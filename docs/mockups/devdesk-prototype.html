@@ -3,472 +3,532 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>DevDesk — 交互原型</title>
+<title>DevDesk — 完整 UI/UX 原型</title>
 <script src="https://cdn.tailwindcss.com"></script>
 <script>
 tailwind.config = {
   theme: {
     extend: {
       colors: {
-        // 方案 B：温暖专业（Claude.ai 风格）— Dark
-        bg: { base: '#1A1816', surface: '#232120', elevated: '#2C2A28', hover: '#353231', active: '#3E3B39' },
-        accent: { DEFAULT: '#D97757', hover: '#E0896B', pressed: '#B85F3F', soft: '#3A2620' },
-        text: { primary: '#FAF9F5', secondary: '#C9C5BD', tertiary: '#9A948A', disabled: '#6B6660' },
-        border: { DEFAULT: '#3A3735', muted: '#2A2826' },
-        success: '#788C5D', warning: '#C29243', error: '#CF2D56', info: '#6A9BCC',
+        // 方案 B 温暖专业
+        bg: { base: 'var(--bg-base)', surface: 'var(--bg-surface)', elevated: 'var(--bg-elevated)', hover: 'var(--bg-hover)', active: 'var(--bg-active)', muted: 'var(--bg-muted)' },
+        accent: { DEFAULT: 'var(--accent)', hover: 'var(--accent-hover)', pressed: 'var(--accent-pressed)', soft: 'var(--accent-soft)' },
+        text: { primary: 'var(--text-primary)', secondary: 'var(--text-secondary)', tertiary: 'var(--text-tertiary)', disabled: 'var(--text-disabled)' },
+        border: { DEFAULT: 'var(--border-default)', muted: 'var(--border-muted)' },
+        success: 'var(--success)', warning: 'var(--warning)', error: 'var(--error)', info: 'var(--info)',
       },
       fontFamily: {
         sans: ['Inter', '-apple-system', 'BlinkMacSystemFont', 'PingFang SC', 'Microsoft YaHei UI', 'sans-serif'],
         mono: ['JetBrains Mono', 'SF Mono', 'Cascadia Code', 'monospace'],
       },
-      borderRadius: {
-        pill: '999px',
-      }
     }
   }
 }
 </script>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;700&family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet">
 <style>
-  body { font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif; -webkit-font-smoothing: antialiased; }
-  .font-mono { font-family: 'JetBrains Mono', monospace; }
+  :root {
+    /* 默认浅色 - 方案 B Light（用户选择） */
+    --bg-base: #FAF9F5;
+    --bg-surface: #FFFFFF;
+    --bg-elevated: #FFFFFF;
+    --bg-hover: #F5F2EC;
+    --bg-active: #EBE7DF;
+    --bg-muted: #F0EEE6;
+    --accent: #D97757;
+    --accent-hover: #E0896B;
+    --accent-pressed: #B85F3F;
+    --accent-soft: #F5E6DE;
+    --text-primary: #1F1D1A;
+    --text-secondary: #6B6660;
+    --text-tertiary: #9A948A;
+    --text-disabled: #B5B0A8;
+    --border-default: #E8E6DC;
+    --border-muted: #F0EEE6;
+    --success: #5E7048;
+    --warning: #9A6B30;
+    --error: #B82850;
+    --info: #4A7AAB;
+  }
+  [data-theme="dark"] {
+    --bg-base: #1A1816;
+    --bg-surface: #232120;
+    --bg-elevated: #2C2A28;
+    --bg-hover: #353231;
+    --bg-active: #3E3B39;
+    --bg-muted: #2A2826;
+    --accent: #D97757;
+    --accent-hover: #E0896B;
+    --accent-pressed: #B85F3F;
+    --accent-soft: #3A2620;
+    --text-primary: #FAF9F5;
+    --text-secondary: #C9C5BD;
+    --text-tertiary: #9A948A;
+    --text-disabled: #6B6660;
+    --border-default: #3A3735;
+    --border-muted: #2A2826;
+    --success: #788C5D;
+    --warning: #C29243;
+    --error: #CF2D56;
+    --info: #6A9BCC;
+  }
+  * { transition: background-color 300ms ease-in-out, border-color 300ms ease-in-out, color 300ms ease-in-out; }
+  body { font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'PingFang SC', sans-serif; -webkit-font-smoothing: antialiased; background: var(--bg-base); color: var(--text-primary); }
+  .font-mono { font-family: 'JetBrains Mono', 'SF Mono', monospace; }
+
+  /* Focus 样式 WCAG AAA */
+  :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 8px; }
+  button:focus-visible, a:focus-visible { border-radius: 10px; }
+
+  /* Scrollbar */
+  ::-webkit-scrollbar { width: 10px; height: 10px; }
+  ::-webkit-scrollbar-thumb { background: var(--border-default); border-radius: 5px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb:hover { background: var(--text-tertiary); }
+
+  /* Page 切换 */
   [data-page] { display: none; }
-  [data-page].active { display: block; }
-  .nav-item { transition: background 150ms ease-out, color 150ms ease-out; }
-  .btn-primary { transition: background 150ms ease-out; }
-  .scrollbar-thin::-webkit-scrollbar { width: 8px; height: 8px; }
-  .scrollbar-thin::-webkit-scrollbar-thumb { background: #3A3735; border-radius: 4px; }
-  .scrollbar-thin::-webkit-scrollbar-track { background: transparent; }
+  [data-page].active { display: flex; }
+
+  /* Skeleton shimmer */
+  @keyframes shimmer { 0% { background-position: 200% 0; } 100% { background-position: -200% 0; } }
+  .skeleton {
+    background: linear-gradient(90deg, var(--bg-surface) 0%, var(--bg-elevated) 50%, var(--bg-surface) 100%);
+    background-size: 200% 100%;
+    animation: shimmer 1.5s ease-in-out infinite;
+    border-radius: 6px;
+    color: transparent;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .skeleton { animation: none; background: var(--bg-elevated); }
+    * { transition: none !important; animation: none !important; }
+  }
+
+  /* Modal 动画 */
+  @keyframes modalIn { from { opacity: 0; transform: scale(0.95) translateY(-10px); } to { opacity: 1; transform: scale(1) translateY(0); } }
+  @keyframes backdropIn { from { opacity: 0; } to { opacity: 1; } }
+  .modal-backdrop { animation: backdropIn 200ms cubic-bezier(0.32, 0.72, 0, 1); }
+  .modal-container { animation: modalIn 200ms cubic-bezier(0.32, 0.72, 0, 1); }
+
+  /* Toast 动画 */
+  @keyframes toastIn { from { opacity: 0; transform: translateX(20px); } to { opacity: 1; transform: translateX(0); } }
+  @keyframes toastOut { to { opacity: 0; transform: translateX(20px); } }
+  .toast-enter { animation: toastIn 250ms ease-out; }
+  .toast-exit { animation: toastOut 200ms ease-in forwards; }
+
+  /* Drag and drop */
+  .dragging { opacity: 0.6; transform: scale(0.98); box-shadow: 0 8px 24px rgba(0,0,0,0.3); }
+  .drop-target { background: var(--accent-soft) !important; transition: background 150ms; }
+  .draggable { cursor: grab; }
+  .draggable:active { cursor: grabbing; }
+
+  /* Spinner */
+  @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+  .spinner { animation: spin 1.2s linear infinite; }
+
+  /* Nav active 状态 */
+  .nav-item.active { background: var(--accent-soft); color: var(--accent); font-weight: 600; }
+
+  /* Empty state */
+  .empty-state { padding: 80px 40px; text-align: center; color: var(--text-tertiary); }
+
+  /* Toast progress bar */
+  @keyframes toastProgress { from { width: 100%; } to { width: 0%; } }
+  .toast-progress { animation: toastProgress linear forwards; }
 </style>
 </head>
-<body class="bg-bg-base text-text-primary min-h-screen">
+<body>
 
 <div class="flex h-screen">
+
   <!-- ============ 侧边栏 ============ -->
-  <aside class="w-[260px] bg-bg-surface border-r border-border flex flex-col py-6 px-4">
-    <div class="flex items-center gap-2 px-3 mb-8">
-      <div class="w-8 h-8 rounded-lg bg-accent flex items-center justify-center text-white font-bold">D</div>
+  <aside class="w-[260px] flex flex-col py-6 px-4 border-r" style="background:var(--bg-surface); border-color:var(--border-default)">
+    <div class="flex items-center gap-3 px-3 mb-8 cursor-pointer" onclick="switchPage('home')">
+      <div class="w-8 h-8 rounded-lg flex items-center justify-center text-white font-bold" style="background:var(--accent)">D</div>
       <span class="text-lg font-bold tracking-tight">DevDesk</span>
     </div>
-
-    <nav class="flex flex-col gap-1 flex-1">
-      <div class="nav-item px-4 py-2.5 rounded-lg text-text-secondary hover:bg-bg-hover hover:text-text-primary cursor-pointer flex items-center gap-3" data-page-target="home">
-        <span class="text-lg">🏠</span>
-        <span class="text-sm font-medium">首页</span>
+    <nav id="nav" class="flex flex-col gap-1 flex-1" role="navigation" aria-label="主导航">
+      <div class="nav-item px-4 py-2.5 rounded-lg flex items-center gap-3 cursor-pointer" style="color:var(--text-secondary)" data-page-target="home" onclick="switchPage('home')">
+        <span class="text-lg">🏠</span><span class="text-sm font-medium">首页</span>
       </div>
-      <div class="nav-item px-4 py-2.5 rounded-lg text-text-secondary hover:bg-bg-hover hover:text-text-primary cursor-pointer flex items-center gap-3" data-page-target="markdown">
-        <span class="text-lg">📝</span>
-        <span class="text-sm font-medium">Markdown 笔记本</span>
+      <div class="nav-item px-4 py-2.5 rounded-lg flex items-center gap-3 cursor-pointer" style="color:var(--text-secondary)" data-page-target="markdown" onclick="switchPage('markdown')">
+        <span class="text-lg">📝</span><span class="text-sm font-medium">Markdown 笔记本</span>
       </div>
-      <div class="nav-item px-4 py-2.5 rounded-lg text-text-secondary hover:bg-bg-hover hover:text-text-primary cursor-pointer flex items-center gap-3" data-page-target="todo">
-        <span class="text-lg">✅</span>
-        <span class="text-sm font-medium">Todo 看板</span>
+      <div class="nav-item px-4 py-2.5 rounded-lg flex items-center gap-3 cursor-pointer" style="color:var(--text-secondary)" data-page-target="todo" onclick="switchPage('todo')">
+        <span class="text-lg">✅</span><span class="text-sm font-medium">Todo 看板</span>
       </div>
-      <div class="nav-item px-4 py-2.5 rounded-lg text-text-secondary hover:bg-bg-hover hover:text-text-primary cursor-pointer flex items-center gap-3" data-page-target="claude">
-        <span class="text-lg">🔄</span>
-        <span class="text-sm font-medium">Claude 切换器</span>
+      <div class="nav-item px-4 py-2.5 rounded-lg flex items-center gap-3 cursor-pointer" style="color:var(--text-secondary)" data-page-target="claude" onclick="switchPage('claude')">
+        <span class="text-lg">🔄</span><span class="text-sm font-medium">Claude 切换器</span>
       </div>
     </nav>
-
-    <div class="nav-item px-4 py-2.5 rounded-lg text-text-secondary hover:bg-bg-hover hover:text-text-primary cursor-pointer flex items-center gap-3" data-page-target="settings">
-      <span class="text-lg">⚙️</span>
-      <span class="text-sm font-medium">设置</span>
+    <div class="nav-item px-4 py-2.5 rounded-lg flex items-center gap-3 cursor-pointer" style="color:var(--text-secondary)" data-page-target="settings" onclick="switchPage('settings')">
+      <span class="text-lg">⚙️</span><span class="text-sm font-medium">设置</span>
     </div>
   </aside>
 
   <!-- ============ 主区 ============ -->
-  <main class="flex-1 overflow-auto scrollbar-thin">
+  <main class="flex-1 overflow-auto">
 
-    <!-- ===== Home 页 ===== -->
-    <div data-page="home" class="active p-10">
+    <!-- ===== Home ===== -->
+    <div data-page="home" class="active flex-col p-10">
       <div class="flex items-center justify-between mb-10">
         <div>
           <h1 class="text-3xl font-bold tracking-tight">欢迎回来</h1>
-          <p class="text-text-secondary mt-2">2026 年 9 月 20 日 · 星期六</p>
+          <p class="mt-2 text-sm" style="color:var(--text-secondary)">2026 年 9 月 21 日 · 星期一</p>
         </div>
         <div class="flex gap-2">
-          <button class="px-5 py-2.5 rounded-lg text-sm font-medium text-text-secondary hover:bg-bg-hover">↻ 刷新</button>
-          <button class="px-5 py-2.5 rounded-lg text-sm font-medium bg-bg-elevated hover:bg-bg-hover">⚙ 设置</button>
+          <button onclick="showToast('info', '已刷新')" class="h-10 px-5 rounded-lg text-sm font-medium hover:bg-bg-hover" style="color:var(--text-secondary)">↻ 刷新</button>
+          <button onclick="switchPage('settings')" class="h-10 px-5 rounded-lg text-sm font-medium border hover:bg-bg-hover" style="background:var(--bg-elevated); border-color:var(--border-default)">⚙ 设置</button>
         </div>
       </div>
 
-      <!-- 统计卡片 -->
       <div class="grid grid-cols-4 gap-5 mb-10">
-        <div class="bg-bg-surface border border-border rounded-2xl p-7">
-          <div class="text-xs uppercase tracking-wider text-text-secondary font-medium mb-3">今日笔记</div>
+        <div class="p-7 border rounded-2xl" style="background:var(--bg-surface); border-color:var(--border-default)">
+          <div class="text-xs uppercase tracking-wider font-medium mb-3" style="color:var(--text-secondary)">今日笔记</div>
           <div class="text-5xl font-bold mb-2">3</div>
-          <span class="inline-block px-2.5 py-0.5 rounded-pill text-xs bg-bg-elevated text-text-tertiary">+1 今日</span>
+          <span class="inline-block px-2.5 py-0.5 rounded-pill text-xs" style="background:var(--bg-elevated); color:var(--text-tertiary)">+1 今日</span>
         </div>
-        <div class="bg-bg-surface border border-border rounded-2xl p-7">
-          <div class="text-xs uppercase tracking-wider text-text-secondary font-medium mb-3">待办任务</div>
+        <div class="p-7 border rounded-2xl" style="background:var(--bg-surface); border-color:var(--border-default)">
+          <div class="text-xs uppercase tracking-wider font-medium mb-3" style="color:var(--text-secondary)">待办任务</div>
           <div class="text-5xl font-bold mb-2">7</div>
-          <span class="inline-block px-2.5 py-0.5 rounded-pill text-xs bg-bg-elevated text-text-tertiary">3 高优</span>
+          <span class="inline-block px-2.5 py-0.5 rounded-pill text-xs" style="background:var(--bg-elevated); color:var(--text-tertiary)">3 高优</span>
         </div>
-        <div class="bg-bg-surface border border-border rounded-2xl p-7">
-          <div class="text-xs uppercase tracking-wider text-text-secondary font-medium mb-3">逾期任务</div>
-          <div class="text-5xl font-bold mb-2 text-error">1</div>
-          <span class="inline-block px-2.5 py-0.5 rounded-pill text-xs bg-bg-elevated text-error">需关注</span>
+        <div class="p-7 border rounded-2xl" style="background:var(--bg-surface); border-color:var(--border-default)">
+          <div class="text-xs uppercase tracking-wider font-medium mb-3" style="color:var(--text-secondary)">逾期任务</div>
+          <div class="text-5xl font-bold mb-2" style="color:var(--error)">1</div>
+          <span class="inline-block px-2.5 py-0.5 rounded-pill text-xs" style="background:var(--bg-elevated); color:var(--error)">需关注</span>
         </div>
-        <div class="bg-bg-surface border border-border rounded-2xl p-7">
-          <div class="text-xs uppercase tracking-wider text-text-secondary font-medium mb-3">API 调用</div>
+        <div class="p-7 border rounded-2xl" style="background:var(--bg-surface); border-color:var(--border-default)">
+          <div class="text-xs uppercase tracking-wider font-medium mb-3" style="color:var(--text-secondary)">API 调用</div>
           <div class="text-5xl font-bold mb-2">142</div>
-          <span class="inline-block px-2.5 py-0.5 rounded-pill text-xs bg-bg-elevated text-text-tertiary">今日</span>
+          <span class="inline-block px-2.5 py-0.5 rounded-pill text-xs" style="background:var(--bg-elevated); color:var(--text-tertiary)">今日</span>
         </div>
       </div>
 
-      <!-- 最近编辑 -->
-      <div class="bg-bg-surface border border-border rounded-2xl p-7 mb-6">
+      <div class="p-7 border rounded-2xl mb-6" style="background:var(--bg-surface); border-color:var(--border-default)">
         <h2 class="text-lg font-semibold mb-5">最近编辑</h2>
         <div class="flex flex-col gap-1">
-          <div class="px-4 py-3 rounded-lg hover:bg-bg-hover cursor-pointer flex items-center gap-4 transition-colors">
-            <div class="w-10 h-10 rounded-lg bg-bg-elevated flex items-center justify-center">📄</div>
+          <div onclick="switchPage('markdown')" class="px-4 py-3 rounded-lg cursor-pointer flex items-center gap-4 hover:bg-bg-hover">
+            <div class="w-10 h-10 rounded-lg flex items-center justify-center" style="background:var(--bg-elevated)">📄</div>
             <div class="flex-1">
               <div class="text-sm font-medium">设计稿v2.md</div>
-              <div class="text-xs text-text-tertiary mt-0.5">2 小时前 · inbox/设计稿v2.md</div>
+              <div class="text-xs mt-0.5" style="color:var(--text-tertiary)">2 小时前 · inbox/设计稿v2.md</div>
             </div>
-            <span class="px-3 py-1 rounded-pill text-xs bg-accent-soft text-accent border border-transparent">#工作</span>
+            <span class="px-3 py-1 rounded-pill text-xs" style="background:var(--accent-soft); color:var(--accent)">#工作</span>
           </div>
-          <div class="px-4 py-3 rounded-lg hover:bg-bg-hover cursor-pointer flex items-center gap-4 transition-colors">
-            <div class="w-10 h-10 rounded-lg bg-bg-elevated flex items-center justify-center">📄</div>
+          <div onclick="switchPage('markdown')" class="px-4 py-3 rounded-lg cursor-pointer flex items-center gap-4 hover:bg-bg-hover">
+            <div class="w-10 h-10 rounded-lg flex items-center justify-center" style="background:var(--bg-elevated)">📄</div>
             <div class="flex-1">
               <div class="text-sm font-medium">周会纪要.md</div>
-              <div class="text-xs text-text-tertiary mt-0.5">昨天 · work/周会纪要.md</div>
+              <div class="text-xs mt-0.5" style="color:var(--text-tertiary)">昨天 · work/周会纪要.md</div>
             </div>
-            <span class="px-3 py-1 rounded-pill text-xs bg-accent-soft text-accent border border-transparent">#工作</span>
+            <span class="px-3 py-1 rounded-pill text-xs" style="background:var(--accent-soft); color:var(--accent)">#工作</span>
           </div>
-          <div class="px-4 py-3 rounded-lg hover:bg-bg-hover cursor-pointer flex items-center gap-4 transition-colors">
-            <div class="w-10 h-10 rounded-lg bg-bg-elevated flex items-center justify-center">📄</div>
+          <div onclick="switchPage('markdown')" class="px-4 py-3 rounded-lg cursor-pointer flex items-center gap-4 hover:bg-bg-hover">
+            <div class="w-10 h-10 rounded-lg flex items-center justify-center" style="background:var(--bg-elevated)">📄</div>
             <div class="flex-1">
               <div class="text-sm font-medium">bug分析.md</div>
-              <div class="text-xs text-text-tertiary mt-0.5">3 天前 · notes/bug分析.md</div>
+              <div class="text-xs mt-0.5" style="color:var(--text-tertiary)">3 天前 · notes/bug分析.md</div>
             </div>
-            <span class="px-3 py-1 rounded-pill text-xs bg-bg-elevated text-text-secondary border border-border">#学习</span>
+            <span class="px-3 py-1 rounded-pill text-xs border" style="background:var(--bg-elevated); color:var(--text-secondary); border-color:var(--border-default)">#学习</span>
           </div>
         </div>
       </div>
 
-      <!-- 快捷操作 -->
       <div class="flex gap-3">
-        <button class="px-5 py-3 rounded-xl bg-accent text-white text-sm font-medium hover:bg-accent-hover">+ 新建笔记</button>
-        <button class="px-5 py-3 rounded-xl bg-bg-elevated text-text-primary text-sm font-medium hover:bg-bg-hover border border-border">+ 新建任务</button>
-        <button class="px-5 py-3 rounded-xl bg-bg-elevated text-text-primary text-sm font-medium hover:bg-bg-hover border border-border">📋 切换 Claude Profile</button>
+        <button onclick="switchPage('markdown')" class="px-5 py-3 rounded-xl text-sm font-medium text-white" style="background:var(--accent)">+ 新建笔记</button>
+        <button onclick="switchPage('todo')" class="px-5 py-3 rounded-xl text-sm font-medium border hover:bg-bg-hover" style="background:var(--bg-elevated); border-color:var(--border-default)">+ 新建任务</button>
+        <button onclick="switchPage('claude')" class="px-5 py-3 rounded-xl text-sm font-medium border hover:bg-bg-hover" style="background:var(--bg-elevated); border-color:var(--border-default)">📋 切换 Claude Profile</button>
       </div>
     </div>
 
-    <!-- ===== Markdown 页 ===== -->
-    <div data-page="markdown" class="p-10 h-screen flex flex-col">
+    <!-- ===== Markdown ===== -->
+    <div data-page="markdown" class="flex-col p-10 h-screen">
       <div class="flex items-center justify-between mb-6">
         <div>
           <h1 class="text-3xl font-bold tracking-tight">Markdown 笔记本</h1>
-          <p class="text-text-secondary mt-2">本地化的笔记系统，文件可直接用外部编辑器打开</p>
+          <p class="mt-2 text-sm" style="color:var(--text-secondary)">本地化的笔记系统，文件可直接用外部编辑器打开</p>
         </div>
         <div class="flex gap-2">
-          <button class="px-5 py-2.5 rounded-lg text-sm font-medium text-text-secondary hover:bg-bg-hover">↻ 重扫</button>
-          <button class="px-5 py-2.5 rounded-lg text-sm font-medium bg-bg-elevated hover:bg-bg-hover border border-border">⚙ 设置</button>
-          <button class="px-5 py-2.5 rounded-lg text-sm font-medium bg-accent text-white hover:bg-accent-hover">+ 新建笔记</button>
+          <button onclick="showToast('info', '已重新扫描')" class="h-10 px-5 rounded-lg text-sm font-medium hover:bg-bg-hover" style="color:var(--text-secondary)">↻ 重扫</button>
+          <button onclick="switchPage('settings')" class="h-10 px-5 rounded-lg text-sm font-medium border hover:bg-bg-hover" style="background:var(--bg-elevated); border-color:var(--border-default)">⚙ 设置</button>
+          <button onclick="showToast('success', '已新建笔记')" class="h-10 px-5 rounded-lg text-sm font-medium text-white" style="background:var(--accent)">+ 新建笔记</button>
         </div>
       </div>
 
       <div class="flex-1 grid grid-cols-[220px_1fr_1fr] gap-5 min-h-0">
-        <!-- 文件树 -->
-        <div class="bg-bg-surface border border-border rounded-2xl p-5 overflow-auto scrollbar-thin">
-          <div class="mb-4">
-            <input type="text" placeholder="🔍 搜索笔记..." class="w-full px-3 py-2 bg-bg-elevated border border-border rounded-lg text-sm focus:border-accent focus:outline-none">
+        <div class="border rounded-2xl p-5 overflow-auto" style="background:var(--bg-surface); border-color:var(--border-default)">
+          <input type="text" placeholder="🔍 搜索笔记..." class="w-full px-3 py-2 border rounded-lg text-sm mb-4 focus:outline-none focus:border-accent" style="background:var(--bg-elevated); border-color:var(--border-default)">
+          <div class="flex flex-col gap-0.5 mb-6">
+            <div class="px-3 py-2 text-sm rounded-md cursor-pointer font-medium" style="background:var(--accent-soft); color:var(--accent)">📄 设计稿v2.md</div>
+            <div class="px-3 py-2 text-sm rounded-md cursor-pointer hover:bg-bg-hover" style="color:var(--text-secondary)">📄 周会纪要.md</div>
+            <div class="px-3 py-2 text-sm rounded-md cursor-pointer hover:bg-bg-hover" style="color:var(--text-secondary)">📄 bug分析.md</div>
+            <div class="px-3 py-2 mt-3 text-xs uppercase tracking-wider font-medium" style="color:var(--text-tertiary)">▾ 📁 inbox</div>
+            <div class="px-3 py-2 pl-8 text-sm rounded-md cursor-pointer hover:bg-bg-hover" style="color:var(--text-secondary)">📄 ideas.md</div>
+            <div class="px-3 py-2 pl-8 text-sm rounded-md cursor-pointer hover:bg-bg-hover" style="color:var(--text-secondary)">📄 todo.md</div>
           </div>
-          <div class="flex flex-col gap-0.5">
-            <div class="px-3 py-2 text-sm rounded-md cursor-pointer bg-accent-soft text-accent font-medium">📄 设计稿v2.md</div>
-            <div class="px-3 py-2 text-sm rounded-md cursor-pointer text-text-secondary hover:bg-bg-hover hover:text-text-primary">📄 周会纪要.md</div>
-            <div class="px-3 py-2 text-sm rounded-md cursor-pointer text-text-secondary hover:bg-bg-hover hover:text-text-primary">📄 bug分析.md</div>
-            <div class="px-3 py-2 mt-3 text-xs uppercase tracking-wider text-text-tertiary font-medium">▾ 📁 inbox</div>
-            <div class="px-3 py-2 pl-8 text-sm rounded-md cursor-pointer text-text-secondary hover:bg-bg-hover hover:text-text-primary">📄 ideas.md</div>
-            <div class="px-3 py-2 pl-8 text-sm rounded-md cursor-pointer text-text-secondary hover:bg-bg-hover hover:text-text-primary">📄 todo.md</div>
-          </div>
-          <div class="mt-6 pt-5 border-t border-border-muted">
-            <div class="text-xs text-text-tertiary mb-2 font-medium">标签</div>
+          <div class="pt-5 border-t" style="border-color:var(--border-muted)">
+            <div class="text-xs mb-2 font-medium" style="color:var(--text-tertiary)">标签</div>
             <div class="flex flex-wrap gap-1.5">
-              <span class="px-3 py-1 rounded-pill text-xs bg-accent-soft text-accent">#工作</span>
-              <span class="px-3 py-1 rounded-pill text-xs bg-bg-elevated text-text-secondary border border-border">#学习</span>
-              <span class="px-3 py-1 rounded-pill text-xs bg-bg-elevated text-text-secondary border border-border">#想法</span>
+              <span class="px-3 py-1 rounded-pill text-xs" style="background:var(--accent-soft); color:var(--accent)">#工作</span>
+              <span class="px-3 py-1 rounded-pill text-xs border" style="background:var(--bg-elevated); color:var(--text-secondary); border-color:var(--border-default)">#学习</span>
+              <span class="px-3 py-1 rounded-pill text-xs border" style="background:var(--bg-elevated); color:var(--text-secondary); border-color:var(--border-default)">#想法</span>
             </div>
           </div>
         </div>
 
-        <!-- 编辑器 -->
-        <div class="bg-bg-surface border border-border rounded-2xl p-6 overflow-auto scrollbar-thin">
-          <div class="font-mono text-sm leading-relaxed text-text-secondary whitespace-pre-wrap"># 你好 DevDesk
+        <div class="border rounded-2xl p-6 overflow-auto" style="background:var(--bg-surface); border-color:var(--border-default)">
+          <div class="font-mono text-sm leading-relaxed whitespace-pre-wrap" style="color:var(--text-secondary)"># 你好 DevDesk
 
-这是一个 **Markdown** 笔记本的演示。试试 *中文* + English 混排。
+这是一个 **Markdown** 笔记本的演示。
+
+试试 *中文* + English 混排。
 
 ## 二级标题
 
 - 列表项 1
 - 列表项 2
-- 列表项 3
 
 ```cpp
 #include &lt;iostream&gt;
 int main() { return 0; }
 ```
 
-> 引用块演示，长文本会换行显示。
-
-[链接演示](https://anthropic.com)
-
-| 列1 | 列2 |
-|-----|-----|
-| A   | B   |
-| C   | D   |
-
-试试改这里的内容 →</div>
+> 引用块演示</div>
         </div>
 
-        <!-- 预览 -->
-        <div class="bg-bg-surface border border-border rounded-2xl p-6 overflow-auto scrollbar-thin">
-          <h1 class="text-2xl font-bold mb-4 text-text-primary">你好 DevDesk</h1>
+        <div class="border rounded-2xl p-6 overflow-auto" style="background:var(--bg-surface); border-color:var(--border-default)">
+          <h1 class="text-2xl font-bold mb-4">你好 DevDesk</h1>
           <p class="mb-4 leading-relaxed">这是一个 <strong>Markdown</strong> 笔记本的演示。试试 <em>中文</em> + English 混排。</p>
-          <h2 class="text-lg font-semibold mt-6 mb-3 text-text-primary">二级标题</h2>
+          <h2 class="text-lg font-semibold mt-6 mb-3">二级标题</h2>
           <ul class="mb-4 list-disc list-inside space-y-1">
             <li>列表项 1</li>
             <li>列表项 2</li>
-            <li>列表项 3</li>
           </ul>
-          <div class="bg-bg-elevated rounded-lg p-4 mb-4 font-mono text-xs border-l-4 border-accent">
+          <div class="rounded-lg p-4 mb-4 font-mono text-xs border-l-4" style="background:var(--bg-elevated); border-color:var(--accent)">
             #include &lt;iostream&gt;<br>int main() { return 0; }
           </div>
-          <blockquote class="border-l-4 border-accent pl-4 py-1 text-text-secondary italic mb-4">引用块演示，长文本会换行显示。</blockquote>
-          <p class="mb-4"><a href="#" class="text-accent hover:underline">链接演示</a></p>
-          <table class="w-full text-sm border border-border rounded-lg overflow-hidden">
-            <thead class="bg-bg-elevated"><tr><th class="px-3 py-2 text-left">列1</th><th class="px-3 py-2 text-left">列2</th></tr></thead>
-            <tbody><tr class="border-t border-border"><td class="px-3 py-2">A</td><td class="px-3 py-2">B</td></tr><tr class="border-t border-border"><td class="px-3 py-2">C</td><td class="px-3 py-2">D</td></tr></tbody>
-          </table>
+          <blockquote class="border-l-4 pl-4 py-1 italic" style="border-color:var(--accent); color:var(--text-secondary)">引用块演示</blockquote>
         </div>
       </div>
     </div>
 
-    <!-- ===== Todo 页 ===== -->
-    <div data-page="todo" class="p-10 h-screen flex flex-col">
+    <!-- ===== Todo ===== -->
+    <div data-page="todo" class="flex-col p-10 h-screen">
       <div class="flex items-center justify-between mb-6">
         <div>
           <h1 class="text-3xl font-bold tracking-tight">Todo 看板</h1>
-          <p class="text-text-secondary mt-2">⌘N 新建任务 · 拖拽卡片跨列移动（也可右键"移动到..."）</p>
+          <p class="mt-2 text-sm" style="color:var(--text-secondary)">⌘N 新建 · 拖拽卡片跨列 · 也可右键"移动到..."</p>
         </div>
         <div class="flex gap-2">
-          <input type="text" placeholder="🔍 搜索任务..." class="px-4 py-2.5 bg-bg-elevated border border-border rounded-lg text-sm focus:border-accent focus:outline-none w-64">
-          <button class="px-5 py-2.5 rounded-lg text-sm font-medium bg-bg-elevated hover:bg-bg-hover border border-border">+ 列</button>
-          <button class="px-5 py-2.5 rounded-lg text-sm font-medium bg-accent text-white hover:bg-accent-hover">+ 新建任务</button>
+          <input type="text" placeholder="🔍 搜索任务..." class="h-10 px-4 border rounded-lg text-sm w-64 focus:outline-none focus:border-accent" style="background:var(--bg-elevated); border-color:var(--border-default)">
+          <button class="h-10 px-5 rounded-lg text-sm font-medium border hover:bg-bg-hover" style="background:var(--bg-elevated); border-color:var(--border-default)">+ 列</button>
+          <button onclick="addTodoCard()" class="h-10 px-5 rounded-lg text-sm font-medium text-white" style="background:var(--accent)">+ 新建任务</button>
         </div>
       </div>
 
       <div class="flex-1 grid grid-cols-4 gap-5 min-h-0 overflow-x-auto">
-        <!-- 列：待办 -->
-        <div class="bg-bg-surface border border-border rounded-2xl p-4 flex flex-col">
+        <div class="todo-column border rounded-2xl p-4 flex flex-col" data-column="todo" style="background:var(--bg-surface); border-color:var(--border-default)" ondragover="onDragOver(event, this)" ondragleave="onDragLeave(event, this)" ondrop="onDrop(event, this, 'todo')">
           <div class="flex items-center justify-between mb-4 px-2">
-            <h3 class="font-semibold text-sm">待办 <span class="text-text-tertiary font-normal ml-1">3</span></h3>
-            <button class="text-text-tertiary hover:text-text-primary">+</button>
+            <h3 class="font-semibold text-sm">待办 <span class="font-normal ml-1" style="color:var(--text-tertiary)">3</span></h3>
+            <button class="text-lg" style="color:var(--text-tertiary)">+</button>
           </div>
-          <div class="flex-1 overflow-y-auto scrollbar-thin flex flex-col gap-2">
-            <div class="bg-bg-elevated rounded-xl p-3.5 border-l-4 border-error cursor-grab hover:bg-bg-hover transition-colors">
+          <div class="flex-1 overflow-y-auto flex flex-col gap-2 todo-list">
+            <div class="draggable rounded-xl p-3.5 border-l-4 cursor-grab hover:bg-bg-hover transition-colors" draggable="true" style="background:var(--bg-elevated); border-color:var(--error)" ondragstart="onDragStart(event)" ondragend="onDragEnd(event)">
               <div class="text-sm font-medium mb-2">写文档</div>
               <div class="flex items-center gap-2">
-                <span class="px-2 py-0.5 rounded-pill text-[10px] font-bold bg-error text-white">高</span>
-                <span class="text-[11px] text-text-tertiary">⏰ 明天</span>
+                <span class="px-2 py-0.5 rounded-pill text-[10px] font-bold text-white" style="background:var(--error)">高</span>
+                <span class="text-[11px]" style="color:var(--text-tertiary)">⏰ 明天</span>
               </div>
             </div>
-            <div class="bg-bg-elevated rounded-xl p-3.5 border-l-4 border-warning cursor-grab hover:bg-bg-hover transition-colors">
+            <div class="draggable rounded-xl p-3.5 border-l-4 cursor-grab hover:bg-bg-hover transition-colors" draggable="true" style="background:var(--bg-elevated); border-color:var(--warning)" ondragstart="onDragStart(event)" ondragend="onDragEnd(event)">
               <div class="text-sm font-medium mb-2">会议纪要</div>
               <div class="flex items-center gap-2">
-                <span class="px-2 py-0.5 rounded-pill text-[10px] font-bold bg-warning text-bg-base">中</span>
-                <span class="text-[11px] text-text-tertiary">今天</span>
+                <span class="px-2 py-0.5 rounded-pill text-[10px] font-bold" style="background:var(--warning); color:var(--bg-base)">中</span>
+                <span class="text-[11px]" style="color:var(--text-tertiary)">📅 今天</span>
               </div>
             </div>
-            <div class="bg-bg-elevated rounded-xl p-3.5 border-l-4 border-info cursor-grab hover:bg-bg-hover transition-colors">
+            <div class="draggable rounded-xl p-3.5 border-l-4 cursor-grab hover:bg-bg-hover transition-colors" draggable="true" style="background:var(--bg-elevated); border-color:var(--info)" ondragstart="onDragStart(event)" ondragend="onDragEnd(event)">
               <div class="text-sm font-medium mb-2">代码 review</div>
               <div class="flex items-center gap-2">
-                <span class="px-2 py-0.5 rounded-pill text-[10px] font-bold bg-info text-bg-base">低</span>
+                <span class="px-2 py-0.5 rounded-pill text-[10px] font-bold" style="background:var(--info); color:var(--bg-base)">低</span>
               </div>
             </div>
           </div>
         </div>
 
-        <!-- 列：进行中 -->
-        <div class="bg-bg-surface border border-border rounded-2xl p-4 flex flex-col">
+        <div class="todo-column border rounded-2xl p-4 flex flex-col" data-column="doing" style="background:var(--bg-surface); border-color:var(--border-default)" ondragover="onDragOver(event, this)" ondragleave="onDragLeave(event, this)" ondrop="onDrop(event, this, 'doing')">
           <div class="flex items-center justify-between mb-4 px-2">
-            <h3 class="font-semibold text-sm">进行中 <span class="text-text-tertiary font-normal ml-1">1</span></h3>
-            <button class="text-text-tertiary hover:text-text-primary">+</button>
+            <h3 class="font-semibold text-sm">进行中 <span class="font-normal ml-1" style="color:var(--text-tertiary)">1</span></h3>
+            <button class="text-lg" style="color:var(--text-tertiary)">+</button>
           </div>
-          <div class="flex-1 overflow-y-auto scrollbar-thin flex flex-col gap-2">
-            <div class="bg-accent-soft rounded-xl p-3.5 border-l-4 border-accent cursor-grab hover:bg-bg-hover transition-colors">
+          <div class="flex-1 overflow-y-auto flex flex-col gap-2 todo-list">
+            <div class="draggable rounded-xl p-3.5 border-l-4 cursor-grab hover:bg-bg-hover transition-colors" draggable="true" style="background:var(--accent-soft); border-color:var(--accent)" ondragstart="onDragStart(event)" ondragend="onDragEnd(event)">
               <div class="text-sm font-medium mb-2">修复 bug #42</div>
               <div class="flex items-center gap-2">
-                <span class="px-2 py-0.5 rounded-pill text-[10px] font-bold bg-warning text-bg-base">中</span>
-                <span class="text-[11px] text-text-tertiary">🚧 进行中</span>
+                <span class="px-2 py-0.5 rounded-pill text-[10px] font-bold" style="background:var(--warning); color:var(--bg-base)">中</span>
+                <span class="text-[11px]" style="color:var(--text-tertiary)">🚧 进行中</span>
               </div>
             </div>
           </div>
         </div>
 
-        <!-- 列：已完成 -->
-        <div class="bg-bg-surface border border-border rounded-2xl p-4 flex flex-col">
+        <div class="todo-column border rounded-2xl p-4 flex flex-col" data-column="done" style="background:var(--bg-surface); border-color:var(--border-default)" ondragover="onDragOver(event, this)" ondragleave="onDragLeave(event, this)" ondrop="onDrop(event, this, 'done')">
           <div class="flex items-center justify-between mb-4 px-2">
-            <h3 class="font-semibold text-sm">已完成 <span class="text-text-tertiary font-normal ml-1">2</span></h3>
-            <button class="text-text-tertiary hover:text-text-primary">+</button>
+            <h3 class="font-semibold text-sm">已完成 <span class="font-normal ml-1" style="color:var(--text-tertiary)">2</span></h3>
+            <button class="text-lg" style="color:var(--text-tertiary)">+</button>
           </div>
-          <div class="flex-1 overflow-y-auto scrollbar-thin flex flex-col gap-2">
-            <div class="bg-bg-elevated rounded-xl p-3.5 border-l-4 border-success opacity-60 cursor-grab">
+          <div class="flex-1 overflow-y-auto flex flex-col gap-2 todo-list">
+            <div class="draggable rounded-xl p-3.5 border-l-4 cursor-grab hover:bg-bg-hover transition-colors opacity-60" draggable="true" style="background:var(--bg-elevated); border-color:var(--success)" ondragstart="onDragStart(event)" ondragend="onDragEnd(event)">
               <div class="text-sm font-medium mb-2 line-through">初次部署</div>
               <div class="flex items-center gap-2">
-                <span class="text-[11px] text-text-tertiary">✓ 今天 14:30</span>
+                <span class="text-[11px]" style="color:var(--text-tertiary)">✓ 今天 14:30</span>
               </div>
             </div>
-            <div class="bg-bg-elevated rounded-xl p-3.5 border-l-4 border-success opacity-60 cursor-grab">
+            <div class="draggable rounded-xl p-3.5 border-l-4 cursor-grab hover:bg-bg-hover transition-colors opacity-60" draggable="true" style="background:var(--bg-elevated); border-color:var(--success)" ondragstart="onDragStart(event)" ondragend="onDragEnd(event)">
               <div class="text-sm font-medium mb-2 line-through">环境配置</div>
               <div class="flex items-center gap-2">
-                <span class="text-[11px] text-text-tertiary">✓ 昨天</span>
+                <span class="text-[11px]" style="color:var(--text-tertiary)">✓ 昨天</span>
               </div>
             </div>
           </div>
         </div>
 
-        <!-- 列：已归档 -->
-        <div class="bg-bg-surface border border-border rounded-2xl p-4 flex flex-col">
+        <div class="todo-column border rounded-2xl p-4 flex flex-col" data-column="archived" style="background:var(--bg-surface); border-color:var(--border-default)" ondragover="onDragOver(event, this)" ondragleave="onDragLeave(event, this)" ondrop="onDrop(event, this, 'archived')">
           <div class="flex items-center justify-between mb-4 px-2">
             <h3 class="font-semibold text-sm">已归档</h3>
-            <button class="text-text-tertiary hover:text-text-primary">+</button>
+            <button class="text-lg" style="color:var(--text-tertiary)">+</button>
           </div>
-          <div class="flex-1 flex items-center justify-center">
-            <div class="text-center text-text-tertiary text-sm">
-              <div class="text-3xl mb-2">📦</div>
-              <div>归档的任务在这里</div>
-            </div>
+          <div class="flex-1 empty-state">
+            <div class="text-4xl mb-3">📦</div>
+            <div class="text-sm font-medium">还没有归档任务</div>
+            <div class="text-xs mt-1">右键任务选择"归档"</div>
           </div>
         </div>
       </div>
     </div>
 
-    <!-- ===== Claude 切换器页 ===== -->
-    <div data-page="claude" class="p-10">
+    <!-- ===== Claude ===== -->
+    <div data-page="claude" class="flex-col p-10">
       <div class="flex items-center justify-between mb-6">
         <div>
           <h1 class="text-3xl font-bold tracking-tight flex items-center gap-3">
             Claude 切换器
-            <span class="inline-flex items-center gap-1.5 px-3 py-1 rounded-pill text-xs bg-success/20 text-success border border-success/30">
-              <span class="w-2 h-2 rounded-full bg-success"></span>
-              运行中 :8888
+            <span id="proxyStatus" class="inline-flex items-center gap-1.5 px-3 py-1 rounded-pill text-xs border" style="background:var(--bg-elevated); border-color:var(--border-default)">
+              <span class="w-2 h-2 rounded-full" id="proxyDot" style="background:var(--text-tertiary)"></span>
+              <span id="proxyText">未启动</span>
             </span>
           </h1>
-          <p class="text-text-secondary mt-2">管理多套 Claude API 配置 · 本地代理地址 http://127.0.0.1:8888</p>
+          <p class="mt-2 text-sm" style="color:var(--text-secondary)">本地代理：<span class="font-mono">http://127.0.0.1:8888</span> · 需 Bearer Token 认证</p>
         </div>
         <div class="flex gap-2">
-          <button class="px-5 py-2.5 rounded-lg text-sm font-medium bg-bg-elevated hover:bg-bg-hover border border-border">⏸ 停止代理</button>
-          <button class="px-5 py-2.5 rounded-lg text-sm font-medium bg-accent text-white hover:bg-accent-hover">+ 新建 Profile</button>
+          <button onclick="toggleProxy()" id="proxyToggleBtn" class="h-10 px-5 rounded-lg text-sm font-medium border hover:bg-bg-hover" style="background:var(--bg-elevated); border-color:var(--border-default)">▶ 启动代理</button>
+          <button onclick="openNewProfileModal()" class="h-10 px-5 rounded-lg text-sm font-medium text-white" style="background:var(--accent)">+ 新建 Profile</button>
         </div>
       </div>
 
       <div class="grid grid-cols-[400px_1fr] gap-6">
-        <!-- Profile 列表 -->
         <div class="flex flex-col gap-3">
-          <div class="bg-accent-soft border-2 border-accent rounded-2xl p-5 cursor-pointer">
+          <div class="profile-card border-2 rounded-2xl p-5 cursor-pointer" data-profile-id="1" onclick="selectProfile(1)" style="background:var(--accent-soft); border-color:var(--accent)">
             <div class="flex items-center gap-3 mb-3">
-              <div class="w-10 h-10 rounded-full bg-accent flex items-center justify-center text-white font-bold">官</div>
+              <div class="w-10 h-10 rounded-full flex items-center justify-center text-white font-bold" style="background:var(--accent)">官</div>
               <div class="flex-1">
                 <div class="flex items-center gap-2">
                   <span class="font-semibold">官方</span>
-                  <span class="px-2 py-0.5 rounded-pill text-[10px] font-bold bg-accent text-white">ACTIVE</span>
+                  <span class="px-2 py-0.5 rounded-pill text-[10px] font-bold text-white" style="background:var(--accent)">ACTIVE</span>
                 </div>
-                <div class="text-xs text-text-tertiary font-mono mt-1">api.anthropic.com</div>
+                <div class="text-xs font-mono mt-1" style="color:var(--text-tertiary)">api.anthropic.com</div>
               </div>
             </div>
-            <div class="font-mono text-xs text-text-secondary">claude-sonnet-4-5 · sk-ant-***xyz</div>
+            <div class="font-mono text-xs" style="color:var(--text-secondary)">claude-sonnet-4-5 · sk-ant-***xyz</div>
           </div>
 
-          <div class="bg-bg-surface border border-border rounded-2xl p-5 cursor-pointer hover:bg-bg-hover transition-colors">
+          <div class="profile-card border rounded-2xl p-5 cursor-pointer hover:bg-bg-hover transition-colors" data-profile-id="2" onclick="selectProfile(2)" style="background:var(--bg-surface); border-color:var(--border-default)">
             <div class="flex items-center gap-3 mb-3">
-              <div class="w-10 h-10 rounded-full bg-bg-elevated flex items-center justify-center text-text-secondary font-bold">3</div>
+              <div class="w-10 h-10 rounded-full flex items-center justify-center font-bold" style="background:var(--bg-elevated); color:var(--text-secondary)">3</div>
               <div class="flex-1">
                 <span class="font-semibold">第三方 A</span>
-                <div class="text-xs text-text-tertiary font-mono mt-1">api.thirdparty-a.com</div>
+                <div class="text-xs font-mono mt-1" style="color:var(--text-tertiary)">api.thirdparty-a.com</div>
               </div>
             </div>
-            <div class="font-mono text-xs text-text-secondary">claude-opus-5 · sk-***abc</div>
+            <div class="font-mono text-xs" style="color:var(--text-secondary)">claude-opus-5 · sk-***abc</div>
           </div>
 
-          <div class="bg-bg-surface border border-border rounded-2xl p-5 cursor-pointer hover:bg-bg-hover transition-colors">
+          <div class="profile-card border rounded-2xl p-5 cursor-pointer hover:bg-bg-hover transition-colors" data-profile-id="3" onclick="selectProfile(3)" style="background:var(--bg-surface); border-color:var(--border-default)">
             <div class="flex items-center gap-3 mb-3">
-              <div class="w-10 h-10 rounded-full bg-bg-elevated flex items-center justify-center text-text-secondary font-bold">测</div>
+              <div class="w-10 h-10 rounded-full flex items-center justify-center font-bold" style="background:var(--bg-elevated); color:var(--text-secondary)">测</div>
               <div class="flex-1">
                 <span class="font-semibold">测试账号</span>
-                <div class="text-xs text-text-tertiary font-mono mt-1">api.test.com</div>
+                <div class="text-xs font-mono mt-1" style="color:var(--text-tertiary)">api.test.com</div>
               </div>
             </div>
-            <div class="font-mono text-xs text-text-secondary">claude-haiku-5 · sk-***test</div>
+            <div class="font-mono text-xs" style="color:var(--text-secondary)">claude-haiku-5 · sk-***test</div>
           </div>
         </div>
 
-        <!-- 详情面板 -->
         <div>
-          <!-- 当前 Profile 详情 -->
-          <div class="bg-bg-surface border border-border rounded-2xl p-7 mb-5">
+          <div class="border rounded-2xl p-7 mb-5" style="background:var(--bg-surface); border-color:var(--border-default)">
             <div class="flex items-center justify-between mb-6">
               <h2 class="text-xl font-semibold">当前 Profile 详情</h2>
               <div class="flex gap-2">
-                <button class="px-5 py-2.5 rounded-xl text-sm font-medium bg-accent text-white hover:bg-accent-hover">启用</button>
-                <button class="px-5 py-2.5 rounded-xl text-sm font-medium bg-bg-elevated hover:bg-bg-hover border border-border">测试连通</button>
-                <button class="px-5 py-2.5 rounded-xl text-sm font-medium bg-bg-elevated hover:bg-bg-hover border border-border">编辑</button>
+                <button onclick="showToast('success', '已切换到「官方」· 代理已重启')" class="h-10 px-5 rounded-xl text-sm font-medium text-white" style="background:var(--accent)">启用</button>
+                <button onclick="testConnection()" id="testBtn" class="h-10 px-5 rounded-xl text-sm font-medium border hover:bg-bg-hover" style="background:var(--bg-elevated); border-color:var(--border-default)">测试连通</button>
+                <button class="h-10 px-5 rounded-xl text-sm font-medium border hover:bg-bg-hover" style="background:var(--bg-elevated); border-color:var(--border-default)">编辑</button>
               </div>
             </div>
             <div class="grid grid-cols-2 gap-5">
               <div>
-                <div class="text-xs text-text-tertiary mb-1.5 font-medium uppercase tracking-wider">名称</div>
+                <div class="text-xs mb-1.5 font-medium uppercase tracking-wider" style="color:var(--text-tertiary)">名称</div>
                 <div class="text-base font-medium">官方</div>
               </div>
               <div>
-                <div class="text-xs text-text-tertiary mb-1.5 font-medium uppercase tracking-wider">模型</div>
+                <div class="text-xs mb-1.5 font-medium uppercase tracking-wider" style="color:var(--text-tertiary)">模型</div>
                 <div class="text-base font-mono">claude-sonnet-4-5</div>
               </div>
               <div class="col-span-2">
-                <div class="text-xs text-text-tertiary mb-1.5 font-medium uppercase tracking-wider">Base URL</div>
+                <div class="text-xs mb-1.5 font-medium uppercase tracking-wider" style="color:var(--text-tertiary)">Base URL</div>
                 <div class="text-base font-mono">https://api.anthropic.com</div>
               </div>
               <div class="col-span-2">
-                <div class="text-xs text-text-tertiary mb-1.5 font-medium uppercase tracking-wider">API Key</div>
+                <div class="text-xs mb-1.5 font-medium uppercase tracking-wider" style="color:var(--text-tertiary)">API Key</div>
                 <div class="flex items-center gap-2">
                   <code class="text-base font-mono">sk-ant-•••••••••••••••••••xyz</code>
-                  <span class="px-2 py-0.5 rounded-pill text-[10px] bg-success/20 text-success">Keychain 存储</span>
+                  <span class="px-2 py-0.5 rounded-pill text-[10px]" style="background:rgba(120,140,93,0.2); color:var(--success)">Keychain 存储</span>
+                  <button onclick="showToast('success', '已复制 Token')" class="text-xs px-2 py-1 rounded border hover:bg-bg-hover" style="border-color:var(--border-default)">📋</button>
                 </div>
               </div>
             </div>
           </div>
 
-          <!-- 最近调用 -->
-          <div class="bg-bg-surface border border-border rounded-2xl p-7">
+          <div class="border rounded-2xl p-7" style="background:var(--bg-surface); border-color:var(--border-default)">
             <div class="flex items-center justify-between mb-5">
               <h2 class="text-xl font-semibold">最近调用</h2>
-              <button class="text-sm text-text-secondary hover:text-text-primary">查看全部 →</button>
+              <button class="text-sm hover:underline" style="color:var(--text-secondary)">查看全部 →</button>
             </div>
             <div class="font-mono text-xs">
-              <div class="grid grid-cols-[100px_180px_80px_80px_1fr] gap-3 px-3 py-2.5 text-text-tertiary border-b border-border-muted">
+              <div class="grid grid-cols-[100px_180px_80px_80px_1fr] gap-3 px-3 py-2.5 border-b" style="color:var(--text-tertiary); border-color:var(--border-muted)">
                 <div>时间</div><div>方法 / 路径</div><div>状态</div><div>耗时</div><div>大小</div>
               </div>
               <div class="grid grid-cols-[100px_180px_80px_80px_1fr] gap-3 px-3 py-3 hover:bg-bg-hover rounded-md cursor-pointer transition-colors">
-                <div class="text-text-secondary">14:32:18</div>
+                <div style="color:var(--text-secondary)">14:32:18</div>
                 <div>POST /v1/messages</div>
-                <div class="text-success">200</div>
+                <div style="color:var(--success)">200</div>
                 <div>1247 ms</div>
-                <div class="text-text-secondary">1.2 KB → 8.4 KB</div>
+                <div style="color:var(--text-secondary)">1.2 KB → 8.4 KB</div>
               </div>
               <div class="grid grid-cols-[100px_180px_80px_80px_1fr] gap-3 px-3 py-3 hover:bg-bg-hover rounded-md cursor-pointer transition-colors">
-                <div class="text-text-secondary">14:30:42</div>
+                <div style="color:var(--text-secondary)">14:30:42</div>
                 <div>POST /v1/messages</div>
-                <div class="text-success">200</div>
+                <div style="color:var(--success)">200</div>
                 <div>832 ms</div>
-                <div class="text-text-secondary">0.8 KB → 4.2 KB</div>
+                <div style="color:var(--text-secondary)">0.8 KB → 4.2 KB</div>
               </div>
               <div class="grid grid-cols-[100px_180px_80px_80px_1fr] gap-3 px-3 py-3 hover:bg-bg-hover rounded-md cursor-pointer transition-colors">
-                <div class="text-text-secondary">14:25:11</div>
+                <div style="color:var(--text-secondary)">14:25:11</div>
                 <div>POST /v1/messages</div>
-                <div class="text-warning">429</div>
+                <div style="color:var(--warning)">429</div>
                 <div>312 ms</div>
-                <div class="text-text-secondary">速率限制</div>
+                <div style="color:var(--text-secondary)">速率限制</div>
               </div>
             </div>
           </div>
@@ -476,111 +536,94 @@ int main() { return 0; }
       </div>
     </div>
 
-    <!-- ===== 设置页 ===== -->
-    <div data-page="settings" class="p-10">
+    <!-- ===== Settings ===== -->
+    <div data-page="settings" class="flex-col p-10">
       <h1 class="text-3xl font-bold tracking-tight mb-8">设置</h1>
-
       <div class="max-w-3xl space-y-6">
-        <div class="bg-bg-surface border border-border rounded-2xl p-7">
+        <div class="border rounded-2xl p-7" style="background:var(--bg-surface); border-color:var(--border-default)">
           <h2 class="text-lg font-semibold mb-5">外观</h2>
           <div class="space-y-5">
             <div class="flex items-center justify-between">
               <div>
                 <div class="font-medium">主题</div>
-                <div class="text-sm text-text-secondary mt-1">选择应用的整体外观</div>
+                <div class="text-sm mt-1" style="color:var(--text-secondary)">⌘⇧L 切换深浅</div>
               </div>
-              <select class="px-4 py-2.5 bg-bg-elevated border border-border rounded-lg text-sm">
-                <option>🌙 深色（方案 B）</option>
-                <option>☀️ 浅色</option>
-                <option>🖥 跟随系统</option>
+              <select id="themeSelect" onchange="setTheme(this.value)" class="h-10 px-4 border text-sm rounded-lg focus:outline-none" style="background:var(--bg-elevated); border-color:var(--border-default)">
+                <option value="light">☀️ 浅色（方案 B，默认）</option>
+                <option value="dark">🌙 深色</option>
+                <option value="system">🖥 跟随系统</option>
               </select>
             </div>
           </div>
         </div>
 
-        <div class="bg-bg-surface border border-border rounded-2xl p-7">
+        <div class="border rounded-2xl p-7" style="background:var(--bg-surface); border-color:var(--border-default)">
           <h2 class="text-lg font-semibold mb-5">Markdown 笔记本</h2>
           <div class="space-y-5">
             <div>
               <div class="font-medium mb-2">笔记目录</div>
               <div class="flex gap-2">
-                <input type="text" value="~/Library/Application Support/DevDesk/notes" class="flex-1 px-4 py-2.5 bg-bg-elevated border border-border rounded-lg text-sm font-mono">
-                <button class="px-4 py-2.5 rounded-lg text-sm bg-bg-elevated hover:bg-bg-hover border border-border">📂 打开目录</button>
+                <input type="text" value="~/Library/Application Support/DevDesk/notes" class="flex-1 h-10 px-4 border rounded-lg text-sm font-mono focus:outline-none" style="background:var(--bg-elevated); border-color:var(--border-default)">
+                <button onclick="showToast('info', '已在 Finder 打开')" class="h-10 px-4 rounded-lg text-sm border hover:bg-bg-hover" style="background:var(--bg-elevated); border-color:var(--border-default)">📂 打开目录</button>
               </div>
             </div>
             <div class="flex items-center justify-between">
               <div>
                 <div class="font-medium">编辑器字体大小</div>
-                <div class="text-sm text-text-secondary mt-1">默认 15 px（大气档）</div>
+                <div class="text-sm mt-1" style="color:var(--text-secondary)">默认 15 px（大气档）</div>
               </div>
-              <input type="number" value="15" class="w-20 px-3 py-2 bg-bg-elevated border border-border rounded-lg text-center">
+              <input type="number" value="15" class="w-20 h-10 px-3 border rounded-lg text-center focus:outline-none" style="background:var(--bg-elevated); border-color:var(--border-default)">
             </div>
             <div class="flex items-center justify-between">
               <div>
                 <div class="font-medium">编辑器字体</div>
-                <div class="text-sm text-text-secondary mt-1">默认 JetBrains Mono</div>
               </div>
-              <select class="px-4 py-2.5 bg-bg-elevated border border-border rounded-lg text-sm">
+              <select class="h-10 px-4 border text-sm rounded-lg focus:outline-none" style="background:var(--bg-elevated); border-color:var(--border-default)">
                 <option>JetBrains Mono（推荐）</option>
                 <option>Inter</option>
                 <option>跟随系统</option>
-                <option>自定义路径…</option>
               </select>
             </div>
           </div>
         </div>
 
-        <div class="bg-bg-surface border border-border rounded-2xl p-7">
+        <div class="border rounded-2xl p-7" style="background:var(--bg-surface); border-color:var(--border-default)">
           <h2 class="text-lg font-semibold mb-5">Claude 代理</h2>
           <div class="space-y-5">
             <div class="flex items-center justify-between">
               <div>
                 <div class="font-medium">代理端口</div>
-                <div class="text-sm text-text-secondary mt-1">改后自动重启</div>
+                <div class="text-sm mt-1" style="color:var(--text-secondary)">改后自动重启</div>
               </div>
-              <input type="number" value="8888" class="w-24 px-3 py-2 bg-bg-elevated border border-border rounded-lg text-center">
+              <input type="number" value="8888" class="w-24 h-10 px-3 border rounded-lg text-center focus:outline-none" style="background:var(--bg-elevated); border-color:var(--border-default)">
             </div>
             <div>
               <div class="font-medium mb-2">认证 Token</div>
-              <div class="text-sm text-text-secondary mb-2">Claude Code 配置时需要在 Authorization 头加 Bearer &lt;token&gt;</div>
+              <div class="text-sm mb-2" style="color:var(--text-secondary)">Claude Code 配置时需在 Authorization 头加 Bearer &lt;token&gt;</div>
               <div class="flex gap-2">
-                <code class="flex-1 px-4 py-2.5 bg-bg-elevated border border-border rounded-lg text-sm font-mono">a1b2c3d4e5f6g7h8i9j0...</code>
-                <button class="px-4 py-2.5 rounded-lg text-sm bg-bg-elevated hover:bg-bg-hover border border-border">📋 复制</button>
-                <button class="px-4 py-2.5 rounded-lg text-sm bg-bg-elevated hover:bg-bg-hover border border-border">🔄 重新生成</button>
+                <code class="flex-1 h-10 px-4 border rounded-lg text-sm font-mono flex items-center" style="background:var(--bg-elevated); border-color:var(--border-default)">a1b2c3d4e5f6g7h8i9j0k1l2m3n4o5p6q7r8s9t0</code>
+                <button onclick="showToast('success', 'Token 已复制')" class="h-10 px-4 rounded-lg text-sm border hover:bg-bg-hover" style="background:var(--bg-elevated); border-color:var(--border-default)">📋 复制</button>
+                <button onclick="showToast('warning', 'Token 已重新生成')" class="h-10 px-4 rounded-lg text-sm border hover:bg-bg-hover" style="background:var(--bg-elevated); border-color:var(--border-default)">🔄 重新生成</button>
               </div>
             </div>
           </div>
         </div>
 
-        <div class="bg-bg-surface border border-border rounded-2xl p-7">
-          <h2 class="text-lg font-semibold mb-5">日志</h2>
-          <div class="space-y-5">
-            <div class="flex items-center justify-between">
-              <div>
-                <div class="font-medium">日志级别</div>
-                <div class="text-sm text-text-secondary mt-1">开发调试用</div>
-              </div>
-              <select class="px-4 py-2.5 bg-bg-elevated border border-border rounded-lg text-sm">
-                <option>Info</option>
-                <option>Debug</option>
-                <option>Trace</option>
-                <option>Warn</option>
-                <option>Error</option>
-              </select>
-            </div>
-            <div class="flex items-center justify-between">
-              <div>
-                <div class="font-medium">调用日志保留天数</div>
-                <div class="text-sm text-text-secondary mt-1">30 天后自动清理</div>
-              </div>
-              <input type="number" value="30" class="w-20 px-3 py-2 bg-bg-elevated border border-border rounded-lg text-center">
-            </div>
+        <div class="border rounded-2xl p-7" style="background:var(--bg-surface); border-color:var(--border-default)">
+          <h2 class="text-lg font-semibold mb-5">快捷键</h2>
+          <div class="grid grid-cols-2 gap-x-8 gap-y-3 text-sm">
+            <div class="flex justify-between"><span>切换到首页</span><kbd class="font-mono px-2 py-0.5 rounded border" style="background:var(--bg-elevated); border-color:var(--border-default)">⌘1</kbd></div>
+            <div class="flex justify-between"><span>切换到 Markdown</span><kbd class="font-mono px-2 py-0.5 rounded border" style="background:var(--bg-elevated); border-color:var(--border-default)">⌘2</kbd></div>
+            <div class="flex justify-between"><span>切换到 Todo</span><kbd class="font-mono px-2 py-0.5 rounded border" style="background:var(--bg-elevated); border-color:var(--border-default)">⌘3</kbd></div>
+            <div class="flex justify-between"><span>切换到 Claude</span><kbd class="font-mono px-2 py-0.5 rounded border" style="background:var(--bg-elevated); border-color:var(--border-default)">⌘4</kbd></div>
+            <div class="flex justify-between"><span>切换主题</span><kbd class="font-mono px-2 py-0.5 rounded border" style="background:var(--bg-elevated); border-color:var(--border-default)">⌘⇧L</kbd></div>
+            <div class="flex justify-between"><span>打开设置</span><kbd class="font-mono px-2 py-0.5 rounded border" style="background:var(--bg-elevated); border-color:var(--border-default)">⌘,</kbd></div>
           </div>
         </div>
 
-        <div class="bg-bg-surface border border-border rounded-2xl p-7 text-center">
-          <div class="text-sm text-text-tertiary">DevDesk v0.1.0 · Apache 2.0</div>
-          <div class="text-xs text-text-tertiary mt-2">EUI-NEO · SQLite · cpp-httplib · libcurl · yyjson · md4c</div>
+        <div class="border rounded-2xl p-7 text-center" style="background:var(--bg-surface); border-color:var(--border-default)">
+          <div class="text-sm" style="color:var(--text-tertiary)">DevDesk v0.1.0 · Apache 2.0</div>
+          <div class="text-xs mt-2" style="color:var(--text-tertiary)">EUI-NEO · SQLite · cpp-httplib · libcurl · yyjson · md4c</div>
         </div>
       </div>
     </div>
@@ -588,33 +631,324 @@ int main() { return 0; }
   </main>
 </div>
 
+<!-- ============ Toast 容器 ============ -->
+<div id="toastContainer" class="fixed bottom-6 right-6 flex flex-col gap-2 z-50" aria-live="polite"></div>
+
+<!-- ============ New Profile Modal ============ -->
+<div id="newProfileModal" class="fixed inset-0 z-50 hidden items-center justify-center" style="background:rgba(26,24,22,0.7); backdrop-filter:blur(4px)">
+  <div class="modal-container border rounded-2xl w-[560px] max-w-[90vw]" style="background:var(--bg-surface); border-color:var(--border-default)" role="dialog" aria-modal="true" aria-labelledby="modalTitle">
+    <div class="flex items-center justify-between p-7 border-b" style="border-color:var(--border-default)">
+      <h2 id="modalTitle" class="text-xl font-semibold">新建 Profile</h2>
+      <button onclick="closeNewProfileModal()" class="w-8 h-8 rounded-lg hover:bg-bg-hover flex items-center justify-center" aria-label="关闭">×</button>
+    </div>
+    <div class="p-7 space-y-5">
+      <div>
+        <label class="block text-sm font-medium mb-2">名称 <span class="text-error">*</span></label>
+        <input id="np_name" type="text" placeholder="如：官方" class="w-full h-10 px-4 border rounded-lg focus:outline-none focus:border-accent" style="background:var(--bg-elevated); border-color:var(--border-default)">
+      </div>
+      <div>
+        <label class="block text-sm font-medium mb-2">Base URL <span class="text-error">*</span></label>
+        <input id="np_url" type="url" value="https://api.anthropic.com" class="w-full h-10 px-4 border rounded-lg font-mono focus:outline-none focus:border-accent" style="background:var(--bg-elevated); border-color:var(--border-default)">
+      </div>
+      <div>
+        <label class="block text-sm font-medium mb-2">API Key <span class="text-error">*</span></label>
+        <div class="flex gap-2">
+          <input id="np_key" type="password" placeholder="sk-ant-..." class="flex-1 h-10 px-4 border rounded-lg font-mono focus:outline-none focus:border-accent" style="background:var(--bg-elevated); border-color:var(--border-default)">
+          <button onclick="toggleKeyVisibility()" class="h-10 px-3 rounded-lg border hover:bg-bg-hover" style="background:var(--bg-elevated); border-color:var(--border-default)" aria-label="显示/隐藏">👁</button>
+        </div>
+        <div class="text-xs mt-1.5" style="color:var(--text-tertiary)">将加密存储于 macOS Keychain / Windows DPAPI</div>
+      </div>
+      <div>
+        <label class="block text-sm font-medium mb-2">模型 <span class="text-error">*</span></label>
+        <select id="np_model" class="w-full h-10 px-4 border rounded-lg focus:outline-none focus:border-accent" style="background:var(--bg-elevated); border-color:var(--border-default)">
+          <option>claude-sonnet-4-5</option>
+          <option>claude-opus-5</option>
+          <option>claude-haiku-5</option>
+        </select>
+      </div>
+      <div class="text-xs px-3 py-2 rounded-lg flex items-start gap-2" style="background:var(--accent-soft); color:var(--accent)">
+        <span>⚠</span>
+        <span>API Key 创建后无法以明文查看，务必妥善保存</span>
+      </div>
+    </div>
+    <div class="flex justify-end gap-2 p-7 border-t" style="border-color:var(--border-default)">
+      <button onclick="closeNewProfileModal()" class="h-10 px-5 rounded-lg text-sm font-medium border hover:bg-bg-hover" style="background:var(--bg-elevated); border-color:var(--border-default)">取消</button>
+      <button onclick="submitNewProfile()" id="np_submit" class="h-10 px-5 rounded-lg text-sm font-medium text-white disabled:opacity-50" style="background:var(--accent)" disabled>创建</button>
+    </div>
+  </div>
+</div>
+
 <script>
-// 页面切换
-const navItems = document.querySelectorAll('[data-page-target]');
-const pages = document.querySelectorAll('[data-page]');
-
+// ============ 页面切换 ============
 function switchPage(targetId) {
-  // 更新 nav 状态
-  navItems.forEach(item => {
-    const isActive = item.dataset.pageTarget === targetId;
-    item.classList.toggle('bg-accent-soft', isActive);
-    item.classList.toggle('text-accent', isActive);
-    item.classList.toggle('font-semibold', isActive);
+  document.querySelectorAll('[data-page]').forEach(p => p.classList.remove('active'));
+  document.querySelectorAll('.nav-item').forEach(n => {
+    n.classList.remove('active');
+    n.style.background = '';
+    n.style.color = 'var(--text-secondary)';
   });
+  const page = document.querySelector(`[data-page="${targetId}"]`);
+  if (page) page.classList.add('active');
+  const nav = document.querySelector(`[data-page-target="${targetId}"]`);
+  if (nav) {
+    nav.classList.add('active');
+    nav.style.background = 'var(--accent-soft)';
+    nav.style.color = 'var(--accent)';
+  }
+}
 
-  // 切换页面
-  pages.forEach(page => {
-    page.classList.toggle('active', page.dataset.page === targetId);
+// 初始化
+switchPage('home');
+
+// ============ 主题切换 ============
+function setTheme(theme) {
+  if (theme === 'system') {
+    const isDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+    document.documentElement.setAttribute('data-theme', isDark ? 'dark' : 'light');
+  } else {
+    document.documentElement.setAttribute('data-theme', theme);
+  }
+  try { localStorage.setItem('devdesk-theme', theme); } catch(e) {}
+}
+
+(function() {
+  try {
+    const saved = localStorage.getItem('devdesk-theme') || 'light';
+    setTheme(saved);
+    const sel = document.getElementById('themeSelect');
+    if (sel) sel.value = saved;
+  } catch(e) {}
+})();
+
+// ============ Toast 系统 ============
+const toastIcons = { info: 'ⓘ', success: '✓', warning: '⚠', error: '✕' };
+const toastColors = { info: 'var(--info)', success: 'var(--success)', warning: 'var(--warning)', error: 'var(--error)' };
+const toastDurations = { info: 4000, success: 3000, warning: 6000, error: 8000 };
+
+function showToast(type, message) {
+  const container = document.getElementById('toastContainer');
+  // 最多 3 个
+  while (container.children.length >= 3) container.firstChild.remove();
+
+  const toast = document.createElement('div');
+  toast.className = 'toast-enter';
+  toast.setAttribute('role', type === 'error' ? 'alert' : 'status');
+  toast.style.cssText = `
+    width: 360px;
+    background: var(--bg-surface);
+    border: 1px solid var(--border-default);
+    border-radius: 12px;
+    padding: 16px;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.12);
+    position: relative;
+    overflow: hidden;
+  `;
+  toast.innerHTML = `
+    <div style="display:flex;align-items:start;gap:12px;">
+      <div style="width:24px;height:24px;border-radius:50%;background:${toastColors[type]};color:#fff;display:flex;align-items:center;justify-content:center;font-size:14px;font-weight:bold;flex-shrink:0;">${toastIcons[type]}</div>
+      <div style="flex:1;font-size:14px;line-height:1.5;">${message}</div>
+      <button onclick="dismissToast(this.parentElement.parentElement)" style="background:transparent;border:none;color:var(--text-tertiary);cursor:pointer;font-size:18px;padding:0;width:20px;height:20px;flex-shrink:0;" aria-label="关闭">×</button>
+    </div>
+    <div style="position:absolute;bottom:0;left:0;height:3px;background:${toastColors[type]};width:100%;animation:toastProgress ${toastDurations[type]}ms linear forwards;"></div>
+  `;
+  container.appendChild(toast);
+
+  // hover 暂停
+  let timer = setTimeout(() => dismissToast(toast), toastDurations[type]);
+  toast.addEventListener('mouseenter', () => clearTimeout(timer));
+  toast.addEventListener('mouseleave', () => {
+    timer = setTimeout(() => dismissToast(toast), 1500);
   });
 }
 
-navItems.forEach(item => {
-  item.addEventListener('click', () => switchPage(item.dataset.pageTarget));
+function dismissToast(toast) {
+  if (!toast || !toast.parentElement) return;
+  toast.classList.remove('toast-enter');
+  toast.classList.add('toast-exit');
+  setTimeout(() => toast.remove(), 200);
+}
+
+// ============ 模态框 ============
+function openNewProfileModal() {
+  const modal = document.getElementById('newProfileModal');
+  modal.classList.remove('hidden');
+  modal.classList.add('flex');
+  // 焦点陷阱
+  setTimeout(() => document.getElementById('np_name').focus(), 100);
+}
+
+function closeNewProfileModal() {
+  const modal = document.getElementById('newProfileModal');
+  modal.classList.add('hidden');
+  modal.classList.remove('flex');
+  // 清空
+  document.getElementById('np_name').value = '';
+  document.getElementById('np_url').value = 'https://api.anthropic.com';
+  document.getElementById('np_key').value = '';
+  document.getElementById('np_key').type = 'password';
+  document.getElementById('np_submit').disabled = true;
+}
+
+// 表单验证 → 启用按钮
+['np_name', 'np_url', 'np_key'].forEach(id => {
+  document.getElementById(id).addEventListener('input', updateSubmitState);
+});
+function updateSubmitState() {
+  const name = document.getElementById('np_name').value.trim();
+  const url = document.getElementById('np_url').value.trim();
+  const key = document.getElementById('np_key').value.trim();
+  document.getElementById('np_submit').disabled = !(name && url.startsWith('http') && key.length >= 10);
+}
+
+function toggleKeyVisibility() {
+  const input = document.getElementById('np_key');
+  input.type = input.type === 'password' ? 'text' : 'password';
+}
+
+function submitNewProfile() {
+  const name = document.getElementById('np_name').value.trim();
+  showToast('success', `Profile「${name}」已创建`);
+  closeNewProfileModal();
+}
+
+// Esc 关闭 modal
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape') {
+    const modal = document.getElementById('newProfileModal');
+    if (!modal.classList.contains('hidden')) closeNewProfileModal();
+  }
+  // 点击遮罩关闭
+  document.getElementById('newProfileModal').addEventListener('click', (ev) => {
+    if (ev.target.id === 'newProfileModal') closeNewProfileModal();
+  });
 });
 
-// 初始：激活 Home（视觉默认）
-const homeItem = document.querySelector('[data-page-target="home"]');
-homeItem.classList.add('bg-accent-soft', 'text-accent', 'font-semibold');
+// ============ 拖拽 ============
+let dragData = null;
+
+function onDragStart(e) {
+  dragData = e.target;
+  e.target.classList.add('dragging');
+  e.dataTransfer.effectAllowed = 'move';
+  try { e.dataTransfer.setData('text/plain', ''); } catch(_) {}
+}
+
+function onDragEnd(e) {
+  e.target.classList.remove('dragging');
+  document.querySelectorAll('.drop-target').forEach(el => el.classList.remove('drop-target'));
+  dragData = null;
+}
+
+function onDragOver(e, target) {
+  e.preventDefault();
+  e.dataTransfer.dropEffect = 'move';
+  if (!target.classList.contains('drop-target')) target.classList.add('drop-target');
+}
+
+function onDragLeave(e, target) {
+  if (e.target === target) target.classList.remove('drop-target');
+}
+
+function onDrop(e, target, columnId) {
+  e.preventDefault();
+  target.classList.remove('drop-target');
+  if (!dragData) return;
+  const list = target.querySelector('.todo-list') || target;
+  list.appendChild(dragData);
+  showToast('success', `已移至 ${getColumnName(columnId)}`);
+}
+
+function getColumnName(id) {
+  return { todo: '待办', doing: '进行中', done: '已完成', archived: '已归档' }[id];
+}
+
+// ============ Todo 新建卡片 ============
+function addTodoCard() {
+  const list = document.querySelector('[data-column="todo"] .todo-list');
+  const card = document.createElement('div');
+  card.className = 'draggable rounded-xl p-3.5 border-l-4 cursor-grab hover:bg-bg-hover transition-colors';
+  card.setAttribute('draggable', 'true');
+  card.style.cssText = 'background:var(--bg-elevated);border-color:var(--info)';
+  card.setAttribute('ondragstart', 'onDragStart(event)');
+  card.setAttribute('ondragend', 'onDragEnd(event)');
+  card.innerHTML = `
+    <div class="text-sm font-medium mb-2">新建任务（点击编辑）</div>
+    <div class="flex items-center gap-2">
+      <span class="px-2 py-0.5 rounded-pill text-[10px] font-bold" style="background:var(--info);color:var(--bg-base)">新</span>
+    </div>
+  `;
+  list.prepend(card);
+  showToast('success', '已新建任务');
+}
+
+// ============ Claude 代理切换 ============
+let proxyRunning = false;
+function toggleProxy() {
+  proxyRunning = !proxyRunning;
+  const btn = document.getElementById('proxyToggleBtn');
+  const dot = document.getElementById('proxyDot');
+  const text = document.getElementById('proxyText');
+  if (proxyRunning) {
+    btn.textContent = '⏸ 停止代理';
+    dot.style.background = 'var(--success)';
+    text.textContent = '运行中 :8888';
+    showToast('success', '代理已启动 · http://127.0.0.1:8888');
+  } else {
+    btn.textContent = '▶ 启动代理';
+    dot.style.background = 'var(--text-tertiary)';
+    text.textContent = '未启动';
+    showToast('info', '代理已停止');
+  }
+}
+
+function testConnection() {
+  const btn = document.getElementById('testBtn');
+  const orig = btn.textContent;
+  btn.innerHTML = '<span class="spinner inline-block">◜</span> 测试中';
+  btn.disabled = true;
+  setTimeout(() => {
+    btn.textContent = orig;
+    btn.disabled = false;
+    showToast('success', '连接成功 · 200 OK · 247ms');
+  }, 1500);
+}
+
+function selectProfile(id) {
+  document.querySelectorAll('.profile-card').forEach(c => {
+    c.style.background = 'var(--bg-surface)';
+    c.style.border = '1px solid var(--border-default)';
+  });
+  const selected = document.querySelector(`[data-profile-id="${id}"]`);
+  if (selected) {
+    selected.style.background = 'var(--accent-soft)';
+    selected.style.border = '2px solid var(--accent)';
+  }
+  showToast('info', `已选中 Profile #${id}`);
+}
+
+// ============ 全局快捷键 ============
+document.addEventListener('keydown', (e) => {
+  const cmd = e.metaKey || e.ctrlKey;
+  if (!cmd) return;
+  if (e.key === '1') { e.preventDefault(); switchPage('home'); }
+  if (e.key === '2') { e.preventDefault(); switchPage('markdown'); }
+  if (e.key === '3') { e.preventDefault(); switchPage('todo'); }
+  if (e.key === '4') { e.preventDefault(); switchPage('claude'); }
+  if (e.key === ',') { e.preventDefault(); switchPage('settings'); }
+  if (e.shiftKey && e.key.toLowerCase() === 'l') {
+    e.preventDefault();
+    const cur = document.documentElement.getAttribute('data-theme') || 'dark';
+    setTheme(cur === 'dark' ? 'light' : 'dark');
+    const sel = document.getElementById('themeSelect');
+    if (sel) sel.value = cur === 'dark' ? 'light' : 'dark';
+    showToast('info', `已切换到${cur === 'dark' ? '浅色' : '深色'}主题`);
+  }
+});
+
+// 首次加载展示一个 Toast 演示
+setTimeout(() => {
+  showToast('info', '💡 试试 ⌘1~4 切换页面，⌘⇧L 切换主题');
+}, 800);
 </script>
 
 </body>
