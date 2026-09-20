@@ -1,0 +1,47 @@
+# Build
+build/
+cmake-build-*/
+*.o
+*.obj
+*.a
+*.lib
+*.so
+*.dylib
+*.dll
+*.exe
+compile_commands.json
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+Makefile
+
+# IDE
+.vscode/
+.idea/
+*.swp
+.DS_Store
+
+# Runtime
+logs/
+*.log
+.cache/
+
+# User data (sqlite, app config)
+devdesk.db
+devdesk.db-journal
+devdesk.db-wal
+devdesk.db-shm
+config.json
+
+# Fonts (download on first build)
+fonts/Inter-*.ttf
+fonts/JetBrainsMono-*.ttf
+
+# 3rd party (submodules)
+3rd/EUI-NEO/
+3rd/cpp-httplib/
+3rd/doctest/
+
+# OS
+Thumbs.db
+desktop.ini

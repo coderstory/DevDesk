@@ -56,6 +56,53 @@ main → 4 个 module_* (markdown / todo / claude_proxy / home)
 - `platform` ✅ 可以依赖 `core`（用 `Result`）
 - `module_*` ✅ 可以依赖 `core` 和 `platform`
 
+## 🔧 EUI-NEO 上游贡献政策（重要）
+
+**遇到 EUI-NEO 的 ❌ 限制时**，优先考虑**直接修复 EUI-NEO 仓库**（在 `/Users/coderstory/Dev/gui/EUI-NEO/`），反哺社区并提交 PR，而不是 DevDesk 内自造 workaround。
+
+### 工作流
+
+1. **在 DevDesk 中遇到问题** → 不要立即写 DevDesk 专属 hack
+2. **判断是否通用问题** → 如果是（拖拽 / 文件拖入 / macOS 27 / 字体等），属于 EUI-NEO 上游应修
+3. **修复 EUI-NEO** → 在 `../EUI-NEO/` 写 patch → 编译 DevDesk 验证
+4. **提交 PR** → 推送到用户 GitHub EUI-NEO fork 或发起到上游
+5. **DevDesk 受益** → 移除自己的 hack，复用 EUI-NEO 新能力
+
+### 哪些场景适合修上游
+
+- ✅ **通用 UI 能力缺失**（drop target / file drop / tree 组件）
+- ✅ **macOS 27+ 适配**（Liquid Glass / Metal 后端 / OpenGL fallback）
+- ✅ **跨平台一致性问题**（IME / 字体 fallback / DPI）
+- ✅ **API 设计改进**（fontWeight 真切换 / 主题切换便捷性）
+- ✅ **性能 / 编译时间 / 二进制大小**
+
+### 哪些场景 DevDesk 自己解决
+
+- ✅ **业务逻辑**（Markdown 解析、Todo CRUD、Claude 切换）
+- ✅ **应用级拖拽**（Todo 卡片跨列拖拽是 DevDesk 业务，EUI-NEO 提供基础 onDrag 就够）
+- ✅ **设计 token / 配色方案**（DevDesk 自己的事）
+- ✅ **第三方集成**（Keychain / SQLite / libcurl）
+
+### PR 准备清单
+
+修复 EUI-NEO 后提交 PR 前要确保：
+1. 在 EUI-NEO 的 `examples/` 或 `apps/` 加 demo 用例
+2. 不破坏现有 API（向后兼容）
+3. 更新 `docs/` 文档
+4. 通过 EUI-NEO 自身的编译（DevDesk 不需要参与）
+5. commit message 写明需求来源（"DevDesk 需要 X 功能"）
+
+### EUI-NEO 仓库约定
+
+- 主分支：`main`
+- 提交前缀：`feat:` `fix:` `refactor:` `docs:`（与 DevDesk 一致）
+- 大改动先开 issue 讨论
+- 提交后附带 example + 测试
+
+**详见**：[[docs/EUI-NEO-CAPABILITIES.md]] 中每个 ❌ 项的"应对" —— 现在"应对"应优先考虑"提交 PR"而非"自造 hack"。
+
+---
+
 ## ⚠️ EUI-NEO 真实能力盘点（已审计源码，2026-09-20）
 
 **📄 完整调研报告**：[`docs/EUI-NEO-CAPABILITIES.md`](docs/EUI-NEO-CAPABILITIES.md) — 后续开发遇到 UI 问题**先查这里**。

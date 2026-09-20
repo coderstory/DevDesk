@@ -1,0 +1,621 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>DevDesk — 交互原型</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<script>
+tailwind.config = {
+  theme: {
+    extend: {
+      colors: {
+        // 方案 B：温暖专业（Claude.ai 风格）— Dark
+        bg: { base: '#1A1816', surface: '#232120', elevated: '#2C2A28', hover: '#353231', active: '#3E3B39' },
+        accent: { DEFAULT: '#D97757', hover: '#E0896B', pressed: '#B85F3F', soft: '#3A2620' },
+        text: { primary: '#FAF9F5', secondary: '#C9C5BD', tertiary: '#9A948A', disabled: '#6B6660' },
+        border: { DEFAULT: '#3A3735', muted: '#2A2826' },
+        success: '#788C5D', warning: '#C29243', error: '#CF2D56', info: '#6A9BCC',
+      },
+      fontFamily: {
+        sans: ['Inter', '-apple-system', 'BlinkMacSystemFont', 'PingFang SC', 'Microsoft YaHei UI', 'sans-serif'],
+        mono: ['JetBrains Mono', 'SF Mono', 'Cascadia Code', 'monospace'],
+      },
+      borderRadius: {
+        pill: '999px',
+      }
+    }
+  }
+}
+</script>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;700&family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet">
+<style>
+  body { font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif; -webkit-font-smoothing: antialiased; }
+  .font-mono { font-family: 'JetBrains Mono', monospace; }
+  [data-page] { display: none; }
+  [data-page].active { display: block; }
+  .nav-item { transition: background 150ms ease-out, color 150ms ease-out; }
+  .btn-primary { transition: background 150ms ease-out; }
+  .scrollbar-thin::-webkit-scrollbar { width: 8px; height: 8px; }
+  .scrollbar-thin::-webkit-scrollbar-thumb { background: #3A3735; border-radius: 4px; }
+  .scrollbar-thin::-webkit-scrollbar-track { background: transparent; }
+</style>
+</head>
+<body class="bg-bg-base text-text-primary min-h-screen">
+
+<div class="flex h-screen">
+  <!-- ============ 侧边栏 ============ -->
+  <aside class="w-[260px] bg-bg-surface border-r border-border flex flex-col py-6 px-4">
+    <div class="flex items-center gap-2 px-3 mb-8">
+      <div class="w-8 h-8 rounded-lg bg-accent flex items-center justify-center text-white font-bold">D</div>
+      <span class="text-lg font-bold tracking-tight">DevDesk</span>
+    </div>
+
+    <nav class="flex flex-col gap-1 flex-1">
+      <div class="nav-item px-4 py-2.5 rounded-lg text-text-secondary hover:bg-bg-hover hover:text-text-primary cursor-pointer flex items-center gap-3" data-page-target="home">
+        <span class="text-lg">🏠</span>
+        <span class="text-sm font-medium">首页</span>
+      </div>
+      <div class="nav-item px-4 py-2.5 rounded-lg text-text-secondary hover:bg-bg-hover hover:text-text-primary cursor-pointer flex items-center gap-3" data-page-target="markdown">
+        <span class="text-lg">📝</span>
+        <span class="text-sm font-medium">Markdown 笔记本</span>
+      </div>
+      <div class="nav-item px-4 py-2.5 rounded-lg text-text-secondary hover:bg-bg-hover hover:text-text-primary cursor-pointer flex items-center gap-3" data-page-target="todo">
+        <span class="text-lg">✅</span>
+        <span class="text-sm font-medium">Todo 看板</span>
+      </div>
+      <div class="nav-item px-4 py-2.5 rounded-lg text-text-secondary hover:bg-bg-hover hover:text-text-primary cursor-pointer flex items-center gap-3" data-page-target="claude">
+        <span class="text-lg">🔄</span>
+        <span class="text-sm font-medium">Claude 切换器</span>
+      </div>
+    </nav>
+
+    <div class="nav-item px-4 py-2.5 rounded-lg text-text-secondary hover:bg-bg-hover hover:text-text-primary cursor-pointer flex items-center gap-3" data-page-target="settings">
+      <span class="text-lg">⚙️</span>
+      <span class="text-sm font-medium">设置</span>
+    </div>
+  </aside>
+
+  <!-- ============ 主区 ============ -->
+  <main class="flex-1 overflow-auto scrollbar-thin">
+
+    <!-- ===== Home 页 ===== -->
+    <div data-page="home" class="active p-10">
+      <div class="flex items-center justify-between mb-10">
+        <div>
+          <h1 class="text-3xl font-bold tracking-tight">欢迎回来</h1>
+          <p class="text-text-secondary mt-2">2026 年 9 月 20 日 · 星期六</p>
+        </div>
+        <div class="flex gap-2">
+          <button class="px-5 py-2.5 rounded-lg text-sm font-medium text-text-secondary hover:bg-bg-hover">↻ 刷新</button>
+          <button class="px-5 py-2.5 rounded-lg text-sm font-medium bg-bg-elevated hover:bg-bg-hover">⚙ 设置</button>
+        </div>
+      </div>
+
+      <!-- 统计卡片 -->
+      <div class="grid grid-cols-4 gap-5 mb-10">
+        <div class="bg-bg-surface border border-border rounded-2xl p-7">
+          <div class="text-xs uppercase tracking-wider text-text-secondary font-medium mb-3">今日笔记</div>
+          <div class="text-5xl font-bold mb-2">3</div>
+          <span class="inline-block px-2.5 py-0.5 rounded-pill text-xs bg-bg-elevated text-text-tertiary">+1 今日</span>
+        </div>
+        <div class="bg-bg-surface border border-border rounded-2xl p-7">
+          <div class="text-xs uppercase tracking-wider text-text-secondary font-medium mb-3">待办任务</div>
+          <div class="text-5xl font-bold mb-2">7</div>
+          <span class="inline-block px-2.5 py-0.5 rounded-pill text-xs bg-bg-elevated text-text-tertiary">3 高优</span>
+        </div>
+        <div class="bg-bg-surface border border-border rounded-2xl p-7">
+          <div class="text-xs uppercase tracking-wider text-text-secondary font-medium mb-3">逾期任务</div>
+          <div class="text-5xl font-bold mb-2 text-error">1</div>
+          <span class="inline-block px-2.5 py-0.5 rounded-pill text-xs bg-bg-elevated text-error">需关注</span>
+        </div>
+        <div class="bg-bg-surface border border-border rounded-2xl p-7">
+          <div class="text-xs uppercase tracking-wider text-text-secondary font-medium mb-3">API 调用</div>
+          <div class="text-5xl font-bold mb-2">142</div>
+          <span class="inline-block px-2.5 py-0.5 rounded-pill text-xs bg-bg-elevated text-text-tertiary">今日</span>
+        </div>
+      </div>
+
+      <!-- 最近编辑 -->
+      <div class="bg-bg-surface border border-border rounded-2xl p-7 mb-6">
+        <h2 class="text-lg font-semibold mb-5">最近编辑</h2>
+        <div class="flex flex-col gap-1">
+          <div class="px-4 py-3 rounded-lg hover:bg-bg-hover cursor-pointer flex items-center gap-4 transition-colors">
+            <div class="w-10 h-10 rounded-lg bg-bg-elevated flex items-center justify-center">📄</div>
+            <div class="flex-1">
+              <div class="text-sm font-medium">设计稿v2.md</div>
+              <div class="text-xs text-text-tertiary mt-0.5">2 小时前 · inbox/设计稿v2.md</div>
+            </div>
+            <span class="px-3 py-1 rounded-pill text-xs bg-accent-soft text-accent border border-transparent">#工作</span>
+          </div>
+          <div class="px-4 py-3 rounded-lg hover:bg-bg-hover cursor-pointer flex items-center gap-4 transition-colors">
+            <div class="w-10 h-10 rounded-lg bg-bg-elevated flex items-center justify-center">📄</div>
+            <div class="flex-1">
+              <div class="text-sm font-medium">周会纪要.md</div>
+              <div class="text-xs text-text-tertiary mt-0.5">昨天 · work/周会纪要.md</div>
+            </div>
+            <span class="px-3 py-1 rounded-pill text-xs bg-accent-soft text-accent border border-transparent">#工作</span>
+          </div>
+          <div class="px-4 py-3 rounded-lg hover:bg-bg-hover cursor-pointer flex items-center gap-4 transition-colors">
+            <div class="w-10 h-10 rounded-lg bg-bg-elevated flex items-center justify-center">📄</div>
+            <div class="flex-1">
+              <div class="text-sm font-medium">bug分析.md</div>
+              <div class="text-xs text-text-tertiary mt-0.5">3 天前 · notes/bug分析.md</div>
+            </div>
+            <span class="px-3 py-1 rounded-pill text-xs bg-bg-elevated text-text-secondary border border-border">#学习</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- 快捷操作 -->
+      <div class="flex gap-3">
+        <button class="px-5 py-3 rounded-xl bg-accent text-white text-sm font-medium hover:bg-accent-hover">+ 新建笔记</button>
+        <button class="px-5 py-3 rounded-xl bg-bg-elevated text-text-primary text-sm font-medium hover:bg-bg-hover border border-border">+ 新建任务</button>
+        <button class="px-5 py-3 rounded-xl bg-bg-elevated text-text-primary text-sm font-medium hover:bg-bg-hover border border-border">📋 切换 Claude Profile</button>
+      </div>
+    </div>
+
+    <!-- ===== Markdown 页 ===== -->
+    <div data-page="markdown" class="p-10 h-screen flex flex-col">
+      <div class="flex items-center justify-between mb-6">
+        <div>
+          <h1 class="text-3xl font-bold tracking-tight">Markdown 笔记本</h1>
+          <p class="text-text-secondary mt-2">本地化的笔记系统，文件可直接用外部编辑器打开</p>
+        </div>
+        <div class="flex gap-2">
+          <button class="px-5 py-2.5 rounded-lg text-sm font-medium text-text-secondary hover:bg-bg-hover">↻ 重扫</button>
+          <button class="px-5 py-2.5 rounded-lg text-sm font-medium bg-bg-elevated hover:bg-bg-hover border border-border">⚙ 设置</button>
+          <button class="px-5 py-2.5 rounded-lg text-sm font-medium bg-accent text-white hover:bg-accent-hover">+ 新建笔记</button>
+        </div>
+      </div>
+
+      <div class="flex-1 grid grid-cols-[220px_1fr_1fr] gap-5 min-h-0">
+        <!-- 文件树 -->
+        <div class="bg-bg-surface border border-border rounded-2xl p-5 overflow-auto scrollbar-thin">
+          <div class="mb-4">
+            <input type="text" placeholder="🔍 搜索笔记..." class="w-full px-3 py-2 bg-bg-elevated border border-border rounded-lg text-sm focus:border-accent focus:outline-none">
+          </div>
+          <div class="flex flex-col gap-0.5">
+            <div class="px-3 py-2 text-sm rounded-md cursor-pointer bg-accent-soft text-accent font-medium">📄 设计稿v2.md</div>
+            <div class="px-3 py-2 text-sm rounded-md cursor-pointer text-text-secondary hover:bg-bg-hover hover:text-text-primary">📄 周会纪要.md</div>
+            <div class="px-3 py-2 text-sm rounded-md cursor-pointer text-text-secondary hover:bg-bg-hover hover:text-text-primary">📄 bug分析.md</div>
+            <div class="px-3 py-2 mt-3 text-xs uppercase tracking-wider text-text-tertiary font-medium">▾ 📁 inbox</div>
+            <div class="px-3 py-2 pl-8 text-sm rounded-md cursor-pointer text-text-secondary hover:bg-bg-hover hover:text-text-primary">📄 ideas.md</div>
+            <div class="px-3 py-2 pl-8 text-sm rounded-md cursor-pointer text-text-secondary hover:bg-bg-hover hover:text-text-primary">📄 todo.md</div>
+          </div>
+          <div class="mt-6 pt-5 border-t border-border-muted">
+            <div class="text-xs text-text-tertiary mb-2 font-medium">标签</div>
+            <div class="flex flex-wrap gap-1.5">
+              <span class="px-3 py-1 rounded-pill text-xs bg-accent-soft text-accent">#工作</span>
+              <span class="px-3 py-1 rounded-pill text-xs bg-bg-elevated text-text-secondary border border-border">#学习</span>
+              <span class="px-3 py-1 rounded-pill text-xs bg-bg-elevated text-text-secondary border border-border">#想法</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- 编辑器 -->
+        <div class="bg-bg-surface border border-border rounded-2xl p-6 overflow-auto scrollbar-thin">
+          <div class="font-mono text-sm leading-relaxed text-text-secondary whitespace-pre-wrap"># 你好 DevDesk
+
+这是一个 **Markdown** 笔记本的演示。试试 *中文* + English 混排。
+
+## 二级标题
+
+- 列表项 1
+- 列表项 2
+- 列表项 3
+
+```cpp
+#include &lt;iostream&gt;
+int main() { return 0; }
+```
+
+> 引用块演示，长文本会换行显示。
+
+[链接演示](https://anthropic.com)
+
+| 列1 | 列2 |
+|-----|-----|
+| A   | B   |
+| C   | D   |
+
+试试改这里的内容 →</div>
+        </div>
+
+        <!-- 预览 -->
+        <div class="bg-bg-surface border border-border rounded-2xl p-6 overflow-auto scrollbar-thin">
+          <h1 class="text-2xl font-bold mb-4 text-text-primary">你好 DevDesk</h1>
+          <p class="mb-4 leading-relaxed">这是一个 <strong>Markdown</strong> 笔记本的演示。试试 <em>中文</em> + English 混排。</p>
+          <h2 class="text-lg font-semibold mt-6 mb-3 text-text-primary">二级标题</h2>
+          <ul class="mb-4 list-disc list-inside space-y-1">
+            <li>列表项 1</li>
+            <li>列表项 2</li>
+            <li>列表项 3</li>
+          </ul>
+          <div class="bg-bg-elevated rounded-lg p-4 mb-4 font-mono text-xs border-l-4 border-accent">
+            #include &lt;iostream&gt;<br>int main() { return 0; }
+          </div>
+          <blockquote class="border-l-4 border-accent pl-4 py-1 text-text-secondary italic mb-4">引用块演示，长文本会换行显示。</blockquote>
+          <p class="mb-4"><a href="#" class="text-accent hover:underline">链接演示</a></p>
+          <table class="w-full text-sm border border-border rounded-lg overflow-hidden">
+            <thead class="bg-bg-elevated"><tr><th class="px-3 py-2 text-left">列1</th><th class="px-3 py-2 text-left">列2</th></tr></thead>
+            <tbody><tr class="border-t border-border"><td class="px-3 py-2">A</td><td class="px-3 py-2">B</td></tr><tr class="border-t border-border"><td class="px-3 py-2">C</td><td class="px-3 py-2">D</td></tr></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <!-- ===== Todo 页 ===== -->
+    <div data-page="todo" class="p-10 h-screen flex flex-col">
+      <div class="flex items-center justify-between mb-6">
+        <div>
+          <h1 class="text-3xl font-bold tracking-tight">Todo 看板</h1>
+          <p class="text-text-secondary mt-2">⌘N 新建任务 · 拖拽卡片跨列移动（也可右键"移动到..."）</p>
+        </div>
+        <div class="flex gap-2">
+          <input type="text" placeholder="🔍 搜索任务..." class="px-4 py-2.5 bg-bg-elevated border border-border rounded-lg text-sm focus:border-accent focus:outline-none w-64">
+          <button class="px-5 py-2.5 rounded-lg text-sm font-medium bg-bg-elevated hover:bg-bg-hover border border-border">+ 列</button>
+          <button class="px-5 py-2.5 rounded-lg text-sm font-medium bg-accent text-white hover:bg-accent-hover">+ 新建任务</button>
+        </div>
+      </div>
+
+      <div class="flex-1 grid grid-cols-4 gap-5 min-h-0 overflow-x-auto">
+        <!-- 列：待办 -->
+        <div class="bg-bg-surface border border-border rounded-2xl p-4 flex flex-col">
+          <div class="flex items-center justify-between mb-4 px-2">
+            <h3 class="font-semibold text-sm">待办 <span class="text-text-tertiary font-normal ml-1">3</span></h3>
+            <button class="text-text-tertiary hover:text-text-primary">+</button>
+          </div>
+          <div class="flex-1 overflow-y-auto scrollbar-thin flex flex-col gap-2">
+            <div class="bg-bg-elevated rounded-xl p-3.5 border-l-4 border-error cursor-grab hover:bg-bg-hover transition-colors">
+              <div class="text-sm font-medium mb-2">写文档</div>
+              <div class="flex items-center gap-2">
+                <span class="px-2 py-0.5 rounded-pill text-[10px] font-bold bg-error text-white">高</span>
+                <span class="text-[11px] text-text-tertiary">⏰ 明天</span>
+              </div>
+            </div>
+            <div class="bg-bg-elevated rounded-xl p-3.5 border-l-4 border-warning cursor-grab hover:bg-bg-hover transition-colors">
+              <div class="text-sm font-medium mb-2">会议纪要</div>
+              <div class="flex items-center gap-2">
+                <span class="px-2 py-0.5 rounded-pill text-[10px] font-bold bg-warning text-bg-base">中</span>
+                <span class="text-[11px] text-text-tertiary">今天</span>
+              </div>
+            </div>
+            <div class="bg-bg-elevated rounded-xl p-3.5 border-l-4 border-info cursor-grab hover:bg-bg-hover transition-colors">
+              <div class="text-sm font-medium mb-2">代码 review</div>
+              <div class="flex items-center gap-2">
+                <span class="px-2 py-0.5 rounded-pill text-[10px] font-bold bg-info text-bg-base">低</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- 列：进行中 -->
+        <div class="bg-bg-surface border border-border rounded-2xl p-4 flex flex-col">
+          <div class="flex items-center justify-between mb-4 px-2">
+            <h3 class="font-semibold text-sm">进行中 <span class="text-text-tertiary font-normal ml-1">1</span></h3>
+            <button class="text-text-tertiary hover:text-text-primary">+</button>
+          </div>
+          <div class="flex-1 overflow-y-auto scrollbar-thin flex flex-col gap-2">
+            <div class="bg-accent-soft rounded-xl p-3.5 border-l-4 border-accent cursor-grab hover:bg-bg-hover transition-colors">
+              <div class="text-sm font-medium mb-2">修复 bug #42</div>
+              <div class="flex items-center gap-2">
+                <span class="px-2 py-0.5 rounded-pill text-[10px] font-bold bg-warning text-bg-base">中</span>
+                <span class="text-[11px] text-text-tertiary">🚧 进行中</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- 列：已完成 -->
+        <div class="bg-bg-surface border border-border rounded-2xl p-4 flex flex-col">
+          <div class="flex items-center justify-between mb-4 px-2">
+            <h3 class="font-semibold text-sm">已完成 <span class="text-text-tertiary font-normal ml-1">2</span></h3>
+            <button class="text-text-tertiary hover:text-text-primary">+</button>
+          </div>
+          <div class="flex-1 overflow-y-auto scrollbar-thin flex flex-col gap-2">
+            <div class="bg-bg-elevated rounded-xl p-3.5 border-l-4 border-success opacity-60 cursor-grab">
+              <div class="text-sm font-medium mb-2 line-through">初次部署</div>
+              <div class="flex items-center gap-2">
+                <span class="text-[11px] text-text-tertiary">✓ 今天 14:30</span>
+              </div>
+            </div>
+            <div class="bg-bg-elevated rounded-xl p-3.5 border-l-4 border-success opacity-60 cursor-grab">
+              <div class="text-sm font-medium mb-2 line-through">环境配置</div>
+              <div class="flex items-center gap-2">
+                <span class="text-[11px] text-text-tertiary">✓ 昨天</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- 列：已归档 -->
+        <div class="bg-bg-surface border border-border rounded-2xl p-4 flex flex-col">
+          <div class="flex items-center justify-between mb-4 px-2">
+            <h3 class="font-semibold text-sm">已归档</h3>
+            <button class="text-text-tertiary hover:text-text-primary">+</button>
+          </div>
+          <div class="flex-1 flex items-center justify-center">
+            <div class="text-center text-text-tertiary text-sm">
+              <div class="text-3xl mb-2">📦</div>
+              <div>归档的任务在这里</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ===== Claude 切换器页 ===== -->
+    <div data-page="claude" class="p-10">
+      <div class="flex items-center justify-between mb-6">
+        <div>
+          <h1 class="text-3xl font-bold tracking-tight flex items-center gap-3">
+            Claude 切换器
+            <span class="inline-flex items-center gap-1.5 px-3 py-1 rounded-pill text-xs bg-success/20 text-success border border-success/30">
+              <span class="w-2 h-2 rounded-full bg-success"></span>
+              运行中 :8888
+            </span>
+          </h1>
+          <p class="text-text-secondary mt-2">管理多套 Claude API 配置 · 本地代理地址 http://127.0.0.1:8888</p>
+        </div>
+        <div class="flex gap-2">
+          <button class="px-5 py-2.5 rounded-lg text-sm font-medium bg-bg-elevated hover:bg-bg-hover border border-border">⏸ 停止代理</button>
+          <button class="px-5 py-2.5 rounded-lg text-sm font-medium bg-accent text-white hover:bg-accent-hover">+ 新建 Profile</button>
+        </div>
+      </div>
+
+      <div class="grid grid-cols-[400px_1fr] gap-6">
+        <!-- Profile 列表 -->
+        <div class="flex flex-col gap-3">
+          <div class="bg-accent-soft border-2 border-accent rounded-2xl p-5 cursor-pointer">
+            <div class="flex items-center gap-3 mb-3">
+              <div class="w-10 h-10 rounded-full bg-accent flex items-center justify-center text-white font-bold">官</div>
+              <div class="flex-1">
+                <div class="flex items-center gap-2">
+                  <span class="font-semibold">官方</span>
+                  <span class="px-2 py-0.5 rounded-pill text-[10px] font-bold bg-accent text-white">ACTIVE</span>
+                </div>
+                <div class="text-xs text-text-tertiary font-mono mt-1">api.anthropic.com</div>
+              </div>
+            </div>
+            <div class="font-mono text-xs text-text-secondary">claude-sonnet-4-5 · sk-ant-***xyz</div>
+          </div>
+
+          <div class="bg-bg-surface border border-border rounded-2xl p-5 cursor-pointer hover:bg-bg-hover transition-colors">
+            <div class="flex items-center gap-3 mb-3">
+              <div class="w-10 h-10 rounded-full bg-bg-elevated flex items-center justify-center text-text-secondary font-bold">3</div>
+              <div class="flex-1">
+                <span class="font-semibold">第三方 A</span>
+                <div class="text-xs text-text-tertiary font-mono mt-1">api.thirdparty-a.com</div>
+              </div>
+            </div>
+            <div class="font-mono text-xs text-text-secondary">claude-opus-5 · sk-***abc</div>
+          </div>
+
+          <div class="bg-bg-surface border border-border rounded-2xl p-5 cursor-pointer hover:bg-bg-hover transition-colors">
+            <div class="flex items-center gap-3 mb-3">
+              <div class="w-10 h-10 rounded-full bg-bg-elevated flex items-center justify-center text-text-secondary font-bold">测</div>
+              <div class="flex-1">
+                <span class="font-semibold">测试账号</span>
+                <div class="text-xs text-text-tertiary font-mono mt-1">api.test.com</div>
+              </div>
+            </div>
+            <div class="font-mono text-xs text-text-secondary">claude-haiku-5 · sk-***test</div>
+          </div>
+        </div>
+
+        <!-- 详情面板 -->
+        <div>
+          <!-- 当前 Profile 详情 -->
+          <div class="bg-bg-surface border border-border rounded-2xl p-7 mb-5">
+            <div class="flex items-center justify-between mb-6">
+              <h2 class="text-xl font-semibold">当前 Profile 详情</h2>
+              <div class="flex gap-2">
+                <button class="px-5 py-2.5 rounded-xl text-sm font-medium bg-accent text-white hover:bg-accent-hover">启用</button>
+                <button class="px-5 py-2.5 rounded-xl text-sm font-medium bg-bg-elevated hover:bg-bg-hover border border-border">测试连通</button>
+                <button class="px-5 py-2.5 rounded-xl text-sm font-medium bg-bg-elevated hover:bg-bg-hover border border-border">编辑</button>
+              </div>
+            </div>
+            <div class="grid grid-cols-2 gap-5">
+              <div>
+                <div class="text-xs text-text-tertiary mb-1.5 font-medium uppercase tracking-wider">名称</div>
+                <div class="text-base font-medium">官方</div>
+              </div>
+              <div>
+                <div class="text-xs text-text-tertiary mb-1.5 font-medium uppercase tracking-wider">模型</div>
+                <div class="text-base font-mono">claude-sonnet-4-5</div>
+              </div>
+              <div class="col-span-2">
+                <div class="text-xs text-text-tertiary mb-1.5 font-medium uppercase tracking-wider">Base URL</div>
+                <div class="text-base font-mono">https://api.anthropic.com</div>
+              </div>
+              <div class="col-span-2">
+                <div class="text-xs text-text-tertiary mb-1.5 font-medium uppercase tracking-wider">API Key</div>
+                <div class="flex items-center gap-2">
+                  <code class="text-base font-mono">sk-ant-•••••••••••••••••••xyz</code>
+                  <span class="px-2 py-0.5 rounded-pill text-[10px] bg-success/20 text-success">Keychain 存储</span>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- 最近调用 -->
+          <div class="bg-bg-surface border border-border rounded-2xl p-7">
+            <div class="flex items-center justify-between mb-5">
+              <h2 class="text-xl font-semibold">最近调用</h2>
+              <button class="text-sm text-text-secondary hover:text-text-primary">查看全部 →</button>
+            </div>
+            <div class="font-mono text-xs">
+              <div class="grid grid-cols-[100px_180px_80px_80px_1fr] gap-3 px-3 py-2.5 text-text-tertiary border-b border-border-muted">
+                <div>时间</div><div>方法 / 路径</div><div>状态</div><div>耗时</div><div>大小</div>
+              </div>
+              <div class="grid grid-cols-[100px_180px_80px_80px_1fr] gap-3 px-3 py-3 hover:bg-bg-hover rounded-md cursor-pointer transition-colors">
+                <div class="text-text-secondary">14:32:18</div>
+                <div>POST /v1/messages</div>
+                <div class="text-success">200</div>
+                <div>1247 ms</div>
+                <div class="text-text-secondary">1.2 KB → 8.4 KB</div>
+              </div>
+              <div class="grid grid-cols-[100px_180px_80px_80px_1fr] gap-3 px-3 py-3 hover:bg-bg-hover rounded-md cursor-pointer transition-colors">
+                <div class="text-text-secondary">14:30:42</div>
+                <div>POST /v1/messages</div>
+                <div class="text-success">200</div>
+                <div>832 ms</div>
+                <div class="text-text-secondary">0.8 KB → 4.2 KB</div>
+              </div>
+              <div class="grid grid-cols-[100px_180px_80px_80px_1fr] gap-3 px-3 py-3 hover:bg-bg-hover rounded-md cursor-pointer transition-colors">
+                <div class="text-text-secondary">14:25:11</div>
+                <div>POST /v1/messages</div>
+                <div class="text-warning">429</div>
+                <div>312 ms</div>
+                <div class="text-text-secondary">速率限制</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ===== 设置页 ===== -->
+    <div data-page="settings" class="p-10">
+      <h1 class="text-3xl font-bold tracking-tight mb-8">设置</h1>
+
+      <div class="max-w-3xl space-y-6">
+        <div class="bg-bg-surface border border-border rounded-2xl p-7">
+          <h2 class="text-lg font-semibold mb-5">外观</h2>
+          <div class="space-y-5">
+            <div class="flex items-center justify-between">
+              <div>
+                <div class="font-medium">主题</div>
+                <div class="text-sm text-text-secondary mt-1">选择应用的整体外观</div>
+              </div>
+              <select class="px-4 py-2.5 bg-bg-elevated border border-border rounded-lg text-sm">
+                <option>🌙 深色（方案 B）</option>
+                <option>☀️ 浅色</option>
+                <option>🖥 跟随系统</option>
+              </select>
+            </div>
+          </div>
+        </div>
+
+        <div class="bg-bg-surface border border-border rounded-2xl p-7">
+          <h2 class="text-lg font-semibold mb-5">Markdown 笔记本</h2>
+          <div class="space-y-5">
+            <div>
+              <div class="font-medium mb-2">笔记目录</div>
+              <div class="flex gap-2">
+                <input type="text" value="~/Library/Application Support/DevDesk/notes" class="flex-1 px-4 py-2.5 bg-bg-elevated border border-border rounded-lg text-sm font-mono">
+                <button class="px-4 py-2.5 rounded-lg text-sm bg-bg-elevated hover:bg-bg-hover border border-border">📂 打开目录</button>
+              </div>
+            </div>
+            <div class="flex items-center justify-between">
+              <div>
+                <div class="font-medium">编辑器字体大小</div>
+                <div class="text-sm text-text-secondary mt-1">默认 15 px（大气档）</div>
+              </div>
+              <input type="number" value="15" class="w-20 px-3 py-2 bg-bg-elevated border border-border rounded-lg text-center">
+            </div>
+            <div class="flex items-center justify-between">
+              <div>
+                <div class="font-medium">编辑器字体</div>
+                <div class="text-sm text-text-secondary mt-1">默认 JetBrains Mono</div>
+              </div>
+              <select class="px-4 py-2.5 bg-bg-elevated border border-border rounded-lg text-sm">
+                <option>JetBrains Mono（推荐）</option>
+                <option>Inter</option>
+                <option>跟随系统</option>
+                <option>自定义路径…</option>
+              </select>
+            </div>
+          </div>
+        </div>
+
+        <div class="bg-bg-surface border border-border rounded-2xl p-7">
+          <h2 class="text-lg font-semibold mb-5">Claude 代理</h2>
+          <div class="space-y-5">
+            <div class="flex items-center justify-between">
+              <div>
+                <div class="font-medium">代理端口</div>
+                <div class="text-sm text-text-secondary mt-1">改后自动重启</div>
+              </div>
+              <input type="number" value="8888" class="w-24 px-3 py-2 bg-bg-elevated border border-border rounded-lg text-center">
+            </div>
+            <div>
+              <div class="font-medium mb-2">认证 Token</div>
+              <div class="text-sm text-text-secondary mb-2">Claude Code 配置时需要在 Authorization 头加 Bearer &lt;token&gt;</div>
+              <div class="flex gap-2">
+                <code class="flex-1 px-4 py-2.5 bg-bg-elevated border border-border rounded-lg text-sm font-mono">a1b2c3d4e5f6g7h8i9j0...</code>
+                <button class="px-4 py-2.5 rounded-lg text-sm bg-bg-elevated hover:bg-bg-hover border border-border">📋 复制</button>
+                <button class="px-4 py-2.5 rounded-lg text-sm bg-bg-elevated hover:bg-bg-hover border border-border">🔄 重新生成</button>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="bg-bg-surface border border-border rounded-2xl p-7">
+          <h2 class="text-lg font-semibold mb-5">日志</h2>
+          <div class="space-y-5">
+            <div class="flex items-center justify-between">
+              <div>
+                <div class="font-medium">日志级别</div>
+                <div class="text-sm text-text-secondary mt-1">开发调试用</div>
+              </div>
+              <select class="px-4 py-2.5 bg-bg-elevated border border-border rounded-lg text-sm">
+                <option>Info</option>
+                <option>Debug</option>
+                <option>Trace</option>
+                <option>Warn</option>
+                <option>Error</option>
+              </select>
+            </div>
+            <div class="flex items-center justify-between">
+              <div>
+                <div class="font-medium">调用日志保留天数</div>
+                <div class="text-sm text-text-secondary mt-1">30 天后自动清理</div>
+              </div>
+              <input type="number" value="30" class="w-20 px-3 py-2 bg-bg-elevated border border-border rounded-lg text-center">
+            </div>
+          </div>
+        </div>
+
+        <div class="bg-bg-surface border border-border rounded-2xl p-7 text-center">
+          <div class="text-sm text-text-tertiary">DevDesk v0.1.0 · Apache 2.0</div>
+          <div class="text-xs text-text-tertiary mt-2">EUI-NEO · SQLite · cpp-httplib · libcurl · yyjson · md4c</div>
+        </div>
+      </div>
+    </div>
+
+  </main>
+</div>
+
+<script>
+// 页面切换
+const navItems = document.querySelectorAll('[data-page-target]');
+const pages = document.querySelectorAll('[data-page]');
+
+function switchPage(targetId) {
+  // 更新 nav 状态
+  navItems.forEach(item => {
+    const isActive = item.dataset.pageTarget === targetId;
+    item.classList.toggle('bg-accent-soft', isActive);
+    item.classList.toggle('text-accent', isActive);
+    item.classList.toggle('font-semibold', isActive);
+  });
+
+  // 切换页面
+  pages.forEach(page => {
+    page.classList.toggle('active', page.dataset.page === targetId);
+  });
+}
+
+navItems.forEach(item => {
+  item.addEventListener('click', () => switchPage(item.dataset.pageTarget));
+});
+
+// 初始：激活 Home（视觉默认）
+const homeItem = document.querySelector('[data-page-target="home"]');
+homeItem.classList.add('bg-accent-soft', 'text-accent', 'font-semibold');
+</script>
+
+</body>
+</html>
