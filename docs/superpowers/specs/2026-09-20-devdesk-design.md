@@ -548,8 +548,9 @@ std::string currentThemeName();
 
 namespace core::theme {
 struct FontTokens {
-    std::string sansFamily;       // "Inter" + 系统 fallback
+    std::string sansFamily;       // "Inter"
     std::string sansFilePath;     // "fonts/Inter-Regular.ttf"
+    std::string sansBoldFilePath; // "fonts/Inter-Bold.ttf"（**仅打包 Regular + Bold 两份**）
     std::string monoFamily;       // "JetBrains Mono"
     std::string monoFilePath;     // "fonts/JetBrainsMono-Regular.ttf"
     std::string chineseFamily;    // macOS: PingFang SC; Windows: 微软雅黑
@@ -560,10 +561,16 @@ struct FontTokens {
 ```
 
 字体加载策略：
-- **主字体**：开源 Inter（Regular / Medium / SemiBold / Bold），文件 ~400 KB
-- **等宽字体**：开源 JetBrains Mono（Regular / Bold），文件 ~250 KB
-- **中文 fallback**：不打包字体，使用系统字体（macOS 自动用苹方，Windows 自动用微软雅黑）
+- **主字体**：开源 Inter（**Regular + Bold 两份**，OFL 协议），文件 ~200 KB × 2
+- **等宽字体**：开源 JetBrains Mono（**Regular 一份**），文件 ~250 KB
+- **中文 fallback**：不打包字体，使用系统字体（macOS 自动苹方，Windows 自动微软雅黑，EUI-NEO 自动 fallback）
 - **版权合规**：Inter 与 JetBrains Mono 均为 OFL 协议，可商用打包
+
+**⚠️ EUI-NEO 真实能力警告**（来自审计）：
+- `fontWeight(700)` 数值传入但 **runtime 不切换字重 face**
+- 因此不打包 SemiBold/Medium 等中间字重，避免浪费
+- 真正的"半粗"视觉改用：Bold 字 + opacity 0.85，或 Bold 字 + 1px text stroke
+- 在 spec 中所有提到"Medium / SemiBold"的位置替换为"Bold"或"Regular + opacity"
 
 #### 圆角系统
 
@@ -617,6 +624,144 @@ struct ShadowTokens {
 - ⚠️ EUI-NEO **不支持** web 风格 CSS 变量；token 在 C++ 中硬编码到 `theme.cpp`
 - ⚠️ EUI-NEO **不支持** shadcn 风格组件；用 EUI-NEO 自带 `components/` 下的 button / input / chip
 - ⚠️ macOS 27 Liquid Glass 需要 EUI-NEO 上游支持（截至审计未实现），先用实色 + 阴影替代
+
+### 6.5.2 大气设计原则（Generous Design）
+
+**决策**：2026-09-20 添加。**反对"咪咪小"设计** —— DevDesk 是桌面应用，用户在 1080P / 2K / 4K 显示器前长时间使用，需要舒展、有呼吸感的视觉。
+
+#### 窗口尺寸规范
+
+| 项 | 数值 | 说明 |
+|----|------|------|
+| 默认窗口大小 | **1600 × 1000** | 占 1080P 屏幕 83% × 93%，2K 屏 75% × 83% |
+| 最小窗口 | 1200 × 720 | 三栏布局的最小可读尺寸 |
+| 最大窗口 | 全屏 | 用户可最大化（macOS 绿色按钮 / Windows 最大化）|
+| HiDPI | **默认开启** | `DslAppConfig{}.hiDpi(true)` |
+| 窗口位置 | 居中显示 | 首次启动屏幕中心；之后记住上次位置 |
+| 窗口持久化 | `config.json` | 记录 size + position，下次启动恢复 |
+
+#### 间距系统（基于 8 px 网格）
+
+| Token | 值 | 用途 |
+|-------|-----|------|
+| `--spacing-xs` | 4 px | 紧凑（如 chip 内 padding） |
+| `--spacing-sm` | 8 px | 元素内 padding（小按钮）|
+| `--spacing-md` | 16 px | 标准间距（按钮 padding）|
+| `--spacing-lg` | 24 px | 卡片内 padding |
+| `--spacing-xl` | **40 px** | 内容区四周 padding |
+| `--spacing-2xl` | **56 px** | section 之间留白 |
+| `--spacing-3xl` | 80 px | 页面顶部留白 |
+
+**原则**：宁可多留 8 px，也不要挤 4 px。
+
+#### 字号系统（"大气"档）
+
+| Token | 值 | 用途 |
+|-------|-----|------|
+| `--font-xs` | 12 px | chip 标签、辅助说明 |
+| `--font-sm` | 13 px | 次要元数据、时间戳 |
+| `--font-body` | **15 px** | 正文（默认）|
+| `--font-lg` | **18 px** | 强调文本 |
+| `--font-title` | **24 px** | 卡片标题 |
+| `--font-page` | **32 px** | 页面大标题 |
+| `--font-display` | **48 px** | 统计数字（Home 大数字）|
+
+**关键**：正文 15 px（不是 14），页面标题 32 px（不是 24），统计 48 px（不是 28）。
+
+#### 行高
+
+| 类型 | 行高 |
+|------|------|
+| 英文正文 | 1.5 |
+| 中文正文 | **1.7**（中文需要更多行高）|
+| 大标题 | 1.2 |
+
+#### 按钮尺寸（"大气"档）
+
+| 元素 | 高度 | padding |
+|------|------|---------|
+| 主按钮 | **40-44 px** | 16 px / 20 px |
+| 次按钮 | **40 px** | 16 px / 20 px |
+| 小按钮 | 32 px | 8 px / 12 px |
+| 图标按钮 | 40 × 40 px | - |
+
+**关键**：主按钮 40 px 高（不是 32 px），触感和点击区域都更舒适。
+
+#### 输入框尺寸
+
+| 元素 | 高度 |
+|------|------|
+| 输入框 | **40 px** |
+| 多行编辑器 | 最小高度 320 px |
+| 搜索框 | 40 px |
+
+#### 卡片系统
+
+| 类型 | 内 padding | 圆角 |
+|------|-----------|------|
+| 统计卡片 | 24 px | 14 px |
+| 列表卡片 | 20 px | 12 px |
+| 普通卡片 | 20-24 px | 12 px |
+| 大卡片（Profile、Home） | **28-32 px** | **14 px** |
+| section 之间间距 | 40 px | - |
+
+#### 侧边栏
+
+- 宽度：**260 px**（不是 200-220）
+- 内 padding：上下 24 px，左右 16 px
+- 导航项高度：40 px
+- 导航项之间 gap：4 px
+
+#### 图标尺寸
+
+| 用途 | 大小 |
+|------|------|
+| 侧边栏导航 | 20 px |
+| 按钮内 icon | 18 px |
+| 大标题旁 icon | 24 px |
+| 状态指示器 | 8 px（点）或 16 px（小图标）|
+
+#### 内容区最大宽度（防止超宽屏文字过长）
+
+```css
+max-width: 1200px;  /* 主内容容器 */
+margin: 0 auto;      /* 居中 */
+```
+
+#### 应用示例
+
+```cpp
+// 主按钮（大气版）
+components::button(ui, "save")
+    .text("保存")
+    .height(44.0f)             // 不是 32
+    .padding(16.0f, 20.0f)     // 不是 8, 12
+    .radius(10.0f)
+    .fontSize(15.0f)           // 不是 13
+    .build();
+
+// 卡片
+ui.column("card")
+    .padding(28.0f)            // 不是 16
+    .gap(20.0f)                  // 而不是 12
+    .radius(14.0f)              // 而不是 8
+    .build();
+
+// 统计数字
+ui.text("stat.value")
+    .text("142")
+    .fontSize(48.0f)           // 不是 32
+    .fontWeight(700)           // Bold face 唯一支持的"粗"
+    .color(textPrimary())
+    .build();
+```
+
+#### 与 EUI-NEO 兼容性
+
+- ✅ 所有间距 / 字号 / padding 数值 EUI-NEO 完全支持
+- ✅ 圆角 14 px EUI-NEO 支持（不限值）
+- ✅ HiDPI 通过 GLFW 自动缩放，无需代码改动
+- ✅ 窗口尺寸 / 最小尺寸 DslAppConfig 完整支持
 
 ### 6.6 `router.h` 和 `module_interface.h` - 模块系统
 
@@ -1018,8 +1163,14 @@ private:
 6. 点击标签 → 过滤显示同标签的文件
 7. 文件存在系统目录中，可用任意外部编辑器直接打开
 
-**EUI-NEO 限制说明**（已知约束）：
+**EUI-NEO 限制说明**（已知约束，已审计源码确认）：
 - **没有文件拖入 API**（onDrop）：文件需通过 UI 新建按钮添加，不支持拖文件进窗口
+- **没有 tree 组件**：需自实现 `MarkdownTreeView`（约 150 行）：
+  - 基于 `components::virtualList` 渲染节点
+  - 用 `▶ / ▼` Unicode 字符图标
+  - 状态机：`isExpanded` 状态 + 父子节点链表
+  - 节点类型：folder（可展开）/ file（不可展开）
+  - P4 阶段实现
 - **没有真正的代码/Markdown 编辑器组件**：MVP 使用 `components::input.multiline(true)` 普通多行文本框
   - 不支持：语法高亮、行号、括号匹配、代码折叠、缩进
   - 支持：多行输入、IME、复制粘贴、撤销重做、选区
