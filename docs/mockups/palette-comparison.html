@@ -1,0 +1,646 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>DevDesk 配色方案对比</title>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { font-family: -apple-system, BlinkMacSystemFont, "Inter", "PingFang SC", "Microsoft YaHei UI", system-ui, sans-serif; }
+
+/* ===== 顶部选择器 ===== */
+.toolbar {
+  position: fixed; top: 0; left: 0; right: 0;
+  background: #2C2C2E; color: #FFFFFF;
+  padding: 12px 24px; z-index: 1000;
+  display: flex; align-items: center; gap: 12px;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.3);
+}
+.toolbar h1 { font-size: 14px; font-weight: 600; }
+.toolbar .sub { font-size: 12px; opacity: 0.7; }
+.toolbar select {
+  background: #48484A; color: #FFFFFF; border: none;
+  padding: 6px 12px; border-radius: 6px; font-size: 13px;
+  cursor: pointer;
+}
+
+/* ===== 各配色方案 CSS 变量 ===== */
+/* 方案 A：专业冷静 */
+.style-a-dark {
+  --bg-base: #0D1117; --bg-surface: #161B22; --bg-elevated: #1C2128;
+  --bg-hover: #21262D; --bg-active: #2D333B;
+  --text-primary: #E6EDF3; --text-secondary: #B4B8BE; --text-tertiary: #8B949E;
+  --text-disabled: #6E7681;
+  --border-default: #30363D; --border-muted: #21262D;
+  --accent: #5E6AD2; --accent-hover: #7170FF; --accent-pressed: #4A55C2;
+  --success: #3FB950; --warning: #D29922; --error: #F85149; --info: #2F81F7;
+}
+.style-a-light {
+  --bg-base: #FFFFFF; --bg-surface: #F6F8FA; --bg-elevated: #FFFFFF;
+  --bg-hover: #F3F4F6; --bg-active: #E5E7EB;
+  --text-primary: #1F2328; --text-secondary: #656D76; --text-tertiary: #8C959F;
+  --text-disabled: #AFB8C1;
+  --border-default: #D0D7DE; --border-muted: #E5E7EB;
+  --accent: #5E6AD2; --accent-hover: #7170FF; --accent-pressed: #4A55C2;
+  --success: #1A7F37; --warning: #9A6700; --error: #CF222E; --info: #0969DA;
+}
+/* 方案 B：温暖专业 */
+.style-b-dark {
+  --bg-base: #1A1816; --bg-surface: #232120; --bg-elevated: #2C2A28;
+  --bg-hover: #353231; --bg-active: #3E3B39;
+  --text-primary: #FAF9F5; --text-secondary: #C9C5BD; --text-tertiary: #9A948A;
+  --text-disabled: #6B6660;
+  --border-default: #3A3735; --border-muted: #2A2826;
+  --accent: #D97757; --accent-hover: #E0896B; --accent-pressed: #B85F3F;
+  --accent-soft-bg: #3A2620;
+  --success: #788C5D; --warning: #C29243; --error: #CF2D56; --info: #6A9BCC;
+}
+.style-b-light {
+  --bg-base: #FAF9F5; --bg-surface: #FFFFFF; --bg-elevated: #FFFFFF;
+  --bg-hover: #F5F2EC; --bg-active: #EBE7DF;
+  --text-primary: #1F1D1A; --text-secondary: #6B6660; --text-tertiary: #9A948A;
+  --text-disabled: #B5B0A8;
+  --border-default: #E8E6DC; --border-muted: #F0EEE6;
+  --accent: #D97757; --accent-hover: #E0896B; --accent-pressed: #B85F3F;
+  --accent-soft-bg: #F5E6DE;
+  --success: #5E7048; --warning: #9A6B30; --error: #B82850; --info: #4A7AAB;
+}
+/* 方案 C：技术极简 */
+.style-c-dark {
+  --bg-base: #1C1C1E; --bg-surface: #2C2C2E; --bg-elevated: #3A3A3C;
+  --bg-hover: #48484A; --bg-active: #636366;
+  --text-primary: #FFFFFF; --text-secondary: #EBEBF5; --text-tertiary: #EBEBF599;
+  --text-disabled: #EBEBF566;
+  --border-default: #545458; --border-muted: #38383A;
+  --accent: #FF6363; --accent-hover: #FF7A7A; --accent-pressed: #E04F4F;
+  --success: #30D158; --warning: #FFD60A; --error: #FF453A; --info: #64D2FF;
+}
+.style-c-light {
+  --bg-base: #FFFFFF; --bg-surface: #F2F2F7; --bg-elevated: #FFFFFF;
+  --bg-hover: #E5E5EA; --bg-active: #D1D1D6;
+  --text-primary: #000000; --text-secondary: #3C3C4399; --text-tertiary: #3C3C434D;
+  --text-disabled: #3C3C4326;
+  --border-default: #C6C6C8; --border-muted: #E5E5EA;
+  --accent: #FF6363; --accent-hover: #FF7A7A; --accent-pressed: #E04F4F;
+  --success: #28A745; --warning: #B25000; --error: #D70015C; --info: #007AFF;
+}
+/* 混合 1：B 底色 + A 边框 */
+.style-h1-dark {
+  --bg-base: #1A1816; --bg-surface: #232120; --bg-elevated: #2C2A28;
+  --bg-hover: #353231; --bg-active: #3E3B39;
+  --text-primary: #FAF9F5; --text-secondary: #C9C5BD; --text-tertiary: #9A948A;
+  --text-disabled: #6B6660;
+  --border-default: #30363D; --border-muted: #21262D;
+  --accent: #D97757; --accent-hover: #E0896B; --accent-pressed: #B85F3F;
+  --accent-soft-bg: #3A2620;
+  --success: #788C5D; --warning: #C29243; --error: #CF2D56; --info: #6A9BCC;
+}
+/* 混合 2：C 底色 + B 橘强调 */
+.style-h2-dark {
+  --bg-base: #1C1C1E; --bg-surface: #2C2C2E; --bg-elevated: #3A3A3C;
+  --bg-hover: #48484A; --bg-active: #636366;
+  --text-primary: #FFFFFF; --text-secondary: #EBEBF5; --text-tertiary: #EBEBF599;
+  --text-disabled: #EBEBF566;
+  --border-default: #545458; --border-muted: #38383A;
+  --accent: #D97757; --accent-hover: #E0896B; --accent-pressed: #B85F3F;
+  --success: #30D158; --warning: #FFD60A; --error: #FF453A; --info: #64D2FF;
+}
+/* 混合 3：A 骨架 + B 橘点缀 */
+.style-h3-dark {
+  --bg-base: #0D1117; --bg-surface: #161B22; --bg-elevated: #1C2128;
+  --bg-hover: #21262D; --bg-active: #2D333B;
+  --text-primary: #E6EDF3; --text-secondary: #B4B8BE; --text-tertiary: #8B949E;
+  --text-disabled: #6E7681;
+  --border-default: #30363D; --border-muted: #21262D;
+  --accent: #D97757; --accent-hover: #E0896B; --accent-pressed: #B85F3F;
+  --success: #3FB950; --warning: #D29922; --error: #F85149; --info: #2F81F7;
+}
+
+/* ===== 应用容器 ===== */
+.app {
+  background: var(--bg-base);
+  color: var(--text-primary);
+  min-height: 100vh;
+  display: grid;
+  grid-template-columns: 240px 1fr;
+  padding-top: 56px;
+}
+.sidebar {
+  background: var(--bg-surface);
+  border-right: 1px solid var(--border-default);
+  padding: 20px 16px;
+  display: flex; flex-direction: column; gap: 4px;
+}
+.brand {
+  display: flex; align-items: center; gap: 8px;
+  padding: 8px 12px; margin-bottom: 16px;
+  font-weight: 700; font-size: 16px;
+}
+.brand .logo {
+  width: 24px; height: 24px; border-radius: 6px;
+  background: var(--accent); display: flex; align-items: center; justify-content: center;
+  color: white; font-size: 14px;
+}
+.nav-item {
+  display: flex; align-items: center; gap: 12px;
+  padding: 10px 12px; border-radius: 8px;
+  font-size: 14px; cursor: pointer; transition: background 0.15s;
+  color: var(--text-secondary);
+}
+.nav-item:hover { background: var(--bg-hover); color: var(--text-primary); }
+.nav-item.active {
+  background: var(--accent-soft-bg, var(--bg-active));
+  color: var(--accent); font-weight: 600;
+}
+.nav-item .icon { width: 18px; opacity: 0.8; }
+
+.main {
+  padding: 32px 40px; overflow: auto;
+}
+.topbar {
+  display: flex; align-items: center; justify-content: space-between;
+  margin-bottom: 24px;
+}
+.page-title { font-size: 24px; font-weight: 700; }
+.page-subtitle { font-size: 13px; color: var(--text-secondary); margin-top: 4px; }
+.topbar-actions { display: flex; gap: 8px; }
+
+/* ===== 按钮 ===== */
+.btn {
+  padding: 8px 16px; border-radius: 8px; font-size: 13px; font-weight: 500;
+  cursor: pointer; border: 1px solid transparent; transition: all 0.15s;
+}
+.btn-primary {
+  background: var(--accent); color: white;
+}
+.btn-primary:hover { background: var(--accent-hover); }
+.btn-secondary {
+  background: var(--bg-surface); color: var(--text-primary);
+  border-color: var(--border-default);
+}
+.btn-secondary:hover { background: var(--bg-hover); }
+.btn-ghost {
+  background: transparent; color: var(--text-secondary);
+}
+.btn-ghost:hover { background: var(--bg-hover); color: var(--text-primary); }
+
+/* ===== 卡片 ===== */
+.card {
+  background: var(--bg-surface);
+  border: 1px solid var(--border-default);
+  border-radius: 12px; padding: 20px;
+}
+.stats-grid {
+  display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px;
+  margin-bottom: 24px;
+}
+.stat-card {
+  background: var(--bg-surface);
+  border: 1px solid var(--border-default);
+  border-radius: 12px; padding: 20px;
+}
+.stat-label {
+  font-size: 12px; color: var(--text-secondary);
+  text-transform: uppercase; letter-spacing: 0.5px; font-weight: 500;
+  margin-bottom: 8px;
+}
+.stat-value {
+  font-size: 32px; font-weight: 700; color: var(--text-primary);
+}
+.stat-card .badge {
+  display: inline-block; margin-top: 4px;
+  padding: 2px 8px; border-radius: 999px; font-size: 11px;
+  background: var(--bg-elevated); color: var(--text-tertiary);
+}
+
+/* ===== 输入框 ===== */
+.input {
+  width: 100%; padding: 10px 14px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-default);
+  border-radius: 8px; color: var(--text-primary); font-size: 14px;
+  outline: none; transition: border-color 0.15s;
+}
+.input:focus { border-color: var(--accent); }
+
+/* ===== 列表项 ===== */
+.list-item {
+  display: flex; align-items: center; gap: 12px;
+  padding: 12px 16px; border-radius: 8px; cursor: pointer;
+  transition: background 0.15s;
+}
+.list-item:hover { background: var(--bg-hover); }
+.list-icon {
+  width: 32px; height: 32px; border-radius: 6px;
+  background: var(--bg-elevated);
+  display: flex; align-items: center; justify-content: center;
+  font-size: 14px; color: var(--text-secondary);
+}
+.list-content { flex: 1; }
+.list-title { font-size: 14px; font-weight: 500; }
+.list-meta { font-size: 12px; color: var(--text-tertiary); margin-top: 2px; }
+
+/* ===== 状态指示器 ===== */
+.dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; }
+.dot-success { background: var(--success); }
+.dot-warning { background: var(--warning); }
+.dot-error { background: var(--error); }
+.dot-info { background: var(--info); }
+
+/* ===== 配置卡片（Claude 切换器示意） ===== */
+.profile-card {
+  background: var(--bg-surface);
+  border: 1px solid var(--border-default);
+  border-radius: 12px; padding: 16px; margin-bottom: 12px;
+  display: flex; align-items: center; gap: 12px;
+}
+.profile-card.active {
+  border-color: var(--accent);
+  background: var(--accent-soft-bg, var(--bg-elevated));
+}
+.profile-avatar {
+  width: 36px; height: 36px; border-radius: 50%;
+  background: var(--bg-elevated); display: flex; align-items: center; justify-content: center;
+  font-weight: 600; color: var(--text-secondary);
+}
+.profile-name { font-size: 14px; font-weight: 600; }
+.profile-meta { font-size: 12px; color: var(--text-tertiary); margin-top: 2px; font-family: 'JetBrains Mono', 'SF Mono', monospace; }
+
+/* ===== Markdown 编辑器示意 ===== */
+.editor {
+  display: grid; grid-template-columns: 200px 1fr 1fr; gap: 16px;
+  height: 360px;
+}
+.tree, .edit-pane, .preview-pane {
+  background: var(--bg-surface);
+  border: 1px solid var(--border-default);
+  border-radius: 12px; padding: 16px;
+  overflow: auto;
+}
+.tree-item {
+  padding: 6px 8px; font-size: 13px; border-radius: 4px;
+  color: var(--text-secondary); cursor: pointer;
+}
+.tree-item.active { background: var(--accent-soft-bg, var(--bg-hover)); color: var(--accent); }
+.edit-content, .preview-content {
+  font-family: 'JetBrains Mono', 'SF Mono', 'Source Han Mono SC', monospace;
+  font-size: 12.5px; line-height: 1.6; color: var(--text-secondary);
+  white-space: pre-wrap;
+}
+.preview-content { color: var(--text-primary); }
+.h1 { font-size: 20px; font-weight: 700; color: var(--text-primary); margin-bottom: 8px; }
+.h2 { font-size: 16px; font-weight: 600; color: var(--text-primary); margin: 12px 0 6px; }
+.code-block {
+  background: var(--bg-elevated); border-radius: 6px; padding: 8px 12px;
+  margin: 8px 0; font-size: 12px;
+  border-left: 3px solid var(--accent);
+}
+
+/* ===== Tag chips ===== */
+.chip {
+  display: inline-block; padding: 3px 10px; border-radius: 999px;
+  font-size: 11px; font-weight: 500; margin-right: 4px;
+  background: var(--bg-elevated); color: var(--text-secondary);
+  border: 1px solid var(--border-default);
+}
+.chip-accent { background: var(--accent-soft-bg, transparent); color: var(--accent); border-color: transparent; }
+
+/* ===== 分割 ===== */
+.section-title {
+  font-size: 16px; font-weight: 600; margin: 24px 0 12px;
+  display: flex; align-items: center; gap: 8px;
+}
+.row { display: flex; gap: 8px; align-items: center; }
+
+/* ===== 颜色 swatch ===== */
+.swatch-row {
+  display: flex; gap: 4px; margin-top: 12px;
+}
+.swatch {
+  flex: 1; height: 32px; border-radius: 4px;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 9px; font-family: monospace;
+  border: 1px solid rgba(255,255,255,0.1);
+}
+.swatch.dark { color: rgba(255,255,255,0.9); }
+.swatch.light { color: rgba(0,0,0,0.7); }
+
+/* ===== 显示控制 ===== */
+.style-frame {
+  display: none;
+}
+.style-frame.active {
+  display: block;
+}
+</style>
+</head>
+<body>
+
+<div class="toolbar">
+  <h1>🎨 DevDesk 配色方案对比</h1>
+  <span class="sub">| 同一个 UI 模板，不同配色</span>
+  <select onchange="switchStyle(this.value)">
+    <option value="style-a-dark">A · 冷静 · Dark</option>
+    <option value="style-a-light">A · 冷静 · Light</option>
+    <option value="style-b-dark" selected>B · 温暖 · Dark ⭐</option>
+    <option value="style-b-light">B · 温暖 · Light</option>
+    <option value="style-c-dark">C · 极简 · Dark</option>
+    <option value="style-c-light">C · 极简 · Light</option>
+    <option value="style-h1-dark">H1 · B底+A边 · Dark</option>
+    <option value="style-h2-dark">H2 · C底+B橘 · Dark</option>
+    <option value="style-h3-dark">H3 · A骨架+B点缀 · Dark</option>
+  </select>
+  <span class="sub" id="styleDesc"></span>
+</div>
+
+<!-- ============ 模板定义 ============ -->
+<template id="appTpl">
+  <div class="app">
+    <!-- 侧边栏 -->
+    <aside class="sidebar">
+      <div class="brand">
+        <div class="logo">D</div>
+        <span>DevDesk</span>
+      </div>
+      <div class="nav-item">
+        <span class="icon">🏠</span>
+        <span>首页</span>
+      </div>
+      <div class="nav-item active">
+        <span class="icon">📝</span>
+        <span>Markdown 笔记本</span>
+      </div>
+      <div class="nav-item">
+        <span class="icon">✅</span>
+        <span>Todo 看板</span>
+      </div>
+      <div class="nav-item">
+        <span class="icon">🔄</span>
+        <span>Claude 切换器</span>
+      </div>
+      <div style="flex:1"></div>
+      <div class="nav-item">
+        <span class="icon">⚙️</span>
+        <span>设置</span>
+      </div>
+    </aside>
+
+    <!-- 主区 -->
+    <main class="main">
+      <div class="topbar">
+        <div>
+          <div class="page-title">Markdown 笔记本</div>
+          <div class="page-subtitle">本地化的笔记系统，文件可直接用外部编辑器打开</div>
+        </div>
+        <div class="topbar-actions">
+          <button class="btn btn-ghost">↻ 重扫</button>
+          <button class="btn btn-secondary">⚙ 设置</button>
+          <button class="btn btn-primary">+ 新建笔记</button>
+        </div>
+      </div>
+
+      <!-- Markdown 编辑器三栏 -->
+      <div class="editor">
+        <div class="tree">
+          <div class="tree-item active">📄 设计稿v2.md</div>
+          <div class="tree-item">📄 周会纪要.md</div>
+          <div class="tree-item">📄 bug分析.md</div>
+          <div style="margin-top: 8px; color: var(--text-tertiary); font-size: 11px; padding: 6px 8px;">▾ 📁 inbox</div>
+          <div class="tree-item" style="padding-left: 24px;">📄 ideas.md</div>
+          <div class="tree-item" style="padding-left: 24px;">📄 todo.md</div>
+          <div style="margin-top: 16px;">
+            <span class="chip">#工作</span>
+            <span class="chip">#学习</span>
+          </div>
+        </div>
+        <div class="edit-pane">
+          <div class="edit-content"># 你好
+
+这是段落文字，演示**中文**与 *English* 混排效果。
+
+## 二级标题
+
+- 列表项 1
+- 列表项 2
+
+```cpp
+#include &lt;iostream&gt;
+int main() { return 0; }
+```
+
+> 引用块测试</div>
+        </div>
+        <div class="preview-pane">
+          <div class="preview-content">
+            <div class="h1">你好</div>
+            <p>这是段落文字，演示<strong>中文</strong>与 <em>English</em> 混排效果。</p>
+            <div class="h2">二级标题</div>
+            <p>• 列表项 1<br>• 列表项 2</p>
+            <div class="code-block">#include &lt;iostream&gt;<br>int main() { return 0; }</div>
+            <p style="border-left: 3px solid var(--accent); padding-left: 12px; color: var(--text-secondary);">引用块测试</p>
+          </div>
+        </div>
+      </div>
+
+      <!-- 状态色演示 -->
+      <div class="section-title">状态色演示</div>
+      <div class="card">
+        <div class="row" style="gap: 24px; flex-wrap: wrap;">
+          <div class="row">
+            <span class="dot dot-success"></span>
+            <span>成功</span>
+            <span class="chip" style="font-family:monospace">--success</span>
+          </div>
+          <div class="row">
+            <span class="dot dot-warning"></span>
+            <span>警告</span>
+            <span class="chip" style="font-family:monospace">--warning</span>
+          </div>
+          <div class="row">
+            <span class="dot dot-error"></span>
+            <span>错误</span>
+            <span class="chip" style="font-family:monospace">--error</span>
+          </div>
+          <div class="row">
+            <span class="dot dot-info"></span>
+            <span>提示</span>
+            <span class="chip" style="font-family:monospace">--info</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- 按钮 + 输入 -->
+      <div class="section-title">交互组件</div>
+      <div class="card">
+        <div class="row" style="gap: 12px; flex-wrap: wrap; margin-bottom: 12px;">
+          <button class="btn btn-primary">主按钮</button>
+          <button class="btn btn-secondary">次按钮</button>
+          <button class="btn btn-ghost">文字按钮</button>
+        </div>
+        <input class="input" placeholder="🔍 搜索笔记..." />
+      </div>
+
+      <!-- Claude 切换器示意 -->
+      <div class="section-title">Claude 切换器</div>
+      <div class="profile-card active">
+        <div class="profile-avatar">官</div>
+        <div style="flex:1">
+          <div class="row" style="gap: 8px;">
+            <span class="profile-name">官方</span>
+            <span class="chip chip-accent">active</span>
+            <span class="dot dot-success"></span>
+          </div>
+          <div class="profile-meta">https://api.anthropic.com · claude-sonnet-4-5</div>
+        </div>
+        <button class="btn btn-secondary">测试</button>
+      </div>
+      <div class="profile-card">
+        <div class="profile-avatar">3</div>
+        <div style="flex:1">
+          <div class="profile-name">第三方A</div>
+          <div class="profile-meta">https://api.example.com · claude-opus-5</div>
+        </div>
+        <button class="btn btn-ghost">启用</button>
+      </div>
+
+      <!-- 颜色 swatch -->
+      <div class="section-title">色板速览</div>
+      <div class="card">
+        <div class="swatch-row" id="swatches"></div>
+      </div>
+
+      <!-- Home 仪表盘示意 -->
+      <div class="section-title">Home 仪表盘（额外展示）</div>
+      <div class="stats-grid">
+        <div class="stat-card">
+          <div class="stat-label">今日笔记</div>
+          <div class="stat-value">3</div>
+          <span class="badge">+1</span>
+        </div>
+        <div class="stat-card">
+          <div class="stat-label">待办任务</div>
+          <div class="stat-value">7</div>
+          <span class="badge">3 高优</span>
+        </div>
+        <div class="stat-card">
+          <div class="stat-label">逾期任务</div>
+          <div class="stat-value" style="color: var(--error)">1</div>
+          <span class="badge">需关注</span>
+        </div>
+        <div class="stat-card">
+          <div class="stat-label">API 调用</div>
+          <div class="stat-value">142</div>
+          <span class="badge">今日</span>
+        </div>
+      </div>
+
+      <!-- Todo 看板示意 -->
+      <div class="section-title">Todo 看板（额外展示）</div>
+      <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px;">
+        <div class="card" style="padding: 12px;">
+          <div class="row" style="justify-content: space-between; margin-bottom: 8px;">
+            <strong>待办 (3)</strong>
+            <span style="color: var(--text-tertiary);">+</span>
+          </div>
+          <div class="card" style="margin-bottom: 6px; padding: 8px 10px; background: var(--bg-elevated);">
+            <div style="font-size: 13px;">写文档</div>
+            <div class="row" style="gap: 4px; margin-top: 4px;">
+              <span class="chip chip-accent" style="font-size:10px">高</span>
+              <span style="font-size: 10px; color: var(--text-tertiary);">⏰ 明天</span>
+            </div>
+          </div>
+          <div class="card" style="margin-bottom: 6px; padding: 8px 10px; background: var(--bg-elevated);">
+            <div style="font-size: 13px;">会议纪要</div>
+          </div>
+        </div>
+        <div class="card" style="padding: 12px;">
+          <div class="row" style="justify-content: space-between; margin-bottom: 8px;">
+            <strong>进行中 (1)</strong>
+            <span style="color: var(--text-tertiary);">+</span>
+          </div>
+          <div class="card" style="margin-bottom: 6px; padding: 8px 10px; background: var(--bg-elevated); border-left: 3px solid var(--accent);">
+            <div style="font-size: 13px;">修复bug#42</div>
+            <div class="row" style="gap: 4px; margin-top: 4px;">
+              <span class="chip" style="font-size:10px">中</span>
+            </div>
+          </div>
+        </div>
+        <div class="card" style="padding: 12px;">
+          <div class="row" style="justify-content: space-between; margin-bottom: 8px;">
+            <strong>已完成 (2)</strong>
+            <span style="color: var(--text-tertiary);">+</span>
+          </div>
+          <div class="card" style="margin-bottom: 6px; padding: 8px 10px; background: var(--bg-elevated); opacity: 0.6;">
+            <div style="font-size: 13px; text-decoration: line-through;">初次部署</div>
+          </div>
+        </div>
+      </div>
+
+    </main>
+  </div>
+</template>
+
+<!-- ============ 渲染所有方案 ============ -->
+<div id="frames"></div>
+
+<script>
+const STYLES = {
+  'style-a-dark':   { name: 'A · 冷静 · Dark',   desc: '近黑蓝灰 + Linear 紫，开发者识别度极高' },
+  'style-a-light':  { name: 'A · 冷静 · Light',  desc: 'Linear 紫 + GitHub 风格白底' },
+  'style-b-dark':   { name: 'B · 温暖 · Dark',   desc: '暖墨底 + Claude 陶土橘，米白文本，调研推荐 ⭐' },
+  'style-b-light':  { name: 'B · 温暖 · Light',  desc: 'Claude Ivory 米白底 + 暖橘，中文最舒服' },
+  'style-c-dark':   { name: 'C · 极简 · Dark',   desc: 'macOS systemGray6 + Raycast 红' },
+  'style-c-light':  { name: 'C · 极简 · Light',  desc: 'macOS systemGray + Raycast 红' },
+  'style-h1-dark':  { name: 'H1 · B底+A边 · Dark', desc: '暖色基调 + 冷峻精度边框' },
+  'style-h2-dark':  { name: 'H2 · C底+B橘 · Dark', desc: 'macOS 原生 + Claude 品牌色' },
+  'style-h3-dark':  { name: 'H3 · A骨架+B点缀 · Dark', desc: '冷静骨架 + 暖橘焦点' },
+};
+
+const frames = document.getElementById('frames');
+const tpl = document.getElementById('appTpl');
+
+Object.entries(STYLES).forEach(([className, info]) => {
+  const frame = document.createElement('div');
+  frame.className = 'style-frame ' + className;
+  frame.dataset.style = className;
+  const clone = tpl.content.cloneNode(true);
+
+  // 注入 swatch
+  const swatchesEl = clone.querySelector('#swatches');
+  const samples = [
+    { var: '--bg-base', label: 'base' },
+    { var: '--bg-surface', label: 'surface' },
+    { var: '--bg-elevated', label: 'elev' },
+    { var: '--accent', label: 'accent' },
+    { var: '--text-primary', label: 'text' },
+    { var: '--text-secondary', label: 'sub' },
+    { var: '--border-default', label: 'border' },
+    { var: '--success', label: 'OK' },
+    { var: '--warning', label: 'warn' },
+    { var: '--error', label: 'err' },
+  ];
+  samples.forEach(s => {
+    const div = document.createElement('div');
+    div.className = 'swatch dark';
+    div.style.background = `var(${s.var})`;
+    div.textContent = s.label;
+    swatchesEl.appendChild(div);
+  });
+
+  frame.appendChild(clone);
+  frames.appendChild(frame);
+});
+
+function switchStyle(styleName) {
+  document.querySelectorAll('.style-frame').forEach(f => {
+    f.classList.toggle('active', f.dataset.style === styleName);
+  });
+  const info = STYLES[styleName];
+  document.getElementById('styleDesc').textContent = ' — ' + info.desc;
+}
+
+// 初始
+switchStyle('style-b-dark');
+</script>
+
+</body>
+</html>

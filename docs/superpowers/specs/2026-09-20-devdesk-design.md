@@ -431,21 +431,31 @@ void addConsoleOutput();
 // src/core/theme.h
 namespace core::theme {
 
-// 颜色 token
+// 颜色 token（基于方案 B：温暖专业，Claude.ai 风格）
 struct ColorTokens {
-    eui::Color background;      // 主背景
-    eui::Color surface;        // 卡片表面
-    eui::Color surfaceAlt;     // 备选表面
-    eui::Color primary;        // 主色（按钮、强调）
-    eui::Color primaryHover;
-    eui::Color danger;         // 错误/危险
-    eui::Color success;        // 成功
-    eui::Color warn;           // 警告
-    eui::Color textPrimary;    // 主文本
-    eui::Color textSecondary;  // 次文本
-    eui::Color textMuted;      // 弱化文本
-    eui::Color border;         // 边框
-    eui::Color borderStrong;
+    eui::Color background;        // 主背景
+    eui::Color surface;          // 卡片表面
+    eui::Color surfaceElevated;  // 浮层表面
+    eui::Color hover;            // hover 背景
+    eui::Color active;           // 选中 / 按下态
+
+    eui::Color primary;          // Claude Clay #D97757 — 主品牌色
+    eui::Color primaryHover;     // #E0896B
+    eui::Color primaryPressed;   // #B85F3F
+    eui::Color primarySoftBg;    // 强调态背景 #3A2620 (dark) / #F5E6DE (light)
+
+    eui::Color textPrimary;
+    eui::Color textSecondary;
+    eui::Color textTertiary;
+    eui::Color textDisabled;
+
+    eui::Color borderDefault;
+    eui::Color borderMuted;
+
+    eui::Color success;          // Claude Sage Green #788C5D
+    eui::Color warning;          // Notion 黄 #C29243
+    eui::Color error;            // Cursor 玫红 #CF2D56
+    eui::Color info;             // Claude Dusty Blue #6A9BCC
 };
 
 // 尺寸 token
@@ -453,11 +463,15 @@ struct SizeTokens {
     float spacing;             // 8.0f
     float spacingSmall;        // 4.0f
     float spacingLarge;        // 16.0f
-    float radius;              // 6.0f
+    float spacingXLarge;       // 24.0f
+    float radius;              // 10.0f（按钮 / 输入框）
+    float radiusSmall;         // 6.0f（chip / tag）
+    float radiusLarge;         // 12.0f（卡片）
     float fontSizeSmall;       // 12.0f
     float fontSizeBody;        // 14.0f
     float fontSizeLarge;       // 18.0f
     float fontSizeTitle;       // 24.0f
+    float fontSizeDisplay;     // 32.0f
 };
 
 struct Tokens {
@@ -465,14 +479,144 @@ struct Tokens {
     SizeTokens sizes;
 };
 
-// 当前主题（默认深色）
+// 当前主题（默认深色 = 方案 B Dark）
 const Tokens& current();
 // 切换主题
 void setDark();
 void setLight();
+// 获取当前主题名（用于持久化）
+std::string currentThemeName();
 
 } // namespace core::theme
 ```
+
+### 6.5.1 Design Tokens（方案 B：温暖专业）
+
+**决策**：2026-09-20 选定方案 B（warm professional），与 Claude.ai / Cursor / Notion 风格同源。
+
+#### Dark Mode 主色板
+
+| Token | Hex | 用途 | 备注 |
+|-------|-----|------|------|
+| `--bg-base` | `#1A1816` | 主背景 | 暖墨底（深于 Cursor `#26251E`）|
+| `--bg-surface` | `#232120` | 卡片 / 面板 | +5% 亮度 |
+| `--bg-elevated` | `#2C2A28` | 浮层 / 菜单 / 弹窗 | +5% 亮度 |
+| `--bg-hover` | `#353231` | hover 态 | |
+| `--bg-active` | `#3E3B39` | 选中 / 按下态 | |
+| `--accent` | `#D97757` | Claude Clay — 主品牌色 | 唯一鲜艳色 |
+| `--accent-hover` | `#E0896B` | | |
+| `--accent-pressed` | `#B85F3F` | | |
+| `--accent-soft-bg` | `#3A2620` | 强调态背景（按钮二级态、激活态）| |
+| `--text-primary` | `#FAF9F5` | 正文 | Claude Ivory（15.2:1 AAA）|
+| `--text-secondary` | `#C9C5BD` | 次要 | |
+| `--text-tertiary` | `#9A948A` | 弱化 / 时间戳 | |
+| `--text-disabled` | `#6B6660` | 禁用 | |
+| `--border-default` | `#3A3735` | 默认边框 | |
+| `--border-muted` | `#2A2826` | 弱边框 | |
+| `--success` | `#788C5D` | Claude Sage Green | |
+| `--warning` | `#C29243` | Notion 黄 | |
+| `--error` | `#CF2D56` | Cursor 玫红 | |
+| `--info` | `#6A9BCC` | Claude Dusty Blue | |
+
+#### Light Mode 主色板
+
+| Token | Hex | 备注 |
+|-------|-----|------|
+| `--bg-base` | `#FAF9F5` | Claude Ivory 暖白 |
+| `--bg-surface` | `#FFFFFF` | |
+| `--bg-elevated` | `#FFFFFF` | |
+| `--bg-hover` | `#F5F2EC` | |
+| `--bg-active` | `#EBE7DF` | |
+| `--accent` | `#D97757` | 跨模式同色（强化品牌识别）|
+| `--accent-soft-bg` | `#F5E6DE` | |
+| `--text-primary` | `#1F1D1A` | 非纯黑（暖墨）|
+| `--text-secondary` | `#6B6660` | |
+| `--text-tertiary` | `#9A948A` | |
+| `--text-disabled` | `#B5B0A8` | |
+| `--border-default` | `#E8E6DC` | |
+| `--border-muted` | `#F0EEE6` | |
+| `--success` | `#5E7048` | |
+| `--warning` | `#9A6B30` | |
+| `--error` | `#B82850` | |
+| `--info` | `#4A7AAB` | |
+
+#### 字体搭配
+
+```cpp
+// EUI-NEO 通过 FreeType 加载 TTF 文件
+// 路径：src/core/fonts/
+
+namespace core::theme {
+struct FontTokens {
+    std::string sansFamily;       // "Inter" + 系统 fallback
+    std::string sansFilePath;     // "fonts/Inter-Regular.ttf"
+    std::string monoFamily;       // "JetBrains Mono"
+    std::string monoFilePath;     // "fonts/JetBrainsMono-Regular.ttf"
+    std::string chineseFamily;    // macOS: PingFang SC; Windows: 微软雅黑
+    float bodyLineHeight;         // 1.6（英文）/ 1.8（中文）
+    float chineseLetterSpacing;   // 0.02em
+};
+}
+```
+
+字体加载策略：
+- **主字体**：开源 Inter（Regular / Medium / SemiBold / Bold），文件 ~400 KB
+- **等宽字体**：开源 JetBrains Mono（Regular / Bold），文件 ~250 KB
+- **中文 fallback**：不打包字体，使用系统字体（macOS 自动用苹方，Windows 自动用微软雅黑）
+- **版权合规**：Inter 与 JetBrains Mono 均为 OFL 协议，可商用打包
+
+#### 圆角系统
+
+| 元素 | 圆角 |
+|------|------|
+| 按钮 | 10 px |
+| 输入框 | 10 px |
+| Chip / Tag | 999 px (pill) |
+| 小卡片 | 8 px |
+| 卡片 | 12 px |
+| 大卡片 / 弹窗 | 14 px |
+| macOS 27 窗口 | 18 px（系统默认）|
+
+#### 阴影（macOS 上 vibrancy 替代实色阴影）
+
+```cpp
+struct ShadowTokens {
+    // 弱阴影，用于普通浮层
+    ShadowTokens small = {
+        .offsetY = 1.0f,
+        .blur = 3.0f,
+        .color = eui::Color(0, 0, 0, 0.04f)
+    };
+    // 中阴影，用于弹窗
+    ShadowTokens medium = {
+        .offsetY = 4.0f,
+        .blur = 12.0f,
+        .color = eui::Color(0, 0, 0, 0.06f)
+    };
+};
+// 注：macOS 上优选 vibrancy（Liquid Glass），Windows 上用实色阴影
+```
+
+#### 动画
+
+| 场景 | 时长 | 缓动函数 |
+|------|------|----------|
+| 按钮 hover / 按下 | 150 ms | `ease-out` |
+| 页面切换 | 200 ms | `ease-out` |
+| 弹窗出现 | 200 ms | `cubic-bezier(0.32, 0.72, 0, 1)` (spring) |
+| Toast 进出 | 250 ms | `ease-out` |
+| 拖拽跟随 | 即时 | - |
+| Markdown 预览 debounce | 300 ms | - |
+
+#### 与 EUI-NEO 落地的注意事项
+
+- ✅ EUI-NEO 支持任意 hex `eui::Color`，所有 token 直接可用
+- ✅ EUI-NEO 支持 FreeType 字体加载（见 `3rd/EUI-NEO/3rd/freetype/`）
+- ✅ EUI-NEO 支持阴影 API（见 `core/render/opengl/opengl_backend.cpp`）
+- ✅ EUI-NEO 支持 transition / animation API（见 `core/runtime/runtime_animation.h`）
+- ⚠️ EUI-NEO **不支持** web 风格 CSS 变量；token 在 C++ 中硬编码到 `theme.cpp`
+- ⚠️ EUI-NEO **不支持** shadcn 风格组件；用 EUI-NEO 自带 `components/` 下的 button / input / chip
+- ⚠️ macOS 27 Liquid Glass 需要 EUI-NEO 上游支持（截至审计未实现），先用实色 + 阴影替代
 
 ### 6.6 `router.h` 和 `module_interface.h` - 模块系统
 
