@@ -1610,16 +1610,26 @@ public:
 
 ### 9.1 平台差异抹平点
 
-| 关注点 | macOS | Windows |
-|--------|-------|---------|
-| 应用数据目录 | `~/Library/Application Support/DevDesk/` | `%APPDATA%\DevDesk\` |
-| 配置目录 | 同上 | 同上 |
-| 快捷键修饰键 | `Cmd` | `Ctrl` |
-| 路径分隔符 | `/` | `\`（代码中统一用 `std::filesystem::path`） |
-| 字体 | 系统默认（San Francisco） | 系统默认（Segoe UI） |
-| 密钥存储 | Keychain | DPAPI |
-| 系统托盘 | 菜单栏图标 | 系统托盘 |
-| 进程启动 | `posix_spawn` | `CreateProcess` |
+| 关注点 | macOS | Windows | EUI-NEO 真实能力 |
+|--------|-------|---------|------------------|
+| 应用数据目录 | `~/Library/Application Support/DevDesk/` | `%APPDATA%\DevDesk\` | ✅ |
+| 配置目录 | 同上 | 同上 | ✅ |
+| 快捷键修饰键 | `Cmd`（`key.modifiers.shortcut()` 自动识别）| `Ctrl`（同上）| ✅ |
+| 路径分隔符 | `/` | `\`（代码统一用 `std::filesystem::path`）| ✅ |
+| 字体 | 系统默认（San Francisco / PingFang SC）| Segoe UI / Microsoft YaHei | ✅ EUI-NEO 自动 fallback |
+| 密钥存储 | Keychain | DPAPI | ✅ 通过 platform/keychain 抽象 |
+| **系统托盘** | 菜单栏图标 | 系统托盘 | ⚠️ **菜单项硬编码为 Show/Exit**，不能加自定义项；iconPath 可设 |
+| HiDPI | 自动（Retina）| 自动（4K）| ✅ 通过 `DslAppConfig{}.hiDpi(true)` 开启 |
+| 窗口默认大小 | 1600 × 1000 | 1600 × 1000 | ✅ `DslAppConfig{}.windowSize(1600, 1000)` |
+| 窗口最小大小 | 1200 × 720 | 1200 × 720 | ✅ `DslAppConfig{}.minWindowSize(1200, 720)` |
+| 全局 OS hotkey | 不支持 | 不支持 | ❌ 窗口失焦时收不到 key 事件，需先聚焦窗口 |
+
+**EUI-NEO 不支持的事项**（实现时绕开）：
+- ❌ OS 文件拖入窗口 → 用"+ 新建"按钮 + `core::platform::openFileDialog`
+- ❌ 跨元素拖放 → 自实现 `DragController`（P7a 键盘 / 菜单先行）
+- ❌ macOS 27 Liquid Glass → 实色 + 阴影替代
+- ❌ 字体 weight runtime 切换 → 只打包 Regular + Bold 两份
+- ❌ onResize / onMove 回调 → 通过 `DslWindowRequest::compose(ui, screen)` 的 `screen` 参数变化触发自适应
 
 ### 9.2 平台抽象层
 
