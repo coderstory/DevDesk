@@ -58,6 +58,8 @@ main → 4 个 module_* (markdown / todo / claude_proxy / home)
 
 ## ⚠️ EUI-NEO 真实能力盘点（已审计源码，2026-09-20）
 
+**📄 完整调研报告**：[`docs/EUI-NEO-CAPABILITIES.md`](docs/EUI-NEO-CAPABILITIES.md) — 后续开发遇到 UI 问题**先查这里**。
+
 实现时**只使用以下能力**，不要假设有未列出的 API：
 
 | ✅ 支持 | ❌ 不支持（必须 hack 或放弃） |
@@ -75,7 +77,13 @@ main → 4 个 module_* (markdown / todo / claude_proxy / home)
 | | **Tab 焦点循环**（InputKey::Tab 不自动调度）|
 | | **onResize / onMove 回调**（靠 `screen` 参数变化触发自适应）|
 
-完整盘点报告见 spec §16（实施里程碑）章节的依赖章节。
+### 后续开发遇到 UI 问题时的查询顺序
+
+1. 查 [`docs/EUI-NEO-CAPABILITIES.md`](docs/EUI-NEO-CAPABILITIES.md) 的组件清单和功能核对表
+2. grep `../EUI-NEO/components/` 看是否有现成组件
+3. grep `../EUI-NEO/core/dsl.h` 看 DSL API
+4. 看 `../EUI-NEO/examples/` 和 `../EUI-NEO/apps/` 的实际用法
+5. 如果还是不清楚，**不要假设**，明确写"待验证"留 TODO
 
 ## 🎨 视觉规范（"大气"原则）
 
