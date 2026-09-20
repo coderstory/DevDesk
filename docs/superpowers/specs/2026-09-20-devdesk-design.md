@@ -41,13 +41,14 @@ DevDesk 是一个面向开发者的桌面工具集，集三大常用工具于一
 
 ### 2.2 非功能性目标
 
-| 维度 | 目标 |
-|------|------|
-| 启动时间 | < 2 秒（macOS） |
-| 内存占用 | < 200 MB RSS |
-| 帧率 | UI 交互 ≥ 60 FPS |
-| 编译时间 | 全量编译 < 60 秒 |
-| 二进制大小 | < 5 MB（不含 EUI-NEO）|
+| 维度 | 目标 | 备注 |
+|------|------|------|
+| 启动时间 | < 5 秒（macOS）| 含 SQLite 启动、4 模块初始化、OpenGL 上下文创建；首次冷启 |
+| 内存占用 | < 250 MB RSS | 含 Cocoa/GL 驱动框架（实测 EUI-NEO 示例 ~120 MB）|
+| 帧率 | UI 交互 ≥ 60 FPS | 拖拽期间需 ≥ 30 FPS 即可接受；Markdown 长文档预览允许临时降帧 |
+| 编译时间 | 全量冷编译 < 120 秒 | EUI-NEO 自带 md4c/FreeType/yyjson 等，首次编译就接近 60 秒 |
+| 二进制大小 | < 35 MB（Release）| 含 EUI-NEO 全静态链；不含 EUI-NEO 单独 1.6 MB |
+| 跨平台 | macOS 主线承诺；Windows **实验性** | 见 §15.2 |
 
 ### 2.3 约束
 
@@ -70,9 +71,10 @@ DevDesk 是一个面向开发者的桌面工具集，集三大常用工具于一
 | 构建系统 | CMake 3.14+ | EUI-NEO 已用 |
 | 本地数据库 | SQLite3 | 单文件、零配置、跨平台 |
 | HTTP 客户端 | libcurl | 跨平台标准 |
-| HTTP 服务器 | cpp-httplib（header-only）| 本地代理用，单文件，零依赖 |
+| HTTP 服务器 | cpp-httplib（header-only）| 本地代理用，单文件，零依赖；**需 OpenSSL/LibreSSL 启用 HTTPS** |
 | JSON | yyjson（**复用 EUI-NEO 自带**）| 高性能、轻量 |
-| Markdown 渲染 | md4c（**复用 EUI-NEO 自带**）| C 标准库、轻量 |
+| Markdown 渲染 | md4c（**复用 EUI-NEO 自带**，独立 C 库，非标准库）| 轻量、C 标准 C99 |
+| TLS | OpenSSL / LibreSSL | cpp-httplib 启用 HTTPS 必需 |
 | 单元测试 | doctest（header-only）| 比 GoogleTest 快、单文件 |
 | 字体渲染 | FreeType（**复用 EUI-NEO 自带**）| - |
 | 加密 | macOS Keychain / Windows DPAPI | 平台原生密钥管理 |
@@ -247,12 +249,24 @@ public:
     // 判断是否成功
     bool isOk() const;
     bool isFail() const;
-    // 取值（错误时调用会 LOG+FATAL，调用前必须 isOk）
-    const T& value() const;
+    // 安全取值（错误时返回默认值，不退出进程）
     T valueOr(T defaultValue) const;
+    // 显式取值（错误时 LOG_FATAL + 抛 std::logic_error，调用前必须 isOk）
+    // 适合已确认成功的内部代码路径
+    const T& value() const;
+    // 类 Rust expect()：错误时 LOG_FATAL + 抛异常，附带自定义上下文
+    const T& expect(const std::string& contextMessage) const;
+    // 显式取值（不检查错误，调用前必须确认 isOk；性能敏感场景用）
+    const T& unsafeValue() const;
     // 取错误
     ErrorCode errorCode() const;
     const std::string& errorMessage() const;
+    // 链式：若 ok 应用 fn，否则传播错误
+    template<typename Fn>
+    auto map(Fn fn) -> Result<decltype(fn(std::declval<T>()))>;
+    // 链式：若 ok 应用返回 Result 的 fn
+    template<typename Fn>
+    auto andThen(Fn fn) -> Result<decltype(fn(std::declval<T>()).value())>;
 };
 
 } // namespace core
@@ -312,6 +326,24 @@ struct Migration {
     std::string sql;  // 多条用 ; 分隔
 };
 
+// SQLite 支持的标量类型（替代 std::any，类型安全）
+using SqlValue = std::variant<std::monostate, int64_t, double, std::string, std::vector<uint8_t>>;
+
+// 一行结果：按列名索引到值
+struct SqlRow {
+    std::vector<std::string> columnNames;
+    std::vector<SqlValue> values;
+
+    // 按列名取值（类型安全的访问器）
+    Result<int64_t> getInt64(const std::string& col) const;
+    Result<double> getDouble(const std::string& col) const;
+    Result<std::string> getString(const std::string& col) const;
+    Result<std::vector<uint8_t>> getBlob(const std::string& col) const;
+    bool isNull(const std::string& col) const;
+};
+
+// 线程模型：单连接 + 全局互斥锁（write 串行化，read 可并发但实现简单起见也走同一锁）
+// 后续如性能不够，可改为 connection-per-thread 池
 class SqliteDb {
 public:
     // 打开数据库（不存在则创建）
@@ -321,30 +353,42 @@ public:
     // 执行无返回值的 SQL
     Result<void> exec(const std::string& sql);
 
-    // 准备语句
+    // 准备语句（每个 Statement 内部使用 shared_ptr<sqlite3_stmt>）
     class Statement {
     public:
-        Result<void> bind(int index, int value);
+        // 绑定参数（按索引）
         Result<void> bind(int index, int64_t value);
         Result<void> bind(int index, double value);
         Result<void> bind(int index, const std::string& value);
         Result<void> bind(int index, std::nullptr_t);
-        // 执行 + 取出所有行
-        Result<std::vector<std::vector<std::any>>> fetchAll();
-        // 单步执行（用于批量插入）
-        Result<void> step();
+        Result<void> bind(int index, const std::vector<uint8_t>& blob);
+
+        // 执行一步
+        Result<bool> step();    // 返回 true = 有一行可读；false = 没有更多行
+        // 取当前行（必须在 step() 返回 true 后调用）
+        Result<SqlRow> currentRow() const;
+
+        // 一次性取出所有行
+        Result<std::vector<SqlRow>> fetchAll();
     };
 
     Result<Statement> prepare(const std::string& sql);
 
-    // 事务（自动 commit/rollback）
+    // 事务（自动 commit/rollback；包在 mutex 内）
     Result<void> transaction(std::function<Result<void>()> fn);
 
-    // 运行迁移（幂等）
+    // 运行迁移（幂等；包在事务里）
     Result<void> runMigrations(const std::vector<Migration>& migrations);
 
     // 当前 schema 版本
     int schemaVersion() const;
+
+    // 内部：取互斥锁供 Statement 内部使用
+    std::recursive_mutex& mutex();
+
+private:
+    sqlite3* handle_;
+    std::recursive_mutex mutex_;
 };
 
 } // namespace core::data
@@ -530,12 +574,29 @@ Result<Response> send(const Request& req);
 // 带重试（指数退避）
 Result<Response> sendWithRetry(const Request& req, int maxRetries = 3);
 
+// 流式响应的 chunk 状态
+enum class ChunkResult {
+    More,    // 还有数据，chunk 有效
+    End,     // 正常结束
+    Error,   // 网络错误或上游断开
+};
+
 // 流式发送（SSE 场景）
 class StreamingResponse {
 public:
-    bool readChunk(std::string& chunk);   // 读到返回 true，流结束返回 false
+    // 读下一个 chunk
+    //   返回 More + 填充 chunk = 有数据
+    //   返回 End = 流正常结束
+    //   返回 Error + errorMessage = 出错
+    ChunkResult readChunk(std::string& chunk, std::string& errorMessage);
+
     int statusCode() const;
-    std::string errorMessage() const;
+    std::string finalErrorMessage() const;     // 整个流关闭后的最终错误
+
+    // 主动取消（中断 libcurl transfer）
+    void cancel();
+
+    ~StreamingResponse();
 };
 
 Result<std::unique_ptr<StreamingResponse>> sendStreaming(const Request& req);
@@ -555,6 +616,7 @@ struct RequestCtx {
     std::map<std::string, std::string> headers;
     std::string body;
     std::string clientAddress;
+    bool authenticated = false;       // 认证通过的标记（由 Server 内部检查后设置）
 };
 
 class ResponseWriter {
@@ -569,8 +631,10 @@ using RouteHandler = std::function<void(const RequestCtx&, ResponseWriter&)>;
 
 class Server {
 public:
-    Server(std::string bindAddress, int port);
+    // 构造（authToken 留空表示不要求认证，仅用于开发模式）
+    Server(std::string bindAddress, int port, std::string authToken = "");
 
+    // 注册路由
     void route(const std::string& method, const std::string& path,
                RouteHandler handler);
 
@@ -585,6 +649,14 @@ public:
     bool isRunning() const;
 
     int actualPort() const;     // 用于获取随机分配的端口
+
+    // 认证相关
+    bool requiresAuth() const;
+    const std::string& authToken() const;       // 用于日志/UI 显示
+
+private:
+    // 内部：每个请求前调用，检查 Authorization: Bearer <token>
+    bool checkAuth(const RequestCtx& ctx) const;
 };
 
 } // namespace platform::http
@@ -795,12 +867,24 @@ private:
 
 **用户操作**（USER_GUIDE.md 写法）：
 1. 点击左下「+ 新建」→ 输入文件名 → 自动打开编辑器
-2. 在中间编辑 Markdown，右侧实时渲染
-3. `Cmd+S`（macOS）/ `Ctrl+S`（Windows）保存
+2. 在中间编辑 Markdown，右侧实时渲染（**带 300ms debounce**，避免每键重渲染）
+3. `Cmd+S`（macOS）/ `Ctrl+S`（Windows）保存 → 触发外部文件变更检测时自动让 DevDesk 重读
 4. 顶部搜索框输入关键词 → 显示匹配的文件列表
 5. 点击文件树的文件 → 加载到编辑器
 6. 点击标签 → 过滤显示同标签的文件
 7. 文件存在系统目录中，可用任意外部编辑器直接打开
+
+**EUI-NEO 限制说明**（已知约束）：
+- **没有文件拖入 API**（onDrop）：文件需通过 UI 新建按钮添加，不支持拖文件进窗口
+- **没有真正的代码/Markdown 编辑器组件**：MVP 使用 `components::input.multiline(true)` 普通多行文本框
+  - 不支持：语法高亮、行号、括号匹配、代码折叠、缩进
+  - 支持：多行输入、IME、复制粘贴、撤销重做、选区
+- **实时预览每次步骤**：解析 md4c → 重建 Element 树 → 触发 dirty rect
+  - 长文档（> 5000 字）下需 debounce（300ms）+ 分段渲染
+  - 否则帧率会从 60FPS 跌到 20FPS 以下
+- **外部编辑器冲突处理**：
+  - 启用 `std::filesystem::last_write_time` 轮询（每 5 秒） + kqueue/inotify/ReadDirectoryChangesW 平台 watcher
+  - 若检测到磁盘文件 mtime > DevDesk 编辑器 mtime，弹 toast：「文件已被外部修改，是否重新加载？」三选项：覆盖 / 重新加载 / 取消
 
 ### 8.2 模块：Todo 看板
 
@@ -920,24 +1004,84 @@ public:
 **用户操作**：
 1. 进入页面看到 4 个默认列
 2. `Cmd+N` / `Ctrl+N` 快速新建任务（在第一列）
-3. 鼠标拖拽卡片跨列移动
-4. 单击卡片打开详情面板（编辑标题、描述、优先级、截止日期、标签）
-5. 右键卡片 → 快捷菜单（编辑/删除/移动到...）
-6. 点击列标题 → 重命名 / 改色 / 删除
+3. **拖拽**（P7b 阶段）：鼠标按下卡片 → 拖动 → 跨列放置，详见 `DragController` 设计
+4. **键盘/菜单移动**（P7a 阶段，必交付）：选中卡片 + `Cmd+↑/↓` 上下移动；右键菜单 → 「移动到...」选列
+5. 单击卡片打开详情面板（编辑标题、描述、优先级、截止日期、标签）
+6. 右键卡片 → 快捷菜单（编辑/删除/移动到...）
+7. 点击列标题 → 重命名 / 改色 / 删除
+
+#### 拖拽框架设计（DragController）
+
+**背景**：EUI-NEO 只提供 `onDrag`（指针拖动）回调，无 drop target / 跨元素移动语义。所有拖拽需自实现。
+
+```cpp
+// src/core/drag_controller.h
+namespace core::drag {
+
+struct DragContext {
+    std::string dragId;          // 由调用方生成的拖拽唯一标识
+    void* payload;               // 拖拽的数据（如 taskId）
+    eui::Vec2 startPosition;     // 起始位置
+    eui::Vec2 currentPosition;   // 当前光标位置
+};
+
+class DragController {
+public:
+    // 注册可拖拽元素（鼠标按下时调用）
+    //   onDragStart: 拖拽开始，可视化反馈（半透明、阴影）
+    //   onDragMove: 光标移动
+    //   onDragEnd: 拖拽结束（含是否在有效 drop target 上）
+    void registerDraggable(
+        const std::string& elementId,
+        std::function<void(const DragContext&)> onDragStart,
+        std::function<void(const DragContext&)> onDragMove,
+        std::function<void(const DragContext&, bool droppedOnValidTarget)> onDragEnd);
+
+    // 注册 drop target（鼠标移入/移出时检测）
+    void registerDropTarget(
+        const std::string& targetId,
+        eui::Rect bounds,
+        std::function<bool(const DragContext&)> acceptPredicate,
+        std::function<void(const DragContext&)> onDragEnter,
+        std::function<void(const DragContext&)> onDragLeave,
+        std::function<void(const DragContext&)> onDrop);
+
+    // 接收 EUI-NEO 的指针事件（应在主 UI compose 中调用）
+    void onPointerDown(eui::Vec2 pos);
+    void onPointerMove(eui::Vec2 pos);
+    void onPointerUp(eui::Vec2 pos);
+
+private:
+    DragContext current_;
+    bool dragging_ = false;
+};
+
+}
+```
+
+**实现要点**：
+- DragController 是单例，由 Router 创建并注入到需要拖拽的模块
+- 鼠标按下时通过 hit-test 找到 draggable 元素
+- 鼠标移动时更新 current_，通知 draggable 的 onDragMove
+- 同时 hit-test 找 drop target，触发 enter/leave
+- 鼠标抬起时调用 onDragEnd，参数告诉调用方是否落在有效 target
+- 失败回退：若 P7b 拖拽体验不达 60 FPS 或频繁崩溃，**直接降级为只保留 P7a 键盘/菜单移动**，不阻塞交付
 
 ### 8.3 模块：Claude 配置切换器
 
 #### 数据模型
 
 ```sql
+-- API key 不存在 SQLite，**只存平台原生 Keychain/DPAPI**；本表存引用
 CREATE TABLE claude_profiles (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
-    name TEXT UNIQUE NOT NULL,            -- "官方" / "第三方A" / "测试"
-    base_url TEXT NOT NULL,                -- "https://api.anthropic.com"
-    api_key_encrypted BLOB NOT NULL,       -- 加密后的 token
-    api_key_hint TEXT NOT NULL,            -- 显示用，如 "sk-ant-***xyz"
-    model TEXT NOT NULL,                   -- "claude-sonnet-5"
-    is_active INTEGER NOT NULL DEFAULT 0,  -- 全局唯一
+    name TEXT UNIQUE NOT NULL,                -- "官方" / "第三方A" / "测试"
+    base_url TEXT NOT NULL,                    -- "https://api.anthropic.com"
+    api_key_hint TEXT NOT NULL,                -- 仅显示用：明文末3位（如 "***xyz"），便于用户区分多个 key
+    api_key_check TEXT NOT NULL,               -- 明文前 8 字符的 SHA256 hex，用于 profile 删除时验证选错 key
+    keychain_account TEXT NOT NULL,            -- Keychain/DPAPI 中的账号名（"DevDesk:claude:profile:<id>"）
+    model TEXT NOT NULL,                       -- 默认 "claude-sonnet-4-5"
+    is_active INTEGER NOT NULL DEFAULT 0,      -- 全局唯一
     created_at INTEGER NOT NULL,
     updated_at INTEGER NOT NULL
 );
@@ -974,8 +1118,10 @@ struct Profile {
     int64_t id;
     std::string name;
     std::string baseUrl;
-    std::string apiKeyPlain;       // 仅在使用时存在于内存
-    std::string apiKeyHint;
+    std::string apiKeyPlain;       // **仅在内存中存在**，从不落盘 SQLite
+    std::string apiKeyHint;        // "***xyz" 形式，用于 UI 显示
+    std::string apiKeyCheck;       // 前 8 字符的 SHA256 hex，用于防止误操作
+    std::string keychainAccount;   // Keychain/DPAPI 中的账号
     std::string model;
     bool isActive;
     std::time_t createdAt;
@@ -989,13 +1135,20 @@ public:
 
     // Profile CRUD
     Result<std::vector<Profile>> listProfiles();
+    // getProfile 返回的 Profile.apiKeyPlain **不填充**（空字符串），需显式 loadApiKey
     Result<Profile> getProfile(int64_t id);
+
+    // 创建（API key 入 Keychain，引用入 SQLite）
     Result<Profile> createProfile(const std::string& name,
                                    const std::string& baseUrl,
                                    const std::string& apiKey,
                                    const std::string& model);
-    Result<void> updateProfile(const Profile& profile);
-    Result<void> deleteProfile(int64_t id);
+
+    Result<void> updateProfile(const Profile& profile);  // profile.apiKeyPlain 为空则不改 key
+    Result<void> deleteProfile(int64_t id);             // 同时清理 Keychain 条目
+
+    // 显式加载明文 API key（仅在需要发请求时调用，用完即丢弃）
+    Result<std::string> loadApiKey(int64_t profileId);
 
     // 激活
     Result<Profile> getActiveProfile();
@@ -1003,14 +1156,6 @@ public:
 
     // 连通测试（发送 GET /v1/models）
     Result<platform::http::Response> testConnection(const Profile& profile);
-
-    // 加密辅助
-    Result<std::string> encryptApiKey(const std::string& plainKey);
-    Result<std::string> decryptApiKey(const std::string& encrypted);
-
-private:
-    // 内部：加载时把加密字段解密到内存（apiKeyPlain）
-    Result<Profile> loadProfileFromRow(const SqliteRow& row);
 };
 
 } // namespace module::claude
@@ -1058,8 +1203,8 @@ private:
 │                    │                                       │
 │ ● 官方 [active]    │ 名称: 官方                            │
 │   sk-ant-***xyz    │ Base URL: https://api.anthropic.com   │
-│   claude-sonnet-5  │ Token: sk-ant-***xyz (已脱敏)        │
-│                    │ 模型: claude-sonnet-5                 │
+│   claude-sonnet-4-5  │ Token: sk-ant-***xyz (已脱敏)        │
+│                    │ 模型: claude-sonnet-4-5                 │
 │ ○ 第三方A           │                                       │
 │   sk-***abc         │ [启用] [测试连通] [编辑] [删除]       │
 │   claude-opus-5    │                                       │
@@ -1081,7 +1226,7 @@ private:
    - 名称（必填）
    - Base URL（必填，默认 `https://api.anthropic.com`）
    - API Key（必填，密码框）
-   - 模型（必填，默认 `claude-sonnet-5`）
+   - 模型（必填，默认 `claude-sonnet-4-5`）
 2. 点击「测试连通」→ 发送 `GET /v1/models` → 显示状态码 + 耗时
 3. 点击「启用」→ 该 Profile 高亮，代理自动重启读取新配置
 4. Claude Code 配置：`ANTHROPIC_BASE_URL=http://127.0.0.1:8888`
@@ -1150,10 +1295,19 @@ public:
 **设置项**：
 1. **主题**：深色 / 浅色 / 跟随系统
 2. **笔记目录**：路径输入框 + 「打开目录」按钮
-3. **Claude 代理端口**：数字输入框
-4. **Claude 代理地址**：文本输入框（用于给 Claude Code 配置）
-5. **日志级别**：下拉框（Trace / Debug / Info / Warn / Error）
-6. **关于**：版本号、许可证、依赖列表
+3. **Markdown 编辑器字体大小**：数字输入框（默认 14）
+4. **Markdown 编辑器字体**：下拉（系统等宽 / 系统无衬线 / 自定义路径）
+5. **Claude 代理端口**：数字输入框（默认 8888；改后自动重启代理）
+6. **Claude 代理认证 Token**：只读显示当前 token +「复制」按钮 +「重新生成」按钮
+7. **调用日志保留天数**：数字输入框（默认 30；保留策略见 11.5）
+8. **API key 提示脱敏粒度**：下拉（仅末 3 位 / 仅末 6 位 / 完全隐藏）
+9. **日志级别**：下拉框（Trace / Debug / Info / Warn / Error）
+10. **关于**：版本号、许可证、依赖列表
+
+**安全说明**（写入文档）：
+- 代理地址固定为 `http://127.0.0.1:<port>`，**不暴露对外网**
+- 调用 Claude Code 时需在配置中加 `Authorization: Bearer <token>`
+- 设置页面提供 token 复制按钮，避免用户手动输入错误
 
 ---
 
@@ -1272,32 +1426,74 @@ TodoCard.cpp: 记录拖拽开始
   └─ LOG_INFO("移动任务: id=42 → column=3, position=1")
 ```
 
-### 10.4 一次 Claude API 代理调用
+### 10.4 一次 Claude API 代理调用（流式）
+
+#### 线程模型（三线程 + 队列）
+
+```
+[Thread A: cpp-httplib worker]                 [Thread B: libcurl]                 [Thread C: UI main]
+                                                                                   ┐
+  接收 POST /v1/messages                      ── 无工作 ──                        │ 信号通知
+  检查 Authorization: Bearer <token> ✓                                            │ 状态变化
+  检查请求大小 (避免 OOM, >10MB 拒绝)                                              │
+  构造 ResponseWriter (chunked provider)                                          │
+       │                                                                              │
+       ▼                                                                              │
+  从 cpp-httplib 内部队列 <queue_> 取数据 ────► 若有 ──► 写入 HTTP chunk ──► [客户端] 
+       ▲                                                                              │
+       │                                                                              │
+  [Thread B: libcurl connection thread]                                              │
+       │                                                                              │
+       ▼                                                                              │
+  sendStreaming(req)                                                                  │
+  libcurl CURLOPT_WRITEFUNCTION 回调 ──► 把 chunk 推入 <queue_> ◄─────────────┘
+                                                                                      
+  客户端断开 / 网络错误 / 完成:
+     ◄─── cancel() / 自然结束 ────
+     ◄─── 从队列读 End 标记 ────
+     ◄─── ResponseWriter.end() ────
+     ◄─── call_logger 写入 ────
+```
+
+**关键设计**：
+- `queue_`：线程安全的 `std::deque<std::string>` + `std::mutex` + `std::condition_variable`
+- libcurl 回调只做"队列推入"，不做 IO
+- cpp-httplib 的 chunked_content_provider 阻塞在队列 pop
+- 出错时从队列推入 Error 标记，cpp-httplib 停止读取 → 关闭连接
+- 超时保护：cpp-httplib 端设 5 分钟无新 chunk 则主动 close（防止挂死）
+- backpressure：队列上限 100 chunk（约 1 MB），超过则 libcurl 端 `curl_easy_pause` 暂停
+
+#### 请求路径
 
 ```
 Claude Code: POST http://127.0.0.1:8888/v1/messages
+            Headers: Authorization: Bearer <token>,
+                     x-api-key: sk-ant-xxx,
+                     anthropic-version: 2023-06-01,
+                     Content-Type: application/json
+            Body: JSON {model, messages, stream: true, ...}
   ↓
 cpp-httplib Server 接收
   ↓
 proxy_router.cpp: 路由 /v1/messages
-  ├─ 读取 RequestCtx（method, path, body, headers）
-  ├─ 记录开始时间戳
-  ├─ claudeService.getActiveProfile() → Profile
-  ├─ 构造转发请求：
+  ├─ 1. 验证 Authorization（auth_token 一致 → 通过；不一致 → 401）
+  ├─ 2. 读取 RequestCtx（method, path, body, headers）
+  ├─ 3. 记录开始时间戳
+  ├─ 4. claudeService.getActiveProfile() → Profile
+  ├─ 5. claudeService.loadApiKey(profileId) → 明文 token（用完即丢弃）
+  ├─ 6. 构造转发请求：
   │   - url = profile.baseUrl + path
-  │   - headers = 原始 headers + 重写 x-api-key
-  ├─ upstream_client.cpp: sendStreaming(req)
-  │   └─ libcurl 流式发起
+  │   - headers = 原始 headers（去掉 x-api-key） + x-api-key: 明文 token
+  │   - body = 透传
+  └─ 7. upstream_client.cpp: sendStreaming(req) → 启动三线程流式转发
   ↓
-上游响应流式到达
-  ├─ chunk by chunk 写入 ResponseWriter
-  ├─ ResponseWriter.write(chunk) → 通过 cpp-httplib 流式发给 Claude Code
-  ├─ 累计接收字节数
-  └─ 错误时立即关闭连接 + LOG_ERROR
+上游 Claude API 流式响应
+  ↓
+chunks 通过队列流回 Claude Code
   ↓
 流结束
   ├─ call_logger.cpp: 写入 claude_call_logs 表
-  │   ├─ profile_id, method, path, status_code, latency_ms, bytes
+  │   ├─ profile_id, method, path, status_code, latency_ms, request_bytes, response_bytes
   │   └─ 错误时 error 字段记录
   └─ ResponseWriter.end()
 ```
@@ -1390,11 +1586,23 @@ if (!result.isOk()) {
 | 集成测试 | SQLite 迁移、`MarkdownService` + 文件系统、proxy 转发 | doctest |
 | 端到端 | 应用启动、UI 交互 | AI 手动验证 + 自动截屏 |
 
-### 12.3 测试覆盖目标
+### 12.3 测试覆盖目标与度量
 
-- 核心工具类：`Result`、`paths`、`sqlite_db` 覆盖率 ≥ 90%
-- 各 Service 层：覆盖率 ≥ 80%
-- UI 层：不强制（依赖框架，人工验证）
+**覆盖率工具**：
+- macOS: `llvm-cov`（Xcode Command Line Tools 自带）+ `gcovr` 生成报告
+- Windows: `OpenCppCoverage` 或 `llvm-cov`（通过 LLVM 安装）
+- 集成到 CMake：在 Debug 构建中加 `--coverage` 编译标志
+
+**覆盖率目标**：
+
+| 层级 | 目标 |
+|------|------|
+| 核心工具类（`Result`、`paths`、`sqlite_db`、`logging`）| 行覆盖 ≥ 90% |
+| Service 层（各模块）| 行覆盖 ≥ 80% |
+| UI 层 | 不强制 |
+| Platform 层（`http_client`、`http_server`、`keychain`）| 行覆盖 ≥ 70%（mock 上游） |
+
+**报告产出**：`build/coverage/coverage.html` 单文件报告，每个 P 阶段验证覆盖率不下降。
 
 ### 12.4 Mock 策略
 
@@ -1553,18 +1761,27 @@ target_include_directories(DevDesk PRIVATE src)
 ### 14.2 cmake/Dependencies.cmake
 
 ```cmake
-# 找 SQLite3
+# 找 SQLite3（必须带 FTS5）
 find_package(SQLite3 REQUIRED)
+if(NOT SQLite3_VERSION_SYM OR NOT SQLite3_VERSION_SYM MATCHES "FTS5")
+    message(WARNING "SQLite3 编译时未启用 FTS5，Markdown 全文搜索功能将不可用")
+endif()
 
-# 找 CURL
+# 找 CURL（上游 Claude API 必需）
 find_package(CURL REQUIRED)
+
+# 找 OpenSSL（cpp-httplib HTTPS 支持必需）
+find_package(OpenSSL REQUIRED)
 
 # Threads
 find_package(Threads REQUIRED)
 
 # cpp-httplib（header-only，直接放 3rd/）
+# 注意：必须定义 CPPHTTPLIB_OPENSSL_SUPPORT 才能用 HTTPS
 add_library(cpp_httplib INTERFACE)
 target_include_directories(cpp_httplib INTERFACE ${CMAKE_SOURCE_DIR}/3rd/cpp-httplib)
+target_compile_definitions(cpp_httplib INTERFACE CPPHTTPLIB_OPENSSL_SUPPORT=1)
+target_link_libraries(cpp_httplib INTERFACE OpenSSL::SSL OpenSSL::Crypto)
 
 # yyjson / md4c / FreeType 复用 EUI-NEO 自带
 add_library(yyjson INTERFACE)
@@ -1637,67 +1854,97 @@ echo "截图已保存: docs/screenshots/${PAGE_NAME}.png"
 
 | 风险 | 等级 | 缓解措施 |
 |------|------|---------|
-| cpp-httplib 流式转发稳定性 | 🔴 高 | 集成测试 + mock 上游充分验证 |
-| EUI-NEO 拖拽 API 不支持/有限 | 🟡 中 | 先 spike 验证，必要时改用键盘菜单 |
-| macOS 27 OpenGL 移除 | 🟡 中 | 提供 Vulkan 选项，但 macOS 主路径仍是 OpenGL |
-| Keychain/DPAPI 跨平台差异 | 🟡 中 | 抽象层统一接口 |
-| md4c 渲染复杂 Markdown 边角 case | 🟢 低 | Markdown 语法标准且 md4c 成熟 |
+| **SSE 流式转发（cpp-httplib + libcurl）** | 🔴 高 | P0a 单独 PoC 验证三线程 + 队列架构；P10a 先做 buffer 模式；P10b 加流式；必须有 mock 上游 + 长连接回归测试 |
+| **EUI-NEO 无 drop-target 拖拽 API** | 🔴 高 | 自实现 DragController；P7a 先交付键盘/菜单移动；P7b 鼠标拖拽如不达 60 FPS 或频繁崩溃，**直接降级为只保留 P7a** |
+| **macOS 27 OpenGL 移除 + Vulkan 选项不可用** | 🔴 高 | 已审计：EUI-NEO 无 MoltenVK/Metal 配置，Vulkan 在 macOS 上**跑不通**。长期需 fork EUI-NEO 加 Metal 后端，或迁 SDL2+Metal 直写；MVP 仅承诺 OpenGL，macOS 27 升级节点再决策 |
+| **SQLite 多线程并发** | 🔴 高 | SqliteDb 内部 `std::recursive_mutex`，所有操作走同一把锁；Statement 引用 db 锁；call_log 写入也走同一锁。后续可改 connection-per-thread |
+| **代理无认证 → 本机进程可盗用 API key** | 🔴 高 | 启动时生成随机 token（32 字节 base64），要求 `Authorization: Bearer <token>`；UI 显示 token 供复制 |
+| Markdown 实时预览长文档帧率 | 🟡 中 | 300ms debounce + 分段渲染；长文档（>5000 字）做懒加载预览 |
+| EUI-NEO 无代码编辑器组件 | 🟡 中 | MVP 用 `components::input.multiline(true)`；语法高亮等 v2 |
+| EUI-NEO 无文件拖入 API | 🟢 低 | UI 加「+ 新建」按钮代替；用户用拖入的预期需在文档说明 |
+| macOS 27+ 实际可达性 | 🟡 中 | 已要求"macOS 27+"，但实际只在本机（macOS 26 Tahoe，2025）测过；具体 27 兼容性待发布后再验 |
+| FTS5 在 Windows SQLite 不可用 | 🟡 中 | vcpkg 用 `sqlite3[fts5]` feature；运行时检测，无 FTS5 降级到 LIKE |
+| md4c 复杂 Markdown 边角 case | 🟢 低 | 标准 Markdown 语法，md4c 成熟 |
 | 中文文件名编码 | 🟢 低 | 全程 UTF-8，std::filesystem 原生支持 |
+| 外部编辑器与 DevDesk 同时编辑同一文件 | 🟡 中 | mtime 轮询 + 平台 watcher，冲突时弹 toast 三选项 |
+| **OpenSSL 缺失 → HTTPS 无法连接** | 🟡 中 | 平台包作为硬依赖（macOS: brew install openssl；Windows: vcpkg install openssl），CMake find_package(OpenSSL REQUIRED) |
 
 ### 15.2 项目风险
 
 | 风险 | 等级 | 缓解措施 |
 |------|------|---------|
-| 范围过大 | 🟡 中 | 严格按 spec 实现，不做 spec 之外的功能 |
-| 用户不熟 C++ 无法 review | 🟡 中 | 文档 + 截屏 + 测试是主要反馈手段 |
-| Windows 验证难 | 🟡 中 | macOS 优先，Windows 通过 CI + 用户手测 |
+| **Windows 几乎无法验证** | 🔴 高 | 当前**没有 GitHub Actions 配置**；用户不熟 C++ 无法手测。MVP 诚实承诺 **macOS 为唯一主线**，Windows 标记为"实验性 — 编译通过 ≠ 可运行"；待补 CI workflow 后再升级承诺 |
+| 范围过大 | 🟡 中 | 严格按 spec 实现，不做 spec 之外的功能；每个 P 阶段都跑测试 + 截屏 |
+| 用户不熟 C++ 无法 review | 🟡 中 | 文档 + 截屏 + 测试 + 中文日志是主要反馈手段；自我诊断页面报告运行时状态 |
+| 调用日志无限增长 | 🟡 中 | 30 天滚动保留 + 月度归档（SQLite DELETE WHERE started_at < now-30d）|
+| 拖拽 / 流式 PoC 失败 | 🟡 中 | P7a 键盘/菜单 / P10a buffer 模式作为降级方案，确保核心功能仍可交付 |
 
 ### 15.3 权衡决策记录
 
 | 决策 | 选择 | 备选 | 理由 |
 |------|------|------|------|
-| 渲染后端 | OpenGL（默认）| Vulkan | macOS 27 可能弃用 GL，但 Vulkan 性能损耗 + MoltenVK 复杂度不划算 |
-| HTTP 服务器 | cpp-httplib | civetweb | 单文件、零依赖、API 简洁 |
+| 渲染后端 | OpenGL（macOS 主线）| Vulkan | Vulkan 在 macOS 上跑不通（无 MoltenVK），长期需评估 Metal 后端 |
+| HTTP 服务器 | cpp-httplib | civetweb | 单文件、零依赖、API 简洁；需 OpenSSL 支持 HTTPS |
 | JSON | yyjson | nlohmann/json | 复用 EUI-NEO 自带，性能更高 |
 | Markdown 渲染 | md4c | cmark | 复用 EUI-NEO 自带 |
 | 测试框架 | doctest | GoogleTest / Catch2 | 单文件、速度快 |
-| 拖拽交互 | EUI-NEO 原生（如有）| 自实现 | 优先使用框架能力 |
-| 加密 | Keychain/DPAPI | 应用内 AES | 用平台原生能力，密钥管理更安全 |
-| 主题 | 单深色 + 可切换浅色 | 多套主题 | YAGNI |
+| 拖拽交互 | 自实现 DragController | "等 EUI-NEO" | 已审计无 drop-target；P7a 键盘/菜单先做，P7b 鼠标拖拽可选 |
+| API key 存储 | 仅 Keychain/DPAPI | SQLite AES BLOB | 消除双存储攻击面；平台原生密钥管理更安全 |
+| 代理认证 | 随机 Bearer token | 不认证 / TLS 双向 | 127.0.0.1 + 强 token 足够；TLS 双向在 loopback 收益不大 |
+| 主题 | 深色 + 浅色双主题 | 多套主题 / 单深色 | YAGNI 但浅色不可少（白天使用场景） |
 | 文件存储 | 文件 + SQLite 索引 | 纯 SQLite | 用户可直接用外部编辑器 |
+| Markdown 编辑器 | 普通多行 Input | 自实现组件 | EUI-NEO 无编辑器组件；MVP 接受无语法高亮 |
 | 部署 | 源码构建 | 打包 .dmg/.msi | 个人项目，本地构建足够 |
+| 平台支持 | macOS 主线 + Windows 实验性 | 双主线 | 用户只 macOS，Windows 验证手段缺 |
+| 性能目标 | 启动 < 5s / 编译 < 120s / 二进制 < 35 MB | 更激进 | 实测后修订，符合 EUI-NEO 实际开销 |
 
 ---
 
 ## 16. 实施里程碑
 
-虽然用户不限制开发时间，但为方便跟踪进度，按以下顺序实施：
+虽然用户不限制开发时间，但为方便跟踪进度，按以下顺序实施。**红线风险点（P7 拖拽、P10 流式）拆成两步 + 前置 PoC**。
 
-| 阶段 | 内容 | 可交付物 |
-|------|------|---------|
-| **P0：项目骨架** | 目录、CMake、依赖、空窗口启动 | 应用启动后显示空窗口 |
-| **P1：Core 基础设施** | `Result`、`paths`、`logging`、`sqlite_db`、`theme` | 对应单元测试通过 |
-| **P2：Platform 层** | `http_client`、`http_server`、`keychain`、`json` | 对应单元测试通过 |
-| **P3：Router + Home** | 侧边栏 4 个模块入口 + Home 空状态 | 应用显示完整导航 |
-| **P4：Markdown MVP** | 文件树 + 编辑器 + 预览 | 能写笔记 + 渲染 |
-| **P5：Markdown 增强** | 搜索、标签 | 完整 Markdown 体验 |
-| **P6：Todo MVP** | 4 列 + 卡片 CRUD | 能管理任务 |
-| **P7：Todo 增强** | 拖拽、优先级、截止日期、标签 | 完整 Todo 体验 |
-| **P8：Claude profile** | profile CRUD + active 切换 | 能管理配置 |
-| **P9：Claude 代理（非流式）** | 代理转发 + 测试 + 日志 | Claude Code 能走通（buffer 模式）|
-| **P10：Claude 流式转发** | SSE 流式 chunk 透传 | Claude Code 流式响应正常 |
-| **P11：Claude 加密** | Keychain/DPAPI 存储 | API key 不再明文落盘 |
-| **P12：Home 仪表盘数据** | 真实数据展示 | 首页不是空壳 |
-| **P13：设置页面** | 主题、目录配置 | 用户可定制 |
-| **P14：Windows 适配** | 路径、字体、CI | Windows 上可编译运行 |
-| **P15：完善文档** | README、USER_GUIDE、ARCHITECTURE | 文档齐全 |
+| 阶段 | 内容 | 可交付物 | 依赖 |
+|------|------|---------|------|
+| **P0：项目骨架** | 目录、CMake、依赖、空窗口启动 | 应用启动后显示空窗口 | - |
+| **P1：Core 基础设施** | `Result`、`paths`、`logging`、`sqlite_db`（含 mutex）、`theme` | 对应单元测试通过 | P0 |
+| **P2：Platform 层** | `http_client`、`http_server`（含 auth）、`keychain`、`json` | 对应单元测试通过 | P1 |
+| **P3：Router + Home** | 侧边栏 4 个模块入口 + Home 空状态 + DragController 占位 | 应用显示完整导航 | P1 |
+| **P4：Markdown MVP** | 文件树 + 编辑器（Input 组件） + 预览（debounced）+ mtime watcher | 能写笔记 + 渲染 | P2, P3 |
+| **P5：Markdown 增强** | 搜索、标签、外部编辑器冲突处理 | 完整 Markdown 体验 | P4 |
+| **P6：Todo MVP** | 4 列 + 卡片 CRUD + 优先级/截止/标签 | 能管理任务 | P3 |
+| **P7a：Todo 移动（必交付）** | 键盘（`Cmd+↑/↓`）+ 右键菜单「移动到...」+ 列间排序逻辑 | 任务移动不依赖拖拽 | P6 |
+| **P7b：Todo 拖拽（可选）** | 自实现 DragController + 跨列拖拽 + 视觉反馈 | 鼠标拖拽可用 | P7a |
+| **P8：Claude profile** | profile CRUD + Keychain 存储 + active 切换 + token UI | 能管理配置 | P2, P3 |
+| **P0a：流式 PoC（前置 spike）** | 独立 console 程序：cpp-httplib + libcurl + mock 上游，验证三线程 + 队列架构 | 流式透传 demo 可跑 | P2 |
+| **P9：Claude 代理（非流式）** | 代理转发（buffer 模式）+ 测试 + 日志 + 认证 token 集成 | Claude Code 能走通 | P0a, P8 |
+| **P10a：Claude 流式（生产者-消费者）** | SSE 流式 chunk 透传，含 backpressure + 取消 + 超时 | 流式响应正常 | P9 |
+| **P10b：Claude 流式（质量保证）** | 5 分钟长连接回归 + 大 body (10MB) 压测 + 异常断连恢复 | 边界情况稳定 | P10a |
+| **P11：Claude 加密** | Keychain/DPAPI 存储（实际上 P8 已用，P11 确认加固）| API key 验证不落 SQLite | P8 |
+| **P12：Home 仪表盘数据** | 真实数据展示 + 30 天日志清理任务 | 首页不是空壳 | P4, P6, P9 |
+| **P13：设置页面** | 主题、目录、token UI、字体大小、日志保留策略 | 用户可定制 | P12 |
+| **P14：Windows 实验性支持** | 路径、字体、CI workflow（windows-latest runner）、FTS5 vcpkg feature | 编译 + 单元测试过；功能不承诺 | P13 |
+| **P15：完善文档** | README、USER_GUIDE、ARCHITECTURE + 自我诊断页面 + 已知限制 | 文档齐全 | P13 |
+| **P16：长期维护评估** | 评估 EUI-NEO Metal 后端或 fork 需求；评估 Markdown 编辑器自实现 | macOS 27+ 升级准备 | P15 |
 
-每个 P 阶段完成后：
-1. ✅ 跑 `./scripts/test.sh`（单元测试全过）
-2. ✅ 跑 `./scripts/dev.sh`（应用启动）
-3. ✅ 跑 `./scripts/screenshot.sh`（自动截屏）
-4. ✅ 更新 `docs/USER_GUIDE.md` 和 `docs/screenshots/`
-5. ✅ git commit
+### 16.1 失败回退路径
+
+| 阶段 | 失败表现 | 降级方案 |
+|------|---------|---------|
+| P7b 鼠标拖拽 | 帧率 < 30 FPS 或崩溃 | 砍掉鼠标拖拽，**只保留 P7a 键盘/菜单** |
+| P10a 流式 | 长连接挂起/内存泄漏 | 退回到 P9 buffer 模式，**流式推迟到 v2** |
+| P14 Windows | CI 编译失败 | 暂降为"已知不支持 Windows"，**修复优先 macOS** |
+| P0a PoC | 三线程架构不可行 | 流式永久放弃，**始终 buffer 模式** |
+
+### 16.2 验证规范（每个 P 阶段完成后必须做）
+
+1. ✅ 跑 `./scripts/test.sh`（单元测试全过，含覆盖率报告）
+2. ✅ 跑 `./scripts/dev.sh`（应用启动，5 秒内可见主界面）
+3. ✅ 跑 `./scripts/screenshot.sh <page>`（自动截屏当前页）
+4. ✅ 录屏验证拖拽/动画（仅 P7b、P10b 等含动画阶段）
+5. ✅ 更新 `docs/USER_GUIDE.md` 和 `docs/screenshots/`
+6. ✅ 更新 `docs/KNOWN_LIMITATIONS.md`（记录该阶段发现的边界）
+7. ✅ git commit + 写 CHANGELOG.md 条目
 
 ---
 
