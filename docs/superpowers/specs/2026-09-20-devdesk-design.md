@@ -2,7 +2,7 @@
 
 > **项目代号**：DevDesk
 > **类型**：跨平台桌面 GUI 应用（个人瑞士军刀）
-> **目标平台**：macOS 27+、Windows 11
+> **目标平台**：macOS（开发机当前 macOS 27，实际可达 macOS 26+ Tahoe）、Windows 11
 > **作者**：纯 AI 开发（用户不熟悉 C++）
 > **创建日期**：2026-09-20
 
@@ -224,19 +224,8 @@ DevDesk/
 // src/core/result.h
 namespace core {
 
-// 错误码枚举
-enum class ErrorCode {
-    Ok = 0,
-    FileNotFound,
-    FilePermissionDenied,
-    DatabaseError,
-    NetworkError,
-    ParseError,
-    ValidationError,
-    NotFound,
-    AlreadyExists,
-    Internal,
-};
+// 错误码枚举的完整定义见 §11.2（统一唯一权威定义）
+// 这里只前向引用，避免重复
 
 // 通用 Result 容器
 template<typename T>
@@ -458,20 +447,23 @@ struct ColorTokens {
     eui::Color info;             // Claude Dusty Blue #6A9BCC
 };
 
-// 尺寸 token
+// 尺寸 token（**唯一权威定义**，§6.5.2 大气设计原则统一此值）
 struct SizeTokens {
-    float spacing;             // 8.0f
+    float spacing;             // 8.0f（基础间距单位）
     float spacingSmall;        // 4.0f
     float spacingLarge;        // 16.0f
     float spacingXLarge;       // 24.0f
-    float radius;              // 10.0f（按钮 / 输入框）
-    float radiusSmall;         // 6.0f（chip / tag）
-    float radiusLarge;         // 12.0f（卡片）
-    float fontSizeSmall;       // 12.0f
-    float fontSizeBody;        // 14.0f
+    float spacingXXLarge;      // 40.0f（内容区 padding）
+    float radius;              // 10.0f（按钮 / 输入框默认）
+    float radiusSmall;         // 6.0f（仅小元素辅助）
+    float radiusLarge;         // 14.0f（大卡片 / 弹窗）
+    float radiusPill;          // 999.0f（chip / tag）
+    float fontSizeSmall;       // 13.0f
+    float fontSizeBody;        // **15.0f**（大气正文，不可用 14）
     float fontSizeLarge;       // 18.0f
     float fontSizeTitle;       // 24.0f
-    float fontSizeDisplay;     // 32.0f
+    float fontSizePage;        // 32.0f（页面大标题）
+    float fontSizeDisplay;     // 48.0f（统计数字）
 };
 
 struct Tokens {
@@ -1532,10 +1524,16 @@ public:
 
 #### 数据获取
 
-不存独立数据，从其他模块聚合：
+**依赖规则遵守**：Home 模块**不直接依赖**其他 module_* 的 service（违反 §4.2 规则）。改为：**直接通过 `core::data::SqliteDb` 查询聚合数据**，每个被查询的表（markdown_index、todo_tasks、claude_call_logs）都是稳定的 schema，独立可查。
 
 ```cpp
 namespace module::home {
+
+struct RecentNoteMeta {
+    std::filesystem::path relativePath;
+    std::string title;
+    int64_t modifiedAt;       // Unix 时间戳
+};
 
 struct DashboardStats {
     int todayMarkdownCount;
@@ -1544,20 +1542,35 @@ struct DashboardStats {
     int overdueTodoCount;
     int totalClaudeCalls;
     int todayClaudeCalls;
-    std::vector<module::markdown::NoteMeta> recentNotes;  // 最近 5 个
+    std::vector<RecentNoteMeta> recentNotes;   // 最近 5 个
 };
 
 class HomeService {
 public:
-    HomeService(module::markdown::MarkdownService& md,
-                module::todo::TodoService& todo,
-                module::claude::ClaudeService& claude);
+    // 只依赖 core 层（SqliteDb），不依赖任何 module_*
+    explicit HomeService(core::data::SqliteDb& db);
 
     Result<DashboardStats> getStats();
+
+private:
+    // 每个查询独立方法，可单元测试
+    Result<int> countTodayMarkdown();
+    Result<int> countWeekMarkdown();
+    Result<int> countPendingTodo();
+    Result<int> countOverdueTodo();
+    Result<int> countTodayClaudeCalls();
+    Result<int> countTotalClaudeCalls();
+    Result<std::vector<RecentNoteMeta>> queryRecentNotes(int limit);
 };
 
 }
 ```
+
+**实现要点**：
+- 所有查询都用 prepared statement + 参数化 SQL
+- 复用 core::data::SqliteDb 的 mutex 模型（自动串行化）
+- 不缓存 DashboardStats，每次进入页面重新查询（数据量小，几十 ms 内完成）
+- 错误处理：任何一个查询失败 → 返回 Result.fail(Internal, "...")，UI 显示"加载失败"重试按钮
 
 #### UI 布局
 
@@ -1588,16 +1601,25 @@ public:
 通过侧边栏底部齿轮图标进入。
 
 **设置项**：
-1. **主题**：深色 / 浅色 / 跟随系统
+1. **主题**：深色 / 浅色 / 跟随系统（默认深色 = 方案 B Dark）
 2. **笔记目录**：路径输入框 + 「打开目录」按钮
-3. **Markdown 编辑器字体大小**：数字输入框（默认 14）
-4. **Markdown 编辑器字体**：下拉（系统等宽 / 系统无衬线 / 自定义路径）
+3. **Markdown 编辑器字体大小**：数字输入框（默认 15，与 §6.5.2 一致）
+4. **Markdown 编辑器字体**：下拉选择（**与 §6.5.1 FontTokens 完全一致**）：
+   - **JetBrains Mono**（默认，DevDesk 自带 OTF）
+   - **Inter**（DevDesk 自带 OTF）
+   - **跟随系统**（fallback 到 `PingFang SC` / `Microsoft YaHei UI` 等）
+   - **自定义路径**（高级用户，TTF/OTF 文件路径）
 5. **Claude 代理端口**：数字输入框（默认 8888；改后自动重启代理）
 6. **Claude 代理认证 Token**：只读显示当前 token +「复制」按钮 +「重新生成」按钮
-7. **调用日志保留天数**：数字输入框（默认 30；保留策略见 11.5）
+7. **调用日志保留天数**：数字输入框（默认 30；保留策略见 §11.5）
 8. **API key 提示脱敏粒度**：下拉（仅末 3 位 / 仅末 6 位 / 完全隐藏）
 9. **日志级别**：下拉框（Trace / Debug / Info / Warn / Error）
 10. **关于**：版本号、许可证、依赖列表
+
+**字体下拉选项说明**（与设计 token 一致）：
+- 不暴露"系统等宽 / 系统无衬线" 这种模糊选项
+- 用户能选的就是 DevDesk 自带的两种 + 系统 fallback + 自定义
+- 默认 JetBrains Mono（代码场景最佳）
 
 **安全说明**（写入文档）：
 - 代理地址固定为 `http://127.0.0.1:<port>`，**不暴露对外网**
@@ -1761,12 +1783,12 @@ TodoCard.cpp: 记录拖拽开始
 ```
 
 **关键设计**：
-- `queue_`：线程安全的 `std::deque<std::string>` + `std::mutex` + `std::condition_variable`
-- libcurl 回调只做"队列推入"，不做 IO
+- `queue_`：线程安全的 `std::deque<std::string>` + `std::mutex` + `std::condition_variable`，队列上限 100 chunk（约 1 MB）
+- **backpressure 归属方（重要修正）**：当 cpp-httplib consumer 端发现队列 ≥ 100 → 调用 `curl_easy_pause(CURL, CURLPAUSE_RECV)` **暂停 libcurl 生产者**（不是暂停 cpp-httplib 自己；cpp-httplib 是被动消费者）。队列 < 50 时调用 `curl_easy_pause(CURL, CURLPAUSE_RECV_CONT)` 恢复。这样队列深度稳定在 50-100 之间
+- libcurl 回调（CURLOPT_WRITEFUNCTION）只做"队列推入"，不做 IO，不阻塞
 - cpp-httplib 的 chunked_content_provider 阻塞在队列 pop
 - 出错时从队列推入 Error 标记，cpp-httplib 停止读取 → 关闭连接
 - 超时保护：cpp-httplib 端设 5 分钟无新 chunk 则主动 close（防止挂死）
-- backpressure：队列上限 100 chunk（约 1 MB），超过则 libcurl 端 `curl_easy_pause` 暂停
 
 #### 请求路径
 
@@ -2068,8 +2090,31 @@ target_include_directories(DevDesk PRIVATE src)
 ```cmake
 # 找 SQLite3（必须带 FTS5）
 find_package(SQLite3 REQUIRED)
-if(NOT SQLite3_VERSION_SYM OR NOT SQLite3_VERSION_SYM MATCHES "FTS5")
-    message(WARNING "SQLite3 编译时未启用 FTS5，Markdown 全文搜索功能将不可用")
+
+# 验证 SQLite3 是否启用 FTS5（通过编译测试）
+include(CheckCXXSourceCompiles)
+set(CMAKE_REQUIRED_QUIET TRUE)
+set(_devdesk_fts5_check_src "
+#include <sqlite3.h>
+int main() {
+    sqlite3* db = nullptr;
+    if (sqlite3_open(\":memory:\", &db) != SQLITE_OK) return 1;
+    char* err = nullptr;
+    int rc = sqlite3_exec(db,
+        \"CREATE VIRTUAL TABLE t USING fts5(content);\",
+        nullptr, nullptr, &err);
+    sqlite3_close(db);
+    return (rc == SQLITE_OK) ? 0 : 1;
+}
+")
+check_cxx_source_compiles("${_devdesk_fts5_check_src}" SQLITE3_HAS_FTS5)
+unset(CMAKE_REQUIRED_QUIET)
+
+if(NOT SQLITE3_HAS_FTS5)
+    message(WARNING "SQLite3 未启用 FTS5 — Markdown 全文搜索功能将不可用，自动降级到 LIKE")
+    set(SQLITE3_HAS_FTS5 FALSE CACHE BOOL "SQLite3 FTS5 availability")
+else()
+    set(SQLITE3_HAS_FTS5 TRUE CACHE BOOL "SQLite3 FTS5 availability")
 endif()
 
 # 找 CURL（上游 Claude API 必需）
@@ -2225,7 +2270,7 @@ echo "截图已保存: docs/screenshots/${PAGE_NAME}.png"
 | **P9：Claude 代理（非流式）** | 代理转发（buffer 模式）+ 测试 + 日志 + 认证 token 集成 | Claude Code 能走通 | P0a, P8 |
 | **P10a：Claude 流式（生产者-消费者）** | SSE 流式 chunk 透传，含 backpressure + 取消 + 超时 | 流式响应正常 | P9 |
 | **P10b：Claude 流式（质量保证）** | 5 分钟长连接回归 + 大 body (10MB) 压测 + 异常断连恢复 | 边界情况稳定 | P10a |
-| **P11：Claude 加密** | Keychain/DPAPI 存储（实际上 P8 已用，P11 确认加固）| API key 验证不落 SQLite | P8 |
+| **P11：Claude 加密（已合并入 P8）** | ~~Keychain/DPAPI 存储~~ | ~~API key 验证不落 SQLite~~ | ~~P8~~（P8 已实现 Keychain 集成，无需独立阶段）|
 | **P12：Home 仪表盘数据** | 真实数据展示 + 30 天日志清理任务 | 首页不是空壳 | P4, P6, P9 |
 | **P13：设置页面** | 主题、目录、token UI、字体大小、日志保留策略 | 用户可定制 | P12 |
 | **P14：Windows 实验性支持** | 路径、字体、CI workflow（windows-latest runner）、FTS5 vcpkg feature | 编译 + 单元测试过；功能不承诺 | P13 |
