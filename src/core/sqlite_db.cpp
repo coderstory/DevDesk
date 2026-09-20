@@ -215,6 +215,20 @@ SqliteDb::~SqliteDb() {
     }
 }
 
+SqliteDb::SqliteDb(SqliteDb&& other) noexcept
+    : handle_(other.handle_), mutex_() {
+    other.handle_ = nullptr;
+}
+
+SqliteDb& SqliteDb::operator=(SqliteDb&& other) noexcept {
+    if (this != &other) {
+        if (handle_) sqlite3_close(handle_);
+        handle_ = other.handle_;
+        other.handle_ = nullptr;
+    }
+    return *this;
+}
+
 Result<void> SqliteDb::exec(const std::string& sql) {
     std::lock_guard<std::recursive_mutex> lock(mutex_);
     char* errMsg = nullptr;
@@ -280,20 +294,23 @@ Result<void> SqliteDb::runMigrations(const std::vector<Migration>& migrations) {
     int current = schemaVersion();
     for (const auto& m : migrations) {
         if (m.version <= current) continue;
-        auto txResult = transaction([&] {
+        auto txResult = transaction([&]() -> core::Result<void> {
             auto execResult = exec(m.sql);
             if (execResult.isFail()) return execResult;
-            // 记录已应用
             auto prep = prepare(
                 "INSERT INTO schema_version (version, description, applied_at) VALUES (?, ?, ?)");
-            if (prep.isFail()) return Result<void>::fail(prep.errorCode(), prep.errorMessage());
+            if (prep.isFail()) {
+                return core::Result<void>::fail(prep.errorCode(), prep.errorMessage());
+            }
             auto& stmt = prep.value();
             stmt.bind(1, static_cast<int64_t>(m.version));
             stmt.bind(2, m.description);
             stmt.bind(3, static_cast<int64_t>(std::time(nullptr)));
             auto stepResult = stmt.step();
-            if (stepResult.isFail()) return Result<void>::fail(stepResult.errorCode(), stepResult.errorMessage());
-            return Result<void>::ok();
+            if (stepResult.isFail()) {
+                return core::Result<void>::fail(stepResult.errorCode(), stepResult.errorMessage());
+            }
+            return core::Result<void>::ok();
         });
         if (txResult.isFail()) {
             return Result<void>::fail(ErrorCode::DatabaseMigrationFailed,

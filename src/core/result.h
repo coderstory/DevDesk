@@ -100,6 +100,14 @@ public:
         return std::get<1>(data_);
     }
 
+    // 非 const 版本（需要修改 result 中的对象，如 sqlite3_stmt）
+    T& value() {
+        if (!isOk()) {
+            throw std::logic_error("Result::value() called on error: " + errorMessage());
+        }
+        return std::get<1>(data_);
+    }
+
     // Rust 风格 expect
     const T& expect(const std::string& context) const {
         if (!isOk()) {
@@ -108,8 +116,19 @@ public:
         return std::get<1>(data_);
     }
 
+    T& expect(const std::string& context) {
+        if (!isOk()) {
+            throw std::logic_error(context + ": " + errorMessage());
+        }
+        return std::get<1>(data_);
+    }
+
     // 不检查错误的取值（性能敏感）
     const T& unsafeValue() const {
+        return std::get<1>(data_);
+    }
+
+    T& unsafeValue() {
         return std::get<1>(data_);
     }
 

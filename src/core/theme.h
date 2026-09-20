@@ -2,10 +2,9 @@
 // 设计 token（基于方案 B 温暖专业）
 #pragma once
 
-#include <string>
+#include <eui/types.h>
 
-// 前向声明 EUI-NEO 的 Color
-namespace eui { struct Color; }
+#include <string>
 
 namespace core::theme {
 

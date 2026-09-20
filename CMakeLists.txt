@@ -31,6 +31,20 @@ add_subdirectory(${EUI_NEO_DIR} ${CMAKE_BINARY_DIR}/_eui_neo_build EXCLUDE_FROM_
 add_subdirectory(src/core)
 add_subdirectory(src/platform)
 
+# EUI-NEO include 路径（暴露给所有目标）
+set(EUI_NEO_INCLUDE_DIR "${EUI_NEO_DIR}/include")
+include_directories(${EUI_NEO_INCLUDE_DIR})
+
+# 把 EUI-NEO 的 include 路径和 3rd 依赖加给所有目标
+function(devdesk_add_eui_includes target)
+    target_include_directories(${target} PRIVATE
+        ${EUI_NEO_INCLUDE_DIR}
+        ${EUI_NEO_DIR}
+        ${EUI_NEO_DIR}/3rd/yyjson-0.12.0/src
+        ${EUI_NEO_DIR}/3rd/md4c/src
+    )
+endfunction()
+
 # 四个功能模块
 add_subdirectory(src/module_home)
 add_subdirectory(src/module_markdown)

@@ -24,3 +24,14 @@ target_link_libraries(devdesk_core
 target_compile_definitions(devdesk_core PUBLIC
     SQLITE_HAS_FTS5=${SQLITE3_HAS_FTS5}
 )
+
+# 添加 EUI-NEO include
+if(TARGET eui_neo)
+    target_link_libraries(devdesk_core PUBLIC eui_neo)
+else()
+    target_include_directories(devdesk_core PUBLIC
+        ${CMAKE_SOURCE_DIR}/../EUI-NEO/include
+        ${CMAKE_SOURCE_DIR}/../EUI-NEO/3rd/yyjson-0.12.0/src
+        ${CMAKE_SOURCE_DIR}/../EUI-NEO/3rd/md4c/src
+    )
+endif()

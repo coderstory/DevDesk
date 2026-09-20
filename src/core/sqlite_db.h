@@ -71,11 +71,14 @@ private:
 
 class SqliteDb {
 public:
+    SqliteDb() = default;
     static Result<SqliteDb> open(const std::filesystem::path& file);
     ~SqliteDb();
 
     SqliteDb(const SqliteDb&) = delete;
     SqliteDb& operator=(const SqliteDb&) = delete;
+    SqliteDb(SqliteDb&& other) noexcept;
+    SqliteDb& operator=(SqliteDb&& other) noexcept;
 
     Result<void> exec(const std::string& sql);
     Result<Statement> prepare(const std::string& sql);
@@ -90,7 +93,6 @@ public:
     sqlite3* handle() { return handle_; }
 
 private:
-    SqliteDb() = default;
     sqlite3* handle_ = nullptr;
     std::recursive_mutex mutex_;
 };
