@@ -1,12 +1,17 @@
 // src/module_claude_proxy/proxy_router.cpp
 // ProxyRouter 实现：本地 HTTP 代理 → Claude 上游 API
+//   - stream:true + /v1/messages → SSE 流式转发（spec §10.4 / P10a）
+//   - 其余 → 缓冲转发（P9）
 #include "proxy_router.h"
 
 #include "core/logging.h"
 #include "platform/http_client.h"
+#include "streaming_proxy.h"
 
+#include <algorithm>
 #include <chrono>
 #include <ctime>
+#include <memory>
 #include <string>
 
 namespace module::claude {
@@ -90,6 +95,12 @@ void ProxyRouter::handleRequest(
     const std::map<std::string, std::string>& headers,
     const std::string& body,
     platform::http::ResponseWriter& out) {
+
+    // ---- 0. 流式分支（spec §10.4）：POST /v1/messages + "stream": true ----
+    if (shouldUseStreaming(path, body)) {
+        handleStreamingRequest(method, path, headers, body, out);
+        return;
+    }
 
     const auto startTime = std::chrono::steady_clock::now();
     const std::time_t startedAt = std::time(nullptr);
@@ -223,6 +234,155 @@ void ProxyRouter::handleRequest(
              std::to_string(resp.statusCode) + " (" +
              std::to_string(latencyMs) + "ms, profile=" +
              std::to_string(profile.id) + ")");
+}
+
+// ==================== 流式转发（spec §10.4 / P10a）====================
+
+bool ProxyRouter::shouldUseStreaming(const std::string& path,
+                                     const std::string& body) {
+    return isStreamablePath(path) && wantsStream(body);
+}
+
+core::Result<Profile> ProxyRouter::resolveProfile() {
+    // 测试 / UI 注入路径：直接返回（已含 apiKeyPlain）
+    if (profileProvider_) {
+        return profileProvider_();
+    }
+
+    // 默认路径：SQLite 取 active profile → Keychain 取明文 key
+    auto activeR = service_.getActiveProfile();
+    if (activeR.isFail()) {
+        return core::Result<Profile>::fail(activeR.errorCode(),
+                                          activeR.errorMessage());
+    }
+    Profile profile = std::move(activeR).value();
+
+    auto keyR = service_.loadApiKey(profile.id);
+    if (keyR.isFail()) {
+        return core::Result<Profile>::fail(core::ErrorCode::InvalidApiKey,
+            "读取 API key 失败: " + keyR.errorMessage());
+    }
+    profile.apiKeyPlain = std::move(keyR).value();
+    return core::Result<Profile>::ok(std::move(profile));
+}
+
+void ProxyRouter::handleStreamingRequest(
+    const std::string& method,
+    const std::string& path,
+    const std::map<std::string, std::string>& headers,
+    const std::string& body,
+    platform::http::ResponseWriter& out) {
+
+    const auto startTime = std::chrono::steady_clock::now();
+    const std::time_t startedAt = std::time(nullptr);
+
+    // ---- 1. 取 profile（含明文 API key）----
+    auto profileR = resolveProfile();
+    if (profileR.isFail()) {
+        LOG_WARN("流式代理：取 profile 失败 (" + profileR.errorMessage() + ")");
+        out.setStatus(503);
+        out.setHeader("Content-Type", "application/json");
+        out.write(std::string("{\"error\":\"no_active_profile\",\"message\":\"") +
+                  profileR.errorMessage() + "\"}");
+        out.end();
+        return;
+    }
+    Profile profile = std::move(profileR).value();
+
+    // ---- 2. 构造上游请求 ----
+    platform::http::Request upstream;
+    upstream.method = method;
+    upstream.url = path;              // 相对路径，sendStreamingClaude 会拼 baseUrl
+    upstream.body = body;
+    upstream.timeoutMs = 300000;      // SSE 长连接：5 分钟
+    upstream.verifyTls = true;
+    upstream.headers = copyHeaders(headers);
+    if (!hasHeader(upstream.headers, "anthropic-version")) {
+        upstream.headers["anthropic-version"] = "2023-06-01";
+    }
+
+    // ---- 3. 启动三线程流式转发（libcurl 线程 + 队列 + backpressure）----
+    auto streamR = sendStreamingClaude(upstream, profile);
+    if (streamR.isFail()) {
+        LOG_WARN("流式代理：启动上游失败: " + streamR.errorMessage());
+        out.setStatus(502);
+        out.setHeader("Content-Type", "application/json");
+        out.write(std::string("{\"error\":\"upstream_unreachable\",\"message\":\"") +
+                  streamR.errorMessage() + "\"}");
+        out.end();
+
+        ClaudeService::CallLogEntry entry;
+        entry.profileId = profile.id;
+        entry.method = method;
+        entry.path = path;
+        entry.statusCode = 0;
+        entry.requestBytes = static_cast<int64_t>(body.size());
+        entry.error = streamR.errorMessage();
+        entry.startedAt = startedAt;
+        service_.logCall(entry);
+        return;
+    }
+
+    auto& upstreamRef = streamR.value();
+    auto upstreamStream =
+        std::shared_ptr<platform::http::StreamingResponse>(std::move(upstreamRef));
+
+    // ---- 4. 等上游响应头（拿到状态码，最多 30s）----
+    upstreamStream->waitForStatus(30000);
+    const int upstreamStatus = upstreamStream->statusCode();
+
+    if (upstreamStatus == 0) {
+        // 连接失败 / 超时：回 502
+        LOG_WARN("流式代理：上游无响应头");
+        out.setStatus(502);
+        out.setHeader("Content-Type", "application/json");
+        out.write("{\"error\":\"upstream_unreachable\",\"message\":\"上游无响应\"}");
+        out.end();
+
+        ClaudeService::CallLogEntry entry;
+        entry.profileId = profile.id;
+        entry.method = method;
+        entry.path = path;
+        entry.statusCode = 502;
+        entry.requestBytes = static_cast<int64_t>(body.size());
+        entry.error = "no_response_header";
+        entry.startedAt = startedAt;
+        service_.logCall(entry);
+        return;
+    }
+
+    // ---- 5. 写响应头 + 交给 chunked provider 流式回写 ----
+    // SSE 场景 Content-Type 必须是 text/event-stream（spec §10.4）
+    std::string contentType = upstreamStream->contentType();
+    if (contentType.empty()) contentType = sse::kContentType;
+
+    out.setStatus(upstreamStatus);
+    out.setHeader("Content-Type", contentType);
+    out.setHeader("Cache-Control", "no-cache");
+    out.setHeader("Connection", "keep-alive");
+    out.setHeader("X-Accel-Buffering", "no");   // 反向代理场景禁用缓冲
+
+    forwardStream(out, upstreamStream, contentType);
+
+    const int64_t latencyMs = std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::steady_clock::now() - startTime).count();
+
+    ClaudeService::CallLogEntry entry;
+    entry.profileId = profile.id;
+    entry.method = method;
+    entry.path = path;
+    entry.statusCode = upstreamStatus;
+    entry.latencyMs = latencyMs;
+    entry.requestBytes = static_cast<int64_t>(body.size());
+    entry.startedAt = startedAt;
+    auto logR = service_.logCall(entry);
+    if (logR.isFail()) {
+        LOG_WARN("流式代理：写 claude_call_logs 失败: " + logR.errorMessage());
+    }
+
+    LOG_INFO("流式代理 " + method + " " + path + " -> " +
+             std::to_string(upstreamStatus) + " (profile=" +
+             std::to_string(profile.id) + ", content-type=" + contentType + ")");
 }
 
 } // namespace module::claude

@@ -78,11 +78,54 @@ httplib::Server::Handler toLibHandler(RouteHandler userHandler,
         rctx.body = req.body;
         rctx.clientAddress = req.remote_addr;
         rctx.authenticated = authed;
+        rctx.isConnectionClosed = req.is_connection_closed;
 
         userHandler(rctx, rw);
 
         // 把 ResponseWriter 的状态写回 cpp-httplib Response
         res.status = rw.status();
+
+        // ---- 流式路径（spec §10.4）----
+        // ResponseWriter 设置了 chunk provider → 用 chunked 传输编码流式回写。
+        // provider 由 cpp-httplib 在其 worker 线程反复调用；我们把它桥接到
+        // 用户提供的 ChunkProvider（内部从 queue 拉数据、实现 backpressure）。
+        if (rw.isStreaming()) {
+            for (const auto& kv : rw.headers()) {
+                res.set_header(kv.first, kv.second);
+            }
+
+            auto provider = rw.takeChunkProvider();
+            auto releaser = rw.takeChunkReleaser();
+            // 捕获 is_connection_closed（内部引用 strm，仅在本请求处理期间有效）
+            auto connClosed = req.is_connection_closed;
+
+            res.set_chunked_content_provider(
+                rw.streamingContentType(),
+                [provider, connClosed](size_t /*offset*/, httplib::DataSink& sink) -> bool {
+                    auto writeChunk = [&sink](const char* data, size_t len) -> bool {
+                        return sink.write(data, len);
+                    };
+                    auto isWritable = [&sink, connClosed]() -> bool {
+                        if (connClosed && connClosed()) return false;
+                        if (sink.is_writable && !sink.is_writable()) return false;
+                        return true;
+                    };
+                    const bool more = provider(writeChunk, isWritable);
+                    if (!more) {
+                        // cpp-httplib 的约定：provider 返回 false 会被当作
+                        // Canceled（不写终止 chunk，客户端会看到截断）。
+                        // 正确做法是调用 sink.done() 写 "0\r\n\r\n" 正常收尾，
+                        // 然后返回 true 让写循环按 data_available=false 退出。
+                        sink.done();
+                    }
+                    return true;
+                },
+                [releaser](bool success) {
+                    if (releaser) releaser(success);
+                });
+            return;
+        }
+
         for (const auto& kv : rw.headers()) {
             res.set_header(kv.first, kv.second);
         }
@@ -112,6 +155,16 @@ void ResponseWriter::write(const std::string& data) {
     ended_ = false;
 }
 void ResponseWriter::end() { ended_ = true; }
+
+void ResponseWriter::setChunkProvider(const std::string& contentType,
+                                      ChunkProvider provider,
+                                      ChunkReleaser releaser) {
+    streaming_ = true;
+    streamingContentType_ = contentType;
+    chunkProvider_ = std::move(provider);
+    chunkReleaser_ = std::move(releaser);
+    ended_ = false;
+}
 
 // ---------- Server::Impl ----------
 

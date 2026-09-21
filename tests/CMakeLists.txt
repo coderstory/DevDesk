@@ -15,12 +15,16 @@ add_executable(devdesk_tests
     test_modules/test_todo.cpp
     test_modules/test_todo_service.cpp
     test_modules/test_claude.cpp
+    test_modules/test_claude_service.cpp
+    test_modules/test_proxy_router.cpp
+    test_modules/test_streaming_proxy.cpp
     test_modules/test_home.cpp
 )
 
 target_include_directories(devdesk_tests PRIVATE
     ${CMAKE_SOURCE_DIR}/src
     ${CMAKE_SOURCE_DIR}/tests
+    ${CMAKE_SOURCE_DIR}/src/module_claude_proxy
 )
 
 # 确保 doctest.h 可被 #include "doctest.h" 找到

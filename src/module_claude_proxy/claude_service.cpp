@@ -22,8 +22,8 @@ namespace module::claude {
 
 namespace {
 
-// Keychain service name（约定：DevDesk 全部密钥都用此 service）
-constexpr const char* kKeychainService = "DevDesk";
+// 默认 Keychain service name（约定：DevDesk 全部密钥都用此 service）
+constexpr const char* kDefaultKeychainService = "DevDesk";
 
 // Keychain account 命名：DevDesk:claude:<profile_id>  ← 但 platform::keychain
 // 接受 service+account 两个独立字符串，所以这里 account 用 "claude:<id>"
@@ -83,7 +83,11 @@ std::string ClaudeService::makeApiKeyHint(const std::string& apiKey) {
 
 // ---------- 构造 / 行解析 ----------
 
-ClaudeService::ClaudeService(core::data::SqliteDb& db) : db_(db) {}
+ClaudeService::ClaudeService(core::data::SqliteDb& db,
+                             const std::string& keychainService)
+    : db_(db),
+      keychainService_(keychainService.empty() ? kDefaultKeychainService
+                                               : keychainService) {}
 
 ClaudeService::~ClaudeService() {
     // 析构时确保停止代理（Server 析构会 join 线程）
@@ -269,7 +273,7 @@ core::Result<Profile> ClaudeService::createProfile(const std::string& name,
 
     // 把 API key 入 Keychain
     const std::string account = keychainAccountFor(newId);
-    auto kcStore = platform::keychain::storeSecret(kKeychainService, account, apiKey);
+    auto kcStore = platform::keychain::storeSecret(keychainService_, account, apiKey);
     if (kcStore.isFail()) {
         // Keychain 失败 → 回滚（删 SQLite 行）
         auto delPrep = db_.prepare("DELETE FROM claude_profiles WHERE id = ?");
@@ -340,7 +344,7 @@ core::Result<void> ClaudeService::updateProfile(const Profile& profile) {
         const std::string newCheck = sha256HexPrefix(profile.apiKeyPlain);
         const std::string newHint = makeApiKeyHint(profile.apiKeyPlain);
         auto kcStore = platform::keychain::storeSecret(
-            kKeychainService, old.value().keychainAccount, profile.apiKeyPlain);
+            keychainService_, old.value().keychainAccount, profile.apiKeyPlain);
         if (kcStore.isFail()) {
             return core::Result<void>::fail(kcStore.errorCode(),
                 "Keychain 更新失败: " + kcStore.errorMessage());
@@ -427,7 +431,7 @@ core::Result<void> ClaudeService::deleteProfile(int64_t id) {
     // 再清 Keychain（即使失败也不回滚 SQLite，Keychain 会泄漏一个孤儿条目
     // 但不影响功能；下次启动时可通过 keychain_check 检测清理）
     auto kcDel = platform::keychain::deleteSecret(
-        kKeychainService, p.value().keychainAccount);
+        keychainService_, p.value().keychainAccount);
     if (kcDel.isFail()) {
         LOG_WARN("清理 Keychain 失败: " + kcDel.errorMessage());
     }
@@ -443,7 +447,7 @@ core::Result<std::string> ClaudeService::loadApiKey(int64_t profileId) {
     if (p.isFail()) {
         return core::Result<std::string>::fail(p.errorCode(), p.errorMessage());
     }
-    return platform::keychain::loadSecret(kKeychainService,
+    return platform::keychain::loadSecret(keychainService_,
                                           p.value().keychainAccount);
 }
 

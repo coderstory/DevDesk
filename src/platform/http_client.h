@@ -72,6 +72,14 @@ public:
     // 从 header callback 解析得到的状态码
     int statusCode() const;
 
+    // 等待上游响应头到达（状态码可用），最多 timeoutMs 毫秒。
+    // 返回 true 表示状态码已知（或流已结束），false 表示超时。
+    // 代理场景下用于在写客户端响应头之前拿到上游状态码。
+    bool waitForStatus(int timeoutMs);
+
+    // 上游 Content-Type（如 text/event-stream）；未到达时返回空串
+    std::string contentType() const;
+
     // readChunk 返回 Error 时的错误信息
     std::string finalErrorMessage() const;
 
@@ -87,6 +95,10 @@ public:
 private:
     friend core::Result<std::unique_ptr<StreamingResponse>>
         sendStreaming(const Request& req);
+
+    // libcurl 回调需要访问 Impl（在 http_client.cpp 中定义）
+    friend size_t streamWriteCb(char* ptr, size_t size, size_t nmemb, void* userp);
+    friend size_t streamHeaderCb(char* buffer, size_t size, size_t nitems, void* userp);
 
     // 三线程 + 队列 + backpressure 的真实实现（spec §10.4）
     // 全部状态隐藏在 Impl 内；header 只暴露 Pimpl 前向声明。

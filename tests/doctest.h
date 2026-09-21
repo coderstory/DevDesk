@@ -34,6 +34,16 @@
 #define DOCTEST_REQUIRE_EQ(a, b) DOCTEST_CHECK_EQ(a, b)
 #define DOCTEST_REQUIRE_NE(a, b) DOCTEST_CHECK_NE(a, b)
 
+// 带自定义消息的断言（失败时输出 message 便于定位）
+#define DOCTEST_CHECK_MESSAGE(expr, message) \
+    do { if (!(expr)) { \
+        std::cerr << "FAIL [" << __FILE__ << ":" << __LINE__ << "] " #expr \
+                  << " — " << (message) << std::endl; \
+        return false; \
+    }} while (0)
+
+#define DOCTEST_REQUIRE_MESSAGE(expr, message) DOCTEST_CHECK_MESSAGE(expr, message)
+
 using TestFunc = bool (*)();
 
 namespace test_registry {

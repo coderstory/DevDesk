@@ -33,8 +33,8 @@ extern "C" char*** _NSGetArgv(void);
 namespace {
 
 // 全局：Finder "打开方式" 传入的文件路径
-// MVP：仅记录 + log，不实际打开（架构准备好）
-// 后续 P 阶段在 Router 启动后根据扩展名 dispatch 到对应模块
+// 两条来源都写这里：命令行 argv（启动时）/ Apple Event（Finder 双击、打开方式）
+// MVP：仅记录 + log + 切页；实际渲染文件内容留待 P 阶段
 std::string& pendingOpenFilePath() {
     static std::string path;
     return path;
@@ -54,7 +54,7 @@ void captureOpenFileFromArgv() {
     char** argv = *_NSGetArgv();
     if (argc < 2 || argv == nullptr) return;
 
-    // argv[1] 是文件路径（Finder 双击时 macOS 自动传入）
+    // argv[1] 是文件路径（命令行直接调用二进制时传入）
     const char* path = argv[1];
     if (path == nullptr || path[0] == '\0') return;
 
@@ -62,7 +62,7 @@ void captureOpenFileFromArgv() {
     if (path[0] == '-') return;
 
     pendingOpenFilePath() = std::string(path);
-    LOG_INFO("捕获到待打开文件: " + pendingOpenFilePath());
+    LOG_INFO("捕获到待打开文件（命令行 argv）: " + pendingOpenFilePath());
 #endif
 }
 
@@ -145,6 +145,26 @@ void setupLogging() {
     return &router;
 }
 
+// Apple Event 路径：Finder 双击 / 右键「打开方式」/ 运行中再次 open -a
+// 由 EUI-NEO 的 app::DslAppConfig::onOpenFile 回调驱动（kAEOpenDocuments），
+// 在主循环每帧渲染前触发，这里可以安全地切页。
+void handleAppleEventOpenFile(const std::string& path) {
+    if (path.empty()) return;
+
+    pendingOpenFilePath() = path;
+    LOG_INFO("捕获到待打开文件（Apple Event）: " + path);
+
+    const ::core::PageId target = dispatchPageForFile(path);
+    LOG_INFO("Apple Event dispatch: 切换到 " +
+             std::string(pageIdToString(target)) +
+             "（实际文件加载留待 P 阶段）");
+
+    ::core::Router* router = getRouter();
+    if (router != nullptr) {
+        router->navigateTo(target);
+    }
+}
+
 // ---- Claude 代理（全局唯一，spec §10.4）----
 
 // ClaudeService 单例（ClaudeModule 通过 ClaudeService::global() 读状态）
@@ -222,7 +242,10 @@ const DslAppConfig& dslAppConfig() {
         .minWindowSize(1200, 720)
         .highDpi(true)
         .resizable(true)
-        .centerWindow();
+        .centerWindow()
+        // Finder 双击 / 右键「打开方式」：macOS 走 kAEOpenDocuments Apple Event，
+        // 由 EUI-NEO 转成回调（主循环里派发），这里切到对应模块。
+        .onOpenFile([](const std::string& path) { handleAppleEventOpenFile(path); });
 
     static bool initialized = []() {
         using namespace core;

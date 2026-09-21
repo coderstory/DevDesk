@@ -44,7 +44,9 @@ struct Profile {
 class ClaudeService {
 public:
     // 构造时不持有所有权，db 由调用方确保生命周期
-    explicit ClaudeService(core::data::SqliteDb& db);
+    // keychainService 默认 "DevDesk"；测试可传 "DevDeskTest" 隔离
+    explicit ClaudeService(core::data::SqliteDb& db,
+                           const std::string& keychainService = "DevDesk");
     ~ClaudeService();
 
     ClaudeService(const ClaudeService&) = delete;
@@ -136,6 +138,7 @@ private:
     static std::string generateAuthToken();
 
     core::data::SqliteDb& db_;
+    std::string keychainService_;
 
     // 代理 server 资源（延迟构造）
     std::unique_ptr<platform::http::Server> server_;

@@ -10,7 +10,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - **Todo 看板**：SQLite 存储，多列卡片管理
 - **Claude 配置切换器**：多套 API profile 管理 + 本地 HTTP 代理（带流式转发）
 
-目标平台：**macOS 27+**（主线承诺）和 **Windows 11**（实验性支持）。
+目标平台：**Windows 11**（当前开发环境，2026-09 从 macOS 迁移而来）和 **macOS 27+**（已完成主线，平台分支代码保留可用）。
 
 ## 🚨 项目核心约束（最重要的几条）
 
@@ -18,25 +18,26 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 2. **完整设计文档**：所有架构 / API / 设计 token 决策都写在 `docs/superpowers/specs/2026-09-20-devdesk-design.md`，**实现前先读 spec**
 3. **每个 P 阶段完成后必须**：跑测试 + 启动应用 + 截屏 + 更新文档 + git commit（详见 spec §16.2）
 4. **配色方案已定为 B（温暖专业 / Claude.ai 风格）**，完整 token 写在 spec §6.5.1 和 §6.5.2
+5. **平台适配代码必须接口隔离**（2026-09-21 定）：头文件定义平台无关接口，实现按平台拆文件（`*_win.cpp` / `*_macos.cpp` / `*_posix.cpp`），CMake 按平台选择编译（与 EUI-NEO 后端选择同一模式）。**禁止在业务代码里散布 `#ifdef _WIN32` / `__APPLE__`**。虚接口仅在需要运行期注入/mock 时对单个点引入，不全局铺开
 
-## 🛠️ 常用命令（规划中，P0 阶段实施）
+## 🛠️ 常用命令
+
+**Windows 11（当前开发平台，MSYS2 MinGW64 + Ninja）**：
 
 ```bash
-# 一键构建 + 运行（macOS）
-./scripts/dev.sh
+export PATH="/d/software/cmake/cmake-4.3.3-windows-x86_64/bin:/d/software/ninja:/c/msys64/mingw64/bin:$PATH"
 
-# 跑全部测试
-./scripts/test.sh
-
-# 自动截屏（当前页面）
-./scripts/screenshot.sh <page-name>
-
-# 重置数据库
-./scripts/reset-db.sh
+cd DevDesk
+rm -rf build   # 换平台后必须（旧 build/ 是 macOS Darwin arm64 产物）
+cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Debug
+cmake --build build
+cd build && ctest --output-on-failure
 ```
 
+**macOS（历史平台，脚本保留）**：`./scripts/dev.sh`（构建+运行）、`./scripts/test.sh`（测试）、`./scripts/screenshot.sh <page>`（截屏）、`./scripts/reset-db.sh`（重置数据库）。注意 `check-consistency.sh` 用了 macOS `screencapture`/`open -a`，Windows 上不可用。
+
 构建入口：`CMakeLists.txt` 顶层 → `src/main.cpp`。
-EUI-NEO 依赖：`3rd/EUI-NEO/`（git submodule）。
+EUI-NEO 依赖：`../EUI-NEO/`（同级目录，通过 `EUI_NEO_DIR` cache 变量 `add_subdirectory`，**不是 git submodule**）。
 
 ## 🏗️ 架构要点（4 层模块化）
 
@@ -58,7 +59,7 @@ main → 4 个 module_* (markdown / todo / claude_proxy / home)
 
 ## 🔧 EUI-NEO 上游贡献政策（重要）
 
-**遇到 EUI-NEO 的 ❌ 限制时**，优先考虑**直接修复 EUI-NEO 仓库**（在 `/Users/coderstory/Dev/gui/EUI-NEO/`），反哺社区并提交 PR，而不是 DevDesk 内自造 workaround。
+**遇到 EUI-NEO 的 ❌ 限制时**，优先考虑**直接修复 EUI-NEO 仓库**（`../EUI-NEO/`，与 DevDesk 同级目录），反哺社区并提交 PR，而不是 DevDesk 内自造 workaround。
 
 ### 工作流
 
@@ -147,16 +148,32 @@ main → 4 个 module_* (markdown / todo / claude_proxy / home)
 
 完整 token 见 spec §6.5.1 和 §6.5.2。
 
-## 🚦 当前阶段
+## 🚦 当前阶段（2026-09-21 更新，macOS → Windows 11 迁移后）
 
-按 spec §16 实施。当前在 **P0（项目骨架）之前**：先调 spec + 出 HTML 原型，**还没有 C++ 代码**。
+按 spec §16 实施，进度：
 
-按 superpowers 流程：
-1. 调 spec（采纳审计结果）— **进行中**
-2. 出 HTML 交互原型（用支持组件模拟 EUI-NEO 能力）
-3. 用户 review 原型
-4. 写实现计划（writing-plans skill）
-5. 按 P0-P15 实施
+- ✅ **P0-P8 完成**（macOS 上 66 测试通过 + .app bundle，截图见 `docs/screenshots/`）
+- 🔄 **P9（代理非流式）+ P10a（SSE 流式）进行中** —— 约 1500 行未提交代码（streaming_proxy、http_client 流式扩展、proxy_router 等），macOS 上被强行终止。32 个新测试用例质量高（SSE 时序/backpressure/鉴权端到端），其中 claude_service/proxy_router 测试已正确用 `error_code` 处理 Windows 文件删除；测试基建修复后即可拿到 Windows 完整基线
+- ⚡ **P14（Windows）从"实验性"升为必选项** —— 当前就在 Windows 11 上开发
+
+### Windows 迁移缺口（P14 提前激活）
+
+| 问题 | 位置 | 严重度 |
+|------|------|--------|
+| DPAPI keychain 是 stub（三个函数全返回 NotImplemented） | `src/platform/keychain.cpp` | 🔴 阻断 Claude 模块 |
+| 缺 `ws2_32` + `crypt32` 链接（Winsock2 + TLS 依赖链，不止 DPAPI 要用） | `src/platform/CMakeLists.txt` | 🔴 现靠 `-DCMAKE_CXX_STANDARD_LIBRARIES="-lws2_32 -lcrypt32"` 绕过 |
+| FTS5 检测假阴性：MSYS2 sqlite 实际带 FTS5（CJK 搜索测试全过），`check_cxx_source_compiles` 没带 SQLite3 库导致误报 NOT enabled | `cmake/Dependencies.cmake` | 🟡 修检测即可 |
+| 5 处干净编译修复：`json.h` 缺 `#include <cstdint>`；`migrations.h` 用了 C++20 designated initializers（项目是 C++17）；`proxy_router.cpp:81` 引用绑临时；`-Werror` 泄漏进 EUI-NEO 第三方子目录 | `src/platform/json.h` 等 | 🔴 现靠 CMakeCache workaround 绕过 |
+| 测试基建 Windows 崩溃：老测试用抛异常版 `filesystem::remove` 且 sqlite 句柄未关（Windows 禁删打开中文件）+ test_main 无 try/catch，一炸全死 | `tests/`（2026-09-21 修复中） | 🔴 曾致套件中途 terminate |
+| 启动顺序 WARN：模块 `onStart` 时 `ClaudeService::global()` 为 null，靠 main 兜底启动代理 | `main.cpp` / `claude_module.cpp` | 🟢 功能正常，顺序待理顺 |
+| **发布形态：单 exe 零外部 DLL**——MinGW `-static` 运行时已由 `eui_neo_configure_app` 自动加，剩余动态依赖 sqlite3/curl/ssl/crypto 待静态化 | `cmake/Dependencies.cmake` | 🟡 用户要求，待实施 |
+| `captureOpenFileFromArgv()` 仅 `__APPLE__` 有实现 | `src/main.cpp` | 🟡 命令行文件打开失效 |
+| `check-consistency.sh` 用 macOS `screencapture`/`open -a` | `scripts/` | 🟢 开发工具，非运行时 |
+| 旧 `build/` 是 Darwin arm64 产物 | `build/` | 🟢 删除重建 |
+
+已正确处理的跨平台点：paths（`%APPDATA%` 分支已有）、`localtime_s`（3 处）、HTTP 层（libcurl/cpp-httplib 跨平台）、`.app` target（`if(APPLE)` 守卫）、Security.framework 链接（有守卫）。
+
+**测试框架注意**：`tests/doctest.h` 是自制 78 行迷你框架（`REGISTER_TEST` 宏静态自注册 + `DOCTEST_CHECK/REQUIRE` 断言，fail-fast），**不是真 doctest**——grep `TEST_CASE` 找不到用例属正常。共 103 个用例（已提交 71 + 未提交 32），无按名过滤能力。
 
 ## 📂 关键文件
 
@@ -165,7 +182,7 @@ main → 4 个 module_* (markdown / todo / claude_proxy / home)
 | `docs/superpowers/specs/2026-09-20-devdesk-design.md` | **唯一权威 spec**，所有架构 / API / token 决策都在这 |
 | `docs/mockups/palette-comparison.html` | 配色对比 demo（已确定方案 B）|
 | `docs/mockups/devdesk-prototype.html` | HTML 交互原型（待生成）|
-| `../EUI-NEO/` | 上游 GUI 框架（git submodule），实现时直接 `add_subdirectory(3rd/EUI-NEO)` |
+| `../EUI-NEO/` | 上游 GUI 框架（同级目录源码，非 submodule），通过 `EUI_NEO_DIR` 以 `add_subdirectory` 集成 |
 
 ## 🧪 验证原则
 
