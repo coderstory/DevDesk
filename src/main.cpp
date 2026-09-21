@@ -10,6 +10,7 @@
 #include "core/router.h"
 #include "core/theme.h"
 #include "platform/file_open.h"
+#include "settings_config.h"
 
 #include <eui/dsl.h>
 #include <eui/dsl_app.h>
@@ -28,9 +29,6 @@ extern "C" ::core::Module* create_claude_module();
 extern "C" ::core::Module* create_settings_module();
 
 namespace {
-
-// 调用日志滚动保留天数（spec §11.5；T11 设置页落地后改为可配置）
-constexpr int kCallLogRetentionDays = 30;
 
 // 全局：Finder "打开方式" 传入的文件路径
 // 两条来源都写这里：命令行 argv（启动时）/ Apple Event（Finder 双击、打开方式）
@@ -100,16 +98,26 @@ void setupLogging() {
         // 注册给 module_* 层（onStart 里通过 core::appDatabase() 拿同一份连接）
         ::core::registerAppDatabase(&db->db());
         LOG_INFO("数据库已就绪: " + ::core::paths::sqliteDbFile().string());
-        // 30 天调用日志滚动清理（spec §11.5）：幂等，失败只记日志不阻断启动
-        const auto pruned = db->pruneCallLogs(kCallLogRetentionDays);
-        if (pruned.isOk()) {
-            if (pruned.unsafeValue() > 0) {
-                LOG_INFO("已清理 " + std::to_string(pruned.unsafeValue()) +
-                         " 条 " + std::to_string(kCallLogRetentionDays) +
-                         " 天前的调用日志");
+        // 调用日志滚动清理（spec §11.5 保留策略）：保留天数读设置页配置
+        //（T11 集成接线：config.json 的 logRetentionDays，默认 30，
+        // 0 = 永久保留跳过清理）；幂等，失败只记日志不阻断启动
+        const module::settings::SettingsStore settingsStore(
+            ::core::paths::configFile());
+        const int retentionDays = settingsStore.load().logRetentionDays;
+        if (retentionDays > 0) {
+            const auto pruned = db->pruneCallLogs(retentionDays);
+            if (pruned.isOk()) {
+                if (pruned.unsafeValue() > 0) {
+                    LOG_INFO("已清理 " + std::to_string(pruned.unsafeValue()) +
+                             " 条 " + std::to_string(retentionDays) +
+                             " 天前的调用日志");
+                }
+            } else {
+                LOG_WARN("调用日志清理失败（不阻断启动）: " +
+                         pruned.errorMessage());
             }
         } else {
-            LOG_WARN("调用日志清理失败（不阻断启动）: " + pruned.errorMessage());
+            LOG_INFO("调用日志保留策略: 永久保留（logRetentionDays=0），跳过清理");
         }
         initialized = true;
     }
