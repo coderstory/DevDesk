@@ -105,43 +105,62 @@ void ProxyRouter::handleRequest(
     const auto startTime = std::chrono::steady_clock::now();
     const std::time_t startedAt = std::time(nullptr);
 
-    // ---- 1. 查 active profile ----
-    auto activeR = service_.getActiveProfile();
-    if (activeR.isFail()) {
-        LOG_WARN("代理：无激活 profile (" + activeR.errorMessage() + ")");
-        out.setStatus(503);
-        out.setHeader("Content-Type", "application/json");
-        out.write(std::string("{\"error\":\"no_active_profile\",\"message\":\"") +
-                  activeR.errorMessage() + "\"}");
-        out.end();
-        return;
+    // ---- 1. 取 profile（含明文 API key）----
+    // 注入路径（测试 / UI）：profileProvider_ 直接给出完整 profile（与流式
+    // 路径一致），绕过 DB / Keychain——否则测试的内存库里没有 profile，
+    // 缓冲转发永远 503（Windows 首跑 stream:false 用例失败根因）。
+    Profile profile;
+    if (profileProvider_) {
+        auto profileR = resolveProfile();
+        if (profileR.isFail()) {
+            LOG_WARN("代理：取 profile 失败 (" + profileR.errorMessage() + ")");
+            out.setStatus(503);
+            out.setHeader("Content-Type", "application/json");
+            out.write(std::string("{\"error\":\"no_active_profile\",\"message\":\"") +
+                      profileR.errorMessage() + "\"}");
+            out.end();
+            return;
+        }
+        profile = std::move(profileR).value();
+    } else {
+        // 生产路径：SQLite 取 active profile → Keychain 取明文 key（P9 原行为）
+        auto activeR = service_.getActiveProfile();
+        if (activeR.isFail()) {
+            LOG_WARN("代理：无激活 profile (" + activeR.errorMessage() + ")");
+            out.setStatus(503);
+            out.setHeader("Content-Type", "application/json");
+            out.write(std::string("{\"error\":\"no_active_profile\",\"message\":\"") +
+                      activeR.errorMessage() + "\"}");
+            out.end();
+            return;
+        }
+        profile = std::move(activeR).value();
+
+        auto keyR = service_.loadApiKey(profile.id);
+        if (keyR.isFail()) {
+            LOG_ERROR("代理：读取 API key 失败: " + keyR.errorMessage());
+            out.setStatus(500);
+            out.setHeader("Content-Type", "application/json");
+            out.write(std::string("{\"error\":\"keychain_read_failed\",\"message\":\"") +
+                      keyR.errorMessage() + "\"}");
+            out.end();
+
+            // 记录日志（status=500, error=keychain）
+            ClaudeService::CallLogEntry entry;
+            entry.profileId = profile.id;
+            entry.method = method;
+            entry.path = path;
+            entry.statusCode = 500;
+            entry.error = "keychain_read_failed";
+            entry.startedAt = startedAt;
+            service_.logCall(entry);
+            return;
+        }
+        profile.apiKeyPlain = std::move(keyR).value();
     }
-    Profile profile = std::move(activeR).value();
+    const std::string apiKey = profile.apiKeyPlain;
 
-    // ---- 2. 读 API key from Keychain ----
-    auto keyR = service_.loadApiKey(profile.id);
-    if (keyR.isFail()) {
-        LOG_ERROR("代理：读取 API key 失败: " + keyR.errorMessage());
-        out.setStatus(500);
-        out.setHeader("Content-Type", "application/json");
-        out.write(std::string("{\"error\":\"keychain_read_failed\",\"message\":\"") +
-                  keyR.errorMessage() + "\"}");
-        out.end();
-
-        // 记录日志（status=500, error=keychain）
-        ClaudeService::CallLogEntry entry;
-        entry.profileId = profile.id;
-        entry.method = method;
-        entry.path = path;
-        entry.statusCode = 500;
-        entry.error = "keychain_read_failed";
-        entry.startedAt = startedAt;
-        service_.logCall(entry);
-        return;
-    }
-    const std::string apiKey = std::move(keyR).value();
-
-    // ---- 3. 构造上游请求 ----
+    // ---- 2. 构造上游请求 ----
     platform::http::Request upstream;
     upstream.method = method;
     upstream.url = stripTrailingSlash(profile.baseUrl) + ensureLeadingSlash(path);
@@ -162,7 +181,7 @@ void ProxyRouter::handleRequest(
 
     upstream.headers = std::move(fwd);
 
-    // ---- 4. 转发 ----
+    // ---- 3. 转发 ----
     auto respR = platform::http::send(upstream);
     auto endTime = std::chrono::steady_clock::now();
     const int64_t latencyMs =
@@ -192,7 +211,7 @@ void ProxyRouter::handleRequest(
 
     auto& resp = respR.unsafeValue();
 
-    // ---- 5. 写回客户端 ----
+    // ---- 4. 写回客户端 ----
     out.setStatus(resp.statusCode);
     bool hasContentType = false;
     for (const auto& kv : resp.headers) {
@@ -215,7 +234,7 @@ void ProxyRouter::handleRequest(
     }
     out.end();
 
-    // ---- 6. 写日志 ----
+    // ---- 5. 写日志 ----
     ClaudeService::CallLogEntry entry;
     entry.profileId = profile.id;
     entry.method = method;
