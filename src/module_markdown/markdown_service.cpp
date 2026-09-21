@@ -5,6 +5,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <chrono>
 #include <filesystem>
 #include <fstream>
 #include <set>
@@ -18,40 +19,51 @@ namespace module::markdown {
 
 namespace {
 
-// 把字符串中非 ASCII 字母/数字/CJK 的 FTS5 操作符字符去掉，避免查询注入
+// 把一个用户输入的词清洗成安全的 FTS5 词元
+//
+// FTS5 查询语法包含 " ' ( ) * : ^ { } - + ~ AND OR NOT NEAR 等操作符。
+// 策略：
+//   1. 只保留字母/数字/下划线/非 ASCII 字节（CJK 等），丢弃其余字符
+//   2. 用双引号包成 phrase（消灭残留的关键字语义，如 AND）
+//   3. 后面跟 * 做 prefix 匹配
 std::string sanitizeFtsToken(const std::string& token) {
     std::string out;
     out.reserve(token.size());
     for (unsigned char ch : token) {
-        // 保留 ASCII 字母/数字 + 中文/日文/韩文等 Unicode 字母
-        // FTS5 操作符：' " ( ) * : ^ + - NEAR AND OR
-        // 简化策略：只保留字母数字和常见 CJK 区间
-        const bool keep =
-            std::isalnum(ch) ||
-            (ch >= 0x80); // 多字节 UTF-8 字节（粗略，会包含所有非 ASCII）
+        // 保留 ASCII 字母/数字/下划线 + 所有非 ASCII 字节（UTF-8 多字节）
+        const bool keep = std::isalnum(ch) != 0 || ch == '_' || ch >= 0x80;
         if (keep) out.push_back(static_cast<char>(ch));
     }
     return out;
 }
 
-// 把用户查询拆词，加 * 后缀做 prefix 匹配；空词跳过
+// 把用户查询拆词 → 安全的 FTS5 MATCH 表达式
+//   例: "special_token_123" → "\"special\"* \"token\"* \"123\"*"
+//   空查询 → ""（调用方需处理）
 std::string buildFtsQuery(const std::string& raw) {
     std::istringstream iss(raw);
     std::string token;
-    std::vector<std::string> terms;
+    std::string joined;
     while (iss >> token) {
         std::string clean = sanitizeFtsToken(token);
         if (clean.empty()) continue;
-        clean += "*";
-        terms.push_back(std::move(clean));
-    }
-    if (terms.empty()) return "";
-    std::string joined;
-    for (size_t i = 0; i < terms.size(); ++i) {
-        if (i > 0) joined += " ";
-        joined += terms[i];
+        if (!joined.empty()) joined += ' ';
+        joined += '"';
+        joined += clean;
+        joined += "\"*";
     }
     return joined;
+}
+
+// LIKE 模式下转义 % _ \（配合 ESCAPE '\'）
+std::string escapeLikePattern(const std::string& raw) {
+    std::string out;
+    out.reserve(raw.size() + 8);
+    for (char ch : raw) {
+        if (ch == '\\' || ch == '%' || ch == '_') out.push_back('\\');
+        out.push_back(ch);
+    }
+    return out;
 }
 
 // 把 SqlRow 转成 NoteMeta
@@ -245,10 +257,30 @@ core::Result<void> MarkdownService::syncOneToIndex(
                     "step update: " + stepResult.errorMessage());
             }
         }
-        // FTS5 更新（INSERT OR REPLACE）
+        // FTS5 同步：先按 path 删除旧行，再插入新行
+        //
+        // 注意：这里**不能**只用 INSERT OR REPLACE —— markdown_fts 的
+        // `path` 列是 UNINDEXED（不参与全文索引），**没有 UNIQUE 约束**，
+        // 所以 INSERT OR REPLACE 不会去重，而是每次追加一行新记录，
+        // 导致旧内容残留、搜索结果命中过期数据。必须先删后插。
         {
             auto prep = db_.prepare(
-                "INSERT OR REPLACE INTO markdown_fts (path, title, content) "
+                "DELETE FROM markdown_fts WHERE path = ?");
+            if (prep.isFail()) {
+                return core::Result<void>::fail(prep.errorCode(),
+                    "prepare fts delete: " + prep.errorMessage());
+            }
+            auto& stmt = prep.value();
+            stmt.bind(1, relPathPosix);
+            auto stepResult = stmt.step();
+            if (stepResult.isFail()) {
+                return core::Result<void>::fail(stepResult.errorCode(),
+                    "step fts delete: " + stepResult.errorMessage());
+            }
+        }
+        {
+            auto prep = db_.prepare(
+                "INSERT INTO markdown_fts (path, title, content) "
                 "VALUES (?, ?, ?)");
             if (prep.isFail()) {
                 return core::Result<void>::fail(prep.errorCode(),
@@ -380,6 +412,15 @@ core::Result<void> MarkdownService::rescan() {
         if (delResult.isFail()) {
             LOG_WARN("删除索引失败 " + p + ": " + delResult.errorMessage());
         }
+    }
+
+    // 3) 清理 FTS 里的孤儿行（path 已不在 markdown_index 中）
+    //    历史版本用过 INSERT OR REPLACE（对 FTS5 不去重），可能留下重复行
+    if (auto cleanup = db_.exec(
+            "DELETE FROM markdown_fts WHERE path NOT IN "
+            "(SELECT path FROM markdown_index)");
+        cleanup.isFail()) {
+        LOG_WARN("清理 FTS 孤儿行失败: " + cleanup.errorMessage());
     }
 
     LOG_INFO("MarkdownService rescan 完成，共索引 " +
@@ -561,39 +602,90 @@ core::Result<std::vector<NoteMeta>> MarkdownService::search(
     if (query.empty()) {
         return listAll();
     }
+
+    std::vector<NoteMeta> results;
+    std::set<std::string> seen;
+
+    auto merge = [&results, &seen](const std::vector<NoteMeta>& incoming) {
+        for (const auto& n : incoming) {
+            const std::string key = n.relativePath.generic_string();
+            if (seen.insert(key).second) {
+                results.push_back(n);
+            }
+        }
+    };
+
+    // ---- 路径 A：FTS5 MATCH（拉丁词、按 rank 排序）----
     const std::string ftsQuery = buildFtsQuery(query);
-    if (ftsQuery.empty()) {
-        return core::Result<std::vector<NoteMeta>>::ok({});
+    if (!ftsQuery.empty()) {
+        auto prep = db_.prepare(
+            "SELECT i.id, i.path, i.title, i.size_bytes, i.modified_at "
+            "FROM markdown_fts f "
+            "JOIN markdown_index i ON i.path = f.path "
+            "WHERE markdown_fts MATCH ? "
+            "ORDER BY rank");
+        if (prep.isOk()) {
+            auto& stmt = prep.value();
+            if (stmt.bind(1, ftsQuery).isOk()) {
+                auto rowsResult = stmt.fetchAll();
+                if (rowsResult.isOk()) {
+                    std::vector<NoteMeta> hits;
+                    hits.reserve(rowsResult.value().size());
+                    for (const auto& row : rowsResult.value()) {
+                        hits.push_back(rowToNoteImpl(row));
+                    }
+                    merge(hits);
+                } else {
+                    LOG_WARN("FTS5 搜索失败: " + rowsResult.errorMessage());
+                }
+            }
+        } else {
+            LOG_WARN("FTS5 prepare 失败: " + prep.errorMessage());
+        }
     }
 
-    auto prep = db_.prepare(
-        "SELECT i.id, i.path, i.title, i.size_bytes, i.modified_at "
-        "FROM markdown_fts f "
-        "JOIN markdown_index i ON i.path = f.path "
-        "WHERE markdown_fts MATCH ? "
-        "ORDER BY rank");
-    if (prep.isFail()) {
-        return core::Result<std::vector<NoteMeta>>::fail(
-            prep.errorCode(), "prepare search: " + prep.errorMessage());
+    // ---- 路径 B：LIKE 子串匹配（CJK 兜底）----
+    //
+    // unicode61 分词器把连续 CJK 视为单个 token，"界面" 无法命中
+    // "用户界面"（前缀也不行）。所以只要查询里含非 ASCII（CJK）字符，
+    // 或者 FTS5 没命中，就走一次 LIKE 子串搜索兜底。
+    const bool hasNonAscii = std::any_of(
+        query.begin(), query.end(),
+        [](char c) { return static_cast<unsigned char>(c) >= 0x80; });
+
+    if (hasNonAscii || results.empty()) {
+        const std::string pattern = "%" + escapeLikePattern(query) + "%";
+        auto prep = db_.prepare(
+            "SELECT i.id, i.path, i.title, i.size_bytes, i.modified_at "
+            "FROM markdown_fts f "
+            "JOIN markdown_index i ON i.path = f.path "
+            "WHERE f.title LIKE ? ESCAPE '\\' "
+            "   OR f.content LIKE ? ESCAPE '\\' "
+            "ORDER BY i.modified_at DESC");
+        if (prep.isFail()) {
+            return core::Result<std::vector<NoteMeta>>::fail(
+                prep.errorCode(), "prepare search like: " + prep.errorMessage());
+        }
+        auto& stmt = prep.value();
+        if (stmt.bind(1, pattern).isFail() || stmt.bind(2, pattern).isFail()) {
+            return core::Result<std::vector<NoteMeta>>::fail(
+                core::ErrorCode::Internal, "bind search like pattern 失败");
+        }
+        auto rowsResult = stmt.fetchAll();
+        if (rowsResult.isFail()) {
+            return core::Result<std::vector<NoteMeta>>::fail(
+                rowsResult.errorCode(),
+                "fetch search like: " + rowsResult.errorMessage());
+        }
+        std::vector<NoteMeta> hits;
+        hits.reserve(rowsResult.value().size());
+        for (const auto& row : rowsResult.value()) {
+            hits.push_back(rowToNoteImpl(row));
+        }
+        merge(hits);
     }
-    auto& stmt = prep.value();
-    auto b = stmt.bind(1, ftsQuery);
-    if (b.isFail()) {
-        return core::Result<std::vector<NoteMeta>>::fail(
-            b.errorCode(), "bind query: " + b.errorMessage());
-    }
-    auto rowsResult = stmt.fetchAll();
-    if (rowsResult.isFail()) {
-        return core::Result<std::vector<NoteMeta>>::fail(
-            rowsResult.errorCode(),
-            "fetch search: " + rowsResult.errorMessage());
-    }
-    std::vector<NoteMeta> out;
-    out.reserve(rowsResult.value().size());
-    for (const auto& row : rowsResult.value()) {
-        out.push_back(rowToNoteImpl(row));
-    }
-    return core::Result<std::vector<NoteMeta>>::ok(std::move(out));
+
+    return core::Result<std::vector<NoteMeta>>::ok(std::move(results));
 }
 
 NoteMeta MarkdownService::rowToNote(const core::data::SqlRow& row) {

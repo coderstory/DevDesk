@@ -25,15 +25,15 @@ namespace fs = std::filesystem;
 
 namespace {
 
-// 创建一个临时目录，返回路径
+// 创建一个临时目录，返回路径（已确保干净）
 fs::path makeTempDir(const std::string& tag) {
     static int counter = 0;
     ++counter;
     fs::path base = fs::temp_directory_path();
     fs::path dir = base / ("devdesk_md_test_" + tag + "_" +
-                          std::to_string(counter) + "_" +
-                          std::to_string(std::rand()));
+                          std::to_string(counter));
     std::error_code ec;
+    fs::remove_all(dir, ec);           // 清掉上次失败留下的残骸
     fs::create_directories(dir, ec);
     return dir;
 }
@@ -405,6 +405,27 @@ REGISTER_TEST(md_index_sync_correct,
     DOCTEST_REQUIRE(sr2.isOk());
     DOCTEST_CHECK_EQ(sr2.value().size(), 0u);
 
+    // FTS 行不应随覆盖写而累积（path 必须唯一）
+    auto ftsPrep = db.prepare(
+        "SELECT COUNT(*) AS n FROM markdown_fts WHERE path = 'foo.md'");
+    DOCTEST_REQUIRE(ftsPrep.isOk());
+    auto ftsRows = ftsPrep.value().fetchAll();
+    DOCTEST_REQUIRE(ftsRows.isOk());
+    DOCTEST_REQUIRE_EQ(ftsRows.value().size(), 1u);
+    DOCTEST_CHECK_EQ(ftsRows.value()[0].getInt64("n").value(), 1);
+
+    // 连续多写 10 次，索引仍然只有一行
+    for (int i = 0; i < 10; ++i) {
+        DOCTEST_REQUIRE(svc.write("foo.md",
+            "# Foo\n\nrevision " + std::to_string(i)).isOk());
+    }
+    auto ftsPrep2 = db.prepare(
+        "SELECT COUNT(*) AS n FROM markdown_fts WHERE path = 'foo.md'");
+    DOCTEST_REQUIRE(ftsPrep2.isOk());
+    auto ftsRows2 = ftsPrep2.value().fetchAll();
+    DOCTEST_REQUIRE(ftsRows2.isOk());
+    DOCTEST_CHECK_EQ(ftsRows2.value()[0].getInt64("n").value(), 1);
+
     fs::remove_all(dir);
     return true;
 })
@@ -437,7 +458,12 @@ REGISTER_TEST(md_path_posix_separator,
     runMigrations(db);
     module::markdown::MarkdownService svc(db, dir);
 
-    DOCTEST_REQUIRE(svc.create("a/b/c/deep.md").isOk());
+    auto createResult = svc.create("a/b/c/deep.md");
+    DOCTEST_CHECK(createResult.isOk());
+    if (createResult.isFail()) {
+        std::cerr << "  create 失败: " << createResult.errorMessage() << std::endl;
+    }
+    DOCTEST_REQUIRE(createResult.isOk());
 
     auto list = svc.listAll().value();
     DOCTEST_REQUIRE_EQ(list.size(), 1u);
@@ -448,11 +474,18 @@ REGISTER_TEST(md_path_posix_separator,
     DOCTEST_CHECK(p.find('/') != std::string::npos);
     DOCTEST_CHECK_EQ(p, std::string("a/b/c/deep.md"));
 
-    // 通过 listInDirectory 用混合分隔符查询也能匹配
-    // （listInDirectory 内部 toPosix）
-    auto sub = svc.listInDirectory(fs::path("a/b"));
+    // listInDirectory 只返回**直接子项**（非递归）：
+    //   a/b       → 空（deep.md 的直接父目录是 a/b/c）
+    //   a/b/c     → deep.md
+    auto mid = svc.listInDirectory(fs::path("a/b"));
+    DOCTEST_REQUIRE(mid.isOk());
+    DOCTEST_CHECK_EQ(mid.value().size(), 0u);
+
+    auto sub = svc.listInDirectory(fs::path("a/b/c"));
     DOCTEST_REQUIRE(sub.isOk());
     DOCTEST_CHECK_EQ(sub.value().size(), 1u);
+    DOCTEST_CHECK_EQ(sub.value()[0].relativePath.generic_string(),
+                     std::string("a/b/c/deep.md"));
 
     fs::remove_all(dir);
     return true;
