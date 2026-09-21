@@ -136,6 +136,17 @@ open build/DevDesk.app
 
 EUI-NEO 的 `main()` 不接收 `argc/argv`，所以我们用 Apple 私有但长期稳定的 API `_NSGetArgv()` 在 `dslAppConfig()` 首次调用时读取 `argv[1]`。
 
+> ⚠️ **签名陷阱**：`_NSGetArgc()` 返回 `int*`，`_NSGetArgv()` 返回 `char***` —— 它们返回的是 argc/argv 的**地址**，必须解引用一次：
+> ```cpp
+> extern "C" int* _NSGetArgc(void);
+> extern "C" char*** _NSGetArgv(void);
+> int argc = *_NSGetArgc();
+> char** argv = *_NSGetArgv();
+> ```
+> 若误写成 `int argc = _NSGetArgc();`，拿到的会是地址的低 32 位（垃圾值），导致 `argc < 2` 误判而静默跳过。
+
+> ⚠️ **顺序要求**：`captureOpenFileFromArgv()` 内部有 `LOG_INFO`，必须放在 `setupLogging()` **之后**调用，否则日志输出尚未注册、捕获日志会丢失。
+
 完整流程在 `src/main.cpp`：
 
 ```cpp
