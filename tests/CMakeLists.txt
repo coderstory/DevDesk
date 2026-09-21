@@ -11,7 +11,9 @@ add_executable(devdesk_tests
     test_platform/test_keychain.cpp
     test_platform/test_json.cpp
     test_modules/test_markdown.cpp
+    test_modules/test_markdown_service.cpp
     test_modules/test_todo.cpp
+    test_modules/test_todo_service.cpp
     test_modules/test_claude.cpp
     test_modules/test_home.cpp
 )

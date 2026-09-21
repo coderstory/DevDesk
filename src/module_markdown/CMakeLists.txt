@@ -1,5 +1,6 @@
 add_library(devdesk_module_markdown STATIC
     markdown_module.cpp
+    markdown_service.cpp
 )
 
 target_include_directories(devdesk_module_markdown PUBLIC

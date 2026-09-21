@@ -1,5 +1,6 @@
 add_library(devdesk_module_todo STATIC
     todo_module.cpp
+    todo_service.cpp
 )
 
 target_include_directories(devdesk_module_todo PUBLIC

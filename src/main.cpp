@@ -13,13 +13,69 @@
 
 #include <memory>
 #include <cstdlib>
+#include <string>
 
 extern "C" ::core::Module* create_home_module();
 extern "C" ::core::Module* create_markdown_module();
 extern "C" ::core::Module* create_todo_module();
 extern "C" ::core::Module* create_claude_module();
 
+// macOS 私有 API：获取进程的 argv（EUI-NEO 的 main 不接 argc/argv）
+// 这是 Apple 长期稳定的 API（自 10.0 起），用于替代 main 签名无法扩展的场景
+#if defined(__APPLE__)
+extern "C" char** _NSGetArgv(void);
+extern "C" int _NSGetArgc(void);
+#endif
+
 namespace {
+
+// 全局：Finder "打开方式" 传入的文件路径
+// MVP：仅记录 + log，不实际打开（架构准备好）
+// 后续 P 阶段在 Router 启动后根据扩展名 dispatch 到对应模块
+std::string& pendingOpenFilePath() {
+    static std::string path;
+    return path;
+}
+
+// 从 argv 捕获要打开的文件（仅在第一次 dslAppConfig() 调用时执行）
+// macOS: 使用 _NSGetArgv 读取命令行
+// 其他平台: 无操作（依赖 Finder open with + EUI-NEO 上游支持）
+void captureOpenFileFromArgv() {
+#if defined(__APPLE__)
+    static bool captured = false;
+    if (captured) return;
+    captured = true;
+
+    int argc = _NSGetArgc();
+    char** argv = _NSGetArgv();
+    if (argc < 2 || argv == nullptr) return;
+
+    // argv[1] 是文件路径（Finder 双击时 macOS 自动传入）
+    const char* path = argv[1];
+    if (path == nullptr || path[0] == '\0') return;
+
+    // 跳过 flag 类参数（以 '-' 开头）
+    if (path[0] == '-') return;
+
+    pendingOpenFilePath() = std::string(path);
+    LOG_INFO("捕获到待打开文件: " + pendingOpenFilePath());
+#endif
+}
+
+// 根据文件扩展名返回目标 PageId（架构准备：MVP 只返回目标，不实际加载内容）
+// 后续 P 阶段：让对应模块读 pendingOpenFilePath() 并实际渲染文件
+::core::PageId dispatchPageForFile(const std::string& path) {
+    auto endsWith = [&](const char* suffix) {
+        size_t n = std::string(suffix).size();
+        return path.size() >= n &&
+               path.compare(path.size() - n, n, suffix) == 0;
+    };
+    if (endsWith(".md") || endsWith(".markdown")) return ::core::PageId::Markdown;
+    if (endsWith(".json")) return ::core::PageId::ClaudeProxy;
+    if (endsWith(".js") || endsWith(".html") || endsWith(".htm") ||
+        endsWith(".txt")) return ::core::PageId::Markdown;  // 文本类用 Markdown 模块查看
+    return ::core::PageId::Home;
+}
 
 void setupLogging() {
     core::log::addFileOutput(::core::paths::logFile());

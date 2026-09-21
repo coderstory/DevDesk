@@ -1,0 +1,603 @@
+// src/module_markdown/markdown_service.cpp
+#include "markdown_service.h"
+
+#include "core/logging.h"
+
+#include <algorithm>
+#include <cctype>
+#include <filesystem>
+#include <fstream>
+#include <set>
+#include <sstream>
+#include <string>
+#include <vector>
+
+namespace fs = std::filesystem;
+
+namespace module::markdown {
+
+namespace {
+
+// 把字符串中非 ASCII 字母/数字/CJK 的 FTS5 操作符字符去掉，避免查询注入
+std::string sanitizeFtsToken(const std::string& token) {
+    std::string out;
+    out.reserve(token.size());
+    for (unsigned char ch : token) {
+        // 保留 ASCII 字母/数字 + 中文/日文/韩文等 Unicode 字母
+        // FTS5 操作符：' " ( ) * : ^ + - NEAR AND OR
+        // 简化策略：只保留字母数字和常见 CJK 区间
+        const bool keep =
+            std::isalnum(ch) ||
+            (ch >= 0x80); // 多字节 UTF-8 字节（粗略，会包含所有非 ASCII）
+        if (keep) out.push_back(static_cast<char>(ch));
+    }
+    return out;
+}
+
+// 把用户查询拆词，加 * 后缀做 prefix 匹配；空词跳过
+std::string buildFtsQuery(const std::string& raw) {
+    std::istringstream iss(raw);
+    std::string token;
+    std::vector<std::string> terms;
+    while (iss >> token) {
+        std::string clean = sanitizeFtsToken(token);
+        if (clean.empty()) continue;
+        clean += "*";
+        terms.push_back(std::move(clean));
+    }
+    if (terms.empty()) return "";
+    std::string joined;
+    for (size_t i = 0; i < terms.size(); ++i) {
+        if (i > 0) joined += " ";
+        joined += terms[i];
+    }
+    return joined;
+}
+
+// 把 SqlRow 转成 NoteMeta
+NoteMeta rowToNoteImpl(const core::data::SqlRow& row) {
+    NoteMeta n;
+    auto idR = row.getInt64("id");
+    if (idR.isOk()) n.id = idR.value();
+    auto pathR = row.getString("path");
+    if (pathR.isOk()) n.relativePath = pathR.value();
+    auto titleR = row.getString("title");
+    if (titleR.isOk()) n.title = titleR.value();
+    auto sizeR = row.getInt64("size_bytes");
+    if (sizeR.isOk()) n.sizeBytes = sizeR.value();
+    auto modR = row.getInt64("modified_at");
+    if (modR.isOk()) n.modifiedAt = modR.value();
+    return n;
+}
+
+} // namespace
+
+// ============ MarkdownService ============
+
+MarkdownService::MarkdownService(core::data::SqliteDb& db,
+                                 const fs::path& notesDir)
+    : db_(db), notesDir_(notesDir) {}
+
+fs::path MarkdownService::resolve(const fs::path& relPath) const {
+    // relPath 是 POSIX 风格的相对路径（'/' 分隔符）
+    // std::filesystem 在 macOS/Linux 上接受 '/'，无需转换
+    return notesDir_ / relPath;
+}
+
+std::string MarkdownService::toPosix(const fs::path& p) {
+    // generic_string() 总是 POSIX 风格（'/' 分隔符），跨平台一致
+    return p.generic_string();
+}
+
+std::string MarkdownService::extractTitle(const std::string& content,
+                                          const fs::path& relPath) {
+    // 从第一非空行提取 "# Title"
+    std::istringstream iss(content);
+    std::string line;
+    while (std::getline(iss, line)) {
+        // 跳过前导空白
+        size_t i = 0;
+        while (i < line.size() &&
+               (line[i] == ' ' || line[i] == '\t' || line[i] == '\r')) {
+            ++i;
+        }
+        if (i >= line.size()) continue; // 空行
+        // 必须以 "#" 开头
+        if (line[i] != '#') break;
+        // 跳过连续的 #
+        ++i;
+        while (i < line.size() && line[i] == '#') ++i;
+        // 跳过后续空白
+        while (i < line.size() &&
+               (line[i] == ' ' || line[i] == '\t')) {
+            ++i;
+        }
+        std::string title = line.substr(i);
+        // 去掉尾部空白
+        while (!title.empty() &&
+               (title.back() == ' ' || title.back() == '\t' ||
+                title.back() == '\r' || title.back() == '\n')) {
+            title.pop_back();
+        }
+        if (!title.empty()) return title;
+    }
+    // 没找到：回退到文件名（去扩展名）
+    std::string name = relPath.stem().string();
+    if (!name.empty()) return name;
+    return relPath.filename().string();
+}
+
+core::Result<void> MarkdownService::syncOneToIndex(
+    const fs::path& absPath,
+    const std::string& relPathPosix) {
+
+    std::error_code ec;
+    auto fileSize = fs::file_size(absPath, ec);
+    if (ec) {
+        return core::Result<void>::fail(core::ErrorCode::FileReadFailed,
+            "无法获取文件大小 " + absPath.string() + ": " + ec.message());
+    }
+    auto mtime = fs::last_write_time(absPath, ec);
+    if (ec) {
+        return core::Result<void>::fail(core::ErrorCode::FileReadFailed,
+            "无法获取 mtime " + absPath.string() + ": " + ec.message());
+    }
+    // mtime 转 unix epoch seconds（C++17 的 file_time 是 clock-dependent）
+    auto mtimeSec = std::chrono::duration_cast<std::chrono::seconds>(
+        mtime.time_since_epoch()).count();
+
+    // 读内容
+    std::ifstream ifs(absPath);
+    if (!ifs) {
+        return core::Result<void>::fail(core::ErrorCode::FileReadFailed,
+            "无法打开文件: " + absPath.string());
+    }
+    std::ostringstream oss;
+    oss << ifs.rdbuf();
+    const std::string content = oss.str();
+
+    const std::string title = extractTitle(content, relPathPosix);
+
+    // 查 index 里是否有这行（按 path）
+    auto selPrep = db_.prepare(
+        "SELECT id, size_bytes, modified_at FROM markdown_index WHERE path = ?");
+    if (selPrep.isFail()) {
+        return core::Result<void>::fail(selPrep.errorCode(),
+            "prepare select index: " + selPrep.errorMessage());
+    }
+    {
+        auto& stmt = selPrep.value();
+        auto b = stmt.bind(1, relPathPosix);
+        if (b.isFail()) {
+            return core::Result<void>::fail(b.errorCode(),
+                "bind path: " + b.errorMessage());
+        }
+        auto stepResult = stmt.step();
+        if (stepResult.isFail()) {
+            return core::Result<void>::fail(stepResult.errorCode(),
+                "step select index: " + stepResult.errorMessage());
+        }
+        const bool exists = stepResult.value();
+
+        if (exists) {
+            // 拿旧的 size/mtime 判断是否要更新
+            auto rowResult = stmt.currentRow();
+            if (rowResult.isFail()) {
+                return core::Result<void>::fail(rowResult.errorCode(),
+                    "currentRow: " + rowResult.errorMessage());
+            }
+            const auto& row = rowResult.value();
+            int64_t oldSize = 0, oldMtime = 0;
+            auto sR = row.getInt64("size_bytes");
+            if (sR.isOk()) oldSize = sR.value();
+            auto mR = row.getInt64("modified_at");
+            if (mR.isOk()) oldMtime = mR.value();
+
+            if (oldSize == static_cast<int64_t>(fileSize) &&
+                oldMtime == static_cast<int64_t>(mtimeSec)) {
+                // 无变化，跳过 update（但 FTS 仍要保证最新；通常没变化 FTS 也不用动）
+                return core::Result<void>::ok();
+            }
+        }
+    }
+
+    // INSERT OR IGNORE + UPDATE 分两步走，保证幂等
+    // 简化：用 INSERT OR REPLACE INTO markdown_index ...
+    auto upsert = db_.transaction([&]() -> core::Result<void> {
+        {
+            auto prep = db_.prepare(
+                "INSERT OR IGNORE INTO markdown_index "
+                "(path, title, size_bytes, modified_at, created_at) "
+                "VALUES (?, ?, ?, ?, ?)");
+            if (prep.isFail()) {
+                return core::Result<void>::fail(prep.errorCode(),
+                    "prepare insert: " + prep.errorMessage());
+            }
+            auto& stmt = prep.value();
+            stmt.bind(1, relPathPosix);
+            stmt.bind(2, title);
+            stmt.bind(3, static_cast<int64_t>(fileSize));
+            stmt.bind(4, static_cast<int64_t>(mtimeSec));
+            stmt.bind(5, static_cast<int64_t>(mtimeSec));
+            auto stepResult = stmt.step();
+            if (stepResult.isFail()) {
+                return core::Result<void>::fail(stepResult.errorCode(),
+                    "step insert: " + stepResult.errorMessage());
+            }
+        }
+        // UPDATE（覆盖 INSERT IGNORE 的 0 行情况）
+        {
+            auto prep = db_.prepare(
+                "UPDATE markdown_index SET title = ?, size_bytes = ?, "
+                "modified_at = ? WHERE path = ?");
+            if (prep.isFail()) {
+                return core::Result<void>::fail(prep.errorCode(),
+                    "prepare update: " + prep.errorMessage());
+            }
+            auto& stmt = prep.value();
+            stmt.bind(1, title);
+            stmt.bind(2, static_cast<int64_t>(fileSize));
+            stmt.bind(3, static_cast<int64_t>(mtimeSec));
+            stmt.bind(4, relPathPosix);
+            auto stepResult = stmt.step();
+            if (stepResult.isFail()) {
+                return core::Result<void>::fail(stepResult.errorCode(),
+                    "step update: " + stepResult.errorMessage());
+            }
+        }
+        // FTS5 更新（INSERT OR REPLACE）
+        {
+            auto prep = db_.prepare(
+                "INSERT OR REPLACE INTO markdown_fts (path, title, content) "
+                "VALUES (?, ?, ?)");
+            if (prep.isFail()) {
+                return core::Result<void>::fail(prep.errorCode(),
+                    "prepare fts: " + prep.errorMessage());
+            }
+            auto& stmt = prep.value();
+            stmt.bind(1, relPathPosix);
+            stmt.bind(2, title);
+            stmt.bind(3, content);
+            auto stepResult = stmt.step();
+            if (stepResult.isFail()) {
+                return core::Result<void>::fail(stepResult.errorCode(),
+                    "step fts: " + stepResult.errorMessage());
+            }
+        }
+        return core::Result<void>::ok();
+    });
+    if (upsert.isFail()) {
+        return core::Result<void>::fail(upsert.errorCode(),
+            "index upsert: " + upsert.errorMessage());
+    }
+    return core::Result<void>::ok();
+}
+
+core::Result<void> MarkdownService::deleteFromIndex(
+    const std::string& relPathPosix) {
+    auto tx = db_.transaction([&]() -> core::Result<void> {
+        {
+            auto prep = db_.prepare(
+                "DELETE FROM markdown_index WHERE path = ?");
+            if (prep.isFail()) {
+                return core::Result<void>::fail(prep.errorCode(),
+                    "prepare delete index: " + prep.errorMessage());
+            }
+            auto& stmt = prep.value();
+            stmt.bind(1, relPathPosix);
+            auto stepResult = stmt.step();
+            if (stepResult.isFail()) {
+                return core::Result<void>::fail(stepResult.errorCode(),
+                    "step delete index: " + stepResult.errorMessage());
+            }
+        }
+        {
+            auto prep = db_.prepare(
+                "DELETE FROM markdown_fts WHERE path = ?");
+            if (prep.isFail()) {
+                return core::Result<void>::fail(prep.errorCode(),
+                    "prepare delete fts: " + prep.errorMessage());
+            }
+            auto& stmt = prep.value();
+            stmt.bind(1, relPathPosix);
+            auto stepResult = stmt.step();
+            if (stepResult.isFail()) {
+                return core::Result<void>::fail(stepResult.errorCode(),
+                    "step delete fts: " + stepResult.errorMessage());
+            }
+        }
+        return core::Result<void>::ok();
+    });
+    if (tx.isFail()) {
+        return core::Result<void>::fail(tx.errorCode(),
+            "delete from index: " + tx.errorMessage());
+    }
+    return core::Result<void>::ok();
+}
+
+core::Result<void> MarkdownService::rescan() {
+    // 确保 notesDir 存在
+    std::error_code ec;
+    fs::create_directories(notesDir_, ec);
+    if (ec) {
+        return core::Result<void>::fail(core::ErrorCode::FileWriteFailed,
+            "无法创建笔记目录: " + ec.message());
+    }
+
+    // 1) 递归遍历磁盘，把所有 .md 文件 upsert 到索引
+    std::set<std::string> foundPaths; // POSIX 风格相对路径
+    for (auto it = fs::recursive_directory_iterator(
+                    notesDir_, fs::directory_options::skip_permission_denied, ec);
+         !ec && it != fs::recursive_directory_iterator();
+         it.increment(ec)) {
+        if (!ec) {
+            const auto& entry = *it;
+            if (!entry.is_regular_file(ec)) continue;
+            const auto& absPath = entry.path();
+            if (absPath.extension() != ".md") continue;
+
+            // 计算相对路径（POSIX 风格）
+            auto relGeneric = fs::relative(absPath, notesDir_, ec);
+            if (ec) continue;
+            const std::string relPosix = relGeneric.generic_string();
+
+            auto syncResult = syncOneToIndex(absPath, relPosix);
+            if (syncResult.isFail()) {
+                LOG_WARN("索引失败 " + absPath.string() + ": " +
+                         syncResult.errorMessage());
+                continue;
+            }
+            foundPaths.insert(relPosix);
+        }
+    }
+    if (ec) {
+        LOG_WARN("遍历笔记目录时出错: " + ec.message());
+    }
+
+    // 2) 删除索引中存在但磁盘上已不存在的条目
+    auto prep = db_.prepare("SELECT path FROM markdown_index");
+    if (prep.isFail()) {
+        return core::Result<void>::fail(prep.errorCode(),
+            "prepare select paths: " + prep.errorMessage());
+    }
+    std::vector<std::string> toRemove;
+    {
+        auto& stmt = prep.value();
+        auto rowsResult = stmt.fetchAll();
+        if (rowsResult.isFail()) {
+            return core::Result<void>::fail(rowsResult.errorCode(),
+                "fetch paths: " + rowsResult.errorMessage());
+        }
+        for (const auto& row : rowsResult.value()) {
+            auto p = row.getString("path");
+            if (p.isOk() && foundPaths.find(p.value()) == foundPaths.end()) {
+                toRemove.push_back(p.value());
+            }
+        }
+    }
+    for (const auto& p : toRemove) {
+        auto delResult = deleteFromIndex(p);
+        if (delResult.isFail()) {
+            LOG_WARN("删除索引失败 " + p + ": " + delResult.errorMessage());
+        }
+    }
+
+    LOG_INFO("MarkdownService rescan 完成，共索引 " +
+             std::to_string(foundPaths.size()) + " 个文件");
+    return core::Result<void>::ok();
+}
+
+core::Result<std::vector<NoteMeta>> MarkdownService::listAll() {
+    auto prep = db_.prepare(
+        "SELECT id, path, title, size_bytes, modified_at "
+        "FROM markdown_index ORDER BY modified_at DESC");
+    if (prep.isFail()) {
+        return core::Result<std::vector<NoteMeta>>::fail(
+            prep.errorCode(), "prepare listAll: " + prep.errorMessage());
+    }
+    auto& stmt = prep.value();
+    auto rowsResult = stmt.fetchAll();
+    if (rowsResult.isFail()) {
+        return core::Result<std::vector<NoteMeta>>::fail(
+            rowsResult.errorCode(),
+            "fetch listAll: " + rowsResult.errorMessage());
+    }
+    std::vector<NoteMeta> out;
+    out.reserve(rowsResult.value().size());
+    for (const auto& row : rowsResult.value()) {
+        out.push_back(rowToNoteImpl(row));
+    }
+    return core::Result<std::vector<NoteMeta>>::ok(std::move(out));
+}
+
+core::Result<std::vector<NoteMeta>> MarkdownService::listInDirectory(
+    const fs::path& dir) {
+    // dir 是 POSIX 风格相对目录（如 "inbox" 或 "" 表示根）
+    std::string prefix = dir.empty() ? "" : toPosix(dir);
+    // 在 SQL 里匹配：path 等于 prefix 或 prefix + '/' + ...
+    // 简化：用 LIKE 'prefix/%' 或 = prefix（精确）
+    // 实际上目录匹配的语义是：parent(path) == dir
+    //   - root: parent 为空
+    //   - "inbox": parent = "inbox"
+    //   - "inbox/sub": parent = "inbox/sub"
+    //
+    // 用 INSTR/SUBSTR 实现：
+    //   parent_dir(path) = case when instr(path, '/') > 0
+    //                          then substr(path, 1, instr(path, '/')-1)
+    //                          else ''
+    //                      END
+    // 干脆全列出来再筛（结果集通常 < 1000 条笔记，性能可接受）
+    auto listResult = listAll();
+    if (listResult.isFail()) {
+        return listResult;
+    }
+    std::vector<NoteMeta> filtered;
+    for (auto& n : listResult.value()) {
+        const std::string& path = n.relativePath.generic_string();
+        // 父目录 = 去掉最后一段
+        const auto pos = path.find_last_of('/');
+        std::string parent;
+        if (pos == std::string::npos) parent = "";
+        else parent = path.substr(0, pos);
+
+        if (parent == prefix) {
+            filtered.push_back(std::move(n));
+        }
+    }
+    return core::Result<std::vector<NoteMeta>>::ok(std::move(filtered));
+}
+
+core::Result<std::string> MarkdownService::read(const fs::path& relPath) {
+    const std::string relPosix = toPosix(relPath);
+    const auto absPath = resolve(relPath);
+    std::ifstream ifs(absPath);
+    if (!ifs) {
+        return core::Result<std::string>::fail(
+            core::ErrorCode::FileNotFound,
+            "无法读取 " + absPath.string());
+    }
+    std::ostringstream oss;
+    oss << ifs.rdbuf();
+    return core::Result<std::string>::ok(oss.str());
+}
+
+core::Result<void> MarkdownService::write(const fs::path& relPath,
+                                          const std::string& content) {
+    const std::string relPosix = toPosix(relPath);
+    const auto absPath = resolve(relPath);
+
+    // 确保父目录存在
+    const auto parent = absPath.parent_path();
+    std::error_code ec;
+    fs::create_directories(parent, ec);
+    if (ec) {
+        return core::Result<void>::fail(core::ErrorCode::FileWriteFailed,
+            "无法创建父目录 " + parent.string() + ": " + ec.message());
+    }
+
+    // 写文件（覆盖）
+    {
+        std::ofstream ofs(absPath, std::ios::binary | std::ios::trunc);
+        if (!ofs) {
+            return core::Result<void>::fail(core::ErrorCode::FileWriteFailed,
+                "无法打开文件写入: " + absPath.string());
+        }
+        ofs.write(content.data(), static_cast<std::streamsize>(content.size()));
+        if (!ofs) {
+            return core::Result<void>::fail(core::ErrorCode::FileWriteFailed,
+                "写入失败: " + absPath.string());
+        }
+    }
+
+    // 同步索引
+    auto syncResult = syncOneToIndex(absPath, relPosix);
+    if (syncResult.isFail()) {
+        return syncResult;
+    }
+    return core::Result<void>::ok();
+}
+
+core::Result<void> MarkdownService::create(const fs::path& relPath) {
+    // 规范化路径：补 .md 后缀
+    fs::path norm = relPath;
+    if (norm.extension() != ".md") {
+        norm += ".md";
+    }
+    const std::string relPosix = toPosix(norm);
+    const auto absPath = resolve(norm);
+
+    if (fs::exists(absPath)) {
+        return core::Result<void>::fail(core::ErrorCode::AlreadyExists,
+            "文件已存在: " + absPath.string());
+    }
+
+    // 默认模板
+    const std::string title = norm.stem().string();
+    const std::string content = "# " + title + "\n\n";
+
+    // 确保父目录存在
+    const auto parent = absPath.parent_path();
+    std::error_code ec;
+    fs::create_directories(parent, ec);
+    if (ec) {
+        return core::Result<void>::fail(core::ErrorCode::FileWriteFailed,
+            "无法创建父目录: " + ec.message());
+    }
+
+    // 写文件
+    {
+        std::ofstream ofs(absPath, std::ios::binary);
+        if (!ofs) {
+            return core::Result<void>::fail(core::ErrorCode::FileWriteFailed,
+                "无法创建文件: " + absPath.string());
+        }
+        ofs.write(content.data(), static_cast<std::streamsize>(content.size()));
+    }
+
+    // 同步索引
+    auto syncResult = syncOneToIndex(absPath, relPosix);
+    if (syncResult.isFail()) {
+        // 回滚：删文件
+        fs::remove(absPath, ec);
+        return syncResult;
+    }
+    return core::Result<void>::ok();
+}
+
+core::Result<void> MarkdownService::remove(const fs::path& relPath) {
+    const std::string relPosix = toPosix(relPath);
+    const auto absPath = resolve(relPath);
+
+    // 删文件（不存在也允许）
+    std::error_code ec;
+    fs::remove(absPath, ec);
+    // 不报错：即使文件不存在，索引也要清
+
+    return deleteFromIndex(relPosix);
+}
+
+core::Result<std::vector<NoteMeta>> MarkdownService::search(
+    const std::string& query) {
+    if (query.empty()) {
+        return listAll();
+    }
+    const std::string ftsQuery = buildFtsQuery(query);
+    if (ftsQuery.empty()) {
+        return core::Result<std::vector<NoteMeta>>::ok({});
+    }
+
+    auto prep = db_.prepare(
+        "SELECT i.id, i.path, i.title, i.size_bytes, i.modified_at "
+        "FROM markdown_fts f "
+        "JOIN markdown_index i ON i.path = f.path "
+        "WHERE markdown_fts MATCH ? "
+        "ORDER BY rank");
+    if (prep.isFail()) {
+        return core::Result<std::vector<NoteMeta>>::fail(
+            prep.errorCode(), "prepare search: " + prep.errorMessage());
+    }
+    auto& stmt = prep.value();
+    auto b = stmt.bind(1, ftsQuery);
+    if (b.isFail()) {
+        return core::Result<std::vector<NoteMeta>>::fail(
+            b.errorCode(), "bind query: " + b.errorMessage());
+    }
+    auto rowsResult = stmt.fetchAll();
+    if (rowsResult.isFail()) {
+        return core::Result<std::vector<NoteMeta>>::fail(
+            rowsResult.errorCode(),
+            "fetch search: " + rowsResult.errorMessage());
+    }
+    std::vector<NoteMeta> out;
+    out.reserve(rowsResult.value().size());
+    for (const auto& row : rowsResult.value()) {
+        out.push_back(rowToNoteImpl(row));
+    }
+    return core::Result<std::vector<NoteMeta>>::ok(std::move(out));
+}
+
+NoteMeta MarkdownService::rowToNote(const core::data::SqlRow& row) {
+    return rowToNoteImpl(row);
+}
+
+} // namespace module::markdown

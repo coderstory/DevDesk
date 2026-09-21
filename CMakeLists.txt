@@ -89,3 +89,14 @@ add_custom_command(TARGET DevDesk POST_BUILD
         "${CMAKE_SOURCE_DIR}/fonts" "$<TARGET_FILE_DIR:DevDesk>/fonts"
     COMMENT "Copying fonts to build directory"
 )
+
+# 构建 .app bundle（仅 macOS 平台生效）
+if(APPLE)
+    add_custom_target(devdesk_app
+        COMMAND ${CMAKE_SOURCE_DIR}/platform/macos/build-app.sh
+        DEPENDS DevDesk
+        WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+        COMMENT "Building DevDesk.app bundle"
+    )
+    add_dependencies(devdesk_app DevDesk)
+endif()
