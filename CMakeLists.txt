@@ -18,6 +18,11 @@ if(NOT EXISTS "${EUI_NEO_DIR}/CMakeLists.txt")
     message(FATAL_ERROR "EUI-NEO not found at ${EUI_NEO_DIR}")
 endif()
 
+# T3：MinGW 全静态链接（默认 ON，仅 MinGW 工具链生效，macOS/MSVC 不受影响）
+# SQLite3/CURL/OpenSSL/zlib 全部用静态库 + libcurl.a 传递依赖闭包，
+# 配合 EUI-NEO 给 app target 的 -static（运行时静态），产出单 exe 零外部 DLL。
+option(DEVDESK_STATIC "MinGW: link everything statically into a single exe (no external DLLs)" ON)
+
 # 系统依赖查找 + Windows/MSYS2 提示 + FTS5 检测（须在 add_subdirectory(EUI-NEO) 之前）
 include(cmake/Dependencies.cmake)
 # 编译警告函数（-Werror 只对 DevDesk 自己的 target 生效，见 devdesk_apply_warnings）
@@ -58,6 +63,23 @@ add_subdirectory(tests)
 add_executable(DevDesk src/main.cpp)
 devdesk_apply_warnings(DevDesk)
 eui_neo_configure_app(DevDesk)
+
+# EUI-NEO 会给非 Debug 的 app target 强加 -Os -fno-exceptions -fno-rtti
+# （eui_apply_compile_options，无缓存开关）。其中 -Os 在 MSYS2 GCC 16.2 下
+# 踩中 C4 ABI 缺口：-Os 时 GCC 对 std::string 移动构造发出新式 C4 引用
+# （constexpr 构造的压缩 mangling，C++20 起 string 移动构造为 constexpr），
+# 而 libstdc++.a 只提供 C1/C2 定义 → Release 链接 undefined reference
+# （-O3 不触发，已实测；Debug 的 genex 本来就不展开，不受影响）。
+# 这里只摘 -Os（app 回到 CMake 默认的 -O3），保留 EUI 的 -fno-exceptions/-fno-rtti。
+# 根治应走上游：EUI 不应给消费者 app target 强加优化级别，或工具链补 C4 别名。
+if(MINGW)
+    get_target_property(_devdesk_compile_opts DevDesk COMPILE_OPTIONS)
+    if(_devdesk_compile_opts)
+        list(FILTER _devdesk_compile_opts EXCLUDE REGEX ":-Os>")
+        set_target_properties(DevDesk PROPERTIES COMPILE_OPTIONS "${_devdesk_compile_opts}")
+    endif()
+    unset(_devdesk_compile_opts)
+endif()
 target_link_libraries(DevDesk PRIVATE
     devdesk_core
     devdesk_platform

@@ -45,3 +45,4 @@ fonts/JetBrainsMono-*.ttf
 # OS
 Thumbs.db
 desktop.ini
+build-release/
