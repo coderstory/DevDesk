@@ -167,6 +167,11 @@ public:
                       }
 
                       auto idx = std::make_shared<size_t>(0);
+                      // releaser 兜底：cpp-httplib 在两次 provider 调用之间
+                      // 发现连接断开（is_writable 失败）时会直接退出写循环、
+                      // 不再调用 provider——sink.write 失败路径没机会执行，
+                      // finished 只能在 ~Response() 的 releaser 里置位。
+                      // （与产品侧 http_server.cpp 的 releaser 模式一致。）
                       res.set_chunked_content_provider(
                           scriptPtr->contentType,
                           [scriptPtr, idx, emitted, finished](
@@ -193,6 +198,9 @@ public:
                                       milliseconds(scriptPtr->delayMsPerChunk));
                               }
                               return true;
+                          },
+                          [finished](bool /*success*/) {
+                              finished->store(true);
                           });
                   });
     }
