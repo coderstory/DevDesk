@@ -8,10 +8,13 @@
 #include "core/module_interface.h"
 #include "core/paths.h"
 #include "core/router.h"
+#include "core/theme.h"
 #include "platform/file_open.h"
 
 #include <eui/dsl.h>
 #include <eui/dsl_app.h>
+
+#include <components/button.h>
 
 #include <fstream>
 #include <memory>
@@ -22,6 +25,7 @@ extern "C" ::core::Module* create_home_module();
 extern "C" ::core::Module* create_markdown_module();
 extern "C" ::core::Module* create_todo_module();
 extern "C" ::core::Module* create_claude_module();
+extern "C" ::core::Module* create_settings_module();
 
 namespace {
 
@@ -104,6 +108,7 @@ void setupLogging() {
     static std::unique_ptr<::core::Module> markdown(create_markdown_module());
     static std::unique_ptr<::core::Module> todo(create_todo_module());
     static std::unique_ptr<::core::Module> claude(create_claude_module());
+    static std::unique_ptr<::core::Module> settings(create_settings_module());
 
     static bool initialized = false;
     if (!initialized) {
@@ -111,6 +116,7 @@ void setupLogging() {
         router.registerModule(markdown.get());
         router.registerModule(todo.get());
         router.registerModule(claude.get());
+        router.registerModule(settings.get());
         router.startAll();
 
         // 架构准备：如果有 pending 文件，dispatch 到对应 Page
@@ -215,6 +221,43 @@ void startClaudeProxy() {
 
 namespace app {
 
+// 全局设置入口（T11 桥接方案）：
+// 应用当前没有侧边栏（Router 只渲染当前模块，全应用导航接线是 T9 遗留项，
+// spec §8.5 的"侧边栏底部齿轮"暂不可达），因此在 compose 顶层画一个
+// 浮动齿轮按钮承担 Settings 的进入/返回；正式侧边栏落地后可移除。
+void drawGlobalSettingsEntry(eui::Ui& ui, const eui::Screen& screen) {
+    ::core::Router* router = getRouter();
+    if (!router) return;
+
+    const bool onSettings = (router->currentPage() == ::core::PageId::Settings);
+    const float size = 52.0f;
+    const float margin = 28.0f;
+    const auto& t = ::core::theme::current();
+
+    ui.stack("app.nav.settings")
+        .position(screen.width - size - margin, screen.height - size - margin)
+        .size(size, size)
+        .zIndex(100)  // 顶层：盖住任何页面内容
+        .content([&] {
+            components::button(ui, "app.nav.settings.btn")
+                .size(size, size)
+                .icon(onSettings ? 0xF060 : 0xF013)  // 在设置页变返回箭头
+                .iconSize(onSettings ? 18.0f : 20.0f)
+                .iconColor(onSettings ? t.colors.textPrimary
+                                      : t.colors.textSecondary)
+                .colors(t.colors.surfaceElevated, t.colors.hover,
+                        t.colors.active)
+                .radius(size * 0.5f)
+                .border(1.0f, t.colors.borderDefault)
+                .onClick([router, onSettings] {
+                    router->navigateTo(onSettings ? ::core::PageId::Home
+                                                  : ::core::PageId::Settings);
+                })
+                .build();
+        })
+        .build();
+}
+
 // DslAppConfig 在 eui::dsl_app.h 中定义（命名空间 app）
 const DslAppConfig& dslAppConfig() {
     static const DslAppConfig config = DslAppConfig{}
@@ -254,6 +297,8 @@ void compose(eui::Ui& ui, const eui::Screen& screen) {
     if (router) {
         router->compose(ui, screen);
     }
+    // 全局设置入口（浮动齿轮）：画在所有页面内容之后 + zIndex 100，始终可见
+    drawGlobalSettingsEntry(ui, screen);
 }
 
 } // namespace app
