@@ -1,7 +1,12 @@
 #include "json.h"
 
+#include <yyjson.h>
+
+#include <cstdio>
 #include <map>
 #include <sstream>
+#include <string>
+#include <utility>
 #include <vector>
 
 namespace platform {
@@ -41,6 +46,139 @@ namespace {
             case JsonImpl::Kind::Object: v.type_ = JsonValue::T_Object; break;
         }
         return v;
+    }
+
+    // yyjson_val → JsonImpl（递归；数组/对象完整还原）
+    // 注意：yyjson 读 API 不接收 const 指针（上游 const 语义不完整），此处不 const 化
+    JsonImpl valToImpl(yyjson_val* val) {
+        JsonImpl out;
+        if (yyjson_is_null(val)) {
+            out.kind = JsonImpl::Kind::Null;
+        } else if (yyjson_is_bool(val)) {
+            out.kind = JsonImpl::Kind::Bool;
+            out.boolVal = yyjson_get_bool(val);
+        } else if (yyjson_is_int(val)) {
+            out.kind = JsonImpl::Kind::Int;
+            out.intVal = yyjson_get_sint(val);
+        } else if (yyjson_is_num(val)) {
+            out.kind = JsonImpl::Kind::Double;
+            out.dblVal = yyjson_get_real(val);
+        } else if (yyjson_is_str(val)) {
+            out.kind = JsonImpl::Kind::String;
+            out.strVal.assign(yyjson_get_str(val), yyjson_get_len(val));
+        } else if (yyjson_is_arr(val)) {
+            out.kind = JsonImpl::Kind::Array;
+            size_t idx = 0;
+            size_t max = 0;
+            yyjson_val* item = nullptr;
+            yyjson_arr_foreach(val, idx, max, item) {
+                out.arrVal.push_back(valToImpl(item));
+            }
+        } else if (yyjson_is_obj(val)) {
+            out.kind = JsonImpl::Kind::Object;
+            size_t idx = 0;
+            size_t max = 0;
+            yyjson_val* key = nullptr;
+            yyjson_val* v = nullptr;
+            yyjson_obj_foreach(val, idx, max, key, v) {
+                out.objVal[std::string(yyjson_get_str(key),
+                                       yyjson_get_len(key))] = valToImpl(v);
+            }
+        }
+        return out;
+    }
+
+    // JsonImpl 字符串转义（RFC 8259：引号/反斜杠/控制字符；UTF-8 原样透传）
+    void escapeTo(const std::string& s, std::string& out) {
+        out.push_back('"');
+        for (char c : s) {
+            switch (c) {
+                case '"': out += "\\\""; break;
+                case '\\': out += "\\\\"; break;
+                case '\b': out += "\\b"; break;
+                case '\f': out += "\\f"; break;
+                case '\n': out += "\\n"; break;
+                case '\r': out += "\\r"; break;
+                case '\t': out += "\\t"; break;
+                default:
+                    if (static_cast<unsigned char>(c) < 0x20) {
+                        char buf[8];
+                        std::snprintf(buf, sizeof(buf), "\\u%04x",
+                                      static_cast<unsigned>(c) & 0xFFu);
+                        out += buf;
+                    } else {
+                        out.push_back(c);
+                    }
+            }
+        }
+        out.push_back('"');
+    }
+
+    void indentTo(std::string& out, int depth) {
+        out.append(static_cast<size_t>(depth) * 2u, ' ');
+    }
+
+    // JsonImpl → JSON 文本（递归）
+    // 注意：yyjson 库被 EUI-NEO 以 YYJSON_DISABLE_WRITER=1 编译（共享库无 writer），
+    // 序列化自实现；DevDesk 场景（扁平对象 + 标量）足够，双精度用 %.17g 保证往返
+    void implToString(const JsonImpl& impl, std::string& out, bool pretty,
+                      int depth) {
+        switch (impl.kind) {
+            case JsonImpl::Kind::Null:
+                out += "null";
+                break;
+            case JsonImpl::Kind::Bool:
+                out += impl.boolVal ? "true" : "false";
+                break;
+            case JsonImpl::Kind::Int:
+                out += std::to_string(impl.intVal);
+                break;
+            case JsonImpl::Kind::Double: {
+                char buf[64];
+                std::snprintf(buf, sizeof(buf), "%.17g", impl.dblVal);
+                out += buf;
+                break;
+            }
+            case JsonImpl::Kind::String:
+                escapeTo(impl.strVal, out);
+                break;
+            case JsonImpl::Kind::Array: {
+                if (impl.arrVal.empty()) {
+                    out += "[]";
+                    break;
+                }
+                out += pretty ? "[\n" : "[";
+                for (size_t i = 0; i < impl.arrVal.size(); ++i) {
+                    if (i > 0) out += pretty ? ",\n" : ",";
+                    if (pretty) indentTo(out, depth + 1);
+                    implToString(impl.arrVal[i], out, pretty, depth + 1);
+                }
+                out += pretty ? "\n" : "";
+                if (pretty) indentTo(out, depth);
+                out += "]";
+                break;
+            }
+            case JsonImpl::Kind::Object: {
+                if (impl.objVal.empty()) {
+                    out += "{}";
+                    break;
+                }
+                out += pretty ? "{\n" : "{";
+                bool first = true;
+                for (const auto& [k, v] : impl.objVal) {
+                    if (!first) out += pretty ? ",\n" : ",";
+                    first = false;
+                    if (pretty) indentTo(out, depth + 1);
+                    escapeTo(k, out);
+                    out += pretty ? ": " : ":";
+                    implToString(v, out, pretty, depth + 1);
+                }
+                out += pretty ? "\n" : "";
+                if (pretty) indentTo(out, depth);
+                out += "}";
+                break;
+            }
+        }
     }
 } // anonymous
 
@@ -162,24 +300,27 @@ JsonValue makeString(const std::string& s) { return JsonValue(s); }
 JsonValue makeObject() { return JsonValue(JsonObject()); }
 JsonValue makeArray() { JsonValue v; return v; }
 
-// 解析（简化版 - 实际应使用 yyjson）
+// 解析（yyjson；T11 实装——此前是返回 null 的桩，config.json 持久化首个消费者）
 core::Result<JsonValue> parse(const std::string& text) {
-    (void)text;
-    return core::Result<JsonValue>::ok(JsonValue());
+    yyjson_doc* doc = yyjson_read(text.data(), text.size(), 0);
+    if (!doc) {
+        return core::Result<JsonValue>::fail(
+            core::ErrorCode::JsonParseError, "JSON 解析失败（yyjson_read 失败）");
+    }
+    yyjson_val* root = yyjson_doc_get_root(doc);
+    JsonValue out;
+    if (root != nullptr) {
+        out = makeFromImpl(valToImpl(root));
+    }  // 空文档 → 保持默认 null
+    yyjson_doc_free(doc);
+    return core::Result<JsonValue>::ok(std::move(out));
 }
 
+// 序列化（自实现，见 implToString 注释——yyjson 共享库无 writer）
 core::Result<std::string> stringify(const JsonValue& value, bool pretty) {
-    (void)pretty;
-    auto* i = getImpl(value.internal());
     std::string out;
-    switch (i->kind) {
-        case JsonImpl::Kind::Null: out = "null"; break;
-        case JsonImpl::Kind::Bool: out = i->boolVal ? "true" : "false"; break;
-        case JsonImpl::Kind::Int: out = std::to_string(i->intVal); break;
-        case JsonImpl::Kind::Double: out = std::to_string(i->dblVal); break;
-        case JsonImpl::Kind::String: out = "\"" + i->strVal + "\""; break;
-        default: out = "{}"; break;
-    }
+    out.reserve(64);
+    implToString(*getImpl(value.internal()), out, pretty, 0);
     return core::Result<std::string>::ok(std::move(out));
 }
 
