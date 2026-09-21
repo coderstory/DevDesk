@@ -30,7 +30,8 @@ struct TestEnv {
 
     explicit TestEnv(const std::string& tag) {
         path = tempDbPath(tag);
-        std::filesystem::remove(path);
+        std::error_code ec;
+        std::filesystem::remove(path, ec);
         auto r = core::Database::open(path);
         if (r.isFail()) return;
         if (r.unsafeValue().migrate().isFail()) return;

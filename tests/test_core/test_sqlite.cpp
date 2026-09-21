@@ -12,14 +12,18 @@ REGISTER_TEST(sqlite_open_memory, "SqliteDb: open in-memory", {
 
 REGISTER_TEST(sqlite_open_file, "SqliteDb: open file", {
     auto path = std::filesystem::temp_directory_path() / "devdesk_test.db";
-    std::filesystem::remove(path);
-    auto r = core::data::SqliteDb::open(path);
-    DOCTEST_CHECK(r.isOk());
-    if (r.isOk()) {
-        auto exec = r.value().exec("CREATE TABLE t (id INTEGER, name TEXT)");
-        DOCTEST_CHECK(exec.isOk());
-    }
-    std::filesystem::remove(path);
+    // 预清理：无异常版本
+    std::error_code ec;
+    std::filesystem::remove(path, ec);
+    {
+        auto r = core::data::SqliteDb::open(path);
+        DOCTEST_CHECK(r.isOk());
+        if (r.isOk()) {
+            auto exec = r.value().exec("CREATE TABLE t (id INTEGER, name TEXT)");
+            DOCTEST_CHECK(exec.isOk());
+        }
+    } // SqliteDb 在此析构（关闭 sqlite 句柄），Windows 不允许删除打开中的文件
+    std::filesystem::remove(path, ec);
     return true;
 })
 
