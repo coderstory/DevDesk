@@ -50,12 +50,16 @@
 
 ### 阶段三：平台架构 + P14 完成
 
-#### T6 接口隔离重构 ⬜
+#### T6 接口隔离重构 ✅
 - keychain.cpp 拆 `keychain_win/macos/posix.cpp`；paths.cpp 同样拆
 - 新增 `core/time.h` + `time_posix.cpp`（localtime_r，macOS/Linux 共用）+ `time_win.cpp`（localtime_s），替换 3 处散布的 #ifdef（logging/todo_module/claude_module）
-- `main.cpp` argv 捕获抽 per-platform 文件（Windows 直接读 argv）
+- `main.cpp` argv 捕获抽 per-platform 文件（Windows 直接读 argv）；keychain/paths/time/file_open 均新增 `*_posix.cpp` 兜底，保证 Linux else 分支可链接
 - CMake `target_sources` 按平台选择
-- 验收：`grep -rn '_WIN32\|__APPLE__' src/` 零命中（CMakeLists 除外）；全平台逻辑等价（现有测试全绿）
+- 实施备注（2026-09-22）：
+  - 接口名定 `core::time::localTime(std::time_t, std::tm*)`——3 处调用方都是转换任意时间戳而非"当前时间"，故不用 localNow
+  - `src/core/time.h` 与系统 `<time.h>` 重名：`-I` 目录优先于系统目录，实测 MinGW 下 `<mutex>→<ctime>` 链条会被劫持导致编译爆炸。已同步移除无人使用的 `-I src/core`（src/core/CMakeLists.txt PUBLIC 与顶层 DevDesk PRIVATE 两处；core 内部全是同目录引号 include，外部全走 `-I src` 的 `core/xxx.h`，无消费者受影响）
+  - 遗留（范围外记录）：`file_open_win.cpp` 用 ANSI `__argv`，非 ASCII 文件路径可能乱码，完整做法 GetCommandLineW + CommandLineToArgvW 转 UTF-8，留后续
+- 验收：`grep -rn '_WIN32\|__APPLE__\|_WIN64' src/`（*.cpp/*.h）零命中；构建过；103 例 84 过 19 挂（keychain 2 + claude_service 10 + proxy_router 7，与 T4 基线一致，纯重构零行为变化）
 
 #### T7 DPAPI keychain ⬜
 - 在 T6 拆好的 `keychain_win.cpp` 实现 `CryptProtectData/CryptUnprotectData`

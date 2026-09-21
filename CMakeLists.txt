@@ -91,7 +91,7 @@ target_link_libraries(DevDesk PRIVATE
 )
 target_include_directories(DevDesk PRIVATE
     src
-    src/core
+    # 不加 src/core：src/core/time.h 会劫持系统 <time.h>/<ctime>（详见 src/core/CMakeLists.txt）
     src/platform
     src/module_home
     src/module_markdown

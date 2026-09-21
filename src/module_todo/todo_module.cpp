@@ -4,6 +4,7 @@
 #include "core/logging.h"
 #include "core/module_interface.h"
 #include "core/theme.h"
+#include "core/time.h"
 #include "todo_service.h"
 
 #include <eui/dsl.h>
@@ -52,11 +53,7 @@ std::string formatDue(int64_t epoch) {
     if (epoch <= 0) return {};
     std::time_t tt = static_cast<std::time_t>(epoch);
     std::tm tmv{};
-#if defined(_WIN32)
-    localtime_s(&tmv, &tt);
-#else
-    localtime_r(&tt, &tmv);
-#endif
+    core::time::localTime(tt, &tmv);
     char buf[16];
     std::snprintf(buf, sizeof(buf), "%02d-%02d", tmv.tm_mon + 1, tmv.tm_mday);
     return std::string(buf);

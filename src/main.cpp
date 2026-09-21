@@ -8,6 +8,7 @@
 #include "core/module_interface.h"
 #include "core/paths.h"
 #include "core/router.h"
+#include "platform/file_open.h"
 
 #include <eui/dsl.h>
 #include <eui/dsl_app.h>
@@ -22,14 +23,6 @@ extern "C" ::core::Module* create_markdown_module();
 extern "C" ::core::Module* create_todo_module();
 extern "C" ::core::Module* create_claude_module();
 
-// macOS 私有 API：获取进程的 argc/argv 地址（EUI-NEO 的 main 不接 argc/argv）
-// 这是 Apple 长期稳定的 API（自 10.0 起），用于替代 main 签名无法扩展的场景。
-// ⚠️ 注意签名：这两个函数返回的是 argc / argv 的【地址】，必须解引用一次。
-#if defined(__APPLE__)
-extern "C" int* _NSGetArgc(void);
-extern "C" char*** _NSGetArgv(void);
-#endif
-
 namespace {
 
 // 全局：Finder "打开方式" 传入的文件路径
@@ -42,28 +35,18 @@ std::string& pendingOpenFilePath() {
 
 // 从 argv 捕获要打开的文件（仅在第一次 dslAppConfig() 调用时执行）
 // 注意：必须在 setupLogging() 之后调用，否则 LOG_INFO 会丢失
-// macOS: 使用 _NSGetArgc/_NSGetArgv 读取命令行（返回地址，需解引用）
-// 其他平台: 无操作（依赖 Finder open with + EUI-NEO 上游支持）
+// 平台差异在 platform/file_open_* 内隔离（macOS 读 _NSGetArgv，Windows 读标准 argv）
 void captureOpenFileFromArgv() {
-#if defined(__APPLE__)
     static bool captured = false;
     if (captured) return;
     captured = true;
 
-    int argc = *_NSGetArgc();
-    char** argv = *_NSGetArgv();
-    if (argc < 2 || argv == nullptr) return;
+    // argv[1] 是文件路径；跳过 flag 类参数（以 '-' 开头）
+    const std::string path = platform::file_open::openFileFromArgv();
+    if (path.empty()) return;
 
-    // argv[1] 是文件路径（命令行直接调用二进制时传入）
-    const char* path = argv[1];
-    if (path == nullptr || path[0] == '\0') return;
-
-    // 跳过 flag 类参数（以 '-' 开头）
-    if (path[0] == '-') return;
-
-    pendingOpenFilePath() = std::string(path);
+    pendingOpenFilePath() = path;
     LOG_INFO("捕获到待打开文件（命令行 argv）: " + pendingOpenFilePath());
-#endif
 }
 
 // 根据文件扩展名返回目标 PageId（架构准备：MVP 只返回目标，不实际加载内容）

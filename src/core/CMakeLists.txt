@@ -9,11 +9,32 @@ add_library(devdesk_core STATIC
     database.cpp
 )
 
+# 平台适配实现按平台选择编译（接口隔离：头文件平台无关，实现 *_win/_macos/_posix，
+# 业务代码零平台宏 —— 与 EUI-NEO 后端选择同一模式）
+if(WIN32)
+    target_sources(devdesk_core PRIVATE
+        paths_win.cpp
+        time_win.cpp
+    )
+elseif(APPLE)
+    target_sources(devdesk_core PRIVATE
+        paths_macos.cpp
+        time_posix.cpp
+    )
+else()
+    target_sources(devdesk_core PRIVATE
+        paths_posix.cpp
+        time_posix.cpp
+    )
+endif()
+
 devdesk_apply_warnings(devdesk_core)
 
 target_include_directories(devdesk_core PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/..
-    ${CMAKE_CURRENT_SOURCE_DIR}
+    # 注意：不要把 src/core 自身加进 include 路径——src/core/time.h 会经 -I 优先级
+    # 劫持系统 <time.h>/<ctime>（MinGW 下 <mutex>→<ctime> 链条实测编译爆炸）。
+    # core 内部一律同目录引号 include（"time.h"），外部一律 <core/xxx.h>（走 -I src）。
 )
 
 # EUI-NEO include 路径（直接添加，因为 add_subdirectory EXCLUDE_FROM_ALL 时 PUBLIC 链路可能不传递）

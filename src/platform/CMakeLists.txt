@@ -1,9 +1,27 @@
 add_library(devdesk_platform STATIC
     http_client.cpp
     http_server.cpp
-    keychain.cpp
     json.cpp
 )
+
+# 平台适配实现按平台选择编译（接口隔离：头文件平台无关，实现 *_win/_macos/_posix，
+# 业务代码零平台宏 —— 与 EUI-NEO 后端选择同一模式）
+if(WIN32)
+    target_sources(devdesk_platform PRIVATE
+        keychain_win.cpp
+        file_open_win.cpp
+    )
+elseif(APPLE)
+    target_sources(devdesk_platform PRIVATE
+        keychain_macos.cpp
+        file_open_macos.cpp
+    )
+else()
+    target_sources(devdesk_platform PRIVATE
+        keychain_posix.cpp
+        file_open_posix.cpp
+    )
+endif()
 
 target_include_directories(devdesk_platform PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/..

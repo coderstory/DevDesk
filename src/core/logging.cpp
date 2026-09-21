@@ -1,4 +1,5 @@
 #include "logging.h"
+#include "time.h"
 
 #include <chrono>
 #include <cstdio>
@@ -22,11 +23,7 @@ namespace {
         auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(
             now.time_since_epoch()).count() % 1000;
         std::tm tm;
-#ifdef _WIN32
-        localtime_s(&tm, &time);
-#else
-        localtime_r(&time, &tm);
-#endif
+        core::time::localTime(time, &tm);
         std::ostringstream oss;
         oss << std::put_time(&tm, "%Y-%m-%d %H:%M:%S")
             << '.' << std::setfill('0') << std::setw(3) << ms;

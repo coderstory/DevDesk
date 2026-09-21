@@ -4,6 +4,7 @@
 #include "core/logging.h"
 #include "core/module_interface.h"
 #include "core/theme.h"
+#include "core/time.h"
 
 #include <eui/dsl.h>
 
@@ -117,13 +118,7 @@ void drawProfileCard(eui::Ui& ui,
 std::string formatHHMM(std::time_t ts) {
     if (ts <= 0) return "--:--";
     std::tm tmv{};
-#if defined(__APPLE__) || defined(__linux__)
-    localtime_r(&ts, &tmv);
-#elif defined(_WIN32)
-    localtime_s(&tmv, &ts);
-#else
-    tmv = *std::localtime(&ts);
-#endif
+    core::time::localTime(ts, &tmv);
     char buf[16];
     std::snprintf(buf, sizeof(buf), "%02d:%02d", tmv.tm_hour, tmv.tm_min);
     return std::string(buf);

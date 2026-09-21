@@ -1,33 +1,14 @@
 #include "paths.h"
-#include "result.h"
 #include "logging.h"
 
-#include <cstdlib>
 #include <filesystem>
 
 namespace fs = std::filesystem;
 
 namespace core::paths {
 
-static fs::path getEnvOr(const char* var, const fs::path& fallback) {
-    if (const char* v = std::getenv(var)) {
-        return fs::path(v);
-    }
-    return fallback;
-}
-
-fs::path appDataDir() {
-#if defined(__APPLE__)
-    fs::path home = getEnvOr("HOME", "");
-    return home / "Library" / "Application Support" / "DevDesk";
-#elif defined(_WIN32) || defined(_WIN64)
-    fs::path appdata = getEnvOr("APPDATA", "");
-    return appdata / "DevDesk";
-#else
-    fs::path home = getEnvOr("HOME", "");
-    return home / ".local" / "share" / "DevDesk";
-#endif
-}
+// appDataDir() 的平台实现在 paths_macos.cpp / paths_win.cpp / paths_posix.cpp，
+// 由 CMake 按平台选择编译（接口隔离，业务代码零平台宏）
 
 fs::path configFile() {
     return appDataDir() / "config.json";
