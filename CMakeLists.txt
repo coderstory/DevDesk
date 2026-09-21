@@ -49,11 +49,12 @@ function(devdesk_add_eui_includes target)
     )
 endfunction()
 
-# 四个功能模块
+# 功能模块（home / markdown / todo / claude_proxy / settings）
 add_subdirectory(src/module_home)
 add_subdirectory(src/module_markdown)
 add_subdirectory(src/module_todo)
 add_subdirectory(src/module_claude_proxy)
+add_subdirectory(src/module_settings)
 
 # 测试
 enable_testing()
@@ -87,6 +88,7 @@ target_link_libraries(DevDesk PRIVATE
     devdesk_module_markdown
     devdesk_module_todo
     devdesk_module_claude_proxy
+    devdesk_module_settings
     eui_neo
 )
 target_include_directories(DevDesk PRIVATE
@@ -97,6 +99,7 @@ target_include_directories(DevDesk PRIVATE
     src/module_markdown
     src/module_todo
     src/module_claude_proxy
+    src/module_settings
     ${EUI_NEO_INCLUDE_DIR}
     ${EUI_NEO_DIR}
 )

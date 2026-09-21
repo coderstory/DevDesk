@@ -20,6 +20,7 @@ add_executable(devdesk_tests
     test_modules/test_streaming_proxy.cpp
     test_modules/test_streaming_stress.cpp
     test_modules/test_home.cpp
+    test_modules/test_settings.cpp
 )
 
 devdesk_apply_warnings(devdesk_tests)
@@ -28,6 +29,7 @@ target_include_directories(devdesk_tests PRIVATE
     ${CMAKE_SOURCE_DIR}/src
     ${CMAKE_SOURCE_DIR}/tests
     ${CMAKE_SOURCE_DIR}/src/module_claude_proxy
+    ${CMAKE_SOURCE_DIR}/src/module_settings
 )
 
 # 确保 doctest.h 可被 #include "doctest.h" 找到
@@ -37,6 +39,7 @@ target_link_libraries(devdesk_tests PRIVATE
     devdesk_module_markdown
     devdesk_module_todo
     devdesk_module_claude_proxy
+    devdesk_module_settings
 )
 
 # 确保 doctest.h 可被 #include "doctest.h" 找到
