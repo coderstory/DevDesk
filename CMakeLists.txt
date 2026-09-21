@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.14)
 project(DevDesk VERSION 0.1.0 LANGUAGES C CXX)
 
-set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED TRUE)
 set(CMAKE_C_STANDARD 99)
 set(CMAKE_C_STANDARD_REQUIRED TRUE)
@@ -11,20 +11,19 @@ if(NOT CMAKE_BUILD_TYPE)
     set(CMAKE_BUILD_TYPE Release)
 endif()
 
-if(CMAKE_BUILD_TYPE STREQUAL "Debug")
-    add_compile_options(-Wall -Wextra -Wpedantic -Werror)
-else()
-    add_compile_options(-Wall -Wextra)
-endif()
-
-include(cmake/Dependencies.cmake)
-include(cmake/CompilerWarnings.cmake)
-
 # EUI-NEO 作为子项目（dev 时使用绝对路径，生产用 submodule）
+# 注意：必须在 include(Dependencies.cmake) 之前定义——ZLIB 查找提示要引用自带 zlib 头
 set(EUI_NEO_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../EUI-NEO" CACHE PATH "EUI-NEO source dir")
 if(NOT EXISTS "${EUI_NEO_DIR}/CMakeLists.txt")
     message(FATAL_ERROR "EUI-NEO not found at ${EUI_NEO_DIR}")
 endif()
+
+# 系统依赖查找 + Windows/MSYS2 提示 + FTS5 检测（须在 add_subdirectory(EUI-NEO) 之前）
+include(cmake/Dependencies.cmake)
+# 编译警告函数（-Werror 只对 DevDesk 自己的 target 生效，见 devdesk_apply_warnings）
+include(cmake/CompilerWarnings.cmake)
+
+# EUI-NEO 子目录：不带 DevDesk 的警告选项（曾因 -Werror 泄漏产生 517 个第三方假错）
 add_subdirectory(${EUI_NEO_DIR} ${CMAKE_BINARY_DIR}/_eui_neo_build EXCLUDE_FROM_ALL)
 
 # Core + Platform 是 static lib
@@ -57,6 +56,7 @@ add_subdirectory(tests)
 
 # 主程序
 add_executable(DevDesk src/main.cpp)
+devdesk_apply_warnings(DevDesk)
 eui_neo_configure_app(DevDesk)
 target_link_libraries(DevDesk PRIVATE
     devdesk_core
@@ -84,11 +84,15 @@ target_include_directories(DevDesk PRIVATE
 )
 
 # 安装 / 拷贝资源
-add_custom_command(TARGET DevDesk POST_BUILD
-    COMMAND ${CMAKE_COMMAND} -E copy_directory
-        "${CMAKE_SOURCE_DIR}/fonts" "$<TARGET_FILE_DIR:DevDesk>/fonts"
-    COMMENT "Copying fonts to build directory"
-)
+# fonts/ 不入 git（.gitignore 按文件名忽略，下载前目录可能不存在/为空），
+# 必须守卫，否则新克隆/新 worktree 的 POST_BUILD 拷贝直接失败
+if(EXISTS "${CMAKE_SOURCE_DIR}/fonts")
+    add_custom_command(TARGET DevDesk POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_directory
+            "${CMAKE_SOURCE_DIR}/fonts" "$<TARGET_FILE_DIR:DevDesk>/fonts"
+        COMMENT "Copying fonts to build directory"
+    )
+endif()
 
 # 构建 .app bundle（仅 macOS 平台生效）
 if(APPLE)

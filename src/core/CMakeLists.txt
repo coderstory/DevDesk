@@ -9,6 +9,8 @@ add_library(devdesk_core STATIC
     database.cpp
 )
 
+devdesk_apply_warnings(devdesk_core)
+
 target_include_directories(devdesk_core PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/..
     ${CMAKE_CURRENT_SOURCE_DIR}

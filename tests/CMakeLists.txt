@@ -21,6 +21,8 @@ add_executable(devdesk_tests
     test_modules/test_home.cpp
 )
 
+devdesk_apply_warnings(devdesk_tests)
+
 target_include_directories(devdesk_tests PRIVATE
     ${CMAKE_SOURCE_DIR}/src
     ${CMAKE_SOURCE_DIR}/tests

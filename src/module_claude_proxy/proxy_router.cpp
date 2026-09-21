@@ -78,7 +78,10 @@ ProxyRouter::ProxyRouter(ClaudeService& service, platform::http::Server& server)
 
 void ProxyRouter::registerRoutes() {
     // 注册常见 method（POST 必选，GET/PUT/DELETE 也常见）
-    for (const std::string& m : {"POST", "GET", "PUT", "DELETE", "PATCH"}) {
+    // 注意：必须用 const char*（而非 const std::string&）——
+    // initializer_list<const char*> 绑 std::string 引用会创建临时，
+    // GCC 16 -Werror(dangling-reference) 直接挂
+    for (const char* const m : {"POST", "GET", "PUT", "DELETE", "PATCH"}) {
         // regex "/(.*)" 匹配所有路径
         server_.route(m, R"(/(.*))",
             [this](const platform::http::RequestCtx& ctx,

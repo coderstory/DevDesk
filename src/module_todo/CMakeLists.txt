@@ -3,6 +3,8 @@ add_library(devdesk_module_todo STATIC
     todo_service.cpp
 )
 
+devdesk_apply_warnings(devdesk_module_todo)
+
 target_include_directories(devdesk_module_todo PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/../..
     ${CMAKE_CURRENT_SOURCE_DIR}/..

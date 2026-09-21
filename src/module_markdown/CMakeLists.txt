@@ -3,6 +3,8 @@ add_library(devdesk_module_markdown STATIC
     markdown_service.cpp
 )
 
+devdesk_apply_warnings(devdesk_module_markdown)
+
 target_include_directories(devdesk_module_markdown PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/../..
     ${CMAKE_CURRENT_SOURCE_DIR}/..

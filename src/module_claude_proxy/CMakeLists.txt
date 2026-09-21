@@ -5,6 +5,8 @@ add_library(devdesk_module_claude_proxy STATIC
     streaming_proxy.cpp
 )
 
+devdesk_apply_warnings(devdesk_module_claude_proxy)
+
 target_include_directories(devdesk_module_claude_proxy PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/../..
     ${CMAKE_CURRENT_SOURCE_DIR}/..

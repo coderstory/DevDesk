@@ -2,6 +2,8 @@ add_library(devdesk_module_home STATIC
     home_module.cpp
 )
 
+devdesk_apply_warnings(devdesk_module_home)
+
 target_include_directories(devdesk_module_home PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/../..
     ${CMAKE_CURRENT_SOURCE_DIR}/..

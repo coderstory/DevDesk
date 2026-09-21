@@ -31,3 +31,12 @@ target_compile_definitions(devdesk_platform PUBLIC
 if(APPLE)
     target_link_libraries(devdesk_platform PUBLIC "-framework Security")
 endif()
+
+# Windows：Winsock2（http_client/http_server 网络）+ Crypt32（TLS 证书链）
+# 之前靠 -DCMAKE_CXX_STANDARD_LIBRARIES="-lws2_32 -lcrypt32" 绕过，现烤进构建系统
+if(WIN32)
+    target_link_libraries(devdesk_platform PUBLIC ws2_32 crypt32)
+endif()
+
+# DevDesk 自己的警告等级（-Werror 只作用于 DevDesk target，不泄漏给第三方）
+devdesk_apply_warnings(devdesk_platform)

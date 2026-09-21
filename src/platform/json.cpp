@@ -122,7 +122,8 @@ JsonValue::JsonValue(JsonObject obj) : data_(new JsonImpl(*getImpl(obj.internal(
     type_ = T_Object;
 }
 
-JsonValue::JsonValue(const JsonValue& o) : data_(new JsonImpl(*getImpl(o.data_))), type_(o.type_) {}
+// 成员初始化顺序必须与声明顺序一致（type_ 在前，data_ 在后），否则 -Werror=reorder
+JsonValue::JsonValue(const JsonValue& o) : type_(o.type_), data_(new JsonImpl(*getImpl(o.data_))) {}
 JsonValue& JsonValue::operator=(const JsonValue& o) {
     if (this != &o) {
         delete getImpl(data_);
@@ -131,7 +132,7 @@ JsonValue& JsonValue::operator=(const JsonValue& o) {
     }
     return *this;
 }
-JsonValue::JsonValue(JsonValue&& o) noexcept : data_(o.data_), type_(o.type_) { o.data_ = new JsonImpl(); o.type_ = T_Null; }
+JsonValue::JsonValue(JsonValue&& o) noexcept : type_(o.type_), data_(o.data_) { o.data_ = new JsonImpl(); o.type_ = T_Null; }
 JsonValue& JsonValue::operator=(JsonValue&& o) noexcept {
     if (this != &o) {
         delete getImpl(data_);
