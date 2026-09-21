@@ -3,6 +3,8 @@
 
 #include <eui/dsl.h>
 
+#include <atomic>
+
 namespace core {
 
 void Router::registerModule(Module* module) {
@@ -43,6 +45,20 @@ void Router::stopAll() {
             m->onStop();
         }
     }
+}
+
+// ============ 进程级 Router 共享访问器 ============
+
+namespace {
+std::atomic<Router*> g_appRouter{nullptr};
+} // namespace
+
+void registerAppRouter(Router* router) {
+    g_appRouter.store(router, std::memory_order_release);
+}
+
+Router* appRouter() {
+    return g_appRouter.load(std::memory_order_acquire);
 }
 
 } // namespace core

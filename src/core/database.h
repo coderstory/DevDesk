@@ -39,6 +39,11 @@ public:
     // 应用所有未跑的 migrations
     core::Result<void> migrate();
 
+    // 滚动清理调用日志（spec §11.5 保留策略）：删除 started_at 早于
+    // now - retentionDays 的 claude_call_logs 行，返回删除条数。
+    // 幂等（重复执行删除 0 行）；retentionDays < 0 按 0 处理。
+    core::Result<int64_t> pruneCallLogs(int retentionDays);
+
     // 访问底层 SqliteDb（给 module_* 层用）
     core::data::SqliteDb& db() { return db_; }
     const core::data::SqliteDb& db() const { return db_; }

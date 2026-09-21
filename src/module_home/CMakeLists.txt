@@ -1,5 +1,6 @@
 add_library(devdesk_module_home STATIC
     home_module.cpp
+    home_service.cpp
 )
 
 devdesk_apply_warnings(devdesk_module_home)
