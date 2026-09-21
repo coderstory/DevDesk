@@ -6,6 +6,7 @@ add_library(devdesk_core STATIC
     theme.cpp
     router.cpp
     drag_controller.cpp
+    database.cpp
 )
 
 target_include_directories(devdesk_core PUBLIC

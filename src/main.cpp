@@ -2,6 +2,7 @@
 // DevDesk 入口 - EUI-NEO 提供 main 函数，我们只需提供
 // app::dslAppConfig() 和 app::compose()
 
+#include "core/database.h"
 #include "core/logging.h"
 #include "core/module_interface.h"
 #include "core/paths.h"
@@ -11,6 +12,7 @@
 #include <eui/dsl_app.h>
 
 #include <memory>
+#include <cstdlib>
 
 extern "C" ::core::Module* create_home_module();
 extern "C" ::core::Module* create_markdown_module();
@@ -23,6 +25,32 @@ void setupLogging() {
     core::log::addFileOutput(::core::paths::logFile());
     core::log::addConsoleOutput();
     core::log::setLevel(core::log::Level::Info);
+}
+
+// 打开应用数据库并跑 migrations
+// 注意：main.cpp 用 -fno-exceptions 编译，所以用 unsafeValue() 而非 .value()
+::core::Database& openAppDatabase() {
+    static std::unique_ptr<::core::Database> db;
+    static bool initialized = false;
+    if (!initialized) {
+        auto r = ::core::Database::open(::core::paths::sqliteDbFile());
+        if (r.isFail()) {
+            LOG_FATAL("无法打开数据库: " + r.errorMessage());
+            std::abort();
+        }
+        // unsafeValue() 是 Result 的非抛出版本，返回 T&。再用 std::move 转成 xvalue
+        // 触发 Database 的 move ctor。
+        auto raw = new ::core::Database(std::move(r.unsafeValue()));
+        db.reset(raw);
+        auto migrateResult = db->migrate();
+        if (migrateResult.isFail()) {
+            LOG_FATAL("数据库迁移失败: " + migrateResult.errorMessage());
+            std::abort();
+        }
+        LOG_INFO("数据库已就绪: " + ::core::paths::sqliteDbFile().string());
+        initialized = true;
+    }
+    return *db;
 }
 
 ::core::Router* getRouter() {
@@ -66,6 +94,7 @@ const DslAppConfig& dslAppConfig() {
         setupLogging();
         LOG_INFO("DevDesk 启动中...");
         LOG_INFO("应用数据目录: " + paths::appDataDir().string());
+        openAppDatabase();
         getRouter();
         return true;
     }();
