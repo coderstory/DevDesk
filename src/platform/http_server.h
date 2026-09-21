@@ -24,12 +24,17 @@ public:
     void write(const std::string& data);
     void end();
 
+    // 内部访问器（仅由 Server 的内部 handler 适配层使用）
+    int status() const { return status_; }
+    const std::map<std::string, std::string>& headers() const { return headers_; }
+    const std::string& body() const { return body_; }
+    bool ended() const { return ended_; }
+
 private:
     int status_ = 200;
     std::map<std::string, std::string> headers_;
     std::string body_;
     bool ended_ = false;
-    friend class Server;
 };
 
 using RouteHandler = std::function<void(const RequestCtx&, ResponseWriter&)>;

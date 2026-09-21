@@ -1,52 +1,240 @@
+// src/platform/http_server.cpp
+// 基于 cpp-httplib 的本地 HTTP 服务器（详见 spec §7.2 / P0a PoC）
+//
+// 线程模型：
+//   - `httplib::Server` 在用户提供的线程里运行 listen 循环
+//   - 我们在 std::thread 里调 listen_after_bind()，stop() 时 join
+//   - 实际请求处理由 cpp-httplib 内部线程池完成（每个请求一个任务）
+//
+// 认证模型：
+//   - 用 set_pre_routing_handler() 在分发前检查 Authorization: Bearer <token>
+//   - 认证失败 → 返回 401（HandlerResponse::Handled 拦截）
+//
+// 路由模型：
+//   - route(method, path, handler) 转发到 svr.Get/Post/Put/Delete/Patch/Options
+//   - handler 是 std::function<void(const RequestCtx&, ResponseWriter&)>
+//     我们在 cpp-httplib 的 Handler 里手动桥接 ctx → writer
+
 #include "http_server.h"
+
 #include <core/logging.h>
 
+#include <httplib.h>
+
 #include <atomic>
+#include <cctype>
 #include <map>
 #include <mutex>
 #include <thread>
 
 namespace platform::http {
 
+namespace {
+
+// 把 cpp-httplib 的 Headers (multimap) 转成 std::map（保留首个同名 value）
+std::map<std::string, std::string> toHeaderMap(const httplib::Headers& src) {
+    std::map<std::string, std::string> dst;
+    for (const auto& kv : src) {
+        if (dst.find(kv.first) == dst.end()) {
+            dst.emplace(kv.first, kv.second);
+        }
+    }
+    return dst;
+}
+
+// 把 RouteHandler 适配成 httplib::Server::Handler
+httplib::Server::Handler toLibHandler(RouteHandler userHandler,
+                                      bool authRequired,
+                                      const std::string& authToken) {
+    return [userHandler = std::move(userHandler), authRequired, authToken](
+               const httplib::Request& req, httplib::Response& res) {
+        bool authed = !authRequired;
+        if (authRequired) {
+            auto it = req.headers.find("Authorization");
+            if (it != req.headers.end()) {
+                const std::string& v = it->second;
+                const std::string prefix = "Bearer ";
+                if (v.size() >= prefix.size() &&
+                    v.compare(0, prefix.size(), prefix) == 0 &&
+                    v.compare(prefix.size(), std::string::npos,
+                              authToken) == 0) {
+                    authed = true;
+                }
+            }
+        }
+        // 正常情况下 pre_routing_handler 已经拦下未认证请求，这里只是防御
+        if (!authed) {
+            res.status = 401;
+            res.set_header("WWW-Authenticate", "Bearer");
+            res.set_content("Unauthorized", "text/plain");
+            return;
+        }
+
+        ResponseWriter rw;
+        RequestCtx rctx;
+        rctx.method = req.method;
+        rctx.path = req.path;
+        rctx.headers = toHeaderMap(req.headers);
+        rctx.body = req.body;
+        rctx.clientAddress = req.remote_addr;
+        rctx.authenticated = authed;
+
+        userHandler(rctx, rw);
+
+        // 把 ResponseWriter 的状态写回 cpp-httplib Response
+        res.status = rw.status();
+        for (const auto& kv : rw.headers()) {
+            res.set_header(kv.first, kv.second);
+        }
+        if (!rw.body().empty()) {
+            const auto& hmap = rw.headers();
+            auto it = hmap.find("Content-Type");
+            if (it != hmap.end()) {
+                res.set_content(rw.body(), it->second);
+            } else {
+                res.set_content(rw.body(), "text/plain; charset=utf-8");
+            }
+        }
+    };
+}
+
+} // namespace
+
+// ---------- ResponseWriter 实现 ----------
+
 void ResponseWriter::setStatus(int code) { status_ = code; }
-void ResponseWriter::setHeader(const std::string& key, const std::string& value) { headers_[key] = value; }
-void ResponseWriter::write(const std::string& data) { body_ += data; }
+void ResponseWriter::setHeader(const std::string& key,
+                               const std::string& value) {
+    headers_[key] = value;
+}
+void ResponseWriter::write(const std::string& data) {
+    body_ += data;
+    ended_ = false;
+}
 void ResponseWriter::end() { ended_ = true; }
 
+// ---------- Server::Impl ----------
+
 struct Server::Impl {
-    std::map<std::string, RouteHandler> handlers;
+    httplib::Server svr;
     std::thread worker;
     std::atomic<bool> stopRequested{false};
+    std::atomic<bool> listenStarted{false};
+    std::mutex routeMutex;
 };
+
+// ---------- Server 实现 ----------
 
 Server::Server(std::string bindAddress, int port, std::string authToken)
     : bindAddress_(std::move(bindAddress)),
       port_(port),
       authToken_(std::move(authToken)),
-      impl_(new Impl()) {}
+      impl_(new Impl()) {
+    // pre_routing_handler 在路由分发前触发，用于拦截未认证请求
+    const std::string token = authToken_;
+    const bool authRequired = !token.empty();
+    impl_->svr.set_pre_routing_handler(
+        [token, authRequired](const httplib::Request& req,
+                              httplib::Response& res)
+            -> httplib::Server::HandlerResponse {
+            if (!authRequired) {
+                return httplib::Server::HandlerResponse::Unhandled;
+            }
+            auto it = req.headers.find("Authorization");
+            if (it != req.headers.end()) {
+                const std::string& v = it->second;
+                const std::string prefix = "Bearer ";
+                if (v.size() >= prefix.size() &&
+                    v.compare(0, prefix.size(), prefix) == 0 &&
+                    v.compare(prefix.size(), std::string::npos,
+                              token) == 0) {
+                    return httplib::Server::HandlerResponse::Unhandled;
+                }
+            }
+            res.status = 401;
+            res.set_header("WWW-Authenticate", "Bearer");
+            res.set_content("Unauthorized", "text/plain");
+            return httplib::Server::HandlerResponse::Handled;
+        });
+}
 
 Server::~Server() {
     stop();
     delete impl_;
 }
 
-void Server::route(const std::string& method, const std::string& path, RouteHandler handler) {
-    impl_->handlers[method + " " + path] = std::move(handler);
+void Server::route(const std::string& method, const std::string& path,
+                   RouteHandler handler) {
+    std::lock_guard<std::mutex> lock(impl_->routeMutex);
+
+    const bool authRequired = !authToken_.empty();
+    const std::string token = authToken_;
+    auto libHandler = toLibHandler(std::move(handler), authRequired, token);
+
+    // method 大小写不敏感
+    std::string m = method;
+    for (auto& c : m) c = static_cast<char>(std::toupper(c));
+
+    if (m == "GET") {
+        impl_->svr.Get(path, libHandler);
+    } else if (m == "POST") {
+        impl_->svr.Post(path, libHandler);
+    } else if (m == "PUT") {
+        impl_->svr.Put(path, libHandler);
+    } else if (m == "DELETE") {
+        impl_->svr.Delete(path, libHandler);
+    } else if (m == "PATCH") {
+        impl_->svr.Patch(path, libHandler);
+    } else if (m == "OPTIONS") {
+        impl_->svr.Options(path, libHandler);
+    } else {
+        LOG_ERROR("Server::route unsupported method: " + method);
+    }
 }
 
 bool Server::start() {
     if (running_) return true;
-    LOG_INFO("HTTP server started: " + bindAddress_ + ":" + std::to_string(port_) +
-            (authToken_.empty() ? "" : " (with auth)"));
+    if (impl_->listenStarted.load()) return true;
+
+    int boundPort = port_;
+    if (port_ == 0) {
+        boundPort = impl_->svr.bind_to_any_port(bindAddress_);
+        if (boundPort <= 0) {
+            LOG_ERROR("HTTP server bind_to_any_port failed on " + bindAddress_);
+            return false;
+        }
+    } else {
+        if (!impl_->svr.bind_to_port(bindAddress_, port_)) {
+            LOG_ERROR("HTTP server bind_to_port failed on " + bindAddress_ +
+                      ":" + std::to_string(port_));
+            return false;
+        }
+    }
+    port_ = boundPort;
+    impl_->listenStarted.store(true);
+
+    LOG_INFO("HTTP server listening on " + bindAddress_ + ":" +
+             std::to_string(port_) +
+             (authToken_.empty() ? "" : " (with auth)"));
+
+    impl_->worker = std::thread([this]() {
+        impl_->svr.listen_after_bind();
+    });
+
+    impl_->svr.wait_until_ready();
     running_ = true;
     return true;
 }
 
 void Server::stop() {
     if (!running_) return;
-    impl_->stopRequested = true;
+
+    LOG_INFO("HTTP server stopping...");
+    impl_->svr.stop();
     if (impl_->worker.joinable()) impl_->worker.join();
     running_ = false;
+    impl_->listenStarted.store(false);
+
     LOG_INFO("HTTP server stopped");
 }
 
