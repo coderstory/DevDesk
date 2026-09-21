@@ -76,21 +76,34 @@
   - 断连恢复：上游发到一半 closesocket，流以 End 干净收尾（非 Error），已收数据与上游已发字节完全一致（直接层 + 经代理端到端两场景）
   - 内存采样：20 轮 × 10MB 流式，内存增量 12,660 KB（阈值 102,400 KB），无泄漏趋势
 
-#### T9 收尾杂项 ⬜
-- `ClaudeService::global()` 启动顺序 WARN 理顺（onStart 时不再为 null）
-- `proxy_router.cpp` `#if 0` 死代码清理
-- Home 快捷按钮接线检查（当前 mock）
+#### T9 收尾杂项 ✅（2026-09-22，commit 50ff663）
+- `ClaudeService::global()` 启动顺序 WARN 理顺：`startClaudeProxy()` 挪到 `getRouter()` 之前，模块 onStart 拿到非 null global()；启动冒烟日志零 WARN、"Claude 代理已启动"仅一次（代理只由 main 启动，onStart 仅兜底检查）
+- `proxy_router.cpp` `#if 0` 死代码清理：getHeader 块删除，grep 全仓库零命中
+- Home 快捷按钮接线：并入 T10 一并落地（降级为导航，跨模块禁依赖，见 T10）
+- 验收：ctest 109/109 全过
 
 ### 阶段四：剩余需求
 
-#### T10 P12 Home 真实数据 ⬜
-- 4 张统计卡接真数据（今日笔记/待办/逾期/API 调用）+ 最近编辑列表 + 30 天日志清理任务
+#### T10 P12 Home 真实数据 ✅（2026-09-22，commit 883d681）
+- 新增 HomeService：只读聚合 markdown_index/todo_tasks/claude_call_logs——今日笔记/待办/逾期/今日 API 调用/最近编辑前 5；4 张统计卡 + 最近编辑列表接真数据，卡片/整行可点击跳转
+- 快捷按钮接线（自 T9 移入）：新建笔记/新建任务/切换 Profile → 对应模块（跨模块禁依赖，降级为导航，范围外项已记 KNOWN_LIMITATIONS）
+- `Database::pruneCallLogs(retentionDays)`：启动时滚动清理调用日志（幂等，失败仅 WARN 不阻断启动；后经 750b7fa 集成接线改读设置页 logRetentionDays，0=永久跳过清理）
+- `core::Router` 增加 registerAppRouter/appRouter()（镜像 registerAppDatabase 模式）
+- 验收：测试 109→111 全过；应用冒烟 Home 日志输出真数据行，种子库验证今日边界/逾期口径/清理行为，无新 ERROR
 
-#### T11 P13 设置页 ⬜
-- 主题切换 / 目录配置 / token 管理 UI / 字号 / 日志保留策略
+#### T11 P13 设置页 ✅（2026-09-22，commit a18c8a8 + 1f273f9）
+- 新增 module_settings：主题切换（下一帧全页生效）/ 字号缩放档位（85–130%，正文基准 15px）/ 代理 token 只读显示 + 重新生成（同端口 stop/start 重启 + 同步重写 proxy_token.txt）/ Markdown 目录只读展示 / 日志保留天数（0–3650，0=永久）
+- SettingsStore 读写 config.json（core::paths::configFile() + platform::json；文件缺失/损坏/字段缺失回退默认值，数值钳制）；前置 1f273f9 实装 platform::json（yyjson 解析 + 自写 RFC 8259 序列化，修复 parse 桩与 stringify 恒输出 "{}" 桩）
+- 入口：应用无侧边栏（导航接线是 T9 遗留），main.cpp compose 顶层浮动齿轮按钮（设置页内变返回箭头）桥接
+- 已知限制如实登记：字号缩放仅作用于设置页自身（core::theme SizeTokens 无运行时缩放入口，配置已持久化待全局接线，见 KNOWN_LIMITATIONS）
+- 验收：ctest 122/122（109 基线 + 10 settings + 3 json，零回归）；启动冒烟两轮（默认 Dark、预设 Light/115%/90 天配置均正确加载，日志自证），零 ERROR/FATAL
 
-#### T12 P15 文档 ⬜
-- USER_GUIDE + KNOWN_LIMITATIONS（Windows 边界如实记录）+ README + CHANGELOG
+#### T12 P15 文档 ✅（2026-09-22，本提交）
+- docs/USER_GUIDE.md：五模块用法 / Claude 代理配置流程（127.0.0.1:8888 + %APPDATA%/DevDesk/proxy_token.txt Bearer 鉴权）/ 数据位置一览 / 主题·字号·token 再生成·日志保留设置法
+- docs/KNOWN_LIMITATIONS.md：Windows 4 项 + 跨平台 12 项如实记录；另收录审计源码新发现——Claude 切换器操作按钮未接线（该页面 0 个 onClick，数据真实但按钮为展示态，服务层 CRUD 完整）
+- README.md：项目简介 / 三分钟上手（裸 cmake configure，工具链见 CLAUDE.md）/ 测试跑法（ctest + DEVDESK_SOAK 门控 + 按名过滤 + --log）/ 架构一图流（4 层 + 平台接口隔离）/ 文档索引
+- CHANGELOG.md：a1a106a → HEAD 按波（W1/W2/W3）分组的条目记录
+- docs/MAINTENANCE-EVALUATION.md：P16 长期维护评估（EUI-NEO Metal 后端 vs OpenGL、Markdown 编辑器自实现 vs input 组件——均为"现在不动"+触发条件，YAGNI 基调）
 
 ## 贯穿纪律
 
@@ -103,3 +116,17 @@
 ## 关键路径
 
 T1 → T2 → T3 → T5 → T6 → T7 → T8/T9 → T10 → T11 → T12
+
+## 全部完成（2026-09-22 收官）
+
+T1–T12 全部 ✅。最终基线：**124/124 测试全绿**（109 基线 + 2 Home + 10 Settings + 3 JSON），工作区干净，全部成果已 commit。
+
+关键成果清单：
+
+- **发布形态**：单 exe 零外部 DLL——MinGW 全静态链接（sqlite3/curl/ssl/crypto/C++ 运行时），objdump 仅 16 个 Windows 系统 DLL（Debug+Release 双验证）；Release 15.4 MiB（16,152,064 字节）；裸 cmake configure 零 workaround flag
+- **平台架构**：keychain/paths/time/file_open 四族平台 API 接口隔离（`*_win/*_macos/*_posix.cpp`，CMake 按平台选择编译），业务代码零 `#ifdef _WIN32`/`__APPLE__`（grep src/ *.cpp/*.h 零命中）
+- **Windows keychain**：DPAPI（CryptProtectData/CryptUnprotectData）+ 文件存储，T4 记录的 19 个连锁失败（keychain 2 + claude_service 10 + proxy_router 7）全转绿
+- **流式代理质量（P10b）**：10MB 端到端流式吞吐实测约 240–320 MB/s（e2e 44ms、1440 chunk、全串比对 + FNV-1a + 块号三重校验一致）；soak 60s 1200/1200（0% 丢失，seq 严格递增）；300s soak 由 DEVDESK_SOAK=1 门控；断连恢复以 End 干净收尾且字节一致；20 轮 × 10MB 内存采样增量 12,660 KB（阈值 102,400 KB）无泄漏趋势
+- **功能补全**：P12 Home 真实数据仪表盘（统计卡/最近编辑/快捷按钮/调用日志滚动清理）、P13 设置页（主题/字号/token 再生成/日志保留，config.json 持久化 + 数值钳制）、platform::json 实装（yyjson 解析 + 自写序列化）、启动顺序理顺零 WARN
+- **文档（P15/P16）**：USER_GUIDE / KNOWN_LIMITATIONS（Windows 4 + 跨平台 12 如实记录）/ README / CHANGELOG / MAINTENANCE-EVALUATION
+- **macOS 侧**：分支代码保留但自迁移后未重新构建验证（P0-P8 曾 66 测试通过；回 macOS 开发时先全量构建 + 测试，见 KNOWN_LIMITATIONS §跨平台-9）
