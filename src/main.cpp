@@ -228,8 +228,10 @@ void startClaudeProxy() {
     }
     // -fno-exceptions：用 unsafeValue() 而非 value()
     const int port = static_cast<int>(r.unsafeValue());
+    // 启动成功日志由 ClaudeService::startProxy 统一输出一次
+    // （claude_service.cpp "Claude 代理已启动 <host>:<port> (auth=on)"），
+    // 这里不再重复记录，避免一次启动打两条"已启动"
     const std::string token = svc->proxyAuthToken();
-    LOG_INFO("Claude 代理已启动: http://127.0.0.1:" + std::to_string(port));
     writeProxyTokenFile(token, port);
 }
 
@@ -298,9 +300,13 @@ const DslAppConfig& dslAppConfig() {
         LOG_INFO("DevDesk 启动中...");
         LOG_INFO("应用数据目录: " + paths::appDataDir().string());
         openAppDatabase();
-        getRouter();
         // 启动全局唯一的 Claude 代理（spec §10.4）
+        // 必须在 getRouter()（内部 Router::startAll → 各模块 onStart）之前：
+        // ClaudeService 的创建 + setGlobal 在 startClaudeProxy() 内完成，
+        // 模块 onStart 才能拿到非 null 的 global()，代理也只由 main 启动这一次
+        //（claude 模块 onStart 仅作"已在运行"兜底检查）。
         startClaudeProxy();
+        getRouter();
         return true;
     }();
     (void)initialized;

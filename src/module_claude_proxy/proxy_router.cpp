@@ -61,16 +61,6 @@ bool hasHeader(const std::map<std::string, std::string>& headers,
     return false;
 }
 
-// 查找 header 值（大小写不敏感）— 暂未使用，保留供 P10a 流式用
-#if 0
-std::string getHeader(const std::map<std::string, std::string>& headers,
-                      const std::string& keyLower) {
-    (void)headers;
-    (void)keyLower;
-    return std::string();
-}
-#endif
-
 } // namespace
 
 ProxyRouter::ProxyRouter(ClaudeService& service, platform::http::Server& server)
