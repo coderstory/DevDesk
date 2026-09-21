@@ -22,7 +22,7 @@
 
 - **现象**：分发时除 `DevDesk.exe` 外还需要旁挂 `fonts/`、`assets/` 目录（构建时 POST_BUILD 拷贝）。
 - **边界**：v1 接受此形态；字体等资源未通过 windres 嵌入 exe，嵌入留待需要时。字体文件按 `.gitignore` 约定不入 git（`fonts/Inter-*.ttf`、`fonts/JetBrainsMono-*.ttf`），目录为空时应用以系统字体回退运行。
-- **参考**：Release 构建 15.4 MiB（16,152,064 字节），`objdump` 仅 16 个 Windows 系统 DLL。
+- **参考**：Release 构建 15.6 MiB（16,402,944 字节，2026-09-22 终验实测；T3 验收时点 15.4 MiB，W3 增码后 +250 KB），`objdump` 仅 16 个 Windows 系统 DLL。
 
 ### 4. 开发脚本 check-consistency.sh 在 Windows 不可用
 

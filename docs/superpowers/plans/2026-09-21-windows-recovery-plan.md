@@ -130,3 +130,14 @@ T1–T12 全部 ✅。最终基线：**124/124 测试全绿**（109 基线 + 2 H
 - **功能补全**：P12 Home 真实数据仪表盘（统计卡/最近编辑/快捷按钮/调用日志滚动清理）、P13 设置页（主题/字号/token 再生成/日志保留，config.json 持久化 + 数值钳制）、platform::json 实装（yyjson 解析 + 自写序列化）、启动顺序理顺零 WARN
 - **文档（P15/P16）**：USER_GUIDE / KNOWN_LIMITATIONS（Windows 4 + 跨平台 12 如实记录）/ README / CHANGELOG / MAINTENANCE-EVALUATION
 - **macOS 侧**：分支代码保留但自迁移后未重新构建验证（P0-P8 曾 66 测试通过；回 macOS 开发时先全量构建 + 测试，见 KNOWN_LIMITATIONS §跨平台-9）
+
+## 终验通过（2026-09-22，恢复计划关闭）
+
+全项目终验（fresh eyes，只验证与收尾，未改业务代码）：
+
+- **提交链**：a1a106a → a0043c5 共 24 个提交完整可读，工作区干净
+- **构建 + 测试**：README 的裸 cmake configure 命令原样可跑（干净目录验证）；Debug 与 Release 双构建 ctest 均 **124/124 全绿**（各实测约 85s）
+- **依赖**：`objdump -p` Debug 与 Release 复验均仅 **16 个 Windows 系统 DLL**，零外部依赖
+- **启动冒烟**：进程存活 8s+；日志零 WARN/ERROR、"Claude 代理已启动"恰 1 次、五模块齐启（含设置）；Home 仪表盘经 HomeService 真实 SQL 聚合（markdown_index / todo_tasks / claude_call_logs）
+- **文档交叉核对**：USER_GUIDE §5 六条路径与 paths_win.cpp / paths.cpp / keychain_win.cpp 实现及 %APPDATA% 磁盘实际目录一一对应；KNOWN_LIMITATIONS 抽查 5 条（ANSI argv / keychain 幂等删留空目录 / fonts+assets 旁挂 / Claude 页 0 个 onClick / soak SKIP 门控）全部属实；README 测试过滤命令原样执行通过（`stress` 子串过滤 6 例全过）
+- **一处数字更正**：Release exe 终验实测 **16,402,944 字节（15.6 MiB）**——上文 15.4 MiB（16,152,064 字节）为 T3/W2 验收时点数字，W3 新增 Settings/Home 代码后增大约 250 KB（+1.5%）；README 与 KNOWN_LIMITATIONS 已同步更正为最新实测，CHANGELOG T3 历史条目保留原值

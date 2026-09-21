@@ -8,7 +8,7 @@
 - **首页仪表盘** —— 今日笔记 / 待办 / 逾期 / API 调用统计 + 最近编辑
 - **设置** —— 主题 / 字号 / 代理 token / 日志保留策略
 
-当前状态（2026-09-22，Windows 11）：**124/124 测试全绿；单 exe 零外部 DLL（Release 15.4 MiB）；10MB 流式端到端吞吐实测约 240–320 MB/s；60s soak 0% 丢失**。macOS 分支代码保留（接口隔离模式），自 2026-09-21 迁移后未重新验证。
+当前状态（2026-09-22，Windows 11）：**124/124 测试全绿；单 exe 零外部 DLL（Release 15.6 MiB）；10MB 流式端到端吞吐实测约 240–320 MB/s；60s soak 0% 丢失**。macOS 分支代码保留（接口隔离模式），自 2026-09-21 迁移后未重新验证。
 
 GUI 框架为 [EUI-NEO](https://sudoevolve.github.io/EUI-NEO/)（源码同级目录集成，非 submodule）。
 
@@ -31,7 +31,7 @@ cmake --build build
 ./build/DevDesk.exe
 ```
 
-Release 构建（单 exe 15.4 MiB，仅依赖 Windows 系统 DLL）：
+Release 构建（单 exe 15.6 MiB = 16,402,944 字节，仅依赖 Windows 系统 DLL；T3 验收时点为 15.4 MiB，W3 增设置页 / Home 服务后 +250 KB）：
 
 ```bash
 cmake -B build-release -G Ninja -DCMAKE_BUILD_TYPE=Release
