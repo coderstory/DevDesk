@@ -73,7 +73,7 @@ public:
 
     void* internal() const { return data_; }
 
-private:
+    // 类型和值（公开，便于 makeFromImpl 等内部函数访问）
     Type type_ = T_Null;
     void* data_ = nullptr;
     bool boolVal_ = false;

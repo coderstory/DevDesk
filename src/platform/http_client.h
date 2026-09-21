@@ -57,8 +57,11 @@ public:
     void cancel();
 
 private:
-    friend class StreamingClient;
-    void* handle_ = nullptr;
+    friend core::Result<std::unique_ptr<StreamingResponse>>
+        sendStreaming(const Request& req);
+
+    struct Impl;
+    Impl* impl_ = nullptr;
     int statusCode_ = 0;
     std::string finalError_;
     bool cancelled_ = false;

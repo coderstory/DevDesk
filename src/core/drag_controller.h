@@ -7,7 +7,8 @@
 #include <unordered_map>
 #include <vector>
 
-namespace eui { struct Vec2; struct Rect; }
+#include <eui/types.h>
+#include <eui/dsl.h>
 
 namespace core::drag {
 
@@ -52,6 +53,13 @@ private:
         DragStartHandler onStart;
         DragMoveHandler onMove;
         DragEndHandler onEnd;
+        Draggable() = default;
+        Draggable(DragStartHandler s, DragMoveHandler m, DragEndHandler e)
+            : onStart(std::move(s)), onMove(std::move(m)), onEnd(std::move(e)) {}
+        Draggable(Draggable&& o) noexcept = default;
+        Draggable& operator=(Draggable&& o) noexcept = default;
+        Draggable(const Draggable&) = delete;
+        Draggable& operator=(const Draggable&) = delete;
     };
     struct DropTarget {
         eui::Rect bounds;
@@ -60,6 +68,14 @@ private:
         DropHandler onLeave;
         DropHandler onDrop;
         bool entered = false;
+        DropTarget() = default;
+        DropTarget(eui::Rect b, DropPredicate a, DropHandler e, DropHandler l, DropHandler d)
+            : bounds(b), accept(std::move(a)), onEnter(std::move(e)),
+              onLeave(std::move(l)), onDrop(std::move(d)) {}
+        DropTarget(DropTarget&& o) noexcept = default;
+        DropTarget& operator=(DropTarget&& o) noexcept = default;
+        DropTarget(const DropTarget&) = delete;
+        DropTarget& operator=(const DropTarget&) = delete;
     };
 
     std::unordered_map<std::string, Draggable> draggables_;

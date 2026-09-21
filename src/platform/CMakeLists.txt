@@ -16,3 +16,8 @@ target_link_libraries(devdesk_platform
         CURL::libcurl
         Threads::Threads
 )
+
+# macOS Security.framework (Keychain)
+if(APPLE)
+    target_link_libraries(devdesk_platform PUBLIC "-framework Security")
+endif()

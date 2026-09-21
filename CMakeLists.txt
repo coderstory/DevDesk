@@ -67,7 +67,21 @@ target_link_libraries(DevDesk PRIVATE
     devdesk_module_claude_proxy
     eui_neo
 )
-target_include_directories(DevDesk PRIVATE src)
+target_include_directories(DevDesk PRIVATE
+    src
+    src/core
+    src/platform
+    src/module_home
+    src/module_markdown
+    src/module_todo
+    src/module_claude_proxy
+    ${EUI_NEO_INCLUDE_DIR}
+    ${EUI_NEO_DIR}
+)
+target_include_directories(DevDesk PRIVATE
+    ${EUI_NEO_DIR}/3rd/yyjson-0.12.0/src
+    ${EUI_NEO_DIR}/3rd/md4c/src
+)
 
 # 安装 / 拷贝资源
 add_custom_command(TARGET DevDesk POST_BUILD

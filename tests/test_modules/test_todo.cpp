@@ -1,7 +1,7 @@
 #include "doctest.h"
 #include "core/module_interface.h"
 
-DOCTEST_TEST_CASE("todo: PageId ordering") {
-    // 验证 PageId 枚举值
+REGISTER_TEST(todo_pageid, "todo: PageId ordering", {
     DOCTEST_CHECK(static_cast<int>(core::PageId::Todo) >= 0);
-}
+    return true;
+})

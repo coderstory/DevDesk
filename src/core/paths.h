@@ -8,7 +8,7 @@ namespace core::paths {
 
 // 应用数据根目录
 //   macOS:   ~/Library/Application Support/DevDesk/
-//   Windows: %APPDATA%\DevDesk\
+//   Windows: %APPDATA%/DevDesk/
 std::filesystem::path appDataDir();
 
 // 配置文件（config.json）

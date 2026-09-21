@@ -1,7 +1,7 @@
 #include "drag_controller.h"
 #include "logging.h"
 
-#include <eui/types.h>
+#include <eui/dsl.h>
 
 namespace core::drag {
 
@@ -18,8 +18,13 @@ void DragController::registerDropTarget(const std::string& targetId,
                                          DropHandler onEnter,
                                          DropHandler onLeave,
                                          DropHandler onDrop) {
-    dropTargets_[targetId] = {bounds, std::move(accept),
-        std::move(onEnter), std::move(onLeave), std::move(onDrop), false};
+    DropTarget t;
+    t.bounds = bounds;
+    t.accept = std::move(accept);
+    t.onEnter = std::move(onEnter);
+    t.onLeave = std::move(onLeave);
+    t.onDrop = std::move(onDrop);
+    dropTargets_[targetId] = std::move(t);
 }
 
 std::string DragController::hitTestDraggable(eui::Vec2 pos) const {
@@ -30,8 +35,8 @@ std::string DragController::hitTestDraggable(eui::Vec2 pos) const {
 
 std::string DragController::hitTestDropTarget(eui::Vec2 pos) const {
     for (const auto& [id, target] : dropTargets_) {
-        if (pos.x >= target.bounds.x && pos.x <= target.bounds.x + target.bounds.w &&
-            pos.y >= target.bounds.y && pos.y <= target.bounds.y + target.bounds.h) {
+        if (pos.x >= target.bounds.x && pos.x <= target.bounds.x + target.bounds.width &&
+            pos.y >= target.bounds.y && pos.y <= target.bounds.y + target.bounds.height) {
             return id;
         }
     }

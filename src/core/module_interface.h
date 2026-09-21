@@ -3,7 +3,7 @@
 
 #include <string>
 
-namespace eui { struct Screen; class Ui; }
+#include <eui/dsl.h>
 
 namespace core {
 

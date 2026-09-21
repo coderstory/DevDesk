@@ -1,8 +1,7 @@
 #include "router.h"
 #include "logging.h"
 
-#include <eui/screen.h>
-#include <eui/ui.h>
+#include <eui/dsl.h>
 
 namespace core {
 

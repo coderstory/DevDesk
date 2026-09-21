@@ -22,12 +22,12 @@ target_include_directories(devdesk_tests PRIVATE
 # 确保 doctest.h 可被 #include "doctest.h" 找到
 
 target_link_libraries(devdesk_tests PRIVATE
-    devdesk_core
-    devdesk_platform
     devdesk_module_home
     devdesk_module_markdown
     devdesk_module_todo
     devdesk_module_claude_proxy
 )
+
+# 确保 doctest.h 可被 #include "doctest.h" 找到
 
 add_test(NAME devdesk_unit_tests COMMAND devdesk_tests)

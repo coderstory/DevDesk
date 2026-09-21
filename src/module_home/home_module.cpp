@@ -3,15 +3,17 @@
 #include "core/logging.h"
 #include "core/module_interface.h"
 
+#include <eui/dsl.h>
+
 namespace module::home {
 
-class HomeModule : public core::Module {
+class HomeModule : public ::core::Module {
 public:
-    core::PageId pageId() const override { return core::PageId::Home; }
+    ::core::PageId pageId() const override { return ::core::PageId::Home; }
     std::string displayName() const override { return "首页"; }
     std::string iconGlyph() const override { return "🏠"; }
 
-    void compose(core::eui::Ui& ui, const core::eui::Screen& screen) override {
+    void compose(eui::Ui& ui, const eui::Screen& screen) override {
         LOG_DEBUG("Home 模块 compose 被调用");
         (void)ui;
         (void)screen;
@@ -23,6 +25,6 @@ public:
 
 } // namespace module::home
 
-extern "C" core::Module* create_home_module() {
+extern "C" ::core::Module* create_home_module() {
     return new module::home::HomeModule();
 }

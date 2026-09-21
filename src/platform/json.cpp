@@ -23,8 +23,14 @@ namespace {
 
     JsonValue makeFromImpl(JsonImpl impl) {
         JsonValue v;
+        v.type_ = JsonValue::T_Null;
         auto* dst = static_cast<JsonImpl*>(v.internal());
         *dst = std::move(impl);
+        // 同步拷贝值字段（strVal_/intVal_/dblVal_/boolVal_）到 JsonValue 自身
+        v.boolVal_ = dst->boolVal;
+        v.intVal_ = dst->intVal;
+        v.dblVal_ = dst->dblVal;
+        v.strVal_ = dst->strVal;
         switch (dst->kind) {
             case JsonImpl::Kind::Null: v.type_ = JsonValue::T_Null; break;
             case JsonImpl::Kind::Bool: v.type_ = JsonValue::T_Bool; break;
@@ -36,7 +42,7 @@ namespace {
         }
         return v;
     }
-}
+} // anonymous
 
 // JsonObject
 JsonObject::JsonObject() : data_(new JsonImpl()) {
@@ -93,20 +99,20 @@ JsonValue::JsonValue() : data_(new JsonImpl()) {
     static_cast<JsonImpl*>(data_)->kind = JsonImpl::Kind::Null;
 }
 JsonValue::JsonValue(std::nullptr_t) : JsonValue() {}
-JsonValue::JsonValue(bool b) : data_(new JsonImpl()) {
+JsonValue::JsonValue(bool b) : data_(new JsonImpl()), boolVal_(b) {
     auto* i = static_cast<JsonImpl*>(data_); i->kind = JsonImpl::Kind::Bool; i->boolVal = b;
     type_ = T_Bool;
 }
 JsonValue::JsonValue(int v) : JsonValue(static_cast<int64_t>(v)) {}
-JsonValue::JsonValue(int64_t v) : data_(new JsonImpl()) {
+JsonValue::JsonValue(int64_t v) : data_(new JsonImpl()), intVal_(v) {
     auto* i = static_cast<JsonImpl*>(data_); i->kind = JsonImpl::Kind::Int; i->intVal = v;
     type_ = T_Number;
 }
-JsonValue::JsonValue(double d) : data_(new JsonImpl()) {
+JsonValue::JsonValue(double d) : data_(new JsonImpl()), dblVal_(d) {
     auto* i = static_cast<JsonImpl*>(data_); i->kind = JsonImpl::Kind::Double; i->dblVal = d;
     type_ = T_Number;
 }
-JsonValue::JsonValue(const std::string& s) : data_(new JsonImpl()) {
+JsonValue::JsonValue(const std::string& s) : data_(new JsonImpl()), strVal_(s) {
     auto* i = static_cast<JsonImpl*>(data_); i->kind = JsonImpl::Kind::String; i->strVal = s;
     type_ = T_String;
 }

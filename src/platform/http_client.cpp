@@ -3,6 +3,7 @@
 
 #include <chrono>
 #include <cstring>
+#include <thread>
 #include <curl/curl.h>
 
 namespace platform::http {
@@ -24,7 +25,6 @@ size_t headerCallback(char* buffer, size_t size, size_t nitems, void* userp) {
     if (colon != std::string::npos) {
         std::string key = line.substr(0, colon);
         std::string value = line.substr(colon + 1);
-        // 去掉前后空白
         while (!value.empty() && (value.front() == ' ' || value.front() == '\t')) value.erase(0, 1);
         while (!value.empty() && (value.back() == '\r' || value.back() == '\n')) value.pop_back();
         if (!key.empty()) resp->headers[key] = value;
@@ -106,7 +106,6 @@ core::Result<Response> sendWithRetry(const Request& req, int maxRetries) {
         if (result.isOk()) return result;
         last = std::move(result);
         if (i < maxRetries) {
-            // 简单指数退避
             int delay = 1000 << i;
             std::this_thread::sleep_for(std::chrono::milliseconds(delay));
         }
@@ -114,62 +113,47 @@ core::Result<Response> sendWithRetry(const Request& req, int maxRetries) {
     return last;
 }
 
-// 流式响应（占位实现 - 完整三线程实现见 spec §10.4 PoC 后）
-struct StreamingClient {
-    CURL* curl = nullptr;
+// ============ 流式响应实现 ============
+
+struct StreamingResponse::Impl {
     std::string buffer;
     bool done = false;
     std::string errorMessage;
-    int statusCode = 0;
-    bool cancelled = false;
-
-    static size_t writeCb(void* contents, size_t size, size_t nmemb, void* userp) {
-        auto* self = static_cast<StreamingClient*>(userp);
-        size_t total = size * nmemb;
-        self->buffer.append(static_cast<char*>(contents), total);
-        return total;
-    }
 };
 
-StreamingResponse::StreamingResponse() : handle_(new StreamingClient()) {}
-StreamingResponse::~StreamingResponse() { delete static_cast<StreamingClient*>(handle_); }
+StreamingResponse::StreamingResponse() : impl_(new Impl()) {}
+StreamingResponse::~StreamingResponse() { delete impl_; }
 
 ChunkResult StreamingResponse::readChunk(std::string& chunk, std::string& errorMessage) {
-    auto* self = static_cast<StreamingClient*>(handle_);
     if (cancelled_) {
         errorMessage = "cancelled";
         return ChunkResult::Error;
     }
-    if (!self->buffer.empty()) {
-        chunk = std::move(self->buffer);
-        self->buffer.clear();
+    if (!impl_->buffer.empty()) {
+        chunk = std::move(impl_->buffer);
+        impl_->buffer.clear();
         return ChunkResult::More;
     }
-    if (self->done) return ChunkResult::End;
-    errorMessage = self->errorMessage;
-    return self->errorMessage.empty() ? ChunkResult::End : ChunkResult::Error;
+    if (impl_->done) return ChunkResult::End;
+    errorMessage = impl_->errorMessage;
+    return impl_->errorMessage.empty() ? ChunkResult::End : ChunkResult::Error;
 }
 
 void StreamingResponse::cancel() {
     cancelled_ = true;
-    auto* self = static_cast<StreamingClient*>(handle_);
-    if (self->curl) {
-        curl_easy_perform(self->curl);
-        // 实际取消要更复杂的实现
-    }
 }
 
 core::Result<std::unique_ptr<StreamingResponse>> sendStreaming(const Request& req) {
     // 简化实现：单次发送全部响应作为单 chunk
+    // 完整三线程 + backpressure 实现见 spec §10.4 / P10a PoC
     auto resp = send(req);
     if (resp.isFail()) return core::Result<std::unique_ptr<StreamingResponse>>::fail(
         resp.errorCode(), resp.errorMessage());
 
-    auto sr = std::make_unique<StreamingResponse>();
-    auto* sc = static_cast<StreamingClient*>(sr.get());
-    sc->buffer = std::move(resp.value().body);
-    sc->statusCode = resp.value().statusCode;
-    sc->done = true;
+    auto sr = std::unique_ptr<StreamingResponse>(new StreamingResponse());
+    sr->impl_->buffer = std::move(resp.value().body);
+    sr->impl_->done = true;
+    sr->statusCode_ = resp.value().statusCode;
     return core::Result<std::unique_ptr<StreamingResponse>>::ok(std::move(sr));
 }
 

@@ -13,6 +13,14 @@ target_include_directories(devdesk_core PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}
 )
 
+# EUI-NEO include 路径（直接添加，因为 add_subdirectory EXCLUDE_FROM_ALL 时 PUBLIC 链路可能不传递）
+target_include_directories(devdesk_core PUBLIC
+    ${EUI_NEO_DIR}/include
+    ${EUI_NEO_DIR}
+    ${EUI_NEO_DIR}/3rd/yyjson-0.12.0/src
+    ${EUI_NEO_DIR}/3rd/md4c/src
+)
+
 target_link_libraries(devdesk_core
     PUBLIC
         SQLite::SQLite3

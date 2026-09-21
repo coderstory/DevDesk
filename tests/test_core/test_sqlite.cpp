@@ -4,12 +4,13 @@
 
 #include <filesystem>
 
-DOCTEST_TEST_CASE("SqliteDb: open in-memory") {
+REGISTER_TEST(sqlite_open_memory, "SqliteDb: open in-memory", {
     auto r = core::data::SqliteDb::open(":memory:");
     DOCTEST_CHECK(r.isOk());
-}
+    return true;
+})
 
-DOCTEST_TEST_CASE("SqliteDb: open file") {
+REGISTER_TEST(sqlite_open_file, "SqliteDb: open file", {
     auto path = std::filesystem::temp_directory_path() / "devdesk_test.db";
     std::filesystem::remove(path);
     auto r = core::data::SqliteDb::open(path);
@@ -19,9 +20,10 @@ DOCTEST_TEST_CASE("SqliteDb: open file") {
         DOCTEST_CHECK(exec.isOk());
     }
     std::filesystem::remove(path);
-}
+    return true;
+})
 
-DOCTEST_TEST_CASE("SqliteDb: prepare + bind + step") {
+REGISTER_TEST(sqlite_bind_step, "SqliteDb: prepare + bind + step", {
     auto r = core::data::SqliteDb::open(":memory:");
     DOCTEST_REQUIRE(r.isOk());
     auto& db = r.value();
@@ -33,9 +35,10 @@ DOCTEST_TEST_CASE("SqliteDb: prepare + bind + step") {
     DOCTEST_REQUIRE(stmt.bind(2, std::string("hello")).isOk());
     auto step = stmt.step();
     DOCTEST_CHECK(step.isOk());
-}
+    return true;
+})
 
-DOCTEST_TEST_CASE("SqliteDb: fetchAll") {
+REGISTER_TEST(sqlite_fetch_all, "SqliteDb: fetchAll", {
     auto r = core::data::SqliteDb::open(":memory:");
     DOCTEST_REQUIRE(r.isOk());
     auto& db = r.value();
@@ -46,16 +49,17 @@ DOCTEST_TEST_CASE("SqliteDb: fetchAll") {
     auto rows = prep.value().fetchAll();
     DOCTEST_REQUIRE(rows.isOk());
     DOCTEST_CHECK_EQ(rows.value().size(), 3u);
-}
+    return true;
+})
 
-DOCTEST_TEST_CASE("SqliteDb: transaction commit") {
+REGISTER_TEST(sqlite_transaction, "SqliteDb: transaction commit", {
     auto r = core::data::SqliteDb::open(":memory:");
     DOCTEST_REQUIRE(r.isOk());
     auto& db = r.value();
     DOCTEST_REQUIRE(db.exec("CREATE TABLE t (x INTEGER)").isOk());
-    auto tx = db.transaction([&]() {
-        DOCTEST_REQUIRE(db.exec("INSERT INTO t VALUES (1)").isOk());
-        DOCTEST_REQUIRE(db.exec("INSERT INTO t VALUES (2)").isOk());
+    auto tx = db.transaction([&]() -> core::Result<void> {
+        if (db.exec("INSERT INTO t VALUES (1)").isFail()) return core::Result<void>::fail(core::ErrorCode::Internal, "insert 1");
+        if (db.exec("INSERT INTO t VALUES (2)").isFail()) return core::Result<void>::fail(core::ErrorCode::Internal, "insert 2");
         return core::Result<void>::ok();
     });
     DOCTEST_CHECK(tx.isOk());
@@ -65,4 +69,5 @@ DOCTEST_TEST_CASE("SqliteDb: transaction commit") {
     DOCTEST_REQUIRE(rows.isOk());
     auto row = rows.value()[0];
     DOCTEST_CHECK_EQ(std::get<int64_t>(row.values[0]), 2);
-}
+    return true;
+})
