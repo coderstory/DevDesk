@@ -148,32 +148,33 @@ main → 4 个 module_* (markdown / todo / claude_proxy / home)
 
 完整 token 见 spec §6.5.1 和 §6.5.2。
 
-## 🚦 当前阶段（2026-09-21 更新，macOS → Windows 11 迁移后）
+## 🚦 当前阶段（2026-09-22 更新，macOS → Windows 11 迁移后）
 
 按 spec §16 实施，进度：
 
 - ✅ **P0-P8 完成**（macOS 上 66 测试通过 + .app bundle，截图见 `docs/screenshots/`）
-- 🔄 **P9（代理非流式）+ P10a（SSE 流式）进行中** —— 约 1500 行未提交代码（streaming_proxy、http_client 流式扩展、proxy_router 等），macOS 上被强行终止。32 个新测试用例质量高（SSE 时序/backpressure/鉴权端到端），其中 claude_service/proxy_router 测试已正确用 `error_code` 处理 Windows 文件删除；测试基建修复后即可拿到 Windows 完整基线
-- ⚡ **P14（Windows）从"实验性"升为必选项** —— 当前就在 Windows 11 上开发
+- ✅ **P9（代理非流式）+ P10a（SSE 流式）+ P10b（流式压测）完成** —— W1 收编 macOS 中断现场并修全部基线问题（T1-T5），Windows 全量测试 109 例全绿（W2 验收 2026-09-22：10MB e2e/soak/断连恢复/内存采样全过）
+- ✅ **P14（Windows）必选达成** —— spec §16 已更新：P14 升必选（Windows 11 为当前开发环境）+ 发布形态约束"单 exe 零外部 DLL"（T3 达成，W2 复查通过）；平台适配接口隔离完成（T6，业务代码零平台宏）
+- ⬜ **剩余**：T9 收尾杂项（启动顺序 WARN 等）→ T10 P12 Home 真实数据 → T11 P13 设置页 → T12 P15 文档
 
-### Windows 迁移缺口（P14 提前激活）
+### Windows 迁移缺口（P14 提前激活；2026-09-22 W2 验收后更新为状态表）
 
-| 问题 | 位置 | 严重度 |
-|------|------|--------|
-| DPAPI keychain 是 stub（三个函数全返回 NotImplemented） | `src/platform/keychain.cpp` | 🔴 阻断 Claude 模块 |
-| 缺 `ws2_32` + `crypt32` 链接（Winsock2 + TLS 依赖链，不止 DPAPI 要用） | `src/platform/CMakeLists.txt` | 🔴 现靠 `-DCMAKE_CXX_STANDARD_LIBRARIES="-lws2_32 -lcrypt32"` 绕过 |
-| FTS5 检测假阴性：MSYS2 sqlite 实际带 FTS5（CJK 搜索测试全过），`check_cxx_source_compiles` 没带 SQLite3 库导致误报 NOT enabled | `cmake/Dependencies.cmake` | 🟡 修检测即可 |
-| 5 处干净编译修复：`json.h` 缺 `#include <cstdint>`；`migrations.h` 用了 C++20 designated initializers（项目是 C++17）；`proxy_router.cpp:81` 引用绑临时；`-Werror` 泄漏进 EUI-NEO 第三方子目录 | `src/platform/json.h` 等 | 🔴 现靠 CMakeCache workaround 绕过 |
-| 测试基建 Windows 崩溃：老测试用抛异常版 `filesystem::remove` 且 sqlite 句柄未关（Windows 禁删打开中文件）+ test_main 无 try/catch，一炸全死 | `tests/`（2026-09-21 修复中） | 🔴 曾致套件中途 terminate |
-| 启动顺序 WARN：模块 `onStart` 时 `ClaudeService::global()` 为 null，靠 main 兜底启动代理 | `main.cpp` / `claude_module.cpp` | 🟢 功能正常，顺序待理顺 |
-| **发布形态：单 exe 零外部 DLL**——MinGW `-static` 运行时已由 `eui_neo_configure_app` 自动加，剩余动态依赖 sqlite3/curl/ssl/crypto 待静态化 | `cmake/Dependencies.cmake` | 🟡 用户要求，待实施 |
-| `captureOpenFileFromArgv()` 仅 `__APPLE__` 有实现 | `src/main.cpp` | 🟡 命令行文件打开失效 |
-| `check-consistency.sh` 用 macOS `screencapture`/`open -a` | `scripts/` | 🟢 开发工具，非运行时 |
-| 旧 `build/` 是 Darwin arm64 产物 | `build/` | 🟢 删除重建 |
+| 问题 | 位置 | 状态 |
+|------|------|------|
+| DPAPI keychain 曾是 stub（三函数全返回 NotImplemented，阻断 Claude 模块） | `src/platform/keychain_win.cpp` | ✅ T7 已实现（a534f5d）：CryptProtectData/CryptUnprotectData + 文件存储，19 个连锁用例全转绿 |
+| 缺 `ws2_32` + `crypt32` 链接（Winsock2 + TLS 依赖链） | `src/platform/CMakeLists.txt` | ✅ T2 已修：`if(WIN32)` 内 PUBLIC 链接，不再需要 `CMAKE_CXX_STANDARD_LIBRARIES` 绕过 |
+| FTS5 检测假阴性（MSYS2 sqlite 实际带 FTS5） | `cmake/Dependencies.cmake` | ✅ T2 已修：`check_cxx_source_compiles` 补 SQLite3 库链接，CJK 搜索测试全过 |
+| 5 处干净编译修复（json.h 缺 cstdint / migrations designated initializers / proxy_router 绑临时 / -Werror 泄漏进 EUI-NEO） | `src/platform/json.h` 等 | ✅ T2 已修：删 build/ 全新 configure 零 workaround flag 可构建 |
+| 测试基建 Windows 崩溃（`filesystem::remove` 抛异常 + sqlite 句柄未关 + test_main 无容错） | `tests/` | ✅ T1-B 已修：套件跑到底，单测异常只挂本用例不炸套件 |
+| 启动顺序 WARN：模块 `onStart` 时 `ClaudeService::global()` 为 null，main 兜底启动代理 | `main.cpp` / `claude_module.cpp` | 🟢 仍开放（T9）：功能正常，顺序待理顺 |
+| 发布形态：单 exe 零外部 DLL | `cmake/Dependencies.cmake` | ✅ T3 已达成（95c59d5）：sqlite3/curl/ssl/crypto/C++ 运行时全静态，W2 验收复查 `objdump` 仅 16 个 Windows 系统 DLL |
+| `captureOpenFileFromArgv()` 曾仅 `__APPLE__` 有实现 | `src/platform/file_open_win.cpp` | ✅ T6 已按平台拆文件（接口隔离）；⚠️ 遗留：win 版用 ANSI `__argv`，非 ASCII 路径可能乱码（完整做法 GetCommandLineW，计划 T6 备注在案） |
+| `check-consistency.sh` 用 macOS `screencapture`/`open -a` | `scripts/` | 🟢 仍开放：开发工具，非运行时 |
+| 旧 `build/` 是 Darwin arm64 产物 | `build/` | ✅ W1 已删除并在 Windows 重建 |
 
-已正确处理的跨平台点：paths（`%APPDATA%` 分支已有）、`localtime_s`（3 处）、HTTP 层（libcurl/cpp-httplib 跨平台）、`.app` target（`if(APPLE)` 守卫）、Security.framework 链接（有守卫）。
+已正确处理的跨平台点（T6 接口隔离后）：**keychain / paths / time / file_open 四族平台 API 全部按平台拆文件**（`*_win.cpp` / `*_macos.cpp` / `*_posix.cpp`，CMake `target_sources` 按平台选择编译，与 EUI-NEO 后端选择同一模式），业务代码零 `#ifdef _WIN32` / `__APPLE__`（2026-09-22 W2 验收 grep `src/` *.cpp/*.h 零命中）；HTTP 层（libcurl/cpp-httplib）本身跨平台；`.app` target（`if(APPLE)` 守卫）、Security.framework 链接（有守卫）。time 统一走 `core::time::localTime`（`src/core/time.h` + `time_win/posix.cpp`）。
 
-**测试框架注意**：`tests/doctest.h` 是自制 78 行迷你框架（`REGISTER_TEST` 宏静态自注册 + `DOCTEST_CHECK/REQUIRE` 断言，fail-fast），**不是真 doctest**——grep `TEST_CASE` 找不到用例属正常。共 103 个用例（已提交 71 + 未提交 32），无按名过滤能力。
+**测试框架注意**：`tests/doctest.h` 是自制 78 行迷你框架（`REGISTER_TEST` 宏静态自注册 + `DOCTEST_CHECK/REQUIRE` 断言，fail-fast），**不是真 doctest**——grep `TEST_CASE` 找不到用例、`--list-test-cases` 之类参数会被当作过滤子串属正常。共 **109 个用例**（2026-09-22 W2 验收全绿：103 基线 + T8 新增 6 个流式压测，soak 300s 由 `DEVDESK_SOAK=1` 门控、常规套件打印 `[SKIP]` 直接通过）。test_main 支持子串过滤：`./devdesk_tests.exe stress` 只跑名字含 "stress" 的用例，`--log` 打开 Debug 级控制台日志。
 
 ## 📂 关键文件
 

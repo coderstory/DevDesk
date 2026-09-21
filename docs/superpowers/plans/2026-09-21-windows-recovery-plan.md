@@ -40,7 +40,8 @@
 - 边界：v1 接受 exe 旁带 fonts/assets 目录；资源嵌入（windres）留待需要时
 
 #### T4 Windows 测试基线 ✅
-- 实测（2026-09-21 验收）：103 例 = **84 过 / 19 挂**；19 个失败全部为 keychain DPAPI stub（`NotImplemented`）连锁——keychain 2 + claude_service 10 + proxy_router 7，待 T7 实现 DPAPI 后转绿（原预期"仅剩 2 个"偏低，连锁波及依赖 keychain 的 service/router 用例）
+- 初次实测（2026-09-21 验收）：103 例 = **84 过 / 19 挂**；19 个失败全部为 keychain DPAPI stub（`NotImplemented`）连锁——keychain 2 + claude_service 10 + proxy_router 7（原预期"仅剩 2 个"偏低，连锁波及依赖 keychain 的 service/router 用例）
+- **最终数字（2026-09-22 W2 验收）：103 例全绿（103 过 / 0 挂）**——T7 DPAPI 落地后 19 个连锁失败全部转绿；加 T8 新增 6 例压测，全量 109 例全过
 - 结果记录进 KNOWN_LIMITATIONS（T12 前先记在 CLAUDE.md）
 
 #### T5 P10a 流式修复 ✅
@@ -61,13 +62,19 @@
   - 遗留（范围外记录）：`file_open_win.cpp` 用 ANSI `__argv`，非 ASCII 文件路径可能乱码，完整做法 GetCommandLineW + CommandLineToArgvW 转 UTF-8，留后续
 - 验收：`grep -rn '_WIN32\|__APPLE__\|_WIN64' src/`（*.cpp/*.h）零命中；构建过；103 例 84 过 19 挂（keychain 2 + claude_service 10 + proxy_router 7，与 T4 基线一致，纯重构零行为变化）
 
-#### T7 DPAPI keychain ⬜
-- 在 T6 拆好的 `keychain_win.cpp` 实现 `CryptProtectData/CryptUnprotectData`
-- 验收：19 个连锁失败测试全转绿（keychain 2 + claude_service 10 + proxy_router 7）
+#### T7 DPAPI keychain ✅
+- 在 T6 拆好的 `keychain_win.cpp` 实现 `CryptProtectData/CryptUnprotectData`（+ 文件存储，commit a534f5d）
+- 实测（2026-09-22 W2 验收）：19 个连锁失败全转绿——keychain 2 + claude_service 10 + proxy_router 7 全部 PASS，全量 109 例全过（103 基线 + T8 新增 6 压测），0 失败
 
-#### T8 P10b 流式质量 ⬜
-- 5 分钟长连接回归 + 10MB 大 body 压测 + 异常断连恢复
-- 验收：压测不丢块不挂起不泄漏（内存采样前后对比）
+#### T8 P10b 流式质量 ✅
+- 新增 `tests/test_modules/test_streaming_stress.cpp` 6 个压测用例（commit 458cf50）：10MB 流式 e2e / 10MB 缓冲路径 / soak 60s / soak 300s（`DEVDESK_SOAK=1` 门控）/ 上游断连恢复 / 内存采样
+- 实测（2026-09-22 W2 验收，全部 PASS）：
+  - 10MB 流式 e2e：44ms、1440 次 receiver 调用，全串比对 + FNV-1a 哈希 + 160 块块号三重校验一致
+  - 10MB 缓冲路径：48ms，字节一致
+  - soak 60s：收到 1200/1200 chunk（上游发 1200），误差 0%（验收口径 < 5%），seq 严格递增
+  - soak 300s：未设 `DEVDESK_SOAK` 时打印 `[SKIP]` 直接通过（常规套件不背 5 分钟）
+  - 断连恢复：上游发到一半 closesocket，流以 End 干净收尾（非 Error），已收数据与上游已发字节完全一致（直接层 + 经代理端到端两场景）
+  - 内存采样：20 轮 × 10MB 流式，内存增量 12,660 KB（阈值 102,400 KB），无泄漏趋势
 
 #### T9 收尾杂项 ⬜
 - `ClaudeService::global()` 启动顺序 WARN 理顺（onStart 时不再为 null）

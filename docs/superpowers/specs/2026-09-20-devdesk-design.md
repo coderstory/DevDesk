@@ -2277,7 +2277,8 @@ echo "截图已保存: docs/screenshots/${PAGE_NAME}.png"
 | **P11：Claude 加密（已合并入 P8）** | ~~Keychain/DPAPI 存储~~ | ~~API key 验证不落 SQLite~~ | ~~P8~~（P8 已实现 Keychain 集成，无需独立阶段）|
 | **P12：Home 仪表盘数据** | 真实数据展示 + 30 天日志清理任务 | 首页不是空壳 | P4, P6, P9 |
 | **P13：设置页面** | 主题、目录、token UI、字体大小、日志保留策略 | 用户可定制 | P12 |
-| **P14：Windows 实验性支持** | 路径、字体、CI workflow（windows-latest runner）、FTS5 vcpkg feature | 编译 + 单元测试过；功能不承诺 | P13 |
+| **P14：Windows 支持（必选）** | 路径、字体、CI workflow（windows-latest runner）、FTS5 vcpkg feature | 编译 + 单元测试过；功能承诺（Windows 11 已是当前开发环境，2026-09-21 起） | P13 |
+| **发布形态（P14 约束）** | 单 exe 零外部 DLL：MinGW 全静态链接（sqlite3/curl/ssl/crypto/C++ 运行时全部静态化） | `objdump -p DevDesk.exe \| grep "DLL Name"` 仅出现 Windows 系统 DLL | P14 |
 | **P15：完善文档** | README、USER_GUIDE、ARCHITECTURE + 自我诊断页面 + 已知限制 | 文档齐全 | P13 |
 | **P16：长期维护评估** | 评估 EUI-NEO Metal 后端或 fork 需求；评估 Markdown 编辑器自实现 | macOS 27+ 升级准备 | P15 |
 
@@ -2287,7 +2288,7 @@ echo "截图已保存: docs/screenshots/${PAGE_NAME}.png"
 |------|---------|---------|
 | P7b 鼠标拖拽 | 帧率 < 30 FPS 或崩溃 | 砍掉鼠标拖拽，**只保留 P7a 键盘/菜单** |
 | P10a 流式 | 长连接挂起/内存泄漏 | 退回到 P9 buffer 模式，**流式推迟到 v2** |
-| P14 Windows | CI 编译失败 | 暂降为"已知不支持 Windows"，**修复优先 macOS** |
+| P14 Windows | 未验证平台编译/运行失败 | Windows 已支持（Windows 11 为当前开发环境），回退仅针对未验证平台（如旧版 Windows Server），不再降级 Windows 整体 |
 | P0a PoC | 三线程架构不可行 | 流式永久放弃，**始终 buffer 模式** |
 
 ### 16.2 验证规范（每个 P 阶段完成后必须做）
