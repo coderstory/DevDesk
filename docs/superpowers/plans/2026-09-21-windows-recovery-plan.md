@@ -15,14 +15,14 @@
 
 ### 阶段一：止血收编
 
-#### T1 三连 commit ⬜
+#### T1 三连 commit ✅
 - A `feat(claude): 收编 macOS 中断现场 P9/P10a`——src/** 全部修改 + streaming_proxy.* + 3 个新测试文件 + tests/CMakeLists.txt + doctest.h
 - B `fix(tests): Windows 文件锁崩溃 + test_main 容错`——test_migrations/sqlite/logging/todo_service/test_main
 - C `docs: 平台迁移现状 + 缺口清单 + 本计划`——DevDesk/CLAUDE.md + 本文件
 - 附：spec §16 增补（P14 升必选 + 单 exe 要求）
 - 验收：git log 三条新 commit，工作区干净
 
-#### T2 干净编译 5 处修复 ⬜
+#### T2 干净编译 5 处修复 ✅
 - `src/platform/json.h` 加 `#include <cstdint>`
 - `src/platform/CMakeLists.txt` 补 `if(WIN32) ws2_32 crypt32`
 - migrations.h designated initializers：顶层 `CMAKE_CXX_STANDARD` 升 20（1 行）
@@ -33,17 +33,17 @@
 
 ### 阶段二：发布形态 + 基线
 
-#### T3 静态链接单 exe ⬜
+#### T3 静态链接单 exe ✅
 - CMake 指到静态库：`SQLite3_LIBRARY=libsqlite3.a`、`CURL_LIBRARY=libcurl.a`、`OPENSSL_USE_STATIC_LIBS=TRUE`、zlib 静态
 - libcurl 传递依赖按链接器报错补齐（MSYS2 均有静态版）
 - 验收：`objdump -p DevDesk.exe | grep "DLL Name"` 零外部 DLL；拷贝到无 MSYS2 PATH 的干净目录 + fonts/assets 能跑；Release 体积记录在案
 - 边界：v1 接受 exe 旁带 fonts/assets 目录；资源嵌入（windres）留待需要时
 
-#### T4 Windows 测试基线 ⬜
-- 拿测试基建修复后的完整统计；预期仅剩 2 个 keychain 失败（DPAPI stub）
+#### T4 Windows 测试基线 ✅
+- 实测（2026-09-21 验收）：103 例 = **84 过 / 19 挂**；19 个失败全部为 keychain DPAPI stub（`NotImplemented`）连锁——keychain 2 + claude_service 10 + proxy_router 7，待 T7 实现 DPAPI 后转绿（原预期"仅剩 2 个"偏低，连锁波及依赖 keychain 的 service/router 用例）
 - 结果记录进 KNOWN_LIMITATIONS（T12 前先记在 CLAUDE.md）
 
-#### T5 P10a 流式修复 ⬜
+#### T5 P10a 流式修复 ✅
 - 已知 bug：`sendStreamingClaude forwards upstream sse chunks` 和 `backpressure preserves all chunks under load` 报 libcurl 错误 18 `Transferred a partial file`（暂停/恢复路径丢传输尾部，或 mock 上游 Content-Length 时序差异）
 - 诊断路径：先最小复现（mock 上游 + curl 暂停），区分「上游提前断」vs「恢复时序丢尾」
 - 验收：14 个 streaming 测试全绿（Windows + 逻辑层面）
