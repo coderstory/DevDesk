@@ -475,3 +475,78 @@ REGISTER_TEST(todo_svc_delete_task,
     DOCTEST_CHECK_EQ(tasks.value()[0].title, std::string("活着"));
     return true;
 })
+
+// 端到端：新建任务 → 完成 → 移到「已完成」列（UI 的完成流程）
+REGISTER_TEST(todo_svc_acceptance_flow,
+              "TodoService: 验收流程 新建 → 完成 → 落到「已完成」列",
+              {
+    TestEnv env("acceptance");
+    DOCTEST_REQUIRE(env.ready);
+
+    auto list = env.svc->listColumns();
+    DOCTEST_REQUIRE(list.isOk());
+    DOCTEST_REQUIRE_EQ(list.value().size(), 4u);
+    // migration 里的 4 列标题
+    DOCTEST_CHECK_EQ(list.value()[0].title, std::string("待办"));
+    DOCTEST_CHECK_EQ(list.value()[2].title, std::string("已完成"));
+
+    const int64_t todoCol = list.value()[0].id;
+    const int64_t doneCol = list.value()[2].id;
+
+    // 1. 新建任务（落到待办列）
+    auto created = env.svc->createTask(todoCol, "验收：写文档");
+    DOCTEST_REQUIRE(created.isOk());
+    const int64_t taskId = created.value().id;
+
+    auto inTodo = env.svc->listTasks(todoCol);
+    DOCTEST_REQUIRE(inTodo.isOk());
+    DOCTEST_CHECK_EQ(inTodo.value().size(), 1u);
+
+    // 2. 验证真的写进了 db 文件（另开一条连接读）
+    {
+        auto probe = core::data::SqliteDb::open(env.path);
+        DOCTEST_REQUIRE(probe.isOk());
+        auto prep = probe.value().prepare(
+            "SELECT title, completed_at FROM todo_tasks WHERE id = ?");
+        DOCTEST_REQUIRE(prep.isOk());
+        auto& stmt = prep.value();
+        DOCTEST_REQUIRE(stmt.bind(1, taskId).isOk());
+        auto rows = stmt.fetchAll();
+        DOCTEST_REQUIRE(rows.isOk());
+        DOCTEST_REQUIRE_EQ(rows.value().size(), 1u);
+        DOCTEST_CHECK_EQ(rows.value()[0].getString("title").value(),
+                         std::string("验收：写文档"));
+        DOCTEST_CHECK(rows.value()[0].isNull("completed_at"));
+    }
+
+    // 3. 完成 + 移到「已完成」列
+    DOCTEST_CHECK(env.svc->completeTask(taskId).isOk());
+    DOCTEST_CHECK(env.svc->moveTask(taskId, doneCol, 0).isOk());
+
+    auto inDone = env.svc->listTasks(doneCol);
+    DOCTEST_REQUIRE(inDone.isOk());
+    DOCTEST_CHECK_EQ(inDone.value().size(), 1u);
+    DOCTEST_CHECK_EQ(inDone.value()[0].title, std::string("验收：写文档"));
+    DOCTEST_CHECK(inDone.value()[0].completedAt.has_value());
+
+    auto emptyTodo = env.svc->listTasks(todoCol);
+    DOCTEST_REQUIRE(emptyTodo.isOk());
+    DOCTEST_CHECK_EQ(emptyTodo.value().size(), 0u);
+
+    // 4. 再次确认 db 里 completed_at 已写入
+    {
+        auto probe = core::data::SqliteDb::open(env.path);
+        DOCTEST_REQUIRE(probe.isOk());
+        auto prep = probe.value().prepare(
+            "SELECT column_id, completed_at FROM todo_tasks WHERE id = ?");
+        DOCTEST_REQUIRE(prep.isOk());
+        auto& stmt = prep.value();
+        DOCTEST_REQUIRE(stmt.bind(1, taskId).isOk());
+        auto rows = stmt.fetchAll();
+        DOCTEST_REQUIRE(rows.isOk());
+        DOCTEST_REQUIRE_EQ(rows.value().size(), 1u);
+        DOCTEST_CHECK_EQ(rows.value()[0].getInt64("column_id").value(), doneCol);
+        DOCTEST_CHECK(!rows.value()[0].isNull("completed_at"));
+    }
+    return true;
+})

@@ -3,6 +3,8 @@
 #include "logging.h"
 #include "migrations.h"
 
+#include <atomic>
+
 namespace core {
 
 Database::Database(core::data::SqliteDb db, std::vector<core::data::Migration> migrations)
@@ -40,6 +42,20 @@ core::Result<void> Database::migrate() {
         LOG_ERROR("Database migrate failed: " + r.errorMessage());
     }
     return r;
+}
+
+// ============ 进程级数据库共享访问器 ============
+
+namespace {
+std::atomic<core::data::SqliteDb*> g_appDatabase{nullptr};
+} // namespace
+
+void registerAppDatabase(core::data::SqliteDb* db) {
+    g_appDatabase.store(db, std::memory_order_release);
+}
+
+core::data::SqliteDb* appDatabase() {
+    return g_appDatabase.load(std::memory_order_acquire);
 }
 
 } // namespace core

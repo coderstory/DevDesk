@@ -50,4 +50,14 @@ private:
     std::vector<core::data::Migration> migrations_;
 };
 
+// ============ 进程级数据库共享访问器 ============
+//
+// main.cpp 在启动时（跑完 migrations 之后）调用 registerAppDatabase()，
+// module_* 层在 onStart() 里用 appDatabase() 拿到同一份连接，
+// 保持 spec §6.3 的"单连接 + recursive_mutex"设计。
+//
+// 返回 nullptr 表示尚未注册（模块应跳过数据加载，只画空态）。
+void registerAppDatabase(core::data::SqliteDb* db);
+core::data::SqliteDb* appDatabase();
+
 } // namespace core
