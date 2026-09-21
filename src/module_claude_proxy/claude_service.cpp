@@ -36,13 +36,6 @@ std::time_t nowUnix() {
     return std::time(nullptr);
 }
 
-// 转小写（用于 HTTP method 比较等）
-std::string toLower(std::string s) {
-    std::transform(s.begin(), s.end(), s.begin(),
-                   [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
-    return s;
-}
-
 // 去除前导/尾随空白
 std::string trim(const std::string& s) {
     size_t b = 0;

@@ -56,17 +56,15 @@ bool hasHeader(const std::map<std::string, std::string>& headers,
     return false;
 }
 
-// 查找 header 值（大小写不敏感）
+// 查找 header 值（大小写不敏感）— 暂未使用，保留供 P10a 流式用
+#if 0
 std::string getHeader(const std::map<std::string, std::string>& headers,
                       const std::string& keyLower) {
-    for (const auto& kv : headers) {
-        std::string k = kv.first;
-        std::transform(k.begin(), k.end(), k.begin(),
-                       [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
-        if (k == keyLower) return kv.second;
-    }
+    (void)headers;
+    (void)keyLower;
     return std::string();
 }
+#endif
 
 } // namespace
 

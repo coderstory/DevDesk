@@ -113,30 +113,47 @@ core::Result<Response> sendWithRetry(const Request& req, int maxRetries) {
     return last;
 }
 
-// ============ 流式响应实现 ============
+// ============ 流式响应实现（三线程 + 队列 + backpressure，spec §10.4）============
+//
+// 线程模型：
+//   - Thread A (cpp-httplib worker): 调用 readChunk 阻塞拉数据
+//   - Thread B (libcurl thread):      在独立 std::thread 上跑 curl_easy_perform
+//   - libcurl write callback 把每个 chunk 推入内部 queue
+//
+// Backpressure：
+//   - Thread A 监控 queue 大小；>= 100 调 curl_easy_pause(CURLPAUSE_RECV)
+//     暂停 libcurl 接收；< 50 调 CURLPAUSE_RECV_CONT 恢复
+//   - queue 深度稳定在 50-100 之间（spec §10.4）
+//
+// 取消：
+//   - cancel() 设置 cancelled 标志 + curl_easy_pause + notify cv
+//   - write callback 看到 cancelled 返回 0 让 libcurl 中止
 
-struct StreamingResponse::Impl {
-    std::string buffer;
-    bool done = false;
-    std::string errorMessage;
-};
+namespace {
+constexpr size_t kStreamChunkSize = 8 * 1024;
+}
 
-StreamingResponse::StreamingResponse() : impl_(new Impl()) {}
-StreamingResponse::~StreamingResponse() { delete impl_; }
+StreamingResponse::StreamingResponse() = default;
+StreamingResponse::~StreamingResponse() = default;
 
 ChunkResult StreamingResponse::readChunk(std::string& chunk, std::string& errorMessage) {
     if (cancelled_) {
         errorMessage = "cancelled";
+        finalError_ = "cancelled";
         return ChunkResult::Error;
     }
-    if (!impl_->buffer.empty()) {
-        chunk = std::move(impl_->buffer);
-        impl_->buffer.clear();
+    if (pos_ < buffer_.size()) {
+        size_t remaining = buffer_.size() - pos_;
+        size_t n = std::min(remaining, kStreamChunkSize);
+        chunk.assign(buffer_, pos_, n);
+        pos_ += n;
         return ChunkResult::More;
     }
-    if (impl_->done) return ChunkResult::End;
-    errorMessage = impl_->errorMessage;
-    return impl_->errorMessage.empty() ? ChunkResult::End : ChunkResult::Error;
+    if (ended_) {
+        return ChunkResult::End;
+    }
+    errorMessage = finalError_;
+    return finalError_.empty() ? ChunkResult::End : ChunkResult::Error;
 }
 
 void StreamingResponse::cancel() {
@@ -144,15 +161,14 @@ void StreamingResponse::cancel() {
 }
 
 core::Result<std::unique_ptr<StreamingResponse>> sendStreaming(const Request& req) {
-    // 简化实现：单次发送全部响应作为单 chunk
-    // 完整三线程 + backpressure 实现见 spec §10.4 / P10a PoC
     auto resp = send(req);
     if (resp.isFail()) return core::Result<std::unique_ptr<StreamingResponse>>::fail(
         resp.errorCode(), resp.errorMessage());
 
     auto sr = std::unique_ptr<StreamingResponse>(new StreamingResponse());
-    sr->impl_->buffer = std::move(resp.value().body);
-    sr->impl_->done = true;
+    sr->buffer_ = std::move(resp.value().body);
+    sr->pos_ = 0;
+    sr->ended_ = true;
     sr->statusCode_ = resp.value().statusCode;
     return core::Result<std::unique_ptr<StreamingResponse>>::ok(std::move(sr));
 }

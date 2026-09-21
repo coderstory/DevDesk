@@ -329,10 +329,10 @@ REGISTER_TEST(todo_svc_search,
     DOCTEST_REQUIRE(r1.isOk());
     DOCTEST_CHECK_EQ(r1.value().size(), 1u);
 
-    // 搜 "周" → 命中 "写周报" + "开周会" + description 里的 "本周工作总结"
+    // 搜 "周" → 命中 "写周报" + "开周会"（description 里的 "本周工作总结" 属于 t1，不重复计）
     auto r2 = env.svc->search("周");
     DOCTEST_REQUIRE(r2.isOk());
-    DOCTEST_CHECK(r2.value().size() >= 3u);
+    DOCTEST_CHECK(r2.value().size() >= 2u);
 
     // 搜 "bug" → 命中 "修复登录 bug"
     auto r3 = env.svc->search("bug");

@@ -1,5 +1,7 @@
 add_library(devdesk_module_claude_proxy STATIC
     claude_module.cpp
+    claude_service.cpp
+    proxy_router.cpp
 )
 
 target_include_directories(devdesk_module_claude_proxy PUBLIC

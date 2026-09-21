@@ -123,6 +123,17 @@ void setupLogging() {
         router.registerModule(todo.get());
         router.registerModule(claude.get());
         router.startAll();
+
+        // 架构准备：如果有 pending 文件，dispatch 到对应 Page
+        // MVP：仅切换页面；实际加载文件由对应模块在 onStart/P 阶段实现
+        const std::string& pendingFile = pendingOpenFilePath();
+        if (!pendingFile.empty()) {
+            ::core::PageId target = dispatchPageForFile(pendingFile);
+            LOG_INFO("MVP dispatch: 切换到 " +
+                     std::string(pageIdToString(target)) +
+                     "（实际文件加载留待 P 阶段）");
+            router.navigateTo(target);
+        }
         initialized = true;
     }
     return &router;
@@ -146,6 +157,7 @@ const DslAppConfig& dslAppConfig() {
 
     static bool initialized = []() {
         using namespace core;
+        captureOpenFileFromArgv();
         paths::ensureDirectoriesExist();
         setupLogging();
         LOG_INFO("DevDesk 启动中...");

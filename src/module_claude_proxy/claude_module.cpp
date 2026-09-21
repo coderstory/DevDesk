@@ -1,11 +1,14 @@
 // src/module_claude_proxy/claude_module.cpp
-// Claude 配置切换器模块 - 完整 UI 实现
+// Claude 配置切换器模块 - 完整 UI 实现 + 真实状态集成
+#include "claude_service.h"
 #include "core/logging.h"
 #include "core/module_interface.h"
 #include "core/theme.h"
 
 #include <eui/dsl.h>
 
+#include <cstdio>
+#include <ctime>
 #include <string>
 
 namespace module::claude {
