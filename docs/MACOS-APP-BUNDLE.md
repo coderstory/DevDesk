@@ -129,10 +129,13 @@ open build/DevDesk.app
 
 ## 文件参数传递（argv → Router）
 
-当用户在 Finder 双击 `.md` 文件时，macOS 调用：
+当通过命令行启动应用并带文件参数时，macOS 调用形式为：
+
 ```bash
 /Applications/DevDesk.app/Contents/MacOS/DevDesk /path/to/file.md
 ```
+
+（Finder 双击不走 argv，走 Apple Event —— 见下方「两条打开路径」）
 
 EUI-NEO 的 `main()` 不接收 `argc/argv`，所以我们用 Apple 私有但长期稳定的 API `_NSGetArgv()` 在 `dslAppConfig()` 首次调用时读取 `argv[1]`。
 
@@ -167,6 +170,21 @@ router.navigateTo(target);
 - ✅ argv[1] 路径读取 + 写入 LOG
 - ✅ 根据扩展名切换 PageId
 - ❌ **不实际加载文件内容** — 留给后续 P 阶段实现（让对应模块的 `onStart()` 读 `pendingOpenFilePath()` 并渲染）
+
+### ⚠️ 两条打开路径（重要）
+
+macOS 传递文件给应用有**两条完全不同的路径**：
+
+| 触发方式 | 传递机制 | 当前是否生效 |
+|---------|---------|------------|
+| `DevDesk.app/Contents/MacOS/DevDesk file.md`（命令行直接调用二进制） | **argv** | ✅ 已生效（本文档所述实现） |
+| Finder 双击 / 右键「打开方式」/ `open -a DevDesk file.md` | **Apple Event**（`kAEOpenDocuments`） | ❌ 尚未生效 |
+
+Finder 路径走的是 Apple Event，最终落到 `NSApplication` 的 `application:openFile:` 代理方法 —— EUI-NEO 没有注册 NSApplication delegate，所以事件被静默丢弃（实测 `open -a DevDesk file.md` 后日志无捕获记录）。
+
+**后续方案（推荐按 CLAUDE.md 上游政策处理）**：在 EUI-NEO 加一个轻量 ObjC shim 注册 `NSApplicationDelegate`，把 Apple Event 转成一个 C 回调（或落盘到临时文件让应用轮询），DevDesk 侧消费该回调拿到文件路径。这属于"通用 UI 能力缺失"，适合反哺 EUI-NEO 上游。
+
+当前 MVP 下，Finder 里「打开方式」菜单**能看到 DevDesk**（LaunchServices 注册已生效），但双击文件还不会加载内容。
 
 ### P 阶段实现路径
 
