@@ -50,9 +50,11 @@ enum class ChunkResult {
 //
 // 内部架构：
 //   - libcurl 在独立 std::thread 上跑 curl_easy_perform（Thread B）
-//   - CURLOPT_WRITEFUNCTION 把每个 chunk 推入内部 queue
-//   - 消费者通过 readChunk() 拉数据；queue >= 100 时调
-//     curl_easy_pause(CURLPAUSE_RECV) 暂停 libcurl，< 50 时恢复
+//   - CURLOPT_WRITEFUNCTION 把每个 chunk 推入内部 queue（生产者）
+//   - 消费者通过 readChunk() 拉数据
+//   - backpressure：队列 >= 100 时生产者阻塞在 write callback 内部
+//     （libcurl 停止收数据，TCP 窗口收敛），队列 <= 50 恢复——回调内阻塞
+//     是 libcurl 唯一线程安全的背压方式，不使用跨线程 curl_easy_pause
 //   - statusCode 由 header callback 解析状态行后填充
 //
 // 生命周期：
@@ -89,7 +91,7 @@ public:
     // 当前队列深度（用于测试 / 调试）
     size_t queueDepth() const;
 
-    // 当前是否处于已暂停接收状态（backpressure 触发）
+    // 当前生产者是否被背压阻塞（queue >= 100，backpressure 触发）
     bool isPaused() const;
 
 private:

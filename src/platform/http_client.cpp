@@ -123,18 +123,26 @@ core::Result<Response> sendWithRetry(const Request& req, int maxRetries) {
 // ============ 流式响应（三线程 + 队列 + backpressure，spec §10.4）============
 //
 // 线程模型：
-//   - Thread A (cpp-httplib worker): 调用 readChunk 阻塞拉数据
+//   - Thread A (cpp-httplib worker): 调用 readChunk 阻塞拉数据（消费者）
 //   - Thread B (libcurl thread):      在独立 std::thread 上跑 curl_easy_perform
-//   - libcurl write callback 把每个 chunk 推入内部 queue
+//   - libcurl write callback 把每个 chunk 推入内部 queue（生产者）
 //
-// Backpressure：
-//   - Thread A 监控 queue 大小；>= 100 调 curl_easy_pause(CURLPAUSE_RECV)
-//     暂停 libcurl 接收；< 50 调 CURLPAUSE_RECV_CONT 恢复
-//   - queue 深度稳定在 50-100 之间（spec §10.4）
+// Backpressure（队列 >= 100 / <= 50 滞回）：
+//   生产者在 write callback 内部阻塞等待消费者腾出队列空间。
+//   这是 libcurl 唯一线程安全的背压方式——回调阻塞期间 libcurl 自然停止
+//   从 socket 读取，TCP 接收窗口收敛，压力传回上游。
+//   （旧实现从消费者线程调 curl_easy_pause(CURLPAUSE_RECV)：暂停后 write
+//   callback 永远不会再被调用，既无法 resume 也无法中止，传输会一直挂死
+//   到 CURLOPT_TIMEOUT_MS——Windows 首跑 300s 卡死的根因。）
 //
 // 取消：
-//   - cancel() 设置 cancelled 标志 + curl_easy_pause + notify cv
-//   - write callback 看到 cancelled 返回 0 让 libcurl 中止
+//   cancel() 只置标志 + notify_all：
+//     - 消费者立即解除阻塞（Error/"cancelled"）
+//     - 被背压阻塞的生产者醒来返回 0 → libcurl 以 CURLE_WRITE_ERROR 中止
+//       并关闭上游连接（上游随即观察到断开）
+//
+// 上游截断（CURLE_PARTIAL_FILE，如 chunked 流未写终止 chunk 即断开）：
+//   已到达的数据保留，流按正常结束（End）处理，不算 Error。
 
 struct StreamingResponse::Impl {
     // queue 与 producer/consumer 通信
@@ -145,7 +153,7 @@ struct StreamingResponse::Impl {
     std::atomic<bool> done{false};           // libcurl 线程结束（成功或失败）
     std::atomic<bool> error{false};          // 上游错误
     std::atomic<bool> cancelled{false};      // 用户主动 cancel() 触发
-    std::atomic<bool> paused{false};         // 当前是否已暂停 libcurl 接收
+    std::atomic<bool> producerThrottled{false};  // 生产者当前被背压阻塞
 
     // 错误信息
     std::string errorMessage;
@@ -162,29 +170,51 @@ struct StreamingResponse::Impl {
     // CURL handle + 执行线程
     CURL* curl = nullptr;
     std::thread thread;
-    std::mutex curlMutex;                    // 保护 curl handle（pause/resume/getinfo）
+    std::mutex curlMutex;                    // 保护 curl handle（getinfo/cleanup）
+
+    // 整个传输的截止时刻（来自 Request::timeoutMs）。
+    // 背压阻塞发生在 write callback 内部时 CURLOPT_TIMEOUT_MS 无法生效，
+    // 生产者用它兜底，避免无限期阻塞。
+    std::chrono::steady_clock::time_point deadline =
+        std::chrono::steady_clock::time_point::max();
 
     // backpressure 阈值（spec §10.4）
     static constexpr size_t kPauseThreshold = 100;
     static constexpr size_t kResumeThreshold = 50;
 };
 
-// libcurl write callback：把 chunk 推入 queue
+// libcurl write callback：把 chunk 推入 queue（生产者）
 size_t streamWriteCb(char* ptr, size_t size, size_t nmemb, void* userp) {
     auto* impl = static_cast<StreamingResponse::Impl*>(userp);
     const size_t total = size * nmemb;
 
-    // 如果已取消，返回 0 让 libcurl 中止
+    std::unique_lock<std::mutex> lock(impl->queueMutex);
+
+    // ---- backpressure：队列满时阻塞在本回调内 ----
+    // libcurl 会停在那里不继续收数据（TCP 窗口收敛），等消费者腾出空间。
+    if (impl->queue.size() >= StreamingResponse::Impl::kPauseThreshold) {
+        impl->producerThrottled.store(true, std::memory_order_release);
+        const bool woke = impl->queueCv.wait_until(lock, impl->deadline, [&impl] {
+            return impl->cancelled.load(std::memory_order_acquire) ||
+                   impl->queue.size() <=
+                       StreamingResponse::Impl::kResumeThreshold;
+        });
+        impl->producerThrottled.store(false, std::memory_order_release);
+        if (!woke) {
+            // 背压等待超过了总超时（CURLOPT_TIMEOUT_MS 在回调内不生效）
+            impl->error.store(true, std::memory_order_release);
+            impl->errorMessage = "stream timed out (consumer too slow)";
+            return 0;
+        }
+    }
+
+    // 如果已取消，返回 0 让 libcurl 中止（CURLE_WRITE_ERROR → 线程按 cancelled 分类）
     if (impl->cancelled.load(std::memory_order_acquire)) {
         return 0;
     }
 
-    {
-        std::lock_guard<std::mutex> lock(impl->queueMutex);
-        impl->queue.emplace_back(ptr, total);
-    }
-    impl->queueCv.notify_one();
-
+    impl->queue.emplace_back(ptr, total);
+    impl->queueCv.notify_one();   // 唤醒消费者
     return total;
 }
 
@@ -282,21 +312,6 @@ ChunkResult StreamingResponse::readChunk(std::string& chunk,
                                           std::string& errorMessage) {
     std::unique_lock<std::mutex> lock(impl_->queueMutex);
 
-    // ---- backpressure（spec §10.4）----
-    // queue >= 100 → 暂停 libcurl 接收
-    if (!impl_->paused.load(std::memory_order_acquire) &&
-        impl_->queue.size() >= Impl::kPauseThreshold) {
-        lock.unlock();
-        {
-            std::lock_guard<std::mutex> curlLock(impl_->curlMutex);
-            if (impl_->curl) {
-                curl_easy_pause(impl_->curl, CURLPAUSE_RECV);
-            }
-        }
-        impl_->paused.store(true, std::memory_order_release);
-        lock.lock();
-    }
-
     // 阻塞等待：直到有数据 / 流结束 / 取消
     impl_->queueCv.wait(lock, [this] {
         return !impl_->queue.empty() ||
@@ -308,20 +323,8 @@ ChunkResult StreamingResponse::readChunk(std::string& chunk,
     if (!impl_->queue.empty()) {
         chunk = std::move(impl_->queue.front());
         impl_->queue.pop_front();
-
-        // queue < 50 且当前 paused → 恢复 libcurl
-        if (impl_->paused.load(std::memory_order_acquire) &&
-            impl_->queue.size() <= Impl::kResumeThreshold) {
-            lock.unlock();
-            {
-                std::lock_guard<std::mutex> curlLock(impl_->curlMutex);
-                if (impl_->curl) {
-                    curl_easy_pause(impl_->curl, CURLPAUSE_RECV_CONT);
-                }
-            }
-            impl_->paused.store(false, std::memory_order_release);
-            lock.lock();
-        }
+        // 队列腾出了空间：唤醒被背压阻塞的生产者
+        impl_->queueCv.notify_one();
         return ChunkResult::More;
     }
 
@@ -342,16 +345,13 @@ void StreamingResponse::cancel() {
     if (impl_->cancelled.exchange(true, std::memory_order_acq_rel)) {
         return;  // 已经取消
     }
-    // 唤醒所有阻塞在 readChunk 的等待者
+    // 唤醒所有等待者：
+    //   - readChunk 的消费者（立即返回 Error/"cancelled"）
+    //   - write callback 里被背压阻塞的生产者（返回 0 → libcurl 以
+    //     CURLE_WRITE_ERROR 中止并关闭上游连接）
+    // 注意：不要在这里调 curl_easy_pause——从其它线程暂停会阻止 write
+    // callback 再次被调用，传输将挂死到 CURLOPT_TIMEOUT_MS。
     impl_->queueCv.notify_all();
-    // 尝试暂停 libcurl；write callback 看到 cancelled 标志后会返回 0
-    // libcurl 收到 0 返回值会中止并返回 CURLE_WRITE_ERROR
-    {
-        std::lock_guard<std::mutex> lock(impl_->curlMutex);
-        if (impl_->curl) {
-            curl_easy_pause(impl_->curl, CURLPAUSE_RECV);
-        }
-    }
 }
 
 size_t StreamingResponse::queueDepth() const {
@@ -362,7 +362,7 @@ size_t StreamingResponse::queueDepth() const {
 
 bool StreamingResponse::isPaused() const {
     if (!impl_) return false;
-    return impl_->paused.load(std::memory_order_acquire);
+    return impl_->producerThrottled.load(std::memory_order_acquire);
 }
 
 // ============ 流式 sendStreaming ============
@@ -374,6 +374,13 @@ core::Result<std::unique_ptr<StreamingResponse>> sendStreaming(const Request& re
     globalInit();
 
     auto sr = std::unique_ptr<StreamingResponse>(new StreamingResponse());
+
+    // 背压阻塞发生在 write callback 内部时 CURLOPT_TIMEOUT_MS 不生效，
+    // 生产者用 deadline 兜底（timeoutMs <= 0 视为不限时）
+    if (req.timeoutMs > 0) {
+        sr->impl_->deadline = std::chrono::steady_clock::now() +
+                              std::chrono::milliseconds(req.timeoutMs);
+    }
 
     {
         std::lock_guard<std::mutex> lock(sr->impl_->curlMutex);
@@ -444,7 +451,7 @@ core::Result<std::unique_ptr<StreamingResponse>> sendStreaming(const Request& re
         //   CURLE_PARTIAL_FILE   → 上游提前断开（chunked 流未写终止 chunk）：
         //                          已收到的数据保留，按正常结束处理（spec §10.4
         //                          截断语义：流干净结束，不算 Error）
-        //   主动取消（CURLE_ABORTED_BY_CALLBACK / CURLE_WRITE_ERROR） → 算 cancelled
+        //   主动取消（CURLE_ABORTED_BY_CALLBACK / CURLE_WRITE_ERROR）→ 算 cancelled
         //   其他 → 网络/超时错误
         if (implPtr->cancelled.load(std::memory_order_acquire)) {
             // 主动取消：不算 error，由 cancelled 状态表示
@@ -452,8 +459,11 @@ core::Result<std::unique_ptr<StreamingResponse>> sendStreaming(const Request& re
             // 上游截断：不算 error，已入队数据照常消费，流以 End 收尾
         } else if (rc != CURLE_OK) {
             std::lock_guard<std::mutex> lock(implPtr->queueMutex);
-            implPtr->error.store(true, std::memory_order_release);
-            implPtr->errorMessage = curl_easy_strerror(rc);
+            // write callback 超时路径可能已写入更具体的信息，别覆盖
+            if (!implPtr->error.load(std::memory_order_acquire)) {
+                implPtr->error.store(true, std::memory_order_release);
+                implPtr->errorMessage = curl_easy_strerror(rc);
+            }
         }
 
         if (headers) curl_slist_free_all(headers);
