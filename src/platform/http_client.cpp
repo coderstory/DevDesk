@@ -440,11 +440,16 @@ core::Result<std::unique_ptr<StreamingResponse>> sendStreaming(const Request& re
         implPtr->statusCv.notify_all();
 
         // 分类错误
-        //   CURLE_OK  → 正常结束
+        //   CURLE_OK             → 正常结束
+        //   CURLE_PARTIAL_FILE   → 上游提前断开（chunked 流未写终止 chunk）：
+        //                          已收到的数据保留，按正常结束处理（spec §10.4
+        //                          截断语义：流干净结束，不算 Error）
         //   主动取消（CURLE_ABORTED_BY_CALLBACK / CURLE_WRITE_ERROR） → 算 cancelled
         //   其他 → 网络/超时错误
         if (implPtr->cancelled.load(std::memory_order_acquire)) {
             // 主动取消：不算 error，由 cancelled 状态表示
+        } else if (rc == CURLE_PARTIAL_FILE) {
+            // 上游截断：不算 error，已入队数据照常消费，流以 End 收尾
         } else if (rc != CURLE_OK) {
             std::lock_guard<std::mutex> lock(implPtr->queueMutex);
             implPtr->error.store(true, std::memory_order_release);
