@@ -55,6 +55,7 @@ add_subdirectory(src/module_markdown)
 add_subdirectory(src/module_todo)
 add_subdirectory(src/module_claude_proxy)
 add_subdirectory(src/module_settings)
+add_subdirectory(src/module_pet)
 
 # 测试
 enable_testing()
@@ -89,6 +90,7 @@ target_link_libraries(DevDesk PRIVATE
     devdesk_module_todo
     devdesk_module_claude_proxy
     devdesk_module_settings
+    devdesk_module_pet
     eui_neo
 )
 target_include_directories(DevDesk PRIVATE
@@ -100,6 +102,7 @@ target_include_directories(DevDesk PRIVATE
     src/module_todo
     src/module_claude_proxy
     src/module_settings
+    src/module_pet
     ${EUI_NEO_INCLUDE_DIR}
     ${EUI_NEO_DIR}
 )

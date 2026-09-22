@@ -20,6 +20,10 @@ std::filesystem::path sqliteDbFile();
 // Markdown 笔记根目录
 std::filesystem::path markdownDir();
 
+// 桌宠皮肤根目录（module_pet；皮肤 = <petsDir>/<皮肤名>/pet.json + 帧序列）
+// 环境变量 DEVDESK_PETS_DIR 可覆盖（测试隔离用，与 markdownDir 同款机制）
+std::filesystem::path petsDir();
+
 // 日志目录
 std::filesystem::path logsDir();
 

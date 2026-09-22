@@ -355,8 +355,8 @@ public:
                                            contentWidth, 160.0f, t);
                         cardY += 160.0f + gapY;
                         drawModulesCard(inner, "settings.card.modules",
-                                        contentWidth, 232.0f, t);
-                        cardY += 232.0f + gapY;
+                                        contentWidth, 288.0f, t);
+                        cardY += 288.0f + gapY;
                         if (mdOn) {
                             drawDirectoryCard(inner, "settings.card.directory",
                                               contentWidth, 108.0f, t);
@@ -609,7 +609,10 @@ private:
             {kModuleIdTodo, "Todo 看板", "待办任务管理，多列卡片看板"},
             {kModuleIdClaudeProxy, "Claude 配置切换器",
              "Profile 管理 + 本地代理（关闭后 8888 不再监听）"},
+            {kModuleIdPet, "桌宠",
+             "桌面小宠物：透明置顶小窗，可拖拽/点击互动（默认关闭）"},
         };
+        constexpr int kToggleCount = static_cast<int>(sizeof(kToggleable) / sizeof(kToggleable[0]));
         const auto compTheme = t.isDark ? components::theme::dark()
                                         : components::theme::light();
         ui.stack(id)
@@ -635,7 +638,7 @@ private:
                     .color(t.colors.textTertiary)
                     .build();
 
-                for (int i = 0; i < 3; ++i) {
+                for (int i = 0; i < kToggleCount; ++i) {
                     const ModuleMeta& meta = kToggleable[i];
                     const float rowY = 68.0f + static_cast<float>(i) * 56.0f;
                     const std::string suffix = std::to_string(i);
