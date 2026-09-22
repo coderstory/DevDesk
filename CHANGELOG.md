@@ -2,6 +2,26 @@
 
 本文件记录 **a1a106a（macOS 中断现场收编）起** 的条目式变更，按恢复计划的三波（W1 止血收编 / W2 平台架构 / W3 剩余需求）组织，波内按 feat / fix / test / docs 分组。更早的 macOS 主线历史（P0–P8，66 测试通过）见 git log 与 spec §16。
 
+## [W8] 2026-09-22 —— Markdown 左栏重构（二级目录树 + 大纲浮动面板）
+
+最终基线：**184/184 测试全绿**（W5 后 177 基线 + 7 新增）。分支 `feat/md-tree-outline`（worktree `wt-w8-md`）。
+
+### feat
+
+- **`4019b85` 左栏二级目录树**：新增 `md_tree.{h,cpp}` 纯函数 `buildTreeRows`——顶层 = 一级子目录（字母序），二级 = 组内文件（mtime 倒序），根目录散文件单独一组排最后，更深层文件挂在一级目录下显示剩余子路径（二级树不递归）。文件夹可展开/收起（内存态，不持久化）；搜索时树展平为命中文件列表。用户原话：基本 UI 就是左侧目录树（二级，文件夹-文件）、右侧展示编辑区域，勾选大纲后浮动展示大纲可点击。
+- **`4019b85` 大纲浮动面板**：移除左栏「文件/大纲」页签，改为顶栏 switch 开关；面板 264px、`positioned + zIndex(10)` 浮在编辑/预览区右侧，不挤压布局；沿用 Phase 1 大纲逻辑（md_line_scanner 扫标题、当前节高亮、点击跳转 InputState.cursor + followCaret）；✕ 可关闭。
+- **`4019b85` 文件变化自动感知**（spec §8.1 承诺的 5 秒轮询）：`MarkdownService::pollChanged()`（轻量 mtime/size 快照比对，不读内容不写库不打日志）+ `fileMtime()`；模块层 5 秒节流轮询，有差异才 `rescan()`——新文件自动出现在树里、删除自动消失，「↻ 重扫」按钮随之移除。当前笔记被外部修改：无本地编辑 → 静默重载；有未保存编辑 → dialog 二选一（重载磁盘版本 / 保留本地；EUI-NEO toast 无按钮能力，选择类交互用 dialog）；外部删除 → toast 提示（`lastKnownMtime=-1` 标记防 5 秒重复弹，dirty 时保存会重建文件）。
+- **`4019b85` 新建笔记路径校验**：`isSafeNewNotePath` 拒绝绝对路径、盘符（`X:`）、`..` 逃逸、反斜杠；模块层前置校验给友好提示，`MarkdownService::create` 同规则兜底（trust boundary 在服务层）。
+
+### fix
+
+- **`4019b85` 左栏/大纲行渲染 position 静默失效（W7 已知坑实锤）**：文件行/大纲行的 rect 原是叶子元素，行内 icon/name 的 `position()` 在 scrollView column 流式布局中被忽略，图标和名字会被流式排成独立行。改为整行包 `ui.stack`（行内元素 position 定位）——与 W7 Todo 列同一修法，无头 layout 级测试断言缩进与行内坐标。
+
+### test
+
+- md_tree 纯函数 2 例（分组/收起/深层文件）；`isSafeNewNotePath`/`create` 兜底/`pollChanged+fileMtime` 3 例；无头 compose+layout 2 例（目录树展开收起与缩进 `frame.x` 断言、大纲面板 zIndex/右侧浮层/编辑区不挤压）；既有 Phase 1 / W7 用例同步到新 UI（页签→开关、树行 id）。
+- 踩坑登记：`REGISTER_TEST` 宏按逗号切参，测试体里的 vector 初始化列表会破坏宏展开（报 "passed N arguments"），需用 `push_back`。
+
 ## [W5] 2026-09-22 —— 遗留项清零（三链并行 + 集成）
 
 最终基线：**137/137 测试全绿**（124 基线 + 6 Router payload + 2 Claude UI 冒烟 + 5 字号缩放/Router 集成）。
