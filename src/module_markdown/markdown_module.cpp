@@ -6,6 +6,12 @@
 //   compose()  → 左栏文件树（真实索引）/ 中栏编辑器（真实读文件、改即写盘）
 //                / 右栏预览（components::markdown 把 Markdown 渲染成 eui 节点）
 //
+// Phase 1 编辑体验（docs/superpowers/specs/2026-09-22-markdown-editor-ux-design.md）：
+//   - 编辑 / 双栏 / 预览三态切换（顶栏 segmented + Ctrl+Shift+P 循环）
+//   - 双栏同步滚动（标题锚点 + 段内线性插值，编辑器单向驱动预览）
+//   - 左栏大纲面板（md_line_scanner 扫描标题，点击跳转）
+//   - 编辑器底部状态栏（保存状态 ●/✓ + 行:列 · N 字）
+//
 // 所有 I/O 都通过 MarkdownService，失败走 core::Result（不抛异常）。
 #include "core/database.h"
 #include "core/logging.h"
@@ -13,7 +19,9 @@
 #include "core/paths.h"
 #include "core/router.h"
 #include "core/theme.h"
+#include "core/time.h"
 #include "markdown_service.h"
+#include "md_line_scanner.h"
 
 #include <eui/dsl.h>
 
@@ -22,10 +30,14 @@
 #include <components/input.h>
 #include <components/markdown.h>
 #include <components/scrollview.h>
+#include <components/segmented.h>
 #include <components/theme.h>
 
 #include <algorithm>
 #include <chrono>
+#include <cmath>
+#include <cstdio>
+#include <ctime>
 #include <filesystem>
 #include <functional>
 #include <memory>
@@ -81,6 +93,26 @@ std::string noteDisplayPath(const NoteMeta& n) {
     return n.relativePath.generic_string();
 }
 
+// ---------- Phase 1 常量 ----------
+
+// 三态视图（值 = 顶栏 segmented 的选中下标）
+enum class ViewMode { Edit = 0, Split = 1, Preview = 2 };
+
+constexpr float kEditorFontSize = 14.0f;      // 与编辑器 input 的 fontSize 一致
+constexpr float kEditorLineHeight = kEditorFontSize * 1.2f;  // input 内部行高
+constexpr float kEditTextColumnWidth = 720.0f;  // 仅编辑态的居中文本列宽（Typora 写作宽度）
+constexpr float kPreviewColumnWidth = 760.0f;   // 仅预览态的居中阅读列宽
+
+// "已保存 HH:MM"
+std::string formatSaveTime(std::time_t t) {
+    if (t <= 0) return {};
+    std::tm tm{};
+    ::core::time::localTime(t, &tm);
+    char buf[8];
+    std::snprintf(buf, sizeof(buf), "%02d:%02d", tm.tm_hour, tm.tm_min);
+    return buf;
+}
+
 } // namespace
 
 class MarkdownModule : public ::core::Module {
@@ -119,6 +151,13 @@ public:
     void compose(eui::Ui& ui, const eui::Screen& screen) override {
         // 自动保存：停止输入 kAutoSaveDelayMs 后把编辑器内容真正写回磁盘
         flushEditorIfIdle();
+
+        // 大纲数据：文本变化后重扫（行扫描器是纯函数，小文档开销可忽略；
+        // 大文档下 onChange 每键一次 O(n) 扫描，>5000 行如成瓶颈再增量分片）
+        if (outlineDirty_) {
+            outline_ = scanHeadings(editorText_);
+            outlineDirty_ = false;
+        }
 
         // 消费跨模块跳转负载（Router payload，一次性语义）
         consumeNavPayload();
@@ -168,12 +207,13 @@ private:
             .size(contentW, 64.0f)
             .alignItems(eui::Align::CENTER)
             .content([&] {
+                const float segW = 264.0f;
                 ui.column("md.title")
-                    .size(contentW - 320.0f, 64.0f)
+                    .size(contentW - 320.0f - segW - t.sizes.spacingSmall, 64.0f)
                     .gap(2.0f)
                     .content([&] {
                         ui.text("md.h1")
-                            .size(contentW - 320.0f, 32.0f)
+                            .size(contentW - 320.0f - segW - t.sizes.spacingSmall, 32.0f)
                             .text("Markdown 笔记本")
                             .fontSize(t.sizes.fontSizeTitle)
                             .lineHeight(32.0f)
@@ -181,12 +221,24 @@ private:
                             .color(t.colors.textPrimary)
                             .build();
                         ui.text("md.subtitle")
-                            .size(contentW - 320.0f, 18.0f)
+                            .size(contentW - 320.0f - segW - t.sizes.spacingSmall, 18.0f)
                             .text(subtitle)
                             .fontSize(t.sizes.fontSizeSmall)
                             .lineHeight(18.0f)
                             .color(t.colors.textSecondary)
                             .build();
+                    })
+                    .build();
+
+                // 三态切换：编辑 / 双栏 / 预览（Ctrl+Shift+P 循环）
+                components::segmented(ui, "md.mode")
+                    .size(segW, 36.0f)
+                    .items({"✎ 编辑", "⇔ 双栏", "👁 预览"})
+                    .selected(static_cast<int>(mode_))
+                    .fontSize(13.0f)
+                    .theme(componentTheme)
+                    .onChange([this](int index) {
+                        setMode(static_cast<ViewMode>(index));
                     })
                     .build();
 
@@ -225,7 +277,7 @@ private:
             .build();
     }
 
-    // ---------- 三栏主区 ----------
+    // ---------- 三栏主区（按视图模式裁剪：编辑/双栏/预览） ----------
     void drawBody(eui::Ui& ui,
                   float contentW,
                   float bodyH,
@@ -234,13 +286,20 @@ private:
                   float gap,
                   const core::theme::Tokens& t,
                   const components::theme::ThemeColorTokens& componentTheme) {
+        const float fullW = contentW - sideW - gap;  // 单栏态的全宽
         ui.row("md.body")
             .size(contentW, bodyH)
             .gap(gap)
             .content([&] {
                 drawTreeColumn(ui, bodyH, sideW, t, componentTheme);
-                drawEditorColumn(ui, bodyH, midW, t, componentTheme);
-                drawPreviewColumn(ui, bodyH, midW, t, componentTheme, gap);
+                if (mode_ != ViewMode::Preview) {
+                    drawEditorColumn(ui, bodyH, mode_ == ViewMode::Split ? midW : fullW,
+                                     t, componentTheme);
+                }
+                if (mode_ != ViewMode::Edit) {
+                    drawPreviewColumn(ui, bodyH, mode_ == ViewMode::Split ? midW : fullW,
+                                      t, componentTheme, gap);
+                }
             })
             .build();
     }
@@ -276,10 +335,28 @@ private:
                 })
                 .build();
 
-            const float listY = 60.0f;
+            // 文件 / 大纲 切换（segmented 无 position API，用 stack 包一层定位）
+            ui.stack("md.tree.tabwrap")
+                .position(12.0f, 56.0f)
+                .size(sideW - 24.0f, 30.0f)
+                .content([&] {
+                    components::segmented(ui, "md.tree.tab")
+                        .size(sideW - 24.0f, 30.0f)
+                        .items({"文件", "大纲"})
+                        .selected(leftTab_)
+                        .fontSize(13.0f)
+                        .theme(componentTheme)
+                        .onChange([this](int index) { leftTab_ = index; })
+                        .build();
+                })
+                .build();
+
+            const float listY = 98.0f;
             const float listH = std::max(0.0f, bodyH - listY - 60.0f);
 
-            if (notes_.empty()) {
+            if (leftTab_ == 1) {
+                drawOutlineList(ui, listY, listH, sideW, t, componentTheme);
+            } else if (notes_.empty()) {
                 ui.text("md.tree.empty")
                     .position(16.0f, listY + 8.0f)
                     .size(sideW - 32.0f, 40.0f)
@@ -342,12 +419,76 @@ private:
             .build();
     }
 
+    // ---- 左栏：大纲面板（md_line_scanner 扫描的标题，点击跳转）----
+    void drawOutlineList(eui::Ui& ui,
+                         float listY,
+                         float listH,
+                         float sideW,
+                         const core::theme::Tokens& t,
+                         const components::theme::ThemeColorTokens& componentTheme) {
+        if (outline_.empty()) {
+            ui.text("md.outline.empty")
+                .position(16.0f, listY + 8.0f)
+                .size(sideW - 32.0f, 40.0f)
+                .text(currentPath_.empty() ? "先打开一篇笔记"
+                                           : "没有标题\n用 # 开始一行即可加入大纲")
+                .fontSize(12.0f)
+                .lineHeight(18.0f)
+                .wrap()
+                .color(t.colors.textTertiary)
+                .build();
+            return;
+        }
+
+        // 当前节：光标行所在的上一个标题（仅预览态无编辑器，用上次跳转位置）
+        const int active = activeOutlineIndex(ui);
+
+        components::scrollView(ui, "md.outline.scroll")
+            .position(8.0f, listY)
+            .size(sideW - 16.0f, listH)
+            .gap(0.0f)
+            .step(40.0f)
+            .theme(componentTheme)
+            .contentKey("md.outline.scroll." + std::to_string(outline_.size()))
+            .content([&](eui::Ui& inner, float contentWidth, float viewportHeight) {
+                (void)viewportHeight;
+                const float rowW = std::min(contentWidth, sideW - 16.0f);
+                for (size_t i = 0; i < outline_.size(); ++i) {
+                    const MdHeading& h = outline_[i];
+                    const std::string id = "md.outline.item." + std::to_string(i);
+                    const bool current = static_cast<int>(i) == active;
+                    // 当前节高亮 primarySoftBg + primary 文本；按级别缩进
+                    inner.rect(id + ".row")
+                        .size(rowW, 30.0f)
+                        .color(current ? t.colors.primarySoftBg : t.colors.surface)
+                        .hoverColor(t.colors.hover)
+                        .onClick([this, i, &ui, componentTheme] {
+                            jumpToHeading(ui, i, componentTheme);
+                        })
+                        .build();
+                    inner.text(id + ".label")
+                        .position(12.0f + static_cast<float>(h.level - 1) * 14.0f, 0.0f)
+                        .size(std::max(0.0f, rowW - 20.0f -
+                                       static_cast<float>(h.level - 1) * 14.0f), 30.0f)
+                        .text(h.title.empty() ? "(无标题)" : h.title)
+                        .fontSize(13.0f)
+                        .lineHeight(30.0f)
+                        .color(current ? t.colors.primary : t.colors.textPrimary)
+                        .fontWeight(current ? 700 : 400)
+                        .build();
+                }
+            })
+            .build();
+    }
+
     // ---- 中栏：编辑器（真实读 / 写文件）----
+    // Phase 1：栏内小标题移到状态栏（§5.7 去密度）；仅编辑态文本列居中 720px。
     void drawEditorColumn(eui::Ui& ui,
                           float bodyH,
                           float midW,
                           const core::theme::Tokens& t,
                           const components::theme::ThemeColorTokens& componentTheme) {
+        (void)componentTheme;
         ui.column("md.editor").size(midW, bodyH).gap(0.0f).content([&] {
             ui.rect("md.editor.bg")
                 .size(midW, bodyH)
@@ -359,15 +500,6 @@ private:
 
         ui.stack("md.editor.overlay").size(midW, bodyH).content([&] {
             const bool hasNote = !currentPath_.empty();
-            ui.text("md.editor.filename")
-                .position(24.0f, 18.0f)
-                .size(midW - 48.0f, 18.0f)
-                .text(hasNote ? currentPath_ + " · 编辑中（自动保存）"
-                              : "未选择笔记")
-                .fontSize(11.0f)
-                .lineHeight(18.0f)
-                .color(t.colors.textTertiary)
-                .build();
 
             if (!hasNote) {
                 ui.text("md.editor.hint")
@@ -378,13 +510,19 @@ private:
                     .lineHeight(20.0f)
                     .color(t.colors.textTertiary)
                     .build();
+                drawStatusBar(ui, 0.0f, bodyH - 22.0f, midW, t);
                 return;
             }
 
-            const float edX = 16.0f;
-            const float edY = 46.0f;
-            const float edW = midW - 32.0f;
-            const float edH = std::max(0.0f, bodyH - edY - 16.0f);
+            float edX = 16.0f;
+            float edW = midW - 32.0f;
+            if (mode_ == ViewMode::Edit) {
+                // 无干扰写作：文本列 clamp 720px 居中（Typora 写作宽度）
+                edW = std::min(edW, kEditTextColumnWidth);
+                edX = std::max(0.0f, (midW - edW) * 0.5f);
+            }
+            const float edY = 16.0f;
+            const float edH = std::max(0.0f, bodyH - edY - 22.0f - 8.0f);
 
             components::input(ui, "md.editor.input")
                 .position(edX, edY)
@@ -393,20 +531,78 @@ private:
                 .placeholder("在这里写 Markdown…")
                 .multiline(true)
                 .scrollbar(true)
-                .fontSize(14.0f)
+                .fontSize(kEditorFontSize)
                 .inset(10.0f)
                 .theme(componentTheme)
                 .onChange([this](const std::string& v) {
                     // 每次输入都更新内存缓冲；落盘走防抖（见 flushEditorIfIdle）
                     editorText_ = v;
                     editorDirty_ = true;
+                    outlineDirty_ = true;
                     lastEditAt_ = std::chrono::steady_clock::now();
                 })
                 .build();
+
+            drawStatusBar(ui, 0.0f, bodyH - 22.0f, midW, t);
         }).build();
     }
 
+    // 编辑器底部状态栏：左 = 文件名 + 保存状态（● 未保存 / ✓ 已保存 HH:MM），
+    // 右 = 行:列 · N 字（隐含 UX #7：把自动保存从视线外的顶栏 subtitle 升级为
+    // 视线内的持续反馈）
+    void drawStatusBar(eui::Ui& ui, float x, float y, float w, const core::theme::Tokens& t) {
+        ui.rect("md.status.bg")
+            .position(x, y)
+            .size(w, 22.0f)
+            .color(t.colors.surface)
+            .build();
+
+        std::string left = "未选择笔记";
+        eui::Color leftColor = t.colors.textTertiary;
+        if (!currentPath_.empty()) {
+            const std::string name = fs::path(currentPath_).filename().string();
+            if (editorDirty_) {
+                left = name + "  ● 未保存";
+                leftColor = t.colors.warning;
+            } else {
+                left = name + "  ✓ 已保存 " + formatSaveTime(lastSavedAt_);
+                leftColor = t.colors.success;
+            }
+        }
+        ui.text("md.status.save")
+            .position(x + 24.0f, y)
+            .size(w * 0.6f, 22.0f)
+            .text(left)
+            .fontSize(11.0f)
+            .lineHeight(22.0f)
+            .color(leftColor)
+            .build();
+
+        // 行:列 · N 字（列/字数按 UTF-8 码点计）
+        std::string right;
+        if (!currentPath_.empty()) {
+            const auto& st = ui.state<components::input_detail::InputModel::InputState>("md.editor.input");
+            const int line = byteOffsetToLine(st.text, static_cast<size_t>(st.cursor));
+            const size_t lineStart = lineStartOffset(st.text, line);
+            const int col = static_cast<int>(utf8Length(
+                st.text.substr(lineStart, static_cast<size_t>(st.cursor) - lineStart))) + 1;
+            right = std::to_string(line + 1) + ":" + std::to_string(col) + " · " +
+                    std::to_string(utf8Length(st.text)) + " 字";
+        }
+        ui.text("md.status.pos")
+            .position(x + w - 24.0f - 160.0f, y)
+            .size(160.0f, 22.0f)
+            .text(right)
+            .fontSize(11.0f)
+            .lineHeight(22.0f)
+            .horizontalAlign(eui::HorizontalAlign::Right)
+            .color(t.colors.textTertiary)
+            .build();
+    }
+
     // ---- 右栏：预览（components::markdown 渲染成 eui 节点树）----
+    // 双栏态：编辑器单向驱动预览滚动（标题锚点 + 段内插值，§5.3）；
+    // 仅预览态：手动滚动（previewOffset_ 记忆），进入时对齐编辑器位置。
     void drawPreviewColumn(eui::Ui& ui,
                            float bodyH,
                            float midW,
@@ -424,18 +620,14 @@ private:
         }).build();
 
         ui.stack("md.preview.overlay").size(midW, bodyH).content([&] {
-            ui.text("md.preview.filename")
-                .position(24.0f, 18.0f)
-                .size(midW - 48.0f, 18.0f)
-                .text(currentPath_.empty() ? "预览" : currentPath_ + " · 预览")
-                .fontSize(11.0f)
-                .lineHeight(18.0f)
-                .color(t.colors.textTertiary)
-                .build();
-
-            const float pvX = 20.0f;
-            const float pvY = 46.0f;
-            const float pvW = midW - 40.0f;
+            float pvX = 20.0f;
+            float pvW = midW - 40.0f;
+            if (mode_ == ViewMode::Preview) {
+                // 阅读态：内容列 clamp 760px 居中
+                pvW = std::min(pvW, kPreviewColumnWidth);
+                pvX = std::max(0.0f, (midW - pvW) * 0.5f);
+            }
+            const float pvY = 16.0f;
             const float pvH = std::max(0.0f, bodyH - pvY - 16.0f);
 
             if (currentPath_.empty()) {
@@ -450,17 +642,36 @@ private:
                 return;
             }
 
-            components::scrollView(ui, "md.preview.scroll")
+            const components::MarkdownStyle style(componentTheme);
+
+            // 滚动位置来源：
+            //   Split  = 同步滚动目标（编辑器驱动，每帧覆盖用户滚动）
+            //   Preview= previewOffset_（手动滚动记忆；刚切入时对齐编辑器位置）
+            float scrollOffset = previewOffset_;
+            if (mode_ == ViewMode::Split) {
+                scrollOffset = computeSyncOffset(ui, pvW, pvH, style);
+            } else if (syncPreviewOnEnter_) {
+                previewOffset_ = computeSyncOffset(ui, pvW, pvH, style);
+                scrollOffset = previewOffset_;
+                syncPreviewOnEnter_ = false;
+            }
+
+            auto scroll = components::scrollView(ui, "md.preview.scroll")
                 .position(pvX, pvY)
                 .size(pvW, pvH)
                 .gap(8.0f)
                 .step(56.0f)
                 .theme(componentTheme)
+                .offset(scrollOffset)
                 .contentKey("md.preview.scroll." + currentPath_ + "." +
-                            std::to_string(editorText_.size()))
-                .content([&](eui::Ui& inner, float contentWidth, float viewportHeight) {
+                            std::to_string(editorText_.size()));
+            if (mode_ == ViewMode::Preview) {
+                // 仅预览态允许手动滚动（双向：滚轮写回 previewOffset_）
+                scroll.onChange([this](float v) { previewOffset_ = v; });
+            }
+            scroll.content([&](eui::Ui& inner, float contentWidth, float viewportHeight) {
                     (void)viewportHeight;
-                    components::MarkdownStyle style(componentTheme);
+                    lastPvContentWidth_ = contentWidth;  // 供同步滚动 estimateHeight 用
                     components::markdown(inner, "md.preview.md")
                         .markdown(editorText_)
                         .width(contentWidth)
@@ -470,6 +681,44 @@ private:
                 })
                 .build();
         }).build();
+    }
+
+    // 双栏同步滚动（§5.3）：编辑器视口顶行 → 所在标题节 → 用
+    // MarkdownBuilder::estimateHeight（public static，带文档级缓存）算该节
+    // 在预览里的 y，段内按行数线性插值，再留 20% 视口余量。
+    // 近似（ponytail）：锚点用标题而非 md4c 块（块无源码 offset，全块扫描器
+    // 是 Phase 3 工作）；estimateHeight 本身是平均字宽估算，误差见设计文档 §9.2。
+    float computeSyncOffset(eui::Ui& ui,
+                            float pvW,
+                            float pvH,
+                            const components::MarkdownStyle& style) {
+        if (editorText_.empty()) return 0.0f;
+        const auto& st = ui.state<components::input_detail::InputModel::InputState>("md.editor.input");
+        const float topLine = st.verticalScroll / kEditorLineHeight;
+        const float width = lastPvContentWidth_ > 0.0f ? lastPvContentWidth_ : pvW;
+
+        // 找 topLine 所在节：锚点 0 = 虚拟文首（line 0, y 0），其后每个标题一个锚点
+        size_t a = 0;
+        for (size_t i = 0; i < outline_.size(); ++i) {
+            if (outline_[i].lineNo <= topLine) a = i + 1;
+            else break;
+        }
+        const int aLine = (a == 0) ? 0 : outline_[a - 1].lineNo;
+        const int bLine = (a < outline_.size())
+            ? outline_[a].lineNo
+            : std::max(countLines(editorText_), aLine + 1);
+        const float yA = (a == 0)
+            ? 0.0f
+            : components::MarkdownBuilder::estimateHeight(
+                  editorText_.substr(0, outline_[a - 1].byteOffset), width, style);
+        const float yB = (a < outline_.size())
+            ? components::MarkdownBuilder::estimateHeight(
+                  editorText_.substr(0, outline_[a].byteOffset), width, style)
+            : components::MarkdownBuilder::estimateHeight(editorText_, width, style);
+
+        const float frac = (bLine > aLine) ? (topLine - aLine) / (bLine - aLine) : 0.0f;
+        const float y = yA + frac * (yB - yA);
+        return std::max(0.0f, y - pvH * 0.2f);
     }
 
     // ---- 新建笔记弹窗 ----
@@ -545,6 +794,69 @@ private:
 
     // ==================== 业务动作 ====================
 
+    // ---- Phase 1：三态切换 / 大纲 ----
+
+    void setMode(ViewMode m) {
+        if (m == mode_) return;
+        mode_ = m;
+        // 进预览态时把滚动位置对齐编辑器当前位置（compose 里延迟计算，
+        // 因为需要预览列宽和主题样式）
+        if (m == ViewMode::Preview) syncPreviewOnEnter_ = true;
+        LOG_INFO("Markdown 视图切换: " + std::to_string(static_cast<int>(m)));
+    }
+
+    // Ctrl+Shift+P 循环切换三态。通道 = app 级 onKeyEvent → Router 派发到
+    // 当前页模块（EUI-NEO InputBuilder 无逐组件按键 passthrough，那是
+    // Phase 2 上游 PR；本快捷键不涉及编辑器文本变换，走全局通道无 undo 问题）
+    bool onKeyEvent(const eui::KeyEvent& key) override {
+        if (key.isDown() && key.modifiers.shortcut() && key.modifiers.shift &&
+            key.key == eui::InputKey::P) {
+            setMode(static_cast<ViewMode>((static_cast<int>(mode_) + 1) % 3));
+            return true;
+        }
+        return false;
+    }
+
+    // 大纲当前节：光标行（InputState）所在的上一个标题；仅预览态无编辑器
+    // 渲染时沿用上次跳转/光标位置（activeOutlineIdx_）
+    int activeOutlineIndex(eui::Ui& ui) {
+        if (outline_.empty()) return -1;
+        if (mode_ == ViewMode::Preview) return activeOutlineIdx_;
+        const auto& st = ui.state<components::input_detail::InputModel::InputState>("md.editor.input");
+        const int line = byteOffsetToLine(st.text, static_cast<size_t>(st.cursor));
+        int idx = -1;
+        for (size_t i = 0; i < outline_.size(); ++i) {
+            if (outline_[i].lineNo <= line) idx = static_cast<int>(i);
+            else break;
+        }
+        return idx;
+    }
+
+    // 大纲点击跳转：编辑/双栏态写 InputState.cursor 到标题行行首 + followCaret
+    // （编辑器自动滚到光标，预览经同步滚动链路跟随）；仅预览态直接滚预览到该节。
+    // 只改 cursor 不改文本 → 不动 undo 栈（§9.3 的 editText 规约不适用）。
+    void jumpToHeading(eui::Ui& ui, size_t outlineIndex,
+                       const components::theme::ThemeColorTokens& componentTheme) {
+        if (outlineIndex >= outline_.size()) return;
+        const MdHeading& h = outline_[outlineIndex];
+        activeOutlineIdx_ = static_cast<int>(outlineIndex);
+        if (mode_ == ViewMode::Preview) {
+            const float width = lastPvContentWidth_;
+            previewOffset_ = components::MarkdownBuilder::estimateHeight(
+                editorText_.substr(0, h.byteOffset), width,
+                components::MarkdownStyle(componentTheme));
+            syncPreviewOnEnter_ = false;
+            return;
+        }
+        auto& st = ui.state<components::input_detail::InputModel::InputState>("md.editor.input");
+        st.cursor = static_cast<int>(h.byteOffset);
+        st.selectionStart = st.cursor;
+        st.selectionEnd = st.cursor;
+        st.dragAnchor = st.cursor;
+        st.hasPreferredCursorX = false;
+        st.followCaret = true;
+    }
+
     // 消费挂在 Markdown 页上的跳转负载（每帧调用；consumePendingPayload
     // 取出即清空，compose 逐帧重复调用不会重复触发）：
     //   "action:new_note"     → 打开新建笔记弹窗（等价页内「+ 新建笔记」）
@@ -601,6 +913,9 @@ private:
         editorText_ = r.value();
         lastSavedText_ = editorText_;
         editorDirty_ = false;
+        outlineDirty_ = true;
+        activeOutlineIdx_ = -1;
+        if (mode_ == ViewMode::Preview) syncPreviewOnEnter_ = true;
         status_ = "已打开 " + relPath;
         LOG_INFO("打开笔记: " + relPath);
     }
@@ -630,6 +945,7 @@ private:
         }
         lastSavedText_ = editorText_;
         editorDirty_ = false;
+        lastSavedAt_ = std::time(nullptr);
         status_ = "已保存 " + currentPath_;
     }
 
@@ -705,6 +1021,17 @@ private:
     std::string status_;               // 顶栏副标题里的状态提示
     bool newNoteOpen_ = false;
     std::string newNoteName_;
+
+    // ---- Phase 1 状态 ----
+    ViewMode mode_ = ViewMode::Split;  // 三态视图（默认双栏）
+    int leftTab_ = 0;                  // 左栏页签：0=文件 1=大纲
+    std::vector<MdHeading> outline_;   // 大纲（标题扫描结果）
+    bool outlineDirty_ = true;
+    int activeOutlineIdx_ = -1;        // 仅预览态用（无编辑器光标可读）
+    float previewOffset_ = 0.0f;       // 仅预览态的手动滚动位置
+    bool syncPreviewOnEnter_ = false;  // 刚切入预览态 → 对齐编辑器位置
+    float lastPvContentWidth_ = 0.0f;  // 预览内容宽（estimateHeight 用，滞后一帧）
+    std::time_t lastSavedAt_ = 0;      // 上次落盘时刻（状态栏 "✓ 已保存 HH:MM"）
 };
 
 } // namespace module::markdown

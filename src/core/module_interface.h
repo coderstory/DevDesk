@@ -4,6 +4,7 @@
 #include <string>
 
 #include <eui/dsl.h>
+#include <eui/types.h>
 
 namespace core {
 
@@ -35,6 +36,16 @@ public:
     virtual std::string iconGlyph() const = 0;
 
     virtual void compose(eui::Ui& ui, const eui::Screen& screen) = 0;
+
+    // 焦点元素没消费的按键，经 app 级 onKeyEvent → Router::dispatchKeyEvent
+    // 派发到当前页模块。返回 true = 已消费。
+    // 背景：EUI-NEO InputBuilder 无逐组件 onKeyEvent passthrough（Phase 2
+    // 上游 PR），模块级快捷键（如 Markdown 的 Ctrl+Shift+P 三态切换，不涉及
+    // 编辑器文本变换）走这条全局通道。
+    virtual bool onKeyEvent(const eui::KeyEvent& key) {
+        (void)key;
+        return false;
+    }
 
     virtual void onStart() {}
     virtual void onStop() {}
