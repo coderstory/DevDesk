@@ -72,6 +72,39 @@ std::string invertedBoolValue(const std::string& v) {
     return "0";
 }
 
+// 导入键 → 槽位成员的映射表（§6.1 导入解析规则）
+struct ImportSlotRef {
+    const char* modelKey;             // 发往上游的模型名键
+    const char* nameKey;              // 显示名键（nullptr = 该槽位无 _NAME 变体）
+    ModelSlot ModelsConfig::*slot;
+};
+
+constexpr ImportSlotRef kImportSlots[] = {
+    {"ANTHROPIC_MODEL",                 nullptr,                              &ModelsConfig::def},
+    {"ANTHROPIC_DEFAULT_SONNET_MODEL",  "ANTHROPIC_DEFAULT_SONNET_MODEL_NAME",  &ModelsConfig::sonnet},
+    {"ANTHROPIC_DEFAULT_OPUS_MODEL",    "ANTHROPIC_DEFAULT_OPUS_MODEL_NAME",    &ModelsConfig::opus},
+    {"ANTHROPIC_DEFAULT_HAIKU_MODEL",   "ANTHROPIC_DEFAULT_HAIKU_MODEL_NAME",   &ModelsConfig::haiku},
+    {"ANTHROPIC_DEFAULT_FABLE_MODEL",   "ANTHROPIC_DEFAULT_FABLE_MODEL_NAME",   &ModelsConfig::fable},
+    {"CLAUDE_CODE_SUBAGENT_MODEL",      nullptr,                              &ModelsConfig::subagent},
+};
+
+// 导入键名校验：^[A-Z][A-Z0-9_]*$（§7.4，防注入奇怪键名）
+bool isValidEnvKeyName(const std::string& key) {
+    if (key.empty() || key[0] < 'A' || key[0] > 'Z') return false;
+    for (const char c : key) {
+        const bool ok = (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_';
+        if (!ok) return false;
+    }
+    return true;
+}
+
+bool isBlankText(const std::string& text) {
+    for (const char c : text) {
+        if (c != ' ' && c != '\t' && c != '\r' && c != '\n') return false;
+    }
+    return true;
+}
+
 } // namespace
 
 std::string deriveDisplayName(const std::string& model) {
@@ -195,6 +228,124 @@ EnvAliasMapping applyEnvAliases(const std::map<std::string, std::string>& env) {
         }
     }
     return out;
+}
+
+core::Result<ImportedConfig> parseImportedEnv(const std::string& text) {
+    ImportedConfig out;
+    if (isBlankText(text)) {
+        return core::Result<ImportedConfig>::fail(
+            core::ErrorCode::ValidationError, "粘贴内容为空");
+    }
+
+    auto parsed = platform::json::parse(text);
+    if (parsed.isFail()) {
+        return core::Result<ImportedConfig>::fail(parsed.errorCode(),
+                                                  parsed.errorMessage());
+    }
+    if (!parsed.value().isObject()) {
+        return core::Result<ImportedConfig>::fail(
+            core::ErrorCode::ValidationError,
+            "顶层必须是 JSON 对象（整段 settings.json 或裸 env 对象）");
+    }
+    auto obj = parsed.value().asObject();
+
+    // 两种形状：含 "env" 键 → 整段 settings.json（取 env 子对象）；
+    // 否则视为裸 env 对象（所有值必须是字符串，下面统一校验）
+    bool hasEnvKey = false;
+    for (const auto& k : obj.keys()) {
+        if (k == "env") { hasEnvKey = true; break; }
+    }
+    platform::json::JsonObject envObj;
+    if (hasEnvKey) {
+        auto envVal = obj.get("env");
+        if (!envVal.isObject()) {
+            return core::Result<ImportedConfig>::fail(
+                core::ErrorCode::ValidationError,
+                "settings.json 的 env 字段必须是 JSON 对象");
+        }
+        envObj = envVal.asObject();
+    } else {
+        envObj = obj;
+    }
+
+    // 键数上限（§7.4）
+    if (envObj.keys().size() > 64) {
+        return core::Result<ImportedConfig>::fail(
+            core::ErrorCode::ValidationError,
+            "env 键数超过上限 64: " + std::to_string(envObj.keys().size()));
+    }
+
+    std::map<std::string, std::string> leftover;   // 非基础/槽位键 → extraEnv 候选
+    bool sawApiKey = false;
+    bool sawAuthToken = false;
+
+    for (const auto& key : envObj.keys()) {
+        if (!isValidEnvKeyName(key)) {
+            return core::Result<ImportedConfig>::fail(
+                core::ErrorCode::ValidationError,
+                "键名非法（只允许大写字母/数字/下划线，且以大写字母开头）: " + key);
+        }
+        auto val = envObj.get(key);
+        if (!val.isString()) {
+            return core::Result<ImportedConfig>::fail(
+                core::ErrorCode::ValidationError,
+                "env 值必须是字符串: " + key);
+        }
+        const std::string v = val.asString();
+        if (v.size() > 4096) {
+            return core::Result<ImportedConfig>::fail(
+                core::ErrorCode::ValidationError,
+                "值超过 4KB 上限: " + key);
+        }
+
+        if (key == "ANTHROPIC_BASE_URL") {
+            out.baseUrl = v;
+            continue;
+        }
+        if (key == "ANTHROPIC_AUTH_TOKEN") {
+            sawAuthToken = true;
+            out.authToken = v;   // 同现时 AUTH_TOKEN 优先（API_KEY 不覆盖）
+            continue;
+        }
+        if (key == "ANTHROPIC_API_KEY") {
+            sawApiKey = true;
+            if (!sawAuthToken) out.authToken = v;
+            continue;
+        }
+
+        // 模型槽位键
+        bool matchedSlot = false;
+        for (const auto& s : kImportSlots) {
+            if (key == s.modelKey) {
+                (out.models.*s.slot).model = v;
+                matchedSlot = true;
+                break;
+            }
+            if (s.nameKey != nullptr && key == s.nameKey) {
+                (out.models.*s.slot).name = v;
+                matchedSlot = true;
+                break;
+            }
+        }
+        if (matchedSlot) continue;
+        leftover[key] = v;
+    }
+
+    if (sawApiKey && sawAuthToken) {
+        out.warnings.push_back(
+            "同时含 ANTHROPIC_API_KEY 与 ANTHROPIC_AUTH_TOKEN，已采用 AUTH_TOKEN");
+    }
+
+    // 其余键走别名归一（§4.3 规则 6）：别名映射 + 未识别键警告
+    auto aliased = applyEnvAliases(leftover);
+    out.extraEnv = std::move(aliased.env);
+    out.aliasMappedKeys = std::move(aliased.aliasMappedKeys);
+    out.unrecognizedKeys = std::move(aliased.unrecognizedKeys);
+
+    for (const auto& s : kSlots) {
+        if (!(out.models.*s.slot).model.empty()) ++out.recognizedSlots;
+    }
+    return core::Result<ImportedConfig>::ok(std::move(out));
 }
 
 std::map<std::string, std::string> buildProxyEnv(

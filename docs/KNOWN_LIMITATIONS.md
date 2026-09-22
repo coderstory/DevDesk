@@ -61,6 +61,29 @@
 - 5 分钟长连接 soak 用例由环境变量 `DEVDESK_SOAK=1` 门控；未设置时打印 `[SKIP]` 直接通过，避免常规套件（约 86s）背上 5 分钟负担。
 - 60s soak 常跑（实测 1200/1200 chunk，0% 丢失，seq 严格递增）；300s 版本需显式 `DEVDESK_SOAK=1` 才会执行，常规验收跑的是门控 SKIP 路径。
 
+### Claude 供应商配置 / Claude Code 接管（provider-config，2026-09-22 Phase E 登记）
+
+#### 10. `CLAUDE_CONFIG_DIR` 自定义目录一期不识别
+
+- 接管通道只写默认 `~/.claude/settings.json`（`core::paths::claudeSettingsFile()`）。用户若设置了 `CLAUDE_CONFIG_DIR` 环境变量把 `.claude` 挪到别处，DevDesk 接管后 Claude Code 不会读到托管 env（它读的是自定义目录下的 settings.json）。
+- 升级路径（设计 §9 开放问题 3）：设置页加一个 settings.json 路径输入框即可，有真实用户反馈再做。
+
+#### 11. 接管期间手工改托管键会被下次同步覆盖
+
+- 托管键（`ANTHROPIC_BASE_URL` / `ANTHROPIC_AUTH_TOKEN` / `ANTHROPIC_MODEL` / `ANTHROPIC_DEFAULT_*_MODEL(_NAME)` / `CLAUDE_CODE_SUBAGENT_MODEL` / extra_env 中配置的键）语义归 DevDesk：接管生效期间用户手工编辑这些键，会在下一次代理启动 / 切 profile 同步时被覆盖。用户自有其他 env 键与非 env 字段完全不受影响。已接受的设计边界（设计 §5.3 如实记录）。
+
+#### 12. env 热切换未做真机验证（留给用户人工点验）
+
+- 官方 settings-reference 文档背书 env 键在「saved change alters the merged env」时运行中会话即重载（设计 §9 问题 1 已关闭），但「真实 Claude Code 连本地代理跑一次对话 + 热切换后立即生效」的真机验证尚未执行——属用户人工点验项（见 CHANGELOG [Provider-Config] 的人工验证清单）。
+
+#### 13. 导入的 `*_MODEL_DESCRIPTION` 变体不识别（范围外登记）
+
+- 官方还存在 `ANTHROPIC_DEFAULT_*_MODEL_DESCRIPTION`（模型描述文案）env 变体；`parseImportedEnv()` 未收录，导入时该键会落入高级 env 表原样透传（不丢失，仅不做槽位语义识别）。设计 §9 问题 2 的可选增强，无真实诉求不做。
+
+#### 14. 表单高级 env 页可见行数上限 5
+
+- 760×600 弹窗高度约束，键值编辑器只渲染前 5 行（导入超过 5 个键时全量保存在状态里、保存时全量写入，界面显示「另有 N 项已保存」提示）；编辑第 6 行及以后需先删行腾位。升级路径：引入 scrollView 或加高弹窗。
+
 ### 平台验证
 
 #### 6. macOS 侧自 2026-09-21 迁移后未重新构建验证

@@ -2,6 +2,35 @@
 
 本文件记录 **a1a106a（macOS 中断现场收编）起** 的条目式变更，按恢复计划的三波（W1 止血收编 / W2 平台架构 / W3 剩余需求）组织，波内按 feat / fix / test / docs 分组。更早的 macOS 主线历史（P0–P8，66 测试通过）见 git log 与 spec §16。
 
+## [Provider-Config] 2026-09-22 —— Claude 供应商完整配置（Phase A–E 全量落地）
+
+设计文档 `docs/superpowers/specs/2026-09-22-claude-provider-config-design.md`；分支 `feat/provider-config-bc`（A/B/C，已合 master）+ `feat/provider-config-de`（D/E）。最终基线 **233/233 全绿**（226 基线 + 7 新增）。
+
+### feat（Phase A/B/C，已随 master 合入，此处补记条目）
+
+- **数据模型 v3**：`claude_profiles` 增 `models_config`（6 模型槽位 × 实际名/显示名）+ `extra_env`（自定义键值）两个 JSON 文本列，存量数据零迁移；上游 key 仍全走 Keychain 不落数据库。
+- **代理默认不启动**（硬性需求 1）：`claudeProxyAutoStart` 配置默认 false，设置页「随应用启动代理」开关；`startProxy` 收敛为手动入口（Claude 页按钮 / 设置页重生成 token）。
+- **settings.json 接管通道**（硬性需求 2+3）：代理启动 / 运行中切 profile → `buildProxyEnv()` 生成的托管 env 块合并写入 `~/.claude/settings.json`（BASE_URL→本地代理、AUTH_TOKEN→代理 token、模型映射、行为开关）；非 env 字段与用户自有 env 键原样保留；首份快照存 sidecar，停止代理 / 应用退出按键级还原；原子写 + 备份轮换（保留 10 份）+ 崩溃启动补还原；managed/project 层同名 env 键检测 → 警告提示不代改。
+
+### feat（Phase D，本批）
+
+- **Profile 编辑弹窗升级 tabs 三页**（760×600）：基础（名称/Base URL/API Key）+ 模型映射（6 槽位 × 上游模型名/显示名，显示名留空自动剥 `[1M]` 等标记，placeholder 实时渲染派生预览）+ 高级 env（键值行编辑器 + cc-switch/settings.json 粘贴导入）。
+- **粘贴导入**：`parseImportedEnv()` 纯函数解析（整段 settings.json 或裸 env 对象两种形状；BASE_URL/AUTH_TOKEN 归基础页、模型键归槽位、其余进 env 表；值必须字符串、键名白名单、4KB/64 键上限）；解析后先预览（识别槽位数 / 别名映射 / 未识别键警告角标），确认才应用到表单；`AUTO_COMPACT_ENABLED` 等非官方别名自动映射官方变量。
+- **接管状态可视**：设置页 + Claude 页详情面板显示「● 已接管 <settings.json 路径> / ○ 未接管」+ 上层覆盖警告行；Claude 页头部代理未启动时一次性引导条。
+- **模型映射摘要**：详情面板「模型映射」字段改一行式摘要（默认模型 + 已配 N/6），列表卡片 model 行显示 default 槽位（未配回落旧 model 列）。
+
+### test
+
+- `parseImportedEnv` 纯函数 4 用例（用户真实模板全量分布 / 裸对象 / 非法输入整体拒绝 / API_KEY+AUTH_TOKEN 同现）。
+- 无头 compose 3 用例：表单 tabs 槽位/env 填写→保存→DB 往返→重开回显（经 input.hit 的 `onTextInput` 驱动，等价真实键盘路径）；粘贴导入解析→预览→应用→保存全链路；设置页接管状态行随 startProxy/stopProxy 切换 + 覆盖警告命中。
+- 回归：全量 233/233 全绿（226 基线 + 7 新增）。
+
+### 已知边界（详见 KNOWN_LIMITATIONS）
+
+- `CLAUDE_CONFIG_DIR` 自定义 `.claude` 目录一期不识别，只接管默认 `~/.claude`。
+- 接管期间用户手工改托管键（BASE_URL/AUTH_TOKEN/模型键）会在下次同步被覆盖（托管键语义归 DevDesk）。
+- env 热切换（运行中的 Claude Code 会话保存即生效）已有官方文档背书，真机验证留给用户人工点验。
+
 ## [W8] 2026-09-22 —— 设置页三项修复（下拉裁剪 / 日志保留即时生效 / token 居中）
 
 分支 `fix/settings-ux`（`0efd83e`），链内基线 180/180（177 + 3 新增）。

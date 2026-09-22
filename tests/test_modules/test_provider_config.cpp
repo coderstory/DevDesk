@@ -393,3 +393,146 @@ REGISTER_TEST(provider_config_migration_upgrade,
     std::filesystem::remove(path.string() + "-shm", ec);
     return true;
 })
+
+// ---- parseImportedEnv（Phase D 导入解析，§6.1 + §7.4）----
+
+// 用户真实模板（设计 §1）包进整段 settings.json（含非 env 顶层字段）。
+// 注意 raw string 用自定义分隔符 json(...)json —— 模板里的 `)"` 序列
+//（如 "Bash(ls)"）会提前终止默认 R"(...)"
+static const char* kImportTemplate = R"json({
+    "permissions": {"allow": ["Bash(ls)"]},
+    "env": {
+        "ANTHROPIC_AUTH_TOKEN": "sk_ind_test_abc",
+        "ANTHROPIC_BASE_URL": "https://gw.example.com/fangzhou/anthropic",
+        "ANTHROPIC_DEFAULT_FABLE_MODEL": "fangzhou/glm-5.3[1M]",
+        "ANTHROPIC_DEFAULT_FABLE_MODEL_NAME": "fangzhou/glm-5.3",
+        "ANTHROPIC_DEFAULT_HAIKU_MODEL": "fangzhou/glm-5.3",
+        "ANTHROPIC_DEFAULT_OPUS_MODEL": "fangzhou/glm-5.3[1M]",
+        "ANTHROPIC_DEFAULT_OPUS_MODEL_NAME": "fangzhou/glm-5.3",
+        "ANTHROPIC_DEFAULT_SONNET_MODEL": "fangzhou/glm-5.3[1M]",
+        "ANTHROPIC_DEFAULT_SONNET_MODEL_NAME": "fangzhou/glm-5.3",
+        "ANTHROPIC_MODEL": "fangzhou/glm-5.3[1M]",
+        "AUTO_COMPACT_ENABLED": "1",
+        "CLAUDE_AUTOCOMPACT_PCT_OVERRIDE": "75",
+        "CLAUDE_CODE_AUTO_COMPACT_WINDOW": "800000",
+        "CLAUDE_CODE_DISABLE_ADAPTIVE_THINKING": "1",
+        "CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS": "1",
+        "CLAUDE_CODE_SUBAGENT_MODEL": "fangzhou/glm-5.3[1M]",
+        "DISABLE_AUTOUPDATER": "1"
+    }
+})json";
+
+REGISTER_TEST(provider_config_parse_import_full_settings,
+              "parseImportedEnv: 整段 settings.json 形状全量分布", {
+    auto r = module::claude::parseImportedEnv(kImportTemplate);
+    DOCTEST_REQUIRE(r.isOk());
+    const auto& c = r.value();
+    DOCTEST_CHECK_EQ(c.baseUrl,
+                     std::string("https://gw.example.com/fangzhou/anthropic"));
+    DOCTEST_CHECK_EQ(c.authToken, std::string("sk_ind_test_abc"));
+    // 6 槽位
+    DOCTEST_CHECK_EQ(c.models.def.model, std::string("fangzhou/glm-5.3[1M]"));
+    DOCTEST_CHECK_EQ(c.models.sonnet.model, std::string("fangzhou/glm-5.3[1M]"));
+    DOCTEST_CHECK_EQ(c.models.sonnet.name, std::string("fangzhou/glm-5.3"));
+    DOCTEST_CHECK_EQ(c.models.opus.model, std::string("fangzhou/glm-5.3[1M]"));
+    DOCTEST_CHECK_EQ(c.models.opus.name, std::string("fangzhou/glm-5.3"));
+    DOCTEST_CHECK_EQ(c.models.haiku.model, std::string("fangzhou/glm-5.3"));
+    DOCTEST_CHECK(c.models.haiku.name.empty());   // 模板未给 → 派生兜底
+    DOCTEST_CHECK_EQ(c.models.fable.model, std::string("fangzhou/glm-5.3[1M]"));
+    DOCTEST_CHECK_EQ(c.models.fable.name, std::string("fangzhou/glm-5.3"));
+    DOCTEST_CHECK_EQ(c.models.subagent.model,
+                     std::string("fangzhou/glm-5.3[1M]"));
+    DOCTEST_CHECK_EQ(c.recognizedSlots, 6);
+    // 别名映射：AUTO_COMPACT_ENABLED=1 → DISABLE_AUTO_COMPACT=0
+    DOCTEST_REQUIRE_EQ(c.aliasMappedKeys.size(), 1u);
+    DOCTEST_CHECK_EQ(c.aliasMappedKeys[0], std::string("AUTO_COMPACT_ENABLED"));
+    DOCTEST_CHECK_EQ(c.extraEnv.at("DISABLE_AUTO_COMPACT"), std::string("0"));
+    // 官方键透传进 extraEnv
+    DOCTEST_CHECK_EQ(c.extraEnv.at("CLAUDE_CODE_AUTO_COMPACT_WINDOW"),
+                     std::string("800000"));
+    DOCTEST_CHECK_EQ(c.extraEnv.at("DISABLE_AUTOUPDATER"), std::string("1"));
+    DOCTEST_CHECK_EQ(c.extraEnv.at("CLAUDE_CODE_DISABLE_ADAPTIVE_THINKING"),
+                     std::string("1"));
+    DOCTEST_CHECK_EQ(c.extraEnv.at("CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS"),
+                     std::string("1"));
+    // 非官方键警告角标透传
+    DOCTEST_REQUIRE_EQ(c.unrecognizedKeys.size(), 1u);
+    DOCTEST_CHECK_EQ(c.unrecognizedKeys[0],
+                     std::string("CLAUDE_AUTOCOMPACT_PCT_OVERRIDE"));
+    DOCTEST_CHECK_EQ(c.extraEnv.at("CLAUDE_AUTOCOMPACT_PCT_OVERRIDE"),
+                     std::string("75"));
+    DOCTEST_CHECK(c.warnings.empty());   // 无 API_KEY/AUTH_TOKEN 同现
+    return true;
+})
+
+REGISTER_TEST(provider_config_parse_import_bare_env,
+              "parseImportedEnv: 裸 env 对象形状", {
+    const std::string json =
+        "{\n"
+        "  \"ANTHROPIC_BASE_URL\": \"https://relay.example.com\",\n"
+        "  \"DISABLE_AUTOUPDATER\": \"1\"\n"
+        "}";
+    auto r = module::claude::parseImportedEnv(json);
+    DOCTEST_REQUIRE(r.isOk());
+    const auto& c = r.value();
+    DOCTEST_CHECK_EQ(c.baseUrl, std::string("https://relay.example.com"));
+    DOCTEST_CHECK(c.authToken.empty());
+    DOCTEST_CHECK_EQ(c.recognizedSlots, 0);
+    DOCTEST_REQUIRE_EQ(c.extraEnv.size(), 1u);
+    DOCTEST_CHECK_EQ(c.extraEnv.at("DISABLE_AUTOUPDATER"), std::string("1"));
+    DOCTEST_CHECK(c.unrecognizedKeys.empty());
+    DOCTEST_CHECK(c.aliasMappedKeys.empty());
+    return true;
+})
+
+REGISTER_TEST(provider_config_parse_import_rejects,
+              "parseImportedEnv: 非法输入整体拒绝（不部分导入）", {
+    using module::claude::parseImportedEnv;
+    // 空白 / 非法 JSON / 顶层非对象 / 值非字符串 / 键名非法 / 超键数 / 超长值
+    DOCTEST_CHECK(parseImportedEnv("   \n  ").isFail());
+    DOCTEST_CHECK(parseImportedEnv("{ not json").isFail());
+    DOCTEST_CHECK(parseImportedEnv("[1,2,3]").isFail());
+    DOCTEST_CHECK(parseImportedEnv("{ \"FOO\": 1 }").isFail());          // 数字值
+    DOCTEST_CHECK(parseImportedEnv("{ \"FOO\": true }").isFail());       // 布尔值
+    DOCTEST_CHECK(parseImportedEnv("{ \"foo-bar\": \"1\" }").isFail());  // 小写/连字符
+    DOCTEST_CHECK(parseImportedEnv("{ \"1FOO\": \"1\" }").isFail());     // 数字开头
+    DOCTEST_CHECK(parseImportedEnv(
+        "{ \"env\": \"not-an-object\" }").isFail());                     // env 非对象
+    // >64 键（65 个）
+    {
+        std::string json = "{";
+        for (int i = 0; i < 65; ++i) {
+            json += "\"K" + std::to_string(i) + "\": \"v\"";
+            if (i != 64) json += ", ";
+        }
+        json += "}";
+        DOCTEST_CHECK(parseImportedEnv(json).isFail());
+    }
+    // 单值 > 4KB
+    {
+        const std::string big(4097, 'x');
+        DOCTEST_CHECK(parseImportedEnv(
+            "{ \"BIG\": \"" + big + "\" }").isFail());
+    }
+    return true;
+})
+
+REGISTER_TEST(provider_config_parse_import_key_conflict,
+              "parseImportedEnv: API_KEY 与 AUTH_TOKEN 同现取 AUTH_TOKEN", {
+    const std::string both =
+        "{ \"ANTHROPIC_API_KEY\": \"sk-key\", "
+        "\"ANTHROPIC_AUTH_TOKEN\": \"sk-token\" }";
+    auto r = module::claude::parseImportedEnv(both);
+    DOCTEST_REQUIRE(r.isOk());
+    DOCTEST_CHECK_EQ(r.value().authToken, std::string("sk-token"));
+    DOCTEST_REQUIRE_EQ(r.value().warnings.size(), 1u);
+    DOCTEST_CHECK(r.value().warnings[0].find("AUTH_TOKEN") !=
+                  std::string::npos);
+
+    const std::string onlyKey = "{ \"ANTHROPIC_API_KEY\": \"sk-key\" }";
+    auto r2 = module::claude::parseImportedEnv(onlyKey);
+    DOCTEST_REQUIRE(r2.isOk());
+    DOCTEST_CHECK_EQ(r2.value().authToken, std::string("sk-key"));
+    DOCTEST_CHECK(r2.value().warnings.empty());
+    return true;
+})

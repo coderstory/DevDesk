@@ -41,6 +41,7 @@
 #include <components/switch.h>
 #include <components/theme.h>
 
+#include <algorithm>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
@@ -272,9 +273,24 @@ public:
                         drawDirectoryCard(ui, "settings.card.directory",
                                           contentW, 108.0f, t);
                         cardY += 108.0f + gapY;
-                        drawProxyCard(ui, "settings.card.proxy", contentW,
-                                      140.0f, t);
-                        cardY += 140.0f + gapY;
+                        // 代理卡高度动态：接管状态行 + 上层覆盖警告行（§6.3）
+                        {
+                            auto* svc =
+                                ::module::claude::ClaudeService::global();
+                            const bool managed =
+                                svc && svc->isClaudeCodeManaged();
+                            size_t warnLines = 0;
+                            if (managed && svc) {
+                                warnLines = std::min<size_t>(
+                                    svc->lastSyncWarnings().size(), 2);
+                            }
+                            const float proxyH = 140.0f + 28.0f +
+                                (managed ? 20.0f : 0.0f) +
+                                static_cast<float>(warnLines) * 16.0f;
+                            drawProxyCard(ui, "settings.card.proxy", contentW,
+                                          proxyH, t);
+                            cardY += proxyH + gapY;
+                        }
                         drawLogCard(ui, "settings.card.log", contentW, 100.0f,
                                     t, cardY, screen.height);
                     })
@@ -589,6 +605,48 @@ private:
                     .disabled(!running)
                     .onClick([this] { requestRegenerateToken(); })
                     .build();
+
+                // Claude Code 接管状态（Phase D，§6.3）：sidecar 是否存在推导，
+                // 让还原机制对用户可见；上层覆盖警告（§5.3 检测命中时）逐行展示
+                const bool managed = svc && svc->isClaudeCodeManaged();
+                ui.text(id + ".takeover.label")
+                    .position(28.0f, 134.0f)
+                    .size(150.0f, 18.0f)
+                    .text("Claude Code 接管")
+                    .fontSize(fs(12.0f))
+                    .lineHeight(18.0f)
+                    .color(t.colors.textSecondary)
+                    .build();
+                const std::string ccPath =
+                    ::module::claude::settings_sync::defaultPaths()
+                        .settingsFile.string();
+                ui.text(id + ".takeover.value")
+                    .position(190.0f, 134.0f)
+                    .size(w - 190.0f - 28.0f, 18.0f)
+                    .text(managed
+                          ? ("● 已接管 " + ccPath)
+                          : std::string("○ 未接管（启动代理后自动接管，停止时还原）"))
+                    .fontSize(fs(12.0f))
+                    .lineHeight(18.0f)
+                    .color(managed ? t.colors.success : t.colors.textTertiary)
+                    .build();
+                if (managed && svc) {
+                    const auto& warns = svc->lastSyncWarnings();
+                    // ponytail: 最多展示 2 条（卡片高度约束），更多警告在
+                    // 日志（LOG_WARN 全量）可查
+                    const size_t shown =
+                        std::min<size_t>(warns.size(), 2);
+                    for (size_t i = 0; i < shown; ++i) {
+                        ui.text(id + ".takeover.warn." + std::to_string(i))
+                            .position(28.0f, 154.0f + static_cast<float>(i) * 16.0f)
+                            .size(w - 56.0f, 16.0f)
+                            .text("⚠ " + warns[i])
+                            .fontSize(fs(11.0f))
+                            .lineHeight(16.0f)
+                            .color(t.colors.warning)
+                            .build();
+                    }
+                }
             })
             .build();
     }
