@@ -404,13 +404,21 @@ private:
                       const core::theme::Tokens& t,
                       const components::theme::ThemeColorTokens& componentTheme) {
         const float rowW = sideW - 16.0f;
+        // contentKey 反模式修复（W7）：旧 key 用 notes_.size()，同数量替换
+        // （如搜索结果变化）不触发滚动内容重建、左栏显示旧列表。改为
+        // 逐条路径组合 hash，内容变即 key 变。
+        size_t listKey = 0;
+        for (const auto& n : notes_) {
+            listKey = listKey * 1315423911u +
+                      std::hash<std::string>{}(noteDisplayPath(n));
+        }
         components::scrollView(ui, "md.tree.scroll")
             .position(8.0f, listY)
             .size(sideW - 16.0f, listH)
             .gap(0.0f)
             .step(40.0f)
             .theme(componentTheme)
-            .contentKey("md.tree.scroll." + std::to_string(notes_.size()))
+            .contentKey("md.tree.scroll." + std::to_string(listKey))
             .content([&](eui::Ui& inner, float contentWidth, float viewportHeight) {
                 (void)viewportHeight;
                 const float w = std::min(contentWidth, rowW);
@@ -450,13 +458,21 @@ private:
         // 当前节：光标行所在的上一个标题（仅预览态无编辑器，用上次跳转位置）
         const int active = activeOutlineIndex(ui);
 
+        // contentKey 反模式修复（W7）：旧 key 用 outline_.size()，同数量
+        // 标题替换（改标题文字）不触发重建。改为标题+级别组合 hash。
+        size_t outlineKey = 0;
+        for (const auto& h : outline_) {
+            outlineKey = outlineKey * 1315423911u +
+                         std::hash<std::string>{}(h.title) +
+                         static_cast<size_t>(h.level);
+        }
         components::scrollView(ui, "md.outline.scroll")
             .position(8.0f, listY)
             .size(sideW - 16.0f, listH)
             .gap(0.0f)
             .step(40.0f)
             .theme(componentTheme)
-            .contentKey("md.outline.scroll." + std::to_string(outline_.size()))
+            .contentKey("md.outline.scroll." + std::to_string(outlineKey))
             .content([&](eui::Ui& inner, float contentWidth, float viewportHeight) {
                 (void)viewportHeight;
                 const float rowW = std::min(contentWidth, sideW - 16.0f);
@@ -671,7 +687,7 @@ private:
                 .theme(componentTheme)
                 .offset(scrollOffset)
                 .contentKey("md.preview.scroll." + currentPath_ + "." +
-                            std::to_string(editorText_.size()));
+                            std::to_string(std::hash<std::string>{}(editorText_)));
             if (mode_ == ViewMode::Preview) {
                 // 仅预览态允许手动滚动（双向：滚轮写回 previewOffset_）
                 scroll.onChange([this](float v) { previewOffset_ = v; });
