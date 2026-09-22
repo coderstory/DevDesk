@@ -61,6 +61,44 @@ bool hasHeader(const std::map<std::string, std::string>& headers,
     return false;
 }
 
+// JSON 字符串转义（RFC 8259：引号/反斜杠/控制字符；UTF-8 原样透传）
+std::string jsonEscape(const std::string& s) {
+    std::string out;
+    out.reserve(s.size() + 8);
+    for (char c : s) {
+        switch (c) {
+            case '"': out += "\\\""; break;
+            case '\\': out += "\\\\"; break;
+            case '\b': out += "\\b"; break;
+            case '\f': out += "\\f"; break;
+            case '\n': out += "\\n"; break;
+            case '\r': out += "\\r"; break;
+            case '\t': out += "\\t"; break;
+            default:
+                if (static_cast<unsigned char>(c) < 0x20) {
+                    char buf[8];
+                    std::snprintf(buf, sizeof(buf), "\\u%04x",
+                                  static_cast<unsigned>(c) & 0xFFu);
+                    out += buf;
+                } else {
+                    out.push_back(c);
+                }
+        }
+    }
+    return out;
+}
+
+// 统一 JSON 错误响应：message 可能含引号/反斜杠/换行（来自 errorMessage()），
+// 不转义会产出非法 JSON，Claude Code 侧只会看到解析错误而非真实原因
+void writeErrorJson(platform::http::ResponseWriter& out, int status,
+                    const char* error, const std::string& message) {
+    out.setStatus(status);
+    out.setHeader("Content-Type", "application/json");
+    out.write(std::string("{\"error\":\"") + error +
+              "\",\"message\":\"" + jsonEscape(message) + "\"}");
+    out.end();
+}
+
 } // namespace
 
 ProxyRouter::ProxyRouter(ClaudeService& service, platform::http::Server& server)
@@ -107,11 +145,7 @@ void ProxyRouter::handleRequest(
         auto profileR = resolveProfile();
         if (profileR.isFail()) {
             LOG_WARN("代理：取 profile 失败 (" + profileR.errorMessage() + ")");
-            out.setStatus(503);
-            out.setHeader("Content-Type", "application/json");
-            out.write(std::string("{\"error\":\"no_active_profile\",\"message\":\"") +
-                      profileR.errorMessage() + "\"}");
-            out.end();
+            writeErrorJson(out, 503, "no_active_profile", profileR.errorMessage());
             return;
         }
         profile = std::move(profileR).value();
@@ -120,11 +154,7 @@ void ProxyRouter::handleRequest(
         auto activeR = service_.getActiveProfile();
         if (activeR.isFail()) {
             LOG_WARN("代理：无激活 profile (" + activeR.errorMessage() + ")");
-            out.setStatus(503);
-            out.setHeader("Content-Type", "application/json");
-            out.write(std::string("{\"error\":\"no_active_profile\",\"message\":\"") +
-                      activeR.errorMessage() + "\"}");
-            out.end();
+            writeErrorJson(out, 503, "no_active_profile", activeR.errorMessage());
             return;
         }
         profile = std::move(activeR).value();
@@ -132,11 +162,7 @@ void ProxyRouter::handleRequest(
         auto keyR = service_.loadApiKey(profile.id);
         if (keyR.isFail()) {
             LOG_ERROR("代理：读取 API key 失败: " + keyR.errorMessage());
-            out.setStatus(500);
-            out.setHeader("Content-Type", "application/json");
-            out.write(std::string("{\"error\":\"keychain_read_failed\",\"message\":\"") +
-                      keyR.errorMessage() + "\"}");
-            out.end();
+            writeErrorJson(out, 500, "keychain_read_failed", keyR.errorMessage());
 
             // 记录日志（status=500, error=keychain）
             ClaudeService::CallLogEntry entry;
@@ -183,11 +209,7 @@ void ProxyRouter::handleRequest(
     if (respR.isFail()) {
         // 网络失败（DNS / TLS / 连接 / 超时）
         LOG_WARN("代理：上游请求失败: " + respR.errorMessage());
-        out.setStatus(502);
-        out.setHeader("Content-Type", "application/json");
-        out.write(std::string("{\"error\":\"upstream_unreachable\",\"message\":\"") +
-                  respR.errorMessage() + "\"}");
-        out.end();
+        writeErrorJson(out, 502, "upstream_unreachable", respR.errorMessage());
 
         ClaudeService::CallLogEntry entry;
         entry.profileId = profile.id;
@@ -292,11 +314,7 @@ void ProxyRouter::handleStreamingRequest(
     auto profileR = resolveProfile();
     if (profileR.isFail()) {
         LOG_WARN("流式代理：取 profile 失败 (" + profileR.errorMessage() + ")");
-        out.setStatus(503);
-        out.setHeader("Content-Type", "application/json");
-        out.write(std::string("{\"error\":\"no_active_profile\",\"message\":\"") +
-                  profileR.errorMessage() + "\"}");
-        out.end();
+        writeErrorJson(out, 503, "no_active_profile", profileR.errorMessage());
         return;
     }
     Profile profile = std::move(profileR).value();
@@ -322,11 +340,7 @@ void ProxyRouter::handleStreamingRequest(
     auto streamR = sendStreamingClaude(upstream, profile);
     if (streamR.isFail()) {
         LOG_WARN("流式代理：启动上游失败: " + streamR.errorMessage());
-        out.setStatus(502);
-        out.setHeader("Content-Type", "application/json");
-        out.write(std::string("{\"error\":\"upstream_unreachable\",\"message\":\"") +
-                  streamR.errorMessage() + "\"}");
-        out.end();
+        writeErrorJson(out, 502, "upstream_unreachable", streamR.errorMessage());
 
         ClaudeService::CallLogEntry entry;
         entry.profileId = profile.id;

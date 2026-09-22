@@ -730,6 +730,11 @@ public:
             LOG_WARN("onStart: ClaudeService::global() 为 null，跳过代理启动");
             return;
         }
+        // 启动时孤儿密钥清理（一次扫描，删除无对应 profile 的 keychain 条目）
+        auto orphan = svc->cleanupOrphanKeychainEntries();
+        if (orphan.isFail()) {
+            LOG_WARN("onStart: 孤儿 Keychain 清理失败 - " + orphan.errorMessage());
+        }
         if (svc->isProxyRunning()) {
             LOG_INFO("onStart: 代理已在运行 port=" +
                      std::to_string(svc->proxyPort()));

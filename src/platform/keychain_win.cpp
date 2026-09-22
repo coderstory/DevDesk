@@ -11,6 +11,7 @@
 
 #include <filesystem>
 #include <fstream>
+#include <set>
 #include <string>
 
 #ifndef WIN32_LEAN_AND_MEAN
@@ -152,6 +153,39 @@ core::Result<void> deleteSecret(const std::string& service,
             "delete key file failed: " + ec.message());
     }
     return core::Result<void>::ok();
+}
+
+core::Result<std::vector<std::string>> deleteSecretsNotIn(
+    const std::string& service,
+    const std::vector<std::string>& keepAccounts) {
+    std::vector<std::string> removed;
+    const fs::path dir = core::paths::appDataDir() / "keychain" /
+                         sanitize(service);
+
+    std::error_code ec;
+    if (!fs::exists(dir, ec) || ec) {
+        return core::Result<std::vector<std::string>>::ok(std::move(removed));
+    }
+
+    // 存储形态是文件名安全化后的 account（claude:5 → claude_5），
+    // keep 集合同样按 sanitize 后比较
+    std::set<std::string> keep;
+    for (const auto& a : keepAccounts) keep.insert(sanitize(a));
+
+    for (const auto& entry : fs::directory_iterator(dir)) {
+        if (!entry.is_regular_file(ec) || ec) { ec.clear(); continue; }
+        const std::string stem = entry.path().stem().string();
+        if (keep.count(stem)) continue;
+        std::error_code rmEc;
+        fs::remove(entry.path(), rmEc);
+        if (rmEc) {
+            return core::Result<std::vector<std::string>>::fail(
+                core::ErrorCode::Internal,
+                "delete key file failed: " + rmEc.message());
+        }
+        removed.push_back(stem);
+    }
+    return core::Result<std::vector<std::string>>::ok(std::move(removed));
 }
 
 } // namespace platform::keychain

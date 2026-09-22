@@ -70,8 +70,14 @@ public:
     //   - 若 profile.apiKeyPlain 非空，则覆盖 Keychain
     core::Result<void> updateProfile(const Profile& profile);
 
-    // 删除 profile（同时清理 Keychain 条目）
+    // 删除 profile（同时清理 Keychain 条目）。
+    // Keychain 清理失败会中止删除并返回错误（SQLite 行保留，可重试）
     core::Result<void> deleteProfile(int64_t id);
+
+    // 启动时孤儿清理：把 keychainService_ 命名空间里没有对应
+    // claude_profiles 行的密钥清掉（历史 bug 遗留的 claude:* 孤儿）。
+    // 返回清理数量
+    core::Result<int> cleanupOrphanKeychainEntries();
 
     // ---- API key ----
 

@@ -304,3 +304,42 @@ REGISTER_TEST(http_server_stop_restart, "http_server: stop and start cycles", {
     }
     return true;
 })
+
+// ---- Request body size limit（spec §10.4：>10MB 拒绝） ----
+
+REGISTER_TEST(http_server_body_size_limit,
+              "http_server: 请求体 >10MB 拒绝（413），边界 10MB 通过", {
+    platform::http::Server srv("127.0.0.1", 0);
+    int handlerCalls = 0;
+    srv.route("POST", "/echo",
+              [&](const platform::http::RequestCtx& ctx,
+                  platform::http::ResponseWriter& w) {
+                  ++handlerCalls;
+                  w.setStatus(200);
+                  w.write("len:" + std::to_string(ctx.body.size()));
+                  w.end();
+              });
+    DOCTEST_CHECK(srv.start());
+    int port = srv.actualPort();
+    DOCTEST_CHECK(waitForReady(port));
+
+    // 恰好 10MB（边界，含）→ 200，handler 收到完整 body
+    const std::string exact(platform::http::kMaxBodyBytes, 'x');
+    std::string body;
+    long statusExact = httpPost(
+        "http://127.0.0.1:" + std::to_string(port) + "/echo", exact, body);
+    DOCTEST_CHECK_EQ(statusExact, 200L);
+    DOCTEST_CHECK_EQ(body,
+                     std::string("len:") + std::to_string(exact.size()));
+
+    // 10MB + 1 → 413，handler 不执行
+    const std::string over(platform::http::kMaxBodyBytes + 1, 'x');
+    const int callsBefore = handlerCalls;
+    long statusOver = httpPost(
+        "http://127.0.0.1:" + std::to_string(port) + "/echo", over, body);
+    DOCTEST_CHECK_EQ(statusOver, 413L);
+    DOCTEST_CHECK_EQ(handlerCalls, callsBefore);
+
+    srv.stop();
+    return true;
+})

@@ -183,6 +183,9 @@ Server::Server(std::string bindAddress, int port, std::string authToken)
       port_(port),
       authToken_(std::move(authToken)),
       impl_(new Impl()) {
+    // 请求体上限（spec §10.4）：所有路由单点收口，超出由 cpp-httplib 回 413
+    impl_->svr.set_payload_max_length(kMaxBodyBytes);
+
     // pre_routing_handler 在路由分发前触发，用于拦截未认证请求
     const std::string token = authToken_;
     const bool authRequired = !token.empty();
