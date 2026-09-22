@@ -42,11 +42,15 @@ constexpr int kMaxLogRetentionDays = 3650;
 
 // ---- 模块开关 ID（模块插拔方案 A，设计 2026-09-22 §5.1）----
 // 字符串与 pageIdToString 的小写对齐；config.json 的 enabledModules 数组用。
+// pet 是桌宠（2026-09-22-desktop-pet-design.md §4.1）：不是 Router 页面模块
+//（无 PageId/侧边栏入口），但同样经 enabledModules 门控（关闭 = 不开窗口零执行）；
+// 默认不启用（氛围功能，用户主动开）。
 inline constexpr const char* kModuleIdHome = "home";
 inline constexpr const char* kModuleIdMarkdown = "markdown";
 inline constexpr const char* kModuleIdTodo = "todo";
 inline constexpr const char* kModuleIdClaudeProxy = "claude_proxy";
 inline constexpr const char* kModuleIdSettings = "settings";
+inline constexpr const char* kModuleIdPet = "pet";
 
 // 默认全启用（字段缺失/解析失败回退；home/settings 恒启用见 kAlwaysOn）
 std::vector<std::string> defaultEnabledModules();
@@ -73,8 +77,14 @@ struct SettingsConfig {
     std::string windowEffect = kWindowEffectOff;
     // 模块开关（模块插拔方案 A）：可关的是三个工具模块（markdown/todo/
     // claude_proxy）；home 是默认落地页、settings 是开关 UI 宿主，恒启用
-    //（sanitized 强制补齐）。缺省 = 全启用，老 config.json 零迁移兼容
+    //（sanitized 强制补齐）。缺省 = 全启用，老 config.json 零迁移兼容。
+    // pet（桌宠）是已知 ID 但**不在默认清单**——默认关闭，用户在设置页开启
     std::vector<std::string> enabledModules = defaultEnabledModules();
+    // ---- 桌宠（2026-09-22-desktop-pet-design.md §4.6）----
+    std::string petSkin = "clay-cat";  // 皮肤目录名（assets/pets/<petSkin>）
+    int petX = -1;                     // 窗口位置（逻辑屏幕坐标；<0 = 未设置，
+    int petY = -1;                     //  开窗时取主显示器工作区右下角并钳制）
+    bool petClickThrough = false;      // 挂机穿透（右键菜单可切换）
 };
 
 // 模块开关判定（sanitized 后的 config 恒有效；home/settings 恒 true，未知

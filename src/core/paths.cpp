@@ -31,6 +31,14 @@ fs::path markdownDir() {
     return appDataDir() / "notes";
 }
 
+fs::path petsDir() {
+    // 环境变量覆盖（无头测试隔离用，同 markdownDir 机制）
+    if (const char* env = std::getenv("DEVDESK_PETS_DIR")) {
+        return fs::path(env);
+    }
+    return appDataDir() / "pets";
+}
+
 fs::path logsDir() {
     return appDataDir() / "logs";
 }
@@ -41,7 +49,7 @@ fs::path logFile() {
 
 void ensureDirectoriesExist() {
     std::error_code ec;
-    for (const auto& dir : {appDataDir(), markdownDir(), logsDir()}) {
+    for (const auto& dir : {appDataDir(), markdownDir(), logsDir(), petsDir()}) {
         fs::create_directories(dir, ec);
         if (ec) {
             LOG_WARN("创建目录失败: " + dir.string() + " (" + ec.message() + ")");

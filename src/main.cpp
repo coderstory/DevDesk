@@ -9,6 +9,7 @@
 #include "core/paths.h"
 #include "core/router.h"
 #include "core/theme.h"
+#include "module_pet/pet_window.h"
 #include "platform/file_open.h"
 #include "settings_config.h"
 
@@ -512,6 +513,16 @@ const DslAppConfig& dslAppConfig() {
             }
         }
         getRouter();
+        // 桌宠（2026-09-22-desktop-pet-design.md §4.1）：不是 Router 页面模块，
+        // 经同一 enabledModules 门控（含 "pet" 才开窗，默认关 = 零执行）。
+        // openWindow 在主循环起来前入队、首帧消费；皮肤缺失时自动生成占位皮肤
+        if (isModuleEnabled(module::settings::kModuleIdPet)) {
+            module::pet::startPetWindow(module::pet::PetWindowConfig{
+                settingsCfg.petSkin, settingsCfg.petX, settingsCfg.petY,
+                settingsCfg.petClickThrough});
+        } else {
+            LOG_INFO("桌宠已关闭（enabledModules 不含 pet），不开宠物窗口");
+        }
         return true;
     }();
     (void)initialized;
