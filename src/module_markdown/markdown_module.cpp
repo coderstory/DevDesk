@@ -19,6 +19,10 @@
 //     当前笔记被外部修改时弹「重载 / 保留本地」选择（dialog；EUI-NEO toast
 //     无按钮能力，选择类交互用 dialog）
 //
+// Phase 2 键盘流（spec §5.2，通道 A = input.onKeyEvent passthrough）：
+//   Tab/Shift+Tab 缩进、Enter 列表续行、Ctrl+B/I 包裹、Ctrl+K 链接骨架；
+//   纯函数在 md_keyboard.{h,cpp}，本文件只做接线（handleEditorKey）
+//
 // 所有 I/O 都通过 MarkdownService，失败走 core::Result（不抛异常）。
 #include "core/database.h"
 #include "core/logging.h"
@@ -28,6 +32,7 @@
 #include "core/theme.h"
 #include "core/time.h"
 #include "markdown_service.h"
+#include "md_keyboard.h"
 #include "md_line_scanner.h"
 #include "md_tree.h"
 
@@ -840,15 +845,76 @@ private:
                 .theme(componentTheme)
                 .onChange([this](const std::string& v) {
                     // 每次输入都更新内存缓冲；落盘走防抖（见 flushEditorIfIdle）
-                    editorText_ = v;
-                    editorDirty_ = true;
-                    outlineDirty_ = true;
-                    lastEditAt_ = std::chrono::steady_clock::now();
+                    onEditorTextChanged(v);
+                })
+                // Phase 2 键盘流（spec §5.2 通道 A）：聚焦时先于内置处理收到
+                // 按键，返回 true = 拦截。ui 引用即 Runtime 的常驻 Ui（状态
+                // store 跨帧持久），lambda 捕获安全
+                .onKeyEvent([this, &ui](const eui::KeyEvent& event) {
+                    return handleEditorKey(ui, event);
                 })
                 .build();
 
             drawStatusBar(ui, 0.0f, bodyH - 22.0f, midW, t);
         }).build();
+    }
+    // ---- Phase 2 键盘流：onKeyEvent 接线（纯函数在 md_keyboard）----
+    // 键位：Tab/Shift+Tab 缩进、Enter 列表续行、Ctrl+B/I 包裹、Ctrl+K 链接。
+    // 文本/光标/选区变换全部走 md_keyboard 纯函数，这里只做：
+    // IME 防御 → 纯函数 → 写回 InputState（undo 快照 + textRevision +
+    // onChange 副作用）。无变化的拦截（如 Shift+Tab 无前导空格）只消费不动状态。
+    bool handleEditorKey(eui::Ui& ui, const eui::KeyEvent& event) {
+        using InputState = components::input_detail::InputModel::InputState;
+        if (!event.isDown()) return false;
+        auto& st = ui.state<InputState>("md.editor.input");
+        // IME 预编辑中不拦截（避免打断组字；Ctrl 类修饰键 IME 也可能用）
+        if (!st.compositionText.empty()) return false;
+
+        EditBuffer buf{st.text, st.cursor, st.selectionStart, st.selectionEnd};
+        const bool shortcut = event.modifiers.shortcut();
+        const bool plain = !shortcut && !event.modifiers.shift &&
+                           !event.modifiers.alt && !event.modifiers.super;
+        bool handled = false;
+        if (event.key == eui::InputKey::Tab && !shortcut && !event.modifiers.alt) {
+            applyTab(buf, event.modifiers.shift);
+            handled = true;
+        } else if (event.key == eui::InputKey::Enter && plain) {
+            handled = applyEnterList(buf);
+        } else if (shortcut && !event.modifiers.shift && !event.modifiers.alt) {
+            if (event.key == eui::InputKey::B) {
+                applyWrapAround(buf, "**");
+                handled = true;
+            } else if (event.key == eui::InputKey::I) {
+                applyWrapAround(buf, "*");
+                handled = true;
+            } else if (event.key == eui::InputKey::K) {
+                applyLinkSkeleton(buf);
+                handled = true;
+            }
+        }
+        if (!handled) return false;
+        if (buf.text == st.text && buf.cursor == st.cursor &&
+            buf.selStart == st.selectionStart && buf.selEnd == st.selectionEnd) {
+            return true;  // 无变化：已消费，不制造空 undo / 脏标记
+        }
+        components::input_detail::InputModel::pushUndoState(st);
+        st.text = std::move(buf.text);
+        ++st.textRevision;
+        st.cursor = buf.cursor;
+        st.selectionStart = buf.selStart;
+        st.selectionEnd = buf.selEnd;
+        st.hasPreferredCursorX = false;
+        st.followCaret = true;  // 编辑后滚到光标（同内置行为）
+        onEditorTextChanged(st.text);
+        return true;
+    }
+
+    // onChange 与键盘流共用的副作用（内存缓冲 + 脏标记，落盘走防抖）
+    void onEditorTextChanged(const std::string& v) {
+        editorText_ = v;
+        editorDirty_ = true;
+        outlineDirty_ = true;
+        lastEditAt_ = std::chrono::steady_clock::now();
     }
 
     // ---- 编辑器顶栏：当前笔记的标签 chip 行（显示 + 添加输入 + × 删除）----
