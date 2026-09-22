@@ -8,6 +8,7 @@
 
 #include "claude_service.h"
 #include "core/database.h"
+#include "core/paths.h"
 #include "core/sqlite_db.h"
 #include "platform/http_server.h"
 #include "platform/keychain.h"
@@ -15,6 +16,7 @@
 #include <chrono>
 #include <ctime>
 #include <filesystem>
+#include <fstream>
 #include <stdexcept>
 #include <string>
 #include <thread>
@@ -309,6 +311,95 @@ REGISTER_TEST(claude_service_delete_profile,
     auto again = svc.deleteProfile(id);
     DOCTEST_CHECK(again.isFail());
 
+    return true;
+})
+
+// ---- 6b. deleteProfile：Keychain 清理失败时中止（SQLite 行保留） ----
+
+#if defined(_WIN32)
+REGISTER_TEST(claude_service_delete_profile_keychain_fail,
+              "claude_service: Keychain 删除失败时中止 deleteProfile", {
+    TestDb tdb("delfail");
+    module::claude::ClaudeService svc(tdb.handle(), kTestKeychainService);
+
+    auto created = svc.createProfile("Stuck", "https://stuck.example.com",
+                                     "sk-ant-stuck-7777", "m");
+    DOCTEST_REQUIRE(created.isOk());
+    const int64_t id = created.value().id;
+
+    // Windows keychain 存储路径（见 keychain_win.cpp）：
+    // <appData>/keychain/<service>/<sanitize(account)>.key，
+    // account "claude:<id>" 安全化后为 "claude_<id>"。
+    // 把密钥文件换成非空目录 → fs::remove 必失败，注入 Keychain 删除失败
+    const auto keyPath = core::paths::appDataDir() / "keychain" /
+                         kTestKeychainService /
+                         ("claude_" + std::to_string(id) + ".key");
+    std::error_code ec;
+    DOCTEST_REQUIRE(std::filesystem::exists(keyPath, ec));
+    std::filesystem::remove(keyPath, ec);
+    std::filesystem::create_directories(keyPath, ec);
+    {
+        std::ofstream blocker(keyPath / "blocker.txt");
+        blocker << "make dir non-empty";
+    }
+
+    // 中止：deleteProfile 失败，SQLite 行保留（可重试，数据不丢）
+    auto r = svc.deleteProfile(id);
+    DOCTEST_CHECK(r.isFail());
+    DOCTEST_CHECK(svc.getProfile(id).isOk());
+
+    // 恢复现场后重试 → 成功，两边都清干净
+    std::filesystem::remove_all(keyPath, ec);
+    DOCTEST_REQUIRE(platform::keychain::storeSecret(
+        kTestKeychainService, "claude:" + std::to_string(id),
+        "sk-ant-stuck-7777").isOk());
+    DOCTEST_REQUIRE(svc.deleteProfile(id).isOk());
+    DOCTEST_CHECK(svc.getProfile(id).isFail());
+    DOCTEST_CHECK(platform::keychain::loadSecret(
+        kTestKeychainService, "claude:" + std::to_string(id)).isFail());
+    return true;
+})
+#endif  // _WIN32
+
+// ---- 6c. 启动时孤儿 Keychain 清理 ----
+
+REGISTER_TEST(claude_service_orphan_keychain_cleanup,
+              "claude_service: cleanupOrphanKeychainEntries 清孤儿密钥", {
+    TestDb tdb("orphan");
+    module::claude::ClaudeService svc(tdb.handle(), kTestKeychainService);
+
+    auto a = svc.createProfile("KeepA", "https://a.example.com",
+                               "sk-ant-keep-aaaa", "m");
+    DOCTEST_REQUIRE(a.isOk());
+    auto b = svc.createProfile("KeepB", "https://b.example.com",
+                               "sk-ant-keep-bbbb", "m");
+    DOCTEST_REQUIRE(b.isOk());
+
+    // 塞一个无对应 profile 的孤儿密钥（历史 bug 遗留形态）
+    DOCTEST_REQUIRE(platform::keychain::storeSecret(
+        kTestKeychainService, "claude:999", "sk-ant-orphan").isOk());
+
+    auto r = svc.cleanupOrphanKeychainEntries();
+    DOCTEST_REQUIRE(r.isOk());
+    DOCTEST_CHECK(r.value() >= 1);
+
+    // 孤儿被清，在册 profile 的 key 完好
+    DOCTEST_CHECK(platform::keychain::loadSecret(
+        kTestKeychainService, "claude:999").isFail());
+    auto ka = svc.loadApiKey(a.value().id);
+    DOCTEST_REQUIRE(ka.isOk());
+    DOCTEST_CHECK_EQ(ka.value(), std::string("sk-ant-keep-aaaa"));
+    auto kb = svc.loadApiKey(b.value().id);
+    DOCTEST_REQUIRE(kb.isOk());
+    DOCTEST_CHECK_EQ(kb.value(), std::string("sk-ant-keep-bbbb"));
+
+    // 再跑一次 → 无孤儿可清
+    auto again = svc.cleanupOrphanKeychainEntries();
+    DOCTEST_REQUIRE(again.isOk());
+    DOCTEST_CHECK_EQ(again.value(), 0);
+
+    cleanupKey(a.value().id);
+    cleanupKey(b.value().id);
     return true;
 })
 

@@ -416,7 +416,19 @@ core::Result<void> ClaudeService::deleteProfile(int64_t id) {
         return core::Result<void>::fail(p.errorCode(), p.errorMessage());
     }
 
-    // 先删 SQLite 行（FK CASCADE 会清空 claude_call_logs）
+    // 先清 Keychain，失败则中止删除并返回错误（SQLite 行保留，用户可重试，
+    // API key 不丢）。顺序不能反：先删行会让 Keychain 失败时留下永久孤儿密钥。
+    auto kcDel = platform::keychain::deleteSecret(
+        keychainService_, p.value().keychainAccount);
+    if (kcDel.isFail()) {
+        LOG_ERROR("清理 Keychain 失败，中止删除 profile id=" +
+                  std::to_string(id) + ": " + kcDel.errorMessage());
+        return core::Result<void>::fail(
+            kcDel.errorCode(),
+            "清理 Keychain 失败，profile 未删除: " + kcDel.errorMessage());
+    }
+
+    // 再删 SQLite 行（FK CASCADE 会清空 claude_call_logs）
     auto prep = db_.prepare("DELETE FROM claude_profiles WHERE id = ?");
     if (prep.isFail()) {
         return core::Result<void>::fail(prep.errorCode(), prep.errorMessage());
@@ -428,16 +440,34 @@ core::Result<void> ClaudeService::deleteProfile(int64_t id) {
         return core::Result<void>::fail(stepR.errorCode(), stepR.errorMessage());
     }
 
-    // 再清 Keychain（即使失败也不回滚 SQLite，Keychain 会泄漏一个孤儿条目
-    // 但不影响功能；下次启动时可通过 keychain_check 检测清理）
-    auto kcDel = platform::keychain::deleteSecret(
-        keychainService_, p.value().keychainAccount);
-    if (kcDel.isFail()) {
-        LOG_WARN("清理 Keychain 失败: " + kcDel.errorMessage());
-    }
-
     LOG_INFO("已删除 Claude profile id=" + std::to_string(id));
     return core::Result<void>::ok();
+}
+
+core::Result<int> ClaudeService::cleanupOrphanKeychainEntries() {
+    // 一次扫描：keychainService_ 命名空间归 Claude profile 独占，
+    // 不在 claude_profiles.keychain_account 里的条目即孤儿密钥
+    auto profilesR = listProfiles();
+    if (profilesR.isFail()) {
+        return core::Result<int>::fail(profilesR.errorCode(),
+                                       profilesR.errorMessage());
+    }
+    std::vector<std::string> keep;
+    keep.reserve(profilesR.value().size());
+    for (const auto& prof : profilesR.value()) {
+        keep.push_back(prof.keychainAccount);
+    }
+
+    auto delR = platform::keychain::deleteSecretsNotIn(keychainService_, keep);
+    if (delR.isFail()) {
+        return core::Result<int>::fail(delR.errorCode(), delR.errorMessage());
+    }
+    const int removed = static_cast<int>(delR.value().size());
+    if (removed > 0) {
+        LOG_INFO("已清理 " + std::to_string(removed) +
+                 " 个孤儿 Keychain 密钥（无对应 profile）");
+    }
+    return core::Result<int>::ok(removed);
 }
 
 // ---------- API key ----------
