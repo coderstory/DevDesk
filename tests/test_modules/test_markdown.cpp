@@ -304,3 +304,44 @@ REGISTER_TEST(md_module_compose_phase1, "markdown_module: Phase 1 三态/大纲/
     mod->onStop();
     return true;
 })
+
+// ---- 3. W7 稳定化：pagebg / toast 节点常驻（headless 冒烟）----
+
+REGISTER_TEST(md_module_compose_w7, "markdown_module: W7 pagebg/toast compose（headless）", {
+    const std::string text = "# W7\n\n冒烟内容。\n";
+    MdUiEnv env("w7");
+    DOCTEST_REQUIRE(env.db != nullptr);
+    DOCTEST_REQUIRE(writeTextFile(env.dir / "note.md", text));
+
+    std::unique_ptr<::core::Module> mod(create_markdown_module());
+    mod->onStart();
+
+    eui::Screen screen;
+    screen.width = 1600.0f;
+    screen.height = 1000.0f;
+    eui::Ui ui;
+    auto frame = [&](const char* page) {
+        ui.begin(page);
+        mod->compose(ui, screen);
+        ui.end();
+    };
+
+    frame("w7_f1");
+    // 页面铺底色（深色主题黑底修复的载体）
+    const auto* pagebg = ui.find("md.pagebg");
+    DOCTEST_REQUIRE(pagebg != nullptr);
+    DOCTEST_CHECK_EQ(pagebg->width.value, screen.width);
+    DOCTEST_CHECK_EQ(pagebg->height.value, screen.height);
+    // toast 单例常驻（保存失败反馈的载体，visible 由状态位控制）
+    DOCTEST_CHECK(ui.find("md.toast") != nullptr);
+
+    // 打开笔记走一遍真实保存链路（onStop 落盘不崩）
+    const auto* row = ui.find("md.tree.item.0.row");
+    DOCTEST_REQUIRE(row != nullptr);
+    DOCTEST_REQUIRE(row->onClick != nullptr);
+    row->onClick();
+    frame("w7_f2");
+    DOCTEST_CHECK(ui.find("md.editor.input") != nullptr);
+    mod->onStop();
+    return true;
+})

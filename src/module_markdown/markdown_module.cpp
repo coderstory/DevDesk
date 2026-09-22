@@ -32,6 +32,7 @@
 #include <components/scrollview.h>
 #include <components/segmented.h>
 #include <components/theme.h>
+#include <components/toast.h>
 
 #include <algorithm>
 #include <chrono>
@@ -42,6 +43,7 @@
 #include <functional>
 #include <memory>
 #include <string>
+#include <thread>
 #include <vector>
 
 namespace module::markdown {
@@ -69,7 +71,7 @@ void drawFileTreeItem(eui::Ui& ui,
         .position(12.0f, 0.0f)
         .size(20.0f, 32.0f)
         .text(icon)
-        .fontSize(14.0f)
+        .fontSize(t.sizes.fontSizeBody)
         .lineHeight(32.0f)
         .color(t.colors.textSecondary)
         .build();
@@ -77,7 +79,7 @@ void drawFileTreeItem(eui::Ui& ui,
         .position(36.0f, 0.0f)
         .size(std::max(0.0f, width - 48.0f), 32.0f)
         .text(name)
-        .fontSize(13.0f)
+        .fontSize(t.sizes.fontSizeSmall)
         .lineHeight(32.0f)
         .color(active ? t.colors.primary : t.colors.textPrimary)
         .fontWeight(active ? 700 : 400)
@@ -98,7 +100,7 @@ std::string noteDisplayPath(const NoteMeta& n) {
 // 三态视图（值 = 顶栏 segmented 的选中下标）
 enum class ViewMode { Edit = 0, Split = 1, Preview = 2 };
 
-constexpr float kEditorFontSize = 14.0f;      // 与编辑器 input 的 fontSize 一致
+constexpr float kEditorFontSize = 15.0f;      // = fontSizeBody（视觉规范正文 15px，W7 P1-4 换 token 基准）
 constexpr float kEditorLineHeight = kEditorFontSize * 1.2f;  // input 内部行高
 constexpr float kEditTextColumnWidth = 720.0f;  // 仅编辑态的居中文本列宽（Typora 写作宽度）
 constexpr float kPreviewColumnWidth = 760.0f;   // 仅预览态的居中阅读列宽
@@ -142,7 +144,18 @@ public:
     }
 
     void onStop() override {
-        saveEditor();
+        // 退出前落盘：失败不能静默丢编辑（W7 P1-2）。EUI-NEO 无退出拦截
+        // API，无法阻断退出弹 dialog，做同步有限重试（瞬时文件锁可自行恢复）
+        // + 响亮日志兜底；编辑器内容不再有其他持久化通道。
+        for (int attempt = 0; attempt < 3 && editorDirty_; ++attempt) {
+            saveEditor();
+            if (!editorDirty_) break;
+            std::this_thread::sleep_for(std::chrono::milliseconds(200));
+        }
+        if (editorDirty_ && !currentPath_.empty()) {
+            LOG_ERROR("退出时保存笔记失败，未落盘的编辑已丢失: " + currentPath_ +
+                      "（EUI-NEO 暂无退出拦截 API，无法阻断退出）");
+        }
         LOG_INFO("Markdown 模块停止");
     }
 
@@ -174,6 +187,13 @@ public:
         const float midW = (contentW - sideW * 2.0f - gap * 2.0f) / 2.0f;
         const float bodyH = contentH - 64.0f - t.sizes.spacingLarge;
 
+        // 页面背景自绘（仿 settings_module：main.cpp clearColor 固定浅色，
+        // 深色主题下页面必须自己铺底，否则黑底/浅底混色不可读——W7 P0-1）
+        ui.rect("md.pagebg")
+            .size(screen.width, screen.height)
+            .color(t.colors.background)
+            .build();
+
         ui.column("md.root")
             .size(screen.width, screen.height)
             .padding(pad)
@@ -186,6 +206,9 @@ public:
 
         // 弹窗要画在最上层（dialog 自带 zIndex）
         drawNewNoteDialog(ui, screen, t, componentTheme);
+
+        // 保存失败等操作的 toast 反馈（画在弹窗之上）
+        drawToast(ui, screen, componentTheme);
     }
 
 private:
@@ -235,7 +258,7 @@ private:
                     .size(segW, 36.0f)
                     .items({"✎ 编辑", "⇔ 双栏", "👁 预览"})
                     .selected(static_cast<int>(mode_))
-                    .fontSize(13.0f)
+                    .fontSize(t.sizes.fontSizeSmall)
                     .theme(componentTheme)
                     .onChange([this](int index) {
                         setMode(static_cast<ViewMode>(index));
@@ -326,7 +349,7 @@ private:
                 .size(sideW - 24.0f, 36.0f)
                 .value(searchQuery_)
                 .placeholder("🔍 搜索笔记…")
-                .fontSize(13.0f)
+                .fontSize(t.sizes.fontSizeSmall)
                 .inset(10.0f)
                 .theme(componentTheme)
                 .onChange([this](const std::string& v) {
@@ -344,7 +367,7 @@ private:
                         .size(sideW - 24.0f, 30.0f)
                         .items({"文件", "大纲"})
                         .selected(leftTab_)
-                        .fontSize(13.0f)
+                        .fontSize(t.sizes.fontSizeSmall)
                         .theme(componentTheme)
                         .onChange([this](int index) { leftTab_ = index; })
                         .build();
@@ -354,15 +377,28 @@ private:
             const float listY = 98.0f;
             const float listH = std::max(0.0f, bodyH - listY - 60.0f);
 
+            // 错误态与空态区分（W7 P1-1，仿 Home 三态）：
+            // DB/列表失败 → 错误文案 + 重试指引，不再伪装成「还没有笔记」
             if (leftTab_ == 1) {
                 drawOutlineList(ui, listY, listH, sideW, t, componentTheme);
+            } else if (!listError_.empty()) {
+                ui.text("md.tree.error")
+                    .position(16.0f, listY + 8.0f)
+                    .size(sideW - 32.0f, 60.0f)
+                    .text("列表加载失败：\n" + listError_ +
+                          "\n点右上角「↻ 重扫」重试")
+                    .fontSize(t.sizes.fontSizeSmall)
+                    .lineHeight(18.0f)
+                    .wrap()
+                    .color(t.colors.error)
+                    .build();
             } else if (notes_.empty()) {
                 ui.text("md.tree.empty")
                     .position(16.0f, listY + 8.0f)
                     .size(sideW - 32.0f, 40.0f)
                     .text(searchQuery_.empty() ? "还没有笔记\n点下面「+ 新建」开始"
                                                : "没有匹配的笔记")
-                    .fontSize(12.0f)
+                    .fontSize(t.sizes.fontSizeSmall)
                     .lineHeight(18.0f)
                     .wrap()
                     .color(t.colors.textTertiary)
@@ -377,7 +413,7 @@ private:
                 .position(12.0f, newBtnY)
                 .size(sideW - 24.0f, 36.0f)
                 .text("+ 新建")
-                .fontSize(13.0f)
+                .fontSize(t.sizes.fontSizeSmall)
                 .theme(componentTheme, false)
                 .textColor(t.colors.textPrimary)
                 .radius(t.sizes.radius)
@@ -397,13 +433,21 @@ private:
                       const core::theme::Tokens& t,
                       const components::theme::ThemeColorTokens& componentTheme) {
         const float rowW = sideW - 16.0f;
+        // contentKey 反模式修复（W7）：旧 key 用 notes_.size()，同数量替换
+        // （如搜索结果变化）不触发滚动内容重建、左栏显示旧列表。改为
+        // 逐条路径组合 hash，内容变即 key 变。
+        size_t listKey = 0;
+        for (const auto& n : notes_) {
+            listKey = listKey * 1315423911u +
+                      std::hash<std::string>{}(noteDisplayPath(n));
+        }
         components::scrollView(ui, "md.tree.scroll")
             .position(8.0f, listY)
             .size(sideW - 16.0f, listH)
             .gap(0.0f)
             .step(40.0f)
             .theme(componentTheme)
-            .contentKey("md.tree.scroll." + std::to_string(notes_.size()))
+            .contentKey("md.tree.scroll." + std::to_string(listKey))
             .content([&](eui::Ui& inner, float contentWidth, float viewportHeight) {
                 (void)viewportHeight;
                 const float w = std::min(contentWidth, rowW);
@@ -432,7 +476,7 @@ private:
                 .size(sideW - 32.0f, 40.0f)
                 .text(currentPath_.empty() ? "先打开一篇笔记"
                                            : "没有标题\n用 # 开始一行即可加入大纲")
-                .fontSize(12.0f)
+                .fontSize(t.sizes.fontSizeSmall)
                 .lineHeight(18.0f)
                 .wrap()
                 .color(t.colors.textTertiary)
@@ -443,13 +487,21 @@ private:
         // 当前节：光标行所在的上一个标题（仅预览态无编辑器，用上次跳转位置）
         const int active = activeOutlineIndex(ui);
 
+        // contentKey 反模式修复（W7）：旧 key 用 outline_.size()，同数量
+        // 标题替换（改标题文字）不触发重建。改为标题+级别组合 hash。
+        size_t outlineKey = 0;
+        for (const auto& h : outline_) {
+            outlineKey = outlineKey * 1315423911u +
+                         std::hash<std::string>{}(h.title) +
+                         static_cast<size_t>(h.level);
+        }
         components::scrollView(ui, "md.outline.scroll")
             .position(8.0f, listY)
             .size(sideW - 16.0f, listH)
             .gap(0.0f)
             .step(40.0f)
             .theme(componentTheme)
-            .contentKey("md.outline.scroll." + std::to_string(outline_.size()))
+            .contentKey("md.outline.scroll." + std::to_string(outlineKey))
             .content([&](eui::Ui& inner, float contentWidth, float viewportHeight) {
                 (void)viewportHeight;
                 const float rowW = std::min(contentWidth, sideW - 16.0f);
@@ -471,7 +523,7 @@ private:
                         .size(std::max(0.0f, rowW - 20.0f -
                                        static_cast<float>(h.level - 1) * 14.0f), 30.0f)
                         .text(h.title.empty() ? "(无标题)" : h.title)
-                        .fontSize(13.0f)
+                        .fontSize(t.sizes.fontSizeSmall)
                         .lineHeight(30.0f)
                         .color(current ? t.colors.primary : t.colors.textPrimary)
                         .fontWeight(current ? 700 : 400)
@@ -506,7 +558,7 @@ private:
                     .position(24.0f, 50.0f)
                     .size(midW - 48.0f, 40.0f)
                     .text("从左栏选一篇笔记开始编辑")
-                    .fontSize(14.0f)
+                    .fontSize(t.sizes.fontSizeBody)
                     .lineHeight(20.0f)
                     .color(t.colors.textTertiary)
                     .build();
@@ -561,7 +613,10 @@ private:
         eui::Color leftColor = t.colors.textTertiary;
         if (!currentPath_.empty()) {
             const std::string name = fs::path(currentPath_).filename().string();
-            if (editorDirty_) {
+            if (saveFailed_) {
+                left = name + "  ✕ 保存失败，自动重试中";
+                leftColor = t.colors.error;
+            } else if (editorDirty_) {
                 left = name + "  ● 未保存";
                 leftColor = t.colors.warning;
             } else {
@@ -635,7 +690,7 @@ private:
                     .position(pvX, pvY)
                     .size(pvW, 40.0f)
                     .text("选择笔记后在这里看到渲染结果")
-                    .fontSize(14.0f)
+                    .fontSize(t.sizes.fontSizeBody)
                     .lineHeight(20.0f)
                     .color(t.colors.textTertiary)
                     .build();
@@ -664,7 +719,7 @@ private:
                 .theme(componentTheme)
                 .offset(scrollOffset)
                 .contentKey("md.preview.scroll." + currentPath_ + "." +
-                            std::to_string(editorText_.size()));
+                            std::to_string(std::hash<std::string>{}(editorText_)));
             if (mode_ == ViewMode::Preview) {
                 // 仅预览态允许手动滚动（双向：滚轮写回 previewOffset_）
                 scroll.onChange([this](float v) { previewOffset_ = v; });
@@ -740,7 +795,7 @@ private:
                     .position(28.0f, 24.0f)
                     .size(w - 56.0f, 28.0f)
                     .text("新建笔记")
-                    .fontSize(20.0f)
+                    .fontSize(t.sizes.fontSizeLarge)
                     .lineHeight(28.0f)
                     .fontWeight(700)
                     .color(t.colors.textPrimary)
@@ -750,7 +805,7 @@ private:
                     .position(28.0f, 56.0f)
                     .size(w - 56.0f, 18.0f)
                     .text("支持子目录，例如 inbox/ideas.md")
-                    .fontSize(12.0f)
+                    .fontSize(t.sizes.fontSizeSmall)
                     .lineHeight(18.0f)
                     .color(t.colors.textTertiary)
                     .build();
@@ -760,7 +815,7 @@ private:
                     .size(w - 56.0f, 44.0f)
                     .value(newNoteName_)
                     .placeholder("笔记名，例如 周会纪要")
-                    .fontSize(15.0f)
+                    .fontSize(t.sizes.fontSizeBody)
                     .theme(componentTheme)
                     .onChange([this](const std::string& v) { newNoteName_ = v; })
                     .onEnter([this] { commitNewNote(); })
@@ -770,7 +825,7 @@ private:
                     .position(28.0f, h - 60.0f)
                     .size((w - 68.0f) * 0.5f, 40.0f)
                     .text("取消")
-                    .fontSize(14.0f)
+                    .fontSize(t.sizes.fontSizeBody)
                     .theme(componentTheme, false)
                     .textColor(t.colors.textPrimary)
                     .radius(t.sizes.radius)
@@ -782,7 +837,7 @@ private:
                     .position(28.0f + (w - 68.0f) * 0.5f + 12.0f, h - 60.0f)
                     .size((w - 68.0f) * 0.5f, 40.0f)
                     .text("创建")
-                    .fontSize(14.0f)
+                    .fontSize(t.sizes.fontSizeBody)
                     .theme(componentTheme, true)
                     .textColor(eui::Color("#FFFFFF"))
                     .radius(t.sizes.radius)
@@ -793,6 +848,27 @@ private:
     }
 
     // ==================== 业务动作 ====================
+
+    // ---- Toast 反馈（仿 claude_module）----
+    void drawToast(eui::Ui& ui, const eui::Screen& screen,
+                   const components::theme::ThemeColorTokens& themeTokens) {
+        components::toast(ui, "md.toast")
+            .theme(themeTokens)
+            .screen(screen.width, screen.height)
+            .visible(toastOpen_)
+            .duration(3.5f)
+            .title(toastTitle_)
+            .message(toastMessage_)
+            .onAutoDismiss([this] { toastOpen_ = false; })
+            .onDismiss([this] { toastOpen_ = false; })
+            .build();
+    }
+
+    void showToast(const std::string& title, const std::string& msg, bool isError) {
+        toastTitle_ = isError ? ("⚠ " + title) : ("✓ " + title);
+        toastMessage_ = msg;
+        toastOpen_ = true;
+    }
 
     // ---- Phase 1：三态切换 / 大纲 ----
 
@@ -893,8 +969,11 @@ private:
         if (r.isFail()) {
             LOG_ERROR("刷新笔记列表失败: " + r.errorMessage());
             status_ = "列表失败：" + r.errorMessage();
+            listError_ = r.errorMessage();
+            notes_.clear();  // 不拿旧数据伪装成当前态
             return;
         }
+        listError_.clear();
         notes_ = std::move(r.value());
     }
 
@@ -907,6 +986,7 @@ private:
         if (r.isFail()) {
             LOG_ERROR("读取笔记失败 " + relPath + ": " + r.errorMessage());
             status_ = "读取失败：" + r.errorMessage();
+            showToast("读取失败", "「" + relPath + "」" + r.errorMessage(), true);
             return;
         }
         currentPath_ = relPath;
@@ -920,31 +1000,50 @@ private:
         LOG_INFO("打开笔记: " + relPath);
     }
 
-    // 编辑器里还有未落盘的改动时写回文件 + 索引（每帧调用，自带防抖）
+    // 编辑器里还有未落盘的改动时写回文件 + 索引（每帧调用，自带防抖）。
+    // 保存失败后指数退避（W7 P1-2）：旧代码 dirty 期间每帧重试，
+    // 60fps 下每秒打 60 次失败 IO/日志。
     void flushEditorIfIdle() {
         if (!editorDirty_) return;
         const auto now = std::chrono::steady_clock::now();
         const auto idleMs = std::chrono::duration_cast<std::chrono::milliseconds>(
                                 now - lastEditAt_).count();
-        if (idleMs >= kAutoSaveDelayMs) {
-            saveEditor();
-        }
+        if (idleMs < kAutoSaveDelayMs) return;
+        const auto sinceAttemptMs = std::chrono::duration_cast<std::chrono::milliseconds>(
+                                        now - lastSaveAttemptAt_).count();
+        if (sinceAttemptMs < saveBackoffMs_) return;
+        lastSaveAttemptAt_ = now;
+        saveEditor();
     }
 
     void saveEditor() {
         if (!service_ || currentPath_.empty()) return;
         if (editorText_ == lastSavedText_) {
             editorDirty_ = false;
+            saveFailed_ = false;
             return;
         }
         auto r = service_->write(currentPath_, editorText_);
         if (r.isFail()) {
             LOG_ERROR("保存笔记失败 " + currentPath_ + ": " + r.errorMessage());
             status_ = "保存失败：" + r.errorMessage();
+            saveFailed_ = true;
+            // 500ms → 1s → 2s → … 封顶 60s
+            saveBackoffMs_ = (saveBackoffMs_ == 0)
+                ? 500 : std::min(saveBackoffMs_ * 2, kMaxSaveBackoffMs);
+            // toast 单实例：失败重试风暴期间只在无 toast 展示时弹一次
+            if (!toastOpen_) {
+                showToast("保存失败",
+                          "「" + currentPath_ + "」" + r.errorMessage() +
+                              "，已自动重试",
+                          true);
+            }
             return;
         }
         lastSavedText_ = editorText_;
         editorDirty_ = false;
+        saveFailed_ = false;
+        saveBackoffMs_ = 0;
         lastSavedAt_ = std::time(nullptr);
         status_ = "已保存 " + currentPath_;
     }
@@ -955,6 +1054,7 @@ private:
         if (r.isFail()) {
             LOG_ERROR("重扫失败: " + r.errorMessage());
             status_ = "重扫失败：" + r.errorMessage();
+            listError_ = r.errorMessage();  // 左栏立即切到错误态（含重试指引）
             return;
         }
         refreshList();
@@ -1009,6 +1109,7 @@ private:
     // ==================== 状态 ====================
 
     static constexpr int64_t kAutoSaveDelayMs = 400;
+    static constexpr int64_t kMaxSaveBackoffMs = 60000;  // 保存失败退避封顶 60s
 
     std::unique_ptr<MarkdownService> service_;
     std::vector<NoteMeta> notes_;      // 当前展示（全部或搜索结果）
@@ -1017,10 +1118,19 @@ private:
     std::string editorText_;           // 编辑器缓冲
     std::string lastSavedText_;        // 上次落盘内容（用于跳过冗余写）
     bool editorDirty_ = false;
+    bool saveFailed_ = false;          // 上次保存尝试失败（状态栏 ✕ 提示）
     std::chrono::steady_clock::time_point lastEditAt_{};
+    std::chrono::steady_clock::time_point lastSaveAttemptAt_{};  // 退避计时基准
+    int64_t saveBackoffMs_ = 0;        // 0 = 无退避；失败后指数增长
     std::string status_;               // 顶栏副标题里的状态提示
+    std::string listError_;            // 左栏错误态（空 = 正常；W7 P1-1）
     bool newNoteOpen_ = false;
     std::string newNoteName_;
+
+    // ---- Toast（EUI-NEO 单实例，复用一个状态位）----
+    bool toastOpen_ = false;
+    std::string toastTitle_;
+    std::string toastMessage_;
 
     // ---- Phase 1 状态 ----
     ViewMode mode_ = ViewMode::Split;  // 三态视图（默认双栏）

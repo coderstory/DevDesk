@@ -154,9 +154,13 @@ core::Result<void> MarkdownService::syncOneToIndex(
         return core::Result<void>::fail(core::ErrorCode::FileReadFailed,
             "无法获取 mtime " + absPath.string() + ": " + ec.message());
     }
-    // mtime 转 unix epoch seconds（C++17 的 file_time 是 clock-dependent）
-    auto mtimeSec = std::chrono::duration_cast<std::chrono::seconds>(
-        mtime.time_since_epoch()).count();
+    // mtime 转 unix epoch seconds。C++17 的 file_clock epoch 是
+    // implementation-defined（MinGW 上非 1970-01-01，直接 duration_cast 会
+    // 写入荒谬时间，导致 Home「今日笔记」恒 0 /「最近编辑」日期异常——W7 P0-5）。
+    // 可移植换算：file_clock 与 system_clock 在同一时刻各取 now 做差值基准。
+    const auto mtimeSec = std::chrono::duration_cast<std::chrono::seconds>(
+        std::chrono::system_clock::now().time_since_epoch() +
+        (mtime - std::chrono::file_clock::now())).count();
 
     // 读内容
     std::ifstream ifs(absPath);

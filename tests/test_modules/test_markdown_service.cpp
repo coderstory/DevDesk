@@ -14,6 +14,7 @@
 #include <algorithm>
 #include <chrono>
 #include <cstdlib>
+#include <ctime>
 #include <filesystem>
 #include <fstream>
 #include <set>
@@ -425,6 +426,32 @@ REGISTER_TEST(md_index_sync_correct,
     auto ftsRows2 = ftsPrep2.value().fetchAll();
     DOCTEST_REQUIRE(ftsRows2.isOk());
     DOCTEST_CHECK_EQ(ftsRows2.value()[0].getInt64("n").value(), 1);
+
+    fs::remove_all(dir);
+    return true;
+})
+
+REGISTER_TEST(md_mtime_epoch_sane,
+              "MarkdownService: indexed mtime is real unix epoch (anti-false-negative)", {
+    // W7 P0-5 回归防护：旧代码直接 duration_cast(file_clock)，MinGW 的
+    // file_clock epoch 非 1970，写入的时间戳荒谬（Home「今日笔记」恒 0）。
+    // 旧测试用 SQL 直插合成时间戳绕过了这条链路，本用例走真实 write/rescan。
+    const auto dir = makeTempDir("mtime");
+    auto db = makeDb();
+    runMigrations(db);
+    module::markdown::MarkdownService svc(db, dir);
+
+    DOCTEST_REQUIRE(svc.write("fresh.md", "# Fresh\n\nJust written.").isOk());
+    // rescan 走磁盘 mtime 读取链路（write 内部也走 syncOneToIndex，双保险）
+    DOCTEST_REQUIRE(svc.rescan().isOk());
+
+    auto list = svc.listAll();
+    DOCTEST_REQUIRE(list.isOk());
+    DOCTEST_REQUIRE_EQ(list.value().size(), 1u);
+    const int64_t now = static_cast<int64_t>(std::time(nullptr));
+    const int64_t mtime = list.value()[0].modifiedAt;
+    DOCTEST_CHECK(mtime > now - 86400);
+    DOCTEST_CHECK(mtime < now + 86400);
 
     fs::remove_all(dir);
     return true;
