@@ -36,6 +36,9 @@ public:
     // 元素未消费的键回调出来）→ main.cpp → 这里。返回模块是否消费。
     bool dispatchKeyEvent(const eui::KeyEvent& key);
 
+    // navigateTo 会回调目标模块的 Module::onPageEnter（进页通知，
+    // 含同页重入），模块可借此重查数据。默认空实现零改动兼容。
+
     void compose(eui::Ui& ui, const eui::Screen& screen);
 
     void startAll();

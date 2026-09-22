@@ -149,6 +149,10 @@ public:
         LOG_INFO("Home 模块停止");
     }
 
+    // 进页重查（W7）：数据只在启动查一次，从 Todo/Markdown 切回来数字
+    // 不更新——Router::navigateTo 进页通知驱动重查
+    void onPageEnter() override { refreshStats(); }
+
     // ==================== 数据 ====================
 
     void refreshStats() {

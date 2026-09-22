@@ -17,6 +17,14 @@ void Router::navigateTo(PageId page, const std::string& payload) {
                  : "导航到: " + std::string(pageIdToString(page)) + "（负载 " +
                        payload + "）");
     current_ = page;
+    // 进页通知（与 dispatchKeyEvent 同一扩展模式）：目标模块可借
+    // onPageEnter 重查数据（Home 进页重查仪表盘）；含同页重入
+    for (auto* m : modules_) {
+        if (m && m->pageId() == page) {
+            m->onPageEnter();
+            break;
+        }
+    }
     // 仅非空 payload 才记录：纯导航（默认空参）不清除已挂起的负载，
     // 保证既有 navigateTo(page) 调用行为零变化
     if (!payload.empty()) {
