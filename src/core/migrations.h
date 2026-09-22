@@ -165,7 +165,7 @@ inline const Migration kTodoColumnKind = {
         ALTER TABLE todo_columns ADD COLUMN kind TEXT;
         UPDATE todo_columns SET kind = 'todo' WHERE title = '待办';
         UPDATE todo_columns SET kind = 'done' WHERE title = '已完成';
-    )}"
+    )"
 };
 
 // 所有 migrations 的权威列表（顺序敏感，必须按 version 升序）
