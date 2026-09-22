@@ -176,6 +176,14 @@ public:
         const float statH = 120.0f;
         const std::time_t now = std::time(nullptr);
 
+        // 页面背景自绘（与 settings_module 同款）：main.cpp clearColor 固定
+        // 浅色，深色主题下页面必须自己铺底，否则浅色 clear 底 + 深色 token
+        // 文字不可读
+        ui.rect("home.pagebg")
+            .size(screen.width, screen.height)
+            .color(t.colors.background)
+            .build();
+
         ui.column("home.root")
             .size(screen.width, screen.height)
             .padding(pad)
