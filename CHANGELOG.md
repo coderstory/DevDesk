@@ -2,6 +2,21 @@
 
 本文件记录 **a1a106a（macOS 中断现场收编）起** 的条目式变更，按恢复计划的三波（W1 止血收编 / W2 平台架构 / W3 剩余需求）组织，波内按 feat / fix / test / docs 分组。更早的 macOS 主线历史（P0–P8，66 测试通过）见 git log 与 spec §16。
 
+## [W8] 2026-09-22 —— Todo 卡片拖拽真 drop 语义 + 拖动视觉反馈
+
+基线：**178/178 测试全绿**（177 基线 + 1 新增纯函数用例；1 个既有拖拽用例改写为新语义）。
+
+### feat
+
+- **Todo 卡片拖拽重构为真 drop 语义**：旧实现 onDrag 阈值（横向拖过 60% 列宽）即落库，一次拖拽可连环触发多列移动且无中间态。新实现：`onPress` 记锚点（按下时卡片 bounds + 源列/卡序）→ `onDrag` 只更新悬停列（视觉反馈）→ `onRelease` 按指针落点一次性落库（`computeAppendPosition` 追加到目标列尾）。落点换算是纯函数 `ui::dragDropTarget`（todo_ui_logic.h）：以按下卡片 bounds 为锚，dpi 用 `bounds.width / compose 卡宽` 探测、板面原点用卡片左缘回推，同时消掉指针像素空间与 compose 空间的缩放和偏移差；列内滚动偏移一并还原（命中框跟随滚动 transform）。落点在列间隙 / 板外 / Cancel / 源列 → 取消，卡片回原位。顺带消灭旧缺陷：落库只依赖稳定 taskId，不再使用 reloadAll 后会过期的列/卡索引。
+- **拖动视觉中间态**：被拖卡片整体半透明（opacity 0.45，含优先级条 / 标题 / chip / 打勾）；指针悬停列边框高亮（2px primary）。拖拽松手回落在本卡上不误开详情弹窗（onClick 抑制，运行时 onClick 先于 onRelease 派发）。
+- **删除死代码 `core::drag::DragController`**：审计确认无任何调用方；其"平行拖拽框架"需要应用层指针接线，而 EUI-NEO 元素级 `onPress`/`onDrag`/`onRelease` 回调已直接提供同等数据，无法复用，删除 .h/.cpp 与 CMake 条目。
+
+### test
+
+- **`todo_ui_drag_hit_pure`（新增）**：`dragDropTarget` 纯函数——命中/列间隙/板外/板上下方/HiDPI（dpi=2 全坐标翻倍）/列内滚动偏移/退化输入。
+- **`todo_ui_move_appends_to_end`（改写）**：真实 layout 帧驱动完整拖拽序列（press → drag → release），断言中间态（被拖卡 opacity 0.45 + 目标列 border 2px + 源列不亮）、松手落库追加列尾、拖出板外取消、落回源列取消、拖拽松手不开详情弹窗（dialog 常驻 compose，断言 panel opacity）。
+
 ## [W5] 2026-09-22 —— 遗留项清零（三链并行 + 集成）
 
 最终基线：**137/137 测试全绿**（124 基线 + 6 Router payload + 2 Claude UI 冒烟 + 5 字号缩放/Router 集成）。

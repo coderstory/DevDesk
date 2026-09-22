@@ -29,7 +29,7 @@
 | 限制 | 后果 | 应对 |
 |------|------|------|
 | **OS 文件拖入** | 文件不能从 Finder/Explorer 拖入窗口 | "+ 新建"按钮 + `openFileDialog` |
-| **drop target API** | 卡片跨列拖拽需自实现 | 自实现 `DragController`（~200 行）|
+| **drop target API** | 卡片跨列拖拽需自实现 | 用元素级 `onPress`/`onDrag`/`onRelease` 回调自实现（W8 Todo 拖拽已落地，`dragDropTarget` 纯函数换算落点）|
 | **macOS 27 Liquid Glass / vibrancy** | 无透明标题栏、无材料层 | 实色 + 阴影替代 |
 | **tree 组件** | 文件树需自实现 | 用 `virtualList` + 字符图标 + 状态机 |
 | **全局 OS hotkey** | DevDesk 失焦时收不到键盘事件 | 切 profile 需先聚焦窗口 |
@@ -395,7 +395,7 @@ mouseArea(ui, "drag")
 - ❌ **没有跨元素 drop 事件**
 - ❌ **没有 OS 文件拖入**
 
-DevDesk 必须自实现 `DragController`（约 200 行）。
+DevDesk 用元素级 `onPress`/`onDrag`/`onRelease` 回调自实现（W8 Todo 卡片拖拽已落地；早期设想的 `core::drag::DragController` 框架是死代码，已删除）。
 
 ### Hover / 进入 / 离开
 
@@ -589,7 +589,7 @@ components::progress(ui, "p").value(0.6f).build();
 | 模态弹窗 | ✅ 支持 | `components::dialog` |
 | 搜索框 + 实时过滤 | ✅ 支持 | `input` + `Signal<string>` 绑定 |
 | 折叠/展开面板 | ⚠️ 需 hack | `state.expanded ? h : 0` + transition |
-| 拖拽跨列 | ❌ 不支持 | 自实现 `DragController`（~200 行）|
+| 拖拽跨列 | ❌ 不支持 | 元素级 `onDrag`/`onRelease` 回调自实现（W8 已落地）|
 | 文件拖入窗口 | ❌ 不支持 | "+ 新建"按钮 + `openFileDialog` |
 | Toast | ✅ 支持（单实例）| `components::toast` |
 | Loading | ✅ 支持 | `onTimer` + state |
@@ -627,7 +627,7 @@ components::progress(ui, "p").value(0.6f).build();
 1. **写新组件前先 grep `components/`** —— 大概率已有，别造轮子
 2. **配色直接用 hex** —— `core::Color("#D97757")`，无 CSS 变量
 3. **字体只打包 Bold 一份** —— 不打包 SemiBold/Medium，字重靠 stroke / opacity 模拟
-4. **拖拽自实现 DragController** —— 不要等"原生 API"
+4. **拖拽用元素级回调自实现** —— 不要等"原生 API"
 5. **测试用 mock upstream** —— 用 httpbin 或自己写 mock server（cpp-httplib 服务端）
 
 ---
