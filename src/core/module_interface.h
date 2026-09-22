@@ -4,6 +4,7 @@
 #include <string>
 
 #include <eui/dsl.h>
+#include <eui/types.h>
 
 namespace core {
 
@@ -35,6 +36,11 @@ public:
     virtual std::string iconGlyph() const = 0;
 
     virtual void compose(eui::Ui& ui, const eui::Screen& screen) = 0;
+
+    // 页面级键盘事件（P7a 键盘移动）：EUI-NEO 无聚焦元素消费时经
+    // DslAppConfig::onKeyEvent → Router::dispatchKeyEvent 转发到当前页模块。
+    // 返回 true 表示已消费（当前仅约定语义，EUI-NEO 回调无返回值）。
+    virtual bool onKeyEvent(const eui::KeyEvent& event) { return false; }
 
     virtual void onStart() {}
     virtual void onStop() {}
