@@ -141,3 +141,30 @@ T1–T12 全部 ✅。最终基线：**124/124 测试全绿**（109 基线 + 2 H
 - **启动冒烟**：进程存活 8s+；日志零 WARN/ERROR、"Claude 代理已启动"恰 1 次、五模块齐启（含设置）；Home 仪表盘经 HomeService 真实 SQL 聚合（markdown_index / todo_tasks / claude_call_logs）
 - **文档交叉核对**：USER_GUIDE §5 六条路径与 paths_win.cpp / paths.cpp / keychain_win.cpp 实现及 %APPDATA% 磁盘实际目录一一对应；KNOWN_LIMITATIONS 抽查 5 条（ANSI argv / keychain 幂等删留空目录 / fonts+assets 旁挂 / Claude 页 0 个 onClick / soak SKIP 门控）全部属实；README 测试过滤命令原样执行通过（`stress` 子串过滤 6 例全过）
 - **一处数字更正**：Release exe 终验实测 **16,402,944 字节（15.6 MiB）**——上文 15.4 MiB（16,152,064 字节）为 T3/W2 验收时点数字，W3 新增 Settings/Home 代码后增大约 250 KB（+1.5%）；README 与 KNOWN_LIMITATIONS 已同步更正为最新实测，CHANGELOG T3 历史条目保留原值
+
+## W5 遗留项清零（2026-09-22，恢复计划关闭后的追加波）
+
+恢复计划收官后，KNOWN_LIMITATIONS 中登记的 UI 遗留项集中清零，三链并行开发 + 集成合并。
+
+### 任务与 commit
+
+| 链 | 任务 | commit | 内容 |
+|----|------|--------|------|
+| chain1 w5-payload | 跨模块跳转负载 | `c3901a8` | Router payload + consume 一次性语义；Home 快捷按钮弹窗接线、最近编辑打开指定笔记 |
+| chain2 w5-claude-ui | Claude 按钮全量接线 | `843cb2c` | claude_module.cpp 0 onClick → 全量真接 ClaudeService（新建/启用/编辑/删除/测试连通/代理开关） |
+| chain3 w5-nav-global | 侧边栏 + 全局字号 + argv + clearColor | `90d5792` | 常驻侧边栏（260px，删浮动齿轮）；theme fontScale 全局缩放；GetCommandLineW UTF-8 argv；clearColor 随主题 |
+| 集成 | 三链合并 | `317bcf6` / `68182cc` / `0a20a65` | claude-ui → nav-global → payload 依次合回 master |
+
+### 测试
+
+合并后全量 **137/137 全绿**（124 基线 + 6 Router payload + 2 Claude UI 冒烟 + 5 字号缩放/Router），ctest 87s。
+
+### 遗留（如实）
+
+- Home 页右上角「⚙ 设置」按钮仍置灰（视觉残留，设置入口已由侧边栏承担，源码注释已过时）——下次 UI 清理顺手处理
+- 运行中切换主题，窗口底色（clearColor）需重启才跟随（EUI-NEO 无运行时 API，根治走上游 PR）
+- 其余见 KNOWN_LIMITATIONS「已解决」小节之上的现存条目
+
+### 验收（W5 终验，fresh eyes）
+
+git log 三链 commit + 3 个 merge commit 在、工作区干净；ctest 137/137；objdump 仅 16 系统 DLL；启动冒烟 8s 五模块齐启、零 WARN/ERROR、代理恰 1 次、侧边栏挂载日志在；静态抽查（claude_module 回调 ≥6 全真接 / main.cpp 侧边栏+齿轮已删+clearColor 读 theme / theme fontScale 落地 token 层 / file_open_win GetCommandLineW / Router payload consume 一次性）全部通过。UI 交互的最终人工点验留给用户（无头环境无法真鼠标点验）。

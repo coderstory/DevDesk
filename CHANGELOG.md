@@ -2,6 +2,21 @@
 
 本文件记录 **a1a106a（macOS 中断现场收编）起** 的条目式变更，按恢复计划的三波（W1 止血收编 / W2 平台架构 / W3 剩余需求）组织，波内按 feat / fix / test / docs 分组。更早的 macOS 主线历史（P0–P8，66 测试通过）见 git log 与 spec §16。
 
+## [W5] 2026-09-22 —— 遗留项清零（三链并行 + 集成）
+
+最终基线：**137/137 测试全绿**（124 基线 + 6 Router payload + 2 Claude UI 冒烟 + 5 字号缩放/Router 集成）。
+
+### feat
+
+- **`c3901a8` 跨模块跳转负载（w5-payload 链）**：`Router::navigateTo` 增加可选 payload（默认空，既有调用零改动兼容），`consumePendingPayload(PageId)` 一次性消费语义（取出即清空、页面隔离、纯导航不清挂起负载）；Home「+ 新建笔记 / + 新建任务」带 `action:*` 负载在目标页触发既有新建弹窗，「最近编辑」行点击带 `open:<路径>` 负载直接打开指定笔记。测试 +6。
+- **`843cb2c` Claude 模块操作按钮全量接线（w5-claude-ui 链）**：claude_module.cpp 从 0 个 onClick 到全量真接 `ClaudeService`——新建/编辑（dialog 表单，编辑预填、Key 留空=不换）、启用（setActiveProfile）、删除（确认 dialog + Keychain 清理）、测试连通（testConnection + toast）、代理开关（startProxy/stopProxy）。测试 +2（无头 compose 冒烟）。
+- **`90d5792` 侧边栏导航 + 全局字号缩放 + UTF-8 argv + clearColor 跟随主题（w5-nav-global 链）**：main.cpp 自绘常驻侧边栏（260px，5 模块入口，当前页高亮），移除 T11 浮动齿轮桥接；`core::theme` 增加 `fontScale`（钳制 [0.5,2.0]，token 读取层统一施加、重建后重放不叠加），设置页字号档位改写全局缩放；`file_open_win.cpp` 改 `GetCommandLineW + CommandLineToArgvW` 宽字符 argv 转 UTF-8（非 ASCII 路径不再乱码，链接补 shell32）；`clearColor` 构造时从持久化主题快照（运行中切换主题窗口底色仍需重启，EUI-NEO 无运行时 API，见已知限制）。测试 +5。
+- **`317bcf6` / `68182cc` / `0a20a65` 三链合并集成**：w5-claude-ui、w5-nav-global、w5-payload 依次合并回 master，合并后全量 137/137 全绿。
+
+### docs
+
+- **（本波收尾提交）**：KNOWN_LIMITATIONS 已修条目移入「已解决」存档小节（含修复 commit）；USER_GUIDE 导航改为侧边栏描述、代理配置流程改为全 UI 可完成；恢复计划追加 W5 段；CLAUDE.md 缺口表同步。
+
 ## [W3] 2026-09-22 —— 剩余需求（T9–T12 + P16）
 
 最终基线：**124/124 测试全绿**（109 基线 + 2 Home + 10 Settings + 3 JSON）。
