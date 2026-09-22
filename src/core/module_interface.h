@@ -37,10 +37,15 @@ public:
 
     virtual void compose(eui::Ui& ui, const eui::Screen& screen) = 0;
 
-    // 页面级键盘事件（P7a 键盘移动）：EUI-NEO 无聚焦元素消费时经
-    // DslAppConfig::onKeyEvent → Router::dispatchKeyEvent 转发到当前页模块。
-    // 返回 true 表示已消费（当前仅约定语义，EUI-NEO 回调无返回值）。
-    virtual bool onKeyEvent(const eui::KeyEvent& event) { return false; }
+    // 页面级键盘事件：焦点元素没消费的按键，经 app 级 onKeyEvent →
+    // Router::dispatchKeyEvent 派发到当前页模块。返回 true = 已消费。
+    // 背景：EUI-NEO InputBuilder 无逐组件 onKeyEvent passthrough（Phase 2
+    // 上游 PR），模块级快捷键（Todo Ctrl+↑/↓ 移动、Markdown Ctrl+Shift+P
+    // 三态切换，不涉及编辑器文本变换）走这条全局通道。
+    virtual bool onKeyEvent(const eui::KeyEvent& event) {
+        (void)event;
+        return false;
+    }
 
     virtual void onStart() {}
     virtual void onStop() {}

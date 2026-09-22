@@ -132,3 +132,58 @@ REGISTER_TEST(router_payload_overwrite, "router: 新负载覆盖旧负载", {
                      std::string("open:new.md"));
     return true;
 })
+
+// Router::dispatchKeyEvent：把焦点元素没消费的按键派发到当前页模块，
+// 模块返回 true = 已消费；非当前页模块不收；模块默认实现返回 false。
+
+namespace {
+
+class KeyStubModule : public ::core::Module {
+public:
+    KeyStubModule(::core::PageId page, std::string name)
+        : page_(page), name_(std::move(name)) {}
+    ::core::PageId pageId() const override { return page_; }
+    std::string displayName() const override { return name_; }
+    std::string iconGlyph() const override { return "•"; }
+    void compose(eui::Ui& ui, const eui::Screen&) override {
+        ui.text("stub." + name_).text(name_).size(120.0f, 20.0f).build();
+    }
+    bool onKeyEvent(const eui::KeyEvent& key) override {
+        lastKey_ = key.key;
+        return consume_;
+    }
+    ::eui::InputKey lastKey_ = ::eui::InputKey::Unknown;
+    bool consume_ = false;
+
+private:
+    ::core::PageId page_;
+    std::string name_;
+};
+
+} // namespace
+
+REGISTER_TEST(router_dispatch_key_event, "router: dispatchKeyEvent 派发到当前页模块", {
+    ::core::Router router;
+    KeyStubModule md(::core::PageId::Markdown, "md");
+    StubModule home(::core::PageId::Home, "home");
+    router.registerModule(&md);
+    router.registerModule(&home);
+
+    eui::KeyEvent key;
+    key.key = ::eui::InputKey::P;
+    key.modifiers.control = true;
+    key.modifiers.shift = true;
+
+    // 默认 current_=Home → Home 模块无 onKeyEvent 覆盖（默认 false）
+    DOCTEST_CHECK(!router.dispatchKeyEvent(key));
+    DOCTEST_CHECK(md.lastKey_ == ::eui::InputKey::Unknown);  // 非当前页不收
+
+    router.navigateTo(::core::PageId::Markdown);
+    md.consume_ = true;
+    DOCTEST_CHECK(router.dispatchKeyEvent(key));
+    DOCTEST_CHECK(md.lastKey_ == ::eui::InputKey::P);
+
+    md.consume_ = false;
+    DOCTEST_CHECK(!router.dispatchKeyEvent(key));
+    return true;
+})

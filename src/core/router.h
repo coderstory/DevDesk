@@ -31,11 +31,12 @@ public:
     //   - 纯导航（payload 为空）不会清除已挂起的负载
     std::string consumePendingPayload(PageId page);
 
-    void compose(eui::Ui& ui, const eui::Screen& screen);
+    // 焦点元素没消费的按键派发到当前页模块（Module::onKeyEvent，默认 false
+    // = 不消费）。通道：EUI-NEO app 级 onKeyEvent（runtime_input 只把焦点
+    // 元素未消费的键回调出来）→ main.cpp → 这里。返回模块是否消费。
+    bool dispatchKeyEvent(const eui::KeyEvent& key);
 
-    // 把未被聚焦元素消费的键盘事件转发给当前页模块（P7a 键盘移动）。
-    // 返回当前模块是否消费了该事件。
-    bool dispatchKeyEvent(const eui::KeyEvent& event);
+    void compose(eui::Ui& ui, const eui::Screen& screen);
 
     void startAll();
     void stopAll();

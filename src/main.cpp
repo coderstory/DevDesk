@@ -363,10 +363,13 @@ const DslAppConfig& dslAppConfig() {
         // Finder 双击 / 右键「打开方式」：macOS 走 kAEOpenDocuments Apple Event，
         // 由 EUI-NEO 转成回调（主循环里派发），这里切到对应模块。
         .onOpenFile([](const std::string& path) { handleAppleEventOpenFile(path); })
-        // 未被聚焦元素消费的键盘事件 → 当前页模块（Todo Ctrl+↑/↓ 移动等）
-        .onKeyEvent([](const eui::KeyEvent& e) {
+        // 模块级快捷键通道：EUI-NEO 只把焦点元素未消费的按键回调到这里
+        //（runtime_input dispatch 语义），转交 Router 派发到当前页模块。
+        // 背景：InputBuilder 无逐组件 onKeyEvent passthrough（Phase 2 上游 PR），
+        // 不涉及编辑器文本变换的快捷键（Todo Ctrl+↑/↓、Markdown Ctrl+Shift+P）走此通道。
+        .onKeyEvent([](const eui::KeyEvent& key) {
             if (auto* router = getRouter()) {
-                router->dispatchKeyEvent(e);
+                router->dispatchKeyEvent(key);
             }
         });
 
