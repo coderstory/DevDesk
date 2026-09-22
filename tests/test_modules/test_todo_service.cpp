@@ -104,6 +104,55 @@ REGISTER_TEST(todo_svc_rename_column,
     return true;
 })
 
+REGISTER_TEST(todo_svc_set_column_color,
+              "TodoService: setColumnColor 设置/清除/读回",
+              {
+    TestEnv env("color");
+    DOCTEST_REQUIRE(env.ready);
+
+    // 新建列（color NULL）→ 设为预设 token → 读回
+    auto created = env.svc->createColumn("改色列");
+    DOCTEST_REQUIRE(created.isOk());
+    const int64_t id = created.value().id;
+
+    DOCTEST_CHECK(env.svc->setColumnColor(
+                      id, std::optional<std::string>("dusty-blue")).isOk());
+    {
+        auto list = env.svc->listColumns();
+        DOCTEST_REQUIRE(list.isOk());
+        for (const auto& c : list.value()) {
+            if (c.id == id) {
+                DOCTEST_REQUIRE(c.color.has_value());
+                DOCTEST_CHECK_EQ(*c.color, std::string("dusty-blue"));
+            }
+        }
+    }
+
+    // 再改一次（覆盖旧值）+ 清除（nullopt → NULL）
+    DOCTEST_CHECK(env.svc->setColumnColor(
+                      id, std::optional<std::string>("rose-red")).isOk());
+    DOCTEST_CHECK(env.svc->setColumnColor(id, std::nullopt).isOk());
+    {
+        auto list = env.svc->listColumns();
+        DOCTEST_REQUIRE(list.isOk());
+        for (const auto& c : list.value()) {
+            if (c.id == id) {
+                DOCTEST_CHECK(!c.color.has_value());
+            }
+        }
+    }
+
+    // 迁移种子列的 color 原样可读（'claude-clay' 等 token）
+    {
+        auto list = env.svc->listColumns();
+        DOCTEST_REQUIRE(list.isOk());
+        DOCTEST_REQUIRE(!list.value().empty());
+        DOCTEST_REQUIRE(list.value()[0].color.has_value());
+        DOCTEST_CHECK_EQ(*list.value()[0].color, std::string("claude-clay"));
+    }
+    return true;
+})
+
 REGISTER_TEST(todo_svc_delete_column,
               "TodoService: deleteColumn + CASCADE deletes tasks",
               {

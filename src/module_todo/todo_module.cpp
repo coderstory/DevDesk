@@ -133,6 +133,32 @@ void drawChip(eui::Ui& ui,
         .build();
 }
 
+// chip 宽度估算（fontSizeSmall-3 ≈ 11px：CJK ≈ 11px/字（3 字节），ASCII ≈ 5.5px/字节）
+// ponytail: 估宽不发 FontRegistry 实测；偏差只影响 chip 间留白，可接受
+float chipWidth(const std::string& text) {
+    float w = 20.0f;
+    for (unsigned char c : text) {
+        w += (c >= 0x80) ? 4.0f : 5.5f;
+    }
+    return w;
+}
+
+// 改色预设（token 与 ui::columnDotColor 的映射表一一对应；spec §8.2 承诺）
+struct ColorPreset {
+    const char* token;
+    const char* label;
+};
+const ColorPreset kColorPresets[] = {
+    {"claude-clay", "Claude 橘"},
+    {"warm-amber",  "暖琥珀"},
+    {"muted-sage",  "鼠尾草绿"},
+    {"warm-gray",   "暖灰"},
+    {"dusty-blue",  "雾蓝"},
+    {"rose-red",    "玫瑰红"},
+};
+constexpr int kColorPresetCount =
+    static_cast<int>(sizeof(kColorPresets) / sizeof(kColorPresets[0]));
+
 } // namespace
 
 class TodoModule : public ::core::Module {
@@ -184,6 +210,43 @@ public:
         if (drag_.active && findTask(drag_.taskId) == nullptr) {
             drag_ = DragState{};
         }
+        // 逾期 badge 数量 + 搜索命中集跟随数据刷新（写操作后 reloadAll 统一收口）
+        refreshOverdueCount();
+        if (!searchQuery_.empty()) refreshSearch();
+    }
+
+    // ============ 搜索 / 逾期（W 计划 P2 三件套）============
+
+    // 搜索词变化 → 重新调用 service_->search（title/description LIKE）刷新命中集
+    void refreshSearch() {
+        searchMatchIds_.clear();
+        if (searchQuery_.empty() || !service_) return;
+        auto r = service_->search(searchQuery_);
+        if (r.isFail()) {
+            setStatus("搜索失败：" + r.errorMessage(), true);
+            return;
+        }
+        searchMatchIds_.reserve(r.value().size());
+        for (const auto& t : r.value()) {
+            searchMatchIds_.push_back(t.id);
+        }
+    }
+
+    void refreshOverdueCount() {
+        overdueCount_ = 0;
+        if (!service_) return;
+        auto r = service_->listOverdue();
+        if (r.isOk()) overdueCount_ = r.value().size();
+    }
+
+    void openOverdueDialog() {
+        overdueTasks_.clear();
+        if (service_) {
+            auto r = service_->listOverdue();
+            if (r.isOk()) overdueTasks_ = std::move(r).value();
+        }
+        overdueCount_ = overdueTasks_.size();
+        overdueOpen_ = true;
     }
 
     // 错误态重试：数据库晚注册（onStart 时为 null）或读取失败后手动恢复
@@ -360,6 +423,17 @@ public:
         reloadAll();
     }
 
+    void doSetColumnColor(int64_t id, const std::string& token) {
+        if (!service_) return;
+        auto r = service_->setColumnColor(id, token);
+        if (r.isFail()) {
+            setStatus("改色失败：" + r.errorMessage(), true);
+            return;
+        }
+        setStatus("已更新列颜色");
+        reloadAll();
+    }
+
     // dir = -1 左移一位 / +1 右移一位（交换相邻列后整体重排 position）
     void doShiftColumn(int64_t id, int dir) {
         if (!service_) return;
@@ -514,6 +588,7 @@ public:
         // 弹窗（画在最上层）
         drawNewTaskDialog(ui, screen, t);
         drawDetailDialog(ui, screen, t);
+        drawOverdueDialog(ui, screen, t);
         drawContextMenu(ui, screen, t);
         drawDatePicker(ui, screen, t);
         drawRenameDialog(ui, screen, t);
@@ -545,19 +620,22 @@ public:
 
 private:
     // ---------- 顶部 Header ----------
+    // 右侧动作区 560px：搜索框(240) + 逾期入口(104) + 「+ 列」(72) + 「+ 新建任务」(120) + 间距
     void drawHeader(eui::Ui& ui, float contentW, float headerH, float bodyH,
                     const core::theme::Tokens& t) {
         (void)bodyH;
+        const auto componentTheme = t.isDark ? components::theme::dark()
+                                             : components::theme::light();
         ui.row("todo.header")
             .size(contentW, headerH)
             .alignItems(eui::Align::CENTER)
             .content([&] {
                 ui.column("todo.title")
-                    .size(contentW - 480.0f, headerH)
+                    .size(contentW - 560.0f, headerH)
                     .gap(2.0f)
                     .content([&] {
                         ui.text("todo.h1")
-                            .size(contentW - 480.0f, 32.0f)
+                            .size(contentW - 560.0f, 32.0f)
                             .text("Todo 看板")
                             .fontSize(t.sizes.fontSizeTitle)
                             .lineHeight(32.0f)
@@ -566,7 +644,7 @@ private:
                             .build();
                         // subtitle 保持静态操作说明（动态反馈走 toast）
                         ui.text("todo.subtitle")
-                            .size(contentW - 480.0f, 18.0f)
+                            .size(contentW - 560.0f, 18.0f)
                             .text("点击卡片查看详情 · Ctrl+↑/↓ 移动选中任务 · 右键卡片/列头更多操作")
                             .fontSize(t.sizes.fontSizeSmall)
                             .lineHeight(18.0f)
@@ -576,11 +654,50 @@ private:
                     .build();
 
                 ui.row("todo.actions")
-                    .size(480.0f, 40.0f)
+                    .size(560.0f, 40.0f)
                     .justifyContent(eui::Align::END)
                     .alignItems(eui::Align::CENTER)
                     .gap(t.sizes.spacingSmall)
                     .content([&] {
+                        // 搜索框（真实调用 service_->search；仿 markdown 模块 md.search）
+                        // Enter/Esc 清空（EUI-NEO input 把 Escape 映射到 onEnter）
+                        components::input(ui, "todo.search")
+                            .size(240.0f, 40.0f)
+                            .value(searchQuery_)
+                            .placeholder("🔍 搜索任务…")
+                            .fontSize(t.sizes.fontSizeSmall)
+                            .inset(10.0f)
+                            .theme(componentTheme)
+                            .onChange([this](const std::string& v) {
+                                searchQuery_ = v;
+                                refreshSearch();
+                            })
+                            .onEnter([this] {
+                                if (!searchQuery_.empty()) {
+                                    searchQuery_.clear();
+                                    refreshSearch();
+                                }
+                            })
+                            .build();
+
+                        // 逾期入口（badge = listOverdue().size()，0 时置灰不可点）
+                        const bool hasOverdue = overdueCount_ > 0;
+                        components::button(ui, "todo.btn.overdue")
+                            .size(104.0f, 40.0f)
+                            .text("⚠ 逾期 " + std::to_string(overdueCount_))
+                            .fontSize(t.sizes.fontSizeSmall)
+                            .colors(hasOverdue ? t.colors.error : t.colors.surfaceElevated,
+                                    hasOverdue ? t.colors.error : t.colors.hover,
+                                    hasOverdue ? t.colors.error : t.colors.active)
+                            .textColor(hasOverdue ? eui::Color("#FFFFFF")
+                                                  : t.colors.textDisabled)
+                            .radius(t.sizes.radius)
+                            .border(1.0f, t.colors.borderDefault)
+                            .onClick([this] {
+                                if (overdueCount_ > 0) openOverdueDialog();
+                            })
+                            .build();
+
                         // + 列
                         components::button(ui, "todo.btn.addcol")
                             .size(72.0f, 40.0f)
@@ -726,6 +843,9 @@ private:
             .build();
 
         auto colTasks = tasksInColumn(col.id);
+        // 搜索激活时只显示命中卡（命中列照常渲染；命中集来自 service_->search）
+        colTasks = ui::filterBySearch(colTasks, searchMatchIds_,
+                                      !searchQuery_.empty());
         const bool isArchive = (col.title == "已归档");
 
         // 列头右键热区（重命名/左移/右移/删除列）。纯命中区：Rect 不设
@@ -741,9 +861,20 @@ private:
             })
             .build();
 
+        // 列颜色点（Column::color 入库后首次渲染；10px 圆点，token→hex 见 ui::columnDotColor）
+        const auto colDot = ui::columnDotColor(col.color);
+        if (colDot.has_value()) {
+            ui.rect(id + ".dot")
+                .position(16.0f, 21.0f)
+                .size(10.0f, 10.0f)
+                .color(*colDot)
+                .radius(5.0f)
+                .build();
+        }
+
         ui.text(id + ".title")
-            .position(16.0f, 16.0f)
-            .size(width - 60.0f, 20.0f)
+            .position(colDot.has_value() ? 34.0f : 16.0f, 16.0f)
+            .size(width - 60.0f - (colDot.has_value() ? 18.0f : 0.0f), 20.0f)
             .text(col.title + " (" + std::to_string(colTasks.size()) + ")")
             .fontSize(t.sizes.fontSizeBody)
             .lineHeight(20.0f)
@@ -767,7 +898,9 @@ private:
             ui.text(id + ".empty")
                 .position(0.0f, height / 2.0f - 12.0f)
                 .size(width, 24.0f)
-                .text(isArchive ? "📦 归档的任务在这里" : "暂无任务")
+                .text(searchQuery_.empty()
+                          ? (isArchive ? "📦 归档的任务在这里" : "暂无任务")
+                          : "无命中任务")
                 .fontSize(t.sizes.fontSizeSmall - 1.0f)
                 .lineHeight(24.0f)
                 .horizontalAlign(eui::HorizontalAlign::Center)
@@ -898,6 +1031,26 @@ private:
             drawChip(ui, id + ".due", 70.0f, y + 44.0f, 66.0f, t, dueText,
                      isOverdue(task) ? t.colors.error : t.colors.textTertiary,
                      t.colors.surface, cardOpacity);
+        }
+
+        // tags chip（前 2 个 + 超出 +N；完整编辑在详情弹窗）
+        if (!task.tags.empty()) {
+            float tagX = task.dueAt.has_value() ? 146.0f : 70.0f;
+            size_t shown = 0;
+            for (size_t ti = 0; ti < task.tags.size() && shown < 2; ++ti) {
+                const float tw = chipWidth(task.tags[ti]);
+                if (tagX + tw > width - 12.0f) break;
+                drawChip(ui, id + ".tag." + std::to_string(ti), tagX, y + 44.0f,
+                         tw, t, task.tags[ti], t.colors.info, t.colors.surface,
+                         cardOpacity);
+                tagX += tw + 6.0f;
+                ++shown;
+            }
+            if (task.tags.size() > shown) {
+                const std::string more = "+" + std::to_string(task.tags.size() - shown);
+                drawChip(ui, id + ".tag.more", tagX, y + 44.0f, chipWidth(more), t,
+                         more, t.colors.textTertiary, t.colors.surface, cardOpacity);
+            }
         }
 
         // 完成打勾
@@ -1071,6 +1224,12 @@ private:
             items.push_back({"重命名列"});
             items.push_back({"左移列"});
             items.push_back({"右移列"});
+            // 改色子选（spec §8.2 承诺；预设与 ui::columnDotColor 映射表对应）
+            std::vector<components::ContextMenuItem> colorItems;
+            for (int i = 0; i < kColorPresetCount; ++i) {
+                colorItems.push_back({kColorPresets[i].label});
+            }
+            items.push_back({"改色", std::move(colorItems)});
             items.push_back({"删除列"});
         } else {
             return;
@@ -1090,14 +1249,33 @@ private:
             .size(menuW, 36.0f)
             .items(std::move(items))
             .theme(themeTokens)
-            .onSelect([this](int index) { onContextSelect(index); })
+            .onSelectPath([this](const std::vector<int>& path) { onContextSelectPath(path); })
             .onOpenChange([this](bool v) { ctxOpen_ = v; })
             .build();
     }
 
+    // 菜单项点击分发（路径版，兼容「改色」子菜单）。
+    // 任务菜单无子级，path[0] 即原索引；列菜单：0=重命名 1=左移 2=右移
+    //   3=改色（path[1] = 预设索引）4=删除
+    void onContextSelectPath(const std::vector<int>& path) {
+        if (ctxTaskId_ != 0) {
+            if (!path.empty()) onContextSelect(path[0]);
+            return;
+        }
+        if (path.size() == 2 && path[0] == 3) {
+            const Column* col = findColumn(ctxColumnId_);
+            if (col != nullptr && path[1] >= 0 && path[1] < kColorPresetCount) {
+                doSetColumnColor(col->id, kColorPresets[path[1]].token);
+            }
+            return;
+        }
+        // 删除列从原索引 3 挪到 4（改色插在前面）
+        onContextSelect(!path.empty() && path[0] == 4 ? 3 : (path.empty() ? -1 : path[0]));
+    }
+
     // 菜单项点击分发。索引含义与 drawContextMenu 构建的 items 一一对应：
     //   任务菜单：0=编辑 1=上移 2=下移 3+i=移动到第 i 个其他列 末项=删除（带确认）
-    //   列菜单：  0=重命名 1=左移 2=右移 3=删除
+    //   列菜单：  0=重命名 1=左移 2=右移 3=删除（改色走 onContextSelectPath，不进这里）
     void onContextSelect(int index) {
         if (ctxTaskId_ != 0) {
             const Task* self = findTask(ctxTaskId_);
@@ -1335,6 +1513,103 @@ private:
             .build();
     }
 
+    // ---------- 逾期任务弹窗（三件套 2） ----------
+    // 数据源 service_->listOverdue()（openOverdueDialog 时刷新）；
+    // 行点击 = 关闭本弹窗并打开该任务详情
+    void drawOverdueDialog(eui::Ui& ui, const eui::Screen& screen,
+                           const core::theme::Tokens& t) {
+        const auto themeTokens = t.isDark ? components::theme::dark()
+                                          : components::theme::light();
+        const float w = 560.0f;
+        const float rowH = 44.0f;
+        // ponytail: 不做滚动——逾期列表通常个位数，封顶 640 高；超长再上 scrollView
+        const float h =
+            std::min(640.0f, 96.0f + rowH * static_cast<float>(overdueTasks_.size()));
+
+        components::dialog(ui, "todo.dialog.overdue")
+            .open(overdueOpen_)
+            .screen(screen.width, screen.height)
+            .size(w, h)
+            .theme(themeTokens)
+            .onOpenChange([this](bool v) { overdueOpen_ = v; })
+            .content([&] {
+                ui.text("todo.dialog.overdue.title")
+                    .position(28.0f, 20.0f)
+                    .size(w - 56.0f, 28.0f)
+                    .text("⚠ 逾期任务（" + std::to_string(overdueTasks_.size()) + "）")
+                    .fontSize(t.sizes.fontSizeLarge + 2.0f)
+                    .lineHeight(28.0f)
+                    .fontWeight(700)
+                    .color(t.colors.error)
+                    .build();
+                ui.text("todo.dialog.overdue.hint")
+                    .position(28.0f, 50.0f)
+                    .size(w - 56.0f, 16.0f)
+                    .text("任务名 · 所属列 · 截止 · 逾期天数，点击行跳转详情")
+                    .fontSize(t.sizes.fontSizeSmall - 2.0f)
+                    .lineHeight(16.0f)
+                    .color(t.colors.textTertiary)
+                    .build();
+
+                const int64_t now = static_cast<int64_t>(std::time(nullptr));
+                for (size_t i = 0; i < overdueTasks_.size(); ++i) {
+                    const Task& task = overdueTasks_[i];
+                    const float y = 74.0f + static_cast<float>(i) * rowH;
+                    const std::string rowId =
+                        "todo.dialog.overdue.row." + std::to_string(i);
+                    const Column* col = findColumn(task.columnId);
+                    ui.rect(rowId)
+                        .position(20.0f, y)
+                        .size(w - 40.0f, rowH - 6.0f)
+                        .states(t.colors.surfaceElevated, t.colors.hover, t.colors.active)
+                        .radius(t.sizes.radius)
+                        .onClick([this, taskId = task.id] {
+                            overdueOpen_ = false;
+                            if (const Task* task = findTask(taskId)) {
+                                openDetailDialog(*task);
+                            }
+                        })
+                        .build();
+                    ui.text(rowId + ".title")
+                        .position(32.0f, y + 10.0f)
+                        .size(w - 300.0f, 20.0f)
+                        .text(task.title)
+                        .fontSize(t.sizes.fontSizeSmall)
+                        .lineHeight(20.0f)
+                        .fontWeight(500)
+                        .color(t.colors.textPrimary)
+                        .build();
+                    ui.text(rowId + ".col")
+                        .position(w - 262.0f, y + 10.0f)
+                        .size(120.0f, 20.0f)
+                        .text(col != nullptr ? col->title : "?")
+                        .fontSize(t.sizes.fontSizeSmall)
+                        .lineHeight(20.0f)
+                        .color(t.colors.textSecondary)
+                        .build();
+                    ui.text(rowId + ".due")
+                        .position(w - 136.0f, y + 10.0f)
+                        .size(60.0f, 20.0f)
+                        .text(task.dueAt.has_value() ? formatDue(task.dueAt.value())
+                                                     : "-")
+                        .fontSize(t.sizes.fontSizeSmall)
+                        .lineHeight(20.0f)
+                        .color(t.colors.textSecondary)
+                        .build();
+                    ui.text(rowId + ".days")
+                        .position(w - 68.0f, y + 10.0f)
+                        .size(48.0f, 20.0f)
+                        .text("逾期" + std::to_string(
+                                   ui::overdueDays(task.dueAt.value_or(0), now)) + "天")
+                        .fontSize(t.sizes.fontSizeSmall)
+                        .lineHeight(20.0f)
+                        .color(t.colors.error)
+                        .build();
+                }
+            })
+            .build();
+    }
+
     // ---------- 任务详情 / 编辑弹窗 ----------
     void openDetailDialog(const Task& task) {
         selectedTaskId_ = task.id;  // 选中态：详情弹窗关闭后保留，供 Ctrl+↑/↓
@@ -1346,7 +1621,22 @@ private:
         detailDueAt_ = task.dueAt;
         detailCompleted_ = task.completedAt.has_value();
         detailTags_ = task.tags;
+        detailTagInput_.clear();
         detailOpen_ = true;
+    }
+
+    // 标签输入回车 → 追加（去空白 / 去重 / 空忽略；保存时才落库）
+    void addDetailTag() {
+        std::string tag;
+        for (char c : detailTagInput_) {
+            if (c != ' ' && c != '\t') tag += c;
+        }
+        detailTagInput_.clear();
+        if (tag.empty()) return;
+        for (const auto& existing : detailTags_) {
+            if (existing == tag) return;
+        }
+        detailTags_.push_back(std::move(tag));
     }
 
     void drawDetailDialog(eui::Ui& ui, const eui::Screen& screen,
@@ -1362,7 +1652,8 @@ private:
             1, static_cast<int>((w - 56.0f + moveGap) / (moveBtnW + moveGap)));
         const int moveRows = static_cast<int>(
             (columns_.size() + static_cast<size_t>(perRow) - 1) / perRow);
-        const float h = 560.0f + 40.0f * static_cast<float>(std::max(0, moveRows - 1));
+        // 640 = 原布局 + 标签编辑区（chips 行 + 输入框，见下方「标签」段）
+        const float h = 640.0f + 40.0f * static_cast<float>(std::max(0, moveRows - 1));
 
         components::dialog(ui, "todo.dialog.detail")
             .open(detailOpen_)
@@ -1486,9 +1777,58 @@ private:
                     .onClick([this] { datePickOpen_ = true; })
                     .build();
 
+                // 标签（三件套 3）：chip × 删除 + 输入回车添加；保存时随
+                // detailTags_ 走 updateTask 的 JSON tags 序列化（W9 已确认往返）
+                ui.text("todo.dialog.detail.taglabel")
+                    .position(28.0f, 372.0f)
+                    .size(120.0f, 16.0f)
+                    .text("标签")
+                    .fontSize(t.sizes.fontSizeSmall - 2.0f)
+                    .lineHeight(16.0f)
+                    .color(t.colors.textTertiary)
+                    .build();
+                {
+                    float chipX = 28.0f;
+                    for (size_t ti = 0; ti < detailTags_.size(); ++ti) {
+                        const float tw = chipWidth(detailTags_[ti]);
+                        // ponytail: 单行不换行，放不下即截断（+N 省略）；标签很多时再改多行
+                        if (chipX + tw + 22.0f > w - 28.0f) break;
+                        const std::string chipId =
+                            "todo.dialog.detail.tag." + std::to_string(ti);
+                        drawChip(ui, chipId, chipX, 392.0f, tw, t, detailTags_[ti],
+                                 t.colors.info, t.colors.surface);
+                        components::button(ui, chipId + ".x")
+                            .position(chipX + tw + 1.0f, 390.0f)
+                            .size(20.0f, 22.0f)
+                            .text("×")
+                            .fontSize(t.sizes.fontSizeSmall)
+                            .colors(t.colors.surface, t.colors.hover, t.colors.active)
+                            .textColor(t.colors.textSecondary)
+                            .radius(11.0f)
+                            .onClick([this, ti] {
+                                if (ti < detailTags_.size()) {
+                                    detailTags_.erase(detailTags_.begin() +
+                                                      static_cast<long>(ti));
+                                }
+                            })
+                            .build();
+                        chipX += tw + 26.0f;
+                    }
+                }
+                components::input(ui, "todo.dialog.detail.tag.input")
+                    .position(28.0f, 418.0f)
+                    .size(w - 56.0f, 36.0f)
+                    .value(detailTagInput_)
+                    .placeholder("输入标签，回车添加…")
+                    .fontSize(t.sizes.fontSizeSmall)
+                    .theme(themeTokens)
+                    .onChange([this](const std::string& v) { detailTagInput_ = v; })
+                    .onEnter([this] { addDetailTag(); })
+                    .build();
+
                 // 移动到其他列
                 ui.text("todo.dialog.detail.mlabel")
-                    .position(28.0f, 372.0f)
+                    .position(28.0f, 470.0f)
                     .size(120.0f, 16.0f)
                     .text("移动到")
                     .fontSize(t.sizes.fontSizeSmall - 2.0f)
@@ -1500,7 +1840,7 @@ private:
                     const int slot = static_cast<int>(i);
                     const float bx = 28.0f +
                         static_cast<float>(slot % perRow) * (moveBtnW + moveGap);
-                    const float by = 392.0f +
+                    const float by = 490.0f +
                         static_cast<float>(slot / perRow) * 40.0f;
                     components::button(ui, "todo.dialog.detail.move." + std::to_string(i))
                         .position(bx, by)
@@ -1640,6 +1980,7 @@ private:
     std::optional<int64_t> detailDueAt_;
     bool detailCompleted_ = false;
     std::vector<std::string> detailTags_;
+    std::string detailTagInput_;  // 标签输入框（回车追加，未落库）
 
     // 键盘移动选中态（最近点击的卡片；详情弹窗关闭后保留）
     int64_t selectedTaskId_ = 0;
@@ -1666,6 +2007,15 @@ private:
     // 状态反馈 toast（超时消失；subtitle 保持静态说明）
     bool toastOpen_ = false;
     std::string toastTitle_;
+
+    // 搜索（三件套 1）：query + service_->search 的命中任务 id 集
+    std::string searchQuery_;
+    std::vector<int64_t> searchMatchIds_;
+
+    // 逾期视图（三件套 2）：badge 数量 + 弹窗数据（打开时刷新）
+    size_t overdueCount_ = 0;
+    bool overdueOpen_ = false;
+    std::vector<Task> overdueTasks_;
 
     // 数据加载错误（空 = 正常；与空态区分，见 drawBoard）
     std::string loadError_;
