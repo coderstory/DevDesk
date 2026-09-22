@@ -78,6 +78,9 @@ REGISTER_TEST(router_compose_renders_current_page_only, "router: compose renders
 
 REGISTER_TEST(router_navigate_default_no_payload, "router: 默认导航无负载", {
     core::Router r;
+    // 插拔门控后 navigateTo 校验目标页已注册（未注册回退 Home），先挂桩
+    StubModule md(core::PageId::Markdown, "md");
+    r.registerModule(&md);
     r.navigateTo(core::PageId::Markdown);
     DOCTEST_CHECK_EQ(r.currentPage(), core::PageId::Markdown);
     DOCTEST_CHECK(r.consumePendingPayload(core::PageId::Markdown).empty());
@@ -86,6 +89,8 @@ REGISTER_TEST(router_navigate_default_no_payload, "router: 默认导航无负载
 
 REGISTER_TEST(router_payload_set_and_consume, "router: 设负载并取出", {
     core::Router r;
+    StubModule md(core::PageId::Markdown, "md");
+    r.registerModule(&md);
     r.navigateTo(core::PageId::Markdown, "open:notes/a.md");
     DOCTEST_CHECK_EQ(r.consumePendingPayload(core::PageId::Markdown),
                      std::string("open:notes/a.md"));
@@ -94,6 +99,8 @@ REGISTER_TEST(router_payload_set_and_consume, "router: 设负载并取出", {
 
 REGISTER_TEST(router_payload_consume_once, "router: 负载一次性消费", {
     core::Router r;
+    StubModule todo(core::PageId::Todo, "todo");
+    r.registerModule(&todo);
     r.navigateTo(core::PageId::Todo, "action:new_task");
     DOCTEST_CHECK_EQ(r.consumePendingPayload(core::PageId::Todo),
                      std::string("action:new_task"));
@@ -104,6 +111,8 @@ REGISTER_TEST(router_payload_consume_once, "router: 负载一次性消费", {
 
 REGISTER_TEST(router_payload_page_isolated, "router: 负载页面隔离", {
     core::Router r;
+    StubModule md(core::PageId::Markdown, "md");
+    r.registerModule(&md);
     r.navigateTo(core::PageId::Markdown, "action:new_note");
     // 别页取不走，也不清掉本页挂起的负载
     DOCTEST_CHECK(r.consumePendingPayload(core::PageId::Todo).empty());
@@ -115,6 +124,10 @@ REGISTER_TEST(router_payload_page_isolated, "router: 负载页面隔离", {
 
 REGISTER_TEST(router_plain_navigate_keeps_pending, "router: 纯导航不清已挂起负载", {
     core::Router r;
+    StubModule md(core::PageId::Markdown, "md");
+    StubModule home(core::PageId::Home, "home");
+    r.registerModule(&md);
+    r.registerModule(&home);
     r.navigateTo(core::PageId::Markdown, "open:x.md");
     // 中途的纯导航（默认空 payload）不清除挂起负载
     r.navigateTo(core::PageId::Home);
@@ -126,6 +139,8 @@ REGISTER_TEST(router_plain_navigate_keeps_pending, "router: 纯导航不清已�
 
 REGISTER_TEST(router_payload_overwrite, "router: 新负载覆盖旧负载", {
     core::Router r;
+    StubModule md(core::PageId::Markdown, "md");
+    r.registerModule(&md);
     r.navigateTo(core::PageId::Markdown, "open:old.md");
     r.navigateTo(core::PageId::Markdown, "open:new.md");
     DOCTEST_CHECK_EQ(r.consumePendingPayload(core::PageId::Markdown),
@@ -239,5 +254,53 @@ REGISTER_TEST(router_navigate_page_enter, "router: navigateTo 回调目标模块
     DOCTEST_CHECK_EQ(todo.enterCount_, 2);
     DOCTEST_CHECK_EQ(router.consumePendingPayload(::core::PageId::Todo),
                      std::string("action:new_task"));
+    return true;
+})
+
+// ============ 模块插拔（方案 A）：isRegistered + 未注册页导航兜底 ============
+
+REGISTER_TEST(router_is_registered, "router: isRegistered 反映注册状态", {
+    core::Router r;
+    DOCTEST_CHECK(!r.isRegistered(core::PageId::Home));
+    StubModule home(core::PageId::Home, "home");
+    r.registerModule(&home);
+    DOCTEST_CHECK(r.isRegistered(core::PageId::Home));
+    DOCTEST_CHECK(!r.isRegistered(core::PageId::Todo));
+    return true;
+})
+
+REGISTER_TEST(router_navigate_unregistered_falls_back_home, "router: 未注册页导航回退 Home（不进空白页）", {
+    core::Router r;
+    StubModule home(core::PageId::Home, "home");
+    r.registerModule(&home);
+    r.navigateTo(core::PageId::Home);  // 先离开初始态语义：停在 Home
+    // Todo 未注册 → WARN + 回退 Home，current_ 不变成 Todo
+    r.navigateTo(core::PageId::Todo);
+    DOCTEST_CHECK_EQ(r.currentPage(), core::PageId::Home);
+    // 已注册页导航不受影响
+    StubModule todo(core::PageId::Todo, "todo");
+    r.registerModule(&todo);
+    r.navigateTo(core::PageId::Todo);
+    DOCTEST_CHECK_EQ(r.currentPage(), core::PageId::Todo);
+    return true;
+})
+
+REGISTER_TEST(router_navigate_unregistered_payload_dropped, "router: 未注册页导航负载作废", {
+    core::Router r;
+    StubModule home(core::PageId::Home, "home");
+    r.registerModule(&home);
+    // 目标模块已关闭 → 负载不落到任何页（别页取不走，Home 也取不走）
+    r.navigateTo(core::PageId::Markdown, "open:x.md");
+    DOCTEST_CHECK_EQ(r.currentPage(), core::PageId::Home);
+    DOCTEST_CHECK(r.consumePendingPayload(core::PageId::Home).empty());
+    DOCTEST_CHECK(r.consumePendingPayload(core::PageId::Markdown).empty());
+    return true;
+})
+
+REGISTER_TEST(router_navigate_nothing_registered_stays, "router: 全未注册时导航保持当前页（防御兜底）", {
+    core::Router r;
+    // 一个模块都没注册（Home 也未注册的极端防御分支）：不崩溃、停留当前页
+    r.navigateTo(core::PageId::Markdown, "open:x.md");
+    DOCTEST_CHECK_EQ(r.currentPage(), core::PageId::Home);
     return true;
 })

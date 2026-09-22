@@ -20,6 +20,10 @@
 //   5. 调用日志保留天数（0=永久）——切换档位立即执行一次滚动清理并
 //      反馈「已清理 N 条」（core::pruneCallLogs，经 appDatabase() 共享
 //      连接；启动时 main.cpp 仍会按持久化配置再清一次，幂等）
+//   6. 模块管理（模块插拔方案 A，设计 2026-09-22 §5.4）：三个工具模块
+//      （markdown/todo/claude_proxy）各一行开关；home/settings 恒启用不
+//      展示开关。开关只写 config.json，**重启生效**（注册是启动期行为）；
+//      对应模块关闭时其专属卡片整卡隐藏（代理卡/目录卡，不显示故障态）
 //
 // 入口说明：设置入口在 main.cpp 的常驻侧边栏（app.sidebar，spec §2/§6.5.2），
 // 与其他四个模块同列。
@@ -246,6 +250,25 @@ public:
                  std::string(on ? "true" : "false"));
     }
 
+    // 模块开关（插拔方案 A §5.4）：只写 config.json，注册门控在下次启动的
+    // main.cpp 装配处生效。home/settings 恒启用，UI 不提供开关
+    void applyModuleEnabled(const std::string& moduleId, bool on) {
+        auto& v = cfg_.enabledModules;
+        auto it = std::find(v.begin(), v.end(), moduleId);
+        if (on && it == v.end()) {
+            v.push_back(moduleId);
+        } else if (!on && it != v.end()) {
+            v.erase(it);
+        } else {
+            return;  // 状态没变（重复点击），不写盘
+        }
+        persist();
+        setStatus((on ? "模块已开启" : "模块已关闭") +
+                  std::string("，重启 DevDesk 后生效"));
+        LOG_INFO("Settings: 模块开关 " + moduleId + " → " +
+                 (on ? "启用" : "关闭") + "（重启生效）");
+    }
+
     void persist() {
         if (!store_) return;
         auto r = store_->save(cfg_);
@@ -299,6 +322,12 @@ public:
                 const float proxyH = 140.0f + 28.0f +
                     (managed ? 20.0f : 0.0f) +
                     static_cast<float>(warnLines) * 16.0f;
+                // 模块插拔门控（§5.4）：claude 关 → 代理卡整卡隐藏；markdown
+                // 关 → 目录卡整卡隐藏（不显示故障态）。读 cfg_（= 启动时注册
+                // 状态的来源），拨动开关即时预览下次启动的卡片布局
+                const bool claudeOn =
+                    moduleEnabled(cfg_, kModuleIdClaudeProxy);
+                const bool mdOn = moduleEnabled(cfg_, kModuleIdMarkdown);
                 const auto compTheme = t.isDark
                     ? components::theme::dark()
                     : components::theme::light();
@@ -307,8 +336,11 @@ public:
                     .gap(t.sizes.spacingLarge)
                     .step(60.0f)
                     .theme(compTheme)
+                    // contentKey 带代理卡高 + 卡片显隐签名：卡片增减时滚动
+                    // 高度缓存失效重测
                     .contentKey("settings.cards." +
-                                std::to_string(static_cast<int>(proxyH)))
+                                std::to_string(static_cast<int>(proxyH)) +
+                                (claudeOn ? "C" : "c") + (mdOn ? "M" : "m"))
                     .offset(cardsScrollOffset_)
                     .onChange([this](float v) { cardsScrollOffset_ = v; })
                     .content([&](eui::Ui& inner, float contentWidth,
@@ -322,12 +354,19 @@ public:
                         drawAppearanceCard(inner, "settings.card.appearance",
                                            contentWidth, 160.0f, t);
                         cardY += 160.0f + gapY;
-                        drawDirectoryCard(inner, "settings.card.directory",
-                                          contentWidth, 108.0f, t);
-                        cardY += 108.0f + gapY;
-                        drawProxyCard(inner, "settings.card.proxy",
-                                      contentWidth, proxyH, t);
-                        cardY += proxyH + gapY;
+                        drawModulesCard(inner, "settings.card.modules",
+                                        contentWidth, 232.0f, t);
+                        cardY += 232.0f + gapY;
+                        if (mdOn) {
+                            drawDirectoryCard(inner, "settings.card.directory",
+                                              contentWidth, 108.0f, t);
+                            cardY += 108.0f + gapY;
+                        }
+                        if (claudeOn) {
+                            drawProxyCard(inner, "settings.card.proxy",
+                                          contentWidth, proxyH, t);
+                            cardY += proxyH + gapY;
+                        }
                         drawLogCard(inner, "settings.card.log", contentWidth,
                                     100.0f, t,
                                     cardsTopY + cardY - cardsScrollOffset_,
@@ -554,7 +593,91 @@ private:
             .build();
     }
 
-    // ---------- 卡片 2：Markdown 笔记目录（只读） ----------
+    // ---------- 卡片 2：模块管理（插拔方案 A §5.4） ----------
+    // 三个工具模块各一行开关；关闭 = 下次启动不注册进 Router（不执行代码、
+    // 不显示侧边栏入口）。home/settings 恒启用，不提供开关
+    void drawModulesCard(eui::Ui& ui, const std::string& id, float w, float h,
+                         const core::theme::Tokens& t) {
+        struct ModuleMeta {
+            const char* moduleId;
+            const char* name;
+            const char* desc;
+        };
+        static const ModuleMeta kToggleable[] = {
+            {kModuleIdMarkdown, "Markdown 笔记本",
+             "本地文件存储 + SQLite FTS5 全文搜索"},
+            {kModuleIdTodo, "Todo 看板", "待办任务管理，多列卡片看板"},
+            {kModuleIdClaudeProxy, "Claude 配置切换器",
+             "Profile 管理 + 本地代理（关闭后 8888 不再监听）"},
+        };
+        const auto compTheme = t.isDark ? components::theme::dark()
+                                        : components::theme::light();
+        ui.stack(id)
+            .size(w, h)
+            .content([&] {
+                cardFrame(ui, id, w, h, t);
+                ui.text(id + ".title")
+                    .position(28.0f, 16.0f)
+                    .size(w - 56.0f, 22.0f)
+                    .text("模块")
+                    .fontSize(t.sizes.fontSizeLarge)
+                    .lineHeight(22.0f)
+                    .fontWeight(600)
+                    .color(t.colors.textPrimary)
+                    .build();
+                ui.text(id + ".desc")
+                    .position(28.0f, 40.0f)
+                    .size(w - 56.0f, 16.0f)
+                    .text("关闭模块后需重启应用生效（关闭 = 该模块代码不再执行、"
+                          "侧边栏不显示入口）")
+                    .fontSize(fs(12.0f))
+                    .lineHeight(16.0f)
+                    .color(t.colors.textTertiary)
+                    .build();
+
+                for (int i = 0; i < 3; ++i) {
+                    const ModuleMeta& meta = kToggleable[i];
+                    const float rowY = 68.0f + static_cast<float>(i) * 56.0f;
+                    const std::string suffix = std::to_string(i);
+                    ui.text(id + ".name." + suffix)
+                        .position(28.0f, rowY)
+                        .size(w - 160.0f, 18.0f)
+                        .text(meta.name)
+                        .fontSize(t.sizes.fontSizeBody - 1.0f)
+                        .lineHeight(18.0f)
+                        .fontWeight(500)
+                        .color(t.colors.textPrimary)
+                        .build();
+                    ui.text(id + ".rowdesc." + suffix)
+                        .position(28.0f, rowY + 20.0f)
+                        .size(w - 160.0f, 16.0f)
+                        .text(meta.desc)
+                        .fontSize(fs(12.0f))
+                        .lineHeight(16.0f)
+                        .color(t.colors.textTertiary)
+                        .build();
+                    // SwitchBuilder 无 position，套 stack 定位（与代理卡同款）
+                    ui.stack(id + ".sw.wrap." + suffix)
+                        .position(w - 28.0f - 80.0f, rowY - 2.0f)
+                        .size(80.0f, 32.0f)
+                        .content([&] {
+                            components::toggleSwitch(ui, id + ".sw." + suffix)
+                                .size(80.0f, 32.0f)
+                                .checked(moduleEnabled(cfg_, meta.moduleId))
+                                .theme(compTheme)
+                                .onChange([this, mid = meta.moduleId](
+                                              bool v) {
+                                    applyModuleEnabled(mid, v);
+                                })
+                                .build();
+                        })
+                        .build();
+                }
+            })
+            .build();
+    }
+
+    // ---------- 卡片 3：Markdown 笔记目录（只读） ----------
     void drawDirectoryCard(eui::Ui& ui, const std::string& id, float w,
                            float h, const core::theme::Tokens& t) {
         ui.stack(id)
@@ -603,7 +726,7 @@ private:
             .build();
     }
 
-    // ---------- 卡片 3：Claude 代理 token ----------
+    // ---------- 卡片 4：Claude 代理 token（claude 模块关闭时整卡隐藏） ----------
     void drawProxyCard(eui::Ui& ui, const std::string& id, float w, float h,
                        const core::theme::Tokens& t) {
         ui.stack(id)
@@ -754,7 +877,7 @@ private:
             .build();
     }
 
-    // ---------- 卡片 4：日志保留策略 ----------
+    // ---------- 卡片 5：日志保留策略 ----------
     // cardTopY/screenH：日志卡是页面最后一张卡，字段贴近窗口底部；
     // 估算弹层高度（与 dropdown 内部一致：菜单项 34 × 6 项 + 上下 padding 6×2）
     // 判断向下展开是否出界，出界则 openUp 向上展开（修复菜单被窗体裁剪）

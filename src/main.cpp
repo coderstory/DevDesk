@@ -15,10 +15,13 @@
 #include <eui/dsl.h>
 #include <eui/dsl_app.h>
 
+#include <filesystem>
 #include <fstream>
+#include <algorithm>
 #include <memory>
 #include <cstdlib>
 #include <string>
+#include <vector>
 
 extern "C" ::core::Module* create_home_module();
 extern "C" ::core::Module* create_markdown_module();
@@ -27,6 +30,25 @@ extern "C" ::core::Module* create_claude_module();
 extern "C" ::core::Module* create_settings_module();
 
 namespace {
+
+// ---- 模块开关（模块插拔方案 A：编译期内置 + 运行时注册门控）----
+// 关闭 = 不注册进 Router（onStart/compose/onKeyEvent 全部不可达，零执行）
+// + 其专属服务不启动（Claude 代理）。生效时机：重启（注册是启动期行为，
+// 设计 §5.4）。新模块必须在 getRouter() 装配处走 isModuleEnabled() 门控，
+// 否则无法被用户关闭（设计 §8 风险约定）。
+bool isModuleEnabled(const char* moduleId) {
+    // 进程内读一次 config.json（static 局部缓存；设置页改开关只影响下次启动）
+    static const std::vector<std::string> enabled = [] {
+        const module::settings::SettingsStore store(
+            ::core::paths::configFile());
+        return store.load().enabledModules;
+    }();
+    if (std::string(moduleId) == module::settings::kModuleIdHome ||
+        std::string(moduleId) == module::settings::kModuleIdSettings) {
+        return true;  // 恒启用：落地页 + 开关 UI 宿主
+    }
+    return std::find(enabled.begin(), enabled.end(), moduleId) != enabled.end();
+}
 
 // 全局：Finder "打开方式" 传入的文件路径
 // 两条来源都写这里：命令行 argv（启动时）/ Apple Event（Finder 双击、打开方式）
@@ -134,10 +156,25 @@ void setupLogging() {
     if (!initialized) {
         // 注册给 module_* 层（快捷按钮/卡片点击通过 core::appRouter() 导航）
         ::core::registerAppRouter(&router);
+        // 注册门控（方案 A）：home/settings 恒注册；三个工具模块按
+        // enabledModules 决定——不注册 = onStart/compose/菜单项全部不可达，
+        // "零执行零菜单项"是结构性保证，不靠模块自觉检查开关
         router.registerModule(home.get());
-        router.registerModule(markdown.get());
-        router.registerModule(todo.get());
-        router.registerModule(claude.get());
+        if (isModuleEnabled(module::settings::kModuleIdMarkdown)) {
+            router.registerModule(markdown.get());
+        } else {
+            LOG_INFO("模块已关闭（enabledModules 不含 markdown），不注册");
+        }
+        if (isModuleEnabled(module::settings::kModuleIdTodo)) {
+            router.registerModule(todo.get());
+        } else {
+            LOG_INFO("模块已关闭（enabledModules 不含 todo），不注册");
+        }
+        if (isModuleEnabled(module::settings::kModuleIdClaudeProxy)) {
+            router.registerModule(claude.get());
+        } else {
+            LOG_INFO("模块已关闭（enabledModules 不含 claude_proxy），不注册");
+        }
         router.registerModule(settings.get());
         router.startAll();
 
@@ -431,27 +468,48 @@ const DslAppConfig& dslAppConfig() {
         LOG_INFO("DevDesk 启动中...");
         LOG_INFO("应用数据目录: " + paths::appDataDir().string());
         openAppDatabase();
-        // ClaudeService 创建 + Claude Code 接管通道注入（spec §10.4）。
-        // 必须在 getRouter()（内部 Router::startAll → 各模块 onStart）之前：
-        // ClaudeService 的创建 + setGlobal 在 getClaudeService() 内完成，
-        // 模块 onStart 才能拿到非 null 的 global()——W3 修过的启动顺序不能
-        // 因为「默认不启动代理」回退，所以无论是否启动代理都必须先调它。
-        auto* claudeSvc = getClaudeService();
-        // 崩溃补还原（provider-config Phase C §5.3）：上次异常退出时 sidecar
-        // 残留 → 先还原，且必须先于任何 startProxy（否则残留的托管键会被
-        // 误快照为用户原值）
-        if (claudeSvc) {
-            claudeSvc->recoverPendingSettingsRestore();
-        }
-        // 硬性需求 1（provider-config Phase B）：代理默认不启动，
-        // claudeProxyAutoStart 门控；启动/停止按钮在 Claude 页
+        // 模块插拔门控（方案 A §5.2）：claude 模块关闭 = 该功能整体下线，
+        // 含后台服务——不创建 ClaudeService（global() 保持 null）、不 bind
+        // 8888、不写 proxy_token.txt。W3 的启动顺序约定（service 先于
+        // getRouter）只在模块启用时原样保留
         const module::settings::SettingsStore settingsStore(
             paths::configFile());
-        if (settingsStore.load().claudeProxyAutoStart) {
-            startClaudeProxy();
+        const auto settingsCfg = settingsStore.load();
+        if (!module::settings::moduleEnabled(
+                settingsCfg, module::settings::kModuleIdClaudeProxy)) {
+            LOG_INFO("Claude 模块已关闭：代理/ClaudeService 整体下线"
+                     "（8888 不监听；重新启用需改设置并重启）");
+            // 陈旧凭据清理（设计 §8 风险表）：上一次运行留下的 token 已失效，
+            // 删掉避免外部脚本误连（删不掉只记日志，不阻断启动）
+            std::error_code ec;
+            const auto tokenFile =
+                paths::appDataDir() / "proxy_token.txt";
+            if (std::filesystem::exists(tokenFile, ec) && !ec) {
+                std::filesystem::remove(tokenFile, ec);
+                LOG_INFO(ec ? "无法删除过期的 proxy_token.txt: " + ec.message()
+                            : "已删除过期的 proxy_token.txt（模块关闭）");
+            }
         } else {
-            LOG_INFO("Claude 代理未自动启动（claudeProxyAutoStart=false，"
-                     "可在设置页或 Claude 页手动启动）");
+            // ClaudeService 创建 + Claude Code 接管通道注入（spec §10.4）。
+            // 必须在 getRouter()（内部 Router::startAll → 各模块 onStart）之前：
+            // ClaudeService 的创建 + setGlobal 在 getClaudeService() 内完成，
+            // 模块 onStart 才能拿到非 null 的 global()——W3 修过的启动顺序不能
+            // 因为「默认不启动代理」回退，所以无论是否启动代理都必须先调它。
+            auto* claudeSvc = getClaudeService();
+            // 崩溃补还原（provider-config Phase C §5.3）：上次异常退出时
+            // sidecar 残留 → 先还原，且必须先于任何 startProxy（否则残留的
+            // 托管键会被误快照为用户原值）
+            if (claudeSvc) {
+                claudeSvc->recoverPendingSettingsRestore();
+            }
+            // 硬性需求 1（provider-config Phase B）：代理默认不启动，
+            // claudeProxyAutoStart 门控；启动/停止按钮在 Claude 页
+            if (settingsCfg.claudeProxyAutoStart) {
+                startClaudeProxy();
+            } else {
+                LOG_INFO("Claude 代理未自动启动（claudeProxyAutoStart=false，"
+                         "可在设置页或 Claude 页手动启动）");
+            }
         }
         getRouter();
         return true;

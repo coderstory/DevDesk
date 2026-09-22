@@ -1,6 +1,8 @@
 // src/module_settings/settings_config.cpp
 #include "settings_config.h"
 
+#include <algorithm>
+
 #include <fstream>
 #include <sstream>
 #include <utility>
@@ -24,7 +26,32 @@ constexpr const char* kKeyFontScale = "fontScalePercentV3";
 constexpr const char* kKeyLogRetention = "logRetentionDays";
 constexpr const char* kKeyProxyAutoStart = "claudeProxyAutoStart";
 constexpr const char* kKeyWindowEffect = "windowEffect";
+constexpr const char* kKeyEnabledModules = "enabledModules";
+
+// 合法模块 ID 清单（sanitized 过滤未知项；与 kModuleId* 一一对应）
+const char* const kKnownModuleIds[] = {
+    kModuleIdHome, kModuleIdMarkdown,     kModuleIdTodo,
+    kModuleIdClaudeProxy, kModuleIdSettings};
+
+bool isKnownModuleId(const std::string& id) {
+    for (const char* known : kKnownModuleIds) {
+        if (id == known) return true;
+    }
+    return false;
+}
 } // namespace
+
+std::vector<std::string> defaultEnabledModules() {
+    return {kModuleIdHome, kModuleIdMarkdown, kModuleIdTodo,
+            kModuleIdClaudeProxy, kModuleIdSettings};
+}
+
+bool moduleEnabled(const SettingsConfig& cfg, const std::string& moduleId) {
+    // home/settings 不可关闭（设计 §5.1：落地页 + 开关 UI 宿主）
+    if (moduleId == kModuleIdHome || moduleId == kModuleIdSettings) return true;
+    return std::find(cfg.enabledModules.begin(), cfg.enabledModules.end(),
+                     moduleId) != cfg.enabledModules.end();
+}
 
 SettingsStore::SettingsStore(std::filesystem::path file)
     : file_(std::move(file)) {}
@@ -46,6 +73,23 @@ SettingsConfig SettingsStore::sanitized(const SettingsConfig& cfg) {
         out.windowEffect != kWindowEffectFrosted) {
         out.windowEffect = kWindowEffectOff;
     }
+    // 模块开关：未知 ID 过滤（防手改 config）+ 去重 + 强制补齐恒启用项
+    //（home/settings，设计 §5.1）。静默过滤——load 对文件里的未知 ID 才 WARN
+    std::vector<std::string> modules;
+    modules.reserve(out.enabledModules.size());
+    for (const auto& id : out.enabledModules) {
+        if (isKnownModuleId(id) &&
+            std::find(modules.begin(), modules.end(), id) == modules.end()) {
+            modules.push_back(id);
+        }
+    }
+    for (const char* alwaysOn : {kModuleIdHome, kModuleIdSettings}) {
+        if (std::find(modules.begin(), modules.end(), alwaysOn) ==
+            modules.end()) {
+            modules.push_back(alwaysOn);
+        }
+    }
+    out.enabledModules = std::move(modules);
     return out;
 }
 
@@ -138,6 +182,23 @@ SettingsConfig SettingsStore::load() const {
     if (obj.has(kKeyWindowEffect) && obj.get(kKeyWindowEffect).isString()) {
         cfg.windowEffect = obj.get(kKeyWindowEffect).asString();
     }
+    // 模块开关：字符串数组；未知 ID 忽略 + WARN（防手改 config 打死模块，
+    // 设计 §5.1/§8）。字段缺失 → 保持默认全启用
+    if (obj.has(kKeyEnabledModules) && obj.get(kKeyEnabledModules).isArray()) {
+        const platform::json::JsonValue arr = obj.get(kKeyEnabledModules);
+        std::vector<std::string> ids;
+        for (int i = 0; i < arr.size(); ++i) {
+            if (!arr[i].isString()) continue;
+            const std::string id = arr[i].asString();
+            if (!isKnownModuleId(id)) {
+                LOG_WARN("Settings: enabledModules 含未知模块 ID \"" + id +
+                         "\"，已忽略");
+                continue;
+            }
+            ids.push_back(id);
+        }
+        cfg.enabledModules = std::move(ids);
+    }
     return sanitized(cfg);
 }
 
@@ -150,6 +211,8 @@ core::Result<void> SettingsStore::save(const SettingsConfig& cfgRaw) const {
     obj.set(kKeyLogRetention, platform::json::makeInt(cfg.logRetentionDays));
     obj.set(kKeyProxyAutoStart, platform::json::makeBool(cfg.claudeProxyAutoStart));
     obj.set(kKeyWindowEffect, platform::json::makeString(cfg.windowEffect));
+    obj.set(kKeyEnabledModules,
+            platform::json::makeStringArray(cfg.enabledModules));
 
     auto text = platform::json::stringify(
         platform::json::JsonValue(obj), /*pretty=*/true);

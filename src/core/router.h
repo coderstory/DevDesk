@@ -24,6 +24,10 @@ public:
     // 已注册模块的只读访问（侧边栏渲染 displayName/iconGlyph/pageId 用）
     const std::vector<Module*>& modules() const { return modules_; }
 
+    // 页面是否已注册（模块插拔方案 A：main 按 enabledModules 门控注册后，
+    // Home 降级渲染 / 调用方判断导航目标可达都查这里）
+    bool isRegistered(PageId page) const;
+
     // 取出并清空挂在某页上的跳转负载（一次性消费语义）：
     //   - 返回空串表示该页没有待消费负载
     //   - 取过一次后再次调用返回空（compose 每帧调用不会重复触发）

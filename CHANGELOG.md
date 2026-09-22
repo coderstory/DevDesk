@@ -2,6 +2,30 @@
 
 本文件记录 **a1a106a（macOS 中断现场收编）起** 的条目式变更，按恢复计划的三波（W1 止血收编 / W2 平台架构 / W3 剩余需求）组织，波内按 feat / fix / test / docs 分组。更早的 macOS 主线历史（P0–P8，66 测试通过）见 git log 与 spec §16。
 
+## [Module-Gating] 2026-09-22 —— 模块插拔方案 A（编译期内置 + 运行时注册门控）
+
+设计文档 `docs/superpowers/specs/2026-09-22-module-plugin-architecture-design.md`（推荐方案 A 为权威）；分支 `feat/plugin-gating`。最终基线 **275/275 全绿**（259 基线 + 16 新增）。
+
+### feat
+
+- **enabledModules 配置**：`config.json` 新增 `enabledModules` 字符串数组（缺省全启用，老配置零迁移）；`home`/`settings` 恒启用（落地页 + 开关 UI 宿主，sanitized 强制补齐），`markdown`/`todo`/`claude_proxy` 可关；未知 ID 忽略 + WARN。为此给 `platform::json` 补了最小数组读写能力（`size()/operator[]` 实装 + `makeStringArray`，原先是返回 0 的桩）。
+- **注册门控**：`main.cpp getRouter()` 按 `isModuleEnabled()` 决定三个工具模块是否 `registerModule`——不注册 = onStart/compose/onKeyEvent/侧边栏入口全部不可达（结构性零执行，不靠模块自觉）；Claude 模块关闭时代理整体下线（不创建 ClaudeService、8888 不监听、`proxy_token.txt` 启动时清理陈旧文件），与 `claudeProxyAutoStart` 正交（模块开关优先）。
+- **Router 加固**：新增 `isRegistered()`；`navigateTo()` 目标页未注册 → WARN + 回退 Home（不进"无页面"空白页；Home 也未注册的极端防御分支保持当前页）。Home 卡片、托盘菜单、文件打开分发（`.md`→Markdown 等）的残留跳转入口全部经此兜底。
+- **Home 仪表盘降级**：统计卡/快捷按钮/最近编辑按 Router 注册状态隐藏（宽度按剩余数量现算，n=1..5；三模块全关出「所有工具模块已关闭」空态文案）；不改 HomeService SQL，隐藏纯在渲染层。
+- **设置页「模块」卡**：三个工具模块各一行开关（名称 + 描述 + switch），描述注明「关闭模块后需重启应用生效」（注册是启动期行为，重启生效是设计 §5.4 的一期决策）；claude 关 → 代理卡整卡隐藏，markdown 关 → 目录卡整卡隐藏（不显示故障态）。
+
+### test（16 新增）
+
+- config 语义 6 用例：默认全启用/恒启用项/往返/未知 ID 过滤/空数组/损坏回退（`test_module_gating.cpp` + `test_settings.cpp`）。
+- Router 4 用例：`isRegistered`/未注册导航回退 Home/负载作废/全未注册防御（既有 payload 用例补注册桩适配新语义）。
+- 注册门控 1 用例：按 config 注册后关闭模块不在 `modules()`。
+- Home 降级 3 用例：三模块全关/部分关/全开等价（scoped appRouter 注入注册状态的无头 compose）。
+- 设置页 3 用例（含既有 openUp 用例适配 5 卡新布局改窗口高度）。
+
+### 已知边界
+
+- Claude 模块关闭期间不执行崩溃补还原（`recoverPendingSettingsRestore` 随 service 一起下线）：若上次退出时处于接管状态且本次以关闭 claude 模块启动，`settings.json` 保持托管值直至重新启用。见 KNOWN_LIMITATIONS。
+
 ## [Provider-Config] 2026-09-22 —— Claude 供应商完整配置（Phase A–E 全量落地）
 
 设计文档 `docs/superpowers/specs/2026-09-22-claude-provider-config-design.md`；分支 `feat/provider-config-bc`（A/B/C，已合 master）+ `feat/provider-config-de`（D/E）。最终基线 **233/233 全绿**（226 基线 + 7 新增）。
