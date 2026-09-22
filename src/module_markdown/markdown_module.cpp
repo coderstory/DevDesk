@@ -16,8 +16,8 @@
 //     文件夹可展开/收起，搜索时展平显示命中文件）
 //   - 大纲 = 顶栏开关 + 浮动面板（positioned + zIndex，不挤压编辑区）
 //   - 文件变化自动感知：5 秒轮询（pollChanged 轻量比对 → rescan），
-//     当前笔记被外部修改时弹「重载 / 保留本地」选择（dialog；EUI-NEO toast
-//     无按钮能力，选择类交互用 dialog）
+//     当前笔记被外部修改时弹「重载磁盘版本 / 保留本地」toast（action 按钮 =
+//     重载；✕ 关闭 = 保留本地；不自动超时，用户必须二选一）
 //
 // Phase 2 键盘流（spec §5.2，通道 A = input.onKeyEvent passthrough）：
 //   Tab/Shift+Tab 缩进、Enter 列表续行、Ctrl+B/I 包裹、Ctrl+K 链接骨架；
@@ -72,11 +72,12 @@ namespace fs = std::filesystem;
 // 行元素直接做 scrollView column 的流式子元素时其 position 会被静默忽略，
 // 图标/名字会被流式排到下一行）——行是 column 的流式子元素，行内的
 // 背景 rect / icon / name 才用 position 定位。
+// 文件树行（icon 为 FA7 Free-Solid 码点；📄 emoji 已换 fa-file-lines）
 void drawFileTreeItem(eui::Ui& ui,
                       const std::string& id,
                       float width,
                       const core::theme::Tokens& t,
-                      const std::string& icon,
+                      unsigned int icon,
                       const std::string& name,
                       bool active,
                       float indent,
@@ -93,8 +94,8 @@ void drawFileTreeItem(eui::Ui& ui,
             ui.text(id + ".icon")
                 .position(12.0f + indent, 0.0f)
                 .size(20.0f, 32.0f)
-                .text(icon)
-                .fontSize(t.sizes.fontSizeBody)
+                .icon(icon)
+                .fontSize(t.sizes.fontSizeSmall)
                 .lineHeight(32.0f)
                 .color(t.colors.textSecondary)
                 .build();
@@ -251,9 +252,8 @@ public:
         // 弹窗要画在最上层（dialog 自带 zIndex）
         drawNewNoteDialog(ui, screen, t, componentTheme);
         drawNewFolderDialog(ui, screen, t, componentTheme);
-        drawConflictDialog(ui, screen, t, componentTheme);
 
-        // 保存失败等操作的 toast 反馈（画在弹窗之上）
+        // 保存失败等操作的 toast 反馈（画在弹窗之上；外部修改冲突也走 toast）
         drawToast(ui, screen, componentTheme);
     }
 
@@ -299,10 +299,12 @@ private:
                     })
                     .build();
 
-                // 三态切换：编辑 / 双栏 / 预览（Ctrl+Shift+P 循环）
+                // 三态切换：编辑 / 双栏 / 预览（Ctrl+Shift+P 循环）。
+                // 旧文案带 ✎/⇔/👁 符号——👁 是彩色 emoji（系统 emoji 字体渲染，
+                // 风格不统一），segmented 只支持纯文本，故整体去符号
                 components::segmented(ui, "md.mode")
                     .size(segW, 36.0f)
-                    .items({"✎ 编辑", "⇔ 双栏", "👁 预览"})
+                    .items({"编辑", "双栏", "预览"})
                     .selected(static_cast<int>(mode_))
                     .fontSize(t.sizes.fontSizeSmall)
                     .theme(componentTheme)
@@ -333,7 +335,7 @@ private:
                             .text("+ 新建笔记")
                             .fontSize(t.sizes.fontSizeBody)
                             .theme(componentTheme, true)
-                            .textColor(eui::Color("#FFFFFF"))
+                            .textColor(t.colors.onPrimary)
                             .radius(t.sizes.radius)
                             .onClick([this] {
                                 newNoteOpen_ = true;
@@ -390,19 +392,29 @@ private:
                 .radius(t.sizes.radiusLarge)
                 .border(1.0f, t.colors.borderDefault)
                 .build();
-            // 搜索框：真实调用 FTS5
+            // 搜索框：真实调用 FTS5。🔍 emoji 换 FA（fa-magnifying-glass，
+            // 码点已对 EUI-NEO FA7 cmap 离线核对）——input 无前缀图标槽，
+            // 用浮层 icon 元素 + 加大 inset 给文字让位
             components::input(ui, "md.search")
                 .position(12.0f, 12.0f)
                 .size(sideW - 24.0f, 36.0f)
                 .value(searchQuery_)
-                .placeholder("🔍 搜索笔记…")
+                .placeholder("搜索笔记…")
                 .fontSize(t.sizes.fontSizeSmall)
-                .inset(10.0f)
+                .inset(28.0f)
                 .theme(componentTheme)
                 .onChange([this](const std::string& v) {
                     searchQuery_ = v;
                     refreshList();
                 })
+                .build();
+            ui.text("md.search.icon")
+                .position(24.0f, 22.0f)
+                .size(16.0f, 16.0f)
+                .icon(0xF002)  // fa-magnifying-glass
+                .fontSize(12.0f)
+                .lineHeight(16.0f)
+                .color(t.colors.textTertiary)
                 .build();
 
             // 标签筛选区（spec §8.1：全部标签 chip 带笔记数，点击过滤树 /
@@ -458,7 +470,7 @@ private:
                                 .fontSize(fs)
                                 .lineHeight(rowH)
                                 .horizontalAlign(eui::HorizontalAlign::Center)
-                                .color(active ? eui::Color("#FFFFFF")
+                                .color(active ? t.colors.onPrimary
                                               : t.colors.textSecondary)
                                 .build();
                         })
@@ -580,7 +592,7 @@ private:
                     const NoteMeta& n = notes_[i];
                     const std::string path = noteDisplayPath(n);
                     const std::string id = "md.tree.item." + std::to_string(i);
-                    drawFileTreeItem(inner, id, w, t, "📄", noteDisplayName(n),
+                    drawFileTreeItem(inner, id, w, t, 0xF15C, noteDisplayName(n),
                                      path == currentPath_, 0.0f,
                                      [this, path] { openNote(path); });
                 }
@@ -619,8 +631,8 @@ private:
                     const MdTreeRow& r = rows[i];
                     const std::string id = "md.tree.node." + std::to_string(i);
                     if (r.isFolder) {
-                        // 文件夹行：▸/▾ 展开指示 + 📁，点击收起/展开
-                        // （同样包 stack，position 只在 stack 内生效）
+                        // 文件夹行：▸/▾ 展开指示 + fa-folder，点击收起/展开
+                        // （同样包 stack，position 只在 stack 内生效；📁 emoji 已换 FA）
                         const bool expanded = collapsedDirs_.count(r.relPath) == 0;
                         inner.stack(id)
                             .size(w, 32.0f)
@@ -645,10 +657,18 @@ private:
                                     .lineHeight(32.0f)
                                     .color(t.colors.textTertiary)
                                     .build();
+                                inner.text(id + ".ficon")
+                                    .position(26.0f, 0.0f)
+                                    .size(16.0f, 32.0f)
+                                    .icon(0xF07B)  // fa-folder
+                                    .fontSize(t.sizes.fontSizeSmall)
+                                    .lineHeight(32.0f)
+                                    .color(t.colors.textTertiary)
+                                    .build();
                                 inner.text(id + ".name")
-                                    .position(28.0f, 0.0f)
-                                    .size(std::max(0.0f, w - 40.0f), 32.0f)
-                                    .text("📁 " + r.name)
+                                    .position(46.0f, 0.0f)
+                                    .size(std::max(0.0f, w - 58.0f), 32.0f)
+                                    .text(r.name)
                                     .fontSize(t.sizes.fontSizeSmall)
                                     .lineHeight(32.0f)
                                     .color(t.colors.textPrimary)
@@ -657,10 +677,11 @@ private:
                             })
                             .build();
                     } else {
-                        // 文件行：depth=1 缩进 20px
-                        drawFileTreeItem(inner, id, w, t, "📄", r.name,
+                        // 文件行：depth=1 缩进 32px（文件夹名 x=46，
+                        // 子文件名 36+32=68——层级差 ≥20px，缩进可辨）
+                        drawFileTreeItem(inner, id, w, t, 0xF15C, r.name,
                                          r.relPath == currentPath_,
-                                         20.0f,
+                                         32.0f,
                                          [this, path = r.relPath] { openNote(path); });
                     }
                 }
@@ -858,6 +879,7 @@ private:
             drawStatusBar(ui, 0.0f, bodyH - 22.0f, midW, t);
         }).build();
     }
+
     // ---- Phase 2 键盘流：onKeyEvent 接线（纯函数在 md_keyboard）----
     // 键位：Tab/Shift+Tab 缩进、Enter 列表续行、Ctrl+B/I 包裹、Ctrl+K 链接。
     // 文本/光标/选区变换全部走 md_keyboard 纯函数，这里只做：
@@ -994,7 +1016,7 @@ private:
                 .text("＋")
                 .fontSize(fs)
                 .theme(componentTheme, true)
-                .textColor(eui::Color("#FFFFFF"))
+                .textColor(t.colors.onPrimary)
                 .radius(t.sizes.radiusPill)
                 .onClick([this] { commitAddTag(); })
                 .build();
@@ -1240,7 +1262,7 @@ private:
                     .text("创建")
                     .fontSize(t.sizes.fontSizeBody)
                     .theme(componentTheme, true)
-                    .textColor(eui::Color("#FFFFFF"))
+                    .textColor(t.colors.onPrimary)
                     .radius(t.sizes.radius)
                     .onClick([this] { commitNewNote(); })
                     .build();
@@ -1311,7 +1333,7 @@ private:
                     .text("创建")
                     .fontSize(t.sizes.fontSizeBody)
                     .theme(componentTheme, true)
-                    .textColor(eui::Color("#FFFFFF"))
+                    .textColor(t.colors.onPrimary)
                     .radius(t.sizes.radius)
                     .onClick([this] { commitNewFolder(); })
                     .build();
@@ -1319,89 +1341,53 @@ private:
             .build();
     }
 
-    // ---- 外部修改冲突弹窗（W8：当前笔记被外部程序改动时二选一）----
-    // 注：EUI-NEO toast 无按钮能力，「重载/保留本地」这类选择交互用 dialog。
-    void drawConflictDialog(eui::Ui& ui,
-                            const eui::Screen& screen,
-                            const core::theme::Tokens& t,
-                            const components::theme::ThemeColorTokens& componentTheme) {
-        const float w = 460.0f;
-        const float h = 220.0f;
+    // ---- 外部修改冲突提示（W8 → 本批改版）：dialog → toast action ----
+    // EUI-NEO toast 已支持 action 按钮（单按钮 + 右上 ✕）：
+    //   action「重载磁盘版本」= 从磁盘重读；✕ 关闭 = 保留本地编辑。
+    // duration(0) 不自动超时——二选一必须显式决定，超时默认替用户做选择不可取。
+    // ponytail: toast 单实例 + 单 action 按钮，冲突提示与普通状态提示共用
+    // 一个实例（冲突期间优先展示冲突内容），普通 toast 排队语义等上游支持再做。
 
-        components::dialog(ui, "md.dialog.conflict")
-            .open(conflictOpen_)
+    // ==================== 业务动作 ====================
+
+    // ---- Toast 反馈（仿 claude_module；⚠/✓ 前缀已换 icon 码点）----
+    void drawToast(eui::Ui& ui, const eui::Screen& screen,
+                   const components::theme::ThemeColorTokens& themeTokens) {
+        const bool conflict = conflictOpen_;
+        components::toast(ui, "md.toast")
+            .theme(themeTokens)
             .screen(screen.width, screen.height)
-            .size(w, h)
-            .theme(componentTheme)
-            .onOpenChange([this](bool v) { conflictOpen_ = v; })
-            .content([&] {
-                ui.text("md.dialog.conflict.title")
-                    .position(28.0f, 24.0f)
-                    .size(w - 56.0f, 28.0f)
-                    .text("文件已被外部修改")
-                    .fontSize(t.sizes.fontSizeLarge)
-                    .lineHeight(28.0f)
-                    .fontWeight(700)
-                    .color(t.colors.textPrimary)
-                    .build();
-
-                ui.text("md.dialog.conflict.hint")
-                    .position(28.0f, 56.0f)
-                    .size(w - 56.0f, 36.0f)
-                    .text("「" + currentPath_ + "」在磁盘上被其他程序修改，"
-                          "与未保存的本地编辑冲突。")
-                    .fontSize(t.sizes.fontSizeSmall)
-                    .lineHeight(18.0f)
-                    .wrap()
-                    .color(t.colors.textTertiary)
-                    .build();
-
-                components::button(ui, "md.dialog.conflict.reload")
-                    .position(28.0f, h - 60.0f)
-                    .size((w - 68.0f) * 0.5f, 40.0f)
-                    .text("↻ 重载磁盘版本")
-                    .fontSize(t.sizes.fontSizeBody)
-                    .theme(componentTheme, true)
-                    .textColor(eui::Color("#FFFFFF"))
-                    .radius(t.sizes.radius)
-                    .onClick([this] { resolveConflict(true); })
-                    .build();
-
-                components::button(ui, "md.dialog.conflict.keep")
-                    .position(28.0f + (w - 68.0f) * 0.5f + 12.0f, h - 60.0f)
-                    .size((w - 68.0f) * 0.5f, 40.0f)
-                    .text("保留本地编辑")
-                    .fontSize(t.sizes.fontSizeBody)
-                    .theme(componentTheme, false)
-                    .textColor(t.colors.textPrimary)
-                    .radius(t.sizes.radius)
-                    .border(1.0f, t.colors.borderDefault)
-                    .onClick([this] { resolveConflict(false); })
-                    .build();
+            .visible(conflict || toastOpen_)
+            .size(360.0f, conflict ? 128.0f : 88.0f)  // 带 action 按钮加高一档
+            .duration(conflict ? 0.0f : 3.5f)
+            .title(conflict ? "文件已被外部修改" : toastTitle_)
+            .message(conflict
+                         ? "「" + currentPath_ + "」在磁盘上被其他程序修改，"
+                           "与未保存的本地编辑冲突。\n✕ 关闭 = 保留本地编辑"
+                         : toastMessage_)
+            .icon(conflict ? 0xF071 : (toastError_ ? 0xF071 : 0xF00C))
+            .action(conflict ? "重载磁盘版本" : "", [this] { resolveConflict(true); })
+            .onAutoDismiss([this] {
+                if (conflictOpen_) {
+                    resolveConflict(false);
+                } else {
+                    toastOpen_ = false;
+                }
+            })
+            .onDismiss([this] {
+                if (conflictOpen_) {
+                    resolveConflict(false);
+                } else {
+                    toastOpen_ = false;
+                }
             })
             .build();
     }
 
-    // ==================== 业务动作 ====================
-
-    // ---- Toast 反馈（仿 claude_module）----
-    void drawToast(eui::Ui& ui, const eui::Screen& screen,
-                   const components::theme::ThemeColorTokens& themeTokens) {
-        components::toast(ui, "md.toast")
-            .theme(themeTokens)
-            .screen(screen.width, screen.height)
-            .visible(toastOpen_)
-            .duration(3.5f)
-            .title(toastTitle_)
-            .message(toastMessage_)
-            .onAutoDismiss([this] { toastOpen_ = false; })
-            .onDismiss([this] { toastOpen_ = false; })
-            .build();
-    }
-
     void showToast(const std::string& title, const std::string& msg, bool isError) {
-        toastTitle_ = isError ? ("⚠ " + title) : ("✓ " + title);
+        toastTitle_ = title;
         toastMessage_ = msg;
+        toastError_ = isError;
         toastOpen_ = true;
     }
 
@@ -1789,8 +1775,10 @@ private:
     void resolveConflict(bool reloadFromDisk) {
         conflictOpen_ = false;
         if (reloadFromDisk) {
+            // 重载本身就是可见反馈（编辑器内容即刻变化 + 状态栏「已重新加载」）；
+            // 不再补 toast——action 点击后 toast 必关，立刻再弹会被 onDismiss
+            // 连带清掉（单实例限制，见 drawToast 注释）
             reloadCurrentNote(false);
-            showToast("已重载", "已载入磁盘上的最新版本", false);
         } else {
             // 保留本地：把基准 mtime 推到磁盘当前值，未保存编辑走原有
             // 自动保存链路（400ms 防抖后覆盖写回）
@@ -1921,6 +1909,7 @@ private:
 
     // ---- Toast（EUI-NEO 单实例，复用一个状态位）----
     bool toastOpen_ = false;
+    bool toastError_ = false;         // toast 图标用（fa-triangle-exclamation / fa-check）
     std::string toastTitle_;
     std::string toastMessage_;
 
@@ -1940,7 +1929,7 @@ private:
     std::set<std::string> collapsedDirs_;             // 已收起的一级目录（内存态）
     bool outlineOpen_ = false;                        // 大纲浮动面板开关
     int64_t lastKnownMtime_ = 0;                      // 当前笔记已知磁盘 mtime（-1=已删除）
-    bool conflictOpen_ = false;                       // 外部修改冲突弹窗
+    bool conflictOpen_ = false;                       // 外部修改冲突 toast（action 二选一）
     std::chrono::steady_clock::time_point lastPollAt_{};  // 轮询节流基准
 
     // ---- 标签状态（spec §8.1）----

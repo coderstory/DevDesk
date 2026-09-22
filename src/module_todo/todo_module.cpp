@@ -36,13 +36,14 @@ using module::todo::ui::kCardHeight;
 using module::todo::ui::kCardGap;
 using module::todo::ui::kColumnHeaderHeight;
 
-// 优先级 → 中文标签
+// 优先级 → 中文标签（●/○ 是文本字形，随 chip 前景色调色；
+// 旧 🔴🟡🔵⚪ 是系统彩色 emoji，风格不统一已换）
 const char* priorityLabel(Priority p) {
     switch (p) {
-        case Priority::High:   return "🔴高";
-        case Priority::Medium: return "🟡中";
-        case Priority::Low:    return "🔵低";
-        default:               return "⚪无";
+        case Priority::High:   return "●高";
+        case Priority::Medium: return "●中";
+        case Priority::Low:    return "●低";
+        default:               return "无";
     }
 }
 
@@ -537,7 +538,8 @@ public:
     // 此前写进 header subtitle 永久驻留，静态操作说明被最后一条
     // 操作结果永久顶掉；现在 subtitle 始终保持静态说明。
     void setStatus(const std::string& msg, bool isError = false) {
-        toastTitle_ = isError ? ("⚠ " + msg) : msg;
+        toastTitle_ = msg;
+        toastError_ = isError;
         toastOpen_ = true;
     }
 
@@ -550,6 +552,7 @@ public:
             .visible(toastOpen_)
             .duration(3.5f)
             .title(toastTitle_)
+            .icon(toastError_ ? 0xF071 : 0xF00C)  // fa-triangle-exclamation / fa-check
             .onAutoDismiss([this] { toastOpen_ = false; })
             .onDismiss([this] { toastOpen_ = false; })
             .build();
@@ -660,36 +663,54 @@ private:
                     .gap(t.sizes.spacingSmall)
                     .content([&] {
                         // 搜索框（真实调用 service_->search；仿 markdown 模块 md.search）
-                        // Enter/Esc 清空（EUI-NEO input 把 Escape 映射到 onEnter）
-                        components::input(ui, "todo.search")
+                        // Enter/Esc 清空（EUI-NEO input 把 Escape 映射到 onEnter）。
+                        // 🔍 emoji 换 FA：包一层 stack 才能在流式 row 里叠 icon 浮层
+                        ui.stack("todo.search.wrap")
                             .size(240.0f, 40.0f)
-                            .value(searchQuery_)
-                            .placeholder("🔍 搜索任务…")
-                            .fontSize(t.sizes.fontSizeSmall)
-                            .inset(10.0f)
-                            .theme(componentTheme)
-                            .onChange([this](const std::string& v) {
-                                searchQuery_ = v;
-                                refreshSearch();
-                            })
-                            .onEnter([this] {
-                                if (!searchQuery_.empty()) {
-                                    searchQuery_.clear();
-                                    refreshSearch();
-                                }
+                            .content([&] {
+                                components::input(ui, "todo.search")
+                                    .size(240.0f, 40.0f)
+                                    .value(searchQuery_)
+                                    .placeholder("搜索任务…")
+                                    .fontSize(t.sizes.fontSizeSmall)
+                                    .inset(30.0f)
+                                    .theme(componentTheme)
+                                    .onChange([this](const std::string& v) {
+                                        searchQuery_ = v;
+                                        refreshSearch();
+                                    })
+                                    .onEnter([this] {
+                                        if (!searchQuery_.empty()) {
+                                            searchQuery_.clear();
+                                            refreshSearch();
+                                        }
+                                    })
+                                    .build();
+                                ui.text("todo.search.icon")
+                                    .position(14.0f, 12.0f)
+                                    .size(16.0f, 16.0f)
+                                    .icon(0xF002)  // fa-magnifying-glass
+                                    .fontSize(12.0f)
+                                    .lineHeight(16.0f)
+                                    .color(t.colors.textTertiary)
+                                    .build();
                             })
                             .build();
 
-                        // 逾期入口（badge = listOverdue().size()，0 时置灰不可点）
+                        // 逾期入口（badge = listOverdue().size()，0 时置灰不可点；
+                        // ⚠ emoji 换 fa-triangle-exclamation，0 时随 disabled 自动置灰）
                         const bool hasOverdue = overdueCount_ > 0;
                         components::button(ui, "todo.btn.overdue")
                             .size(104.0f, 40.0f)
-                            .text("⚠ 逾期 " + std::to_string(overdueCount_))
+                            .text("逾期 " + std::to_string(overdueCount_))
+                            .icon(0xF071)
                             .fontSize(t.sizes.fontSizeSmall)
                             .colors(hasOverdue ? t.colors.error : t.colors.surfaceElevated,
                                     hasOverdue ? t.colors.error : t.colors.hover,
                                     hasOverdue ? t.colors.error : t.colors.active)
-                            .textColor(hasOverdue ? eui::Color("#FFFFFF")
+                            .textColor(hasOverdue ? t.colors.onPrimary
+                                                  : t.colors.textDisabled)
+                            .iconColor(hasOverdue ? t.colors.onPrimary
                                                   : t.colors.textDisabled)
                             .radius(t.sizes.radius)
                             .border(1.0f, t.colors.borderDefault)
@@ -720,7 +741,7 @@ private:
                             .fontSize(t.sizes.fontSizeSmall)
                             .colors(t.colors.primary, t.colors.primaryHover,
                                     t.colors.primaryPressed)
-                            .textColor(eui::Color("#FFFFFF"))
+                            .textColor(t.colors.onPrimary)
                             .radius(t.sizes.radius)
                             .onClick([this] {
                                 if (columns_.empty()) {
@@ -764,7 +785,7 @@ private:
                         .fontSize(t.sizes.fontSizeBody - 1.0f)
                         .colors(t.colors.primary, t.colors.primaryHover,
                                 t.colors.primaryPressed)
-                        .textColor(eui::Color("#FFFFFF"))
+                        .textColor(t.colors.onPrimary)
                         .radius(t.sizes.radius)
                         .onClick([this] { retryLoad(); })
                         .build();
@@ -899,7 +920,7 @@ private:
                 .position(0.0f, height / 2.0f - 12.0f)
                 .size(width, 24.0f)
                 .text(searchQuery_.empty()
-                          ? (isArchive ? "📦 归档的任务在这里" : "暂无任务")
+                          ? (isArchive ? "归档的任务在这里" : "暂无任务")
                           : "无命中任务")
                 .fontSize(t.sizes.fontSizeSmall - 1.0f)
                 .lineHeight(24.0f)
@@ -1026,9 +1047,9 @@ private:
                  priorityLabel(task.priority), priorityColor(task.priority, t),
                  t.colors.surface, cardOpacity);
 
-        // 截止 chip
+        // 截止 chip（⏰ emoji 已去掉：逾期时 chip 前景直接用 error 色示意）
         if (task.dueAt.has_value()) {
-            const std::string dueText = "⏰ " + formatDue(task.dueAt.value());
+            const std::string dueText = formatDue(task.dueAt.value());
             drawChip(ui, id + ".due", 70.0f, y + 44.0f, 66.0f, t, dueText,
                      isOverdue(task) ? t.colors.error : t.colors.textTertiary,
                      t.colors.surface, cardOpacity);
@@ -1171,7 +1192,7 @@ private:
                     .text("创建")
                     .fontSize(t.sizes.fontSizeBody - 1.0f)
                     .colors(t.colors.primary, t.colors.primaryHover, t.colors.primaryPressed)
-                    .textColor(eui::Color("#FFFFFF"))
+                    .textColor(t.colors.onPrimary)
                     .radius(t.sizes.radius)
                     .onClick([this] {
                         const int64_t col = newTaskColumnId_;
@@ -1391,7 +1412,7 @@ private:
                     .text("保存")
                     .fontSize(t.sizes.fontSizeBody - 1.0f)
                     .colors(t.colors.primary, t.colors.primaryHover, t.colors.primaryPressed)
-                    .textColor(eui::Color("#FFFFFF"))
+                    .textColor(t.colors.onPrimary)
                     .radius(t.sizes.radius)
                     .onClick([this] {
                         const int64_t id = renameColumnId_;
@@ -1471,7 +1492,7 @@ private:
                     .text("删除")
                     .fontSize(t.sizes.fontSizeBody - 1.0f)
                     .colors(t.colors.error, t.colors.error, t.colors.error)
-                    .textColor(eui::Color("#FFFFFF"))
+                    .textColor(t.colors.onPrimary)
                     .radius(t.sizes.radius)
                     .onClick([this] {
                         if (confirmTaskId_ != 0) {
@@ -1763,12 +1784,12 @@ private:
                     .border(1.0f, !hasDue ? t.colors.primary : t.colors.borderDefault)
                     .onClick([this] { detailDueAt_ = std::nullopt; })
                     .build();
-                const std::string dueBtnText =
-                    hasDue ? "📅 " + formatDue(detailDueAt_.value()) : "📅 选择日期…";
+                // 📅 emoji 换 fa-calendar（码点已对 EUI-NEO FA7 cmap 离线核对）
                 components::button(ui, "todo.dialog.detail.due.pick")
                     .position(136.0f, 328.0f)
                     .size(180.0f, 32.0f)
-                    .text(dueBtnText)
+                    .text(hasDue ? formatDue(detailDueAt_.value()) : "选择日期…")
+                    .icon(0xF133)
                     .fontSize(t.sizes.fontSizeSmall - 1.0f)
                     .colors(hasDue ? t.colors.primarySoftBg : t.colors.surfaceElevated,
                             t.colors.hover, t.colors.active)
@@ -1910,7 +1931,7 @@ private:
                     .text("保存")
                     .fontSize(t.sizes.fontSizeBody - 1.0f)
                     .colors(t.colors.primary, t.colors.primaryHover, t.colors.primaryPressed)
-                    .textColor(eui::Color("#FFFFFF"))
+                    .textColor(t.colors.onPrimary)
                     .radius(t.sizes.radius)
                     .onClick([this] {
                         Task updated;
@@ -2007,6 +2028,7 @@ private:
 
     // 状态反馈 toast（超时消失；subtitle 保持静态说明）
     bool toastOpen_ = false;
+    bool toastError_ = false;  // toast 图标用（fa-triangle-exclamation / fa-check）
     std::string toastTitle_;
 
     // 搜索（三件套 1）：query + service_->search 的命中任务 id 集

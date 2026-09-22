@@ -456,11 +456,11 @@ REGISTER_TEST(md_module_compose_tree, "markdown_module: W8 目录树展开收起
 
     // 帧1：树行序（W9 根组置顶）= [根目录▾, solo.md, inbox▾, idea.md, work▾, week.md]
     frame("t1");
-    DOCTEST_CHECK_EQ(ui.find("md.tree.node.0.name")->text, std::string("📁 根目录"));
+    DOCTEST_CHECK_EQ(ui.find("md.tree.node.0.name")->text, std::string("根目录"));
     DOCTEST_CHECK_EQ(ui.find("md.tree.node.1.name")->text, std::string("solo.md"));
-    DOCTEST_CHECK_EQ(ui.find("md.tree.node.2.name")->text, std::string("📁 inbox"));
+    DOCTEST_CHECK_EQ(ui.find("md.tree.node.2.name")->text, std::string("inbox"));
     DOCTEST_CHECK_EQ(ui.find("md.tree.node.3.name")->text, std::string("idea.md"));
-    DOCTEST_CHECK_EQ(ui.find("md.tree.node.4.name")->text, std::string("📁 work"));
+    DOCTEST_CHECK_EQ(ui.find("md.tree.node.4.name")->text, std::string("work"));
 
     // layout 级验证（W7 坑位：position 在流式子元素上静默失效——跑真实 layout
     // 后比对计算 frame，缩进丢失会在下面两条断言暴露）
@@ -480,11 +480,11 @@ REGISTER_TEST(md_module_compose_tree, "markdown_module: W8 目录树展开收起
     DOCTEST_REQUIRE(folder->onClick != nullptr);
     folder->onClick();
     frame("t2");
-    DOCTEST_CHECK_EQ(ui.find("md.tree.node.0.name")->text, std::string("📁 根目录"));
+    DOCTEST_CHECK_EQ(ui.find("md.tree.node.0.name")->text, std::string("根目录"));
     DOCTEST_CHECK_EQ(ui.find("md.tree.node.1.name")->text, std::string("solo.md"));
-    DOCTEST_CHECK_EQ(ui.find("md.tree.node.2.name")->text, std::string("📁 inbox"));
+    DOCTEST_CHECK_EQ(ui.find("md.tree.node.2.name")->text, std::string("inbox"));
     DOCTEST_CHECK_EQ(ui.find("md.tree.node.2.arrow")->text, std::string("▸"));
-    DOCTEST_CHECK_EQ(ui.find("md.tree.node.3.name")->text, std::string("📁 work"));
+    DOCTEST_CHECK_EQ(ui.find("md.tree.node.3.name")->text, std::string("work"));
     DOCTEST_CHECK_EQ(ui.find("md.tree.node.4.name")->text, std::string("week.md"));
 
     // 帧3：再点展开 → 文件行回来
@@ -522,19 +522,28 @@ REGISTER_TEST(md_module_empty_tree, "markdown_module: W9 空目录根组标题+�
     mod->compose(ui, screen);
     ui.end();
 
-    // 空目录：根组标题行 + 空态提示同显
+    // 空目录：根组标题行 + 空态提示同显（📁 emoji 已换 fa-folder icon 元素）
     const auto* rootHeader = ui.find("md.tree.node.0.name");
     DOCTEST_REQUIRE(rootHeader != nullptr);
-    DOCTEST_CHECK_EQ(rootHeader->text, std::string("📁 根目录"));
+    DOCTEST_CHECK_EQ(rootHeader->text, std::string("根目录"));
+    const auto* rootIcon = ui.find("md.tree.node.0.ficon");
+    DOCTEST_REQUIRE(rootIcon != nullptr);
+    DOCTEST_CHECK_EQ(rootIcon->fontFamily, std::string("Icon"));  // FA 路由
+    DOCTEST_CHECK_EQ(rootIcon->text, eui::utf8(0xF07B));          // fa-folder
     const auto* hint = ui.find("md.tree.empty");
     DOCTEST_REQUIRE(hint != nullptr);
     DOCTEST_CHECK(hint->text.find("还没有笔记") != std::string::npos);
 
     // 搜索框 placeholder：空输入 + 未聚焦时也渲染（用户报告「空白文本框」，
-    // 核查结论：EUI-NEO input 只要 text 为空就画 placeholder，与焦点无关）
+    // 核查结论：EUI-NEO input 只要 text 为空就画 placeholder，与焦点无关）。
+    // 🔍 emoji 已换 FA 浮层 icon（fa-magnifying-glass）
     const auto* search = ui.find("md.search.text");
     DOCTEST_REQUIRE(search != nullptr);
-    DOCTEST_CHECK_EQ(search->text, std::string("🔍 搜索笔记…"));
+    DOCTEST_CHECK_EQ(search->text, std::string("搜索笔记…"));
+    const auto* searchIcon = ui.find("md.search.icon");
+    DOCTEST_REQUIRE(searchIcon != nullptr);
+    DOCTEST_CHECK_EQ(searchIcon->fontFamily, std::string("Icon"));
+    DOCTEST_CHECK_EQ(searchIcon->text, eui::utf8(0xF002));
 
     mod->onStop();
     return true;
@@ -562,7 +571,7 @@ REGISTER_TEST(md_module_new_folder, "markdown_module: W9 新建文件夹入口�
 
     // 帧1：左栏有「+ 文件夹」按钮；点开弹窗
     frame("nf1");
-    DOCTEST_CHECK_EQ(ui.find("md.tree.node.0.name")->text, std::string("📁 根目录"));
+    DOCTEST_CHECK_EQ(ui.find("md.tree.node.0.name")->text, std::string("根目录"));
     const auto* folderBtn = ui.find("md.tree.newfolder.bg");
     DOCTEST_REQUIRE(folderBtn != nullptr);
     DOCTEST_REQUIRE(folderBtn->onClick != nullptr);
@@ -589,9 +598,9 @@ REGISTER_TEST(md_module_new_folder, "markdown_module: W9 新建文件夹入口�
     const auto* dialogPanel = ui.find("md.dialog.newfolder.panel");
     DOCTEST_REQUIRE(dialogPanel != nullptr);
     DOCTEST_CHECK_EQ(dialogPanel->opacity, 0.0f);
-    DOCTEST_CHECK_EQ(ui.find("md.tree.node.0.name")->text, std::string("📁 根目录"));
+    DOCTEST_CHECK_EQ(ui.find("md.tree.node.0.name")->text, std::string("根目录"));
     DOCTEST_CHECK_EQ(ui.find("md.tree.node.1.name")->text, std::string("solo.md"));
-    DOCTEST_CHECK_EQ(ui.find("md.tree.node.2.name")->text, std::string("📁 工作"));
+    DOCTEST_CHECK_EQ(ui.find("md.tree.node.2.name")->text, std::string("工作"));
     DOCTEST_CHECK_EQ(ui.find("md.tree.node.2.arrow")->text, std::string("▾"));
     DOCTEST_CHECK(ui.find("md.tree.node.3.name") == nullptr);  // 空文件夹无子行
     // 磁盘上目录真实存在
@@ -614,7 +623,7 @@ REGISTER_TEST(md_module_new_folder, "markdown_module: W9 新建文件夹入口�
     frame("nf7");
     // 文件真实落盘在子目录，树里 工作 组下出现 周会.md
     DOCTEST_CHECK(fs::is_regular_file(env.dir / "工作" / "周会.md"));
-    DOCTEST_CHECK_EQ(ui.find("md.tree.node.2.name")->text, std::string("📁 工作"));
+    DOCTEST_CHECK_EQ(ui.find("md.tree.node.2.name")->text, std::string("工作"));
     DOCTEST_CHECK_EQ(ui.find("md.tree.node.3.name")->text, std::string("周会.md"));
 
     mod->onStop();

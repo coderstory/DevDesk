@@ -80,9 +80,10 @@ REGISTER_TEST(todo_card_text_fits, "font-em: todo card & chips fit fixed heights
     core::theme::setFontScale(1.0f);
     const float chipFont = t.sizes.fontSizeSmall - 3.0f;  // 10
 
-    // chip 固定宽：优先级 48、截止 66（drawChip 内容水平居中，超宽即视觉外溢）
-    DOCTEST_CHECK(textW("高", chipFont, 600) <= 48.0f);
-    DOCTEST_CHECK(textW("⏰ 12-31", chipFont) <= 66.0f);
+    // chip 固定宽：优先级 48、截止 66（drawChip 内容水平居中，超宽即视觉外溢）。
+    // 优先级 chip 现为「●高」（文本字形，随前景色）；截止 chip 已去 ⏰ emoji
+    DOCTEST_CHECK(textW("●高", chipFont, 600) <= 48.0f);
+    DOCTEST_CHECK(textW("12-31", chipFont) <= 66.0f);
 
     // 纵向（drawCard：title y=14 lineHeight 18、chip y=44；卡高 84）
     DOCTEST_CHECK(14.0f + kGlyphExtentRatio * (t.sizes.fontSizeBody - 1.0f) <= 44.0f);
