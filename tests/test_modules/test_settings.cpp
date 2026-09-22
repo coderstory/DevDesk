@@ -1,15 +1,18 @@
 // tests/test_modules/test_settings.cpp
 // P13 设置页单测：SettingsStore（config.json 读写）纯逻辑 + 模块 compose 无头冒烟
 // 覆盖：默认值 / 保存-加载往返 / 损坏 JSON 回退 / 数值钳制 / 主题字段映射 /
-//       设置页可渲染（DSL 元素树构建）/ 主题切换对下一次 compose 即时生效
+//       设置页可渲染（DSL 元素树构建）/ 主题切换对下一次 compose 即时生效 /
+//       日志保留下拉弹层不出窗体（openUp）/ 切换档位立即清理 / 文本垂直居中
 #include "doctest.h"
 #include "settings_config.h"
 
+#include "core/database.h"
 #include "core/module_interface.h"
 #include "core/theme.h"
 
 #include <eui/dsl.h>
 
+#include <ctime>
 #include <filesystem>
 #include <fstream>
 #include <memory>
@@ -29,6 +32,52 @@ void removeQuietly(const std::filesystem::path& p) {
     std::error_code ec;
     std::filesystem::remove(p, ec);
 }
+
+// 环境变量设置（Windows 用 _putenv_s，空串清除；与 test_markdown 同款）
+void setEnvVar(const char* name, const std::string& value) {
+#if defined(_WIN32)
+    ::_putenv_s(name, value.c_str());
+#else
+    if (value.empty()) {
+        ::unsetenv(name);
+    } else {
+        ::setenv(name, value.c_str(), 1);
+    }
+#endif
+}
+
+// RAII：临时 config.json（DEVDESK_CONFIG_PATH）+ 临时 DB（appDatabase），
+// 析构注销/清除，fail-fast 断言提前返回也不污染其他用例
+struct PruneEnv {
+    std::filesystem::path cfgPath;
+    std::filesystem::path dbPath;
+    std::unique_ptr<::core::Database> db;
+
+    explicit PruneEnv(const char* tag) {
+        cfgPath = std::filesystem::temp_directory_path() /
+                  ("devdesk_test_settings_" + std::string(tag) + "_cfg.json");
+        dbPath = std::filesystem::temp_directory_path() /
+                 ("devdesk_test_settings_" + std::string(tag) + ".db");
+        removeQuietly(cfgPath);
+        removeQuietly(dbPath);
+        auto r = ::core::Database::open(dbPath);
+        if (r.isFail()) return;
+        db = std::make_unique<::core::Database>(std::move(r.unsafeValue()));
+        if (db->migrate().isFail()) {
+            db.reset();
+            return;
+        }
+        ::core::registerAppDatabase(&db->db());
+        setEnvVar("DEVDESK_CONFIG_PATH", cfgPath.string());
+    }
+
+    ~PruneEnv() {
+        setEnvVar("DEVDESK_CONFIG_PATH", "");
+        ::core::registerAppDatabase(nullptr);
+        removeQuietly(cfgPath);
+        removeQuietly(dbPath);
+    }
+};
 
 } // namespace
 
@@ -264,5 +313,140 @@ REGISTER_TEST(settings_theme_switch_reflects, "settings: theme switch reflects o
 
     DOCTEST_CHECK(darkR != lightR);
     ::core::theme::setDark();  // 恢复
+    return true;
+})
+
+// ---- 日志保留下拉弹层不被窗体裁剪（W8：小窗口下自动向上展开） ----
+
+REGISTER_TEST(settings_log_dropdown_popup_stays_in_window, "settings: log dropdown popup stays in window (openUp)", {
+    std::unique_ptr<::core::Module> mod(create_settings_module());
+    mod->onStart();
+
+    // 最小窗口 1200×720：日志卡贴近底部，向下展开的弹层会超出窗体，
+    // 应改向上展开（弹层整体留在窗体内且位于字段上方）
+    eui::Screen screen;
+    screen.width = 1200.0f;
+    screen.height = 720.0f;
+    eui::Ui ui;
+    ui.begin("small");
+    mod->compose(ui, screen);
+    ui.end();
+    ui.layout(screen.width, screen.height);
+
+    const auto* field = ui.find("settings.card.log.dd.field");
+    const auto* popup = ui.find("settings.card.log.dd.popup");
+    DOCTEST_REQUIRE(field != nullptr);
+    DOCTEST_REQUIRE(popup != nullptr);
+    DOCTEST_CHECK(popup->frame.y >= 0.0f);
+    DOCTEST_CHECK(popup->frame.y + popup->frame.height <= screen.height);
+    DOCTEST_CHECK(popup->frame.y + popup->frame.height <= field->frame.y);
+
+    // 大窗口 1600×1000：下方空间充足，保持默认向下展开（弹层在字段下方）
+    eui::Screen tall;
+    tall.width = 1600.0f;
+    tall.height = 1000.0f;
+    ui.begin("tall");
+    mod->compose(ui, tall);
+    ui.end();
+    ui.layout(tall.width, tall.height);
+    const auto* tallField = ui.find("settings.card.log.dd.field");
+    const auto* tallPopup = ui.find("settings.card.log.dd.popup");
+    DOCTEST_REQUIRE(tallField != nullptr);
+    DOCTEST_REQUIRE(tallPopup != nullptr);
+    DOCTEST_CHECK(tallPopup->frame.y >=
+                  tallField->frame.y + tallField->frame.height);
+    DOCTEST_CHECK(tallPopup->frame.y + tallPopup->frame.height <=
+                  tall.height);
+
+    mod->onStop();
+    ::core::theme::setDark();
+    return true;
+})
+
+// ---- 代理 token 文本框文字垂直居中（W8） ----
+
+REGISTER_TEST(settings_token_text_vertically_centered, "settings: token text vertically centered", {
+    std::unique_ptr<::core::Module> mod(create_settings_module());
+    mod->onStart();
+    eui::Screen screen;
+    screen.width = 1600.0f;
+    screen.height = 1000.0f;
+    eui::Ui ui;
+    ui.begin("center");
+    mod->compose(ui, screen);
+    ui.end();
+
+    // token 值与目录路径都是"可见圆角框内的单行文本"，必须显式 Center
+    //（缺省 Top 会贴框顶，W7 侧边栏同款问题）
+    const auto* token = ui.find("settings.card.proxy.token.value");
+    const auto* path = ui.find("settings.card.directory.path.value");
+    DOCTEST_REQUIRE(token != nullptr);
+    DOCTEST_REQUIRE(path != nullptr);
+    DOCTEST_CHECK(token->verticalAlign == eui::VerticalAlign::Center);
+    DOCTEST_CHECK(path->verticalAlign == eui::VerticalAlign::Center);
+
+    mod->onStop();
+    ::core::theme::setDark();
+    return true;
+})
+
+// ---- 切换保留档位立即执行一次清理（W8：此前仅启动时清理） ----
+
+REGISTER_TEST(settings_retention_change_prunes_immediately, "settings: retention change prunes immediately", {
+    // 隔离：临时 config.json（DEVDESK_CONFIG_PATH）+ 临时 DB（appDatabase）
+    PruneEnv env("prune");
+    DOCTEST_REQUIRE(env.db != nullptr);
+
+    const int64_t now = static_cast<int64_t>(std::time(nullptr));
+    auto& sq = env.db->db();
+    DOCTEST_CHECK(sq.exec(
+        "INSERT INTO claude_profiles (name, base_url, api_key_hint, api_key_check, "
+        "keychain_account, model, created_at, updated_at) VALUES "
+        "('p1', 'http://x', 'sk-***', 'chk', 'acct', 'm', " +
+        std::to_string(now) + ", " + std::to_string(now) + ")"
+    ).isOk());
+    // 40 天前 ×2 + 5 天前 ×1：切到「30 天」应立即删掉前两条
+    DOCTEST_CHECK(sq.exec(
+        "INSERT INTO claude_call_logs (profile_id, method, path, started_at) VALUES "
+        "(1, 'POST', '/v1/messages', " + std::to_string(now - 40LL * 86400) + "), "
+        "(1, 'POST', '/v1/messages', " + std::to_string(now - 35LL * 86400) + "), "
+        "(1, 'POST', '/v1/messages', " + std::to_string(now - 5LL * 86400) + ")"
+    ).isOk());
+
+    std::unique_ptr<::core::Module> mod(create_settings_module());
+    mod->onStart();
+    eui::Screen screen;
+    screen.width = 1600.0f;
+    screen.height = 1000.0f;
+    eui::Ui ui;
+    ui.begin("prune");
+    mod->compose(ui, screen);
+    ui.end();
+
+    // 点下拉第 3 项（「30 天」）——直接调用元素的 onClick（无头等价点击）
+    const auto* item = ui.find("settings.card.log.dd.item.2");
+    DOCTEST_REQUIRE(item != nullptr);
+    DOCTEST_REQUIRE(item->onClick != nullptr);
+    item->onClick();
+
+    // DB 立即只剩 5 天前那条
+    auto prep = sq.prepare("SELECT COUNT(*) AS n FROM claude_call_logs");
+    DOCTEST_REQUIRE(prep.isOk());
+    DOCTEST_CHECK(prep.value().step().isOk());
+    auto row = prep.value().currentRow();
+    DOCTEST_REQUIRE(row.isOk());
+    DOCTEST_CHECK_EQ(row.unsafeValue().getInt64("n").unsafeValue(),
+                     static_cast<int64_t>(1));
+
+    // 状态反馈「已清理 2 条」渲染在副标题
+    ui.begin("prune_status");
+    mod->compose(ui, screen);
+    ui.end();
+    const auto* subtitle = ui.find("settings.subtitle");
+    DOCTEST_REQUIRE(subtitle != nullptr);
+    DOCTEST_CHECK(subtitle->text.find("已清理 2 条") != std::string::npos);
+
+    mod->onStop();
+    ::core::theme::setDark();
     return true;
 })

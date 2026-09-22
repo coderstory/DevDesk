@@ -12,6 +12,10 @@ namespace core::paths {
 // 由 CMake 按平台选择编译（接口隔离，业务代码零平台宏）
 
 fs::path configFile() {
+    // 环境变量覆盖（无头测试隔离真实 config.json 用；与 markdownDir 同款机制）
+    if (const char* env = std::getenv("DEVDESK_CONFIG_PATH")) {
+        return fs::path(env);
+    }
     return appDataDir() / "config.json";
 }
 

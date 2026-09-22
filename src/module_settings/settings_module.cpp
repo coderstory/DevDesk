@@ -12,9 +12,9 @@
 //   3. Claude 代理 token 只读显示 + 重新生成（stopProxy + startProxy 同端口重启
 //      → 服务端生成新 token；同步重写 proxy_token.txt）
 //   4. Markdown 笔记目录只读展示（改目录属于范围外，仅展示）
-//   5. 调用日志保留天数（0=永久）——仅配置存取；
-//      集成点：与 w3-t10-home 并行分支的日志清理任务联动，T10 清理逻辑读取
-//      config.json 的 logRetentionDays 字段，接线留给集成阶段
+//   5. 调用日志保留天数（0=永久）——切换档位立即执行一次滚动清理并
+//      反馈「已清理 N 条」（core::pruneCallLogs，经 appDatabase() 共享
+//      连接；启动时 main.cpp 仍会按持久化配置再清一次，幂等）
 //
 // 入口说明：设置入口在 main.cpp 的常驻侧边栏（app.sidebar，spec §2/§6.5.2），
 // 与其他四个模块同列。
@@ -25,6 +25,7 @@
 #include "settings_config.h"
 
 #include "claude_service.h"
+#include "core/database.h"
 #include "core/logging.h"
 #include "core/module_interface.h"
 #include "core/paths.h"
@@ -155,9 +156,31 @@ public:
         if (index < 0 || index >= kRetentionPresetCount) return;
         cfg_.logRetentionDays = kRetentionPresets[index];
         persist();
-        setStatus("日志保留：" + retentionLabel());
-        LOG_INFO("Settings: 日志保留 → " + retentionLabel() +
-                 "（清理任务由 Home 模块联动，集成阶段接线）");
+        // 0 = 永久：跳过清理；否则切档立即执行一次滚动清理并反馈条数
+        //（此前只在启动时读档清理一次，改档要重启才生效）
+        if (cfg_.logRetentionDays == 0) {
+            setStatus("日志保留：永久保留（不清理历史日志）");
+            LOG_INFO("Settings: 日志保留 → 永久保留（跳过清理）");
+            return;
+        }
+        auto* db = ::core::appDatabase();
+        if (db == nullptr) {
+            setStatus("日志保留：" + retentionLabel() +
+                      "（数据库未就绪，重启后生效）");
+            LOG_WARN("Settings: appDatabase 未注册，跳过立即清理");
+            return;
+        }
+        auto pruned = ::core::pruneCallLogs(*db, cfg_.logRetentionDays);
+        if (pruned.isOk()) {
+            setStatus("日志保留：" + retentionLabel() + "，已清理 " +
+                      std::to_string(pruned.unsafeValue()) + " 条历史日志");
+            LOG_INFO("Settings: 日志保留 → " + retentionLabel() + "，已清理 " +
+                     std::to_string(pruned.unsafeValue()) + " 条");
+        } else {
+            setStatus("日志保留：" + retentionLabel() +
+                      "（清理失败：" + pruned.errorMessage() + "）", true);
+            LOG_ERROR("Settings: 立即清理失败: " + pruned.errorMessage());
+        }
     }
 
     void doRegenerateToken() {
@@ -222,14 +245,22 @@ public:
                                         t.sizes.spacingLarge)
                     .gap(t.sizes.spacingLarge)
                     .content([&] {
+                        // 卡片纵向游标（与 column 布局的 padding/gap 逐项对应），
+                        // 用于计算日志卡下拉字段的绝对 Y —— 判断弹层向下展开
+                        // 是否会超出窗口底部（超出则改向上展开，EUI-NEO openUp）
+                        const float gapY = t.sizes.spacingLarge;
+                        float cardY = pad + headerH + gapY;
                         drawAppearanceCard(ui, "settings.card.appearance",
                                            contentW, 160.0f, t);
+                        cardY += 160.0f + gapY;
                         drawDirectoryCard(ui, "settings.card.directory",
                                           contentW, 108.0f, t);
+                        cardY += 108.0f + gapY;
                         drawProxyCard(ui, "settings.card.proxy", contentW,
                                       140.0f, t);
+                        cardY += 140.0f + gapY;
                         drawLogCard(ui, "settings.card.log", contentW, 100.0f,
-                                    t);
+                                    t, cardY, screen.height);
                     })
                     .build();
             })
@@ -429,7 +460,7 @@ private:
                     .size(w - 80.0f, 34.0f)
                     .text(mdDir.string() + (exists ? "" : "（尚未创建）"))
                     .fontSize(fs(13.0f))
-                    .lineHeight(34.0f)
+                    .verticalAlign(eui::VerticalAlign::Center)
                     .color(t.colors.textSecondary)
                     .build();
                 ui.text(id + ".hint")
@@ -500,7 +531,7 @@ private:
                     .size(w - 80.0f - btnW - 12.0f, 40.0f)
                     .text(tokenText)
                     .fontSize(fs(13.0f))
-                    .lineHeight(40.0f)
+                    .verticalAlign(eui::VerticalAlign::Center)
                     .color(running ? t.colors.textSecondary : t.colors.textTertiary)
                     .build();
 
@@ -520,8 +551,12 @@ private:
     }
 
     // ---------- 卡片 4：日志保留策略 ----------
+    // cardTopY/screenH：日志卡是页面最后一张卡，字段贴近窗口底部；
+    // 估算弹层高度（与 dropdown 内部一致：菜单项 34 × 6 项 + 上下 padding 6×2）
+    // 判断向下展开是否出界，出界则 openUp 向上展开（修复菜单被窗体裁剪）
     void drawLogCard(eui::Ui& ui, const std::string& id, float w, float h,
-                     const core::theme::Tokens& t) {
+                     const core::theme::Tokens& t, float cardTopY,
+                     float screenH) {
         const auto compTheme = t.isDark ? components::theme::dark()
                                         : components::theme::light();
         ui.stack(id)
@@ -546,6 +581,14 @@ private:
                     .position(28.0f, 48.0f)
                     .size(240.0f, 40.0f)
                     .content([&] {
+                        // 字段绝对底边 = 卡顶 + 卡内 y 偏移(48) + 字段高(40)
+                        const float fieldBottomY = cardTopY + 48.0f + 40.0f;
+                        const float popupGap = 8.0f;   // metrics spacing.compact
+                        const float popupH =
+                            static_cast<float>(kRetentionPresetCount) *
+                                34.0f + 12.0f;  // menuItem × 6 + small×2
+                        const bool openUp =
+                            fieldBottomY + popupGap + popupH > screenH - 16.0f;
                         components::dropdown(ui, id + ".dd")
                             .size(240.0f, 40.0f)
                             .theme(compTheme)
@@ -556,6 +599,7 @@ private:
                                                    kRetentionPresets,
                                                    kRetentionPresetCount))
                             .open(retentionDropdownOpen_)
+                            .openUp(openUp)
                             .onOpenChange(
                                 [this](bool v) { retentionDropdownOpen_ = v; })
                             .onChange(
@@ -566,7 +610,7 @@ private:
                 ui.text(id + ".hint")
                     .position(288.0f, 60.0f)
                     .size(w - 316.0f, 18.0f)
-                    .text("0 = 永久保留；30 天为默认。清理任务随 Home 模块联动。")
+                    .text("0 = 永久保留；30 天为默认。切换档位立即清理一次。")
                     .fontSize(fs(12.0f))
                     .lineHeight(18.0f)
                     .color(t.colors.textTertiary)
