@@ -353,6 +353,9 @@ const DslAppConfig& dslAppConfig() {
 
     static const DslAppConfig config = DslAppConfig{}
         .title("DevDesk")
+        // Debug 构建下 EUI-NEO 默认把 FPS/CPU/GPU 拼进窗口标题
+        //（dsl_app.h showDebugStatsInTitleValue），用户不需要，显式关掉
+        .showDebugStatsInTitle(false)
         .pageId("devdesk")
         .clearColor(::core::theme::current().colors.background)  // 跟随主题
         .windowSize(1600, 1000)
