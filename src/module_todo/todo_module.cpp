@@ -389,6 +389,13 @@ public:
         const float headerH = 64.0f;
         const float bodyH = contentH - headerH - t.sizes.spacingLarge;
 
+        // 页面铺底色（仿 settings_module）：clearColor 只在启动时取主题快照，
+        // 运行时切主题不跟随——页面必须自己铺 background，否则浅色主题下黑底
+        ui.rect("todo.pagebg")
+            .size(screen.width, screen.height)
+            .color(t.colors.background)
+            .build();
+
         ui.column("todo.root")
             .size(screen.width, screen.height)
             .padding(pad)
