@@ -41,6 +41,10 @@ struct SettingsConfig {
     // 缩水语义下选的，修正后失去意义）。
     int fontScalePercent = 100;    // 100 = 设计字号原样（正文 15px token）
     int logRetentionDays = 30;     // 0 = 永久保留
+    // Claude 代理随应用启动（provider-config Phase B 硬性需求 1：默认 **不**
+    // 启动，代理由用户手动启动；false 时 main.cpp 只创建 ClaudeService
+    // 注册全局单例，不拉起 127.0.0.1:8888）
+    bool claudeProxyAutoStart = false;
 };
 
 // config.json 读写（不抛异常；文件不存在/损坏一律回退默认值）

@@ -26,6 +26,19 @@ std::filesystem::path logsDir();
 // 主日志文件
 std::filesystem::path logFile();
 
+// Claude Code 用户级 settings.json（provider-config Phase C 接管通道的写入目标）
+//   Windows: %USERPROFILE%\.claude\settings.json
+//   macOS:   ~/.claude/settings.json
+// 环境变量 DEVDESK_CLAUDE_CONFIG_DIR 可覆盖 .claude 目录（测试隔离用；
+// 也是 spec 开放问题 3「自定义 .claude 目录」的预留入口）
+std::filesystem::path claudeSettingsFile();
+
+// Claude Code 企业托管 managed-settings.json（上层覆盖检测用，只读不写）
+//   Windows: C:\ProgramData\ClaudeCode\managed-settings.json
+//   macOS:   /Library/Application Support/ClaudeCode/managed-settings.json
+//   POSIX:   /etc/claude-code/managed-settings.json
+std::filesystem::path claudeManagedSettingsFile();
+
 // 确保所有目录存在
 void ensureDirectoriesExist();
 

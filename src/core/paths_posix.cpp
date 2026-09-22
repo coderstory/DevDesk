@@ -14,4 +14,17 @@ fs::path appDataDir() {
     return base / ".local" / "share" / "DevDesk";
 }
 
+fs::path claudeSettingsFile() {
+    if (const char* env = std::getenv("DEVDESK_CLAUDE_CONFIG_DIR")) {
+        return fs::path(env) / "settings.json";
+    }
+    const char* home = std::getenv("HOME");
+    fs::path base(home ? home : "");
+    return base / ".claude" / "settings.json";
+}
+
+fs::path claudeManagedSettingsFile() {
+    return fs::path("/etc/claude-code/managed-settings.json");
+}
+
 } // namespace core::paths

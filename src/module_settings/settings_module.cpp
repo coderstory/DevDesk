@@ -9,8 +9,10 @@
 //   2. 字号缩放——core::theme::setFontScale 全局生效：token 层缩放让所有
 //      经 t.sizes.fontSize* 取字号的模块零改动受益；本页非 token 的硬编码
 //      小字号经 fs() 辅助函数跟随同一缩放
-//   3. Claude 代理 token 只读显示 + 重新生成（stopProxy + startProxy 同端口重启
-//      → 服务端生成新 token；同步重写 proxy_token.txt）
+//   3. Claude 代理：随应用启动开关（Phase B 硬性需求 1，默认关）+ token 只读
+//      显示 + 重新生成（确认弹窗后 stopProxy + startProxy 同端口重启 → 服务端
+//      生成新 token；代理未运行时按钮置灰，不允许顺带拉起代理）
+//      + Claude Code 接管状态（Phase D UI 接入，数据源 ClaudeService）
 //   4. Markdown 笔记目录只读展示（改目录属于范围外，仅展示）
 //   5. 调用日志保留天数（0=永久）——切换档位立即执行一次滚动清理并
 //      反馈「已清理 N 条」（core::pruneCallLogs，经 appDatabase() 共享
@@ -34,7 +36,9 @@
 #include <eui/dsl.h>
 
 #include <components/button.h>
+#include <components/dialog.h>
 #include <components/dropdown.h>
+#include <components/switch.h>
 #include <components/theme.h>
 
 #include <cstdlib>
@@ -69,28 +73,9 @@ int nearestIndex(int value, const int* presets, int count) {
     return best;
 }
 
-// 与 main.cpp 的 writeProxyTokenFile 保持一致（那边在匿名命名空间，无法复用；
-// 重新生成 token 后必须同步重写，否则用户按文件里的旧 token 调用会 401）
-void writeProxyTokenFile(const std::string& token, int port) {
-    const auto path = core::paths::appDataDir() / "proxy_token.txt";
-    std::ofstream f(path, std::ios::trunc);
-    if (!f) {
-        LOG_WARN("Settings: 无法写入 proxy_token.txt: " + path.string());
-        return;
-    }
-    f << "# DevDesk Claude 代理凭据（自动生成，请勿提交到版本控制）\n"
-      << "port=" << port << "\n"
-      << "token=" << token << "\n"
-      << "\n"
-      << "# 用法：\n"
-      << "# curl -X POST http://127.0.0.1:" << port << "/v1/messages \\\n"
-      << "#   -H \"Authorization: Bearer " << token << "\" \\\n"
-      << "#   -H \"Content-Type: application/json\" \\\n"
-      << "#   -d '{\"model\":\"claude-sonnet-4-5\",\"max_tokens\":64,"
-         "\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}]}'\n";
-    f.close();
-    LOG_INFO("Settings: 代理凭据已更新: " + path.string());
-}
+// 代理凭据文件写入已收敛到 module_claude_proxy 的
+// module::claude::writeProxyTokenFile（claude_service.h），本模块直接复用
+//（此前这里与 main.cpp 各有一份复制粘贴实现）
 
 } // namespace
 
@@ -183,16 +168,37 @@ public:
         }
     }
 
+    // 请求重新生成 token：代理未运行 → 不可生成（token 随 startProxy 生成，
+    // 没有「预生成」概念，也不允许顺带把代理拉起来——Phase B 修的怪行为）；
+    // 运行中 → 先弹确认（一键作废在用 token）
+    void requestRegenerateToken() {
+        auto* svc = ::module::claude::ClaudeService::global();
+        if (!svc) {
+            setStatus("Claude 服务不可用", true);
+            return;
+        }
+        if (!svc->isProxyRunning()) {
+            setStatus("代理未运行，无法重新生成（Token 随代理启动时生成）", true);
+            LOG_INFO("Settings: 重新生成被拒——代理未运行（不拉起代理）");
+            return;
+        }
+        regenConfirmOpen_ = true;
+    }
+
+    // 确认弹窗「确认重新生成」回调：stop + start 同端口重启（服务端生成
+    // 新 token），并同步重写 proxy_token.txt
     void doRegenerateToken() {
         auto* svc = ::module::claude::ClaudeService::global();
         if (!svc) {
             setStatus("Claude 服务不可用", true);
             return;
         }
-        const int port = svc->isProxyRunning() ? svc->proxyPort() : 8888;
-        if (svc->isProxyRunning()) {
-            svc->stopProxy();
+        if (!svc->isProxyRunning()) {  // 双保险：弹窗期间代理可能已被停止
+            setStatus("代理未运行，无法重新生成", true);
+            return;
         }
+        const int port = svc->proxyPort();
+        svc->stopProxy();
         // startProxy 不传 token → 服务端生成新 token（claude_service 现有 API）
         auto r = svc->startProxy("127.0.0.1", port);
         if (r.isFail()) {
@@ -200,9 +206,19 @@ public:
             LOG_ERROR("Settings: 代理 token 重新生成失败: " + r.errorMessage());
             return;
         }
-        writeProxyTokenFile(svc->proxyAuthToken(), port);
+        ::module::claude::writeProxyTokenFile(svc->proxyAuthToken(), port);
         setStatus("已重新生成代理 Token（端口 " + std::to_string(port) + "）");
         LOG_INFO("Settings: 代理 token 已重新生成 port=" + std::to_string(port));
+    }
+
+    // 「随应用启动代理」开关（provider-config Phase B 硬性需求 1）
+    void applyAutoStart(bool on) {
+        cfg_.claudeProxyAutoStart = on;
+        persist();
+        setStatus(on ? "代理将随应用启动（下次启动生效）"
+                     : "代理不再随应用启动（下次启动生效）");
+        LOG_INFO("Settings: claudeProxyAutoStart → " +
+                 std::string(on ? "true" : "false"));
     }
 
     void persist() {
@@ -265,6 +281,9 @@ public:
                     .build();
             })
             .build();
+
+        // 重新生成 Token 确认弹窗（画在最上层；仿 claude_module 删除确认弹窗）
+        drawRegenConfirmDialog(ui, screen, t);
 
         LOG_DEBUG("Settings 模块 compose 完成");
     }
@@ -491,20 +510,41 @@ private:
 
                 ui.text(id + ".title")
                     .position(28.0f, 16.0f)
-                    .size(w - 56.0f, 22.0f)
+                    .size(240.0f, 22.0f)
                     .text("Claude 代理")
                     .fontSize(t.sizes.fontSizeLarge)
                     .lineHeight(22.0f)
                     .fontWeight(600)
                     .color(t.colors.textPrimary)
                     .build();
+
+                // 随应用启动代理（Phase B 硬性需求 1，默认关）——放卡片右上，
+                // 不新增卡片高度（SwitchBuilder 无 position，套 stack 定位，
+                // 与字号下拉同款包装）
+                const auto compTheme = t.isDark ? components::theme::dark()
+                                                : components::theme::light();
+                ui.stack(id + ".autostart.wrap")
+                    .position(w - 28.0f - 240.0f, 12.0f)
+                    .size(240.0f, 28.0f)
+                    .content([&] {
+                        components::toggleSwitch(ui, id + ".autostart")
+                            .size(240.0f, 28.0f)
+                            .text("随应用启动代理")
+                            .fontSize(fs(13.0f))
+                            .checked(cfg_.claudeProxyAutoStart)
+                            .theme(compTheme)
+                            .onChange([this](bool v) { applyAutoStart(v); })
+                            .build();
+                    })
+                    .build();
+
                 ui.text(id + ".desc")
                     .position(28.0f, 40.0f)
                     .size(w - 56.0f, 16.0f)
                     .text(running
                           ? "本地代理 http://127.0.0.1:" + std::to_string(port) +
                                 " · 客户端调用需携带 Authorization: Bearer <token>"
-                          : "本地代理未运行（启动应用时会自动启动）")
+                          : "本地代理未运行（默认不随应用启动，可在 Claude 页手动启动）")
                     .fontSize(fs(12.0f))
                     .lineHeight(16.0f)
                     .color(t.colors.textTertiary)
@@ -535,6 +575,8 @@ private:
                     .color(running ? t.colors.textSecondary : t.colors.textTertiary)
                     .build();
 
+                // 未运行时置灰（token 随 startProxy 生成，无「预生成」概念；
+                // 且绝不允许此按钮顺带拉起代理——Phase B）
                 components::button(ui, id + ".token.regen")
                     .position(w - 28.0f - btnW, 86.0f)
                     .size(btnW, 40.0f)
@@ -544,7 +586,8 @@ private:
                             t.colors.primaryPressed)
                     .textColor(eui::Color("#FFFFFF"))
                     .radius(t.sizes.radius)
-                    .onClick([this] { doRegenerateToken(); })
+                    .disabled(!running)
+                    .onClick([this] { requestRegenerateToken(); })
                     .build();
             })
             .build();
@@ -619,11 +662,78 @@ private:
             .build();
     }
 
+    // ---------- 重新生成 Token 确认弹窗 ----------
+    // 一键作废在用 token 是破坏性操作，先确认再执行（provider-config Phase B；
+    // W9 批次「删除确认同款」需求并入此处）
+    void drawRegenConfirmDialog(eui::Ui& ui, const eui::Screen& screen,
+                                const core::theme::Tokens& t) {
+        const float w = 460.0f;
+        const float h = 210.0f;
+        const auto compTheme = t.isDark ? components::theme::dark()
+                                        : components::theme::light();
+        components::dialog(ui, "settings.dialog.regen")
+            .open(regenConfirmOpen_)
+            .screen(screen.width, screen.height)
+            .size(w, h)
+            .theme(compTheme)
+            .onOpenChange([this](bool v) { regenConfirmOpen_ = v; })
+            .content([&] {
+                ui.text("settings.dialog.regen.title")
+                    .position(28.0f, 24.0f)
+                    .size(w - 56.0f, 28.0f)
+                    .text("重新生成代理 Token？")
+                    .fontSize(20.0f)
+                    .lineHeight(28.0f)
+                    .fontWeight(700)
+                    .color(t.colors.textPrimary)
+                    .build();
+                ui.text("settings.dialog.regen.msg")
+                    .position(28.0f, 58.0f)
+                    .size(w - 56.0f, 60.0f)
+                    .text("将立即作废当前正在使用的 Token（同端口重启代理生成新 "
+                          "Token）。正在调用代理的客户端需要更新凭据后才能继续。")
+                    .fontSize(t.sizes.fontSizeSmall)
+                    .lineHeight(20.0f)
+                    .color(t.colors.textSecondary)
+                    .build();
+
+                components::button(ui, "settings.dialog.regen.cancel")
+                    .position(28.0f, h - 60.0f)
+                    .size((w - 68.0f) * 0.5f, 40.0f)
+                    .text("取消")
+                    .fontSize(14.0f)
+                    .colors(t.colors.surfaceElevated, t.colors.hover,
+                            t.colors.active)
+                    .textColor(t.colors.textPrimary)
+                    .radius(t.sizes.radius)
+                    .border(1.0f, t.colors.borderDefault)
+                    .onClick([this] { regenConfirmOpen_ = false; })
+                    .build();
+                components::button(ui, "settings.dialog.regen.confirm")
+                    .position(28.0f + (w - 68.0f) * 0.5f + 12.0f, h - 60.0f)
+                    .size((w - 68.0f) * 0.5f, 40.0f)
+                    .text("确认重新生成")
+                    .fontSize(14.0f)
+                    .colors(t.colors.surfaceElevated, t.colors.hover,
+                            t.colors.active)
+                    .textColor(t.colors.error)
+                    .radius(t.sizes.radius)
+                    .border(1.0f, t.colors.borderDefault)
+                    .onClick([this] {
+                        regenConfirmOpen_ = false;
+                        doRegenerateToken();
+                    })
+                    .build();
+            })
+            .build();
+    }
+
     // ---------- 状态 ----------
     std::unique_ptr<SettingsStore> store_;
     SettingsConfig cfg_;
     bool fontDropdownOpen_ = false;
     bool retentionDropdownOpen_ = false;
+    bool regenConfirmOpen_ = false;       // 重新生成 token 确认弹窗
     std::string statusMessage_;
     bool statusIsError_ = false;
 };

@@ -18,6 +18,7 @@ constexpr const char* kKeyTheme = "theme";
 // 用户在新语义下重选。保存只写 V3 键；V3 下任何值按字面生效。
 constexpr const char* kKeyFontScale = "fontScalePercentV3";
 constexpr const char* kKeyLogRetention = "logRetentionDays";
+constexpr const char* kKeyProxyAutoStart = "claudeProxyAutoStart";
 } // namespace
 
 SettingsStore::SettingsStore(std::filesystem::path file)
@@ -75,6 +76,9 @@ SettingsConfig SettingsStore::load() const {
         cfg.logRetentionDays =
             static_cast<int>(obj.get(kKeyLogRetention).asInt());
     }
+    if (obj.has(kKeyProxyAutoStart) && obj.get(kKeyProxyAutoStart).isBool()) {
+        cfg.claudeProxyAutoStart = obj.get(kKeyProxyAutoStart).asBool();
+    }
     return sanitized(cfg);
 }
 
@@ -85,6 +89,7 @@ core::Result<void> SettingsStore::save(const SettingsConfig& cfgRaw) const {
     obj.set(kKeyTheme, platform::json::makeString(cfg.darkTheme ? "dark" : "light"));
     obj.set(kKeyFontScale, platform::json::makeInt(cfg.fontScalePercent));
     obj.set(kKeyLogRetention, platform::json::makeInt(cfg.logRetentionDays));
+    obj.set(kKeyProxyAutoStart, platform::json::makeBool(cfg.claudeProxyAutoStart));
 
     auto text = platform::json::stringify(
         platform::json::JsonValue(obj), /*pretty=*/true);

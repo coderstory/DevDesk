@@ -186,35 +186,20 @@ void handleAppleEventOpenFile(const std::string& path) {
     if (!initialized) {
         auto& db = openAppDatabase();
         svc = std::make_unique<::module::claude::ClaudeService>(db.db());
+        // Claude Code settings.json 接管通道（provider-config Phase C）：
+        // 路径注入在此一次性完成，startProxy/stopProxy/setActiveProfile 的
+        // 接管/还原触发收在 service 层，UI 不感知
+        svc->setSettingsSyncPaths(
+            ::module::claude::settings_sync::defaultPaths());
         ::module::claude::ClaudeService::setGlobal(svc.get());
         initialized = true;
     }
     return svc.get();
 }
 
-// 把代理 auth token 写到应用数据目录，方便用户 curl 测试时读取
-void writeProxyTokenFile(const std::string& token, int port) {
-    const auto path = ::core::paths::appDataDir() / "proxy_token.txt";
-    std::ofstream f(path, std::ios::trunc);
-    if (!f) {
-        LOG_WARN("无法写入 proxy_token.txt: " + path.string());
-        return;
-    }
-    f << "# DevDesk Claude 代理凭据（自动生成，请勿提交到版本控制）\n"
-      << "port=" << port << "\n"
-      << "token=" << token << "\n"
-      << "\n"
-      << "# 用法：\n"
-      << "# curl -X POST http://127.0.0.1:" << port << "/v1/messages \\\n"
-      << "#   -H \"Authorization: Bearer " << token << "\" \\\n"
-      << "#   -H \"Content-Type: application/json\" \\\n"
-      << "#   -d '{\"model\":\"claude-sonnet-4-5\",\"max_tokens\":64,"
-         "\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}]}'\n";
-    f.close();
-    LOG_INFO("代理凭据已写入: " + path.string());
-}
-
-// 启动本地 Claude 代理（全局唯一实例）
+// 启动本地 Claude 代理（全局唯一实例）。
+// 调用方：dslAppConfig 初始化（设置 claudeProxyAutoStart=true 时）；手动启动
+// 走 Claude 页的启动按钮（provider-config Phase B 硬性需求 1）
 void startClaudeProxy() {
     auto* svc = getClaudeService();
     if (!svc) {
@@ -237,8 +222,7 @@ void startClaudeProxy() {
     // 启动成功日志由 ClaudeService::startProxy 统一输出一次
     // （claude_service.cpp "Claude 代理已启动 <host>:<port> (auth=on)"），
     // 这里不再重复记录，避免一次启动打两条"已启动"
-    const std::string token = svc->proxyAuthToken();
-    writeProxyTokenFile(token, port);
+    ::module::claude::writeProxyTokenFile(svc->proxyAuthToken(), port);
 }
 
 } // namespace
@@ -406,12 +390,28 @@ const DslAppConfig& dslAppConfig() {
         LOG_INFO("DevDesk 启动中...");
         LOG_INFO("应用数据目录: " + paths::appDataDir().string());
         openAppDatabase();
-        // 启动全局唯一的 Claude 代理（spec §10.4）
+        // ClaudeService 创建 + Claude Code 接管通道注入（spec §10.4）。
         // 必须在 getRouter()（内部 Router::startAll → 各模块 onStart）之前：
-        // ClaudeService 的创建 + setGlobal 在 startClaudeProxy() 内完成，
-        // 模块 onStart 才能拿到非 null 的 global()，代理也只由 main 启动这一次
-        //（claude 模块 onStart 仅作"已在运行"兜底检查）。
-        startClaudeProxy();
+        // ClaudeService 的创建 + setGlobal 在 getClaudeService() 内完成，
+        // 模块 onStart 才能拿到非 null 的 global()——W3 修过的启动顺序不能
+        // 因为「默认不启动代理」回退，所以无论是否启动代理都必须先调它。
+        auto* claudeSvc = getClaudeService();
+        // 崩溃补还原（provider-config Phase C §5.3）：上次异常退出时 sidecar
+        // 残留 → 先还原，且必须先于任何 startProxy（否则残留的托管键会被
+        // 误快照为用户原值）
+        if (claudeSvc) {
+            claudeSvc->recoverPendingSettingsRestore();
+        }
+        // 硬性需求 1（provider-config Phase B）：代理默认不启动，
+        // claudeProxyAutoStart 门控；启动/停止按钮在 Claude 页
+        const module::settings::SettingsStore settingsStore(
+            paths::configFile());
+        if (settingsStore.load().claudeProxyAutoStart) {
+            startClaudeProxy();
+        } else {
+            LOG_INFO("Claude 代理未自动启动（claudeProxyAutoStart=false，"
+                     "可在设置页或 Claude 页手动启动）");
+        }
         getRouter();
         return true;
     }();

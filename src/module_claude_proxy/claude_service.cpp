@@ -3,6 +3,7 @@
 #include "claude_service.h"
 
 #include "core/logging.h"
+#include "core/paths.h"
 #include "platform/http_server.h"
 #include "platform/keychain.h"
 #include "provider_config.h"
@@ -14,10 +15,12 @@
 #include <cctype>
 #include <chrono>
 #include <ctime>
+#include <fstream>
 #include <iomanip>
 #include <random>
 #include <sstream>
 #include <string>
+#include <utility>
 
 namespace module::claude {
 
@@ -524,7 +527,8 @@ core::Result<std::string> ClaudeService::loadApiKey(int64_t profileId) {
 core::Result<Profile> ClaudeService::getActiveProfile() {
     auto prep = db_.prepare(
         "SELECT id, name, base_url, api_key_hint, api_key_check, "
-        "keychain_account, model, is_active, created_at, updated_at "
+        "keychain_account, model, models_config, extra_env, "
+        "is_active, created_at, updated_at "
         "FROM claude_profiles WHERE is_active = 1 LIMIT 1");
     if (prep.isFail()) {
         return core::Result<Profile>::fail(prep.errorCode(), prep.errorMessage());
@@ -557,7 +561,7 @@ core::Result<void> ClaudeService::setActiveProfile(int64_t id) {
     }
 
     // 事务内：清零 → 设置目标
-    return db_.transaction([this, id]() -> core::Result<void> {
+    auto result = db_.transaction([this, id]() -> core::Result<void> {
         auto c = db_.prepare("UPDATE claude_profiles SET is_active = 0 "
                             "WHERE is_active = 1");
         if (c.isFail()) {
@@ -582,6 +586,13 @@ core::Result<void> ClaudeService::setActiveProfile(int64_t id) {
         }
         return core::Result<void>::ok();
     });
+
+    // 代理运行中切 profile → settings.json env 跟随（§5.2 触发点 2）；
+    // 代理未运行 → 只更新 DB，不动 settings.json（写了反而制造死指向）
+    if (result.isOk() && isProxyRunning()) {
+        syncTakeOver();
+    }
+    return result;
 }
 
 // ---------- 连通性测试 ----------
@@ -747,6 +758,10 @@ core::Result<int> ClaudeService::startProxy(const std::string& bindAddress,
     const int actual = server_->actualPort();
     LOG_INFO("Claude 代理已启动 " + bindAddress + ":" + std::to_string(actual) +
              " (auth=" + (token.empty() ? std::string("off") : std::string("on")) + ")");
+
+    // 接管 Claude Code settings.json（§5.2 触发点 1；含手动启动、设置页
+    // 重生成 token 的重启）。失败只 WARN：代理已可用，接入失败用户可感知
+    syncTakeOver();
     return core::Result<int>::ok(actual);
 }
 
@@ -756,6 +771,8 @@ void ClaudeService::stopProxy() {
     server_->stop();
     server_.reset();
     router_.reset();
+    // 停止即还原（§5.3）：settings.json 永不指向死代理
+    syncRestore();
 }
 
 bool ClaudeService::isProxyRunning() const {
@@ -768,6 +785,89 @@ int ClaudeService::proxyPort() const {
 
 std::string ClaudeService::proxyAuthToken() const {
     return server_ ? server_->authToken() : std::string();
+}
+
+// ---------- Claude Code settings 接管（Phase C）----------
+
+void ClaudeService::setSettingsSyncPaths(const settings_sync::Paths& paths) {
+    syncPaths_ = paths;
+    lastSyncWarnings_.clear();
+}
+
+bool ClaudeService::isClaudeCodeManaged() const {
+    return !syncPaths_.settingsFile.empty() &&
+           settings_sync::hasPendingSnapshot(syncPaths_);
+}
+
+const std::vector<std::string>& ClaudeService::lastSyncWarnings() const {
+    return lastSyncWarnings_;
+}
+
+void ClaudeService::recoverPendingSettingsRestore() {
+    if (syncPaths_.settingsFile.empty()) return;
+    auto r = settings_sync::recoverPendingSnapshot(syncPaths_);
+    if (!r.ok) {
+        LOG_WARN("Claude Code 接管崩溃补还原失败: " + r.error);
+    }
+}
+
+void ClaudeService::syncTakeOver() {
+    if (syncPaths_.settingsFile.empty()) return;
+    // 无激活 profile：仍接管 BASE_URL/token（接入路径先就位，转发层会报
+    // 503 提示用户先启用 profile）
+    Profile active;
+    auto a = getActiveProfile();
+    if (a.isOk()) {
+        active = std::move(a).value();
+    }
+    auto r = settings_sync::takeOver(active, proxyPort(), proxyAuthToken(),
+                                     syncPaths_);
+    lastSyncWarnings_ = std::move(r.warnings);
+    if (!r.ok) {
+        LOG_WARN("Claude Code settings 接管失败: " + r.error);
+        return;
+    }
+    LOG_INFO("Claude Code settings 已接管: " +
+             syncPaths_.settingsFile.string() +
+             (lastSyncWarnings_.empty()
+                  ? std::string("")
+                  : "（含 " + std::to_string(lastSyncWarnings_.size()) +
+                        " 条上层覆盖警告）"));
+}
+
+void ClaudeService::syncRestore() {
+    if (syncPaths_.settingsFile.empty()) return;
+    if (!settings_sync::hasPendingSnapshot(syncPaths_)) return;
+    auto r = settings_sync::restore(syncPaths_);
+    if (!r.ok) {
+        LOG_WARN("Claude Code settings 还原失败: " + r.error);
+        return;
+    }
+    lastSyncWarnings_.clear();
+    LOG_INFO("Claude Code settings 已还原（settings.json 不再指向本地代理）");
+}
+
+// ---------- 代理凭据文件（三条启动路径共用）----------
+
+void writeProxyTokenFile(const std::string& token, int port) {
+    const auto path = core::paths::appDataDir() / "proxy_token.txt";
+    std::ofstream f(path, std::ios::trunc);
+    if (!f) {
+        LOG_WARN("无法写入 proxy_token.txt: " + path.string());
+        return;
+    }
+    f << "# DevDesk Claude 代理凭据（自动生成，请勿提交到版本控制）\n"
+      << "port=" << port << "\n"
+      << "token=" << token << "\n"
+      << "\n"
+      << "# 用法：\n"
+      << "# curl -X POST http://127.0.0.1:" << port << "/v1/messages \\\n"
+      << "#   -H \"Authorization: Bearer " << token << "\" \\\n"
+      << "#   -H \"Content-Type: application/json\" \\\n"
+      << "#   -d '{\"model\":\"claude-sonnet-4-5\",\"max_tokens\":64,"
+         "\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}]}'\n";
+    f.close();
+    LOG_INFO("代理凭据已写入: " + path.string());
 }
 
 } // namespace module::claude

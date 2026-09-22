@@ -19,12 +19,18 @@
 #include "core/sqlite_db.h"
 #include "core/result.h"
 #include "platform/http_client.h"
+#include "settings_sync.h"
 
 namespace platform::http { class Server; }
 
 namespace module::claude {
 
 class ProxyRouter;
+
+// 把代理凭据写到 appDataDir()/proxy_token.txt（curl 测试便利）。
+// 代理的三条启动路径（main 自启 / Claude 页手动启动 / 设置页重生成 token）
+// 共用（此前 main 与 settings 各有一份复制粘贴实现）
+void writeProxyTokenFile(const std::string& token, int port);
 
 // 单条 Claude API 配置（spec §8.3）
 struct Profile {
@@ -130,6 +136,23 @@ public:
     int proxyPort() const;            // 0 if not running
     std::string proxyAuthToken() const;
 
+    // ---- Claude Code settings 接管（provider-config Phase C，§5.2/§5.3）----
+
+    // 注入接管通道路径并启用（生产由 main.cpp 一次性注入
+    // settings_sync::defaultPaths()）。默认不启用：直接构造的 service
+    //（测试）不写任何真实文件
+    void setSettingsSyncPaths(const settings_sync::Paths& paths);
+
+    // 已接管（sidecar 快照存在；设置页「接管状态」行数据源，Phase D UI 用）
+    bool isClaudeCodeManaged() const;
+
+    // 最近一次接管的上层覆盖检测警告（Phase D UI 展示；无警告为空）
+    const std::vector<std::string>& lastSyncWarnings() const;
+
+    // 启动崩溃补还原：sidecar 残留（上次没走完还原）→ 先还原。
+    // main.cpp 在任何 startProxy 之前调用（调用时序见 settings_sync.h）
+    void recoverPendingSettingsRestore();
+
     // ---- 全局单例（main.cpp 注册，claude_module.cpp 读状态） ----
 
     static void setGlobal(ClaudeService* svc);
@@ -145,12 +168,20 @@ private:
     // 生成 auth token（32 hex chars from std::random_device）
     static std::string generateAuthToken();
 
+    // 接管/还原的内部入口（settingsFile 为空 = 通道未启用，直接返回）
+    void syncTakeOver();
+    void syncRestore();
+
     core::data::SqliteDb& db_;
     std::string keychainService_;
 
     // 代理 server 资源（延迟构造）
     std::unique_ptr<platform::http::Server> server_;
     std::unique_ptr<ProxyRouter> router_;
+
+    // Claude Code 接管通道（settingsFile 为空 = 未启用）
+    settings_sync::Paths syncPaths_;
+    std::vector<std::string> lastSyncWarnings_;
 };
 
 } // namespace module::claude

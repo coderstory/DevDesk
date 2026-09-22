@@ -21,6 +21,7 @@ add_executable(devdesk_tests
     test_modules/test_claude.cpp
     test_modules/test_claude_service.cpp
     test_modules/test_provider_config.cpp
+    test_modules/test_settings_sync.cpp
     test_modules/test_claude_ui.cpp
     test_modules/test_proxy_router.cpp
     test_modules/test_streaming_proxy.cpp
