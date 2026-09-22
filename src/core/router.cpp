@@ -71,6 +71,9 @@ void Router::startAll() {
 }
 
 void Router::stopAll() {
+    // 调用方：main.cpp 的 atexit handler（getRouter 初始化尾部注册）——
+    // 应用退出（关窗 / 托盘 Exit）时触发各模块 onStop（如 Claude 模块的
+    // settings.json 接管还原），详见 main.cpp 注释
     for (auto* m : modules_) {
         if (m) {
             LOG_INFO("停止模块: " + m->displayName());

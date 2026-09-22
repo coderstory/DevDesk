@@ -141,6 +141,21 @@ void setupLogging() {
         router.registerModule(settings.get());
         router.startAll();
 
+        // 应用退出还原接线（W2 终验问题 1）：EUI-NEO 无 onExit 回调，
+        // main() 由 glfw_app_main 提供（eui_app_run → return → main return），
+        // 返回后进程只剩静态析构/atexit 栈。关窗（glfwWindowShouldClose）
+        // 与托盘 Exit（trayExitRequested → break）都汇合于 eui_app_run 的
+        // 同一 return，因此这里注册的 atexit 在两条退出路径都会执行。
+        // 必须在全部模块静态对象构造完成之后注册（LIFO：handler 先于
+        // modules/router 静态析构运行，stopAll 时模块仍活着）→
+        // Router::stopAll → ClaudeModule::onStop → stopProxy →
+        // settings.json 还原，接管状态下退出不留死代理 BASE_URL。
+        std::atexit([] {
+            if (auto* r = ::core::appRouter()) {
+                r->stopAll();
+            }
+        });
+
         // 架构准备：如果有 pending 文件，dispatch 到对应 Page
         // MVP：仅切换页面；实际加载文件由对应模块在 onStart/P 阶段实现
         const std::string& pendingFile = pendingOpenFilePath();
