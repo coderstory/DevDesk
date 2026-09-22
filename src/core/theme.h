@@ -26,6 +26,9 @@ struct ColorTokens {
     eui::Color primaryHover;
     eui::Color primaryPressed;
     eui::Color primarySoftBg;
+    // 主色背景上的前景色（主按钮文字 / ACTIVE 徽标；两主题均为白，
+    // 收敛模块里 9 处 eui::Color("#FFFFFF") 硬编码——W10 复审项）
+    eui::Color onPrimary;
     eui::Color textPrimary;
     eui::Color textSecondary;
     eui::Color textTertiary;

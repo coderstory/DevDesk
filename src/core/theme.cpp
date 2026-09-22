@@ -18,6 +18,7 @@ namespace {
         c.primaryHover = eui::Color("#E0896B");
         c.primaryPressed = eui::Color("#B85F3F");
         c.primarySoftBg = eui::Color("#3A2620");
+        c.onPrimary = eui::Color("#FFFFFF");
         c.textPrimary = eui::Color("#FAF9F5");
         c.textSecondary = eui::Color("#C9C5BD");
         c.textTertiary = eui::Color("#9A948A");
@@ -61,6 +62,7 @@ namespace {
         c.primaryHover = eui::Color("#E0896B");
         c.primaryPressed = eui::Color("#B85F3F");
         c.primarySoftBg = eui::Color("#F5E6DE");
+        c.onPrimary = eui::Color("#FFFFFF");
         c.textPrimary = eui::Color("#1F1D1A");
         c.textSecondary = eui::Color("#6B6660");
         c.textTertiary = eui::Color("#9A948A");
