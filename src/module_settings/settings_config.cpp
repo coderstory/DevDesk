@@ -12,7 +12,12 @@ namespace module::settings {
 
 namespace {
 constexpr const char* kKeyTheme = "theme";
-constexpr const char* kKeyFontScale = "fontScalePercent";
+// W7：键更名做一次性迁移。旧键 fontScalePercent 存的 100 是"从未设置"的
+// 旧默认值痕迹（EUI-NEO hhea 度量缩水 ~0.75，100% 观感偏小 ~25%），
+// 映射到新默认 130；用户显式选过的 85/115/130 原样保留。
+// 新键下保存的任何值（含重新选 100）都按字面生效。
+constexpr const char* kKeyFontScale = "fontScalePercentV2";
+constexpr const char* kKeyFontScaleLegacy = "fontScalePercent";
 constexpr const char* kKeyLogRetention = "logRetentionDays";
 } // namespace
 
@@ -65,6 +70,13 @@ SettingsConfig SettingsStore::load() const {
     if (obj.has(kKeyFontScale) && obj.get(kKeyFontScale).isNumber()) {
         cfg.fontScalePercent =
             static_cast<int>(obj.get(kKeyFontScale).asInt());
+    } else if (obj.has(kKeyFontScaleLegacy) &&
+               obj.get(kKeyFontScaleLegacy).isNumber()) {
+        const int legacy =
+            static_cast<int>(obj.get(kKeyFontScaleLegacy).asInt());
+        if (legacy != 100) {  // 100 = 旧默认，视为未设置 → 用新默认 130
+            cfg.fontScalePercent = legacy;
+        }
     }
     if (obj.has(kKeyLogRetention) && obj.get(kKeyLogRetention).isNumber()) {
         cfg.logRetentionDays =

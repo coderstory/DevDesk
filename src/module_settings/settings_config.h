@@ -35,7 +35,10 @@ constexpr int kMaxLogRetentionDays = 3650;
 
 struct SettingsConfig {
     bool darkTheme = true;         // 默认深色（方案 B Dark）
-    int fontScalePercent = 100;    // 100 = 标准（正文 15px）
+    // W7 默认 130：EUI-NEO 按 hhea 度量缩放字号（Segoe UI 系数 ~0.75），
+    // 15px 正文实际按 ~11.3px 渲染；130% 补偿后 ≈14.6px 恢复设计观感。
+    // 根治走 EUI-NEO 上游 em 语义 PR（W7 计划第四节）。
+    int fontScalePercent = 130;    // 130 = 新默认（正文 15px token × 1.3）
     int logRetentionDays = 30;     // 0 = 永久保留
 };
 
