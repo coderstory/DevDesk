@@ -944,6 +944,7 @@ private:
         if (ctxTaskId_ != 0) {
             const Task* self = findTask(ctxTaskId_);
             if (self == nullptr) return;
+            items.push_back({"编辑"});
             items.push_back({"上移"});
             items.push_back({"下移"});
             for (const auto& c : columns_) {
@@ -951,6 +952,7 @@ private:
                     items.push_back({"移动到「" + c.title + "」"});
                 }
             }
+            items.push_back({"删除"});
         } else if (ctxColumnId_ != 0) {
             if (findColumn(ctxColumnId_) == nullptr) return;
             items.push_back({"重命名列"});
@@ -981,15 +983,31 @@ private:
     }
 
     // 菜单项点击分发。索引含义与 drawContextMenu 构建的 items 一一对应：
-    //   任务菜单：0=上移 1=下移 2+i=移动到第 i 个其他列
+    //   任务菜单：0=编辑 1=上移 2=下移 3+i=移动到第 i 个其他列 末项=删除（带确认）
     //   列菜单：  0=重命名 1=左移 2=右移 3=删除
     void onContextSelect(int index) {
         if (ctxTaskId_ != 0) {
             const Task* self = findTask(ctxTaskId_);
             if (self == nullptr) return;
-            if (index == 0) { moveTaskByKeyboard(true); return; }
-            if (index == 1) { moveTaskByKeyboard(false); return; }
-            int k = index - 2;
+            if (index == 0) {
+                openDetailDialog(*self);
+                return;
+            }
+            if (index == 1) { moveTaskByKeyboard(true); return; }
+            if (index == 2) { moveTaskByKeyboard(false); return; }
+            size_t otherColumns = 0;
+            for (const auto& c : columns_) {
+                if (c.id != self->columnId) ++otherColumns;
+            }
+            const int deleteIndex = 3 + static_cast<int>(otherColumns);
+            if (index == deleteIndex) {
+                confirmTaskId_ = ctxTaskId_;
+                confirmTaskTitle_ = self->title;
+                confirmColumnId_ = 0;
+                confirmOpen_ = true;
+                return;
+            }
+            int k = index - 3;
             for (const auto& c : columns_) {
                 if (c.id == self->columnId) continue;
                 if (k == 0) {
@@ -1015,6 +1033,7 @@ private:
             case 2: doShiftColumn(col->id, +1); break;
             case 3:
                 confirmColumnId_ = col->id;
+                confirmTaskId_ = 0;
                 confirmOpen_ = true;
                 break;
             default: break;
@@ -1093,19 +1112,29 @@ private:
             .build();
     }
 
-    // ---------- 删除列确认弹窗（外键 CASCADE 会连带删掉列下全部任务） ----------
+    // ---------- 删除确认弹窗 ----------
+    // 双模式：confirmTaskId_ > 0 = 删任务；否则 confirmColumnId_ > 0 = 删列
+    // （外键 CASCADE 会连带删掉列下全部任务）
     void drawConfirmDeleteDialog(eui::Ui& ui, const eui::Screen& screen,
                                  const core::theme::Tokens& t) {
         const auto themeTokens = t.isDark ? components::theme::dark()
                                           : components::theme::light();
         const float w = 460.0f;
         const float h = 200.0f;
+        const bool delTask = (confirmTaskId_ != 0);
         std::string colName = "?";
         int taskCount = 0;
-        if (const Column* col = findColumn(confirmColumnId_)) {
-            colName = col->title;
-            taskCount = static_cast<int>(tasksInColumn(col->id).size());
+        if (!delTask) {
+            if (const Column* col = findColumn(confirmColumnId_)) {
+                colName = col->title;
+                taskCount = static_cast<int>(tasksInColumn(col->id).size());
+            }
         }
+        const std::string title = delTask ? "删除任务" : "删除列";
+        const std::string body = delTask
+            ? "将删除任务「" + confirmTaskTitle_ + "」，不可恢复。"
+            : "将删除「" + colName + "」列及其中 " +
+                  std::to_string(taskCount) + " 个任务，不可恢复。";
 
         components::dialog(ui, "todo.dialog.delcol")
             .open(confirmOpen_)
@@ -1117,8 +1146,8 @@ private:
                 ui.text("todo.dialog.delcol.title")
                     .position(28.0f, 24.0f)
                     .size(w - 56.0f, 28.0f)
-                    .text("删除列")
-                    .fontSize(20.0f)
+                    .text(title)
+                    .fontSize(t.sizes.fontSizeLarge + 2.0f)
                     .lineHeight(28.0f)
                     .fontWeight(700)
                     .color(t.colors.textPrimary)
@@ -1126,9 +1155,8 @@ private:
                 ui.text("todo.dialog.delcol.body")
                     .position(28.0f, 60.0f)
                     .size(w - 56.0f, 40.0f)
-                    .text("将删除「" + colName + "」列及其中 " +
-                          std::to_string(taskCount) + " 个任务，不可恢复。")
-                    .fontSize(14.0f)
+                    .text(body)
+                    .fontSize(t.sizes.fontSizeBody - 1.0f)
                     .lineHeight(20.0f)
                     .color(t.colors.textSecondary)
                     .build();
@@ -1154,6 +1182,13 @@ private:
                     .textColor(eui::Color("#FFFFFF"))
                     .radius(t.sizes.radius)
                     .onClick([this] {
+                        if (confirmTaskId_ != 0) {
+                            const int64_t taskId = confirmTaskId_;
+                            confirmOpen_ = false;
+                            confirmTaskId_ = 0;
+                            doDeleteTask(taskId);
+                            return;
+                        }
                         const int64_t id = confirmColumnId_;
                         confirmOpen_ = false;
                         doDeleteColumn(id);
@@ -1471,12 +1506,14 @@ private:
     // 截止日期 datepicker
     bool datePickOpen_ = false;
 
-    // 重命名列 / 删除列确认弹窗
+    // 重命名列 / 删除确认弹窗（确认弹窗双模式：任务 / 列）
     bool renameOpen_ = false;
     int64_t renameColumnId_ = 0;
     std::string renameTitle_;
     bool confirmOpen_ = false;
     int64_t confirmColumnId_ = 0;
+    int64_t confirmTaskId_ = 0;
+    std::string confirmTaskTitle_;
 
     // 顶部提示
     std::string statusMessage_;

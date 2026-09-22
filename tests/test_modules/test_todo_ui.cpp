@@ -660,3 +660,72 @@ REGISTER_TEST(todo_ui_error_state_and_retry,
     std::filesystem::remove(path.string() + "-shm", ec);
     return true;
 })
+
+REGISTER_TEST(todo_ui_ctx_edit_and_delete,
+              "todo_ui: 右键菜单「编辑」开详情 / 「删除」带确认（headless）", {
+    TestEnv env;
+    DOCTEST_REQUIRE(env.ready);
+    auto col = env.svc->createColumn("菜单列");
+    DOCTEST_REQUIRE(col.isOk());
+    auto a = env.svc->createTask(col.value().id, "待编辑任务");
+    auto b = env.svc->createTask(col.value().id, "陪衬任务");
+    DOCTEST_REQUIRE(a.isOk());
+    DOCTEST_REQUIRE(b.isOk());
+
+    std::unique_ptr<::core::Module> mod(create_todo_module());
+    mod->onStart();
+
+    // 右键第 0 张卡 → item.0 = 编辑 → 详情弹窗打开且标题正确
+    {
+        Frame frame(mod.get());
+        eui::PointerEvent pe;
+        eui::Rect rect;
+        const auto* card = frame.ui.find("todo.col.4.card.0.bg");
+        DOCTEST_REQUIRE(card != nullptr);
+        card->onContextMenu(pe, rect);
+        frame.refresh();
+        const auto* edit = frame.ui.find("todo.ctx.level.0.item.0");
+        DOCTEST_REQUIRE(edit != nullptr);
+        DOCTEST_REQUIRE(edit->onClick != nullptr);
+        const auto* label0 = frame.ui.find("todo.ctx.level.0.label.0");
+        DOCTEST_REQUIRE(label0 != nullptr);
+        DOCTEST_CHECK_EQ(label0->text, std::string("编辑"));
+        edit->onClick();
+        frame.refresh();
+        DOCTEST_CHECK(frame.ui.find("todo.dialog.detail.input.title") != nullptr);
+    }
+
+    // 右键同一张卡 → 末项 = 删除 → 确认弹窗（任务模式，文案含任务标题）→ 确认 → 落库删除
+    {
+        Frame frame(mod.get());
+        eui::PointerEvent pe;
+        eui::Rect rect;
+        frame.ui.find("todo.col.4.card.0.bg")->onContextMenu(pe, rect);
+        frame.refresh();
+        // 5 列时任务菜单：0=编辑 1=上移 2=下移 3..6=移动到 7=删除
+        const auto* del = frame.ui.find("todo.ctx.level.0.item.7");
+        DOCTEST_REQUIRE(del != nullptr);
+        DOCTEST_REQUIRE(del->onClick != nullptr);
+        const auto* label7 = frame.ui.find("todo.ctx.level.0.label.7");
+        DOCTEST_REQUIRE(label7 != nullptr);
+        DOCTEST_CHECK_EQ(label7->text, std::string("删除"));
+        del->onClick();
+        frame.refresh();
+        const auto* body = frame.ui.find("todo.dialog.delcol.body");
+        DOCTEST_REQUIRE(body != nullptr);
+        DOCTEST_CHECK(body->text.find("待编辑任务") != std::string::npos);
+        const auto* confirm = frame.ui.find("todo.dialog.delcol.confirm.bg");
+        DOCTEST_REQUIRE(confirm != nullptr);
+        DOCTEST_REQUIRE(confirm->onClick != nullptr);
+        confirm->onClick();
+    }
+    {
+        auto ts = env.svc->listTasks(col.value().id);
+        DOCTEST_REQUIRE(ts.isOk());
+        DOCTEST_REQUIRE_EQ(ts.value().size(), static_cast<size_t>(1));
+        DOCTEST_CHECK_EQ(ts.value()[0].title, std::string("陪衬任务"));
+    }
+
+    mod->onStop();
+    return true;
+})
