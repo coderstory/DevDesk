@@ -1040,6 +1040,46 @@ REGISTER_TEST(todo_ui_detail_move_all_columns,
     return true;
 })
 
+// 状态反馈 toast：超时消失 + subtitle 保持静态说明
+// （此前 setStatus 写进 subtitle 永久驻留，静态操作说明被顶掉）
+REGISTER_TEST(todo_ui_status_toast_timeout,
+              "todo_ui: 状态提示 toast 超时消失，subtitle 静态（headless）", {
+    TestEnv env;
+    DOCTEST_REQUIRE(env.ready);
+
+    std::unique_ptr<::core::Module> mod(create_todo_module());
+    mod->onStart();
+
+    Frame frame(mod.get());
+    // 无选中任务按 Ctrl+↑ → 错误反馈进 toast（而非 subtitle）
+    DOCTEST_CHECK(!mod->onKeyEvent(ctrlArrow(eui::InputKey::Up)));
+    frame.refresh();
+    const auto* title = frame.ui.find("todo.toast.title");
+    DOCTEST_REQUIRE(title != nullptr);
+    DOCTEST_CHECK(title->text.find("先点击卡片选中任务") != std::string::npos);
+    // subtitle 始终是静态操作说明
+    const auto* sub = frame.ui.find("todo.subtitle");
+    DOCTEST_REQUIRE(sub != nullptr);
+    DOCTEST_CHECK(sub->text.find("点击卡片查看详情") != std::string::npos);
+
+    // toast 带超时回调（3.5s 自动消失）→ 触发后 visible 关闭
+    const auto* timer = frame.ui.find("todo.toast.timer");
+    DOCTEST_REQUIRE(timer != nullptr);
+    DOCTEST_CHECK(timer->timerSeconds > 0.0f);
+    DOCTEST_REQUIRE(timer->onTimer != nullptr);
+    const auto* toastOpen = frame.ui.find("todo.toast");
+    DOCTEST_REQUIRE(toastOpen != nullptr);
+    DOCTEST_CHECK_EQ(toastOpen->opacity, 1.0f);
+    timer->onTimer();
+    frame.refresh();
+    const auto* toastClosed = frame.ui.find("todo.toast");
+    DOCTEST_REQUIRE(toastClosed != nullptr);
+    DOCTEST_CHECK_EQ(toastClosed->opacity, 0.0f);
+
+    mod->onStop();
+    return true;
+})
+
 REGISTER_TEST(todo_ui_fontscale_tokens,
               "todo_ui: 模块字号经 token 派生，全局缩放生效（headless）", {
     TestEnv env;

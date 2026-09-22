@@ -18,6 +18,7 @@
 #include <components/input.h>
 #include <components/scrollview.h>
 #include <components/theme.h>
+#include <components/toast.h>
 
 #include <algorithm>
 #include <ctime>
@@ -458,9 +459,26 @@ public:
 
     // ============ 状态提示 ============
 
+    // 状态反馈走 toast（3.5s 超时自动消失，仿 markdown/claude 模块）。
+    // 此前写进 header subtitle 永久驻留，静态操作说明被最后一条
+    // 操作结果永久顶掉；现在 subtitle 始终保持静态说明。
     void setStatus(const std::string& msg, bool isError = false) {
-        statusMessage_ = msg;
-        statusIsError_ = isError;
+        toastTitle_ = isError ? ("⚠ " + msg) : msg;
+        toastOpen_ = true;
+    }
+
+    // ---------- Toast（画在弹窗之上，超时消失） ----------
+    void drawToast(eui::Ui& ui, const eui::Screen& screen,
+                   const components::theme::ThemeColorTokens& themeTokens) {
+        components::toast(ui, "todo.toast")
+            .theme(themeTokens)
+            .screen(screen.width, screen.height)
+            .visible(toastOpen_)
+            .duration(3.5f)
+            .title(toastTitle_)
+            .onAutoDismiss([this] { toastOpen_ = false; })
+            .onDismiss([this] { toastOpen_ = false; })
+            .build();
     }
 
     // ============ UI ============
@@ -500,6 +518,8 @@ public:
         drawDatePicker(ui, screen, t);
         drawRenameDialog(ui, screen, t);
         drawConfirmDeleteDialog(ui, screen, t);
+        drawToast(ui, screen,
+                  t.isDark ? components::theme::dark() : components::theme::light());
     }
 
     // P7a 键盘移动：Ctrl/Cmd+↑↓ 上移/下移当前选中任务（选中 = 最近
@@ -544,15 +564,13 @@ private:
                             .fontWeight(700)
                             .color(t.colors.textPrimary)
                             .build();
-                        const std::string sub = statusMessage_.empty()
-                            ? "点击卡片查看详情 · Ctrl+↑/↓ 移动选中任务 · 右键卡片/列头更多操作"
-                            : statusMessage_;
+                        // subtitle 保持静态操作说明（动态反馈走 toast）
                         ui.text("todo.subtitle")
                             .size(contentW - 480.0f, 18.0f)
-                            .text(sub)
+                            .text("点击卡片查看详情 · Ctrl+↑/↓ 移动选中任务 · 右键卡片/列头更多操作")
                             .fontSize(t.sizes.fontSizeSmall)
                             .lineHeight(18.0f)
-                            .color(statusIsError_ ? t.colors.error : t.colors.textSecondary)
+                            .color(t.colors.textSecondary)
                             .build();
                     })
                     .build();
@@ -1645,9 +1663,9 @@ private:
     int64_t confirmTaskId_ = 0;
     std::string confirmTaskTitle_;
 
-    // 顶部提示
-    std::string statusMessage_;
-    bool statusIsError_ = false;
+    // 状态反馈 toast（超时消失；subtitle 保持静态说明）
+    bool toastOpen_ = false;
+    std::string toastTitle_;
 
     // 数据加载错误（空 = 正常；与空态区分，见 drawBoard）
     std::string loadError_;
