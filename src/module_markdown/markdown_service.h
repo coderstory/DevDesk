@@ -27,6 +27,12 @@ struct NoteMeta {
     int64_t modifiedAt = 0; // unix epoch seconds
 };
 
+// 标签 + 引用它的笔记数（listAllTags 用）
+struct TagCount {
+    std::string name;
+    int64_t noteCount = 0;
+};
+
 class MarkdownService {
 public:
     MarkdownService(core::data::SqliteDb& db, const std::filesystem::path& notesDir);
@@ -64,6 +70,23 @@ public:
     // FTS5 全文搜索
     //   返回匹配的笔记元数据（按 FTS5 rank 排序）
     core::Result<std::vector<NoteMeta>> search(const std::string& query);
+
+    // ---- 标签（spec §8.1；手动标签，数据全在 markdown_tags/markdown_note_tags）----
+
+    // 某笔记的全部标签（按名字母序）
+    core::Result<std::vector<std::string>> tagsForNote(
+        const std::filesystem::path& relPath);
+
+    // 全量替换某笔记的标签（事务：删旧关联 + upsert 标签 + 建新关联 +
+    // 清理无笔记引用的孤儿标签）。笔记必须已在索引中，否则 fail。
+    core::Result<void> setTags(const std::filesystem::path& relPath,
+                               const std::vector<std::string>& tags);
+
+    // 全部标签 + 各自笔记数（按名字母序；只含至少被一篇笔记引用的标签）
+    core::Result<std::vector<TagCount>> listAllTags();
+
+    // 含某标签的全部笔记（按 modified_at DESC）
+    core::Result<std::vector<NoteMeta>> notesWithTag(const std::string& tag);
 
     // ---- W8：文件变化自动感知（spec §8.1 承诺的 5 秒轮询底座）----
 

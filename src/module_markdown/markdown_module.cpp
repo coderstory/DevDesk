@@ -135,6 +135,16 @@ std::string formatSaveTime(std::time_t t) {
     return buf;
 }
 
+// 粗略文字宽度估算（标签 chip 布局用）：ASCII 字节 ≈ 0.55×字号，
+// 非 ASCII 字节（UTF-8 多字节）≈ 字号/3 —— CJK 3 字节 ≈ 1 个字宽
+float estimateTextWidth(const std::string& s, float fontSize) {
+    float w = 0.0f;
+    for (unsigned char ch : s) {
+        w += (ch < 0x80) ? fontSize * 0.55f : fontSize / 3.0f;
+    }
+    return w;
+}
+
 } // namespace
 
 class MarkdownModule : public ::core::Module {
@@ -390,8 +400,71 @@ private:
                 })
                 .build();
 
+            // 标签筛选区（spec §8.1：全部标签 chip 带笔记数，点击过滤树 /
+            // 再点取消；选中 chip 高亮 primary）。有标签才显示。
+            const float tagY = 56.0f;
+            float tagAreaH = 0.0f;
+            if (!allTags_.empty()) {
+                ui.text("md.tags.title")
+                    .position(16.0f, tagY)
+                    .size(sideW - 32.0f, 14.0f)
+                    .text("标签")
+                    .fontSize(10.0f)
+                    .lineHeight(14.0f)
+                    .fontWeight(700)
+                    .color(t.colors.textTertiary)
+                    .build();
+                const float fs = 11.0f;
+                const float rowH = 24.0f;
+                float cx = 12.0f;
+                float cy = tagY + 18.0f;
+                int row = 0;
+                for (size_t i = 0; i < allTags_.size(); ++i) {
+                    const auto& tc = allTags_[i];
+                    const std::string label =
+                        tc.name + "·" + std::to_string(tc.noteCount);
+                    const std::string id = "md.tags.filter." + std::to_string(i);
+                    const float chipW = 16.0f + estimateTextWidth(label, fs);
+                    if (cx + chipW > sideW - 12.0f) {
+                        // 换行；最多 3 行，超出丢弃
+                        // （ponytail: 标签很多时改 scrollView 虚拟列表）
+                        cx = 12.0f;
+                        cy += rowH + 4.0f;
+                        if (++row >= 3) break;
+                    }
+                    const bool active = tagFilter_ == tc.name;
+                    ui.stack(id)
+                        .position(cx, cy)
+                        .size(chipW, rowH)
+                        .content([&] {
+                            ui.rect(id + ".bg")
+                                .size(chipW, rowH)
+                                .color(active ? t.colors.primary : t.colors.hover)
+                                .hoverColor(t.colors.primarySoftBg)
+                                .radius(t.sizes.radiusPill)
+                                .onClick([this, name = tc.name] {
+                                    toggleTagFilter(name);
+                                })
+                                .build();
+                            ui.text(id + ".name")
+                                .position(0.0f, 0.0f)
+                                .size(chipW, rowH)
+                                .text(label)
+                                .fontSize(fs)
+                                .lineHeight(rowH)
+                                .horizontalAlign(eui::HorizontalAlign::Center)
+                                .color(active ? eui::Color("#FFFFFF")
+                                              : t.colors.textSecondary)
+                                .build();
+                        })
+                        .build();
+                    cx += chipW + 4.0f;
+                }
+                tagAreaH = 18.0f + static_cast<float>(row + 1) * (rowH + 4.0f);
+            }
+
             // 搜索时树展平为命中文件列表；空搜索 = 二级目录树（W8）
-            const float listY = 60.0f;
+            const float listY = 60.0f + tagAreaH;
             const float listH = std::max(0.0f, bodyH - listY - 60.0f);
 
             // 错误态与空态区分（W7 P1-1，仿 Home 三态）：
@@ -409,7 +482,7 @@ private:
                     .color(t.colors.error)
                     .build();
             } else if (notes_.empty()) {
-                if (searchQuery_.empty()) {
+                if (searchQuery_.empty() && tagFilter_.empty()) {
                     // 空目录：根组标题 + 空态提示同显（W9——组标题行常显，
                     // 提示挪到标题行下方，不再独占替换掉树结构）
                     drawTreeList(ui, listY, listH, sideW, t, componentTheme);
@@ -750,7 +823,9 @@ private:
                 edW = std::min(edW, kEditTextColumnWidth);
                 edX = std::max(0.0f, (midW - edW) * 0.5f);
             }
-            const float edY = 16.0f;
+            // 标签 chip 行（spec §8.1 标签 UI；与编辑器文本列同列对齐）
+            drawTagBar(ui, edX, edW, t, componentTheme);
+            const float edY = 48.0f;  // 16 顶距 + 24 chip 行 + 8 间距
             const float edH = std::max(0.0f, bodyH - edY - 22.0f - 8.0f);
 
             components::input(ui, "md.editor.input")
@@ -774,6 +849,90 @@ private:
 
             drawStatusBar(ui, 0.0f, bodyH - 22.0f, midW, t);
         }).build();
+    }
+
+    // ---- 编辑器顶栏：当前笔记的标签 chip 行（显示 + 添加输入 + × 删除）----
+    // ponytail: 标签多到溢出文本列宽时直接截断，不换行/不滚动；需要大量
+    // 标签时再升级为 wrap 布局
+    void drawTagBar(eui::Ui& ui,
+                    float x,
+                    float w,
+                    const core::theme::Tokens& t,
+                    const components::theme::ThemeColorTokens& componentTheme) {
+        const float y = 16.0f;
+        const float h = 24.0f;
+        const float fs = 11.0f;
+        float cx = x;
+        for (size_t i = 0; i < currentTags_.size(); ++i) {
+            const std::string& name = currentTags_[i];
+            const std::string id = "md.tags.chip." + std::to_string(i);
+            const float chipW = 10.0f + estimateTextWidth(name, fs) + 26.0f;
+            if (cx + chipW > x + w) break;  // 溢出截断（见函数头注释）
+            ui.stack(id)
+                .position(cx, y)
+                .size(chipW, h)
+                .content([&] {
+                    ui.rect(id + ".bg")
+                        .size(chipW, h)
+                        .color(t.colors.primarySoftBg)
+                        .radius(t.sizes.radiusPill)
+                        .build();
+                    ui.text(id + ".name")
+                        .position(10.0f, 0.0f)
+                        .size(std::max(0.0f, chipW - 30.0f), h)
+                        .text(name)
+                        .fontSize(fs)
+                        .lineHeight(h)
+                        .color(t.colors.primary)
+                        .fontWeight(600)
+                        .build();
+                    // × 删除（chip 右侧独立热区，底色同 chip 不额外可见）
+                    ui.rect(id + ".del")
+                        .position(chipW - 24.0f, 0.0f)
+                        .size(24.0f, h)
+                        .color(t.colors.primarySoftBg)
+                        .hoverColor(t.colors.hover)
+                        .radius(t.sizes.radiusPill)
+                        .onClick([this, name] { removeTag(name); })
+                        .build();
+                    ui.text(id + ".x")
+                        .position(chipW - 24.0f, 0.0f)
+                        .size(24.0f, h)
+                        .text("×")
+                        .fontSize(fs)
+                        .lineHeight(h)
+                        .horizontalAlign(eui::HorizontalAlign::Center)
+                        .color(t.colors.primary)
+                        .build();
+                })
+                .build();
+            cx += chipW + 6.0f;
+        }
+        // 添加输入 + 「＋」按钮（回车或点击都提交）
+        const float inW = 92.0f;
+        if (cx + inW + 30.0f <= x + w) {
+            components::input(ui, "md.tags.add")
+                .position(cx, y)
+                .size(inW, h)
+                .value(tagInput_)
+                .placeholder("＋ 标签")
+                .fontSize(fs)
+                .inset(8.0f)
+                .theme(componentTheme)
+                .onChange([this](const std::string& v) { tagInput_ = v; })
+                .onEnter([this] { commitAddTag(); })
+                .build();
+            components::button(ui, "md.tags.addbtn")
+                .position(cx + inW + 4.0f, y)
+                .size(26.0f, h)
+                .text("＋")
+                .fontSize(fs)
+                .theme(componentTheme, true)
+                .textColor(eui::Color("#FFFFFF"))
+                .radius(t.sizes.radiusPill)
+                .onClick([this] { commitAddTag(); })
+                .build();
+        }
     }
 
     // 编辑器底部状态栏：左 = 文件名 + 保存状态（● 未保存 / ✓ 已保存 HH:MM），
@@ -1273,6 +1432,7 @@ private:
         if (!service_) {
             notes_.clear();
             topFolders_.clear();
+            allTags_.clear();
             return;
         }
         // W9：磁盘一级目录实时枚举（含空目录），目录树据此显示空文件夹行
@@ -1290,6 +1450,114 @@ private:
         }
         listError_.clear();
         notes_ = std::move(r.value());
+        // 标签筛选：树只显示含当前筛选标签的笔记
+        if (!tagFilter_.empty()) {
+            auto fr = service_->notesWithTag(tagFilter_);
+            if (fr.isOk()) {
+                std::set<std::string> keep;
+                for (const auto& n : fr.value()) {
+                    keep.insert(n.relativePath.generic_string());
+                }
+                notes_.erase(
+                    std::remove_if(notes_.begin(), notes_.end(),
+                                   [&](const NoteMeta& n) {
+                                       return keep.count(
+                                                  n.relativePath.generic_string()) == 0;
+                                   }),
+                    notes_.end());
+            } else {
+                LOG_WARN("标签筛选失败: " + fr.errorMessage());
+            }
+        }
+        refreshTags();
+    }
+
+    // 全部标签（左栏筛选区数据源）+ 筛选有效性检查
+    void refreshTags() {
+        if (!service_) {
+            allTags_.clear();
+            return;
+        }
+        auto r = service_->listAllTags();
+        if (r.isOk()) {
+            allTags_ = std::move(r.value());
+        } else {
+            LOG_WARN("加载标签失败: " + r.errorMessage());
+        }
+        // 筛选标签已无任何笔记引用（如最后一个用它的标签被删）→ 自动取消筛选
+        if (!tagFilter_.empty()) {
+            bool found = false;
+            for (const auto& tc : allTags_) {
+                if (tc.name == tagFilter_) {
+                    found = true;
+                    break;
+                }
+            }
+            if (!found) tagFilter_.clear();
+        }
+    }
+
+    // ---- 标签动作（spec §8.1 手动标签；数据全在 DB）----
+
+    // 左栏标签 chip：点击过滤 / 再点取消
+    void toggleTagFilter(const std::string& name) {
+        tagFilter_ = (tagFilter_ == name) ? std::string() : name;
+        refreshList();
+        status_ = tagFilter_.empty() ? "已取消标签筛选"
+                                     : "按标签筛选：" + tagFilter_;
+        LOG_INFO("标签筛选: " + (tagFilter_.empty() ? "(无)" : tagFilter_));
+    }
+
+    // 编辑器标签行的「＋」/回车：给当前笔记加一个标签
+    void commitAddTag() {
+        if (!service_ || currentPath_.empty()) return;
+        std::string name = tagInput_;
+        while (!name.empty() &&
+               (name.front() == ' ' || name.front() == '\t')) {
+            name.erase(name.begin());
+        }
+        while (!name.empty() &&
+               (name.back() == ' ' || name.back() == '\t' ||
+                name.back() == '\r' || name.back() == '\n')) {
+            name.pop_back();
+        }
+        tagInput_.clear();
+        if (name.empty()) return;
+        for (const auto& existing : currentTags_) {
+            if (existing == name) return;  // 已有，不重复
+        }
+        currentTags_.push_back(name);
+        auto r = service_->setTags(currentPath_, currentTags_);
+        if (r.isFail()) {
+            currentTags_.pop_back();
+            LOG_ERROR("添加标签失败 " + name + ": " + r.errorMessage());
+            showToast("添加标签失败", r.errorMessage(), true);
+            return;
+        }
+        refreshTags();
+        status_ = "已添加标签 " + name;
+        LOG_INFO("添加标签 " + name + " → " + currentPath_);
+    }
+
+    // 编辑器标签 chip 的 ×：从当前笔记移除一个标签
+    void removeTag(const std::string& name) {
+        if (!service_ || currentPath_.empty()) return;
+        std::vector<std::string> next;
+        for (const auto& tg : currentTags_) {
+            if (tg != name) next.push_back(tg);
+        }
+        if (next.size() == currentTags_.size()) return;
+        auto r = service_->setTags(currentPath_, next);
+        if (r.isFail()) {
+            LOG_ERROR("删除标签失败 " + name + ": " + r.errorMessage());
+            showToast("删除标签失败", r.errorMessage(), true);
+            return;
+        }
+        currentTags_ = std::move(next);
+        refreshTags();
+        refreshList();  // 筛选标签可能随删除失效，树要同步
+        status_ = "已删除标签 " + name;
+        LOG_INFO("删除标签 " + name + " ← " + currentPath_);
     }
 
     void openNote(const std::string& relPath) {
@@ -1310,6 +1578,12 @@ private:
         editorDirty_ = false;
         outlineDirty_ = true;
         activeOutlineIdx_ = -1;
+        // 标签行随笔记切换
+        if (auto tr = service_->tagsForNote(relPath); tr.isOk()) {
+            currentTags_ = std::move(tr.value());
+        } else {
+            currentTags_.clear();
+        }
         syncCurrentMtime();  // W8：外部修改检测的 mtime 基准
         if (mode_ == ViewMode::Preview) syncPreviewOnEnter_ = true;
         status_ = "已打开 " + relPath;
@@ -1602,6 +1876,12 @@ private:
     int64_t lastKnownMtime_ = 0;                      // 当前笔记已知磁盘 mtime（-1=已删除）
     bool conflictOpen_ = false;                       // 外部修改冲突弹窗
     std::chrono::steady_clock::time_point lastPollAt_{};  // 轮询节流基准
+
+    // ---- 标签状态（spec §8.1）----
+    std::vector<std::string> currentTags_;  // 当前打开笔记的标签
+    std::vector<TagCount> allTags_;         // 左栏筛选区的全部标签（含笔记数）
+    std::string tagFilter_;                 // 生效中的标签筛选（空 = 无）
+    std::string tagInput_;                  // 添加标签输入框内容
 };
 
 } // namespace module::markdown

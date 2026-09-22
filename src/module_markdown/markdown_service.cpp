@@ -369,6 +369,23 @@ core::Result<void> MarkdownService::deleteFromIndex(
                     "step delete fts: " + stepResult.errorMessage());
             }
         }
+        // 标签关联随 markdown_index 行删除（FK ON DELETE CASCADE），
+        // 但 markdown_tags 里的标签名会留孤儿 —— 顺手清理
+        {
+            auto prep = db_.prepare(
+                "DELETE FROM markdown_tags WHERE id NOT IN "
+                "(SELECT DISTINCT tag_id FROM markdown_note_tags)");
+            if (prep.isFail()) {
+                return core::Result<void>::fail(prep.errorCode(),
+                    "prepare delete orphan tags: " + prep.errorMessage());
+            }
+            auto& stmt = prep.value();
+            auto stepResult = stmt.step();
+            if (stepResult.isFail()) {
+                return core::Result<void>::fail(stepResult.errorCode(),
+                    "step delete orphan tags: " + stepResult.errorMessage());
+            }
+        }
         return core::Result<void>::ok();
     });
     if (tx.isFail()) {
@@ -725,6 +742,245 @@ core::Result<std::vector<NoteMeta>> MarkdownService::search(
     }
 
     return core::Result<std::vector<NoteMeta>>::ok(std::move(results));
+}
+
+// ---- 标签 ----
+
+namespace {
+
+// 去掉 ASCII 首尾空白（标签名清洗用；UTF-8 正文不受影响）
+std::string trimAscii(const std::string& s) {
+    size_t b = 0, e = s.size();
+    while (b < e && (s[b] == ' ' || s[b] == '\t' || s[b] == '\r' || s[b] == '\n')) ++b;
+    while (e > b && (s[e - 1] == ' ' || s[e - 1] == '\t' || s[e - 1] == '\r' || s[e - 1] == '\n')) --e;
+    return s.substr(b, e - b);
+}
+
+} // namespace
+
+core::Result<std::vector<std::string>> MarkdownService::tagsForNote(
+    const fs::path& relPath) {
+    auto prep = db_.prepare(
+        "SELECT t.name FROM markdown_note_tags nt "
+        "JOIN markdown_tags t ON t.id = nt.tag_id "
+        "JOIN markdown_index i ON i.id = nt.note_id "
+        "WHERE i.path = ? ORDER BY t.name");
+    if (prep.isFail()) {
+        return core::Result<std::vector<std::string>>::fail(
+            prep.errorCode(), "prepare tagsForNote: " + prep.errorMessage());
+    }
+    auto& stmt = prep.value();
+    if (stmt.bind(1, toPosix(relPath)).isFail()) {
+        return core::Result<std::vector<std::string>>::fail(
+            core::ErrorCode::Internal, "bind tagsForNote 失败");
+    }
+    auto rows = stmt.fetchAll();
+    if (rows.isFail()) {
+        return core::Result<std::vector<std::string>>::fail(
+            rows.errorCode(), "fetch tagsForNote: " + rows.errorMessage());
+    }
+    std::vector<std::string> out;
+    out.reserve(rows.value().size());
+    for (const auto& row : rows.value()) {
+        if (auto n = row.getString("name"); n.isOk()) out.push_back(n.value());
+    }
+    return core::Result<std::vector<std::string>>::ok(std::move(out));
+}
+
+core::Result<void> MarkdownService::setTags(
+    const fs::path& relPath, const std::vector<std::string>& tags) {
+    const std::string relPosix = toPosix(relPath);
+    // 清洗：去首尾空白、跳过空串、去重（保持首次出现序）
+    std::vector<std::string> clean;
+    std::set<std::string> seen;
+    for (const auto& raw : tags) {
+        std::string s = trimAscii(raw);
+        if (s.empty()) continue;
+        if (seen.insert(s).second) clean.push_back(std::move(s));
+    }
+
+    auto tx = db_.transaction([&]() -> core::Result<void> {
+        // 笔记必须在索引中（标签挂在 markdown_index.id 上）
+        int64_t noteId = -1;
+        {
+            auto prep = db_.prepare(
+                "SELECT id FROM markdown_index WHERE path = ?");
+            if (prep.isFail()) {
+                return core::Result<void>::fail(prep.errorCode(),
+                    "prepare setTags select note: " + prep.errorMessage());
+            }
+            auto& stmt = prep.value();
+            if (stmt.bind(1, relPosix).isFail()) {
+                return core::Result<void>::fail(core::ErrorCode::Internal,
+                    "bind setTags select note 失败");
+            }
+            auto step = stmt.step();
+            if (step.isFail()) {
+                return core::Result<void>::fail(step.errorCode(),
+                    "step setTags select note: " + step.errorMessage());
+            }
+            if (!step.value()) {
+                return core::Result<void>::fail(core::ErrorCode::NotFound,
+                    "笔记未索引，无法设置标签: " + relPosix);
+            }
+            auto row = stmt.currentRow();
+            if (row.isFail() || row.value().getInt64("id").isFail()) {
+                return core::Result<void>::fail(core::ErrorCode::Internal,
+                    "读取笔记 id 失败: " + relPosix);
+            }
+            noteId = row.value().getInt64("id").value();
+        }
+        // 全量替换：删旧关联
+        {
+            auto prep = db_.prepare(
+                "DELETE FROM markdown_note_tags WHERE note_id = ?");
+            if (prep.isFail()) {
+                return core::Result<void>::fail(prep.errorCode(),
+                    "prepare setTags delete: " + prep.errorMessage());
+            }
+            auto& stmt = prep.value();
+            if (stmt.bind(1, noteId).isFail()) {
+                return core::Result<void>::fail(core::ErrorCode::Internal,
+                    "bind setTags delete 失败");
+            }
+            auto step = stmt.step();
+            if (step.isFail()) {
+                return core::Result<void>::fail(step.errorCode(),
+                    "step setTags delete: " + step.errorMessage());
+            }
+        }
+        // upsert 标签 + 建关联
+        for (const auto& name : clean) {
+            {
+                auto prep = db_.prepare(
+                    "INSERT OR IGNORE INTO markdown_tags (name) VALUES (?)");
+                if (prep.isFail()) {
+                    return core::Result<void>::fail(prep.errorCode(),
+                        "prepare setTags insert tag: " + prep.errorMessage());
+                }
+                prep.value().bind(1, name);
+                auto step = prep.value().step();
+                if (step.isFail()) {
+                    return core::Result<void>::fail(step.errorCode(),
+                        "step setTags insert tag: " + step.errorMessage());
+                }
+            }
+            int64_t tagId = -1;
+            {
+                auto prep = db_.prepare(
+                    "SELECT id FROM markdown_tags WHERE name = ?");
+                if (prep.isFail()) {
+                    return core::Result<void>::fail(prep.errorCode(),
+                        "prepare setTags select tag: " + prep.errorMessage());
+                }
+                prep.value().bind(1, name);
+                auto step = prep.value().step();
+                if (step.isFail() || !step.value()) {
+                    return core::Result<void>::fail(core::ErrorCode::Internal,
+                        "读取标签 id 失败: " + name);
+                }
+                auto row = prep.value().currentRow();
+                if (row.isFail() || row.value().getInt64("id").isFail()) {
+                    return core::Result<void>::fail(core::ErrorCode::Internal,
+                        "读取标签 id 失败: " + name);
+                }
+                tagId = row.value().getInt64("id").value();
+            }
+            {
+                auto prep = db_.prepare(
+                    "INSERT OR IGNORE INTO markdown_note_tags "
+                    "(note_id, tag_id) VALUES (?, ?)");
+                if (prep.isFail()) {
+                    return core::Result<void>::fail(prep.errorCode(),
+                        "prepare setTags link: " + prep.errorMessage());
+                }
+                prep.value().bind(1, noteId);
+                prep.value().bind(2, tagId);
+                auto step = prep.value().step();
+                if (step.isFail()) {
+                    return core::Result<void>::fail(step.errorCode(),
+                        "step setTags link: " + step.errorMessage());
+                }
+            }
+        }
+        // 清理无笔记引用的孤儿标签（标签最后一个使用者被移除后自动消失）
+        {
+            auto prep = db_.prepare(
+                "DELETE FROM markdown_tags WHERE id NOT IN "
+                "(SELECT DISTINCT tag_id FROM markdown_note_tags)");
+            if (prep.isFail()) {
+                return core::Result<void>::fail(prep.errorCode(),
+                    "prepare setTags prune: " + prep.errorMessage());
+            }
+            auto step = prep.value().step();
+            if (step.isFail()) {
+                return core::Result<void>::fail(step.errorCode(),
+                    "step setTags prune: " + step.errorMessage());
+            }
+        }
+        return core::Result<void>::ok();
+    });
+    if (tx.isFail()) {
+        return core::Result<void>::fail(tx.errorCode(),
+            "setTags: " + tx.errorMessage());
+    }
+    return core::Result<void>::ok();
+}
+
+core::Result<std::vector<TagCount>> MarkdownService::listAllTags() {
+    auto prep = db_.prepare(
+        "SELECT t.name AS name, COUNT(nt.note_id) AS n "
+        "FROM markdown_tags t "
+        "JOIN markdown_note_tags nt ON nt.tag_id = t.id "
+        "GROUP BY t.id ORDER BY t.name");
+    if (prep.isFail()) {
+        return core::Result<std::vector<TagCount>>::fail(
+            prep.errorCode(), "prepare listAllTags: " + prep.errorMessage());
+    }
+    auto rows = prep.value().fetchAll();
+    if (rows.isFail()) {
+        return core::Result<std::vector<TagCount>>::fail(
+            rows.errorCode(), "fetch listAllTags: " + rows.errorMessage());
+    }
+    std::vector<TagCount> out;
+    out.reserve(rows.value().size());
+    for (const auto& row : rows.value()) {
+        TagCount tc;
+        if (auto n = row.getString("name"); n.isOk()) tc.name = n.value();
+        if (auto c = row.getInt64("n"); c.isOk()) tc.noteCount = c.value();
+        out.push_back(std::move(tc));
+    }
+    return core::Result<std::vector<TagCount>>::ok(std::move(out));
+}
+
+core::Result<std::vector<NoteMeta>> MarkdownService::notesWithTag(
+    const std::string& tag) {
+    auto prep = db_.prepare(
+        "SELECT i.id, i.path, i.title, i.size_bytes, i.modified_at "
+        "FROM markdown_note_tags nt "
+        "JOIN markdown_tags t ON t.id = nt.tag_id "
+        "JOIN markdown_index i ON i.id = nt.note_id "
+        "WHERE t.name = ? ORDER BY i.modified_at DESC");
+    if (prep.isFail()) {
+        return core::Result<std::vector<NoteMeta>>::fail(
+            prep.errorCode(), "prepare notesWithTag: " + prep.errorMessage());
+    }
+    auto& stmt = prep.value();
+    if (stmt.bind(1, tag).isFail()) {
+        return core::Result<std::vector<NoteMeta>>::fail(
+            core::ErrorCode::Internal, "bind notesWithTag 失败");
+    }
+    auto rows = stmt.fetchAll();
+    if (rows.isFail()) {
+        return core::Result<std::vector<NoteMeta>>::fail(
+            rows.errorCode(), "fetch notesWithTag: " + rows.errorMessage());
+    }
+    std::vector<NoteMeta> out;
+    out.reserve(rows.value().size());
+    for (const auto& row : rows.value()) {
+        out.push_back(rowToNoteImpl(row));
+    }
+    return core::Result<std::vector<NoteMeta>>::ok(std::move(out));
 }
 
 NoteMeta MarkdownService::rowToNote(const core::data::SqlRow& row) {
