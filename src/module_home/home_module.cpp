@@ -280,11 +280,13 @@ public:
                 const bool streaming = snap.activeStreams > 0;
                 const std::string sessionCn =
                     formatTokenCount(snap.sessionTokens);
+                // W9：badge 文案不带「会话」二字——em 修复后 11px 全角文案
+                // 在最小窗口（statW 208）下会溢出卡片（实测 154.85 > 152 可用宽）
                 const std::string tokenBadge =
                     streaming
                         ? "● " + std::to_string(snap.activeStreams) +
-                              " 路并发 · 会话累计 " + sessionCn
-                        : "空闲 · 会话累计 " + sessionCn;
+                              " 路并发 · 累计 " + sessionCn
+                        : "空闲 · 累计 " + sessionCn;
 
                 ui.row("home.stats")
                     .size(contentW, statH)

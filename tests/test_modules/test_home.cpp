@@ -241,7 +241,7 @@ REGISTER_TEST(home_token_rate_card_compose,
         const auto* badge = ui.find("home.stat.tokens.badge");
         DOCTEST_REQUIRE(badge != nullptr);
         DOCTEST_CHECK(badge->text.find("空闲") != std::string::npos);
-        DOCTEST_CHECK(badge->text.find("会话累计 0") != std::string::npos);
+        DOCTEST_CHECK(badge->text.find("累计 0") != std::string::npos);
         mod->onStop();
     }
 
@@ -262,7 +262,7 @@ REGISTER_TEST(home_token_rate_card_compose,
         const auto* badge = ui.find("home.stat.tokens.badge");
         DOCTEST_REQUIRE(badge != nullptr);
         DOCTEST_CHECK(badge->text.find("1 路并发") != std::string::npos);
-        DOCTEST_CHECK(badge->text.find("会话累计 42") != std::string::npos);
+        DOCTEST_CHECK(badge->text.find("累计 42") != std::string::npos);
         mod->onStop();
 
         core::proxy_stats::endStream(id);

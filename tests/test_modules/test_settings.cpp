@@ -87,7 +87,7 @@ REGISTER_TEST(settings_defaults_on_missing_file, "settings: missing file -> defa
     module::settings::SettingsStore store(path);
     const auto cfg = store.load();
     DOCTEST_CHECK(cfg.darkTheme);                        // 默认深色（方案 B Dark）
-    DOCTEST_CHECK_EQ(cfg.fontScalePercent, 130);  // W7 新默认（hhea 缩水补偿）
+    DOCTEST_CHECK_EQ(cfg.fontScalePercent, 100);  // W9 默认（em 语义修复后）
     DOCTEST_CHECK_EQ(cfg.logRetentionDays, 30);
     return true;
 })
@@ -139,7 +139,7 @@ REGISTER_TEST(settings_corrupted_json_fallback, "settings: corrupted json -> def
     module::settings::SettingsStore store(path);
     const auto cfg = store.load();
     DOCTEST_CHECK(cfg.darkTheme);
-    DOCTEST_CHECK_EQ(cfg.fontScalePercent, 130);  // 解析失败 → 新默认
+    DOCTEST_CHECK_EQ(cfg.fontScalePercent, 100);  // 解析失败 → 默认
     DOCTEST_CHECK_EQ(cfg.logRetentionDays, 30);
     removeQuietly(path);
     return true;
@@ -157,39 +157,40 @@ REGISTER_TEST(settings_partial_file_uses_defaults, "settings: partial file -> pe
     module::settings::SettingsStore store(path);
     const auto cfg = store.load();
     DOCTEST_CHECK_FALSE(cfg.darkTheme);            // theme=light 生效
-    DOCTEST_CHECK_EQ(cfg.fontScalePercent, 130);   // 缺失 → 新默认
+    DOCTEST_CHECK_EQ(cfg.fontScalePercent, 100);   // 缺失 → 默认
     DOCTEST_CHECK_EQ(cfg.logRetentionDays, 30);    // 缺失 → 默认
     removeQuietly(path);
     return true;
 })
 
-// W7 一次性迁移：旧键 fontScalePercent 的 100 是旧默认痕迹 → 新默认 130；
-// 用户显式选过的 85/115 原样保留；新键保存后按字面生效（含重新选 100）
-REGISTER_TEST(settings_legacy_fontscale_migration, "settings: legacy fontScalePercent key migrates", {
+// W9 一次性重置：EUI-NEO 0.7.0 修字号 em 语义后文字放大约 33%，
+// 旧键 fontScalePercent / fontScalePercentV2 的存量值（85/115/130）都是
+// 缩水语义下选的 → 一律忽略、回落默认 100；V3 键下的值按字面生效
+REGISTER_TEST(settings_legacy_fontscale_migration, "settings: legacy font scale keys reset to 100", {
     const auto path = tempConfigFile("legacy");
     removeQuietly(path);
     {
         std::ofstream f(path, std::ios::trunc);
-        f << "{\"theme\": \"dark\", \"fontScalePercent\": 100}";
+        f << "{\"theme\": \"dark\", \"fontScalePercent\": 85}";
         f.close();
     }
     module::settings::SettingsStore store(path);
-    DOCTEST_CHECK_EQ(store.load().fontScalePercent, 130);  // 旧默认 → 新默认
+    DOCTEST_CHECK_EQ(store.load().fontScalePercent, 100);  // 最老键 → 重置
 
     {
         std::ofstream f(path, std::ios::trunc);
-        f << "{\"fontScalePercent\": 85}";
+        f << "{\"fontScalePercentV2\": 130}";
         f.close();
     }
-    DOCTEST_CHECK_EQ(store.load().fontScalePercent, 85);   // 显式选择保留
+    DOCTEST_CHECK_EQ(store.load().fontScalePercent, 100);  // V2 键 → 重置
 
     {
-        // 新键优先于旧键；新键下的 100 是显式选择，按字面生效
+        // V3 键按字面生效（旧键同时存在也被忽略）
         std::ofstream f(path, std::ios::trunc);
-        f << "{\"fontScalePercent\": 100, \"fontScalePercentV2\": 100}";
+        f << "{\"fontScalePercent\": 85, \"fontScalePercentV2\": 130, \"fontScalePercentV3\": 115}";
         f.close();
     }
-    DOCTEST_CHECK_EQ(store.load().fontScalePercent, 100);
+    DOCTEST_CHECK_EQ(store.load().fontScalePercent, 115);
     removeQuietly(path);
     return true;
 })

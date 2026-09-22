@@ -12,12 +12,11 @@ namespace module::settings {
 
 namespace {
 constexpr const char* kKeyTheme = "theme";
-// W7：键更名做一次性迁移。旧键 fontScalePercent 存的 100 是"从未设置"的
-// 旧默认值痕迹（EUI-NEO hhea 度量缩水 ~0.75，100% 观感偏小 ~25%），
-// 映射到新默认 130；用户显式选过的 85/115/130 原样保留。
-// 新键下保存的任何值（含重新选 100）都按字面生效。
-constexpr const char* kKeyFontScale = "fontScalePercentV2";
-constexpr const char* kKeyFontScaleLegacy = "fontScalePercent";
+// W9 换键一次性重置：EUI-NEO 0.7.0 修了字号 em 语义后文字放大约 33%，
+// fontScalePercent/fontScalePercentV2 下的存量值（85/115/130）都是在
+// 0.75 缩水语义下选的，修正后失去意义 → 一律忽略、回落默认 100，
+// 用户在新语义下重选。保存只写 V3 键；V3 下任何值按字面生效。
+constexpr const char* kKeyFontScale = "fontScalePercentV3";
 constexpr const char* kKeyLogRetention = "logRetentionDays";
 } // namespace
 
@@ -70,14 +69,8 @@ SettingsConfig SettingsStore::load() const {
     if (obj.has(kKeyFontScale) && obj.get(kKeyFontScale).isNumber()) {
         cfg.fontScalePercent =
             static_cast<int>(obj.get(kKeyFontScale).asInt());
-    } else if (obj.has(kKeyFontScaleLegacy) &&
-               obj.get(kKeyFontScaleLegacy).isNumber()) {
-        const int legacy =
-            static_cast<int>(obj.get(kKeyFontScaleLegacy).asInt());
-        if (legacy != 100) {  // 100 = 旧默认，视为未设置 → 用新默认 130
-            cfg.fontScalePercent = legacy;
-        }
     }
+    // 旧键 fontScalePercent / fontScalePercentV2 刻意不读（见文件头注释）
     if (obj.has(kKeyLogRetention) && obj.get(kKeyLogRetention).isNumber()) {
         cfg.logRetentionDays =
             static_cast<int>(obj.get(kKeyLogRetention).asInt());

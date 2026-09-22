@@ -27,6 +27,7 @@ add_executable(devdesk_tests
     test_modules/test_home.cpp
     test_modules/test_settings.cpp
     test_modules/test_module_icons.cpp
+    test_modules/test_font_em_layout.cpp
 )
 
 devdesk_apply_warnings(devdesk_tests)
