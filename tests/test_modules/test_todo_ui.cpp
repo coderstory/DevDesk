@@ -588,27 +588,64 @@ REGISTER_TEST(todo_ui_move_appends_to_end,
         DOCTEST_CHECK_EQ(ts.value().size(), static_cast<size_t>(2));  // 未动
     }
 
-    // 松手落回源列 = 取消；且拖拽松手回落卡上不触发详情弹窗（框架
-    // InteractionState.dragMoved 语义：超阈值拖动后不再派发 click，
-    // 模块内抑制逻辑已删；这里直接按真实时序 press→drag→release）
+    // 松手落回源列 = 取消；且拖拽松手回落卡上不触发详情弹窗。
+    // 终验复审：无头直接调 onClick/onRelease 回调时 click 从不派发，旧的
+    // 「详情弹窗未开」断言恒真。改为驱动 EUI-NEO InteractionState 真实时序
+    //（框架派发 click 的唯一仲裁者）：press → 超阈值 drag → release 回卡内
+    // → clicked=false；对照组 press → release 原地未动 → clicked=true
     {
         composeLayout();
         const auto* card = ui.find("todo.col.5.card.1.bg");
         DOCTEST_REQUIRE(card != nullptr);
+        const eui::Rect bounds = boundsOf(card);
+        const float cx = card->frame.x + card->frame.width / 2.0f;
+        const float cy = card->frame.y + card->frame.height / 2.0f;
+        auto makeEvent = [](float x, float y, eui::PointerAction action) {
+            eui::PointerEvent ev;
+            ev.x = x;
+            ev.y = y;
+            ev.action = action;
+            ev.button = core::PointerButton::Left;
+            ev.buttons.set(core::PointerButton::Left,
+                           action != eui::PointerAction::Release);
+            return ev;
+        };
+        // 拖拽时序：press → 拖出 500px（超阈值）→ 拖回卡内松手
+        core::InteractionState dragState;
+        dragState.update(bounds, makeEvent(cx, cy, eui::PointerAction::Press),
+                         true, core::PointerButton::Left);
+        DOCTEST_CHECK(dragState.pressStarted);
+        dragState.update(bounds, makeEvent(cx + 500.0f, cy, eui::PointerAction::Move),
+                         true, core::PointerButton::Left);
+        DOCTEST_CHECK(dragState.dragMoved);  // 超阈值拖动激活过
+        dragState.update(bounds, makeEvent(cx, cy, eui::PointerAction::Release),
+                         true, core::PointerButton::Left);
+        DOCTEST_CHECK(dragState.released);
+        DOCTEST_CHECK(!dragState.clicked);  // 拖过又拖回 ≠ 点击 → onClick 不派发
+
+        // 对照组：press → 原地 release → clicked=true（这条路径才开详情弹窗）
+        core::InteractionState clickState;
+        clickState.update(bounds, makeEvent(cx, cy, eui::PointerAction::Press),
+                          true, core::PointerButton::Left);
+        clickState.update(bounds, makeEvent(cx, cy, eui::PointerAction::Release),
+                          true, core::PointerButton::Left);
+        DOCTEST_CHECK(clickState.clicked);
+
+        // 模块 drop 路径照旧走真实回调：拖出又拖回松手 → 落回源列 = 取消，
+        // 详情弹窗不因松手打开（回归护栏：模块不得在 onRelease 里自开详情）
         eui::PointerEvent pe;
-        card->onPress(pe, boundsOf(card));
+        card->onPress(pe, bounds);
         core::dsl::DragEvent ev;  // 超阈值拖动后又拖回卡上
-        ev.x = card->frame.x + card->frame.width / 2.0f;
-        ev.y = card->frame.y + card->frame.height / 2.0f;
+        ev.x = cx;
+        ev.y = cy;
         ev.totalX = 500.0;
         card->onDrag(ev);
         eui::PointerEvent up;
-        up.x = ev.x;
-        up.y = ev.y;
+        up.x = cx;
+        up.y = cy;
         up.action = eui::PointerAction::Release;
         card->onRelease(up, eui::Rect{});
         composeLayout();
-        // 详情弹窗未打开（dialog 组件常驻 compose，open 只控 opacity → 断言 panel 透明）
         const auto* detailPanel = ui.find("todo.dialog.detail.panel");
         DOCTEST_REQUIRE(detailPanel != nullptr);
         DOCTEST_CHECK_EQ(detailPanel->opacity, 0.0f);
