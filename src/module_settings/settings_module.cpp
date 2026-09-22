@@ -97,7 +97,7 @@ class SettingsModule : public ::core::Module {
 public:
     ::core::PageId pageId() const override { return ::core::PageId::Settings; }
     std::string displayName() const override { return "设置"; }
-    std::string iconGlyph() const override { return "⚙"; }
+    std::string iconGlyph() const override { return eui::utf8(0xF013); }  // fa-gear
 
     // ============ 生命周期 ============
 

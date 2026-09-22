@@ -128,7 +128,7 @@ class HomeModule : public ::core::Module {
 public:
     ::core::PageId pageId() const override { return ::core::PageId::Home; }
     std::string displayName() const override { return "首页"; }
-    std::string iconGlyph() const override { return "🏠"; }
+    std::string iconGlyph() const override { return eui::utf8(0xF015); }  // fa-house
 
     // ==================== 生命周期 ====================
 

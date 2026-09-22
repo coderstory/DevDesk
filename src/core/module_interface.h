@@ -33,6 +33,11 @@ public:
 
     virtual PageId pageId() const = 0;
     virtual std::string displayName() const = 0;
+
+    // 模块图标：返回 FontAwesome 7 Free-Solid 图标码点的 UTF-8 编码
+    //（用 eui::utf8(0xF015) 生成），渲染侧经 TextBuilder::icon(const std::string&)
+    // 自动切到 Icon 字体。码点必须存在于 EUI-NEO 内置的
+    // assets/Font Awesome 7 Free-Solid-900.otf（main.cpp 侧边栏消费）。
     virtual std::string iconGlyph() const = 0;
 
     virtual void compose(eui::Ui& ui, const eui::Screen& screen) = 0;
