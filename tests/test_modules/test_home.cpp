@@ -3,8 +3,11 @@
 #include "doctest.h"
 #include "core/database.h"
 #include "core/module_interface.h"
+#include "core/proxy_stats.h"
 #include "core/time.h"
 #include "module_home/home_service.h"
+
+#include <eui/dsl.h>
 
 #include <ctime>
 #include <filesystem>
@@ -181,5 +184,85 @@ REGISTER_TEST(home_prune_call_logs,
     auto second = env.db->pruneCallLogs(30);
     DOCTEST_REQUIRE(second.isOk());
     DOCTEST_CHECK_EQ(second.unsafeValue(), static_cast<int64_t>(0));
+    return true;
+})
+
+// ==================== Token 速率卡片（设计 2026-09-22-token-rate-card） ====================
+
+extern "C" ::core::Module* create_home_module();
+
+REGISTER_TEST(home_token_format_functions,
+              "Token 速率卡片: formatTokenCount / formatRateTps 纯函数", {
+    using module::home::formatTokenCount;
+    using module::home::formatRateTps;
+    DOCTEST_CHECK_EQ(formatTokenCount(0), std::string("0"));
+    DOCTEST_CHECK_EQ(formatTokenCount(47), std::string("47"));
+    DOCTEST_CHECK_EQ(formatTokenCount(999), std::string("999"));
+    DOCTEST_CHECK_EQ(formatTokenCount(12400), std::string("12.4k"));
+    DOCTEST_CHECK_EQ(formatTokenCount(1000), std::string("1.0k"));
+    DOCTEST_CHECK_EQ(formatTokenCount(1234567), std::string("1.2M"));
+    DOCTEST_CHECK_EQ(formatRateTps(0.0), std::string("0"));
+    DOCTEST_CHECK_EQ(formatRateTps(47.26), std::string("47.3"));
+    DOCTEST_CHECK_EQ(formatRateTps(99.94), std::string("99.9"));
+    DOCTEST_CHECK_EQ(formatRateTps(123.6), std::string("124"));
+    return true;
+})
+
+REGISTER_TEST(home_token_rate_card_compose,
+              "Token 速率卡片: 无头 compose 冒烟（5 卡 + 三态 + onTimer 元素）", {
+    core::proxy_stats::resetForTest();
+
+    // 空闲态：activeStreams=0 → 数字 0、badge 空闲文案
+    {
+        std::unique_ptr<::core::Module> mod(create_home_module());
+        eui::Screen screen;
+        screen.width = 1200.0f; // 最小窗口宽度（卡片 208px 仍可容纳）
+        screen.height = 720.0f;
+        eui::Ui ui;
+        ui.begin("home_idle");
+        mod->compose(ui, screen);
+        ui.end();
+
+        DOCTEST_CHECK(ui.find("home.stat.tokens") != nullptr);
+        DOCTEST_CHECK(ui.find("home.stat.notes") != nullptr);
+        DOCTEST_CHECK(ui.find("home.stat.todo") != nullptr);
+        DOCTEST_CHECK(ui.find("home.stat.overdue") != nullptr);
+        DOCTEST_CHECK(ui.find("home.stat.api") != nullptr);
+        // 卡内 onTimer 驱动元素（0.5s 重绘，设计 §2.6）
+        DOCTEST_CHECK(ui.find("home.stat.tokens.timer") != nullptr);
+        const auto* number = ui.find("home.stat.tokens.number");
+        DOCTEST_REQUIRE(number != nullptr);
+        DOCTEST_CHECK_EQ(number->text, std::string("0"));
+        const auto* badge = ui.find("home.stat.tokens.badge");
+        DOCTEST_REQUIRE(badge != nullptr);
+        DOCTEST_CHECK(badge->text.find("空闲") != std::string::npos);
+        DOCTEST_CHECK(badge->text.find("会话累计 0") != std::string::npos);
+        mod->onStop();
+    }
+
+    // 流式中态：注入 usage → activeStreams=1 → badge 带并发 + 累计
+    {
+        const uint64_t id = core::proxy_stats::beginStream();
+        core::proxy_stats::updateStream(id, 42);
+
+        std::unique_ptr<::core::Module> mod(create_home_module());
+        eui::Screen screen;
+        screen.width = 1600.0f;
+        screen.height = 1000.0f;
+        eui::Ui ui;
+        ui.begin("home_streaming");
+        mod->compose(ui, screen);
+        ui.end();
+
+        const auto* badge = ui.find("home.stat.tokens.badge");
+        DOCTEST_REQUIRE(badge != nullptr);
+        DOCTEST_CHECK(badge->text.find("1 路并发") != std::string::npos);
+        DOCTEST_CHECK(badge->text.find("会话累计 42") != std::string::npos);
+        mod->onStop();
+
+        core::proxy_stats::endStream(id);
+    }
+
+    core::proxy_stats::resetForTest();
     return true;
 })

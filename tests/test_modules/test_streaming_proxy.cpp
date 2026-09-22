@@ -32,6 +32,7 @@
 #include "doctest.h"
 
 #include "claude_service.h"
+#include "core/proxy_stats.h"
 #include "core/sqlite_db.h"
 #include "platform/http_client.h"
 #include "platform/http_server.h"
@@ -883,5 +884,118 @@ REGISTER_TEST(streaming_concurrent_requests_isolated,
     DOCTEST_CHECK_EQ(b, expected);
 
     upstream.stop();
+    return true;
+})
+
+// ==================== 15. SSE usage 重组器（首页 Token 速率卡片） ====================
+
+REGISTER_TEST(streaming_sse_usage_parser,
+              "SseUsageParser: 跨 chunk 切断重组 / 多事件 / CRLF / 缺 usage / DONE / 畸形", {
+    using module::claude::SseUsageParser;
+    std::vector<int64_t> v;
+
+    // 1. 事件从中间切断：TCP 分段边界 ≠ 事件边界
+    SseUsageParser p1;
+    v = p1.feed("event: message_delta\ndata: {\"type\":\"message_delta\"");
+    DOCTEST_CHECK(v.empty());
+    v = p1.feed(",\"delta\":{},\"usage\":{\"output_tokens\":42}}\n\n");
+    DOCTEST_CHECK_EQ(v.size(), static_cast<size_t>(1));
+    DOCTEST_CHECK_EQ(v[0], 42);
+
+    // 2. 一个 chunk 多事件（message_start 嵌套 + delta 顶层 + 无 usage 事件跳过）
+    SseUsageParser p2;
+    v = p2.feed("data: {\"type\":\"message_start\",\"message\":{\"usage\":"
+                "{\"input_tokens\":10,\"output_tokens\":3}}}\n\n"
+                "event: content_block_delta\n"
+                "data: {\"type\":\"content_block_delta\",\"index\":0,"
+                "\"delta\":{\"type\":\"text_delta\",\"text\":\"Hi\"}}\n\n"
+                "data: {\"type\":\"message_delta\",\"delta\":{},"
+                "\"usage\":{\"output_tokens\":15}}\n\n");
+    DOCTEST_CHECK_EQ(v.size(), static_cast<size_t>(2));
+    DOCTEST_CHECK_EQ(v[0], 3);
+    DOCTEST_CHECK_EQ(v[1], 15);
+
+    // 3. \r\n 分隔符（含 \r\n\r\n 事件边界 + 行尾 \r）
+    SseUsageParser p3;
+    v = p3.feed("data: {\"type\":\"message_delta\",\"usage\":"
+                "{\"output_tokens\":7}}\r\n\r\n");
+    DOCTEST_CHECK_EQ(v.size(), static_cast<size_t>(1));
+    DOCTEST_CHECK_EQ(v[0], 7);
+
+    // 4. [DONE] / 畸形 JSON / 非 data 行 / 无分隔符截断 → 全部安全跳过
+    SseUsageParser p4;
+    DOCTEST_CHECK(p4.feed("data: [DONE]\n\n").empty());
+    DOCTEST_CHECK(p4.feed("data: {not json at all\n\n").empty());
+    DOCTEST_CHECK(p4.feed("event: ping\n\n").empty());
+    DOCTEST_CHECK(p4.feed("data: {\"type\":\"message_delta\"").empty());
+    // 补完剩余字节后正常出值
+    v = p4.feed(",\"usage\":{\"output_tokens\":9}}\n\n");
+    DOCTEST_CHECK_EQ(v.size(), static_cast<size_t>(1));
+    DOCTEST_CHECK_EQ(v[0], 9);
+
+    // 5. usage 缺 output_tokens / 非数字 → 跳过
+    SseUsageParser p5;
+    DOCTEST_CHECK(p5.feed("data: {\"type\":\"message_delta\",\"usage\":{}}\n\n")
+                     .empty());
+    DOCTEST_CHECK(p5.feed("data: {\"type\":\"message_delta\"}\n\n").empty());
+    return true;
+})
+
+// ==================== 16. 端到端：流式统计接线 ====================
+
+REGISTER_TEST(streaming_stats_end_to_end,
+              "streaming: 代理流式请求驱动 proxy_stats（usage 累计 + 流结束回收）", {
+    core::proxy_stats::resetForTest();
+    MockSseServer upstream;
+    DOCTEST_REQUIRE(upstream.start());
+
+    // message_start + 2 个 message_delta（累计 3 → 18 → 40）+ [DONE]
+    MockScript script;
+    script.chunks.push_back(
+        "data: {\"type\":\"message_start\",\"message\":{\"usage\":"
+        "{\"input_tokens\":10,\"output_tokens\":3}}}\n\n");
+    script.chunks.push_back(
+        "data: {\"type\":\"message_delta\",\"delta\":{},"
+        "\"usage\":{\"output_tokens\":18}}\n\n");
+    script.chunks.push_back(
+        "data: {\"type\":\"message_delta\",\"delta\":{},"
+        "\"usage\":{\"output_tokens\":40}}\n\n");
+    script.chunks.push_back("data: [DONE]\n\n");
+    upstream.onMessages(script);
+
+    TestEnv env;
+    DOCTEST_REQUIRE(env.service != nullptr);
+
+    platform::http::Server proxy("127.0.0.1", 0);
+    module::claude::ProxyRouter router(env.svc(), proxy);
+    const std::string upstreamBase = upstream.baseUrl();
+    router.setProfileProvider([upstreamBase]() {
+        return core::Result<Profile>::ok(makeProfile(upstreamBase));
+    });
+    router.registerRoutes();
+    DOCTEST_REQUIRE(proxy.start());
+
+    httplib::Client cli("127.0.0.1", proxy.actualPort());
+    cli.set_read_timeout(15, 0);
+    auto res = clientPostStream(cli, "/v1/messages",
+                                R"({"model":"claude-sonnet-4-5","stream":true})",
+                                false);
+    DOCTEST_CHECK(res.ok);
+    DOCTEST_CHECK_EQ(res.status, 200);
+
+    // 流结束后（releaser 必触发）：累计 = 40，活动流归零
+    DOCTEST_CHECK(waitUntil([] {
+        const auto s = core::proxy_stats::snapshot();
+        return s.activeStreams == 0 && s.sessionTokens == 40;
+    }, 5000));
+    {
+        const auto s = core::proxy_stats::snapshot();
+        DOCTEST_CHECK_EQ(s.sessionTokens, 40);
+        DOCTEST_CHECK_EQ(s.activeStreams, 0);
+    }
+
+    proxy.stop();
+    upstream.stop();
+    core::proxy_stats::resetForTest();
     return true;
 })

@@ -43,6 +43,12 @@ std::string formatRelativeTime(int64_t modifiedAt, std::time_t now);
 // 中文日期行："2026 年 9 月 22 日 · 星期二"
 std::string formatTodayCn(std::time_t now);
 
+// Token 速率卡片纯函数（设计 §4 方案 A）
+// 累计缩写：0→"0"，12400→"12.4k"，1234567→"1.2M"
+std::string formatTokenCount(int64_t tokens);
+// 速率：0→"0"，<100 保留 1 位小数（47.25→"47.3"），>=100 整数（123.6→"124"）
+std::string formatRateTps(double tps);
+
 // Home 仪表盘只读聚合查询
 class HomeService {
 public:

@@ -58,6 +58,30 @@ std::string formatTodayCn(std::time_t now) {
            std::to_string(local.tm_mday) + " 日 · " + kWeekdays[local.tm_wday];
 }
 
+std::string formatTokenCount(int64_t tokens) {
+    if (tokens < 1000) return std::to_string(tokens);
+    char buf[32];
+    if (tokens < 1000000) {
+        std::snprintf(buf, sizeof(buf), "%.1fk",
+                      static_cast<double>(tokens) / 1000.0);
+    } else {
+        std::snprintf(buf, sizeof(buf), "%.1fM",
+                      static_cast<double>(tokens) / 1000000.0);
+    }
+    return buf;
+}
+
+std::string formatRateTps(double tps) {
+    if (tps <= 0.0) return "0";
+    char buf[32];
+    if (tps < 100.0) {
+        std::snprintf(buf, sizeof(buf), "%.1f", tps);
+    } else {
+        std::snprintf(buf, sizeof(buf), "%.0f", tps);
+    }
+    return buf;
+}
+
 // ===== HomeService =====
 
 HomeService::HomeService(core::data::SqliteDb& db) : db_(db) {}
