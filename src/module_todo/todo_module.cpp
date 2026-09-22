@@ -960,8 +960,9 @@ private:
             .border(selected ? 2.0f : 0.0f,
                     selected ? t.colors.primary : t.colors.borderDefault)
             .onClick([this, task] {
-                // 拖拽松手回落在本卡上时不当作点击（onClick 先于 onRelease 派发）
-                if (drag_.active) return;
+                // 拖拽后松手不触发 click 由框架 InteractionState.dragMoved 语义
+                // 保障（挂了 onDrag 的元素超阈值拖动后不再派发 click），本地
+                // 抑制逻辑已删（上游能力采用）
                 openDetailDialog(task);
             })
             .onContextMenu([this, task, colIndex, cardIndex](const eui::PointerEvent&,
