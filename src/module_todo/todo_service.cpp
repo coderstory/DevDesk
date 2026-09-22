@@ -329,6 +329,26 @@ core::Result<void> TodoService::renameColumn(int64_t id, const std::string& titl
     return core::Result<void>::ok();
 }
 
+core::Result<void> TodoService::setColumnColor(int64_t id,
+                                                const std::optional<std::string>& color) {
+    auto prep = db_.prepare("UPDATE todo_columns SET color = ? WHERE id = ?");
+    if (prep.isFail()) {
+        return core::Result<void>::fail(prep.errorCode(), prep.errorMessage());
+    }
+    auto& stmt = prep.value();
+    if (color.has_value()) {
+        if (auto r = stmt.bind(1, color.value()); r.isFail()) return r;
+    } else {
+        if (auto r = stmt.bind(1, nullptr); r.isFail()) return r;
+    }
+    if (auto r = stmt.bind(2, id); r.isFail()) return r;
+    auto stepResult = stmt.step();
+    if (stepResult.isFail()) {
+        return core::Result<void>::fail(stepResult.errorCode(), stepResult.errorMessage());
+    }
+    return core::Result<void>::ok();
+}
+
 core::Result<void> TodoService::deleteColumn(int64_t id) {
     auto prep = db_.prepare("DELETE FROM todo_columns WHERE id = ?");
     if (prep.isFail()) {

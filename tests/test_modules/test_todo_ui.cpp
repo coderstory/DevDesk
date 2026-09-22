@@ -374,7 +374,8 @@ REGISTER_TEST(todo_ui_column_ops_and_datepicker,
         eui::Rect rect;
         frame.ui.find("todo.col.4.head")->onContextMenu(pe, rect);  // 列一还在 idx4
         frame.refresh();
-        const auto* del = frame.ui.find("todo.ctx.level.0.item.3");
+        // 列菜单：0=重命名 1=左移 2=右移 3=改色(子菜单) 4=删除
+        const auto* del = frame.ui.find("todo.ctx.level.0.item.4");
         DOCTEST_REQUIRE(del != nullptr);
         del->onClick();
         frame.refresh();
@@ -1169,5 +1170,365 @@ REGISTER_TEST(todo_ui_dark_no_white_rects,
         DOCTEST_CHECK_MESSAGE(false, ("意外的不透明白 Rect: " + el->id).c_str());
     }
     DOCTEST_CHECK(whites.empty());
+    return true;
+})
+
+// ---- 5. 三件套（W 计划 P2 遗留）：搜索 / 逾期 / tags / 列色点 ----
+
+// 搜索框：input 组件真实 onTextInput 链路 → onChange → service_->search → 卡片过滤
+REGISTER_TEST(todo_ui_search_filter,
+              "todo_ui: 搜索框过滤卡片 + Esc 清空（headless）", {
+    TestEnv env;
+    DOCTEST_REQUIRE(env.ready);
+    auto col = env.svc->createColumn("搜索列");
+    DOCTEST_REQUIRE(col.isOk());
+    auto hitTask = env.svc->createTask(col.value().id, "搜索命中甲");
+    auto missTask = env.svc->createTask(col.value().id, "无关任务乙");
+    DOCTEST_REQUIRE(hitTask.isOk() && missTask.isOk());
+
+    std::unique_ptr<::core::Module> mod(create_todo_module());
+    mod->onStart();
+
+    {
+        Frame frame(mod.get());
+        // 搜索前：两张卡都在
+        DOCTEST_CHECK(frame.ui.find("todo.col.4.card.0.bg") != nullptr);
+        DOCTEST_CHECK(frame.ui.find("todo.col.4.card.1.bg") != nullptr);
+
+        // 输入搜索词（onTextInput → onChange → refreshSearch）
+        auto* input = frame.ui.find("todo.search.hit");
+        DOCTEST_REQUIRE(input != nullptr);
+        DOCTEST_REQUIRE(input->onTextInput != nullptr);
+        core::TextInputEvent ev;
+        ev.text = "命中";
+        input->onTextInput(ev);
+        frame.refresh();
+        // 只显示命中卡（命中列照常渲染）
+        const auto* card0 = frame.ui.find("todo.col.4.card.0.title");
+        DOCTEST_REQUIRE(card0 != nullptr);
+        DOCTEST_CHECK_EQ(card0->text, std::string("搜索命中甲"));
+        DOCTEST_CHECK(frame.ui.find("todo.col.4.card.1.bg") == nullptr);
+        DOCTEST_CHECK(frame.ui.find("todo.col.0.bg") != nullptr);
+
+        // Esc 清空（EUI-NEO input 把 Escape 映射到 onEnter → 清空 query 恢复全部）
+        auto* input2 = frame.ui.find("todo.search.hit");
+        DOCTEST_REQUIRE(input2 != nullptr);
+        core::KeyEvent esc;
+        esc.key = core::InputKey::Escape;
+        esc.action = core::KeyAction::Press;
+        input2->onKeyEvent(esc);
+        frame.refresh();
+        DOCTEST_CHECK(frame.ui.find("todo.col.4.card.1.bg") != nullptr);
+    }
+
+    mod->onStop();
+    return true;
+})
+
+// 逾期视图：badge 数量（已完成/未到期不计）+ 弹窗四列数据 + 行点击跳详情
+REGISTER_TEST(todo_ui_overdue_dialog,
+              "todo_ui: 逾期 badge + 弹窗数据 + 行点击跳详情（headless）", {
+    TestEnv env;
+    DOCTEST_REQUIRE(env.ready);
+    auto list = env.svc->listColumns();
+    DOCTEST_REQUIRE(list.isOk());
+    const int64_t todoCol = list.value()[0].id;
+
+    // 3 个任务：逾期未完成（3 天 1 小时前）/ 逾期但已完成 / 未到期
+    auto ov = env.svc->createTask(todoCol, "逾期任务甲");
+    auto doneOv = env.svc->createTask(todoCol, "已完成的逾期");
+    auto future = env.svc->createTask(todoCol, "未来任务");
+    DOCTEST_REQUIRE(ov.isOk() && doneOv.isOk() && future.isOk());
+    const int64_t now = static_cast<int64_t>(std::time(nullptr));
+    {
+        module::todo::Task t = ov.value();
+        t.dueAt = now - 3 * 86400 - 3600;  // 逾期 4 天（向上取整）
+        DOCTEST_REQUIRE(env.svc->updateTask(t).isOk());
+        module::todo::Task d = doneOv.value();
+        d.dueAt = now - 86400;
+        d.completedAt = now;
+        DOCTEST_REQUIRE(env.svc->updateTask(d).isOk());
+        module::todo::Task f = future.value();
+        f.dueAt = now + 86400;
+        DOCTEST_REQUIRE(env.svc->updateTask(f).isOk());
+    }
+
+    std::unique_ptr<::core::Module> mod(create_todo_module());
+    mod->onStart();
+
+    {
+        Frame frame(mod.get());
+        // badge = 1
+        const auto* badge = frame.ui.find("todo.btn.overdue.text");
+        DOCTEST_REQUIRE(badge != nullptr);
+        DOCTEST_CHECK(badge->text.find("1") != std::string::npos);
+        // 打开弹窗
+        const auto* btn = frame.ui.find("todo.btn.overdue.bg");
+        DOCTEST_REQUIRE(btn != nullptr);
+        DOCTEST_REQUIRE(btn->onClick != nullptr);
+        btn->onClick();
+        frame.refresh();
+        // 单行数据：任务名 / 所属列 / 逾期天数（截止日期列由 formatDue 渲染）
+        const auto* rowTitle = frame.ui.find("todo.dialog.overdue.row.0.title");
+        const auto* rowCol = frame.ui.find("todo.dialog.overdue.row.0.col");
+        const auto* rowDays = frame.ui.find("todo.dialog.overdue.row.0.days");
+        DOCTEST_REQUIRE(rowTitle != nullptr);
+        DOCTEST_REQUIRE(rowCol != nullptr);
+        DOCTEST_REQUIRE(rowDays != nullptr);
+        DOCTEST_CHECK_EQ(rowTitle->text, std::string("逾期任务甲"));
+        DOCTEST_CHECK_EQ(rowCol->text, std::string("待办"));
+        DOCTEST_CHECK(rowDays->text.find("4") != std::string::npos);
+        // 行点击 → 关闭逾期弹窗 + 打开该任务详情
+        const auto* row = frame.ui.find("todo.dialog.overdue.row.0");
+        DOCTEST_REQUIRE(row != nullptr);
+        DOCTEST_REQUIRE(row->onClick != nullptr);
+        row->onClick();
+        frame.refresh();
+        const auto* detailPanel = frame.ui.find("todo.dialog.detail.panel");
+        DOCTEST_REQUIRE(detailPanel != nullptr);
+        DOCTEST_CHECK_EQ(detailPanel->opacity, 1.0f);
+        const auto* overduePanel = frame.ui.find("todo.dialog.overdue.panel");
+        DOCTEST_REQUIRE(overduePanel != nullptr);
+        DOCTEST_CHECK_EQ(overduePanel->opacity, 0.0f);
+    }
+
+    mod->onStop();
+    return true;
+})
+
+// 无逾期：badge 显示 0 且点击不弹窗
+REGISTER_TEST(todo_ui_overdue_zero_grey,
+              "todo_ui: 无逾期时 badge 为 0 且不可开（headless）", {
+    TestEnv env;
+    DOCTEST_REQUIRE(env.ready);
+
+    std::unique_ptr<::core::Module> mod(create_todo_module());
+    mod->onStart();
+
+    Frame frame(mod.get());
+    const auto* badge = frame.ui.find("todo.btn.overdue.text");
+    DOCTEST_REQUIRE(badge != nullptr);
+    DOCTEST_CHECK(badge->text.find("0") != std::string::npos);
+    const auto* btn = frame.ui.find("todo.btn.overdue.bg");
+    DOCTEST_REQUIRE(btn != nullptr);
+    DOCTEST_REQUIRE(btn->onClick != nullptr);
+    btn->onClick();
+    frame.refresh();
+    const auto* panel = frame.ui.find("todo.dialog.overdue.panel");
+    DOCTEST_REQUIRE(panel != nullptr);
+    DOCTEST_CHECK_EQ(panel->opacity, 0.0f);
+
+    mod->onStop();
+    return true;
+})
+
+// tags 编辑：回车添加 / × 删除 / 保存往返（JSON 序列化）/ 卡片渲染前 2 个 + 超出 +N
+REGISTER_TEST(todo_ui_tags_edit_roundtrip,
+              "todo_ui: 详情 tags 编辑往返 + 卡片 chip 渲染（headless）", {
+    TestEnv env;
+    DOCTEST_REQUIRE(env.ready);
+    auto col = env.svc->createColumn("标签列");
+    DOCTEST_REQUIRE(col.isOk());
+    auto a = env.svc->createTask(col.value().id, "标签任务");
+    DOCTEST_REQUIRE(a.isOk());
+
+    std::unique_ptr<::core::Module> mod(create_todo_module());
+    mod->onStart();
+
+    // 打开详情
+    {
+        Frame frame(mod.get());
+        const auto* card = frame.ui.find("todo.col.4.card.0.bg");
+        DOCTEST_REQUIRE(card != nullptr);
+        card->onClick();
+    }
+    // 加两个标签，删除第一个
+    {
+        Frame frame(mod.get());
+        auto* input = frame.ui.find("todo.dialog.detail.tag.input.hit");
+        DOCTEST_REQUIRE(input != nullptr);
+        DOCTEST_REQUIRE(input->onTextInput != nullptr);
+        DOCTEST_REQUIRE(input->onKeyEvent != nullptr);
+        core::KeyEvent enter;
+        enter.key = core::InputKey::Enter;
+        enter.action = core::KeyAction::Press;
+        core::TextInputEvent ev;
+        ev.text = "urgent";
+        input->onTextInput(ev);
+        input->onKeyEvent(enter);
+        frame.refresh();
+        auto* input2 = frame.ui.find("todo.dialog.detail.tag.input.hit");
+        DOCTEST_REQUIRE(input2 != nullptr);
+        core::TextInputEvent ev2;
+        ev2.text = "work";
+        input2->onTextInput(ev2);
+        input2->onKeyEvent(enter);
+        frame.refresh();
+        DOCTEST_CHECK(frame.ui.find("todo.dialog.detail.tag.0.bg") != nullptr);
+        DOCTEST_CHECK(frame.ui.find("todo.dialog.detail.tag.1.bg") != nullptr);
+        // 删除第一个 chip（× 按钮）
+        const auto* x0 = frame.ui.find("todo.dialog.detail.tag.0.x.bg");
+        DOCTEST_REQUIRE(x0 != nullptr);
+        DOCTEST_REQUIRE(x0->onClick != nullptr);
+        x0->onClick();
+        frame.refresh();
+        const auto* chip0 = frame.ui.find("todo.dialog.detail.tag.0.text");
+        DOCTEST_REQUIRE(chip0 != nullptr);
+        DOCTEST_CHECK_EQ(chip0->text, std::string("work"));
+        DOCTEST_CHECK(frame.ui.find("todo.dialog.detail.tag.1.bg") == nullptr);
+    }
+    // 再加两个到 3 个，保存（验证往返 + 卡片 +N）
+    {
+        Frame frame(mod.get());
+        core::KeyEvent enter;
+        enter.key = core::InputKey::Enter;
+        enter.action = core::KeyAction::Press;
+        for (int i = 0; i < 2; ++i) {
+            auto* cur = frame.ui.find("todo.dialog.detail.tag.input.hit");
+            DOCTEST_REQUIRE(cur != nullptr);
+            core::TextInputEvent ev;
+            ev.text = "t" + std::to_string(i);
+            cur->onTextInput(ev);
+            cur->onKeyEvent(enter);
+            frame.refresh();
+        }
+        const auto* save = frame.ui.find("todo.dialog.detail.save.bg");
+        DOCTEST_REQUIRE(save != nullptr);
+        DOCTEST_REQUIRE(save->onClick != nullptr);
+        save->onClick();
+    }
+    {
+        // DB 往返：tags = work, t0, t1（urgent 已删）
+        auto ts = env.svc->listTasks(col.value().id);
+        DOCTEST_REQUIRE(ts.isOk());
+        DOCTEST_REQUIRE_EQ(ts.value()[0].tags.size(), static_cast<size_t>(3));
+        DOCTEST_CHECK_EQ(ts.value()[0].tags[0], std::string("work"));
+        DOCTEST_CHECK_EQ(ts.value()[0].tags[1], std::string("t0"));
+        DOCTEST_CHECK_EQ(ts.value()[0].tags[2], std::string("t1"));
+    }
+    {
+        // 卡片：前 2 个 tag chip + 超出 +N
+        Frame frame(mod.get());
+        const auto* tag0 = frame.ui.find("todo.col.4.card.0.tag.0.text");
+        DOCTEST_REQUIRE(tag0 != nullptr);
+        DOCTEST_CHECK_EQ(tag0->text, std::string("work"));
+        DOCTEST_CHECK(frame.ui.find("todo.col.4.card.0.tag.1.bg") != nullptr);
+        const auto* more = frame.ui.find("todo.col.4.card.0.tag.more.text");
+        DOCTEST_REQUIRE(more != nullptr);
+        DOCTEST_CHECK_EQ(more->text, std::string("+1"));
+    }
+
+    mod->onStop();
+    return true;
+})
+
+// 列色点：迁移种子渲染 + 新建列无色不渲 + 右键改色落库
+REGISTER_TEST(todo_ui_column_color_dot_and_menu,
+              "todo_ui: 列色点渲染 + 右键改色子选落库（headless）", {
+    TestEnv env;
+    DOCTEST_REQUIRE(env.ready);
+    auto plain = env.svc->createColumn("无色列");
+    DOCTEST_REQUIRE(plain.isOk());
+
+    std::unique_ptr<::core::Module> mod(create_todo_module());
+    mod->onStart();
+
+    {
+        Frame frame(mod.get());
+        // 迁移种子：待办列 color='claude-clay' → 色点且色值正确
+        const auto* dot = frame.ui.find("todo.col.0.dot");
+        DOCTEST_REQUIRE(dot != nullptr);
+        const eui::Color clay("#D97757");
+        DOCTEST_CHECK_EQ(dot->color.r, clay.r);
+        DOCTEST_CHECK_EQ(dot->color.g, clay.g);
+        DOCTEST_CHECK_EQ(dot->color.b, clay.b);
+        // 用户新建列无色（color NULL）→ 不渲色点
+        DOCTEST_CHECK(frame.ui.find("todo.col.4.dot") == nullptr);
+
+        // 右键列头 → 改色（子选）→ 选第一个预设 Claude 橘
+        eui::PointerEvent pe;
+        eui::Rect rect;
+        frame.ui.find("todo.col.4.head")->onContextMenu(pe, rect);
+        frame.refresh();
+        const auto* colorItem = frame.ui.find("todo.ctx.level.0.item.3");
+        DOCTEST_REQUIRE(colorItem != nullptr);
+        DOCTEST_REQUIRE(colorItem->onClick != nullptr);
+        colorItem->onClick();  // 打开子菜单（不关闭主菜单）
+        frame.refresh();
+        const auto* preset0 = frame.ui.find("todo.ctx.level.1.item.0");
+        DOCTEST_REQUIRE(preset0 != nullptr);
+        DOCTEST_REQUIRE(preset0->onClick != nullptr);
+        preset0->onClick();
+    }
+    {
+        // 落库：无色列 → claude-clay，且色点出现
+        auto cols = env.svc->listColumns();
+        DOCTEST_REQUIRE(cols.isOk());
+        bool checked = false;
+        for (const auto& c : cols.value()) {
+            if (c.title == "无色列") {
+                DOCTEST_REQUIRE(c.color.has_value());
+                DOCTEST_CHECK_EQ(*c.color, std::string("claude-clay"));
+                checked = true;
+            }
+        }
+        DOCTEST_CHECK(checked);
+        Frame frame(mod.get());
+        DOCTEST_CHECK(frame.ui.find("todo.col.4.dot") != nullptr);
+    }
+
+    mod->onStop();
+    return true;
+})
+
+// 三件套纯函数：columnDotColor / overdueDays / filterBySearch
+REGISTER_TEST(todo_ui_feature_pure_helpers,
+              "todo_ui: columnDotColor/overdueDays/filterBySearch 纯函数", {
+    using module::todo::ui::columnDotColor;
+    using module::todo::ui::filterBySearch;
+    using module::todo::ui::overdueDays;
+
+    // 色点映射：空/未知 token → nullopt；种子 token → hex
+    DOCTEST_CHECK(!columnDotColor(std::nullopt).has_value());
+    DOCTEST_CHECK(!columnDotColor(std::optional<std::string>("unknown")).has_value());
+    const auto clay = columnDotColor(std::optional<std::string>("claude-clay"));
+    DOCTEST_REQUIRE(clay.has_value());
+    const eui::Color expect("#D97757");
+    DOCTEST_CHECK_EQ(clay->r, expect.r);
+    DOCTEST_CHECK_EQ(clay->g, expect.g);
+    DOCTEST_CHECK_EQ(clay->b, expect.b);
+    const auto sage = columnDotColor(std::optional<std::string>("muted-sage"));
+    DOCTEST_REQUIRE(sage.has_value());
+    const eui::Color sageExpect("#788C5D");
+    DOCTEST_CHECK_EQ(sage->r, sageExpect.r);
+
+    // 逾期天数（向上取整；未过期 → 0）
+    const int64_t d = 86400;
+    DOCTEST_CHECK_EQ(overdueDays(100, 100), 0);
+    DOCTEST_CHECK_EQ(overdueDays(100, 99), 0);
+    DOCTEST_CHECK_EQ(overdueDays(100, 101), 1);
+    DOCTEST_CHECK_EQ(overdueDays(0, d), 1);
+    DOCTEST_CHECK_EQ(overdueDays(0, d + 1), 2);
+    DOCTEST_CHECK_EQ(overdueDays(0, 3 * d + 3600), 4);
+
+    // 搜索过滤：命中 id 集内保留且顺序不变；未激活 → 全保留
+    std::vector<module::todo::Task> tasks;
+    tasks.push_back(makeTask(1, 10, 0));
+    tasks.push_back(makeTask(2, 10, 1));
+    tasks.push_back(makeTask(3, 20, 0));
+    std::vector<const module::todo::Task*> ptrs;
+    ptrs.push_back(&tasks[0]);
+    ptrs.push_back(&tasks[1]);
+    ptrs.push_back(&tasks[2]);
+    std::vector<int64_t> matched;
+    matched.push_back(3);
+    matched.push_back(2);
+    const auto out = filterBySearch(ptrs, matched, true);
+    DOCTEST_REQUIRE_EQ(out.size(), static_cast<size_t>(2));
+    DOCTEST_CHECK_EQ(out[0]->id, static_cast<int64_t>(2));
+    DOCTEST_CHECK_EQ(out[1]->id, static_cast<int64_t>(3));
+    DOCTEST_CHECK_EQ(filterBySearch(ptrs, matched, false).size(),
+                     static_cast<size_t>(3));
+
     return true;
 })

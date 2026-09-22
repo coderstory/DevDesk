@@ -5,6 +5,8 @@
 
 #include "todo_service.h"
 
+#include <eui/types.h>
+
 #include <algorithm>
 #include <ctime>
 #include <optional>
@@ -148,6 +150,42 @@ inline bool epochToYmd(int64_t epoch, int& year, int& month, int& day) {
     month = tmv.tm_mon + 1;
     day = tmv.tm_mday;
     return true;
+}
+
+// ---- 三件套（W 计划 P2 遗留）纯函数 ----
+
+// 列颜色 token → 色点 hex（migrations 种子 + 改色预设共用一张表）。
+// 空 / 未知 token → nullopt（列头不渲染色点）。
+inline std::optional<eui::Color> columnDotColor(const std::optional<std::string>& token) {
+    if (!token.has_value()) return std::nullopt;
+    if (*token == "claude-clay") return eui::Color("#D97757");
+    if (*token == "warm-amber")  return eui::Color("#C29243");
+    if (*token == "muted-sage")  return eui::Color("#788C5D");
+    if (*token == "warm-gray")   return eui::Color("#9A948A");
+    if (*token == "dusty-blue")  return eui::Color("#6A9BCC");
+    if (*token == "rose-red")    return eui::Color("#CF2D56");
+    return std::nullopt;
+}
+
+// 逾期天数（向上取整：过期 1 秒也算 1 天；未过期 → 0）
+inline int overdueDays(int64_t dueAt, int64_t now) {
+    if (now <= dueAt) return 0;
+    return static_cast<int>((now - dueAt + 86399) / 86400);
+}
+
+// 搜索过滤：搜索激活时只保留命中 id 集合内的任务（列内排序不变）。
+// matchedIds 来自 TodoService::search（title/description LIKE）。
+inline std::vector<const Task*> filterBySearch(const std::vector<const Task*>& tasks,
+                                               const std::vector<int64_t>& matchedIds,
+                                               bool searching) {
+    if (!searching) return tasks;
+    std::vector<const Task*> out;
+    for (const Task* t : tasks) {
+        if (std::find(matchedIds.begin(), matchedIds.end(), t->id) != matchedIds.end()) {
+            out.push_back(t);
+        }
+    }
+    return out;
 }
 
 } // namespace module::todo::ui
