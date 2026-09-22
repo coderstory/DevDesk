@@ -329,14 +329,18 @@ REGISTER_TEST(md_module_compose_phase1, "markdown_module: Phase 1 三态/大纲/
     DOCTEST_REQUIRE(fileRow->onClick != nullptr);
     fileRow->onClick();
 
-    // 帧2：默认双栏态 —— 编辑器 + 预览 + 状态栏三件套
+    // 帧2：默认编辑态（W9）——只有树 + 编辑器两个可见列，预览列不渲染；
+    // 编辑列内 720px 写作列 clamp 居中（1600 宽 → editor x 明显右移）
     frame("f2");
     DOCTEST_CHECK(ui.find("md.editor.input") != nullptr);
-    DOCTEST_CHECK(ui.find("md.preview.scroll") != nullptr);
+    DOCTEST_CHECK(ui.find("md.preview.scroll") == nullptr);
     const auto* save = ui.find("md.status.save");
     DOCTEST_REQUIRE(save != nullptr);
     DOCTEST_CHECK(save->text.find("note.md") != std::string::npos);
     DOCTEST_CHECK(save->text.find("已保存") != std::string::npos);
+    const auto* edDefault = ui.find("md.editor.input");
+    DOCTEST_REQUIRE(edDefault != nullptr);
+    DOCTEST_CHECK(edDefault->x > 100.0f);
 
     // 帧3：顶栏大纲开关 → 浮动面板出现，两个标题条目
     const auto* toggle = ui.find("md.outline.toggle.hit");
@@ -371,27 +375,23 @@ REGISTER_TEST(md_module_compose_phase1, "markdown_module: Phase 1 三态/大纲/
     frame("f3b");
     DOCTEST_CHECK(ui.find("md.outline.panel") == nullptr);
 
-    // Ctrl+Shift+P 三态循环：Split → Preview → Edit → Split
+    // Ctrl+Shift+P 三态循环：Edit（默认）→ Split → Preview → Edit
     eui::KeyEvent p;
     p.key = eui::InputKey::P;
     p.modifiers.control = true;
     p.modifiers.shift = true;
-    DOCTEST_CHECK(mod->onKeyEvent(p));   // → Preview
+    DOCTEST_CHECK(mod->onKeyEvent(p));   // → Split
     frame("f4");
+    DOCTEST_CHECK(ui.find("md.editor.input") != nullptr);
+    DOCTEST_CHECK(ui.find("md.preview.scroll") != nullptr);
+    DOCTEST_CHECK(mod->onKeyEvent(p));   // → Preview
+    frame("f5");
     DOCTEST_CHECK(ui.find("md.editor.input") == nullptr);
     DOCTEST_CHECK(ui.find("md.preview.scroll") != nullptr);
-    DOCTEST_CHECK(mod->onKeyEvent(p));   // → Edit
-    frame("f5");
-    DOCTEST_CHECK(ui.find("md.editor.input") != nullptr);
-    DOCTEST_CHECK(ui.find("md.preview.scroll") == nullptr);
-    // 仅编辑态：文本列 clamp 720px 居中（1600 宽 → editor x 明显右移）
-    const auto* ed = ui.find("md.editor.input");
-    DOCTEST_REQUIRE(ed != nullptr);
-    DOCTEST_CHECK(ed->x > 100.0f);
-    DOCTEST_CHECK(mod->onKeyEvent(p));   // → Split（回默认）
+    DOCTEST_CHECK(mod->onKeyEvent(p));   // → Edit（回默认）
     frame("f6");
     DOCTEST_CHECK(ui.find("md.editor.input") != nullptr);
-    DOCTEST_CHECK(ui.find("md.preview.scroll") != nullptr);
+    DOCTEST_CHECK(ui.find("md.preview.scroll") == nullptr);
 
     mod->onStop();
     return true;
@@ -575,7 +575,7 @@ REGISTER_TEST(md_module_compose_outline_float, "markdown_module: W8 大纲浮动
     // 不挤压编辑区：开面板前后编辑器宽度一致（同一屏宽）
     const auto* ed = ui.find("md.editor.input");
     DOCTEST_REQUIRE(ed != nullptr);
-    DOCTEST_CHECK(ed->width.value > 400.0f);   // 双栏态编辑列照常均分
+    DOCTEST_CHECK(ed->width.value > 400.0f);   // 默认编辑态编辑列全宽（W9）
 
     mod->onStop();
     return true;

@@ -1444,7 +1444,9 @@ private:
     std::string toastMessage_;
 
     // ---- Phase 1 状态 ----
-    ViewMode mode_ = ViewMode::Split;  // 三态视图（默认双栏）
+    // 三态视图（W9：默认编辑态 = 左树 + 右编辑两栏；预览/双栏经顶栏
+    // segmented 或 Ctrl+Shift+P 切换——用户确认期望「左侧目录树、右侧编辑区」）
+    ViewMode mode_ = ViewMode::Edit;
     std::vector<MdHeading> outline_;   // 大纲（标题扫描结果）
     bool outlineDirty_ = true;
     int activeOutlineIdx_ = -1;        // 仅预览态用（无编辑器光标可读）
