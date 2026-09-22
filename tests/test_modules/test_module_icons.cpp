@@ -66,3 +66,52 @@ REGISTER_TEST(module_icons_fa_codepoints,
     if (!checkOneIcon(create_settings_module, 0xF013)) return false;
     return true;
 })
+
+// W10 复审项：Home/Claude/Settings 三模块页内 emoji 已换 FA——compose 后
+// 抽查代表性 icon 元素：存在 + fontFamily == "Icon" + 码点符合约定
+namespace {
+
+struct PageIconProbe {
+    ::core::Module* (*factory)();
+    const char* elId;
+    unsigned int codepoint;  // FA7 Free-Solid
+};
+
+bool checkPageIcon(::core::Module* (*factory)(), const char* elId,
+                   unsigned int codepoint) {
+    std::unique_ptr<::core::Module> mod(factory());
+    DOCTEST_REQUIRE(mod != nullptr);
+    eui::Screen screen;
+    screen.width = 1600.0f;
+    screen.height = 1000.0f;
+    eui::Ui ui;
+    ui.begin("probe_page");
+    mod->compose(ui, screen);
+    ui.end();
+    const core::dsl::Element* el = ui.find(elId);
+    DOCTEST_REQUIRE(el != nullptr);
+    DOCTEST_CHECK_EQ(el->fontFamily, std::string("Icon"));
+    DOCTEST_CHECK_EQ(el->text, eui::utf8(codepoint));
+    return true;
+}
+
+} // namespace
+
+REGISTER_TEST(module_icons_page_emoji_replaced,
+              "module_icons: 三模块页内 emoji 已换 FA 图标元素", {
+    // Home 按钮（fa-arrows-rotate / fa-gear / fa-clipboard-list）
+    if (!checkPageIcon(create_home_module, "home.btn.refresh.icon", 0xF021)) return false;
+    if (!checkPageIcon(create_home_module, "home.btn.settings.icon", 0xF013)) return false;
+    if (!checkPageIcon(create_home_module, "home.act.claude.icon", 0xF46D)) return false;
+    // Claude 页（fa-play 代理未运行 / fa-circle-info 引导条）
+    if (!checkPageIcon(create_claude_module, "claude.btn.proxy.icon", 0xF04B)) return false;
+    if (!checkPageIcon(create_claude_module, "claude.guide.icon", 0xF05A)) return false;
+    // 设置页（fa-moon / fa-sun / fa-arrows-rotate）
+    if (!checkPageIcon(create_settings_module,
+                       "settings.card.appearance.theme.dark.icon", 0xF186)) return false;
+    if (!checkPageIcon(create_settings_module,
+                       "settings.card.appearance.theme.light.icon", 0xF185)) return false;
+    if (!checkPageIcon(create_settings_module,
+                       "settings.card.proxy.token.regen.icon", 0xF021)) return false;
+    return true;
+})

@@ -184,4 +184,10 @@ private:
     std::vector<std::string> lastSyncWarnings_;
 };
 
+// ===== 纯函数（可单测，无 IO）=====
+
+// 调用记录时间列（W10 复审项：只显 HH:MM 会让跨天记录的新旧判断误导）：
+//   今日 → "HH:MM"；昨天 → "昨天 HH:MM"；更早 → "MM-DD"
+std::string formatCallTime(std::time_t ts, std::time_t now);
+
 } // namespace module::claude

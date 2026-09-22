@@ -11,7 +11,6 @@
 #include "core/logging.h"
 #include "core/module_interface.h"
 #include "core/theme.h"
-#include "core/time.h"
 
 #include <eui/dsl.h>
 
@@ -34,16 +33,6 @@
 namespace module::claude {
 
 namespace {
-
-// 格式化 unix 时间戳为 HH:MM
-std::string formatHHMM(std::time_t ts) {
-    if (ts <= 0) return "--:--";
-    std::tm tmv{};
-    core::time::localTime(ts, &tmv);
-    char buf[16];
-    std::snprintf(buf, sizeof(buf), "%02d:%02d", tmv.tm_hour, tmv.tm_min);
-    return std::string(buf);
-}
 
 // 格式化毫秒数为 "1234ms" / "1.2s"
 std::string formatLatency(int64_t ms) {
@@ -94,6 +83,7 @@ public:
         const float pad = t.sizes.spacingXXLarge;        // 40
         const float contentW = screen.width - pad * 2.0f;
         const float contentH = screen.height - pad * 2.0f;
+        const std::time_t now = std::time(nullptr);   // 调用时间列「今天/昨天」判定
         const float headerH = 64.0f;
         const float gap = 16.0f;
         const float leftW = 400.0f;
@@ -253,11 +243,13 @@ public:
                                 // 停止/启动代理（真实开关）
                                 components::button(ui, "claude.btn.proxy")
                                     .size(110.0f, 40.0f)
-                                    .text(proxyRunning ? "⏸ 停止代理" : "▶ 启动代理")
+                                    .text(proxyRunning ? "停止代理" : "启动代理")
+                                    .icon(proxyRunning ? 0xF04C : 0xF04B)  // fa-pause / fa-play
                                     .fontSize(t.sizes.fontSizeSmall)
                                     .colors(t.colors.surfaceElevated, t.colors.hover,
                                             t.colors.active)
                                     .textColor(t.colors.textSecondary)
+                                    .iconColor(t.colors.textSecondary)
                                     .radius(t.sizes.radius)
                                     .border(1.0f, t.colors.borderDefault)
                                     .onClick([this] { doToggleProxy(); })
@@ -270,7 +262,7 @@ public:
                                     .fontSize(t.sizes.fontSizeSmall)
                                     .colors(t.colors.primary, t.colors.primaryHover,
                                             t.colors.primaryPressed)
-                                    .textColor(eui::Color("#FFFFFF"))
+                                    .textColor(t.colors.onPrimary)
                                     .radius(t.sizes.radius)
                                     .onClick([this] { openCreateForm(); })
                                     .build();
@@ -280,15 +272,30 @@ public:
                     .build();
 
                 // 引导条（§6.4）：代理未运行且本会话从未启动过时一次性提示接管语义
+                //（ⓘ 换 FA：Icon 字体不能与正文混排，图标/文字拆两个元素）
                 if (showGuide) {
-                    ui.text("claude.guide.takeover")
+                    ui.row("claude.guide.wrap")
                         .size(contentW, 18.0f)
-                        .text("ⓘ 启动代理后将自动接管 Claude Code 配置（" +
-                              settings_sync::defaultPaths().settingsFile.string() +
-                              "），停止代理时自动还原；其余字段原样保留")
-                        .fontSize(t.sizes.fontSizeSmall)
-                        .lineHeight(18.0f)
-                        .color(t.colors.textSecondary)
+                        .gap(6.0f)
+                        .alignItems(eui::Align::CENTER)
+                        .content([&] {
+                            ui.text("claude.guide.icon")
+                                .size(14.0f, 18.0f)
+                                .icon(0xF05A)  // fa-circle-info
+                                .fontSize(t.sizes.fontSizeSmall)
+                                .lineHeight(18.0f)
+                                .color(t.colors.textSecondary)
+                                .build();
+                            ui.text("claude.guide.takeover")
+                                .size(contentW - 20.0f, 18.0f)
+                                .text("启动代理后将自动接管 Claude Code 配置（" +
+                                      settings_sync::defaultPaths().settingsFile.string() +
+                                      "），停止代理时自动还原；其余字段原样保留")
+                                .fontSize(t.sizes.fontSizeSmall)
+                                .lineHeight(18.0f)
+                                .color(t.colors.textSecondary)
+                                .build();
+                        })
                         .build();
                 }
 
@@ -531,11 +538,20 @@ public:
                                                      : t.colors.textTertiary)
                                     .build();
                                 // 上层覆盖警告（§5.3 检测命中时；首条 + 计数）
+                                //（⚠ 换 FA：图标/文字拆两个元素）
                                 if (ccManaged && !ccWarnings.empty()) {
-                                    ui.text("claude.field.takeover.warn")
+                                    ui.text("claude.field.takeover.warn.icon")
                                         .position(x0, fy0 + fieldH + 126.0f)
-                                        .size(w0, 16.0f)
-                                        .text("⚠ " + ccWarnings.front() +
+                                        .size(14.0f, 16.0f)
+                                        .icon(0xF071)  // fa-triangle-exclamation
+                                        .fontSize(11.0f)
+                                        .lineHeight(16.0f)
+                                        .color(t.colors.warning)
+                                        .build();
+                                    ui.text("claude.field.takeover.warn")
+                                        .position(x0 + 18.0f, fy0 + fieldH + 126.0f)
+                                        .size(w0 - 18.0f, 16.0f)
+                                        .text(ccWarnings.front() +
                                               (ccWarnings.size() > 1
                                                    ? "（共 " +
                                                          std::to_string(
@@ -570,7 +586,7 @@ public:
                                             .colors(t.colors.primary,
                                                     t.colors.primaryHover,
                                                     t.colors.primaryPressed)
-                                            .textColor(eui::Color("#FFFFFF"))
+                                            .textColor(t.colors.onPrimary)
                                             .radius(t.sizes.radius)
                                             .onClick([this, shownId] {
                                                 if (shownId == 0) {
@@ -732,7 +748,7 @@ public:
                                         ui.text("claude.calls.t." + std::to_string(i))
                                             .position(colTimeX, rowY)
                                             .size(72.0f, 16.0f)
-                                            .text(formatHHMM(c.startedAt))
+                                            .text(formatCallTime(c.startedAt, now))
                                             .fontSize(11.0f)
                                             .lineHeight(16.0f)
                                             .color(t.colors.textPrimary)
@@ -916,7 +932,7 @@ private:
                 .fontSize(9.0f)
                 .lineHeight(20.0f)
                 .horizontalAlign(eui::HorizontalAlign::Center)
-                .color(eui::Color("#FFFFFF"))
+                .color(t.colors.onPrimary)
                 .fontWeight(700)
                 .build();
         }
@@ -1175,9 +1191,13 @@ private:
             .onChange([this](const std::string& v) { formKey_ = v; })
             .build();
 
+        ui.text("claude.form.basic.hint.icon")
+            .position(28.0f, 316.0f).size(14.0f, 18.0f)
+            .icon(0xF05A).fontSize(12.0f).lineHeight(18.0f)
+            .color(t.colors.textTertiary).build();
         ui.text("claude.form.basic.hint")
-            .position(28.0f, 316.0f).size(w - 56.0f, 18.0f)
-            .text("ⓘ 模型映射和高级 env 在另外两个标签页配置")
+            .position(46.0f, 316.0f).size(w - 74.0f, 18.0f)
+            .text("模型映射和高级 env 在另外两个标签页配置")
             .fontSize(12.0f).lineHeight(18.0f)
             .color(t.colors.textTertiary).build();
 
@@ -1250,9 +1270,13 @@ private:
                 .build();
         }
 
+        ui.text("claude.form.slots.hint1.icon")
+            .position(28.0f, 446.0f).size(14.0f, 16.0f)
+            .icon(0xF05A).fontSize(11.0f).lineHeight(16.0f)
+            .color(t.colors.textTertiary).build();
         ui.text("claude.form.slots.hint1")
-            .position(28.0f, 446.0f).size(w - 56.0f, 16.0f)
-            .text("ⓘ 显示名留空时自动剥除模型名的 [1M]/[200K] 等上下文标记")
+            .position(46.0f, 446.0f).size(w - 74.0f, 16.0f)
+            .text("显示名留空时自动剥除模型名的 [1M]/[200K] 等上下文标记")
             .fontSize(11.0f).lineHeight(16.0f)
             .color(t.colors.textTertiary).build();
         ui.text("claude.form.slots.hint2")
@@ -1300,10 +1324,12 @@ private:
                 .build();
             components::button(ui, "claude.form.env.row." + idx + ".del")
                 .position(682.0f, y).size(50.0f, 32.0f)
-                .text("✕").fontSize(12.0f)
+                .icon(0xF00D)  // fa-xmark（✕ 换 FA）
+                .fontSize(12.0f)
                 .colors(t.colors.surfaceElevated, t.colors.hover,
                         t.colors.active)
                 .textColor(t.colors.error)
+                .iconColor(t.colors.error)
                 .radius(t.sizes.radiusSmall)
                 .border(1.0f, t.colors.borderDefault)
                 .onClick([this, i] {
@@ -1366,17 +1392,22 @@ private:
                 .text("应用到表单").fontSize(12.0f)
                 .colors(t.colors.primary, t.colors.primaryHover,
                         t.colors.primaryPressed)
-                .textColor(eui::Color("#FFFFFF"))
+                .textColor(t.colors.onPrimary)
                 .radius(t.sizes.radiusSmall)
                 .onClick([this] { doApplyImport(); })
                 .build();
         }
 
         // 解析结果：失败红字 / 成功预览（槽位/env 识别数 + 别名/未识别提示）
+        //（✕/⚠ 换 FA：图标/文字拆两个元素）
         if (!importError_.empty()) {
+            ui.text("claude.form.import.error.icon")
+                .position(270.0f, 468.0f).size(13.0f, 16.0f)
+                .icon(0xF00D).fontSize(11.0f).lineHeight(16.0f)
+                .color(t.colors.error).build();
             ui.text("claude.form.import.error")
-                .position(270.0f, 468.0f).size(w - 270.0f - 28.0f, 48.0f)
-                .text("✕ " + importError_).fontSize(11.0f).lineHeight(16.0f)
+                .position(286.0f, 468.0f).size(w - 286.0f - 28.0f, 48.0f)
+                .text(importError_).fontSize(11.0f).lineHeight(16.0f)
                 .color(t.colors.error).build();
         } else if (importReady_) {
             ui.text("claude.form.import.preview")
@@ -1408,16 +1439,25 @@ private:
                 notes.push_back(importPreview_.warnings[i]);
             }
             for (size_t i = 0; i < notes.size(); ++i) {
-                ui.text("claude.form.import.note." + std::to_string(i))
+                ui.text("claude.form.import.note.icon." + std::to_string(i))
                     .position(270.0f, 486.0f + static_cast<float>(i) * 15.0f)
-                    .size(w - 270.0f - 28.0f, 15.0f)
-                    .text("⚠ " + notes[i]).fontSize(10.0f).lineHeight(15.0f)
+                    .size(13.0f, 15.0f)
+                    .icon(0xF071).fontSize(10.0f).lineHeight(15.0f)
+                    .color(t.colors.warning).build();
+                ui.text("claude.form.import.note." + std::to_string(i))
+                    .position(286.0f, 486.0f + static_cast<float>(i) * 15.0f)
+                    .size(w - 286.0f - 28.0f, 15.0f)
+                    .text(notes[i]).fontSize(10.0f).lineHeight(15.0f)
                     .color(t.colors.warning).build();
             }
         } else {
+            ui.text("claude.form.import.hint.icon")
+                .position(270.0f, 468.0f).size(13.0f, 16.0f)
+                .icon(0xF05A).fontSize(11.0f).lineHeight(16.0f)
+                .color(t.colors.textTertiary).build();
             ui.text("claude.form.import.hint")
-                .position(270.0f, 468.0f).size(w - 270.0f - 28.0f, 32.0f)
-                .text("ⓘ BASE_URL/AUTH_TOKEN 归基础页，模型键归模型映射页，"
+                .position(286.0f, 468.0f).size(w - 286.0f - 28.0f, 32.0f)
+                .text("BASE_URL/AUTH_TOKEN 归基础页，模型键归模型映射页，"
                       "其余进入上表")
                 .fontSize(11.0f).lineHeight(16.0f)
                 .color(t.colors.textTertiary).build();
@@ -1504,7 +1544,7 @@ private:
                     .fontSize(14.0f)
                     .colors(t.colors.primary, t.colors.primaryHover,
                             t.colors.primaryPressed)
-                    .textColor(eui::Color("#FFFFFF"))
+                    .textColor(t.colors.onPrimary)
                     .radius(t.sizes.radius)
                     .onClick([this] { submitForm(); })
                     .build();
@@ -1624,11 +1664,12 @@ private:
                         .color(t.colors.textTertiary)
                         .build();
                 } else {
+                    const std::time_t now = std::time(nullptr);
                     for (size_t i = 0; i < allCalls_.size(); ++i) {
                         const ClaudeService::CallLogEntry& c = allCalls_[i];
                         const float rowY = 68.0f + static_cast<float>(i) * 22.0f;
                         const std::string line =
-                            formatHHMM(c.startedAt) + "  " + c.method + " " +
+                            formatCallTime(c.startedAt, now) + "  " + c.method + " " +
                             c.path + "  " +
                             (c.statusCode > 0 ? std::to_string(c.statusCode)
                                               : std::string("-")) +
@@ -1672,6 +1713,8 @@ private:
             .screen(screen.width, screen.height)
             .visible(toastOpen_)
             .duration(3.5f)
+            // 图标走 toast 自带 Icon 字体通道（⚠/✓ 前缀混排正文不可行）
+            .icon(toastIsError_ ? 0xF071 : 0xF058)  // fa-triangle-exclamation / fa-circle-check
             .title(toastTitle_)
             .message(toastMessage_)
             .onAutoDismiss([this] { toastOpen_ = false; })
@@ -1680,8 +1723,9 @@ private:
     }
 
     void showToast(const std::string& title, const std::string& msg, bool isError) {
-        toastTitle_ = isError ? ("⚠ " + title) : ("✓ " + title);
+        toastTitle_ = title;
         toastMessage_ = msg;
+        toastIsError_ = isError;
         toastOpen_ = true;
     }
 
@@ -1817,6 +1861,7 @@ private:
     bool toastOpen_ = false;
     std::string toastTitle_;
     std::string toastMessage_;
+    bool toastIsError_ = false;
 
     // 测试连通后台线程（结果经 testDone_ 原子标志回 compose 收割；
     // 普通成员的发布顺序由 release/acquire + join 保证）
