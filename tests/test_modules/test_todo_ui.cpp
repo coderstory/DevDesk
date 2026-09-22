@@ -882,6 +882,204 @@ REGISTER_TEST(todo_ui_ctx_edit_and_delete,
     return true;
 })
 
+// 详情弹窗「删除」也走确认弹窗（与右键菜单路径行为统一）
+REGISTER_TEST(todo_ui_detail_delete_confirms,
+              "todo_ui: 详情弹窗删除先弹确认（headless）", {
+    TestEnv env;
+    DOCTEST_REQUIRE(env.ready);
+    auto col = env.svc->createColumn("详情删除列");
+    DOCTEST_REQUIRE(col.isOk());
+    auto a = env.svc->createTask(col.value().id, "详情待删任务");
+    DOCTEST_REQUIRE(a.isOk());
+
+    std::unique_ptr<::core::Module> mod(create_todo_module());
+    mod->onStart();
+
+    // 右键卡片 → 编辑 → 打开详情弹窗
+    {
+        Frame frame(mod.get());
+        eui::PointerEvent pe;
+        eui::Rect rect;
+        const auto* card = frame.ui.find("todo.col.4.card.0.bg");
+        DOCTEST_REQUIRE(card != nullptr);
+        card->onContextMenu(pe, rect);
+        frame.refresh();
+        const auto* edit = frame.ui.find("todo.ctx.level.0.item.0");
+        DOCTEST_REQUIRE(edit != nullptr);
+        edit->onClick();
+        frame.refresh();
+        DOCTEST_REQUIRE(frame.ui.find("todo.dialog.detail.input.title") != nullptr);
+
+        // 点详情里的「删除」→ 不应直接删，而是切到确认弹窗（文案含任务标题）
+        const auto* del = frame.ui.find("todo.dialog.detail.delete.bg");
+        DOCTEST_REQUIRE(del != nullptr);
+        DOCTEST_REQUIRE(del->onClick != nullptr);
+        del->onClick();
+        frame.refresh();
+        const auto* body = frame.ui.find("todo.dialog.delcol.body");
+        DOCTEST_REQUIRE(body != nullptr);
+        DOCTEST_CHECK(body->text.find("详情待删任务") != std::string::npos);
+
+        // 确认弹窗点「取消」→ 任务仍在
+        const auto* cancel = frame.ui.find("todo.dialog.delcol.cancel.bg");
+        DOCTEST_REQUIRE(cancel != nullptr);
+        DOCTEST_REQUIRE(cancel->onClick != nullptr);
+        cancel->onClick();
+    }
+    {
+        auto ts = env.svc->listTasks(col.value().id);
+        DOCTEST_REQUIRE(ts.isOk());
+        DOCTEST_CHECK_EQ(ts.value().size(), 1u);
+    }
+
+    mod->onStop();
+    return true;
+})
+
+// 完成态按 kind 落列（不靠「已完成」标题）：重命名已完成列后，
+// 详情弹窗「标记完成」仍应把任务移进该列（回归：此前按标题找列，
+// 重命名后任务静默留在原列）
+REGISTER_TEST(todo_ui_complete_by_kind,
+              "todo_ui: 完成按 kind 落列，列改名后仍命中（headless）", {
+    TestEnv env;
+    DOCTEST_REQUIRE(env.ready);
+    auto list = env.svc->listColumns();
+    DOCTEST_REQUIRE(list.isOk());
+    const int64_t todoCol = list.value()[0].id;    // kind=todo
+    const int64_t doneCol = list.value()[2].id;    // kind=done
+    // 模块启动前先改名（模块 onStart 才会缓存列）
+    DOCTEST_REQUIRE(env.svc->renameColumn(doneCol, "Finished").isOk());
+    auto a = env.svc->createTask(todoCol, "kind 回归任务");
+    DOCTEST_REQUIRE(a.isOk());
+
+    std::unique_ptr<::core::Module> mod(create_todo_module());
+    mod->onStart();
+
+    // 右键卡片 → 编辑 → 详情 → 点「标记完成」
+    {
+        Frame frame(mod.get());
+        eui::PointerEvent pe;
+        eui::Rect rect;
+        const auto* card = frame.ui.find("todo.col.0.card.0.bg");
+        DOCTEST_REQUIRE(card != nullptr);
+        card->onContextMenu(pe, rect);
+        frame.refresh();
+        const auto* edit = frame.ui.find("todo.ctx.level.0.item.0");
+        DOCTEST_REQUIRE(edit != nullptr);
+        edit->onClick();
+        frame.refresh();
+        const auto* toggle = frame.ui.find("todo.dialog.detail.toggle.bg");
+        DOCTEST_REQUIRE(toggle != nullptr);
+        DOCTEST_REQUIRE(toggle->onClick != nullptr);
+        toggle->onClick();
+    }
+
+    // 任务应落到改名的已完成列且带 completedAt
+    {
+        auto inDone = env.svc->listTasks(doneCol);
+        DOCTEST_REQUIRE(inDone.isOk());
+        DOCTEST_REQUIRE_EQ(inDone.value().size(), 1u);
+        DOCTEST_CHECK_EQ(inDone.value()[0].title, std::string("kind 回归任务"));
+        DOCTEST_CHECK(inDone.value()[0].completedAt.has_value());
+        auto inTodo = env.svc->listTasks(todoCol);
+        DOCTEST_REQUIRE(inTodo.isOk());
+        DOCTEST_CHECK_EQ(inTodo.value().size(), 0u);
+    }
+
+    mod->onStop();
+    return true;
+})
+
+// 详情弹窗「移动到」全列遍历（此前硬编码 i < 4，第 5 列起不可移）
+REGISTER_TEST(todo_ui_detail_move_all_columns,
+              "todo_ui: 详情弹窗移动到覆盖全部列（headless）", {
+    TestEnv env;
+    DOCTEST_REQUIRE(env.ready);
+    auto list = env.svc->listColumns();
+    DOCTEST_REQUIRE(list.isOk());
+    const int64_t todoCol = list.value()[0].id;
+    // 补 2 列 → 共 6 列（超过旧的 4 列上限）
+    DOCTEST_REQUIRE(env.svc->createColumn("第五列").isOk());
+    DOCTEST_REQUIRE(env.svc->createColumn("第六列").isOk());
+    auto a = env.svc->createTask(todoCol, "跨列移动任务");
+    DOCTEST_REQUIRE(a.isOk());
+
+    std::unique_ptr<::core::Module> mod(create_todo_module());
+    mod->onStart();
+
+    // 打开详情 → 第 5、6 列按钮都存在，点第 6 列按钮任务真的移过去
+    {
+        Frame frame(mod.get());
+        eui::PointerEvent pe;
+        eui::Rect rect;
+        const auto* card = frame.ui.find("todo.col.0.card.0.bg");
+        DOCTEST_REQUIRE(card != nullptr);
+        card->onContextMenu(pe, rect);
+        frame.refresh();
+        const auto* edit = frame.ui.find("todo.ctx.level.0.item.0");
+        DOCTEST_REQUIRE(edit != nullptr);
+        edit->onClick();
+        frame.refresh();
+        DOCTEST_REQUIRE(frame.ui.find("todo.dialog.detail.move.3") != nullptr);
+        const auto* move5 = frame.ui.find("todo.dialog.detail.move.5.bg");
+        DOCTEST_REQUIRE(move5 != nullptr);
+        DOCTEST_REQUIRE(move5->onClick != nullptr);
+        move5->onClick();
+    }
+    {
+        auto list2 = env.svc->listColumns();
+        DOCTEST_REQUIRE(list2.isOk());
+        DOCTEST_REQUIRE_EQ(list2.value().size(), 6u);
+        auto inSixth = env.svc->listTasks(list2.value()[5].id);
+        DOCTEST_REQUIRE(inSixth.isOk());
+        DOCTEST_REQUIRE_EQ(inSixth.value().size(), 1u);
+        DOCTEST_CHECK_EQ(inSixth.value()[0].title, std::string("跨列移动任务"));
+    }
+
+    mod->onStop();
+    return true;
+})
+
+// 状态反馈 toast：超时消失 + subtitle 保持静态说明
+// （此前 setStatus 写进 subtitle 永久驻留，静态操作说明被顶掉）
+REGISTER_TEST(todo_ui_status_toast_timeout,
+              "todo_ui: 状态提示 toast 超时消失，subtitle 静态（headless）", {
+    TestEnv env;
+    DOCTEST_REQUIRE(env.ready);
+
+    std::unique_ptr<::core::Module> mod(create_todo_module());
+    mod->onStart();
+
+    Frame frame(mod.get());
+    // 无选中任务按 Ctrl+↑ → 错误反馈进 toast（而非 subtitle）
+    DOCTEST_CHECK(!mod->onKeyEvent(ctrlArrow(eui::InputKey::Up)));
+    frame.refresh();
+    const auto* title = frame.ui.find("todo.toast.title");
+    DOCTEST_REQUIRE(title != nullptr);
+    DOCTEST_CHECK(title->text.find("先点击卡片选中任务") != std::string::npos);
+    // subtitle 始终是静态操作说明
+    const auto* sub = frame.ui.find("todo.subtitle");
+    DOCTEST_REQUIRE(sub != nullptr);
+    DOCTEST_CHECK(sub->text.find("点击卡片查看详情") != std::string::npos);
+
+    // toast 带超时回调（3.5s 自动消失）→ 触发后 visible 关闭
+    const auto* timer = frame.ui.find("todo.toast.timer");
+    DOCTEST_REQUIRE(timer != nullptr);
+    DOCTEST_CHECK(timer->timerSeconds > 0.0f);
+    DOCTEST_REQUIRE(timer->onTimer != nullptr);
+    const auto* toastOpen = frame.ui.find("todo.toast");
+    DOCTEST_REQUIRE(toastOpen != nullptr);
+    DOCTEST_CHECK_EQ(toastOpen->opacity, 1.0f);
+    timer->onTimer();
+    frame.refresh();
+    const auto* toastClosed = frame.ui.find("todo.toast");
+    DOCTEST_REQUIRE(toastClosed != nullptr);
+    DOCTEST_CHECK_EQ(toastClosed->opacity, 0.0f);
+
+    mod->onStop();
+    return true;
+})
+
 REGISTER_TEST(todo_ui_fontscale_tokens,
               "todo_ui: 模块字号经 token 派生，全局缩放生效（headless）", {
     TestEnv env;

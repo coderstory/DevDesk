@@ -27,6 +27,9 @@ struct Column {
     std::string title;
     int position;
     std::optional<std::string> color;
+    // 语义标记（migration v3）：'done' = 已完成列，'todo' = 默认待办列，
+    // 空 = 普通列。完成态流转按它定位目标列，不靠标题字符串。
+    std::string kind;
 };
 
 // 任务（来自 todo_tasks 表）

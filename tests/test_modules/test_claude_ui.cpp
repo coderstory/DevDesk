@@ -10,14 +10,17 @@
 #include "core/database.h"
 #include "core/module_interface.h"
 #include "core/sqlite_db.h"
+#include "platform/http_server.h"
 #include "platform/keychain.h"
 
 #include <eui/dsl.h>
 
+#include <chrono>
 #include <filesystem>
 #include <memory>
 #include <stdexcept>
 #include <string>
+#include <thread>
 
 extern "C" ::core::Module* create_claude_module();
 
@@ -151,5 +154,79 @@ REGISTER_TEST(claude_module_compose_with_data,
     mod->onStop();
     cleanupKey(a.value().id);
     cleanupKey(b.value().id);
+    return true;
+})
+
+// ---- 3. 测试连通不阻塞 UI 线程（后台线程 + 结果回 compose 收割） ----
+// 回归：此前 UI 线程同步调 testConnection（timeout 15s），慢上游时
+// 点「测试连通」整个界面冻结。现在点击立即返回 + toast「测试中」，
+// 上游返回后由 compose 每帧收割结果弹 toast。
+REGISTER_TEST(claude_module_test_connection_async,
+              "claude_module: 测试连通后台执行不冻结 UI（headless）", {
+    TestEnv env;
+    // mock 上游挂 500ms 再回 200：点击必须立即返回（不等上游）
+    platform::http::Server upstream("127.0.0.1", 0);
+    upstream.route("GET", "/v1/models",
+                   [](const platform::http::RequestCtx&,
+                      platform::http::ResponseWriter& w) {
+                       std::this_thread::sleep_for(
+                           std::chrono::milliseconds(500));
+                       w.setStatus(200);
+                       w.setHeader("Content-Type", "application/json");
+                       w.write(R"({"data":[]})");
+                       w.end();
+                   });
+    DOCTEST_REQUIRE(upstream.start());
+    const std::string baseUrl =
+        "http://127.0.0.1:" + std::to_string(upstream.actualPort());
+    auto a = env.svc->createProfile("异步测试", baseUrl,
+                                    "sk-ant-async-8888", "claude-sonnet-4-5");
+    DOCTEST_REQUIRE(a.isOk());
+    DOCTEST_REQUIRE(env.svc->setActiveProfile(a.value().id).isOk());
+
+    std::unique_ptr<::core::Module> mod(create_claude_module());
+    eui::Screen screen;
+    screen.width = 1600.0f;
+    screen.height = 1000.0f;
+    auto compose = [&](eui::Ui& ui) {
+        ui.begin("claude_async");
+        mod->compose(ui, screen);
+        ui.end();
+    };
+
+    // 点「测试连通」→ 立即返回，toast 切到「测试中」
+    {
+        eui::Ui ui;
+        compose(ui);
+        const auto* testBtn = ui.find("claude.act.test.bg");
+        DOCTEST_REQUIRE(testBtn != nullptr);
+        DOCTEST_REQUIRE(testBtn->onClick != nullptr);
+        testBtn->onClick();
+    }
+    {
+        eui::Ui ui;
+        compose(ui);
+        const auto* title = ui.find("claude.toast.title");
+        DOCTEST_REQUIRE(title != nullptr);
+        DOCTEST_CHECK(title->text.find("测试中") != std::string::npos);
+    }
+
+    // 轮询 compose（每帧收割）直到上游 500ms 响应被收割成结果 toast
+    bool gotResult = false;
+    for (int i = 0; i < 250 && !gotResult; ++i) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(20));
+        eui::Ui ui;
+        compose(ui);
+        const auto* title = ui.find("claude.toast.title");
+        if (title != nullptr &&
+            title->text.find("连通成功") != std::string::npos) {
+            gotResult = true;
+        }
+    }
+    DOCTEST_CHECK(gotResult);
+
+    mod->onStop();
+    upstream.stop();
+    cleanupKey(a.value().id);
     return true;
 })

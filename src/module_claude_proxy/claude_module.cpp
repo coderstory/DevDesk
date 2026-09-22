@@ -20,9 +20,11 @@
 #include <components/theme.h>
 #include <components/toast.h>
 
+#include <atomic>
 #include <cstdio>
 #include <ctime>
 #include <string>
+#include <thread>
 #include <vector>
 
 namespace module::claude {
@@ -55,6 +57,11 @@ public:
     ::core::PageId pageId() const override { return ::core::PageId::ClaudeProxy; }
     std::string displayName() const override { return "Claude 切换器"; }
     std::string iconGlyph() const override { return eui::utf8(0xF021); }  // fa-arrows-rotate
+
+    ~ClaudeModule() override {
+        // 后台测试线程必须先收（最坏阻塞到 HTTP 超时 15s，避免悬垂 this）
+        if (testThread_.joinable()) testThread_.join();
+    }
 
     // ============ UI ============
 
@@ -716,6 +723,7 @@ public:
         drawProfileFormDialog(ui, screen, t, themeTokens);
         drawDeleteConfirmDialog(ui, screen, t, themeTokens);
         drawCallsDialog(ui, screen, t, themeTokens);
+        harvestTestResult();  // 后台「测试连通」结果回 UI（每帧轮询）
         drawToast(ui, screen, themeTokens);
 
         LOG_DEBUG("Claude 模块 compose 完成");
@@ -1289,22 +1297,46 @@ private:
     void doTestConnection(const Profile& p) {
         ClaudeService* svc = ClaudeService::global();
         if (!svc) return;
-        // ponytail: 同步 HTTP 会阻塞 UI 线程（本地/局域网通常 <1s）；
-        // 慢上游需要非阻塞时再挪后台线程 + 回调刷新
-        auto r = svc->testConnection(p);
-        if (r.isFail()) {
-            showToast("连通失败", r.errorMessage(), true);
+        // 先收上一轮结果（页面不可见时 compose 不跑，会在这里积累）
+        harvestTestResult();
+        if (testThread_.joinable()) {
+            showToast("测试进行中", "请等待上一轮测试完成", false);
             return;
         }
-        const int code = r.value().statusCode;
-        if (code >= 200 && code < 300) {
-            showToast("连通成功",
-                      "上游返回 HTTP " + std::to_string(code) + "，API 可用", false);
-        } else {
-            showToast("连通异常",
-                      "上游返回 HTTP " + std::to_string(code) +
-                      "（检查 API Key 或 Base URL）", true);
-        }
+        // ponytail 升级路径已落地：testConnection 是同步 HTTP（timeout 15s），
+        // 在 UI 线程直接调最坏冻结界面 15s → 挪后台线程，立即 toast「测试中」，
+        // 结果经原子标志回 compose 每帧收割（模块析构时 join 防悬垂）
+        showToast("测试中", "正在请求 " + p.baseUrl + "/v1/models，最长 15 秒…", false);
+        testThread_ = std::thread([this, p, svc] {
+            auto r = svc->testConnection(p);
+            if (r.isFail()) {
+                testResultTitle_ = "连通失败";
+                testResultMsg_ = r.errorMessage();
+                testResultIsError_ = true;
+            } else {
+                const int code = r.value().statusCode;
+                if (code >= 200 && code < 300) {
+                    testResultTitle_ = "连通成功";
+                    testResultMsg_ = "上游返回 HTTP " + std::to_string(code) + "，API 可用";
+                    testResultIsError_ = false;
+                } else {
+                    testResultTitle_ = "连通异常";
+                    testResultMsg_ = "上游返回 HTTP " + std::to_string(code) +
+                                      "（检查 API Key 或 Base URL）";
+                    testResultIsError_ = true;
+                }
+            }
+            testDone_.store(true, std::memory_order_release);
+        });
+    }
+
+    // 收割后台测试结果：线程跑完后 join 并弹结果 toast（compose 每帧调）
+    void harvestTestResult() {
+        if (!testThread_.joinable()) return;
+        if (!testDone_.load(std::memory_order_acquire)) return;  // 还在跑
+        testThread_.join();
+        testDone_.store(false);
+        showToast(testResultTitle_, testResultMsg_, testResultIsError_);
     }
 
     // ============ 状态 ============
@@ -1334,6 +1366,14 @@ private:
     bool toastOpen_ = false;
     std::string toastTitle_;
     std::string toastMessage_;
+
+    // 测试连通后台线程（结果经 testDone_ 原子标志回 compose 收割；
+    // 普通成员的发布顺序由 release/acquire + join 保证）
+    std::thread testThread_;
+    std::atomic<bool> testDone_{false};
+    std::string testResultTitle_;
+    std::string testResultMsg_;
+    bool testResultIsError_ = false;
 };
 
 } // namespace module::claude

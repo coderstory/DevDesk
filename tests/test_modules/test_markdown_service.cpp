@@ -478,6 +478,46 @@ REGISTER_TEST(md_search_in_query_escape,
     return true;
 })
 
+// 含被丢弃符号的词元（c++ / std::vector / #tag 等）：FTS 清洗会把
+// "c++" 变 "c"* 前缀误命中所有 c 开头词（clean/crisp…）。修复后：
+// 全失真查询跳过 FTS 只走 LIKE 字面子串；混合失真查询 LIKE 兜底补命中
+REGISTER_TEST(md_search_symbol_tokens,
+              "MarkdownService: 符号词元（c++）不前缀误命中且能搜到", {
+    const auto dir = makeTempDir("search_symbol");
+    auto db = makeDb();
+    runMigrations(db);
+    module::markdown::MarkdownService svc(db, dir);
+
+    DOCTEST_REQUIRE(svc.write("cpp.md",
+                              "# Cpp\n\nc++ template specialization notes").isOk());
+    DOCTEST_REQUIRE(svc.write("clean.md",
+                              "# Clean\n\nclean code and crisp content").isOk());
+
+    // 搜 "c++"：只命中含字面 c++ 的笔记（clean/crisp 不再被 c* 前缀误中）
+    auto r1 = svc.search("c++");
+    DOCTEST_REQUIRE(r1.isOk());
+    DOCTEST_REQUIRE_EQ(r1.value().size(), 1u);
+    DOCTEST_CHECK_EQ(r1.value()[0].relativePath.generic_string(),
+                     std::string("cpp.md"));
+
+    // 混合查询（失真词元 + 干净词元）：FTS 保 AND 语义，LIKE 兜底补字面命中
+    auto r2 = svc.search("c++ template");
+    DOCTEST_REQUIRE(r2.isOk());
+    DOCTEST_REQUIRE_EQ(r2.value().size(), 1u);
+    DOCTEST_CHECK_EQ(r2.value()[0].relativePath.generic_string(),
+                     std::string("cpp.md"));
+
+    // 纯干净词元查询行为不变（FTS 前缀命中）
+    auto r3 = svc.search("crisp");
+    DOCTEST_REQUIRE(r3.isOk());
+    DOCTEST_REQUIRE_EQ(r3.value().size(), 1u);
+    DOCTEST_CHECK_EQ(r3.value()[0].relativePath.generic_string(),
+                     std::string("clean.md"));
+
+    fs::remove_all(dir);
+    return true;
+})
+
 REGISTER_TEST(md_path_posix_separator,
               "MarkdownService: relativePath uses POSIX separators", {
     const auto dir = makeTempDir("posix");

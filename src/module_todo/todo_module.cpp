@@ -18,6 +18,7 @@
 #include <components/input.h>
 #include <components/scrollview.h>
 #include <components/theme.h>
+#include <components/toast.h>
 
 #include <algorithm>
 #include <ctime>
@@ -212,10 +213,11 @@ public:
         return out;
     }
 
-    // 按标题找列 id（找不到返回 0）
-    int64_t findColumnByTitle(const std::string& title) const {
+    // 按语义标记找列 id（'done'=已完成列 / 'todo'=待办列；找不到返回 0）
+    // 不按标题找：用户重命名列后标题不可靠（migration v3 起 kind 是权威）
+    int64_t findColumnByKind(const std::string& kind) const {
         for (const auto& c : columns_) {
-            if (c.title == title) return c.id;
+            if (c.kind == kind) return c.id;
         }
         return 0;
     }
@@ -268,14 +270,19 @@ public:
             setStatus("标记完成失败：" + r.errorMessage(), true);
             return;
         }
-        // 看板行为：完成后移到「已完成」列（如果该列存在），追加到列尾
-        const int64_t doneCol = findColumnByTitle("已完成");
+        // 看板行为：完成后移到已完成列（kind='done'），追加到列尾
+        const int64_t doneCol = findColumnByKind("done");
         if (doneCol != 0) {
             auto mv = service_->moveTask(
                 taskId, doneCol, ui::computeAppendPosition(tasks_, doneCol));
             if (mv.isFail()) {
                 LOG_WARN("Todo: 完成后移动到已完成列失败: " + mv.errorMessage());
             }
+        } else {
+            // 明示而非静默：没有 done 列时任务留在原列，用户需要知道为什么
+            setStatus("任务已完成（未找到 kind='done' 的列，任务留在原列）");
+            reloadAll();
+            return;
         }
         setStatus("任务已完成 ✓");
         reloadAll();
@@ -288,15 +295,20 @@ public:
             setStatus("取消完成失败：" + r.errorMessage(), true);
             return;
         }
-        // 从「已完成」列撤回「待办」列（如果两列都存在），追加到列尾
-        const int64_t doneCol = findColumnByTitle("已完成");
-        const int64_t todoCol = columns_.empty() ? 0 : columns_.front().id;
-        if (doneCol != 0 && todoCol != 0) {
+        // 撤回到待办列（kind='todo'），追加到列尾。
+        // 此前假设 columns_.front() 是待办列——用户重排列后会把任务
+        // 撤到错误的列，改为按语义标记定位。
+        const int64_t todoCol = findColumnByKind("todo");
+        if (todoCol != 0) {
             auto mv = service_->moveTask(
                 taskId, todoCol, ui::computeAppendPosition(tasks_, todoCol));
             if (mv.isFail()) {
                 LOG_WARN("Todo: 取消完成后移回待办列失败: " + mv.errorMessage());
             }
+        } else {
+            setStatus("已取消完成（未找到 kind='todo' 的列，任务留在原列）");
+            reloadAll();
+            return;
         }
         setStatus("已取消完成");
         reloadAll();
@@ -447,9 +459,26 @@ public:
 
     // ============ 状态提示 ============
 
+    // 状态反馈走 toast（3.5s 超时自动消失，仿 markdown/claude 模块）。
+    // 此前写进 header subtitle 永久驻留，静态操作说明被最后一条
+    // 操作结果永久顶掉；现在 subtitle 始终保持静态说明。
     void setStatus(const std::string& msg, bool isError = false) {
-        statusMessage_ = msg;
-        statusIsError_ = isError;
+        toastTitle_ = isError ? ("⚠ " + msg) : msg;
+        toastOpen_ = true;
+    }
+
+    // ---------- Toast（画在弹窗之上，超时消失） ----------
+    void drawToast(eui::Ui& ui, const eui::Screen& screen,
+                   const components::theme::ThemeColorTokens& themeTokens) {
+        components::toast(ui, "todo.toast")
+            .theme(themeTokens)
+            .screen(screen.width, screen.height)
+            .visible(toastOpen_)
+            .duration(3.5f)
+            .title(toastTitle_)
+            .onAutoDismiss([this] { toastOpen_ = false; })
+            .onDismiss([this] { toastOpen_ = false; })
+            .build();
     }
 
     // ============ UI ============
@@ -489,6 +518,8 @@ public:
         drawDatePicker(ui, screen, t);
         drawRenameDialog(ui, screen, t);
         drawConfirmDeleteDialog(ui, screen, t);
+        drawToast(ui, screen,
+                  t.isDark ? components::theme::dark() : components::theme::light());
     }
 
     // P7a 键盘移动：Ctrl/Cmd+↑↓ 上移/下移当前选中任务（选中 = 最近
@@ -533,15 +564,13 @@ private:
                             .fontWeight(700)
                             .color(t.colors.textPrimary)
                             .build();
-                        const std::string sub = statusMessage_.empty()
-                            ? "点击卡片查看详情 · Ctrl+↑/↓ 移动选中任务 · 右键卡片/列头更多操作"
-                            : statusMessage_;
+                        // subtitle 保持静态操作说明（动态反馈走 toast）
                         ui.text("todo.subtitle")
                             .size(contentW - 480.0f, 18.0f)
-                            .text(sub)
+                            .text("点击卡片查看详情 · Ctrl+↑/↓ 移动选中任务 · 右键卡片/列头更多操作")
                             .fontSize(t.sizes.fontSizeSmall)
                             .lineHeight(18.0f)
-                            .color(statusIsError_ ? t.colors.error : t.colors.textSecondary)
+                            .color(t.colors.textSecondary)
                             .build();
                     })
                     .build();
@@ -1325,7 +1354,15 @@ private:
         const auto themeTokens = t.isDark ? components::theme::dark()
                                           : components::theme::light();
         const float w = 560.0f;
-        const float h = 560.0f;
+        // 「移动到」全列遍历 + 可换行：每行 4 个按钮，列多时增高弹窗
+        // （此前硬编码 i < 4，第 5 列起在详情弹窗里移不过去）
+        const float moveBtnW = 118.0f;
+        const float moveGap = 8.0f;
+        const int perRow = std::max(
+            1, static_cast<int>((w - 56.0f + moveGap) / (moveBtnW + moveGap)));
+        const int moveRows = static_cast<int>(
+            (columns_.size() + static_cast<size_t>(perRow) - 1) / perRow);
+        const float h = 560.0f + 40.0f * static_cast<float>(std::max(0, moveRows - 1));
 
         components::dialog(ui, "todo.dialog.detail")
             .open(detailOpen_)
@@ -1458,12 +1495,16 @@ private:
                     .lineHeight(16.0f)
                     .color(t.colors.textTertiary)
                     .build();
-                for (size_t i = 0; i < columns_.size() && i < 4; ++i) {
+                for (size_t i = 0; i < columns_.size(); ++i) {
                     const bool active = (columns_[i].id == detailColumnId_);
-                    const float bw = 118.0f;
+                    const int slot = static_cast<int>(i);
+                    const float bx = 28.0f +
+                        static_cast<float>(slot % perRow) * (moveBtnW + moveGap);
+                    const float by = 392.0f +
+                        static_cast<float>(slot / perRow) * 40.0f;
                     components::button(ui, "todo.dialog.detail.move." + std::to_string(i))
-                        .position(28.0f + static_cast<float>(i) * (bw + 8.0f), 392.0f)
-                        .size(bw, 32.0f)
+                        .position(bx, by)
+                        .size(moveBtnW, 32.0f)
                         .text(columns_[i].title)
                         .fontSize(t.sizes.fontSizeSmall - 1.0f)
                         .colors(active ? t.colors.primarySoftBg : t.colors.surfaceElevated,
@@ -1494,10 +1535,13 @@ private:
                     .textColor(t.colors.error)
                     .radius(t.sizes.radius)
                     .border(1.0f, t.colors.borderDefault)
+                    // 与右键菜单删除同路径：先弹确认（confirmOpen_），不再直接落库
                     .onClick([this] {
-                        const int64_t taskId = detailTaskId_;
+                        confirmTaskId_ = detailTaskId_;
+                        confirmTaskTitle_ = detailTitle_;
+                        confirmColumnId_ = 0;
                         detailOpen_ = false;
-                        doDeleteTask(taskId);
+                        confirmOpen_ = true;
                     })
                     .build();
 
@@ -1619,9 +1663,9 @@ private:
     int64_t confirmTaskId_ = 0;
     std::string confirmTaskTitle_;
 
-    // 顶部提示
-    std::string statusMessage_;
-    bool statusIsError_ = false;
+    // 状态反馈 toast（超时消失；subtitle 保持静态说明）
+    bool toastOpen_ = false;
+    std::string toastTitle_;
 
     // 数据加载错误（空 = 正常；与空态区分，见 drawBoard）
     std::string loadError_;
