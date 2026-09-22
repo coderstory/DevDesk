@@ -174,6 +174,13 @@ public:
         const float midW = (contentW - sideW * 2.0f - gap * 2.0f) / 2.0f;
         const float bodyH = contentH - 64.0f - t.sizes.spacingLarge;
 
+        // 页面背景自绘（仿 settings_module：main.cpp clearColor 固定浅色，
+        // 深色主题下页面必须自己铺底，否则黑底/浅底混色不可读——W7 P0-1）
+        ui.rect("md.pagebg")
+            .size(screen.width, screen.height)
+            .color(t.colors.background)
+            .build();
+
         ui.column("md.root")
             .size(screen.width, screen.height)
             .padding(pad)
