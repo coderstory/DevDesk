@@ -291,6 +291,22 @@ JsonObject JsonValue::asObject() const {
     return obj;
 }
 
+int JsonValue::size() const {
+    const auto* impl = getImpl(data_);
+    return impl->kind == JsonImpl::Kind::Array
+               ? static_cast<int>(impl->arrVal.size())
+               : 0;
+}
+
+JsonValue JsonValue::operator[](int index) const {
+    const auto* impl = getImpl(data_);
+    if (impl->kind == JsonImpl::Kind::Array && index >= 0 &&
+        static_cast<size_t>(index) < impl->arrVal.size()) {
+        return makeFromImpl(impl->arrVal[static_cast<size_t>(index)]);
+    }
+    return JsonValue();
+}
+
 // 工厂
 JsonValue makeNull() { return JsonValue(nullptr); }
 JsonValue makeBool(bool b) { return JsonValue(b); }
@@ -299,6 +315,21 @@ JsonValue makeDouble(double d) { return JsonValue(d); }
 JsonValue makeString(const std::string& s) { return JsonValue(s); }
 JsonValue makeObject() { return JsonValue(JsonObject()); }
 JsonValue makeArray() { JsonValue v; return v; }
+
+JsonValue makeStringArray(const std::vector<std::string>& items) {
+    JsonValue v;
+    auto* impl = getImpl(v.internal());
+    impl->kind = JsonImpl::Kind::Array;
+    impl->arrVal.reserve(items.size());
+    for (const auto& s : items) {
+        JsonImpl item;
+        item.kind = JsonImpl::Kind::String;
+        item.strVal = s;
+        impl->arrVal.push_back(std::move(item));
+    }
+    v.type_ = JsonValue::T_Array;
+    return v;
+}
 
 // 解析（yyjson；T11 实装——此前是返回 null 的桩，config.json 持久化首个消费者）
 core::Result<JsonValue> parse(const std::string& text) {

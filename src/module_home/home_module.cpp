@@ -122,6 +122,14 @@ std::string recentNoteSubtitle(const RecentNote& note, std::time_t now) {
     return sub;
 }
 
+// 模块注册感知（插拔方案 A §5.5）：按 Router 注册状态隐藏对应卡片/按钮，
+// 不显示陈旧数据、不显示故障态。appRouter() 为 null（无头测试）视为全启用
+// ——与模块既有 null-guard 行为一致
+bool moduleRegistered(::core::PageId page) {
+    auto* router = ::core::appRouter();
+    return router == nullptr || router->isRegistered(page);
+}
+
 } // namespace
 
 class HomeModule : public ::core::Module {
@@ -183,10 +191,18 @@ public:
         const float gap = t.sizes.spacingLarge * 1.25f; // 20
         const float contentW = screen.width - pad * 2.0f;
         const float cardGap = 20.0f;
-        const float statW = (contentW - cardGap * 4.0f) / 5.0f;
         // 卡高随字号缩放派生（卡内 y 布局同源缩放，大字号不裁切）
         const float statH = 120.0f * core::theme::fontScale();
         const std::time_t now = std::time(nullptr);
+
+        // 模块注册感知（插拔方案 A §5.5）：卡片/按钮按目标模块注册状态显隐
+        const bool claudeOn = moduleRegistered(::core::PageId::ClaudeProxy);
+        const bool mdOn = moduleRegistered(::core::PageId::Markdown);
+        const bool todoOn = moduleRegistered(::core::PageId::Todo);
+        // 统计卡可见数：Token/API 调用随 claude，笔记随 markdown，待办/逾期随
+        // todo；宽度按剩余数量现算（n=1..5），全关整行隐藏
+        const int statCount =
+            (claudeOn ? 2 : 0) + (mdOn ? 1 : 0) + (todoOn ? 2 : 0);
 
         // 页面背景自绘（与 settings_module 同款）：main.cpp clearColor 固定
         // 浅色，深色主题下页面必须自己铺底，否则浅色 clear 底 + 深色 token
@@ -292,10 +308,24 @@ public:
                               " 路并发 · 累计 " + sessionCn
                         : "空闲 · 累计 " + sessionCn;
 
+                if (statCount == 0) {
+                    // 三模块全关的空态兜底（§5.5）：欢迎区保留 + 一句引导
+                    ui.text("home.stats.alloff")
+                        .size(contentW, 32.0f)
+                        .text("所有工具模块已关闭，可在设置中开启")
+                        .fontSize(t.sizes.fontSizeBody)
+                        .lineHeight(32.0f)
+                        .color(t.colors.textTertiary)
+                        .build();
+                } else {
+                const float statW =
+                    (contentW - cardGap * static_cast<float>(statCount - 1)) /
+                    static_cast<float>(statCount);
                 ui.row("home.stats")
                     .size(contentW, statH)
                     .gap(cardGap)
                     .content([&] {
+                        if (claudeOn) {
                         drawStatCard(ui, "home.stat.tokens", statW, statH, t,
                                      "Token 速率 (tok/s)",
                                      formatRateTps(snap.rateTps), tokenBadge,
@@ -305,11 +335,15 @@ public:
                                                : &t.colors.textTertiary,
                                      streaming ? &t.colors.success : nullptr,
                                      0.5f);
+                        }
+                        if (mdOn) {
                         drawStatCard(ui, "home.stat.notes", statW, statH, t,
                                      "今日笔记", num(stats_.todayNotes),
                                      ok ? "今日修改过的笔记" : "加载失败",
                                      false,
                                      [this] { navigateTo(::core::PageId::Markdown); });
+                        }
+                        if (todoOn) {
                         drawStatCard(ui, "home.stat.todo", statW, statH, t,
                                      "待办任务", num(stats_.pendingTodos),
                                      ok ? "未完成总数" : "加载失败",
@@ -320,15 +354,21 @@ public:
                                      ok ? "已过截止时间" : "加载失败",
                                      stats_.overdueTodos > 0,
                                      [this] { navigateTo(::core::PageId::Todo); });
+                        }
+                        if (claudeOn) {
                         drawStatCard(ui, "home.stat.api", statW, statH, t,
                                      "API 调用", num(stats_.todayApiCalls),
                                      ok ? "今日代理调用" : "加载失败",
                                      false,
                                      [this] { navigateTo(::core::PageId::ClaudeProxy); });
+                        }
                     })
                     .build();
+                }
 
                 // ========== 最近编辑卡片（真实数据，stack 内绝对定位） ==========
+                // markdown 模块关闭 → 整卡隐藏（表还在但数据是死的，展示即欺骗）
+                if (mdOn) {
                 const int noteCount =
                     static_cast<int>(stats_.recentNotes.size());
                 const float itemH = 44.0f;
@@ -442,16 +482,24 @@ public:
                         }
                     })
                     .build();
+                }  // if (mdOn) 最近编辑
 
                 // ========== 快捷操作按钮组（Router payload 跨模块指令）==========
+                // 目标模块关闭 → 按钮隐藏，宽度按剩余数量均分；全关整行隐藏
+                const int actCount =
+                    (mdOn ? 1 : 0) + (todoOn ? 1 : 0) + (claudeOn ? 1 : 0);
+                if (actCount > 0) {
                 const float actGap = t.sizes.spacingLarge; // 16
-                const float actW = (contentW - actGap * 2.0f) / 3.0f;
+                const float actW =
+                    (contentW - actGap * static_cast<float>(actCount - 1)) /
+                    static_cast<float>(actCount);
                 ui.row("home.actions")
                     .size(contentW, 44.0f)
                     .gap(actGap)
                     .content([&] {
                         // + 新建笔记 → 跳 Markdown 并触发新建笔记弹窗
                         // （payload 由 Markdown 模块 compose 消费）
+                        if (mdOn) {
                         components::button(ui, "home.act.newnote")
                             .size(actW, 44.0f)
                             .text("+ 新建笔记")
@@ -465,8 +513,10 @@ public:
                                            "action:new_note");
                             })
                             .build();
+                        }
 
                         // + 新建任务 → 跳 Todo 并触发新建任务弹窗
+                        if (todoOn) {
                         components::button(ui, "home.act.newtodo")
                             .size(actW, 44.0f)
                             .text("+ 新建任务")
@@ -481,8 +531,10 @@ public:
                                            "action:new_task");
                             })
                             .build();
+                        }
 
                         // 切换 Claude Profile → Claude 模块（Profile 列表在该页）
+                        if (claudeOn) {
                         components::button(ui, "home.act.claude")
                             .size(actW, 44.0f)
                             .text("切换 Claude Profile")
@@ -496,8 +548,10 @@ public:
                             .border(1.0f, t.colors.borderDefault)
                             .onClick([this] { navigateTo(::core::PageId::ClaudeProxy); })
                             .build();
+                        }
                     })
                     .build();
+                }  // if (actCount > 0)
             })
             .build();
     }

@@ -27,6 +27,7 @@
 
 #include <filesystem>
 #include <string>
+#include <vector>
 
 #include "core/platform/window_effect.h"
 #include "core/result.h"
@@ -38,6 +39,17 @@ constexpr int kMinFontScalePercent = 85;
 constexpr int kMaxFontScalePercent = 130;
 // 日志保留天数上限（0 = 永久）
 constexpr int kMaxLogRetentionDays = 3650;
+
+// ---- 模块开关 ID（模块插拔方案 A，设计 2026-09-22 §5.1）----
+// 字符串与 pageIdToString 的小写对齐；config.json 的 enabledModules 数组用。
+inline constexpr const char* kModuleIdHome = "home";
+inline constexpr const char* kModuleIdMarkdown = "markdown";
+inline constexpr const char* kModuleIdTodo = "todo";
+inline constexpr const char* kModuleIdClaudeProxy = "claude_proxy";
+inline constexpr const char* kModuleIdSettings = "settings";
+
+// 默认全启用（字段缺失/解析失败回退；home/settings 恒启用见 kAlwaysOn）
+std::vector<std::string> defaultEnabledModules();
 
 // 窗口效果三档（磨砂设计 §3.4；档位字符串直接持久化进 config.json）
 inline constexpr const char* kWindowEffectOff = "off";
@@ -59,7 +71,15 @@ struct SettingsConfig {
     // 窗口效果（磨砂设计 Phase D）："off"（默认实色）| "translucent"（整体
     // 半透）| "frosted"（Acrylic 磨砂）。sanitized 把未知值收敛为 "off"
     std::string windowEffect = kWindowEffectOff;
+    // 模块开关（模块插拔方案 A）：可关的是三个工具模块（markdown/todo/
+    // claude_proxy）；home 是默认落地页、settings 是开关 UI 宿主，恒启用
+    //（sanitized 强制补齐）。缺省 = 全启用，老 config.json 零迁移兼容
+    std::vector<std::string> enabledModules = defaultEnabledModules();
 };
+
+// 模块开关判定（sanitized 后的 config 恒有效；home/settings 恒 true，未知
+// ID 恒 false）。main.cpp 装配门控与设置页卡片显隐共用这一个谓词
+bool moduleEnabled(const SettingsConfig& cfg, const std::string& moduleId);
 
 // ---- 窗口效果档位 → 参数映射（纯函数，供单测）----
 

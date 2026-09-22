@@ -71,6 +71,11 @@
 
 - 托管键（`ANTHROPIC_BASE_URL` / `ANTHROPIC_AUTH_TOKEN` / `ANTHROPIC_MODEL` / `ANTHROPIC_DEFAULT_*_MODEL(_NAME)` / `CLAUDE_CODE_SUBAGENT_MODEL` / extra_env 中配置的键）语义归 DevDesk：接管生效期间用户手工编辑这些键，会在下一次代理启动 / 切 profile 同步时被覆盖。用户自有其他 env 键与非 env 字段完全不受影响。已接受的设计边界（设计 §5.3 如实记录）。
 
+#### 12. Claude 模块关闭期间不执行崩溃补还原（module-gating，2026-09-22 登记）
+
+- 代理崩溃补还原（`recoverPendingSettingsRestore`）挂在 ClaudeService 创建路径上；按插拔方案 A 的语义（设计 §5.2），claude 模块关闭时 service 整体下线，补还原也随之不执行。若上次退出时处于接管状态（异常退出没走到还原）、且本次以关闭 claude 模块启动，`settings.json` 会保持托管值直至重新启用模块。
+- 缓解：重新启用 claude 模块并启动代理，下次正常退出即还原；升级路径是把补还原提升为 app 级启动步骤（不依赖模块开关），有真实踩坑再做。
+
 #### 12. env 热切换未做真机验证（留给用户人工点验）
 
 - 官方 settings-reference 文档背书 env 键在「saved change alters the merged env」时运行中会话即重载（设计 §9 问题 1 已关闭），但「真实 Claude Code 连本地代理跑一次对话 + 热切换后立即生效」的真机验证尚未执行——属用户人工点验项（见 CHANGELOG [Provider-Config] 的人工验证清单）。

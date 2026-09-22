@@ -69,8 +69,9 @@ public:
     std::string asString() const { return strVal_; }
     JsonObject asObject() const;
 
-    int size() const { return 0; }  // 数组简化
-    JsonValue operator[](int) const { return JsonValue(); }
+    // 数组访问（模块插拔 enabledModules 首个消费者；仅支持读，元素按值返回）
+    int size() const;
+    JsonValue operator[](int index) const;
 
     void* internal() const { return data_; }
 
@@ -97,6 +98,8 @@ JsonValue makeDouble(double d);
 JsonValue makeString(const std::string& s);
 JsonValue makeObject();
 JsonValue makeArray();
+// 字符串数组工厂（config.json 的 enabledModules；此前 makeArray 是空桩）
+JsonValue makeStringArray(const std::vector<std::string>& items);
 
 } // namespace json
 } // namespace platform

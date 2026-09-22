@@ -11,7 +11,28 @@ void Router::registerModule(Module* module) {
     if (module) modules_.push_back(module);
 }
 
+bool Router::isRegistered(PageId page) const {
+    for (auto* m : modules_) {
+        if (m && m->pageId() == page) return true;
+    }
+    return false;
+}
+
 void Router::navigateTo(PageId page, const std::string& payload) {
+    // 未注册页兜底（模块插拔方案 A，设计 §5.3）：目标模块被关闭后，任何
+    // 残留跳转入口（Home 卡片、文件打开分发等）都不送进"无页面"空白页，
+    // 回退 Home。Home 恒注册（kAlwaysOn），无递归风险；万一 Home 也没
+    // 注册（防御），保持当前页不动。payload 面向已关闭的模块，随跳转作废
+    if (!isRegistered(page)) {
+        LOG_WARN("跳转到未注册页面 " + std::string(pageIdToString(page)) +
+                 (payload.empty() ? std::string()
+                                  : "（负载 " + payload + "）") +
+                 "，回退 Home");
+        if (page != PageId::Home && isRegistered(PageId::Home)) {
+            navigateTo(PageId::Home);
+        }
+        return;
+    }
     LOG_INFO(payload.empty()
                  ? "导航到: " + std::string(pageIdToString(page))
                  : "导航到: " + std::string(pageIdToString(page)) + "（负载 " +

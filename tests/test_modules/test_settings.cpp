@@ -370,11 +370,13 @@ REGISTER_TEST(settings_log_dropdown_popup_stays_in_window, "settings: log dropdo
     std::unique_ptr<::core::Module> mod(create_settings_module());
     mod->onStart();
 
-    // 最小窗口 1200×720：日志卡贴近底部，向下展开的弹层会超出窗体，
-    // 应改向上展开（弹层整体留在窗体内且位于字段上方）
+    // 模块插拔后设置页 5 卡（外观/模块/目录/代理/日志），日志卡在小窗里被
+    // 滚出视口——取「日志卡贴近底部、字段可见」的最小窗口 1200×1000：
+    // 向下展开的弹层会超出窗体，应改向上展开（弹层整体留在窗体内且位于
+    // 字段上方）
     eui::Screen screen;
     screen.width = 1200.0f;
-    screen.height = 720.0f;
+    screen.height = 1000.0f;
     eui::Ui ui;
     ui.begin("small");
     mod->compose(ui, screen);
@@ -389,10 +391,10 @@ REGISTER_TEST(settings_log_dropdown_popup_stays_in_window, "settings: log dropdo
     DOCTEST_CHECK(popup->frame.y + popup->frame.height <= screen.height);
     DOCTEST_CHECK(popup->frame.y + popup->frame.height <= field->frame.y);
 
-    // 大窗口 1600×1000：下方空间充足，保持默认向下展开（弹层在字段下方）
+    // 大窗口 1600×1300：下方空间充足，保持默认向下展开（弹层在字段下方）
     eui::Screen tall;
     tall.width = 1600.0f;
-    tall.height = 1000.0f;
+    tall.height = 1300.0f;
     ui.begin("tall");
     mod->compose(ui, tall);
     ui.end();
@@ -699,5 +701,91 @@ REGISTER_TEST(settings_window_effect_apply_visuals, "settings: applyWindowVisual
     ms::applyWindowVisuals(ms::kWindowEffectOff);
     DOCTEST_CHECK(app::currentClearColor().a == 1.0f);
     DOCTEST_CHECK(app::currentWindowEffect() == WE::None);
+    return true;
+})
+
+// ============ 模块插拔（方案 A）：模块管理卡 + 卡片门控 ============
+
+REGISTER_TEST(settings_modules_card_renders, "settings: 模块管理卡渲染（3 个工具模块开关）", {
+    PruneEnv env("modcard");
+    std::unique_ptr<::core::Module> mod(create_settings_module());
+    mod->onStart();  // 读 PruneEnv 指向的临时 config（无文件 → 默认全启用）
+    eui::Screen screen;
+    screen.width = 1600.0f;
+    screen.height = 1000.0f;
+    eui::Ui ui;
+    ui.begin("modcard");
+    mod->compose(ui, screen);
+    ui.end();
+
+    DOCTEST_CHECK(ui.find("settings.card.modules.bg") != nullptr);
+    DOCTEST_CHECK(ui.find("settings.card.modules.sw.0") != nullptr);
+    DOCTEST_CHECK(ui.find("settings.card.modules.sw.1") != nullptr);
+    DOCTEST_CHECK(ui.find("settings.card.modules.sw.2") != nullptr);
+    // 描述文案含重启提示（设计 §5.4）
+    const auto* desc = ui.find("settings.card.modules.desc");
+    DOCTEST_REQUIRE(desc != nullptr);
+    DOCTEST_CHECK(desc->text.find("重启") != std::string::npos);
+    mod->onStop();
+    ::core::theme::setDark();
+    return true;
+})
+
+REGISTER_TEST(settings_gated_proxy_card_hidden, "settings: claude 模块关闭 → 代理卡整卡隐藏", {
+    PruneEnv env("gateclaude");
+    // claude_proxy 关闭（markdown/todo 开）
+    module::settings::SettingsConfig cfg;
+    cfg.enabledModules.clear();
+    cfg.enabledModules.push_back(module::settings::kModuleIdHome);
+    cfg.enabledModules.push_back(module::settings::kModuleIdMarkdown);
+    cfg.enabledModules.push_back(module::settings::kModuleIdTodo);
+    cfg.enabledModules.push_back(module::settings::kModuleIdSettings);
+    DOCTEST_REQUIRE(module::settings::SettingsStore(env.cfgPath).save(cfg).isOk());
+
+    std::unique_ptr<::core::Module> mod(create_settings_module());
+    mod->onStart();  // 读临时 config：claude 关
+    eui::Screen screen;
+    screen.width = 1600.0f;
+    screen.height = 1000.0f;
+    eui::Ui ui;
+    ui.begin("gateclaude");
+    mod->compose(ui, screen);
+    ui.end();
+
+    DOCTEST_CHECK(ui.find("settings.card.proxy.bg") == nullptr);  // 整卡隐藏
+    DOCTEST_CHECK(ui.find("settings.card.proxy.token.value") == nullptr);
+    DOCTEST_CHECK(ui.find("settings.card.directory.bg") != nullptr);  // markdown 开
+    DOCTEST_CHECK(ui.find("settings.card.log.bg") != nullptr);
+    DOCTEST_CHECK(ui.find("settings.card.modules.bg") != nullptr);
+    mod->onStop();
+    ::core::theme::setDark();
+    return true;
+})
+
+REGISTER_TEST(settings_gated_directory_card_hidden, "settings: markdown 模块关闭 → 目录卡整卡隐藏", {
+    PruneEnv env("gatemd");
+    // markdown 关闭（claude 开）
+    module::settings::SettingsConfig cfg;
+    cfg.enabledModules.clear();
+    cfg.enabledModules.push_back(module::settings::kModuleIdHome);
+    cfg.enabledModules.push_back(module::settings::kModuleIdTodo);
+    cfg.enabledModules.push_back(module::settings::kModuleIdClaudeProxy);
+    cfg.enabledModules.push_back(module::settings::kModuleIdSettings);
+    DOCTEST_REQUIRE(module::settings::SettingsStore(env.cfgPath).save(cfg).isOk());
+
+    std::unique_ptr<::core::Module> mod(create_settings_module());
+    mod->onStart();
+    eui::Screen screen;
+    screen.width = 1600.0f;
+    screen.height = 1000.0f;
+    eui::Ui ui;
+    ui.begin("gatemd");
+    mod->compose(ui, screen);
+    ui.end();
+
+    DOCTEST_CHECK(ui.find("settings.card.directory.bg") == nullptr);  // 整卡隐藏
+    DOCTEST_CHECK(ui.find("settings.card.proxy.bg") != nullptr);  // claude 开
+    mod->onStop();
+    ::core::theme::setDark();
     return true;
 })
