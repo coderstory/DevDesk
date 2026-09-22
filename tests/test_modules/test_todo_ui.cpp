@@ -882,6 +882,60 @@ REGISTER_TEST(todo_ui_ctx_edit_and_delete,
     return true;
 })
 
+// 详情弹窗「删除」也走确认弹窗（与右键菜单路径行为统一）
+REGISTER_TEST(todo_ui_detail_delete_confirms,
+              "todo_ui: 详情弹窗删除先弹确认（headless）", {
+    TestEnv env;
+    DOCTEST_REQUIRE(env.ready);
+    auto col = env.svc->createColumn("详情删除列");
+    DOCTEST_REQUIRE(col.isOk());
+    auto a = env.svc->createTask(col.value().id, "详情待删任务");
+    DOCTEST_REQUIRE(a.isOk());
+
+    std::unique_ptr<::core::Module> mod(create_todo_module());
+    mod->onStart();
+
+    // 右键卡片 → 编辑 → 打开详情弹窗
+    {
+        Frame frame(mod.get());
+        eui::PointerEvent pe;
+        eui::Rect rect;
+        const auto* card = frame.ui.find("todo.col.4.card.0.bg");
+        DOCTEST_REQUIRE(card != nullptr);
+        card->onContextMenu(pe, rect);
+        frame.refresh();
+        const auto* edit = frame.ui.find("todo.ctx.level.0.item.0");
+        DOCTEST_REQUIRE(edit != nullptr);
+        edit->onClick();
+        frame.refresh();
+        DOCTEST_REQUIRE(frame.ui.find("todo.dialog.detail.input.title") != nullptr);
+
+        // 点详情里的「删除」→ 不应直接删，而是切到确认弹窗（文案含任务标题）
+        const auto* del = frame.ui.find("todo.dialog.detail.delete.bg");
+        DOCTEST_REQUIRE(del != nullptr);
+        DOCTEST_REQUIRE(del->onClick != nullptr);
+        del->onClick();
+        frame.refresh();
+        const auto* body = frame.ui.find("todo.dialog.delcol.body");
+        DOCTEST_REQUIRE(body != nullptr);
+        DOCTEST_CHECK(body->text.find("详情待删任务") != std::string::npos);
+
+        // 确认弹窗点「取消」→ 任务仍在
+        const auto* cancel = frame.ui.find("todo.dialog.delcol.cancel.bg");
+        DOCTEST_REQUIRE(cancel != nullptr);
+        DOCTEST_REQUIRE(cancel->onClick != nullptr);
+        cancel->onClick();
+    }
+    {
+        auto ts = env.svc->listTasks(col.value().id);
+        DOCTEST_REQUIRE(ts.isOk());
+        DOCTEST_CHECK_EQ(ts.value().size(), 1u);
+    }
+
+    mod->onStop();
+    return true;
+})
+
 REGISTER_TEST(todo_ui_fontscale_tokens,
               "todo_ui: 模块字号经 token 派生，全局缩放生效（headless）", {
     TestEnv env;

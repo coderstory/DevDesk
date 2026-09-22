@@ -1494,10 +1494,13 @@ private:
                     .textColor(t.colors.error)
                     .radius(t.sizes.radius)
                     .border(1.0f, t.colors.borderDefault)
+                    // 与右键菜单删除同路径：先弹确认（confirmOpen_），不再直接落库
                     .onClick([this] {
-                        const int64_t taskId = detailTaskId_;
+                        confirmTaskId_ = detailTaskId_;
+                        confirmTaskTitle_ = detailTitle_;
+                        confirmColumnId_ = 0;
                         detailOpen_ = false;
-                        doDeleteTask(taskId);
+                        confirmOpen_ = true;
                     })
                     .build();
 
