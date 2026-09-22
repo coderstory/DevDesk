@@ -130,7 +130,7 @@ void petCompose(eui::Ui& ui, const eui::Screen& screen) {
         .position(state.menuX, state.menuY)
         .items(std::vector<components::ContextMenuItem>{
             {state.clickThrough ? "关闭鼠标穿透" : "挂机穿透（点击透到下层）"},
-            {"隐藏桌宠（设置页可重新开启）"},
+            {"隐藏桌宠（本次会话；重启后恢复，设置页开关也需重启生效）"},
             {"退出 DevDesk"},
         })
         .open(state.menuOpen)
@@ -209,16 +209,15 @@ void startPetWindow(const PetWindowConfig& config) {
     const bool haveWorkArea = workW > 0 && workH > 0;
     int x = config.x;
     int y = config.y;
-    if (x < 0 || y < 0) {
-        if (haveWorkArea) {
-            x = workX + workW - rt.skin.frameWidth - 48;
-            y = workY + workH - rt.skin.frameHeight - 48;
-        } else {
-            x = 100;
-            y = 100;
-        }
+    // 单边独立处理 -1 哨兵：只重置未设置的那一边（只存了 x 时 y 不丢）
+    if (x < 0) {
+        x = haveWorkArea ? workX + workW - rt.skin.frameWidth - 48 : 100;
     } else if (haveWorkArea) {
         x = std::clamp(x, workX, workX + std::max(0, workW - rt.skin.frameWidth));
+    }
+    if (y < 0) {
+        y = haveWorkArea ? workY + workH - rt.skin.frameHeight - 48 : 100;
+    } else if (haveWorkArea) {
         y = std::clamp(y, workY, workY + std::max(0, workH - rt.skin.frameHeight));
     }
     rt.config.x = x;

@@ -438,24 +438,4 @@ std::vector<std::filesystem::path> skinRootCandidates() {
     return roots;
 }
 
-std::vector<std::string> discoverSkins() {
-    std::vector<std::string> names;
-    std::error_code ec;
-    for (const std::filesystem::path& root : skinRootCandidates()) {
-        if (!std::filesystem::exists(root, ec) || ec) {
-            continue;
-        }
-        for (const auto& entry : std::filesystem::directory_iterator(root, ec)) {
-            if (ec || !entry.is_directory(ec)) continue;
-            const std::string name = entry.path().filename().string();
-            if (std::filesystem::exists(entry.path() / "pet.json", ec) && !ec &&
-                std::find(names.begin(), names.end(), name) == names.end()) {
-                names.push_back(name);
-            }
-        }
-    }
-    std::sort(names.begin(), names.end());
-    return names;
-}
-
 } // namespace module::pet

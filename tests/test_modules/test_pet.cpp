@@ -308,6 +308,14 @@ REGISTER_TEST(pet_start_window_request, "pet: 开窗请求逐字段断言（无�
     DOCTEST_CHECK(second[0].mousePassthrough);   // 本次 clickThrough=true
     DOCTEST_CHECK(second[0].width == 128);       // 默认皮肤 128×128
 
+    // 单边 -1 哨兵：只重置未设置的那一边，已知坐标不丢
+    //（无头环境无工作区 → 未设置边落到兜底值 100）
+    module::pet::startPetWindow(module::pet::PetWindowConfig{"", 77, -1, false});
+    std::vector<app::DslWindowRequest> third = app::consumeWindowRequests();
+    DOCTEST_CHECK_EQ(third.size(), static_cast<size_t>(1));
+    DOCTEST_CHECK_EQ(third[0].x, 77);   // 已知的 x 原样保留
+    DOCTEST_CHECK_EQ(third[0].y, 100);  // 未设置的 y 走兜底
+
     setEnvVar("DEVDESK_PETS_DIR", "");
     removeTreeQuietly(petsRoot);
     return true;
