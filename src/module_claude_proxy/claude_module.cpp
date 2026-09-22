@@ -723,11 +723,9 @@ public:
 
     void onStart() override {
         LOG_INFO("Claude 模块启动");
-        // 代理由 main.cpp 的 dslAppConfig() 启动（全局唯一）。
-        // 这里只在尚未启动时兜底启动一次，避免模块独立运行时没有代理。
         ClaudeService* svc = ClaudeService::global();
         if (!svc) {
-            LOG_WARN("onStart: ClaudeService::global() 为 null，跳过代理启动");
+            LOG_WARN("onStart: ClaudeService::global() 为 null");
             return;
         }
         // 启动时孤儿密钥清理（一次扫描，删除无对应 profile 的 keychain 条目）
@@ -735,17 +733,15 @@ public:
         if (orphan.isFail()) {
             LOG_WARN("onStart: 孤儿 Keychain 清理失败 - " + orphan.errorMessage());
         }
+        // 硬性需求 1（provider-config Phase B）：代理默认不启动，不再兜底
+        // startProxy——由 main.cpp 按设置页「随应用启动」门控，或用户点本页
+        // 右上角按钮手动启动；这里只做状态日志
         if (svc->isProxyRunning()) {
             LOG_INFO("onStart: 代理已在运行 port=" +
                      std::to_string(svc->proxyPort()));
-            return;
+        } else {
+            LOG_INFO("onStart: 代理未运行（默认不自动启动，等待用户手动启动）");
         }
-        auto r = svc->startProxy("127.0.0.1", 8888);
-        if (r.isFail()) {
-            LOG_ERROR("onStart: 启动代理失败 - " + r.errorMessage());
-            return;
-        }
-        LOG_INFO("onStart: 代理已启动 port=" + std::to_string(r.value()));
     }
 
     void onStop() override {
@@ -1258,6 +1254,9 @@ private:
             showToast("启动代理失败", r.errorMessage(), true);
             return;
         }
+        // 手动启动是 Phase B 后的主启动路径，凭据文件同步重写
+        //（此前只有 main 自启 / 设置页重生成两条路径写）
+        writeProxyTokenFile(svc->proxyAuthToken(), r.value());
         showToast("代理已启动",
                   "监听 http://127.0.0.1:" + std::to_string(r.value()), false);
     }

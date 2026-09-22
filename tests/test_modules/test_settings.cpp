@@ -92,6 +92,31 @@ REGISTER_TEST(settings_defaults_on_missing_file, "settings: missing file -> defa
     return true;
 })
 
+REGISTER_TEST(settings_proxy_autostart_default_off, "settings: claudeProxyAutoStart 默认 false + 读写往返", {
+    // 硬性需求 1（provider-config Phase B）：默认不启动代理
+    const auto path = tempConfigFile("autostart");
+    removeQuietly(path);
+    module::settings::SettingsStore store(path);
+
+    // 默认 false
+    DOCTEST_CHECK_FALSE(store.load().claudeProxyAutoStart);
+
+    // 打开后持久化 + 读回 true
+    module::settings::SettingsConfig cfg;
+    cfg.claudeProxyAutoStart = true;
+    DOCTEST_REQUIRE(store.save(cfg).isOk());
+    DOCTEST_CHECK(store.load().claudeProxyAutoStart);
+
+    // 存量 config.json（无该键）→ 保持默认 false
+    {
+        std::ofstream f(path, std::ios::trunc);
+        f << R"({"theme": "light", "logRetentionDays": 30})";
+    }
+    DOCTEST_CHECK_FALSE(store.load().claudeProxyAutoStart);
+    removeQuietly(path);
+    return true;
+})
+
 REGISTER_TEST(settings_save_load_roundtrip, "settings: save/load roundtrip", {
     const auto path = tempConfigFile("roundtrip");
     removeQuietly(path);
