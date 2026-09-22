@@ -304,7 +304,7 @@ public:
                         drawStatCard(ui, "home.stat.overdue", statW, statH, t,
                                      "逾期任务", num(stats_.overdueTodos),
                                      ok ? "已过截止时间" : "尚未加载",
-                                     true,
+                                     stats_.overdueTodos > 0,
                                      [this] { navigateTo(::core::PageId::Todo); });
                         drawStatCard(ui, "home.stat.api", statW, statH, t,
                                      "API 调用", num(stats_.todayApiCalls),
