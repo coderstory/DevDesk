@@ -43,6 +43,11 @@ void drawStatCard(eui::Ui& ui,
                   const eui::Color* numberColor = nullptr,
                   const eui::Color* badgeColor = nullptr,
                   float timerSeconds = 0.0f) {
+    // 卡内布局常量随全局字号缩放派生：行高/内边距固定 px 在大字号下会
+    // 裁切数字（W7 稳定化），fontSize* token 已在 theme 层缩放
+    const float s = core::theme::fontScale();
+    const float badgeFont = t.sizes.fontSizeSmall - 2.0f; // 11px @ scale 1
+    const float padX = 28.0f * s;
     ui.stack(id)
         .size(width, height)
         .content([&] {
@@ -56,20 +61,20 @@ void drawStatCard(eui::Ui& ui,
                 .build();
 
             ui.text(id + ".label")
-                .position(28.0f, 20.0f)
-                .size(width - 56.0f, 16.0f)
+                .position(padX, 20.0f * s)
+                .size(width - padX * 2.0f, 16.0f * s)
                 .text(label)
                 .fontSize(t.sizes.fontSizeSmall - 1.0f)
-                .lineHeight(16.0f)
+                .lineHeight(16.0f * s)
                 .color(t.colors.textSecondary)
                 .build();
 
             ui.text(id + ".number")
-                .position(28.0f, 42.0f)
-                .size(width - 56.0f, 56.0f)
+                .position(padX, 42.0f * s)
+                .size(width - padX * 2.0f, 56.0f * s)
                 .text(number)
                 .fontSize(t.sizes.fontSizeDisplay)
-                .lineHeight(56.0f)
+                .lineHeight(56.0f * s)
                 .fontWeight(700)
                 .color(numberColor ? *numberColor
                                    : (accent ? t.colors.error
@@ -77,11 +82,11 @@ void drawStatCard(eui::Ui& ui,
                 .build();
 
             ui.text(id + ".badge")
-                .position(28.0f, 98.0f)
-                .size(width - 56.0f, 14.0f)
+                .position(padX, 98.0f * s)
+                .size(width - padX * 2.0f, badgeFont + 3.0f)
                 .text(badge)
-                .fontSize(11.0f)
-                .lineHeight(14.0f)
+                .fontSize(badgeFont)
+                .lineHeight(badgeFont + 3.0f)
                 .color(badgeColor ? *badgeColor
                                   : (accent ? t.colors.error
                                             : t.colors.textTertiary))
@@ -173,7 +178,8 @@ public:
         const float contentW = screen.width - pad * 2.0f;
         const float cardGap = 20.0f;
         const float statW = (contentW - cardGap * 4.0f) / 5.0f;
-        const float statH = 120.0f;
+        // 卡高随字号缩放派生（卡内 y 布局同源缩放，大字号不裁切）
+        const float statH = 120.0f * core::theme::fontScale();
         const std::time_t now = std::time(nullptr);
 
         // 页面背景自绘（与 settings_module 同款）：main.cpp clearColor 固定
@@ -411,8 +417,8 @@ public:
                                     .position(72.0f, iy + 18.0f)
                                     .size(contentW - 120.0f, 14.0f)
                                     .text(recentNoteSubtitle(note, now))
-                                    .fontSize(11.0f)
-                                    .lineHeight(14.0f)
+                                    .fontSize(t.sizes.fontSizeSmall - 2.0f)
+                                    .lineHeight(t.sizes.fontSizeSmall + 1.0f)
                                     .color(t.colors.textTertiary)
                                     .build();
                             }
