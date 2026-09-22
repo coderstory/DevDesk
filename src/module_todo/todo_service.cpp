@@ -98,7 +98,7 @@ core::Result<Column> TodoService::parseColumnRow(const core::data::SqlRow& row) 
             c.color = colorResult.value();
         }
     }
-    // kind 可能为 NULL（migration v3 之前的行 / 用户新建列）→ 留空 = 普通列
+    // kind 可能为 NULL（migration v4 之前的行 / 用户新建列）→ 留空 = 普通列
     if (!row.isNull("kind")) {
         auto kindResult = row.getString("kind");
         if (kindResult.isOk()) {
@@ -304,7 +304,7 @@ core::Result<Column> TodoService::createColumn(const std::string& title) {
     c.title = title;
     c.position = pos;
     c.color = std::nullopt;
-    c.kind = "";  // 用户新建列默认普通列（迁移 v3 只回填种子列）
+    c.kind = "";  // 用户新建列默认普通列（迁移 v4 只回填种子列）
     return core::Result<Column>::ok(std::move(c));
 }
 
