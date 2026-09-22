@@ -348,7 +348,8 @@ public:
             reloadAll();
             return;
         }
-        setStatus("任务已完成 ✓");
+        // toast 图标通道已带 fa-check（drawToast），正文不再混排 ✓ 字符
+        setStatus("任务已完成");
         reloadAll();
     }
 
@@ -1080,7 +1081,7 @@ private:
             ui.text(id + ".done")
                 .position(width - 36.0f, y + 14.0f)
                 .size(24.0f, 18.0f)
-                .text("✓")
+                .icon(0xF00C)  // fa-check（✓ 字符混排正文不可行，走 icon 通道）
                 .fontSize(t.sizes.fontSizeBody - 1.0f)
                 .lineHeight(18.0f)
                 .horizontalAlign(eui::HorizontalAlign::Center)
@@ -1544,9 +1545,14 @@ private:
                                           : components::theme::light();
         const float w = 560.0f;
         const float rowH = 44.0f;
-        // ponytail: 不做滚动——逾期列表通常个位数，封顶 640 高；超长再上 scrollView
+        constexpr float kMaxDialogH = 640.0f;
+        // 行数按封顶高度截断（终验复审：≥13 条时高度封顶 640 但行仍全量渲染，
+        // 第 13 条起画到弹窗外；标题保留总数，提示行标注截断）
+        const size_t maxRows =
+            static_cast<size_t>((kMaxDialogH - 96.0f) / rowH);  // = 12
+        const size_t shown = std::min(overdueTasks_.size(), maxRows);
         const float h =
-            std::min(640.0f, 96.0f + rowH * static_cast<float>(overdueTasks_.size()));
+            std::min(kMaxDialogH, 96.0f + rowH * static_cast<float>(shown));
 
         components::dialog(ui, "todo.dialog.overdue")
             .open(overdueOpen_)
@@ -1555,26 +1561,38 @@ private:
             .theme(themeTokens)
             .onOpenChange([this](bool v) { overdueOpen_ = v; })
             .content([&] {
-                ui.text("todo.dialog.overdue.title")
+                ui.text("todo.dialog.overdue.title.icon")
                     .position(28.0f, 20.0f)
-                    .size(w - 56.0f, 28.0f)
-                    .text("⚠ 逾期任务（" + std::to_string(overdueTasks_.size()) + "）")
+                    .size(18.0f, 28.0f)
+                    .icon(0xF071)  // fa-triangle-exclamation（⚠ 字符换 FA）
+                    .fontSize(t.sizes.fontSizeLarge + 2.0f)
+                    .lineHeight(28.0f)
+                    .color(t.colors.error)
+                    .build();
+                ui.text("todo.dialog.overdue.title")
+                    .position(50.0f, 20.0f)
+                    .size(w - 78.0f, 28.0f)
+                    .text("逾期任务（" + std::to_string(overdueTasks_.size()) + "）")
                     .fontSize(t.sizes.fontSizeLarge + 2.0f)
                     .lineHeight(28.0f)
                     .fontWeight(700)
                     .color(t.colors.error)
                     .build();
+                std::string hint = "任务名 · 所属列 · 截止 · 逾期天数，点击行跳转详情";
+                if (overdueTasks_.size() > shown) {
+                    hint += "（仅显示前 " + std::to_string(shown) + " 条）";
+                }
                 ui.text("todo.dialog.overdue.hint")
                     .position(28.0f, 50.0f)
                     .size(w - 56.0f, 16.0f)
-                    .text("任务名 · 所属列 · 截止 · 逾期天数，点击行跳转详情")
+                    .text(hint)
                     .fontSize(t.sizes.fontSizeSmall - 2.0f)
                     .lineHeight(16.0f)
                     .color(t.colors.textTertiary)
                     .build();
 
                 const int64_t now = static_cast<int64_t>(std::time(nullptr));
-                for (size_t i = 0; i < overdueTasks_.size(); ++i) {
+                for (size_t i = 0; i < shown; ++i) {
                     const Task& task = overdueTasks_[i];
                     const float y = 74.0f + static_cast<float>(i) * rowH;
                     const std::string rowId =
@@ -1910,10 +1928,13 @@ private:
                 components::button(ui, "todo.dialog.detail.toggle")
                     .position(132.0f, btnY)
                     .size(132.0f, 40.0f)
-                    .text(detailCompleted_ ? "↩ 取消完成" : "✓ 标记完成")
+                    .icon(detailCompleted_ ? 0xF021 : 0xF00C)  // fa-arrows-rotate / fa-check
+                    .text(detailCompleted_ ? "取消完成" : "标记完成")
                     .fontSize(t.sizes.fontSizeSmall)
                     .colors(t.colors.surfaceElevated, t.colors.hover, t.colors.active)
                     .textColor(detailCompleted_ ? t.colors.textSecondary : t.colors.success)
+                    .iconColor(detailCompleted_ ? t.colors.textSecondary
+                                                : t.colors.success)
                     .radius(t.sizes.radius)
                     .border(1.0f, t.colors.borderDefault)
                     .onClick([this] {
