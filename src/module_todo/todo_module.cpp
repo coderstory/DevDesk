@@ -249,14 +249,16 @@ public:
         reloadAll();
     }
 
-    void doMoveTask(int64_t taskId, int64_t toColumnId, int newPosition) {
-        if (!service_) return;
+    // 返回是否成功（拖拽收尾要区分成败给提示；其余调用方忽略返回值）
+    bool doMoveTask(int64_t taskId, int64_t toColumnId, int newPosition) {
+        if (!service_) return false;
         auto r = service_->moveTask(taskId, toColumnId, newPosition);
         if (r.isFail()) {
             setStatus("移动失败：" + r.errorMessage(), true);
-            return;
+            return false;
         }
         reloadAll();
+        return true;
     }
 
     void doCompleteTask(int64_t taskId) {
@@ -411,8 +413,9 @@ public:
         if (target >= static_cast<int>(columns_.size())) return;
         const auto& dst = columns_[static_cast<size_t>(target)];
         const std::string title = dst.title;
-        doMoveTask(taskId, dst.id, ui::computeAppendPosition(tasks_, dst.id));
-        setStatus("已移动到「" + title + "」");
+        if (doMoveTask(taskId, dst.id, ui::computeAppendPosition(tasks_, dst.id))) {
+            setStatus("已移动到「" + title + "」");  // 失败时保留 doMoveTask 的错误提示
+        }
     }
 
     const Task* findTask(int64_t id) const {
