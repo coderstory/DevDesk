@@ -1336,7 +1336,15 @@ private:
         const auto themeTokens = t.isDark ? components::theme::dark()
                                           : components::theme::light();
         const float w = 560.0f;
-        const float h = 560.0f;
+        // 「移动到」全列遍历 + 可换行：每行 4 个按钮，列多时增高弹窗
+        // （此前硬编码 i < 4，第 5 列起在详情弹窗里移不过去）
+        const float moveBtnW = 118.0f;
+        const float moveGap = 8.0f;
+        const int perRow = std::max(
+            1, static_cast<int>((w - 56.0f + moveGap) / (moveBtnW + moveGap)));
+        const int moveRows = static_cast<int>(
+            (columns_.size() + static_cast<size_t>(perRow) - 1) / perRow);
+        const float h = 560.0f + 40.0f * static_cast<float>(std::max(0, moveRows - 1));
 
         components::dialog(ui, "todo.dialog.detail")
             .open(detailOpen_)
@@ -1469,12 +1477,16 @@ private:
                     .lineHeight(16.0f)
                     .color(t.colors.textTertiary)
                     .build();
-                for (size_t i = 0; i < columns_.size() && i < 4; ++i) {
+                for (size_t i = 0; i < columns_.size(); ++i) {
                     const bool active = (columns_[i].id == detailColumnId_);
-                    const float bw = 118.0f;
+                    const int slot = static_cast<int>(i);
+                    const float bx = 28.0f +
+                        static_cast<float>(slot % perRow) * (moveBtnW + moveGap);
+                    const float by = 392.0f +
+                        static_cast<float>(slot / perRow) * 40.0f;
                     components::button(ui, "todo.dialog.detail.move." + std::to_string(i))
-                        .position(28.0f + static_cast<float>(i) * (bw + 8.0f), 392.0f)
-                        .size(bw, 32.0f)
+                        .position(bx, by)
+                        .size(moveBtnW, 32.0f)
                         .text(columns_[i].title)
                         .fontSize(t.sizes.fontSizeSmall - 1.0f)
                         .colors(active ? t.colors.primarySoftBg : t.colors.surfaceElevated,

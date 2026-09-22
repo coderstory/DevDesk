@@ -990,6 +990,56 @@ REGISTER_TEST(todo_ui_complete_by_kind,
     return true;
 })
 
+// 详情弹窗「移动到」全列遍历（此前硬编码 i < 4，第 5 列起不可移）
+REGISTER_TEST(todo_ui_detail_move_all_columns,
+              "todo_ui: 详情弹窗移动到覆盖全部列（headless）", {
+    TestEnv env;
+    DOCTEST_REQUIRE(env.ready);
+    auto list = env.svc->listColumns();
+    DOCTEST_REQUIRE(list.isOk());
+    const int64_t todoCol = list.value()[0].id;
+    // 补 2 列 → 共 6 列（超过旧的 4 列上限）
+    DOCTEST_REQUIRE(env.svc->createColumn("第五列").isOk());
+    DOCTEST_REQUIRE(env.svc->createColumn("第六列").isOk());
+    auto a = env.svc->createTask(todoCol, "跨列移动任务");
+    DOCTEST_REQUIRE(a.isOk());
+
+    std::unique_ptr<::core::Module> mod(create_todo_module());
+    mod->onStart();
+
+    // 打开详情 → 第 5、6 列按钮都存在，点第 6 列按钮任务真的移过去
+    {
+        Frame frame(mod.get());
+        eui::PointerEvent pe;
+        eui::Rect rect;
+        const auto* card = frame.ui.find("todo.col.0.card.0.bg");
+        DOCTEST_REQUIRE(card != nullptr);
+        card->onContextMenu(pe, rect);
+        frame.refresh();
+        const auto* edit = frame.ui.find("todo.ctx.level.0.item.0");
+        DOCTEST_REQUIRE(edit != nullptr);
+        edit->onClick();
+        frame.refresh();
+        DOCTEST_REQUIRE(frame.ui.find("todo.dialog.detail.move.3") != nullptr);
+        const auto* move5 = frame.ui.find("todo.dialog.detail.move.5.bg");
+        DOCTEST_REQUIRE(move5 != nullptr);
+        DOCTEST_REQUIRE(move5->onClick != nullptr);
+        move5->onClick();
+    }
+    {
+        auto list2 = env.svc->listColumns();
+        DOCTEST_REQUIRE(list2.isOk());
+        DOCTEST_REQUIRE_EQ(list2.value().size(), 6u);
+        auto inSixth = env.svc->listTasks(list2.value()[5].id);
+        DOCTEST_REQUIRE(inSixth.isOk());
+        DOCTEST_REQUIRE_EQ(inSixth.value().size(), 1u);
+        DOCTEST_CHECK_EQ(inSixth.value()[0].title, std::string("跨列移动任务"));
+    }
+
+    mod->onStop();
+    return true;
+})
+
 REGISTER_TEST(todo_ui_fontscale_tokens,
               "todo_ui: 模块字号经 token 派生，全局缩放生效（headless）", {
     TestEnv env;
