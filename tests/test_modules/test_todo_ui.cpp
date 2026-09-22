@@ -768,3 +768,57 @@ REGISTER_TEST(todo_ui_fontscale_tokens,
     DOCTEST_CHECK_EQ(scaled, 15.0f * 1.3f - 1.0f);
     return true;
 })
+
+// ---- 4. 深色主题列区域白底回归 ----
+// 根因：列头右键热区 ui.rect(id + ".head") 没设 color，Element::color 默认
+// {1,1,1,1} 不透明白 → 深色主题下每列列头被整条刷白（浅色下白底不可见）。
+// 这里全树扫描：深色主题下 Todo 页任何 Rect 元素都不允许是「不透明近白色」。
+namespace {
+
+void collectOpaqueWhiteRects(const core::dsl::Element* el,
+                             std::vector<const core::dsl::Element*>* out) {
+    if (el == nullptr) return;
+    if (el->kind == core::dsl::ElementKind::Rect &&
+        el->color.a > 0.99f && el->color.r > 0.9f &&
+        el->color.g > 0.9f && el->color.b > 0.9f) {
+        out->push_back(el);
+    }
+    for (const auto& child : el->children) {
+        collectOpaqueWhiteRects(child.get(), out);
+    }
+}
+
+} // namespace
+
+REGISTER_TEST(todo_ui_dark_no_white_rects,
+              "todo_ui: 深色主题下列区域无白底 Rect（.head 热区回归）", {
+    TestEnv env;
+    DOCTEST_REQUIRE(env.ready);
+    auto col = env.svc->createColumn("深色列");
+    DOCTEST_REQUIRE(col.isOk());
+    auto a = env.svc->createTask(col.value().id, "深色任务");
+    DOCTEST_REQUIRE(a.isOk());
+
+    std::unique_ptr<::core::Module> mod(create_todo_module());
+    mod->onStart();
+
+    ::core::theme::setDark();   // 默认即深色，显式声明本用例前提
+    Frame frame(mod.get());
+
+    // 直接回归点：列头热区必须是全透明（默认白是 bug）
+    const auto* head = frame.ui.find("todo.col.4.head");
+    DOCTEST_REQUIRE(head != nullptr);
+    DOCTEST_CHECK_EQ(head->color.a, 0.0f);
+
+    // 全树兜底：深色主题下不允许任何不透明近白 Rect
+    std::vector<const core::dsl::Element*> whites;
+    for (const auto& root : frame.ui.roots()) {
+        collectOpaqueWhiteRects(root.get(), &whites);
+    }
+    for (const auto* el : whites) {
+        // 失败时直接输出元素 id，一眼定位
+        DOCTEST_CHECK_MESSAGE(false, ("意外的不透明白 Rect: " + el->id).c_str());
+    }
+    DOCTEST_CHECK(whites.empty());
+    return true;
+})

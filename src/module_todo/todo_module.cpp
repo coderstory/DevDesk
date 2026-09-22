@@ -644,10 +644,13 @@ private:
         auto colTasks = tasksInColumn(col.id);
         const bool isArchive = (col.title == "已归档");
 
-        // 列头右键热区（重命名/左移/右移/删除列）
+        // 列头右键热区（重命名/左移/右移/删除列）。纯命中区：Rect 不设
+        // color 时默认不透明白色（Element::color 默认 {1,1,1,1}），深色主题
+        // 下会把列头整条刷白——必须显式给全透明
         ui.rect(id + ".head")
             .position(0.0f, 0.0f)
             .size(width, kColumnHeaderHeight)
+            .color(eui::Color{0.0f, 0.0f, 0.0f, 0.0f})
             .onContextMenu([this, col, colIndex](const eui::PointerEvent&,
                                                  const eui::Rect&) {
                 openColumnContextMenu(col, static_cast<int>(colIndex));
