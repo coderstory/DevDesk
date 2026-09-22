@@ -113,5 +113,14 @@ REGISTER_TEST(module_icons_page_emoji_replaced,
                        "settings.card.appearance.theme.light.icon", 0xF185)) return false;
     if (!checkPageIcon(create_settings_module,
                        "settings.card.proxy.token.regen.icon", 0xF021)) return false;
+    // Markdown 页（fa-magnifying-glass 搜索浮层；ficon/fa-folder 树在
+    // test_markdown.cpp 的空目录用例里断言——icons 探针无服务无数据）
+    if (!checkPageIcon(create_markdown_module, "md.search.icon", 0xF002)) return false;
+    // Todo 页（fa-triangle-exclamation 逾期入口 / fa-magnifying-glass 搜索 /
+    // fa-calendar 截止日期按钮——dialog 常驻 compose，无数据也渲染）
+    if (!checkPageIcon(create_todo_module, "todo.btn.overdue.icon", 0xF071)) return false;
+    if (!checkPageIcon(create_todo_module, "todo.search.icon", 0xF002)) return false;
+    if (!checkPageIcon(create_todo_module,
+                       "todo.dialog.detail.due.pick.icon", 0xF133)) return false;
     return true;
 })

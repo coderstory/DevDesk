@@ -588,7 +588,9 @@ REGISTER_TEST(todo_ui_move_appends_to_end,
         DOCTEST_CHECK_EQ(ts.value().size(), static_cast<size_t>(2));  // 未动
     }
 
-    // 松手落回源列 = 取消；且拖拽松手回落卡上不触发详情弹窗（onClick 抑制）
+    // 松手落回源列 = 取消；且拖拽松手回落卡上不触发详情弹窗（框架
+    // InteractionState.dragMoved 语义：超阈值拖动后不再派发 click，
+    // 模块内抑制逻辑已删；这里直接按真实时序 press→drag→release）
     {
         composeLayout();
         const auto* card = ui.find("todo.col.5.card.1.bg");
@@ -600,8 +602,6 @@ REGISTER_TEST(todo_ui_move_appends_to_end,
         ev.y = card->frame.y + card->frame.height / 2.0f;
         ev.totalX = 500.0;
         card->onDrag(ev);
-        // 真实派发顺序：onClick 先于 onRelease（同一次松手）
-        card->onClick();
         eui::PointerEvent up;
         up.x = ev.x;
         up.y = ev.y;
