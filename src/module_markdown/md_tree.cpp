@@ -6,15 +6,14 @@
 namespace module::markdown {
 
 std::vector<MdTreeRow> buildTreeRows(const std::vector<NoteMeta>& notes,
+                                     const std::set<std::string>& extraFolders,
                                      const std::set<std::string>& collapsed) {
-    // 一级目录集合（std::set 自带字母序）
-    std::set<std::string> folders;
-    bool hasRootFiles = false;
+    // 一级目录集合 = 笔记路径推导 ∪ 磁盘枚举的空目录（std::set 自带字母序）
+    std::set<std::string> folders = extraFolders;
     for (const auto& n : notes) {
         const std::string p = n.relativePath.generic_string();
         const auto pos = p.find('/');
-        if (pos == std::string::npos) hasRootFiles = true;
-        else folders.insert(p.substr(0, pos));
+        if (pos != std::string::npos) folders.insert(p.substr(0, pos));
     }
 
     std::vector<MdTreeRow> rows;
@@ -46,8 +45,11 @@ std::vector<MdTreeRow> buildTreeRows(const std::vector<NoteMeta>& notes,
         }
     };
 
+    // W9：根组标题常显且置顶——笔记目录全是根目录散文件（零子文件夹）时
+    // 树也不会退化成无结构的平铺列表，「这是树」始终可感知；空目录时
+    // 树里也保留这一行，由 UI 层叠加空态提示
+    addGroup("", "根目录");
     for (const auto& dir : folders) addGroup(dir, dir);
-    if (hasRootFiles) addGroup("", "根目录");
     return rows;
 }
 
