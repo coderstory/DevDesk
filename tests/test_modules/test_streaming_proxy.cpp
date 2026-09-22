@@ -36,6 +36,7 @@
 #include "core/sqlite_db.h"
 #include "platform/http_client.h"
 #include "platform/http_server.h"
+#include "platform/json.h"
 #include "proxy_router.h"
 #include "streaming_proxy.h"
 
@@ -997,5 +998,97 @@ REGISTER_TEST(streaming_stats_end_to_end,
     proxy.stop();
     upstream.stop();
     core::proxy_stats::resetForTest();
+    return true;
+})
+
+// ==================== 17. 上游断流 error 帧合成（W7 P0-2）====================
+
+REGISTER_TEST(streaming_error_frame_synthesis,
+              "streaming: 上游断流合成 event: error SSE 帧（合法 JSON + 转义）", {
+    using module::claude::buildUpstreamErrorFrame;
+
+    const std::string frame = buildUpstreamErrorFrame("Timeout was reached");
+    DOCTEST_CHECK(frame.compare(0, 12, "event: error") == 0);
+    DOCTEST_CHECK(frame.size() >= 4 &&
+                  frame.compare(frame.size() - 2, 2, "\n\n") == 0);
+
+    // data 行必须是合法 JSON（客户端要能解析出错误信息）
+    const size_t dataPos = frame.find("data: ");
+    DOCTEST_REQUIRE(dataPos != std::string::npos);
+    const std::string payload = frame.substr(
+        dataPos + 6, frame.find("\n\n", dataPos) - (dataPos + 6));
+    auto r = platform::json::parse(payload);
+    DOCTEST_REQUIRE(r.isOk());
+    DOCTEST_REQUIRE(r.value().isObject());
+    DOCTEST_CHECK_EQ(r.value().asObject().get("type").asString(),
+                     std::string("error"));
+    const auto errObj = r.value().asObject().get("error");
+    DOCTEST_REQUIRE(errObj.isObject());
+    DOCTEST_CHECK_EQ(errObj.asObject().get("message").asString(),
+                     std::string("Timeout was reached"));
+
+    // 转义：引号/反斜杠/换行 → 合法 JSON；\r 丢弃
+    const std::string esc = buildUpstreamErrorFrame("a\"b\\c\nd\re");
+    const size_t d2 = esc.find("data: ");
+    const std::string p2 = esc.substr(d2 + 6, esc.find("\n\n", d2) - (d2 + 6));
+    auto r2 = platform::json::parse(p2);
+    DOCTEST_REQUIRE(r2.isOk());
+    DOCTEST_CHECK_EQ(r2.value().asObject().get("error")
+                         .asObject()
+                         .get("message")
+                         .asString(),
+                     std::string("a\"b\\c\nde"));
+    return true;
+})
+
+// ==================== 18. 低速空闲超时（W7 P0-3）====================
+
+REGISTER_TEST(streaming_low_speed_idle_timeout,
+              "streaming: 低速空闲超时中止（无总墙钟上限，无新 chunk 才判死）", {
+    MockSseServer upstream;
+    DOCTEST_REQUIRE(upstream.start());
+
+    MockScript script;
+    script.chunks = makeSseScript(3, false);
+    script.delayMsPerChunk = 15000;   // 第 1 个 chunk 之后挂 15s（模拟断流）
+    upstream.onMessages(script);
+
+    platform::http::Request req;
+    req.method = "POST";
+    req.url = "/v1/messages";
+    req.body = R"({"stream":true})";
+    req.timeoutMs = 0;                // 无总墙钟上限
+    req.lowSpeedBytesPerSec = 1;      // 速率 < 1 B/s
+    req.lowSpeedTimeSec = 3;          // 持续 3s → curl 中止（CURLE_OPERATION_TIMEDOUT）
+
+    auto r = module::claude::sendStreamingClaude(req, makeProfile(upstream.baseUrl()));
+    DOCTEST_REQUIRE(r.isOk());
+    auto sr = takeStream(r);
+    DOCTEST_REQUIRE(sr != nullptr);
+
+    // 第 1 个 chunk 正常到达（空闲超时不影响活跃数据）
+    std::string chunk;
+    std::string err;
+    DOCTEST_REQUIRE(sr->readChunk(chunk, err) ==
+                    platform::http::ChunkResult::More);
+
+    // 之后无新数据 → 低速超时触发 Error。libcurl 的低速检测基于滑动窗口
+    // 速率采样，实测要么 3-10s 内自行中止、要么等下一次 socket 事件
+    // （mock 的 15s chunk 到达）时才中止；个别轮次还会先把那个 chunk
+    // 交付出来再中止。所以这里读到终态为止（Error/End），只断言
+    // "远早于无超时的无限挂死"，不卡精确时刻。
+    const auto t0 = steady_clock::now();
+    platform::http::ChunkResult cr = platform::http::ChunkResult::More;
+    while (cr == platform::http::ChunkResult::More &&
+           steady_clock::now() - t0 < milliseconds(25000)) {
+        cr = sr->readChunk(chunk, err);
+    }
+    const auto elapsed =
+        duration_cast<milliseconds>(steady_clock::now() - t0).count();
+    DOCTEST_CHECK(cr == platform::http::ChunkResult::Error);
+    DOCTEST_CHECK(elapsed >= 1500);    // 不是立即失败（确认真在等数据）
+    DOCTEST_CHECK(elapsed < 25000);    // 两条中止路径都覆盖
+
+    upstream.stop();
     return true;
 })
