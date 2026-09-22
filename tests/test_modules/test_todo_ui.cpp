@@ -936,6 +936,60 @@ REGISTER_TEST(todo_ui_detail_delete_confirms,
     return true;
 })
 
+// 完成态按 kind 落列（不靠「已完成」标题）：重命名已完成列后，
+// 详情弹窗「标记完成」仍应把任务移进该列（回归：此前按标题找列，
+// 重命名后任务静默留在原列）
+REGISTER_TEST(todo_ui_complete_by_kind,
+              "todo_ui: 完成按 kind 落列，列改名后仍命中（headless）", {
+    TestEnv env;
+    DOCTEST_REQUIRE(env.ready);
+    auto list = env.svc->listColumns();
+    DOCTEST_REQUIRE(list.isOk());
+    const int64_t todoCol = list.value()[0].id;    // kind=todo
+    const int64_t doneCol = list.value()[2].id;    // kind=done
+    // 模块启动前先改名（模块 onStart 才会缓存列）
+    DOCTEST_REQUIRE(env.svc->renameColumn(doneCol, "Finished").isOk());
+    auto a = env.svc->createTask(todoCol, "kind 回归任务");
+    DOCTEST_REQUIRE(a.isOk());
+
+    std::unique_ptr<::core::Module> mod(create_todo_module());
+    mod->onStart();
+
+    // 右键卡片 → 编辑 → 详情 → 点「标记完成」
+    {
+        Frame frame(mod.get());
+        eui::PointerEvent pe;
+        eui::Rect rect;
+        const auto* card = frame.ui.find("todo.col.0.card.0.bg");
+        DOCTEST_REQUIRE(card != nullptr);
+        card->onContextMenu(pe, rect);
+        frame.refresh();
+        const auto* edit = frame.ui.find("todo.ctx.level.0.item.0");
+        DOCTEST_REQUIRE(edit != nullptr);
+        edit->onClick();
+        frame.refresh();
+        const auto* toggle = frame.ui.find("todo.dialog.detail.toggle.bg");
+        DOCTEST_REQUIRE(toggle != nullptr);
+        DOCTEST_REQUIRE(toggle->onClick != nullptr);
+        toggle->onClick();
+    }
+
+    // 任务应落到改名的已完成列且带 completedAt
+    {
+        auto inDone = env.svc->listTasks(doneCol);
+        DOCTEST_REQUIRE(inDone.isOk());
+        DOCTEST_REQUIRE_EQ(inDone.value().size(), 1u);
+        DOCTEST_CHECK_EQ(inDone.value()[0].title, std::string("kind 回归任务"));
+        DOCTEST_CHECK(inDone.value()[0].completedAt.has_value());
+        auto inTodo = env.svc->listTasks(todoCol);
+        DOCTEST_REQUIRE(inTodo.isOk());
+        DOCTEST_CHECK_EQ(inTodo.value().size(), 0u);
+    }
+
+    mod->onStop();
+    return true;
+})
+
 REGISTER_TEST(todo_ui_fontscale_tokens,
               "todo_ui: 模块字号经 token 派生，全局缩放生效（headless）", {
     TestEnv env;

@@ -551,3 +551,32 @@ REGISTER_TEST(todo_svc_acceptance_flow,
     }
     return true;
 })
+
+// 列 kind 语义标记（migration v3）：完成态流转不依赖标题
+REGISTER_TEST(todo_svc_column_kind,
+              "TodoService: 列 kind 标记回填 + 重命名后保留", {
+    TestEnv env("column_kind");
+    DOCTEST_REQUIRE(env.ready);
+
+    auto list = env.svc->listColumns();
+    DOCTEST_REQUIRE(list.isOk());
+    DOCTEST_REQUIRE_EQ(list.value().size(), 4u);
+    // 种子列的 kind 回填：待办=todo 已完成=done 其余=空（普通列）
+    DOCTEST_CHECK_EQ(list.value()[0].kind, std::string("todo"));
+    DOCTEST_CHECK_EQ(list.value()[1].kind, std::string(""));
+    DOCTEST_CHECK_EQ(list.value()[2].kind, std::string("done"));
+    DOCTEST_CHECK_EQ(list.value()[3].kind, std::string(""));
+
+    // 重命名后 kind 保留（语义不随标题变）
+    DOCTEST_REQUIRE(env.svc->renameColumn(list.value()[2].id, "Finished").isOk());
+    auto list2 = env.svc->listColumns();
+    DOCTEST_REQUIRE(list2.isOk());
+    DOCTEST_CHECK_EQ(list2.value()[2].title, std::string("Finished"));
+    DOCTEST_CHECK_EQ(list2.value()[2].kind, std::string("done"));
+
+    // 用户新建列 = 普通列（kind 空）
+    auto created = env.svc->createColumn("复核中");
+    DOCTEST_REQUIRE(created.isOk());
+    DOCTEST_CHECK_EQ(created.value().kind, std::string(""));
+    return true;
+})

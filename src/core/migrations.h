@@ -137,11 +137,29 @@ inline const Migration kSeedDefaultTodoColumns = {
     )"
 };
 
+// Todo 列语义标记（version 3）
+// 完成态流转（完成任务 → 已完成列）此前靠标题字符串「已完成」硬编码，
+// 用户重命名列后行为静默失效。加 kind 列做语义标记：
+//   'done' = 已完成列；'todo' = 默认待办列；NULL = 普通列
+// 迁移时按种子标题回填一次，此后 kind 是唯一权威（重命名不再影响语义）。
+// 注意：ALTER TABLE ADD COLUMN 无 IF NOT EXISTS，靠 schema_version
+// 版本号保证只执行一次（runMigrations 事务内，失败整体回滚）。
+inline const Migration kTodoColumnKind = {
+    .version = 3,
+    .description = "todo columns add kind semantic marker",
+    .sql = R"(
+        ALTER TABLE todo_columns ADD COLUMN kind TEXT;
+        UPDATE todo_columns SET kind = 'todo' WHERE title = '待办';
+        UPDATE todo_columns SET kind = 'done' WHERE title = '已完成';
+    )"
+};
+
 // 所有 migrations 的权威列表（顺序敏感，必须按 version 升序）
 inline const std::vector<core::data::Migration>& all() {
     static const std::vector<core::data::Migration> kMigrations = {
         kCreateInitialTables,
         kSeedDefaultTodoColumns,
+        kTodoColumnKind,
     };
     return kMigrations;
 }

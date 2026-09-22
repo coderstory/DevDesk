@@ -212,10 +212,11 @@ public:
         return out;
     }
 
-    // 按标题找列 id（找不到返回 0）
-    int64_t findColumnByTitle(const std::string& title) const {
+    // 按语义标记找列 id（'done'=已完成列 / 'todo'=待办列；找不到返回 0）
+    // 不按标题找：用户重命名列后标题不可靠（migration v3 起 kind 是权威）
+    int64_t findColumnByKind(const std::string& kind) const {
         for (const auto& c : columns_) {
-            if (c.title == title) return c.id;
+            if (c.kind == kind) return c.id;
         }
         return 0;
     }
@@ -268,14 +269,19 @@ public:
             setStatus("标记完成失败：" + r.errorMessage(), true);
             return;
         }
-        // 看板行为：完成后移到「已完成」列（如果该列存在），追加到列尾
-        const int64_t doneCol = findColumnByTitle("已完成");
+        // 看板行为：完成后移到已完成列（kind='done'），追加到列尾
+        const int64_t doneCol = findColumnByKind("done");
         if (doneCol != 0) {
             auto mv = service_->moveTask(
                 taskId, doneCol, ui::computeAppendPosition(tasks_, doneCol));
             if (mv.isFail()) {
                 LOG_WARN("Todo: 完成后移动到已完成列失败: " + mv.errorMessage());
             }
+        } else {
+            // 明示而非静默：没有 done 列时任务留在原列，用户需要知道为什么
+            setStatus("任务已完成（未找到 kind='done' 的列，任务留在原列）");
+            reloadAll();
+            return;
         }
         setStatus("任务已完成 ✓");
         reloadAll();
@@ -288,15 +294,20 @@ public:
             setStatus("取消完成失败：" + r.errorMessage(), true);
             return;
         }
-        // 从「已完成」列撤回「待办」列（如果两列都存在），追加到列尾
-        const int64_t doneCol = findColumnByTitle("已完成");
-        const int64_t todoCol = columns_.empty() ? 0 : columns_.front().id;
-        if (doneCol != 0 && todoCol != 0) {
+        // 撤回到待办列（kind='todo'），追加到列尾。
+        // 此前假设 columns_.front() 是待办列——用户重排列后会把任务
+        // 撤到错误的列，改为按语义标记定位。
+        const int64_t todoCol = findColumnByKind("todo");
+        if (todoCol != 0) {
             auto mv = service_->moveTask(
                 taskId, todoCol, ui::computeAppendPosition(tasks_, todoCol));
             if (mv.isFail()) {
                 LOG_WARN("Todo: 取消完成后移回待办列失败: " + mv.errorMessage());
             }
+        } else {
+            setStatus("已取消完成（未找到 kind='todo' 的列，任务留在原列）");
+            reloadAll();
+            return;
         }
         setStatus("已取消完成");
         reloadAll();
