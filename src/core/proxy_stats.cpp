@@ -51,12 +51,20 @@ struct State {
     // 最近 2s 窗口速率（设计 §2.7）：
     // 基线 = 2s 前最近一次采样的总累计；找不到（全部采样都在 2s 内）时
     // 用最老采样，窗口按实际经过时长算。静止 >2s 时基线追上当前值 → 自然 0。
+    // 注意 found=false 分支不能用 baseT=0 兜底：steady 时钟是绝对值，
+    // 会导致 windowMs = 绝对时钟 → 首 burst 前 2 秒速率严重低估。
     double rateTps(int64_t nowMs) const {
         if (ringCount == 0) return 0.0;
         bool found = false;
+        bool oldest = true;
         int64_t baseTotal = 0;
         int64_t baseT = 0;
         forEach([&](const Sample& s) {
+            if (oldest) { // 时间序第一个 = 最老采样：找不到 ≥2s 时的基线
+                baseTotal = s.total;
+                baseT = s.tMs;
+                oldest = false;
+            }
             if (s.tMs <= nowMs - static_cast<int64_t>(kWindowMs)) {
                 baseTotal = s.total;
                 baseT = s.tMs;
