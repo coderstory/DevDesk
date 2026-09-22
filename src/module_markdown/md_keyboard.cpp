@@ -75,13 +75,15 @@ bool applyEnterList(EditBuffer& buf) {
 }
 
 void applyTab(EditBuffer& buf, bool shift) {
+    // spec §5.2：缩进单位 = 4 空格（反缩进每行去 1 个 Tab 或至多 4 个前导空格）
+    constexpr int kIndentUnit = 4;
     const int s = std::min(buf.selStart, buf.selEnd);
     const int e = std::max(buf.selStart, buf.selEnd);
 
     if (!shift && s == e) {
-        // 无选区 Tab：插入两空格（同打字）
-        buf.text.insert(static_cast<size_t>(s), "  ");
-        buf.cursor = s + 2;
+        // 无选区 Tab：插入 4 空格（同打字）
+        buf.text.insert(static_cast<size_t>(s), "    ");
+        buf.cursor = s + kIndentUnit;
         buf.selStart = buf.selEnd = buf.cursor;
         return;
     }
@@ -101,13 +103,17 @@ void applyTab(EditBuffer& buf, bool shift) {
             size_t remove = 0;
             if (ls < buf.text.size() && buf.text[ls] == '\t') {
                 remove = 1;
-            } else if (ls < buf.text.size() && buf.text[ls] == ' ') {
-                remove = 1;
-                if (ls + 1 < buf.text.size() && buf.text[ls + 1] == ' ') remove = 2;
+            } else {
+                // 至多 kIndentUnit 个前导空格（不足 4 个有几个去几个）
+                while (remove < static_cast<size_t>(kIndentUnit) &&
+                       ls + remove < buf.text.size() &&
+                       buf.text[ls + remove] == ' ') {
+                    ++remove;
+                }
             }
             if (remove > 0) edits.push_back({ls, -static_cast<int>(remove)});
         } else {
-            edits.push_back({ls, 2});
+            edits.push_back({ls, kIndentUnit});
         }
     }
 
@@ -120,22 +126,28 @@ void applyTab(EditBuffer& buf, bool shift) {
         }
     }
 
-    // 偏移修正（edits 按行序天然升序）：
-    //   插入 pos/len：off >= pos → +len；删除 pos/n：off >= pos+n → -n，
-    //   落进被删区间（pos < off < pos+n）→ 钳回行首 pos
-    const auto adjust = [&edits](int& off) {
+    // 偏移修正：off 始终按原始坐标比较，shift 累计位移最后一次性应用
+    //（终验复审：原实现边比边移，删减钳回行首时会拿已位移的 off 与原始
+    // pos 比较，多行反缩进选区端点偏 1）
+    //   插入 pos/len：off >= pos → shift+len；删除 pos/n：off >= pos+n →
+    //   shift-n，落进被删区间（pos < off < pos+n）→ 钳回行首 pos
+    const auto adjust = [&edits](int& offRef) {
+        int off = offRef;
+        int shift = 0;
         for (const Edit& ed : edits) {
+            const int pos = static_cast<int>(ed.pos);
             if (ed.len > 0) {
-                if (off >= static_cast<int>(ed.pos)) off += ed.len;
+                if (off >= pos) shift += ed.len;
             } else {
                 const int n = -ed.len;
-                if (off >= static_cast<int>(ed.pos) + n) {
-                    off -= n;
-                } else if (off > static_cast<int>(ed.pos)) {
-                    off = static_cast<int>(ed.pos);
+                if (off >= pos + n) {
+                    shift -= n;
+                } else if (off > pos) {
+                    off = pos;
                 }
             }
         }
+        offRef = off + shift;
     };
     adjust(buf.selStart);
     adjust(buf.selEnd);
@@ -146,6 +158,26 @@ void applyWrapAround(EditBuffer& buf, const std::string& marker) {
     const int s = std::min(buf.selStart, buf.selEnd);
     const int e = std::max(buf.selStart, buf.selEnd);
     const int m = static_cast<int>(marker.size());
+    // 再按 = 去包裹（unwrap toggle，spec §5.2）：选区两端恰为 marker → 移除
+    if (s != e && s - m >= 0 && e + m <= static_cast<int>(buf.text.size()) &&
+        buf.text.compare(static_cast<size_t>(s - m), static_cast<size_t>(m),
+                         marker) == 0 &&
+        buf.text.compare(static_cast<size_t>(e), static_cast<size_t>(m),
+                         marker) == 0) {
+        buf.text.erase(static_cast<size_t>(e), static_cast<size_t>(m));
+        buf.text.erase(static_cast<size_t>(s - m), static_cast<size_t>(m));
+        const int ns = s - m;  // 去包裹后原文的新区间 [ns, ne)
+        const int ne = e - m;
+        if (buf.selStart <= buf.selEnd) {
+            buf.selStart = ns;
+            buf.selEnd = ne;
+        } else {
+            buf.selEnd = ns;
+            buf.selStart = ne;
+        }
+        buf.cursor = (buf.cursor == e) ? ne : ns;
+        return;
+    }
     if (s == e) {
         buf.text.insert(static_cast<size_t>(s), marker + marker);
         buf.cursor = s + m;  // 光标放中间

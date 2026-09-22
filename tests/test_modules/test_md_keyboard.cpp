@@ -156,31 +156,38 @@ REGISTER_TEST(md_kbd_enter_list, "md_keyboard: Enter 列表续行/空项退出/�
 
 // ---- 纯函数：Tab 缩进 ----
 
-REGISTER_TEST(md_kbd_tab_indent, "md_keyboard: Tab 两空格缩进/反缩进", {
-    // 无选区 Tab = 插入两空格
+REGISTER_TEST(md_kbd_tab_indent, "md_keyboard: Tab 4 空格缩进/反缩进（spec §5.2）", {
+    // 无选区 Tab = 插入 4 空格
     EditBuffer a = buf("ab");
     a.cursor = a.selStart = a.selEnd = 1;
     module::markdown::applyTab(a, false);
-    DOCTEST_CHECK_EQ(a.text, std::string("a  b"));
-    DOCTEST_CHECK_EQ(a.cursor, 3);
+    DOCTEST_CHECK_EQ(a.text, std::string("a    b"));
+    DOCTEST_CHECK_EQ(a.cursor, 5);
 
-    // 多行选区 Tab：整块行首 +2，选区覆盖原内容
+    // 多行选区 Tab：整块行首 +4，选区覆盖原内容
     EditBuffer m = buf("aa\nbb\ncc");
     m.selStart = 0;
     m.selEnd = 6;  // 选中 aa\nbb\n（cc 行不选——选区到行首为止不含该行）
     module::markdown::applyTab(m, false);
-    DOCTEST_CHECK_EQ(m.text, std::string("  aa\n  bb\ncc"));
-    DOCTEST_CHECK_EQ(m.selStart, 2);
-    DOCTEST_CHECK_EQ(m.selEnd, 10);
+    DOCTEST_CHECK_EQ(m.text, std::string("    aa\n    bb\ncc"));
+    DOCTEST_CHECK_EQ(m.selStart, 4);
+    DOCTEST_CHECK_EQ(m.selEnd, 14);
 
-    // Shift+Tab 反缩进：去掉行首两空格
-    EditBuffer r = buf("  aa\n  bb\ncc");
+    // Shift+Tab 反缩进：每行去掉至多 4 个前导空格（不足 4 有几个去几个）
+    EditBuffer r = buf("    aa\n  bb\ncc");
     r.selStart = 0;
-    r.selEnd = 10;
+    r.selEnd = 12;
     module::markdown::applyTab(r, true);
     DOCTEST_CHECK_EQ(r.text, std::string("aa\nbb\ncc"));
     DOCTEST_CHECK_EQ(r.selStart, 0);
     DOCTEST_CHECK_EQ(r.selEnd, 6);
+
+    // Tab 字符行 Shift+Tab：去 1 个 Tab
+    EditBuffer t = buf("\taa");
+    t.selStart = 0;
+    t.selEnd = 3;
+    module::markdown::applyTab(t, true);
+    DOCTEST_CHECK_EQ(t.text, std::string("aa"));
 
     // 无前导空格的 Shift+Tab：无变化（接线层据此不动状态）
     EditBuffer n = buf("aa\nbb");
@@ -220,6 +227,24 @@ REGISTER_TEST(md_kbd_wrap_and_link, "md_keyboard: 选区包裹 / 成对标记 / 
     DOCTEST_CHECK_EQ(b.selStart, 4);
     DOCTEST_CHECK_EQ(b.selEnd, 7);
     DOCTEST_CHECK_EQ(b.cursor, 7);
+
+    // 再按 = 去包裹（unwrap toggle，spec §5.2）：选区两端恰为 ** → 移除
+    EditBuffer u = buf("ab**cde**f");
+    u.selStart = 4;
+    u.selEnd = 7;
+    u.cursor = 7;
+    module::markdown::applyWrapAround(u, "**");
+    DOCTEST_CHECK_EQ(u.text, std::string("abcdef"));
+    DOCTEST_CHECK_EQ(u.selStart, 2);
+    DOCTEST_CHECK_EQ(u.selEnd, 5);
+    DOCTEST_CHECK_EQ(u.cursor, 5);
+
+    // 两端不恰为 marker（只有一端）→ 正常包裹，不误删
+    EditBuffer h = buf("ab*cde*f");
+    h.selStart = 0;
+    h.selEnd = 3;  // 选 "ab*"，前端无 *
+    module::markdown::applyWrapAround(h, "*");
+    DOCTEST_CHECK_EQ(h.text, std::string("*ab**cde*f"));
 
     // 选区 Ctrl+K：[sel](链接)，选「链接」占位（占位词 2 个 CJK 字 = 6 字节）
     EditBuffer k = buf("abcdef");
@@ -306,12 +331,12 @@ REGISTER_TEST(md_kbd_wiring_input_passthrough,
     DOCTEST_REQUIRE(save != nullptr);
     DOCTEST_CHECK(save->text.find("未保存") != std::string::npos);
 
-    // Tab：无选区插入两空格
+    // Tab：无选区插入 4 空格
     DOCTEST_CHECK(pressKey(eui::InputKey::Tab));
     frame();
     {
         const auto& st = ui.state<InputState>("md.editor.input");
-        DOCTEST_CHECK_EQ(st.text, std::string("- 列表项\n-   \n正文\n"));
+        DOCTEST_CHECK_EQ(st.text, std::string("- 列表项\n-     \n正文\n"));
     }
 
     // Ctrl+B：无选区插入成对 **（光标放中间）
@@ -319,7 +344,7 @@ REGISTER_TEST(md_kbd_wiring_input_passthrough,
     frame();
     {
         const auto& st = ui.state<InputState>("md.editor.input");
-        DOCTEST_CHECK_EQ(st.text, std::string("- 列表项\n-   ****\n正文\n"));
+        DOCTEST_CHECK_EQ(st.text, std::string("- 列表项\n-     ****\n正文\n"));
         DOCTEST_CHECK_EQ(st.cursor, st.selectionStart);
     }
 
@@ -332,7 +357,7 @@ REGISTER_TEST(md_kbd_wiring_input_passthrough,
     frame();
     {
         const auto& st = ui.state<InputState>("md.editor.input");
-        DOCTEST_CHECK_EQ(st.text, std::string("- 列表项\n-   ****\n正文\n"));
+        DOCTEST_CHECK_EQ(st.text, std::string("- 列表项\n-     ****\n正文\n"));
     }
 
     // 普通按键（A）不拦截：内置继续处理，冒泡不受影响
