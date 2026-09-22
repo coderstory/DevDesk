@@ -11,6 +11,7 @@
 #include "core/input/input_types.h"
 #include "core/module_interface.h"
 #include "core/sqlite_db.h"
+#include "core/time.h"
 #include "platform/http_server.h"
 #include "platform/keychain.h"
 #include "provider_config.h"
@@ -76,6 +77,37 @@ void cleanupKey(int64_t profileId) {
 }
 
 } // namespace
+
+// ---- 0. 纯函数 formatCallTime（W10 复审：调用时间列跨天显示） ----
+// 锚定本地正午避免跨零点抖动（仿 test_home 的 noon 模式）
+REGISTER_TEST(claude_format_call_time, "claude: formatCallTime 今日/昨天/更早三态", {
+    const std::time_t now = std::time(nullptr);
+    std::tm nowTm{};
+    core::time::localTime(now, &nowTm);
+    nowTm.tm_hour = 12;
+    nowTm.tm_min = 0;
+    nowTm.tm_sec = 0;
+    const std::time_t noon = std::mktime(&nowTm);
+
+    DOCTEST_CHECK_EQ(module::claude::formatCallTime(0, noon),
+                     std::string("--:--"));
+    // 今日 → HH:MM
+    DOCTEST_CHECK_EQ(module::claude::formatCallTime(noon, noon),
+                     std::string("12:00"));
+    DOCTEST_CHECK_EQ(module::claude::formatCallTime(noon - 90 * 60, noon),
+                     std::string("10:30"));
+    // 昨天 → 昨天 HH:MM
+    DOCTEST_CHECK_EQ(module::claude::formatCallTime(noon - 86400, noon),
+                     std::string("昨天 12:00"));
+    DOCTEST_CHECK_EQ(module::claude::formatCallTime(noon - 86400 - 3600, noon),
+                     std::string("昨天 11:00"));
+    // 更早 → MM-DD（5 字符，中间 '-'）
+    const std::string older =
+        module::claude::formatCallTime(noon - 3 * 86400, noon);
+    DOCTEST_CHECK_EQ(older.size(), static_cast<size_t>(5));
+    DOCTEST_CHECK_EQ(older[2], '-');
+    return true;
+})
 
 // ---- 1. 无服务（global 为 null）时 compose 不崩 ----
 

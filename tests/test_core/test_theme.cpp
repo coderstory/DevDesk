@@ -37,6 +37,31 @@ REGISTER_TEST(theme_dark_light_differ, "theme: dark and light differ", {
     return true;
 })
 
+// onPrimary token（W10 复审项）：主色背景上的前景色，两主题都必须
+// 不透明且与主色有足够对比（主按钮文字可读），替代模块里 #FFFFFF 硬编码
+REGISTER_TEST(theme_on_primary_readable, "theme: onPrimary opaque & contrasts primary", {
+    core::theme::setDark();
+    const auto& d = core::theme::current().colors;
+    core::theme::setLight();
+    const auto& l = core::theme::current().colors;
+    const auto opaque = [](const eui::Color& c) { return c.a >= 0.999f; };
+    // 与主色的亮度差（粗略相对亮度）：主按钮白字可读性下限
+    const auto lumadiff = [](const eui::Color& a, const eui::Color& b) {
+        const auto luma = [](const eui::Color& c) {
+            return 0.299f * c.r + 0.587f * c.g + 0.114f * c.b;
+        };
+        const float hi = luma(a) > luma(b) ? luma(a) : luma(b);
+        const float lo = luma(a) > luma(b) ? luma(b) : luma(a);
+        return hi - lo;
+    };
+    DOCTEST_CHECK(opaque(d.onPrimary));
+    DOCTEST_CHECK(opaque(l.onPrimary));
+    DOCTEST_CHECK(lumadiff(d.onPrimary, d.primary) > 0.4f);
+    DOCTEST_CHECK(lumadiff(l.onPrimary, l.primary) > 0.4f);
+    core::theme::setDark();
+    return true;
+})
+
 // 标题栏深浅主题联动（磨砂设计 Phase A）：setDark/setLight 必须通知
 // 回调（main.cpp 注入 app::setTitleBarAppearance），这里 mock 回调断言
 // 通知发生且参数与 isDark 一致；清除后不再通知

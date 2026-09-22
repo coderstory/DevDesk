@@ -237,11 +237,13 @@ public:
                             .content([&] {
                                 components::button(ui, "home.btn.refresh")
                                     .size(100.0f, 40.0f)
-                                    .text("↻ 刷新")
+                                    .text("刷新")
+                                    .icon(0xF021)  // fa-arrows-rotate
                                     .fontSize(t.sizes.fontSizeBody - 1.0f)
                                     .colors(t.colors.surfaceElevated,
                                             t.colors.hover, t.colors.active)
                                     .textColor(t.colors.textSecondary)
+                                    .iconColor(t.colors.textSecondary)
                                     .radius(t.sizes.radius)
                                     .border(1.0f, t.colors.borderDefault)
                                     .onClick([this] { refreshStats(); })
@@ -250,11 +252,13 @@ public:
                                 // 设置页已落地（P13/T11），直接导航
                                 components::button(ui, "home.btn.settings")
                                     .size(100.0f, 40.0f)
-                                    .text("⚙ 设置")
+                                    .text("设置")
+                                    .icon(0xF013)  // fa-gear
                                     .fontSize(t.sizes.fontSizeBody - 1.0f)
                                     .colors(t.colors.surfaceElevated,
                                             t.colors.hover, t.colors.active)
                                     .textColor(t.colors.textSecondary)
+                                    .iconColor(t.colors.textSecondary)
                                     .radius(t.sizes.radius)
                                     .border(1.0f, t.colors.borderDefault)
                                     .onClick([this] {
@@ -409,10 +413,11 @@ public:
                                 ui.text("home.recent.icon.text." + id)
                                     .position(28.0f, iy)
                                     .size(32.0f, 32.0f)
-                                    .text("📝")
+                                    .icon(0xF15C)  // fa-file-lines（📝 换 FA）
                                     .fontSize(14.0f)
                                     .lineHeight(32.0f)
                                     .horizontalAlign(eui::HorizontalAlign::Center)
+                                    .color(t.colors.textTertiary)
                                     .build();
                                 // 文件名（标题）
                                 ui.text("home.recent.name." + id)
@@ -453,7 +458,7 @@ public:
                             .fontSize(t.sizes.fontSizeBody)
                             .colors(t.colors.primary, t.colors.primaryHover,
                                     t.colors.primaryPressed)
-                            .textColor(eui::Color("#FFFFFF"))
+                            .textColor(t.colors.onPrimary)
                             .radius(t.sizes.radius)
                             .onClick([this] {
                                 navigateTo(::core::PageId::Markdown,
@@ -480,11 +485,13 @@ public:
                         // 切换 Claude Profile → Claude 模块（Profile 列表在该页）
                         components::button(ui, "home.act.claude")
                             .size(actW, 44.0f)
-                            .text("📋 切换 Claude Profile")
+                            .text("切换 Claude Profile")
+                            .icon(0xF46D)  // fa-clipboard-list
                             .fontSize(t.sizes.fontSizeBody)
                             .colors(t.colors.surfaceElevated, t.colors.hover,
                                     t.colors.active)
                             .textColor(t.colors.textPrimary)
+                            .iconColor(t.colors.textPrimary)
                             .radius(t.sizes.radius)
                             .border(1.0f, t.colors.borderDefault)
                             .onClick([this] { navigateTo(::core::PageId::ClaudeProxy); })

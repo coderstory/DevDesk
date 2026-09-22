@@ -4,6 +4,7 @@
 
 #include "core/logging.h"
 #include "core/paths.h"
+#include "core/time.h"
 #include "platform/http_server.h"
 #include "platform/keychain.h"
 #include "provider_config.h"
@@ -14,6 +15,7 @@
 #include <algorithm>
 #include <cctype>
 #include <chrono>
+#include <cstdio>
 #include <ctime>
 #include <fstream>
 #include <iomanip>
@@ -868,6 +870,32 @@ void writeProxyTokenFile(const std::string& token, int port) {
          "\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}]}'\n";
     f.close();
     LOG_INFO("代理凭据已写入: " + path.string());
+}
+
+std::string formatCallTime(std::time_t ts, std::time_t now) {
+    if (ts <= 0) return "--:--";
+    std::tm tmv{};
+    core::time::localTime(ts, &tmv);
+    std::tm nowTm{};
+    core::time::localTime(now, &nowTm);
+    const auto sameDay = [](const std::tm& a, const std::tm& b) {
+        return a.tm_year == b.tm_year && a.tm_yday == b.tm_yday;
+    };
+    char buf[24];
+    if (sameDay(tmv, nowTm)) {
+        std::snprintf(buf, sizeof(buf), "%02d:%02d", tmv.tm_hour, tmv.tm_min);
+        return std::string(buf);
+    }
+    // ponytail: 昨天判定取 now-86400 的本地日；DST 切换日误差 ≤1 小时，
+    // 只影响「昨天/日期」文案边界，无正确性风险
+    std::tm yestTm{};
+    core::time::localTime(now - 86400, &yestTm);
+    if (sameDay(tmv, yestTm)) {
+        std::snprintf(buf, sizeof(buf), "昨天 %02d:%02d", tmv.tm_hour, tmv.tm_min);
+    } else {
+        std::snprintf(buf, sizeof(buf), "%02d-%02d", tmv.tm_mon + 1, tmv.tm_mday);
+    }
+    return std::string(buf);
 }
 
 } // namespace module::claude
