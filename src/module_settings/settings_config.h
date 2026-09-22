@@ -35,10 +35,11 @@ constexpr int kMaxLogRetentionDays = 3650;
 
 struct SettingsConfig {
     bool darkTheme = true;         // 默认深色（方案 B Dark）
-    // W7 默认 130：EUI-NEO 按 hhea 度量缩放字号（Segoe UI 系数 ~0.75），
-    // 15px 正文实际按 ~11.3px 渲染；130% 补偿后 ≈14.6px 恢复设计观感。
-    // 根治走 EUI-NEO 上游 em 语义 PR（W7 计划第四节）。
-    int fontScalePercent = 130;    // 130 = 新默认（正文 15px token × 1.3）
+    // W9 默认 100：EUI-NEO 0.7.0 已修字号 CSS em 语义（fix/font-em-size，
+    // scalable 字体 fontSize 直接作 em 尺寸），此前 hhea 缩水 ~0.75 不复存在。
+    // 存量用户值通过换键 fontScalePercentV3 一次性重置回 100（旧值都是
+    // 缩水语义下选的，修正后失去意义）。
+    int fontScalePercent = 100;    // 100 = 设计字号原样（正文 15px token）
     int logRetentionDays = 30;     // 0 = 永久保留
 };
 
