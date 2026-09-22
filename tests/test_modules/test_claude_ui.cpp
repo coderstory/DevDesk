@@ -96,8 +96,9 @@ REGISTER_TEST(claude_module_compose_null_service,
     DOCTEST_CHECK(ui.find("claude.act.test") != nullptr);
     DOCTEST_CHECK(ui.find("claude.act.edit") != nullptr);
     DOCTEST_CHECK(ui.find("claude.act.del") != nullptr);
-    // 空列表占位
-    DOCTEST_CHECK(ui.find("claude.profiles.empty") != nullptr);
+    // 无服务时显示错误态（W7：不再静默吞错显示假空态）
+    DOCTEST_CHECK(ui.find("claude.profiles.error") != nullptr);
+    DOCTEST_CHECK(ui.find("claude.profiles.empty") == nullptr);
 
     mod->onStop();
     return true;

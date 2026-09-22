@@ -77,18 +77,43 @@ public:
         const int runningPort = svc ? svc->proxyPort() : 0;
         const std::string portStr = runningPort > 0
             ? (":" + std::to_string(runningPort))
-            : std::string(":8888");
+            : std::string("");   // 未运行时不显示假端口（副标题另有提示）
+
+        // 页面背景自绘（仿 settings_module：main.cpp clearColor 固定浅色，
+        // 深色主题下页面必须自己铺底，否则浅色 clear 底 + 深色 token 文字不可读）
+        ui.rect("claude.pagebg")
+            .size(screen.width, screen.height)
+            .color(t.colors.background)
+            .build();
+
+        // 错误态（仿 Home statsError_）：加载失败不静默吞错显示假空态
+        std::string profilesError;
+        std::string callsError;
 
         std::vector<Profile> profiles;
-        if (svc) {
+        if (!svc) {
+            profilesError = "服务未就绪（ClaudeService 未注册）";
+        } else {
             auto listR = svc->listProfiles();
-            if (listR.isOk()) profiles = std::move(listR).value();
+            if (listR.isOk()) {
+                profiles = std::move(listR).value();
+            } else {
+                profilesError = listR.errorMessage();
+                LOG_ERROR("Profile 列表加载失败: " + profilesError);
+            }
         }
 
         std::vector<ClaudeService::CallLogEntry> recent;
-        if (svc) {
+        if (!svc) {
+            callsError = "服务未就绪（ClaudeService 未注册）";
+        } else {
             auto rR = svc->recentCalls(3);
-            if (rR.isOk()) recent = std::move(rR).value();
+            if (rR.isOk()) {
+                recent = std::move(rR).value();
+            } else {
+                callsError = rR.errorMessage();
+                LOG_ERROR("调用记录加载失败: " + callsError);
+            }
         }
 
         Profile activeProfile;
@@ -159,7 +184,7 @@ public:
                                         ui.text("claude.status.text")
                                             .size(200.0f, 18.0f)
                                             .text(statusText)
-                                            .fontSize(13.0f)
+                                            .fontSize(t.sizes.fontSizeSmall)
                                             .lineHeight(18.0f)
                                             .color(proxyRunning ? t.colors.success
                                                                 : t.colors.textTertiary)
@@ -168,9 +193,11 @@ public:
                                     })
                                     .build();
 
-                                const std::string subtitle =
-                                    std::string("管理多套 Claude API 配置 · 本地代理 http://127.0.0.1") +
-                                    portStr;
+                                // 代理未运行时不显示假地址，改为可操作的提示
+                                const std::string subtitle = proxyRunning
+                                    ? (std::string("管理多套 Claude API 配置 · 本地代理 http://127.0.0.1") +
+                                       portStr)
+                                    : std::string("管理多套 Claude API 配置 · 代理已停止，点右上角启动");
                                 ui.text("claude.subtitle")
                                     .size(contentW - 360.0f, 16.0f)
                                     .text(subtitle)
@@ -192,7 +219,7 @@ public:
                                 components::button(ui, "claude.btn.proxy")
                                     .size(110.0f, 40.0f)
                                     .text(proxyRunning ? "⏸ 停止代理" : "▶ 启动代理")
-                                    .fontSize(13.0f)
+                                    .fontSize(t.sizes.fontSizeSmall)
                                     .colors(t.colors.surfaceElevated, t.colors.hover,
                                             t.colors.active)
                                     .textColor(t.colors.textSecondary)
@@ -205,7 +232,7 @@ public:
                                 components::button(ui, "claude.btn.new")
                                     .size(140.0f, 40.0f)
                                     .text("+ 新建 Profile")
-                                    .fontSize(13.0f)
+                                    .fontSize(t.sizes.fontSizeSmall)
                                     .colors(t.colors.primary, t.colors.primaryHover,
                                             t.colors.primaryPressed)
                                     .textColor(eui::Color("#FFFFFF"))
@@ -244,7 +271,7 @@ public:
                                     .position(20.0f, 20.0f)
                                     .size(leftW - 40.0f, 20.0f)
                                     .text("Profile 列表")
-                                    .fontSize(15.0f)
+                                    .fontSize(t.sizes.fontSizeBody)
                                     .lineHeight(20.0f)
                                     .fontWeight(600)
                                     .color(t.colors.textPrimary)
@@ -253,7 +280,16 @@ public:
                                 // 卡片列表（真实数据；空时显示占位）
                                 const float cardY0 = 56.0f;
                                 const float cardGap = 12.0f;
-                                if (profiles.empty()) {
+                                if (!profilesError.empty()) {
+                                    ui.text("claude.profiles.error")
+                                        .position(20.0f, cardY0 + 20.0f)
+                                        .size(leftW - 40.0f, 60.0f)
+                                        .text("Profile 列表加载失败：" + profilesError)
+                                        .fontSize(12.0f)
+                                        .lineHeight(20.0f)
+                                        .color(t.colors.error)
+                                        .build();
+                                } else if (profiles.empty()) {
                                     ui.text("claude.profiles.empty")
                                         .position(20.0f, cardY0 + 20.0f)
                                         .size(leftW - 40.0f, 60.0f)
@@ -277,7 +313,7 @@ public:
                                     .position(20.0f, bodyH - 64.0f)
                                     .size(leftW - 40.0f, 40.0f)
                                     .text("+ 新建 Profile")
-                                    .fontSize(13.0f)
+                                    .fontSize(t.sizes.fontSizeSmall)
                                     .colors(t.colors.surfaceElevated, t.colors.hover,
                                             t.colors.active)
                                     .textColor(t.colors.textPrimary)
@@ -314,7 +350,7 @@ public:
                                     .position(x0, y0)
                                     .size(w0, 24.0f)
                                     .text("当前 Profile 详情")
-                                    .fontSize(18.0f)
+                                    .fontSize(t.sizes.fontSizeLarge)
                                     .lineHeight(24.0f)
                                     .fontWeight(600)
                                     .color(t.colors.textPrimary)
@@ -395,7 +431,7 @@ public:
                                     .position(x0 + 12.0f, fy0 + fieldH + 18.0f)
                                     .size(w0 - 24.0f, 28.0f)
                                     .text(urlValue)
-                                    .fontSize(13.0f)
+                                    .fontSize(t.sizes.fontSizeSmall)
                                     .lineHeight(28.0f)
                                     .color(t.colors.textPrimary)
                                     .build();
@@ -420,7 +456,7 @@ public:
                                     .position(x0 + 12.0f, fy0 + fieldH + 74.0f)
                                     .size(w0 - 24.0f, 32.0f)
                                     .text(tokenValue)
-                                    .fontSize(13.0f)
+                                    .fontSize(t.sizes.fontSizeSmall)
                                     .lineHeight(32.0f)
                                     .color(t.colors.textSecondary)
                                     .build();
@@ -441,7 +477,7 @@ public:
                                         components::button(ui, "claude.act.enable")
                                             .size(actW, 36.0f)
                                             .text("启用")
-                                            .fontSize(13.0f)
+                                            .fontSize(t.sizes.fontSizeSmall)
                                             .colors(t.colors.primary,
                                                     t.colors.primaryHover,
                                                     t.colors.primaryPressed)
@@ -461,7 +497,7 @@ public:
                                         components::button(ui, "claude.act.test")
                                             .size(actW, 36.0f)
                                             .text("测试连通")
-                                            .fontSize(13.0f)
+                                            .fontSize(t.sizes.fontSizeSmall)
                                             .colors(t.colors.surfaceElevated,
                                                     t.colors.hover, t.colors.active)
                                             .textColor(t.colors.textPrimary)
@@ -481,7 +517,7 @@ public:
                                         components::button(ui, "claude.act.edit")
                                             .size(actW, 36.0f)
                                             .text("编辑")
-                                            .fontSize(13.0f)
+                                            .fontSize(t.sizes.fontSizeSmall)
                                             .colors(t.colors.surfaceElevated,
                                                     t.colors.hover, t.colors.active)
                                             .textColor(t.colors.textPrimary)
@@ -501,7 +537,7 @@ public:
                                         components::button(ui, "claude.act.del")
                                             .size(actW, 36.0f)
                                             .text("删除")
-                                            .fontSize(13.0f)
+                                            .fontSize(t.sizes.fontSizeSmall)
                                             .colors(t.colors.surfaceElevated,
                                                     t.colors.hover, t.colors.active)
                                             .textColor(t.colors.error)
@@ -534,7 +570,7 @@ public:
                                     .position(x0, actY + 76.0f)
                                     .size(w0, 20.0f)
                                     .text("最近调用")
-                                    .fontSize(15.0f)
+                                    .fontSize(t.sizes.fontSizeBody)
                                     .lineHeight(20.0f)
                                     .fontWeight(600)
                                     .color(t.colors.textPrimary)
@@ -580,7 +616,16 @@ public:
                                     .build();
 
                                 // 最近调用（真实数据，从 claude_call_logs 读）
-                                if (recent.empty()) {
+                                if (!callsError.empty()) {
+                                    ui.text("claude.calls.error")
+                                        .position(colTimeX, tableY + 24.0f)
+                                        .size(w0 - 80.0f, 16.0f)
+                                        .text("调用记录加载失败：" + callsError)
+                                        .fontSize(11.0f)
+                                        .lineHeight(16.0f)
+                                        .color(t.colors.error)
+                                        .build();
+                                } else if (recent.empty()) {
                                     ui.text("claude.calls.empty")
                                         .position(colTimeX, tableY + 24.0f)
                                         .size(w0 - 80.0f, 16.0f)
@@ -643,7 +688,15 @@ public:
                                     }
                                 }
 
-                                // 查看全部 →
+                                // 查看全部 →（可点击：弹完整调用记录）
+                                ui.rect("claude.calls.viewall.hit")
+                                    .position(x0, tableY + 104.0f)
+                                    .size(w0, 24.0f)
+                                    .color(t.colors.surface)
+                                    .hoverColor(t.colors.hover)
+                                    .radius(t.sizes.radiusSmall)
+                                    .onClick([this] { openCallsDialog(); })
+                                    .build();
                                 ui.text("claude.calls.viewall")
                                     .position(x0, tableY + 108.0f)
                                     .size(w0, 18.0f)
@@ -662,6 +715,7 @@ public:
         // 弹窗（画在最上层）
         drawProfileFormDialog(ui, screen, t, themeTokens);
         drawDeleteConfirmDialog(ui, screen, t, themeTokens);
+        drawCallsDialog(ui, screen, t, themeTokens);
         drawToast(ui, screen, themeTokens);
 
         LOG_DEBUG("Claude 模块 compose 完成");
@@ -751,7 +805,7 @@ private:
             .position(64.0f, y + 18.0f)
             .size(width - 130.0f, 20.0f)
             .text(p.name)
-            .fontSize(15.0f)
+            .fontSize(t.sizes.fontSizeBody)
             .lineHeight(20.0f)
             .fontWeight(600)
             .color(t.colors.textPrimary)
@@ -1036,7 +1090,7 @@ private:
                     .size(w - 56.0f, 40.0f)
                     .text("将删除 Profile「" + deleteTargetName_ +
                           "」及其 Keychain 中的 API Key，不可恢复。")
-                    .fontSize(13.0f)
+                    .fontSize(t.sizes.fontSizeSmall)
                     .lineHeight(20.0f)
                     .color(t.colors.textSecondary)
                     .build();
@@ -1066,6 +1120,95 @@ private:
                         deleteConfirmOpen_ = false;
                         doDelete(id);
                     })
+                    .build();
+            })
+            .build();
+    }
+
+    // ============ 完整调用记录弹窗（「查看全部」入口） ============
+    void openCallsDialog() {
+        ClaudeService* svc = ClaudeService::global();
+        if (!svc) {
+            showToast("加载失败", "服务未就绪（ClaudeService 未注册）", true);
+            return;
+        }
+        auto r = svc->recentCalls(20);
+        if (r.isFail()) {
+            showToast("加载失败", r.errorMessage(), true);
+            return;
+        }
+        allCalls_ = std::move(r).value();
+        callsDialogOpen_ = true;
+    }
+
+    void drawCallsDialog(eui::Ui& ui, const eui::Screen& screen,
+                         const core::theme::Tokens& t,
+                         const components::theme::ThemeColorTokens& themeTokens) {
+        const float w = 720.0f;
+        const float h = 560.0f;
+
+        components::dialog(ui, "claude.dialog.calls")
+            .open(callsDialogOpen_)
+            .screen(screen.width, screen.height)
+            .size(w, h)
+            .theme(themeTokens)
+            .onOpenChange([this](bool v) { callsDialogOpen_ = v; })
+            .content([&] {
+                ui.text("claude.dialog.calls.title")
+                    .position(28.0f, 24.0f)
+                    .size(w - 56.0f, 28.0f)
+                    .text("调用记录（最近 20 条）")
+                    .fontSize(20.0f)
+                    .lineHeight(28.0f)
+                    .fontWeight(700)
+                    .color(t.colors.textPrimary)
+                    .build();
+
+                if (allCalls_.empty()) {
+                    ui.text("claude.dialog.calls.empty")
+                        .position(28.0f, 72.0f)
+                        .size(w - 56.0f, 20.0f)
+                        .text("(暂无调用记录)")
+                        .fontSize(t.sizes.fontSizeSmall)
+                        .lineHeight(20.0f)
+                        .color(t.colors.textTertiary)
+                        .build();
+                } else {
+                    for (size_t i = 0; i < allCalls_.size(); ++i) {
+                        const ClaudeService::CallLogEntry& c = allCalls_[i];
+                        const float rowY = 68.0f + static_cast<float>(i) * 22.0f;
+                        const std::string line =
+                            formatHHMM(c.startedAt) + "  " + c.method + " " +
+                            c.path + "  " +
+                            (c.statusCode > 0 ? std::to_string(c.statusCode)
+                                              : std::string("-")) +
+                            "  " + formatLatency(c.latencyMs);
+                        const eui::Color rowColor =
+                            (c.statusCode >= 200 && c.statusCode < 300)
+                                ? t.colors.textSecondary
+                                : t.colors.error;
+                        ui.text("claude.dialog.calls.row." + std::to_string(i))
+                            .position(28.0f, rowY)
+                            .size(w - 56.0f, 18.0f)
+                            .text(line)
+                            .fontSize(12.0f)
+                            .lineHeight(18.0f)
+                            .color(rowColor)
+                            .build();
+                    }
+                }
+
+                components::button(ui, "claude.dialog.calls.close")
+                    .position(28.0f, h - 60.0f)
+                    .size(w - 56.0f, 40.0f)
+                    .text("关闭")
+                    .fontSize(14.0f)
+                    .colors(t.colors.surfaceElevated, t.colors.hover,
+                            t.colors.active)
+                    .textColor(t.colors.textPrimary)
+                    .radius(t.sizes.radius)
+                    .border(1.0f, t.colors.borderDefault)
+                    .onClick([this] { callsDialogOpen_ = false; })
                     .build();
             })
             .build();
@@ -1177,6 +1320,10 @@ private:
     bool deleteConfirmOpen_ = false;
     int64_t deleteTargetId_ = 0;
     std::string deleteTargetName_;
+
+    // 完整调用记录弹窗
+    bool callsDialogOpen_ = false;
+    std::vector<ClaudeService::CallLogEntry> allCalls_;
 
     // Toast
     bool toastOpen_ = false;
