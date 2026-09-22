@@ -74,6 +74,25 @@ inline const char* kDoneMarker = "data: [DONE]\n\n";
 inline const char* kContentType = "text/event-stream";
 } // namespace sse
 
+// SSE 事件重组器 + usage 解析（首页 Token 速率卡片，设计 §3）
+//
+// 网络 chunk 可能把一条 SSE 事件从中间切断（TCP 分段边界 ≠ 事件边界），
+// 重组器累积缓冲、按空行（\n\n 或 \r\n\r\n）切事件，剥 data: 前缀后解析
+// JSON，取出累计 output tokens：
+//   - message_start：message.usage.output_tokens（嵌套一层）
+//   - message_delta：usage.output_tokens（顶层，累计值口径）
+// 其余事件（content_block_delta 等）安全跳过；解析失败跳过不抛
+// （统计尽力而为，绝不影响转发）。
+class SseUsageParser {
+public:
+    // 喂入一个原始网络 chunk，返回本 chunk 内重组完成的事件里
+    // 解析出的全部累计 output token 值（时间序）
+    std::vector<int64_t> feed(const std::string& chunk);
+
+private:
+    std::string buf_;
+};
+
 // 检测请求 body 是否要求流式响应（JSON 中 "stream": true）
 // 解析失败时返回 false（走缓冲路径）
 bool wantsStream(const std::string& body);
