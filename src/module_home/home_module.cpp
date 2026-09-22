@@ -8,6 +8,7 @@
 #include "core/database.h"
 #include "core/logging.h"
 #include "core/module_interface.h"
+#include "core/proxy_stats.h"
 #include "core/router.h"
 #include "core/theme.h"
 #include "home_service.h"
@@ -27,6 +28,8 @@ namespace module::home {
 namespace {
 
 // 渲染单个统计卡片（stack 内子元素绝对定位，点击整卡跳转）
+// numberColor/badgeColor 非空时覆盖默认配色（accent ? error : 常规）
+// timerSeconds > 0 时挂一个 0 尺寸 onTimer 元素驱动本卡定期重绘
 void drawStatCard(eui::Ui& ui,
                   const std::string& id,
                   float width,
@@ -36,7 +39,10 @@ void drawStatCard(eui::Ui& ui,
                   const std::string& number,
                   const std::string& badge,
                   bool accent,
-                  std::function<void()> onClick) {
+                  std::function<void()> onClick,
+                  const eui::Color* numberColor = nullptr,
+                  const eui::Color* badgeColor = nullptr,
+                  float timerSeconds = 0.0f) {
     ui.stack(id)
         .size(width, height)
         .content([&] {
@@ -65,7 +71,9 @@ void drawStatCard(eui::Ui& ui,
                 .fontSize(t.sizes.fontSizeDisplay)
                 .lineHeight(56.0f)
                 .fontWeight(700)
-                .color(accent ? t.colors.error : t.colors.textPrimary)
+                .color(numberColor ? *numberColor
+                                   : (accent ? t.colors.error
+                                             : t.colors.textPrimary))
                 .build();
 
             ui.text(id + ".badge")
@@ -74,8 +82,19 @@ void drawStatCard(eui::Ui& ui,
                 .text(badge)
                 .fontSize(11.0f)
                 .lineHeight(14.0f)
-                .color(accent ? t.colors.error : t.colors.textTertiary)
+                .color(badgeColor ? *badgeColor
+                                  : (accent ? t.colors.error
+                                            : t.colors.textTertiary))
                 .build();
+
+            if (timerSeconds > 0.0f) {
+                // compose 不是每帧重跑（DSL.md），实时刷新靠 onTimer 周期触发
+                // 整页 compose（设计 §2.6，linechart 同款机制）
+                ui.stack(id + ".timer")
+                    .size(0.0f, 0.0f)
+                    .onTimer(timerSeconds, [] {})
+                    .build();
+            }
         })
         .build();
 }
@@ -153,7 +172,7 @@ public:
         const float gap = t.sizes.spacingLarge * 1.25f; // 20
         const float contentW = screen.width - pad * 2.0f;
         const float cardGap = 20.0f;
-        const float statW = (contentW - cardGap * 3.0f) / 4.0f;
+        const float statW = (contentW - cardGap * 4.0f) / 5.0f;
         const float statH = 120.0f;
         const std::time_t now = std::time(nullptr);
 
@@ -225,16 +244,39 @@ public:
                     })
                     .build();
 
-                // ========== 4 个统计卡片（真实数据） ==========
+                // ========== 5 个统计卡片（真实数据 + Token 速率实时卡） ==========
                 const bool ok = statsLoaded_;
                 auto num = [&ok](int64_t v) {
                     return ok ? std::to_string(v) : std::string("--");
                 };
 
+                // Token 速率卡三态（设计 §4 方案 A）：
+                //   流式中 = primary 色 + success 绿 badge；空闲/刚结束 = 灰，
+                //   速率随 2s 窗口自然衰减到 0，累计定格保留
+                const core::proxy_stats::Snapshot snap =
+                    core::proxy_stats::snapshot();
+                const bool streaming = snap.activeStreams > 0;
+                const std::string sessionCn =
+                    formatTokenCount(snap.sessionTokens);
+                const std::string tokenBadge =
+                    streaming
+                        ? "● " + std::to_string(snap.activeStreams) +
+                              " 路并发 · 会话累计 " + sessionCn
+                        : "空闲 · 会话累计 " + sessionCn;
+
                 ui.row("home.stats")
                     .size(contentW, statH)
                     .gap(cardGap)
                     .content([&] {
+                        drawStatCard(ui, "home.stat.tokens", statW, statH, t,
+                                     "Token 速率 (tok/s)",
+                                     formatRateTps(snap.rateTps), tokenBadge,
+                                     false,
+                                     [this] { navigateTo(::core::PageId::ClaudeProxy); },
+                                     streaming ? &t.colors.primary
+                                               : &t.colors.textTertiary,
+                                     streaming ? &t.colors.success : nullptr,
+                                     0.5f);
                         drawStatCard(ui, "home.stat.notes", statW, statH, t,
                                      "今日笔记", num(stats_.todayNotes),
                                      ok ? "今日修改过的笔记" : "尚未加载",
