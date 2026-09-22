@@ -2,6 +2,78 @@
 
 本文件记录 **a1a106a（macOS 中断现场收编）起** 的条目式变更，按恢复计划的三波（W1 止血收编 / W2 平台架构 / W3 剩余需求）组织，波内按 feat / fix / test / docs 分组。更早的 macOS 主线历史（P0–P8，66 测试通过）见 git log 与 spec §16。
 
+## [Final-Verify] 2026-09-23 —— 终验发现问题收尾批（12 项）
+
+分支 `fix/final-verify`。基线 290/290 → **291/291 全绿**（+1 设置页布局断言；EUI-NEO 侧另加 1 个单测）。
+
+### fix
+
+- **模块隔离**：module_pet 直 include module_settings 的 SettingsStore（违反 module_* 互依禁令）——petSkin/petX/petY/petClickThrough 四字段从 config.json 迁到 `petsDir()/pet_config.json`，module_pet 自有 `PetConfigStore` 读写（存量旧 pet 坐标一次性丢失，桌宠回默认位置）。
+- **逾期弹窗溢出**：高度封顶 640 但行全量渲染，≥13 条画到窗外——行循环按 (640-96)/44=12 条截断，提示行标注「仅显示前 N 条」。
+- **设置页效果下拉溢出**：固定 x=680 在 1200 最小窗下超出外观卡 60px——字号/效果两列改右缘自适应（宽窗原位不变），补 1200 宽断言。
+- **键盘流 spec 对齐（§5.2）**：Ctrl+B/I 再按去包裹（选区两端恰为 **/* 时移除）；Tab 缩进 2→4 空格（反缩进每行去 1 Tab 或 ≤4 前导空格）；顺带修 applyTab 偏移修正的坐标混用（多行反缩进选区端点偏 1）。
+- **overdueDays 改本地日历日差**：昨天到期今天看 = 1 天（原秒差向上取整在 23:59 到期/次日 00:01 查看时虚报 2 天）。
+- **桌宠 petX/petY 单边 -1 哨兵**：原 x/y 任一边未设置就两边一起重置——改单边独立；删除死代码 `discoverSkins()`。
+- **桌宠菜单文案**：「隐藏桌宠（设置页可重新开启）」→「本次会话；重启后恢复」（设置页开关本就需重启生效）。
+- **md 切笔记清空 tagInput_**；空态文案「+ 新建」→「+ 笔记」。
+- **FA 残留清扫**：设置页降级提示 ⚠、Todo 弹窗标题 ⚠/卡片勾 ✓/详情按钮 ✓↩ 全部换 FA icon 通道。
+
+### test
+
+- Todo 拖拽防误触断言去空洞化：直接调回调时 onClick 从不派发、旧断言恒真——改驱动 EUI-NEO `InteractionState` 真实时序（press→超阈值 drag→release 回卡内 = clicked=false；对照组原地 release = clicked=true）。
+- EUI-NEO `tests/unit/exit_request.cpp`（上游 main 本地 commit）：requestExit/consumeExitRequest 恰好一次语义 + requestWindowClose(nullptr) 守卫。
+
+### docs
+
+- KNOWN_LIMITATIONS 重复 #12 重新编号（12-16 连续）；CHANGELOG 补登波次 3+4 各批（见下节）；CLAUDE.md 测试数 137→291。
+
+## [Wave-3+4] 2026-09-22/23 —— 波次 3+4 补登（自主时段批次汇总）
+
+对照 `docs/superpowers/plans/2026-09-22-backlog.md` §二补记此前漏登的批次（Module-Gating / Provider-Config 已有专节，不重复）。EUI-NEO 侧上游 commit 均在 `../EUI-NEO` main（本地领先 origin，未 push）。
+
+### 磨砂全链 Phase A–D（spec `2026-09-22-eui-window-frost-design.md`）
+
+- Phase A：标题栏深浅主题联动（见 [W8] 条目）。
+- Phase B/C（EUI-NEO 上游）：透明管线 + 运行时 `app::setClearColor`（覆盖主窗口 + 全部子窗口 + requestFullPaint）；DWM backdrop `setWindowEffect/activeWindowEffect` 运行时 API。
+- Phase D（`4f6fbac`）：设置页「外观」卡窗口效果三档（off/translucent/frosted）——档位→参数纯函数（clearColor alpha + backdrop 请求 + 降级提示矩阵）、`applyWindowVisuals` 三处共用接线、透明 hint 常开三档运行时切换不重建窗口；顺手根治 KNOWN_LIMITATIONS「切主题底色需重启」（244/244）。
+
+### EUI-NEO 上游批（DevDesk 消费）
+
+- 拖拽取消 click（`InteractionState.dragMoved`：超阈值拖动后松手不派发 click）——DevDesk 删 Todo 卡片本地抑制逻辑（`3dba229`）。
+- toast action 按钮（单按钮 + 右上 ✕）——Markdown 外部修改二选一从 dialog 改 toast action（`97db502`：重载磁盘 / 保留本地，duration(0) 强制显式决定）。
+- `input.onKeyEvent` passthrough——Markdown 键盘流的通道 A（见下）。
+- 按钮 disabled 自动置灰、托盘 UTF-16 乱码修复。
+
+### Markdown 布局修复（`8cbc2ba`）
+
+- Split 双栏 `midW` 公式笔误 + 三栏「column 铺底 + overlay stack」双占位结构导致双栏各窄 128px、预览溢出屏——改单 stack 铺底 + 内容绝对定位，补 headless layout 回归（235/235）。
+- 默认视图改编辑态（左树 + 右编辑两栏，三态循环 Edit→Split→Preview）；目录树根组标题常显置顶 + 空目录空态同显；新建文件夹入口 + 新建笔记子路径提示（240/240）。
+
+### Todo 功能补完（`a6f3742`，W7 计划 P2 三件套）
+
+- 搜索框（真实 `service->search`，命中列照常渲染只显示命中卡，Enter/Esc 清空）；逾期视图（badge=listOverdue 数量、0 置灰，弹窗四列数据、行点击跳详情）；tags 编辑（详情弹窗回车添加/× 删除，卡片前 2 个 chip + 溢出 +N）；列色点 + 右键改色（6 预设，`setColumnColor` 落库）。纯函数 `columnDotColor/overdueDays/filterBySearch` 落 `todo_ui_logic.h`（241/241）。
+
+### Markdown 标签系统（`d58379d`，spec §8.1）
+
+- 服务层 `markdown_tags/markdown_note_tags` 表首次接线：`setTags` 全量替换（事务 + 孤儿清理）、`tagsForNote/listAllTags/notesWithTag`；UI 手动标签最简形态（编辑器顶栏 chip 行 + 左栏筛选，点击过滤树）+5 用例（245/245）。
+
+### Markdown 键盘流（`9b7558f`，spec §5.2 通道 A）
+
+- `md_keyboard` 纯函数（EditBuffer 字节偏移语义）+ `handleEditorKey` 接线（IME 预编辑防御 → 纯函数 → 写回 InputState 含 undo/textRevision/onChange）：Tab 缩进、Enter 列表续行（前缀继承/空项退出）、Ctrl+B/I 包裹、Ctrl+K 链接骨架，+15 单测；顺带修反缩进误删非前导空格。
+- FA 收尾（`97db502`）：Markdown/Todo 全量 emoji→FontAwesome（码点对 FA7 Free-Solid cmap 离线核对）；`#FFFFFF` 硬编码 → `t.colors.onPrimary`。
+
+### 桌宠 MVP（`bbac916`，spec `2026-09-22-desktop-pet-design.md` M1）
+
+- module_pet（非 Router 页面模块）：pet.json 皮肤解析 + 内置占位皮肤 clay-cat 程序生成（PNG 未压缩 deflate 写出器零第三方依赖）；帧状态机（Idle 循环/poke 播一遍）；`app::openWindow` 子窗口（无边框/置顶/128×128/不抢焦点/不进任务栏/全透，EUI-NEO G1-G5 扩展）+ 拖拽 setWindowPos + 右键菜单（穿透/隐藏/退出）+ 持久化 + 工作区钳制；`kModuleIdPet` 门控（默认关）+ `core::paths::petsDir()`，+10 用例（285/285）。子窗口视觉呈现因企业水印层无法自动截图，人工点验。
+
+### 打磨批（`426584a`）
+
+- 调用时间列跨天显示（`formatCallTime`：今日 HH:MM/昨天/更早 MM-DD）；Home/Claude/设置页 emoji→FA；设置页卡片区套 scrollView（4 卡总高 580 > 小窗口可视 552，第 4 卡被裁）；`onPrimary` token；CLAUDE.md 架构图 4 模块改 5（237/237）。
+
+### 托盘图标（`049a4f4`，波次 2 批次补记）
+
+- `.tray` 托盘 + 四模块快速跳转菜单（EUI-NEO tray-menu PR 已合 main）。
+
 ## [Module-Gating] 2026-09-22 —— 模块插拔方案 A（编译期内置 + 运行时注册门控）
 
 设计文档 `docs/superpowers/specs/2026-09-22-module-plugin-architecture-design.md`（推荐方案 A 为权威）；分支 `feat/plugin-gating`。最终基线 **275/275 全绿**（259 基线 + 16 新增）。

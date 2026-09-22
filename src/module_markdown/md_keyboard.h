@@ -32,11 +32,13 @@ std::string nextListPrefix(const std::string& prefix);
 // 返回 true = 已处理；false = 普通行/有选区，交回 input 内置 Enter。
 bool applyEnterList(EditBuffer& buf);
 
-// Tab / Shift+Tab：无选区 Tab = 插入两空格（同打字）；
-// 有选区（或 Shift）= 光标/选区覆盖的所有行整体缩进 / 反缩进两空格。
+// Tab / Shift+Tab：无选区 Tab = 插入 4 空格（spec §5.2）；
+// 有选区（或 Shift）= 光标/选区覆盖的所有行整体缩进 4 空格 / 反缩进
+//（每行去掉 1 个 Tab 或至多 4 个前导空格）。
 void applyTab(EditBuffer& buf, bool shift);
 
-// Ctrl+B / Ctrl+I：选区包裹 marker；无选区插入成对标记、光标放中间。
+// Ctrl+B / Ctrl+I：选区包裹 marker；再按 = 去包裹（选区两端恰为 marker 时
+// 移除，unwrap toggle，spec §5.2）；无选区插入成对标记、光标放中间。
 void applyWrapAround(EditBuffer& buf, const std::string& marker);
 
 // Ctrl+K：有选区 → [选区](链接) 并选中「链接」占位；

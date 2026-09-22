@@ -588,27 +588,64 @@ REGISTER_TEST(todo_ui_move_appends_to_end,
         DOCTEST_CHECK_EQ(ts.value().size(), static_cast<size_t>(2));  // 未动
     }
 
-    // 松手落回源列 = 取消；且拖拽松手回落卡上不触发详情弹窗（框架
-    // InteractionState.dragMoved 语义：超阈值拖动后不再派发 click，
-    // 模块内抑制逻辑已删；这里直接按真实时序 press→drag→release）
+    // 松手落回源列 = 取消；且拖拽松手回落卡上不触发详情弹窗。
+    // 终验复审：无头直接调 onClick/onRelease 回调时 click 从不派发，旧的
+    // 「详情弹窗未开」断言恒真。改为驱动 EUI-NEO InteractionState 真实时序
+    //（框架派发 click 的唯一仲裁者）：press → 超阈值 drag → release 回卡内
+    // → clicked=false；对照组 press → release 原地未动 → clicked=true
     {
         composeLayout();
         const auto* card = ui.find("todo.col.5.card.1.bg");
         DOCTEST_REQUIRE(card != nullptr);
+        const eui::Rect bounds = boundsOf(card);
+        const float cx = card->frame.x + card->frame.width / 2.0f;
+        const float cy = card->frame.y + card->frame.height / 2.0f;
+        auto makeEvent = [](float x, float y, eui::PointerAction action) {
+            eui::PointerEvent ev;
+            ev.x = x;
+            ev.y = y;
+            ev.action = action;
+            ev.button = core::PointerButton::Left;
+            ev.buttons.set(core::PointerButton::Left,
+                           action != eui::PointerAction::Release);
+            return ev;
+        };
+        // 拖拽时序：press → 拖出 500px（超阈值）→ 拖回卡内松手
+        core::InteractionState dragState;
+        dragState.update(bounds, makeEvent(cx, cy, eui::PointerAction::Press),
+                         true, core::PointerButton::Left);
+        DOCTEST_CHECK(dragState.pressStarted);
+        dragState.update(bounds, makeEvent(cx + 500.0f, cy, eui::PointerAction::Move),
+                         true, core::PointerButton::Left);
+        DOCTEST_CHECK(dragState.dragMoved);  // 超阈值拖动激活过
+        dragState.update(bounds, makeEvent(cx, cy, eui::PointerAction::Release),
+                         true, core::PointerButton::Left);
+        DOCTEST_CHECK(dragState.released);
+        DOCTEST_CHECK(!dragState.clicked);  // 拖过又拖回 ≠ 点击 → onClick 不派发
+
+        // 对照组：press → 原地 release → clicked=true（这条路径才开详情弹窗）
+        core::InteractionState clickState;
+        clickState.update(bounds, makeEvent(cx, cy, eui::PointerAction::Press),
+                          true, core::PointerButton::Left);
+        clickState.update(bounds, makeEvent(cx, cy, eui::PointerAction::Release),
+                          true, core::PointerButton::Left);
+        DOCTEST_CHECK(clickState.clicked);
+
+        // 模块 drop 路径照旧走真实回调：拖出又拖回松手 → 落回源列 = 取消，
+        // 详情弹窗不因松手打开（回归护栏：模块不得在 onRelease 里自开详情）
         eui::PointerEvent pe;
-        card->onPress(pe, boundsOf(card));
+        card->onPress(pe, bounds);
         core::dsl::DragEvent ev;  // 超阈值拖动后又拖回卡上
-        ev.x = card->frame.x + card->frame.width / 2.0f;
-        ev.y = card->frame.y + card->frame.height / 2.0f;
+        ev.x = cx;
+        ev.y = cy;
         ev.totalX = 500.0;
         card->onDrag(ev);
         eui::PointerEvent up;
-        up.x = ev.x;
-        up.y = ev.y;
+        up.x = cx;
+        up.y = cy;
         up.action = eui::PointerAction::Release;
         card->onRelease(up, eui::Rect{});
         composeLayout();
-        // 详情弹窗未打开（dialog 组件常驻 compose，open 只控 opacity → 断言 panel 透明）
         const auto* detailPanel = ui.find("todo.dialog.detail.panel");
         DOCTEST_REQUIRE(detailPanel != nullptr);
         DOCTEST_CHECK_EQ(detailPanel->opacity, 0.0f);
@@ -1242,7 +1279,13 @@ REGISTER_TEST(todo_ui_overdue_dialog,
     const int64_t now = static_cast<int64_t>(std::time(nullptr));
     {
         module::todo::Task t = ov.value();
-        t.dueAt = now - 3 * 86400 - 3600;  // 逾期 4 天（向上取整）
+        // 本地日历日前天 12:00 到期（日历日差 = 2 天；与测试机时区无关）
+        std::tm dueTm{};
+        core::time::localTime(now, &dueTm);
+        dueTm.tm_hour = 12;
+        dueTm.tm_min = 0;
+        dueTm.tm_sec = 0;
+        t.dueAt = std::mktime(&dueTm) - 2 * 86400;  // 逾期 2 天（日历日差）
         DOCTEST_REQUIRE(env.svc->updateTask(t).isOk());
         module::todo::Task d = doneOv.value();
         d.dueAt = now - 86400;
@@ -1277,7 +1320,7 @@ REGISTER_TEST(todo_ui_overdue_dialog,
         DOCTEST_REQUIRE(rowDays != nullptr);
         DOCTEST_CHECK_EQ(rowTitle->text, std::string("逾期任务甲"));
         DOCTEST_CHECK_EQ(rowCol->text, std::string("待办"));
-        DOCTEST_CHECK(rowDays->text.find("4") != std::string::npos);
+        DOCTEST_CHECK(rowDays->text.find("2") != std::string::npos);
         // 行点击 → 关闭逾期弹窗 + 打开该任务详情
         const auto* row = frame.ui.find("todo.dialog.overdue.row.0");
         DOCTEST_REQUIRE(row != nullptr);
@@ -1502,14 +1545,24 @@ REGISTER_TEST(todo_ui_feature_pure_helpers,
     const eui::Color sageExpect("#788C5D");
     DOCTEST_CHECK_EQ(sage->r, sageExpect.r);
 
-    // 逾期天数（向上取整；未过期 → 0）
-    const int64_t d = 86400;
-    DOCTEST_CHECK_EQ(overdueDays(100, 100), 0);
-    DOCTEST_CHECK_EQ(overdueDays(100, 99), 0);
-    DOCTEST_CHECK_EQ(overdueDays(100, 101), 1);
-    DOCTEST_CHECK_EQ(overdueDays(0, d), 1);
-    DOCTEST_CHECK_EQ(overdueDays(0, d + 1), 2);
-    DOCTEST_CHECK_EQ(overdueDays(0, 3 * d + 3600), 4);
+    // 逾期天数（本地日历日差：昨天到期今天看 = 1 天；当天/未过期 → 0）。
+    // 用 mktime 构造本地时间，断言不依赖测试机时区
+    const auto localMidnight = [](int daysAgo) -> int64_t {
+        std::time_t now = std::time(nullptr);
+        std::tm tm{};
+        core::time::localTime(now, &tm);
+        tm.tm_hour = 0;
+        tm.tm_min = 0;
+        tm.tm_sec = 0;
+        return std::mktime(&tm) - static_cast<int64_t>(daysAgo) * 86400;
+    };
+    DOCTEST_CHECK_EQ(overdueDays(100, 100), 0);   // 同一时刻
+    DOCTEST_CHECK_EQ(overdueDays(100, 99), 0);    // 未过期
+    // 昨天 23:59 到期、今天 00:01 查看 = 1 天（旧秒差向上取整会虚报 2 天）
+    DOCTEST_CHECK_EQ(overdueDays(localMidnight(1) + 86399, localMidnight(0) + 60), 1);
+    // 3 个日历日前到期 = 3 天；今天更早时刻到期 = 0 天
+    DOCTEST_CHECK_EQ(overdueDays(localMidnight(3), localMidnight(0)), 3);
+    DOCTEST_CHECK_EQ(overdueDays(localMidnight(0) + 3600, localMidnight(0) + 7200), 0);
 
     // 搜索过滤：命中 id 集内保留且顺序不变；未激活 → 全保留
     std::vector<module::todo::Task> tasks;

@@ -1,4 +1,5 @@
 add_library(devdesk_module_pet STATIC
+    pet_config.cpp
     pet_skin.cpp
     pet_window.cpp
 )

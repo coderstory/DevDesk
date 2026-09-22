@@ -21,7 +21,7 @@
 
 namespace module::pet {
 
-// 内置占位皮肤名（settings_config 的 petSkin 默认值与此一致）
+// 内置占位皮肤名（pet_config 的 skinName 默认值与此一致）
 inline constexpr const char* kDefaultSkinName = "clay-cat";
 
 struct PetSkin {
@@ -59,8 +59,5 @@ core::Result<PetSkin> ensureDefaultSkin(const std::filesystem::path& dir);
 
 // 皮肤根目录候选（依次：exe 旁 assets/pets → appDataDir/pets）
 std::vector<std::filesystem::path> skinRootCandidates();
-
-// 扫描全部候选根下的皮肤目录名（去重；设置页皮肤下拉预留，M2）
-std::vector<std::string> discoverSkins();
 
 } // namespace module::pet

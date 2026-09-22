@@ -9,6 +9,7 @@
 // 子窗口真实渲染/拖拽/穿透属人工点验（设计 §6 M1 验收项）。
 #include "doctest.h"
 
+#include "module_pet/pet_config.h"
 #include "module_pet/pet_frame_player.h"
 #include "module_pet/pet_skin.h"
 #include "module_pet/pet_window.h"
@@ -239,30 +240,31 @@ REGISTER_TEST(pet_gating_defaults, "pet: 默认关闭、已知 ID 可持久化",
     return true;
 });
 
-REGISTER_TEST(pet_settings_roundtrip, "pet: petSkin/petX/petY/petClickThrough 往返", {
-    using namespace module::settings;
+REGISTER_TEST(pet_settings_roundtrip, "pet: pet_config.json 读写往返 + 钳制", {
+    using namespace module::pet;
     const std::filesystem::path file =
         std::filesystem::temp_directory_path() / "devdesk_test_pet_config.json";
     std::error_code ec;
     std::filesystem::remove(file, ec);
-    SettingsStore store(file);
-    SettingsConfig cfg;
-    cfg.petSkin = "my-cat";
-    cfg.petX = 1600;
-    cfg.petY = 800;
-    cfg.petClickThrough = true;
+    PetConfigStore store(file);
+    PetConfig cfg;
+    cfg.skinName = "my-cat";
+    cfg.x = 1600;
+    cfg.y = 800;
+    cfg.clickThrough = true;
     DOCTEST_CHECK(store.save(cfg).isOk());
-    const SettingsConfig loaded = store.load();
-    DOCTEST_CHECK_EQ(loaded.petSkin, "my-cat");
-    DOCTEST_CHECK_EQ(loaded.petX, 1600);
-    DOCTEST_CHECK_EQ(loaded.petY, 800);
-    DOCTEST_CHECK(loaded.petClickThrough);
-    // 皮肤名白名单：路径分隔符/空 → 收敛默认 clay-cat；坐标钳制
-    cfg.petSkin = "../evil";
-    cfg.petX = 999999;
-    const SettingsConfig sanitizedCfg = SettingsStore::sanitized(cfg);
-    DOCTEST_CHECK_EQ(sanitizedCfg.petSkin, "clay-cat");
-    DOCTEST_CHECK_EQ(sanitizedCfg.petX, 32767);
+    const PetConfig loaded = store.load();
+    DOCTEST_CHECK_EQ(loaded.skinName, "my-cat");
+    DOCTEST_CHECK_EQ(loaded.x, 1600);
+    DOCTEST_CHECK_EQ(loaded.y, 800);
+    DOCTEST_CHECK(loaded.clickThrough);
+    // 皮肤名白名单：路径分隔符/空 → 收敛默认 clay-cat；坐标钳制保留 -1 哨兵
+    cfg.skinName = "../evil";
+    cfg.x = 999999;
+    const PetConfig sanitizedCfg = PetConfigStore::sanitized(cfg);
+    DOCTEST_CHECK_EQ(sanitizedCfg.skinName, "clay-cat");
+    DOCTEST_CHECK_EQ(sanitizedCfg.x, 32767);
+    DOCTEST_CHECK_EQ(PetConfigStore::sanitized(PetConfig{}).x, -1);
     std::filesystem::remove(file, ec);
     return true;
 });
@@ -305,6 +307,14 @@ REGISTER_TEST(pet_start_window_request, "pet: 开窗请求逐字段断言（无�
     DOCTEST_CHECK_EQ(second.size(), static_cast<size_t>(1));
     DOCTEST_CHECK(second[0].mousePassthrough);   // 本次 clickThrough=true
     DOCTEST_CHECK(second[0].width == 128);       // 默认皮肤 128×128
+
+    // 单边 -1 哨兵：只重置未设置的那一边，已知坐标不丢
+    //（无头环境无工作区 → 未设置边落到兜底值 100）
+    module::pet::startPetWindow(module::pet::PetWindowConfig{"", 77, -1, false});
+    std::vector<app::DslWindowRequest> third = app::consumeWindowRequests();
+    DOCTEST_CHECK_EQ(third.size(), static_cast<size_t>(1));
+    DOCTEST_CHECK_EQ(third[0].x, 77);   // 已知的 x 原样保留
+    DOCTEST_CHECK_EQ(third[0].y, 100);  // 未设置的 y 走兜底
 
     setEnvVar("DEVDESK_PETS_DIR", "");
     removeTreeQuietly(petsRoot);

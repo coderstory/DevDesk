@@ -789,3 +789,58 @@ REGISTER_TEST(settings_gated_directory_card_hidden, "settings: markdown 模块�
     ::core::theme::setDark();
     return true;
 })
+
+// ---- 效果下拉不超外观卡（终验复审：固定 x=680 在 1200 最小窗超卡 60px） ----
+
+REGISTER_TEST(settings_effect_dropdown_fits_min_window,
+              "settings: 效果下拉 1200 最小窗收进外观卡内", {
+    std::unique_ptr<::core::Module> mod(create_settings_module());
+    mod->onStart();
+    // 1200 最小窗 = 页面宽 940（去掉 260 侧边栏）→ 外观卡内宽 940-80=860，
+    // 旧布局效果下拉 680+240=920 超出卡右缘 60px
+    eui::Screen screen;
+    screen.width = 940.0f;
+    screen.height = 1000.0f;
+    eui::Ui ui;
+    ui.begin("minwin");
+    mod->compose(ui, screen);
+    ui.end();
+    ui.layout(screen.width, screen.height);
+
+    const auto* card = ui.find("settings.card.appearance.bg");
+    const auto* themeLight = ui.find("settings.card.appearance.theme.light.bg");
+    const auto* font = ui.find("settings.card.appearance.font.ddwrap");
+    const auto* effect = ui.find("settings.card.appearance.effect.ddwrap");
+    DOCTEST_REQUIRE(card != nullptr);
+    DOCTEST_REQUIRE(themeLight != nullptr);
+    DOCTEST_REQUIRE(font != nullptr);
+    DOCTEST_REQUIRE(effect != nullptr);
+    // 效果下拉右缘收在卡内（设计右缘留白 28，断言留 ≥20 容差）
+    DOCTEST_CHECK(effect->frame.x + effect->frame.width <=
+                  card->frame.x + card->frame.width - 20.0f);
+    // 字号下拉不与主题按钮重叠、效果下拉不与字号下拉重叠
+    DOCTEST_CHECK(font->frame.x >=
+                  themeLight->frame.x + themeLight->frame.width);
+    DOCTEST_CHECK(effect->frame.x >= font->frame.x + font->frame.width);
+
+    // 宽窗 1600（页面 1340）：保持既有位置（字号 380 / 效果 680 相对卡原点）
+    eui::Screen wide;
+    wide.width = 1340.0f;
+    wide.height = 1000.0f;
+    ui.begin("wide");
+    mod->compose(ui, wide);
+    ui.end();
+    ui.layout(wide.width, wide.height);
+    const auto* wideFont = ui.find("settings.card.appearance.font.ddwrap");
+    const auto* wideEffect = ui.find("settings.card.appearance.effect.ddwrap");
+    const auto* wideCard = ui.find("settings.card.appearance.bg");
+    DOCTEST_REQUIRE(wideFont != nullptr);
+    DOCTEST_REQUIRE(wideEffect != nullptr);
+    DOCTEST_REQUIRE(wideCard != nullptr);
+    DOCTEST_CHECK_EQ(wideFont->frame.x - wideCard->frame.x, 380.0f);
+    DOCTEST_CHECK_EQ(wideEffect->frame.x - wideCard->frame.x, 680.0f);
+
+    mod->onStop();
+    ::core::theme::setDark();
+    return true;
+})

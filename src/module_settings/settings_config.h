@@ -80,11 +80,6 @@ struct SettingsConfig {
     //（sanitized 强制补齐）。缺省 = 全启用，老 config.json 零迁移兼容。
     // pet（桌宠）是已知 ID 但**不在默认清单**——默认关闭，用户在设置页开启
     std::vector<std::string> enabledModules = defaultEnabledModules();
-    // ---- 桌宠（2026-09-22-desktop-pet-design.md §4.6）----
-    std::string petSkin = "clay-cat";  // 皮肤目录名（assets/pets/<petSkin>）
-    int petX = -1;                     // 窗口位置（逻辑屏幕坐标；<0 = 未设置，
-    int petY = -1;                     //  开窗时取主显示器工作区右下角并钳制）
-    bool petClickThrough = false;      // 挂机穿透（右键菜单可切换）
 };
 
 // 模块开关判定（sanitized 后的 config 恒有效；home/settings 恒 true，未知

@@ -167,10 +167,29 @@ inline std::optional<eui::Color> columnDotColor(const std::optional<std::string>
     return std::nullopt;
 }
 
-// 逾期天数（向上取整：过期 1 秒也算 1 天；未过期 → 0）
+// 逾期天数（本地日历日差：昨天到期今天看 = 1 天；未过期/当天到期 → 0。
+// 终验复审：原秒差向上取整在"23:59 到期、次日 00:01 查看"时虚报 2 天）
 inline int overdueDays(int64_t dueAt, int64_t now) {
     if (now <= dueAt) return 0;
-    return static_cast<int>((now - dueAt + 86399) / 86400);
+    std::tm dueTm{};
+    std::tm nowTm{};
+    core::time::localTime(dueAt, &dueTm);
+    core::time::localTime(now, &nowTm);
+    // 日历日序号（days_from_civil，Howard Hinnant；免 tm_yday 跨年/闰年坑）
+    const auto dayNumber = [](const std::tm& tm) -> long long {
+        long long y = static_cast<long long>(tm.tm_year) + 1900;
+        const unsigned m = static_cast<unsigned>(tm.tm_mon) + 1;
+        y -= m <= 2;
+        const long long era = (y >= 0 ? y : y - 399) / 400;
+        const unsigned yoe = static_cast<unsigned>(y - era * 400);
+        const unsigned doy =
+            (153u * (m + (m > 2 ? -3u : 9u)) + 2u) / 5u +
+            static_cast<unsigned>(tm.tm_mday) - 1u;
+        const unsigned doe = yoe * 365u + yoe / 4u - yoe / 100u + doy;
+        return era * 146097 + static_cast<long long>(doe);
+    };
+    const long long diff = dayNumber(nowTm) - dayNumber(dueTm);
+    return diff <= 0 ? 0 : static_cast<int>(diff);
 }
 
 // 搜索过滤：搜索激活时只保留命中 id 集合内的任务（列内排序不变）。

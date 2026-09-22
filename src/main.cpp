@@ -9,6 +9,7 @@
 #include "core/paths.h"
 #include "core/router.h"
 #include "core/theme.h"
+#include "module_pet/pet_config.h"
 #include "module_pet/pet_window.h"
 #include "platform/file_open.h"
 #include "settings_config.h"
@@ -517,9 +518,12 @@ const DslAppConfig& dslAppConfig() {
         // 经同一 enabledModules 门控（含 "pet" 才开窗，默认关 = 零执行）。
         // openWindow 在主循环起来前入队、首帧消费；皮肤缺失时自动生成占位皮肤
         if (isModuleEnabled(module::settings::kModuleIdPet)) {
+            // 桌宠自身配置在 petsDir()/pet_config.json（模块隔离，不走
+            // config.json；pet 字段 2026-09-23 从 SettingsConfig 迁出）
+            const module::pet::PetConfig petCfg =
+                module::pet::PetConfigStore(module::pet::petConfigFile()).load();
             module::pet::startPetWindow(module::pet::PetWindowConfig{
-                settingsCfg.petSkin, settingsCfg.petX, settingsCfg.petY,
-                settingsCfg.petClickThrough});
+                petCfg.skinName, petCfg.x, petCfg.y, petCfg.clickThrough});
         } else {
             LOG_INFO("桌宠已关闭（enabledModules 不含 pet），不开宠物窗口");
         }

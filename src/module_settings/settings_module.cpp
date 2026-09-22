@@ -519,9 +519,14 @@ private:
                     .onClick([this] { applyTheme(false); })
                     .build();
 
-                // 右：字号缩放
+                // 右：字号缩放 + 右二：窗口效果三档（磨砂 Phase D），即时生效。
+                // 终验复审：固定 x=380/680 在 1200 最小窗（页面宽 940、卡内宽
+                // 860）下效果下拉右缘到 920，超出卡片 60px——右缘自适应：
+                // 宽窗保持原位，窄窗右对齐收进卡内（列宽 240、列距 28、右缘留 28）
+                const float effectX = std::min(680.0f, w - 28.0f - 240.0f);
+                const float fontX = std::min(380.0f, effectX - 240.0f - 28.0f);
                 ui.text(id + ".font.label")
-                    .position(380.0f, 72.0f)
+                    .position(fontX, 72.0f)
                     .size(240.0f, 16.0f)
                     .text("字号缩放（正文基准 15px）")
                     .fontSize(fs(12.0f))
@@ -529,7 +534,7 @@ private:
                     .color(t.colors.textSecondary)
                     .build();
                 ui.stack(id + ".font.ddwrap")
-                    .position(380.0f, 94.0f)
+                    .position(fontX, 94.0f)
                     .size(240.0f, 40.0f)
                     .content([&] {
                         components::dropdown(ui, id + ".font.dd")
@@ -547,9 +552,9 @@ private:
                     })
                     .build();
 
-                // 右二：窗口效果三档（磨砂 Phase D），即时生效
+                // 右二：窗口效果三档（磨砂 Phase D），即时生效（effectX 见上）
                 ui.text(id + ".effect.label")
-                    .position(680.0f, 72.0f)
+                    .position(effectX, 72.0f)
                     .size(240.0f, 16.0f)
                     .text("窗口效果")
                     .fontSize(fs(12.0f))
@@ -557,7 +562,7 @@ private:
                     .color(t.colors.textSecondary)
                     .build();
                 ui.stack(id + ".effect.ddwrap")
-                    .position(680.0f, 94.0f)
+                    .position(effectX, 94.0f)
                     .size(240.0f, 40.0f)
                     .content([&] {
                         components::dropdown(ui, id + ".effect.dd")
@@ -580,10 +585,19 @@ private:
                 const std::string degraded = windowEffectDegradedHint(
                     cfg_.windowEffect, app::activeWindowEffect());
                 if (!degraded.empty()) {
+                    // ⚠ 字符换 FA：图标/文字拆两个元素（icon 字体通道）
+                    ui.text(id + ".effect.hint.icon")
+                        .position(effectX, 140.0f)
+                        .size(14.0f, 16.0f)
+                        .icon(0xF071)  // fa-triangle-exclamation
+                        .fontSize(fs(11.0f))
+                        .lineHeight(16.0f)
+                        .color(t.colors.warning)
+                        .build();
                     ui.text(id + ".effect.hint")
-                        .position(680.0f, 140.0f)
-                        .size(w - 680.0f - 28.0f, 16.0f)
-                        .text("⚠ " + degraded)
+                        .position(effectX + 16.0f, 140.0f)
+                        .size(w - effectX - 16.0f - 28.0f, 16.0f)
+                        .text(degraded)
                         .fontSize(fs(11.0f))
                         .lineHeight(16.0f)
                         .color(t.colors.warning)
