@@ -295,22 +295,22 @@ public:
                                      0.5f);
                         drawStatCard(ui, "home.stat.notes", statW, statH, t,
                                      "今日笔记", num(stats_.todayNotes),
-                                     ok ? "今日修改过的笔记" : "尚未加载",
+                                     ok ? "今日修改过的笔记" : "加载失败",
                                      false,
                                      [this] { navigateTo(::core::PageId::Markdown); });
                         drawStatCard(ui, "home.stat.todo", statW, statH, t,
                                      "待办任务", num(stats_.pendingTodos),
-                                     ok ? "未完成总数" : "尚未加载",
+                                     ok ? "未完成总数" : "加载失败",
                                      false,
                                      [this] { navigateTo(::core::PageId::Todo); });
                         drawStatCard(ui, "home.stat.overdue", statW, statH, t,
                                      "逾期任务", num(stats_.overdueTodos),
-                                     ok ? "已过截止时间" : "尚未加载",
+                                     ok ? "已过截止时间" : "加载失败",
                                      stats_.overdueTodos > 0,
                                      [this] { navigateTo(::core::PageId::Todo); });
                         drawStatCard(ui, "home.stat.api", statW, statH, t,
                                      "API 调用", num(stats_.todayApiCalls),
-                                     ok ? "今日代理调用" : "尚未加载",
+                                     ok ? "今日代理调用" : "加载失败",
                                      false,
                                      [this] { navigateTo(::core::PageId::ClaudeProxy); });
                     })
