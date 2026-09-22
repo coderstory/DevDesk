@@ -20,6 +20,7 @@
 #include "core/sqlite_db.h"
 #include "platform/http_client.h"
 #include "platform/http_server.h"
+#include "platform/json.h"
 #include "platform/keychain.h"
 #include "proxy_router.h"
 
@@ -435,5 +436,46 @@ REGISTER_TEST(proxy_router_end_to_end,
     upstream.stop();
     platform::keychain::deleteSecret(
         kTestKeychainService, "claude:" + std::to_string(created.value().id));
+    return true;
+})
+
+// ---- 8. 错误响应是合法 JSON（message 含引号/反斜杠/换行时转义） ----
+
+REGISTER_TEST(proxy_router_error_json_escaped,
+              "proxy_router: 错误 JSON 转义（message 含引号/反斜杠）", {
+    TestDb tdb("escjson");
+    module::claude::ClaudeService svc(tdb.handle(), kTestKeychainService);
+
+    platform::http::Server proxyServer("127.0.0.1", 0);
+    module::claude::ProxyRouter router(svc, proxyServer);
+    router.registerRoutes();
+
+    // 注入会失败的 profile 提供者：错误 message 含引号/反斜杠/换行
+    const std::string nasty = "boom \"quoted\" C:\\path\\next\nline";
+    router.setProfileProvider([&nasty]() {
+        return core::Result<module::claude::Profile>::fail(
+            core::ErrorCode::NoActiveProfile, nasty);
+    });
+
+    // 缓冲路径（非流式 body）
+    auto r1 = directCall(router, "POST", "/v1/other", "{}");
+    DOCTEST_CHECK_EQ(r1.status, 503);
+
+    // 流式路径（POST /v1/messages + stream:true，取 profile 失败在启动上游之前）
+    auto r2 = directCall(router, "POST", "/v1/messages",
+                         R"({"model":"m","stream":true,"messages":[]})");
+    DOCTEST_CHECK_EQ(r2.status, 503);
+
+    for (const DirectResult* r : {&r1, &r2}) {
+        // 必须是可解析的 JSON，且 message 原样往返
+        auto parsed = platform::json::parse(r->body);
+        DOCTEST_REQUIRE(parsed.isOk());
+        DOCTEST_REQUIRE(parsed.value().isObject());
+        auto msg = parsed.value().asObject().get("message");
+        DOCTEST_REQUIRE(msg.isString());
+        DOCTEST_CHECK_EQ(msg.asString(), nasty);
+        auto err = parsed.value().asObject().get("error");
+        DOCTEST_CHECK_EQ(err.asString(), std::string("no_active_profile"));
+    }
     return true;
 })
