@@ -111,6 +111,39 @@ REGISTER_TEST(proxy_stats_idempotent,
     return true;
 })
 
+REGISTER_TEST(proxy_stats_first_burst_rate,
+              "proxy_stats: 首 burst 前 2s 无老采样时按最老采样算速率", {
+    // 回归（W6 终验发现）：环内没有 ≥2s 老采样时基线曾取 0/绝对时钟，
+    // 导致首 burst 速率低估。假时钟起点取小值 + 首采样累计非零，
+    // 确保覆盖 found=false 分支（既有用例起点 1e6ms 恰好绕开该分支）。
+    core::proxy_stats::resetForTest();
+    FakeClock clock;
+    clock.now = 1000;
+    const uint64_t id = core::proxy_stats::beginStream();
+
+    // t=1000ms 累计 100；t=2500ms 累计 400（窗口内全部采样 <2s 老）
+    core::proxy_stats::updateStream(id, 100);
+    clock.now += 1500;
+    core::proxy_stats::updateStream(id, 400);
+
+    const auto snap = core::proxy_stats::snapshot();
+    // 基线 = 最老采样（t=1000, total=100）：增益 300 / 1500ms = 200 tps
+    // （旧缺陷算法：(400-0)/2500ms = 160 tps）
+    DOCTEST_CHECK(snap.rateTps > 199.0 && snap.rateTps < 201.0);
+    DOCTEST_CHECK_EQ(snap.sessionTokens, 400);
+
+    // 首采样即快照（窗口 < kMinWindowMs）→ 报 0 不除微小数
+    core::proxy_stats::resetForTest();
+    FakeClock clock2;
+    clock2.now = 1000;
+    const uint64_t id2 = core::proxy_stats::beginStream();
+    core::proxy_stats::updateStream(id2, 50);
+    clock2.now += 50;
+    const auto snap2 = core::proxy_stats::snapshot();
+    DOCTEST_CHECK(snap2.rateTps < 0.001);
+    return true;
+})
+
 REGISTER_TEST(proxy_stats_concurrent,
               "proxy_stats: 多线程 begin/update/end 小压测", {
     core::proxy_stats::resetForTest();

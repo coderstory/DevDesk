@@ -187,3 +187,57 @@ REGISTER_TEST(router_dispatch_key_event, "router: dispatchKeyEvent 派发到当�
     DOCTEST_CHECK(!router.dispatchKeyEvent(key));
     return true;
 })
+
+// Router::navigateTo 进页通知：目标模块 onPageEnter 被回调（含同页重入），
+// 非目标页模块不收；Home 借此进页重查仪表盘数据。
+
+namespace {
+
+class EnterStubModule : public ::core::Module {
+public:
+    EnterStubModule(::core::PageId page, std::string name)
+        : page_(page), name_(std::move(name)) {}
+    ::core::PageId pageId() const override { return page_; }
+    std::string displayName() const override { return name_; }
+    std::string iconGlyph() const override { return "•"; }
+    void compose(eui::Ui& ui, const eui::Screen&) override {
+        ui.text("stub." + name_).text(name_).size(120.0f, 20.0f).build();
+    }
+    void onPageEnter() override { ++enterCount_; }
+    int enterCount_ = 0;
+
+private:
+    ::core::PageId page_;
+    std::string name_;
+};
+
+} // namespace
+
+REGISTER_TEST(router_navigate_page_enter, "router: navigateTo 回调目标模块 onPageEnter", {
+    ::core::Router router;
+    EnterStubModule home(::core::PageId::Home, "home");
+    EnterStubModule todo(::core::PageId::Todo, "todo");
+    router.registerModule(&home);
+    router.registerModule(&todo);
+
+    // Home → Todo：目标页收到进页通知，Home 不收
+    router.navigateTo(::core::PageId::Todo);
+    DOCTEST_CHECK_EQ(todo.enterCount_, 1);
+    DOCTEST_CHECK_EQ(home.enterCount_, 0);
+
+    // Todo → Home：重入 Home 触发重查语义
+    router.navigateTo(::core::PageId::Home);
+    DOCTEST_CHECK_EQ(home.enterCount_, 1);
+    DOCTEST_CHECK_EQ(todo.enterCount_, 1);
+
+    // 同页重入（侧边栏再点当前页）也算进页
+    router.navigateTo(::core::PageId::Home);
+    DOCTEST_CHECK_EQ(home.enterCount_, 2);
+
+    // 带 payload 的导航同样通知
+    router.navigateTo(::core::PageId::Todo, "action:new_task");
+    DOCTEST_CHECK_EQ(todo.enterCount_, 2);
+    DOCTEST_CHECK_EQ(router.consumePendingPayload(::core::PageId::Todo),
+                     std::string("action:new_task"));
+    return true;
+})

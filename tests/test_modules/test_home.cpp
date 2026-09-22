@@ -230,6 +230,11 @@ REGISTER_TEST(home_token_rate_card_compose,
         DOCTEST_CHECK(ui.find("home.stat.api") != nullptr);
         // 卡内 onTimer 驱动元素（0.5s 重绘，设计 §2.6）
         DOCTEST_CHECK(ui.find("home.stat.tokens.timer") != nullptr);
+        // 未加载数据（onStart 未跑）→ 错误态 badge 是「加载失败」而非
+        // 「尚未加载」（W7：错误态与加载中区分）
+        const auto* notesBadge = ui.find("home.stat.notes.badge");
+        DOCTEST_REQUIRE(notesBadge != nullptr);
+        DOCTEST_CHECK(notesBadge->text.find("加载失败") != std::string::npos);
         const auto* number = ui.find("home.stat.tokens.number");
         DOCTEST_REQUIRE(number != nullptr);
         DOCTEST_CHECK_EQ(number->text, std::string("0"));

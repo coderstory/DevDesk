@@ -43,6 +43,11 @@ void drawStatCard(eui::Ui& ui,
                   const eui::Color* numberColor = nullptr,
                   const eui::Color* badgeColor = nullptr,
                   float timerSeconds = 0.0f) {
+    // 卡内布局常量随全局字号缩放派生：行高/内边距固定 px 在大字号下会
+    // 裁切数字（W7 稳定化），fontSize* token 已在 theme 层缩放
+    const float s = core::theme::fontScale();
+    const float badgeFont = t.sizes.fontSizeSmall - 2.0f; // 11px @ scale 1
+    const float padX = 28.0f * s;
     ui.stack(id)
         .size(width, height)
         .content([&] {
@@ -56,20 +61,20 @@ void drawStatCard(eui::Ui& ui,
                 .build();
 
             ui.text(id + ".label")
-                .position(28.0f, 20.0f)
-                .size(width - 56.0f, 16.0f)
+                .position(padX, 20.0f * s)
+                .size(width - padX * 2.0f, 16.0f * s)
                 .text(label)
                 .fontSize(t.sizes.fontSizeSmall - 1.0f)
-                .lineHeight(16.0f)
+                .lineHeight(16.0f * s)
                 .color(t.colors.textSecondary)
                 .build();
 
             ui.text(id + ".number")
-                .position(28.0f, 42.0f)
-                .size(width - 56.0f, 56.0f)
+                .position(padX, 42.0f * s)
+                .size(width - padX * 2.0f, 56.0f * s)
                 .text(number)
                 .fontSize(t.sizes.fontSizeDisplay)
-                .lineHeight(56.0f)
+                .lineHeight(56.0f * s)
                 .fontWeight(700)
                 .color(numberColor ? *numberColor
                                    : (accent ? t.colors.error
@@ -77,11 +82,11 @@ void drawStatCard(eui::Ui& ui,
                 .build();
 
             ui.text(id + ".badge")
-                .position(28.0f, 98.0f)
-                .size(width - 56.0f, 14.0f)
+                .position(padX, 98.0f * s)
+                .size(width - padX * 2.0f, badgeFont + 3.0f)
                 .text(badge)
-                .fontSize(11.0f)
-                .lineHeight(14.0f)
+                .fontSize(badgeFont)
+                .lineHeight(badgeFont + 3.0f)
                 .color(badgeColor ? *badgeColor
                                   : (accent ? t.colors.error
                                             : t.colors.textTertiary))
@@ -131,6 +136,8 @@ public:
         auto* db = ::core::appDatabase();
         if (db == nullptr) {
             LOG_WARN("Home 模块启动：appDatabase() 为空，仪表盘显示空态");
+            // 补齐错误文案：否则 compose 拼出「数据加载失败：（空串）」
+            statsError_ = "数据库未初始化（appDatabase 为空）";
             return;
         }
         service_ = std::make_unique<HomeService>(*db);
@@ -141,6 +148,10 @@ public:
         service_.reset();
         LOG_INFO("Home 模块停止");
     }
+
+    // 进页重查（W7）：数据只在启动查一次，从 Todo/Markdown 切回来数字
+    // 不更新——Router::navigateTo 进页通知驱动重查
+    void onPageEnter() override { refreshStats(); }
 
     // ==================== 数据 ====================
 
@@ -173,8 +184,17 @@ public:
         const float contentW = screen.width - pad * 2.0f;
         const float cardGap = 20.0f;
         const float statW = (contentW - cardGap * 4.0f) / 5.0f;
-        const float statH = 120.0f;
+        // 卡高随字号缩放派生（卡内 y 布局同源缩放，大字号不裁切）
+        const float statH = 120.0f * core::theme::fontScale();
         const std::time_t now = std::time(nullptr);
+
+        // 页面背景自绘（与 settings_module 同款）：main.cpp clearColor 固定
+        // 浅色，深色主题下页面必须自己铺底，否则浅色 clear 底 + 深色 token
+        // 文字不可读
+        ui.rect("home.pagebg")
+            .size(screen.width, screen.height)
+            .color(t.colors.background)
+            .build();
 
         ui.column("home.root")
             .size(screen.width, screen.height)
@@ -281,22 +301,22 @@ public:
                                      0.5f);
                         drawStatCard(ui, "home.stat.notes", statW, statH, t,
                                      "今日笔记", num(stats_.todayNotes),
-                                     ok ? "今日修改过的笔记" : "尚未加载",
+                                     ok ? "今日修改过的笔记" : "加载失败",
                                      false,
                                      [this] { navigateTo(::core::PageId::Markdown); });
                         drawStatCard(ui, "home.stat.todo", statW, statH, t,
                                      "待办任务", num(stats_.pendingTodos),
-                                     ok ? "未完成总数" : "尚未加载",
+                                     ok ? "未完成总数" : "加载失败",
                                      false,
                                      [this] { navigateTo(::core::PageId::Todo); });
                         drawStatCard(ui, "home.stat.overdue", statW, statH, t,
                                      "逾期任务", num(stats_.overdueTodos),
-                                     ok ? "已过截止时间" : "尚未加载",
-                                     true,
+                                     ok ? "已过截止时间" : "加载失败",
+                                     stats_.overdueTodos > 0,
                                      [this] { navigateTo(::core::PageId::Todo); });
                         drawStatCard(ui, "home.stat.api", statW, statH, t,
                                      "API 调用", num(stats_.todayApiCalls),
-                                     ok ? "今日代理调用" : "尚未加载",
+                                     ok ? "今日代理调用" : "加载失败",
                                      false,
                                      [this] { navigateTo(::core::PageId::ClaudeProxy); });
                     })
@@ -335,7 +355,9 @@ public:
                             ui.text("home.recent.error")
                                 .position(28.0f, listTop)
                                 .size(contentW - 56.0f, 32.0f)
-                                .text("数据加载失败：" + statsError_ +
+                                .text("数据加载失败：" +
+                                      (statsError_.empty() ? std::string("未知错误")
+                                                           : statsError_) +
                                       "（点右上角刷新重试）")
                                 .fontSize(t.sizes.fontSizeSmall)
                                 .lineHeight(20.0f)
@@ -405,8 +427,8 @@ public:
                                     .position(72.0f, iy + 18.0f)
                                     .size(contentW - 120.0f, 14.0f)
                                     .text(recentNoteSubtitle(note, now))
-                                    .fontSize(11.0f)
-                                    .lineHeight(14.0f)
+                                    .fontSize(t.sizes.fontSizeSmall - 2.0f)
+                                    .lineHeight(t.sizes.fontSizeSmall + 1.0f)
                                     .color(t.colors.textTertiary)
                                     .build();
                             }
@@ -469,8 +491,6 @@ public:
                     .build();
             })
             .build();
-
-        LOG_DEBUG("Home 模块 compose 完成");
     }
 
 private:

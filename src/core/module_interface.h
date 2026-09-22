@@ -47,6 +47,11 @@ public:
         return false;
     }
 
+    // 页面进入通知：Router::navigateTo 切到本模块页面时回调（含同页重入，
+    // 如从别的页切回）。模块可借此重查数据（如 Home 仪表盘进页刷新）。
+    // 启动首次进入不经过这里（走 onStart），默认空实现零改动兼容。
+    virtual void onPageEnter() {}
+
     virtual void onStart() {}
     virtual void onStop() {}
 };
