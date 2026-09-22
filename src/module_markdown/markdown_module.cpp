@@ -377,8 +377,21 @@ private:
             const float listY = 98.0f;
             const float listH = std::max(0.0f, bodyH - listY - 60.0f);
 
+            // 错误态与空态区分（W7 P1-1，仿 Home 三态）：
+            // DB/列表失败 → 错误文案 + 重试指引，不再伪装成「还没有笔记」
             if (leftTab_ == 1) {
                 drawOutlineList(ui, listY, listH, sideW, t, componentTheme);
+            } else if (!listError_.empty()) {
+                ui.text("md.tree.error")
+                    .position(16.0f, listY + 8.0f)
+                    .size(sideW - 32.0f, 60.0f)
+                    .text("列表加载失败：\n" + listError_ +
+                          "\n点右上角「↻ 重扫」重试")
+                    .fontSize(12.0f)
+                    .lineHeight(18.0f)
+                    .wrap()
+                    .color(t.colors.error)
+                    .build();
             } else if (notes_.empty()) {
                 ui.text("md.tree.empty")
                     .position(16.0f, listY + 8.0f)
@@ -956,8 +969,11 @@ private:
         if (r.isFail()) {
             LOG_ERROR("刷新笔记列表失败: " + r.errorMessage());
             status_ = "列表失败：" + r.errorMessage();
+            listError_ = r.errorMessage();
+            notes_.clear();  // 不拿旧数据伪装成当前态
             return;
         }
+        listError_.clear();
         notes_ = std::move(r.value());
     }
 
@@ -970,6 +986,7 @@ private:
         if (r.isFail()) {
             LOG_ERROR("读取笔记失败 " + relPath + ": " + r.errorMessage());
             status_ = "读取失败：" + r.errorMessage();
+            showToast("读取失败", "「" + relPath + "」" + r.errorMessage(), true);
             return;
         }
         currentPath_ = relPath;
@@ -1037,6 +1054,7 @@ private:
         if (r.isFail()) {
             LOG_ERROR("重扫失败: " + r.errorMessage());
             status_ = "重扫失败：" + r.errorMessage();
+            listError_ = r.errorMessage();  // 左栏立即切到错误态（含重试指引）
             return;
         }
         refreshList();
@@ -1105,6 +1123,7 @@ private:
     std::chrono::steady_clock::time_point lastSaveAttemptAt_{};  // 退避计时基准
     int64_t saveBackoffMs_ = 0;        // 0 = 无退避；失败后指数增长
     std::string status_;               // 顶栏副标题里的状态提示
+    std::string listError_;            // 左栏错误态（空 = 正常；W7 P1-1）
     bool newNoteOpen_ = false;
     std::string newNoteName_;
 
