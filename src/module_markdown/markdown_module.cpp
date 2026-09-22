@@ -71,7 +71,7 @@ void drawFileTreeItem(eui::Ui& ui,
         .position(12.0f, 0.0f)
         .size(20.0f, 32.0f)
         .text(icon)
-        .fontSize(14.0f)
+        .fontSize(t.sizes.fontSizeBody)
         .lineHeight(32.0f)
         .color(t.colors.textSecondary)
         .build();
@@ -79,7 +79,7 @@ void drawFileTreeItem(eui::Ui& ui,
         .position(36.0f, 0.0f)
         .size(std::max(0.0f, width - 48.0f), 32.0f)
         .text(name)
-        .fontSize(13.0f)
+        .fontSize(t.sizes.fontSizeSmall)
         .lineHeight(32.0f)
         .color(active ? t.colors.primary : t.colors.textPrimary)
         .fontWeight(active ? 700 : 400)
@@ -100,7 +100,7 @@ std::string noteDisplayPath(const NoteMeta& n) {
 // 三态视图（值 = 顶栏 segmented 的选中下标）
 enum class ViewMode { Edit = 0, Split = 1, Preview = 2 };
 
-constexpr float kEditorFontSize = 14.0f;      // 与编辑器 input 的 fontSize 一致
+constexpr float kEditorFontSize = 15.0f;      // = fontSizeBody（视觉规范正文 15px，W7 P1-4 换 token 基准）
 constexpr float kEditorLineHeight = kEditorFontSize * 1.2f;  // input 内部行高
 constexpr float kEditTextColumnWidth = 720.0f;  // 仅编辑态的居中文本列宽（Typora 写作宽度）
 constexpr float kPreviewColumnWidth = 760.0f;   // 仅预览态的居中阅读列宽
@@ -258,7 +258,7 @@ private:
                     .size(segW, 36.0f)
                     .items({"✎ 编辑", "⇔ 双栏", "👁 预览"})
                     .selected(static_cast<int>(mode_))
-                    .fontSize(13.0f)
+                    .fontSize(t.sizes.fontSizeSmall)
                     .theme(componentTheme)
                     .onChange([this](int index) {
                         setMode(static_cast<ViewMode>(index));
@@ -349,7 +349,7 @@ private:
                 .size(sideW - 24.0f, 36.0f)
                 .value(searchQuery_)
                 .placeholder("🔍 搜索笔记…")
-                .fontSize(13.0f)
+                .fontSize(t.sizes.fontSizeSmall)
                 .inset(10.0f)
                 .theme(componentTheme)
                 .onChange([this](const std::string& v) {
@@ -367,7 +367,7 @@ private:
                         .size(sideW - 24.0f, 30.0f)
                         .items({"文件", "大纲"})
                         .selected(leftTab_)
-                        .fontSize(13.0f)
+                        .fontSize(t.sizes.fontSizeSmall)
                         .theme(componentTheme)
                         .onChange([this](int index) { leftTab_ = index; })
                         .build();
@@ -387,7 +387,7 @@ private:
                     .size(sideW - 32.0f, 60.0f)
                     .text("列表加载失败：\n" + listError_ +
                           "\n点右上角「↻ 重扫」重试")
-                    .fontSize(12.0f)
+                    .fontSize(t.sizes.fontSizeSmall)
                     .lineHeight(18.0f)
                     .wrap()
                     .color(t.colors.error)
@@ -398,7 +398,7 @@ private:
                     .size(sideW - 32.0f, 40.0f)
                     .text(searchQuery_.empty() ? "还没有笔记\n点下面「+ 新建」开始"
                                                : "没有匹配的笔记")
-                    .fontSize(12.0f)
+                    .fontSize(t.sizes.fontSizeSmall)
                     .lineHeight(18.0f)
                     .wrap()
                     .color(t.colors.textTertiary)
@@ -413,7 +413,7 @@ private:
                 .position(12.0f, newBtnY)
                 .size(sideW - 24.0f, 36.0f)
                 .text("+ 新建")
-                .fontSize(13.0f)
+                .fontSize(t.sizes.fontSizeSmall)
                 .theme(componentTheme, false)
                 .textColor(t.colors.textPrimary)
                 .radius(t.sizes.radius)
@@ -476,7 +476,7 @@ private:
                 .size(sideW - 32.0f, 40.0f)
                 .text(currentPath_.empty() ? "先打开一篇笔记"
                                            : "没有标题\n用 # 开始一行即可加入大纲")
-                .fontSize(12.0f)
+                .fontSize(t.sizes.fontSizeSmall)
                 .lineHeight(18.0f)
                 .wrap()
                 .color(t.colors.textTertiary)
@@ -523,7 +523,7 @@ private:
                         .size(std::max(0.0f, rowW - 20.0f -
                                        static_cast<float>(h.level - 1) * 14.0f), 30.0f)
                         .text(h.title.empty() ? "(无标题)" : h.title)
-                        .fontSize(13.0f)
+                        .fontSize(t.sizes.fontSizeSmall)
                         .lineHeight(30.0f)
                         .color(current ? t.colors.primary : t.colors.textPrimary)
                         .fontWeight(current ? 700 : 400)
@@ -558,7 +558,7 @@ private:
                     .position(24.0f, 50.0f)
                     .size(midW - 48.0f, 40.0f)
                     .text("从左栏选一篇笔记开始编辑")
-                    .fontSize(14.0f)
+                    .fontSize(t.sizes.fontSizeBody)
                     .lineHeight(20.0f)
                     .color(t.colors.textTertiary)
                     .build();
@@ -690,7 +690,7 @@ private:
                     .position(pvX, pvY)
                     .size(pvW, 40.0f)
                     .text("选择笔记后在这里看到渲染结果")
-                    .fontSize(14.0f)
+                    .fontSize(t.sizes.fontSizeBody)
                     .lineHeight(20.0f)
                     .color(t.colors.textTertiary)
                     .build();
@@ -795,7 +795,7 @@ private:
                     .position(28.0f, 24.0f)
                     .size(w - 56.0f, 28.0f)
                     .text("新建笔记")
-                    .fontSize(20.0f)
+                    .fontSize(t.sizes.fontSizeLarge)
                     .lineHeight(28.0f)
                     .fontWeight(700)
                     .color(t.colors.textPrimary)
@@ -805,7 +805,7 @@ private:
                     .position(28.0f, 56.0f)
                     .size(w - 56.0f, 18.0f)
                     .text("支持子目录，例如 inbox/ideas.md")
-                    .fontSize(12.0f)
+                    .fontSize(t.sizes.fontSizeSmall)
                     .lineHeight(18.0f)
                     .color(t.colors.textTertiary)
                     .build();
@@ -815,7 +815,7 @@ private:
                     .size(w - 56.0f, 44.0f)
                     .value(newNoteName_)
                     .placeholder("笔记名，例如 周会纪要")
-                    .fontSize(15.0f)
+                    .fontSize(t.sizes.fontSizeBody)
                     .theme(componentTheme)
                     .onChange([this](const std::string& v) { newNoteName_ = v; })
                     .onEnter([this] { commitNewNote(); })
@@ -825,7 +825,7 @@ private:
                     .position(28.0f, h - 60.0f)
                     .size((w - 68.0f) * 0.5f, 40.0f)
                     .text("取消")
-                    .fontSize(14.0f)
+                    .fontSize(t.sizes.fontSizeBody)
                     .theme(componentTheme, false)
                     .textColor(t.colors.textPrimary)
                     .radius(t.sizes.radius)
@@ -837,7 +837,7 @@ private:
                     .position(28.0f + (w - 68.0f) * 0.5f + 12.0f, h - 60.0f)
                     .size((w - 68.0f) * 0.5f, 40.0f)
                     .text("创建")
-                    .fontSize(14.0f)
+                    .fontSize(t.sizes.fontSizeBody)
                     .theme(componentTheme, true)
                     .textColor(eui::Color("#FFFFFF"))
                     .radius(t.sizes.radius)
