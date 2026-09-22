@@ -8,6 +8,7 @@
 #include <chrono>
 #include <filesystem>
 #include <fstream>
+#include <map>
 #include <set>
 #include <sstream>
 #include <string>
@@ -82,6 +83,19 @@ NoteMeta rowToNoteImpl(const core::data::SqlRow& row) {
     return n;
 }
 
+// 文件 mtime → unix 秒；失败返回 -1。
+// C++17 的 file_clock epoch 是 implementation-defined（MinGW 上非 1970-01-01，
+// 直接 duration_cast 会写入荒谬时间——W7 P0-5）。可移植换算：file_clock 与
+// system_clock 在同一时刻各取 now 做差值基准。
+int64_t fileMtimeEpoch(const fs::path& absPath) {
+    std::error_code ec;
+    const auto mtime = fs::last_write_time(absPath, ec);
+    if (ec) return -1;
+    return std::chrono::duration_cast<std::chrono::seconds>(
+        std::chrono::system_clock::now().time_since_epoch() +
+        (mtime - std::chrono::file_clock::now())).count();
+}
+
 } // namespace
 
 // ============ MarkdownService ============
@@ -149,18 +163,11 @@ core::Result<void> MarkdownService::syncOneToIndex(
         return core::Result<void>::fail(core::ErrorCode::FileReadFailed,
             "无法获取文件大小 " + absPath.string() + ": " + ec.message());
     }
-    auto mtime = fs::last_write_time(absPath, ec);
-    if (ec) {
+    auto mtimeSec = fileMtimeEpoch(absPath);
+    if (mtimeSec < 0) {
         return core::Result<void>::fail(core::ErrorCode::FileReadFailed,
-            "无法获取 mtime " + absPath.string() + ": " + ec.message());
+            "无法获取 mtime " + absPath.string());
     }
-    // mtime 转 unix epoch seconds。C++17 的 file_clock epoch 是
-    // implementation-defined（MinGW 上非 1970-01-01，直接 duration_cast 会
-    // 写入荒谬时间，导致 Home「今日笔记」恒 0 /「最近编辑」日期异常——W7 P0-5）。
-    // 可移植换算：file_clock 与 system_clock 在同一时刻各取 now 做差值基准。
-    const auto mtimeSec = std::chrono::duration_cast<std::chrono::seconds>(
-        std::chrono::system_clock::now().time_since_epoch() +
-        (mtime - std::chrono::file_clock::now())).count();
 
     // 读内容
     std::ifstream ifs(absPath);
@@ -543,6 +550,12 @@ core::Result<void> MarkdownService::write(const fs::path& relPath,
 }
 
 core::Result<void> MarkdownService::create(const fs::path& relPath) {
+    // 路径安全校验（trust boundary：目录树/打开逻辑都依赖 relativePath 落在
+    // notesDir 内，这里兜底拒绝逃逸输入，模块层另有同规则的前置校验）
+    if (!isSafeNewNotePath(toPosix(relPath))) {
+        return core::Result<void>::fail(core::ErrorCode::ValidationError,
+            "路径不合法（不允许绝对路径、盘符或 ..）: " + toPosix(relPath));
+    }
     // 规范化路径：补 .md 后缀
     fs::path norm = relPath;
     if (norm.extension() != ".md") {
@@ -694,6 +707,74 @@ core::Result<std::vector<NoteMeta>> MarkdownService::search(
 
 NoteMeta MarkdownService::rowToNote(const core::data::SqlRow& row) {
     return rowToNoteImpl(row);
+}
+
+// ---- W8：文件变化自动感知 ----
+
+core::Result<bool> MarkdownService::pollChanged() {
+    // 磁盘侧快照：path → (mtime, size)
+    std::map<std::string, std::pair<int64_t, int64_t>> disk;
+    std::error_code ec;
+    if (fs::exists(notesDir_, ec)) {
+        for (auto it = fs::recursive_directory_iterator(
+                        notesDir_, fs::directory_options::skip_permission_denied, ec);
+             !ec && it != fs::recursive_directory_iterator(); it.increment(ec)) {
+            if (ec) break;
+            const auto& entry = *it;
+            if (!entry.is_regular_file(ec)) continue;
+            if (entry.path().extension() != ".md") continue;
+            auto rel = fs::relative(entry.path(), notesDir_, ec);
+            if (ec) continue;
+            const int64_t mtime = fileMtimeEpoch(entry.path());
+            const int64_t size = static_cast<int64_t>(entry.file_size(ec));
+            if (mtime < 0 || ec) continue;
+            disk[rel.generic_string()] = {mtime, size};
+        }
+    }
+
+    // 索引侧快照
+    auto prep = db_.prepare("SELECT path, size_bytes, modified_at FROM markdown_index");
+    if (prep.isFail()) {
+        return core::Result<bool>::fail(prep.errorCode(),
+            "prepare pollChanged: " + prep.errorMessage());
+    }
+    std::map<std::string, std::pair<int64_t, int64_t>> indexed;
+    {
+        auto& stmt = prep.value();
+        auto rows = stmt.fetchAll();
+        if (rows.isFail()) {
+            return core::Result<bool>::fail(rows.errorCode(),
+                "fetch pollChanged: " + rows.errorMessage());
+        }
+        for (const auto& row : rows.value()) {
+            auto p = row.getString("path");
+            if (p.isFail()) continue;
+            int64_t size = 0, mtime = 0;
+            if (auto v = row.getInt64("size_bytes"); v.isOk()) size = v.value();
+            if (auto v = row.getInt64("modified_at"); v.isOk()) mtime = v.value();
+            indexed[p.value()] = {mtime, size};
+        }
+    }
+    return core::Result<bool>::ok(disk != indexed);
+}
+
+core::Result<int64_t> MarkdownService::fileMtime(const fs::path& relPath) const {
+    const auto absPath = resolve(relPath);
+    const int64_t mtime = fileMtimeEpoch(absPath);
+    if (mtime < 0) {
+        return core::Result<int64_t>::fail(core::ErrorCode::FileNotFound,
+            "文件不存在或无法读取 mtime: " + absPath.string());
+    }
+    return core::Result<int64_t>::ok(mtime);
+}
+
+bool MarkdownService::isSafeNewNotePath(const std::string& name) {
+    if (name.empty()) return false;
+    if (name.front() == '/' || name.front() == '\\') return false;  // 绝对路径
+    if (name.size() >= 2 && name[1] == ':') return false;           // 盘符 X:
+    if (name.find("..") != std::string::npos) return false;         // 父目录逃逸
+    if (name.find('\\') != std::string::npos) return false;         // 统一 POSIX '/'
+    return true;
 }
 
 } // namespace module::markdown

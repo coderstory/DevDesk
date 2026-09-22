@@ -517,3 +517,85 @@ REGISTER_TEST(md_path_posix_separator,
     fs::remove_all(dir);
     return true;
 })
+// ==================== W8：文件变化感知 + 路径安全 ====================
+
+REGISTER_TEST(md_is_safe_new_note_path,
+              "MarkdownService: isSafeNewNotePath 拒绝逃逸/盘符/绝对路径", {
+    using module::markdown::MarkdownService;
+    DOCTEST_CHECK(MarkdownService::isSafeNewNotePath("笔记.md"));
+    DOCTEST_CHECK(MarkdownService::isSafeNewNotePath("inbox/ideas.md"));
+    DOCTEST_CHECK(MarkdownService::isSafeNewNotePath("a/b/c/deep.md"));
+    DOCTEST_CHECK(!MarkdownService::isSafeNewNotePath(""));            // 空
+    DOCTEST_CHECK(!MarkdownService::isSafeNewNotePath("../etc/passwd.md")); // 父目录逃逸
+    DOCTEST_CHECK(!MarkdownService::isSafeNewNotePath("a/../../x.md"));
+    DOCTEST_CHECK(!MarkdownService::isSafeNewNotePath("C:/evil.md"));  // 盘符
+    DOCTEST_CHECK(!MarkdownService::isSafeNewNotePath("c:x.md"));
+    DOCTEST_CHECK(!MarkdownService::isSafeNewNotePath("/abs.md"));     // 绝对路径
+    DOCTEST_CHECK(!MarkdownService::isSafeNewNotePath("\\\\srv\\share.md")); // UNC
+    DOCTEST_CHECK(!MarkdownService::isSafeNewNotePath("a\\b.md"));     // 反斜杠
+    return true;
+})
+
+REGISTER_TEST(md_create_rejects_unsafe_path,
+              "MarkdownService: create 拒绝不合法路径（trust boundary 兜底）", {
+    const auto dir = makeTempDir("unsafe_create");
+    auto db = makeDb();
+    runMigrations(db);
+    module::markdown::MarkdownService svc(db, dir);
+
+    DOCTEST_CHECK(svc.create("../escape.md").isFail());
+    DOCTEST_CHECK(svc.create("C:/evil.md").isFail());
+    DOCTEST_CHECK(svc.create("/abs.md").isFail());
+    // 逃逸路径不应在 notesDir 之外创建任何文件
+    DOCTEST_CHECK(!fs::exists(dir / ".." / "escape.md"));
+    fs::remove_all(dir);
+    return true;
+})
+
+REGISTER_TEST(md_poll_changed_and_file_mtime,
+              "MarkdownService: pollChanged/fileMtime 轮询底座", {
+    const auto dir = makeTempDir("poll");
+    auto db = makeDb();
+    runMigrations(db);
+    module::markdown::MarkdownService svc(db, dir);
+
+    writeTextFile(dir / "a.md", "# a\n");
+    DOCTEST_REQUIRE(svc.rescan().isOk());
+
+    // 无变化 → false
+    auto c1 = svc.pollChanged();
+    DOCTEST_REQUIRE(c1.isOk());
+    DOCTEST_CHECK(!c1.value());
+
+    // fileMtime：存在的文件返回非负；不存在返回 fail
+    auto m = svc.fileMtime("a.md");
+    DOCTEST_REQUIRE(m.isOk());
+    DOCTEST_CHECK(m.value() >= 0);
+    DOCTEST_CHECK(svc.fileMtime("nope.md").isFail());
+
+    // 新文件 → true；rescan 后恢复 false
+    writeTextFile(dir / "inbox" / "b.md", "# b\n");
+    auto c2 = svc.pollChanged();
+    DOCTEST_REQUIRE(c2.isOk());
+    DOCTEST_CHECK(c2.value());
+    DOCTEST_REQUIRE(svc.rescan().isOk());
+    auto c3 = svc.pollChanged();
+    DOCTEST_REQUIRE(c3.isOk());
+    DOCTEST_CHECK(!c3.value());
+
+    // 删除 → true
+    fs::remove(dir / "a.md");
+    auto c4 = svc.pollChanged();
+    DOCTEST_REQUIRE(c4.isOk());
+    DOCTEST_CHECK(c4.value());
+
+    // 修改（内容变化改变 size）→ true
+    DOCTEST_REQUIRE(svc.rescan().isOk());
+    writeTextFile(dir / "inbox" / "b.md", "# b changed\n");
+    auto c5 = svc.pollChanged();
+    DOCTEST_REQUIRE(c5.isOk());
+    DOCTEST_CHECK(c5.value());
+
+    fs::remove_all(dir);
+    return true;
+})
