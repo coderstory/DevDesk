@@ -227,7 +227,7 @@ public:
                                     .onClick([this] { refreshStats(); })
                                     .build();
 
-                                // 设置页 T11 落地前不可用（disabled 置灰）
+                                // 设置页已落地（P13/T11），直接导航
                                 components::button(ui, "home.btn.settings")
                                     .size(100.0f, 40.0f)
                                     .text("⚙ 设置")
@@ -237,7 +237,9 @@ public:
                                     .textColor(t.colors.textSecondary)
                                     .radius(t.sizes.radius)
                                     .border(1.0f, t.colors.borderDefault)
-                                    .disabled()
+                                    .onClick([this] {
+                                        navigateTo(::core::PageId::Settings);
+                                    })
                                     .build();
                             })
                             .build();
