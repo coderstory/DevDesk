@@ -16,6 +16,7 @@
 #include <components/datepicker.h>
 #include <components/dialog.h>
 #include <components/input.h>
+#include <components/scrollview.h>
 #include <components/theme.h>
 
 #include <algorithm>
@@ -119,7 +120,7 @@ void drawChip(eui::Ui& ui,
         .position(x, y)
         .size(w, 18.0f)
         .text(text)
-        .fontSize(10.0f)
+        .fontSize(t.sizes.fontSizeSmall - 3.0f)
         .lineHeight(18.0f)
         .horizontalAlign(eui::HorizontalAlign::Center)
         .color(fg)
@@ -158,17 +159,37 @@ public:
 
     void reloadAll() {
         if (!service_) return;
+        loadError_.clear();
         auto cols = service_->listColumns();
         if (cols.isOk()) {
             columns_ = std::move(cols).value();
         } else {
-            LOG_ERROR("Todo: 读取列失败: " + cols.errorMessage());
+            loadError_ = "读取列失败: " + cols.errorMessage();
+            LOG_ERROR("Todo: " + loadError_);
         }
         auto all = service_->listAllTasks();
         if (all.isOk()) {
             tasks_ = std::move(all).value();
         } else {
-            LOG_ERROR("Todo: 读取任务失败: " + all.errorMessage());
+            loadError_ = "读取任务失败: " + all.errorMessage();
+            LOG_ERROR("Todo: " + loadError_);
+        }
+        columnScrolls_.resize(columns_.size(), 0.0f);
+    }
+
+    // 错误态重试：数据库晚注册（onStart 时为 null）或读取失败后手动恢复
+    void retryLoad() {
+        auto* db = ::core::appDatabase();
+        if (db == nullptr) {
+            setStatus("数据库尚未注册，无法重试", true);
+            return;
+        }
+        if (!service_) service_ = std::make_unique<TodoService>(*db);
+        reloadAll();
+        if (loadError_.empty()) {
+            setStatus("已重新加载");
+        } else {
+            setStatus("重试仍失败：" + loadError_, true);
         }
     }
 
@@ -237,10 +258,11 @@ public:
             setStatus("标记完成失败：" + r.errorMessage(), true);
             return;
         }
-        // 看板行为：完成后移到「已完成」列（如果该列存在）
+        // 看板行为：完成后移到「已完成」列（如果该列存在），追加到列尾
         const int64_t doneCol = findColumnByTitle("已完成");
         if (doneCol != 0) {
-            auto mv = service_->moveTask(taskId, doneCol, 0);
+            auto mv = service_->moveTask(
+                taskId, doneCol, ui::computeAppendPosition(tasks_, doneCol));
             if (mv.isFail()) {
                 LOG_WARN("Todo: 完成后移动到已完成列失败: " + mv.errorMessage());
             }
@@ -256,11 +278,12 @@ public:
             setStatus("取消完成失败：" + r.errorMessage(), true);
             return;
         }
-        // 从「已完成」列撤回「待办」列（如果两列都存在）
+        // 从「已完成」列撤回「待办」列（如果两列都存在），追加到列尾
         const int64_t doneCol = findColumnByTitle("已完成");
         const int64_t todoCol = columns_.empty() ? 0 : columns_.front().id;
         if (doneCol != 0 && todoCol != 0) {
-            auto mv = service_->moveTask(taskId, todoCol, 0);
+            auto mv = service_->moveTask(
+                taskId, todoCol, ui::computeAppendPosition(tasks_, todoCol));
             if (mv.isFail()) {
                 LOG_WARN("Todo: 取消完成后移回待办列失败: " + mv.errorMessage());
             }
@@ -342,6 +365,14 @@ public:
 
     // ============ 查找辅助 ============
 
+    // 列内滚动位置（按列索引记忆；reloadAll 时 resize 保留旧值）
+    float colScrollOffset(size_t colIndex) const {
+        return colIndex < columnScrolls_.size() ? columnScrolls_[colIndex] : 0.0f;
+    }
+    void setColScrollOffset(size_t colIndex, float v) {
+        if (colIndex < columnScrolls_.size()) columnScrolls_[colIndex] = v;
+    }
+
     const Task* findTask(int64_t id) const {
         for (const auto& t : tasks_) {
             if (t.id == id) return &t;
@@ -388,6 +419,13 @@ public:
         const float contentH = screen.height - pad * 2.0f;
         const float headerH = 64.0f;
         const float bodyH = contentH - headerH - t.sizes.spacingLarge;
+
+        // 页面铺底色（仿 settings_module）：clearColor 只在启动时取主题快照，
+        // 运行时切主题不跟随——页面必须自己铺 background，否则浅色主题下黑底
+        ui.rect("todo.pagebg")
+            .size(screen.width, screen.height)
+            .color(t.colors.background)
+            .build();
 
         ui.column("todo.root")
             .size(screen.width, screen.height)
@@ -473,7 +511,7 @@ private:
                         components::button(ui, "todo.btn.addcol")
                             .size(72.0f, 40.0f)
                             .text("+ 列")
-                            .fontSize(13.0f)
+                            .fontSize(t.sizes.fontSizeSmall)
                             .colors(t.colors.surfaceElevated, t.colors.hover, t.colors.active)
                             .textColor(t.colors.textPrimary)
                             .radius(t.sizes.radius)
@@ -488,7 +526,7 @@ private:
                         components::button(ui, "todo.btn.add")
                             .size(120.0f, 40.0f)
                             .text("+ 新建任务")
-                            .fontSize(13.0f)
+                            .fontSize(t.sizes.fontSizeSmall)
                             .colors(t.colors.primary, t.colors.primaryHover,
                                     t.colors.primaryPressed)
                             .textColor(eui::Color("#FFFFFF"))
@@ -510,6 +548,40 @@ private:
     // ---------- 看板列 ----------
     void drawBoard(eui::Ui& ui, float contentW, float bodyH,
                    const core::theme::Tokens& t) {
+        // 错误态（服务未就绪 / 读取失败）：与空态区分，给文案 + 重试按钮
+        // （仿 Home statsError_ 三态：空 / 错误+重试 / 数据）
+        if (!service_ || !loadError_.empty()) {
+            const std::string msg = !service_
+                ? "数据库尚未就绪，数据未加载"
+                : "数据加载失败：" + loadError_;
+            ui.stack("todo.error")
+                .size(contentW, bodyH)
+                .content([&] {
+                    ui.text("todo.error.text")
+                        .position(0.0f, bodyH / 2.0f - 36.0f)
+                        .size(contentW, 24.0f)
+                        .text(msg + "（点击重试）")
+                        .fontSize(t.sizes.fontSizeBody)
+                        .lineHeight(24.0f)
+                        .horizontalAlign(eui::HorizontalAlign::Center)
+                        .color(t.colors.error)
+                        .build();
+                    components::button(ui, "todo.error.retry")
+                        .position(contentW / 2.0f - 60.0f, bodyH / 2.0f)
+                        .size(120.0f, 40.0f)
+                        .text("重试")
+                        .fontSize(t.sizes.fontSizeBody - 1.0f)
+                        .colors(t.colors.primary, t.colors.primaryHover,
+                                t.colors.primaryPressed)
+                        .textColor(eui::Color("#FFFFFF"))
+                        .radius(t.sizes.radius)
+                        .onClick([this] { retryLoad(); })
+                        .build();
+                })
+                .build();
+            return;
+        }
+
         if (columns_.empty()) {
             ui.stack("todo.empty")
                 .size(contentW, bodyH)
@@ -548,6 +620,19 @@ private:
     void drawColumn(eui::Ui& ui, const std::string& id, const Column& col,
                     float width, float height, const core::theme::Tokens& t,
                     size_t colIndex) {
+        // 列内容整体包一层 stack：EUI-NEO 的 position() 只在 stack 内生效，
+        // 直接作为 row("todo.body") 的子元素会被流式布局横向排开（列头/卡片错位）
+        ui.stack(id)
+            .size(width, height)
+            .content([&] {
+                drawColumnContent(ui, id, col, width, height, t, colIndex);
+            })
+            .build();
+    }
+
+    void drawColumnContent(eui::Ui& ui, const std::string& id, const Column& col,
+                           float width, float height,
+                           const core::theme::Tokens& t, size_t colIndex) {
         ui.rect(id + ".bg")
             .position(0.0f, 0.0f)
             .size(width, height)
@@ -573,7 +658,7 @@ private:
             .position(16.0f, 16.0f)
             .size(width - 60.0f, 20.0f)
             .text(col.title + " (" + std::to_string(colTasks.size()) + ")")
-            .fontSize(15.0f)
+            .fontSize(t.sizes.fontSizeBody)
             .lineHeight(20.0f)
             .fontWeight(600)
             .color(t.colors.textPrimary)
@@ -584,7 +669,7 @@ private:
             .position(width - 36.0f, 14.0f)
             .size(28.0f, 28.0f)
             .text("+")
-            .fontSize(16.0f)
+            .fontSize(t.sizes.fontSizeBody + 1.0f)
             .colors(t.colors.surfaceElevated, t.colors.hover, t.colors.active)
             .textColor(t.colors.textSecondary)
             .radius(14.0f)
@@ -596,7 +681,7 @@ private:
                 .position(0.0f, height / 2.0f - 12.0f)
                 .size(width, 24.0f)
                 .text(isArchive ? "📦 归档的任务在这里" : "暂无任务")
-                .fontSize(12.0f)
+                .fontSize(t.sizes.fontSizeSmall - 1.0f)
                 .lineHeight(24.0f)
                 .horizontalAlign(eui::HorizontalAlign::Center)
                 .color(t.colors.textTertiary)
@@ -604,14 +689,35 @@ private:
             return;
         }
 
-        const float cardY0 = kColumnHeaderHeight;
-        for (size_t i = 0; i < colTasks.size(); ++i) {
-            const float y = cardY0 + static_cast<float>(i) * (kCardHeight + kCardGap);
-            if (y + kCardHeight > height) break;  // 超出列高就不画（简化：不做列内滚动）
-            drawCard(ui, id + ".card." + std::to_string(i), y, width - 16.0f, t,
-                     *colTasks[i], static_cast<int>(colIndex),
-                     static_cast<int>(columns_.size()), static_cast<int>(i));
-        }
+        // 列内滚动（scrollView）：此前直接裁掉超出列高的卡片（第 12 张起消失）。
+        // 滚动位置按列索引记忆（reloadAll 时 vector resize 保留旧值）。
+        const auto componentTheme = t.isDark ? components::theme::dark()
+                                             : components::theme::light();
+        components::scrollView(ui, id + ".scroll")
+            .position(0.0f, kColumnHeaderHeight)
+            .size(width, height - kColumnHeaderHeight)
+            .gap(kCardGap)
+            .step(60.0f)
+            .theme(componentTheme)
+            .contentKey(id + ".scroll." + std::to_string(colTasks.size()))
+            .offset(colScrollOffset(colIndex))
+            .onChange([this, colIndex](float v) { setColScrollOffset(colIndex, v); })
+            .content([&](eui::Ui& inner, float contentWidth, float viewportHeight) {
+                (void)viewportHeight;
+                for (size_t i = 0; i < colTasks.size(); ++i) {
+                    const std::string cardId = id + ".card." + std::to_string(i);
+                    inner.stack(cardId + ".wrap")
+                        .size(contentWidth, kCardHeight)
+                        .content([&] {
+                            drawCard(inner, cardId, 0.0f, contentWidth - 16.0f, t,
+                                     *colTasks[i], static_cast<int>(colIndex),
+                                     static_cast<int>(columns_.size()),
+                                     static_cast<int>(i));
+                        })
+                        .build();
+                }
+            })
+            .build();
     }
 
     void drawCard(eui::Ui& ui, const std::string& id, float y, float width,
@@ -633,15 +739,17 @@ private:
                 openTaskContextMenu(task, colIndex, cardIndex);
             })
             .onDrag([this, task, colIndex, colCount, width](const core::dsl::DragEvent& ev) {
-                // 拖拽超过半列宽 → 移到相邻列（左 / 右）
+                // 拖拽超过半列宽 → 移到相邻列（左 / 右），追加到目标列尾
                 const double threshold = static_cast<double>(width) * 0.6;
                 if (ev.totalX > threshold && colIndex + 1 < colCount) {
                     const int64_t toCol = columns_[static_cast<size_t>(colIndex + 1)].id;
-                    doMoveTask(task.id, toCol, 0);
+                    doMoveTask(task.id, toCol,
+                               ui::computeAppendPosition(tasks_, toCol));
                     setStatus("已移动到「" + columns_[static_cast<size_t>(colIndex + 1)].title + "」");
                 } else if (ev.totalX < -threshold && colIndex > 0) {
                     const int64_t toCol = columns_[static_cast<size_t>(colIndex - 1)].id;
-                    doMoveTask(task.id, toCol, 0);
+                    doMoveTask(task.id, toCol,
+                               ui::computeAppendPosition(tasks_, toCol));
                     setStatus("已移动到「" + columns_[static_cast<size_t>(colIndex - 1)].title + "」");
                 }
             })
@@ -660,7 +768,7 @@ private:
             .position(16.0f, y + 14.0f)
             .size(width - 44.0f, 18.0f)
             .text(task.title)
-            .fontSize(14.0f)
+            .fontSize(t.sizes.fontSizeBody - 1.0f)
             .lineHeight(18.0f)
             .fontWeight(500)
             .color(t.colors.textPrimary)
@@ -686,7 +794,7 @@ private:
                 .position(width - 36.0f, y + 14.0f)
                 .size(24.0f, 18.0f)
                 .text("✓")
-                .fontSize(14.0f)
+                .fontSize(t.sizes.fontSizeBody - 1.0f)
                 .lineHeight(18.0f)
                 .horizontalAlign(eui::HorizontalAlign::Center)
                 .color(t.colors.success)
@@ -742,7 +850,7 @@ private:
                     .position(28.0f, 24.0f)
                     .size(w - 56.0f, 28.0f)
                     .text("新建任务")
-                    .fontSize(20.0f)
+                    .fontSize(t.sizes.fontSizeLarge + 2.0f)
                     .lineHeight(28.0f)
                     .fontWeight(700)
                     .color(t.colors.textPrimary)
@@ -757,7 +865,7 @@ private:
                     .position(28.0f, 56.0f)
                     .size(w - 56.0f, 18.0f)
                     .text("将创建在「" + colName + "」列")
-                    .fontSize(12.0f)
+                    .fontSize(t.sizes.fontSizeSmall - 1.0f)
                     .lineHeight(18.0f)
                     .color(t.colors.textTertiary)
                     .build();
@@ -767,7 +875,7 @@ private:
                     .size(w - 56.0f, 44.0f)
                     .value(newTaskTitle_)
                     .placeholder("任务标题…")
-                    .fontSize(15.0f)
+                    .fontSize(t.sizes.fontSizeBody)
                     .theme(themeTokens)
                     .onChange([this](const std::string& v) { newTaskTitle_ = v; })
                     .onEnter([this] {
@@ -782,7 +890,7 @@ private:
                     .position(28.0f, h - 60.0f)
                     .size((w - 68.0f) * 0.5f, 40.0f)
                     .text("取消")
-                    .fontSize(14.0f)
+                    .fontSize(t.sizes.fontSizeBody - 1.0f)
                     .colors(t.colors.surfaceElevated, t.colors.hover, t.colors.active)
                     .textColor(t.colors.textPrimary)
                     .radius(t.sizes.radius)
@@ -794,7 +902,7 @@ private:
                     .position(28.0f + (w - 68.0f) * 0.5f + 12.0f, h - 60.0f)
                     .size((w - 68.0f) * 0.5f, 40.0f)
                     .text("创建")
-                    .fontSize(14.0f)
+                    .fontSize(t.sizes.fontSizeBody - 1.0f)
                     .colors(t.colors.primary, t.colors.primaryHover, t.colors.primaryPressed)
                     .textColor(eui::Color("#FFFFFF"))
                     .radius(t.sizes.radius)
@@ -836,6 +944,7 @@ private:
         if (ctxTaskId_ != 0) {
             const Task* self = findTask(ctxTaskId_);
             if (self == nullptr) return;
+            items.push_back({"编辑"});
             items.push_back({"上移"});
             items.push_back({"下移"});
             for (const auto& c : columns_) {
@@ -843,6 +952,7 @@ private:
                     items.push_back({"移动到「" + c.title + "」"});
                 }
             }
+            items.push_back({"删除"});
         } else if (ctxColumnId_ != 0) {
             if (findColumn(ctxColumnId_) == nullptr) return;
             items.push_back({"重命名列"});
@@ -873,20 +983,37 @@ private:
     }
 
     // 菜单项点击分发。索引含义与 drawContextMenu 构建的 items 一一对应：
-    //   任务菜单：0=上移 1=下移 2+i=移动到第 i 个其他列
+    //   任务菜单：0=编辑 1=上移 2=下移 3+i=移动到第 i 个其他列 末项=删除（带确认）
     //   列菜单：  0=重命名 1=左移 2=右移 3=删除
     void onContextSelect(int index) {
         if (ctxTaskId_ != 0) {
             const Task* self = findTask(ctxTaskId_);
             if (self == nullptr) return;
-            if (index == 0) { moveTaskByKeyboard(true); return; }
-            if (index == 1) { moveTaskByKeyboard(false); return; }
-            int k = index - 2;
+            if (index == 0) {
+                openDetailDialog(*self);
+                return;
+            }
+            if (index == 1) { moveTaskByKeyboard(true); return; }
+            if (index == 2) { moveTaskByKeyboard(false); return; }
+            size_t otherColumns = 0;
+            for (const auto& c : columns_) {
+                if (c.id != self->columnId) ++otherColumns;
+            }
+            const int deleteIndex = 3 + static_cast<int>(otherColumns);
+            if (index == deleteIndex) {
+                confirmTaskId_ = ctxTaskId_;
+                confirmTaskTitle_ = self->title;
+                confirmColumnId_ = 0;
+                confirmOpen_ = true;
+                return;
+            }
+            int k = index - 3;
             for (const auto& c : columns_) {
                 if (c.id == self->columnId) continue;
                 if (k == 0) {
                     const std::string title = c.title;
-                    doMoveTask(ctxTaskId_, c.id, 0);
+                    doMoveTask(ctxTaskId_, c.id,
+                               ui::computeAppendPosition(tasks_, c.id));
                     setStatus("已移动到「" + title + "」");
                     return;
                 }
@@ -906,6 +1033,7 @@ private:
             case 2: doShiftColumn(col->id, +1); break;
             case 3:
                 confirmColumnId_ = col->id;
+                confirmTaskId_ = 0;
                 confirmOpen_ = true;
                 break;
             default: break;
@@ -931,7 +1059,7 @@ private:
                     .position(28.0f, 24.0f)
                     .size(w - 56.0f, 28.0f)
                     .text("重命名列")
-                    .fontSize(20.0f)
+                    .fontSize(t.sizes.fontSizeLarge + 2.0f)
                     .lineHeight(28.0f)
                     .fontWeight(700)
                     .color(t.colors.textPrimary)
@@ -942,7 +1070,7 @@ private:
                     .size(w - 56.0f, 44.0f)
                     .value(renameTitle_)
                     .placeholder("列标题…")
-                    .fontSize(15.0f)
+                    .fontSize(t.sizes.fontSizeBody)
                     .theme(themeTokens)
                     .onChange([this](const std::string& v) { renameTitle_ = v; })
                     .onEnter([this] {
@@ -957,7 +1085,7 @@ private:
                     .position(28.0f, h - 60.0f)
                     .size((w - 68.0f) * 0.5f, 40.0f)
                     .text("取消")
-                    .fontSize(14.0f)
+                    .fontSize(t.sizes.fontSizeBody - 1.0f)
                     .colors(t.colors.surfaceElevated, t.colors.hover, t.colors.active)
                     .textColor(t.colors.textPrimary)
                     .radius(t.sizes.radius)
@@ -969,7 +1097,7 @@ private:
                     .position(28.0f + (w - 68.0f) * 0.5f + 12.0f, h - 60.0f)
                     .size((w - 68.0f) * 0.5f, 40.0f)
                     .text("保存")
-                    .fontSize(14.0f)
+                    .fontSize(t.sizes.fontSizeBody - 1.0f)
                     .colors(t.colors.primary, t.colors.primaryHover, t.colors.primaryPressed)
                     .textColor(eui::Color("#FFFFFF"))
                     .radius(t.sizes.radius)
@@ -984,19 +1112,29 @@ private:
             .build();
     }
 
-    // ---------- 删除列确认弹窗（外键 CASCADE 会连带删掉列下全部任务） ----------
+    // ---------- 删除确认弹窗 ----------
+    // 双模式：confirmTaskId_ > 0 = 删任务；否则 confirmColumnId_ > 0 = 删列
+    // （外键 CASCADE 会连带删掉列下全部任务）
     void drawConfirmDeleteDialog(eui::Ui& ui, const eui::Screen& screen,
                                  const core::theme::Tokens& t) {
         const auto themeTokens = t.isDark ? components::theme::dark()
                                           : components::theme::light();
         const float w = 460.0f;
         const float h = 200.0f;
+        const bool delTask = (confirmTaskId_ != 0);
         std::string colName = "?";
         int taskCount = 0;
-        if (const Column* col = findColumn(confirmColumnId_)) {
-            colName = col->title;
-            taskCount = static_cast<int>(tasksInColumn(col->id).size());
+        if (!delTask) {
+            if (const Column* col = findColumn(confirmColumnId_)) {
+                colName = col->title;
+                taskCount = static_cast<int>(tasksInColumn(col->id).size());
+            }
         }
+        const std::string title = delTask ? "删除任务" : "删除列";
+        const std::string body = delTask
+            ? "将删除任务「" + confirmTaskTitle_ + "」，不可恢复。"
+            : "将删除「" + colName + "」列及其中 " +
+                  std::to_string(taskCount) + " 个任务，不可恢复。";
 
         components::dialog(ui, "todo.dialog.delcol")
             .open(confirmOpen_)
@@ -1008,8 +1146,8 @@ private:
                 ui.text("todo.dialog.delcol.title")
                     .position(28.0f, 24.0f)
                     .size(w - 56.0f, 28.0f)
-                    .text("删除列")
-                    .fontSize(20.0f)
+                    .text(title)
+                    .fontSize(t.sizes.fontSizeLarge + 2.0f)
                     .lineHeight(28.0f)
                     .fontWeight(700)
                     .color(t.colors.textPrimary)
@@ -1017,9 +1155,8 @@ private:
                 ui.text("todo.dialog.delcol.body")
                     .position(28.0f, 60.0f)
                     .size(w - 56.0f, 40.0f)
-                    .text("将删除「" + colName + "」列及其中 " +
-                          std::to_string(taskCount) + " 个任务，不可恢复。")
-                    .fontSize(14.0f)
+                    .text(body)
+                    .fontSize(t.sizes.fontSizeBody - 1.0f)
                     .lineHeight(20.0f)
                     .color(t.colors.textSecondary)
                     .build();
@@ -1028,7 +1165,7 @@ private:
                     .position(28.0f, h - 60.0f)
                     .size((w - 68.0f) * 0.5f, 40.0f)
                     .text("取消")
-                    .fontSize(14.0f)
+                    .fontSize(t.sizes.fontSizeBody - 1.0f)
                     .colors(t.colors.surfaceElevated, t.colors.hover, t.colors.active)
                     .textColor(t.colors.textPrimary)
                     .radius(t.sizes.radius)
@@ -1040,11 +1177,18 @@ private:
                     .position(28.0f + (w - 68.0f) * 0.5f + 12.0f, h - 60.0f)
                     .size((w - 68.0f) * 0.5f, 40.0f)
                     .text("删除")
-                    .fontSize(14.0f)
+                    .fontSize(t.sizes.fontSizeBody - 1.0f)
                     .colors(t.colors.error, t.colors.error, t.colors.error)
                     .textColor(eui::Color("#FFFFFF"))
                     .radius(t.sizes.radius)
                     .onClick([this] {
+                        if (confirmTaskId_ != 0) {
+                            const int64_t taskId = confirmTaskId_;
+                            confirmOpen_ = false;
+                            confirmTaskId_ = 0;
+                            doDeleteTask(taskId);
+                            return;
+                        }
                         const int64_t id = confirmColumnId_;
                         confirmOpen_ = false;
                         doDeleteColumn(id);
@@ -1110,7 +1254,7 @@ private:
                     .position(28.0f, 22.0f)
                     .size(w - 56.0f, 28.0f)
                     .text("任务详情")
-                    .fontSize(20.0f)
+                    .fontSize(t.sizes.fontSizeLarge + 2.0f)
                     .lineHeight(28.0f)
                     .fontWeight(700)
                     .color(t.colors.textPrimary)
@@ -1121,7 +1265,7 @@ private:
                     .position(28.0f, 58.0f)
                     .size(80.0f, 16.0f)
                     .text("标题")
-                    .fontSize(11.0f)
+                    .fontSize(t.sizes.fontSizeSmall - 2.0f)
                     .lineHeight(16.0f)
                     .color(t.colors.textTertiary)
                     .build();
@@ -1130,7 +1274,7 @@ private:
                     .size(w - 56.0f, 40.0f)
                     .value(detailTitle_)
                     .placeholder("任务标题…")
-                    .fontSize(14.0f)
+                    .fontSize(t.sizes.fontSizeBody - 1.0f)
                     .theme(themeTokens)
                     .onChange([this](const std::string& v) { detailTitle_ = v; })
                     .build();
@@ -1140,7 +1284,7 @@ private:
                     .position(28.0f, 126.0f)
                     .size(80.0f, 16.0f)
                     .text("描述")
-                    .fontSize(11.0f)
+                    .fontSize(t.sizes.fontSizeSmall - 2.0f)
                     .lineHeight(16.0f)
                     .color(t.colors.textTertiary)
                     .build();
@@ -1149,7 +1293,7 @@ private:
                     .size(w - 56.0f, 88.0f)
                     .value(detailDescription_)
                     .placeholder("补充说明…（可多行）")
-                    .fontSize(13.0f)
+                    .fontSize(t.sizes.fontSizeSmall)
                     .multiline(true)
                     .scrollbar(true)
                     .theme(themeTokens)
@@ -1161,7 +1305,7 @@ private:
                     .position(28.0f, 244.0f)
                     .size(80.0f, 16.0f)
                     .text("优先级")
-                    .fontSize(11.0f)
+                    .fontSize(t.sizes.fontSizeSmall - 2.0f)
                     .lineHeight(16.0f)
                     .color(t.colors.textTertiary)
                     .build();
@@ -1174,7 +1318,7 @@ private:
                         .position(28.0f + static_cast<float>(i) * (bw + 8.0f), 264.0f)
                         .size(bw, 32.0f)
                         .text(priorityLabel(prios[i]))
-                        .fontSize(12.0f)
+                        .fontSize(t.sizes.fontSizeSmall - 1.0f)
                         .colors(active ? t.colors.primarySoftBg : t.colors.surfaceElevated,
                                 t.colors.hover, t.colors.active)
                         .textColor(active ? t.colors.primary : t.colors.textSecondary)
@@ -1189,7 +1333,7 @@ private:
                     .position(28.0f, 308.0f)
                     .size(120.0f, 16.0f)
                     .text("截止日期")
-                    .fontSize(11.0f)
+                    .fontSize(t.sizes.fontSizeSmall - 2.0f)
                     .lineHeight(16.0f)
                     .color(t.colors.textTertiary)
                     .build();
@@ -1198,7 +1342,7 @@ private:
                     .position(28.0f, 328.0f)
                     .size(100.0f, 32.0f)
                     .text(!hasDue ? "未设置" : "清除")
-                    .fontSize(12.0f)
+                    .fontSize(t.sizes.fontSizeSmall - 1.0f)
                     .colors(!hasDue ? t.colors.primarySoftBg : t.colors.surfaceElevated,
                             t.colors.hover, t.colors.active)
                     .textColor(!hasDue ? t.colors.primary : t.colors.textSecondary)
@@ -1212,7 +1356,7 @@ private:
                     .position(136.0f, 328.0f)
                     .size(180.0f, 32.0f)
                     .text(dueBtnText)
-                    .fontSize(12.0f)
+                    .fontSize(t.sizes.fontSizeSmall - 1.0f)
                     .colors(hasDue ? t.colors.primarySoftBg : t.colors.surfaceElevated,
                             t.colors.hover, t.colors.active)
                     .textColor(hasDue ? t.colors.primary : t.colors.textSecondary)
@@ -1226,7 +1370,7 @@ private:
                     .position(28.0f, 372.0f)
                     .size(120.0f, 16.0f)
                     .text("移动到")
-                    .fontSize(11.0f)
+                    .fontSize(t.sizes.fontSizeSmall - 2.0f)
                     .lineHeight(16.0f)
                     .color(t.colors.textTertiary)
                     .build();
@@ -1237,7 +1381,7 @@ private:
                         .position(28.0f + static_cast<float>(i) * (bw + 8.0f), 392.0f)
                         .size(bw, 32.0f)
                         .text(columns_[i].title)
-                        .fontSize(12.0f)
+                        .fontSize(t.sizes.fontSizeSmall - 1.0f)
                         .colors(active ? t.colors.primarySoftBg : t.colors.surfaceElevated,
                                 t.colors.hover, t.colors.active)
                         .textColor(active ? t.colors.primary : t.colors.textSecondary)
@@ -1246,9 +1390,11 @@ private:
                         .onClick([this, i] {
                             const int64_t taskId = detailTaskId_;
                             const int64_t toCol = columns_[i].id;
+                            if (toCol == detailColumnId_) return;  // 已在该列
                             detailColumnId_ = toCol;
                             detailOpen_ = false;
-                            doMoveTask(taskId, toCol, 0);
+                            doMoveTask(taskId, toCol,
+                                       ui::computeAppendPosition(tasks_, toCol));
                         })
                         .build();
                 }
@@ -1259,7 +1405,7 @@ private:
                     .position(28.0f, btnY)
                     .size(96.0f, 40.0f)
                     .text("删除")
-                    .fontSize(13.0f)
+                    .fontSize(t.sizes.fontSizeSmall)
                     .colors(t.colors.surfaceElevated, t.colors.hover, t.colors.active)
                     .textColor(t.colors.error)
                     .radius(t.sizes.radius)
@@ -1275,7 +1421,7 @@ private:
                     .position(132.0f, btnY)
                     .size(132.0f, 40.0f)
                     .text(detailCompleted_ ? "↩ 取消完成" : "✓ 标记完成")
-                    .fontSize(13.0f)
+                    .fontSize(t.sizes.fontSizeSmall)
                     .colors(t.colors.surfaceElevated, t.colors.hover, t.colors.active)
                     .textColor(detailCompleted_ ? t.colors.textSecondary : t.colors.success)
                     .radius(t.sizes.radius)
@@ -1293,7 +1439,7 @@ private:
                     .position(w - 28.0f - 160.0f, btnY)
                     .size(160.0f, 40.0f)
                     .text("保存")
-                    .fontSize(14.0f)
+                    .fontSize(t.sizes.fontSizeBody - 1.0f)
                     .colors(t.colors.primary, t.colors.primaryHover, t.colors.primaryPressed)
                     .textColor(eui::Color("#FFFFFF"))
                     .radius(t.sizes.radius)
@@ -1311,7 +1457,12 @@ private:
                             ? std::optional<int64_t>(static_cast<int64_t>(std::time(nullptr)))
                             : std::nullopt;
                         updated.tags = detailTags_;
-                        updated.position = 0;
+                        // 保留原 position（编辑不改序；此前硬编码 0 会把任务顶到列首）
+                        if (const Task* orig = findTask(detailTaskId_)) {
+                            updated.position = orig->position;
+                        } else {
+                            updated.position = 0;
+                        }
                         detailOpen_ = false;
                         doUpdateTask(updated);
                     })
@@ -1324,6 +1475,7 @@ private:
     std::unique_ptr<TodoService> service_;
     std::vector<Column> columns_;
     std::vector<Task> tasks_;
+    std::vector<float> columnScrolls_;  // 列内滚动偏移（按列索引）
 
     // 新建任务弹窗
     bool newTaskOpen_ = false;
@@ -1354,16 +1506,21 @@ private:
     // 截止日期 datepicker
     bool datePickOpen_ = false;
 
-    // 重命名列 / 删除列确认弹窗
+    // 重命名列 / 删除确认弹窗（确认弹窗双模式：任务 / 列）
     bool renameOpen_ = false;
     int64_t renameColumnId_ = 0;
     std::string renameTitle_;
     bool confirmOpen_ = false;
     int64_t confirmColumnId_ = 0;
+    int64_t confirmTaskId_ = 0;
+    std::string confirmTaskTitle_;
 
     // 顶部提示
     std::string statusMessage_;
     bool statusIsError_ = false;
+
+    // 数据加载错误（空 = 正常；与空态区分，见 drawBoard）
+    std::string loadError_;
 };
 
 } // namespace module::todo

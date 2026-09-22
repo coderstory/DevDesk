@@ -63,6 +63,17 @@ inline std::optional<MoveTarget> computeKeyboardMove(
     return MoveTarget{self->columnId, colTasks[idx + 1]->position + 1};
 }
 
+// 目标列末尾追加位置（该列 max position + 1；空列 = 0）。
+// 拖拽 / 详情移动 / 完成迁移等"无目标索引"的移动统一追加到列尾；
+// 用 DB 真实 position 计算（moveTask 留空洞，rank 不可靠，同 computeKeyboardMove）。
+inline int computeAppendPosition(const std::vector<Task>& tasks, int64_t columnId) {
+    int maxPos = -1;
+    for (const auto& t : tasks) {
+        if (t.columnId == columnId && t.position > maxPos) maxPos = t.position;
+    }
+    return maxPos + 1;
+}
+
 // 年月日（本地时区零点）→ Unix 秒
 inline int64_t ymdToEpoch(int year, int month, int day) {
     std::tm tmv{};

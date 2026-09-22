@@ -10,6 +10,7 @@
 #include "core/database.h"
 #include "core/module_interface.h"
 #include "core/sqlite_db.h"
+#include "core/theme.h"
 #include "module_todo/todo_service.h"
 #include "module_todo/todo_ui_logic.h"
 
@@ -419,5 +420,351 @@ REGISTER_TEST(todo_ui_column_ops_and_datepicker,
     }
 
     mod->onStop();
+    return true;
+})
+
+// ---- 4. W7 position 缺陷回归 ----
+
+REGISTER_TEST(todo_ui_append_position,
+              "todo_ui: computeAppendPosition 空列/已有列/空洞", {
+    using module::todo::ui::computeAppendPosition;
+    std::vector<module::todo::Task> tasks;
+    // 空列 → 0
+    DOCTEST_CHECK_EQ(computeAppendPosition(tasks, 10), 0);
+    tasks.push_back(makeTask(1, 10, 0));
+    tasks.push_back(makeTask(2, 10, 2));   // position 带空洞（moveTask 留洞形态）
+    tasks.push_back(makeTask(3, 20, 7));   // 另一列，不应干扰
+    // 已有列 → max + 1（按真实 position，非 rank）
+    DOCTEST_CHECK_EQ(computeAppendPosition(tasks, 10), 3);
+    DOCTEST_CHECK_EQ(computeAppendPosition(tasks, 20), 8);
+    return true;
+})
+
+REGISTER_TEST(todo_ui_edit_keeps_order,
+              "todo_ui: 编辑保存不改序（position 保留，headless）", {
+    TestEnv env;
+    DOCTEST_REQUIRE(env.ready);
+    auto col = env.svc->createColumn("编辑列");
+    DOCTEST_REQUIRE(col.isOk());
+    auto a = env.svc->createTask(col.value().id, "甲");
+    auto b = env.svc->createTask(col.value().id, "乙");
+    auto c = env.svc->createTask(col.value().id, "丙");
+    DOCTEST_REQUIRE(a.isOk() && b.isOk() && c.isOk());
+
+    std::unique_ptr<::core::Module> mod(create_todo_module());
+    mod->onStart();
+
+    // 打开「丙」详情 → 直接点保存（标题未改，仍走完整 updateTask 链路）
+    {
+        Frame frame(mod.get());
+        const auto* card = frame.ui.find("todo.col.4.card.2.bg");
+        DOCTEST_REQUIRE(card != nullptr);
+        DOCTEST_REQUIRE(card->onClick != nullptr);
+        card->onClick();
+    }
+    {
+        Frame frame(mod.get());
+        const auto* save = frame.ui.find("todo.dialog.detail.save.bg");
+        DOCTEST_REQUIRE(save != nullptr);
+        DOCTEST_REQUIRE(save->onClick != nullptr);
+        save->onClick();
+    }
+    // 回归断言：丙仍在列尾且 position 保留（旧缺陷：保存硬编码 position=0 → 丙顶到列首）
+    auto ts = env.svc->listTasks(col.value().id);
+    DOCTEST_REQUIRE(ts.isOk());
+    DOCTEST_REQUIRE_EQ(ts.value().size(), static_cast<size_t>(3));
+    DOCTEST_CHECK_EQ(ts.value()[0].title, std::string("甲"));
+    DOCTEST_CHECK_EQ(ts.value()[1].title, std::string("乙"));
+    DOCTEST_CHECK_EQ(ts.value()[2].title, std::string("丙"));
+    DOCTEST_CHECK_EQ(ts.value()[2].position, c.value().position);
+
+    mod->onStop();
+    return true;
+})
+
+REGISTER_TEST(todo_ui_move_appends_to_end,
+              "todo_ui: 拖拽/右键移动追加到目标列尾（headless）", {
+    TestEnv env;
+    DOCTEST_REQUIRE(env.ready);
+    auto src = env.svc->createColumn("移动源列");
+    auto dst = env.svc->createColumn("移动目标列");
+    DOCTEST_REQUIRE(src.isOk());
+    DOCTEST_REQUIRE(dst.isOk());
+    auto keeper = env.svc->createTask(dst.value().id, "目标列原任务");
+    auto mover = env.svc->createTask(src.value().id, "被移动任务");
+    DOCTEST_REQUIRE(keeper.isOk());
+    DOCTEST_REQUIRE(mover.isOk());
+
+    std::unique_ptr<::core::Module> mod(create_todo_module());
+    mod->onStart();
+
+    // 拖拽：col.4=移动源列（第 5 列，index 4）→ 向右拖过 60% 列宽 → 落到 col.5 列尾
+    {
+        Frame frame(mod.get());
+        const auto* card = frame.ui.find("todo.col.4.card.0.bg");
+        DOCTEST_REQUIRE(card != nullptr);
+        DOCTEST_REQUIRE(card->onDrag != nullptr);
+        core::dsl::DragEvent ev;
+        ev.totalX = 500.0;  // 远超列宽 60%
+        card->onDrag(ev);
+    }
+    {
+        auto ts = env.svc->listTasks(dst.value().id);
+        DOCTEST_REQUIRE(ts.isOk());
+        DOCTEST_REQUIRE_EQ(ts.value().size(), static_cast<size_t>(2));
+        // 追加到列尾：原任务在前（旧缺陷：position=0 → 被移动任务插到列首）
+        DOCTEST_CHECK_EQ(ts.value()[0].title, std::string("目标列原任务"));
+        DOCTEST_CHECK_EQ(ts.value()[1].title, std::string("被移动任务"));
+    }
+
+    // 右键菜单「移动到」同样追加列尾：把「被移动任务」移回源列（此时源列已空 → 追加位 0）
+    {
+        Frame frame(mod.get());
+        eui::PointerEvent pe;
+        eui::Rect rect;
+        const auto* card = frame.ui.find("todo.col.5.card.1.bg");
+        DOCTEST_REQUIRE(card != nullptr);
+        card->onContextMenu(pe, rect);
+        frame.refresh();
+        const core::dsl::Element* moveTo = nullptr;
+        for (int i = 2; i < 12 && moveTo == nullptr; ++i) {
+            const auto* item = frame.ui.find("todo.ctx.level.0.item." + std::to_string(i));
+            if (item == nullptr || item->onClick == nullptr) break;
+            const auto* label = frame.ui.find("todo.ctx.level.0.label." + std::to_string(i));
+            if (label != nullptr && label->text == "移动到「移动源列」") {
+                moveTo = label;
+                item->onClick();
+            }
+        }
+        DOCTEST_REQUIRE(moveTo != nullptr);
+        auto ts = env.svc->listTasks(src.value().id);
+        DOCTEST_REQUIRE(ts.isOk());
+        DOCTEST_REQUIRE_EQ(ts.value().size(), static_cast<size_t>(1));
+        DOCTEST_CHECK_EQ(ts.value()[0].title, std::string("被移动任务"));
+        DOCTEST_CHECK_EQ(ts.value()[0].position, 0);
+    }
+
+    mod->onStop();
+    return true;
+})
+
+REGISTER_TEST(todo_ui_column_scroll_geometry,
+              "todo_ui: 列内滚动——第 12 张起不裁切 + 列几何正确（headless layout）", {
+    TestEnv env;
+    DOCTEST_REQUIRE(env.ready);
+    auto col = env.svc->createColumn("长列");
+    DOCTEST_REQUIRE(col.isOk());
+    for (int i = 1; i <= 15; ++i) {
+        auto r = env.svc->createTask(col.value().id, "任务" + std::to_string(i));
+        DOCTEST_REQUIRE(r.isOk());
+    }
+
+    std::unique_ptr<::core::Module> mod(create_todo_module());
+    mod->onStart();
+
+    eui::Ui ui;
+    eui::Screen screen;
+    screen.width = 1600.0f;
+    screen.height = 1000.0f;
+    auto layoutFrame = [&]() {
+        ui.begin("todo_scroll_frame");
+        mod->compose(ui, screen);
+        ui.end();
+        ui.layout(screen);
+    };
+    layoutFrame();
+
+    // 15 张卡全部构建（旧缺陷：第 ~8 张起因列高 break 消失）
+    for (int i = 0; i < 15; ++i) {
+        const auto* card = ui.find("todo.col.4.card." + std::to_string(i) + ".bg");
+        DOCTEST_REQUIRE(card != nullptr);
+    }
+    // 滚动容器存在
+    DOCTEST_CHECK(ui.find("todo.col.4.scroll") != nullptr);
+
+    // 列几何回归（stack 包装修复）：列头与列背景同 x 起点，卡片在列内纵向排列。
+    // 旧缺陷：position() 在 row 流式布局里被忽略，列头/卡片横向排开（col 头 x 偏移一整列宽）
+    const auto* colBg = ui.find("todo.col.4.bg");
+    const auto* colHead = ui.find("todo.col.4.head");
+    const auto* colTitle = ui.find("todo.col.4.title");
+    DOCTEST_REQUIRE(colBg != nullptr);
+    DOCTEST_REQUIRE(colHead != nullptr);
+    DOCTEST_REQUIRE(colTitle != nullptr);
+    DOCTEST_CHECK_EQ(colHead->frame.x, colBg->frame.x);
+    DOCTEST_CHECK_EQ(colHead->frame.y, colBg->frame.y);
+    DOCTEST_CHECK_EQ(colTitle->frame.x, colBg->frame.x + 16.0f);
+    const auto* card0 = ui.find("todo.col.4.card.0.bg");
+    const auto* card1 = ui.find("todo.col.4.card.1.bg");
+    const auto* card14 = ui.find("todo.col.4.card.14.bg");
+    DOCTEST_REQUIRE(card0 != nullptr);
+    DOCTEST_REQUIRE(card1 != nullptr);
+    DOCTEST_REQUIRE(card14 != nullptr);
+    DOCTEST_CHECK_EQ(card0->frame.x, colBg->frame.x);        // 卡片在列内（不是横向流式排开）
+    DOCTEST_CHECK_EQ(card1->frame.x, colBg->frame.x);
+    DOCTEST_CHECK_EQ(card1->frame.y - card0->frame.y, 84.0f + 8.0f);  // 卡高 + 间距
+    DOCTEST_CHECK(card14->frame.y > card1->frame.y);          // 超出视口的卡继续向下排
+
+    // 多列不重叠：col.4 与相邻 col.3 背景横向相邻（x 差 = 列宽 + 间距）
+    const auto* prevBg = ui.find("todo.col.3.bg");
+    DOCTEST_REQUIRE(prevBg != nullptr);
+    DOCTEST_CHECK(colBg->frame.x > prevBg->frame.x);
+    DOCTEST_CHECK(colBg->frame.x - prevBg->frame.x < colBg->frame.width * 2.0f);
+
+    mod->onStop();
+    return true;
+})
+
+REGISTER_TEST(todo_ui_error_state_and_retry,
+              "todo_ui: db 未就绪错误态 + 重试恢复（headless）", {
+    // 前置：确保全局无注册数据库（TestEnv 析构后即此状态，显式再清一次防串扰）
+    ::core::registerAppDatabase(nullptr);
+    const std::filesystem::path path =
+        std::filesystem::temp_directory_path() / "devdesk_test_todo_retry.db";
+    std::error_code ec;
+    std::filesystem::remove(path, ec);
+
+    std::unique_ptr<::core::Module> mod(create_todo_module());
+    mod->onStart();  // db null → service_ 未初始化，只 WARN 不崩
+
+    {
+        Frame frame(mod.get());
+        // 错误态可见：文案 + 重试按钮（不是静默空白）
+        const auto* errText = frame.ui.find("todo.error.text");
+        DOCTEST_REQUIRE(errText != nullptr);
+        DOCTEST_CHECK(errText->text.find("尚未就绪") != std::string::npos);
+        const auto* retry = frame.ui.find("todo.error.retry.bg");
+        DOCTEST_REQUIRE(retry != nullptr);
+        DOCTEST_REQUIRE(retry->onClick != nullptr);
+        // 看板不渲染（无列背景）
+        DOCTEST_CHECK(frame.ui.find("todo.col.0.bg") == nullptr);
+
+        // 数据库晚注册 → 点重试 → 恢复
+        std::error_code ec2;
+        std::filesystem::remove(path, ec2);
+        auto r = ::core::Database::open(path);
+        DOCTEST_REQUIRE(r.isOk());
+        DOCTEST_REQUIRE(r.unsafeValue().migrate().isOk());
+        auto db = std::make_unique<::core::Database>(std::move(r.unsafeValue()));
+        ::core::registerAppDatabase(&db->db());
+        retry->onClick();
+    }
+    {
+        Frame frame(mod.get());
+        DOCTEST_CHECK(frame.ui.find("todo.error.text") == nullptr);
+        DOCTEST_CHECK(frame.ui.find("todo.col.0.bg") != nullptr);  // 默认 4 列已加载
+    }
+
+    mod->onStop();
+    ::core::registerAppDatabase(nullptr);
+    std::filesystem::remove(path, ec);
+    std::filesystem::remove(path.string() + "-wal", ec);
+    std::filesystem::remove(path.string() + "-shm", ec);
+    return true;
+})
+
+REGISTER_TEST(todo_ui_ctx_edit_and_delete,
+              "todo_ui: 右键菜单「编辑」开详情 / 「删除」带确认（headless）", {
+    TestEnv env;
+    DOCTEST_REQUIRE(env.ready);
+    auto col = env.svc->createColumn("菜单列");
+    DOCTEST_REQUIRE(col.isOk());
+    auto a = env.svc->createTask(col.value().id, "待编辑任务");
+    auto b = env.svc->createTask(col.value().id, "陪衬任务");
+    DOCTEST_REQUIRE(a.isOk());
+    DOCTEST_REQUIRE(b.isOk());
+
+    std::unique_ptr<::core::Module> mod(create_todo_module());
+    mod->onStart();
+
+    // 右键第 0 张卡 → item.0 = 编辑 → 详情弹窗打开且标题正确
+    {
+        Frame frame(mod.get());
+        eui::PointerEvent pe;
+        eui::Rect rect;
+        const auto* card = frame.ui.find("todo.col.4.card.0.bg");
+        DOCTEST_REQUIRE(card != nullptr);
+        card->onContextMenu(pe, rect);
+        frame.refresh();
+        const auto* edit = frame.ui.find("todo.ctx.level.0.item.0");
+        DOCTEST_REQUIRE(edit != nullptr);
+        DOCTEST_REQUIRE(edit->onClick != nullptr);
+        const auto* label0 = frame.ui.find("todo.ctx.level.0.label.0");
+        DOCTEST_REQUIRE(label0 != nullptr);
+        DOCTEST_CHECK_EQ(label0->text, std::string("编辑"));
+        edit->onClick();
+        frame.refresh();
+        DOCTEST_CHECK(frame.ui.find("todo.dialog.detail.input.title") != nullptr);
+    }
+
+    // 右键同一张卡 → 末项 = 删除 → 确认弹窗（任务模式，文案含任务标题）→ 确认 → 落库删除
+    {
+        Frame frame(mod.get());
+        eui::PointerEvent pe;
+        eui::Rect rect;
+        frame.ui.find("todo.col.4.card.0.bg")->onContextMenu(pe, rect);
+        frame.refresh();
+        // 5 列时任务菜单：0=编辑 1=上移 2=下移 3..6=移动到 7=删除
+        const auto* del = frame.ui.find("todo.ctx.level.0.item.7");
+        DOCTEST_REQUIRE(del != nullptr);
+        DOCTEST_REQUIRE(del->onClick != nullptr);
+        const auto* label7 = frame.ui.find("todo.ctx.level.0.label.7");
+        DOCTEST_REQUIRE(label7 != nullptr);
+        DOCTEST_CHECK_EQ(label7->text, std::string("删除"));
+        del->onClick();
+        frame.refresh();
+        const auto* body = frame.ui.find("todo.dialog.delcol.body");
+        DOCTEST_REQUIRE(body != nullptr);
+        DOCTEST_CHECK(body->text.find("待编辑任务") != std::string::npos);
+        const auto* confirm = frame.ui.find("todo.dialog.delcol.confirm.bg");
+        DOCTEST_REQUIRE(confirm != nullptr);
+        DOCTEST_REQUIRE(confirm->onClick != nullptr);
+        confirm->onClick();
+    }
+    {
+        auto ts = env.svc->listTasks(col.value().id);
+        DOCTEST_REQUIRE(ts.isOk());
+        DOCTEST_REQUIRE_EQ(ts.value().size(), static_cast<size_t>(1));
+        DOCTEST_CHECK_EQ(ts.value()[0].title, std::string("陪衬任务"));
+    }
+
+    mod->onStop();
+    return true;
+})
+
+REGISTER_TEST(todo_ui_fontscale_tokens,
+              "todo_ui: 模块字号经 token 派生，全局缩放生效（headless）", {
+    TestEnv env;
+    DOCTEST_REQUIRE(env.ready);
+    auto col = env.svc->createColumn("字号列");
+    DOCTEST_REQUIRE(col.isOk());
+    auto a = env.svc->createTask(col.value().id, "字号任务");
+    DOCTEST_REQUIRE(a.isOk());
+
+    std::unique_ptr<::core::Module> mod(create_todo_module());
+    mod->onStart();
+
+    auto cardTitleSize = [&](float* out) {
+        eui::Ui ui;
+        eui::Screen screen;
+        screen.width = 1600.0f;
+        screen.height = 1000.0f;
+        ui.begin("todo_font_frame");
+        mod->compose(ui, screen);
+        ui.end();
+        const auto* title = ui.find("todo.col.4.card.0.title");
+        if (title == nullptr) return false;
+        *out = title->fontSize;
+        return true;
+    };
+    ::core::theme::setFontScale(1.0f);
+    float base = 0.0f;
+    DOCTEST_REQUIRE(cardTitleSize(&base));       // 14（Body-1 派生）
+    ::core::theme::setFontScale(1.3f);
+    float scaled = 0.0f;
+    DOCTEST_REQUIRE(cardTitleSize(&scaled));
+    ::core::theme::setFontScale(1.0f);           // 恢复，不影响其他用例
+    DOCTEST_CHECK_EQ(base, 14.0f);
+    // 派生式 = token(缩放后) - 1：15×1.3 - 1 = 18.5（字面量时代这里恒为 14 不动）
+    DOCTEST_CHECK_EQ(scaled, 15.0f * 1.3f - 1.0f);
     return true;
 })
