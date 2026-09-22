@@ -774,3 +774,103 @@ REGISTER_TEST(md_module_compose_w7, "markdown_module: W7 pagebg/toast compose（
     mod->onStop();
     return true;
 })
+// ---- 2d. 标签系统（spec §8.1）：编辑器标签行 + 左栏标签筛选（headless）----
+
+REGISTER_TEST(md_module_tags_ui, "markdown_module: 标签 chip 行 + 左栏标签筛选（headless）", {
+    MdUiEnv env("tags");
+    DOCTEST_REQUIRE(env.db != nullptr);
+    DOCTEST_REQUIRE(writeTextFile(env.dir / "note.md", "# A\n"));
+    DOCTEST_REQUIRE(writeTextFile(env.dir / "other.md", "# B\n"));
+
+    std::unique_ptr<::core::Module> mod(create_markdown_module());
+    mod->onStart();
+
+    eui::Screen screen;
+    screen.width = 1600.0f;
+    screen.height = 1000.0f;
+    eui::Ui ui;
+    auto frame = [&](const char* page) {
+        ui.begin(page);
+        mod->compose(ui, screen);
+        ui.end();
+    };
+    // 扫树行找指定文件名的行（避免 mtime 同秒时根组内顺序不稳定）
+    auto findFileRow = [&](const std::string& name) -> const core::dsl::Element* {
+        for (int i = 0; i < 6; ++i) {
+            const auto* nm = ui.find("md.tree.node." + std::to_string(i) + ".name");
+            if (nm != nullptr && nm->text == name) {
+                return ui.find("md.tree.node." + std::to_string(i) + ".row");
+            }
+        }
+        return nullptr;
+    };
+    auto treeHasNote = [&](const std::string& name) {
+        for (int i = 0; i < 6; ++i) {
+            const auto* nm = ui.find("md.tree.node." + std::to_string(i) + ".name");
+            if (nm != nullptr && nm->text == name) return true;
+        }
+        return false;
+    };
+
+    // 帧1：无标签 → 左栏无筛选区
+    frame("tg1");
+    DOCTEST_CHECK(ui.find("md.tags.title") == nullptr);
+
+    // 打开 note.md → 编辑器顶部标签行出现（添加输入 + ＋按钮）
+    const auto* fileRow = findFileRow("note.md");
+    DOCTEST_REQUIRE(fileRow != nullptr);
+    DOCTEST_REQUIRE(fileRow->onClick != nullptr);
+    fileRow->onClick();
+    frame("tg2");
+    const auto* addInput = ui.find("md.tags.add.hit");
+    DOCTEST_REQUIRE(addInput != nullptr);
+    DOCTEST_REQUIRE(addInput->onTextInput != nullptr);
+
+    // 输入标签名 → 点「＋」提交（真实 onTextInput + onClick 链路）
+    core::TextInputEvent tie;
+    tie.text = "工作";
+    addInput->onTextInput(tie);
+    frame("tg3");
+    const auto* addBtn = ui.find("md.tags.addbtn.bg");
+    DOCTEST_REQUIRE(addBtn != nullptr);
+    DOCTEST_REQUIRE(addBtn->onClick != nullptr);
+    addBtn->onClick();
+    frame("tg4");
+
+    // 编辑器 chip 出现；左栏筛选区出现同名 chip（带笔记数）
+    const auto* chipName = ui.find("md.tags.chip.0.name");
+    DOCTEST_REQUIRE(chipName != nullptr);
+    DOCTEST_CHECK_EQ(chipName->text, std::string("工作"));
+    DOCTEST_CHECK(ui.find("md.tags.title") != nullptr);
+    const auto* filterName = ui.find("md.tags.filter.0.name");
+    DOCTEST_REQUIRE(filterName != nullptr);
+    DOCTEST_CHECK(filterName->text.find("工作") != std::string::npos);
+    DOCTEST_CHECK(filterName->text.find("1") != std::string::npos);
+
+    // 点筛选 chip → 树只显示含该标签的笔记（other.md 隐藏，note.md 保留）
+    const auto* filterBg = ui.find("md.tags.filter.0.bg");
+    DOCTEST_REQUIRE(filterBg != nullptr);
+    DOCTEST_REQUIRE(filterBg->onClick != nullptr);
+    filterBg->onClick();
+    frame("tg5");
+    DOCTEST_CHECK(!treeHasNote("other.md"));
+    DOCTEST_CHECK(treeHasNote("note.md"));
+
+    // 再点一次 → 取消筛选，other.md 回来
+    ui.find("md.tags.filter.0.bg")->onClick();
+    frame("tg6");
+    DOCTEST_CHECK(treeHasNote("other.md"));
+    DOCTEST_CHECK(treeHasNote("note.md"));
+
+    // chip 的 × → 删除标签：chip 消失，标签无引用后左栏筛选区也消失
+    const auto* del = ui.find("md.tags.chip.0.del");
+    DOCTEST_REQUIRE(del != nullptr);
+    DOCTEST_REQUIRE(del->onClick != nullptr);
+    del->onClick();
+    frame("tg7");
+    DOCTEST_CHECK(ui.find("md.tags.chip.0.name") == nullptr);
+    DOCTEST_CHECK(ui.find("md.tags.title") == nullptr);
+
+    mod->onStop();
+    return true;
+})

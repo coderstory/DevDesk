@@ -697,3 +697,174 @@ REGISTER_TEST(md_poll_changed_and_file_mtime,
     fs::remove_all(dir);
     return true;
 })
+// ==================== 标签（spec §8.1：setTags / listAllTags / notesWithTag） ====================
+
+REGISTER_TEST(md_tags_set_roundtrip,
+              "MarkdownService: setTags 全量替换往返 + 清洗去重", {
+    const auto dir = makeTempDir("tags_rw");
+    auto db = makeDb();
+    runMigrations(db);
+    module::markdown::MarkdownService svc(db, dir);
+
+    DOCTEST_REQUIRE(svc.create("a.md").isOk());
+    DOCTEST_CHECK(svc.setTags("a.md", {"工作", "idea"}).isOk());
+    auto t1 = svc.tagsForNote("a.md");
+    DOCTEST_REQUIRE(t1.isOk());
+    DOCTEST_REQUIRE_EQ(t1.value().size(), 2u);
+    DOCTEST_CHECK_EQ(t1.value()[0], std::string("idea"));   // 按名字母序
+    DOCTEST_CHECK_EQ(t1.value()[1], std::string("工作"));
+
+    // 全量替换：旧标签消失
+    DOCTEST_CHECK(svc.setTags("a.md", {"工作"}).isOk());
+    auto t2 = svc.tagsForNote("a.md");
+    DOCTEST_REQUIRE(t2.isOk());
+    DOCTEST_REQUIRE_EQ(t2.value().size(), 1u);
+    DOCTEST_CHECK_EQ(t2.value()[0], std::string("工作"));
+
+    // 清洗：空白标签跳过、首尾空白去除、重复去重
+    DOCTEST_CHECK(svc.setTags("a.md", {" x ", "", "x", "y"}).isOk());
+    auto t3 = svc.tagsForNote("a.md");
+    DOCTEST_REQUIRE(t3.isOk());
+    DOCTEST_REQUIRE_EQ(t3.value().size(), 2u);
+    DOCTEST_CHECK_EQ(t3.value()[0], std::string("x"));
+    DOCTEST_CHECK_EQ(t3.value()[1], std::string("y"));
+
+    // 清空 = 移除全部标签
+    DOCTEST_CHECK(svc.setTags("a.md", {}).isOk());
+    auto t4 = svc.tagsForNote("a.md");
+    DOCTEST_REQUIRE(t4.isOk());
+    DOCTEST_CHECK_EQ(t4.value().size(), 0u);
+
+    // 未索引的笔记 → fail（标签挂在 markdown_index.id 上）
+    DOCTEST_CHECK(svc.setTags("ghost.md", {"x"}).isFail());
+
+    fs::remove_all(dir);
+    return true;
+})
+
+REGISTER_TEST(md_tags_list_all_counts,
+              "MarkdownService: listAllTags 计数 + 孤儿标签清理", {
+    const auto dir = makeTempDir("tags_list");
+    auto db = makeDb();
+    runMigrations(db);
+    module::markdown::MarkdownService svc(db, dir);
+
+    DOCTEST_REQUIRE(svc.create("a.md").isOk());
+    DOCTEST_REQUIRE(svc.create("b.md").isOk());
+    DOCTEST_REQUIRE(svc.create("c.md").isOk());
+    DOCTEST_REQUIRE(svc.setTags("a.md", {"工作", "急"}).isOk());
+    DOCTEST_REQUIRE(svc.setTags("b.md", {"工作"}).isOk());
+    DOCTEST_REQUIRE(svc.setTags("c.md", {"工作"}).isOk());
+
+    auto tags = svc.listAllTags();
+    DOCTEST_REQUIRE(tags.isOk());
+    DOCTEST_REQUIRE_EQ(tags.value().size(), 2u);
+    // UTF-8 字节序：工(E5) < 急(E6) → 「工作」在前
+    DOCTEST_CHECK_EQ(tags.value()[0].name, std::string("工作"));
+    DOCTEST_CHECK_EQ(tags.value()[0].noteCount, 3);
+    DOCTEST_CHECK_EQ(tags.value()[1].name, std::string("急"));
+    DOCTEST_CHECK_EQ(tags.value()[1].noteCount, 1);
+
+    // b 不再用「工作」→ 计数降为 2；「急」升到 2
+    DOCTEST_REQUIRE(svc.setTags("b.md", {"急"}).isOk());
+    auto tags2 = svc.listAllTags();
+    DOCTEST_REQUIRE(tags2.isOk());
+    DOCTEST_REQUIRE_EQ(tags2.value().size(), 2u);
+    DOCTEST_CHECK_EQ(tags2.value()[0].name, std::string("工作"));
+    DOCTEST_CHECK_EQ(tags2.value()[0].noteCount, 2);
+    DOCTEST_CHECK_EQ(tags2.value()[1].name, std::string("急"));
+    DOCTEST_CHECK_EQ(tags2.value()[1].noteCount, 2);
+
+    // 所有笔记移除某标签 → 该标签（孤儿）从 listAllTags 消失
+    DOCTEST_REQUIRE(svc.setTags("a.md", {}).isOk());
+    DOCTEST_REQUIRE(svc.setTags("b.md", {}).isOk());
+    auto tags3 = svc.listAllTags();
+    DOCTEST_REQUIRE(tags3.isOk());
+    DOCTEST_REQUIRE_EQ(tags3.value().size(), 1u);
+    DOCTEST_CHECK_EQ(tags3.value()[0].name, std::string("工作"));
+    DOCTEST_CHECK_EQ(tags3.value()[0].noteCount, 1);
+
+    fs::remove_all(dir);
+    return true;
+})
+
+REGISTER_TEST(md_tags_filter_notes,
+              "MarkdownService: notesWithTag 按标签过滤笔记", {
+    const auto dir = makeTempDir("tags_filter");
+    auto db = makeDb();
+    runMigrations(db);
+    module::markdown::MarkdownService svc(db, dir);
+
+    DOCTEST_REQUIRE(svc.create("a.md").isOk());
+    DOCTEST_REQUIRE(svc.create("b.md").isOk());
+    DOCTEST_REQUIRE(svc.create("c.md").isOk());
+    DOCTEST_REQUIRE(svc.setTags("a.md", {"工作"}).isOk());
+    DOCTEST_REQUIRE(svc.setTags("b.md", {"工作", "急"}).isOk());
+
+    auto hit = svc.notesWithTag("工作");
+    DOCTEST_REQUIRE(hit.isOk());
+    DOCTEST_REQUIRE_EQ(hit.value().size(), 2u);
+    std::set<std::string> paths;
+    for (const auto& n : hit.value()) {
+        paths.insert(n.relativePath.generic_string());
+    }
+    DOCTEST_CHECK(paths.count("a.md") == 1);
+    DOCTEST_CHECK(paths.count("b.md") == 1);
+
+    // 无命中标签 → 空结果（不报错）
+    auto none = svc.notesWithTag("不存在");
+    DOCTEST_REQUIRE(none.isOk());
+    DOCTEST_CHECK_EQ(none.value().size(), 0u);
+
+    fs::remove_all(dir);
+    return true;
+})
+
+REGISTER_TEST(md_tags_removed_note_cleans_associations,
+              "MarkdownService: 删除笔记清理标签关联（cascade + 孤儿清理）", {
+    const auto dir = makeTempDir("tags_del");
+    auto db = makeDb();
+    runMigrations(db);
+    module::markdown::MarkdownService svc(db, dir);
+
+    DOCTEST_REQUIRE(svc.create("a.md").isOk());
+    DOCTEST_REQUIRE(svc.create("b.md").isOk());
+    DOCTEST_REQUIRE(svc.setTags("a.md", {"独占", "共享"}).isOk());
+    DOCTEST_REQUIRE(svc.setTags("b.md", {"共享"}).isOk());
+
+    // 删除 a：独占标签消失，共享标签计数降 1
+    DOCTEST_REQUIRE(svc.remove("a.md").isOk());
+    auto tags = svc.listAllTags();
+    DOCTEST_REQUIRE(tags.isOk());
+    DOCTEST_REQUIRE_EQ(tags.value().size(), 1u);
+    DOCTEST_CHECK_EQ(tags.value()[0].name, std::string("共享"));
+    DOCTEST_CHECK_EQ(tags.value()[0].noteCount, 1);
+
+    // note_tags 表里 a 的关联行已清（FK cascade）
+    {
+        auto prep = db.prepare(
+            "SELECT COUNT(*) AS n FROM markdown_note_tags nt "
+            "JOIN markdown_index i ON i.id = nt.note_id "
+            "WHERE i.path = 'a.md'");
+        DOCTEST_REQUIRE(prep.isOk());
+        auto rows = prep.value().fetchAll();
+        DOCTEST_REQUIRE(rows.isOk());
+        DOCTEST_CHECK_EQ(rows.value()[0].getInt64("n").value(), 0);
+    }
+
+    // 删除最后一个使用者 → 标签表彻底干净
+    DOCTEST_REQUIRE(svc.remove("b.md").isOk());
+    auto tags2 = svc.listAllTags();
+    DOCTEST_REQUIRE(tags2.isOk());
+    DOCTEST_CHECK_EQ(tags2.value().size(), 0u);
+    {
+        auto prep = db.prepare("SELECT COUNT(*) AS n FROM markdown_tags");
+        DOCTEST_REQUIRE(prep.isOk());
+        auto rows = prep.value().fetchAll();
+        DOCTEST_REQUIRE(rows.isOk());
+        DOCTEST_CHECK_EQ(rows.value()[0].getInt64("n").value(), 0);
+    }
+
+    fs::remove_all(dir);
+    return true;
+})
