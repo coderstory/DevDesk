@@ -16,6 +16,9 @@ public:
     void navigateTo(PageId page);
     PageId currentPage() const;
 
+    // 已注册模块的只读访问（侧边栏渲染 displayName/iconGlyph/pageId 用）
+    const std::vector<Module*>& modules() const { return modules_; }
+
     void compose(eui::Ui& ui, const eui::Screen& screen);
 
     void startAll();

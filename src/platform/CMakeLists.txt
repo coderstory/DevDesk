@@ -51,9 +51,10 @@ if(APPLE)
 endif()
 
 # Windows：Winsock2（http_client/http_server 网络）+ Crypt32（TLS 证书链）
+# + Shell32（file_open_win.cpp 的 CommandLineToArgvW）
 # 之前靠 -DCMAKE_CXX_STANDARD_LIBRARIES="-lws2_32 -lcrypt32" 绕过，现烤进构建系统
 if(WIN32)
-    target_link_libraries(devdesk_platform PUBLIC ws2_32 crypt32)
+    target_link_libraries(devdesk_platform PUBLIC ws2_32 crypt32 shell32)
 endif()
 
 # DevDesk 自己的警告等级（-Werror 只作用于 DevDesk target，不泄漏给第三方）

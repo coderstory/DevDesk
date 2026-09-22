@@ -92,12 +92,47 @@ namespace {
     }
 
     Tokens g_current = darkTokens();
+
+    // 全局字号缩放（默认 1.0）；setDark/setLight 重建 token 后统一施加
+    float g_fontScale = 1.0f;
+
+    // 只缩放字号，间距/圆角不动（字号是可读性需求，布局度量保持稳定）
+    void applyFontScale(Tokens& t) {
+        auto& s = t.sizes;
+        s.fontSizeSmall *= g_fontScale;
+        s.fontSizeBody *= g_fontScale;
+        s.fontSizeLarge *= g_fontScale;
+        s.fontSizeTitle *= g_fontScale;
+        s.fontSizePage *= g_fontScale;
+        s.fontSizeDisplay *= g_fontScale;
+    }
+
+    // 按当前 isDark + g_fontScale 重建全局 token（单一来源，避免缩放叠加）
+    void rebuild() {
+        g_current = g_current.isDark ? darkTokens() : lightTokens();
+        applyFontScale(g_current);
+    }
 }
 
 const Tokens& current() { return g_current; }
 
-void setDark() { g_current = darkTokens(); }
-void setLight() { g_current = lightTokens(); }
+void setDark() {
+    g_current = darkTokens();
+    applyFontScale(g_current);
+}
+
+void setLight() {
+    g_current = lightTokens();
+    applyFontScale(g_current);
+}
+
+void setFontScale(float scale) {
+    // 钳制到 [0.5, 2.0]：低于 0.5 文字不可读，高于 2.0 布局必然破裂
+    g_fontScale = scale < 0.5f ? 0.5f : (scale > 2.0f ? 2.0f : scale);
+    rebuild();
+}
+
+float fontScale() { return g_fontScale; }
 
 std::string currentThemeName() {
     return g_current.isDark ? "Dark" : "Light";
