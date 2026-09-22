@@ -2,6 +2,34 @@
 
 本文件记录 **a1a106a（macOS 中断现场收编）起** 的条目式变更，按恢复计划的三波（W1 止血收编 / W2 平台架构 / W3 剩余需求）组织，波内按 feat / fix / test / docs 分组。更早的 macOS 主线历史（P0–P8，66 测试通过）见 git log 与 spec §16。
 
+## [W8] 2026-09-22 —— 设置页三项修复（下拉裁剪 / 日志保留即时生效 / token 居中）
+
+分支 `fix/settings-ux`（`0efd83e`），链内基线 180/180（177 + 3 新增）。
+
+### fix
+
+- **下拉框被窗体裁剪**：诊断为 EUI-NEO dropdown 组件只向下展开——「调用日志保留」是设置页最后一张卡，1200×720 最小窗下 6 项弹层（≈216px）超出窗体下缘。EUI-NEO 侧新增 `openUp(true)` 构建器选项（负 y 偏移 + transformOrigin 锚底边，默认 false 完全向后兼容，已合入 EUI-NEO main `2d818eb`）；DevDesk 侧按字段绝对 Y + 弹层高度估算动态决定展开方向，大窗口行为不变。
+- **日志保留切档即时生效**：`Database::pruneCallLogs` 逻辑提为自由函数 `core::pruneCallLogs(SqliteDb&, int)`（成员版委托，`main.cpp` 启动清理零改动）；设置页切档立即经 `core::appDatabase()` 共享连接清理，副标题反馈「已清理 N 条历史日志」，0=永久跳过并提示。另加 `DEVDESK_CONFIG_PATH` 环境变量覆盖供测试隔离真实 config.json。
+- **token 文本框不居中**：代理认证 token 与笔记目录路径两处框内文本补 `verticalAlign(Center)`（W7 侧边栏同款缺陷）。
+
+### test
+
+- 720/1000 两窗口尺寸下拉弹层无头 layout 出界断言；切档 onClick 无头触发后 DB 行数 + 副标题断言；verticalAlign 断言。
+
+## [W8] 2026-09-22 —— 代理安全加固（W8 期间并行任务）
+
+分支 `fix/proxy-hardening`（`67aa88a` / `30fddc8` / `8dd4d3d`），链内基线 182/182（177 + 5 新增）。
+
+### fix
+
+- **错误 JSON 未转义（6 处）**：`proxy_router.cpp` 手工拼接的错误响应在 message 含引号/反斜杠/控制字符时产出非法 JSON；抽 `jsonEscape()`（RFC 8259）+ `writeErrorJson()` 统一出口，缓冲 4 处 + 流式 2 处全换。
+- **请求体无上限（DoS 面）**：`Server` 构造设置 `set_payload_max_length(kMaxBodyBytes=10MB)`，httplib 读包阶段单点拦截回 413（spec §10.4 承诺），所有路由含 SSE 生效。
+- **deleteProfile 孤儿密钥**：调序为先清 Keychain（失败中止、SQLite 行保留可重试）再删行；keychain 新增 `deleteSecretsNotIn(service, keep)`，`ClaudeService::cleanupOrphanKeychainEntries()` 启动时清理孤儿密钥（`claude_module` onStart 接线）。
+
+### test
+
+- 错误 JSON 转义往返解析（缓冲+流式）；10MB 边界通过 / 10MB+1 回 413；Keychain 删除失败中止+行保留+重试恢复；孤儿清理只删无主密钥+幂等。
+
 ## [W8] 2026-09-22 —— Todo 卡片拖拽真 drop 语义 + 拖动视觉反馈
 
 基线：**178/178 测试全绿**（177 基线 + 1 新增纯函数用例；1 个既有拖拽用例改写为新语义）。
