@@ -73,6 +73,25 @@ struct EnvAliasMapping {
 
 EnvAliasMapping applyEnvAliases(const std::map<std::string, std::string>& env);
 
+// ---- cc-switch / settings.json 粘贴导入（§6.1 + §7.4，Phase D）----
+// 输入：粘贴的原文（两种形状皆可：整段 settings.json（取其 env 子对象）或
+// 裸 env 对象）。纯函数，无 IO，UI 导入入口直接消费。
+struct ImportedConfig {
+    std::string baseUrl;    // ANTHROPIC_BASE_URL（未出现 = 空串，不覆盖表单）
+    std::string authToken;  // ANTHROPIC_AUTH_TOKEN / ANTHROPIC_API_KEY（同现取
+                            // AUTH_TOKEN 并给 warning）
+    ModelsConfig models;    // *_MODEL / *_MODEL_NAME / SUBAGENT → 槽位
+    std::map<std::string, std::string> extraEnv;  // 其余键（别名归一后）
+    std::vector<std::string> aliasMappedKeys;     // 「已映射为官方变量」提示
+    std::vector<std::string> unrecognizedKeys;    // 警告角标（透传，行为自负）
+    std::vector<std::string> warnings;            // 其他警告（API_KEY/AUTH_TOKEN 同现等）
+    int recognizedSlots = 0;  // 预览用：model 非空的槽位数
+};
+
+// 校验（§7.4）：env 值必须字符串（数字/布尔拒绝）；键名 ^[A-Z][A-Z0-9_]*$；
+// 值 ≤ 4KB/键；键数 ≤ 64。非法输入整体 fail，不部分导入。
+core::Result<ImportedConfig> parseImportedEnv(const std::string& text);
+
 // ---- 接管 env 生成（§4.3，Phase C 接管通道的输入）----
 // 输入：profile 的三个数据源字段 + 代理端口/token；输出：要写入
 // ~/.claude/settings.json env 块的托管键值（纯函数，无 IO）。

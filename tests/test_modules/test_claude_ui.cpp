@@ -8,10 +8,12 @@
 
 #include "claude_service.h"
 #include "core/database.h"
+#include "core/input/input_types.h"
 #include "core/module_interface.h"
 #include "core/sqlite_db.h"
 #include "platform/http_server.h"
 #include "platform/keychain.h"
+#include "provider_config.h"
 
 #include <eui/dsl.h>
 
@@ -228,5 +230,292 @@ REGISTER_TEST(claude_module_test_connection_async,
     mod->onStop();
     upstream.stop();
     cleanupKey(a.value().id);
+    return true;
+})
+
+// ---- 4. Profile 表单 tabs：槽位/env 填写 → 保存 → DB 往返 → 重开回显 ----
+// （provider-config Phase D，§6.1；输入经 input.hit 的 onTextInput 驱动，
+//   等价于真实键盘输入路径——insertAtCursor + onChange 回模块状态）
+REGISTER_TEST(claude_module_form_tabs_roundtrip,
+              "claude_module: 表单 tabs 槽位/env 填写保存回显（headless）", {
+    TestEnv env;
+    auto a = env.svc->createProfile("槽位测试", "https://a.example.com",
+                                    "sk-ant-slots-0001", "");
+    DOCTEST_REQUIRE(a.isOk());
+    const int64_t pid = a.value().id;
+
+    std::unique_ptr<::core::Module> mod(create_claude_module());
+    eui::Screen screen;
+    screen.width = 1600.0f;
+    screen.height = 1000.0f;
+    auto compose = [&](eui::Ui& ui) {
+        ui.begin("claude_form_rt");
+        mod->compose(ui, screen);
+        ui.end();
+    };
+    // CHECK 宏内含 return false，不能进 void lambda —— helper 返回 bool，
+    // 由测试体的 DOCTEST_CHECK 收敛（失败即 fail-fast 本用例）
+    auto click = [](eui::Ui& ui, const std::string& id) -> bool {
+        const auto* node = ui.find(id);
+        if (node == nullptr || node->onClick == nullptr) {
+            std::cerr << "missing clickable: " << id << std::endl;
+            return false;
+        }
+        node->onClick();
+        return true;
+    };
+    auto type = [](eui::Ui& ui, const std::string& id,
+                   const std::string& text) -> bool {
+        const auto* node = ui.find(id);
+        if (node == nullptr || node->onTextInput == nullptr) {
+            std::cerr << "missing input: " << id << std::endl;
+            return false;
+        }
+        core::TextInputEvent ev;
+        ev.text = text;
+        node->onTextInput(ev);
+        return true;
+    };
+
+    // 选中卡片（无激活 profile 时详情面板需要 selectedId 才有编辑目标）
+    {
+        eui::Ui ui;
+        compose(ui);
+        DOCTEST_CHECK(click(ui, "claude.profile.0.bg"));
+    }
+    // 打开编辑弹窗：基础页默认，tabs 存在，名称回显
+    {
+        eui::Ui ui;
+        compose(ui);
+        DOCTEST_CHECK(click(ui, "claude.act.edit.bg"));
+    }
+    {
+        eui::Ui ui;
+        compose(ui);
+        DOCTEST_CHECK(ui.find("claude.form.tabs.hit.1") != nullptr);
+        const auto* nameText = ui.find("claude.dialog.form.name.text");
+        DOCTEST_REQUIRE(nameText != nullptr);
+        DOCTEST_CHECK_EQ(nameText->text, std::string("槽位测试"));
+        DOCTEST_CHECK(click(ui, "claude.form.tabs.hit.1"));   // → 模型映射页
+    }
+    // 模型映射页：6 行槽位输入；默认槽位空 → name placeholder 是「自动派生」
+    {
+        eui::Ui ui;
+        compose(ui);
+        for (int i = 0; i < 6; ++i) {
+            DOCTEST_CHECK(ui.find("claude.form.slot." + std::to_string(i) +
+                                  ".model.hit") != nullptr);
+        }
+        const auto* ph = ui.find("claude.form.slot.0.name.text");
+        DOCTEST_REQUIRE(ph != nullptr);
+        DOCTEST_CHECK_EQ(ph->text, std::string("（自动派生）"));
+        type(ui, "claude.form.slot.0.model.hit", "fangzhou/glm-5.3[1M]");
+        type(ui, "claude.form.slot.1.model.hit", "m-sonnet");
+        type(ui, "claude.form.slot.1.name.hit", "sonnet显示名");
+        type(ui, "claude.form.slot.5.model.hit", "m-sub");
+        DOCTEST_CHECK(click(ui, "claude.form.tabs.hit.2"));   // → 高级 env 页
+    }
+    // 高级 env 页：添加一行键值后保存
+    {
+        eui::Ui ui;
+        compose(ui);
+        DOCTEST_CHECK(click(ui, "claude.form.env.add.bg"));
+    }
+    {
+        eui::Ui ui;
+        compose(ui);
+        type(ui, "claude.form.env.row.0.key.hit", "DISABLE_AUTOUPDATER");
+        type(ui, "claude.form.env.row.0.value.hit", "1");
+        DOCTEST_CHECK(click(ui, "claude.dialog.form.confirm.bg"));
+    }
+    // 详情面板摘要（§6.2）：默认模型 + 已配 3/6
+    {
+        eui::Ui ui;
+        compose(ui);
+        const auto* summary = ui.find("claude.field.model.value");
+        DOCTEST_REQUIRE(summary != nullptr);
+        DOCTEST_CHECK(summary->text.find("fangzhou/glm-5.3[1M]") !=
+                      std::string::npos);
+        DOCTEST_CHECK(summary->text.find("3/6") != std::string::npos);
+    }
+    // DB 往返：models_config / extra_env / 旧 model 列同步
+    {
+        auto got = env.svc->getProfile(pid);
+        DOCTEST_REQUIRE(got.isOk());
+        const auto& p = got.value();
+        auto mc = module::claude::parseModelsConfig(p.modelsConfigJson);
+        DOCTEST_REQUIRE(mc.isOk());
+        DOCTEST_CHECK_EQ(mc.value().def.model,
+                         std::string("fangzhou/glm-5.3[1M]"));
+        DOCTEST_CHECK_EQ(mc.value().sonnet.model, std::string("m-sonnet"));
+        DOCTEST_CHECK_EQ(mc.value().sonnet.name, std::string("sonnet显示名"));
+        DOCTEST_CHECK_EQ(mc.value().subagent.model, std::string("m-sub"));
+        DOCTEST_CHECK(mc.value().opus.model.empty());
+        DOCTEST_CHECK_EQ(p.model, std::string("fangzhou/glm-5.3[1M]"));
+        auto ee = module::claude::parseExtraEnv(p.extraEnvJson);
+        DOCTEST_REQUIRE(ee.isOk());
+        DOCTEST_REQUIRE_EQ(ee.value().size(), 1u);
+        DOCTEST_CHECK_EQ(ee.value().at("DISABLE_AUTOUPDATER"), std::string("1"));
+    }
+    // 重开编辑 → 槽位 / env 回显
+    {
+        eui::Ui ui;
+        compose(ui);
+        DOCTEST_CHECK(click(ui, "claude.act.edit.bg"));
+    }
+    {
+        eui::Ui ui;
+        compose(ui);
+        DOCTEST_CHECK(click(ui, "claude.form.tabs.hit.1"));
+    }
+    {
+        eui::Ui ui;
+        compose(ui);
+        const auto* m0 = ui.find("claude.form.slot.0.model.text");
+        DOCTEST_REQUIRE(m0 != nullptr);
+        DOCTEST_CHECK_EQ(m0->text, std::string("fangzhou/glm-5.3[1M]"));
+        const auto* s1 = ui.find("claude.form.slot.1.name.text");
+        DOCTEST_REQUIRE(s1 != nullptr);
+        DOCTEST_CHECK_EQ(s1->text, std::string("sonnet显示名"));
+    }
+    {
+        eui::Ui ui;
+        compose(ui);
+        DOCTEST_CHECK(click(ui, "claude.form.tabs.hit.2"));
+    }
+    {
+        eui::Ui ui;
+        compose(ui);
+        const auto* k = ui.find("claude.form.env.row.0.key.text");
+        DOCTEST_REQUIRE(k != nullptr);
+        DOCTEST_CHECK_EQ(k->text, std::string("DISABLE_AUTOUPDATER"));
+    }
+
+    mod->onStop();
+    cleanupKey(pid);
+    return true;
+})
+
+// ---- 5. cc-switch JSON 粘贴导入：解析预览 → 应用到表单 → 保存 ----
+REGISTER_TEST(claude_module_import_flow,
+              "claude_module: cc-switch 粘贴导入解析应用（headless）", {
+    TestEnv env;
+    std::unique_ptr<::core::Module> mod(create_claude_module());
+    eui::Screen screen;
+    screen.width = 1600.0f;
+    screen.height = 1000.0f;
+    auto compose = [&](eui::Ui& ui) {
+        ui.begin("claude_import");
+        mod->compose(ui, screen);
+        ui.end();
+    };
+    // CHECK 宏内含 return false，不能进 void lambda —— helper 返回 bool，
+    // 由测试体的 DOCTEST_CHECK 收敛（失败即 fail-fast 本用例）
+    auto click = [](eui::Ui& ui, const std::string& id) -> bool {
+        const auto* node = ui.find(id);
+        if (node == nullptr || node->onClick == nullptr) {
+            std::cerr << "missing clickable: " << id << std::endl;
+            return false;
+        }
+        node->onClick();
+        return true;
+    };
+    auto type = [](eui::Ui& ui, const std::string& id,
+                   const std::string& text) -> bool {
+        const auto* node = ui.find(id);
+        if (node == nullptr || node->onTextInput == nullptr) {
+            std::cerr << "missing input: " << id << std::endl;
+            return false;
+        }
+        core::TextInputEvent ev;
+        ev.text = text;
+        node->onTextInput(ev);
+        return true;
+    };
+    // 用户模板（BASE_URL/AUTH_TOKEN/模型键/别名键/非官方键）
+    std::string tpl = R"({"env":{)";
+    tpl += R"("ANTHROPIC_BASE_URL":"https://gw.example.com/a",)";
+    tpl += R"("ANTHROPIC_AUTH_TOKEN":"sk-import-tok",)";
+    tpl += R"("ANTHROPIC_MODEL":"m-default[1M]",)";
+    tpl += R"("ANTHROPIC_DEFAULT_SONNET_MODEL":"m-sonnet[1M]",)";
+    tpl += R"("AUTO_COMPACT_ENABLED":"0",)";
+    tpl += R"("CLAUDE_AUTOCOMPACT_PCT_OVERRIDE":"75",)";
+    tpl += R"("DISABLE_AUTOUPDATER":"1")";
+    tpl += "}}";
+
+    // 新建表单 → 填名称 → 高级 env 页粘贴导入
+    {
+        eui::Ui ui;
+        compose(ui);
+        DOCTEST_CHECK(click(ui, "claude.btn.new.bg"));
+    }
+    {
+        eui::Ui ui;
+        compose(ui);
+        type(ui, "claude.dialog.form.name.hit", "导入测试");
+        DOCTEST_CHECK(click(ui, "claude.form.tabs.hit.2"));
+    }
+    {
+        eui::Ui ui;
+        compose(ui);
+        type(ui, "claude.form.import.text.hit", tpl);
+        DOCTEST_CHECK(click(ui, "claude.form.import.parse.bg"));
+    }
+    // 解析预览：槽位 2/6 + 别名 1 + 未识别 1；别名提示行存在
+    {
+        eui::Ui ui;
+        compose(ui);
+        const auto* preview = ui.find("claude.form.import.preview");
+        DOCTEST_REQUIRE(preview != nullptr);
+        DOCTEST_CHECK(preview->text.find("槽位 2/6") != std::string::npos);
+        DOCTEST_CHECK(preview->text.find("别名映射 1") != std::string::npos);
+        const auto* note0 = ui.find("claude.form.import.note.0");
+        DOCTEST_REQUIRE(note0 != nullptr);
+        DOCTEST_CHECK(note0->text.find("AUTO_COMPACT_ENABLED") !=
+                      std::string::npos);
+        DOCTEST_CHECK(ui.find("claude.form.import.apply.bg") != nullptr);
+        DOCTEST_CHECK(click(ui, "claude.form.import.apply.bg"));
+    }
+    // 应用后基础页回填 BASE_URL，确认创建（API Key 来自导入的 AUTH_TOKEN）
+    {
+        eui::Ui ui;
+        compose(ui);
+        DOCTEST_CHECK(click(ui, "claude.form.tabs.hit.0"));
+    }
+    {
+        eui::Ui ui;
+        compose(ui);
+        const auto* url = ui.find("claude.dialog.form.url.text");
+        DOCTEST_REQUIRE(url != nullptr);
+        DOCTEST_CHECK_EQ(url->text, std::string("https://gw.example.com/a"));
+        DOCTEST_CHECK(click(ui, "claude.dialog.form.confirm.bg"));
+    }
+    // DB 断言：base_url / 槽位 / env 别名归一 + 透传 / key 入库
+    {
+        auto list = env.svc->listProfiles();
+        DOCTEST_REQUIRE(list.isOk());
+        DOCTEST_REQUIRE_EQ(list.value().size(), 1u);
+        const auto& p = list.value()[0];
+        DOCTEST_CHECK_EQ(p.name, std::string("导入测试"));
+        DOCTEST_CHECK_EQ(p.baseUrl, std::string("https://gw.example.com/a"));
+        DOCTEST_CHECK(!p.apiKeyHint.empty());   // 导入 token 已入 Keychain
+        auto mc = module::claude::parseModelsConfig(p.modelsConfigJson);
+        DOCTEST_REQUIRE(mc.isOk());
+        DOCTEST_CHECK_EQ(mc.value().def.model, std::string("m-default[1M]"));
+        DOCTEST_CHECK_EQ(mc.value().sonnet.model, std::string("m-sonnet[1M]"));
+        auto ee = module::claude::parseExtraEnv(p.extraEnvJson);
+        DOCTEST_REQUIRE(ee.isOk());
+        // AUTO_COMPACT_ENABLED=0 → DISABLE_AUTO_COMPACT=1（值取反）
+        DOCTEST_CHECK_EQ(ee.value().at("DISABLE_AUTO_COMPACT"),
+                         std::string("1"));
+        DOCTEST_CHECK_EQ(ee.value().at("CLAUDE_AUTOCOMPACT_PCT_OVERRIDE"),
+                         std::string("75"));
+        DOCTEST_CHECK_EQ(ee.value().at("DISABLE_AUTOUPDATER"),
+                         std::string("1"));
+        DOCTEST_CHECK_EQ(p.model, std::string("m-default[1M]"));
+        cleanupKey(p.id);
+    }
+
+    mod->onStop();
     return true;
 })

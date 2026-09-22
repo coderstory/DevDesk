@@ -7,6 +7,7 @@
 //   测试连通 → testConnection；代理开关 → startProxy / stopProxy
 //   每次操作后靠下一帧 compose 重新拉取数据（本模块 compose 直读 service）
 #include "claude_service.h"
+#include "provider_config.h"
 #include "core/logging.h"
 #include "core/module_interface.h"
 #include "core/theme.h"
@@ -17,14 +18,17 @@
 #include <components/button.h>
 #include <components/dialog.h>
 #include <components/input.h>
+#include <components/tabs.h>
 #include <components/theme.h>
 #include <components/toast.h>
 
 #include <atomic>
 #include <cstdio>
 #include <ctime>
+#include <map>
 #include <string>
 #include <thread>
+#include <utility>
 #include <vector>
 
 namespace module::claude {
@@ -50,6 +54,24 @@ std::string formatLatency(int64_t ms) {
     return std::string(buf);
 }
 
+// 模型映射摘要（§6.2 详情面板一行式）：「默认 <model> · 槽位已配 N/6」
+std::string modelsSummary(const Profile& p) {
+    const ModelsConfig mc = effectiveModelsConfig(p.modelsConfigJson, p.model);
+    const ModelSlot slots[] = {mc.def, mc.sonnet, mc.opus,
+                               mc.haiku, mc.fable, mc.subagent};
+    int configured = 0;
+    for (const auto& s : slots) {
+        if (!s.model.empty()) ++configured;
+    }
+    if (mc.def.model.empty()) {
+        return configured > 0
+            ? ("（默认未配）· 槽位已配 " + std::to_string(configured) + "/6")
+            : std::string("-");
+    }
+    return "默认 " + mc.def.model + " · 槽位已配 " +
+           std::to_string(configured) + "/6";
+}
+
 } // namespace
 
 class ClaudeModule : public ::core::Module {
@@ -73,7 +95,6 @@ public:
         const float contentW = screen.width - pad * 2.0f;
         const float contentH = screen.height - pad * 2.0f;
         const float headerH = 64.0f;
-        const float bodyH = contentH - headerH - t.sizes.spacingLarge;
         const float gap = 16.0f;
         const float leftW = 400.0f;
         const float rightW = contentW - leftW - gap;
@@ -85,6 +106,12 @@ public:
         const std::string portStr = runningPort > 0
             ? (":" + std::to_string(runningPort))
             : std::string("");   // 未运行时不显示假端口（副标题另有提示）
+
+        // 引导条（§6.4）：代理未运行且本会话从未启动过时显示（内存态一次性）
+        if (proxyRunning) proxyEverSeen_ = true;
+        const bool showGuide = !proxyRunning && !proxyEverSeen_;
+        const float bodyH = contentH - headerH - t.sizes.spacingLarge -
+                            (showGuide ? 30.0f : 0.0f);
 
         // 页面背景自绘（仿 settings_module：main.cpp clearColor 固定浅色，
         // 深色主题下页面必须自己铺底，否则浅色 clear 底 + 深色 token 文字不可读）
@@ -141,7 +168,8 @@ public:
         if (!shown && hasActive) shown = &activeProfile;
 
         const std::string nameValue = shown ? shown->name : std::string("(未启用)");
-        const std::string modelValue = shown ? shown->model : std::string("-");
+        const std::string modelValue = shown ? modelsSummary(*shown)
+                                             : std::string("-");
         const std::string urlValue = shown ? shown->baseUrl : std::string("-");
         const std::string tokenValue = shown
             ? (shown->apiKeyHint + " [Keychain]")
@@ -250,6 +278,19 @@ public:
                             .build();
                     })
                     .build();
+
+                // 引导条（§6.4）：代理未运行且本会话从未启动过时一次性提示接管语义
+                if (showGuide) {
+                    ui.text("claude.guide.takeover")
+                        .size(contentW, 18.0f)
+                        .text("ⓘ 启动代理后将自动接管 Claude Code 配置（" +
+                              settings_sync::defaultPaths().settingsFile.string() +
+                              "），停止代理时自动还原；其余字段原样保留")
+                        .fontSize(t.sizes.fontSizeSmall)
+                        .lineHeight(18.0f)
+                        .color(t.colors.textSecondary)
+                        .build();
+                }
 
                 // ========== 主区: Profile 列表 + 详情 ==========
                 ui.row("claude.body")
@@ -392,12 +433,12 @@ public:
                                     .color(t.colors.textPrimary)
                                     .build();
 
-                                // 模型（右）
+                                // 模型映射摘要（右，§6.2）
                                 const float col2x = x0 + (w0 + 16.0f) / 2.0f;
                                 ui.text("claude.field.model.label")
                                     .position(col2x, fy0)
                                     .size((w0 - 16.0f) / 2.0f, 14.0f)
-                                    .text("模型")
+                                    .text("模型映射")
                                     .fontSize(11.0f)
                                     .lineHeight(14.0f)
                                     .color(t.colors.textTertiary)
@@ -468,8 +509,49 @@ public:
                                     .color(t.colors.textSecondary)
                                     .build();
 
+                                // Claude Code 接管状态（Phase D，数据源 service）
+                                const bool ccManaged = svc && svc->isClaudeCodeManaged();
+                                const auto& ccWarnings =
+                                    svc ? svc->lastSyncWarnings()
+                                        : std::vector<std::string>();
+                                const std::string ccPath =
+                                    settings_sync::defaultPaths()
+                                        .settingsFile.string();
+                                ui.text("claude.field.takeover.value")
+                                    .position(x0, fy0 + fieldH + 110.0f)
+                                    .size(w0, 16.0f)
+                                    .text(ccManaged
+                                          ? ("● Claude Code 已接管 " + ccPath)
+                                          : std::string("○ Claude Code 未接管"
+                                                        "（启动代理后自动接管，"
+                                                        "停止时还原）"))
+                                    .fontSize(11.0f)
+                                    .lineHeight(16.0f)
+                                    .color(ccManaged ? t.colors.success
+                                                     : t.colors.textTertiary)
+                                    .build();
+                                // 上层覆盖警告（§5.3 检测命中时；首条 + 计数）
+                                if (ccManaged && !ccWarnings.empty()) {
+                                    ui.text("claude.field.takeover.warn")
+                                        .position(x0, fy0 + fieldH + 126.0f)
+                                        .size(w0, 16.0f)
+                                        .text("⚠ " + ccWarnings.front() +
+                                              (ccWarnings.size() > 1
+                                                   ? "（共 " +
+                                                         std::to_string(
+                                                             ccWarnings.size()) +
+                                                         " 条，详见设置页）"
+                                                   : ""))
+                                        .fontSize(11.0f)
+                                        .lineHeight(16.0f)
+                                        .color(t.colors.warning)
+                                        .build();
+                                }
+
                                 // 操作按钮组（全量接线）
-                                const float actY = fy0 + fieldH + 130.0f;
+                                const float actY = fy0 + fieldH +
+                                    (ccManaged && !ccWarnings.empty()
+                                         ? 152.0f : 130.0f);
                                 const float actGap = 12.0f;
                                 const float actW = (w0 - actGap * 3.0f) / 4.0f;
                                 ui.row("claude.detail.actions")
@@ -849,38 +931,140 @@ private:
             .color(t.colors.textTertiary)
             .build();
 
-        // model (mono, 12px)
+        // model（default 槽位，未配则旧 model 列 fallback——§6.2 列表卡片）
         ui.text(id + ".model")
             .position(64.0f, y + 62.0f)
             .size(width - 80.0f, 14.0f)
-            .text(std::string("model: ") + p.model)
+            .text(std::string("model: ") +
+                  effectiveModelsConfig(p.modelsConfigJson, p.model).def.model)
             .fontSize(11.0f)
             .lineHeight(14.0f)
             .color(t.colors.textSecondary)
             .build();
     }
 
-    // ============ 新建/编辑 Profile 表单弹窗 ============
+    // ============ 新建/编辑 Profile 表单弹窗（tabs 三页，§6.1） ============
     void openCreateForm() {
         formEditId_ = 0;   // 0 = 新建
+        formTab_ = 0;
         formName_.clear();
         formUrl_.clear();
-        formModel_.clear();
         formKey_.clear();
         formError_.clear();
         formKeyHint_.clear();
+        formModels_ = ModelsConfig{};
+        formEnvRows_.clear();
+        resetImportState();
         formOpen_ = true;
     }
 
     void openEditForm(const Profile& p) {
         formEditId_ = p.id;
+        formTab_ = 0;
         formName_ = p.name;
         formUrl_ = p.baseUrl;
-        formModel_ = p.model;
         formKey_.clear();   // 留空 = 不换 key（updateProfile 语义）
         formError_.clear();
         formKeyHint_ = p.apiKeyHint;
+        // 槽位：models_config + 旧 model 列 fallback（§4.2 兼容读取）
+        formModels_ = effectiveModelsConfig(p.modelsConfigJson, p.model);
+        // env 行：非法 JSON 读路径容错为空表（不炸）
+        formEnvRows_.clear();
+        auto ee = parseExtraEnv(p.extraEnvJson);
+        if (ee.isOk()) {
+            for (const auto& [k, v] : ee.value()) {
+                formEnvRows_.emplace_back(k, v);
+            }
+        }
+        resetImportState();
         formOpen_ = true;
+    }
+
+    void resetImportState() {
+        importText_.clear();
+        importReady_ = false;
+        importError_.clear();
+        importPreview_ = ImportedConfig{};
+    }
+
+    // 导入解析（纯函数消费，Phase D）：失败只写红字，不动表单
+    void doParseImport() {
+        importError_.clear();
+        importReady_ = false;
+        auto r = parseImportedEnv(importText_);
+        if (r.isFail()) {
+            importError_ = r.errorMessage();
+            return;
+        }
+        importPreview_ = std::move(r).value();
+        importReady_ = true;
+    }
+
+    // 确认导入：按解析结果填充三页表单（BASE_URL/token → 基础页，
+    // 槽位非空覆盖，env 键同名替换 / 新键追加）
+    void doApplyImport() {
+        if (!importReady_) return;
+        if (!importPreview_.baseUrl.empty()) formUrl_ = importPreview_.baseUrl;
+        if (!importPreview_.authToken.empty()) {
+            formKey_ = importPreview_.authToken;
+        }
+        auto mergeSlot = [this](ModelSlot ModelsConfig::* m) {
+            const ModelSlot& src = importPreview_.models.*m;
+            if (!src.model.empty()) formModels_.*m = src;
+        };
+        mergeSlot(&ModelsConfig::def);
+        mergeSlot(&ModelsConfig::sonnet);
+        mergeSlot(&ModelsConfig::opus);
+        mergeSlot(&ModelsConfig::haiku);
+        mergeSlot(&ModelsConfig::fable);
+        mergeSlot(&ModelsConfig::subagent);
+        for (const auto& [k, v] : importPreview_.extraEnv) {
+            bool replaced = false;
+            for (auto& row : formEnvRows_) {
+                if (row.first == k) {
+                    row.second = v;
+                    replaced = true;
+                    break;
+                }
+            }
+            if (!replaced) formEnvRows_.emplace_back(k, v);
+        }
+        importReady_ = false;
+        importText_.clear();
+        formError_.clear();   // 导入成功清掉旧校验错误
+    }
+
+    // 表单 → models_config / extra_env JSON（全空 = 空串，保持「未配置」语义）
+    bool serializeFormData(std::string* modelsJson, std::string* envJson) {
+        const ModelSlot slots[] = {formModels_.def, formModels_.sonnet,
+                                   formModels_.opus, formModels_.haiku,
+                                   formModels_.fable, formModels_.subagent};
+        bool anySlot = false;
+        for (const auto& s : slots) {
+            if (!s.model.empty() || !s.name.empty()) { anySlot = true; break; }
+        }
+        if (anySlot) {
+            auto r = serializeModelsConfig(formModels_);
+            if (r.isFail()) {
+                formError_ = "模型配置序列化失败: " + r.errorMessage();
+                return false;
+            }
+            *modelsJson = r.value();
+        }
+        std::map<std::string, std::string> envMap;   // 空键行跳过
+        for (const auto& row : formEnvRows_) {
+            if (row.first.empty()) continue;
+            envMap[row.first] = row.second;   // 同名后行胜（map 语义）
+        }
+        if (!envMap.empty()) {
+            auto r = serializeExtraEnv(envMap);
+            if (r.isFail()) {
+                formError_ = "env 序列化失败: " + r.errorMessage();
+                return false;
+            }
+            *envJson = r.value();
+        }
+        return true;
     }
 
     void submitForm() {
@@ -893,16 +1077,34 @@ private:
             formError_ = "名称和 Base URL 不能为空";
             return;
         }
+        std::string modelsJson;
+        std::string envJson;
+        if (!serializeFormData(&modelsJson, &envJson)) return;
+
         if (formEditId_ == 0) {
             // 新建：API Key 必填
             if (formKey_.empty()) {
                 formError_ = "新建 Profile 必须填写 API Key";
                 return;
             }
-            auto r = svc->createProfile(formName_, formUrl_, formKey_, formModel_);
+            auto r = svc->createProfile(formName_, formUrl_, formKey_,
+                                        formModels_.def.model);
             if (r.isFail()) {
                 formError_ = r.errorMessage();
                 return;
+            }
+            // createProfile 无槽位/env 参数（最小 diff 不动签名），二段补写
+            if (!modelsJson.empty() || !envJson.empty()) {
+                Profile p = r.value();
+                p.model = formModels_.def.model;
+                p.modelsConfigJson = modelsJson;
+                p.extraEnvJson = envJson;
+                auto u = svc->updateProfile(p);
+                if (u.isFail()) {
+                    formError_ = "已创建，但模型/env 写入失败: " +
+                                 u.errorMessage();
+                    return;
+                }
             }
             formOpen_ = false;
             selectedId_ = r.value().id;
@@ -917,7 +1119,9 @@ private:
             Profile p = std::move(got).value();
             p.name = formName_;
             p.baseUrl = formUrl_;
-            p.model = formModel_;
+            p.model = formModels_.def.model;   // 旧列与 default 槽位同步（§4.2）
+            p.modelsConfigJson = modelsJson;
+            p.extraEnvJson = envJson;
             p.apiKeyPlain = formKey_;   // 空 = 不换 key
             auto r = svc->updateProfile(p);
             if (r.isFail()) {
@@ -929,11 +1133,302 @@ private:
         }
     }
 
+    // ---- 基础页（§6.1 线框）----
+    void drawFormBasicTab(eui::Ui& ui, float w,
+                          const core::theme::Tokens& t,
+                          const components::theme::ThemeColorTokens& themeTokens,
+                          bool isEdit) {
+        ui.text("claude.form.basic.name.label")
+            .position(28.0f, 104.0f).size(w - 56.0f, 16.0f)
+            .text("名称").fontSize(11.0f).lineHeight(16.0f)
+            .color(t.colors.textTertiary).build();
+        components::input(ui, "claude.dialog.form.name")
+            .position(28.0f, 122.0f).size(w - 56.0f, 40.0f)
+            .value(formName_).placeholder("例如：官方 / 中转 A")
+            .fontSize(14.0f).theme(themeTokens)
+            .onChange([this](const std::string& v) { formName_ = v; })
+            .build();
+
+        ui.text("claude.form.basic.url.label")
+            .position(28.0f, 174.0f).size(w - 56.0f, 16.0f)
+            .text("Base URL").fontSize(11.0f).lineHeight(16.0f)
+            .color(t.colors.textTertiary).build();
+        components::input(ui, "claude.dialog.form.url")
+            .position(28.0f, 192.0f).size(w - 56.0f, 40.0f)
+            .value(formUrl_).placeholder("https://api.anthropic.com")
+            .fontSize(14.0f).theme(themeTokens)
+            .onChange([this](const std::string& v) { formUrl_ = v; })
+            .build();
+
+        ui.text("claude.form.basic.key.label")
+            .position(28.0f, 244.0f).size(w - 56.0f, 16.0f)
+            .text("API Key（存入 Keychain，不落数据库）")
+            .fontSize(11.0f).lineHeight(16.0f)
+            .color(t.colors.textTertiary).build();
+        const std::string keyPlaceholder = isEdit
+            ? ("留空 = 保持现有 Key（" + formKeyHint_ + "）")
+            : std::string("sk-ant-...");
+        components::input(ui, "claude.dialog.form.key")
+            .position(28.0f, 262.0f).size(w - 56.0f, 40.0f)
+            .value(formKey_).placeholder(keyPlaceholder)
+            .fontSize(14.0f).theme(themeTokens)
+            .onChange([this](const std::string& v) { formKey_ = v; })
+            .build();
+
+        ui.text("claude.form.basic.hint")
+            .position(28.0f, 316.0f).size(w - 56.0f, 18.0f)
+            .text("ⓘ 模型映射和高级 env 在另外两个标签页配置")
+            .fontSize(12.0f).lineHeight(18.0f)
+            .color(t.colors.textTertiary).build();
+
+        if (!formError_.empty()) {
+            ui.text("claude.dialog.form.error")
+                .position(28.0f, 340.0f).size(w - 56.0f, 18.0f)
+                .text(formError_).fontSize(12.0f).lineHeight(18.0f)
+                .color(t.colors.error).build();
+        }
+    }
+
+    // ---- 模型映射页（6 槽位 × model/name，§6.1 线框）----
+    void drawFormModelsTab(eui::Ui& ui, float w,
+                            const core::theme::Tokens& t,
+                            const components::theme::ThemeColorTokens& themeTokens) {
+        struct SlotRow {
+            const char* label;
+            ModelSlot ModelsConfig::*slot;
+        };
+        static const SlotRow kRows[] = {
+            {"默认 (MODEL)", &ModelsConfig::def},
+            {"Sonnet",      &ModelsConfig::sonnet},
+            {"Opus",        &ModelsConfig::opus},
+            {"Haiku",       &ModelsConfig::haiku},
+            {"Fable",       &ModelsConfig::fable},
+            {"Subagent",    &ModelsConfig::subagent},
+        };
+
+        // 表头
+        ui.text("claude.form.slots.h.slot")
+            .position(28.0f, 104.0f).size(110.0f, 14.0f)
+            .text("槽位").fontSize(11.0f).lineHeight(14.0f)
+            .color(t.colors.textTertiary).build();
+        ui.text("claude.form.slots.h.model")
+            .position(150.0f, 104.0f).size(330.0f, 14.0f)
+            .text("上游模型名（发往上游）").fontSize(11.0f).lineHeight(14.0f)
+            .color(t.colors.textTertiary).build();
+        ui.text("claude.form.slots.h.name")
+            .position(492.0f, 104.0f).size(240.0f, 14.0f)
+            .text("显示名（CC 界面）").fontSize(11.0f).lineHeight(14.0f)
+            .color(t.colors.textTertiary).build();
+
+        for (size_t i = 0; i < 6; ++i) {
+            const float y = 126.0f + static_cast<float>(i) * 52.0f;
+            const SlotRow& row = kRows[i];
+            const ModelSlot& slot = formModels_.*row.slot;
+            const std::string idx = std::to_string(i);
+            ui.text("claude.form.slot.label." + idx)
+                .position(28.0f, y + 10.0f).size(110.0f, 16.0f)
+                .text(row.label).fontSize(12.0f).lineHeight(16.0f)
+                .color(t.colors.textSecondary).build();
+            components::input(ui, "claude.form.slot." + idx + ".model")
+                .position(150.0f, y).size(330.0f, 36.0f)
+                .value(slot.model).placeholder("fangzhou/glm-5.3[1M]")
+                .fontSize(13.0f).theme(themeTokens)
+                .onChange([this, m = row.slot](const std::string& v) {
+                    (formModels_.*m).model = v;
+                })
+                .build();
+            // 显示名留空 → placeholder 渲染派生预览（§6.1）
+            const std::string derived = deriveDisplayName(slot.model);
+            components::input(ui, "claude.form.slot." + idx + ".name")
+                .position(492.0f, y).size(240.0f, 36.0f)
+                .value(slot.name)
+                .placeholder(derived.empty() ? "（自动派生）" : derived)
+                .fontSize(13.0f).theme(themeTokens)
+                .onChange([this, m = row.slot](const std::string& v) {
+                    (formModels_.*m).name = v;
+                })
+                .build();
+        }
+
+        ui.text("claude.form.slots.hint1")
+            .position(28.0f, 446.0f).size(w - 56.0f, 16.0f)
+            .text("ⓘ 显示名留空时自动剥除模型名的 [1M]/[200K] 等上下文标记")
+            .fontSize(11.0f).lineHeight(16.0f)
+            .color(t.colors.textTertiary).build();
+        ui.text("claude.form.slots.hint2")
+            .position(28.0f, 464.0f).size(w - 56.0f, 16.0f)
+            .text("    槽位留空 = 不写入该 env 键，Claude Code 用内置映射")
+            .fontSize(11.0f).lineHeight(16.0f)
+            .color(t.colors.textTertiary).build();
+    }
+
+    // ---- 高级 env 页（键值编辑器 + cc-switch 粘贴导入，§6.1 线框）----
+    // ponytail: 可见行数上限 5（760×600 弹窗高度约束），超出部分保存在
+    // 状态里全量保存；需要编辑超长列表时再引入 scrollView
+    void drawFormEnvTab(eui::Ui& ui, float w,
+                        const core::theme::Tokens& t,
+                        const components::theme::ThemeColorTokens& themeTokens) {
+        constexpr size_t kMaxVisibleRows = 5;
+
+        ui.text("claude.form.env.label")
+            .position(28.0f, 104.0f).size(w - 56.0f, 16.0f)
+            .text("额外环境变量（原样写入 settings.json env 块）")
+            .fontSize(11.0f).lineHeight(16.0f)
+            .color(t.colors.textTertiary).build();
+
+        const size_t visible =
+            formEnvRows_.size() < kMaxVisibleRows ? formEnvRows_.size()
+                                                  : kMaxVisibleRows;
+        for (size_t i = 0; i < visible; ++i) {
+            const float y = 124.0f + static_cast<float>(i) * 38.0f;
+            const std::string idx = std::to_string(i);
+            components::input(ui, "claude.form.env.row." + idx + ".key")
+                .position(28.0f, y).size(220.0f, 32.0f)
+                .value(formEnvRows_[i].first).placeholder("ENV_KEY")
+                .fontSize(12.0f).theme(themeTokens)
+                .onChange([this, i](const std::string& v) {
+                    formEnvRows_[i].first = v;
+                })
+                .build();
+            components::input(ui, "claude.form.env.row." + idx + ".value")
+                .position(258.0f, y).size(414.0f, 32.0f)
+                .value(formEnvRows_[i].second).placeholder("值（字符串）")
+                .fontSize(12.0f).theme(themeTokens)
+                .onChange([this, i](const std::string& v) {
+                    formEnvRows_[i].second = v;
+                })
+                .build();
+            components::button(ui, "claude.form.env.row." + idx + ".del")
+                .position(682.0f, y).size(50.0f, 32.0f)
+                .text("✕").fontSize(12.0f)
+                .colors(t.colors.surfaceElevated, t.colors.hover,
+                        t.colors.active)
+                .textColor(t.colors.error)
+                .radius(t.sizes.radiusSmall)
+                .border(1.0f, t.colors.borderDefault)
+                .onClick([this, i] {
+                    if (i < formEnvRows_.size()) {
+                        formEnvRows_.erase(formEnvRows_.begin() +
+                                           static_cast<long>(i));
+                    }
+                })
+                .build();
+        }
+
+        // 底部：添加按钮 + 溢出说明
+        components::button(ui, "claude.form.env.add")
+            .position(28.0f, 314.0f).size(110.0f, 30.0f)
+            .text("+ 添加变量").fontSize(12.0f)
+            .colors(t.colors.surfaceElevated, t.colors.hover, t.colors.active)
+            .textColor(t.colors.textPrimary)
+            .radius(t.sizes.radiusSmall)
+            .border(1.0f, t.colors.borderDefault)
+            .onClick([this] { formEnvRows_.emplace_back(); })
+            .build();
+        if (formEnvRows_.size() > kMaxVisibleRows) {
+            ui.text("claude.form.env.overflow")
+                .position(150.0f, 320.0f).size(w - 150.0f - 28.0f, 16.0f)
+                .text("另有 " + std::to_string(formEnvRows_.size() -
+                                               kMaxVisibleRows) +
+                      " 项已保存（保存时全量写入，列表仅显示前 " +
+                      std::to_string(kMaxVisibleRows) + " 项）")
+                .fontSize(11.0f).lineHeight(16.0f)
+                .color(t.colors.textTertiary).build();
+        }
+
+        // ---- 粘贴导入（cc-switch / settings.json）----
+        ui.text("claude.form.import.label")
+            .position(28.0f, 356.0f).size(w - 56.0f, 16.0f)
+            .text("── 从 cc-switch / settings.json 粘贴导入 ──")
+            .fontSize(11.0f).lineHeight(16.0f)
+            .color(t.colors.textTertiary).build();
+        components::input(ui, "claude.form.import.text")
+            .position(28.0f, 376.0f).size(w - 56.0f, 82.0f)
+            .value(importText_)
+            .placeholder(R"({ "env": { "ANTHROPIC_BASE_URL": "...", ... } }  粘贴整段 settings.json 或仅 env 对象)")
+            .multiline(true).scrollbar(true)
+            .fontSize(12.0f).theme(themeTokens)
+            .onChange([this](const std::string& v) { importText_ = v; })
+            .build();
+
+        components::button(ui, "claude.form.import.parse")
+            .position(28.0f, 468.0f).size(110.0f, 32.0f)
+            .text("解析导入").fontSize(12.0f)
+            .colors(t.colors.surfaceElevated, t.colors.hover, t.colors.active)
+            .textColor(t.colors.textPrimary)
+            .radius(t.sizes.radiusSmall)
+            .border(1.0f, t.colors.borderDefault)
+            .onClick([this] { doParseImport(); })
+            .build();
+        if (importReady_) {
+            components::button(ui, "claude.form.import.apply")
+                .position(148.0f, 468.0f).size(110.0f, 32.0f)
+                .text("应用到表单").fontSize(12.0f)
+                .colors(t.colors.primary, t.colors.primaryHover,
+                        t.colors.primaryPressed)
+                .textColor(eui::Color("#FFFFFF"))
+                .radius(t.sizes.radiusSmall)
+                .onClick([this] { doApplyImport(); })
+                .build();
+        }
+
+        // 解析结果：失败红字 / 成功预览（槽位/env 识别数 + 别名/未识别提示）
+        if (!importError_.empty()) {
+            ui.text("claude.form.import.error")
+                .position(270.0f, 468.0f).size(w - 270.0f - 28.0f, 48.0f)
+                .text("✕ " + importError_).fontSize(11.0f).lineHeight(16.0f)
+                .color(t.colors.error).build();
+        } else if (importReady_) {
+            ui.text("claude.form.import.preview")
+                .position(270.0f, 468.0f).size(w - 270.0f - 28.0f, 16.0f)
+                .text("识别：槽位 " + std::to_string(importPreview_.recognizedSlots) +
+                      "/6 · env " + std::to_string(importPreview_.extraEnv.size()) +
+                      " 项 · 别名映射 " +
+                      std::to_string(importPreview_.aliasMappedKeys.size()) +
+                      " · 未识别 " +
+                      std::to_string(importPreview_.unrecognizedKeys.size()))
+                .fontSize(11.0f).lineHeight(16.0f)
+                .color(t.colors.textSecondary).build();
+            // 警告角标透传（§4.3 规则 6）：别名映射 / 未识别键 / 解析警告，
+            // 最多 3 条（弹窗高度约束——再往下会压到底部按钮；全量信息在
+            // 保存后的 settings.json 与日志可查）
+            std::vector<std::string> notes;
+            for (size_t i = 0; i < importPreview_.aliasMappedKeys.size() && i < 2; ++i) {
+                notes.push_back("已映射为官方变量: " +
+                                importPreview_.aliasMappedKeys[i]);
+            }
+            for (size_t i = 0;
+                 i < importPreview_.unrecognizedKeys.size() && notes.size() < 3;
+                 ++i) {
+                notes.push_back("未识别键将透传: " +
+                                importPreview_.unrecognizedKeys[i]);
+            }
+            for (size_t i = 0;
+                 i < importPreview_.warnings.size() && notes.size() < 3; ++i) {
+                notes.push_back(importPreview_.warnings[i]);
+            }
+            for (size_t i = 0; i < notes.size(); ++i) {
+                ui.text("claude.form.import.note." + std::to_string(i))
+                    .position(270.0f, 486.0f + static_cast<float>(i) * 15.0f)
+                    .size(w - 270.0f - 28.0f, 15.0f)
+                    .text("⚠ " + notes[i]).fontSize(10.0f).lineHeight(15.0f)
+                    .color(t.colors.warning).build();
+            }
+        } else {
+            ui.text("claude.form.import.hint")
+                .position(270.0f, 468.0f).size(w - 270.0f - 28.0f, 32.0f)
+                .text("ⓘ BASE_URL/AUTH_TOKEN 归基础页，模型键归模型映射页，"
+                      "其余进入上表")
+                .fontSize(11.0f).lineHeight(16.0f)
+                .color(t.colors.textTertiary).build();
+        }
+    }
+
     void drawProfileFormDialog(eui::Ui& ui, const eui::Screen& screen,
                                const core::theme::Tokens& t,
                                const components::theme::ThemeColorTokens& themeTokens) {
-        const float w = 520.0f;
-        const float h = 440.0f;
+        const float w = 760.0f;
+        const float h = 600.0f;
         const bool isEdit = (formEditId_ != 0);
 
         components::dialog(ui, "claude.dialog.form")
@@ -944,98 +1439,44 @@ private:
             .onOpenChange([this](bool v) { formOpen_ = v; })
             .content([&] {
                 ui.text("claude.dialog.form.title")
-                    .position(28.0f, 24.0f)
-                    .size(w - 56.0f, 28.0f)
+                    .position(28.0f, 20.0f)
+                    .size(w - 56.0f, 26.0f)
                     .text(isEdit ? "编辑 Profile" : "新建 Profile")
                     .fontSize(20.0f)
-                    .lineHeight(28.0f)
+                    .lineHeight(26.0f)
                     .fontWeight(700)
                     .color(t.colors.textPrimary)
                     .build();
 
-                // 名称
-                ui.text("claude.dialog.form.name.label")
-                    .position(28.0f, 62.0f)
-                    .size(w - 56.0f, 16.0f)
-                    .text("名称")
-                    .fontSize(11.0f)
-                    .lineHeight(16.0f)
-                    .color(t.colors.textTertiary)
-                    .build();
-                components::input(ui, "claude.dialog.form.name")
-                    .position(28.0f, 80.0f)
-                    .size(w - 56.0f, 40.0f)
-                    .value(formName_)
-                    .placeholder("例如：官方 / 中转 A")
-                    .fontSize(14.0f)
-                    .theme(themeTokens)
-                    .onChange([this](const std::string& v) { formName_ = v; })
+                // tabs（§6.1：基础 / 模型映射 / 高级 env）。
+                // TabsBuilder 无 position，套 stack 定位（字号下拉同款包装）
+                ui.stack("claude.form.tabs.wrap")
+                    .position(28.0f, 52.0f)
+                    .size(w - 56.0f, 34.0f)
+                    .content([&] {
+                        components::tabs(ui, "claude.form.tabs")
+                            .size(w - 56.0f, 34.0f)
+                            .items({"基础", "模型映射", "高级 env"})
+                            .selected(formTab_)
+                            .fontSize(13.0f)
+                            .theme(themeTokens)
+                            .onChange([this](int idx) { formTab_ = idx; })
+                            .build();
+                    })
                     .build();
 
-                // Base URL
-                ui.text("claude.dialog.form.url.label")
-                    .position(28.0f, 132.0f)
-                    .size(w - 56.0f, 16.0f)
-                    .text("Base URL")
-                    .fontSize(11.0f)
-                    .lineHeight(16.0f)
-                    .color(t.colors.textTertiary)
-                    .build();
-                components::input(ui, "claude.dialog.form.url")
-                    .position(28.0f, 150.0f)
-                    .size(w - 56.0f, 40.0f)
-                    .value(formUrl_)
-                    .placeholder("https://api.anthropic.com")
-                    .fontSize(14.0f)
-                    .theme(themeTokens)
-                    .onChange([this](const std::string& v) { formUrl_ = v; })
-                    .build();
+                if (formTab_ == 0) {
+                    drawFormBasicTab(ui, w, t, themeTokens, isEdit);
+                } else if (formTab_ == 1) {
+                    drawFormModelsTab(ui, w, t, themeTokens);
+                } else {
+                    drawFormEnvTab(ui, w, t, themeTokens);
+                }
 
-                // 模型
-                ui.text("claude.dialog.form.model.label")
-                    .position(28.0f, 202.0f)
-                    .size(w - 56.0f, 16.0f)
-                    .text("默认模型")
-                    .fontSize(11.0f)
-                    .lineHeight(16.0f)
-                    .color(t.colors.textTertiary)
-                    .build();
-                components::input(ui, "claude.dialog.form.model")
-                    .position(28.0f, 220.0f)
-                    .size(w - 56.0f, 40.0f)
-                    .value(formModel_)
-                    .placeholder("claude-sonnet-4-5")
-                    .fontSize(14.0f)
-                    .theme(themeTokens)
-                    .onChange([this](const std::string& v) { formModel_ = v; })
-                    .build();
-
-                // API Key
-                ui.text("claude.dialog.form.key.label")
-                    .position(28.0f, 272.0f)
-                    .size(w - 56.0f, 16.0f)
-                    .text("API Key（存入 Keychain，不落数据库）")
-                    .fontSize(11.0f)
-                    .lineHeight(16.0f)
-                    .color(t.colors.textTertiary)
-                    .build();
-                const std::string keyPlaceholder = isEdit
-                    ? ("留空 = 保持现有 Key（" + formKeyHint_ + "）")
-                    : std::string("sk-ant-...");
-                components::input(ui, "claude.dialog.form.key")
-                    .position(28.0f, 290.0f)
-                    .size(w - 56.0f, 40.0f)
-                    .value(formKey_)
-                    .placeholder(keyPlaceholder)
-                    .fontSize(14.0f)
-                    .theme(themeTokens)
-                    .onChange([this](const std::string& v) { formKey_ = v; })
-                    .build();
-
-                // 错误信息（Result 的中文错误）
-                if (!formError_.empty()) {
+                // 错误信息（基础页之外也要能看到校验错误）
+                if (!formError_.empty() && formTab_ != 0) {
                     ui.text("claude.dialog.form.error")
-                        .position(28.0f, 340.0f)
+                        .position(28.0f, h - 104.0f)
                         .size(w - 56.0f, 18.0f)
                         .text(formError_)
                         .fontSize(12.0f)
@@ -1342,15 +1783,26 @@ private:
 
     int64_t selectedId_ = 0;   // 0 = 跟随激活 profile
 
-    // 新建/编辑表单
+    // 新建/编辑表单（tabs 三页，§6.1）
     bool formOpen_ = false;
     int64_t formEditId_ = 0;   // 0 = 新建，非 0 = 编辑该 id
+    int formTab_ = 0;          // 0 基础 / 1 模型映射 / 2 高级 env
     std::string formName_;
     std::string formUrl_;
-    std::string formModel_;
     std::string formKey_;
     std::string formKeyHint_;  // 编辑时显示现有 key 脱敏提示
     std::string formError_;
+    ModelsConfig formModels_;  // 6 槽位（默认模型 = def 槽位，旧 formModel_ 并入）
+    std::vector<std::pair<std::string, std::string>> formEnvRows_;  // env 键值行
+
+    // cc-switch 粘贴导入（高级 env 页）
+    std::string importText_;       // 多行粘贴框原文
+    bool importReady_ = false;     // 解析成功待应用
+    std::string importError_;      // 解析失败信息（红字）
+    ImportedConfig importPreview_; // 解析结果预览
+
+    // 引导条一次性标记（§6.4：会话内代理从未启动过才显示；内存态不持久化）
+    bool proxyEverSeen_ = false;
 
     // 删除确认
     bool deleteConfirmOpen_ = false;
