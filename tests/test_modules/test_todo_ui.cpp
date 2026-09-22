@@ -421,3 +421,128 @@ REGISTER_TEST(todo_ui_column_ops_and_datepicker,
     mod->onStop();
     return true;
 })
+
+// ---- 4. W7 position 缺陷回归 ----
+
+REGISTER_TEST(todo_ui_append_position,
+              "todo_ui: computeAppendPosition 空列/已有列/空洞", {
+    using module::todo::ui::computeAppendPosition;
+    std::vector<module::todo::Task> tasks;
+    // 空列 → 0
+    DOCTEST_CHECK_EQ(computeAppendPosition(tasks, 10), 0);
+    tasks.push_back(makeTask(1, 10, 0));
+    tasks.push_back(makeTask(2, 10, 2));   // position 带空洞（moveTask 留洞形态）
+    tasks.push_back(makeTask(3, 20, 7));   // 另一列，不应干扰
+    // 已有列 → max + 1（按真实 position，非 rank）
+    DOCTEST_CHECK_EQ(computeAppendPosition(tasks, 10), 3);
+    DOCTEST_CHECK_EQ(computeAppendPosition(tasks, 20), 8);
+    return true;
+})
+
+REGISTER_TEST(todo_ui_edit_keeps_order,
+              "todo_ui: 编辑保存不改序（position 保留，headless）", {
+    TestEnv env;
+    DOCTEST_REQUIRE(env.ready);
+    auto col = env.svc->createColumn("编辑列");
+    DOCTEST_REQUIRE(col.isOk());
+    auto a = env.svc->createTask(col.value().id, "甲");
+    auto b = env.svc->createTask(col.value().id, "乙");
+    auto c = env.svc->createTask(col.value().id, "丙");
+    DOCTEST_REQUIRE(a.isOk() && b.isOk() && c.isOk());
+
+    std::unique_ptr<::core::Module> mod(create_todo_module());
+    mod->onStart();
+
+    // 打开「丙」详情 → 直接点保存（标题未改，仍走完整 updateTask 链路）
+    {
+        Frame frame(mod.get());
+        const auto* card = frame.ui.find("todo.col.4.card.2.bg");
+        DOCTEST_REQUIRE(card != nullptr);
+        DOCTEST_REQUIRE(card->onClick != nullptr);
+        card->onClick();
+    }
+    {
+        Frame frame(mod.get());
+        const auto* save = frame.ui.find("todo.dialog.detail.save.bg");
+        DOCTEST_REQUIRE(save != nullptr);
+        DOCTEST_REQUIRE(save->onClick != nullptr);
+        save->onClick();
+    }
+    // 回归断言：丙仍在列尾且 position 保留（旧缺陷：保存硬编码 position=0 → 丙顶到列首）
+    auto ts = env.svc->listTasks(col.value().id);
+    DOCTEST_REQUIRE(ts.isOk());
+    DOCTEST_REQUIRE_EQ(ts.value().size(), static_cast<size_t>(3));
+    DOCTEST_CHECK_EQ(ts.value()[0].title, std::string("甲"));
+    DOCTEST_CHECK_EQ(ts.value()[1].title, std::string("乙"));
+    DOCTEST_CHECK_EQ(ts.value()[2].title, std::string("丙"));
+    DOCTEST_CHECK_EQ(ts.value()[2].position, c.value().position);
+
+    mod->onStop();
+    return true;
+})
+
+REGISTER_TEST(todo_ui_move_appends_to_end,
+              "todo_ui: 拖拽/右键移动追加到目标列尾（headless）", {
+    TestEnv env;
+    DOCTEST_REQUIRE(env.ready);
+    auto src = env.svc->createColumn("移动源列");
+    auto dst = env.svc->createColumn("移动目标列");
+    DOCTEST_REQUIRE(src.isOk());
+    DOCTEST_REQUIRE(dst.isOk());
+    auto keeper = env.svc->createTask(dst.value().id, "目标列原任务");
+    auto mover = env.svc->createTask(src.value().id, "被移动任务");
+    DOCTEST_REQUIRE(keeper.isOk());
+    DOCTEST_REQUIRE(mover.isOk());
+
+    std::unique_ptr<::core::Module> mod(create_todo_module());
+    mod->onStart();
+
+    // 拖拽：col.4=移动源列（第 5 列，index 4）→ 向右拖过 60% 列宽 → 落到 col.5 列尾
+    {
+        Frame frame(mod.get());
+        const auto* card = frame.ui.find("todo.col.4.card.0.bg");
+        DOCTEST_REQUIRE(card != nullptr);
+        DOCTEST_REQUIRE(card->onDrag != nullptr);
+        core::dsl::DragEvent ev;
+        ev.totalX = 500.0;  // 远超列宽 60%
+        card->onDrag(ev);
+    }
+    {
+        auto ts = env.svc->listTasks(dst.value().id);
+        DOCTEST_REQUIRE(ts.isOk());
+        DOCTEST_REQUIRE_EQ(ts.value().size(), static_cast<size_t>(2));
+        // 追加到列尾：原任务在前（旧缺陷：position=0 → 被移动任务插到列首）
+        DOCTEST_CHECK_EQ(ts.value()[0].title, std::string("目标列原任务"));
+        DOCTEST_CHECK_EQ(ts.value()[1].title, std::string("被移动任务"));
+    }
+
+    // 右键菜单「移动到」同样追加列尾：把「被移动任务」移回源列（此时源列已空 → 追加位 0）
+    {
+        Frame frame(mod.get());
+        eui::PointerEvent pe;
+        eui::Rect rect;
+        const auto* card = frame.ui.find("todo.col.5.card.1.bg");
+        DOCTEST_REQUIRE(card != nullptr);
+        card->onContextMenu(pe, rect);
+        frame.refresh();
+        const core::dsl::Element* moveTo = nullptr;
+        for (int i = 2; i < 12 && moveTo == nullptr; ++i) {
+            const auto* item = frame.ui.find("todo.ctx.level.0.item." + std::to_string(i));
+            if (item == nullptr || item->onClick == nullptr) break;
+            const auto* label = frame.ui.find("todo.ctx.level.0.label." + std::to_string(i));
+            if (label != nullptr && label->text == "移动到「移动源列」") {
+                moveTo = label;
+                item->onClick();
+            }
+        }
+        DOCTEST_REQUIRE(moveTo != nullptr);
+        auto ts = env.svc->listTasks(src.value().id);
+        DOCTEST_REQUIRE(ts.isOk());
+        DOCTEST_REQUIRE_EQ(ts.value().size(), static_cast<size_t>(1));
+        DOCTEST_CHECK_EQ(ts.value()[0].title, std::string("被移动任务"));
+        DOCTEST_CHECK_EQ(ts.value()[0].position, 0);
+    }
+
+    mod->onStop();
+    return true;
+})

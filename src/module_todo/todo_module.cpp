@@ -237,10 +237,11 @@ public:
             setStatus("标记完成失败：" + r.errorMessage(), true);
             return;
         }
-        // 看板行为：完成后移到「已完成」列（如果该列存在）
+        // 看板行为：完成后移到「已完成」列（如果该列存在），追加到列尾
         const int64_t doneCol = findColumnByTitle("已完成");
         if (doneCol != 0) {
-            auto mv = service_->moveTask(taskId, doneCol, 0);
+            auto mv = service_->moveTask(
+                taskId, doneCol, ui::computeAppendPosition(tasks_, doneCol));
             if (mv.isFail()) {
                 LOG_WARN("Todo: 完成后移动到已完成列失败: " + mv.errorMessage());
             }
@@ -256,11 +257,12 @@ public:
             setStatus("取消完成失败：" + r.errorMessage(), true);
             return;
         }
-        // 从「已完成」列撤回「待办」列（如果两列都存在）
+        // 从「已完成」列撤回「待办」列（如果两列都存在），追加到列尾
         const int64_t doneCol = findColumnByTitle("已完成");
         const int64_t todoCol = columns_.empty() ? 0 : columns_.front().id;
         if (doneCol != 0 && todoCol != 0) {
-            auto mv = service_->moveTask(taskId, todoCol, 0);
+            auto mv = service_->moveTask(
+                taskId, todoCol, ui::computeAppendPosition(tasks_, todoCol));
             if (mv.isFail()) {
                 LOG_WARN("Todo: 取消完成后移回待办列失败: " + mv.errorMessage());
             }
@@ -640,15 +642,17 @@ private:
                 openTaskContextMenu(task, colIndex, cardIndex);
             })
             .onDrag([this, task, colIndex, colCount, width](const core::dsl::DragEvent& ev) {
-                // 拖拽超过半列宽 → 移到相邻列（左 / 右）
+                // 拖拽超过半列宽 → 移到相邻列（左 / 右），追加到目标列尾
                 const double threshold = static_cast<double>(width) * 0.6;
                 if (ev.totalX > threshold && colIndex + 1 < colCount) {
                     const int64_t toCol = columns_[static_cast<size_t>(colIndex + 1)].id;
-                    doMoveTask(task.id, toCol, 0);
+                    doMoveTask(task.id, toCol,
+                               ui::computeAppendPosition(tasks_, toCol));
                     setStatus("已移动到「" + columns_[static_cast<size_t>(colIndex + 1)].title + "」");
                 } else if (ev.totalX < -threshold && colIndex > 0) {
                     const int64_t toCol = columns_[static_cast<size_t>(colIndex - 1)].id;
-                    doMoveTask(task.id, toCol, 0);
+                    doMoveTask(task.id, toCol,
+                               ui::computeAppendPosition(tasks_, toCol));
                     setStatus("已移动到「" + columns_[static_cast<size_t>(colIndex - 1)].title + "」");
                 }
             })
@@ -893,7 +897,8 @@ private:
                 if (c.id == self->columnId) continue;
                 if (k == 0) {
                     const std::string title = c.title;
-                    doMoveTask(ctxTaskId_, c.id, 0);
+                    doMoveTask(ctxTaskId_, c.id,
+                               ui::computeAppendPosition(tasks_, c.id));
                     setStatus("已移动到「" + title + "」");
                     return;
                 }
@@ -1253,9 +1258,11 @@ private:
                         .onClick([this, i] {
                             const int64_t taskId = detailTaskId_;
                             const int64_t toCol = columns_[i].id;
+                            if (toCol == detailColumnId_) return;  // 已在该列
                             detailColumnId_ = toCol;
                             detailOpen_ = false;
-                            doMoveTask(taskId, toCol, 0);
+                            doMoveTask(taskId, toCol,
+                                       ui::computeAppendPosition(tasks_, toCol));
                         })
                         .build();
                 }
@@ -1318,7 +1325,12 @@ private:
                             ? std::optional<int64_t>(static_cast<int64_t>(std::time(nullptr)))
                             : std::nullopt;
                         updated.tags = detailTags_;
-                        updated.position = 0;
+                        // 保留原 position（编辑不改序；此前硬编码 0 会把任务顶到列首）
+                        if (const Task* orig = findTask(detailTaskId_)) {
+                            updated.position = orig->position;
+                        } else {
+                            updated.position = 0;
+                        }
                         detailOpen_ = false;
                         doUpdateTask(updated);
                     })
