@@ -262,6 +262,27 @@ std::string buildUpstreamUrl(const std::string& baseUrl,
     return base + path;
 }
 
+std::string buildUpstreamErrorFrame(const std::string& upstreamError) {
+    // 转义引号/反斜杠/换行，保证 data 行是合法 JSON（错误 JSON 转义属 W8）
+    std::string escaped;
+    escaped.reserve(upstreamError.size() + 16);
+    for (const char c : upstreamError) {
+        if (c == '"' || c == '\\') {
+            escaped.push_back('\\');
+            escaped.push_back(c);
+        } else if (c == '\n') {
+            escaped += "\\n";
+        } else if (c == '\r') {
+            // 丢弃
+        } else {
+            escaped.push_back(c);
+        }
+    }
+    return "event: error\ndata: {\"type\":\"error\",\"error\":"
+           "{\"type\":\"upstream_stream_error\",\"message\":\"" +
+           escaped + "\"}}\n\n";
+}
+
 // ---------- 上游流式请求 ----------
 
 core::Result<std::unique_ptr<platform::http::StreamingResponse>>
@@ -334,6 +355,15 @@ void forwardStream(platform::http::ResponseWriter& out,
         }
         if (r == platform::http::ChunkResult::Error) {
             LOG_WARN("上游流式错误: " + err);
+            // W7 P0-2：上游断流/超时不再静默收尾——先合成一个 event: error
+            // SSE 帧写给客户端（Claude Code 能感知截断），再正常结束 chunked
+            // 传输。err == "cancelled"（客户端已断开）时跳过，写也写不进去。
+            if (err != "cancelled") {
+                const std::string frame = buildUpstreamErrorFrame(err);
+                if (!writeChunk(frame.data(), frame.size())) {
+                    LOG_INFO("写 error 帧失败（对端已断开）");
+                }
+            }
             upstream->cancel();
             core::proxy_stats::endStream(statsId);
             return false;

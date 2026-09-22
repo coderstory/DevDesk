@@ -396,6 +396,13 @@ core::Result<std::unique_ptr<StreamingResponse>> sendStreaming(const Request& re
     curl_easy_setopt(curl, CURLOPT_URL, req.url.c_str());
     curl_easy_setopt(curl, CURLOPT_CUSTOMREQUEST, req.method.c_str());
     curl_easy_setopt(curl, CURLOPT_TIMEOUT_MS, req.timeoutMs);
+    // 流式空闲超时（W7 P0-3）：timeoutMs=0（无总墙钟上限）时由它兜底
+    // "无新 chunk 才 close" 的语义——速率低于 lowSpeedBytesPerSec 持续
+    // lowSpeedTimeSec 秒即中止
+    if (req.lowSpeedBytesPerSec > 0 && req.lowSpeedTimeSec > 0) {
+        curl_easy_setopt(curl, CURLOPT_LOW_SPEED_LIMIT, req.lowSpeedBytesPerSec);
+        curl_easy_setopt(curl, CURLOPT_LOW_SPEED_TIME, req.lowSpeedTimeSec);
+    }
     curl_easy_setopt(curl, CURLOPT_NOSIGNAL, 1L);
     curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, streamWriteCb);
     curl_easy_setopt(curl, CURLOPT_WRITEDATA, sr->impl_);

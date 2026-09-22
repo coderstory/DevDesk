@@ -306,7 +306,12 @@ void ProxyRouter::handleStreamingRequest(
     upstream.method = method;
     upstream.url = path;              // 相对路径，sendStreamingClaude 会拼 baseUrl
     upstream.body = body;
-    upstream.timeoutMs = 300000;      // SSE 长连接：5 分钟
+    // W7 P0-3：SSE 长连接不用总墙钟超时（原 300s 会把长生成整个砍断），
+    // 改空闲超时——速率 <1 B/s 持续 60s（即无新 chunk 60s）才判死。
+    // 注：libcurl 低速检测按 ~5s 滑动窗口采样，实际中止在 60-70s 间
+    upstream.timeoutMs = 0;             // 0 = 无总上限（sendStreaming 语义）
+    upstream.lowSpeedBytesPerSec = 1;   // 1 B/s
+    upstream.lowSpeedTimeSec = 60;      // 持续 60s → CURLE_OPERATION_TIMEDOUT
     upstream.verifyTls = true;
     upstream.headers = copyHeaders(headers);
     if (!hasHeader(upstream.headers, "anthropic-version")) {
