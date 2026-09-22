@@ -362,7 +362,13 @@ const DslAppConfig& dslAppConfig() {
         .centerWindow()
         // Finder 双击 / 右键「打开方式」：macOS 走 kAEOpenDocuments Apple Event，
         // 由 EUI-NEO 转成回调（主循环里派发），这里切到对应模块。
-        .onOpenFile([](const std::string& path) { handleAppleEventOpenFile(path); });
+        .onOpenFile([](const std::string& path) { handleAppleEventOpenFile(path); })
+        // 未被聚焦元素消费的键盘事件 → 当前页模块（Todo Ctrl+↑/↓ 移动等）
+        .onKeyEvent([](const eui::KeyEvent& e) {
+            if (auto* router = getRouter()) {
+                router->dispatchKeyEvent(e);
+            }
+        });
 
     static bool initialized = []() {
         using namespace core;

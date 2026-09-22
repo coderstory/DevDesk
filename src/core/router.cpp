@@ -46,6 +46,15 @@ void Router::compose(eui::Ui& ui, const eui::Screen& screen) {
     ui.text("empty").text("无页面").build();
 }
 
+bool Router::dispatchKeyEvent(const eui::KeyEvent& event) {
+    for (auto* m : modules_) {
+        if (m && m->pageId() == current_) {
+            return m->onKeyEvent(event);
+        }
+    }
+    return false;
+}
+
 void Router::startAll() {
     for (auto* m : modules_) {
         if (m) {

@@ -33,6 +33,10 @@ public:
 
     void compose(eui::Ui& ui, const eui::Screen& screen);
 
+    // 把未被聚焦元素消费的键盘事件转发给当前页模块（P7a 键盘移动）。
+    // 返回当前模块是否消费了该事件。
+    bool dispatchKeyEvent(const eui::KeyEvent& event);
+
     void startAll();
     void stopAll();
 
