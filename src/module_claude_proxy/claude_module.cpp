@@ -1,5 +1,11 @@
 // src/module_claude_proxy/claude_module.cpp
-// Claude 配置切换器模块 - 完整 UI 实现 + 真实状态集成
+// Claude 配置切换器模块 - 完整 UI + 操作按钮全量接线（真实 ClaudeService）
+//
+// 接线清单（W5）：
+//   新建/编辑 Profile（dialog 表单）→ createProfile / updateProfile
+//   启用 → setActiveProfile；删除（确认 dialog）→ deleteProfile
+//   测试连通 → testConnection；代理开关 → startProxy / stopProxy
+//   每次操作后靠下一帧 compose 重新拉取数据（本模块 compose 直读 service）
 #include "claude_service.h"
 #include "core/logging.h"
 #include "core/module_interface.h"
@@ -8,111 +14,20 @@
 
 #include <eui/dsl.h>
 
+#include <components/button.h>
+#include <components/dialog.h>
+#include <components/input.h>
+#include <components/theme.h>
+#include <components/toast.h>
+
 #include <cstdio>
 #include <ctime>
 #include <string>
+#include <vector>
 
 namespace module::claude {
 
 namespace {
-
-// 通用 profile 卡片（接受 std::string，与真实 module::claude::Profile 兼容）
-void drawProfileCard(eui::Ui& ui,
-                     const std::string& id,
-                     float y,
-                     float width,
-                     const core::theme::Tokens& t,
-                     const std::string& name,
-                     const std::string& baseUrl,
-                     const std::string& model,
-                     bool active) {
-    const float h = 96.0f;
-    const eui::Color borderColor = active ? t.colors.primary : t.colors.borderDefault;
-    const float borderW = active ? 2.0f : 1.0f;
-    const eui::Color bg = active ? t.colors.primarySoftBg : t.colors.surface;
-
-    // 卡片背景
-    ui.rect(id + ".bg")
-        .position(0.0f, y)
-        .size(width, h)
-        .color(bg)
-        .radius(t.sizes.radiusLarge)
-        .border(borderW, borderColor)
-        .build();
-
-    // 头像（圆形 - 用 rect 模拟）
-    ui.rect(id + ".avatar")
-        .position(16.0f, y + 16.0f)
-        .size(40.0f, 40.0f)
-        .color(t.colors.surfaceElevated)
-        .radius(20.0f)
-        .border(1.0f, t.colors.borderDefault)
-        .build();
-    // 头像首字
-    const std::string initial = name.empty()
-        ? std::string("?")
-        : std::string(1, name[0]);
-    ui.text(id + ".avatar.text")
-        .position(16.0f, y + 16.0f)
-        .size(40.0f, 40.0f)
-        .text(initial)
-        .fontSize(16.0f)
-        .lineHeight(40.0f)
-        .horizontalAlign(eui::HorizontalAlign::Center)
-        .color(t.colors.textPrimary)
-        .fontWeight(600)
-        .build();
-
-    // 名称
-    ui.text(id + ".name")
-        .position(64.0f, y + 18.0f)
-        .size(width - 130.0f, 20.0f)
-        .text(name)
-        .fontSize(15.0f)
-        .lineHeight(20.0f)
-        .fontWeight(600)
-        .color(t.colors.textPrimary)
-        .build();
-
-    if (active) {
-        ui.rect(id + ".active.bg")
-            .position(width - 60.0f, y + 16.0f)
-            .size(48.0f, 20.0f)
-            .color(t.colors.primary)
-            .radius(t.sizes.radiusPill)
-            .build();
-        ui.text(id + ".active.text")
-            .position(width - 60.0f, y + 16.0f)
-            .size(48.0f, 20.0f)
-            .text("ACTIVE")
-            .fontSize(9.0f)
-            .lineHeight(20.0f)
-            .horizontalAlign(eui::HorizontalAlign::Center)
-            .color(eui::Color("#FFFFFF"))
-            .fontWeight(700)
-            .build();
-    }
-
-    // base-url (mono, 12px, tertiary)
-    ui.text(id + ".url")
-        .position(64.0f, y + 44.0f)
-        .size(width - 80.0f, 14.0f)
-        .text(baseUrl)
-        .fontSize(11.0f)
-        .lineHeight(14.0f)
-        .color(t.colors.textTertiary)
-        .build();
-
-    // model (mono, 12px)
-    ui.text(id + ".model")
-        .position(64.0f, y + 62.0f)
-        .size(width - 80.0f, 14.0f)
-        .text(std::string("model: ") + model)
-        .fontSize(11.0f)
-        .lineHeight(14.0f)
-        .color(t.colors.textSecondary)
-        .build();
-}
 
 // 格式化 unix 时间戳为 HH:MM
 std::string formatHHMM(std::time_t ts) {
@@ -141,8 +56,12 @@ public:
     std::string displayName() const override { return "Claude 切换器"; }
     std::string iconGlyph() const override { return "🔄"; }
 
+    // ============ UI ============
+
     void compose(eui::Ui& ui, const eui::Screen& screen) override {
         const auto& t = core::theme::current();
+        const auto themeTokens = t.isDark ? components::theme::dark()
+                                          : components::theme::light();
         const float pad = t.sizes.spacingXXLarge;        // 40
         const float contentW = screen.width - pad * 2.0f;
         const float contentH = screen.height - pad * 2.0f;
@@ -181,11 +100,19 @@ public:
                 hasActive = true;
             }
         }
-        const std::string nameValue = hasActive ? activeProfile.name : std::string("(未启用)");
-        const std::string modelValue = hasActive ? activeProfile.model : std::string("-");
-        const std::string urlValue = hasActive ? activeProfile.baseUrl : std::string("-");
-        const std::string tokenValue = hasActive
-            ? (activeProfile.apiKeyHint + " [Keychain]")
+
+        // 详情面板展示的 profile：优先用户选中的，其次激活的
+        const Profile* shown = nullptr;
+        for (const auto& p : profiles) {
+            if (p.id == selectedId_) { shown = &p; break; }
+        }
+        if (!shown && hasActive) shown = &activeProfile;
+
+        const std::string nameValue = shown ? shown->name : std::string("(未启用)");
+        const std::string modelValue = shown ? shown->model : std::string("-");
+        const std::string urlValue = shown ? shown->baseUrl : std::string("-");
+        const std::string tokenValue = shown
+            ? (shown->apiKeyHint + " [Keychain]")
             : std::string("(无激活 profile)");
 
         ui.column("claude.root")
@@ -261,35 +188,29 @@ public:
                             .alignItems(eui::Align::CENTER)
                             .gap(t.sizes.spacingSmall)
                             .content([&] {
-                                // 停止代理
-                                ui.rect("claude.btn.stop.bg")
-                                    .size(96.0f, 40.0f)
-                                    .color(t.colors.surfaceElevated)
+                                // 停止/启动代理（真实开关）
+                                components::button(ui, "claude.btn.proxy")
+                                    .size(110.0f, 40.0f)
+                                    .text(proxyRunning ? "⏸ 停止代理" : "▶ 启动代理")
+                                    .fontSize(13.0f)
+                                    .colors(t.colors.surfaceElevated, t.colors.hover,
+                                            t.colors.active)
+                                    .textColor(t.colors.textSecondary)
                                     .radius(t.sizes.radius)
                                     .border(1.0f, t.colors.borderDefault)
-                                    .build();
-                                ui.text("claude.btn.stop.text")
-                                    .size(96.0f, 40.0f)
-                                    .text("⏸ 停止代理")
-                                    .fontSize(13.0f)
-                                    .lineHeight(40.0f)
-                                    .horizontalAlign(eui::HorizontalAlign::Center)
-                                    .color(t.colors.textSecondary)
+                                    .onClick([this] { doToggleProxy(); })
                                     .build();
 
                                 // 新建 Profile
-                                ui.rect("claude.btn.new.bg")
-                                    .size(140.0f, 40.0f)
-                                    .color(t.colors.primary)
-                                    .radius(t.sizes.radius)
-                                    .build();
-                                ui.text("claude.btn.new.text")
+                                components::button(ui, "claude.btn.new")
                                     .size(140.0f, 40.0f)
                                     .text("+ 新建 Profile")
                                     .fontSize(13.0f)
-                                    .lineHeight(40.0f)
-                                    .horizontalAlign(eui::HorizontalAlign::Center)
-                                    .color(eui::Color("#FFFFFF"))
+                                    .colors(t.colors.primary, t.colors.primaryHover,
+                                            t.colors.primaryPressed)
+                                    .textColor(eui::Color("#FFFFFF"))
+                                    .radius(t.sizes.radius)
+                                    .onClick([this] { openCreateForm(); })
                                     .build();
                             })
                             .build();
@@ -343,32 +264,26 @@ public:
                                         .build();
                                 } else {
                                     for (size_t i = 0; i < profiles.size(); ++i) {
-                                        const Profile& p = profiles[i];
-                                        drawProfileCard(ui, "claude.profile." + std::to_string(i),
-                                                        cardY0 + static_cast<float>(i) * (96.0f + cardGap),
-                                                        leftW - 24.0f, t,
-                                                        p.name, p.baseUrl, p.model,
-                                                        p.isActive);
+                                        drawProfileCard(ui,
+                                                        "claude.profile." + std::to_string(i),
+                                                        cardY0 + static_cast<float>(i) *
+                                                            (96.0f + cardGap),
+                                                        leftW - 24.0f, t, profiles[i]);
                                     }
                                 }
 
                                 // 底部新建按钮
-                                const float newBtnY = bodyH - 64.0f;
-                                ui.rect("claude.profiles.new.bg")
-                                    .position(20.0f, newBtnY)
-                                    .size(leftW - 40.0f, 40.0f)
-                                    .color(t.colors.surfaceElevated)
-                                    .radius(t.sizes.radius)
-                                    .border(1.0f, t.colors.borderDefault)
-                                    .build();
-                                ui.text("claude.profiles.new.text")
-                                    .position(20.0f, newBtnY)
+                                components::button(ui, "claude.profiles.new")
+                                    .position(20.0f, bodyH - 64.0f)
                                     .size(leftW - 40.0f, 40.0f)
                                     .text("+ 新建 Profile")
                                     .fontSize(13.0f)
-                                    .lineHeight(40.0f)
-                                    .horizontalAlign(eui::HorizontalAlign::Center)
-                                    .color(t.colors.textPrimary)
+                                    .colors(t.colors.surfaceElevated, t.colors.hover,
+                                            t.colors.active)
+                                    .textColor(t.colors.textPrimary)
+                                    .radius(t.sizes.radius)
+                                    .border(1.0f, t.colors.borderDefault)
+                                    .onClick([this] { openCreateForm(); })
                                     .build();
                             })
                             .build();
@@ -510,7 +425,7 @@ public:
                                     .color(t.colors.textSecondary)
                                     .build();
 
-                                // 操作按钮组
+                                // 操作按钮组（全量接线）
                                 const float actY = fy0 + fieldH + 130.0f;
                                 const float actGap = 12.0f;
                                 const float actW = (w0 - actGap * 3.0f) / 4.0f;
@@ -518,64 +433,91 @@ public:
                                     .size(w0, 36.0f)
                                     .gap(actGap)
                                     .content([&] {
-                                        // 启用
-                                        ui.rect("claude.act.enable.bg")
-                                            .size(actW, 36.0f)
-                                            .color(t.colors.primary)
-                                            .radius(t.sizes.radius)
-                                            .build();
-                                        ui.text("claude.act.enable.text")
+                                        const int64_t shownId = shown ? shown->id : 0;
+                                        const Profile shownCopy = shown
+                                            ? *shown : Profile{};
+
+                                        // 启用（设为激活）
+                                        components::button(ui, "claude.act.enable")
                                             .size(actW, 36.0f)
                                             .text("启用")
                                             .fontSize(13.0f)
-                                            .lineHeight(36.0f)
-                                            .horizontalAlign(eui::HorizontalAlign::Center)
-                                            .color(eui::Color("#FFFFFF"))
+                                            .colors(t.colors.primary,
+                                                    t.colors.primaryHover,
+                                                    t.colors.primaryPressed)
+                                            .textColor(eui::Color("#FFFFFF"))
+                                            .radius(t.sizes.radius)
+                                            .onClick([this, shownId] {
+                                                if (shownId == 0) {
+                                                    showToast("启用失败",
+                                                              "请先新建或选择一个 Profile",
+                                                              true);
+                                                    return;
+                                                }
+                                                doSetActive(shownId);
+                                            })
                                             .build();
                                         // 测试连通
-                                        ui.rect("claude.act.test.bg")
-                                            .size(actW, 36.0f)
-                                            .color(t.colors.surfaceElevated)
-                                            .radius(t.sizes.radius)
-                                            .border(1.0f, t.colors.borderDefault)
-                                            .build();
-                                        ui.text("claude.act.test.text")
+                                        components::button(ui, "claude.act.test")
                                             .size(actW, 36.0f)
                                             .text("测试连通")
                                             .fontSize(13.0f)
-                                            .lineHeight(36.0f)
-                                            .horizontalAlign(eui::HorizontalAlign::Center)
-                                            .color(t.colors.textPrimary)
-                                            .build();
-                                        // 编辑
-                                        ui.rect("claude.act.edit.bg")
-                                            .size(actW, 36.0f)
-                                            .color(t.colors.surfaceElevated)
+                                            .colors(t.colors.surfaceElevated,
+                                                    t.colors.hover, t.colors.active)
+                                            .textColor(t.colors.textPrimary)
                                             .radius(t.sizes.radius)
                                             .border(1.0f, t.colors.borderDefault)
+                                            .onClick([this, shownCopy] {
+                                                if (shownCopy.id == 0) {
+                                                    showToast("测试连通失败",
+                                                              "请先新建或选择一个 Profile",
+                                                              true);
+                                                    return;
+                                                }
+                                                doTestConnection(shownCopy);
+                                            })
                                             .build();
-                                        ui.text("claude.act.edit.text")
+                                        // 编辑（预填现有值）
+                                        components::button(ui, "claude.act.edit")
                                             .size(actW, 36.0f)
                                             .text("编辑")
                                             .fontSize(13.0f)
-                                            .lineHeight(36.0f)
-                                            .horizontalAlign(eui::HorizontalAlign::Center)
-                                            .color(t.colors.textPrimary)
-                                            .build();
-                                        // 删除
-                                        ui.rect("claude.act.del.bg")
-                                            .size(actW, 36.0f)
-                                            .color(t.colors.surfaceElevated)
+                                            .colors(t.colors.surfaceElevated,
+                                                    t.colors.hover, t.colors.active)
+                                            .textColor(t.colors.textPrimary)
                                             .radius(t.sizes.radius)
                                             .border(1.0f, t.colors.borderDefault)
+                                            .onClick([this, shownCopy] {
+                                                if (shownCopy.id == 0) {
+                                                    showToast("编辑失败",
+                                                              "请先新建或选择一个 Profile",
+                                                              true);
+                                                    return;
+                                                }
+                                                openEditForm(shownCopy);
+                                            })
                                             .build();
-                                        ui.text("claude.act.del.text")
+                                        // 删除（确认 dialog）
+                                        components::button(ui, "claude.act.del")
                                             .size(actW, 36.0f)
                                             .text("删除")
                                             .fontSize(13.0f)
-                                            .lineHeight(36.0f)
-                                            .horizontalAlign(eui::HorizontalAlign::Center)
-                                            .color(t.colors.error)
+                                            .colors(t.colors.surfaceElevated,
+                                                    t.colors.hover, t.colors.active)
+                                            .textColor(t.colors.error)
+                                            .radius(t.sizes.radius)
+                                            .border(1.0f, t.colors.borderDefault)
+                                            .onClick([this, shownCopy] {
+                                                if (shownCopy.id == 0) {
+                                                    showToast("删除失败",
+                                                              "请先新建或选择一个 Profile",
+                                                              true);
+                                                    return;
+                                                }
+                                                deleteTargetId_ = shownCopy.id;
+                                                deleteTargetName_ = shownCopy.name;
+                                                deleteConfirmOpen_ = true;
+                                            })
                                             .build();
                                     })
                                     .build();
@@ -717,6 +659,11 @@ public:
             })
             .build();
 
+        // 弹窗（画在最上层）
+        drawProfileFormDialog(ui, screen, t, themeTokens);
+        drawDeleteConfirmDialog(ui, screen, t, themeTokens);
+        drawToast(ui, screen, themeTokens);
+
         LOG_DEBUG("Claude 模块 compose 完成");
     }
 
@@ -750,6 +697,491 @@ public:
             LOG_INFO("onStop: 代理已停止");
         }
     }
+
+private:
+    // ============ Profile 卡片（点击选中，选中/激活高亮） ============
+    void drawProfileCard(eui::Ui& ui,
+                         const std::string& id,
+                         float y,
+                         float width,
+                         const core::theme::Tokens& t,
+                         const Profile& p) {
+        const float h = 96.0f;
+        const bool selected = (p.id == selectedId_);
+        const eui::Color borderColor = (p.isActive || selected)
+            ? t.colors.primary : t.colors.borderDefault;
+        const float borderW = p.isActive ? 2.0f : 1.0f;
+        const eui::Color bg = p.isActive ? t.colors.primarySoftBg : t.colors.surface;
+
+        // 卡片背景（可点击 → 选中后详情面板跟随）
+        ui.rect(id + ".bg")
+            .position(0.0f, y)
+            .size(width, h)
+            .states(bg, t.colors.hover, t.colors.active)
+            .radius(t.sizes.radiusLarge)
+            .border(borderW, borderColor)
+            .onClick([this, pid = p.id] { selectedId_ = pid; })
+            .build();
+
+        // 头像（圆形 - 用 rect 模拟）
+        ui.rect(id + ".avatar")
+            .position(16.0f, y + 16.0f)
+            .size(40.0f, 40.0f)
+            .color(t.colors.surfaceElevated)
+            .radius(20.0f)
+            .border(1.0f, t.colors.borderDefault)
+            .build();
+        // 头像首字
+        const std::string initial = p.name.empty()
+            ? std::string("?")
+            : std::string(1, p.name[0]);
+        ui.text(id + ".avatar.text")
+            .position(16.0f, y + 16.0f)
+            .size(40.0f, 40.0f)
+            .text(initial)
+            .fontSize(16.0f)
+            .lineHeight(40.0f)
+            .horizontalAlign(eui::HorizontalAlign::Center)
+            .color(t.colors.textPrimary)
+            .fontWeight(600)
+            .build();
+
+        // 名称
+        ui.text(id + ".name")
+            .position(64.0f, y + 18.0f)
+            .size(width - 130.0f, 20.0f)
+            .text(p.name)
+            .fontSize(15.0f)
+            .lineHeight(20.0f)
+            .fontWeight(600)
+            .color(t.colors.textPrimary)
+            .build();
+
+        if (p.isActive) {
+            ui.rect(id + ".active.bg")
+                .position(width - 60.0f, y + 16.0f)
+                .size(48.0f, 20.0f)
+                .color(t.colors.primary)
+                .radius(t.sizes.radiusPill)
+                .build();
+            ui.text(id + ".active.text")
+                .position(width - 60.0f, y + 16.0f)
+                .size(48.0f, 20.0f)
+                .text("ACTIVE")
+                .fontSize(9.0f)
+                .lineHeight(20.0f)
+                .horizontalAlign(eui::HorizontalAlign::Center)
+                .color(eui::Color("#FFFFFF"))
+                .fontWeight(700)
+                .build();
+        }
+
+        // base-url (mono, 12px, tertiary)
+        ui.text(id + ".url")
+            .position(64.0f, y + 44.0f)
+            .size(width - 80.0f, 14.0f)
+            .text(p.baseUrl)
+            .fontSize(11.0f)
+            .lineHeight(14.0f)
+            .color(t.colors.textTertiary)
+            .build();
+
+        // model (mono, 12px)
+        ui.text(id + ".model")
+            .position(64.0f, y + 62.0f)
+            .size(width - 80.0f, 14.0f)
+            .text(std::string("model: ") + p.model)
+            .fontSize(11.0f)
+            .lineHeight(14.0f)
+            .color(t.colors.textSecondary)
+            .build();
+    }
+
+    // ============ 新建/编辑 Profile 表单弹窗 ============
+    void openCreateForm() {
+        formEditId_ = 0;   // 0 = 新建
+        formName_.clear();
+        formUrl_.clear();
+        formModel_.clear();
+        formKey_.clear();
+        formError_.clear();
+        formKeyHint_.clear();
+        formOpen_ = true;
+    }
+
+    void openEditForm(const Profile& p) {
+        formEditId_ = p.id;
+        formName_ = p.name;
+        formUrl_ = p.baseUrl;
+        formModel_ = p.model;
+        formKey_.clear();   // 留空 = 不换 key（updateProfile 语义）
+        formError_.clear();
+        formKeyHint_ = p.apiKeyHint;
+        formOpen_ = true;
+    }
+
+    void submitForm() {
+        ClaudeService* svc = ClaudeService::global();
+        if (!svc) {
+            formError_ = "服务未就绪（ClaudeService 未注册）";
+            return;
+        }
+        if (formName_.empty() || formUrl_.empty()) {
+            formError_ = "名称和 Base URL 不能为空";
+            return;
+        }
+        if (formEditId_ == 0) {
+            // 新建：API Key 必填
+            if (formKey_.empty()) {
+                formError_ = "新建 Profile 必须填写 API Key";
+                return;
+            }
+            auto r = svc->createProfile(formName_, formUrl_, formKey_, formModel_);
+            if (r.isFail()) {
+                formError_ = r.errorMessage();
+                return;
+            }
+            formOpen_ = false;
+            selectedId_ = r.value().id;
+            showToast("已创建", "Profile「" + formName_ + "」已保存", false);
+        } else {
+            // 编辑：先取现有行（保留 keychain 引用等字段），再覆盖表单值
+            auto got = svc->getProfile(formEditId_);
+            if (got.isFail()) {
+                formError_ = got.errorMessage();
+                return;
+            }
+            Profile p = std::move(got).value();
+            p.name = formName_;
+            p.baseUrl = formUrl_;
+            p.model = formModel_;
+            p.apiKeyPlain = formKey_;   // 空 = 不换 key
+            auto r = svc->updateProfile(p);
+            if (r.isFail()) {
+                formError_ = r.errorMessage();
+                return;
+            }
+            formOpen_ = false;
+            showToast("已保存", "Profile「" + formName_ + "」已更新", false);
+        }
+    }
+
+    void drawProfileFormDialog(eui::Ui& ui, const eui::Screen& screen,
+                               const core::theme::Tokens& t,
+                               const components::theme::ThemeColorTokens& themeTokens) {
+        const float w = 520.0f;
+        const float h = 440.0f;
+        const bool isEdit = (formEditId_ != 0);
+
+        components::dialog(ui, "claude.dialog.form")
+            .open(formOpen_)
+            .screen(screen.width, screen.height)
+            .size(w, h)
+            .theme(themeTokens)
+            .onOpenChange([this](bool v) { formOpen_ = v; })
+            .content([&] {
+                ui.text("claude.dialog.form.title")
+                    .position(28.0f, 24.0f)
+                    .size(w - 56.0f, 28.0f)
+                    .text(isEdit ? "编辑 Profile" : "新建 Profile")
+                    .fontSize(20.0f)
+                    .lineHeight(28.0f)
+                    .fontWeight(700)
+                    .color(t.colors.textPrimary)
+                    .build();
+
+                // 名称
+                ui.text("claude.dialog.form.name.label")
+                    .position(28.0f, 62.0f)
+                    .size(w - 56.0f, 16.0f)
+                    .text("名称")
+                    .fontSize(11.0f)
+                    .lineHeight(16.0f)
+                    .color(t.colors.textTertiary)
+                    .build();
+                components::input(ui, "claude.dialog.form.name")
+                    .position(28.0f, 80.0f)
+                    .size(w - 56.0f, 40.0f)
+                    .value(formName_)
+                    .placeholder("例如：官方 / 中转 A")
+                    .fontSize(14.0f)
+                    .theme(themeTokens)
+                    .onChange([this](const std::string& v) { formName_ = v; })
+                    .build();
+
+                // Base URL
+                ui.text("claude.dialog.form.url.label")
+                    .position(28.0f, 132.0f)
+                    .size(w - 56.0f, 16.0f)
+                    .text("Base URL")
+                    .fontSize(11.0f)
+                    .lineHeight(16.0f)
+                    .color(t.colors.textTertiary)
+                    .build();
+                components::input(ui, "claude.dialog.form.url")
+                    .position(28.0f, 150.0f)
+                    .size(w - 56.0f, 40.0f)
+                    .value(formUrl_)
+                    .placeholder("https://api.anthropic.com")
+                    .fontSize(14.0f)
+                    .theme(themeTokens)
+                    .onChange([this](const std::string& v) { formUrl_ = v; })
+                    .build();
+
+                // 模型
+                ui.text("claude.dialog.form.model.label")
+                    .position(28.0f, 202.0f)
+                    .size(w - 56.0f, 16.0f)
+                    .text("默认模型")
+                    .fontSize(11.0f)
+                    .lineHeight(16.0f)
+                    .color(t.colors.textTertiary)
+                    .build();
+                components::input(ui, "claude.dialog.form.model")
+                    .position(28.0f, 220.0f)
+                    .size(w - 56.0f, 40.0f)
+                    .value(formModel_)
+                    .placeholder("claude-sonnet-4-5")
+                    .fontSize(14.0f)
+                    .theme(themeTokens)
+                    .onChange([this](const std::string& v) { formModel_ = v; })
+                    .build();
+
+                // API Key
+                ui.text("claude.dialog.form.key.label")
+                    .position(28.0f, 272.0f)
+                    .size(w - 56.0f, 16.0f)
+                    .text("API Key（存入 Keychain，不落数据库）")
+                    .fontSize(11.0f)
+                    .lineHeight(16.0f)
+                    .color(t.colors.textTertiary)
+                    .build();
+                const std::string keyPlaceholder = isEdit
+                    ? ("留空 = 保持现有 Key（" + formKeyHint_ + "）")
+                    : std::string("sk-ant-...");
+                components::input(ui, "claude.dialog.form.key")
+                    .position(28.0f, 290.0f)
+                    .size(w - 56.0f, 40.0f)
+                    .value(formKey_)
+                    .placeholder(keyPlaceholder)
+                    .fontSize(14.0f)
+                    .theme(themeTokens)
+                    .onChange([this](const std::string& v) { formKey_ = v; })
+                    .build();
+
+                // 错误信息（Result 的中文错误）
+                if (!formError_.empty()) {
+                    ui.text("claude.dialog.form.error")
+                        .position(28.0f, 340.0f)
+                        .size(w - 56.0f, 18.0f)
+                        .text(formError_)
+                        .fontSize(12.0f)
+                        .lineHeight(18.0f)
+                        .color(t.colors.error)
+                        .build();
+                }
+
+                // 底部按钮
+                components::button(ui, "claude.dialog.form.cancel")
+                    .position(28.0f, h - 60.0f)
+                    .size((w - 68.0f) * 0.5f, 40.0f)
+                    .text("取消")
+                    .fontSize(14.0f)
+                    .colors(t.colors.surfaceElevated, t.colors.hover, t.colors.active)
+                    .textColor(t.colors.textPrimary)
+                    .radius(t.sizes.radius)
+                    .border(1.0f, t.colors.borderDefault)
+                    .onClick([this] { formOpen_ = false; })
+                    .build();
+                components::button(ui, "claude.dialog.form.confirm")
+                    .position(28.0f + (w - 68.0f) * 0.5f + 12.0f, h - 60.0f)
+                    .size((w - 68.0f) * 0.5f, 40.0f)
+                    .text(isEdit ? "保存" : "创建")
+                    .fontSize(14.0f)
+                    .colors(t.colors.primary, t.colors.primaryHover,
+                            t.colors.primaryPressed)
+                    .textColor(eui::Color("#FFFFFF"))
+                    .radius(t.sizes.radius)
+                    .onClick([this] { submitForm(); })
+                    .build();
+            })
+            .build();
+    }
+
+    // ============ 删除确认弹窗 ============
+    void drawDeleteConfirmDialog(eui::Ui& ui, const eui::Screen& screen,
+                                 const core::theme::Tokens& t,
+                                 const components::theme::ThemeColorTokens& themeTokens) {
+        const float w = 420.0f;
+        const float h = 190.0f;
+
+        components::dialog(ui, "claude.dialog.delete")
+            .open(deleteConfirmOpen_)
+            .screen(screen.width, screen.height)
+            .size(w, h)
+            .theme(themeTokens)
+            .onOpenChange([this](bool v) { deleteConfirmOpen_ = v; })
+            .content([&] {
+                ui.text("claude.dialog.delete.title")
+                    .position(28.0f, 24.0f)
+                    .size(w - 56.0f, 28.0f)
+                    .text("确认删除？")
+                    .fontSize(20.0f)
+                    .lineHeight(28.0f)
+                    .fontWeight(700)
+                    .color(t.colors.textPrimary)
+                    .build();
+                ui.text("claude.dialog.delete.msg")
+                    .position(28.0f, 58.0f)
+                    .size(w - 56.0f, 40.0f)
+                    .text("将删除 Profile「" + deleteTargetName_ +
+                          "」及其 Keychain 中的 API Key，不可恢复。")
+                    .fontSize(13.0f)
+                    .lineHeight(20.0f)
+                    .color(t.colors.textSecondary)
+                    .build();
+
+                components::button(ui, "claude.dialog.delete.cancel")
+                    .position(28.0f, h - 60.0f)
+                    .size((w - 68.0f) * 0.5f, 40.0f)
+                    .text("取消")
+                    .fontSize(14.0f)
+                    .colors(t.colors.surfaceElevated, t.colors.hover, t.colors.active)
+                    .textColor(t.colors.textPrimary)
+                    .radius(t.sizes.radius)
+                    .border(1.0f, t.colors.borderDefault)
+                    .onClick([this] { deleteConfirmOpen_ = false; })
+                    .build();
+                components::button(ui, "claude.dialog.delete.confirm")
+                    .position(28.0f + (w - 68.0f) * 0.5f + 12.0f, h - 60.0f)
+                    .size((w - 68.0f) * 0.5f, 40.0f)
+                    .text("确认删除")
+                    .fontSize(14.0f)
+                    .colors(t.colors.surfaceElevated, t.colors.hover, t.colors.active)
+                    .textColor(t.colors.error)
+                    .radius(t.sizes.radius)
+                    .border(1.0f, t.colors.borderDefault)
+                    .onClick([this] {
+                        const int64_t id = deleteTargetId_;
+                        deleteConfirmOpen_ = false;
+                        doDelete(id);
+                    })
+                    .build();
+            })
+            .build();
+    }
+
+    // ============ Toast 反馈 ============
+    void drawToast(eui::Ui& ui, const eui::Screen& screen,
+                   const components::theme::ThemeColorTokens& themeTokens) {
+        components::toast(ui, "claude.toast")
+            .theme(themeTokens)
+            .screen(screen.width, screen.height)
+            .visible(toastOpen_)
+            .duration(3.5f)
+            .title(toastTitle_)
+            .message(toastMessage_)
+            .onAutoDismiss([this] { toastOpen_ = false; })
+            .onDismiss([this] { toastOpen_ = false; })
+            .build();
+    }
+
+    void showToast(const std::string& title, const std::string& msg, bool isError) {
+        toastTitle_ = isError ? ("⚠ " + title) : ("✓ " + title);
+        toastMessage_ = msg;
+        toastOpen_ = true;
+    }
+
+    // ============ 操作（全部真接 ClaudeService） ============
+
+    void doToggleProxy() {
+        ClaudeService* svc = ClaudeService::global();
+        if (!svc) {
+            showToast("代理操作失败", "服务未就绪（ClaudeService 未注册）", true);
+            return;
+        }
+        if (svc->isProxyRunning()) {
+            svc->stopProxy();
+            showToast("代理已停止", "本地代理已停止监听", false);
+            return;
+        }
+        auto r = svc->startProxy("127.0.0.1", 8888);
+        if (r.isFail()) {
+            showToast("启动代理失败", r.errorMessage(), true);
+            return;
+        }
+        showToast("代理已启动",
+                  "监听 http://127.0.0.1:" + std::to_string(r.value()), false);
+    }
+
+    void doSetActive(int64_t id) {
+        ClaudeService* svc = ClaudeService::global();
+        if (!svc) return;
+        auto r = svc->setActiveProfile(id);
+        if (r.isFail()) {
+            showToast("启用失败", r.errorMessage(), true);
+            return;
+        }
+        selectedId_ = id;
+        showToast("已启用", "该 Profile 已设为激活（ACTIVE）", false);
+    }
+
+    void doDelete(int64_t id) {
+        ClaudeService* svc = ClaudeService::global();
+        if (!svc) return;
+        auto r = svc->deleteProfile(id);
+        if (r.isFail()) {
+            showToast("删除失败", r.errorMessage(), true);
+            return;
+        }
+        if (selectedId_ == id) selectedId_ = 0;
+        showToast("已删除", "Profile 已删除（含 Keychain 条目）", false);
+    }
+
+    void doTestConnection(const Profile& p) {
+        ClaudeService* svc = ClaudeService::global();
+        if (!svc) return;
+        // ponytail: 同步 HTTP 会阻塞 UI 线程（本地/局域网通常 <1s）；
+        // 慢上游需要非阻塞时再挪后台线程 + 回调刷新
+        auto r = svc->testConnection(p);
+        if (r.isFail()) {
+            showToast("连通失败", r.errorMessage(), true);
+            return;
+        }
+        const int code = r.value().statusCode;
+        if (code >= 200 && code < 300) {
+            showToast("连通成功",
+                      "上游返回 HTTP " + std::to_string(code) + "，API 可用", false);
+        } else {
+            showToast("连通异常",
+                      "上游返回 HTTP " + std::to_string(code) +
+                      "（检查 API Key 或 Base URL）", true);
+        }
+    }
+
+    // ============ 状态 ============
+
+    int64_t selectedId_ = 0;   // 0 = 跟随激活 profile
+
+    // 新建/编辑表单
+    bool formOpen_ = false;
+    int64_t formEditId_ = 0;   // 0 = 新建，非 0 = 编辑该 id
+    std::string formName_;
+    std::string formUrl_;
+    std::string formModel_;
+    std::string formKey_;
+    std::string formKeyHint_;  // 编辑时显示现有 key 脱敏提示
+    std::string formError_;
+
+    // 删除确认
+    bool deleteConfirmOpen_ = false;
+    int64_t deleteTargetId_ = 0;
+    std::string deleteTargetName_;
+
+    // Toast
+    bool toastOpen_ = false;
+    std::string toastTitle_;
+    std::string toastMessage_;
 };
 
 } // namespace module::claude
