@@ -32,6 +32,7 @@
 #include <components/scrollview.h>
 #include <components/segmented.h>
 #include <components/theme.h>
+#include <components/toast.h>
 
 #include <algorithm>
 #include <chrono>
@@ -42,6 +43,7 @@
 #include <functional>
 #include <memory>
 #include <string>
+#include <thread>
 #include <vector>
 
 namespace module::markdown {
@@ -142,7 +144,18 @@ public:
     }
 
     void onStop() override {
-        saveEditor();
+        // 退出前落盘：失败不能静默丢编辑（W7 P1-2）。EUI-NEO 无退出拦截
+        // API，无法阻断退出弹 dialog，做同步有限重试（瞬时文件锁可自行恢复）
+        // + 响亮日志兜底；编辑器内容不再有其他持久化通道。
+        for (int attempt = 0; attempt < 3 && editorDirty_; ++attempt) {
+            saveEditor();
+            if (!editorDirty_) break;
+            std::this_thread::sleep_for(std::chrono::milliseconds(200));
+        }
+        if (editorDirty_ && !currentPath_.empty()) {
+            LOG_ERROR("退出时保存笔记失败，未落盘的编辑已丢失: " + currentPath_ +
+                      "（EUI-NEO 暂无退出拦截 API，无法阻断退出）");
+        }
         LOG_INFO("Markdown 模块停止");
     }
 
@@ -193,6 +206,9 @@ public:
 
         // 弹窗要画在最上层（dialog 自带 zIndex）
         drawNewNoteDialog(ui, screen, t, componentTheme);
+
+        // 保存失败等操作的 toast 反馈（画在弹窗之上）
+        drawToast(ui, screen, componentTheme);
     }
 
 private:
@@ -584,7 +600,10 @@ private:
         eui::Color leftColor = t.colors.textTertiary;
         if (!currentPath_.empty()) {
             const std::string name = fs::path(currentPath_).filename().string();
-            if (editorDirty_) {
+            if (saveFailed_) {
+                left = name + "  ✕ 保存失败，自动重试中";
+                leftColor = t.colors.error;
+            } else if (editorDirty_) {
                 left = name + "  ● 未保存";
                 leftColor = t.colors.warning;
             } else {
@@ -817,6 +836,27 @@ private:
 
     // ==================== 业务动作 ====================
 
+    // ---- Toast 反馈（仿 claude_module）----
+    void drawToast(eui::Ui& ui, const eui::Screen& screen,
+                   const components::theme::ThemeColorTokens& themeTokens) {
+        components::toast(ui, "md.toast")
+            .theme(themeTokens)
+            .screen(screen.width, screen.height)
+            .visible(toastOpen_)
+            .duration(3.5f)
+            .title(toastTitle_)
+            .message(toastMessage_)
+            .onAutoDismiss([this] { toastOpen_ = false; })
+            .onDismiss([this] { toastOpen_ = false; })
+            .build();
+    }
+
+    void showToast(const std::string& title, const std::string& msg, bool isError) {
+        toastTitle_ = isError ? ("⚠ " + title) : ("✓ " + title);
+        toastMessage_ = msg;
+        toastOpen_ = true;
+    }
+
     // ---- Phase 1：三态切换 / 大纲 ----
 
     void setMode(ViewMode m) {
@@ -943,31 +983,50 @@ private:
         LOG_INFO("打开笔记: " + relPath);
     }
 
-    // 编辑器里还有未落盘的改动时写回文件 + 索引（每帧调用，自带防抖）
+    // 编辑器里还有未落盘的改动时写回文件 + 索引（每帧调用，自带防抖）。
+    // 保存失败后指数退避（W7 P1-2）：旧代码 dirty 期间每帧重试，
+    // 60fps 下每秒打 60 次失败 IO/日志。
     void flushEditorIfIdle() {
         if (!editorDirty_) return;
         const auto now = std::chrono::steady_clock::now();
         const auto idleMs = std::chrono::duration_cast<std::chrono::milliseconds>(
                                 now - lastEditAt_).count();
-        if (idleMs >= kAutoSaveDelayMs) {
-            saveEditor();
-        }
+        if (idleMs < kAutoSaveDelayMs) return;
+        const auto sinceAttemptMs = std::chrono::duration_cast<std::chrono::milliseconds>(
+                                        now - lastSaveAttemptAt_).count();
+        if (sinceAttemptMs < saveBackoffMs_) return;
+        lastSaveAttemptAt_ = now;
+        saveEditor();
     }
 
     void saveEditor() {
         if (!service_ || currentPath_.empty()) return;
         if (editorText_ == lastSavedText_) {
             editorDirty_ = false;
+            saveFailed_ = false;
             return;
         }
         auto r = service_->write(currentPath_, editorText_);
         if (r.isFail()) {
             LOG_ERROR("保存笔记失败 " + currentPath_ + ": " + r.errorMessage());
             status_ = "保存失败：" + r.errorMessage();
+            saveFailed_ = true;
+            // 500ms → 1s → 2s → … 封顶 60s
+            saveBackoffMs_ = (saveBackoffMs_ == 0)
+                ? 500 : std::min(saveBackoffMs_ * 2, kMaxSaveBackoffMs);
+            // toast 单实例：失败重试风暴期间只在无 toast 展示时弹一次
+            if (!toastOpen_) {
+                showToast("保存失败",
+                          "「" + currentPath_ + "」" + r.errorMessage() +
+                              "，已自动重试",
+                          true);
+            }
             return;
         }
         lastSavedText_ = editorText_;
         editorDirty_ = false;
+        saveFailed_ = false;
+        saveBackoffMs_ = 0;
         lastSavedAt_ = std::time(nullptr);
         status_ = "已保存 " + currentPath_;
     }
@@ -1032,6 +1091,7 @@ private:
     // ==================== 状态 ====================
 
     static constexpr int64_t kAutoSaveDelayMs = 400;
+    static constexpr int64_t kMaxSaveBackoffMs = 60000;  // 保存失败退避封顶 60s
 
     std::unique_ptr<MarkdownService> service_;
     std::vector<NoteMeta> notes_;      // 当前展示（全部或搜索结果）
@@ -1040,10 +1100,18 @@ private:
     std::string editorText_;           // 编辑器缓冲
     std::string lastSavedText_;        // 上次落盘内容（用于跳过冗余写）
     bool editorDirty_ = false;
+    bool saveFailed_ = false;          // 上次保存尝试失败（状态栏 ✕ 提示）
     std::chrono::steady_clock::time_point lastEditAt_{};
+    std::chrono::steady_clock::time_point lastSaveAttemptAt_{};  // 退避计时基准
+    int64_t saveBackoffMs_ = 0;        // 0 = 无退避；失败后指数增长
     std::string status_;               // 顶栏副标题里的状态提示
     bool newNoteOpen_ = false;
     std::string newNoteName_;
+
+    // ---- Toast（EUI-NEO 单实例，复用一个状态位）----
+    bool toastOpen_ = false;
+    std::string toastTitle_;
+    std::string toastMessage_;
 
     // ---- Phase 1 状态 ----
     ViewMode mode_ = ViewMode::Split;  // 三态视图（默认双栏）
