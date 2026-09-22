@@ -203,7 +203,7 @@ std::map<std::string, std::string> buildProxyEnv(
 3. `env` 对象内：`buildProxyEnv()` 产出的键写入/覆盖（这些键归 DevDesk 管理）；用户自己的其他 env 键原样保留
 4. **首份快照**：接管前把原 `env` 对象完整存入 sidecar（`appDataDir()/claude_settings_snapshot.json`：`{ "managedKeys": [...], "envSnapshot": {...} }`）——sidecar 放 DevDesk 数据目录，**不往 settings.json 里塞标记字段**（「非 env 字段原样保留」的红线，多一个下划线键也是违规）
 5. 原子写：写同目录临时文件 → rename 替换
-6. 备份轮换：每次写入前复制一份 `settings.json.devdesk.bak.<n>`（保留最近 10 份，学 cc-switch；清理在写入成功后做）
+6. ~~备份轮换（`.devdesk.bak.<n>` 保留 10 份）~~ **降级取舍（W2 终验 2026-09-22）**：不实现——原子写（tmp+rename）+ 首份快照 sidecar + 崩溃启动补还原已覆盖「不弄坏 / 可还原」的数据安全面，轮换备份的增量收益（用户手改后被托管覆盖的历史找回）不抵其复杂度；已在 KNOWN_LIMITATIONS 登记
 
 **还原（stopProxy 时，含应用退出）**：
 - 读 sidecar；`env` 中 managedKeys：快照里有值 → 恢复原值，快照里没有 → 删除该键；其余一切不动；写回后删除 sidecar
@@ -310,7 +310,7 @@ std::map<std::string, std::string> buildProxyEnv(
 
 1. **上游 API key 永不入 settings.json / SQLite**（现有 Keychain 机制不变）；settings.json 里只有短命代理 token（本机回环 + Bearer 校验，泄漏面 = 本机进程）
 2. **token 展示脱敏**：设置页代理 token 默认 `a3f8***c21e`，[👁] 临时显形，[复制] 进剪贴板（显形不持久化）
-3. **settings.json 原子写 + 备份轮换**：tmp+rename，写前备份保留 10 份（§5.3）；解析失败中止不写
+3. **settings.json 原子写**：tmp+rename；解析失败中止不写（备份轮换已降级取舍，见 §5.3 第 6 条与 KNOWN_LIMITATIONS）
 4. **导入校验**（`parseImportedEnv()` 输入侧）：
    - 顶层必须是 JSON 对象；接受整段 settings.json（取 `env`）或裸 env 对象两种形状
    - env 值必须是字符串（数字/布尔 → 拒绝并提示，不做隐式转换——避免 `"1"` vs `1` 的语义歧义）
@@ -333,8 +333,8 @@ std::map<std::string, std::string> buildProxyEnv(
 - **验收**：默认启动后代理**不**监听 8888、无「已启动」日志；开关打开重启后自动启动；模块 onStart 零 WARN；重新生成 token 在停止态不可点
 
 ### Phase C：settings.json 接管通道（硬性需求 2+3，依赖 A）
-- `core::paths::claudeSettingsFile()`（平台拆文件）+ `settings_sync.h/.cpp`（写入/还原/sidecar/备份轮换/崩溃补还原）+ service 三触发点接线
-- **测试**（临时目录注入路径，全单测）：合并保留非 env 字段与用户 env 键；快照还原（有值恢复/无值删除）；sidecar 缺失不写不删；解析失败中止；备份轮换 ≤10；崩溃补还原；**上层覆盖检测**（临时目录伪造 project/local settings.json 含同名 env 键 → 检测命中；无 → 不警告）
+- `core::paths::claudeSettingsFile()`（平台拆文件）+ `settings_sync.h/.cpp`（写入/还原/sidecar/崩溃补还原；备份轮换降级取舍见 §5.3 第 6 条）+ service 三触发点接线
+- **测试**（临时目录注入路径，全单测）：合并保留非 env 字段与用户 env 键；快照还原（有值恢复/无值删除）；sidecar 缺失不写不删；解析失败中止；崩溃补还原；**上层覆盖检测**（临时目录伪造 project/local settings.json 含同名 env 键 → 检测命中；无 → 不警告）
 - **验收**：启动代理 → settings.json env 块含 BASE_URL=127.0.0.1:port + 代理 token + 模型映射 + 行为开关，其余字段 diff 为空；切 profile → env 跟随；停代理 → settings.json 恢复到接管前内容（逐字节 diff 仅 env 块）；杀进程重启 → 自动补还原
 - **人工验证**：真实 Claude Code 连代理跑一次对话（同时验证开放问题 1 的热切换）
 

@@ -17,6 +17,8 @@
 
 #include "claude_service.h"
 #include "core/database.h"
+#include "core/module_interface.h"
+#include "core/router.h"
 #include "platform/json.h"
 #include "platform/keychain.h"
 #include "provider_config.h"
@@ -25,6 +27,7 @@
 #include <filesystem>
 #include <fstream>
 #include <map>
+#include <memory>
 #include <sstream>
 #include <stdexcept>
 #include <string>
@@ -553,5 +556,52 @@ REGISTER_TEST(sync_service_warnings_surface, "claude_service: 接管警告经 la
                   std::string::npos);
     svc.stopProxy();
     DOCTEST_CHECK(svc.lastSyncWarnings().empty());  // 还原后清空
+    return true;
+})
+
+// ---- 11. 应用退出序列（W2 终验问题 1）：Router::stopAll → onStop → 还原 ----
+// main.cpp 的 atexit handler 走的正是这条链；这里模拟该退出序列，断言
+// 接管状态下退出后 settings.json 还原、sidecar 被消费、代理已停。
+extern "C" ::core::Module* create_claude_module();
+
+REGISTER_TEST(sync_exit_sequence_stop_all,
+              "claude_module: 退出序列 Router::stopAll 触发还原", {
+    using namespace module::claude;
+    TestDb tdb("exit");
+    TempDir d("exit");
+    auto paths = makePaths(d);
+    d.write(paths.settingsFile, R"({"env": {"MY_KEY": "user"}})");
+
+    ClaudeService svc(tdb.handle(), kTestKeychainService);
+    ClaudeService::setGlobal(&svc);
+    struct GlobalGuard {
+        ~GlobalGuard() { ClaudeService::setGlobal(nullptr); }
+    } guard;
+
+    svc.setSettingsSyncPaths(paths);
+    auto r = svc.startProxy("127.0.0.1", 0);
+    DOCTEST_REQUIRE(r.isOk());
+    // 接管已发生：托管键写入 + sidecar 落地
+    {
+        const auto env = readEnv(paths.settingsFile);
+        DOCTEST_CHECK(env.find("ANTHROPIC_BASE_URL") != env.end());
+        DOCTEST_CHECK(d.exists(paths.sidecarFile));
+        DOCTEST_CHECK(svc.isClaudeCodeManaged());
+    }
+
+    // 模拟退出序列（main.cpp atexit → Router::stopAll）
+    std::unique_ptr<::core::Module> mod(create_claude_module());
+    ::core::Router router;
+    router.registerModule(mod.get());
+    router.stopAll();
+
+    // 断言：还原完成（用户键保留、托管键消失）、sidecar 已消费、代理已停
+    const auto env = readEnv(paths.settingsFile);
+    DOCTEST_CHECK_EQ(env.at("MY_KEY"), std::string("user"));
+    DOCTEST_CHECK(env.find("ANTHROPIC_BASE_URL") == env.end());
+    DOCTEST_CHECK(env.find("ANTHROPIC_AUTH_TOKEN") == env.end());
+    DOCTEST_CHECK(!d.exists(paths.sidecarFile));
+    DOCTEST_CHECK(!svc.isClaudeCodeManaged());
+    DOCTEST_CHECK(!svc.isProxyRunning());
     return true;
 })

@@ -214,7 +214,7 @@ public:
     }
 
     // 按语义标记找列 id（'done'=已完成列 / 'todo'=待办列；找不到返回 0）
-    // 不按标题找：用户重命名列后标题不可靠（migration v3 起 kind 是权威）
+    // 不按标题找：用户重命名列后标题不可靠（migration v4 起 kind 是权威）
     int64_t findColumnByKind(const std::string& kind) const {
         for (const auto& c : columns_) {
             if (c.kind == kind) return c.id;

@@ -10,7 +10,7 @@
 
 - **数据模型 v3**：`claude_profiles` 增 `models_config`（6 模型槽位 × 实际名/显示名）+ `extra_env`（自定义键值）两个 JSON 文本列，存量数据零迁移；上游 key 仍全走 Keychain 不落数据库。
 - **代理默认不启动**（硬性需求 1）：`claudeProxyAutoStart` 配置默认 false，设置页「随应用启动代理」开关；`startProxy` 收敛为手动入口（Claude 页按钮 / 设置页重生成 token）。
-- **settings.json 接管通道**（硬性需求 2+3）：代理启动 / 运行中切 profile → `buildProxyEnv()` 生成的托管 env 块合并写入 `~/.claude/settings.json`（BASE_URL→本地代理、AUTH_TOKEN→代理 token、模型映射、行为开关）；非 env 字段与用户自有 env 键原样保留；首份快照存 sidecar，停止代理 / 应用退出按键级还原；原子写 + 备份轮换（保留 10 份）+ 崩溃启动补还原；managed/project 层同名 env 键检测 → 警告提示不代改。
+- **settings.json 接管通道**（硬性需求 2+3）：代理启动 / 运行中切 profile → `buildProxyEnv()` 生成的托管 env 块合并写入 `~/.claude/settings.json`（BASE_URL→本地代理、AUTH_TOKEN→代理 token、模型映射、行为开关）；非 env 字段与用户自有 env 键原样保留；首份快照存 sidecar，停止代理 / 应用退出按键级还原；原子写 + 崩溃启动补还原（备份轮换不实现，降级取舍见 KNOWN_LIMITATIONS）；managed/project 层同名 env 键检测 → 警告提示不代改。
 
 ### feat（Phase D，本批）
 
