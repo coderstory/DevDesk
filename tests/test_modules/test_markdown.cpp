@@ -146,7 +146,7 @@ NoteMeta makeNote(const std::string& path, int64_t mtime) {
 
 } // namespace
 
-REGISTER_TEST(md_tree_grouping, "md_tree: 顶层文件夹/二级文件/根目录散文件分组", {
+REGISTER_TEST(md_tree_grouping, "md_tree: 根组常显置顶 + 顶层文件夹/二级文件分组", {
     // mtime 倒序（listAll 语义），同目录内保持该序。
     // 注意：REGISTER_TEST 宏按逗号切参，vector 初始化列表里的逗号会破坏宏
     // 展开（编译报 "passed 7 arguments"），必须用 push_back —— W8 踩坑。
@@ -156,26 +156,25 @@ REGISTER_TEST(md_tree_grouping, "md_tree: 顶层文件夹/二级文件/根目录
     notes.push_back(makeNote("root.md", 5));
     notes.push_back(makeNote("inbox/c.md", 3));
     const auto rows = buildTreeRows(notes, {});
-    // 顶层文件夹按字母序（inbox, work）+ 根目录组最后；默认全展开
+    // W9：根组「根目录」常显且置顶，其后一级目录按字母序（inbox, work）
     DOCTEST_CHECK_EQ(rows.size(), static_cast<size_t>(7));
     DOCTEST_CHECK(rows[0].isFolder);
-    DOCTEST_CHECK_EQ(rows[0].name, std::string("inbox"));
-    DOCTEST_CHECK_EQ(rows[0].relPath, std::string("inbox"));
-    // Files under folder keep the incoming vector order (listAll = mtime DESC)
-    DOCTEST_CHECK(!rows[1].isFolder);
-    DOCTEST_CHECK_EQ(rows[1].name, std::string("b.md"));
-    DOCTEST_CHECK_EQ(rows[1].relPath, std::string("inbox/b.md"));
+    DOCTEST_CHECK_EQ(rows[0].name, std::string("根目录"));
+    DOCTEST_CHECK_EQ(rows[0].relPath, std::string(""));
+    DOCTEST_CHECK_EQ(rows[1].name, std::string("root.md"));
+    DOCTEST_CHECK_EQ(rows[1].relPath, std::string("root.md"));
     DOCTEST_CHECK_EQ(rows[1].depth, 1);
-    DOCTEST_CHECK_EQ(rows[2].name, std::string("c.md"));
-    DOCTEST_CHECK(rows[3].isFolder);
-    DOCTEST_CHECK_EQ(rows[3].name, std::string("work"));
-    DOCTEST_CHECK_EQ(rows[4].name, std::string("a.md"));
-    // Root scattered files in a separate group at the end
+    // 文件夹组按字母序；组内保持传入顺序（listAll = mtime DESC）
+    DOCTEST_CHECK(rows[2].isFolder);
+    DOCTEST_CHECK_EQ(rows[2].name, std::string("inbox"));
+    DOCTEST_CHECK_EQ(rows[2].relPath, std::string("inbox"));
+    DOCTEST_CHECK_EQ(rows[3].name, std::string("b.md"));
+    DOCTEST_CHECK_EQ(rows[3].relPath, std::string("inbox/b.md"));
+    DOCTEST_CHECK_EQ(rows[3].depth, 1);
+    DOCTEST_CHECK_EQ(rows[4].name, std::string("c.md"));
     DOCTEST_CHECK(rows[5].isFolder);
-    DOCTEST_CHECK_EQ(rows[5].name, std::string("根目录"));
-    DOCTEST_CHECK_EQ(rows[5].relPath, std::string(""));
-    DOCTEST_CHECK_EQ(rows[6].name, std::string("root.md"));
-    DOCTEST_CHECK_EQ(rows[6].relPath, std::string("root.md"));
+    DOCTEST_CHECK_EQ(rows[5].name, std::string("work"));
+    DOCTEST_CHECK_EQ(rows[6].name, std::string("a.md"));
     return true;
 })
 
@@ -184,22 +183,48 @@ REGISTER_TEST(md_tree_collapse_and_deep_files, "md_tree: 收起隐藏文件 / �
     notes.push_back(makeNote("a/deep/x.md", 1));
     notes.push_back(makeNote("a/top.md", 2));
     notes.push_back(makeNote("solo.md", 3));
-    // 收起 a → a 组只剩文件夹行；根目录组不受影响
+    // 收起 a → a 组只剩文件夹行；根目录组不受影响（常显置顶）
     const auto collapsed = buildTreeRows(notes, {"a"});
     DOCTEST_CHECK_EQ(collapsed.size(), static_cast<size_t>(3));
     DOCTEST_CHECK(collapsed[0].isFolder);
-    DOCTEST_CHECK_EQ(collapsed[0].name, std::string("a"));
-    DOCTEST_CHECK(collapsed[1].isFolder);          // 根目录组仍在最后
-    DOCTEST_CHECK_EQ(collapsed[1].name, std::string("根目录"));
-    DOCTEST_CHECK(!collapsed[2].isFolder);
-    DOCTEST_CHECK_EQ(collapsed[2].name, std::string("solo.md"));
+    DOCTEST_CHECK_EQ(collapsed[0].name, std::string("根目录"));
+    DOCTEST_CHECK(!collapsed[1].isFolder);
+    DOCTEST_CHECK_EQ(collapsed[1].name, std::string("solo.md"));
+    DOCTEST_CHECK(collapsed[2].isFolder);
+    DOCTEST_CHECK_EQ(collapsed[2].name, std::string("a"));
     // 更深层文件（a/deep/x.md）挂在一级目录 a 下，显示剩余子路径（二级树不递归）；
     // 组内保持传入顺序（listAll 的 mtime 倒序）
     const auto rows = buildTreeRows(notes, {});
     DOCTEST_CHECK_EQ(rows.size(), static_cast<size_t>(5));
-    DOCTEST_CHECK_EQ(rows[1].name, std::string("deep/x.md"));
-    DOCTEST_CHECK_EQ(rows[2].name, std::string("top.md"));
-    DOCTEST_CHECK_EQ(rows[1].relPath, std::string("a/deep/x.md"));
+    DOCTEST_CHECK(rows[0].isFolder);
+    DOCTEST_CHECK_EQ(rows[0].name, std::string("根目录"));
+    DOCTEST_CHECK_EQ(rows[1].name, std::string("solo.md"));
+    DOCTEST_CHECK(rows[2].isFolder);
+    DOCTEST_CHECK_EQ(rows[2].name, std::string("a"));
+    DOCTEST_CHECK_EQ(rows[3].name, std::string("deep/x.md"));
+    DOCTEST_CHECK_EQ(rows[4].name, std::string("top.md"));
+    DOCTEST_CHECK_EQ(rows[3].relPath, std::string("a/deep/x.md"));
+    return true;
+})
+
+REGISTER_TEST(md_tree_root_group_always, "md_tree: 根组标题常显（无根文件/空目录）", {
+    // 只有子目录文件（无根散文件）→ 根组行仍在顶部（W9）
+    std::vector<NoteMeta> notes;
+    notes.push_back(makeNote("work/a.md", 1));
+    const auto noRoot = buildTreeRows(notes, {});
+    DOCTEST_CHECK_EQ(noRoot.size(), static_cast<size_t>(3));
+    DOCTEST_CHECK(noRoot[0].isFolder);
+    DOCTEST_CHECK_EQ(noRoot[0].name, std::string("根目录"));
+    DOCTEST_CHECK_EQ(noRoot[0].relPath, std::string(""));
+    DOCTEST_CHECK_EQ(noRoot[1].name, std::string("work"));
+    DOCTEST_CHECK_EQ(noRoot[2].name, std::string("a.md"));
+
+    // 空目录 → 仅剩根组标题行（UI 层叠加空态提示）
+    const std::vector<NoteMeta> none;
+    const auto empty = buildTreeRows(none, {});
+    DOCTEST_CHECK_EQ(empty.size(), static_cast<size_t>(1));
+    DOCTEST_CHECK(empty[0].isFolder);
+    DOCTEST_CHECK_EQ(empty[0].name, std::string("根目录"));
     return true;
 })
 
@@ -419,19 +444,19 @@ REGISTER_TEST(md_module_compose_tree, "markdown_module: W8 目录树展开收起
         ui.end();
     };
 
-    // 帧1：树行序 = [inbox▾, idea.md, work▾, week.md, 根目录▾, solo.md]
+    // 帧1：树行序（W9 根组置顶）= [根目录▾, solo.md, inbox▾, idea.md, work▾, week.md]
     frame("t1");
-    DOCTEST_CHECK_EQ(ui.find("md.tree.node.0.name")->text, std::string("📁 inbox"));
-    DOCTEST_CHECK_EQ(ui.find("md.tree.node.1.name")->text, std::string("idea.md"));
-    DOCTEST_CHECK_EQ(ui.find("md.tree.node.2.name")->text, std::string("📁 work"));
-    DOCTEST_CHECK_EQ(ui.find("md.tree.node.4.name")->text, std::string("📁 根目录"));
-    DOCTEST_CHECK_EQ(ui.find("md.tree.node.5.name")->text, std::string("solo.md"));
+    DOCTEST_CHECK_EQ(ui.find("md.tree.node.0.name")->text, std::string("📁 根目录"));
+    DOCTEST_CHECK_EQ(ui.find("md.tree.node.1.name")->text, std::string("solo.md"));
+    DOCTEST_CHECK_EQ(ui.find("md.tree.node.2.name")->text, std::string("📁 inbox"));
+    DOCTEST_CHECK_EQ(ui.find("md.tree.node.3.name")->text, std::string("idea.md"));
+    DOCTEST_CHECK_EQ(ui.find("md.tree.node.4.name")->text, std::string("📁 work"));
 
     // layout 级验证（W7 坑位：position 在流式子元素上静默失效——跑真实 layout
     // 后比对计算 frame，缩进丢失会在下面两条断言暴露）
     ui.layout(screen.width, screen.height);
-    const auto* folderName = ui.find("md.tree.node.0.name");
-    const auto* fileName = ui.find("md.tree.node.1.name");
+    const auto* folderName = ui.find("md.tree.node.2.name");
+    const auto* fileName = ui.find("md.tree.node.3.name");
     DOCTEST_REQUIRE(folderName != nullptr);
     DOCTEST_REQUIRE(fileName != nullptr);
     DOCTEST_CHECK(fileName->frame.x > folderName->frame.x + 20.0f);  // depth=1 缩进
@@ -440,31 +465,66 @@ REGISTER_TEST(md_module_compose_tree, "markdown_module: W8 目录树展开收起
     DOCTEST_CHECK(ui.find("md.outline.panel") == nullptr);
 
     // 帧2：点文件夹行收起 inbox → inbox 的文件行消失（文件夹行保留，箭头变 ▸）
-    const auto* folder = ui.find("md.tree.node.0.row");
+    const auto* folder = ui.find("md.tree.node.2.row");
     DOCTEST_REQUIRE(folder != nullptr);
     DOCTEST_REQUIRE(folder->onClick != nullptr);
     folder->onClick();
     frame("t2");
-    DOCTEST_CHECK_EQ(ui.find("md.tree.node.0.name")->text, std::string("📁 inbox"));
-    DOCTEST_CHECK_EQ(ui.find("md.tree.node.0.arrow")->text, std::string("▸"));
-    DOCTEST_CHECK_EQ(ui.find("md.tree.node.1.name")->text, std::string("📁 work"));
-    DOCTEST_CHECK_EQ(ui.find("md.tree.node.2.name")->text, std::string("week.md"));
-    DOCTEST_CHECK_EQ(ui.find("md.tree.node.3.name")->text, std::string("📁 根目录"));
-    DOCTEST_CHECK_EQ(ui.find("md.tree.node.4.name")->text, std::string("solo.md"));
+    DOCTEST_CHECK_EQ(ui.find("md.tree.node.0.name")->text, std::string("📁 根目录"));
+    DOCTEST_CHECK_EQ(ui.find("md.tree.node.1.name")->text, std::string("solo.md"));
+    DOCTEST_CHECK_EQ(ui.find("md.tree.node.2.name")->text, std::string("📁 inbox"));
+    DOCTEST_CHECK_EQ(ui.find("md.tree.node.2.arrow")->text, std::string("▸"));
+    DOCTEST_CHECK_EQ(ui.find("md.tree.node.3.name")->text, std::string("📁 work"));
+    DOCTEST_CHECK_EQ(ui.find("md.tree.node.4.name")->text, std::string("week.md"));
 
     // 帧3：再点展开 → 文件行回来
-    const auto* folder2 = ui.find("md.tree.node.0.row");
+    const auto* folder2 = ui.find("md.tree.node.2.row");
     DOCTEST_REQUIRE(folder2 != nullptr);
     folder2->onClick();
     frame("t3");
-    DOCTEST_CHECK_EQ(ui.find("md.tree.node.1.name")->text, std::string("idea.md"));
+    DOCTEST_CHECK_EQ(ui.find("md.tree.node.3.name")->text, std::string("idea.md"));
 
     // 帧4：点文件行 → 打开笔记（真实链路）
-    const auto* fileRow = ui.find("md.tree.node.1.row");
+    const auto* fileRow = ui.find("md.tree.node.3.row");
     DOCTEST_REQUIRE(fileRow != nullptr);
     fileRow->onClick();
     frame("t4");
     DOCTEST_CHECK(ui.find("md.editor.input") != nullptr);
+
+    mod->onStop();
+    return true;
+})
+
+// ---- 2b3. W9：空目录树 = 根组标题 + 空态提示同显；搜索 placeholder 常显 ----
+
+REGISTER_TEST(md_module_empty_tree, "markdown_module: W9 空目录根组标题+空态提示同显 / 搜索框 placeholder（headless）", {
+    MdUiEnv env("empty");
+    DOCTEST_REQUIRE(env.db != nullptr);  // 不写任何笔记 → 空目录
+
+    std::unique_ptr<::core::Module> mod(create_markdown_module());
+    mod->onStart();
+
+    eui::Screen screen;
+    screen.width = 1600.0f;
+    screen.height = 1000.0f;
+    eui::Ui ui;
+    ui.begin("e1");
+    mod->compose(ui, screen);
+    ui.end();
+
+    // 空目录：根组标题行 + 空态提示同显
+    const auto* rootHeader = ui.find("md.tree.node.0.name");
+    DOCTEST_REQUIRE(rootHeader != nullptr);
+    DOCTEST_CHECK_EQ(rootHeader->text, std::string("📁 根目录"));
+    const auto* hint = ui.find("md.tree.empty");
+    DOCTEST_REQUIRE(hint != nullptr);
+    DOCTEST_CHECK(hint->text.find("还没有笔记") != std::string::npos);
+
+    // 搜索框 placeholder：空输入 + 未聚焦时也渲染（用户报告「空白文本框」，
+    // 核查结论：EUI-NEO input 只要 text 为空就画 placeholder，与焦点无关）
+    const auto* search = ui.find("md.search.text");
+    DOCTEST_REQUIRE(search != nullptr);
+    DOCTEST_CHECK_EQ(search->text, std::string("🔍 搜索笔记…"));
 
     mod->onStop();
     return true;

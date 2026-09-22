@@ -408,16 +408,30 @@ private:
                     .color(t.colors.error)
                     .build();
             } else if (notes_.empty()) {
-                ui.text("md.tree.empty")
-                    .position(16.0f, listY + 8.0f)
-                    .size(sideW - 32.0f, 40.0f)
-                    .text(searchQuery_.empty() ? "还没有笔记\n点下面「+ 新建」开始"
-                                               : "没有匹配的笔记")
-                    .fontSize(t.sizes.fontSizeSmall)
-                    .lineHeight(18.0f)
-                    .wrap()
-                    .color(t.colors.textTertiary)
-                    .build();
+                if (searchQuery_.empty()) {
+                    // 空目录：根组标题 + 空态提示同显（W9——组标题行常显，
+                    // 提示挪到标题行下方，不再独占替换掉树结构）
+                    drawTreeList(ui, listY, listH, sideW, t, componentTheme);
+                    ui.text("md.tree.empty")
+                        .position(36.0f, listY + 40.0f)
+                        .size(sideW - 48.0f, 40.0f)
+                        .text("还没有笔记\n点下面「+ 新建」开始")
+                        .fontSize(t.sizes.fontSizeSmall)
+                        .lineHeight(18.0f)
+                        .wrap()
+                        .color(t.colors.textTertiary)
+                        .build();
+                } else {
+                    ui.text("md.tree.empty")
+                        .position(16.0f, listY + 8.0f)
+                        .size(sideW - 32.0f, 40.0f)
+                        .text("没有匹配的笔记")
+                        .fontSize(t.sizes.fontSizeSmall)
+                        .lineHeight(18.0f)
+                        .wrap()
+                        .color(t.colors.textTertiary)
+                        .build();
+                }
             } else if (!searchQuery_.empty()) {
                 drawNoteList(ui, listY, listH, sideW, t, componentTheme);
             } else {
