@@ -470,6 +470,71 @@ REGISTER_TEST(md_module_compose_tree, "markdown_module: W8 目录树展开收起
     return true;
 })
 
+// ---- 2b2. W9：双栏宽度公式（layout 级——midW 笔误回归）----
+
+REGISTER_TEST(md_module_split_layout, "markdown_module: W9 双栏三列铺满 contentW 无残隙（headless layout）", {
+    MdUiEnv env("split");
+    DOCTEST_REQUIRE(env.db != nullptr);
+    DOCTEST_REQUIRE(writeTextFile(env.dir / "note.md", "# A\n"));
+
+    std::unique_ptr<::core::Module> mod(create_markdown_module());
+    mod->onStart();
+
+    eui::Screen screen;
+    screen.width = 1600.0f;
+    screen.height = 1000.0f;
+    eui::Ui ui;
+    auto frame = [&](const char* page) {
+        ui.begin(page);
+        mod->compose(ui, screen);
+        ui.end();
+    };
+
+    // 打开笔记（单根文件 → 树行 [根目录, note.md]）
+    frame("sp_open");
+    const auto* fileRow = ui.find("md.tree.node.1.row");
+    DOCTEST_REQUIRE(fileRow != nullptr);
+    DOCTEST_REQUIRE(fileRow->onClick != nullptr);
+    fileRow->onClick();
+
+    // 进双栏态（默认态会随版本演进，最多循环 3 次一定经过 Split）
+    eui::KeyEvent p;
+    p.key = eui::InputKey::P;
+    p.modifiers.control = true;
+    p.modifiers.shift = true;
+    bool split = false;
+    for (int i = 0; i < 3 && !split; ++i) {
+        frame("sp");
+        split = ui.find("md.editor.input") != nullptr &&
+               ui.find("md.preview.scroll") != nullptr;
+        if (!split) mod->onKeyEvent(p);
+    }
+    DOCTEST_REQUIRE(split);
+
+    ui.layout(screen.width, screen.height);
+    const auto* tree = ui.find("md.tree.bg");
+    const auto* editor = ui.find("md.editor.bg");
+    const auto* preview = ui.find("md.preview.bg");
+    DOCTEST_REQUIRE(tree != nullptr);
+    DOCTEST_REQUIRE(editor != nullptr);
+    DOCTEST_REQUIRE(preview != nullptr);
+
+    // 三列 + 2 gap 铺满 contentW（1600 - 80 padding = 1520），无残余死白
+    const float pad = 40.0f;
+    const float contentW = screen.width - pad * 2.0f;
+    const float gap = 16.0f;
+    DOCTEST_CHECK_EQ(tree->frame.x, pad);
+    DOCTEST_CHECK_EQ(tree->frame.width, 240.0f);
+    DOCTEST_CHECK_EQ(editor->frame.width, preview->frame.width);
+    const float total = tree->frame.width + editor->frame.width +
+                        preview->frame.width + gap * 2.0f;
+    DOCTEST_CHECK(total > contentW - 0.5f && total < contentW + 0.5f);
+    DOCTEST_CHECK_EQ(preview->frame.x + preview->frame.width, pad + contentW);
+
+    mod->onStop();
+    return true;
+})
+
 // ---- 2c. W8：大纲浮动面板不挤压编辑区（layout 级）----
 
 REGISTER_TEST(md_module_compose_outline_float, "markdown_module: W8 大纲浮动面板 zIndex/不挤压（headless layout）", {

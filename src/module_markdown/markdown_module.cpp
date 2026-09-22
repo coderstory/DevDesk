@@ -207,7 +207,10 @@ public:
         const float contentH = screen.height - pad * 2.0f;
         const float sideW = 240.0f;
         const float gap = 16.0f;
-        const float midW = (contentW - sideW * 2.0f - gap * 2.0f) / 2.0f;
+        // 双栏态中栏宽：md.body row 实际只有左栏一个 sideW（树）+ 编辑 + 预览
+        // 两列 + 两个 gap（W9 修复：旧公式多减一个 sideW，双栏各窄 128px、
+        // 右侧 240px 死白）
+        const float midW = (contentW - sideW - gap * 2.0f) / 2.0f;
         const float bodyH = contentH - 64.0f - t.sizes.spacingLarge;
 
         // 页面背景自绘（仿 settings_module：main.cpp clearColor 固定浅色，
@@ -360,16 +363,17 @@ private:
                         float sideW,
                         const core::theme::Tokens& t,
                         const components::theme::ThemeColorTokens& componentTheme) {
-        ui.column("md.tree").size(sideW, bodyH).gap(0.0f).content([&] {
+        // W9 修复：旧结构 = column（只铺底色）+ 兄弟 overlay stack，overlay
+        // 会在 md.body row 的流式布局里占第二个同样宽的槽位（三列整体右移
+        // 溢出屏）。改为单个 stack：bg 不定位时居中铺满，内容绝对定位
+        // （同 drawOutlinePanel 的成熟模式）。
+        ui.stack("md.tree").size(sideW, bodyH).content([&] {
             ui.rect("md.tree.bg")
                 .size(sideW, bodyH)
                 .color(t.colors.surface)
                 .radius(t.sizes.radiusLarge)
                 .border(1.0f, t.colors.borderDefault)
                 .build();
-        }).build();
-
-        ui.stack("md.tree.overlay").size(sideW, bodyH).content([&] {
             // 搜索框：真实调用 FTS5
             components::input(ui, "md.search")
                 .position(12.0f, 12.0f)
@@ -684,16 +688,15 @@ private:
                           const core::theme::Tokens& t,
                           const components::theme::ThemeColorTokens& componentTheme) {
         (void)componentTheme;
-        ui.column("md.editor").size(midW, bodyH).gap(0.0f).content([&] {
+        // W9 修复：同左栏——column+overlay 兄弟双占位改单 stack
+        ui.stack("md.editor").size(midW, bodyH).content([&] {
             ui.rect("md.editor.bg")
                 .size(midW, bodyH)
                 .color(t.colors.surface)
                 .radius(t.sizes.radiusLarge)
                 .border(1.0f, t.colors.borderDefault)
                 .build();
-        }).build();
 
-        ui.stack("md.editor.overlay").size(midW, bodyH).content([&] {
             const bool hasNote = !currentPath_.empty();
 
             if (!hasNote) {
@@ -808,16 +811,15 @@ private:
                            const components::theme::ThemeColorTokens& componentTheme,
                            float gap) {
         (void)gap;
-        ui.column("md.preview").size(midW, bodyH).gap(0.0f).content([&] {
+        // W9 修复：同左栏——column+overlay 兄弟双占位改单 stack
+        ui.stack("md.preview").size(midW, bodyH).content([&] {
             ui.rect("md.preview.bg")
                 .size(midW, bodyH)
                 .color(t.colors.surface)
                 .radius(t.sizes.radiusLarge)
                 .border(1.0f, t.colors.borderDefault)
                 .build();
-        }).build();
 
-        ui.stack("md.preview.overlay").size(midW, bodyH).content([&] {
             float pvX = 20.0f;
             float pvW = midW - 40.0f;
             if (mode_ == ViewMode::Preview) {
