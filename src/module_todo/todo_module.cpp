@@ -3,6 +3,7 @@
 #include "core/database.h"
 #include "core/logging.h"
 #include "core/module_interface.h"
+#include "core/router.h"
 #include "core/theme.h"
 #include "core/time.h"
 #include "todo_service.h"
@@ -266,6 +267,9 @@ public:
     // ============ UI ============
 
     void compose(eui::Ui& ui, const eui::Screen& screen) override {
+        // 消费跨模块跳转负载（Router payload，一次性语义）
+        consumeNavPayload();
+
         const auto& t = core::theme::current();
         const float pad = t.sizes.spacingXXLarge;        // 40
         const float contentW = screen.width - pad * 2.0f;
@@ -538,6 +542,28 @@ private:
     }
 
     // ---------- 新建任务弹窗 ----------
+
+    // 消费挂在 Todo 页上的跳转负载（每帧调用；consumePendingPayload
+    // 取出即清空，compose 逐帧重复调用不会重复触发）：
+    //   "action:new_task" → 打开新建任务弹窗（等价页内「+ 新建任务」）
+    void consumeNavPayload() {
+        auto* router = ::core::appRouter();
+        if (router == nullptr) return;
+        const std::string payload = router->consumePendingPayload(pageId());
+        if (payload.empty()) return;
+
+        if (payload == "action:new_task") {
+            if (columns_.empty()) {
+                setStatus("请先创建至少一列", true);
+                return;
+            }
+            openNewTaskDialog(columns_.front().id);
+            LOG_INFO("跨模块负载：打开新建任务弹窗");
+            return;
+        }
+        LOG_WARN("Todo: 未识别的跳转负载: " + payload);
+    }
+
     void openNewTaskDialog(int64_t columnId) {
         newTaskColumnId_ = columnId;
         newTaskTitle_.clear();

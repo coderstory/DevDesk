@@ -3,7 +3,8 @@
 //
 // 数据：markdown_index / todo_tasks / claude_call_logs 只读聚合，
 // 经 core::appDatabase() 拿共享连接（与 Markdown/Todo 模块同一装配模式）。
-// 导航：core::appRouter()（main.cpp 注册），module_* 之间互不依赖。
+// 导航：core::appRouter()（main.cpp 注册），module_* 之间互不依赖；
+// 跨模块动作经 Router payload 下发（"action:*" / "open:*"），由目标页消费。
 #include "core/database.h"
 #include "core/logging.h"
 #include "core/module_interface.h"
@@ -312,16 +313,23 @@ public:
                                 const RecentNote& note = stats_.recentNotes[i];
                                 const float iy = listTop + static_cast<float>(i) * itemH;
                                 const auto id = std::to_string(i);
+                                // 拷贝进闭包：note 是 stats_ 里的引用，
+                                // refreshStats 后可能失效
+                                const std::string notePath = note.relativePath;
 
-                                // 整行可点击 → 跳转 Markdown 页
+                                // 整行可点击 → 跳转 Markdown 页并打开该笔记
+                                // （Router payload："open:<相对路径>"，由
+                                // Markdown 模块 compose 消费）
                                 ui.rect("home.recent.row." + id)
                                     .position(12.0f, iy - 4.0f)
                                     .size(contentW - 24.0f, 40.0f)
                                     .color(t.colors.surface)
                                     .hoverColor(t.colors.hover)
                                     .radius(t.sizes.radiusSmall)
-                                    .onClick(
-                                        [this] { navigateTo(::core::PageId::Markdown); })
+                                    .onClick([this, notePath] {
+                                        navigateTo(::core::PageId::Markdown,
+                                                   "open:" + notePath);
+                                    })
                                     .build();
                                 // 图标
                                 ui.rect("home.recent.icon." + id)
@@ -362,14 +370,15 @@ public:
                     })
                     .build();
 
-                // ========== 快捷操作按钮组（接线：导航到对应模块） ==========
+                // ========== 快捷操作按钮组（Router payload 跨模块指令）==========
                 const float actGap = t.sizes.spacingLarge; // 16
                 const float actW = (contentW - actGap * 2.0f) / 3.0f;
                 ui.row("home.actions")
                     .size(contentW, 44.0f)
                     .gap(actGap)
                     .content([&] {
-                        // + 新建笔记 → Markdown 模块（跨模块无"开新建对话框"机制，降级为导航）
+                        // + 新建笔记 → 跳 Markdown 并触发新建笔记弹窗
+                        // （payload 由 Markdown 模块 compose 消费）
                         components::button(ui, "home.act.newnote")
                             .size(actW, 44.0f)
                             .text("+ 新建笔记")
@@ -378,10 +387,13 @@ public:
                                     t.colors.primaryPressed)
                             .textColor(eui::Color("#FFFFFF"))
                             .radius(t.sizes.radius)
-                            .onClick([this] { navigateTo(::core::PageId::Markdown); })
+                            .onClick([this] {
+                                navigateTo(::core::PageId::Markdown,
+                                           "action:new_note");
+                            })
                             .build();
 
-                        // + 新建任务 → Todo 模块（同上，降级为导航）
+                        // + 新建任务 → 跳 Todo 并触发新建任务弹窗
                         components::button(ui, "home.act.newtodo")
                             .size(actW, 44.0f)
                             .text("+ 新建任务")
@@ -391,7 +403,10 @@ public:
                             .textColor(t.colors.textPrimary)
                             .radius(t.sizes.radius)
                             .border(1.0f, t.colors.borderDefault)
-                            .onClick([this] { navigateTo(::core::PageId::Todo); })
+                            .onClick([this] {
+                                navigateTo(::core::PageId::Todo,
+                                           "action:new_task");
+                            })
                             .build();
 
                         // 切换 Claude Profile → Claude 模块（Profile 列表在该页）
@@ -417,14 +432,14 @@ public:
 private:
     static constexpr int kRecentNoteLimit = 5;
 
-    void navigateTo(::core::PageId page) {
+    void navigateTo(::core::PageId page, const std::string& payload = "") {
         auto* router = ::core::appRouter();
         if (router == nullptr) {
             LOG_WARN("Home: Router 未注册，无法跳转到 " +
                      std::string(::core::pageIdToString(page)));
             return;
         }
-        router->navigateTo(page);
+        router->navigateTo(page, payload);
     }
 
     std::unique_ptr<HomeService> service_;
