@@ -3,11 +3,12 @@
 //
 // 设置项：
 //   1. 主题切换（深色/浅色）——core::theme::setDark/setLight，compose 每帧读
-//      current()，切换后下一帧全页生效（日志自证：applyTheme 有 LOG_INFO）
-//   2. 字号缩放——**限制（如实记录）**：core::theme 的 SizeTokens 不支持运行时
-//      缩放（setDark/setLight 用硬编码 token 重建全局，无缩放入口，且 core/theme
-//      不在本任务文件范围），因此该设置当前仅作用于设置页自身可控的字号
-//      （fs() 辅助函数），并持久化到 config.json，供后续全局接线
+//      current()，切换后下一帧全页生效（日志自证：applyTheme 有 LOG_INFO）；
+//      窗口底色（clearColor）在启动时跟随持久化主题，运行中切换重启后生效
+//      （EUI-NEO 无运行时改 clearColor 的 API，见 main.cpp 注释）
+//   2. 字号缩放——core::theme::setFontScale 全局生效：token 层缩放让所有
+//      经 t.sizes.fontSize* 取字号的模块零改动受益；本页非 token 的硬编码
+//      小字号经 fs() 辅助函数跟随同一缩放
 //   3. Claude 代理 token 只读显示 + 重新生成（stopProxy + startProxy 同端口重启
 //      → 服务端生成新 token；同步重写 proxy_token.txt）
 //   4. Markdown 笔记目录只读展示（改目录属于范围外，仅展示）
@@ -15,8 +16,8 @@
 //      集成点：与 w3-t10-home 并行分支的日志清理任务联动，T10 清理逻辑读取
 //      config.json 的 logRetentionDays 字段，接线留给集成阶段
 //
-// 入口说明：应用当前没有侧边栏（Router 只渲染当前模块，全应用导航接线是 T9
-// 遗留项），Settings 入口由 main.cpp 的全局浮动齿轮按钮承担（见 main.cpp）。
+// 入口说明：设置入口在 main.cpp 的常驻侧边栏（app.sidebar，spec §2/§6.5.2），
+// 与其他四个模块同列。
 //
 // 依赖说明：module_* 之间原则上不互相依赖（防循环）；本模块单向依赖
 // module_claude_proxy，仅为读取 main.cpp 注册的 ClaudeService::global() 单例
@@ -103,12 +104,15 @@ public:
     void onStart() override {
         store_ = std::make_unique<SettingsStore>(::core::paths::configFile());
         cfg_ = store_->load();
-        // 启动即应用持久化主题（getRouter() 在首帧 compose 之前完成 startAll）
+        // 启动即应用持久化主题 + 字号缩放（main.cpp 的 dslAppConfig 也做过
+        // 同样恢复——这里幂等重放，保证模块独立使用时行为一致）
         if (cfg_.darkTheme) {
             ::core::theme::setDark();
         } else {
             ::core::theme::setLight();
         }
+        ::core::theme::setFontScale(
+            static_cast<float>(cfg_.fontScalePercent) / 100.0f);
         LOG_INFO("Settings 模块启动（主题=" + ::core::theme::currentThemeName() +
                  ", 字号=" + std::to_string(cfg_.fontScalePercent) + "%" +
                  ", 日志保留=" + retentionLabel() + "）");
@@ -137,11 +141,14 @@ public:
     void applyFontPreset(int index) {
         if (index < 0 || index >= kFontPresetCount) return;
         cfg_.fontScalePercent = kFontPresets[index];
+        // 写入 core::theme 全局缩放：token 读取层生效，所有模块零改动受益
+        ::core::theme::setFontScale(
+            static_cast<float>(cfg_.fontScalePercent) / 100.0f);
         persist();
         setStatus("字号缩放：" + std::to_string(cfg_.fontScalePercent) +
-                  "%（当前仅设置页生效）");
+                  "%（下一帧全局生效）");
         LOG_INFO("Settings: 字号缩放 → " + std::to_string(cfg_.fontScalePercent) +
-                 "%（限制：仅设置页自身字号，全局生效待 core::theme 支持运行时缩放）");
+                 "%（core::theme token 层全局缩放）");
     }
 
     void applyRetentionPreset(int index) {
@@ -232,9 +239,10 @@ public:
     }
 
 private:
-    // 模块可控字号 = 基准字号 × 缩放（限制：仅设置页自身，见文件头注释）
+    // 非 token 的硬编码字号跟随全局缩放（单一来源 core::theme::fontScale；
+    // token 字号已在 theme 层缩放，不要再经 fs() 包一层，避免双重缩放）
     float fs(float base) const {
-        return base * static_cast<float>(cfg_.fontScalePercent) / 100.0f;
+        return base * ::core::theme::fontScale();
     }
 
     std::string retentionLabel() const {
@@ -263,12 +271,12 @@ private:
                             .color(t.colors.textPrimary)
                             .build();
                         const std::string sub = statusMessage_.empty()
-                            ? "所有变更即时保存到 config.json · 通过右下角浮动按钮返回首页"
+                            ? "所有变更即时保存到 config.json · 左侧侧边栏切换页面"
                             : statusMessage_;
                         ui.text("settings.subtitle")
                             .size(contentW, 20.0f)
                             .text(sub)
-                            .fontSize(fs(t.sizes.fontSizeSmall))
+                            .fontSize(t.sizes.fontSizeSmall)
                             .lineHeight(20.0f)
                             .color(statusIsError_ ? t.colors.error
                                                   : t.colors.textSecondary)
@@ -315,7 +323,7 @@ private:
                 ui.text(id + ".desc")
                     .position(28.0f, 44.0f)
                     .size(w - 56.0f, 18.0f)
-                    .text("主题切换即时生效；字号缩放当前仅作用于设置页自身文字")
+                    .text("主题即时生效（窗口底色重启后跟随）；字号缩放全局生效")
                     .fontSize(fs(12.0f))
                     .lineHeight(18.0f)
                     .color(t.colors.textTertiary)

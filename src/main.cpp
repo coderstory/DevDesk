@@ -15,8 +15,6 @@
 #include <eui/dsl.h>
 #include <eui/dsl_app.h>
 
-#include <components/button.h>
-
 #include <fstream>
 #include <memory>
 #include <cstdlib>
@@ -247,49 +245,116 @@ void startClaudeProxy() {
 
 namespace app {
 
-// 全局设置入口（T11 桥接方案）：
-// 应用当前没有侧边栏（Router 只渲染当前模块，全应用导航接线是 T9 遗留项，
-// spec §8.5 的"侧边栏底部齿轮"暂不可达），因此在 compose 顶层画一个
-// 浮动齿轮按钮承担 Settings 的进入/返回；正式侧边栏落地后可移除。
-void drawGlobalSettingsEntry(eui::Ui& ui, const eui::Screen& screen) {
+// ---- 常驻侧边栏（spec §2 预期效果 / §6.5.2 侧边栏规格）----
+// 布局：row(侧边栏 260px, 页面内容)。侧边栏列出 Router 已注册的全部模块
+//（含设置），当前页高亮，点击 navigateTo。EUI-NEO components/sidebar 是
+//右侧滑出抽屉（scrim + 关闭按钮，见 ../EUI-NEO/components/sidebar.h），
+//不适合常驻导航栏，因此这里按 spec token 自绘（设计 token 属 DevDesk 自己的事）。
+void drawSidebar(eui::Ui& ui, const eui::Screen& screen) {
     ::core::Router* router = getRouter();
     if (!router) return;
-
-    const bool onSettings = (router->currentPage() == ::core::PageId::Settings);
-    const float size = 52.0f;
-    const float margin = 28.0f;
     const auto& t = ::core::theme::current();
 
-    ui.stack("app.nav.settings")
-        .position(screen.width - size - margin, screen.height - size - margin)
-        .size(size, size)
-        .zIndex(100)  // 顶层：盖住任何页面内容
+    // 渲染自证：首帧挂载日志（侧边栏每帧重绘，static 只记一次）
+    static const bool mounted = [] {
+        LOG_INFO("侧边栏导航已挂载（" +
+                 std::to_string(getRouter()->modules().size()) +
+                 " 个模块入口，宽 260px）");
+        return true;
+    }();
+    (void)mounted;
+
+    constexpr float kWidth = 260.0f;   // spec §6.5.2：侧边栏宽 260（不是 200-220）
+    const float itemH = 40.0f;         // 导航项高 40
+    const float gap = 4.0f;            // 导航项 gap 4
+    const float padX = 16.0f;          // 左右 padding 16
+
+    ui.stack("app.sidebar")
+        .size(kWidth, screen.height)
         .content([&] {
-            components::button(ui, "app.nav.settings.btn")
-                .size(size, size)
-                .icon(onSettings ? 0xF060 : 0xF013)  // 在设置页变返回箭头
-                .iconSize(onSettings ? 18.0f : 20.0f)
-                .iconColor(onSettings ? t.colors.textPrimary
-                                      : t.colors.textSecondary)
-                .colors(t.colors.surfaceElevated, t.colors.hover,
-                        t.colors.active)
-                .radius(size * 0.5f)
-                .border(1.0f, t.colors.borderDefault)
-                .onClick([router, onSettings] {
-                    router->navigateTo(onSettings ? ::core::PageId::Home
-                                                  : ::core::PageId::Settings);
-                })
+            ui.rect("app.sidebar.bg")
+                .size(kWidth, screen.height)
+                .color(t.colors.surface)
                 .build();
+            ui.rect("app.sidebar.divider")
+                .position(kWidth - 1.0f, 0.0f)
+                .size(1.0f, screen.height)
+                .color(t.colors.borderMuted)
+                .build();
+
+            ui.text("app.sidebar.brand")
+                .position(padX, 24.0f)
+                .size(kWidth - padX * 2.0f, 32.0f)
+                .text("DevDesk")
+                .fontSize(t.sizes.fontSizePage)
+                .lineHeight(32.0f)
+                .fontWeight(700)
+                .color(t.colors.textPrimary)
+                .build();
+
+            float y = 84.0f;
+            for (auto* m : router->modules()) {
+                if (!m) continue;
+                const ::core::PageId page = m->pageId();
+                const bool active = (page == router->currentPage());
+                const std::string id =
+                    std::string("app.sidebar.item.") +
+                    ::core::pageIdToString(page);
+
+                // 命中区 + 悬停反馈（states: 常态/悬停/按下）
+                ui.rect(id + ".hit")
+                    .position(padX, y)
+                    .size(kWidth - padX * 2.0f, itemH)
+                    .states(active ? t.colors.primarySoftBg
+                                   : eui::Color{0.0f, 0.0f, 0.0f, 0.0f},
+                            t.colors.hover, t.colors.active)
+                    .radius(t.sizes.radius)
+                    .onClick([router, page] { router->navigateTo(page); })
+                    .build();
+                ui.text(id + ".label")
+                    .position(padX, y)
+                    .size(kWidth - padX * 2.0f, itemH)
+                    .text(m->iconGlyph() + "  " + m->displayName())
+                    .fontSize(t.sizes.fontSizeBody)
+                    .lineHeight(itemH)
+                    .color(active ? t.colors.primary : t.colors.textSecondary)
+                    .build();
+
+                y += itemH + gap;
+            }
         })
         .build();
 }
 
 // DslAppConfig 在 eui::dsl_app.h 中定义（命名空间 app）
 const DslAppConfig& dslAppConfig() {
+    // 第一步：恢复持久化主题 + 全局字号缩放（只读 config.json，无 DB 依赖）。
+    // 必须先于下面 DslAppConfig 的构造执行：clearColor 在构造时从 theme 快照。
+    // EUI-NEO 无运行时改 clearColor 的 API（DslWindowRuntime::request_ 是
+    // initialize 时拷贝的快照且无私有成员 setter，见
+    // ../EUI-NEO/core/app/dsl_window_runtime.h render 处），因此运行中切换
+    // 主题时窗口底色不跟随，重启后生效（卡片/文字色仍即时生效）。
+    static const bool themeRestored = []() {
+        ::core::paths::ensureDirectoriesExist();
+        setupLogging();
+        const module::settings::SettingsStore store(
+            ::core::paths::configFile());
+        const auto cfg = store.load();
+        if (cfg.darkTheme) {
+            ::core::theme::setDark();
+        } else {
+            ::core::theme::setLight();
+        }
+        ::core::theme::setFontScale(
+            static_cast<float>(cfg.fontScalePercent) / 100.0f);
+        return true;
+    }();
+    (void)themeRestored;
+
     static const DslAppConfig config = DslAppConfig{}
         .title("DevDesk")
         .pageId("devdesk")
-        .clearColor(eui::Color("#FAF9F5"))
+        .clearColor(::core::theme::current().colors.background)  // 跟随主题
         .windowSize(1600, 1000)
         .minWindowSize(1200, 720)
         .highDpi(true)
@@ -301,9 +366,7 @@ const DslAppConfig& dslAppConfig() {
 
     static bool initialized = []() {
         using namespace core;
-        paths::ensureDirectoriesExist();
-        setupLogging();
-        // 必须在 setupLogging() 之后：captureOpenFileFromArgv() 内部有 LOG_INFO
+        // 必须在 setupLogging() 之后（themeRestored 里已完成）：内部有 LOG_INFO
         captureOpenFileFromArgv();
         LOG_INFO("DevDesk 启动中...");
         LOG_INFO("应用数据目录: " + paths::appDataDir().string());
@@ -324,11 +387,27 @@ const DslAppConfig& dslAppConfig() {
 
 void compose(eui::Ui& ui, const eui::Screen& screen) {
     auto* router = getRouter();
-    if (router) {
-        router->compose(ui, screen);
-    }
-    // 全局设置入口（浮动齿轮）：画在所有页面内容之后 + zIndex 100，始终可见
-    drawGlobalSettingsEntry(ui, screen);
+    if (!router) return;
+    // 布局：row(常驻侧边栏, 页面内容)——spec §2"左侧侧边栏切换工具，右侧主区"
+    constexpr float kSidebarWidth = 260.0f;
+    ui.row("app.root")
+        .size(screen.width, screen.height)
+        .content([&] {
+            drawSidebar(ui, screen);
+            const float pageW = screen.width - kSidebarWidth;
+            ui.stack("app.page")
+                .size(pageW, screen.height)
+                .clip()
+                .content([&] {
+                    // 页面模块按"去掉侧边栏后的宽度"布局（Screen 只含宽高）
+                    eui::Screen pageScreen;
+                    pageScreen.width = pageW;
+                    pageScreen.height = screen.height;
+                    router->compose(ui, pageScreen);
+                })
+                .build();
+        })
+        .build();
 }
 
 } // namespace app

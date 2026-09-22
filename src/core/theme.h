@@ -63,6 +63,12 @@ const Tokens& current();
 void setDark();
 void setLight();
 
+// 全局字号缩放（1.0 = 原始尺寸；作用于 SizeTokens 的全部 fontSize* 字段，
+// 即 token 读取层——所有经 t.sizes.fontSize* 取字号的模块零改动受益。
+// 各模块内硬编码的字面量字号（如 fontSize(12.0f)）不经过 token，不在缩放范围）
+void setFontScale(float scale);
+float fontScale();
+
 // 获取当前主题名
 std::string currentThemeName();
 
