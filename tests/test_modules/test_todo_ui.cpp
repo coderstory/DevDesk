@@ -612,3 +612,51 @@ REGISTER_TEST(todo_ui_column_scroll_geometry,
     mod->onStop();
     return true;
 })
+
+REGISTER_TEST(todo_ui_error_state_and_retry,
+              "todo_ui: db 未就绪错误态 + 重试恢复（headless）", {
+    // 前置：确保全局无注册数据库（TestEnv 析构后即此状态，显式再清一次防串扰）
+    ::core::registerAppDatabase(nullptr);
+    const std::filesystem::path path =
+        std::filesystem::temp_directory_path() / "devdesk_test_todo_retry.db";
+    std::error_code ec;
+    std::filesystem::remove(path, ec);
+
+    std::unique_ptr<::core::Module> mod(create_todo_module());
+    mod->onStart();  // db null → service_ 未初始化，只 WARN 不崩
+
+    {
+        Frame frame(mod.get());
+        // 错误态可见：文案 + 重试按钮（不是静默空白）
+        const auto* errText = frame.ui.find("todo.error.text");
+        DOCTEST_REQUIRE(errText != nullptr);
+        DOCTEST_CHECK(errText->text.find("尚未就绪") != std::string::npos);
+        const auto* retry = frame.ui.find("todo.error.retry.bg");
+        DOCTEST_REQUIRE(retry != nullptr);
+        DOCTEST_REQUIRE(retry->onClick != nullptr);
+        // 看板不渲染（无列背景）
+        DOCTEST_CHECK(frame.ui.find("todo.col.0.bg") == nullptr);
+
+        // 数据库晚注册 → 点重试 → 恢复
+        std::error_code ec2;
+        std::filesystem::remove(path, ec2);
+        auto r = ::core::Database::open(path);
+        DOCTEST_REQUIRE(r.isOk());
+        DOCTEST_REQUIRE(r.unsafeValue().migrate().isOk());
+        auto db = std::make_unique<::core::Database>(std::move(r.unsafeValue()));
+        ::core::registerAppDatabase(&db->db());
+        retry->onClick();
+    }
+    {
+        Frame frame(mod.get());
+        DOCTEST_CHECK(frame.ui.find("todo.error.text") == nullptr);
+        DOCTEST_CHECK(frame.ui.find("todo.col.0.bg") != nullptr);  // 默认 4 列已加载
+    }
+
+    mod->onStop();
+    ::core::registerAppDatabase(nullptr);
+    std::filesystem::remove(path, ec);
+    std::filesystem::remove(path.string() + "-wal", ec);
+    std::filesystem::remove(path.string() + "-shm", ec);
+    return true;
+})

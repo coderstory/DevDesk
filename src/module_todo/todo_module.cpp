@@ -159,19 +159,38 @@ public:
 
     void reloadAll() {
         if (!service_) return;
+        loadError_.clear();
         auto cols = service_->listColumns();
         if (cols.isOk()) {
             columns_ = std::move(cols).value();
         } else {
-            LOG_ERROR("Todo: 读取列失败: " + cols.errorMessage());
+            loadError_ = "读取列失败: " + cols.errorMessage();
+            LOG_ERROR("Todo: " + loadError_);
         }
         auto all = service_->listAllTasks();
         if (all.isOk()) {
             tasks_ = std::move(all).value();
         } else {
-            LOG_ERROR("Todo: 读取任务失败: " + all.errorMessage());
+            loadError_ = "读取任务失败: " + all.errorMessage();
+            LOG_ERROR("Todo: " + loadError_);
         }
         columnScrolls_.resize(columns_.size(), 0.0f);
+    }
+
+    // 错误态重试：数据库晚注册（onStart 时为 null）或读取失败后手动恢复
+    void retryLoad() {
+        auto* db = ::core::appDatabase();
+        if (db == nullptr) {
+            setStatus("数据库尚未注册，无法重试", true);
+            return;
+        }
+        if (!service_) service_ = std::make_unique<TodoService>(*db);
+        reloadAll();
+        if (loadError_.empty()) {
+            setStatus("已重新加载");
+        } else {
+            setStatus("重试仍失败：" + loadError_, true);
+        }
     }
 
     std::vector<const Task*> tasksInColumn(int64_t columnId) const {
@@ -529,6 +548,40 @@ private:
     // ---------- 看板列 ----------
     void drawBoard(eui::Ui& ui, float contentW, float bodyH,
                    const core::theme::Tokens& t) {
+        // 错误态（服务未就绪 / 读取失败）：与空态区分，给文案 + 重试按钮
+        // （仿 Home statsError_ 三态：空 / 错误+重试 / 数据）
+        if (!service_ || !loadError_.empty()) {
+            const std::string msg = !service_
+                ? "数据库尚未就绪，数据未加载"
+                : "数据加载失败：" + loadError_;
+            ui.stack("todo.error")
+                .size(contentW, bodyH)
+                .content([&] {
+                    ui.text("todo.error.text")
+                        .position(0.0f, bodyH / 2.0f - 36.0f)
+                        .size(contentW, 24.0f)
+                        .text(msg + "（点击重试）")
+                        .fontSize(t.sizes.fontSizeBody)
+                        .lineHeight(24.0f)
+                        .horizontalAlign(eui::HorizontalAlign::Center)
+                        .color(t.colors.error)
+                        .build();
+                    components::button(ui, "todo.error.retry")
+                        .position(contentW / 2.0f - 60.0f, bodyH / 2.0f)
+                        .size(120.0f, 40.0f)
+                        .text("重试")
+                        .fontSize(t.sizes.fontSizeBody - 1.0f)
+                        .colors(t.colors.primary, t.colors.primaryHover,
+                                t.colors.primaryPressed)
+                        .textColor(eui::Color("#FFFFFF"))
+                        .radius(t.sizes.radius)
+                        .onClick([this] { retryLoad(); })
+                        .build();
+                })
+                .build();
+            return;
+        }
+
         if (columns_.empty()) {
             ui.stack("todo.empty")
                 .size(contentW, bodyH)
@@ -1428,6 +1481,9 @@ private:
     // 顶部提示
     std::string statusMessage_;
     bool statusIsError_ = false;
+
+    // 数据加载错误（空 = 正常；与空态区分，见 drawBoard）
+    std::string loadError_;
 };
 
 } // namespace module::todo
