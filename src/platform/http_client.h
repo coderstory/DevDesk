@@ -22,6 +22,12 @@ struct Request {
     std::string body;
     long timeoutMs = 30000;
     bool verifyTls = true;
+    // 流式专用空闲超时（W7 P0-3，仅 sendStreaming 生效）：
+    // 传输速率低于 lowSpeedBytesPerSec 持续 lowSpeedTimeSec 秒 → curl 中止
+    // （CURLE_OPERATION_TIMEDOUT）。替代"总墙钟超时"——长生成场景只要一直
+    // 有新 chunk 就不会被砍。两者任一 <= 0 表示不启用。
+    long lowSpeedBytesPerSec = 0;
+    long lowSpeedTimeSec = 0;
 };
 
 struct Response {
