@@ -16,6 +16,7 @@
 #include <components/datepicker.h>
 #include <components/dialog.h>
 #include <components/input.h>
+#include <components/scrollview.h>
 #include <components/theme.h>
 
 #include <algorithm>
@@ -170,6 +171,7 @@ public:
         } else {
             LOG_ERROR("Todo: 读取任务失败: " + all.errorMessage());
         }
+        columnScrolls_.resize(columns_.size(), 0.0f);
     }
 
     std::vector<const Task*> tasksInColumn(int64_t columnId) const {
@@ -343,6 +345,14 @@ public:
     }
 
     // ============ 查找辅助 ============
+
+    // 列内滚动位置（按列索引记忆；reloadAll 时 resize 保留旧值）
+    float colScrollOffset(size_t colIndex) const {
+        return colIndex < columnScrolls_.size() ? columnScrolls_[colIndex] : 0.0f;
+    }
+    void setColScrollOffset(size_t colIndex, float v) {
+        if (colIndex < columnScrolls_.size()) columnScrolls_[colIndex] = v;
+    }
 
     const Task* findTask(int64_t id) const {
         for (const auto& t : tasks_) {
@@ -557,6 +567,19 @@ private:
     void drawColumn(eui::Ui& ui, const std::string& id, const Column& col,
                     float width, float height, const core::theme::Tokens& t,
                     size_t colIndex) {
+        // 列内容整体包一层 stack：EUI-NEO 的 position() 只在 stack 内生效，
+        // 直接作为 row("todo.body") 的子元素会被流式布局横向排开（列头/卡片错位）
+        ui.stack(id)
+            .size(width, height)
+            .content([&] {
+                drawColumnContent(ui, id, col, width, height, t, colIndex);
+            })
+            .build();
+    }
+
+    void drawColumnContent(eui::Ui& ui, const std::string& id, const Column& col,
+                           float width, float height,
+                           const core::theme::Tokens& t, size_t colIndex) {
         ui.rect(id + ".bg")
             .position(0.0f, 0.0f)
             .size(width, height)
@@ -582,7 +605,7 @@ private:
             .position(16.0f, 16.0f)
             .size(width - 60.0f, 20.0f)
             .text(col.title + " (" + std::to_string(colTasks.size()) + ")")
-            .fontSize(15.0f)
+            .fontSize(t.sizes.fontSizeBody)
             .lineHeight(20.0f)
             .fontWeight(600)
             .color(t.colors.textPrimary)
@@ -593,7 +616,7 @@ private:
             .position(width - 36.0f, 14.0f)
             .size(28.0f, 28.0f)
             .text("+")
-            .fontSize(16.0f)
+            .fontSize(t.sizes.fontSizeBody + 1.0f)
             .colors(t.colors.surfaceElevated, t.colors.hover, t.colors.active)
             .textColor(t.colors.textSecondary)
             .radius(14.0f)
@@ -605,7 +628,7 @@ private:
                 .position(0.0f, height / 2.0f - 12.0f)
                 .size(width, 24.0f)
                 .text(isArchive ? "📦 归档的任务在这里" : "暂无任务")
-                .fontSize(12.0f)
+                .fontSize(t.sizes.fontSizeSmall - 1.0f)
                 .lineHeight(24.0f)
                 .horizontalAlign(eui::HorizontalAlign::Center)
                 .color(t.colors.textTertiary)
@@ -613,14 +636,35 @@ private:
             return;
         }
 
-        const float cardY0 = kColumnHeaderHeight;
-        for (size_t i = 0; i < colTasks.size(); ++i) {
-            const float y = cardY0 + static_cast<float>(i) * (kCardHeight + kCardGap);
-            if (y + kCardHeight > height) break;  // 超出列高就不画（简化：不做列内滚动）
-            drawCard(ui, id + ".card." + std::to_string(i), y, width - 16.0f, t,
-                     *colTasks[i], static_cast<int>(colIndex),
-                     static_cast<int>(columns_.size()), static_cast<int>(i));
-        }
+        // 列内滚动（scrollView）：此前直接裁掉超出列高的卡片（第 12 张起消失）。
+        // 滚动位置按列索引记忆（reloadAll 时 vector resize 保留旧值）。
+        const auto componentTheme = t.isDark ? components::theme::dark()
+                                             : components::theme::light();
+        components::scrollView(ui, id + ".scroll")
+            .position(0.0f, kColumnHeaderHeight)
+            .size(width, height - kColumnHeaderHeight)
+            .gap(kCardGap)
+            .step(60.0f)
+            .theme(componentTheme)
+            .contentKey(id + ".scroll." + std::to_string(colTasks.size()))
+            .offset(colScrollOffset(colIndex))
+            .onChange([this, colIndex](float v) { setColScrollOffset(colIndex, v); })
+            .content([&](eui::Ui& inner, float contentWidth, float viewportHeight) {
+                (void)viewportHeight;
+                for (size_t i = 0; i < colTasks.size(); ++i) {
+                    const std::string cardId = id + ".card." + std::to_string(i);
+                    inner.stack(cardId + ".wrap")
+                        .size(contentWidth, kCardHeight)
+                        .content([&] {
+                            drawCard(inner, cardId, 0.0f, contentWidth - 16.0f, t,
+                                     *colTasks[i], static_cast<int>(colIndex),
+                                     static_cast<int>(columns_.size()),
+                                     static_cast<int>(i));
+                        })
+                        .build();
+                }
+            })
+            .build();
     }
 
     void drawCard(eui::Ui& ui, const std::string& id, float y, float width,
@@ -1343,6 +1387,7 @@ private:
     std::unique_ptr<TodoService> service_;
     std::vector<Column> columns_;
     std::vector<Task> tasks_;
+    std::vector<float> columnScrolls_;  // 列内滚动偏移（按列索引）
 
     // 新建任务弹窗
     bool newTaskOpen_ = false;

@@ -546,3 +546,69 @@ REGISTER_TEST(todo_ui_move_appends_to_end,
     mod->onStop();
     return true;
 })
+
+REGISTER_TEST(todo_ui_column_scroll_geometry,
+              "todo_ui: 列内滚动——第 12 张起不裁切 + 列几何正确（headless layout）", {
+    TestEnv env;
+    DOCTEST_REQUIRE(env.ready);
+    auto col = env.svc->createColumn("长列");
+    DOCTEST_REQUIRE(col.isOk());
+    for (int i = 1; i <= 15; ++i) {
+        auto r = env.svc->createTask(col.value().id, "任务" + std::to_string(i));
+        DOCTEST_REQUIRE(r.isOk());
+    }
+
+    std::unique_ptr<::core::Module> mod(create_todo_module());
+    mod->onStart();
+
+    eui::Ui ui;
+    eui::Screen screen;
+    screen.width = 1600.0f;
+    screen.height = 1000.0f;
+    auto layoutFrame = [&]() {
+        ui.begin("todo_scroll_frame");
+        mod->compose(ui, screen);
+        ui.end();
+        ui.layout(screen);
+    };
+    layoutFrame();
+
+    // 15 张卡全部构建（旧缺陷：第 ~8 张起因列高 break 消失）
+    for (int i = 0; i < 15; ++i) {
+        const auto* card = ui.find("todo.col.4.card." + std::to_string(i) + ".bg");
+        DOCTEST_REQUIRE(card != nullptr);
+    }
+    // 滚动容器存在
+    DOCTEST_CHECK(ui.find("todo.col.4.scroll") != nullptr);
+
+    // 列几何回归（stack 包装修复）：列头与列背景同 x 起点，卡片在列内纵向排列。
+    // 旧缺陷：position() 在 row 流式布局里被忽略，列头/卡片横向排开（col 头 x 偏移一整列宽）
+    const auto* colBg = ui.find("todo.col.4.bg");
+    const auto* colHead = ui.find("todo.col.4.head");
+    const auto* colTitle = ui.find("todo.col.4.title");
+    DOCTEST_REQUIRE(colBg != nullptr);
+    DOCTEST_REQUIRE(colHead != nullptr);
+    DOCTEST_REQUIRE(colTitle != nullptr);
+    DOCTEST_CHECK_EQ(colHead->frame.x, colBg->frame.x);
+    DOCTEST_CHECK_EQ(colHead->frame.y, colBg->frame.y);
+    DOCTEST_CHECK_EQ(colTitle->frame.x, colBg->frame.x + 16.0f);
+    const auto* card0 = ui.find("todo.col.4.card.0.bg");
+    const auto* card1 = ui.find("todo.col.4.card.1.bg");
+    const auto* card14 = ui.find("todo.col.4.card.14.bg");
+    DOCTEST_REQUIRE(card0 != nullptr);
+    DOCTEST_REQUIRE(card1 != nullptr);
+    DOCTEST_REQUIRE(card14 != nullptr);
+    DOCTEST_CHECK_EQ(card0->frame.x, colBg->frame.x);        // 卡片在列内（不是横向流式排开）
+    DOCTEST_CHECK_EQ(card1->frame.x, colBg->frame.x);
+    DOCTEST_CHECK_EQ(card1->frame.y - card0->frame.y, 84.0f + 8.0f);  // 卡高 + 间距
+    DOCTEST_CHECK(card14->frame.y > card1->frame.y);          // 超出视口的卡继续向下排
+
+    // 多列不重叠：col.4 与相邻 col.3 背景横向相邻（x 差 = 列宽 + 间距）
+    const auto* prevBg = ui.find("todo.col.3.bg");
+    DOCTEST_REQUIRE(prevBg != nullptr);
+    DOCTEST_CHECK(colBg->frame.x > prevBg->frame.x);
+    DOCTEST_CHECK(colBg->frame.x - prevBg->frame.x < colBg->frame.width * 2.0f);
+
+    mod->onStop();
+    return true;
+})
