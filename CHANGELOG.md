@@ -2,6 +2,14 @@
 
 本文件记录 **a1a106a（macOS 中断现场收编）起** 的条目式变更，按恢复计划的三波（W1 止血收编 / W2 平台架构 / W3 剩余需求）组织，波内按 feat / fix / test / docs 分组。更早的 macOS 主线历史（P0–P8，66 测试通过）见 git log 与 spec §16。
 
+## [W8] 2026-09-22 —— 标题栏深浅主题联动（磨砂 Phase A 先行）
+
+最终基线：**178/178 测试全绿**（177 基线 + 1 主题联动）。
+
+### feat
+
+- **标题栏深浅主题联动（EUI-NEO 上游 + DevDesk 接线）**：EUI-NEO 新增 `core/platform/window_effect.{h,_win,_stub.cpp}`（`TitleBarAppearance` + `applyTitleBarAppearance`，Windows 走 `DWMWA_USE_IMMERSIVE_DARK_MODE`，Win11 22000+，老系统静默降级返回 false）、`DslAppConfig::darkTitleBar(bool)` 启动快照、`app::setTitleBarAppearance/currentTitleBarAppearance` 运行时 API（即时生效，覆盖主窗口 + 全部存活子窗口 + 之后新开子窗口）+ `examples/window_effect.cpp` 演示 + 单测，已合回 EUI-NEO main（feat 34b21f2，本地未 push）。DevDesk 侧 `core::theme` 增加变更回调（core 不依赖 EUI-NEO 的架构铁律下由 main.cpp 注入 `app::setTitleBarAppearance`），启动主题恢复与设置页运行时切换走同一路径；`dslAppConfig` 补 `.darkTitleBar(theme::current().isDark)` 快照。测试 +1（theme 变更回调 mock 断言）。设计文档：`docs/superpowers/specs/2026-09-22-eui-window-frost-design.md` Phase A。
+
 ## [W5] 2026-09-22 —— 遗留项清零（三链并行 + 集成）
 
 最终基线：**137/137 测试全绿**（124 基线 + 6 Router payload + 2 Claude UI 冒烟 + 5 字号缩放/Router 集成）。

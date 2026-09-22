@@ -348,6 +348,15 @@ const DslAppConfig& dslAppConfig() {
     static const bool themeRestored = []() {
         ::core::paths::ensureDirectoriesExist();
         setupLogging();
+        // 标题栏深浅主题联动（磨砂设计 Phase A）：core 不依赖 EUI-NEO，
+        // 通过 theme 回调注入——先装回调再恢复主题，启动恢复与运行时切换
+        // （设置页 theme::setDark/setLight → 回调 → app::setTitleBarAppearance）
+        // 走同一条路径，标题栏即时生效无需重启。仅 Windows 生效，其他平台
+        // EUI-NEO 内部静默降级
+        ::core::theme::setChangeHandler([](bool isDark) {
+            app::setTitleBarAppearance(
+                core::platform::TitleBarAppearance{isDark});
+        });
         const module::settings::SettingsStore store(
             ::core::paths::configFile());
         const auto cfg = store.load();
@@ -373,6 +382,9 @@ const DslAppConfig& dslAppConfig() {
         .minWindowSize(1200, 720)
         .highDpi(true)
         .resizable(true)
+        // 启动快照：持久化主题恢复（上文 themeRestored）后按当前深浅设置；
+        // 运行时切换由 theme 回调走 setTitleBarAppearance（覆盖本快照）
+        .darkTitleBar(::core::theme::current().isDark)
         .centerWindow()
         // Finder 双击 / 右键「打开方式」：macOS 走 kAEOpenDocuments Apple Event，
         // 由 EUI-NEO 转成回调（主循环里派发），这里切到对应模块。

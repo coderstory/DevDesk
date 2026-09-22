@@ -36,3 +36,34 @@ REGISTER_TEST(theme_dark_light_differ, "theme: dark and light differ", {
     core::theme::setDark();
     return true;
 })
+
+// 标题栏深浅主题联动（磨砂设计 Phase A）：setDark/setLight 必须通知
+// 回调（main.cpp 注入 app::setTitleBarAppearance），这里 mock 回调断言
+// 通知发生且参数与 isDark 一致；清除后不再通知
+REGISTER_TEST(theme_change_handler_notified, "theme: change handler notified on dark/light", {
+    int calls = 0;
+    bool sawDark = false;
+    bool sawLight = false;
+    bool lastNotifiedMatchesCurrent = false;
+    core::theme::setChangeHandler([&](bool isDark) {
+        ++calls;
+        // 回调参数必须与切换后的主题一致（断言放外面：CHECK 宏带 return，
+        // 不能进 void lambda）
+        if (isDark) sawDark = true; else sawLight = true;
+        lastNotifiedMatchesCurrent = (isDark == core::theme::current().isDark);
+    });
+    core::theme::setDark();
+    DOCTEST_CHECK(lastNotifiedMatchesCurrent);
+    core::theme::setLight();
+    DOCTEST_CHECK(lastNotifiedMatchesCurrent);
+    DOCTEST_CHECK_EQ(calls, 2);
+    DOCTEST_CHECK(sawDark);
+    DOCTEST_CHECK(sawLight);
+    // 清除回调后切换不再通知
+    core::theme::setChangeHandler(nullptr);
+    core::theme::setDark();
+    DOCTEST_CHECK_EQ(calls, 2);
+    // 收尾：回到默认深色 + 无回调的全局状态
+    core::theme::setDark();
+    return true;
+})
