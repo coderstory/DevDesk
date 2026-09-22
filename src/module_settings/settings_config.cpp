@@ -6,7 +6,11 @@
 #include <utility>
 
 #include "core/logging.h"
+#include "core/theme.h"
 #include "platform/json.h"
+
+#include <eui/app.h>
+#include <eui/types.h>
 
 namespace module::settings {
 
@@ -19,6 +23,7 @@ constexpr const char* kKeyTheme = "theme";
 constexpr const char* kKeyFontScale = "fontScalePercentV3";
 constexpr const char* kKeyLogRetention = "logRetentionDays";
 constexpr const char* kKeyProxyAutoStart = "claudeProxyAutoStart";
+constexpr const char* kKeyWindowEffect = "windowEffect";
 } // namespace
 
 SettingsStore::SettingsStore(std::filesystem::path file)
@@ -36,7 +41,58 @@ SettingsConfig SettingsStore::sanitized(const SettingsConfig& cfg) {
     if (out.logRetentionDays > kMaxLogRetentionDays) {
         out.logRetentionDays = kMaxLogRetentionDays;
     }
+    // 窗口效果：只认三档，未知值收敛为 off（照抄 fontScale 的钳制模式）
+    if (out.windowEffect != kWindowEffectTranslucent &&
+        out.windowEffect != kWindowEffectFrosted) {
+        out.windowEffect = kWindowEffectOff;
+    }
     return out;
+}
+
+float windowEffectAlpha(const std::string& mode) {
+    if (mode == kWindowEffectTranslucent) return 0.85f;
+    if (mode == kWindowEffectFrosted) return 0.55f;
+    return 1.0f;  // off / 未知值：实色
+}
+
+core::platform::WindowEffect windowEffectRequest(const std::string& mode) {
+    if (mode == kWindowEffectFrosted) {
+        return core::platform::WindowEffect::Acrylic;
+    }
+    // off / translucent（含未知值）：显式关 backdrop，视觉由 clearColor alpha 决定
+    return core::platform::WindowEffect::None;
+}
+
+std::string windowEffectDegradedHint(const std::string& mode,
+                                     core::platform::WindowEffect active) {
+    using core::platform::WindowEffect;
+    if (mode == kWindowEffectTranslucent) {
+        if (active != WindowEffect::Transparent) {
+            return "当前系统不支持窗口半透，已回退为不透明";
+        }
+        return {};
+    }
+    if (mode == kWindowEffectFrosted) {
+        if (active == WindowEffect::Acrylic) {
+            return {};
+        }
+        if (active == WindowEffect::Transparent) {
+            return "当前系统不支持磨砂（需 Windows 11 22H2+），已回退为半透";
+        }
+        return "当前系统不支持窗口效果，已回退为不透明";
+    }
+    // off：alpha=1 下任何 active 都视觉等价（透明 hint 开着也不可见）
+    return {};
+}
+
+void applyWindowVisuals(const std::string& mode) {
+    // 底色跟随当前主题 token，alpha 按档位；setClearColor 覆盖主窗口 + 全部
+    // 存活子窗口并触发全量重绘（EUI-NEO Phase B），主题切换底色即时跟随
+    const eui::Color& bg = core::theme::current().colors.background;
+    app::setClearColor(eui::Color{bg.r, bg.g, bg.b, windowEffectAlpha(mode)});
+    // backdrop 请求（EUI-NEO Phase C）：下一帧应用，实际生效值经
+    // app::activeWindowEffect() 回查，降级由设置页提示
+    app::setWindowEffect(windowEffectRequest(mode));
 }
 
 SettingsConfig SettingsStore::load() const {
@@ -79,6 +135,9 @@ SettingsConfig SettingsStore::load() const {
     if (obj.has(kKeyProxyAutoStart) && obj.get(kKeyProxyAutoStart).isBool()) {
         cfg.claudeProxyAutoStart = obj.get(kKeyProxyAutoStart).asBool();
     }
+    if (obj.has(kKeyWindowEffect) && obj.get(kKeyWindowEffect).isString()) {
+        cfg.windowEffect = obj.get(kKeyWindowEffect).asString();
+    }
     return sanitized(cfg);
 }
 
@@ -90,6 +149,7 @@ core::Result<void> SettingsStore::save(const SettingsConfig& cfgRaw) const {
     obj.set(kKeyFontScale, platform::json::makeInt(cfg.fontScalePercent));
     obj.set(kKeyLogRetention, platform::json::makeInt(cfg.logRetentionDays));
     obj.set(kKeyProxyAutoStart, platform::json::makeBool(cfg.claudeProxyAutoStart));
+    obj.set(kKeyWindowEffect, platform::json::makeString(cfg.windowEffect));
 
     auto text = platform::json::stringify(
         platform::json::JsonValue(obj), /*pretty=*/true);

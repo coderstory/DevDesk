@@ -19,10 +19,16 @@
 //     集成点：与 w3-t10-home 并行分支的"30 天日志清理任务"联动——
 //     T10 的清理逻辑应读取本字段（config.json 的 logRetentionDays），
 //     接线留给集成阶段
+//   - windowEffect: 窗口效果三档 "off"|"translucent"|"frosted"（磨砂设计
+//     Phase D）。档位→参数映射（clearColor alpha / backdrop 请求 / 降级文案）
+//     是纯函数，供启动接线（main.cpp）、设置页切换（settings_module）与
+//     单测三处共用；EUI-NEO 侧能力见其 docs/DSL.md「窗口效果」
 #pragma once
 
 #include <filesystem>
+#include <string>
 
+#include "core/platform/window_effect.h"
 #include "core/result.h"
 
 namespace module::settings {
@@ -32,6 +38,11 @@ constexpr int kMinFontScalePercent = 85;
 constexpr int kMaxFontScalePercent = 130;
 // 日志保留天数上限（0 = 永久）
 constexpr int kMaxLogRetentionDays = 3650;
+
+// 窗口效果三档（磨砂设计 §3.4；档位字符串直接持久化进 config.json）
+inline constexpr const char* kWindowEffectOff = "off";
+inline constexpr const char* kWindowEffectTranslucent = "translucent";
+inline constexpr const char* kWindowEffectFrosted = "frosted";
 
 struct SettingsConfig {
     bool darkTheme = true;         // 默认深色（方案 B Dark）
@@ -45,7 +56,30 @@ struct SettingsConfig {
     // 启动，代理由用户手动启动；false 时 main.cpp 只创建 ClaudeService
     // 注册全局单例，不拉起 127.0.0.1:8888）
     bool claudeProxyAutoStart = false;
+    // 窗口效果（磨砂设计 Phase D）："off"（默认实色）| "translucent"（整体
+    // 半透）| "frosted"（Acrylic 磨砂）。sanitized 把未知值收敛为 "off"
+    std::string windowEffect = kWindowEffectOff;
 };
+
+// ---- 窗口效果档位 → 参数映射（纯函数，供单测）----
+
+// 档位 → clearColor alpha：off=1.0（实色）/ translucent≈0.85 / frosted≈0.55
+//（Acrylic 材质自身还有一层遮蔽，alpha 偏小才透得出磨砂；观感调参定）
+float windowEffectAlpha(const std::string& mode);
+
+// 档位 → EUI-NEO backdrop 请求：off/translucent 显式关 backdrop（视觉由
+// clearColor alpha 决定），frosted 请求 Acrylic
+core::platform::WindowEffect windowEffectRequest(const std::string& mode);
+
+// 降级提示文案（app::activeWindowEffect 回查 vs 用户所选档；一致返回空串）：
+// translucent 拿不到透明 → 提示回退不透明；frosted 拿不到 Acrylic → 按
+// 实际值提示回退半透/不透明；off 档任何 active 都视觉等价（alpha=1），不提示
+std::string windowEffectDegradedHint(const std::string& mode,
+                                     core::platform::WindowEffect active);
+
+// 按档位 + 当前主题应用窗口视觉（clearColor alpha + backdrop 请求），启动
+// 恢复 / 设置页切档 / 主题切换三处共用一条路径（EUI-NEO Phase B/C 运行时 API）
+void applyWindowVisuals(const std::string& mode);
 
 // config.json 读写（不抛异常；文件不存在/损坏一律回退默认值）
 class SettingsStore {

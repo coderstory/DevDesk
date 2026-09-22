@@ -2,7 +2,9 @@
 // P13 设置页单测：SettingsStore（config.json 读写）纯逻辑 + 模块 compose 无头冒烟
 // 覆盖：默认值 / 保存-加载往返 / 损坏 JSON 回退 / 数值钳制 / 主题字段映射 /
 //       设置页可渲染（DSL 元素树构建）/ 主题切换对下一次 compose 即时生效 /
-//       日志保留下拉弹层不出窗体（openUp）/ 切换档位立即清理 / 文本垂直居中
+//       日志保留下拉弹层不出窗体（openUp）/ 切换档位立即清理 / 文本垂直居中 /
+//       窗口效果三档（磨砂 Phase D）：默认值/往返/非法值收敛、档位→alpha/
+//       backdrop 映射、降级提示矩阵、applyWindowVisuals 接线（无头）
 #include "doctest.h"
 #include "settings_config.h"
 
@@ -12,7 +14,10 @@
 #include "core/theme.h"
 #include "platform/keychain.h"
 
+#include <eui/app.h>
+#include <eui/detail/dsl_app_impl.h>
 #include <eui/dsl.h>
+#include <eui/dsl_app.h>
 
 #include <ctime>
 #include <filesystem>
@@ -21,6 +26,18 @@
 #include <string>
 
 extern "C" ::core::Module* create_settings_module();
+
+// 窗口效果（磨砂 Phase D）让 module_settings 引用 app:: 运行时 API；app API
+// 的实现 TU（glfw_app_main）只编进 DevDesk 主程序，测试侧包含 dsl_app_impl.h
+// 自带实现（与 EUI-NEO 自身单测相同的注入方式），并提供它要求的
+// app::dslAppConfig / app::compose
+namespace app {
+const app::DslAppConfig& dslAppConfig() {
+    static const DslAppConfig config = DslAppConfig{}.title("devdesk_test_settings");
+    return config;
+}
+void compose(eui::Ui&, const eui::Screen&) {}
+} // namespace app
 
 namespace {
 
@@ -303,6 +320,7 @@ REGISTER_TEST(settings_module_compose_renders, "settings: module compose builds 
     // 关键元素存在 = 设置页可渲染（背景 + 4 张设置卡）
     DOCTEST_CHECK(ui.find("settings.pagebg") != nullptr);
     DOCTEST_CHECK(ui.find("settings.card.appearance.bg") != nullptr);
+    DOCTEST_CHECK(ui.find("settings.card.appearance.effect.ddwrap") != nullptr);
     DOCTEST_CHECK(ui.find("settings.card.directory.bg") != nullptr);
     DOCTEST_CHECK(ui.find("settings.card.proxy.bg") != nullptr);
     DOCTEST_CHECK(ui.find("settings.card.log.bg") != nullptr);
@@ -572,5 +590,112 @@ REGISTER_TEST(settings_takeover_status_row,
     platform::keychain::deleteSecret(
         "DevDeskTestTakeover", "claude:" + std::to_string(pr.value().id));
     fs::remove_all(dir, ec);
+    return true;
+})
+
+// ---- 窗口效果三档（磨砂 Phase D）----
+
+// REGISTER_TEST 宏体内不能出现裸逗号，档位数组放宏外
+namespace {
+bool windowEffectRoundtripOne(module::settings::SettingsStore& store,
+                              const char* mode) {
+    module::settings::SettingsConfig cfg;
+    cfg.windowEffect = mode;
+    if (store.save(cfg).isFail()) return false;
+    return store.load().windowEffect == mode;
+}
+} // namespace
+
+REGISTER_TEST(settings_window_effect_defaults_and_roundtrip, "settings: windowEffect 默认 off + 三档读写往返", {
+    const auto path = tempConfigFile("wineffect");
+    removeQuietly(path);
+    module::settings::SettingsStore store(path);
+
+    // 默认 off；存量 config.json（无该键）同样回落 off
+    DOCTEST_CHECK_EQ(store.load().windowEffect, std::string(module::settings::kWindowEffectOff));
+    {
+        std::ofstream f(path, std::ios::trunc);
+        f << R"({"theme": "dark", "logRetentionDays": 30})";
+    }
+    DOCTEST_CHECK_EQ(store.load().windowEffect, std::string(module::settings::kWindowEffectOff));
+
+    // 三档逐一保存-读回
+    DOCTEST_CHECK(windowEffectRoundtripOne(store, module::settings::kWindowEffectOff));
+    DOCTEST_CHECK(windowEffectRoundtripOne(store, module::settings::kWindowEffectTranslucent));
+    DOCTEST_CHECK(windowEffectRoundtripOne(store, module::settings::kWindowEffectFrosted));
+
+    // 非法值：save 前 sanitized 收敛为 off；手写进文件同样收敛
+    module::settings::SettingsConfig bad;
+    bad.windowEffect = "glass";
+    DOCTEST_CHECK_EQ(module::settings::SettingsStore::sanitized(bad).windowEffect,
+                     std::string(module::settings::kWindowEffectOff));
+    {
+        std::ofstream f(path, std::ios::trunc);
+        f << R"({"theme": "dark", "windowEffect": "vibrancy"})";
+    }
+    DOCTEST_CHECK_EQ(store.load().windowEffect, std::string(module::settings::kWindowEffectOff));
+    removeQuietly(path);
+    return true;
+})
+
+REGISTER_TEST(settings_window_effect_param_mapping, "settings: 档位→alpha/backdrop 请求映射（纯函数）", {
+    namespace ms = module::settings;
+    using WE = core::platform::WindowEffect;
+
+    // clearColor alpha：off=1.0 / translucent=0.85 / frosted=0.55 / 未知→1.0
+    DOCTEST_CHECK(ms::windowEffectAlpha(ms::kWindowEffectOff) == 1.0f);
+    DOCTEST_CHECK(ms::windowEffectAlpha(ms::kWindowEffectTranslucent) == 0.85f);
+    DOCTEST_CHECK(ms::windowEffectAlpha(ms::kWindowEffectFrosted) == 0.55f);
+    DOCTEST_CHECK(ms::windowEffectAlpha("bogus") == 1.0f);
+
+    // backdrop 请求：off/translucent 显式关（None），frosted→Acrylic，未知→None
+    DOCTEST_CHECK(ms::windowEffectRequest(ms::kWindowEffectOff) == WE::None);
+    DOCTEST_CHECK(ms::windowEffectRequest(ms::kWindowEffectTranslucent) == WE::None);
+    DOCTEST_CHECK(ms::windowEffectRequest(ms::kWindowEffectFrosted) == WE::Acrylic);
+    DOCTEST_CHECK(ms::windowEffectRequest("bogus") == WE::None);
+    return true;
+})
+
+REGISTER_TEST(settings_window_effect_degraded_hint, "settings: 降级提示文案矩阵（纯函数）", {
+    namespace ms = module::settings;
+    using WE = core::platform::WindowEffect;
+
+    // off：任何 active 都视觉等价（alpha=1），永不提示
+    DOCTEST_CHECK(ms::windowEffectDegradedHint(ms::kWindowEffectOff, WE::None).empty());
+    DOCTEST_CHECK(ms::windowEffectDegradedHint(ms::kWindowEffectOff, WE::Transparent).empty());
+    DOCTEST_CHECK(ms::windowEffectDegradedHint(ms::kWindowEffectOff, WE::Acrylic).empty());
+
+    // translucent：拿不到 Transparent 才提示回退不透明
+    DOCTEST_CHECK(ms::windowEffectDegradedHint(ms::kWindowEffectTranslucent, WE::Transparent).empty());
+    const std::string t1 = ms::windowEffectDegradedHint(ms::kWindowEffectTranslucent, WE::None);
+    DOCTEST_CHECK(t1.find("回退为不透明") != std::string::npos);
+
+    // frosted：拿不到 Acrylic 时按实际值提示（Transparent→回退半透，None→回退不透明）
+    DOCTEST_CHECK(ms::windowEffectDegradedHint(ms::kWindowEffectFrosted, WE::Acrylic).empty());
+    const std::string f1 = ms::windowEffectDegradedHint(ms::kWindowEffectFrosted, WE::Transparent);
+    DOCTEST_CHECK(f1.find("回退为半透") != std::string::npos);
+    const std::string f2 = ms::windowEffectDegradedHint(ms::kWindowEffectFrosted, WE::None);
+    DOCTEST_CHECK(f2.find("回退为不透明") != std::string::npos);
+    return true;
+})
+
+REGISTER_TEST(settings_window_effect_apply_visuals, "settings: applyWindowVisuals 接线（无头：app 运行时覆盖）", {
+    namespace ms = module::settings;
+    using WE = core::platform::WindowEffect;
+
+    // 半透档：clearColor alpha=0.85 + backdrop 请求 None（显式关）
+    ms::applyWindowVisuals(ms::kWindowEffectTranslucent);
+    DOCTEST_CHECK(app::currentClearColor().a == 0.85f);
+    DOCTEST_CHECK(app::currentWindowEffect() == WE::None);
+
+    // 磨砂档：alpha=0.55 + Acrylic 请求
+    ms::applyWindowVisuals(ms::kWindowEffectFrosted);
+    DOCTEST_CHECK(app::currentClearColor().a == 0.55f);
+    DOCTEST_CHECK(app::currentWindowEffect() == WE::Acrylic);
+
+    // 关档：alpha=1（视觉等价实色，透明 hint 仍开）——收尾恢复，不污染后续用例
+    ms::applyWindowVisuals(ms::kWindowEffectOff);
+    DOCTEST_CHECK(app::currentClearColor().a == 1.0f);
+    DOCTEST_CHECK(app::currentWindowEffect() == WE::None);
     return true;
 })

@@ -30,7 +30,7 @@
 |------|------|------|
 | **OS 文件拖入** | 文件不能从 Finder/Explorer 拖入窗口 | "+ 新建"按钮 + `openFileDialog` |
 | **drop target API** | 卡片跨列拖拽需自实现 | 用元素级 `onPress`/`onDrag`/`onRelease` 回调自实现（W8 Todo 拖拽已落地，`dragDropTarget` 纯函数换算落点）|
-| **macOS 27 Liquid Glass / vibrancy** | 无透明标题栏、无材料层 | 实色 + 阴影替代 |
+| **macOS 27 Liquid Glass / vibrancy** | 无透明标题栏、无材料层 | 实色 + 阴影替代；**Windows 侧已有窗口效果**（磨砂 Phase A-D，2026-09-22）：标题栏深浅联动 + 透明半透 + DWM backdrop（Acrylic/Mica，Win11 22H2+），经 `DslAppConfig::darkTitleBar/windowEffect` 与 `app::setTitleBarAppearance/setClearColor/setWindowEffect/activeWindowEffect` 使用，见 EUI-NEO `docs/DSL.md`「窗口效果」 |
 | **tree 组件** | 文件树需自实现 | 用 `virtualList` + 字符图标 + 状态机 |
 | **全局 OS hotkey** | DevDesk 失焦时收不到键盘事件 | 切 profile 需先聚焦窗口 |
 
