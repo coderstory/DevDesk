@@ -1242,7 +1242,13 @@ REGISTER_TEST(todo_ui_overdue_dialog,
     const int64_t now = static_cast<int64_t>(std::time(nullptr));
     {
         module::todo::Task t = ov.value();
-        t.dueAt = now - 3 * 86400 - 3600;  // 逾期 4 天（向上取整）
+        // 本地日历日前天 12:00 到期（日历日差 = 2 天；与测试机时区无关）
+        std::tm dueTm{};
+        core::time::localTime(now, &dueTm);
+        dueTm.tm_hour = 12;
+        dueTm.tm_min = 0;
+        dueTm.tm_sec = 0;
+        t.dueAt = std::mktime(&dueTm) - 2 * 86400;  // 逾期 2 天（日历日差）
         DOCTEST_REQUIRE(env.svc->updateTask(t).isOk());
         module::todo::Task d = doneOv.value();
         d.dueAt = now - 86400;
@@ -1277,7 +1283,7 @@ REGISTER_TEST(todo_ui_overdue_dialog,
         DOCTEST_REQUIRE(rowDays != nullptr);
         DOCTEST_CHECK_EQ(rowTitle->text, std::string("逾期任务甲"));
         DOCTEST_CHECK_EQ(rowCol->text, std::string("待办"));
-        DOCTEST_CHECK(rowDays->text.find("4") != std::string::npos);
+        DOCTEST_CHECK(rowDays->text.find("2") != std::string::npos);
         // 行点击 → 关闭逾期弹窗 + 打开该任务详情
         const auto* row = frame.ui.find("todo.dialog.overdue.row.0");
         DOCTEST_REQUIRE(row != nullptr);
@@ -1502,14 +1508,24 @@ REGISTER_TEST(todo_ui_feature_pure_helpers,
     const eui::Color sageExpect("#788C5D");
     DOCTEST_CHECK_EQ(sage->r, sageExpect.r);
 
-    // 逾期天数（向上取整；未过期 → 0）
-    const int64_t d = 86400;
-    DOCTEST_CHECK_EQ(overdueDays(100, 100), 0);
-    DOCTEST_CHECK_EQ(overdueDays(100, 99), 0);
-    DOCTEST_CHECK_EQ(overdueDays(100, 101), 1);
-    DOCTEST_CHECK_EQ(overdueDays(0, d), 1);
-    DOCTEST_CHECK_EQ(overdueDays(0, d + 1), 2);
-    DOCTEST_CHECK_EQ(overdueDays(0, 3 * d + 3600), 4);
+    // 逾期天数（本地日历日差：昨天到期今天看 = 1 天；当天/未过期 → 0）。
+    // 用 mktime 构造本地时间，断言不依赖测试机时区
+    const auto localMidnight = [](int daysAgo) -> int64_t {
+        std::time_t now = std::time(nullptr);
+        std::tm tm{};
+        core::time::localTime(now, &tm);
+        tm.tm_hour = 0;
+        tm.tm_min = 0;
+        tm.tm_sec = 0;
+        return std::mktime(&tm) - static_cast<int64_t>(daysAgo) * 86400;
+    };
+    DOCTEST_CHECK_EQ(overdueDays(100, 100), 0);   // 同一时刻
+    DOCTEST_CHECK_EQ(overdueDays(100, 99), 0);    // 未过期
+    // 昨天 23:59 到期、今天 00:01 查看 = 1 天（旧秒差向上取整会虚报 2 天）
+    DOCTEST_CHECK_EQ(overdueDays(localMidnight(1) + 86399, localMidnight(0) + 60), 1);
+    // 3 个日历日前到期 = 3 天；今天更早时刻到期 = 0 天
+    DOCTEST_CHECK_EQ(overdueDays(localMidnight(3), localMidnight(0)), 3);
+    DOCTEST_CHECK_EQ(overdueDays(localMidnight(0) + 3600, localMidnight(0) + 7200), 0);
 
     // 搜索过滤：命中 id 集内保留且顺序不变；未激活 → 全保留
     std::vector<module::todo::Task> tasks;
