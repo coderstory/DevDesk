@@ -485,8 +485,6 @@ public:
                     .build();
             })
             .build();
-
-        LOG_DEBUG("Home 模块 compose 完成");
     }
 
 private:
