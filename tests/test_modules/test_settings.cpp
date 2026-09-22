@@ -308,6 +308,8 @@ REGISTER_TEST(settings_module_compose_renders, "settings: module compose builds 
     DOCTEST_CHECK(ui.find("settings.card.log.bg") != nullptr);
     // ClaudeService::global() 为 null（测试环境）时代理卡仍应渲染
     DOCTEST_CHECK(ui.find("settings.card.proxy.token.value") != nullptr);
+    // W10 复审项：卡片区套 scrollView（4 卡总高 > 小窗口可视高，可滚动）
+    DOCTEST_CHECK(ui.find("settings.cards.scroll") != nullptr);
 
     mod->onStop();
     ::core::theme::setDark();  // 恢复全局默认主题，不影响其他用例

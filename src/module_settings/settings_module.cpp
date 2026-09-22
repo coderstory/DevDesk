@@ -38,6 +38,7 @@
 #include <components/button.h>
 #include <components/dialog.h>
 #include <components/dropdown.h>
+#include <components/scrollview.h>
 #include <components/switch.h>
 #include <components/theme.h>
 
@@ -257,42 +258,57 @@ public:
             .gap(t.sizes.spacingLarge)
             .content([&] {
                 drawHeader(ui, contentW, headerH, t);
-                ui.column("settings.cards")
-                    .size(contentW, screen.height - pad * 2.0f - headerH -
-                                        t.sizes.spacingLarge)
+
+                // 卡片区套 scrollView（W10 复审项：4 卡总高约 580 > 720 高
+                // 窗口可视 552，第 4 卡被裁；仿 Todo 列内滚动，小窗口可滚动）
+                const float cardsTopY = pad + headerH + t.sizes.spacingLarge;
+                const float cardsH =
+                    screen.height - cardsTopY - pad;
+                // 代理卡高度动态：接管状态行 + 上层覆盖警告行（§6.3）。
+                // contentKey 带 proxyH：警告行数变化时滚动高度缓存失效重测
+                auto* svc = ::module::claude::ClaudeService::global();
+                const bool managed = svc && svc->isClaudeCodeManaged();
+                size_t warnLines = 0;
+                if (managed && svc) {
+                    warnLines = std::min<size_t>(
+                        svc->lastSyncWarnings().size(), 2);
+                }
+                const float proxyH = 140.0f + 28.0f +
+                    (managed ? 20.0f : 0.0f) +
+                    static_cast<float>(warnLines) * 16.0f;
+                const auto compTheme = t.isDark
+                    ? components::theme::dark()
+                    : components::theme::light();
+                components::scrollView(ui, "settings.cards.scroll")
+                    .size(contentW, cardsH)
                     .gap(t.sizes.spacingLarge)
-                    .content([&] {
-                        // 卡片纵向游标（与 column 布局的 padding/gap 逐项对应），
-                        // 用于计算日志卡下拉字段的绝对 Y —— 判断弹层向下展开
-                        // 是否会超出窗口底部（超出则改向上展开，EUI-NEO openUp）
+                    .step(60.0f)
+                    .theme(compTheme)
+                    .contentKey("settings.cards." +
+                                std::to_string(static_cast<int>(proxyH)))
+                    .offset(cardsScrollOffset_)
+                    .onChange([this](float v) { cardsScrollOffset_ = v; })
+                    .content([&](eui::Ui& inner, float contentWidth,
+                                 float viewportHeight) {
+                        (void)viewportHeight;
+                        // 卡片纵向游标（scrollView 内容空间，顶 = 0）。日志卡
+                        // 下拉 openUp 判断需要页面绝对 Y：滚动后字段页内位置
+                        // = cardsTopY + 内容Y - 滚动偏移
                         const float gapY = t.sizes.spacingLarge;
-                        float cardY = pad + headerH + gapY;
-                        drawAppearanceCard(ui, "settings.card.appearance",
-                                           contentW, 160.0f, t);
+                        float cardY = 0.0f;
+                        drawAppearanceCard(inner, "settings.card.appearance",
+                                           contentWidth, 160.0f, t);
                         cardY += 160.0f + gapY;
-                        drawDirectoryCard(ui, "settings.card.directory",
-                                          contentW, 108.0f, t);
+                        drawDirectoryCard(inner, "settings.card.directory",
+                                          contentWidth, 108.0f, t);
                         cardY += 108.0f + gapY;
-                        // 代理卡高度动态：接管状态行 + 上层覆盖警告行（§6.3）
-                        {
-                            auto* svc =
-                                ::module::claude::ClaudeService::global();
-                            const bool managed =
-                                svc && svc->isClaudeCodeManaged();
-                            size_t warnLines = 0;
-                            if (managed && svc) {
-                                warnLines = std::min<size_t>(
-                                    svc->lastSyncWarnings().size(), 2);
-                            }
-                            const float proxyH = 140.0f + 28.0f +
-                                (managed ? 20.0f : 0.0f) +
-                                static_cast<float>(warnLines) * 16.0f;
-                            drawProxyCard(ui, "settings.card.proxy", contentW,
-                                          proxyH, t);
-                            cardY += proxyH + gapY;
-                        }
-                        drawLogCard(ui, "settings.card.log", contentW, 100.0f,
-                                    t, cardY, screen.height);
+                        drawProxyCard(inner, "settings.card.proxy",
+                                      contentWidth, proxyH, t);
+                        cardY += proxyH + gapY;
+                        drawLogCard(inner, "settings.card.log", contentWidth,
+                                    100.0f, t,
+                                    cardsTopY + cardY - cardsScrollOffset_,
+                                    screen.height);
                     })
                     .build();
             })
@@ -408,11 +424,13 @@ private:
                 components::button(ui, id + ".theme.dark")
                     .position(28.0f, 94.0f)
                     .size(130.0f, 40.0f)
-                    .text("🌙 深色")
+                    .text("深色")
+                    .icon(0xF186)  // fa-moon
                     .fontSize(fs(14.0f))
                     .colors(dark ? t.colors.primarySoftBg : t.colors.surfaceElevated,
                             t.colors.hover, t.colors.active)
                     .textColor(dark ? t.colors.primary : t.colors.textSecondary)
+                    .iconColor(dark ? t.colors.primary : t.colors.textSecondary)
                     .radius(t.sizes.radius)
                     .border(1.0f, dark ? t.colors.primary : t.colors.borderDefault)
                     .onClick([this] { applyTheme(true); })
@@ -420,11 +438,13 @@ private:
                 components::button(ui, id + ".theme.light")
                     .position(170.0f, 94.0f)
                     .size(130.0f, 40.0f)
-                    .text("☀ 浅色")
+                    .text("浅色")
+                    .icon(0xF185)  // fa-sun
                     .fontSize(fs(14.0f))
                     .colors(!dark ? t.colors.primarySoftBg : t.colors.surfaceElevated,
                             t.colors.hover, t.colors.active)
                     .textColor(!dark ? t.colors.primary : t.colors.textSecondary)
+                    .iconColor(!dark ? t.colors.primary : t.colors.textSecondary)
                     .radius(t.sizes.radius)
                     .border(1.0f, !dark ? t.colors.primary : t.colors.borderDefault)
                     .onClick([this] { applyTheme(false); })
@@ -596,11 +616,13 @@ private:
                 components::button(ui, id + ".token.regen")
                     .position(w - 28.0f - btnW, 86.0f)
                     .size(btnW, 40.0f)
-                    .text("↻ 重新生成")
+                    .text("重新生成")
+                    .icon(0xF021)  // fa-arrows-rotate
                     .fontSize(fs(14.0f))
                     .colors(t.colors.primary, t.colors.primaryHover,
                             t.colors.primaryPressed)
-                    .textColor(eui::Color("#FFFFFF"))
+                    .textColor(t.colors.onPrimary)
+                    .iconColor(t.colors.onPrimary)
                     .radius(t.sizes.radius)
                     .disabled(!running)
                     .onClick([this] { requestRegenerateToken(); })
@@ -633,14 +655,22 @@ private:
                 if (managed && svc) {
                     const auto& warns = svc->lastSyncWarnings();
                     // ponytail: 最多展示 2 条（卡片高度约束），更多警告在
-                    // 日志（LOG_WARN 全量）可查
+                    // 日志（LOG_WARN 全量）可查；⚠ 换 FA（图标/文字拆两个元素）
                     const size_t shown =
                         std::min<size_t>(warns.size(), 2);
                     for (size_t i = 0; i < shown; ++i) {
-                        ui.text(id + ".takeover.warn." + std::to_string(i))
+                        ui.text(id + ".takeover.warn.icon." + std::to_string(i))
                             .position(28.0f, 154.0f + static_cast<float>(i) * 16.0f)
-                            .size(w - 56.0f, 16.0f)
-                            .text("⚠ " + warns[i])
+                            .size(12.0f, 16.0f)
+                            .icon(0xF071)  // fa-triangle-exclamation
+                            .fontSize(fs(11.0f))
+                            .lineHeight(16.0f)
+                            .color(t.colors.warning)
+                            .build();
+                        ui.text(id + ".takeover.warn." + std::to_string(i))
+                            .position(42.0f, 154.0f + static_cast<float>(i) * 16.0f)
+                            .size(w - 42.0f - 28.0f, 16.0f)
+                            .text(warns[i])
                             .fontSize(fs(11.0f))
                             .lineHeight(16.0f)
                             .color(t.colors.warning)
@@ -792,6 +822,7 @@ private:
     bool fontDropdownOpen_ = false;
     bool retentionDropdownOpen_ = false;
     bool regenConfirmOpen_ = false;       // 重新生成 token 确认弹窗
+    float cardsScrollOffset_ = 0.0f;      // 卡片区 scrollView 滚动位置
     std::string statusMessage_;
     bool statusIsError_ = false;
 };
