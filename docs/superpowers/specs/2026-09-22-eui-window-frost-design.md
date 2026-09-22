@@ -192,6 +192,13 @@ DevDesk 设置页对降级的呈现：`app::activeWindowEffect()` 与用户所�
 | O2 | EUI-NEO 是否已有 GPU 帧时间采样 | 性能验收手段 | Phase C 查证，没有则随 premultiply blit 顺手加一个开关门控的 `GL_TIME_ELAPSED` |
 | O3 | Mica 在多显示器/不同壁纸下的观感、以及与 DevDesk 侧栏布局的搭配 | 纯视觉调参 | Phase D 截屏评审（验证原则：未截屏 = 未完成） |
 
+### spike 结论回填（2026-09-22，Phase 0 实测，Win11 Enterprise 26200；证据 EUI-NEO `spike/frost-phase0` 分支 spike/*.png）
+
+- **R1 premultiplied——必需项，非 polish**：顶窗 clearColor gray(51,51,51) a=0.5 叠洋红(255,0,255)，straight blit 实测 (178,51,178) 与「DWM 按 premult 解释」理论值完全吻合（每通道 +25 @ a=0.5，约 +17% 增亮）；premultiply quad blit 实测 (153,26,153) 与正确合成理论值吻合。Phase B 已按此落地 premultiply blit。
+- **R2 backdrop 组合成立**：GLFW 透明帧缓冲 + `DWMWA_SYSTEMBACKDROP_TYPE` 组合可用，Mica=2/Acrylic=3 均返回 S_OK 且采样到均匀材质色；**`DWMSBT_AUTO(0)` 返回 S_OK 但无材质**（无装饰窗口被内部启发式跳过）——证实 §3.0「必须显式选 MAINWINDOW/TRANSIENTWINDOW」，Phase C 实现一律显式档位。
+- **版本门槛**：开发机 Win11 26200 全量支持；22621 门槛按文档（属性粒度能力缓存 + 调用失败降级返回 false 兜底，旧版本实测靠返回值逻辑保证）。
+- **resize 残影（R2 风险表第二项）**：spike 支持 `--resizable` 人工验证，未自动化；DevDesk 主窗口有 min 1200×720 约束，触发面小，观察项保留。
+
 ---
 
 ## 5. 实施切分
@@ -219,12 +226,12 @@ DevDesk 设置页对降级的呈现：`app::activeWindowEffect()` 与用户所�
 - DevDesk：clearColor 改走 `setClearColor`（主题切换底色即时生效，关 KNOWN_LIMITATIONS UI-2）。
 - **验收**：`setClearColor` 切主题底色即时跟随（重启后一致）；alpha=1 路径与现状逐像素一致（无效果回归）；半透档截屏过审；`examples/` 加 `transparent_window` demo。
 
-### Phase C — DWM backdrop（2-3 天）
+### Phase C — DWM backdrop（2-3 天）——✅ 完成（2026-09-22，EUI-NEO `feat/frost-phase-cd`）
 
 - EUI-NEO：`applyWindowEffect` 完整实现（SYSTEMBACKDROP_TYPE 四档 + 能力缓存降级）+ `app::setWindowEffect/activeWindowEffect`。
 - **验收**：22H2+ 上 Acrylic/Mica 截屏；`setWindowEffect` 运行时切换生效；<22H2 分支按降级链返回 false；§3.5 性能实测三项跑完并记录；example 扩展 backdrop 三档切换按钮。
 
-### Phase D — DevDesk 设置页三档开关（1-2 天）
+### Phase D — DevDesk 设置页三档开关（1-2 天）——✅ 完成（2026-09-22，DevDesk `feat/window-effect-ui`）
 
 - `SettingsConfig.windowEffect` + sanitized + 持久化；设置页 UI（三档 segmented control，附降级提示行）；接线 `setWindowEffect/setClearColor` 即时生效。
 - **验收**：三档切换截屏 + 重启保持；非法值收敛；降级提示在（模拟）老系统场景正确显示；全量测试绿 + 文档更新（KNOWN_LIMITATIONS 划掉 UI-2，EUI-NEO-CAPABILITIES.md 的 vibrancy ❌ 行改为 ✅（Windows））。

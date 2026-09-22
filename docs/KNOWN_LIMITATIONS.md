@@ -33,10 +33,9 @@
 - W5 侧边栏落地后设置入口已由侧边栏承担（原浮动齿轮桥接已删），但 Home 页右上角的「⚙ 设置」按钮**没有随之一并接线或移除**，仍是 disabled 置灰状态，且源码注释（"设置页 T11 落地前不可用"）已过时。
 - **影响**：纯视觉残留，不影响任何功能（侧边栏常驻可进设置）；属下次 UI 清理顺手项（改为 navigateTo(Settings) 或直接删掉按钮）。
 
-#### 2. 运行中切换主题，窗口底色（clearColor）需重启才跟随
+#### 2. 运行中切换主题，窗口底色（clearColor）需重启才跟随 —— 已解决（磨砂 Phase B/D）
 
-- W5 起 `clearColor` 在启动时从持久化主题快照（`main.cpp` 的 `dslAppConfig()`），深浅主题启动即正确。
-- 但 EUI-NEO 无运行时改 clearColor 的 API（`DslWindowRuntime::request_` 是 initialize 时的快照且无私有 setter），**运行中**在设置页切主题时卡片/文字色即时生效、窗口底色不跟随，重启后一致。根治需上游提供运行时 clearColor API。
+- **已解决（2026-09-22，磨砂设计 Phase B/D）**：EUI-NEO 上游新增 `app::setClearColor` 运行时 API（覆盖主窗口 + 全部存活子窗口 + requestFullPaint），DevDesk 侧 `main.cpp` 的 theme 回调与 `module::settings::applyWindowVisuals` 已接线——切主题/切窗口效果档，底色（含 alpha）下一帧即时生效，重启后一致。同一通路顺带支持窗口效果三档（关闭/半透/磨砂，见设置页「外观」卡）。
 
 #### 3. Home 统计在 onStart 查询 + 手动刷新
 

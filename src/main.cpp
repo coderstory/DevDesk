@@ -339,11 +339,9 @@ void drawSidebar(eui::Ui& ui, const eui::Screen& screen) {
 // DslAppConfig 在 eui::dsl_app.h 中定义（命名空间 app）
 const DslAppConfig& dslAppConfig() {
     // 第一步：恢复持久化主题 + 全局字号缩放（只读 config.json，无 DB 依赖）。
-    // 必须先于下面 DslAppConfig 的构造执行：clearColor 在构造时从 theme 快照。
-    // EUI-NEO 无运行时改 clearColor 的 API（DslWindowRuntime::request_ 是
-    // initialize 时拷贝的快照且无私有成员 setter，见
-    // ../EUI-NEO/core/app/dsl_window_runtime.h render 处），因此运行中切换
-    // 主题时窗口底色不跟随，重启后生效（卡片/文字色仍即时生效）。
+    // 必须先于下面 DslAppConfig 的构造执行：clearColor 在构造时从 theme 快照
+    //（运行时底色跟随走 app::setClearColor，EUI-NEO 磨砂 Phase B 起已有该 API，
+    // 主题切换/窗口效果切档都即时生效，见下方 themeRestored 与 theme 回调）。
     static const bool themeRestored = []() {
         ::core::paths::ensureDirectoriesExist();
         setupLogging();
@@ -351,10 +349,15 @@ const DslAppConfig& dslAppConfig() {
         // 通过 theme 回调注入——先装回调再恢复主题，启动恢复与运行时切换
         // （设置页 theme::setDark/setLight → 回调 → app::setTitleBarAppearance）
         // 走同一条路径，标题栏即时生效无需重启。仅 Windows 生效，其他平台
-        // EUI-NEO 内部静默降级
+        // EUI-NEO 内部静默降级。
+        // 窗口底色随主题即时跟随（磨砂 Phase B/D）：clearColor 走运行时 API，
+        // alpha 按当前窗口效果档位（重读 config.json——主题切换是低频用户操作）
         ::core::theme::setChangeHandler([](bool isDark) {
             app::setTitleBarAppearance(
                 core::platform::TitleBarAppearance{isDark});
+            const module::settings::SettingsStore store(
+                ::core::paths::configFile());
+            module::settings::applyWindowVisuals(store.load().windowEffect);
         });
         const module::settings::SettingsStore store(
             ::core::paths::configFile());
@@ -366,6 +369,12 @@ const DslAppConfig& dslAppConfig() {
         }
         ::core::theme::setFontScale(
             static_cast<float>(cfg.fontScalePercent) / 100.0f);
+        // 窗口效果启动接线（磨砂 Phase D）：clearColor alpha 按档 + backdrop
+        // 请求（frosted → Acrylic）。窗口以透明帧缓冲创建（下方
+        // windowEffect(Transparent) 常开 hint，创建期不可逆；off 档 alpha=1
+        // 视觉等价实色），backdrop 在主循环首帧应用，降级真值经
+        // app::activeWindowEffect() 回查（设置页提示）
+        module::settings::applyWindowVisuals(cfg.windowEffect);
         return true;
     }();
     (void)themeRestored;
@@ -381,6 +390,11 @@ const DslAppConfig& dslAppConfig() {
         .minWindowSize(1200, 720)
         .highDpi(true)
         .resizable(true)
+        // 窗口效果（磨砂 Phase D）：透明帧缓冲 hint 常开（创建期属性不可逆，
+        // 三档运行时切换不重建窗口——off 档靠 clearColor alpha=1 视觉等价，
+        // 见 themeRestored 里 applyWindowVisuals）。实际档位/backdrop 由
+        // app::setWindowEffect 运行时驱动，此启动快照只负责开 hint
+        .windowEffect(core::platform::WindowEffect::Transparent)
         // 启动快照：持久化主题恢复（上文 themeRestored）后按当前深浅设置；
         // 运行时切换由 theme 回调走 setTitleBarAppearance（覆盖本快照）
         .darkTitleBar(::core::theme::current().isDark)

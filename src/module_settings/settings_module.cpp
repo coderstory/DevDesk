@@ -4,8 +4,11 @@
 // 设置项：
 //   1. 主题切换（深色/浅色）——core::theme::setDark/setLight，compose 每帧读
 //      current()，切换后下一帧全页生效（日志自证：applyTheme 有 LOG_INFO）；
-//      窗口底色（clearColor）在启动时跟随持久化主题，运行中切换重启后生效
-//      （EUI-NEO 无运行时改 clearColor 的 API，见 main.cpp 注释）
+//      窗口底色（clearColor）走 EUI-NEO 运行时 API app::setClearColor（磨砂
+//      Phase B），主题/窗口效果切换即时生效（main.cpp theme 回调同款路径）
+//   1b. 窗口效果三档（关闭/半透/磨砂，磨砂 Phase D）——applyWindowVisuals
+//      （clearColor alpha 按档 + setWindowEffect backdrop 请求）即时生效；
+//      activeWindowEffect 回查降级，行内提示（不支持磨砂 → 回退半透等）
 //   2. 字号缩放——core::theme::setFontScale 全局生效：token 层缩放让所有
 //      经 t.sizes.fontSize* 取字号的模块零改动受益；本页非 token 的硬编码
 //      小字号经 fs() 辅助函数跟随同一缩放
@@ -33,6 +36,7 @@
 #include "core/paths.h"
 #include "core/theme.h"
 
+#include <eui/app.h>
 #include <eui/dsl.h>
 
 #include <components/button.h>
@@ -61,6 +65,12 @@ const char* kFontPresetLabels[] = {"小 85%", "标准 100%", "大 115%", "特大
 // 日志保留档位（天；0 = 永久）
 constexpr int kRetentionPresets[] = {0, 7, 30, 90, 180, 365};
 constexpr int kRetentionPresetCount = 6;
+
+// 窗口效果档位（磨砂 Phase D；与 settings_config 的三档字符串一一对应）
+const char* kWindowEffectPresets[] = {
+    kWindowEffectOff, kWindowEffectTranslucent, kWindowEffectFrosted};
+constexpr int kWindowEffectPresetCount = 3;
+const char* kWindowEffectPresetLabels[] = {"关闭（默认）", "半透", "磨砂（Acrylic）"};
 
 int nearestIndex(int value, const int* presets, int count) {
     int best = 0;
@@ -137,6 +147,19 @@ public:
                   "%（下一帧全局生效）");
         LOG_INFO("Settings: 字号缩放 → " + std::to_string(cfg_.fontScalePercent) +
                  "%（core::theme token 层全局缩放）");
+    }
+
+    // 窗口效果三档切换（磨砂 Phase D）：clearColor alpha + backdrop 请求即时
+    // 生效（EUI-NEO 运行时 API，下一帧应用）；系统不支持时 compose 每帧回查
+    // activeWindowEffect 显示降级提示行（不需要 toast——提示随档位常驻更稳）
+    void applyWindowEffectPreset(int index) {
+        if (index < 0 || index >= kWindowEffectPresetCount) return;
+        cfg_.windowEffect = kWindowEffectPresets[index];
+        persist();
+        applyWindowVisuals(cfg_.windowEffect);
+        setStatus(std::string("窗口效果：") + kWindowEffectPresetLabels[index] +
+                  "（即时生效）");
+        LOG_INFO("Settings: 窗口效果 → " + cfg_.windowEffect);
     }
 
     void applyRetentionPreset(int index) {
@@ -333,6 +356,13 @@ private:
                    : std::to_string(cfg_.logRetentionDays) + " 天";
     }
 
+    // cfg_.windowEffect（三档字符串）→ 下拉索引；sanitized 保证只会是三档之一
+    int windowEffectIndex() const {
+        if (cfg_.windowEffect == kWindowEffectTranslucent) return 1;
+        if (cfg_.windowEffect == kWindowEffectFrosted) return 2;
+        return 0;
+    }
+
     // ---------- 顶部 Header ----------
     void drawHeader(eui::Ui& ui, float contentW, float headerH,
                     const core::theme::Tokens& t) {
@@ -405,7 +435,7 @@ private:
                 ui.text(id + ".desc")
                     .position(28.0f, 44.0f)
                     .size(w - 56.0f, 18.0f)
-                    .text("主题即时生效（窗口底色重启后跟随）；字号缩放全局生效")
+                    .text("主题与窗口底色即时生效；字号缩放全局生效")
                     .fontSize(fs(12.0f))
                     .lineHeight(18.0f)
                     .color(t.colors.textTertiary)
@@ -477,6 +507,49 @@ private:
                             .build();
                     })
                     .build();
+
+                // 右二：窗口效果三档（磨砂 Phase D），即时生效
+                ui.text(id + ".effect.label")
+                    .position(680.0f, 72.0f)
+                    .size(240.0f, 16.0f)
+                    .text("窗口效果")
+                    .fontSize(fs(12.0f))
+                    .lineHeight(16.0f)
+                    .color(t.colors.textSecondary)
+                    .build();
+                ui.stack(id + ".effect.ddwrap")
+                    .position(680.0f, 94.0f)
+                    .size(240.0f, 40.0f)
+                    .content([&] {
+                        components::dropdown(ui, id + ".effect.dd")
+                            .size(240.0f, 40.0f)
+                            .theme(compTheme)
+                            .items(std::vector<std::string>(
+                                kWindowEffectPresetLabels,
+                                kWindowEffectPresetLabels +
+                                    kWindowEffectPresetCount))
+                            .selected(windowEffectIndex())
+                            .open(effectDropdownOpen_)
+                            .onOpenChange(
+                                [this](bool v) { effectDropdownOpen_ = v; })
+                            .onChange(
+                                [this](int idx) { applyWindowEffectPreset(idx); })
+                            .build();
+                    })
+                    .build();
+                // 降级提示行（activeWindowEffect 回查实际生效值；一致时为空不显示）
+                const std::string degraded = windowEffectDegradedHint(
+                    cfg_.windowEffect, app::activeWindowEffect());
+                if (!degraded.empty()) {
+                    ui.text(id + ".effect.hint")
+                        .position(680.0f, 140.0f)
+                        .size(w - 680.0f - 28.0f, 16.0f)
+                        .text("⚠ " + degraded)
+                        .fontSize(fs(11.0f))
+                        .lineHeight(16.0f)
+                        .color(t.colors.warning)
+                        .build();
+                }
             })
             .build();
     }
@@ -821,6 +894,7 @@ private:
     SettingsConfig cfg_;
     bool fontDropdownOpen_ = false;
     bool retentionDropdownOpen_ = false;
+    bool effectDropdownOpen_ = false;      // 窗口效果下拉（磨砂 Phase D）
     bool regenConfirmOpen_ = false;       // 重新生成 token 确认弹窗
     float cardsScrollOffset_ = 0.0f;      // 卡片区 scrollView 滚动位置
     std::string statusMessage_;
