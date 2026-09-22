@@ -112,6 +112,18 @@ namespace {
         g_current = g_current.isDark ? darkTokens() : lightTokens();
         applyFontScale(g_current);
     }
+
+    ChangeHandler g_changeHandler;
+
+    void notifyThemeChanged(bool isDark) {
+        if (g_changeHandler) {
+            g_changeHandler(isDark);
+        }
+    }
+}
+
+void setChangeHandler(ChangeHandler handler) {
+    g_changeHandler = std::move(handler);
 }
 
 const Tokens& current() { return g_current; }
@@ -119,11 +131,13 @@ const Tokens& current() { return g_current; }
 void setDark() {
     g_current = darkTokens();
     applyFontScale(g_current);
+    notifyThemeChanged(true);
 }
 
 void setLight() {
     g_current = lightTokens();
     applyFontScale(g_current);
+    notifyThemeChanged(false);
 }
 
 void setFontScale(float scale) {

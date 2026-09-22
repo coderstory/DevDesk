@@ -37,6 +37,14 @@
 - md_tree 纯函数 2 例（分组/收起/深层文件）；`isSafeNewNotePath`/`create` 兜底/`pollChanged+fileMtime` 3 例；无头 compose+layout 2 例（目录树展开收起与缩进 `frame.x` 断言、大纲面板 zIndex/右侧浮层/编辑区不挤压）；既有 Phase 1 / W7 用例同步到新 UI（页签→开关、树行 id）。
 - 踩坑登记：`REGISTER_TEST` 宏按逗号切参，测试体里的 vector 初始化列表会破坏宏展开（报 "passed N arguments"），需用 `push_back`。
 
+## [W8] 2026-09-22 —— 标题栏深浅主题联动（磨砂 Phase A 先行）
+
+最终基线：**178/178 测试全绿**（177 基线 + 1 主题联动）。
+
+### feat
+
+- **标题栏深浅主题联动（EUI-NEO 上游 + DevDesk 接线）**：EUI-NEO 新增 `core/platform/window_effect.{h,_win,_stub.cpp}`（`TitleBarAppearance` + `applyTitleBarAppearance`，Windows 走 `DWMWA_USE_IMMERSIVE_DARK_MODE`，Win11 22000+，老系统静默降级返回 false）、`DslAppConfig::darkTitleBar(bool)` 启动快照、`app::setTitleBarAppearance/currentTitleBarAppearance` 运行时 API（即时生效，覆盖主窗口 + 全部存活子窗口 + 之后新开子窗口）+ `examples/window_effect.cpp` 演示 + 单测，已合回 EUI-NEO main（feat 34b21f2，本地未 push）。DevDesk 侧 `core::theme` 增加变更回调（core 不依赖 EUI-NEO 的架构铁律下由 main.cpp 注入 `app::setTitleBarAppearance`），启动主题恢复与设置页运行时切换走同一路径；`dslAppConfig` 补 `.darkTitleBar(theme::current().isDark)` 快照。测试 +1（theme 变更回调 mock 断言）。设计文档：`docs/superpowers/specs/2026-09-22-eui-window-frost-design.md` Phase A。
+
 ## [W5] 2026-09-22 —— 遗留项清零（三链并行 + 集成）
 
 最终基线：**137/137 测试全绿**（124 基线 + 6 Router payload + 2 Claude UI 冒烟 + 5 字号缩放/Router 集成）。

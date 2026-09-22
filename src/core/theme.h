@@ -4,9 +4,16 @@
 
 #include <eui/types.h>
 
+#include <functional>
 #include <string>
 
 namespace core::theme {
+
+// 主题深浅切换回调。core 层不能依赖 EUI-NEO（架构分层铁律），标题栏主题
+// 联动（app::setTitleBarAppearance，磨砂设计 Phase A）等由 main.cpp 在启动
+// 时注入回调实现；setDark/setLight 每次切换都会通知（幂等重放也通知）
+using ChangeHandler = std::function<void(bool isDark)>;
+void setChangeHandler(ChangeHandler handler);
 
 // 颜色 token（Dark Mode）
 struct ColorTokens {
