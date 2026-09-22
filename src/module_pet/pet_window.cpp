@@ -11,9 +11,9 @@
 
 #include "core/logging.h"
 #include "core/paths.h"
+#include "module_pet/pet_config.h"
 #include "module_pet/pet_frame_player.h"
 #include "module_pet/pet_skin.h"
-#include "module_settings/settings_config.h"
 
 #include <components/contextmenu.h>
 #include <eui/app.h>
@@ -36,26 +36,27 @@ PetRuntime& runtime() {
     return instance;
 }
 
-// ---- 持久化（读-改-写 config.json，只动 pet 字段）----
+// ---- 持久化（读-改-写 petsDir()/pet_config.json，只含 pet 字段；模块隔离，
+// 不依赖 module_settings）----
 
 void savePetPosition() {
     if (runtime().handle == nullptr) return;
     int x = 0;
     int y = 0;
     core::window::getWindowPos(runtime().handle, x, y);
-    module::settings::SettingsStore store(core::paths::configFile());
-    auto cfg = store.load();
-    cfg.petX = x;
-    cfg.petY = y;
+    PetConfigStore store(petConfigFile());
+    PetConfig cfg = store.load();
+    cfg.x = x;
+    cfg.y = y;
     if (store.save(cfg).isFail()) {
         LOG_WARN("桌宠位置持久化失败（不影响本次会话）");
     }
 }
 
 void savePetClickThrough(bool enabled) {
-    module::settings::SettingsStore store(core::paths::configFile());
-    auto cfg = store.load();
-    cfg.petClickThrough = enabled;
+    PetConfigStore store(petConfigFile());
+    PetConfig cfg = store.load();
+    cfg.clickThrough = enabled;
     if (store.save(cfg).isFail()) {
         LOG_WARN("桌宠穿透状态持久化失败（不影响本次会话）");
     }

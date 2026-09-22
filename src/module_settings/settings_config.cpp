@@ -27,10 +27,6 @@ constexpr const char* kKeyLogRetention = "logRetentionDays";
 constexpr const char* kKeyProxyAutoStart = "claudeProxyAutoStart";
 constexpr const char* kKeyWindowEffect = "windowEffect";
 constexpr const char* kKeyEnabledModules = "enabledModules";
-constexpr const char* kKeyPetSkin = "petSkin";
-constexpr const char* kKeyPetX = "petX";
-constexpr const char* kKeyPetY = "petY";
-constexpr const char* kKeyPetClickThrough = "petClickThrough";
 
 // 合法模块 ID 清单（sanitized 过滤未知项；与 kModuleId* 一一对应）
 const char* const kKnownModuleIds[] = {
@@ -94,18 +90,6 @@ SettingsConfig SettingsStore::sanitized(const SettingsConfig& cfg) {
         }
     }
     out.enabledModules = std::move(modules);
-    // 桌宠字段：皮肤名只许 [A-Za-z0-9_-]（它要拼进文件系统路径，防穿越）；
-    // 坐标保留 -1 哨兵（未设置），正负都钳进 int16 量级防手改乱值
-    if (out.petSkin.empty() ||
-        out.petSkin.find_first_not_of(
-            "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_") !=
-            std::string::npos) {
-        out.petSkin = "clay-cat";
-    }
-    if (out.petX < -1) out.petX = -1;
-    if (out.petY < -1) out.petY = -1;
-    if (out.petX > 32767) out.petX = 32767;
-    if (out.petY > 32767) out.petY = 32767;
     return out;
 }
 
@@ -215,19 +199,6 @@ SettingsConfig SettingsStore::load() const {
         }
         cfg.enabledModules = std::move(ids);
     }
-    // 桌宠（设计 §4.6）：字段缺失回退默认；越界/非法值由 sanitized 收敛
-    if (obj.has(kKeyPetSkin) && obj.get(kKeyPetSkin).isString()) {
-        cfg.petSkin = obj.get(kKeyPetSkin).asString();
-    }
-    if (obj.has(kKeyPetX) && obj.get(kKeyPetX).isNumber()) {
-        cfg.petX = static_cast<int>(obj.get(kKeyPetX).asInt());
-    }
-    if (obj.has(kKeyPetY) && obj.get(kKeyPetY).isNumber()) {
-        cfg.petY = static_cast<int>(obj.get(kKeyPetY).asInt());
-    }
-    if (obj.has(kKeyPetClickThrough) && obj.get(kKeyPetClickThrough).isBool()) {
-        cfg.petClickThrough = obj.get(kKeyPetClickThrough).asBool();
-    }
     return sanitized(cfg);
 }
 
@@ -242,10 +213,6 @@ core::Result<void> SettingsStore::save(const SettingsConfig& cfgRaw) const {
     obj.set(kKeyWindowEffect, platform::json::makeString(cfg.windowEffect));
     obj.set(kKeyEnabledModules,
             platform::json::makeStringArray(cfg.enabledModules));
-    obj.set(kKeyPetSkin, platform::json::makeString(cfg.petSkin));
-    obj.set(kKeyPetX, platform::json::makeInt(cfg.petX));
-    obj.set(kKeyPetY, platform::json::makeInt(cfg.petY));
-    obj.set(kKeyPetClickThrough, platform::json::makeBool(cfg.petClickThrough));
 
     auto text = platform::json::stringify(
         platform::json::JsonValue(obj), /*pretty=*/true);
