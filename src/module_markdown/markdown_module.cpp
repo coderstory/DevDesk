@@ -506,7 +506,7 @@ private:
                     ui.text("md.tree.empty")
                         .position(36.0f, listY + 40.0f)
                         .size(sideW - 48.0f, 40.0f)
-                        .text("还没有笔记\n点下面「+ 新建」开始")
+                        .text("还没有笔记\n点下面「+ 笔记」开始")
                         .fontSize(t.sizes.fontSizeSmall)
                         .lineHeight(18.0f)
                         .wrap()
@@ -1630,6 +1630,7 @@ private:
         editorDirty_ = false;
         outlineDirty_ = true;
         activeOutlineIdx_ = -1;
+        tagInput_.clear();  // 终验复审：标签输入框残留上一篇的半截输入
         // 标签行随笔记切换
         if (auto tr = service_->tagsForNote(relPath); tr.isOk()) {
             currentTags_ = std::move(tr.value());
