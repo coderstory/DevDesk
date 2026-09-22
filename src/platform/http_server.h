@@ -9,6 +9,10 @@
 
 namespace platform::http {
 
+// 请求体大小上限（spec §10.4：>10MB 拒绝，防 OOM/DoS）。
+// 在 Server 层单点收口（cpp-httplib payload_max_length），超出直接回 413。
+inline constexpr size_t kMaxBodyBytes = 10u * 1024u * 1024u;
+
 struct RequestCtx {
     std::string method;
     std::string path;
