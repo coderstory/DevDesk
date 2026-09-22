@@ -1,6 +1,7 @@
 #include "paths.h"
 #include "logging.h"
 
+#include <cstdlib>
 #include <filesystem>
 
 namespace fs = std::filesystem;
@@ -19,6 +20,10 @@ fs::path sqliteDbFile() {
 }
 
 fs::path markdownDir() {
+    // 环境变量覆盖（无头测试隔离用；用户也可借此把笔记目录挪到任意位置）
+    if (const char* env = std::getenv("DEVDESK_NOTES_DIR")) {
+        return fs::path(env);
+    }
     return appDataDir() / "notes";
 }
 
