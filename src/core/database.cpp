@@ -48,15 +48,19 @@ core::Result<void> Database::migrate() {
 }
 
 core::Result<int64_t> Database::pruneCallLogs(int retentionDays) {
+    return core::pruneCallLogs(db_, retentionDays);
+}
+
+core::Result<int64_t> pruneCallLogs(core::data::SqliteDb& db, int retentionDays) {
     if (retentionDays < 0) retentionDays = 0;
     const int64_t cutoff = static_cast<int64_t>(std::time(nullptr)) -
                            static_cast<int64_t>(retentionDays) * 86400;
 
     // 持锁覆盖 step + sqlite3_changes，避免并发语句插队导致计数失真
     //（recursive_mutex，Statement 内部加锁可重入）
-    std::lock_guard<std::recursive_mutex> lock(db_.mutex());
+    std::lock_guard<std::recursive_mutex> lock(db.mutex());
 
-    auto prep = db_.prepare(
+    auto prep = db.prepare(
         "DELETE FROM claude_call_logs WHERE started_at < ?");
     if (prep.isFail()) {
         return core::Result<int64_t>::fail(prep.errorCode(), prep.errorMessage());
@@ -70,7 +74,7 @@ core::Result<int64_t> Database::pruneCallLogs(int retentionDays) {
         return core::Result<int64_t>::fail(step.errorCode(), step.errorMessage());
     }
     return core::Result<int64_t>::ok(
-        static_cast<int64_t>(sqlite3_changes(db_.handle())));
+        static_cast<int64_t>(sqlite3_changes(db.handle())));
 }
 
 // ============ 进程级数据库共享访问器 ============

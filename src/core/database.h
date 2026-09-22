@@ -55,6 +55,11 @@ private:
     std::vector<core::data::Migration> migrations_;
 };
 
+// 滚动清理调用日志（自由函数版，实现见 database.cpp）：Database::pruneCallLogs
+// 的同款逻辑，供 module_* 层经 core::appDatabase() 拿连接后直接调用
+// （设置页切换保留档位时立即执行一次清理，不必重启）
+core::Result<int64_t> pruneCallLogs(core::data::SqliteDb& db, int retentionDays);
+
 // ============ 进程级数据库共享访问器 ============
 //
 // main.cpp 在启动时（跑完 migrations 之后）调用 registerAppDatabase()，
