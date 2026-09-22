@@ -1,0 +1,77 @@
+// src/module_claude_proxy/settings_sync.h
+// Claude Code settings.json 接管通道（provider-config Phase C，设计 §5.3）
+//
+// 接管协议（takeOver，代理启动 / 运行中切 profile 触发）：
+//   1. 读现有 settings.json（不存在 → 视为空对象；解析失败 → **中止不写**——
+//      宁可不让用户自动接入，不能弄坏用户文件）
+//   2. 首份快照：接管前把原 env 对象完整存入 sidecar（DevDesk 数据目录的
+//      claude_settings_snapshot.json，**不往 settings.json 塞标记字段**）；
+//      sidecar 已存在则保留首份快照（热切换 / 重生成 token 不覆盖），
+//      仅把新的托管键并入 managedKeys（防旧托管键漏还原）
+//   3. 只动 env 键：buildProxyEnv() 产出的托管键写入/覆盖；用户自己的其他
+//      env 键与所有非 env 顶层字段（permissions / hooks / model 等）原样保留
+//      （读-改-写，platform::json；注意序列化会统一 pretty 格式，字段值不变）
+//   4. 原子写：同目录临时文件 + rename
+//   5. 上层覆盖检测（§5.3）：managed（企业策略）/ project（cwd 的
+//      .claude/settings.json + settings.local.json）层 env 含
+//      ANTHROPIC_BASE_URL / AUTH_TOKEN / MODEL 等同名键 → LOG_WARN + 警告
+//      信息随 SyncResult 返回（UI 展示留给 Phase D），**提示不代改**
+//
+// 还原协议（restore，代理停止 / 应用退出触发）：
+//   - 按 sidecar 快照按键级还原：快照里有值 → 恢复原值；原本不存在的键 →
+//     删除；其余一切不动；写回后删除 sidecar
+//   - 代理停止 = settings.json 永不指向死代理
+//
+// 崩溃兜底：启动时 sidecar 残留（上次没走完还原）→ recoverPendingSnapshot()
+// 自动补还原，必须先于任何 takeOver 调用（否则残留的托管键会被误快照为
+// 用户原值）。
+//
+// 热切换：官方 settings-reference 已确认 env 键在「at startup, and again in
+// the running session when a saved change alters the merged env」时重新加载，
+// 即保存后运行中的 Claude Code 会话即生效，无需重启客户端（model settings
+// 键的 /model 例外不影响 env 路径）。
+#pragma once
+
+#include <filesystem>
+#include <string>
+#include <vector>
+
+namespace module::claude {
+
+struct Profile;
+
+namespace settings_sync {
+
+// 路径注入点：生产用 defaultPaths()（core::paths），测试传临时目录，
+// 绝不碰真实 ~/.claude
+struct Paths {
+    std::filesystem::path settingsFile;  // ~/.claude/settings.json
+    std::filesystem::path sidecarFile;   // appDataDir()/claude_settings_snapshot.json
+    // 上层覆盖检测要读的文件（managed + project 层；user 层就是 settingsFile 自身，不列）
+    std::vector<std::filesystem::path> overlayFiles;
+};
+
+Paths defaultPaths();
+
+struct SyncResult {
+    bool ok = false;
+    std::string error;                  // 失败 / 中止原因（解析失败中止等）
+    std::vector<std::string> warnings;  // 上层覆盖检测命中（Phase D UI 展示）
+};
+
+// 接管。profile 可为默认构造（无激活 profile 时只写 BASE_URL + AUTH_TOKEN）
+SyncResult takeOver(const Profile& profile, int proxyPort,
+                    const std::string& proxyToken, const Paths& paths);
+
+// 还原（无 sidecar → no-op ok；settings.json 解析失败 → fail 且保留 sidecar
+// 供人工恢复）
+SyncResult restore(const Paths& paths);
+
+// sidecar 是否存在（设置页「接管状态」行数据源 + 崩溃补还原检测）
+bool hasPendingSnapshot(const Paths& paths);
+
+// 启动崩溃补还原：sidecar 残留 → 先还原（见文件头注释的调用时序要求）
+SyncResult recoverPendingSnapshot(const Paths& paths);
+
+} // namespace settings_sync
+} // namespace module::claude

@@ -197,4 +197,49 @@ EnvAliasMapping applyEnvAliases(const std::map<std::string, std::string>& env) {
     return out;
 }
 
+std::map<std::string, std::string> buildProxyEnv(
+    const std::string& modelsConfigJson, const std::string& legacyModel,
+    const std::string& extraEnvJson,
+    int proxyPort, const std::string& proxyToken) {
+    std::map<std::string, std::string> out;
+
+    // extra_env 先入表（别名归一），托管键随后写入 → 冲突时托管键优先（规则 5）
+    auto extra = parseExtraEnv(extraEnvJson);
+    if (extra.isOk()) {
+        out = applyEnvAliases(extra.value()).env;
+        // 非法 JSON：读路径容错，整体忽略（与 effectiveModelsConfig 语义一致）
+    }
+
+    out["ANTHROPIC_BASE_URL"] = "http://127.0.0.1:" + std::to_string(proxyPort);
+    if (!proxyToken.empty()) {
+        out["ANTHROPIC_AUTH_TOKEN"] = proxyToken;
+    }
+
+    const ModelsConfig mc = effectiveModelsConfig(modelsConfigJson, legacyModel);
+    // 槽位 → env 键（nameKey 为空表示该槽位无官方 _NAME 变体，不生成）
+    struct SlotEnv {
+        const ModelSlot* slot;
+        const char* envKey;
+        const char* nameKey;
+    };
+    const SlotEnv rows[] = {
+        {&mc.def,      "ANTHROPIC_MODEL",                    nullptr},
+        {&mc.sonnet,   "ANTHROPIC_DEFAULT_SONNET_MODEL",     "ANTHROPIC_DEFAULT_SONNET_MODEL_NAME"},
+        {&mc.opus,     "ANTHROPIC_DEFAULT_OPUS_MODEL",       "ANTHROPIC_DEFAULT_OPUS_MODEL_NAME"},
+        {&mc.haiku,    "ANTHROPIC_DEFAULT_HAIKU_MODEL",      "ANTHROPIC_DEFAULT_HAIKU_MODEL_NAME"},
+        {&mc.fable,    "ANTHROPIC_DEFAULT_FABLE_MODEL",      "ANTHROPIC_DEFAULT_FABLE_MODEL_NAME"},
+        {&mc.subagent, "CLAUDE_CODE_SUBAGENT_MODEL",         nullptr},
+    };
+    for (const auto& row : rows) {
+        if (row.slot->model.empty()) continue;  // 空槽位跳过（规则 3）
+        out[row.envKey] = row.slot->model;
+        if (row.nameKey != nullptr) {
+            out[row.nameKey] = row.slot->name.empty()
+                ? deriveDisplayName(row.slot->model)  // 显示名派生（规则 4）
+                : row.slot->name;
+        }
+    }
+    return out;
+}
+
 } // namespace module::claude
