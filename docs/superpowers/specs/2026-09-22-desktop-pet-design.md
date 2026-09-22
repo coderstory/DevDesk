@@ -2,7 +2,7 @@
 
 日期：2026-09-22 ｜ 状态：设计定稿（待评审）｜ 关联：`2026-09-22-eui-window-frost-design.md`（透明管线 Phase B）、`2026-09-22-module-plugin-architecture-design.md`（模块插拔方案 A）、`docs/EUI-NEO-CAPABILITIES.md`（多窗口 ✅ 项）
 
-**结论先行**：可行，推荐形态是**精灵图序列帧（sprite PNG + alpha 通道，格式数据驱动、兼容 shimeji 生态）+ 独立无边框置顶子窗口**，走 `app::openWindow` 多窗口通路，**Windows 11 与 macOS 27+ 双平台覆盖**（核心 hint 组合 `DECORATED=0 + TRANSPARENT_FRAMEBUFFER + FLOATING + MOUSE_PASSTHROUGH + FOCUS_ON_SHOW=0` 在 GLFW 层两平台同构，差异只在 platform 层：Windows 补 `WS_EX_TOOLWINDOW`，macOS 补全桌面空间常驻等 NSWindow 属性，按 `*_win.cpp`/`*_macos.mm` 接口隔离惯例拆文件）。**形态选型的硬约束是开源授权合规**（用户明确要求尽可能使用开源方案）：Live2D（专有 SDK，商用需付费发布许可）、Spine（专有运行时许可，要求每个终端用户自购编辑器授权）**默认排除**；推荐路线的引擎侧零新依赖（EUI-NEO 自绘 + stb_image），素材侧走 CC0（Kenney / itch.io 免费区）或 shimeji 生态包（原版 Shimeji/Shimeji-EE 为 BSD 类许可，可随程序分发，需标注来源；社区第三方包逐包核授权）。桌宠的透明需求与磨砂设计共享 **Phase B（透明帧缓冲管线）** 的全部基础设施（`GLFW_TRANSPARENT_FRAMEBUFFER` hint + premultiplied blit），**被 Phase B 阻塞、不被 Phase C（DWM backdrop）阻塞**——桌宠不需要磨砂材质，只要像素级透明。EUI-NEO 侧需一次约 6 项小扩展的上游 PR（子窗口窗口级配置透传 / setWindowPos / 鼠标穿透 / 不抢焦点 / 任务栏隐藏 / 子窗口最小尺寸下限放开），DevDesk 侧按模块插拔方案 A 的模式新增 `module_pet`（可插拔，关掉 = 不开窗口 = 零执行）。MVP（静态/眨眼 sprite + 拖拽 + 点击反应 + 位置持久化）估计 **3-5 个工作日**（含 EUI-NEO 上游扩展），全量（状态机/气泡/菜单/皮肤）另加 3-4 天。
+**结论先行**：可行，推荐形态是**精灵图序列帧（sprite PNG + alpha 通道，格式数据驱动、兼容 shimeji 生态）+ 独立无边框置顶子窗口**，走 `app::openWindow` 多窗口通路，**Windows 11 与 macOS 27+ 双平台覆盖**（核心 hint 组合 `DECORATED=0 + TRANSPARENT_FRAMEBUFFER + FLOATING + MOUSE_PASSTHROUGH + FOCUS_ON_SHOW=0` 在 GLFW 层两平台同构，差异只在 platform 层：Windows 补 `WS_EX_TOOLWINDOW`，macOS 补全桌面空间常驻等 NSWindow 属性，按 `*_win.cpp`/`*_macos.mm` 接口隔离惯例拆文件）。**选型标准（用户 2026-09-22 最新决策）：纯按技术优劣、实现成本、效果质量评估，不设授权/开源合规约束**——Live2D、Spine、Rive 付费档全部回到桌面重新权衡（§3.1）；维持序列帧推荐的核心理由是**实现成本最低（~200 行帧播放器）+ 素材渠道现成（CC0 序列帧资源 + shimeji 生态）+ 与 EUI-NEO 现有能力零缝隙对齐**，Rive（MIT 运行时 + 状态机天然适合行为驱动）与 Spine/Live2D 列为表现力升级路径而非起步路径（§3.2 给出升级触发条件）。桌宠的透明需求与磨砂设计共享 **Phase B（透明帧缓冲管线）** 的全部基础设施（`GLFW_TRANSPARENT_FRAMEBUFFER` hint + premultiplied blit），**被 Phase B 阻塞、不被 Phase C（DWM backdrop）阻塞**——桌宠不需要磨砂材质，只要像素级透明。EUI-NEO 侧需一次约 6 项小扩展的上游 PR（子窗口窗口级配置透传 / setWindowPos / 鼠标穿透 / 不抢焦点 / 任务栏隐藏 / 子窗口最小尺寸下限放开），DevDesk 侧按模块插拔方案 A 的模式新增 `module_pet`（可插拔，关掉 = 不开窗口 = 零执行）。MVP（静态/眨眼 sprite + 拖拽 + 点击反应 + 位置持久化）估计 **3-5 个工作日**（含 EUI-NEO 上游扩展），全量（状态机/气泡/菜单/皮肤）另加 3-4 天。
 
 ---
 
@@ -28,8 +28,8 @@
 ### 1.3 约束
 
 - 单 exe 零外部 DLL（T3 发布形态）——排除 CEF/Electron 壳类方案。
-- **开源优先（硬约束，用户 2026-09-22 补充）**：框架/引擎/素材尽可能使用开源方案，授权合规作为形态选型的一票否决项——Live2D（专有 SDK）、Spine（专有运行时）这类默认排除；推荐方案必须给出许可证名 + 素材获取渠道。
-- **双平台（用户 2026-09-22 补充）**：DevDesk 目标平台是 Windows 11 + macOS 27+，桌宠技术设计必须双平台覆盖；平台差异按仓库 `*_win.cpp`/`*_macos.mm` 接口隔离惯例落位（EUI-NEO 侧对齐其 platform 分层，DevDesk 侧对齐 T6 模式）。
+- **选型标准（用户 2026-09-22 最新决策）**：纯按技术优劣、实现成本、效果质量评估，**不设授权/开源合规约束**（早先「尽可能开源」的要求已作废，Live2D/Spine/Rive 全部回到桌面）；素材授权从「一票否决项」降为工程偏好——CC0/CC-BY 仍是首选（零义务/低摩擦），但不再是硬门槛。
+- **双平台（硬要求）**：DevDesk 目标平台是 Windows 11 + macOS 27+，桌宠技术设计必须双平台覆盖；平台差异按仓库 `*_win.cpp`/`*_macos.mm` 接口隔离惯例落位（EUI-NEO 侧对齐其 platform 分层，DevDesk 侧对齐 T6 模式）。
 - 不抛 C++ 异常，错误走 `Result<T>`；平台适配接口隔离（`*_win.cpp` 拆文件，业务代码零 `#ifdef`）。
 - EUI-NEO 上游优先：窗口能力缺口修 `../EUI-NEO/`，DevDesk 只做接线。
 
@@ -72,7 +72,11 @@
 | 任务栏隐藏 | **无**。GLFW 无此 hint，需要平台层 `WS_EX_TOOLWINDOW`（`SetWindowLongPtr` 改 GWL_EXSTYLE；官方语义：任务栏和 Alt+Tab 均不出现） | grep EUI-NEO core/ 零命中；这是唯一需要全新 Win32 代码的项（~20 行，接口隔离进 platform） |
 | 运行时移动窗口（拖拽宠物） | **无**。`core/window/window_backend.h` 的 API 清单里没有 setWindowPos / getWindowPos | 拖拽需要：onDrag 给 deltaX/Y + 运行时 setWindowPos；均需新增（GLFW 的 `glfwSetWindowPos` 一行封装） |
 
-**外网核实的一个关键技术事实**（影响透明路线选择）：经典「按像素 alpha 命中 + 穿透」走 `WS_EX_LAYERED` 分层窗口，但 **`WS_EX_LAYERED` 与 OpenGL 窗口类传统要求的 `CS_OWNDC` 类样式冲突**（learn.microsoft.com extended-window-styles）。GLFW 3.4 的透明窗口走的是 DWM 合成路线（`GLFW_TRANSPARENT_FRAMEBUFFER` + blur-behind），天然规避此冲突——**桌宠透明必须走 DWM/GLFW 路线，不能走 `UpdateLayeredWindow`**，这与磨砂设计的结论一致，进一步佐证两者共享 Phase B 基础设施。
+**关键技术事实**（影响透明与命中路线选择，外部调研 + 用户调研双重核实）：
+
+1. 经典「按像素 alpha 命中」分层窗口路线：`WS_EX_LAYERED` 与 OpenGL 窗口类传统要求的 `CS_OWNDC` 类样式冲突（learn.microsoft.com）；且 OpenGL 不能直染分层窗口——要离屏 FBO → `glReadPixels` → `CreateDIBSection`（**BGRA 字节序交换**）→ `UpdateLayeredWindow`（**预乘 alpha**，否则半透明边缘黑边），`glReadPixels` 是 CPU-GPU 同步点（用户调研：100-300px 窗口 30fps 足够，可脏矩形优化）。
+2. GLFW 3.4 透明窗口走 **DWM 合成路线**（`GLFW_TRANSPARENT_FRAMEBUFFER` + blur-behind），天然规避 1 的全部三个坑（无类样式冲突、无读回同步点、premultiply 在 blit 一次修）。
+3. **结论：桌宠透明走 DWM/GLFW 路线**（与磨砂设计结论一致，共享 Phase B）；分层窗口读回路线留作 DWM 路线失效时的备选。逐像素命中则**不需要**分层窗口——`WM_NCHITTEST` 读帧缓冲 alpha 阈值即可（O1，用户调研给出）。
 
 ### 2.4 动画与图像渲染：能力充足
 
@@ -109,40 +113,48 @@ G1-G5 合计约一个 **1-2 天的上游 PR**（`feat(window): managed window co
 
 ---
 
-## 3. 形态方案对比（外网调研，2026-09-22，来源见文末）
+## 3. 形态方案对比（外网调研 + 用户自研调研，2026-09-22）
 
-### 3.1 四种主流实现模式对照（DevDesk 约束 + 开源授权硬约束视角）
+> 输入：外部调研（子 agent 实抓 GitHub/官方文档，来源见文末）+ 用户自研调研报告 `docs/superpowers/research/2026-09-22-desktop-pet-external-research.md`（六方案雷达图数据、素材渠道、Win32 技术要点）。两份调研独立得出同一初步结论（序列帧够用），本节按最新选型标准（技术/成本/质量，授权不作废门）复核。
 
-| 维度 | A. 精灵图序列帧（shimeji 式） | B. Live2D | C. 骨骼动画（Spine） | D. HTML/CEF 壳 |
-|------|------------------------------|-----------|--------------------|----------------|
-| **引擎/运行时授权** | **零新依赖**（EUI-NEO 自绘 + stb_image，均在仓库内） | **专有 SDK**（Cubism SDK 闭源；个人与年销售额 <2000 万日元的小规模事业者免发布许可，超过须签付费 Publication License Agreement，且应用内需带 Live2D 声明）——**开源约束下排除** | **专有运行时许可**（2025-04 版 Spine Runtimes License：集成产品的**每个用户须自购 Spine Editor license**）——免费分发的桌宠基本不可行，**排除** | Electron（MIT）或 CEF（BSD）本身开源，但见下行 |
-| 与单 exe 零 DLL 冲突 | 无 | SDK 静态链接可行但授权存疑 | 无 | **正面冲突**（Chromium 壳常驻 150-400MB 内存 + 多进程） |
-| 与 EUI-NEO 契合 | **完美**：ImageBuilder/纹理缓存/onTimer/clip 直接用 | 差：Cubism 网格渲染要接进自绘 GL 后端，工作量≈半个后端 | 中：2D 骨骼可映射 transform，蒙皮变形超出 DSL 能力 | 无（另一渲染栈） |
-| 资源生态 | **最好**：shimeji 格式是事实标准（见 3.2），deviantART/itch.io 大量现成包 | 模型需专门制作，成本高 | 需绑骨骼，编辑器收费 | 任意 web 素材 |
-| CPU/GPU/内存开销 | 最低（帧切换 = 纹理换绑；自绘单窗口 20-50MB 级） | 低-中 | 低 | **最高**（Java 桌宠 JVM 100-200MB、Chromium 150-400MB，同为社区诟病主因） |
-| 开源先例 | Shimeji-EE（BSD 类）、Ark-Pets（GPL-3.0，1099★）、eSheep（1150★）、wl_shimeji（GPL-2.0） | Desktop Mate（闭源商业）、粉丝自制（角色版权属 miHoYo，不可商用） | 无主流开源桌宠走 Spine | clawd-on-desk（AGPL-3.0，6267★）、DyberPet（GPL-3.0） |
+### 3.1 六种实现模式对照
 
-开源替代的补充盘点：**骨骼动画开源格式**（DragonBones 已停维护——待验证；CoaTools/Spriter 开放格式生态薄）与 **Lottie/rive 运行时**（rive runtime 开源状态未查证）均无成熟桌宠先例，不改变结论；3D 路线的 **VRM**（开源虚拟形象标准）+ Mate-Engine（Unity，3692★）是 Live2D 的开源平替，但引入 3D 渲染栈与自绘框架路线冲突，列为远期观察项。
+| 方案 | 运行时情况 | 与 EUI-NEO 集成成本 | 素材/创作生态 | 桌宠场景评价 |
+|------|-----------|--------------------|--------------|--------------|
+| **A. 精灵图序列帧（shimeji 式）** | 自研 ~200 行帧播放器（stb_image + ImageBuilder，全在仓库内） | **零**（§2.4 逐项对齐） | **最好**：shimeji 格式事实标准 + CC0 序列帧包现成（见 3.2 渠道表） | 动画集有限但桌宠完全够用，shimeji 生态验证多年 |
+| B. Rive | 运行时 **MIT 完全开源**（OpenGL 渲染器现成），但编辑器是 SaaS 订阅（Free 档不能生产导出，Cadet $17/座/月），格式非开放 | 中：rive-cpp 引入新依赖树，渲染要接进自绘 GL 后端 | 编辑器门槛 + 桌宠素材生态薄 | **状态机天然适合行为驱动**（input/state machine 是 Rive 一等概念），矢量平滑、文件小——**技术上是序列帧的最强升级对手** |
+| C. Spine（骨骼） | 运行时源码可见非开源（需购买编辑器许可，每用户一 seat） | 高：蒙皮变形渲染 ≈ 半个后端 | 编辑器成熟（买断），桌宠素材生态薄 | 表现力高、动作词汇量大，但 MVP 用不上这么多 |
+| D. Live2D | 专有 Cubism SDK（FREE 档限个人/小规模，年营收有门槛，详见官网） | 高：网格变形 + 物理渲染接入自绘后端 | 模型需专门制作，成本人天级 | 角色表现力天花板，商业化桌宠（Desktop Mate）验证过 |
+| E. DragonBones / Spriter SCML / CoaTools / Lottie | DragonBones MIT 但编辑器已死（腾讯归档）；Spriter 运行时萎缩；CoaTools 无成熟 C++ 运行时；Lottie 依赖 AE 创作 | 各异 | 全部生态萎缩或错位 | **不推荐**（维护风险/工具链断裂，用户调研同结论） |
+| F. HTML/CEF 壳 | Electron/CEF 或 Tauri（BongoCat 先例） | 无（另一渲染栈） | 任意 web 素材 | **正面冲突**单 exe 零 DLL；Chromium 壳常驻 150-400MB |
 
-### 3.2 推荐：A（精灵图序列帧），皮肤格式数据驱动 + 兼容 shimeji 生态
+开源先例佐证 A 的可行域：Shimeji-EE（BSD 类）、Ark-Pets（GPL-3.0，1099★，明日方舟序列帧）、eSheep（1150★）、wl_shimeji（GPL-2.0）；事件驱动新形态参考 NeurolingsCE（C++/Qt6，响应 AI 编码工具事件）与 clawd-on-desk（6267★，监控 AI agent 状态）——**DevDesk 的桌宠将来可接代理/Claude 事件**（M2 气泡的进阶源，§4.5）。
 
-推荐理由收敛：
+### 3.2 推荐：A（精灵图序列帧）——维持，理由重述 + 升级触发条件
 
-1. **授权合规是硬约束**：A 是唯一「引擎零新依赖、素材生态有 BSD 类许可官方包」的形态。B/C 被专有授权一票否决，D 与发布形态冲突。
-2. **与 EUI-NEO 能力完全对齐**（§2.4 已逐项核实：多 PNG 切帧 / sprite sheet+clip / transition easing / onTimer）。
-3. **shimeji 格式是事实标准**，数据驱动的动画配置是所有成功桌宠项目的共同点（Shimeji 用 XML actions/behaviors、DyberPet 用 JSON MOD、eSheep 用 animations.xml + 编辑器）——**皮肤格式从第一天就走 JSON 数据驱动**（§4.3），并预留 shimeji `actions.xml` 子集兼容的导入路径，白捡现存素材生态。
-4. 一条反向佐证：Shijima-Qt（C++/Qt 重实现）作者归档时自述「框架选错导致整个项目变成 hack 集合」——用自绘轻量路径而非重型框架，正是本方案的方向。
+放开授权约束后重新权衡的**独立判断：仍然推荐 A 起步**，理由收敛为五条：
 
-**素材获取渠道与许可证**（M1 落地时逐项核实）：
+1. **实现成本最低**：~200 行帧播放器 vs Rive 一套新依赖树+渲染接入 vs Spine/Live2D 半个后端。桌宠 MVP 的表现力需求（待机/眨眼/被戳）本来就是序列帧的主场。
+2. **素材渠道现成**：CC0 序列帧包即插即用（不用等美术/不用买编辑器订阅），shimeji 生态按帧数计的现成行为库（含 walk/run/eat/sleep/grab 全套状态的包都有，见下表 tatsu-san 桌宠包）。
+3. **与 EUI-NEO 零缝隙**（§2.4）：多 PNG 切帧 / sprite sheet+clip / transition easing / onTimer 全部现成，B/C/D 每个都要动渲染后端。
+4. **shimeji 格式是事实标准**，数据驱动的动画配置是所有成功桌宠项目的共同点（Shimeji 用 XML actions/behaviors、DyberPet 用 JSON MOD、eSheep 用 animations.xml + 编辑器）——**皮肤格式从第一天就走 JSON 数据驱动**（§4.3），并预留 shimeji `actions.xml` 子集兼容的导入路径（O5），白捡现存素材生态。C++ 状态机可参考 libshijima（纯 C++ 跨平台仿真核心，GPL-3.0——只参考思路重写，不链接）。
+5. 反向佐证：Shijima-Qt（C++/Qt 重实现）作者归档时自述「框架选错导致整个项目变成 hack 集合」——用自绘轻量路径而非重型框架，正是本方案的方向。
 
-| 渠道 | 许可证 | 用途 |
-|------|--------|------|
-| Shimeji-EE 官方素材包（Shimeji/KuroShimeji） | BSD 类（原版 group-finity 许可 + Kilkakon 条款：可随程序分发，须标注来源、修改须明示） | 可作内置默认皮肤候选 |
-| Kenney（kenney.nl） | **CC0** | 备选像素角色素材 |
-| itch.io `game-assets/tag-shimeji` 免费区 | 逐包确认（混杂，多为个人授权） | 用户自装皮肤，不作内置分发 |
-| 自绘（Clay Cat，呼应品牌色 #D97757） | 自有 | **MVP 首选**：把授权风险与功能开发彻底解耦 |
+**Rive 是认真考虑过的对手**（状态机行为驱动 + MIT 运行时 + 矢量质量），不选它做起步的唯一硬理由是集成成本与素材生态；**升级触发条件**（任一满足即立项重评）：① 需要大动作词汇量/程序化平滑动画（走路物理、连续朝向插值）；② 出现「动画由设计师持续迭代」的工作流需求（Rive 编辑器实时预览）；③ 桌宠素材生态出现 Rive 优先的拐点。届时窗口/交互/状态机/持久化层（§4 全部）**原样复用，只换渲染层**——这是 A 起步的结构性保险。
 
-明确不用：eSheep 内置的 Pikachu/Bugs Bunny 等（仓库无 license 文件，版权存疑）；任何 miHoYo/商业角色 Live2D 粉丝模型。
+**素材获取渠道**（用户调研 + 外部调研合并；授权从硬约束降为偏好，CC0 仍最省事）：
+
+| 渠道 | 许可 | 备注 |
+|------|------|------|
+| Kenney Animal Pack / Cube Pets / All-in-1（kenney.nl、opengameart.org） | **CC0**（全站） | 零义务，首选池 |
+| Tiny Creatures（itch.io，180 sprite）、Pixel Adventure（Pixel Frog） | CC0 | 零义务 |
+| Desktop Pet Sprite（tatsu-san） | 宽松（CC-BY 系） | **含 walk/run/eat/sleep/grab 全套状态**，最贴合桌宠需求 |
+| Lacey Animated Pixel Doll（57 帧透明 PNG + atlas） | CC-BY | 帧序列完整，「关于」页致谢即可 |
+| Kawaii Pixel Pet Pack | CC-BY（明确兼容桌宠） | |
+| Shimeji-EE 官方素材包（Shimeji/KuroShimeji） | BSD 类（标注来源、修改明示） | 可随程序分发 |
+| 自绘（Clay Cat，呼应品牌色 #D97757） | 自有 | **MVP 首选**：与功能开发解耦，不阻塞在素材选型上 |
+
+避坑（用户调研红线，保留为偏好级建议）：GPL / CC-BY-SA / CC-BY-NC 素材有传染或禁商用条款，能用 CC0/CC-BY 替代时不用它们；OpenGameArt 用 License 过滤器筛。
 
 ### 3.3 交互面惯例（各项目 README/文档核实的公共集合）
 
@@ -150,7 +162,7 @@ G1-G5 合计约一个 **1-2 天的上游 PR**（`feat(window): managed window co
 - **点击反应状态机**：Shimeji 动作词汇表（Stand/Walk/Run/Sit/Fall/...）+ 三档性格行为频率（Calm/Mischievous/Professional）；Ark-Pets「戳一戳」；Desktop Mate 摸头反应。典型状态集：待机/游走/坐下/睡觉/被戳/拖拽中/下落/边缘攀爬。
 - **气泡对话**：Shimeji speech 配置、DyberPet AI 聊天、clawd-on-desk 权限请求气泡；实现惯例是**独立于宠物本体的第二个窗口**（可穿透/可点击切换）。
 - **右键/托盘菜单**：Ark-Pets 双入口（托盘 + 右键宠物），菜单集合：手动模式 / **透明模式（点击穿透开关）** / 多形态切换 / 退出。
-- **上下文感知行为**（进阶）：沿窗口边框攀爬（Shimeji）、站窗口边缘（Ark-Pets）；前台窗口检测在 macOS 要 Accessibility 权限、Linux 要 shell 插件，**Windows 原生最容易**——若做，Windows 先行。
+- **上下文感知行为**（进阶）：沿窗口边框攀爬（Shimeji）、站窗口边缘（Ark-Pets）；前台窗口检测在 macOS 要 Accessibility 权限、Linux 要 shell 插件，**Windows 原生最容易**——若做，Windows 先行。**事件驱动形态**（NeurolingsCE/clawd-on-desk）：宠物状态跟随 AI 编码工具事件——DevDesk 天然有素材源（代理流式状态、Claude 调用事件），列为 M2+ 气泡内容的进阶源（§4.5）。
 - 本设计裁剪（§4.4/§4.5）：MVP 取拖拽+点击反应+右键菜单；气泡 M2；抛掷物理/攀爬/游走**明确不做**（屏幕工作区探测 + 长状态机，性价比低，列不承诺远期）。
 
 ---
@@ -218,7 +230,7 @@ core/platform/window_style_macos.mm // CanJoinAllSpaces / ignoresMouseEvents / s
 core/platform/window_style_stub.cpp // Linux 空实现
 ```
 
-- **窗口尺寸 = sprite 紧包围盒**，不用「大透明窗口内浮动小图」。理由：`GLFW_MOUSE_PASSTHROUGH` 是整窗穿透，不能按像素 alpha 命中（Windows 上按像素命中需 layered window `UpdateLayeredWindow` 通路，与 OpenGL 窗口类样式冲突，§2.3 已核实排除）；bbox 方案下窗口几乎全是有效像素，整窗穿透的语义损失可忽略。
+- **窗口尺寸 = sprite 紧包围盒**，不用「大透明窗口内浮动小图」。理由：`GLFW_MOUSE_PASSTHROUGH` 是整窗穿透；逐像素命中可行但走 `WM_NCHITTEST` 读帧缓冲 alpha 阈值（Windows）/ `NSWindow` 事件链（macOS）属于 M3 精修（O1）。bbox 方案下窗口几乎全是有效像素，整窗穿透的语义损失可忽略。
 - **穿透定位为可选模式**（右键菜单「挂机穿透」，对齐 Ark-Pets 的「透明模式」惯例）：睡觉/挂机时开 `clickThrough`（运行时切换——Windows 走 `glfwSetWindowAttrib(GLFW_MOUSE_PASSTHROUGH)`，macOS 走 `ignoresMouseEvents`，G4 的运行时半边）。默认关。
 - 拖拽（G3）：`onDrag` 回调里 `core::window::setWindowPos(handle, petX + totalDeltaX, petY + totalDeltaY)`——需要拿到子窗口 Handle；`DslWindowRequest` 增加 `onWindowCreated(Handle)` 回调（G1 一并加，~5 行）。拖拽结束持久化位置。
 - **macOS 27+ 注意**：项目已知 macOS 侧 Liquid Glass/材质体系待调研（磨砂设计 Phase E）；桌宠不依赖任何材质，只依赖透明 hint（GLFW 层）——**桌宠 macOS 移植不被磨砂 Phase E 阻塞**，但 premultiply blit（Phase B 的 GL 层修正）同样前置。
@@ -232,6 +244,13 @@ core/platform/window_style_stub.cpp // Linux 空实现
 | 全屏应用共存 | 全屏游戏/视频时 topmost 宠物悬浮其上（Ark-Pets 记录过与特定游戏引擎冲突、Wallpaper Engine 干扰窗口检测的案例） | 全屏 Space 切走时宠物留在原 Space（CanJoinAllSpaces 之前的默认行为） | M2：检测前台全屏窗口自动隐藏（Windows 原生易做，macOS 需要 API 核实——待验证）；MVP 先不处理，记录已知问题 |
 | 开机自启 | 注册表 `HKCU\...\Run` | Login Items（SMAppService 系） | **M3，本期不做**；两平台 API 形态差异大，届时单独立项 |
 | OpenGL 兼容性 | Ark-Pets FAQ 记录过 NVIDIA 驱动 OpenGL GDI 兼容导致黑窗的案例 | Metal/GL 合成路径由 GLFW/MoltenVK 承担 | 风险表 R8；实测覆盖 NVIDIA 机器 |
+
+**Windows 杂项坑清单**（用户调研核实，实现期逐项对照）：
+
+- **DPI**：PerMonitorV2 感知必须声明（EUI-NEO 已开 `GLFW_SCALE_TO_MONITOR`，HiDPI 默认路径一致）；多显示器逐屏 DPI 时持久化坐标按逻辑坐标存（§4.6），跨屏拖动后重存。
+- **TOOLWINDOW 任务栏残留**：个别情况下设完 `WS_EX_TOOLWINDOW` 任务栏仍有残影——配合无标题文字 + `ITaskbarList::DeleteTab` 清理。
+- **全屏应用检测**：`SetWinEventHook`/shell hook 监听前台全屏窗口（R9 的实现机制，Windows 原生易做）。
+- **睡眠唤醒后 GL 上下文可能丢失**：唤醒事件里验证上下文有效性，失效则重建（EUI-NEO 现有 backend 是否已处理待验证——列 R10）。
 
 ### 4.3 渲染与帧动画
 
@@ -266,7 +285,7 @@ MVP 只做 Idle/Poked/Dragged 三态；Sleep 进 M2（它同时是功耗优化�
 
 ### 4.5 气泡对话与右键菜单
 
-- **气泡**：M2。自绘（圆角矩形 + 小三角 + text，全在 DSL 能力内），出现在宠物上方，`transition` 淡入。内容源：内置静态语料随机 + （可选）接 Home 数据（「你有 3 条逾期任务」）。不用 toast——toast 是全局组件，位置不可控。
+- **气泡**：M2。自绘（圆角矩形 + 小三角 + text，全在 DSL 能力内），出现在宠物上方，`transition` 淡入。内容源三级：① 内置静态语料随机；② 接 Home 数据（「你有 3 条逾期任务」）；③ **事件驱动**（NeurolingsCE/clawd-on-desk 形态）：宠物状态跟随代理/Claude 调用事件（流式中→打字动画、完成→庆祝）——DevDesk 有天然的 `core::proxy_stats` 素材源，这是桌宠与工具集结合的最高价值点，列 M2+。不用 toast——toast 是全局组件，位置不可控。
 - **右键菜单**：`onContextMenu` + contextMenu 组件（已有），菜单项：挂机穿透开关 / 换肤（子菜单或弹设置页）/ 位置重置 / 关闭桌宠。
 
 ### 4.6 持久化
@@ -342,7 +361,7 @@ MVP 只做 Idle/Poked/Dragged 三态；Sleep 进 M2（它同时是功耗优化�
 
 ### M3 — 后续（不承诺）
 
-桌宠低频帧率路径（O2）、按像素命中（O1）、shimeji 导入器（O5）、开机自启、表现力升级（VRM 等开源路线；Live2D/Spine 受开源约束长期排除，见 §3.1）。
+桌宠低频帧率路径（O2）、按像素命中（O1）、shimeji 导入器（O5）、开机自启、事件驱动形态（§4.5 三级气泡源）、表现力升级（Rive/Spine/Live2D，按 §3.2 升级触发条件立项重评）。
 
 **总量**：M0+M1 = 3-4 天（若磨砂 Phase B 已合入；未合入则 +1 天透明联调，或先以不透明形态验收）；M2 再 +2-3 天。
 
@@ -360,8 +379,9 @@ MVP 只做 Idle/Poked/Dragged 三态；Sleep 进 M2（它同时是功耗优化�
 | R6 | **透明 + 置顶 + 穿透的组合兼容性**（GLFW 透明窗口在部分驱动/远程桌面下的已知怪癖） | 远程桌面/老显卡上宠物不可见或黑块 | glfwGetWindowAttrib 回查降级（磨砂 §3.1.2 同款模式）；降级形态=不透明圆角小窗 |
 | R7 | 素材授权不干净（shimeji 社区第三方包多为个人授权；eSheep 内置角色无 license 文件） | 分发风险 | 首套皮肤自绘；内置分发只用 Shimeji-EE 官方包（BSD 类，标注来源）或 CC0（Kenney）；皮肤包内嵌 license/source 字段（§4.3）；用户自装素材责任自负（设置页注明） |
 | R8 | **OpenGL 驱动兼容**：Ark-Pets FAQ 记录过 NVIDIA 显卡 OpenGL GDI 兼容问题导致黑窗 | 特定显卡上宠物不可见/黑块 | M1 验收覆盖 NVIDIA 机器；复现时降级为不透明圆角窗；严重时评估 ANGLE 路线（Ark-Pets 的绕法） |
-| R9 | **置顶宠物与全屏应用/WallpaperEngine 冲突**：全屏游戏上悬浮宠物遮挡、WallpaperEngine 干扰窗口检测（Ark-Pets 案例） | 游戏时遮挡视野、偶发窗口异常 | M2 做「前台全屏窗口自动隐藏」（Windows 原生易做）；MVP 记录已知问题，右键菜单提供快速关闭 |
-| O1 | **按像素 alpha 命中**（透明区域点击穿透、不透明区域可交互）是否可行 | 交互精细度 | Windows 需 layered window `UpdateLayeredWindow` 通路，与 OpenGL 窗口类 `CS_OWNDC` 样式冲突（§2.3 已核实排除）；MVP 用 bbox 方案规避。真需求出现时在 platform 层加 per-pixel hittest（`WM_NCHITTEST` + 读帧缓冲 alpha，成本中） |
+| R9 | **置顶宠物与全屏应用/WallpaperEngine 冲突**：全屏游戏上悬浮宠物遮挡、WallpaperEngine 干扰窗口检测（Ark-Pets 案例） | 游戏时遮挡视野、偶发窗口异常 | M2 做「前台全屏窗口自动隐藏」（shell hook，Windows 原生易做，§4.2.1）；MVP 记录已知问题，右键菜单提供快速关闭 |
+| R10 | **睡眠唤醒后 GL 上下文丢失**（用户调研坑清单）：唤醒后桌宠窗口黑屏/消失 | 唤醒后宠物不可用 | 唤醒事件验证上下文有效性、失效重建（EUI-NEO backend 现状待验证）；M2 验收含「睡眠唤醒后宠物正常」用例 |
+| O1 | **按像素 alpha 命中**（透明区域点击穿透、不透明区域可交互） | 交互精细度 | 可行且不需要分层窗口：Windows `WM_NCHITTEST` 读帧缓冲 alpha 阈值 → HTCLIENT/HTTRANSPARENT；闲置/拖拽态动态切 `WS_EX_TRANSPARENT`（`SetWindowLongPtr` + `SWP_FRAMECHANGED` 生效）；macOS 走 `NSWindow` 事件链等价处理（待设计）。MVP 用 bbox 方案规避，M3 精修 |
 | O2 | 子窗口独立帧率 / 低频 timer 的功耗路径值不值得做 | M3 | M2 实测 Sleep/Idle 功耗差再决策 |
 | O3 | SDL2 后端（Linux 备选）无透明/穿透支持 | Linux 移植 | DevDesk 当前 Windows 优先 + macOS 27+，GLFW 后端；SDL2 侧标注不支持，Linux 移植时再议 |
 | O4 | 首套皮肤素材选型（自绘 Clay Cat vs CC0 vs Shimeji-EE 官方包） | M1 资源 | 落地时定（§3.2 渠道表已给许可证名） |
@@ -371,14 +391,16 @@ MVP 只做 Idle/Poked/Dragged 三态；Sleep 进 M2（它同时是功耗优化�
 
 ## 附：调研来源
 
+**用户自研调研**：`docs/superpowers/research/2026-09-22-desktop-pet-external-research.md`（六方案对比雷达图、CC0 素材渠道清单、Win32 分层窗口/逐像素命中技术要点、开源项目盘点——本设计 §3.1/§3.2/§4.2.1/O1 直接采用其结论）
+
 **本地源码**（行号见 §2，2026-09-22 工作区，EUI-NEO commit `b172297`）：dsl_app.h / app.h / dsl.h / glfw_app_main.cpp / dsl_window_manager.h / dsl_window_runtime.h / app_runner.h / frame_pacing.h / window_backend.{h,cpp} / window_effect.h / image_source.cpp / image_stream.h / runtime_update.h
 
 **本地设计文档**：磨砂设计 `2026-09-22-eui-window-frost-design.md`（Phase A-D 切分、premultiply/残影风险、降级链、macOS Phase E 定位）、模块插拔设计 `2026-09-22-module-plugin-architecture-design.md`（方案 A 装配门控、零执行语义、重启生效决策）
 
 **外网**（2026-09-22 实抓）：
 - Shimeji 格式与许可：github.com/gil/shimeji-ee（conf/actions.xml、licence.txt、originallicence.txt）
-- 桌宠项目先例：github.com/isHarryh/Ark-Pets（+docs/FAQ.md，NVIDIA OpenGL/游戏引擎冲突案例）、github.com/pixelomer/Shijima-Qt（C++ 框架选型教训）、github.com/Adrianotiger/desktopPet（eSheep）、github.com/ChaozhongLiu/DyberPet、github.com/rullerzhou-afk/clawd-on-desk、github.com/shinyflvre/Mate-Engine（VRM 路线）
-- 授权：live2d.com/en/sdk/license/（Cubism SDK 发布许可条款）、esotericsoftware.com/spine-runtimes-license（每用户编辑器授权要求）
+- 桌宠项目先例：github.com/isHarryh/Ark-Pets（+docs/FAQ.md，NVIDIA OpenGL/游戏引擎冲突案例）、github.com/pixelomer/Shijima-Qt（C++ 框架选型教训）、github.com/Adrianotiger/desktopPet（eSheep）、github.com/ChaozhongLiu/DyberPet、github.com/rullerzhou-afk/clawd-on-desk、github.com/shinyflvre/Mate-Engine（VRM 路线）、NeurolingsCE / BongoCat（事件驱动形态，见用户调研报告）
+- 授权（选型参考，非约束）：live2d.com/en/sdk/license/（Cubism SDK 发布许可条款）、esotericsoftware.com/spine-runtimes-license（每用户编辑器授权要求）、rive（MIT 运行时 + SaaS 编辑器，见用户调研报告 §2）
 - Windows API：learn.microsoft.com/en-us/windows/win32/winmsg/extended-window-styles（WS_EX_LAYERED×CS_OWNDC 冲突、WS_EX_TRANSPARENT、WS_EX_TOOLWINDOW、WS_EX_NOACTIVATE）、learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-setwindowpos
 - GLFW 3.4：glfw.org/docs/3.4/window_guide.html（MOUSE_PASSTHROUGH、TRANSPARENT_FRAMEBUFFER、FLOATING、FOCUS_ON_SHOW、undecorated 限制）
 - 参考产品：store.steampowered.com/app/3301060（Desktop Mate）、store.steampowered.com/app/431960（Wallpaper Engine）、veado.tube（veadotube，sprite 状态机路线佐证）
