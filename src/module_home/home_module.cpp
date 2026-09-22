@@ -136,6 +136,8 @@ public:
         auto* db = ::core::appDatabase();
         if (db == nullptr) {
             LOG_WARN("Home 模块启动：appDatabase() 为空，仪表盘显示空态");
+            // 补齐错误文案：否则 compose 拼出「数据加载失败：（空串）」
+            statsError_ = "数据库未初始化（appDatabase 为空）";
             return;
         }
         service_ = std::make_unique<HomeService>(*db);
@@ -347,7 +349,9 @@ public:
                             ui.text("home.recent.error")
                                 .position(28.0f, listTop)
                                 .size(contentW - 56.0f, 32.0f)
-                                .text("数据加载失败：" + statsError_ +
+                                .text("数据加载失败：" +
+                                      (statsError_.empty() ? std::string("未知错误")
+                                                           : statsError_) +
                                       "（点右上角刷新重试）")
                                 .fontSize(t.sizes.fontSizeSmall)
                                 .lineHeight(20.0f)
