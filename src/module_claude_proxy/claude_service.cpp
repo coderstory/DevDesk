@@ -5,6 +5,7 @@
 #include "core/logging.h"
 #include "platform/http_server.h"
 #include "platform/keychain.h"
+#include "provider_config.h"
 #include "proxy_router.h"
 
 #include <openssl/sha.h>
@@ -118,6 +119,8 @@ core::Result<Profile> ClaudeService::rowToProfile(const core::data::SqlRow& row)
     auto check = row.getString("api_key_check");
     auto acct = row.getString("keychain_account");
     auto model = row.getString("model");
+    auto modelsCfg = row.getString("models_config");
+    auto extraEnv = row.getString("extra_env");
     auto active = row.getInt64("is_active");
     auto created = row.getInt64("created_at");
     auto updated = row.getInt64("updated_at");
@@ -128,6 +131,8 @@ core::Result<Profile> ClaudeService::rowToProfile(const core::data::SqlRow& row)
     if (check.isOk()) p.apiKeyCheck = check.value();
     if (acct.isOk()) p.keychainAccount = acct.value();
     if (model.isOk()) p.model = model.value();
+    if (modelsCfg.isOk()) p.modelsConfigJson = modelsCfg.value();
+    if (extraEnv.isOk()) p.extraEnvJson = extraEnv.value();
     if (active.isOk()) p.isActive = (active.value() != 0);
     if (created.isOk()) p.createdAt = static_cast<std::time_t>(created.value());
     if (updated.isOk()) p.updatedAt = static_cast<std::time_t>(updated.value());
@@ -141,7 +146,8 @@ core::Result<Profile> ClaudeService::rowToProfile(const core::data::SqlRow& row)
 core::Result<std::vector<Profile>> ClaudeService::listProfiles() {
     auto prep = db_.prepare(
         "SELECT id, name, base_url, api_key_hint, api_key_check, "
-        "keychain_account, model, is_active, created_at, updated_at "
+        "keychain_account, model, models_config, extra_env, "
+        "is_active, created_at, updated_at "
         "FROM claude_profiles ORDER BY is_active DESC, name ASC");
     if (prep.isFail()) {
         return core::Result<std::vector<Profile>>::fail(
@@ -170,7 +176,8 @@ core::Result<std::vector<Profile>> ClaudeService::listProfiles() {
 core::Result<Profile> ClaudeService::getProfile(int64_t id) {
     auto prep = db_.prepare(
         "SELECT id, name, base_url, api_key_hint, api_key_check, "
-        "keychain_account, model, is_active, created_at, updated_at "
+        "keychain_account, model, models_config, extra_env, "
+        "is_active, created_at, updated_at "
         "FROM claude_profiles WHERE id = ?");
     if (prep.isFail()) {
         return core::Result<Profile>::fail(prep.errorCode(), prep.errorMessage());
@@ -336,8 +343,33 @@ core::Result<void> ClaudeService::updateProfile(const Profile& profile) {
 
     const std::string cleanedUrl = stripTrailingSlash(trim(profile.baseUrl));
     const std::string cleanedName = trim(profile.name);
-    const std::string cleanedModel = trim(profile.model);
     const std::time_t now = nowUnix();
+
+    // 写入前校验两个 JSON 原文（信任边界：不把坏 JSON 落库；读侧另有容错）
+    if (!profile.modelsConfigJson.empty()) {
+        auto mc = parseModelsConfig(profile.modelsConfigJson);
+        if (mc.isFail()) {
+            return core::Result<void>::fail(mc.errorCode(),
+                "models_config 非法: " + mc.errorMessage());
+        }
+    }
+    if (!profile.extraEnvJson.empty()) {
+        auto ee = parseExtraEnv(profile.extraEnvJson);
+        if (ee.isFail()) {
+            return core::Result<void>::fail(ee.errorCode(),
+                "extra_env 非法: " + ee.errorMessage());
+        }
+    }
+
+    // 旧 model 列与 default 槽位保持一致（provider-config §4.2：
+    // 双向同步两字段成本低于迁移存量数据）
+    std::string cleanedModel = trim(profile.model);
+    if (!profile.modelsConfigJson.empty()) {
+        auto mc = parseModelsConfig(profile.modelsConfigJson);
+        if (mc.isOk() && !mc.value().def.model.empty()) {
+            cleanedModel = mc.value().def.model;
+        }
+    }
 
     // 1. 如果 apiKeyPlain 非空，覆盖 Keychain
     if (!profile.apiKeyPlain.empty()) {
@@ -353,7 +385,8 @@ core::Result<void> ClaudeService::updateProfile(const Profile& profile) {
         auto prep = db_.prepare(
             "UPDATE claude_profiles SET "
             "name = ?, base_url = ?, api_key_hint = ?, api_key_check = ?, "
-            "model = ?, updated_at = ? WHERE id = ?");
+            "model = ?, models_config = ?, extra_env = ?, updated_at = ? "
+            "WHERE id = ?");
         if (prep.isFail()) {
             return core::Result<void>::fail(prep.errorCode(), prep.errorMessage());
         }
@@ -363,8 +396,10 @@ core::Result<void> ClaudeService::updateProfile(const Profile& profile) {
         stmt.bind(3, newHint);
         stmt.bind(4, newCheck);
         stmt.bind(5, cleanedModel);
-        stmt.bind(6, static_cast<int64_t>(now));
-        stmt.bind(7, profile.id);
+        stmt.bind(6, profile.modelsConfigJson);
+        stmt.bind(7, profile.extraEnvJson);
+        stmt.bind(8, static_cast<int64_t>(now));
+        stmt.bind(9, profile.id);
         auto stepR = stmt.step();
         if (stepR.isFail()) {
             std::string msg = stepR.errorMessage();
@@ -379,7 +414,8 @@ core::Result<void> ClaudeService::updateProfile(const Profile& profile) {
         // 只更新 name / url / model
         auto prep = db_.prepare(
             "UPDATE claude_profiles SET "
-            "name = ?, base_url = ?, model = ?, updated_at = ? WHERE id = ?");
+            "name = ?, base_url = ?, model = ?, models_config = ?, "
+            "extra_env = ?, updated_at = ? WHERE id = ?");
         if (prep.isFail()) {
             return core::Result<void>::fail(prep.errorCode(), prep.errorMessage());
         }
@@ -387,8 +423,10 @@ core::Result<void> ClaudeService::updateProfile(const Profile& profile) {
         stmt.bind(1, cleanedName);
         stmt.bind(2, cleanedUrl);
         stmt.bind(3, cleanedModel);
-        stmt.bind(4, static_cast<int64_t>(now));
-        stmt.bind(5, profile.id);
+        stmt.bind(4, profile.modelsConfigJson);
+        stmt.bind(5, profile.extraEnvJson);
+        stmt.bind(6, static_cast<int64_t>(now));
+        stmt.bind(7, profile.id);
         auto stepR = stmt.step();
         if (stepR.isFail()) {
             std::string msg = stepR.errorMessage();
