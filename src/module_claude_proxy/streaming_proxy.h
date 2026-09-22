@@ -106,6 +106,12 @@ bool isStreamablePath(const std::string& path);
 std::string buildUpstreamUrl(const std::string& baseUrl,
                              const std::string& pathOrUrl);
 
+// 合成上游断流时发给客户端的 event: error SSE 帧（W7 P0-2）。
+// 上游断流/超时原本只 LOG_WARN 后正常收尾，客户端（Claude Code）会把
+// 截断当成"完整结束"；改为先写一个 error 帧再收尾，让客户端能感知。
+// upstreamError 中的引号/换行会被转义，保证 data 行是合法 JSON。
+std::string buildUpstreamErrorFrame(const std::string& upstreamError);
+
 // 构造转发到 Claude 上游的流式请求并启动 libcurl 线程（spec §10.4）
 //
 // 行为：
