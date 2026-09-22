@@ -1,6 +1,7 @@
 add_library(devdesk_module_markdown STATIC
     markdown_module.cpp
     markdown_service.cpp
+    md_line_scanner.cpp
 )
 
 devdesk_apply_warnings(devdesk_module_markdown)
