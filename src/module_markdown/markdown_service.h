@@ -79,6 +79,15 @@ public:
     // create() 内部也会用同一规则兜底（trust boundary 在服务层）。
     static bool isSafeNewNotePath(const std::string& name);
 
+    // ---- W9：新建文件夹入口 ----
+
+    // 一级子目录清单（磁盘实时枚举，含空目录；目录树显示空文件夹行用）。
+    // 返回目录名（不含路径），按字母序。
+    core::Result<std::vector<std::string>> listTopFolders() const;
+
+    // 新建文件夹（相对路径，安全规则同 isSafeNewNotePath；已存在不算错）
+    core::Result<void> createFolder(const std::string& name);
+
     // 笔记目录（绝对路径）
     const std::filesystem::path& notesDir() const { return notesDir_; }
 

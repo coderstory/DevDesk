@@ -27,7 +27,10 @@ struct MdTreeRow {
 };
 
 // collapsed = 已收起的一级目录名集合（内存态，不持久化）
+// extraFolders = 磁盘枚举的一级目录（W9：含没有任何 .md 的空目录，
+//   让「新建文件夹」后的空文件夹也能出现在树里）
 std::vector<MdTreeRow> buildTreeRows(const std::vector<NoteMeta>& notes,
+                                     const std::set<std::string>& extraFolders,
                                      const std::set<std::string>& collapsed);
 
 } // namespace module::markdown

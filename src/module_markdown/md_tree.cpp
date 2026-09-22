@@ -6,9 +6,10 @@
 namespace module::markdown {
 
 std::vector<MdTreeRow> buildTreeRows(const std::vector<NoteMeta>& notes,
+                                     const std::set<std::string>& extraFolders,
                                      const std::set<std::string>& collapsed) {
-    // 一级目录集合（std::set 自带字母序）
-    std::set<std::string> folders;
+    // 一级目录集合 = 笔记路径推导 ∪ 磁盘枚举的空目录（std::set 自带字母序）
+    std::set<std::string> folders = extraFolders;
     for (const auto& n : notes) {
         const std::string p = n.relativePath.generic_string();
         const auto pos = p.find('/');

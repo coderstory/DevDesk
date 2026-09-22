@@ -592,6 +592,64 @@ REGISTER_TEST(md_create_rejects_unsafe_path,
     return true;
 })
 
+REGISTER_TEST(md_create_subpath_makes_dirs,
+              "MarkdownService: create 带子路径时自动建中间目录（W9）", {
+    const auto dir = makeTempDir("subpath_create");
+    auto db = makeDb();
+    runMigrations(db);
+    module::markdown::MarkdownService svc(db, dir);
+
+    // 「工作/周会.md」形式的输入（无 .md 后缀时 create 内部补全）：
+    // 中间目录不存在 → create_directories 建出
+    DOCTEST_REQUIRE(svc.create("工作/周会").isOk());
+    DOCTEST_CHECK(fs::is_regular_file(dir / "工作" / "周会.md"));
+    DOCTEST_CHECK(fs::is_directory(dir / "工作"));
+
+    fs::remove_all(dir);
+    return true;
+})
+
+REGISTER_TEST(md_create_folder_and_list_top,
+              "MarkdownService: createFolder + listTopFolders（W9 新建文件夹入口）", {
+    const auto dir = makeTempDir("folder");
+    auto db = makeDb();
+    runMigrations(db);
+    module::markdown::MarkdownService svc(db, dir);
+
+    // 空目录 → 无一级子目录
+    auto empty = svc.listTopFolders();
+    DOCTEST_REQUIRE(empty.isOk());
+    DOCTEST_CHECK_EQ(empty.value().size(), static_cast<size_t>(0));
+
+    // 新建文件夹（多级也支持）→ listTopFolders 枚举出一级目录名
+    DOCTEST_REQUIRE(svc.createFolder("工作").isOk());
+    DOCTEST_REQUIRE(svc.createFolder("归档/2026").isOk());
+    auto folders = svc.listTopFolders();
+    DOCTEST_REQUIRE(folders.isOk());
+    DOCTEST_CHECK_EQ(folders.value().size(), static_cast<size_t>(2));
+    // std::sort 按 UTF-8 字节序：E5B7(工) < E5BD(归)
+    DOCTEST_CHECK_EQ(folders.value()[0], std::string("工作"));
+    DOCTEST_CHECK_EQ(folders.value()[1], std::string("归档"));
+    DOCTEST_CHECK(fs::is_directory(dir / "工作"));
+    DOCTEST_CHECK(fs::is_directory(dir / "归档" / "2026"));
+
+    // 幂等：已存在不算错；不安全路径拒绝
+    DOCTEST_CHECK(svc.createFolder("工作").isOk());
+    DOCTEST_CHECK(svc.createFolder("../escape").isFail());
+    DOCTEST_CHECK(svc.createFolder("C:/evil").isFail());
+    DOCTEST_CHECK(svc.createFolder("/abs").isFail());
+    DOCTEST_CHECK(!fs::exists(dir / ".." / "escape"));
+
+    // 有 .md 文件的目录也在枚举里（与笔记路径推导的目录一致）
+    DOCTEST_REQUIRE(svc.create("inbox/idea.md").isOk());
+    auto mixed = svc.listTopFolders();
+    DOCTEST_REQUIRE(mixed.isOk());
+    DOCTEST_CHECK_EQ(mixed.value().size(), static_cast<size_t>(3));
+
+    fs::remove_all(dir);
+    return true;
+})
+
 REGISTER_TEST(md_poll_changed_and_file_mtime,
               "MarkdownService: pollChanged/fileMtime 轮询底座", {
     const auto dir = makeTempDir("poll");

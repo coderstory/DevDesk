@@ -799,4 +799,40 @@ bool MarkdownService::isSafeNewNotePath(const std::string& name) {
     return true;
 }
 
+// ---- W9：新建文件夹入口 ----
+
+core::Result<std::vector<std::string>> MarkdownService::listTopFolders() const {
+    std::vector<std::string> out;
+    std::error_code ec;
+    if (!fs::exists(notesDir_, ec) || ec) {
+        return core::Result<std::vector<std::string>>::ok(std::move(out));
+    }
+    for (auto it = fs::directory_iterator(
+                    notesDir_, fs::directory_options::skip_permission_denied, ec);
+         !ec && it != fs::directory_iterator(); it.increment(ec)) {
+        if (ec) break;
+        std::error_code dec;
+        if (it->is_directory(dec) && !dec) {
+            out.push_back(it->path().filename().generic_string());
+        }
+    }
+    std::sort(out.begin(), out.end());
+    return core::Result<std::vector<std::string>>::ok(std::move(out));
+}
+
+core::Result<void> MarkdownService::createFolder(const std::string& name) {
+    if (!isSafeNewNotePath(name)) {
+        return core::Result<void>::fail(core::ErrorCode::ValidationError,
+            "文件夹名不合法（不允许绝对路径、盘符或 ..）: " + name);
+    }
+    const auto absPath = notesDir_ / fs::path(name);
+    std::error_code ec;
+    fs::create_directories(absPath, ec);  // 已存在不算错（幂等）
+    if (ec) {
+        return core::Result<void>::fail(core::ErrorCode::FileWriteFailed,
+            "无法创建文件夹 " + absPath.string() + ": " + ec.message());
+    }
+    return core::Result<void>::ok();
+}
+
 } // namespace module::markdown

@@ -235,6 +235,7 @@ public:
 
         // 弹窗要画在最上层（dialog 自带 zIndex）
         drawNewNoteDialog(ui, screen, t, componentTheme);
+        drawNewFolderDialog(ui, screen, t, componentTheme);
         drawConflictDialog(ui, screen, t, componentTheme);
 
         // 保存失败等操作的 toast 反馈（画在弹窗之上）
@@ -438,12 +439,13 @@ private:
                 drawTreeList(ui, listY, listH, sideW, t, componentTheme);
             }
 
-            // 底部「+ 新建」
+            // 底部动作条：+ 笔记 / + 文件夹（W9：新建文件夹入口）
             const float newBtnY = bodyH - 52.0f;
+            const float btnW = (sideW - 24.0f - 8.0f) / 2.0f;
             components::button(ui, "md.tree.new")
                 .position(12.0f, newBtnY)
-                .size(sideW - 24.0f, 36.0f)
-                .text("+ 新建")
+                .size(btnW, 36.0f)
+                .text("+ 笔记")
                 .fontSize(t.sizes.fontSizeSmall)
                 .theme(componentTheme, false)
                 .textColor(t.colors.textPrimary)
@@ -452,6 +454,20 @@ private:
                 .onClick([this] {
                     newNoteOpen_ = true;
                     newNoteName_.clear();
+                })
+                .build();
+            components::button(ui, "md.tree.newfolder")
+                .position(12.0f + btnW + 8.0f, newBtnY)
+                .size(btnW, 36.0f)
+                .text("+ 文件夹")
+                .fontSize(t.sizes.fontSizeSmall)
+                .theme(componentTheme, false)
+                .textColor(t.colors.textPrimary)
+                .radius(t.sizes.radius)
+                .border(1.0f, t.colors.borderDefault)
+                .onClick([this] {
+                    newFolderOpen_ = true;
+                    newFolderName_.clear();
                 })
                 .build();
         }).build();
@@ -501,7 +517,8 @@ private:
                       float sideW,
                       const core::theme::Tokens& t,
                       const components::theme::ThemeColorTokens& componentTheme) {
-        const std::vector<MdTreeRow> rows = buildTreeRows(notes_, collapsedDirs_);
+        const std::vector<MdTreeRow> rows = buildTreeRows(notes_, topFolders_,
+                                                          collapsedDirs_);
         const float rowW = sideW - 16.0f;
         // contentKey：行内容（类型+名字+路径）组合 hash，内容变即重建
         size_t treeKey = 0;
@@ -963,7 +980,7 @@ private:
                 ui.text("md.dialog.new.hint")
                     .position(28.0f, 56.0f)
                     .size(w - 56.0f, 18.0f)
-                    .text("支持子目录，例如 inbox/ideas.md")
+                    .text("支持子目录，例如 工作/周会.md")
                     .fontSize(t.sizes.fontSizeSmall)
                     .lineHeight(18.0f)
                     .color(t.colors.textTertiary)
@@ -973,7 +990,7 @@ private:
                     .position(28.0f, 84.0f)
                     .size(w - 56.0f, 44.0f)
                     .value(newNoteName_)
-                    .placeholder("笔记名，例如 周会纪要")
+                    .placeholder("笔记名，可用 / 分文件夹，如 工作/周会")
                     .fontSize(t.sizes.fontSizeBody)
                     .theme(componentTheme)
                     .onChange([this](const std::string& v) { newNoteName_ = v; })
@@ -1001,6 +1018,77 @@ private:
                     .textColor(eui::Color("#FFFFFF"))
                     .radius(t.sizes.radius)
                     .onClick([this] { commitNewNote(); })
+                    .build();
+            })
+            .build();
+    }
+
+    // ---- 新建文件夹弹窗（W9：左栏「+ 文件夹」入口）----
+    void drawNewFolderDialog(eui::Ui& ui,
+                             const eui::Screen& screen,
+                             const core::theme::Tokens& t,
+                             const components::theme::ThemeColorTokens& componentTheme) {
+        const float w = 460.0f;
+        const float h = 220.0f;
+
+        components::dialog(ui, "md.dialog.newfolder")
+            .open(newFolderOpen_)
+            .screen(screen.width, screen.height)
+            .size(w, h)
+            .theme(componentTheme)
+            .onOpenChange([this](bool v) { newFolderOpen_ = v; })
+            .content([&] {
+                ui.text("md.dialog.newfolder.title")
+                    .position(28.0f, 24.0f)
+                    .size(w - 56.0f, 28.0f)
+                    .text("新建文件夹")
+                    .fontSize(t.sizes.fontSizeLarge)
+                    .lineHeight(28.0f)
+                    .fontWeight(700)
+                    .color(t.colors.textPrimary)
+                    .build();
+
+                ui.text("md.dialog.newfolder.hint")
+                    .position(28.0f, 56.0f)
+                    .size(w - 56.0f, 18.0f)
+                    .text("在笔记目录下创建，可用 / 建多级；新建后树里出现空文件夹行")
+                    .fontSize(t.sizes.fontSizeSmall)
+                    .lineHeight(18.0f)
+                    .color(t.colors.textTertiary)
+                    .build();
+
+                components::input(ui, "md.dialog.newfolder.input")
+                    .position(28.0f, 84.0f)
+                    .size(w - 56.0f, 44.0f)
+                    .value(newFolderName_)
+                    .placeholder("文件夹名，如 工作")
+                    .fontSize(t.sizes.fontSizeBody)
+                    .theme(componentTheme)
+                    .onChange([this](const std::string& v) { newFolderName_ = v; })
+                    .onEnter([this] { commitNewFolder(); })
+                    .build();
+
+                components::button(ui, "md.dialog.newfolder.cancel")
+                    .position(28.0f, h - 60.0f)
+                    .size((w - 68.0f) * 0.5f, 40.0f)
+                    .text("取消")
+                    .fontSize(t.sizes.fontSizeBody)
+                    .theme(componentTheme, false)
+                    .textColor(t.colors.textPrimary)
+                    .radius(t.sizes.radius)
+                    .border(1.0f, t.colors.borderDefault)
+                    .onClick([this] { newFolderOpen_ = false; })
+                    .build();
+
+                components::button(ui, "md.dialog.newfolder.confirm")
+                    .position(28.0f + (w - 68.0f) * 0.5f + 12.0f, h - 60.0f)
+                    .size((w - 68.0f) * 0.5f, 40.0f)
+                    .text("创建")
+                    .fontSize(t.sizes.fontSizeBody)
+                    .theme(componentTheme, true)
+                    .textColor(eui::Color("#FFFFFF"))
+                    .radius(t.sizes.radius)
+                    .onClick([this] { commitNewFolder(); })
                     .build();
             })
             .build();
@@ -1184,7 +1272,12 @@ private:
     void refreshList() {
         if (!service_) {
             notes_.clear();
+            topFolders_.clear();
             return;
+        }
+        // W9：磁盘一级目录实时枚举（含空目录），目录树据此显示空文件夹行
+        if (auto fr = service_->listTopFolders(); fr.isOk()) {
+            topFolders_ = std::set<std::string>(fr.value().begin(), fr.value().end());
         }
         auto r = searchQuery_.empty() ? service_->listAll()
                                       : service_->search(searchQuery_);
@@ -1430,6 +1523,37 @@ private:
         LOG_INFO("新建笔记: " + relPath);
     }
 
+    // ---- W9：新建文件夹（左栏「+ 文件夹」入口）----
+    void commitNewFolder() {
+        std::string name = newFolderName_;
+        // 去掉首尾空白与多余的尾部 '/'
+        while (!name.empty() && (name.front() == ' ' || name.front() == '\t')) {
+            name.erase(name.begin());
+        }
+        while (!name.empty() &&
+               (name.back() == ' ' || name.back() == '\t' || name.back() == '/')) {
+            name.pop_back();
+        }
+        if (name.empty()) {
+            status_ = "文件夹名不能为空";
+            return;
+        }
+        if (!service_) return;
+
+        auto r = service_->createFolder(name);
+        if (r.isFail()) {
+            LOG_ERROR("新建文件夹失败 " + name + ": " + r.errorMessage());
+            status_ = "新建文件夹失败：" + r.errorMessage();
+            showToast("新建文件夹失败", "「" + name + "」" + r.errorMessage(), true);
+            return;
+        }
+        newFolderOpen_ = false;
+        refreshList();  // listTopFolders 磁盘枚举 → 树里立即出现空文件夹行
+        status_ = "已创建文件夹 " + name;
+        showToast("已创建文件夹", name, false);
+        LOG_INFO("新建文件夹: " + name);
+    }
+
     // ==================== 状态 ====================
 
     static constexpr int64_t kAutoSaveDelayMs = 400;
@@ -1451,6 +1575,9 @@ private:
     std::string listError_;            // 左栏错误态（空 = 正常；W7 P1-1）
     bool newNoteOpen_ = false;
     std::string newNoteName_;
+    bool newFolderOpen_ = false;       // W9：新建文件夹弹窗
+    std::string newFolderName_;
+    std::set<std::string> topFolders_; // W9：磁盘一级目录（含空目录，树显示用）
 
     // ---- Toast（EUI-NEO 单实例，复用一个状态位）----
     bool toastOpen_ = false;
