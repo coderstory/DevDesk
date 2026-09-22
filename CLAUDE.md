@@ -42,7 +42,7 @@ EUI-NEO 依赖：`../EUI-NEO/`（同级目录，通过 `EUI_NEO_DIR` cache 变�
 ## 🏗️ 架构要点（4 层模块化）
 
 ```
-main → 4 个 module_* (markdown / todo / claude_proxy / home)
+main → 5 个 module_* (home / markdown / todo / claude_proxy / settings)
             ↓
        core (Result / paths / sqlite_db / logging / theme / router)
             ↓
