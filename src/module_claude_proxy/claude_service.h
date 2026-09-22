@@ -35,7 +35,9 @@ struct Profile {
     std::string apiKeyHint;     // 例如 sk-ant-***xyz（UI 显示用）
     std::string apiKeyCheck;    // 前 8 字符的 SHA256 hex（防误操作校验）
     std::string keychainAccount;// Keychain account（约定：claude:<id>）
-    std::string model;          // 默认模型
+    std::string model;          // 默认模型（旧列；语义降级为 default 槽位未配置时的 fallback）
+    std::string modelsConfigJson; // 6 槽位模型配置 JSON 原文（空串 = 未配置；provider-config §4.1）
+    std::string extraEnvJson;   // 额外 env 键值 JSON 原文（空串 = 未配置）
     bool isActive = false;
     std::time_t createdAt = 0;
     std::time_t updatedAt = 0;

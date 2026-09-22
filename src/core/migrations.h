@@ -137,11 +137,26 @@ inline const Migration kSeedDefaultTodoColumns = {
     )"
 };
 
+// Claude 供应商完整配置（version 3，spec 2026-09-22 provider-config §4.1）
+//   - models_config / extra_env 均为 JSON 文本列，空串 = 未配置
+//   - 旧行零迁移（读时兼容：旧 model 列降级为 default 槽位 fallback，§4.2）
+//   - SQLite 无 ADD COLUMN IF NOT EXISTS；幂等性由 schema_version 版本号
+//     保证（v3 只执行一次，exec 多语句 + 事务包裹）
+inline const Migration kClaudeProviderConfigColumns = {
+    .version = 3,
+    .description = "claude provider full config columns",
+    .sql = R"(
+        ALTER TABLE claude_profiles ADD COLUMN models_config TEXT NOT NULL DEFAULT '';
+        ALTER TABLE claude_profiles ADD COLUMN extra_env TEXT NOT NULL DEFAULT '';
+    )"
+};
+
 // 所有 migrations 的权威列表（顺序敏感，必须按 version 升序）
 inline const std::vector<core::data::Migration>& all() {
     static const std::vector<core::data::Migration> kMigrations = {
         kCreateInitialTables,
         kSeedDefaultTodoColumns,
+        kClaudeProviderConfigColumns,
     };
     return kMigrations;
 }

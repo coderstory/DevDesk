@@ -1,6 +1,7 @@
 add_library(devdesk_module_claude_proxy STATIC
     claude_module.cpp
     claude_service.cpp
+    provider_config.cpp
     proxy_router.cpp
     streaming_proxy.cpp
 )
