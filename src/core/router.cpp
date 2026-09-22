@@ -11,9 +11,26 @@ void Router::registerModule(Module* module) {
     if (module) modules_.push_back(module);
 }
 
-void Router::navigateTo(PageId page) {
-    LOG_INFO("导航到: " + std::string(pageIdToString(page)));
+void Router::navigateTo(PageId page, const std::string& payload) {
+    LOG_INFO(payload.empty()
+                 ? "导航到: " + std::string(pageIdToString(page))
+                 : "导航到: " + std::string(pageIdToString(page)) + "（负载 " +
+                       payload + "）");
     current_ = page;
+    // 仅非空 payload 才记录：纯导航（默认空参）不清除已挂起的负载，
+    // 保证既有 navigateTo(page) 调用行为零变化
+    if (!payload.empty()) {
+        pendingPayloadPage_ = page;
+        pendingPayload_ = payload;
+    }
+}
+
+std::string Router::consumePendingPayload(PageId page) {
+    if (pendingPayload_.empty() || pendingPayloadPage_ != page) return {};
+    // swap 取出即清空 → 一次性消费
+    std::string out;
+    out.swap(pendingPayload_);
+    return out;
 }
 
 PageId Router::currentPage() const { return current_; }

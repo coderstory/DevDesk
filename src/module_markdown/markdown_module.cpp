@@ -11,6 +11,7 @@
 #include "core/logging.h"
 #include "core/module_interface.h"
 #include "core/paths.h"
+#include "core/router.h"
 #include "core/theme.h"
 #include "markdown_service.h"
 
@@ -118,6 +119,9 @@ public:
     void compose(eui::Ui& ui, const eui::Screen& screen) override {
         // 自动保存：停止输入 kAutoSaveDelayMs 后把编辑器内容真正写回磁盘
         flushEditorIfIdle();
+
+        // 消费跨模块跳转负载（Router payload，一次性语义）
+        consumeNavPayload();
 
         const auto& t = core::theme::current();
         const auto componentTheme =
@@ -540,6 +544,32 @@ private:
     }
 
     // ==================== 业务动作 ====================
+
+    // 消费挂在 Markdown 页上的跳转负载（每帧调用；consumePendingPayload
+    // 取出即清空，compose 逐帧重复调用不会重复触发）：
+    //   "action:new_note"     → 打开新建笔记弹窗（等价页内「+ 新建笔记」）
+    //   "open:<relativePath>" → 打开指定笔记进编辑器（POSIX 相对路径）
+    void consumeNavPayload() {
+        auto* router = ::core::appRouter();
+        if (router == nullptr) return;
+        const std::string payload = router->consumePendingPayload(pageId());
+        if (payload.empty()) return;
+
+        if (payload == "action:new_note") {
+            newNoteOpen_ = true;
+            newNoteName_.clear();
+            LOG_INFO("跨模块负载：打开新建笔记弹窗");
+            return;
+        }
+        static constexpr char kOpenPrefix[] = "open:";
+        constexpr size_t kOpenLen = sizeof(kOpenPrefix) - 1;
+        if (payload.size() > kOpenLen &&
+            payload.compare(0, kOpenLen, kOpenPrefix) == 0) {
+            openNote(payload.substr(kOpenLen));
+            return;
+        }
+        LOG_WARN("Markdown: 未识别的跳转负载: " + payload);
+    }
 
     void refreshList() {
         if (!service_) {

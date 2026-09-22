@@ -6,6 +6,7 @@ add_executable(devdesk_tests
     test_core/test_sqlite.cpp
     test_core/test_theme.cpp
     test_core/test_migrations.cpp
+    test_core/test_router.cpp
     test_platform/test_http_client.cpp
     test_platform/test_http_server.cpp
     test_platform/test_keychain.cpp
