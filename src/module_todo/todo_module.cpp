@@ -30,9 +30,10 @@ namespace module::todo {
 namespace {
 
 // ---------- 卡片尺寸 ----------
-constexpr float kCardHeight = 84.0f;
-constexpr float kCardGap = 8.0f;
-constexpr float kColumnHeaderHeight = 56.0f;
+// 常量定义在 todo_ui_logic.h（拖拽命中换算共用）
+using module::todo::ui::kCardHeight;
+using module::todo::ui::kCardGap;
+using module::todo::ui::kColumnHeaderHeight;
 
 // 优先级 → 中文标签
 const char* priorityLabel(Priority p) {
@@ -109,12 +110,14 @@ void drawChip(eui::Ui& ui,
               const core::theme::Tokens& t,
               const std::string& text,
               const eui::Color& fg,
-              const eui::Color& bg) {
+              const eui::Color& bg,
+              float opacity = 1.0f) {
     ui.rect(id + ".bg")
         .position(x, y)
         .size(w, 18.0f)
         .color(bg)
         .radius(t.sizes.radiusPill)
+        .opacity(opacity)
         .build();
     ui.text(id + ".text")
         .position(x, y)
@@ -125,6 +128,7 @@ void drawChip(eui::Ui& ui,
         .horizontalAlign(eui::HorizontalAlign::Center)
         .color(fg)
         .fontWeight(600)
+        .opacity(opacity)
         .build();
 }
 
@@ -175,6 +179,10 @@ public:
             LOG_ERROR("Todo: " + loadError_);
         }
         columnScrolls_.resize(columns_.size(), 0.0f);
+        // 拖拽中任务被外部操作删除（如确认弹窗回调）→ 拖拽锚点失效，复位防悬垂
+        if (drag_.active && findTask(drag_.taskId) == nullptr) {
+            drag_ = DragState{};
+        }
     }
 
     // 错误态重试：数据库晚注册（onStart 时为 null）或读取失败后手动恢复
@@ -241,14 +249,16 @@ public:
         reloadAll();
     }
 
-    void doMoveTask(int64_t taskId, int64_t toColumnId, int newPosition) {
-        if (!service_) return;
+    // 返回是否成功（拖拽收尾要区分成败给提示；其余调用方忽略返回值）
+    bool doMoveTask(int64_t taskId, int64_t toColumnId, int newPosition) {
+        if (!service_) return false;
         auto r = service_->moveTask(taskId, toColumnId, newPosition);
         if (r.isFail()) {
             setStatus("移动失败：" + r.errorMessage(), true);
-            return;
+            return false;
         }
         reloadAll();
+        return true;
     }
 
     void doCompleteTask(int64_t taskId) {
@@ -371,6 +381,41 @@ public:
     }
     void setColScrollOffset(size_t colIndex, float v) {
         if (colIndex < columnScrolls_.size()) columnScrolls_[colIndex] = v;
+    }
+
+    // ---- W8 拖拽（真 drop 语义）----
+
+    // 指针落点 → 目标列索引（列外/板外 → -1）。换算细节见 ui::dragDropTarget。
+    int hitDropColumn(double x, double y) const {
+        ui::DragHitInput in;
+        in.fromColIndex = drag_.fromColIndex;
+        in.colCount = static_cast<int>(columns_.size());
+        in.pressX = drag_.pressX;
+        in.pressY = drag_.pressY;
+        in.pressWidth = drag_.pressWidth;
+        in.cardWidth = boardCardW_;
+        in.colWidth = boardColW_;
+        in.colGap = boardColGap_;
+        in.boardHeight = boardH_;
+        in.scrollOffset =
+            drag_.fromColIndex >= 0 ? colScrollOffset(static_cast<size_t>(drag_.fromColIndex)) : 0.0f;
+        in.cardIndex = drag_.cardIndex;
+        return ui::dragDropTarget(in, x, y);
+    }
+
+    // 松手收尾：目标无效或等于源列 → 取消（卡片回原位）；
+    // 否则按稳定 taskId 落到目标列尾（computeAppendPosition），消灭过期索引
+    void finishDrag(int target) {
+        const int64_t taskId = drag_.taskId;
+        const int from = drag_.fromColIndex;
+        drag_ = DragState{};  // 先复位（拖拽中间态结束，无论成败）
+        if (target < 0 || target == from) return;
+        if (target >= static_cast<int>(columns_.size())) return;
+        const auto& dst = columns_[static_cast<size_t>(target)];
+        const std::string title = dst.title;
+        if (doMoveTask(taskId, dst.id, ui::computeAppendPosition(tasks_, dst.id))) {
+            setStatus("已移动到「" + title + "」");  // 失败时保留 doMoveTask 的错误提示
+        }
     }
 
     const Task* findTask(int64_t id) const {
@@ -605,6 +650,11 @@ private:
         const float colW = (contentW - colGap * static_cast<float>(n - 1)) /
                            static_cast<float>(n);
 
+        // 板面几何快照（W8 拖拽命中换算用；compose 每帧刷新）
+        boardColW_ = colW;
+        boardColGap_ = colGap;
+        boardH_ = bodyH;
+
         ui.row("todo.body")
             .size(contentW, bodyH)
             .gap(colGap)
@@ -633,12 +683,17 @@ private:
     void drawColumnContent(eui::Ui& ui, const std::string& id, const Column& col,
                            float width, float height,
                            const core::theme::Tokens& t, size_t colIndex) {
+        // 拖动中指针所在列高亮（drop 目标提示）
+        const bool dropHover = drag_.active &&
+            drag_.hoverColIndex == static_cast<int>(colIndex);
+
         ui.rect(id + ".bg")
             .position(0.0f, 0.0f)
             .size(width, height)
             .color(t.colors.surface)
             .radius(t.sizes.radiusLarge)
-            .border(1.0f, t.colors.borderDefault)
+            .border(dropHover ? 2.0f : 1.0f,
+                    dropHover ? t.colors.primary : t.colors.borderDefault)
             .build();
 
         auto colTasks = tasksInColumn(col.id);
@@ -726,35 +781,59 @@ private:
     void drawCard(eui::Ui& ui, const std::string& id, float y, float width,
                   const core::theme::Tokens& t, const Task& task,
                   int colIndex, int colCount, int cardIndex) {
+        (void)colCount;
         const bool done = task.completedAt.has_value();
         const bool selected = (task.id == selectedTaskId_);
+        // W8 拖拽中间态：被拖卡片半透明（拖动只是记录 + 视觉反馈，松手才落库）
+        const bool dragging = drag_.active && drag_.taskId == task.id;
+        const float cardOpacity = dragging ? 0.45f : 1.0f;
+        boardCardW_ = width;  // compose 空间卡宽（拖拽命中 dpi 探针）
 
         ui.rect(id + ".bg")
             .position(0.0f, y)
             .size(width, kCardHeight)
             .states(t.colors.surfaceElevated, t.colors.hover, t.colors.active)
             .radius(t.sizes.radius)
+            .opacity(cardOpacity)
             .border(selected ? 2.0f : 0.0f,
                     selected ? t.colors.primary : t.colors.borderDefault)
-            .onClick([this, task] { openDetailDialog(task); })
+            .onClick([this, task] {
+                // 拖拽松手回落在本卡上时不当作点击（onClick 先于 onRelease 派发）
+                if (drag_.active) return;
+                openDetailDialog(task);
+            })
             .onContextMenu([this, task, colIndex, cardIndex](const eui::PointerEvent&,
                                                              const eui::Rect&) {
                 openTaskContextMenu(task, colIndex, cardIndex);
             })
-            .onDrag([this, task, colIndex, colCount, width](const core::dsl::DragEvent& ev) {
-                // 拖拽超过半列宽 → 移到相邻列（左 / 右），追加到目标列尾
-                const double threshold = static_cast<double>(width) * 0.6;
-                if (ev.totalX > threshold && colIndex + 1 < colCount) {
-                    const int64_t toCol = columns_[static_cast<size_t>(colIndex + 1)].id;
-                    doMoveTask(task.id, toCol,
-                               ui::computeAppendPosition(tasks_, toCol));
-                    setStatus("已移动到「" + columns_[static_cast<size_t>(colIndex + 1)].title + "」");
-                } else if (ev.totalX < -threshold && colIndex > 0) {
-                    const int64_t toCol = columns_[static_cast<size_t>(colIndex - 1)].id;
-                    doMoveTask(task.id, toCol,
-                               ui::computeAppendPosition(tasks_, toCol));
-                    setStatus("已移动到「" + columns_[static_cast<size_t>(colIndex - 1)].title + "」");
+            // ---- 真 drop 语义（W8）：拖动中无落库，松手按指针落点决定 ----
+            .onPress([this, task, colIndex, cardIndex](const eui::PointerEvent&,
+                                                       const eui::Rect& bounds) {
+                // 记录拖拽锚点（卡片 bounds 为指针像素空间，含列内滚动偏移）
+                drag_ = DragState{};
+                drag_.taskId = task.id;
+                drag_.fromColIndex = colIndex;
+                drag_.cardIndex = cardIndex;
+                drag_.pressX = bounds.x;
+                drag_.pressY = bounds.y;
+                drag_.pressWidth = bounds.width;
+            })
+            .onDrag([this](const core::dsl::DragEvent& ev) {
+                // 运行时只在超过 dragThreshold 后派发 → 到这里即视为拖拽激活
+                if (drag_.taskId == 0) return;
+                drag_.active = true;
+                drag_.hoverColIndex = hitDropColumn(ev.x, ev.y);
+            })
+            .onRelease([this](const eui::PointerEvent& ev, const eui::Rect&) {
+                if (!drag_.active) {
+                    drag_ = DragState{};  // 普通点击：只清锚点（onClick 已处理）
+                    return;
                 }
+                // Cancel 或落点无效 → 取消，卡片回原位
+                const int target = ev.action == eui::PointerAction::Release
+                                       ? hitDropColumn(ev.x, ev.y)
+                                       : -1;
+                finishDrag(target);
             })
             .build();
 
@@ -764,6 +843,7 @@ private:
             .size(4.0f, kCardHeight)
             .color(priorityColor(task.priority, t))
             .radius(2.0f)
+            .opacity(cardOpacity)
             .build();
 
         // 标题
@@ -775,20 +855,20 @@ private:
             .lineHeight(18.0f)
             .fontWeight(500)
             .color(t.colors.textPrimary)
-            .opacity(done ? 0.6f : 1.0f)
+            .opacity(done ? 0.6f : cardOpacity)
             .build();
 
         // 优先级 chip
         drawChip(ui, id + ".prio", 16.0f, y + 44.0f, 48.0f, t,
                  priorityLabel(task.priority), priorityColor(task.priority, t),
-                 t.colors.surface);
+                 t.colors.surface, cardOpacity);
 
         // 截止 chip
         if (task.dueAt.has_value()) {
             const std::string dueText = "⏰ " + formatDue(task.dueAt.value());
             drawChip(ui, id + ".due", 70.0f, y + 44.0f, 66.0f, t, dueText,
                      isOverdue(task) ? t.colors.error : t.colors.textTertiary,
-                     t.colors.surface);
+                     t.colors.surface, cardOpacity);
         }
 
         // 完成打勾
@@ -802,6 +882,7 @@ private:
                 .horizontalAlign(eui::HorizontalAlign::Center)
                 .color(t.colors.success)
                 .fontWeight(700)
+                .opacity(cardOpacity)
                 .build();
         }
     }
@@ -1479,6 +1560,26 @@ private:
     std::vector<Column> columns_;
     std::vector<Task> tasks_;
     std::vector<float> columnScrolls_;  // 列内滚动偏移（按列索引）
+
+    // W8 拖拽（真 drop 语义）：onPress 记锚点 → onDrag 更新悬停列（视觉反馈）
+    // → onRelease 按指针落点落库。dragging 半透明 + 目标列高亮见 drawCard/drawColumn
+    struct DragState {
+        bool active = false;       // 超过 dragThreshold 才置位
+        int64_t taskId = 0;        // 稳定任务 id（不用会过期的列/卡索引做落库依据）
+        int fromColIndex = -1;
+        int cardIndex = -1;
+        float pressX = 0.0f;       // 按下时卡片 bounds（指针像素空间）
+        float pressY = 0.0f;
+        float pressWidth = 0.0f;
+        int hoverColIndex = -1;    // 拖动中指针所在列（-1 = 列外，松手取消）
+    };
+    DragState drag_;
+
+    // 板面几何快照（drawBoard/drawCard 每帧刷新，拖拽命中换算用）
+    float boardColW_ = 0.0f;
+    float boardColGap_ = 0.0f;
+    float boardH_ = 0.0f;
+    float boardCardW_ = 0.0f;
 
     // 新建任务弹窗
     bool newTaskOpen_ = false;

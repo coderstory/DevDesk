@@ -6,7 +6,6 @@ add_library(devdesk_core STATIC
     theme.cpp
     router.cpp
     proxy_stats.cpp
-    drag_controller.cpp
     database.cpp
 )
 

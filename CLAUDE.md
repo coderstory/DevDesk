@@ -44,7 +44,7 @@ EUI-NEO 依赖：`../EUI-NEO/`（同级目录，通过 `EUI_NEO_DIR` cache 变�
 ```
 main → 4 个 module_* (markdown / todo / claude_proxy / home)
             ↓
-       core (Result / paths / sqlite_db / logging / theme / router / drag_controller)
+       core (Result / paths / sqlite_db / logging / theme / router)
             ↓
        platform (http_client / http_server / keychain / json)
             ↓

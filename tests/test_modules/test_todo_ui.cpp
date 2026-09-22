@@ -498,15 +498,62 @@ REGISTER_TEST(todo_ui_move_appends_to_end,
     std::unique_ptr<::core::Module> mod(create_todo_module());
     mod->onStart();
 
-    // 拖拽：col.4=移动源列（第 5 列，index 4）→ 向右拖过 60% 列宽 → 落到 col.5 列尾
+    // 无头 layout 帧辅助：compose + layout 后元素 frame 即指针空间坐标（dpi=1）
+    eui::Ui ui;
+    eui::Screen screen;
+    screen.width = 1600.0f;
+    screen.height = 1000.0f;
+    auto composeLayout = [&]() {
+        ui.begin("todo_drag_frame");
+        mod->compose(ui, screen);
+        ui.end();
+        ui.layout(screen);
+    };
+    // Element::frame（LayoutRect）→ 回调参数的 Rect（宏体内不能出现裸逗号，逐字段赋值）
+    auto boundsOf = [](const core::dsl::Element* e) {
+        eui::Rect r;
+        r.x = e->frame.x;
+        r.y = e->frame.y;
+        r.width = e->frame.width;
+        r.height = e->frame.height;
+        return r;
+    };
+
+    // 拖拽（W8 真 drop 语义）：press 记锚点 → drag 中间态 → release 按落点落库。
+    // col.4=移动源列 → 拖到 col.5（移动目标列）中央松手 → 落到列尾
     {
-        Frame frame(mod.get());
-        const auto* card = frame.ui.find("todo.col.4.card.0.bg");
+        composeLayout();
+        const auto* card = ui.find("todo.col.4.card.0.bg");
         DOCTEST_REQUIRE(card != nullptr);
+        DOCTEST_REQUIRE(card->onPress != nullptr);
         DOCTEST_REQUIRE(card->onDrag != nullptr);
+        DOCTEST_REQUIRE(card->onRelease != nullptr);
+
+        // press：锚点 = 卡片真实 bounds（headless dpi=1，layout 帧即指针空间）
+        eui::PointerEvent pe;
+        card->onPress(pe, boundsOf(card));
+
+        // drag：指针移到目标列中央（中间态：被拖卡半透明 + 目标列高亮）
+        const auto* dstBg = ui.find("todo.col.5.bg");
+        DOCTEST_REQUIRE(dstBg != nullptr);
         core::dsl::DragEvent ev;
-        ev.totalX = 500.0;  // 远超列宽 60%
+        ev.x = dstBg->frame.x + dstBg->frame.width / 2.0f;
+        ev.y = dstBg->frame.y + dstBg->frame.height / 2.0f;
         card->onDrag(ev);
+        composeLayout();
+        DOCTEST_CHECK_EQ(ui.find("todo.col.4.card.0.bg")->opacity, 0.45f);
+        DOCTEST_CHECK_EQ(ui.find("todo.col.5.bg")->border.width, 2.0f);
+        DOCTEST_CHECK_EQ(ui.find("todo.col.4.bg")->border.width, 1.0f);
+
+        // release（PointerAction::Release）→ moveTask 落库
+        eui::PointerEvent up;
+        up.x = ev.x;
+        up.y = ev.y;
+        up.action = eui::PointerAction::Release;
+        ui.find("todo.col.4.card.0.bg")->onRelease(up, eui::Rect{});
+        composeLayout();
+        // 拖拽结束后视觉复位
+        DOCTEST_CHECK_EQ(ui.find("todo.col.5.bg")->border.width, 1.0f);
     }
     {
         auto ts = env.svc->listTasks(dst.value().id);
@@ -515,6 +562,60 @@ REGISTER_TEST(todo_ui_move_appends_to_end,
         // 追加到列尾：原任务在前（旧缺陷：position=0 → 被移动任务插到列首）
         DOCTEST_CHECK_EQ(ts.value()[0].title, std::string("目标列原任务"));
         DOCTEST_CHECK_EQ(ts.value()[1].title, std::string("被移动任务"));
+    }
+
+    // 拖出板外 = 取消：把「被移动任务」（现在 col.5.card.1）拖向板左外松手 → 不动作
+    {
+        composeLayout();
+        const auto* card = ui.find("todo.col.5.card.1.bg");
+        DOCTEST_REQUIRE(card != nullptr);
+        eui::PointerEvent pe;
+        card->onPress(pe, boundsOf(card));
+        core::dsl::DragEvent ev;
+        ev.x = -100.0;  // 板外
+        ev.y = 500.0;
+        card->onDrag(ev);
+        eui::PointerEvent up;
+        up.x = -100.0;
+        up.y = 500.0;
+        up.action = eui::PointerAction::Release;
+        card->onRelease(up, eui::Rect{});
+    }
+    {
+        auto ts = env.svc->listTasks(dst.value().id);
+        DOCTEST_REQUIRE(ts.isOk());
+        DOCTEST_CHECK_EQ(ts.value().size(), static_cast<size_t>(2));  // 未动
+    }
+
+    // 松手落回源列 = 取消；且拖拽松手回落卡上不触发详情弹窗（onClick 抑制）
+    {
+        composeLayout();
+        const auto* card = ui.find("todo.col.5.card.1.bg");
+        DOCTEST_REQUIRE(card != nullptr);
+        eui::PointerEvent pe;
+        card->onPress(pe, boundsOf(card));
+        core::dsl::DragEvent ev;  // 超阈值拖动后又拖回卡上
+        ev.x = card->frame.x + card->frame.width / 2.0f;
+        ev.y = card->frame.y + card->frame.height / 2.0f;
+        ev.totalX = 500.0;
+        card->onDrag(ev);
+        // 真实派发顺序：onClick 先于 onRelease（同一次松手）
+        card->onClick();
+        eui::PointerEvent up;
+        up.x = ev.x;
+        up.y = ev.y;
+        up.action = eui::PointerAction::Release;
+        card->onRelease(up, eui::Rect{});
+        composeLayout();
+        // 详情弹窗未打开（dialog 组件常驻 compose，open 只控 opacity → 断言 panel 透明）
+        const auto* detailPanel = ui.find("todo.dialog.detail.panel");
+        DOCTEST_REQUIRE(detailPanel != nullptr);
+        DOCTEST_CHECK_EQ(detailPanel->opacity, 0.0f);
+    }
+    {
+        auto ts = env.svc->listTasks(dst.value().id);
+        DOCTEST_REQUIRE(ts.isOk());
+        DOCTEST_CHECK_EQ(ts.value().size(), static_cast<size_t>(2));  // 未动
     }
 
     // 右键菜单「移动到」同样追加列尾：把「被移动任务」移回源列（此时源列已空 → 追加位 0）
@@ -545,6 +646,56 @@ REGISTER_TEST(todo_ui_move_appends_to_end,
     }
 
     mod->onStop();
+    return true;
+})
+
+REGISTER_TEST(todo_ui_drag_hit_pure,
+              "todo_ui: dragDropTarget 命中/列隙/板外/滚动/dpi（纯函数）", {
+    using module::todo::ui::DragHitInput;
+    using module::todo::ui::dragDropTarget;
+    // 锚定卡在列 1 第 0 张：板面（dpi=1）originX=80，列 [80,280][300,500][520,720]，
+    // boardTop=144，boardBottom=644
+    DragHitInput in;
+    in.fromColIndex = 1;
+    in.colCount = 3;
+    in.pressX = 300.0f;
+    in.pressY = 200.0f;
+    in.pressWidth = 200.0f;
+    in.cardWidth = 200.0f;
+    in.colWidth = 200.0f;
+    in.colGap = 20.0f;
+    in.boardHeight = 500.0f;
+    in.scrollOffset = 0.0f;
+    in.cardIndex = 0;
+
+    DOCTEST_CHECK_EQ(dragDropTarget(in, 400.0, 300.0), 1);   // 源列
+    DOCTEST_CHECK_EQ(dragDropTarget(in, 350.0, 300.0), 1);   // 源列内偏左
+    DOCTEST_CHECK_EQ(dragDropTarget(in, 550.0, 300.0), 2);   // 右列（跨列拖）
+    DOCTEST_CHECK_EQ(dragDropTarget(in, 100.0, 300.0), 0);   // 左列
+    DOCTEST_CHECK_EQ(dragDropTarget(in, 290.0, 300.0), -1);  // 列间隙
+    DOCTEST_CHECK_EQ(dragDropTarget(in, 50.0, 300.0), -1);   // 板左外
+    DOCTEST_CHECK_EQ(dragDropTarget(in, 400.0, 100.0), -1);  // 板上方
+    DOCTEST_CHECK_EQ(dragDropTarget(in, 400.0, 700.0), -1);  // 板下方
+
+    // HiDPI（dpi=2）：指针空间坐标全翻倍，命中结果不变
+    DragHitInput hi = in;
+    hi.pressX = 600.0f;
+    hi.pressY = 400.0f;
+    hi.pressWidth = 400.0f;
+    DOCTEST_CHECK_EQ(dragDropTarget(hi, 700.0, 600.0), 1);   // 源列
+    DOCTEST_CHECK_EQ(dragDropTarget(hi, 1100.0, 600.0), 2);  // 右列
+
+    // 列内滚动 100：boardTop 随可视上移下推到 244
+    DragHitInput sc = in;
+    sc.scrollOffset = 100.0f;
+    DOCTEST_CHECK_EQ(dragDropTarget(sc, 400.0, 200.0), -1);  // 原 200 在板内，滚动后板上方
+    DOCTEST_CHECK_EQ(dragDropTarget(sc, 400.0, 300.0), 1);
+
+    // 退化输入 → 取消
+    DOCTEST_CHECK_EQ(dragDropTarget(DragHitInput{}, 0.0, 0.0), -1);
+    DragHitInput bad = in;
+    bad.cardWidth = 0.0f;
+    DOCTEST_CHECK_EQ(dragDropTarget(bad, 400.0, 300.0), -1);
     return true;
 })
 
