@@ -287,8 +287,8 @@ void drawSidebar(eui::Ui& ui, const eui::Screen& screen) {
                 .size(kWidth - padX * 2.0f, 32.0f)
                 .text("DevDesk")
                 .fontSize(t.sizes.fontSizePage)
-                .lineHeight(32.0f)
                 .fontWeight(700)
+                .verticalAlign(eui::VerticalAlign::Center)
                 .color(t.colors.textPrimary)
                 .build();
 
@@ -316,7 +316,7 @@ void drawSidebar(eui::Ui& ui, const eui::Screen& screen) {
                     .size(kWidth - padX * 2.0f, itemH)
                     .text(m->iconGlyph() + "  " + m->displayName())
                     .fontSize(t.sizes.fontSizeBody)
-                    .lineHeight(itemH)
+                    .verticalAlign(eui::VerticalAlign::Center)
                     .color(active ? t.colors.primary : t.colors.textSecondary)
                     .build();
 
