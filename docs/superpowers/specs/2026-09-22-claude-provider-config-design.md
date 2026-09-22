@@ -78,7 +78,7 @@ API key 全程走 Keychain（`claude:<id>` account），SQLite 只存 hint + SHA
 - 供应商数据存自己的 SQLite（`~/.cc-switch/cc-switch.db`），**切换时写入目标工具的配置文件**（Claude Code 即 `~/.claude/settings.json`）
 - 原子写保护配置不损坏；自动备份轮换（保留最近 10 份，`~/.cc-switch/backups/`）
 - 50+ 供应商预设、一键导入、系统托盘快切
-- README FAQ 声称 **Claude Code 是唯一支持热切换的工具**（改 settings.json 后无需重启终端；其余工具要重启）——「启动代理后 Claude Code 下一个请求自动走代理」的时效性依据，待本地实测（见开放问题 1）
+- README FAQ 声称 **Claude Code 是唯一支持热切换的工具**（改 settings.json 后无需重启终端；其余工具要重启）——**已获官方文档背书**（code.claude.com/docs/en/settings-reference，独立事实核查 2026-09-22）：env 键在「at startup, and again in the running session when a saved change alters the merged env」时重新加载，即保存后运行中的会话即生效；例外是 `model` settings 键（会话中途切换需 `/model` 命令），**env 路径不受该例外影响**。实施时顺手验证一次即可（见开放问题 1，已关闭）
 
 ### 2.2 关键技术事实（设计前提）
 
@@ -87,7 +87,7 @@ API key 全程走 Keychain（`claude:<id>` account），SQLite 只存 hint + SHA
 | `ANTHROPIC_BASE_URL` / `ANTHROPIC_AUTH_TOKEN` | 客户端连接哪个服务 | 否（决定客户端发到哪） | 走 settings.json 通道：BASE_URL → `http://127.0.0.1:8888`，AUTH_TOKEN → 代理 token（真实上游 key 由代理注入，现有机制） |
 | `ANTHROPIC_DEFAULT_*_MODEL` / `ANTHROPIC_MODEL` / `CLAUDE_CODE_SUBAGENT_MODEL` | 客户端本地决定请求里填什么模型名 | 理论可（重写请求体 `model` 字段），但见 §5 分析 | 走 settings.json 通道（写实际模型名，客户端直发，代理零改动转发） |
 | `*_MODEL_NAME` | 纯 UI 显示 | 否 | 只能走 settings.json 通道 |
-| `AUTO_COMPACT_*` / `CLAUDE_CODE_*` / `DISABLE_AUTOUPDATER` | 纯客户端行为 | 否 | 只能走 settings.json 通道 |
+| `DISABLE_AUTO_COMPACT` / `CLAUDE_CODE_*` / `DISABLE_AUTOUPDATER` 等行为开关 | 纯客户端行为 | 否 | 只能走 settings.json 通道。**注意**：用户模板里的 `AUTO_COMPACT_ENABLED` **不是官方变量**（官方关闭自动压缩用 env `DISABLE_AUTO_COMPACT` 或 settings 键 `autoCompactEnabled`），导入/生成时需映射或警告（见 §4.3 规则 6） |
 
 **`[1M]` 上下文标记**：本环境网关模型名形如 `fangzhou/glm-5.3[1M]`（发上游的实际名），而 `_MODEL_NAME` 显示名是剥除了 `[1M]` 的 `fangzhou/glm-5.3`。设计上体现为：模型槽位存两个字段——`model`（实际名，原样保存）和 `displayName`（显示名）；**displayName 留空时自动从 model 派生：剥除尾部 `[...]` 标记**（`[1M]`/`[200K]`/`[1m]` 等），导入和手填都走同一派生函数。
 
@@ -154,6 +154,7 @@ std::map<std::string, std::string> buildProxyEnv(
 3. 模型槽位 → `ANTHROPIC_MODEL` / `ANTHROPIC_DEFAULT_{SONNET|OPUS|HAIKU|FABLE}_MODEL` / `CLAUDE_CODE_SUBAGENT_MODEL`；槽位空则跳过该键（Claude Code 回落内置映射）
 4. 显示名 → 对应 `*_MODEL_NAME`（`ANTHROPIC_MODEL` 没有官方 `_NAME` 变体，不生成）；`name` 空则用派生函数剥 `[...]` 后缀
 5. `extra_env` 原样平铺；键与 1-4 冲突时 **1-4 优先**（导入的 JSON 里可能带旧的 BASE_URL/AUTH_TOKEN，必须被代理的覆盖）
+6. **非官方变量别名表**（导入 cc-switch 模板时的常见坑）：`AUTO_COMPACT_ENABLED` → 官方 `DISABLE_AUTO_COMPACT`，**值取反**（`AUTO_COMPACT_ENABLED=1` 表示开 → 生成 `DISABLE_AUTO_COMPACT=0` 或直接省略该键；`=0` → `DISABLE_AUTO_COMPACT=1`）。`parseImportedEnv()` 命中别名表即自动映射并在 UI 提示「已映射为官方变量」；别名表外无法识别官方文档出处的键（如部分 `CLAUDE_AUTOCOMPACT_*`）原样透传 + 警告角标（不阻断，行为由用户自负）
 
 ## 5. 生效机制设计（本文档核心决策）
 
@@ -210,6 +211,8 @@ std::map<std::string, std::string> buildProxyEnv(
 - **崩溃兜底**：启动时若发现 sidecar 存在（上次没走完还原）且 settings.json 仍含管理的 BASE_URL → 自动补还原，日志说明
 
 **已接受的边界（如实记录）**：接管期间用户手工改了 managedKeys 里的值 → 下次触发同步会被覆盖（managed 键语义归 DevDesk）；用户改其他字段/env 键 → 完全不受影响。
+
+**上层覆盖检测（settings 优先级风险面）**：Claude Code 的 settings 合并顺序是 **managed（企业策略）> project（`<项目>/.claude/settings.json` + `settings.local.json`）> user（`~/.claude/settings.json`，DevDesk 只写这一层）**——上两层里同名的 env 键会**静默覆盖**DevDesk 的接管结果，Claude Code 仍可能不走代理。`syncClaudeCodeSettings()` 写入成功后顺带检测：读当前工作目录的 `.claude/settings.json`、`.claude/settings.local.json` 与 managed 配置路径（Windows managed 路径按官方文档，`core::paths` 提供常量），任一文件的 env 块含 `ANTHROPIC_BASE_URL`/`ANTHROPIC_AUTH_TOKEN`/`ANTHROPIC_MODEL` 键 → 设置页「接管状态」行追加警告（见 §6.3）+ 日志 WARN，**提示但不代改**（上层文件语义归用户/企业管理员，DevDesk 不越权写）。
 
 **实现落点**：新文件 `src/module_claude_proxy/settings_sync.h/.cpp`（ClaudeService 调用；模块内依赖 platform::json + core::paths，分层合法）。ClaudeService 的 startProxy/stopProxy/setActiveProfile 在**成功路径末尾**调 `syncClaudeCodeSettings()` / `restoreClaudeCodeSettings()`——触发逻辑收在 service 层，UI 和 main 不感知。
 
@@ -291,6 +294,8 @@ std::map<std::string, std::string> buildProxyEnv(
 │  │ 代理 Token              a3f8***c21e  [复制] [👁]            │   │
 │  │ 重新生成 Token          [ 重新生成 ]（未运行时置灰）         │   │
 │  │ Claude Code 接管状态     ● 已接管 ~/.claude/settings.json   │   │
+│  │   ⚠ 检测到项目级 .claude/settings.json 含同名 env 键，     │   │
+│  │     可能覆盖接管（查看）← 上层覆盖警告，仅出现于检测命中时   │   │
 │  └────────────────────────────────────────────────────────────┘   │
 └────────────────────────────────────────────────────────────────────┘
 ```
@@ -311,6 +316,7 @@ std::map<std::string, std::string> buildProxyEnv(
    - env 值必须是字符串（数字/布尔 → 拒绝并提示，不做隐式转换——避免 `"1"` vs `1` 的语义歧义）
    - 键名白名单正则 `^[A-Z][A-Z0-9_]*$`（防注入奇怪键名）；值长度上限 4KB/键、总键数上限 64
    - `ANTHROPIC_API_KEY` 与 `ANTHROPIC_AUTH_TOKEN` 同现 → 警告提示二选一（AUTH_TOKEN 走代理注入优先）
+   - 别名表命中（如 `AUTO_COMPACT_ENABLED`）→ 按规则 6 映射为官方变量 + UI 提示；别名表外疑似非官方键 → 透传 + 警告角标（§4.3 规则 6）
 5. **删除 profile**：若删的是激活 profile 且代理运行中 → 停代理（触发还原），不让 settings.json 指向无 profile 的代理
 
 ## 8. 分阶段实施
@@ -318,7 +324,7 @@ std::map<std::string, std::string> buildProxyEnv(
 ### Phase A：数据模型 + 纯函数（无 UI，先行解耦）
 - migration v3 两列 + Profile struct 两字段 + CRUD SQL 更新（create/update/list/get 补两列读写）
 - `buildProxyEnv()` / `parseImportedEnv()` / displayName 派生函数
-- **测试**：迁移幂等（旧库升级 + 新库直建同 schema）；buildProxyEnv 的槽位跳过/派生/extra_env 冲突优先级/空 profile；parseImportedEnv 的两种形状/非法值/键名校验
+- **测试**：迁移幂等（旧库升级 + 新库直建同 schema）；buildProxyEnv 的槽位跳过/派生/extra_env 冲突优先级/空 profile/**别名映射（AUTO_COMPACT_ENABLED → DISABLE_AUTO_COMPACT 值取反）**；parseImportedEnv 的两种形状/非法值/键名校验/别名命中提示
 - **验收**：137 用例基线全绿 + 新用例全绿；旧 profile（models_config 空）读出行为与今天一致
 
 ### Phase B：代理手动启动（硬性需求 1）
@@ -328,7 +334,7 @@ std::map<std::string, std::string> buildProxyEnv(
 
 ### Phase C：settings.json 接管通道（硬性需求 2+3，依赖 A）
 - `core::paths::claudeSettingsFile()`（平台拆文件）+ `settings_sync.h/.cpp`（写入/还原/sidecar/备份轮换/崩溃补还原）+ service 三触发点接线
-- **测试**（临时目录注入路径，全单测）：合并保留非 env 字段与用户 env 键；快照还原（有值恢复/无值删除）；sidecar 缺失不写不删；解析失败中止；备份轮换 ≤10；崩溃补还原
+- **测试**（临时目录注入路径，全单测）：合并保留非 env 字段与用户 env 键；快照还原（有值恢复/无值删除）；sidecar 缺失不写不删；解析失败中止；备份轮换 ≤10；崩溃补还原；**上层覆盖检测**（临时目录伪造 project/local settings.json 含同名 env 键 → 检测命中；无 → 不警告）
 - **验收**：启动代理 → settings.json env 块含 BASE_URL=127.0.0.1:port + 代理 token + 模型映射 + 行为开关，其余字段 diff 为空；切 profile → env 跟随；停代理 → settings.json 恢复到接管前内容（逐字节 diff 仅 env 块）；杀进程重启 → 自动补还原
 - **人工验证**：真实 Claude Code 连代理跑一次对话（同时验证开放问题 1 的热切换）
 
@@ -344,9 +350,9 @@ std::map<std::string, std::string> buildProxyEnv(
 
 ## 9. 开放问题
 
-1. **热切换时效**：cc-switch README 声称 Claude Code 改 settings.json 后无需重启终端即生效——待 Phase C 人工验证实测；若实测需重启，在引导文案里如实写明「重启终端生效」，机制本身不受影响
-2. **`ANTHROPIC_DEFAULT_FABLE_MODEL` 官方语义**：fable 是较新的模型档位，`_MODEL`/`_MODEL_NAME` 变量名以用户模板为准照抄；若官方文档另有约定（如 FABLE 无 `_NAME` 变体），生成时跳过即可，属 Phase A 纯函数一行调整
+1. **~~热切换时效~~（已关闭，2026-09-22 独立核查）**：官方 settings-reference 文档明确 env 键在保存后「again in the running session when a saved change alters the merged env」重新加载——免重启热切换成立，`model` settings 键的 `/model` 例外不影响 env 路径。Phase C 人工验证时顺手打一条真实请求确认一次即可，不再是不确定项
+2. **`ANTHROPIC_DEFAULT_FABLE_MODEL` 官方语义**：fable 是较新的模型档位，`_MODEL`/`_MODEL_NAME` 变量名以用户模板为准照抄；若官方文档另有约定（如 FABLE 无 `_NAME` 变体），生成时跳过即可，属 Phase A 纯函数一行调整。**顺带记录**：官方还存在 `ANTHROPIC_DEFAULT_*_MODEL_DESCRIPTION` 变体（模型描述文案），导入时可一并识别进槽位结构（`models_config` 每槽位可加可选 `description` 字段，不生成不丢失），作为导入增强排进 Phase D 可选项
 3. **多机/`.claude` 目录定制**（`CLAUDE_CONFIG_DIR`）：一期只认默认 `~/.claude`；有用户反馈再支持自定义路径（settings 页加一个路径输入框的事）
 4. **代理侧模型名 normalize（通道 a）**：本期不做；若某网关拒绝 `[1M]` 后缀的真实案例出现，在 proxy_router 转发前加剥除逻辑，独立小改动
-5. **settings.local.json 优先级**：Claude Code 的 local 覆盖机制可能压过 settings.json——一期不管，导入时若检测到 local 文件存在，toast 提醒用户可能被覆盖
+5. **~~settings.local.json 优先级~~（已升级为设计项，2026-09-22 核查扩展）**：原以为只有 local 一层，实际覆盖面是三层——**project 级 `.claude/settings.json`（project > user）+ `.claude/settings.local.json` + 企业 managed settings** 都会静默压过用户级接管。检测 + 引导提示已纳入 §5.3「上层覆盖检测」和 §6.3 设置页警告行。残留开放点：managed settings 路径在各平台的准确位置以官方文档为准，Phase C 实现时核实；DevDesk 只提示不代改上层文件（越权写企业策略文件不可接受）
 6. **并发写**：DevDesk 写 settings.json 与 Claude Code 自身写（如勾选 trust dialog）撞车——原子写保证不损坏，最后写者胜；概率低，一期接受
