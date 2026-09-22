@@ -35,6 +35,13 @@ std::string Router::consumePendingPayload(PageId page) {
 
 PageId Router::currentPage() const { return current_; }
 
+bool Router::dispatchKeyEvent(const eui::KeyEvent& key) {
+    for (auto* m : modules_) {
+        if (m && m->pageId() == current_) return m->onKeyEvent(key);
+    }
+    return false;
+}
+
 void Router::compose(eui::Ui& ui, const eui::Screen& screen) {
     for (auto* m : modules_) {
         if (m && m->pageId() == current_) {
