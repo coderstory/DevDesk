@@ -7,10 +7,13 @@
 #include "core/theme.h"
 #include "core/time.h"
 #include "todo_service.h"
+#include "todo_ui_logic.h"
 
 #include <eui/dsl.h>
 
 #include <components/button.h>
+#include <components/contextmenu.h>
+#include <components/datepicker.h>
 #include <components/dialog.h>
 #include <components/input.h>
 #include <components/theme.h>
@@ -63,6 +66,37 @@ std::string formatDue(int64_t epoch) {
 bool isOverdue(const Task& task) {
     if (!task.dueAt.has_value() || task.completedAt.has_value()) return false;
     return task.dueAt.value() < static_cast<int64_t>(std::time(nullptr));
+}
+
+// ---------- 看板几何 ----------
+// drawBoard 与右键菜单定位共用（菜单坐标走模块自身布局空间，
+// 不用指针事件的窗口坐标——页面在侧边栏右侧，两者相差一个侧边栏宽）
+struct BoardGeom {
+    float pad = 0.0f;
+    float colW = 0.0f;
+    float colGap = 0.0f;
+    float boardTop = 0.0f;  // 看板区（列背景）顶边的模块空间 y
+};
+
+BoardGeom boardGeom(const eui::Screen& screen, size_t columnCount,
+                    const core::theme::Tokens& t) {
+    BoardGeom g;
+    g.pad = t.sizes.spacingXXLarge;
+    g.colGap = t.sizes.spacingLarge;
+    const float contentW = screen.width - g.pad * 2.0f;
+    const auto n = static_cast<float>(columnCount == 0 ? 1 : columnCount);
+    g.colW = (contentW - g.colGap * (n - 1.0f)) / n;
+    g.boardTop = g.pad + 64.0f /*headerH*/ + t.sizes.spacingLarge;
+    return g;
+}
+
+float cardLeft(const BoardGeom& g, int columnIndex) {
+    return g.pad + static_cast<float>(columnIndex) * (g.colW + g.colGap);
+}
+
+float cardTop(const BoardGeom& g, int cardIndex) {
+    return g.boardTop + kColumnHeaderHeight +
+           static_cast<float>(cardIndex) * (kCardHeight + kCardGap);
 }
 
 // 小标签（pill）
@@ -257,6 +291,84 @@ public:
         reloadAll();
     }
 
+    // ============ 列管理（service 四 API 中的 rename/delete/reorder 接线） ============
+
+    void doRenameColumn(int64_t id, const std::string& title) {
+        if (!service_ || title.empty()) return;
+        auto r = service_->renameColumn(id, title);
+        if (r.isFail()) {
+            setStatus("重命名失败：" + r.errorMessage(), true);
+            return;
+        }
+        setStatus("已重命名列");
+        reloadAll();
+    }
+
+    void doDeleteColumn(int64_t id) {
+        if (!service_) return;
+        auto r = service_->deleteColumn(id);
+        if (r.isFail()) {
+            setStatus("删除失败：" + r.errorMessage(), true);
+            return;
+        }
+        setStatus("已删除列（含其下全部任务）");
+        reloadAll();
+    }
+
+    // dir = -1 左移一位 / +1 右移一位（交换相邻列后整体重排 position）
+    void doShiftColumn(int64_t id, int dir) {
+        if (!service_) return;
+        std::vector<int64_t> ids;
+        ids.reserve(columns_.size());
+        size_t idx = columns_.size();
+        for (size_t i = 0; i < columns_.size(); ++i) {
+            ids.push_back(columns_[i].id);
+            if (columns_[i].id == id) idx = i;
+        }
+        const size_t j = (dir < 0) ? (idx == 0 ? idx : idx - 1)
+                                   : (idx + 1 >= ids.size() ? idx : idx + 1);
+        if (idx >= ids.size() || j == idx) {
+            setStatus(dir < 0 ? "已经在最左边了" : "已经在最右边了");
+            return;
+        }
+        std::swap(ids[idx], ids[j]);
+        auto r = service_->reorderColumns(ids);
+        if (r.isFail()) {
+            setStatus("重排列失败：" + r.errorMessage(), true);
+            return;
+        }
+        reloadAll();
+    }
+
+    // ============ 查找辅助 ============
+
+    const Task* findTask(int64_t id) const {
+        for (const auto& t : tasks_) {
+            if (t.id == id) return &t;
+        }
+        return nullptr;
+    }
+
+    const Column* findColumn(int64_t id) const {
+        for (const auto& c : columns_) {
+            if (c.id == id) return &c;
+        }
+        return nullptr;
+    }
+
+    // 键盘/菜单共用的上移下移（moveTask 的 position 语义见 todo_ui_logic.h）
+    void moveTaskByKeyboard(bool up) {
+        const auto mv = ui::computeKeyboardMove(tasks_, selectedTaskId_, up);
+        if (!mv) {
+            setStatus(up ? "已经在最上面了" : "已经在最下面了");
+            return;
+        }
+        const std::string title =
+            findTask(selectedTaskId_) != nullptr ? findTask(selectedTaskId_)->title : "";
+        doMoveTask(selectedTaskId_, mv->columnId, mv->position);
+        setStatus((up ? "已上移「" : "已下移「") + title + "」");
+    }
+
     // ============ 状态提示 ============
 
     void setStatus(const std::string& msg, bool isError = false) {
@@ -290,6 +402,31 @@ public:
         // 弹窗（画在最上层）
         drawNewTaskDialog(ui, screen, t);
         drawDetailDialog(ui, screen, t);
+        drawContextMenu(ui, screen, t);
+        drawDatePicker(ui, screen, t);
+        drawRenameDialog(ui, screen, t);
+        drawConfirmDeleteDialog(ui, screen, t);
+    }
+
+    // P7a 键盘移动：Ctrl/Cmd+↑↓ 上移/下移当前选中任务（选中 = 最近
+    // 点击过的卡片，点击详情弹窗关闭后选中态保留）。
+    // 事件来源：EUI-NEO 无聚焦元素消费时经 main.cpp → Router 转发到本页。
+    bool onKeyEvent(const eui::KeyEvent& event) override {
+        if (event.action != eui::KeyAction::Press &&
+            event.action != eui::KeyAction::Repeat) {
+            return false;
+        }
+        if (event.key != eui::InputKey::Up && event.key != eui::InputKey::Down) {
+            return false;
+        }
+        if (!event.modifiers.shortcut()) return false;
+        if (service_ == nullptr) return false;
+        if (selectedTaskId_ == 0 || findTask(selectedTaskId_) == nullptr) {
+            setStatus("先点击卡片选中任务，再用 Ctrl+↑/↓ 移动", true);
+            return false;
+        }
+        moveTaskByKeyboard(event.key == eui::InputKey::Up);
+        return true;
     }
 
 private:
@@ -314,7 +451,7 @@ private:
                             .color(t.colors.textPrimary)
                             .build();
                         const std::string sub = statusMessage_.empty()
-                            ? "点击卡片查看详情 · 拖拽卡片跨列移动 · + 新建任务"
+                            ? "点击卡片查看详情 · Ctrl+↑/↓ 移动选中任务 · 右键卡片/列头更多操作"
                             : statusMessage_;
                         ui.text("todo.subtitle")
                             .size(contentW - 480.0f, 18.0f)
@@ -422,6 +559,16 @@ private:
         auto colTasks = tasksInColumn(col.id);
         const bool isArchive = (col.title == "已归档");
 
+        // 列头右键热区（重命名/左移/右移/删除列）
+        ui.rect(id + ".head")
+            .position(0.0f, 0.0f)
+            .size(width, kColumnHeaderHeight)
+            .onContextMenu([this, col, colIndex](const eui::PointerEvent&,
+                                                 const eui::Rect&) {
+                openColumnContextMenu(col, static_cast<int>(colIndex));
+            })
+            .build();
+
         ui.text(id + ".title")
             .position(16.0f, 16.0f)
             .size(width - 60.0f, 20.0f)
@@ -463,21 +610,28 @@ private:
             if (y + kCardHeight > height) break;  // 超出列高就不画（简化：不做列内滚动）
             drawCard(ui, id + ".card." + std::to_string(i), y, width - 16.0f, t,
                      *colTasks[i], static_cast<int>(colIndex),
-                     static_cast<int>(columns_.size()));
+                     static_cast<int>(columns_.size()), static_cast<int>(i));
         }
     }
 
     void drawCard(eui::Ui& ui, const std::string& id, float y, float width,
                   const core::theme::Tokens& t, const Task& task,
-                  int colIndex, int colCount) {
+                  int colIndex, int colCount, int cardIndex) {
         const bool done = task.completedAt.has_value();
+        const bool selected = (task.id == selectedTaskId_);
 
         ui.rect(id + ".bg")
             .position(0.0f, y)
             .size(width, kCardHeight)
             .states(t.colors.surfaceElevated, t.colors.hover, t.colors.active)
             .radius(t.sizes.radius)
+            .border(selected ? 2.0f : 0.0f,
+                    selected ? t.colors.primary : t.colors.borderDefault)
             .onClick([this, task] { openDetailDialog(task); })
+            .onContextMenu([this, task, colIndex, cardIndex](const eui::PointerEvent&,
+                                                             const eui::Rect&) {
+                openTaskContextMenu(task, colIndex, cardIndex);
+            })
             .onDrag([this, task, colIndex, colCount, width](const core::dsl::DragEvent& ev) {
                 // 拖拽超过半列宽 → 移到相邻列（左 / 右）
                 const double threshold = static_cast<double>(width) * 0.6;
@@ -655,8 +809,278 @@ private:
             .build();
     }
 
+    // ---------- 右键菜单 ----------
+    // 菜单定位走模块自身布局空间（boardGeom），不用窗口坐标（见 BoardGeom 注释）
+    void openTaskContextMenu(const Task& task, int columnIndex, int cardIndex) {
+        selectedTaskId_ = task.id;
+        ctxTaskId_ = task.id;
+        ctxColumnId_ = 0;
+        ctxColumnIndex_ = columnIndex;
+        ctxCardIndex_ = cardIndex;
+        ctxOpen_ = true;
+    }
+
+    void openColumnContextMenu(const Column& col, int columnIndex) {
+        ctxTaskId_ = 0;
+        ctxColumnId_ = col.id;
+        ctxColumnIndex_ = columnIndex;
+        ctxCardIndex_ = -1;
+        ctxOpen_ = true;
+    }
+
+    void drawContextMenu(eui::Ui& ui, const eui::Screen& screen,
+                         const core::theme::Tokens& t) {
+        const auto themeTokens = t.isDark ? components::theme::dark()
+                                          : components::theme::light();
+        std::vector<components::ContextMenuItem> items;
+        if (ctxTaskId_ != 0) {
+            const Task* self = findTask(ctxTaskId_);
+            if (self == nullptr) return;
+            items.push_back({"上移"});
+            items.push_back({"下移"});
+            for (const auto& c : columns_) {
+                if (c.id != self->columnId) {
+                    items.push_back({"移动到「" + c.title + "」"});
+                }
+            }
+        } else if (ctxColumnId_ != 0) {
+            if (findColumn(ctxColumnId_) == nullptr) return;
+            items.push_back({"重命名列"});
+            items.push_back({"左移列"});
+            items.push_back({"右移列"});
+            items.push_back({"删除列"});
+        } else {
+            return;
+        }
+
+        const BoardGeom g = boardGeom(screen, columns_.size(), t);
+        const float menuW = 190.0f;
+        const float x = cardLeft(g, ctxColumnIndex_) + g.colW * 0.5f - menuW * 0.5f;
+        const float y = ctxCardIndex_ >= 0
+            ? cardTop(g, ctxCardIndex_) + kCardHeight + 4.0f
+            : g.boardTop + 4.0f;
+
+        components::contextMenu(ui, "todo.ctx")
+            .open(ctxOpen_)
+            .screen(screen.width, screen.height)
+            .position(x, y)
+            .size(menuW, 36.0f)
+            .items(std::move(items))
+            .theme(themeTokens)
+            .onSelect([this](int index) { onContextSelect(index); })
+            .onOpenChange([this](bool v) { ctxOpen_ = v; })
+            .build();
+    }
+
+    // 菜单项点击分发。索引含义与 drawContextMenu 构建的 items 一一对应：
+    //   任务菜单：0=上移 1=下移 2+i=移动到第 i 个其他列
+    //   列菜单：  0=重命名 1=左移 2=右移 3=删除
+    void onContextSelect(int index) {
+        if (ctxTaskId_ != 0) {
+            const Task* self = findTask(ctxTaskId_);
+            if (self == nullptr) return;
+            if (index == 0) { moveTaskByKeyboard(true); return; }
+            if (index == 1) { moveTaskByKeyboard(false); return; }
+            int k = index - 2;
+            for (const auto& c : columns_) {
+                if (c.id == self->columnId) continue;
+                if (k == 0) {
+                    const std::string title = c.title;
+                    doMoveTask(ctxTaskId_, c.id, 0);
+                    setStatus("已移动到「" + title + "」");
+                    return;
+                }
+                --k;
+            }
+            return;
+        }
+        const Column* col = findColumn(ctxColumnId_);
+        if (col == nullptr) return;
+        switch (index) {
+            case 0:
+                renameColumnId_ = col->id;
+                renameTitle_ = col->title;
+                renameOpen_ = true;
+                break;
+            case 1: doShiftColumn(col->id, -1); break;
+            case 2: doShiftColumn(col->id, +1); break;
+            case 3:
+                confirmColumnId_ = col->id;
+                confirmOpen_ = true;
+                break;
+            default: break;
+        }
+    }
+
+    // ---------- 重命名列弹窗 ----------
+    void drawRenameDialog(eui::Ui& ui, const eui::Screen& screen,
+                          const core::theme::Tokens& t) {
+        const auto themeTokens = t.isDark ? components::theme::dark()
+                                          : components::theme::light();
+        const float w = 460.0f;
+        const float h = 210.0f;
+
+        components::dialog(ui, "todo.dialog.rename")
+            .open(renameOpen_)
+            .screen(screen.width, screen.height)
+            .size(w, h)
+            .theme(themeTokens)
+            .onOpenChange([this](bool v) { renameOpen_ = v; })
+            .content([&] {
+                ui.text("todo.dialog.rename.title")
+                    .position(28.0f, 24.0f)
+                    .size(w - 56.0f, 28.0f)
+                    .text("重命名列")
+                    .fontSize(20.0f)
+                    .lineHeight(28.0f)
+                    .fontWeight(700)
+                    .color(t.colors.textPrimary)
+                    .build();
+
+                components::input(ui, "todo.dialog.rename.input")
+                    .position(28.0f, 68.0f)
+                    .size(w - 56.0f, 44.0f)
+                    .value(renameTitle_)
+                    .placeholder("列标题…")
+                    .fontSize(15.0f)
+                    .theme(themeTokens)
+                    .onChange([this](const std::string& v) { renameTitle_ = v; })
+                    .onEnter([this] {
+                        const int64_t id = renameColumnId_;
+                        const std::string title = renameTitle_;
+                        renameOpen_ = false;
+                        doRenameColumn(id, title);
+                    })
+                    .build();
+
+                components::button(ui, "todo.dialog.rename.cancel")
+                    .position(28.0f, h - 60.0f)
+                    .size((w - 68.0f) * 0.5f, 40.0f)
+                    .text("取消")
+                    .fontSize(14.0f)
+                    .colors(t.colors.surfaceElevated, t.colors.hover, t.colors.active)
+                    .textColor(t.colors.textPrimary)
+                    .radius(t.sizes.radius)
+                    .border(1.0f, t.colors.borderDefault)
+                    .onClick([this] { renameOpen_ = false; })
+                    .build();
+
+                components::button(ui, "todo.dialog.rename.confirm")
+                    .position(28.0f + (w - 68.0f) * 0.5f + 12.0f, h - 60.0f)
+                    .size((w - 68.0f) * 0.5f, 40.0f)
+                    .text("保存")
+                    .fontSize(14.0f)
+                    .colors(t.colors.primary, t.colors.primaryHover, t.colors.primaryPressed)
+                    .textColor(eui::Color("#FFFFFF"))
+                    .radius(t.sizes.radius)
+                    .onClick([this] {
+                        const int64_t id = renameColumnId_;
+                        const std::string title = renameTitle_;
+                        renameOpen_ = false;
+                        doRenameColumn(id, title);
+                    })
+                    .build();
+            })
+            .build();
+    }
+
+    // ---------- 删除列确认弹窗（外键 CASCADE 会连带删掉列下全部任务） ----------
+    void drawConfirmDeleteDialog(eui::Ui& ui, const eui::Screen& screen,
+                                 const core::theme::Tokens& t) {
+        const auto themeTokens = t.isDark ? components::theme::dark()
+                                          : components::theme::light();
+        const float w = 460.0f;
+        const float h = 200.0f;
+        std::string colName = "?";
+        int taskCount = 0;
+        if (const Column* col = findColumn(confirmColumnId_)) {
+            colName = col->title;
+            taskCount = static_cast<int>(tasksInColumn(col->id).size());
+        }
+
+        components::dialog(ui, "todo.dialog.delcol")
+            .open(confirmOpen_)
+            .screen(screen.width, screen.height)
+            .size(w, h)
+            .theme(themeTokens)
+            .onOpenChange([this](bool v) { confirmOpen_ = v; })
+            .content([&] {
+                ui.text("todo.dialog.delcol.title")
+                    .position(28.0f, 24.0f)
+                    .size(w - 56.0f, 28.0f)
+                    .text("删除列")
+                    .fontSize(20.0f)
+                    .lineHeight(28.0f)
+                    .fontWeight(700)
+                    .color(t.colors.textPrimary)
+                    .build();
+                ui.text("todo.dialog.delcol.body")
+                    .position(28.0f, 60.0f)
+                    .size(w - 56.0f, 40.0f)
+                    .text("将删除「" + colName + "」列及其中 " +
+                          std::to_string(taskCount) + " 个任务，不可恢复。")
+                    .fontSize(14.0f)
+                    .lineHeight(20.0f)
+                    .color(t.colors.textSecondary)
+                    .build();
+
+                components::button(ui, "todo.dialog.delcol.cancel")
+                    .position(28.0f, h - 60.0f)
+                    .size((w - 68.0f) * 0.5f, 40.0f)
+                    .text("取消")
+                    .fontSize(14.0f)
+                    .colors(t.colors.surfaceElevated, t.colors.hover, t.colors.active)
+                    .textColor(t.colors.textPrimary)
+                    .radius(t.sizes.radius)
+                    .border(1.0f, t.colors.borderDefault)
+                    .onClick([this] { confirmOpen_ = false; })
+                    .build();
+
+                components::button(ui, "todo.dialog.delcol.confirm")
+                    .position(28.0f + (w - 68.0f) * 0.5f + 12.0f, h - 60.0f)
+                    .size((w - 68.0f) * 0.5f, 40.0f)
+                    .text("删除")
+                    .fontSize(14.0f)
+                    .colors(t.colors.error, t.colors.error, t.colors.error)
+                    .textColor(eui::Color("#FFFFFF"))
+                    .radius(t.sizes.radius)
+                    .onClick([this] {
+                        const int64_t id = confirmColumnId_;
+                        confirmOpen_ = false;
+                        doDeleteColumn(id);
+                    })
+                    .build();
+            })
+            .build();
+    }
+
+    // ---------- 截止日期选择（EUI-NEO datepicker 滚轮，替代 4 个固定预设） ----------
+    void drawDatePicker(eui::Ui& ui, const eui::Screen& screen,
+                        const core::theme::Tokens& t) {
+        if (!datePickOpen_) return;
+        const auto themeTokens = t.isDark ? components::theme::dark()
+                                          : components::theme::light();
+        int y = 0, m = 0, d = 0;
+        if (!ui::epochToYmd(detailDueAt_.value_or(0), y, m, d)) {
+            ui::epochToYmd(static_cast<int64_t>(std::time(nullptr)), y, m, d);
+        }
+        components::datePicker(ui, "todo.datepicker")
+            .open(true)
+            .screen(screen.width, screen.height)
+            .size(380.0f, 260.0f)
+            .date(y, m, d)
+            .theme(themeTokens)
+            .zIndex(1100)  // 盖在详情弹窗（zIndex 1000）之上
+            .onChange([this](int yy, int mm, int dd) {
+                detailDueAt_ = ui::ymdToEpoch(yy, mm, dd);
+            })
+            .onOpenChange([this](bool v) { datePickOpen_ = v; })
+            .build();
+    }
+
     // ---------- 任务详情 / 编辑弹窗 ----------
     void openDetailDialog(const Task& task) {
+        selectedTaskId_ = task.id;  // 选中态：详情弹窗关闭后保留，供 Ctrl+↑/↓
         detailTaskId_ = task.id;
         detailColumnId_ = task.columnId;
         detailTitle_ = task.title;
@@ -760,7 +1184,7 @@ private:
                         .build();
                 }
 
-                // 截止日期（快捷预设：无 / 今天 / 明天 / 一周后）
+                // 截止日期：清除 + datepicker 滚轮选任意日期（原 4 个固定预设已替换）
                 ui.text("todo.dialog.detail.dlabel2")
                     .position(28.0f, 308.0f)
                     .size(120.0f, 16.0f)
@@ -769,33 +1193,33 @@ private:
                     .lineHeight(16.0f)
                     .color(t.colors.textTertiary)
                     .build();
-                const char* dueLabels[4] = {"无", "今天", "明天", "一周后"};
-                for (int i = 0; i < 4; ++i) {
-                    const bool hasDue = detailDueAt_.has_value();
-                    const bool active = (i == 0) ? !hasDue : hasDue;
-                    const float bw = 100.0f;
-                    components::button(ui, "todo.dialog.detail.due." + std::to_string(i))
-                        .position(28.0f + static_cast<float>(i) * (bw + 8.0f), 328.0f)
-                        .size(bw, 32.0f)
-                        .text(dueLabels[i])
-                        .fontSize(12.0f)
-                        .colors(active ? t.colors.primarySoftBg : t.colors.surfaceElevated,
-                                t.colors.hover, t.colors.active)
-                        .textColor(active ? t.colors.primary : t.colors.textSecondary)
-                        .radius(t.sizes.radius)
-                        .border(1.0f, active ? t.colors.primary : t.colors.borderDefault)
-                        .onClick([this, i] {
-                            const int64_t day = 86400;
-                            const int64_t now = static_cast<int64_t>(std::time(nullptr));
-                            switch (i) {
-                                case 0: detailDueAt_ = std::nullopt; break;
-                                case 1: detailDueAt_ = now + day; break;
-                                case 2: detailDueAt_ = now + day * 2; break;
-                                default: detailDueAt_ = now + day * 7; break;
-                            }
-                        })
-                        .build();
-                }
+                const bool hasDue = detailDueAt_.has_value();
+                components::button(ui, "todo.dialog.detail.due.clear")
+                    .position(28.0f, 328.0f)
+                    .size(100.0f, 32.0f)
+                    .text(!hasDue ? "未设置" : "清除")
+                    .fontSize(12.0f)
+                    .colors(!hasDue ? t.colors.primarySoftBg : t.colors.surfaceElevated,
+                            t.colors.hover, t.colors.active)
+                    .textColor(!hasDue ? t.colors.primary : t.colors.textSecondary)
+                    .radius(t.sizes.radius)
+                    .border(1.0f, !hasDue ? t.colors.primary : t.colors.borderDefault)
+                    .onClick([this] { detailDueAt_ = std::nullopt; })
+                    .build();
+                const std::string dueBtnText =
+                    hasDue ? "📅 " + formatDue(detailDueAt_.value()) : "📅 选择日期…";
+                components::button(ui, "todo.dialog.detail.due.pick")
+                    .position(136.0f, 328.0f)
+                    .size(180.0f, 32.0f)
+                    .text(dueBtnText)
+                    .fontSize(12.0f)
+                    .colors(hasDue ? t.colors.primarySoftBg : t.colors.surfaceElevated,
+                            t.colors.hover, t.colors.active)
+                    .textColor(hasDue ? t.colors.primary : t.colors.textSecondary)
+                    .radius(t.sizes.radius)
+                    .border(1.0f, hasDue ? t.colors.primary : t.colors.borderDefault)
+                    .onClick([this] { datePickOpen_ = true; })
+                    .build();
 
                 // 移动到其他列
                 ui.text("todo.dialog.detail.mlabel")
@@ -916,6 +1340,26 @@ private:
     std::optional<int64_t> detailDueAt_;
     bool detailCompleted_ = false;
     std::vector<std::string> detailTags_;
+
+    // 键盘移动选中态（最近点击的卡片；详情弹窗关闭后保留）
+    int64_t selectedTaskId_ = 0;
+
+    // 右键菜单（ctxTaskId_ > 0 = 任务菜单；否则 ctxColumnId_ > 0 = 列菜单）
+    bool ctxOpen_ = false;
+    int64_t ctxTaskId_ = 0;
+    int64_t ctxColumnId_ = 0;
+    int ctxColumnIndex_ = 0;
+    int ctxCardIndex_ = -1;
+
+    // 截止日期 datepicker
+    bool datePickOpen_ = false;
+
+    // 重命名列 / 删除列确认弹窗
+    bool renameOpen_ = false;
+    int64_t renameColumnId_ = 0;
+    std::string renameTitle_;
+    bool confirmOpen_ = false;
+    int64_t confirmColumnId_ = 0;
 
     // 顶部提示
     std::string statusMessage_;
