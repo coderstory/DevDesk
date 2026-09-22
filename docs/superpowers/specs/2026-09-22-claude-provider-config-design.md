@@ -1,6 +1,6 @@
 # Claude 供应商完整配置 — 调研与设计
 
-日期：2026-09-22 ｜ 状态：设计定稿（待评审） ｜ 关联 spec：§8.3（Profile 数据模型）、§10.4（本地代理）
+日期：2026-09-22 ｜ 状态：**已实施**（Phase A–E 全量落地 2026-09-22，233/233 全绿；真机热切换验证留给用户） ｜ 关联 spec：§8.3（Profile 数据模型）、§10.4（本地代理）
 
 ## 1. 需求与用户价值
 
@@ -338,21 +338,21 @@ std::map<std::string, std::string> buildProxyEnv(
 - **验收**：启动代理 → settings.json env 块含 BASE_URL=127.0.0.1:port + 代理 token + 模型映射 + 行为开关，其余字段 diff 为空；切 profile → env 跟随；停代理 → settings.json 恢复到接管前内容（逐字节 diff 仅 env 块）；杀进程重启 → 自动补还原
 - **人工验证**：真实 Claude Code 连代理跑一次对话（同时验证开放问题 1 的热切换）
 
-### Phase D：UI（依赖 A）
+### Phase D：UI（依赖 A）✅ 完成（2026-09-22，分支 `feat/provider-config-de`）
 - 编辑弹窗 tabs 三页（6 槽位表单 + env 键值表 + 导入多行框）+ 详情面板摘要 + 设置页新块 + Claude 页引导条
 - **测试**：表单状态读写往返（填 6 槽位 → 保存 → 重开弹窗回显）；导入 → 三页字段分布正确
 - **验收**：贴用户模板 JSON 一键导入后保存、启动代理、settings.json 与模板语义等价（BASE_URL/AUTH_TOKEN 换成代理侧值）；按 CLAUDE.md 验证原则补截屏
 
-### Phase E：收尾
+### Phase E：收尾 ✅ 完成（2026-09-22，分支 `feat/provider-config-de`）
 - CHANGELOG、README、spec §8.3/§10.4 增补引用本文档、git commit
 
 **工作量预估**：A ≈ 0.5 天，B ≈ 0.5 天，C ≈ 1.5 天，D ≈ 1.5 天，E ≈ 0.25 天，合计 **约 4~4.5 个开发日**（含测试与截屏，AI 开发口径）。
 
 ## 9. 开放问题
 
-1. **~~热切换时效~~（已关闭，2026-09-22 独立核查）**：官方 settings-reference 文档明确 env 键在保存后「again in the running session when a saved change alters the merged env」重新加载——免重启热切换成立，`model` settings 键的 `/model` 例外不影响 env 路径。Phase C 人工验证时顺手打一条真实请求确认一次即可，不再是不确定项
-2. **`ANTHROPIC_DEFAULT_FABLE_MODEL` 官方语义**：fable 是较新的模型档位，`_MODEL`/`_MODEL_NAME` 变量名以用户模板为准照抄；若官方文档另有约定（如 FABLE 无 `_NAME` 变体），生成时跳过即可，属 Phase A 纯函数一行调整。**顺带记录**：官方还存在 `ANTHROPIC_DEFAULT_*_MODEL_DESCRIPTION` 变体（模型描述文案），导入时可一并识别进槽位结构（`models_config` 每槽位可加可选 `description` 字段，不生成不丢失），作为导入增强排进 Phase D 可选项
-3. **多机/`.claude` 目录定制**（`CLAUDE_CONFIG_DIR`）：一期只认默认 `~/.claude`；有用户反馈再支持自定义路径（settings 页加一个路径输入框的事）
+1. **~~热切换时效~~（已关闭，2026-09-22 独立核查）**：官方 settings-reference 文档明确 env 键在保存后「again in the running session when a saved change alters the merged env」重新加载——免重启热切换成立，`model` settings 键的 `/model` 例外不影响 env 路径。Phase C 人工验证时顺手打一条真实请求确认一次即可，不再是不确定项。**状态回填（Phase E，2026-09-22）**：真机验证（真实 Claude Code 连本地代理跑一次对话 + 热切换后立即生效）尚未执行，留给用户人工点验，已在 KNOWN_LIMITATIONS #12 登记
+2. **`ANTHROPIC_DEFAULT_FABLE_MODEL` 官方语义**：fable 是较新的模型档位，`_MODEL`/`_MODEL_NAME` 变量名以用户模板为准照抄；若官方文档另有约定（如 FABLE 无 `_NAME` 变体），生成时跳过即可，属 Phase A 纯函数一行调整。**顺带记录**：官方还存在 `ANTHROPIC_DEFAULT_*_MODEL_DESCRIPTION` 变体（模型描述文案），导入时可一并识别进槽位结构（`models_config` 每槽位可加可选 `description` 字段，不生成不丢失），作为导入增强排进 Phase D 可选项。**状态回填（Phase E，2026-09-22）**：`_MODEL_NAME` 变体按用户模板照抄落地（Phase A 已实现）；`_MODEL_DESCRIPTION` 识别为可选项**未做**——导入时该键落入 extra_env 原样透传（不丢失），无真实诉求不做，已在 KNOWN_LIMITATIONS #13 登记
+3. **多机/`.claude` 目录定制**（`CLAUDE_CONFIG_DIR`）：一期只认默认 `~/.claude`；有用户反馈再支持自定义路径（settings 页加一个路径输入框的事）。**状态回填（Phase E，2026-09-22）**：维持一期不识别，已在 KNOWN_LIMITATIONS #10 登记
 4. **代理侧模型名 normalize（通道 a）**：本期不做；若某网关拒绝 `[1M]` 后缀的真实案例出现，在 proxy_router 转发前加剥除逻辑，独立小改动
 5. **~~settings.local.json 优先级~~（已升级为设计项，2026-09-22 核查扩展）**：原以为只有 local 一层，实际覆盖面是三层——**project 级 `.claude/settings.json`（project > user）+ `.claude/settings.local.json` + 企业 managed settings** 都会静默压过用户级接管。检测 + 引导提示已纳入 §5.3「上层覆盖检测」和 §6.3 设置页警告行。残留开放点：managed settings 路径在各平台的准确位置以官方文档为准，Phase C 实现时核实；DevDesk 只提示不代改上层文件（越权写企业策略文件不可接受）
 6. **并发写**：DevDesk 写 settings.json 与 Claude Code 自身写（如勾选 trust dialog）撞车——原子写保证不损坏，最后写者胜；概率低，一期接受
