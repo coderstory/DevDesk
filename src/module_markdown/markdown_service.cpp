@@ -38,22 +38,42 @@ std::string sanitizeFtsToken(const std::string& token) {
     return out;
 }
 
-// 把用户查询拆词 → 安全的 FTS5 MATCH 表达式
+// FTS 查询计划：
+//   match    = 安全的 MATCH 表达式（"" = 跳过 FTS）
+//   anyLossy = 有词元含被丢弃符号（+ - # . : 等），FTS 语义已失真，
+//              需要 LIKE 兜底补一次字面子串匹配
+//   allLossy = 全部词元失真 → FTS 前缀必然误命中（搜 "c++" 清洗成
+//              "c"* 会命中所有 c 开头词），直接跳过 FTS 只走 LIKE
+struct FtsQueryPlan {
+    std::string match;
+    bool anyLossy = false;
+    bool allLossy = false;
+};
+
+// 把用户查询拆词 → 安全的 FTS5 MATCH 表达式 + 失真标记
 //   例: "special_token_123" → "\"special\"* \"token\"* \"123\"*"
-//   空查询 → ""（调用方需处理）
-std::string buildFtsQuery(const std::string& raw) {
+//   空查询 → match=""（调用方需处理）
+FtsQueryPlan buildFtsQuery(const std::string& raw) {
     std::istringstream iss(raw);
     std::string token;
     std::string joined;
+    size_t total = 0;
+    size_t lossy = 0;
     while (iss >> token) {
+        ++total;
         std::string clean = sanitizeFtsToken(token);
+        if (clean != token) ++lossy;
         if (clean.empty()) continue;
         if (!joined.empty()) joined += ' ';
         joined += '"';
         joined += clean;
         joined += "\"*";
     }
-    return joined;
+    FtsQueryPlan plan;
+    plan.match = joined;
+    plan.anyLossy = lossy > 0;
+    plan.allLossy = total > 0 && lossy == total;
+    return plan;
 }
 
 // LIKE 模式下转义 % _ \（配合 ESCAPE '\'）
@@ -633,8 +653,9 @@ core::Result<std::vector<NoteMeta>> MarkdownService::search(
     };
 
     // ---- 路径 A：FTS5 MATCH（拉丁词、按 rank 排序）----
-    const std::string ftsQuery = buildFtsQuery(query);
-    if (!ftsQuery.empty()) {
+    // 全部词元失真（如查询就是 "c++"）时跳过 FTS，见 FtsQueryPlan 注释
+    const FtsQueryPlan plan = buildFtsQuery(query);
+    if (!plan.match.empty() && !plan.allLossy) {
         auto prep = db_.prepare(
             "SELECT i.id, i.path, i.title, i.size_bytes, i.modified_at "
             "FROM markdown_fts f "
@@ -643,7 +664,7 @@ core::Result<std::vector<NoteMeta>> MarkdownService::search(
             "ORDER BY rank");
         if (prep.isOk()) {
             auto& stmt = prep.value();
-            if (stmt.bind(1, ftsQuery).isOk()) {
+            if (stmt.bind(1, plan.match).isOk()) {
                 auto rowsResult = stmt.fetchAll();
                 if (rowsResult.isOk()) {
                     std::vector<NoteMeta> hits;
@@ -661,16 +682,17 @@ core::Result<std::vector<NoteMeta>> MarkdownService::search(
         }
     }
 
-    // ---- 路径 B：LIKE 子串匹配（CJK 兜底）----
+    // ---- 路径 B：LIKE 子串匹配（CJK / 符号词元兜底）----
     //
     // unicode61 分词器把连续 CJK 视为单个 token，"界面" 无法命中
-    // "用户界面"（前缀也不行）。所以只要查询里含非 ASCII（CJK）字符，
-    // 或者 FTS5 没命中，就走一次 LIKE 子串搜索兜底。
+    // "用户界面"（前缀也不行）；同样，含被丢弃符号的词元（"c++" 清洗成
+    // "c"）在 FTS 里语义失真。所以只要查询里含非 ASCII（CJK）字符、
+    // 有失真词元、或 FTS5 没命中，就走一次 LIKE 字面子串搜索兜底。
     const bool hasNonAscii = std::any_of(
         query.begin(), query.end(),
         [](char c) { return static_cast<unsigned char>(c) >= 0x80; });
 
-    if (hasNonAscii || results.empty()) {
+    if (hasNonAscii || plan.anyLossy || results.empty()) {
         const std::string pattern = "%" + escapeLikePattern(query) + "%";
         auto prep = db_.prepare(
             "SELECT i.id, i.path, i.title, i.size_bytes, i.modified_at "
