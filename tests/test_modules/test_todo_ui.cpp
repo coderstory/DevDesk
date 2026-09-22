@@ -10,6 +10,7 @@
 #include "core/database.h"
 #include "core/module_interface.h"
 #include "core/sqlite_db.h"
+#include "core/theme.h"
 #include "module_todo/todo_service.h"
 #include "module_todo/todo_ui_logic.h"
 
@@ -727,5 +728,43 @@ REGISTER_TEST(todo_ui_ctx_edit_and_delete,
     }
 
     mod->onStop();
+    return true;
+})
+
+REGISTER_TEST(todo_ui_fontscale_tokens,
+              "todo_ui: 模块字号经 token 派生，全局缩放生效（headless）", {
+    TestEnv env;
+    DOCTEST_REQUIRE(env.ready);
+    auto col = env.svc->createColumn("字号列");
+    DOCTEST_REQUIRE(col.isOk());
+    auto a = env.svc->createTask(col.value().id, "字号任务");
+    DOCTEST_REQUIRE(a.isOk());
+
+    std::unique_ptr<::core::Module> mod(create_todo_module());
+    mod->onStart();
+
+    auto cardTitleSize = [&](float* out) {
+        eui::Ui ui;
+        eui::Screen screen;
+        screen.width = 1600.0f;
+        screen.height = 1000.0f;
+        ui.begin("todo_font_frame");
+        mod->compose(ui, screen);
+        ui.end();
+        const auto* title = ui.find("todo.col.4.card.0.title");
+        if (title == nullptr) return false;
+        *out = title->fontSize;
+        return true;
+    };
+    ::core::theme::setFontScale(1.0f);
+    float base = 0.0f;
+    DOCTEST_REQUIRE(cardTitleSize(&base));       // 14（Body-1 派生）
+    ::core::theme::setFontScale(1.3f);
+    float scaled = 0.0f;
+    DOCTEST_REQUIRE(cardTitleSize(&scaled));
+    ::core::theme::setFontScale(1.0f);           // 恢复，不影响其他用例
+    DOCTEST_CHECK_EQ(base, 14.0f);
+    // 派生式 = token(缩放后) - 1：15×1.3 - 1 = 18.5（字面量时代这里恒为 14 不动）
+    DOCTEST_CHECK_EQ(scaled, 15.0f * 1.3f - 1.0f);
     return true;
 })
