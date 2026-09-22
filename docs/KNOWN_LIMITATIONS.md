@@ -48,6 +48,12 @@
 - EUI-NEO 的剪贴板能力仅用于 Input 组件内部粘贴（窗口层 `clipboardText/setClipboardText`），未暴露应用级"复制到剪贴板"的组件 API。
 - 因此设置页 / 代理凭据的 token 没有「复制」按钮，需手动从 `%APPDATA%\DevDesk\proxy_token.txt` 抄录。
 
+#### 5. Markdown 文件变化轮询是 mtime/size 秒级比对（W8）
+
+- 「当前笔记被外部修改」检测基于 mtime（unix 秒）+ size 快照：外部编辑器若在同秒内改回等长内容，最快要等下一次 mtime 变化才被发现；目录级新文件/删除同样 5 秒内才反映（`MarkdownService::pollChanged`，`markdown_service.cpp`）。
+- 外部删除当前笔记且本地有未保存编辑时只弹一次 toast（单实例限制，靠 `lastKnownMtime=-1` 标记节流），不弹选择框——本地编辑保存时会重建文件，无数据丢失风险。
+- 升级路径：平台级 watcher（ReadDirectoryChangesW / FSEvent）在 EUI-NEO 有 onFileDrop/watcher 诉求时一并考虑上游 PR。
+
 ### 测试
 
 #### 5. soak 300s 压测默认 SKIP

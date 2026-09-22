@@ -3,14 +3,21 @@
 //
 // 数据流：
 //   onStart()  → 从 core::appDatabase() 拿共享连接 → MarkdownService → rescan()
-//   compose()  → 左栏文件树（真实索引）/ 中栏编辑器（真实读文件、改即写盘）
-//                / 右栏预览（components::markdown 把 Markdown 渲染成 eui 节点）
+//   compose()  → 左栏二级目录树（md_tree 纯函数分组）/ 中栏编辑器（真实读文件、
+//                改即写盘）/ 右栏预览（components::markdown 渲染成 eui 节点）
 //
 // Phase 1 编辑体验（docs/superpowers/specs/2026-09-22-markdown-editor-ux-design.md）：
 //   - 编辑 / 双栏 / 预览三态切换（顶栏 segmented + Ctrl+Shift+P 循环）
 //   - 双栏同步滚动（标题锚点 + 段内线性插值，编辑器单向驱动预览）
-//   - 左栏大纲面板（md_line_scanner 扫描标题，点击跳转）
 //   - 编辑器底部状态栏（保存状态 ●/✓ + 行:列 · N 字）
+//
+// W8 左栏重构（用户确认方案）：
+//   - 左栏 = 二级目录树（顶层文件夹 → 二级文件，根目录散文件单独一组，
+//     文件夹可展开/收起，搜索时展平显示命中文件）
+//   - 大纲 = 顶栏开关 + 浮动面板（positioned + zIndex，不挤压编辑区）
+//   - 文件变化自动感知：5 秒轮询（pollChanged 轻量比对 → rescan），
+//     当前笔记被外部修改时弹「重载 / 保留本地」选择（dialog；EUI-NEO toast
+//     无按钮能力，选择类交互用 dialog）
 //
 // 所有 I/O 都通过 MarkdownService，失败走 core::Result（不抛异常）。
 #include "core/database.h"
@@ -22,6 +29,7 @@
 #include "core/time.h"
 #include "markdown_service.h"
 #include "md_line_scanner.h"
+#include "md_tree.h"
 
 #include <eui/dsl.h>
 
@@ -31,6 +39,7 @@
 #include <components/markdown.h>
 #include <components/scrollview.h>
 #include <components/segmented.h>
+#include <components/switch.h>
 #include <components/theme.h>
 #include <components/toast.h>
 
@@ -41,7 +50,9 @@
 #include <ctime>
 #include <filesystem>
 #include <functional>
+#include <map>
 #include <memory>
+#include <set>
 #include <string>
 #include <thread>
 #include <vector>
@@ -52,7 +63,10 @@ namespace {
 
 namespace fs = std::filesystem;
 
-// 单行文件树条目（现在由 scrollView 负责纵向排布，所以不传 y）
+// 单行树条目。整行包一层 stack（W7 已知坑：position() 只在 stack 内生效，
+// 行元素直接做 scrollView column 的流式子元素时其 position 会被静默忽略，
+// 图标/名字会被流式排到下一行）——行是 column 的流式子元素，行内的
+// 背景 rect / icon / name 才用 position 定位。
 void drawFileTreeItem(eui::Ui& ui,
                       const std::string& id,
                       float width,
@@ -60,29 +74,35 @@ void drawFileTreeItem(eui::Ui& ui,
                       const std::string& icon,
                       const std::string& name,
                       bool active,
+                      float indent,
                       std::function<void()> onClick) {
-    ui.rect(id + ".row")
+    ui.stack(id)
         .size(width, 32.0f)
-        .color(active ? t.colors.primarySoftBg : t.colors.surface)
-        .hoverColor(t.colors.hover)
-        .onClick(std::move(onClick))
-        .build();
-    ui.text(id + ".icon")
-        .position(12.0f, 0.0f)
-        .size(20.0f, 32.0f)
-        .text(icon)
-        .fontSize(t.sizes.fontSizeBody)
-        .lineHeight(32.0f)
-        .color(t.colors.textSecondary)
-        .build();
-    ui.text(id + ".name")
-        .position(36.0f, 0.0f)
-        .size(std::max(0.0f, width - 48.0f), 32.0f)
-        .text(name)
-        .fontSize(t.sizes.fontSizeSmall)
-        .lineHeight(32.0f)
-        .color(active ? t.colors.primary : t.colors.textPrimary)
-        .fontWeight(active ? 700 : 400)
+        .content([&] {
+            ui.rect(id + ".row")
+                .size(width, 32.0f)
+                .color(active ? t.colors.primarySoftBg : t.colors.surface)
+                .hoverColor(t.colors.hover)
+                .onClick(std::move(onClick))
+                .build();
+            ui.text(id + ".icon")
+                .position(12.0f + indent, 0.0f)
+                .size(20.0f, 32.0f)
+                .text(icon)
+                .fontSize(t.sizes.fontSizeBody)
+                .lineHeight(32.0f)
+                .color(t.colors.textSecondary)
+                .build();
+            ui.text(id + ".name")
+                .position(36.0f + indent, 0.0f)
+                .size(std::max(0.0f, width - 48.0f - indent), 32.0f)
+                .text(name)
+                .fontSize(t.sizes.fontSizeSmall)
+                .lineHeight(32.0f)
+                .color(active ? t.colors.primary : t.colors.textPrimary)
+                .fontWeight(active ? 700 : 400)
+                .build();
+        })
         .build();
 }
 
@@ -165,6 +185,9 @@ public:
         // 自动保存：停止输入 kAutoSaveDelayMs 后把编辑器内容真正写回磁盘
         flushEditorIfIdle();
 
+        // W8：文件变化自动感知——5 秒周期轻量 mtime 轮询（新文件/删除/外部修改）
+        pollDiskChangesIfDue();
+
         // 大纲数据：文本变化后重扫（行扫描器是纯函数，小文档开销可忽略；
         // 大文档下 onChange 每键一次 O(n) 扫描，>5000 行如成瓶颈再增量分片）
         if (outlineDirty_) {
@@ -204,8 +227,12 @@ public:
             })
             .build();
 
+        // 大纲浮动面板（zIndex 浮在编辑/预览区上方，不参与流式布局）
+        drawOutlinePanel(ui, screen, t, componentTheme);
+
         // 弹窗要画在最上层（dialog 自带 zIndex）
         drawNewNoteDialog(ui, screen, t, componentTheme);
+        drawConflictDialog(ui, screen, t, componentTheme);
 
         // 保存失败等操作的 toast 反馈（画在弹窗之上）
         drawToast(ui, screen, componentTheme);
@@ -271,15 +298,15 @@ private:
                     .alignItems(eui::Align::CENTER)
                     .gap(t.sizes.spacingSmall)
                     .content([&] {
-                        components::button(ui, "md.btn.rescan")
-                            .size(84.0f, 40.0f)
-                            .text("↻ 重扫")
-                            .fontSize(t.sizes.fontSizeBody)
-                            .theme(componentTheme, false)
-                            .textColor(t.colors.textSecondary)
-                            .radius(t.sizes.radius)
-                            .border(1.0f, t.colors.borderDefault)
-                            .onClick([this] { doRescan(); })
+                        // 大纲浮动面板开关（W8：大纲从左栏页签改为顶栏开关 +
+                        // 浮动面板，不挤压编辑区）
+                        components::toggleSwitch(ui, "md.outline.toggle")
+                            .size(112.0f, 36.0f)
+                            .checked(outlineOpen_)
+                            .text("大纲")
+                            .fontSize(t.sizes.fontSizeSmall)
+                            .theme(componentTheme)
+                            .onChange([this](bool v) { outlineOpen_ = v; })
                             .build();
 
                         components::button(ui, "md.btn.new")
@@ -358,35 +385,19 @@ private:
                 })
                 .build();
 
-            // 文件 / 大纲 切换（segmented 无 position API，用 stack 包一层定位）
-            ui.stack("md.tree.tabwrap")
-                .position(12.0f, 56.0f)
-                .size(sideW - 24.0f, 30.0f)
-                .content([&] {
-                    components::segmented(ui, "md.tree.tab")
-                        .size(sideW - 24.0f, 30.0f)
-                        .items({"文件", "大纲"})
-                        .selected(leftTab_)
-                        .fontSize(t.sizes.fontSizeSmall)
-                        .theme(componentTheme)
-                        .onChange([this](int index) { leftTab_ = index; })
-                        .build();
-                })
-                .build();
-
-            const float listY = 98.0f;
+            // 搜索时树展平为命中文件列表；空搜索 = 二级目录树（W8）
+            const float listY = 60.0f;
             const float listH = std::max(0.0f, bodyH - listY - 60.0f);
 
             // 错误态与空态区分（W7 P1-1，仿 Home 三态）：
-            // DB/列表失败 → 错误文案 + 重试指引，不再伪装成「还没有笔记」
-            if (leftTab_ == 1) {
-                drawOutlineList(ui, listY, listH, sideW, t, componentTheme);
-            } else if (!listError_.empty()) {
+            // DB/列表失败 → 错误文案，不再伪装成「还没有笔记」。
+            // W8：重扫按钮已移除（5 秒自动轮询），错误态等下一轮自动恢复
+            if (!listError_.empty()) {
                 ui.text("md.tree.error")
                     .position(16.0f, listY + 8.0f)
                     .size(sideW - 32.0f, 60.0f)
                     .text("列表加载失败：\n" + listError_ +
-                          "\n点右上角「↻ 重扫」重试")
+                          "\n每 5 秒自动重试")
                     .fontSize(t.sizes.fontSizeSmall)
                     .lineHeight(18.0f)
                     .wrap()
@@ -403,8 +414,10 @@ private:
                     .wrap()
                     .color(t.colors.textTertiary)
                     .build();
-            } else {
+            } else if (!searchQuery_.empty()) {
                 drawNoteList(ui, listY, listH, sideW, t, componentTheme);
+            } else {
+                drawTreeList(ui, listY, listH, sideW, t, componentTheme);
             }
 
             // 底部「+ 新建」
@@ -456,79 +469,209 @@ private:
                     const std::string path = noteDisplayPath(n);
                     const std::string id = "md.tree.item." + std::to_string(i);
                     drawFileTreeItem(inner, id, w, t, "📄", noteDisplayName(n),
-                                     path == currentPath_,
+                                     path == currentPath_, 0.0f,
                                      [this, path] { openNote(path); });
                 }
             })
             .build();
     }
 
-    // ---- 左栏：大纲面板（md_line_scanner 扫描的标题，点击跳转）----
-    void drawOutlineList(eui::Ui& ui,
-                         float listY,
-                         float listH,
-                         float sideW,
-                         const core::theme::Tokens& t,
-                         const components::theme::ThemeColorTokens& componentTheme) {
-        if (outline_.empty()) {
-            ui.text("md.outline.empty")
-                .position(16.0f, listY + 8.0f)
-                .size(sideW - 32.0f, 40.0f)
-                .text(currentPath_.empty() ? "先打开一篇笔记"
-                                           : "没有标题\n用 # 开始一行即可加入大纲")
-                .fontSize(t.sizes.fontSizeSmall)
-                .lineHeight(18.0f)
-                .wrap()
-                .color(t.colors.textTertiary)
-                .build();
-            return;
+    // ---- 左栏：二级目录树（W8，md_tree 纯函数分组）----
+    void drawTreeList(eui::Ui& ui,
+                      float listY,
+                      float listH,
+                      float sideW,
+                      const core::theme::Tokens& t,
+                      const components::theme::ThemeColorTokens& componentTheme) {
+        const std::vector<MdTreeRow> rows = buildTreeRows(notes_, collapsedDirs_);
+        const float rowW = sideW - 16.0f;
+        // contentKey：行内容（类型+名字+路径）组合 hash，内容变即重建
+        size_t treeKey = 0;
+        for (const auto& r : rows) {
+            treeKey = treeKey * 1315423911u +
+                      std::hash<std::string>{}(r.name + "\x1f" + r.relPath) +
+                      (r.isFolder ? 1u : 0u) + static_cast<size_t>(r.depth);
         }
-
-        // 当前节：光标行所在的上一个标题（仅预览态无编辑器，用上次跳转位置）
-        const int active = activeOutlineIndex(ui);
-
-        // contentKey 反模式修复（W7）：旧 key 用 outline_.size()，同数量
-        // 标题替换（改标题文字）不触发重建。改为标题+级别组合 hash。
-        size_t outlineKey = 0;
-        for (const auto& h : outline_) {
-            outlineKey = outlineKey * 1315423911u +
-                         std::hash<std::string>{}(h.title) +
-                         static_cast<size_t>(h.level);
-        }
-        components::scrollView(ui, "md.outline.scroll")
+        components::scrollView(ui, "md.tree.scroll")
             .position(8.0f, listY)
             .size(sideW - 16.0f, listH)
             .gap(0.0f)
             .step(40.0f)
             .theme(componentTheme)
-            .contentKey("md.outline.scroll." + std::to_string(outlineKey))
+            .contentKey("md.tree.scroll." + std::to_string(treeKey))
             .content([&](eui::Ui& inner, float contentWidth, float viewportHeight) {
                 (void)viewportHeight;
-                const float rowW = std::min(contentWidth, sideW - 16.0f);
-                for (size_t i = 0; i < outline_.size(); ++i) {
-                    const MdHeading& h = outline_[i];
-                    const std::string id = "md.outline.item." + std::to_string(i);
-                    const bool current = static_cast<int>(i) == active;
-                    // 当前节高亮 primarySoftBg + primary 文本；按级别缩进
-                    inner.rect(id + ".row")
-                        .size(rowW, 30.0f)
-                        .color(current ? t.colors.primarySoftBg : t.colors.surface)
-                        .hoverColor(t.colors.hover)
-                        .onClick([this, i, &ui, componentTheme] {
-                            jumpToHeading(ui, i, componentTheme);
-                        })
-                        .build();
-                    inner.text(id + ".label")
-                        .position(12.0f + static_cast<float>(h.level - 1) * 14.0f, 0.0f)
-                        .size(std::max(0.0f, rowW - 20.0f -
-                                       static_cast<float>(h.level - 1) * 14.0f), 30.0f)
-                        .text(h.title.empty() ? "(无标题)" : h.title)
-                        .fontSize(t.sizes.fontSizeSmall)
-                        .lineHeight(30.0f)
-                        .color(current ? t.colors.primary : t.colors.textPrimary)
-                        .fontWeight(current ? 700 : 400)
-                        .build();
+                const float w = std::min(contentWidth, rowW);
+                for (size_t i = 0; i < rows.size(); ++i) {
+                    const MdTreeRow& r = rows[i];
+                    const std::string id = "md.tree.node." + std::to_string(i);
+                    if (r.isFolder) {
+                        // 文件夹行：▸/▾ 展开指示 + 📁，点击收起/展开
+                        // （同样包 stack，position 只在 stack 内生效）
+                        const bool expanded = collapsedDirs_.count(r.relPath) == 0;
+                        inner.stack(id)
+                            .size(w, 32.0f)
+                            .content([&] {
+                                inner.rect(id + ".row")
+                                    .size(w, 32.0f)
+                                    .color(t.colors.surface)
+                                    .hoverColor(t.colors.hover)
+                                    .onClick([this, dir = r.relPath] {
+                                        if (collapsedDirs_.count(dir) != 0) {
+                                            collapsedDirs_.erase(dir);
+                                        } else {
+                                            collapsedDirs_.insert(dir);
+                                        }
+                                    })
+                                    .build();
+                                inner.text(id + ".arrow")
+                                    .position(6.0f, 0.0f)
+                                    .size(16.0f, 32.0f)
+                                    .text(expanded ? "▾" : "▸")
+                                    .fontSize(t.sizes.fontSizeSmall)
+                                    .lineHeight(32.0f)
+                                    .color(t.colors.textTertiary)
+                                    .build();
+                                inner.text(id + ".name")
+                                    .position(28.0f, 0.0f)
+                                    .size(std::max(0.0f, w - 40.0f), 32.0f)
+                                    .text("📁 " + r.name)
+                                    .fontSize(t.sizes.fontSizeSmall)
+                                    .lineHeight(32.0f)
+                                    .color(t.colors.textPrimary)
+                                    .fontWeight(700)
+                                    .build();
+                            })
+                            .build();
+                    } else {
+                        // 文件行：depth=1 缩进 20px
+                        drawFileTreeItem(inner, id, w, t, "📄", r.name,
+                                         r.relPath == currentPath_,
+                                         20.0f,
+                                         [this, path = r.relPath] { openNote(path); });
+                    }
                 }
+            })
+            .build();
+    }
+
+    // ---- 大纲浮动面板（W8：顶栏开关触发，positioned + zIndex 浮在编辑/预览区
+    //      右侧，不挤压布局。沿用 Phase 1 的 md_line_scanner + 点击跳转逻辑）----
+    void drawOutlinePanel(eui::Ui& ui,
+                          const eui::Screen& screen,
+                          const core::theme::Tokens& t,
+                          const components::theme::ThemeColorTokens& componentTheme) {
+        if (!outlineOpen_) return;
+        const float pad = t.sizes.spacingXXLarge; // 与 compose 同基准（40）
+        const float panelW = 264.0f;
+        const float panelH = screen.height - pad * 2.0f - 64.0f -
+                             t.sizes.spacingLarge;
+        const float x = screen.width - pad - panelW;
+        const float y = pad + 64.0f + t.sizes.spacingLarge;
+
+        ui.stack("md.outline.panel")
+            .position(x, y)
+            .size(panelW, panelH)
+            .zIndex(10)
+            .content([&] {
+                ui.rect("md.outline.panel.bg")
+                    .size(panelW, panelH)
+                    .color(t.colors.surface)
+                    .radius(t.sizes.radiusLarge)
+                    .border(1.0f, t.colors.borderDefault)
+                    .build();
+                ui.text("md.outline.panel.title")
+                    .position(16.0f, 10.0f)
+                    .size(120.0f, 24.0f)
+                    .text("大纲")
+                    .fontSize(t.sizes.fontSizeBody)
+                    .lineHeight(24.0f)
+                    .fontWeight(700)
+                    .color(t.colors.textPrimary)
+                    .build();
+                components::button(ui, "md.outline.panel.close")
+                    .position(panelW - 44.0f, 8.0f)
+                    .size(32.0f, 28.0f)
+                    .text("✕")
+                    .fontSize(t.sizes.fontSizeSmall)
+                    .theme(componentTheme, false)
+                    .textColor(t.colors.textSecondary)
+                    .radius(t.sizes.radius)
+                    .onClick([this] { outlineOpen_ = false; })
+                    .build();
+
+                if (outline_.empty()) {
+                    ui.text("md.outline.panel.empty")
+                        .position(16.0f, 52.0f)
+                        .size(panelW - 32.0f, 60.0f)
+                        .text(currentPath_.empty() ? "先打开一篇笔记"
+                                                   : "没有标题\n用 # 开始一行即可加入大纲")
+                        .fontSize(t.sizes.fontSizeSmall)
+                        .lineHeight(18.0f)
+                        .wrap()
+                        .color(t.colors.textTertiary)
+                        .build();
+                    return;
+                }
+
+                // 当前节：光标行所在的上一个标题（仅预览态无编辑器，用上次跳转位置）
+                const int active = activeOutlineIndex(ui);
+
+                // contentKey：标题+级别组合 hash（W7 反模式修复同款）
+                size_t outlineKey = 0;
+                for (const auto& h : outline_) {
+                    outlineKey = outlineKey * 1315423911u +
+                                 std::hash<std::string>{}(h.title) +
+                                 static_cast<size_t>(h.level);
+                }
+                components::scrollView(ui, "md.outline.scroll")
+                    .position(8.0f, 44.0f)
+                    .size(panelW - 16.0f, std::max(0.0f, panelH - 52.0f))
+                    .gap(0.0f)
+                    .step(40.0f)
+                    .theme(componentTheme)
+                    .contentKey("md.outline.scroll." + std::to_string(outlineKey))
+                    .content([&](eui::Ui& inner, float contentWidth,
+                                 float viewportHeight) {
+                        (void)viewportHeight;
+                        const float rowW = std::min(contentWidth, panelW - 16.0f);
+                        for (size_t i = 0; i < outline_.size(); ++i) {
+                            const MdHeading& h = outline_[i];
+                            const std::string id =
+                                "md.outline.item." + std::to_string(i);
+                            const bool current = static_cast<int>(i) == active;
+                            // 当前节高亮 primarySoftBg + primary 文本；按级别缩进。
+                            // 行包 stack（position 只在 stack 内生效，同左栏树行）
+                            inner.stack(id)
+                                .size(rowW, 30.0f)
+                                .content([&] {
+                                    inner.rect(id + ".row")
+                                        .size(rowW, 30.0f)
+                                        .color(current ? t.colors.primarySoftBg
+                                                       : t.colors.surface)
+                                        .hoverColor(t.colors.hover)
+                                        .onClick([this, i, &ui, componentTheme] {
+                                            jumpToHeading(ui, i, componentTheme);
+                                        })
+                                        .build();
+                                    inner.text(id + ".label")
+                                        .position(12.0f + static_cast<float>(h.level - 1) * 14.0f,
+                                                  0.0f)
+                                        .size(std::max(0.0f, rowW - 20.0f -
+                                                       static_cast<float>(h.level - 1) * 14.0f),
+                                              30.0f)
+                                        .text(h.title.empty() ? "(无标题)" : h.title)
+                                        .fontSize(t.sizes.fontSizeSmall)
+                                        .lineHeight(30.0f)
+                                        .color(current ? t.colors.primary
+                                                       : t.colors.textPrimary)
+                                        .fontWeight(current ? 700 : 400)
+                                        .build();
+                                })
+                                .build();
+                        }
+                    })
+                    .build();
             })
             .build();
     }
@@ -847,6 +990,69 @@ private:
             .build();
     }
 
+    // ---- 外部修改冲突弹窗（W8：当前笔记被外部程序改动时二选一）----
+    // 注：EUI-NEO toast 无按钮能力，「重载/保留本地」这类选择交互用 dialog。
+    void drawConflictDialog(eui::Ui& ui,
+                            const eui::Screen& screen,
+                            const core::theme::Tokens& t,
+                            const components::theme::ThemeColorTokens& componentTheme) {
+        const float w = 460.0f;
+        const float h = 220.0f;
+
+        components::dialog(ui, "md.dialog.conflict")
+            .open(conflictOpen_)
+            .screen(screen.width, screen.height)
+            .size(w, h)
+            .theme(componentTheme)
+            .onOpenChange([this](bool v) { conflictOpen_ = v; })
+            .content([&] {
+                ui.text("md.dialog.conflict.title")
+                    .position(28.0f, 24.0f)
+                    .size(w - 56.0f, 28.0f)
+                    .text("文件已被外部修改")
+                    .fontSize(t.sizes.fontSizeLarge)
+                    .lineHeight(28.0f)
+                    .fontWeight(700)
+                    .color(t.colors.textPrimary)
+                    .build();
+
+                ui.text("md.dialog.conflict.hint")
+                    .position(28.0f, 56.0f)
+                    .size(w - 56.0f, 36.0f)
+                    .text("「" + currentPath_ + "」在磁盘上被其他程序修改，"
+                          "与未保存的本地编辑冲突。")
+                    .fontSize(t.sizes.fontSizeSmall)
+                    .lineHeight(18.0f)
+                    .wrap()
+                    .color(t.colors.textTertiary)
+                    .build();
+
+                components::button(ui, "md.dialog.conflict.reload")
+                    .position(28.0f, h - 60.0f)
+                    .size((w - 68.0f) * 0.5f, 40.0f)
+                    .text("↻ 重载磁盘版本")
+                    .fontSize(t.sizes.fontSizeBody)
+                    .theme(componentTheme, true)
+                    .textColor(eui::Color("#FFFFFF"))
+                    .radius(t.sizes.radius)
+                    .onClick([this] { resolveConflict(true); })
+                    .build();
+
+                components::button(ui, "md.dialog.conflict.keep")
+                    .position(28.0f + (w - 68.0f) * 0.5f + 12.0f, h - 60.0f)
+                    .size((w - 68.0f) * 0.5f, 40.0f)
+                    .text("保留本地编辑")
+                    .fontSize(t.sizes.fontSizeBody)
+                    .theme(componentTheme, false)
+                    .textColor(t.colors.textPrimary)
+                    .radius(t.sizes.radius)
+                    .border(1.0f, t.colors.borderDefault)
+                    .onClick([this] { resolveConflict(false); })
+                    .build();
+            })
+            .build();
+    }
+
     // ==================== 业务动作 ====================
 
     // ---- Toast 反馈（仿 claude_module）----
@@ -995,6 +1201,7 @@ private:
         editorDirty_ = false;
         outlineDirty_ = true;
         activeOutlineIdx_ = -1;
+        syncCurrentMtime();  // W8：外部修改检测的 mtime 基准
         if (mode_ == ViewMode::Preview) syncPreviewOnEnter_ = true;
         status_ = "已打开 " + relPath;
         LOG_INFO("打开笔记: " + relPath);
@@ -1045,21 +1252,112 @@ private:
         saveFailed_ = false;
         saveBackoffMs_ = 0;
         lastSavedAt_ = std::time(nullptr);
+        syncCurrentMtime();  // W8：自己写盘后推进 mtime 基准（避免误报外部修改）
         status_ = "已保存 " + currentPath_;
     }
 
-    void doRescan() {
+    // ---- W8：文件变化自动感知（spec §8.1 承诺的 5 秒轮询）----
+
+    // 每 5 秒一次（compose 每帧调用，内部用 steady_clock 节流）
+    void pollDiskChangesIfDue() {
         if (!service_) return;
-        auto r = service_->rescan();
-        if (r.isFail()) {
-            LOG_ERROR("重扫失败: " + r.errorMessage());
-            status_ = "重扫失败：" + r.errorMessage();
-            listError_ = r.errorMessage();  // 左栏立即切到错误态（含重试指引）
+        const auto now = std::chrono::steady_clock::now();
+        const auto sinceMs = std::chrono::duration_cast<std::chrono::milliseconds>(
+                                 now - lastPollAt_).count();
+        if (sinceMs < kPollIntervalMs) return;
+        lastPollAt_ = now;
+
+        // 1) 目录级轻量比对：有差异（新文件/删除/修改）才做全量 rescan
+        auto changed = service_->pollChanged();
+        if (changed.isOk() && changed.value()) {
+            auto r = service_->rescan();
+            if (r.isOk()) {
+                listError_.clear();
+                refreshList();
+            } else {
+                LOG_WARN("自动重扫失败: " + r.errorMessage());
+            }
+        }
+        // 2) 当前打开笔记的外部修改 / 删除检测
+        checkCurrentNoteOnDisk();
+    }
+
+    void checkCurrentNoteOnDisk() {
+        if (currentPath_.empty() || conflictOpen_) return;
+        auto m = service_->fileMtime(currentPath_);
+        if (m.isFail()) {
+            // 文件被外部删除：lastKnownMtime_ = -1 做已知缺失标记（防 5 秒一次
+            // 的重复 toast；EUI-NEO toast 单实例限制下的节流手段）
+            if (lastKnownMtime_ == -1) return;
+            lastKnownMtime_ = -1;
+            if (!editorDirty_) {
+                currentPath_.clear();
+                editorText_.clear();
+                lastSavedText_.clear();
+                outlineDirty_ = true;
+                activeOutlineIdx_ = -1;
+                status_ = "笔记已被外部删除";
+                showToast("笔记已被删除", "当前笔记已从磁盘移除", true);
+            } else {
+                // 本地还有未保存编辑：write() 会重建文件，提示一次即可
+                showToast("笔记已被外部删除",
+                          "保留的本地编辑会在保存时重新创建该文件", true);
+            }
             return;
         }
-        refreshList();
-        status_ = "重扫完成";
-        LOG_INFO("手动重扫完成");
+        if (m.value() > lastKnownMtime_) {
+            if (!editorDirty_) {
+                // 无本地改动：静默重载（用户无感知的正确行为）
+                reloadCurrentNote(true);
+            } else {
+                // 有未保存编辑：弹「重载 / 保留本地」选择（只弹一次，选择时
+                // 才更新 lastKnownMtime_，避免轮询期间重复弹窗）
+                conflictOpen_ = true;
+            }
+        }
+    }
+
+    // 从磁盘重读当前笔记（不经过 openNote 的「先保存旧笔记」路径）
+    void reloadCurrentNote(bool silent) {
+        auto r = service_->read(currentPath_);
+        if (r.isFail()) {
+            if (!silent) {
+                showToast("重载失败", r.errorMessage(), true);
+            }
+            return;
+        }
+        editorText_ = r.value();
+        lastSavedText_ = editorText_;
+        editorDirty_ = false;
+        outlineDirty_ = true;
+        activeOutlineIdx_ = -1;
+        syncCurrentMtime();
+        if (mode_ == ViewMode::Preview) syncPreviewOnEnter_ = true;
+        status_ = "已重新加载 " + currentPath_;
+        LOG_INFO("重载笔记: " + currentPath_);
+    }
+
+    void resolveConflict(bool reloadFromDisk) {
+        conflictOpen_ = false;
+        if (reloadFromDisk) {
+            reloadCurrentNote(false);
+            showToast("已重载", "已载入磁盘上的最新版本", false);
+        } else {
+            // 保留本地：把基准 mtime 推到磁盘当前值，未保存编辑走原有
+            // 自动保存链路（400ms 防抖后覆盖写回）
+            syncCurrentMtime();
+            status_ = "保留本地编辑 " + currentPath_;
+        }
+    }
+
+    // lastKnownMtime_ ← 磁盘当前 mtime（打开/保存/重载后调用）
+    void syncCurrentMtime() {
+        if (currentPath_.empty()) {
+            lastKnownMtime_ = 0;
+            return;
+        }
+        auto m = service_->fileMtime(currentPath_);
+        lastKnownMtime_ = m.isOk() ? m.value() : -1;
     }
 
     void commitNewNote() {
@@ -1076,6 +1374,16 @@ private:
             return;
         }
         if (!service_) return;
+
+        // W8 路径安全校验（目录树依赖 relativePath 落在 notesDir 内；
+        // MarkdownService::create 有同规则兜底，这里给出更友好的提示）
+        if (!MarkdownService::isSafeNewNotePath(name)) {
+            status_ = "笔记名不合法：不支持绝对路径、盘符或 ..";
+            showToast("笔记名不合法",
+                      "不允许绝对路径、盘符（如 C:）或 ..，请用相对路径，"
+                      "例如 inbox/ideas.md", true);
+            return;
+        }
 
         // 规范化路径：无扩展名时补 .md（与 MarkdownService::create 一致）
         std::string relPath = name;
@@ -1110,6 +1418,7 @@ private:
 
     static constexpr int64_t kAutoSaveDelayMs = 400;
     static constexpr int64_t kMaxSaveBackoffMs = 60000;  // 保存失败退避封顶 60s
+    static constexpr int64_t kPollIntervalMs = 5000;     // W8：文件变化轮询周期
 
     std::unique_ptr<MarkdownService> service_;
     std::vector<NoteMeta> notes_;      // 当前展示（全部或搜索结果）
@@ -1134,7 +1443,6 @@ private:
 
     // ---- Phase 1 状态 ----
     ViewMode mode_ = ViewMode::Split;  // 三态视图（默认双栏）
-    int leftTab_ = 0;                  // 左栏页签：0=文件 1=大纲
     std::vector<MdHeading> outline_;   // 大纲（标题扫描结果）
     bool outlineDirty_ = true;
     int activeOutlineIdx_ = -1;        // 仅预览态用（无编辑器光标可读）
@@ -1142,6 +1450,13 @@ private:
     bool syncPreviewOnEnter_ = false;  // 刚切入预览态 → 对齐编辑器位置
     float lastPvContentWidth_ = 0.0f;  // 预览内容宽（estimateHeight 用，滞后一帧）
     std::time_t lastSavedAt_ = 0;      // 上次落盘时刻（状态栏 "✓ 已保存 HH:MM"）
+
+    // ---- W8 状态 ----
+    std::set<std::string> collapsedDirs_;             // 已收起的一级目录（内存态）
+    bool outlineOpen_ = false;                        // 大纲浮动面板开关
+    int64_t lastKnownMtime_ = 0;                      // 当前笔记已知磁盘 mtime（-1=已删除）
+    bool conflictOpen_ = false;                       // 外部修改冲突弹窗
+    std::chrono::steady_clock::time_point lastPollAt_{};  // 轮询节流基准
 };
 
 } // namespace module::markdown

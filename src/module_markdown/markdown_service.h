@@ -65,6 +65,20 @@ public:
     //   返回匹配的笔记元数据（按 FTS5 rank 排序）
     core::Result<std::vector<NoteMeta>> search(const std::string& query);
 
+    // ---- W8：文件变化自动感知（spec §8.1 承诺的 5 秒轮询底座）----
+
+    // 轻量磁盘轮询：只遍历目录比 mtime/size，不读内容、不写索引、不打日志。
+    // 返回 true = 磁盘与索引有差异（新文件/删除/修改），需要调用方 rescan()。
+    core::Result<bool> pollChanged();
+
+    // 磁盘文件的 mtime（unix 秒）。文件不存在 → fail。
+    // 用于「当前打开的笔记被外部修改」检测（配合模块层缓存的 lastKnownMtime）。
+    core::Result<int64_t> fileMtime(const std::filesystem::path& relPath) const;
+
+    // 新建笔记路径安全校验：拒绝绝对路径、盘符（X:）、.. 逃逸、反斜杠。
+    // create() 内部也会用同一规则兜底（trust boundary 在服务层）。
+    static bool isSafeNewNotePath(const std::string& name);
+
     // 笔记目录（绝对路径）
     const std::filesystem::path& notesDir() const { return notesDir_; }
 
