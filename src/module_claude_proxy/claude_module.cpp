@@ -11,6 +11,7 @@
 #include "core/logging.h"
 #include "core/module_interface.h"
 #include "core/theme.h"
+#include "core/component_theme.h"
 
 #include <eui/dsl.h>
 
@@ -78,8 +79,7 @@ public:
 
     void compose(eui::Ui& ui, const eui::Screen& screen) override {
         const auto& t = core::theme::current();
-        const auto themeTokens = t.isDark ? components::theme::dark()
-                                          : components::theme::light();
+        const auto themeTokens = core::theme::componentTokens(t);
         const float pad = t.sizes.spacingXXLarge;        // 40
         const float contentW = screen.width - pad * 2.0f;
         const float contentH = screen.height - pad * 2.0f;

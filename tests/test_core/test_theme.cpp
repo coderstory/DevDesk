@@ -1,6 +1,11 @@
 #include "doctest.h"
+#include "core/component_theme.h"
 #include "core/theme.h"
 
+#include <components/dropdown.h>
+#include <components/input.h>
+#include <components/scroll.h>
+#include <components/toast.h>
 #include <eui/types.h>
 
 REGISTER_TEST(theme_default_dark, "theme: default is dark", {
@@ -89,6 +94,75 @@ REGISTER_TEST(theme_change_handler_notified, "theme: change handler notified on 
     core::theme::setDark();
     DOCTEST_CHECK_EQ(calls, 2);
     // 收尾：回到默认深色 + 无回调的全局状态
+    core::theme::setDark();
+    return true;
+})
+// ---- 色源统一（浅色米色/深色暖墨混杂 bug）：EUI-NEO 组件主题必须从
+// core::theme 派生（componentTokens），不得回落内置 light()/dark() 默认。
+// 断言策略：色值断言而非截图——两主题下关键组件（input/toast/dropdown）
+// 的渲染色等于 core::theme 对应 token，且不等于 EUI-NEO 内置默认。
+namespace {
+bool sameRgb(const eui::Color& a, const eui::Color& b) {
+    return a.r == b.r && a.g == b.g && a.b == b.b;
+}
+} // namespace
+
+REGISTER_TEST(theme_component_tokens_light_source, "theme: componentTokens derives EUI-NEO component colors from core tokens", {
+    // 浅色：页面底米色 + 卡片暖白（spec §6.5.1 方案 B Light）
+    core::theme::setLight();
+    const auto& t = core::theme::current();
+    const auto ct = core::theme::componentTokens(t);
+
+    // 映射逐字段 == core token
+    DOCTEST_CHECK(sameRgb(ct.background, t.colors.background));   // #FAF9F5
+    DOCTEST_CHECK(sameRgb(ct.primary, t.colors.primary));         // #D97757
+    DOCTEST_CHECK(sameRgb(ct.surface, t.colors.surface));         // #FFFFFF
+    DOCTEST_CHECK(sameRgb(ct.surfaceHover, t.colors.hover));
+    DOCTEST_CHECK(sameRgb(ct.surfaceActive, t.colors.active));
+    DOCTEST_CHECK(sameRgb(ct.text, t.colors.textPrimary));
+    DOCTEST_CHECK(sameRgb(ct.border, t.colors.borderDefault));
+    DOCTEST_CHECK(ct.dark == t.isDark);
+
+    // 关键组件实际渲染色 == core token（经组件 Style 构造的真实取色路径）
+    const components::InputStyle input(ct);
+    DOCTEST_CHECK(sameRgb(input.background, t.colors.surface));
+    DOCTEST_CHECK(sameRgb(input.text, t.colors.textPrimary));
+    DOCTEST_CHECK(sameRgb(input.focusBorder, t.colors.primary));
+    const components::ToastStyle toast(ct);
+    DOCTEST_CHECK(sameRgb(toast.background, t.colors.surface));   // 浅色 toast 面板 = 卡片白
+    DOCTEST_CHECK(sameRgb(toast.accent, t.colors.primary));
+    const components::DropdownStyle dd(ct);
+    DOCTEST_CHECK(sameRgb(dd.field, t.colors.surface));
+    DOCTEST_CHECK(sameRgb(dd.popup, t.colors.surface));           // 浅色弹层底 = 卡片白
+    DOCTEST_CHECK(sameRgb(dd.text, t.colors.textPrimary));
+    DOCTEST_CHECK(sameRgb(dd.accent, t.colors.primary));
+    const components::ScrollStyle scroll(ct);
+
+    // 不等于 EUI-NEO 内置默认（内置 light 是冷灰底 + 蓝主色，即本 bug 的杂色来源）
+    const auto builtinLight = components::theme::light();
+    DOCTEST_CHECK(!sameRgb(ct.background, builtinLight.background));
+    DOCTEST_CHECK(!sameRgb(ct.primary, builtinLight.primary));
+    DOCTEST_CHECK(!sameRgb(ct.text, builtinLight.text));
+    (void)scroll;
+
+    // 深色同断言（暖墨底 + Claude Clay，非内置冷灰黑/蓝）
+    core::theme::setDark();
+    const auto& td = core::theme::current();
+    const auto ctd = core::theme::componentTokens(td);
+    DOCTEST_CHECK(sameRgb(ctd.background, td.colors.background));  // #1A1816
+    DOCTEST_CHECK(sameRgb(ctd.surface, td.colors.surface));        // #232120
+    DOCTEST_CHECK(sameRgb(ctd.primary, td.colors.primary));        // #D97757（内置是蓝！）
+    DOCTEST_CHECK(sameRgb(ctd.text, td.colors.textPrimary));
+    const components::InputStyle inputD(ctd);
+    DOCTEST_CHECK(sameRgb(inputD.background, td.colors.surface));
+    const components::DropdownStyle ddD(ctd);
+    DOCTEST_CHECK(sameRgb(ddD.field, td.colors.surface));
+    DOCTEST_CHECK(sameRgb(ddD.accent, td.colors.primary));
+    const auto builtinDark = components::theme::dark();
+    DOCTEST_CHECK(!sameRgb(ctd.primary, builtinDark.primary));
+    DOCTEST_CHECK(!sameRgb(ctd.surface, builtinDark.surface));
+
+    core::theme::setLight();  // 交给下方用例前保持浅色无意义，恢复默认深色
     core::theme::setDark();
     return true;
 })
