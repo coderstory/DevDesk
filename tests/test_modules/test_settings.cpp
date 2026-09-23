@@ -22,6 +22,7 @@
 #include <ctime>
 #include <filesystem>
 #include <fstream>
+#include <sstream>
 #include <memory>
 #include <string>
 
@@ -132,6 +133,95 @@ REGISTER_TEST(settings_proxy_autostart_default_off, "settings: claudeProxyAutoSt
         f << R"({"theme": "light", "logRetentionDays": 30})";
     }
     DOCTEST_CHECK_FALSE(store.load().claudeProxyAutoStart);
+    removeQuietly(path);
+    return true;
+})
+
+REGISTER_TEST(settings_proxy_port_roundtrip_clamp, "settings: proxyPort 默认/读写往返/非法回落/输入解析", {
+    using namespace module::settings;
+    const auto path = tempConfigFile("proxyport");
+    removeQuietly(path);
+    SettingsStore store(path);
+
+    auto withPort = [](int port) {
+        SettingsConfig c;
+        c.proxyPort = port;
+        return c;
+    };
+
+    // 默认 8888（spec §8.5 承诺默认端口，审计 2026-09-23 [14]）
+    DOCTEST_CHECK_EQ(store.load().proxyPort, 8888);
+
+    // 读写往返
+    DOCTEST_REQUIRE(store.save(withPort(9000)).isOk());
+    DOCTEST_CHECK_EQ(store.load().proxyPort, 9000);
+
+    // 非法值回落默认（0 / 负数 / 越界）；边界合法值保留
+    DOCTEST_REQUIRE(store.save(withPort(0)).isOk());
+    DOCTEST_CHECK_EQ(store.load().proxyPort, 8888);
+    DOCTEST_CHECK_EQ(SettingsStore::sanitized(withPort(-1)).proxyPort, 8888);
+    DOCTEST_CHECK_EQ(SettingsStore::sanitized(withPort(70000)).proxyPort, 8888);
+    DOCTEST_CHECK_EQ(SettingsStore::sanitized(withPort(1)).proxyPort, 1);
+    DOCTEST_CHECK_EQ(SettingsStore::sanitized(withPort(65535)).proxyPort, 65535);
+
+    // 存量 config.json 无 claudeProxyPort 键 → 默认 8888
+    {
+        std::ofstream f(path, std::ios::trunc);
+        f << R"({"theme": "dark", "claudeProxyAutoStart": true})";
+    }
+    DOCTEST_CHECK_EQ(store.load().proxyPort, 8888);
+
+    // 输入框解析（纯数字 + 范围）
+    int out = 0;
+    DOCTEST_CHECK(parseProxyPortInput("8888", out) && out == 8888);
+    DOCTEST_CHECK(parseProxyPortInput("1", out) && out == 1);
+    DOCTEST_CHECK(parseProxyPortInput("65535", out) && out == 65535);
+    DOCTEST_CHECK_FALSE(parseProxyPortInput("", out));
+    DOCTEST_CHECK_FALSE(parseProxyPortInput("0", out));
+    DOCTEST_CHECK_FALSE(parseProxyPortInput("65536", out));
+    DOCTEST_CHECK_FALSE(parseProxyPortInput("123456", out));   // 6 位封顶拒绝
+    DOCTEST_CHECK_FALSE(parseProxyPortInput("88ab", out));
+    DOCTEST_CHECK_FALSE(parseProxyPortInput(" 88", out));
+    DOCTEST_CHECK_FALSE(parseProxyPortInput("8.8", out));
+    DOCTEST_CHECK_FALSE(parseProxyPortInput("-1", out));
+    removeQuietly(path);
+    return true;
+})
+
+REGISTER_TEST(settings_proxy_token_mask, "settings: maskProxyToken 默认脱敏策略（审计 [16]）", {
+    using module::settings::maskProxyToken;
+
+    // 常规 32-hex token：前 4 + *** + 后 4（provider-config §7 示例形态）
+    const std::string token = "a3f8b2c1d4e5f60718293a4b5c6d7e8f";
+    DOCTEST_CHECK_EQ(maskProxyToken(token), std::string("a3f8***7e8f"));
+    // 掩码绝不等于原文、不含中段
+    DOCTEST_CHECK(maskProxyToken(token) != token);
+    DOCTEST_CHECK(maskProxyToken(token).find("18293") == std::string::npos);
+
+    // 恰 8 位走前后缀分支
+    DOCTEST_CHECK_EQ(maskProxyToken("abcdefgh"), std::string("abcd***efgh"));
+    // 短于 8 位全掩且固定形态（不泄露真实长度、不输出真实字符）
+    DOCTEST_CHECK_EQ(maskProxyToken("abcdefg"), std::string("****"));
+    DOCTEST_CHECK_EQ(maskProxyToken("a"), std::string("****"));
+    // 空串原样（调用方以「代理未运行」分支为主，防御式定义）
+    DOCTEST_CHECK(maskProxyToken("").empty());
+
+    // 「显形不持久化」结构性保证：token 与显形态都不进 SettingsConfig——
+    // 任意 save 后 config.json 文本不含 token / revealed 键
+    const auto path = tempConfigFile("tokenmask");
+    removeQuietly(path);
+    module::settings::SettingsStore store(path);
+    module::settings::SettingsConfig cfg;
+    DOCTEST_REQUIRE(store.save(cfg).isOk());
+    {
+        std::ifstream f(path);
+        std::stringstream ss;
+        ss << f.rdbuf();
+        const std::string text = ss.str();
+        DOCTEST_CHECK_FALSE(text.empty());
+        DOCTEST_CHECK(text.find("token") == std::string::npos);
+        DOCTEST_CHECK(text.find("revealed") == std::string::npos);
+    }
     removeQuietly(path);
     return true;
 })

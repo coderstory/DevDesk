@@ -214,7 +214,8 @@ core::Result<Profile> ClaudeService::getProfile(int64_t id) {
 core::Result<Profile> ClaudeService::createProfile(const std::string& name,
                                                    const std::string& baseUrl,
                                                    const std::string& apiKey,
-                                                   const std::string& model) {
+                                                   const std::string& model,
+                                                   bool activateIfNoneActive) {
     // 校验
     if (trim(name).empty()) {
         return core::Result<Profile>::fail(core::ErrorCode::ValidationError,
@@ -290,6 +291,17 @@ core::Result<Profile> ClaudeService::createProfile(const std::string& name,
     }
     const int64_t newId = idVal.value();
 
+    // 把 INSERT ... RETURNING 步进到 DONE 释放连接上的 in-progress 状态：
+    // 语句停在结果行时 COMMIT 会被 SQLite 拒绝（"cannot commit transaction -
+    // SQL statements in progress"）——下面首建自动激活路径里 setActiveProfile
+    // 的事务在本连接上会直接撞上它（产品审计 2026-09-23 [6] 实测触发）。
+    // DONE 后语句自动 reset，不再阻塞任何事务；失败极罕见且行已写入，只 WARN
+    auto drain = stmt.step();
+    if (drain.isFail()) {
+        LOG_WARN("INSERT RETURNING 收尾 step 失败（行已写入，继续）: " +
+                 drain.errorMessage());
+    }
+
     // 把 API key 入 Keychain
     const std::string account = keychainAccountFor(newId);
     auto kcStore = platform::keychain::storeSecret(keychainService_, account, apiKey);
@@ -332,6 +344,29 @@ core::Result<Profile> ClaudeService::createProfile(const std::string& name,
     LOG_INFO("已创建 Claude profile id=" + std::to_string(newId) +
              " name=" + cleanedName);
 
+    // 产品审计 2026-09-23 [6]：首建自动激活——无任何激活 Profile 时激活刚建的
+    // 这条（setActiveProfile 内部在代理运行中会 syncTakeOver 同步 settings.json）。
+    // 激活失败不回滚创建：行已完整可用，用户仍可手动点「启用」；只 WARN 留痕，
+    // 返回值按实际 is_active 状态回填（失败时维持 false，UI 走「点击启用」文案）。
+    bool autoActivated = false;
+    if (activateIfNoneActive) {
+        auto cur = getActiveProfile();
+        if (cur.isFail() &&
+            cur.errorCode() == core::ErrorCode::NoActiveProfile) {
+            auto act = setActiveProfile(newId);
+            if (act.isOk()) {
+                autoActivated = true;
+                LOG_INFO("首个 Profile 自动激活 id=" + std::to_string(newId) +
+                         " name=" + cleanedName);
+            } else {
+                LOG_WARN("首个 Profile 自动激活失败（可手动启用）: " +
+                         act.errorMessage());
+            }
+        }
+        // cur.isOk()（已有激活）→ 不抢占；cur 失败但非 NoActiveProfile
+        //（DB 异常等）→ 保守不动作
+    }
+
     // 返回完整 Profile
     Profile out;
     out.id = newId;
@@ -341,7 +376,7 @@ core::Result<Profile> ClaudeService::createProfile(const std::string& name,
     out.apiKeyCheck = check;
     out.keychainAccount = account;
     out.model = cleanedModel;
-    out.isActive = false;
+    out.isActive = autoActivated;
     out.createdAt = now;
     out.updatedAt = now;
     // apiKeyPlain 留空（不返回明文）
@@ -571,8 +606,12 @@ core::Result<Profile> ClaudeService::getActiveProfile() {
         return core::Result<Profile>::fail(stepR.errorCode(), stepR.errorMessage());
     }
     if (!stepR.value()) {
+        // 产品审计 2026-09-23 [6]：错误 message 补可操作指引——503 的 JSON
+        // body 原样透传此文案（proxy_router 三处 no_active_profile），用户
+        // 在 Claude Code 侧即可看到去 DevDesk 启用的路径，不用再猜原因
         return core::Result<Profile>::fail(core::ErrorCode::NoActiveProfile,
-            "没有激活的 Claude profile");
+            "没有激活的 Claude profile，请在 DevDesk 的 Claude 页选中 Profile "
+            "并点击「启用」");
     }
     auto row = prep.value().currentRow();
     if (row.isFail()) {
@@ -937,6 +976,17 @@ int ClaudeService::proxyPort() const {
 
 std::string ClaudeService::proxyAuthToken() const {
     return server_ ? server_->authToken() : std::string();
+}
+
+void ClaudeService::setConfiguredProxyPort(int port) {
+    // 钳制到合法范围（非法输入保守回落默认值：0/负数/越界都是配置错误，
+    // 拿字面值 bind 必然失败，不如统一收敛）
+    if (port < kMinProxyPort || port > kMaxProxyPort) {
+        LOG_WARN("代理端口配置非法 (" + std::to_string(port) +
+                 ")，回落默认 " + std::to_string(kDefaultProxyPort));
+        port = kDefaultProxyPort;
+    }
+    configuredProxyPort_ = port;
 }
 
 // ---------- 在途流式上游登记（审计 2026-09-23 [9]）----------

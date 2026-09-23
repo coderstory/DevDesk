@@ -540,6 +540,30 @@ public:
                                     .color(t.colors.textPrimary)
                                     .build();
 
+                                // 产品审计 2026-09-23 [6]：「已选中但未激活」标记——
+                                // ACTIVE 徽章只标激活卡，详情面板此前对未激活的
+                                // 选中 Profile 零提示，用户误以为选中即生效
+                                if (shown && !shown->isActive) {
+                                    ui.rect("claude.field.name.inactive.bg")
+                                        .position(x0 + (w0 - 16.0f) / 2.0f - 64.0f,
+                                                  fy0 + 22.0f)
+                                        .size(56.0f, 16.0f)
+                                        .color(t.colors.surfaceElevated)
+                                        .radius(t.sizes.radiusPill)
+                                        .border(1.0f, t.colors.warning)
+                                        .build();
+                                    ui.text("claude.field.name.inactive")
+                                        .position(x0 + (w0 - 16.0f) / 2.0f - 64.0f,
+                                                  fy0 + 22.0f)
+                                        .size(56.0f, 16.0f)
+                                        .text("未激活")
+                                        .fontSize(10.0f)
+                                        .lineHeight(16.0f)
+                                        .horizontalAlign(eui::HorizontalAlign::Center)
+                                        .color(t.colors.warning)
+                                        .build();
+                                }
+
                                 // 模型映射摘要（右，§6.2）
                                 const float col2x = x0 + (w0 + 16.0f) / 2.0f;
                                 ui.text("claude.field.model.label")
@@ -1268,8 +1292,10 @@ private:
                 formError_ = "新建 Profile 必须填写 API Key";
                 return;
             }
+            // 产品审计 2026-09-23 [6]：activateIfNoneActive=true——当前无激活
+            // Profile 时 service 层自动激活这条（首次体验闭环）；已有激活则不抢占
             auto r = svc->createProfile(formName_, formUrl_, formKey_,
-                                        formModels_.def.model);
+                                        formModels_.def.model, /*activateIfNoneActive=*/true);
             if (r.isFail()) {
                 formError_ = r.errorMessage();
                 return;
@@ -1289,7 +1315,18 @@ private:
             }
             formOpen_ = false;
             selectedId_ = r.value().id;
-            showToast("已创建", "Profile「" + formName_ + "」已保存", false);
+            // 审计 2026-09-23 [6]：按是否自动激活分文案——只说「已保存」会让
+            // 用户以为点「启动代理」就能用（无激活时 Claude Code 直接 503）
+            if (r.value().isActive) {
+                showToast("已创建并启用",
+                          "Profile「" + formName_ + "」已设为激活（ACTIVE）",
+                          false);
+            } else {
+                showToast("已创建",
+                          "Profile「" + formName_ +
+                              "」已保存，点击「启用」使其生效",
+                          false);
+            }
         } else {
             // 编辑：先取现有行（保留 keychain 引用等字段），再覆盖表单值
             auto got = svc->getProfile(formEditId_);
@@ -2087,7 +2124,9 @@ private:
             showToast("代理已停止", "本地代理已停止监听", false);
             return;
         }
-        auto r = svc->startProxy("127.0.0.1", 8888);
+        // 端口读 service 上的配置值（审计 [14]：main 启动注入 + 设置页改端口
+        // 同步；默认 8888）。此前硬编码导致 8888 被占用时用户无处改端口
+        auto r = svc->startProxy("127.0.0.1", svc->configuredProxyPort());
         if (r.isFail()) {
             showToast("启动代理失败", r.errorMessage(), true);
             return;

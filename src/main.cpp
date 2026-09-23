@@ -280,8 +280,9 @@ void startClaudeProxy() {
         return;
     }
 
-    // port=8888 是约定端口；若被占用则 bind 失败，调用方在日志里可见
-    auto r = svc->startProxy("127.0.0.1", 8888);
+    // 端口读设置页配置（审计 2026-09-23 [14]，默认 8888）；若被占用则 bind
+    // 失败，调用方在日志里可见
+    auto r = svc->startProxy("127.0.0.1", svc->configuredProxyPort());
     if (r.isFail()) {
         LOG_ERROR("Claude 代理启动失败: " + r.errorMessage());
         return;
@@ -426,8 +427,9 @@ const DslAppConfig& dslAppConfig() {
         app::setSidebarCollapsed(settingsCfg.sidebarCollapsed);
         if (!module::settings::moduleEnabled(
                 settingsCfg, module::settings::kModuleIdClaudeProxy)) {
-            LOG_INFO("Claude 模块已关闭：代理/ClaudeService 整体下线"
-                     "（8888 不监听；重新启用需改设置并重启）");
+            LOG_INFO("Claude 模块已关闭：代理/ClaudeService 整体下线（端口 " +
+                     std::to_string(settingsCfg.proxyPort) +
+                     " 不监听；重新启用需改设置并重启）");
             // 陈旧凭据清理（设计 §8 风险表）：上一次运行留下的 token 已失效，
             // 删掉避免外部脚本误连（删不掉只记日志，不阻断启动）
             std::error_code ec;
@@ -445,6 +447,11 @@ const DslAppConfig& dslAppConfig() {
             // 模块 onStart 才能拿到非 null 的 global()——W3 修过的启动顺序不能
             // 因为「默认不启动代理」回退，所以无论是否启动代理都必须先调它。
             auto* claudeSvc = getClaudeService();
+            // 配置端口注入（审计 [14]）：Claude 页手动启动 / 下方自启都经
+            // service 的 configuredProxyPort 读值；设置页改端口时会再同步一次
+            if (claudeSvc) {
+                claudeSvc->setConfiguredProxyPort(settingsCfg.proxyPort);
+            }
             // 崩溃补还原（provider-config Phase C §5.3）：上次异常退出时
             // sidecar 残留 → 先还原，且必须先于任何 startProxy（否则残留的
             // 托管键会被误快照为用户原值）

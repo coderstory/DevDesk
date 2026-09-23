@@ -39,6 +39,12 @@ constexpr int kMinFontScalePercent = 85;
 constexpr int kMaxFontScalePercent = 130;
 // 日志保留天数上限（0 = 永久）
 constexpr int kMaxLogRetentionDays = 3650;
+// Claude 代理端口（总设计 §8.5 第 5 条「数字输入框（默认 8888；改后自动重启
+// 代理）」，产品审计 2026-09-23 [14]；范围/默认值与 ClaudeService 的
+// k*ProxyPort 常量保持字面一致——模块隔离不互相 include）
+constexpr int kDefaultProxyPort = 8888;
+constexpr int kMinProxyPort = 1;
+constexpr int kMaxProxyPort = 65535;
 
 // ---- 模块开关 ID（模块插拔方案 A，设计 2026-09-22 §5.1）----
 // 字符串与 pageIdToString 的小写对齐；config.json 的 enabledModules 数组用。
@@ -72,6 +78,11 @@ struct SettingsConfig {
     // 启动，代理由用户手动启动；false 时 main.cpp 只创建 ClaudeService
     // 注册全局单例，不拉起 127.0.0.1:8888）
     bool claudeProxyAutoStart = false;
+    // Claude 代理监听端口（审计 [14]；sanitized 钳制 [kMinProxyPort,
+    // kMaxProxyPort]，非法 0/负数/越界一律回落默认 8888）。生效路径：
+    // main 启动注入 ClaudeService::setConfiguredProxyPort，设置页改端口时
+    // 代理运行中自动 stop→start 重启（§8.5 原话语义）
+    int proxyPort = kDefaultProxyPort;
     // 窗口效果（磨砂设计 Phase D）："off"（默认实色）| "translucent"（整体
     // 半透）| "frosted"（Acrylic 磨砂）。sanitized 把未知值收敛为 "off"
     std::string windowEffect = kWindowEffectOff;
@@ -89,6 +100,17 @@ struct SettingsConfig {
 // 模块开关判定（sanitized 后的 config 恒有效；home/settings 恒 true，未知
 // ID 恒 false）。main.cpp 装配门控与设置页卡片显隐共用这一个谓词
 bool moduleEnabled(const SettingsConfig& cfg, const std::string& moduleId);
+
+// ---- 代理端口输入解析（纯函数，供设置页与单测；审计 2026-09-23 [14]）----
+// 只接受纯数字且在 [kMinProxyPort, kMaxProxyPort]：空格 / 符号 / 超长 /
+// 0 / 越界一律 false。out 仅在 true 时写入
+bool parseProxyPortInput(const std::string& text, int& out);
+
+// ---- 代理 token 脱敏（纯函数，供设置页与单测；审计 2026-09-23 [16]）----
+// provider-config §7 安全第 2 条：展示默认掩码（前 4 + "***" + 后 4，
+// 形如 a3f8***c21e）。短于 8 位整体替换为固定 "****"（不输出任何真实
+// 字符、不泄露长度）；空串原样返回（调用方按「代理未运行」分支处理）。
+std::string maskProxyToken(const std::string& token);
 
 // ---- 窗口效果档位 → 参数映射（纯函数，供单测）----
 
