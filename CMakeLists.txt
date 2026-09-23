@@ -18,6 +18,39 @@ if(NOT EXISTS "${EUI_NEO_DIR}/CMakeLists.txt")
     message(FATAL_ERROR "EUI-NEO not found at ${EUI_NEO_DIR}")
 endif()
 
+# ---- EUI-NEO 版本诊断（审计 [11]）：打印 git rev + 软校验最低依赖 rev ----
+# EUI-NEO 以同级源码目录集成（非 submodule），DevDesk 依赖其本地 main 上
+# 尚未 push 到 origin 的提交（push 与否是用户决策门控），故此处**不做硬钉扎**
+# （他人克隆只有 v0.6.0，硬 fail 会造成误阻断）；EUI-NEO push 后可将本诊断
+# 升级为硬检查。最低依赖 rev 与 CLAUDE.md「当前依赖 rev」保持一致，消费
+# EUI-NEO 新 API 后两处同步更新。
+set(DEVDESK_EUI_NEO_MIN_REV "aa4d5f7")
+execute_process(
+    COMMAND git -C "${EUI_NEO_DIR}" rev-parse --short HEAD
+    OUTPUT_VARIABLE EUI_NEO_GIT_REV
+    OUTPUT_STRIP_TRAILING_WHITESPACE
+    ERROR_QUIET
+    RESULT_VARIABLE _devdesk_eui_rev_rc
+)
+if(_devdesk_eui_rev_rc EQUAL 0 AND NOT EUI_NEO_GIT_REV STREQUAL "")
+    message(STATUS "EUI-NEO git rev: ${EUI_NEO_GIT_REV} (minimum dependency rev: ${DEVDESK_EUI_NEO_MIN_REV})")
+    execute_process(
+        COMMAND git -C "${EUI_NEO_DIR}" merge-base --is-ancestor ${DEVDESK_EUI_NEO_MIN_REV} HEAD
+        ERROR_QUIET
+        RESULT_VARIABLE _devdesk_eui_anc_rc
+    )
+    if(NOT _devdesk_eui_anc_rc EQUAL 0)
+        message(WARNING
+            "EUI-NEO 当前检出（rev ${EUI_NEO_GIT_REV}）不包含 CLAUDE.md 记录的最低依赖 rev ${DEVDESK_EUI_NEO_MIN_REV}——"
+            "trayMenu/windowEffect/lineStyles/requestFocus 等新 API 可能缺失导致编译失败。请将 EUI-NEO 切到本地 main "
+            "并更新至最新（EUI-NEO push 后将启用硬版本检查）。")
+    endif()
+else()
+    message(WARNING
+        "无法读取 EUI-NEO（${EUI_NEO_DIR}）的 git rev——可能不是 git 检出或 PATH 中没有 git。DevDesk 依赖 EUI-NEO 本地 main "
+        "的较新提交（当前最低依赖 rev ${DEVDESK_EUI_NEO_MIN_REV}，见 CLAUDE.md）；若后续编译报缺成员/缺头文件，请先检查 EUI-NEO 版本。")
+endif()
+
 # T3：MinGW 全静态链接（默认 ON，仅 MinGW 工具链生效，macOS/MSVC 不受影响）
 # SQLite3/CURL/OpenSSL/zlib 全部用静态库 + libcurl.a 传递依赖闭包，
 # 配合 EUI-NEO 给 app target 的 -static（运行时静态），产出单 exe 零外部 DLL。

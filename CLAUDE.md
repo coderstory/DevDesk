@@ -39,7 +39,7 @@ cd build && ctest --output-on-failure
 **macOS（历史平台，脚本保留）**：`./scripts/dev.sh`（构建+运行）、`./scripts/test.sh`（测试）、`./scripts/screenshot.sh <page>`（截屏）、`./scripts/reset-db.sh`（重置数据库）。注意 `check-consistency.sh` 用了 macOS `screencapture`/`open -a`，Windows 上不可用。
 
 构建入口：`CMakeLists.txt` 顶层 → `src/main.cpp`。
-EUI-NEO 依赖：`../EUI-NEO/`（同级目录，通过 `EUI_NEO_DIR` cache 变量 `add_subdirectory`，**不是 git submodule**）。
+EUI-NEO 依赖：`../EUI-NEO/`（同级目录，通过 `EUI_NEO_DIR` cache 变量 `add_subdirectory` 集成，**不是 git submodule**）。**当前依赖 rev**：`aa4d5f7`（2026-09-23，EUI-NEO 本地 main；这批提交尚未 push 到 origin——origin/main 停在 v0.6.0，push 与否是用户决策门控）。**EUI-NEO 需保持本地 main 最新**（含 onWindowDestroyed/requestFocus/trayMenu/windowEffect/lineStyles 等新 API），顶层 CMake configure 时打印 `EUI-NEO git rev` 并在缺失最低依赖 rev（`DEVDESK_EUI_NEO_MIN_REV`，与本行保持一致、消费 EUI 新 API 后两处同步更新）时软警告不 fail；EUI-NEO push 后将启用硬版本检查（审计 [11]）。
 
 ## 🏗️ 架构要点（4 层模块化）
 
@@ -55,7 +55,7 @@ main → 6 个 module_* (home / markdown / todo / claude_proxy / settings / pet)
 ```
 
 **关键依赖规则**（违反会导致循环依赖）：
-- `core` ❌ 不能依赖 `platform` 或 `EUI-NEO`
+- `core` ❌ 不能依赖 `platform`；❌ 不可调用 EUI-NEO 运行时行为（仅 **header-only 类型桥接**例外——eui::Color 值类型 / Ui/Screen 签名透传 / component_theme.h 纯映射，边界见 spec §4.2.1）
 - `module_*` 之间 ❌ 不可互相依赖
 - `platform` ✅ 可以依赖 `core`（用 `Result`）
 - `module_*` ✅ 可以依赖 `core` 和 `platform`
@@ -187,7 +187,7 @@ main → 6 个 module_* (home / markdown / todo / claude_proxy / settings / pet)
 | `docs/superpowers/specs/2026-09-20-devdesk-design.md` | **唯一权威 spec**，所有架构 / API / token 决策都在这 |
 | `docs/mockups/palette-comparison.html` | 配色对比 demo（已确定方案 B）|
 | `docs/mockups/devdesk-prototype.html` | HTML 交互原型（待生成）|
-| `../EUI-NEO/` | 上游 GUI 框架（同级目录源码，非 submodule），通过 `EUI_NEO_DIR` 以 `add_subdirectory` 集成 |
+| `../EUI-NEO/` | 上游 GUI 框架（同级目录源码，非 submodule），通过 `EUI_NEO_DIR` 以 `add_subdirectory` 集成；**当前依赖 rev `aa4d5f7`（本地 main 未 push，需保持最新，见「常用命令」段与审计 [11]）** |
 
 ## 🧪 验证原则
 
