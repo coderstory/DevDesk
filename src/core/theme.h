@@ -9,7 +9,8 @@
 
 namespace core::theme {
 
-// 主题深浅切换回调。core 层不能依赖 EUI-NEO（架构分层铁律），标题栏主题
+// 主题深浅切换回调。core 层不可调用 EUI-NEO 运行时行为（header-only 类型
+// 桥接例外见 spec §4.2.1，eui::Color 值类型属之），标题栏主题
 // 联动（app::setTitleBarAppearance，磨砂设计 Phase A）等由 main.cpp 在启动
 // 时注入回调实现；setDark/setLight 每次切换都会通知（幂等重放也通知）
 using ChangeHandler = std::function<void(bool isDark)>;

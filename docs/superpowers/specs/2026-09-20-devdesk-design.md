@@ -125,8 +125,26 @@ DevDesk 是一个面向开发者的桌面工具集，集三大常用工具于一
 - ✅ `platform` 可依赖 `core`（仅依赖通用工具如 `Result`，不依赖业务逻辑）
 - ✅ `core` 不依赖 `platform`（core 必须能在无 GUI 环境运行，便于单元测试）
 - ✅ `module_*` 之间**不可互相依赖**（必须通过 `core` 的服务层通信）
-- ❌ `core` 不可依赖 `platform` 或 `EUI-NEO`
+- ⚠️ `core` → `EUI-NEO` 仅限 **header-only 类型桥接例外**（边界见 §4.2.1，2026-09-23 审计 [6] 转正）
+- ❌ `core` 不可依赖 `platform`；除 §4.2.1 例外外，不可触碰 `EUI-NEO`（尤其不可调用其运行时行为）
 - ❌ `module_*` 不可直接依赖 `EUI-NEO`（通过 `core` 间接使用，保持模块可独立测试）
+
+#### 4.2.1 core → EUI-NEO header-only 类型桥接例外（2026-09-23 审计 [6] 转正）
+
+**背景**：core 的公开 API 以 EUI-NEO 的 UI 类型作签名参数（`Module::compose(eui::Ui&, const eui::Screen&)`、`Router::compose`、`Router::dispatchKeyEvent(const eui::KeyEvent&)`），主题 token 以 `eui::Color` 为颜色值类型，`component_theme.h` 提供 header-only 的设计 token → `components::theme::ThemeColorTokens` 映射。旧版本节「core 不可依赖 EUI-NEO」的一刀切表述与构建现状（`src/core/CMakeLists.txt` 将 `devdesk_core` PUBLIC 链接 `eui_neo` 并传播 include 路径）矛盾。审计 [6] 的处置决定是**文档对齐、构建不动**，本节据此转正例外并写明边界。
+
+**允许（仅类型桥接）**：
+- core 的头文件/.cpp 可 `#include` EUI-NEO 的**类型定义**头（`eui/types.h`、`eui/dsl.h`、`components/theme.h` 等）
+- 以 EUI-NEO 值类型作 core 接口的参数、结构成员，或 header-only inline 纯映射的返回（如 `eui::Color("#D97757")` hex 值解析构造、`ThemeColorTokens` 字段赋值）
+- `eui::Ui`/`eui::Screen` 仅可**透传**（原样转发给 `module_*` 的 `compose`），不在 core 内调用其成员
+
+**禁止（扩展需先修订本节）**：
+- 调用 EUI-NEO 运行时行为：窗口、渲染后端、事件循环、输入系统、动画调度、组件生命周期等任何需要 eui_neo 编译实体符号的能力
+- 在 core 单元测试中实际驱动上述运行时路径（core 逻辑测试必须保持无 GUI 可跑）
+
+**构建层**：`devdesk_core` 以 `PUBLIC` 链接 `eui_neo` 并传播其 include 目录，**维持现状**（不收紧为 PRIVATE）：core 的公开头文件已暴露 eui 类型，消费方（`module_*`、tests、DevDesk）需要经依赖链统一取得 include 路径与 `eui_neo` 目标；静态库的 PUBLIC 链接只传播 usage requirements，core 自身目标文件不解析任何 eui_neo 符号，实际耦合停留在「类型/include 路径」层，与「core 保持可单测」不冲突。
+
+**现状消费点**（2026-09-23 审计 [6] 实测）：`module_interface.h`（eui/dsl.h + eui/types.h，compose 签名）、`theme.h`/`theme.cpp`（eui::Color 值类型 token）、`router.h`/`router.cpp`（eui::Ui/Screen/KeyEvent 透传与分发签名）、`component_theme.h`（header-only ThemeColorTokens 映射）。
 
 ---
 
