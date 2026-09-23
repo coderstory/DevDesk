@@ -629,3 +629,110 @@ REGISTER_TEST(todo_svc_column_kind,
     DOCTEST_CHECK_EQ(created.value().kind, std::string(""));
     return true;
 })
+
+// ---- 审计 2026-09-23 [26]：tags 序列化迁 platform::json 后的往返回归 ----
+// 注意：REGISTER_TEST 的 body 是单个宏实参，花括号初始化列表里的顶层逗号
+// 会被预处理器当参数分隔符（本文件上方 updateTask 用例的额外括号即为此）。
+// 新增用例一律用 push_back / 括号保护规避。
+
+// serializeTags/deserializeTags 是私有方法，经 updateTask → listTasks 公开路径
+// 覆盖往返；特殊字符（引号/反斜杠/换行/制表/控制字符/CJK/空串）必须原样恢复。
+REGISTER_TEST(todo_svc_tags_roundtrip_special_chars,
+              "TodoService: tags 特殊字符经 updateTask→listTasks 往返无损",
+              {
+    TestEnv env("tags_roundtrip");
+    DOCTEST_REQUIRE(env.ready);
+
+    auto list = env.svc->listColumns();
+    DOCTEST_REQUIRE(list.isOk());
+    const int64_t colId = list.value()[0].id;
+
+    auto t = env.svc->createTask(colId, "标签往返");
+    DOCTEST_REQUIRE(t.isOk());
+
+    std::vector<std::string> tags;
+    tags.push_back("简单");                          // CJK 原样透传
+    tags.push_back("带\"引号\"");                    // 双引号转义
+    tags.push_back("反斜杠\\");                      // 反斜杠转义
+    tags.push_back("换行\n制表\t");                  // 命名转义
+    tags.push_back(std::string(1, '\x01') + "控制"); // \u00xx 数字转义
+    tags.push_back("");                              // 空串元素
+    tags.push_back(" 前后空格 ");                    // 空格保留
+
+    module::todo::Task updated = t.value();
+    updated.tags = tags;
+    DOCTEST_CHECK(env.svc->updateTask(updated).isOk());
+
+    auto tasks = env.svc->listTasks(colId);
+    DOCTEST_REQUIRE(tasks.isOk());
+    DOCTEST_REQUIRE_EQ(tasks.value().size(), 1u);
+    DOCTEST_CHECK_EQ(tasks.value()[0].tags.size(), tags.size());
+    for (size_t i = 0; i < tags.size(); ++i) {
+        DOCTEST_CHECK_EQ(tasks.value()[0].tags[i], tags[i]);
+    }
+
+    // 空 tags → "[]" → 空 vector（往返清零）
+    module::todo::Task cleared = tasks.value()[0];
+    cleared.tags = {};
+    DOCTEST_CHECK(env.svc->updateTask(cleared).isOk());
+    auto tasks2 = env.svc->listTasks(colId);
+    DOCTEST_REQUIRE(tasks2.isOk());
+    DOCTEST_CHECK(tasks2.value()[0].tags.empty());
+    return true;
+})
+
+// deserializeTags 容错（经 listTasks 公开路径）：非法 JSON / 非数组 /
+// 混合类型数组都不得崩溃或阻断行解析。
+REGISTER_TEST(todo_svc_tags_deserialize_tolerant,
+              "TodoService: tags 列内容异常时反序列化容错",
+              {
+    TestEnv env("tags_tolerant");
+    DOCTEST_REQUIRE(env.ready);
+
+    auto list = env.svc->listColumns();
+    DOCTEST_REQUIRE(list.isOk());
+    const int64_t colId = list.value()[0].id;
+
+    auto t1 = env.svc->createTask(colId, "非法JSON");
+    auto t2 = env.svc->createTask(colId, "非数组");
+    auto t3 = env.svc->createTask(colId, "混合类型");
+    DOCTEST_REQUIRE(t1.isOk()); DOCTEST_REQUIRE(t2.isOk()); DOCTEST_REQUIRE(t3.isOk());
+
+    {
+        auto probe = core::data::SqliteDb::open(env.path);
+        DOCTEST_REQUIRE(probe.isOk());
+        const char* bad[3];
+        bad[0] = "not json at all";
+        bad[1] = "{\"k\":\"v\"}";
+        bad[2] = "[\"a\", 1, null, \"b\"]";
+        int64_t ids[3];
+        ids[0] = t1.value().id;
+        ids[1] = t2.value().id;
+        ids[2] = t3.value().id;
+        for (int i = 0; i < 3; ++i) {
+            auto prep = probe.value().prepare(
+                "UPDATE todo_tasks SET tags = ? WHERE id = ?");
+            DOCTEST_REQUIRE(prep.isOk());
+            auto& stmt = prep.value();
+            DOCTEST_REQUIRE(stmt.bind(1, std::string(bad[i])).isOk());
+            DOCTEST_REQUIRE(stmt.bind(2, ids[i]).isOk());
+            DOCTEST_REQUIRE(stmt.step().isOk());
+        }
+    }
+
+    auto tasks = env.svc->listTasks(colId);
+    DOCTEST_REQUIRE(tasks.isOk());
+    DOCTEST_REQUIRE_EQ(tasks.value().size(), 3u);
+    for (const auto& task : tasks.value()) {
+        if (task.title == "非法JSON") {
+            DOCTEST_CHECK(task.tags.empty());   // parse 失败 → 空 tags，行仍返回
+        } else if (task.title == "非数组") {
+            DOCTEST_CHECK(task.tags.empty());   // 合法 JSON 但非数组 → 空
+        } else if (task.title == "混合类型") {
+            DOCTEST_REQUIRE_EQ(task.tags.size(), 2u);  // 仅保留 string 元素
+            DOCTEST_CHECK_EQ(task.tags[0], std::string("a"));
+            DOCTEST_CHECK_EQ(task.tags[1], std::string("b"));
+        }
+    }
+    return true;
+})

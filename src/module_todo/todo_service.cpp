@@ -5,10 +5,8 @@
 #include "core/logging.h"
 #include "core/result.h"
 #include "core/sqlite_db.h"
+#include "platform/json.h"
 
-#include <yyjson.h>
-
-#include <cstdio>
 #include <cstring>
 #include <ctime>
 #include <utility>
@@ -181,67 +179,38 @@ core::Result<Task> TodoService::parseTaskRow(const core::data::SqlRow& row) {
 }
 
 std::string TodoService::serializeTags(const std::vector<std::string>& tags) {
-    if (tags.empty()) {
+    // 走 platform::json 封装（审计 2026-09-23 [26]）：此前此处因
+    // 「yyjson_mut_write_opts 被禁用」手写了一份 JSON 数组序列化器，
+    // 与 platform/json.cpp 的 stringify 形成两份易漂移的实现。该限制已由
+    // platform::json 自实现 stringify 解决，故迁移为 makeStringArray + stringify。
+    auto arr = platform::json::makeStringArray(tags);
+    auto out = platform::json::stringify(arr);
+    if (out.isFail()) {
+        // stringify 当前实现不会失败；防御式退化为空数组（与旧行为一致）
         return "[]";
     }
-    // 手写 JSON 数组序列化（因为 EUI-NEO 编译 yyjson.c 时定义了
-    // YYJSON_DISABLE_WRITER=1，导致 yyjson_mut_write_opts 不可用）。
-    // 仅支持 string 元素的数组，转义双引号、反斜杠、控制字符。
-    std::string out;
-    out.reserve(32 + tags.size() * 16);
-    out.push_back('[');
-    for (size_t i = 0; i < tags.size(); ++i) {
-        if (i > 0) out.push_back(',');
-        out.push_back('"');
-        for (char c : tags[i]) {
-            switch (c) {
-                case '"':  out.append("\\\""); break;
-                case '\\': out.append("\\\\"); break;
-                case '\b': out.append("\\b");  break;
-                case '\f': out.append("\\f");  break;
-                case '\n': out.append("\\n");  break;
-                case '\r': out.append("\\r");  break;
-                case '\t': out.append("\\t");  break;
-                default:
-                    if (static_cast<unsigned char>(c) < 0x20) {
-                        char buf[8];
-                        std::snprintf(buf, sizeof(buf), "\\u%04x",
-                                      static_cast<unsigned char>(c));
-                        out.append(buf);
-                    } else {
-                        out.push_back(c);
-                    }
-            }
-        }
-        out.push_back('"');
-    }
-    out.push_back(']');
-    return out;
+    return out.value();
 }
 
 core::Result<std::vector<std::string>> TodoService::deserializeTags(const std::string& json) {
     if (json.empty()) {
         return core::Result<std::vector<std::string>>::ok({});
     }
-    yyjson_doc* doc = yyjson_read(json.c_str(), json.size(), 0);
-    if (!doc) {
+    auto parsed = platform::json::parse(json);
+    if (parsed.isFail()) {
         return core::Result<std::vector<std::string>>::fail(
-            core::ErrorCode::JsonParseError, "failed to parse tags JSON");
+            parsed.errorCode(), parsed.errorMessage());
     }
-    yyjson_val* root = yyjson_doc_get_root(doc);
+    const auto& root = parsed.value();
     std::vector<std::string> out;
-    if (root && yyjson_is_arr(root)) {
-        yyjson_arr_iter iter;
-        yyjson_arr_iter_init(root, &iter);
-        yyjson_val* val = nullptr;
-        while ((val = yyjson_arr_iter_next(&iter)) != nullptr) {
-            if (yyjson_is_str(val)) {
-                const char* s = yyjson_get_str(val);
-                if (s) out.emplace_back(s);
+    if (root.isArray()) {
+        for (int i = 0; i < root.size(); ++i) {
+            auto item = root[i];
+            if (item.isString()) {
+                out.push_back(item.asString());
             }
         }
     }
-    yyjson_doc_free(doc);
     return core::Result<std::vector<std::string>>::ok(std::move(out));
 }
 
