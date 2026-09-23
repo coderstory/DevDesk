@@ -1,0 +1,593 @@
+{
+ "dimensionSummaries": [
+  {
+   "completeness": "六条核心旅程全部走完代码路径（main/router/home/markdown/todo/claude/pet/settings 共 ~17k 行模块代码通读，关键路径逐行推演）：①首启链路健康（config 缺省全启用、DB 迁移播种 4 列、各页空态与错误态区分清晰）；②笔记闭环在「删除」处断链（服务层 remove 已实现且测试覆盖但零 UI 接线，也无重命名）；③看板闭环最完整（建列/改色/重命名/拖拽/键盘/kind 语义降级文案/确认删除均接住，仅剩搜索 Enter 清空和详情保存语义两处小刺）；④供应商闭环骨架扎实（接管-快照-还原-崩溃补还原-三层覆盖检测都真实现），断点在首次建 Profile 不自动激活的引导缺失与 503 兜底文案；⑤桌宠闭环在「穿透」处有硬死路（HIGH）；⑥模块插拔降级整体接得住（Home 卡片感知/Router 兜底/设置卡隐藏），漏了托盘菜单静态硬编码和 argv 文件分发两处。整体评价：CRUD 深层（服务层/数据层）质量高、错误反馈习惯好（toast/状态栏/降级文案），薄弱面集中在「入口可发现性」（右键菜单承载全部列管理却无文档、启用按钮无引导）与「单向门」（穿透无退路、删除无入口）——这类问题的共同根因是各模块把能力做出来了但产品视角的回路（进得去也要出得来）没有逐一收口。未覆盖面：真实鼠标渲染行为、SSE soak 长跑、macOS 平台分支（无环境），均不在本次走查范围。"
+  },
+  {
+   "completeness": "四大 spec 的主干承诺兑现度很高：Markdown（FTS 搜索/标签/三态视图/滚动同步/键盘流/语法高亮/状态栏）、Todo（默认四列/CRUD/拖拽/逾期视图/右键全操作）、Claude（流式代理/供应商三页表单/settings.json 接管-还原-崩溃补还原/上层覆盖检测）、桌宠（透明置顶/拖拽/穿透/换肤/四态机）均已落地且多处超预期（Home Token 速率卡、托盘菜单、DPAPI keychain）。缩水集中在三类：设置页 §8.5 十项承诺约半数未做（端口/目录/字体/关于/日志级别等）、若干交互细节从路线图静默消失（表格编辑器、新建聚焦、日志面板过滤搜索、桌宠数据气泡）、以及一条安全语义承诺未兑现（删激活 Profile 不停代理导致 Claude Code 全量 503）；另有 USER_GUIDE 仍描述「代理默认自动启动」的旧行为，与硬性需求 1 相反，构成负向文档。15 项缺口中 14 项属「spec 说了但 KNOWN_LIMITATIONS/backlog 均未登记」的静默缩水，建议按本次清单补登记或补实现。"
+  },
+  {
+   "completeness": "交互逻辑一致性维度整体完成度中等偏上：Todo/Claude 两模块在「操作结果 toast 化、破坏性操作加确认弹窗」上已相当整齐，Markdown 编辑器的自动保存/冲突处理链路也很扎实；但一致性裂缝集中在三处——Markdown 模块反馈与删除能力明显滞后于 Todo/Claude（同一动作四种反馈通道、删除 API 已实现却无 UI），EUI-NEO 原语缺口（Escape→onEnter、无弹窗 Esc/autofocus）直接外溢为产品层的 Esc 语义反转和键盘流断裂，桌宠存在两个独立高危陷阱（穿透开启后无解铃路径、右键菜单误触整应用退出）。建议先修两条 HIGH（Todo 详情弹窗静默丢编辑、桌宠穿透死锁），再以两个横向约定收口其余不一致：①反馈分工规则（操作结果=toast、表单校验=弹窗内红字），②公共确认弹窗组件（统一危险按钮样式与文案）。"
+  },
+  {
+   "completeness": "整体完成度较高：术语统一（Token/Profile 全程一致无中英混用）、空态/错误态/数据态三态区分在 Home/Todo/Markdown 列表均已落地、破坏性操作（删任务/删列/删 Profile/重生成 Token）均有确认弹窗、Todo 副标题主动文档化快捷键、测试连通走后台线程并有「最长 15 秒」预期管理、状态栏保存状态用符号+颜色双通道（色盲可辨），这些都是合格线以上的工程。主要缺口集中在四处：浅色主题的对比度从未做过校验（tertiary 2.86:1、主色当文字 2.96:1 全面不达标，深色主题则全部合格，说明浅色是后加的且没回验）；三处 spec 明确承诺的 UX 被静默砍掉未登记（Token 脱敏、新建笔记即聚焦、Ctrl+N）；Todo 详情弹窗有一条静默丢弃未保存编辑的数据丢失路径；USER_GUIDE.md 作为唯一用户手册多处与实际行为相反（最严重的是声称代理自动启动，而 Phase B 后默认不启动）。"
+  }
+ ],
+ "confirmed": [
+  {
+   "flow": "pet",
+   "location": "src/module_pet/pet_window.cpp:239-279（穿透唯一开关在宠物自身右键菜单）；src/module_settings/settings_module.cpp:710-795（设置页桌宠卡只有皮肤下拉+位置重置，无穿透开关）；src/module_pet/pet_config.cpp:79-92（clickThrough 持久化，重启后仍是穿透）",
+   "problem": "穿透开启后窗口不再接收任何鼠标事件，右键菜单（唯一的关闭入口）永久不可达；设置页桌宠卡没有穿透开关；托盘菜单没有桌宠入口；状态还持久化到 pet_config.json，重启无效。设计文档（desktop-pet-design §调研）明确 Ark-Pets 的惯例是「托盘+右键宠物」双入口，DevDesk 只做了右键单入口。",
+   "scenario": "用户在桌宠上右键 → 点「挂机穿透（点击透到下层）」想试试这个模式 → 从此宠物窗口对鼠标完全透明，无法再右键它、无法戳它、无法拖动、无法换肤、无法「隐藏桌宠」。置顶小窗永远停在屏幕角落，重启后依然穿透。",
+   "severity": "HIGH",
+   "suggestion": "在设置页桌宠卡补一个「鼠标穿透」toggleSwitch（与皮肤下拉同款接线 setWindowMousePassthrough + savePetClickThrough，即时生效）；或按设计文档把桌宠入口加进托盘菜单（含穿透开关/隐藏）。短期最低成本：开启穿透时弹气泡提示「已开启穿透，可在 设置→桌宠 关闭」。",
+   "dim": "flows",
+   "verdict": "CONFIRMED",
+   "verifyReason": "All elements verified: pet_window.cpp:239-279 is the only click-through toggle; EUI-NEO setWindowMousePassthrough maps to GLFW_MOUSE_PASSTHROUGH/WS_EX_TRANSPARENT (whole-window, window_types.h:49-50), so with passthrough on the window receives no mouse events and its right-click menu (also the only hide/skin/reset/exit entry) is unreachable. settings_module.cpp:710-795 drawPetCard has only skin dropdown + position reset — no passthrough switch; main.cpp:449-455 tray menu has no pet entry; pet_config.cpp:79-92 persists clickThrough and main.cpp:526-529 re-opens the window with it on restart, so rebooting doesn't help. Enabling it gives no bubble/toast guidance. Design doc line 164 confirms Ark-Pets' tray+right-click dual-entry convention with the click-through toggle, and line 234 defaults it off — DevDesk shipped only the single right-click entry. Only escape hatch found: disable the whole pet module in settings (window gone after restart), but re-enabling restores the still-passthrough pet; the clickThrough flag itself has no in-app off switch once enabled."
+  },
+  {
+   "flow": "claude",
+   "location": "D:/project/gui/DevDesk/src/module_claude_proxy/claude_service.cpp:451（deleteProfile；claude_module.cpp:1772 doDelete 同样只转发）",
+   "problem": "provider-config 设计 §7 安全设计第 5 条明确承诺「删除 profile：若删的是激活 profile 且代理运行中 → 停代理（触发还原），不让 settings.json 指向无 profile 的代理」。实现只清 Keychain + 删 SQLite 行，无 isProxyRunning 检查、无 stopProxy/syncRestore 分支；代理按请求取 active profile，取不到即 503。KNOWN_LIMITATIONS（#10-16）与 backlog 均未登记此边界。",
+   "scenario": "用户启动了代理（Claude Code 已被接管），在切换器页删除当前 ACTIVE 的 Profile（如清理测试配置）→ UI 弹「已删除」成功 toast；但代理仍在运行、~/.claude/settings.json 仍指向 127.0.0.1:8888 → 此后 Claude Code 每次请求都收到 503 no_active_profile，界面上没有任何提示告诉用户问题根源或如何恢复。",
+   "severity": "HIGH",
+   "suggestion": "deleteProfile 成功路径（或 UI 层 doDelete）补：删除的是激活 profile 且 isProxyRunning() → stopProxy()（顺带触发还原）+ toast 明示「已停止代理并还原 Claude Code 配置」；若决定不做，必须把该边界登记进 KNOWN_LIMITATIONS。",
+   "dim": "spec-compliance",
+   "verdict": "CONFIRMED",
+   "verifyReason": "Code path fully verified: ClaudeService::deleteProfile (claude_service.cpp:451-488) only clears Keychain + deletes the SQLite row; its sole UI caller doDelete (claude_module.cpp:1772-1782) just forwards — grep confirms no isProxyRunning/stopProxy anywhere in the delete path (stopProxy is only called from onStop:860, toggle:1744, settings regen:237). The delete button is offered for any selected profile including the ACTIVE one (claude_module.cpp:653-663) and the confirm dialog (1575-1585) carries no active/running warning. After deletion the proxy keeps running; both proxy paths (proxy_router.cpp:148/157 buffered, :317 streaming) return 503 no_active_profile and return BEFORE logging a call entry, so even the 最近调用 list shows nothing — only a WARN in devdesk.log. settings.json stays pointed at the running proxy (restore only happens in stopProxy:777 syncRestore). This directly violates provider-config design §7 item 5 verbatim (「删除 profile：若删的是激活 profile 且代理运行中 → 停代理（触发还原）」). Not in KNOWN_LIMITATIONS (#10-16 cover other boundaries) or backlog. Scenario reachable and worse than described (503s invisible in UI)."
+  },
+  {
+   "flow": "todo",
+   "location": "src/module_todo/todo_module.cpp:1891-1899（移动到）、1936-1942（标记完成）、1915-1921（删除）、1699（onOpenChange/backdrop 关闭）",
+   "problem": "详情弹窗是编辑表单（标题/多行描述/优先级/截止/标签），但只有「保存」按钮落库；「移动到」「标记完成」直接执行服务调用不携带表单值，「删除」先把弹窗关掉再弹确认（确认被取消后弹窗也不回来），backdrop 点击和输入框焦点丢失路径同样直接丢弃。markdown 编辑器是自动保存语义，todo 详情是显式保存语义，两套心智之间没有任何丢失防护。",
+   "scenario": "用户点开一张任务卡改标题、写了三行描述、加了个标签，然后直接点「标记完成」（或点「移动到」某列、或点了「删除」后在确认弹窗里点「取消」、或手滑点到弹窗外的遮罩）——弹窗关闭，任务确实完成/移动/什么都没发生，但刚改的标题、描述、标签全部静默消失。",
+   "severity": "HIGH",
+   "suggestion": "动作按钮改为「先保存表单再执行动作」（doUpdateTask 后再 complete/move/delete）；删除路径保留 detailOpen_，确认取消后回到弹窗。中期给 dialog 组件补 dismissable 开关，编辑型弹窗禁用 backdrop 点击关闭。",
+   "dim": "interaction",
+   "verdict": "CONFIRMED",
+   "verifyReason": "All four loss paths verified in todo_module.cpp. 移动到 (1891-1899) and 标记完成 (1936-1942) set detailOpen_=false and call doMoveTask/doCompleteTask with only taskId — those functions (320, 331) never read detailTitle_/detailDescription_/detailTags_; only the 保存 button (1953-1975) calls doUpdateTask. 删除 (1915-1921) closes the detail dialog before opening confirm; cancel (1486) only clears confirmOpen_, detail stays closed. Backdrop: dialog.h:107 wires backdrop onClick→onOpenChange(false)→detailOpen_=false (1699). Reopening the task re-reads from DB (openDetailDialog 1651-1663), so edits are unrecoverable. Genuine silent data loss; HIGH justified."
+  },
+  {
+   "flow": "pet",
+   "location": "src/module_pet/pet_window.cpp:275-279（穿透开关只在宠物自身右键菜单）+ 91-98（savePetClickThrough 持久化）+ settings_module.cpp:710-795（设置页桌宠卡无穿透开关）",
+   "problem": "穿透开关的唯一入口挂在宠物窗口自己的右键菜单上，而穿透开启后该窗口不再接收任何鼠标事件——开关自己把自己锁死了；状态还被持久化，重启后依旧穿透。设计文档（desktop-pet-design §3.3/§4.2）引用的 Ark-Pets 惯例是「托盘 + 右键双入口」，托盘入口未实现，设计承诺的解铃路径缺失。",
+   "scenario": "用户右键桌宠尝鲜点了「挂机穿透（点击透到下层）」，之后想关掉：右键宠物没反应（点击全穿透了），设置页桌宠卡只有换肤和位置重置，托盘菜单没有桌宠项；重启 DevDesk 穿透依旧。最后只能去设置里整个关掉桌宠模块，或手改 pet_config.json。",
+   "severity": "HIGH",
+   "suggestion": "设置页桌宠卡补「鼠标穿透」开关（读写同一 pet_config.json，onChange 即时 setWindowMousePassthrough）；中期按设计把托盘双入口补上。",
+   "dim": "interaction",
+   "verdict": "CONFIRMED",
+   "verifyReason": "Lockout fully code-verified. Toggle exists only in pet's own right-click menu (pet_window.cpp:239-240, 275-279); setWindowMousePassthrough(true) = GLFW_MOUSE_PASSTHROUGH/WS_EX_TRANSPARENT so the window receives no mouse events — its own menu becomes unreachable. Persisted (savePetClickThrough 91-98) and restored on restart (pet_window.cpp:397, main.cpp:526-529). Settings pet card (settings_module.cpp:710-795) has only skin dropdown + position reset; tray menu (main.cpp:449-455) has no pet entry; pet_window.cpp:277 is the sole DevDesk call site of setWindowMousePassthrough. Escape hatches are only module-off (kToggleable includes pet, needs restart) or hand-editing pet_config.json. Minor nuance: design doc §3.3 cites Ark-Pets tray+right-click dual entry as researched convention while the concrete menu spec (§4.5) lists only right-click items, so '设计承诺' is slightly overstated — but the self-locking defect is real."
+  },
+  {
+   "flow": "markdown",
+   "location": "src/module_markdown/markdown_service.cpp:642-652（remove 已实现且被单测覆盖）；src/module_markdown/markdown_module.cpp（全文无任何调用/无右键菜单/无删除按钮）",
+   "problem": "笔记的完整生命周期缺少收尾一环：服务层 remove()（删文件+索引+FTS+孤儿标签清理）已实现并通过测试，但模块 UI 层没有任何入口调用它——左栏树没有 onContextMenu，编辑器也没有删除动作，也没有重命名。spec 的 service API 里明确列了 remove。",
+   "scenario": "新用户建了几篇测试笔记想清理 → 左栏右键文件行没反应，顶栏、状态栏、详情里都没有删除按钮 → 只能打开资源管理器去 %APPDATA%\\DevDesk\\notes 手工删文件，再等 5 秒轮询刷新树。",
+   "severity": "MEDIUM",
+   "suggestion": "给树行加 onContextMenu（右键 → 删除/重命名，删除走确认 dialog，复用 Todo 的确认弹窗模式调 service_->remove()；重命名 = create 新路径 + copy 内容 + remove 旧路径，或先只做删除）。",
+   "dim": "flows",
+   "verdict": "CONFIRMED",
+   "verifyReason": "MarkdownService::remove is implemented (markdown_service.cpp:642-652: fs::remove + deleteFromIndex) and directly unit-tested (test_markdown_service.cpp:241,246,836,856 call svc.remove). Full read of markdown_module.cpp (all 1994 lines) plus grep shows zero UI call sites: no service_->remove(, no onContextMenu on tree rows (drawFileTreeItem only wires onClick), no delete/rename button in header, editor, or status bar. Spec devdesk-design.md:1107 lists remove in the service API. Not registered in KNOWN_LIMITATIONS or backlog. The only deletion paths are external file deletion (picked up by the 5s poll) or manual %APPDATA% cleanup."
+  },
+  {
+   "flow": "全局/模块插拔",
+   "location": "src/main.cpp:79-92（dispatchPageForFile 注释自认 MVP：仅切页）；src/main.cpp:198-207（只 navigateTo 不带 payload）",
+   "problem": "文件打开链路只完成了「切页」半截：markdown 模块已支持 open:<路径> 负载（Home 最近编辑就在用），但 main.cpp 的文件分发不给负载、不做绝对路径→笔记目录的映射，文件内容永远不会被加载。`.json` 映射到 Claude 页更是无消费方的空跳。",
+   "scenario": "用户在资源管理器把 .md 的打开方式关联到 DevDesk.exe（或把文件拖到 exe 上启动），期望像Typora/Obsidian那样直接看到这篇笔记 → 应用启动后停在 Markdown 页，显示的是上次的笔记或空目录，双击的文件毫无反应，也没有任何提示。",
+   "severity": "MEDIUM",
+   "suggestion": "dispatchPageForFile 处把文件路径塞进 Router payload（Markdown 页已有 open: 消费通道）；若文件在笔记目录外，至少弹 toast「文件 X 已捕获，暂不支持打开外部文件」而不是静默切页；或一期先在 USER_GUIDE 明示此边界。",
+   "dim": "flows",
+   "verdict": "CONFIRMED",
+   "verifyReason": "main.cpp:198-207 calls router.navigateTo(target) with no payload (handleAppleEventOpenFile:229 same); comments at :57/:79-80/:199 self-describe as MVP page-switch only. The Markdown module's consumeNavPayload does support 'open:<relativePath>' (markdown_module.cpp:1516-1522) and Home's recent-edit list already uses that channel (home_module.cpp:442-443), so the consumption side exists and is unused by file dispatch. pendingOpenFilePath() is never read by any module (grep: only main.cpp logs it). claude_module.cpp has no consumeNavPayload at all, so .json→ClaudeProxy is a payload-less dead switch. Windows argv capture works (file_open_win.cpp GetCommandLineW), so the scenario (associate .md → app opens on Markdown page showing last state, file never loads, no toast) is the actual behavior. Not registered in KNOWN_LIMITATIONS/backlog/USER_GUIDE."
+  },
+  {
+   "flow": "claude",
+   "location": "src/module_claude_proxy/claude_service.cpp:239-245（createProfile 硬编码 is_active=0）；src/module_claude_proxy/claude_module.cpp:1103-1130（submitForm 创建后不激活、toast 不引导）；src/module_claude_proxy/claude_service.cpp:816-826（无激活 profile 也接管写 settings.json）",
+   "problem": "新建 Profile 不自动激活、成功 toast 只说「已保存」，详情面板对「已选中但未激活」的 profile 也没有任何未启用标记（ACTIVE 徽章只标激活卡）。用户自然的下一步是点「启动代理」——而 startProxy 在无激活 profile 时照样接管 settings.json（BASE_URL 指向本地代理），Claude Code 随即开始 503。错误能自愈（点启用后 setActiveProfile 会重同步），但用户要先在 CC 的报错里猜到原因。",
+   "scenario": "新用户第一次用：点「+ 新建 Profile」填好名称/URL/Key → 创建成功 → 直接点「启动代理」（界面上这是最显眼的下一步）→ settings.json 已被接管指向 127.0.0.1:8888 → 在 Claude Code 里发消息得到 503「no_active_profile: 没有激活的 Claude profile」→ 用户不知道要去 DevDesk 点「启用」。",
+   "severity": "MEDIUM",
+   "suggestion": "创建成功后若当前无任何激活 Profile 则自动激活（首次体验最顺）；至少把 toast 改成「已创建，点击『启用』使其生效」。503 错误 message 补上下文：「请在 DevDesk 的 Claude 页选中 Profile 并点击启用」。",
+   "dim": "flows",
+   "verdict": "CONFIRMED",
+   "verifyReason": "Every code-level claim checks out: createProfile hardcodes is_active=0 (claude_service.cpp:240 'VALUES (..., 0, ...)'); submitForm after create only sets selectedId_ and toasts '已创建/已保存' with no activation or guidance (claude_module.cpp:1128-1130); syncTakeOver explicitly takes over settings.json even with no active profile (claude_service.cpp:816-826, comment '无激活 profile：仍接管 BASE_URL/token'); the 503 message is just '没有激活的 Claude profile' (claude_service.cpp:544) with no remediation pointer; the ACTIVE badge renders only on the active card (claude_module.cpp:924) and the detail panel for a selected-but-inactive profile shows no un-activated marker; doToggleProxy's success toast (1756-1757) doesn't mention the missing profile either. Self-heal confirmed (setActiveProfile→syncTakeOver at 594-596). Caveat: the behavior is deliberate per code comment and USER_GUIDE §4.2 documents the 启用 step, so this is a first-run flow friction finding, not a spec violation — but the spec is silent on auto-activation, and the user-visible 503 dead-end without guidance is real."
+  },
+  {
+   "flow": "全局/模块插拔",
+   "location": "src/main.cpp:448-454（trayMenu 四项硬编码）；src/core/router.cpp:26-35（未注册页静默回退 Home，只写 LOG_WARN）",
+   "problem": "托盘菜单项在启动期写死，不随 Router 注册状态收缩；点击失效入口后的兜底（回 Home）是纯代码层行为，用户视角无任何解释。与侧边栏（按 router->modules() 动态渲染）不一致。",
+   "scenario": "用户在设置里关掉了 Todo 模块并重启 → 托盘菜单仍显示「待办」→ 点它 → 主窗口弹出来停在首页，没有任何反馈说明为什么没到待办页，用户以为自己点错了。",
+   "severity": "MEDIUM",
+   "suggestion": "托盘菜单按 Router 已注册模块动态生成（侧边栏同款数据源）；若 EUI-NEO 托盘菜单不支持运行时重建，至少在启动时按 enabledModules 过滤菜单项。",
+   "dim": "flows",
+   "verdict": "CONFIRMED",
+   "verifyReason": "main.cpp:448-455 trayMenu is a static config with four hardcoded module entries, built before/independent of Router registration; isModuleEnabled reads config.json once at startup (:41-53) and settings toggles only affect next launch, so after disabling Todo and restarting, the tray still lists 待办. Clicking it runs navigateTo(Todo) → Router::navigateTo falls back to Home with only LOG_WARN, no user-visible feedback (router.cpp:26-35). Sidebar by contrast renders from router->modules() dynamically (main.cpp:336). One nuance found that makes it slightly worse, not better: custom tray items don't set show_requested (tray_bridge.c eui_bridge_item_cb only invokes the callback), so when the main window is hidden to tray the dead click shows nothing at all rather than 'window pops up on Home'. Not registered anywhere."
+  },
+  {
+   "flow": "todo/全局",
+   "location": "docs/USER_GUIDE.md:53-56（记载已被 W8 移除的「↻ 重扫」按钮）、:61（断言「列的删除当前无 UI 入口」——实际右键列头就有）；src/module_todo/todo_module.cpp:1222-1356（列管理全部只挂在右键菜单）",
+   "problem": "本项目的用户反馈通道就是文档（CLAUDE.md：用户不读代码），但操作手册落后实现两三个波次：重命名列/左移右移/改色/删除列/任务右键菜单、Todo 搜索/逾期视图/标签、Markdown 标签/大纲/三态视图、模块开关、桌宠——全部没写进手册。列管理只有右键一个入口且无 discoverability 提示（副标题只提了「右键卡片/列头更多操作」一行小字）。",
+   "scenario": "用户想删掉一个看板列 → 查 USER_GUIDE，读到「列的删除当前无 UI 入口」→ 认定做不到，留着没用的列；或者按手册找「↻ 重扫」按钮整理笔记目录，界面上根本没有这个按钮。",
+   "severity": "MEDIUM",
+   "suggestion": "USER_GUIDE 3.2/3.3 节按当前 UI 重写：删掉重扫条目、把「列的删除」改为右键列头操作说明，补搜索/逾期/标签/右键菜单/模块开关/桌宠章节。顺手在 Todo 副标题把「右键列头：重命名/改色/删除」写全（现在只说『更多操作』）。",
+   "dim": "flows",
+   "verdict": "CONFIRMED",
+   "verifyReason": "USER_GUIDE.md line 49 (finding cites 53-56; content is at :49 in the current file) documents the '↻ 重扫' button that W8 removed — markdown_module.cpp:511 comment states 'W8：重扫按钮已移除（5 秒自动轮询）' and no such button exists in the module; FAQ :151 also references it. Line 61 asserts '列的删除当前无 UI 入口' but openColumnContextMenu/drawContextMenu provides 删除列 via right-click column header (todo_module.cpp:1246-1257). Guide baseline is 2026-09-22 124/124 vs current 304 tests; Todo search/overdue/tags/task context menu, Markdown tags/outline/three-state view (guide still describes the old always-3-column layout at :45), module toggles (absent from settings table :89-95), and the pet are all undocumented (module table :8-16 says five modules, no pet). The guide even still claims proxy auto-starts at launch (:26/:103), which provider-config Phase B changed. Todo subtitle's '右键卡片/列头更多操作' hint exists but is vague (todo_module.cpp:652)."
+  },
+  {
+   "flow": "markdown",
+   "location": "src/module_markdown/markdown_service.cpp:568-579（ofstream trunc 直写，无 tmp+rename）；对照 src/module_claude_proxy/settings_sync.cpp:57-97（settings.json 已用 atomicWrite）",
+   "problem": "settings.json 的接管写入专门做了原子写并注释了理由，但价值更高的笔记正文反而是截断式直写。autosave 让写入频率很高（每次停顿 400ms），暴露窗口被拉大。同一代码库里两种文件两种标准。",
+   "scenario": "用户写了一下午的长文，靠 400ms 自动保存落盘 → 某次保存写入途中进程被杀/断电 → 文件已被 truncate 但内容没写完 → 笔记变成半截甚至空文件，且编辑器内存缓冲随进程一起没了，无法恢复。",
+   "severity": "MEDIUM",
+   "suggestion": "write() 改用 settings_sync 同款 tmp+rename 原子写（十几行，函数已有现成模板可抄）。",
+   "dim": "flows",
+   "verdict": "CONFIRMED",
+   "verifyReason": "MarkdownService::write opens std::ofstream(absPath, binary|trunc) and writes in place (markdown_service.cpp:567-579) — a crash/kill/power loss between truncation and write completion leaves a partial or empty file, and the editor buffer dies with the process. settings_sync.cpp:54-97 atomicWrite does tmp+remove+rename with an explicit comment about never producing half-written files, applied to settings.json but not the higher-value note content. Exposure is amplified by 400ms autosave (kAutoSaveDelayMs, flushEditorIfIdle) — saveEditor only skips writes when text is unchanged, so every pause triggers a truncating write. onStop's 3-attempt retry loop helps transient locks, not power loss. Not registered in KNOWN_LIMITATIONS/backlog."
+  },
+  {
+   "flow": "todo",
+   "location": "src/module_todo/todo_module.cpp:683-689（onEnter → searchQuery_.clear() + refreshSearch）",
+   "problem": "搜索框把回车当清除用（代码注释自述：EUI-NEO input 把 Escape 映射到 onEnter，于是 Enter/Esc 都成了清除）。与 Markdown 页搜索行为不一致（那里 Enter 无副作用），也和所有主流应用的习惯相反。",
+   "scenario": "用户在搜索框输入「bug」想过滤任务，习惯性按回车确认 → 搜索框瞬间清空、过滤重置、全部任务又回来了 → 用户以为搜索功能坏了，再输一遍又不敢按回车。",
+   "severity": "MEDIUM",
+   "suggestion": "Enter 不做任何事（搜索已即时生效）或显示「按 Esc 清除」placeholder；若上游按键映射允许，把 Escape 单独映射到清除。",
+   "dim": "flows",
+   "verdict": "CONFIRMED",
+   "verifyReason": "todo_module.cpp:683-688: search input's onEnter clears searchQuery_ and calls refreshSearch whenever non-empty. Verified at framework level: EUI-NEO components/input.h:326-339 dispatches both Enter (single-line) and Escape to the same onEnter callback, so the code comment 'EUI-NEO input 把 Escape 映射到 onEnter' is accurate — Enter-to-clear is a framework-limitation side effect, not a designed affordance. Markdown page's md.search input wires only onChange (markdown_module.cpp:420-432), so Enter there is a no-op — the cross-page inconsistency is real. Not registered anywhere."
+  },
+  {
+   "flow": "claude",
+   "location": "D:/project/gui/DevDesk/src/module_claude_proxy/claude_module.cpp:1622-1709（openCallsDialog/drawCallsDialog）",
+   "problem": "总设计 §8.3 用户操作第 6 条承诺「点击『查看全部日志』→ 弹出完整日志面板（支持过滤、搜索）」；实现是固定 20 条的静态列表，recentCalls(20) 写死，无搜索框、无状态码/路径过滤、无滚动翻页。数据全在 claude_call_logs 表却没暴露查询 UI。未登记。",
+   "scenario": "用户代理跑了几天（30 天保留策略下累计上百条调用），想找那次 429/超时调用做排查 → 点「查看全部 →」→ 弹窗只有最近 20 条纯文本行，更早的记录既翻不到也查不了，只能去翻 SQLite 或日志文件。",
+   "severity": "MEDIUM",
+   "suggestion": "弹窗加搜索框（按路径/状态码过滤）+ scrollView 列表放开条数（或分页）；排障是这条入口存在的全部理由，spec 承诺的两个能力都该补。",
+   "dim": "spec-compliance",
+   "verdict": "CONFIRMED",
+   "verifyReason": "Verified: openCallsDialog (claude_module.cpp:1622-1635) calls svc->recentCalls(20) — the only consumer besides the 3-item details panel; drawCallsDialog (1637-1709) renders 20 static absolutely-positioned text rows (title literally 「调用记录（最近 20 条）」), no search input, no status/path filter, no scrollView, no pagination — 20 rows exactly fill the 560px dialog. Main design §8.3 user op 6 promises 「弹出完整日志面板（支持过滤、搜索）」. Data accumulates in claude_call_logs under 30-day default retention (settings_config.h logRetentionDays=30) but older rows are unreachable from any UI. Not registered in KNOWN_LIMITATIONS or backlog."
+  },
+  {
+   "flow": "markdown",
+   "location": "D:/project/gui/DevDesk/src/module_markdown/（全模块无任何表格插入/编辑代码；对照 ux-design §5.5）",
+   "problem": "markdown-editor-ux-design §4 #8 与 §5.5 把表格编辑列为 Phase 2 交付：MVP（右键「插入表格」级联选行列 + Tab 跳格，成本小）→ V1（预览侧行列增删按钮）。实际 grep 全仓库零命中，两项均未实现。backlog 中 Phase 2 只记「键盘部分完成」，剩余项清单只列 Phase 3——表格 MVP/V1 从路线图静默消失，未登记为显式取舍。",
+   "scenario": "用户在笔记里要一张 3×3 表格 → 只能手写 `| a | b |` + 分隔行 + 空行的管道语法，格式写错预览就不渲染，也没有行列增删辅助。",
+   "severity": "MEDIUM",
+   "suggestion": "至少补 MVP：编辑器 contextMenu「插入表格」级联选行列 → 光标处插模板（spec 自估 ~100 行，成本小）；若决定砍掉，在 backlog/KNOWN_LIMITATIONS 登记「表格编辑降级为手写管道」为显式决策。",
+   "dim": "spec-compliance",
+   "verdict": "CONFIRMED",
+   "verifyReason": "Verified zero table authoring code: grep 表格/插入表格 across module_markdown hits only md_highlight.cpp's syntax-coloring of pipe characters; markdown_module.cpp has NO contextMenu at all, so no 「插入表格」 entry exists; md_keyboard only implements Tab/Enter/Ctrl+B/I/K. ux-design §4 #8 and §5.5 schedule 表格 MVP (contextMenu 级联选行列 + Tab 跳格, ~100 行, 成本小) and V1 (预览侧行列增删) as Phase 2. Backlog's Phase 2 entries claim only 「Markdown 键盘流…Phase 2 键盘部分完成」 and 「Phase 2 语法高亮 ✅」; the remaining-items list (§三) lists only Phase 3 — table MVP/V1 appears in neither the done nor the remaining list, and KNOWN_LIMITATIONS has no entry. The 「静默消失，未登记为显式取舍」 characterization is accurate."
+  },
+  {
+   "flow": "markdown",
+   "location": "D:/project/gui/DevDesk/src/module_markdown/markdown_module.cpp:1658（openNote）/1844（commitNewNote）",
+   "problem": "ux-design §4 #6（P1 项）承诺「新建后自动 focus 编辑器；支持默认名快速创建」，并把这条列为新笔记即时性差距的核心。实现里 openNote/commitNewNote 无任何焦点设置（上游 EUI-NEO dsl.h 已有 setFocusedId 通路可用），新建也强制输入文件名（空名报错，无默认名快速路径）。未登记。",
+   "scenario": "用户点「+ 新建笔记」→ 弹窗输入文件名 → 回车 → 笔记打开了，直接开始打字 → 没有任何字符上屏（焦点不在编辑器），必须先点一下编辑器才能写——正是 spec 里点名的「6 步且新建后无焦点」摩擦。",
+   "severity": "MEDIUM",
+   "suggestion": "commitNewNote 成功后对 \"md.editor.input\" 调 setFocusedId（上游 API 已存在）；可选：弹窗支持空名 + 默认「未命名.md」快速创建。",
+   "dim": "spec-compliance",
+   "verdict": "CONFIRMED",
+   "verifyReason": "Verified: commitNewNote (markdown_module.cpp:1844-1896) rejects empty names (「笔记名不能为空」, 1853-1856 — no default-name quick path) and on success only calls openNote (1658-1687), which never touches focus; grep for setFocusedId/focus in markdown_module.cpp has zero hits. EUI-NEO input gains focus only via its click hit area (input.h:108 isFocused(hitId), no autofocus), and Runtime::setFocusedId does exist as an available path (EUI-NEO core/runtime/runtime_input.h:227, dsl.h:1541) — so after the dialog closes, keystrokes go nowhere until the user clicks the editor. ux-design §4 #6 lists 「新建后自动 focus 编辑器；支持默认名快速创建」 as P1 and calls it the core of the 新笔记即时性 gap; neighboring P1 items (status bar #7, outline #9, keyboard #5) were delivered, this one wasn't. Not registered anywhere."
+  },
+  {
+   "flow": "claude",
+   "location": "D:/project/gui/DevDesk/src/main.cpp:269 与 src/module_claude_proxy/claude_module.cpp:1748（8888 硬编码）；设置页无端口项",
+   "problem": "总设计 §8.5 设置项第 5 条承诺「Claude 代理端口：数字输入框（默认 8888；改后自动重启代理）」；实现把 8888 硬编码在 main.cpp 与 claude_module 的 startProxy 调用点（settings 的重新生成路径用当前端口），设置页无端口配置。未登记为取舍。",
+   "scenario": "开发者机器上 8888 被 Jupyter（其经典默认端口）或其他服务占用 → 点「启动代理」→ toast「启动代理失败」，日志可见 bind 失败 → 设置页没有任何入口能改端口，只能关掉占用进程，代理功能整体不可用。",
+   "severity": "MEDIUM",
+   "suggestion": "SettingsConfig 加 proxyPort 字段 + 设置页数字输入，两个硬编码调用点改读配置；改端口时若代理运行中自动重启（spec 原话语义）。",
+   "dim": "spec-compliance",
+   "verdict": "CONFIRMED",
+   "verifyReason": "Verified: port 8888 is hardcoded at both call sites — main.cpp:269 (svc->startProxy(\"127.0.0.1\", 8888)) and claude_module.cpp:1748 (doToggleProxy) — plus the default in claude_service.h:129. SettingsConfig (settings_config.h) has no proxyPort field; the settings page has no port input (drawProxyCard only displays svc->proxyPort(); the regen path at settings_module.cpp:236 reuses the current port). Bind failure surfaces only as toast 「启动代理失败」 with the generic error from claude_service.cpp:756. Main design §8.5 item 5 explicitly promises 「Claude 代理端口：数字输入框（默认 8888；改后自动重启代理）」. Not registered in KNOWN_LIMITATIONS or backlog; 8888 colliding with Jupyter's classic default makes the scenario common."
+  },
+  {
+   "flow": "全局",
+   "location": "D:/project/gui/DevDesk/src/module_settings/settings_module.cpp:797-844（drawDirectoryCard 只读展示）",
+   "problem": "总设计 §2.1 功能目标 6 承诺「设置页面（主题切换、目录配置）」、§8.5 设置项 2 承诺「笔记目录：路径输入框 + 『打开目录』按钮」；实现只读展示，连「打开目录」按钮也没有（用户需手动拼 APPDATA 路径）。代码注释自认「属于后续功能」，但 KNOWN_LIMITATIONS/backlog 均未登记——这是顶层功能目标级的静默缩水。",
+   "scenario": "用户已有多年笔记库（Obsidian vault / 同步盘目录 / git 仓库），装 DevDesk 想直接接管 → 设置页「Markdown 笔记目录（只读）」提示「修改笔记目录属于后续功能」→ 只能把笔记拷进 %APPDATA%\\DevDesk\\notes，或放弃迁移。",
+   "severity": "MEDIUM",
+   "suggestion": "短期至少加「打开目录」按钮（消除找目录的成本）并把「目录不可配」登记进 KNOWN_LIMITATIONS；中期做路径输入 + 索引重扫迁移。",
+   "dim": "spec-compliance",
+   "verdict": "CONFIRMED",
+   "verifyReason": "Verified: drawDirectoryCard (settings_module.cpp:797-844) renders the path read-only with hint 「修改笔记目录属于后续功能，当前仅展示」 and no 「打开目录」 button (grep 打开目录 across src/ = zero hits — the only open-note hits are markdown LOG_INFO lines). Main design §2.1 goal 6 promises 「设置页面（主题切换、目录配置）」 and §8.5 item 2 promises 「路径输入框 + 『打开目录』按钮」. Neither KNOWN_LIMITATIONS nor backlog registers this (grep 笔记目录/目录配置 in both = zero). Nuance for the record: USER_GUIDE §3.5 does disclose the read-only state to end users, but the audit's registers contain nothing and the top-level functional-goal shortfall is real — the finding's claims as stated are all accurate."
+  },
+  {
+   "flow": "claude",
+   "location": "D:/project/gui/DevDesk/src/module_settings/settings_module.cpp:856-924（drawProxyCard 直接渲染 proxyAuthToken() 全文）",
+   "problem": "provider-config §7 安全设计第 2 条承诺「token 展示脱敏：设置页代理 token 默认 a3f8***c21e，[👁] 临时显形（显形不持久化）」；实现无脱敏、无显形开关（[复制] 缺失已在 KNOWN_LIMITATIONS UI-4 登记，脱敏缺失未登记）。",
+   "scenario": "用户在共享屏幕/录屏时打开设置页，或按本项目「每阶段截屏归档」的验收铁律截设置页 → 「认证 Token（只读）」一栏整串明文展示代理 token，直接进截图/文档库。",
+   "severity": "MEDIUM",
+   "suggestion": "默认掩码（前 4 + *** + 后 4），加显形切换按钮且不持久化；与本仓库截屏验收流程配合，避免凭据例行入库。",
+   "dim": "spec-compliance",
+   "verdict": "CONFIRMED",
+   "verifyReason": "Verified: drawProxyCard (settings_module.cpp:856-924) sets tokenText = svc->proxyAuthToken() — the full 32-hex-char token (generateAuthToken, claude_service.cpp:719-732) rendered in clear with no masking and no reveal toggle. Provider-config design §7 item 2 promises 「token 展示脱敏：默认 a3f8***c21e，[👁] 临时显形（显形不持久化）」 and the §6.3 settings mockup shows the same. KNOWN_LIMITATIONS 跨平台 UI-4 registers only the missing clipboard/copy button — the masking omission is a separate unregistered gap (grep 脱敏/掩码 in KNOWN_LIMITATIONS/backlog = zero). The screenshot-per-phase acceptance workflow in this repo makes the exposure scenario concrete."
+  },
+  {
+   "flow": "全局",
+   "location": "D:/project/gui/DevDesk/docs/USER_GUIDE.md:26/103（基线停在 124/124 时代）；docs/CROSS_PLATFORM.md 缺失",
+   "problem": "总设计 §13/§16.2 把「每个 P 阶段完成后更新 docs/USER_GUIDE.md」列为验收步骤，§2.1 目标 7 承诺「用户操作手册」。USER_GUIDE 停在 provider-config 落地前的行为基线，核心流程描述与实际相反，属负向文档；spec 目录树承诺的 docs/CROSS_PLATFORM.md 也未创建。",
+   "scenario": "第一次用 DevDesk 的开发者照指南操作：§2/§4.1 写「应用启动即自动在 127.0.0.1:8888 启动本地代理（无需手动开）」→ 实际默认不启动（provider-config 硬性需求 1），照指南配 Claude Code → 连接被拒；§4.2 的手工抄 token 流程已被 settings.json 自动接管取代但指南只字未提；§3.2 让用户点已删除的「↻ 重扫」按钮；§3.3 说「列的删除当前无 UI 入口」（右键列头已有重命名/改色/删除）；桌宠/模块开关/随启动代理/窗口效果全部无文档。",
+   "severity": "MEDIUM",
+   "suggestion": "按当前行为重写 §2/§3.3/§3.5/§4（启动代理按钮、接管/还原语义、右键列操作、设置页全量项），补桌宠与模块开关章节；顺带补 CROSS_PLATFORM.md 或从 spec 目录树移除该承诺。",
+   "dim": "spec-compliance",
+   "verdict": "CONFIRMED",
+   "verifyReason": "Every sub-claim verified against current code: (a) USER_GUIDE.md:26 and :103 say the proxy auto-starts at launch — contradicted by provider-config hard requirement 1 (SettingsConfig.claudeProxyAutoStart=false default; main.cpp:478 「8888 不监听」), so a first-time user following §4 would find the proxy stopped; (b) §4.2's manual token-copy flow never mentions the settings.json auto-takeover that replaced it as the primary path (grep 接管/settings.json in the guide = zero); (c) §3.2:49 and FAQ :151 instruct clicking the 「↻ 重扫」 button, removed in W8 (markdown_module.cpp:511 comment 「W8：重扫按钮已移除」); (d) §3.3:61 claims 「列的删除当前无 UI 入口」 but column headers have a right-click menu with 重命名/左移/右移/改色/删除列 (todo_module.cpp:875, 1248-1257); (e) the guide documents none of the delivered settings cards (模块开关/桌宠/随应用启动代理/窗口效果 — settings_module has 6 cards, guide's table lists 5 legacy rows) and no pet; (f) docs/CROSS_PLATFORM.md does not exist (docs/ listing) though promised in spec §5 tree and §13. Baseline header 「124/124」 is also stale (304+ per CLAUDE.md). Spec §16.2 item 5 makes USER_GUIDE updates a per-phase acceptance step and §2.1 goal 7 promises the manual — the guide is actively misleading on the core Claude flow, not merely incomplete."
+  },
+  {
+   "flow": "pet",
+   "location": "D:/project/gui/DevDesk/src/module_pet/pet_window.cpp:69-72/155-166（pickPhrase 只查静态短语表）",
+   "problem": "桌宠设计 §4.5 把气泡内容源定为三级（①静态语料 ②接 Home 数据「你有 3 条逾期任务」 ③代理事件联动），M2 交付项明确写「气泡对话（含接 Home 逾期任务数）」，M2 验收条款「气泡内容与 Todo 数据一致」。实现只有 ①③（③打字联动已做），②完全缺失（module_pet 无任何 Todo/Home 数据读取）；设计原话称这是「桌宠与工具集结合的最高价值点」。backlog 宣布 M2 完成时未登记此缺口。",
+   "scenario": "用户有 3 条逾期任务，开着桌宠期待它像设计描述那样提醒 → 桌宠只会随机说「喵~」「摸鱼中…」这类静态短语，永远不引用任何真实数据。",
+   "severity": "MEDIUM",
+   "suggestion": "在 onTimer 里低频（如 5 分钟）经 core 层查一次 Todo 逾期数，>0 时优先播「你有 N 条逾期任务」；todo 模块关闭时回退静态语料（设计已给降级原则）。",
+   "dim": "spec-compliance",
+   "verdict": "CONFIRMED",
+   "verifyReason": "Verified: pickPhrase (pet_window.cpp:69-72) draws only from phraseTable(skin) — skin phrases or the built-in static list 「喵~/在忙吗？/摸鱼中…」 (pet_skin.h:82-91); bubbles are shown only from random idle chatter (151-157) and clicks (165-167). Grep for todo/overdue/Home across the whole module_pet directory = zero hits — the only data integration is ③ proxy streaming via core::proxy_stats (setStreaming → typing animation, 142-145), exactly as the finding states. Pet design M2 deliverable explicitly reads 「气泡对话（含接 Home 逾期任务数）」 and the M2 acceptance criterion reads 「气泡内容与 Todo 数据一致（关 todo 模块时回退通用语料）」; backlog declares 「桌宠 M2 ✅ 2026-09-23（四态机/气泡/换肤UI/代理流式联动）」 without registering the missing content source ②. Scenario (overdue tasks exist, pet never mentions them) is real."
+  },
+  {
+   "flow": "全局",
+   "location": "src/module_markdown/markdown_module.cpp:1853-1855、1886-1889（新建笔记空名/失败仅写 status_）vs 1916-1925（新建文件夹失败走 toast）；todo_module.cpp:407-408（重命名列空名完全静默）",
+   "problem": "同类「创建/校验失败」反馈四个模块四个通道：claude=弹窗内红字且弹窗不关（最佳）；todo=关弹窗+错误 toast；markdown 笔记=不关弹窗+零可见反馈；markdown 文件夹=toast；todo 重命名列空名=完全静默。markdown 模块内部还混用 subtitle 和 toast 两个通道（加标签=subtitle、加文件夹=toast）。用户无法建立稳定的反馈预期。",
+   "scenario": "用户在「新建笔记」弹窗里没输名字直接点「创建」——弹窗不关，也没有任何提示（提示写在了被遮罩盖住的页面顶栏副标题里），看起来像按钮坏了；而同一个页面「+ 文件夹」失败会弹 toast，Todo 新建任务失败是弹窗关掉+toast，Claude 表单是弹窗内红字。",
+   "severity": "MEDIUM",
+   "suggestion": "定一条全局反馈分工规则并各模块执行：操作结果（成功/失败）=toast；表单校验错误=弹窗内红字+弹窗不关（照抄 claude 的 formError_ 模式）。status_ 副标题只留持续性状态（如保存状态）。",
+   "dim": "interaction",
+   "verdict": "CONFIRMED",
+   "verifyReason": "All channel claims verified. md new-note empty name (1853-1855) and create failure (1886-1889) write only status_, rendered in the header subtitle (291-292, 312-314) which sits behind the full-screen dialog scrim; dialog stays open with zero in-dialog feedback. Folder create failure shows a toast (1919) — and toast zIndex defaults to 1100 > dialog 1000, so a toast would be visible, the note path simply doesn't use one. Todo new-task failure: dialog closed first (1175/1203), error toast after (295). Todo rename-column empty: dialog already closed, doRenameColumn silently returns (407-408). Claude: formError_ red text inside dialog (1207-1210), dialog stays open on error. Within markdown, addTag success=status_ (1633) vs failure=toast (1629) confirms the mixed-channel claim."
+  },
+  {
+   "flow": "markdown",
+   "location": "src/module_markdown/markdown_service.h:68（remove() 已实现，全仓无 UI 调用方）；对比 todo_module.cpp:1432-1512、claude_module.cpp:1559-1619（均确认弹窗）",
+   "problem": "同类破坏性操作（删除一条用户数据）覆盖不对称：todo 删任务/删列有确认，claude 删 Profile 有确认（还提示 Keychain 清理），markdown 删除/重命名笔记完全没有 UI——尽管 service 层 remove() 已就绪。且全部删除均无撤销路径（文案明示「不可恢复」），对 markdown 尤其致命：误创建的笔记连应用内删除都做不到。",
+   "scenario": "用户想删掉一篇废稿笔记：左栏右键笔记行没有任何菜单，顶栏也没有删除按钮，只能打开资源管理器进 notes 目录手动删文件（应用要等 5 秒轮询才发现）。同一个用户在 Todo 删任务、Claude 删 Profile 都有带「不可恢复」提示的确认弹窗。",
+   "severity": "MEDIUM",
+   "suggestion": "markdown 树行加右键菜单（删除笔记→确认弹窗→service_->remove()；顺带补重命名），确认弹窗与 todo/claude 同款文案；撤销（或软删除/回收站）作为 backlog 统一评估。",
+   "dim": "interaction",
+   "verdict": "CONFIRMED",
+   "verifyReason": "markdown_service.h:68 declares and markdown_service.cpp:642 implements remove(); grep finds zero UI callers in src. markdown_module.cpp contains no onContextMenu at all; tree file rows wire only onClick→openNote (705-708). No rename UI either. Contrast verified: todo delete (1432-1512) and claude delete (1559-1619) both have confirm dialogs with 不可恢复 copy. Not registered in KNOWN_LIMITATIONS or backlog, and spec's service API (devdesk-design §8.1) includes remove() — designed but never wired."
+  },
+  {
+   "flow": "全局",
+   "location": "../EUI-NEO/components/input.h:336-339（Escape→onEnter）；DevDesk 接线点：markdown_module.cpp:1287/1358、todo_module.cpp:1172-1177/1390-1395（onEnter=提交创建）",
+   "problem": "EUI-NEO 把 Escape 无条件映射到 onEnter，而 DevDesk 所有创建型弹窗的 onEnter 都绑定了提交动作——Esc 从「取消」反转为「确认」。claude 表单输入框没绑 onEnter，Esc 又完全无效，同一按键三种语义。md 标签输入框（onEnter=commitAddTag）里按 Esc 会把打到一半的标签直接提交。",
+   "scenario": "用户在「新建任务」弹窗输入框里打完字又改变主意，按 Esc 想关掉弹窗——任务被创建出来了。同样的反转发生在 Markdown 新建笔记、新建文件夹、Todo 重命名列弹窗（Esc=确认创建/确认改名）；而到了 Claude 的 Profile 表单里按 Esc 什么都不会发生。在 markdown 里 Esc 误建的垃圾笔记还删不掉（见删除覆盖缺口）。",
+   "severity": "MEDIUM",
+   "suggestion": "上游修（符合本项目上游优先政策）：input 的 Escape 不再映射 onEnter，新增 onCancel 回调供使用方区分；上游合入前 DevDesk 侧可在创建型 onEnter 里做守卫文案提示。",
+   "dim": "interaction",
+   "verdict": "CONFIRMED",
+   "verifyReason": "EUI-NEO input.h:336-339 maps Escape to onEnter() unconditionally (even for multiline). All DevDesk create-dialog inputs bind onEnter to submit: md new note (1287), md new folder (1358), md tag input (1052 — Esc commits the half-typed tag), todo new task (1172-1177), todo rename column (1390-1395). Claude form inputs bind no onEnter → Escape is a dead key there (onEnter null → no-op). Scenario (type in input → press Esc → task created) is exactly the code path. The todo search box comment (line 667) shows the mapping is known and deliberately exploited for clear-to-empty, but no guard exists in any create dialog; not registered as a known limitation."
+  },
+  {
+   "flow": "全局",
+   "location": "src/core/router.h:41（dispatchKeyEvent 仅派发到当前页模块）；todo_module.cpp:882/993、pet_window.cpp:195（右键菜单无键盘等价）；EUI-NEO components/dialog.h（无 Escape 处理、无焦点 API）；markdown_editor-ux-design.md §4-#6 承诺的「新建即聚焦」未落地",
+   "problem": "键盘可达性矩阵参差：markdown 有 Ctrl+Shift+P+编辑器快捷键、todo 有 Ctrl+↑/↓，claude/settings/pet 零快捷键；弹窗全部不能用 Esc 关（dialog 组件无此能力，只能鼠标点遮罩或按钮）；弹窗打开后输入框不自动聚焦（EUI-NEO 无程序化 focus API），每个弹窗都要先鼠标点一下才能打字。",
+   "scenario": "键盘用户想给 Todo 列改名：只能右键列头（无 Menu 键等价、菜单无键盘导航）；想在模块间切换：只能鼠标点侧边栏（无 Ctrl+1..5）；打开「新建笔记」弹窗后按 Esc 没反应、还得先用鼠标点进输入框才能打字——四个模块里只有 Todo 的副标题提示了快捷键。",
+   "severity": "MEDIUM",
+   "suggestion": "优先级：①上游 dialog/input 补 Esc 关闭与 autofocus API；②app 级 onKeyEvent 通道已通 Router，加 Ctrl+1..5 模块切换；③高频右键专属动作（重命名列/移动任务）在 UI 上给可见入口；④各模块 subtitle 或帮助里统一列一张快捷键表。",
+   "dim": "interaction",
+   "verdict": "CONFIRMED",
+   "verifyReason": "All sub-claims verified. router.h:41 + main.cpp onKeyEvent (463-467) forward keys only to the current page module — no Ctrl+1..5 module switching anywhere. contextmenu.h and dialog.h contain zero key handling (no onKeyEvent/InputKey). No public programmatic focus API: Ui::setFocusedId is private with friend Runtime only (dsl.h:1541); DevDesk never calls any focus setter → dialogs never autofocus the input. markdown-editor-ux-design §4-#6 '新建后自动 focus 编辑器' (line 128, P1) unimplemented. Only todo's subtitle (652) documents shortcuts (Ctrl+↑/↓ + right-click hint); claude/settings/home have no onKeyEvent (grep-verified)."
+  },
+  {
+   "flow": "全局",
+   "location": "markdown_module.cpp:1963（mode_ 重启回 Edit）、无 lastPath 持久化、1973（collapsedDirs_ 内存态）；module_pet/pet_config（位置/皮肤/穿透全持久化）；main.cpp:430-432（主窗固定 1600×1000 居中）",
+   "problem": "同类「视图状态」跨会话保留策略不一致：桌宠全持久化，三个工具模块的视图状态全不持久化。主窗口永远居中固定尺寸（上游无 onResize/onMove 回调是已登记的能力缺口，但产品层面未做决策）。另外 todo 的 columnScrolls_ 按列索引而非列 id 记忆，重排/删列后滚动位置会串列。",
+   "scenario": "用户昨天在编辑「周报.md」（双栏模式、展开了「工作」文件夹、搜索框里还有关键词），今天打开 DevDesk——编辑器是空的「从左栏选一篇笔记开始编辑」，视图回到编辑态、文件夹全部收起；而桌宠却精确记得昨天被拖到哪个位置、穿的哪套皮肤。",
+   "severity": "MEDIUM",
+   "suggestion": "定统一规则「会话内全内存（现状已一致）、跨会话只记用户明确布置过的」：markdown 持久化 lastPath + mode_（config.json 两字段）；todo 可选记选中任务；主窗口位置待上游回调能力落地后再决策；columnScrolls_ 改按列 id 记忆。",
+   "dim": "interaction",
+   "verdict": "CONFIRMED",
+   "verifyReason": "All state facts verified. markdown: mode_=Edit member init (1963), no lastPath/config restore (SettingsStore has no markdown fields; openNote only via UI or nav payload), collapsedDirs_ (1973) and searchQuery_ memory-only. Pet: position/skin/clickThrough all persisted to pet_config.json (savePetPosition 77-89, savePetClickThrough 91-98, applyPetSkin 418-431) and restored at startup. Main window: windowSize(1600,1000)+centerWindow() (main.cpp:431/443), geometry never remembered across sessions. columnScrolls_ is keyed by column index (945-947, 1985) so offsets attach to the wrong columns after reorder/delete — a real minor bug. The onResize/onMove upstream gap is indeed already registered (KNOWN_LIMITATIONS #9), which the finding itself acknowledges."
+  },
+  {
+   "flow": "todo",
+   "location": "src/module_todo/todo_module.cpp:724-736（+ 列按钮直接 doCreateColumn(\"新列 N\")）",
+   "problem": "全应用所有创建动作都走弹窗命名，唯独「+ 列」即时落库，创建范式不统一；且列的重命名入口藏在右键菜单（发现性差），新用户没有任何线索如何改掉默认名。",
+   "scenario": "第一次用 Todo 的用户点「+ 列」，预期像旁边的「+ 新建任务」一样弹出命名框——结果立刻多出一个叫「新列 2」的列，没有机会起名；想改名得自己发现「右键列头 → 重命名列」这条隐藏路径。",
+   "severity": "MEDIUM",
+   "suggestion": "「+ 列」改弹窗（预填「新列 N」并全选，Enter 确认，与其他创建弹窗同款）；或即时创建后立即进入行内重命名态。",
+   "dim": "interaction",
+   "verdict": "CONFIRMED",
+   "verifyReason": "Core verified: '+ 列' onClick (todo_module.cpp:732-735) calls doCreateColumn(\"新列 N\") directly — instant DB write with an auto-name, unlike every other creation flow in the app (new task/note/folder/profile all open naming dialogs). Column rename is reachable only via right-click context menu (onContextSelect case 0, 1342-1346); no visible rename entry. Two scenario details are slightly off: with the 4 seed columns (migrations.h:128-138) the auto-name is '新列 5' not '新列 2', and the page subtitle (652) does hint '右键卡片/列头更多操作', so '没有任何线索' overstates — but the creation-paradigm inconsistency and hidden rename path are real."
+  },
+  {
+   "flow": "pet",
+   "location": "src/module_pet/pet_window.cpp:248-250（菜单项排列）、285-287（app::requestExit 无确认）",
+   "problem": "全应用对删除一条任务都要确认，但退出整个应用（影响面大得多：代理断开、各弹窗状态丢失）却零确认，且入口埋在桌宠小窗的右键菜单里、紧邻「隐藏桌宠」这一低危项，误触概率高。",
+   "scenario": "用户右键桌宠想换肤，菜单里「隐藏桌宠（本次会话）」的正下方就是「退出 DevDesk」——手一滑点中，整个应用直接退出，无任何确认；正在跑的 Claude 代理断线，弹窗里的半成品表单全丢。",
+   "severity": "MEDIUM",
+   "suggestion": "「退出 DevDesk」移出桌宠右键菜单（退出已有托盘入口），或至少加确认弹窗 + 与「隐藏桌宠」之间加分隔线/分组。",
+   "dim": "interaction",
+   "verdict": "CONFIRMED",
+   "verifyReason": "Verified: menu items are 位置重置 → 隐藏桌宠（本次会话；重启后恢复） → 退出 DevDesk, adjacent with no separator (pet_window.cpp:248-250); the exit handler (285-287) calls app::requestExit() with no confirmation — glfw_app_main.cpp:596 confirms this is an immediate exit path. Running proxy stops and open dialog state is lost on exit. Reinforcing the finding: the design doc's pet menu list (§4.5, line 295: 穿透/换肤/重置/关闭) does not include an app-exit item — the exit entry is an implementation addition not in the design. Caveat: unconfirmed exit is common practice (tray Exit is equally unconfirmed), so the load-bearing hazard is the placement — a destructive app-wide action tucked into a tiny always-on-top window's menu directly beneath a visually similar low-stakes item."
+  },
+  {
+   "flow": "claude",
+   "location": "src/module_claude_proxy/claude_module.cpp:336-365（卡片固定 y=56+i*108 定位，无 scrollView）+ 368-379（底部按钮）",
+   "problem": "同为「左侧列表」模式：markdown 树、todo 列、settings 卡片区都有 scrollView，claude Profile 列表没有——列表容量随 profile 数量增长且无任何滚动兜底，超长内容直接破坏布局。",
+   "scenario": "用户配了 8 个中转站 profile（Claude 切换器的核心用法就是多 profile），第 7 张卡片起画出左栏面板边界、叠在「+ 新建 Profile」按钮上，没法滚动也点不到被盖住的卡片；最小窗口（720 高）下第 4 张就溢出。",
+   "severity": "MEDIUM",
+   "suggestion": "左栏换 scrollView（contentKey 用 profile id 序列 hash），底部新建按钮放滚动区外固定。",
+   "dim": "interaction",
+   "verdict": "CONFIRMED",
+   "verifyReason": "Verified: profile cards positioned at fixed y = 56 + i*108 with height 96 (claude_module.cpp:337-363, 873) inside a non-scrolling fixed-size stack (322-380); the '+ 新建 Profile' button sits at bodyH-64 (369) and is drawn after the cards (on top). No scrollView — unlike markdown tree (603/642), todo columns (939), settings cards (340). Math: at default 1000px height (bodyH≈832, ≈802 with first-run guide) the 7th card (y 704-800) overlaps the button (768-808); at 720px min height with the guide bar visible (bodyH≈522) the 4th card (380-476) overlaps the button (458-498) — matching the finding's '第 4 张' claim for the fresh-install case. Exact overflow index varies with window height/guide state, but the overflow is structural and unbounded in profile count."
+  },
+  {
+   "flow": "全局",
+   "location": "D:/project/gui/DevDesk/src/core/theme.cpp:61-75（浅色 token）",
+   "problem": "浅色主题沿用了深色主题的 textTertiary（#9A948A）和直接拿品牌主色当文字色。实测对比度：textTertiary #9A948A on #FAF9F5 = 2.86:1（空态引导、编辑器提示「从左栏选一篇笔记开始编辑」、状态栏「行:列 · N 字」、设置卡描述等大量 11-13px 小字用它，WCAG AA 需 4.5:1）；primary #D97757 当文字（「查看全部 →」、active 标签 chip、流式中的速率数字）on 浅底 2.96:1、on primarySoftBg 2.57:1，全部 FAIL。深色主题同 token 全部达标（tertiary 5.88:1、primary 5.67:1），说明浅色主题是后加的、从未做过对比度回验。附带：白字 on 主色按钮 #D97757 = 3.12:1（两主题同），14-15px 非粗体按钮文字低于 AA。",
+   "scenario": "用户切到浅色主题（设置页一键切换）后阅读空态引导——「还没有笔记 点下面『+ 笔记』开始」「选择笔记后在这里看到渲染结果」这类第一次使用最需要的引导文字，以及编辑器底部状态栏、设置卡说明，全是 13px 以下的灰字 #9A948A 铺在米色底 #FAF9F5 上，弱光环境/低对比敏感用户基本读不清；「查看全部 →」链接、选中的标签 chip 文字用品牌橘 #D97757，在浅底上同样发虚",
+   "severity": "MEDIUM",
+   "suggestion": "浅色主题独立调深辅助色：textTertiary 提到约 #6E6A63（≈4.6:1）以上；主色仅用于图标/边框/大数字，当正文链接色时用深一档 clay（#B85F3F ≈ 4.5:1）。把对比度校验脚本（本次审计用的 ratio 计算即可）纳入主题 token 变更的验证清单。",
+   "dim": "usability",
+   "verdict": "CONFIRMED",
+   "verifyReason": "Every claim verified. theme.cpp:68 light textTertiary=#9A948A identical to dark (line 24); light toggle exists (settings_module.cpp:507/521). Contrast math independently recomputed: #9A948A on #FAF9F5=2.86:1, #D97757 on #FAF9F5=2.96:1, on primarySoftBg #F5E6DE=2.57:1, white on primary=3.12:1 — all fail the project's own '必达' AA 4.5:1 (UI-UX-DESIGN.md:503), and §10.2 titled '已验证对比度（方案 B Dark）' verifies only dark, confirming light was never re-validated. Usages confirmed: empty-state guidance '还没有笔记…' (markdown_module.cpp:531-535, 13px), editor hint (863-866), preview hint (1158-1161), status bar (1120), all textTertiary; '查看全部 →' 12px primary text (claude_module.cpp:808-814); editor tag chips 11px primary on primarySoftBg (markdown_module.cpp:1004-1016) and selected tree row primary-on-primarySoftBg (98/116). Not registered in KNOWN_LIMITATIONS/backlog (W6 '浅色主题色源统一' was about EUI-NEO built-in theme mixing, not contrast). Minor imprecision only: sidebar filter chips use primary bg + white text, not primary text — but editor chips/tree rows carry the same failure, substance intact. Note UI-UX-DESIGN.md:514 partially flags #D97757-on-light as AA-Large-only, yet implementation still uses it for 12px text; the tertiary failure is acknowledged nowhere."
+  },
+  {
+   "flow": "claude",
+   "location": "D:/project/gui/DevDesk/src/module_settings/settings_module.cpp:901-924（token.value 直取 svc->proxyAuthToken()）",
+   "problem": "设计文档 2026-09-22-claude-provider-config-design.md §6.3/§7.2 明确承诺「token 展示脱敏：默认 a3f8***c21e，[👁] 临时显形」，实现是整段明文常驻显示。ClaudeService::proxyAuthToken() 返回完整 token（claude_service.cpp:788）。KNOWN_LIMITATIONS #4 只登记了「无剪贴板 API，无复制按钮」，脱敏缺失既没实现也没登记。对比：Profile 的 API Key 反而是脱敏的（sk_ind***test），代理 token 作为客户端唯一凭据反而裸露。",
+   "scenario": "用户开着代理准备给 Claude Code 配置，打开设置页核对 token——只要代理在运行，完整 token 就明文平铺在设置页（投屏/会议共享/录屏/截图求助时直接泄漏）；这是能冒充本机调用代理的唯一凭据",
+   "severity": "MEDIUM",
+   "suggestion": "展示层做前 4 + *** + 后 4 截断；配合已登记的「无剪贴板」限制，截断态 + 指引读 proxy_token.txt 即可覆盖配置流程，无需显形按钮也能用。",
+   "dim": "usability",
+   "verdict": "CONFIRMED",
+   "verifyReason": "settings_module.cpp:856-858 takes svc->proxyAuthToken() directly and displays it at line 920 whenever proxy is running; claude_service.cpp:788-790 returns the full token. Spec promise verified: 2026-09-22-claude-provider-config-design.md line 294 (§6.3 mockup 'a3f8***c21e [复制] [👁]') and line 312 (§7 'token 展示脱敏：默认 a3f8***c21e，[👁] 临时显形'). KNOWN_LIMITATIONS #4 (lines 51-54) registers only the missing clipboard/copy button — masking absence is neither implemented nor registered. Asymmetry confirmed: Profile API keys ARE masked via makeApiKeyHint (claude_service.cpp:77-87, first-6+***+last-4) and displayed as hint (claude_module.cpp:165)."
+  },
+  {
+   "flow": "todo",
+   "location": "D:/project/gui/DevDesk/src/module_todo/todo_module.cpp:1891-1899（移动到）、1936-1942（标记完成）、1915-1921（删除）",
+   "problem": "三个按钮都只 detailOpen_ = false 后直接调 doMoveTask/doCompleteTask，不调 doUpdateTask，也不检查表单是否比 DB 里的原值有改动。整个详情弹窗只有「保存」一条持久化路径，弹窗也没有任何「未保存更改」指示。",
+   "scenario": "用户点开任务详情，改了标题（或描述/优先级/标签），不点底部「保存」而是顺手点「移动到」某列或「标记完成」——弹窗直接关闭、移动/完成生效，但刚才改的标题等字段静默丢失，没有任何提示，用户大概率以为已一起保存",
+   "severity": "MEDIUM",
+   "suggestion": "「移动到/标记完成/删除」点击时先 flush 表单（直接复用 save 按钮的 updateTask 逻辑再执行动作），或在弹窗内维护 dirty 标记、有未保存编辑时弹确认。",
+   "dim": "usability",
+   "verdict": "CONFIRMED",
+   "verifyReason": "Verified the full data flow. Detail-dialog form fields write to member state only (title 1720-1728, desc 1739-1749, tags 1816-1863, priority/due similarly) and are persisted solely via the 保存 button → doUpdateTask (1945+). '移动到' (1891-1899) and '标记完成' (1936-1942) both do detailOpen_=false then call doMoveTask/doCompleteTask, which operate purely on DB state (320-329: service_->moveTask; 331-355: completeTask+move) — form edits silently discarded. '删除' (1915-1921) opens confirm without flush (moot for the deleted task but same pattern). No dirty flag or unsaved-changes indicator anywhere (grep dirty/未保存 in todo_module: zero hits); not registered in KNOWN_LIMITATIONS/backlog."
+  },
+  {
+   "flow": "markdown",
+   "location": "D:/project/gui/DevDesk/src/module_markdown/markdown_module.cpp:1853-1856（空名只写 status_）、1885-1889（新建失败只写 status_）；对照 1862-1866（非法路径走 toast）",
+   "problem": "错误反馈写进 drawHeader 的 subtitle（markdown_module.cpp:291-293），与 Todo 模块已修掉的「subtitle 兼任操作日志」反模式相同（todo_module.cpp:539-546 注释明确记录了这次修复，Markdown 没跟上）。同弹窗内两条校验路径一个 toast 一个 subtitle，行为也不一致。",
+   "scenario": "用户在新建笔记弹窗里没输名字直接点「创建」——弹窗不关、也没有任何可见反馈：错误文案「笔记名不能为空」被写在 40px 之外、叠在弹窗遮罩下的页头副标题里（「N 篇笔记 · 笔记名不能为空」），用户只觉得按钮没反应；service 创建失败（如目录无写权限）同样只有副标题提示",
+   "severity": "MEDIUM",
+   "suggestion": "弹窗内嵌红字错误行（照抄 claude_module 表单的 formError_ 模式：claude_module.cpp:1207-1212），错误随下一次输入清除。",
+   "dim": "usability",
+   "verdict": "CONFIRMED",
+   "verifyReason": "commitNewNote: empty name → status_='笔记名不能为空' only (1853-1856), create failure → status_ only (1885-1889), while unsafe path → status_ + showToast (1861-1866) — inconsistent paths within the same dialog confirmed. status_ renders in the header subtitle 'N 篇笔记 · <status>' (291-293), outside the modal. The new-note dialog content (1253-1315) has title/hint/input/cancel/confirm and no error element. Todo's documented fix of the same antipattern verified (todo_module.cpp:539-546 comment + setStatus→toast), and the claude formError_ in-dialog pattern exists (claude_module.cpp:1207-1212). Scenario holds: dialog stays open, no toast, no in-dialog feedback — button appears dead."
+  },
+  {
+   "flow": "markdown",
+   "location": "D:/project/gui/DevDesk/src/module_markdown/markdown_module.cpp:1844-1896（commitNewNote→openNote 全程无焦点操作；EUI input 无 autofocus API，模块层也未写状态）",
+   "problem": "ux-design §4 隐含体验 #6 把这个流程列为 P1 差距并给出修法（新建后自动 focus；支持默认名快速创建），§7 Phase 1 变更清单明确含「新建即聚焦」，但状态栏做了、聚焦没做，CHANGELOG/backlog/KNOWN_LIMITATIONS 均无砍掉记录——对「文档驱动」的项目这是承诺与实现脱节。",
+   "scenario": "用户点「+ 新建笔记」→ 弹窗输名 → 创建 → 弹窗关、笔记打开，然后开始打字——没反应，必须再点一下编辑器才获得焦点。这正是 markdown-editor-ux-design §4 #6 自己批评的「约 6 步，且新建后编辑器没有焦点」流程，spec 把「新建即聚焦 + 默认名快速创建」列为 Phase 1 交付项",
+   "severity": "MEDIUM",
+   "suggestion": "openNote 后把焦点设进编辑器（InputState 无公开 focus API 则经 onKeyEvent 同款状态直写通道处理，或在 EUI-NEO 上游补 input.requestFocus 小 PR 并登记）；顺手支持空名直接创建「无标题笔记.md」。",
+   "dim": "usability",
+   "verdict": "CONFIRMED",
+   "verifyReason": "commitNewNote→openNote (1844-1896) contains zero focus operations; grep 'focus' in markdown_module.cpp: no matches. EUI-NEO InputBuilder exposes only an onFocus callback, no focus()/autofocus() setter; Ui::setFocusedId is private (dsl.h:1541, friend-only). Without input focus, plain typing does nothing — the editor onKeyEvent (941-973) handles only Tab/Enter/Ctrl-combos and returns false for plain keys. Spec verified: markdown-editor-ux-design.md line 128 (§4 #6, '新建后编辑器没有焦点…约 6 步', P1) and line 283 (§7 Phase 1 deliverable '保存状态栏 + 新建即聚焦 + contentKey bug 修复'). The status bar half of that same item was implemented (1067-1102) while focus was not; grep 聚焦/focus in CHANGELOG.md/KNOWN_LIMITATIONS.md/backlog: zero records of dropping it."
+  },
+  {
+   "flow": "markdown",
+   "location": "D:/project/gui/DevDesk/src/module_markdown/markdown_module.cpp:941-973（Ctrl+B/I/K、Tab、Enter 续行）、1451-1458（Ctrl+Shift+P）；todo_module.cpp:998-1025（拖拽）",
+   "problem": "Todo 副标题是「静态操作说明」好样板（todo_module.cpp:650-652），Markdown 副标题却是动态状态文本（笔记数 + 最后一次操作结果），从未提示任何快捷键；拖拽卡片无 cursor 变化、无拖拽把手，onClick 开详情与 onDrag 移动全靠用户偶然发现。主 spec devdesk-design.md:1293 承诺的 Ctrl+N 快速新建任务全库无实现（grep InputKey::N 零命中），也未登记砍掉。",
+   "scenario": "开发者用户想加粗文字，第一反应按 Ctrl+B——碰巧能用（Phase 2 键盘流已实现）；但除非碰巧试到，否则永远不会知道 Tab 缩进、Enter 自动续列表、Ctrl+K 插链接、Ctrl+Shift+P 三态切换这些效率功能——界面上零提示、USER_GUIDE 也一个字没写。Todo 卡片可拖拽跨列同样无任何视觉/文案暗示（副标题只写了点击/键盘/右键）",
+   "severity": "MEDIUM",
+   "suggestion": "Markdown 副标题改静态操作说明（对齐 Todo 模式）：「Ctrl+Shift+P 切换视图 · Ctrl+B/I/K 格式 · Tab 缩进 · Enter 续列表」；实现或正式砍掉 Ctrl+N；拖拽可先在副标题补一句「拖动卡片跨列移动」。",
+   "dim": "usability",
+   "verdict": "CONFIRMED",
+   "verifyReason": "Shortcuts implemented but undocumented in-app: Ctrl+B/I/K/Tab/Enter (941-973), Ctrl+Shift+P (1451-1458); markdown subtitle is dynamic status (291-293) never mentioning shortcuts, in contrast to Todo's static instruction subtitle (652). Drag (998-1025) is onPress/onDrag/onRelease on a plain rect — no cursor change, no handle, and the Todo subtitle omits drag. USER_GUIDE contains zero Ctrl/快捷键 mentions (drag IS documented at USER_GUIDE:60, but the finding scoped 'USER_GUIDE 一个字没写' to the shortcuts, which is accurate — and that drag doc itself is imprecise, saying adjacent-column only while hitDropColumn targets any column). Ctrl+N: promised at devdesk-design.md:1292, zero InputKey::N / 'N' key handling in src (all onKeyEvent implementations checked: markdown editor 901, markdown module 1451, todo 608 — none handle N), not registered as dropped anywhere."
+  },
+  {
+   "flow": "文档",
+   "location": "D:/project/gui/DevDesk/docs/USER_GUIDE.md:26、103（自动启动代理）、32（设置按钮置灰）、49、151（↻ 重扫）、59（卡片 ✓ 完成）、61（列删除无入口）、95（日志清理时机）",
+   "problem": "指南停留在 2026-09-22 早间快照，provider-config Phase B（代理默认不启动）、W8（5 秒自动轮询、重扫按钮删除）、W9（右键列头菜单、详情删除确认）之后的变更全部没跟上；键盘流/三态视图/标签/大纲/模块管理/桌宠/窗口效果等新功能只字未提。对「用户不熟悉 C++、反馈全靠文档」的项目，手册失真等于产品失真。",
+   "scenario": "第一次用的开发者按指南 §4.1 预期「应用启动即自动在 127.0.0.1:8888 启动代理（无需手动开）」，直接照 §4.2 把 Claude Code 指到 8888——结果代理默认不启动（Phase B 硬性需求 1），调用全挂，还得翻 FAQ/日志才知道要点「启动代理」；同理找不到重扫按钮、在卡片上找不到 ✓、以为列不能删",
+   "severity": "MEDIUM",
+   "suggestion": "以当前代码为准全量重写 USER_GUIDE（重点：代理手动启动、右键菜单体系、键盘流、模块开关重启生效）；把「USER_GUIDE 与行为同步」加进每个波次的收尾 checklist（与 CHANGELOG 同级）。",
+   "dim": "usability",
+   "verdict": "CONFIRMED",
+   "verifyReason": "Every cited line verified stale against current code. :26/:103 claim proxy auto-starts — Phase B hard requirement 1 made claudeProxyAutoStart default false (provider-config-design §5.2/Phase B; settings_module.cpp:895 '默认不随应用启动，可在 Claude 页手动启动'). :32 says gear button is '置灰装饰' — home_module.cpp:268-272 now navigates to Settings. :49/:151 reference the '↻ 重扫' button — removed in W8 (markdown_module.cpp:511 comment '重扫按钮已移除（5 秒自动轮询）'). :59 says '点 ✓ 完成' on cards — the only ✓ on a card is a done-indicator text with no onClick (1082-1092); completion is via detail dialog/context menu. :61 says column delete has no UI — W9 added right-click column-header menu with 删除列 (todo 875-877, 1257). :95 says retention cleans '下次启动' — now immediate on change (settings_module.cpp:180-194, comment '此前只在启动时读档清理一次，改档要重启才生效'). Keyboard flow/three-state view/tags/outline/module management/pet/window effects absent from the full guide; header still says baseline 2026-09-22 124/124 vs current 304 tests."
+  },
+  {
+   "flow": "claude",
+   "location": "src/module_claude_proxy/settings_sync.cpp:350-352（注释说『env 全空且接管前没有 env 块 → 不留空 env 键』，代码却无条件 root.set(\"env\", rebuilt)）",
+   "problem": "还原逻辑对「接管前没有 env 块」的场景缺少判断分支，用户文件被留下一个多余的空 env 对象；同时整个文件被 pretty-print 重排。语义上托管键确实恢复原值、用户键未动，但「其余字段原样保留」的承诺在文件形态层面不成立。",
+   "scenario": "用户的 ~/.claude/settings.json 原本只有 {\"model\": \"...\"}（无 env 块）→ 启动代理又停止 → 文件变成 {\"model\": \"...\", \"env\": {}}，格式还被重排了；用 git 管理配置的用户会看到无意义 diff。",
+   "severity": "LOW",
+   "suggestion": "restore 末尾加判断：rebuilt 为空且快照前的 root 无 env 键 → 不写 env 键；顺带把注释与实现对齐。",
+   "dim": "flows",
+   "verdict": "CONFIRMED",
+   "verifyReason": "settings_sync.cpp:350-352: the comment promises 'env 全空且接管前没有 env 块 → 不留空 env 键' but the very next statement unconditionally executes root.set(\"env\", JsonValue(rebuilt)) — the described branch does not exist. Traced the exact scenario: user with {\"model\":\"...\"} (no env) → takeOver snapshots empty env → restore rebuilds an empty env (no user keys to keep, no snapshot keys to restore) → file ends up {\"model\":\"...\",\"env\":{}}. The pretty-print reformat is inherent to the sync design (both takeOver and restore stringify pretty), and the in-app guide text does promise '其余字段原样保留' (claude_module.cpp:293), which the stray empty env key violates at file-shape level. Semantically harmless, LOW severity is appropriate. Comment/implementation mismatch is objective."
+  },
+  {
+   "flow": "todo",
+   "location": "src/module_todo/todo_module.cpp:1953-1975（保存回调：completedAt 无条件重盖 now；标题无空校验）；src/module_todo/todo_service.cpp:509 起（updateTask 无 title 校验）",
+   "problem": "「已完成的完成时间」在每次保存时被重写为当下（新建任务路径有 title 空校验，详情保存路径没有）。完成时间目前虽无处展示，但数据被静默篡改，未来做「本周完成 N 件」类统计时会失真；空标题卡片在看板上渲染成无题卡。",
+   "scenario": "用户上周完成的任务想补一句备注 → 打开详情改描述点保存 → completed_at 被改成今天；或者把标题删干净点保存 → 看板上出现一张没有标题的空卡。",
+   "severity": "LOW",
+   "suggestion": "保存回调保留原 completedAt（detailCompleted_ 为 true 时从原任务取值而非 time(nullptr)）；标题空时 doUpdateTask 前置校验 + toast，与 doCreateTask 对齐。",
+   "dim": "flows",
+   "verdict": "CONFIRMED",
+   "verifyReason": "Detail-save callback builds updated.completedAt = detailCompleted_ ? time(nullptr) : nullopt (todo_module.cpp:1963-1965), overwriting the original completion timestamp on every save of a completed task — editing a description a week later rewrites completed_at to today. Title flows in unchecked (updated.title = detailTitle_), doUpdateTask (todo_module.cpp:394-403) adds no validation, and TodoService::updateTask (todo_service.cpp:508-553) binds title as-is — an emptied title saves and renders as a title-less card. Contrast verified: doCreateTask rejects empty titles with a toast (todo_module.cpp:294-297). completedAt is indeed displayed nowhere (grep: only done-checks and detail dialog state), so the mutation is silent. Not registered."
+  },
+  {
+   "flow": "markdown",
+   "location": "src/module_markdown/markdown_module.cpp:613-620（drawNoteList 只渲染 noteDisplayName = 文件名）",
+   "problem": "搜索结果列表只显示文件名不带目录，同名文件无法区分；树模式靠分组消除歧义，搜索模式反而丢了这层上下文。",
+   "scenario": "用户建了 工作/周会.md 和 个人/周会.md，搜索「周会」→ 结果列表出现两行一模一样的「周会.md」，只能逐个点开试。",
+   "severity": "LOW",
+   "suggestion": "搜索态的行名改用 noteDisplayPath（或「文件名 + 二级目录」灰字后缀，Home 最近编辑列表就是这种『标题 · 目录』双行样式，可直接复用）。",
+   "dim": "flows",
+   "verdict": "CONFIRMED",
+   "verifyReason": "noteDisplayName returns only relativePath.filename() (markdown_module.cpp:124-126) and drawNoteList renders it for every search hit (:613-620), so 工作/周会.md and 个人/周会.md produce two identical '周会.md' rows in search mode; clicking each opens a different note (onClick captures the full path), so the only disambiguation is trial. Tree mode avoids this via grouping (md_tree.cpp addGroup shows path-minus-prefix under the folder row), and tag-filter mode uses the tree — only the flat search list loses the context. The suggested fix pattern genuinely exists in the same codebase: Home's recent list renders recentNoteName + recentNoteSubtitle (name on top, time+directory below, home_module.cpp:462-480)."
+  },
+  {
+   "flow": "markdown",
+   "location": "src/module_markdown/markdown_module.cpp:461-473（左栏标签 chip 最多 3 行，超出直接 break 丢弃）；:995-999（编辑器标签行溢出截断，无 +N 提示）",
+   "problem": "两处标签显示边界都是静默截断：左栏第 4 行起的标签彻底不可见（用户会以为标签丢了/删错了），编辑器标签行截断也没有『还有 N 个』的提示。代码内 ponytail 注释自知此天花板，但属用户可感知的信息丢失。",
+   "scenario": "用户给不同笔记打了十几个标签，左栏只显示得下约 3 行（约 10 个）→ 最近的标签在筛选区找不到，以为 setTags 失败了。",
+   "severity": "LOW",
+   "suggestion": "截断处补一个「+N」chip（点击可暂列全部/提示去搜索框按标签名过滤）；左栏区域改 scrollView 是已登记的升级路径，可一并做。",
+   "dim": "flows",
+   "verdict": "CONFIRMED",
+   "verifyReason": "Left panel tag area wraps to at most 3 rows then breaks out of the loop, dropping the rest (markdown_module.cpp:467-472, with the self-aware ponytail comment '标签很多时改 scrollView 虚拟列表'); allTags_ is ordered alphabetically (listAllTags: ORDER BY t.name, markdown_service.cpp:935), so with ~10+ tags at 240px sidebar width the later-alphabet ones are simply invisible in the filter area. Editor tag bar (drawTagBar) breaks on overflow with no +N indicator (:995-999, ponytail comment at :984-985). Both truncations are silent information loss a user can mistake for failed setTags. The scrollView upgrade path is acknowledged in code but not registered in KNOWN_LIMITATIONS/backlog as a user-facing cap."
+  },
+  {
+   "flow": "markdown",
+   "location": "src/module_markdown/md_tree.cpp:13-17（目录集合只取路径第一段）；src/module_markdown/markdown_module.cpp:1341-1348（新建文件夹弹窗提示「可用 / 建多级；新建后树里出现空文件夹行」）",
+   "problem": "树是二级结构：一级目录行 + 其下所有文件（不管多深，深层路径整体当文件名显示）；listTopFolders 只枚举磁盘一级目录，所以「a/b」里的空 b 目录在树里不可见。弹窗文案承诺了树里出现空文件夹行，多级场景兑现不了。",
+   "scenario": "用户在新建文件夹弹窗输入「工作/2026」→ 创建成功、toast 也说已创建 → 左栏树里只看到「工作」，没有「2026」行，用户以为没建成，又建了一遍。之后在里面建笔记，树里显示的文件名是「2026/周会.md」而不是「周会.md」。",
+   "severity": "LOW",
+   "suggestion": "最省改法：弹窗提示改为「仅支持一级文件夹（多级目录中的笔记会归到第一级分组显示）」；或者 buildTreeRows 的目录集合改用全路径父目录并按深度缩进渲染（改动较大，看真实诉求）。",
+   "dim": "flows",
+   "verdict": "CONFIRMED",
+   "verifyReason": "md_tree.cpp:13-17 derives folder rows from note paths using only the first '/' segment; listTopFolders enumerates just the first directory level non-recursively (markdown_service.cpp:1060-1077, fs::directory_iterator without recursion); createFolder uses create_directories and happily creates multi-level paths (:1079-1092). So '工作/2026' succeeds and toasts '已创建文件夹', but the tree only ever shows a '工作' folder row (from first-level enumeration) — the empty '2026' level is invisible, and a note at 工作/2026/周会.md renders as a file named '2026/周会.md' under 工作 (addGroup name = p.substr(prefix.size())). The dialog hint '可用 / 建多级；新建后树里出现空文件夹行' (markdown_module.cpp:1344) over-promises for the multi-level case exactly as described. The user's '又建了一遍' reaction is the natural reading of the visible state."
+  },
+  {
+   "flow": "home/todo",
+   "location": "src/module_home/home_module.cpp:352-357（逾期卡 onClick 只 navigateTo(Todo) 无负载）；对照 todo_module.cpp:1103-1119（Todo 已有 action: 负载消费机制）",
+   "problem": "Home 的逾期卡是一个强上下文入口（红色警示数字），但跳转后上下文全丢；Todo 页其实已有现成的逾期弹窗和跨模块负载通道，就差一个 action:show_overdue 的消费分支。",
+   "scenario": "用户看到首页「逾期任务 5」红色卡片，点进去想看是哪 5 件 → 落在普通看板上，还得自己找到右上角的「逾期 5」按钮再点一次。",
+   "severity": "LOW",
+   "suggestion": "逾期卡 onClick 改为 navigateTo(Todo, \"action:show_overdue\")，Todo 的 consumeNavPayload 加一个分支调 openOverdueDialog()（机制现成，两侧各 ~5 行）。",
+   "dim": "flows",
+   "verdict": "CONFIRMED",
+   "verifyReason": "home_module.cpp:352-356: overdue stat card's onClick is plain navigateTo(PageId::Todo) with no payload, while the module's own navigateTo helper takes an optional payload (line 562) and other entries already use it ('open:' at :442, action payloads at :512/:530). Todo's consumeNavPayload handles only 'action:new_task' (todo_module.cpp:1103-1119) — no show_overdue branch — and openOverdueDialog exists (todo_module.cpp:244), currently reachable only via the page's own 逾期 N button (:718-720). So the red warning card dumps the user on the plain board with context lost, and the fix (payload + one consume branch) matches two already-proven patterns. All mechanics in the finding are real."
+  },
+  {
+   "flow": "pet",
+   "location": "D:/project/gui/DevDesk/src/module_pet/pet_window.cpp:361-380（钳制只按主显示器工作区）",
+   "problem": "桌宠设计 §4.6/M2 承诺「位置多显示器钳制」（M1 允许先主屏、M2 完善）；代码注释仍写着「M1 先主显示器，多显示器钳制是 M2」，但 backlog 已宣布 M2 完成，该升级未做也未登记，副作用是副屏位置永远无法持久化。",
+   "scenario": "双显示器用户把桌宠拖到副屏陪伴写代码 → 重启 DevDesk → 桌宠被强行钳制回主屏右下角，副屏摆放每次丢失。",
+   "severity": "LOW",
+   "suggestion": "遍历显示器工作区，位置落在任一显示器内即视为合法；至少不要把副屏坐标拉回主屏（把越界钳制改成仅当坐标不在任何显示器时才重置）。",
+   "dim": "spec-compliance",
+   "verdict": "CONFIRMED",
+   "verifyReason": "Verified: startPetWindow (pet_window.cpp:361-380) clamps a known position solely against getPrimaryMonitorWorkArea — a secondary-monitor coordinate (e.g. x=2200 with primary work area 0..1920) gets clamped back to the primary screen on every launch; the code comment at 359 still says 「M1 先主显示器，多显示器钳制是 M2」. Dragging itself doesn't clamp (savePetPosition writes raw coords), so the pet CAN live on a secondary screen all session — the position is simply lost on restart. Pet design M2 deliverable list includes 「位置多显示器钳制」 (R4: 「M1 先主显示器钳制，M2 完善」), and backlog marks M2 ✅. Not registered in KNOWN_LIMITATIONS or backlog (grep 多显示器/副屏 = zero)."
+  },
+  {
+   "flow": "todo",
+   "location": "D:/project/gui/DevDesk/src/module_todo/todo_module.cpp:608-624（onKeyEvent 只处理 Ctrl+↑/↓）",
+   "problem": "总设计 §8.2 用户操作第 2 条承诺「Cmd+N / Ctrl+N 快速新建任务（在第一列）」，UI 线框也标了 [⌘N 新建]；实现 onKeyEvent 只处理上下键，全仓库无 InputKey::N 处理。未登记。",
+   "scenario": "用户在 Todo 页按 Ctrl+N 想快速新建任务 → 无反应（只有 Ctrl+↑/↓ 移动和右键菜单），必须用鼠标点右上角按钮或列头 +。",
+   "severity": "LOW",
+   "suggestion": "onKeyEvent 加 Ctrl+N → openNewTaskDialog(第一列)（约 3 行）；顺手把快捷键写进 subtitle 操作提示。",
+   "dim": "spec-compliance",
+   "verdict": "CONFIRMED",
+   "verifyReason": "Verified: todo onKeyEvent (todo_module.cpp:608-624) returns false for anything but Ctrl/Cmd+Up/Down; grep for InputKey::N / Ctrl+N across todo_module, markdown_module and main.cpp = zero hits, so Ctrl+N is an app-wide no-op. Main design §8.2 user op 2 promises 「Cmd+N / Ctrl+N 快速新建任务（在第一列）」 and the §8.2 wireframe labels [⌘N 新建]. The event-routing channel exists (main.cpp:459-462 forwards unconsumed keys to the current module) and openNewTaskDialog exists, so the ~3-line fix is feasible. Not registered."
+  },
+  {
+   "flow": "markdown",
+   "location": "D:/project/gui/DevDesk/src/module_markdown/markdown_module.cpp:929-973（handleEditorKey）/1451-1458（onKeyEvent）",
+   "problem": "总设计 §8.1 用户操作第 3 条与 §10.2 数据流以「Cmd+S/Ctrl+S 保存」为锚；后来的 markdown-editor-ux-design 把保存重构为自动保存 + 状态栏（已兑现），但总设计从未修订，Ctrl+S 承诺悬空。未登记。",
+   "scenario": "习惯性按 Ctrl+S 想立刻保存的用户 → 无任何反馈（不弹 toast、状态栏 ● 不变）；400ms 防抖后内容其实已落盘，但「按了没反应」会让用户怀疑没存上。",
+   "severity": "LOW",
+   "suggestion": "handleEditorKey 加 Ctrl+S → 立即 saveEditor()（跳过防抖）并给可见反馈；或修订总设计 §8.1 为「自动保存」——二选一消除承诺与实现的分叉。",
+   "dim": "spec-compliance",
+   "verdict": "CONFIRMED",
+   "verifyReason": "Verified: handleEditorKey (markdown_module.cpp:929-973) handles only Tab/Enter/Ctrl+B/I/K; module onKeyEvent (1451-1458) only Ctrl+Shift+P; EUI-NEO input's built-ins are Ctrl+A/C/X/V/Z/Y — so Ctrl+S is an app-wide no-op, and pressing it during the 400ms debounce window leaves the status bar still showing 「● 未保存」 with zero feedback (drawStatusBar 1082-1091). Main design §8.1 op 3 (「Cmd+S/Ctrl+S 保存」) and §10.2 (whole save flow anchored on Cmd+S) were never revised after the ux-design autosave redesign, and the descope is registered nowhere. The finding itself correctly concedes the later design's autosave+status-bar was delivered — the surviving gap is precisely the unrevised spec fork plus the no-feedback keypress, both real."
+  },
+  {
+   "flow": "markdown",
+   "location": "D:/project/gui/DevDesk/src/module_markdown/markdown_module.cpp:840-922（drawEditorColumn 无当前行高亮）",
+   "problem": "ux-design §4 #4 把「当前行高亮」列为 P1 交付（模块层画一条 rect，InputState 有光标行信息可算，成本小）；实现未做且未登记。（caret 闪烁属 P2「可放弃」，不算缺口。）",
+   "scenario": "长文档编辑中，用户视线在编辑/预览两栏间切换后回来 → 无行号、无当前行底色，只有 1.5px 静态 caret，需要花时间重新定位光标在哪。",
+   "severity": "LOW",
+   "suggestion": "在编辑器 stack 里按 InputState.cursor 算行 y，画一条 hover 色 30% 透明度的行底 rect（spec §6.3 已给配色），约 20 行。",
+   "dim": "spec-compliance",
+   "verdict": "CONFIRMED",
+   "verifyReason": "Verified: drawEditorColumn (markdown_module.cpp:840-922) draws only panel bg, tag bar, the input, and status bar — no line-highlight rect; grep 当前行/行高亮/lineY in the module = zero; EUI-NEO's input internals track layout.cursorLine (input_model.h:120+) purely for caret/scroll math and render no highlight, so nothing upstream supplies it either. ux-design §4 #4 lists 当前行高亮 as a P1 deliverable (模块层 rect, cost 小, with §6.3 giving the exact hover-30% color); the neighboring P1 items were delivered, this one silently skipped. Not registered. (Caret blink is correctly excluded — P2 「可放弃」.)"
+  },
+  {
+   "flow": "claude",
+   "location": "D:/project/gui/DevDesk/src/module_claude_proxy/claude_module.cpp:1796-1817（doTestConnection 结果 toast 只拼状态码）",
+   "problem": "总设计 §8.3 用户操作第 2 条承诺「显示状态码 + 耗时」；elapsedMs 在 testConnection 已采集（claude_service.cpp:628-630 只进日志），UI toast 丢了后半句。未登记。",
+   "scenario": "用户点「测试连通」→ toast「连通成功：上游返回 HTTP 200，API 可用」→ 想判断这条供应商链路快不快、该不该切 → 耗时数字不在界面上，只能翻日志。",
+   "severity": "LOW",
+   "suggestion": "testResultMsg_ 拼上 resp.elapsedMs（数据现成，一行改动，如「HTTP 200 · 347ms」）。",
+   "dim": "spec-compliance",
+   "verdict": "CONFIRMED",
+   "verifyReason": "Verified: doTestConnection (claude_module.cpp:1796-1817) builds testResultMsg_ from the status code only (「上游返回 HTTP 200，API 可用」 / 「（检查 API Key 或 Base URL）」); elapsedMs is captured in the Response and written only to the log at claude_service.cpp:628-630 (LOG_INFO with ms). The toast is the sole result surface — the recent-calls latency column covers proxy calls, not the test. Main design §8.3 user op 2 promises 「显示状态码 + 耗时」. Not registered."
+  },
+  {
+   "flow": "全局",
+   "location": "D:/project/gui/DevDesk/src/module_settings/settings_module.cpp（外观卡/模块卡/桌宠卡/目录卡/代理卡/日志卡之外无对应设置项）",
+   "problem": "总设计 §8.5 设置清单 10 项中：第 1 项的「跟随系统」、第 4 项编辑器字体下拉（JetBrains Mono/Inter/跟随系统/自定义路径——字体文件本就随包分发）、第 8 项脱敏粒度、第 9 项日志级别、第 10 项关于卡，共 5 个子项未实现且全部未登记（第 2 项目录、第 5 项端口另见独立条目）。",
+   "scenario": "用户想换编辑器等宽字体、想让主题跟随系统深浅、想查版本号与开源许可、想把 API key 提示从「末 3 位」改「完全隐藏」、或把日志调到 Debug 排查问题 → 设置页都没有这些入口。",
+   "severity": "LOW",
+   "suggestion": "优先补「关于」卡（版本/许可证/依赖，纯静态）与日志级别下拉（core::log::setLevel API 已有）；字体下拉可后置，但应在 KNOWN_LIMITATIONS 登记取舍而不是静默消失。",
+   "dim": "spec-compliance",
+   "verdict": "CONFIRMED",
+   "verifyReason": "Verified all five sub-items absent: SettingsConfig (settings_config.h) carries only darkTheme(bool — so no 跟随系统 third option per §8.5 item 1; appearance card offers exactly 深色/浅色 buttons)/fontScalePercent/logRetentionDays/claudeProxyAutoStart/windowEffect/enabledModules — no fontFamily, no masking granularity, no log level; the settings page's cards are exactly appearance/modules/pet/directory/proxy/log-retention — no 关于 card (grep 关于/版本/许可证 = zero), no font dropdown, no log-level dropdown (drawLogCard 1000-1062 is retention only), no masking selector. core::log::setLevel does exist (logging.h:12) and fonts ship alongside the exe (KNOWN_LIMITATIONS Windows-2), so both recommendations are grounded. Items 3/6/7 of §8.5 are implemented (font scale, token+regen, retention) — the finding's enumeration of the five missing sub-items is exact, and none is registered."
+  },
+  {
+   "flow": "全局",
+   "location": "todo_module.cpp:1489-1494（实底 error 按钮）vs claude_module.cpp:1602-1610、settings_module.cpp:1110-1119（浅底描边 + error 文字）",
+   "problem": "三处确认弹窗两套危险按钮视觉：todo 删任务/删列的确认按钮是 error 色实底（视觉分量重），claude 删 Profile 和 settings 重新生成 token 的确认按钮是浅底描边红字（分量轻）。同一语义「不可恢复的确认」给出两种危险暗示。",
+   "scenario": "用户先在 Todo 里删过任务（确认按钮是一块醒目的实底红色），再到 Claude 页删 Profile——确认按钮变成了一圈细细的红字描边，视觉上像普通次要按钮，危险暗示骤减。",
+   "severity": "LOW",
+   "suggestion": "抽公共 confirmDialog(title, body, onConfirm) 帮助函数，危险按钮统一为实底 error 样式（以 todo 现状为准），三处调用方收敛。",
+   "dim": "interaction",
+   "verdict": "CONFIRMED",
+   "verifyReason": "Verified all three. todo delete confirm: solid error fill — .colors(error, error, error) + onPrimary text (todo_module.cpp:1494-1495). claude delete confirm: surfaceElevated background + error-colored text + default border (claude_module.cpp:1607-1610). settings regen-token confirm: identical light style (settings_module.cpp:1115-1119). Same 'irreversible destructive confirm' semantic rendered with two different visual weights."
+  },
+  {
+   "flow": "全局",
+   "location": "claude_module.cpp:1720（成功图标 fa-circle-check 0xF058）vs markdown_module.cpp:1411、todo_module.cpp:557（fa-check 0xF00C）；todo_module.cpp:551-560（toast 只设 title 不设 message）",
+   "problem": "同类操作结果提示的图标、信息结构不统一：成功一边用 ✓（fa-check）一边用 ⊙（fa-circle-check）；todo 的 toast 无 message 行（单行矮条），md/claude 的 toast 带标题+正文两行。视觉高度、信息密度、图标语义都不同。",
+   "scenario": "用户在 Todo 完成任务看到的是单行小 toast，切到 Claude 启动代理看到的却是带图标和两行文字的 toast，成功图标还是两种不同的对勾——用户感知不到这是同一套反馈系统。",
+   "severity": "LOW",
+   "suggestion": "定 toast 规范：成功=fa-circle-check、失败=fa-triangle-exclamation；title=动作结果、message=对象与详情；todo 的 setStatus 补 message 通道。",
+   "dim": "interaction",
+   "verdict": "CONFIRMED",
+   "verifyReason": "Verified all three toasts. claude: icon 0xF058 (fa-circle-check), title + message both set (claude_module.cpp:1720-1722). markdown: icon 0xF00C (fa-check), title + message (markdown_module.cpp:1406-1411). todo: icon 0xF00C, .title() only — no .message() call at all (todo_module.cpp:551-560). Two different success icons plus inconsistent information structure (single-line vs title+body) confirmed."
+  },
+  {
+   "flow": "markdown",
+   "location": "src/module_markdown/markdown_module.cpp:1658-1687（openNote 不清 conflictOpen_）、1766（conflictOpen_ 短路新检测）、1412（action 按钮作用于 currentPath_）",
+   "problem": "冲突提示是全局单例状态但绑定的是「当前笔记」这个可变上下文：切笔记后提示文案指向旧笔记、动作却作用于新笔记，且冲突态期间新笔记的外部修改检测被短路，形成既误导又漏检的双重问题。",
+   "scenario": "笔记 A 弹出「文件已被外部修改」的冲突提示还没处理，用户先点了笔记 B——提示还挂在屏幕上、文案仍是 A 的路径，但点「重载磁盘版本」实际重载的是 B；期间 B 自己被外部修改也不会再触发检测，直到用户处理掉这条旧提示。",
+   "severity": "LOW",
+   "suggestion": "openNote() 开头检测 conflictOpen_：先 resolveConflict(false) 收掉旧冲突（旧笔记的本地编辑随后由 saveEditor 正常落盘），再执行切换，避免冲突态跨上下文存活。",
+   "dim": "interaction",
+   "verdict": "CONFIRMED",
+   "verifyReason": "Core defect verified: openNote (markdown_module.cpp:1658-1687) never touches conflictOpen_ (set only at 1794, cleared only at 1820 in resolveConflict); the conflict toast is non-modal so clicking note B (tree row onClick→openNote, 705-708) mid-conflict is reachable. Action misdirection confirmed: '重载磁盘版本' (1412) → resolveConflict(true) → reloadCurrentNote reads currentPath_, which is now B. Missed detection confirmed: checkCurrentNoteOnDisk early-returns while conflictOpen_ (1765), and dismissing via ✕ calls syncCurrentMtime() (1829) which swallows any B change that occurred during the window. One sub-detail corrected: the toast message is recomputed from currentPath_ every compose frame (1407-1410), so after switching it displays B's path — it falsely attributes A's conflict to the new note rather than still showing A's path as the finding states. The misleading + missed-detection essence stands (and openNote's leading saveEditor() at 1660 additionally force-writes A's local text over the disk version before the user ever chooses, making the switch path worse than described)."
+  },
+  {
+   "flow": "pet",
+   "location": "D:/project/gui/DevDesk/src/module_pet/pet_window.cpp:248-250（菜单项）、285-286（app::requestExit 直退）",
+   "problem": "退出路径无确认（主窗点 X 是隐藏到托盘，整个应用仅托盘 Exit 和宠物菜单两处真退出，宠物菜单这处最容易误触且与「隐藏桌宠」语义相邻）；属设计外私增项。",
+   "scenario": "用户右键桌宠想换肤或开穿透，菜单一共 5-6 项挤在 190px 小菜单里，「隐藏桌宠（本次会话；重启后恢复）」正上方就是「退出 DevDesk」——手滑点错直接整个应用退出（触发退出保存流程），无任何确认；设计文档 §4.5 的菜单集合只有 穿透/换肤/重置/关闭桌宠，并没有整应用退出项",
+   "severity": "LOW",
+   "suggestion": "删除「退出 DevDesk」项（退出走托盘即可），或挪进二级子菜单/加确认弹窗。",
+   "dim": "usability",
+   "verdict": "CONFIRMED",
+   "verifyReason": "pet_window.cpp:248-250: menu items in order 位置重置 / 隐藏桌宠（本次会话；重启后恢复） / 退出 DevDesk — '隐藏' directly above '退出', adjacency confirmed. Handler at 285-286 calls app::requestExit() with no confirmation dialog. Menu width 190px confirmed (EUI-NEO contextmenu.h:337 width_=190.0f). Design §4.5 (desktop-pet-design.md line 295) specifies exactly 挂机穿透开关/换肤/位置重置/关闭桌宠 — no app-exit item, so this is beyond-spec addition. Main-window X hides to tray (glfw_app_main.cpp:611-613 hideWindowToTray; also KNOWN_LIMITATIONS:29), and grep requestExit in DevDesk src shows pet menu is the only in-app call site besides the tray default Exit — the two-exit-paths claim holds. Not registered in KNOWN_LIMITATIONS."
+  },
+  {
+   "flow": "全局",
+   "location": "D:/project/gui/DevDesk/src/main.cpp:448-454（trayMenu）",
+   "problem": "托盘菜单与侧边栏导航项不对齐；主窗隐藏到托盘后，托盘是唯一入口，改任何设置都要多一跳。",
+   "scenario": "用户点主窗 X 把 DevDesk 藏进托盘，想切个主题——右键托盘菜单只有 首页/笔记/待办/Claude 四项，没有「设置」，必须先 Show 还原主窗再走侧边栏",
+   "severity": "LOW",
+   "suggestion": "trayMenu 数组补一行 {\"设置\", navigateTo(Settings)}，与侧边栏对齐。",
+   "dim": "usability",
+   "verdict": "CONFIRMED",
+   "verifyReason": "main.cpp:449-455: trayMenu = 首页/笔记/待办/Claude + separator, with EUI-NEO default Show/Exit appended (tray_bridge.c expand logic) — no 设置 entry, while the sidebar has 5 entries including Settings (router registers settings unconditionally, main.cpp:180). Main-window close → hideWindowToTray (glfw_app_main.cpp:611-613), so when hidden the tray is the only entry point. Custom tray item callbacks only navigateTo+requestUpdate (main.cpp:450-453) — they do not restore the window; only the default Show item does. So changing any setting while tray-hidden requires Show first: an extra hop, exactly as described."
+  },
+  {
+   "flow": "claude",
+   "location": "D:/project/gui/DevDesk/src/module_claude_proxy/claude_module.cpp:160/166/739/1664（半角括号）、957（model: 前缀）、1748-1751 + claude_service.cpp:756-757（启动失败 toast）",
+   "problem": "①同类文案两套括号风格；②中英混排不一致；③错误 toast 把最常见原因（bind 失败→端口占用）留在日志里，用户可见文案不含原因，可操作性打折（USER_GUIDE FAQ 倒是写了端口占用，但用户不一定会去翻）。",
+   "scenario": "用户阅读 Claude 页详情：「(未启用)」「(暂无调用记录)」用半角括号，而设置页「Markdown 笔记目录（只读）」「（仅显示前 12 条）」用全角——同一个 app 两种标点风格；Profile 卡片写「model: fangzhou/...」英文前缀而详情面板叫「模型映射」；启动代理失败时 toast 只说「代理 server 启动失败 (port=8888)」，最常见的原因（端口被占用）不提示——细节在日志里（http_server.cpp:263 bind_to_port failed），但用户不看日志",
+   "severity": "LOW",
+   "suggestion": "统一全角括号与「模型」中文前缀；启动失败 toast 附原因提示：「端口 8888 可能被占用（详见 logs/devdesk.log）」——bind 结果已在 Server::start 内部可知，向上透传一枚错误码即可。",
+   "dim": "usability",
+   "verdict": "CONFIRMED",
+   "verifyReason": "① Half-width parens in claude_module: '(未启用)' (160), '(无激活 profile)' (166), '(暂无调用记录)' (~739 and 1664) vs full-width elsewhere in the same app — settings 'Markdown 笔记目录（只读）'/'认证 Token（只读）' (settings_module.cpp:807/904), and even within claude_module itself '（保存时全量写入，列表仅显示前…）' (1362) and todo '（仅显示前 N 条）' (1580). ② 'model: ' English prefix on cards (957) vs '模型映射' Chinese label in the detail panel (450). ③ Startup-failure toast chain verified: http_server.cpp:263-266 logs bind_to_port failure and returns bool; claude_service.cpp:756-757 converts to generic '代理 server 启动失败 (port=N)' with no reason; claude_module.cpp:1748-1751 toasts only that message — the most common cause (port occupied) never reaches user-visible UI, only logs. USER_GUIDE:148 FAQ does mention port occupation, as the finding itself acknowledged."
+  }
+ ],
+ "uncertain": [],
+ "refutedCount": 0,
+ "rawCount": 52
+}
