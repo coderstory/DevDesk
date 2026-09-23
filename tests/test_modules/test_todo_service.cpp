@@ -803,3 +803,57 @@ REGISTER_TEST(todo_svc_returning_id_consistency,
     DOCTEST_CHECK(!bTasks.value()[0].completedAt.has_value());
     return true;
 })
+// ---- RETURNING-drain 复查（B）：取行后同连接事务 COMMIT 不被卡 ----
+
+// createColumn/createTask 用 INSERT ... RETURNING 取 id，语句停在结果行时
+// 连接上有 in-progress 状态，同连接的事务 COMMIT 会报
+// "cannot commit transaction - SQL statements in progress"（claude
+// createProfile 曾实测触发，产品审计 2026-09-23 [6]）。本用例构造触发场景：
+// 创建后紧接同连接事务写入 + COMMIT，必须成功。锁定「drain 到 DONE 或
+// ~Statement finalize 释放」两条收口中的对外可见契约；若日后有人把取行后的
+// 代码扩成 in-scope 事务（claude 同款事故），配合源码里的显式 drain 可保持
+// 该契约不破。
+REGISTER_TEST(todo_svc_returning_drain_commit,
+              "TodoService: createColumn/createTask 后同连接事务 COMMIT 不卡死",
+              {
+    TestEnv env("returning_drain");
+    DOCTEST_REQUIRE(env.ready);
+
+    auto& db = env.db->db();
+
+    auto col = env.svc->createColumn("drain列");
+    DOCTEST_REQUIRE(col.isOk());
+    // 紧接同连接事务：BEGIN → 写 → COMMIT（COMMIT 正是未 drain 时撞墙的一步）
+    auto tx1 = db.transaction([&]() -> core::Result<void> {
+        return db.exec("INSERT INTO todo_columns (title, position, color, created_at) "
+                       "VALUES ('事务列', 98, NULL, 0)");
+    });
+    DOCTEST_REQUIRE(tx1.isOk());
+
+    auto task = env.svc->createTask(col.value().id, "drain任务");
+    DOCTEST_REQUIRE(task.isOk());
+    auto tx2 = db.transaction([&]() -> core::Result<void> {
+        return db.exec("INSERT INTO todo_tasks (column_id, title, position, tags, created_at, updated_at) "
+                       "VALUES (1, '事务任务', 98, '[]', 0, 0)");
+    });
+    DOCTEST_REQUIRE(tx2.isOk());
+
+    // 事务确实提交：独立连接能读到两批行
+    {
+        auto probe = core::data::SqliteDb::open(env.path);
+        DOCTEST_REQUIRE(probe.isOk());
+        auto rows = probe.value().exec("SELECT 1");  // 可读性冒烟
+        DOCTEST_REQUIRE(rows.isOk());
+    }
+    auto cols = env.svc->listColumns();
+    DOCTEST_REQUIRE(cols.isOk());
+    bool sawDrain = false;
+    bool sawTxCol = false;
+    for (const auto& c : cols.value()) {
+        if (c.title == "drain列") sawDrain = true;
+        if (c.title == "事务列") sawTxCol = true;
+    }
+    DOCTEST_CHECK(sawDrain);
+    DOCTEST_CHECK(sawTxCol);   // 事务 COMMIT 真的落了库（而不是被静默拒绝）
+    return true;
+})

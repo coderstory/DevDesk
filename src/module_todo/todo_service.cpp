@@ -292,6 +292,20 @@ core::Result<Column> TodoService::createColumn(const std::string& title) {
         return core::Result<Column>::fail(idVal.errorCode(), idVal.errorMessage());
     }
 
+    // 步进到 DONE，释放连接上的 in-progress 语句（RETURNING-drain 复查 B，
+    // 与 settings 簇修 claude createProfile 同款）：RETURNING 取行后不 drain，
+    // 同连接上的事务 COMMIT 会撞 "cannot commit transaction - SQL statements
+    // in progress"。本函数取 id 后虽无 in-scope 事务、~Statement finalize 也
+    // 不影响本行提交（todo_svc_returning_id_consistency 锁定该行为），但取行
+    // 到函数返回之间仍有危险窗口（recursive_mutex 只逐调用持锁，其他线程在
+    // 此窗口对本连接开事务同样会撞上）。显式 drain 把窗口关到函数内部。
+    // 失败极罕见且行已写入，只 WARN（claude createProfile 同款处理）。
+    auto drain = stmt.step();
+    if (drain.isFail()) {
+        LOG_WARN("Todo: INSERT ... RETURNING 收尾 step 失败（行已写入，继续）: " +
+                 drain.errorMessage());
+    }
+
     Column c;
     c.id = idVal.value();
     c.title = title;
@@ -497,6 +511,13 @@ core::Result<Task> TodoService::createTask(int64_t columnId, const std::string& 
     auto idVal = idRow.value().getInt64("id");
     if (idVal.isFail()) {
         return core::Result<Task>::fail(idVal.errorCode(), idVal.errorMessage());
+    }
+
+    // 同 createColumn：drain 到 DONE 关闭 in-progress 窗口（RETURNING-drain 复查 B）
+    auto drain = stmt.step();
+    if (drain.isFail()) {
+        LOG_WARN("Todo: INSERT ... RETURNING 收尾 step 失败（行已写入，继续）: " +
+                 drain.errorMessage());
     }
 
     Task t;
