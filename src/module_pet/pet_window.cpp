@@ -110,6 +110,7 @@ struct PetUiState {
     float menuY = 0.0f;
     double lastInteractionMs = 0.0;  // 最近交互时刻（入睡判定用）
     double lastTickMs = 0.0;         // 上次 onTimer 时刻（气泡倒计时 dt 用）
+    PetDragAnchor dragAnchor;        // 拖拽锚点（见 pet_window.h，抖动修复）
 };
 
 void petCompose(eui::Ui& ui, const eui::Screen& screen) {
@@ -170,15 +171,25 @@ void petCompose(eui::Ui& ui, const eui::Screen& screen) {
                     state.wasDragged =
                         std::abs(event.totalX) + std::abs(event.totalY) > 4.0;
                     if (runtime().handle == nullptr) return;
-                    int x = 0;
-                    int y = 0;
-                    core::window::getWindowPos(runtime().handle, x, y);
-                    core::window::setWindowPos(
-                        runtime().handle,
-                        x + static_cast<int>(event.deltaX),
-                        y + static_cast<int>(event.deltaY));
+                    // 异常取消路径防御：拖拽键已不在按住状态 → 重锚定（防跳变）
+                    if (!event.buttons.contains(event.button)) {
+                        state.dragAnchor.valid = false;
+                    }
+                    // 锚点跟随（pet_window.h）：不能用 event.delta 累加——
+                    // delta 是窗口内相对坐标，窗口自身移动会漂移参考系（抖动）
+                    double cursorX = 0.0;
+                    double cursorY = 0.0;
+                    core::window::getCursorPosition(runtime().handle, cursorX,
+                                                    cursorY);
+                    int winX = 0;
+                    int winY = 0;
+                    core::window::getWindowPos(runtime().handle, winX, winY);
+                    const auto [x, y] = petDragMove(state.dragAnchor, winX, winY,
+                                                    cursorX, cursorY);
+                    core::window::setWindowPos(runtime().handle, x, y);
                 })
-                .onRelease([](const eui::PointerEvent&, const eui::Rect&) {
+                .onRelease([&state](const eui::PointerEvent&, const eui::Rect&) {
+                    petDragEnd(state.dragAnchor);  // 释放/取消 → 清锚点
                     savePetPosition();  // 拖拽结束才写盘（设计 §4.6）
                 })
                 .onContextMenu([&state](const eui::PointerEvent& event, const eui::Rect&) {
@@ -294,6 +305,27 @@ std::filesystem::path resolveSkinDir(const std::string& skinName) {
 
 } // namespace
 
+std::pair<int, int> petDragMove(PetDragAnchor& anchor, int windowX, int windowY,
+                                double cursorX, double cursorY) {
+    // 光标屏幕位 = 窗口原点 + 窗口内光标（两参同为 GLFW 屏幕坐标系实时值，
+    // setWindowPos 造成的窗口移动立刻反映——这就是 delta 反馈回路的解法）
+    const double screenX = static_cast<double>(windowX) + cursorX;
+    const double screenY = static_cast<double>(windowY) + cursorY;
+    if (!anchor.valid) {
+        anchor.valid = true;
+        anchor.offsetX = static_cast<double>(windowX) - screenX;
+        anchor.offsetY = static_cast<double>(windowY) - screenY;
+    }
+    return {static_cast<int>(screenX + anchor.offsetX + 0.5),
+            static_cast<int>(screenY + anchor.offsetY + 0.5)};
+}
+
+void petDragEnd(PetDragAnchor& anchor) {
+    anchor.valid = false;
+    anchor.offsetX = 0.0;
+    anchor.offsetY = 0.0;
+}
+
 void startPetWindow(const PetWindowConfig& config) {
     PetRuntime& rt = runtime();
     rt.config = config;
@@ -359,6 +391,9 @@ void startPetWindow(const PetWindowConfig& config) {
                         .resizable(false)
                         .focusOnShow(false)            // 显示不抢焦点
                         .hideFromTaskbar(true)         // 不进任务栏/Alt+Tab
+                        .transparentFramebuffer(true)  // sprite 窗逐像素透明
+                                                       //（黑底修复：不随全局
+                                                       // 窗口效果档位回落）
                         .clickThrough(config.clickThrough)  // 挂机穿透（持久化恢复）
                         .ignoreClearColorOverride()    // 全透底不被主题广播冲掉
                         .clearColor({0.0f, 0.0f, 0.0f, 0.0f})

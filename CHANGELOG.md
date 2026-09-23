@@ -31,6 +31,53 @@
 - 浅色下逐页目测：markdown 三栏、todo 看板列、claude 双栏、home 卡片浮起感、settings 卡片；深色下看板卡片 #232120 与列底 #1A1816 的层次。
 
 ## [Pet-Anime] 2026-09-23 —— 二次元桌宠皮肤（真实美术素材包）
+## [Pet-Fix] 2026-09-23 —— 桌宠 Windows 真机四症状修复
+
+分支 `fix/pet-window-bugs`（EUI-NEO 同名分支已合上游 main）。首次真机验证暴露
+「状态对但行为错」四症状，全部先根因后修；**DevDesk 312/312 全绿**（+1 拖拽
+锚点用例），EUI-NEO 46/46 全绿。根因链详见各 commit message。
+
+### fix（EUI-NEO，D:/project/gui/EUI-NEO main）
+
+- **症状 2 黑背景**：`GLFW_TRANSPARENT_FRAMEBUFFER` hint 只由 app 级窗口效果
+  档位驱动（`windowEffect != None` 才开），设置页「关闭」档（用户实测即此档）
+  → `setWindowEffect(None)` → 桌宠 sprite 窗不透明创建，全透 clearColor 落在
+  不透明表面 = 黑底。新增 per-window `transparentFramebuffer`（DslWindowConfig
+  → DslWindowRequest → WindowCreateRequest 三层透传），与全局档位解耦。
+- **症状 3 任务栏图标**：双重根因——GLFW 的 Win32 窗口自带 `WS_EX_APPWINDOW`
+  （与 `WS_EX_TOOLWINDOW` 互斥，只加不清不消失）且可见创建先注册任务栏按钮。
+  修法：window_style_win 对称清/补 APPWINDOW + `visible` 创建期属性
+  （hideFromTaskbar 窗隐藏创建、样式就位后 glfwShowWindow 首秀）。
+- **症状 4 主窗点 X 无反应**：托盘可用时 close callback 撤回关闭并请求隐藏到
+  托盘，但主循环「有子窗即取消隐藏」守卫把请求吞掉——桌宠存活期间点 X 什么都
+  不发生。删守卫（模态保护在 callback 层）+ hiddenToTray 分支补子窗泵（桌宠
+  动画/输入/开窗关窗照常，设计 R5「宠物独立于主窗存活」）。
+- **症状 1 拖拽抖动（上游示例同款）**：examples/pet_window 拖拽改锚点跟随。
+
+### fix（DevDesk）
+
+- **症状 1 拖动抖动非常厉害**：onDrag 按 `DragEvent.delta` 移动窗口——delta 是
+  窗口内相对坐标，窗口自身移动后参考系漂移（+10/-5/+10 振荡），且单位是帧缓冲
+  像素（DPI≠100% 时差一个 contentScale）。改 `PetDragAnchor` 锚点跟随
+  （getWindowPos + getCursorPosition 光标屏幕位 + 锚点，1:1、DPI 无关），
+  `petDragMove/petDragEnd` 纯函数化。
+- **症状 2（DevDesk 侧）**：开窗请求声明 `.transparentFramebuffer(true)`，
+  `pet_start_window_request` 补透传断言。
+
+### test
+
+- `pet: 拖拽锚点跟随——1:1 跟光标，无反馈抖动`（旧方案必现负增量的轨迹回归）
+- `pet: 开窗请求逐字段断言（无头）` +transparentFramebuffer
+- EUI-NEO `pet_window_config` +transparentFramebuffer 透传/默认值断言
+
+### 冒烟（真机，2026-09-23）
+
+窗口样式枚举（TOOLWIN=1/APPWIN=0）、主窗 WM_CLOSE → 隐藏到托盘且进程/桌宠
+存活、托盘驻留期间桌宠持续动画（截屏差分 135px）、桌宠窗口角落像素非黑
+（255,255,25x，桌面透出）、桌宠 WM_CLOSE 仅关桌宠。任务栏按钮不出现、拖拽
+手感、磨砂视觉三项登记人工点验。
+
+
 
 分支 `feat/pet-anime`（基线 ad5c94d，含 merge master f6d0ac3）。**304/304 全绿**（+1 内置美术皮肤断言）。
 

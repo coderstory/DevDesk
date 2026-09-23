@@ -24,6 +24,12 @@
 - **现象**：`scripts/check-consistency.sh` 使用 macOS 的 `screencapture` / `open -a`，Windows 上无法运行。
 - **定位**：开发工具，非运行时功能，暂不处理。
 
+### 4. 主窗「最小化」期间桌宠动画暂停（Pet-Fix 2026-09-23 登记）
+
+- **现象**：主窗口最小化（标题栏 ─）时桌宠帧动画/输入暂停，直到主窗还原；主窗点 X 隐藏到托盘（Pet-Fix 已修）则不受影响，桌宠照常运行。
+- **位置**：EUI-NEO `core/app/glfw_app_main.cpp` iconified 分支（`glfwWaitEventsTimeout(0.25); continue;` 跳过子窗泵；与 hiddenToTray 分支同构）。
+- **定位**：与桌宠设计 R5（宠物独立存活）同类，但最小化是暂态、用户还原即恢复，真机四症状范围外，登记待修。
+
 ## 二、跨平台已知限制
 
 ### UI / 交互

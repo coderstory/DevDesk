@@ -332,6 +332,8 @@ REGISTER_TEST(pet_start_window_request, "pet: 开窗请求逐字段断言（无�
     DOCTEST_CHECK(!req.resizable);
     DOCTEST_CHECK(!req.focusOnShow);          // 不抢焦点
     DOCTEST_CHECK(req.hideFromTaskbar);       // 不进任务栏/Alt+Tab
+    DOCTEST_CHECK(req.transparentFramebuffer);  // 逐像素透明（黑底修复：不随
+                                                // 全局窗口效果档位回落 None）
     DOCTEST_CHECK(!req.mousePassthrough);     // 默认不穿透
     DOCTEST_CHECK(!req.followClearColorOverride);  // 全透底不被主题广播冲掉
     DOCTEST_CHECK(req.clearColor.a == 0.0f);  // 全透
@@ -783,5 +785,88 @@ REGISTER_TEST(pet_apply_skin_and_reset, "pet: applyPetSkin 校验/持久化 + �
     }
     setEnvVar("DEVDESK_PETS_DIR", "");
     removeTreeQuietly(root);
+    return true;
+});
+
+// ---- 拖拽锚点跟随（2026-09-23 真机症状 1：拖动抖动）----
+// 复现坐标模型：GLFW 上报的光标位置是「窗口相对」的——窗口被拖拽回调移动
+// 后，同样的屏幕移动产生反向偏差的读数。旧 delta 累加方案在此模型下
+// +10/-5/+10 振荡；锚点方案：首个拖拽事件捕获锚点（窗口原地起步），
+// 此后窗口逐事件精确移动光标屏幕位移（1:1，无振荡无累积漂移）。
+
+// 光标轨迹步进（REGISTER_TEST 宏体内不能有含逗号的初始化列表，拆出函数）
+namespace {
+int petDragStepX(int i) {
+    static const int dx[5] = {8, 5, 5, 7, 6};
+    return dx[i];
+}
+int petDragStepY(int i) {
+    static const int dy[5] = {0, 3, 4, 2, 5};
+    return dy[i];
+}
+} // namespace
+
+REGISTER_TEST(pet_drag_anchor_follow, "pet: 拖拽锚点跟随——1:1 跟光标，无反馈抖动", {
+    module::pet::PetDragAnchor anchor;
+    int winX = 500;
+    int winY = 400;
+    double screenX = 560.0;  // 光标屏幕位（模拟真机轨迹：单调右移+下移）
+    double screenY = 440.0;
+    int prevTargetX = winX;
+    int prevTargetY = winY;
+    int prevScreenXi = static_cast<int>(screenX);
+    int prevScreenYi = static_cast<int>(screenY);
+    for (int i = 0; i < 5; ++i) {
+        screenX += petDragStepX(i);
+        screenY += petDragStepY(i);
+        // GLFW 会报的窗口内光标位（窗口移动后参考系已变——抖动根源所在）
+        const double relX = screenX - static_cast<double>(winX);
+        const double relY = screenY - static_cast<double>(winY);
+        const auto target =
+            module::pet::petDragMove(anchor, winX, winY, relX, relY);
+        if (i == 0) {
+            // 首个拖拽事件：锚点捕获，窗口原地起步（不跳变）
+            DOCTEST_CHECK_EQ(target.first, 500);
+            DOCTEST_CHECK_EQ(target.second, 400);
+        } else {
+            // 1:1 跟随：窗口位移 == 光标屏幕位移（旧 delta 方案在此轨迹上
+            // 会出现负增量/振荡）
+            DOCTEST_CHECK_EQ(target.first - prevTargetX,
+                             static_cast<int>(screenX) - prevScreenXi);
+            DOCTEST_CHECK_EQ(target.second - prevTargetY,
+                             static_cast<int>(screenY) - prevScreenYi);
+            DOCTEST_CHECK(target.first > prevTargetX);  // 单调不回跳
+        }
+        prevTargetX = target.first;
+        prevTargetY = target.second;
+        prevScreenXi = static_cast<int>(screenX);
+        prevScreenYi = static_cast<int>(screenY);
+        winX = target.first;
+        winY = target.second;
+    }
+    // 光标不动 → 窗口不动（锚点保持，无漂移）
+    {
+        const double relX = screenX - static_cast<double>(winX);
+        const double relY = screenY - static_cast<double>(winY);
+        const auto target =
+            module::pet::petDragMove(anchor, winX, winY, relX, relY);
+        DOCTEST_CHECK_EQ(target.first, winX);
+        DOCTEST_CHECK_EQ(target.second, winY);
+    }
+    // 释放清锚点；下次拖拽在任意新位置重锚定（不跳变到旧偏移）
+    module::pet::petDragEnd(anchor);
+    DOCTEST_CHECK(!anchor.valid);
+    {
+        winX = 900;
+        winY = 700;
+        screenX = 930.0;
+        screenY = 715.0;
+        const double relX = screenX - static_cast<double>(winX);
+        const double relY = screenY - static_cast<double>(winY);
+        const auto target =
+            module::pet::petDragMove(anchor, winX, winY, relX, relY);
+        DOCTEST_CHECK_EQ(target.first, 900);  // 新锚点：窗口停在原地起步
+        DOCTEST_CHECK_EQ(target.second, 700);
+    }
     return true;
 });
