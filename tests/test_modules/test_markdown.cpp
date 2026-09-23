@@ -1529,3 +1529,131 @@ REGISTER_TEST(md_module_ctrl_n_new_note,
     mod->onStop();
     return true;
 })
+// ---- 审计 [19] 收尾：重命名弹窗校验错误改内嵌红字 formError（原走 toast）----
+
+REGISTER_TEST(md_module_rename_form_error,
+              "markdown_module: 重命名空名/撞名/非法路径 → 内嵌红字 + 弹窗不关 + 输入清除 + 打开清残留（headless）", {
+    using InputState = components::input_detail::InputModel::InputState;
+
+    MdUiEnv env("rferr");
+    DOCTEST_REQUIRE(env.db != nullptr);
+    DOCTEST_REQUIRE(writeTextFile(env.dir / "a.md", "# A\n"));
+    DOCTEST_REQUIRE(writeTextFile(env.dir / "b.md", "# B\n"));
+
+    std::unique_ptr<::core::Module> mod(create_markdown_module());
+    mod->onStart();
+
+    eui::Screen screen;
+    screen.width = 1600.0f;
+    screen.height = 1000.0f;
+    eui::Ui ui;
+    auto frame = [&](const char* page) {
+        ui.begin(page);
+        mod->compose(ui, screen);
+        ui.end();
+    };
+    auto findRow = [&](const std::string& name) -> core::dsl::Element* {
+        for (int i = 0; i < 8; ++i) {
+            const auto* nm = ui.find("md.tree.node." + std::to_string(i) + ".name");
+            if (nm != nullptr && nm->text == name) {
+                return ui.find("md.tree.node." + std::to_string(i) + ".row");
+            }
+        }
+        return nullptr;
+    };
+    // （框架宏失败 = return false，lambda 必须返回 bool，调用处 DOCTEST_CHECK）
+    auto openRename = [&](const std::string& name) -> bool {
+        auto* row = findRow(name);
+        DOCTEST_REQUIRE(row != nullptr);
+        eui::PointerEvent pe;
+        pe.x = 120.0;
+        pe.y = 210.0;
+        DOCTEST_REQUIRE(row->onContextMenu != nullptr);
+        row->onContextMenu(pe, eui::Rect{});
+        frame("rfx1");
+        auto* item = ui.find("md.ctx.level.0.item.0");
+        DOCTEST_REQUIRE(item != nullptr && item->onClick != nullptr);
+        item->onClick();
+        return true;
+    };
+    // 全选 + Backspace：走 input 内置选区删除 → onChange 真实链路
+    auto clearInput = [&]() -> bool {
+        auto& st = ui.state<InputState>("md.dialog.rename.input");
+        st.selectionStart = 0;
+        st.selectionEnd = static_cast<int>(st.text.size());
+        auto* hit2 = ui.find("md.dialog.rename.input.hit");
+        DOCTEST_REQUIRE(hit2 != nullptr && hit2->onKeyEvent != nullptr);
+        eui::KeyEvent bs;
+        bs.key = eui::InputKey::Backspace;
+        hit2->onKeyEvent(bs);
+        return true;
+    };
+    auto typeOver = [&](const std::string& text) -> bool {
+        auto& st = ui.state<InputState>("md.dialog.rename.input");
+        st.selectionStart = 0;
+        st.selectionEnd = static_cast<int>(st.text.size());
+        auto* hit2 = ui.find("md.dialog.rename.input.hit");
+        DOCTEST_REQUIRE(hit2 != nullptr && hit2->onTextInput != nullptr);
+        core::TextInputEvent t2;
+        t2.text = text;
+        hit2->onTextInput(t2);
+        return true;
+    };
+
+    // 打开 a.md 的重命名弹窗（预填原路径）
+    frame("rf1");
+    DOCTEST_CHECK(openRename("a.md"));
+    frame("rf2");
+    DOCTEST_CHECK(ui.find("md.dialog.rename.panel")->opacity > 0.0f);
+    DOCTEST_CHECK_EQ(ui.find("md.dialog.rename.input.text")->text,
+                     std::string("a.md"));
+
+    // 1) 空名提交 → 红字「新名字不能为空」，弹窗不关（旧行为：静默关弹窗）
+    DOCTEST_CHECK(clearInput());
+    frame("rf3");
+    auto* confirm = ui.find("md.dialog.rename.confirm.bg");
+    DOCTEST_REQUIRE(confirm != nullptr && confirm->onClick != nullptr);
+    confirm->onClick();
+    frame("rf4");
+    const auto* err = ui.find("md.dialog.rename.error");
+    DOCTEST_REQUIRE(err != nullptr);
+    DOCTEST_CHECK_EQ(err->text, std::string("新名字不能为空"));
+    DOCTEST_CHECK(ui.find("md.dialog.rename.panel")->opacity > 0.0f);
+
+    // 2) 下一次输入清错误；撞名提交 → 红字「重命名失败：…已存在…」，文件未动
+    DOCTEST_CHECK(typeOver("b.md"));
+    frame("rf5");
+    DOCTEST_CHECK(ui.find("md.dialog.rename.error") == nullptr);
+    ui.find("md.dialog.rename.confirm.bg")->onClick();
+    frame("rf6");
+    err = ui.find("md.dialog.rename.error");
+    DOCTEST_REQUIRE(err != nullptr);
+    DOCTEST_CHECK(err->text.find("重命名失败") != std::string::npos);
+    DOCTEST_CHECK(err->text.find("已存在") != std::string::npos);
+    DOCTEST_CHECK(ui.find("md.dialog.rename.panel")->opacity > 0.0f);
+    DOCTEST_CHECK(fs::exists(env.dir / "a.md"));  // 失败不落盘
+    DOCTEST_CHECK(fs::exists(env.dir / "b.md"));
+
+    // 3) 非法路径提交 → 红字「不合法」，弹窗不关
+    DOCTEST_CHECK(typeOver("C:/bad"));
+    frame("rf7");
+    ui.find("md.dialog.rename.confirm.bg")->onClick();
+    frame("rf8");
+    err = ui.find("md.dialog.rename.error");
+    DOCTEST_REQUIRE(err != nullptr);
+    DOCTEST_CHECK(err->text.find("不合法") != std::string::npos);
+    DOCTEST_CHECK(ui.find("md.dialog.rename.panel")->opacity > 0.0f);
+
+    // 4) 取消后重开 → 残留错误已清（打开清；错误行只随错误态存在）
+    ui.find("md.dialog.rename.cancel.bg")->onClick();
+    frame("rf9");
+    DOCTEST_CHECK_EQ(ui.find("md.dialog.rename.panel")->opacity, 0.0f);
+    DOCTEST_CHECK(openRename("a.md"));
+    frame("rf10");
+    DOCTEST_CHECK(ui.find("md.dialog.rename.error") == nullptr);
+    DOCTEST_CHECK_EQ(ui.find("md.dialog.rename.input.text")->text,
+                     std::string("a.md"));
+
+    mod->onStop();
+    return true;
+})

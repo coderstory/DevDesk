@@ -2168,6 +2168,7 @@ private:
                     renameOpen_ = true;
                     renameTargetPath_ = ctxMenuPath_;
                     renameInput_ = ctxMenuPath_;  // 预填相对路径（含文件夹）
+                    renameError_.clear();         // 审计 [19]：打开清残留错误
                 } else if (index == 1) {
                     deleteConfirmOpen_ = true;
                     deleteTargetPath_ = ctxMenuPath_;
@@ -2327,11 +2328,27 @@ private:
                     .placeholder("新名字或新路径")
                     .fontSize(t.sizes.fontSizeBody)
                     .theme(componentTheme)
-                    .onChange([this](const std::string& v) { renameInput_ = v; })
+                    .onChange([this](const std::string& v) {
+                        renameInput_ = v;
+                        renameError_.clear();  // 审计 [19] 收尾：错误随下一次输入清除
+                    })
                     .onEnter([this] { commitRenameNote(); })
                     // 审计 [21]：Esc=取消（关弹窗不改名）
                     .onCancel([this] { renameOpen_ = false; })
                     .build();
+                // 审计 [19] 收尾：重命名弹窗校验/落盘失败内嵌红字（原走 toast
+                // 隔到弹窗外，与 [30] 的新建笔记/文件夹弹窗不一致）；弹窗保持
+                // 打开让用户改输入
+                if (!renameError_.empty()) {
+                    ui.text("md.dialog.rename.error")
+                        .position(28.0f, 134.0f)
+                        .size(w - 56.0f, 18.0f)
+                        .text(renameError_)
+                        .fontSize(12.0f)
+                        .lineHeight(18.0f)
+                        .color(t.colors.error)
+                        .build();
+                }
                 components::button(ui, "md.dialog.rename.cancel")
                     .position(28.0f, h - 60.0f)
                     .size((w - 68.0f) * 0.5f, 40.0f)
@@ -2401,8 +2418,10 @@ private:
             target.pop_back();
         }
         if (target.empty()) {
-            // 空名提交 = 取消（输入框预填了原路径，清空视为反悔而非错误）
-            renameOpen_ = false;
+            // 审计 [19] 收尾：原「清空预填回车 = 关弹窗视为反悔」与新建笔记/
+            // 文件夹弹窗的校验反馈不一致（且静默关闭容易被当成没生效），
+            // 统一改内嵌红字，弹窗保持打开让用户重填
+            renameError_ = "新名字不能为空";
             return;
         }
         if (!service_ || renameTargetPath_.empty()) {
@@ -2410,23 +2429,26 @@ private:
             return;
         }
         if (!MarkdownService::isSafeNewNotePath(target)) {
-            showToast("名称不合法",
-                      "不允许绝对路径、盘符（如 C:）或 ..，请用相对路径，"
-                      "例如 工作/新名.md", true);
+            // 审计 [19] 收尾：校验失败内嵌红字（原走 toast 隔到弹窗外）
+            renameError_ =
+                "名称不合法：不支持绝对路径、盘符（如 C:）或 ..，请用相对路径";
             return;  // 弹窗保持打开让用户改
         }
         auto r = service_->rename(renameTargetPath_, target);
         if (r.isFail()) {
             LOG_ERROR("重命名笔记失败 " + renameTargetPath_ + " → " + target +
                       ": " + r.errorMessage());
-            showToast("重命名失败", r.errorMessage(), true);
-            return;  // 弹窗保持打开（目标已存在等可改输入重试）
+            // 审计 [19] 收尾：service 失败（目标已存在/撞名等）内嵌红字，
+            // 原走 toast；弹窗保持打开可改输入重试
+            renameError_ = "重命名失败：" + r.errorMessage();
+            return;
         }
         const std::string oldPath = renameTargetPath_;
         const std::string newPath = r.value();
         renameOpen_ = false;
         renameTargetPath_.clear();
         renameInput_.clear();
+        renameError_.clear();
         if (currentPath_ == oldPath) {
             // 编辑器继续跟随这篇笔记（内容未变，只换 path；若有未保存编辑，
             // 自动保存将写到新路径——正确语义）
@@ -2483,6 +2505,7 @@ private:
     bool renameOpen_ = false;
     std::string renameTargetPath_;   // 重命名原路径
     std::string renameInput_;        // 重命名输入框内容
+    std::string renameError_;        // 审计 [19] 收尾：弹窗内嵌红字错误行（照 [30] newNoteError_ 模式）
 
     // ---- Toast（EUI-NEO 单实例，复用一个状态位）----
     bool toastOpen_ = false;
