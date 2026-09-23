@@ -1264,3 +1264,126 @@ REGISTER_TEST(md_module_subtitle_static, "markdown_module: subtitle 静态快捷
     mod->onStop();
     return true;
 })
+
+// ---- 审计 [21]：创建/编辑弹窗与标签输入框 Esc=取消（onCancel 取代旧 Esc→提交）----
+
+REGISTER_TEST(md_module_esc_cancel_dialogs,
+              "markdown_module: 新建笔记/文件夹/重命名 Esc=取消不落盘；标签 Esc=丢草稿（headless，审计 [21]）", {
+    using InputState = components::input_detail::InputModel::InputState;
+
+    MdUiEnv env("esccancel");
+    DOCTEST_REQUIRE(env.db != nullptr);
+    DOCTEST_REQUIRE(writeTextFile(env.dir / "old2.md", "# Old2\n"));
+
+    std::unique_ptr<::core::Module> mod(create_markdown_module());
+    mod->onStart();
+
+    eui::Screen screen;
+    screen.width = 1600.0f;
+    screen.height = 1000.0f;
+    eui::Ui ui;
+    auto frame = [&](const char* page) {
+        ui.begin(page);
+        mod->compose(ui, screen);
+        ui.end();
+    };
+    auto pressEsc = [](eui::Ui& u, const std::string& inputId) -> bool {
+        auto* hit = u.find(inputId + ".hit");
+        DOCTEST_REQUIRE(hit != nullptr);
+        DOCTEST_REQUIRE(hit->onKeyEvent != nullptr);
+        eui::KeyEvent esc;
+        esc.key = eui::InputKey::Escape;
+        esc.action = eui::KeyAction::Press;
+        return hit->onKeyEvent(esc);   // 应被 onCancel 消费
+    };
+    auto findFileRow = [&](const std::string& name) -> const core::dsl::Element* {
+        for (int i = 0; i < 8; ++i) {
+            const auto* nm = ui.find("md.tree.node." + std::to_string(i) + ".name");
+            if (nm != nullptr && nm->text == name) {
+                return ui.find("md.tree.node." + std::to_string(i) + ".row");
+            }
+        }
+        return nullptr;
+    };
+
+    // 1) 新建笔记：输入名字 → Esc → 弹窗关、磁盘不落盘
+    frame("ec1");
+    const auto* noteBtn = ui.find("md.tree.new.bg");
+    DOCTEST_REQUIRE(noteBtn != nullptr && noteBtn->onClick != nullptr);
+    noteBtn->onClick();
+    frame("ec2");
+    auto* nhit = ui.find("md.dialog.new.input.hit");
+    DOCTEST_REQUIRE(nhit != nullptr && nhit->onTextInput != nullptr);
+    core::TextInputEvent nt;
+    nt.text = "esc笔记";
+    nhit->onTextInput(nt);
+    frame("ec3");
+    DOCTEST_CHECK(pressEsc(ui, "md.dialog.new.input"));
+    frame("ec4");
+    DOCTEST_CHECK_EQ(ui.find("md.dialog.new.panel")->opacity, 0.0f);
+    DOCTEST_CHECK_FALSE(fs::exists(env.dir / "esc笔记.md"));   // 旧行为：Esc=提交会建出来
+
+    // 2) 新建文件夹：输入名字 → Esc → 弹窗关、目录不创建
+    const auto* folderBtn = ui.find("md.tree.newfolder.bg");
+    DOCTEST_REQUIRE(folderBtn != nullptr && folderBtn->onClick != nullptr);
+    folderBtn->onClick();
+    frame("ec5");
+    auto* fhIT = ui.find("md.dialog.newfolder.input.hit");
+    DOCTEST_REQUIRE(fhIT != nullptr && fhIT->onTextInput != nullptr);
+    core::TextInputEvent ft;
+    ft.text = "esc文件夹";
+    fhIT->onTextInput(ft);
+    frame("ec6");
+    DOCTEST_CHECK(pressEsc(ui, "md.dialog.newfolder.input"));
+    frame("ec7");
+    DOCTEST_CHECK_EQ(ui.find("md.dialog.newfolder.panel")->opacity, 0.0f);
+    DOCTEST_CHECK_FALSE(fs::exists(env.dir / "esc文件夹"));
+
+    // 3) 重命名：打开笔记 → 右键 → 重命名 → 替换输入 → Esc → 旧文件原样在
+    const auto* oldRow = findFileRow("old2.md");
+    DOCTEST_REQUIRE(oldRow != nullptr && oldRow->onClick != nullptr);
+    oldRow->onClick();
+    frame("ec8");
+    eui::PointerEvent pe;
+    pe.x = 120.0;
+    pe.y = 210.0;
+    const auto* oldRow2 = findFileRow("old2.md");
+    DOCTEST_REQUIRE(oldRow2 != nullptr && oldRow2->onContextMenu != nullptr);
+    oldRow2->onContextMenu(pe, eui::Rect{});
+    frame("ec9");
+    auto* renameItem = ui.find("md.ctx.level.0.item.0");
+    DOCTEST_REQUIRE(renameItem != nullptr && renameItem->onClick != nullptr);
+    renameItem->onClick();
+    frame("ec10");
+    auto& rst = ui.state<InputState>("md.dialog.rename.input");
+    rst.selectionStart = 0;
+    rst.selectionEnd = static_cast<int>(rst.text.size());
+    auto* rihit = ui.find("md.dialog.rename.input.hit");
+    DOCTEST_REQUIRE(rihit != nullptr && rihit->onTextInput != nullptr);
+    core::TextInputEvent rt;
+    rt.text = "esc新名.md";
+    rihit->onTextInput(rt);
+    frame("ec11");
+    DOCTEST_CHECK(pressEsc(ui, "md.dialog.rename.input"));
+    frame("ec12");
+    DOCTEST_CHECK_EQ(ui.find("md.dialog.rename.panel")->opacity, 0.0f);
+    DOCTEST_CHECK(fs::exists(env.dir / "old2.md"));            // 未改名
+    DOCTEST_CHECK_FALSE(fs::exists(env.dir / "esc新名.md"));    // 旧行为：Esc=提交会改名
+
+    // 4) 标签输入框：编辑器开着笔记 → 打半截标签 → Esc → 草稿丢弃、chip 不出现
+    const auto* chipAdd = ui.find("md.tags.add.hit");
+    DOCTEST_REQUIRE(chipAdd != nullptr && chipAdd->onTextInput != nullptr);
+    core::TextInputEvent tt;
+    tt.text = "半截";
+    chipAdd->onTextInput(tt);
+    frame("ec13");
+    DOCTEST_CHECK_EQ(ui.find("md.tags.add.text")->text, std::string("半截"));
+    DOCTEST_CHECK(pressEsc(ui, "md.tags.add"));
+    frame("ec14");
+    // 草稿清空 → 输入框回 placeholder；标签未被提交（旧行为：Esc=commitAddTag）
+    DOCTEST_CHECK_EQ(ui.find("md.tags.add.text")->text, std::string("＋ 标签"));
+    DOCTEST_CHECK(ui.find("md.tags.chip.0.name") == nullptr);
+
+    mod->onStop();
+    return true;
+})

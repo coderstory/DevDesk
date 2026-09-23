@@ -24,7 +24,7 @@ endif()
 # （他人克隆只有 v0.6.0，硬 fail 会造成误阻断）；EUI-NEO push 后可将本诊断
 # 升级为硬检查。最低依赖 rev 与 CLAUDE.md「当前依赖 rev」保持一致，消费
 # EUI-NEO 新 API 后两处同步更新。
-set(DEVDESK_EUI_NEO_MIN_REV "b92abb7")
+set(DEVDESK_EUI_NEO_MIN_REV "d5e302c")
 execute_process(
     COMMAND git -C "${EUI_NEO_DIR}" rev-parse --short HEAD
     OUTPUT_VARIABLE EUI_NEO_GIT_REV

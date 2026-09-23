@@ -623,9 +623,9 @@ public:
             event.action != eui::KeyAction::Repeat) {
             return false;
         }
-        // 审计 [24]：新建列弹窗的 Esc=取消兜底。焦点在弹窗输入框时由其
-        // onKeyEvent passthrough 拦下（EUI-NEO 内置把 Escape 映射到 onEnter
-        // =提交，不拦会误建列）；未聚焦时键走本 app 级通道，这里关掉弹窗。
+        // 审计 [24]：新建列弹窗的 Esc=取消兜底（输入框未聚焦时键走本 app 级
+        // 通道；聚焦时由 input 的 onCancel 处理——审计 [21] 上游收口后替代
+        // 原 per-dialog passthrough hack）。
         if (newColumnOpen_ && event.key == eui::InputKey::Escape) {
             newColumnOpen_ = false;
             return true;
@@ -1222,6 +1222,8 @@ private:
                         newTaskError_.clear();  // 审计 [19]：错误随下一次输入清除
                     })
                     .onEnter([this] { submitNewTask(); })
+                    // 审计 [21]：Esc=取消（关弹窗不落库，同「取消」按钮）
+                    .onCancel([this] { newTaskOpen_ = false; })
                     .build();
 
                 // 审计 [19]：内嵌红字错误行（照抄 claude formError_ 渲染——
@@ -1342,17 +1344,10 @@ private:
                         newColumnError_.clear();  // 审计 [19]：错误随下一次输入清除
                     })
                     .onEnter([this] { confirmNewColumn(); })
-                    // EUI-NEO Input 把 Escape 映射到 onEnter（=提交）；创建弹窗
-                    // 需要 Esc=取消：passthrough 先于内置处理，这里拦下并消费。
+                    // 审计 [21]：Esc=取消走 onCancel（原 per-dialog onKeyEvent
+                    // passthrough 拦截 hack 已由上游 onCancel 取代移除）。
                     // 输入框未聚焦的兜底走 app 级 Module::onKeyEvent（见下）。
-                    .onKeyEvent([this](const eui::KeyEvent& event) {
-                        if (event.key == eui::InputKey::Escape &&
-                            event.action == eui::KeyAction::Press) {
-                            newColumnOpen_ = false;
-                            return true;
-                        }
-                        return false;
-                    })
+                    .onCancel([this] { newColumnOpen_ = false; })
                     .build();
 
                 // 审计 [19]：内嵌红字错误行（claude formError_ 同款渲染）
@@ -1595,6 +1590,8 @@ private:
                         renameError_.clear();  // 审计 [19]：错误随下一次输入清除
                     })
                     .onEnter([this] { submitRenameColumn(); })
+                    // 审计 [21]：Esc=取消（关弹窗不改名，同「取消」按钮）
+                    .onCancel([this] { renameOpen_ = false; })
                     .build();
 
                 // 审计 [19]：内嵌红字错误行（claude formError_ 同款渲染）
@@ -2137,6 +2134,9 @@ private:
                     .theme(themeTokens)
                     .onChange([this](const std::string& v) { detailTagInput_ = v; })
                     .onEnter([this] { addDetailTag(); })
+                    // 审计 [21]：详情弹窗内加标签输入框，Esc=丢弃草稿（不清标签
+                    // 草稿、不关详情弹窗——整窗关断由「关闭」按钮负责）
+                    .onCancel([this] { detailTagInput_.clear(); })
                     .build();
 
                 // 移动到其他列

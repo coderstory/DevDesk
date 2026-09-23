@@ -1074,3 +1074,66 @@ REGISTER_TEST(settings_pet_dropdown_z_escape, "settings: pet skin dropdown popup
     ::core::theme::setDark();
     return true;
 })
+
+// ---- 审计 [21]：代理端口输入 Esc=丢弃草稿（旧映射 Esc→onEnter 会应用端口并重启代理）----
+
+REGISTER_TEST(settings_port_esc_discards_draft,
+              "settings: 端口草稿 Esc=丢弃回落已应用端口，不触发应用（headless，审计 [21]）", {
+    PruneEnv env("portesc");
+    std::unique_ptr<::core::Module> mod(create_settings_module());
+    mod->onStart();
+    eui::Screen screen;
+    screen.width = 1600.0f;
+    screen.height = 1000.0f;
+    eui::Ui ui;
+    auto frame = [&](const char* page) {
+        ui.begin(page);
+        mod->compose(ui, screen);
+        ui.end();
+    };
+
+    // 初始显示已应用端口 8888
+    frame("pe1");
+    const auto* shown1 = ui.find("settings.card.proxy.port.input.text");
+    DOCTEST_REQUIRE(shown1 != nullptr);
+    DOCTEST_CHECK_EQ(shown1->text, std::string("8888"));
+
+    // Ctrl+A 全选后输入 → 替换成合法草稿 9999（不替换会追加成 88889999 非法值，
+    // apply 校验失败即早退，失去「Esc 是否触发 apply」的判别力）
+    auto* input = ui.find("settings.card.proxy.port.input.hit");
+    DOCTEST_REQUIRE(input != nullptr);
+    DOCTEST_REQUIRE(input->onTextInput != nullptr);
+    eui::KeyEvent selectAll;
+    selectAll.key = eui::InputKey::A;
+    selectAll.action = eui::KeyAction::Press;
+    selectAll.modifiers.control = true;
+    input->onKeyEvent(selectAll);
+    eui::TextInputEvent t;
+    t.text = "9999";
+    input->onTextInput(t);
+    frame("pe2");
+    const auto* shown2 = ui.find("settings.card.proxy.port.input.text");
+    DOCTEST_REQUIRE(shown2 != nullptr);
+    DOCTEST_CHECK_EQ(shown2->text, std::string("9999"));   // 草稿已显示
+
+    // Esc = onCancel：丢弃草稿、回落 8888；配置与代理均未被触碰
+    auto* input2 = ui.find("settings.card.proxy.port.input.hit");
+    DOCTEST_REQUIRE(input2 != nullptr);
+    DOCTEST_REQUIRE(input2->onKeyEvent != nullptr);
+    eui::KeyEvent esc;
+    esc.key = eui::InputKey::Escape;
+    esc.action = eui::KeyAction::Press;
+    DOCTEST_CHECK(input2->onKeyEvent(esc));   // 被 onCancel 消费
+    frame("pe3");
+    const auto* shown3 = ui.find("settings.card.proxy.port.input.text");
+    DOCTEST_REQUIRE(shown3 != nullptr);
+    DOCTEST_CHECK_EQ(shown3->text, std::string("8888"));   // 草稿清空回落
+
+    // 未落盘：配置仍是默认 8888（旧行为 Esc=applyProxyPort 会写 9999 并重启代理）
+    module::settings::SettingsStore store(env.cfgPath);
+    DOCTEST_CHECK_EQ(store.load().proxyPort, 8888);
+
+    mod->onStop();
+    ::core::theme::setDark();
+    return true;
+})

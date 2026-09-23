@@ -17,7 +17,7 @@ GUI 框架为 [EUI-NEO](https://sudoevolve.github.io/EUI-NEO/)（源码同级目
 
 **前置**：
 
-1. [EUI-NEO](../EUI-NEO) 源码在 DevDesk **同级目录**（`../EUI-NEO`；也可 `-DEUI_NEO_DIR=<路径>` 覆盖）。**EUI-NEO 需保持本地 main 最新**——当前依赖 rev `b92abb7`（含 onWindowDestroyed/requestFocus/trayMenu/windowEffect/lineStyles/getMonitorWorkAreas/setSystemPowerHandler/styledMenu/onTrayMenu/windowIsFocused 等新 API；这批提交尚未 push 到 origin，从 GitHub 新克隆拿到的是旧 v0.6.0、会编译失败）。顶层 CMake configure 时打印 EUI-NEO git rev 并在版本不符时软警告（不 fail）；EUI-NEO push 后将启用硬版本检查。
+1. [EUI-NEO](../EUI-NEO) 源码在 DevDesk **同级目录**（`../EUI-NEO`；也可 `-DEUI_NEO_DIR=<路径>` 覆盖）。**EUI-NEO 需保持本地 main 最新**——当前依赖 rev `d5e302c`（含 onWindowDestroyed/requestFocus/trayMenu/windowEffect/lineStyles/getMonitorWorkAreas/setSystemPowerHandler/styledMenu/onTrayMenu/windowIsFocused/input onCancel 等新 API；这批提交尚未 push 到 origin，从 GitHub 新克隆拿到的是旧 v0.6.0、会编译失败）。顶层 CMake configure 时打印 EUI-NEO git rev 并在版本不符时软警告（不 fail）；EUI-NEO push 后将启用硬版本检查。
 2. MSYS2 MinGW64 环境：`mingw-w64-x86_64-gcc`、`mingw-w64-x86_64-sqlite3`、`mingw-w64-x86_64-curl`、`mingw-w64-x86_64-openssl`（pacman 安装），以及 CMake ≥ 3.14 与 Ninja。
    本机工具链路径（CMake 4.3.3 / Ninja / MinGW64 GCC 16.2）见 [CLAUDE.md](CLAUDE.md)。
 

@@ -1147,3 +1147,95 @@ REGISTER_TEST(claude_profiles_scrollview,
     for (size_t i = 0; i < ids.size(); ++i) cleanupKey(ids[i]);
     return true;
 })
+
+// ---- 审计 [21]：Profile 表单 Esc=取消（旧行为：输入框没绑 onEnter，Esc 完全无效）----
+
+REGISTER_TEST(claude_module_form_esc_cancels,
+              "claude_module: 表单基础页/模型页输入框 Esc=取消不落库（headless，审计 [21]）", {
+    TestEnv env;
+    std::unique_ptr<::core::Module> mod(create_claude_module());
+    mod->onStart();
+    eui::Screen screen;
+    screen.width = 1600.0f;
+    screen.height = 1000.0f;
+    auto profileCount = [&](void) -> size_t {
+        auto r = env.svc->listProfiles();
+        return r.isOk() ? r.value().size() : 0;
+    };
+    DOCTEST_REQUIRE_EQ(profileCount(), 0u);
+
+    // CHECK 宏内含 return false，不能进 void lambda —— helper 返回 bool，
+    // 由测试体的 DOCTEST_CHECK 收敛（本文件既有约定）
+    auto openForm = [&](void) -> bool {
+        eui::Ui ui;
+        ui.begin("fe_open");
+        mod->compose(ui, screen);
+        ui.end();
+        auto* btn = ui.find("claude.btn.new.bg");
+        DOCTEST_REQUIRE(btn != nullptr);
+        DOCTEST_REQUIRE(btn->onClick != nullptr);
+        btn->onClick();
+        return true;
+    };
+    auto typeInto = [&](const char* page, const std::string& id,
+                        const std::string& text) -> bool {
+        eui::Ui ui;
+        ui.begin(page);
+        mod->compose(ui, screen);
+        ui.end();
+        auto* hit = ui.find(id + ".hit");
+        DOCTEST_REQUIRE(hit != nullptr);
+        DOCTEST_REQUIRE(hit->onTextInput != nullptr);
+        core::TextInputEvent ev;
+        ev.text = text;
+        hit->onTextInput(ev);
+        return true;
+    };
+    auto pressEsc = [&](const char* page, const std::string& id) -> bool {
+        eui::Ui ui;
+        ui.begin(page);
+        mod->compose(ui, screen);
+        ui.end();
+        auto* hit = ui.find(id + ".hit");
+        DOCTEST_REQUIRE(hit != nullptr);
+        DOCTEST_REQUIRE(hit->onKeyEvent != nullptr);
+        eui::KeyEvent esc;
+        esc.key = eui::InputKey::Escape;
+        esc.action = eui::KeyAction::Press;
+        DOCTEST_CHECK(hit->onKeyEvent(esc));   // onCancel 消费（旧行为：Esc 无响应）
+        eui::Ui ui2;   // 新帧确认弹窗关闭（每帧新建 Ui，旧指针失效）
+        ui2.begin(page);
+        mod->compose(ui2, screen);
+        ui2.end();
+        const auto* panel = ui2.find("claude.dialog.form.panel");
+        DOCTEST_REQUIRE(panel != nullptr);
+        DOCTEST_CHECK_EQ(panel->opacity, 0.0f);
+        return true;
+    };
+
+    // 1) 基础页：填名称/URL → 名称框 Esc → 关表单，profile 不落库
+    DOCTEST_CHECK(openForm());
+    DOCTEST_CHECK(typeInto("fe_b1", "claude.dialog.form.name", "Esc取消表单"));
+    DOCTEST_CHECK(typeInto("fe_b2", "claude.dialog.form.url", "https://esc.example.com"));
+    DOCTEST_CHECK(pressEsc("fe_b3", "claude.dialog.form.name"));
+    DOCTEST_CHECK_EQ(profileCount(), 0u);
+
+    // 2) 模型页：重开 → 切 tab1 → 槽位输入框 Esc → 同样关表单不落库
+    DOCTEST_CHECK(openForm());
+    {
+        eui::Ui ui;
+        ui.begin("fe_m1");
+        mod->compose(ui, screen);
+        ui.end();
+        auto* tab = ui.find("claude.form.tabs.hit.1");
+        DOCTEST_REQUIRE(tab != nullptr);
+        DOCTEST_REQUIRE(tab->onClick != nullptr);
+        tab->onClick();
+    }
+    DOCTEST_CHECK(typeInto("fe_m2", "claude.form.slot.0.model", "esc/model"));
+    DOCTEST_CHECK(pressEsc("fe_m3", "claude.form.slot.0.model"));
+    DOCTEST_CHECK_EQ(profileCount(), 0u);
+
+    mod->onStop();
+    return true;
+})

@@ -72,7 +72,7 @@
 | 组件 | 关键 API | 备注 |
 |------|---------|------|
 | `components::button` | `.text / .icon(codepoint) / .onClick / .onPress / .onRelease / .disabled / .colors(n,h,p) / .radius / .shadow` | 主题化 |
-| `components::input` | `.value / .placeholder / .multiline / .scrollbar / .fontFamily / .fontSize / .onChange / .onEnter / .onFocus / .bind(Signal<string>)` | **内置选区 + 撤销重做 + 复制粘贴 + IME 预编辑 + 拖拽选区** |
+| `components::input` | `.value / .placeholder / .multiline / .scrollbar / .fontFamily / .fontSize / .onChange / .onEnter / .onCancel(Esc 取消，不设则 Esc 回退 onEnter) / .onFocus / .onKeyEvent / .bind(Signal<string>)` | **内置选区 + 撤销重做 + 复制粘贴 + IME 预编辑 + 拖拽选区** |
 | `components::checkbox` | `.checked(bool) / .bind(Signal<bool>) / .onChange` | |
 | `components::radio` | `.selected / .items / .onChange` | |
 | `components::switch` | `.checked / .bind / .onChange / .text` | |

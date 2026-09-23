@@ -1771,8 +1771,9 @@ REGISTER_TEST(todo_ui_detail_actions_save_form,
 // ---- 审计 [24]：「+ 列」命名弹窗 + 列头 ✎ 重命名入口（headless） ----
 
 // 旧行为：点「+ 列」直接 doCreateColumn("新列 N") 即时落库。新行为：先弹
-// 命名弹窗，确认才落库；Esc（输入框内 passthrough 与 app 级兜底两路）取消
-// 不落库；留空确认采用默认名；输入名字按名字建。改名入口显性化为列头 ✎。
+// 命名弹窗，确认才落库；Esc（输入框聚焦走 input onCancel，未聚焦走 app 级
+// 兜底两路——审计 [21] 收口后原 passthrough hack 已移除）取消不落库；
+// 留空确认采用默认名；输入名字按名字建。改名入口显性化为列头 ✎。
 REGISTER_TEST(todo_ui_new_column_dialog,
               "todo_ui: + 列命名弹窗创建/Esc 取消/列头 ✎ 重命名（headless）", {
     TestEnv env;
@@ -1815,8 +1816,9 @@ REGISTER_TEST(todo_ui_new_column_dialog,
     DOCTEST_REQUIRE_EQ(colCount(), seed + 1);
     DOCTEST_CHECK(findTitle("新列 5"));
 
-    // 3) Esc（焦点在输入框：passthrough 拦内置 Escape→onEnter 提交）→ 取消不落库
-    //    若 passthrough 被删，内置会把 Esc 当提交并建出新列 → colCount 变
+    // 3) Esc（焦点在输入框：input 内置 Escape→onCancel=取消）→ 取消不落库
+    //    审计 [21]：原 onKeyEvent passthrough hack 已由上游 onCancel 取代；
+    //    若 onCancel 被删，内置会把 Esc 回退到 onEnter 提交并建出新列 → colCount 变
     //    注意：refresh 重建元素树，所有旧 Element* 悬垂——每次点击前重新 find
     addcol = frame.ui.find("todo.btn.addcol.bg");
     DOCTEST_REQUIRE(addcol != nullptr);
@@ -2059,5 +2061,134 @@ REGISTER_TEST(todo_ui_dialog_form_error,
     frame.refresh();
     DOCTEST_CHECK_EQ(frame.ui.find("todo.dialog.newtask.panel")->opacity, 0.0f);
     DOCTEST_CHECK(taskTitleExists("任务甲"));
+    return true;
+})
+
+// ---- 审计 [21]：创建/编辑弹窗 Esc=取消（onCancel，不再误提交）----
+
+REGISTER_TEST(todo_ui_esc_cancel_dialogs,
+              "todo_ui: 新建任务/重命名列 Esc=取消不落库；详情标签 Esc=清草稿（headless，审计 [21]）", {
+    TestEnv env;
+    DOCTEST_REQUIRE(env.ready);
+
+    std::unique_ptr<::core::Module> mod(create_todo_module());
+    mod->onStart();
+
+    auto taskExists = [&](const std::string& title) -> bool {
+        auto ts = env.svc->listAllTasks();
+        if (!ts.isOk()) return false;
+        for (const auto& t : ts.value()) {
+            if (t.title == title) return true;
+        }
+        return false;
+    };
+    auto columnTitle = [&](size_t idx) -> std::string {
+        auto cols = env.svc->listColumns();
+        if (!cols.isOk() || idx >= cols.value().size()) return std::string("<缺失>");
+        return cols.value()[idx].title;
+    };
+    const std::string escTask = "Esc不应建的任务";
+
+    Frame frame(mod.get());
+
+    // 1) 新建任务：输入标题 → Esc（onCancel）→ 弹窗关、不落库
+    {
+        auto* add = frame.ui.find("todo.btn.add.bg");
+        DOCTEST_REQUIRE(add != nullptr);
+        add->onClick();
+        frame.refresh();
+        auto* hit = frame.ui.find("todo.dialog.newtask.input.hit");
+        DOCTEST_REQUIRE(hit != nullptr);
+        DOCTEST_REQUIRE(hit->onTextInput != nullptr);
+        eui::TextInputEvent t;
+        t.text = escTask;
+        hit->onTextInput(t);
+        frame.refresh();
+        hit = frame.ui.find("todo.dialog.newtask.input.hit");
+        DOCTEST_REQUIRE(hit != nullptr);
+        DOCTEST_REQUIRE(hit->onKeyEvent != nullptr);
+        eui::KeyEvent esc;
+        esc.key = eui::InputKey::Escape;
+        esc.action = eui::KeyAction::Press;
+        DOCTEST_CHECK(hit->onKeyEvent(esc));   // 被 onCancel 消费
+        frame.refresh();
+        DOCTEST_CHECK_EQ(frame.ui.find("todo.dialog.newtask.panel")->opacity, 0.0f);
+        DOCTEST_CHECK(!taskExists(escTask));   // 旧行为：Esc→onEnter=submitNewTask 会落库
+    }
+
+    // 2) 重命名列：改标题 → Esc → 弹窗关、标题不变
+    {
+        const std::string before = columnTitle(0);
+        auto* pen = frame.ui.find("todo.col.0.rename.bg");
+        DOCTEST_REQUIRE(pen != nullptr);
+        pen->onClick();
+        frame.refresh();
+        auto* hit = frame.ui.find("todo.dialog.rename.input.hit");
+        DOCTEST_REQUIRE(hit != nullptr);
+        DOCTEST_REQUIRE(hit->onTextInput != nullptr);
+        eui::TextInputEvent t;
+        t.text = "Esc不应改的名";
+        hit->onTextInput(t);
+        frame.refresh();
+        hit = frame.ui.find("todo.dialog.rename.input.hit");
+        DOCTEST_REQUIRE(hit != nullptr);
+        eui::KeyEvent esc;
+        esc.key = eui::InputKey::Escape;
+        esc.action = eui::KeyAction::Press;
+        DOCTEST_CHECK(hit->onKeyEvent(esc));
+        frame.refresh();
+        DOCTEST_CHECK_EQ(frame.ui.find("todo.dialog.rename.panel")->opacity, 0.0f);
+        DOCTEST_CHECK_EQ(columnTitle(0), before);
+    }
+
+    // 3) 详情标签输入框：打半截 → Esc → 草稿清空（不误提交成标签），弹窗不关
+    {
+        // 任务经「新建任务」弹窗 UI 路径创建（直接调 service 不进模块内存态）
+        auto* add = frame.ui.find("todo.btn.add.bg");
+        DOCTEST_REQUIRE(add != nullptr);
+        add->onClick();
+        frame.refresh();
+        auto* nhit = frame.ui.find("todo.dialog.newtask.input.hit");
+        DOCTEST_REQUIRE(nhit != nullptr);
+        eui::TextInputEvent t0;
+        t0.text = "详情标签任务";
+        nhit->onTextInput(t0);
+        frame.refresh();
+        auto* nconf = frame.ui.find("todo.dialog.newtask.confirm.bg");
+        DOCTEST_REQUIRE(nconf != nullptr);
+        nconf->onClick();
+        frame.refresh();
+        frame.refresh();   // 列表重载（提交后下一帧才见卡片）
+        const auto* card = frame.ui.find("todo.col.0.card.0.bg");
+        DOCTEST_REQUIRE(card != nullptr);
+        DOCTEST_REQUIRE(card->onClick != nullptr);
+        card->onClick();   // 打开详情弹窗
+        frame.refresh();
+        auto* thit = frame.ui.find("todo.dialog.detail.tag.input.hit");
+        DOCTEST_REQUIRE(thit != nullptr);
+        DOCTEST_REQUIRE(thit->onTextInput != nullptr);
+        eui::TextInputEvent t;
+        t.text = "半截标签";
+        thit->onTextInput(t);
+        frame.refresh();
+        const auto* shown = frame.ui.find("todo.dialog.detail.tag.input.text");
+        DOCTEST_REQUIRE(shown != nullptr);
+        DOCTEST_CHECK_EQ(shown->text, std::string("半截标签"));
+        auto* thit2 = frame.ui.find("todo.dialog.detail.tag.input.hit");
+        DOCTEST_REQUIRE(thit2 != nullptr);
+        eui::KeyEvent esc;
+        esc.key = eui::InputKey::Escape;
+        esc.action = eui::KeyAction::Press;
+        DOCTEST_CHECK(thit2->onKeyEvent(esc));    // onCancel=清草稿
+        frame.refresh();
+        // 草稿清空 → 输入框回 placeholder 显示；详情弹窗保持打开；标签未进草稿
+        const auto* ph = frame.ui.find("todo.dialog.detail.tag.input.text");
+        DOCTEST_REQUIRE(ph != nullptr);
+        DOCTEST_CHECK_EQ(ph->text, std::string("输入标签，回车添加…"));
+        DOCTEST_CHECK_EQ(frame.ui.find("todo.dialog.detail.panel")->opacity, 1.0f);
+        DOCTEST_CHECK(frame.ui.find("todo.dialog.detail.tag.0.bg") == nullptr);  // 草稿未成 chip
+    }
+
+    mod->onStop();
     return true;
 })

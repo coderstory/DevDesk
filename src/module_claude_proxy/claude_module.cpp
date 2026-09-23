@@ -1365,6 +1365,8 @@ private:
             .value(formName_).placeholder("例如：官方 / 中转 A")
             .fontSize(14.0f).theme(themeTokens)
             .onChange([this](const std::string& v) { formName_ = v; })
+            // 审计 [21]：Esc=取消（关表单不提交，同「取消」按钮）；表单各输入框统一
+            .onCancel([this] { formOpen_ = false; })
             .build();
 
         ui.text("claude.form.basic.url.label")
@@ -1376,6 +1378,7 @@ private:
             .value(formUrl_).placeholder("https://api.anthropic.com")
             .fontSize(14.0f).theme(themeTokens)
             .onChange([this](const std::string& v) { formUrl_ = v; })
+            .onCancel([this] { formOpen_ = false; })  // 审计 [21]：Esc=取消
             .build();
 
         ui.text("claude.form.basic.key.label")
@@ -1391,6 +1394,7 @@ private:
             .value(formKey_).placeholder(keyPlaceholder)
             .fontSize(14.0f).theme(themeTokens)
             .onChange([this](const std::string& v) { formKey_ = v; })
+            .onCancel([this] { formOpen_ = false; })  // 审计 [21]：Esc=取消
             .build();
 
         ui.text("claude.form.basic.hint.icon")
@@ -1470,6 +1474,7 @@ private:
                 .onChange([this, m = row.slot](const std::string& v) {
                     (formModels_.*m).model = v;
                 })
+                .onCancel([this] { formOpen_ = false; })  // 审计 [21]：Esc=取消
                 .build();
             // 显示名留空 → placeholder 渲染派生预览（§6.1）
             const std::string derived = deriveDisplayName(slot.model);
@@ -1481,6 +1486,7 @@ private:
                 .onChange([this, m = row.slot](const std::string& v) {
                     (formModels_.*m).name = v;
                 })
+                .onCancel([this] { formOpen_ = false; })  // 审计 [21]：Esc=取消
                 .build();
         }
 
@@ -1527,6 +1533,7 @@ private:
                 .onChange([this, i](const std::string& v) {
                     formEnvRows_[i].first = v;
                 })
+                .onCancel([this] { formOpen_ = false; })  // 审计 [21]：Esc=取消
                 .build();
             components::input(ui, "claude.form.env.row." + idx + ".value")
                 .position(258.0f, y).size(414.0f, 32.0f)
@@ -1535,6 +1542,7 @@ private:
                 .onChange([this, i](const std::string& v) {
                     formEnvRows_[i].second = v;
                 })
+                .onCancel([this] { formOpen_ = false; })  // 审计 [21]：Esc=取消
                 .build();
             components::button(ui, "claude.form.env.row." + idx + ".del")
                 .position(682.0f, y).size(50.0f, 32.0f)
@@ -1589,6 +1597,7 @@ private:
             .multiline(true).scrollbar(true)
             .fontSize(12.0f).theme(themeTokens)
             .onChange([this](const std::string& v) { importText_ = v; })
+            .onCancel([this] { formOpen_ = false; })  // 审计 [21]：Esc=取消
             .build();
 
         components::button(ui, "claude.form.import.parse")
