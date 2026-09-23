@@ -2,6 +2,26 @@
 
 本文件记录 **a1a106a（macOS 中断现场收编）起** 的条目式变更，按恢复计划的三波（W1 止血收编 / W2 平台架构 / W3 剩余需求）组织，波内按 feat / fix / test / docs 分组。更早的 macOS 主线历史（P0–P8，66 测试通过）见 git log 与 spec §16。
 
+## [PhaseC-MD-Highlight] 2026-09-23 —— 编辑器 Markdown 语法高亮（styled-runs Phase C）
+
+分支 `feat/md-highlight`（worktree `wt-mdhl`）。上游 Phase A/B 已在 EUI-NEO main @ b7e0e9f。基线 303/303 → **310/310 全绿**（+7 高亮用例）。
+
+### feat
+
+- **md_line_scanner 扩展**：`scanFences(text) -> vector<MdFenceBlock>`（开栏行/内容区间/闭栏行字节偏移，``` 与 ~~~ 各自配对，未闭合到文末）；`scanHeadings` 改为消费 scanFences——大纲与高亮共用一套围栏状态机（一鱼三吃），原围栏内标题语义不变（既有用例全绿）。
+- **行级高亮器** `src/module_markdown/md_highlight.{h,cpp}`：`MdHighlighter::runsForLine(fullText, lineText, lineStartByte) -> vector<TextRun>`（全文档坐标）。块级：标题 `#` 前缀、引用 `>`（正文 textSecondary + 行内 token 后写覆盖叠加）、列表 `-`/`*`/`+`/`N.`、表格管道（仅 `|` 开头行）；行内：`` `code` ``（同长度反引号配对，含双反引号）、`**bold**`（标记弱化，内容等 Phase D weight run）、`*italic*`（无 italic 字形用 info 色替代）、`[text](url)` / `![alt](url)`。围栏行整行弱化、围栏内容整行 success 色；围栏状态由高亮器内部按 display 文本重建（文本变化首回调一次 O(n)，其后的可视行回调走等值快路径）——与框架回调同源（IME preedit 快照），字节坐标不会错位。块级规则仅硬行首触发（软换行段中恰以 `# ` 开头不误判）。
+- **色表** `mdHighlightColors(Tokens)`：§6.2 全部映射现有语义 token（标记 textTertiary / 代码 success / 链接+斜体 info / 列表 primary / 引用正文 textSecondary），明暗两套自动适配，未新增 token。
+- **接线**：markdown_module 编辑器 input 挂 `.lineStyles(回调)`（从 InputState 解析当前 display 文本喂高亮器）；主题名变化 = 换色表 = bump `InputState.styleRevision` 触发全部可视行重高亮（compose 每帧检查，无模块间耦合）。
+
+### test
+
+- `test_md_highlight.cpp` +7 用例：scanFences 区间（配对/未闭合/空内容/CRLF）、块级前缀与行内 token 字节区间断言（CJK 边界、未闭合标记不误标、粗体星不误判斜体）、围栏跨行、软换行段防误判、色表映射、无头接线（行元素 runs 落色 + 主题切换 styleRevision++ 且换色）、万行性能冒烟。
+- 性能实测（万行 / 2500 围栏块 / 可视窗 27 行）：首帧 1.13ms，击键轮（围栏重建 + 27 行重高亮）avg 0.98ms / max 1.53ms——预算 8ms 内 5 倍余量。
+
+### docs
+
+- 设计文档 §8 Phase C 状态回填；预览侧 `renderInlineRuns` 收敛为 `.runs()` 评估结论：**不做**（segment 间 fontFamily/fontSize/fontWeight 真实不同——代码段是 monospace 小字号，颜色 run 无法合并异字体段，重构手工 inline 布局 > 半天，见设计文档登记）。
+
 ## [Final-Verify] 2026-09-23 —— 终验发现问题收尾批（12 项）
 
 分支 `fix/final-verify`。基线 290/290 → **291/291 全绿**（+1 设置页布局断言；EUI-NEO 侧另加 1 个单测）。
