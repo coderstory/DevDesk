@@ -23,6 +23,10 @@
 //   Tab/Shift+Tab 缩进、Enter 列表续行、Ctrl+B/I 包裹、Ctrl+K 链接骨架；
 //   纯函数在 md_keyboard.{h,cpp}，本文件只做接线（handleEditorKey）
 //
+// Phase C 编辑器语法高亮（styled-runs，ux-design §6.2 色表）：
+//   编辑器 input 挂 .lineStyles(回调) → md_highlight 行级词法扫描（围栏
+//   状态与大纲共用 md_line_scanner）；主题切换 bump styleRevision 重高亮
+//
 // 所有 I/O 都通过 MarkdownService，失败走 core::Result（不抛异常）。
 #include "core/database.h"
 #include "core/logging.h"
@@ -33,6 +37,7 @@
 #include "core/component_theme.h"
 #include "core/time.h"
 #include "markdown_service.h"
+#include "md_highlight.h"
 #include "md_keyboard.h"
 #include "md_line_scanner.h"
 #include "md_tree.h"
@@ -218,6 +223,18 @@ public:
         const auto& t = core::theme::current();
         const auto componentTheme =
             core::theme::componentTokens(t);
+
+        // Phase C 语法高亮：色表随主题（§6.2）。主题名变化 = 换色表 =
+        // bump InputState.styleRevision 触发全部可视行重高亮（Phase B 语义：
+        // 使用方自增；首帧也走一次，保证初始色表就位）
+        if (const std::string themeName = core::theme::currentThemeName();
+            themeName != highlightThemeName_) {
+            highlightThemeName_ = themeName;
+            highlighter_.setColors(mdHighlightColors(t));
+            ++ui.state<components::input_detail::InputModel::InputState>(
+                      "md.editor.input")
+                 .styleRevision;
+        }
 
         const float pad = t.sizes.spacingXXLarge; // 40
         const float contentW = screen.width - pad * 2.0f;
@@ -874,6 +891,20 @@ private:
                 // store 跨帧持久），lambda 捕获安全
                 .onKeyEvent([this, &ui](const eui::KeyEvent& event) {
                     return handleEditorKey(ui, event);
+                })
+                // Phase C 行级语法高亮（styled-runs）：回调只给行文本与行首
+                // 偏移，围栏状态需要全文——从 InputState 取当前 display 文本
+                // （IME 组合期间是 preedit 快照，与框架坐标系同源，字节偏移
+                // 不会错位）。返回全文档坐标 runs，框架裁剪平移归一化。
+                .lineStyles([this, &ui](const std::string& lineText,
+                                        int lineStartByte, int lineNo) {
+                    (void)lineNo;
+                    using InputState =
+                        components::input_detail::InputModel::InputState;
+                    auto& st = ui.state<InputState>("md.editor.input");
+                    return highlighter_.runsForLine(
+                        st.preedit ? st.preedit->text : st.text, lineText,
+                        lineStartByte);
                 })
                 .build();
 
@@ -1939,6 +1970,10 @@ private:
     std::vector<TagCount> allTags_;         // 左栏筛选区的全部标签（含笔记数）
     std::string tagFilter_;                 // 生效中的标签筛选（空 = 无）
     std::string tagInput_;                  // 添加标签输入框内容
+
+    // ---- Phase C 语法高亮状态 ----
+    MdHighlighter highlighter_;        // 行级高亮器（围栏状态随 display 文本重建）
+    std::string highlightThemeName_;   // 上次注入色表的主题名（变化 = 重高亮）
 };
 
 } // namespace module::markdown
