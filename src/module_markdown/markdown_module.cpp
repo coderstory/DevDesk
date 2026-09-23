@@ -1110,6 +1110,8 @@ private:
                 .theme(componentTheme)
                 .onChange([this](const std::string& v) { tagInput_ = v; })
                 .onEnter([this] { commitAddTag(); })
+                // 审计 [21]：Esc=丢弃半截标签草稿（不再走 onEnter 误提交）
+                .onCancel([this] { tagInput_.clear(); })
                 .build();
             components::button(ui, "md.tags.addbtn")
                 .position(cx + inW + 4.0f, y)
@@ -1353,6 +1355,8 @@ private:
                         newNoteError_.clear();  // 审计 [30]：错误随下一次输入清除
                     })
                     .onEnter([this, &ui] { commitNewNote(ui); })
+                    // 审计 [21]：Esc=取消（关弹窗不落盘，同「取消」按钮）
+                    .onCancel([this] { newNoteOpen_ = false; })
                     .build();
 
                 // 审计 [30]：内嵌红字错误行（claude formError_ 模式）——弹窗里
@@ -1440,6 +1444,8 @@ private:
                         newFolderError_.clear();  // 审计 [30]：错误随下一次输入清除
                     })
                     .onEnter([this] { commitNewFolder(); })
+                    // 审计 [21]：Esc=取消（关弹窗不建目录）
+                    .onCancel([this] { newFolderOpen_ = false; })
                     .build();
 
                 // 审计 [30]：内嵌红字错误行，同新建笔记弹窗
@@ -2244,6 +2250,8 @@ private:
                     .theme(componentTheme)
                     .onChange([this](const std::string& v) { renameInput_ = v; })
                     .onEnter([this] { commitRenameNote(); })
+                    // 审计 [21]：Esc=取消（关弹窗不改名）
+                    .onCancel([this] { renameOpen_ = false; })
                     .build();
                 components::button(ui, "md.dialog.rename.cancel")
                     .position(28.0f, h - 60.0f)

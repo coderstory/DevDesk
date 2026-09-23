@@ -1078,6 +1078,9 @@ private:
                         }
                     })
                     .onEnter([this] { applyProxyPort(); })
+                    // 审计 [21]：Esc=丢弃端口草稿（回落已应用端口，不再误触发
+                    // applyProxyPort——旧映射下 Esc 会提交端口并重启代理）
+                    .onCancel([this] { proxyPortDraft_.clear(); })
                     .build();
                 components::button(ui, id + ".port.apply")
                     .position(208.0f, 60.0f)
