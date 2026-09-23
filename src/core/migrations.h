@@ -123,8 +123,10 @@ inline const Migration kCreateInitialTables = {
 };
 
 // 默认 Todo 列（version 2）
-// 首次启动时插入 4 个默认列。ON CONFLICT 保证幂等性
-// （多次调用 migrate 不会重复插入）。
+// 首次启动时插入 4 个默认列。todo_columns.title 无 UNIQUE 约束，SQL 里没有
+// （也无从生效）ON CONFLICT；幂等性由 schema_version 版本号保证——runMigrations
+// 只执行 version > 当前版本 的迁移，且每条迁移包裹在事务里，故 v2 的 INSERT 全程
+// 只跑一次，不会重复插入。（与下方 v3/v4 注释同一口径。）
 inline const Migration kSeedDefaultTodoColumns = {
     .version = 2,
     .description = "seed default todo columns",

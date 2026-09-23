@@ -53,9 +53,9 @@ target_link_libraries(devdesk_core
         Threads::Threads
 )
 
-target_compile_definitions(devdesk_core PUBLIC
-    SQLITE_HAS_FTS5=${SQLITE3_HAS_FTS5}
-)
+# FTS5 死宏已删除：此处曾 target_compile_definitions(devdesk_core PUBLIC
+# SQLITE_HAS_FTS5=${SQLITE3_HAS_FTS5})，全源码零消费者（降级在 markdown_service
+# 运行时判定），见 cmake/Dependencies.cmake 注释。
 
 # 添加 EUI-NEO include
 if(TARGET eui_neo)
