@@ -847,3 +847,81 @@ REGISTER_TEST(settings_effect_dropdown_fits_min_window,
     ::core::theme::setDark();
     return true;
 })
+
+// ---- 桌宠皮肤下拉弹层 z 逃逸：scrollView 内的下拉弹层不得被后续兄弟卡片遮挡 ----
+// 依赖 EUI-NEO 子树 zIndex 上界逃逸（core/dsl.h subtreeMaxZIndex）：下拉组件
+// 自带 zIndex(20)，需把所在卡片整个抬到后绘兄弟之上。色值/层级无头断言。
+
+namespace {
+// 在 root 子树中找同时包含 a、b 两个直接子节点的元素（共同父）
+const core::dsl::Element* commonParentOf(const core::dsl::Element* root,
+                                         const core::dsl::Element* a,
+                                         const core::dsl::Element* b) {
+    if (root == nullptr) return nullptr;
+    bool hasA = false;
+    bool hasB = false;
+    for (const auto& child : root->children) {
+        if (child.get() == a) hasA = true;
+        if (child.get() == b) hasB = true;
+    }
+    if (hasA && hasB) return root;
+    for (const auto& child : root->children) {
+        const core::dsl::Element* hit = commonParentOf(child.get(), a, b);
+        if (hit != nullptr) return hit;
+    }
+    return nullptr;
+}
+
+int orderedIndexOf(const core::dsl::Element* parent, const core::dsl::Element* child) {
+    for (size_t i = 0; i < parent->orderedChildren.size(); ++i) {
+        if (parent->orderedChildren[i] == child) return static_cast<int>(i);
+    }
+    return -1;
+}
+} // namespace
+
+REGISTER_TEST(settings_pet_dropdown_z_escape, "settings: pet skin dropdown popup escapes following cards", {
+    // pet 卡开启（真机默认关），弹层展开时必须盖住下方目录卡
+    PruneEnv env("petz");
+    {
+        std::ofstream out(env.cfgPath);
+        out << "{\"theme\":\"dark\",\"enabledModules\":["
+               "\"home\",\"markdown\",\"todo\",\"claude_proxy\",\"settings\",\"pet\"]}";
+    }
+    std::unique_ptr<::core::Module> mod(create_settings_module());
+    mod->onStart();
+
+    eui::Screen screen;
+    screen.width = 1600.0f;
+    screen.height = 1000.0f;
+    eui::Ui ui;
+    ui.begin("petz");
+    mod->compose(ui, screen);
+    ui.end();
+    ui.layout(screen.width, screen.height);
+
+    const auto* dd = ui.find("settings.card.pet.skin.dd");
+    const auto* petCard = ui.find("settings.card.pet");
+    const auto* dirCard = ui.find("settings.card.directory");
+    DOCTEST_REQUIRE(dd != nullptr);
+    DOCTEST_REQUIRE(petCard != nullptr);
+    DOCTEST_REQUIRE(dirCard != nullptr);
+
+    // 下拉自带 zIndex(20) 沿祖先链传播：pet 卡子树上界 > 目录卡（z 0）
+    DOCTEST_CHECK(dd->subtreeMaxZIndex >= 20);
+    DOCTEST_CHECK(petCard->subtreeMaxZIndex >= 20);
+    DOCTEST_CHECK_EQ(dirCard->subtreeMaxZIndex, 0);
+
+    // 两卡是 scrollView 内容栈里的兄弟：pet 卡（含弹层）排序必须在目录卡之后
+    const core::dsl::Element* parent = nullptr;
+    for (const auto& root : ui.roots()) {
+        parent = commonParentOf(root.get(), petCard, dirCard);
+        if (parent != nullptr) break;
+    }
+    DOCTEST_REQUIRE(parent != nullptr);
+    DOCTEST_CHECK(orderedIndexOf(parent, petCard) > orderedIndexOf(parent, dirCard));
+
+    mod->onStop();
+    ::core::theme::setDark();
+    return true;
+})
