@@ -4,7 +4,7 @@
 // M2 状态机（设计 §4.4/§4.5）：Idle（眨眼循环）→ 点击 → Poked（播一遍）；
 // 无交互 5min → Sleep（闭眼+Zzz）；代理活动流 → Typing（打字帧）。
 // 气泡对话（点击/随机闲聊，短语表随皮肤）；右键菜单（穿透/换肤/位置
-// 重置/隐藏/退出）；拖拽移动窗口（onDrag + setWindowPos，结束持久化）。
+// 重置/隐藏/退出——退出为二段确认，审计 [25]）；拖拽移动窗口（onDrag + setWindowPos，结束持久化）。
 // 代理联动读 core::proxy_stats 共享统计（module_pet → core 合法依赖，
 // 不碰 module_claude_proxy）
 #include "module_pet/pet_window.h"
@@ -273,7 +273,30 @@ void petCompose(eui::Ui& ui, const eui::Screen& screen) {
                         savePetPosition();
                         core::window::requestWindowClose(runtime().handle);
                     } else if (path[0] == idxExit) {
-                        app::requestExit();  // 与托盘 Exit 同一退出路径
+                        // 审计 [25]：退出是应用级破坏性操作（断代理/丢弹窗
+                        // 状态），不能与「隐藏桌宠」同权重零确认。原生菜单
+                        // 就地二段确认（dialog 组件在 sprite 小窗被 bounds
+                        // 裁剪，不可用——见本 lambda 头注释的同一先例）；
+                        // 取消/Esc/平台不支持一律不退出
+                        std::vector<core::platform::ContextMenuItem> confirm;
+                        for (const PetExitConfirmItem& ci : petExitConfirmItems()) {
+                            if (ci.text == "-") {
+                                confirm.push_back(
+                                    core::platform::ContextMenuItem{"-"});
+                                continue;
+                            }
+                            core::platform::ContextMenuItem item;
+                            item.text = ci.text;
+                            item.disabled = ci.disabled;
+                            confirm.push_back(std::move(item));
+                        }
+                        const std::optional<std::vector<int>> chosen =
+                            core::platform::showContextMenu(info.platformWindow,
+                                                            confirm);
+                        if (chosen.has_value() && !chosen->empty() &&
+                            petExitConfirmChosen(*chosen)) {
+                            app::requestExit();  // 与托盘 Exit 同一退出路径
+                        }
                     }
                 })
                 .build();
@@ -520,6 +543,22 @@ void setPetClickThrough(bool enabled) {
     savePetClickThrough(enabled);
     LOG_INFO(std::string("桌宠鼠标穿透 → ") +
              (enabled ? "开（挂机态；锁死后在设置页桌宠卡关闭）" : "关"));
+}
+
+// ---- 退出二次确认（审计 [25]，纯数据层，声明见 pet_window.h）----
+// 下标语义与 petExitConfirmChosen 耦合：0=说明（disabled）1=分隔线
+// 2=确认退出 3=取消。改结构必须同步改 petExitConfirmChosen 与单测
+std::vector<PetExitConfirmItem> petExitConfirmItems() {
+    return {
+        {"将退出 DevDesk：断开代理、丢失未保存弹窗状态，确定？", true},
+        {"-"},
+        {"确认退出"},
+        {"取消"},
+    };
+}
+
+bool petExitConfirmChosen(const std::vector<int>& path) {
+    return path.size() == 1 && path[0] == 2;
 }
 
 } // namespace module::pet

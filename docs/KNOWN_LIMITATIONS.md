@@ -64,6 +64,12 @@
 - 总设计 §8.5 承诺「笔记目录：路径输入框 + 『打开目录』按钮」。**「打开目录」按钮已实现**（`platform::file_open::openDirectory`，目录不存在时先创建再打开）；**路径输入框（改目录）未实现**——设置页只读展示 + 说明文案，用户迁移既有笔记库只能手动拷贝文件到 `%APPDATA%\DevDesk\notes`。
 - 升级路径（中期）：路径输入框 + 索引重扫迁移（换目录后 MarkdownService 需重建 FTS 索引并处理旧目录归档），涉及数据迁移语义，单独排期。来源：产品审计 2026-09-23 confirmed[15]。
 
+#### 7. 拖拽元素无 grab/grabbing 光标（EUI-NEO 上游缺口，审计 [30] 登记，2026-09-23）
+
+- EUI-NEO `CursorShape` 只有 Arrow/Hand 两档（`core/input/input_types.h`），挂了 onClick/onPress 的元素自动 Hand——Todo 卡片悬停已有手型提示，但无法用抓取系光标区分「可点击」与「可拖动」，拖拽 affordance 只剩文案。
+- 本轮已做的补偿：Todo 副标题补「拖动卡片跨列移动」、Markdown 副标题改静态快捷键说明（审计 [30]）。
+- 升级路径：上游给 `CursorShape` 增加 `Grab/Grabbing`（GLFW `glfwSetCursorShape` 原生支持 HAND/ARROW 之外的形状需确认，可能要走 Win32 资源光标），DevDesk 在 onDrag 元素 `.cursor()` 处接线即可。
+
 ### 测试
 
 #### 5. soak 300s 压测默认 SKIP

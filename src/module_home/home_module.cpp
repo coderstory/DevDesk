@@ -327,7 +327,7 @@ public:
                                      formatRateTps(snap.rateTps), tokenBadge,
                                      false,
                                      [this] { navigateTo(::core::PageId::ClaudeProxy); },
-                                     streaming ? &t.colors.primary
+                                     streaming ? &t.colors.primaryText
                                                : &t.colors.textTertiary,
                                      streaming ? &t.colors.success : nullptr,
                                      0.5f);

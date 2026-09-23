@@ -118,7 +118,7 @@ void drawFileTreeItem(eui::Ui& ui,
                 .text(name)
                 .fontSize(t.sizes.fontSizeSmall)
                 .lineHeight(32.0f)
-                .color(active ? t.colors.primary : t.colors.textPrimary)
+                .color(active ? t.colors.primaryText : t.colors.textPrimary)
                 .fontWeight(active ? 700 : 400)
                 .build();
         })
@@ -184,9 +184,9 @@ public:
         auto r = service_->rescan();
         if (r.isFail()) {
             LOG_ERROR("Markdown rescan 失败: " + r.errorMessage());
-            status_ = "重扫失败：" + r.errorMessage();
+            showToast("笔记目录加载失败", "重扫失败：" + r.errorMessage(), true);
         } else {
-            status_ = "已加载笔记目录：" + service_->notesDir().filename().string();
+            LOG_INFO("已加载笔记目录：" + service_->notesDir().filename().string());
         }
         refreshList();
         LOG_INFO("Markdown 模块启动，共 " + std::to_string(notes_.size()) + " 篇笔记");
@@ -295,9 +295,14 @@ private:
         (void)bodyH;
         const auto componentTheme =
             core::theme::componentTokens(t);
+        // 审计 [30]：subtitle 改静态操作说明（对齐 Todo 同类修复）——
+        // 笔记数移入编辑器底部状态栏，操作结果一律走 toast，不再兼任
+        // 「操作日志」把快捷键提示永久顶掉
         const std::string subtitle =
-            service_ ? (std::to_string(notes_.size()) + " 篇笔记 · " + status_)
-                     : "尚未初始化笔记目录";
+            service_
+                ? "Ctrl+Shift+P 切换视图 · Ctrl+B/I/K 格式 · Tab 缩进 · "
+                  "Enter 续列表 · 右键条目更多操作"
+                : "尚未初始化笔记目录";
 
         ui.row("md.header")
             .size(contentW, 64.0f)
@@ -838,7 +843,7 @@ private:
                                         .text(h.title.empty() ? "(无标题)" : h.title)
                                         .fontSize(t.sizes.fontSizeSmall)
                                         .lineHeight(30.0f)
-                                        .color(current ? t.colors.primary
+                                        .color(current ? t.colors.primaryText
                                                        : t.colors.textPrimary)
                                         .fontWeight(current ? 700 : 400)
                                         .build();
@@ -1028,7 +1033,7 @@ private:
                         .text(name)
                         .fontSize(fs)
                         .lineHeight(h)
-                        .color(t.colors.primary)
+                        .color(t.colors.primaryText)
                         .fontWeight(600)
                         .build();
                     // × 删除（chip 右侧独立热区，底色同 chip 不额外可见）
@@ -1047,7 +1052,7 @@ private:
                         .fontSize(fs)
                         .lineHeight(h)
                         .horizontalAlign(eui::HorizontalAlign::Center)
-                        .color(t.colors.primary)
+                        .color(t.colors.primaryText)
                         .build();
                 })
                 .build();
@@ -1115,7 +1120,8 @@ private:
             .color(leftColor)
             .build();
 
-        // 行:列 · N 字（列/字数按 UTF-8 码点计）
+        // 行:列 · N 字 · N 篇笔记（列/字数按 UTF-8 码点计；笔记数从顶栏
+        // subtitle 移来——审计 [30]，subtitle 已改静态操作说明）
         std::string right;
         if (!currentPath_.empty()) {
             const auto& st = ui.state<components::input_detail::InputModel::InputState>("md.editor.input");
@@ -1126,9 +1132,13 @@ private:
             right = std::to_string(line + 1) + ":" + std::to_string(col) + " · " +
                     std::to_string(utf8Length(st.text)) + " 字";
         }
+        if (service_ != nullptr) {
+            if (!right.empty()) right += " · ";
+            right += std::to_string(notes_.size()) + " 篇笔记";
+        }
         ui.text("md.status.pos")
-            .position(x + w - 24.0f - 160.0f, y)
-            .size(160.0f, 22.0f)
+            .position(x + w - 24.0f - 220.0f, y)
+            .size(220.0f, 22.0f)
             .text(right)
             .fontSize(11.0f)
             .lineHeight(22.0f)
@@ -1554,7 +1564,7 @@ private:
                                       : service_->search(searchQuery_);
         if (r.isFail()) {
             LOG_ERROR("刷新笔记列表失败: " + r.errorMessage());
-            status_ = "列表失败：" + r.errorMessage();
+            showToast("笔记列表加载失败", r.errorMessage(), true);
             listError_ = r.errorMessage();
             notes_.clear();  // 不拿旧数据伪装成当前态
             return;
@@ -1614,8 +1624,6 @@ private:
     void toggleTagFilter(const std::string& name) {
         tagFilter_ = (tagFilter_ == name) ? std::string() : name;
         refreshList();
-        status_ = tagFilter_.empty() ? "已取消标签筛选"
-                                     : "按标签筛选：" + tagFilter_;
         LOG_INFO("标签筛选: " + (tagFilter_.empty() ? "(无)" : tagFilter_));
     }
 
@@ -1646,7 +1654,7 @@ private:
             return;
         }
         refreshTags();
-        status_ = "已添加标签 " + name;
+        showToast("已添加标签", name, false);
         LOG_INFO("添加标签 " + name + " → " + currentPath_);
     }
 
@@ -1667,7 +1675,7 @@ private:
         currentTags_ = std::move(next);
         refreshTags();
         refreshList();  // 筛选标签可能随删除失效，树要同步
-        status_ = "已删除标签 " + name;
+        showToast("已删除标签", name, false);
         LOG_INFO("删除标签 " + name + " ← " + currentPath_);
     }
 
@@ -1693,7 +1701,6 @@ private:
         auto r = service_->read(relPath);
         if (r.isFail()) {
             LOG_ERROR("读取笔记失败 " + relPath + ": " + r.errorMessage());
-            status_ = "读取失败：" + r.errorMessage();
             showToast("读取失败", "「" + relPath + "」" + r.errorMessage(), true);
             return;
         }
@@ -1712,7 +1719,7 @@ private:
         }
         syncCurrentMtime();  // W8：外部修改检测的 mtime 基准
         if (mode_ == ViewMode::Preview) syncPreviewOnEnter_ = true;
-        status_ = "已打开 " + relPath;
+        showToast("已打开", relPath, false);
         LOG_INFO("打开笔记: " + relPath);
     }
 
@@ -1742,7 +1749,6 @@ private:
         auto r = service_->write(currentPath_, editorText_);
         if (r.isFail()) {
             LOG_ERROR("保存笔记失败 " + currentPath_ + ": " + r.errorMessage());
-            status_ = "保存失败：" + r.errorMessage();
             saveFailed_ = true;
             // 500ms → 1s → 2s → … 封顶 60s
             saveBackoffMs_ = (saveBackoffMs_ == 0)
@@ -1762,7 +1768,6 @@ private:
         saveBackoffMs_ = 0;
         lastSavedAt_ = std::time(nullptr);
         syncCurrentMtime();  // W8：自己写盘后推进 mtime 基准（避免误报外部修改）
-        status_ = "已保存 " + currentPath_;
     }
 
     // ---- W8：文件变化自动感知（spec §8.1 承诺的 5 秒轮询）----
@@ -1805,7 +1810,6 @@ private:
                 lastSavedText_.clear();
                 outlineDirty_ = true;
                 activeOutlineIdx_ = -1;
-                status_ = "笔记已被外部删除";
                 showToast("笔记已被删除", "当前笔记已从磁盘移除", true);
             } else {
                 // 本地还有未保存编辑：write() 会重建文件，提示一次即可
@@ -1842,14 +1846,19 @@ private:
         activeOutlineIdx_ = -1;
         syncCurrentMtime();
         if (mode_ == ViewMode::Preview) syncPreviewOnEnter_ = true;
-        status_ = "已重新加载 " + currentPath_;
+        if (silent) {
+            // 审计 [30]：原 subtitle「已重新加载」改走 toast（5s 轮询自动
+            // 重载换了屏幕内容必须出声）；冲突处理路径（silent=false）不弹
+            // ——action 点击后 toast 必关，立刻再弹会被 onDismiss 连带清掉
+            showToast("检测到外部修改，已自动重载", currentPath_, false);
+        }
         LOG_INFO("重载笔记: " + currentPath_);
     }
 
     void resolveConflict(bool reloadFromDisk) {
         conflictOpen_ = false;
         if (reloadFromDisk) {
-            // 重载本身就是可见反馈（编辑器内容即刻变化 + 状态栏「已重新加载」）；
+            // 重载本身就是可见反馈（编辑器内容即刻变化）；
             // 不再补 toast——action 点击后 toast 必关，立刻再弹会被 onDismiss
             // 连带清掉（单实例限制，见 drawToast 注释）
             reloadCurrentNote(false);
@@ -1857,7 +1866,7 @@ private:
             // 保留本地：把基准 mtime 推到磁盘当前值，未保存编辑走原有
             // 自动保存链路（400ms 防抖后覆盖写回）
             syncCurrentMtime();
-            status_ = "保留本地编辑 " + currentPath_;
+            LOG_INFO("冲突处理：保留本地编辑 " + currentPath_);
         }
     }
 
@@ -1890,7 +1899,6 @@ private:
         // W8 路径安全校验（目录树依赖 relativePath 落在 notesDir 内；
         // MarkdownService::create 有同规则兜底，这里给出更友好的提示）
         if (!MarkdownService::isSafeNewNotePath(name)) {
-            status_ = "笔记名不合法：不支持绝对路径、盘符或 ..";
             showToast("笔记名不合法",
                       "不允许绝对路径、盘符（如 C:）或 ..，请用相对路径，"
                       "例如 inbox/ideas.md", true);
@@ -1909,7 +1917,7 @@ private:
             newNoteOpen_ = false;
             refreshList();
             openNote(relPath);
-            status_ = "笔记已存在，已打开 " + relPath;
+            showToast("笔记已存在", "已直接打开 " + relPath, false);
             if (currentPath_ == relPath) ui.requestFocus("md.editor.input");
             return;
         }
@@ -1917,7 +1925,7 @@ private:
             // 默认名撞名 → 「无标题笔记 N.md」自动编号（fileMtime 失败 = 不存在）
             for (int i = 2; service_->fileMtime(relPath).isOk(); ++i) {
                 if (i > 999) {
-                    status_ = "新建失败：同名无标题笔记过多";
+                    showToast("新建失败", "同名无标题笔记过多", true);
                     return;
                 }
                 relPath = "无标题笔记 " + std::to_string(i) + ".md";
@@ -1927,13 +1935,13 @@ private:
         auto r = service_->create(relPath);
         if (r.isFail()) {
             LOG_ERROR("新建笔记失败 " + relPath + ": " + r.errorMessage());
-            status_ = "新建失败：" + r.errorMessage();
+            showToast("新建失败", r.errorMessage(), true);
             return;
         }
         newNoteOpen_ = false;
         refreshList();
         openNote(relPath);
-        status_ = "已创建 " + relPath;
+        showToast("已创建笔记", relPath, false);
         // 「新建后自动 focus 编辑器」（ux-design §4 #6，审计 [13][31]）：
         // EUI-NEO Ui::requestFocus 为上游小增量（Runtime 帧末消费），回车即
         // 可打字；openNote 守卫失败（未保存改动阻塞切换）时不聚焦
@@ -1953,7 +1961,7 @@ private:
             name.pop_back();
         }
         if (name.empty()) {
-            status_ = "文件夹名不能为空";
+            showToast("文件夹名不能为空", "请输入文件夹名称", true);
             return;
         }
         if (!service_) return;
@@ -1961,13 +1969,11 @@ private:
         auto r = service_->createFolder(name);
         if (r.isFail()) {
             LOG_ERROR("新建文件夹失败 " + name + ": " + r.errorMessage());
-            status_ = "新建文件夹失败：" + r.errorMessage();
             showToast("新建文件夹失败", "「" + name + "」" + r.errorMessage(), true);
             return;
         }
         newFolderOpen_ = false;
         refreshList();  // listTopFolders 磁盘枚举 → 树里立即出现空文件夹行
-        status_ = "已创建文件夹 " + name;
         showToast("已创建文件夹", name, false);
         LOG_INFO("新建文件夹: " + name);
     }
@@ -2162,7 +2168,6 @@ private:
             currentTags_.clear();
             lastKnownMtime_ = 0;
             conflictOpen_ = false;
-            status_ = "笔记已删除";
         }
         refreshList();
         showToast("已删除笔记", fs::path(path).filename().string(), false);
@@ -2213,7 +2218,6 @@ private:
             syncCurrentMtime();
         }
         refreshList();
-        status_ = "已重命名 " + oldPath + " → " + newPath;
         showToast("已重命名", newPath, false);
         LOG_INFO("重命名笔记: " + oldPath + " → " + newPath);
     }
@@ -2235,7 +2239,6 @@ private:
     std::chrono::steady_clock::time_point lastEditAt_{};
     std::chrono::steady_clock::time_point lastSaveAttemptAt_{};  // 退避计时基准
     int64_t saveBackoffMs_ = 0;        // 0 = 无退避；失败后指数增长
-    std::string status_;               // 顶栏副标题里的状态提示
     std::string listError_;            // 左栏错误态（空 = 正常；W7 P1-1）
     bool newNoteOpen_ = false;
     std::string newNoteName_;

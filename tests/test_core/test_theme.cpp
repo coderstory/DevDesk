@@ -8,6 +8,8 @@
 #include <components/toast.h>
 #include <eui/types.h>
 
+#include <cmath>
+
 REGISTER_TEST(theme_default_dark, "theme: default is dark", {
     DOCTEST_CHECK(core::theme::current().isDark);
     DOCTEST_CHECK_EQ(core::theme::currentThemeName(), std::string("Dark"));
@@ -164,5 +166,54 @@ REGISTER_TEST(theme_component_tokens_light_source, "theme: componentTokens deriv
 
     core::theme::setLight();  // 交给下方用例前保持浅色无意义，恢复默认深色
     core::theme::setDark();
+    return true;
+})
+
+// ---- 审计 [27]：浅色主题 WCAG AA 对比度护栏 ----
+// 浅色 theme 是后加的、从未回验：旧 textTertiary #9A948A on #FAF9F5 只有
+// 2.86:1（大量 11-13px 小字用），主色直接当文字 2.96/2.57:1。本测试把
+// 「辅助灰 + primaryText 在所有落底上 ≥4.5:1」钉死为回归护栏（WCAG 2.x
+// 相对亮度定义），并保住 secondary/tertiary/primary 三档亮度层级
+
+namespace {
+
+double wcagLuminance(const eui::Color& c) {
+    const auto lin = [](double v) {
+        return v <= 0.04045 ? v / 12.92 : std::pow((v + 0.055) / 1.055, 2.4);
+    };
+    return 0.2126 * lin(c.r) + 0.7152 * lin(c.g) + 0.0722 * lin(c.b);
+}
+
+double wcagContrast(const eui::Color& a, const eui::Color& b) {
+    const double la = wcagLuminance(a);
+    const double lb = wcagLuminance(b);
+    const double hi = la > lb ? la : lb;
+    const double lo = la > lb ? lb : la;
+    return (hi + 0.05) / (lo + 0.05);
+}
+
+} // namespace
+
+REGISTER_TEST(theme_light_contrast_wcag, "theme: 浅色辅助灰/主色文字 WCAG AA（审计[27]）", {
+    core::theme::setLight();
+    const auto c = core::theme::current().colors;
+    core::theme::setDark();
+    const auto d = core::theme::current().colors;
+    // 浅色小字三档：background / surface（卡片白）/ primarySoftBg（chip 底）
+    DOCTEST_CHECK(wcagContrast(c.textTertiary, c.background) >= 4.5);
+    DOCTEST_CHECK(wcagContrast(c.textTertiary, c.surface) >= 4.5);
+    DOCTEST_CHECK(wcagContrast(c.textTertiary, c.primarySoftBg) >= 4.5);
+    DOCTEST_CHECK(wcagContrast(c.textSecondary, c.background) >= 4.5);
+    // 主色作文字（树选中/chip/大纲当前节/列表符号）走 primaryText
+    DOCTEST_CHECK(wcagContrast(c.primaryText, c.background) >= 4.5);
+    DOCTEST_CHECK(wcagContrast(c.primaryText, c.primarySoftBg) >= 4.5);
+    // 辅助灰层级不能坍塌：浅底上文字越深越主要，亮度严格递增
+    // textPrimary < textSecondary < textTertiary
+    DOCTEST_CHECK(wcagLuminance(c.textPrimary) < wcagLuminance(c.textSecondary));
+    DOCTEST_CHECK(wcagLuminance(c.textSecondary) < wcagLuminance(c.textTertiary));
+    // 深色档数值未动，也进护栏防退化
+    DOCTEST_CHECK(wcagContrast(d.textTertiary, d.background) >= 4.5);
+    DOCTEST_CHECK(wcagContrast(d.primaryText, d.background) >= 4.5);
+    DOCTEST_CHECK(wcagContrast(d.primaryText, d.primarySoftBg) >= 4.5);
     return true;
 })

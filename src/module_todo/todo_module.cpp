@@ -648,7 +648,7 @@ private:
                         // subtitle 保持静态操作说明（动态反馈走 toast）
                         ui.text("todo.subtitle")
                             .size(contentW - 560.0f, 18.0f)
-                            .text("点击卡片查看详情 · Ctrl+↑/↓ 移动选中任务 · 右键卡片/列头更多操作")
+                            .text("点击卡片查看详情 · Ctrl+↑/↓ 移动选中任务 · 右键卡片/列头更多操作 · 拖动卡片跨列移动")
                             .fontSize(t.sizes.fontSizeSmall)
                             .lineHeight(18.0f)
                             .color(t.colors.textSecondary)
@@ -1836,7 +1836,7 @@ private:
                         .fontSize(t.sizes.fontSizeSmall - 1.0f)
                         .colors(active ? t.colors.primarySoftBg : t.colors.surfaceElevated,
                                 t.colors.hover, t.colors.active)
-                        .textColor(active ? t.colors.primary : t.colors.textSecondary)
+                        .textColor(active ? t.colors.primaryText : t.colors.textSecondary)
                         .radius(t.sizes.radius)
                         .border(1.0f, active ? t.colors.primary : t.colors.borderDefault)
                         .onClick([this, i, prios] { detailPriority_ = prios[i]; })
@@ -1860,7 +1860,7 @@ private:
                     .fontSize(t.sizes.fontSizeSmall - 1.0f)
                     .colors(!hasDue ? t.colors.primarySoftBg : t.colors.surfaceElevated,
                             t.colors.hover, t.colors.active)
-                    .textColor(!hasDue ? t.colors.primary : t.colors.textSecondary)
+                    .textColor(!hasDue ? t.colors.primaryText : t.colors.textSecondary)
                     .radius(t.sizes.radius)
                     .border(1.0f, !hasDue ? t.colors.primary : t.colors.borderDefault)
                     .onClick([this] { detailDueAt_ = std::nullopt; })
@@ -1874,7 +1874,7 @@ private:
                     .fontSize(t.sizes.fontSizeSmall - 1.0f)
                     .colors(hasDue ? t.colors.primarySoftBg : t.colors.surfaceElevated,
                             t.colors.hover, t.colors.active)
-                    .textColor(hasDue ? t.colors.primary : t.colors.textSecondary)
+                    .textColor(hasDue ? t.colors.primaryText : t.colors.textSecondary)
                     .radius(t.sizes.radius)
                     .border(1.0f, hasDue ? t.colors.primary : t.colors.borderDefault)
                     .onClick([this] { datePickOpen_ = true; })
@@ -1952,7 +1952,7 @@ private:
                         .fontSize(t.sizes.fontSizeSmall - 1.0f)
                         .colors(active ? t.colors.primarySoftBg : t.colors.surfaceElevated,
                                 t.colors.hover, t.colors.active)
-                        .textColor(active ? t.colors.primary : t.colors.textSecondary)
+                        .textColor(active ? t.colors.primaryText : t.colors.textSecondary)
                         .radius(t.sizes.radius)
                         .border(1.0f, active ? t.colors.primary : t.colors.borderDefault)
                         .onClick([this, i] {
