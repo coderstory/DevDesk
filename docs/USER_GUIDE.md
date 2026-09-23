@@ -12,8 +12,8 @@ DevDesk 是一个**本地优先**的开发者桌面工具集（C++ 原生应用�
 | **首页** | 仪表盘：今日笔记 / 待办 / 逾期 / API 调用四张统计卡 + 最近编辑列表 |
 | **Markdown 笔记本** | 笔记就是普通 `.md` 文件：FTS5 全文搜索（支持中文）、目录树 / 标签 / 大纲、编辑·双栏·预览三态 + 键盘流、自动保存 |
 | **Todo 看板** | 多列任务看板：拖拽跨列、优先级、截止日期、标签、搜索 / 逾期视图、右键列头管理列 |
-| **Claude 切换器** | 多套 Claude API 配置（Profile）管理 + 本地流式代理 |
-| **设置** | 主题 / 字号 / 代理 token / 日志保留策略 / 模块开关 |
+| **Claude 切换器** | 多套 Claude API 配置（Profile）管理 + 本地流式代理（默认不启动；启动即自动接管 Claude Code settings.json，停止还原） |
+| **设置** | 外观（主题 / 字号 / 窗口效果）/ 模块开关 / 桌宠 / 笔记目录 / Claude 代理（自启 · 端口 · Token · 接管）/ 日志保留，共 6 张卡 |
 | **桌宠** | 桌面独立透明小窗宠物：动画 / 拖拽 / 气泡 / 右键菜单（默认关闭，设置页开启，见 [§3.6](#36-桌宠)） |
 
 所有数据都保存在本机 `%APPDATA%\DevDesk`（见 [§5 数据都在哪](#5-数据都在哪)），不上传任何内容。
@@ -82,37 +82,41 @@ DevDesk 是一个**本地优先**的开发者桌面工具集（C++ 原生应用�
 
 管理多套 Claude API 配置（Profile），并在本地跑一个带鉴权的流式代理，让 Claude Code 之类的客户端经代理调用 API。
 
+**代理默认不启动**：应用启动时 8888 端口不监听（供应商配置设计硬性需求），需在本页手动启动；未启动时副标题提示「代理已停止，点右上角启动」。要开机常驻，可在设置页开「随应用启动代理」（见 §3.5）。
+
 页面上能看到的信息（全部为真实数据）：
 
-- **代理状态**：标题旁的圆点与文字（运行中 `:8888` / 已停止）。
-- **Profile 列表**（左栏）：名称、Base URL、模型、ACTIVE 标记。
-- **当前 Profile 详情**（右栏）：名称、模型、Base URL、API Key（脱敏显示 + `[Keychain]` 标记；明文密钥只存在 DPAPI 加密的本地 keychain 存储，绑定当前 Windows 用户）。
-- **最近调用**：最近 3 次代理调用（时间、方法 / 路径、状态、耗时）。
+- **代理状态**：右上角圆点与文字（绿点「运行中 :<端口>」/ 灰点「已停止」，端口默认 8888、可配）。
+- **Profile 列表**（左栏）：名称、Base URL、模型，激活行带 **ACTIVE** 徽章；选中未激活的 Profile 时详情面板显示「未激活」徽章。
+- **当前 Profile 详情**（右栏）：名称、模型、Base URL、API Key（脱敏提示：前 6 + `***` + 后 4，带 `[Keychain]` 标记；明文密钥只存在 DPAPI 加密的本地 keychain 存储，绑定当前 Windows 用户）、「Claude Code 接管」状态行（「● Claude Code 已接管 <路径>」/「○ Claude Code 未接管（启动代理后自动接管，停止时还原）」）、最近调用表（时间 / 方法·路径 / 状态 / 耗时）。
+- **调用日志面板**：详情底部「查看全部 →」打开**「调用记录」弹窗**——搜索框（占位「搜索路径 / 方法…」）、状态码过滤下拉（全部状态 / 2xx 成功 / 3xx 重定向 / 4xx 客户端错误 / 5xx 服务端错误 / 错误（超时等））、分页每页 20 条（「← 上一页」「下一页 →」「第 N / M 页」）。
 
 页面上可以做的操作（已全量接线，底层真调 `ClaudeService`）：
 
-- **+ 新建 Profile**：弹窗填名称 / Base URL / 模型 / API Key（Key 经 DPAPI 加密存 keychain）。
-- **启用**：把选中的 Profile 设为代理转发的当前配置（ACTIVE 标记刷新）。
+- **+ 新建 Profile**：弹窗填名称 / Base URL / 模型 / API Key（Key 经 DPAPI 加密存 keychain）。**若当前没有任何激活 Profile，新建的会自动激活**（toast「已创建并启用」）；已有激活则不抢占，提示点「启用」。
+- **导入当前配置**：一键读 `~/.claude/settings.json`、解析 env 托管键后**预填新建表单**（名称建议取 Base URL 主机名，可改）。
+- **启用**：把选中的 Profile 设为代理转发的当前配置（代理运行中会立即按新配置重新接管 settings.json）。
 - **编辑**：弹窗预填现有值；API Key 留空表示沿用原 Key 不更换。
-- **删除**：确认弹窗后删除 Profile（含 keychain 条目清理）。
-- **测试连通**：对 Profile 的 Base URL 发一次真实请求，toast 显示 HTTP 结果。
-- **⏸/▶ 代理开关**：停止 / 重新启动本地代理（127.0.0.1:8888）。
+- **删除**：「确认删除？」弹窗（「将删除 Profile「<名称>」及其 Keychain 中的 API Key，不可恢复」）。**删除的是当前激活 Profile 时会同时停止代理并还原 Claude Code 的 settings.json**（toast「删除的是激活 Profile，已停止代理并还原 Claude Code 配置」）。
+- **测试连通**：后台对 `<Base URL>/v1/models` 发一次 GET（15 秒超时，带 x-api-key），toast 显示 HTTP 结果；上一轮未结束时再点提示「测试进行中」。
+- **启动代理 / 停止代理**：右上角按钮随状态切换文字，启停同时接管 / 还原 Claude Code 配置（见 §4.2）。
 
 操作结果统一以页面底部 toast 提示，失败时显示中文错误信息。
 
 ### 3.5 设置
 
-进入方式：左侧侧边栏点「设置」。
+进入方式：左侧侧边栏点「设置」（或首页右上「设置」）。卡片区可滚动，部分卡**按模块开关动态显隐**：桌宠卡仅开启桌宠时出现，笔记目录卡仅 Markdown 开启时出现，代理卡仅 Claude 开启时出现。
 
-| 设置项 | 怎么用 | 生效范围 / 时机 |
-|--------|--------|----------------|
-| **主题** | 「🌙 深色」/「☀ 浅色」二选一 | 切换即时生效（下一帧全页生效） |
-| **字号缩放** | 档位选择（85%–130%，内部映射全局缩放 0.5–2.0 并钳制） | **全局生效**——所有模块的文字随 token 缩放，持久化到 `config.json` |
-| **Markdown 笔记目录** | 只读展示 | 修改目录属于后续功能 |
-| **认证 Token** | 只读显示 Claude 代理 token；「↻ 重新生成」换新 token | 重新生成会重启代理（同端口 8888）并同步重写 `proxy_token.txt` |
-| **调用日志保留** | 天数（0 = 永久保留，默认 30 天，上限 3650 天） | **下次启动时**执行清理 |
+| 卡片 | 设置项 | 生效范围 / 时机 |
+|------|--------|----------------|
+| **外观** | 主题（「深色」/「浅色」，默认深色）；字号缩放（「小 85%」「标准 100%」「大 115%」「特大 130%」，正文基准 15px，**全局生效**）；窗口效果（「关闭（默认）」「半透」「磨砂（Acrylic）」，系统不支持自动回退并提示） | 全部即时生效（下一帧，含窗口底色），持久化 |
+| **模块** | 4 个开关：Markdown 笔记本 / Todo 看板 / Claude 配置切换器 / 桌宠（首页与设置恒开、无开关） | **重启应用生效**——卡内提示「关闭模块后需重启应用生效（关闭 = 该模块代码不再执行、侧边栏不显示入口）」 |
+| **桌宠**（仅桌宠开启时） | 皮肤下拉（即时换肤）；「位置重置」按钮（回主屏右下角）；「鼠标穿透（挂机）」开关——**穿透锁死右键点不中时，就是在这里关掉恢复** | 换肤 / 重置 / 穿透即时；启用桌宠本身走「模块」卡且需重启 |
+| **Markdown 笔记目录（只读）**（仅 Markdown 开启时） | 路径展示 + **「打开目录」**按钮（目录不存在会先创建，再打开资源管理器） | 修改目录属于后续功能（见 [KNOWN_LIMITATIONS](KNOWN_LIMITATIONS.md)），迁移笔记 = 「打开目录」后手动拷贝文件 |
+| **Claude 代理**（仅 Claude 开启时） | 「随应用启动代理」开关（默认**关**）；「代理端口」输入框（回车或点「应用」）；认证 Token（只读 · 默认脱敏，眼睛按钮临时显形、离开本页即恢复掩码；「重新生成」换新 Token）；「Claude Code 接管」状态行 | 自启开关下次启动生效；改端口**代理运行中自动重启（Token 不变）**；重新生成同步重写 `proxy_token.txt` |
+| **调用日志保留** | 下拉：「永久保留」「7 天」「30 天」「90 天」「180 天」「365 天」（默认 30 天；永久 = 不清理） | **切换立即执行一次清理**并反馈「已清理 N 条历史日志」（旧说法「下次启动才生效」已过期） |
 
-配置持久化在 `%APPDATA%\DevDesk\config.json`（theme / fontScalePercent / logRetentionDays 三个字段；文件损坏或字段缺失时自动回退默认值，数值越界自动收敛到合法范围）。
+配置持久化在 `%APPDATA%\DevDesk\config.json`（字段：`theme` / `fontScalePercentV3` / `logRetentionDays` / `claudeProxyAutoStart` / `claudeProxyPort` / `windowEffect` / `sidebarCollapsed` / `enabledModules`；文件损坏或字段缺失时自动回退默认值，数值越界收敛到合法范围）。
 
 ### 3.6 桌宠
 
@@ -129,33 +133,39 @@ DevDesk 是一个**本地优先**的开发者桌面工具集（C++ 原生应用�
 
 ### 4.1 代理如何工作
 
-- 应用启动即自动在 `http://127.0.0.1:8888` 启动本地代理（无需手动开）。
+- **代理默认关闭，不随应用启动**（避免在你不知情时改写 Claude Code 配置）。启动方式二选一：Claude 页点「启动代理」，或设置页「Claude 代理」卡打开「随应用启动代理」后重启。
+- 监听地址 `http://127.0.0.1:<端口>`，端口默认 8888，设置页「代理端口」可改（运行中改端口自动重启代理，Token 不变）。
 - 客户端调用必须带 **Bearer 鉴权**：`Authorization: Bearer <token>`。
 - 代理把请求转发到**当前启用 Profile** 的 Base URL，自动注入该 Profile 的 API Key（密钥明文只存 DPAPI 加密的本地 keychain 存储，见 [§5](#5-数据都在哪)）。流式（SSE）与非流式响应都支持。
-- 没有启用任何 Profile 时，调用返回 `503` 与 `{"error":"no_active_profile", ...}`。
+- 没有启用任何 Profile 时，调用返回 `503` + `no_active_profile`（中文错误信息会指引去 Claude 页新建 / 启用 Profile）。
 
-### 4.2 配置步骤
+### 4.2 配置步骤（推荐：接管模式，无需手抄 token）
 
-1. **建 Profile**：在 Claude 切换器页点「+ 新建 Profile」，弹窗填名称 / Base URL / 模型 / API Key，保存即入 keychain。
-2. **启用**：在 Profile 上点「启用」，使其成为代理转发的当前配置（可用「测试连通」验证，toast 显示 HTTP 结果）。
-3. **把代理配给 Claude Code**：
-   - **Base URL**：`http://127.0.0.1:8888`
-   - **Token**：打开 `%APPDATA%\DevDesk\proxy_token.txt`（每次启动 / 重新生成时自动重写），内容形如：
+1. **建 Profile**：在 Claude 切换器页点「+ 新建 Profile」填名称 / Base URL / 模型 / API Key，保存即入 keychain；或直接点「导入当前配置」从 `~/.claude/settings.json` 一键预填。当前没有激活 Profile 时，新建的会自动激活。
+2. **验证上游**：点「测试连通」（对 `<Base URL>/v1/models` 发一次带 Key 的 GET，最长 15 秒），toast 显示 HTTP 结果。
+3. **启动代理**：点「启动代理」。启动瞬间 DevDesk **自动接管** Claude Code 用户级配置 `%USERPROFILE%\.claude\settings.json`——把托管键 `ANTHROPIC_BASE_URL`（指向本地代理）、`ANTHROPIC_AUTH_TOKEN`（代理 Token）、`ANTHROPIC_MODEL` 及各 `ANTHROPIC_DEFAULT_*_MODEL` / `CLAUDE_CODE_SUBAGENT_MODEL` 写入，写入前对原值做快照。你 settings.json 里的**其他键与 env 之外的字段原样保留**。
+4. **直接用 Claude Code**：无需在 Claude Code 侧抄写任何地址或 token，它经被接管的托管键直连本地代理（官方规范支持运行中会话随配置变更热重载；DevDesk 真机点验项见 KNOWN_LIMITATIONS）。切换激活 Profile 时接管内容同步重写。
+5. **还原**：停止代理、删除当前激活 Profile、正常退出应用都会**按快照自动还原** settings.json 原值；异常崩溃时下次启动检测到残留快照会补还原。接管状态可在设置页「Claude Code 接管」行与 Claude 页详情随时核对。
 
-     ```ini
-     # DevDesk Claude 代理凭据（自动生成，请勿提交到版本控制）
-     port=8888
-     token=<你的-token>
+### 4.3 手工配置（不想让 DevDesk 碰 settings.json 时的备选）
 
-     # 用法：
-     # curl -X POST http://127.0.0.1:8888/v1/messages \
-     #   -H "Authorization: Bearer <你的-token>" \
-     #   -H "Content-Type: application/json" \
-     #   -d '{"model":"claude-sonnet-4-5","max_tokens":64,"messages":[{"role":"user","content":"hi"}]}'
-     ```
+- **Base URL**：`http://127.0.0.1:<端口>`（端口看 Claude 页「运行中 :<端口>」状态）
+- **Token**：打开 `%APPDATA%\DevDesk\proxy_token.txt`（每次启动代理 / 重新生成时自动重写），或到设置页「Claude 代理」卡点眼睛按钮显形查看。应用**没有复制按钮**（无剪贴板 API），需手动抄录。文件内容形如：
 
-   - 应用目前**没有复制按钮**（无剪贴板 API），需要手动从该文件抄录 token。
-4. **验证**：用文件里自带的 curl 命令测试，能收到 JSON 响应即通。
+  ```ini
+  # DevDesk Claude 代理凭据（自动生成，请勿提交到版本控制）
+  port=8888
+  token=<你的-token>
+
+  # 用法：
+  # curl -X POST http://127.0.0.1:8888/v1/messages \
+  #   -H "Authorization: Bearer <你的-token>" \
+  #   -H "Content-Type: application/json" \
+  #   -d '{"model":"claude-sonnet-4-5","max_tokens":64,"messages":[{"role":"user","content":"hi"}]}'
+  ```
+
+- **验证**：用文件里自带的 curl 命令测试，能收到 JSON 响应即通。
+- 注意：手工模式下代理运行时 settings.json 仍会被接管；如需完全隔离，把 Claude Code 指向代理后不要让 DevDesk 启动代理接管（当前版本无「不接管」开关，见 KNOWN_LIMITATIONS）。
 
 ## 5. 数据都在哪
 
