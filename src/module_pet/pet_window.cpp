@@ -405,6 +405,17 @@ void startPetWindow(const PetWindowConfig& config) {
                         .clearColor({0.0f, 0.0f, 0.0f, 0.0f})
                         .onWindowCreated([](core::window::Handle handle) {
                             runtime().handle = handle;
+                        })
+                        // 审计 [0][1]（UAF 根治）：任何销毁路径（菜单隐藏 /
+                        // Alt+F4 / 应用退出）都先于 glfwDestroyWindow 清空缓存
+                        // 句柄——设置页 applyPetSkin/resetPetPosition 与 compose
+                        // 各回调都按 handle==nullptr 分支保护。比较句柄是必需的：
+                        // 热切换（applyPetSkin）新窗创建早于旧窗销毁（主循环
+                        // create→prune 同轮），无条件清空会误清新句柄
+                        .onWindowDestroyed([](core::window::Handle destroyed) {
+                            if (runtime().handle == destroyed) {
+                                runtime().handle = nullptr;
+                            }
                         }),
                     petCompose);
 

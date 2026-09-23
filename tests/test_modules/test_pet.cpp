@@ -339,6 +339,10 @@ REGISTER_TEST(pet_start_window_request, "pet: 开窗请求逐字段断言（无�
     DOCTEST_CHECK(!req.followClearColorOverride);  // 全透底不被主题广播冲掉
     DOCTEST_CHECK(req.clearColor.a == 0.0f);  // 全透
     DOCTEST_CHECK(static_cast<bool>(req.compose));
+    // 审计 [0][1]：创建/销毁回调都须随请求下传（销毁回调置空缓存句柄，
+    // Alt+F4/菜单隐藏/应用退出所有路径覆盖）
+    DOCTEST_CHECK(static_cast<bool>(req.onWindowCreated));
+    DOCTEST_CHECK(static_cast<bool>(req.onWindowDestroyed));
     // 占位皮肤已生成在测试隔离目录
     DOCTEST_CHECK(std::filesystem::exists(petsRoot / "clay-cat" / "pet.json"));
 
