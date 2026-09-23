@@ -1767,3 +1767,128 @@ REGISTER_TEST(todo_ui_detail_actions_save_form,
     mod->onStop();
     return true;
 })
+
+// ---- 审计 [24]：「+ 列」命名弹窗 + 列头 ✎ 重命名入口（headless） ----
+
+// 旧行为：点「+ 列」直接 doCreateColumn("新列 N") 即时落库。新行为：先弹
+// 命名弹窗，确认才落库；Esc（输入框内 passthrough 与 app 级兜底两路）取消
+// 不落库；留空确认采用默认名；输入名字按名字建。改名入口显性化为列头 ✎。
+REGISTER_TEST(todo_ui_new_column_dialog,
+              "todo_ui: + 列命名弹窗创建/Esc 取消/列头 ✎ 重命名（headless）", {
+    TestEnv env;
+    DOCTEST_REQUIRE(env.ready);
+
+    std::unique_ptr<::core::Module> mod(create_todo_module());
+    mod->onStart();
+
+    Frame frame(mod.get());
+    auto colCount = [&](void) -> size_t {
+        auto l = env.svc->listColumns();
+        return l.isOk() ? l.value().size() : 0;
+    };
+    auto findTitle = [&](const std::string& want) -> bool {
+        auto l = env.svc->listColumns();
+        if (!l.isOk()) return false;
+        for (const auto& c : l.value()) {
+            if (c.title == want) return true;
+        }
+        return false;
+    };
+
+    const size_t seed = colCount();   // 迁移默认 4 列
+    DOCTEST_REQUIRE_EQ(seed, 4u);
+
+    // 1) 点「+ 列」→ 只开弹窗，不即时落库（[24] 核心回归）
+    auto* addcol = frame.ui.find("todo.btn.addcol.bg");
+    DOCTEST_REQUIRE(addcol != nullptr);
+    DOCTEST_REQUIRE(addcol->onClick != nullptr);
+    addcol->onClick();
+    frame.refresh();
+    DOCTEST_REQUIRE_EQ(colCount(), seed);
+
+    // 2) 留空点「创建」→ 采用默认名「新列 5」，弹窗关闭
+    auto* confirm = frame.ui.find("todo.dialog.newcol.confirm.bg");
+    DOCTEST_REQUIRE(confirm != nullptr);
+    DOCTEST_REQUIRE(confirm->onClick != nullptr);
+    confirm->onClick();
+    frame.refresh();
+    DOCTEST_REQUIRE_EQ(colCount(), seed + 1);
+    DOCTEST_CHECK(findTitle("新列 5"));
+
+    // 3) Esc（焦点在输入框：passthrough 拦内置 Escape→onEnter 提交）→ 取消不落库
+    //    若 passthrough 被删，内置会把 Esc 当提交并建出新列 → colCount 变
+    addcol->onClick();
+    frame.refresh();
+    auto* hit = frame.ui.find("todo.dialog.newcol.input.hit");
+    DOCTEST_REQUIRE(hit != nullptr);
+    DOCTEST_REQUIRE(hit->onKeyEvent != nullptr);
+    eui::KeyEvent esc;
+    esc.key = eui::InputKey::Escape;
+    esc.action = eui::KeyAction::Press;
+    DOCTEST_CHECK(hit->onKeyEvent(esc));    // 已消费
+    frame.refresh();
+    DOCTEST_REQUIRE_EQ(colCount(), seed + 1);   // 没有多建
+
+    // 3b) Esc（输入框未聚焦的 app 级兜底：Module::onKeyEvent）→ 取消不落库
+    addcol->onClick();
+    frame.refresh();
+    DOCTEST_CHECK(mod->onKeyEvent(esc));
+    frame.refresh();
+    DOCTEST_REQUIRE_EQ(colCount(), seed + 1);
+
+    // 3c) 「取消」按钮 → 不落库
+    addcol->onClick();
+    frame.refresh();
+    auto* cancel = frame.ui.find("todo.dialog.newcol.cancel.bg");
+    DOCTEST_REQUIRE(cancel != nullptr);
+    DOCTEST_REQUIRE(cancel->onClick != nullptr);
+    cancel->onClick();
+    frame.refresh();
+    DOCTEST_REQUIRE_EQ(colCount(), seed + 1);
+
+    // 4) 输入名字再创建：onTextInput 写回 → 「创建」按输入名落库
+    addcol->onClick();
+    frame.refresh();
+    hit = frame.ui.find("todo.dialog.newcol.input.hit");
+    DOCTEST_REQUIRE(hit != nullptr);
+    DOCTEST_REQUIRE(hit->onTextInput != nullptr);
+    eui::TextInputEvent tie;
+    tie.text = "迭代列";
+    hit->onTextInput(tie);
+    frame.refresh();
+    confirm = frame.ui.find("todo.dialog.newcol.confirm.bg");
+    DOCTEST_REQUIRE(confirm != nullptr);
+    confirm->onClick();
+    frame.refresh();
+    DOCTEST_REQUIRE_EQ(colCount(), seed + 2);
+    DOCTEST_CHECK(findTitle("迭代列"));
+    DOCTEST_CHECK(!findTitle("新列 6"));   // 输入名优先于默认名
+
+    // 5) 列头 ✎ 按钮存在且接重命名弹窗：点开 → 输入框 Ctrl+A 全选 →
+    //    打新标题 → 保存 → 落库改名（入口显性化的端到端链路）
+    auto* pen = frame.ui.find("todo.col.0.rename.bg");
+    DOCTEST_REQUIRE(pen != nullptr);
+    DOCTEST_REQUIRE(pen->onClick != nullptr);
+    pen->onClick();
+    frame.refresh();
+    auto* rhit = frame.ui.find("todo.dialog.rename.input.hit");
+    DOCTEST_REQUIRE(rhit != nullptr);
+    DOCTEST_REQUIRE(rhit->onKeyEvent != nullptr);
+    DOCTEST_REQUIRE(rhit->onTextInput != nullptr);
+    eui::KeyEvent selectAll;
+    selectAll.key = eui::InputKey::A;
+    selectAll.action = eui::KeyAction::Press;
+    selectAll.modifiers.control = true;
+    rhit->onKeyEvent(selectAll);          // 内置 Ctrl+A 全选
+    eui::TextInputEvent rtie;
+    rtie.text = "列头改名";
+    rhit->onTextInput(rtie);              // 打字典换选中内容 → onChange 写回
+    frame.refresh();
+    auto* save = frame.ui.find("todo.dialog.rename.confirm.bg");
+    DOCTEST_REQUIRE(save != nullptr);
+    DOCTEST_REQUIRE(save->onClick != nullptr);
+    save->onClick();
+    frame.refresh();
+    DOCTEST_CHECK(findTitle("列头改名"));   // ✎ → 弹窗 → 保存 全链路
+    return true;
+})

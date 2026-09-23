@@ -591,6 +591,7 @@ public:
 
         // 弹窗（画在最上层）
         drawNewTaskDialog(ui, screen, t);
+        drawNewColumnDialog(ui, screen, t);
         drawDetailDialog(ui, screen, t);
         drawOverdueDialog(ui, screen, t);
         drawContextMenu(ui, screen, t);
@@ -608,6 +609,13 @@ public:
         if (event.action != eui::KeyAction::Press &&
             event.action != eui::KeyAction::Repeat) {
             return false;
+        }
+        // 审计 [24]：新建列弹窗的 Esc=取消兜底。焦点在弹窗输入框时由其
+        // onKeyEvent passthrough 拦下（EUI-NEO 内置把 Escape 映射到 onEnter
+        // =提交，不拦会误建列）；未聚焦时键走本 app 级通道，这里关掉弹窗。
+        if (newColumnOpen_ && event.key == eui::InputKey::Escape) {
+            newColumnOpen_ = false;
+            return true;
         }
         if (event.key != eui::InputKey::Up && event.key != eui::InputKey::Down) {
             return false;
@@ -729,8 +737,9 @@ private:
                             .radius(t.sizes.radius)
                             .border(1.0f, t.colors.borderDefault)
                             .onClick([this] {
-                                doCreateColumn("新列 " +
-                                    std::to_string(columns_.size() + 1));
+                                // 审计 [24]：不再即时 doCreateColumn("新列 N") 落库，
+                                // 先走命名弹窗，与全应用创建范式统一
+                                openNewColumnDialog();
                             })
                             .build();
 
@@ -897,12 +906,26 @@ private:
 
         ui.text(id + ".title")
             .position(colDot.has_value() ? 34.0f : 16.0f, 16.0f)
-            .size(width - 60.0f - (colDot.has_value() ? 18.0f : 0.0f), 20.0f)
+            // 右侧留到 width-88：给 ✎ 重命名（width-70 起）和 + 加任务（width-36 起）两个按钮
+            .size(width - 88.0f - (colDot.has_value() ? 18.0f : 0.0f), 20.0f)
             .text(col.title + " (" + std::to_string(colTasks.size()) + ")")
             .fontSize(t.sizes.fontSizeBody)
             .lineHeight(20.0f)
             .fontWeight(600)
             .color(t.colors.textPrimary)
+            .build();
+
+        // 列重命名入口显性化（审计 [24]）：列头可见 ✎ 按钮直达改名弹窗，
+        // 右键菜单「重命名列」入口保留
+        components::button(ui, id + ".rename")
+            .position(width - 70.0f, 14.0f)
+            .size(28.0f, 28.0f)
+            .icon(0xF044)  // fa-pen
+            .iconSize(t.sizes.fontSizeSmall)
+            .colors(t.colors.surfaceElevated, t.colors.hover, t.colors.active)
+            .iconColor(t.colors.textSecondary)
+            .radius(14.0f)
+            .onClick([this, col] { openRenameDialog(col); })
             .build();
 
         // 列头 + 按钮
@@ -1207,6 +1230,109 @@ private:
             .build();
     }
 
+    // ---------- 新建列弹窗（审计 [24]） ----------
+    // 「+ 列」不再即时落库，先走命名弹窗，与任务/笔记/供应商 Profile 的
+    // 创建范式统一。审计建议「预填 新列 N 并全选」——EUI-NEO Input 无
+    // 程序化 focus/selectAll 接口，全选预填产品层做不了；改用与新建任务
+    // 弹窗同款等价实现：空值 + placeholder 显示默认名，确认时留空=采用
+    // 「新列 N」、输入名字=按名字建，两条路径用户都无需额外编辑动作。
+
+    void openNewColumnDialog() {
+        newColumnTitle_.clear();
+        newColumnOpen_ = true;
+    }
+
+    std::string defaultColumnTitle() const {
+        return "新列 " + std::to_string(columns_.size() + 1);
+    }
+
+    void confirmNewColumn() {
+        const std::string title =
+            newColumnTitle_.empty() ? defaultColumnTitle() : newColumnTitle_;
+        newColumnOpen_ = false;
+        doCreateColumn(title);
+    }
+
+    void drawNewColumnDialog(eui::Ui& ui, const eui::Screen& screen,
+                             const core::theme::Tokens& t) {
+        const auto themeTokens = core::theme::componentTokens(t);
+        const float w = 460.0f;
+        const float h = 230.0f;
+
+        components::dialog(ui, "todo.dialog.newcol")
+            .open(newColumnOpen_)
+            .screen(screen.width, screen.height)
+            .size(w, h)
+            .theme(themeTokens)
+            .onOpenChange([this](bool v) { newColumnOpen_ = v; })
+            .content([&] {
+                ui.text("todo.dialog.newcol.title")
+                    .position(28.0f, 24.0f)
+                    .size(w - 56.0f, 28.0f)
+                    .text("新建列")
+                    .fontSize(t.sizes.fontSizeLarge + 2.0f)
+                    .lineHeight(28.0f)
+                    .fontWeight(700)
+                    .color(t.colors.textPrimary)
+                    .build();
+
+                ui.text("todo.dialog.newcol.hint")
+                    .position(28.0f, 56.0f)
+                    .size(w - 56.0f, 18.0f)
+                    .text("输入列标题，留空回车则用「" + defaultColumnTitle() + "」")
+                    .fontSize(t.sizes.fontSizeSmall - 1.0f)
+                    .lineHeight(18.0f)
+                    .color(t.colors.textTertiary)
+                    .build();
+
+                components::input(ui, "todo.dialog.newcol.input")
+                    .position(28.0f, 84.0f)
+                    .size(w - 56.0f, 44.0f)
+                    .value(newColumnTitle_)
+                    .placeholder(defaultColumnTitle())
+                    .fontSize(t.sizes.fontSizeBody)
+                    .theme(themeTokens)
+                    .onChange([this](const std::string& v) { newColumnTitle_ = v; })
+                    .onEnter([this] { confirmNewColumn(); })
+                    // EUI-NEO Input 把 Escape 映射到 onEnter（=提交）；创建弹窗
+                    // 需要 Esc=取消：passthrough 先于内置处理，这里拦下并消费。
+                    // 输入框未聚焦的兜底走 app 级 Module::onKeyEvent（见下）。
+                    .onKeyEvent([this](const eui::KeyEvent& event) {
+                        if (event.key == eui::InputKey::Escape &&
+                            event.action == eui::KeyAction::Press) {
+                            newColumnOpen_ = false;
+                            return true;
+                        }
+                        return false;
+                    })
+                    .build();
+
+                components::button(ui, "todo.dialog.newcol.cancel")
+                    .position(28.0f, h - 60.0f)
+                    .size((w - 68.0f) * 0.5f, 40.0f)
+                    .text("取消")
+                    .fontSize(t.sizes.fontSizeBody - 1.0f)
+                    .colors(t.colors.surfaceElevated, t.colors.hover, t.colors.active)
+                    .textColor(t.colors.textPrimary)
+                    .radius(t.sizes.radius)
+                    .border(1.0f, t.colors.borderDefault)
+                    .onClick([this] { newColumnOpen_ = false; })
+                    .build();
+
+                components::button(ui, "todo.dialog.newcol.confirm")
+                    .position(28.0f + (w - 68.0f) * 0.5f + 12.0f, h - 60.0f)
+                    .size((w - 68.0f) * 0.5f, 40.0f)
+                    .text("创建")
+                    .fontSize(t.sizes.fontSizeBody - 1.0f)
+                    .colors(t.colors.primary, t.colors.primaryHover, t.colors.primaryPressed)
+                    .textColor(t.colors.onPrimary)
+                    .radius(t.sizes.radius)
+                    .onClick([this] { confirmNewColumn(); })
+                    .build();
+            })
+            .build();
+    }
+
     // ---------- 右键菜单 ----------
     // 菜单定位走模块自身布局空间（boardGeom），不用窗口坐标（见 BoardGeom 注释）
     void openTaskContextMenu(const Task& task, int columnIndex, int cardIndex) {
@@ -1339,9 +1465,7 @@ private:
         if (col == nullptr) return;
         switch (index) {
             case 0:
-                renameColumnId_ = col->id;
-                renameTitle_ = col->title;
-                renameOpen_ = true;
+                openRenameDialog(*col);
                 break;
             case 1: doShiftColumn(col->id, -1); break;
             case 2: doShiftColumn(col->id, +1); break;
@@ -1355,6 +1479,13 @@ private:
     }
 
     // ---------- 重命名列弹窗 ----------
+    // 打开列重命名弹窗（右键菜单「重命名列」与列头 ✎ 按钮共用，审计 [24]）
+    void openRenameDialog(const Column& col) {
+        renameColumnId_ = col.id;
+        renameTitle_ = col.title;
+        renameOpen_ = true;
+    }
+
     void drawRenameDialog(eui::Ui& ui, const eui::Screen& screen,
                           const core::theme::Tokens& t) {
         const auto themeTokens = core::theme::componentTokens(t);
@@ -2102,6 +2233,9 @@ private:
     bool renameOpen_ = false;
     int64_t renameColumnId_ = 0;
     std::string renameTitle_;
+    // 新建列弹窗（审计 [24]）：「+ 列」先命名后落库
+    bool newColumnOpen_ = false;
+    std::string newColumnTitle_;
     bool confirmOpen_ = false;
     int64_t confirmColumnId_ = 0;
     int64_t confirmTaskId_ = 0;
