@@ -45,6 +45,7 @@
 #include "core/paths.h"
 #include "core/theme.h"
 #include "core/component_theme.h"
+#include "platform/file_open.h"
 #include "module_pet/pet_config.h"
 #include "module_pet/pet_skin.h"
 #include "module_pet/pet_window.h"
@@ -889,7 +890,31 @@ private:
             .build();
     }
 
-    // ---------- 卡片 4：Markdown 笔记目录（只读） ----------
+    // ---------- 卡片 4：Markdown 笔记目录（只读 + 打开目录） ----------
+    // 打开笔记目录（总设计 §8.5 第 2 条「打开目录」按钮，审计 [15] 短期项）：
+    // 目录不存在先创建（点「打开」的预期是能看到能用的目录），再交平台
+    // 文件管理器打开（Win ShellExecuteW / macOS open / xdg-open）
+    void openNotesDirectory() {
+        const std::filesystem::path mdDir = ::core::paths::markdownDir();
+        std::error_code ec;
+        std::filesystem::create_directories(mdDir, ec);
+        if (ec) {
+            setStatus("笔记目录创建失败：" + ec.message(), true);
+            LOG_ERROR("Settings: create_directories 失败 " + mdDir.string() +
+                      ": " + ec.message());
+            return;
+        }
+        auto r = ::platform::file_open::openDirectory(mdDir.string());
+        if (r.isFail()) {
+            setStatus("打开目录失败：" + r.errorMessage(), true);
+            LOG_ERROR("Settings: openDirectory 失败 " + mdDir.string() + ": " +
+                      r.errorMessage());
+            return;
+        }
+        setStatus("已在文件管理器中打开笔记目录");
+        LOG_INFO("Settings: 已打开笔记目录 " + mdDir.string());
+    }
+
     void drawDirectoryCard(eui::Ui& ui, const std::string& id, float w,
                            float h, const core::theme::Tokens& t) {
         ui.stack(id)
@@ -911,25 +936,42 @@ private:
                 std::error_code ec;
                 const bool exists =
                     std::filesystem::exists(mdDir, ec) && !ec;
+                const float dirBtnW = 110.0f;
                 ui.rect(id + ".path.bg")
                     .position(28.0f, 46.0f)
-                    .size(w - 56.0f, 34.0f)
+                    .size(w - 56.0f - dirBtnW - 12.0f, 34.0f)
                     .color(t.colors.surfaceElevated)
                     .radius(t.sizes.radiusSmall)
                     .border(1.0f, t.colors.borderMuted)
                     .build();
                 ui.text(id + ".path.value")
                     .position(40.0f, 46.0f)
-                    .size(w - 80.0f, 34.0f)
+                    .size(w - 80.0f - dirBtnW - 12.0f, 34.0f)
                     .text(mdDir.string() + (exists ? "" : "（尚未创建）"))
                     .fontSize(fs(13.0f))
                     .verticalAlign(eui::VerticalAlign::Center)
                     .color(t.colors.textSecondary)
                     .build();
+                // 「打开目录」按钮（审计 [15]：路径在 APPDATA 深处，此前用户
+                // 只能手拼路径；改目录本身仍属后续功能，登记 KNOWN_LIMITATIONS）
+                components::button(ui, id + ".open")
+                    .position(w - 28.0f - dirBtnW, 46.0f)
+                    .size(dirBtnW, 34.0f)
+                    .text("打开目录")
+                    .icon(0xF07C)  // fa-folder-open
+                    .fontSize(fs(13.0f))
+                    .colors(t.colors.surfaceElevated, t.colors.hover,
+                            t.colors.active)
+                    .textColor(t.colors.textPrimary)
+                    .radius(t.sizes.radiusSmall)
+                    .border(1.0f, t.colors.borderDefault)
+                    .onClick([this] { openNotesDirectory(); })
+                    .build();
                 ui.text(id + ".hint")
                     .position(28.0f, 86.0f)
                     .size(w - 56.0f, 14.0f)
-                    .text("修改笔记目录属于后续功能，当前仅展示")
+                    .text("修改笔记目录属于后续功能，当前仅展示（可用「打开目录」"
+                          "定位后迁移笔记）")
                     .fontSize(fs(11.0f))
                     .lineHeight(14.0f)
                     .color(t.colors.textTertiary)

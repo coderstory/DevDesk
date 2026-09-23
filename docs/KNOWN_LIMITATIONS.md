@@ -59,6 +59,11 @@
 - 外部删除当前笔记且本地有未保存编辑时只弹一次 toast（单实例限制，靠 `lastKnownMtime=-1` 标记节流），不弹选择框——本地编辑保存时会重建文件，无数据丢失风险。
 - 升级路径：平台级 watcher（ReadDirectoryChangesW / FSEvent）在 EUI-NEO 有 onFileDrop/watcher 诉求时一并考虑上游 PR。
 
+#### 6. Markdown 笔记目录不可配置（spec §8.5 第 2 条部分实现，2026-09-23 审计 [15] 登记）
+
+- 总设计 §8.5 承诺「笔记目录：路径输入框 + 『打开目录』按钮」。**「打开目录」按钮已实现**（`platform::file_open::openDirectory`，目录不存在时先创建再打开）；**路径输入框（改目录）未实现**——设置页只读展示 + 说明文案，用户迁移既有笔记库只能手动拷贝文件到 `%APPDATA%\DevDesk\notes`。
+- 升级路径（中期）：路径输入框 + 索引重扫迁移（换目录后 MarkdownService 需重建 FTS 索引并处理旧目录归档），涉及数据迁移语义，单独排期。来源：产品审计 2026-09-23 confirmed[15]。
+
 ### 测试
 
 #### 5. soak 300s 压测默认 SKIP
