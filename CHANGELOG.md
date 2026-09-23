@@ -2,6 +2,43 @@
 
 本文件记录 **a1a106a（macOS 中断现场收编）起** 的条目式变更，按恢复计划的三波（W1 止血收编 / W2 平台架构 / W3 剩余需求）组织，波内按 feat / fix / test / docs 分组。更早的 macOS 主线历史（P0–P8，66 测试通过）见 git log 与 spec §16。
 
+## [Pet-Anime] 2026-09-23 —— 二次元桌宠皮肤（真实美术素材包）
+
+分支 `feat/pet-anime`（基线 ad5c94d，含 merge master f6d0ac3）。**304/304 全绿**（+1 内置美术皮肤断言）。
+
+### feat
+
+- **内置美术皮肤 `anime-girl`**（用户调研指名的「二次元/女性角色」）：OpenGameArt
+  "Anime Girl"（Michona）by Alicahordana，**CC0** 可再分发（满足素材纪律 R7，调研报告
+  §3 渠道红线）。素材为 221px sprite strip（blink/walk/jump 三组），帧提取后按全局统一
+  缩放规整到 128×128（脚踩底边、内容居中，保纵横比），四态映射：blink(5)→idle、
+  jump(13)→poked、walk(11)→typing、闭眼帧(1)→sleep，共 30 帧 + pet.json 落
+  `assets/pets/anime-girl/`（~600KB）。
+- **assets 分发机制**：顶层 CMake POST_BUILD 拷 `assets/pets/` → build 目录（沿用
+  fonts 同款机制）；运行期 `skinRootCandidates()` 的 cwd/assets/pets 候选零改动即发现，
+  皮肤下拉/右键换肤菜单自动出现 anime-girl。
+
+### docs
+
+- `assets/pets/README.md`（新）：皮肤包结构 + 手动安装第三方素材指南（含 itch.io
+  "Desktop Pet Sprite"（tatsu-san）的下载/解包/四态映射表——其页面为口头许可无正式
+  开源协议，按「下载后放置」模式不入仓库）。
+- 桌宠设计文档 §4.3 补记内置美术皮肤与分发机制。
+
+### test
+
+- `pet: 内置美术皮肤 anime-girl（CC0 四态断言）`：从源码树真实加载（__FILE__ 相对
+  定位），断言四态帧数/128×128/全帧 PNG 结构/license 含 CC0/皮肤名合法。
+
+### 调研结论（候选素材实测）
+
+- itch.io "Desktop Pet Sprite"（tatsu-san，免费）——34MB PyInstaller exe，帧已提取
+  （walk/run/eat/sleep/grab，128×128），许可为口头声明 → 不入仓库，走手动安装
+- itch.io "Lacey Animated Pixel Doll"（kyoii011，调研报告 §3 候选）——**$5 付费**，放弃
+- OpenGameArt "Anime Girl"（Michona，CC0）——**采纳内置**
+- itch.io "School Girl Sprite Pack"（chibi785）——CC-BY-NC-ND 4.0，触碰红线，放弃
+
+
 ## [Final-Verify] 2026-09-23 —— 终验发现问题收尾批（12 项）
 
 分支 `fix/final-verify`。基线 290/290 → **291/291 全绿**（+1 设置页布局断言；EUI-NEO 侧另加 1 个单测）。

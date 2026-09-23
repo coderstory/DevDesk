@@ -175,7 +175,7 @@ main → 5 个 module_* (home / markdown / todo / claude_proxy / settings)
 
 已正确处理的跨平台点（T6 接口隔离后）：**keychain / paths / time / file_open 四族平台 API 全部按平台拆文件**（`*_win.cpp` / `*_macos.cpp` / `*_posix.cpp`，CMake `target_sources` 按平台选择编译，与 EUI-NEO 后端选择同一模式），业务代码零 `#ifdef _WIN32` / `__APPLE__`（2026-09-22 W2 验收 grep `src/` *.cpp/*.h 零命中）；HTTP 层（libcurl/cpp-httplib）本身跨平台；`.app` target（`if(APPLE)` 守卫）、Security.framework 链接（有守卫）。time 统一走 `core::time::localTime`（`src/core/time.h` + `time_win/posix.cpp`）。
 
-**测试框架注意**：`tests/doctest.h` 是自制 78 行迷你框架（`REGISTER_TEST` 宏静态自注册 + `DOCTEST_CHECK/REQUIRE` 断言，fail-fast），**不是真 doctest**——grep `TEST_CASE` 找不到用例、`--list-test-cases` 之类参数会被当作过滤子串属正常。共 **291 个用例**（2026-09-23 终验收尾批全绿：290 = W5 后 137 + 波次 2 供应商/托盘/字体 + 波次 3+4 磨砂/Todo 三件套/标签/键盘流/插件化/桌宠等，+1 设置页布局断言；soak 300s 由 `DEVDESK_SOAK=1` 门控、常规套件打印 `[SKIP]` 直接通过）。test_main 支持子串过滤：`./devdesk_tests.exe stress` 只跑名字含 "stress" 的用例，`--log` 打开 Debug 级控制台日志。
+**测试框架注意**：`tests/doctest.h` 是自制 78 行迷你框架（`REGISTER_TEST` 宏静态自注册 + `DOCTEST_CHECK/REQUIRE` 断言，fail-fast），**不是真 doctest**——grep `TEST_CASE` 找不到用例、`--list-test-cases` 之类参数会被当作过滤子串属正常。共 **304 个用例**（2026-09-23 全绿：291 终验基线 + pet-skins 五款程序化皮肤用例 + anime-girl 内置美术皮肤断言；soak 300s 由 `DEVDESK_SOAK=1` 门控、常规套件打印 `[SKIP]` 直接通过）。test_main 支持子串过滤：`./devdesk_tests.exe stress` 只跑名字含 "stress" 的用例，`--log` 打开 Debug 级控制台日志。
 
 ## 📂 关键文件
 

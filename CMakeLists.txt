@@ -122,6 +122,15 @@ if(EXISTS "${CMAKE_SOURCE_DIR}/fonts")
     )
 endif()
 
+# 桌宠美术皮肤包（assets/pets/<name>/pet.json + 帧 PNG，随仓库分发；程序
+# 生成的内置皮肤走 petsDir()，不在这里）。皮肤根候选含 cwd/assets/pets，
+# 从 build 目录启动 DevDesk 即可发现。assets/pets 入 git，无需守卫。
+add_custom_command(TARGET DevDesk POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_directory
+        "${CMAKE_SOURCE_DIR}/assets/pets" "$<TARGET_FILE_DIR:DevDesk>/assets/pets"
+    COMMENT "Copying pet skins to build directory"
+)
+
 # 构建 .app bundle（仅 macOS 平台生效）
 if(APPLE)
     add_custom_target(devdesk_app

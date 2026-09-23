@@ -263,6 +263,12 @@ assets/pets/<skin-name>/
   f1.png ...      # RGBA PNG，同尺寸（= 窗口尺寸），128×128 为 shimeji 标准帧尺寸
 ```
 
+- **内置美术皮肤（2026-09-23）**：`assets/pets/anime-girl/` 随仓库分发——OpenGameArt
+  "Anime Girl"（Michona）by Alicahordana，**CC0**（满足 R7 素材纪律）。30 帧四态映射：
+  blink→idle / jump→poked / walk→typing / 闭眼帧→sleep，帧统一缩放规整 128×128（脚踩
+  底边、内容居中）；CMake POST_BUILD 拷到 build/assets/pets 供运行期发现。第三方
+  「下载后放置」素材的安装说明见 `assets/pets/README.md`。
+
 - **shimeji 生态兼容（预留，不进 MVP）**：shimeji 包的 `conf/actions.xml`（`<Pose Image="/shime1.png" ImageAnchor Velocity Duration>`）是纯数据描述，后续加一个导入器（解析 actions.xml 子集 → pet.json）即可吃到 deviantART/itch.io 的现成素材生态；MVP 先固化自有格式，导入器等真需求（开放问题 O5）。
 - 每状态一个帧序列；`image("pet.frame").source(currentFrame)` 切换（路径 1，§2.4），onTimer(1/frameRate) 推进帧指针。
 - 反应动画（被戳抖动/气泡弹出）不用帧序列，用 `transition + animate`（easing 一次到位，比加帧省资源）。
