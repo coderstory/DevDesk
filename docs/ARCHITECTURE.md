@@ -64,8 +64,14 @@
 | `main` → `module_*` | `module_*` → `module_*`（互相依赖）|
 | `module_*` → `core` | `module_*` → `EUI-NEO`（通过 core 间接）|
 | `module_*` → `platform` | `core` → `platform`（保持 core 纯净）|
-| `platform` → `core`（用 Result）| `core` → `EUI-NEO`（保持可单测）|
-| | `module_*` → `EUI-NEO`（必须经 core 适配）|
+| `platform` → `core`（用 Result）| `core` → `EUI-NEO` **运行时行为**（窗口/渲染/事件循环/组件；类型桥接例外见注 ①）|
+| `core` → `EUI-NEO` **仅 header-only 类型桥接**（注 ①）| `module_*` → `EUI-NEO`（必须经 core 适配）|
+
+> **注 ①（core → EUI-NEO 类型桥接例外，2026-09-23 审计 [6] 转正）**：core 仅可引用 EUI-NEO 的**类型**——
+> `eui::Color` 值类型 token、`eui::Ui`/`eui::Screen` 签名参数透传、`component_theme.h` 的 header-only
+> `ThemeColorTokens` 映射；`devdesk_core` PUBLIC 链接 `eui_neo` 是为向 `module_*`/tests 传播 include
+> usage requirements（静态库链接不强制解析符号），core 目标文件不含 EUI 运行时调用。「core 保持可单测」
+> 的本意不变：core 逻辑测试不构造 GUI 环境。完整边界见 spec §4.2.1。
 
 ---
 

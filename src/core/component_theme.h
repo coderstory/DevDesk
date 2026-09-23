@@ -8,6 +8,10 @@
 // 分层说明：本头文件供模块层使用，core 静态库自身的 .cpp 不包含它
 //（core 实现不依赖 EUI-NEO components，分层铁律不变；与 theme.h 引
 // eui/types.h 同属"类型桥接"性质的例外，且以 header-only 形式存在）。
+// 例外正式声明（2026-09-23 审计 [6]，spec §4.2.1）：core → EUI-NEO 仅限
+// header-only 类型桥接（类型定义 + 值类型 + inline 纯映射，本文件即代表），
+// 禁止调用 EUI-NEO 运行时行为；devdesk_core PUBLIC 链接 eui_neo 是为传播
+// 类型桥接所需的 include usage requirements，非运行时依赖。
 #pragma once
 
 #include "theme.h"
