@@ -2,10 +2,13 @@
 // P13 设置页模块（spec §8.5 / 任务 T11）
 //
 // 设置项：
-//   1. 主题切换（深色/浅色）——core::theme::setDark/setLight，compose 每帧读
-//      current()，切换后下一帧全页生效（日志自证：applyTheme 有 LOG_INFO）；
-//      窗口底色（clearColor）走 EUI-NEO 运行时 API app::setClearColor（磨砂
-//      Phase B），主题/窗口效果切换即时生效（main.cpp theme 回调同款路径）
+//   1. 主题模式下拉（跟随系统/浅色/深色，spec §8.5「跟随系统主题」，spec
+//      缩水 A）——themeMode 存意图、darkTheme 存解析档；auto 经
+//      platform::prefersDarkTheme() 在 applyThemeRuntime 解析（启动/回本页/
+//      切档三处），core::theme::setDark/setLight，compose 每帧读 current()，
+//      切换后下一帧全页生效；窗口底色（clearColor）走 EUI-NEO 运行时 API
+//      app::setClearColor（磨砂 Phase B），主题/窗口效果切换即时生效
+//      （main.cpp theme 回调同款路径）
 //   1b. 窗口效果三档（关闭/半透/磨砂，磨砂 Phase D）——applyWindowVisuals
 //      （clearColor alpha 按档 + setWindowEffect backdrop 请求）即时生效；
 //      activeWindowEffect 回查降级，行内提示（不支持磨砂 → 回退半透等）
@@ -46,6 +49,7 @@
 #include "core/theme.h"
 #include "core/component_theme.h"
 #include "platform/file_open.h"
+#include "platform/system_theme.h"
 #include "module_pet/pet_config.h"
 #include "module_pet/pet_skin.h"
 #include "module_pet/pet_window.h"
@@ -86,6 +90,13 @@ const char* kWindowEffectPresets[] = {
     kWindowEffectOff, kWindowEffectTranslucent, kWindowEffectFrosted};
 constexpr int kWindowEffectPresetCount = 3;
 const char* kWindowEffectPresetLabels[] = {"关闭（默认）", "半透", "磨砂（Acrylic）"};
+
+// 主题模式三档（spec §8.5「跟随系统主题」，spec 缩水 A；与 settings_config
+// 的 kThemeMode* 一一对应）
+const char* kThemeModePresets[] = {kThemeModeAuto, kThemeModeLight,
+                                   kThemeModeDark};
+constexpr int kThemeModePresetCount = 3;
+const char* kThemeModePresetLabels[] = {"跟随系统", "浅色", "深色"};
 
 // —— 日志保留下拉 openUp 越界判定几何（tech-debt A，原为裸魔数）——
 // 日志卡是页面最后一张卡，下拉向下展开可能被窗体底边裁剪；这里用同一套
@@ -131,15 +142,14 @@ public:
         store_ = std::make_unique<SettingsStore>(::core::paths::configFile());
         cfg_ = store_->load();
         // 启动即应用持久化主题 + 字号缩放（main.cpp 的 dslAppConfig 也做过
-        // 同样恢复——这里幂等重放，保证模块独立使用时行为一致）
-        if (cfg_.darkTheme) {
-            ::core::theme::setDark();
-        } else {
-            ::core::theme::setLight();
-        }
+        // 同样恢复——这里幂等重放，保证模块独立使用时行为一致）。主题走
+        // applyThemeRuntime：themeMode=auto 时按 platform 检测结果解析深浅
+        // （main.cpp 只认持久化的 theme=上次解析值，这里随即纠正到当前系统档）
+        applyThemeRuntime();
         ::core::theme::setFontScale(
             static_cast<float>(cfg_.fontScalePercent) / 100.0f);
         LOG_INFO("Settings 模块启动（主题=" + ::core::theme::currentThemeName() +
+                 "（模式=" + cfg_.themeMode + "）" +
                  ", 字号=" + std::to_string(cfg_.fontScalePercent) + "%" +
                  ", 日志保留=" + retentionLabel() + "）");
     }
@@ -153,6 +163,12 @@ public:
     // 显形只在该次停留内有效，切页再回来恢复掩码，不残留到截图）
     void onPageEnter() override {
         proxyTokenRevealed_ = false;
+        // auto 模式的跟随点：系统深浅在运行中变更后，回到本页即重新解析
+        //（EUI-NEO 无系统主题变更回调，无法做到任意页面实时跟随——已登记
+        // 为限制；切档/启动两处的解析见 applyThemeRuntime）
+        if (cfg_.themeMode == kThemeModeAuto) {
+            applyThemeRuntime();
+        }
     }
 
     // 产品审计 [22]：Ctrl+S 显式保存。设置页除端口草稿外全部即时落盘
@@ -190,17 +206,38 @@ public:
 
     // ============ 设置变更 ============
 
-    void applyTheme(bool dark) {
+    // 按 themeMode 解析并应用深浅（spec 缩水 A）。系统检测经
+    // platform::prefersDarkTheme()（module 层可依赖 platform；core 不可，
+    // 故解析在此而不在 core::theme）。解析结果同步写回 cfg_.darkTheme，
+    // persist 时以 "theme" 键落盘，供 main.cpp 下次启动直读
+    void applyThemeRuntime() {
+        const bool dark =
+            resolveThemeDark(cfg_.themeMode, platform::prefersDarkTheme());
         if (dark) {
             ::core::theme::setDark();
         } else {
             ::core::theme::setLight();
         }
         cfg_.darkTheme = dark;
+    }
+
+    // cfg_.themeMode（三档字符串）→ 下拉索引；sanitized 保证只会是三档之一
+    int themeModeIndex() const {
+        if (cfg_.themeMode == kThemeModeLight) return 1;
+        if (cfg_.themeMode == kThemeModeDark) return 2;
+        return 0;  // auto
+    }
+
+    void applyThemeMode(int index) {
+        if (index < 0 || index >= kThemeModePresetCount) return;
+        cfg_.themeMode = kThemeModePresets[index];
+        applyThemeRuntime();
         persist();
-        setStatus("主题已切换：" + ::core::theme::currentThemeName());
-        LOG_INFO("Settings: 主题切换为 " + ::core::theme::currentThemeName() +
-                 "（下一帧全页生效）");
+        setStatus(std::string("主题模式：") + kThemeModePresetLabels[index] +
+                  "（当前=" + (::core::theme::current().isDark ? "深色" : "浅色") +
+                  "）");
+        LOG_INFO("Settings: 主题模式 → " + cfg_.themeMode + "（生效=" +
+                 ::core::theme::currentThemeName() + "）");
     }
 
     void applyFontPreset(int index) {
@@ -609,34 +646,29 @@ private:
                     .lineHeight(16.0f)
                     .color(t.colors.textSecondary)
                     .build();
-                const bool dark = cfg_.darkTheme;
-                components::button(ui, id + ".theme.dark")
+                // 主题模式下拉（spec 缩水 A）：跟随系统/浅色/深色三档，替代
+                // 原「深色/浅色」双按钮（原按钮只能表达显式档，无法表达 auto）。
+                // 右缘 28+240=268，窄窗自适应后 fontX≥324，不碰撞（见
+                // settings_effect_dropdown_fits_min_window）
+                ui.stack(id + ".theme.ddwrap")
                     .position(28.0f, 94.0f)
-                    .size(130.0f, 40.0f)
-                    .text("深色")
-                    .icon(0xF186)  // fa-moon
-                    .fontSize(fs(14.0f))
-                    .colors(dark ? t.colors.primarySoftBg : t.colors.surfaceElevated,
-                            t.colors.hover, t.colors.active)
-                    .textColor(dark ? t.colors.primary : t.colors.textSecondary)
-                    .iconColor(dark ? t.colors.primary : t.colors.textSecondary)
-                    .radius(t.sizes.radius)
-                    .border(1.0f, dark ? t.colors.primary : t.colors.borderDefault)
-                    .onClick([this] { applyTheme(true); })
-                    .build();
-                components::button(ui, id + ".theme.light")
-                    .position(170.0f, 94.0f)
-                    .size(130.0f, 40.0f)
-                    .text("浅色")
-                    .icon(0xF185)  // fa-sun
-                    .fontSize(fs(14.0f))
-                    .colors(!dark ? t.colors.primarySoftBg : t.colors.surfaceElevated,
-                            t.colors.hover, t.colors.active)
-                    .textColor(!dark ? t.colors.primary : t.colors.textSecondary)
-                    .iconColor(!dark ? t.colors.primary : t.colors.textSecondary)
-                    .radius(t.sizes.radius)
-                    .border(1.0f, !dark ? t.colors.primary : t.colors.borderDefault)
-                    .onClick([this] { applyTheme(false); })
+                    .size(240.0f, 40.0f)
+                    .content([&] {
+                        components::dropdown(ui, id + ".theme.dd")
+                            .size(240.0f, 40.0f)
+                            .theme(compTheme)
+                            .items(std::vector<std::string>(
+                                kThemeModePresetLabels,
+                                kThemeModePresetLabels +
+                                    kThemeModePresetCount))
+                            .selected(themeModeIndex())
+                            .open(themeDropdownOpen_)
+                            .onOpenChange(
+                                [this](bool v) { themeDropdownOpen_ = v; })
+                            .onChange(
+                                [this](int idx) { applyThemeMode(idx); })
+                            .build();
+                    })
                     .build();
 
                 // 右：字号缩放 + 右二：窗口效果三档（磨砂 Phase D），即时生效。
@@ -1402,6 +1434,7 @@ private:
     bool fontDropdownOpen_ = false;
     bool retentionDropdownOpen_ = false;
     bool effectDropdownOpen_ = false;      // 窗口效果下拉（磨砂 Phase D）
+    bool themeDropdownOpen_ = false;       // 主题模式下拉（spec 缩水 A）
     bool petSkinDropdownOpen_ = false;     // 桌宠皮肤下拉（M2）
     bool petSkinDataLoaded_ = false;       // 皮肤清单惰性加载标记（M2）
     std::vector<std::string> petSkins_;    // 发现到的皮肤（M2）

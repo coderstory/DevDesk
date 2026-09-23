@@ -13,6 +13,7 @@
 #include "core/module_interface.h"
 #include "core/theme.h"
 #include "platform/keychain.h"
+#include "platform/system_theme.h"
 
 #include <eui/app.h>
 #include <eui/detail/dsl_app_impl.h>
@@ -957,19 +958,19 @@ REGISTER_TEST(settings_effect_dropdown_fits_min_window,
     ui.layout(screen.width, screen.height);
 
     const auto* card = ui.find("settings.card.appearance.bg");
-    const auto* themeLight = ui.find("settings.card.appearance.theme.light.bg");
+    const auto* themeDd = ui.find("settings.card.appearance.theme.ddwrap");
     const auto* font = ui.find("settings.card.appearance.font.ddwrap");
     const auto* effect = ui.find("settings.card.appearance.effect.ddwrap");
     DOCTEST_REQUIRE(card != nullptr);
-    DOCTEST_REQUIRE(themeLight != nullptr);
+    DOCTEST_REQUIRE(themeDd != nullptr);
     DOCTEST_REQUIRE(font != nullptr);
     DOCTEST_REQUIRE(effect != nullptr);
     // 效果下拉右缘收在卡内（设计右缘留白 28，断言留 ≥20 容差）
     DOCTEST_CHECK(effect->frame.x + effect->frame.width <=
                   card->frame.x + card->frame.width - 20.0f);
-    // 字号下拉不与主题按钮重叠、效果下拉不与字号下拉重叠
-    DOCTEST_CHECK(font->frame.x >=
-                  themeLight->frame.x + themeLight->frame.width);
+    // 字号下拉不与主题模式下拉重叠、效果下拉不与字号下拉重叠
+    //（主题控件 = spec 缩水 A 的三档下拉，替代原深色/浅色双按钮）
+    DOCTEST_CHECK(font->frame.x >= themeDd->frame.x + themeDd->frame.width);
     DOCTEST_CHECK(effect->frame.x >= font->frame.x + font->frame.width);
 
     // 宽窗 1600（页面 1340）：保持既有位置（字号 380 / 效果 680 相对卡原点）
@@ -1250,6 +1251,138 @@ REGISTER_TEST(settings_ctrl_s_save_shortcut,
 
     svc.stopProxy();
     module::claude::ClaudeService::setGlobal(nullptr);
+    mod->onStop();
+    ::core::theme::setDark();
+    return true;
+})
+
+// ---- spec 缩水 A：跟随系统主题（themeMode 三档 + platform::prefersDarkTheme）----
+
+REGISTER_TEST(settings_theme_mode_roundtrip_and_legacy,
+              "settings: themeMode 默认 auto/读写往返/旧 theme 键派生/未知收敛（spec缩水 A）", {
+    using namespace module::settings;
+    const auto path = tempConfigFile("thememode");
+    removeQuietly(path);
+    SettingsStore store(path);
+
+    // 无文件 → 默认 auto（新人跟随系统）
+    DOCTEST_CHECK_EQ(store.load().themeMode, std::string(kThemeModeAuto));
+
+    // 三档读写往返；theme 键随 darkTheme 同步写（main.cpp 兼容通道）
+    SettingsConfig light;
+    light.themeMode = kThemeModeLight;
+    light.darkTheme = false;
+    DOCTEST_REQUIRE(store.save(light).isOk());
+    {
+        const auto loaded = store.load();
+        DOCTEST_CHECK_EQ(loaded.themeMode, std::string(kThemeModeLight));
+        DOCTEST_CHECK_FALSE(loaded.darkTheme);
+    }
+    SettingsConfig dark;
+    dark.themeMode = kThemeModeDark;
+    dark.darkTheme = true;
+    DOCTEST_REQUIRE(store.save(dark).isOk());
+    {
+        const auto loaded = store.load();
+        DOCTEST_CHECK_EQ(loaded.themeMode, std::string(kThemeModeDark));
+        DOCTEST_CHECK(loaded.darkTheme);
+    }
+
+    // 存量文件（只有 theme 键）→ 派生为显式档，不静默转 auto
+    {
+        std::ofstream f(path, std::ios::trunc);
+        f << R"({"theme": "light"})";
+    }
+    DOCTEST_CHECK_EQ(store.load().themeMode, std::string(kThemeModeLight));
+    {
+        std::ofstream f(path, std::ios::trunc);
+        f << R"({"theme": "dark"})";
+    }
+    DOCTEST_CHECK_EQ(store.load().themeMode, std::string(kThemeModeDark));
+
+    // themeMode 非法值：有 legacy theme → 按 theme 派生；无 theme → auto
+    {
+        std::ofstream f(path, std::ios::trunc);
+        f << R"({"themeMode": "neon", "theme": "light"})";
+    }
+    DOCTEST_CHECK_EQ(store.load().themeMode, std::string(kThemeModeLight));
+    {
+        std::ofstream f(path, std::ios::trunc);
+        f << R"({"themeMode": "neon"})";
+    }
+    DOCTEST_CHECK_EQ(store.load().themeMode, std::string(kThemeModeAuto));
+
+    // sanitized：未知档收敛 auto（纯函数，不经 platform）
+    SettingsConfig bad;
+    bad.themeMode = "sepia";
+    DOCTEST_CHECK_EQ(SettingsStore::sanitized(bad).themeMode,
+                     std::string(kThemeModeAuto));
+    removeQuietly(path);
+    return true;
+})
+
+REGISTER_TEST(settings_resolve_theme_dark_matrix,
+              "settings: resolveThemeDark 纯函数矩阵（spec缩水 A）", {
+    using namespace module::settings;
+    DOCTEST_CHECK(resolveThemeDark(kThemeModeDark, false));
+    DOCTEST_CHECK(resolveThemeDark(kThemeModeDark, true));
+    DOCTEST_CHECK_FALSE(resolveThemeDark(kThemeModeLight, true));
+    DOCTEST_CHECK_FALSE(resolveThemeDark(kThemeModeLight, false));
+    DOCTEST_CHECK(resolveThemeDark(kThemeModeAuto, true));
+    DOCTEST_CHECK_FALSE(resolveThemeDark(kThemeModeAuto, false));
+    // 未知 mode 按 auto 语义防御
+    DOCTEST_CHECK(resolveThemeDark("neon", true));
+    return true;
+})
+
+REGISTER_TEST(settings_theme_auto_follows_platform,
+              "settings: auto 模式 onStart 解析跟系统深浅（platform 检测，spec缩水 A）", {
+    PruneEnv env("thauto");
+    {
+        std::ofstream out(env.cfgPath);
+        out << R"({"themeMode": "auto", "theme": "dark"})";
+    }
+    std::unique_ptr<::core::Module> mod(create_settings_module());
+    mod->onStart();
+    // 落盘的 theme=dark 是陈旧值；auto 解析后实际档必须等于本机系统检测
+    // 结果（无论本机浅/深，断言机器无关）
+    const bool systemDark = platform::prefersDarkTheme();
+    DOCTEST_CHECK_EQ(::core::theme::current().isDark, systemDark);
+    mod->onStop();
+    ::core::theme::setDark();
+    return true;
+})
+
+REGISTER_TEST(settings_theme_mode_dropdown_click_persists,
+              "settings: 主题模式下拉存在且点「深色」落盘（替代旧双按钮，spec缩水 A headless）", {
+    PruneEnv env("thdmm");
+    std::unique_ptr<::core::Module> mod(create_settings_module());
+    mod->onStart();
+    eui::Screen screen;
+    screen.width = 1600.0f;
+    screen.height = 1000.0f;
+    eui::Ui ui;
+    ui.begin("thdmm");
+    mod->compose(ui, screen);
+    ui.end();
+
+    DOCTEST_CHECK(ui.find("settings.card.appearance.theme.dd") != nullptr);
+    // 旧的深色/浅色按钮已删（下拉三档取代，fa-moon/fa-sun 图标随之退场）
+    DOCTEST_CHECK(ui.find("settings.card.appearance.theme.dark") == nullptr);
+    DOCTEST_CHECK(ui.find("settings.card.appearance.theme.light") == nullptr);
+
+    // 点第 3 项（深色，索引 2）→ 即时持久化 themeMode=dark + theme 同步
+    const auto* itemDark = ui.find("settings.card.appearance.theme.dd.item.2");
+    DOCTEST_REQUIRE(itemDark != nullptr);
+    DOCTEST_REQUIRE(itemDark->onClick != nullptr);
+    itemDark->onClick();
+    module::settings::SettingsStore store(env.cfgPath);
+    const auto saved = store.load();
+    DOCTEST_CHECK_EQ(saved.themeMode,
+                     std::string(module::settings::kThemeModeDark));
+    DOCTEST_CHECK(saved.darkTheme);
+    DOCTEST_CHECK(::core::theme::current().isDark);
+
     mod->onStop();
     ::core::theme::setDark();
     return true;

@@ -18,6 +18,8 @@ namespace module::settings {
 
 namespace {
 constexpr const char* kKeyTheme = "theme";
+// themeMode 三档字符串键（spec 缩水 A；值 = kThemeMode* 常量）
+constexpr const char* kKeyThemeMode = "themeMode";
 // W9 换键一次性重置：EUI-NEO 0.7.0 修了字号 em 语义后文字放大约 33%，
 // fontScalePercent/fontScalePercentV2 下的存量值（85/115/130）都是在
 // 0.75 缩水语义下选的，修正后失去意义 → 一律忽略、回落默认 100，
@@ -76,6 +78,13 @@ std::string maskProxyToken(const std::string& token) {
     return token.substr(0, 4) + "***" + token.substr(token.size() - 4);
 }
 
+bool resolveThemeDark(const std::string& themeMode, bool systemPrefersDark) {
+    if (themeMode == kThemeModeLight) return false;
+    if (themeMode == kThemeModeDark) return true;
+    // auto（含未知值，sanitized 后理论不可达）：跟随系统检测
+    return systemPrefersDark;
+}
+
 SettingsStore::SettingsStore(std::filesystem::path file)
     : file_(std::move(file)) {}
 
@@ -96,6 +105,12 @@ SettingsConfig SettingsStore::sanitized(const SettingsConfig& cfg) {
     // 必然 bind 失败/被特权的端口，回落 8888 更可预期）
     if (out.proxyPort < kMinProxyPort || out.proxyPort > kMaxProxyPort) {
         out.proxyPort = kDefaultProxyPort;
+    }
+    // 主题模式（spec 缩水 A）：只认三档，未知值收敛为 auto（与新人默认同
+    // 语义；sanitized 保持纯函数，不在此处解析 auto→darkTheme——解析需要
+    // platform 检测，收在 SettingsModule::applyThemeRuntime）
+    if (out.themeMode != kThemeModeLight && out.themeMode != kThemeModeDark) {
+        out.themeMode = kThemeModeAuto;
     }
     // 窗口效果：只认三档，未知值收敛为 off（照抄 fontScale 的钳制模式）
     if (out.windowEffect != kWindowEffectTranslucent &&
@@ -196,6 +211,26 @@ SettingsConfig SettingsStore::load() const {
         // 只认 "light" 为浅色，其余一律深色（默认值安全）
         cfg.darkTheme = (obj.get(kKeyTheme).asString() != "light");
     }
+    // themeMode（spec 缩水 A）：新键优先（只认三档字面值）；键缺失/非法时
+    // 按 legacy "theme" 派生为显式档（存量用户的明确选择不能被静默改成
+    // auto）；两键都没有 = 首启用默认 auto。auto→深浅的实际解析在
+    // SettingsModule::applyThemeRuntime（load/sanitized 保持纯函数，
+    // 不经 platform，单测机器无关）
+    if (obj.has(kKeyThemeMode) && obj.get(kKeyThemeMode).isString()) {
+        const std::string mode = obj.get(kKeyThemeMode).asString();
+        if (mode == kThemeModeAuto || mode == kThemeModeLight ||
+            mode == kThemeModeDark) {
+            cfg.themeMode = mode;
+        } else if (obj.has(kKeyTheme) && obj.get(kKeyTheme).isString()) {
+            cfg.themeMode = (obj.get(kKeyTheme).asString() == "light")
+                                ? kThemeModeLight
+                                : kThemeModeDark;
+        }
+    } else if (obj.has(kKeyTheme) && obj.get(kKeyTheme).isString()) {
+        cfg.themeMode = (obj.get(kKeyTheme).asString() == "light")
+                            ? kThemeModeLight
+                            : kThemeModeDark;
+    }
     if (obj.has(kKeyFontScale) && obj.get(kKeyFontScale).isNumber()) {
         cfg.fontScalePercent =
             static_cast<int>(obj.get(kKeyFontScale).asInt());
@@ -243,6 +278,10 @@ core::Result<void> SettingsStore::save(const SettingsConfig& cfgRaw) const {
 
     platform::json::JsonObject obj;
     obj.set(kKeyTheme, platform::json::makeString(cfg.darkTheme ? "dark" : "light"));
+    // themeMode 与 theme 双写：themeMode = 用户意图（auto/light/dark），
+    // theme = 当前解析档（main.cpp 启动路径只认 theme，settings onStart
+    // 随即按 themeMode 幂等纠正——main.cpp 零改动）
+    obj.set(kKeyThemeMode, platform::json::makeString(cfg.themeMode));
     obj.set(kKeyFontScale, platform::json::makeInt(cfg.fontScalePercent));
     obj.set(kKeyLogRetention, platform::json::makeInt(cfg.logRetentionDays));
     obj.set(kKeyProxyAutoStart, platform::json::makeBool(cfg.claudeProxyAutoStart));
