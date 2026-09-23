@@ -12,6 +12,7 @@
 #include "core/theme.h"
 #include "module_pet/pet_config.h"
 #include "module_pet/pet_window.h"
+#include "module_markdown/md_file_open.h"
 #include "platform/file_open.h"
 #include "settings_config.h"
 
@@ -55,7 +56,8 @@ bool isModuleEnabled(const char* moduleId) {
 
 // 全局：Finder "打开方式" 传入的文件路径
 // 两条来源都写这里：命令行 argv（启动时）/ Apple Event（Finder 双击、打开方式）
-// MVP：仅记录 + log + 切页；实际渲染文件内容留待 P 阶段
+// 审计 2026-09-23 [5] 后不再只留档：dispatchFileOpen 把路径解析进笔记目录后
+// 以 "open:" 负载分发给 Markdown 模块，文件内容真实加载
 std::string& pendingOpenFilePath() {
     static std::string path;
     return path;
@@ -77,8 +79,8 @@ void captureOpenFileFromArgv() {
     LOG_INFO("捕获到待打开文件（命令行 argv）: " + pendingOpenFilePath());
 }
 
-// 根据文件扩展名返回目标 PageId（架构准备：MVP 只返回目标，不实际加载内容）
-// 后续 P 阶段：让对应模块读 pendingOpenFilePath() 并实际渲染文件
+// 根据文件扩展名返回目标 PageId（审计 [5] 后仅作目标选择；内容加载由
+// dispatchFileOpen 带负载完成）
 ::core::PageId dispatchPageForFile(const std::string& path) {
     auto endsWith = [&](const char* suffix) {
         size_t n = std::string(suffix).size();
@@ -90,6 +92,33 @@ void captureOpenFileFromArgv() {
     if (endsWith(".js") || endsWith(".html") || endsWith(".htm") ||
         endsWith(".txt")) return ::core::PageId::Markdown;  // 文本类用 Markdown 模块查看
     return ::core::PageId::Home;
+}
+
+// 文件打开分发（审计 2026-09-23 [5]）：旧版只切页、文件内容永远不加载。
+// 现在把绝对路径经 md_file_open 解析成笔记目录内相对路径（目录内 → 直接
+// 相对化；目录外 → 复制捕获进笔记目录，强制 .md），再以 "open:<相对路径>"
+// 负载走 Markdown 模块 consumeNavPayload 的既有通道（Home 最近编辑同款）。
+// 降级路径：Markdown 模块被关（未注册）→ Router 自带回退 Home 且不投递
+// 负载（不往关掉的模块目录里写文件）；解析失败 → 只切页 + WARN 日志。
+// .json → Claude 页维持无负载切页（该模块暂无消费方，不属本审计项）。
+void dispatchFileOpen(::core::Router* router, const std::string& path) {
+    if (router == nullptr || path.empty()) return;
+    const ::core::PageId target = dispatchPageForFile(path);
+    if (target == ::core::PageId::Markdown &&
+        router->isRegistered(::core::PageId::Markdown)) {
+        // main.cpp 用 -fno-exceptions 编译：取失败信息外的值走 unsafeValue()
+        auto r = module::markdown::captureFileIntoNotesDir(
+            ::core::paths::markdownDir(), path);
+        if (r.isOk()) {
+            const std::string payload = "open:" + r.unsafeValue();
+            LOG_INFO("文件打开分发: " + path + " → " + payload);
+            router->navigateTo(target, payload);
+            return;
+        }
+        LOG_WARN("文件打开分发：无法纳入笔记目录，仅切页 — " + path + ": " +
+                 r.errorMessage());
+    }
+    router->navigateTo(target);
 }
 
 void setupLogging() {
@@ -196,16 +225,8 @@ void setupLogging() {
             }
         });
 
-        // 架构准备：如果有 pending 文件，dispatch 到对应 Page
-        // MVP：仅切换页面；实际加载文件由对应模块在 onStart/P 阶段实现
-        const std::string& pendingFile = pendingOpenFilePath();
-        if (!pendingFile.empty()) {
-            ::core::PageId target = dispatchPageForFile(pendingFile);
-            LOG_INFO("MVP dispatch: 切换到 " +
-                     std::string(pageIdToString(target)) +
-                     "（实际文件加载留待 P 阶段）");
-            router.navigateTo(target);
-        }
+        // 启动时若有待打开文件（argv 捕获），解析成笔记负载分发（审计 [5]）
+        dispatchFileOpen(&router, pendingOpenFilePath());
         initialized = true;
     }
     return &router;
@@ -220,15 +241,8 @@ void handleAppleEventOpenFile(const std::string& path) {
     pendingOpenFilePath() = path;
     LOG_INFO("捕获到待打开文件（Apple Event）: " + path);
 
-    const ::core::PageId target = dispatchPageForFile(path);
-    LOG_INFO("Apple Event dispatch: 切换到 " +
-             std::string(pageIdToString(target)) +
-             "（实际文件加载留待 P 阶段）");
-
-    ::core::Router* router = getRouter();
-    if (router != nullptr) {
-        router->navigateTo(target);
-    }
+    // 与 argv 启动路径同一分发逻辑：解析 + open: 负载（审计 [5]）
+    dispatchFileOpen(getRouter(), path);
 }
 
 // ---- Claude 代理（全局唯一，spec §10.4）----
