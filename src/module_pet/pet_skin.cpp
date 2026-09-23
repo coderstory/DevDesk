@@ -209,6 +209,29 @@ struct Canvas {
 enum class Eyes { Open, Closed, Wide };
 enum class Mouth { Smile, Open };
 
+// 硬边实心矩形（Zzz 字形用；整数坐标全覆盖，足够占位皮肤）
+void fillRect(Canvas& c, float x, float y, float w, float h, const Rgba& color) {
+    for (int yy = static_cast<int>(y); yy < static_cast<int>(y + h); ++yy) {
+        for (int xx = static_cast<int>(x); xx < static_cast<int>(x + w); ++xx) {
+            c.blend(xx, yy, color, 1.0f);
+        }
+    }
+}
+
+// "Z" 字形（sleep 帧的 Zzz）：上横杠 + 阶梯斜杠 + 下横杠，占位画法
+void drawZ(Canvas& c, float x, float y, float scale) {
+    const float t = std::max(1.5f, 2.0f * scale);   // 笔画粗细
+    const float w = 10.0f * scale;
+    const float h = 10.0f * scale;
+    fillRect(c, x, y, w, t, kInk);                  // 上横
+    for (int i = 0; i < 3; ++i) {                   // 斜杠（3 级阶梯近似）
+        const float step = (w - t) / 3.0f;
+        const float vStep = (h - 2.0f * t) / 3.0f;
+        fillRect(c, x + w - t - i * step, y + t + i * vStep, t * 1.5f, t * 1.5f, kInk);
+    }
+    fillRect(c, x, y + h - t, w, t, kInk);          // 下横
+}
+
 // 画一只"黏土猫"帧：身体椭圆 + 三角耳 + 眼睛/嘴表情
 Canvas drawCatFrame(int size, int bob, Eyes eyes, Mouth mouth, bool squash) {
     Canvas c(size, size);
@@ -251,6 +274,8 @@ bool writeFrame(const std::filesystem::path& dir, const char* file, Canvas&& can
 
 // idle 6 帧（frameRate 4 → 1.5s 周期，眨眼 0.25s）：静-轻浮-静-静-闭眼-静
 // poked 2 帧（0.5s）：瞪眼张嘴 → 压扁闭眼
+// sleep 3 帧（M2）：闭眼 + Zzz（两枚 Z 逐帧放大/上浮）
+// typing 2 帧（M2）：代理流式"打字"——张嘴前倾与回弹交替
 bool generatePlaceholderSkin(const std::filesystem::path& dir) {
     std::error_code ec;
     std::filesystem::create_directories(dir, ec);
@@ -280,6 +305,24 @@ bool generatePlaceholderSkin(const std::filesystem::path& dir) {
             return false;
         }
     }
+    // sleep：闭眼安睡 + Zzz（第 0 帧小 Z，逐帧放大上浮，循环 0.75s）
+    for (int i = 0; i < 3; ++i) {
+        Canvas c = drawCatFrame(128, 0, Eyes::Closed, Mouth::Smile, false);
+        drawZ(c, 86.0f, 34.0f - static_cast<float>(i) * 4.0f, 0.8f + 0.25f * i);
+        drawZ(c, 100.0f, 20.0f - static_cast<float>(i) * 3.0f, 0.5f + 0.2f * i);
+        if (!writeFrame(dir, ("s" + std::to_string(i) + ".png").c_str(), std::move(c))) {
+            return false;
+        }
+    }
+    // typing：前倾张嘴（squash 压低 = 按键）与回弹交替
+    {
+        Canvas t0 = drawCatFrame(128, -2, Eyes::Open, Mouth::Open, false);
+        Canvas t1 = drawCatFrame(128, 1, Eyes::Open, Mouth::Open, true);
+        if (!writeFrame(dir, "t0.png", std::move(t0)) ||
+            !writeFrame(dir, "t1.png", std::move(t1))) {
+            return false;
+        }
+    }
     constexpr const char* kPetJson =
         "{\n"
         "  \"name\": \"clay-cat\",\n"
@@ -287,9 +330,12 @@ bool generatePlaceholderSkin(const std::filesystem::path& dir) {
         "  \"frameRate\": 4,\n"
         "  \"license\": \"CC0（程序生成占位皮肤，可整体替换为美术资源）\",\n"
         "  \"source\": \"DevDesk 内置生成\",\n"
+        "  \"phrases\": [\"喵~\", \"在忙吗？\", \"摸鱼中…\", \"休息一下吧\", \"Zzz…\"],\n"
         "  \"states\": {\n"
         "    \"idle\": [\"f0.png\", \"f1.png\", \"f2.png\", \"f3.png\", \"f4.png\", \"f5.png\"],\n"
-        "    \"poked\": [\"p0.png\", \"p1.png\"]\n"
+        "    \"poked\": [\"p0.png\", \"p1.png\"],\n"
+        "    \"sleep\": [\"s0.png\", \"s1.png\", \"s2.png\"],\n"
+        "    \"typing\": [\"t0.png\", \"t1.png\"]\n"
         "  }\n"
         "}\n";
     std::ofstream out(dir / "pet.json", std::ios::trunc);
@@ -377,11 +423,30 @@ Result<PetSkin> parsePetSkinJson(const std::string& jsonText) {
         return Result<PetSkin>::fail(idle.errorCode(), "states.idle: " + idle.errorMessage());
     }
     skin.idleFrames = std::move(idle.unsafeValue());
-    // poked 可选；MVP 之外的状态名静默忽略（前向兼容，M2 多状态机直接吃）
+    // 可选状态/字段（M2）：sleep/typing 帧缺失或非法一律静默忽略——
+    // 状态机各自回落 idle，老皮肤包零迁移（poked 同款容错）
     if (states.has("poked")) {
         auto poked = parseFrameArray(states.get("poked"));
         if (poked.isOk()) {
             skin.pokedFrames = std::move(poked.unsafeValue());
+        }
+    }
+    if (states.has("sleep")) {
+        auto sleep = parseFrameArray(states.get("sleep"));
+        if (sleep.isOk()) {
+            skin.sleepFrames = std::move(sleep.unsafeValue());
+        }
+    }
+    if (states.has("typing")) {
+        auto typing = parseFrameArray(states.get("typing"));
+        if (typing.isOk()) {
+            skin.typingFrames = std::move(typing.unsafeValue());
+        }
+    }
+    if (obj.has("phrases")) {
+        auto phrases = parseFrameArray(obj.get("phrases"));
+        if (phrases.isOk()) {
+            skin.phrases = std::move(phrases.unsafeValue());
         }
     }
     return Result<PetSkin>::ok(std::move(skin));
@@ -414,9 +479,18 @@ Result<PetSkin> loadSkin(const std::filesystem::path& dir) {
 }
 
 Result<PetSkin> ensureDefaultSkin(const std::filesystem::path& dir) {
-    // 已存在且可解析 → 直接用（用户可能整体替换过帧图）
+    // 已存在且可解析 → 直接用（用户可能整体替换过帧图）。例外：内置占位
+    // 皮肤是旧版（缺 M2 的 sleep/typing 帧或短语表）→ 重新生成升级；
+    // 用户替换过的皮肤（source 不是内置标记）原样保留
     if (auto existing = loadSkin(dir); existing.isOk()) {
-        return existing;
+        const PetSkin& s = existing.unsafeValue();
+        const bool userReplaced = s.source != "DevDesk 内置生成";
+        const bool hasM2 =
+            !s.sleepFrames.empty() && !s.typingFrames.empty() && !s.phrases.empty();
+        if (userReplaced || hasM2) {
+            return existing;
+        }
+        LOG_INFO("桌宠内置皮肤为旧版（缺 M2 帧），重新生成升级");
     }
     if (!generatePlaceholderSkin(dir)) {
         return Result<PetSkin>::fail(ErrorCode::FileWriteFailed,
@@ -436,6 +510,31 @@ std::vector<std::filesystem::path> skinRootCandidates() {
         roots.push_back(devRoot);
     }
     return roots;
+}
+
+std::vector<std::string> discoverSkins() {
+    // 皮肤名合法字符与 PetConfigStore::sanitized 一致（会拼回路径）
+    static const std::string kValid =
+        "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_";
+    std::vector<std::string> names;
+    for (const std::filesystem::path& root : skinRootCandidates()) {
+        std::error_code ec;
+        if (!std::filesystem::exists(root, ec) || ec) continue;
+        for (std::filesystem::directory_iterator it(root, ec), end; !ec && it != end;
+             it.increment(ec)) {
+            if (!it->is_directory(ec) || ec) continue;
+            const std::string name = it->path().filename().string();
+            if (name.empty() || name.find_first_not_of(kValid) != std::string::npos) {
+                continue;  // 非法名不进清单（路径安全）
+            }
+            std::error_code ec2;
+            if (!std::filesystem::exists(it->path() / "pet.json", ec2) || ec2) continue;
+            if (std::find(names.begin(), names.end(), name) == names.end()) {
+                names.push_back(name);
+            }
+        }
+    }
+    return names;
 }
 
 } // namespace module::pet

@@ -9,8 +9,10 @@
 //     由本文件在运行时首次生成（简单形状 + 1px 抗锯齿边缘），格式真实、
 //     素材可整体替换为真皮肤包（把 assets/pets/clay-cat 换成美术资源即可）
 //   - 解析是纯函数（parsePetSkinJson），不碰文件系统，供单测
-//   - MVP 只消费 idle/poked 两个状态；pet.json 里其他状态名静默忽略
-//     （前向兼容，M2 多状态机直接吃）
+//   - 状态帧：idle/poked/sleep/typing 四态（M2，设计 §4.4/§4.5）；sleep/
+//     typing/phrases 缺失时静默忽略（老皮肤包前向兼容）
+//   - 气泡短语表（M2 设计 §4.5 内容源①）：pet.json 顶层可选 "phrases"
+//     数组；缺失回退内置语料（换肤可换性格）
 #pragma once
 
 #include <filesystem>
@@ -33,6 +35,9 @@ struct PetSkin {
     std::string source;
     std::vector<std::string> idleFrames;   // 帧文件名（循环播放）
     std::vector<std::string> pokedFrames;  // 被戳反应帧（播一遍回 idle；可为空）
+    std::vector<std::string> sleepFrames;  // 睡眠循环帧（M2；可为空 = 不入睡）
+    std::vector<std::string> typingFrames; // 代理流式"打字"帧（M2；空 = 回落 idle）
+    std::vector<std::string> phrases;      // 气泡短语表（M2；空 = 内置语料）
     std::filesystem::path dir;             // 皮肤目录（解析帧路径；纯解析时为空）
 
     // poked 无帧时回落 idle（皮肤可以只有一套帧）
@@ -53,11 +58,28 @@ core::Result<PetSkin> parsePetSkinJson(const std::string& jsonText);
 // 读目录下 pet.json 并解析（dir 写进结果）
 core::Result<PetSkin> loadSkin(const std::filesystem::path& dir);
 
-// 生成内置占位皮肤：pet.json + idle 4 帧 + poked 2 帧（程序绘制 PNG，
-// 未压缩 deflate，零第三方依赖）。目录已存在且 pet.json 可解析时直接加载。
+// 生成内置占位皮肤：pet.json + idle/poked/sleep/typing 帧 + 短语表（程序
+// 绘制 PNG，未压缩 deflate，零第三方依赖）。目录已存在且 pet.json 可解析时
+// 直接加载；但内置占位皮肤缺 M2 帧时重新生成升级（用户替换过的皮肤不动）
 core::Result<PetSkin> ensureDefaultSkin(const std::filesystem::path& dir);
 
 // 皮肤根目录候选（依次：exe 旁 assets/pets → appDataDir/pets）
 std::vector<std::filesystem::path> skinRootCandidates();
+
+// 发现可用皮肤（M2 多皮肤 UI 消费）：扫皮肤根候选下所有含 pet.json 的
+// 目录名，去重（petsDir 优先）。纯文件系统查询，供设置页下拉/右键换肤菜单
+std::vector<std::string> discoverSkins();
+
+// 内置气泡语料（皮肤无 phrases 时的回退，设计 §4.5 内容源①）
+inline const std::vector<std::string>& defaultPhrases() {
+    static const std::vector<std::string> kPhrases = {
+        "喵~", "在忙吗？", "摸鱼中…", "休息一下吧", "今天也要加油", "Zzz…"};
+    return kPhrases;
+}
+
+// 生效短语表：皮肤自带优先，空则内置语料
+inline const std::vector<std::string>& phraseTable(const PetSkin& skin) {
+    return skin.phrases.empty() ? defaultPhrases() : skin.phrases;
+}
 
 } // namespace module::pet
