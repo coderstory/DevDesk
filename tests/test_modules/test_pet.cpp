@@ -37,7 +37,8 @@
 #include <string>
 #include <vector>
 
-// app:: 实现来自 test_settings.cpp 的 dsl_app_impl.h 注入（单一定义点）
+// app:: 实现来自 src/app_sidebar.cpp（compose 真实现直接编进测试二进制）
+// + test_settings.cpp 的 dsl_app_impl.h 注入（dslAppConfig 等其余符号）
 namespace app {
 void compose(eui::Ui&, const eui::Screen&);
 }
