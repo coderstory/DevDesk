@@ -30,7 +30,10 @@
 //
 // 依赖说明：module_* 之间原则上不互相依赖（防循环）；本模块单向依赖
 // module_claude_proxy，仅为读取 main.cpp 注册的 ClaudeService::global() 单例
-// （既有跨模块桥接模式，claude_module.cpp 同款用法），无环。
+// （既有跨模块桥接模式，claude_module.cpp 同款用法），无环。另单向依赖
+// module_pet（M2 桌宠卡：discoverSkins/applyPetSkin/resetPetPosition，
+// 桌宠非 Router 页面模块，设计 2026-09-22 §4.7 接线表明确设置页承载桌宠卡），
+// pet 不反向依赖 settings，无环。
 #include "settings_config.h"
 
 #include "claude_service.h"
@@ -39,6 +42,9 @@
 #include "core/module_interface.h"
 #include "core/paths.h"
 #include "core/theme.h"
+#include "module_pet/pet_config.h"
+#include "module_pet/pet_skin.h"
+#include "module_pet/pet_window.h"
 
 #include <eui/app.h>
 #include <eui/dsl.h>
@@ -328,6 +334,7 @@ public:
                 const bool claudeOn =
                     moduleEnabled(cfg_, kModuleIdClaudeProxy);
                 const bool mdOn = moduleEnabled(cfg_, kModuleIdMarkdown);
+                const bool petOn = moduleEnabled(cfg_, kModuleIdPet);
                 const auto compTheme = t.isDark
                     ? components::theme::dark()
                     : components::theme::light();
@@ -340,7 +347,8 @@ public:
                     // 高度缓存失效重测
                     .contentKey("settings.cards." +
                                 std::to_string(static_cast<int>(proxyH)) +
-                                (claudeOn ? "C" : "c") + (mdOn ? "M" : "m"))
+                                (claudeOn ? "C" : "c") + (mdOn ? "M" : "m") +
+                                (petOn ? "P" : "p"))
                     .offset(cardsScrollOffset_)
                     .onChange([this](float v) { cardsScrollOffset_ = v; })
                     .content([&](eui::Ui& inner, float contentWidth,
@@ -357,6 +365,11 @@ public:
                         drawModulesCard(inner, "settings.card.modules",
                                         contentWidth, 288.0f, t);
                         cardY += 288.0f + gapY;
+                        if (petOn) {
+                            drawPetCard(inner, "settings.card.pet",
+                                        contentWidth, 120.0f, t);
+                            cardY += 120.0f + gapY;
+                        }
                         if (mdOn) {
                             drawDirectoryCard(inner, "settings.card.directory",
                                               contentWidth, 108.0f, t);
@@ -694,7 +707,98 @@ private:
             .build();
     }
 
-    // ---------- 卡片 3：Markdown 笔记目录（只读） ----------
+    // ---------- 卡片 3：桌宠（M2 多皮肤 UI，设计 §4.5/§4.6） ----------
+    // 皮肤下拉（discoverSkins 发现列表）+ 位置重置按钮；两者即时生效
+    //（换肤热切换/位置直接挪窗），与开关不同（开关重启生效）
+    void drawPetCard(eui::Ui& ui, const std::string& id, float w, float h,
+                     const core::theme::Tokens& t) {
+        // 皮肤清单/当前皮肤首帧惰性加载（目录扫描不进每帧路径）
+        if (!petSkinDataLoaded_) {
+            petSkinDataLoaded_ = true;
+            petSkins_ = ::module::pet::discoverSkins();
+            petSkinName_ =
+                ::module::pet::PetConfigStore(::module::pet::petConfigFile())
+                    .load()
+                    .skinName;
+        }
+        const auto compTheme = t.isDark ? components::theme::dark()
+                                        : components::theme::light();
+        ui.stack(id)
+            .size(w, h)
+            .content([&] {
+                cardFrame(ui, id, w, h, t);
+                ui.text(id + ".title")
+                    .position(28.0f, 16.0f)
+                    .size(w - 56.0f, 22.0f)
+                    .text("桌宠")
+                    .fontSize(t.sizes.fontSizeLarge)
+                    .lineHeight(22.0f)
+                    .fontWeight(600)
+                    .color(t.colors.textPrimary)
+                    .build();
+                ui.text(id + ".desc")
+                    .position(28.0f, 40.0f)
+                    .size(w - 56.0f, 16.0f)
+                    .text("换肤与位置重置即时生效；开关桌宠需重启应用")
+                    .fontSize(fs(12.0f))
+                    .lineHeight(16.0f)
+                    .color(t.colors.textTertiary)
+                    .build();
+                // 皮肤下拉（列表为空时占位一项，选择被忽略）
+                std::vector<std::string> items = petSkins_;
+                if (items.empty()) {
+                    items.emplace_back("（未发现皮肤）");
+                }
+                int selected = 0;
+                for (size_t i = 0; i < petSkins_.size(); ++i) {
+                    if (petSkins_[i] == petSkinName_) {
+                        selected = static_cast<int>(i);
+                        break;
+                    }
+                }
+                ui.stack(id + ".skin.ddwrap")
+                    .position(28.0f, 64.0f)
+                    .size(240.0f, 40.0f)
+                    .content([&] {
+                        components::dropdown(ui, id + ".skin.dd")
+                            .size(240.0f, 40.0f)
+                            .theme(compTheme)
+                            .items(items)
+                            .selected(selected)
+                            .open(petSkinDropdownOpen_)
+                            .onOpenChange(
+                                [this](bool v) { petSkinDropdownOpen_ = v; })
+                            .onChange([this](int idx) {
+                                if (petSkins_.empty() || idx < 0 ||
+                                    idx >= static_cast<int>(petSkins_.size())) {
+                                    return;
+                                }
+                                petSkinName_ = petSkins_[static_cast<size_t>(idx)];
+                                ::module::pet::applyPetSkin(petSkinName_);
+                                setStatus("桌宠皮肤已切换：" + petSkinName_);
+                            })
+                            .build();
+                    })
+                    .build();
+                // 位置重置按钮（回主屏右下角，持久化坐标清回未设置）
+                components::button(ui, id + ".reset")
+                    .position(w - 28.0f - 160.0f, 64.0f)
+                    .size(160.0f, 40.0f)
+                    .text("位置重置")
+                    .fontSize(14.0f)
+                    .theme(compTheme, /*primary=*/false)
+                    .textColor(t.colors.textPrimary)
+                    .border(1.0f, t.colors.borderDefault)
+                    .onClick([this] {
+                        ::module::pet::resetPetPosition();
+                        setStatus("桌宠位置已重置（主屏右下角）");
+                    })
+                    .build();
+            })
+            .build();
+    }
+
+    // ---------- 卡片 4：Markdown 笔记目录（只读） ----------
     void drawDirectoryCard(eui::Ui& ui, const std::string& id, float w,
                            float h, const core::theme::Tokens& t) {
         ui.stack(id)
@@ -1035,6 +1139,10 @@ private:
     bool fontDropdownOpen_ = false;
     bool retentionDropdownOpen_ = false;
     bool effectDropdownOpen_ = false;      // 窗口效果下拉（磨砂 Phase D）
+    bool petSkinDropdownOpen_ = false;     // 桌宠皮肤下拉（M2）
+    bool petSkinDataLoaded_ = false;       // 皮肤清单惰性加载标记（M2）
+    std::vector<std::string> petSkins_;    // 发现到的皮肤（M2）
+    std::string petSkinName_;              // 当前皮肤名（M2）
     bool regenConfirmOpen_ = false;       // 重新生成 token 确认弹窗
     float cardsScrollOffset_ = 0.0f;      // 卡片区 scrollView 滚动位置
     std::string statusMessage_;
