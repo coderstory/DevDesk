@@ -2,7 +2,95 @@
 
 本文件记录 **a1a106a（macOS 中断现场收编）起** 的条目式变更，按恢复计划的三波（W1 止血收编 / W2 平台架构 / W3 剩余需求）组织，波内按 feat / fix / test / docs 分组。更早的 macOS 主线历史（P0–P8，66 测试通过）见 git log 与 spec §16。
 
-> **当前基线（2026-09-23，master @ 296b9c8）**：**330/330 测试全绿**。各波次条目内的测试数为该波时点事实，不代表当前总数；近期波次按合并时间倒序排列（[Pet-Fix] 之后已并入 audit-batch1 +13、winfx-pet +1 两波，代码修复细节见对应分支的 commit message，未单列波次条目）。
+> **当前基线（2026-09-24，master @ 817af80）**：用例 **407**（`grep REGISTER_TEST` 口径，本会话 324 → 407；全绿与否以主会话终验为准）。各波次条目内的测试数为该波时点事实，不代表当前总数；波次按合并时间倒序排列。
+
+## [Session-0923] 2026-09-23 晚 → 09-24 —— 代码/产品审计修复波 + 特性波（f602599 → 817af80，23+ 批，测试 324 → 407）
+
+master `f602599`（侧边栏折叠 merge 点）→ `817af80`：100 commits，22 个 `--no-ff` 合并批次 + 直接提交（审计批、docs 流程批、桌宠气泡①②、HEAD todo 搜索收尾）。文中 `[N]` 编号全部指向两份审计总账：代码质量 49 条（`25e1e67`，2H/20M/27L）+ 产品视角 52 条（`4a81135`，4H/30M/18L），两总账文档批随欠登批一并补登（见文末「欠登补登」节）。按合并时间倒序：
+
+### [Todo-Search] `817af80` —— Todo 搜索 Enter 无副作用
+- Enter 改无副作用与 Markdown 搜索一致（产品审计 [10]），清除只留 Esc（[21] onCancel 路径）。
+
+### [Tech-Debt] `cbc9d4a` —— 技术债四项（A openUp / B 拖拽快照 / C md.tree 语义 / D keychain_posix）
+- A：settings 日志卡下拉 openUp 判定魔数抽命名常量，注明与 EUI-NEO dropdown 默认 metrics 的同步耦合（a5d2a36）。
+- B：todo 拖拽命中 pressY/scrollOffset 对齐到按下同帧快照，消除拖动中列滚动导致的板顶错位 + 纯函数边缘场景锁测试（656496a）。
+- C：md.tree 单 stack 列布局语义规范注释（stack 居中/绝对定位语义 + bg 尺寸耦合点）+ layout 锁测试防回退（e966494）。
+- D：keychain_posix deleteSecret 吞错改失败返回 Internal，语义对齐 keychain_win（不存在=幂等 Ok）；POSIX-only 文件，Windows 不编译未跑 Win 测试（a789bb2）。
+
+### [Pet-Bubble-Proxy] `1e9bf08` —— 桌宠气泡③：接代理事件联动（M2 §4.5 ③，产品审计 [18]）（5b5ad19）
+
+### [View-State-Persist] `5f2bda9` —— 视图状态跨会话持久化（审计 [23]）
+- markdown：选中笔记/三态视图/目录折叠跨会话持久化（282a250）；todo：列滚动按列 id 记忆并跨会话持久化（07c4160）。
+
+### [Keyboard-Shortcuts] `fc3e6eb` —— 快捷键（审计 [22]）
+- claude：Ctrl+N 新建 Profile / Ctrl+S 保存表单 / Enter 启停代理（4bdf3f6）；settings：Ctrl+S 提交待决草稿显式落盘（dbdfeed）。
+
+### [User-Guide-Flows] `885870d` —— USER_GUIDE/README 全局流程对齐（审计 [33]，doc-drift 收尾）
+- 启动序列代理默认关 / Ctrl+B 侧边栏折叠 / 托盘左键唤窗+动态收缩菜单 / 桌宠退出二段确认+逾期气泡 / 数据表接管文件 / FAQ 重写（ee745b2）；README 功能清单与 KNOWN_LIMITATIONS 过期项对齐（b7a5b37）；§4.3 去掉不存在的 KNOWN_LIMITATIONS 引用、数据表补笔记标签与修锚点（3a228f2）。
+
+### [Esc-OnCancel] `d2d373a` —— Esc=取消不提交全量接线（审计 [21]）
+- 创建/编辑弹窗与内联输入全接 EUI-NEO onCancel（38c1d73），MIN_REV → d5e302c（input onCancel 上游依赖，5a203d5）；Claude 代理流程对齐文档（默认不启动/接管-还原语义/删激活停代理/token 脱敏显形/端口可配 + 设置页六卡全量，c695a38，审计 [17][33]）随批。
+
+### [Tray-Dynamic + 随行直接提交] `2a42f39` 前后 —— 托盘菜单动态收缩 + Todo/Markdown 流程文档 + 桌宠气泡①②
+- 托盘菜单按 Router 启用模块动态收缩 + 失效入口给提示（bdce869，审计 [7]）。
+- 交错直接提交：Todo 流程对齐现状（981b2d3）+ Markdown 流程对齐（fc4b59e）（审计 [8]）；桌宠气泡①②——接 Home 逾期任务数 + 静态语料（98d6eb0，M2 §4.5 ①②，产品审计 [18]）。
+
+### [Feedback-Consistency] `3f9e218` —— 反馈统一内嵌红字 formError（审计 [19]）
+- todo 创建/校验失败 → 内嵌红字（对齐 claude 范本，633b080）；settings 端口校验红字随下一次输入清除（cca0cf5）。
+
+### [Menu-Beautify] `c5e0ede` —— styled 菜单窗：桌宠右键 + 托盘（含原生降级）
+- 桌宠右键菜单换 styled 菜单窗（圆角/主题/FA 图标，根治 128px 裁剪，001f013）；托盘菜单换 styled + 原生降级（f7db662）；MIN_REV → b92abb7（styledMenu + onTrayMenu + windowIsFocused，548c0b4）；styled 菜单结构测试 +10 例（e26ed66）；todo 测试悬垂 Element 指针修复（dbf0e37）。
+
+### [Md-Formerr-Table] `93900d4` —— 弹窗错误内嵌红字 + 表格编辑 MVP
+- 新建笔记/文件夹弹窗错误改内嵌红字 formError（1536518，审计 [30]）；表格编辑 MVP：右键插入表格级联 + Tab 跳格（f45b431，审计 [12]）。
+
+### [Pet-M2] `b3488e9` —— 桌宠 M2：多显示器钳制 + Sleep 零渲染
+- 按位置取对应 monitor work area 钳制（47ccfe2，EUI-NEO getMonitorWorkAreas）；系统挂起停渲染、resume 恢复（32164fd，onSystemPower）；MIN_REV → 12c14ed（8d3dfcf）。
+
+### [Todo-Ux] `1a89a48` —— 列重命名显性化 + drain 防卡死（产品审计 [24]）
+- 「+ 列」改弹窗命名 + 列头 ✎ 重命名入口显性化（6adb99d）；createColumn/createTask RETURNING 取行后 drain 到 DONE 防 COMMIT 卡死（9452a85）。
+
+### [Audit-Arch] `5e13cf1` —— 架构 findings（审计 [6][11]）
+- spec §4.2 + ARCHITECTURE 承认 core EUI-NEO header-only 类型桥接例外（99fbc19，[6]）；EUI-NEO 集成加 git rev 诊断 + 软版本警告（6d2fc1e，[11]，push 后转硬检查）。
+
+### [Ux-Polish] `4ee112e` —— UX 三项（审计 [25][27][30]）
+- 浅色辅助灰/主色文字加深至 WCAG AA 4.5:1（5b166b2，[27]）；桌宠退出二段确认防误触（85da0a0，[25]）；markdown 副标题改静态操作说明、动态状态走 toast（eb81d2f，[30]）。
+
+### [Settings-Spec] `e10af1c` —— 设置/代理规格项四项（审计 [6][14][15][16]）
+- claude 首个 Profile 自动激活 + 503 文案指引 + 未激活徽章（bcb59eb，[6]）；代理端口可配 + 改端口自动重启（e3665c0，[14]）；目录卡「打开目录」按钮 + 登记目录不可配限制（fcf8a99，[15]）；代理 token 默认脱敏 + 眼睛按钮临时显形不持久化（a455b5a，[16]）。
+
+### [Todo-Keychain] `9f14dbb` —— rowid 竞态 + JSON 迁移 + POSIX 权限（审计 [7]残留[26][29]）
+- INSERT...RETURNING id 取代 last_insert_rowid 竞态（8e29151，[7] 残留）；serializeTags 迁 platform::json 删 yyjson 直引（6562fdc，[26]）；POSIX keychain 落盘后设 0600 防本机他用户读（7479f9c，[29]）。
+
+### [Claude-Ui] `0078fca` —— 日志面板检索 + Profile 防溢出（审计 [11][26]）
+- 日志面板加搜索/状态码过滤/翻页（e4ac090，[11]）；Profile 列表加 scrollView 防超长破坏布局（4bb0416，[26]）。
+
+### [Md-Lifecycle] `536f5be` —— 笔记生命周期闭环（审计 [4][5][13][20][31]）
+- 笔记删除/重命名 UI 接线（ceb87ad，[4][20]）；文件打开分发带 open: 负载 + 路径解析、内容真实加载（fab8348，[5]）；新建笔记自动聚焦编辑器 + 默认名秒建（f34f997，[13][31]，EUI-NEO requestFocus）。
+
+### [Small-Hardening] `44d9b20` —— 小硬化簇（审计 [22][30][32][33][35][47][48]）
+- 搜索 LIKE 转义防误命中（915138e，[22]）；Bearer token 鉴权改常数时间比较（29380f8，[30]）；迁移/schema 注释对齐 + 删 FTS5 死宏（11a3fc2，[32][33][35]）；PageId 真顺序断言 + core::time::localTime 用例（23c3a4e，[47][48]）。
+
+### [Pet-Uaf] `1ece55a` —— 桌宠 UAF 根治 + 产品审计 HIGH（审计 [0][1][12][28]，产品审计 [1][2]）
+- 窗口销毁回调清空句柄杜绝桌宠窗 UAF（d578e3f，[0][1]）；坐标落盘前钳进工作区，消除负坐标与 -1 哨兵冲突（7bce2c9，[12]）；皮肤帧名校验只放行相对文件名防路径穿越（4114e70，[28]）；删激活 Profile 时停代理并还原配置（5740d09，产品审计 HIGH [1]）；todo 详情动作按钮先存表单防丢编辑 + 删除/背景守卫（5ecfcd0，产品审计 HIGH [2]）。
+
+### [Winfx-Pet] `296b9c8` —— 窗口效果五修 + 穿透恢复⑥ + 真机探针
+- 主窗主体半透/磨砂生效：删五页全屏不透明 pagebg + 侧边栏自铺底（d923f0f）；桌宠灰底——窗口效果档位显式 None（2321dd9）；桌宠右键菜单改原生弹出不被 128px 窗口裁剪（fb0dd16）；托盘菜单全中文化 keepDefault=false + 显示主窗口/退出显式项（7e00096）；设置页鼠标穿透 toggle=穿透锁死态恢复路径（任务⑥，3b9e0bb）；品红底衬真机像素探针脚本（9b1a4cb，d923f0f 配套）。段错误守卫随 EUI-NEO 同名分支上游（requestWindowClose 空句柄守卫 + requestExit/consumeExitRequest 单测）。
+
+### [Audit-Batch1] ff 进 master（分支头 `2d3e50f`）—— 数据完整性簇（审计 [2][3][7][8][9][10]）
+- SqliteDb::transaction 持锁贯穿 fn()——并发写不再穿插进开放事务（ad89193）；markdown 笔记保存改原子写 + openNote 切换前守未落盘编辑（2c31871）；claude 停止代理先取消在途流 + createProfile 原子取 rowid + token 满熵 128 位（72f1db8）；runMigrations「数据库比二进制新」守卫 + 回归用例（37bea22）+ 迁移记录三个 bind 返回值补检查（2a3905d）；Keychain 失败补偿回滚 DELETE 补错误检查与日志（b363822）；curl_global_init 改 std::call_once 消首并发数据竞争（ded3c57）；Result::value/expect 失败路径先落 LOG_FATAL 再 throw（5cafb98）；theme_hierarchy 测试对齐 pagebg 删除形态修合并语义冲突（87e017c）。
+
+### [Docs-Drift] `b3eb66a` + `56142c4` —— 文档漂移修正批 + 桌宠节/CHANGELOG 重排（审计 doc-drift [18-21][34][41-46]）
+- 测试数 330/330、C++20、架构图补 module_pet（5→6 模块）删 drag_controller、浮动齿轮→常驻侧边栏、Home ⚙ 核实已接线（b3eb66a）；USER_GUIDE 补桌宠节 §3.6 + 六模块/数据表/FAQ 同步 + CHANGELOG 顶部按合并时间重排（56142c4）。
+
+### [欠登补登] f602599 及之前 —— 侧边栏折叠 / Claude 一键导入 / 审计总账两文档
+- 侧边栏折叠：72px 图标栏 + Ctrl+B + 持久化 + 内容区自适应（e3de9a5，合入点即 f602599）；导航项加 12px 内边距（32a1027）。
+- Claude 页「导入当前配置」一键读 settings.json 建 Profile（9a4a3be，aad617b）。
+- 审计总账：代码质量 49 条（25e1e67）+ 产品视角 52 条（4a81135）文档批落 master——本大节 `[N]` 编号的权威出处。
+- spec 缩水 A：settings 跟随系统主题（themeMode auto + 平台 prefersDarkTheme，`c0fc536`）——本条目建档时仍在并行分支未合 master，合入与否以主会话为准。
+
+### EUI-NEO 上游增量（随本会话）
+- EUI-NEO main 本地领先 origin **62 commit（未 push**，origin/main 停在 v0.6.0，push 与否为用户决策），其中本会话新增上游 9 项：onWindowDestroyed（b488f11）、Ui::requestFocus（8c103b1）、styledMenu 组件（9f21b97）、onTrayMenu（b92abb7）、onSystemPower（12c14ed）、getMonitorWorkAreas（162e3d3）、input onCancel（d5e302c）、Runtime::compose elementStructure_ move 化（aa4d5f7，代码审计 [38]）、原生菜单 showContextMenu + 子菜单路径表悬空重构（ffd859e/dcd2a15）。DevDesk MIN_REV 随批推进 12c14ed → b92abb7 → d5e302c。
 
 ## [Pet-Fix] 2026-09-23 —— 桌宠 Windows 真机四症状修复
 
