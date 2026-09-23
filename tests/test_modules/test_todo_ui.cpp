@@ -1817,6 +1817,11 @@ REGISTER_TEST(todo_ui_new_column_dialog,
 
     // 3) Esc（焦点在输入框：passthrough 拦内置 Escape→onEnter 提交）→ 取消不落库
     //    若 passthrough 被删，内置会把 Esc 当提交并建出新列 → colCount 变
+    //    注意：refresh 重建元素树，所有旧 Element* 悬垂——每次点击前重新 find
+    addcol = frame.ui.find("todo.btn.addcol.bg");
+    DOCTEST_REQUIRE(addcol != nullptr);
+    addcol = frame.ui.find("todo.btn.addcol.bg");
+    DOCTEST_REQUIRE(addcol != nullptr);
     addcol->onClick();
     frame.refresh();
     auto* hit = frame.ui.find("todo.dialog.newcol.input.hit");
@@ -1830,6 +1835,8 @@ REGISTER_TEST(todo_ui_new_column_dialog,
     DOCTEST_REQUIRE_EQ(colCount(), seed + 1);   // 没有多建
 
     // 3b) Esc（输入框未聚焦的 app 级兜底：Module::onKeyEvent）→ 取消不落库
+    addcol = frame.ui.find("todo.btn.addcol.bg");
+    DOCTEST_REQUIRE(addcol != nullptr);
     addcol->onClick();
     frame.refresh();
     DOCTEST_CHECK(mod->onKeyEvent(esc));
@@ -1837,6 +1844,8 @@ REGISTER_TEST(todo_ui_new_column_dialog,
     DOCTEST_REQUIRE_EQ(colCount(), seed + 1);
 
     // 3c) 「取消」按钮 → 不落库
+    addcol = frame.ui.find("todo.btn.addcol.bg");
+    DOCTEST_REQUIRE(addcol != nullptr);
     addcol->onClick();
     frame.refresh();
     auto* cancel = frame.ui.find("todo.dialog.newcol.cancel.bg");
@@ -1847,6 +1856,8 @@ REGISTER_TEST(todo_ui_new_column_dialog,
     DOCTEST_REQUIRE_EQ(colCount(), seed + 1);
 
     // 4) 输入名字再创建：onTextInput 写回 → 「创建」按输入名落库
+    addcol = frame.ui.find("todo.btn.addcol.bg");
+    DOCTEST_REQUIRE(addcol != nullptr);
     addcol->onClick();
     frame.refresh();
     hit = frame.ui.find("todo.dialog.newcol.input.hit");
