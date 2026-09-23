@@ -1307,13 +1307,65 @@ REGISTER_TEST(todo_ui_search_filter,
         DOCTEST_CHECK(frame.ui.find("todo.col.4.card.1.bg") == nullptr);
         DOCTEST_CHECK(frame.ui.find("todo.col.0.bg") != nullptr);
 
-        // Esc 清空（EUI-NEO input 把 Escape 映射到 onEnter → 清空 query 恢复全部）
+        // Esc 清空（审计 [10] 后走 onCancel 路径；[21] 的 Escape→onEnter 回退不再依赖）
         auto* input2 = frame.ui.find("todo.search.hit");
         DOCTEST_REQUIRE(input2 != nullptr);
         core::KeyEvent esc;
         esc.key = core::InputKey::Escape;
         esc.action = core::KeyAction::Press;
         input2->onKeyEvent(esc);
+        frame.refresh();
+        DOCTEST_CHECK(frame.ui.find("todo.col.4.card.1.bg") != nullptr);
+    }
+
+    mod->onStop();
+    return true;
+})
+
+// 审计 [10]：搜索框 Enter 改无副作用（与 md.search 一致），清除只留 Esc（onCancel）
+REGISTER_TEST(todo_ui_search_enter_noop,
+              "todo_ui: 搜索框 Enter 无副作用（[10]）+ Esc 清除保留", {
+    TestEnv env;
+    DOCTEST_REQUIRE(env.ready);
+    auto col = env.svc->createColumn("回车列");
+    DOCTEST_REQUIRE(col.isOk());
+    auto hitTask = env.svc->createTask(col.value().id, "回车的命中");
+    auto missTask = env.svc->createTask(col.value().id, "回车的无关");
+    DOCTEST_REQUIRE(hitTask.isOk() && missTask.isOk());
+
+    std::unique_ptr<::core::Module> mod(create_todo_module());
+    mod->onStart();
+
+    {
+        Frame frame(mod.get());
+        auto* input = frame.ui.find("todo.search.hit");
+        DOCTEST_REQUIRE(input != nullptr);
+        core::TextInputEvent ev;
+        ev.text = "命中";
+        input->onTextInput(ev);
+        frame.refresh();
+        DOCTEST_CHECK(frame.ui.find("todo.col.4.card.1.bg") == nullptr);
+
+        // Enter：无副作用 —— 搜索词保留、过滤态不变（md.search 同款）
+        auto* inputEnter = frame.ui.find("todo.search.hit");
+        DOCTEST_REQUIRE(inputEnter != nullptr);
+        DOCTEST_REQUIRE(inputEnter->onKeyEvent != nullptr);
+        core::KeyEvent enter;
+        enter.key = core::InputKey::Enter;
+        enter.action = core::KeyAction::Press;
+        inputEnter->onKeyEvent(enter);
+        frame.refresh();
+        DOCTEST_CHECK_EQ(frame.ui.find("todo.col.4.card.0.title")->text,
+                         std::string("回车的命中"));
+        DOCTEST_CHECK(frame.ui.find("todo.col.4.card.1.bg") == nullptr);
+
+        // Esc：清除保留（onCancel 路径），未命中卡恢复
+        auto* inputEsc = frame.ui.find("todo.search.hit");
+        DOCTEST_REQUIRE(inputEsc != nullptr);
+        core::KeyEvent esc;
+        esc.key = core::InputKey::Escape;
+        esc.action = core::KeyAction::Press;
+        inputEsc->onKeyEvent(esc);
         frame.refresh();
         DOCTEST_CHECK(frame.ui.find("todo.col.4.card.1.bg") != nullptr);
     }

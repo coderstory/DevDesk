@@ -734,7 +734,9 @@ private:
                     .gap(t.sizes.spacingSmall)
                     .content([&] {
                         // 搜索框（真实调用 service_->search；仿 markdown 模块 md.search）
-                        // Enter/Esc 清空（EUI-NEO input 把 Escape 映射到 onEnter）。
+                        // 审计 [10]：Enter 改无副作用（不绑 onEnter，与 md.search 一致——
+                        // 搜索已即时生效，回车不该清空）；Esc 清除走 onCancel（[21] 路径，
+                        // 不再依赖 Escape→onEnter 旧映射）。
                         // 🔍 emoji 换 FA：包一层 stack 才能在流式 row 里叠 icon 浮层
                         ui.stack("todo.search.wrap")
                             .size(240.0f, 40.0f)
@@ -750,7 +752,8 @@ private:
                                         searchQuery_ = v;
                                         refreshSearch();
                                     })
-                                    .onEnter([this] {
+                                    .onCancel([this] {
+                                        // 审计 [10]：清除只挂 Esc（onCancel），Enter 无副作用
                                         if (!searchQuery_.empty()) {
                                             searchQuery_.clear();
                                             refreshSearch();
