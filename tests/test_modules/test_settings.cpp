@@ -367,6 +367,9 @@ REGISTER_TEST(settings_theme_switch_reflects, "settings: theme switch reflects o
 // ---- 日志保留下拉弹层不被窗体裁剪（W8：小窗口下自动向上展开） ----
 
 REGISTER_TEST(settings_log_dropdown_popup_stays_in_window, "settings: log dropdown popup stays in window (openUp)", {
+    // 隔离：不隔离会读到真机 config.json（如本机启用了 pet 卡），卡片变多
+    // 把日志卡推到更低位，openUp 也装不下——测试必须与机器本地配置无关
+    PruneEnv env("openup");
     std::unique_ptr<::core::Module> mod(create_settings_module());
     mod->onStart();
 
