@@ -19,4 +19,13 @@ struct PetWindowConfig {
 // 皮肤缺失时自动生成内置占位皮肤；位置钳制进主显示器工作区。
 void startPetWindow(const PetWindowConfig& config);
 
+// 换肤（M2）：校验 skinName 是 discoverSkins() 发现到的皮肤后写盘并热切换
+//（关旧窗 → 按新皮肤重开，位置沿用当前窗口）；未知名字拒绝不动。
+// 窗口未开时只持久化（下次启动生效）
+void applyPetSkin(const std::string& skinName);
+
+// 位置重置（M2）：持久化坐标清回 -1（未设置），窗口开着则立刻移回
+// 主显示器工作区右下角默认位
+void resetPetPosition();
+
 } // namespace module::pet

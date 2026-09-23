@@ -24,3 +24,9 @@ target_link_libraries(devdesk_module_settings PUBLIC
     devdesk_platform
     devdesk_module_claude_proxy
 )
+
+# M2 桌宠卡（设计 2026-09-22 §4.7）：settings → pet 单向（discoverSkins/
+# applyPetSkin/resetPetPosition）；pet 不反向依赖 settings，无环
+target_link_libraries(devdesk_module_settings PUBLIC
+    devdesk_module_pet
+)
