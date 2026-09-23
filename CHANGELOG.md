@@ -2,35 +2,8 @@
 
 本文件记录 **a1a106a（macOS 中断现场收编）起** 的条目式变更，按恢复计划的三波（W1 止血收编 / W2 平台架构 / W3 剩余需求）组织，波内按 feat / fix / test / docs 分组。更早的 macOS 主线历史（P0–P8，66 测试通过）见 git log 与 spec §16。
 
-## [Theme-Hierarchy] 2026-09-23 —— 浅色主题层级全量审计与修正（结构性面板错用卡片白）
+> **当前基线（2026-09-23，master @ 296b9c8）**：**330/330 测试全绿**。各波次条目内的测试数为该波时点事实，不代表当前总数；近期波次按合并时间倒序排列（[Pet-Fix] 之后已并入 audit-batch1 +13、winfx-pet +1 两波，代码修复细节见对应分支的 commit message，未单列波次条目）。
 
-分支 `fix/theme-hierarchy`（worktree `wt-themehier`，基线 e0b0a70 侧边栏修复后续）。**315/315 全绿**（+4 层级回归用例）。
-
-**根因**（承接侧边栏修复）：结构性面板（页面结构的一部分）错用卡片白 `surface`（浅色 #FFFFFF），浅色模式下「页面米色、面板纯白」刺眼。层级口诀（spec §6.5 方案 B）：页面结构 → `background`（#FAF9F5 / 暖墨 #1A1816）；浮动卡片/对话框/弹层/按钮 → `surface`/`surfaceElevated`（白 / #232120 / #2C2A28）；行 hover / 分组底 → `hover`（#F5F2EC，既有 surfaceMuted 语义由 hover token 承担）。
-
-### fix（结构性面板 → background）
-
-- **markdown**：左栏树面板 `md.tree.bg`、编辑区面板 `md.editor.bg`、预览区面板 `md.preview.bg`、编辑器底部状态栏 `md.status.bg`、树行底（文件行/文件夹行）——全部 `surface` → `background`（行底随面板，hover 仍 #F5F2EC 显色）。
-- **todo**：看板列容器 `todo.col.N.bg` `surface` → `background`；看板卡片 `surfaceElevated` → `surface`（深色回落 #232120 卡片层级，曾被无谓抬到浮层色；浅色两值同为白无视觉变化）。
-- **claude**：左栏 Profile 列表 `claude.profiles.bg`、右栏详情面板 `claude.detail.bg`、最近调用「查看全部」命中区——`surface` → `background`。
-- **markdown 大纲浮层** `md.outline.panel.bg` + 大纲行底：`surface` → `surfaceElevated`（zIndex 浮层语义，深色下正确抬到 #2C2A28 浮层色）。
-
-### 审计确认无需改（防过度修正）
-
-- **home**：统计卡 / 最近编辑卡是**浮动卡片**，留 `surface` 白（浅色下卡片白浮在米色页面上正是 Claude.ai 风格）；行底随卡。**settings**：卡片浮动该白；卡内嵌字段框（路径/Token/字段底）是控件层 `surfaceElevated`，层级正确。四模块页面底 `pagebg` 均已是 `background`。
-- **EUI-NEO componentTokens 映射**（`core/component_theme.h`）：dialog 面板/dropdown 弹层 → `surface`（浮层 ✓）；dropdown 字段/input 底/segmented 轨道 → `surface`（控件层白，Claude.ai 象牙底+白输入框同款）；scrollView 不铺底（透出结构性面板底 ✓）。上游零改动。
-- **深色同规则核对**：修正后层次 = 页面/面板 #1A1816 < 卡片 #232120 < 弹层/按钮/字段 #2C2A28 < hover #353231，符合 spec §6.5.1。
-
-### test
-
-- `tests/test_modules/test_theme_hierarchy.cpp`（+4 用例）：无头 compose 色值断言（防再漂移）——todo（列容器=background、卡片/dialog=surface、交互打开 dialog 后复验）、markdown（左栏/编辑/预览/状态栏=background，Ctrl+Shift+P 切 Split 保三栏全渲染）、claude（左栏/详情=background）、home（统计卡=surface 不得跟风变米色）；明暗两主题各验一遍。
-
-### 人工点验项（无头测试覆盖不到的）
-
-- 侧边栏（`main.cpp app.sidebar.bg`，e0b0a70 已修，无头 compose 不含 main.cpp）浅色米色/深色暖墨；
-- 浅色下逐页目测：markdown 三栏、todo 看板列、claude 双栏、home 卡片浮起感、settings 卡片；深色下看板卡片 #232120 与列底 #1A1816 的层次。
-
-## [Pet-Anime] 2026-09-23 —— 二次元桌宠皮肤（真实美术素材包）
 ## [Pet-Fix] 2026-09-23 —— 桌宠 Windows 真机四症状修复
 
 分支 `fix/pet-window-bugs`（EUI-NEO 同名分支已合上游 main）。首次真机验证暴露
@@ -77,8 +50,55 @@
 （255,255,25x，桌面透出）、桌宠 WM_CLOSE 仅关桌宠。任务栏按钮不出现、拖拽
 手感、磨砂视觉三项登记人工点验。
 
+## [Theme-Hierarchy] 2026-09-23 —— 浅色主题层级全量审计与修正（结构性面板错用卡片白）
 
+分支 `fix/theme-hierarchy`（worktree `wt-themehier`，基线 e0b0a70 侧边栏修复后续）。**315/315 全绿**（+4 层级回归用例）。
 
+**根因**（承接侧边栏修复）：结构性面板（页面结构的一部分）错用卡片白 `surface`（浅色 #FFFFFF），浅色模式下「页面米色、面板纯白」刺眼。层级口诀（spec §6.5 方案 B）：页面结构 → `background`（#FAF9F5 / 暖墨 #1A1816）；浮动卡片/对话框/弹层/按钮 → `surface`/`surfaceElevated`（白 / #232120 / #2C2A28）；行 hover / 分组底 → `hover`（#F5F2EC，既有 surfaceMuted 语义由 hover token 承担）。
+
+### fix（结构性面板 → background）
+
+- **markdown**：左栏树面板 `md.tree.bg`、编辑区面板 `md.editor.bg`、预览区面板 `md.preview.bg`、编辑器底部状态栏 `md.status.bg`、树行底（文件行/文件夹行）——全部 `surface` → `background`（行底随面板，hover 仍 #F5F2EC 显色）。
+- **todo**：看板列容器 `todo.col.N.bg` `surface` → `background`；看板卡片 `surfaceElevated` → `surface`（深色回落 #232120 卡片层级，曾被无谓抬到浮层色；浅色两值同为白无视觉变化）。
+- **claude**：左栏 Profile 列表 `claude.profiles.bg`、右栏详情面板 `claude.detail.bg`、最近调用「查看全部」命中区——`surface` → `background`。
+- **markdown 大纲浮层** `md.outline.panel.bg` + 大纲行底：`surface` → `surfaceElevated`（zIndex 浮层语义，深色下正确抬到 #2C2A28 浮层色）。
+
+### 审计确认无需改（防过度修正）
+
+- **home**：统计卡 / 最近编辑卡是**浮动卡片**，留 `surface` 白（浅色下卡片白浮在米色页面上正是 Claude.ai 风格）；行底随卡。**settings**：卡片浮动该白；卡内嵌字段框（路径/Token/字段底）是控件层 `surfaceElevated`，层级正确。四模块页面底 `pagebg` 均已是 `background`。
+- **EUI-NEO componentTokens 映射**（`core/component_theme.h`）：dialog 面板/dropdown 弹层 → `surface`（浮层 ✓）；dropdown 字段/input 底/segmented 轨道 → `surface`（控件层白，Claude.ai 象牙底+白输入框同款）；scrollView 不铺底（透出结构性面板底 ✓）。上游零改动。
+- **深色同规则核对**：修正后层次 = 页面/面板 #1A1816 < 卡片 #232120 < 弹层/按钮/字段 #2C2A28 < hover #353231，符合 spec §6.5.1。
+
+### test
+
+- `tests/test_modules/test_theme_hierarchy.cpp`（+4 用例）：无头 compose 色值断言（防再漂移）——todo（列容器=background、卡片/dialog=surface、交互打开 dialog 后复验）、markdown（左栏/编辑/预览/状态栏=background，Ctrl+Shift+P 切 Split 保三栏全渲染）、claude（左栏/详情=background）、home（统计卡=surface 不得跟风变米色）；明暗两主题各验一遍。
+
+### 人工点验项（无头测试覆盖不到的）
+
+- 侧边栏（`main.cpp app.sidebar.bg`，e0b0a70 已修，无头 compose 不含 main.cpp）浅色米色/深色暖墨；
+- 浅色下逐页目测：markdown 三栏、todo 看板列、claude 双栏、home 卡片浮起感、settings 卡片；深色下看板卡片 #232120 与列底 #1A1816 的层次。
+
+## [PhaseC-MD-Highlight] 2026-09-23 —— 编辑器 Markdown 语法高亮（styled-runs Phase C）
+
+分支 `feat/md-highlight`（worktree `wt-mdhl`）。上游 Phase A/B 已在 EUI-NEO main @ b7e0e9f。基线 303/303 → **310/310 全绿**（+7 高亮用例）。
+
+### feat
+
+- **md_line_scanner 扩展**：`scanFences(text) -> vector<MdFenceBlock>`（开栏行/内容区间/闭栏行字节偏移，``` 与 ~~~ 各自配对，未闭合到文末）；`scanHeadings` 改为消费 scanFences——大纲与高亮共用一套围栏状态机（一鱼三吃），原围栏内标题语义不变（既有用例全绿）。
+- **行级高亮器** `src/module_markdown/md_highlight.{h,cpp}`：`MdHighlighter::runsForLine(fullText, lineText, lineStartByte) -> vector<TextRun>`（全文档坐标）。块级：标题 `#` 前缀、引用 `>`（正文 textSecondary + 行内 token 后写覆盖叠加）、列表 `-`/`*`/`+`/`N.`、表格管道（仅 `|` 开头行）；行内：`` `code` ``（同长度反引号配对，含双反引号）、`**bold**`（标记弱化，内容等 Phase D weight run）、`*italic*`（无 italic 字形用 info 色替代）、`[text](url)` / `![alt](url)`。围栏行整行弱化、围栏内容整行 success 色；围栏状态由高亮器内部按 display 文本重建（文本变化首回调一次 O(n)，其后的可视行回调走等值快路径）——与框架回调同源（IME preedit 快照），字节坐标不会错位。块级规则仅硬行首触发（软换行段中恰以 `# ` 开头不误判）。
+- **色表** `mdHighlightColors(Tokens)`：§6.2 全部映射现有语义 token（标记 textTertiary / 代码 success / 链接+斜体 info / 列表 primary / 引用正文 textSecondary），明暗两套自动适配，未新增 token。
+- **接线**：markdown_module 编辑器 input 挂 `.lineStyles(回调)`（从 InputState 解析当前 display 文本喂高亮器）；主题名变化 = 换色表 = bump `InputState.styleRevision` 触发全部可视行重高亮（compose 每帧检查，无模块间耦合）。
+
+### test
+
+- `test_md_highlight.cpp` +7 用例：scanFences 区间（配对/未闭合/空内容/CRLF）、块级前缀与行内 token 字节区间断言（CJK 边界、未闭合标记不误标、粗体星不误判斜体）、围栏跨行、软换行段防误判、色表映射、无头接线（行元素 runs 落色 + 主题切换 styleRevision++ 且换色）、万行性能冒烟。
+- 性能实测（万行 / 2500 围栏块 / 可视窗 27 行）：首帧 1.13ms，击键轮（围栏重建 + 27 行重高亮）avg 0.98ms / max 1.53ms——预算 8ms 内 5 倍余量。
+
+### docs
+
+- 设计文档 §8 Phase C 状态回填；预览侧 `renderInlineRuns` 收敛为 `.runs()` 评估结论：**不做**（segment 间 fontFamily/fontSize/fontWeight 真实不同——代码段是 monospace 小字号，颜色 run 无法合并异字体段，重构手工 inline 布局 > 半天，见设计文档登记）。
+
+## [Pet-Anime] 2026-09-23 —— 二次元桌宠皮肤（真实美术素材包）
 分支 `feat/pet-anime`（基线 ad5c94d，含 merge master f6d0ac3）。**304/304 全绿**（+1 内置美术皮肤断言）。
 
 ### feat
@@ -112,26 +132,6 @@
 - itch.io "Lacey Animated Pixel Doll"（kyoii011，调研报告 §3 候选）——**$5 付费**，放弃
 - OpenGameArt "Anime Girl"（Michona，CC0）——**采纳内置**
 - itch.io "School Girl Sprite Pack"（chibi785）——CC-BY-NC-ND 4.0，触碰红线，放弃
-
-## [PhaseC-MD-Highlight] 2026-09-23 —— 编辑器 Markdown 语法高亮（styled-runs Phase C）
-
-分支 `feat/md-highlight`（worktree `wt-mdhl`）。上游 Phase A/B 已在 EUI-NEO main @ b7e0e9f。基线 303/303 → **310/310 全绿**（+7 高亮用例）。
-
-### feat
-
-- **md_line_scanner 扩展**：`scanFences(text) -> vector<MdFenceBlock>`（开栏行/内容区间/闭栏行字节偏移，``` 与 ~~~ 各自配对，未闭合到文末）；`scanHeadings` 改为消费 scanFences——大纲与高亮共用一套围栏状态机（一鱼三吃），原围栏内标题语义不变（既有用例全绿）。
-- **行级高亮器** `src/module_markdown/md_highlight.{h,cpp}`：`MdHighlighter::runsForLine(fullText, lineText, lineStartByte) -> vector<TextRun>`（全文档坐标）。块级：标题 `#` 前缀、引用 `>`（正文 textSecondary + 行内 token 后写覆盖叠加）、列表 `-`/`*`/`+`/`N.`、表格管道（仅 `|` 开头行）；行内：`` `code` ``（同长度反引号配对，含双反引号）、`**bold**`（标记弱化，内容等 Phase D weight run）、`*italic*`（无 italic 字形用 info 色替代）、`[text](url)` / `![alt](url)`。围栏行整行弱化、围栏内容整行 success 色；围栏状态由高亮器内部按 display 文本重建（文本变化首回调一次 O(n)，其后的可视行回调走等值快路径）——与框架回调同源（IME preedit 快照），字节坐标不会错位。块级规则仅硬行首触发（软换行段中恰以 `# ` 开头不误判）。
-- **色表** `mdHighlightColors(Tokens)`：§6.2 全部映射现有语义 token（标记 textTertiary / 代码 success / 链接+斜体 info / 列表 primary / 引用正文 textSecondary），明暗两套自动适配，未新增 token。
-- **接线**：markdown_module 编辑器 input 挂 `.lineStyles(回调)`（从 InputState 解析当前 display 文本喂高亮器）；主题名变化 = 换色表 = bump `InputState.styleRevision` 触发全部可视行重高亮（compose 每帧检查，无模块间耦合）。
-
-### test
-
-- `test_md_highlight.cpp` +7 用例：scanFences 区间（配对/未闭合/空内容/CRLF）、块级前缀与行内 token 字节区间断言（CJK 边界、未闭合标记不误标、粗体星不误判斜体）、围栏跨行、软换行段防误判、色表映射、无头接线（行元素 runs 落色 + 主题切换 styleRevision++ 且换色）、万行性能冒烟。
-- 性能实测（万行 / 2500 围栏块 / 可视窗 27 行）：首帧 1.13ms，击键轮（围栏重建 + 27 行重高亮）avg 0.98ms / max 1.53ms——预算 8ms 内 5 倍余量。
-
-### docs
-
-- 设计文档 §8 Phase C 状态回填；预览侧 `renderInlineRuns` 收敛为 `.runs()` 评估结论：**不做**（segment 间 fontFamily/fontSize/fontWeight 真实不同——代码段是 monospace 小字号，颜色 run 无法合并异字体段，重构手工 inline 布局 > 半天，见设计文档登记）。
 
 ## [Final-Verify] 2026-09-23 —— 终验发现问题收尾批（12 项）
 
