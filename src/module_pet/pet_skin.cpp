@@ -970,6 +970,11 @@ std::vector<std::filesystem::path> skinRootCandidates() {
     // 开发期放皮肤包的只读候选（构建目录旁边）
     std::vector<std::filesystem::path> roots;
     roots.push_back(core::paths::petsDir());
+    // DEVDESK_PETS_DIR 覆盖时独占候选列表（测试隔离语义，与 DEVDESK_NOTES_DIR 一致）——
+    // 否则 cwd/assets 里的内置美术皮肤会泄漏进隔离环境，破坏计数断言
+    if (std::getenv("DEVDESK_PETS_DIR") != nullptr) {
+        return roots;
+    }
     std::error_code ec;
     const std::filesystem::path devRoot = std::filesystem::current_path(ec) / "assets" / "pets";
     if (!ec) {
