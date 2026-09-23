@@ -8,10 +8,13 @@
 //   每次操作后靠下一帧 compose 重新拉取数据（本模块 compose 直读 service）
 #include "claude_service.h"
 #include "provider_config.h"
+#include "settings_sync.h"
 #include "core/logging.h"
 #include "core/module_interface.h"
 #include "core/theme.h"
+#include "core/time.h"
 #include "core/component_theme.h"
+#include "platform/json.h"
 
 #include <eui/dsl.h>
 
@@ -25,7 +28,10 @@
 #include <atomic>
 #include <cstdio>
 #include <ctime>
+#include <filesystem>
+#include <fstream>
 #include <map>
+#include <sstream>
 #include <string>
 #include <thread>
 #include <utility>
@@ -60,6 +66,26 @@ std::string modelsSummary(const Profile& p) {
     }
     return "默认 " + mc.def.model + " · 槽位已配 " +
            std::to_string(configured) + "/6";
+}
+
+// 「导入当前配置」名称建议：BASE_URL host（剥 scheme/路径/端口），
+// 提取不到（无 BASE_URL）→「导入 <日期>」；用户可改
+std::string suggestImportName(const std::string& baseUrl) {
+    size_t start = baseUrl.find("://");
+    start = (start == std::string::npos) ? 0 : start + 3;
+    size_t end = baseUrl.find('/', start);
+    if (end == std::string::npos) end = baseUrl.size();
+    std::string host = baseUrl.substr(start, end - start);
+    const size_t colon = host.rfind(':');
+    if (colon != std::string::npos) host.resize(colon);
+    if (!host.empty()) return "导入 " + host;
+    std::time_t t = std::time(nullptr);
+    std::tm tm{};
+    core::time::localTime(t, &tm);
+    char buf[16];
+    std::snprintf(buf, sizeof(buf), "%04d-%02d-%02d",
+                  tm.tm_year + 1900, tm.tm_mon + 1, tm.tm_mday);
+    return "导入 " + std::string(buf);
 }
 
 } // namespace
@@ -364,10 +390,12 @@ public:
                                     }
                                 }
 
-                                // 底部新建按钮
+                                // 底部按钮：新建 + 导入当前配置（读
+                                // ~/.claude/settings.json 预填新建表单）
+                                const float btnW = (leftW - 40.0f - 12.0f) * 0.5f;
                                 components::button(ui, "claude.profiles.new")
                                     .position(20.0f, bodyH - 64.0f)
-                                    .size(leftW - 40.0f, 40.0f)
+                                    .size(btnW, 40.0f)
                                     .text("+ 新建 Profile")
                                     .fontSize(t.sizes.fontSizeSmall)
                                     .colors(t.colors.surfaceElevated, t.colors.hover,
@@ -376,6 +404,20 @@ public:
                                     .radius(t.sizes.radius)
                                     .border(1.0f, t.colors.borderDefault)
                                     .onClick([this] { openCreateForm(); })
+                                    .build();
+                                components::button(ui, "claude.profiles.import")
+                                    .position(20.0f + btnW + 12.0f, bodyH - 64.0f)
+                                    .size(btnW, 40.0f)
+                                    .text("导入当前配置")
+                                    .icon(0xF019)  // fa-download
+                                    .fontSize(t.sizes.fontSizeSmall)
+                                    .colors(t.colors.surfaceElevated, t.colors.hover,
+                                            t.colors.active)
+                                    .textColor(t.colors.textPrimary)
+                                    .iconColor(t.colors.textPrimary)
+                                    .radius(t.sizes.radius)
+                                    .border(1.0f, t.colors.borderDefault)
+                                    .onClick([this] { doImportCurrentConfig(); })
                                     .build();
                             })
                             .build();
@@ -971,6 +1013,7 @@ private:
         formKey_.clear();
         formError_.clear();
         formKeyHint_.clear();
+        formImportWarn_.clear();
         formModels_ = ModelsConfig{};
         formEnvRows_.clear();
         resetImportState();
@@ -985,6 +1028,7 @@ private:
         formKey_.clear();   // 留空 = 不换 key（updateProfile 语义）
         formError_.clear();
         formKeyHint_ = p.apiKeyHint;
+        formImportWarn_.clear();
         // 槽位：models_config + 旧 model 列 fallback（§4.2 兼容读取）
         formModels_ = effectiveModelsConfig(p.modelsConfigJson, p.model);
         // env 行：非法 JSON 读路径容错为空表（不炸）
@@ -1051,6 +1095,68 @@ private:
         importReady_ = false;
         importText_.clear();
         formError_.clear();   // 导入成功清掉旧校验错误
+    }
+
+    // ============ 导入当前配置（一键读 settings.json → 预填新建表单）============
+    // 等价于用户手动「从 cc-switch / settings.json 粘贴导入」但全自动：
+    // 读用户级 settings.json → parseImportedEnv → 打开新建弹窗并预填
+    // （基础页 BASE_URL/Token、模型映射页槽位、高级 env 页 + 预览标记）。
+    // 接管态（sidecar 快照存在）时 settings.json 里是代理托管值
+    // （BASE_URL=127.0.0.1:8888）而非原始上游 → 弹窗内给警告，不阻断。
+    void doImportCurrentConfig() {
+        // 路径解析：service 注入优先（生产 = main 注入的 defaultPaths，
+        // 测试 = 临时目录注入），未注入（service 为 null 的防御分支）回落
+        // defaultPaths()——与设置页/引导条的路径口径一致
+        settings_sync::Paths paths = settings_sync::defaultPaths();
+        ClaudeService* svc = ClaudeService::global();
+        if (svc && !svc->settingsSyncPaths().settingsFile.empty()) {
+            paths = svc->settingsSyncPaths();
+        }
+
+        // 读文件：不存在 → toast，不弹窗
+        std::error_code ec;
+        if (!std::filesystem::exists(paths.settingsFile, ec) || ec) {
+            showToast("导入失败",
+                      "未找到 ~/.claude/settings.json（" +
+                          paths.settingsFile.string() + "）",
+                      true);
+            return;
+        }
+        std::ifstream in(paths.settingsFile, std::ios::binary);
+        std::ostringstream ss;
+        ss << in.rdbuf();
+        const std::string content = ss.str();
+        // 整段 settings.json 没有 env 键 = 没有可导入的配置（区别于粘贴导入
+        // 认裸 env 对象的形状启发：文件只会是 settings.json 形状），给明确
+        // 提示而非共享解析器的「键名非法: permissions」误报
+        if (auto doc = platform::json::parse(content);
+            doc.isOk() && doc.value().isObject() &&
+            !doc.value().asObject().has("env")) {
+            showToast("导入失败",
+                      "settings.json 没有 env 块，无配置可导入", true);
+            return;
+        }
+        auto parsed = parseImportedEnv(content);
+        if (parsed.isFail()) {
+            showToast("导入失败",
+                      "settings.json 解析失败: " + parsed.errorMessage(), true);
+            return;
+        }
+
+        // 全自动「粘贴导入」：新建表单 → 解析结果 → 应用 → 名称建议
+        openCreateForm();
+        importPreview_ = std::move(parsed).value();
+        importReady_ = true;
+        doApplyImport();       // 预填三页表单（结束时清 importReady_）
+        importReady_ = true;   // 保留高级 env 页预览标记（识别数 + 警告角标）
+        formName_ = suggestImportName(importPreview_.baseUrl);
+
+        // 接管态警告：sidecar 存在 → 导入的是代理配置而非原始上游
+        if (settings_sync::hasPendingSnapshot(paths)) {
+            formImportWarn_ =
+                "当前是接管态，导入的是代理配置而非原始上游"
+                "（BASE_URL=127.0.0.1:8888）；建议先停止代理再导入";
+        }
     }
 
     // 表单 → models_config / extra_env JSON（全空 = 空串，保持「未配置」语义）
@@ -1209,6 +1315,18 @@ private:
                 .position(28.0f, 340.0f).size(w - 56.0f, 18.0f)
                 .text(formError_).fontSize(12.0f).lineHeight(18.0f)
                 .color(t.colors.error).build();
+        }
+
+        // 「导入当前配置」接管态警告（不阻断，仅提示；⚠ 图标 + 文字两元素）
+        if (!formImportWarn_.empty()) {
+            ui.text("claude.dialog.form.importwarn.icon")
+                .position(28.0f, 362.0f).size(14.0f, 18.0f)
+                .icon(0xF071).fontSize(12.0f).lineHeight(18.0f)
+                .color(t.colors.warning).build();
+            ui.text("claude.dialog.form.importwarn")
+                .position(46.0f, 362.0f).size(w - 74.0f, 36.0f)
+                .text(formImportWarn_).fontSize(12.0f).lineHeight(18.0f)
+                .color(t.colors.warning).build();
         }
     }
 
@@ -1839,6 +1957,7 @@ private:
     std::string formKey_;
     std::string formKeyHint_;  // 编辑时显示现有 key 脱敏提示
     std::string formError_;
+    std::string formImportWarn_;  // 导入当前配置的接管态警告（弹窗内展示，不阻断）
     ModelsConfig formModels_;  // 6 槽位（默认模型 = def 槽位，旧 formModel_ 并入）
     std::vector<std::pair<std::string, std::string>> formEnvRows_;  // env 键值行
 

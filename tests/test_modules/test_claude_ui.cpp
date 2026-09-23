@@ -15,11 +15,13 @@
 #include "platform/http_server.h"
 #include "platform/keychain.h"
 #include "provider_config.h"
+#include "settings_sync.h"
 
 #include <eui/dsl.h>
 
 #include <chrono>
 #include <filesystem>
+#include <fstream>
 #include <memory>
 #include <stdexcept>
 #include <string>
@@ -75,6 +77,37 @@ void cleanupKey(int64_t profileId) {
     platform::keychain::deleteSecret(
         kTestKeychainService, "claude:" + std::to_string(profileId));
 }
+
+// RAII 临时目录（「导入当前配置」测试：临时 settings.json / sidecar 注入，
+// 绝不碰真实 ~/.claude——settings_sync 的 Paths 注入模式）
+struct ImportTempDir {
+    std::filesystem::path path;
+
+    explicit ImportTempDir(const std::string& tag) {
+        static int counter = 0;
+        path = std::filesystem::temp_directory_path() /
+               ("devdesk_test_import_cur_" + tag + "_" +
+                std::to_string(++counter));
+        std::error_code ec;
+        std::filesystem::remove_all(path, ec);
+        std::filesystem::create_directories(path, ec);
+    }
+    ~ImportTempDir() {
+        std::error_code ec;
+        std::filesystem::remove_all(path, ec);
+    }
+
+    std::filesystem::path file(const char* name) const { return path / name; }
+    void write(const char* name, const std::string& content) const {
+        std::ofstream(file(name), std::ios::binary | std::ios::trunc) << content;
+    }
+    module::claude::settings_sync::Paths paths() const {
+        module::claude::settings_sync::Paths p;
+        p.settingsFile = file("settings.json");
+        p.sidecarFile = file("snapshot.json");
+        return p;
+    }
+};
 
 } // namespace
 
@@ -546,6 +579,280 @@ REGISTER_TEST(claude_module_import_flow,
                          std::string("1"));
         DOCTEST_CHECK_EQ(p.model, std::string("m-default[1M]"));
         cleanupKey(p.id);
+    }
+
+    mod->onStop();
+    return true;
+})
+
+// ---- 6. 「导入当前配置」按钮存在 + 读 settings.json → 弹窗预填全链 ----
+// 点按钮 = 等价用户手动「粘贴导入」但全自动：临时 settings.json（Paths 注入）
+// → 弹窗打开 → 基础页名称建议/BASE_URL/Token、模型映射页槽位、高级 env 页
+// env 行 + 预览标记 → 保存 → DB 往返。
+REGISTER_TEST(claude_module_import_current_full_chain,
+              "claude_module: 导入当前配置读settings.json预填表单（headless）", {
+    TestEnv env;
+    ImportTempDir d("full");
+    const auto paths = d.paths();
+    env.svc->setSettingsSyncPaths(paths);
+    // 整段 settings.json 形状（含非 env 顶层字段，验证取 env 子对象）
+    d.write("settings.json", R"({
+        "permissions": {"allow": ["Bash"]},
+        "env": {
+            "ANTHROPIC_BASE_URL": "https://gw.example.com/v1",
+            "ANTHROPIC_AUTH_TOKEN": "sk-imp-current-0001",
+            "ANTHROPIC_MODEL": "m-cur-default",
+            "ANTHROPIC_DEFAULT_SONNET_MODEL": "m-cur-sonnet",
+            "DISABLE_AUTOUPDATER": "1"
+        }
+    })");
+
+    std::unique_ptr<::core::Module> mod(create_claude_module());
+    eui::Screen screen;
+    screen.width = 1600.0f;
+    screen.height = 1000.0f;
+    auto compose = [&](eui::Ui& ui) {
+        ui.begin("claude_imp_cur");
+        mod->compose(ui, screen);
+        ui.end();
+    };
+    auto click = [](eui::Ui& ui, const std::string& id) -> bool {
+        const auto* node = ui.find(id);
+        if (node == nullptr || node->onClick == nullptr) {
+            std::cerr << "missing clickable: " << id << std::endl;
+            return false;
+        }
+        node->onClick();
+        return true;
+    };
+    auto textOf = [](eui::Ui& ui, const std::string& id) -> std::string {
+        const auto* node = ui.find(id);
+        return node == nullptr ? std::string("<missing:") + id + ">"
+                               : node->text;
+    };
+
+    // 按钮存在（profile 列表底部，与「+ 新建 Profile」并列）→ 点击
+    {
+        eui::Ui ui;
+        compose(ui);
+        DOCTEST_CHECK(ui.find("claude.profiles.import") != nullptr);
+        DOCTEST_CHECK(ui.find("claude.profiles.new") != nullptr);
+        DOCTEST_CHECK(click(ui, "claude.profiles.import.bg"));
+    }
+    // 弹窗已开 + 基础页预填（名称建议取 BASE_URL host）
+    {
+        eui::Ui ui;
+        compose(ui);
+        const auto* backdrop = ui.find("claude.dialog.form.backdrop");
+        DOCTEST_REQUIRE(backdrop != nullptr);
+        DOCTEST_CHECK(!backdrop->disabled);   // 弹窗开着
+        DOCTEST_CHECK_EQ(textOf(ui, "claude.dialog.form.name.text"),
+                         std::string("导入 gw.example.com"));
+        DOCTEST_CHECK_EQ(textOf(ui, "claude.dialog.form.url.text"),
+                         std::string("https://gw.example.com/v1"));
+        DOCTEST_CHECK_EQ(textOf(ui, "claude.dialog.form.key.text"),
+                         std::string("sk-imp-current-0001"));
+        // 非接管态（无 sidecar）→ 无警告行
+        DOCTEST_CHECK(ui.find("claude.dialog.form.importwarn") == nullptr);
+        DOCTEST_CHECK(click(ui, "claude.form.tabs.hit.1"));
+    }
+    // 模型映射页：default / sonnet 槽位预填
+    {
+        eui::Ui ui;
+        compose(ui);
+        DOCTEST_CHECK_EQ(textOf(ui, "claude.form.slot.0.model.text"),
+                         std::string("m-cur-default"));
+        DOCTEST_CHECK_EQ(textOf(ui, "claude.form.slot.1.model.text"),
+                         std::string("m-cur-sonnet"));
+        DOCTEST_CHECK(click(ui, "claude.form.tabs.hit.2"));
+    }
+    // 高级 env 页：env 行预填 + 预览标记保留（识别槽位 2/6 · env 1 项）
+    {
+        eui::Ui ui;
+        compose(ui);
+        DOCTEST_CHECK_EQ(textOf(ui, "claude.form.env.row.0.key.text"),
+                         std::string("DISABLE_AUTOUPDATER"));
+        DOCTEST_CHECK_EQ(textOf(ui, "claude.form.env.row.0.value.text"),
+                         std::string("1"));
+        const auto* preview = ui.find("claude.form.import.preview");
+        DOCTEST_REQUIRE(preview != nullptr);
+        DOCTEST_CHECK(preview->text.find("槽位 2/6") != std::string::npos);
+        DOCTEST_CHECK(preview->text.find("env 1 项") != std::string::npos);
+        DOCTEST_CHECK(click(ui, "claude.dialog.form.confirm.bg"));
+    }
+    // 保存 → DB 往返（名称/Base URL/槽位/env 全量落地）
+    {
+        auto list = env.svc->listProfiles();
+        DOCTEST_REQUIRE(list.isOk());
+        DOCTEST_REQUIRE_EQ(list.value().size(), 1u);
+        const auto& p = list.value()[0];
+        DOCTEST_CHECK_EQ(p.name, std::string("导入 gw.example.com"));
+        DOCTEST_CHECK_EQ(p.baseUrl, std::string("https://gw.example.com/v1"));
+        DOCTEST_CHECK(!p.apiKeyHint.empty());   // AUTH_TOKEN 已入 Keychain
+        auto mc = module::claude::parseModelsConfig(p.modelsConfigJson);
+        DOCTEST_REQUIRE(mc.isOk());
+        DOCTEST_CHECK_EQ(mc.value().def.model, std::string("m-cur-default"));
+        DOCTEST_CHECK_EQ(mc.value().sonnet.model, std::string("m-cur-sonnet"));
+        auto ee = module::claude::parseExtraEnv(p.extraEnvJson);
+        DOCTEST_REQUIRE(ee.isOk());
+        DOCTEST_CHECK_EQ(ee.value().at("DISABLE_AUTOUPDATER"), std::string("1"));
+        DOCTEST_CHECK_EQ(p.model, std::string("m-cur-default"));
+        cleanupKey(p.id);
+    }
+
+    mod->onStop();
+    return true;
+})
+
+// ---- 7. 「导入当前配置」文件缺失 → toast 提示，不弹窗 ----
+REGISTER_TEST(claude_module_import_current_missing_file,
+              "claude_module: 导入当前配置文件缺失toast不弹窗（headless）", {
+    TestEnv env;
+    ImportTempDir d("miss");
+    const auto paths = d.paths();   // settings.json 不创建
+    env.svc->setSettingsSyncPaths(paths);
+
+    std::unique_ptr<::core::Module> mod(create_claude_module());
+    eui::Screen screen;
+    screen.width = 1600.0f;
+    screen.height = 1000.0f;
+    auto compose = [&](eui::Ui& ui) {
+        ui.begin("claude_imp_miss");
+        mod->compose(ui, screen);
+        ui.end();
+    };
+    auto click = [](eui::Ui& ui, const std::string& id) -> bool {
+        const auto* node = ui.find(id);
+        if (node == nullptr || node->onClick == nullptr) {
+            std::cerr << "missing clickable: " << id << std::endl;
+            return false;
+        }
+        node->onClick();
+        return true;
+    };
+
+    {
+        eui::Ui ui;
+        compose(ui);
+        DOCTEST_CHECK(click(ui, "claude.profiles.import.bg"));
+    }
+    {
+        eui::Ui ui;
+        compose(ui);
+        const auto* title = ui.find("claude.toast.title");
+        DOCTEST_REQUIRE(title != nullptr);
+        DOCTEST_CHECK_EQ(title->text, std::string("导入失败"));
+        const auto* msg = ui.find("claude.toast.message");
+        DOCTEST_REQUIRE(msg != nullptr);
+        DOCTEST_CHECK(msg->text.find("未找到") != std::string::npos);
+        DOCTEST_CHECK(msg->text.find("settings.json") != std::string::npos);
+        // 弹窗未开、表单未预填（input 空值时渲染 placeholder，非空才是预填）
+        const auto* backdrop = ui.find("claude.dialog.form.backdrop");
+        DOCTEST_REQUIRE(backdrop != nullptr);
+        DOCTEST_CHECK(backdrop->disabled);
+        const auto* name = ui.find("claude.dialog.form.name.text");
+        DOCTEST_REQUIRE(name != nullptr);
+        DOCTEST_CHECK_EQ(name->text, std::string("例如：官方 / 中转 A"));
+    }
+
+    // 补充分支：settings.json 存在但没有 env 块 → 明确提示（而非共享解析器
+    // 把整段当裸 env 对象报「键名非法」的误报）
+    d.write("settings.json", R"({"permissions": {"allow": ["Bash"]}})");
+    {
+        eui::Ui ui;
+        compose(ui);
+        DOCTEST_CHECK(click(ui, "claude.profiles.import.bg"));
+    }
+    {
+        eui::Ui ui;
+        compose(ui);
+        const auto* title = ui.find("claude.toast.title");
+        DOCTEST_REQUIRE(title != nullptr);
+        DOCTEST_CHECK_EQ(title->text, std::string("导入失败"));
+        const auto* msg = ui.find("claude.toast.message");
+        DOCTEST_REQUIRE(msg != nullptr);
+        DOCTEST_CHECK(msg->text.find("env 块") != std::string::npos);
+        const auto* backdrop = ui.find("claude.dialog.form.backdrop");
+        DOCTEST_REQUIRE(backdrop != nullptr);
+        DOCTEST_CHECK(backdrop->disabled);
+    }
+
+    mod->onStop();
+    return true;
+})
+
+// ---- 8. 「导入当前配置」接管态 → 弹窗内警告 + 仍预填（不阻断）----
+// sidecar 快照存在 = 接管态：导入的是代理托管值（BASE_URL=127.0.0.1:8888）
+// 而非原始上游 → 警告行展示，弹窗照开照预填，由用户决定。
+REGISTER_TEST(claude_module_import_current_takeover_warn,
+              "claude_module: 导入当前配置接管态警告不阻断（headless）", {
+    TestEnv env;
+    ImportTempDir d("takeover");
+    const auto paths = d.paths();
+    env.svc->setSettingsSyncPaths(paths);
+    // 模拟接管态：settings.json 是代理托管值 + sidecar 快照残留
+    d.write("settings.json", R"({
+        "env": {
+            "ANTHROPIC_BASE_URL": "http://127.0.0.1:8888",
+            "ANTHROPIC_AUTH_TOKEN": "devdesk-proxy-token",
+            "MY_KEY": "user"
+        }
+    })");
+    d.write("snapshot.json",
+            R"({"env": {"ANTHROPIC_BASE_URL": "https://orig.example.com"}})");
+
+    std::unique_ptr<::core::Module> mod(create_claude_module());
+    eui::Screen screen;
+    screen.width = 1600.0f;
+    screen.height = 1000.0f;
+    auto compose = [&](eui::Ui& ui) {
+        ui.begin("claude_imp_takeover");
+        mod->compose(ui, screen);
+        ui.end();
+    };
+    auto click = [](eui::Ui& ui, const std::string& id) -> bool {
+        const auto* node = ui.find(id);
+        if (node == nullptr || node->onClick == nullptr) {
+            std::cerr << "missing clickable: " << id << std::endl;
+            return false;
+        }
+        node->onClick();
+        return true;
+    };
+    auto textOf = [](eui::Ui& ui, const std::string& id) -> std::string {
+        const auto* node = ui.find(id);
+        return node == nullptr ? std::string("<missing:") + id + ">"
+                               : node->text;
+    };
+
+    {
+        eui::Ui ui;
+        compose(ui);
+        DOCTEST_CHECK(click(ui, "claude.profiles.import.bg"));
+    }
+    {
+        eui::Ui ui;
+        compose(ui);
+        // 不阻断：弹窗照开、照预填（导入的就是接管态值）
+        const auto* backdrop = ui.find("claude.dialog.form.backdrop");
+        DOCTEST_REQUIRE(backdrop != nullptr);
+        DOCTEST_CHECK(!backdrop->disabled);
+        DOCTEST_CHECK_EQ(textOf(ui, "claude.dialog.form.url.text"),
+                         std::string("http://127.0.0.1:8888"));
+        // 接管态警告行：提示导入的是代理配置而非原始上游 + 建议先停代理
+        const auto* warn = ui.find("claude.dialog.form.importwarn");
+        DOCTEST_REQUIRE(warn != nullptr);
+        DOCTEST_CHECK(warn->text.find("接管态") != std::string::npos);
+        DOCTEST_CHECK(warn->text.find("代理配置") != std::string::npos);
+        DOCTEST_CHECK(warn->text.find("停止代理") != std::string::npos);
+        // MY_KEY 透传进 env 行（未识别键原样保留）
+        DOCTEST_CHECK(click(ui, "claude.form.tabs.hit.2"));
+    }
+    {
+        eui::Ui ui;
+        compose(ui);
+        DOCTEST_CHECK_EQ(textOf(ui, "claude.form.env.row.0.key.text"),
+                         std::string("MY_KEY"));
     }
 
     mod->onStop();
