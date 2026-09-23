@@ -87,6 +87,19 @@ const char* kWindowEffectPresets[] = {
 constexpr int kWindowEffectPresetCount = 3;
 const char* kWindowEffectPresetLabels[] = {"关闭（默认）", "半透", "磨砂（Acrylic）"};
 
+// —— 日志保留下拉 openUp 越界判定几何（tech-debt A，原为裸魔数）——
+// 日志卡是页面最后一张卡，下拉向下展开可能被窗体底边裁剪；这里用同一套
+// 几何预先判断"向下展开是否出界"，出界则置 openUp 让 dropdown 向上展开。
+// 弹层三项必须与 EUI-NEO dropdown 实际渲染一致，否则判定失真：取值来源是
+// EUI-NEO components/theme.h 的默认 metrics（control.menuItem=34 /
+// spacing.compact=8 / spacing.small=6），若将来主题覆写 metrics 需同步。
+constexpr float kLogDropdownOffsetY = 48.0f;    // ddwrap 在日志卡内 y 偏移
+constexpr float kLogDropdownHeight = 40.0f;     // dropdown 控件高度
+constexpr float kDropdownPopupGap = 8.0f;       // 字段底边与弹层间距（spacing.compact）
+constexpr float kDropdownItemHeight = 34.0f;    // 单个菜单项高（control.menuItem）
+constexpr float kDropdownPopupPadding = 12.0f;  // 弹层上下 padding（spacing.small × 2）
+constexpr float kWindowBottomMargin = 16.0f;    // 窗口底边安全留白，越界 = 有裁剪风险
+
 int nearestIndex(int value, const int* presets, int count) {
     int best = 0;
     int bestDist = 1 << 30;
@@ -1250,9 +1263,9 @@ private:
     }
 
     // ---------- 卡片 5：日志保留策略 ----------
-    // cardTopY/screenH：日志卡是页面最后一张卡，字段贴近窗口底部；
-    // 估算弹层高度（与 dropdown 内部一致：菜单项 34 × 6 项 + 上下 padding 6×2）
-    // 判断向下展开是否出界，出界则 openUp 向上展开（修复菜单被窗体裁剪）
+    // cardTopY/screenH：日志卡是页面最后一张卡，字段贴近窗口底部；弹层几何用
+    // 文件顶部 kDropdown* / kLogDropdown* 常量估算（与 dropdown 内部 metrics
+    // 一致），判断向下展开是否出界，出界则 openUp 向上展开（修复菜单被窗体裁剪）
     void drawLogCard(eui::Ui& ui, const std::string& id, float w, float h,
                      const core::theme::Tokens& t, float cardTopY,
                      float screenH) {
@@ -1276,19 +1289,20 @@ private:
                 static const char* kRetentionLabels[] = {
                     "永久保留", "7 天", "30 天", "90 天", "180 天", "365 天"};
                 ui.stack(id + ".ddwrap")
-                    .position(28.0f, 48.0f)
-                    .size(240.0f, 40.0f)
+                    .position(28.0f, kLogDropdownOffsetY)
+                    .size(240.0f, kLogDropdownHeight)
                     .content([&] {
-                        // 字段绝对底边 = 卡顶 + 卡内 y 偏移(48) + 字段高(40)
-                        const float fieldBottomY = cardTopY + 48.0f + 40.0f;
-                        const float popupGap = 8.0f;   // metrics spacing.compact
-                        const float popupH =
-                            static_cast<float>(kRetentionPresetCount) *
-                                34.0f + 12.0f;  // menuItem × 6 + small×2
-                        const bool openUp =
-                            fieldBottomY + popupGap + popupH > screenH - 16.0f;
+                        // 字段绝对底边 = 卡顶 + 卡内 y 偏移 + 字段高
+                        const float fieldBottomY =
+                            cardTopY + kLogDropdownOffsetY + kLogDropdownHeight;
+                        const float popupH = static_cast<float>(kRetentionPresetCount) *
+                                                 kDropdownItemHeight +
+                                             kDropdownPopupPadding;
+                        const bool openUp = fieldBottomY + kDropdownPopupGap +
+                                                popupH >
+                                            screenH - kWindowBottomMargin;
                         components::dropdown(ui, id + ".dd")
-                            .size(240.0f, 40.0f)
+                            .size(240.0f, kLogDropdownHeight)
                             .theme(compTheme)
                             .items(std::vector<std::string>(
                                 kRetentionLabels,

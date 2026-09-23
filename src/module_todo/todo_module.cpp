@@ -551,8 +551,9 @@ public:
         in.colWidth = boardColW_;
         in.colGap = boardColGap_;
         in.boardHeight = boardH_;
-        in.scrollOffset =
-            drag_.fromColIndex >= 0 ? colScrollOffset(static_cast<size_t>(drag_.fromColIndex)) : 0.0f;
+        // tech-debt B：必须用按下时刻的快照（与 pressY 同帧）。读"当下"的
+        // colScrollOffset 会在拖拽途中列被滚动时两帧混值，板面顶边整体错位
+        in.scrollOffset = drag_.pressScrollOffset;
         in.cardIndex = drag_.cardIndex;
         return ui::dragDropTarget(in, x, y);
     }
@@ -1089,6 +1090,13 @@ private:
                 drag_.pressX = bounds.x;
                 drag_.pressY = bounds.y;
                 drag_.pressWidth = bounds.width;
+                // tech-debt B：bounds.y 里含的是"按下这一帧"的列滚动偏移，
+                // 命中换算必须减同一个值才能还原出正确的板面顶边。拖拽途中
+                // 源列被滚轮滚动时，若 onDrag 时刻再读 colScrollOffset（新值），
+                // pressY（旧帧）× scrollOffset（新帧）混帧 → 命中框整体上偏/下偏。
+                // 在按下回调内快照，保证两值同帧。
+                drag_.pressScrollOffset =
+                    colScrollOffset(static_cast<size_t>(colIndex));
             })
             .onDrag([this](const core::dsl::DragEvent& ev) {
                 // 运行时只在超过 dragThreshold 后派发 → 到这里即视为拖拽激活
@@ -2320,6 +2328,10 @@ private:
         float pressX = 0.0f;       // 按下时卡片 bounds（指针像素空间）
         float pressY = 0.0f;
         float pressWidth = 0.0f;
+        // 与 pressX/pressY 同帧的源列滚动偏移快照（compose 空间）。
+        // dragDropTarget 靠它把含滚动的 bounds.y 还原成板面顶边，
+        // 取"当下"值会跨帧混用（tech-debt B，见 onPress 处注释）
+        float pressScrollOffset = 0.0f;
         int hoverColIndex = -1;    // 拖动中指针所在列（-1 = 列外，松手取消）
     };
     DragState drag_;

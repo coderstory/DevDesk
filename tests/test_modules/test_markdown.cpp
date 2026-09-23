@@ -800,6 +800,61 @@ REGISTER_TEST(md_module_split_layout, "markdown_module: W9 双栏三列铺满 co
     return true;
 })
 
+// ---- 2b'. tech-debt C：单 stack 列布局语义锁（bg 铺满 / 内容坐标 / 单槽位）----
+
+REGISTER_TEST(md_tree_column_layout_semantics,
+              "markdown_module: md.tree 单 stack 列语义锁 bg 重合+绝对内容+每列一槽（tech-debt C）", {
+    MdUiEnv env("tree_layout");
+    DOCTEST_REQUIRE(env.db != nullptr);
+    DOCTEST_REQUIRE(writeTextFile(env.dir / "a.md", "# A\nx\n"));
+
+    std::unique_ptr<::core::Module> mod(create_markdown_module());
+    mod->onStart();
+
+    eui::Screen screen;
+    screen.width = 1600.0f;
+    screen.height = 1000.0f;
+    eui::Ui ui;
+    ui.begin("tl");
+    mod->compose(ui, screen);
+    ui.end();
+    ui.layout(screen.width, screen.height);
+
+    const float pad = 40.0f;        // spacingXXLarge
+    const float sideW = 240.0f;     // 左栏树宽
+    const float gap = 16.0f;
+    const float contentW = screen.width - pad * 2.0f;
+
+    const auto* tree = ui.find("md.tree");
+    const auto* treeBg = ui.find("md.tree.bg");
+    DOCTEST_REQUIRE(tree != nullptr);
+    DOCTEST_REQUIRE(treeBg != nullptr);
+    // 耦合点核心：bg 不带 position，靠 stack 语义"居中 == 铺满"——成立前提
+    // 是 bg 尺寸恒等于 stack 尺寸。任一侧改动使两框不重合 → 本测试变红
+    DOCTEST_CHECK_EQ(treeBg->frame.x, tree->frame.x);
+    DOCTEST_CHECK_EQ(treeBg->frame.y, tree->frame.y);
+    DOCTEST_CHECK_EQ(treeBg->frame.width, tree->frame.width);
+    DOCTEST_CHECK_EQ(treeBg->frame.height, tree->frame.height);
+
+    // 绝对定位内容 = 相对 stack 内容区坐标（搜索框 .position(12,12)）
+    const auto* search = ui.find("md.search");
+    DOCTEST_REQUIRE(search != nullptr);
+    DOCTEST_CHECK_EQ(search->frame.x, tree->frame.x + 12.0f);
+    DOCTEST_CHECK_EQ(search->frame.y, tree->frame.y + 12.0f);
+
+    // 编辑态（默认）：编辑器列只占一个流式槽位（W9 修复前 overlay 兄弟双
+    // 占位 → 整列右移一个 sideW、右缘溢出）。右缘必须精确贴 contentW 右边界
+    const auto* editor = ui.find("md.editor");
+    DOCTEST_REQUIRE(editor != nullptr);
+    DOCTEST_CHECK_EQ(editor->frame.x, tree->frame.x + sideW + gap);
+    DOCTEST_CHECK_EQ(editor->frame.width, contentW - sideW - gap);
+    DOCTEST_CHECK_EQ(editor->frame.x + editor->frame.width, pad + contentW);
+    DOCTEST_CHECK(ui.find("md.preview") == nullptr);  // 编辑态无预览列
+
+    mod->onStop();
+    return true;
+})
+
 // ---- 2c. W8：大纲浮动面板不挤压编辑区（layout 级）----
 
 REGISTER_TEST(md_module_compose_outline_float, "markdown_module: W8 大纲浮动面板 zIndex/不挤压（headless layout）", {

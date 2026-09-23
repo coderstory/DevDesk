@@ -85,6 +85,9 @@ inline int computeAppendPosition(const std::vector<Task>& tasks, int64_t columnI
 // 板面几何 = compose 空间（drawBoard 每帧快照）。两个空间相差统一的
 // 缩放（dpi）与偏移（侧边栏等），锚定卡片自身即可同时消掉两者：
 // dpi 用 pressWidth / cardWidth 探测，板面原点用卡片左缘回推。
+// ⚠ 同帧契约（tech-debt B）：pressY 与 scrollOffset 必须是"按下那一帧"的
+// 成对值——bounds.y 里含的是按下时刻的列滚动，还原板面顶边只能减同一个值。
+// 调用方（hitDropColumn）在 DragState 里快照，拖拽中途列被滚动也不会错位。
 struct DragHitInput {
     int fromColIndex = 0;
     int colCount = 0;
@@ -95,7 +98,7 @@ struct DragHitInput {
     float colWidth = 0.0f;      // compose 空间列宽
     float colGap = 0.0f;
     float boardHeight = 0.0f;   // compose 空间板高
-    float scrollOffset = 0.0f;  // 源列当前滚动偏移（compose 空间）
+    float scrollOffset = 0.0f;  // 源列滚动偏移（compose 空间，按下时刻快照）
     int cardIndex = 0;
 };
 

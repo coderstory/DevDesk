@@ -418,10 +418,16 @@ private:
                         float sideW,
                         const core::theme::Tokens& t,
                         const components::theme::ThemeColorTokens& componentTheme) {
-        // W9 修复：旧结构 = column（只铺底色）+ 兄弟 overlay stack，overlay
-        // 会在 md.body row 的流式布局里占第二个同样宽的槽位（三列整体右移
-        // 溢出屏）。改为单个 stack：bg 不定位时居中铺满，内容绝对定位
-        // （同 drawOutlinePanel 的成熟模式）。
+        // W9 修复 + tech-debt C（布局语义注释）：单 stack 列 = bg rect +
+        // 绝对定位内容。旧结构是 column（只铺底色）+ 兄弟 overlay stack，
+        // overlay 会在 md.body row 的流式布局里占第二个同样宽的槽位
+        // （三列变六槽，整体右移溢出屏）。
+        // EUI-NEO stack 语义（core/layout.h layoutStack）：stack 子元素
+        // 全部同位叠放、不互相挤占——带 .position() 的按栈内容区坐标绝对
+        // 定位；不带 position 的居中摆放 → bg 用"尺寸恒等于 stack 尺寸 +
+        // 居中"实现铺满。⚠ 耦合点：改 bg 或 stack 任一侧尺寸会静默错位
+        // （居中偏移而非报错）；测试 md_tree_column_layout_semantics 锁
+        // "bg 与 stack 精确重合 + 每列在 row 中只占一个槽位"。
         ui.stack("md.tree").size(sideW, bodyH).content([&] {
             ui.rect("md.tree.bg")
                 .size(sideW, bodyH)
@@ -873,6 +879,8 @@ private:
                           const components::theme::ThemeColorTokens& componentTheme) {
         (void)componentTheme;
         // W9 修复：同左栏——column+overlay 兄弟双占位改单 stack
+        // （布局语义与耦合点见 drawTreeColumn 注释，测试统一锁在
+        // md_tree_column_layout_semantics）
         ui.stack("md.editor").size(midW, bodyH).content([&] {
             ui.rect("md.editor.bg")
                 .size(midW, bodyH)
@@ -1202,6 +1210,8 @@ private:
                            float gap) {
         (void)gap;
         // W9 修复：同左栏——column+overlay 兄弟双占位改单 stack
+        // （布局语义与耦合点见 drawTreeColumn 注释，测试统一锁在
+        // md_tree_column_layout_semantics）
         ui.stack("md.preview").size(midW, bodyH).content([&] {
             ui.rect("md.preview.bg")
                 .size(midW, bodyH)
