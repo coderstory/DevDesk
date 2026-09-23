@@ -22,6 +22,8 @@ constexpr const char* kKeyTheme = "theme";
 constexpr const char* kKeyThemeMode = "themeMode";
 // Markdown 编辑器字号（px）键（spec 缩水 B）
 constexpr const char* kKeyEditorFontSize = "editorFontSize";
+// 日志级别四档字符串键（spec 缩水 D；值 = kLogLevel* 常量）
+constexpr const char* kKeyLogLevel = "logLevel";
 // W9 换键一次性重置：EUI-NEO 0.7.0 修了字号 em 语义后文字放大约 33%，
 // fontScalePercent/fontScalePercentV2 下的存量值（85/115/130）都是在
 // 0.75 缩水语义下选的，修正后失去意义 → 一律忽略、回落默认 100，
@@ -87,6 +89,14 @@ bool resolveThemeDark(const std::string& themeMode, bool systemPrefersDark) {
     return systemPrefersDark;
 }
 
+core::log::Level parseLogLevel(const std::string& mode) {
+    if (mode == kLogLevelDebug) return core::log::Level::Debug;
+    if (mode == kLogLevelWarn) return core::log::Level::Warn;
+    if (mode == kLogLevelError) return core::log::Level::Error;
+    // INFO 与一切未知值（sanitized 保证正常路径只会是四档之一）
+    return core::log::Level::Info;
+}
+
 // ---- 关于卡文案（spec 缩水 C）。宏缺失回退（手工编译/其他 target）----
 #ifndef DEVDESK_VERSION
 #define DEVDESK_VERSION "dev"
@@ -129,6 +139,12 @@ SettingsConfig SettingsStore::sanitized(const SettingsConfig& cfg) {
     if (out.logRetentionDays < 0) out.logRetentionDays = 0;
     if (out.logRetentionDays > kMaxLogRetentionDays) {
         out.logRetentionDays = kMaxLogRetentionDays;
+    }
+    // 日志级别（spec 缩水 D）：只认四档大写字符串，未知值收敛 INFO
+    //（与 parseLogLevel 同口径；大小写敏感——配置键值即字面档位）
+    if (out.logLevel != kLogLevelDebug && out.logLevel != kLogLevelWarn &&
+        out.logLevel != kLogLevelError) {
+        out.logLevel = kLogLevelInfo;
     }
     // 编辑器字号（spec 缩水 B）：钳制区间与 core::theme::setEditorFontSize
     // 同口径（load 回退默认、save 前收敛，双向不产生越界值）
@@ -282,6 +298,9 @@ SettingsConfig SettingsStore::load() const {
         cfg.editorFontSize =
             static_cast<int>(obj.get(kKeyEditorFontSize).asInt());
     }
+    if (obj.has(kKeyLogLevel) && obj.get(kKeyLogLevel).isString()) {
+        cfg.logLevel = obj.get(kKeyLogLevel).asString();
+    }
     if (obj.has(kKeyProxyAutoStart) && obj.get(kKeyProxyAutoStart).isBool()) {
         cfg.claudeProxyAutoStart = obj.get(kKeyProxyAutoStart).asBool();
     }
@@ -325,6 +344,7 @@ core::Result<void> SettingsStore::save(const SettingsConfig& cfgRaw) const {
     // 随即按 themeMode 幂等纠正——main.cpp 零改动）
     obj.set(kKeyThemeMode, platform::json::makeString(cfg.themeMode));
     obj.set(kKeyEditorFontSize, platform::json::makeInt(cfg.editorFontSize));
+    obj.set(kKeyLogLevel, platform::json::makeString(cfg.logLevel));
     obj.set(kKeyFontScale, platform::json::makeInt(cfg.fontScalePercent));
     obj.set(kKeyLogRetention, platform::json::makeInt(cfg.logRetentionDays));
     obj.set(kKeyProxyAutoStart, platform::json::makeBool(cfg.claudeProxyAutoStart));

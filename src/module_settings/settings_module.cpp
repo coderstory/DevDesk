@@ -28,6 +28,8 @@
 //   5. 调用日志保留天数（0=永久）——切换档位立即执行一次滚动清理并
 //      反馈「已清理 N 条」（core::pruneCallLogs，经 appDatabase() 共享
 //      连接；启动时 main.cpp 仍会按持久化配置再清一次，幂等）
+//   5b. 日志级别四档（spec §8.5「日志级别」，spec 缩水 D）——切档即时
+//      core::log::setLevel（下一行日志起生效）；重启由 onStart 恢复
 //   6. 模块管理（模块插拔方案 A，设计 2026-09-22 §5.4）：三个工具模块
 //      （markdown/todo/claude_proxy）各一行开关；home/settings 恒启用不
 //      展示开关。开关只写 config.json，**重启生效**（注册是启动期行为）；
@@ -109,6 +111,14 @@ constexpr int kEditorFontPresetCount = 4;
 const char* kEditorFontPresetLabels[] = {
     "小 13px", "标准 15px", "大 17px", "特大 20px"};
 
+// 日志级别四档（spec 缩水 D；与 settings_config 的 kLogLevel* 一一对应，
+// 核心档用裸大写词 = 与 core::log::levelToString 输出对齐）
+const char* kLogLevelPresets[] = {kLogLevelDebug, kLogLevelInfo,
+                                  kLogLevelWarn, kLogLevelError};
+constexpr int kLogLevelPresetCount = 4;
+const char* kLogLevelPresetLabels[] = {
+    "DEBUG（详尽）", "INFO（默认）", "WARN", "ERROR"};
+
 // —— 日志保留下拉 openUp 越界判定几何（tech-debt A，原为裸魔数）——
 // 日志卡是页面最后一张卡，下拉向下展开可能被窗体底边裁剪；这里用同一套
 // 几何预先判断"向下展开是否出界"，出界则置 openUp 让 dropdown 向上展开。
@@ -119,6 +129,8 @@ constexpr float kLogDropdownOffsetY = 48.0f;    // ddwrap 在日志卡内 y 偏�
 constexpr float kLogDropdownHeight = 40.0f;     // dropdown 控件高度
 constexpr float kLogEditorFontOffsetY = 92.0f;  // 编辑器字号行 y 偏移（spec 缩水 B）
 constexpr float kLogEditorFontHeight = 36.0f;   // 编辑器字号 dropdown 高
+constexpr float kLogLevelOffsetY = 136.0f;      // 日志级别行 y 偏移（spec 缩水 D）
+constexpr float kLogLevelHeight = 36.0f;        // 日志级别 dropdown 高
 constexpr float kDropdownPopupGap = 8.0f;       // 字段底边与弹层间距（spacing.compact）
 constexpr float kDropdownItemHeight = 34.0f;    // 单个菜单项高（control.menuItem）
 constexpr float kDropdownPopupPadding = 12.0f;  // 弹层上下 padding（spacing.small × 2）
@@ -165,10 +177,15 @@ public:
         // core::theme 传给 markdown（模块隔离：markdown 不 include settings）
         ::core::theme::setEditorFontSize(
             static_cast<float>(cfg_.editorFontSize));
+        // 日志级别档（spec 缩水 D）：core::log::setLevel 已存在，这里只是
+        // 把持久化档应用到运行时（main.cpp 启动日志先于本模块，恒定按
+        // 默认 INFO 过滤——DEBUG 档从 settings 启动起生效）
+        ::core::log::setLevel(parseLogLevel(cfg_.logLevel));
         LOG_INFO("Settings 模块启动（主题=" + ::core::theme::currentThemeName() +
                  "（模式=" + cfg_.themeMode + "）" +
                  ", 字号=" + std::to_string(cfg_.fontScalePercent) + "%" +
                  ", 编辑器字号=" + std::to_string(cfg_.editorFontSize) + "px" +
+                 ", 日志级别=" + cfg_.logLevel +
                  ", 日志保留=" + retentionLabel() + "）");
     }
 
@@ -435,6 +452,25 @@ public:
                  std::to_string(port) + "，代理已自动重启");
     }
 
+    // 日志级别切档（spec 缩水 D）：core::log::setLevel 即时应用（下一行日志
+    // 起生效，无缓冲），persist 供下次启动由 onStart 恢复
+    void applyLogLevelPreset(int index) {
+        if (index < 0 || index >= kLogLevelPresetCount) return;
+        cfg_.logLevel = kLogLevelPresets[index];
+        ::core::log::setLevel(parseLogLevel(cfg_.logLevel));
+        persist();
+        setStatus("日志级别：" + cfg_.logLevel + "（即时生效）");
+        LOG_INFO("Settings: 日志级别 → " + cfg_.logLevel + "（core::log::setLevel）");
+    }
+
+    // cfg_.logLevel（四档字符串）→ 下拉索引；sanitized 保证只会是四档之一
+    int logLevelIndex() const {
+        if (cfg_.logLevel == kLogLevelDebug) return 0;
+        if (cfg_.logLevel == kLogLevelWarn) return 2;
+        if (cfg_.logLevel == kLogLevelError) return 3;
+        return 1;  // INFO 默认档
+    }
+
     // 模块开关（插拔方案 A §5.4）：只写 config.json，注册门控在下次启动的
     // main.cpp 装配处生效。home/settings 恒启用，UI 不提供开关
     void applyModuleEnabled(const std::string& moduleId, bool on) {
@@ -558,10 +594,10 @@ public:
                             cardY += proxyH + gapY;
                         }
                         drawLogCard(inner, "settings.card.log", contentWidth,
-                                    148.0f, t,
+                                    192.0f, t,
                                     cardsTopY + cardY - cardsScrollOffset_,
                                     screen.height);
-                        cardY += 148.0f + gapY;
+                        cardY += 192.0f + gapY;
                         // 关于卡恒显（不受模块开关门控，自身就是排障信息源）
                         drawAboutCard(inner, "settings.card.about",
                                       contentWidth, 150.0f, t);
@@ -1350,7 +1386,7 @@ private:
                 ui.text(id + ".title")
                     .position(28.0f, 16.0f)
                     .size(w - 56.0f, 22.0f)
-                    .text("调用日志保留")
+                    .text("日志与编辑器")
                     .fontSize(t.sizes.fontSizeLarge)
                     .lineHeight(22.0f)
                     .fontWeight(600)
@@ -1448,6 +1484,56 @@ private:
                     .position(288.0f, 100.0f)
                     .size(w - 316.0f, 18.0f)
                     .text("Markdown 编辑器正文字号；默认 15px（标准）。切换即时生效。")
+                    .fontSize(fs(12.0f))
+                    .lineHeight(18.0f)
+                    .color(t.colors.textTertiary)
+                    .build();
+
+                // ---- 行 3：日志级别（spec §8.5「日志级别」，spec 缩水 D）：
+                // 切档即时 core::log::setLevel（DEBUG 起打 LOG_DEBUG 详录），
+                // 重启由 onStart 恢复持久化档 ----
+                ui.text(id + ".level.label")
+                    .position(28.0f, 144.0f)
+                    .size(84.0f, 20.0f)
+                    .text("日志级别")
+                    .fontSize(fs(12.0f))
+                    .lineHeight(20.0f)
+                    .color(t.colors.textSecondary)
+                    .build();
+                ui.stack(id + ".level.ddwrap")
+                    .position(124.0f, kLogLevelOffsetY)
+                    .size(150.0f, kLogLevelHeight)
+                    .content([&] {
+                        const float levelFieldBottomY =
+                            cardTopY + kLogLevelOffsetY + kLogLevelHeight;
+                        const float levelPopupH =
+                            static_cast<float>(kLogLevelPresetCount) *
+                                    kDropdownItemHeight +
+                                kDropdownPopupPadding;
+                        const bool levelOpenUp = levelFieldBottomY +
+                                    kDropdownPopupGap + levelPopupH >
+                                screenH - kWindowBottomMargin;
+                        components::dropdown(ui, id + ".level.dd")
+                            .size(150.0f, kLogLevelHeight)
+                            .theme(compTheme)
+                            .items(std::vector<std::string>(
+                                kLogLevelPresetLabels,
+                                kLogLevelPresetLabels + kLogLevelPresetCount))
+                            .selected(logLevelIndex())
+                            .openUp(levelOpenUp)
+                            .open(logLevelDropdownOpen_)
+                            .onOpenChange(
+                                [this](bool v) { logLevelDropdownOpen_ = v; })
+                            .onChange([this](int idx) {
+                                applyLogLevelPreset(idx);
+                            })
+                            .build();
+                    })
+                    .build();
+                ui.text(id + ".level.hint")
+                    .position(288.0f, 144.0f)
+                    .size(w - 316.0f, 18.0f)
+                    .text("DEBUG 最详尽（排障）；默认 INFO。切档即时生效。")
                     .fontSize(fs(12.0f))
                     .lineHeight(18.0f)
                     .color(t.colors.textTertiary)
@@ -1585,6 +1671,7 @@ private:
     bool effectDropdownOpen_ = false;      // 窗口效果下拉（磨砂 Phase D）
     bool themeDropdownOpen_ = false;       // 主题模式下拉（spec 缩水 A）
     bool editorFontDropdownOpen_ = false;  // 编辑器字号下拉（spec 缩水 B）
+    bool logLevelDropdownOpen_ = false;    // 日志级别下拉（spec 缩水 D）
     bool petSkinDropdownOpen_ = false;     // 桌宠皮肤下拉（M2）
     bool petSkinDataLoaded_ = false;       // 皮肤清单惰性加载标记（M2）
     std::vector<std::string> petSkins_;    // 发现到的皮肤（M2）

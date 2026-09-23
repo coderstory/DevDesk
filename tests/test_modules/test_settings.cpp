@@ -1447,6 +1447,7 @@ REGISTER_TEST(settings_editor_font_dropdown_applies_channel,
 
     mod->onStop();
     ::core::theme::setEditorFontSize(15.0f);  // 恢复通道默认
+    ::core::theme::setDark();  // onStart 的 auto 解析在本机可能 setLight，防串扰
     return true;
 })
 
@@ -1493,5 +1494,88 @@ REGISTER_TEST(settings_about_text_helpers,
     DOCTEST_CHECK(e.find("EUI-NEO rev") != std::string::npos);
     // 最低依赖 rev 恒打印（顶层 CMake 变量）
     DOCTEST_CHECK(e.find("最低依赖 rev") != std::string::npos);
+    return true;
+})
+
+// ---- spec 缩水 D：日志级别可配（SettingsConfig + core::log::setLevel 应用）----
+
+REGISTER_TEST(settings_log_level_roundtrip_matrix,
+              "settings: logLevel 默认 INFO/读写往返/未知收敛/parseLogLevel 矩阵（spec缩水 D）", {
+    using namespace module::settings;
+    const auto path = tempConfigFile("loglevel");
+    removeQuietly(path);
+    SettingsStore store(path);
+
+    // 默认 INFO
+    DOCTEST_CHECK_EQ(store.load().logLevel, std::string(kLogLevelInfo));
+
+    // 四档读写往返
+    SettingsConfig cfg;
+    cfg.logLevel = kLogLevelDebug;
+    DOCTEST_REQUIRE(store.save(cfg).isOk());
+    DOCTEST_CHECK_EQ(store.load().logLevel, std::string(kLogLevelDebug));
+    cfg.logLevel = kLogLevelWarn;
+    DOCTEST_REQUIRE(store.save(cfg).isOk());
+    DOCTEST_CHECK_EQ(store.load().logLevel, std::string(kLogLevelWarn));
+    cfg.logLevel = kLogLevelError;
+    DOCTEST_REQUIRE(store.save(cfg).isOk());
+    DOCTEST_CHECK_EQ(store.load().logLevel, std::string(kLogLevelError));
+
+    // 未知值（含小写/脏值）→ sanitized 收敛 INFO
+    SettingsConfig bad;
+    bad.logLevel = "verbose";
+    DOCTEST_CHECK_EQ(SettingsStore::sanitized(bad).logLevel,
+                     std::string(kLogLevelInfo));
+    bad.logLevel = "debug";  // 大小写敏感
+    DOCTEST_CHECK_EQ(SettingsStore::sanitized(bad).logLevel,
+                     std::string(kLogLevelInfo));
+
+    // parseLogLevel 矩阵（Trace/Fatal 字面量不开放 → Info）
+    DOCTEST_CHECK(parseLogLevel(kLogLevelDebug) ==
+                  core::log::Level::Debug);
+    DOCTEST_CHECK(parseLogLevel(kLogLevelWarn) == core::log::Level::Warn);
+    DOCTEST_CHECK(parseLogLevel(kLogLevelError) == core::log::Level::Error);
+    DOCTEST_CHECK(parseLogLevel(kLogLevelInfo) == core::log::Level::Info);
+    DOCTEST_CHECK(parseLogLevel("TRACE") == core::log::Level::Info);
+    DOCTEST_CHECK(parseLogLevel("") == core::log::Level::Info);
+    removeQuietly(path);
+    return true;
+})
+
+REGISTER_TEST(settings_log_level_applied_on_start_and_click,
+              "settings: 日志级别 onStart 恢复 + 下拉切档即时应用（spec缩水 D headless）", {
+    PruneEnv env("loglvl");
+    {
+        std::ofstream out(env.cfgPath);
+        out << R"({"logLevel": "WARN"})";
+    }
+    const core::log::Level prev = core::log::level();
+    std::unique_ptr<::core::Module> mod(create_settings_module());
+    mod->onStart();
+    // 持久化 WARN 档在 onStart 即应用
+    DOCTEST_CHECK(core::log::level() == core::log::Level::Warn);
+
+    eui::Screen screen;
+    screen.width = 1600.0f;
+    screen.height = 1000.0f;
+    eui::Ui ui;
+    ui.begin("loglvl");
+    mod->compose(ui, screen);
+    ui.end();
+    DOCTEST_CHECK(ui.find("settings.card.log.level.dd") != nullptr);
+
+    // 点第 1 项 DEBUG → 运行时 + 落盘同步
+    const auto* item = ui.find("settings.card.log.level.dd.item.0");
+    DOCTEST_REQUIRE(item != nullptr);
+    DOCTEST_REQUIRE(item->onClick != nullptr);
+    item->onClick();
+    DOCTEST_CHECK(core::log::level() == core::log::Level::Debug);
+    module::settings::SettingsStore store(env.cfgPath);
+    DOCTEST_CHECK_EQ(store.load().logLevel,
+                     std::string(module::settings::kLogLevelDebug));
+
+    mod->onStop();
+    core::log::setLevel(prev);  // 恢复（测试进程默认 Info）
+    ::core::theme::setDark();   // onStart 的 auto 解析可能 setLight，防串扰
     return true;
 })
