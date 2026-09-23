@@ -154,11 +154,14 @@ unset(CMAKE_REQUIRED_LIBRARIES)
 
 if(SQLITE3_HAS_FTS5)
     message(STATUS "SQLite3 FTS5: enabled")
-    add_compile_definitions(SQLITE3_HAS_FTS5=1)
 else()
     message(WARNING "SQLite3 FTS5: NOT enabled - Markdown search will fallback to LIKE")
-    add_compile_definitions(SQLITE3_HAS_FTS5=0)
 endif()
+# 注：SQLITE3_HAS_FTS5 是 check_cxx_source_compiles 写入的 CMake 缓存变量，仅用于
+# 上面的状态提示。历史上此处还 add_compile_definitions 定义了全局宏 SQLITE3_HAS_FTS5
+# 与 core PUBLIC 的 SQLITE_HAS_FTS5 两个「编译期宏」，但全源码零消费者（FTS5 降级
+# 实际在 markdown_service.cpp 运行时判定 + LIKE 兜底），属死配置且会泄漏进 EUI-NEO
+# 子目录作用域，已删除。FTS5 检测本身（check_cxx_source_compiles）保留。
 
 # yyjson / md4c / FreeType 复用 EUI-NEO 自带
 add_library(yyjson INTERFACE)

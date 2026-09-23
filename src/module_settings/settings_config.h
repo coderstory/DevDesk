@@ -11,10 +11,10 @@
 //   - theme: "dark" | "light"（默认 dark = 方案 B Dark）
 //   - fontScalePercent: 字号缩放百分比，load 时钳制到
 //     [kMinFontScalePercent, kMaxFontScalePercent]。
-//     限制（如实记录）：core::theme 的 SizeTokens 不支持运行时缩放
-//     （setDark/setLight 用硬编码 token 重建全局，无缩放入口；core/theme
-//     不在本任务文件范围），该值当前仅作用于设置页自身可控的字号，
-//     持久化先行，全局生效需后续在 core::theme 加 API + 清理各模块硬编码字号
+//     生效范围：core::theme::setFontScale 在 token 读取层全局施加——main.cpp
+//     启动时恢复、settings_module 切换时调用，作用于全站字号，并非仅设置页自身。
+//     （早期"SizeTokens 不支持运行时缩放、该值仅作用于设置页自身、持久化先行"
+//     的限制已在 W5 消除，见 KNOWN_LIMITATIONS「已解决」。）
 //   - logRetentionDays: 调用日志保留天数，0 = 永久保留
 //     集成点：与 w3-t10-home 并行分支的"30 天日志清理任务"联动——
 //     T10 的清理逻辑应读取本字段（config.json 的 logRetentionDays），
