@@ -697,18 +697,112 @@ core::Result<void> ClaudeService::logCall(const CallLogEntry& entry) {
 
 core::Result<std::vector<ClaudeService::CallLogEntry>>
 ClaudeService::recentCalls(int limit) {
-    if (limit <= 0) limit = 20;
+    CallLogQuery q;
+    q.limit = limit;
+    return queryCalls(q);
+}
 
-    auto prep = db_.prepare(
+namespace {
+
+// LIKE 模式转义（审计 [11]）：用户输入的 % / _ / \ 按字面量匹配
+// （SQL 侧统一 ESCAPE '\'，SQLite 的 LIKE 对 ASCII 默认大小写不敏感）
+std::string escapeLikePattern(const std::string& term) {
+    std::string out;
+    out.reserve(term.size() + 8);
+    for (const char c : term) {
+        if (c == '\\' || c == '%' || c == '_') out.push_back('\\');
+        out.push_back(c);
+    }
+    return out;
+}
+
+// queryCalls / countCalls 共用 WHERE 片段（无命中返回空串 → 调用方省略 WHERE）。
+// status_code 列可 NULL（早期直插行），COALESCE 归 0 → 落「错误」桶
+std::string buildCallLogWhere(const ClaudeService::CallLogQuery& q) {
+    std::string where;
+    if (!q.search.empty()) {
+        where = "(path LIKE ? ESCAPE '\\' OR method LIKE ? ESCAPE '\\')";
+    }
+    std::string status;
+    switch (q.statusClass) {
+        case ClaudeService::CallLogQuery::kStatus2xx:
+            status = "COALESCE(status_code, 0) BETWEEN 200 AND 299";
+            break;
+        case ClaudeService::CallLogQuery::kStatus3xx:
+            status = "COALESCE(status_code, 0) BETWEEN 300 AND 399";
+            break;
+        case ClaudeService::CallLogQuery::kStatus4xx:
+            status = "COALESCE(status_code, 0) BETWEEN 400 AND 499";
+            break;
+        case ClaudeService::CallLogQuery::kStatus5xx:
+            status = "COALESCE(status_code, 0) >= 500";
+            break;
+        case ClaudeService::CallLogQuery::kStatusErr:
+            status = "COALESCE(status_code, 0) < 200";
+            break;
+        default:
+            break;  // kStatusAll：不加状态条件
+    }
+    if (!status.empty()) {
+        where = where.empty() ? status : (where + " AND " + status);
+    }
+    return where;
+}
+
+ClaudeService::CallLogEntry callLogFromRow(const core::data::SqlRow& row) {
+    ClaudeService::CallLogEntry e;
+    auto idV = row.getInt64("id");
+    auto pidV = row.getInt64("profile_id");
+    auto mV = row.getString("method");
+    auto pV = row.getString("path");
+    auto sV = row.getInt64("status_code");
+    auto lV = row.getInt64("latency_ms");
+    auto rbV = row.getInt64("request_bytes");
+    auto rxbV = row.getInt64("response_bytes");
+    auto errV = row.getString("error");
+    auto saV = row.getInt64("started_at");
+    if (idV.isOk()) e.id = idV.value();
+    if (pidV.isOk()) e.profileId = pidV.value();
+    if (mV.isOk()) e.method = mV.value();
+    if (pV.isOk()) e.path = pV.value();
+    if (sV.isOk()) e.statusCode = static_cast<int>(sV.value());
+    if (lV.isOk()) e.latencyMs = lV.value();
+    if (rbV.isOk()) e.requestBytes = rbV.value();
+    if (rxbV.isOk()) e.responseBytes = rxbV.value();
+    if (errV.isOk()) e.error = errV.value();
+    if (saV.isOk()) e.startedAt = static_cast<std::time_t>(saV.value());
+    return e;
+}
+
+} // namespace
+
+core::Result<std::vector<ClaudeService::CallLogEntry>>
+ClaudeService::queryCalls(const CallLogQuery& q) {
+    const int limit = q.limit > 0 ? q.limit : 20;
+    const int offset = q.offset > 0 ? q.offset : 0;
+
+    std::string sql =
         "SELECT id, profile_id, method, path, status_code, latency_ms, "
         "request_bytes, response_bytes, error, started_at "
-        "FROM claude_call_logs ORDER BY started_at DESC, id DESC LIMIT ?");
+        "FROM claude_call_logs";
+    const std::string where = buildCallLogWhere(q);
+    if (!where.empty()) sql += " WHERE " + where;
+    sql += " ORDER BY started_at DESC, id DESC LIMIT ? OFFSET ?";
+
+    auto prep = db_.prepare(sql);
     if (prep.isFail()) {
         return core::Result<std::vector<CallLogEntry>>::fail(
             prep.errorCode(), prep.errorMessage());
     }
     auto& stmt = prep.value();
-    stmt.bind(1, static_cast<int64_t>(limit));
+    int bindIdx = 1;
+    if (!q.search.empty()) {
+        const std::string like = "%" + escapeLikePattern(q.search) + "%";
+        stmt.bind(bindIdx++, like);
+        stmt.bind(bindIdx++, like);
+    }
+    stmt.bind(bindIdx++, static_cast<int64_t>(limit));
+    stmt.bind(bindIdx++, static_cast<int64_t>(offset));
 
     auto rows = stmt.fetchAll();
     if (rows.isFail()) {
@@ -719,30 +813,37 @@ ClaudeService::recentCalls(int limit) {
     std::vector<CallLogEntry> out;
     out.reserve(rows.value().size());
     for (const auto& row : rows.value()) {
-        CallLogEntry e;
-        auto idV = row.getInt64("id");
-        auto pidV = row.getInt64("profile_id");
-        auto mV = row.getString("method");
-        auto pV = row.getString("path");
-        auto sV = row.getInt64("status_code");
-        auto lV = row.getInt64("latency_ms");
-        auto rbV = row.getInt64("request_bytes");
-        auto rxbV = row.getInt64("response_bytes");
-        auto errV = row.getString("error");
-        auto saV = row.getInt64("started_at");
-        if (idV.isOk()) e.id = idV.value();
-        if (pidV.isOk()) e.profileId = pidV.value();
-        if (mV.isOk()) e.method = mV.value();
-        if (pV.isOk()) e.path = pV.value();
-        if (sV.isOk()) e.statusCode = static_cast<int>(sV.value());
-        if (lV.isOk()) e.latencyMs = lV.value();
-        if (rbV.isOk()) e.requestBytes = rbV.value();
-        if (rxbV.isOk()) e.responseBytes = rxbV.value();
-        if (errV.isOk()) e.error = errV.value();
-        if (saV.isOk()) e.startedAt = static_cast<std::time_t>(saV.value());
-        out.push_back(std::move(e));
+        out.push_back(callLogFromRow(row));
     }
     return core::Result<std::vector<CallLogEntry>>::ok(std::move(out));
+}
+
+core::Result<int> ClaudeService::countCalls(const CallLogQuery& q) {
+    std::string sql = "SELECT COUNT(*) AS n FROM claude_call_logs";
+    const std::string where = buildCallLogWhere(q);
+    if (!where.empty()) sql += " WHERE " + where;
+
+    auto prep = db_.prepare(sql);
+    if (prep.isFail()) {
+        return core::Result<int>::fail(prep.errorCode(), prep.errorMessage());
+    }
+    auto& stmt = prep.value();
+    if (!q.search.empty()) {
+        const std::string like = "%" + escapeLikePattern(q.search) + "%";
+        stmt.bind(1, like);
+        stmt.bind(2, like);
+    }
+
+    auto rows = stmt.fetchAll();
+    if (rows.isFail()) {
+        return core::Result<int>::fail(rows.errorCode(), rows.errorMessage());
+    }
+    if (rows.value().empty()) return core::Result<int>::ok(0);
+    auto nV = rows.value()[0].getInt64("n");
+    if (nV.isFail()) {
+        return core::Result<int>::fail(nV.errorCode(), nV.errorMessage());
+    }
+    return core::Result<int>::ok(static_cast<int>(nV.value()));
 }
 
 // ---------- 代理 server 生命周期 ----------

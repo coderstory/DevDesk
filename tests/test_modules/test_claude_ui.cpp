@@ -20,6 +20,7 @@
 #include <eui/dsl.h>
 
 #include <chrono>
+#include <ctime>
 #include <filesystem>
 #include <fstream>
 #include <memory>
@@ -856,5 +857,232 @@ REGISTER_TEST(claude_module_import_current_takeover_warn,
     }
 
     mod->onStop();
+    return true;
+})
+
+// ---- 9. 调用记录弹窗：搜索 / 状态码过滤 / 翻页（产品审计 2026-09-23 [11]） ----
+// spec §8.3 第 6 条「完整日志面板（支持过滤、搜索）」：25 条日志 → 弹窗每页
+// 20 条 + 搜索框（path/method 模糊）+ 状态码下拉 + 上下页；过滤条件跨开关保留
+REGISTER_TEST(claude_module_calls_dialog,
+              "claude_module: 调用记录弹窗搜索/状态码过滤/翻页（headless）", {
+    TestEnv env;
+    auto p = env.svc->createProfile("日志弹窗", "https://l.example.com",
+                                    "sk-ant-logdlg-01", "m");
+    DOCTEST_REQUIRE(p.isOk());
+    const int64_t pid = p.value().id;
+    const std::time_t base = std::time(nullptr);
+
+    // 20×200 messages + 3×429 complete + 2×超时（status 0 带 error）
+    // 注：DOCTEST 宏在 lambda 内 return false → 显式 bool 返回，调用点传播
+    auto addRow = [&](const std::string& m, const std::string& path, int st,
+                      const std::string& err, std::time_t ts) -> bool {
+        module::claude::ClaudeService::CallLogEntry e;
+        e.profileId = pid;
+        e.method = m;
+        e.path = path;
+        e.statusCode = st;
+        e.error = err;
+        e.latencyMs = 120;
+        e.startedAt = ts;
+        DOCTEST_REQUIRE(env.svc->logCall(e).isOk());
+        return true;
+    };
+    for (int i = 0; i < 20; ++i) {
+        DOCTEST_REQUIRE(addRow("POST", "/v1/messages", 200, "", base + i));
+    }
+    for (int i = 0; i < 3; ++i) {
+        DOCTEST_REQUIRE(addRow("POST", "/v1/complete", 429, "", base + 100 + i));
+    }
+    for (int i = 0; i < 2; ++i) {
+        DOCTEST_REQUIRE(addRow("GET", "/v1/hold", 0, "connection timeout",
+                               base + 200 + i));
+    }
+
+    std::unique_ptr<::core::Module> mod(create_claude_module());
+    eui::Screen screen;
+    screen.width = 1600.0f;
+    screen.height = 1000.0f;
+    auto compose = [&](eui::Ui& ui) {
+        ui.begin("claude_calls_rt");
+        mod->compose(ui, screen);
+        ui.end();
+    };
+    auto click = [](eui::Ui& ui, const std::string& id) -> bool {
+        const auto* node = ui.find(id);
+        if (node == nullptr || node->onClick == nullptr) {
+            std::cerr << "missing clickable: " << id << std::endl;
+            return false;
+        }
+        node->onClick();
+        return true;
+    };
+    auto type = [](eui::Ui& ui, const std::string& id,
+                   const std::string& txt) -> bool {
+        const auto* node = ui.find(id);
+        if (node == nullptr || node->onTextInput == nullptr) {
+            std::cerr << "missing input: " << id << std::endl;
+            return false;
+        }
+        core::TextInputEvent ev;
+        ev.text = txt;
+        node->onTextInput(ev);
+        return true;
+    };
+    auto textOf = [](eui::Ui& ui, const std::string& id) -> std::string {
+        const auto* node = ui.find(id);
+        return node == nullptr ? std::string("<missing>") : node->text;
+    };
+
+    // 1. 点「查看全部 →」开弹窗
+    {
+        eui::Ui ui;
+        compose(ui);
+        DOCTEST_CHECK(click(ui, "claude.calls.viewall.hit"));
+    }
+    // 2. 弹窗首帧：搜索框 / 状态下拉 / scrollView / 首页 20 行 / 页码 / 总数
+    {
+        eui::Ui ui;
+        compose(ui);
+        DOCTEST_CHECK(ui.find("claude.dialog.calls.search.hit") != nullptr);
+        DOCTEST_CHECK(ui.find("claude.dialog.calls.status.ddwrap") != nullptr);
+        DOCTEST_CHECK(ui.find("claude.dialog.calls.scroll") != nullptr);
+        DOCTEST_CHECK(ui.find("claude.dialog.calls.row.0.wrap") != nullptr);
+        DOCTEST_CHECK(ui.find("claude.dialog.calls.row.19.wrap") != nullptr);
+        DOCTEST_CHECK(ui.find("claude.dialog.calls.row.20.wrap") == nullptr);
+        // 超时行（status 0）行尾附错误摘要
+        DOCTEST_CHECK(textOf(ui, "claude.dialog.calls.row.0").find("/v1/hold") !=
+                      std::string::npos);
+        DOCTEST_CHECK(textOf(ui, "claude.dialog.calls.row.0").find("connection timeout") !=
+                      std::string::npos);
+        DOCTEST_CHECK_EQ(textOf(ui, "claude.dialog.calls.count"),
+                         std::string("25 条匹配"));
+        DOCTEST_CHECK_EQ(textOf(ui, "claude.dialog.calls.page"),
+                         std::string("第 1 / 2 页"));
+        // disabled/onClick 都挂在按钮的 .bg rect 上（button build 结构）
+        DOCTEST_CHECK(ui.find("claude.dialog.calls.prev.bg")->disabled);
+    }
+    // 3. 下一页：剩 5 行，下一页置灰
+    {
+        eui::Ui ui;
+        compose(ui);
+        DOCTEST_CHECK(click(ui, "claude.dialog.calls.next.bg"));
+    }
+    {
+        eui::Ui ui;
+        compose(ui);
+        DOCTEST_CHECK(ui.find("claude.dialog.calls.row.4.wrap") != nullptr);
+        DOCTEST_CHECK(ui.find("claude.dialog.calls.row.5.wrap") == nullptr);
+        DOCTEST_CHECK_EQ(textOf(ui, "claude.dialog.calls.page"),
+                         std::string("第 2 / 2 页"));
+        DOCTEST_CHECK(textOf(ui, "claude.dialog.calls.row.0").find("/v1/messages") !=
+                      std::string::npos);
+        DOCTEST_CHECK(ui.find("claude.dialog.calls.next.bg")->disabled);
+    }
+    // 4. 上一页回第一页
+    {
+        eui::Ui ui;
+        compose(ui);
+        DOCTEST_CHECK(click(ui, "claude.dialog.calls.prev.bg"));
+    }
+    {
+        eui::Ui ui;
+        compose(ui);
+        DOCTEST_CHECK_EQ(textOf(ui, "claude.dialog.calls.page"),
+                         std::string("第 1 / 2 页"));
+    }
+    // 5. 搜索框过滤（path 子串）：3 条命中，单页
+    {
+        eui::Ui ui;
+        compose(ui);
+        DOCTEST_CHECK(type(ui, "claude.dialog.calls.search.hit", "complete"));
+    }
+    {
+        eui::Ui ui;
+        compose(ui);
+        DOCTEST_CHECK_EQ(textOf(ui, "claude.dialog.calls.count"),
+                         std::string("3 条匹配"));
+        DOCTEST_CHECK_EQ(textOf(ui, "claude.dialog.calls.page"),
+                         std::string("第 1 / 1 页"));
+        DOCTEST_CHECK(ui.find("claude.dialog.calls.row.2.wrap") != nullptr);
+        DOCTEST_CHECK(ui.find("claude.dialog.calls.row.3.wrap") == nullptr);
+        DOCTEST_CHECK(textOf(ui, "claude.dialog.calls.row.0").find("429") !=
+                      std::string::npos);
+    }
+    // 6. 状态码下拉：4xx ∧ 搜索 complete → 3；切 2xx ∧ 搜索 → 0（空态）
+    {
+        eui::Ui ui;
+        compose(ui);
+        DOCTEST_CHECK(click(ui, "claude.dialog.calls.status.dd.field"));
+    }
+    {
+        eui::Ui ui;
+        compose(ui);
+        DOCTEST_CHECK(ui.find("claude.dialog.calls.status.dd.item.3") != nullptr);
+        DOCTEST_CHECK(click(ui, "claude.dialog.calls.status.dd.item.3"));  // 4xx
+    }
+    {
+        eui::Ui ui;
+        compose(ui);
+        // complete 全是 429 → 4xx 命中不变
+        DOCTEST_CHECK_EQ(textOf(ui, "claude.dialog.calls.count"),
+                         std::string("3 条匹配"));
+    }
+    {
+        eui::Ui ui;
+        compose(ui);
+        DOCTEST_CHECK(click(ui, "claude.dialog.calls.status.dd.field"));
+    }
+    {
+        eui::Ui ui;
+        compose(ui);
+        DOCTEST_CHECK(click(ui, "claude.dialog.calls.status.dd.item.1"));  // 2xx
+    }
+    {
+        eui::Ui ui;
+        compose(ui);
+        DOCTEST_CHECK_EQ(textOf(ui, "claude.dialog.calls.count"),
+                         std::string("0 条匹配"));
+        DOCTEST_CHECK(ui.find("claude.dialog.calls.empty") != nullptr);
+        DOCTEST_CHECK(ui.find("claude.dialog.calls.scroll") == nullptr);
+    }
+    // 7. 切回全部状态 → 恢复 3 条
+    {
+        eui::Ui ui;
+        compose(ui);
+        DOCTEST_CHECK(click(ui, "claude.dialog.calls.status.dd.field"));
+    }
+    {
+        eui::Ui ui;
+        compose(ui);
+        DOCTEST_CHECK(click(ui, "claude.dialog.calls.status.dd.item.0"));
+    }
+    {
+        eui::Ui ui;
+        compose(ui);
+        DOCTEST_CHECK_EQ(textOf(ui, "claude.dialog.calls.count"),
+                         std::string("3 条匹配"));
+    }
+    // 8. 关闭再打开：过滤条件保留（会话内记忆），页码回第一页
+    //（dialog 关闭只是收起，content 节点树仍在，不以此断言开关）
+    {
+        eui::Ui ui;
+        compose(ui);
+        DOCTEST_CHECK(click(ui, "claude.dialog.calls.close.bg"));
+    }
+    {
+        eui::Ui ui;
+        compose(ui);
+        DOCTEST_CHECK(click(ui, "claude.calls.viewall.hit"));
+    }
+    {
+        eui::Ui ui;
+        compose(ui);
+        DOCTEST_CHECK_EQ(textOf(ui, "claude.dialog.calls.count"),
+                         std::string("3 条匹配"));
+        DOCTEST_CHECK(ui.find("claude.dialog.calls.row.2.wrap") != nullptr);
+    }
+
+    mod->onStop();
+    cleanupKey(pid);
     return true;
 })

@@ -127,6 +127,33 @@ public:
     core::Result<void> logCall(const CallLogEntry& entry);
     core::Result<std::vector<CallLogEntry>> recentCalls(int limit = 20);
 
+    // 日志面板查询条件（产品审计 2026-09-23 [11]）：总设计 §8.3 第 6 条承诺
+    // 「完整日志面板（支持过滤、搜索）」，此前只有 recentCalls(20) 静态列表。
+    // search 按 path/method 模糊匹配（LIKE，% 与 _ 转义为字面量，ASCII 大小写
+    // 不敏感）；statusClass 按状态码分桶（status_code 列可空，NULL 按 0 归
+    // 「错误」桶）；limit/offset 翻页。排序与 recentCalls 一致
+    // （started_at DESC, id DESC）。
+    struct CallLogQuery {
+        // statusClass 取值：
+        static constexpr int kStatusAll = 0;  // 全部
+        static constexpr int kStatus2xx = 2;  // 200..299
+        static constexpr int kStatus3xx = 3;  // 300..399
+        static constexpr int kStatus4xx = 4;  // 400..499
+        static constexpr int kStatus5xx = 5;  // >=500
+        static constexpr int kStatusErr = 9;  // <200（0/NULL = 超时、网络错误等无状态码）
+
+        std::string search;    // 空串 = 不做文本过滤
+        int statusClass = kStatusAll;
+        int limit = 20;        // <=0 按 20
+        int offset = 0;        // <0 按 0
+    };
+
+    // 过滤 + 分页查询（日志弹窗搜索框 / 状态码下拉 / 翻页共用）
+    core::Result<std::vector<CallLogEntry>> queryCalls(const CallLogQuery& q);
+
+    // 满足过滤条件的总条数（忽略 limit/offset；UI 算页数、判断有无下一页）
+    core::Result<int> countCalls(const CallLogQuery& q);
+
     // ---- 代理 server 生命周期 ----
 
     // 启动本地 HTTP 代理

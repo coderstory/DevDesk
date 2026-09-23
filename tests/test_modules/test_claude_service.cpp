@@ -579,6 +579,164 @@ REGISTER_TEST(claude_service_call_logs,
     return true;
 })
 
+// ---- 10b. queryCalls / countCalls（产品审计 2026-09-23 [11]）----
+// 日志弹窗承诺的「过滤 + 搜索」在 service 层的支撑：search 按 path/method
+// 模糊匹配、statusClass 分桶、limit/offset 翻页、countCalls 总数
+
+REGISTER_TEST(claude_call_log_query,
+              "claude_service: queryCalls 搜索/状态码过滤/翻页 + countCalls", {
+    TestDb tdb("callquery");
+    module::claude::ClaudeService svc(tdb.handle(), kTestKeychainService);
+
+    auto created = svc.createProfile("QueryTest", "https://q.example.com",
+                                     "sk-ant-query-0001", "m");
+    DOCTEST_REQUIRE(created.isOk());
+    const int64_t pid = created.value().id;
+    const std::time_t base = std::time(nullptr);
+
+    // 8 场景行（seq 递增 = 越后越新）+ 20 条老 filler 行（测 limit 截断）
+    // 注：REGISTER_TEST body 是函数，DOCTEST 宏 return false → lambda 须显式
+    // bool 返回，调用点用 DOCTEST_REQUIRE 传播失败
+    auto addRow = [&](const std::string& m, const std::string& p, int st,
+                      const std::string& err, int seq) -> bool {
+        module::claude::ClaudeService::CallLogEntry e;
+        e.profileId = pid;
+        e.method = m;
+        e.path = p;
+        e.statusCode = st;
+        e.error = err;
+        e.latencyMs = 50 + seq;
+        e.requestBytes = 10;
+        e.responseBytes = 20;
+        e.startedAt = base + seq;
+        DOCTEST_REQUIRE(svc.logCall(e).isOk());
+        return true;
+    };
+    DOCTEST_REQUIRE(addRow("POST", "/v1/messages", 200, "", 1));
+    DOCTEST_REQUIRE(addRow("POST", "/v1/messages", 429, "", 2));
+    DOCTEST_REQUIRE(addRow("GET", "/v1/models", 200, "", 3));
+    DOCTEST_REQUIRE(addRow("POST", "/v1/complete", 500, "", 4));
+    DOCTEST_REQUIRE(addRow("GET", "/health", 204, "", 5));
+    DOCTEST_REQUIRE(addRow("POST", "/v1/messages", 0, "connection timeout", 6));
+    DOCTEST_REQUIRE(addRow("GET", "/admin%status", 301, "", 7));
+    DOCTEST_REQUIRE(addRow("GET", "/v1/status", 200, "", 8));
+    for (int i = 0; i < 20; ++i) {
+        DOCTEST_REQUIRE(addRow("GET", "/filler", 200, "", -1000 - i));
+    }
+    // 直插一行 status_code NULL（历史/旁路写入，仿 home/settings 测试）：
+    // 应被 COALESCE 归入「错误」桶
+    DOCTEST_REQUIRE(tdb.handle().exec(
+        "INSERT INTO claude_call_logs (profile_id, method, path, started_at) "
+        "VALUES (" + std::to_string(pid) + ", 'GET', '/legacy-null', " +
+        std::to_string(static_cast<long long>(base) - 2000) + ")").isOk());
+
+    using Q = module::claude::ClaudeService::CallLogQuery;
+
+    // 全量：29 行，最新在前（row 8 = /v1/status）
+    Q all;
+    all.limit = 100;
+    auto rAll = svc.queryCalls(all);
+    DOCTEST_REQUIRE(rAll.isOk());
+    DOCTEST_CHECK_EQ(rAll.value().size(), 29u);
+    DOCTEST_CHECK_EQ(rAll.value()[0].path, std::string("/v1/status"));
+
+    // 搜索命中 path（messages ×3）
+    Q qMsg;
+    qMsg.search = "messages";
+    qMsg.limit = 100;
+    auto rMsg = svc.queryCalls(qMsg);
+    DOCTEST_REQUIRE(rMsg.isOk());
+    DOCTEST_CHECK_EQ(rMsg.value().size(), 3u);
+    auto cMsg = svc.countCalls(qMsg);
+    DOCTEST_REQUIRE(cMsg.isOk());
+    DOCTEST_CHECK_EQ(cMsg.value(), 3);
+
+    // 搜索命中 method 且 ASCII 大小写不敏感（post → 4 行）
+    Q qPost;
+    qPost.search = "post";
+    qPost.limit = 100;
+    auto rPost = svc.queryCalls(qPost);
+    DOCTEST_REQUIRE(rPost.isOk());
+    DOCTEST_CHECK_EQ(rPost.value().size(), 4u);
+
+    // LIKE 通配符转义：% 按字面量 → 只命中 /admin%status，不误伤 /v1/status
+    Q qEsc;
+    qEsc.search = "%status";
+    qEsc.limit = 100;
+    auto rEsc = svc.queryCalls(qEsc);
+    DOCTEST_REQUIRE(rEsc.isOk());
+    DOCTEST_CHECK_EQ(rEsc.value().size(), 1u);
+    DOCTEST_CHECK_EQ(rEsc.value()[0].path, std::string("/admin%status"));
+
+    // 状态码分桶（NULL 归错误桶）
+    Q q2xx;
+    q2xx.statusClass = Q::kStatus2xx;
+    q2xx.limit = 100;
+    auto r2xx = svc.queryCalls(q2xx);
+    DOCTEST_REQUIRE(r2xx.isOk());
+    DOCTEST_CHECK_EQ(r2xx.value().size(), 24u);  // 场景 4 + filler 20
+
+    Q q4xx;
+    q4xx.statusClass = Q::kStatus4xx;
+    q4xx.limit = 100;
+    DOCTEST_REQUIRE(svc.queryCalls(q4xx).isOk());
+    DOCTEST_CHECK_EQ(svc.queryCalls(q4xx).value().size(), 1u);
+
+    Q q5xx;
+    q5xx.statusClass = Q::kStatus5xx;
+    q5xx.limit = 100;
+    DOCTEST_CHECK_EQ(svc.queryCalls(q5xx).value().size(), 1u);
+
+    Q q3xx;
+    q3xx.statusClass = Q::kStatus3xx;
+    q3xx.limit = 100;
+    DOCTEST_CHECK_EQ(svc.queryCalls(q3xx).value().size(), 1u);
+
+    Q qErr;
+    qErr.statusClass = Q::kStatusErr;
+    qErr.limit = 100;
+    auto rErr = svc.queryCalls(qErr);
+    DOCTEST_REQUIRE(rErr.isOk());
+    DOCTEST_CHECK_EQ(rErr.value().size(), 2u);  // timeout 行 + NULL 行
+
+    // 组合：搜索 + 状态桶（messages ∧ 4xx → 1 行 429）
+    Q qCombo;
+    qCombo.search = "messages";
+    qCombo.statusClass = Q::kStatus4xx;
+    auto cCombo = svc.countCalls(qCombo);
+    DOCTEST_REQUIRE(cCombo.isOk());
+    DOCTEST_CHECK_EQ(cCombo.value(), 1);
+
+    // 翻页：limit 10 × 3 页互不重叠，拼起来 == 全量顺序
+    std::vector<int64_t> paged;
+    for (int pg = 0; pg < 3; ++pg) {
+        Q qPage;
+        qPage.limit = 10;
+        qPage.offset = pg * 10;
+        auto rp = svc.queryCalls(qPage);
+        DOCTEST_REQUIRE(rp.isOk());
+        for (const auto& e : rp.value()) paged.push_back(e.id);
+    }
+    DOCTEST_CHECK_EQ(paged.size(), 29u);
+    bool sameOrder = true;
+    for (size_t i = 0; i < paged.size(); ++i) {
+        if (paged[i] != rAll.value()[i].id) sameOrder = false;
+    }
+    DOCTEST_CHECK(sameOrder);
+
+    // 非法参数归一：limit<=0 按 20；offset<0 按 0（首 20 行）
+    Q qClamp;
+    qClamp.limit = 0;
+    qClamp.offset = -5;
+    auto rClamp = svc.queryCalls(qClamp);
+    DOCTEST_REQUIRE(rClamp.isOk());
+    DOCTEST_CHECK_EQ(rClamp.value().size(), 20u);
+    DOCTEST_CHECK_EQ(rClamp.value()[0].id, rAll.value()[0].id);
+
+    cleanupKey(pid);
+    return true;
+})
+
 // ---- 11. startProxy / stopProxy / isProxyRunning ----
 
 REGISTER_TEST(claude_service_proxy_lifecycle,
