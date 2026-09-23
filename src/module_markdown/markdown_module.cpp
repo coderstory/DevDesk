@@ -277,6 +277,8 @@ public:
         // contextMenu 自带全屏 dismiss 层与 zIndex 1050（盖过 dialog 默认 1000），
         // 菜单项点击先 dismiss 再开确认弹窗，二者不共存，无需提 dialog zIndex
         drawNoteContextMenu(ui, screen, t, componentTheme);
+        // 审计 [12]：编辑器右键「插入表格」级联菜单
+        drawEditorContextMenu(ui, screen, t, componentTheme);
         drawDeleteDialog(ui, screen, t, componentTheme);
         drawRenameDialog(ui, screen, t, componentTheme);
 
@@ -300,8 +302,8 @@ private:
         // 「操作日志」把快捷键提示永久顶掉
         const std::string subtitle =
             service_
-                ? "Ctrl+Shift+P 切换视图 · Ctrl+B/I/K 格式 · Tab 缩进 · "
-                  "Enter 续列表 · 右键条目更多操作"
+                ? "Ctrl+Shift+P 切换视图 · Ctrl+B/I/K 格式 · Tab 缩进/表格跳格 · "
+                  "Enter 续列表 · 右键条目/编辑器更多操作"
                 : "尚未初始化笔记目录";
 
         ui.row("md.header")
@@ -372,6 +374,7 @@ private:
                             .onClick([this] {
                                 newNoteOpen_ = true;
                                 newNoteName_.clear();
+                                newNoteError_.clear();
                             })
                             .build();
                     })
@@ -578,6 +581,7 @@ private:
                 .onClick([this] {
                     newNoteOpen_ = true;
                     newNoteName_.clear();
+                    newNoteError_.clear();
                 })
                 .build();
             components::button(ui, "md.tree.newfolder")
@@ -592,6 +596,7 @@ private:
                 .onClick([this] {
                     newFolderOpen_ = true;
                     newFolderName_.clear();
+                    newFolderError_.clear();
                 })
                 .build();
         }).build();
@@ -938,6 +943,19 @@ private:
                 })
                 .build();
 
+            // 审计 [12]：编辑器右键 → 插入表格菜单。EUI-NEO input 组件不透出
+            // 右键入口，runtime 的 contextMenu 只派发给最上层交互元素（即 .hit，
+            // 见 runtime_input updateInteraction），故 build 后直接把回调挂到该
+            // 元素上（ui.begin() 每帧重建元素树 → 每帧 compose 内重新挂）。
+            if (auto* hit = ui.find("md.editor.input.hit")) {
+                hit->onContextMenu = [this](const eui::PointerEvent& ev,
+                                            const eui::Rect&) {
+                    editorCtxX_ = static_cast<float>(ev.x);
+                    editorCtxY_ = static_cast<float>(ev.y);
+                    editorCtxOpen_ = true;
+                };
+            }
+
             drawStatusBar(ui, 0.0f, bodyH - 22.0f, midW, t);
         }).build();
     }
@@ -960,7 +978,10 @@ private:
                            !event.modifiers.alt && !event.modifiers.super;
         bool handled = false;
         if (event.key == eui::InputKey::Tab && !shortcut && !event.modifiers.alt) {
-            applyTab(buf, event.modifiers.shift);
+            // 审计 [12]：光标在表格行时优先单元格跳格，否则走缩进语义
+            if (!applyTabTable(buf, event.modifiers.shift)) {
+                applyTab(buf, event.modifiers.shift);
+            }
             handled = true;
         } else if (event.key == eui::InputKey::Enter && plain) {
             handled = applyEnterList(buf);
@@ -977,9 +998,28 @@ private:
             }
         }
         if (!handled) return false;
-        if (buf.text == st.text && buf.cursor == st.cursor &&
-            buf.selStart == st.selectionStart && buf.selEnd == st.selectionEnd) {
-            return true;  // 无变化：已消费，不制造空 undo / 脏标记
+        commitEditBuffer(ui, buf);
+        return true;
+    }
+
+    // 键盘流与右键「插入表格」共用的写回：undo 快照 + textRevision + onChange
+    // 副作用。无变化只消费不动状态——不制造空 undo / 脏标记。
+    void commitEditBuffer(eui::Ui& ui, EditBuffer& buf) {
+        using InputState = components::input_detail::InputModel::InputState;
+        auto& st = ui.state<InputState>("md.editor.input");
+        if (buf.text == st.text) {
+            // 纯光标/选区移动（表格跳格落点、无变化消费）：只更新位置，不进
+            // undo 栈、不 bump revision、不打脏——否则 Tab 一次「未保存」上头
+            if (buf.cursor == st.cursor && buf.selStart == st.selectionStart &&
+                buf.selEnd == st.selectionEnd) {
+                return;
+            }
+            st.cursor = buf.cursor;
+            st.selectionStart = buf.selStart;
+            st.selectionEnd = buf.selEnd;
+            st.hasPreferredCursorX = false;
+            st.followCaret = true;
+            return;
         }
         components::input_detail::InputModel::pushUndoState(st);
         st.text = std::move(buf.text);
@@ -990,7 +1030,6 @@ private:
         st.hasPreferredCursorX = false;
         st.followCaret = true;  // 编辑后滚到光标（同内置行为）
         onEditorTextChanged(st.text);
-        return true;
     }
 
     // onChange 与键盘流共用的副作用（内存缓冲 + 脏标记，落盘走防抖）
@@ -1274,7 +1313,7 @@ private:
                            const core::theme::Tokens& t,
                            const components::theme::ThemeColorTokens& componentTheme) {
         const float w = 460.0f;
-        const float h = 220.0f;
+        const float h = 220.0f;   // 错误行走输入框(y84+44=128)与按钮(y160)间 32px 空档，不撑高
 
         components::dialog(ui, "md.dialog.new")
             .open(newNoteOpen_)
@@ -1309,9 +1348,25 @@ private:
                     .placeholder("笔记名，可用 / 分文件夹，如 工作/周会")
                     .fontSize(t.sizes.fontSizeBody)
                     .theme(componentTheme)
-                    .onChange([this](const std::string& v) { newNoteName_ = v; })
+                    .onChange([this](const std::string& v) {
+                        newNoteName_ = v;
+                        newNoteError_.clear();  // 审计 [30]：错误随下一次输入清除
+                    })
                     .onEnter([this, &ui] { commitNewNote(ui); })
                     .build();
+
+                // 审计 [30]：内嵌红字错误行（claude formError_ 模式）——弹窗里
+                // 的校验/创建失败就地可见，不再隔 toast 指到弹窗外
+                if (!newNoteError_.empty()) {
+                    ui.text("md.dialog.new.error")
+                        .position(28.0f, 134.0f)
+                        .size(w - 56.0f, 18.0f)
+                        .text(newNoteError_)
+                        .fontSize(12.0f)
+                        .lineHeight(18.0f)
+                        .color(t.colors.error)
+                        .build();
+                }
 
                 components::button(ui, "md.dialog.new.cancel")
                     .position(28.0f, h - 60.0f)
@@ -1380,9 +1435,24 @@ private:
                     .placeholder("文件夹名，如 工作")
                     .fontSize(t.sizes.fontSizeBody)
                     .theme(componentTheme)
-                    .onChange([this](const std::string& v) { newFolderName_ = v; })
+                    .onChange([this](const std::string& v) {
+                        newFolderName_ = v;
+                        newFolderError_.clear();  // 审计 [30]：错误随下一次输入清除
+                    })
                     .onEnter([this] { commitNewFolder(); })
                     .build();
+
+                // 审计 [30]：内嵌红字错误行，同新建笔记弹窗
+                if (!newFolderError_.empty()) {
+                    ui.text("md.dialog.newfolder.error")
+                        .position(28.0f, 134.0f)
+                        .size(w - 56.0f, 18.0f)
+                        .text(newFolderError_)
+                        .fontSize(12.0f)
+                        .lineHeight(18.0f)
+                        .color(t.colors.error)
+                        .build();
+                }
 
                 components::button(ui, "md.dialog.newfolder.cancel")
                     .position(28.0f, h - 60.0f)
@@ -1536,6 +1606,7 @@ private:
         if (payload == "action:new_note") {
             newNoteOpen_ = true;
             newNoteName_.clear();
+            newNoteError_.clear();
             LOG_INFO("跨模块负载：打开新建笔记弹窗");
             return;
         }
@@ -1899,9 +1970,9 @@ private:
         // W8 路径安全校验（目录树依赖 relativePath 落在 notesDir 内；
         // MarkdownService::create 有同规则兜底，这里给出更友好的提示）
         if (!MarkdownService::isSafeNewNotePath(name)) {
-            showToast("笔记名不合法",
-                      "不允许绝对路径、盘符（如 C:）或 ..，请用相对路径，"
-                      "例如 inbox/ideas.md", true);
+            // 审计 [30]：弹窗内校验错误改内嵌红字（原走 toast 隔到弹窗外）
+            newNoteError_ =
+                "笔记名不合法：不支持绝对路径、盘符（如 C:）或 ..，请用相对路径";
             return;
         }
 
@@ -1925,7 +1996,7 @@ private:
             // 默认名撞名 → 「无标题笔记 N.md」自动编号（fileMtime 失败 = 不存在）
             for (int i = 2; service_->fileMtime(relPath).isOk(); ++i) {
                 if (i > 999) {
-                    showToast("新建失败", "同名无标题笔记过多", true);
+                    newNoteError_ = "新建失败：同名无标题笔记过多，请手动命名";
                     return;
                 }
                 relPath = "无标题笔记 " + std::to_string(i) + ".md";
@@ -1935,7 +2006,8 @@ private:
         auto r = service_->create(relPath);
         if (r.isFail()) {
             LOG_ERROR("新建笔记失败 " + relPath + ": " + r.errorMessage());
-            showToast("新建失败", r.errorMessage(), true);
+            // 审计 [30]：service 创建失败（目录不可写等）就地红字，弹窗不关
+            newNoteError_ = "新建失败：" + r.errorMessage();
             return;
         }
         newNoteOpen_ = false;
@@ -1961,7 +2033,8 @@ private:
             name.pop_back();
         }
         if (name.empty()) {
-            showToast("文件夹名不能为空", "请输入文件夹名称", true);
+            // 审计 [30]：弹窗内校验错误改内嵌红字
+            newFolderError_ = "文件夹名不能为空";
             return;
         }
         if (!service_) return;
@@ -1969,7 +2042,8 @@ private:
         auto r = service_->createFolder(name);
         if (r.isFail()) {
             LOG_ERROR("新建文件夹失败 " + name + ": " + r.errorMessage());
-            showToast("新建文件夹失败", "「" + name + "」" + r.errorMessage(), true);
+            // 审计 [30]：service 创建失败就地红字，弹窗不关
+            newFolderError_ = "新建失败：" + r.errorMessage();
             return;
         }
         newFolderOpen_ = false;
@@ -2016,6 +2090,60 @@ private:
             })
             .onOpenChange([this](bool v) { ctxMenuOpen_ = v; })
             .build();
+    }
+
+    // ---- 审计 [12]：编辑器右键「插入表格」（ux-design §5.5 MVP）----
+    // spec 例举自绘网格 hover 选区；EUI-NEO contextMenu 原生支持子菜单级联
+    // （ContextMenuItem children + onSelectPath），行→列两级即可选尺寸，网格化
+    // 留 V1 增强。行数含表头行（GFM 表头 + 分隔行自动生成）。
+    static std::vector<components::ContextMenuItem> buildTableMenuItems() {
+        std::vector<components::ContextMenuItem> rowItems;
+        for (int r = 1; r <= 6; ++r) {
+            std::vector<components::ContextMenuItem> colItems;
+            for (int c = 1; c <= 8; ++c) {
+                colItems.emplace_back(std::to_string(c) + " 列");
+            }
+            rowItems.emplace_back(std::to_string(r) + " 行", std::move(colItems));
+        }
+        std::vector<components::ContextMenuItem> items;
+        items.emplace_back("插入表格", std::move(rowItems));
+        return items;
+    }
+
+    void drawEditorContextMenu(eui::Ui& ui,
+                               const eui::Screen& screen,
+                               const core::theme::Tokens& t,
+                               const components::theme::ThemeColorTokens& componentTheme) {
+        (void)t;
+        // 只在打开时构建（树形菜单同款惰性；关闭态无覆盖层残留）
+        if (!editorCtxOpen_) return;
+        components::contextMenu(ui, "md.editor.ctx")
+            .open(editorCtxOpen_)
+            .screen(screen.width, screen.height)
+            .position(editorCtxX_, editorCtxY_)
+            .size(170.0f, 36.0f)
+            .items(buildTableMenuItems())
+            .theme(componentTheme)
+            .onSelectPath([this, &ui](const std::vector<int>& path) {
+                // path = [0(插入表格), 行下标, 列下标]（三级叶子的层级索引）
+                if (path.size() == 3 && path[0] == 0) {
+                    insertTableAtCursor(ui, path[1] + 1, path[2] + 1);
+                }
+            })
+            .onOpenChange([this](bool v) { editorCtxOpen_ = v; })
+            .build();
+    }
+
+    // 「插入表格」→ 光标处插模板（与键盘流同一写回：可 undo、走脏标记链路）
+    void insertTableAtCursor(eui::Ui& ui, int rows, int cols) {
+        using InputState = components::input_detail::InputModel::InputState;
+        if (!service_ || currentPath_.empty()) return;
+        if (ui.find("md.editor.input.hit") == nullptr) return;  // 预览态无编辑器
+        auto& st = ui.state<InputState>("md.editor.input");
+        EditBuffer buf{st.text, st.cursor, st.selectionStart, st.selectionEnd};
+        module::markdown::applyInsertTable(buf, rows, cols);
+        commitEditBuffer(ui, buf);
+        ui.requestFocus("md.editor.input");
     }
 
     // 删除确认弹窗（与 todo 删任务 / claude 删 Profile 同款「不可恢复」文案）
@@ -2242,8 +2370,12 @@ private:
     std::string listError_;            // 左栏错误态（空 = 正常；W7 P1-1）
     bool newNoteOpen_ = false;
     std::string newNoteName_;
+    // 审计 [30]：弹窗内嵌红字错误行（照抄 claude_module formError_ 模式）——
+    // 校验/创建失败不再走 toast 隔空提示，错误随下一次输入清除
+    std::string newNoteError_;
     bool newFolderOpen_ = false;       // W9：新建文件夹弹窗
     std::string newFolderName_;
+    std::string newFolderError_;       // 审计 [30]：同款内嵌错误行
     std::set<std::string> topFolders_; // W9：磁盘一级目录（含空目录，树显示用）
 
     // ---- 生命周期（审计 [4][20]）：树行右键菜单 + 删除确认 + 重命名 ----
@@ -2251,6 +2383,10 @@ private:
     float ctxMenuX_ = 0.0f;
     float ctxMenuY_ = 0.0f;
     std::string ctxMenuPath_;        // 右键目标（POSIX 相对路径）
+    // 审计 [12]：编辑器右键「插入表格」级联菜单
+    bool editorCtxOpen_ = false;
+    float editorCtxX_ = 0.0f;
+    float editorCtxY_ = 0.0f;
     bool deleteConfirmOpen_ = false;
     std::string deleteTargetPath_;   // 待删笔记（确认弹窗展示 + 删除目标）
     bool renameOpen_ = false;
