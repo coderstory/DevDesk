@@ -303,9 +303,15 @@ Result<void> SqliteDb::runMigrations(const std::vector<Migration>& migrations) {
                 return core::Result<void>::fail(prep.errorCode(), prep.errorMessage());
             }
             auto& stmt = prep.value();
-            stmt.bind(1, static_cast<int64_t>(m.version));
-            stmt.bind(2, m.description);
-            stmt.bind(3, static_cast<int64_t>(std::time(nullptr)));
+            if (auto b = stmt.bind(1, static_cast<int64_t>(m.version)); b.isFail()) {
+                return core::Result<void>::fail(b.errorCode(), b.errorMessage());
+            }
+            if (auto b = stmt.bind(2, m.description); b.isFail()) {
+                return core::Result<void>::fail(b.errorCode(), b.errorMessage());
+            }
+            if (auto b = stmt.bind(3, static_cast<int64_t>(std::time(nullptr))); b.isFail()) {
+                return core::Result<void>::fail(b.errorCode(), b.errorMessage());
+            }
             auto stepResult = stmt.step();
             if (stepResult.isFail()) {
                 return core::Result<void>::fail(stepResult.errorCode(), stepResult.errorMessage());
