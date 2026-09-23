@@ -630,6 +630,96 @@ REGISTER_TEST(md_module_new_folder, "markdown_module: W9 新建文件夹入口�
     return true;
 })
 
+// ---- 2b5. 审计 [30]：新建笔记/文件夹弹窗错误 → 内嵌红字 formError + 输入清除 ----
+
+REGISTER_TEST(md_module_dialog_form_error,
+              "markdown_module: 弹窗创建错误内嵌红字 + 下一次输入清除（headless，审计 [30]）", {
+    MdUiEnv env("formerror");
+    DOCTEST_REQUIRE(env.db != nullptr);
+    DOCTEST_REQUIRE(writeTextFile(env.dir / "solo.md", "# solo\n"));
+
+    std::unique_ptr<::core::Module> mod(create_markdown_module());
+    mod->onStart();
+
+    eui::Screen screen;
+    screen.width = 1600.0f;
+    screen.height = 1000.0f;
+    eui::Ui ui;
+    auto frame = [&](const char* page) {
+        ui.begin(page);
+        mod->compose(ui, screen);
+        ui.end();
+    };
+
+    // 1) 新建文件夹空名提交 → 弹窗内红字「文件夹名不能为空」，弹窗保持打开
+    //    （旧行为：showToast 隔到弹窗外；toast 单例还常被冲突提示复用）
+    frame("fe1");
+    const auto* folderBtn = ui.find("md.tree.newfolder.bg");
+    DOCTEST_REQUIRE(folderBtn != nullptr);
+    folderBtn->onClick();
+    frame("fe2");
+    const auto* folderConfirm = ui.find("md.dialog.newfolder.confirm.bg");
+    DOCTEST_REQUIRE(folderConfirm != nullptr);
+    DOCTEST_REQUIRE(folderConfirm->onClick != nullptr);
+    folderConfirm->onClick();
+    frame("fe3");
+    const auto* folderError = ui.find("md.dialog.newfolder.error");
+    DOCTEST_REQUIRE(folderError != nullptr);   // 错误行只随错误态存在
+    DOCTEST_CHECK_EQ(folderError->text, std::string("文件夹名不能为空"));
+    const auto* folderPanel = ui.find("md.dialog.newfolder.panel");
+    DOCTEST_REQUIRE(folderPanel != nullptr);
+    DOCTEST_CHECK(folderPanel->opacity > 0.0f);  // 弹窗不关（错误就地可见）
+
+    // 2) 下一次输入（onTextInput → onChange）→ 错误行消失
+    const auto* folderInput = ui.find("md.dialog.newfolder.input.hit");
+    DOCTEST_REQUIRE(folderInput != nullptr);
+    DOCTEST_REQUIRE(folderInput->onTextInput != nullptr);
+    core::TextInputEvent tie;
+    tie.text = "工作";
+    folderInput->onTextInput(tie);
+    frame("fe4");
+    DOCTEST_CHECK(ui.find("md.dialog.newfolder.error") == nullptr);
+
+    // 3) 新建笔记非法路径名提交 → 内嵌红字（旧行为：toast；同弹窗内与
+    //    其他校验路径不一致，审计 [30] 点名）
+    const auto* noteBtn = ui.find("md.tree.new.bg");
+    DOCTEST_REQUIRE(noteBtn != nullptr);
+    noteBtn->onClick();
+    frame("fe5");
+    const auto* noteInput = ui.find("md.dialog.new.input.hit");
+    DOCTEST_REQUIRE(noteInput != nullptr);
+    core::TextInputEvent tie2;
+    tie2.text = "C:/bad";
+    noteInput->onTextInput(tie2);
+    frame("fe6");
+    const auto* noteConfirm = ui.find("md.dialog.new.confirm.bg");
+    DOCTEST_REQUIRE(noteConfirm != nullptr);
+    noteConfirm->onClick();
+    frame("fe7");
+    const auto* noteError = ui.find("md.dialog.new.error");
+    DOCTEST_REQUIRE(noteError != nullptr);
+    DOCTEST_CHECK(noteError->text.find("不合法") != std::string::npos);
+    const auto* notePanel = ui.find("md.dialog.new.panel");
+    DOCTEST_REQUIRE(notePanel != nullptr);
+    DOCTEST_CHECK(notePanel->opacity > 0.0f);  // 弹窗不关
+    // （不额外断言磁盘无「C:」残留：Windows 下含盘符串的 path::exists 语义
+    // 不可靠；未落盘由 isSafeNewNotePath 分支 + 弹窗保持打开共同保证）
+
+    // 4) 重新输入 → 错误行清除（与文件夹弹窗同模式）
+    //    注意：ui.begin() 每帧重建元素树，noteInput 来自 fe5 帧已失效——重 find
+    const auto* noteInput2 = ui.find("md.dialog.new.input.hit");
+    DOCTEST_REQUIRE(noteInput2 != nullptr);
+    DOCTEST_REQUIRE(noteInput2->onTextInput != nullptr);
+    core::TextInputEvent tie3;
+    tie3.text = "ok";
+    noteInput2->onTextInput(tie3);
+    frame("fe8");
+    DOCTEST_CHECK(ui.find("md.dialog.new.error") == nullptr);
+
+    mod->onStop();
+    return true;
+})
+
 // ---- 2b2. W9：双栏宽度公式（layout 级——midW 笔误回归）----
 
 REGISTER_TEST(md_module_split_layout, "markdown_module: W9 双栏三列铺满 contentW 无残隙（headless layout）", {
