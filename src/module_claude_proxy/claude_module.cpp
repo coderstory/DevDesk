@@ -984,6 +984,45 @@ public:
         }
     }
 
+    // 产品审计 [22]：页级快捷键（通道 = app 级 onKeyEvent → Router 派发到
+    // 当前页模块，同 Markdown Ctrl+Shift+P / Todo Ctrl+↑↓ 先例；只在窗口
+    // 聚焦时生效——EUI-NEO 无全局 OS hotkey 是已登记限制）。
+    //   Ctrl+N      新建 Profile（任一弹窗打开时不响应，防止重置填写中的表单）
+    //   Ctrl+S      保存/创建表单中编辑的 Profile（=「保存/创建」按钮，
+    //               表单内输入框聚焦时同样生效：input 不消费 Ctrl+字母组合键）；
+    //               表单未打开 = 无可保存对象，不消费
+    //   Ctrl+Enter  启动/停止代理（仅 Press 消费，按住 Repeat 不会来回启停；
+    //               弹窗打开时不生效；输入框聚焦时 Enter 被 input 消费，
+    //               天然不触发——正好避免打字中途启停代理）
+    // 返回 false = 未消费（键盘事件继续按 EUI-NEO 语义丢弃/传递）。
+    bool onKeyEvent(const eui::KeyEvent& key) override {
+        if (key.action != eui::KeyAction::Press) {
+            return false;
+        }
+        if (!key.modifiers.shortcut() || key.modifiers.alt) {
+            return false;
+        }
+        const bool anyDialogOpen =
+            formOpen_ || deleteConfirmOpen_ || callsDialogOpen_;
+        if (key.key == eui::InputKey::N) {
+            if (anyDialogOpen) return false;
+            openCreateForm();
+            LOG_INFO("快捷键 Ctrl+N：打开新建 Profile 表单");
+            return true;
+        }
+        if (key.key == eui::InputKey::S) {
+            if (!formOpen_) return false;
+            submitForm();
+            return true;
+        }
+        if (key.key == eui::InputKey::Enter) {
+            if (anyDialogOpen) return false;
+            doToggleProxy();
+            return true;
+        }
+        return false;
+    }
+
 private:
     // ============ Profile 卡片（点击选中，选中/激活高亮） ============
     void drawProfileCard(eui::Ui& ui,
