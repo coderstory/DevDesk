@@ -1903,3 +1903,161 @@ REGISTER_TEST(todo_ui_new_column_dialog,
     DOCTEST_CHECK(findTitle("列头改名"));   // ✎ → 弹窗 → 保存 全链路
     return true;
 })
+
+// ---- 审计 [19]：创建/校验失败反馈 → 弹窗内嵌红字 formError（照抄 claude 范本）----
+
+REGISTER_TEST(todo_ui_dialog_form_error,
+              "todo_ui: 新建列/重命名列/新建任务校验失败 → 内嵌红字 + 弹窗不关 + 输入清除（headless，审计 [19]）", {
+    TestEnv env;
+    DOCTEST_REQUIRE(env.ready);
+    auto seed = env.svc->listColumns();
+    DOCTEST_REQUIRE(seed.isOk());
+    DOCTEST_REQUIRE(seed.value().size() >= 2);
+    const std::string dupTitle = seed.value()[1].title;   // 已存在列名，撞名素材
+
+    std::unique_ptr<::core::Module> mod(create_todo_module());
+    mod->onStart();
+    Frame frame(mod.get());
+
+    auto findTitle = [&](const std::string& want) -> bool {
+        auto l = env.svc->listColumns();
+        if (!l.isOk()) return false;
+        for (const auto& c : l.value()) {
+            if (c.title == want) return true;
+        }
+        return false;
+    };
+    auto taskTitleExists = [&](const std::string& want) -> bool {
+        auto l = env.svc->listAllTasks();
+        if (!l.isOk()) return false;
+        for (const auto& tk : l.value()) {
+            if (tk.title == want) return true;
+        }
+        return false;
+    };
+
+    eui::KeyEvent selectAll;
+    selectAll.key = eui::InputKey::A;
+    selectAll.action = eui::KeyAction::Press;
+    selectAll.modifiers.control = true;
+    eui::KeyEvent del;
+    del.key = eui::InputKey::Delete;
+    del.action = eui::KeyAction::Press;
+
+    // 注意：refresh 重建元素树，所有旧 Element* 悬垂——每次交互前重新 find
+
+    // ===== A. 重命名列空名 → 内嵌红字 + 弹窗不关（旧行为：静默返回零反馈）=====
+    auto* pen = frame.ui.find("todo.col.0.rename.bg");
+    DOCTEST_REQUIRE(pen != nullptr);
+    pen->onClick();
+    frame.refresh();
+    auto* rinput = frame.ui.find("todo.dialog.rename.input.hit");
+    DOCTEST_REQUIRE(rinput != nullptr);
+    DOCTEST_REQUIRE(rinput->onKeyEvent != nullptr);
+    rinput->onKeyEvent(selectAll);   // Ctrl+A 全选
+    rinput->onKeyEvent(del);         // Delete 清空（onTextInput 空文本是 no-op）
+    frame.refresh();
+    auto* rsave = frame.ui.find("todo.dialog.rename.confirm.bg");
+    DOCTEST_REQUIRE(rsave != nullptr);
+    DOCTEST_REQUIRE(rsave->onClick != nullptr);
+    rsave->onClick();
+    frame.refresh();
+    const auto* rerr = frame.ui.find("todo.dialog.rename.error");
+    DOCTEST_REQUIRE(rerr != nullptr);   // 错误行只随错误态存在
+    DOCTEST_CHECK_EQ(rerr->text, std::string("列标题不能为空"));
+    DOCTEST_CHECK_EQ(frame.ui.find("todo.dialog.rename.panel")->opacity, 1.0f);  // 弹窗不关
+
+    // ===== B. 重命名撞名 → 红字；下一次输入清除；改唯一名成功关窗落库 =====
+    rinput = frame.ui.find("todo.dialog.rename.input.hit");
+    DOCTEST_REQUIRE(rinput != nullptr);
+    rinput->onKeyEvent(selectAll);
+    eui::TextInputEvent t1;
+    t1.text = dupTitle;
+    rinput->onTextInput(t1);            // 打成已存在的列名
+    frame.refresh();
+    rsave = frame.ui.find("todo.dialog.rename.confirm.bg");
+    DOCTEST_REQUIRE(rsave != nullptr);
+    rsave->onClick();
+    frame.refresh();
+    rerr = frame.ui.find("todo.dialog.rename.error");
+    DOCTEST_REQUIRE(rerr != nullptr);
+    DOCTEST_CHECK_EQ(rerr->text, std::string("该列名已存在，请换一个"));
+    DOCTEST_CHECK_EQ(frame.ui.find("todo.dialog.rename.panel")->opacity, 1.0f);
+    rinput = frame.ui.find("todo.dialog.rename.input.hit");
+    rinput->onKeyEvent(selectAll);
+    eui::TextInputEvent t2;
+    t2.text = "唯一新名";
+    rinput->onTextInput(t2);            // 下一次输入 → 错误清除（[19] 语义）
+    frame.refresh();
+    DOCTEST_CHECK(frame.ui.find("todo.dialog.rename.error") == nullptr);
+    rsave = frame.ui.find("todo.dialog.rename.confirm.bg");
+    DOCTEST_REQUIRE(rsave != nullptr);
+    rsave->onClick();
+    frame.refresh();
+    DOCTEST_CHECK_EQ(frame.ui.find("todo.dialog.rename.panel")->opacity, 0.0f);  // 成功才关
+    DOCTEST_CHECK(findTitle("唯一新名"));
+
+    // ===== C. 新建列显式输入撞名 → 红字 + 不关（留空默认名路径不受影响，[24]）=====
+    auto* addcol = frame.ui.find("todo.btn.addcol.bg");
+    DOCTEST_REQUIRE(addcol != nullptr);
+    addcol->onClick();
+    frame.refresh();
+    auto* chit = frame.ui.find("todo.dialog.newcol.input.hit");
+    DOCTEST_REQUIRE(chit != nullptr);
+    DOCTEST_REQUIRE(chit->onTextInput != nullptr);
+    eui::TextInputEvent t3;
+    t3.text = "唯一新名";
+    chit->onTextInput(t3);
+    frame.refresh();
+    auto* cconf = frame.ui.find("todo.dialog.newcol.confirm.bg");
+    DOCTEST_REQUIRE(cconf != nullptr);
+    cconf->onClick();
+    frame.refresh();
+    const auto* cerr = frame.ui.find("todo.dialog.newcol.error");
+    DOCTEST_REQUIRE(cerr != nullptr);
+    DOCTEST_CHECK_EQ(cerr->text, std::string("该列名已存在，请换一个"));
+    DOCTEST_CHECK_EQ(frame.ui.find("todo.dialog.newcol.panel")->opacity, 1.0f);
+    chit = frame.ui.find("todo.dialog.newcol.input.hit");
+    DOCTEST_REQUIRE(chit != nullptr);
+    chit->onKeyEvent(selectAll);
+    eui::TextInputEvent t4;
+    t4.text = "迭代列B";
+    chit->onTextInput(t4);
+    frame.refresh();
+    DOCTEST_CHECK(frame.ui.find("todo.dialog.newcol.error") == nullptr);  // 输入清除
+    cconf = frame.ui.find("todo.dialog.newcol.confirm.bg");
+    DOCTEST_REQUIRE(cconf != nullptr);
+    cconf->onClick();
+    frame.refresh();
+    DOCTEST_CHECK(findTitle("迭代列B"));
+    DOCTEST_CHECK_EQ(frame.ui.find("todo.dialog.newcol.panel")->opacity, 0.0f);
+
+    // ===== D. 新建任务空标题 → 红字 + 不关（旧行为：先关弹窗再把错误 toast 到窗外）=====
+    auto* add = frame.ui.find("todo.btn.add.bg");
+    DOCTEST_REQUIRE(add != nullptr);
+    add->onClick();
+    frame.refresh();
+    auto* tconf = frame.ui.find("todo.dialog.newtask.confirm.bg");
+    DOCTEST_REQUIRE(tconf != nullptr);
+    tconf->onClick();          // 空标题直接提交
+    frame.refresh();
+    const auto* terr = frame.ui.find("todo.dialog.newtask.error");
+    DOCTEST_REQUIRE(terr != nullptr);
+    DOCTEST_CHECK_EQ(terr->text, std::string("任务标题不能为空"));
+    DOCTEST_CHECK_EQ(frame.ui.find("todo.dialog.newtask.panel")->opacity, 1.0f);
+    auto* tinput = frame.ui.find("todo.dialog.newtask.input.hit");
+    DOCTEST_REQUIRE(tinput != nullptr);
+    DOCTEST_REQUIRE(tinput->onTextInput != nullptr);
+    eui::TextInputEvent t5;
+    t5.text = "任务甲";
+    tinput->onTextInput(t5);
+    frame.refresh();
+    DOCTEST_CHECK(frame.ui.find("todo.dialog.newtask.error") == nullptr);  // 输入清除
+    tconf = frame.ui.find("todo.dialog.newtask.confirm.bg");
+    DOCTEST_REQUIRE(tconf != nullptr);
+    tconf->onClick();
+    frame.refresh();
+    DOCTEST_CHECK_EQ(frame.ui.find("todo.dialog.newtask.panel")->opacity, 0.0f);
+    DOCTEST_CHECK(taskTitleExists("任务甲"));
+    return true;
+})
