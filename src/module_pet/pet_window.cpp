@@ -399,6 +399,10 @@ void startPetWindow(const PetWindowConfig& config) {
                         .transparentFramebuffer(true)  // sprite 窗逐像素透明
                                                        //（黑底修复：不随全局
                                                        // 窗口效果档位回落）
+                        // backdrop 档位显式 None（灰底修复）：不跟随全局磨砂/
+                        // 半透档——否则 Acrylic 材质画在透明像素后面，四角透出
+                        // 的是材质灰而非桌面（真机采样 #D3D3D3 = 材质色）
+                        .windowEffect(core::platform::WindowEffect::None)
                         .clickThrough(config.clickThrough)  // 挂机穿透（持久化恢复）
                         .ignoreClearColorOverride()    // 全透底不被主题广播冲掉
                         .clearColor({0.0f, 0.0f, 0.0f, 0.0f})
