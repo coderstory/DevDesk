@@ -60,8 +60,16 @@ core::Result<std::string> loadSecret(const std::string& service, const std::stri
 
 core::Result<void> deleteSecret(const std::string& service, const std::string& account) {
     auto path = getKeyFilePath(service, account);
+    // tech-debt D：原先 ec 被吞、无条件返回 ok，删除失败（权限/只读挂载/IO）
+    // 调用方无从感知。对齐 keychain_win 语义：不存在 → remove 返回 false 且
+    // 不置 ec → Ok（幂等删除）；真实失败 → Internal 带上 error_code 消息。
     std::error_code ec;
     std::filesystem::remove(path, ec);
+    if (ec) {
+        return core::Result<void>::fail(
+            core::ErrorCode::Internal,
+            "delete key file failed: " + ec.message());
+    }
     return core::Result<void>::ok();
 }
 
