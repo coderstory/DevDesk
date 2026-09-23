@@ -1886,13 +1886,24 @@ private:
     void doDelete(int64_t id) {
         ClaudeService* svc = ClaudeService::global();
         if (!svc) return;
-        auto r = svc->deleteProfile(id);
+        // 产品审计 2026-09-23 [1]（§7 安全第 5 条）：删除激活 Profile 且代理
+        // 运行中 → service 层已停代理并还原 settings.json，proxyStopped 出参
+        // 告知这里，toast 明示（否则用户只见「已删除」，不知道 Claude Code
+        // 接入配置已被还原）
+        bool proxyStopped = false;
+        auto r = svc->deleteProfile(id, &proxyStopped);
         if (r.isFail()) {
             showToast("删除失败", r.errorMessage(), true);
             return;
         }
         if (selectedId_ == id) selectedId_ = 0;
-        showToast("已删除", "Profile 已删除（含 Keychain 条目）", false);
+        if (proxyStopped) {
+            showToast("已删除（代理已停止）",
+                      "删除的是激活 Profile，已停止代理并还原 Claude Code 配置",
+                      false);
+        } else {
+            showToast("已删除", "Profile 已删除（含 Keychain 条目）", false);
+        }
     }
 
     void doTestConnection(const Profile& p) {

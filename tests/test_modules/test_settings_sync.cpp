@@ -605,3 +605,69 @@ REGISTER_TEST(sync_exit_sequence_stop_all,
     DOCTEST_CHECK(!svc.isProxyRunning());
     return true;
 })
+
+// ---- 12. 产品审计 2026-09-23 [1]：删激活 Profile 停代理并还原 settings.json ----
+// provider-config 设计 §7 安全第 5 条：删除激活 profile 且代理运行中 →
+// 停代理（触发还原），settings.json 不能继续指向无 profile 的代理。
+REGISTER_TEST(sync_delete_active_profile_stops_proxy,
+              "claude_service: 删激活 Profile 停代理并还原 settings（审计 [1]）", {
+    using namespace module::claude;
+    TestDb tdb("delact");
+    TempDir d("delact");
+    auto paths = makePaths(d);
+    d.write(paths.settingsFile, R"({"env": {"MY_KEY": "user"}})");
+
+    ClaudeService svc(tdb.handle(), kTestKeychainService);
+    svc.setSettingsSyncPaths(paths);
+    auto created = svc.createProfile("激活删除目标", "https://gw.example.com",
+                                     "sk-ind-test-0123456789abcdef", "");
+    DOCTEST_REQUIRE(created.isOk());
+    auto created2 = svc.createProfile("旁观者", "https://gw2.example.com",
+                                      "sk-ind-test-fedcba9876543210", "");
+    DOCTEST_REQUIRE(created2.isOk());
+    DOCTEST_REQUIRE(svc.setActiveProfile(created.value().id).isOk());
+    auto r = svc.startProxy("127.0.0.1", 0);
+    DOCTEST_REQUIRE(r.isOk());
+    DOCTEST_CHECK(svc.isProxyRunning());
+    DOCTEST_CHECK(svc.isClaudeCodeManaged());
+
+    // 1) 删非激活 Profile：代理保持、不触发还原（出参被清零）
+    {
+        bool stopped = true;  // 故意初值 true，验证函数显式置 false
+        DOCTEST_REQUIRE(svc.deleteProfile(created2.value().id, &stopped).isOk());
+        DOCTEST_CHECK(!stopped);
+        DOCTEST_CHECK(svc.isProxyRunning());
+        DOCTEST_CHECK(svc.isClaudeCodeManaged());
+    }
+
+    // 2) 删激活 Profile：代理停止 + settings.json 还原（sidecar 消费）
+    {
+        bool stopped = false;
+        DOCTEST_REQUIRE(svc.deleteProfile(created.value().id, &stopped).isOk());
+        DOCTEST_CHECK(stopped);
+        DOCTEST_CHECK(!svc.isProxyRunning());
+        DOCTEST_CHECK(!svc.isClaudeCodeManaged());
+        const auto env = readEnv(paths.settingsFile);
+        DOCTEST_CHECK_EQ(env.at("MY_KEY"), std::string("user"));
+        DOCTEST_CHECK(env.find("ANTHROPIC_BASE_URL") == env.end());
+    }
+
+    // 3) 代理未运行时删激活 Profile：不报错、不动文件、stopped=false
+    {
+        auto c3 = svc.createProfile("停机激活", "https://gw3.example.com",
+                                    "sk-ind-test-abc0123456789def", "");
+        DOCTEST_REQUIRE(c3.isOk());
+        DOCTEST_REQUIRE(svc.setActiveProfile(c3.value().id).isOk());
+        bool stopped = true;
+        DOCTEST_REQUIRE(svc.deleteProfile(c3.value().id, &stopped).isOk());
+        DOCTEST_CHECK(!stopped);
+        DOCTEST_CHECK(!svc.isProxyRunning());
+        const auto env = readEnv(paths.settingsFile);
+        DOCTEST_CHECK_EQ(env.at("MY_KEY"), std::string("user"));
+    }
+
+    // 清理 keychain 条目
+    platform::keychain::deleteSecret(
+        kTestKeychainService, "claude:" + std::to_string(created.value().id));
+    return true;
+})

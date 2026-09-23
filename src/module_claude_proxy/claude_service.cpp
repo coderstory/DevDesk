@@ -466,7 +466,8 @@ core::Result<void> ClaudeService::updateProfile(const Profile& profile) {
     return core::Result<void>::ok();
 }
 
-core::Result<void> ClaudeService::deleteProfile(int64_t id) {
+core::Result<void> ClaudeService::deleteProfile(int64_t id, bool* proxyStopped) {
+    if (proxyStopped) *proxyStopped = false;
     if (id == 0) {
         return core::Result<void>::fail(core::ErrorCode::ValidationError,
             "id 不能为 0");
@@ -476,6 +477,7 @@ core::Result<void> ClaudeService::deleteProfile(int64_t id) {
     if (p.isFail()) {
         return core::Result<void>::fail(p.errorCode(), p.errorMessage());
     }
+    const bool wasActive = p.value().isActive;
 
     // 先清 Keychain，失败则中止删除并返回错误（SQLite 行保留，用户可重试，
     // API key 不丢）。顺序不能反：先删行会让 Keychain 失败时留下永久孤儿密钥。
@@ -502,6 +504,17 @@ core::Result<void> ClaudeService::deleteProfile(int64_t id) {
     }
 
     LOG_INFO("已删除 Claude profile id=" + std::to_string(id));
+
+    // 产品审计 2026-09-23 [1]（provider-config 设计 §7 安全第 5 条）：
+    // 删的是激活 profile 且代理运行中 → 停代理（stopProxy 内部 syncRestore
+    // 还原 ~/.claude/settings.json），settings.json 不能继续指向无激活
+    // profile 的代理（否则 Claude Code 此后每个请求 503 no_active_profile）。
+    // UI 经 proxyStopped 出参获知并 toast 告知用户。
+    if (wasActive && isProxyRunning()) {
+        LOG_INFO("删除的是激活 profile 且代理运行中 → 停代理并还原 Claude Code 配置");
+        stopProxy();
+        if (proxyStopped) *proxyStopped = true;
+    }
     return core::Result<void>::ok();
 }
 

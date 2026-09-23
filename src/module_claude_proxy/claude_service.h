@@ -81,7 +81,14 @@ public:
 
     // 删除 profile（同时清理 Keychain 条目）。
     // Keychain 清理失败会中止删除并返回错误（SQLite 行保留，可重试）
-    core::Result<void> deleteProfile(int64_t id);
+    //
+    // 产品审计 2026-09-23 [1]（provider-config 设计 §7 安全第 5 条）：
+    // 删除的是激活 profile 且代理运行中 → 删除成功后 stopProxy()
+    //（内部触发 syncRestore 还原 ~/.claude/settings.json），不让
+    // settings.json 继续指向无激活 profile 的代理（否则 Claude Code 全量 503）。
+    // proxyStopped（可选出参）：true = 本次删除顺带停用了代理，UI 据此
+    // toast 告知用户「已停止代理并还原 Claude Code 配置」
+    core::Result<void> deleteProfile(int64_t id, bool* proxyStopped = nullptr);
 
     // 启动时孤儿清理：把 keychainService_ 命名空间里没有对应
     // claude_profiles 行的密钥清掉（历史 bug 遗留的 claude:* 孤儿）。
