@@ -30,6 +30,19 @@ int priorityToInt(Priority p) {
     return static_cast<int>(p);
 }
 
+// LIKE 模式转义 % _ \（配合 SQL 的 ESCAPE '\'），防止用户查询串里的通配符被当作
+// SQL LIKE 元字符导致误命中。与 markdown 模块同款实现；因 module_* 互不依赖铁律，
+// 此处本地复制一份而非跨模块 include。
+std::string escapeLikePattern(const std::string& raw) {
+    std::string out;
+    out.reserve(raw.size() + 8);
+    for (char ch : raw) {
+        if (ch == '\\' || ch == '%' || ch == '_') out.push_back('\\');
+        out.push_back(ch);
+    }
+    return out;
+}
+
 } // namespace
 
 TodoService::TodoService(core::data::SqliteDb& db) : db_(db) {}
@@ -719,13 +732,14 @@ core::Result<std::vector<Task>> TodoService::search(const std::string& query) {
     auto prep = db_.prepare(
         "SELECT id, column_id, title, description, priority, due_at, tags, position, completed_at "
         "FROM todo_tasks "
-        "WHERE title LIKE ? OR (description IS NOT NULL AND description LIKE ?) "
+        "WHERE title LIKE ? ESCAPE '\\' "
+        "   OR (description IS NOT NULL AND description LIKE ? ESCAPE '\\') "
         "ORDER BY column_id ASC, position ASC");
     if (prep.isFail()) {
         return core::Result<std::vector<Task>>::fail(prep.errorCode(), prep.errorMessage());
     }
     auto& stmt = prep.value();
-    std::string like = "%" + query + "%";
+    const std::string like = "%" + escapeLikePattern(query) + "%";
     if (auto r = stmt.bind(1, like); r.isFail()) {
         return core::Result<std::vector<Task>>::fail(r.errorCode(), r.errorMessage());
     }
