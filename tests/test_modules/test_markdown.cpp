@@ -1116,3 +1116,61 @@ REGISTER_TEST(md_module_default_name_create, "markdown_module: 空名提交=「�
     mod->onStop();
     return true;
 })
+
+// ---- 审计 [30]：subtitle 静态操作说明（对齐 Todo 同类修复）----
+// 旧行为：subtitle = 「N 篇笔记 · 最后一次操作结果」，操作日志顶掉快捷键
+// 提示且永久驻留。新行为：subtitle 恒为静态说明；操作结果走 toast（status_
+// 成员已删）；笔记数进编辑器底部状态栏右侧
+REGISTER_TEST(md_module_subtitle_static, "markdown_module: subtitle 静态快捷键说明 + 笔记数在状态栏（审计[30]，headless）", {
+    MdUiEnv env("subtitle");
+    DOCTEST_REQUIRE(env.db != nullptr);
+    DOCTEST_REQUIRE(writeTextFile(env.dir / "note.md", "# 标题\n正文\n"));
+
+    std::unique_ptr<::core::Module> mod(create_markdown_module());
+    mod->onStart();
+
+    eui::Screen screen;
+    screen.width = 1600.0f;
+    screen.height = 1000.0f;
+    eui::Ui ui;
+    auto frame = [&](const char* page) {
+        ui.begin(page);
+        mod->compose(ui, screen);
+        ui.end();
+    };
+    frame("f1");
+
+    // subtitle 含快捷键提示（Phase 2 键盘流 + Ctrl+Shift+P 三态都是真实能力），
+    // 不再携带笔记数/操作结果
+    const auto* sub = ui.find("md.subtitle");
+    DOCTEST_REQUIRE(sub != nullptr);
+    DOCTEST_CHECK(sub->text.find("Ctrl+Shift+P") != std::string::npos);
+    DOCTEST_CHECK(sub->text.find("Ctrl+B/I/K") != std::string::npos);
+    DOCTEST_CHECK(sub->text.find("Tab") != std::string::npos);
+    DOCTEST_CHECK(sub->text.find("Enter") != std::string::npos);
+    DOCTEST_CHECK(sub->text.find("篇笔记") == std::string::npos);
+    const std::string staticSub = sub->text;
+
+    // 打开笔记（旧行为会把「已打开 note.md」写进 subtitle 顶掉提示）
+    const auto* fileRow = ui.find("md.tree.node.1.row");
+    DOCTEST_REQUIRE(fileRow != nullptr);
+    DOCTEST_REQUIRE(fileRow->onClick != nullptr);
+    fileRow->onClick();
+    frame("f2");
+
+    // subtitle 逐字不变 = 静态
+    const auto* sub2 = ui.find("md.subtitle");
+    DOCTEST_REQUIRE(sub2 != nullptr);
+    DOCTEST_CHECK_EQ(sub2->text, staticSub);
+    // 操作反馈改走 toast（title=「已打开」）
+    const auto* toastTitle = ui.find("md.toast.title");
+    DOCTEST_REQUIRE(toastTitle != nullptr);
+    DOCTEST_CHECK_EQ(toastTitle->text, std::string("已打开"));
+    // 笔记数落点：编辑器底部状态栏右侧
+    const auto* pos = ui.find("md.status.pos");
+    DOCTEST_REQUIRE(pos != nullptr);
+    DOCTEST_CHECK(pos->text.find("篇笔记") != std::string::npos);
+
+    mod->onStop();
+    return true;
+})
