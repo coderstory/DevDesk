@@ -122,6 +122,18 @@ struct MdHlEnv {
 #endif
     }
 
+    static void setViewStateEnv(const std::string& value) {
+#if defined(_WIN32)
+        ::_putenv_s("DEVDESK_MARKDOWN_VIEW_STATE_PATH", value.c_str());
+#else
+        if (value.empty()) {
+            ::unsetenv("DEVDESK_MARKDOWN_VIEW_STATE_PATH");
+        } else {
+            ::setenv("DEVDESK_MARKDOWN_VIEW_STATE_PATH", value.c_str(), 1);
+        }
+#endif
+    }
+
     explicit MdHlEnv(const char* tag) {
         dir = makeTempNotesDir(tag);
         auto r = core::Database::open(dir / "mdhl_test.db");
@@ -132,11 +144,14 @@ struct MdHlEnv {
             return;
         }
         core::registerAppDatabase(&db->db());
+        // 视图状态文件隔离（审计 [23]）：无头用例不碰真实 %APPDATA% 状态
+        setViewStateEnv((dir / "view_state.json").string());
         setEnvVar(dir.string());
     }
 
     ~MdHlEnv() {
         setEnvVar("");
+        setViewStateEnv("");
         core::registerAppDatabase(nullptr);
         std::error_code ec;
         fs::remove_all(dir, ec);

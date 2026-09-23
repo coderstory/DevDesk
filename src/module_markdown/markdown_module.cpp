@@ -41,6 +41,7 @@
 #include "md_keyboard.h"
 #include "md_line_scanner.h"
 #include "md_tree.h"
+#include "md_view_state.h"
 
 #include <eui/dsl.h>
 
@@ -189,6 +190,7 @@ public:
             LOG_INFO("已加载笔记目录：" + service_->notesDir().filename().string());
         }
         refreshList();
+        loadViewState();  // 审计 [23]：恢复上次的选中笔记 / 视图模式 / 收起目录
         LOG_INFO("Markdown 模块启动，共 " + std::to_string(notes_.size()) + " 篇笔记");
     }
 
@@ -691,6 +693,7 @@ private:
                                         } else {
                                             collapsedDirs_.insert(dir);
                                         }
+                                        saveViewState();  // 审计 [23]：目录折叠跨会话记忆
                                     })
                                     .build();
                                 inner.text(id + ".arrow")
@@ -1544,6 +1547,7 @@ private:
         // 进预览态时把滚动位置对齐编辑器当前位置（compose 里延迟计算，
         // 因为需要预览列宽和主题样式）
         if (m == ViewMode::Preview) syncPreviewOnEnter_ = true;
+        saveViewState();  // 审计 [23]：三态视图跨会话记忆
         LOG_INFO("Markdown 视图切换: " + std::to_string(static_cast<int>(m)));
     }
 
@@ -1796,8 +1800,51 @@ private:
         }
         syncCurrentMtime();  // W8：外部修改检测的 mtime 基准
         if (mode_ == ViewMode::Preview) syncPreviewOnEnter_ = true;
+        saveViewState();  // 审计 [23]：选中笔记跨会话记忆
         showToast("已打开", relPath, false);
         LOG_INFO("打开笔记: " + relPath);
+    }
+
+    // ==================== 视图状态持久化（审计 [23]） ====================
+
+    // onStart 尾部调用（refreshList 之后）：恢复上次选中笔记 / 三态视图 /
+    // 收起目录。笔记可能已被外部删除——只在当前列表里能找到才重开，找不到
+    // 静默跳过（下次成功 openNote 会覆盖旧值）。
+    void loadViewState() {
+        viewStore_ = std::make_unique<MarkdownViewStateStore>(markdownViewStateFile());
+        const MarkdownViewState st = viewStore_->load();
+        if (st.mode != static_cast<int>(mode_)) {
+            // 直接赋值而非 setMode：恢复发生在启动期，setMode 的
+            // saveViewState 会冗余落一次同样的值
+            mode_ = static_cast<ViewMode>(st.mode);
+            if (mode_ == ViewMode::Preview) syncPreviewOnEnter_ = true;
+        }
+        collapsedDirs_.insert(st.collapsedDirs.begin(), st.collapsedDirs.end());
+        if (st.lastPath.empty()) return;
+        const bool exists =
+            std::any_of(notes_.begin(), notes_.end(),
+                        [&](const NoteMeta& n) {
+                            return n.relativePath.generic_string() == st.lastPath;
+                        });
+        if (!exists) {
+            LOG_INFO("Markdown: 上次笔记已不存在，跳过恢复: " + st.lastPath);
+            return;
+        }
+        openNote(st.lastPath);
+        LOG_INFO("Markdown: 已恢复上次笔记: " + st.lastPath);
+    }
+
+    // 尽力而为：视图状态写失败只记日志，绝不影响编辑主流程
+    void saveViewState() const {
+        if (!viewStore_) return;
+        MarkdownViewState st;
+        st.lastPath = currentPath_;
+        st.mode = static_cast<int>(mode_);
+        st.collapsedDirs.assign(collapsedDirs_.begin(), collapsedDirs_.end());
+        auto r = viewStore_->save(st);
+        if (r.isFail()) {
+            LOG_WARN("Markdown: 视图状态落盘失败（不影响编辑）: " + r.errorMessage());
+        }
     }
 
     // 编辑器里还有未落盘的改动时写回文件 + 索引（每帧调用，自带防抖）。
@@ -1887,6 +1934,7 @@ private:
                 lastSavedText_.clear();
                 outlineDirty_ = true;
                 activeOutlineIdx_ = -1;
+                saveViewState();  // 审计 [23]：已删笔记不该在下次启动被恢复
                 showToast("笔记已被删除", "当前笔记已从磁盘移除", true);
             } else {
                 // 本地还有未保存编辑：write() 会重建文件，提示一次即可
@@ -2298,6 +2346,7 @@ private:
             lastSavedText_.clear();
             editorDirty_ = false;
             saveFailed_ = false;
+            saveViewState();  // 审计 [23]：删的是当前笔记 → 视图状态同步清空
             saveBackoffMs_ = 0;
             outlineDirty_ = true;
             activeOutlineIdx_ = -1;
@@ -2352,6 +2401,7 @@ private:
             // 自动保存将写到新路径——正确语义）
             currentPath_ = newPath;
             syncCurrentMtime();
+            saveViewState();  // 审计 [23]：重命名后恢复新路径
         }
         refreshList();
         showToast("已重命名", newPath, false);
@@ -2365,6 +2415,8 @@ private:
     static constexpr int64_t kPollIntervalMs = 5000;     // W8：文件变化轮询周期
 
     std::unique_ptr<MarkdownService> service_;
+    // 审计 [23]：视图状态 store（loadViewState 创建；未创建 = 不持久化，saveViewState 静默跳过）
+    std::unique_ptr<MarkdownViewStateStore> viewStore_;
     std::vector<NoteMeta> notes_;      // 当前展示（全部或搜索结果）
     std::string searchQuery_;          // 搜索框内容
     std::string currentPath_;          // 打开的笔记（POSIX 相对路径）
