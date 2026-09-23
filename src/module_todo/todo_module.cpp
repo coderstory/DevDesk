@@ -858,7 +858,9 @@ private:
         ui.rect(id + ".bg")
             .position(0.0f, 0.0f)
             .size(width, height)
-            .color(t.colors.surface)
+            // 看板列容器是页面结构 → background（米色/暖墨），卡片白只给
+            // 列内浮动卡片与按钮（主题层级修正，同侧边栏根因）
+            .color(t.colors.background)
             .radius(t.sizes.radiusLarge)
             .border(dropHover ? 2.0f : 1.0f,
                     dropHover ? t.colors.primary : t.colors.borderDefault)
@@ -975,7 +977,9 @@ private:
         ui.rect(id + ".bg")
             .position(0.0f, y)
             .size(width, kCardHeight)
-            .states(t.colors.surfaceElevated, t.colors.hover, t.colors.active)
+            // 卡片 = surface 层（浅色白 / 深色 #232120，spec §6.5.1 卡片色），
+            // 浮在列容器（background）之上；曾用 surfaceElevated 抬高了一级
+            .states(t.colors.surface, t.colors.hover, t.colors.active)
             .radius(t.sizes.radius)
             .opacity(cardOpacity)
             .border(selected ? 2.0f : 0.0f,

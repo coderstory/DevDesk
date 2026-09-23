@@ -2,6 +2,34 @@
 
 本文件记录 **a1a106a（macOS 中断现场收编）起** 的条目式变更，按恢复计划的三波（W1 止血收编 / W2 平台架构 / W3 剩余需求）组织，波内按 feat / fix / test / docs 分组。更早的 macOS 主线历史（P0–P8，66 测试通过）见 git log 与 spec §16。
 
+## [Theme-Hierarchy] 2026-09-23 —— 浅色主题层级全量审计与修正（结构性面板错用卡片白）
+
+分支 `fix/theme-hierarchy`（worktree `wt-themehier`，基线 e0b0a70 侧边栏修复后续）。**315/315 全绿**（+4 层级回归用例）。
+
+**根因**（承接侧边栏修复）：结构性面板（页面结构的一部分）错用卡片白 `surface`（浅色 #FFFFFF），浅色模式下「页面米色、面板纯白」刺眼。层级口诀（spec §6.5 方案 B）：页面结构 → `background`（#FAF9F5 / 暖墨 #1A1816）；浮动卡片/对话框/弹层/按钮 → `surface`/`surfaceElevated`（白 / #232120 / #2C2A28）；行 hover / 分组底 → `hover`（#F5F2EC，既有 surfaceMuted 语义由 hover token 承担）。
+
+### fix（结构性面板 → background）
+
+- **markdown**：左栏树面板 `md.tree.bg`、编辑区面板 `md.editor.bg`、预览区面板 `md.preview.bg`、编辑器底部状态栏 `md.status.bg`、树行底（文件行/文件夹行）——全部 `surface` → `background`（行底随面板，hover 仍 #F5F2EC 显色）。
+- **todo**：看板列容器 `todo.col.N.bg` `surface` → `background`；看板卡片 `surfaceElevated` → `surface`（深色回落 #232120 卡片层级，曾被无谓抬到浮层色；浅色两值同为白无视觉变化）。
+- **claude**：左栏 Profile 列表 `claude.profiles.bg`、右栏详情面板 `claude.detail.bg`、最近调用「查看全部」命中区——`surface` → `background`。
+- **markdown 大纲浮层** `md.outline.panel.bg` + 大纲行底：`surface` → `surfaceElevated`（zIndex 浮层语义，深色下正确抬到 #2C2A28 浮层色）。
+
+### 审计确认无需改（防过度修正）
+
+- **home**：统计卡 / 最近编辑卡是**浮动卡片**，留 `surface` 白（浅色下卡片白浮在米色页面上正是 Claude.ai 风格）；行底随卡。**settings**：卡片浮动该白；卡内嵌字段框（路径/Token/字段底）是控件层 `surfaceElevated`，层级正确。四模块页面底 `pagebg` 均已是 `background`。
+- **EUI-NEO componentTokens 映射**（`core/component_theme.h`）：dialog 面板/dropdown 弹层 → `surface`（浮层 ✓）；dropdown 字段/input 底/segmented 轨道 → `surface`（控件层白，Claude.ai 象牙底+白输入框同款）；scrollView 不铺底（透出结构性面板底 ✓）。上游零改动。
+- **深色同规则核对**：修正后层次 = 页面/面板 #1A1816 < 卡片 #232120 < 弹层/按钮/字段 #2C2A28 < hover #353231，符合 spec §6.5.1。
+
+### test
+
+- `tests/test_modules/test_theme_hierarchy.cpp`（+4 用例）：无头 compose 色值断言（防再漂移）——todo（列容器=background、卡片/dialog=surface、交互打开 dialog 后复验）、markdown（左栏/编辑/预览/状态栏=background，Ctrl+Shift+P 切 Split 保三栏全渲染）、claude（左栏/详情=background）、home（统计卡=surface 不得跟风变米色）；明暗两主题各验一遍。
+
+### 人工点验项（无头测试覆盖不到的）
+
+- 侧边栏（`main.cpp app.sidebar.bg`，e0b0a70 已修，无头 compose 不含 main.cpp）浅色米色/深色暖墨；
+- 浅色下逐页目测：markdown 三栏、todo 看板列、claude 双栏、home 卡片浮起感、settings 卡片；深色下看板卡片 #232120 与列底 #1A1816 的层次。
+
 ## [Pet-Anime] 2026-09-23 —— 二次元桌宠皮肤（真实美术素材包）
 
 分支 `feat/pet-anime`（基线 ad5c94d，含 merge master f6d0ac3）。**304/304 全绿**（+1 内置美术皮肤断言）。

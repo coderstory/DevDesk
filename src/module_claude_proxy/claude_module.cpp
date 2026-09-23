@@ -311,7 +311,8 @@ public:
                             .content([&] {
                                 ui.rect("claude.profiles.bg")
                                     .size(leftW, bodyH)
-                                    .color(t.colors.surface)
+                                    // 左栏 Profile 列表 = 结构性面板 → background
+                                    .color(t.colors.background)
                                     .radius(t.sizes.radiusLarge)
                                     .border(1.0f, t.colors.borderDefault)
                                     .build();
@@ -386,7 +387,8 @@ public:
                             .content([&] {
                                 ui.rect("claude.detail.bg")
                                     .size(rightW, bodyH)
-                                    .color(t.colors.surface)
+                                    // 右栏详情面板 = 结构性面板 → background
+                                    .color(t.colors.background)
                                     .radius(t.sizes.radiusLarge)
                                     .border(1.0f, t.colors.borderDefault)
                                     .build();
@@ -797,7 +799,8 @@ public:
                                 ui.rect("claude.calls.viewall.hit")
                                     .position(x0, tableY + 104.0f)
                                     .size(w0, 24.0f)
-                                    .color(t.colors.surface)
+                                    // 命中区底 = 所在详情面板底（background）
+                                    .color(t.colors.background)
                                     .hoverColor(t.colors.hover)
                                     .radius(t.sizes.radiusSmall)
                                     .onClick([this] { openCallsDialog(); })
