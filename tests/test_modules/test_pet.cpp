@@ -571,8 +571,109 @@ REGISTER_TEST(pet_bubble_static_corpus_roundtrip, "pet: 内容源①静态语料
     return true;
 });
 
-// ============ 8. M2 多皮肤 ============
+// 内容源③（M2 §4.5，产品审计 [18]）：代理事件文案——mock ProxyEventGetter
+// 返回各终态码，断言气泡文案；无事件（nullopt）/ 未注入桥回退（空串）
+REGISTER_TEST(pet_bubble_proxy_event_content,
+              "pet: 气泡内容源③代理事件文案（2xx/4xx/5xx/网络失败/无事件）", {
+    using namespace module::pet;
+    // 2xx → 转发完成
+    std::function<std::optional<int>()> ok = [] {
+        return std::optional<int>(200);
+    };
+    const std::string tOk = proxyEventBubbleText(ok);
+    DOCTEST_CHECK_MESSAGE(!tOk.empty(), tOk);
+    DOCTEST_CHECK_MESSAGE(tOk.find("代理") != std::string::npos, tOk);
+    DOCTEST_CHECK_MESSAGE(tOk.find("完成") != std::string::npos, tOk);
+    // 装气泡可往返
+    PetBubble bubble;
+    bubble.show(tOk, 3.0);
+    DOCTEST_CHECK(bubble.visible);
+    DOCTEST_CHECK_EQ(bubble.text, tOk);
+    bubble.tick(3.5);
+    DOCTEST_CHECK(!bubble.visible);
+    // 3xx（如 301）也归转发完成，不出「出错」字样
+    std::function<std::optional<int>()> redirect = [] {
+        return std::optional<int>(301);
+    };
+    const std::string tRedirect = proxyEventBubbleText(redirect);
+    DOCTEST_CHECK_MESSAGE(tRedirect.find("完成") != std::string::npos, tRedirect);
+    // 4xx → 「代理出错：{status}」含状态码
+    std::function<std::optional<int>()> rateLimited = [] {
+        return std::optional<int>(429);
+    };
+    const std::string t429 = proxyEventBubbleText(rateLimited);
+    DOCTEST_CHECK_MESSAGE(t429.find("429") != std::string::npos, t429);
+    DOCTEST_CHECK_MESSAGE(t429.find("出错") != std::string::npos, t429);
+    // 5xx → 同款带码
+    std::function<std::optional<int>()> serverErr = [] {
+        return std::optional<int>(503);
+    };
+    const std::string t503 = proxyEventBubbleText(serverErr);
+    DOCTEST_CHECK_MESSAGE(t503.find("503") != std::string::npos, t503);
+    DOCTEST_CHECK_MESSAGE(t503.find("出错") != std::string::npos, t503);
+    // 0（上游不可达，网络层失败无响应码）→ 网络失败文案，不带裸 0 码
+    std::function<std::optional<int>()> netFail = [] {
+        return std::optional<int>(0);
+    };
+    const std::string tNet = proxyEventBubbleText(netFail);
+    DOCTEST_CHECK_MESSAGE(tNet.find("网络") != std::string::npos, tNet);
+    DOCTEST_CHECK_MESSAGE(tNet.find("0") == std::string::npos, tNet);
+    // 桥返回 nullopt（无待消费事件 / claude 关 / 过期）→ 空串 = 回退②/①
+    std::function<std::optional<int>()> unavailable = [] {
+        return std::optional<int>(std::nullopt);
+    };
+    DOCTEST_CHECK(proxyEventBubbleText(unavailable).empty());
+    // 桥未注入（空 std::function）→ 空串回退，绝不出残句
+    std::function<std::optional<int>()> none;
+    DOCTEST_CHECK(proxyEventBubbleText(none).empty());
+    return true;
+});
 
+// 三级内容源回退序（§4.5 ③>②>①，审计 [18]）：petDataBubbleText 纯函数——
+// ③有事件必压过②；③无回退②；③②皆无数据回空串（调用方出①静态语料）
+REGISTER_TEST(pet_bubble_three_level_fallback,
+              "pet: 气泡三级内容源回退序（③代理事件>②逾期>①静态）", {
+    using namespace module::pet;
+    std::function<std::optional<int>()> proxyOk = [] {
+        return std::optional<int>(200);
+    };
+    std::function<std::optional<int64_t>()> overdue3 = [] {
+        return std::optional<int64_t>(3);
+    };
+    std::function<std::optional<int>()> proxyNone = [] {
+        return std::optional<int>(std::nullopt);
+    };
+    std::function<std::optional<int64_t>()> overdueNone = [] {
+        return std::optional<int64_t>(std::nullopt);
+    };
+    // ③有 + ②有 → 取③（3s），即便②也有逾期数
+    const auto both = petDataBubbleText(proxyOk, overdue3);
+    DOCTEST_CHECK_MESSAGE(both.first.find("代理") != std::string::npos, both.first);
+    DOCTEST_CHECK_MESSAGE(both.first.find("逾期") == std::string::npos, both.first);
+    DOCTEST_CHECK(both.second == 3.0);
+    // ③无 + ②有 → 取②（4s，逾期文案）
+    const auto onlyOverdue = petDataBubbleText(proxyNone, overdue3);
+    DOCTEST_CHECK_MESSAGE(onlyOverdue.first.find("逾期") != std::string::npos,
+                          onlyOverdue.first);
+    DOCTEST_CHECK(onlyOverdue.second == 4.0);
+    // ③有（4xx）+ ②有 → 仍取③（出错事件优先）
+    std::function<std::optional<int>()> proxyErr = [] {
+        return std::optional<int>(500);
+    };
+    const auto proxyErrWins = petDataBubbleText(proxyErr, overdue3);
+    DOCTEST_CHECK_MESSAGE(proxyErrWins.first.find("500") != std::string::npos,
+                          proxyErrWins.first);
+    // ③无 + ②无 → 空串 = 调用方回退①静态语料
+    const auto empty = petDataBubbleText(proxyNone, overdueNone);
+    DOCTEST_CHECK(empty.first.empty());
+    // 两桥都未注入 → 空串
+    std::function<std::optional<int>()> noProxy;
+    std::function<std::optional<int64_t>()> noOverdue;
+    DOCTEST_CHECK(petDataBubbleText(noProxy, noOverdue).first.empty());
+    return true;
+});
+
+// ============ 8. M2 多皮肤 ============
 REGISTER_TEST(pet_skin_parse_m2_states, "pet: pet.json sleep/typing 帧解析", {
     using namespace module::pet;
     auto r = parsePetSkinJson(kM2SkinJson);

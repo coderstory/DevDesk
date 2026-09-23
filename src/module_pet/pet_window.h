@@ -73,6 +73,17 @@ PetMenuAction petMenuActionForPath(const std::vector<int>& path, size_t skinCoun
 // pet 只见 std::function 签名、不 include module_home——module_* 隔离不破
 using OverdueCountGetter = std::function<std::optional<int64_t>()>;
 
+// 气泡内容源③的跨模块只读桥（M2 §4.5，产品审计 [18]）：main 装配的最近
+// 代理请求事件读取器（ClaudeService::takeProxyEvent 同款 app 级桥，main 层
+// 查 claude_proxy 经 PetWindowConfig 喂给 pet）。返回值为该请求回给客户端
+// 的 HTTP 状态码：2xx/3xx = 转发完成，>=400 = 服务端出错，0 = 上游不可达
+//（网络失败无响应码）；nullopt = 无待消费事件（桥未注入 = claude_proxy 关闭、
+// 无请求、或事件过期丢弃）。契约要点：读取即消费（take 语义，claude_proxy
+// 侧读走清空），保证一个事件最多弹一次气泡、不刷屏。pet 只见 std::function
+// 签名、不 include module_claude_proxy——module_* 隔离不破（同 OverdueCountGetter
+// 先例）。nullopt 时调用方按 ②逾期 → ①静态语料顺序回退
+using ProxyEventGetter = std::function<std::optional<int>()>;
+
 struct PetWindowConfig {
     std::string skinName;   // 空 = kDefaultSkinName
     int x = -1;             // -1 = 未设置（取主显示器工作区右下角）；其他负值是
@@ -81,6 +92,9 @@ struct PetWindowConfig {
     // 内容源②回调（main 注入；applyPetSkin 热换肤重开时从 rt.config 原样
     // 携带不丢桥）。空 = 无数据源，气泡只出静态语料①
     OverdueCountGetter getOverdueCount;
+    // 内容源③回调（main 注入；换肤重开同样携带）。空 = 无代理事件源，
+    // 气泡按 ②→① 回退
+    ProxyEventGetter getProxyEvent;
 };
 
 // 无边框窗拖拽锚点（拖拽抖动修复，2026-09 真机验证症状 1）：

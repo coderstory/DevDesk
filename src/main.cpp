@@ -298,6 +298,22 @@ std::optional<int64_t> getOverdueTaskCount() {
     return stats.value().overdueTodos;
 }
 
+// 桌宠气泡内容源③（M2 §4.5，产品审计 [18]）：代理事件桥。读 ClaudeService
+// 单例的最近代理请求终态（ProxyRouter recordProxyEvent 写入；take 语义 =
+// 读走即清 + 过期丢弃，一个事件最多喂一次气泡）。app 级回调——main 查
+// claude_proxy 经 PetWindowConfig 喂给 pet；pet 不 include module_claude_proxy，
+// module_* 隔离不破（契约见 pet_window.h ProxyEventGetter）。
+// main 只透传不解释语义：statusCode 原值交给 pet 纯函数分类（2xx/3xx=完成、
+// >=400=出错、0=上游不可达）；nullopt = 单例未就绪（claude_proxy 关）/
+// 无待消费事件/事件过期，pet 侧按 ②逾期 → ①静态语料回退（不显示死数据条款）
+std::optional<int> getProxyEventStatus() {
+    auto* svc = module::claude::ClaudeService::global();
+    if (svc == nullptr) {
+        return std::nullopt;
+    }
+    return svc->takeProxyEvent();
+}
+
 // 启动本地 Claude 代理（全局唯一实例）。
 // 调用方：dslAppConfig 初始化（设置 claudeProxyAutoStart=true 时）；手动启动
 // 走 Claude 页的启动按钮（provider-config Phase B 硬性需求 1）
@@ -659,9 +675,11 @@ const DslAppConfig& dslAppConfig() {
                 module::pet::PetConfigStore(module::pet::petConfigFile()).load();
             // 气泡内容源②（§4.5，审计 [18]）：注入 app 级只读桥，pet 经它查
             // Home 逾期数（pet 不 include module_home，隔离不破）
+            // 气泡内容源③（M2 §4.5，审计 [18]）：同款桥查 claude_proxy 最近
+            // 请求事件（take 语义一次一泡），无事件 pet 自动回退②→①
             module::pet::startPetWindow(module::pet::PetWindowConfig{
                 petCfg.skinName, petCfg.x, petCfg.y, petCfg.clickThrough,
-                &getOverdueTaskCount});
+                &getOverdueTaskCount, &getProxyEventStatus});
         } else {
             LOG_INFO("桌宠已关闭（enabledModules 不含 pet），不开宠物窗口");
         }

@@ -661,6 +661,55 @@ REGISTER_TEST(claude_service_call_logs,
     return true;
 })
 
+// ---- 10a+. 最近代理请求事件槽（M2 §4.5 气泡③，产品审计 [18]）----
+// recordProxyEvent/takeProxyEvent：take 读走即清（一事件一泡）、单槽后写
+// 覆盖先写、滞留超 kProxyEventFreshSec 过期丢弃、时钟回摆不误吞
+
+REGISTER_TEST(claude_proxy_event_slot,
+              "claude_service: 代理事件槽 take-once/覆盖/过期语义", {
+    TestDb tdb("proxy_event");
+    module::claude::ClaudeService svc(tdb.handle(), kTestKeychainService);
+
+    // 初始无事件
+    DOCTEST_CHECK(!svc.takeProxyEvent().has_value());
+
+    // record 后 take 拿到同一码；再 take 已被消费（读走即清）
+    svc.recordProxyEvent(200);
+    const auto first = svc.takeProxyEvent();
+    DOCTEST_REQUIRE(first.has_value());
+    DOCTEST_CHECK_EQ(*first, 200);
+    DOCTEST_CHECK(!svc.takeProxyEvent().has_value());
+
+    // 单槽覆盖：连续 record 只留最后一条（0 = 上游不可达口径）
+    svc.recordProxyEvent(200);
+    svc.recordProxyEvent(0);
+    const auto second = svc.takeProxyEvent();
+    DOCTEST_REQUIRE(second.has_value());
+    DOCTEST_CHECK_EQ(*second, 0);
+    DOCTEST_CHECK(!svc.takeProxyEvent().has_value());
+
+    // 过期丢弃：显式传 now = 记录时刻 + 窗口 + 1 → nullopt，且事件被消费
+    //（不是留在槽里等下一个读取者）
+    svc.recordProxyEvent(503);
+    const std::time_t staleNow =
+        std::time(nullptr) + module::claude::ClaudeService::kProxyEventFreshSec + 1;
+    DOCTEST_CHECK(!svc.takeProxyEvent(staleNow).has_value());
+    DOCTEST_CHECK(!svc.takeProxyEvent().has_value());
+
+    // 新鲜事件正常取；显式传当前时刻等价默认参
+    svc.recordProxyEvent(429);
+    const auto fresh = svc.takeProxyEvent(std::time(nullptr));
+    DOCTEST_REQUIRE(fresh.has_value());
+    DOCTEST_CHECK_EQ(*fresh, 429);
+
+    // 时钟回摆（now < 记录时刻）按未过期处理：宁可多弹不误吞
+    svc.recordProxyEvent(500);
+    const auto rolledBack = svc.takeProxyEvent(std::time(nullptr) - 3600);
+    DOCTEST_REQUIRE(rolledBack.has_value());
+    DOCTEST_CHECK_EQ(*rolledBack, 500);
+    return true;
+})
+
 // ---- 10b. queryCalls / countCalls（产品审计 2026-09-23 [11]）----
 // 日志弹窗承诺的「过滤 + 搜索」在 service 层的支撑：search 按 path/method
 // 模糊匹配、statusClass 分桶、limit/offset 翻页、countCalls 总数
