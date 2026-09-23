@@ -956,3 +956,42 @@ REGISTER_TEST(pet_pos_clamp_work_area, "pet: 已知坐标钳进工作区（审�
     DOCTEST_CHECK_EQ(cfg0.y, 0);
     return true;
 });
+
+// 帧名穿越拒绝判定（合法皮肤包/单点扩展名必须放行）。辅助函数绕开
+// REGISTER_TEST 宏体裸逗号限制
+static bool frameNameRejected(const char* frameName) {
+    const std::string json =
+        std::string("{\"states\":{\"idle\":[\"") + frameName + "\"]}}";
+    return module::pet::parsePetSkinJson(json).isFail();
+}
+
+REGISTER_TEST(pet_skin_frame_name_traversal, "pet: 帧名路径穿越拒绝（审计[28]）", {
+    // 穿越/绝对路径/盘符形态 → 解析整体失败（idle 必填）
+    DOCTEST_CHECK(frameNameRejected("../secret.png"));
+    DOCTEST_CHECK(frameNameRejected("..\\secret.png"));
+    DOCTEST_CHECK(frameNameRejected("../../assets/../x.png"));
+    DOCTEST_CHECK(frameNameRejected("/etc/passwd.png"));
+    DOCTEST_CHECK(frameNameRejected("C:/Windows/evil.png"));
+    DOCTEST_CHECK(frameNameRejected("sub/inner.png"));
+    // 合法名不误伤：PNG 扩展名单点、中文名、连字符
+    DOCTEST_CHECK(!frameNameRejected("f0.png"));
+    DOCTEST_CHECK(!frameNameRejected("帧一.png"));
+    DOCTEST_CHECK(!frameNameRejected("idle-0.PNG"));
+    // 可选状态含非法帧名 → 静默丢弃回落 idle（皮肤照常解析）
+    const std::string pokedJson =
+        "{\"states\":{\"idle\":[\"ok.png\"],\"poked\":[\"../x.png\"]}}";
+    const auto pokedResult = module::pet::parsePetSkinJson(pokedJson);
+    DOCTEST_CHECK(pokedResult.isOk());
+    DOCTEST_CHECK(pokedResult.unsafeValue().pokedFrames.empty());
+    DOCTEST_CHECK_EQ(pokedResult.unsafeValue().frames(true).size(),
+                     static_cast<size_t>(1));
+    // phrases 是展示文本不是路径：含路径字符不拖垮解析
+    const std::string phraseJson =
+        "{\"states\":{\"idle\":[\"f.png\"]},"
+        "\"phrases\":[\"走之前去C:/Downloads拿东西\",\"嗯……/../没什么\"]}";
+    const auto phraseResult = module::pet::parsePetSkinJson(phraseJson);
+    DOCTEST_CHECK(phraseResult.isOk());
+    DOCTEST_CHECK_EQ(phraseResult.unsafeValue().phrases.size(),
+                     static_cast<size_t>(2));
+    return true;
+});
