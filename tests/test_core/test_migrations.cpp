@@ -2,6 +2,7 @@
 // 测试 Database + migrations
 #include "doctest.h"
 #include "core/database.h"
+#include "core/migrations.h"
 #include "core/result.h"
 #include "core/sqlite_db.h"
 
@@ -129,6 +130,36 @@ REGISTER_TEST(migrate_is_idempotent, "Database: migrate is idempotent", {
         DOCTEST_REQUIRE(rows.isOk());
         DOCTEST_CHECK_EQ(std::get<int64_t>(rows.value()[0].values[0]), 4);
     } // Database 在此析构（关闭 sqlite 句柄）
+
+    std::filesystem::remove(path, ec);
+    return true;
+})
+
+REGISTER_TEST(migrate_rejects_newer_schema,
+              "Database: migrate rejects newer schema_version (downgrade guard)", {
+    auto path = tempDbPath("newer");
+    std::error_code ec;
+    std::filesystem::remove(path, ec);
+
+    {
+        auto openR = core::data::SqliteDb::open(path);
+        DOCTEST_REQUIRE(openR.isOk());
+        auto& db = openR.value();
+        // 伪造一个来自未来版本的 schema_version 记录（模拟数据库被
+        // 更新版 DevDesk 打开后回退旧 exe 运行）
+        DOCTEST_REQUIRE(db.exec(
+            "CREATE TABLE schema_version ("
+            "version INTEGER PRIMARY KEY, description TEXT NOT NULL, "
+            "applied_at INTEGER NOT NULL)").isOk());
+        DOCTEST_REQUIRE(db.exec(
+            "INSERT INTO schema_version (version, description, applied_at) "
+            "VALUES (999, 'future', 0)").isOk());
+        // runMigrations 必须显式失败（带明确文案），而不是静默跳过全部迁移
+        auto r = db.runMigrations(core::migrations::all());
+        DOCTEST_CHECK(r.isFail());
+        DOCTEST_CHECK(r.errorCode() ==
+                      core::ErrorCode::DatabaseMigrationFailed);
+    } // SqliteDb 在此析构（关闭 sqlite 句柄）
 
     std::filesystem::remove(path, ec);
     return true;

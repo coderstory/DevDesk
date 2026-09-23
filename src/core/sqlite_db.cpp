@@ -292,6 +292,21 @@ Result<void> SqliteDb::runMigrations(const std::vector<Migration>& migrations) {
     if (initResult.isFail()) return initResult;
 
     int current = schemaVersion();
+    // 「数据库比二进制新」守卫（审计 2026-09-23 [37]）：降级运行旧 exe 时
+    // schema_version 高于本二进制已知的最大迁移版本，下方循环会静默跳过
+    // 全部迁移，后续 SQL 得到莫名的列缺失错误。这里显式失败并给明确文案。
+    int knownMax = 0;
+    for (const auto& m : migrations) {
+        knownMax = (m.version > knownMax) ? m.version : knownMax;
+    }
+    if (current > knownMax) {
+        const std::string msg =
+            "数据库 schema 版本 v" + std::to_string(current) +
+            " 高于本版本 DevDesk 支持的最大迁移版本 v" + std::to_string(knownMax) +
+            "（数据库被更新版本的 DevDesk 打开过，请使用新版 DevDesk）";
+        LOG_FATAL(msg);
+        return Result<void>::fail(ErrorCode::DatabaseMigrationFailed, msg);
+    }
     for (const auto& m : migrations) {
         if (m.version <= current) continue;
         auto txResult = transaction([&]() -> core::Result<void> {
