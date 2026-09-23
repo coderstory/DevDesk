@@ -18,13 +18,13 @@
 
 #include "core/logging.h"
 #include "core/paths.h"
+#include "core/platform/context_menu.h"
 #include "core/proxy_stats.h"
 #include "module_pet/pet_bubble.h"
 #include "module_pet/pet_config.h"
 #include "module_pet/pet_frame_player.h"
 #include "module_pet/pet_skin.h"
 
-#include <components/contextmenu.h>
 #include <eui/app.h>
 #include <eui/dsl.h>
 #include <eui/dsl_app.h>
@@ -104,10 +104,7 @@ struct PetUiState {
     PetBubble bubble;              // 气泡对话（M2 设计 §4.5）
     bool initialized = false;
     bool wasDragged = false;   // 拖拽结束抑制误触 poke（设计 §4.4 Dragged 语义）
-    bool clickThrough = false;
-    bool menuOpen = false;
-    float menuX = 0.0f;
-    float menuY = 0.0f;
+    // 穿透状态在 PetRuntime::config（原生菜单切换，热换肤重开窗后仍在）
     double lastInteractionMs = 0.0;  // 最近交互时刻（入睡判定用）
     double lastTickMs = 0.0;         // 上次 onTimer 时刻（气泡倒计时 dt 用）
     PetDragAnchor dragAnchor;        // 拖拽锚点（见 pet_window.h，抖动修复）
@@ -117,7 +114,6 @@ void petCompose(eui::Ui& ui, const eui::Screen& screen) {
     PetUiState& state = ui.state<PetUiState>("pet.state");
     if (!state.initialized) {
         state.initialized = true;
-        state.clickThrough = runtime().config.clickThrough;
         state.lastInteractionMs = steadyMs();
         state.lastTickMs = state.lastInteractionMs;
     }
@@ -192,12 +188,76 @@ void petCompose(eui::Ui& ui, const eui::Screen& screen) {
                     petDragEnd(state.dragAnchor);  // 释放/取消 → 清锚点
                     savePetPosition();  // 拖拽结束才写盘（设计 §4.6）
                 })
-                .onContextMenu([&state](const eui::PointerEvent& event, const eui::Rect&) {
+                .onContextMenu([](const eui::PointerEvent&, const eui::Rect&) {
+                    // 原生右键菜单（EUI-NEO core::platform::showContextMenu，
+                    // Win32 TrackPopupMenuEx 光标处弹出）：自绘菜单画在 128px
+                    // sprite 窗内被窗口 bounds 裁剪，只露出一点（用户实测）。
+                    // 同步模态：主循环在菜单期间不推进（与托盘菜单同一模式）。
                     // 开菜单前刷新皮肤清单（新放进目录的皮肤立即可选）
                     runtime().skins = discoverSkins();
-                    state.menuX = event.x;
-                    state.menuY = event.y;
-                    state.menuOpen = true;
+                    if (runtime().handle == nullptr) return;
+                    const core::window::NativeWindowInfo info =
+                        core::window::nativeWindowInfo(runtime().handle);
+                    if (info.platformWindow == nullptr) return;  // 无原生句柄（stub 平台）
+
+                    std::vector<core::platform::ContextMenuItem> items;
+                    core::platform::ContextMenuItem through;
+                    through.text = runtime().config.clickThrough
+                                       ? "关闭鼠标穿透"
+                                       : "挂机穿透（点击透到下层）";
+                    items.push_back(std::move(through));
+                    if (!runtime().skins.empty()) {
+                        core::platform::ContextMenuItem skinMenu;
+                        skinMenu.text = "换肤";
+                        for (const std::string& name : runtime().skins) {
+                            core::platform::ContextMenuItem skin;
+                            skin.text = name;
+                            skinMenu.children.push_back(std::move(skin));
+                        }
+                        items.push_back(std::move(skinMenu));
+                    }
+                    core::platform::ContextMenuItem reset;
+                    reset.text = "位置重置（回主屏右下角）";
+                    items.push_back(std::move(reset));
+                    core::platform::ContextMenuItem hide;
+                    hide.text = "隐藏桌宠（本次会话；重启后恢复）";
+                    items.push_back(std::move(hide));
+                    items.push_back(core::platform::ContextMenuItem{"-"});
+                    core::platform::ContextMenuItem exitApp;
+                    exitApp.text = "退出 DevDesk";
+                    items.push_back(std::move(exitApp));
+
+                    const std::optional<std::vector<int>> selection =
+                        core::platform::showContextMenu(info.platformWindow, items);
+                    if (!selection.has_value() || selection->empty()) return;  // 不支持/取消
+
+                    // 下标随「换肤」子菜单有无偏移（与旧自绘菜单同一套数学）
+                    const int idxThrough = 0;
+                    const int idxReset = runtime().skins.empty() ? 1 : 2;
+                    const int idxHide = idxReset + 1;
+                    const int idxExit = idxHide + 1;
+                    const std::vector<int>& path = *selection;
+                    if (path.size() == 2) {
+                        if (path[0] == 1 && path[1] >= 0 &&
+                            path[1] < static_cast<int>(runtime().skins.size())) {
+                            applyPetSkin(runtime().skins[static_cast<size_t>(path[1])]);
+                        }
+                        return;
+                    }
+                    if (path.size() != 1) return;
+                    if (path[0] == idxThrough) {
+                        runtime().config.clickThrough = !runtime().config.clickThrough;
+                        core::window::setWindowMousePassthrough(
+                            runtime().handle, runtime().config.clickThrough);
+                        savePetClickThrough(runtime().config.clickThrough);
+                    } else if (path[0] == idxReset) {
+                        resetPetPosition();
+                    } else if (path[0] == idxHide) {
+                        savePetPosition();
+                        core::window::requestWindowClose(runtime().handle);
+                    } else if (path[0] == idxExit) {
+                        app::requestExit();  // 与托盘 Exit 同一退出路径
+                    }
                 })
                 .build();
 
@@ -233,61 +293,6 @@ void petCompose(eui::Ui& ui, const eui::Screen& screen) {
         })
         .build();
 
-    // 右键菜单（设计 §4.5 M2）：穿透 / 换肤（子菜单=发现的皮肤）/
-    // 位置重置 / 隐藏 / 退出
-    std::vector<components::ContextMenuItem> menuItems;
-    menuItems.emplace_back(state.clickThrough ? "关闭鼠标穿透"
-                                              : "挂机穿透（点击透到下层）");
-    if (!runtime().skins.empty()) {
-        std::vector<components::ContextMenuItem> skinItems;
-        for (const std::string& name : runtime().skins) {
-            skinItems.emplace_back(name);
-        }
-        menuItems.emplace_back("换肤", std::move(skinItems));
-    }
-    menuItems.emplace_back("位置重置（回主屏右下角）");
-    menuItems.emplace_back("隐藏桌宠（本次会话；重启后恢复）");
-    menuItems.emplace_back("退出 DevDesk");
-    // 顶层下标随「换肤」子菜单有无而偏移；[1][k] = 换肤到第 k 个皮肤
-    const int idxThrough = 0;
-    const int idxReset = runtime().skins.empty() ? 1 : 2;
-    const int idxHide = idxReset + 1;
-    const int idxExit = idxHide + 1;
-    components::contextMenu(ui, "pet.menu")
-        .theme(components::theme::dark())
-        .screen(screen.width, screen.height)
-        .position(state.menuX, state.menuY)
-        .items(std::move(menuItems))
-        .open(state.menuOpen)
-        .onSelectPath([&state, idxThrough, idxReset, idxHide,
-                       idxExit](const std::vector<int>& path) {
-            state.menuOpen = false;
-            if (path.size() == 2) {
-                // 换肤子菜单（换肤项只在其存在时才有子路径）
-                if (path[0] == 1 && path[1] >= 0 &&
-                    path[1] < static_cast<int>(runtime().skins.size())) {
-                    applyPetSkin(runtime().skins[static_cast<size_t>(path[1])]);
-                }
-                return;
-            }
-            if (path.size() != 1) return;
-            const int idx = path[0];
-            if (idx == idxThrough) {
-                state.clickThrough = !state.clickThrough;
-                core::window::setWindowMousePassthrough(runtime().handle,
-                                                        state.clickThrough);
-                savePetClickThrough(state.clickThrough);
-            } else if (idx == idxReset) {
-                resetPetPosition();
-            } else if (idx == idxHide) {
-                savePetPosition();
-                core::window::requestWindowClose(runtime().handle);  // 主循环正常销毁
-            } else if (idx == idxExit) {
-                app::requestExit();  // 与托盘 Exit 同一退出路径
-            }
-        })
-        .onOpenChange([&state](bool open) { state.menuOpen = open; })
-        .build();
 }
 
 // 解析皮肤目录：按候选根找 <skinName>；找不到（或名字是默认皮肤）落到
