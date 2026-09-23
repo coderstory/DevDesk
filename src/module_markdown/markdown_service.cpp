@@ -684,6 +684,133 @@ core::Result<void> MarkdownService::remove(const fs::path& relPath) {
     return deleteFromIndex(relPosix);
 }
 
+core::Result<std::string> MarkdownService::rename(const fs::path& oldRelPath,
+                                                  const fs::path& newRelPath) {
+    const std::string oldPosix = toPosix(oldRelPath);
+    // 新名走与 create() 同一安全规则（绝对路径/盘符/.. 一律拒绝）
+    if (!isSafeNewNotePath(toPosix(newRelPath))) {
+        return core::Result<std::string>::fail(core::ErrorCode::ValidationError,
+            "新名不合法（不允许绝对路径、盘符或 ..）: " + toPosix(newRelPath));
+    }
+    // 规范化路径：无扩展名时补 .md（与 create() 一致）
+    fs::path norm = newRelPath;
+    if (norm.extension() != ".md") {
+        norm += ".md";
+    }
+    const std::string newPosix = toPosix(norm);
+    if (newPosix == oldPosix) {
+        return core::Result<std::string>::ok(oldPosix);  // 原地改名 = 无操作
+    }
+
+    std::error_code ec;
+    const auto absOld = resolve(oldRelPath);
+    const auto absNew = resolve(norm);
+    if (!fs::exists(absOld, ec) || ec) {
+        return core::Result<std::string>::fail(core::ErrorCode::FileNotFound,
+            "原文件不存在: " + absOld.string());
+    }
+    if (fs::exists(absNew, ec)) {
+        return core::Result<std::string>::fail(core::ErrorCode::AlreadyExists,
+            "目标文件已存在: " + absNew.string());
+    }
+    fs::create_directories(absNew.parent_path(), ec);
+    if (ec) {
+        return core::Result<std::string>::fail(core::ErrorCode::FileWriteFailed,
+            "无法创建目标父目录 " + absNew.parent_path().string() + ": " + ec.message());
+    }
+    fs::rename(absOld, absNew, ec);
+    if (ec) {
+        return core::Result<std::string>::fail(core::ErrorCode::FileWriteFailed,
+            "重命名失败 " + oldPosix + " → " + newPosix + ": " + ec.message());
+    }
+
+    // 读新文件内容（title 与 FTS 同源）。读失败不致命：title 退化为文件名，
+    // FTS 内容空一帧，5 秒轮询的 rescan 最终会修正索引。
+    std::string content;
+    {
+        std::ifstream ifs(absNew);
+        if (ifs) {
+            std::ostringstream oss;
+            oss << ifs.rdbuf();
+            content = oss.str();
+        }
+    }
+    auto fileSize = fs::file_size(absNew, ec);
+    if (ec) fileSize = 0;
+    const int64_t mtime = fileMtimeEpoch(absNew);
+    const std::string title = extractTitle(content, norm);
+
+    // 索引行按 path 就地 UPDATE（id 不变 → 标签外键关联保留，这是不用
+    // remove+create 组合的全部原因）；FTS 先删旧行再插新行。
+    auto tx = db_.transaction([&]() -> core::Result<void> {
+        {
+            auto prep = db_.prepare(
+                "UPDATE markdown_index SET path = ?, title = ?, "
+                "size_bytes = ?, modified_at = ? WHERE path = ?");
+            if (prep.isFail()) {
+                return core::Result<void>::fail(prep.errorCode(),
+                    "prepare rename index: " + prep.errorMessage());
+            }
+            auto& stmt = prep.value();
+            stmt.bind(1, newPosix);
+            stmt.bind(2, title);
+            stmt.bind(3, static_cast<int64_t>(fileSize));
+            stmt.bind(4, mtime);
+            stmt.bind(5, oldPosix);
+            auto step = stmt.step();
+            if (step.isFail()) {
+                return core::Result<void>::fail(step.errorCode(),
+                    "step rename index: " + step.errorMessage());
+            }
+        }
+        {
+            auto prep = db_.prepare(
+                "DELETE FROM markdown_fts WHERE path = ?");
+            if (prep.isFail()) {
+                return core::Result<void>::fail(prep.errorCode(),
+                    "prepare rename fts delete: " + prep.errorMessage());
+            }
+            prep.value().bind(1, oldPosix);
+            auto step = prep.value().step();
+            if (step.isFail()) {
+                return core::Result<void>::fail(step.errorCode(),
+                    "step rename fts delete: " + step.errorMessage());
+            }
+        }
+        {
+            auto prep = db_.prepare(
+                "INSERT INTO markdown_fts (path, title, content) VALUES (?, ?, ?)");
+            if (prep.isFail()) {
+                return core::Result<void>::fail(prep.errorCode(),
+                    "prepare rename fts insert: " + prep.errorMessage());
+            }
+            prep.value().bind(1, newPosix);
+            prep.value().bind(2, title);
+            prep.value().bind(3, content);
+            auto step = prep.value().step();
+            if (step.isFail()) {
+                return core::Result<void>::fail(step.errorCode(),
+                    "step rename fts insert: " + step.errorMessage());
+            }
+        }
+        return core::Result<void>::ok();
+    });
+    if (tx.isFail()) {
+        // DB 失败 → 把磁盘改回去，保持「文件位置 = 索引 path」一致性；
+        // 回滚也失败时留响亮日志（rescan 5 秒内会以磁盘为准修正索引）
+        std::error_code rbEc;
+        fs::rename(absNew, absOld, rbEc);
+        if (rbEc) {
+            LOG_ERROR("重命名回滚失败（文件留在 " + newPosix + "，索引未变）: " +
+                      rbEc.message());
+        }
+        return core::Result<std::string>::fail(tx.errorCode(),
+            "rename 更新索引: " + tx.errorMessage());
+    }
+    LOG_INFO("Markdown 重命名笔记: " + oldPosix + " → " + newPosix);
+    return core::Result<std::string>::ok(newPosix);
+}
+
 core::Result<std::vector<NoteMeta>> MarkdownService::search(
     const std::string& query) {
     if (query.empty()) {

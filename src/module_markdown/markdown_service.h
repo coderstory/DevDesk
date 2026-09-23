@@ -67,6 +67,14 @@ public:
     // 删除笔记（删文件 + 索引 + FTS）
     core::Result<void> remove(const std::filesystem::path& relPath);
 
+    // 重命名/移动笔记（磁盘 rename + 索引 path 就地 UPDATE + FTS 先删后插）。
+    // 关键：markdown_index.id 保持不变 → markdown_note_tags 外键关联（标签）
+    // 随之保留，不能走 remove+create（那会级联删标签）。newRelPath 无 .md
+    // 自动补全；目标已存在 → AlreadyExists；失败时磁盘 rename 回滚。
+    // 返回最终生效的 POSIX 相对路径（补全后）。
+    core::Result<std::string> rename(const std::filesystem::path& oldRelPath,
+                                     const std::filesystem::path& newRelPath);
+
     // FTS5 全文搜索
     //   返回匹配的笔记元数据（按 FTS5 rank 排序）
     core::Result<std::vector<NoteMeta>> search(const std::string& query);
