@@ -377,11 +377,7 @@ private:
                             .theme(componentTheme, true)
                             .textColor(t.colors.onPrimary)
                             .radius(t.sizes.radius)
-                            .onClick([this] {
-                                newNoteOpen_ = true;
-                                newNoteName_.clear();
-                                newNoteError_.clear();
-                            })
+                            .onClick([this] { openNewNoteDialog(); })
                             .build();
                     })
                     .build();
@@ -590,11 +586,7 @@ private:
                 .textColor(t.colors.textPrimary)
                 .radius(t.sizes.radius)
                 .border(1.0f, t.colors.borderDefault)
-                .onClick([this] {
-                    newNoteOpen_ = true;
-                    newNoteName_.clear();
-                    newNoteError_.clear();
-                })
+                .onClick([this] { openNewNoteDialog(); })
                 .build();
             components::button(ui, "md.tree.newfolder")
                 .position(12.0f + btnW + 8.0f, newBtnY)
@@ -1567,16 +1559,41 @@ private:
         LOG_INFO("Markdown 视图切换: " + std::to_string(static_cast<int>(m)));
     }
 
-    // Ctrl+Shift+P 循环切换三态。通道 = app 级 onKeyEvent → Router 派发到
-    // 当前页模块（EUI-NEO InputBuilder 无逐组件按键 passthrough，那是
-    // Phase 2 上游 PR；本快捷键不涉及编辑器文本变换，走全局通道无 undo 问题）
+    // Ctrl+Shift+P 循环切换三态 / Ctrl+N 新建笔记。通道 = app 级 onKeyEvent →
+    // Router 派发到当前页模块（EUI-NEO InputBuilder 无逐组件按键 passthrough，那是
+    // Phase 2 上游 PR；本快捷键不涉及编辑器文本变换，走全局通道无 undo 问题）。
+    // 焦点在编辑器/搜索框/弹窗输入时 runtime_input 把内置未消费的键回调出来，
+    // Ctrl+N 不在 EUI-NEO input 内置键位表（只吃 A/C/X/V/Z/Y），能到达这里
     bool onKeyEvent(const eui::KeyEvent& key) override {
         if (key.isDown() && key.modifiers.shortcut() && key.modifiers.shift &&
             key.key == eui::InputKey::P) {
             setMode(static_cast<ViewMode>((static_cast<int>(mode_) + 1) % 3));
             return true;
         }
+        // ux-design §4 #6 P1：Ctrl+N 打开新建笔记弹窗（与「+ 新建笔记」按钮/
+        // 跨模块负载同一入口 openNewNoteDialog，秒建走弹窗内空名回车=默认名，
+        // 行为与既有链路完全一致）。弹窗已开时不重复触发——否则会清掉用户
+        // 正在输入的草稿名（返回 false 让按键落空，比误清代价低）。
+        if (key.isDown() && key.modifiers.shortcut() && !key.modifiers.shift &&
+            !key.modifiers.alt && key.key == eui::InputKey::N) {
+            // 任一弹窗开着就落空：避免键盘叠弹窗 / 清掉正在输入的草稿
+            if (newNoteOpen_ || newFolderOpen_ || renameOpen_ ||
+                deleteConfirmOpen_) {
+                return false;
+            }
+            openNewNoteDialog();
+            LOG_INFO("Ctrl+N：打开新建笔记弹窗");
+            return true;
+        }
         return false;
+    }
+
+    // 新建笔记弹窗统一入口（顶栏「+ 新建笔记」/ 左栏「+ 笔记」/ Ctrl+N /
+    // 跨模块负载共用）：打开前重置草稿名与内嵌错误行（审计 [19] 去重）
+    void openNewNoteDialog() {
+        newNoteOpen_ = true;
+        newNoteName_.clear();
+        newNoteError_.clear();
     }
 
     // 大纲当前节：光标行（InputState）所在的上一个标题；仅预览态无编辑器
@@ -1630,9 +1647,7 @@ private:
         if (payload.empty()) return;
 
         if (payload == "action:new_note") {
-            newNoteOpen_ = true;
-            newNoteName_.clear();
-            newNoteError_.clear();
+            openNewNoteDialog();
             LOG_INFO("跨模块负载：打开新建笔记弹窗");
             return;
         }

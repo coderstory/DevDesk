@@ -1457,3 +1457,75 @@ REGISTER_TEST(md_module_esc_cancel_dialogs,
     mod->onStop();
     return true;
 })
+
+// ---- ux-design §4 #6 P1：Ctrl+N 新建笔记快捷键（app 级通道，同弹窗入口）----
+
+REGISTER_TEST(md_module_ctrl_n_new_note,
+              "markdown_module: Ctrl+N 开新建笔记弹窗；弹窗开着再按不重置草稿；完整创建链路（headless）", {
+    using InputState = components::input_detail::InputModel::InputState;
+
+    MdUiEnv env("ctrln");
+    DOCTEST_REQUIRE(env.db != nullptr);
+
+    std::unique_ptr<::core::Module> mod(create_markdown_module());
+    mod->onStart();
+
+    eui::Screen screen;
+    screen.width = 1600.0f;
+    screen.height = 1000.0f;
+    eui::Ui ui;
+    auto frame = [&](const char* page) {
+        ui.begin(page);
+        mod->compose(ui, screen);
+        ui.end();
+    };
+
+    // 1) Ctrl+N（isDown + control，无 shift/alt）→ 模块消费、弹窗打开
+    frame("cn1");
+    eui::KeyEvent cn;
+    cn.key = eui::InputKey::N;
+    cn.modifiers.control = true;
+    DOCTEST_CHECK(mod->onKeyEvent(cn));
+    frame("cn2");
+    const auto* panel = ui.find("md.dialog.new.panel");
+    DOCTEST_REQUIRE(panel != nullptr);
+    DOCTEST_CHECK(panel->opacity > 0.0f);
+    DOCTEST_CHECK(ui.find("md.dialog.new.input") != nullptr);
+
+    // 2) 输入草稿名后（弹窗开着）再按 Ctrl+N → 不消费、不清草稿（防误重开）
+    const auto* hit = ui.find("md.dialog.new.input.hit");
+    DOCTEST_REQUIRE(hit != nullptr && hit->onTextInput != nullptr);
+    core::TextInputEvent tie;
+    tie.text = "草稿";
+    hit->onTextInput(tie);
+    frame("cn3");
+    DOCTEST_CHECK_FALSE(mod->onKeyEvent(cn));
+    frame("cn4");
+    DOCTEST_CHECK_EQ(ui.state<InputState>("md.dialog.new.input").text,
+                     std::string("草稿"));
+
+    // 3) 确认 → 走既有 commitNewNote 链路：落盘 + 弹窗关（快捷键与按钮同源）
+    const auto* confirm = ui.find("md.dialog.new.confirm.bg");
+    DOCTEST_REQUIRE(confirm != nullptr && confirm->onClick != nullptr);
+    confirm->onClick();
+    DOCTEST_CHECK(fs::exists(env.dir / "草稿.md"));
+    frame("cn5");
+    DOCTEST_CHECK_EQ(ui.find("md.dialog.new.panel")->opacity, 0.0f);
+
+    // 4) Ctrl+Shift+N 不触发（显式排除 shift 组合，留给「无痕新窗口」类语义）
+    eui::KeyEvent csn;
+    csn.key = eui::InputKey::N;
+    csn.modifiers.control = true;
+    csn.modifiers.shift = true;
+    DOCTEST_CHECK_FALSE(mod->onKeyEvent(csn));
+    frame("cn6");
+    DOCTEST_CHECK_EQ(ui.find("md.dialog.new.panel")->opacity, 0.0f);
+
+    // 5) 新建文件夹弹窗开着时 Ctrl+N 落空（不叠弹窗）
+    ui.find("md.tree.newfolder.bg")->onClick();
+    frame("cn7");
+    DOCTEST_CHECK_FALSE(mod->onKeyEvent(cn));
+
+    mod->onStop();
+    return true;
+})
