@@ -97,12 +97,11 @@ void drawSidebar(eui::Ui& ui, const eui::Screen& screen) {
     ui.stack("app.sidebar")
         .size(kWidth, screen.height)
         .content([&] {
-            ui.rect("app.sidebar.bg")
-                .size(kWidth, screen.height)
-                // 底色跟页面 background（米色/暖墨）而非卡片 surface——浅色下侧边栏
-                // 不应是纯白（用户实测反馈；深色下 background 比卡片略深也正确）
-                .color(t.colors.background)
-                .build();
+            // 侧边栏底色 = 主窗口 clearColor（applyWindowVisuals 随主题/窗口
+            // 效果档运行时跟随）——不自铺不透明底，半透/磨砂档下侧边栏与页面
+            // 主体一致透出效果；色值与旧 t.colors.background 完全相同（off 档
+            // 观感不变）。本改动自 fix/winfx-pet d923f0f 移植（侧边栏拆文件后
+            // 的落点）
             ui.rect("app.sidebar.divider")
                 .position(kWidth - 1.0f, 0.0f)
                 .size(1.0f, screen.height)

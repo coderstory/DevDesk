@@ -4,8 +4,8 @@
 // surfaceElevated。曾发生「结构性面板错用卡片白」bug（侧边栏修复后用户
 // 反馈其余面板仍白得刺眼）——本文件对每类代表元素做无头 compose 后的
 // 色值断言：渲染色 == 预期 token，改错 token 即红。
-// 侧边栏（main.cpp app.sidebar.bg）不在模块内，无法无头 compose，
-// 由人工点验覆盖（见 CHANGELOG）。
+// 侧边栏（app_sidebar app.sidebar.bg）同样已删自铺底（磨砂/半透要求透出
+// 窗口 clearColor，d923f0f），由 app 层窗口色承担，不在模块断言范围。
 #include "doctest.h"
 
 #include "claude_service.h"
@@ -56,6 +56,8 @@ struct Frame {
         const auto* el = ui.find(id);
         return el != nullptr && sameRgb(el->color, expected);
     }
+    // 元素必须不存在（页面级全屏不透明底已删，见下）
+    bool absent(const std::string& id) { return ui.find(id) == nullptr; }
 };
 
 std::filesystem::path tempDbPath(const char* tag) {
@@ -129,8 +131,9 @@ REGISTER_TEST(theme_hierarchy_todo,
     // 必须显式 -> bool；调用点再 DOCTEST_CHECK 汇总
     const auto checkFrame = [&](Frame& frame,
                                 const core::theme::Tokens& t) -> bool {
-        // 列容器 = 页面结构 → background
-        DOCTEST_CHECK(frame.colorIs("todo.pagebg", t.colors.background));
+        // 页面级全屏不透明底已删（磨砂/半透窗口效果要求主体透出，d923f0f），
+        // 页面底色由主窗 clearColor 承担——pagebg 必须不存在
+        DOCTEST_CHECK(frame.absent("todo.pagebg"));
         DOCTEST_CHECK(frame.colorIs("todo.col.4.bg", t.colors.background));
         // 卡片 = 浮动卡片 → surface（深色 #232120，曾被抬到 elevated）
         DOCTEST_CHECK(frame.colorIs("todo.col.4.card.0.bg", t.colors.surface));
@@ -199,7 +202,7 @@ REGISTER_TEST(theme_hierarchy_markdown,
 
     const auto checkFrame = [&](Frame& frame,
                                 const core::theme::Tokens& t) -> bool {
-        DOCTEST_CHECK(frame.colorIs("md.pagebg", t.colors.background));
+        DOCTEST_CHECK(frame.absent("md.pagebg"));  // 页面底由 clearColor 承担
         DOCTEST_CHECK(frame.colorIs("md.tree.bg", t.colors.background));
         DOCTEST_CHECK(frame.colorIs("md.editor.bg", t.colors.background));
         DOCTEST_CHECK(frame.colorIs("md.preview.bg", t.colors.background));
@@ -234,7 +237,7 @@ REGISTER_TEST(theme_hierarchy_claude,
 
     const auto checkFrame = [&](Frame& frame,
                                 const core::theme::Tokens& t) -> bool {
-        DOCTEST_CHECK(frame.colorIs("claude.pagebg", t.colors.background));
+        DOCTEST_CHECK(frame.absent("claude.pagebg"));  // 页面底由 clearColor 承担
         DOCTEST_CHECK(frame.colorIs("claude.profiles.bg", t.colors.background));
         DOCTEST_CHECK(frame.colorIs("claude.detail.bg", t.colors.background));
         return true;
@@ -253,14 +256,14 @@ REGISTER_TEST(theme_hierarchy_claude,
 
 // ---- 统计卡：浮动卡片留在 surface（白），页面底 background ----
 REGISTER_TEST(theme_hierarchy_home,
-              "theme_hierarchy: home 统计卡=surface 页面底=background（light+dark）", {
+              "theme_hierarchy: home 统计卡=surface 页面底无自铺底（light+dark）", {
     core::proxy_stats::resetForTest();
 
     std::unique_ptr<::core::Module> mod(create_home_module());
 
     const auto checkFrame = [&](Frame& frame,
                                 const core::theme::Tokens& t) -> bool {
-        DOCTEST_CHECK(frame.colorIs("home.pagebg", t.colors.background));
+        DOCTEST_CHECK(frame.absent("home.pagebg"));  // 页面底由 clearColor 承担
         // 统计卡/最近编辑卡是浮动卡片 → surface（浅色白），不得跟风变米色
         DOCTEST_CHECK(frame.colorIs("home.stat.tokens.bg", t.colors.surface));
         DOCTEST_CHECK(frame.colorIs("home.recent.bg", t.colors.surface));

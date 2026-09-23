@@ -789,6 +789,48 @@ REGISTER_TEST(pet_apply_skin_and_reset, "pet: applyPetSkin 校验/持久化 + �
     return true;
 });
 
+// ---- 鼠标穿透桥（任务⑥：穿透锁死态的设置页恢复路径）----
+// 无头环境 handle==nullptr → setPetClickThrough 走「只持久化」分支；
+// 即时 setWindowMousePassthrough 分支真机验证。断言：toggle 写 config、
+// 状态往返不丢其他字段
+REGISTER_TEST(pet_click_through_bridge,
+              "pet: setPetClickThrough 持久化 + 状态往返（⑥恢复路径）", {
+    using namespace module::pet;
+    const std::filesystem::path root = tempDir("through");
+    removeTreeQuietly(root);
+    std::filesystem::create_directories(root);
+    setEnvVar("DEVDESK_PETS_DIR", root.string());
+    const std::filesystem::path cfgFile = petConfigFile();
+    // 预置：未穿透 + 已知皮肤/位置
+    {
+        PetConfigStore store(cfgFile);
+        PetConfig cfg;
+        cfg.skinName = "clay-cat";
+        cfg.x = 300;
+        cfg.y = 400;
+        cfg.clickThrough = false;
+        DOCTEST_CHECK(store.save(cfg).isOk());
+    }
+    // 开穿透 → 落盘 true，其他字段原样（读-改-写不串字段）
+    setPetClickThrough(true);
+    {
+        const PetConfig cfg = PetConfigStore(cfgFile).load();
+        DOCTEST_CHECK(cfg.clickThrough);
+        DOCTEST_CHECK_EQ(cfg.skinName, "clay-cat");
+        DOCTEST_CHECK_EQ(cfg.x, 300);
+        DOCTEST_CHECK_EQ(cfg.y, 400);
+    }
+    // 关穿透（锁死恢复方向）→ false 往返
+    setPetClickThrough(false);
+    {
+        const PetConfig cfg = PetConfigStore(cfgFile).load();
+        DOCTEST_CHECK(!cfg.clickThrough);
+    }
+    setEnvVar("DEVDESK_PETS_DIR", "");
+    removeTreeQuietly(root);
+    return true;
+});
+
 // ---- 拖拽锚点跟随（2026-09-23 真机症状 1：拖动抖动）----
 // 复现坐标模型：GLFW 上报的光标位置是「窗口相对」的——窗口被拖拽回调移动
 // 后，同样的屏幕移动产生反向偏差的读数。旧 delta 累加方案在此模型下

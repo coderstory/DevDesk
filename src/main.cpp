@@ -351,18 +351,23 @@ const DslAppConfig& dslAppConfig() {
         // 运行时切换由 theme 回调走 setTitleBarAppearance（覆盖本快照）
         .darkTitleBar(::core::theme::current().isDark)
         .centerWindow()
-        // 托盘图标（EUI-NEO 自定义托盘菜单 API）：菜单 = 四模块页快速跳转。
+        // 托盘图标（EUI-NEO 自定义托盘菜单 API）：全中文自定义菜单，
+        // keepDefault=false 去掉内置英文 Show/Exit（用户反馈菜单里混英文）。
+        // 「显示主窗口」走 app::requestShow（处理隐藏到托盘/最小化/失焦三态），
         // 回调主线程触发、运行期 Router 已就绪，与侧边栏 onClick 同款
-        // null-guard 写法；requestUpdate() 主动唤起重绘。Show/Exit 默认保留。
+        // null-guard 写法；requestUpdate() 主动唤起重绘。
         .tray(true)
         .trayTitle("DevDesk")
         .trayMenu({
+            {"显示主窗口", [] { app::requestShow(); }},
+            {"-", nullptr},
             {"首页", [] { if (auto* r = getRouter()) { r->navigateTo(::core::PageId::Home); requestUpdate(); } }},
             {"笔记", [] { if (auto* r = getRouter()) { r->navigateTo(::core::PageId::Markdown); requestUpdate(); } }},
             {"待办", [] { if (auto* r = getRouter()) { r->navigateTo(::core::PageId::Todo); requestUpdate(); } }},
             {"Claude", [] { if (auto* r = getRouter()) { r->navigateTo(::core::PageId::ClaudeProxy); requestUpdate(); } }},
             {"-", nullptr},
-        })
+            {"退出 DevDesk", [] { app::requestExit(); }},
+        }, false)
         // Finder 双击 / 右键「打开方式」：macOS 走 kAEOpenDocuments Apple Event，
         // 由 EUI-NEO 转成回调（主循环里派发），这里切到对应模块。
         .onOpenFile([](const std::string& path) { handleAppleEventOpenFile(path); })

@@ -129,12 +129,8 @@ public:
         const float bodyH = contentH - headerH - t.sizes.spacingLarge -
                             (showGuide ? 30.0f : 0.0f);
 
-        // 页面背景自绘（仿 settings_module：main.cpp clearColor 固定浅色，
-        // 深色主题下页面必须自己铺底，否则浅色 clear 底 + 深色 token 文字不可读）
-        ui.rect("claude.pagebg")
-            .size(screen.width, screen.height)
-            .color(t.colors.background)
-            .build();
+        // 页面底色 = 主窗口 clearColor（随主题/窗口效果档运行时跟随，
+        // 磨砂 Phase B/D）——不自铺不透明底，半透/磨砂档主体才生效
 
         // 错误态（仿 Home statsError_）：加载失败不静默吞错显示假空态
         std::string profilesError;

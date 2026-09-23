@@ -204,13 +204,9 @@ public:
         const int statCount =
             (claudeOn ? 2 : 0) + (mdOn ? 1 : 0) + (todoOn ? 2 : 0);
 
-        // 页面背景自绘（与 settings_module 同款）：main.cpp clearColor 固定
-        // 浅色，深色主题下页面必须自己铺底，否则浅色 clear 底 + 深色 token
-        // 文字不可读
-        ui.rect("home.pagebg")
-            .size(screen.width, screen.height)
-            .color(t.colors.background)
-            .build();
+        // 页面底色 = 主窗口 clearColor（applyWindowVisuals 随主题/窗口效果档
+        // 运行时跟随，磨砂 Phase B/D）——不再自铺不透明底，否则半透/磨砂档
+        // 下页面 alpha 恒为 1，主体看不见效果（用户实测主窗主体无效果的根因）
 
         ui.column("home.root")
             .size(screen.width, screen.height)

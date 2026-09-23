@@ -317,8 +317,8 @@ REGISTER_TEST(settings_module_compose_renders, "settings: module compose builds 
     mod->compose(ui, screen);
     ui.end();
 
-    // 关键元素存在 = 设置页可渲染（背景 + 4 张设置卡）
-    DOCTEST_CHECK(ui.find("settings.pagebg") != nullptr);
+    // 关键元素存在 = 设置页可渲染（4 张设置卡；页面底色载体是主窗口
+    // clearColor 不再自铺——settings.pagebg 已删，见下方回归守卫）
     DOCTEST_CHECK(ui.find("settings.card.appearance.bg") != nullptr);
     DOCTEST_CHECK(ui.find("settings.card.appearance.effect.ddwrap") != nullptr);
     DOCTEST_CHECK(ui.find("settings.card.directory.bg") != nullptr);
@@ -341,25 +341,26 @@ REGISTER_TEST(settings_theme_switch_reflects, "settings: theme switch reflects o
     screen.height = 1000.0f;
     eui::Ui ui;
 
-    // 深色主题 compose 一次，取页面背景色（Element 在下一次 begin 时销毁，先拷值）
+    // 页面底色载体从 settings.pagebg（已删——自铺不透明全屏底会把帧缓冲
+    // alpha 恒置 1，半透/磨砂档下主体看不见效果，用户实测根因）改为主窗口
+    // clearColor：applyWindowVisuals 随主题重设，无头验证颜色跟随
     ::core::theme::setDark();
-    ui.begin("dark");
-    mod->compose(ui, screen);
-    ui.end();
-    const auto* darkBg = ui.find("settings.pagebg");
-    DOCTEST_REQUIRE(darkBg != nullptr);
-    const float darkR = darkBg->color.r;
+    module::settings::applyWindowVisuals(module::settings::kWindowEffectOff);
+    const float darkClearR = app::currentClearColor().r;
 
-    // 切浅色再 compose：背景色应随之变化（与运行时"每帧读 current()"同一机制）
+    // 切浅色再应用：底色应随之变化（运行时切主题走 theme 回调同一函数）
     ::core::theme::setLight();
+    module::settings::applyWindowVisuals(module::settings::kWindowEffectOff);
+    const float lightClearR = app::currentClearColor().r;
+    DOCTEST_CHECK(darkClearR != lightClearR);
+
+    // 回归守卫：compose 不得再出现全屏自铺底（加回 = 主体效果全灭）
     ui.begin("light");
     mod->compose(ui, screen);
     ui.end();
-    const auto* lightBg = ui.find("settings.pagebg");
-    DOCTEST_REQUIRE(lightBg != nullptr);
-    const float lightR = lightBg->color.r;
+    DOCTEST_CHECK(ui.find("settings.pagebg") == nullptr);
+    DOCTEST_CHECK(ui.find("settings.card.appearance.bg") != nullptr);
 
-    DOCTEST_CHECK(darkR != lightR);
     ::core::theme::setDark();  // 恢复
     return true;
 })
@@ -906,6 +907,9 @@ REGISTER_TEST(settings_pet_dropdown_z_escape, "settings: pet skin dropdown popup
     DOCTEST_REQUIRE(dd != nullptr);
     DOCTEST_REQUIRE(petCard != nullptr);
     DOCTEST_REQUIRE(dirCard != nullptr);
+    // ⑥恢复路径：桌宠卡内「鼠标穿透」toggle 必须随卡片渲染
+    DOCTEST_CHECK(ui.find("settings.card.pet.through.sw") != nullptr);
+    DOCTEST_CHECK(ui.find("settings.card.pet.through.label") != nullptr);
 
     // 下拉自带 zIndex(20) 沿祖先链传播：pet 卡子树上界 > 目录卡（z 0）
     DOCTEST_CHECK(dd->subtreeMaxZIndex >= 20);
