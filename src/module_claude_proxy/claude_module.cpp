@@ -20,12 +20,15 @@
 
 #include <components/button.h>
 #include <components/dialog.h>
+#include <components/dropdown.h>
 #include <components/input.h>
+#include <components/scrollview.h>
 #include <components/tabs.h>
 #include <components/theme.h>
 #include <components/toast.h>
 
 #include <atomic>
+#include <algorithm>
 #include <cstdio>
 #include <ctime>
 #include <filesystem>
@@ -49,6 +52,25 @@ std::string formatLatency(int64_t ms) {
     std::snprintf(buf, sizeof(buf), "%.1fs", ms / 1000.0);
     return std::string(buf);
 }
+
+// 按字节截断 UTF-8 串（审计 [11]：错误行尾附 error 摘要，过长会挤爆行宽）。
+// 截点回退到字符边界，不把多字节字符切成半个（乱码方块）
+std::string truncateUtf8(const std::string& s, size_t maxBytes) {
+    if (s.size() <= maxBytes) return s;
+    size_t cut = maxBytes;
+    while (cut > 0 && (static_cast<unsigned char>(s[cut]) & 0xC0) == 0x80) --cut;
+    return s.substr(0, cut) + "…";
+}
+
+// 调用记录弹窗状态码过滤（审计 [11]，spec §8.3 第 6 条「支持过滤、搜索」）：
+// 下拉索引 → ClaudeService::CallLogQuery::statusClass 映射
+constexpr int kCallsStatusClasses[] = {0, 2, 3, 4, 5, 9};
+const char* const kCallsStatusLabels[] = {
+    "全部状态", "2xx 成功", "3xx 重定向", "4xx 客户端错误",
+    "5xx 服务端错误", "错误（超时等）"};
+constexpr int kCallsStatusCount = 6;
+// 日志弹窗每页条数（审计 [11]；总设计只承诺「过滤、搜索」，条数由 UI 自定）
+constexpr int kCallsPageSize = 20;
 
 // 模型映射摘要（§6.2 详情面板一行式）：「默认 <model> · 槽位已配 N/6」
 std::string modelsSummary(const Profile& p) {
@@ -377,13 +399,51 @@ public:
                                         .color(t.colors.textTertiary)
                                         .build();
                                 } else {
-                                    for (size_t i = 0; i < profiles.size(); ++i) {
-                                        drawProfileCard(ui,
-                                                        "claude.profile." + std::to_string(i),
-                                                        cardY0 + static_cast<float>(i) *
-                                                            (96.0f + cardGap),
-                                                        leftW - 24.0f, t, profiles[i]);
+                                    // 卡片列表套 scrollView（产品审计 2026-09-23
+                                    // [26]）：此前固定 y=56+i*108 平铺，profile 数
+                                    // 一多就画出左栏边界、叠在底部按钮上且无法滚
+                                    // 动。仿 Todo 列内滚动 / settings 卡片区。
+                                    // 滚动区底 = 底部按钮（bodyH-64）上方 12px
+                                    const float scrollH = std::max(
+                                        0.0f, bodyH - 64.0f - 12.0f - cardY0);
+                                    // contentKey = profile id 序列 hash（仿 md.tree，
+                                    // W7 教训：数量相同但内容替换也要失效重测）
+                                    size_t listKey = 0;
+                                    for (const auto& p : profiles) {
+                                        listKey = listKey * 1315423911u +
+                                                  static_cast<size_t>(p.id);
                                     }
+                                    components::scrollView(ui, "claude.profiles.scroll")
+                                        .position(0.0f, cardY0)
+                                        .size(leftW - 24.0f, scrollH)
+                                        .gap(cardGap)
+                                        .step(96.0f + cardGap)
+                                        .theme(themeTokens)
+                                        .contentKey("claude.profiles.scroll." +
+                                                    std::to_string(listKey))
+                                        .offset(profilesScrollOffset_)
+                                        .onChange([this](float v) {
+                                            profilesScrollOffset_ = v;
+                                        })
+                                        .content([&](eui::Ui& inner, float contentWidth,
+                                                     float viewportHeight) {
+                                            (void)viewportHeight;
+                                            for (size_t i = 0; i < profiles.size(); ++i) {
+                                                const std::string cardId =
+                                                    "claude.profile." + std::to_string(i);
+                                                // 行包 stack（position 只在 stack 内
+                                                // 生效，仿 todo 列卡片）
+                                                inner.stack(cardId + ".wrap")
+                                                    .size(contentWidth, 96.0f)
+                                                    .content([&] {
+                                                        drawProfileCard(
+                                                            inner, cardId, 0.0f,
+                                                            contentWidth, t, profiles[i]);
+                                                    })
+                                                    .build();
+                                            }
+                                        })
+                                        .build();
                                 }
 
                                 // 底部按钮：新建 + 导入当前配置（读
@@ -1733,18 +1793,46 @@ private:
     }
 
     // ============ 完整调用记录弹窗（「查看全部」入口） ============
-    void openCallsDialog() {
+    // 产品审计 2026-09-23 [11]：spec §8.3 第 6 条承诺「支持过滤、搜索」，
+    // 此前是 recentCalls(20) 写死的 20 行静态列表。现走 CallLogQuery：
+    // 搜索框（path/method 模糊）+ 状态码下拉（2xx/3xx/4xx/5xx/错误）+
+    // 分页（每页 kCallsPageSize 条，页内 scrollView 兜住小窗口）。
+    std::string reloadCallsPage() {
+        // 拉取当前过滤条件下的一页 + 总匹配数；返回错误信息（空串 = 成功）。
+        // 失败时清空当页（弹窗不留旧过滤条件的残留行）
+        allCalls_.clear();
+        callsTotalMatches_ = 0;
         ClaudeService* svc = ClaudeService::global();
-        if (!svc) {
-            showToast("加载失败", "服务未就绪（ClaudeService 未注册）", true);
-            return;
-        }
-        auto r = svc->recentCalls(20);
-        if (r.isFail()) {
-            showToast("加载失败", r.errorMessage(), true);
-            return;
-        }
+        if (!svc) return "服务未就绪（ClaudeService 未注册）";
+        ClaudeService::CallLogQuery q;
+        q.search = callsSearch_;
+        q.statusClass =
+            kCallsStatusClasses[std::clamp(callsStatusIdx_, 0, kCallsStatusCount - 1)];
+        q.limit = kCallsPageSize;
+        q.offset = callsPage_ * kCallsPageSize;
+        auto r = svc->queryCalls(q);
+        if (r.isFail()) return r.errorMessage();
         allCalls_ = std::move(r).value();
+        auto c = svc->countCalls(q);
+        if (c.isOk()) callsTotalMatches_ = c.value();
+        return {};
+    }
+
+    // 过滤条件变化：回第一页重查（搜索框逐字符触发，本地 SQLite 直查可承受）
+    void applyCallsFilter() {
+        callsPage_ = 0;
+        callsScrollOffset_ = 0;
+        reloadCallsPage();
+    }
+
+    void openCallsDialog() {
+        callsPage_ = 0;
+        callsScrollOffset_ = 0;
+        std::string err = reloadCallsPage();
+        if (!err.empty()) {
+            showToast("加载失败", err, true);
+            return;
+        }
         callsDialogOpen_ = true;
     }
 
@@ -1753,6 +1841,7 @@ private:
                          const components::theme::ThemeColorTokens& themeTokens) {
         const float w = 720.0f;
         const float h = 560.0f;
+        const int rowH = 22;
 
         components::dialog(ui, "claude.dialog.calls")
             .open(callsDialogOpen_)
@@ -1762,57 +1851,196 @@ private:
             .onOpenChange([this](bool v) { callsDialogOpen_ = v; })
             .content([&] {
                 ui.text("claude.dialog.calls.title")
-                    .position(28.0f, 24.0f)
+                    .position(28.0f, 20.0f)
                     .size(w - 56.0f, 28.0f)
-                    .text("调用记录（最近 20 条）")
+                    .text("调用记录")
                     .fontSize(20.0f)
                     .lineHeight(28.0f)
                     .fontWeight(700)
                     .color(t.colors.textPrimary)
                     .build();
 
+                // ---- 工具行：搜索框 + 状态码过滤 + 匹配总数 ----
+                components::input(ui, "claude.dialog.calls.search")
+                    .position(28.0f, 58.0f)
+                    .size(260.0f, 32.0f)
+                    .value(callsSearch_)
+                    .placeholder("搜索路径 / 方法…")
+                    .fontSize(12.0f)
+                    .theme(themeTokens)
+                    .onChange([this](const std::string& v) {
+                        callsSearch_ = v;
+                        applyCallsFilter();
+                    })
+                    .onEnter([this] {
+                        // Enter/Esc 清空（EUI-NEO input 把 Escape 映射到 onEnter，
+                        // 与 todo.search 交互一致）
+                        if (!callsSearch_.empty()) {
+                            callsSearch_.clear();
+                            applyCallsFilter();
+                        }
+                    })
+                    .build();
+
+                // dropdown 无 position 接口 → 包定位 stack（仿 settings 下拉）
+                ui.stack("claude.dialog.calls.status.ddwrap")
+                    .position(298.0f, 58.0f)
+                    .size(150.0f, 32.0f)
+                    .content([&] {
+                        components::dropdown(ui, "claude.dialog.calls.status.dd")
+                            .size(150.0f, 32.0f)
+                            .theme(themeTokens)
+                            .items(std::vector<std::string>(
+                                kCallsStatusLabels,
+                                kCallsStatusLabels + kCallsStatusCount))
+                            .selected(callsStatusIdx_)
+                            .open(callsStatusDdOpen_)
+                            .onOpenChange([this](bool v) { callsStatusDdOpen_ = v; })
+                            .onChange([this](int idx) {
+                                callsStatusIdx_ =
+                                    std::clamp(idx, 0, kCallsStatusCount - 1);
+                                applyCallsFilter();
+                            })
+                            .build();
+                    })
+                    .build();
+
+                ui.text("claude.dialog.calls.count")
+                    .position(460.0f, 58.0f)
+                    .size(w - 460.0f - 28.0f, 32.0f)
+                    .text(std::to_string(callsTotalMatches_) + " 条匹配")
+                    .fontSize(12.0f)
+                    .lineHeight(32.0f)
+                    .horizontalAlign(eui::HorizontalAlign::Right)
+                    .color(t.colors.textTertiary)
+                    .build();
+
+                // ---- 列表区：当页行 + scrollView（440 > 视口时出滚动条） ----
                 if (allCalls_.empty()) {
                     ui.text("claude.dialog.calls.empty")
-                        .position(28.0f, 72.0f)
+                        .position(28.0f, 112.0f)
                         .size(w - 56.0f, 20.0f)
-                        .text("(暂无调用记录)")
+                        .text("(无匹配的调用记录)")
                         .fontSize(t.sizes.fontSizeSmall)
                         .lineHeight(20.0f)
                         .color(t.colors.textTertiary)
                         .build();
                 } else {
-                    const std::time_t now = std::time(nullptr);
-                    for (size_t i = 0; i < allCalls_.size(); ++i) {
-                        const ClaudeService::CallLogEntry& c = allCalls_[i];
-                        const float rowY = 68.0f + static_cast<float>(i) * 22.0f;
-                        const std::string line =
-                            formatCallTime(c.startedAt, now) + "  " + c.method + " " +
-                            c.path + "  " +
-                            (c.statusCode > 0 ? std::to_string(c.statusCode)
-                                              : std::string("-")) +
-                            "  " + formatLatency(c.latencyMs);
-                        const eui::Color rowColor =
-                            (c.statusCode >= 200 && c.statusCode < 300)
-                                ? t.colors.textSecondary
-                                : t.colors.error;
-                        ui.text("claude.dialog.calls.row." + std::to_string(i))
-                            .position(28.0f, rowY)
-                            .size(w - 56.0f, 18.0f)
-                            .text(line)
-                            .fontSize(12.0f)
-                            .lineHeight(18.0f)
-                            .color(rowColor)
-                            .build();
+                    // contentKey = 当页 id 序列 hash（行替换也失效重测，W7 教训）
+                    size_t rowsKey = 0;
+                    for (const auto& c : allCalls_) {
+                        rowsKey = rowsKey * 1315423911u + static_cast<size_t>(c.id);
                     }
+                    const std::time_t now = std::time(nullptr);
+                    const float scrollY = 100.0f;
+                    const float scrollBottom = h - 60.0f - 12.0f;  // 底部按钮上方
+                    components::scrollView(ui, "claude.dialog.calls.scroll")
+                        .position(28.0f, scrollY)
+                        .size(w - 56.0f, scrollBottom - scrollY)
+                        .gap(0.0f)
+                        .step(static_cast<float>(rowH))
+                        .theme(themeTokens)
+                        .contentKey("claude.dialog.calls.scroll." +
+                                    std::to_string(rowsKey) + "." +
+                                    std::to_string(allCalls_.size()))
+                        .offset(callsScrollOffset_)
+                        .onChange([this](float v) { callsScrollOffset_ = v; })
+                        .content([&](eui::Ui& inner, float contentWidth,
+                                     float viewportHeight) {
+                            (void)viewportHeight;
+                            for (size_t i = 0; i < allCalls_.size(); ++i) {
+                                const ClaudeService::CallLogEntry& c = allCalls_[i];
+                                const std::string rowId =
+                                    "claude.dialog.calls.row." + std::to_string(i);
+                                // 行包 stack（position 只在 stack 内生效，仿 todo）
+                                inner.stack(rowId + ".wrap")
+                                    .size(contentWidth, static_cast<float>(rowH))
+                                    .content([&] {
+                                        std::string line =
+                                            formatCallTime(c.startedAt, now) + "  " +
+                                            c.method + " " + c.path + "  " +
+                                            (c.statusCode > 0
+                                                 ? std::to_string(c.statusCode)
+                                                 : std::string("-")) +
+                                            "  " + formatLatency(c.latencyMs);
+                                        // 无状态码行（超时/网络错误）行尾附错误摘要，
+                                        // 截 48 字节防挤爆行宽
+                                        if (c.statusCode <= 0 && !c.error.empty()) {
+                                            line += "  " + truncateUtf8(c.error, 48);
+                                        }
+                                        const eui::Color rowColor =
+                                            (c.statusCode >= 200 && c.statusCode < 300)
+                                                ? t.colors.textSecondary
+                                                : t.colors.error;
+                                        inner.text(rowId)
+                                            .position(0.0f, 2.0f)
+                                            .size(contentWidth, 18.0f)
+                                            .text(line)
+                                            .fontSize(12.0f)
+                                            .lineHeight(18.0f)
+                                            .color(rowColor)
+                                            .build();
+                                    })
+                                    .build();
+                            }
+                        })
+                        .build();
                 }
 
-                components::button(ui, "claude.dialog.calls.close")
+                // ---- 底部：翻页 + 页码 + 关闭 ----
+                const int pages = std::max(
+                    1, (callsTotalMatches_ + kCallsPageSize - 1) / kCallsPageSize);
+                const bool hasNext =
+                    (callsPage_ + 1) * kCallsPageSize < callsTotalMatches_;
+                components::button(ui, "claude.dialog.calls.prev")
                     .position(28.0f, h - 60.0f)
-                    .size(w - 56.0f, 40.0f)
+                    .size(88.0f, 40.0f)
+                    .text("← 上一页")
+                    .fontSize(14.0f)
+                    .colors(t.colors.surfaceElevated, t.colors.hover, t.colors.active)
+                    .textColor(t.colors.textPrimary)
+                    .radius(t.sizes.radius)
+                    .border(1.0f, t.colors.borderDefault)
+                    .disabled(callsPage_ == 0)
+                    .onClick([this] {
+                        if (callsPage_ == 0) return;
+                        --callsPage_;
+                        callsScrollOffset_ = 0;
+                        reloadCallsPage();
+                    })
+                    .build();
+                components::button(ui, "claude.dialog.calls.next")
+                    .position(128.0f, h - 60.0f)
+                    .size(88.0f, 40.0f)
+                    .text("下一页 →")
+                    .fontSize(14.0f)
+                    .colors(t.colors.surfaceElevated, t.colors.hover, t.colors.active)
+                    .textColor(t.colors.textPrimary)
+                    .radius(t.sizes.radius)
+                    .border(1.0f, t.colors.borderDefault)
+                    .disabled(!hasNext)
+                    .onClick([this] {
+                        if ((callsPage_ + 1) * kCallsPageSize >= callsTotalMatches_) return;
+                        ++callsPage_;
+                        callsScrollOffset_ = 0;
+                        reloadCallsPage();
+                    })
+                    .build();
+                ui.text("claude.dialog.calls.page")
+                    .position(228.0f, h - 60.0f)
+                    .size(332.0f, 40.0f)
+                    .text("第 " + std::to_string(callsPage_ + 1) + " / " +
+                          std::to_string(pages) + " 页")
+                    .fontSize(12.0f)
+                    .lineHeight(40.0f)
+                    .color(t.colors.textSecondary)
+                    .build();
+                components::button(ui, "claude.dialog.calls.close")
+                    .position(w - 28.0f - 120.0f, h - 60.0f)
+                    .size(120.0f, 40.0f)
                     .text("关闭")
                     .fontSize(14.0f)
-                    .colors(t.colors.surfaceElevated, t.colors.hover,
-                            t.colors.active)
+                    .colors(t.colors.surfaceElevated, t.colors.hover, t.colors.active)
                     .textColor(t.colors.textPrimary)
                     .radius(t.sizes.radius)
                     .border(1.0f, t.colors.borderDefault)
@@ -1982,9 +2210,18 @@ private:
     int64_t deleteTargetId_ = 0;
     std::string deleteTargetName_;
 
-    // 完整调用记录弹窗
+    // 完整调用记录弹窗（审计 [11]：搜索/状态码过滤/翻页共用以下查询态）
     bool callsDialogOpen_ = false;
     std::vector<ClaudeService::CallLogEntry> allCalls_;
+    std::string callsSearch_;        // 搜索框文本（path/method 模糊）
+    int callsStatusIdx_ = 0;         // 状态下拉索引（→ kCallsStatusClasses）
+    bool callsStatusDdOpen_ = false; // 状态下拉展开态
+    int callsPage_ = 0;              // 当前页（0-based）
+    int callsTotalMatches_ = 0;      // 满足过滤的总条数（countCalls）
+    float callsScrollOffset_ = 0.0f; // 列表区滚动位置（翻页时归零）
+
+    // Profile 列表滚动位置（审计 [26]：卡片超界可滚，不再压底部按钮）
+    float profilesScrollOffset_ = 0.0f;
 
     // Toast
     bool toastOpen_ = false;
