@@ -2,6 +2,7 @@
 // DevDesk 入口 - EUI-NEO 提供 main 函数，我们只需提供
 // app::dslAppConfig() 和 app::compose()
 
+#include "app_sidebar.h"
 #include "claude_service.h"
 #include "core/database.h"
 #include "core/logging.h"
@@ -283,98 +284,9 @@ void startClaudeProxy() {
 
 namespace app {
 
-// ---- 常驻侧边栏（spec §2 预期效果 / §6.5.2 侧边栏规格）----
-// 布局：row(侧边栏 260px, 页面内容)。侧边栏列出 Router 已注册的全部模块
-//（含设置），当前页高亮，点击 navigateTo。EUI-NEO components/sidebar 是
-//右侧滑出抽屉（scrim + 关闭按钮，见 ../EUI-NEO/components/sidebar.h），
-//不适合常驻导航栏，因此这里按 spec token 自绘（设计 token 属 DevDesk 自己的事）。
-void drawSidebar(eui::Ui& ui, const eui::Screen& screen) {
-    ::core::Router* router = getRouter();
-    if (!router) return;
-    const auto& t = ::core::theme::current();
-
-    // 渲染自证：首帧挂载日志（侧边栏每帧重绘，static 只记一次）
-    static const bool mounted = [] {
-        LOG_INFO("侧边栏导航已挂载（" +
-                 std::to_string(getRouter()->modules().size()) +
-                 " 个模块入口，宽 260px）");
-        return true;
-    }();
-    (void)mounted;
-
-    constexpr float kWidth = 260.0f;   // spec §6.5.2：侧边栏宽 260（不是 200-220）
-    const float itemH = 40.0f;         // 导航项高 40
-    const float gap = 4.0f;            // 导航项 gap 4
-    const float padX = 16.0f;          // 左右 padding 16
-
-    ui.stack("app.sidebar")
-        .size(kWidth, screen.height)
-        .content([&] {
-            // 侧边栏底色 = 主窗口 clearColor（applyWindowVisuals 随主题/窗口
-            // 效果档运行时跟随）——不自铺不透明底，半透/磨砂档下侧边栏与页面
-            // 主体一致透出效果；色值与旧 t.colors.background 完全相同（off 档
-            // 观感不变）
-            ui.rect("app.sidebar.divider")
-                .position(kWidth - 1.0f, 0.0f)
-                .size(1.0f, screen.height)
-                .color(t.colors.borderMuted)
-                .build();
-
-            ui.text("app.sidebar.brand")
-                .position(padX, 24.0f)
-                .size(kWidth - padX * 2.0f, 32.0f)
-                .text("DevDesk")
-                .fontSize(t.sizes.fontSizePage)
-                .fontWeight(700)
-                .verticalAlign(eui::VerticalAlign::Center)
-                .color(t.colors.textPrimary)
-                .build();
-
-            float y = 84.0f;
-            for (auto* m : router->modules()) {
-                if (!m) continue;
-                const ::core::PageId page = m->pageId();
-                const bool active = (page == router->currentPage());
-                const std::string id =
-                    std::string("app.sidebar.item.") +
-                    ::core::pageIdToString(page);
-
-                // 命中区 + 悬停反馈（states: 常态/悬停/按下）
-                ui.rect(id + ".hit")
-                    .position(padX, y)
-                    .size(kWidth - padX * 2.0f, itemH)
-                    .states(active ? t.colors.primarySoftBg
-                                   : eui::Color{0.0f, 0.0f, 0.0f, 0.0f},
-                            t.colors.hover, t.colors.active)
-                    .radius(t.sizes.radius)
-                    .onClick([router, page] { router->navigateTo(page); })
-                    .build();
-                // 图标与文字分开两个元素：.icon() 用的 Icon 字体
-                //（FontAwesome）不能和正文字体混排在一个 Text 里
-                constexpr float kIconW = 28.0f;
-                constexpr float kItemInset = 12.0f;  // 内容距高亮条左缘内边距（用户反馈文字贴边）
-                ui.text(id + ".icon")
-                    .position(padX + kItemInset, y)
-                    .size(kIconW, itemH)
-                    .icon(m->iconGlyph())
-                    .fontSize(t.sizes.fontSizeBody)
-                    .verticalAlign(eui::VerticalAlign::Center)
-                    .color(active ? t.colors.primary : t.colors.textSecondary)
-                    .build();
-                ui.text(id + ".label")
-                    .position(padX + kItemInset + kIconW, y)
-                    .size(kWidth - padX * 2.0f - kItemInset - kIconW, itemH)
-                    .text(m->displayName())
-                    .fontSize(t.sizes.fontSizeBody)
-                    .verticalAlign(eui::VerticalAlign::Center)
-                    .color(active ? t.colors.primary : t.colors.textSecondary)
-                    .build();
-
-                y += itemH + gap;
-            }
-        })
-        .build();
-}
+// ---- 常驻侧边栏 + 根布局 ----
+// drawSidebar / compose 已移至 app_sidebar.{h,cpp}（2026-09-23 折叠/展开
+// 改造时拆出：单测需要无头驱动，而这里的 getRouter() 拉起全部真实模块）
 
 // DslAppConfig 在 eui::dsl_app.h 中定义（命名空间 app）
 const DslAppConfig& dslAppConfig() {
@@ -464,6 +376,18 @@ const DslAppConfig& dslAppConfig() {
         // 背景：InputBuilder 无逐组件 onKeyEvent passthrough（Phase 2 上游 PR），
         // 不涉及编辑器文本变换的快捷键（Todo Ctrl+↑/↓、Markdown Ctrl+Shift+P）走此通道。
         .onKeyEvent([](const eui::KeyEvent& key) {
+            // Ctrl+B 折叠/展开侧边栏（VS Code 同款语义）。选 Ctrl+B 而非
+            // Ctrl+Shift+B：EUI-NEO 派发序 = 焦点元素优先——Markdown 编辑器
+            // 聚焦时 Ctrl+B 已被 handleEditorKey 消费（加粗），到这里的一定
+            // 不是编辑场景，天然让位无需特判（编辑器失焦 = 全局切换）
+            if (key.isDown() && key.modifiers.shortcut() &&
+                !key.modifiers.shift && !key.modifiers.alt &&
+                key.key == eui::InputKey::B) {
+                app::setSidebarCollapsed(!app::sidebarCollapsed(),
+                                         ::core::paths::configFile());
+                requestUpdate();
+                return;
+            }
             if (auto* router = getRouter()) {
                 router->dispatchKeyEvent(key);
             }
@@ -483,6 +407,9 @@ const DslAppConfig& dslAppConfig() {
         const module::settings::SettingsStore settingsStore(
             paths::configFile());
         const auto settingsCfg = settingsStore.load();
+        // 侧边栏折叠启动恢复（app_sidebar）：config.json → 运行时状态。
+        // 空路径 = 只改内存不回写（保存发生在用户切换时）
+        app::setSidebarCollapsed(settingsCfg.sidebarCollapsed);
         if (!module::settings::moduleEnabled(
                 settingsCfg, module::settings::kModuleIdClaudeProxy)) {
             LOG_INFO("Claude 模块已关闭：代理/ClaudeService 整体下线"
@@ -540,29 +467,7 @@ const DslAppConfig& dslAppConfig() {
     return config;
 }
 
-void compose(eui::Ui& ui, const eui::Screen& screen) {
-    auto* router = getRouter();
-    if (!router) return;
-    // 布局：row(常驻侧边栏, 页面内容)——spec §2"左侧侧边栏切换工具，右侧主区"
-    constexpr float kSidebarWidth = 260.0f;
-    ui.row("app.root")
-        .size(screen.width, screen.height)
-        .content([&] {
-            drawSidebar(ui, screen);
-            const float pageW = screen.width - kSidebarWidth;
-            ui.stack("app.page")
-                .size(pageW, screen.height)
-                .clip()
-                .content([&] {
-                    // 页面模块按"去掉侧边栏后的宽度"布局（Screen 只含宽高）
-                    eui::Screen pageScreen;
-                    pageScreen.width = pageW;
-                    pageScreen.height = screen.height;
-                    router->compose(ui, pageScreen);
-                })
-                .build();
-        })
-        .build();
-}
+// 根布局 row(侧边栏, 页面内容) 已移至 app_sidebar.cpp 的 app::compose
+//（EUI-NEO app main 每帧回调，符号解析与定义位置无关）
 
 } // namespace app

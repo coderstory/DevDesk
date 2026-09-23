@@ -1,5 +1,6 @@
 add_executable(devdesk_tests
     test_main.cpp
+    ${CMAKE_SOURCE_DIR}/src/app_sidebar.cpp
     test_core/test_result.cpp
     test_core/test_paths.cpp
     test_core/test_logging.cpp
@@ -35,6 +36,7 @@ add_executable(devdesk_tests
     test_modules/test_module_gating.cpp
     test_modules/test_pet.cpp
     test_modules/test_theme_hierarchy.cpp
+    test_modules/test_app_sidebar.cpp
 )
 
 devdesk_apply_warnings(devdesk_tests)

@@ -75,6 +75,10 @@ struct SettingsConfig {
     // 窗口效果（磨砂设计 Phase D）："off"（默认实色）| "translucent"（整体
     // 半透）| "frosted"（Acrylic 磨砂）。sanitized 把未知值收敛为 "off"
     std::string windowEffect = kWindowEffectOff;
+    // 侧边栏折叠（2026-09-23 侧边栏折叠/展开）：true = 启动恢复 72px 图标栏，
+    // false = 常规 260px。运行时切换在 app_sidebar（按钮/Ctrl+B），经
+    // setSidebarCollapsed 走 SettingsStore 持久化到这里
+    bool sidebarCollapsed = false;
     // 模块开关（模块插拔方案 A）：可关的是三个工具模块（markdown/todo/
     // claude_proxy）；home 是默认落地页、settings 是开关 UI 宿主，恒启用
     //（sanitized 强制补齐）。缺省 = 全启用，老 config.json 零迁移兼容。

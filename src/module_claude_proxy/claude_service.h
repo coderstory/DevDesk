@@ -143,6 +143,10 @@ public:
     //（测试）不写任何真实文件
     void setSettingsSyncPaths(const settings_sync::Paths& paths);
 
+    // 注入的接管路径（未注入时 settingsFile 为空）。「导入当前配置」据此
+    // 定位 settings.json：生产 = main 注入的 defaultPaths，测试 = 临时目录
+    const settings_sync::Paths& settingsSyncPaths() const { return syncPaths_; }
+
     // 已接管（sidecar 快照存在；设置页「接管状态」行数据源，Phase D UI 用）
     bool isClaudeCodeManaged() const;
 

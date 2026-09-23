@@ -30,13 +30,13 @@ extern "C" ::core::Module* create_settings_module();
 // 窗口效果（磨砂 Phase D）让 module_settings 引用 app:: 运行时 API；app API
 // 的实现 TU（glfw_app_main）只编进 DevDesk 主程序，测试侧包含 dsl_app_impl.h
 // 自带实现（与 EUI-NEO 自身单测相同的注入方式），并提供它要求的
-// app::dslAppConfig / app::compose
+// app::dslAppConfig。app::compose 不再需要桩——src/app_sidebar.cpp 的真实现
+// 已直接编进测试二进制（tests/CMakeLists.txt，侧边栏折叠单测驱动同一份）
 namespace app {
 const app::DslAppConfig& dslAppConfig() {
     static const DslAppConfig config = DslAppConfig{}.title("devdesk_test_settings");
     return config;
 }
-void compose(eui::Ui&, const eui::Screen&) {}
 } // namespace app
 
 namespace {

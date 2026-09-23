@@ -13,7 +13,7 @@
 //     badge y=98、卡高 120、padX 28、最小窗口 1200 时 statW=208
 //   - todo_module.cpp drawChip：chip 高 18、字号 fontSizeSmall-3；
 //     drawCard：title y=14 lineHeight 18、chip y=44、卡高 84（todo_ui_logic.h）
-//   - main.cpp 侧边栏：itemH 40、label 宽 200、brand 32px
+//   - app_sidebar.cpp 侧边栏：itemH 40、label 宽 200、brand 32px
 #include "doctest.h"
 
 #include <cmath>
@@ -94,7 +94,7 @@ REGISTER_TEST(todo_card_text_fits, "font-em: todo card & chips fit fixed heights
     return true;
 })
 
-// ---- 4. 侧边栏（main.cpp：itemH 40、label 宽 200、brand 32px） ----
+// ---- 4. 侧边栏（app_sidebar.cpp：itemH 40、label 宽 200、brand 32px） ----
 REGISTER_TEST(sidebar_text_fits, "font-em: sidebar labels fit item height/width", {
     const auto& t = core::theme::current();
     core::theme::setFontScale(1.0f);
