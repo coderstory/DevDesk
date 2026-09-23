@@ -19,7 +19,8 @@ MdHighlightColors mdHighlightColors(const core::theme::Tokens& tokens) {
         tokens.colors.textTertiary,   // marker
         tokens.colors.success,        // code
         tokens.colors.info,           // link / italic
-        tokens.colors.primary,        // listMarker
+        tokens.colors.primaryText,    // listMarker（审计 [27]：文字色走
+                                      // primaryText，浅色下达标深一档）
         tokens.colors.textSecondary,  // quote
     };
 }

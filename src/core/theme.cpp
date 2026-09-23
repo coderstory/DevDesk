@@ -18,6 +18,8 @@ namespace {
         c.primaryHover = eui::Color("#E0896B");
         c.primaryPressed = eui::Color("#B85F3F");
         c.primarySoftBg = eui::Color("#3A2620");
+        // 深色档 primary 作文字达标（5.67:1 on background），与 primary 同值
+        c.primaryText = eui::Color("#D97757");
         c.onPrimary = eui::Color("#FFFFFF");
         c.textPrimary = eui::Color("#FAF9F5");
         c.textSecondary = eui::Color("#C9C5BD");
@@ -62,10 +64,16 @@ namespace {
         c.primaryHover = eui::Color("#E0896B");
         c.primaryPressed = eui::Color("#B85F3F");
         c.primarySoftBg = eui::Color("#F5E6DE");
+        // 审计 [27]：主色 #D97757 直接当文字在浅底 2.96:1 / primarySoftBg
+        // 2.57:1 全不达标，文字档加深到深一档 clay（5.27 / 4.57，WCAG AA）
+        c.primaryText = eui::Color("#A64F2E");
         c.onPrimary = eui::Color("#FFFFFF");
         c.textPrimary = eui::Color("#1F1D1A");
-        c.textSecondary = eui::Color("#6B6660");
-        c.textTertiary = eui::Color("#9A948A");
+        // 审计 [27]：旧值 #6B6660 与新 textTertiary（原 #9A948A 在浅底
+        // 仅 2.86:1，已加深到 #6B665E=5.41:1）几乎同色、层级坍塌；secondary
+        // 相应再深一档保住两级辅助灰（7.49:1）
+        c.textSecondary = eui::Color("#55514A");
+        c.textTertiary = eui::Color("#6B665E");
         c.textDisabled = eui::Color("#B5B0A8");
         c.borderDefault = eui::Color("#E8E6DC");
         c.borderMuted = eui::Color("#F0EEE6");

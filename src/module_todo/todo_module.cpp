@@ -1836,7 +1836,7 @@ private:
                         .fontSize(t.sizes.fontSizeSmall - 1.0f)
                         .colors(active ? t.colors.primarySoftBg : t.colors.surfaceElevated,
                                 t.colors.hover, t.colors.active)
-                        .textColor(active ? t.colors.primary : t.colors.textSecondary)
+                        .textColor(active ? t.colors.primaryText : t.colors.textSecondary)
                         .radius(t.sizes.radius)
                         .border(1.0f, active ? t.colors.primary : t.colors.borderDefault)
                         .onClick([this, i, prios] { detailPriority_ = prios[i]; })
@@ -1860,7 +1860,7 @@ private:
                     .fontSize(t.sizes.fontSizeSmall - 1.0f)
                     .colors(!hasDue ? t.colors.primarySoftBg : t.colors.surfaceElevated,
                             t.colors.hover, t.colors.active)
-                    .textColor(!hasDue ? t.colors.primary : t.colors.textSecondary)
+                    .textColor(!hasDue ? t.colors.primaryText : t.colors.textSecondary)
                     .radius(t.sizes.radius)
                     .border(1.0f, !hasDue ? t.colors.primary : t.colors.borderDefault)
                     .onClick([this] { detailDueAt_ = std::nullopt; })
@@ -1874,7 +1874,7 @@ private:
                     .fontSize(t.sizes.fontSizeSmall - 1.0f)
                     .colors(hasDue ? t.colors.primarySoftBg : t.colors.surfaceElevated,
                             t.colors.hover, t.colors.active)
-                    .textColor(hasDue ? t.colors.primary : t.colors.textSecondary)
+                    .textColor(hasDue ? t.colors.primaryText : t.colors.textSecondary)
                     .radius(t.sizes.radius)
                     .border(1.0f, hasDue ? t.colors.primary : t.colors.borderDefault)
                     .onClick([this] { datePickOpen_ = true; })
@@ -1952,7 +1952,7 @@ private:
                         .fontSize(t.sizes.fontSizeSmall - 1.0f)
                         .colors(active ? t.colors.primarySoftBg : t.colors.surfaceElevated,
                                 t.colors.hover, t.colors.active)
-                        .textColor(active ? t.colors.primary : t.colors.textSecondary)
+                        .textColor(active ? t.colors.primaryText : t.colors.textSecondary)
                         .radius(t.sizes.radius)
                         .border(1.0f, active ? t.colors.primary : t.colors.borderDefault)
                         .onClick([this, i] {

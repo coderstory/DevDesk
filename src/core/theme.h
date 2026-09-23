@@ -26,6 +26,12 @@ struct ColorTokens {
     eui::Color primaryHover;
     eui::Color primaryPressed;
     eui::Color primarySoftBg;
+    // 主色作**文字色**时的专用 token（审计 [27]：#D97757 直接当 11-13px
+    // 小字色在浅底上仅 2.96:1，低于 WCAG AA 4.5:1）。深色档 = primary
+    // （本就 5.67:1 达标）；浅色档 = 深一档 clay（浅底/primarySoftBg 上
+    // 均 ≥4.5:1）。链接/标签 chip 文字/大纲当前节/列表符号等文字用本
+    // token；图标/边框/背景继续用 primary
+    eui::Color primaryText;
     // 主色背景上的前景色（主按钮文字 / ACTIVE 徽标；两主题均为白，
     // 收敛模块里 9 处 eui::Color("#FFFFFF") 硬编码——W10 复审项）
     eui::Color onPrimary;

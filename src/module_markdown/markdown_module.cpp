@@ -118,7 +118,7 @@ void drawFileTreeItem(eui::Ui& ui,
                 .text(name)
                 .fontSize(t.sizes.fontSizeSmall)
                 .lineHeight(32.0f)
-                .color(active ? t.colors.primary : t.colors.textPrimary)
+                .color(active ? t.colors.primaryText : t.colors.textPrimary)
                 .fontWeight(active ? 700 : 400)
                 .build();
         })
@@ -838,7 +838,7 @@ private:
                                         .text(h.title.empty() ? "(无标题)" : h.title)
                                         .fontSize(t.sizes.fontSizeSmall)
                                         .lineHeight(30.0f)
-                                        .color(current ? t.colors.primary
+                                        .color(current ? t.colors.primaryText
                                                        : t.colors.textPrimary)
                                         .fontWeight(current ? 700 : 400)
                                         .build();
@@ -1028,7 +1028,7 @@ private:
                         .text(name)
                         .fontSize(fs)
                         .lineHeight(h)
-                        .color(t.colors.primary)
+                        .color(t.colors.primaryText)
                         .fontWeight(600)
                         .build();
                     // × 删除（chip 右侧独立热区，底色同 chip 不额外可见）
@@ -1047,7 +1047,7 @@ private:
                         .fontSize(fs)
                         .lineHeight(h)
                         .horizontalAlign(eui::HorizontalAlign::Center)
-                        .color(t.colors.primary)
+                        .color(t.colors.primaryText)
                         .build();
                 })
                 .build();
