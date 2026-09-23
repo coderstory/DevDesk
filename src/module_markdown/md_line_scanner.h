@@ -24,8 +24,21 @@ struct MdHeading {
     std::string title;    // 去掉 # 前缀和首尾空白后的标题文本
 };
 
-// 扫描全文标题。围栏代码块（``` / ~~~）内的 # 行不算标题。
-// 近似（ponytail）：围栏不校验缩进与信息串语法，``` 与 ~~~ 各自配对开关。
+// 一个围栏代码块（``` / ~~~）。行首字节偏移集合 {openLineStart, contentEnd}
+// 即围栏行（开/闭栏行）行首——高亮器据此区分围栏行与内容行（一鱼三吃）。
+struct MdFenceBlock {
+    size_t openLineStart = 0;   // 开栏行（如 ```cpp）行首
+    size_t contentStart = 0;    // 首个内容行行首（开栏行换行之后）
+    size_t contentEnd = 0;      // 闭栏行行首；未闭合围栏 = text.size()
+};
+
+// 扫描围栏代码块区间。近似（ponytail）同 scanHeadings：围栏不校验缩进与
+// 信息串语法，``` 与 ~~~ 各自按字符配对开关。区间按出现顺序升序、互不重叠。
+std::vector<MdFenceBlock> scanFences(const std::string& text);
+
+// 扫描全文标题。围栏代码块（``` / ~~~）内的 # 行不算标题（围栏语义与
+// scanFences 同源，两处共用一套状态机语义）。
+// 近似（ponytail）：同 scanFences。
 std::vector<MdHeading> scanHeadings(const std::string& text);
 
 // 总行数（0 行文本算 1 行；行尾无换行的最后一行也计一行）

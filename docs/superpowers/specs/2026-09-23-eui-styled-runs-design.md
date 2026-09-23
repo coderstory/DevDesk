@@ -1,7 +1,7 @@
 # EUI-NEO Styled Text Runs 设计（Markdown Phase 2 语法高亮的上游前置）
 
 - 日期：2026-09-23
-- 状态：设计定稿，待评审
+- 状态：Phase A/B 已合入 EUI-NEO main（b7e0e9f）；**Phase C 已落地**（DevDesk `feat/md-highlight`，2026-09-23，§8 表回填）；Phase D 未启动
 - 范围：EUI-NEO 仓（上游 PR）+ DevDesk 侧行级高亮器；**本文档只做设计，不改代码**
 - 上游依据：
   - `docs/superpowers/specs/2026-09-22-markdown-editor-ux-design.md` §5.1（编辑器语法高亮上游改造范围）、§6.2（着色表）
@@ -23,6 +23,7 @@
 ### 1.2 次级需求（顺带受益，不额外开发）
 
 - **静态富文本**：markdown 预览组件目前靠"多个 `ui.text` segment 手工定位"实现混色（`EUI-NEO/components/markdown.h:1418-1460` `renderInlineRuns/renderInlineSegment`），styled runs 落地后可部分收敛（仅颜色差异的 segment 合并为单元素）
+  - **Phase C 评估结论（2026-09-23）：不做**。segment 间不只是颜色差异——代码 run 是 monospace 小字号、标题有独立字号/字重，颜色 run（v1 唯一维度）无法合并异字体/异字号段；只有"同字体同字号仅色差"的 run（如链接文字 vs 正文）能收敛，而那要先重构逐段测量+手工换行的 inline 布局才能定位收益，工作量 > 半天。待 Phase D（weight run）落地后重评——届时代码段字号可并入 run 维度，收敛空间更大。
 - **未来代码块虚拟化 / 日志着色**：同一 run 机制直接复用（框架中立，EUI-NEO 不懂 Markdown）
 - **批渲染收益**：现状 OpenGL 文本批在颜色变化时 flush（`opengl_text.cpp:320-331`），预览侧多色文本每换色一次断一批；per-vertex color 后该 flush 消失
 
@@ -288,8 +289,8 @@ InputBuilder& lineStyles(std::function<std::vector<TextRun>(
 |-------|------|-----|------|--------------|
 | **A. 只读样式** | TextRun/TextStyle.runs/normalize、TextBuilder.run/runs、TextPrimitive per-vertex color、OpenGL+Vulkan 顶点格式 5→9 float、删颜色 flush | EUI-NEO | ~600 行 + 2 后端 shader | example（多彩标题/代码行）+ 单测（normalize 边界、空 runs 与旧路径输出逐字节一致）；现有 examples 截屏零差异 |
 | **B. input 高亮** | InputBuilder::lineStyles 回调、行级 runs 渲染、styleRevision + 行缓存、dirtyKey 追加 | EUI-NEO | ~300 行 | example（关键词着色的多行编辑器，光标/选区/中文 IME 全操作回归）+ 单测 |
-| **C. DevDesk 高亮器** | `md_highlighter.{h,cpp}`（扩展 md_line_scanner 围栏状态）+ theme 明暗色表接线 + 行缓存随 textRevision 失效 | DevDesk | ~200-300 行 | 高亮截屏评审（对照 ux-design §6.2 色表）；万行文档击键延迟实测 < 8ms |
-| **D. weight run（可选）** | TextRun 加 fontWeight、per-run 字体栈 shaping、TextMetrics 跨 run 缝合、TextSizeCache key 扩展、caret 回归 | EUI-NEO | ~800 行 | 独立 PR，A-C 落地后按需求决策 |
+| **C. DevDesk 高亮器** | `md_highlighter.{h,cpp}`（扩展 md_line_scanner 围栏状态）+ theme 明暗色表接线 + 行缓存随 textRevision 失效 | DevDesk | ~200-300 行 | ✅ **已落地**（2026-09-23，`feat/md-highlight`）：`md_highlight.{h,cpp}` + `md_line_scanner.scanFences`（大纲/高亮共用围栏状态机）+ §6.2 色表全映射现有 token + lineStyles 接线/主题切换 bump styleRevision；+7 单测（含万行性能冒烟实测击键轮 max 1.53ms < 8ms） |
+| **D. weight run（可选）** | TextRun 加 fontWeight、per-run 字体栈 shaping、TextMetrics 跨 run 缝合、TextSizeCache key 扩展、caret 回归 | EUI-NEO | ~800 行 | 独立 PR，A-C 落地后按需求决策（粗体内容当前只有标记弱化、无强调色——是 Phase C 已知取舍） |
 
 依赖链：A → B → C 严格串行；D 独立。A+B 即满足"上游 PR"定义（PR #2，附 example + 测试 + docs，符合 EUI-NEO 贡献政策）。
 

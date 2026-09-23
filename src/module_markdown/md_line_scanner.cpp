@@ -22,12 +22,13 @@ char fenceMarker(std::string_view line) {
 
 } // namespace
 
-std::vector<MdHeading> scanHeadings(const std::string& text) {
-    std::vector<MdHeading> out;
+std::vector<MdFenceBlock> scanFences(const std::string& text) {
+    std::vector<MdFenceBlock> out;
     bool inFence = false;
     char fenceChar = 0;
+    size_t openLineStart = 0;
+    size_t contentStart = 0;
     size_t pos = 0;
-    int lineNo = 0;
     while (pos <= text.size()) {
         const size_t eol = text.find('\n', pos);
         size_t end = (eol == std::string::npos) ? text.size() : eol;
@@ -40,10 +41,44 @@ std::vector<MdHeading> scanHeadings(const std::string& text) {
             if (!inFence) {
                 inFence = true;
                 fenceChar = fence;
+                openLineStart = pos;
+                contentStart = (eol == std::string::npos) ? text.size() : eol + 1;
             } else if (fence == fenceChar) {
                 inFence = false;
+                out.push_back({openLineStart, contentStart, pos});
             }
-        } else if (!inFence && !line.empty() && line[0] == '#') {
+        }
+
+        if (eol == std::string::npos) break;
+        pos = eol + 1;
+    }
+    if (inFence) {
+        out.push_back({openLineStart, contentStart, text.size()});
+    }
+    return out;
+}
+
+std::vector<MdHeading> scanHeadings(const std::string& text) {
+    std::vector<MdHeading> out;
+    // 围栏语义与 scanFences 同源（一鱼三吃：大纲/高亮/分块共用一套状态机）
+    const std::vector<MdFenceBlock> fences = scanFences(text);
+    size_t nextFence = 0;
+    size_t pos = 0;
+    int lineNo = 0;
+    while (pos <= text.size()) {
+        const size_t eol = text.find('\n', pos);
+        size_t end = (eol == std::string::npos) ? text.size() : eol;
+        if (end > pos && text[end - 1] == '\r') --end;  // CRLF
+        const std::string_view line(text.data() + pos, end - pos);
+
+        // 区间按序且互不重叠：先跳过已结束的围栏，再看行首是否落在内容区间
+        while (nextFence < fences.size() &&
+               fences[nextFence].contentEnd <= pos) {
+            ++nextFence;
+        }
+        const bool inFence = nextFence < fences.size() &&
+                             fences[nextFence].contentStart <= pos;
+        if (!inFence && !line.empty() && line[0] == '#') {
             size_t level = 0;
             while (level < line.size() && level < 6 && line[level] == '#') ++level;
             if (level == line.size() || isSpace(line[level])) {
