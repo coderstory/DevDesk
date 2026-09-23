@@ -288,32 +288,33 @@ public:
     }
 
     // ============ 写操作（都落到 SQLite） ============
+    // 审计 [19]：doCreate*/doRename* 返回错误信息（空 = 成功），校验/创建
+    // 失败由弹窗调用方写进内嵌红字 formError（照抄 claude formError_ 模式：
+    // 弹窗不关、就地可见、下一次输入清除），不再走「关弹窗 + toast」。
+    // 成功路径的确认反馈仍走 toast（操作结果 = toast 的全局分工）。
 
-    void doCreateTask(int64_t columnId, const std::string& title) {
-        if (!service_) return;
-        if (title.empty()) {
-            setStatus("任务标题不能为空", true);
-            return;
-        }
+    std::string doCreateTask(int64_t columnId, const std::string& title) {
+        if (!service_) return "服务未就绪（TodoService 未注册）";
+        if (title.empty()) return "任务标题不能为空";
         auto r = service_->createTask(columnId, title);
         if (r.isFail()) {
-            setStatus("新建任务失败：" + r.errorMessage(), true);
             LOG_ERROR("Todo: createTask 失败: " + r.errorMessage());
-            return;
+            return "新建任务失败：" + r.errorMessage();
         }
         setStatus("已创建任务「" + title + "」");
         reloadAll();
+        return "";
     }
 
-    void doCreateColumn(const std::string& title) {
-        if (!service_) return;
+    std::string doCreateColumn(const std::string& title) {
+        if (!service_) return "服务未就绪（TodoService 未注册）";
         auto r = service_->createColumn(title);
         if (r.isFail()) {
-            setStatus("新建列失败：" + r.errorMessage(), true);
-            return;
+            return "新建列失败：" + r.errorMessage();
         }
         setStatus("已创建列「" + title + "」");
         reloadAll();
+        return "";
     }
 
     // 返回是否成功（拖拽收尾要区分成败给提示；其余调用方忽略返回值）
@@ -407,15 +408,27 @@ public:
 
     // ============ 列管理（service 四 API 中的 rename/delete/reorder 接线） ============
 
-    void doRenameColumn(int64_t id, const std::string& title) {
-        if (!service_ || title.empty()) return;
+    // 列标题是否已被占用（exceptId = 改名列自身 id，重命名为自己的
+    // 当前名不算撞名；0 = 不排除）。审计 [19]：撞名校验错误经弹窗
+    // 内嵌红字呈现（此前重命名空名静默返回、无任何反馈）。
+    bool columnTitleTaken(const std::string& title, int64_t exceptId) const {
+        for (const auto& c : columns_) {
+            if (c.id != exceptId && c.title == title) return true;
+        }
+        return false;
+    }
+
+    std::string doRenameColumn(int64_t id, const std::string& title) {
+        if (!service_) return "服务未就绪（TodoService 未注册）";
+        if (title.empty()) return "列标题不能为空";
+        if (columnTitleTaken(title, id)) return "该列名已存在，请换一个";
         auto r = service_->renameColumn(id, title);
         if (r.isFail()) {
-            setStatus("重命名失败：" + r.errorMessage(), true);
-            return;
+            return "重命名失败：" + r.errorMessage();
         }
         setStatus("已重命名列");
         reloadAll();
+        return "";
     }
 
     void doDeleteColumn(int64_t id) {
@@ -1143,7 +1156,21 @@ private:
     void openNewTaskDialog(int64_t columnId) {
         newTaskColumnId_ = columnId;
         newTaskTitle_.clear();
+        newTaskError_.clear();   // 审计 [19]：打开清（claude formError_ 模式）
         newTaskOpen_ = true;
+    }
+
+    // 审计 [19]：提交失败（空标题/服务错误）→ 弹窗内嵌红字、弹窗不关；
+    // 成功 → 关窗 + toast 确认。此前「先关弹窗再报 toast」，反馈隔在窗外。
+    void submitNewTask() {
+        const int64_t col = newTaskColumnId_;
+        const std::string title = newTaskTitle_;
+        const std::string err = doCreateTask(col, title);
+        if (!err.empty()) {
+            newTaskError_ = err;
+            return;
+        }
+        newTaskOpen_ = false;
     }
 
     void drawNewTaskDialog(eui::Ui& ui, const eui::Screen& screen,
@@ -1190,14 +1217,25 @@ private:
                     .placeholder("任务标题…")
                     .fontSize(t.sizes.fontSizeBody)
                     .theme(themeTokens)
-                    .onChange([this](const std::string& v) { newTaskTitle_ = v; })
-                    .onEnter([this] {
-                        const int64_t col = newTaskColumnId_;
-                        const std::string title = newTaskTitle_;
-                        newTaskOpen_ = false;
-                        doCreateTask(col, title);
+                    .onChange([this](const std::string& v) {
+                        newTaskTitle_ = v;
+                        newTaskError_.clear();  // 审计 [19]：错误随下一次输入清除
                     })
+                    .onEnter([this] { submitNewTask(); })
                     .build();
+
+                // 审计 [19]：内嵌红字错误行（照抄 claude formError_ 渲染——
+                // 校验/创建失败就地可见，弹窗不关）
+                if (!newTaskError_.empty()) {
+                    ui.text("todo.dialog.newtask.error")
+                        .position(28.0f, 134.0f)
+                        .size(w - 56.0f, 18.0f)
+                        .text(newTaskError_)
+                        .fontSize(t.sizes.fontSizeSmall)
+                        .lineHeight(18.0f)
+                        .color(t.colors.error)
+                        .build();
+                }
 
                 components::button(ui, "todo.dialog.newtask.cancel")
                     .position(28.0f, h - 60.0f)
@@ -1219,12 +1257,7 @@ private:
                     .colors(t.colors.primary, t.colors.primaryHover, t.colors.primaryPressed)
                     .textColor(t.colors.onPrimary)
                     .radius(t.sizes.radius)
-                    .onClick([this] {
-                        const int64_t col = newTaskColumnId_;
-                        const std::string title = newTaskTitle_;
-                        newTaskOpen_ = false;
-                        doCreateTask(col, title);
-                    })
+                    .onClick([this] { submitNewTask(); })
                     .build();
             })
             .build();
@@ -1239,6 +1272,7 @@ private:
 
     void openNewColumnDialog() {
         newColumnTitle_.clear();
+        newColumnError_.clear();   // 审计 [19]：打开清（claude formError_ 模式）
         newColumnOpen_ = true;
     }
 
@@ -1246,11 +1280,22 @@ private:
         return "新列 " + std::to_string(columns_.size() + 1);
     }
 
+    // 审计 [19]：显式输入的列名撞名 / 创建失败 → 弹窗内嵌红字，弹窗不关。
+    // 留空采用默认名「新列 N」的便利路径不查重（默认名是序号兜底，撞名
+    // 也不该把用户困在弹窗里）。失败仍关闭的话与「关弹窗+toast」旧通道同罪。
     void confirmNewColumn() {
-        const std::string title =
-            newColumnTitle_.empty() ? defaultColumnTitle() : newColumnTitle_;
+        const bool defaulted = newColumnTitle_.empty();
+        const std::string title = defaulted ? defaultColumnTitle() : newColumnTitle_;
+        if (!defaulted && columnTitleTaken(title, 0)) {
+            newColumnError_ = "该列名已存在，请换一个";
+            return;
+        }
+        const std::string err = doCreateColumn(title);
+        if (!err.empty()) {
+            newColumnError_ = err;
+            return;
+        }
         newColumnOpen_ = false;
-        doCreateColumn(title);
     }
 
     void drawNewColumnDialog(eui::Ui& ui, const eui::Screen& screen,
@@ -1292,7 +1337,10 @@ private:
                     .placeholder(defaultColumnTitle())
                     .fontSize(t.sizes.fontSizeBody)
                     .theme(themeTokens)
-                    .onChange([this](const std::string& v) { newColumnTitle_ = v; })
+                    .onChange([this](const std::string& v) {
+                        newColumnTitle_ = v;
+                        newColumnError_.clear();  // 审计 [19]：错误随下一次输入清除
+                    })
                     .onEnter([this] { confirmNewColumn(); })
                     // EUI-NEO Input 把 Escape 映射到 onEnter（=提交）；创建弹窗
                     // 需要 Esc=取消：passthrough 先于内置处理，这里拦下并消费。
@@ -1306,6 +1354,18 @@ private:
                         return false;
                     })
                     .build();
+
+                // 审计 [19]：内嵌红字错误行（claude formError_ 同款渲染）
+                if (!newColumnError_.empty()) {
+                    ui.text("todo.dialog.newcol.error")
+                        .position(28.0f, 134.0f)
+                        .size(w - 56.0f, 18.0f)
+                        .text(newColumnError_)
+                        .fontSize(t.sizes.fontSizeSmall)
+                        .lineHeight(18.0f)
+                        .color(t.colors.error)
+                        .build();
+                }
 
                 components::button(ui, "todo.dialog.newcol.cancel")
                     .position(28.0f, h - 60.0f)
@@ -1483,7 +1543,21 @@ private:
     void openRenameDialog(const Column& col) {
         renameColumnId_ = col.id;
         renameTitle_ = col.title;
+        renameError_.clear();   // 审计 [19]：打开清（claude formError_ 模式）
         renameOpen_ = true;
+    }
+
+    // 审计 [19]：重命名提交——空名此前静默返回（弹窗已关、零反馈），
+    // 撞名此前根本不校验；统一为弹窗内嵌红字 + 弹窗不关。
+    void submitRenameColumn() {
+        const int64_t id = renameColumnId_;
+        const std::string title = renameTitle_;
+        const std::string err = doRenameColumn(id, title);
+        if (!err.empty()) {
+            renameError_ = err;
+            return;
+        }
+        renameOpen_ = false;
     }
 
     void drawRenameDialog(eui::Ui& ui, const eui::Screen& screen,
@@ -1516,14 +1590,24 @@ private:
                     .placeholder("列标题…")
                     .fontSize(t.sizes.fontSizeBody)
                     .theme(themeTokens)
-                    .onChange([this](const std::string& v) { renameTitle_ = v; })
-                    .onEnter([this] {
-                        const int64_t id = renameColumnId_;
-                        const std::string title = renameTitle_;
-                        renameOpen_ = false;
-                        doRenameColumn(id, title);
+                    .onChange([this](const std::string& v) {
+                        renameTitle_ = v;
+                        renameError_.clear();  // 审计 [19]：错误随下一次输入清除
                     })
+                    .onEnter([this] { submitRenameColumn(); })
                     .build();
+
+                // 审计 [19]：内嵌红字错误行（claude formError_ 同款渲染）
+                if (!renameError_.empty()) {
+                    ui.text("todo.dialog.rename.error")
+                        .position(28.0f, 118.0f)
+                        .size(w - 56.0f, 18.0f)
+                        .text(renameError_)
+                        .fontSize(t.sizes.fontSizeSmall)
+                        .lineHeight(18.0f)
+                        .color(t.colors.error)
+                        .build();
+                }
 
                 components::button(ui, "todo.dialog.rename.cancel")
                     .position(28.0f, h - 60.0f)
@@ -1545,12 +1629,7 @@ private:
                     .colors(t.colors.primary, t.colors.primaryHover, t.colors.primaryPressed)
                     .textColor(t.colors.onPrimary)
                     .radius(t.sizes.radius)
-                    .onClick([this] {
-                        const int64_t id = renameColumnId_;
-                        const std::string title = renameTitle_;
-                        renameOpen_ = false;
-                        doRenameColumn(id, title);
-                    })
+                    .onClick([this] { submitRenameColumn(); })
                     .build();
             })
             .build();
@@ -2200,6 +2279,7 @@ private:
     bool newTaskOpen_ = false;
     int64_t newTaskColumnId_ = 0;
     std::string newTaskTitle_;
+    std::string newTaskError_;  // 审计 [19]：内嵌红字（claude formError_ 模式）
 
     // 详情弹窗
     bool detailOpen_ = false;
@@ -2233,9 +2313,13 @@ private:
     bool renameOpen_ = false;
     int64_t renameColumnId_ = 0;
     std::string renameTitle_;
+    // 审计 [19]：弹窗内嵌红字错误行（照抄 claude formError_ 模式）——
+    // 校验/创建失败不再静默、不再「关弹窗 + toast」，就地可见
+    std::string renameError_;
     // 新建列弹窗（审计 [24]）：「+ 列」先命名后落库
     bool newColumnOpen_ = false;
     std::string newColumnTitle_;
+    std::string newColumnError_;  // 审计 [19]：同款内嵌错误行
     bool confirmOpen_ = false;
     int64_t confirmColumnId_ = 0;
     int64_t confirmTaskId_ = 0;
