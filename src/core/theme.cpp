@@ -158,6 +158,17 @@ void setFontScale(float scale) {
 
 float fontScale() { return g_fontScale; }
 
+namespace {
+    // 编辑器字号全局通道（spec 缩水 B）；默认 15 = fontSizeBody token 基准
+    float g_editorFontSize = 15.0f;
+}
+
+void setEditorFontSize(float px) {
+    g_editorFontSize = px < 10.0f ? 10.0f : (px > 32.0f ? 32.0f : px);
+}
+
+float editorFontSize() { return g_editorFontSize; }
+
 std::string currentThemeName() {
     return g_current.isDark ? "Dark" : "Light";
 }

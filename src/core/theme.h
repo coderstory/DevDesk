@@ -86,6 +86,14 @@ void setLight();
 void setFontScale(float scale);
 float fontScale();
 
+// Markdown 编辑器字号（px，spec §8.5「编辑器字体大小」，spec 缩水 B）。
+// 与 fontScale 同型的「core 存值、app/settings 写入、消费方 compose 读取」
+// 全局通道：SettingsConfig 本体在 module_settings（模块隔离，markdown 不可
+// include），字号运行时值下沉 core::theme 传递。默认 15.0f = fontSizeBody
+// token 基准；set 钳制 [10, 32]（低于 10 不可读、高于 32 编辑器布局必裂）
+void setEditorFontSize(float px);
+float editorFontSize();
+
 // 获取当前主题名
 std::string currentThemeName();
 

@@ -34,6 +34,12 @@
 
 namespace module::settings {
 
+// 编辑器字号范围（px；spec 缩水 B；默认 15 = fontSizeBody token 基准，
+// 与 core::theme::setEditorFontSize 的钳制区间保持一致）
+constexpr int kDefaultEditorFontSize = 15;
+constexpr int kMinEditorFontSize = 10;
+constexpr int kMaxEditorFontSize = 32;
+
 // 字号缩放范围（%）
 constexpr int kMinFontScalePercent = 85;
 constexpr int kMaxFontScalePercent = 130;
@@ -83,6 +89,11 @@ struct SettingsConfig {
     // 存量用户静默切到 auto）；save 双写 themeMode + theme（theme 供未改动的
     // main.cpp 启动路径读到「上次解析值」，settings onStart 随即幂等纠正）。
     std::string themeMode = kThemeModeAuto;
+    // Markdown 编辑器字号（px，spec §8.5「编辑器字体大小」，spec 缩水 B）。
+    // 生效通道：SettingsModule onStart/切档写 core::theme::setEditorFontSize
+    // （值下沉 core，markdown 不 include 本模块，模块隔离不破）；sanitized
+    // 钳制 [kMinEditorFontSize, kMaxEditorFontSize]
+    int editorFontSize = kDefaultEditorFontSize;
     // W9 默认 100：EUI-NEO 0.7.0 已修字号 CSS em 语义（fix/font-em-size，
     // scalable 字体 fontSize 直接作 em 尺寸），此前 hhea 缩水 ~0.75 不复存在。
     // 存量用户值通过换键 fontScalePercentV3 一次性重置回 100（旧值都是

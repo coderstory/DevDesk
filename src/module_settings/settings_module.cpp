@@ -21,7 +21,10 @@
 //      显示 + 重新生成（确认弹窗后 stopProxy + startProxy 同端口重启 → 服务端
 //      生成新 token；代理未运行时按钮置灰，不允许顺带拉起代理）
 //      + Claude Code 接管状态（Phase D UI 接入，数据源 ClaudeService）
-//   4. Markdown 笔记目录只读展示（改目录属于范围外，仅展示）
+//   4. Markdown 笔记目录只读展示（改目录属于范围外，仅展示）+ 编辑器字号
+//      档位（spec §8.5「编辑器字体大小」，spec 缩水 B；收在日志卡行 2——
+//      末卡弹层逃逸路径已验证，目录卡抬 z 会压桌宠下拉）。值经
+//      core::theme::editorFontSize 全局通道传 markdown（模块隔离）
 //   5. 调用日志保留天数（0=永久）——切换档位立即执行一次滚动清理并
 //      反馈「已清理 N 条」（core::pruneCallLogs，经 appDatabase() 共享
 //      连接；启动时 main.cpp 仍会按持久化配置再清一次，幂等）
@@ -98,6 +101,12 @@ const char* kThemeModePresets[] = {kThemeModeAuto, kThemeModeLight,
 constexpr int kThemeModePresetCount = 3;
 const char* kThemeModePresetLabels[] = {"跟随系统", "浅色", "深色"};
 
+// 编辑器字号档位（px；spec 缩水 B；15 = fontSizeBody token 基准 = 旧硬编值）
+constexpr int kEditorFontPresets[] = {13, 15, 17, 20};
+constexpr int kEditorFontPresetCount = 4;
+const char* kEditorFontPresetLabels[] = {
+    "小 13px", "标准 15px", "大 17px", "特大 20px"};
+
 // —— 日志保留下拉 openUp 越界判定几何（tech-debt A，原为裸魔数）——
 // 日志卡是页面最后一张卡，下拉向下展开可能被窗体底边裁剪；这里用同一套
 // 几何预先判断"向下展开是否出界"，出界则置 openUp 让 dropdown 向上展开。
@@ -106,6 +115,8 @@ const char* kThemeModePresetLabels[] = {"跟随系统", "浅色", "深色"};
 // spacing.compact=8 / spacing.small=6），若将来主题覆写 metrics 需同步。
 constexpr float kLogDropdownOffsetY = 48.0f;    // ddwrap 在日志卡内 y 偏移
 constexpr float kLogDropdownHeight = 40.0f;     // dropdown 控件高度
+constexpr float kLogEditorFontOffsetY = 92.0f;  // 编辑器字号行 y 偏移（spec 缩水 B）
+constexpr float kLogEditorFontHeight = 36.0f;   // 编辑器字号 dropdown 高
 constexpr float kDropdownPopupGap = 8.0f;       // 字段底边与弹层间距（spacing.compact）
 constexpr float kDropdownItemHeight = 34.0f;    // 单个菜单项高（control.menuItem）
 constexpr float kDropdownPopupPadding = 12.0f;  // 弹层上下 padding（spacing.small × 2）
@@ -148,9 +159,14 @@ public:
         applyThemeRuntime();
         ::core::theme::setFontScale(
             static_cast<float>(cfg_.fontScalePercent) / 100.0f);
+        // 编辑器字号通道（spec 缩水 B）：值存 SettingsConfig，运行时经
+        // core::theme 传给 markdown（模块隔离：markdown 不 include settings）
+        ::core::theme::setEditorFontSize(
+            static_cast<float>(cfg_.editorFontSize));
         LOG_INFO("Settings 模块启动（主题=" + ::core::theme::currentThemeName() +
                  "（模式=" + cfg_.themeMode + "）" +
                  ", 字号=" + std::to_string(cfg_.fontScalePercent) + "%" +
+                 ", 编辑器字号=" + std::to_string(cfg_.editorFontSize) + "px" +
                  ", 日志保留=" + retentionLabel() + "）");
     }
 
@@ -251,6 +267,20 @@ public:
                   "%（下一帧全局生效）");
         LOG_INFO("Settings: 字号缩放 → " + std::to_string(cfg_.fontScalePercent) +
                  "%（core::theme token 层全局缩放）");
+    }
+
+    // 编辑器字号档位切换（spec 缩水 B）：写 core::theme 全局通道即时生效
+    //（markdown compose 每帧读 editorFontSize()），persist 供下次启动恢复
+    void applyEditorFontPreset(int index) {
+        if (index < 0 || index >= kEditorFontPresetCount) return;
+        cfg_.editorFontSize = kEditorFontPresets[index];
+        ::core::theme::setEditorFontSize(
+            static_cast<float>(cfg_.editorFontSize));
+        persist();
+        setStatus("编辑器字号：" + std::to_string(cfg_.editorFontSize) +
+                  "px（Markdown 编辑器下一帧生效）");
+        LOG_INFO("Settings: 编辑器字号 → " + std::to_string(cfg_.editorFontSize) +
+                 "px（core::theme 全局通道）");
     }
 
     // 窗口效果三档切换（磨砂 Phase D）：clearColor alpha + backdrop 请求即时
@@ -526,7 +556,7 @@ public:
                             cardY += proxyH + gapY;
                         }
                         drawLogCard(inner, "settings.card.log", contentWidth,
-                                    100.0f, t,
+                                    148.0f, t,
                                     cardsTopY + cardY - cardsScrollOffset_,
                                     screen.height);
                     })
@@ -1294,10 +1324,14 @@ private:
             .build();
     }
 
-    // ---------- 卡片 5：日志保留策略 ----------
-    // cardTopY/screenH：日志卡是页面最后一张卡，字段贴近窗口底部；弹层几何用
-    // 文件顶部 kDropdown* / kLogDropdown* 常量估算（与 dropdown 内部 metrics
-    // 一致），判断向下展开是否出界，出界则 openUp 向上展开（修复菜单被窗体裁剪）
+    // ---------- 卡片 5/6：调用日志保留 + 编辑器字号 ----------
+    // 日志卡是页面最后一张卡（关于卡之后无下拉），行内下拉的弹层用
+    // cardTopY/screenH 几何估算判断向下展开是否出界，出界则 openUp 向上
+    //（修复菜单被窗体裁剪）。spec 缩水 B 的编辑器字号收在本卡行 2：目录卡
+    // 若抬 z 压过日志/代理卡，会反向压住桌宠卡下拉弹层（z 逃逸互斥），
+    // 末卡是唯一无冲突宿主
+    // cardTopY/screenH：弹层几何用文件顶部 kDropdown* / kLogDropdown* 常量
+    // 估算（与 dropdown 内部 metrics 一致）
     void drawLogCard(eui::Ui& ui, const std::string& id, float w, float h,
                      const core::theme::Tokens& t, float cardTopY,
                      float screenH) {
@@ -1355,6 +1389,59 @@ private:
                     .position(288.0f, 60.0f)
                     .size(w - 316.0f, 18.0f)
                     .text("0 = 永久保留；30 天为默认。切换档位立即清理一次。")
+                    .fontSize(fs(12.0f))
+                    .lineHeight(18.0f)
+                    .color(t.colors.textTertiary)
+                    .build();
+
+                // ---- 行 2：编辑器字号（spec §8.5「编辑器字体大小」，spec
+                // 缩水 B）：档位写 core::theme::editorFontSize 通道，markdown
+                // 下一帧生效；默认 15px = fontSizeBody token 基准 ----
+                ui.text(id + ".font.label")
+                    .position(28.0f, 100.0f)
+                    .size(84.0f, 20.0f)
+                    .text("编辑器字号")
+                    .fontSize(fs(12.0f))
+                    .lineHeight(20.0f)
+                    .color(t.colors.textSecondary)
+                    .build();
+                ui.stack(id + ".font.ddwrap")
+                    .position(124.0f, kLogEditorFontOffsetY)
+                    .size(150.0f, kLogEditorFontHeight)
+                    .content([&] {
+                        const float efontFieldBottomY = cardTopY +
+                            kLogEditorFontOffsetY + kLogEditorFontHeight;
+                        const float efontPopupH =
+                            static_cast<float>(kEditorFontPresetCount) *
+                                    kDropdownItemHeight +
+                                kDropdownPopupPadding;
+                        const bool efontOpenUp = efontFieldBottomY +
+                                    kDropdownPopupGap + efontPopupH >
+                                screenH - kWindowBottomMargin;
+                        components::dropdown(ui, id + ".font.dd")
+                            .size(150.0f, kLogEditorFontHeight)
+                            .theme(compTheme)
+                            .items(std::vector<std::string>(
+                                kEditorFontPresetLabels,
+                                kEditorFontPresetLabels +
+                                    kEditorFontPresetCount))
+                            .selected(nearestIndex(cfg_.editorFontSize,
+                                                   kEditorFontPresets,
+                                                   kEditorFontPresetCount))
+                            .openUp(efontOpenUp)
+                            .open(editorFontDropdownOpen_)
+                            .onOpenChange(
+                                [this](bool v) { editorFontDropdownOpen_ = v; })
+                            .onChange([this](int idx) {
+                                applyEditorFontPreset(idx);
+                            })
+                            .build();
+                    })
+                    .build();
+                ui.text(id + ".font.hint")
+                    .position(288.0f, 100.0f)
+                    .size(w - 316.0f, 18.0f)
+                    .text("Markdown 编辑器正文字号；默认 15px（标准）。切换即时生效。")
                     .fontSize(fs(12.0f))
                     .lineHeight(18.0f)
                     .color(t.colors.textTertiary)
@@ -1435,6 +1522,7 @@ private:
     bool retentionDropdownOpen_ = false;
     bool effectDropdownOpen_ = false;      // 窗口效果下拉（磨砂 Phase D）
     bool themeDropdownOpen_ = false;       // 主题模式下拉（spec 缩水 A）
+    bool editorFontDropdownOpen_ = false;  // 编辑器字号下拉（spec 缩水 B）
     bool petSkinDropdownOpen_ = false;     // 桌宠皮肤下拉（M2）
     bool petSkinDataLoaded_ = false;       // 皮肤清单惰性加载标记（M2）
     std::vector<std::string> petSkins_;    // 发现到的皮肤（M2）

@@ -46,3 +46,22 @@ REGISTER_TEST(theme_fontscale_clamped, "theme: setFontScale clamps to [0.5, 2.0]
     core::theme::setFontScale(1.0f);
     return true;
 })
+
+// spec 缩水 B：编辑器字号全局通道（settings 写入 → markdown compose 读取）
+REGISTER_TEST(theme_editor_font_channel,
+              "theme: 编辑器字号通道默认 15 + 钳制 [10,32]（spec缩水 B）", {
+    DOCTEST_CHECK_EQ(core::theme::editorFontSize(), 15.0f);
+    core::theme::setEditorFontSize(20.0f);
+    DOCTEST_CHECK_EQ(core::theme::editorFontSize(), 20.0f);
+    core::theme::setEditorFontSize(5.0f);
+    DOCTEST_CHECK_EQ(core::theme::editorFontSize(), 10.0f);
+    core::theme::setEditorFontSize(99.0f);
+    DOCTEST_CHECK_EQ(core::theme::editorFontSize(), 32.0f);
+    core::theme::setEditorFontSize(15.0f);  // 恢复默认
+    DOCTEST_CHECK_EQ(core::theme::editorFontSize(), 15.0f);
+    // 与全局 fontScale 正交：token 缩放不动编辑器通道值
+    core::theme::setFontScale(1.15f);
+    DOCTEST_CHECK_EQ(core::theme::editorFontSize(), 15.0f);
+    core::theme::setFontScale(1.0f);
+    return true;
+})

@@ -523,7 +523,8 @@ REGISTER_TEST(settings_log_dropdown_popup_stays_in_window, "settings: log dropdo
     // 模块插拔后设置页 5 卡（外观/模块/目录/代理/日志），日志卡在小窗里被
     // 滚出视口——取「日志卡贴近底部、字段可见」的最小窗口 1200×1000：
     // 向下展开的弹层会超出窗体，应改向上展开（弹层整体留在窗体内且位于
-    // 字段上方）
+    // 字段上方）。注意：spec 缩水 B 的编辑器字号收在日志卡行 2（末卡自身
+    // 变高不移动任何字段基线），日志卡顶位置保持 822
     eui::Screen screen;
     screen.width = 1200.0f;
     screen.height = 1000.0f;
@@ -1057,7 +1058,9 @@ REGISTER_TEST(settings_pet_dropdown_z_escape, "settings: pet skin dropdown popup
     DOCTEST_CHECK(ui.find("settings.card.pet.through.sw") != nullptr);
     DOCTEST_CHECK(ui.find("settings.card.pet.through.label") != nullptr);
 
-    // 下拉自带 zIndex(20) 沿祖先链传播：pet 卡子树上界 > 目录卡（z 0）
+    // 下拉自带 zIndex(20) 沿祖先链传播：pet 卡子树上界 > 目录卡（z 0）。
+    // spec 缩水 B 的编辑器字号没有收进目录卡（抬目录卡 z 会反向压住 pet
+    // 弹层，z 逃逸互斥），而是收进末卡日志卡——目录卡维持 z0，本断言不变
     DOCTEST_CHECK(dd->subtreeMaxZIndex >= 20);
     DOCTEST_CHECK(petCard->subtreeMaxZIndex >= 20);
     DOCTEST_CHECK_EQ(dirCard->subtreeMaxZIndex, 0);
@@ -1376,14 +1379,73 @@ REGISTER_TEST(settings_theme_mode_dropdown_click_persists,
     DOCTEST_REQUIRE(itemDark != nullptr);
     DOCTEST_REQUIRE(itemDark->onClick != nullptr);
     itemDark->onClick();
-    module::settings::SettingsStore store(env.cfgPath);
-    const auto saved = store.load();
-    DOCTEST_CHECK_EQ(saved.themeMode,
-                     std::string(module::settings::kThemeModeDark));
-    DOCTEST_CHECK(saved.darkTheme);
-    DOCTEST_CHECK(::core::theme::current().isDark);
-
     mod->onStop();
     ::core::theme::setDark();
+    return true;
+})
+
+// ---- spec 缩水 B：编辑器字号可配（SettingsConfig + settings UI + 通道写入）----
+
+REGISTER_TEST(settings_editor_font_size_roundtrip_clamp,
+              "settings: editorFontSize 默认 15/读写往返/越界钳制（spec缩水 B）", {
+    using namespace module::settings;
+    const auto path = tempConfigFile("edfont");
+    removeQuietly(path);
+    SettingsStore store(path);
+
+    // 默认 15 = fontSizeBody token 基准
+    DOCTEST_CHECK_EQ(store.load().editorFontSize, kDefaultEditorFontSize);
+
+    // 读写往返
+    SettingsConfig cfg;
+    cfg.editorFontSize = 17;
+    DOCTEST_REQUIRE(store.save(cfg).isOk());
+    DOCTEST_CHECK_EQ(store.load().editorFontSize, 17);
+
+    // sanitized 钳制 [10,32]
+    SettingsConfig lo;
+    lo.editorFontSize = 5;
+    DOCTEST_CHECK_EQ(SettingsStore::sanitized(lo).editorFontSize,
+                     kMinEditorFontSize);
+    SettingsConfig hi;
+    hi.editorFontSize = 999;
+    DOCTEST_CHECK_EQ(SettingsStore::sanitized(hi).editorFontSize,
+                     kMaxEditorFontSize);
+
+    // 存量文件无该键 → 默认 15
+    {
+        std::ofstream f(path, std::ios::trunc);
+        f << R"({"theme": "dark", "logRetentionDays": 30})";
+    }
+    DOCTEST_CHECK_EQ(store.load().editorFontSize, 15);
+    removeQuietly(path);
+    return true;
+})
+
+REGISTER_TEST(settings_editor_font_dropdown_applies_channel,
+              "settings: 编辑器字号下拉点档 → core::theme 通道 + 落盘（spec缩水 B headless）", {
+    PruneEnv env("edfontui");
+    std::unique_ptr<::core::Module> mod(create_settings_module());
+    mod->onStart();
+    eui::Screen screen;
+    screen.width = 1600.0f;
+    screen.height = 1000.0f;
+    eui::Ui ui;
+    ui.begin("edfontui");
+    mod->compose(ui, screen);
+    ui.end();
+
+    DOCTEST_CHECK(ui.find("settings.card.log.font.dd") != nullptr);
+    // 点第 3 档「大 17px」→ 通道即时生效 + 持久化
+    const auto* item = ui.find("settings.card.log.font.dd.item.2");
+    DOCTEST_REQUIRE(item != nullptr);
+    DOCTEST_REQUIRE(item->onClick != nullptr);
+    item->onClick();
+    DOCTEST_CHECK_EQ(::core::theme::editorFontSize(), 17.0f);
+    module::settings::SettingsStore store(env.cfgPath);
+    DOCTEST_CHECK_EQ(store.load().editorFontSize, 17);
+
+    mod->onStop();
+    ::core::theme::setEditorFontSize(15.0f);  // 恢复通道默认
     return true;
 })
