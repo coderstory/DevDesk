@@ -4,17 +4,21 @@
 
 #include "app_sidebar.h"
 #include "claude_service.h"
+#include "core/component_theme.h"
 #include "core/database.h"
 #include "core/logging.h"
 #include "core/module_interface.h"
 #include "core/paths.h"
 #include "core/router.h"
 #include "core/theme.h"
+#include "core/tray_menu_spec.h"
 #include "module_pet/pet_config.h"
 #include "module_pet/pet_window.h"
 #include "module_markdown/md_file_open.h"
 #include "platform/file_open.h"
 #include "settings_config.h"
+
+#include <components/styledmenu.h>
 
 #include <eui/dsl.h>
 #include <eui/dsl_app.h>
@@ -295,6 +299,88 @@ void startClaudeProxy() {
     ::module::claude::writeProxyTokenFile(svc->proxyAuthToken(), port);
 }
 
+// ---- 托盘菜单（菜单美化 2026-09-23）----
+// 唯一数据源 core::tray::trayMenuSpec()：styled 独立菜单窗（主路径）与
+// 原生托盘菜单（降级路径）都从 spec 生成，动作路由共用 executeTrayAction。
+
+void executeTrayAction(::core::tray::TrayMenuAction action) {
+    using Action = ::core::tray::TrayMenuAction;
+    switch (action) {
+        case Action::ShowMainWindow:
+            app::requestShow();
+            break;
+        case Action::NavigateHome:
+            if (auto* r = getRouter()) {
+                r->navigateTo(::core::PageId::Home);
+                app::requestUpdate();
+            }
+            break;
+        case Action::NavigateMarkdown:
+            if (auto* r = getRouter()) {
+                r->navigateTo(::core::PageId::Markdown);
+                app::requestUpdate();
+            }
+            break;
+        case Action::NavigateTodo:
+            if (auto* r = getRouter()) {
+                r->navigateTo(::core::PageId::Todo);
+                app::requestUpdate();
+            }
+            break;
+        case Action::NavigateClaude:
+            if (auto* r = getRouter()) {
+                r->navigateTo(::core::PageId::ClaudeProxy);
+                app::requestUpdate();
+            }
+            break;
+        case Action::Exit:
+            app::requestExit();
+            break;
+        case Action::None:
+        default:
+            break;
+    }
+}
+
+// 原生降级菜单（onTrayMenu 返回 false 时弹这份；keepDefault=false：
+// 全部来自 spec，无内置英文 Show/Exit）
+std::vector<core::platform::TrayMenuItem> nativeTrayMenuItems() {
+    std::vector<core::platform::TrayMenuItem> items;
+    for (const auto& spec : ::core::tray::trayMenuSpec()) {
+        core::platform::TrayMenuItem item;
+        item.text = spec.text;
+        if (!item.isSeparator()) {
+            const auto action = spec.action;
+            item.callback = [action] { executeTrayAction(action); };
+        }
+        items.push_back(std::move(item));
+    }
+    return items;
+}
+
+// styled 托盘菜单（圆角/主题/FA 图标，独立弹窗不受任何窗 bounds 限制）。
+// 返回 false = styled 构建失败 → 托盘走原生菜单降级
+bool showTrayStyledMenu(int x, int y) {
+    std::vector<components::StyledMenuItem> items;
+    for (const auto& spec : ::core::tray::trayMenuSpec()) {
+        components::StyledMenuItem item;
+        item.text = spec.text;
+        item.iconCodepoint = spec.iconCodepoint;
+        items.push_back(std::move(item));
+    }
+    const components::StyledMenuStyle style(
+        core::theme::componentTokens(core::theme::current()));
+    return components::showStyledMenu("tray", std::move(items), style,
+                                      static_cast<float>(x), static_cast<float>(y),
+                                      [](const std::vector<int>& path) {
+                                          const auto spec = ::core::tray::trayMenuSpec();
+                                          if (path.size() == 1 && path[0] >= 0 &&
+                                              static_cast<size_t>(path[0]) < spec.size()) {
+                                              executeTrayAction(spec[static_cast<size_t>(path[0])].action);
+                                          }
+                                      });
+}
+
 } // namespace
 
 namespace app {
@@ -366,23 +452,23 @@ const DslAppConfig& dslAppConfig() {
         // 运行时切换由 theme 回调走 setTitleBarAppearance（覆盖本快照）
         .darkTitleBar(::core::theme::current().isDark)
         .centerWindow()
-        // 托盘图标（EUI-NEO 自定义托盘菜单 API）：全中文自定义菜单，
-        // keepDefault=false 去掉内置英文 Show/Exit（用户反馈菜单里混英文）。
-        // 「显示主窗口」走 app::requestShow（处理隐藏到托盘/最小化/失焦三态），
-        // 回调主线程触发、运行期 Router 已就绪，与侧边栏 onClick 同款
-        // null-guard 写法；requestUpdate() 主动唤起重绘。
+        // 托盘图标（EUI-NEO 自定义托盘菜单 API）：菜单美化（2026-09-23）后
+        // styled 独立菜单窗为主路径（onTrayMenu，圆角/主题/FA 图标），原生
+        // trayMenu 保留为降级数据源（styled 构建失败时 EUI-NEO 自动弹这份，
+        // keepDefault=false 去掉内置英文 Show/Exit——菜单项全来自
+        // core::tray::trayMenuSpec，与 styled 同源）。
+        // 左键 = 直接唤起主窗口（requestShow 处理隐藏到托盘/最小化/失焦三态），
+        // 右键 = styled 菜单；回调主线程触发、运行期 Router 已就绪
         .tray(true)
         .trayTitle("DevDesk")
-        .trayMenu({
-            {"显示主窗口", [] { app::requestShow(); }},
-            {"-", nullptr},
-            {"首页", [] { if (auto* r = getRouter()) { r->navigateTo(::core::PageId::Home); requestUpdate(); } }},
-            {"笔记", [] { if (auto* r = getRouter()) { r->navigateTo(::core::PageId::Markdown); requestUpdate(); } }},
-            {"待办", [] { if (auto* r = getRouter()) { r->navigateTo(::core::PageId::Todo); requestUpdate(); } }},
-            {"Claude", [] { if (auto* r = getRouter()) { r->navigateTo(::core::PageId::ClaudeProxy); requestUpdate(); } }},
-            {"-", nullptr},
-            {"退出 DevDesk", [] { app::requestExit(); }},
-        }, false)
+        .trayMenu(nativeTrayMenuItems(), false)
+        .onTrayMenu([](int x, int y, bool leftButton) {
+            if (leftButton) {
+                executeTrayAction(::core::tray::TrayMenuAction::ShowMainWindow);
+                return true;
+            }
+            return showTrayStyledMenu(x, y);
+        })
         // Finder 双击 / 右键「打开方式」：macOS 走 kAEOpenDocuments Apple Event，
         // 由 EUI-NEO 转成回调（主循环里派发），这里切到对应模块。
         .onOpenFile([](const std::string& path) { handleAppleEventOpenFile(path); })

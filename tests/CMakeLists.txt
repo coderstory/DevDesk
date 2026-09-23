@@ -38,6 +38,7 @@ add_executable(devdesk_tests
     test_modules/test_font_em_layout.cpp
     test_modules/test_module_gating.cpp
     test_modules/test_pet.cpp
+    test_modules/test_menu_beautify.cpp
     test_modules/test_theme_hierarchy.cpp
     test_modules/test_app_sidebar.cpp
 )
