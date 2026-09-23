@@ -6,8 +6,29 @@
 
 #include <string>
 #include <utility>
+#include <vector>
 
 namespace module::pet {
+
+// ---- 退出二次确认（审计 [25]：全应用删单条任务都要确认，退整个应用却零
+// 确认，且入口埋在桌宠小窗右键菜单紧邻低危项，误触即断代理/丢弹窗状态）----
+// 确认 UI 走原生菜单二段式而非 dialog 组件：桌宠窗是 ~128px sprite 窗，
+// 自绘 dialog 会被窗口 bounds 裁剪（右键菜单当年因此换原生，见
+// pet_window.cpp 同一先例注释）。以下为无头可测的纯数据层：
+// petExitConfirmItems() 出菜单文本结构，petExitConfirmChosen(path) 判
+// 「确认退出」被选中（true 才许 app::requestExit）。头文件不依赖
+// EUI-NEO，pet_window.cpp 里再转成 core::platform::ContextMenuItem
+
+struct PetExitConfirmItem {
+    std::string text;      // "-" = 分隔线
+    bool disabled = false; // 说明行不可点
+};
+
+std::vector<PetExitConfirmItem> petExitConfirmItems();
+
+// 选择路径 = 确认菜单里「确认退出」项（分隔线不占位、说明行占 0 号位，
+// 「确认退出」下标 2、「取消」下标 3）；其余任何路径（取消/Esc/嵌套）= 不退出
+bool petExitConfirmChosen(const std::vector<int>& path);
 
 struct PetWindowConfig {
     std::string skinName;   // 空 = kDefaultSkinName

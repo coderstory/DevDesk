@@ -995,3 +995,45 @@ REGISTER_TEST(pet_skin_frame_name_traversal, "pet: 帧名路径穿越拒绝（�
                      static_cast<size_t>(2));
     return true;
 });
+
+// ---- 审计 [25]：退出二段确认 ----
+
+// 嵌套路径构造（宏体裸逗号限制，见文件头注释）
+static std::vector<int> petExitNestedPath() {
+    std::vector<int> p;
+    p.push_back(2);
+    p.push_back(1);
+    return p;
+}
+
+REGISTER_TEST(pet_exit_confirm_menu, "pet: 退出确认菜单文本结构（审计[25]）", {
+    const auto items = module::pet::petExitConfirmItems();
+    DOCTEST_REQUIRE_EQ(items.size(), static_cast<size_t>(4));
+    // 0=影响说明（不可点）：必须讲清断代理 + 丢弹窗状态两个后果
+    DOCTEST_CHECK(items[0].disabled);
+    DOCTEST_CHECK(items[0].text.find("将退出 DevDesk") != std::string::npos);
+    DOCTEST_CHECK(items[0].text.find("断开代理") != std::string::npos);
+    DOCTEST_CHECK(items[0].text.find("未保存弹窗状态") != std::string::npos);
+    DOCTEST_CHECK(items[0].text.find("确定") != std::string::npos);
+    // 1=分隔线 2=确认 3=取消（下标与 petExitConfirmChosen 耦合）
+    DOCTEST_CHECK_EQ(items[1].text, std::string("-"));
+    DOCTEST_CHECK_EQ(items[2].text, std::string("确认退出"));
+    DOCTEST_CHECK(!items[2].disabled);
+    DOCTEST_CHECK_EQ(items[3].text, std::string("取消"));
+    DOCTEST_CHECK(!items[3].disabled);
+    return true;
+})
+
+REGISTER_TEST(pet_exit_confirm_decision, "pet: 只有「确认退出」路径触发退出（审计[25]）", {
+    using module::pet::petExitConfirmChosen;
+    // 确认退出（下标 2）→ 退
+    DOCTEST_CHECK(petExitConfirmChosen(std::vector<int>{2}));
+    // 取消 / 点中说明行 / 嵌套路径（防御）→ 不退
+    DOCTEST_CHECK(!petExitConfirmChosen(std::vector<int>{3}));
+    DOCTEST_CHECK(!petExitConfirmChosen(std::vector<int>{0}));
+    DOCTEST_CHECK(!petExitConfirmChosen(std::vector<int>{1}));
+    DOCTEST_CHECK(!petExitConfirmChosen(petExitNestedPath()));
+    // 空选择（Esc/点别处/平台不支持）→ 不退
+    DOCTEST_CHECK(!petExitConfirmChosen(std::vector<int>{}));
+    return true;
+})
