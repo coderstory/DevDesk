@@ -354,8 +354,9 @@ void drawSidebar(eui::Ui& ui, const eui::Screen& screen) {
                 // 图标与文字分开两个元素：.icon() 用的 Icon 字体
                 //（FontAwesome）不能和正文字体混排在一个 Text 里
                 constexpr float kIconW = 28.0f;
+                constexpr float kItemInset = 12.0f;  // 内容距高亮条左缘内边距（用户反馈文字贴边）
                 ui.text(id + ".icon")
-                    .position(padX, y)
+                    .position(padX + kItemInset, y)
                     .size(kIconW, itemH)
                     .icon(m->iconGlyph())
                     .fontSize(t.sizes.fontSizeBody)
@@ -363,8 +364,8 @@ void drawSidebar(eui::Ui& ui, const eui::Screen& screen) {
                     .color(active ? t.colors.primary : t.colors.textSecondary)
                     .build();
                 ui.text(id + ".label")
-                    .position(padX + kIconW, y)
-                    .size(kWidth - padX * 2.0f - kIconW, itemH)
+                    .position(padX + kItemInset + kIconW, y)
+                    .size(kWidth - padX * 2.0f - kItemInset - kIconW, itemH)
                     .text(m->displayName())
                     .fontSize(t.sizes.fontSizeBody)
                     .verticalAlign(eui::VerticalAlign::Center)
