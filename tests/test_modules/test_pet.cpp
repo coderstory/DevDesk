@@ -11,6 +11,8 @@
 //   7. M2 气泡：超时消失纯函数 + 短语表（皮肤语料/内置回退）
 //   8. M2 多皮肤：sleep/typing/phrases 解析、占位皮肤 M2 帧升级重生成、
 //      discoverSkins 发现消费、applyPetSkin/resetPetPosition 持久化行为
+//   9. 内置皮肤全集（duck/slime/robot/ghost）：四态帧齐全、五款互异、
+//      discoverSkins 发现、短语表区分、用户替换保留
 // 子窗口真实渲染/拖拽/穿透/气泡视觉属人工点验（设计 §6 M2 验收项）。
 #include "doctest.h"
 
@@ -555,6 +557,95 @@ REGISTER_TEST(pet_default_skin_m2_frames, "pet: 占位皮肤含 M2 帧 + 旧版�
     DOCTEST_CHECK(kept.unsafeValue().sleepFrames.empty());
     DOCTEST_CHECK_EQ(kept.unsafeValue().idleFrames.size(), static_cast<size_t>(1));
     removeTreeQuietly(dir);
+    return true;
+});
+
+// 新内置皮肤名（宏外声明：REGISTER_TEST 宏体内不能出现裸逗号）
+const char* kNewBuiltinSkins[] = {"duck", "slime", "robot", "ghost"};
+
+REGISTER_TEST(pet_builtin_skins, "pet: 四款新内置皮肤（四态帧/互异/发现/短语表/替换保留）", {
+    using namespace module::pet;
+    const std::filesystem::path root = tempDir("builtin_skins");
+    removeTreeQuietly(root);
+    setEnvVar("DEVDESK_PETS_DIR", root.string());
+    // ensureBuiltinSkins 生成全部 5 款（clay-cat + 四款新皮肤）
+    const std::vector<std::string> generated = ensureBuiltinSkins(root);
+    DOCTEST_CHECK_EQ(generated.size(), static_cast<size_t>(5));
+    // discoverSkins 发现全部 5 款（设置页下拉/右键换肤菜单数据源，零改动）
+    const std::vector<std::string> found = discoverSkins();
+    DOCTEST_CHECK_EQ(found.size(), static_cast<size_t>(5));
+    for (const std::string& name : builtinSkinNames()) {
+        DOCTEST_CHECK(std::find(found.begin(), found.end(), name) != found.end());
+    }
+    // 四款新皮肤 + clay-cat 全部载入（后者做互异/短语对比基准）
+    std::vector<PetSkin> skins;
+    for (const char* name : kNewBuiltinSkins) {
+        auto r = loadSkin(root / name);
+        DOCTEST_CHECK_MESSAGE(r.isOk(), r.isFail() ? r.errorMessage() : name);
+        if (r.isOk()) {
+            skins.push_back(std::move(r.unsafeValue()));
+        }
+    }
+    auto catR = loadSkin(root / "clay-cat");
+    DOCTEST_CHECK(catR.isOk());
+    if (catR.isOk()) {
+        skins.push_back(std::move(catR.unsafeValue()));
+    }
+    DOCTEST_CHECK_EQ(skins.size(), static_cast<size_t>(5));
+    // 每款：四态帧数齐全 + 128×128 + 全帧 PNG 结构有效 + 短语表非空
+    for (const PetSkin& skin : skins) {
+        DOCTEST_CHECK_EQ(skin.idleFrames.size(), static_cast<size_t>(6));
+        DOCTEST_CHECK_EQ(skin.pokedFrames.size(), static_cast<size_t>(2));
+        DOCTEST_CHECK_EQ(skin.sleepFrames.size(), static_cast<size_t>(3));
+        DOCTEST_CHECK_EQ(skin.typingFrames.size(), static_cast<size_t>(2));
+        DOCTEST_CHECK_EQ(skin.frameWidth, 128);
+        DOCTEST_CHECK_EQ(skin.frameHeight, 128);
+        DOCTEST_CHECK(!skin.phrases.empty());
+        for (size_t i = 0; i < skin.idleFrames.size(); ++i) {
+            DOCTEST_CHECK(pngLooksValid(skin.dir / skin.idleFrames[i], 128, 128));
+        }
+        for (size_t i = 0; i < skin.pokedFrames.size(); ++i) {
+            DOCTEST_CHECK(pngLooksValid(skin.dir / skin.pokedFrames[i], 128, 128));
+        }
+        for (size_t i = 0; i < skin.sleepFrames.size(); ++i) {
+            DOCTEST_CHECK(pngLooksValid(skin.dir / skin.sleepFrames[i], 128, 128));
+        }
+        for (size_t i = 0; i < skin.typingFrames.size(); ++i) {
+            DOCTEST_CHECK(pngLooksValid(skin.dir / skin.typingFrames[i], 128, 128));
+        }
+    }
+    // 五款互异：idle 首帧 PNG 原始字节两两不同（stored-deflate 不压缩，
+    // 像素不同 → 字节必不同）
+    std::vector<std::string> blobs;
+    for (const PetSkin& skin : skins) {
+        std::ifstream f(skin.dir / skin.idleFrames[0], std::ios::binary);
+        std::ostringstream ss;
+        ss << f.rdbuf();
+        blobs.push_back(ss.str());
+        DOCTEST_CHECK(!blobs.back().empty());
+    }
+    for (size_t i = 0; i < blobs.size(); ++i) {
+        for (size_t j = i + 1; j < blobs.size(); ++j) {
+            DOCTEST_CHECK(blobs[i] != blobs[j]);
+        }
+    }
+    // 新皮肤短语表 ≠ clay-cat 语料（性格区分；clay-cat 是 skins.back()）
+    for (size_t i = 0; i + 1 < skins.size(); ++i) {
+        DOCTEST_CHECK(skins[i].phrases != skins.back().phrases);
+    }
+    // 用户替换语义：duck 换成美术包（source 非内置标记）→ 原样保留
+    {
+        std::ofstream out(root / "duck" / "pet.json", std::ios::trunc);
+        out << "{\"name\":\"duck\",\"source\":\"artist\","
+               "\"states\":{\"idle\":[\"a0.png\"]}}";
+    }
+    const std::vector<std::string> again = ensureBuiltinSkins(root);
+    DOCTEST_CHECK_EQ(again.size(), static_cast<size_t>(5));
+    auto duck = loadSkin(root / "duck");
+    DOCTEST_CHECK(duck.isOk());
+    DOCTEST_CHECK_EQ(duck.unsafeValue().idleFrames.size(), static_cast<size_t>(1));
+    setEnvVar("DEVDESK_PETS_DIR", "");
+    removeTreeQuietly(root);
     return true;
 });
 
