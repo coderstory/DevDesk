@@ -885,6 +885,32 @@ core::Result<int> ClaudeService::countCalls(const CallLogQuery& q) {
     return core::Result<int>::ok(static_cast<int>(nV.value()));
 }
 
+// ---------- 最近代理请求事件（气泡③，审计 [18]）----------
+
+void ClaudeService::recordProxyEvent(int statusCode) {
+    std::lock_guard<std::mutex> lock(proxyEventMutex_);
+    proxyEventStatus_ = statusCode;
+    proxyEventAt_ = std::time(nullptr);
+}
+
+std::optional<int> ClaudeService::takeProxyEvent(std::time_t nowSec) {
+    std::lock_guard<std::mutex> lock(proxyEventMutex_);
+    if (!proxyEventStatus_.has_value()) {
+        return std::nullopt;
+    }
+    const int status = *proxyEventStatus_;
+    const std::time_t at = proxyEventAt_;
+    // 读走即清空（take 语义）：无论走哪个返回分支，槽都已消费
+    proxyEventStatus_.reset();
+    proxyEventAt_ = 0;
+    // 过期滞留事件丢弃（桌宠关了很久的旧闻，不是「刚才发生了什么」）；
+    // 时钟回摆（at > nowSec）按未过期处理——宁可多弹一次，不误吞事件
+    if (at > 0 && nowSec >= at && nowSec - at > kProxyEventFreshSec) {
+        return std::nullopt;
+    }
+    return status;
+}
+
 // ---------- 代理 server 生命周期 ----------
 
 std::string ClaudeService::generateAuthToken() {

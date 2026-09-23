@@ -11,9 +11,11 @@
 #pragma once
 
 #include <atomic>
+#include <cstdint>
 #include <ctime>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -161,6 +163,21 @@ public:
     // 满足过滤条件的总条数（忽略 limit/offset；UI 算页数、判断有无下一页）
     core::Result<int> countCalls(const CallLogQuery& q);
 
+    // ---- 最近代理请求事件（气泡内容源③，M2 §4.5，产品审计 [18]）----
+    // ProxyRouter 在每条请求的终态记一次 statusCode 进单槽（后写覆盖先写）：
+    //   0 = 上游不可达（DNS/TLS/超时，无响应）；其余为回给客户端的状态码。
+    // takeProxyEvent() 读走即清空（take 语义）——桌宠气泡保证一个事件最多弹
+    // 一次、应用挂机不重复弹最后事件。滞留超过 kProxyEventFreshSec 的事件作
+    // 过期丢弃（nullopt）：桌宠关了几小时后再开不该弹旧闻；窗口取 10min，
+    // 覆盖气泡 roll（onTimer ③② 平均 ~5min 一次）的典型间隔。
+    // 写方 = proxy worker 线程、读方 = UI 线程，mutex 保护（与 activeStreams
+    // 同款模式）。main 经本接口装配 pet 的 ProxyEventGetter app 级桥
+    //（pet 不 include 本模块，模块隔离见 pet_window.h 契约注释）。
+    static constexpr std::time_t kProxyEventFreshSec = 600;
+    void recordProxyEvent(int statusCode);
+    // nowSec 默认取当前墙钟（测试可显式传值验证过期分支）
+    std::optional<int> takeProxyEvent(std::time_t nowSec = std::time(nullptr));
+
     // ---- 代理 server 生命周期 ----
 
     // 启动本地 HTTP 代理
@@ -260,6 +277,11 @@ private:
 
     // 设置页配置的代理端口（审计 [14]；默认 8888 = 历史硬编码值）
     int configuredProxyPort_ = kDefaultProxyPort;
+
+    // 最近代理请求事件单槽（气泡③，审计 [18]）：proxy worker 写 / UI take 读
+    std::mutex proxyEventMutex_;
+    std::optional<int> proxyEventStatus_;
+    std::time_t proxyEventAt_ = 0;
 
     // Claude Code 接管通道（settingsFile 为空 = 未启用）
     settings_sync::Paths syncPaths_;

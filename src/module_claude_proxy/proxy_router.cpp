@@ -146,6 +146,8 @@ void ProxyRouter::handleRequest(
         if (profileR.isFail()) {
             LOG_WARN("代理：取 profile 失败 (" + profileR.errorMessage() + ")");
             writeErrorJson(out, 503, "no_active_profile", profileR.errorMessage());
+            // 气泡③（审计 [18]）：503 也是请求终态，记录之（下详各出口同）
+            service_.recordProxyEvent(503);
             return;
         }
         profile = std::move(profileR).value();
@@ -155,6 +157,7 @@ void ProxyRouter::handleRequest(
         if (activeR.isFail()) {
             LOG_WARN("代理：无激活 profile (" + activeR.errorMessage() + ")");
             writeErrorJson(out, 503, "no_active_profile", activeR.errorMessage());
+            service_.recordProxyEvent(503);
             return;
         }
         profile = std::move(activeR).value();
@@ -163,6 +166,7 @@ void ProxyRouter::handleRequest(
         if (keyR.isFail()) {
             LOG_ERROR("代理：读取 API key 失败: " + keyR.errorMessage());
             writeErrorJson(out, 500, "keychain_read_failed", keyR.errorMessage());
+            service_.recordProxyEvent(500);
 
             // 记录日志（status=500, error=keychain）
             ClaudeService::CallLogEntry entry;
@@ -221,6 +225,8 @@ void ProxyRouter::handleRequest(
         entry.error = respR.errorMessage();
         entry.startedAt = startedAt;
         service_.logCall(entry);
+        // 0 = 上游不可达（无响应码），与日志 entry 口径一致
+        service_.recordProxyEvent(0);
         return;
     }
 
@@ -263,6 +269,8 @@ void ProxyRouter::handleRequest(
     if (logR.isFail()) {
         LOG_WARN("代理：写 claude_call_logs 失败: " + logR.errorMessage());
     }
+    // 气泡③：正常转发完成（4xx/5xx 原样透传，pet 侧按码分类文案）
+    service_.recordProxyEvent(resp.statusCode);
 
     LOG_INFO("代理 " + method + " " + path + " -> " +
              std::to_string(resp.statusCode) + " (" +
@@ -315,6 +323,7 @@ void ProxyRouter::handleStreamingRequest(
     if (profileR.isFail()) {
         LOG_WARN("流式代理：取 profile 失败 (" + profileR.errorMessage() + ")");
         writeErrorJson(out, 503, "no_active_profile", profileR.errorMessage());
+        service_.recordProxyEvent(503);
         return;
     }
     Profile profile = std::move(profileR).value();
@@ -351,6 +360,7 @@ void ProxyRouter::handleStreamingRequest(
         entry.error = streamR.errorMessage();
         entry.startedAt = startedAt;
         service_.logCall(entry);
+        service_.recordProxyEvent(0);  // 上游不可达（无响应码）
         return;
     }
 
@@ -386,6 +396,7 @@ void ProxyRouter::handleStreamingRequest(
         entry.error = "no_response_header";
         entry.startedAt = startedAt;
         service_.logCall(entry);
+        service_.recordProxyEvent(502);
         return;
     }
 
@@ -417,6 +428,8 @@ void ProxyRouter::handleStreamingRequest(
     if (logR.isFail()) {
         LOG_WARN("流式代理：写 claude_call_logs 失败: " + logR.errorMessage());
     }
+    // 气泡③：流式转发完成（4xx/5xx 上游状态码原样记录，pet 侧分类文案）
+    service_.recordProxyEvent(upstreamStatus);
 
     LOG_INFO("流式代理 " + method + " " + path + " -> " +
              std::to_string(upstreamStatus) + " (profile=" +
