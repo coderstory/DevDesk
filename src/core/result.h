@@ -7,6 +7,8 @@
 #include <utility>
 #include <variant>
 
+#include "core/logging.h"
+
 namespace core {
 
 // 错误码枚举（**唯一权威定义**，见 spec §11.2）
@@ -92,9 +94,12 @@ public:
         return defaultValue;
     }
 
-    // 显式取值（错误时 LOG_FATAL + 抛 logic_error）
+    // 显式取值（错误时 LOG_FATAL + 抛 logic_error）。
+    // app 以 -fno-exceptions 编译时 throw 退化为无日志 abort，所以 throw 前
+    // 必须先落一条 FATAL 日志（spec §11.2 承诺的 LOG_FATAL，审计 2026-09-23 [23]）
     const T& value() const {
         if (!isOk()) {
+            LOG_FATAL("Result::value() called on error: " + errorMessage());
             throw std::logic_error("Result::value() called on error: " + errorMessage());
         }
         return std::get<1>(data_);
@@ -103,6 +108,7 @@ public:
     // 非 const 版本（需要修改 result 中的对象，如 sqlite3_stmt）
     T& value() {
         if (!isOk()) {
+            LOG_FATAL("Result::value() called on error: " + errorMessage());
             throw std::logic_error("Result::value() called on error: " + errorMessage());
         }
         return std::get<1>(data_);
@@ -111,6 +117,7 @@ public:
     // Rust 风格 expect
     const T& expect(const std::string& context) const {
         if (!isOk()) {
+            LOG_FATAL(context + ": " + errorMessage());
             throw std::logic_error(context + ": " + errorMessage());
         }
         return std::get<1>(data_);
@@ -118,6 +125,7 @@ public:
 
     T& expect(const std::string& context) {
         if (!isOk()) {
+            LOG_FATAL(context + ": " + errorMessage());
             throw std::logic_error(context + ": " + errorMessage());
         }
         return std::get<1>(data_);
