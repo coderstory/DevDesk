@@ -312,7 +312,9 @@ void drawSidebar(eui::Ui& ui, const eui::Screen& screen) {
         .content([&] {
             ui.rect("app.sidebar.bg")
                 .size(kWidth, screen.height)
-                .color(t.colors.surface)
+                // 底色跟页面 background（米色/暖墨）而非卡片 surface——浅色下侧边栏
+                // 不应是纯白（用户实测反馈；深色下 background 比卡片略深也正确）
+                .color(t.colors.background)
                 .build();
             ui.rect("app.sidebar.divider")
                 .position(kWidth - 1.0f, 0.0f)
