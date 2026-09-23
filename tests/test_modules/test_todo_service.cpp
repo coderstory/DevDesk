@@ -736,3 +736,70 @@ REGISTER_TEST(todo_svc_tags_deserialize_tolerant,
     }
     return true;
 })
+
+// ---- 审计 2026-09-23 [7] 残留：INSERT ... RETURNING id 取代 last_insert_rowid ----
+
+// 回归守护：createColumn/createTask 返回的 id 必须就是本表落库行的 rowid，
+// 且用该 id 的后续操作精确命中该行（旧实现竞态下 id 可能指错行）。
+// 注：旧 bug 需要并发穿插 INSERT 才触发，单线程测试无法复现竞态本身，
+// 此测试锁定的是「RETURNING 取回的 id 语义正确」这一底线。
+REGISTER_TEST(todo_svc_returning_id_consistency,
+              "TodoService: createColumn/createTask 返回 id 与落库行精确一致",
+              {
+    TestEnv env("returning_id");
+    DOCTEST_REQUIRE(env.ready);
+
+    auto cols = env.svc->listColumns();
+    DOCTEST_REQUIRE(cols.isOk());
+    const int64_t colA = cols.value()[0].id;
+    const int64_t colB = cols.value()[1].id;
+
+    // 交错建列/任务，让两张表的 rowid 序列各自推进
+    auto c1 = env.svc->createColumn("列一");
+    auto c2 = env.svc->createColumn("列二");
+    DOCTEST_REQUIRE(c1.isOk()); DOCTEST_REQUIRE(c2.isOk());
+    DOCTEST_CHECK(c1.value().id > 0);
+    DOCTEST_CHECK(c2.value().id > 0);
+    DOCTEST_CHECK(c1.value().id != c2.value().id);
+
+    auto t1 = env.svc->createTask(colA, "任务一");
+    auto t2 = env.svc->createTask(colB, "任务二");
+    DOCTEST_REQUIRE(t1.isOk()); DOCTEST_REQUIRE(t2.isOk());
+    DOCTEST_CHECK(t1.value().id > 0);
+    DOCTEST_CHECK(t1.value().id != t2.value().id);
+
+    // 独立连接验证：返回 id 对应的行就是刚创建的那一行（列/任务各自核对）
+    {
+        auto probe = core::data::SqliteDb::open(env.path);
+        DOCTEST_REQUIRE(probe.isOk());
+        struct Expect { const char* sql; int64_t id; const char* want; };
+        Expect checks[4];
+        // 外层括号保护初始化列表逗号不被 REGISTER_TEST 宏拆成实参
+        checks[0] = (Expect{"SELECT title FROM todo_columns WHERE id = ?", c1.value().id, "列一"});
+        checks[1] = (Expect{"SELECT title FROM todo_columns WHERE id = ?", c2.value().id, "列二"});
+        checks[2] = (Expect{"SELECT title FROM todo_tasks WHERE id = ?", t1.value().id, "任务一"});
+        checks[3] = (Expect{"SELECT title FROM todo_tasks WHERE id = ?", t2.value().id, "任务二"});
+        for (const auto& e : checks) {
+            auto prep = probe.value().prepare(e.sql);
+            DOCTEST_REQUIRE(prep.isOk());
+            auto& stmt = prep.value();
+            DOCTEST_REQUIRE(stmt.bind(1, e.id).isOk());
+            auto rows = stmt.fetchAll();
+            DOCTEST_REQUIRE(rows.isOk());
+            DOCTEST_REQUIRE_EQ(rows.value().size(), 1u);   // id 必须存在
+            DOCTEST_CHECK_EQ(rows.value()[0].getString("title").valueOr(""),
+                             std::string(e.want));         // 且标题吻合
+        }
+    }
+
+    // 用返回 id 更新：只命中该行，另一行不动（id 指错行会立刻暴露）
+    DOCTEST_REQUIRE(env.svc->completeTask(t1.value().id).isOk());
+    auto aTasks = env.svc->listTasks(colA);
+    auto bTasks = env.svc->listTasks(colB);
+    DOCTEST_REQUIRE(aTasks.isOk()); DOCTEST_REQUIRE(bTasks.isOk());
+    DOCTEST_REQUIRE_EQ(aTasks.value().size(), 1u);
+    DOCTEST_REQUIRE_EQ(bTasks.value().size(), 1u);
+    DOCTEST_CHECK(aTasks.value()[0].completedAt.has_value());
+    DOCTEST_CHECK(!bTasks.value()[0].completedAt.has_value());
+    return true;
+})

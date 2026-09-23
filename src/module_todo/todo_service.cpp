@@ -252,37 +252,48 @@ core::Result<Column> TodoService::createColumn(const std::string& title) {
     int pos = nextPosResult.value();
     int64_t now = nowResult.value();
 
-    auto txResult = db_.transaction([&]() -> core::Result<void> {
-        auto prep = db_.prepare(
-            "INSERT INTO todo_columns (title, position, color, created_at) VALUES (?, ?, NULL, ?)");
-        if (prep.isFail()) {
-            return core::Result<void>::fail(prep.errorCode(), prep.errorMessage());
-        }
-        auto& stmt = prep.value();
-        if (auto r = stmt.bind(1, title); r.isFail()) return r;
-        if (auto r = stmt.bind(2, static_cast<int64_t>(pos)); r.isFail()) return r;
-        if (auto r = stmt.bind(3, now); r.isFail()) return r;
-        auto stepResult = stmt.step();
-        if (stepResult.isFail()) {
-            return core::Result<void>::fail(stepResult.errorCode(), stepResult.errorMessage());
-        }
-        return core::Result<void>::ok();
-    });
-    if (txResult.isFail()) {
-        return core::Result<Column>::fail(txResult.errorCode(), txResult.errorMessage());
+    // INSERT ... RETURNING id（SQLite ≥3.35）单语句原子取回新 rowid
+    // （审计 2026-09-23 [7] 残留）：旧实现是事务内 INSERT + COMMIT 后再
+    // SELECT last_insert_rowid()——两步之间不持锁，其他线程（代理 worker 的
+    // logCall INSERT 等）穿插写同一连接会改写连接级 last_insert_rowid，
+    // 取回错误 id。RETURNING 让 id 随本条 INSERT 的结果行返回，无竞态；
+    // 单语句自带原子性，原事务包装一并去掉（与 claude_service createProfile 同款）。
+    auto prep = db_.prepare(
+        "INSERT INTO todo_columns (title, position, color, created_at) "
+        "VALUES (?, ?, NULL, ?) RETURNING id");
+    if (prep.isFail()) {
+        return core::Result<Column>::fail(prep.errorCode(), prep.errorMessage());
     }
-
-    auto idPrep = db_.prepare("SELECT last_insert_rowid() AS id");
-    if (idPrep.isFail()) {
-        return core::Result<Column>::fail(idPrep.errorCode(), idPrep.errorMessage());
+    auto& stmt = prep.value();
+    if (auto r = stmt.bind(1, title); r.isFail()) {
+        return core::Result<Column>::fail(r.errorCode(), r.errorMessage());
     }
-    auto idRows = idPrep.value().fetchAll();
-    if (idRows.isFail()) {
-        return core::Result<Column>::fail(idRows.errorCode(), idRows.errorMessage());
+    if (auto r = stmt.bind(2, static_cast<int64_t>(pos)); r.isFail()) {
+        return core::Result<Column>::fail(r.errorCode(), r.errorMessage());
+    }
+    if (auto r = stmt.bind(3, now); r.isFail()) {
+        return core::Result<Column>::fail(r.errorCode(), r.errorMessage());
+    }
+    auto stepResult = stmt.step();
+    if (stepResult.isFail()) {
+        return core::Result<Column>::fail(stepResult.errorCode(), stepResult.errorMessage());
+    }
+    if (!stepResult.value()) {
+        // RETURNING 理论上必返回一行；防御式处理（DONE 意味着异常路径）
+        return core::Result<Column>::fail(
+            core::ErrorCode::Internal, "INSERT ... RETURNING id 未返回行");
+    }
+    auto idRow = stmt.currentRow();
+    if (idRow.isFail()) {
+        return core::Result<Column>::fail(idRow.errorCode(), idRow.errorMessage());
+    }
+    auto idVal = idRow.value().getInt64("id");
+    if (idVal.isFail()) {
+        return core::Result<Column>::fail(idVal.errorCode(), idVal.errorMessage());
     }
 
     Column c;
-    c.id = idRows.value().empty() ? 0 : idRows.value()[0].getInt64("id").valueOr(0);
+    c.id = idVal.value();
     c.title = title;
     c.position = pos;
     c.color = std::nullopt;
@@ -444,41 +455,52 @@ core::Result<Task> TodoService::createTask(int64_t columnId, const std::string& 
     int pos = nextPosResult.value();
     int64_t now = nowResult.value();
 
-    auto txResult = db_.transaction([&]() -> core::Result<void> {
-        auto prep = db_.prepare(
-            "INSERT INTO todo_tasks "
-            "(column_id, title, description, priority, due_at, tags, position, completed_at, created_at, updated_at) "
-            "VALUES (?, ?, NULL, 0, NULL, '[]', ?, NULL, ?, ?)");
-        if (prep.isFail()) {
-            return core::Result<void>::fail(prep.errorCode(), prep.errorMessage());
-        }
-        auto& stmt = prep.value();
-        if (auto r = stmt.bind(1, columnId); r.isFail()) return r;
-        if (auto r = stmt.bind(2, title); r.isFail()) return r;
-        if (auto r = stmt.bind(3, static_cast<int64_t>(pos)); r.isFail()) return r;
-        if (auto r = stmt.bind(4, now); r.isFail()) return r;
-        if (auto r = stmt.bind(5, now); r.isFail()) return r;
-        auto stepResult = stmt.step();
-        if (stepResult.isFail()) {
-            return core::Result<void>::fail(stepResult.errorCode(), stepResult.errorMessage());
-        }
-        return core::Result<void>::ok();
-    });
-    if (txResult.isFail()) {
-        return core::Result<Task>::fail(txResult.errorCode(), txResult.errorMessage());
+    // 同 createColumn：INSERT ... RETURNING id 取代「事务内 INSERT +
+    // COMMIT 后 SELECT last_insert_rowid()」（审计 2026-09-23 [7] 残留），
+    // 消除并发写者穿插改写连接级 rowid 的竞态。
+    auto prep = db_.prepare(
+        "INSERT INTO todo_tasks "
+        "(column_id, title, description, priority, due_at, tags, position, completed_at, created_at, updated_at) "
+        "VALUES (?, ?, NULL, 0, NULL, '[]', ?, NULL, ?, ?) RETURNING id");
+    if (prep.isFail()) {
+        return core::Result<Task>::fail(prep.errorCode(), prep.errorMessage());
     }
-
-    auto idPrep = db_.prepare("SELECT last_insert_rowid() AS id");
-    if (idPrep.isFail()) {
-        return core::Result<Task>::fail(idPrep.errorCode(), idPrep.errorMessage());
+    auto& stmt = prep.value();
+    if (auto r = stmt.bind(1, columnId); r.isFail()) {
+        return core::Result<Task>::fail(r.errorCode(), r.errorMessage());
     }
-    auto idRows = idPrep.value().fetchAll();
-    if (idRows.isFail()) {
-        return core::Result<Task>::fail(idRows.errorCode(), idRows.errorMessage());
+    if (auto r = stmt.bind(2, title); r.isFail()) {
+        return core::Result<Task>::fail(r.errorCode(), r.errorMessage());
+    }
+    if (auto r = stmt.bind(3, static_cast<int64_t>(pos)); r.isFail()) {
+        return core::Result<Task>::fail(r.errorCode(), r.errorMessage());
+    }
+    if (auto r = stmt.bind(4, now); r.isFail()) {
+        return core::Result<Task>::fail(r.errorCode(), r.errorMessage());
+    }
+    if (auto r = stmt.bind(5, now); r.isFail()) {
+        return core::Result<Task>::fail(r.errorCode(), r.errorMessage());
+    }
+    auto stepResult = stmt.step();
+    if (stepResult.isFail()) {
+        return core::Result<Task>::fail(stepResult.errorCode(), stepResult.errorMessage());
+    }
+    if (!stepResult.value()) {
+        // RETURNING 理论上必返回一行；防御式处理（DONE 意味着异常路径）
+        return core::Result<Task>::fail(
+            core::ErrorCode::Internal, "INSERT ... RETURNING id 未返回行");
+    }
+    auto idRow = stmt.currentRow();
+    if (idRow.isFail()) {
+        return core::Result<Task>::fail(idRow.errorCode(), idRow.errorMessage());
+    }
+    auto idVal = idRow.value().getInt64("id");
+    if (idVal.isFail()) {
+        return core::Result<Task>::fail(idVal.errorCode(), idVal.errorMessage());
     }
 
     Task t;
-    t.id = idRows.value().empty() ? 0 : idRows.value()[0].getInt64("id").valueOr(0);
+    t.id = idVal.value();
     t.columnId = columnId;
     t.title = title;
     t.position = pos;
