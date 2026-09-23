@@ -758,6 +758,45 @@ REGISTER_TEST(todo_ui_drag_hit_pure,
     return true;
 })
 
+REGISTER_TEST(todo_ui_drag_hit_scroll_same_frame,
+              "todo_ui: 拖拽 pressY/scrollOffset 同帧快照（tech-debt B 边缘场景锁）", {
+    using module::todo::ui::DragHitInput;
+    using module::todo::ui::dragDropTarget;
+    namespace u = module::todo::ui;
+    // 场景：列 0 第 4 张卡（cardIndex=3），按下时源列已滚动 100。
+    // bounds.y（pressY）= 板面真实顶边 + (列头 + 3×步长 - 100) × dpi。
+    const float boardTopPx = 150.0f;  // 板面真实顶边（屏幕像素，拖拽全程不动）
+    const float stride = u::kCardHeight + u::kCardGap;
+    DragHitInput in;
+    in.fromColIndex = 0;
+    in.colCount = 2;
+    in.colWidth = 200.0f;
+    in.colGap = 20.0f;
+    in.cardWidth = 200.0f;
+    in.pressWidth = 200.0f;  // dpi = 1
+    in.boardHeight = 500.0f;
+    in.cardIndex = 3;
+    in.scrollOffset = 100.0f;  // 按下时刻快照（DragState.pressScrollOffset 语义）
+    in.pressX = 80.0f;
+    in.pressY = boardTopPx + (u::kColumnHeaderHeight + 3.0f * stride - 100.0f);
+
+    // 同帧（快照值）：还原出的板顶 = 真实板顶 150 → 边界精确
+    DOCTEST_CHECK_EQ(dragDropTarget(in, 180.0, 150.0), 0);   // 板顶线上 = 板内
+    DOCTEST_CHECK_EQ(dragDropTarget(in, 180.0, 149.0), -1);  // 板上方 1px
+    DOCTEST_CHECK_EQ(dragDropTarget(in, 180.0, 300.0), 0);   // 源列
+    DOCTEST_CHECK_EQ(dragDropTarget(in, 400.0, 300.0), 1);   // 跨列
+
+    // 反例（tech-debt B 修前的 bug 形态）：拖拽中途列又被滚下 50（实际滚动
+    // = 150），若命中时改读"当下" scrollOffset，pressY（旧帧）与新帧混值 →
+    // 还原板顶被误推到 200，板顶线附近（真实板内）被误判板外。
+    DragHitInput stale = in;
+    stale.scrollOffset = 150.0f;
+    DOCTEST_CHECK_EQ(dragDropTarget(stale, 180.0, 160.0), -1);
+    // 修复后调用方始终传按下快照 → 命中框仍钉在按下时刻的真实板面上
+    DOCTEST_CHECK_EQ(dragDropTarget(in, 180.0, 160.0), 0);
+    return true;
+})
+
 REGISTER_TEST(todo_ui_column_scroll_geometry,
               "todo_ui: 列内滚动——第 12 张起不裁切 + 列几何正确（headless layout）", {
     TestEnv env;
