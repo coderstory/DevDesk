@@ -1,6 +1,7 @@
 add_library(devdesk_module_todo STATIC
     todo_module.cpp
     todo_service.cpp
+    todo_view_state.cpp
 )
 
 devdesk_apply_warnings(devdesk_module_todo)

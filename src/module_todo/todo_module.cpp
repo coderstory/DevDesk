@@ -9,6 +9,7 @@
 #include "core/time.h"
 #include "todo_service.h"
 #include "todo_ui_logic.h"
+#include "todo_view_state.h"
 
 #include <eui/dsl.h>
 
@@ -23,6 +24,7 @@
 
 #include <algorithm>
 #include <ctime>
+#include <map>
 #include <memory>
 #include <string>
 #include <vector>
@@ -179,11 +181,15 @@ public:
         }
         service_ = std::make_unique<TodoService>(*db);
         reloadAll();
+        // 审计 [23]：恢复列滚动（按列 id）+ 选中任务（reloadAll 之后，列/任务已就位）
+        viewStore_ = std::make_unique<TodoViewStateStore>(todoViewStateFile());
+        restoreViewState();
         LOG_INFO("Todo 模块启动（" + std::to_string(columns_.size()) + " 列 / " +
                  std::to_string(tasks_.size()) + " 任务）");
     }
 
     void onStop() override {
+        if (viewDirty_) saveViewState();  // 审计 [23]：退出前落盘视图状态
         service_.reset();
         LOG_INFO("Todo 模块停止");
     }
@@ -207,7 +213,14 @@ public:
             loadError_ = "读取任务失败: " + all.errorMessage();
             LOG_ERROR("Todo: " + loadError_);
         }
-        columnScrolls_.resize(columns_.size(), 0.0f);
+        // 审计 [23]：滚动按列 id 记忆（旧按列索引 vector，重排/删列后串列）；
+        // 剪掉已不存在列的记录，防文件膨胀。prune 有删除 → 状态待落盘
+        std::vector<int64_t> liveIds;
+        liveIds.reserve(columns_.size());
+        for (const auto& c : columns_) liveIds.push_back(c.id);
+        if (TodoViewStateStore::pruneScrolls(columnScrolls_, liveIds) > 0) {
+            viewDirty_ = true;
+        }
         // 拖拽中任务被外部操作删除（如确认弹窗回调）→ 拖拽锚点失效，复位防悬垂
         if (drag_.active && findTask(drag_.taskId) == nullptr) {
             drag_ = DragState{};
@@ -480,12 +493,48 @@ public:
 
     // ============ 查找辅助 ============
 
-    // 列内滚动位置（按列索引记忆；reloadAll 时 resize 保留旧值）
+    // 列内滚动位置（审计 [23]：按列 id 记忆——列重排/删列不再串列；
+    // 变更只标脏，onStop 统一落盘，避免每滚轮一格写一次文件）
     float colScrollOffset(size_t colIndex) const {
-        return colIndex < columnScrolls_.size() ? columnScrolls_[colIndex] : 0.0f;
+        if (colIndex >= columns_.size()) return 0.0f;
+        auto it = columnScrolls_.find(columns_[colIndex].id);
+        return it == columnScrolls_.end() ? 0.0f : it->second;
     }
     void setColScrollOffset(size_t colIndex, float v) {
-        if (colIndex < columnScrolls_.size()) columnScrolls_[colIndex] = v;
+        if (colIndex >= columns_.size()) return;
+        columnScrolls_[columns_[colIndex].id] = v;
+        viewDirty_ = true;
+    }
+
+    // ---- 视图状态持久化（审计 [23]）----
+
+    // onStart 的 reloadAll 之后调用：恢复列滚动（列已不存在则丢弃该条）
+    // 与选中任务（任务已删/移动走则不恢复，findTask 校验）
+    void restoreViewState() {
+        if (!viewStore_) return;
+        const TodoViewState st = viewStore_->load();
+        for (const auto& [colId, offset] : st.columnScrolls) {
+            const bool live = std::any_of(columns_.begin(), columns_.end(),
+                                          [&](const Column& c) { return c.id == colId; });
+            if (live) columnScrolls_[colId] = offset;
+        }
+        if (st.selectedTaskId != 0 && findTask(st.selectedTaskId) != nullptr) {
+            selectedTaskId_ = st.selectedTaskId;
+            LOG_INFO("Todo: 已恢复上次选中任务 id=" + std::to_string(st.selectedTaskId));
+        }
+    }
+
+    // 尽力而为：写失败只记日志，不影响看板操作
+    void saveViewState() {
+        if (!viewStore_) return;
+        TodoViewState st;
+        st.columnScrolls = columnScrolls_;
+        st.selectedTaskId = selectedTaskId_;
+        auto r = viewStore_->save(st);
+        if (r.isFail()) {
+            LOG_WARN("Todo: 视图状态落盘失败（不影响使用）: " + r.errorMessage());
+        }
+        viewDirty_ = false;
     }
 
     // ---- W8 拖拽（真 drop 语义）----
@@ -1392,6 +1441,7 @@ private:
     // 菜单定位走模块自身布局空间（boardGeom），不用窗口坐标（见 BoardGeom 注释）
     void openTaskContextMenu(const Task& task, int columnIndex, int cardIndex) {
         selectedTaskId_ = task.id;
+        saveViewState();  // 审计 [23]：选中任务离散变更，即时落盘
         ctxTaskId_ = task.id;
         ctxColumnId_ = 0;
         ctxColumnIndex_ = columnIndex;
@@ -1863,6 +1913,7 @@ private:
     // ---------- 任务详情 / 编辑弹窗 ----------
     void openDetailDialog(const Task& task) {
         selectedTaskId_ = task.id;  // 选中态：详情弹窗关闭后保留，供 Ctrl+↑/↓
+        saveViewState();            // 审计 [23]：同上，即时落盘
         detailTaskId_ = task.id;
         detailColumnId_ = task.columnId;
         detailTitle_ = task.title;
@@ -2253,7 +2304,11 @@ private:
     std::unique_ptr<TodoService> service_;
     std::vector<Column> columns_;
     std::vector<Task> tasks_;
-    std::vector<float> columnScrolls_;  // 列内滚动偏移（按列索引）
+    // 审计 [23]：列内滚动偏移按列 id 记忆（旧按列索引，重排/删列串列）+
+    // 跨会话持久化（viewStore_；viewDirty_ = 有未落盘变更，onStop 收口）
+    std::map<int64_t, float> columnScrolls_;
+    std::unique_ptr<TodoViewStateStore> viewStore_;
+    bool viewDirty_ = false;
 
     // W8 拖拽（真 drop 语义）：onPress 记锚点 → onDrag 更新悬停列（视觉反馈）
     // → onRelease 按指针落点落库。dragging 半透明 + 目标列高亮见 drawCard/drawColumn

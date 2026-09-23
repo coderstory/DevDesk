@@ -24,6 +24,7 @@ add_executable(devdesk_tests
     test_modules/test_todo.cpp
     test_modules/test_todo_service.cpp
     test_modules/test_todo_ui.cpp
+    test_modules/test_view_state.cpp
     test_modules/test_claude.cpp
     test_modules/test_claude_service.cpp
     test_modules/test_provider_config.cpp

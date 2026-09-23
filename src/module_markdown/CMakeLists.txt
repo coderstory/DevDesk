@@ -6,6 +6,7 @@ add_library(devdesk_module_markdown STATIC
     md_line_scanner.cpp
     md_file_open.cpp
     md_tree.cpp
+    md_view_state.cpp
 )
 
 devdesk_apply_warnings(devdesk_module_markdown)
