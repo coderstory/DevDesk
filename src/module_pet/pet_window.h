@@ -38,6 +38,15 @@ std::pair<int, int> petDragMove(PetDragAnchor& anchor, int windowX, int windowY,
 // 拖拽结束（释放/取消）清锚点，下次拖拽重新捕获（防止跨会话锚点跳变）
 void petDragEnd(PetDragAnchor& anchor);
 
+// 已知坐标钳制进主显示器工作区（纯函数，单测断言用；设计 §4.6，M1 仅主显
+// 示器）。workW/workH <= 0（工作区查询失败：无头/早于 glfwInit）原样返回。
+// 审计 [12]：落盘路径（savePetPosition/applyPetSkin）与启动路径共用本钳制
+// ——负坐标若直接落盘，会被 pet_config 的 -1「未设置」哨兵吞掉，重启后桌宠
+// 跳回默认位。已知坐标（>=0）才许进本函数，哨兵判断归调用方
+std::pair<int, int> clampPetPosToWorkArea(int x, int y, int workX, int workY,
+                                          int workW, int workH, int frameW,
+                                          int frameH);
+
 // 打开桌宠窗口（主循环起来前调用；openWindow 入队、首帧消费）。
 // 皮肤缺失时自动生成内置占位皮肤；位置钳制进主显示器工作区。
 void startPetWindow(const PetWindowConfig& config);

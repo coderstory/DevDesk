@@ -15,6 +15,8 @@
 //      discoverSkins 发现、短语表区分、用户替换保留
 //  10. 内置美术皮肤 anime-girl（真实 CC0 素材包）：四态帧齐全 + 全帧
 //      128×128 RGBA PNG + license 自带（素材纪律 R7）
+//  11. 审计修复（2026-09-23 pet 簇）：帧名路径穿越拒绝 [28] + 已知坐标
+//      钳进工作区纯函数 [12]（[0][1] 的 onWindowDestroyed 接线断言在 §5）
 // 子窗口真实渲染/拖拽/穿透/气泡视觉属人工点验（设计 §6 M2 验收项）。
 #include "doctest.h"
 
@@ -339,6 +341,10 @@ REGISTER_TEST(pet_start_window_request, "pet: 开窗请求逐字段断言（无�
     DOCTEST_CHECK(!req.followClearColorOverride);  // 全透底不被主题广播冲掉
     DOCTEST_CHECK(req.clearColor.a == 0.0f);  // 全透
     DOCTEST_CHECK(static_cast<bool>(req.compose));
+    // 审计 [0][1]：创建/销毁回调都须随请求下传（销毁回调置空缓存句柄，
+    // Alt+F4/菜单隐藏/应用退出所有路径覆盖）
+    DOCTEST_CHECK(static_cast<bool>(req.onWindowCreated));
+    DOCTEST_CHECK(static_cast<bool>(req.onWindowDestroyed));
     // 占位皮肤已生成在测试隔离目录
     DOCTEST_CHECK(std::filesystem::exists(petsRoot / "clay-cat" / "pet.json"));
 
@@ -911,5 +917,81 @@ REGISTER_TEST(pet_drag_anchor_follow, "pet: 拖拽锚点跟随——1:1 跟光�
         DOCTEST_CHECK_EQ(target.first, 900);  // 新锚点：窗口停在原地起步
         DOCTEST_CHECK_EQ(target.second, 700);
     }
+    return true;
+});
+
+// ============ 11. 审计修复（2026-09-23 pet 簇）============
+
+REGISTER_TEST(pet_pos_clamp_work_area, "pet: 已知坐标钳进工作区（审计[12]）", {
+    // 常规位置不动
+    const auto normal =
+        module::pet::clampPetPosToWorkArea(100, 200, 0, 0, 1920, 1080, 128, 128);
+    DOCTEST_CHECK_EQ(normal.first, 100);
+    DOCTEST_CHECK_EQ(normal.second, 200);
+    // 负坐标（拖出左/上缘）→ 钳到工作区原点——这是哨兵冲突根因：落盘后
+    // sanitized 的 x<-1→-1 把「未设置」哨兵和真实负位混为一谈，重启跳默认位
+    const auto negative =
+        module::pet::clampPetPosToWorkArea(-50, -80, 0, 0, 1920, 1080, 128, 128);
+    DOCTEST_CHECK_EQ(negative.first, 0);
+    DOCTEST_CHECK_EQ(negative.second, 0);
+    // 越右下缘 → 工作区内边缘（1920-128 = 1792）
+    const auto overflow =
+        module::pet::clampPetPosToWorkArea(99999, 99999, 0, 0, 1920, 1080, 128, 128);
+    DOCTEST_CHECK_EQ(overflow.first, 1792);
+    DOCTEST_CHECK_EQ(overflow.second, 952);
+    // 非零工作区原点（副屏）：钳界随 workX 平移（-2000 ~ -2000+1920-128）
+    const auto offOrigin =
+        module::pet::clampPetPosToWorkArea(-10, 300, -2000, 0, 1920, 1080, 128, 128);
+    DOCTEST_CHECK_EQ(offOrigin.first, -208);
+    DOCTEST_CHECK_EQ(offOrigin.second, 300);
+    // 工作区不可用（无头）→ 原样
+    const auto noArea =
+        module::pet::clampPetPosToWorkArea(-50, -60, 0, 0, 0, 0, 128, 128);
+    DOCTEST_CHECK_EQ(noArea.first, -50);
+    DOCTEST_CHECK_EQ(noArea.second, -60);
+    // 落盘哨兵语义回归：钳后的 0 合法存取；只有 -1 保持「未设置」
+    const auto cfg0 = module::pet::PetConfigStore::sanitized(
+        [&] { module::pet::PetConfig c; c.x = 0; c.y = 0; return c; }());
+    DOCTEST_CHECK_EQ(cfg0.x, 0);
+    DOCTEST_CHECK_EQ(cfg0.y, 0);
+    return true;
+});
+
+// 帧名穿越拒绝判定（合法皮肤包/单点扩展名必须放行）。辅助函数绕开
+// REGISTER_TEST 宏体裸逗号限制
+static bool frameNameRejected(const char* frameName) {
+    const std::string json =
+        std::string("{\"states\":{\"idle\":[\"") + frameName + "\"]}}";
+    return module::pet::parsePetSkinJson(json).isFail();
+}
+
+REGISTER_TEST(pet_skin_frame_name_traversal, "pet: 帧名路径穿越拒绝（审计[28]）", {
+    // 穿越/绝对路径/盘符形态 → 解析整体失败（idle 必填）
+    DOCTEST_CHECK(frameNameRejected("../secret.png"));
+    DOCTEST_CHECK(frameNameRejected("..\\secret.png"));
+    DOCTEST_CHECK(frameNameRejected("../../assets/../x.png"));
+    DOCTEST_CHECK(frameNameRejected("/etc/passwd.png"));
+    DOCTEST_CHECK(frameNameRejected("C:/Windows/evil.png"));
+    DOCTEST_CHECK(frameNameRejected("sub/inner.png"));
+    // 合法名不误伤：PNG 扩展名单点、中文名、连字符
+    DOCTEST_CHECK(!frameNameRejected("f0.png"));
+    DOCTEST_CHECK(!frameNameRejected("帧一.png"));
+    DOCTEST_CHECK(!frameNameRejected("idle-0.PNG"));
+    // 可选状态含非法帧名 → 静默丢弃回落 idle（皮肤照常解析）
+    const std::string pokedJson =
+        "{\"states\":{\"idle\":[\"ok.png\"],\"poked\":[\"../x.png\"]}}";
+    const auto pokedResult = module::pet::parsePetSkinJson(pokedJson);
+    DOCTEST_CHECK(pokedResult.isOk());
+    DOCTEST_CHECK(pokedResult.unsafeValue().pokedFrames.empty());
+    DOCTEST_CHECK_EQ(pokedResult.unsafeValue().frames(true).size(),
+                     static_cast<size_t>(1));
+    // phrases 是展示文本不是路径：含路径字符不拖垮解析
+    const std::string phraseJson =
+        "{\"states\":{\"idle\":[\"f.png\"]},"
+        "\"phrases\":[\"走之前去C:/Downloads拿东西\",\"嗯……/../没什么\"]}";
+    const auto phraseResult = module::pet::parsePetSkinJson(phraseJson);
+    DOCTEST_CHECK(phraseResult.isOk());
+    DOCTEST_CHECK_EQ(phraseResult.unsafeValue().phrases.size(),
+                     static_cast<size_t>(2));
     return true;
 });

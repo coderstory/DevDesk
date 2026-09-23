@@ -779,8 +779,23 @@ bool generateGhostSkin(const std::filesystem::path& dir) {
 
 namespace {
 
-// 提取字符串数组（成员必须全是非空字符串；否则失败）
-Result<std::vector<std::string>> parseFrameArray(const platform::json::JsonValue& value) {
+// 审计 [28]：帧名会直接拼进皮肤目录（PetSkin::framePath = dir / 帧名），恶意
+// 皮肤包可用 "../.." 或绝对路径加载皮肤目录外的任意 PNG（有限任意文件读）。
+// 只放行相对文件名：'/'、'\\'（兼收 Unix/Windows 绝对路径与 UNC）、':'（盘符
+// 前缀 "C:"、ADS 一律拒）任一出现即拒；".." 子串即拒（穿越片段；单个 '.' 是
+// PNG 扩展名必须放行）；空串由上游非空校验兜底
+bool isSafeFrameName(const std::string& name) {
+    if (name.find_first_of("/\\:") != std::string::npos) {
+        return false;
+    }
+    return name.find("..") == std::string::npos;
+}
+
+// 提取字符串数组（成员必须全是非空字符串；否则失败）。asFrameNames=true 时
+// 帧名过 isSafeFrameName（states.idle/poked/sleep/typing 用）；false 供
+// phrases 等纯文本数组复用——短语是展示文本不是路径，不收字符集限制
+Result<std::vector<std::string>> parseFrameArray(const platform::json::JsonValue& value,
+                                                 bool asFrameNames) {
     if (!value.isArray()) {
         return Result<std::vector<std::string>>::fail(ErrorCode::ValidationError,
                                                       "states.* 必须是字符串数组");
@@ -791,7 +806,13 @@ Result<std::vector<std::string>> parseFrameArray(const platform::json::JsonValue
             return Result<std::vector<std::string>>::fail(
                 ErrorCode::ValidationError, "帧名必须是非空字符串");
         }
-        frames.push_back(value[i].asString());
+        const std::string& name = value[i].asString();
+        if (asFrameNames && !isSafeFrameName(name)) {
+            return Result<std::vector<std::string>>::fail(
+                ErrorCode::ValidationError,
+                "帧名只许相对文件名（含 / \\ : 或 .. 被拒）: " + name);
+        }
+        frames.push_back(name);
     }
     if (frames.empty()) {
         return Result<std::vector<std::string>>::fail(ErrorCode::ValidationError,
@@ -843,7 +864,7 @@ Result<PetSkin> parsePetSkinJson(const std::string& jsonText) {
         return Result<PetSkin>::fail(ErrorCode::ValidationError,
                                      "pet.json 缺少 states.idle");
     }
-    auto idle = parseFrameArray(states.get("idle"));
+    auto idle = parseFrameArray(states.get("idle"), /*asFrameNames=*/true);
     if (idle.isFail()) {
         return Result<PetSkin>::fail(idle.errorCode(), "states.idle: " + idle.errorMessage());
     }
@@ -851,25 +872,25 @@ Result<PetSkin> parsePetSkinJson(const std::string& jsonText) {
     // 可选状态/字段（M2）：sleep/typing 帧缺失或非法一律静默忽略——
     // 状态机各自回落 idle，老皮肤包零迁移（poked 同款容错）
     if (states.has("poked")) {
-        auto poked = parseFrameArray(states.get("poked"));
+        auto poked = parseFrameArray(states.get("poked"), /*asFrameNames=*/true);
         if (poked.isOk()) {
             skin.pokedFrames = std::move(poked.unsafeValue());
         }
     }
     if (states.has("sleep")) {
-        auto sleep = parseFrameArray(states.get("sleep"));
+        auto sleep = parseFrameArray(states.get("sleep"), /*asFrameNames=*/true);
         if (sleep.isOk()) {
             skin.sleepFrames = std::move(sleep.unsafeValue());
         }
     }
     if (states.has("typing")) {
-        auto typing = parseFrameArray(states.get("typing"));
+        auto typing = parseFrameArray(states.get("typing"), /*asFrameNames=*/true);
         if (typing.isOk()) {
             skin.typingFrames = std::move(typing.unsafeValue());
         }
     }
     if (obj.has("phrases")) {
-        auto phrases = parseFrameArray(obj.get("phrases"));
+        auto phrases = parseFrameArray(obj.get("phrases"), /*asFrameNames=*/false);
         if (phrases.isOk()) {
             skin.phrases = std::move(phrases.unsafeValue());
         }
