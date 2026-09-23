@@ -19,6 +19,81 @@ size_t lineStartOfCursor(const std::string& text, int cursor) {
     return p == std::string::npos ? 0 : p + 1;
 }
 
+// ---- 审计 [12] 表格跳格 helpers ----
+
+// 块内一行：[start,end) 不含换行符；pipes = 行内 '|' 绝对偏移（≥2 才成立）；
+// separator = 表头分隔行（单元格仅 -/:/空白且至少一个 '-'）
+struct TableLine {
+    size_t start = 0;
+    size_t end = 0;
+    std::vector<size_t> pipes;
+    bool separator = false;
+};
+
+// [start,end) 是表格行（trim 后首尾皆 '|'、≥2 竖线）→ 返回竖线绝对偏移，否则空
+std::vector<size_t> tablePipesOf(const std::string& text, size_t start, size_t end) {
+    size_t s = start;
+    size_t e = end;
+    while (s < e && (text[s] == ' ' || text[s] == '\t')) ++s;
+    while (e > s && (text[e - 1] == ' ' || text[e - 1] == '\t')) --e;
+    if (e - s < 2 || text[s] != '|' || text[e - 1] != '|') return {};
+    std::vector<size_t> pipes;
+    for (size_t i = s; i < e; ++i) {
+        if (text[i] == '|') pipes.push_back(i);
+    }
+    return pipes.size() >= 2 ? pipes : std::vector<size_t>{};
+}
+
+bool isSeparatorLine(const std::string& text, const std::vector<size_t>& pipes) {
+    for (size_t k = 0; k + 1 < pipes.size(); ++k) {
+        bool anyDash = false;
+        for (size_t i = pipes[k] + 1; i < pipes[k + 1]; ++i) {
+            const char c = text[i];
+            if (c != '-' && c != ':' && c != ' ' && c != '\t') return false;
+            if (c == '-') anyDash = true;
+        }
+        if (!anyDash) return false;  // 全空单元格（|   |）不是分隔行
+    }
+    return true;
+}
+
+// 含 lineStart 行的表格块：上下连续表格行（含分隔行）。lineStart 行非表格行 → 空。
+std::vector<TableLine> tableBlockAt(const std::string& text, size_t lineStart) {
+    const size_t nl = text.find('\n', lineStart);
+    const size_t lineEnd = nl == std::string::npos ? text.size() : nl;
+    if (tablePipesOf(text, lineStart, lineEnd).empty()) return {};
+
+    size_t top = lineStart;  // 向上并块
+    while (top > 0) {
+        if (text[top - 1] != '\n') break;
+        size_t prevStart = 0;
+        if (top >= 2) {
+            const size_t p = text.rfind('\n', top - 2);
+            prevStart = p == std::string::npos ? 0 : p + 1;
+        }
+        if (tablePipesOf(text, prevStart, top - 1).empty()) break;
+        top = prevStart;
+    }
+
+    std::vector<TableLine> block;  // 自 top 向下收
+    size_t cur = top;
+    while (true) {
+        const size_t e = text.find('\n', cur);
+        const size_t endAbs = e == std::string::npos ? text.size() : e;
+        auto pipes = tablePipesOf(text, cur, endAbs);
+        if (pipes.empty()) break;
+        TableLine ln;
+        ln.start = cur;
+        ln.end = endAbs;
+        ln.separator = isSeparatorLine(text, pipes);
+        ln.pipes = std::move(pipes);
+        block.push_back(std::move(ln));
+        if (e == std::string::npos) break;
+        cur = e + 1;
+    }
+    return block;
+}
+
 } // namespace
 
 std::string listPrefixOf(const std::string& line) {
@@ -217,6 +292,113 @@ void applyLinkSkeleton(EditBuffer& buf) {
     buf.selStart = urlStart;  // 选中「链接」占位
     buf.selEnd = urlStart + static_cast<int>(kUrl.size());
     buf.cursor = buf.selEnd;
+}
+
+// ==================== 审计 [12]：表格 MVP ====================
+
+std::string buildMarkdownTable(int rows, int cols) {
+    if (rows < 1) rows = 1;
+    if (cols < 1) cols = 1;
+    std::string header = "|";
+    std::string sep = "|";
+    for (int c = 0; c < cols; ++c) {
+        header += "   |";
+        sep += "---|";
+    }
+    std::string out = header + "\n" + sep;  // 表头 + 分隔行
+    for (int r = 1; r < rows; ++r) out += "\n" + header;  // rows 含表头行
+    return out;
+}
+
+void applyInsertTable(EditBuffer& buf, int rows, int cols) {
+    const std::string table = buildMarkdownTable(rows, cols);
+    const size_t ls = lineStartOfCursor(buf.text, buf.cursor);
+    const size_t nl = buf.text.find('\n', ls);
+    const size_t le = nl == std::string::npos ? buf.text.size() : nl;
+    const std::string line = buf.text.substr(ls, le - ls);
+    size_t at = 0;
+    if (line.find_first_not_of(" \t") == std::string::npos) {
+        buf.text.replace(ls, le - ls, table);   // 空白行：整行替换为表格
+        at = ls;
+    } else {
+        buf.text.insert(le, "\n\n" + table);    // 非空行：行尾插，前置空行隔开段落
+        at = le + 2;
+    }
+    const int cell = static_cast<int>(at) + 2;  // 进表头首格（"| " 之后）
+    buf.cursor = cell;
+    buf.selStart = buf.selEnd = cell;
+}
+
+bool applyTabTable(EditBuffer& buf, bool shift) {
+    const size_t ls = lineStartOfCursor(buf.text, buf.cursor);
+    const size_t nl = buf.text.find('\n', ls);
+    const size_t le = nl == std::string::npos ? buf.text.size() : nl;
+    if (tablePipesOf(buf.text, ls, le).empty()) return false;  // 非表格行：交回缩进
+    const auto block = tableBlockAt(buf.text, ls);
+    if (block.empty()) return false;
+
+    int ri = 0;  // 光标行在块内的行号
+    for (int i = 0; i < static_cast<int>(block.size()); ++i) {
+        if (static_cast<size_t>(buf.cursor) >= block[i].start &&
+            static_cast<size_t>(buf.cursor) <= block[i].end) {
+            ri = i;
+            break;
+        }
+    }
+    const TableLine& cur = block[ri];
+    const int cellCount = static_cast<int>(cur.pipes.size()) - 1;
+    // 光标单元格 = 「最后一根严格在其左侧的竖线」右邻格（压在竖线上算左格；
+    // 跳格落点 ce 在格内，Shift+Tab 才能反向走回去）；第一格前钳 0、末格后钳末
+    int k = -1;
+    for (size_t i = 0; i < cur.pipes.size() &&
+                      static_cast<size_t>(buf.cursor) > cur.pipes[i]; ++i) {
+        k = static_cast<int>(i);
+    }
+    if (k < 0) k = 0;
+    if (k > cellCount - 1) k = cellCount - 1;
+
+    // 块内下一个/上一个非分隔行（环形查找；块内除自身外全分隔行 → 自身回绕）
+    const int m = static_cast<int>(block.size());
+    auto nextNonSep = [&](int from, bool forward) {
+        for (int step = 1; step <= m; ++step) {
+            const int i = ((forward ? from + step : from - step) % m + m) % m;
+            if (!block[i].separator) return i;
+        }
+        return -1;
+    };
+
+    int nr = ri;
+    int nk = k;
+    if (!shift) {
+        if (!cur.separator && k + 1 < cellCount) {
+            nk = k + 1;  // 同行下一格
+        } else {
+            const int r2 = nextNonSep(ri, true);
+            nr = r2 >= 0 ? r2 : ri;
+            nk = 0;
+        }
+    } else {
+        if (!cur.separator && k > 0) {
+            nk = k - 1;  // 同行上一格
+        } else {
+            const int r2 = nextNonSep(ri, false);
+            nr = r2 >= 0 ? r2 : ri;
+            nk = block[nr].pipes.size() >= 2
+                     ? static_cast<int>(block[nr].pipes.size()) - 2
+                     : 0;
+        }
+    }
+
+    // 落点：目标格内容成选区（去贴边各一个空格，覆写友好）
+    const TableLine& dst = block[nr];
+    size_t cs = dst.pipes[nk] + 1;
+    size_t ce = dst.pipes[nk + 1];
+    if (cs < ce && buf.text[cs] == ' ') ++cs;
+    if (ce > cs && buf.text[ce - 1] == ' ') --ce;
+    buf.selStart = static_cast<int>(cs);
+    buf.selEnd = static_cast<int>(ce);
+    buf.cursor = static_cast<int>(ce);
+    return true;
 }
 
 } // namespace module::markdown

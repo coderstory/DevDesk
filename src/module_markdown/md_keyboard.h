@@ -45,4 +45,24 @@ void applyWrapAround(EditBuffer& buf, const std::string& marker);
 // 无选区 → [文本](链接) 并选中「文本」占位（直接输入即替换）。
 void applyLinkSkeleton(EditBuffer& buf);
 
+// ---- 审计 [12]：表格 MVP（ux-design §5.5：插入表格 + Tab 跳格）----
+
+// 生成 rows×cols 的 Markdown 表格模板（含表头）：行 1 = 空表头「|   |   |」，
+// 行 2 = 分隔行「|---|---|」，之后为空数据行；rows==1 → 表头 + 分隔行
+//（GFM 合法）。rows/cols 下限钳到 1。返回不含结尾换行。
+std::string buildMarkdownTable(int rows, int cols);
+
+// 光标处插入 rows×cols 表格：光标行为空白 → 整行替换为表格；非空 → 光标行
+// 尾插入（前置空行与段落隔开）。光标落进第一个表头单元格、无选区。
+// 已知边界（MVP）：光标行下紧贴另一张表的 | 行时，其后段落需空行分隔的场景
+// 不额外补空行。
+void applyInsertTable(EditBuffer& buf, int rows, int cols);
+
+// Tab/Shift+Tab 表格跳格：光标所在行是表格行（trim 后首尾皆 '|' 且 ≥2 个竖线）
+// 时接管——光标格 = 最后一根严格在其左侧的竖线的右邻格（压线算左格）；Tab 进
+// 本行下一格，行尾/表头分隔行 → 块内下一个非分隔行首格（越块回绕）；Shift+Tab
+// 镜像。目标格内容成选区（覆写友好）。返回 true = 已处理；false = 光标不在
+// 表格行（交回 applyTab 缩进语义）。
+bool applyTabTable(EditBuffer& buf, bool shift);
+
 } // namespace module::markdown
