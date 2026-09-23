@@ -158,6 +158,8 @@ struct StreamingResponse::Impl {
 
     // 错误信息
     std::string errorMessage;
+    // cancel 原因（"cancelled" / "proxy stopping"...）；queueMutex 保护
+    std::string cancelReason = "cancelled";
 
     // status code（header callback 写，线程退出前 getinfo 兜底）
     std::atomic<int> statusCodeAtomic{0};
@@ -331,7 +333,7 @@ ChunkResult StreamingResponse::readChunk(std::string& chunk,
 
     // ---- 队列空，done 或 cancelled ----
     if (impl_->cancelled.load(std::memory_order_acquire)) {
-        errorMessage = "cancelled";
+        errorMessage = impl_->cancelReason;
         return ChunkResult::Error;
     }
     if (impl_->error.load(std::memory_order_acquire)) {
@@ -342,14 +344,28 @@ ChunkResult StreamingResponse::readChunk(std::string& chunk,
 }
 
 void StreamingResponse::cancel() {
+    cancelWithReason("cancelled");
+}
+
+void StreamingResponse::cancelWithReason(const std::string& reason) {
     if (!impl_) return;
-    if (impl_->cancelled.exchange(true, std::memory_order_acq_rel)) {
-        return;  // 已经取消
+    {
+        // 置标志必须在 queueMutex 内（审计 2026-09-23 [9] 的 stop 路径依赖
+        // cancel 能立即叫醒阻塞在 readChunk 的消费者）：旧实现 exchange 不带
+        // 锁，存在「消费者判完谓词（false）还没睡下 → notify 落空 → 睡到
+        // 生产者/空闲超时才被叫醒」的丢唤醒窗口。持锁 store 保证谓词评估与
+        // 置标志对 queueMutex 串行，wait(lock, pred) 不可能带着过期谓词睡着。
+        std::lock_guard<std::mutex> lock(impl_->queueMutex);
+        if (impl_->cancelled.load(std::memory_order_relaxed)) {
+            return;  // 已经取消
+        }
+        impl_->cancelReason = reason;
+        impl_->cancelled.store(true, std::memory_order_release);
     }
     // 唤醒所有等待者：
-    //   - readChunk 的消费者（立即返回 Error/"cancelled"）
-    //   - write callback 里被背压阻塞的生产者（返回 0 → libcurl 以
-    //     CURLE_WRITE_ERROR 中止并关闭上游连接）
+    //   - readChunk 的消费者（立即返回 Error/cancelReason）
+    //   - 被背压阻塞的生产者（返回 0 → libcurl 以 CURLE_WRITE_ERROR 中止
+    //     并关闭上游连接）
     // 注意：不要在这里调 curl_easy_pause——从其它线程暂停会阻止 write
     // callback 再次被调用，传输将挂死到 CURLOPT_TIMEOUT_MS。
     impl_->queueCv.notify_all();

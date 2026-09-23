@@ -1092,3 +1092,71 @@ REGISTER_TEST(streaming_low_speed_idle_timeout,
     upstream.stop();
     return true;
 })
+
+// ==================== 19. 在途流进行中停服（审计 2026-09-23 [9]）====================
+// 回归：stopProxy 先 cancelActiveStreams() 再 server stop()。旧实现
+// Server::stop() 只关监听 socket 就 join worker，在途流的 worker 阻塞在
+// readChunk（上游持续产出时空闲超时永不触发），「停止代理」/应用退出会
+// 挂到流自然结束（幽灵进程）。本测试上游脚本约 1000 chunk × 10ms ≈ 10s，
+// 取消生效后 stop 必须秒级返回。
+REGISTER_TEST(streaming_proxy_stop_unblocks_inflight_stream,
+              "streaming: server stop with an in-flight stream returns promptly", {
+    MockSseServer upstream;
+    DOCTEST_REQUIRE(upstream.start());
+
+    std::vector<std::string> many;
+    for (int i = 0; i < 1000; ++i) many.push_back(sseChunk(i));
+    MockScript script;
+    script.chunks = many;
+    script.delayMsPerChunk = 10;
+    upstream.onMessages(script);
+
+    TestEnv env;
+    DOCTEST_REQUIRE(env.service != nullptr);
+
+    platform::http::Server proxy("127.0.0.1", 0);
+    module::claude::ProxyRouter router(env.svc(), proxy);
+    const std::string upstreamBase = upstream.baseUrl();
+    router.setProfileProvider([upstreamBase]() {
+        return core::Result<Profile>::ok(makeProfile(upstreamBase));
+    });
+    router.registerRoutes();
+    DOCTEST_REQUIRE(proxy.start());
+
+    // 客户端线程：持续流式接收（content_receiver 一直 true）
+    std::atomic<bool> gotFirstChunk{false};
+    const int proxyPort = proxy.actualPort();
+    std::thread client([proxyPort, &gotFirstChunk] {
+        httplib::Client cli("127.0.0.1", proxyPort);
+        cli.set_read_timeout(30, 0);
+        httplib::Request req;
+        req.method = "POST";
+        req.path = "/v1/messages";
+        req.body = R"({"stream":true})";
+        req.headers.emplace("Content-Type", "application/json");
+        req.response_handler = [](const httplib::Response&) { return true; };
+        req.content_receiver = [&gotFirstChunk](
+            const char* /*data*/, size_t len, uint64_t /*off*/, uint64_t /*total*/) {
+            if (len > 0) gotFirstChunk.store(true);
+            return true;
+        };
+        cli.send(req);
+    });
+
+    DOCTEST_CHECK(waitUntil([&] { return gotFirstChunk.load(); }, 10000));
+
+    // 与 stopProxy 相同顺序：先取消在途流，再停 server
+    const auto t0 = steady_clock::now();
+    env.svc().cancelActiveStreams();
+    proxy.stop();
+    const auto stopMs = duration_cast<milliseconds>(
+        steady_clock::now() - t0).count();
+    DOCTEST_CHECK(stopMs < 2000);
+
+    client.join();
+    DOCTEST_CHECK(waitUntil([&] { return upstream.upstreamFinished(); }, 3000));
+    DOCTEST_CHECK(upstream.emitted() < many.size());
+
+    upstream.stop();
+    return true;
+})

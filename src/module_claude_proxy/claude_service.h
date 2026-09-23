@@ -13,6 +13,7 @@
 #include <atomic>
 #include <ctime>
 #include <memory>
+#include <mutex>
 #include <string>
 #include <vector>
 
@@ -132,6 +133,16 @@ public:
     // 停止代理
     void stopProxy();
 
+    // ---- 在途流式请求登记（审计 2026-09-23 [9]）----
+    // ProxyRouter 在启动上游流后立即 registerActiveStream；stopProxy() /
+    // 析构先调 cancelActiveStreams() 再停 server——否则 httplib worker 阻塞
+    // 在 provider 的 readChunk 里，Server::stop() 的 join 要等流自然结束
+    // （Claude 活动生成期无空闲超时，停止/退出会挂起成幽灵进程）。
+    // public：测试用与 stopProxy 相同的顺序驱动验证。
+    void registerActiveStream(
+        const std::shared_ptr<platform::http::StreamingResponse>& stream);
+    void cancelActiveStreams();
+
     bool isProxyRunning() const;
     int proxyPort() const;            // 0 if not running
     std::string proxyAuthToken() const;
@@ -182,6 +193,12 @@ private:
     // 代理 server 资源（延迟构造）
     std::unique_ptr<platform::http::Server> server_;
     std::unique_ptr<ProxyRouter> router_;
+
+    // 在途流式上游登记（[9]）。streamsStopping_：stopProxy/析构已发起，
+    // 期间新登记的流立即被取消（消掉「cancel 跑完才有流登记进来」的窗口）
+    std::mutex streamsMutex_;
+    std::vector<std::weak_ptr<platform::http::StreamingResponse>> activeStreams_;
+    bool streamsStopping_ = false;
 
     // Claude Code 接管通道（settingsFile 为空 = 未启用）
     settings_sync::Paths syncPaths_;

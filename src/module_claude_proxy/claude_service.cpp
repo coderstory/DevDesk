@@ -15,6 +15,7 @@
 #include <algorithm>
 #include <cctype>
 #include <chrono>
+#include <cstdint>
 #include <cstdio>
 #include <ctime>
 #include <fstream>
@@ -96,7 +97,10 @@ ClaudeService::ClaudeService(core::data::SqliteDb& db,
                                                : keychainService) {}
 
 ClaudeService::~ClaudeService() {
-    // 析构时确保停止代理（Server 析构会 join 线程）
+    // 析构时确保停止代理（Server 析构会 join 线程）。审计 2026-09-23 [9]：
+    // 与 stopProxy 同款顺序——先取消在途流，否则 ~Server 的 join 被阻塞在
+    // readChunk 的 worker 卡住。
+    cancelActiveStreams();
     server_.reset();
     router_.reset();
 }
@@ -232,12 +236,19 @@ core::Result<Profile> ClaudeService::createProfile(const std::string& name,
     const std::string hint = makeApiKeyHint(apiKey);
     const std::string check = sha256HexPrefix(apiKey);
 
-    // 先插入一行（keychain_account 临时用一个占位符）
+    // 先插入一行并直接取回 rowid（审计 2026-09-23 [7]）：旧实现是
+    // INSERT 与 SELECT last_insert_rowid() 两条语句，中间不持锁——代理
+    // worker 线程的 logCall INSERT 穿插其间会改写连接级 last_insert_rowid，
+    // 导致 newId 取错：密钥存进错误 account、UPDATE 回填落空（profile 损坏
+    // + 孤儿密钥）。INSERT ... RETURNING id（SQLite ≥3.35）单语句原子取回，
+    // rowid 随本条 INSERT 的结果行返回，不再依赖连接级状态。
+    // （keychain_account 仍先占位空串、storeSecret 成功后 UPDATE 回填，
+    // Keychain 失败时按 newId 精确 DELETE 回滚。）
     auto prep = db_.prepare(
         "INSERT INTO claude_profiles "
         "(name, base_url, api_key_hint, api_key_check, keychain_account, "
         " model, is_active, created_at, updated_at) "
-        "VALUES (?, ?, ?, ?, ?, ?, 0, ?, ?)");
+        "VALUES (?, ?, ?, ?, ?, ?, 0, ?, ?) RETURNING id");
     if (prep.isFail()) {
         return core::Result<Profile>::fail(prep.errorCode(), prep.errorMessage());
     }
@@ -262,22 +273,18 @@ core::Result<Profile> ClaudeService::createProfile(const std::string& name,
         }
         return core::Result<Profile>::fail(stepR.errorCode(), msg);
     }
-
-    // 取新分配的 rowid
-    auto idPrep = db_.prepare("SELECT last_insert_rowid()");
-    if (idPrep.isFail()) {
-        return core::Result<Profile>::fail(idPrep.errorCode(), idPrep.errorMessage());
-    }
-    auto idStep = idPrep.value().step();
-    if (idStep.isFail() || !idStep.value()) {
+    if (!stepR.value()) {
+        // RETURNING 理论上必返回一行；防御式处理（DONE 意味着异常路径）
         return core::Result<Profile>::fail(core::ErrorCode::Internal,
-            "无法读取 last_insert_rowid");
+            "INSERT ... RETURNING id 未返回行");
     }
-    auto idRow = idPrep.value().currentRow();
+
+    // 取新分配的 rowid（本语句结果行，无跨语句竞态）
+    auto idRow = stmt.currentRow();
     if (idRow.isFail()) {
         return core::Result<Profile>::fail(idRow.errorCode(), idRow.errorMessage());
     }
-    auto idVal = idRow.value().getInt64("last_insert_rowid()");
+    auto idVal = idRow.value().getInt64("id");
     if (idVal.isFail()) {
         return core::Result<Profile>::fail(idVal.errorCode(), idVal.errorMessage());
     }
@@ -728,17 +735,22 @@ ClaudeService::recentCalls(int limit) {
 // ---------- 代理 server 生命周期 ----------
 
 std::string ClaudeService::generateAuthToken() {
-    // 32 hex chars (16 bytes) from std::random_device
+    // 32 hex chars (16 bytes) —— 直接从 std::random_device 逐 32 位采样
+    // 4 次填满 128 位（审计 2026-09-23 [10]）。旧实现用单次 random_device()
+    // 采样给 mt19937_64 播种，之后两次的 64 位输出全由那一个 ≤2^32 取值
+    // 的种子决定——token 看着 128 位、实际熵 ≤32 位，loopback 暴力可枚举。
+    // Windows 上 std::random_device 由 BCryptGenRandom 驱动，非确定。
+    // （失败不用 Result：random_device 构造/采样失败抛 std::runtime_error，
+    // 项目约定不抛异常——MinGW/GCC 的实现同样基于系统熵源，启动失败时
+    // 与旧实现行为一致，属于环境级故障。）
     std::random_device rd;
-    std::mt19937_64 gen(rd());
-    std::uniform_int_distribution<uint64_t> dist;
-
-    const uint64_t a = dist(gen);
-    const uint64_t b = dist(gen);
+    std::uint32_t words[4];
+    for (auto& w : words) w = rd();
 
     std::ostringstream oss;
-    oss << std::hex << std::setw(16) << std::setfill('0') << a
-        << std::setw(16) << std::setfill('0') << b;
+    for (const auto w : words) {
+        oss << std::hex << std::setw(8) << std::setfill('0') << w;
+    }
     return oss.str();
 }
 
@@ -752,6 +764,14 @@ core::Result<int> ClaudeService::startProxy(const std::string& bindAddress,
 
     // 决定实际 token：未提供就生成一个
     const std::string token = authToken.empty() ? generateAuthToken() : authToken;
+
+    // 上一轮 stopProxy 置位的停止标志清零（否则 startProxy 后新登记到
+    // router 的流一进来就被误取消）
+    {
+        std::lock_guard<std::mutex> lock(streamsMutex_);
+        streamsStopping_ = false;
+        activeStreams_.clear();
+    }
 
     // 构造 Server
     server_ = std::make_unique<platform::http::Server>(bindAddress, port, token);
@@ -781,6 +801,11 @@ core::Result<int> ClaudeService::startProxy(const std::string& bindAddress,
 void ClaudeService::stopProxy() {
     if (!server_) return;
     LOG_INFO("停止 Claude 代理");
+    // 审计 2026-09-23 [9]：先取消在途流式上游，再停 server。server_->stop()
+    // 内部要 join httplib worker，而在途流的 worker 阻塞在 provider 的
+    // readChunk 上——不取消就要等流自然结束（活动生成期无空闲超时，
+    // UI「停止代理」按钮/退出流程会挂起，进程变幽灵）。
+    cancelActiveStreams();
     server_->stop();
     server_.reset();
     router_.reset();
@@ -798,6 +823,45 @@ int ClaudeService::proxyPort() const {
 
 std::string ClaudeService::proxyAuthToken() const {
     return server_ ? server_->authToken() : std::string();
+}
+
+// ---------- 在途流式上游登记（审计 2026-09-23 [9]）----------
+
+void ClaudeService::registerActiveStream(
+    const std::shared_ptr<platform::http::StreamingResponse>& stream) {
+    if (!stream) return;
+    std::lock_guard<std::mutex> lock(streamsMutex_);
+    // 顺手清掉已结束的条目（weak_ptr 过期 = provider/releaser 已放手），
+    // 防止长期运行下 vector 单调增长
+    std::erase_if(activeStreams_,
+                  [](const std::weak_ptr<platform::http::StreamingResponse>& w) {
+                      return w.expired();
+                  });
+    activeStreams_.emplace_back(stream);
+    // stopProxy 已发起（cancelActiveStreams 跑完后 handler 才登记进来）：
+    // 立即取消，消掉「取消与登记赛跑」的窗口，handler 快速走 Error 路径
+    if (streamsStopping_) {
+        stream->cancelWithReason("proxy stopping");
+    }
+}
+
+void ClaudeService::cancelActiveStreams() {
+    std::vector<std::shared_ptr<platform::http::StreamingResponse>> live;
+    {
+        std::lock_guard<std::mutex> lock(streamsMutex_);
+        streamsStopping_ = true;
+        live.reserve(activeStreams_.size());
+        for (auto& w : activeStreams_) {
+            if (auto sp = w.lock()) live.push_back(std::move(sp));
+        }
+        activeStreams_.clear();
+    }
+    // 锁外逐个 cancel：只置标志 + notify_all（持 queueMutex），阻塞在
+    // readChunk 的 worker 线程立即拿到 Error/"proxy stopping" 退出 provider
+    // 循环 → httplib worker 收工 → Server::stop() 的 join 不再等流结束
+    for (auto& sp : live) {
+        sp->cancelWithReason("proxy stopping");
+    }
 }
 
 // ---------- Claude Code settings 接管（Phase C）----------

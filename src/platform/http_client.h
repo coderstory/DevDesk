@@ -91,8 +91,14 @@ public:
     // readChunk 返回 Error 时的错误信息
     std::string finalErrorMessage() const;
 
-    // 主动取消（立即停止 libcurl 接收、解锁 readChunk）
+    // 主动取消（立即停止 libcurl 接收、解锁 readChunk）。
+    // readChunk 将以 Error + "cancelled" 返回。
     void cancel();
+
+    // 带原因的主动取消：readChunk 返回 Error + reason（消费者据此区分
+    // 「客户端断开」与「服务方主动中止」，审计 2026-09-23 [9] 用于
+    // stopProxy 时告诉在途流「代理正在停止」）
+    void cancelWithReason(const std::string& reason);
 
     // 当前队列深度（用于测试 / 调试）
     size_t queueDepth() const;

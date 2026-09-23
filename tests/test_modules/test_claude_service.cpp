@@ -621,3 +621,36 @@ REGISTER_TEST(claude_service_proxy_lifecycle,
     DOCTEST_CHECK_FALSE(svc.isProxyRunning());
     return true;
 })
+
+// ---- 11b. 审计 2026-09-23 [10]：自动生成 Bearer token 的取值形态 ----
+// 旧实现用单次 32 位 random_device 采样给 mt19937_64 播种，128 位 token
+// 实际熵 ≤2^32。修复后 random_device 逐 32 位采样 4 次直填 16 字节。
+// 熵本身要统计大样本才可测（单元层做不了），本测试固定可观测契约：
+// 32 位小写 hex 十六进制 + 每次生成不同（种子路径已移除）。
+REGISTER_TEST(claude_service_authtoken_hex_random_format,
+              "claude_service: 自动生成 token 为 32 位小写 hex 且每次不同", {
+    TestDb tdb("token");
+    module::claude::ClaudeService svc(tdb.handle(), kTestKeychainService);
+
+    auto started = svc.startProxy("127.0.0.1", 0, "");
+    DOCTEST_REQUIRE(started.isOk());
+    const std::string t1 = svc.proxyAuthToken();
+    svc.stopProxy();
+
+    auto again = svc.startProxy("127.0.0.1", 0, "");
+    DOCTEST_REQUIRE(again.isOk());
+    const std::string t2 = svc.proxyAuthToken();
+    svc.stopProxy();
+
+    auto isLowerHex = [](char c) {
+        return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f');
+    };
+    DOCTEST_CHECK_EQ(t1.size(), 32u);
+    DOCTEST_CHECK_EQ(t2.size(), 32u);
+    bool hexOk = true;
+    for (char c : t1) { if (!isLowerHex(c)) hexOk = false; }
+    for (char c : t2) { if (!isLowerHex(c)) hexOk = false; }
+    DOCTEST_CHECK(hexOk);
+    DOCTEST_CHECK(t1 != t2);
+    return true;
+})

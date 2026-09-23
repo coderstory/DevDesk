@@ -358,6 +358,13 @@ void ProxyRouter::handleStreamingRequest(
     auto upstreamStream =
         std::shared_ptr<platform::http::StreamingResponse>(std::move(upstreamRef));
 
+    // 审计 2026-09-23 [9]：登记到 ClaudeService 在途流表。stopProxy()/应用
+    // 退出会 cancelActiveStreams()，立即解锁之后阻塞在 readChunk 的
+    // provider（否则 Server::stop() 的 join 挂到流自然结束）。若停止已
+    // 发起，这里会被立即 cancel，后续 waitForStatus 快速返回、走 502 或
+    // provider Error 路径退出。
+    service_.registerActiveStream(upstreamStream);
+
     // ---- 4. 等上游响应头（拿到状态码，最多 30s）----
     upstreamStream->waitForStatus(30000);
     const int upstreamStatus = upstreamStream->statusCode();
