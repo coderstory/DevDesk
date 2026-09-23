@@ -25,6 +25,7 @@ constexpr const char* kKeyTheme = "theme";
 constexpr const char* kKeyFontScale = "fontScalePercentV3";
 constexpr const char* kKeyLogRetention = "logRetentionDays";
 constexpr const char* kKeyProxyAutoStart = "claudeProxyAutoStart";
+constexpr const char* kKeyProxyPort = "claudeProxyPort";
 constexpr const char* kKeyWindowEffect = "windowEffect";
 constexpr const char* kKeyEnabledModules = "enabledModules";
 constexpr const char* kKeySidebarCollapsed = "sidebarCollapsed";
@@ -54,6 +55,19 @@ bool moduleEnabled(const SettingsConfig& cfg, const std::string& moduleId) {
                      moduleId) != cfg.enabledModules.end();
 }
 
+bool parseProxyPortInput(const std::string& text, int& out) {
+    // 纯数字约束：任一非数字字符即拒绝（不静默截取，避免 "88ab" 悄悄变 88）
+    if (text.empty() || text.size() > 5) return false;  // 5 位封顶（65535）
+    int value = 0;
+    for (const char c : text) {
+        if (c < '0' || c > '9') return false;
+        value = value * 10 + (c - '0');
+    }
+    if (value < kMinProxyPort || value > kMaxProxyPort) return false;
+    out = value;
+    return true;
+}
+
 SettingsStore::SettingsStore(std::filesystem::path file)
     : file_(std::move(file)) {}
 
@@ -68,6 +82,12 @@ SettingsConfig SettingsStore::sanitized(const SettingsConfig& cfg) {
     if (out.logRetentionDays < 0) out.logRetentionDays = 0;
     if (out.logRetentionDays > kMaxLogRetentionDays) {
         out.logRetentionDays = kMaxLogRetentionDays;
+    }
+    // 代理端口（审计 [14]）：越界/0/负数不钳到边界而是回落默认——与
+    // ClaudeService::setConfiguredProxyPort 同语义（0 钳到 1 会得到一个
+    // 必然 bind 失败/被特权的端口，回落 8888 更可预期）
+    if (out.proxyPort < kMinProxyPort || out.proxyPort > kMaxProxyPort) {
+        out.proxyPort = kDefaultProxyPort;
     }
     // 窗口效果：只认三档，未知值收敛为 off（照抄 fontScale 的钳制模式）
     if (out.windowEffect != kWindowEffectTranslucent &&
@@ -180,6 +200,9 @@ SettingsConfig SettingsStore::load() const {
     if (obj.has(kKeyProxyAutoStart) && obj.get(kKeyProxyAutoStart).isBool()) {
         cfg.claudeProxyAutoStart = obj.get(kKeyProxyAutoStart).asBool();
     }
+    if (obj.has(kKeyProxyPort) && obj.get(kKeyProxyPort).isNumber()) {
+        cfg.proxyPort = static_cast<int>(obj.get(kKeyProxyPort).asInt());
+    }
     if (obj.has(kKeyWindowEffect) && obj.get(kKeyWindowEffect).isString()) {
         cfg.windowEffect = obj.get(kKeyWindowEffect).asString();
     }
@@ -215,6 +238,7 @@ core::Result<void> SettingsStore::save(const SettingsConfig& cfgRaw) const {
     obj.set(kKeyFontScale, platform::json::makeInt(cfg.fontScalePercent));
     obj.set(kKeyLogRetention, platform::json::makeInt(cfg.logRetentionDays));
     obj.set(kKeyProxyAutoStart, platform::json::makeBool(cfg.claudeProxyAutoStart));
+    obj.set(kKeyProxyPort, platform::json::makeInt(cfg.proxyPort));
     obj.set(kKeyWindowEffect, platform::json::makeString(cfg.windowEffect));
     obj.set(kKeySidebarCollapsed,
             platform::json::makeBool(cfg.sidebarCollapsed));

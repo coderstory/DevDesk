@@ -12,7 +12,9 @@
 //   2. 字号缩放——core::theme::setFontScale 全局生效：token 层缩放让所有
 //      经 t.sizes.fontSize* 取字号的模块零改动受益；本页非 token 的硬编码
 //      小字号经 fs() 辅助函数跟随同一缩放
-//   3. Claude 代理：随应用启动开关（Phase B 硬性需求 1，默认关）+ token 只读
+//   3. Claude 代理：随应用启动开关（Phase B 硬性需求 1，默认关）+ 代理端口
+//      数字输入（总设计 §8.5 第 5 条，审计 [14]：默认 8888，改后运行中自动
+//      重启并保持 token）+ token 只读
 //      显示 + 重新生成（确认弹窗后 stopProxy + startProxy 同端口重启 → 服务端
 //      生成新 token；代理未运行时按钮置灰，不允许顺带拉起代理）
 //      + Claude Code 接管状态（Phase D UI 接入，数据源 ClaudeService）
@@ -53,6 +55,7 @@
 #include <components/button.h>
 #include <components/dialog.h>
 #include <components/dropdown.h>
+#include <components/input.h>
 #include <components/scrollview.h>
 #include <components/switch.h>
 #include <components/theme.h>
@@ -257,6 +260,59 @@ public:
                  std::string(on ? "true" : "false"));
     }
 
+    // 应用代理端口（总设计 §8.5 第 5 条，审计 2026-09-23 [14]）：
+    // 解析 draft → 写 config.json → 同步 ClaudeService::configuredProxyPort
+    //（Claude 页手动启动 / main 自启读它）→ 运行中自动 stop→start 重启，
+    // **保持当前 token 只换端口**（改端口不是轮换凭据，不该强制客户端换
+    // token——与「重新生成」按钮语义区分）。重启失败：代理已停、settings.json
+    // 已被 stopProxy 还原（不会指向死端口），状态栏提示可换端口重试。
+    void applyProxyPort() {
+        int port = 0;
+        if (!parseProxyPortInput(proxyPortDraft_, port)) {
+            setStatus("端口无效：请输入 " + std::to_string(kMinProxyPort) +
+                          " - " + std::to_string(kMaxProxyPort) + " 的纯数字",
+                      true);
+            return;
+        }
+        if (port == cfg_.proxyPort) {
+            setStatus("代理端口未变化（" + std::to_string(port) + "）");
+            return;
+        }
+        const int oldPort = cfg_.proxyPort;
+        cfg_.proxyPort = port;
+        persist();
+        proxyPortDraft_ = std::to_string(port);   // 规范化显示（"08888" → "8888"）
+
+        auto* svc = ::module::claude::ClaudeService::global();
+        if (svc) {
+            svc->setConfiguredProxyPort(port);
+        }
+        if (!svc || !svc->isProxyRunning()) {
+            setStatus("代理端口已保存：" + std::to_string(oldPort) + " → " +
+                      std::to_string(port) + "（下次启动代理生效）");
+            LOG_INFO("Settings: 代理端口 " + std::to_string(oldPort) + " → " +
+                     std::to_string(port) + "（代理未运行，下次启动生效）");
+            return;
+        }
+        const std::string keepToken = svc->proxyAuthToken();
+        svc->stopProxy();
+        auto r = svc->startProxy("127.0.0.1", port, keepToken);
+        if (r.isFail()) {
+            setStatus("端口已保存为 " + std::to_string(port) +
+                          "，但代理重启失败（" + r.errorMessage() +
+                          "）；代理已停止，可换端口或释放占用后在 Claude 页重启",
+                      true);
+            LOG_ERROR("Settings: 代理端口改 " + std::to_string(port) +
+                      " 重启失败: " + r.errorMessage());
+            return;
+        }
+        ::module::claude::writeProxyTokenFile(svc->proxyAuthToken(), port);
+        setStatus("代理端口已改为 " + std::to_string(port) +
+                  " 并自动重启（Token 不变）");
+        LOG_INFO("Settings: 代理端口 " + std::to_string(oldPort) + " → " +
+                 std::to_string(port) + "，代理已自动重启");
+    }
+
     // 模块开关（插拔方案 A §5.4）：只写 config.json，注册门控在下次启动的
     // main.cpp 装配处生效。home/settings 恒启用，UI 不提供开关
     void applyModuleEnabled(const std::string& moduleId, bool on) {
@@ -322,7 +378,10 @@ public:
                     warnLines = std::min<size_t>(
                         svc->lastSyncWarnings().size(), 2);
                 }
-                const float proxyH = 140.0f + 28.0f +
+                // 代理卡高度动态：端口行 +34（审计 [14]）+ 接管状态行 + 上层
+                // 覆盖警告行（§6.3）。contentKey 带 proxyH：警告行数变化时滚动
+                // 高度缓存失效重测
+                const float proxyH = 174.0f + 28.0f +
                     (managed ? 20.0f : 0.0f) +
                     static_cast<float>(warnLines) * 16.0f;
                 // 模块插拔门控（§5.4）：claude 关 → 代理卡整卡隐藏；markdown
@@ -934,8 +993,54 @@ private:
                     .color(t.colors.textTertiary)
                     .build();
 
+                // ---- 代理端口行（总设计 §8.5 第 5 条，审计 2026-09-23 [14]）----
+                // 数字输入 + Enter/应用按钮提交；代理运行中改端口自动 stop→start
+                // 重启（保持 token，只换端口），未运行则下次启动生效
+                const std::string portText = proxyPortDraft_.empty()
+                    ? std::to_string(cfg_.proxyPort)
+                    : proxyPortDraft_;
+                ui.text(id + ".port.label")
+                    .position(28.0f, 62.0f)
+                    .size(72.0f, 18.0f)
+                    .text("代理端口")
+                    .fontSize(fs(12.0f))
+                    .lineHeight(28.0f)
+                    .color(t.colors.textSecondary)
+                    .build();
+                components::input(ui, id + ".port.input")
+                    .position(104.0f, 60.0f)
+                    .size(96.0f, 28.0f)
+                    .value(portText)
+                    .placeholder("8888")
+                    .fontSize(fs(13.0f))
+                    .theme(compTheme)
+                    .onChange([this](const std::string& v) {
+                        proxyPortDraft_ = v;
+                    })
+                    .onEnter([this] { applyProxyPort(); })
+                    .build();
+                components::button(ui, id + ".port.apply")
+                    .position(208.0f, 60.0f)
+                    .size(64.0f, 28.0f)
+                    .text("应用")
+                    .fontSize(fs(13.0f))
+                    .colors(t.colors.primary, t.colors.primaryHover,
+                            t.colors.primaryPressed)
+                    .textColor(t.colors.onPrimary)
+                    .radius(t.sizes.radiusSmall)
+                    .onClick([this] { applyProxyPort(); })
+                    .build();
+                ui.text(id + ".port.hint")
+                    .position(282.0f, 62.0f)
+                    .size(w - 282.0f - 28.0f, 18.0f)
+                    .text("改后回车或点「应用」；代理运行中自动重启（Token 不变）")
+                    .fontSize(fs(12.0f))
+                    .lineHeight(18.0f)
+                    .color(t.colors.textTertiary)
+                    .build();
+
                 ui.text(id + ".token.label")
-                    .position(28.0f, 64.0f)
+                    .position(28.0f, 98.0f)
                     .size(240.0f, 16.0f)
                     .text("认证 Token（只读）")
                     .fontSize(fs(12.0f))
@@ -944,14 +1049,14 @@ private:
                     .build();
                 const float btnW = 140.0f;
                 ui.rect(id + ".token.bg")
-                    .position(28.0f, 86.0f)
+                    .position(28.0f, 120.0f)
                     .size(w - 56.0f - btnW - 12.0f, 40.0f)
                     .color(t.colors.surfaceElevated)
                     .radius(t.sizes.radiusSmall)
                     .border(1.0f, t.colors.borderMuted)
                     .build();
                 ui.text(id + ".token.value")
-                    .position(40.0f, 86.0f)
+                    .position(40.0f, 120.0f)
                     .size(w - 80.0f - btnW - 12.0f, 40.0f)
                     .text(tokenText)
                     .fontSize(fs(13.0f))
@@ -962,7 +1067,7 @@ private:
                 // 未运行时置灰（token 随 startProxy 生成，无「预生成」概念；
                 // 且绝不允许此按钮顺带拉起代理——Phase B）
                 components::button(ui, id + ".token.regen")
-                    .position(w - 28.0f - btnW, 86.0f)
+                    .position(w - 28.0f - btnW, 120.0f)
                     .size(btnW, 40.0f)
                     .text("重新生成")
                     .icon(0xF021)  // fa-arrows-rotate
@@ -980,7 +1085,7 @@ private:
                 // 让还原机制对用户可见；上层覆盖警告（§5.3 检测命中时）逐行展示
                 const bool managed = svc && svc->isClaudeCodeManaged();
                 ui.text(id + ".takeover.label")
-                    .position(28.0f, 134.0f)
+                    .position(28.0f, 168.0f)
                     .size(150.0f, 18.0f)
                     .text("Claude Code 接管")
                     .fontSize(fs(12.0f))
@@ -991,7 +1096,7 @@ private:
                     ::module::claude::settings_sync::defaultPaths()
                         .settingsFile.string();
                 ui.text(id + ".takeover.value")
-                    .position(190.0f, 134.0f)
+                    .position(190.0f, 168.0f)
                     .size(w - 190.0f - 28.0f, 18.0f)
                     .text(managed
                           ? ("● 已接管 " + ccPath)
@@ -1008,7 +1113,7 @@ private:
                         std::min<size_t>(warns.size(), 2);
                     for (size_t i = 0; i < shown; ++i) {
                         ui.text(id + ".takeover.warn.icon." + std::to_string(i))
-                            .position(28.0f, 154.0f + static_cast<float>(i) * 16.0f)
+                            .position(28.0f, 188.0f + static_cast<float>(i) * 16.0f)
                             .size(12.0f, 16.0f)
                             .icon(0xF071)  // fa-triangle-exclamation
                             .fontSize(fs(11.0f))
@@ -1016,7 +1121,7 @@ private:
                             .color(t.colors.warning)
                             .build();
                         ui.text(id + ".takeover.warn." + std::to_string(i))
-                            .position(42.0f, 154.0f + static_cast<float>(i) * 16.0f)
+                            .position(42.0f, 188.0f + static_cast<float>(i) * 16.0f)
                             .size(w - 42.0f - 28.0f, 16.0f)
                             .text(warns[i])
                             .fontSize(fs(11.0f))
@@ -1174,6 +1279,9 @@ private:
     std::string petSkinName_;              // 当前皮肤名（M2）
     bool petClickThrough_ = false;         // 桌宠鼠标穿透态（⑥恢复路径）
     bool regenConfirmOpen_ = false;       // 重新生成 token 确认弹窗
+    // 代理端口输入草稿（审计 [14]）：空 = 未编辑，compose 显示 cfg_.proxyPort；
+    // applyProxyPort 成功后由 persist 侧刷新（下次进页恢复显示配置值）
+    std::string proxyPortDraft_;
     float cardsScrollOffset_ = 0.0f;      // 卡片区 scrollView 滚动位置
     std::string statusMessage_;
     bool statusIsError_ = false;

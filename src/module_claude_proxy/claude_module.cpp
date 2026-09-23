@@ -2124,7 +2124,9 @@ private:
             showToast("代理已停止", "本地代理已停止监听", false);
             return;
         }
-        auto r = svc->startProxy("127.0.0.1", 8888);
+        // 端口读 service 上的配置值（审计 [14]：main 启动注入 + 设置页改端口
+        // 同步；默认 8888）。此前硬编码导致 8888 被占用时用户无处改端口
+        auto r = svc->startProxy("127.0.0.1", svc->configuredProxyPort());
         if (r.isFail()) {
             showToast("启动代理失败", r.errorMessage(), true);
             return;

@@ -188,6 +188,15 @@ public:
     int proxyPort() const;            // 0 if not running
     std::string proxyAuthToken() const;
 
+    // ---- 配置端口（产品审计 2026-09-23 [14]）----
+    // 设置页「代理端口」的运行时镜像：main.cpp 启动时从 SettingsConfig 注入，
+    // 设置页改端口时同步注入。手动启动路径（Claude 页按钮）用这个值而不是
+    // 硬编码 8888——module_claude_proxy 不能依赖 module_settings，端口经由
+    // service 单例桥接（与 ClaudeService::global() 同款模式），无环。
+    // setter 钳制到 [kMinConfiguredProxyPort, kMaxConfiguredProxyPort]。
+    int configuredProxyPort() const { return configuredProxyPort_; }
+    void setConfiguredProxyPort(int port);
+
     // ---- Claude Code settings 接管（provider-config Phase C，§5.2/§5.3）----
 
     // 注入接管通道路径并启用（生产由 main.cpp 一次性注入
@@ -213,6 +222,14 @@ public:
 
     static void setGlobal(ClaudeService* svc);
     static ClaudeService* global();
+
+public:
+    // 代理端口合法范围与默认值（审计 [14]；与 module_settings 的
+    // SettingsConfig::proxyPort 钳制范围/默认值保持字面一致——两模块不能
+    // 互相依赖，故各自定义同值常量）
+    static constexpr int kDefaultProxyPort = 8888;
+    static constexpr int kMinProxyPort = 1;
+    static constexpr int kMaxProxyPort = 65535;
 
 private:
     // 从一行 SqlRow 构造 Profile（不含 apiKeyPlain）
@@ -240,6 +257,9 @@ private:
     std::mutex streamsMutex_;
     std::vector<std::weak_ptr<platform::http::StreamingResponse>> activeStreams_;
     bool streamsStopping_ = false;
+
+    // 设置页配置的代理端口（审计 [14]；默认 8888 = 历史硬编码值）
+    int configuredProxyPort_ = kDefaultProxyPort;
 
     // Claude Code 接管通道（settingsFile 为空 = 未启用）
     settings_sync::Paths syncPaths_;

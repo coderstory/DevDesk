@@ -978,6 +978,17 @@ std::string ClaudeService::proxyAuthToken() const {
     return server_ ? server_->authToken() : std::string();
 }
 
+void ClaudeService::setConfiguredProxyPort(int port) {
+    // 钳制到合法范围（非法输入保守回落默认值：0/负数/越界都是配置错误，
+    // 拿字面值 bind 必然失败，不如统一收敛）
+    if (port < kMinProxyPort || port > kMaxProxyPort) {
+        LOG_WARN("代理端口配置非法 (" + std::to_string(port) +
+                 ")，回落默认 " + std::to_string(kDefaultProxyPort));
+        port = kDefaultProxyPort;
+    }
+    configuredProxyPort_ = port;
+}
+
 // ---------- 在途流式上游登记（审计 2026-09-23 [9]）----------
 
 void ClaudeService::registerActiveStream(

@@ -136,6 +136,57 @@ REGISTER_TEST(settings_proxy_autostart_default_off, "settings: claudeProxyAutoSt
     return true;
 })
 
+REGISTER_TEST(settings_proxy_port_roundtrip_clamp, "settings: proxyPort 默认/读写往返/非法回落/输入解析", {
+    using namespace module::settings;
+    const auto path = tempConfigFile("proxyport");
+    removeQuietly(path);
+    SettingsStore store(path);
+
+    auto withPort = [](int port) {
+        SettingsConfig c;
+        c.proxyPort = port;
+        return c;
+    };
+
+    // 默认 8888（spec §8.5 承诺默认端口，审计 2026-09-23 [14]）
+    DOCTEST_CHECK_EQ(store.load().proxyPort, 8888);
+
+    // 读写往返
+    DOCTEST_REQUIRE(store.save(withPort(9000)).isOk());
+    DOCTEST_CHECK_EQ(store.load().proxyPort, 9000);
+
+    // 非法值回落默认（0 / 负数 / 越界）；边界合法值保留
+    DOCTEST_REQUIRE(store.save(withPort(0)).isOk());
+    DOCTEST_CHECK_EQ(store.load().proxyPort, 8888);
+    DOCTEST_CHECK_EQ(SettingsStore::sanitized(withPort(-1)).proxyPort, 8888);
+    DOCTEST_CHECK_EQ(SettingsStore::sanitized(withPort(70000)).proxyPort, 8888);
+    DOCTEST_CHECK_EQ(SettingsStore::sanitized(withPort(1)).proxyPort, 1);
+    DOCTEST_CHECK_EQ(SettingsStore::sanitized(withPort(65535)).proxyPort, 65535);
+
+    // 存量 config.json 无 claudeProxyPort 键 → 默认 8888
+    {
+        std::ofstream f(path, std::ios::trunc);
+        f << R"({"theme": "dark", "claudeProxyAutoStart": true})";
+    }
+    DOCTEST_CHECK_EQ(store.load().proxyPort, 8888);
+
+    // 输入框解析（纯数字 + 范围）
+    int out = 0;
+    DOCTEST_CHECK(parseProxyPortInput("8888", out) && out == 8888);
+    DOCTEST_CHECK(parseProxyPortInput("1", out) && out == 1);
+    DOCTEST_CHECK(parseProxyPortInput("65535", out) && out == 65535);
+    DOCTEST_CHECK_FALSE(parseProxyPortInput("", out));
+    DOCTEST_CHECK_FALSE(parseProxyPortInput("0", out));
+    DOCTEST_CHECK_FALSE(parseProxyPortInput("65536", out));
+    DOCTEST_CHECK_FALSE(parseProxyPortInput("123456", out));   // 6 位封顶拒绝
+    DOCTEST_CHECK_FALSE(parseProxyPortInput("88ab", out));
+    DOCTEST_CHECK_FALSE(parseProxyPortInput(" 88", out));
+    DOCTEST_CHECK_FALSE(parseProxyPortInput("8.8", out));
+    DOCTEST_CHECK_FALSE(parseProxyPortInput("-1", out));
+    removeQuietly(path);
+    return true;
+})
+
 REGISTER_TEST(settings_save_load_roundtrip, "settings: save/load roundtrip", {
     const auto path = tempConfigFile("roundtrip");
     removeQuietly(path);
