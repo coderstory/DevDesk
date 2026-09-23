@@ -65,21 +65,39 @@ std::pair<int, int> defaultPetPos(int frameW, int frameH) {
     return {100, 100};
 }
 
-// 审计 [12]：已知坐标（>=0）钳进工作区再落盘——负坐标（拖出左/上缘）会被
-// pet_config sanitized 的 -1「未设置」哨兵吞掉，重启后静默跳回默认位。
-// 与启动路径共用同一纯函数，两处语义单源。工作区查询失败原样返回
+// 枚举当前全部显示器工作区（M2 多显示器）；枚举为空（无头/早于 glfwInit/
+// 无显示器）时回退主屏单元素——也拿不到则空 vector，clampPetPosToMonitors
+// 原样返回，「无工作区信息时不动」的兜底语义保持
+std::vector<PetWorkArea> currentMonitorWorkAreas() {
+    std::vector<PetWorkArea> areas;
+    for (const core::window::MonitorWorkArea& m : core::window::getMonitorWorkAreas()) {
+        areas.push_back(PetWorkArea{m.x, m.y, m.width, m.height});
+    }
+    if (areas.empty()) {
+        int workX = 0;
+        int workY = 0;
+        int workW = 0;
+        int workH = 0;
+        core::window::getPrimaryMonitorWorkArea(workX, workY, workW, workH);
+        if (workW > 0 && workH > 0) {
+            areas.push_back(PetWorkArea{workX, workY, workW, workH});
+        }
+    }
+    return areas;
+}
+
+// 审计 [12] + M2 多显示器：已知坐标钳进「所在/最近显示器」的工作区再落盘。
+// M1 只按主屏钳，副屏位置（负坐标或超出主屏边界）落盘被吞回主屏，重启跳回
+// 主屏；M2 按位置选对应显示器后副屏负坐标可持久化（pet_config 哨兵同步放宽
+// 为仅 -1）。与启动路径共用同一纯函数，两处语义单源
 void clampPetPosIntoWorkAreaInPlace(int& x, int& y) {
-    int workX = 0;
-    int workY = 0;
-    int workW = 0;
-    int workH = 0;
-    core::window::getPrimaryMonitorWorkArea(workX, workY, workW, workH);
     const PetSkin& skin = runtime().skin;
-    const auto [cx, cy] =
-        clampPetPosToWorkArea(x, y, workX, workY, workW, workH,
-                              skin.frameWidth, skin.frameHeight);
-    x = cx;
-    y = cy;
+    const auto [cx, cy] = clampPetPosToMonitors(x, y, currentMonitorWorkAreas(),
+                                                skin.frameWidth, skin.frameHeight);
+    // 哨兵冲突避让：钳后恰好 -1（如副屏右缘紧贴主屏原点 x=0 的左邻位）会被
+    // 存取两侧误读为「未设置」→ 外挪 1px（肉眼无感），-1 从此唯一表示未设置
+    x = (cx == -1) ? -2 : cx;
+    y = (cy == -1) ? -2 : cy;
 }
 
 // 随机挑一句短语（短语表随皮肤，见 pet_skin.h phraseTable）
@@ -381,6 +399,55 @@ std::pair<int, int> clampPetPosToWorkArea(int x, int y, int workX, int workY,
             std::clamp(y, workY, workY + std::max(0, workH - frameH))};
 }
 
+namespace {
+
+// 点到工作区矩形（闭包 [lo, lo+extent-1]）的轴距离，超出才计
+long long petAxisDist(int p, int lo, int extent) {
+    if (static_cast<long long>(p) < lo) {
+        return static_cast<long long>(lo) - p;
+    }
+    const long long hi = static_cast<long long>(lo) + extent - 1;
+    if (static_cast<long long>(p) > hi) {
+        return static_cast<long long>(p) - hi;
+    }
+    return 0;
+}
+
+} // namespace
+
+std::pair<int, int> clampPetPosToMonitors(int x, int y,
+                                          const std::vector<PetWorkArea>& areas,
+                                          int frameW, int frameH) {
+    // 选屏：某工作区含住点（半开 [x, x+w)）取之（多块含住取枚举序首个，
+    // 实际布局不重叠）；都不含则取点-矩形距离平方最小的一块（= Win32
+    // MONITOR_DEFAULTTONEAREST，处理拖过边缘/两屏之间），并列取先枚举者
+    int best = -1;
+    long long bestDist = 0;
+    for (size_t i = 0; i < areas.size(); ++i) {
+        const PetWorkArea& a = areas[i];
+        if (a.width <= 0 || a.height <= 0) {
+            continue;  // 无效块不参与（防把钳界算成 [x, x)）
+        }
+        if (x >= a.x && x < a.x + a.width && y >= a.y && y < a.y + a.height) {
+            best = static_cast<int>(i);
+            break;
+        }
+        const long long dx = petAxisDist(x, a.x, a.width);
+        const long long dy = petAxisDist(y, a.y, a.height);
+        const long long d = dx * dx + dy * dy;
+        if (best < 0 || d < bestDist) {
+            best = static_cast<int>(i);
+            bestDist = d;
+        }
+    }
+    if (best < 0) {
+        return {x, y};  // 无任何有效工作区（无头兜底）：不动
+    }
+    const PetWorkArea& a = areas[static_cast<size_t>(best)];
+    return clampPetPosToWorkArea(x, y, a.x, a.y, a.width, a.height, frameW,
+                                 frameH);
+}
+
 void startPetWindow(const PetWindowConfig& config) {
     PetRuntime& rt = runtime();
     rt.config = config;
@@ -410,28 +477,25 @@ void startPetWindow(const PetWindowConfig& config) {
     rt.config.skinName = skinName;
     rt.skins = discoverSkins();
 
-    // 位置：未设置 → 主显示器工作区右下角；已知位置钳制进工作区（设计 §4.6，
-    // M1 先主显示器，多显示器钳制是 M2）。工作区查询失败（无头/早于 glfwInit）
-    // 时不动已知位置，未设置则给一个屏内兜底值
-    int workX = 0;
-    int workY = 0;
-    int workW = 0;
-    int workH = 0;
-    core::window::getPrimaryMonitorWorkArea(workX, workY, workW, workH);
+    // 位置：未设置 → 主显示器工作区右下角；已知位置钳制进所在/最近显示器的
+    // 工作区（设计 §4.6；M2 多显示器——M1 只按主屏钳，副屏位置落盘被吞）。
+    // 工作区查询失败（无头/早于 glfwInit）时不动已知位置，未设置则给屏内兜底值
     int x = config.x;
     int y = config.y;
     const auto [defX, defY] = defaultPetPos(rt.skin.frameWidth, rt.skin.frameHeight);
-    // 单边独立处理 -1 哨兵：只重置未设置的那一边（只存了 x 时 y 不丢）
-    if (x < 0) {
+    // 单边独立处理 -1 哨兵：只重置未设置的那一边（只存了 x 时 y 不丢）。
+    // M2 起哨兵是「== -1」而非「< 0」：其他负值是左/上副屏的合法坐标
+    if (x == -1) {
         x = defX;
     }
-    if (y < 0) {
+    if (y == -1) {
         y = defY;
     }
     // 审计 [12]：与落盘路径共用同一钳制纯函数（默认位本就在工作区内，
     // 再钳幂等；无头工作区查不到时原样）
-    const auto [cx, cy] = clampPetPosToWorkArea(x, y, workX, workY, workW, workH,
-                                                rt.skin.frameWidth, rt.skin.frameHeight);
+    const auto [cx, cy] = clampPetPosToMonitors(x, y, currentMonitorWorkAreas(),
+                                                rt.skin.frameWidth,
+                                                rt.skin.frameHeight);
     x = cx;
     y = cy;
     rt.config.x = x;

@@ -29,15 +29,17 @@ PetConfigStore::PetConfigStore(std::filesystem::path file)
 PetConfig PetConfigStore::sanitized(const PetConfig& cfg) {
     PetConfig out = cfg;
     // 皮肤名只许 [A-Za-z0-9_-]（要拼进文件系统路径，防穿越）；
-    // 坐标保留 -1 哨兵（未设置，单边独立生效），正负都钳进 int16 量级防手改乱值
+    // -1「未设置」哨兵单边独立生效；M2 多显示器：其他负值是左/上副屏的合法
+    // 坐标原样保留（旧 x<-1→-1 收敛把副屏位置吞成未设置，重启跳回主屏）；
+    // 正负都钳进 int16 量级防手改乱值
     if (out.skinName.empty() ||
         out.skinName.find_first_not_of(
             "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_") !=
             std::string::npos) {
         out.skinName = kDefaultSkinName;
     }
-    if (out.x < -1) out.x = -1;
-    if (out.y < -1) out.y = -1;
+    if (out.x < -32767) out.x = -32767;
+    if (out.y < -32767) out.y = -32767;
     if (out.x > 32767) out.x = 32767;
     if (out.y > 32767) out.y = 32767;
     return out;
