@@ -32,8 +32,8 @@ bool petExitConfirmChosen(const std::vector<int>& path);
 
 struct PetWindowConfig {
     std::string skinName;   // 空 = kDefaultSkinName
-    int x = -1;             // <0 = 未设置（取主显示器工作区右下角）
-    int y = -1;
+    int x = -1;             // -1 = 未设置（取主显示器工作区右下角）；其他负值是
+    int y = -1;             // 左/上副屏的合法坐标（M2 多显示器，钳制按位置选屏后保留）
     bool clickThrough = false;  // 挂机穿透（右键菜单可切换，持久化）
 };
 
@@ -67,6 +67,31 @@ void petDragEnd(PetDragAnchor& anchor);
 std::pair<int, int> clampPetPosToWorkArea(int x, int y, int workX, int workY,
                                           int workW, int workH, int frameW,
                                           int frameH);
+
+// 单显示器工作区矩形（与 core::window::MonitorWorkArea 同构，头文件不依赖
+// EUI-NEO——照 PetExitConfirmItem 先例，映射在 pet_window.cpp）
+struct PetWorkArea {
+    int x = 0;
+    int y = 0;
+    int width = 0;
+    int height = 0;
+};
+
+// M2 多显示器钳制（纯函数，单测断言用）：按「位置所在或最近的显示器」选工作
+// 区再钳——点在某工作区矩形内取该块（多块含住取枚举序首个，实际不会重叠）；
+// 都不含则取点-矩形欧氏距离最近的一块（等价 Win32 MONITOR_DEFAULTTONEAREST，
+// 处理拖过边缘/两屏之间）。副屏负坐标因此不再被主屏钳吞掉。areas 为空或
+// 选中块宽高 <=0：原样返回（无头兜底，与 clampPetPosToWorkArea 同语义）
+std::pair<int, int> clampPetPosToMonitors(int x, int y,
+                                          const std::vector<PetWorkArea>& areas,
+                                          int frameW, int frameH);
+
+// M2 Sleep 零渲染：系统挂起（PBT_APMSUSPEND）置 true、唤醒置 false。
+// petCompose 入口检查 isPetRenderPaused()，true 则整帧跳过（不重建成命令 /
+// 不推动画 / 不跑 onTimer / 不计气泡倒计时），唤醒后自动恢复。回调由
+// startPetWindow 注册到 EUI-NEO core::platform::setSystemPowerHandler
+void setPetRenderPaused(bool paused);
+bool isPetRenderPaused();
 
 // 打开桌宠窗口（主循环起来前调用；openWindow 入队、首帧消费）。
 // 皮肤缺失时自动生成内置占位皮肤；位置钳制进主显示器工作区。

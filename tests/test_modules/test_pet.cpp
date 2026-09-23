@@ -17,6 +17,8 @@
 //      128×128 RGBA PNG + license 自带（素材纪律 R7）
 //  11. 审计修复（2026-09-23 pet 簇）：帧名路径穿越拒绝 [28] + 已知坐标
 //      钳进工作区纯函数 [12]（[0][1] 的 onWindowDestroyed 接线断言在 §5）
+//  12. M2 收尾（2026-09-23 pet-m2）：多显示器按位置选屏钳制 + 负坐标持久化
+//      往返 + Sleep 零渲染暂停门（电源事件真触发属人工点验）
 // 子窗口真实渲染/拖拽/穿透/气泡视觉属人工点验（设计 §6 M2 验收项）。
 #include "doctest.h"
 
@@ -1037,3 +1039,141 @@ REGISTER_TEST(pet_exit_confirm_decision, "pet: 只有「确认退出」路径触
     DOCTEST_CHECK(!petExitConfirmChosen(std::vector<int>{}));
     return true;
 })
+
+// ============ 12. M2 收尾：多显示器钳制 + Sleep 零渲染（2026-09-23 pet-m2）============
+
+namespace {
+
+// 工作区 mock 构造（REGISTER_TEST 宏体不能有含逗号的初始化列表，照
+// frameNameRejected 先例拆出）
+module::pet::PetWorkArea mockArea(int x, int y, int w, int h) {
+    module::pet::PetWorkArea a;
+    a.x = x;
+    a.y = y;
+    a.width = w;
+    a.height = h;
+    return a;
+}
+
+// 左副屏布局：主屏 [0,1920) + 副屏 [-1920,0)（负坐标区）
+std::vector<module::pet::PetWorkArea> dualMonitorLeft() {
+    std::vector<module::pet::PetWorkArea> v;
+    v.push_back(mockArea(0, 0, 1920, 1080));
+    v.push_back(mockArea(-1920, 0, 1920, 1080));
+    return v;
+}
+
+// 右副屏布局：主屏 [0,1920) + 副屏 [1920,3840)
+std::vector<module::pet::PetWorkArea> dualMonitorRight() {
+    std::vector<module::pet::PetWorkArea> v;
+    v.push_back(mockArea(0, 0, 1920, 1080));
+    v.push_back(mockArea(1920, 0, 1920, 1080));
+    return v;
+}
+
+// 仅主屏（M1 形态回归基准）
+std::vector<module::pet::PetWorkArea> primaryOnly() {
+    std::vector<module::pet::PetWorkArea> v;
+    v.push_back(mockArea(0, 0, 1920, 1080));
+    return v;
+}
+
+} // namespace
+
+REGISTER_TEST(pet_multi_monitor_clamp, "pet: 多显示器按位置选屏钳制（M2 任务A）", {
+    using module::pet::clampPetPosToMonitors;
+    // 副屏内合法负坐标：不动（M1 只按主屏钳会把 -1500 钳回 0 = 跳回主屏）
+    const auto onSecondary = clampPetPosToMonitors(-1500, 500, dualMonitorLeft(), 128, 128);
+    DOCTEST_CHECK_EQ(onSecondary.first, -1500);
+    DOCTEST_CHECK_EQ(onSecondary.second, 500);
+    // 超出左副屏左缘 → 钳到副屏工作区原点（-1920），不是主屏 0
+    const auto pastLeft = clampPetPosToMonitors(-3000, 500, dualMonitorLeft(), 128, 128);
+    DOCTEST_CHECK_EQ(pastLeft.first, -1920);
+    DOCTEST_CHECK_EQ(pastLeft.second, 500);
+    // 副屏纵向越界 → 钳副屏内（1080-128），横坐标原样
+    const auto secondaryOverflow = clampPetPosToMonitors(-1500, 99999, dualMonitorLeft(), 128, 128);
+    DOCTEST_CHECK_EQ(secondaryOverflow.first, -1500);
+    DOCTEST_CHECK_EQ(secondaryOverflow.second, 952);
+    // 右副屏内：正坐标超出主屏边界同样不动
+    const auto onRight = clampPetPosToMonitors(2500, 300, dualMonitorRight(), 128, 128);
+    DOCTEST_CHECK_EQ(onRight.first, 2500);
+    DOCTEST_CHECK_EQ(onRight.second, 300);
+    // 两块屏都不含的远处（x=99999）→ 取最近屏（右副屏）钳 3840-128=3712，
+    // 不是主屏的 1792（MONITOR_DEFAULTTONEAREST 语义）
+    const auto farRight = clampPetPosToMonitors(99999, 300, dualMonitorRight(), 128, 128);
+    DOCTEST_CHECK_EQ(farRight.first, 3712);
+    DOCTEST_CHECK_EQ(farRight.second, 300);
+    // M1 行为回归：仅主屏枚举时负坐标仍钳回主屏原点（单机无副屏用户零变化）
+    const auto legacy = clampPetPosToMonitors(-50, -80, primaryOnly(), 128, 128);
+    DOCTEST_CHECK_EQ(legacy.first, 0);
+    DOCTEST_CHECK_EQ(legacy.second, 0);
+    // 空枚举（无头兜底）→ 原样
+    const auto headless = clampPetPosToMonitors(-50, -60, std::vector<module::pet::PetWorkArea>{}, 128, 128);
+    DOCTEST_CHECK_EQ(headless.first, -50);
+    DOCTEST_CHECK_EQ(headless.second, -60);
+    // 无效块（宽高 0）不参与选屏：[无效, 主屏] 布局下仍按主屏钳
+    std::vector<module::pet::PetWorkArea> withInvalid;
+    withInvalid.push_back(mockArea(5000, 5000, 0, 0));
+    withInvalid.push_back(mockArea(0, 0, 1920, 1080));
+    const auto skipInvalid = clampPetPosToMonitors(99999, 300, withInvalid, 128, 128);
+    DOCTEST_CHECK_EQ(skipInvalid.first, 1792);
+    return true;
+});
+
+REGISTER_TEST(pet_negative_coord_persist, "pet: 副屏负坐标落盘往返（M2 任务A 哨兵）", {
+    using namespace module::pet;
+    const std::filesystem::path file =
+        std::filesystem::temp_directory_path() / "devdesk_test_pet_config_neg.json";
+    std::error_code ec;
+    std::filesystem::remove(file, ec);
+    PetConfigStore store(file);
+    // 左副屏坐标落盘 → 读回原值（旧 sanitize 的 x<-1→-1 会把它吞成「未设置」）
+    PetConfig cfg;
+    cfg.skinName = "clay-cat";
+    cfg.x = -1500;
+    cfg.y = 500;
+    DOCTEST_CHECK(store.save(cfg).isOk());
+    const PetConfig loaded = store.load();
+    DOCTEST_CHECK_EQ(loaded.x, -1500);
+    DOCTEST_CHECK_EQ(loaded.y, 500);
+    // -1「未设置」哨兵语义保持：单边独立、往返不变
+    PetConfig unsetCfg;  // 默认 -1/-1
+    DOCTEST_CHECK_EQ(PetConfigStore::sanitized(unsetCfg).x, -1);
+    unsetCfg.x = 100;
+    unsetCfg.y = -1;
+    const PetConfig half = PetConfigStore::sanitized(unsetCfg);
+    DOCTEST_CHECK_EQ(half.x, 100);
+    DOCTEST_CHECK_EQ(half.y, -1);
+    // 乱值钳制方向对称：负向也收在 int16 量级（-99999 → -32767）
+    PetConfig wild;
+    wild.x = -99999;
+    wild.y = -99999;
+    DOCTEST_CHECK_EQ(PetConfigStore::sanitized(wild).x, -32767);
+    DOCTEST_CHECK_EQ(PetConfigStore::sanitized(wild).y, -32767);
+    std::filesystem::remove(file, ec);
+    return true;
+});
+
+// Sleep 零渲染（任务B）：无头可断言的是「暂停门」——compose 入口唯一的读值
+// isPetRenderPaused()（true 即整帧 return，不重建成/不推动画/不跑计时器），
+// 以及电源回调写入方与读取方共用同一标志。WM_POWERBROADCAST → 回调 → 标志
+// 的真实链路属真机点验（EUI-NEO power_events 只在 Windows 消息泵触发）。
+REGISTER_TEST(pet_sleep_render_pause, "pet: Sleep 零渲染暂停门（M2 任务B）", {
+    using module::pet::isPetRenderPaused;
+    using module::pet::setPetRenderPaused;
+    // 默认不暂停（首帧正常 compose）
+    DOCTEST_CHECK(!isPetRenderPaused());
+    // 挂起回调侧：置位 → compose 跳帧门生效
+    setPetRenderPaused(true);
+    DOCTEST_CHECK(isPetRenderPaused());
+    // 唤醒回调侧：清位 → 恢复渲染
+    setPetRenderPaused(false);
+    DOCTEST_CHECK(!isPetRenderPaused());
+    // 重复挂起/唤醒幂等（PBT_APMRESUMEAUTOMATIC 与 RESUMESUSPEND 先后到也只收敛到 false）
+    setPetRenderPaused(true);
+    setPetRenderPaused(true);
+    setPetRenderPaused(false);
+    setPetRenderPaused(false);
+    DOCTEST_CHECK(!isPetRenderPaused());
+    return true;
+});
