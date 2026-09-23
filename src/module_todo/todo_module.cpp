@@ -5,6 +5,7 @@
 #include "core/module_interface.h"
 #include "core/router.h"
 #include "core/theme.h"
+#include "core/component_theme.h"
 #include "core/time.h"
 #include "todo_service.h"
 #include "todo_ui_logic.h"
@@ -598,7 +599,7 @@ public:
         drawRenameDialog(ui, screen, t);
         drawConfirmDeleteDialog(ui, screen, t);
         drawToast(ui, screen,
-                  t.isDark ? components::theme::dark() : components::theme::light());
+                  core::theme::componentTokens(t));
     }
 
     // P7a 键盘移动：Ctrl/Cmd+↑↓ 上移/下移当前选中任务（选中 = 最近
@@ -628,8 +629,7 @@ private:
     void drawHeader(eui::Ui& ui, float contentW, float headerH, float bodyH,
                     const core::theme::Tokens& t) {
         (void)bodyH;
-        const auto componentTheme = t.isDark ? components::theme::dark()
-                                             : components::theme::light();
+        const auto componentTheme = core::theme::componentTokens(t);
         ui.row("todo.header")
             .size(contentW, headerH)
             .alignItems(eui::Align::CENTER)
@@ -933,8 +933,7 @@ private:
 
         // 列内滚动（scrollView）：此前直接裁掉超出列高的卡片（第 12 张起消失）。
         // 滚动位置按列索引记忆（reloadAll 时 vector resize 保留旧值）。
-        const auto componentTheme = t.isDark ? components::theme::dark()
-                                             : components::theme::light();
+        const auto componentTheme = core::theme::componentTokens(t);
         components::scrollView(ui, id + ".scroll")
             .position(0.0f, kColumnHeaderHeight)
             .size(width, height - kColumnHeaderHeight)
@@ -1123,8 +1122,7 @@ private:
 
     void drawNewTaskDialog(eui::Ui& ui, const eui::Screen& screen,
                            const core::theme::Tokens& t) {
-        const auto themeTokens = t.isDark ? components::theme::dark()
-                                          : components::theme::light();
+        const auto themeTokens = core::theme::componentTokens(t);
         const float w = 460.0f;
         const float h = 230.0f;
 
@@ -1227,8 +1225,7 @@ private:
 
     void drawContextMenu(eui::Ui& ui, const eui::Screen& screen,
                          const core::theme::Tokens& t) {
-        const auto themeTokens = t.isDark ? components::theme::dark()
-                                          : components::theme::light();
+        const auto themeTokens = core::theme::componentTokens(t);
         std::vector<components::ContextMenuItem> items;
         if (ctxTaskId_ != 0) {
             const Task* self = findTask(ctxTaskId_);
@@ -1357,8 +1354,7 @@ private:
     // ---------- 重命名列弹窗 ----------
     void drawRenameDialog(eui::Ui& ui, const eui::Screen& screen,
                           const core::theme::Tokens& t) {
-        const auto themeTokens = t.isDark ? components::theme::dark()
-                                          : components::theme::light();
+        const auto themeTokens = core::theme::componentTokens(t);
         const float w = 460.0f;
         const float h = 210.0f;
 
@@ -1431,8 +1427,7 @@ private:
     // （外键 CASCADE 会连带删掉列下全部任务）
     void drawConfirmDeleteDialog(eui::Ui& ui, const eui::Screen& screen,
                                  const core::theme::Tokens& t) {
-        const auto themeTokens = t.isDark ? components::theme::dark()
-                                          : components::theme::light();
+        const auto themeTokens = core::theme::componentTokens(t);
         const float w = 460.0f;
         const float h = 200.0f;
         const bool delTask = (confirmTaskId_ != 0);
@@ -1516,8 +1511,7 @@ private:
     void drawDatePicker(eui::Ui& ui, const eui::Screen& screen,
                         const core::theme::Tokens& t) {
         if (!datePickOpen_) return;
-        const auto themeTokens = t.isDark ? components::theme::dark()
-                                          : components::theme::light();
+        const auto themeTokens = core::theme::componentTokens(t);
         int y = 0, m = 0, d = 0;
         if (!ui::epochToYmd(detailDueAt_.value_or(0), y, m, d)) {
             ui::epochToYmd(static_cast<int64_t>(std::time(nullptr)), y, m, d);
@@ -1541,8 +1535,7 @@ private:
     // 行点击 = 关闭本弹窗并打开该任务详情
     void drawOverdueDialog(eui::Ui& ui, const eui::Screen& screen,
                            const core::theme::Tokens& t) {
-        const auto themeTokens = t.isDark ? components::theme::dark()
-                                          : components::theme::light();
+        const auto themeTokens = core::theme::componentTokens(t);
         const float w = 560.0f;
         const float rowH = 44.0f;
         constexpr float kMaxDialogH = 640.0f;
@@ -1681,8 +1674,7 @@ private:
 
     void drawDetailDialog(eui::Ui& ui, const eui::Screen& screen,
                           const core::theme::Tokens& t) {
-        const auto themeTokens = t.isDark ? components::theme::dark()
-                                          : components::theme::light();
+        const auto themeTokens = core::theme::componentTokens(t);
         const float w = 560.0f;
         // 「移动到」全列遍历 + 可换行：每行 4 个按钮，列多时增高弹窗
         // （此前硬编码 i < 4，第 5 列起在详情弹窗里移不过去）

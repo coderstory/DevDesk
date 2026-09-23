@@ -30,6 +30,7 @@
 #include "core/paths.h"
 #include "core/router.h"
 #include "core/theme.h"
+#include "core/component_theme.h"
 #include "core/time.h"
 #include "markdown_service.h"
 #include "md_keyboard.h"
@@ -216,7 +217,7 @@ public:
 
         const auto& t = core::theme::current();
         const auto componentTheme =
-            t.isDark ? components::theme::dark() : components::theme::light();
+            core::theme::componentTokens(t);
 
         const float pad = t.sizes.spacingXXLarge; // 40
         const float contentW = screen.width - pad * 2.0f;
@@ -267,7 +268,7 @@ private:
         (void)contentH;
         (void)bodyH;
         const auto componentTheme =
-            t.isDark ? components::theme::dark() : components::theme::light();
+            core::theme::componentTokens(t);
         const std::string subtitle =
             service_ ? (std::to_string(notes_.size()) + " 篇笔记 · " + status_)
                      : "尚未初始化笔记目录";

@@ -42,6 +42,7 @@
 #include "core/module_interface.h"
 #include "core/paths.h"
 #include "core/theme.h"
+#include "core/component_theme.h"
 #include "module_pet/pet_config.h"
 #include "module_pet/pet_skin.h"
 #include "module_pet/pet_window.h"
@@ -335,9 +336,7 @@ public:
                     moduleEnabled(cfg_, kModuleIdClaudeProxy);
                 const bool mdOn = moduleEnabled(cfg_, kModuleIdMarkdown);
                 const bool petOn = moduleEnabled(cfg_, kModuleIdPet);
-                const auto compTheme = t.isDark
-                    ? components::theme::dark()
-                    : components::theme::light();
+                const auto compTheme = core::theme::componentTokens(t);
                 components::scrollView(ui, "settings.cards.scroll")
                     .size(contentW, cardsH)
                     .gap(t.sizes.spacingLarge)
@@ -468,8 +467,7 @@ private:
     // 弹层在卡片子树内，需整卡抬层）
     void drawAppearanceCard(eui::Ui& ui, const std::string& id, float w,
                             float h, const core::theme::Tokens& t) {
-        const auto compTheme = t.isDark ? components::theme::dark()
-                                        : components::theme::light();
+        const auto compTheme = core::theme::componentTokens(t);
         ui.stack(id)
             .size(w, h)
             .zIndex(30)
@@ -640,8 +638,7 @@ private:
              "桌面小宠物：透明置顶小窗，可拖拽/点击互动（默认关闭）"},
         };
         constexpr int kToggleCount = static_cast<int>(sizeof(kToggleable) / sizeof(kToggleable[0]));
-        const auto compTheme = t.isDark ? components::theme::dark()
-                                        : components::theme::light();
+        const auto compTheme = core::theme::componentTokens(t);
         ui.stack(id)
             .size(w, h)
             .content([&] {
@@ -721,8 +718,7 @@ private:
                     .load()
                     .skinName;
         }
-        const auto compTheme = t.isDark ? components::theme::dark()
-                                        : components::theme::light();
+        const auto compTheme = core::theme::componentTokens(t);
         ui.stack(id)
             .size(w, h)
             .content([&] {
@@ -874,8 +870,7 @@ private:
                 // 随应用启动代理（Phase B 硬性需求 1，默认关）——放卡片右上，
                 // 不新增卡片高度（SwitchBuilder 无 position，套 stack 定位，
                 // 与字号下拉同款包装）
-                const auto compTheme = t.isDark ? components::theme::dark()
-                                                : components::theme::light();
+                const auto compTheme = core::theme::componentTokens(t);
                 ui.stack(id + ".autostart.wrap")
                     .position(w - 28.0f - 240.0f, 12.0f)
                     .size(240.0f, 28.0f)
@@ -1005,8 +1000,7 @@ private:
     void drawLogCard(eui::Ui& ui, const std::string& id, float w, float h,
                      const core::theme::Tokens& t, float cardTopY,
                      float screenH) {
-        const auto compTheme = t.isDark ? components::theme::dark()
-                                        : components::theme::light();
+        const auto compTheme = core::theme::componentTokens(t);
         ui.stack(id)
             .size(w, h)
             .zIndex(30)
@@ -1074,8 +1068,7 @@ private:
                                 const core::theme::Tokens& t) {
         const float w = 460.0f;
         const float h = 210.0f;
-        const auto compTheme = t.isDark ? components::theme::dark()
-                                        : components::theme::light();
+        const auto compTheme = core::theme::componentTokens(t);
         components::dialog(ui, "settings.dialog.regen")
             .open(regenConfirmOpen_)
             .screen(screen.width, screen.height)
