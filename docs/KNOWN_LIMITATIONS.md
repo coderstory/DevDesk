@@ -1,6 +1,6 @@
 # DevDesk 已知限制
 
-> 如实记录，不做粉饰。基线：2026-09-22，Windows 11，137/137 测试全绿，单 exe 零外部 DLL。
+> 如实记录，不做粉饰。基线：2026-09-23，Windows 11，330/330 测试全绿，单 exe 零外部 DLL。
 > 分「Windows 已知限制」与「跨平台已知限制」两节；每条附来源 / 升级路径（如有）。
 > 这些条目大多是各任务 notes 中登记的**范围外项**，不是未发现的缺陷。
 > 已修复的历史条目移入文末「已解决」小节存档（含修复 commit），不静默删除。
@@ -34,10 +34,10 @@
 
 ### UI / 交互
 
-#### 1. Home 页右上角「⚙ 设置」按钮仍置灰（残留装饰按钮）
+#### 1. Home 页右上角「⚙ 设置」按钮置灰 —— 已解决（W7 `7b115a6` 接线，本次文档核对清账）
 
-- W5 侧边栏落地后设置入口已由侧边栏承担（原浮动齿轮桥接已删），但 Home 页右上角的「⚙ 设置」按钮**没有随之一并接线或移除**，仍是 disabled 置灰状态，且源码注释（"设置页 T11 落地前不可用"）已过时。
-- **影响**：纯视觉残留，不影响任何功能（侧边栏常驻可进设置）；属下次 UI 清理顺手项（改为 navigateTo(Settings) 或直接删掉按钮）。
+- W5 侧边栏落地后设置入口已由侧边栏承担，Home 右上角「⚙ 设置」按钮一度未接线、置灰，且源码注释（"设置页 T11 落地前不可用"）过时。
+- **已解决**：`home_module.cpp` 的 `home.btn.settings` 已挂 `navigateTo(core::PageId::Settings)`（2026-09-23 源码核实无 disabled 态），与侧边栏「设置」入口等效；本节此前条目描述滞后于 W7 实态。
 
 #### 2. 运行中切换主题，窗口底色（clearColor）需重启才跟随 —— 已解决（磨砂 Phase B/D）
 
@@ -135,7 +135,7 @@
 
 1. **非 ASCII 文件路径可能乱码（argv 打开文件）**（原 Windows-1）——**已于 W5 修复（`90d5792`）**：`file_open_win.cpp` 改 `GetCommandLineW + CommandLineToArgvW + WideCharToMultiByte(CP_UTF8)`，宽字符 argv 转 UTF-8，非 ASCII 路径不再乱码。
 2. **字号缩放仅作用于设置页自身**（原跨平台 UI-1）——**已于 W5 修复（`90d5792`）**：`core::theme` 增加 `setFontScale/fontScale`（默认 1.0，钳制 [0.5, 2.0]），在 token 读取层统一施加（setDark/setLight 重建后重放，不叠加）；设置页字号档位改写全局缩放，全模块生效。
-3. **无侧边栏导航（浮动齿轮桥接）**（原跨平台 UI-2）——**已于 W5 修复（`90d5792`）**：main.cpp 自绘常驻侧边栏（260px，row(侧边栏, 页面内容)，含设置共 5 个模块入口，当前页高亮，点击 navigateTo）；浮动齿轮桥接已删。残留：Home 页右上角「⚙ 设置」按钮本身仍是置灰状态（见上文跨平台 UI-1，纯视觉残留）。
+3. **无侧边栏导航（浮动齿轮桥接）**（原跨平台 UI-2）——**已于 W5 修复（`90d5792`）**：main.cpp 自绘常驻侧边栏（260px，row(侧边栏, 页面内容)，含设置共 5 个模块入口，当前页高亮，点击 navigateTo）；浮动齿轮桥接已删。曾记的残留（Home ⚙ 置灰按钮）亦已接线（见上文跨平台 UI-1）。
 4. **Home 快捷按钮降级为导航；最近编辑点击仅导航**（原跨平台 UI-3）——**已于 W5 修复（`c3901a8`）**：Router 增加跨模块跳转负载（`navigateTo(page, payload)` + `consumePendingPayload` 一次性消费语义）；Home「+ 新建笔记 / + 新建任务」带 `action:*` 负载在目标页触发新建弹窗，「最近编辑」行点击带 `open:<路径>` 负载直接打开那篇笔记。
 5. **Claude 切换器页面的操作按钮未接线**（原跨平台 UI-4）——**已于 W5 修复（`843cb2c`）**：claude_module.cpp 从 0 个 onClick 到全量真接 `ClaudeService`——新建/编辑（dialog 表单，编辑预填、Key 留空=不换）、启用（setActiveProfile）、删除（确认 dialog + Keychain 清理）、测试连通（testConnection + toast）、代理开关（startProxy/stopProxy），失败 toast 显示 Result 中文错误。
 6. **深色主题下除设置页外页面背景固定浅色**（原跨平台 UI-6）——**已于 W5 修复（`90d5792`）**：`clearColor` 改为构造时从 `core::theme::current().colors.background` 快照，跟随持久化主题；EUI-NEO 无运行时改 clearColor 的 API，运行中切换主题仍需重启生效（运行中切换的小尾巴见上文跨平台 UI-2）。

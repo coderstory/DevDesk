@@ -4,11 +4,13 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## 项目概况
 
-**DevDesk** 是面向开发者的跨平台桌面工具集（C++17 GUI 应用），包含三大工具：
+**DevDesk** 是面向开发者的跨平台桌面工具集（C++20 GUI 应用），包含三大工具：
 
 - **Markdown 笔记本**：本地文件存储 + SQLite FTS5 全文搜索
 - **Todo 看板**：SQLite 存储，多列卡片管理
 - **Claude 配置切换器**：多套 API profile 管理 + 本地 HTTP 代理（带流式转发）
+
+另有首页仪表盘、设置页（模块插拔开关）与**桌宠**（module_pet，非 Router 页面模块，无边框置顶透明子窗，默认关闭、经设置页模块开关启用）。
 
 目标平台：**Windows 11**（当前开发环境，2026-09 从 macOS 迁移而来）和 **macOS 27+**（已完成主线，平台分支代码保留可用）。
 
@@ -42,7 +44,8 @@ EUI-NEO 依赖：`../EUI-NEO/`（同级目录，通过 `EUI_NEO_DIR` cache 变�
 ## 🏗️ 架构要点（4 层模块化）
 
 ```
-main → 5 个 module_* (home / markdown / todo / claude_proxy / settings)
+main → 6 个 module_* (home / markdown / todo / claude_proxy / settings / pet)
+            │  pet 非 Router 页面模块：main 直接 startPetWindow 接线独立子窗
             ↓
        core (Result / paths / sqlite_db / logging / theme / router)
             ↓
@@ -175,7 +178,7 @@ main → 5 个 module_* (home / markdown / todo / claude_proxy / settings)
 
 已正确处理的跨平台点（T6 接口隔离后）：**keychain / paths / time / file_open 四族平台 API 全部按平台拆文件**（`*_win.cpp` / `*_macos.cpp` / `*_posix.cpp`，CMake `target_sources` 按平台选择编译，与 EUI-NEO 后端选择同一模式），业务代码零 `#ifdef _WIN32` / `__APPLE__`（2026-09-22 W2 验收 grep `src/` *.cpp/*.h 零命中）；HTTP 层（libcurl/cpp-httplib）本身跨平台；`.app` target（`if(APPLE)` 守卫）、Security.framework 链接（有守卫）。time 统一走 `core::time::localTime`（`src/core/time.h` + `time_win/posix.cpp`）。
 
-**测试框架注意**：`tests/doctest.h` 是自制 78 行迷你框架（`REGISTER_TEST` 宏静态自注册 + `DOCTEST_CHECK/REQUIRE` 断言，fail-fast），**不是真 doctest**——grep `TEST_CASE` 找不到用例、`--list-test-cases` 之类参数会被当作过滤子串属正常。共 **304 个用例**（2026-09-23 全绿：291 终验基线 + pet-skins 五款程序化皮肤用例 + anime-girl 内置美术皮肤断言；soak 300s 由 `DEVDESK_SOAK=1` 门控、常规套件打印 `[SKIP]` 直接通过）。test_main 支持子串过滤：`./devdesk_tests.exe stress` 只跑名字含 "stress" 的用例，`--log` 打开 Debug 级控制台日志。
+**测试框架注意**：`tests/doctest.h` 是自制 78 行迷你框架（`REGISTER_TEST` 宏静态自注册 + `DOCTEST_CHECK/REQUIRE` 断言，fail-fast），**不是真 doctest**——grep `TEST_CASE` 找不到用例、`--list-test-cases` 之类参数会被当作过滤子串属正常。共 **330 个用例**（2026-09-23 master @ 296b9c8 实测全绿：291 终验基线 + pet-skins/anime-girl 波 +13 + md-highlight +7 + theme-hierarchy +4 + pet-fix +1 + audit-batch1 +13 + winfx-pet +1；soak 300s 由 `DEVDESK_SOAK=1` 门控、常规套件打印 `[SKIP]` 直接通过）。test_main 支持子串过滤：`./devdesk_tests.exe stress` 只跑名字含 "stress" 的用例，`--log` 打开 Debug 级控制台日志。
 
 ## 📂 关键文件
 

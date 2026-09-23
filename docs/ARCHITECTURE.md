@@ -13,16 +13,18 @@
 │ Layer 0: Application Entry                                     │
 │   src/main.cpp                                                │
 │   - 初始化 paths / logging / sqlite                           │
-│   - 注册 4 个模块到 Router                                    │
+│   - 注册 5 个页面模块到 Router + 直启桌宠子窗（startPetWindow） │
 │   - 启动 EUI-NEO 事件循环                                     │
 └────────────────┬────────────────────────────────────────────┘
                  ↓
 ┌─────────────────────────────────────────────────────────────┐
-│ Layer 1: Feature Modules（4 个独立模块）                       │
+│ Layer 1: Feature Modules（6 个独立模块）                       │
 │   src/module_home/         - 首页仪表盘                       │
 │   src/module_markdown/     - Markdown 笔记本                   │
 │   src/module_todo/         - Todo 看板                         │
 │   src/module_claude_proxy/ - Claude 切换器                    │
+│   src/module_settings/     - 设置页                           │
+│   src/module_pet/          - 桌宠（非 Router 页面模块，独立子窗）│
 │   每个模块一个 static lib                                    │
 └────────────────┬────────────────────────────────────────────┘
                  ↓
@@ -35,7 +37,6 @@
 │   - Paths         跨平台目录                                  │
 │   - Theme         设计 token                                  │
 │   - Router        模块调度                                    │
-│   - DragController 拖拽框架                                   │
 │   - Module        模块抽象接口                                 │
 └────────────────┬────────────────────────────────────────────┘
                  ↓
@@ -363,7 +364,7 @@ enum class ErrorCode {
 | API key 存储 | spec §7.3（已审计修正）| ✅ 仅 Keychain，无 SQLite BLOB |
 | 代理认证 | spec §6.2.2（已审计修正）| ✅ Bearer token + 127.0.0.1 |
 | 多维度 spec 审计 | spec commit 2c7447e | ✅ 8/10 严重问题已修 |
-| 拖拽可行性 | spec §8.2 DragController | ✅ 自实现 ~200 行 |
+| 拖拽可行性 | spec §8.2 DragController | ✅ 自实现 ~200 行（W8 后作为死代码删除，见 CHANGELOG「Todo 卡片拖拽真 drop 语义」条目；拖拽现走 EUI-NEO 元素级 onPress/onDrag/onRelease） |
 
 ### 6.2 ⏳ 部分（待继续）
 
@@ -420,7 +421,7 @@ enum class ErrorCode {
 
 ### ADR-005：DragController 自实现
 
-**状态**：采纳
+**状态**：已被取代（W8 后 `core::drag::DragController` 经审计确认零调用方，作为死代码删除 .h/.cpp 与 CMake 条目；拖拽改用 EUI-NEO 元素级 `onPress`/`onDrag`/`onRelease` 回调）
 **理由**（EUI-NEO 审计）：
 - EUI-NEO 没有 drop target API
 - 自实现 ~200 行可控可测

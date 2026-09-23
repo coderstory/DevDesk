@@ -1,14 +1,15 @@
 # DevDesk
 
-面向开发者的跨平台桌面工具集（C++20 原生 GUI，单 exe）。三个核心工具 + 仪表盘 + 设置：
+面向开发者的跨平台桌面工具集（C++20 原生 GUI，单 exe）。三个核心工具 + 仪表盘 + 设置 + 桌宠：
 
 - **Markdown 笔记本** —— 笔记即普通 `.md` 文件，SQLite FTS5 全文搜索（支持中文）
 - **Todo 看板** —— 四列看板，拖拽移动 / 优先级 / 截止日期 / 标签
 - **Claude 切换器** —— 多套 API Profile 管理 + 本地流式代理（`127.0.0.1:8888`，Bearer 鉴权，SSE 透传）
 - **首页仪表盘** —— 今日笔记 / 待办 / 逾期 / API 调用统计 + 最近编辑
-- **设置** —— 主题 / 字号 / 代理 token / 日志保留策略
+- **设置** —— 主题 / 字号 / 代理 token / 日志保留策略 / 模块开关
+- **桌宠** —— 无边框置顶透明小窗宠物（module_pet，非页面模块）：拖拽 / 四态动画（待机·被戳·打字·睡觉）/ 气泡对话 / 右键菜单（鼠标穿透·换肤·位置重置·隐藏·退出）/ 程序化与美术皮肤体系；默认关闭，经设置页模块开关启用（重启生效）
 
-当前状态（2026-09-22，Windows 11）：**137/137 测试全绿；单 exe 零外部 DLL（Release 15.6 MiB）；10MB 流式端到端吞吐实测约 240–320 MB/s；60s soak 0% 丢失**。macOS 分支代码保留（接口隔离模式），自 2026-09-21 迁移后未重新验证。
+当前状态（2026-09-23，Windows 11）：**330/330 测试全绿；单 exe 零外部 DLL（Release 15.6 MiB）；10MB 流式端到端吞吐实测约 240–320 MB/s；60s soak 0% 丢失**。macOS 分支代码保留（接口隔离模式），自 2026-09-21 迁移后未重新验证。
 
 GUI 框架为 [EUI-NEO](https://sudoevolve.github.io/EUI-NEO/)（源码同级目录集成，非 submodule）。
 
@@ -45,7 +46,7 @@ cmake --build build-release
 
 ```bash
 cd build
-ctest --output-on-failure                  # 全量 137 例（实测约 87s，不含默认 SKIP 的 300s soak）
+ctest --output-on-failure                  # 全量 330 例（不含默认 SKIP 的 300s soak）
 ```
 
 测试二进制支持**按名子串过滤**与调试日志（自制轻量框架，没有 `--list-test-cases` 之类参数，子串即过滤）：
@@ -67,13 +68,14 @@ DEVDESK_SOAK=1 ./tests/devdesk_tests.exe soak
 4 层模块化 + 平台接口隔离（与 EUI-NEO 后端选择同一模式）：
 
 ```
-main.cpp ── 装配：paths / logging / SQLite / Claude 代理 / Router + 浮动设置入口
+main.cpp ── 装配：paths / logging / SQLite / Claude 代理 / Router + 常驻侧边栏（桌宠窗直连 startPetWindow）
    │
    ▼
-module_home / module_markdown / module_todo / module_claude_proxy / module_settings
-   │   可依赖 core + platform；模块之间禁止互相依赖（跨模块只走 core::appRouter 导航）
+module_home / module_markdown / module_todo / module_claude_proxy / module_settings / module_pet
+   │   可依赖 core + platform；模块之间禁止互相依赖（跨模块只走 core::appRouter 导航；
+   │   home/markdown/todo/claude_proxy/settings 是 Router 页面模块，module_pet 为独立子窗模块）
    ▼
-core ── Result / paths / sqlite_db / database / logging / theme / router / time / drag_controller
+core ── Result / paths / sqlite_db / database / logging / theme / router / time
    │   禁止依赖 platform 与 EUI-NEO（错误处理统一 Result<T>，不抛异常）
    ▼
 platform ── http_client / http_server / keychain / json / file_open
@@ -99,7 +101,7 @@ src/platform/keychain_posix.cpp  Linux 兜底
 |------|------|
 | [docs/superpowers/specs/2026-09-20-devdesk-design.md](docs/superpowers/specs/2026-09-20-devdesk-design.md) | 唯一权威设计 spec（架构 / API / 设计 token / §16 里程碑） |
 | [docs/superpowers/plans/2026-09-21-windows-recovery-plan.md](docs/superpowers/plans/2026-09-21-windows-recovery-plan.md) | macOS→Windows 迁移恢复计划（T1–T12 任务与实测数字） |
-| [docs/USER_GUIDE.md](docs/USER_GUIDE.md) | 用户指南（五模块用法 / 代理配置 / 数据位置） |
+| [docs/USER_GUIDE.md](docs/USER_GUIDE.md) | 用户指南（六模块用法 / 代理配置 / 数据位置） |
 | [docs/KNOWN_LIMITATIONS.md](docs/KNOWN_LIMITATIONS.md) | 已知限制（Windows / 跨平台，如实记录） |
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | 架构详解（4 层 / 依赖规则 / OOP 模式 / ADR） |
 | [docs/EUI-NEO-CAPABILITIES.md](docs/EUI-NEO-CAPABILITIES.md) | EUI-NEO 能力盘点（遇到 UI 问题先查这里） |
