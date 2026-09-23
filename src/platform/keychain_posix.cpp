@@ -29,6 +29,24 @@ core::Result<void> storeSecret(const std::string& service, const std::string& ac
     std::ofstream f(path, std::ios::binary);
     if (!f) return core::Result<void>::fail(core::ErrorCode::FileWriteFailed, "cannot write key file");
     f << secret;
+    f.close();
+    // 写完收紧为 0600（审计 2026-09-23 [29]）：默认 umask 022 下新建文件为
+    // 0644，多用户机器上其他本地用户可直读明文 API key。perm_options::replace
+    // 将权限整体覆盖为 rw-------。用 error_code 重载（项目约定不抛异常）；
+    // chmod 失败时删掉已落盘的密钥并按失败返回——宁可保存失败，也不留下
+    // 他人可读的明文密钥（调用方收到失败后重试会重新写入，不会丢失状态）。
+    std::error_code ec;
+    std::filesystem::permissions(
+        path,
+        std::filesystem::perms::owner_read | std::filesystem::perms::owner_write,
+        std::filesystem::perm_options::replace, ec);
+    if (ec) {
+        std::error_code rmEc;
+        std::filesystem::remove(path, rmEc);
+        return core::Result<void>::fail(
+            core::ErrorCode::FilePermissionDenied,
+            "cannot chmod key file to 0600: " + ec.message());
+    }
     return core::Result<void>::ok();
 }
 
