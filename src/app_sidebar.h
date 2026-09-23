@@ -10,6 +10,7 @@
 #include <eui/dsl.h>
 
 #include <filesystem>
+#include <string>
 
 namespace app {
 
@@ -35,5 +36,16 @@ void drawSidebar(eui::Ui& ui, const eui::Screen& screen);
 // 应用根布局 row(侧边栏, 页面内容)：EUI-NEO app main 每帧回调。
 //（原实现自 main.cpp 移入，页面区宽度改为随折叠态动态计算）
 void compose(eui::Ui& ui, const eui::Screen& screen);
+
+// ---- 应用级 toast 通知（审计 [7]，2026-09-24）----
+// 托盘失效入口点击等"不属于任何页面模块"的反馈经此通道显示：调用方
+//（main.cpp 托盘动作路由）只写状态，compose 顶层每帧绘制，自动消失后回
+// 落到 clearAppNotice。单实例（与 EUI-NEO toast 队列限制一致）。
+void showAppNotice(const std::string& title, const std::string& message);
+void clearAppNotice();
+bool appNoticeVisible();
+// 当前通知内容（供测试/调试断言；无通知时为空串）
+std::string appNoticeTitle();
+std::string appNoticeMessage();
 
 } // namespace app

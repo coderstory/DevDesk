@@ -27,6 +27,7 @@
 #include <fstream>
 #include <algorithm>
 #include <memory>
+#include <optional>
 #include <cstdlib>
 #include <string>
 #include <vector>
@@ -299,9 +300,81 @@ void startClaudeProxy() {
     ::module::claude::writeProxyTokenFile(svc->proxyAuthToken(), port);
 }
 
-// ---- 托盘菜单（菜单美化 2026-09-23）----
-// 唯一数据源 core::tray::trayMenuSpec()：styled 独立菜单窗（主路径）与
-// 原生托盘菜单（降级路径）都从 spec 生成，动作路由共用 executeTrayAction。
+// ---- 托盘菜单（菜单美化 2026-09-23；审计 [7] 动态收缩 2026-09-24）----
+// 唯一数据源 core::tray::trayMenuSpec：styled 独立菜单窗（主路径）与
+// 原生托盘菜单（降级路径）都从 spec 按模块实际可用性生成，动作路由共用
+// executeTrayAction。可用性与侧边栏同源（Router 注册门控 enabledModules）。
+
+std::optional<::core::PageId> pageForTrayAction(::core::tray::TrayMenuAction action) {
+    using Action = ::core::tray::TrayMenuAction;
+    switch (action) {
+        case Action::NavigateHome: return ::core::PageId::Home;
+        case Action::NavigateMarkdown: return ::core::PageId::Markdown;
+        case Action::NavigateTodo: return ::core::PageId::Todo;
+        case Action::NavigateClaude: return ::core::PageId::ClaudeProxy;
+        default: return std::nullopt;
+    }
+}
+
+const char* trayPageDisplayName(::core::PageId page) {
+    switch (page) {
+        case ::core::PageId::Home: return "首页";
+        case ::core::PageId::Markdown: return "笔记";
+        case ::core::PageId::Todo: return "待办";
+        case ::core::PageId::ClaudeProxy: return "Claude";
+        case ::core::PageId::Settings: return "设置";
+    }
+    return "?";
+}
+
+// styled 路径可用性谓词：每次右键重建 spec 时查 Router::isRegistered——
+// 与侧边栏 router->modules() 动态渲染完全同一真值。
+bool trayNavRegisteredInRouter(::core::tray::TrayMenuAction action) {
+    auto* router = getRouter();
+    if (!router) {
+        return true;  // 理论上不可达（回调在主循环、Router 已装配），保守不置灰
+    }
+    const auto page = pageForTrayAction(action);
+    return !page || router->isRegistered(*page);
+}
+
+// 原生降级路径可用性谓词：菜单在 DslAppConfig 静态构造期生成，Router 尚未
+// 装配（此刻不能 getRouter()——会抢在 startClaudeProxy 之前拉起模块 onStart，
+// 复刻 W3 修过的启动顺序 bug），走 isModuleEnabled 同一份 enabledModules
+// 快照，与 getRouter() 注册门控结果必然一致（门控是启动期行为，进程内不变）
+bool trayNavAvailableFromConfig(::core::tray::TrayMenuAction action) {
+    using Action = ::core::tray::TrayMenuAction;
+    switch (action) {
+        case Action::NavigateHome: return true;  // 恒注册（kAlwaysOn）
+        case Action::NavigateMarkdown:
+            return isModuleEnabled(module::settings::kModuleIdMarkdown);
+        case Action::NavigateTodo:
+            return isModuleEnabled(module::settings::kModuleIdTodo);
+        case Action::NavigateClaude:
+            return isModuleEnabled(module::settings::kModuleIdClaudeProxy);
+        default: return true;
+    }
+}
+
+// 导航到托盘指定页；模块未注册时不再静默回退 Home（审计 [7]）——唤起主窗 +
+// 应用级 toast 解释「怎么启用」，仍落到首页（有落点，但用户知道为什么）
+void navigateFromTray(::core::PageId page) {
+    auto* router = getRouter();
+    if (!router) {
+        return;
+    }
+    if (router->isRegistered(page)) {
+        router->navigateTo(page);
+        app::requestUpdate();
+        return;
+    }
+    router->navigateTo(::core::PageId::Home);
+    app::requestShow();
+    app::showAppNotice("模块已关闭",
+                       std::string("「") + trayPageDisplayName(page) +
+                           "」模块未启用，已转到首页。可在 设置 → 模块开关 中启用，重启后生效。");
+    app::requestUpdate();
+}
 
 void executeTrayAction(::core::tray::TrayMenuAction action) {
     using Action = ::core::tray::TrayMenuAction;
@@ -310,28 +383,16 @@ void executeTrayAction(::core::tray::TrayMenuAction action) {
             app::requestShow();
             break;
         case Action::NavigateHome:
-            if (auto* r = getRouter()) {
-                r->navigateTo(::core::PageId::Home);
-                app::requestUpdate();
-            }
+            navigateFromTray(::core::PageId::Home);
             break;
         case Action::NavigateMarkdown:
-            if (auto* r = getRouter()) {
-                r->navigateTo(::core::PageId::Markdown);
-                app::requestUpdate();
-            }
+            navigateFromTray(::core::PageId::Markdown);
             break;
         case Action::NavigateTodo:
-            if (auto* r = getRouter()) {
-                r->navigateTo(::core::PageId::Todo);
-                app::requestUpdate();
-            }
+            navigateFromTray(::core::PageId::Todo);
             break;
         case Action::NavigateClaude:
-            if (auto* r = getRouter()) {
-                r->navigateTo(::core::PageId::ClaudeProxy);
-                app::requestUpdate();
-            }
+            navigateFromTray(::core::PageId::ClaudeProxy);
             break;
         case Action::Exit:
             app::requestExit();
@@ -343,10 +404,12 @@ void executeTrayAction(::core::tray::TrayMenuAction action) {
 }
 
 // 原生降级菜单（onTrayMenu 返回 false 时弹这份；keepDefault=false：
-// 全部来自 spec，无内置英文 Show/Exit）
+// 全部来自 spec，无内置英文 Show/Exit）。审计 [7]：TrayMenuItem 无置灰
+// 概念，不可用模块直接过滤不显示（trayMenuSpecFiltered）
 std::vector<core::platform::TrayMenuItem> nativeTrayMenuItems() {
     std::vector<core::platform::TrayMenuItem> items;
-    for (const auto& spec : ::core::tray::trayMenuSpec()) {
+    for (const auto& spec :
+         ::core::tray::trayMenuSpecFiltered(trayNavAvailableFromConfig)) {
         core::platform::TrayMenuItem item;
         item.text = spec.text;
         if (!item.isSeparator()) {
@@ -359,21 +422,25 @@ std::vector<core::platform::TrayMenuItem> nativeTrayMenuItems() {
 }
 
 // styled 托盘菜单（圆角/主题/FA 图标，独立弹窗不受任何窗 bounds 限制）。
-// 返回 false = styled 构建失败 → 托盘走原生菜单降级
+// 返回 false = styled 构建失败 → 托盘走原生菜单降级。
+// 审计 [7]：每次右键按 Router 重建 spec——不可用模块置灰带「（已关闭）」
+// 说明（置灰行 EUI-NEO 不挂点击，可见即解释）；spec 按值捕获作为 path {i}
+// 映射基础（禁用项仍占下标，索引天然对齐）
 bool showTrayStyledMenu(int x, int y) {
+    const auto spec = ::core::tray::trayMenuSpec(trayNavRegisteredInRouter);
     std::vector<components::StyledMenuItem> items;
-    for (const auto& spec : ::core::tray::trayMenuSpec()) {
+    for (const auto& s : spec) {
         components::StyledMenuItem item;
-        item.text = spec.text;
-        item.iconCodepoint = spec.iconCodepoint;
+        item.text = s.text;
+        item.iconCodepoint = s.iconCodepoint;
+        item.disabled = s.disabled;
         items.push_back(std::move(item));
     }
     const components::StyledMenuStyle style(
         core::theme::componentTokens(core::theme::current()));
     return components::showStyledMenu("tray", std::move(items), style,
                                       static_cast<float>(x), static_cast<float>(y),
-                                      [](const std::vector<int>& path) {
-                                          const auto spec = ::core::tray::trayMenuSpec();
+                                      [spec](const std::vector<int>& path) {
                                           if (path.size() == 1 && path[0] >= 0 &&
                                               static_cast<size_t>(path[0]) < spec.size()) {
                                               executeTrayAction(spec[static_cast<size_t>(path[0])].action);
@@ -456,7 +523,8 @@ const DslAppConfig& dslAppConfig() {
         // styled 独立菜单窗为主路径（onTrayMenu，圆角/主题/FA 图标），原生
         // trayMenu 保留为降级数据源（styled 构建失败时 EUI-NEO 自动弹这份，
         // keepDefault=false 去掉内置英文 Show/Exit——菜单项全来自
-        // core::tray::trayMenuSpec，与 styled 同源）。
+        // core::tray::trayMenuSpecFiltered，按 enabledModules 动态收缩
+        //（审计 [7]），与 styled 同源）。
         // 左键 = 直接唤起主窗口（requestShow 处理隐藏到托盘/最小化/失焦三态），
         // 右键 = styled 菜单；回调主线程触发、运行期 Router 已就绪
         .tray(true)

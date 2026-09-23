@@ -12,12 +12,14 @@
 //     切换——后续若上游补 Width 动画再接
 #include "app_sidebar.h"
 
+#include "core/component_theme.h"
 #include "core/logging.h"
 #include "core/paths.h"
 #include "core/router.h"
 #include "core/theme.h"
 #include "settings_config.h"
 
+#include <components/toast.h>
 #include <components/tooltip.h>
 #include <eui/types.h>
 
@@ -28,6 +30,12 @@ namespace {
 // 进程内折叠状态单值；默认展开，启动恢复由 main.cpp 调
 // setSidebarCollapsed(cfg.sidebarCollapsed)（不回写）
 bool g_sidebarCollapsed = false;
+
+// 应用级 toast 通知（审计 [7]）：托盘失效入口点击的解释反馈。
+// 调用方（main.cpp）写状态，compose 顶层每帧读状态绘制；单实例。
+bool g_appNoticeOpen = false;
+std::string g_appNoticeTitle;
+std::string g_appNoticeMessage;
 
 // 折叠态 tooltip 样式：EUI-NEO TooltipStyle 默认用上游 dark tokens，
 // 这里换成 DevDesk 自己的主题 token（与侧边栏文字/卡片同源）
@@ -62,6 +70,23 @@ void setSidebarCollapsed(bool collapsed,
 float sidebarWidth() {
     return g_sidebarCollapsed ? kSidebarWidthCollapsed : kSidebarWidthExpanded;
 }
+
+// ---- 应用级 toast 通知（审计 [7]：托盘失效入口点击的解释通道）----
+void showAppNotice(const std::string& title, const std::string& message) {
+    g_appNoticeTitle = title;
+    g_appNoticeMessage = message;
+    g_appNoticeOpen = true;
+}
+
+void clearAppNotice() {
+    g_appNoticeOpen = false;
+    g_appNoticeTitle.clear();
+    g_appNoticeMessage.clear();
+}
+
+bool appNoticeVisible() { return g_appNoticeOpen; }
+std::string appNoticeTitle() { return g_appNoticeTitle; }
+std::string appNoticeMessage() { return g_appNoticeMessage; }
 
 float pageContentWidth(float windowWidth) {
     return windowWidth - sidebarWidth();
@@ -252,6 +277,19 @@ void compose(eui::Ui& ui, const eui::Screen& screen) {
                 })
                 .build();
         })
+        .build();
+    // 应用级 toast（审计 [7]）：row 之后顶层绘制盖过侧边栏/页面；每帧无条件
+    // 调用、visible 控状态（同各模块 drawToast 模式），自动消失回写 clear
+    components::toast(ui, "app.notice")
+        .theme(core::theme::componentTokens(core::theme::current()))
+        .screen(screen.width, screen.height)
+        .visible(appNoticeVisible())
+        .duration(4.5f)
+        .icon(0xF05A)  // fa-circle-info
+        .title(appNoticeTitle())
+        .message(appNoticeMessage())
+        .onAutoDismiss([] { clearAppNotice(); })
+        .onDismiss([] { clearAppNotice(); })
         .build();
 }
 
