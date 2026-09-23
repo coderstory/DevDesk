@@ -42,6 +42,21 @@ std::map<std::string, std::string> toHeaderMap(const httplib::Headers& src) {
     return dst;
 }
 
+// 常数时间比较 Authorization 里的 token 段。std::string::compare 走 memcmp，
+// 首个差异字节即提前返回——存在 CWE-208 时序侧信道（理论上可逐字节猜 token）。
+// 此处逐字节 XOR 累加、遍历完再判总掩码为零，比较时长只取决于长度不取决于差异位置。
+// 长度不等先返回是安全的：token 长度是固定公开格式（32 hex），长度本身非秘密。
+bool constantTimeTokenEqual(const char* got, size_t gotLen,
+                            const std::string& token) {
+    if (gotLen != token.size()) return false;
+    unsigned char diff = 0;
+    for (size_t i = 0; i < gotLen; ++i) {
+        diff |= static_cast<unsigned char>(got[i]) ^
+                static_cast<unsigned char>(token[i]);
+    }
+    return diff == 0;
+}
+
 // 把 RouteHandler 适配成 httplib::Server::Handler
 httplib::Server::Handler toLibHandler(RouteHandler userHandler,
                                       bool authRequired,
@@ -56,8 +71,9 @@ httplib::Server::Handler toLibHandler(RouteHandler userHandler,
                 const std::string prefix = "Bearer ";
                 if (v.size() >= prefix.size() &&
                     v.compare(0, prefix.size(), prefix) == 0 &&
-                    v.compare(prefix.size(), std::string::npos,
-                              authToken) == 0) {
+                    constantTimeTokenEqual(v.data() + prefix.size(),
+                                           v.size() - prefix.size(),
+                                           authToken)) {
                     authed = true;
                 }
             }
@@ -202,8 +218,9 @@ Server::Server(std::string bindAddress, int port, std::string authToken)
                 const std::string prefix = "Bearer ";
                 if (v.size() >= prefix.size() &&
                     v.compare(0, prefix.size(), prefix) == 0 &&
-                    v.compare(prefix.size(), std::string::npos,
-                              token) == 0) {
+                    constantTimeTokenEqual(v.data() + prefix.size(),
+                                           v.size() - prefix.size(),
+                                           token)) {
                     return httplib::Server::HandlerResponse::Unhandled;
                 }
             }
