@@ -2,10 +2,13 @@
 // P13 设置页模块（spec §8.5 / 任务 T11）
 //
 // 设置项：
-//   1. 主题切换（深色/浅色）——core::theme::setDark/setLight，compose 每帧读
-//      current()，切换后下一帧全页生效（日志自证：applyTheme 有 LOG_INFO）；
-//      窗口底色（clearColor）走 EUI-NEO 运行时 API app::setClearColor（磨砂
-//      Phase B），主题/窗口效果切换即时生效（main.cpp theme 回调同款路径）
+//   1. 主题模式下拉（跟随系统/浅色/深色，spec §8.5「跟随系统主题」，spec
+//      缩水 A）——themeMode 存意图、darkTheme 存解析档；auto 经
+//      platform::prefersDarkTheme() 在 applyThemeRuntime 解析（启动/回本页/
+//      切档三处），core::theme::setDark/setLight，compose 每帧读 current()，
+//      切换后下一帧全页生效；窗口底色（clearColor）走 EUI-NEO 运行时 API
+//      app::setClearColor（磨砂 Phase B），主题/窗口效果切换即时生效
+//      （main.cpp theme 回调同款路径）
 //   1b. 窗口效果三档（关闭/半透/磨砂，磨砂 Phase D）——applyWindowVisuals
 //      （clearColor alpha 按档 + setWindowEffect backdrop 请求）即时生效；
 //      activeWindowEffect 回查降级，行内提示（不支持磨砂 → 回退半透等）
@@ -18,14 +21,21 @@
 //      显示 + 重新生成（确认弹窗后 stopProxy + startProxy 同端口重启 → 服务端
 //      生成新 token；代理未运行时按钮置灰，不允许顺带拉起代理）
 //      + Claude Code 接管状态（Phase D UI 接入，数据源 ClaudeService）
-//   4. Markdown 笔记目录只读展示（改目录属于范围外，仅展示）
+//   4. Markdown 笔记目录只读展示（改目录属于范围外，仅展示）+ 编辑器字号
+//      档位（spec §8.5「编辑器字体大小」，spec 缩水 B；收在日志卡行 2——
+//      末卡弹层逃逸路径已验证，目录卡抬 z 会压桌宠下拉）。值经
+//      core::theme::editorFontSize 全局通道传 markdown（模块隔离）
 //   5. 调用日志保留天数（0=永久）——切换档位立即执行一次滚动清理并
 //      反馈「已清理 N 条」（core::pruneCallLogs，经 appDatabase() 共享
 //      连接；启动时 main.cpp 仍会按持久化配置再清一次，幂等）
+//   5b. 日志级别四档（spec §8.5「日志级别」，spec 缩水 D）——切档即时
+//      core::log::setLevel（下一行日志起生效）；重启由 onStart 恢复
 //   6. 模块管理（模块插拔方案 A，设计 2026-09-22 §5.4）：三个工具模块
 //      （markdown/todo/claude_proxy）各一行开关；home/settings 恒启用不
 //      展示开关。开关只写 config.json，**重启生效**（注册是启动期行为）；
 //      对应模块关闭时其专属卡片整卡隐藏（代理卡/目录卡，不显示故障态）
+//   7. 关于卡（spec §8.5「关于」，spec 缩水 C）：DevDesk 版本/构建类型/
+//      构建时间戳 + EUI-NEO rev（CMake 注入宏）+ 配置/日志文件路径，恒显
 //
 // 入口说明：设置入口在 main.cpp 的常驻侧边栏（app.sidebar，spec §2/§6.5.2），
 // 与其他四个模块同列。
@@ -46,6 +56,7 @@
 #include "core/theme.h"
 #include "core/component_theme.h"
 #include "platform/file_open.h"
+#include "platform/system_theme.h"
 #include "module_pet/pet_config.h"
 #include "module_pet/pet_skin.h"
 #include "module_pet/pet_window.h"
@@ -87,6 +98,27 @@ const char* kWindowEffectPresets[] = {
 constexpr int kWindowEffectPresetCount = 3;
 const char* kWindowEffectPresetLabels[] = {"关闭（默认）", "半透", "磨砂（Acrylic）"};
 
+// 主题模式三档（spec §8.5「跟随系统主题」，spec 缩水 A；与 settings_config
+// 的 kThemeMode* 一一对应）
+const char* kThemeModePresets[] = {kThemeModeAuto, kThemeModeLight,
+                                   kThemeModeDark};
+constexpr int kThemeModePresetCount = 3;
+const char* kThemeModePresetLabels[] = {"跟随系统", "浅色", "深色"};
+
+// 编辑器字号档位（px；spec 缩水 B；15 = fontSizeBody token 基准 = 旧硬编值）
+constexpr int kEditorFontPresets[] = {13, 15, 17, 20};
+constexpr int kEditorFontPresetCount = 4;
+const char* kEditorFontPresetLabels[] = {
+    "小 13px", "标准 15px", "大 17px", "特大 20px"};
+
+// 日志级别四档（spec 缩水 D；与 settings_config 的 kLogLevel* 一一对应，
+// 核心档用裸大写词 = 与 core::log::levelToString 输出对齐）
+const char* kLogLevelPresets[] = {kLogLevelDebug, kLogLevelInfo,
+                                  kLogLevelWarn, kLogLevelError};
+constexpr int kLogLevelPresetCount = 4;
+const char* kLogLevelPresetLabels[] = {
+    "DEBUG（详尽）", "INFO（默认）", "WARN", "ERROR"};
+
 // —— 日志保留下拉 openUp 越界判定几何（tech-debt A，原为裸魔数）——
 // 日志卡是页面最后一张卡，下拉向下展开可能被窗体底边裁剪；这里用同一套
 // 几何预先判断"向下展开是否出界"，出界则置 openUp 让 dropdown 向上展开。
@@ -95,6 +127,10 @@ const char* kWindowEffectPresetLabels[] = {"关闭（默认）", "半透", "磨�
 // spacing.compact=8 / spacing.small=6），若将来主题覆写 metrics 需同步。
 constexpr float kLogDropdownOffsetY = 48.0f;    // ddwrap 在日志卡内 y 偏移
 constexpr float kLogDropdownHeight = 40.0f;     // dropdown 控件高度
+constexpr float kLogEditorFontOffsetY = 92.0f;  // 编辑器字号行 y 偏移（spec 缩水 B）
+constexpr float kLogEditorFontHeight = 36.0f;   // 编辑器字号 dropdown 高
+constexpr float kLogLevelOffsetY = 136.0f;      // 日志级别行 y 偏移（spec 缩水 D）
+constexpr float kLogLevelHeight = 36.0f;        // 日志级别 dropdown 高
 constexpr float kDropdownPopupGap = 8.0f;       // 字段底边与弹层间距（spacing.compact）
 constexpr float kDropdownItemHeight = 34.0f;    // 单个菜单项高（control.menuItem）
 constexpr float kDropdownPopupPadding = 12.0f;  // 弹层上下 padding（spacing.small × 2）
@@ -131,16 +167,25 @@ public:
         store_ = std::make_unique<SettingsStore>(::core::paths::configFile());
         cfg_ = store_->load();
         // 启动即应用持久化主题 + 字号缩放（main.cpp 的 dslAppConfig 也做过
-        // 同样恢复——这里幂等重放，保证模块独立使用时行为一致）
-        if (cfg_.darkTheme) {
-            ::core::theme::setDark();
-        } else {
-            ::core::theme::setLight();
-        }
+        // 同样恢复——这里幂等重放，保证模块独立使用时行为一致）。主题走
+        // applyThemeRuntime：themeMode=auto 时按 platform 检测结果解析深浅
+        // （main.cpp 只认持久化的 theme=上次解析值，这里随即纠正到当前系统档）
+        applyThemeRuntime();
         ::core::theme::setFontScale(
             static_cast<float>(cfg_.fontScalePercent) / 100.0f);
+        // 编辑器字号通道（spec 缩水 B）：值存 SettingsConfig，运行时经
+        // core::theme 传给 markdown（模块隔离：markdown 不 include settings）
+        ::core::theme::setEditorFontSize(
+            static_cast<float>(cfg_.editorFontSize));
+        // 日志级别档（spec 缩水 D）：core::log::setLevel 已存在，这里只是
+        // 把持久化档应用到运行时（main.cpp 启动日志先于本模块，恒定按
+        // 默认 INFO 过滤——DEBUG 档从 settings 启动起生效）
+        ::core::log::setLevel(parseLogLevel(cfg_.logLevel));
         LOG_INFO("Settings 模块启动（主题=" + ::core::theme::currentThemeName() +
+                 "（模式=" + cfg_.themeMode + "）" +
                  ", 字号=" + std::to_string(cfg_.fontScalePercent) + "%" +
+                 ", 编辑器字号=" + std::to_string(cfg_.editorFontSize) + "px" +
+                 ", 日志级别=" + cfg_.logLevel +
                  ", 日志保留=" + retentionLabel() + "）");
     }
 
@@ -153,6 +198,12 @@ public:
     // 显形只在该次停留内有效，切页再回来恢复掩码，不残留到截图）
     void onPageEnter() override {
         proxyTokenRevealed_ = false;
+        // auto 模式的跟随点：系统深浅在运行中变更后，回到本页即重新解析
+        //（EUI-NEO 无系统主题变更回调，无法做到任意页面实时跟随——已登记
+        // 为限制；切档/启动两处的解析见 applyThemeRuntime）
+        if (cfg_.themeMode == kThemeModeAuto) {
+            applyThemeRuntime();
+        }
     }
 
     // 产品审计 [22]：Ctrl+S 显式保存。设置页除端口草稿外全部即时落盘
@@ -190,17 +241,38 @@ public:
 
     // ============ 设置变更 ============
 
-    void applyTheme(bool dark) {
+    // 按 themeMode 解析并应用深浅（spec 缩水 A）。系统检测经
+    // platform::prefersDarkTheme()（module 层可依赖 platform；core 不可，
+    // 故解析在此而不在 core::theme）。解析结果同步写回 cfg_.darkTheme，
+    // persist 时以 "theme" 键落盘，供 main.cpp 下次启动直读
+    void applyThemeRuntime() {
+        const bool dark =
+            resolveThemeDark(cfg_.themeMode, platform::prefersDarkTheme());
         if (dark) {
             ::core::theme::setDark();
         } else {
             ::core::theme::setLight();
         }
         cfg_.darkTheme = dark;
+    }
+
+    // cfg_.themeMode（三档字符串）→ 下拉索引；sanitized 保证只会是三档之一
+    int themeModeIndex() const {
+        if (cfg_.themeMode == kThemeModeLight) return 1;
+        if (cfg_.themeMode == kThemeModeDark) return 2;
+        return 0;  // auto
+    }
+
+    void applyThemeMode(int index) {
+        if (index < 0 || index >= kThemeModePresetCount) return;
+        cfg_.themeMode = kThemeModePresets[index];
+        applyThemeRuntime();
         persist();
-        setStatus("主题已切换：" + ::core::theme::currentThemeName());
-        LOG_INFO("Settings: 主题切换为 " + ::core::theme::currentThemeName() +
-                 "（下一帧全页生效）");
+        setStatus(std::string("主题模式：") + kThemeModePresetLabels[index] +
+                  "（当前=" + (::core::theme::current().isDark ? "深色" : "浅色") +
+                  "）");
+        LOG_INFO("Settings: 主题模式 → " + cfg_.themeMode + "（生效=" +
+                 ::core::theme::currentThemeName() + "）");
     }
 
     void applyFontPreset(int index) {
@@ -214,6 +286,20 @@ public:
                   "%（下一帧全局生效）");
         LOG_INFO("Settings: 字号缩放 → " + std::to_string(cfg_.fontScalePercent) +
                  "%（core::theme token 层全局缩放）");
+    }
+
+    // 编辑器字号档位切换（spec 缩水 B）：写 core::theme 全局通道即时生效
+    //（markdown compose 每帧读 editorFontSize()），persist 供下次启动恢复
+    void applyEditorFontPreset(int index) {
+        if (index < 0 || index >= kEditorFontPresetCount) return;
+        cfg_.editorFontSize = kEditorFontPresets[index];
+        ::core::theme::setEditorFontSize(
+            static_cast<float>(cfg_.editorFontSize));
+        persist();
+        setStatus("编辑器字号：" + std::to_string(cfg_.editorFontSize) +
+                  "px（Markdown 编辑器下一帧生效）");
+        LOG_INFO("Settings: 编辑器字号 → " + std::to_string(cfg_.editorFontSize) +
+                 "px（core::theme 全局通道）");
     }
 
     // 窗口效果三档切换（磨砂 Phase D）：clearColor alpha + backdrop 请求即时
@@ -366,6 +452,25 @@ public:
                  std::to_string(port) + "，代理已自动重启");
     }
 
+    // 日志级别切档（spec 缩水 D）：core::log::setLevel 即时应用（下一行日志
+    // 起生效，无缓冲），persist 供下次启动由 onStart 恢复
+    void applyLogLevelPreset(int index) {
+        if (index < 0 || index >= kLogLevelPresetCount) return;
+        cfg_.logLevel = kLogLevelPresets[index];
+        ::core::log::setLevel(parseLogLevel(cfg_.logLevel));
+        persist();
+        setStatus("日志级别：" + cfg_.logLevel + "（即时生效）");
+        LOG_INFO("Settings: 日志级别 → " + cfg_.logLevel + "（core::log::setLevel）");
+    }
+
+    // cfg_.logLevel（四档字符串）→ 下拉索引；sanitized 保证只会是四档之一
+    int logLevelIndex() const {
+        if (cfg_.logLevel == kLogLevelDebug) return 0;
+        if (cfg_.logLevel == kLogLevelWarn) return 2;
+        if (cfg_.logLevel == kLogLevelError) return 3;
+        return 1;  // INFO 默认档
+    }
+
     // 模块开关（插拔方案 A §5.4）：只写 config.json，注册门控在下次启动的
     // main.cpp 装配处生效。home/settings 恒启用，UI 不提供开关
     void applyModuleEnabled(const std::string& moduleId, bool on) {
@@ -489,9 +594,13 @@ public:
                             cardY += proxyH + gapY;
                         }
                         drawLogCard(inner, "settings.card.log", contentWidth,
-                                    100.0f, t,
+                                    192.0f, t,
                                     cardsTopY + cardY - cardsScrollOffset_,
                                     screen.height);
+                        cardY += 192.0f + gapY;
+                        // 关于卡恒显（不受模块开关门控，自身就是排障信息源）
+                        drawAboutCard(inner, "settings.card.about",
+                                      contentWidth, 150.0f, t);
                     })
                     .build();
             })
@@ -609,34 +718,29 @@ private:
                     .lineHeight(16.0f)
                     .color(t.colors.textSecondary)
                     .build();
-                const bool dark = cfg_.darkTheme;
-                components::button(ui, id + ".theme.dark")
+                // 主题模式下拉（spec 缩水 A）：跟随系统/浅色/深色三档，替代
+                // 原「深色/浅色」双按钮（原按钮只能表达显式档，无法表达 auto）。
+                // 右缘 28+240=268，窄窗自适应后 fontX≥324，不碰撞（见
+                // settings_effect_dropdown_fits_min_window）
+                ui.stack(id + ".theme.ddwrap")
                     .position(28.0f, 94.0f)
-                    .size(130.0f, 40.0f)
-                    .text("深色")
-                    .icon(0xF186)  // fa-moon
-                    .fontSize(fs(14.0f))
-                    .colors(dark ? t.colors.primarySoftBg : t.colors.surfaceElevated,
-                            t.colors.hover, t.colors.active)
-                    .textColor(dark ? t.colors.primary : t.colors.textSecondary)
-                    .iconColor(dark ? t.colors.primary : t.colors.textSecondary)
-                    .radius(t.sizes.radius)
-                    .border(1.0f, dark ? t.colors.primary : t.colors.borderDefault)
-                    .onClick([this] { applyTheme(true); })
-                    .build();
-                components::button(ui, id + ".theme.light")
-                    .position(170.0f, 94.0f)
-                    .size(130.0f, 40.0f)
-                    .text("浅色")
-                    .icon(0xF185)  // fa-sun
-                    .fontSize(fs(14.0f))
-                    .colors(!dark ? t.colors.primarySoftBg : t.colors.surfaceElevated,
-                            t.colors.hover, t.colors.active)
-                    .textColor(!dark ? t.colors.primary : t.colors.textSecondary)
-                    .iconColor(!dark ? t.colors.primary : t.colors.textSecondary)
-                    .radius(t.sizes.radius)
-                    .border(1.0f, !dark ? t.colors.primary : t.colors.borderDefault)
-                    .onClick([this] { applyTheme(false); })
+                    .size(240.0f, 40.0f)
+                    .content([&] {
+                        components::dropdown(ui, id + ".theme.dd")
+                            .size(240.0f, 40.0f)
+                            .theme(compTheme)
+                            .items(std::vector<std::string>(
+                                kThemeModePresetLabels,
+                                kThemeModePresetLabels +
+                                    kThemeModePresetCount))
+                            .selected(themeModeIndex())
+                            .open(themeDropdownOpen_)
+                            .onOpenChange(
+                                [this](bool v) { themeDropdownOpen_ = v; })
+                            .onChange(
+                                [this](int idx) { applyThemeMode(idx); })
+                            .build();
+                    })
                     .build();
 
                 // 右：字号缩放 + 右二：窗口效果三档（磨砂 Phase D），即时生效。
@@ -1262,10 +1366,14 @@ private:
             .build();
     }
 
-    // ---------- 卡片 5：日志保留策略 ----------
-    // cardTopY/screenH：日志卡是页面最后一张卡，字段贴近窗口底部；弹层几何用
-    // 文件顶部 kDropdown* / kLogDropdown* 常量估算（与 dropdown 内部 metrics
-    // 一致），判断向下展开是否出界，出界则 openUp 向上展开（修复菜单被窗体裁剪）
+    // ---------- 卡片 5/6：调用日志保留 + 编辑器字号 ----------
+    // 日志卡是页面最后一张卡（关于卡之后无下拉），行内下拉的弹层用
+    // cardTopY/screenH 几何估算判断向下展开是否出界，出界则 openUp 向上
+    //（修复菜单被窗体裁剪）。spec 缩水 B 的编辑器字号收在本卡行 2：目录卡
+    // 若抬 z 压过日志/代理卡，会反向压住桌宠卡下拉弹层（z 逃逸互斥），
+    // 末卡是唯一无冲突宿主
+    // cardTopY/screenH：弹层几何用文件顶部 kDropdown* / kLogDropdown* 常量
+    // 估算（与 dropdown 内部 metrics 一致）
     void drawLogCard(eui::Ui& ui, const std::string& id, float w, float h,
                      const core::theme::Tokens& t, float cardTopY,
                      float screenH) {
@@ -1278,7 +1386,7 @@ private:
                 ui.text(id + ".title")
                     .position(28.0f, 16.0f)
                     .size(w - 56.0f, 22.0f)
-                    .text("调用日志保留")
+                    .text("日志与编辑器")
                     .fontSize(t.sizes.fontSizeLarge)
                     .lineHeight(22.0f)
                     .fontWeight(600)
@@ -1325,6 +1433,165 @@ private:
                     .text("0 = 永久保留；30 天为默认。切换档位立即清理一次。")
                     .fontSize(fs(12.0f))
                     .lineHeight(18.0f)
+                    .color(t.colors.textTertiary)
+                    .build();
+
+                // ---- 行 2：编辑器字号（spec §8.5「编辑器字体大小」，spec
+                // 缩水 B）：档位写 core::theme::editorFontSize 通道，markdown
+                // 下一帧生效；默认 15px = fontSizeBody token 基准 ----
+                ui.text(id + ".font.label")
+                    .position(28.0f, 100.0f)
+                    .size(84.0f, 20.0f)
+                    .text("编辑器字号")
+                    .fontSize(fs(12.0f))
+                    .lineHeight(20.0f)
+                    .color(t.colors.textSecondary)
+                    .build();
+                ui.stack(id + ".font.ddwrap")
+                    .position(124.0f, kLogEditorFontOffsetY)
+                    .size(150.0f, kLogEditorFontHeight)
+                    .content([&] {
+                        const float efontFieldBottomY = cardTopY +
+                            kLogEditorFontOffsetY + kLogEditorFontHeight;
+                        const float efontPopupH =
+                            static_cast<float>(kEditorFontPresetCount) *
+                                    kDropdownItemHeight +
+                                kDropdownPopupPadding;
+                        const bool efontOpenUp = efontFieldBottomY +
+                                    kDropdownPopupGap + efontPopupH >
+                                screenH - kWindowBottomMargin;
+                        components::dropdown(ui, id + ".font.dd")
+                            .size(150.0f, kLogEditorFontHeight)
+                            .theme(compTheme)
+                            .items(std::vector<std::string>(
+                                kEditorFontPresetLabels,
+                                kEditorFontPresetLabels +
+                                    kEditorFontPresetCount))
+                            .selected(nearestIndex(cfg_.editorFontSize,
+                                                   kEditorFontPresets,
+                                                   kEditorFontPresetCount))
+                            .openUp(efontOpenUp)
+                            .open(editorFontDropdownOpen_)
+                            .onOpenChange(
+                                [this](bool v) { editorFontDropdownOpen_ = v; })
+                            .onChange([this](int idx) {
+                                applyEditorFontPreset(idx);
+                            })
+                            .build();
+                    })
+                    .build();
+                ui.text(id + ".font.hint")
+                    .position(288.0f, 100.0f)
+                    .size(w - 316.0f, 18.0f)
+                    .text("Markdown 编辑器正文字号；默认 15px（标准）。切换即时生效。")
+                    .fontSize(fs(12.0f))
+                    .lineHeight(18.0f)
+                    .color(t.colors.textTertiary)
+                    .build();
+
+                // ---- 行 3：日志级别（spec §8.5「日志级别」，spec 缩水 D）：
+                // 切档即时 core::log::setLevel（DEBUG 起打 LOG_DEBUG 详录），
+                // 重启由 onStart 恢复持久化档 ----
+                ui.text(id + ".level.label")
+                    .position(28.0f, 144.0f)
+                    .size(84.0f, 20.0f)
+                    .text("日志级别")
+                    .fontSize(fs(12.0f))
+                    .lineHeight(20.0f)
+                    .color(t.colors.textSecondary)
+                    .build();
+                ui.stack(id + ".level.ddwrap")
+                    .position(124.0f, kLogLevelOffsetY)
+                    .size(150.0f, kLogLevelHeight)
+                    .content([&] {
+                        const float levelFieldBottomY =
+                            cardTopY + kLogLevelOffsetY + kLogLevelHeight;
+                        const float levelPopupH =
+                            static_cast<float>(kLogLevelPresetCount) *
+                                    kDropdownItemHeight +
+                                kDropdownPopupPadding;
+                        const bool levelOpenUp = levelFieldBottomY +
+                                    kDropdownPopupGap + levelPopupH >
+                                screenH - kWindowBottomMargin;
+                        components::dropdown(ui, id + ".level.dd")
+                            .size(150.0f, kLogLevelHeight)
+                            .theme(compTheme)
+                            .items(std::vector<std::string>(
+                                kLogLevelPresetLabels,
+                                kLogLevelPresetLabels + kLogLevelPresetCount))
+                            .selected(logLevelIndex())
+                            .openUp(levelOpenUp)
+                            .open(logLevelDropdownOpen_)
+                            .onOpenChange(
+                                [this](bool v) { logLevelDropdownOpen_ = v; })
+                            .onChange([this](int idx) {
+                                applyLogLevelPreset(idx);
+                            })
+                            .build();
+                    })
+                    .build();
+                ui.text(id + ".level.hint")
+                    .position(288.0f, 144.0f)
+                    .size(w - 316.0f, 18.0f)
+                    .text("DEBUG 最详尽（排障）；默认 INFO。切档即时生效。")
+                    .fontSize(fs(12.0f))
+                    .lineHeight(18.0f)
+                    .color(t.colors.textTertiary)
+                    .build();
+            })
+            .build();
+    }
+
+    // ---------- 卡片 6：关于（spec §8.5「关于」卡，spec 缩水 C） ----------
+    // 版本/构建信息（CMake 注入宏，见 settings_config.cpp aboutVersionLine/
+    // aboutEuiNeoLine）+ 配置/日志文件路径（排障入口：路径都在 APPDATA 深处，
+    // 审计 [15] 同款痛点）。纯展示无交互控件 → 无弹层，维持 z0 不影响任何
+    // 兄弟卡的 z 逃逸。GitHub 链接暂未展示（DevDesk 无公开仓库，登记决策项）
+    void drawAboutCard(eui::Ui& ui, const std::string& id, float w, float h,
+                       const core::theme::Tokens& t) {
+        ui.stack(id)
+            .size(w, h)
+            .content([&] {
+                cardFrame(ui, id, w, h, t);
+                ui.text(id + ".title")
+                    .position(28.0f, 16.0f)
+                    .size(w - 56.0f, 22.0f)
+                    .text("关于")
+                    .fontSize(t.sizes.fontSizeLarge)
+                    .lineHeight(22.0f)
+                    .fontWeight(600)
+                    .color(t.colors.textPrimary)
+                    .build();
+                ui.text(id + ".version")
+                    .position(28.0f, 50.0f)
+                    .size(w - 56.0f, 18.0f)
+                    .text(aboutVersionLine())
+                    .fontSize(fs(13.0f))
+                    .lineHeight(18.0f)
+                    .color(t.colors.textSecondary)
+                    .build();
+                ui.text(id + ".eui")
+                    .position(28.0f, 72.0f)
+                    .size(w - 56.0f, 18.0f)
+                    .text(aboutEuiNeoLine())
+                    .fontSize(fs(13.0f))
+                    .lineHeight(18.0f)
+                    .color(t.colors.textSecondary)
+                    .build();
+                ui.text(id + ".config")
+                    .position(28.0f, 98.0f)
+                    .size(w - 56.0f, 16.0f)
+                    .text("配置文件: " + ::core::paths::configFile().string())
+                    .fontSize(fs(12.0f))
+                    .lineHeight(16.0f)
+                    .color(t.colors.textTertiary)
+                    .build();
+                ui.text(id + ".logfile")
+                    .position(28.0f, 118.0f)
+                    .size(w - 56.0f, 16.0f)
+                    .text("日志文件: " + ::core::paths::logFile().string())
+                    .fontSize(fs(12.0f))
+                    .lineHeight(16.0f)
                     .color(t.colors.textTertiary)
                     .build();
             })
@@ -1402,6 +1669,9 @@ private:
     bool fontDropdownOpen_ = false;
     bool retentionDropdownOpen_ = false;
     bool effectDropdownOpen_ = false;      // 窗口效果下拉（磨砂 Phase D）
+    bool themeDropdownOpen_ = false;       // 主题模式下拉（spec 缩水 A）
+    bool editorFontDropdownOpen_ = false;  // 编辑器字号下拉（spec 缩水 B）
+    bool logLevelDropdownOpen_ = false;    // 日志级别下拉（spec 缩水 D）
     bool petSkinDropdownOpen_ = false;     // 桌宠皮肤下拉（M2）
     bool petSkinDataLoaded_ = false;       // 皮肤清单惰性加载标记（M2）
     std::vector<std::string> petSkins_;    // 发现到的皮肤（M2）

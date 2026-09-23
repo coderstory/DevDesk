@@ -10,16 +10,19 @@ if(WIN32)
     target_sources(devdesk_platform PRIVATE
         keychain_win.cpp
         file_open_win.cpp
+        system_theme_win.cpp
     )
 elseif(APPLE)
     target_sources(devdesk_platform PRIVATE
         keychain_macos.cpp
         file_open_macos.cpp
+        system_theme_posix.cpp
     )
 else()
     target_sources(devdesk_platform PRIVATE
         keychain_posix.cpp
         file_open_posix.cpp
+        system_theme_posix.cpp
     )
 endif()
 
@@ -53,8 +56,9 @@ endif()
 # Windows：Winsock2（http_client/http_server 网络）+ Crypt32（TLS 证书链）
 # + Shell32（file_open_win.cpp 的 CommandLineToArgvW）
 # 之前靠 -DCMAKE_CXX_STANDARD_LIBRARIES="-lws2_32 -lcrypt32" 绕过，现烤进构建系统
+# advapi32：system_theme_win.cpp 的 RegGetValueW（跟随系统主题，spec 缩水 A）
 if(WIN32)
-    target_link_libraries(devdesk_platform PUBLIC ws2_32 crypt32 shell32)
+    target_link_libraries(devdesk_platform PUBLIC ws2_32 crypt32 shell32 advapi32)
 endif()
 
 # DevDesk 自己的警告等级（-Werror 只作用于 DevDesk target，不泄漏给第三方）

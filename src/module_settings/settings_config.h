@@ -30,9 +30,16 @@
 #include <vector>
 
 #include "core/platform/window_effect.h"
+#include "core/logging.h"
 #include "core/result.h"
 
 namespace module::settings {
+
+// 编辑器字号范围（px；spec 缩水 B；默认 15 = fontSizeBody token 基准，
+// 与 core::theme::setEditorFontSize 的钳制区间保持一致）
+constexpr int kDefaultEditorFontSize = 15;
+constexpr int kMinEditorFontSize = 10;
+constexpr int kMaxEditorFontSize = 32;
 
 // 字号缩放范围（%）
 constexpr int kMinFontScalePercent = 85;
@@ -66,8 +73,40 @@ inline constexpr const char* kWindowEffectOff = "off";
 inline constexpr const char* kWindowEffectTranslucent = "translucent";
 inline constexpr const char* kWindowEffectFrosted = "frosted";
 
+// 主题模式三档（spec §8.5「跟随系统主题」，spec 缩水任务 A）：
+//   auto（默认，跟随系统浅/深，检测见 platform::prefersDarkTheme）
+//   light / dark（固定档）。字符串直接持久化进 config.json 的 themeMode 键
+inline constexpr const char* kThemeModeAuto = "auto";
+inline constexpr const char* kThemeModeLight = "light";
+inline constexpr const char* kThemeModeDark = "dark";
+
+// 日志级别四档（spec §8.5「日志级别」，spec 缩水 D；大写字符串直接持久化，
+// 与 core::log::levelToString 的档位对齐）。Trace/Fatal 不开放：Trace 在
+// Debug 下已够详尽（LOG_DEBUG 是最低常规档），Fatal 作输出级别无意义
+inline constexpr const char* kLogLevelDebug = "DEBUG";
+inline constexpr const char* kLogLevelInfo = "INFO";
+inline constexpr const char* kLogLevelWarn = "WARN";
+inline constexpr const char* kLogLevelError = "ERROR";
+
 struct SettingsConfig {
-    bool darkTheme = true;         // 默认深色（方案 B Dark）
+    bool darkTheme = true;         // 实际生效的深浅档（auto 模式下 = 解析结果）
+    // 主题模式（spec §8.5，spec 缩水 A）："auto"（默认，跟随系统）|"light"|"dark"。
+    // 与 darkTheme 的关系：darkTheme 恒为「当前应生效的档」，themeMode 是用户
+    // 意图；auto 时由调用方经 resolveThemeDark(mode, platform::prefersDarkTheme())
+    // 解析（SettingsModule onStart/onPageEnter/切档三处），core 不依赖 platform。
+    // 兼容：老 config.json 只有 theme 键 → load 派生为显式 light/dark（不把
+    // 存量用户静默切到 auto）；save 双写 themeMode + theme（theme 供未改动的
+    // main.cpp 启动路径读到「上次解析值」，settings onStart 随即幂等纠正）。
+    std::string themeMode = kThemeModeAuto;
+    // Markdown 编辑器字号（px，spec §8.5「编辑器字体大小」，spec 缩水 B）。
+    // 生效通道：SettingsModule onStart/切档写 core::theme::setEditorFontSize
+    // （值下沉 core，markdown 不 include 本模块，模块隔离不破）；sanitized
+    // 钳制 [kMinEditorFontSize, kMaxEditorFontSize]
+    int editorFontSize = kDefaultEditorFontSize;
+    // 日志级别（spec §8.5「日志级别」，spec 缩水 D）："DEBUG"|"INFO"(默认)
+    // |"WARN"|"ERROR"。sanitized 把未知值收敛为 INFO；生效路径 = settings
+    // onStart 与切档时 core::log::setLevel(parseLogLevel(...))，即时生效
+    std::string logLevel = kLogLevelInfo;
     // W9 默认 100：EUI-NEO 0.7.0 已修字号 CSS em 语义（fix/font-em-size，
     // scalable 字体 fontSize 直接作 em 尺寸），此前 hhea 缩水 ~0.75 不复存在。
     // 存量用户值通过换键 fontScalePercentV3 一次性重置回 100（旧值都是
@@ -111,6 +150,25 @@ bool parseProxyPortInput(const std::string& text, int& out);
 // 形如 a3f8***c21e）。短于 8 位整体替换为固定 "****"（不输出任何真实
 // 字符、不泄露长度）；空串原样返回（调用方按「代理未运行」分支处理）。
 std::string maskProxyToken(const std::string& token);
+
+// ---- 主题模式解析（纯函数，供 SettingsModule 与单测；spec 缩水 A）----
+// themeMode + 系统深浅检测 → 实际生效的深色档。core 不可依赖 platform，
+// 所以「系统是否深色」由调用方（module 层可依赖 platform）探测后传入。
+// 未知 mode 按 auto 语义处理（sanitized 保证正常路径只会是三档之一）
+bool resolveThemeDark(const std::string& themeMode, bool systemPrefersDark);
+
+// ---- 日志级别解析（纯函数，供设置页与单测；spec 缩水 D）----
+// 只认四档大写字符串，未知值（含 Trace/Fatal 字面量与任意脏值）→ Info。
+// core::log::setLevel 消费该结果：SettingsModule onStart 恢复持久化档、
+// 设置页切档即时应用
+core::log::Level parseLogLevel(const std::string& mode);
+
+// ---- 关于卡文案（spec §8.5，spec 缩水 C；纯函数供单测）----
+// 版本/构建信息来自 CMake 注入宏（module_settings 的
+// target_compile_definitions），宏缺失（如手工编译）回退 "dev"/"unknown"。
+// 行内已含前缀标签，单测断言包含 "DevDesk"/"EUI-NEO" 即可
+std::string aboutVersionLine();
+std::string aboutEuiNeoLine();
 
 // ---- 窗口效果档位 → 参数映射（纯函数，供单测）----
 

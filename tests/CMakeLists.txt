@@ -42,6 +42,7 @@ add_executable(devdesk_tests
     test_modules/test_menu_beautify.cpp
     test_modules/test_tray_dynamic.cpp
     test_modules/test_theme_hierarchy.cpp
+    test_modules/test_editor_font.cpp
     test_modules/test_app_sidebar.cpp
 )
 

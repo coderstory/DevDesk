@@ -140,8 +140,12 @@ std::string noteDisplayPath(const NoteMeta& n) {
 // 三态视图（值 = 顶栏 segmented 的选中下标）
 enum class ViewMode { Edit = 0, Split = 1, Preview = 2 };
 
-constexpr float kEditorFontSize = 15.0f;      // = fontSizeBody（视觉规范正文 15px，W7 P1-4 换 token 基准）
-constexpr float kEditorLineHeight = kEditorFontSize * 1.2f;  // input 内部行高
+// 编辑器字号（spec §8.5「编辑器字体大小」，spec 缩水 B）：运行时值改从
+// core::theme::editorFontSize() 全局通道读（SettingsConfig 在 module_settings，
+// 模块隔离不经本模块 include；通道写入方 = settings onStart/切档，默认与本
+// 常量一致 15 = fontSizeBody token 基准）。行高 = 字号 × 1.2 运行时算
+constexpr float kDefaultEditorFontSize = 15.0f;
+constexpr float kEditorLineHeightFactor = 1.2f;  // input 内部行高系数
 constexpr float kEditTextColumnWidth = 720.0f;  // 仅编辑态的居中文本列宽（Typora 写作宽度）
 constexpr float kPreviewColumnWidth = 760.0f;   // 仅预览态的居中阅读列宽
 
@@ -925,7 +929,7 @@ private:
                 .placeholder("在这里写 Markdown…")
                 .multiline(true)
                 .scrollbar(true)
-                .fontSize(kEditorFontSize)
+                .fontSize(core::theme::editorFontSize())
                 .inset(10.0f)
                 .theme(componentTheme)
                 .onChange([this](const std::string& v) {
@@ -1295,7 +1299,9 @@ private:
                             const components::MarkdownStyle& style) {
         if (editorText_.empty()) return 0.0f;
         const auto& st = ui.state<components::input_detail::InputModel::InputState>("md.editor.input");
-        const float topLine = st.verticalScroll / kEditorLineHeight;
+        const float topLine =
+            st.verticalScroll /
+            (core::theme::editorFontSize() * kEditorLineHeightFactor);
         const float width = lastPvContentWidth_ > 0.0f ? lastPvContentWidth_ : pvW;
 
         // 找 topLine 所在节：锚点 0 = 虚拟文首（line 0, y 0），其后每个标题一个锚点

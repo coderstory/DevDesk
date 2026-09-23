@@ -18,6 +18,12 @@ namespace module::settings {
 
 namespace {
 constexpr const char* kKeyTheme = "theme";
+// themeMode 三档字符串键（spec 缩水 A；值 = kThemeMode* 常量）
+constexpr const char* kKeyThemeMode = "themeMode";
+// Markdown 编辑器字号（px）键（spec 缩水 B）
+constexpr const char* kKeyEditorFontSize = "editorFontSize";
+// 日志级别四档字符串键（spec 缩水 D；值 = kLogLevel* 常量）
+constexpr const char* kKeyLogLevel = "logLevel";
 // W9 换键一次性重置：EUI-NEO 0.7.0 修了字号 em 语义后文字放大约 33%，
 // fontScalePercent/fontScalePercentV2 下的存量值（85/115/130）都是在
 // 0.75 缩水语义下选的，修正后失去意义 → 一律忽略、回落默认 100，
@@ -76,6 +82,49 @@ std::string maskProxyToken(const std::string& token) {
     return token.substr(0, 4) + "***" + token.substr(token.size() - 4);
 }
 
+bool resolveThemeDark(const std::string& themeMode, bool systemPrefersDark) {
+    if (themeMode == kThemeModeLight) return false;
+    if (themeMode == kThemeModeDark) return true;
+    // auto（含未知值，sanitized 后理论不可达）：跟随系统检测
+    return systemPrefersDark;
+}
+
+core::log::Level parseLogLevel(const std::string& mode) {
+    if (mode == kLogLevelDebug) return core::log::Level::Debug;
+    if (mode == kLogLevelWarn) return core::log::Level::Warn;
+    if (mode == kLogLevelError) return core::log::Level::Error;
+    // INFO 与一切未知值（sanitized 保证正常路径只会是四档之一）
+    return core::log::Level::Info;
+}
+
+// ---- 关于卡文案（spec 缩水 C）。宏缺失回退（手工编译/其他 target）----
+#ifndef DEVDESK_VERSION
+#define DEVDESK_VERSION "dev"
+#endif
+#ifndef DEVDESK_BUILD_TYPE
+#define DEVDESK_BUILD_TYPE "?"
+#endif
+#ifndef DEVDESK_EUI_NEO_REV
+#define DEVDESK_EUI_NEO_REV "unknown"
+#endif
+#ifndef DEVDESK_EUI_NEO_MIN_REV
+#define DEVDESK_EUI_NEO_MIN_REV "?"
+#endif
+
+std::string aboutVersionLine() {
+    // 版本号 = 顶层 CMake project(VERSION)；构建类型 + 编译时间戳
+    //（__DATE__/__TIME__ 为本 TU 编译时刻，Debug 增量构建后随之刷新）
+    return std::string("DevDesk ") + DEVDESK_VERSION + " · " +
+           DEVDESK_BUILD_TYPE + " · 构建 " __DATE__ " " __TIME__;
+}
+
+std::string aboutEuiNeoLine() {
+    // EUI-NEO 以同级源码集成（非 submodule），rev 取 configure 期
+    // git rev-parse（顶层 CMakeLists「EUI-NEO 版本诊断」同一变量）
+    return std::string("EUI-NEO rev ") + DEVDESK_EUI_NEO_REV +
+           "（最低依赖 rev " + DEVDESK_EUI_NEO_MIN_REV + "）";
+}
+
 SettingsStore::SettingsStore(std::filesystem::path file)
     : file_(std::move(file)) {}
 
@@ -91,11 +140,31 @@ SettingsConfig SettingsStore::sanitized(const SettingsConfig& cfg) {
     if (out.logRetentionDays > kMaxLogRetentionDays) {
         out.logRetentionDays = kMaxLogRetentionDays;
     }
+    // 日志级别（spec 缩水 D）：只认四档大写字符串，未知值收敛 INFO
+    //（与 parseLogLevel 同口径；大小写敏感——配置键值即字面档位）
+    if (out.logLevel != kLogLevelDebug && out.logLevel != kLogLevelWarn &&
+        out.logLevel != kLogLevelError) {
+        out.logLevel = kLogLevelInfo;
+    }
+    // 编辑器字号（spec 缩水 B）：钳制区间与 core::theme::setEditorFontSize
+    // 同口径（load 回退默认、save 前收敛，双向不产生越界值）
+    if (out.editorFontSize < kMinEditorFontSize) {
+        out.editorFontSize = kMinEditorFontSize;
+    }
+    if (out.editorFontSize > kMaxEditorFontSize) {
+        out.editorFontSize = kMaxEditorFontSize;
+    }
     // 代理端口（审计 [14]）：越界/0/负数不钳到边界而是回落默认——与
     // ClaudeService::setConfiguredProxyPort 同语义（0 钳到 1 会得到一个
     // 必然 bind 失败/被特权的端口，回落 8888 更可预期）
     if (out.proxyPort < kMinProxyPort || out.proxyPort > kMaxProxyPort) {
         out.proxyPort = kDefaultProxyPort;
+    }
+    // 主题模式（spec 缩水 A）：只认三档，未知值收敛为 auto（与新人默认同
+    // 语义；sanitized 保持纯函数，不在此处解析 auto→darkTheme——解析需要
+    // platform 检测，收在 SettingsModule::applyThemeRuntime）
+    if (out.themeMode != kThemeModeLight && out.themeMode != kThemeModeDark) {
+        out.themeMode = kThemeModeAuto;
     }
     // 窗口效果：只认三档，未知值收敛为 off（照抄 fontScale 的钳制模式）
     if (out.windowEffect != kWindowEffectTranslucent &&
@@ -196,6 +265,26 @@ SettingsConfig SettingsStore::load() const {
         // 只认 "light" 为浅色，其余一律深色（默认值安全）
         cfg.darkTheme = (obj.get(kKeyTheme).asString() != "light");
     }
+    // themeMode（spec 缩水 A）：新键优先（只认三档字面值）；键缺失/非法时
+    // 按 legacy "theme" 派生为显式档（存量用户的明确选择不能被静默改成
+    // auto）；两键都没有 = 首启用默认 auto。auto→深浅的实际解析在
+    // SettingsModule::applyThemeRuntime（load/sanitized 保持纯函数，
+    // 不经 platform，单测机器无关）
+    if (obj.has(kKeyThemeMode) && obj.get(kKeyThemeMode).isString()) {
+        const std::string mode = obj.get(kKeyThemeMode).asString();
+        if (mode == kThemeModeAuto || mode == kThemeModeLight ||
+            mode == kThemeModeDark) {
+            cfg.themeMode = mode;
+        } else if (obj.has(kKeyTheme) && obj.get(kKeyTheme).isString()) {
+            cfg.themeMode = (obj.get(kKeyTheme).asString() == "light")
+                                ? kThemeModeLight
+                                : kThemeModeDark;
+        }
+    } else if (obj.has(kKeyTheme) && obj.get(kKeyTheme).isString()) {
+        cfg.themeMode = (obj.get(kKeyTheme).asString() == "light")
+                            ? kThemeModeLight
+                            : kThemeModeDark;
+    }
     if (obj.has(kKeyFontScale) && obj.get(kKeyFontScale).isNumber()) {
         cfg.fontScalePercent =
             static_cast<int>(obj.get(kKeyFontScale).asInt());
@@ -204,6 +293,13 @@ SettingsConfig SettingsStore::load() const {
     if (obj.has(kKeyLogRetention) && obj.get(kKeyLogRetention).isNumber()) {
         cfg.logRetentionDays =
             static_cast<int>(obj.get(kKeyLogRetention).asInt());
+    }
+    if (obj.has(kKeyEditorFontSize) && obj.get(kKeyEditorFontSize).isNumber()) {
+        cfg.editorFontSize =
+            static_cast<int>(obj.get(kKeyEditorFontSize).asInt());
+    }
+    if (obj.has(kKeyLogLevel) && obj.get(kKeyLogLevel).isString()) {
+        cfg.logLevel = obj.get(kKeyLogLevel).asString();
     }
     if (obj.has(kKeyProxyAutoStart) && obj.get(kKeyProxyAutoStart).isBool()) {
         cfg.claudeProxyAutoStart = obj.get(kKeyProxyAutoStart).asBool();
@@ -243,6 +339,12 @@ core::Result<void> SettingsStore::save(const SettingsConfig& cfgRaw) const {
 
     platform::json::JsonObject obj;
     obj.set(kKeyTheme, platform::json::makeString(cfg.darkTheme ? "dark" : "light"));
+    // themeMode 与 theme 双写：themeMode = 用户意图（auto/light/dark），
+    // theme = 当前解析档（main.cpp 启动路径只认 theme，settings onStart
+    // 随即按 themeMode 幂等纠正——main.cpp 零改动）
+    obj.set(kKeyThemeMode, platform::json::makeString(cfg.themeMode));
+    obj.set(kKeyEditorFontSize, platform::json::makeInt(cfg.editorFontSize));
+    obj.set(kKeyLogLevel, platform::json::makeString(cfg.logLevel));
     obj.set(kKeyFontScale, platform::json::makeInt(cfg.fontScalePercent));
     obj.set(kKeyLogRetention, platform::json::makeInt(cfg.logRetentionDays));
     obj.set(kKeyProxyAutoStart, platform::json::makeBool(cfg.claudeProxyAutoStart));

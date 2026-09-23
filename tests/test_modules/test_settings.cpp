@@ -13,6 +13,7 @@
 #include "core/module_interface.h"
 #include "core/theme.h"
 #include "platform/keychain.h"
+#include "platform/system_theme.h"
 
 #include <eui/app.h>
 #include <eui/detail/dsl_app_impl.h>
@@ -522,7 +523,8 @@ REGISTER_TEST(settings_log_dropdown_popup_stays_in_window, "settings: log dropdo
     // 模块插拔后设置页 5 卡（外观/模块/目录/代理/日志），日志卡在小窗里被
     // 滚出视口——取「日志卡贴近底部、字段可见」的最小窗口 1200×1000：
     // 向下展开的弹层会超出窗体，应改向上展开（弹层整体留在窗体内且位于
-    // 字段上方）
+    // 字段上方）。注意：spec 缩水 B 的编辑器字号收在日志卡行 2（末卡自身
+    // 变高不移动任何字段基线），日志卡顶位置保持 822
     eui::Screen screen;
     screen.width = 1200.0f;
     screen.height = 1000.0f;
@@ -957,19 +959,19 @@ REGISTER_TEST(settings_effect_dropdown_fits_min_window,
     ui.layout(screen.width, screen.height);
 
     const auto* card = ui.find("settings.card.appearance.bg");
-    const auto* themeLight = ui.find("settings.card.appearance.theme.light.bg");
+    const auto* themeDd = ui.find("settings.card.appearance.theme.ddwrap");
     const auto* font = ui.find("settings.card.appearance.font.ddwrap");
     const auto* effect = ui.find("settings.card.appearance.effect.ddwrap");
     DOCTEST_REQUIRE(card != nullptr);
-    DOCTEST_REQUIRE(themeLight != nullptr);
+    DOCTEST_REQUIRE(themeDd != nullptr);
     DOCTEST_REQUIRE(font != nullptr);
     DOCTEST_REQUIRE(effect != nullptr);
     // 效果下拉右缘收在卡内（设计右缘留白 28，断言留 ≥20 容差）
     DOCTEST_CHECK(effect->frame.x + effect->frame.width <=
                   card->frame.x + card->frame.width - 20.0f);
-    // 字号下拉不与主题按钮重叠、效果下拉不与字号下拉重叠
-    DOCTEST_CHECK(font->frame.x >=
-                  themeLight->frame.x + themeLight->frame.width);
+    // 字号下拉不与主题模式下拉重叠、效果下拉不与字号下拉重叠
+    //（主题控件 = spec 缩水 A 的三档下拉，替代原深色/浅色双按钮）
+    DOCTEST_CHECK(font->frame.x >= themeDd->frame.x + themeDd->frame.width);
     DOCTEST_CHECK(effect->frame.x >= font->frame.x + font->frame.width);
 
     // 宽窗 1600（页面 1340）：保持既有位置（字号 380 / 效果 680 相对卡原点）
@@ -1056,7 +1058,9 @@ REGISTER_TEST(settings_pet_dropdown_z_escape, "settings: pet skin dropdown popup
     DOCTEST_CHECK(ui.find("settings.card.pet.through.sw") != nullptr);
     DOCTEST_CHECK(ui.find("settings.card.pet.through.label") != nullptr);
 
-    // 下拉自带 zIndex(20) 沿祖先链传播：pet 卡子树上界 > 目录卡（z 0）
+    // 下拉自带 zIndex(20) 沿祖先链传播：pet 卡子树上界 > 目录卡（z 0）。
+    // spec 缩水 B 的编辑器字号没有收进目录卡（抬目录卡 z 会反向压住 pet
+    // 弹层，z 逃逸互斥），而是收进末卡日志卡——目录卡维持 z0，本断言不变
     DOCTEST_CHECK(dd->subtreeMaxZIndex >= 20);
     DOCTEST_CHECK(petCard->subtreeMaxZIndex >= 20);
     DOCTEST_CHECK_EQ(dirCard->subtreeMaxZIndex, 0);
@@ -1252,5 +1256,326 @@ REGISTER_TEST(settings_ctrl_s_save_shortcut,
     module::claude::ClaudeService::setGlobal(nullptr);
     mod->onStop();
     ::core::theme::setDark();
+    return true;
+})
+
+// ---- spec 缩水 A：跟随系统主题（themeMode 三档 + platform::prefersDarkTheme）----
+
+REGISTER_TEST(settings_theme_mode_roundtrip_and_legacy,
+              "settings: themeMode 默认 auto/读写往返/旧 theme 键派生/未知收敛（spec缩水 A）", {
+    using namespace module::settings;
+    const auto path = tempConfigFile("thememode");
+    removeQuietly(path);
+    SettingsStore store(path);
+
+    // 无文件 → 默认 auto（新人跟随系统）
+    DOCTEST_CHECK_EQ(store.load().themeMode, std::string(kThemeModeAuto));
+
+    // 三档读写往返；theme 键随 darkTheme 同步写（main.cpp 兼容通道）
+    SettingsConfig light;
+    light.themeMode = kThemeModeLight;
+    light.darkTheme = false;
+    DOCTEST_REQUIRE(store.save(light).isOk());
+    {
+        const auto loaded = store.load();
+        DOCTEST_CHECK_EQ(loaded.themeMode, std::string(kThemeModeLight));
+        DOCTEST_CHECK_FALSE(loaded.darkTheme);
+    }
+    SettingsConfig dark;
+    dark.themeMode = kThemeModeDark;
+    dark.darkTheme = true;
+    DOCTEST_REQUIRE(store.save(dark).isOk());
+    {
+        const auto loaded = store.load();
+        DOCTEST_CHECK_EQ(loaded.themeMode, std::string(kThemeModeDark));
+        DOCTEST_CHECK(loaded.darkTheme);
+    }
+
+    // 存量文件（只有 theme 键）→ 派生为显式档，不静默转 auto
+    {
+        std::ofstream f(path, std::ios::trunc);
+        f << R"({"theme": "light"})";
+    }
+    DOCTEST_CHECK_EQ(store.load().themeMode, std::string(kThemeModeLight));
+    {
+        std::ofstream f(path, std::ios::trunc);
+        f << R"({"theme": "dark"})";
+    }
+    DOCTEST_CHECK_EQ(store.load().themeMode, std::string(kThemeModeDark));
+
+    // themeMode 非法值：有 legacy theme → 按 theme 派生；无 theme → auto
+    {
+        std::ofstream f(path, std::ios::trunc);
+        f << R"({"themeMode": "neon", "theme": "light"})";
+    }
+    DOCTEST_CHECK_EQ(store.load().themeMode, std::string(kThemeModeLight));
+    {
+        std::ofstream f(path, std::ios::trunc);
+        f << R"({"themeMode": "neon"})";
+    }
+    DOCTEST_CHECK_EQ(store.load().themeMode, std::string(kThemeModeAuto));
+
+    // sanitized：未知档收敛 auto（纯函数，不经 platform）
+    SettingsConfig bad;
+    bad.themeMode = "sepia";
+    DOCTEST_CHECK_EQ(SettingsStore::sanitized(bad).themeMode,
+                     std::string(kThemeModeAuto));
+    removeQuietly(path);
+    return true;
+})
+
+REGISTER_TEST(settings_resolve_theme_dark_matrix,
+              "settings: resolveThemeDark 纯函数矩阵（spec缩水 A）", {
+    using namespace module::settings;
+    DOCTEST_CHECK(resolveThemeDark(kThemeModeDark, false));
+    DOCTEST_CHECK(resolveThemeDark(kThemeModeDark, true));
+    DOCTEST_CHECK_FALSE(resolveThemeDark(kThemeModeLight, true));
+    DOCTEST_CHECK_FALSE(resolveThemeDark(kThemeModeLight, false));
+    DOCTEST_CHECK(resolveThemeDark(kThemeModeAuto, true));
+    DOCTEST_CHECK_FALSE(resolveThemeDark(kThemeModeAuto, false));
+    // 未知 mode 按 auto 语义防御
+    DOCTEST_CHECK(resolveThemeDark("neon", true));
+    return true;
+})
+
+REGISTER_TEST(settings_theme_auto_follows_platform,
+              "settings: auto 模式 onStart 解析跟系统深浅（platform 检测，spec缩水 A）", {
+    PruneEnv env("thauto");
+    {
+        std::ofstream out(env.cfgPath);
+        out << R"({"themeMode": "auto", "theme": "dark"})";
+    }
+    std::unique_ptr<::core::Module> mod(create_settings_module());
+    mod->onStart();
+    // 落盘的 theme=dark 是陈旧值；auto 解析后实际档必须等于本机系统检测
+    // 结果（无论本机浅/深，断言机器无关）
+    const bool systemDark = platform::prefersDarkTheme();
+    DOCTEST_CHECK_EQ(::core::theme::current().isDark, systemDark);
+    mod->onStop();
+    ::core::theme::setDark();
+    return true;
+})
+
+REGISTER_TEST(settings_theme_mode_dropdown_click_persists,
+              "settings: 主题模式下拉存在且点「深色」落盘（替代旧双按钮，spec缩水 A headless）", {
+    PruneEnv env("thdmm");
+    std::unique_ptr<::core::Module> mod(create_settings_module());
+    mod->onStart();
+    eui::Screen screen;
+    screen.width = 1600.0f;
+    screen.height = 1000.0f;
+    eui::Ui ui;
+    ui.begin("thdmm");
+    mod->compose(ui, screen);
+    ui.end();
+
+    DOCTEST_CHECK(ui.find("settings.card.appearance.theme.dd") != nullptr);
+    // 旧的深色/浅色按钮已删（下拉三档取代，fa-moon/fa-sun 图标随之退场）
+    DOCTEST_CHECK(ui.find("settings.card.appearance.theme.dark") == nullptr);
+    DOCTEST_CHECK(ui.find("settings.card.appearance.theme.light") == nullptr);
+
+    // 点第 3 项（深色，索引 2）→ 即时持久化 themeMode=dark + theme 同步
+    const auto* itemDark = ui.find("settings.card.appearance.theme.dd.item.2");
+    DOCTEST_REQUIRE(itemDark != nullptr);
+    DOCTEST_REQUIRE(itemDark->onClick != nullptr);
+    itemDark->onClick();
+    mod->onStop();
+    ::core::theme::setDark();
+    return true;
+})
+
+// ---- spec 缩水 B：编辑器字号可配（SettingsConfig + settings UI + 通道写入）----
+
+REGISTER_TEST(settings_editor_font_size_roundtrip_clamp,
+              "settings: editorFontSize 默认 15/读写往返/越界钳制（spec缩水 B）", {
+    using namespace module::settings;
+    const auto path = tempConfigFile("edfont");
+    removeQuietly(path);
+    SettingsStore store(path);
+
+    // 默认 15 = fontSizeBody token 基准
+    DOCTEST_CHECK_EQ(store.load().editorFontSize, kDefaultEditorFontSize);
+
+    // 读写往返
+    SettingsConfig cfg;
+    cfg.editorFontSize = 17;
+    DOCTEST_REQUIRE(store.save(cfg).isOk());
+    DOCTEST_CHECK_EQ(store.load().editorFontSize, 17);
+
+    // sanitized 钳制 [10,32]
+    SettingsConfig lo;
+    lo.editorFontSize = 5;
+    DOCTEST_CHECK_EQ(SettingsStore::sanitized(lo).editorFontSize,
+                     kMinEditorFontSize);
+    SettingsConfig hi;
+    hi.editorFontSize = 999;
+    DOCTEST_CHECK_EQ(SettingsStore::sanitized(hi).editorFontSize,
+                     kMaxEditorFontSize);
+
+    // 存量文件无该键 → 默认 15
+    {
+        std::ofstream f(path, std::ios::trunc);
+        f << R"({"theme": "dark", "logRetentionDays": 30})";
+    }
+    DOCTEST_CHECK_EQ(store.load().editorFontSize, 15);
+    removeQuietly(path);
+    return true;
+})
+
+REGISTER_TEST(settings_editor_font_dropdown_applies_channel,
+              "settings: 编辑器字号下拉点档 → core::theme 通道 + 落盘（spec缩水 B headless）", {
+    PruneEnv env("edfontui");
+    std::unique_ptr<::core::Module> mod(create_settings_module());
+    mod->onStart();
+    eui::Screen screen;
+    screen.width = 1600.0f;
+    screen.height = 1000.0f;
+    eui::Ui ui;
+    ui.begin("edfontui");
+    mod->compose(ui, screen);
+    ui.end();
+
+    DOCTEST_CHECK(ui.find("settings.card.log.font.dd") != nullptr);
+    // 点第 3 档「大 17px」→ 通道即时生效 + 持久化
+    const auto* item = ui.find("settings.card.log.font.dd.item.2");
+    DOCTEST_REQUIRE(item != nullptr);
+    DOCTEST_REQUIRE(item->onClick != nullptr);
+    item->onClick();
+    DOCTEST_CHECK_EQ(::core::theme::editorFontSize(), 17.0f);
+    module::settings::SettingsStore store(env.cfgPath);
+    DOCTEST_CHECK_EQ(store.load().editorFontSize, 17);
+
+    mod->onStop();
+    ::core::theme::setEditorFontSize(15.0f);  // 恢复通道默认
+    ::core::theme::setDark();  // onStart 的 auto 解析在本机可能 setLight，防串扰
+    return true;
+})
+
+// ---- spec 缩水 C：关于卡（版本 / EUI-NEO rev / 构建信息，CMake 注入宏）----
+
+REGISTER_TEST(settings_about_card_renders,
+              "settings: 关于卡渲染版本与 EUI-NEO 行（spec缩水 C headless）", {
+    std::unique_ptr<::core::Module> mod(create_settings_module());
+    mod->onStart();
+    eui::Screen screen;
+    screen.width = 1600.0f;
+    screen.height = 1000.0f;
+    eui::Ui ui;
+    ui.begin("aboutc");
+    mod->compose(ui, screen);
+    ui.end();
+
+    DOCTEST_CHECK(ui.find("settings.card.about.bg") != nullptr);
+    const auto* version = ui.find("settings.card.about.version");
+    const auto* euiLine = ui.find("settings.card.about.eui");
+    const auto* cfgLine = ui.find("settings.card.about.config");
+    DOCTEST_REQUIRE(version != nullptr);
+    DOCTEST_REQUIRE(euiLine != nullptr);
+    DOCTEST_REQUIRE(cfgLine != nullptr);
+    DOCTEST_CHECK(version->text.find("DevDesk") != std::string::npos);
+    // CMake 注入的 project VERSION（0.1.0）出现在版本行
+    DOCTEST_CHECK(version->text.find("0.1.") != std::string::npos);
+    DOCTEST_CHECK(version->text.find("构建") != std::string::npos);
+    DOCTEST_CHECK(euiLine->text.find("EUI-NEO") != std::string::npos);
+    DOCTEST_CHECK(cfgLine->text.find("config.json") != std::string::npos);
+
+    mod->onStop();
+    ::core::theme::setDark();
+    return true;
+})
+
+REGISTER_TEST(settings_about_text_helpers,
+              "settings: aboutVersionLine/aboutEuiNeoLine 纯函数（spec缩水 C）", {
+    const std::string v = module::settings::aboutVersionLine();
+    DOCTEST_CHECK(v.find("DevDesk 0.1.") != std::string::npos);
+    // 宏缺失回退分支不可能在本 target 命中；有值即可（构建戳/类型非空）
+    DOCTEST_CHECK(v.find("dev") == std::string::npos);  // VERSION 注入生效
+    const std::string e = module::settings::aboutEuiNeoLine();
+    DOCTEST_CHECK(e.find("EUI-NEO rev") != std::string::npos);
+    // 最低依赖 rev 恒打印（顶层 CMake 变量）
+    DOCTEST_CHECK(e.find("最低依赖 rev") != std::string::npos);
+    return true;
+})
+
+// ---- spec 缩水 D：日志级别可配（SettingsConfig + core::log::setLevel 应用）----
+
+REGISTER_TEST(settings_log_level_roundtrip_matrix,
+              "settings: logLevel 默认 INFO/读写往返/未知收敛/parseLogLevel 矩阵（spec缩水 D）", {
+    using namespace module::settings;
+    const auto path = tempConfigFile("loglevel");
+    removeQuietly(path);
+    SettingsStore store(path);
+
+    // 默认 INFO
+    DOCTEST_CHECK_EQ(store.load().logLevel, std::string(kLogLevelInfo));
+
+    // 四档读写往返
+    SettingsConfig cfg;
+    cfg.logLevel = kLogLevelDebug;
+    DOCTEST_REQUIRE(store.save(cfg).isOk());
+    DOCTEST_CHECK_EQ(store.load().logLevel, std::string(kLogLevelDebug));
+    cfg.logLevel = kLogLevelWarn;
+    DOCTEST_REQUIRE(store.save(cfg).isOk());
+    DOCTEST_CHECK_EQ(store.load().logLevel, std::string(kLogLevelWarn));
+    cfg.logLevel = kLogLevelError;
+    DOCTEST_REQUIRE(store.save(cfg).isOk());
+    DOCTEST_CHECK_EQ(store.load().logLevel, std::string(kLogLevelError));
+
+    // 未知值（含小写/脏值）→ sanitized 收敛 INFO
+    SettingsConfig bad;
+    bad.logLevel = "verbose";
+    DOCTEST_CHECK_EQ(SettingsStore::sanitized(bad).logLevel,
+                     std::string(kLogLevelInfo));
+    bad.logLevel = "debug";  // 大小写敏感
+    DOCTEST_CHECK_EQ(SettingsStore::sanitized(bad).logLevel,
+                     std::string(kLogLevelInfo));
+
+    // parseLogLevel 矩阵（Trace/Fatal 字面量不开放 → Info）
+    DOCTEST_CHECK(parseLogLevel(kLogLevelDebug) ==
+                  core::log::Level::Debug);
+    DOCTEST_CHECK(parseLogLevel(kLogLevelWarn) == core::log::Level::Warn);
+    DOCTEST_CHECK(parseLogLevel(kLogLevelError) == core::log::Level::Error);
+    DOCTEST_CHECK(parseLogLevel(kLogLevelInfo) == core::log::Level::Info);
+    DOCTEST_CHECK(parseLogLevel("TRACE") == core::log::Level::Info);
+    DOCTEST_CHECK(parseLogLevel("") == core::log::Level::Info);
+    removeQuietly(path);
+    return true;
+})
+
+REGISTER_TEST(settings_log_level_applied_on_start_and_click,
+              "settings: 日志级别 onStart 恢复 + 下拉切档即时应用（spec缩水 D headless）", {
+    PruneEnv env("loglvl");
+    {
+        std::ofstream out(env.cfgPath);
+        out << R"({"logLevel": "WARN"})";
+    }
+    const core::log::Level prev = core::log::level();
+    std::unique_ptr<::core::Module> mod(create_settings_module());
+    mod->onStart();
+    // 持久化 WARN 档在 onStart 即应用
+    DOCTEST_CHECK(core::log::level() == core::log::Level::Warn);
+
+    eui::Screen screen;
+    screen.width = 1600.0f;
+    screen.height = 1000.0f;
+    eui::Ui ui;
+    ui.begin("loglvl");
+    mod->compose(ui, screen);
+    ui.end();
+    DOCTEST_CHECK(ui.find("settings.card.log.level.dd") != nullptr);
+
+    // 点第 1 项 DEBUG → 运行时 + 落盘同步
+    const auto* item = ui.find("settings.card.log.level.dd.item.0");
+    DOCTEST_REQUIRE(item != nullptr);
+    DOCTEST_REQUIRE(item->onClick != nullptr);
+    item->onClick();
+    DOCTEST_CHECK(core::log::level() == core::log::Level::Debug);
+    module::settings::SettingsStore store(env.cfgPath);
+    DOCTEST_CHECK_EQ(store.load().logLevel,
+                     std::string(module::settings::kLogLevelDebug));
+
+    mod->onStop();
+    core::log::setLevel(prev);  // 恢复（测试进程默认 Info）
+    ::core::theme::setDark();   // onStart 的 auto 解析可能 setLight，防串扰
     return true;
 })

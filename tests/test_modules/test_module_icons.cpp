@@ -106,11 +106,9 @@ REGISTER_TEST(module_icons_page_emoji_replaced,
     // Claude 页（fa-play 代理未运行 / fa-circle-info 引导条）
     if (!checkPageIcon(create_claude_module, "claude.btn.proxy.icon", 0xF04B)) return false;
     if (!checkPageIcon(create_claude_module, "claude.guide.icon", 0xF05A)) return false;
-    // 设置页（fa-moon / fa-sun / fa-arrows-rotate）
-    if (!checkPageIcon(create_settings_module,
-                       "settings.card.appearance.theme.dark.icon", 0xF186)) return false;
-    if (!checkPageIcon(create_settings_module,
-                       "settings.card.appearance.theme.light.icon", 0xF185)) return false;
+    // 设置页（fa-arrows-rotate 重新生成）。原「深色/浅色」按钮（fa-moon/
+    // fa-sun）在 spec 缩水 A 中被主题模式三档下拉替代，下拉无图标通道，
+    // 两条 icon 断言随之删除
     if (!checkPageIcon(create_settings_module,
                        "settings.card.proxy.token.regen.icon", 0xF021)) return false;
     // Markdown 页（fa-magnifying-glass 搜索浮层；ficon/fa-folder 树在
