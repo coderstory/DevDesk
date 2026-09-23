@@ -907,6 +907,9 @@ REGISTER_TEST(settings_pet_dropdown_z_escape, "settings: pet skin dropdown popup
     DOCTEST_REQUIRE(dd != nullptr);
     DOCTEST_REQUIRE(petCard != nullptr);
     DOCTEST_REQUIRE(dirCard != nullptr);
+    // ⑥恢复路径：桌宠卡内「鼠标穿透」toggle 必须随卡片渲染
+    DOCTEST_CHECK(ui.find("settings.card.pet.through.sw") != nullptr);
+    DOCTEST_CHECK(ui.find("settings.card.pet.through.label") != nullptr);
 
     // 下拉自带 zIndex(20) 沿祖先链传播：pet 卡子树上界 > 目录卡（z 0）
     DOCTEST_CHECK(dd->subtreeMaxZIndex >= 20);

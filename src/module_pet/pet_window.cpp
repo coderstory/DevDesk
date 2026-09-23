@@ -204,7 +204,7 @@ void petCompose(eui::Ui& ui, const eui::Screen& screen) {
                     core::platform::ContextMenuItem through;
                     through.text = runtime().config.clickThrough
                                        ? "关闭鼠标穿透"
-                                       : "挂机穿透（点击透到下层）";
+                                       : "挂机穿透（点击透到下层；锁死后到设置页桌宠卡关闭）";
                     items.push_back(std::move(through));
                     if (!runtime().skins.empty()) {
                         core::platform::ContextMenuItem skinMenu;
@@ -246,10 +246,7 @@ void petCompose(eui::Ui& ui, const eui::Screen& screen) {
                     }
                     if (path.size() != 1) return;
                     if (path[0] == idxThrough) {
-                        runtime().config.clickThrough = !runtime().config.clickThrough;
-                        core::window::setWindowMousePassthrough(
-                            runtime().handle, runtime().config.clickThrough);
-                        savePetClickThrough(runtime().config.clickThrough);
+                        setPetClickThrough(!runtime().config.clickThrough);
                     } else if (path[0] == idxReset) {
                         resetPetPosition();
                     } else if (path[0] == idxHide) {
@@ -466,6 +463,19 @@ void resetPetPosition() {
     rt.config.x = x;
     rt.config.y = y;
     LOG_INFO("桌宠位置已重置（" + std::to_string(x) + "," + std::to_string(y) + "）");
+}
+
+void setPetClickThrough(bool enabled) {
+    PetRuntime& rt = runtime();
+    rt.config.clickThrough = enabled;
+    if (rt.handle != nullptr) {
+        // 即时生效：开 = 进入挂机锁死态；关 = 解锁（设置页恢复路径的核心
+        // 诉求——锁死态下这是唯一能碰到桌宠窗口的入口）
+        core::window::setWindowMousePassthrough(rt.handle, enabled);
+    }
+    savePetClickThrough(enabled);
+    LOG_INFO(std::string("桌宠鼠标穿透 → ") +
+             (enabled ? "开（挂机态；锁死后在设置页桌宠卡关闭）" : "关"));
 }
 
 } // namespace module::pet

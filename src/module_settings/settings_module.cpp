@@ -361,9 +361,10 @@ public:
                                         contentWidth, 288.0f, t);
                         cardY += 288.0f + gapY;
                         if (petOn) {
+                            // ⑥：卡内加「鼠标穿透」toggle 行（恢复路径），120→168
                             drawPetCard(inner, "settings.card.pet",
-                                        contentWidth, 120.0f, t);
-                            cardY += 120.0f + gapY;
+                                        contentWidth, 168.0f, t);
+                            cardY += 168.0f + gapY;
                         }
                         if (mdOn) {
                             drawDirectoryCard(inner, "settings.card.directory",
@@ -709,10 +710,12 @@ private:
         if (!petSkinDataLoaded_) {
             petSkinDataLoaded_ = true;
             petSkins_ = ::module::pet::discoverSkins();
-            petSkinName_ =
+            const auto pcfg =
                 ::module::pet::PetConfigStore(::module::pet::petConfigFile())
-                    .load()
-                    .skinName;
+                    .load();
+            petSkinName_ = pcfg.skinName;
+            // 穿透 toggle 初值读 pet_config（锁死态下本卡是唯一恢复入口）
+            petClickThrough_ = pcfg.clickThrough;
         }
         const auto compTheme = core::theme::componentTokens(t);
         ui.stack(id)
@@ -784,6 +787,43 @@ private:
                     .onClick([this] {
                         ::module::pet::resetPetPosition();
                         setStatus("桌宠位置已重置（主屏右下角）");
+                    })
+                    .build();
+                // 鼠标穿透 toggle（⑥恢复路径）：即时生效（setWindowMousePassthrough）
+                // + 持久化 pet_config。桌宠锁死（右键也点不中自己）时本页是唯一出口
+                ui.text(id + ".through.label")
+                    .position(28.0f, 114.0f)
+                    .size(w - 160.0f, 18.0f)
+                    .text("鼠标穿透（挂机）")
+                    .fontSize(t.sizes.fontSizeBody - 1.0f)
+                    .lineHeight(18.0f)
+                    .fontWeight(500)
+                    .color(t.colors.textPrimary)
+                    .build();
+                ui.text(id + ".through.desc")
+                    .position(28.0f, 134.0f)
+                    .size(w - 160.0f, 16.0f)
+                    .text("开启后桌宠点击透到下层；锁死无法右键时，关此开关即恢复")
+                    .fontSize(fs(12.0f))
+                    .lineHeight(16.0f)
+                    .color(t.colors.textTertiary)
+                    .build();
+                ui.stack(id + ".through.sw.wrap")
+                    .position(w - 28.0f - 80.0f, 112.0f)
+                    .size(80.0f, 32.0f)
+                    .content([&] {
+                        components::toggleSwitch(ui, id + ".through.sw")
+                            .size(80.0f, 32.0f)
+                            .checked(petClickThrough_)
+                            .theme(compTheme)
+                            .onChange([this](bool v) {
+                                petClickThrough_ = v;
+                                ::module::pet::setPetClickThrough(v);
+                                setStatus(v
+                                              ? "桌宠已开启鼠标穿透（锁死后回本页关闭）"
+                                              : "桌宠已关闭鼠标穿透");
+                            })
+                            .build();
                     })
                     .build();
             })
@@ -1132,6 +1172,7 @@ private:
     bool petSkinDataLoaded_ = false;       // 皮肤清单惰性加载标记（M2）
     std::vector<std::string> petSkins_;    // 发现到的皮肤（M2）
     std::string petSkinName_;              // 当前皮肤名（M2）
+    bool petClickThrough_ = false;         // 桌宠鼠标穿透态（⑥恢复路径）
     bool regenConfirmOpen_ = false;       // 重新生成 token 确认弹窗
     float cardsScrollOffset_ = 0.0f;      // 卡片区 scrollView 滚动位置
     std::string statusMessage_;

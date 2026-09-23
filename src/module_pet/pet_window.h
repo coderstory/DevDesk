@@ -51,4 +51,10 @@ void applyPetSkin(const std::string& skinName);
 // 主显示器工作区右下角默认位
 void resetPetPosition();
 
+// 鼠标穿透（任务⑥「穿透锁死恢复路径」）：写 runtime 状态 + 即时
+// setWindowMousePassthrough + 持久化 pet_config.json。设置页桌宠卡调用
+// ——桌宠锁死（clickThrough=true 时右键也点不中自己）后，设置页是唯一
+// 恢复入口。窗口未开（桌宠关/隐藏）时只持久化，下次 startPetWindow 生效
+void setPetClickThrough(bool enabled);
+
 } // namespace module::pet
