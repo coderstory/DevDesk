@@ -61,8 +61,8 @@ add_subdirectory(src/module_pet)
 enable_testing()
 add_subdirectory(tests)
 
-# 主程序
-add_executable(DevDesk src/main.cpp)
+# 主程序（app_sidebar.cpp = 侧边栏 + 根布局，单测复用同一份实现）
+add_executable(DevDesk src/main.cpp src/app_sidebar.cpp)
 devdesk_apply_warnings(DevDesk)
 eui_neo_configure_app(DevDesk)
 

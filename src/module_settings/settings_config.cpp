@@ -27,6 +27,7 @@ constexpr const char* kKeyLogRetention = "logRetentionDays";
 constexpr const char* kKeyProxyAutoStart = "claudeProxyAutoStart";
 constexpr const char* kKeyWindowEffect = "windowEffect";
 constexpr const char* kKeyEnabledModules = "enabledModules";
+constexpr const char* kKeySidebarCollapsed = "sidebarCollapsed";
 
 // 合法模块 ID 清单（sanitized 过滤未知项；与 kModuleId* 一一对应）
 const char* const kKnownModuleIds[] = {
@@ -182,6 +183,10 @@ SettingsConfig SettingsStore::load() const {
     if (obj.has(kKeyWindowEffect) && obj.get(kKeyWindowEffect).isString()) {
         cfg.windowEffect = obj.get(kKeyWindowEffect).asString();
     }
+    if (obj.has(kKeySidebarCollapsed) &&
+        obj.get(kKeySidebarCollapsed).isBool()) {
+        cfg.sidebarCollapsed = obj.get(kKeySidebarCollapsed).asBool();
+    }
     // 模块开关：字符串数组；未知 ID 忽略 + WARN（防手改 config 打死模块，
     // 设计 §5.1/§8）。字段缺失 → 保持默认全启用
     if (obj.has(kKeyEnabledModules) && obj.get(kKeyEnabledModules).isArray()) {
@@ -211,6 +216,8 @@ core::Result<void> SettingsStore::save(const SettingsConfig& cfgRaw) const {
     obj.set(kKeyLogRetention, platform::json::makeInt(cfg.logRetentionDays));
     obj.set(kKeyProxyAutoStart, platform::json::makeBool(cfg.claudeProxyAutoStart));
     obj.set(kKeyWindowEffect, platform::json::makeString(cfg.windowEffect));
+    obj.set(kKeySidebarCollapsed,
+            platform::json::makeBool(cfg.sidebarCollapsed));
     obj.set(kKeyEnabledModules,
             platform::json::makeStringArray(cfg.enabledModules));
 
