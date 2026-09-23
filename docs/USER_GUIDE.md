@@ -171,7 +171,7 @@ DevDesk 是一个**本地优先**的开发者桌面工具集（C++ 原生应用�
   ```
 
 - **验证**：用文件里自带的 curl 命令测试，能收到 JSON 响应即通。
-- 注意：手工模式下代理运行时 settings.json 仍会被接管；如需完全隔离，把 Claude Code 指向代理后不要让 DevDesk 启动代理接管（当前版本无「不接管」开关，见 KNOWN_LIMITATIONS）。
+- 注意：手工模式下代理运行时 settings.json 仍会被接管（当前版本无「不接管」开关，启动即托管、停止即还原）。
 
 ## 5. 数据都在哪
 
@@ -180,11 +180,11 @@ DevDesk 是一个**本地优先**的开发者桌面工具集（C++ 原生应用�
 | 路径 | 内容 | 说明 |
 |------|------|------|
 | `%APPDATA%\DevDesk\notes\` | **所有笔记** | 普通 `.md` 文件树，可直接备份 / 同步 |
-| `%APPDATA%\DevDesk\devdesk.db` | SQLite 数据库 | Todo 列与任务、Profile 元数据、笔记索引（FTS5）、代理调用日志 |
+| `%APPDATA%\DevDesk\devdesk.db` | SQLite 数据库 | Todo 列与任务、Profile 元数据、笔记索引（FTS5）与笔记标签、代理调用日志 |
 | `%APPDATA%\DevDesk\config.json` | 应用配置 | `theme` / `fontScalePercentV3` / `logRetentionDays` / `claudeProxyAutoStart` / `claudeProxyPort` / `windowEffect` / `sidebarCollapsed` / `enabledModules`（见 [§3.5](#35-设置)） |
 | `%APPDATA%\DevDesk\keychain\` | 凭据密文 | `<service>\<account>.key`，DPAPI 加密（绑定当前 Windows 用户），存 API Key 明文的唯一位置 |
 | `%APPDATA%\DevDesk\logs\devdesk.log` | 运行日志 | 排查问题先看这里；调用日志的保留天数在设置页配置 |
-| `%APPDATA%\DevDesk\proxy_token.txt` | 代理凭据 | port + token，见 [§4.2](#42-配置步骤) |
+| `%APPDATA%\DevDesk\proxy_token.txt` | 代理凭据 | port + token，见 [§4.3](#43-手工配置不想让-devdesk-碰-settingsjson-时的备选) |
 | `%APPDATA%\DevDesk\pets\` | 桌宠数据与皮肤 | `pet_config.json`（皮肤 / 位置 / 穿透状态）+ 手动安装的第三方皮肤目录 |
 | `%USERPROFILE%\.claude\settings.json` | Claude Code 用户配置（接管） | **代理运行期间** DevDesk 只写托管键（`ANTHROPIC_*` 等），其余键原样保留；停止代理 / 退出应用自动还原（见 [§4.2](#42-配置步骤推荐接管模式无需手抄-token)） |
 
