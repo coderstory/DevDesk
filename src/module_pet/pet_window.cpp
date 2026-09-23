@@ -335,11 +335,26 @@ void petCompose(eui::Ui& ui, const eui::Screen& screen) {
                                  (now - state.lastInteractionMs) / 1000.0, s);
                              state.anim.tick(s);
                              state.bubble.tick(dt);
-                             // 随机闲聊：Idle 且无气泡时，平均 ~60s 一句
+                             // Idle 且无气泡时按三级内容源选词（§4.5，审计 [18]）：
+                             // ②逾期提醒——平均 ~5min 一次（低频节奏按审计建议），经
+                             //   main 注入的 config.getOverdueCount 跨模块只读桥取数；
+                             //   数据不可用（todo 关 / 查询失败 = 空串）本轮降级到①，
+                             //   不显示死数据（M2 验收条款）
+                             // ①静态语料——平均 ~60s 一句（dt/300 ⊂ dt/60，roll 复用
+                             //   一个随机数即可表达两级优先，闲聊频率几乎不变）
                              if (!state.bubble.visible &&
                                  state.anim.state == PetAnimState::Idle) {
-                                 if (static_cast<double>(std::rand()) / RAND_MAX <
-                                     dt / 60.0) {
+                                 const double roll =
+                                     static_cast<double>(std::rand()) / RAND_MAX;
+                                 if (roll < dt / 300.0) {
+                                     const std::string dataText = overdueBubbleText(
+                                         runtime().config.getOverdueCount);
+                                     // 数据文案稍长停 4s（含数字，3s 读不完）
+                                     state.bubble.show(
+                                         dataText.empty() ? pickPhrase(s)
+                                                           : dataText,
+                                         dataText.empty() ? 3.0 : 4.0);
+                                 } else if (roll < dt / 60.0) {
                                      state.bubble.show(pickPhrase(s), 3.0);
                                  }
                              }
@@ -687,7 +702,8 @@ void applyPetSkin(const std::string& skinName) {
         core::window::requestWindowClose(rt.handle);
         rt.handle = nullptr;  // 等新窗 onWindowCreated 回填
         startPetWindow(
-            PetWindowConfig{skinName, cfg.x, cfg.y, cfg.clickThrough});
+            PetWindowConfig{skinName, cfg.x, cfg.y, cfg.clickThrough,
+                            rt.config.getOverdueCount});
     }
     LOG_INFO("桌宠换肤 → " + skinName + (hotSwap ? "（已热切换）" : "（下次启动生效）"));
 }

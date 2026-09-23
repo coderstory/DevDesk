@@ -4,6 +4,9 @@
 // 门控在 main.cpp（enabledModules 含 "pet" 才调 startPetWindow，零执行语义）。
 #pragma once
 
+#include <cstdint>
+#include <functional>
+#include <optional>
 #include <string>
 #include <utility>
 #include <vector>
@@ -63,11 +66,21 @@ enum class PetMenuAction {
 PetMenuAction petMenuActionForPath(const std::vector<int>& path, size_t skinCount,
                                    int& skinIndex);
 
+// 气泡内容源②的跨模块只读桥（§4.5，审计 [18]）：main 装配的逾期任务计数
+// 回调（getClaudeService 同型的 app 级桥——main 层查 Home 数据经 PetWindowConfig
+// 喂给 pet）。返回 nullopt = 数据不可用（todo 模块关闭 / 查询失败），pet 侧
+// 回退内容源①静态语料（M2 验收降级条款：不显示死数据）。
+// pet 只见 std::function 签名、不 include module_home——module_* 隔离不破
+using OverdueCountGetter = std::function<std::optional<int64_t>()>;
+
 struct PetWindowConfig {
     std::string skinName;   // 空 = kDefaultSkinName
     int x = -1;             // -1 = 未设置（取主显示器工作区右下角）；其他负值是
     int y = -1;             // 左/上副屏的合法坐标（M2 多显示器，钳制按位置选屏后保留）
     bool clickThrough = false;  // 挂机穿透（右键菜单可切换，持久化）
+    // 内容源②回调（main 注入；applyPetSkin 热换肤重开时从 rt.config 原样
+    // 携带不丢桥）。空 = 无数据源，气泡只出静态语料①
+    OverdueCountGetter getOverdueCount;
 };
 
 // 无边框窗拖拽锚点（拖拽抖动修复，2026-09 真机验证症状 1）：

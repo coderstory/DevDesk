@@ -19,6 +19,8 @@
 //      钳进工作区纯函数 [12]（[0][1] 的 onWindowDestroyed 接线断言在 §5）
 //  12. M2 收尾（2026-09-23 pet-m2）：多显示器按位置选屏钳制 + 负坐标持久化
 //      往返 + Sleep 零渲染暂停门（电源事件真触发属人工点验）
+//  13. 气泡内容源（产品审计 [18]，§4.5 ①②）：②逾期计数 mock 桥三分支
+//      （N>0 计数文案 / N=0 正面文案 / 无数据回退）+ ①静态语料逐条往返
 // 子窗口真实渲染/拖拽/穿透/气泡视觉属人工点验（设计 §6 M2 验收项）。
 #include "doctest.h"
 
@@ -510,6 +512,62 @@ REGISTER_TEST(pet_phrase_table, "pet: 短语表皮肤语料优先 + 内置回退
         "{\"phrases\":[42],\"states\":{\"idle\":[\"f.png\"]}}");
     DOCTEST_CHECK(bad.isOk());
     DOCTEST_CHECK(bad.unsafeValue().phrases.empty());
+    return true;
+});
+
+// 内容源②（审计 [18]，§4.5）：mock 逾期计数桥三分支——N>0 含计数文案 /
+// N=0 正面文案不带死数字 / 桥空或 nullopt（todo 关、查询失败）回退静态语料
+REGISTER_TEST(pet_bubble_overdue_content, "pet: 气泡内容源②逾期数文案（N>0/N=0/无数据）", {
+    using namespace module::pet;
+    // N>0 → 「你有 N 条逾期任务」：文本含计数与款式词，装气泡可往返
+    std::function<std::optional<int64_t>()> three =
+        [] { return std::optional<int64_t>(3); };
+    const std::string t3 = overdueBubbleText(three);
+    DOCTEST_CHECK_MESSAGE(t3.find("3") != std::string::npos, t3);
+    DOCTEST_CHECK_MESSAGE(t3.find("逾期任务") != std::string::npos, t3);
+    PetBubble bubble;
+    bubble.show(t3, 4.0);
+    DOCTEST_CHECK(bubble.visible);
+    DOCTEST_CHECK_EQ(bubble.text, t3);
+    bubble.tick(4.5);
+    DOCTEST_CHECK(!bubble.visible);
+    // 大数字同款（串接 std::to_string，不做千分位）
+    std::function<std::optional<int64_t>()> hundred =
+        [] { return std::optional<int64_t>(120); };
+    DOCTEST_CHECK_MESSAGE(
+        overdueBubbleText(hundred).find("120") != std::string::npos,
+        overdueBubbleText(hundred));
+    // N=0 → 正面文案，且不得出现「0 条」死数字
+    std::function<std::optional<int64_t>()> zero =
+        [] { return std::optional<int64_t>(0); };
+    const std::string t0 = overdueBubbleText(zero);
+    DOCTEST_CHECK_MESSAGE(!t0.empty(), t0);
+    DOCTEST_CHECK_MESSAGE(t0.find("0") == std::string::npos, t0);
+    // 桥返回 nullopt（todo 模块关闭 / 查询失败）→ 空串 = 回退内容源①
+    std::function<std::optional<int64_t>()> unavailable =
+        [] { return std::optional<int64_t>(std::nullopt); };
+    DOCTEST_CHECK(overdueBubbleText(unavailable).empty());
+    // 桥未注入（空 std::function）→ 同样空串回退，气泡绝不出「你有 条…」残句
+    std::function<std::optional<int64_t>()> none;
+    DOCTEST_CHECK(overdueBubbleText(none).empty());
+    return true;
+});
+
+// 内容源①补强（审计 [18]）：静态语料逐条装气泡往返——语料退化（空表/空串/
+// 装不进气泡）直接红，M2 验收「关 todo 模块时回退通用语料」的数据侧保障
+REGISTER_TEST(pet_bubble_static_corpus_roundtrip, "pet: 内容源①静态语料逐条气泡往返", {
+    using namespace module::pet;
+    const std::vector<std::string>& phrases = defaultPhrases();
+    DOCTEST_CHECK(phrases.size() >= 4);
+    for (const std::string& p : phrases) {
+        DOCTEST_CHECK_MESSAGE(!p.empty(), p);
+        PetBubble bubble;
+        bubble.show(p, 3.0);
+        DOCTEST_CHECK(bubble.visible);
+        DOCTEST_CHECK_EQ(bubble.text, p);
+        bubble.tick(3.5);
+        DOCTEST_CHECK(!bubble.visible);
+    }
     return true;
 });
 

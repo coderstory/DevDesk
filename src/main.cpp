@@ -12,6 +12,7 @@
 #include "core/router.h"
 #include "core/theme.h"
 #include "core/tray_menu_spec.h"
+#include "module_home/home_service.h"
 #include "module_pet/pet_config.h"
 #include "module_pet/pet_window.h"
 #include "module_markdown/md_file_open.h"
@@ -269,6 +270,32 @@ void handleAppleEventOpenFile(const std::string& path) {
         initialized = true;
     }
     return svc.get();
+}
+
+// 桌宠气泡内容源②（pet 设计 §4.5，审计 [18]）：跨模块逾期计数桥。
+// getClaudeService 同型——app 层懒建只读 HomeService（其公开头仅依赖 core，
+// 本就为跨页聚合设计），main 注入 startPetWindow 回调喂给 pet；pet 不
+// include module_home，module_* 隔离不破（契约见 pet_window.h
+// OverdueCountGetter）。
+// 降级（M2 验收条款「关 todo 模块时回退通用语料」）：todo 模块关闭 →
+// nullopt；聚合查询失败 → nullopt（Result 口径，不抛异常）。nullopt 一律
+// 由 pet 侧解释为「数据不可用」→ 气泡回退静态语料①，不显示死数据
+std::optional<int64_t> getOverdueTaskCount() {
+    if (!isModuleEnabled(module::settings::kModuleIdTodo)) {
+        return std::nullopt;
+    }
+    static std::unique_ptr<module::home::HomeService> svc;
+    static bool initialized = false;
+    if (!initialized) {
+        auto& db = openAppDatabase();
+        svc = std::make_unique<module::home::HomeService>(db.db());
+        initialized = true;
+    }
+    const auto stats = svc->getStats();
+    if (stats.isFail()) {
+        return std::nullopt;
+    }
+    return stats.value().overdueTodos;
 }
 
 // 启动本地 Claude 代理（全局唯一实例）。
@@ -630,8 +657,11 @@ const DslAppConfig& dslAppConfig() {
             // config.json；pet 字段 2026-09-23 从 SettingsConfig 迁出）
             const module::pet::PetConfig petCfg =
                 module::pet::PetConfigStore(module::pet::petConfigFile()).load();
+            // 气泡内容源②（§4.5，审计 [18]）：注入 app 级只读桥，pet 经它查
+            // Home 逾期数（pet 不 include module_home，隔离不破）
             module::pet::startPetWindow(module::pet::PetWindowConfig{
-                petCfg.skinName, petCfg.x, petCfg.y, petCfg.clickThrough});
+                petCfg.skinName, petCfg.x, petCfg.y, petCfg.clickThrough,
+                &getOverdueTaskCount});
         } else {
             LOG_INFO("桌宠已关闭（enabledModules 不含 pet），不开宠物窗口");
         }
