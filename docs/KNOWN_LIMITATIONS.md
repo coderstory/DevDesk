@@ -43,15 +43,14 @@
 
 - **已解决（2026-09-22，磨砂设计 Phase B/D）**：EUI-NEO 上游新增 `app::setClearColor` 运行时 API（覆盖主窗口 + 全部存活子窗口 + requestFullPaint），DevDesk 侧 `main.cpp` 的 theme 回调与 `module::settings::applyWindowVisuals` 已接线——切主题/切窗口效果档，底色（含 alpha）下一帧即时生效，重启后一致。同一通路顺带支持窗口效果三档（关闭/半透/磨砂，见设置页「外观」卡）。
 
-#### 3. Home 统计在 onStart 查询 + 手动刷新
+#### 3. Home 统计在 onStart 查询 + 手动刷新 —— 已解决（`153a166` Router 加进页通知，本次文档核对清账）
 
-- 仪表盘数据在模块 `onStart` 时查询一次，之后靠右上角「↻ 刷新」手动刷新；不会在每次切回首页时自动重查。
-- 原因：`core::Router` 无 `onShow` 回调（只有 startAll / stopAll / navigateTo / compose），切页不触发数据刷新。
+- **已解决**：`core::Router` 新增 `Module::onPageEnter` 进页回调（含同页重入，`src/core/router.cpp`），`HomeModule::onPageEnter` 每次进入首页重查全部统计；右上角「刷新」保留为手动补查。本条「Router 无 onShow 回调、切回首页不自动重查」的原结论随 `153a166` 失效。
 
 #### 4. 无剪贴板 API，token 无复制按钮
 
 - EUI-NEO 的剪贴板能力仅用于 Input 组件内部粘贴（窗口层 `clipboardText/setClipboardText`），未暴露应用级"复制到剪贴板"的组件 API。
-- 因此设置页 / 代理凭据的 token 没有「复制」按钮，需手动从 `%APPDATA%\DevDesk\proxy_token.txt` 抄录。
+- 因此设置页 / 代理凭据的 token 没有「复制」按钮。**影响已被接管通道大幅缩小**（provider-config）：推荐路径是启动代理自动写 `~/.claude/settings.json`，用户无需抄 token；仅手工配置模式需要从设置页眼睛显形或 `proxy_token.txt` 手动抄录。
 
 #### 5. Markdown 文件变化轮询是 mtime/size 秒级比对（W8）
 
@@ -136,7 +135,7 @@
 - **无 OS 文件拖入**（无 onFileDrop）——DevDesk 的 Markdown 导入只能走目录扫描；
 - **单字重**（只打包 Bold 一份字重，`fontWeight` 运行时切换无效，SemiBold/Medium 不生效）；
 - **无全局 OS hotkey**（窗口失焦时收不到键盘事件）；
-- 其他：无 tree 组件、无自定义托盘菜单（只硬编码 Show/Exit）、Toast 单实例、无 Collapse/Accordion、无 skeleton loader、无 Tab 焦点循环、无 onResize/onMove 回调。
+- 其他：无 tree 组件、Toast 单实例、无 Collapse/Accordion、无 skeleton loader、无 Tab 焦点循环、无 onResize/onMove 回调。（0.6.0 的「无自定义托盘菜单（只硬编码 Show/Exit）」已过时：上游已加 `trayMenu` / `onTrayMenu` / `styledMenu`，DevDesk 托盘与桌宠 / Todo 列菜单均已换 styled 菜单 + 按模块动态收缩；本清单是当时快照，以 `docs/EUI-NEO-CAPABILITIES.md` 复核为准。）
 
 ---
 
