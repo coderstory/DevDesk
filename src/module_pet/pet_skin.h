@@ -5,9 +5,9 @@
 //               "states":{"idle":["f0.png",...],"poked":[...]}}
 //
 // 设计决策：
-//   - 内置默认皮肤（clay-cat）是**程序生成的占位皮肤**：pet.json + 帧全部
-//     由本文件在运行时首次生成（简单形状 + 1px 抗锯齿边缘），格式真实、
-//     素材可整体替换为真皮肤包（把 assets/pets/clay-cat 换成美术资源即可）
+//   - 内置皮肤（clay-cat + duck/slime/robot/ghost）全部**程序生成**：pet.json
+//     + 帧由本文件在运行时首次生成（简单形状 + 1px 抗锯齿边缘），格式真实、
+//     素材可整体替换为真皮肤包（把 assets/pets/<name> 换成美术资源即可）
 //   - 解析是纯函数（parsePetSkinJson），不碰文件系统，供单测
 //   - 状态帧：idle/poked/sleep/typing 四态（M2，设计 §4.4/§4.5）；sleep/
 //     typing/phrases 缺失时静默忽略（老皮肤包前向兼容）
@@ -62,6 +62,14 @@ core::Result<PetSkin> loadSkin(const std::filesystem::path& dir);
 // 绘制 PNG，未压缩 deflate，零第三方依赖）。目录已存在且 pet.json 可解析时
 // 直接加载；但内置占位皮肤缺 M2 帧时重新生成升级（用户替换过的皮肤不动）
 core::Result<PetSkin> ensureDefaultSkin(const std::filesystem::path& dir);
+
+// 全部内置皮肤名（clay-cat + 程序生成的 duck/slime/robot/ghost）
+const std::vector<std::string>& builtinSkinNames();
+
+// 在 root 下生成/升级全部内置皮肤（ensureDefaultSkin 同款语义对每款适用：
+// 已存在且含 M2 帧的直接加载，用户替换过的原样保留）。返回成功清单；
+// 供 startPetWindow 落盘后，discoverSkins/设置页下拉/右键换肤菜单零改动发现
+std::vector<std::string> ensureBuiltinSkins(const std::filesystem::path& root);
 
 // 皮肤根目录候选（依次：exe 旁 assets/pets → appDataDir/pets）
 std::vector<std::filesystem::path> skinRootCandidates();

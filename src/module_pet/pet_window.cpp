@@ -298,6 +298,10 @@ void startPetWindow(const PetWindowConfig& config) {
     PetRuntime& rt = runtime();
     rt.config = config;
 
+    // 内置皮肤全集落盘（幂等；用户替换过的原样保留）——换肤菜单/设置页
+    // 下拉靠 discoverSkins 发现，皮肤须先存在于 petsDir
+    (void)ensureBuiltinSkins(core::paths::petsDir());
+
     // 皮肤：候选根找 → 找不到回退默认皮肤 → 生成/加载占位皮肤
     std::string skinName =
         config.skinName.empty() ? kDefaultSkinName : config.skinName;
