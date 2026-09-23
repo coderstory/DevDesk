@@ -391,15 +391,18 @@ public:
         reloadAll();
     }
 
-    void doUpdateTask(const Task& task) {
-        if (!service_) return;
+    // 返回是否保存成功（详情弹窗动作按钮先落表单再执行动作，保存失败要中止
+    // 动作并保留弹窗——产品审计 2026-09-23 [2]；其余调用方忽略返回值）
+    bool doUpdateTask(const Task& task) {
+        if (!service_) return false;
         auto r = service_->updateTask(task);
         if (r.isFail()) {
             setStatus("保存失败：" + r.errorMessage(), true);
-            return;
+            return false;
         }
         setStatus("已保存");
         reloadAll();
+        return true;
     }
 
     // ============ 列管理（service 四 API 中的 rename/delete/reorder 接线） ============
@@ -1450,6 +1453,9 @@ private:
             .screen(screen.width, screen.height)
             .size(w, h)
             .theme(themeTokens)
+            // 审计 2026-09-23 [2]：从详情弹窗发起的删除确认叠在详情之上，
+            // 需盖住详情弹窗（默认 zIndex 1000），同 datepicker 先例
+            .zIndex(1100)
             .onOpenChange([this](bool v) { confirmOpen_ = v; })
             .content([&] {
                 ui.text("todo.dialog.delcol.title")
@@ -1495,6 +1501,10 @@ private:
                             const int64_t taskId = confirmTaskId_;
                             confirmOpen_ = false;
                             confirmTaskId_ = 0;
+                            // 详情弹窗发起的删除：确认后才关详情（取消路径
+                            // 不关，回到弹窗——审计 2026-09-23 [2]）
+                            detailOpen_ = false;
+                            detailDiscardArmed_ = false;
                             doDeleteTask(taskId);
                             return;
                         }
@@ -1655,6 +1665,7 @@ private:
         detailCompleted_ = task.completedAt.has_value();
         detailTags_ = task.tags;
         detailTagInput_.clear();
+        detailDiscardArmed_ = false;
         detailOpen_ = true;
     }
 
@@ -1670,6 +1681,54 @@ private:
             if (existing == tag) return;
         }
         detailTags_.push_back(std::move(tag));
+    }
+
+    // ---------- 详情弹窗表单落库辅助（产品审计 2026-09-23 [2]） ----------
+    // 「保存」「移动到」「标记完成」「取消完成」共用同一份表单组装，
+    // 动作按钮先落表单再执行动作，编辑中的改动不再被静默丢弃。
+
+    // 表单字段 → Task（含 position 保留；completedAt 取当前完成态）
+    Task collectDetailFormTask() const {
+        Task updated;
+        updated.id = detailTaskId_;
+        updated.columnId = detailColumnId_;
+        updated.title = detailTitle_;
+        if (!detailDescription_.empty()) {
+            updated.description = detailDescription_;
+        }
+        updated.priority = detailPriority_;
+        updated.dueAt = detailDueAt_;
+        updated.completedAt = detailCompleted_
+            ? std::optional<int64_t>(static_cast<int64_t>(std::time(nullptr)))
+            : std::nullopt;
+        updated.tags = detailTags_;
+        // 保留原 position（编辑不改序；此前硬编码 0 会把任务顶到列首）
+        if (const Task* orig = findTask(detailTaskId_)) {
+            updated.position = orig->position;
+        } else {
+            updated.position = 0;
+        }
+        return updated;
+    }
+
+    // 表单原样落库；false = 保存失败（已 setStatus 报错），调用方应保持
+    // 弹窗打开并放弃后续动作
+    bool saveDetailForm() {
+        return doUpdateTask(collectDetailFormTask());
+    }
+
+    // 表单与库中任务是否有差异（backdrop 关闭守卫用）。任务不在内存
+    //（已被别的路径删掉）时无法比较，按不脏处理
+    bool detailFormDirty() const {
+        const Task* orig = findTask(detailTaskId_);
+        if (orig == nullptr) return false;
+        return orig->title != detailTitle_ ||
+               orig->description.value_or("") != detailDescription_ ||
+               orig->priority != detailPriority_ ||
+               orig->dueAt != detailDueAt_ ||
+               orig->columnId != detailColumnId_ ||
+               orig->completedAt.has_value() != detailCompleted_ ||
+               orig->tags != detailTags_;
     }
 
     void drawDetailDialog(eui::Ui& ui, const eui::Screen& screen,
@@ -1692,7 +1751,19 @@ private:
             .screen(screen.width, screen.height)
             .size(w, h)
             .theme(themeTokens)
-            .onOpenChange([this](bool v) { detailOpen_ = v; })
+            .onOpenChange([this](bool v) {
+                // 产品审计 2026-09-23 [2]：backdrop 点击（dialog 唯一外部关闭
+                // 通道）在有未存改动时第一次只警告不关，再点一次 = 明确放弃
+                // 修改才关。EUI-NEO dialog 无 dismissable 开关（中期上游补），
+                // 两击语义是当前组件能力下的守卫
+                if (!v && detailFormDirty() && !detailDiscardArmed_) {
+                    detailDiscardArmed_ = true;
+                    setStatus("有未保存修改：点「保存」落库，或再点一次遮罩放弃", true);
+                    return;
+                }
+                detailDiscardArmed_ = false;
+                detailOpen_ = v;
+            })
             .content([&] {
                 ui.text("todo.dialog.detail.title")
                     .position(28.0f, 22.0f)
@@ -1888,8 +1959,12 @@ private:
                             const int64_t taskId = detailTaskId_;
                             const int64_t toCol = columns_[i].id;
                             if (toCol == detailColumnId_) return;  // 已在该列
+                            // 产品审计 2026-09-23 [2]：先落表单再移动，
+                            // 编辑中的改动不再被静默丢弃；保存失败保持弹窗
+                            if (!saveDetailForm()) return;
                             detailColumnId_ = toCol;
                             detailOpen_ = false;
+                            detailDiscardArmed_ = false;
                             doMoveTask(taskId, toCol,
                                        ui::computeAppendPosition(tasks_, toCol));
                         })
@@ -1907,12 +1982,13 @@ private:
                     .textColor(t.colors.error)
                     .radius(t.sizes.radius)
                     .border(1.0f, t.colors.borderDefault)
-                    // 与右键菜单删除同路径：先弹确认（confirmOpen_），不再直接落库
+                    // 与右键菜单删除同路径：先弹确认（confirmOpen_），不再直接落库。
+                    // 产品审计 2026-09-23 [2]：不关详情弹窗——确认取消后回到
+                    // 弹窗继续编辑（confirm 弹窗 zIndex 1100 压在详情之上）
                     .onClick([this] {
                         confirmTaskId_ = detailTaskId_;
                         confirmTaskTitle_ = detailTitle_;
                         confirmColumnId_ = 0;
-                        detailOpen_ = false;
                         confirmOpen_ = true;
                     })
                     .build();
@@ -1932,7 +2008,11 @@ private:
                     .onClick([this] {
                         const int64_t taskId = detailTaskId_;
                         const bool wasDone = detailCompleted_;
+                        // 产品审计 2026-09-23 [2]：先落表单再切完成态，
+                        // 编辑中的改动不再被静默丢弃；保存失败保持弹窗
+                        if (!saveDetailForm()) return;
                         detailOpen_ = false;
+                        detailDiscardArmed_ = false;
                         if (wasDone) doUncompleteTask(taskId);
                         else doCompleteTask(taskId);
                     })
@@ -1947,27 +2027,12 @@ private:
                     .textColor(t.colors.onPrimary)
                     .radius(t.sizes.radius)
                     .onClick([this] {
-                        Task updated;
-                        updated.id = detailTaskId_;
-                        updated.columnId = detailColumnId_;
-                        updated.title = detailTitle_;
-                        if (!detailDescription_.empty()) {
-                            updated.description = detailDescription_;
-                        }
-                        updated.priority = detailPriority_;
-                        updated.dueAt = detailDueAt_;
-                        updated.completedAt = detailCompleted_
-                            ? std::optional<int64_t>(static_cast<int64_t>(std::time(nullptr)))
-                            : std::nullopt;
-                        updated.tags = detailTags_;
-                        // 保留原 position（编辑不改序；此前硬编码 0 会把任务顶到列首）
-                        if (const Task* orig = findTask(detailTaskId_)) {
-                            updated.position = orig->position;
-                        } else {
-                            updated.position = 0;
-                        }
+                        // 表单组装 + 落库统一走 collectDetailFormTask/
+                        // saveDetailForm（与动作按钮同一份语义）；
+                        // 保存失败保持弹窗打开（错误已 setStatus 提示）
+                        if (!saveDetailForm()) return;
                         detailOpen_ = false;
-                        doUpdateTask(updated);
+                        detailDiscardArmed_ = false;
                     })
                     .build();
             })
@@ -2007,6 +2072,9 @@ private:
 
     // 详情弹窗
     bool detailOpen_ = false;
+    // backdrop 关闭守卫（审计 2026-09-23 [2]）：有未存改动时第一次点遮罩
+    // 只警告（置位），再点一次才真正关闭放弃修改
+    bool detailDiscardArmed_ = false;
     int64_t detailTaskId_ = 0;
     int64_t detailColumnId_ = 0;
     std::string detailTitle_;

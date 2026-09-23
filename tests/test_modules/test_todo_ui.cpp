@@ -16,6 +16,7 @@
 
 #include <eui/dsl.h>
 #include <eui/types.h>
+#include "core/input/input_types.h"
 
 #include <filesystem>
 #include <memory>
@@ -1583,5 +1584,186 @@ REGISTER_TEST(todo_ui_feature_pure_helpers,
     DOCTEST_CHECK_EQ(filterBySearch(ptrs, matched, false).size(),
                      static_cast<size_t>(3));
 
+    return true;
+})
+
+// ---- 6. 产品审计 2026-09-23 [2]：详情弹窗动作先存表单 / 删除确认保留弹窗 / backdrop 守卫 ----
+
+REGISTER_TEST(todo_ui_detail_actions_save_form,
+              "todo_ui: 详情动作按钮先存表单 + 删除取消保留弹窗 + backdrop 守卫（审计 [2]）", {
+    TestEnv env;
+    DOCTEST_REQUIRE(env.ready);
+    auto col = env.svc->createColumn("编辑列");
+    auto col2 = env.svc->createColumn("目标列");
+    DOCTEST_REQUIRE(col.isOk() && col2.isOk());
+    auto a = env.svc->createTask(col.value().id, "旧标题");
+    auto b = env.svc->createTask(col.value().id, "移动前编辑");
+    auto c = env.svc->createTask(col.value().id, "删除目标");
+    auto e = env.svc->createTask(col.value().id, "遮罩守卫");
+    DOCTEST_REQUIRE(a.isOk() && b.isOk() && c.isOk() && e.isOk());
+
+    std::unique_ptr<::core::Module> mod(create_todo_module());
+    mod->onStart();
+
+    // 列序：4 个种子列 [0..3] + 编辑列(4) + 目标列(5)；「移动到」按钮按列序编号
+
+    // A. 「标记完成」先落表单：改标题不点保存 → 点标记完成 → 标题已落库 + 已完成
+    {
+        Frame f1(mod.get());
+        const auto* card = f1.ui.find("todo.col.4.card.0.bg");
+        DOCTEST_REQUIRE(card != nullptr);
+        DOCTEST_REQUIRE(card->onClick != nullptr);
+        card->onClick();  // 打开「旧标题」详情
+        Frame f2(mod.get());
+        const auto* input = f2.ui.find("todo.dialog.detail.input.title.hit");
+        DOCTEST_REQUIRE(input != nullptr);
+        DOCTEST_REQUIRE(input->onTextInput != nullptr);
+        core::TextInputEvent tie;
+        tie.text = "NEW";
+        input->onTextInput(tie);  // 真实链路：onTextInput → onChange → detailTitle_
+        const auto* toggle = f2.ui.find("todo.dialog.detail.toggle.bg");
+        DOCTEST_REQUIRE(toggle != nullptr);
+        DOCTEST_REQUIRE(toggle->onClick != nullptr);
+        toggle->onClick();  // 不点保存直接标记完成
+
+        auto got = env.svc->listAllTasks();
+        DOCTEST_REQUIRE(got.isOk());
+        bool found = false;
+        for (const auto& tk : got.value()) {
+            if (tk.id == a.unsafeValue().id) {
+                found = true;
+                DOCTEST_CHECK_EQ(tk.title, std::string("旧标题NEW"));  // 编辑未丢（修复前会丢）
+                DOCTEST_CHECK(tk.completedAt.has_value());             // 动作照常执行
+            }
+        }
+        DOCTEST_CHECK(found);
+    }
+
+    // B. 「移动到」先落表单：改标题 → 点移动到目标列 → 标题落库 + 列变更
+    {
+        Frame f1(mod.get());
+        const auto* card = f1.ui.find("todo.col.4.card.0.bg");  // 旧标题已完成移走
+        DOCTEST_REQUIRE(card != nullptr);
+        DOCTEST_REQUIRE(card->onClick != nullptr);
+        card->onClick();
+        Frame f2(mod.get());
+        const auto* input = f2.ui.find("todo.dialog.detail.input.title.hit");
+        DOCTEST_REQUIRE(input != nullptr);
+        DOCTEST_REQUIRE(input->onTextInput != nullptr);
+        core::TextInputEvent tie;
+        tie.text = "M";
+        input->onTextInput(tie);
+        const auto* moveBtn = f2.ui.find("todo.dialog.detail.move.5.bg");  // 目标列
+        DOCTEST_REQUIRE(moveBtn != nullptr);
+        DOCTEST_REQUIRE(moveBtn->onClick != nullptr);
+        moveBtn->onClick();
+
+        auto got = env.svc->listAllTasks();
+        DOCTEST_REQUIRE(got.isOk());
+        for (const auto& tk : got.value()) {
+            if (tk.id == b.unsafeValue().id) {
+                DOCTEST_CHECK_EQ(tk.title, std::string("移动前编辑M"));
+                DOCTEST_CHECK_EQ(tk.columnId, col2.unsafeValue().id);
+            }
+        }
+    }
+
+    // C. 详情内删除：确认取消后回到详情弹窗（编辑现场保留）；确认删除才落库关窗
+    {
+        Frame f1(mod.get());
+        const auto* card = f1.ui.find("todo.col.4.card.0.bg");  // 删除目标
+        DOCTEST_REQUIRE(card != nullptr);
+        DOCTEST_REQUIRE(card->onClick != nullptr);
+        card->onClick();
+        Frame f2(mod.get());
+        const auto* del = f2.ui.find("todo.dialog.detail.delete.bg");
+        DOCTEST_REQUIRE(del != nullptr);
+        DOCTEST_REQUIRE(del->onClick != nullptr);
+        del->onClick();  // 只开确认；详情不再被关掉（修复前 detailOpen_ 先关）
+        Frame f3(mod.get());
+        DOCTEST_CHECK_EQ(f3.ui.find("todo.dialog.delcol.panel")->opacity, 1.0f);
+        DOCTEST_CHECK_EQ(f3.ui.find("todo.dialog.detail.panel")->opacity, 1.0f);
+        const auto* cancel = f3.ui.find("todo.dialog.delcol.cancel.bg");
+        DOCTEST_REQUIRE(cancel != nullptr);
+        DOCTEST_REQUIRE(cancel->onClick != nullptr);
+        cancel->onClick();
+        Frame f4(mod.get());
+        DOCTEST_CHECK_EQ(f4.ui.find("todo.dialog.delcol.panel")->opacity, 0.0f);
+        DOCTEST_CHECK_EQ(f4.ui.find("todo.dialog.detail.panel")->opacity, 1.0f);  // 回到弹窗
+        bool stillThere = false;
+        auto got1 = env.svc->listAllTasks();
+        DOCTEST_REQUIRE(got1.isOk());
+        for (const auto& tk : got1.value()) {
+            if (tk.id == c.unsafeValue().id) stillThere = true;
+        }
+        DOCTEST_CHECK(stillThere);  // 取消 = 什么都没发生
+        // 再删 → 确认 → 任务消失 + 详情关闭
+        const auto* del2 = f4.ui.find("todo.dialog.detail.delete.bg");
+        DOCTEST_REQUIRE(del2 != nullptr);
+        DOCTEST_REQUIRE(del2->onClick != nullptr);
+        del2->onClick();
+        Frame f5(mod.get());
+        const auto* confirm = f5.ui.find("todo.dialog.delcol.confirm.bg");
+        DOCTEST_REQUIRE(confirm != nullptr);
+        DOCTEST_REQUIRE(confirm->onClick != nullptr);
+        confirm->onClick();
+        Frame f6(mod.get());
+        DOCTEST_CHECK_EQ(f6.ui.find("todo.dialog.detail.panel")->opacity, 0.0f);
+        bool gone = true;
+        auto got2 = env.svc->listAllTasks();
+        DOCTEST_REQUIRE(got2.isOk());
+        for (const auto& tk : got2.value()) {
+            if (tk.id == c.unsafeValue().id) gone = false;
+        }
+        DOCTEST_CHECK(gone);
+    }
+
+    // D. backdrop 守卫：有未存改动第一次点遮罩只警告不关不落库，再点一次放弃关闭
+    {
+        Frame f1(mod.get());
+        const auto* card = f1.ui.find("todo.col.4.card.0.bg");  // 遮罩守卫
+        DOCTEST_REQUIRE(card != nullptr);
+        DOCTEST_REQUIRE(card->onClick != nullptr);
+        card->onClick();
+        Frame f2(mod.get());
+        const auto* input = f2.ui.find("todo.dialog.detail.input.title.hit");
+        DOCTEST_REQUIRE(input != nullptr);
+        DOCTEST_REQUIRE(input->onTextInput != nullptr);
+        core::TextInputEvent tie;
+        tie.text = "G";
+        input->onTextInput(tie);
+        const auto* backdrop = f2.ui.find("todo.dialog.detail.backdrop");
+        DOCTEST_REQUIRE(backdrop != nullptr);
+        DOCTEST_REQUIRE(backdrop->onClick != nullptr);
+        backdrop->onClick();  // 第一次：脏表单 → 守卫只警告
+        Frame f3(mod.get());
+        DOCTEST_CHECK_EQ(f3.ui.find("todo.dialog.detail.panel")->opacity, 1.0f);  // 未关
+        bool dbUnchanged = false;
+        auto got = env.svc->listAllTasks();
+        DOCTEST_REQUIRE(got.isOk());
+        for (const auto& tk : got.value()) {
+            if (tk.id == e.unsafeValue().id && tk.title == std::string("遮罩守卫")) {
+                dbUnchanged = true;
+            }
+        }
+        DOCTEST_CHECK(dbUnchanged);  // 警告点击不落库
+        const auto* backdrop2 = f3.ui.find("todo.dialog.detail.backdrop");
+        DOCTEST_REQUIRE(backdrop2 != nullptr);
+        DOCTEST_REQUIRE(backdrop2->onClick != nullptr);
+        backdrop2->onClick();  // 第二次：明确放弃修改 → 关闭
+        Frame f4(mod.get());
+        DOCTEST_CHECK_EQ(f4.ui.find("todo.dialog.detail.panel")->opacity, 0.0f);
+        bool discarded = false;
+        auto got2 = env.svc->listAllTasks();
+        DOCTEST_REQUIRE(got2.isOk());
+        for (const auto& tk : got2.value()) {
+            if (tk.id == e.unsafeValue().id && tk.title == std::string("遮罩守卫")) {
+                discarded = true;  // 放弃语义：改动不入库
+            }
+        }
+        DOCTEST_CHECK(discarded);
+    }
+
+    mod->onStop();
     return true;
 })
