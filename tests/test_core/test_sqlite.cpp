@@ -2,7 +2,10 @@
 #include "core/sqlite_db.h"
 #include "core/result.h"
 
+#include <atomic>
+#include <chrono>
 #include <filesystem>
+#include <thread>
 
 REGISTER_TEST(sqlite_open_memory, "SqliteDb: open in-memory", {
     auto r = core::data::SqliteDb::open(":memory:");
@@ -73,5 +76,50 @@ REGISTER_TEST(sqlite_transaction, "SqliteDb: transaction commit", {
     DOCTEST_REQUIRE(rows.isOk());
     auto row = rows.value()[0];
     DOCTEST_CHECK_EQ(std::get<int64_t>(row.values[0]), 2);
+    return true;
+})
+// 审计 2026-09-23 [8] 回归：transaction() 全程持锁，并发 INSERT 不再穿插
+// 进开放事务。旧实现锁只盖 BEGIN/COMMIT，fn() 期间放开——worker 线程的
+// exec INSERT 落进 UI 线程未提交的事务里，fn 失败 ROLLBACK 时被连带吞掉
+// （表现为 count==0）。修复后 worker 阻塞在 BEGIN 前的锁上，事务结束才
+// 落语句（count==1：只有自己的写被回滚）。
+REGISTER_TEST(sqlite_transaction_serializes_concurrent_writers,
+              "SqliteDb: transaction 全程持锁，并发 INSERT 不穿插（审计[8]）", {
+    auto r = core::data::SqliteDb::open(":memory:");
+    DOCTEST_REQUIRE(r.isOk());
+    auto& db = r.value();
+    DOCTEST_REQUIRE(db.exec(
+        "CREATE TABLE t (id INTEGER PRIMARY KEY AUTOINCREMENT, who TEXT)").isOk());
+
+    std::atomic<bool> fnInside{false};
+    core::Result<void> workerInsert = core::Result<void>::ok();
+
+    std::thread worker([&] {
+        while (!fnInside.load()) std::this_thread::yield();
+        workerInsert = db.exec("INSERT INTO t (who) VALUES ('worker')");
+    });
+
+    auto tx = db.transaction([&]() -> core::Result<void> {
+        auto p = db.prepare("INSERT INTO t (who) VALUES ('tx')");
+        if (p.isFail()) return core::Result<void>::fail(p.errorCode(), p.errorMessage());
+        p.value().step();
+        fnInside.store(true);
+        // 给 worker 充分的穿插机会（旧实现此时锁已放开）
+        std::this_thread::sleep_for(std::chrono::milliseconds(150));
+        return core::Result<void>::fail(core::ErrorCode::Internal, "deliberate rollback");
+    });
+    worker.join();
+
+    DOCTEST_CHECK(tx.isFail());
+    DOCTEST_CHECK(workerInsert.isOk());
+
+    auto prep = db.prepare("SELECT COUNT(*) AS c FROM t");
+    DOCTEST_REQUIRE(prep.isOk());
+    auto rows = prep.value().fetchAll();
+    DOCTEST_REQUIRE(rows.isOk());
+    DOCTEST_REQUIRE_EQ(rows.value().size(), 1u);
+    auto c = rows.value()[0].getInt64("c");
+    DOCTEST_REQUIRE(c.isOk());
+    DOCTEST_CHECK_EQ(c.value(), static_cast<int64_t>(1));
     return true;
 })

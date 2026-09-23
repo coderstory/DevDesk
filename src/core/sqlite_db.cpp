@@ -252,30 +252,35 @@ Result<Statement> SqliteDb::prepare(const std::string& sql) {
 }
 
 Result<void> SqliteDb::transaction(std::function<Result<void>()> fn) {
-    {
-        std::lock_guard<std::recursive_mutex> lock(mutex_);
-        char* err = nullptr;
-        if (sqlite3_exec(handle_, "BEGIN", nullptr, nullptr, &err) != SQLITE_OK) {
-            std::string e = err ? err : "?";
-            sqlite3_free(err);
-            return Result<void>::fail(ErrorCode::DatabaseCorrupted, "BEGIN: " + e);
-        }
+    // 全程持锁（审计 2026-09-23 [8]）：BEGIN + fn() + COMMIT/ROLLBACK 必须
+    // 在同一把 recursive_mutex 内完成。旧实现锁只盖住 BEGIN 和 COMMIT，
+    // fn() 期间是放开的——recursive_mutex 只对同线程重入有效，跨线程没有
+    // 任何串行：代理 worker 线程的单条 INSERT（logCall）能穿插进 UI 线程
+    // 的开放事务（被 ROLLBACK 连带吞掉），两个线程的 BEGIN 也会互相撞
+    // "cannot start a transaction within a transaction"，多语句原子性形同
+    // 虚设。现在并发方在 BEGIN 前就阻塞在这把锁上，等事务结束才能落语句。
+    // fn() 内部的 exec/prepare/step 取的是同一把锁（同线程重入，不死锁）；
+    // 前提约束：fn() 内只做 DB 操作（现有全部调用方满足），不得做长阻塞
+    // 的 IO/网络，否则会拖住其他线程的语句。
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
+    char* err = nullptr;
+    if (sqlite3_exec(handle_, "BEGIN", nullptr, nullptr, &err) != SQLITE_OK) {
+        std::string e = err ? err : "?";
+        sqlite3_free(err);
+        return Result<void>::fail(ErrorCode::DatabaseCorrupted, "BEGIN: " + e);
     }
     auto result = fn();
-    {
-        std::lock_guard<std::recursive_mutex> lock(mutex_);
-        if (result.isOk()) {
-            char* err = nullptr;
-            if (sqlite3_exec(handle_, "COMMIT", nullptr, nullptr, &err) != SQLITE_OK) {
-                std::string e = err ? err : "?";
-                sqlite3_free(err);
-                return Result<void>::fail(ErrorCode::DatabaseCorrupted, "COMMIT: " + e);
-            }
-        } else {
-            char* err = nullptr;
-            sqlite3_exec(handle_, "ROLLBACK", nullptr, nullptr, &err);
-            if (err) sqlite3_free(err);
+    if (result.isOk()) {
+        err = nullptr;
+        if (sqlite3_exec(handle_, "COMMIT", nullptr, nullptr, &err) != SQLITE_OK) {
+            std::string e = err ? err : "?";
+            sqlite3_free(err);
+            return Result<void>::fail(ErrorCode::DatabaseCorrupted, "COMMIT: " + e);
         }
+    } else {
+        err = nullptr;
+        sqlite3_exec(handle_, "ROLLBACK", nullptr, nullptr, &err);
+        if (err) sqlite3_free(err);
     }
     return result;
 }
