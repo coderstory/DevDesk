@@ -17,6 +17,8 @@
 //      128×128 RGBA PNG + license 自带（素材纪律 R7）
 //  11. 审计修复（2026-09-23 pet 簇）：帧名路径穿越拒绝 [28] + 已知坐标
 //      钳进工作区纯函数 [12]（[0][1] 的 onWindowDestroyed 接线断言在 §5）
+//  12. M2 收尾（2026-09-23 pet-m2）：多显示器按位置选屏钳制 + 负坐标持久化
+//      往返 + Sleep 零渲染暂停门（电源事件真触发属人工点验）
 // 子窗口真实渲染/拖拽/穿透/气泡视觉属人工点验（设计 §6 M2 验收项）。
 #include "doctest.h"
 
@@ -1038,7 +1040,7 @@ REGISTER_TEST(pet_exit_confirm_decision, "pet: 只有「确认退出」路径触
     return true;
 })
 
-// ============ 12. M2 收尾：多显示器按位置选屏钳制（2026-09-23 pet-m2）============
+// ============ 12. M2 收尾：多显示器钳制 + Sleep 零渲染（2026-09-23 pet-m2）============
 
 namespace {
 
@@ -1149,5 +1151,29 @@ REGISTER_TEST(pet_negative_coord_persist, "pet: 副屏负坐标落盘往返（M2
     DOCTEST_CHECK_EQ(PetConfigStore::sanitized(wild).x, -32767);
     DOCTEST_CHECK_EQ(PetConfigStore::sanitized(wild).y, -32767);
     std::filesystem::remove(file, ec);
+    return true;
+});
+
+// Sleep 零渲染（任务B）：无头可断言的是「暂停门」——compose 入口唯一的读值
+// isPetRenderPaused()（true 即整帧 return，不重建成/不推动画/不跑计时器），
+// 以及电源回调写入方与读取方共用同一标志。WM_POWERBROADCAST → 回调 → 标志
+// 的真实链路属真机点验（EUI-NEO power_events 只在 Windows 消息泵触发）。
+REGISTER_TEST(pet_sleep_render_pause, "pet: Sleep 零渲染暂停门（M2 任务B）", {
+    using module::pet::isPetRenderPaused;
+    using module::pet::setPetRenderPaused;
+    // 默认不暂停（首帧正常 compose）
+    DOCTEST_CHECK(!isPetRenderPaused());
+    // 挂起回调侧：置位 → compose 跳帧门生效
+    setPetRenderPaused(true);
+    DOCTEST_CHECK(isPetRenderPaused());
+    // 唤醒回调侧：清位 → 恢复渲染
+    setPetRenderPaused(false);
+    DOCTEST_CHECK(!isPetRenderPaused());
+    // 重复挂起/唤醒幂等（PBT_APMRESUMEAUTOMATIC 与 RESUMESUSPEND 先后到也只收敛到 false）
+    setPetRenderPaused(true);
+    setPetRenderPaused(true);
+    setPetRenderPaused(false);
+    setPetRenderPaused(false);
+    DOCTEST_CHECK(!isPetRenderPaused());
     return true;
 });

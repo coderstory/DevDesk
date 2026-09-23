@@ -19,6 +19,7 @@
 #include "core/logging.h"
 #include "core/paths.h"
 #include "core/platform/context_menu.h"
+#include "core/platform/power_events.h"
 #include "core/proxy_stats.h"
 #include "module_pet/pet_bubble.h"
 #include "module_pet/pet_config.h"
@@ -39,6 +40,9 @@ struct PetRuntime {
     core::window::Handle handle = nullptr;
     PetWindowConfig config;
     std::vector<std::string> skins;  // 发现到的皮肤（换肤菜单/设置页消费）
+    // M2 Sleep 零渲染：系统挂起置位 / 唤醒清零（回调在主线程，compose 同线程
+    // 读，无并发，普通 bool 即可）
+    bool renderPaused = false;
 };
 
 PetRuntime& runtime() {
@@ -149,6 +153,12 @@ struct PetUiState {
 };
 
 void petCompose(eui::Ui& ui, const eui::Screen& screen) {
+    // M2 Sleep 零渲染：系统挂起期间整帧不进 compose——不重建成命令、
+    // 不推动画、不跑 onTimer、不计气泡倒计时（挂起的窗口本就无屏可看），
+    // 唤醒回调清标志后自动恢复
+    if (runtime().renderPaused) {
+        return;
+    }
     PetUiState& state = ui.state<PetUiState>("pet.state");
     if (!state.initialized) {
         state.initialized = true;
@@ -448,6 +458,10 @@ std::pair<int, int> clampPetPosToMonitors(int x, int y,
                                  frameH);
 }
 
+void setPetRenderPaused(bool paused) { runtime().renderPaused = paused; }
+
+bool isPetRenderPaused() { return runtime().renderPaused; }
+
 void startPetWindow(const PetWindowConfig& config) {
     PetRuntime& rt = runtime();
     rt.config = config;
@@ -476,6 +490,13 @@ void startPetWindow(const PetWindowConfig& config) {
     rt.skin = std::move(skin.unsafeValue());
     rt.config.skinName = skinName;
     rt.skins = discoverSkins();
+
+    // M2 Sleep 零渲染：注册进程级电源回调（换肤重开重复注册 = 单实例覆盖，
+    // 幂等；回调只动 renderPaused 标志，不碰窗口句柄，窗口销毁后触发也安全）。
+    // Windows 由 EUI-NEO 主循环 WndProc 链上抛；其他平台 stub 永不触发
+    core::platform::setSystemPowerHandler([](core::platform::SystemPowerEvent ev) {
+        setPetRenderPaused(ev == core::platform::SystemPowerEvent::Suspending);
+    });
 
     // 位置：未设置 → 主显示器工作区右下角；已知位置钳制进所在/最近显示器的
     // 工作区（设计 §4.6；M2 多显示器——M1 只按主屏钳，副屏位置落盘被吞）。

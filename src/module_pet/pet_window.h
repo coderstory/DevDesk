@@ -86,6 +86,13 @@ std::pair<int, int> clampPetPosToMonitors(int x, int y,
                                           const std::vector<PetWorkArea>& areas,
                                           int frameW, int frameH);
 
+// M2 Sleep 零渲染：系统挂起（PBT_APMSUSPEND）置 true、唤醒置 false。
+// petCompose 入口检查 isPetRenderPaused()，true 则整帧跳过（不重建成命令 /
+// 不推动画 / 不跑 onTimer / 不计气泡倒计时），唤醒后自动恢复。回调由
+// startPetWindow 注册到 EUI-NEO core::platform::setSystemPowerHandler
+void setPetRenderPaused(bool paused);
+bool isPetRenderPaused();
+
 // 打开桌宠窗口（主循环起来前调用；openWindow 入队、首帧消费）。
 // 皮肤缺失时自动生成内置占位皮肤；位置钳制进主显示器工作区。
 void startPetWindow(const PetWindowConfig& config);
