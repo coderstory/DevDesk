@@ -18,6 +18,7 @@
 #include <eui/types.h>
 #include "core/input/input_types.h"
 
+#include <cstdlib>
 #include <filesystem>
 #include <memory>
 #include <string>
@@ -38,9 +39,23 @@ std::filesystem::path tempDbPath() {
 // 析构时一定解除注册，防悬垂污染后续用例
 struct TestEnv {
     std::filesystem::path path;
+    std::filesystem::path statePath;  // 审计 [23]：视图状态文件按用例隔离
     std::unique_ptr<core::Database> db;
     std::unique_ptr<module::todo::TodoService> svc;
     bool ready = false;
+
+    // 视图状态路径经环境变量注入（无头用例不碰真实 %APPDATA% 状态文件）
+    static void setViewStateEnv(const std::string& value) {
+#if defined(_WIN32)
+        ::_putenv_s("DEVDESK_TODO_VIEW_STATE_PATH", value.c_str());
+#else
+        if (value.empty()) {
+            ::unsetenv("DEVDESK_TODO_VIEW_STATE_PATH");
+        } else {
+            ::setenv("DEVDESK_TODO_VIEW_STATE_PATH", value.c_str(), 1);
+        }
+#endif
+    }
 
     TestEnv() {
         path = tempDbPath();
@@ -52,14 +67,19 @@ struct TestEnv {
         db = std::make_unique<core::Database>(std::move(r.unsafeValue()));
         ::core::registerAppDatabase(&db->db());
         svc = std::make_unique<module::todo::TodoService>(db->db());
+        statePath = path.string() + ".view_state.json";
+        std::filesystem::remove(statePath, ec);
+        setViewStateEnv(statePath.string());
         ready = true;
     }
 
     ~TestEnv() {
+        setViewStateEnv("");
         ::core::registerAppDatabase(nullptr);
         svc.reset();
         db.reset();
         std::error_code ec;
+        std::filesystem::remove(statePath, ec);
         std::filesystem::remove(path, ec);
         std::filesystem::remove(path.string() + "-wal", ec);
         std::filesystem::remove(path.string() + "-shm", ec);
