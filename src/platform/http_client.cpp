@@ -9,6 +9,7 @@
 #include <mutex>
 #include <string>
 #include <thread>
+#include <utility>
 #include <curl/curl.h>
 
 namespace platform::http {
@@ -37,12 +38,12 @@ size_t headerCallback(char* buffer, size_t size, size_t nitems, void* userp) {
     return total;
 }
 
+// curl_global_init 非线程安全：代理 worker 线程（httplib 线程池）与 Claude
+// 连通性测试后台线程可能并发首发请求，普通 bool check-then-set 是数据竞争
+//（审计 2026-09-23 [4][27]）。std::call_once 一行解决。
 void globalInit() {
-    static bool initialized = false;
-    if (!initialized) {
-        curl_global_init(CURL_GLOBAL_DEFAULT);
-        initialized = true;
-    }
+    static std::once_flag once;
+    std::call_once(once, [] { curl_global_init(CURL_GLOBAL_DEFAULT); });
 }
 
 } // anonymous namespace
