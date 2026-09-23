@@ -1137,3 +1137,120 @@ REGISTER_TEST(settings_port_esc_discards_draft,
     ::core::theme::setDark();
     return true;
 })
+
+// ---- 产品审计 [22]：设置页 Ctrl+S 保存快捷键（headless）----
+// 设置页除端口草稿外全部即时落盘，Ctrl+S 语义 = 提交待决草稿（=「应用」按钮
+// 全链路，含 ClaudeService 端口同步），无待决时显式重写落盘 + 状态行回显；
+// 「重新生成 Token」确认弹窗开着时不消费。服务注册 + 代理启动仅为了让
+// 置灰的「重新生成」按钮变可点，验证弹窗门控分支。
+REGISTER_TEST(settings_ctrl_s_save_shortcut,
+              "settings: Ctrl+S 提交端口草稿 / 显式落盘 / 弹窗门控（审计 [22]）", {
+    PruneEnv env("ctrls");
+    module::claude::ClaudeService svc(env.db->db(), "DevDeskTestCtrlS");
+    module::claude::ClaudeService::setGlobal(&svc);
+    std::unique_ptr<::core::Module> mod(create_settings_module());
+    mod->onStart();
+    eui::Screen screen;
+    screen.width = 1600.0f;
+    screen.height = 1000.0f;
+    eui::Ui ui;
+    auto frame = [&](const char* page) {
+        ui.begin(page);
+        mod->compose(ui, screen);
+        ui.end();
+    };
+    auto ctrlS = [](eui::KeyAction action) {
+        eui::KeyEvent e;
+        e.key = eui::InputKey::S;
+        e.action = action;
+        e.modifiers.control = true;
+        return e;
+    };
+
+    // 1) 无草稿：Ctrl+S → 配置落盘（onStart 只读不写，此处才出现文件）
+    //    + 状态行回显「设置已保存」
+    DOCTEST_CHECK(!std::filesystem::exists(env.cfgPath));
+    DOCTEST_CHECK(mod->onKeyEvent(ctrlS(eui::KeyAction::Press)));
+    DOCTEST_CHECK(std::filesystem::exists(env.cfgPath));
+    frame("css1");
+    {
+        const auto* sub = ui.find("settings.subtitle");
+        DOCTEST_REQUIRE(sub != nullptr);
+        DOCTEST_CHECK(sub->text.find("设置已保存") != std::string::npos);
+    }
+    {
+        module::settings::SettingsStore store(env.cfgPath);
+        DOCTEST_CHECK_EQ(store.load().proxyPort, 8888);
+    }
+    // 2) 门控：裸 S（无 Ctrl）/ Release / 其他 Ctrl 组合 → 不消费
+    {
+        eui::KeyEvent plain;
+        plain.key = eui::InputKey::S;
+        plain.action = eui::KeyAction::Press;
+        DOCTEST_CHECK(!mod->onKeyEvent(plain));
+        DOCTEST_CHECK(!mod->onKeyEvent(ctrlS(eui::KeyAction::Release)));
+        eui::KeyEvent ctrlA = ctrlS(eui::KeyAction::Press);
+        ctrlA.key = eui::InputKey::A;
+        DOCTEST_CHECK(!mod->onKeyEvent(ctrlA));
+        eui::KeyEvent ctrlAltS = ctrlS(eui::KeyAction::Press);
+        ctrlAltS.modifiers.alt = true;
+        DOCTEST_CHECK(!mod->onKeyEvent(ctrlAltS));
+    }
+    // 3) 端口草稿 ≠ 已应用端口 → Ctrl+S 提交草稿（等价点「应用」，
+    //    ClaudeService::configuredProxyPort 同步；代理未运行 → 状态「下次启动生效」）
+    frame("css2");
+    {
+        auto* input = ui.find("settings.card.proxy.port.input.hit");
+        DOCTEST_REQUIRE(input != nullptr);
+        DOCTEST_REQUIRE(input->onKeyEvent != nullptr);
+        DOCTEST_REQUIRE(input->onTextInput != nullptr);
+        eui::KeyEvent selectAll;
+        selectAll.key = eui::InputKey::A;
+        selectAll.action = eui::KeyAction::Press;
+        selectAll.modifiers.control = true;
+        input->onKeyEvent(selectAll);           // Ctrl+A 全选
+        eui::TextInputEvent t;
+        t.text = "9001";
+        input->onTextInput(t);                  // 替换 → draft = "9001"
+    }
+    frame("css3");
+    DOCTEST_CHECK(mod->onKeyEvent(ctrlS(eui::KeyAction::Press)));
+    {
+        module::settings::SettingsStore store(env.cfgPath);
+        DOCTEST_CHECK_EQ(store.load().proxyPort, 9001);
+    }
+    DOCTEST_CHECK_EQ(svc.configuredProxyPort(), 9001);
+    frame("css3b");   // 重新 compose，让状态行进树
+    {
+        const auto* sub = ui.find("settings.subtitle");
+        DOCTEST_REQUIRE(sub != nullptr);
+        DOCTEST_CHECK(sub->text.find("代理端口已保存") != std::string::npos);
+    }
+    // 4) 「重新生成 Token」确认弹窗开着 → Ctrl+S 不消费（确认弹窗优先，
+    //    不得顺带产生写盘/应用副作用）
+    auto started = svc.startProxy("127.0.0.1", 0);
+    DOCTEST_REQUIRE(started.isOk());
+    frame("css4");
+    {
+        auto* regen = ui.find("settings.card.proxy.token.regen.bg");
+        DOCTEST_REQUIRE(regen != nullptr);
+        DOCTEST_REQUIRE(regen->onClick != nullptr);
+        regen->onClick();                       // 打开确认弹窗
+    }
+    DOCTEST_CHECK(!mod->onKeyEvent(ctrlS(eui::KeyAction::Press)));
+    frame("css5");
+    {
+        auto* cancel = ui.find("settings.dialog.regen.cancel.bg");
+        DOCTEST_REQUIRE(cancel != nullptr);
+        DOCTEST_REQUIRE(cancel->onClick != nullptr);
+        cancel->onClick();                      // 关弹窗
+    }
+    // 5) 弹窗关闭后恢复：draft 已应用（"9001" == cfg），Ctrl+S 走显式落盘分支
+    DOCTEST_CHECK(mod->onKeyEvent(ctrlS(eui::KeyAction::Press)));
+
+    svc.stopProxy();
+    module::claude::ClaudeService::setGlobal(nullptr);
+    mod->onStop();
+    ::core::theme::setDark();
+    return true;
+})

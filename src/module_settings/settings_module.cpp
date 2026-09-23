@@ -142,6 +142,39 @@ public:
         proxyTokenRevealed_ = false;
     }
 
+    // 产品审计 [22]：Ctrl+S 显式保存。设置页除端口草稿外全部即时落盘
+    //（开关/下拉一改即 persist()），故 Ctrl+S 语义 = 提交唯一待决变更：
+    //   - 端口草稿非空且 ≠ 已应用端口 → 走 applyProxyPort()（=「应用」按钮，
+    //     含代理运行中自动重启保 token 的完整语义）；
+    //   - 否则重写当前配置落盘 + 状态行回显「已保存」（给用户明确的保存反馈，
+    //     与 markdown 编辑器 Ctrl+S 的心智一致）。
+    // 「重新生成 Token」确认弹窗打开时不响应（防打字/确认中途产生副作用）。
+    // 通道 = app 级 onKeyEvent → Router::dispatchKeyEvent（同 Todo/Markdown
+    // 先例；EUI-NEO 无全局 OS hotkey，窗口聚焦时生效，已登记限制）。
+    bool onKeyEvent(const eui::KeyEvent& key) override {
+        if (key.action != eui::KeyAction::Press) {
+            return false;
+        }
+        if (!key.modifiers.shortcut() || key.modifiers.alt) {
+            return false;
+        }
+        if (key.key != eui::InputKey::S) {
+            return false;
+        }
+        if (regenConfirmOpen_) {
+            return false;
+        }
+        if (!proxyPortDraft_.empty() &&
+            proxyPortDraft_ != std::to_string(cfg_.proxyPort)) {
+            applyProxyPort();
+            return true;
+        }
+        persist();
+        setStatus("设置已保存（本页变更本就即时持久化）");
+        LOG_INFO("Settings: Ctrl+S 显式保存");
+        return true;
+    }
+
     // ============ 设置变更 ============
 
     void applyTheme(bool dark) {
