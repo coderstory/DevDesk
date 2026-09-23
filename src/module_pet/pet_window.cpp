@@ -65,6 +65,23 @@ std::pair<int, int> defaultPetPos(int frameW, int frameH) {
     return {100, 100};
 }
 
+// 审计 [12]：已知坐标（>=0）钳进工作区再落盘——负坐标（拖出左/上缘）会被
+// pet_config sanitized 的 -1「未设置」哨兵吞掉，重启后静默跳回默认位。
+// 与启动路径共用同一纯函数，两处语义单源。工作区查询失败原样返回
+void clampPetPosIntoWorkAreaInPlace(int& x, int& y) {
+    int workX = 0;
+    int workY = 0;
+    int workW = 0;
+    int workH = 0;
+    core::window::getPrimaryMonitorWorkArea(workX, workY, workW, workH);
+    const PetSkin& skin = runtime().skin;
+    const auto [cx, cy] =
+        clampPetPosToWorkArea(x, y, workX, workY, workW, workH,
+                              skin.frameWidth, skin.frameHeight);
+    x = cx;
+    y = cy;
+}
+
 // 随机挑一句短语（短语表随皮肤，见 pet_skin.h phraseTable）
 std::string pickPhrase(const PetSkin& skin) {
     const std::vector<std::string>& table = phraseTable(skin);
@@ -79,6 +96,9 @@ void savePetPosition() {
     int x = 0;
     int y = 0;
     core::window::getWindowPos(runtime().handle, x, y);
+    // 审计 [12]：钳进工作区再落盘——拖到左/上边缘外（负坐标）直接写盘会被
+    // -1「未设置」哨兵吞掉，重启跳回默认位（钳制与启动路径同一规则）
+    clampPetPosIntoWorkAreaInPlace(x, y);
     PetConfigStore store(petConfigFile());
     PetConfig cfg = store.load();
     cfg.x = x;
@@ -328,6 +348,16 @@ void petDragEnd(PetDragAnchor& anchor) {
     anchor.offsetY = 0.0;
 }
 
+std::pair<int, int> clampPetPosToWorkArea(int x, int y, int workX, int workY,
+                                          int workW, int workH, int frameW,
+                                          int frameH) {
+    if (workW <= 0 || workH <= 0) {
+        return {x, y};  // 工作区不可用（无头/早于 glfwInit）：不动
+    }
+    return {std::clamp(x, workX, workX + std::max(0, workW - frameW)),
+            std::clamp(y, workY, workY + std::max(0, workH - frameH))};
+}
+
 void startPetWindow(const PetWindowConfig& config) {
     PetRuntime& rt = runtime();
     rt.config = config;
@@ -365,21 +395,22 @@ void startPetWindow(const PetWindowConfig& config) {
     int workW = 0;
     int workH = 0;
     core::window::getPrimaryMonitorWorkArea(workX, workY, workW, workH);
-    const bool haveWorkArea = workW > 0 && workH > 0;
     int x = config.x;
     int y = config.y;
     const auto [defX, defY] = defaultPetPos(rt.skin.frameWidth, rt.skin.frameHeight);
     // 单边独立处理 -1 哨兵：只重置未设置的那一边（只存了 x 时 y 不丢）
     if (x < 0) {
         x = defX;
-    } else if (haveWorkArea) {
-        x = std::clamp(x, workX, workX + std::max(0, workW - rt.skin.frameWidth));
     }
     if (y < 0) {
         y = defY;
-    } else if (haveWorkArea) {
-        y = std::clamp(y, workY, workY + std::max(0, workH - rt.skin.frameHeight));
     }
+    // 审计 [12]：与落盘路径共用同一钳制纯函数（默认位本就在工作区内，
+    // 再钳幂等；无头工作区查不到时原样）
+    const auto [cx, cy] = clampPetPosToWorkArea(x, y, workX, workY, workW, workH,
+                                                rt.skin.frameWidth, rt.skin.frameHeight);
+    x = cx;
+    y = cy;
     rt.config.x = x;
     rt.config.y = y;
 
@@ -440,6 +471,8 @@ void applyPetSkin(const std::string& skinName) {
         int x = 0;
         int y = 0;
         core::window::getWindowPos(rt.handle, x, y);
+        // 审计 [12]：同 savePetPosition，负坐标钳进工作区再落盘防哨兵吞掉
+        clampPetPosIntoWorkAreaInPlace(x, y);
         cfg.x = x;
         cfg.y = y;
     }
