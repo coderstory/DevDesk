@@ -16,6 +16,7 @@
 #include <filesystem>
 #include <utility>
 
+#include "core/component_theme.h"
 #include "core/logging.h"
 #include "core/paths.h"
 #include "core/platform/context_menu.h"
@@ -25,6 +26,8 @@
 #include "module_pet/pet_config.h"
 #include "module_pet/pet_frame_player.h"
 #include "module_pet/pet_skin.h"
+
+#include <components/styledmenu.h>
 
 #include <eui/app.h>
 #include <eui/dsl.h>
@@ -152,6 +155,147 @@ struct PetUiState {
     PetDragAnchor dragAnchor;        // 拖拽锚点（见 pet_window.h，抖动修复）
 };
 
+// ---- styled 右键菜单（菜单美化 2026-09-23）----
+// FontAwesome 码点（fa-solid）：穿透=mouse-pointer / 换肤=palette /
+// 位置重置=crosshairs / 隐藏=eye-slash / 退出=power-off
+constexpr int kIconThrough = 0xF245;
+constexpr int kIconSkin = 0xF53F;
+constexpr int kIconReset = 0xF05B;
+constexpr int kIconHide = 0xF070;
+constexpr int kIconExit = 0xF011;
+constexpr int kIconConfirm = 0xF071;   // 退出确认：triangle-exclamation
+constexpr int kIconCancel = 0xF00D;    // 取消：xmark
+
+// 菜单位置：光标屏幕坐标（窗口原点 + 窗口内光标，与拖拽锚点同一坐标系）
+std::pair<float, float> petMenuAnchorPos() {
+    double cursorX = 0.0;
+    double cursorY = 0.0;
+    core::window::getCursorPosition(runtime().handle, cursorX, cursorY);
+    int winX = 0;
+    int winY = 0;
+    core::window::getWindowPos(runtime().handle, winX, winY);
+    return {static_cast<float>(winX) + static_cast<float>(cursorX),
+            static_cast<float>(winY) + static_cast<float>(cursorY)};
+}
+
+components::StyledMenuStyle petMenuStyle() {
+    return components::StyledMenuStyle(
+        core::theme::componentTokens(core::theme::current()));
+}
+
+// 选中处理（styled 回调与原生降级共用同一选择数学，path 语义一致）
+void executePetMenuSelection(const std::vector<int>& path);
+
+// 退出二段确认（审计 [25] 语义保持：仅「确认退出」触发 requestExit）：
+// styled 优先，失败降级原生就地弹出（dialog 组件在 sprite 小窗被裁剪的
+// 先例注释依然成立——独立菜单窗不受裁剪，styled 可用时确认走独立窗）
+void showPetExitConfirm() {
+    const std::vector<PetExitConfirmItem> confirmData = petExitConfirmItems();
+    const std::pair<float, float> pos = petMenuAnchorPos();
+
+    std::vector<components::StyledMenuItem> styled;
+    for (const PetExitConfirmItem& ci : confirmData) {
+        components::StyledMenuItem item;
+        item.text = ci.text;
+        item.disabled = ci.disabled;
+        if (ci.text == "确认退出") {
+            item.iconCodepoint = kIconConfirm;
+        } else if (ci.text == "取消") {
+            item.iconCodepoint = kIconCancel;
+        }
+        styled.push_back(std::move(item));
+    }
+    if (components::showStyledMenu("pet-exit-confirm", std::move(styled),
+                                   petMenuStyle(), pos.first, pos.second,
+                                   [](const std::vector<int>& path) {
+                                       if (petExitConfirmChosen(path)) {
+                                           app::requestExit();  // 与托盘 Exit 同一退出路径
+                                       }
+                                   })) {
+        return;
+    }
+
+    // 原生降级（winfx ③ 原路径）
+    std::vector<core::platform::ContextMenuItem> items;
+    for (const PetExitConfirmItem& ci : confirmData) {
+        if (ci.text == "-") {
+            items.push_back(core::platform::ContextMenuItem{"-"});
+            continue;
+        }
+        core::platform::ContextMenuItem item;
+        item.text = ci.text;
+        item.disabled = ci.disabled;
+        items.push_back(std::move(item));
+    }
+    if (runtime().handle == nullptr || items.empty()) {
+        return;
+    }
+    const core::window::NativeWindowInfo info =
+        core::window::nativeWindowInfo(runtime().handle);
+    if (info.platformWindow == nullptr) {
+        return;
+    }
+    const std::optional<std::vector<int>> chosen =
+        core::platform::showContextMenu(info.platformWindow, items);
+    if (chosen.has_value() && !chosen->empty() && petExitConfirmChosen(*chosen)) {
+        app::requestExit();
+    }
+}
+
+void executePetMenuSelection(const std::vector<int>& path) {
+    int skinIndex = -1;
+    const PetMenuAction action =
+        petMenuActionForPath(path, runtime().skins.size(), skinIndex);
+    switch (action) {
+        case PetMenuAction::ToggleThrough:
+            setPetClickThrough(!runtime().config.clickThrough);
+            break;
+        case PetMenuAction::Skin:
+            if (skinIndex >= 0 &&
+                static_cast<size_t>(skinIndex) < runtime().skins.size()) {
+                applyPetSkin(runtime().skins[static_cast<size_t>(skinIndex)]);
+            }
+            break;
+        case PetMenuAction::ResetPosition:
+            resetPetPosition();
+            break;
+        case PetMenuAction::Hide:
+            savePetPosition();
+            if (runtime().handle != nullptr) {
+                core::window::requestWindowClose(runtime().handle);
+            }
+            break;
+        case PetMenuAction::Exit:
+            showPetExitConfirm();
+            break;
+        case PetMenuAction::None:
+        default:
+            break;
+    }
+}
+
+// styled 菜单构建（PetMenuItemData → StyledMenuItem，图标按语义注入）
+bool showPetStyledMenu(const std::vector<PetMenuItemData>& menu, float x, float y) {
+    std::vector<components::StyledMenuItem> items;
+    for (const PetMenuItemData& data : menu) {
+        components::StyledMenuItem item;
+        item.text = data.text;
+        item.disabled = data.disabled;
+        item.iconCodepoint = data.iconCodepoint;
+        for (const PetMenuItemData& child : data.children) {
+            components::StyledMenuItem childItem;
+            childItem.text = child.text;
+            childItem.disabled = child.disabled;
+            item.children.push_back(std::move(childItem));
+        }
+        items.push_back(std::move(item));
+    }
+    return components::showStyledMenu("pet", std::move(items), petMenuStyle(), x, y,
+                                      [](const std::vector<int>& path) {
+                                          executePetMenuSelection(path);
+                                      });
+}
+
 void petCompose(eui::Ui& ui, const eui::Screen& screen) {
     // M2 Sleep 零渲染：系统挂起期间整帧不进 compose——不重建成命令、
     // 不推动画、不跑 onTimer、不计气泡倒计时（挂起的窗口本就无屏可看），
@@ -237,95 +381,44 @@ void petCompose(eui::Ui& ui, const eui::Screen& screen) {
                     savePetPosition();  // 拖拽结束才写盘（设计 §4.6）
                 })
                 .onContextMenu([](const eui::PointerEvent&, const eui::Rect&) {
-                    // 原生右键菜单（EUI-NEO core::platform::showContextMenu，
-                    // Win32 TrackPopupMenuEx 光标处弹出）：自绘菜单画在 128px
-                    // sprite 窗内被窗口 bounds 裁剪，只露出一点（用户实测）。
-                    // 同步模态：主循环在菜单期间不推进（与托盘菜单同一模式）。
+                    // 菜单美化（2026-09-23）：优先 styled 独立菜单窗（圆角/主题/
+                    // FA 图标，app::openWindow 弹窗不受 128px sprite 窗 bounds
+                    // 裁剪——winfx ③ 换原生正是为躲裁剪，独立窗从根上解决）。
+                    // styled 构建失败 → 降级原生菜单（winfx ③ 路径保留）。
                     // 开菜单前刷新皮肤清单（新放进目录的皮肤立即可选）
                     runtime().skins = discoverSkins();
                     if (runtime().handle == nullptr) return;
+
+                    const std::vector<PetMenuItemData> menu =
+                        petContextMenuItems(runtime().config.clickThrough,
+                                            runtime().skins);
+                    const std::pair<float, float> pos = petMenuAnchorPos();
+                    if (showPetStyledMenu(menu, pos.first, pos.second)) {
+                        return;  // 已入队开窗，选择经 executePetMenuSelection 回调
+                    }
+
+                    // ---- 原生降级：Win32 TrackPopupMenuEx 光标处弹出，同步模态 ----
+                    std::vector<core::platform::ContextMenuItem> items;
+                    for (const PetMenuItemData& data : menu) {
+                        core::platform::ContextMenuItem item;
+                        item.text = data.text;
+                        item.disabled = data.disabled;
+                        for (const PetMenuItemData& child : data.children) {
+                            core::platform::ContextMenuItem childItem;
+                            childItem.text = child.text;
+                            childItem.disabled = child.disabled;
+                            item.children.push_back(std::move(childItem));
+                        }
+                        items.push_back(std::move(item));
+                    }
+                    if (items.empty()) return;
                     const core::window::NativeWindowInfo info =
                         core::window::nativeWindowInfo(runtime().handle);
                     if (info.platformWindow == nullptr) return;  // 无原生句柄（stub 平台）
-
-                    std::vector<core::platform::ContextMenuItem> items;
-                    core::platform::ContextMenuItem through;
-                    through.text = runtime().config.clickThrough
-                                       ? "关闭鼠标穿透"
-                                       : "挂机穿透（点击透到下层；锁死后到设置页桌宠卡关闭）";
-                    items.push_back(std::move(through));
-                    if (!runtime().skins.empty()) {
-                        core::platform::ContextMenuItem skinMenu;
-                        skinMenu.text = "换肤";
-                        for (const std::string& name : runtime().skins) {
-                            core::platform::ContextMenuItem skin;
-                            skin.text = name;
-                            skinMenu.children.push_back(std::move(skin));
-                        }
-                        items.push_back(std::move(skinMenu));
-                    }
-                    core::platform::ContextMenuItem reset;
-                    reset.text = "位置重置（回主屏右下角）";
-                    items.push_back(std::move(reset));
-                    core::platform::ContextMenuItem hide;
-                    hide.text = "隐藏桌宠（本次会话；重启后恢复）";
-                    items.push_back(std::move(hide));
-                    items.push_back(core::platform::ContextMenuItem{"-"});
-                    core::platform::ContextMenuItem exitApp;
-                    exitApp.text = "退出 DevDesk";
-                    items.push_back(std::move(exitApp));
-
                     const std::optional<std::vector<int>> selection =
                         core::platform::showContextMenu(info.platformWindow, items);
                     if (!selection.has_value() || selection->empty()) return;  // 不支持/取消
-
-                    // 下标随「换肤」子菜单有无偏移（与旧自绘菜单同一套数学）
-                    const int idxThrough = 0;
-                    const int idxReset = runtime().skins.empty() ? 1 : 2;
-                    const int idxHide = idxReset + 1;
-                    const int idxExit = idxHide + 1;
-                    const std::vector<int>& path = *selection;
-                    if (path.size() == 2) {
-                        if (path[0] == 1 && path[1] >= 0 &&
-                            path[1] < static_cast<int>(runtime().skins.size())) {
-                            applyPetSkin(runtime().skins[static_cast<size_t>(path[1])]);
-                        }
-                        return;
-                    }
-                    if (path.size() != 1) return;
-                    if (path[0] == idxThrough) {
-                        setPetClickThrough(!runtime().config.clickThrough);
-                    } else if (path[0] == idxReset) {
-                        resetPetPosition();
-                    } else if (path[0] == idxHide) {
-                        savePetPosition();
-                        core::window::requestWindowClose(runtime().handle);
-                    } else if (path[0] == idxExit) {
-                        // 审计 [25]：退出是应用级破坏性操作（断代理/丢弹窗
-                        // 状态），不能与「隐藏桌宠」同权重零确认。原生菜单
-                        // 就地二段确认（dialog 组件在 sprite 小窗被 bounds
-                        // 裁剪，不可用——见本 lambda 头注释的同一先例）；
-                        // 取消/Esc/平台不支持一律不退出
-                        std::vector<core::platform::ContextMenuItem> confirm;
-                        for (const PetExitConfirmItem& ci : petExitConfirmItems()) {
-                            if (ci.text == "-") {
-                                confirm.push_back(
-                                    core::platform::ContextMenuItem{"-"});
-                                continue;
-                            }
-                            core::platform::ContextMenuItem item;
-                            item.text = ci.text;
-                            item.disabled = ci.disabled;
-                            confirm.push_back(std::move(item));
-                        }
-                        const std::optional<std::vector<int>> chosen =
-                            core::platform::showContextMenu(info.platformWindow,
-                                                            confirm);
-                        if (chosen.has_value() && !chosen->empty() &&
-                            petExitConfirmChosen(*chosen)) {
-                            app::requestExit();  // 与托盘 Exit 同一退出路径
-                        }
-                    }
+                    executePetMenuSelection(*selection);
                 })
                 .build();
 
@@ -644,6 +737,71 @@ std::vector<PetExitConfirmItem> petExitConfirmItems() {
 
 bool petExitConfirmChosen(const std::vector<int>& path) {
     return path.size() == 1 && path[0] == 2;
+}
+
+// ---- 右键菜单结构（菜单美化 2026-09-23，纯数据层，声明见 pet_window.h）----
+// 顺序 = path 语义基础：0 穿透切换 /（有皮肤时）1 换肤子组 / 位置重置 /
+// 隐藏 / 分隔线 / 退出。图标码点只被 styled 菜单消费，原生降级忽略。
+std::vector<PetMenuItemData> petContextMenuItems(bool clickThrough,
+                                                 const std::vector<std::string>& skins) {
+    std::vector<PetMenuItemData> items;
+    items.push_back({clickThrough
+                         ? "关闭鼠标穿透"
+                         : "挂机穿透（点击透到下层；锁死后到设置页桌宠卡关闭）",
+                     kIconThrough, false, {}});
+    if (!skins.empty()) {
+        PetMenuItemData skinMenu;
+        skinMenu.text = "换肤";
+        skinMenu.iconCodepoint = kIconSkin;
+        for (const std::string& name : skins) {
+            skinMenu.children.push_back({name, 0, false, {}});
+        }
+        items.push_back(std::move(skinMenu));
+    }
+    items.push_back({"位置重置（回主屏右下角）", kIconReset, false, {}});
+    items.push_back({"隐藏桌宠（本次会话；重启后恢复）", kIconHide, false, {}});
+    items.push_back({"-", 0, false, {}});
+    items.push_back({"退出 DevDesk", kIconExit, false, {}});
+    return items;
+}
+
+PetMenuAction petMenuActionForPath(const std::vector<int>& path, size_t skinCount,
+                                   int& skinIndex) {
+    skinIndex = -1;
+    const bool hasSkinMenu = skinCount > 0;
+    // 子项组 path = {1, j}（换肤组恒在穿透之后 = 下标 1）
+    if (path.size() == 2) {
+        if (hasSkinMenu && path[0] == 1 && path[1] >= 0 &&
+            static_cast<size_t>(path[1]) < skinCount) {
+            skinIndex = path[1];
+            return PetMenuAction::Skin;
+        }
+        return PetMenuAction::None;
+    }
+    if (path.size() != 1) {
+        return PetMenuAction::None;
+    }
+    // 顶层下标随换肤子组有无整体偏移（与历史实现同一数学）。
+    // 注意：退出项在「隐藏」+ 分隔线之后 = idxHide + 2——分隔线不可选但在
+    // items 向量占下标（styled/native 两条 path 语义都是向量原始下标）。
+    // 修复此前原生实现的 off-by-one（idxHide+1 指向分隔线，选「退出 DevDesk」
+    // 永远无动作），菜单美化单测 menuBeautifyPetActionPaths* 锁定。
+    const int idxReset = hasSkinMenu ? 2 : 1;
+    const int idxHide = idxReset + 1;
+    const int idxExit = idxHide + 2;
+    if (path[0] == 0) {
+        return PetMenuAction::ToggleThrough;
+    }
+    if (path[0] == idxReset) {
+        return PetMenuAction::ResetPosition;
+    }
+    if (path[0] == idxHide) {
+        return PetMenuAction::Hide;
+    }
+    if (path[0] == idxExit) {
+        return PetMenuAction::Exit;
+    }
+    return PetMenuAction::None;  // 换肤组头 / 分隔线 / 未知下标
 }
 
 } // namespace module::pet

@@ -30,6 +30,39 @@ std::vector<PetExitConfirmItem> petExitConfirmItems();
 // 「确认退出」下标 2、「取消」下标 3）；其余任何路径（取消/Esc/嵌套）= 不退出
 bool petExitConfirmChosen(const std::vector<int>& path);
 
+// ---- 右键菜单结构（菜单美化 2026-09-23：styled 独立菜单窗 + 原生降级
+// 共用同一数据源与同一选择语义）----
+// 照 PetExitConfirmItem 先例，头文件不依赖 EUI-NEO：纯数据 + 语义动作枚举，
+// pet_window.cpp 里分别映射成 components::StyledMenuItem（带 FA 图标）与
+// core::platform::ContextMenuItem（原生降级）。path → 动作走
+// petMenuActionForPath，两条 UI 路径共享（原生子菜单 {i,j} 与 styled 内联
+// 子项组 path 语义一致）。
+struct PetMenuItemData {
+    std::string text;      // "-" = 分隔线
+    int iconCodepoint = 0; // FontAwesome 码点（仅 styled 用；0 = 无图标）
+    bool disabled = false;
+    std::vector<PetMenuItemData> children;  // 非空 = 子项组（换肤）
+};
+
+// 构建桌宠右键菜单：穿透切换 /（有皮肤时）换肤子组 / 位置重置 / 隐藏 /
+// 分隔线 / 退出。顺序即 path 语义基础
+std::vector<PetMenuItemData> petContextMenuItems(bool clickThrough,
+                                                 const std::vector<std::string>& skins);
+
+enum class PetMenuAction {
+    None,          // 未识别路径（含组头本身）
+    ToggleThrough, // 鼠标穿透开关
+    Skin,          // 换肤（skinIndex = 子项下标）
+    ResetPosition,
+    Hide,
+    Exit,          // 需再过二段确认（petExitConfirmItems）
+};
+
+// path（{i} 或 {i,j}）→ 语义动作 + 皮肤下标（仅 Skin 有效，越界回 None）。
+// 纯函数，单测断言用（styled / 原生共用选择数学，杜绝双实现漂移）
+PetMenuAction petMenuActionForPath(const std::vector<int>& path, size_t skinCount,
+                                   int& skinIndex);
+
 struct PetWindowConfig {
     std::string skinName;   // 空 = kDefaultSkinName
     int x = -1;             // -1 = 未设置（取主显示器工作区右下角）；其他负值是
