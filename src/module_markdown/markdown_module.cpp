@@ -45,6 +45,7 @@
 #include <eui/dsl.h>
 
 #include <components/button.h>
+#include <components/contextmenu.h>
 #include <components/dialog.h>
 #include <components/input.h>
 #include <components/markdown.h>
@@ -79,6 +80,7 @@ namespace fs = std::filesystem;
 // 图标/名字会被流式排到下一行）——行是 column 的流式子元素，行内的
 // 背景 rect / icon / name 才用 position 定位。
 // 文件树行（icon 为 FA7 Free-Solid 码点；📄 emoji 已换 fa-file-lines）
+// onContextMenu（审计 [4][20]）：右键文件行弹 重命名/删除 菜单；null = 无菜单
 void drawFileTreeItem(eui::Ui& ui,
                       const std::string& id,
                       float width,
@@ -87,7 +89,9 @@ void drawFileTreeItem(eui::Ui& ui,
                       const std::string& name,
                       bool active,
                       float indent,
-                      std::function<void()> onClick) {
+                      std::function<void()> onClick,
+                      std::function<void(const eui::PointerEvent&, const eui::Rect&)>
+                          onContextMenu = {}) {
     ui.stack(id)
         .size(width, 32.0f)
         .content([&] {
@@ -98,6 +102,7 @@ void drawFileTreeItem(eui::Ui& ui,
                 .color(active ? t.colors.primarySoftBg : t.colors.background)
                 .hoverColor(t.colors.hover)
                 .onClick(std::move(onClick))
+                .onContextMenu(std::move(onContextMenu))
                 .build();
             ui.text(id + ".icon")
                 .position(12.0f + indent, 0.0f)
@@ -268,6 +273,12 @@ public:
         // 弹窗要画在最上层（dialog 自带 zIndex）
         drawNewNoteDialog(ui, screen, t, componentTheme);
         drawNewFolderDialog(ui, screen, t, componentTheme);
+        // 生命周期（审计 [4][20]）：树行右键菜单 + 删除确认 + 重命名对话框。
+        // contextMenu 自带全屏 dismiss 层与 zIndex 1050（盖过 dialog 默认 1000），
+        // 菜单项点击先 dismiss 再开确认弹窗，二者不共存，无需提 dialog zIndex
+        drawNoteContextMenu(ui, screen, t, componentTheme);
+        drawDeleteDialog(ui, screen, t, componentTheme);
+        drawRenameDialog(ui, screen, t, componentTheme);
 
         // 保存失败等操作的 toast 反馈（画在弹窗之上；外部修改冲突也走 toast）
         drawToast(ui, screen, componentTheme);
@@ -612,7 +623,11 @@ private:
                     const std::string id = "md.tree.item." + std::to_string(i);
                     drawFileTreeItem(inner, id, w, t, 0xF15C, noteDisplayName(n),
                                      path == currentPath_, 0.0f,
-                                     [this, path] { openNote(path); });
+                                     [this, path] { openNote(path); },
+                                     [this, path](const eui::PointerEvent& ev,
+                                                  const eui::Rect&) {
+                                         openFileContextMenu(path, ev);
+                                     });
                 }
             })
             .build();
@@ -701,7 +716,12 @@ private:
                         drawFileTreeItem(inner, id, w, t, 0xF15C, r.name,
                                          r.relPath == currentPath_,
                                          32.0f,
-                                         [this, path = r.relPath] { openNote(path); });
+                                         [this, path = r.relPath] { openNote(path); },
+                                         [this, path = r.relPath](
+                                             const eui::PointerEvent& ev,
+                                             const eui::Rect&) {
+                                             openFileContextMenu(path, ev);
+                                         });
                     }
                 }
             })
@@ -1280,7 +1300,7 @@ private:
                     .fontSize(t.sizes.fontSizeBody)
                     .theme(componentTheme)
                     .onChange([this](const std::string& v) { newNoteName_ = v; })
-                    .onEnter([this] { commitNewNote(); })
+                    .onEnter([this, &ui] { commitNewNote(ui); })
                     .build();
 
                 components::button(ui, "md.dialog.new.cancel")
@@ -1303,7 +1323,7 @@ private:
                     .theme(componentTheme, true)
                     .textColor(t.colors.onPrimary)
                     .radius(t.sizes.radius)
-                    .onClick([this] { commitNewNote(); })
+                    .onClick([this, &ui] { commitNewNote(ui); })
                     .build();
             })
             .build();
@@ -1851,7 +1871,7 @@ private:
         lastKnownMtime_ = m.isOk() ? m.value() : -1;
     }
 
-    void commitNewNote() {
+    void commitNewNote(eui::Ui& ui) {
         std::string name = newNoteName_;
         // 去掉首尾空白
         while (!name.empty() && (name.front() == ' ' || name.front() == '\t')) {
@@ -1860,10 +1880,11 @@ private:
         while (!name.empty() && (name.back() == ' ' || name.back() == '\t')) {
             name.pop_back();
         }
-        if (name.empty()) {
-            status_ = "笔记名不能为空";
-            return;
-        }
+        // ux-design §4 #6「默认名快速创建」（审计 [13][31]）：空名提交 = 建
+        // 「无标题笔记」撞名自动编号，而非报错——显式命名撞名保持原语义
+        // （已存在 → 直接打开）
+        const bool defaultedName = name.empty();
+        if (defaultedName) name = "无标题笔记";
         if (!service_) return;
 
         // W8 路径安全校验（目录树依赖 relativePath 落在 notesDir 内；
@@ -1883,13 +1904,24 @@ private:
             relPath += ".md";
         }
 
-        // 已存在 → 直接打开，不报错
-        if (service_->read(relPath).isOk()) {
+        // 已存在 → 直接打开，不报错（仅显式命名；默认名走「永远新建」编号）
+        if (!defaultedName && service_->read(relPath).isOk()) {
             newNoteOpen_ = false;
             refreshList();
             openNote(relPath);
             status_ = "笔记已存在，已打开 " + relPath;
+            if (currentPath_ == relPath) ui.requestFocus("md.editor.input");
             return;
+        }
+        if (defaultedName) {
+            // 默认名撞名 → 「无标题笔记 N.md」自动编号（fileMtime 失败 = 不存在）
+            for (int i = 2; service_->fileMtime(relPath).isOk(); ++i) {
+                if (i > 999) {
+                    status_ = "新建失败：同名无标题笔记过多";
+                    return;
+                }
+                relPath = "无标题笔记 " + std::to_string(i) + ".md";
+            }
         }
 
         auto r = service_->create(relPath);
@@ -1902,6 +1934,10 @@ private:
         refreshList();
         openNote(relPath);
         status_ = "已创建 " + relPath;
+        // 「新建后自动 focus 编辑器」（ux-design §4 #6，审计 [13][31]）：
+        // EUI-NEO Ui::requestFocus 为上游小增量（Runtime 帧末消费），回车即
+        // 可打字；openNote 守卫失败（未保存改动阻塞切换）时不聚焦
+        if (currentPath_ == relPath) ui.requestFocus("md.editor.input");
         LOG_INFO("新建笔记: " + relPath);
     }
 
@@ -1936,6 +1972,252 @@ private:
         LOG_INFO("新建文件夹: " + name);
     }
 
+    // ---- 生命周期：右键菜单 / 删除 / 重命名（审计 [4][20]：service remove
+    //      早已就绪且被单测覆盖，本段补 UI 入口）----
+
+    // 右键文件行 → 菜单弹出位置用指针事件的逻辑坐标（runtime 派发时已换算到
+    // compose 同一坐标系，见 runtime_input updateInteraction），标准右键菜单语义
+    void openFileContextMenu(const std::string& relPath, const eui::PointerEvent& ev) {
+        ctxMenuPath_ = relPath;
+        ctxMenuX_ = static_cast<float>(ev.x);
+        ctxMenuY_ = static_cast<float>(ev.y);
+        ctxMenuOpen_ = true;
+    }
+
+    void drawNoteContextMenu(eui::Ui& ui,
+                             const eui::Screen& screen,
+                             const core::theme::Tokens& t,
+                             const components::theme::ThemeColorTokens& componentTheme) {
+        (void)t;
+        // 未右键过时无目标；常驻构建（关闭态由组件内部 opacity/disabled 收起）
+        if (ctxMenuPath_.empty()) return;
+        components::contextMenu(ui, "md.ctx")
+            .open(ctxMenuOpen_)
+            .screen(screen.width, screen.height)
+            .position(ctxMenuX_, ctxMenuY_)
+            .size(160.0f, 36.0f)
+            .items({"重命名", "删除笔记"})
+            .theme(componentTheme)
+            .onSelect([this](int index) {
+                if (index == 0) {
+                    renameOpen_ = true;
+                    renameTargetPath_ = ctxMenuPath_;
+                    renameInput_ = ctxMenuPath_;  // 预填相对路径（含文件夹）
+                } else if (index == 1) {
+                    deleteConfirmOpen_ = true;
+                    deleteTargetPath_ = ctxMenuPath_;
+                }
+            })
+            .onOpenChange([this](bool v) { ctxMenuOpen_ = v; })
+            .build();
+    }
+
+    // 删除确认弹窗（与 todo 删任务 / claude 删 Profile 同款「不可恢复」文案）
+    void drawDeleteDialog(eui::Ui& ui,
+                          const eui::Screen& screen,
+                          const core::theme::Tokens& t,
+                          const components::theme::ThemeColorTokens& componentTheme) {
+        const float w = 460.0f;
+        const float h = 200.0f;
+        components::dialog(ui, "md.dialog.del")
+            .open(deleteConfirmOpen_)
+            .screen(screen.width, screen.height)
+            .size(w, h)
+            .theme(componentTheme)
+            .onOpenChange([this](bool v) { deleteConfirmOpen_ = v; })
+            .content([&] {
+                ui.text("md.dialog.del.title")
+                    .position(28.0f, 24.0f)
+                    .size(w - 56.0f, 28.0f)
+                    .text("删除笔记")
+                    .fontSize(t.sizes.fontSizeLarge + 2.0f)
+                    .lineHeight(28.0f)
+                    .fontWeight(700)
+                    .color(t.colors.textPrimary)
+                    .build();
+                ui.text("md.dialog.del.body")
+                    .position(28.0f, 60.0f)
+                    .size(w - 56.0f, 40.0f)
+                    .text("将删除笔记「" + deleteTargetPath_ + "」及其磁盘文件，不可恢复。")
+                    .fontSize(t.sizes.fontSizeBody - 1.0f)
+                    .lineHeight(20.0f)
+                    .wrap()
+                    .color(t.colors.textSecondary)
+                    .build();
+                components::button(ui, "md.dialog.del.cancel")
+                    .position(28.0f, h - 60.0f)
+                    .size((w - 68.0f) * 0.5f, 40.0f)
+                    .text("取消")
+                    .fontSize(t.sizes.fontSizeBody - 1.0f)
+                    .theme(componentTheme, false)
+                    .textColor(t.colors.textPrimary)
+                    .radius(t.sizes.radius)
+                    .border(1.0f, t.colors.borderDefault)
+                    .onClick([this] { deleteConfirmOpen_ = false; })
+                    .build();
+                components::button(ui, "md.dialog.del.confirm")
+                    .position(28.0f + (w - 68.0f) * 0.5f + 12.0f, h - 60.0f)
+                    .size((w - 68.0f) * 0.5f, 40.0f)
+                    .text("删除")
+                    .fontSize(t.sizes.fontSizeBody - 1.0f)
+                    .theme(componentTheme, false)
+                    .colors(t.colors.error, t.colors.error, t.colors.error)
+                    .textColor(t.colors.onPrimary)
+                    .radius(t.sizes.radius)
+                    .onClick([this] { doDeleteNote(); })
+                    .build();
+            })
+            .build();
+    }
+
+    // 重命名对话框（预填当前相对路径；改名 = 换名，填含 / 的路径 = 移动文件）
+    void drawRenameDialog(eui::Ui& ui,
+                          const eui::Screen& screen,
+                          const core::theme::Tokens& t,
+                          const components::theme::ThemeColorTokens& componentTheme) {
+        const float w = 460.0f;
+        const float h = 220.0f;
+        components::dialog(ui, "md.dialog.rename")
+            .open(renameOpen_)
+            .screen(screen.width, screen.height)
+            .size(w, h)
+            .theme(componentTheme)
+            .onOpenChange([this](bool v) { renameOpen_ = v; })
+            .content([&] {
+                ui.text("md.dialog.rename.title")
+                    .position(28.0f, 24.0f)
+                    .size(w - 56.0f, 28.0f)
+                    .text("重命名笔记")
+                    .fontSize(t.sizes.fontSizeLarge)
+                    .lineHeight(28.0f)
+                    .fontWeight(700)
+                    .color(t.colors.textPrimary)
+                    .build();
+                ui.text("md.dialog.rename.hint")
+                    .position(28.0f, 56.0f)
+                    .size(w - 56.0f, 18.0f)
+                    .text("相对笔记目录；填「工作/新名」可同时移动，无 .md 自动补全")
+                    .fontSize(t.sizes.fontSizeSmall)
+                    .lineHeight(18.0f)
+                    .color(t.colors.textTertiary)
+                    .build();
+                components::input(ui, "md.dialog.rename.input")
+                    .position(28.0f, 84.0f)
+                    .size(w - 56.0f, 44.0f)
+                    .value(renameInput_)
+                    .placeholder("新名字或新路径")
+                    .fontSize(t.sizes.fontSizeBody)
+                    .theme(componentTheme)
+                    .onChange([this](const std::string& v) { renameInput_ = v; })
+                    .onEnter([this] { commitRenameNote(); })
+                    .build();
+                components::button(ui, "md.dialog.rename.cancel")
+                    .position(28.0f, h - 60.0f)
+                    .size((w - 68.0f) * 0.5f, 40.0f)
+                    .text("取消")
+                    .fontSize(t.sizes.fontSizeBody)
+                    .theme(componentTheme, false)
+                    .textColor(t.colors.textPrimary)
+                    .radius(t.sizes.radius)
+                    .border(1.0f, t.colors.borderDefault)
+                    .onClick([this] { renameOpen_ = false; })
+                    .build();
+                components::button(ui, "md.dialog.rename.confirm")
+                    .position(28.0f + (w - 68.0f) * 0.5f + 12.0f, h - 60.0f)
+                    .size((w - 68.0f) * 0.5f, 40.0f)
+                    .text("重命名")
+                    .fontSize(t.sizes.fontSizeBody)
+                    .theme(componentTheme, true)
+                    .textColor(t.colors.onPrimary)
+                    .radius(t.sizes.radius)
+                    .onClick([this] { commitRenameNote(); })
+                    .build();
+            })
+            .build();
+    }
+
+    void doDeleteNote() {
+        const std::string path = deleteTargetPath_;
+        deleteConfirmOpen_ = false;
+        deleteTargetPath_.clear();
+        if (!service_ || path.empty()) return;
+        auto r = service_->remove(path);
+        if (r.isFail()) {
+            LOG_ERROR("删除笔记失败 " + path + ": " + r.errorMessage());
+            showToast("删除失败", "「" + path + "」" + r.errorMessage(), true);
+            return;
+        }
+        // 删的是当前打开的笔记 → 编辑器直接清空：文件已不存在，未保存的
+        // 编辑随之作废（不做「删了又写回去」的复活）；清 dirty 防自动保存
+        // 把文件重建出来
+        if (currentPath_ == path) {
+            currentPath_.clear();
+            editorText_.clear();
+            lastSavedText_.clear();
+            editorDirty_ = false;
+            saveFailed_ = false;
+            saveBackoffMs_ = 0;
+            outlineDirty_ = true;
+            activeOutlineIdx_ = -1;
+            currentTags_.clear();
+            lastKnownMtime_ = 0;
+            conflictOpen_ = false;
+            status_ = "笔记已删除";
+        }
+        refreshList();
+        showToast("已删除笔记", fs::path(path).filename().string(), false);
+        LOG_INFO("已删除笔记: " + path);
+    }
+
+    void commitRenameNote() {
+        std::string target = renameInput_;
+        while (!target.empty() && (target.front() == ' ' || target.front() == '\t')) {
+            target.erase(target.begin());
+        }
+        while (!target.empty() &&
+               (target.back() == ' ' || target.back() == '\t' ||
+                target.back() == '\r' || target.back() == '\n')) {
+            target.pop_back();
+        }
+        if (target.empty()) {
+            // 空名提交 = 取消（输入框预填了原路径，清空视为反悔而非错误）
+            renameOpen_ = false;
+            return;
+        }
+        if (!service_ || renameTargetPath_.empty()) {
+            renameOpen_ = false;
+            return;
+        }
+        if (!MarkdownService::isSafeNewNotePath(target)) {
+            showToast("名称不合法",
+                      "不允许绝对路径、盘符（如 C:）或 ..，请用相对路径，"
+                      "例如 工作/新名.md", true);
+            return;  // 弹窗保持打开让用户改
+        }
+        auto r = service_->rename(renameTargetPath_, target);
+        if (r.isFail()) {
+            LOG_ERROR("重命名笔记失败 " + renameTargetPath_ + " → " + target +
+                      ": " + r.errorMessage());
+            showToast("重命名失败", r.errorMessage(), true);
+            return;  // 弹窗保持打开（目标已存在等可改输入重试）
+        }
+        const std::string oldPath = renameTargetPath_;
+        const std::string newPath = r.value();
+        renameOpen_ = false;
+        renameTargetPath_.clear();
+        renameInput_.clear();
+        if (currentPath_ == oldPath) {
+            // 编辑器继续跟随这篇笔记（内容未变，只换 path；若有未保存编辑，
+            // 自动保存将写到新路径——正确语义）
+            currentPath_ = newPath;
+            syncCurrentMtime();
+        }
+        refreshList();
+        status_ = "已重命名 " + oldPath + " → " + newPath;
+        showToast("已重命名", newPath, false);
+        LOG_INFO("重命名笔记: " + oldPath + " → " + newPath);
+    }
+
     // ==================== 状态 ====================
 
     static constexpr int64_t kAutoSaveDelayMs = 400;
@@ -1960,6 +2242,17 @@ private:
     bool newFolderOpen_ = false;       // W9：新建文件夹弹窗
     std::string newFolderName_;
     std::set<std::string> topFolders_; // W9：磁盘一级目录（含空目录，树显示用）
+
+    // ---- 生命周期（审计 [4][20]）：树行右键菜单 + 删除确认 + 重命名 ----
+    bool ctxMenuOpen_ = false;
+    float ctxMenuX_ = 0.0f;
+    float ctxMenuY_ = 0.0f;
+    std::string ctxMenuPath_;        // 右键目标（POSIX 相对路径）
+    bool deleteConfirmOpen_ = false;
+    std::string deleteTargetPath_;   // 待删笔记（确认弹窗展示 + 删除目标）
+    bool renameOpen_ = false;
+    std::string renameTargetPath_;   // 重命名原路径
+    std::string renameInput_;        // 重命名输入框内容
 
     // ---- Toast（EUI-NEO 单实例，复用一个状态位）----
     bool toastOpen_ = false;

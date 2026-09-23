@@ -250,6 +250,94 @@ REGISTER_TEST(md_remove_deletes_file_and_index,
     return true;
 })
 
+// ============ rename（审计 [4][20] 配套服务层） ============
+
+REGISTER_TEST(md_rename_moves_file_updates_index_and_keeps_tags,
+              "MarkdownService: rename 移动文件+更新索引/FTS，标签（FK 挂 id）保留", {
+    const auto dir = makeTempDir("rename_basic");
+    auto db = makeDb();
+    runMigrations(db);
+    module::markdown::MarkdownService svc(db, dir);
+
+    DOCTEST_REQUIRE(svc.write("a.md", "# Alpha\n独特内容XYZ\n").isOk());
+    DOCTEST_REQUIRE(svc.setTags("a.md", {"工作", "重要"}).isOk());
+
+    auto r = svc.rename("a.md", "b.md");
+    DOCTEST_REQUIRE(r.isOk());
+    DOCTEST_CHECK_EQ(r.value(), std::string("b.md"));
+
+    // 磁盘：旧文件消失，新文件内容原样
+    DOCTEST_CHECK_FALSE(fs::exists(dir / "a.md"));
+    DOCTEST_CHECK(fs::exists(dir / "b.md"));
+    auto content = svc.read("b.md");
+    DOCTEST_REQUIRE(content.isOk());
+    DOCTEST_CHECK_EQ(content.value(), std::string("# Alpha\n独特内容XYZ\n"));
+
+    // 索引：只剩 b.md，title 重算仍为 Alpha
+    auto notes = svc.listAll();
+    DOCTEST_REQUIRE(notes.isOk());
+    DOCTEST_CHECK_EQ(notes.value().size(), 1u);
+    DOCTEST_CHECK_EQ(notes.value()[0].relativePath.generic_string(), std::string("b.md"));
+    DOCTEST_CHECK_EQ(notes.value()[0].title, std::string("Alpha"));
+
+    // 标签随 id 保留（rename 不删索引行，markdown_note_tags FK 不受影响）
+    auto tags = svc.tagsForNote("b.md");
+    DOCTEST_REQUIRE(tags.isOk());
+    DOCTEST_CHECK_EQ(tags.value().size(), 2u);
+
+    // FTS 迁移：旧 path 不再命中，新 path 命中内容
+    auto hits = svc.search("独特内容XYZ");
+    DOCTEST_REQUIRE(hits.isOk());
+    DOCTEST_REQUIRE_EQ(hits.value().size(), 1u);
+    DOCTEST_CHECK_EQ(hits.value()[0].relativePath.generic_string(), std::string("b.md"));
+
+    fs::remove_all(dir);
+    return true;
+})
+
+REGISTER_TEST(md_rename_normalizes_and_rejects,
+              "MarkdownService: rename 补 .md/子目录移动/目标冲突/源缺失/不安全名拒绝", {
+    const auto dir = makeTempDir("rename_reject");
+    auto db = makeDb();
+    runMigrations(db);
+    module::markdown::MarkdownService svc(db, dir);
+
+    DOCTEST_REQUIRE(svc.write("a.md", "# A\n").isOk());
+    DOCTEST_REQUIRE(svc.write("taken.md", "# T\n").isOk());
+
+    // 无扩展名自动补 .md
+    auto ext = svc.rename("a.md", "c");
+    DOCTEST_REQUIRE(ext.isOk());
+    DOCTEST_CHECK_EQ(ext.value(), std::string("c.md"));
+
+    // 子目录 = 移动语义（中间目录自动创建）
+    auto move = svc.rename("c.md", "work/d");
+    DOCTEST_REQUIRE(move.isOk());
+    DOCTEST_CHECK_EQ(move.value(), std::string("work/d.md"));
+    DOCTEST_CHECK(fs::exists(dir / "work" / "d.md"));
+
+    // 目标已存在 → 拒绝，原文件不动
+    auto clash = svc.rename("work/d.md", "taken.md");
+    DOCTEST_CHECK(clash.isFail());
+    DOCTEST_CHECK(fs::exists(dir / "work" / "d.md"));
+    DOCTEST_CHECK_EQ(svc.listAll().value().size(), 2u);
+
+    // 源不存在 → 拒绝
+    DOCTEST_CHECK(svc.rename("ghost.md", "x.md").isFail());
+    // 不安全新名（绝对路径/盘符/../）→ 拒绝
+    DOCTEST_CHECK(svc.rename("taken.md", "../escape").isFail());
+    DOCTEST_CHECK(svc.rename("taken.md", "C:/evil").isFail());
+    // 原地改名 → 幂等成功
+    auto noop = svc.rename("taken.md", "taken.md");
+    DOCTEST_REQUIRE(noop.isOk());
+    DOCTEST_CHECK_EQ(noop.value(), std::string("taken.md"));
+    // taken → taken.md 显式同路径也算无操作
+    DOCTEST_CHECK(svc.rename("taken.md", "taken").isOk());
+
+    fs::remove_all(dir);
+    return true;
+})
+
 REGISTER_TEST(md_search_finds_matching_notes,
               "MarkdownService: FTS5 search returns matching notes", {
     const auto dir = makeTempDir("search");

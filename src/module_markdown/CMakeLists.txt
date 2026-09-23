@@ -4,6 +4,7 @@ add_library(devdesk_module_markdown STATIC
     md_highlight.cpp
     md_keyboard.cpp
     md_line_scanner.cpp
+    md_file_open.cpp
     md_tree.cpp
 )
 

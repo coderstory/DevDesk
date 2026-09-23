@@ -881,3 +881,238 @@ REGISTER_TEST(md_module_tags_ui, "markdown_module: 标签 chip 行 + 左栏标�
     mod->onStop();
     return true;
 })
+
+// ---- 2e. 生命周期（审计 [4][20]）：树行右键菜单 → 删除/重命名 真实链路 ----
+
+REGISTER_TEST(md_module_delete_note_ui, "markdown_module: 右键→删除→确认弹窗（取消保留/确认落删），编辑器联动清空（headless）", {
+    MdUiEnv env("delui");
+    DOCTEST_REQUIRE(env.db != nullptr);
+    DOCTEST_REQUIRE(writeTextFile(env.dir / "a.md", "# A\n正文A\n"));
+    DOCTEST_REQUIRE(writeTextFile(env.dir / "b.md", "# B\n正文B\n"));
+
+    std::unique_ptr<::core::Module> mod(create_markdown_module());
+    mod->onStart();
+
+    eui::Screen screen;
+    screen.width = 1600.0f;
+    screen.height = 1000.0f;
+    eui::Ui ui;
+    auto frame = [&](const char* page) {
+        ui.begin(page);
+        mod->compose(ui, screen);
+        ui.end();
+    };
+    auto findRow = [&](const std::string& name) -> core::dsl::Element* {
+        for (int i = 0; i < 8; ++i) {
+            const auto* nm = ui.find("md.tree.node." + std::to_string(i) + ".name");
+            if (nm != nullptr && nm->text == name) {
+                return ui.find("md.tree.node." + std::to_string(i) + ".row");
+            }
+        }
+        return nullptr;
+    };
+    auto treeHas = [&ui](const std::string& name) {
+        for (int i = 0; i < 8; ++i) {
+            const auto* nm = ui.find("md.tree.node." + std::to_string(i) + ".name");
+            if (nm != nullptr && nm->text == name) return true;
+        }
+        return false;
+    };
+
+    // 打开 a.md（编辑器活跃），右键它的树行 → 菜单出现「删除笔记」项
+    frame("d1");
+    auto* row1 = findRow("a.md");
+    DOCTEST_REQUIRE(row1 != nullptr);
+    DOCTEST_REQUIRE(row1->onClick != nullptr);
+    DOCTEST_REQUIRE(row1->onContextMenu != nullptr);
+    row1->onClick();
+    frame("d2");
+    DOCTEST_CHECK(ui.find("md.editor.input") != nullptr);
+
+    eui::PointerEvent pe;
+    pe.x = 150.0;
+    pe.y = 230.0;
+    auto* row2 = findRow("a.md");
+    DOCTEST_REQUIRE(row2 != nullptr);
+    row2->onContextMenu(pe, eui::Rect{});
+    frame("d3");
+    const auto* delLabel = ui.find("md.ctx.level.0.label.1");
+    DOCTEST_REQUIRE(delLabel != nullptr);
+    DOCTEST_CHECK_EQ(delLabel->text, std::string("删除笔记"));
+
+    // 取消路径：删除项 → 确认弹窗（「不可恢复」文案）→ 取消 → 文件不动
+    auto* delItem = ui.find("md.ctx.level.0.item.1");
+    DOCTEST_REQUIRE(delItem != nullptr && delItem->onClick != nullptr);
+    delItem->onClick();
+    frame("d4");
+    const auto* body = ui.find("md.dialog.del.body");
+    DOCTEST_REQUIRE(body != nullptr);
+    DOCTEST_CHECK(body->text.find("a.md") != std::string::npos);
+    DOCTEST_CHECK(body->text.find("不可恢复") != std::string::npos);
+    auto* cancelBtn = ui.find("md.dialog.del.cancel.bg");
+    DOCTEST_REQUIRE(cancelBtn != nullptr && cancelBtn->onClick != nullptr);
+    cancelBtn->onClick();
+    frame("d5");
+    DOCTEST_CHECK(fs::exists(env.dir / "a.md"));
+    DOCTEST_CHECK(ui.find("md.editor.input") != nullptr);  // 编辑器未受影响
+
+    // 确认路径：再右键 → 删除 → 确认 → 文件删除、树消失、编辑器清回空态；
+    // b.md 不受牵连
+    auto* row3 = findRow("a.md");
+    DOCTEST_REQUIRE(row3 != nullptr);
+    row3->onContextMenu(pe, eui::Rect{});
+    frame("d6");
+    auto* delItem2 = ui.find("md.ctx.level.0.item.1");
+    DOCTEST_REQUIRE(delItem2 != nullptr && delItem2->onClick != nullptr);
+    delItem2->onClick();
+    frame("d7");
+    auto* delBtn = ui.find("md.dialog.del.confirm.bg");
+    DOCTEST_REQUIRE(delBtn != nullptr && delBtn->onClick != nullptr);
+    delBtn->onClick();
+    DOCTEST_CHECK_FALSE(fs::exists(env.dir / "a.md"));
+    DOCTEST_CHECK(fs::exists(env.dir / "b.md"));
+    frame("d8");
+    DOCTEST_CHECK_FALSE(treeHas("a.md"));
+    DOCTEST_CHECK(treeHas("b.md"));
+    // 删的是当前打开的笔记 → 编辑器回到空态提示
+    DOCTEST_CHECK(ui.find("md.editor.hint") != nullptr);
+
+    mod->onStop();
+    return true;
+})
+
+REGISTER_TEST(md_module_rename_note_ui, "markdown_module: 右键→重命名→预填原路径→选区替换输入→落盘，编辑器跟随（headless）", {
+    using InputState = components::input_detail::InputModel::InputState;
+
+    MdUiEnv env("renui");
+    DOCTEST_REQUIRE(env.db != nullptr);
+    DOCTEST_REQUIRE(writeTextFile(env.dir / "old.md", "# Old\n正文\n"));
+
+    std::unique_ptr<::core::Module> mod(create_markdown_module());
+    mod->onStart();
+
+    eui::Screen screen;
+    screen.width = 1600.0f;
+    screen.height = 1000.0f;
+    eui::Ui ui;
+    auto frame = [&](const char* page) {
+        ui.begin(page);
+        mod->compose(ui, screen);
+        ui.end();
+    };
+    auto findRow = [&](const std::string& name) -> core::dsl::Element* {
+        for (int i = 0; i < 8; ++i) {
+            const auto* nm = ui.find("md.tree.node." + std::to_string(i) + ".name");
+            if (nm != nullptr && nm->text == name) {
+                return ui.find("md.tree.node." + std::to_string(i) + ".row");
+            }
+        }
+        return nullptr;
+    };
+    auto treeHas = [&ui](const std::string& name) {
+        for (int i = 0; i < 8; ++i) {
+            const auto* nm = ui.find("md.tree.node." + std::to_string(i) + ".name");
+            if (nm != nullptr && nm->text == name) return true;
+        }
+        return false;
+    };
+
+    // 先打开 old.md（编辑器跟随），右键 → 重命名
+    frame("r1");
+    auto* row1 = findRow("old.md");
+    DOCTEST_REQUIRE(row1 != nullptr);
+    row1->onClick();
+    frame("r2");
+    eui::PointerEvent pe;
+    pe.x = 120.0;
+    pe.y = 210.0;
+    auto* row2 = findRow("old.md");
+    DOCTEST_REQUIRE(row2 != nullptr && row2->onContextMenu != nullptr);
+    row2->onContextMenu(pe, eui::Rect{});
+    frame("r3");
+    auto* renameItem = ui.find("md.ctx.level.0.item.0");
+    DOCTEST_REQUIRE(renameItem != nullptr && renameItem->onClick != nullptr);
+    renameItem->onClick();
+    frame("r4");
+
+    // 弹窗输入框预填原相对路径
+    const auto* prefill = ui.find("md.dialog.rename.input.text");
+    DOCTEST_REQUIRE(prefill != nullptr);
+    DOCTEST_CHECK_EQ(prefill->text, std::string("old.md"));
+
+    // 全选 + 真实 onTextInput（insertAtCursor 选区替换 → onChange → renameInput_）
+    auto& st = ui.state<InputState>("md.dialog.rename.input");
+    st.selectionStart = 0;
+    st.selectionEnd = static_cast<int>(st.text.size());
+    auto* hit = ui.find("md.dialog.rename.input.hit");
+    DOCTEST_REQUIRE(hit != nullptr && hit->onTextInput != nullptr);
+    core::TextInputEvent tie;
+    tie.text = "新名.md";
+    hit->onTextInput(tie);
+    frame("r5");
+    auto* confirm = ui.find("md.dialog.rename.confirm.bg");
+    DOCTEST_REQUIRE(confirm != nullptr && confirm->onClick != nullptr);
+    confirm->onClick();
+    DOCTEST_CHECK_FALSE(fs::exists(env.dir / "old.md"));
+    DOCTEST_CHECK(fs::exists(env.dir / "新名.md"));
+    frame("r6");
+    DOCTEST_CHECK(treeHas("新名.md"));
+    DOCTEST_CHECK_FALSE(treeHas("old.md"));
+    // 编辑器继续跟随这篇笔记：非空态、内容保留、状态栏文件名已更新
+    DOCTEST_CHECK(ui.find("md.editor.hint") == nullptr);
+    const auto& est = ui.state<InputState>("md.editor.input");
+    DOCTEST_CHECK_EQ(est.text, std::string("# Old\n正文\n"));
+    const auto* status = ui.find("md.status.save");
+    DOCTEST_REQUIRE(status != nullptr);
+    DOCTEST_CHECK(status->text.find("新名.md") != std::string::npos);
+
+    mod->onStop();
+    return true;
+})
+
+// ---- 2f. 新建笔记即时性（审计 [13][31]）：默认名快速创建 + 编辑器聚焦接线 ----
+
+REGISTER_TEST(md_module_default_name_create, "markdown_module: 空名提交=「无标题笔记」秒建+撞名编号，编辑器随开（headless）", {
+    MdUiEnv env("defname");
+    DOCTEST_REQUIRE(env.db != nullptr);
+
+    std::unique_ptr<::core::Module> mod(create_markdown_module());
+    mod->onStart();
+
+    eui::Screen screen;
+    screen.width = 1600.0f;
+    screen.height = 1000.0f;
+    eui::Ui ui;
+    auto frame = [&](const char* page) {
+        ui.begin(page);
+        mod->compose(ui, screen);
+        ui.end();
+    };
+
+    // 弹窗直接回车/确认（不输入名字）→ 旧行为是「笔记名不能为空」拒办，
+    // 现在建「无标题笔记.md」并打开（commitNewNote 成功后经
+    // Ui::requestFocus 聚焦编辑器——headless 无 Runtime 消费端，聚焦行为
+    // 由上游单测/人工冒烟覆盖，这里断言到「已打开」为止）
+    frame("dn1");
+    auto* newBtn = ui.find("md.tree.new.bg");
+    DOCTEST_REQUIRE(newBtn != nullptr && newBtn->onClick != nullptr);
+    newBtn->onClick();
+    frame("dn2");
+    auto* confirm = ui.find("md.dialog.new.confirm.bg");
+    DOCTEST_REQUIRE(confirm != nullptr && confirm->onClick != nullptr);
+    confirm->onClick();
+    DOCTEST_CHECK(fs::exists(env.dir / "无标题笔记.md"));
+    frame("dn3");
+    DOCTEST_CHECK(ui.find("md.editor.hint") == nullptr);  // 编辑器已打开这篇
+
+    // 再建一篇：默认名撞名自动编号，不覆盖第一篇
+    ui.find("md.tree.new.bg")->onClick();
+    frame("dn4");
+    ui.find("md.dialog.new.confirm.bg")->onClick();
+    DOCTEST_CHECK(fs::exists(env.dir / "无标题笔记 2.md"));
+    frame("dn5");
+    DOCTEST_CHECK(fs::exists(env.dir / "无标题笔记.md"));  // 第一篇原样
+
+    mod->onStop();
+    return true;
+})
