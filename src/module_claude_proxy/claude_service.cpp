@@ -287,11 +287,22 @@ core::Result<Profile> ClaudeService::createProfile(const std::string& name,
     const std::string account = keychainAccountFor(newId);
     auto kcStore = platform::keychain::storeSecret(keychainService_, account, apiKey);
     if (kcStore.isFail()) {
-        // Keychain 失败 → 回滚（删 SQLite 行）
+        // Keychain 失败 → 回滚（删 SQLite 行）。回滚本身再失败会留下无密钥的
+        // 幽灵 profile 行，至少留 ERROR 痕迹可诊断（审计 2026-09-23 [25]）
         auto delPrep = db_.prepare("DELETE FROM claude_profiles WHERE id = ?");
         if (delPrep.isOk()) {
-            delPrep.value().bind(1, newId);
-            delPrep.value().step();
+            auto& delStmt = delPrep.value();
+            delStmt.bind(1, newId);
+            auto delStep = delStmt.step();
+            if (delStep.isFail()) {
+                LOG_ERROR("Keychain 失败后的回滚 DELETE 也失败，存在悬空 "
+                          "profile 行 id=" + std::to_string(newId) + ": " +
+                          delStep.errorMessage());
+            }
+        } else {
+            LOG_ERROR("Keychain 失败后的回滚 DELETE prepare 失败，存在悬空 "
+                      "profile 行 id=" + std::to_string(newId) + ": " +
+                      delPrep.errorMessage());
         }
         return core::Result<Profile>::fail(kcStore.errorCode(),
             "Keychain 存储失败: " + kcStore.errorMessage());
