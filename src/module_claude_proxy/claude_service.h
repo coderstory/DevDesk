@@ -70,10 +70,17 @@ public:
     core::Result<Profile> getProfile(int64_t id);
 
     // 创建并保存到 SQLite + Keychain
+    //
+    // 产品审计 2026-09-23 [6]：activateIfNoneActive=true 时，创建成功后若当前
+    // 无任何激活 Profile 则自动激活新 Profile（首次体验最顺——新用户建完直接
+    // 「启动代理」不再 503）。已有激活 Profile 时不抢占，返回值 isActive=false，
+    // UI 据此分 toast 文案。默认 false：既有调用方与单测行为不变。
+    // 自动激活走 setActiveProfile（代理运行中会同步接管 settings.json）。
     core::Result<Profile> createProfile(const std::string& name,
                                        const std::string& baseUrl,
                                        const std::string& apiKey,
-                                       const std::string& model);
+                                       const std::string& model,
+                                       bool activateIfNoneActive = false);
 
     // 更新 profile（profile.id 必须已存在）
     //   - 若 profile.apiKeyPlain 非空，则覆盖 Keychain

@@ -200,6 +200,51 @@ REGISTER_TEST(claude_service_set_active_profile,
     return true;
 })
 
+// ---- 3b. 首建自动激活（产品审计 2026-09-23 [6]） ----
+
+REGISTER_TEST(claude_service_first_create_auto_activates,
+              "claude_service: createProfile 首建自动激活 + 不抢占 + 503 指引文案", {
+    TestDb tdb("autoactivate");
+    module::claude::ClaudeService svc(tdb.handle(), kTestKeychainService);
+
+    // 1) 默认参数保持旧行为：不激活（既有调用方/测试零影响）
+    auto legacy = svc.createProfile("Legacy", "https://legacy.example.com",
+                                    "sk-ant-legacy-0001", "m");
+    DOCTEST_REQUIRE(legacy.isOk());
+    DOCTEST_CHECK_FALSE(legacy.value().isActive);
+    DOCTEST_CHECK(svc.getActiveProfile().isFail());
+    cleanupKey(legacy.value().id);
+
+    // 2) activateIfNoneActive=true 且无激活 → 自动激活，返回 isActive=true
+    auto first = svc.createProfile("First", "https://first.example.com",
+                                   "sk-ant-first-0002", "m", true);
+    DOCTEST_REQUIRE(first.isOk());
+    DOCTEST_CHECK(first.value().isActive);
+    auto act = svc.getActiveProfile();
+    DOCTEST_REQUIRE(act.isOk());
+    DOCTEST_CHECK_EQ(act.value().id, first.value().id);
+
+    // 3) 已有激活 → 不抢占（返回值 isActive=false，UI 走「点击启用」文案）
+    auto second = svc.createProfile("Second", "https://second.example.com",
+                                    "sk-ant-second-0003", "m", true);
+    DOCTEST_REQUIRE(second.isOk());
+    DOCTEST_CHECK_FALSE(second.value().isActive);
+    auto actStill = svc.getActiveProfile();
+    DOCTEST_REQUIRE(actStill.isOk());
+    DOCTEST_CHECK_EQ(actStill.value().id, first.value().id);
+
+    // 4) 无激活时错误 message 带可操作指引（503 body 原样透传此文案）
+    auto del = svc.deleteProfile(first.value().id);
+    DOCTEST_REQUIRE(del.isOk());
+    auto none = svc.getActiveProfile();
+    DOCTEST_REQUIRE(none.isFail());
+    DOCTEST_CHECK(none.errorCode() == core::ErrorCode::NoActiveProfile);
+    DOCTEST_CHECK(none.errorMessage().find("并点击「启用」") != std::string::npos);
+
+    cleanupKey(second.value().id);
+    return true;
+})
+
 // ---- 4. loadApiKey（从 Keychain 读明文） ----
 
 REGISTER_TEST(claude_service_load_api_key,
