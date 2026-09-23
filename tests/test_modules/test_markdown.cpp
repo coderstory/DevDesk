@@ -763,11 +763,9 @@ REGISTER_TEST(md_module_compose_w7, "markdown_module: W7 pagebg/toast compose（
     };
 
     frame("w7_f1");
-    // 页面铺底色（深色主题黑底修复的载体）
-    const auto* pagebg = ui.find("md.pagebg");
-    DOCTEST_REQUIRE(pagebg != nullptr);
-    DOCTEST_CHECK_EQ(pagebg->width.value, screen.width);
-    DOCTEST_CHECK_EQ(pagebg->height.value, screen.height);
+    // 页面不再自铺全屏底色（半透/磨砂档主体效果的载体是主窗口 clearColor，
+    // 自铺不透明底会把 alpha 恒置 1 盖掉效果——回归守卫）
+    DOCTEST_CHECK(ui.find("md.pagebg") == nullptr);
     // toast 单例常驻（保存失败反馈的载体，visible 由状态位控制）
     DOCTEST_CHECK(ui.find("md.toast") != nullptr);
     // 重扫按钮已移除（W8：5 秒自动轮询取代）

@@ -297,12 +297,8 @@ public:
         const float pad = t.sizes.spacingXXLarge;  // 40
         const float contentW = screen.width - pad * 2.0f;
 
-        // 页面背景自绘（main.cpp clearColor 固定浅色，深色主题下页面必须自己铺底，
-        // 否则浅色 clear 底 + 深色 token 文字不可读——其他模块不铺底是既有现状）
-        ui.rect("settings.pagebg")
-            .size(screen.width, screen.height)
-            .color(t.colors.background)
-            .build();
+        // 页面底色 = 主窗口 clearColor（随主题/窗口效果档运行时跟随，
+        // 磨砂 Phase B/D）——不自铺不透明底，半透/磨砂档主体才生效
 
         const float headerH = 64.0f;
         ui.column("settings.root")
