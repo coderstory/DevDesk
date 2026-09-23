@@ -1069,6 +1069,13 @@ private:
                     .theme(compTheme)
                     .onChange([this](const std::string& v) {
                         proxyPortDraft_ = v;
+                        // 审计 [19]：校验错误（红字状态行）随下一次输入清除，
+                        // 对齐 claude formError_ 的「就地红字 + 输入即清」语义；
+                        // 成功提示（非红字）不打断，保留到下一次操作
+                        if (statusIsError_) {
+                            statusMessage_.clear();
+                            statusIsError_ = false;
+                        }
                     })
                     .onEnter([this] { applyProxyPort(); })
                     .build();

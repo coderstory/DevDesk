@@ -424,6 +424,61 @@ REGISTER_TEST(settings_module_compose_renders, "settings: module compose builds 
     return true;
 })
 
+// ---- 审计 [19]：代理端口校验失败反馈（红字状态行 + 下一次输入清除）----
+// 设置页无创建弹窗，端口 draft 就地提交；反馈通道对齐 claude formError 语义：
+// 校验错误以红字呈现（settings.subtitle 走 colors.error，非 toast），
+// 且随下一次输入自动清除（修复前红字挂到下一次操作才走）。
+
+REGISTER_TEST(settings_port_error_clear_on_input,
+              "settings: 端口校验失败 → 红字状态行 + 下一次输入清除（headless，审计 [19]）", {
+    PruneEnv env("portformerr");   // 临时 config，不碰真机配置
+    std::unique_ptr<::core::Module> mod(create_settings_module());
+    mod->onStart();
+    eui::Screen screen;
+    screen.width = 1600.0f;
+    screen.height = 1000.0f;
+    eui::Ui ui;
+    auto frame = [&](const char* page) {
+        ui.begin(page);
+        mod->compose(ui, screen);
+        ui.end();
+    };
+
+    frame("pf1");
+    auto* input = ui.find("settings.card.proxy.port.input.hit");
+    DOCTEST_REQUIRE(input != nullptr);
+    DOCTEST_REQUIRE(input->onTextInput != nullptr);
+    eui::TextInputEvent bad;
+    bad.text = "abc";               // 非纯数字 → parseProxyPortInput 拒绝
+    input->onTextInput(bad);
+    frame("pf2");
+    // 点「应用」提交非法 draft（与回车 onEnter 同走 applyProxyPort）
+    auto* apply = ui.find("settings.card.proxy.port.apply.bg");
+    DOCTEST_REQUIRE(apply != nullptr);
+    DOCTEST_REQUIRE(apply->onClick != nullptr);
+    apply->onClick();
+    frame("pf3");
+    const auto* sub = ui.find("settings.subtitle");
+    DOCTEST_REQUIRE(sub != nullptr);
+    DOCTEST_CHECK(sub->text.find("端口无效") != std::string::npos);  // 红字校验错误行
+    // 非法端口未落盘：临时 config 文件里的 proxyPort 仍是默认 8888
+    module::settings::SettingsStore store(env.cfgPath);
+    DOCTEST_CHECK_EQ(store.load().proxyPort, 8888);
+
+    // 下一次输入 → 校验错误清除，subtitle 回静态说明（formError「输入即清」语义）
+    auto* input2 = ui.find("settings.card.proxy.port.input.hit");
+    DOCTEST_REQUIRE(input2 != nullptr);
+    eui::TextInputEvent fix;
+    fix.text = "9";
+    input2->onTextInput(fix);       // onChange → statusIsError_ 清
+    frame("pf4");
+    const auto* sub2 = ui.find("settings.subtitle");
+    DOCTEST_REQUIRE(sub2 != nullptr);
+    DOCTEST_CHECK(sub2->text.find("端口无效") == std::string::npos);
+    mod->onStop();
+    return true;
+})
+
 REGISTER_TEST(settings_theme_switch_reflects, "settings: theme switch reflects on recompose", {
     std::unique_ptr<::core::Module> mod(create_settings_module());
     eui::Screen screen;
