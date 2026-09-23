@@ -868,3 +868,45 @@ REGISTER_TEST(md_tags_removed_note_cleans_associations,
     fs::remove_all(dir);
     return true;
 })
+
+// ============ 审计 2026-09-23 [2]：笔记保存原子写 ============
+
+// write/create 改 tmp+rename 后验证三件事：
+//   1. 成功路径不留 *.devdesk-tmp 残骸（rename 完成即消失）
+//   2. 覆盖已存在的非空文件正常工作（remove+rename 路径，MinGW rename
+//      不覆盖语义正是先删再替换的原因）
+//   3. create()（旧实现写失败连检查都没有）同样原子化且内容完整
+REGISTER_TEST(md_write_atomic_no_tmp_leftover,
+              "MarkdownService: write/create 原子写不留 tmp 残骸", {
+    const auto dir = makeTempDir("atomic_write");
+    auto db = makeDb();
+    runMigrations(db);
+    module::markdown::MarkdownService svc(db, dir);
+
+    // 深一层目录 + 较大内容（走 create_directories + tmp+rename 全路径）
+    const std::string big = "# Deep\n\n" + std::string(200000, 'x');
+    DOCTEST_REQUIRE(svc.write(fs::path("notes") / "deep.md", big).isOk());
+
+    // 覆盖写（目标已存在 → 先 remove 再 rename）
+    DOCTEST_REQUIRE(svc.write(fs::path("notes") / "deep.md", std::string("# Short")).isOk());
+    auto rd = svc.read(fs::path("notes") / "deep.md");
+    DOCTEST_REQUIRE(rd.isOk());
+    DOCTEST_CHECK_EQ(rd.value(), std::string("# Short"));
+
+    // create 同款原子写（补 .md 后缀 + 默认模板）
+    DOCTEST_REQUIRE(svc.create(fs::path("brand-new")).isOk());
+    auto rd2 = svc.read(fs::path("brand-new.md"));
+    DOCTEST_REQUIRE(rd2.isOk());
+    DOCTEST_CHECK(rd2.value().rfind("# brand-new", 0) == 0);
+
+    // 全目录扫描：不允许存在任何 .devdesk-tmp 残留
+    int tmpCount = 0;
+    std::error_code ec;
+    for (fs::recursive_directory_iterator it(dir, ec), end; it != end; it.increment(ec)) {
+        if (ec) break;
+        if (it->path().extension() == ".devdesk-tmp") ++tmpCount;
+    }
+    DOCTEST_CHECK_EQ(tmpCount, 0);
+    fs::remove_all(dir, ec);
+    return true;
+})

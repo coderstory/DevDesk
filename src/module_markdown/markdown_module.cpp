@@ -1658,6 +1658,20 @@ private:
     void openNote(const std::string& relPath) {
         // 切换前先把上一篇的改动落盘
         saveEditor();
+        // 审计 2026-09-23 [3]：saveEditor 失败（文件锁/磁盘满/只读，正是
+        // W7 P1-2 退避机制针对的场景）时 editorDirty_ 保持 true，继续往下
+        // 会无条件 editorText_ = 新内容 + 清 dirty——未落盘的编辑被静默丢
+        // 弃。保数据优先于便利：还有未落盘改动就阻止切换并提示。每次点击
+        // 都会经 saveEditor 立即重试一次保存，故障恢复后自然放行。
+        // （onStop 对同一失败做 3 次重试 + 响亮日志；这里 5 个 openNote
+        // 调用点——树点击/跳转/新建笔记——共用这一个守卫。）
+        if (editorDirty_) {
+            showToast("有未保存的改动",
+                      "「" + currentPath_ + "」保存失败，切换会丢失这些编辑；"
+                      "请先处理保存问题或撤销改动",
+                      true);
+            return;
+        }
         if (!service_) return;
 
         auto r = service_->read(relPath);
