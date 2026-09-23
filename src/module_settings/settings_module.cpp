@@ -136,6 +136,12 @@ public:
         LOG_INFO("Settings 模块停止");
     }
 
+    // 重新进入设置页：token 显形状态复位（审计 [16]：「临时显形不持久化」——
+    // 显形只在该次停留内有效，切页再回来恢复掩码，不残留到截图）
+    void onPageEnter() override {
+        proxyTokenRevealed_ = false;
+    }
+
     // ============ 设置变更 ============
 
     void applyTheme(bool dark) {
@@ -990,8 +996,13 @@ private:
                 auto* svc = ::module::claude::ClaudeService::global();
                 const bool running = svc && svc->isProxyRunning();
                 const int port = running ? svc->proxyPort() : 0;
+                // token 默认脱敏展示（provider-config §7 安全第 2 条，审计 [16]）：
+                // 本仓库截屏验收流程会把设置页整页归档，明文 token 会直接进截图。
+                // 显形仅 UI 态成员（proxyTokenRevealed_），不写 config.json，
+                // 离开设置页（onPageEnter 重进）即恢复掩码
                 const std::string tokenText = running
-                    ? svc->proxyAuthToken()
+                    ? (proxyTokenRevealed_ ? svc->proxyAuthToken()
+                                           : maskProxyToken(svc->proxyAuthToken()))
                     : std::string("（代理未运行）");
 
                 ui.text(id + ".title")
@@ -1083,27 +1094,46 @@ private:
 
                 ui.text(id + ".token.label")
                     .position(28.0f, 98.0f)
-                    .size(240.0f, 16.0f)
-                    .text("认证 Token（只读）")
+                    .size(w - 56.0f, 16.0f)
+                    .text("认证 Token（只读 · 默认脱敏；眼睛按钮临时显形，"
+                          "离开本页即恢复）")
                     .fontSize(fs(12.0f))
                     .lineHeight(16.0f)
                     .color(t.colors.textSecondary)
                     .build();
                 const float btnW = 140.0f;
+                const float eyeW = 44.0f;
                 ui.rect(id + ".token.bg")
                     .position(28.0f, 120.0f)
-                    .size(w - 56.0f - btnW - 12.0f, 40.0f)
+                    .size(w - 56.0f - btnW - 12.0f - eyeW - 12.0f, 40.0f)
                     .color(t.colors.surfaceElevated)
                     .radius(t.sizes.radiusSmall)
                     .border(1.0f, t.colors.borderMuted)
                     .build();
                 ui.text(id + ".token.value")
                     .position(40.0f, 120.0f)
-                    .size(w - 80.0f - btnW - 12.0f, 40.0f)
+                    .size(w - 80.0f - btnW - 12.0f - eyeW - 12.0f, 40.0f)
                     .text(tokenText)
                     .fontSize(fs(13.0f))
                     .verticalAlign(eui::VerticalAlign::Center)
                     .color(running ? t.colors.textSecondary : t.colors.textTertiary)
+                    .build();
+
+                // token 显形/掩码切换（审计 [16]）：仅 UI 临时态，不持久化
+                components::button(ui, id + ".token.reveal")
+                    .position(w - 28.0f - btnW - 12.0f - eyeW, 120.0f)
+                    .size(eyeW, 40.0f)
+                    .icon(proxyTokenRevealed_ ? 0xF070 : 0xF06E)  // eye-slash / eye
+                    .iconColor(proxyTokenRevealed_ ? t.colors.primary
+                                                   : t.colors.textSecondary)
+                    .fontSize(fs(14.0f))
+                    .colors(t.colors.surfaceElevated, t.colors.hover,
+                            t.colors.active)
+                    .textColor(t.colors.textSecondary)
+                    .radius(t.sizes.radiusSmall)
+                    .border(1.0f, t.colors.borderDefault)
+                    .disabled(!running)
+                    .onClick([this] { proxyTokenRevealed_ = !proxyTokenRevealed_; })
                     .build();
 
                 // 未运行时置灰（token 随 startProxy 生成，无「预生成」概念；
@@ -1324,6 +1354,9 @@ private:
     // 代理端口输入草稿（审计 [14]）：空 = 未编辑，compose 显示 cfg_.proxyPort；
     // applyProxyPort 成功后由 persist 侧刷新（下次进页恢复显示配置值）
     std::string proxyPortDraft_;
+    // 代理 token 显形开关（审计 [16]）：仅 UI 内存态，**不写 config.json**，
+    // onPageEnter 复位——截屏验收时默认为掩码形态
+    bool proxyTokenRevealed_ = false;
     float cardsScrollOffset_ = 0.0f;      // 卡片区 scrollView 滚动位置
     std::string statusMessage_;
     bool statusIsError_ = false;

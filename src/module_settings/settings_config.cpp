@@ -68,6 +68,14 @@ bool parseProxyPortInput(const std::string& text, int& out) {
     return true;
 }
 
+std::string maskProxyToken(const std::string& token) {
+    if (token.empty()) return {};
+    // 短 token（<8 位）整体遮蔽：前后缀会暴露大半内容，且固定 "****"
+    // 不泄露真实长度（32 hex 的常规代理 token 恒走下面的前后缀分支）
+    if (token.size() < 8) return "****";
+    return token.substr(0, 4) + "***" + token.substr(token.size() - 4);
+}
+
 SettingsStore::SettingsStore(std::filesystem::path file)
     : file_(std::move(file)) {}
 
