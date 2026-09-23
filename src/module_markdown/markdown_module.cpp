@@ -1300,7 +1300,7 @@ private:
                     .fontSize(t.sizes.fontSizeBody)
                     .theme(componentTheme)
                     .onChange([this](const std::string& v) { newNoteName_ = v; })
-                    .onEnter([this] { commitNewNote(); })
+                    .onEnter([this, &ui] { commitNewNote(ui); })
                     .build();
 
                 components::button(ui, "md.dialog.new.cancel")
@@ -1323,7 +1323,7 @@ private:
                     .theme(componentTheme, true)
                     .textColor(t.colors.onPrimary)
                     .radius(t.sizes.radius)
-                    .onClick([this] { commitNewNote(); })
+                    .onClick([this, &ui] { commitNewNote(ui); })
                     .build();
             })
             .build();
@@ -1871,7 +1871,7 @@ private:
         lastKnownMtime_ = m.isOk() ? m.value() : -1;
     }
 
-    void commitNewNote() {
+    void commitNewNote(eui::Ui& ui) {
         std::string name = newNoteName_;
         // 去掉首尾空白
         while (!name.empty() && (name.front() == ' ' || name.front() == '\t')) {
@@ -1880,10 +1880,11 @@ private:
         while (!name.empty() && (name.back() == ' ' || name.back() == '\t')) {
             name.pop_back();
         }
-        if (name.empty()) {
-            status_ = "笔记名不能为空";
-            return;
-        }
+        // ux-design §4 #6「默认名快速创建」（审计 [13][31]）：空名提交 = 建
+        // 「无标题笔记」撞名自动编号，而非报错——显式命名撞名保持原语义
+        // （已存在 → 直接打开）
+        const bool defaultedName = name.empty();
+        if (defaultedName) name = "无标题笔记";
         if (!service_) return;
 
         // W8 路径安全校验（目录树依赖 relativePath 落在 notesDir 内；
@@ -1903,13 +1904,24 @@ private:
             relPath += ".md";
         }
 
-        // 已存在 → 直接打开，不报错
-        if (service_->read(relPath).isOk()) {
+        // 已存在 → 直接打开，不报错（仅显式命名；默认名走「永远新建」编号）
+        if (!defaultedName && service_->read(relPath).isOk()) {
             newNoteOpen_ = false;
             refreshList();
             openNote(relPath);
             status_ = "笔记已存在，已打开 " + relPath;
+            if (currentPath_ == relPath) ui.requestFocus("md.editor.input");
             return;
+        }
+        if (defaultedName) {
+            // 默认名撞名 → 「无标题笔记 N.md」自动编号（fileMtime 失败 = 不存在）
+            for (int i = 2; service_->fileMtime(relPath).isOk(); ++i) {
+                if (i > 999) {
+                    status_ = "新建失败：同名无标题笔记过多";
+                    return;
+                }
+                relPath = "无标题笔记 " + std::to_string(i) + ".md";
+            }
         }
 
         auto r = service_->create(relPath);
@@ -1922,6 +1934,10 @@ private:
         refreshList();
         openNote(relPath);
         status_ = "已创建 " + relPath;
+        // 「新建后自动 focus 编辑器」（ux-design §4 #6，审计 [13][31]）：
+        // EUI-NEO Ui::requestFocus 为上游小增量（Runtime 帧末消费），回车即
+        // 可打字；openNote 守卫失败（未保存改动阻塞切换）时不聚焦
+        if (currentPath_ == relPath) ui.requestFocus("md.editor.input");
         LOG_INFO("新建笔记: " + relPath);
     }
 

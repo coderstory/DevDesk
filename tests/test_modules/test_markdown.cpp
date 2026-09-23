@@ -1069,3 +1069,50 @@ REGISTER_TEST(md_module_rename_note_ui, "markdown_module: 右键→重命名→�
     mod->onStop();
     return true;
 })
+
+// ---- 2f. 新建笔记即时性（审计 [13][31]）：默认名快速创建 + 编辑器聚焦接线 ----
+
+REGISTER_TEST(md_module_default_name_create, "markdown_module: 空名提交=「无标题笔记」秒建+撞名编号，编辑器随开（headless）", {
+    MdUiEnv env("defname");
+    DOCTEST_REQUIRE(env.db != nullptr);
+
+    std::unique_ptr<::core::Module> mod(create_markdown_module());
+    mod->onStart();
+
+    eui::Screen screen;
+    screen.width = 1600.0f;
+    screen.height = 1000.0f;
+    eui::Ui ui;
+    auto frame = [&](const char* page) {
+        ui.begin(page);
+        mod->compose(ui, screen);
+        ui.end();
+    };
+
+    // 弹窗直接回车/确认（不输入名字）→ 旧行为是「笔记名不能为空」拒办，
+    // 现在建「无标题笔记.md」并打开（commitNewNote 成功后经
+    // Ui::requestFocus 聚焦编辑器——headless 无 Runtime 消费端，聚焦行为
+    // 由上游单测/人工冒烟覆盖，这里断言到「已打开」为止）
+    frame("dn1");
+    auto* newBtn = ui.find("md.tree.new.bg");
+    DOCTEST_REQUIRE(newBtn != nullptr && newBtn->onClick != nullptr);
+    newBtn->onClick();
+    frame("dn2");
+    auto* confirm = ui.find("md.dialog.new.confirm.bg");
+    DOCTEST_REQUIRE(confirm != nullptr && confirm->onClick != nullptr);
+    confirm->onClick();
+    DOCTEST_CHECK(fs::exists(env.dir / "无标题笔记.md"));
+    frame("dn3");
+    DOCTEST_CHECK(ui.find("md.editor.hint") == nullptr);  // 编辑器已打开这篇
+
+    // 再建一篇：默认名撞名自动编号，不覆盖第一篇
+    ui.find("md.tree.new.bg")->onClick();
+    frame("dn4");
+    ui.find("md.dialog.new.confirm.bg")->onClick();
+    DOCTEST_CHECK(fs::exists(env.dir / "无标题笔记 2.md"));
+    frame("dn5");
+    DOCTEST_CHECK(fs::exists(env.dir / "无标题笔记.md"));  // 第一篇原样
+
+    mod->onStop();
+    return true;
+})
