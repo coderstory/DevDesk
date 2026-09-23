@@ -20,6 +20,7 @@
 #include <eui/dsl.h>
 
 #include <chrono>
+#include <cstdlib>
 #include <ctime>
 #include <filesystem>
 #include <fstream>
@@ -77,6 +78,19 @@ struct TestEnv {
 void cleanupKey(int64_t profileId) {
     platform::keychain::deleteSecret(
         kTestKeychainService, "claude:" + std::to_string(profileId));
+}
+
+// 环境变量设置（Windows 用 _putenv_s，空串清除；与 test_settings 同款）
+void setEnvVar(const char* name, const std::string& value) {
+#if defined(_WIN32)
+    ::_putenv_s(name, value.c_str());
+#else
+    if (value.empty()) {
+        ::unsetenv(name);
+    } else {
+        ::setenv(name, value.c_str(), 1);
+    }
+#endif
 }
 
 // RAII 临时目录（「导入当前配置」测试：临时 settings.json / sidecar 注入，
@@ -1237,5 +1251,131 @@ REGISTER_TEST(claude_module_form_esc_cancels,
     DOCTEST_CHECK_EQ(profileCount(), 0u);
 
     mod->onStop();
+    return true;
+})
+
+// ---- 产品审计 [22]：Claude 页级快捷键 Ctrl+N / Ctrl+S / Ctrl+Enter（headless）----
+// 通道 = Module::onKeyEvent（模拟 app 级 onKeyEvent → Router 派发到当前页
+// 模块，与 todo_ui_keyboard_move 同款直调）。Ctrl+Enter 段把 APPDATA 重定向
+// 到临时目录：doToggleProxy 成功路径会写 proxy_token.txt 到 appDataDir()
+//（%APPDATA%/DevDesk），不能污染真实用户目录；端口用冷门 28888 避让冲突。
+REGISTER_TEST(claude_module_keyboard_shortcuts,
+              "claude: Ctrl+N 新建 / Ctrl+S 保存表单 / Ctrl+Enter 启停代理（审计 [22]）", {
+    TestEnv env;
+    std::unique_ptr<::core::Module> mod(create_claude_module());
+    eui::Screen screen;
+    screen.width = 1600.0f;
+    screen.height = 1000.0f;
+
+    auto compose = [&](eui::Ui& ui, const char* page) {
+        ui.begin(page);
+        mod->compose(ui, screen);
+        ui.end();
+    };
+    auto ctrlPress = [](eui::InputKey k) {
+        eui::KeyEvent e;
+        e.key = k;
+        e.action = eui::KeyAction::Press;
+        e.modifiers.control = true;
+        return e;
+    };
+    auto type = [](eui::Ui& ui, const std::string& nodeId,
+                   const std::string& text) {
+        const auto* n = ui.find(nodeId);
+        if (n == nullptr || n->onTextInput == nullptr) {
+            return;
+        }
+        core::TextInputEvent ev;
+        ev.text = text;
+        n->onTextInput(ev);
+    };
+
+    // 1) Ctrl+N 打开新建表单（dialog 子节点常驻构建树，开合用 panel opacity 判定）
+    DOCTEST_CHECK(mod->onKeyEvent(ctrlPress(eui::InputKey::N)));
+    {
+        eui::Ui ui;
+        compose(ui, "ks1");
+        const auto* panel = ui.find("claude.dialog.form.panel");
+        DOCTEST_REQUIRE(panel != nullptr);
+        DOCTEST_CHECK_EQ(panel->opacity, 1.0f);
+        DOCTEST_CHECK(ui.find("claude.dialog.form.name.hit") != nullptr);
+        type(ui, "claude.dialog.form.name.hit", "快捷键建档");
+    }
+    // 2) 表单开着再按 Ctrl+N → 不消费（不得重置填写中的草稿）；
+    //    Ctrl+Enter 表单开着 → 不消费（不得打字中途启停代理）
+    DOCTEST_CHECK(!mod->onKeyEvent(ctrlPress(eui::InputKey::N)));
+    DOCTEST_CHECK(!mod->onKeyEvent(ctrlPress(eui::InputKey::Enter)));
+    DOCTEST_CHECK(!env.svc->isProxyRunning());
+    {
+        eui::Ui ui;
+        compose(ui, "ks2");
+        const auto* name = ui.find("claude.dialog.form.name.text");
+        DOCTEST_REQUIRE(name != nullptr);
+        DOCTEST_CHECK_EQ(name->text, std::string("快捷键建档"));
+        type(ui, "claude.dialog.form.url.hit", "https://kbd.example.com");
+        type(ui, "claude.dialog.form.key.hit", "sk-ant-kbd-00001");
+    }
+    // 3) Ctrl+S = 点「保存/创建」按钮：建档落库、表单关闭
+    DOCTEST_CHECK(mod->onKeyEvent(ctrlPress(eui::InputKey::S)));
+    auto listed = env.svc->listProfiles();
+    DOCTEST_REQUIRE(listed.isOk());
+    DOCTEST_CHECK_EQ(listed.value().size(), 1u);
+    DOCTEST_CHECK_EQ(listed.value()[0].name, std::string("快捷键建档"));
+    const int64_t pid = listed.value()[0].id;
+    {
+        eui::Ui ui;
+        compose(ui, "ks3");
+        const auto* panel = ui.find("claude.dialog.form.panel");
+        DOCTEST_REQUIRE(panel != nullptr);
+        DOCTEST_CHECK_EQ(panel->opacity, 0.0f);   // 提交成功后表单关闭
+    }
+    // 4) 表单外 Ctrl+S（无保存对象）、未注册组合、裸键、Alt 修饰、Release
+    //    全部不消费，且不得开表单
+    DOCTEST_CHECK(!mod->onKeyEvent(ctrlPress(eui::InputKey::S)));
+    DOCTEST_CHECK(!mod->onKeyEvent(ctrlPress(eui::InputKey::X)));
+    {
+        eui::KeyEvent plain;
+        plain.key = eui::InputKey::N;
+        plain.action = eui::KeyAction::Press;
+        DOCTEST_CHECK(!mod->onKeyEvent(plain));
+        eui::KeyEvent withAlt = ctrlPress(eui::InputKey::N);
+        withAlt.modifiers.alt = true;
+        DOCTEST_CHECK(!mod->onKeyEvent(withAlt));
+        eui::KeyEvent release = ctrlPress(eui::InputKey::N);
+        release.action = eui::KeyAction::Release;
+        DOCTEST_CHECK(!mod->onKeyEvent(release));
+    }
+    {
+        eui::Ui ui;
+        compose(ui, "ks4");
+        const auto* panel = ui.find("claude.dialog.form.panel");
+        DOCTEST_REQUIRE(panel != nullptr);
+        DOCTEST_CHECK_EQ(panel->opacity, 0.0f);   // 上述不消费按键不得重开表单
+    }
+
+    // 5) Ctrl+Enter 启停：无弹窗开着 → 按一次启动（端口 = configuredProxyPort）、
+    //    再按一次停止；token 文件写进重定向后的临时 APPDATA
+    const std::filesystem::path tmpData =
+        std::filesystem::temp_directory_path() /
+        "devdesk_test_claude_ctrlenter_appdata";
+    std::error_code ec;
+    std::filesystem::remove_all(tmpData, ec);
+    std::filesystem::create_directories(tmpData / "DevDesk", ec);
+    std::string savedAppdata;
+    if (const char* a = std::getenv("APPDATA")) {
+        savedAppdata = a;
+    }
+    setEnvVar("APPDATA", tmpData.string());
+    env.svc->setConfiguredProxyPort(28888);
+    DOCTEST_CHECK(mod->onKeyEvent(ctrlPress(eui::InputKey::Enter)));
+    DOCTEST_CHECK(env.svc->isProxyRunning());
+    DOCTEST_CHECK_EQ(env.svc->proxyPort(), 28888);
+    DOCTEST_CHECK(std::filesystem::exists(tmpData / "DevDesk" / "proxy_token.txt"));
+    DOCTEST_CHECK(mod->onKeyEvent(ctrlPress(eui::InputKey::Enter)));
+    DOCTEST_CHECK(!env.svc->isProxyRunning());
+    setEnvVar("APPDATA", savedAppdata);
+
+    mod->onStop();
+    cleanupKey(pid);
     return true;
 })
