@@ -332,6 +332,8 @@ REGISTER_TEST(pet_start_window_request, "pet: 开窗请求逐字段断言（无�
     DOCTEST_CHECK(!req.resizable);
     DOCTEST_CHECK(!req.focusOnShow);          // 不抢焦点
     DOCTEST_CHECK(req.hideFromTaskbar);       // 不进任务栏/Alt+Tab
+    DOCTEST_CHECK(req.transparentFramebuffer);  // 逐像素透明（黑底修复：不随
+                                                // 全局窗口效果档位回落 None）
     DOCTEST_CHECK(!req.mousePassthrough);     // 默认不穿透
     DOCTEST_CHECK(!req.followClearColorOverride);  // 全透底不被主题广播冲掉
     DOCTEST_CHECK(req.clearColor.a == 0.0f);  // 全透

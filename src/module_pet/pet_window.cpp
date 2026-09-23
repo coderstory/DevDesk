@@ -391,6 +391,9 @@ void startPetWindow(const PetWindowConfig& config) {
                         .resizable(false)
                         .focusOnShow(false)            // 显示不抢焦点
                         .hideFromTaskbar(true)         // 不进任务栏/Alt+Tab
+                        .transparentFramebuffer(true)  // sprite 窗逐像素透明
+                                                       //（黑底修复：不随全局
+                                                       // 窗口效果档位回落）
                         .clickThrough(config.clickThrough)  // 挂机穿透（持久化恢复）
                         .ignoreClearColorOverride()    // 全透底不被主题广播冲掉
                         .clearColor({0.0f, 0.0f, 0.0f, 0.0f})
