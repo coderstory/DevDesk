@@ -93,7 +93,9 @@ void drawFileTreeItem(eui::Ui& ui,
         .content([&] {
             ui.rect(id + ".row")
                 .size(width, 32.0f)
-                .color(active ? t.colors.primarySoftBg : t.colors.surface)
+                // 行底 = 所在结构性面板底（background），非卡片白——hover/
+                // active 才显色（主题层级：页面结构 vs 浮动卡片）
+                .color(active ? t.colors.primarySoftBg : t.colors.background)
                 .hoverColor(t.colors.hover)
                 .onClick(std::move(onClick))
                 .build();
@@ -406,7 +408,9 @@ private:
         ui.stack("md.tree").size(sideW, bodyH).content([&] {
             ui.rect("md.tree.bg")
                 .size(sideW, bodyH)
-                .color(t.colors.surface)
+                // 左栏树面板是页面结构（非浮动卡片）→ background（米色/暖墨），
+                // 不用卡片白（用户反馈浅色下一堆组件白得刺眼的同一根因）
+                .color(t.colors.background)
                 .radius(t.sizes.radiusLarge)
                 .border(1.0f, t.colors.borderDefault)
                 .build();
@@ -657,7 +661,8 @@ private:
                             .content([&] {
                                 inner.rect(id + ".row")
                                     .size(w, 32.0f)
-                                    .color(t.colors.surface)
+                                    // 同文件行：行底 = 面板底（background）
+                                    .color(t.colors.background)
                                     .hoverColor(t.colors.hover)
                                     .onClick([this, dir = r.relPath] {
                                         if (collapsedDirs_.count(dir) != 0) {
@@ -728,7 +733,8 @@ private:
             .content([&] {
                 ui.rect("md.outline.panel.bg")
                     .size(panelW, panelH)
-                    .color(t.colors.surface)
+                    // zIndex 浮层（浮在编辑/预览区上方）→ surfaceElevated 浮层语义
+                    .color(t.colors.surfaceElevated)
                     .radius(t.sizes.radiusLarge)
                     .border(1.0f, t.colors.borderDefault)
                     .build();
@@ -799,8 +805,9 @@ private:
                                 .content([&] {
                                     inner.rect(id + ".row")
                                         .size(rowW, 30.0f)
+                                        // 行底 = 浮层面板底（surfaceElevated）
                                         .color(current ? t.colors.primarySoftBg
-                                                       : t.colors.surface)
+                                                       : t.colors.surfaceElevated)
                                         .hoverColor(t.colors.hover)
                                         .onClick([this, i, &ui, componentTheme] {
                                             jumpToHeading(ui, i, componentTheme);
@@ -840,7 +847,9 @@ private:
         ui.stack("md.editor").size(midW, bodyH).content([&] {
             ui.rect("md.editor.bg")
                 .size(midW, bodyH)
-                .color(t.colors.surface)
+                // 编辑区面板是页面结构 → background（spec §6.5 层级：结构性
+                // 面板不浮起，卡片白只给浮动元素）
+                .color(t.colors.background)
                 .radius(t.sizes.radiusLarge)
                 .border(1.0f, t.colors.borderDefault)
                 .build();
@@ -1062,7 +1071,8 @@ private:
         ui.rect("md.status.bg")
             .position(x, y)
             .size(w, 22.0f)
-            .color(t.colors.surface)
+            // 工具条底 = 编辑面板底（background），随面板融为一块
+            .color(t.colors.background)
             .build();
 
         std::string left = "未选择笔记";
@@ -1125,7 +1135,8 @@ private:
         ui.stack("md.preview").size(midW, bodyH).content([&] {
             ui.rect("md.preview.bg")
                 .size(midW, bodyH)
-                .color(t.colors.surface)
+                // 预览列同编辑列：结构性面板 → background（阅读底与页面同层）
+                .color(t.colors.background)
                 .radius(t.sizes.radiusLarge)
                 .border(1.0f, t.colors.borderDefault)
                 .build();
