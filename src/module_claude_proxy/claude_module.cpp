@@ -399,13 +399,51 @@ public:
                                         .color(t.colors.textTertiary)
                                         .build();
                                 } else {
-                                    for (size_t i = 0; i < profiles.size(); ++i) {
-                                        drawProfileCard(ui,
-                                                        "claude.profile." + std::to_string(i),
-                                                        cardY0 + static_cast<float>(i) *
-                                                            (96.0f + cardGap),
-                                                        leftW - 24.0f, t, profiles[i]);
+                                    // 卡片列表套 scrollView（产品审计 2026-09-23
+                                    // [26]）：此前固定 y=56+i*108 平铺，profile 数
+                                    // 一多就画出左栏边界、叠在底部按钮上且无法滚
+                                    // 动。仿 Todo 列内滚动 / settings 卡片区。
+                                    // 滚动区底 = 底部按钮（bodyH-64）上方 12px
+                                    const float scrollH = std::max(
+                                        0.0f, bodyH - 64.0f - 12.0f - cardY0);
+                                    // contentKey = profile id 序列 hash（仿 md.tree，
+                                    // W7 教训：数量相同但内容替换也要失效重测）
+                                    size_t listKey = 0;
+                                    for (const auto& p : profiles) {
+                                        listKey = listKey * 1315423911u +
+                                                  static_cast<size_t>(p.id);
                                     }
+                                    components::scrollView(ui, "claude.profiles.scroll")
+                                        .position(0.0f, cardY0)
+                                        .size(leftW - 24.0f, scrollH)
+                                        .gap(cardGap)
+                                        .step(96.0f + cardGap)
+                                        .theme(themeTokens)
+                                        .contentKey("claude.profiles.scroll." +
+                                                    std::to_string(listKey))
+                                        .offset(profilesScrollOffset_)
+                                        .onChange([this](float v) {
+                                            profilesScrollOffset_ = v;
+                                        })
+                                        .content([&](eui::Ui& inner, float contentWidth,
+                                                     float viewportHeight) {
+                                            (void)viewportHeight;
+                                            for (size_t i = 0; i < profiles.size(); ++i) {
+                                                const std::string cardId =
+                                                    "claude.profile." + std::to_string(i);
+                                                // 行包 stack（position 只在 stack 内
+                                                // 生效，仿 todo 列卡片）
+                                                inner.stack(cardId + ".wrap")
+                                                    .size(contentWidth, 96.0f)
+                                                    .content([&] {
+                                                        drawProfileCard(
+                                                            inner, cardId, 0.0f,
+                                                            contentWidth, t, profiles[i]);
+                                                    })
+                                                    .build();
+                                            }
+                                        })
+                                        .build();
                                 }
 
                                 // 底部按钮：新建 + 导入当前配置（读
@@ -2181,6 +2219,9 @@ private:
     int callsPage_ = 0;              // 当前页（0-based）
     int callsTotalMatches_ = 0;      // 满足过滤的总条数（countCalls）
     float callsScrollOffset_ = 0.0f; // 列表区滚动位置（翻页时归零）
+
+    // Profile 列表滚动位置（审计 [26]：卡片超界可滚，不再压底部按钮）
+    float profilesScrollOffset_ = 0.0f;
 
     // Toast
     bool toastOpen_ = false;

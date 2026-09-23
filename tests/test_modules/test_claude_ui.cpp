@@ -1086,3 +1086,64 @@ REGISTER_TEST(claude_module_calls_dialog,
     cleanupKey(pid);
     return true;
 })
+
+// ---- 10. Profile 列表 scrollView（产品审计 2026-09-23 [26]） ----
+// 此前卡片固定 y=56+i*108 平铺：8 个 profile 时第 7 张起画出左栏、叠底部按钮，
+// 最小窗口高度 720 下第 4 张即溢出。现在整列表进 scrollView，超界可滚、全可达
+REGISTER_TEST(claude_profiles_scrollview,
+              "claude_module: Profile 列表超长可滚动不压按钮（headless）", {
+    TestEnv env;
+    std::vector<int64_t> ids;
+    for (int i = 0; i < 8; ++i) {
+        auto p = env.svc->createProfile("站" + std::to_string(i),
+                                        "https://p" + std::to_string(i) + ".example.com",
+                                        "sk-ant-scroll-0" + std::to_string(i), "m");
+        DOCTEST_REQUIRE(p.isOk());
+        ids.push_back(p.value().id);
+    }
+
+    std::unique_ptr<::core::Module> mod(create_claude_module());
+    auto composeAt = [&](eui::Ui& ui, float h) {
+        eui::Screen screen;
+        screen.width = 1600.0f;
+        screen.height = h;
+        ui.begin("claude_scroll");
+        mod->compose(ui, screen);
+        ui.end();
+    };
+
+    // 默认高度 1000：scrollView 存在，8 张卡全在滚动内容区，底部按钮照常
+    {
+        eui::Ui ui;
+        composeAt(ui, 1000.0f);
+        DOCTEST_CHECK(ui.find("claude.profiles.scroll") != nullptr);
+        DOCTEST_CHECK(ui.find("claude.profile.0.wrap") != nullptr);
+        DOCTEST_CHECK(ui.find("claude.profile.7.wrap") != nullptr);
+        const auto* name7 = ui.find("claude.profile.7.name");
+        DOCTEST_REQUIRE(name7 != nullptr);
+        DOCTEST_CHECK_EQ(name7->text, std::string("站7"));
+        DOCTEST_CHECK(ui.find("claude.profiles.new") != nullptr);
+        DOCTEST_CHECK(ui.find("claude.profiles.import") != nullptr);
+    }
+    // 最小高度 720：末卡仍在树里且可点选（详情面板跟随第 8 个 profile）
+    {
+        eui::Ui ui;
+        composeAt(ui, 720.0f);
+        DOCTEST_CHECK(ui.find("claude.profiles.scroll") != nullptr);
+        const auto* node = ui.find("claude.profile.7.bg");
+        DOCTEST_REQUIRE(node != nullptr);
+        DOCTEST_REQUIRE(node->onClick != nullptr);
+        node->onClick();
+    }
+    {
+        eui::Ui ui;
+        composeAt(ui, 720.0f);
+        const auto* nameV = ui.find("claude.field.name.value");
+        DOCTEST_REQUIRE(nameV != nullptr);
+        DOCTEST_CHECK_EQ(nameV->text, std::string("站7"));
+    }
+
+    mod->onStop();
+    for (size_t i = 0; i < ids.size(); ++i) cleanupKey(ids[i]);
+    return true;
+})
