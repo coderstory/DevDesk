@@ -87,6 +87,34 @@ bool resolveThemeDark(const std::string& themeMode, bool systemPrefersDark) {
     return systemPrefersDark;
 }
 
+// ---- 关于卡文案（spec 缩水 C）。宏缺失回退（手工编译/其他 target）----
+#ifndef DEVDESK_VERSION
+#define DEVDESK_VERSION "dev"
+#endif
+#ifndef DEVDESK_BUILD_TYPE
+#define DEVDESK_BUILD_TYPE "?"
+#endif
+#ifndef DEVDESK_EUI_NEO_REV
+#define DEVDESK_EUI_NEO_REV "unknown"
+#endif
+#ifndef DEVDESK_EUI_NEO_MIN_REV
+#define DEVDESK_EUI_NEO_MIN_REV "?"
+#endif
+
+std::string aboutVersionLine() {
+    // 版本号 = 顶层 CMake project(VERSION)；构建类型 + 编译时间戳
+    //（__DATE__/__TIME__ 为本 TU 编译时刻，Debug 增量构建后随之刷新）
+    return std::string("DevDesk ") + DEVDESK_VERSION + " · " +
+           DEVDESK_BUILD_TYPE + " · 构建 " __DATE__ " " __TIME__;
+}
+
+std::string aboutEuiNeoLine() {
+    // EUI-NEO 以同级源码集成（非 submodule），rev 取 configure 期
+    // git rev-parse（顶层 CMakeLists「EUI-NEO 版本诊断」同一变量）
+    return std::string("EUI-NEO rev ") + DEVDESK_EUI_NEO_REV +
+           "（最低依赖 rev " + DEVDESK_EUI_NEO_MIN_REV + "）";
+}
+
 SettingsStore::SettingsStore(std::filesystem::path file)
     : file_(std::move(file)) {}
 

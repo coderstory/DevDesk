@@ -144,6 +144,13 @@ std::string maskProxyToken(const std::string& token);
 // 未知 mode 按 auto 语义处理（sanitized 保证正常路径只会是三档之一）
 bool resolveThemeDark(const std::string& themeMode, bool systemPrefersDark);
 
+// ---- 关于卡文案（spec §8.5，spec 缩水 C；纯函数供单测）----
+// 版本/构建信息来自 CMake 注入宏（module_settings 的
+// target_compile_definitions），宏缺失（如手工编译）回退 "dev"/"unknown"。
+// 行内已含前缀标签，单测断言包含 "DevDesk"/"EUI-NEO" 即可
+std::string aboutVersionLine();
+std::string aboutEuiNeoLine();
+
 // ---- 窗口效果档位 → 参数映射（纯函数，供单测）----
 
 // 档位 → clearColor alpha：off=1.0（实色）/ translucent≈0.85 / frosted≈0.55

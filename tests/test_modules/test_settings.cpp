@@ -1449,3 +1449,49 @@ REGISTER_TEST(settings_editor_font_dropdown_applies_channel,
     ::core::theme::setEditorFontSize(15.0f);  // 恢复通道默认
     return true;
 })
+
+// ---- spec 缩水 C：关于卡（版本 / EUI-NEO rev / 构建信息，CMake 注入宏）----
+
+REGISTER_TEST(settings_about_card_renders,
+              "settings: 关于卡渲染版本与 EUI-NEO 行（spec缩水 C headless）", {
+    std::unique_ptr<::core::Module> mod(create_settings_module());
+    mod->onStart();
+    eui::Screen screen;
+    screen.width = 1600.0f;
+    screen.height = 1000.0f;
+    eui::Ui ui;
+    ui.begin("aboutc");
+    mod->compose(ui, screen);
+    ui.end();
+
+    DOCTEST_CHECK(ui.find("settings.card.about.bg") != nullptr);
+    const auto* version = ui.find("settings.card.about.version");
+    const auto* euiLine = ui.find("settings.card.about.eui");
+    const auto* cfgLine = ui.find("settings.card.about.config");
+    DOCTEST_REQUIRE(version != nullptr);
+    DOCTEST_REQUIRE(euiLine != nullptr);
+    DOCTEST_REQUIRE(cfgLine != nullptr);
+    DOCTEST_CHECK(version->text.find("DevDesk") != std::string::npos);
+    // CMake 注入的 project VERSION（0.1.0）出现在版本行
+    DOCTEST_CHECK(version->text.find("0.1.") != std::string::npos);
+    DOCTEST_CHECK(version->text.find("构建") != std::string::npos);
+    DOCTEST_CHECK(euiLine->text.find("EUI-NEO") != std::string::npos);
+    DOCTEST_CHECK(cfgLine->text.find("config.json") != std::string::npos);
+
+    mod->onStop();
+    ::core::theme::setDark();
+    return true;
+})
+
+REGISTER_TEST(settings_about_text_helpers,
+              "settings: aboutVersionLine/aboutEuiNeoLine 纯函数（spec缩水 C）", {
+    const std::string v = module::settings::aboutVersionLine();
+    DOCTEST_CHECK(v.find("DevDesk 0.1.") != std::string::npos);
+    // 宏缺失回退分支不可能在本 target 命中；有值即可（构建戳/类型非空）
+    DOCTEST_CHECK(v.find("dev") == std::string::npos);  // VERSION 注入生效
+    const std::string e = module::settings::aboutEuiNeoLine();
+    DOCTEST_CHECK(e.find("EUI-NEO rev") != std::string::npos);
+    // 最低依赖 rev 恒打印（顶层 CMake 变量）
+    DOCTEST_CHECK(e.find("最低依赖 rev") != std::string::npos);
+    return true;
+})

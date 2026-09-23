@@ -32,6 +32,8 @@
 //      （markdown/todo/claude_proxy）各一行开关；home/settings 恒启用不
 //      展示开关。开关只写 config.json，**重启生效**（注册是启动期行为）；
 //      对应模块关闭时其专属卡片整卡隐藏（代理卡/目录卡，不显示故障态）
+//   7. 关于卡（spec §8.5「关于」，spec 缩水 C）：DevDesk 版本/构建类型/
+//      构建时间戳 + EUI-NEO rev（CMake 注入宏）+ 配置/日志文件路径，恒显
 //
 // 入口说明：设置入口在 main.cpp 的常驻侧边栏（app.sidebar，spec §2/§6.5.2），
 // 与其他四个模块同列。
@@ -559,6 +561,10 @@ public:
                                     148.0f, t,
                                     cardsTopY + cardY - cardsScrollOffset_,
                                     screen.height);
+                        cardY += 148.0f + gapY;
+                        // 关于卡恒显（不受模块开关门控，自身就是排障信息源）
+                        drawAboutCard(inner, "settings.card.about",
+                                      contentWidth, 150.0f, t);
                     })
                     .build();
             })
@@ -1444,6 +1450,62 @@ private:
                     .text("Markdown 编辑器正文字号；默认 15px（标准）。切换即时生效。")
                     .fontSize(fs(12.0f))
                     .lineHeight(18.0f)
+                    .color(t.colors.textTertiary)
+                    .build();
+            })
+            .build();
+    }
+
+    // ---------- 卡片 6：关于（spec §8.5「关于」卡，spec 缩水 C） ----------
+    // 版本/构建信息（CMake 注入宏，见 settings_config.cpp aboutVersionLine/
+    // aboutEuiNeoLine）+ 配置/日志文件路径（排障入口：路径都在 APPDATA 深处，
+    // 审计 [15] 同款痛点）。纯展示无交互控件 → 无弹层，维持 z0 不影响任何
+    // 兄弟卡的 z 逃逸。GitHub 链接暂未展示（DevDesk 无公开仓库，登记决策项）
+    void drawAboutCard(eui::Ui& ui, const std::string& id, float w, float h,
+                       const core::theme::Tokens& t) {
+        ui.stack(id)
+            .size(w, h)
+            .content([&] {
+                cardFrame(ui, id, w, h, t);
+                ui.text(id + ".title")
+                    .position(28.0f, 16.0f)
+                    .size(w - 56.0f, 22.0f)
+                    .text("关于")
+                    .fontSize(t.sizes.fontSizeLarge)
+                    .lineHeight(22.0f)
+                    .fontWeight(600)
+                    .color(t.colors.textPrimary)
+                    .build();
+                ui.text(id + ".version")
+                    .position(28.0f, 50.0f)
+                    .size(w - 56.0f, 18.0f)
+                    .text(aboutVersionLine())
+                    .fontSize(fs(13.0f))
+                    .lineHeight(18.0f)
+                    .color(t.colors.textSecondary)
+                    .build();
+                ui.text(id + ".eui")
+                    .position(28.0f, 72.0f)
+                    .size(w - 56.0f, 18.0f)
+                    .text(aboutEuiNeoLine())
+                    .fontSize(fs(13.0f))
+                    .lineHeight(18.0f)
+                    .color(t.colors.textSecondary)
+                    .build();
+                ui.text(id + ".config")
+                    .position(28.0f, 98.0f)
+                    .size(w - 56.0f, 16.0f)
+                    .text("配置文件: " + ::core::paths::configFile().string())
+                    .fontSize(fs(12.0f))
+                    .lineHeight(16.0f)
+                    .color(t.colors.textTertiary)
+                    .build();
+                ui.text(id + ".logfile")
+                    .position(28.0f, 118.0f)
+                    .size(w - 56.0f, 16.0f)
+                    .text("日志文件: " + ::core::paths::logFile().string())
+                    .fontSize(fs(12.0f))
+                    .lineHeight(16.0f)
                     .color(t.colors.textTertiary)
                     .build();
             })
