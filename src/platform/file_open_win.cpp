@@ -10,6 +10,7 @@
 #include <shellapi.h>
 
 #include <string>
+#include <vector>
 
 namespace platform::file_open {
 
@@ -25,18 +26,27 @@ static std::string wideToUtf8(const wchar_t* wstr, int wlen) {
     return out;
 }
 
+// 测试缝（审计 [17]）：暴露 wideToUtf8 编码链供回归用例直接调用（非 ASCII
+// 往返），与 openFileFromArgv 用的是同一函数，锁的就是真实转换路径。
+std::string wideToUtf8ForTest(const std::wstring& w) {
+    return wideToUtf8(w.data(), static_cast<int>(w.size()));
+}
+
 std::string openFileFromArgv() {
     int argc = 0;
     LPWSTR* argvW = CommandLineToArgvW(GetCommandLineW(), &argc);
     if (argvW == nullptr) return {};
-    std::string result;
-    // argv[0] 是 exe 自身路径；argv[1] 是文件路径（文件关联/命令行启动时传入）
-    if (argc >= 2 && argvW[1] != nullptr && argvW[1][0] != L'\0' &&
-        argvW[1][0] != L'-') {  // 跳过 flag 类参数
-        result = wideToUtf8(argvW[1], lstrlenW(argvW[1]));
+    // 解码 argv[0..1] 为 UTF-8（只这两项够选参数），交共用纯函数选 argv[1]：
+    // 非 ASCII 路径不再经 ANSI 代码页而乱码（旧实现用 MinGW CRT 的 ANSI __argv，
+    // 该限制已在 2026-09-22 升级消除）
+    std::vector<std::string> utf8Args;
+    for (int i = 0; i < argc && i <= 1; ++i) {
+        utf8Args.push_back(argvW[i] != nullptr
+                               ? wideToUtf8(argvW[i], lstrlenW(argvW[i]))
+                               : std::string{});
     }
     LocalFree(argvW);
-    return result;
+    return selectOpenFileArg(utf8Args);
 }
 
 // UTF-8 → UTF-16（openDirectory 用；空串/非法输入返回空 wstring）

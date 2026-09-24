@@ -6,6 +6,7 @@
 
 #include <cstdlib>
 #include <string>
+#include <vector>
 
 // macOS 私有 API：获取进程的 argc/argv 地址
 extern "C" int* _NSGetArgc(void);
@@ -18,14 +19,11 @@ std::string openFileFromArgv() {
     char** argv = *_NSGetArgv();
     if (argc < 2 || argv == nullptr) return {};
 
-    // argv[1] 是文件路径（命令行直接调用二进制时传入）
-    const char* path = argv[1];
-    if (path == nullptr || path[0] == '\0') return {};
-
-    // 跳过 flag 类参数（以 '-' 开头）
-    if (path[0] == '-') return {};
-
-    return std::string(path);
+    // argv[0..1] 交共用纯函数选文件参数（macOS argv 按 UTF-8 处理）
+    std::vector<std::string> utf8Args;
+    utf8Args.push_back(argv[0] != nullptr ? argv[0] : "");
+    utf8Args.push_back(argv[1] != nullptr ? argv[1] : "");
+    return selectOpenFileArg(utf8Args);
 }
 
 // shell 单引号转义（' 拆成 '\''）：路径含空格/引号不破坏命令边界

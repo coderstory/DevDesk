@@ -2,6 +2,7 @@ add_library(devdesk_platform STATIC
     http_client.cpp
     http_server.cpp
     json.cpp
+    file_open_common.cpp
 )
 
 # 平台适配实现按平台选择编译（接口隔离：头文件平台无关，实现 *_win/_macos/_posix，
