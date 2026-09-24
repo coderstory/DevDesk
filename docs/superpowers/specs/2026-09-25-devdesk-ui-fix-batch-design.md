@@ -149,3 +149,53 @@ A → E → G → H → B → F（先清活 bug A/E/G/H，再做 feature B/F）�
 ## 开发方法
 
 subagent-driven-development（每任务 1 实现子代理 + 任务审查；机械 A 单代理批量；模型 A=haiku、E/G/H=sonnet、B/F=sonnet）。TDD 每任务 RED→GREEN。ledger 文件记进度。主工作树、不自动 commit。
+
+---
+
+## 审计裁决与修订（2026-09-25，独立审计后）
+
+独立 skeptic 审计对照源码逐条证伪，原 spec 有多处根因/前提错误。以下裁决**取代**原各任务段的根因与修法，开发以本段为准。
+
+### 全局修订
+- 工作树已 clean（会话改动已提交 c0518cc on `feat/ui-fix-batch-2026-09-25`）。原"大量未提交改动"前提作废。**SDD 允许逐任务 commit**（tree 干净，BASE..HEAD review-package 有 diff）；不开新 worktree，在本分支跑。
+- EUI-NEO 无 CMake 字体打包配置（原 G 前提错）；字体靠 `text.cpp` 运行时找 assets。
+
+### Task A — 修订（可开发）
+- **必加一步**：`ensureDefaultSkin`（pet_skin.cpp:965）内部调 `generatePlaceholderSkin`，且是 pet_window.cpp:599 兜底 + 8 处测试（L265/281/714/727/739/750/894/922）的活路径。**删 generatePlaceholderSkin 前先把它重定向到 `generateRobotSkin`**（保持兜底语义），否则 undeclared identifier 编译断。
+- **删除范围全列**（连私有 helper + 色常量，否则 -Wunused-function + -Werror）：`kClayBody`(143)、`drawCatFrame`(236-265)、`generatePlaceholderSkin`(302-364)、`kDuckBody/kDuckWing/kDuckBeak`(366-368)、`drawDuckFrame`(371-399)、`generateDuckSkin`(401-457)、`kSlimeBody/kSlimeShine`(459-460)、`drawSlimeFrame`(464-492)、`generateSlimeSkin`(494-615)。保留 robot(617-712)/ghost(714-775) 及共用 `Eyes/Mouth/fillRect/drawZ/writeFrame/Canvas/kInk`。
+- **行号订正**：`kDefaultSkinName` 在 `pet_skin.h:27`（非 L66）；L8 头注释同样列 5 款需改。
+- **测试补漏**：`test_pet.cpp:368` `exists(petsRoot/"clay-cat"/"pet.json")` 删注册表后必红，要改；L14 文件头注释；L1313 用符号 `kDefaultSkinName` 无需改（原列入冗余）。
+- **验收订正**：仓库自带 `assets/pets/anime-girl` 真实美术皮肤，被 `discoverSkins()`（pet_skin.cpp:1000-1003）发现 → 桌宠菜单实际列 `robot/ghost/anime-girl`（+本地 tatsu-pet 若有），**不是**"只列 robot/ghost"。
+
+### Task E — 重开（不可盲开发）
+- **根因 REFUTED**：`md.root` 是 `ui.column`（markdown_module.cpp:276），column 流式排布，header 在 body 上方，不叠放；`edY=48` 是 `md.editor` stack（L886）内部坐标，与 header 不同空间。原修法（md.body 加 .position）会被 `layoutColumn`（layout.h:596-611，不读 hasX_/x_/y_）静默忽略=空操作。
+- **需用户取证**：截图或确认"tab"具体指哪个控件（候选：header 的 `md.mode` segmented、编辑器 stack 内标签 chip 行 `md.tags.chip.*`、`drawOutlinePanel` 浮动面板 L283）+ 压的是哪段文本。**未取证不开发**（同 C）。
+
+### Task G — 重开（部分可开发）
+- **panelHeight 不漏算**（REFUTED）：`styledMenuPanelHeight`(L193-199) 遍历全 rows，Separator 按 separatorHeight、GroupHeader 按 rowHeight，已被 test_menu_beautify:182-192 锁。
+- **panelWidth 预算自洽**（绘制盒宽 ≥ textW，测量/渲染权重同 400）——看不出溢出来源。**需真机取证**：在 showStyledMenu 临时打 panelWidth/panelHeight/rows + 实测 label 宽，定位真因。
+- **TDD 前置**：panelWidth 只在 `showStyledMenu` 内部算（L303-312，会 openWindow 开真窗，headless 不可达）。要 TDD 必先把宽度计算提取为导出纯函数 `styledMenuPanelWidth(rows, style)`，再断言 `≥ measureTextWidth + padding`。
+- **字体粗（原机制写错）**：打包默认 UI 字体是 `JingNanJunJunTi-Bold`（text.cpp:37），CJK 字形恒从该 Bold 文件取（fallback 链 L762 首位），与 fontWeight 无关——**全局效应**。需先回答"为什么只有菜单看起来粗"（或主窗口中文其实也粗、用户先注意到菜单）。杠杆：改 fallback 顺序 / DevDesk 调 `TextPrimitive::setDefaultFontFiles()` / 改默认字体。**未取证不开发字体部分**。
+
+### Task H — 修订（可开发，但有上次同源风险）
+- **窗口尺寸定死**：`showStyledMenu` openWindow 时 `.windowSize(...).resizable(false)`（L365-374），`window_backend.h` 无 size setter → hover 展开子行画到窗外（上次"离谱"同因）。**修法必须**：展开 = `requestWindowClose` + 按新 rows 重算 panelHeight/clampPosition 重开；**或**开窗时按全展开预留高度（复用 `petMenuFullHeight` pet_window.cpp:179-186 的"宁高勿叠"语义）。spec 取后者更稳。
+- **GroupHeader 无交互面**（L451 只 Item 挂 hit/onClick，且 onClick=requestDismiss）：要给 GroupHeader 造一条**不 dismiss** 的 hit 路径切展开态。
+- **折叠→selectableCount==0 降级**（L130-138 只数 Item；L291 无可选→return false→降级原生，pet_window.cpp:297）：折叠态必须保证至少 1 可选行，或允许组头可选。
+- **上游向后兼容**：`styledMenuFlatten` 默认行为变"默认折叠"破坏上游 API（EUI-NEO 约定 + DevDesk CLAUDE.md PR 清单要求不破坏）。**改 opt-in**：`StyledMenuItem` 加 `bool collapsedByDefault` 或 flatten 增 `ExpandedSet` 入参，旧签名/旧行为保持。
+- **既有测试 4 条会红**（test_menu_beautify:165/173/178/189-190）：折叠默认化让 rows==6 等断言失败 → 改两态（折叠/展开）重写。
+
+### Task B — 修订（可开发）
+- **TDD 去自相矛盾**：原"点日志 tab→settings.theme.mode 不存在"+"现有各卡 ui.find 仍能找到"互斥。改：`test_settings.cpp:413-421` 现一次 compose 断多卡 → 改 per-tab（先 `selected=2` 切日志 tab，再断言日志卡存在、通用卡不存在）。
+- **真实 id**：`settings.theme.mode` 是臆想，真名 `settings.card.appearance.theme.dd`（settings_module.cpp:748）。
+- **contentKey 纳 tab 索引**（settings_module.cpp:579-582 现 key=代理卡高+C/M/p 显隐）：tab 化后切 tab 沿用上 tab 内容高→滚动错，key 加 `activeTab_`。
+- **日志卡 openUp 游标**（L615-618 传 cardsTopY+cardY-offset，cardY 是 L591-622 硬编码卡高手算游标）：按 tab 过滤卡片后游标序列变，下拉方向会错，需重算。
+- **日志读盘移出 compose**：scrollView content lambda 被 measure/paint 多次调；切日志 tab / 点刷新时读一次存成员变量，compose 只渲染字符串。
+- **日志路径**：直接用 `core::paths::logFile()`（settings_module.cpp:1572 已在用），不在 logging.cpp 加 getter。
+- **补 include** `components/tabs.h`（settings_module.cpp:86-92 现无）。
+
+### Task F — 作废
+- **已实现并已提交**（commit 393770c）：`createFolder`（markdown_service.h:146）、`md.tree.newfolder` 按钮（markdown_module.cpp:597）、`drawNewFolderDialog`（1673）、树文件夹展开/收起（664/687-718）、测试（test_markdown.cpp:615/195/227/256/1443）全在 HEAD。原 spec 前提"只有+新建笔记"为假。**整节作废**。
+- **唯一可能真缺口**：`createFolder(name)` 只建一级目录，二级子目录创建缺失。**待用户确认是否要二级目录创建**；要则另立小任务。
+
+### 修订后可开发顺序
+A、B、H 可立即开发（SDD+TDD）。E、G 待取证（E 需截图/确认控件，G 需真机打日志或字体对照）。F 作废（待用户确认二级目录）。C、D 不变。
