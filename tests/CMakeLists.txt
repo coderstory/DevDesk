@@ -22,6 +22,7 @@ add_executable(devdesk_tests
     test_modules/test_md_file_open.cpp
     test_modules/test_md_keyboard.cpp
     test_modules/test_md_block_model.cpp
+    test_modules/test_md_block_interact.cpp
     test_modules/test_md_preview_highlight.cpp
     test_modules/test_md_sync_map.cpp
     test_modules/test_todo.cpp

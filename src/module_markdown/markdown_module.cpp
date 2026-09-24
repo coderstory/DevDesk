@@ -38,6 +38,7 @@
 #include "core/time.h"
 #include "markdown_service.h"
 #include "md_block_model.h"
+#include "md_block_interact.h"
 #include "md_highlight.h"
 #include "md_keyboard.h"
 #include "md_line_scanner.h"
@@ -53,6 +54,7 @@
 #include <components/dialog.h>
 #include <components/input.h>
 #include <components/markdown.h>
+#include <components/mousearea.h>
 #include <components/scrollview.h>
 #include <components/segmented.h>
 #include <components/switch.h>
@@ -1333,54 +1335,112 @@ private:
                     }
                     // P3-③ 色表注入（每帧）：主题切换时缓存旧色条目自动作废
                     previewCodeCache_.setColors(mdHighlightColors(t));
+                    // P3-⑤ 逐块 hit/hover 几何表：与 ④ 同一张表。Split 态
+                    // computeSyncOffset 已重建（(rev,width,gap,块数) 全等 →
+                    // 本调用零成本）；Preview 态这里是唯一重建点（表本就常驻
+                    // 成员，无额外状态）。
+                    rebuildSyncMap(contentWidth, style);
                     const auto& blocks = blockModel_.blocks();
                     std::vector<int> activeCodeIds;  // 本帧 CodeFence 块，供缓存回收
+                    // hover 高亮底色（token 随浅/深主题，同树行 hover 语义）
+                    const eui::Color hoverTint = t.colors.hover;
                     inner.column("md.preview.blocks")
                         .width(contentWidth)
                         .gap(style.blockGap)
                         .content([&] {
-                            for (const MdBlock& b : blocks) {
-                                // CodeFence 块走 DevDesk 侧自绘：md_highlight 色表
-                                // 产出着色 runs 喂给带 runs 的 text 节点（上游
-                                // markdown 代码块单色且不暴露预解析注入——
-                                // KNOWN_LIMITATIONS #9，本块是唯一不能走上游通路的
-                                // 类型）。未变块命中 (stableId, hash) 缓存零重算。
-                                // 解析不出单围栏（防御）→ 落到下方上游通路兜底。
-                                if (b.kind == MdBlockKind::CodeFence) {
-                                    const MdPreviewCodeHighlight* hl =
-                                        previewCodeCache_.get(b.stableId, b.hash);
-                                    if (!hl) {
-                                        MdPreviewCodeHighlight fresh =
-                                            mdPreviewCodeHighlight(
-                                                blockModel_.text().substr(
-                                                    b.start, b.end - b.start),
-                                                mdHighlightColors(t));
-                                        if (fresh.ok) {
-                                            previewCodeCache_.put(
-                                                b.stableId, b.hash,
-                                                std::move(fresh));
-                                            hl = previewCodeCache_.get(b.stableId,
-                                                                       b.hash);
-                                        }
-                                    }
-                                    if (hl) {
-                                        activeCodeIds.push_back(b.stableId);
-                                        drawPreviewCodeBlock(
-                                            inner,
-                                            "md.preview.code." +
-                                                std::to_string(b.stableId),
-                                            *hl, contentWidth, style);
-                                        continue;
-                                    }
-                                }
-                                components::markdown(
-                                    inner,
-                                    "md.preview.block." + std::to_string(b.stableId))
-                                    .markdown(blockModel_.text().substr(
-                                        b.start, b.end - b.start))
+                            for (size_t k = 0; k < blocks.size(); ++k) {
+                                const MdBlock& b = blocks[k];
+                                const bool hovered = previewHover_.hovered(b.stableId);
+                                const float hk = syncMap_.blockHeight(k);
+                                // ---- P3-⑤ 逐块交互包裹 ----
+                                // 上游 components::markdown 无逐块命中/指针
+                                // 事件（纯展示，link 亦不可点——KNOWN_LIMITATIONS
+                                // #9 补 ⑤），DevDesk 侧给每个块（含上游块，不只
+                                // CodeFence）包一层固定高 stack：hover 底衬垫最
+                                // 下、块内容居中、透明 MouseArea 覆盖层在最上。
+                                // 包裹高 = H_k 取自几何表（④ 同源 = 实际布局，
+                                // 列内累计与旧逐块直挂完全一致 → 内容总高不变、
+                                // 不回归 ②③④）。滚轮路由走 hitTestScrollable
+                                // （只匹配 scrollStateId/onScroll 元素），透明
+                                // mouseArea 不劫持预览滚动。
+                                const std::string wrapId =
+                                    "md.preview.blk." + std::to_string(b.stableId);
+                                inner.stack(wrapId)
                                     .width(contentWidth)
-                                    .wrapContentHeight()
-                                    .style(style)
+                                    .height(hk)
+                                    .content([&] {
+                                        // hover 底衬（上游块文字底透明 → 直接
+                                        // 透出成背景高亮；CodeFence 自带不透明
+                                        // bg 盖在其下 → 走混色参数由块自身呈现）
+                                        inner.rect(wrapId + ".hl")
+                                            .size(contentWidth, hk)
+                                            .radius(style.radius)
+                                            .color(hovered
+                                                       ? hoverTint
+                                                       : eui::Color{0.0f, 0.0f, 0.0f, 0.0f})
+                                            .build();
+                                        bool codeDrawn = false;
+                                        if (b.kind == MdBlockKind::CodeFence) {
+                                            // CodeFence 块走 DevDesk 侧自绘：md_highlight 色表
+                                            // 产出着色 runs 喂给带 runs 的 text 节点（上游
+                                            // markdown 代码块单色且不暴露预解析注入——
+                                            // KNOWN_LIMITATIONS #9，本块是唯一不能走上游通路的
+                                            // 类型）。未变块命中 (stableId, hash) 缓存零重算。
+                                            // 解析不出单围栏（防御）→ 落到下方上游通路兜底。
+                                            const MdPreviewCodeHighlight* hl =
+                                                previewCodeCache_.get(b.stableId, b.hash);
+                                            if (!hl) {
+                                                MdPreviewCodeHighlight fresh =
+                                                    mdPreviewCodeHighlight(
+                                                        blockModel_.text().substr(
+                                                            b.start, b.end - b.start),
+                                                        mdHighlightColors(t));
+                                                if (fresh.ok) {
+                                                    previewCodeCache_.put(
+                                                        b.stableId, b.hash,
+                                                        std::move(fresh));
+                                                    hl = previewCodeCache_.get(b.stableId,
+                                                                               b.hash);
+                                                }
+                                            }
+                                            if (hl) {
+                                                activeCodeIds.push_back(b.stableId);
+                                                drawPreviewCodeBlock(
+                                                    inner,
+                                                    wrapId + ".code",
+                                                    *hl, contentWidth, style,
+                                                    hovered, hoverTint);
+                                                codeDrawn = true;
+                                            }
+                                        }
+                                        if (!codeDrawn) {
+                                            components::markdown(
+                                                inner,
+                                                "md.preview.block." +
+                                                    std::to_string(b.stableId))
+                                                .markdown(blockModel_.text().substr(
+                                                    b.start, b.end - b.start))
+                                                .width(contentWidth)
+                                                .wrapContentHeight()
+                                                .style(style)
+                                                .build();
+                                        }
+                                        // 透明 hit 覆盖层（默认手型光标 = 点击
+                                        // 定位可点性提示；onTap 的 y 为区域局部
+                                        // 坐标，经反查表映射回编辑器行）
+                                        components::mouseArea(inner, wrapId + ".hit")
+                                            .size(contentWidth, hk)
+                                            .onTap([this, &ui, k](
+                                                       const components::MouseEvent& ev) {
+                                                handlePreviewBlockClick(
+                                                    ui, k, static_cast<float>(ev.y));
+                                            })
+                                            .onHover([this, sid = b.stableId](bool h) {
+                                                if (h) previewHover_.enter(sid);
+                                                else previewHover_.leave(sid);
+                                            })
+                                            .build();
+                                    })
                                     .build();
                             }
                         })
@@ -1397,11 +1457,16 @@ private:
     // 高度公式 + wrap）——唯一差异是 text 节点带 md_highlight 色表的着色 runs
     //（上游 styled-runs：颜色只改顶点色不动 layout/测量）。runs 未覆盖段
     //（理论不存在，防御性）兜底 style.codeText 基色 = 旧单色渲染，不回归。
+    // P3-⑤ hover：本块 bg 不透明且垫在 hover 底衬之上（底衬透不出来）→
+    // hovered 时把 codeBackground 混向 hover 色呈现块背景高亮（纯函数
+    // mdHoverMix，与上游块同一观感强度）。
     void drawPreviewCodeBlock(eui::Ui& ui,
                               const std::string& partId,
                               const MdPreviewCodeHighlight& hl,
                               float contentWidth,
-                              const components::MarkdownStyle& style) {
+                              const components::MarkdownStyle& style,
+                              bool hovered,
+                              const eui::Color& hoverTint) {
         const float textWidth =
             std::max(0.0f, contentWidth - style.codePadding * 2.0f);
         const float textHeight = components::detail::estimateMarkdownTextHeight(
@@ -1413,7 +1478,9 @@ private:
             .content([&] {
                 ui.rect(partId + ".bg")
                     .size(contentWidth, blockHeight)
-                    .color(style.codeBackground)
+                    .color(hovered
+                               ? mdHoverMix(style.codeBackground, hoverTint, 0.5f)
+                               : style.codeBackground)
                     .radius(style.radius)
                     .build();
                 ui.text(partId + ".text")
@@ -1482,6 +1549,35 @@ private:
                 return components::MarkdownBuilder::estimateHeight(
                     editorText_.substr(b.start, b.end - b.start), width, style);
             });
+    }
+
+    // P3-⑤ 预览块点击 → 编辑器光标定位 + 聚焦（ux-design §7 Phase 3 ⑤）。
+    // 坐标链路全程与 ④ 同源：本块 hit 区域局部 y → 预览 content y →
+    // editorLineForPreviewY 反查（分段线性函数，块边界行号精确）→ floor +
+    // 块内行区间钳制 → 行首字节（mdResolvePreviewJump 纯函数，单测锁语义）。
+    // 行内列不映射：预览折行/宽度（阅读态 clamp 760）与编辑器布局不同源，
+    // 行首是唯一无歧义落点。cursor 写法照抄 jumpToHeading（不改文本 = 不动
+    // undo 栈；followCaret=true 让编辑器自动滚到光标，双栏态预览随之回稳）。
+    // 仅预览态无编辑器可定位（块本就在预览里可见）→ 忽略点击。
+    void handlePreviewBlockClick(eui::Ui& ui, size_t blockIndex, float localY) {
+        if (mode_ == ViewMode::Preview || editorText_.empty()) return;
+        const MdPreviewJump jump = mdResolvePreviewJump(
+            editorText_, blockModel_.blocks(), syncMap_, blockIndex, localY);
+        if (!jump.ok) return;
+        auto& st =
+            ui.state<components::input_detail::InputModel::InputState>("md.editor.input");
+        st.cursor = static_cast<int>(jump.cursorByte);
+        st.selectionStart = st.cursor;
+        st.selectionEnd = st.cursor;
+        st.dragAnchor = st.cursor;
+        st.hasPreferredCursorX = false;
+        st.followCaret = true;
+        ui.requestFocus("md.editor.input");  // 帧末消费（Runtime 机制，同回车聚焦）
+        LOG_INFO("预览块点击: 块#" + std::to_string(jump.blockIndex) +
+                 " stableId=" + std::to_string(jump.stableId) +
+                 " kind=" +
+                 mdBlockKindName(blockModel_.blocks()[jump.blockIndex].kind) +
+                 " → 编辑器行 " + std::to_string(jump.targetLine + 1));
     }
 
     // ---- 新建笔记弹窗 ----
@@ -1986,6 +2082,7 @@ private:
         editorDirty_ = false;
         outlineDirty_ = true;
         activeOutlineIdx_ = -1;
+        previewHover_.reset();  // P3-⑤：换笔记 = 块身份换代，旧 hover 作废
         tagInput_.clear();  // 终验复审：标签输入框残留上一篇的半截输入
         // 标签行随笔记切换
         if (auto tr = service_->tagsForNote(relPath); tr.isOk()) {
@@ -2647,6 +2744,9 @@ private:
     // blockGap + 块数；块高度按 stableId 备忘，编辑只重测脏块）。取代旧
     // yA/yB 单锚缓存（标题锚 + 换锚即重算）。
     MdSyncMap syncMap_;
+    // P3-⑤：预览逐块 hover 状态（当前 hovered 的 stableId，乱序 leave 保护
+    // 在 MdPreviewHoverState 内）；点击定位的纯数学在 mdResolvePreviewJump。
+    MdPreviewHoverState previewHover_;
     // [39] 状态栏 (行, 列, 码点数) 缓存（键 = 修订 + 光标字节偏移）
     uint64_t statusCacheRev_ = ~0ull;
     size_t statusCacheCursor_ = ~0ull;

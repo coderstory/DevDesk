@@ -61,6 +61,11 @@ public:
     float blockTopY(size_t k) const;
     // 编辑器中块 k 的首行行号（越界返回 0）
     int blockFirstLine(size_t k) const;
+    // 块 k 的预览高度 H_k（P3-⑤：逐块 hit 覆盖层 / hover 包裹的几何来源；
+    // 越界返回 0）
+    float blockHeight(size_t k) const;
+    // 块 k 占编辑器行数（≥1；P3-⑤ 命中行钳制边界；越界返回 0）
+    int blockLineCount(size_t k) const;
 
     // 正向：编辑器行（可为小数——滚动像素 / 行高）→ 预览 y。
     // 行 < 首块首行 → 0；行 > 末块末行 → 末块底部（clamp，滚动到底不越界）。

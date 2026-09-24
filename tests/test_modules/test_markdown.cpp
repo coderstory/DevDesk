@@ -2134,3 +2134,144 @@ REGISTER_TEST(md_module_split_block_anchor_precision,
     mod->onStop();
     return true;
 })
+
+// ---- P3-⑤ 预览块级交互（headless）----
+// 直接驱动 hit 覆盖层元素（MouseArea 注册的 onPress/onRelease/onHoverChanged）
+// 走完整链路：点击 → MdSyncMap 反查 → InputState.cursor 定位；hover →
+// 高亮底衬 / CodeFence bg 混色。tap 语义：传入 bounds 高固定 100，hit 的
+// 局部 y = event.y × (H/100)（makeMouseEvent 缩放还原），fracY∈[0,1] 即块
+// 内顶→底分数位。CodeFence（自绘块）与 Heading（上游 markdown 块）都验证
+// ——⑤ 的覆盖不受上游无 hit API 限制。
+REGISTER_TEST(md_module_split_block_click_hover,
+              "markdown_module: 预览块点击编辑器定位 + hover 高亮（headless，Phase 3 ⑤）", {
+    std::string text = "# T\n\npara one\npara two\n\n```\nfence a\nfence b\nfence c\n```\n\ntail line\n";
+    MdUiEnv env("interact");
+    DOCTEST_REQUIRE(env.db != nullptr);
+    DOCTEST_REQUIRE(writeTextFile(env.dir / "inter.md", text));
+
+    std::unique_ptr<::core::Module> mod(create_markdown_module());
+    mod->onStart();
+    eui::Screen screen;
+    screen.width = 1600.0f;
+    screen.height = 1000.0f;
+    eui::Ui ui;
+    auto frame = [&](void) {
+        ui.begin("pv");
+        mod->compose(ui, screen);
+        ui.end();
+    };
+    frame();
+    const auto* fileRow = ui.find("md.tree.node.1.row");
+    DOCTEST_REQUIRE(fileRow != nullptr);
+    DOCTEST_REQUIRE(fileRow->onClick != nullptr);
+    fileRow->onClick();
+    eui::KeyEvent p;
+    p.key = eui::InputKey::P;
+    p.modifiers.control = true;
+    p.modifiers.shift = true;
+    mod->onKeyEvent(p);  // Editor → Split（④ 同款通道）
+    frame();
+    frame();
+
+    // 块序列同源分块；首帧 update 按序发 stableId = 块下标
+    const auto blocks = module::markdown::segmentMarkdownBlocks(text);
+    DOCTEST_REQUIRE(blocks.size() >= 4);
+    size_t kf = blocks.size();
+    size_t kh = blocks.size();
+    for (size_t k = 0; k < blocks.size(); ++k) {
+        if (blocks[k].kind == module::markdown::MdBlockKind::CodeFence) kf = k;
+        if (blocks[k].kind == module::markdown::MdBlockKind::Heading) kh = k;
+    }
+    DOCTEST_REQUIRE(kf < blocks.size());
+    DOCTEST_REQUIRE(kh < blocks.size());
+
+    auto findHit = [&](size_t idx) {
+        return ui.find("md.preview.blk." + std::to_string(idx) + ".hit");
+    };
+    const auto* fenceHit = findHit(kf);
+    const auto* headHit = findHit(kh);
+    DOCTEST_REQUIRE(fenceHit != nullptr);  // 自绘块有 hit 覆盖层
+    DOCTEST_REQUIRE(headHit != nullptr);   // 上游 markdown 块同样有（不只 CodeFence）
+    DOCTEST_REQUIRE(fenceHit->onPress != nullptr);
+    DOCTEST_REQUIRE(fenceHit->onRelease != nullptr);
+    DOCTEST_REQUIRE(fenceHit->onHoverChanged != nullptr);
+    DOCTEST_REQUIRE(headHit->onPress != nullptr);
+    DOCTEST_REQUIRE(headHit->onRelease != nullptr);
+    DOCTEST_REQUIRE(headHit->onHoverChanged != nullptr);
+
+    using IS = components::input_detail::InputModel::InputState;
+    auto tap = [&](const auto* el, float fracY) {
+        // REGISTER_TEST 宏体：逗号藏进括号（C++20 聚合圆括号初始化）
+        eui::Rect bounds(0.0, 0.0, 100.0, 100.0);
+        eui::PointerEvent down;
+        down.action = eui::PointerAction::Press;
+        down.x = 50.0;
+        down.y = 50.0;
+        eui::PointerEvent up;
+        up.action = eui::PointerAction::Release;
+        up.x = 50.0;
+        up.y = static_cast<double>(100.0f * fracY);
+        el->onPress(down, bounds);
+        el->onRelease(up, bounds);
+    };
+
+    // ① 点击 CodeFence 块顶 → 光标 = 块起始字节（``` 开栏行行首）
+    tap(fenceHit, 0.0f);
+    {
+        const auto& st = ui.state<IS>("md.editor.input");
+        DOCTEST_CHECK_EQ(st.cursor, static_cast<int>(blocks[kf].start));
+        DOCTEST_CHECK_EQ(st.selectionStart, st.cursor);
+        DOCTEST_CHECK_EQ(st.selectionEnd, st.cursor);
+    }
+    // ② 点击 CodeFence 块底（frac=1 反函数落「下一块首行」→ 钳回本块末行）
+    //    → ``` 闭栏行行首；下一帧（followCaret 已滚）光标不被改写
+    const int flNext =
+        module::markdown::byteOffsetToLine(text, blocks[kf + 1].start);
+    const size_t closeByte =
+        module::markdown::lineStartOffset(text, flNext - 1);
+    DOCTEST_REQUIRE(closeByte > blocks[kf].start);
+    tap(fenceHit, 1.0f);
+    DOCTEST_CHECK_EQ(ui.state<IS>("md.editor.input").cursor,
+                     static_cast<int>(closeByte));
+    frame();
+    DOCTEST_CHECK_EQ(ui.state<IS>("md.editor.input").cursor,
+                     static_cast<int>(closeByte));
+
+    // ③ hover：上游 Heading 块底衬 idle 透明 → enter 后 = 主题 hover 色
+    const eui::Color hoverTint = core::theme::current().colors.hover;
+    const std::string hlHead = "md.preview.blk." + std::to_string(kh) + ".hl";
+    frame();
+    DOCTEST_CHECK(ui.find(hlHead)->color.a == 0.0f);
+    findHit(kh)->onHoverChanged(true);
+    frame();
+    {
+        const auto* hl = ui.find(hlHead);
+        DOCTEST_REQUIRE(hl != nullptr);
+        DOCTEST_CHECK(std::fabs(hl->color.r - hoverTint.r) < 1e-6f);
+        DOCTEST_CHECK(std::fabs(hl->color.g - hoverTint.g) < 1e-6f);
+        DOCTEST_CHECK(std::fabs(hl->color.b - hoverTint.b) < 1e-6f);
+    }
+
+    // ④ hover CodeFence 自绘块：bg 混色变深；乱序 leave（另一块迟到）不清
+    //    当前 hover；匹配 leave 后回到 idle 底色
+    const std::string codeBg = "md.preview.blk." + std::to_string(kf) + ".code.bg";
+    frame();
+    const eui::Color bgIdle = ui.find(codeBg)->color;
+    findHit(kf)->onHoverChanged(true);
+    frame();
+    const auto diffBg = [&](void) {
+        const eui::Color c = ui.find(codeBg)->color;
+        return std::fabs(c.r - bgIdle.r) + std::fabs(c.g - bgIdle.g) +
+               std::fabs(c.b - bgIdle.b);
+    };
+    DOCTEST_CHECK(diffBg() > 1e-4f);
+    findHit(kh)->onHoverChanged(false);
+    frame();
+    DOCTEST_CHECK(diffBg() > 1e-4f);  // 迟到 leave 不误擦（enter 覆盖语义）
+    findHit(kf)->onHoverChanged(false);
+    frame();
+    DOCTEST_CHECK(diffBg() < 1e-6f);
+
+    mod->onStop();
+    return true;
+})
