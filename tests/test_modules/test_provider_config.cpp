@@ -17,6 +17,7 @@
 #include "core/migrations.h"
 #include "core/sqlite_db.h"
 #include "platform/keychain.h"
+#include "env_var_hints.h"
 #include "provider_config.h"
 
 #include <filesystem>
@@ -488,14 +489,14 @@ REGISTER_TEST(provider_config_parse_import_bare_env,
 REGISTER_TEST(provider_config_parse_import_rejects,
               "parseImportedEnv: 非法输入整体拒绝（不部分导入）", {
     using module::claude::parseImportedEnv;
-    // 空白 / 非法 JSON / 顶层非对象 / 值非字符串 / 键名非法 / 超键数 / 超长值
+    // 空白 / 非法 JSON / 顶层非对象 / 值非字符串 / 超键数 / 超长值
+    //（键名格式校验 2026-09-24 放开：非标准键名可导入，见下方 loose_keys 用例）
     DOCTEST_CHECK(parseImportedEnv("   \n  ").isFail());
     DOCTEST_CHECK(parseImportedEnv("{ not json").isFail());
     DOCTEST_CHECK(parseImportedEnv("[1,2,3]").isFail());
     DOCTEST_CHECK(parseImportedEnv("{ \"FOO\": 1 }").isFail());          // 数字值
     DOCTEST_CHECK(parseImportedEnv("{ \"FOO\": true }").isFail());       // 布尔值
-    DOCTEST_CHECK(parseImportedEnv("{ \"foo-bar\": \"1\" }").isFail());  // 小写/连字符
-    DOCTEST_CHECK(parseImportedEnv("{ \"1FOO\": \"1\" }").isFail());     // 数字开头
+
     DOCTEST_CHECK(parseImportedEnv(
         "{ \"env\": \"not-an-object\" }").isFail());                     // env 非对象
     // >64 键（65 个）
@@ -536,3 +537,31 @@ REGISTER_TEST(provider_config_parse_import_key_conflict,
     DOCTEST_CHECK(r2.value().warnings.empty());
     return true;
 })
+
+REGISTER_TEST(provider_config_parse_import_loose_keys,
+              "parseImportedEnv: 非标准键名（小写/连字符/数字开头）也导入（2026-09-24 放开）", {
+    using module::claude::parseImportedEnv;
+    auto r = parseImportedEnv("{ \"foo-bar\": \"1\", \"1FOO\": \"2\" }");
+    DOCTEST_REQUIRE(r.isOk());
+    DOCTEST_REQUIRE_EQ(r.value().extraEnv.size(), 2u);
+    DOCTEST_CHECK_EQ(r.value().extraEnv.count("foo-bar"), 1u);
+    DOCTEST_CHECK_EQ(r.value().extraEnv.count("1FOO"), 1u);
+    DOCTEST_CHECK_EQ(r.value().extraEnv.at("foo-bar"), std::string("1"));
+    return true;
+})
+
+REGISTER_TEST(claude_env_var_hints,
+              "envVarHint: 官方清单识别（代表变量）+ 未知返回 null", {
+    using module::claude::envVarHint;
+    DOCTEST_CHECK(envVarHint("ANTHROPIC_BASE_URL") != nullptr);
+    DOCTEST_CHECK(envVarHint("ANTHROPIC_AUTH_TOKEN") != nullptr);
+    DOCTEST_CHECK(envVarHint("CLAUDE_CODE_EFFORT_LEVEL") != nullptr);
+    DOCTEST_CHECK(envVarHint("MAX_THINKING_TOKENS") != nullptr);
+    DOCTEST_CHECK(envVarHint("MCP_TIMEOUT") != nullptr);
+    const char* h = envVarHint("ANTHROPIC_BASE_URL");
+    DOCTEST_CHECK(std::string(h).find("端点") != std::string::npos);
+    DOCTEST_CHECK(envVarHint("NOT_A_REAL_VAR_XX") == nullptr);
+    DOCTEST_CHECK(envVarHint("") == nullptr);
+    return true;
+})
+

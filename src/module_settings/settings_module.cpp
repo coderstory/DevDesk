@@ -46,7 +46,7 @@
 // main.cpp 注册的 ClaudeService::global() 单例——头声明 + 最终可执行文件
 // 解析符号，无 CMake 依赖边。pet 侧（同审计项）不 include、不 link：
 // 桌宠卡全部调用（discoverSkins/applyPetSkin/resetPetPosition/
-// setPetClickThrough/currentSkinName/currentClickThrough）走下方 extern
+// currentSkinName）走下方 extern
 // 自由函数桥，实现在 pet 模块内。两条边均单向（claude/pet 不反向依赖
 // settings），无环；桌宠非 Router 页面模块，设计 2026-09-22 §4.7 接线表
 // 明确设置页承载桌宠卡。
@@ -71,15 +71,13 @@
 // 而非编译错误。只暴露标量/平凡类型（string/bool/vector<string>），不共享
 // PetConfig 结构体布局（跨 TU 各自重定义 = ODR 风险）。
 // PetConfig 快照类的盘读取点已换成 pet 侧新增的
-// currentSkinName()/currentClickThrough() 只读桥（语义等价：apply 路径
+// currentSkinName() 只读桥（语义等价：apply 路径
 // 双写运行时 + 盘，盘即真值）。
 namespace module::pet {
 std::vector<std::string> discoverSkins();
 void applyPetSkin(const std::string& skinName);
 void resetPetPosition();
-void setPetClickThrough(bool enabled);
 std::string currentSkinName();
-bool currentClickThrough();
 } // namespace module::pet
 
 #include <eui/app.h>
@@ -951,8 +949,6 @@ private:
             //（两次独立读盘代替一次快照——初值展示语义，
             // 与 apply 双写路径无竞态顾虑）
             petSkinName_ = ::module::pet::currentSkinName();
-            // 穿透 toggle 初值读 pet_config（锁死态下本卡是唯一恢复入口）
-            petClickThrough_ = ::module::pet::currentClickThrough();
         }
         const auto compTheme = core::theme::componentTokens(t);
         ui.stack(id)
@@ -1024,43 +1020,6 @@ private:
                     .onClick([this] {
                         ::module::pet::resetPetPosition();
                         setStatus("桌宠位置已重置（主屏右下角）");
-                    })
-                    .build();
-                // 鼠标穿透 toggle（⑥恢复路径）：即时生效（setWindowMousePassthrough）
-                // + 持久化 pet_config。桌宠锁死（右键也点不中自己）时本页是唯一出口
-                ui.text(id + ".through.label")
-                    .position(28.0f, 114.0f)
-                    .size(w - 160.0f, 18.0f)
-                    .text("鼠标穿透（挂机）")
-                    .fontSize(t.sizes.fontSizeBody - 1.0f)
-                    .lineHeight(18.0f)
-                    .fontWeight(500)
-                    .color(t.colors.textPrimary)
-                    .build();
-                ui.text(id + ".through.desc")
-                    .position(28.0f, 134.0f)
-                    .size(w - 160.0f, 16.0f)
-                    .text("开启后桌宠点击透到下层；锁死无法右键时，关此开关即恢复")
-                    .fontSize(fs(12.0f))
-                    .lineHeight(16.0f)
-                    .color(t.colors.textTertiary)
-                    .build();
-                ui.stack(id + ".through.sw.wrap")
-                    .position(w - 28.0f - 80.0f, 112.0f)
-                    .size(80.0f, 32.0f)
-                    .content([&] {
-                        components::toggleSwitch(ui, id + ".through.sw")
-                            .size(80.0f, 32.0f)
-                            .checked(petClickThrough_)
-                            .theme(compTheme)
-                            .onChange([this](bool v) {
-                                petClickThrough_ = v;
-                                ::module::pet::setPetClickThrough(v);
-                                setStatus(v
-                                              ? "桌宠已开启鼠标穿透（锁死后回本页关闭）"
-                                              : "桌宠已关闭鼠标穿透");
-                            })
-                            .build();
                     })
                     .build();
             })
@@ -1697,7 +1656,7 @@ private:
     bool petSkinDataLoaded_ = false;       // 皮肤清单惰性加载标记（M2）
     std::vector<std::string> petSkins_;    // 发现到的皮肤（M2）
     std::string petSkinName_;              // 当前皮肤名（M2）
-    bool petClickThrough_ = false;         // 桌宠鼠标穿透态（⑥恢复路径）
+    // 桌宠挂机穿透功能已于 2026-09-24 移除（本成员删除）
     bool regenConfirmOpen_ = false;       // 重新生成 token 确认弹窗
     // 代理端口输入草稿（审计 [14]）：空 = 未编辑，compose 显示 cfg_.proxyPort；
     // applyProxyPort 成功后由 persist 侧刷新（下次进页恢复显示配置值）

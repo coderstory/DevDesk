@@ -1054,9 +1054,6 @@ REGISTER_TEST(settings_pet_dropdown_z_escape, "settings: pet skin dropdown popup
     DOCTEST_REQUIRE(dd != nullptr);
     DOCTEST_REQUIRE(petCard != nullptr);
     DOCTEST_REQUIRE(dirCard != nullptr);
-    // ⑥恢复路径：桌宠卡内「鼠标穿透」toggle 必须随卡片渲染
-    DOCTEST_CHECK(ui.find("settings.card.pet.through.sw") != nullptr);
-    DOCTEST_CHECK(ui.find("settings.card.pet.through.label") != nullptr);
 
     // 下拉自带 zIndex(20) 沿祖先链传播：pet 卡子树上界 > 目录卡（z 0）。
     // spec 缩水 B 的编辑器字号没有收进目录卡（抬目录卡 z 会反向压住 pet
@@ -1631,7 +1628,7 @@ REGISTER_TEST(settings_module_isolation_guard,
     // 正向：extern 自由函数桥存在（解耦而非删功能），claude 头通道按设计保留
     DOCTEST_CHECK(src.find("namespace module::pet") != std::string::npos);
     DOCTEST_CHECK(src.find("currentSkinName") != std::string::npos);
-    DOCTEST_CHECK(src.find("currentClickThrough") != std::string::npos);
+    // currentClickThrough 桥已随挂机穿透功能移除（2026-09-24）
     DOCTEST_CHECK(src.find("#include \"claude_service.h\"") != std::string::npos);
 
     // 2) settings CMakeLists：非注释行不得再 link 兄弟模块库

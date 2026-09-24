@@ -88,15 +88,9 @@ constexpr ImportSlotRef kImportSlots[] = {
     {"CLAUDE_CODE_SUBAGENT_MODEL",      nullptr,                              &ModelsConfig::subagent},
 };
 
-// 导入键名校验：^[A-Z][A-Z0-9_]*$（§7.4，防注入奇怪键名）
-bool isValidEnvKeyName(const std::string& key) {
-    if (key.empty() || key[0] < 'A' || key[0] > 'Z') return false;
-    for (const char c : key) {
-        const bool ok = (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_';
-        if (!ok) return false;
-    }
-    return true;
-}
+// 键名格式硬校验已于 2026-09-24 移除：env 块内的变量名一律可导入
+//（用户要求——小写/连字符/数字开头等非标准键也收；「不在官方清单」
+// 由表单侧红边框提示，不阻断导入）
 
 bool isBlankText(const std::string& text) {
     for (const char c : text) {
@@ -280,10 +274,10 @@ core::Result<ImportedConfig> parseImportedEnv(const std::string& text) {
     bool sawAuthToken = false;
 
     for (const auto& key : envObj.keys()) {
-        if (!isValidEnvKeyName(key)) {
+        // 键名格式不设限（2026-09-24 放开，见上方注释）；仅保留空键防御
+        if (key.empty()) {
             return core::Result<ImportedConfig>::fail(
-                core::ErrorCode::ValidationError,
-                "键名非法（只允许大写字母/数字/下划线，且以大写字母开头）: " + key);
+                core::ErrorCode::ValidationError, "env 键名为空");
         }
         auto val = envObj.get(key);
         if (!val.isString()) {
