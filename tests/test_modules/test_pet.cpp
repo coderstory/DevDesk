@@ -1339,3 +1339,32 @@ REGISTER_TEST(pet_sleep_render_pause, "pet: Sleep 零渲染暂停门（M2 任务
     DOCTEST_CHECK(!isPetRenderPaused());
     return true;
 });
+
+// ---- 审计 [5][36]：设置页解耦只读桥 currentSkinName / currentClickThrough ----
+// settings 不再 include pet 头也不 link pet，桌宠卡初值改走这两个标量只读
+// 函数（盘即真值：apply 路径双写运行时 + pet_config.json）。本用例锁桥语义：
+// 无盘 → 默认值；setPetClickThrough（无头窗口未开 → 只持久化）→ 桥回读；
+// store 写皮肤 → 桥跟随。
+REGISTER_TEST(pet_bridge_readonly_accessors,
+              "pet: currentSkinName/currentClickThrough 只读桥（审计 [5][36] 设置页解耦）", {
+    PetsDirEnv env("bridge");
+    using namespace module::pet;
+
+    // pet_config.json 不存在 → PetConfig 默认值
+    DOCTEST_CHECK_EQ(currentSkinName(), std::string(kDefaultSkinName));
+    DOCTEST_CHECK_EQ(currentClickThrough(), false);
+
+    // 穿透开关持久化后桥回读（窗口未开：setPetClickThrough 只落盘）
+    setPetClickThrough(true);
+    DOCTEST_CHECK_EQ(currentClickThrough(), true);
+    DOCTEST_CHECK_EQ(currentSkinName(), std::string(kDefaultSkinName));
+
+    // 换皮肤名走盘 store（applyPetSkin 需 discoverSkins 命中，桥只读同一张盘）
+    PetConfig cfg;
+    cfg.skinName = "bridge-skin";
+    cfg.clickThrough = false;
+    DOCTEST_CHECK(!PetConfigStore(petConfigFile()).save(cfg).isFail());
+    DOCTEST_CHECK_EQ(currentSkinName(), std::string("bridge-skin"));
+    DOCTEST_CHECK_EQ(currentClickThrough(), false);
+    return true;
+})

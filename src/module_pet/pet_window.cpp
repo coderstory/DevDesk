@@ -743,6 +743,17 @@ void setPetClickThrough(bool enabled) {
              (enabled ? "开（挂机态；锁死后在设置页桌宠卡关闭）" : "关"));
 }
 
+// 审计 [5][36]：设置页桌宠卡只读桥（契约见 pet_window.h 同名声明）。
+// 读 pet_config.json 而非 rt.config——设置页可能在窗口未开时读取（桌宠关/
+// 隐藏），且 apply 双写保证盘与运行时一致
+std::string currentSkinName() {
+    return PetConfigStore(petConfigFile()).load().skinName;
+}
+
+bool currentClickThrough() {
+    return PetConfigStore(petConfigFile()).load().clickThrough;
+}
+
 // ---- 退出二次确认（审计 [25]，纯数据层，声明见 pet_window.h）----
 // 下标语义与 petExitConfirmChosen 耦合：0=说明（disabled）1=分隔线
 // 2=确认退出 3=取消。改结构必须同步改 petExitConfirmChosen 与单测
