@@ -203,7 +203,7 @@ REGISTER_TEST(md_keyword_python_prefix,
 REGISTER_TEST(md_keyword_fallback,
               "md_keyword: 未覆盖 lang / 空 lang → supported=false 且零 run", {
     const std::string code = "SELECT * FROM t WHERE x = 1; // not cpp";
-    for (const char* lang : {"", "text", "js", "markdown", "TXT", "pytohn"}) {
+    for (const char* lang : {"", "text", "ruby", "markdown", "TXT", "pytohn"}) {
         const auto h = lex(code, lang);
         DOCTEST_CHECK(!h.supported);
         DOCTEST_CHECK(h.runs.empty());
@@ -218,6 +218,18 @@ REGISTER_TEST(md_keyword_alias_case,
         DOCTEST_CHECK(mdKeywordLangSupported(lang));
     }
     for (const char* lang : {"python", "PY", "Python3", "py"}) {
+        DOCTEST_CHECK(mdKeywordLangSupported(lang));
+    }
+    for (const char* lang : {"js", "javascript", "JS", "mjs"}) {
+        DOCTEST_CHECK(mdKeywordLangSupported(lang));
+    }
+    for (const char* lang : {"go", "golang", "GO"}) {
+        DOCTEST_CHECK(mdKeywordLangSupported(lang));
+    }
+    for (const char* lang : {"rs", "rust", "RUST"}) {
+        DOCTEST_CHECK(mdKeywordLangSupported(lang));
+    }
+    for (const char* lang : {"sh", "bash", "shell", "zsh"}) {
         DOCTEST_CHECK(mdKeywordLangSupported(lang));
     }
     return true;
@@ -268,5 +280,87 @@ REGISTER_TEST(md_keyword_color_table,
     DOCTEST_CHECK(colorEq(l.codeKeyword, l.codeComment) == false);
     DOCTEST_CHECK(colorEq(l.codeKeyword, d.codeKeyword) == false);
     DOCTEST_CHECK(colorEq(l.codeNumber, d.codeNumber) == false);
+    return true;
+})
+
+REGISTER_TEST(md_keyword_js_basic,
+              "md_keyword: JS 关键字/字符串/行注释/反引号串跨行", {
+    const std::string code = "let x = \"hi\"; // c\n`tmpl\n` + 42;";
+    const auto h = lex(code, "js");
+    DOCTEST_CHECK(h.supported);
+    DOCTEST_CHECK(exactRun(h, 0, 3, kKw));                       // let
+    DOCTEST_CHECK(colorEq(runAt(h, code.find("\"hi\""))->color, kStr));
+    DOCTEST_CHECK(colorEq(runAt(h, code.find("// c"))->color, kCmt));
+    DOCTEST_CHECK(colorEq(runAt(h, code.find("tmpl"))->color, kStr));  // 反引号串跨行
+    DOCTEST_CHECK(exactRun(h, code.find("42"), code.find("42") + 2, kNum));
+    DOCTEST_CHECK(structInvariants(code, h));
+    return true;
+})
+
+REGISTER_TEST(md_keyword_json_basic,
+              "md_keyword: JSON 字面量/字符串/数字（无注释语言）", {
+    const std::string code = "{\"k\": true, \"n\": null, \"ok\": false, \"v\": 3.14}";
+    const auto h = lex(code, "json");
+    DOCTEST_CHECK(h.supported);
+    DOCTEST_CHECK(exactRun(h, code.find("true"), code.find("true") + 4, kKw));
+    DOCTEST_CHECK(exactRun(h, code.find("null"), code.find("null") + 4, kKw));
+    DOCTEST_CHECK(exactRun(h, code.find("false"), code.find("false") + 5, kKw));
+    DOCTEST_CHECK(colorEq(runAt(h, code.find("\"k\""))->color, kStr));
+    DOCTEST_CHECK(exactRun(h, code.find("3.14"), code.find("3.14") + 4, kNum));
+    DOCTEST_CHECK(structInvariants(code, h));
+    return true;
+})
+
+REGISTER_TEST(md_keyword_java_basic,
+              "md_keyword: Java 关键字/字符串/块注释", {
+    const std::string code = "public class A { /* c */ int x = 1; }";
+    const auto h = lex(code, "java");
+    DOCTEST_CHECK(h.supported);
+    DOCTEST_CHECK(exactRun(h, 0, 6, kKw));  // public
+    DOCTEST_CHECK(colorEq(runAt(h, code.find("class"))->color, kKw));
+    DOCTEST_CHECK(colorEq(runAt(h, code.find("/* c */"))->color, kCmt));
+    DOCTEST_CHECK(colorEq(runAt(h, code.find("int"))->color, kKw));
+    DOCTEST_CHECK(exactRun(h, code.find("1;"), code.find("1;") + 1, kNum));
+    DOCTEST_CHECK(structInvariants(code, h));
+    return true;
+})
+
+REGISTER_TEST(md_keyword_go_backtick,
+              "md_keyword: Go 关键字/反引号原始串跨行", {
+    const std::string code = "func main() {\n s := `raw\nstr` }";
+    const auto h = lex(code, "go");
+    DOCTEST_CHECK(h.supported);
+    DOCTEST_CHECK(exactRun(h, 0, 4, kKw));   // func
+    DOCTEST_CHECK(colorEq(runAt(h, code.find("raw"))->color, kStr));
+    DOCTEST_CHECK(colorEq(runAt(h, code.find("str"))->color, kStr));
+    DOCTEST_CHECK(structInvariants(code, h));
+    return true;
+})
+
+REGISTER_TEST(md_keyword_rust_basic,
+              "md_keyword: Rust 关键字/字符串/行注释/块注释", {
+    const std::string code = "let n = 42; // num\n/* block */ fn";
+    const auto h = lex(code, "rust");
+    DOCTEST_CHECK(h.supported);
+    DOCTEST_CHECK(exactRun(h, 0, 3, kKw));   // let
+    DOCTEST_CHECK(exactRun(h, code.find("42"), code.find("42") + 2, kNum));
+    DOCTEST_CHECK(colorEq(runAt(h, code.find("num"))->color, kCmt));   // 行注释
+    DOCTEST_CHECK(colorEq(runAt(h, code.find("block"))->color, kCmt)); // 块注释
+    DOCTEST_CHECK(colorEq(runAt(h, code.find("fn"))->color, kKw));     // 块注释后 fn
+    DOCTEST_CHECK(structInvariants(code, h));
+    return true;
+})
+
+REGISTER_TEST(md_keyword_shell_hash,
+              "md_keyword: Shell 关键字/# 注释/字符串", {
+    const std::string code = "if true; then\n echo \"x\" # c\nfi";
+    const auto h = lex(code, "bash");
+    DOCTEST_CHECK(h.supported);
+    DOCTEST_CHECK(exactRun(h, 0, 2, kKw));   // if
+    DOCTEST_CHECK(colorEq(runAt(h, code.find("then"))->color, kKw));
+    DOCTEST_CHECK(colorEq(runAt(h, code.find("\"x\""))->color, kStr));
+    DOCTEST_CHECK(colorEq(runAt(h, code.find("# c"))->color, kCmt));
+    DOCTEST_CHECK(colorEq(runAt(h, code.find("fi"))->color, kKw));
+    DOCTEST_CHECK(structInvariants(code, h));
     return true;
 })

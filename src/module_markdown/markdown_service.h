@@ -123,6 +123,11 @@ public:
     // 此时 pollChanged 退化为纯 mtime/size 比对）。测试与诊断用。
     bool watcherActive() const;
 
+    // watcher 是否有未消费的事件 credit（pollChanged 会消费）。
+    // 模块层每帧轻量 peek：true → 即时 rescan+refresh（毫秒级响应），
+    // 无需等 5s 轮询节流；stub 平台恒 false，自然退回轮询兜底。
+    bool hasWatchCredit() const;
+
     // 磁盘文件的 mtime（unix 秒）。文件不存在 → fail。
     // 用于「当前打开的笔记被外部修改」检测（配合模块层缓存的 lastKnownMtime）。
     core::Result<int64_t> fileMtime(const std::filesystem::path& relPath) const;

@@ -33,7 +33,7 @@ bool ieq(std::string_view a, std::string_view lower) {
     return true;
 }
 
-enum class Lang { None, Cpp, Python };
+enum class Lang { None, Cpp, Python, Js, Go, Rust, Shell, Java, Json };
 
 Lang langOf(std::string_view lang) {
     if (ieq(lang, "cpp") || ieq(lang, "c++") || ieq(lang, "cc") ||
@@ -43,6 +43,25 @@ Lang langOf(std::string_view lang) {
     }
     if (ieq(lang, "python") || ieq(lang, "py") || ieq(lang, "python3")) {
         return Lang::Python;
+    }
+    if (ieq(lang, "js") || ieq(lang, "javascript") || ieq(lang, "mjs")) {
+        return Lang::Js;
+    }
+    if (ieq(lang, "go") || ieq(lang, "golang")) {
+        return Lang::Go;
+    }
+    if (ieq(lang, "rs") || ieq(lang, "rust")) {
+        return Lang::Rust;
+    }
+    if (ieq(lang, "sh") || ieq(lang, "bash") || ieq(lang, "shell") ||
+        ieq(lang, "zsh")) {
+        return Lang::Shell;
+    }
+    if (ieq(lang, "java")) {
+        return Lang::Java;
+    }
+    if (ieq(lang, "json")) {
+        return Lang::Json;
     }
     return Lang::None;
 }
@@ -83,6 +102,103 @@ const std::unordered_set<std::string_view>& pyKeywords() {
         "return", "try",    "while",   "with",     "yield",
     };
     return kw;
+}
+
+
+const std::unordered_set<std::string_view>& jsKeywords() {
+    static const std::unordered_set<std::string_view> kw = {
+        "var", "let", "const", "function", "return", "if", "else", "for",
+        "while", "do", "switch", "case", "break", "continue", "new",
+        "delete", "typeof", "instanceof", "in", "of", "this", "class",
+        "extends", "super", "import", "export", "default", "try", "catch",
+        "finally", "throw", "async", "await", "yield", "null", "true",
+        "false", "undefined", "void",
+    };
+    return kw;
+}
+
+const std::unordered_set<std::string_view>& goKeywords() {
+    static const std::unordered_set<std::string_view> kw = {
+        "break", "case", "chan", "const", "continue", "default", "defer",
+        "else", "fallthrough", "for", "func", "go", "goto", "if", "import",
+        "interface", "map", "package", "range", "return", "select",
+        "struct", "switch", "type", "var",
+    };
+    return kw;
+}
+
+const std::unordered_set<std::string_view>& rustKeywords() {
+    static const std::unordered_set<std::string_view> kw = {
+        "fn", "let", "mut", "const", "static", "if", "else", "for",
+        "while", "loop", "match", "return", "break", "continue", "struct",
+        "enum", "impl", "trait", "pub", "use", "mod", "crate", "self",
+        "super", "Self", "as", "in", "ref", "where", "unsafe", "async",
+        "await", "dyn", "box", "move", "true", "false",
+    };
+    return kw;
+}
+
+const std::unordered_set<std::string_view>& shellKeywords() {
+    static const std::unordered_set<std::string_view> kw = {
+        "if", "then", "elif", "else", "fi", "for", "in", "do", "done",
+        "while", "case", "esac", "function", "return", "local", "export",
+        "unset", "echo", "exit", "shift", "wait",
+    };
+    return kw;
+}
+
+const std::unordered_set<std::string_view>& javaKeywords() {
+    static const std::unordered_set<std::string_view> kw = {
+        "abstract", "assert", "boolean", "break", "byte", "case", "catch",
+        "char", "class", "const", "continue", "default", "do", "double",
+        "else", "enum", "extends", "final", "finally", "float", "for",
+        "goto", "if", "implements", "import", "instanceof", "int",
+        "interface", "long", "native", "new", "package", "private",
+        "protected", "public", "record", "return", "sealed", "short",
+        "static", "strictfp", "super", "switch", "synchronized", "this",
+        "throw", "throws", "transient", "try", "var", "void", "volatile",
+        "while", "yield", "true", "false", "null",
+    };
+    return kw;
+}
+
+// JSON 无语句关键字，仅三个字面量（键名与值都是字符串色、数字走数字色）
+const std::unordered_set<std::string_view>& jsonKeywords() {
+    static const std::unordered_set<std::string_view> kw = {
+        "true", "false", "null",
+    };
+    return kw;
+}
+
+// 按 Lang 取对应关键字表（None 返回空集）
+const std::unordered_set<std::string_view>& keywordsOf(Lang lang) {
+    switch (lang) {
+    case Lang::Cpp:    return cppKeywords();
+    case Lang::Python: return pyKeywords();
+    case Lang::Js:     return jsKeywords();
+    case Lang::Go:     return goKeywords();
+    case Lang::Rust:   return rustKeywords();
+    case Lang::Shell:  return shellKeywords();
+    case Lang::Java:   return javaKeywords();
+    case Lang::Json:   return jsonKeywords();
+    default: {
+        static const std::unordered_set<std::string_view> empty;
+        return empty;
+    }
+    }
+}
+
+// 语言特性开关（注释 / 反引号串）
+bool hasLineComment(Lang lang) {
+    return lang == Lang::Cpp || lang == Lang::Js ||
+           lang == Lang::Go || lang == Lang::Rust || lang == Lang::Java;
+}
+bool hasBlockComment(Lang lang) {
+    return lang == Lang::Cpp || lang == Lang::Js ||
+           lang == Lang::Go || lang == Lang::Rust || lang == Lang::Java;
+}
+bool hasBacktickString(Lang lang) {
+    return lang == Lang::Js || lang == Lang::Go;
 }
 
 // Python 字符串字面量前缀（r/b/u/f 及两两组合，≤2 字符且后随引号才算）
@@ -133,7 +249,7 @@ public:
     }
 
 private:
-    enum class Mode { Normal, BlockComment, TripleD, TripleS };
+    enum class Mode { Normal, BlockComment, TripleD, TripleS, Backtick };
 
     // 产 run（[a,b) 绝对坐标）。相邻同色自动合并；调用方保证 b ≥ 上一 run 端点
     void push(size_t a, size_t b, const eui::Color& color) {
@@ -168,6 +284,17 @@ private:
             push(a, close, c_.codeString);
             mode_ = Mode::Normal;
             lexNormal(close, b);
+            return;
+        }
+        if (mode_ == Mode::Backtick) {
+            const size_t close = s_.find('`', a);
+            if (close == std::string_view::npos || close >= b) {
+                push(a, b, c_.codeString);
+                return;  // 反引号串仍未闭合，下一行继续
+            }
+            push(a, close + 1, c_.codeString);
+            mode_ = Mode::Normal;
+            lexNormal(close + 1, b);
             return;
         }
         lexNormal(a, b);
@@ -274,14 +401,14 @@ private:
                 ++i;
                 continue;
             }
-            // ── 注释
-            if (lang_ == Lang::Cpp && ch == '/' && i + 1 < b) {
-                if (s_[i + 1] == '/') {  // 行注释：到行尾
+            // ── 注释（// 行注释、/* */ 块注释：C++/JS/Go/Rust）
+            if (ch == '/' && i + 1 < b) {
+                if (hasLineComment(lang_) && s_[i + 1] == '/') {
                     flushDef(i);
                     push(i, b, c_.codeComment);
                     return;
                 }
-                if (s_[i + 1] == '*') {  // 块注释：或跨行
+                if (hasBlockComment(lang_) && s_[i + 1] == '*') {
                     flushDef(i);
                     const size_t close = s_.find("*/", i + 2);
                     if (close == std::string_view::npos || close + 2 > b) {
@@ -294,7 +421,8 @@ private:
                     continue;
                 }
             }
-            if (lang_ == Lang::Python && ch == '#') {  // 行注释：到行尾
+            if ((lang_ == Lang::Python || lang_ == Lang::Shell) &&
+                ch == '#') {  // 行注释：到行尾（Python / Shell）
                 flushDef(i);
                 push(i, b, c_.codeComment);
                 return;
@@ -328,6 +456,20 @@ private:
                 ++i;
                 continue;
             }
+            // ── 反引号原始串 / 模板串（JS/Go，跨行）
+            if (ch == '`' && hasBacktickString(lang_)) {
+                const size_t close = s_.find('`', i + 1);
+                if (close == std::string_view::npos || close >= b) {
+                    flushDef(i);
+                    push(i, b, c_.codeString);
+                    mode_ = Mode::Backtick;
+                    return;
+                }
+                flushDef(i);
+                push(i, close + 1, c_.codeString);
+                i = close + 1;
+                continue;
+            }
             // ── 数字
             if (isDigit(ch)) {
                 flushDef(i);
@@ -354,9 +496,7 @@ private:
                     // 未闭合：前缀+引号整体落默认，逐字续扫（j 不动，
                     // 下面按普通标识符消费前缀两字，引号下轮再处理）
                 }
-                const bool keyword =
-                    (lang_ == Lang::Cpp ? cppKeywords().count(w)
-                                        : pyKeywords().count(w)) > 0;
+                const bool keyword = keywordsOf(lang_).count(w) > 0;
                 if (keyword) {
                     flushDef(i);
                     push(i, j, c_.codeKeyword);

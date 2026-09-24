@@ -2194,7 +2194,7 @@ private:
         const auto now = std::chrono::steady_clock::now();
         const auto sinceMs = std::chrono::duration_cast<std::chrono::milliseconds>(
                                  now - lastPollAt_).count();
-        if (sinceMs < kPollIntervalMs) return;
+        if (!service_->hasWatchCredit() && sinceMs < kPollIntervalMs) return;
         lastPollAt_ = now;
 
         // 1) 目录级轻量比对：有差异（新文件/删除/修改）才做全量 rescan

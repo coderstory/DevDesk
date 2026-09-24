@@ -48,8 +48,9 @@ MdPreviewCodeHighlight mdPreviewCodeHighlight(std::string_view blockSource,
         return out;  // 防御：区间不自洽（理论不可达）
     }
 
-    // 开栏行 → lang 标签：跳过 ≤3 前导空格与 ≥3 围栏字符，info 取首词
-    //（md4c MD_LANG 语义；与上游 codeBlockDisplayText 的 lang 行显示对齐）
+    // 开栏行 → lang：跳过 ≤3 前导空格与 ≥3 围栏字符，info 取首词
+    //（md4c MD_LANG 语义；lang 只供词法器选语言，不进显示串——2026-09-24
+    //  用户要求代码块渲染不显示语言名标签）
     const size_t openLineEnd = src.find('\n', f.openLineStart);
     std::string_view openLine(src.data() + f.openLineStart,
                               (openLineEnd == std::string::npos
@@ -72,12 +73,7 @@ MdPreviewCodeHighlight mdPreviewCodeHighlight(std::string_view blockSource,
     while (e < info.size() && !isFenceSpace(info[e])) ++e;
     out.lang.assign(info.substr(s, e - s));
 
-    // 显示串：[lang\n] + 内容行以 \n 连接（无尾换行，对齐 codeBlockDisplayText）
-    if (!out.lang.empty()) {
-        out.runs.push_back({0, static_cast<int>(out.lang.size()), colors.marker});
-        out.displayText = out.lang;
-        out.displayText += '\n';
-    }
+    // 显示串：内容行以 \n 连接（无尾换行；lang 标签不显示，见开栏行注释）
     // 内容行先入显示串（不产 run）：受支持语言交给关键字词法器，
     // 未覆盖/空 lang 保持 ③ 的逐行整行 code 单色（与编辑器 token 等价）
     struct LineSpan {
@@ -107,7 +103,7 @@ MdPreviewCodeHighlight mdPreviewCodeHighlight(std::string_view blockSource,
             mdKeywordHighlight(content, out.lang, colors);
         if (kw.supported) {
             // 词法器 runs 坐标 = content 内偏移 → 平移进 displayText 坐标系；
-            // 升序不重叠由词法器保证（lang 标签 run 在最前，不冲突）
+            // 升序不重叠由词法器保证
             out.runs.reserve(out.runs.size() + kw.runs.size());
             for (const eui::TextRun& r : kw.runs) {
                 out.runs.push_back({r.byteStart + contentDispStart,

@@ -17,8 +17,8 @@
 //
 // 着色语义：
 //   - 编辑器围栏行（```lang 开栏 / 闭栏）整行 marker 色 → 预览不显示围栏线、
-//     仅显示 lang 标签（显示串结构对齐上游 codeBlockDisplayText：
-//     lang\n + 内容行以 \n 连接），lang 段 marker 色
+//     也不显示 lang 标签（2026-09-24 用户要求：```lang 渲染不应出现
+//     语言名）；显示串 = 内容行以 \n 连接，lang 字段保留供词法器选语言
 //   - 受支持语言（C++/Python，Phase 3 ⑤）：内容按关键字/字符串/注释/数字/
 //     默认 五色 runs（md_keyword_highlight；默认段 = code 色，与编辑器现状
 //     视觉连续）

@@ -147,6 +147,11 @@ bool MarkdownService::watcherActive() const {
     return watcher_ && watcher_->active();
 }
 
+bool MarkdownService::hasWatchCredit() const {
+    // 仅 load 不 exchange：peek 语义，credit 仍留给 pollChanged 正式消费
+    return watcherFired_.load();
+}
+
 void MarkdownService::onWatchEvent(std::vector<platform::FileWatchEvent> events) {
     // 1) 置标记：模块层下一次 pollChanged 必为 true → 其 rescan+refreshList
     //    照旧跑一轮（UI 列表 ≤5s 内对齐，模块无需感知 watcher 的存在）。
