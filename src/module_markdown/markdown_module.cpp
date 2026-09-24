@@ -37,6 +37,7 @@
 #include "core/component_theme.h"
 #include "core/time.h"
 #include "markdown_service.h"
+#include "md_block_model.h"
 #include "md_highlight.h"
 #include "md_keyboard.h"
 #include "md_line_scanner.h"
@@ -1058,6 +1059,16 @@ private:
         editorText_ = v;
         ++editorTextRev_;
         previewTextHash_ = std::hash<std::string>{}(editorText_);
+        // Phase 3 块模型：唯一文本写点顺带 update（同文零重算）。编辑只脏
+        // 受影响块——预览逐块渲染时未变块按内容命中上游 md4c 解析缓存。
+        const MdBlockUpdate upd = blockModel_.update(editorText_);
+        if (upd.changed) {
+            LOG_DEBUG("Markdown 块模型: 共 " +
+                      std::to_string(blockModel_.blocks().size()) + " 块, 脏区间 [" +
+                      std::to_string(upd.dirtyFirst) + "," +
+                      std::to_string(upd.dirtyLast) + "], 复用 " +
+                      std::to_string(upd.reused) + " 块");
+        }
     }
 
     // ---- 编辑器顶栏：当前笔记的标签 chip 行（显示 + 添加输入 + × 删除）----
@@ -1299,11 +1310,41 @@ private:
                     // （DevDesk 零字形级布局）。带重音符（combining accent，
                     // U+0300–036F）字形轻微跨行属上游 TextPrimitive 行框问题，
                     // 根因与升级路径见 KNOWN_LIMITATIONS #8，DevDesk 侧无可修点。
-                    components::markdown(inner, "md.preview.md")
-                        .markdown(editorText_)
+                    //
+                    // Phase 3 增量块渲染：按块模型逐块 components::markdown
+                    // （每块 = 一段自足源码，切分器保证与整篇渲染等价——逐块
+                    // md4c 解析结果与整篇逐块一致，由
+                    // md_block_model_render_equivalence 回归锁定）。收益构成：
+                    //   - ≤8 块文档：未变块命中上游 cachedMarkdownDocument
+                    //     （LRU 8 槽）→ 编辑只重析脏块；
+                    //   - 大文档：解析缓存 8 槽不够会抖动，但昂贵的行内布局
+                    //     （cachedInlineLayout，256 槽、按块 runs 键控）与整篇
+                    //     模式同等命中 → 成本与整篇模式同量级；
+                    //   - 块模型 dirty 区间 + stableId 身份 = 后续块级编辑/
+                    //     高亮接线的基础（Phase 3 余下项）。
+                    // 上游能力边界登记 KNOWN_LIMITATIONS #9（markdown 无块级
+                    // 增量 API，增量全靠内容键控缓存）。块间隙用 column.gap =
+                    // MarkdownStyle.blockGap，与单实例内部 gap 同源，观感一致。
+                    if (blockModel_.text() != editorText_) {
+                        blockModel_.update(editorText_);  // 防御：理论不可达
+                    }
+                    const auto& blocks = blockModel_.blocks();
+                    inner.column("md.preview.blocks")
                         .width(contentWidth)
-                        .wrapContentHeight()
-                        .style(style)
+                        .gap(style.blockGap)
+                        .content([&] {
+                            for (const MdBlock& b : blocks) {
+                                components::markdown(
+                                    inner,
+                                    "md.preview.block." + std::to_string(b.stableId))
+                                    .markdown(blockModel_.text().substr(
+                                        b.start, b.end - b.start))
+                                    .width(contentWidth)
+                                    .wrapContentHeight()
+                                    .style(style)
+                                    .build();
+                            }
+                        })
                         .build();
                 })
                 .build();
@@ -2606,6 +2647,9 @@ private:
     // ---- Phase C 语法高亮状态 ----
     MdHighlighter highlighter_;        // 行级高亮器（围栏状态随 display 文本重建）
     std::string highlightThemeName_;   // 上次注入色表的主题名（变化 = 重高亮）
+
+    // ---- Phase 3 块级元素模型（预览逐块增量渲染的键控源）----
+    MdBlockModel blockModel_;
 };
 
 } // namespace module::markdown

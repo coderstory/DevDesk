@@ -76,6 +76,12 @@
 - DevDesk 侧无可低成本修：预览走 `components::markdown` 默认 `bodyLineHeight` 24px（1.5×）已经很宽裕，溢出量由 `ascent_/bitmap_top` 决定、与 lineHeight 无关——加大行距消不掉溢出；编辑器是 EUI-NEO Input，同理。
 - 升级路径（EUI-NEO 上游 PR）：`TextPrimitive` 渲染/测量行循环里消费既有 `line.inkTop`——对 `inkTop < 0` 的行做顶部溢出补偿（行内整体下移或行距取 `max(lineHeight, lineHeight - inkTop)`），数据已在 Line 结构、改动局部；参考 `markdown_module.cpp` 预览构建处注释。
 
+#### 9. Markdown 预览逐块增量渲染依赖上游内容键控缓存，块数 >8 时解析缓存抖动（Phase 3 首块②，2026-09-24 登记）
+
+- DevDesk Phase 3 把预览拆成逐块 `components::markdown`（块模型 `md_block_model`，等价性由 `md_block_model_render_equivalence` 回归锁定）。「编辑只重算受影响块」的省析收益**完整成立的条件是文档 ≤8 块**：上游 `components/markdown.h` 的 `cachedMarkdownDocument` 按 source 串键、LRU 容量仅 **8 条**（`kCacheCapacity`），块数 >8 时任何一次编辑触发的全块重建会把未变块互相逐出 → 逐块重新 md4c 解析（总字节量与整篇重析相同，成本中性不恶化，但无增量收益）。
+- 更贵的行内布局（文本测量/折行）有独立缓存 `cachedInlineLayout`（256 条、按块 runs+宽度键控），逐块与整篇两种模式命中效果相同——这是当前增量收益的真实来源，块级拆分对它的命中无帮助也无损害。
+- DevDesk 侧无法绕过：markdown 组件只吃 source 串、不暴露预解析注入；元素树每帧整体重建是框架前提。升级路径（EUI-NEO 上游 PR 候选）：① `cachedMarkdownDocument` 容量随活跃 markdown 实例数伸缩（或 ≥64）；② 暴露块级解析/渲染 API（只提交脏块）；③ markdown 组件消费 `dirtyKey`（runtime 机制已有，见 `core/runtime/runtime_update.h`）。上游任一落地后 DevDesk 零改动自动受益（分块结构与 stableId 身份已就绪）。来源：Phase 3 首块②上游勘察（2026-09-24）。
+
 ### 测试
 
 #### 5. soak 300s 压测默认 SKIP
