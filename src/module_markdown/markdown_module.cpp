@@ -59,6 +59,7 @@
 #include <algorithm>
 #include <chrono>
 #include <cmath>
+#include <cstdint>
 #include <cstdio>
 #include <ctime>
 #include <filesystem>
@@ -1041,10 +1042,22 @@ private:
 
     // onChange 与键盘流共用的副作用（内存缓冲 + 脏标记，落盘走防抖）
     void onEditorTextChanged(const std::string& v) {
-        editorText_ = v;
+        setEditorText(v);
         editorDirty_ = true;
         outlineDirty_ = true;
         lastEditAt_ = std::chrono::steady_clock::now();
+    }
+
+    // 审计 perf [14][15][39]：editorText_ 唯一写点。内容变化时推进修订号 +
+    // 刷新预览 hash 缓存，让同步滚动 yA/yB、预览 contentKey、状态栏
+    // （行:列·字数）三个下游缓存都以 (rev) 为键跨帧复用，不再每个重组合
+    // 帧付 O(doc) 的全文 hash / 前缀 substr / 逐字节扫描。内容不变则不动
+    // rev/hash —— 与旧「每帧对当前内容重算」等价（同串同 hash 同结果）。
+    void setEditorText(const std::string& v) {
+        if (editorText_ == v) return;
+        editorText_ = v;
+        ++editorTextRev_;
+        previewTextHash_ = std::hash<std::string>{}(editorText_);
     }
 
     // ---- 编辑器顶栏：当前笔记的标签 chip 行（显示 + 添加输入 + × 删除）----
@@ -1172,13 +1185,24 @@ private:
         // subtitle 移来——审计 [30]，subtitle 已改静态操作说明）
         std::string right;
         if (!currentPath_.empty()) {
+            // 审计 perf [39]：(行, 列, 字数) 按 (文本修订, 光标) 缓存，文本与
+            // 光标都没变的帧直接复用；变化帧才付一次扫描（旧行为每帧都付）
             const auto& st = ui.state<components::input_detail::InputModel::InputState>("md.editor.input");
-            const int line = byteOffsetToLine(st.text, static_cast<size_t>(st.cursor));
-            const size_t lineStart = lineStartOffset(st.text, line);
-            const int col = static_cast<int>(utf8Length(
-                st.text.substr(lineStart, static_cast<size_t>(st.cursor) - lineStart))) + 1;
-            right = std::to_string(line + 1) + ":" + std::to_string(col) + " · " +
-                    std::to_string(utf8Length(st.text)) + " 字";
+            const size_t cursor = static_cast<size_t>(st.cursor);
+            if (statusCacheRev_ != editorTextRev_ || statusCacheCursor_ != cursor) {
+                const int line = byteOffsetToLine(st.text, cursor);
+                const size_t lineStart = lineStartOffset(st.text, line);
+                const int col = static_cast<int>(utf8Length(
+                    st.text.substr(lineStart, cursor - lineStart))) + 1;
+                statusCacheLine_ = line;
+                statusCacheCol_ = col;
+                statusCacheChars_ = utf8Length(st.text);
+                statusCacheRev_ = editorTextRev_;
+                statusCacheCursor_ = cursor;
+            }
+            right = std::to_string(statusCacheLine_ + 1) + ":" +
+                    std::to_string(statusCacheCol_) + " · " +
+                    std::to_string(statusCacheChars_) + " 字";
         }
         if (service_ != nullptr) {
             if (!right.empty()) right += " · ";
@@ -1260,8 +1284,10 @@ private:
                 .step(56.0f)
                 .theme(componentTheme)
                 .offset(scrollOffset)
+                // 审计 perf [15]：contentKey 用缓存 hash（setEditorText 维护），
+                // 与旧 std::hash(editorText_) 同值，但不再每帧全文重算
                 .contentKey("md.preview.scroll." + currentPath_ + "." +
-                            std::to_string(std::hash<std::string>{}(editorText_)));
+                            std::to_string(previewTextHash_));
             if (mode_ == ViewMode::Preview) {
                 // 仅预览态允许手动滚动（双向：滚轮写回 previewOffset_）
                 scroll.onChange([this](float v) { previewOffset_ = v; });
@@ -1306,14 +1332,31 @@ private:
         const int bLine = (a < outline_.size())
             ? outline_[a].lineNo
             : std::max(countLines(editorText_), aLine + 1);
-        const float yA = (a == 0)
-            ? 0.0f
-            : components::MarkdownBuilder::estimateHeight(
-                  editorText_.substr(0, outline_[a - 1].byteOffset), width, style);
-        const float yB = (a < outline_.size())
-            ? components::MarkdownBuilder::estimateHeight(
-                  editorText_.substr(0, outline_[a].byteOffset), width, style)
-            : components::MarkdownBuilder::estimateHeight(editorText_, width, style);
+        // 审计 perf [14]：yA/yB 按 (文本修订, 锚点, 宽度) 缓存。锚点未动且
+        // 文本未改的帧直接复用——不再每帧两次全文前缀 substr 拷贝 +
+        // 上游缓存 O(n) 串哈希/比较；仅锚点切换/编辑/宽度变化帧重算一次。
+        float yA = 0.0f;
+        float yB = 0.0f;
+        if (syncCacheValid_ && syncCacheRev_ == editorTextRev_ &&
+            syncCacheAnchor_ == a && syncCacheWidth_ == width) {
+            yA = syncCacheYA_;
+            yB = syncCacheYB_;
+        } else {
+            yA = (a == 0)
+                ? 0.0f
+                : components::MarkdownBuilder::estimateHeight(
+                      editorText_.substr(0, outline_[a - 1].byteOffset), width, style);
+            yB = (a < outline_.size())
+                ? components::MarkdownBuilder::estimateHeight(
+                      editorText_.substr(0, outline_[a].byteOffset), width, style)
+                : components::MarkdownBuilder::estimateHeight(editorText_, width, style);
+            syncCacheValid_ = true;
+            syncCacheRev_ = editorTextRev_;
+            syncCacheAnchor_ = a;
+            syncCacheWidth_ = width;
+            syncCacheYA_ = yA;
+            syncCacheYB_ = yB;
+        }
 
         const float frac = (bLine > aLine) ? (topLine - aLine) / (bLine - aLine) : 0.0f;
         const float y = yA + frac * (yB - yA);
@@ -1817,7 +1860,7 @@ private:
             return;
         }
         currentPath_ = relPath;
-        editorText_ = r.value();
+        setEditorText(r.value());
         lastSavedText_ = editorText_;
         editorDirty_ = false;
         outlineDirty_ = true;
@@ -1961,7 +2004,7 @@ private:
             lastKnownMtime_ = -1;
             if (!editorDirty_) {
                 currentPath_.clear();
-                editorText_.clear();
+                setEditorText(std::string());
                 lastSavedText_.clear();
                 outlineDirty_ = true;
                 activeOutlineIdx_ = -1;
@@ -1995,7 +2038,7 @@ private:
             }
             return;
         }
-        editorText_ = r.value();
+        setEditorText(r.value());
         lastSavedText_ = editorText_;
         editorDirty_ = false;
         outlineDirty_ = true;
@@ -2390,7 +2433,7 @@ private:
         // 把文件重建出来
         if (currentPath_ == path) {
             currentPath_.clear();
-            editorText_.clear();
+            setEditorText(std::string());
             lastSavedText_.clear();
             editorDirty_ = false;
             saveFailed_ = false;
@@ -2474,6 +2517,24 @@ private:
     std::string searchQuery_;          // 搜索框内容
     std::string currentPath_;          // 打开的笔记（POSIX 相对路径）
     std::string editorText_;           // 编辑器缓冲
+    // ---- 审计 perf [14][15][39]：以 editorText_ 内容修订为键的跨帧缓存 ----
+    // 写点唯一（setEditorText）。初值 hash 与旧「首帧 std::hash(空串)」一致，
+    // 保证任何帧 contentKey 取值与优化前逐位相等。
+    uint64_t editorTextRev_ = 0;
+    uint64_t previewTextHash_ = std::hash<std::string>{}(std::string());
+    // [14] computeSyncOffset 的 yA/yB 缓存（键 = 修订 + 锚点 + 宽度）
+    bool syncCacheValid_ = false;
+    uint64_t syncCacheRev_ = 0;
+    size_t syncCacheAnchor_ = 0;
+    float syncCacheWidth_ = -1.0f;
+    float syncCacheYA_ = 0.0f;
+    float syncCacheYB_ = 0.0f;
+    // [39] 状态栏 (行, 列, 码点数) 缓存（键 = 修订 + 光标字节偏移）
+    uint64_t statusCacheRev_ = ~0ull;
+    size_t statusCacheCursor_ = ~0ull;
+    int statusCacheLine_ = 0;
+    int statusCacheCol_ = 1;
+    size_t statusCacheChars_ = 0;
     std::string lastSavedText_;        // 上次落盘内容（用于跳过冗余写）
     bool editorDirty_ = false;
     bool saveFailed_ = false;          // 上次保存尝试失败（状态栏 ✕ 提示）

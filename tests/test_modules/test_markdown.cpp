@@ -1657,3 +1657,229 @@ REGISTER_TEST(md_module_rename_form_error,
     mod->onStop();
     return true;
 })
+
+// ---- 审计 perf [39]：状态栏（行:列 · N 字）缓存等价 ----
+// 旧实现每次 compose 对全文 O(n) 扫（byteOffsetToLine + utf8Length）；新实现按
+// (文本修订, 光标) 缓存。等价锁 = 三种帧的结果都与「独立复算」（同公式、纯函数
+// 源自 md_line_scanner）逐字一致：①未变帧（缓存命中）②仅光标移动帧（大纲跳转
+// 改 cursor 不改文本）③编辑帧（onChange 改文本）。
+REGISTER_TEST(md_module_status_bar_cache_equivalence,
+              "markdown_module: 状态栏缓存=独立复算（headless，perf [39]）", {
+    const std::string text = "# 标题一\n正文一二三\n\n## 标题二\n正文二\n";
+    MdUiEnv env("statuscache");
+    DOCTEST_REQUIRE(env.db != nullptr);
+    DOCTEST_REQUIRE(writeTextFile(env.dir / "note.md", text));
+
+    std::unique_ptr<::core::Module> mod(create_markdown_module());
+    mod->onStart();
+    eui::Screen screen;
+    screen.width = 1600.0f;
+    screen.height = 1000.0f;
+    // 全程同一 page 名：Ui 的 state store 以 pageId 为前缀，换名会让
+    // InputState（cursor/verticalScroll）每帧重建成新对象，跳光标/滚动全丢
+    eui::Ui ui;
+    auto frame = [&](void) {
+        ui.begin("sc");
+        mod->compose(ui, screen);
+        ui.end();
+    };
+    using IS = components::input_detail::InputModel::InputState;
+    // 旧公式的独立复算（与优化前代码同源同参）
+    auto oracle = [&](const std::string& t, int cursor) -> std::string {
+        using namespace module::markdown;
+        const int line = byteOffsetToLine(t, static_cast<size_t>(cursor));
+        const size_t lineStart = lineStartOffset(t, line);
+        const int col = static_cast<int>(
+            utf8Length(t.substr(lineStart,
+                               static_cast<size_t>(cursor) - lineStart))) + 1;
+        return std::to_string(line + 1) + ":" + std::to_string(col) + " · " +
+               std::to_string(utf8Length(t)) + " 字";
+    };
+    auto statusPos = [&](void) -> std::string {
+        const auto* n = ui.find("md.status.pos");
+        return n == nullptr ? std::string("<missing>") : n->text;
+    };
+    auto checkMatchesRecompute = [&](void) -> bool {
+        const auto& st = ui.state<IS>("md.editor.input");
+        const std::string o = oracle(st.text, st.cursor);
+        const std::string s = statusPos();
+        if (s.compare(0, o.size(), o) != 0) {
+            std::cerr << "status=[" << s << "] oracle=[" << o << "]"
+                      << std::endl;
+            return false;
+        }
+        return true;
+    };
+
+    frame();
+    const auto* fileRow = ui.find("md.tree.node.1.row");
+    DOCTEST_REQUIRE(fileRow != nullptr);
+    DOCTEST_REQUIRE(fileRow->onClick != nullptr);
+    fileRow->onClick();
+
+    frame();   // 打开笔记（编辑态），光标=文末
+    DOCTEST_CHECK(checkMatchesRecompute());
+    const std::string s2 = statusPos();
+    frame();   // 缓存命中帧：与上一帧逐字节一致
+    DOCTEST_CHECK_EQ(statusPos(), s2);
+
+    // 仅光标移动：大纲跳转「标题二」（onChange 不触发，修订号不变）
+    const auto* toggle = ui.find("md.outline.toggle.hit");
+    DOCTEST_REQUIRE(toggle != nullptr);
+    DOCTEST_REQUIRE(toggle->onClick != nullptr);
+    toggle->onClick();
+    frame();
+    const auto* h2 = ui.find("md.outline.item.1.row");
+    DOCTEST_REQUIRE(h2 != nullptr);
+    DOCTEST_REQUIRE(h2->onClick != nullptr);
+    h2->onClick();
+    frame();
+    DOCTEST_CHECK(checkMatchesRecompute());
+    DOCTEST_CHECK(statusPos() != s2);   // 行列随光标更新（缓存未冻结旧值）
+    const std::string s5 = statusPos();
+    frame();
+    DOCTEST_CHECK_EQ(statusPos(), s5);
+
+    // 文本编辑：光标处插一个 CJK 码点（字数 +1，行列随 UTF-8 语义变化）
+    const auto* hit = ui.find("md.editor.input.hit");
+    DOCTEST_REQUIRE(hit != nullptr);
+    DOCTEST_REQUIRE(hit->onTextInput != nullptr);
+    const size_t charsBefore = module::markdown::utf8Length(
+        ui.state<IS>("md.editor.input").text);
+    core::TextInputEvent ev;
+    ev.text = "汉";
+    hit->onTextInput(ev);
+    frame();
+    DOCTEST_CHECK_EQ(module::markdown::utf8Length(
+                         ui.state<IS>("md.editor.input").text),
+                     charsBefore + 1);
+    DOCTEST_CHECK(checkMatchesRecompute());
+    const std::string s7 = statusPos();
+    frame();
+    DOCTEST_CHECK_EQ(statusPos(), s7);
+
+    mod->onStop();
+    return true;
+})
+
+// ---- 审计 perf [14][15]：双栏同步滚动 yA/yB 缓存 + 预览 contentKey 缓存等价 ----
+// [14] 旧实现每次 Split compose 两次全文前缀 substr + estimateHeight；新实现按
+// (修订, 锚点, 宽度) 缓存 yA/yB。等价锁：编辑器视口滚到深锚点 → 回顶锚点 →
+// 预览 scrollOffset 与第一次顶锚点读数逐位相等（缓存被中段覆盖后复算 = 旧值）。
+// [15] contentKey 从每帧全文 std::hash 改为 setEditorText 维护的缓存 hash。
+// 等价锁：编辑后预览可滚高度（maxOffset，contentKey 变了才会重测）增大且跨帧
+// 稳定；未编辑帧读数不动。
+REGISTER_TEST(md_module_split_scroll_cache_equivalence,
+              "markdown_module: 双栏同步滚动/预览测量缓存等价（headless，perf [14][15]）", {
+    std::string text;
+    for (int s = 0; s < 8; ++s) {
+        text += "# 节" + std::to_string(s) + "\n";
+        for (int l = 0; l < 12; ++l) {
+            text += "内容行 " + std::to_string(s) + "-" +
+                    std::to_string(l) + " 一二三四五六七八九十\n";
+        }
+        text += "\n";
+    }
+    MdUiEnv env("splitcache");
+    DOCTEST_REQUIRE(env.db != nullptr);
+    DOCTEST_REQUIRE(writeTextFile(env.dir / "long.md", text));
+
+    std::unique_ptr<::core::Module> mod(create_markdown_module());
+    mod->onStart();
+    eui::Screen screen;
+    screen.width = 1600.0f;
+    screen.height = 1000.0f;
+    // 全程同一 page 名（state store 按 pageId 分键，换名 = 编辑器状态每帧清零）
+    eui::Ui ui;
+    auto frame = [&](void) {
+        ui.begin("pv");
+        mod->compose(ui, screen);
+        ui.end();
+    };
+
+    // 打开笔记 → Ctrl+Shift+P 进 Split（两帧：首帧建宽度、次帧同步滚动稳定）
+    frame();
+    const auto* fileRow = ui.find("md.tree.node.1.row");
+    DOCTEST_REQUIRE(fileRow != nullptr);
+    DOCTEST_REQUIRE(fileRow->onClick != nullptr);
+    fileRow->onClick();
+    eui::KeyEvent p;
+    p.key = eui::InputKey::P;
+    p.modifiers.control = true;
+    p.modifiers.shift = true;
+    DOCTEST_CHECK(mod->onKeyEvent(p));
+    frame();
+    frame();
+    DOCTEST_CHECK(ui.find("md.editor.input") != nullptr);
+    const auto* pvScroll = ui.find("md.preview.scroll");
+    DOCTEST_REQUIRE(pvScroll != nullptr);
+    DOCTEST_CHECK(pvScroll->scrollMaxOffset > 0.0f);   // 内容高于视口才可滚
+
+    // 大纲面板常驻打开：跳转顶锚点/深锚点驱动 computeSyncOffset 换锚
+    const auto* toggle = ui.find("md.outline.toggle.hit");
+    DOCTEST_REQUIRE(toggle != nullptr);
+    DOCTEST_REQUIRE(toggle->onClick != nullptr);
+    toggle->onClick();
+    frame();
+    // 元素每帧重建，跨帧持指针悬垂（旧 onClick 调用 = bad_function_call）——
+    // 点击一律「当前帧 find + 立即 onClick」
+    auto clickOutline = [&](size_t i) -> bool {
+        const auto* row = ui.find("md.outline.item." + std::to_string(i) + ".row");
+        if (row == nullptr || row->onClick == nullptr) {
+            std::cerr << "missing outline row " << i << std::endl;
+            return false;
+        }
+        row->onClick();
+        return true;
+    };
+    DOCTEST_REQUIRE(ui.find("md.outline.item.0.row") != nullptr);
+    DOCTEST_REQUIRE(ui.find("md.outline.item.5.row") != nullptr);
+
+    // 顶锚点读数（光标=文首行，视口回顶 → sync offset 归零族）
+    clickOutline(0);
+    frame();
+    frame();
+    const float oTop1 = ui.find("md.preview.scroll")->scrollOffset;
+    // 缓存命中帧：读数不动
+    frame();
+    DOCTEST_CHECK_EQ(ui.find("md.preview.scroll")->scrollOffset, oTop1);
+
+    // 跳深锚点（节5）：编辑视口跟随光标下移 → 同步偏移必须变大；
+    // 首帧（miss 重算）与次帧（hit 缓存）读数必须逐位相等
+    DOCTEST_CHECK(clickOutline(5));
+    frame();
+    const float oDeepMiss = ui.find("md.preview.scroll")->scrollOffset;
+    frame();
+    const float oDeepHit = ui.find("md.preview.scroll")->scrollOffset;
+    DOCTEST_CHECK(oDeepMiss > oTop1);
+    DOCTEST_CHECK_EQ(oDeepHit, oDeepMiss);
+
+    // 回顶锚点：缓存已被中段覆盖，此帧为「重算」——必须与旧顶锚点读数逐位
+    // 相等（缓存命中路径与新鲜计算等价的直接证据）
+    DOCTEST_CHECK(clickOutline(0));
+    frame();
+    frame();
+    DOCTEST_CHECK_EQ(ui.find("md.preview.scroll")->scrollOffset, oTop1);
+
+    // [15]：编辑加长内容 → contentKey（缓存 hash）变化 → 预览重测高度，
+    // maxOffset 增大；未编辑帧（命中）读数稳定
+    const float maxBefore = ui.find("md.preview.scroll")->scrollMaxOffset;
+    const auto* hit = ui.find("md.editor.input.hit");
+    DOCTEST_REQUIRE(hit != nullptr);
+    DOCTEST_REQUIRE(hit->onTextInput != nullptr);
+    std::string big = "\n";
+    for (int i = 0; i < 60; ++i) {
+        big += "填充行一二三四五六七八九十\n";
+    }
+    core::TextInputEvent ev;
+    ev.text = big;
+    hit->onTextInput(ev);
+    frame();
+    const float maxAfter = ui.find("md.preview.scroll")->scrollMaxOffset;
+    DOCTEST_CHECK(maxAfter > maxBefore);
+    frame();
+    DOCTEST_CHECK_EQ(ui.find("md.preview.scroll")->scrollMaxOffset, maxAfter);
+
+    mod->onStop();
+    return true;
+})
