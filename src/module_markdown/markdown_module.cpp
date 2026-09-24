@@ -42,6 +42,7 @@
 #include "md_keyboard.h"
 #include "md_line_scanner.h"
 #include "md_preview_highlight.h"
+#include "md_sync_map.h"
 #include "md_tree.h"
 #include "md_view_state.h"
 
@@ -1051,7 +1052,8 @@ private:
     }
 
     // 审计 perf [14][15][39]：editorText_ 唯一写点。内容变化时推进修订号 +
-    // 刷新预览 hash 缓存，让同步滚动 yA/yB、预览 contentKey、状态栏
+    // 刷新预览 hash 缓存，让同步滚动几何表（MdSyncMap，P3-④）、预览
+    // contentKey、状态栏
     // （行:列·字数）三个下游缓存都以 (rev) 为键跨帧复用，不再每个重组合
     // 帧付 O(doc) 的全文 hash / 前缀 substr / 逐字节扫描。内容不变则不动
     // rev/hash —— 与旧「每帧对当前内容重算」等价（同串同 hash 同结果）。
@@ -1232,7 +1234,7 @@ private:
     }
 
     // ---- 右栏：预览（components::markdown 渲染成 eui 节点树）----
-    // 双栏态：编辑器单向驱动预览滚动（标题锚点 + 段内插值，§5.3）；
+    // 双栏态：编辑器单向驱动预览滚动（块模型精确锚，§5.3 / P3-④）；
     // 仅预览态：手动滚动（previewOffset_ 记忆），进入时对齐编辑器位置。
     void drawPreviewColumn(eui::Ui& ui,
                            float bodyH,
@@ -1431,11 +1433,24 @@ private:
             .build();
     }
 
-    // 双栏同步滚动（§5.3）：编辑器视口顶行 → 所在标题节 → 用
-    // MarkdownBuilder::estimateHeight（public static，带文档级缓存）算该节
-    // 在预览里的 y，段内按行数线性插值，再留 20% 视口余量。
-    // 近似（ponytail）：锚点用标题而非 md4c 块（块无源码 offset，全块扫描器
-    // 是 Phase 3 工作）；estimateHeight 本身是平均字宽估算，误差见设计文档 §9.2。
+    // 双栏同步滚动（§5.3，Phase 3 ④ 块模型精确锚）：编辑器视口顶行 →
+    // 块模型定位所在块 → 预览侧块几何（MdSyncMap）。旧版锚点 = 标题 +
+    // 节内按行线性插值（原注释点名「块无源码 offset，全块扫描器是
+    // Phase 3 工作」——块模型现已就绪，兑现该升级）：
+    //   - 锚点从「仅标题」细化到「每个块」：预览块 k 顶 y =
+    //     Σ_{i<k}(H_i + blockGap)，H_i = estimateHeight(块 i)，与预览逐块
+    //     渲染路径完全同源（上游 estimateBlockHeight 与 renderBlock 共用
+    //     cachedInlineLayout / estimateMarkdownTextHeight 测量 ⇒ 块边界
+    //     误差 0，不再随节长累积标题锚点间的摊分误差）。
+    //   - 块内按编辑器行线性插值：短行（不折行）段落逐行精确，异高
+    //     极端情形误差有界（≤ 块高，恒 ≤ 旧版整节摊分）。
+    //   - 反向映射（预览 y → 编辑器行，editorLineForPreviewY）是同一函数
+    //     的反函数，块边界精确可逆——P3-⑤ 块级交互（点预览块定位编辑器）
+    //     的底座；本轮不接线实时 UI（双栏仍是编辑器单向驱动，避免
+    //     滚动回环）。
+    // 缓存从旧 [14] 的 yA/yB 单锚对（换锚即重算）升级为 MdSyncMap 全表
+    // （键 = 修订 + 宽度 + blockGap + 块数；块高度按 stableId 备忘 ⇒ 编辑
+    // 只重测脏块）。留 20% 视口余量（旧行为保持）。
     float computeSyncOffset(eui::Ui& ui,
                             float pvW,
                             float pvH,
@@ -1446,46 +1461,27 @@ private:
             st.verticalScroll /
             (core::theme::editorFontSize() * kEditorLineHeightFactor);
         const float width = lastPvContentWidth_ > 0.0f ? lastPvContentWidth_ : pvW;
-
-        // 找 topLine 所在节：锚点 0 = 虚拟文首（line 0, y 0），其后每个标题一个锚点
-        size_t a = 0;
-        for (size_t i = 0; i < outline_.size(); ++i) {
-            if (outline_[i].lineNo <= topLine) a = i + 1;
-            else break;
-        }
-        const int aLine = (a == 0) ? 0 : outline_[a - 1].lineNo;
-        const int bLine = (a < outline_.size())
-            ? outline_[a].lineNo
-            : std::max(countLines(editorText_), aLine + 1);
-        // 审计 perf [14]：yA/yB 按 (文本修订, 锚点, 宽度) 缓存。锚点未动且
-        // 文本未改的帧直接复用——不再每帧两次全文前缀 substr 拷贝 +
-        // 上游缓存 O(n) 串哈希/比较；仅锚点切换/编辑/宽度变化帧重算一次。
-        float yA = 0.0f;
-        float yB = 0.0f;
-        if (syncCacheValid_ && syncCacheRev_ == editorTextRev_ &&
-            syncCacheAnchor_ == a && syncCacheWidth_ == width) {
-            yA = syncCacheYA_;
-            yB = syncCacheYB_;
-        } else {
-            yA = (a == 0)
-                ? 0.0f
-                : components::MarkdownBuilder::estimateHeight(
-                      editorText_.substr(0, outline_[a - 1].byteOffset), width, style);
-            yB = (a < outline_.size())
-                ? components::MarkdownBuilder::estimateHeight(
-                      editorText_.substr(0, outline_[a].byteOffset), width, style)
-                : components::MarkdownBuilder::estimateHeight(editorText_, width, style);
-            syncCacheValid_ = true;
-            syncCacheRev_ = editorTextRev_;
-            syncCacheAnchor_ = a;
-            syncCacheWidth_ = width;
-            syncCacheYA_ = yA;
-            syncCacheYB_ = yB;
-        }
-
-        const float frac = (bLine > aLine) ? (topLine - aLine) / (bLine - aLine) : 0.0f;
-        const float y = yA + frac * (yB - yA);
+        rebuildSyncMap(width, style);
+        const float y = syncMap_.previewYForEditorLine(topLine);
         return std::max(0.0f, y - pvH * 0.2f);
+    }
+
+    // 几何表按需重建（(修订, 宽度, blockGap, 块数) 未变 = 查表零成本；
+    // 变了也只对 memo 未命中的块付 estimateHeight）。
+    void rebuildSyncMap(float width, const components::MarkdownStyle& style) {
+        if (blockModel_.text() != editorText_) {
+            blockModel_.update(editorText_);  // 防御：理论不可达（同预览路径）
+        }
+        syncMap_.rebuild(
+            editorText_, blockModel_.blocks(), editorTextRev_, width,
+            style.blockGap,
+            [this, width, &style](const MdBlock& b) {
+                // 与预览逐块渲染同一份块源码 + 同一宽度 + 同一 style ⇒
+                // 测量结果与预览实际布局同源（块边界误差 0 的依据）。
+                // CodeFence 块的自绘几何（P3-③）与本公式逐项对齐。
+                return components::MarkdownBuilder::estimateHeight(
+                    editorText_.substr(b.start, b.end - b.start), width, style);
+            });
     }
 
     // ---- 新建笔记弹窗 ----
@@ -2647,13 +2643,10 @@ private:
     // 保证任何帧 contentKey 取值与优化前逐位相等。
     uint64_t editorTextRev_ = 0;
     uint64_t previewTextHash_ = std::hash<std::string>{}(std::string());
-    // [14] computeSyncOffset 的 yA/yB 缓存（键 = 修订 + 锚点 + 宽度）
-    bool syncCacheValid_ = false;
-    uint64_t syncCacheRev_ = 0;
-    size_t syncCacheAnchor_ = 0;
-    float syncCacheWidth_ = -1.0f;
-    float syncCacheYA_ = 0.0f;
-    float syncCacheYB_ = 0.0f;
+    // [14] → P3-④：computeSyncOffset 块模型精确锚几何表（键 = 修订 + 宽度 +
+    // blockGap + 块数；块高度按 stableId 备忘，编辑只重测脏块）。取代旧
+    // yA/yB 单锚缓存（标题锚 + 换锚即重算）。
+    MdSyncMap syncMap_;
     // [39] 状态栏 (行, 列, 码点数) 缓存（键 = 修订 + 光标字节偏移）
     uint64_t statusCacheRev_ = ~0ull;
     size_t statusCacheCursor_ = ~0ull;

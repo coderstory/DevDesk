@@ -7,18 +7,23 @@
 #include "doctest.h"
 #include "core/database.h"
 #include "core/module_interface.h"
+#include "core/theme.h"
+#include "module_markdown/md_block_model.h"
 #include "module_markdown/md_line_scanner.h"
 #include "module_markdown/md_tree.h"
 
 #include <components/input.h>
 #include <eui/dsl.h>
 
+#include <algorithm>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
+#include <map>
 #include <memory>
 #include <string>
 #include <system_error>
+#include <vector>
 
 extern "C" ::core::Module* create_markdown_module();
 
@@ -1920,6 +1925,211 @@ REGISTER_TEST(md_module_split_scroll_cache_equivalence,
     DOCTEST_CHECK(maxAfter > maxBefore);
     frame();
     DOCTEST_CHECK_EQ(ui.find("md.preview.scroll")->scrollMaxOffset, maxAfter);
+
+    mod->onStop();
+    return true;
+})
+
+// ---- P3-④ 双栏同步滚动块模型精确锚（headless）----
+// 旧机制（标题锚 + 节内按行摊分）在单节文档里步长恒定；块模型锚给出
+// 块级签名。全部断言从模块实时读数反推、不复制实现公式：
+//   ① 块内相邻行步长 = H_k/lc_k 按块而异（4 行段 0.8u vs 2 行段 0.67u）
+//      —— 全文档单一斜率被证伪
+//   ② 块界步长（末行 → 下块首行）− 块内步长 = blockGap，对段落/列表/
+//      围栏等异型块界给出同一常数 —— 精确累计 Σ(H_i+gap) 的几何签名，
+//      旧机制此值恒为 0
+//   ③ 同型块跨 rep 步长一致（累计漂移为零）
+//   ④ 文首插入一个与已测 paraA 逐字同源的段落块后，深层未变块首行读数
+//      位移 == 插入块高（= s_A×lc_A）+ gap（锚点跟随块几何，不按节摊分漂移）
+// 编辑器行高 = editorFontSize()×1.2，与模块 kEditorLineHeightFactor 同步。
+// 注：REGISTER_TEST 是宏，body 内裸逗号（如 std::map<int, float> 的模板
+// 逗号）会被当宏参数分隔——逗号一律藏进括号或类型别名。
+namespace {
+using IntFloatMap = std::map<int, float>;
+} // namespace
+
+REGISTER_TEST(md_module_split_block_anchor_precision,
+              "markdown_module: 双栏同步滚动块模型精确锚（headless，Phase 3 ④）", {
+    std::string text = "# Section\n\n";
+    for (int r = 0; r < 6; ++r) {
+        const std::string tag = std::to_string(r);
+        text += "para r" + tag + " A one\npara r" + tag + " A two\npara r" + tag +
+                " A three\npara r" + tag + " A four\n\n";
+        text += "para r" + tag + " B one\npara r" + tag + " B two\n\n";
+        text += "- r" + tag + " list one\n- r" + tag + " list two\n\n";
+        text += "```\nr" + tag + " f1\nr" + tag + " f2\nr" + tag + " f3\n```\n\n";
+    }
+    text += "final tail line\n";
+    MdUiEnv env("blockanchor");
+    DOCTEST_REQUIRE(env.db != nullptr);
+    DOCTEST_REQUIRE(writeTextFile(env.dir / "anchors.md", text));
+
+    std::unique_ptr<::core::Module> mod(create_markdown_module());
+    mod->onStart();
+    eui::Screen screen;
+    screen.width = 1600.0f;
+    screen.height = 1000.0f;
+    eui::Ui ui;
+    auto frame = [&](void) {
+        ui.begin("pv");
+        mod->compose(ui, screen);
+        ui.end();
+    };
+    frame();
+    const auto* fileRow = ui.find("md.tree.node.1.row");
+    DOCTEST_REQUIRE(fileRow != nullptr);
+    DOCTEST_REQUIRE(fileRow->onClick != nullptr);
+    fileRow->onClick();
+    eui::KeyEvent p;
+    p.key = eui::InputKey::P;
+    p.modifiers.control = true;
+    p.modifiers.shift = true;
+    DOCTEST_CHECK(mod->onKeyEvent(p));
+    frame();
+    frame();  // 首帧建宽度、次帧同步滚动稳定（同缓存等价用例）
+    const auto* pvScroll = ui.find("md.preview.scroll");
+    DOCTEST_REQUIRE(pvScroll != nullptr);
+    DOCTEST_CHECK(pvScroll->scrollMaxOffset > 0.0f);
+
+    // 块首行表（分块纯函数独立重建，与模块块模型同源）
+    const auto blocks = module::markdown::segmentMarkdownBlocks(text);
+    DOCTEST_REQUIRE(blocks.size() >= 20);  // 标题 + 4 块/rep × 6 + 尾
+    std::vector<int> fl;
+    for (const auto& b : blocks) {
+        fl.push_back(module::markdown::byteOffsetToLine(text, b.start));
+    }
+
+    using IS = components::input_detail::InputModel::InputState;
+    const float lineH = core::theme::editorFontSize() * 1.2f;
+    IntFloatMap probeCache;
+    auto atLine = [&](int line) -> float {
+        auto it = probeCache.find(line);
+        if (it != probeCache.end()) return it->second;
+        auto& st = ui.state<IS>("md.editor.input");
+        st.followCaret = false;  // 不清则组件每帧把滚动拽回光标位（同 md_highlight 用例）
+        st.verticalScroll = static_cast<float>(line) * lineH;
+        frame();
+        const float o = ui.find("md.preview.scroll")->scrollOffset;
+        probeCache[line] = o;
+        return o;
+    };
+
+    // 中段窗口探测（避开顶部 20% 视口余量钳位区与编辑器滚动上限）：
+    // 从首个行号 ≥34 的块起连续 4 个块界（paraA→paraB→list→fence→paraA）
+    size_t k0 = fl.size();
+    for (size_t k = 0; k < fl.size(); ++k) {
+        if (fl[k] >= 34) { k0 = k; break; }
+    }
+    DOCTEST_REQUIRE(k0 + 5 < fl.size());
+    const size_t kEnd = k0 + 5;
+
+    std::vector<float> cBoundary;  // 块界步长 − 块内步长（应恒 = blockGap）
+    std::vector<float> stepsParaA;
+    float stepParaB = 0.0f;
+    bool haveParaB = false;
+    float sA = 0.0f;      // 首个 paraA（4 内容行 + 前导空行槽）步长与行数
+    int lcA = 0;
+    std::string aSrc;     // 其块源（④ 逐字复制插入用）
+    for (size_t k = k0; k < kEnd; ++k) {
+        const int lc = fl[k + 1] - fl[k];
+        DOCTEST_REQUIRE(lc >= 2);
+        const float oTop = atLine(fl[k]);
+        const float oSecond = atLine(fl[k] + 1);
+        const float sIn = oSecond - oTop;  // = H_k/lc_k
+        const float oLast = atLine(fl[k + 1] - 1);
+        const float oNextTop = atLine(fl[k + 1]);
+        const float bnd = oNextTop - oLast;  // = H_k/lc_k + gap
+        DOCTEST_CHECK(sIn > 1.0f);
+        DOCTEST_CHECK(bnd > sIn);            // 界处必跳一个 gap
+        cBoundary.push_back(bnd - sIn);
+        const std::string src = text.substr(blocks[k].start, blocks[k].end - blocks[k].start);
+        // 注意：分块器「前导空行并入块头」→ src 可能以 \n 开头，用 find 判型
+        if (lc == 5 && src.find("A one") != std::string::npos) {
+            stepsParaA.push_back(sIn);
+            if (aSrc.empty()) {
+                sA = sIn;
+                lcA = lc;
+                aSrc = src;
+                const size_t nb = aSrc.find_first_not_of('\n');  // 去前导空行
+                aSrc.erase(0, nb == std::string::npos ? aSrc.size() : nb);
+            }
+        }
+        if (lc == 3 && src.find("B one") != std::string::npos) {
+            stepParaB = sIn;
+            haveParaB = true;
+        }
+        DOCTEST_CHECK(oNextTop > oTop);  // 深层块界严格递增
+        DOCTEST_CHECK(oTop > 0.0f);      // 未被 0 钳位
+    }
+    // ② 所有异型块界的「界步长 − 块内步长」同一常数（旧标题锚恒为 0）
+    DOCTEST_REQUIRE(cBoundary.size() >= 5);
+    const float cMin = *std::min_element(cBoundary.begin(), cBoundary.end());
+    const float cMax = *std::max_element(cBoundary.begin(), cBoundary.end());
+    DOCTEST_CHECK(cMin > 1.0f);
+    DOCTEST_CHECK(cMax - cMin < 0.1f);
+    const float cGap = 0.5f * (cMin + cMax);
+    // ① 块内步长按块而异（4 行段 vs 2 行段）
+    DOCTEST_REQUIRE(!stepsParaA.empty());
+    DOCTEST_CHECK(haveParaB);
+    DOCTEST_CHECK(std::fabs(stepsParaA.front() - stepParaB) > 0.5f);
+    // ③ 同型块跨 rep 步长一致（累计漂移为零）
+    for (float s : stepsParaA) DOCTEST_CHECK(std::fabs(s - stepsParaA.front()) < 0.05f);
+
+    // ④ 文首插入一个与窗口内 paraA 逐字同源的段落块（同内容 ⇒ 同 md4c
+    //    解析 ⇒ 同预览高，无需假设单行高）→ 深层目标块（CodeFence，内容
+    //    未变）首行读数位移必须 == 插入块高（= s_A×lc_A）+ gap。
+    //    旧标题锚机制下位移 = 全局行斜率 × 插入行数，与此值一般不等。
+    size_t tgt = blocks.size();
+    for (size_t k = 0; k < blocks.size(); ++k) {
+        if (blocks[k].kind == module::markdown::MdBlockKind::CodeFence &&
+            fl[k] >= 26 && fl[k] <= 40) {
+            tgt = k;
+            break;
+        }
+    }
+    DOCTEST_REQUIRE(tgt < blocks.size());
+    DOCTEST_REQUIRE(!aSrc.empty());
+    const float offA = atLine(fl[tgt]);
+    DOCTEST_CHECK(offA > 0.0f);
+    {
+        auto& st = ui.state<IS>("md.editor.input");
+        st.cursor = 0;
+        st.selectionStart = 0;
+        st.selectionEnd = 0;
+    }
+    const auto* hit = ui.find("md.editor.input.hit");
+    DOCTEST_REQUIRE(hit != nullptr);
+    DOCTEST_REQUIRE(hit->onTextInput != nullptr);
+    core::TextInputEvent ev;
+    ev.text = aSrc;  // "para rX A one\n…\npara rX A four\n"（ATX 标题必打断段落）
+    hit->onTextInput(ev);
+    probeCache.clear();
+    frame();
+    frame();
+    const std::string text2 = aSrc + text;
+    DOCTEST_CHECK(ui.state<IS>("md.editor.input").text == text2);
+    const auto blocksNew = module::markdown::segmentMarkdownBlocks(text2);
+    DOCTEST_REQUIRE(blocksNew.size() == blocks.size() + 1);
+    const std::string targetSrc =
+        text.substr(blocks[tgt].start, blocks[tgt].end - blocks[tgt].start);
+    size_t tgtNew = blocksNew.size();
+    for (size_t k = 0; k < blocksNew.size(); ++k) {
+        if (blocksNew[k].kind == blocks[tgt].kind &&
+            text2.substr(blocksNew[k].start, blocksNew[k].end - blocksNew[k].start) == targetSrc) {
+            tgtNew = k;
+            break;
+        }
+    }
+    DOCTEST_REQUIRE(tgtNew < blocksNew.size());
+    const int flTgtNew = static_cast<int>(std::count(
+        text2.begin(), text2.begin() + static_cast<long>(blocksNew[tgtNew].start), '\n'));
+    auto& stPoke = ui.state<IS>("md.editor.input");
+    stPoke.followCaret = false;
+    stPoke.verticalScroll = static_cast<float>(flTgtNew) * lineH;
+    frame();
+    const float offB = ui.find("md.preview.scroll")->scrollOffset;
+    const float expectedShift = sA * static_cast<float>(lcA) + cGap;
+    DOCTEST_CHECK(std::fabs((offB - offA) - expectedShift) < 0.3f);
 
     mod->onStop();
     return true;
