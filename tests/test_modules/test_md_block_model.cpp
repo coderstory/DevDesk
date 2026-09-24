@@ -74,6 +74,8 @@ const char* kCorpus[] = {
     "a\r\nb\r\n\r\nc\r\n",
     "# h1\n\n```\ncode\n```\n\n| x |\n| --- |\n\n- list\n\n> quote\n\n---\n\ntail\n",
     "```outer\ntext\n```closer\nafter\n",
+    "[foo]: http://example.com\n\nSee [foo] here.\n",  // 链接引用定义=全文档上下文
+    "定义在前\n\n[a]: /u1\n[b]: /u2\n\n用 [a] 和 [b]\n",
 };
 
 } // namespace
@@ -171,6 +173,18 @@ REGISTER_TEST(md_block_model_segmentation, "md_block_model: 代码块/表格/标
         const auto b = segmentMarkdownBlocks(t);
         DOCTEST_REQUIRE(b.size() == 1);
         DOCTEST_CHECK(b[0].kind == MdBlockKind::List);
+    }
+    // refdef = 全文档上下文 → 整篇单块退化（保等价）；围栏内 refdef 行不触发
+    {
+        const std::string t = "para one\n\n[foo]: http://x\n\nsee [foo]\n";
+        const auto b = segmentMarkdownBlocks(t);
+        DOCTEST_REQUIRE(b.size() == 1);
+        DOCTEST_CHECK(b[0].start == 0 && b[0].end == t.size());
+    }
+    {
+        const std::string t = "```\n[fake]: /not-a-refdef\n```\n\nreal para\n\nnext\n";
+        const auto b = segmentMarkdownBlocks(t);
+        DOCTEST_CHECK(b.size() > 1);  // 围栏内形似 refdef 的文本不触发退化
     }
     return true;
 })

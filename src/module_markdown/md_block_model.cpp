@@ -142,6 +142,21 @@ size_t lineStartAfter(const std::string& text, size_t le, size_t n) {
     return le + 1;
 }
 
+// 链接引用定义行：^ {0,3}\[label\]:\s （label 非空；保守口径：结构像即算）。
+// refdef 是 md4c 的【全文档上下文】——定义段本身不产出可见块，且跨块引用
+// （[foo] 链接在别的块）只有整篇一起解析才能解析。逐块解析会让未定义块
+// 把 [foo] 渲染成字面文本 → 与整篇不等价。含 refdef 的文档整篇退化为单块
+// （单块 = 原样整篇，恒等价），增量收益归零但渲染正确。宁可漏增量不可错切。
+bool isRefdefLine(std::string_view body) {
+    const size_t indent = leadingSpaces(body);
+    if (indent > 3 || indent >= body.size() || body[indent] != '[') return false;
+    const size_t close = body.find(']', indent + 1);
+    if (close == std::string_view::npos || close == indent + 1) return false;
+    if (close + 1 >= body.size() || body[close + 1] != ':') return false;
+    const size_t after = close + 2;
+    return after == body.size() || isSpace(body[after]);
+}
+
 // 表格起点：| 行 + 下一行是合法分隔行
 bool startsTable(const std::string& text, size_t ls, size_t le, size_t n) {
     if (!isTableRowLine(lineBody(text, ls, le))) return false;
@@ -199,6 +214,24 @@ std::vector<MdBlock> segmentMarkdownBlocks(const std::string& text) {
 
     // 围栏状态机与大纲/编辑器高亮同源（一鱼三吃第三吃）
     const std::vector<MdFenceBlock> fences = scanFences(text);
+
+    // refdef 检测（围栏外）：命中 → 全文档单块退化（见 isRefdefLine 注释）
+    {
+        size_t fi = 0;
+        for (size_t i = 0; i < n;) {
+            const size_t rawLe = text.find('\n', i);
+            const size_t le = rawLe == std::string_view::npos ? n : rawLe;
+            while (fi < fences.size() && fences[fi].contentEnd <= i) ++fi;
+            const bool inFence = fi < fences.size() && fences[fi].contentStart <= i;
+            if (!inFence && isRefdefLine(lineBody(text, i, le))) {
+                out.push_back(MdBlock{MdBlockKind::Paragraph, 0, n,
+                                      mdBlockHash(std::string_view(text)), -1});
+                return out;
+            }
+            if (rawLe == std::string_view::npos) break;
+            i = rawLe + 1;
+        }
+    }
 
     auto hashOf = [&](size_t start, size_t end) {
         return mdBlockHash(std::string_view(text).substr(start, end - start));
