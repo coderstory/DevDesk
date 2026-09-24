@@ -32,8 +32,11 @@ struct MdFenceBlock {
     size_t contentEnd = 0;      // 闭栏行行首；未闭合围栏 = text.size()
 };
 
-// 扫描围栏代码块区间。近似（ponytail）同 scanHeadings：围栏不校验缩进与
-// 信息串语法，``` 与 ~~~ 各自按字符配对开关。区间按出现顺序升序、互不重叠。
+// 扫描围栏代码块区间。语义对齐 md4c/CommonMark：缩进 ≤3 空格、≥3 同字符、
+// 闭栏需长度 ≥ 开栏且行尾仅空白（```closer 类尾随文本不闭栏）、` 围栏开栏
+// info 不得含 `。区间按出现顺序升序、互不重叠。与预览分块（md_block_model）
+// / 大纲 / 编辑器高亮共用这一套状态机（一鱼三吃），必须与上游 md4c 解析
+// 保持一致——等价性回归锚 = md_block_model_render_equivalence。
 std::vector<MdFenceBlock> scanFences(const std::string& text);
 
 // 扫描全文标题。围栏代码块（``` / ~~~）内的 # 行不算标题（围栏语义与

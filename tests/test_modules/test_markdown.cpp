@@ -84,6 +84,47 @@ REGISTER_TEST(md_scanner_tilde_fence_pairs, "md_line_scanner: ~~~ 与 ``` 各自
     return true;
 })
 
+// 闭栏规则对齐 md4c/CommonMark（Phase 3 等价测试抓出的破口回归锚）：
+// 尾随文本闭栏行、短闭栏、```a`b` 非法开栏、≤3 空格缩进开/闭栏。
+REGISTER_TEST(md_scanner_fence_close_strict, "md_line_scanner: 围栏开闭语义与 md4c 对齐", {
+    using module::markdown::scanFences;
+    // ```closer 不是闭栏 → 整段到 EOF 一个围栏
+    {
+        const auto fs = scanFences("```outer\ntext\n```closer\nafter\n");
+        DOCTEST_REQUIRE(fs.size() == 1);
+        DOCTEST_CHECK(fs[0].contentEnd == std::string_view("```outer\ntext\n```closer\nafter\n").size());
+    }
+    // 闭栏长度 < 开栏 → 不闭
+    {
+        const auto fs = scanFences("````py\ncode\n```\nstill code\n````\n");
+        DOCTEST_REQUIRE(fs.size() == 1);
+        DOCTEST_CHECK(fs[0].contentEnd == std::string_view("````py\ncode\n```\nstill code\n").size());
+    }
+    // ` 围栏开栏 info 含 ` = 整行是普通文本（不是围栏）；后续 ``` 才是开栏
+    {
+        const std::string t = "```a`b`\ncode?\n```\n";
+        const auto fs = scanFences(t);
+        DOCTEST_REQUIRE(fs.size() == 1);
+        DOCTEST_CHECK(fs[0].openLineStart == std::string_view("```a`b`\ncode?\n").size());
+    }
+    // ~~~ 闭栏行尾随文本不闭栏；纯空格尾随可闭
+    {
+        const auto fs = scanFences("~~~\ncode\n~~~ x\nclose now\n~~~  \n");
+        DOCTEST_REQUIRE(fs.size() == 1);
+        DOCTEST_CHECK(fs[0].contentEnd ==
+                      std::string_view("~~~\ncode\n~~~ x\nclose now\n").size());
+    }
+    // ≤3 前导空格的开栏/闭栏有效；≥4 空格是缩进代码不是围栏
+    {
+        const auto fs = scanFences("   ```py\ncode\n    ```\n   ```\n");
+        DOCTEST_REQUIRE(fs.size() == 1);
+        DOCTEST_CHECK(fs[0].openLineStart == 0);
+        DOCTEST_CHECK(fs[0].contentEnd ==
+                      std::string_view("   ```py\ncode\n    ```\n").size());
+    }
+    return true;
+})
+
 REGISTER_TEST(md_scanner_crlf_and_utf8, "md_line_scanner: CRLF 与中文标题", {
     const std::string text = "# 项目周报\r\n正文\r\n## 本周进展\r\n";
     const auto hs = scanHeadings(text);

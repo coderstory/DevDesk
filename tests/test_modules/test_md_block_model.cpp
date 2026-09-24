@@ -15,6 +15,13 @@
 #include "module_markdown/md_block_model.h"
 #include "module_markdown/md_line_scanner.h"
 
+// 逐块解析结构等价断言直接消费上游 md4c 解析器（EUI_HAS_MD4C 为 eui_neo
+// PUBLIC 编译定义，随链接传播；未启用 md4c 时上游退化为单段落解析，
+// 本比对无意义 → 守卫掉）。
+#if defined(EUI_HAS_MD4C)
+#include <components/markdown.h>
+#endif
+
 #include <chrono>
 #include <string>
 #include <string_view>
@@ -241,6 +248,101 @@ REGISTER_TEST(md_block_model_fence_parity, "md_block_model: 围栏块与 scanFen
         DOCTEST_CHECK(fi == fences.size());
     }
     return true;
+})
+
+// 结构等价比对主体（REGISTER_TEST 宏实参内嵌预处理指令触发
+// -Wpedantic -Werror，故 #if 分支放在宏外）。无 md4c 构建时上游解析
+// 退化为单段落、比对无意义 → 恒真短路。
+static bool mdBlockModelRenderEquivalence() {
+#if !defined(EUI_HAS_MD4C)
+    return true;
+#else
+    using components::detail::MarkdownBlock;
+    using components::detail::MarkdownBlockKind;
+    using components::detail::parseMarkdownBlocks;
+
+    // 块签名：md4c 类型 + 影响渲染的关键状态（标题层级 / 有序编号 / 表格列 /
+    // run 文本拼接）。逐块渲染 == 整篇渲染 的充要条件是块序列一致。
+    auto signature = [](const MarkdownBlock& b) {
+        std::string runsText;
+        for (const auto& r : b.runs) runsText += r.text;
+        std::string cellsText;
+        for (const auto& c : b.cells) {
+            for (const auto& r : c.runs) cellsText += r.text;
+            cellsText += "\x1F";
+        }
+        return std::to_string(static_cast<int>(b.kind)) + '|' +
+               std::to_string(b.headingLevel) + '|' +
+               std::to_string(b.ordered ? 1 : 0) + std::to_string(b.number) + '|' +
+               std::to_string(b.tableHeader ? 1 : 0) + '|' +
+               runsText + '|' + cellsText;
+    };
+    auto signatures = [&](const std::string& text) {
+        std::vector<std::string> out;
+        for (const auto& b : parseMarkdownBlocks(text)) out.push_back(signature(b));
+        return out;
+    };
+
+    // corpus 全覆盖（代码块/表格/标题/列表/引用/分隔线/段落/围栏内噪声行）
+    for (const char* c : kCorpus) {
+        const std::string text = c;
+        const auto whole = signatures(text);
+        std::vector<std::string> perBlock;
+        for (const auto& b : segmentMarkdownBlocks(text)) {
+            const auto s = signatures(text.substr(b.start, b.end - b.start));
+            perBlock.insert(perBlock.end(), s.begin(), s.end());
+        }
+        if (!(whole == perBlock)) {
+            std::cerr << "等价破口 corpus:\n" << text << std::endl;
+            for (size_t i = 0; i < whole.size(); ++i) {
+                std::cerr << "whole[" << i << "]=" << whole[i] << std::endl;
+            }
+            for (size_t i = 0; i < perBlock.size(); ++i) {
+                std::cerr << "blocks[" << i << "]=" << perBlock[i] << std::endl;
+            }
+            return false;  // 逐块解析与整篇不一致 = 切分器等价破口
+        }
+    }
+
+    // 混合富文档：7 种块型 + 行内 runs（粗体/内联代码）+ 表格对齐 + 未闭合围栏
+    {
+        const std::string rich =
+            "# 标题 Alpha\n\n"
+            "**行内粗体** 和 `内联代码` 的段落，跨多行\n软换行合并同段。\n\n"
+            "```cpp\nint main() { return 0; }\n```\n\n"
+            "| 列A | 列B |\n| :-- | --: |\n| 1 | 2 |\n| 三 | 四 |\n\n"
+            "- 项目一\n- 项目二\n  - 嵌套项\n\n"
+            "> 引用第一行\n> 引用第二行\n\n"
+            "---\n\n"
+            "```python\n# 围栏内的 # 与 | 行是噪声\n```\n\n"
+            "结尾段落。\n";
+        const auto whole = signatures(rich);
+        std::vector<std::string> perBlock;
+        for (const auto& b : segmentMarkdownBlocks(rich)) {
+            const auto s = signatures(rich.substr(b.start, b.end - b.start));
+            perBlock.insert(perBlock.end(), s.begin(), s.end());
+        }
+        DOCTEST_CHECK(whole == perBlock);
+        DOCTEST_CHECK(whole.size() >= 8);  // 富样例确有多样块
+    }
+
+    // CJK + CRLF 富文档
+    {
+        const std::string t = "标题一\r\n\r\n```sh\r\ngit status\r\n```\r\n\r\n| 甲 | 乙 |\r\n| - | - |\r\n| 1 | 2 |\r\n\r\n- 中文项\r\n> 中文引用\r\n\r\n结束\r\n";
+        const auto whole = signatures(t);
+        std::vector<std::string> perBlock;
+        for (const auto& b : segmentMarkdownBlocks(t)) {
+            const auto s = signatures(t.substr(b.start, b.end - b.start));
+            perBlock.insert(perBlock.end(), s.begin(), s.end());
+        }
+        DOCTEST_CHECK(whole == perBlock);
+    }
+        return true;
+#endif
+}
+
+REGISTER_TEST(md_block_model_render_equivalence, "md_block_model: 逐块渲染与整篇重算逐块一致（md4c 结构等价）", {
+    return mdBlockModelRenderEquivalence();
 })
 
 REGISTER_TEST(md_block_model_crlf, "md_block_model: CRLF 文档连续覆盖 + 表格/围栏可切", {

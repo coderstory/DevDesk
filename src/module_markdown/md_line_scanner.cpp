@@ -10,14 +10,40 @@ namespace {
 
 bool isSpace(char c) { return c == ' ' || c == '\t'; }
 
-// 行首是否是 >=3 个 ` 或 ~ 的围栏；返回围栏字符，非围栏返回 0
-char fenceMarker(std::string_view line) {
-    if (line.size() < 3) return 0;
-    const char c = line[0];
-    if (c != '`' && c != '~') return 0;
-    size_t n = 0;
-    while (n < line.size() && line[n] == c) ++n;
-    return n >= 3 ? c : 0;
+// 围栏候选行：≤3 前导空格 + ≥3 个同 ` / ~ 字符。返回围栏字符、连串长度与
+// 连串后的剩余文本（ch=0 = 不是候选行；≥4 空格缩进属缩进代码，非围栏）。
+struct FenceInfo {
+    char ch = 0;
+    size_t run = 0;
+    std::string_view rest;
+};
+
+FenceInfo fenceLine(std::string_view line) {
+    FenceInfo f;
+    size_t i = 0;
+    while (i < line.size() && line[i] == ' ' && i < 4) ++i;
+    if (i >= 4 || i >= line.size()) return f;  // 4+ 空格 = 缩进代码
+    const char c = line[i];
+    if (c != '`' && c != '~') return f;
+    size_t j = i;
+    while (j < line.size() && line[j] == c) ++j;
+    if (j - i < 3) return f;
+    f.ch = c;
+    f.run = j - i;
+    f.rest = line.substr(j);
+    return f;
+}
+
+// 闭栏判定（CommonMark/md4c 口径）：同字符、长度 ≥ 开栏、行尾仅空格/制表符。
+// 尾随信息串（```closer / ~~~~ x）不是闭栏——md4c 会把整段视作围栏内容，
+// 本扫描器与它不一致会让大纲/高亮/分块三处同时漂移（等价测试
+// md_block_model_render_equivalence 的回归锚）。
+bool closesFence(const FenceInfo& f, char openChar, size_t openRun) {
+    if (f.ch != openChar || f.run < openRun) return false;
+    for (const char c : f.rest) {
+        if (!isSpace(c)) return false;
+    }
+    return true;
 }
 
 } // namespace
@@ -26,6 +52,7 @@ std::vector<MdFenceBlock> scanFences(const std::string& text) {
     std::vector<MdFenceBlock> out;
     bool inFence = false;
     char fenceChar = 0;
+    size_t openRun = 0;
     size_t openLineStart = 0;
     size_t contentStart = 0;
     size_t pos = 0;
@@ -35,18 +62,22 @@ std::vector<MdFenceBlock> scanFences(const std::string& text) {
         if (end > pos && text[end - 1] == '\r') --end;  // CRLF
         const std::string_view line(text.data() + pos, end - pos);
 
-        const char fence = fenceMarker(line);
-        if (fence != 0) {
-            // ponytail: 只按围栏字符配对开关，不校验 CommonMark 缩进/长度精确匹配
-            if (!inFence) {
+        const FenceInfo f = fenceLine(line);
+        if (!inFence) {
+            // 开栏合法性（md4c 口径）：` 围栏的 info 串不得含 `（```a`b` 整行
+            // 是段落文本）；~ 围栏 info 可含 ~。缩进 ≤3 已在 fenceLine 校验。
+            const bool validOpen = f.ch != 0 &&
+                                   !(f.ch == '`' && f.rest.find('`') != std::string_view::npos);
+            if (validOpen) {
                 inFence = true;
-                fenceChar = fence;
+                fenceChar = f.ch;
+                openRun = f.run;
                 openLineStart = pos;
                 contentStart = (eol == std::string::npos) ? text.size() : eol + 1;
-            } else if (fence == fenceChar) {
-                inFence = false;
-                out.push_back({openLineStart, contentStart, pos});
             }
+        } else if (closesFence(f, fenceChar, openRun)) {
+            inFence = false;
+            out.push_back({openLineStart, contentStart, pos});
         }
 
         if (eol == std::string::npos) break;
