@@ -133,15 +133,6 @@ void savePetPosition() {
     }
 }
 
-void savePetClickThrough(bool enabled) {
-    PetConfigStore store(petConfigFile());
-    PetConfig cfg = store.load();
-    cfg.clickThrough = enabled;
-    if (store.save(cfg).isFail()) {
-        LOG_WARN("桌宠穿透状态持久化失败（不影响本次会话）");
-    }
-}
-
 // ---- compose 状态（ui.state 挂在子窗口自己的 Ui 实例上）----
 
 struct PetUiState {
@@ -158,7 +149,6 @@ struct PetUiState {
 // ---- styled 右键菜单（菜单美化 2026-09-23）----
 // FontAwesome 码点（fa-solid）：穿透=mouse-pointer / 换肤=palette /
 // 位置重置=crosshairs / 隐藏=eye-slash / 退出=power-off
-constexpr int kIconThrough = 0xF245;
 constexpr int kIconSkin = 0xF53F;
 constexpr int kIconReset = 0xF05B;
 constexpr int kIconHide = 0xF070;
@@ -166,8 +156,9 @@ constexpr int kIconExit = 0xF011;
 constexpr int kIconConfirm = 0xF071;   // 退出确认：triangle-exclamation
 constexpr int kIconCancel = 0xF00D;    // 取消：xmark
 
-// 菜单位置：光标屏幕坐标（窗口原点 + 窗口内光标，与拖拽锚点同一坐标系）
-std::pair<float, float> petMenuAnchorPos() {
+// 菜单位置：x 取光标屏位；y 锚到宠物窗顶上方 menuHeight 处——菜单向下
+// 展开不叠宠物（2026-09-24 用户要求；styledMenuClampPosition 兜底越顶贴顶）
+std::pair<float, float> petMenuAnchorPos(float menuHeight) {
     double cursorX = 0.0;
     double cursorY = 0.0;
     core::window::getCursorPosition(runtime().handle, cursorX, cursorY);
@@ -175,12 +166,24 @@ std::pair<float, float> petMenuAnchorPos() {
     int winY = 0;
     core::window::getWindowPos(runtime().handle, winX, winY);
     return {static_cast<float>(winX) + static_cast<float>(cursorX),
-            static_cast<float>(winY) + static_cast<float>(cursorY)};
+            static_cast<float>(winY) - menuHeight};
 }
 
 components::StyledMenuStyle petMenuStyle() {
     return components::StyledMenuStyle(
         core::theme::componentTokens(core::theme::current()));
+}
+
+// 主菜单高度预估（全展开行数 × 行高；换肤组收起时实际更矮，宁高勿叠）
+float petMenuFullHeight() {
+    const std::vector<PetMenuItemData> items = petContextMenuItems(runtime().skins);
+    int rowCount = 0;
+    for (const PetMenuItemData& it : items) {
+        rowCount += 1 + static_cast<int>(it.children.size());
+    }
+    const components::StyledMenuStyle st = petMenuStyle();
+    return st.inset * 2.0f + static_cast<float>(rowCount) * st.rowHeight +
+           st.margin * 2.0f;
 }
 
 // 选中处理（styled 回调与原生降级共用同一选择数学，path 语义一致）
@@ -191,7 +194,11 @@ void executePetMenuSelection(const std::vector<int>& path);
 // 先例注释依然成立——独立菜单窗不受裁剪，styled 可用时确认走独立窗）
 void showPetExitConfirm() {
     const std::vector<PetExitConfirmItem> confirmData = petExitConfirmItems();
-    const std::pair<float, float> pos = petMenuAnchorPos();
+    // 退出确认菜单高：说明/确认/取消 3 行 + 1 分隔线（结构见 petExitConfirmItems）
+    const components::StyledMenuStyle st = petMenuStyle();
+    const float confirmH = st.inset * 2.0f + 3.0f * st.rowHeight +
+                           st.separatorHeight + st.margin * 2.0f;
+    const std::pair<float, float> pos = petMenuAnchorPos(confirmH);
 
     std::vector<components::StyledMenuItem> styled;
     for (const PetExitConfirmItem& ci : confirmData) {
@@ -247,9 +254,6 @@ void executePetMenuSelection(const std::vector<int>& path) {
     const PetMenuAction action =
         petMenuActionForPath(path, runtime().skins.size(), skinIndex);
     switch (action) {
-        case PetMenuAction::ToggleThrough:
-            setPetClickThrough(!runtime().config.clickThrough);
-            break;
         case PetMenuAction::Skin:
             if (skinIndex >= 0 &&
                 static_cast<size_t>(skinIndex) < runtime().skins.size()) {
@@ -338,17 +342,17 @@ void petCompose(eui::Ui& ui, const eui::Screen& screen) {
                              // Idle 且无气泡时按三级内容源选词（M2 §4.5，审计 [18]）：
                              // ③代理事件 > ②逾期提醒 > ①静态语料——数据源都经 main
                              //   注入的 app 级只读桥（pet 不 include claude_proxy/home，
-                             //   隔离不破）。③②共用「数据气泡」槽位 roll（平均 ~5min
+                             //   隔离不破）。③②共用「数据气泡」槽位 roll（平均 ~2.5min
                              //   一次，低频节奏按审计建议）：③为 take 语义，代理繁忙
-                             //   期最多 5min 一泡不刷屏；桥都无数据（空串）本轮降级，
+                             //   期最多 2.5min 一泡不刷屏；桥都无数据（空串）本轮降级，
                              //   不显示死数据（M2 验收条款）
-                             // ①静态语料——平均 ~60s 一句（dt/300 ⊂ dt/60，roll 复用
+                             // ①静态语料——平均 ~60s 一句（dt/150 ⊂ dt/60，roll 复用
                              //   一个随机数即可表达两级优先，闲聊频率几乎不变）
                              if (!state.bubble.visible &&
                                  state.anim.state == PetAnimState::Idle) {
                                  const double roll =
                                      static_cast<double>(std::rand()) / RAND_MAX;
-                                 if (roll < dt / 300.0) {
+                                 if (roll < dt / 150.0) {
                                      const auto [dataText, dataSec] =
                                          petDataBubbleText(
                                              runtime().config.getProxyEvent,
@@ -408,9 +412,9 @@ void petCompose(eui::Ui& ui, const eui::Screen& screen) {
                     if (runtime().handle == nullptr) return;
 
                     const std::vector<PetMenuItemData> menu =
-                        petContextMenuItems(runtime().config.clickThrough,
-                                            runtime().skins);
-                    const std::pair<float, float> pos = petMenuAnchorPos();
+                        petContextMenuItems(runtime().skins);
+                    const std::pair<float, float> pos =
+                        petMenuAnchorPos(petMenuFullHeight());
                     if (showPetStyledMenu(menu, pos.first, pos.second)) {
                         return;  // 已入队开窗，选择经 executePetMenuSelection 回调
                     }
@@ -650,7 +654,6 @@ void startPetWindow(const PetWindowConfig& config) {
                         // 半透档——否则 Acrylic 材质画在透明像素后面，四角透出
                         // 的是材质灰而非桌面（真机采样 #D3D3D3 = 材质色）
                         .windowEffect(core::platform::WindowEffect::None)
-                        .clickThrough(config.clickThrough)  // 挂机穿透（持久化恢复）
                         .ignoreClearColorOverride()    // 全透底不被主题广播冲掉
                         .clearColor({0.0f, 0.0f, 0.0f, 0.0f})
                         .onWindowCreated([](core::window::Handle handle) {
@@ -705,7 +708,7 @@ void applyPetSkin(const std::string& skinName) {
         core::window::requestWindowClose(rt.handle);
         rt.handle = nullptr;  // 等新窗 onWindowCreated 回填
         startPetWindow(
-            PetWindowConfig{skinName, cfg.x, cfg.y, cfg.clickThrough,
+            PetWindowConfig{skinName, cfg.x, cfg.y,
                             rt.config.getOverdueCount,
                             rt.config.getProxyEvent});
     }
@@ -730,19 +733,6 @@ void resetPetPosition() {
     LOG_INFO("桌宠位置已重置（" + std::to_string(x) + "," + std::to_string(y) + "）");
 }
 
-void setPetClickThrough(bool enabled) {
-    PetRuntime& rt = runtime();
-    rt.config.clickThrough = enabled;
-    if (rt.handle != nullptr) {
-        // 即时生效：开 = 进入挂机锁死态；关 = 解锁（设置页恢复路径的核心
-        // 诉求——锁死态下这是唯一能碰到桌宠窗口的入口）
-        core::window::setWindowMousePassthrough(rt.handle, enabled);
-    }
-    savePetClickThrough(enabled);
-    LOG_INFO(std::string("桌宠鼠标穿透 → ") +
-             (enabled ? "开（挂机态；锁死后在设置页桌宠卡关闭）" : "关"));
-}
-
 // 审计 [5][36]：设置页桌宠卡只读桥（契约见 pet_window.h 同名声明）。
 // 读 pet_config.json 而非 rt.config——设置页可能在窗口未开时读取（桌宠关/
 // 隐藏），且 apply 双写保证盘与运行时一致
@@ -750,9 +740,6 @@ std::string currentSkinName() {
     return PetConfigStore(petConfigFile()).load().skinName;
 }
 
-bool currentClickThrough() {
-    return PetConfigStore(petConfigFile()).load().clickThrough;
-}
 
 // ---- 退出二次确认（审计 [25]，纯数据层，声明见 pet_window.h）----
 // 下标语义与 petExitConfirmChosen 耦合：0=说明（disabled）1=分隔线
@@ -773,13 +760,8 @@ bool petExitConfirmChosen(const std::vector<int>& path) {
 // ---- 右键菜单结构（菜单美化 2026-09-23，纯数据层，声明见 pet_window.h）----
 // 顺序 = path 语义基础：0 穿透切换 /（有皮肤时）1 换肤子组 / 位置重置 /
 // 隐藏 / 分隔线 / 退出。图标码点只被 styled 菜单消费，原生降级忽略。
-std::vector<PetMenuItemData> petContextMenuItems(bool clickThrough,
-                                                 const std::vector<std::string>& skins) {
+std::vector<PetMenuItemData> petContextMenuItems(const std::vector<std::string>& skins) {
     std::vector<PetMenuItemData> items;
-    items.push_back({clickThrough
-                         ? "关闭鼠标穿透"
-                         : "挂机穿透（点击透到下层；锁死后到设置页桌宠卡关闭）",
-                     kIconThrough, false, {}});
     if (!skins.empty()) {
         PetMenuItemData skinMenu;
         skinMenu.text = "换肤";
@@ -800,9 +782,9 @@ PetMenuAction petMenuActionForPath(const std::vector<int>& path, size_t skinCoun
                                    int& skinIndex) {
     skinIndex = -1;
     const bool hasSkinMenu = skinCount > 0;
-    // 子项组 path = {1, j}（换肤组恒在穿透之后 = 下标 1）
+    // 子项组 path = {0, j}（换肤组现居首项；穿透 toggle 项已移除，下标整体前移）
     if (path.size() == 2) {
-        if (hasSkinMenu && path[0] == 1 && path[1] >= 0 &&
+        if (hasSkinMenu && path[0] == 0 && path[1] >= 0 &&
             static_cast<size_t>(path[1]) < skinCount) {
             skinIndex = path[1];
             return PetMenuAction::Skin;
@@ -812,17 +794,12 @@ PetMenuAction petMenuActionForPath(const std::vector<int>& path, size_t skinCoun
     if (path.size() != 1) {
         return PetMenuAction::None;
     }
-    // 顶层下标随换肤子组有无整体偏移（与历史实现同一数学）。
-    // 注意：退出项在「隐藏」+ 分隔线之后 = idxHide + 2——分隔线不可选但在
+    // 顶层下标随换肤子组有无整体偏移（与历史实现同一数学，穿透项删除后各 -1）。
+    // 退出项在「隐藏」+ 分隔线之后 = idxHide + 2——分隔线不可选但在
     // items 向量占下标（styled/native 两条 path 语义都是向量原始下标）。
-    // 修复此前原生实现的 off-by-one（idxHide+1 指向分隔线，选「退出 DevDesk」
-    // 永远无动作），菜单美化单测 menuBeautifyPetActionPaths* 锁定。
-    const int idxReset = hasSkinMenu ? 2 : 1;
+    const int idxReset = hasSkinMenu ? 1 : 0;
     const int idxHide = idxReset + 1;
     const int idxExit = idxHide + 2;
-    if (path[0] == 0) {
-        return PetMenuAction::ToggleThrough;
-    }
     if (path[0] == idxReset) {
         return PetMenuAction::ResetPosition;
     }

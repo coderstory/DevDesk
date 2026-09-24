@@ -314,13 +314,11 @@ REGISTER_TEST(pet_settings_roundtrip, "pet: pet_config.json 读写往返 + 钳�
     cfg.skinName = "my-cat";
     cfg.x = 1600;
     cfg.y = 800;
-    cfg.clickThrough = true;
     DOCTEST_CHECK(store.save(cfg).isOk());
     const PetConfig loaded = store.load();
     DOCTEST_CHECK_EQ(loaded.skinName, "my-cat");
     DOCTEST_CHECK_EQ(loaded.x, 1600);
     DOCTEST_CHECK_EQ(loaded.y, 800);
-    DOCTEST_CHECK(loaded.clickThrough);
     // 皮肤名白名单：路径分隔符/空 → 收敛默认 clay-cat；坐标钳制保留 -1 哨兵
     cfg.skinName = "../evil";
     cfg.x = 999999;
@@ -341,7 +339,7 @@ REGISTER_TEST(pet_start_window_request, "pet: 开窗请求逐字段断言（无�
     (void)app::consumeWindowRequests();
 
     module::pet::startPetWindow(module::pet::PetWindowConfig{
-        "", 50, 60, false});  // 皮肤空 = 默认；位置已知
+        "", 50, 60});  // 皮肤空 = 默认；位置已知
     std::vector<app::DslWindowRequest> requests = app::consumeWindowRequests();
     DOCTEST_CHECK_EQ(requests.size(), static_cast<size_t>(1));
     const app::DslWindowRequest& req = requests[0];
@@ -370,15 +368,15 @@ REGISTER_TEST(pet_start_window_request, "pet: 开窗请求逐字段断言（无�
     DOCTEST_CHECK(std::filesystem::exists(petsRoot / "clay-cat" / "pet.json"));
 
     // 未知皮肤名 → 回退默认皮肤，窗口照常入队
-    module::pet::startPetWindow(module::pet::PetWindowConfig{"no-such-skin", -1, -1, true});
+    module::pet::startPetWindow(module::pet::PetWindowConfig{"no-such-skin", -1, -1});
     std::vector<app::DslWindowRequest> second = app::consumeWindowRequests();
     DOCTEST_CHECK_EQ(second.size(), static_cast<size_t>(1));
-    DOCTEST_CHECK(second[0].mousePassthrough);   // 本次 clickThrough=true
+    DOCTEST_CHECK(!second[0].mousePassthrough);   // 挂机穿透已移除，恒不穿透
     DOCTEST_CHECK(second[0].width == 128);       // 默认皮肤 128×128
 
     // 单边 -1 哨兵：只重置未设置的那一边，已知坐标不丢
     //（无头环境无工作区 → 未设置边落到兜底值 100）
-    module::pet::startPetWindow(module::pet::PetWindowConfig{"", 77, -1, false});
+    module::pet::startPetWindow(module::pet::PetWindowConfig{"", 77, -1});
     std::vector<app::DslWindowRequest> third = app::consumeWindowRequests();
     DOCTEST_CHECK_EQ(third.size(), static_cast<size_t>(1));
     DOCTEST_CHECK_EQ(third[0].x, 77);   // 已知的 x 原样保留
@@ -962,45 +960,6 @@ REGISTER_TEST(pet_apply_skin_and_reset, "pet: applyPetSkin 校验/持久化 + �
     return true;
 });
 
-// ---- 鼠标穿透桥（任务⑥：穿透锁死态的设置页恢复路径）----
-// 无头环境 handle==nullptr → setPetClickThrough 走「只持久化」分支；
-// 即时 setWindowMousePassthrough 分支真机验证。断言：toggle 写 config、
-// 状态往返不丢其他字段
-REGISTER_TEST(pet_click_through_bridge,
-              "pet: setPetClickThrough 持久化 + 状态往返（⑥恢复路径）", {
-    using namespace module::pet;
-    const PetsDirEnv pets("through");
-    const std::filesystem::path& root = pets.root;
-    std::filesystem::create_directories(root);
-    const std::filesystem::path cfgFile = petConfigFile();
-    // 预置：未穿透 + 已知皮肤/位置
-    {
-        PetConfigStore store(cfgFile);
-        PetConfig cfg;
-        cfg.skinName = "clay-cat";
-        cfg.x = 300;
-        cfg.y = 400;
-        cfg.clickThrough = false;
-        DOCTEST_CHECK(store.save(cfg).isOk());
-    }
-    // 开穿透 → 落盘 true，其他字段原样（读-改-写不串字段）
-    setPetClickThrough(true);
-    {
-        const PetConfig cfg = PetConfigStore(cfgFile).load();
-        DOCTEST_CHECK(cfg.clickThrough);
-        DOCTEST_CHECK_EQ(cfg.skinName, "clay-cat");
-        DOCTEST_CHECK_EQ(cfg.x, 300);
-        DOCTEST_CHECK_EQ(cfg.y, 400);
-    }
-    // 关穿透（锁死恢复方向）→ false 往返
-    setPetClickThrough(false);
-    {
-        const PetConfig cfg = PetConfigStore(cfgFile).load();
-        DOCTEST_CHECK(!cfg.clickThrough);
-    }
-    return true;
-});
-
 // ---- 拖拽锚点跟随（2026-09-23 真机症状 1：拖动抖动）----
 // 复现坐标模型：GLFW 上报的光标位置是「窗口相对」的——窗口被拖拽回调移动
 // 后，同样的屏幕移动产生反向偏差的读数。旧 delta 累加方案在此模型下
@@ -1340,31 +1299,23 @@ REGISTER_TEST(pet_sleep_render_pause, "pet: Sleep 零渲染暂停门（M2 任务
     return true;
 });
 
-// ---- 审计 [5][36]：设置页解耦只读桥 currentSkinName / currentClickThrough ----
-// settings 不再 include pet 头也不 link pet，桌宠卡初值改走这两个标量只读
+// ---- 审计 [5][36]：设置页解耦只读桥 currentSkinName ----
+// settings 不再 include pet 头也不 link pet，桌宠卡初值改走该标量只读
 // 函数（盘即真值：apply 路径双写运行时 + pet_config.json）。本用例锁桥语义：
-// 无盘 → 默认值；setPetClickThrough（无头窗口未开 → 只持久化）→ 桥回读；
-// store 写皮肤 → 桥跟随。
+// 无盘 → 默认值；store 写皮肤 → 桥跟随。（挂机穿透桥 currentClickThrough
+// 已于 2026-09-24 随功能移除）
 REGISTER_TEST(pet_bridge_readonly_accessors,
-              "pet: currentSkinName/currentClickThrough 只读桥（审计 [5][36] 设置页解耦）", {
+              "pet: currentSkinName 只读桥（审计 [5][36] 设置页解耦）", {
     PetsDirEnv env("bridge");
     using namespace module::pet;
 
     // pet_config.json 不存在 → PetConfig 默认值
     DOCTEST_CHECK_EQ(currentSkinName(), std::string(kDefaultSkinName));
-    DOCTEST_CHECK_EQ(currentClickThrough(), false);
-
-    // 穿透开关持久化后桥回读（窗口未开：setPetClickThrough 只落盘）
-    setPetClickThrough(true);
-    DOCTEST_CHECK_EQ(currentClickThrough(), true);
-    DOCTEST_CHECK_EQ(currentSkinName(), std::string(kDefaultSkinName));
 
     // 换皮肤名走盘 store（applyPetSkin 需 discoverSkins 命中，桥只读同一张盘）
     PetConfig cfg;
     cfg.skinName = "bridge-skin";
-    cfg.clickThrough = false;
     DOCTEST_CHECK(!PetConfigStore(petConfigFile()).save(cfg).isFail());
     DOCTEST_CHECK_EQ(currentSkinName(), std::string("bridge-skin"));
-    DOCTEST_CHECK_EQ(currentClickThrough(), false);
     return true;
 })

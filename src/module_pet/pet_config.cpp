@@ -16,7 +16,8 @@ namespace {
 constexpr const char* kKeySkin = "skinName";
 constexpr const char* kKeyX = "x";
 constexpr const char* kKeyY = "y";
-constexpr const char* kKeyClickThrough = "clickThrough";
+// clickThrough 字段已于 2026-09-24 移除（挂机穿透功能删除）；旧
+// pet_config.json 残留的 clickThrough 键被 load 静默忽略（向后兼容）
 } // namespace
 
 std::filesystem::path petConfigFile() {
@@ -78,9 +79,6 @@ PetConfig PetConfigStore::load() const {
     if (obj.has(kKeyY) && obj.get(kKeyY).isNumber()) {
         cfg.y = static_cast<int>(obj.get(kKeyY).asInt());
     }
-    if (obj.has(kKeyClickThrough) && obj.get(kKeyClickThrough).isBool()) {
-        cfg.clickThrough = obj.get(kKeyClickThrough).asBool();
-    }
     return sanitized(cfg);
 }
 
@@ -91,7 +89,6 @@ core::Result<void> PetConfigStore::save(const PetConfig& cfgRaw) const {
     obj.set(kKeySkin, platform::json::makeString(cfg.skinName));
     obj.set(kKeyX, platform::json::makeInt(cfg.x));
     obj.set(kKeyY, platform::json::makeInt(cfg.y));
-    obj.set(kKeyClickThrough, platform::json::makeBool(cfg.clickThrough));
 
     auto text = platform::json::stringify(
         platform::json::JsonValue(obj), /*pretty=*/true);

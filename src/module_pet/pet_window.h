@@ -47,14 +47,14 @@ struct PetMenuItemData {
     std::vector<PetMenuItemData> children;  // 非空 = 子项组（换肤）
 };
 
-// 构建桌宠右键菜单：穿透切换 /（有皮肤时）换肤子组 / 位置重置 / 隐藏 /
+// 构建桌宠右键菜单：（有皮肤时）换肤子组 / 位置重置 / 隐藏 /
 // 分隔线 / 退出。顺序即 path 语义基础
-std::vector<PetMenuItemData> petContextMenuItems(bool clickThrough,
-                                                 const std::vector<std::string>& skins);
+//（挂机穿透 toggle 项已于 2026-09-24 移除：死锁设计——开启后鼠标穿透致
+// 右键也点不中桌宠，只能设置页关，用户易被困住）
+std::vector<PetMenuItemData> petContextMenuItems(const std::vector<std::string>& skins);
 
 enum class PetMenuAction {
     None,          // 未识别路径（含组头本身）
-    ToggleThrough, // 鼠标穿透开关
     Skin,          // 换肤（skinIndex = 子项下标）
     ResetPosition,
     Hide,
@@ -88,7 +88,6 @@ struct PetWindowConfig {
     std::string skinName;   // 空 = kDefaultSkinName
     int x = -1;             // -1 = 未设置（取主显示器工作区右下角）；其他负值是
     int y = -1;             // 左/上副屏的合法坐标（M2 多显示器，钳制按位置选屏后保留）
-    bool clickThrough = false;  // 挂机穿透（右键菜单可切换，持久化）
     // 内容源②回调（main 注入；applyPetSkin 热换肤重开时从 rt.config 原样
     // 携带不丢桥）。空 = 无数据源，气泡只出静态语料①
     OverdueCountGetter getOverdueCount;
@@ -166,18 +165,11 @@ void applyPetSkin(const std::string& skinName);
 // 主显示器工作区右下角默认位
 void resetPetPosition();
 
-// 鼠标穿透（任务⑥「穿透锁死恢复路径」）：写 runtime 状态 + 即时
-// setWindowMousePassthrough + 持久化 pet_config.json。设置页桌宠卡调用
-// ——桌宠锁死（clickThrough=true 时右键也点不中自己）后，设置页是唯一
-// 恢复入口。窗口未开（桌宠关/隐藏）时只持久化，下次 startPetWindow 生效
-void setPetClickThrough(bool enabled);
-
-// 审计 [5][36] 设置页桥（只读）：当前皮肤名 / 当前穿透态，读 pet_config.json
-// （applyPetSkin/setPetClickThrough 双写运行时 + 盘，盘即真值；与设置页
-// 「初值读 pet_config」原语义一致）。标量返回值——module_settings 侧只
-// extern 声明这些自由函数即可调用（不 include 本头、不 link 本模块），
-// 避免共享 PetConfig 结构体布局（跨 TU 重定义是 ODR 风险）。
+// 审计 [5][36] 设置页桥（只读）：当前皮肤名，读 pet_config.json
+// （applyPetSkin 双写运行时 + 盘，盘即真值；与设置页「初值读 pet_config」
+// 原语义一致）。标量返回值——module_settings 侧只 extern 声明该自由函数
+// 即可调用（不 include 本头、不 link 本模块），避免共享 PetConfig 结构体
+// 布局（跨 TU 重定义是 ODR 风险）。
 std::string currentSkinName();
-bool currentClickThrough();
 
 } // namespace module::pet

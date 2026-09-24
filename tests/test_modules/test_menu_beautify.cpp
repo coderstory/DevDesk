@@ -23,32 +23,18 @@
 
 // ---- 1. 托盘菜单 spec ----
 
-REGISTER_TEST(menuBeautifyTraySpecStructure, "menu: 托盘 spec 项序/分隔线/图标/动作", {
+REGISTER_TEST(menuBeautifyTraySpecStructure,
+              "menu: 托盘 spec 项序/图标/动作（2026-09-24 精简为打开+退出）", {
     const auto spec = core::tray::trayMenuSpec();
-    DOCTEST_REQUIRE_EQ(spec.size(), static_cast<size_t>(8));
+    DOCTEST_REQUIRE_EQ(spec.size(), static_cast<size_t>(2));
     DOCTEST_CHECK_EQ(spec[0].text, std::string("显示主窗口"));
     DOCTEST_CHECK(spec[0].action == core::tray::TrayMenuAction::ShowMainWindow);
-    DOCTEST_CHECK_EQ(spec[1].text, std::string("-"));
-    DOCTEST_CHECK_EQ(spec[2].text, std::string("首页"));
-    DOCTEST_CHECK(spec[2].action == core::tray::TrayMenuAction::NavigateHome);
-    DOCTEST_CHECK_EQ(spec[3].text, std::string("笔记"));
-    DOCTEST_CHECK(spec[3].action == core::tray::TrayMenuAction::NavigateMarkdown);
-    DOCTEST_CHECK_EQ(spec[4].text, std::string("待办"));
-    DOCTEST_CHECK(spec[4].action == core::tray::TrayMenuAction::NavigateTodo);
-    DOCTEST_CHECK_EQ(spec[5].text, std::string("Claude"));
-    DOCTEST_CHECK(spec[5].action == core::tray::TrayMenuAction::NavigateClaude);
-    DOCTEST_CHECK_EQ(spec[6].text, std::string("-"));
-    DOCTEST_CHECK_EQ(spec[7].text, std::string("退出 DevDesk"));
-    DOCTEST_CHECK(spec[7].action == core::tray::TrayMenuAction::Exit);
-    // 可选中项必须有 FA 图标；分隔线无动作
+    DOCTEST_CHECK_EQ(spec[1].text, std::string("退出 DevDesk"));
+    DOCTEST_CHECK(spec[1].action == core::tray::TrayMenuAction::Exit);
+    // 两项都有 FA 图标、有动作（精简后无分隔线）
     for (const auto& item : spec) {
-        if (item.text == "-") {
-            DOCTEST_CHECK(item.action == core::tray::TrayMenuAction::None);
-            DOCTEST_CHECK_EQ(item.iconCodepoint, 0);
-        } else {
-            DOCTEST_CHECK(item.iconCodepoint != 0);
-            DOCTEST_CHECK(item.action != core::tray::TrayMenuAction::None);
-        }
+        DOCTEST_CHECK(item.iconCodepoint != 0);
+        DOCTEST_CHECK(item.action != core::tray::TrayMenuAction::None);
     }
     return true;
 });
@@ -60,24 +46,11 @@ REGISTER_TEST(menuBeautifyPetMenuItemsWithSkins, "menu: 桌宠菜单含换肤子
     skins.push_back("duck");
     skins.push_back("slime");
     skins.push_back("robot");
-    const auto items = module::pet::petContextMenuItems(false, skins);
-    DOCTEST_REQUIRE_EQ(items.size(), static_cast<size_t>(6));
-    DOCTEST_CHECK(items[0].text.find("挂机穿透") != std::string::npos);
-    DOCTEST_CHECK(items[0].iconCodepoint != 0);
-    DOCTEST_CHECK_EQ(items[1].text, std::string("换肤"));
-    DOCTEST_REQUIRE_EQ(items[1].children.size(), static_cast<size_t>(3));
-    DOCTEST_CHECK_EQ(items[1].children[2].text, std::string("robot"));
-    DOCTEST_CHECK(items[2].text.find("位置重置") != std::string::npos);
-    DOCTEST_CHECK(items[3].text.find("隐藏桌宠") != std::string::npos);
-    DOCTEST_CHECK_EQ(items[4].text, std::string("-"));
-    DOCTEST_CHECK_EQ(items[5].text, std::string("退出 DevDesk"));
-    return true;
-});
-
-REGISTER_TEST(menuBeautifyPetMenuItemsWithoutSkins, "menu: 桌宠菜单无皮肤时 5 顶层项（穿透文案随态）", {
-    const auto items = module::pet::petContextMenuItems(true, std::vector<std::string>());
+    const auto items = module::pet::petContextMenuItems(skins);
     DOCTEST_REQUIRE_EQ(items.size(), static_cast<size_t>(5));
-    DOCTEST_CHECK_EQ(items[0].text, std::string("关闭鼠标穿透"));
+    DOCTEST_CHECK_EQ(items[0].text, std::string("换肤"));
+    DOCTEST_REQUIRE_EQ(items[0].children.size(), static_cast<size_t>(3));
+    DOCTEST_CHECK_EQ(items[0].children[2].text, std::string("robot"));
     DOCTEST_CHECK(items[1].text.find("位置重置") != std::string::npos);
     DOCTEST_CHECK(items[2].text.find("隐藏桌宠") != std::string::npos);
     DOCTEST_CHECK_EQ(items[3].text, std::string("-"));
@@ -85,50 +58,57 @@ REGISTER_TEST(menuBeautifyPetMenuItemsWithoutSkins, "menu: 桌宠菜单无皮肤
     return true;
 });
 
+REGISTER_TEST(menuBeautifyPetMenuItemsWithoutSkins, "menu: 桌宠菜单无皮肤时 5 顶层项（穿透文案随态）", {
+    const auto items = module::pet::petContextMenuItems(std::vector<std::string>());
+    DOCTEST_REQUIRE_EQ(items.size(), static_cast<size_t>(4));
+    DOCTEST_CHECK(items[0].text.find("位置重置") != std::string::npos);
+    DOCTEST_CHECK(items[1].text.find("隐藏桌宠") != std::string::npos);
+    DOCTEST_CHECK_EQ(items[2].text, std::string("-"));
+    DOCTEST_CHECK_EQ(items[3].text, std::string("退出 DevDesk"));
+    return true;
+});
+
 // ---- 3. 选择数学（styled 与原生降级共用）----
 
 REGISTER_TEST(menuBeautifyPetActionPathsWithSkins, "menu: path→动作（有换肤子组，下标偏移）", {
     int skinIndex = -1;
+    // 换肤组现居首项（下标 0）；组头本身不可选（size==1 → None）
     DOCTEST_CHECK(module::pet::petMenuActionForPath(std::vector<int>{0}, 3, skinIndex) ==
-                  module::pet::PetMenuAction::ToggleThrough);
-    // 组头本身不可选
-    DOCTEST_CHECK(module::pet::petMenuActionForPath(std::vector<int>{1}, 3, skinIndex) ==
                   module::pet::PetMenuAction::None);
-    DOCTEST_CHECK(module::pet::petMenuActionForPath(std::vector<int>{1, 2}, 3, skinIndex) ==
+    DOCTEST_CHECK(module::pet::petMenuActionForPath(std::vector<int>{0, 2}, 3, skinIndex) ==
                   module::pet::PetMenuAction::Skin);
     DOCTEST_CHECK_EQ(skinIndex, 2);
     // 子项越界
     skinIndex = -1;
-    DOCTEST_CHECK(module::pet::petMenuActionForPath(std::vector<int>{1, 3}, 3, skinIndex) ==
+    DOCTEST_CHECK(module::pet::petMenuActionForPath(std::vector<int>{0, 3}, 3, skinIndex) ==
                   module::pet::PetMenuAction::None);
-    DOCTEST_CHECK(module::pet::petMenuActionForPath(std::vector<int>{2}, 3, skinIndex) ==
+    DOCTEST_CHECK(module::pet::petMenuActionForPath(std::vector<int>{1}, 3, skinIndex) ==
                   module::pet::PetMenuAction::ResetPosition);
-    DOCTEST_CHECK(module::pet::petMenuActionForPath(std::vector<int>{3}, 3, skinIndex) ==
+    DOCTEST_CHECK(module::pet::petMenuActionForPath(std::vector<int>{2}, 3, skinIndex) ==
                   module::pet::PetMenuAction::Hide);
     // 分隔线位不可动作
-    DOCTEST_CHECK(module::pet::petMenuActionForPath(std::vector<int>{4}, 3, skinIndex) ==
+    DOCTEST_CHECK(module::pet::petMenuActionForPath(std::vector<int>{3}, 3, skinIndex) ==
                   module::pet::PetMenuAction::None);
-    DOCTEST_CHECK(module::pet::petMenuActionForPath(std::vector<int>{5}, 3, skinIndex) ==
+    DOCTEST_CHECK(module::pet::petMenuActionForPath(std::vector<int>{4}, 3, skinIndex) ==
                   module::pet::PetMenuAction::Exit);
     DOCTEST_CHECK(module::pet::petMenuActionForPath(std::vector<int>(), 3, skinIndex) ==
                   module::pet::PetMenuAction::None);
-    // 非换肤组的二层路径
-    DOCTEST_CHECK(module::pet::petMenuActionForPath(std::vector<int>{0, 1}, 3, skinIndex) ==
+    // 非换肤组首层的二层路径 → None（Hide 等非子组无二层）
+    DOCTEST_CHECK(module::pet::petMenuActionForPath(std::vector<int>{1, 0}, 3, skinIndex) ==
                   module::pet::PetMenuAction::None);
     return true;
 });
 
 REGISTER_TEST(menuBeautifyPetActionPathsWithoutSkins, "menu: path→动作（无换肤子组，下标回移）", {
     int skinIndex = -1;
+    // 穿透项已删，首项 = 位置重置（idxReset=0）
     DOCTEST_CHECK(module::pet::petMenuActionForPath(std::vector<int>{0}, 0, skinIndex) ==
-                  module::pet::PetMenuAction::ToggleThrough);
-    DOCTEST_CHECK(module::pet::petMenuActionForPath(std::vector<int>{1}, 0, skinIndex) ==
                   module::pet::PetMenuAction::ResetPosition);
-    DOCTEST_CHECK(module::pet::petMenuActionForPath(std::vector<int>{2}, 0, skinIndex) ==
+    DOCTEST_CHECK(module::pet::petMenuActionForPath(std::vector<int>{1}, 0, skinIndex) ==
                   module::pet::PetMenuAction::Hide);
-    DOCTEST_CHECK(module::pet::petMenuActionForPath(std::vector<int>{3}, 0, skinIndex) ==
+    DOCTEST_CHECK(module::pet::petMenuActionForPath(std::vector<int>{2}, 0, skinIndex) ==
                   module::pet::PetMenuAction::None);
-    DOCTEST_CHECK(module::pet::petMenuActionForPath(std::vector<int>{4}, 0, skinIndex) ==
+    DOCTEST_CHECK(module::pet::petMenuActionForPath(std::vector<int>{3}, 0, skinIndex) ==
                   module::pet::PetMenuAction::Exit);
     DOCTEST_CHECK(module::pet::petMenuActionForPath(std::vector<int>{9}, 0, skinIndex) ==
                   module::pet::PetMenuAction::None);

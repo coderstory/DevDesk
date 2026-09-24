@@ -16,7 +16,9 @@ struct PetConfig {
     std::string skinName = kDefaultSkinName;  // 皮肤目录名（assets/pets/<skinName>）
     int x = -1;                               // 窗口位置（逻辑屏幕坐标；<0 = 未设置，
     int y = -1;                               //  单边独立：只重置未设置的那一边）
-    bool clickThrough = false;                // 挂机穿透（右键菜单可切换）
+    // 挂机穿透（clickThrough）功能已于 2026-09-24 移除：死锁设计——开启后
+    // 鼠标穿透导致右键也点不中桌宠，只能设置页关，用户易被困住。旧
+    // pet_config.json 残留的 clickThrough 字段会被 load 静默忽略（向后兼容）
 };
 
 // 默认配置文件位置（core::paths::petsDir() 下；DEVDESK_PETS_DIR 可隔离）
