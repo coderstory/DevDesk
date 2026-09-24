@@ -73,6 +73,24 @@ void setEnvVar(const char* name, const std::string& value) {
 #endif
 }
 
+// 审计 [16]：DEVDESK_PETS_DIR 隔离的 RAII 守卫（test_settings.cpp PruneEnv
+// 同款约定）。构造 = 清残留 + 建临时目录 + 指环境变量；析构 = 环境变量拉回
+// 未设置 + 删临时目录。断言 fail-fast 提前 return false 也会走析构，不留
+// 环境/磁盘泄漏给同进程后续用例（旧版手工 set/clear 配对失败即跳尾）。
+struct PetsDirEnv {
+    const std::filesystem::path root;
+    explicit PetsDirEnv(const std::string& tag) : root(tempDir(tag.c_str())) {
+        removeTreeQuietly(root);
+        setEnvVar("DEVDESK_PETS_DIR", root.string());
+    }
+    PetsDirEnv(const PetsDirEnv&) = delete;
+    PetsDirEnv& operator=(const PetsDirEnv&) = delete;
+    ~PetsDirEnv() {
+        setEnvVar("DEVDESK_PETS_DIR", "");
+        removeTreeQuietly(root);
+    }
+};
+
 // PNG 结构断言：魔数 + IHDR 宽高（不做完整解码，解码属 EUI-NEO stb 路径）
 bool pngLooksValid(const std::filesystem::path& path, int width, int height) {
     std::ifstream file(path, std::ios::binary);
@@ -317,9 +335,8 @@ REGISTER_TEST(pet_settings_roundtrip, "pet: pet_config.json 读写往返 + 钳�
 // ============ 5. startPetWindow 无头冒烟 ============
 
 REGISTER_TEST(pet_start_window_request, "pet: 开窗请求逐字段断言（无头）", {
-    const std::filesystem::path petsRoot = tempDir("petsroot");
-    removeTreeQuietly(petsRoot);
-    setEnvVar("DEVDESK_PETS_DIR", petsRoot.string());
+    const PetsDirEnv pets("petsroot");
+    const std::filesystem::path& petsRoot = pets.root;
     // 清空可能残留的窗口请求队列
     (void)app::consumeWindowRequests();
 
@@ -367,8 +384,6 @@ REGISTER_TEST(pet_start_window_request, "pet: 开窗请求逐字段断言（无�
     DOCTEST_CHECK_EQ(third[0].x, 77);   // 已知的 x 原样保留
     DOCTEST_CHECK_EQ(third[0].y, 100);  // 未设置的 y 走兜底
 
-    setEnvVar("DEVDESK_PETS_DIR", "");
-    removeTreeQuietly(petsRoot);
     return true;
 });
 
@@ -747,9 +762,8 @@ const char* kNewBuiltinSkins[] = {"duck", "slime", "robot", "ghost"};
 
 REGISTER_TEST(pet_builtin_skins, "pet: 四款新内置皮肤（四态帧/互异/发现/短语表/替换保留）", {
     using namespace module::pet;
-    const std::filesystem::path root = tempDir("builtin_skins");
-    removeTreeQuietly(root);
-    setEnvVar("DEVDESK_PETS_DIR", root.string());
+    const PetsDirEnv pets("builtin_skins");
+    const std::filesystem::path& root = pets.root;
     // ensureBuiltinSkins 生成全部 5 款（clay-cat + 四款新皮肤）
     const std::vector<std::string> generated = ensureBuiltinSkins(root);
     DOCTEST_CHECK_EQ(generated.size(), static_cast<size_t>(5));
@@ -826,8 +840,6 @@ REGISTER_TEST(pet_builtin_skins, "pet: 四款新内置皮肤（四态帧/互异/
     auto duck = loadSkin(root / "duck");
     DOCTEST_CHECK(duck.isOk());
     DOCTEST_CHECK_EQ(duck.unsafeValue().idleFrames.size(), static_cast<size_t>(1));
-    setEnvVar("DEVDESK_PETS_DIR", "");
-    removeTreeQuietly(root);
     return true;
 });
 
@@ -875,9 +887,8 @@ REGISTER_TEST(pet_anime_girl_asset_skin, "pet: 内置美术皮肤 anime-girl（C
 
 REGISTER_TEST(pet_discover_skins, "pet: 皮肤发现（下拉/换肤菜单的数据源）", {
     using namespace module::pet;
-    const std::filesystem::path root = tempDir("discover");
-    removeTreeQuietly(root);
-    setEnvVar("DEVDESK_PETS_DIR", root.string());
+    const PetsDirEnv pets("discover");
+    const std::filesystem::path& root = pets.root;
     // 空目录：无皮肤
     std::filesystem::create_directories(root);
     DOCTEST_CHECK(discoverSkins().empty());
@@ -903,16 +914,13 @@ REGISTER_TEST(pet_discover_skins, "pet: 皮肤发现（下拉/换肤菜单的数
     }
     const std::vector<std::string> filtered = discoverSkins();
     DOCTEST_CHECK_EQ(filtered.size(), static_cast<size_t>(2));
-    setEnvVar("DEVDESK_PETS_DIR", "");
-    removeTreeQuietly(root);
     return true;
 });
 
 REGISTER_TEST(pet_apply_skin_and_reset, "pet: applyPetSkin 校验/持久化 + 位置重置", {
     using namespace module::pet;
-    const std::filesystem::path root = tempDir("applyskin");
-    removeTreeQuietly(root);
-    setEnvVar("DEVDESK_PETS_DIR", root.string());
+    const PetsDirEnv pets("applyskin");
+    const std::filesystem::path& root = pets.root;
     DOCTEST_CHECK(ensureDefaultSkin(root / "clay-cat").isOk());
     std::filesystem::create_directories(root / "pixel-dog");
     {
@@ -951,8 +959,6 @@ REGISTER_TEST(pet_apply_skin_and_reset, "pet: applyPetSkin 校验/持久化 + �
         DOCTEST_CHECK_EQ(cfg.y, -1);
         DOCTEST_CHECK_EQ(cfg.skinName, "pixel-dog");
     }
-    setEnvVar("DEVDESK_PETS_DIR", "");
-    removeTreeQuietly(root);
     return true;
 });
 
@@ -963,10 +969,9 @@ REGISTER_TEST(pet_apply_skin_and_reset, "pet: applyPetSkin 校验/持久化 + �
 REGISTER_TEST(pet_click_through_bridge,
               "pet: setPetClickThrough 持久化 + 状态往返（⑥恢复路径）", {
     using namespace module::pet;
-    const std::filesystem::path root = tempDir("through");
-    removeTreeQuietly(root);
+    const PetsDirEnv pets("through");
+    const std::filesystem::path& root = pets.root;
     std::filesystem::create_directories(root);
-    setEnvVar("DEVDESK_PETS_DIR", root.string());
     const std::filesystem::path cfgFile = petConfigFile();
     // 预置：未穿透 + 已知皮肤/位置
     {
@@ -993,8 +998,6 @@ REGISTER_TEST(pet_click_through_bridge,
         const PetConfig cfg = PetConfigStore(cfgFile).load();
         DOCTEST_CHECK(!cfg.clickThrough);
     }
-    setEnvVar("DEVDESK_PETS_DIR", "");
-    removeTreeQuietly(root);
     return true;
 });
 
