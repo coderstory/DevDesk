@@ -17,8 +17,8 @@
 //      不背 5 分钟）
 //   5. 上游断连恢复：原始 socket 上游发到一半 closesocket（不发终止 chunk），
 //      断言流以 End 干净收尾（不是 Error），已收数据与上游已发字节完全一致
-//   6. 内存采样：10MB 流式 e2e 循环 20 轮，每 5 轮用 tasklist 记录
-//      devdesk_tests.exe 内存，断言增量 < 100MB（宽松阈值：防泄漏而非精确测量）
+//   6. 内存采样：10MB 流式 e2e 循环 20 轮，每 5 轮用 psapi GetProcessMemoryInfo
+//      记录本进程工作集内存，断言增量 < 100MB（宽松阈值：防泄漏而非精确测量）
 //
 // 注意：
 //   - REGISTER_TEST 的 body 是宏参数——括号内的逗号安全，顶层裸逗号（聚合
@@ -40,6 +40,8 @@
 #ifdef _WIN32
 #include <winsock2.h>
 #include <ws2tcpip.h>
+#include <windows.h>
+#include <psapi.h>
 #else
 #include <arpa/inet.h>
 #include <netinet/in.h>
@@ -592,46 +594,24 @@ private:
     std::atomic<bool> closed_{false};
 };
 
-// ---------- 内存采样（Windows tasklist）----------
+// ---------- 内存采样（Windows psapi）----------
 
-// 读 devdesk_tests.exe 当前内存（KB）；失败返回 -1。
-// tasklist CSV 形如："devdesk_tests.exe","15468","Console","1","45,678 K"
+// 读本进程当前工作集内存（KB）；失败返回 -1。
+// psapi GetProcessMemoryInfo 是进程内 Win32 API：不 shell、不解析文本，
+// 每毫秒级返回。旧实现 _popen("tasklist ...") 每轮起子进程，本机 tasklist
+// 卡/慢且偶发解析失败 → 返回 0 且把用例拖到 300s+，故弃用。
+// MinGW 下 psapi.h 在 NTDDI_VERSION >= WIN7 时把 GetProcessMemoryInfo
+// 宏转发到 kernel32 的 K32GetProcessMemoryInfo，默认链接集即可用，无需 -lpsapi。
 long long selfMemoryKb() {
 #ifdef _WIN32
-    FILE* pipe = _popen(
-        "tasklist /FI \"IMAGENAME eq devdesk_tests.exe\" /FO CSV /NH", "r");
-    if (!pipe) return -1;
-    std::string out;
-    char buf[512];
-    while (std::fgets(buf, sizeof(buf), pipe) != nullptr) out += buf;
-    _pclose(pipe);
-
-    const std::string name = "\"devdesk_tests.exe\"";
-    const size_t lineStart = out.find(name);
-    if (lineStart == std::string::npos) return -1;
-    const size_t nl = out.find('\n', lineStart);
-    const std::string line =
-        out.substr(lineStart, nl == std::string::npos ? std::string::npos
-                                                      : nl - lineStart);
-    // 取最后一对引号里的内存字段（"45,678 K"），剥出数字
-    const size_t q2 = line.rfind('"');
-    const size_t q1 = q2 == std::string::npos
-                          ? std::string::npos
-                          : line.rfind('"', q2 - 1);
-    if (q1 == std::string::npos || q2 == std::string::npos || q2 <= q1 + 1) {
+    PROCESS_MEMORY_COUNTERS pmc{};
+    pmc.cb = sizeof(pmc);
+    if (!GetProcessMemoryInfo(GetCurrentProcess(), &pmc, sizeof(pmc))) {
         return -1;
     }
-    const std::string memField = line.substr(q1 + 1, q2 - q1 - 1);
-    long long kb = 0;
-    bool sawDigit = false;
-    for (size_t i = 0; i < memField.size(); ++i) {
-        const char ch = memField[i];
-        if (ch >= '0' && ch <= '9') {
-            sawDigit = true;
-            kb = kb * 10 + (ch - '0');
-        }
-    }
-    return sawDigit ? kb : -1;
+    const long long kb =
+        static_cast<long long>(pmc.WorkingSetSize / 1024);
+    return kb > 0 ? kb : -1;
 #else
     return -1;
 #endif
@@ -788,7 +768,7 @@ bool stressMemoryBody() {
 }
 #else
 bool stressMemoryBody() {
-    std::cout << "[SKIP] stress: memory sampling is Windows-only (tasklist)"
+    std::cout << "[SKIP] stress: memory sampling is Windows-only (psapi)"
               << std::endl;
     return true;
 }
