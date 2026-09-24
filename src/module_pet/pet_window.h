@@ -172,4 +172,12 @@ void resetPetPosition();
 // 恢复入口。窗口未开（桌宠关/隐藏）时只持久化，下次 startPetWindow 生效
 void setPetClickThrough(bool enabled);
 
+// 审计 [5][36] 设置页桥（只读）：当前皮肤名 / 当前穿透态，读 pet_config.json
+// （applyPetSkin/setPetClickThrough 双写运行时 + 盘，盘即真值；与设置页
+// 「初值读 pet_config」原语义一致）。标量返回值——module_settings 侧只
+// extern 声明这些自由函数即可调用（不 include 本头、不 link 本模块），
+// 避免共享 PetConfig 结构体布局（跨 TU 重定义是 ODR 风险）。
+std::string currentSkinName();
+bool currentClickThrough();
+
 } // namespace module::pet

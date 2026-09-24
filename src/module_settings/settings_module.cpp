@@ -40,12 +40,16 @@
 // 入口说明：设置入口在 main.cpp 的常驻侧边栏（app.sidebar，spec §2/§6.5.2），
 // 与其他四个模块同列。
 //
-// 依赖说明：module_* 之间原则上不互相依赖（防循环）；本模块单向依赖
-// module_claude_proxy，仅为读取 main.cpp 注册的 ClaudeService::global() 单例
-// （既有跨模块桥接模式，claude_module.cpp 同款用法），无环。另单向依赖
-// module_pet（M2 桌宠卡：discoverSkins/applyPetSkin/resetPetPosition，
-// 桌宠非 Router 页面模块，设计 2026-09-22 §4.7 接线表明确设置页承载桌宠卡），
-// pet 不反向依赖 settings，无环。
+// 依赖说明：module_* 之间原则上不互相依赖（防循环）。claude 侧（审计
+// [5][36] 修复后）settings 不再 link devdesk_module_claude_proxy，仅经
+// claude_service.h（CMake PRIVATE include 目录 ../module_claude_proxy）读取
+// main.cpp 注册的 ClaudeService::global() 单例——头声明 + 最终可执行文件
+// 解析符号，无 CMake 依赖边。pet 侧（同审计项）不 include、不 link：
+// 桌宠卡全部调用（discoverSkins/applyPetSkin/resetPetPosition/
+// setPetClickThrough/currentSkinName/currentClickThrough）走下方 extern
+// 自由函数桥，实现在 pet 模块内。两条边均单向（claude/pet 不反向依赖
+// settings），无环；桌宠非 Router 页面模块，设计 2026-09-22 §4.7 接线表
+// 明确设置页承载桌宠卡。
 #include "settings_config.h"
 
 #include "claude_service.h"
@@ -57,9 +61,26 @@
 #include "core/component_theme.h"
 #include "platform/file_open.h"
 #include "platform/system_theme.h"
-#include "module_pet/pet_config.h"
-#include "module_pet/pet_skin.h"
-#include "module_pet/pet_window.h"
+
+// ---- 审计 [5][36] 解耦桥：module_pet 自由函数 extern 声明 ----
+// 实现在 module_pet（pet_window.cpp / pet_skin.cpp）。settings 不 include
+// module_pet 任何头、CMake 不 link devdesk_module_pet——符号在最终可执行
+// 文件（DevDesk / devdesk_tests 均直接链接全部 module_*）链接期解析。
+// 声明与 pet 侧定义必须逐字同签名（mangled name 匹配，参数名不参与）；
+// pet 侧改动这三个函数签名时本块必须同步，否则表现为链接 undefined symbol
+// 而非编译错误。只暴露标量/平凡类型（string/bool/vector<string>），不共享
+// PetConfig 结构体布局（跨 TU 各自重定义 = ODR 风险）。
+// PetConfig 快照类的盘读取点已换成 pet 侧新增的
+// currentSkinName()/currentClickThrough() 只读桥（语义等价：apply 路径
+// 双写运行时 + 盘，盘即真值）。
+namespace module::pet {
+std::vector<std::string> discoverSkins();
+void applyPetSkin(const std::string& skinName);
+void resetPetPosition();
+void setPetClickThrough(bool enabled);
+std::string currentSkinName();
+bool currentClickThrough();
+} // namespace module::pet
 
 #include <eui/app.h>
 #include <eui/dsl.h>
@@ -926,12 +947,12 @@ private:
         if (!petSkinDataLoaded_) {
             petSkinDataLoaded_ = true;
             petSkins_ = ::module::pet::discoverSkins();
-            const auto pcfg =
-                ::module::pet::PetConfigStore(::module::pet::petConfigFile())
-                    .load();
-            petSkinName_ = pcfg.skinName;
+            // 审计 [5][36]：原「构造盘 store 读一次快照」换成 pet 侧只读桥
+            //（两次独立读盘代替一次快照——初值展示语义，
+            // 与 apply 双写路径无竞态顾虑）
+            petSkinName_ = ::module::pet::currentSkinName();
             // 穿透 toggle 初值读 pet_config（锁死态下本卡是唯一恢复入口）
-            petClickThrough_ = pcfg.clickThrough;
+            petClickThrough_ = ::module::pet::currentClickThrough();
         }
         const auto compTheme = core::theme::componentTokens(t);
         ui.stack(id)

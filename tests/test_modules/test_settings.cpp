@@ -1579,3 +1579,72 @@ REGISTER_TEST(settings_log_level_applied_on_start_and_click,
     ::core::theme::setDark();   // onStart 的 auto 解析可能 setLight，防串扰
     return true;
 })
+
+// ---- 审计 [5][36] 模块隔离静态守卫 ----
+// settings 与 pet 彻底解耦后：源文件不得再 include module_pet 头、不得再
+// 触盘 store 类；CMakeLists 的非注释行不得再出现 devdesk_module_pet /
+// devdesk_module_claude_proxy 两个 link 目标名（解释注释里允许提及）。
+// claude 侧按设计保留 claude_service.h 头通道（global() 单例），故守卫只
+// 盯 pet include 与两条 CMake link。
+namespace {
+
+// 从测试 TU 的 __FILE__（Ninja 下为绝对路径）或 cwd 向上找仓库根
+std::filesystem::path findRepoRoot() {
+    namespace fs = std::filesystem;
+    std::error_code ec;
+    const fs::path marker = "src/module_settings/CMakeLists.txt";
+    std::vector<fs::path> candidates;
+    candidates.emplace_back(fs::path(__FILE__).parent_path().parent_path().parent_path());
+    candidates.emplace_back(fs::path(__FILE__).parent_path().parent_path().parent_path().parent_path());
+    for (fs::path p = fs::current_path(ec); !ec && !p.empty() && p != p.root_path(); p = p.parent_path()) {
+        candidates.emplace_back(p);
+    }
+    for (const auto& c : candidates) {
+        if (fs::exists(c / marker, ec)) return c;
+    }
+    return {};
+}
+
+std::string readWholeFile(const std::filesystem::path& p) {
+    std::ifstream f(p, std::ios::binary);
+    std::ostringstream ss;
+    ss << f.rdbuf();
+    return ss.str();
+}
+
+} // namespace
+
+REGISTER_TEST(settings_module_isolation_guard,
+              "settings: 模块隔离守卫——无 module_pet include、CMake 无 pet/claude link（审计 [5][36]）", {
+    const auto root = findRepoRoot();
+    DOCTEST_REQUIRE_MESSAGE(!root.empty(),
+                            "找不到仓库根，守卫失效（检查 __FILE__/cwd 定位）");
+
+    // 1) settings 源文件：pet 头零 include、盘 store 零触碰；桥为 extern 声明
+    const std::string src =
+        readWholeFile(root / "src/module_settings/settings_module.cpp");
+    DOCTEST_REQUIRE_MESSAGE(!src.empty(), "settings_module.cpp 读取失败");
+    DOCTEST_CHECK(src.find("#include \"module_pet/") == std::string::npos);
+    DOCTEST_CHECK(src.find("module_pet/") == std::string::npos);
+    DOCTEST_CHECK(src.find("PetConfigStore") == std::string::npos);
+    DOCTEST_CHECK(src.find("petConfigFile") == std::string::npos);
+    // 正向：extern 自由函数桥存在（解耦而非删功能），claude 头通道按设计保留
+    DOCTEST_CHECK(src.find("namespace module::pet") != std::string::npos);
+    DOCTEST_CHECK(src.find("currentSkinName") != std::string::npos);
+    DOCTEST_CHECK(src.find("currentClickThrough") != std::string::npos);
+    DOCTEST_CHECK(src.find("#include \"claude_service.h\"") != std::string::npos);
+
+    // 2) settings CMakeLists：非注释行不得再 link 兄弟模块库
+    const std::string cmk = readWholeFile(root / "src/module_settings/CMakeLists.txt");
+    DOCTEST_REQUIRE_MESSAGE(!cmk.empty(), "module_settings/CMakeLists.txt 读取失败");
+    std::istringstream lines(cmk);
+    std::string line;
+    while (std::getline(lines, line)) {
+        const auto first = line.find_first_not_of(" \t\r");
+        if (first == std::string::npos) continue;
+        if (line[first] == '#') continue;  // 注释允许提及目标名
+        DOCTEST_CHECK(line.find("devdesk_module_pet") == std::string::npos);
+        DOCTEST_CHECK(line.find("devdesk_module_claude_proxy") == std::string::npos);
+    }
+    return true;
+})

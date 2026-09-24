@@ -10,25 +10,18 @@ target_include_directories(devdesk_module_settings PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/..
 )
 
-# claude_service.h 所在目录（仅 .cpp 内部 include，PRIVATE 即可）
+# claude_service.h 所在目录（settings_module.cpp 经 ClaudeService::global()
+# 读 main 注册的单例——审计 [5][36]：仅头声明通道，不 link 模块库；符号在
+# DevDesk/devdesk_tests 最终链接期由直接链接的 devdesk_module_claude_proxy
+# 解析）。pet 侧连头都不经：extern 自由函数桥（见 settings_module.cpp），
+# module_* 互不依赖铁律恢复（不再 PUBLIC 链 devdesk_module_pet）。
 target_include_directories(devdesk_module_settings PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/../module_claude_proxy
 )
 
-# 依赖说明：module_* 之间原则上不互相依赖（防循环）。这里是单向
-# settings → claude_proxy，仅为读取 main.cpp 注册的 ClaudeService::global()
-# 单例（既有跨模块桥接模式，claude_module.cpp 同款用法）；claude_proxy
-# 不反向依赖 settings，无环。
 target_link_libraries(devdesk_module_settings PUBLIC
     devdesk_core
     devdesk_platform
-    devdesk_module_claude_proxy
-)
-
-# M2 桌宠卡（设计 2026-09-22 §4.7）：settings → pet 单向（discoverSkins/
-# applyPetSkin/resetPetPosition）；pet 不反向依赖 settings，无环
-target_link_libraries(devdesk_module_settings PUBLIC
-    devdesk_module_pet
 )
 
 # 关于卡（spec §8.5，spec 缩水 C）：版本/构建信息注入。PROJECT_VERSION 来自
