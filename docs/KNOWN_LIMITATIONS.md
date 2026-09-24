@@ -69,6 +69,13 @@
 - 本轮已做的补偿：Todo 副标题补「拖动卡片跨列移动」、Markdown 副标题改静态快捷键说明（审计 [30]）。
 - 升级路径：上游给 `CursorShape` 增加 `Grab/Grabbing`（GLFW `glfwSetCursorShape` 原生支持 HAND/ARROW 之外的形状需确认，可能要走 Win32 资源光标），DevDesk 在 onDrag 元素 `.cursor()` 处接线即可。
 
+#### 8. 带重音符（combining accent）文本渲染轻微跨行 —— EUI-NEO 上游问题（tech-debt B，2026-09-24 登记）
+
+- `e` + U+0301 这类组合重音符号的上方符号字形会轻微压进上一行（浏览器同款溢出，非 DevDesk 回归）。
+- 根因在上游（2026-09-24 源码勘察结论）：EUI-NEO `core/render/text.cpp` 字形 Y 定位 `yOffset = ascent_ - bitmap_top * scale`——组合标记的 `bitmap_top` 高于字体全局 ascent，yOffset 为负、溢出行框顶；行距按固定 `lineIndex * lineHeight` 排布、不随字形包围盒扩张，已追踪的 `line.inkTop`（可为负）只在垂直居中路径消费；且构建禁用 HarfBuzz（`FT_DISABLE_HARFBUZZ`），无集群/GPOS 修正。
+- DevDesk 侧无可低成本修：预览走 `components::markdown` 默认 `bodyLineHeight` 24px（1.5×）已经很宽裕，溢出量由 `ascent_/bitmap_top` 决定、与 lineHeight 无关——加大行距消不掉溢出；编辑器是 EUI-NEO Input，同理。
+- 升级路径（EUI-NEO 上游 PR）：`TextPrimitive` 渲染/测量行循环里消费既有 `line.inkTop`——对 `inkTop < 0` 的行做顶部溢出补偿（行内整体下移或行距取 `max(lineHeight, lineHeight - inkTop)`），数据已在 Line 结构、改动局部；参考 `markdown_module.cpp` 预览构建处注释。
+
 ### 测试
 
 #### 5. soak 300s 压测默认 SKIP

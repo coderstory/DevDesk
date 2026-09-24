@@ -1295,6 +1295,10 @@ private:
             scroll.content([&](eui::Ui& inner, float contentWidth, float viewportHeight) {
                     (void)viewportHeight;
                     lastPvContentWidth_ = contentWidth;  // 供同步滚动 estimateHeight 用
+                    // 预览的文本排版全部在 EUI-NEO markdown/text 组件内完成
+                    // （DevDesk 零字形级布局）。带重音符（combining accent，
+                    // U+0300–036F）字形轻微跨行属上游 TextPrimitive 行框问题，
+                    // 根因与升级路径见 KNOWN_LIMITATIONS #8，DevDesk 侧无可修点。
                     components::markdown(inner, "md.preview.md")
                         .markdown(editorText_)
                         .width(contentWidth)
