@@ -41,6 +41,7 @@
 #include "md_highlight.h"
 #include "md_keyboard.h"
 #include "md_line_scanner.h"
+#include "md_preview_highlight.h"
 #include "md_tree.h"
 #include "md_view_state.h"
 
@@ -1328,12 +1329,48 @@ private:
                     if (blockModel_.text() != editorText_) {
                         blockModel_.update(editorText_);  // 防御：理论不可达
                     }
+                    // P3-③ 色表注入（每帧）：主题切换时缓存旧色条目自动作废
+                    previewCodeCache_.setColors(mdHighlightColors(t));
                     const auto& blocks = blockModel_.blocks();
+                    std::vector<int> activeCodeIds;  // 本帧 CodeFence 块，供缓存回收
                     inner.column("md.preview.blocks")
                         .width(contentWidth)
                         .gap(style.blockGap)
                         .content([&] {
                             for (const MdBlock& b : blocks) {
+                                // CodeFence 块走 DevDesk 侧自绘：md_highlight 色表
+                                // 产出着色 runs 喂给带 runs 的 text 节点（上游
+                                // markdown 代码块单色且不暴露预解析注入——
+                                // KNOWN_LIMITATIONS #9，本块是唯一不能走上游通路的
+                                // 类型）。未变块命中 (stableId, hash) 缓存零重算。
+                                // 解析不出单围栏（防御）→ 落到下方上游通路兜底。
+                                if (b.kind == MdBlockKind::CodeFence) {
+                                    const MdPreviewCodeHighlight* hl =
+                                        previewCodeCache_.get(b.stableId, b.hash);
+                                    if (!hl) {
+                                        MdPreviewCodeHighlight fresh =
+                                            mdPreviewCodeHighlight(
+                                                blockModel_.text().substr(
+                                                    b.start, b.end - b.start),
+                                                mdHighlightColors(t));
+                                        if (fresh.ok) {
+                                            previewCodeCache_.put(
+                                                b.stableId, b.hash,
+                                                std::move(fresh));
+                                            hl = previewCodeCache_.get(b.stableId,
+                                                                       b.hash);
+                                        }
+                                    }
+                                    if (hl) {
+                                        activeCodeIds.push_back(b.stableId);
+                                        drawPreviewCodeBlock(
+                                            inner,
+                                            "md.preview.code." +
+                                                std::to_string(b.stableId),
+                                            *hl, contentWidth, style);
+                                        continue;
+                                    }
+                                }
                                 components::markdown(
                                     inner,
                                     "md.preview.block." + std::to_string(b.stableId))
@@ -1346,9 +1383,52 @@ private:
                             }
                         })
                         .build();
+                    previewCodeCache_.pruneActive(activeCodeIds);
                 })
                 .build();
         }).build();
+    }
+
+    // P3-③ CodeFence 块预览自绘（上游 markdown 代码块单色 + 无预解析注入，
+    // KNOWN_LIMITATIONS #9）。几何参数逐项对齐上游 renderCodeBlock
+    // （bg 圆角块 + codePadding + codeSize+6 行高 + estimateMarkdownTextHeight
+    // 高度公式 + wrap）——唯一差异是 text 节点带 md_highlight 色表的着色 runs
+    //（上游 styled-runs：颜色只改顶点色不动 layout/测量）。runs 未覆盖段
+    //（理论不存在，防御性）兜底 style.codeText 基色 = 旧单色渲染，不回归。
+    void drawPreviewCodeBlock(eui::Ui& ui,
+                              const std::string& partId,
+                              const MdPreviewCodeHighlight& hl,
+                              float contentWidth,
+                              const components::MarkdownStyle& style) {
+        const float textWidth =
+            std::max(0.0f, contentWidth - style.codePadding * 2.0f);
+        const float textHeight = components::detail::estimateMarkdownTextHeight(
+            hl.displayText, textWidth, style.codeSize, style.codeSize + 6.0f);
+        const float blockHeight = textHeight + style.codePadding * 2.0f;
+        ui.stack(partId)
+            .width(contentWidth)
+            .height(blockHeight)
+            .content([&] {
+                ui.rect(partId + ".bg")
+                    .size(contentWidth, blockHeight)
+                    .color(style.codeBackground)
+                    .radius(style.radius)
+                    .build();
+                ui.text(partId + ".text")
+                    .x(style.codePadding)
+                    .y(style.codePadding)
+                    .width(textWidth)
+                    .height(textHeight)
+                    .text(hl.displayText)
+                    .fontFamily(style.codeFontFamily)
+                    .fontSize(style.codeSize)
+                    .lineHeight(style.codeSize + 6.0f)
+                    .wrap()
+                    .color(style.codeText)
+                    .runs(hl.runs)
+                    .build();
+            })
+            .build();
     }
 
     // 双栏同步滚动（§5.3）：编辑器视口顶行 → 所在标题节 → 用
@@ -2650,6 +2730,9 @@ private:
 
     // ---- Phase 3 块级元素模型（预览逐块增量渲染的键控源）----
     MdBlockModel blockModel_;
+
+    // ---- Phase 3 ③ 预览代码块高亮（CodeFence 块自绘的脏块缓存）----
+    MdPreviewCodeCache previewCodeCache_;
 };
 
 } // namespace module::markdown
