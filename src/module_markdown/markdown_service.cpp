@@ -1151,6 +1151,19 @@ NoteMeta MarkdownService::rowToNote(const core::data::SqlRow& row) {
 
 core::Result<bool> MarkdownService::pollChanged() {
     // 磁盘侧快照：path → (mtime, size)
+    //
+    // 精度说明（tech-debt「mtime 秒级粒度」，2026-09-24 评估后维持登记，
+    // 见 KNOWN_LIMITATIONS #5）：mtime 为 unix 秒（fileMtimeEpoch），同秒内
+    // 改回等长内容时 (mtime, size) 元组不变，本函数检测不到。升级路径与取舍：
+    //   - 亚秒级时间戳：需把 markdown_index.modified_at 改存 ns——schema 在
+    //     core/migrations.h，且 module_home 按「秒」消费该列
+    //     （formatRelativeTime / startOfDayEpoch / modified_at >= 清理阈值），
+    //     改动半径跨出本模块，收益只是把漏检窗口从 1s 缩到 NTFS 时间戳粒度
+    //     （~10-16ms，最后写入时间按系统时钟粒度更新），缩不消；
+    //   - 内容哈希：与 pollChanged「不读内容」的轻量轮询设计相悖；
+    //   - 根治 = 平台 watcher（ReadDirectoryChangesW / FSEvent）推事件、
+    //     事件内比对内容，属 spec §风险表「mtime 轮询 + 平台 watcher」的
+    //     更大改动，登记后按需排期。
     std::map<std::string, std::pair<int64_t, int64_t>> disk;
     std::error_code ec;
     if (fs::exists(notesDir_, ec)) {

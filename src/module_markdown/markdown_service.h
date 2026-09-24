@@ -100,6 +100,8 @@ public:
 
     // 轻量磁盘轮询：只遍历目录比 mtime/size，不读内容、不写索引、不打日志。
     // 返回 true = 磁盘与索引有差异（新文件/删除/修改），需要调用方 rescan()。
+    // mtime 秒级粒度的漏检窗口与升级路径：见实现处 pollChanged 注释 +
+    // KNOWN_LIMITATIONS #5（亚秒级需 core schema + platform watcher）。
     core::Result<bool> pollChanged();
 
     // 磁盘文件的 mtime（unix 秒）。文件不存在 → fail。
