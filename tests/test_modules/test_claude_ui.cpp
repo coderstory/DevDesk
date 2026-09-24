@@ -175,7 +175,6 @@ REGISTER_TEST(claude_module_compose_null_service,
     // 页面骨架 + 关键操作按钮存在（即使无数据也应渲染，按钮带防误触提示）
     DOCTEST_CHECK(ui.find("claude.root") != nullptr);
     DOCTEST_CHECK(ui.find("claude.btn.proxy") != nullptr);
-    DOCTEST_CHECK(ui.find("claude.btn.new") != nullptr);
     DOCTEST_CHECK(ui.find("claude.profiles.new") != nullptr);
     DOCTEST_CHECK(ui.find("claude.act.enable") != nullptr);
     DOCTEST_CHECK(ui.find("claude.act.test") != nullptr);
@@ -408,15 +407,19 @@ REGISTER_TEST(claude_module_form_tabs_roundtrip,
         type(ui, "claude.form.env.row.0.value.hit", "1");
         DOCTEST_CHECK(click(ui, "claude.dialog.form.confirm.bg"));
     }
-    // 详情面板摘要（§6.2）：默认模型 + 已配 3/6
+    // 详情面板模型映射 pane（2026-09-24 页签式）：切模型 tab，默认槽位含模型
     {
+        {
+            eui::Ui ui;
+            compose(ui);
+            DOCTEST_CHECK(click(ui, "claude.detail.tabs.hit.1"));  // 切到模型 tab（tabs 组件 hit 区）
+        }
         eui::Ui ui;
         compose(ui);
-        const auto* summary = ui.find("claude.field.model.value");
-        DOCTEST_REQUIRE(summary != nullptr);
-        DOCTEST_CHECK(summary->text.find("fangzhou/glm-5.3[1M]") !=
+        const auto* slot0 = ui.find("claude.slot.val.0");  // 默认槽位
+        DOCTEST_REQUIRE(slot0 != nullptr);
+        DOCTEST_CHECK(slot0->text.find("fangzhou/glm-5.3[1M]") !=
                       std::string::npos);
-        DOCTEST_CHECK(summary->text.find("3/6") != std::string::npos);
     }
     // DB 往返：models_config / extra_env / 旧 model 列同步
     {
@@ -527,7 +530,7 @@ REGISTER_TEST(claude_module_import_flow,
     {
         eui::Ui ui;
         compose(ui);
-        DOCTEST_CHECK(click(ui, "claude.btn.new.bg"));
+        DOCTEST_CHECK(click(ui, "claude.profiles.new.bg"));
     }
     {
         eui::Ui ui;
@@ -1185,7 +1188,7 @@ REGISTER_TEST(claude_module_form_esc_cancels,
         ui.begin("fe_open");
         mod->compose(ui, screen);
         ui.end();
-        auto* btn = ui.find("claude.btn.new.bg");
+        auto* btn = ui.find("claude.profiles.new.bg");
         DOCTEST_REQUIRE(btn != nullptr);
         DOCTEST_REQUIRE(btn->onClick != nullptr);
         btn->onClick();

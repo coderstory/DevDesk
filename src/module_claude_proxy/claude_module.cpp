@@ -8,6 +8,7 @@
 //   每次操作后标脏 compose 数据缓存，下一帧 compose 重查（审计 perf [13]：
 //   缓存命中帧零 SQLite；代理日志经 callLogVersion 感知）
 #include "claude_service.h"
+#include "env_var_hints.h"
 #include "provider_config.h"
 #include "settings_sync.h"
 #include "core/logging.h"
@@ -21,6 +22,7 @@
 
 #include <components/button.h>
 #include <components/dialog.h>
+#include <components/tooltip.h>
 #include <components/dropdown.h>
 #include <components/input.h>
 #include <components/scrollview.h>
@@ -286,18 +288,6 @@ public:
                                     .border(1.0f, t.colors.borderDefault)
                                     .onClick([this] { doToggleProxy(); })
                                     .build();
-
-                                // 新建 Profile
-                                components::button(ui, "claude.btn.new")
-                                    .size(140.0f, 40.0f)
-                                    .text("+ 新建 Profile")
-                                    .fontSize(t.sizes.fontSizeSmall)
-                                    .colors(t.colors.primary, t.colors.primaryHover,
-                                            t.colors.primaryPressed)
-                                    .textColor(t.colors.onPrimary)
-                                    .radius(t.sizes.radius)
-                                    .onClick([this] { openCreateForm(); })
-                                    .build();
                             })
                             .build();
                     })
@@ -353,6 +343,7 @@ public:
 
                         ui.stack("claude.profiles.overlay")
                             .size(leftW, bodyH)
+                            .ignoreLayout()  // overlay 不参与 row 流式布局，覆盖在 profiles 列上
                             .content([&] {
                                 // 顶部栏
                                 ui.text("claude.profiles.title")
@@ -483,6 +474,8 @@ public:
 
                         ui.stack("claude.detail.overlay")
                             .size(rightW, bodyH)
+                            .ignoreLayout()  // overlay 不参与 row 流式布局
+                            .position(leftW + gap, 0.0f)  // 对齐右栏 detail 列位置
                             .content([&] {
                                 const float x0 = 28.0f;
                                 const float y0 = 24.0f;
@@ -499,190 +492,217 @@ public:
                                     .color(t.colors.textPrimary)
                                     .build();
 
-                                // 字段网格（2 列）
-                                const float fy0 = y0 + 44.0f;
-                                const float fieldH = 56.0f;
+                                // 页签栏（2026-09-25：改用 EUI-NEO tabs 组件，自带动画指示器+
+                                // 底部分隔线+居中文字；色源走 componentTokens 桥接。tabs 无
+                                // .position 故包一层定位 stack 对齐右栏内边距，沿用 settings
+                                // 模块 .wrap stack 同款写法）
+                                const float tabY = y0 + 40.0f;
+                                const float tabH = 36.0f;
+                                ui.stack("claude.detail.tabs.wrap")
+                                    .position(x0, tabY)
+                                    .size(w0, tabH)
+                                    .content([&] {
+                                        components::tabs(ui, "claude.detail.tabs")
+                                            .size(w0, tabH)
+                                            .items(std::vector<std::string>{
+                                                "基础信息", "模型映射", "环境变量"})
+                                            .selected(detailTab_)
+                                            .fontSize(t.sizes.fontSizeSmall)
+                                            .theme(themeTokens)
+                                            .onChange([this](int idx) { detailTab_ = idx; })
+                                            .build();
+                                    });
 
-                                // 名称（左）
-                                ui.text("claude.field.name.label")
-                                    .position(x0, fy0)
-                                    .size((w0 - 16.0f) / 2.0f, 14.0f)
-                                    .text("名称")
-                                    .fontSize(11.0f)
-                                    .lineHeight(14.0f)
-                                    .color(t.colors.textTertiary)
-                                    .build();
-                                ui.rect("claude.field.name.bg")
-                                    .position(x0, fy0 + 18.0f)
-                                    .size((w0 - 16.0f) / 2.0f, fieldH - 32.0f)
-                                    .color(t.colors.surfaceElevated)
-                                    .radius(t.sizes.radiusSmall)
-                                    .border(1.0f, t.colors.borderMuted)
-                                    .build();
-                                ui.text("claude.field.name.value")
-                                    .position(x0 + 12.0f, fy0 + 18.0f)
-                                    .size((w0 - 16.0f) / 2.0f - 24.0f, fieldH - 32.0f)
-                                    .text(nameValue)
-                                    .fontSize(14.0f)
-                                    .lineHeight(fieldH - 32.0f)
-                                    .color(t.colors.textPrimary)
-                                    .build();
-
-                                // 产品审计 2026-09-23 [6]：「已选中但未激活」标记——
-                                // ACTIVE 徽章只标激活卡，详情面板此前对未激活的
-                                // 选中 Profile 零提示，用户误以为选中即生效
-                                if (shown && !shown->isActive) {
-                                    ui.rect("claude.field.name.inactive.bg")
-                                        .position(x0 + (w0 - 16.0f) / 2.0f - 64.0f,
-                                                  fy0 + 22.0f)
-                                        .size(56.0f, 16.0f)
-                                        .color(t.colors.surfaceElevated)
-                                        .radius(t.sizes.radiusPill)
-                                        .border(1.0f, t.colors.warning)
-                                        .build();
-                                    ui.text("claude.field.name.inactive")
-                                        .position(x0 + (w0 - 16.0f) / 2.0f - 64.0f,
-                                                  fy0 + 22.0f)
-                                        .size(56.0f, 16.0f)
-                                        .text("未激活")
-                                        .fontSize(10.0f)
-                                        .lineHeight(16.0f)
-                                        .horizontalAlign(eui::HorizontalAlign::Center)
-                                        .color(t.colors.warning)
-                                        .build();
+                                const float paneY = tabY + tabH + 12.0f;
+                                float paneBottom = paneY;  // 各 pane 累加真实底沿，供 actions 定位防重叠
+                                if (detailTab_ == 0) {
+                                    // ---- 基础信息 pane：名称 + 未激活徽章 + Base URL + API Key + 接管 ----
+                                    ui.text("claude.field.name.label")
+                                        .position(x0, paneY).size(w0 * 0.5f - 8.0f, 14.0f)
+                                        .text("名称").fontSize(11.0f).lineHeight(14.0f)
+                                        .color(t.colors.textTertiary).build();
+                                    ui.rect("claude.field.name.bg")
+                                        .position(x0, paneY + 18.0f).size(w0 * 0.5f - 8.0f, 24.0f)
+                                        .color(t.colors.surfaceElevated).radius(t.sizes.radiusSmall)
+                                        .border(1.0f, t.colors.borderMuted).build();
+                                    ui.text("claude.field.name.value")
+                                        .position(x0 + 12.0f, paneY + 18.0f)
+                                        .size(w0 * 0.5f - 20.0f, 24.0f)
+                                        .text(nameValue).fontSize(14.0f).lineHeight(24.0f)
+                                        .color(t.colors.textPrimary).build();
+                                    if (shown && !shown->isActive) {
+                                        ui.rect("claude.field.name.inactive.bg")
+                                            .position(x0 + w0 * 0.5f - 72.0f, paneY + 4.0f)
+                                            .size(56.0f, 16.0f).color(t.colors.surfaceElevated)
+                                            .radius(t.sizes.radiusPill)
+                                            .border(1.0f, t.colors.warning).build();
+                                        ui.text("claude.field.name.inactive")
+                                            .position(x0 + w0 * 0.5f - 72.0f, paneY + 4.0f)
+                                            .size(56.0f, 16.0f).text("未激活")
+                                            .fontSize(10.0f).lineHeight(16.0f)
+                                            .horizontalAlign(eui::HorizontalAlign::Center)
+                                            .color(t.colors.warning).build();
+                                    }
+                                    const float urlY = paneY + 56.0f;
+                                    ui.text("claude.field.url.label")
+                                        .position(x0, urlY).size(w0, 14.0f)
+                                        .text("Base URL").fontSize(11.0f).lineHeight(14.0f)
+                                        .color(t.colors.textTertiary).build();
+                                    ui.rect("claude.field.url.bg")
+                                        .position(x0, urlY + 18.0f).size(w0, 28.0f)
+                                        .color(t.colors.surfaceElevated).radius(t.sizes.radiusSmall)
+                                        .border(1.0f, t.colors.borderMuted).build();
+                                    ui.text("claude.field.url.value")
+                                        .position(x0 + 12.0f, urlY + 18.0f).size(w0 - 24.0f, 28.0f)
+                                        .text(urlValue).fontSize(t.sizes.fontSizeSmall).lineHeight(28.0f)
+                                        .color(t.colors.textPrimary).build();
+                                    const float keyY = urlY + 56.0f;
+                                    ui.text("claude.field.token.label")
+                                        .position(x0, keyY).size(w0, 14.0f)
+                                        .text("API Key").fontSize(11.0f).lineHeight(14.0f)
+                                        .color(t.colors.textTertiary).build();
+                                    ui.rect("claude.field.token.bg")
+                                        .position(x0, keyY + 18.0f).size(w0, 32.0f)
+                                        .color(t.colors.surfaceElevated).radius(t.sizes.radiusSmall)
+                                        .border(1.0f, t.colors.borderMuted).build();
+                                    ui.text("claude.field.token.value")
+                                        .position(x0 + 12.0f, keyY + 18.0f).size(w0 - 24.0f, 32.0f)
+                                        .text(tokenValue).fontSize(t.sizes.fontSizeSmall).lineHeight(32.0f)
+                                        .color(t.colors.textSecondary).build();
+                                    const bool ccManaged = svc && svc->isClaudeCodeManaged();
+                                    const auto& ccWarnings = svc ? svc->lastSyncWarnings()
+                                                                : std::vector<std::string>();
+                                    const std::string ccPath =
+                                        settings_sync::defaultPaths().settingsFile.string();
+                                    const float toY = keyY + 56.0f;
+                                    ui.text("claude.field.takeover.value")
+                                        .position(x0, toY).size(w0, 16.0f)
+                                        .text(ccManaged ? ("● Claude Code 已接管 " + ccPath)
+                                                        : std::string("○ Claude Code 未接管（启动代理后自动接管，停止时还原）"))
+                                        .fontSize(11.0f).lineHeight(16.0f)
+                                        .color(ccManaged ? t.colors.success : t.colors.textTertiary).build();
+                                    if (ccManaged && !ccWarnings.empty()) {
+                                        ui.text("claude.field.takeover.warn.icon")
+                                            .position(x0, toY + 16.0f).size(14.0f, 16.0f).icon(0xF071)
+                                            .fontSize(11.0f).lineHeight(16.0f).color(t.colors.warning).build();
+                                        ui.text("claude.field.takeover.warn")
+                                            .position(x0 + 18.0f, toY + 16.0f).size(w0 - 18.0f, 16.0f)
+                                            .text(ccWarnings.front() + (ccWarnings.size() > 1
+                                                    ? "（共 " + std::to_string(ccWarnings.size()) + " 条，详见设置页）"
+                                                    : ""))
+                                            .fontSize(11.0f).lineHeight(16.0f).color(t.colors.warning).build();
+                                    }
+                                    paneBottom = toY + (ccManaged && !ccWarnings.empty() ? 32.0f : 16.0f);
+                                } else if (detailTab_ == 1) {
+                                    // ---- 模型映射 pane：6 槽位逐行（parseModelsConfig 解析 JSON 原文）----
+                                    ModelsConfig mc{};
+                                    if (shown && !shown->modelsConfigJson.empty()) {
+                                        auto mr = parseModelsConfig(shown->modelsConfigJson);
+                                        if (mr.isOk()) mc = mr.value();
+                                    }
+                                    if (mc.def.model.empty() && shown && !shown->model.empty())
+                                        mc.def.model = shown->model;  // 旧列 fallback
+                                    struct SlotRow { const char* name; const ModelSlot& slot; };
+                                    const SlotRow slots[6] = {
+                                        {"默认", mc.def}, {"Sonnet", mc.sonnet},
+                                        {"Opus", mc.opus}, {"Haiku", mc.haiku},
+                                        {"Fable", mc.fable}, {"子代理", mc.subagent},
+                                    };
+                                    float sy = paneY;
+                                    for (int i = 0; i < 6; ++i) {
+                                        const bool filled = !slots[i].slot.model.empty();
+                                        ui.rect(std::string("claude.slot.bg.") + std::to_string(i))
+                                            .position(x0, sy).size(w0, 32.0f)
+                                            .color(t.colors.surfaceElevated).radius(t.sizes.radiusSmall)
+                                            .border(1.0f, t.colors.borderMuted).build();
+                                        ui.text(std::string("claude.slot.name.") + std::to_string(i))
+                                            .position(x0 + 12.0f, sy).size(80.0f, 32.0f)
+                                            .text(slots[i].name).fontSize(12.0f).lineHeight(32.0f)
+                                            .color(t.colors.textTertiary).build();
+                                        ui.text(std::string("claude.slot.val.") + std::to_string(i))
+                                            .position(x0 + 100.0f, sy).size(w0 - 112.0f, 32.0f)
+                                            .text(filled ? slots[i].slot.model : std::string("未配置"))
+                                            .fontSize(13.0f).lineHeight(32.0f)
+                                            .color(filled ? t.colors.textPrimary : t.colors.textTertiary).build();
+                                        sy += 38.0f;
+                                    }
+                                    paneBottom = sy;
+                                } else {
+                                    // ---- 环境变量 pane：键（截断）+ 值（脱敏）同列不重叠；下方官方说明；未知键红框 ----
+                                    std::map<std::string, std::string> envMap;
+                                    if (shown && !shown->extraEnvJson.empty()) {
+                                        auto er = parseExtraEnv(shown->extraEnvJson);
+                                        if (er.isOk()) envMap = er.value();
+                                    }
+                                    if (envMap.empty()) {
+                                        ui.text("claude.env.empty")
+                                            .position(x0, paneY).size(w0, 20.0f)
+                                            .text("无额外环境变量").fontSize(12.0f).lineHeight(20.0f)
+                                            .color(t.colors.textTertiary).build();
+                                        paneBottom = paneY + 20.0f;
+                                    } else {
+                                        const float keyColW = std::min(220.0f, w0 * 0.45f);
+                                        const int keyMaxChars = std::max(6, static_cast<int>(keyColW / 7.0f));
+                                        float ey = paneY;
+                                        int ei2 = 0;
+                                        for (const auto& kv : envMap) {
+                                            const std::string& k = kv.first;
+                                            const std::string& v = kv.second;
+                                            std::string shownVal = v;
+                                            {
+                                                std::string kl;
+                                                kl.reserve(k.size());
+                                                for (char c : k)
+                                                    kl += static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+                                                bool sensitive = kl.find("token") != std::string::npos
+                                                    || kl.find("key") != std::string::npos
+                                                    || kl.find("secret") != std::string::npos;
+                                                if (sensitive && v.size() > 12)
+                                                    shownVal = v.substr(0, 8) + "…";
+                                            }
+                                            // 键名过长则截断，避免压到右侧值列
+                                            std::string kDisp = k;
+                                            if (static_cast<int>(kDisp.size()) > keyMaxChars)
+                                                kDisp = kDisp.substr(0, keyMaxChars - 1) + "…";
+                                            const char* hint = envVarHint(k);
+                                            const std::string rid = std::to_string(ei2);
+                                            const float valX = x0 + 12.0f + keyColW + 24.0f;  // 键列↔值列间距 24（2026-09-25：12→24，反馈太挤）
+                                            const float valW = std::max(40.0f, w0 - keyColW - 48.0f);
+                                            ui.rect(std::string("claude.env.row.bg.") + rid)
+                                                .position(x0, ey).size(w0, 48.0f)
+                                                .color(t.colors.surfaceElevated).radius(t.sizes.radiusSmall)
+                                                .border(1.0f, hint ? t.colors.borderMuted : t.colors.error)
+                                                .build();
+                                            ui.text(std::string("claude.env.key.") + rid)
+                                                .position(x0 + 12.0f, ey).size(keyColW, 20.0f)
+                                                .text(kDisp).fontSize(12.0f).lineHeight(20.0f)
+                                                .color(t.colors.primary).build();
+                                            ui.text(std::string("claude.env.val.") + rid)
+                                                .position(valX, ey).size(valW, 48.0f)
+                                                .text(shownVal).fontSize(12.0f).lineHeight(20.0f)
+                                                .verticalAlign(eui::VerticalAlign::Center)
+                                                .color(t.colors.textSecondary).build();
+                                            ui.text(std::string("claude.env.hint.") + rid)
+                                                .position(x0 + 12.0f, ey + 24.0f).size(w0 - 24.0f, 18.0f)
+                                                .text(hint ? hint : "（未收录官方清单）")
+                                                .fontSize(11.0f).lineHeight(18.0f)
+                                                .color(t.colors.textTertiary).build();
+                                            ey += 54.0f;
+                                            ++ei2;
+                                        }
+                                        paneBottom = ey;
+                                    }
                                 }
-
-                                // 模型映射摘要（右，§6.2）
-                                const float col2x = x0 + (w0 + 16.0f) / 2.0f;
-                                ui.text("claude.field.model.label")
-                                    .position(col2x, fy0)
-                                    .size((w0 - 16.0f) / 2.0f, 14.0f)
-                                    .text("模型映射")
-                                    .fontSize(11.0f)
-                                    .lineHeight(14.0f)
-                                    .color(t.colors.textTertiary)
-                                    .build();
-                                ui.rect("claude.field.model.bg")
-                                    .position(col2x, fy0 + 18.0f)
-                                    .size((w0 - 16.0f) / 2.0f, fieldH - 32.0f)
-                                    .color(t.colors.surfaceElevated)
-                                    .radius(t.sizes.radiusSmall)
-                                    .border(1.0f, t.colors.borderMuted)
-                                    .build();
-                                ui.text("claude.field.model.value")
-                                    .position(col2x + 12.0f, fy0 + 18.0f)
-                                    .size((w0 - 16.0f) / 2.0f - 24.0f, fieldH - 32.0f)
-                                    .text(modelValue)
-                                    .fontSize(14.0f)
-                                    .lineHeight(fieldH - 32.0f)
-                                    .color(t.colors.textPrimary)
-                                    .build();
-
-                                // Base URL（全宽）
-                                ui.text("claude.field.url.label")
-                                    .position(x0, fy0 + fieldH)
-                                    .size(w0, 14.0f)
-                                    .text("Base URL")
-                                    .fontSize(11.0f)
-                                    .lineHeight(14.0f)
-                                    .color(t.colors.textTertiary)
-                                    .build();
-                                ui.rect("claude.field.url.bg")
-                                    .position(x0, fy0 + fieldH + 18.0f)
-                                    .size(w0, 28.0f)
-                                    .color(t.colors.surfaceElevated)
-                                    .radius(t.sizes.radiusSmall)
-                                    .border(1.0f, t.colors.borderMuted)
-                                    .build();
-                                ui.text("claude.field.url.value")
-                                    .position(x0 + 12.0f, fy0 + fieldH + 18.0f)
-                                    .size(w0 - 24.0f, 28.0f)
-                                    .text(urlValue)
-                                    .fontSize(t.sizes.fontSizeSmall)
-                                    .lineHeight(28.0f)
-                                    .color(t.colors.textPrimary)
-                                    .build();
-
-                                // Token（脱敏）
-                                ui.text("claude.field.token.label")
-                                    .position(x0, fy0 + fieldH + 56.0f)
-                                    .size(w0, 14.0f)
-                                    .text("API Key")
-                                    .fontSize(11.0f)
-                                    .lineHeight(14.0f)
-                                    .color(t.colors.textTertiary)
-                                    .build();
-                                ui.rect("claude.field.token.bg")
-                                    .position(x0, fy0 + fieldH + 74.0f)
-                                    .size(w0, 32.0f)
-                                    .color(t.colors.surfaceElevated)
-                                    .radius(t.sizes.radiusSmall)
-                                    .border(1.0f, t.colors.borderMuted)
-                                    .build();
-                                ui.text("claude.field.token.value")
-                                    .position(x0 + 12.0f, fy0 + fieldH + 74.0f)
-                                    .size(w0 - 24.0f, 32.0f)
-                                    .text(tokenValue)
-                                    .fontSize(t.sizes.fontSizeSmall)
-                                    .lineHeight(32.0f)
-                                    .color(t.colors.textSecondary)
-                                    .build();
-
-                                // Claude Code 接管状态（Phase D，数据源 service）
-                                const bool ccManaged = svc && svc->isClaudeCodeManaged();
-                                const auto& ccWarnings =
-                                    svc ? svc->lastSyncWarnings()
-                                        : std::vector<std::string>();
-                                const std::string ccPath =
-                                    settings_sync::defaultPaths()
-                                        .settingsFile.string();
-                                ui.text("claude.field.takeover.value")
-                                    .position(x0, fy0 + fieldH + 110.0f)
-                                    .size(w0, 16.0f)
-                                    .text(ccManaged
-                                          ? ("● Claude Code 已接管 " + ccPath)
-                                          : std::string("○ Claude Code 未接管"
-                                                        "（启动代理后自动接管，"
-                                                        "停止时还原）"))
-                                    .fontSize(11.0f)
-                                    .lineHeight(16.0f)
-                                    .color(ccManaged ? t.colors.success
-                                                     : t.colors.textTertiary)
-                                    .build();
-                                // 上层覆盖警告（§5.3 检测命中时；首条 + 计数）
-                                //（⚠ 换 FA：图标/文字拆两个元素）
-                                if (ccManaged && !ccWarnings.empty()) {
-                                    ui.text("claude.field.takeover.warn.icon")
-                                        .position(x0, fy0 + fieldH + 126.0f)
-                                        .size(14.0f, 16.0f)
-                                        .icon(0xF071)  // fa-triangle-exclamation
-                                        .fontSize(11.0f)
-                                        .lineHeight(16.0f)
-                                        .color(t.colors.warning)
-                                        .build();
-                                    ui.text("claude.field.takeover.warn")
-                                        .position(x0 + 18.0f, fy0 + fieldH + 126.0f)
-                                        .size(w0 - 18.0f, 16.0f)
-                                        .text(ccWarnings.front() +
-                                              (ccWarnings.size() > 1
-                                                   ? "（共 " +
-                                                         std::to_string(
-                                                             ccWarnings.size()) +
-                                                         " 条，详见设置页）"
-                                                   : ""))
-                                        .fontSize(11.0f)
-                                        .lineHeight(16.0f)
-                                        .color(t.colors.warning)
-                                        .build();
-                                }
-
-                                // 操作按钮组（全量接线）
-                                const float actY = fy0 + fieldH +
-                                    (ccManaged && !ccWarnings.empty()
-                                         ? 152.0f : 130.0f);
+                                // 操作按钮组（全量接线）：actY 跟随各 pane 真实底沿，避免与上方内容重叠
+                                const float actY = paneBottom + 20.0f;
+                                ui.rect("claude.act.divider")
+                                    .position(x0, actY - 10.0f)
+                                    .size(w0, 1.0f)
+                                    .color(t.colors.borderDefault).build();
                                 const float actGap = 12.0f;
                                 const float actW = (w0 - actGap * 3.0f) / 4.0f;
                                 ui.row("claude.detail.actions")
+                                    .position(x0, actY)
                                     .size(w0, 36.0f)
                                     .gap(actGap)
                                     .content([&] {
@@ -1611,6 +1631,26 @@ private:
                 })
                 .onCancel([this] { formOpen_ = false; })  // 审计 [21]：Esc=取消
                 .build();
+            // 变量名识别（2026-09-24，官方 env-vars 文档全量清单）：
+            // 已知 → hover 显示说明 tooltip；未知且非空 → 红边框提示
+            //（仍可导入，键名格式校验已在解析侧放开）
+            if (const char* hint = envVarHint(formEnvRows_[i].first)) {
+                components::tooltip(ui, "claude.form.env.row." + idx + ".tip")
+                    .source("claude.form.env.row." + idx + ".key.hit")
+                    .value(hint)
+                    .anchor(138.0f, y + 16.0f)
+                    .bounds(w, 420.0f)
+                    .theme(themeTokens)
+                    .zIndex(60)
+                    .build();
+            } else if (!formEnvRows_[i].first.empty()) {
+                ui.rect("claude.form.env.row." + idx + ".key.unknown")
+                    .position(28.0f, y).size(220.0f, 32.0f)
+                    .color(eui::Color{0.0f, 0.0f, 0.0f, 0.0f})
+                    .border(1.0f, t.colors.error)
+                    .radius(t.sizes.radiusSmall)
+                    .build();
+            }
             components::input(ui, "claude.form.env.row." + idx + ".value")
                 .position(258.0f, y).size(414.0f, 32.0f)
                 .value(formEnvRows_[i].second).placeholder("值（字符串）")
@@ -2308,6 +2348,7 @@ private:
     // ============ 状态 ============
 
     int64_t selectedId_ = 0;   // 0 = 跟随激活 profile
+    int detailTab_ = 0;       // 详情页签：0 基础 / 1 模型映射 / 2 环境变量（2026-09-24）
 
     // 审计 perf [13]：compose 数据缓存（刷新语义见 refreshDataCache 注释）。
     // 初值脏 = 首帧 compose 必查；seenCallLogVersion_ 初值 ~0 保证 recent
