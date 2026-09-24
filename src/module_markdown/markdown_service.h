@@ -11,8 +11,12 @@
 
 #include "core/result.h"
 #include "core/sqlite_db.h"
+#include "platform/file_watcher.h"
 
+#include <atomic>
 #include <filesystem>
+#include <memory>
+#include <mutex>
 #include <string>
 #include <vector>
 
@@ -36,6 +40,11 @@ struct TagCount {
 class MarkdownService {
 public:
     MarkdownService(core::data::SqliteDb& db, const std::filesystem::path& notesDir);
+    // 析构先 stop watcher（join 后台线程），回调保证不再触碰已销毁成员
+    ~MarkdownService();
+
+    MarkdownService(const MarkdownService&) = delete;
+    MarkdownService& operator=(const MarkdownService&) = delete;
 
     // 扫描 notesDir，同步到 markdown_index / markdown_fts：
     //   - 新文件 → 插入
@@ -97,12 +106,22 @@ public:
     core::Result<std::vector<NoteMeta>> notesWithTag(const std::string& tag);
 
     // ---- W8：文件变化自动感知（spec §8.1 承诺的 5 秒轮询底座）----
+    // ---- P3：platform::FileWatcher 事件驱动（KNOWN_LIMITATIONS #5 根治）----
+    //
+    // 检测路径两条腿：
+    //   1. watcher（Windows 原生 / 其他平台 stub）：事件即刻按事件同步索引
+    //      （含 (mtime,size) 秒级粒度看不见的同秒等长改动），并置标记；
+    //   2. pollChanged：watcher 标记命中 → 直接 true；否则退回磁盘
+    //      mtime/size 比对（stub 平台 / watcher 掉线时的兜底）。
+    // 调用方（模块层）语义不变：true → rescan() + 刷新 UI。
 
     // 轻量磁盘轮询：只遍历目录比 mtime/size，不读内容、不写索引、不打日志。
     // 返回 true = 磁盘与索引有差异（新文件/删除/修改），需要调用方 rescan()。
-    // mtime 秒级粒度的漏检窗口与升级路径：见实现处 pollChanged 注释 +
-    // KNOWN_LIMITATIONS #5（亚秒级需 core schema + platform watcher）。
     core::Result<bool> pollChanged();
+
+    // 原生文件监听是否在工作（Win=true；POSIX/macOS stub 或启动失败=false，
+    // 此时 pollChanged 退化为纯 mtime/size 比对）。测试与诊断用。
+    bool watcherActive() const;
 
     // 磁盘文件的 mtime（unix 秒）。文件不存在 → fail。
     // 用于「当前打开的笔记被外部修改」检测（配合模块层缓存的 lastKnownMtime）。
@@ -135,12 +154,30 @@ private:
     core::data::SqliteDb& db_;
     std::filesystem::path notesDir_;
 
+    // 原生文件监听：ctor 启动 watch notesDir_（失败仅记日志，降级纯轮询）。
+    // 声明在所有被回调触碰的成员之后无意义——停止统一在析构函数体内完成。
+    std::unique_ptr<platform::FileWatcher> watcher_;
+    // watcher 有事件但模块层尚未消费（pollChanged 读取后清除）：
+    // 保证模块的 rescan+refreshList 一轮不被 mtime 短路漏掉
+    std::atomic<bool> watcherFired_{false};
+    // 串行化 rescan：watcher 线程与 UI 线程（模块 5s tick）可能并发进入
+    std::mutex rescanMu_;
+
+    // FileWatcher 回调（watcher 后台线程）：置标记 + 尽力即刻同步
+    void onWatchEvent(std::vector<platform::FileWatchEvent> events);
+
+    // rescan 实体（调用方须已持有 rescanMu_）
+    core::Result<void> rescanLocked();
+
     // relPath (POSIX) → 绝对路径
     std::filesystem::path resolve(const std::filesystem::path& relPath) const;
 
     // 把一个文件 upsert 到索引 + FTS（不做 rescan 的删除清理）
+    // force=true 跳过 (size,mtime) 短路：watcher 事件已确证文件动过，
+    // 秒级粒度比对不可信（同秒改回等长内容）
     core::Result<void> syncOneToIndex(const std::filesystem::path& absPath,
-                                      const std::string& relPathPosix);
+                                      const std::string& relPathPosix,
+                                      bool force = false);
 
     // 从索引 + FTS 删除
     core::Result<void> deleteFromIndex(const std::string& relPathPosix);

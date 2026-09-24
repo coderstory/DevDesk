@@ -39,6 +39,15 @@ fs::path makeTempDir(const std::string& tag) {
     return dir;
 }
 
+// P3 watcher 接入后的确定性辅助：等待原生文件监听把此前磁盘操作的突发
+// 通知送达（Win 去抖 200ms + 线程调度余量），再 rescan 兑现/消费 credit。
+// stub 平台事件永不到达 → credit 恒 false → pollChanged 回到 mtime 比对，
+// 断言不受影响。用于「无变化 → false」类断言前置。
+void settleWatcher(module::markdown::MarkdownService& svc) {
+    std::this_thread::sleep_for(std::chrono::milliseconds(400));
+    (void)svc.rescan();  // 消费 credit + 以磁盘为准对齐（幂等）
+}
+
 // 把字符串写入文件（覆盖）
 bool writeTextFile(const fs::path& path, const std::string& content) {
     fs::create_directories(path.parent_path());
@@ -747,6 +756,7 @@ REGISTER_TEST(md_poll_changed_and_file_mtime,
 
     writeTextFile(dir / "a.md", "# a\n");
     DOCTEST_REQUIRE(svc.rescan().isOk());
+    settleWatcher(svc);  // P3：等 watcher 事件送达并消费 credit，恢复「无变化=false」稳态
 
     // 无变化 → false
     auto c1 = svc.pollChanged();
@@ -765,6 +775,7 @@ REGISTER_TEST(md_poll_changed_and_file_mtime,
     DOCTEST_REQUIRE(c2.isOk());
     DOCTEST_CHECK(c2.value());
     DOCTEST_REQUIRE(svc.rescan().isOk());
+    settleWatcher(svc);  // P3：同 c1，消费 b.md 的 watcher 事件 credit
     auto c3 = svc.pollChanged();
     DOCTEST_REQUIRE(c3.isOk());
     DOCTEST_CHECK(!c3.value());
@@ -785,6 +796,76 @@ REGISTER_TEST(md_poll_changed_and_file_mtime,
     fs::remove_all(dir);
     return true;
 })
+
+// ==================== P3：FileWatcher 接线（#5 根治）====================
+
+REGISTER_TEST(md_service_watcher_external_new_file,
+              "MarkdownService: 外部新建文件 → watcher 即时入索引（不显式 rescan）+ pollChanged credit", {
+    const auto dir = makeTempDir("fwatch_new");
+    auto db = makeDb();
+    runMigrations(db);
+    module::markdown::MarkdownService svc(db, dir);
+    if (!svc.watcherActive()) {  // POSIX/macOS stub：事件链路不存在，跳过
+        std::printf("[SKIP] FileWatcher 非活跃平台（stub），事件链路用例跳过\n");
+        fs::remove_all(dir);
+        return true;
+    }
+
+    writeTextFile(dir / "ext_new.md", "# 外部新建\n\nuniquetoken73f9 body");
+    // 不显式 rescan：watcher 线程 force-sync 应让搜索在几秒内命中
+    bool hit = false;
+    for (int i = 0; i < 50 && !hit; ++i) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        if (auto sr = svc.search("uniquetoken73f9"); sr.isOk() && !sr.value().empty()) {
+            hit = true;
+        }
+    }
+    DOCTEST_CHECK(hit);
+    // credit：事件到达后置位且无人消费 → pollChanged 必须 true（哪怕
+    // watcher 线程已把索引同步好、mtime 比对已无差异——UI 仍需刷新一轮）
+    auto c = svc.pollChanged();
+    DOCTEST_REQUIRE(c.isOk());
+    DOCTEST_CHECK(c.value());
+
+    fs::remove_all(dir);
+    return true;
+})
+
+REGISTER_TEST(md_service_watcher_same_len_external_edit,
+              "MarkdownService: 同秒等长外部改写 → watcher 事件路径看见（mtime/size 盲区，#5 根治点）", {
+    const auto dir = makeTempDir("fwatch_eq");
+    auto db = makeDb();
+    runMigrations(db);
+    module::markdown::MarkdownService svc(db, dir);
+    if (!svc.watcherActive()) {
+        std::printf("[SKIP] FileWatcher 非活跃平台（stub），等长改写用例跳过\n");
+        fs::remove_all(dir);
+        return true;
+    }
+
+    // 等长两条内容（仅 token 不同）→ (mtime,size) 元组理论上不变
+    const std::string bodyA = "# eq\n\naaabbbccc731 body padding xx";
+    const std::string bodyB = "# eq\n\nzzzxywwvv732 body padding xx";
+    DOCTEST_REQUIRE_EQ(bodyA.size(), bodyB.size());
+
+    writeTextFile(dir / "eq.md", bodyA);
+    DOCTEST_REQUIRE(svc.rescan().isOk());
+
+    // 外部等长改写；全程不再 rescan——搜索命中只可能来自 watcher 事件 force-sync
+    writeTextFile(dir / "eq.md", bodyB);
+    bool hit = false;
+    for (int i = 0; i < 50 && !hit; ++i) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        if (auto sr = svc.search("zzzxywwvv732"); sr.isOk() && !sr.value().empty()) {
+            hit = true;
+        }
+    }
+    DOCTEST_CHECK(hit);
+
+    fs::remove_all(dir);
+    return true;
+})
+
 // ==================== 标签（spec §8.1：setTags / listAllTags / notesWithTag） ====================
 
 REGISTER_TEST(md_tags_set_roundtrip,

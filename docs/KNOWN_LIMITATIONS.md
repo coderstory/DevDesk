@@ -52,11 +52,13 @@
 - EUI-NEO 的剪贴板能力仅用于 Input 组件内部粘贴（窗口层 `clipboardText/setClipboardText`），未暴露应用级"复制到剪贴板"的组件 API。
 - 因此设置页 / 代理凭据的 token 没有「复制」按钮。**影响已被接管通道大幅缩小**（provider-config）：推荐路径是启动代理自动写 `~/.claude/settings.json`，用户无需抄 token；仅手工配置模式需要从设置页眼睛显形或 `proxy_token.txt` 手动抄录。
 
-#### 5. Markdown 文件变化轮询是 mtime/size 秒级比对（W8）
+#### 5. Markdown 外部改动检测：Windows 已事件驱动，编辑器冲突检测与 POSIX 平台仍 mtime（W8 → P3 watcher 根治，2026-09-24）
 
-- 「当前笔记被外部修改」检测基于 mtime（unix 秒）+ size 快照：外部编辑器若在同秒内改回等长内容，最快要等下一次 mtime 变化才被发现；目录级新文件/删除同样 5 秒内才反映（`MarkdownService::pollChanged`，`markdown_service.cpp`）。
-- 外部删除当前笔记且本地有未保存编辑时只弹一次 toast（单实例限制，靠 `lastKnownMtime=-1` 标记节流），不弹选择框——本地编辑保存时会重建文件，无数据丢失风险。
-- 升级路径：平台级 watcher（ReadDirectoryChangesW / FSEvent）在 EUI-NEO 有 onFileDrop/watcher 诉求时一并考虑上游 PR。
+- **已根治（Windows）**：`platform::FileWatcher`（`ReadDirectoryChangesW` + 后台线程 + 200ms 去抖）监听笔记目录，外部改动/新增/删除即刻按事件 force-sync 索引（跳过 (mtime,size) 短路，专治「同秒改回等长内容」盲区）——索引与搜索毫秒级跟上；`pollChanged` 对事件突发保证至少一轮 true（credit 语义），驱动模块层 rescan + 列表刷新（UI ≤5s）。POSIX/macOS 为 stub（`active()==false`），自动退回原 mtime/size 轮询，秒级盲区在那些平台仍存在。
+- **仍开放 ①**：「当前打开笔记被外部修改」的编辑器冲突检测走模块侧 `fileMtime`（mtime 秒）快照，同秒等长改动该路径不报（索引已被 watcher 修正，未保存编辑器缓冲不受影响，无数据风险；接线需改 `markdown_module.cpp`，本批未动）。
+- **仍开放 ②**：外部删除当前笔记且本地有未保存编辑时只弹一次 toast（EUI-NEO 单实例限制，靠 `lastKnownMtime=-1` 标记节流），不弹选择框——本地编辑保存时会重建文件，无数据丢失风险（W8 原样保留，与 watcher 无关）。
+- **仍开放 ③**：watcher 事件可能在写方 flush 完成前送达，单次可同步到半截内容——写完 mtime 推进后由下一事件/轮询自愈（200ms 去抖已把窗口压到多数编辑器批量写级别）。
+- 升级路径：FSEvent/inotify 真实现按需；冲突检测可升级为订阅 watcher 事件路径。来源：P3 mtime 根治批（2026-09-24）。
 
 #### 6. Markdown 笔记目录不可配置（spec §8.5 第 2 条部分实现，2026-09-23 审计 [15] 登记）
 
