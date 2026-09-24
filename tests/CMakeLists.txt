@@ -16,6 +16,7 @@ add_executable(devdesk_tests
     test_platform/test_keychain.cpp
     test_platform/test_json.cpp
     test_platform/test_file_open.cpp
+    test_platform/test_file_watcher.cpp
     test_modules/test_markdown.cpp
     test_modules/test_markdown_service.cpp
     test_modules/test_md_highlight.cpp

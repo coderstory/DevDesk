@@ -122,7 +122,83 @@ int64_t fileMtimeEpoch(const fs::path& absPath) {
 
 MarkdownService::MarkdownService(core::data::SqliteDb& db,
                                  const fs::path& notesDir)
-    : db_(db), notesDir_(notesDir) {}
+    : db_(db), notesDir_(notesDir),
+      watcher_(std::make_unique<platform::FileWatcher>()) {
+    // 启动原生文件监听（Windows 真实现 / 其他平台 stub 静默降级）。
+    // rescan() 同样会建目录，但 watcher 要先于首扫存在，故这里先幂等建好。
+    std::error_code ec;
+    fs::create_directories(notesDir_, ec);
+    auto r = watcher_->start(notesDir_,
+                             [this](std::vector<platform::FileWatchEvent> ev) {
+                                 onWatchEvent(std::move(ev));
+                             });
+    if (r.isFail()) {
+        LOG_WARN("Markdown 文件监听启动失败，退回 mtime/size 轮询: " +
+                 r.errorMessage());
+    }
+}
+
+MarkdownService::~MarkdownService() {
+    // 先 join watcher 线程，保证回调不再触碰任何成员（rescanMu_ 等随后才析构）
+    if (watcher_) watcher_->stop();
+}
+
+bool MarkdownService::watcherActive() const {
+    return watcher_ && watcher_->active();
+}
+
+void MarkdownService::onWatchEvent(std::vector<platform::FileWatchEvent> events) {
+    // 1) 置标记：模块层下一次 pollChanged 必为 true → 其 rescan+refreshList
+    //    照旧跑一轮（UI 列表 ≤5s 内对齐，模块无需感知 watcher 的存在）。
+    watcherFired_.store(true);
+
+    // 2) 即刻尽力同步索引（watcher 线程）：让搜索/索引毫秒级跟上外部改动。
+    //    UI 正持有 rescanMu_（模块 tick 的 rescan 在跑）时跳过——那轮 rescan
+    //    以磁盘为准收敛，且标记已置，下一轮 pollChanged 仍会触发刷新。
+    std::unique_lock<std::mutex> lock(rescanMu_, std::try_to_lock);
+    if (!lock.owns_lock()) return;
+
+    bool needFullRescan = false;
+    for (const auto& ev : events) {
+        if (ev.relativePath.empty()) {
+            needFullRescan = true;  // Unknown（缓冲溢出等）：无法逐项处理
+            continue;
+        }
+        // UTF-8 → fs::path 必须走 u8string 构造（Windows 上 std::string→path
+        // 按 ACP 解码，中文笔记名会乱码），与 rescan 的目录枚举编码链一致
+        const fs::path rel{std::u8string(ev.relativePath.begin(),
+                                         ev.relativePath.end())};
+        if (rel.extension() != ".md") continue;  // 目录/非笔记事件交给标记兜底
+        const std::string relPosix = toPosix(rel);
+        const auto absPath = resolve(rel);
+        std::error_code ec;
+        const bool exists = fs::is_regular_file(absPath, ec) && !ec;
+        core::Result<void> one = exists
+            // 事件确证文件动过 → force 跳过 (size,mtime) 短路（#5 根治点：
+            // 同秒改回等长内容 mtime 比对看不见，事件能看见）
+            ? syncOneToIndex(absPath, relPosix, /*force=*/true)
+            : deleteFromIndex(relPosix);
+        if (one.isFail()) {
+            // 半截读/锁冲突等：本轮放弃该文件，标记已置，模块 rescan 以磁盘为准修正
+            LOG_WARN("watcher 事件同步失败 " + ev.relativePath + ": " +
+                     one.errorMessage());
+        }
+    }
+    if (needFullRescan) {
+        auto full = rescanLocked();
+        if (full.isFail()) {
+            LOG_WARN("watcher 触发的全量重扫失败: " + full.errorMessage());
+        }
+    }
+}
+
+core::Result<void> MarkdownService::rescan() {
+    std::lock_guard<std::mutex> lock(rescanMu_);
+    // 入口消费 credit（而非出口）：本轮磁盘遍历必然扫到「消费点之前已发生」
+    // 的改动，credit 当场兑现；遍历期间新到的事件会重新置位，留给下一轮。
+    watcherFired_.store(false);
+    return rescanLocked();
+}
 
 fs::path MarkdownService::resolve(const fs::path& relPath) const {
     // relPath 是 POSIX 风格的相对路径（'/' 分隔符）
@@ -175,7 +251,8 @@ std::string MarkdownService::extractTitle(const std::string& content,
 
 core::Result<void> MarkdownService::syncOneToIndex(
     const fs::path& absPath,
-    const std::string& relPathPosix) {
+    const std::string& relPathPosix,
+    bool force) {
 
     std::error_code ec;
     auto fileSize = fs::file_size(absPath, ec);
@@ -236,9 +313,12 @@ core::Result<void> MarkdownService::syncOneToIndex(
             auto mR = row.getInt64("modified_at");
             if (mR.isOk()) oldMtime = mR.value();
 
-            if (oldSize == static_cast<int64_t>(fileSize) &&
+            if (!force &&
+                oldSize == static_cast<int64_t>(fileSize) &&
                 oldMtime == static_cast<int64_t>(mtimeSec)) {
-                // 无变化，跳过 update（但 FTS 仍要保证最新；通常没变化 FTS 也不用动）
+                // 无变化，跳过 update（但 FTS 仍要保证最新；通常没变化 FTS 也不用动）。
+                // force=true（watcher 事件确证动过）不走此短路：秒级 (mtime,size)
+                // 比对对「同秒改回等长内容」失明，事件粒度比它精确（#5 根治点）。
                 return core::Result<void>::ok();
             }
         }
@@ -395,7 +475,7 @@ core::Result<void> MarkdownService::deleteFromIndex(
     return core::Result<void>::ok();
 }
 
-core::Result<void> MarkdownService::rescan() {
+core::Result<void> MarkdownService::rescanLocked() {
     // 确保 notesDir 存在
     std::error_code ec;
     fs::create_directories(notesDir_, ec);
@@ -1150,20 +1230,19 @@ NoteMeta MarkdownService::rowToNote(const core::data::SqlRow& row) {
 // ---- W8：文件变化自动感知 ----
 
 core::Result<bool> MarkdownService::pollChanged() {
+    // Credit 语义（P3 接入 platform::FileWatcher，#5 根治）：
+    // watcher 报过事件 → 本次必返 true（消费该 credit）——即使 (mtime,size)
+    // 比对因「同秒改回等长内容」失明，也强制调用方跑一轮以磁盘为准的
+    // rescan + UI 刷新。watcher 线程其实已在 onWatchEvent 里 force-sync 过
+    // 受影响文件（索引毫秒级跟上），这一轮 true 的真正消费方是列表刷新。
+    // rescan()（公开）同样消费 credit：调用方已完成一次全量磁盘→索引核对。
+    if (watcherFired_.exchange(false)) {
+        return core::Result<bool>::ok(true);
+    }
+
+    // ---- mtime/size 比对：stub 平台 / watcher 掉线 / credit 已消费后的主路径 ----
+
     // 磁盘侧快照：path → (mtime, size)
-    //
-    // 精度说明（tech-debt「mtime 秒级粒度」，2026-09-24 评估后维持登记，
-    // 见 KNOWN_LIMITATIONS #5）：mtime 为 unix 秒（fileMtimeEpoch），同秒内
-    // 改回等长内容时 (mtime, size) 元组不变，本函数检测不到。升级路径与取舍：
-    //   - 亚秒级时间戳：需把 markdown_index.modified_at 改存 ns——schema 在
-    //     core/migrations.h，且 module_home 按「秒」消费该列
-    //     （formatRelativeTime / startOfDayEpoch / modified_at >= 清理阈值），
-    //     改动半径跨出本模块，收益只是把漏检窗口从 1s 缩到 NTFS 时间戳粒度
-    //     （~10-16ms，最后写入时间按系统时钟粒度更新），缩不消；
-    //   - 内容哈希：与 pollChanged「不读内容」的轻量轮询设计相悖；
-    //   - 根治 = 平台 watcher（ReadDirectoryChangesW / FSEvent）推事件、
-    //     事件内比对内容，属 spec §风险表「mtime 轮询 + 平台 watcher」的
-    //     更大改动，登记后按需排期。
     std::map<std::string, std::pair<int64_t, int64_t>> disk;
     std::error_code ec;
     if (fs::exists(notesDir_, ec)) {
