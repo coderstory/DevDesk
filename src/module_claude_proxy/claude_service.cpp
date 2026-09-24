@@ -731,6 +731,9 @@ core::Result<void> ClaudeService::logCall(const CallLogEntry& entry) {
     if (stepR.isFail()) {
         return core::Result<void>::fail(stepR.errorCode(), stepR.errorMessage());
     }
+    // 审计 perf [13]：落库成功即推进日志版本号，Claude 页 compose 据此
+    // 只在有新调用时重查 recentCalls（proxy worker 线程写，UI 线程读）
+    callLogVersion_.fetch_add(1, std::memory_order_release);
     return core::Result<void>::ok();
 }
 

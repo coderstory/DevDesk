@@ -1379,3 +1379,135 @@ REGISTER_TEST(claude_module_keyboard_shortcuts,
     cleanupKey(pid);
     return true;
 })
+
+// ---- 11. 审计 perf [13]：compose 数据缓存等价 ----
+// 优化前 compose 每帧同步跑 listProfiles/recentCalls(3)/getActiveProfile 三条
+// 查询；优化后缓存命中帧零查询。本用例锁等价契约：
+//   1. 首帧（脏）与次帧（缓存命中）渲染结果逐字段一致
+//   2. 代理 worker 的 logCall（不经过模块、不标脏）经 callLogVersion 驱动
+//      recent 重查 —— 「新调用下一帧可见」不变
+//   3. 外部直写 DB 绕过模块：缓存帧不可见（新语义，TodoModule 同款），
+//      onPageEnter 后可见
+//   4. 模块写操作（启用）标脏：ACTIVE 徽标与详情即时更新
+REGISTER_TEST(claude_module_compose_cache_equivalence,
+              "claude_module: compose 缓存等价（脏标记/callLogVersion/onPageEnter）（headless）", {
+    TestEnv env;
+    auto a = env.svc->createProfile("A缓存", "https://a.example.com",
+                                    "sk-ant-cache-aaaa", "m");
+    DOCTEST_REQUIRE(a.isOk());
+    auto b = env.svc->createProfile("B缓存", "https://b.example.com",
+                                    "sk-ant-cache-bbbb", "m");
+    DOCTEST_REQUIRE(b.isOk());
+    // B 激活 → 列表序（is_active DESC, name ASC）= [B, A]
+    DOCTEST_REQUIRE(env.svc->setActiveProfile(b.value().id).isOk());
+
+    std::unique_ptr<::core::Module> mod(create_claude_module());
+    eui::Screen screen;
+    screen.width = 1600.0f;
+    screen.height = 1000.0f;
+    auto compose = [&](eui::Ui& ui) {
+        ui.begin("cache");
+        mod->compose(ui, screen);
+        ui.end();
+    };
+    // CHECK 宏内含 return false，helper 返回 bool（本文件既有约定）
+    auto click = [](eui::Ui& ui, const std::string& id) -> bool {
+        const auto* node = ui.find(id);
+        if (node == nullptr || node->onClick == nullptr) {
+            std::cerr << "missing clickable: " << id << std::endl;
+            return false;
+        }
+        node->onClick();
+        return true;
+    };
+    auto textOf = [](eui::Ui& ui, const std::string& id) -> std::string {
+        const auto* node = ui.find(id);
+        return node == nullptr ? std::string("<missing>") : node->text;
+    };
+
+    // 1) 首帧（脏标记全查）记录渲染，次帧（缓存命中，零 SQLite）必须一致
+    std::string name0;
+    std::string name1;
+    std::string detail;
+    {
+        eui::Ui ui;
+        compose(ui);
+        name0 = textOf(ui, "claude.profile.0.name");
+        name1 = textOf(ui, "claude.profile.1.name");
+        detail = textOf(ui, "claude.field.name.value");
+        DOCTEST_CHECK_EQ(name0, std::string("B缓存"));
+        DOCTEST_CHECK_EQ(name1, std::string("A缓存"));
+        DOCTEST_CHECK_EQ(detail, std::string("B缓存"));
+        DOCTEST_CHECK(ui.find("claude.profile.0.active.text") != nullptr);
+        DOCTEST_CHECK(ui.find("claude.calls.empty") != nullptr);
+    }
+    {
+        eui::Ui ui;
+        compose(ui);
+        DOCTEST_CHECK_EQ(textOf(ui, "claude.profile.0.name"), name0);
+        DOCTEST_CHECK_EQ(textOf(ui, "claude.profile.1.name"), name1);
+        DOCTEST_CHECK_EQ(textOf(ui, "claude.field.name.value"), detail);
+    }
+
+    // 2) 代理 worker 落库（logCall 直写，不经过模块）→ callLogVersion 驱动重查
+    {
+        module::claude::ClaudeService::CallLogEntry e;
+        e.profileId = a.value().id;
+        e.method = "POST";
+        e.path = "/v1/cache-probe";
+        e.statusCode = 200;
+        e.latencyMs = 42;
+        e.startedAt = std::time(nullptr);
+        DOCTEST_REQUIRE(env.svc->logCall(e).isOk());
+        eui::Ui ui;
+        compose(ui);
+        DOCTEST_CHECK(ui.find("claude.calls.empty") == nullptr);
+        DOCTEST_CHECK(textOf(ui, "claude.calls.p.0").find("/v1/cache-probe") !=
+                      std::string::npos);
+    }
+
+    // 3) 外部直写绕过模块：缓存帧不可见（新语义），onPageEnter 后可见
+    auto c = env.svc->createProfile("C缓存", "https://c.example.com",
+                                    "sk-ant-cache-cccc", "m");
+    DOCTEST_REQUIRE(c.isOk());
+    {
+        eui::Ui ui;
+        compose(ui);
+        DOCTEST_CHECK(ui.find("claude.profile.2.name") == nullptr);
+    }
+    mod->onPageEnter();
+    {
+        eui::Ui ui;
+        compose(ui);
+        const auto* n2 = ui.find("claude.profile.2.name");   // 序：[B, A, C]
+        DOCTEST_REQUIRE(n2 != nullptr);
+        DOCTEST_CHECK_EQ(n2->text, std::string("C缓存"));
+    }
+
+    // 4) 模块写操作（选中 A → 启用）标脏：ACTIVE 徽标移到 A，详情跟随
+    {
+        eui::Ui ui;
+        compose(ui);
+        DOCTEST_CHECK(click(ui, "claude.profile.1.bg"));   // 选中「A缓存」
+    }
+    {
+        eui::Ui ui;
+        compose(ui);
+        DOCTEST_CHECK(click(ui, "claude.act.enable.bg"));  // doSetActive(A)
+    }
+    {
+        eui::Ui ui;
+        compose(ui);
+        // A 激活后排到 index 0，B 不再是 ACTIVE
+        DOCTEST_CHECK_EQ(textOf(ui, "claude.profile.0.name"),
+                         std::string("A缓存"));
+        DOCTEST_CHECK(ui.find("claude.profile.0.active.text") != nullptr);
+        DOCTEST_CHECK(ui.find("claude.profile.1.active.text") == nullptr);
+    }
+
+    mod->onStop();
+    cleanupKey(a.value().id);
+    cleanupKey(b.value().id);
+    cleanupKey(c.value().id);
+    return true;
+})

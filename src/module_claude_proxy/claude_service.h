@@ -240,6 +240,13 @@ public:
     static void setGlobal(ClaudeService* svc);
     static ClaudeService* global();
 
+    // 审计 perf [13]：调用日志写版本号（logCall 成功 +1，proxy worker 线程写）。
+    // Claude 页 compose 用它感知代理侧异步落库，只在版本变化时重查 recentCalls，
+    // 不再每次重组合同步查库。
+    uint64_t callLogVersion() const {
+        return callLogVersion_.load(std::memory_order_acquire);
+    }
+
 public:
     // 代理端口合法范围与默认值（审计 [14]；与 module_settings 的
     // SettingsConfig::proxyPort 钳制范围/默认值保持字面一致——两模块不能
@@ -286,6 +293,9 @@ private:
     // Claude Code 接管通道（settingsFile 为空 = 未启用）
     settings_sync::Paths syncPaths_;
     std::vector<std::string> lastSyncWarnings_;
+
+    // 审计 perf [13]：调用日志版本号（见 callLogVersion()）
+    std::atomic<uint64_t> callLogVersion_{0};
 };
 
 // ===== 纯函数（可单测，无 IO）=====

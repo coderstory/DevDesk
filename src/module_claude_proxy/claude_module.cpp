@@ -5,7 +5,8 @@
 //   新建/编辑 Profile（dialog 表单）→ createProfile / updateProfile
 //   启用 → setActiveProfile；删除（确认 dialog）→ deleteProfile
 //   测试连通 → testConnection；代理开关 → startProxy / stopProxy
-//   每次操作后靠下一帧 compose 重新拉取数据（本模块 compose 直读 service）
+//   每次操作后标脏 compose 数据缓存，下一帧 compose 重查（审计 perf [13]：
+//   缓存命中帧零 SQLite；代理日志经 callLogVersion 感知）
 #include "claude_service.h"
 #include "provider_config.h"
 #include "settings_sync.h"
@@ -158,40 +159,27 @@ public:
         std::string profilesError;
         std::string callsError;
 
+        // 审计 perf [13]：profiles/recent/active 缓存为成员，重组合只从内存拷贝，
+        // 不再每帧同步跑 3 条 SQLite 查询。脏标记（onStart/onPageEnter/写操作）
+        // 触发三类重查；recent 另按 ClaudeService::callLogVersion 感知代理 worker
+        // 异步落库，保住「新调用下一帧可见」与优化前等价；查询失败保持脏、下帧
+        // 重试（错误态照常每帧显示），与旧「每帧查」同退化路径。
         std::vector<Profile> profiles;
-        if (!svc) {
-            profilesError = "服务未就绪（ClaudeService 未注册）";
-        } else {
-            auto listR = svc->listProfiles();
-            if (listR.isOk()) {
-                profiles = std::move(listR).value();
-            } else {
-                profilesError = listR.errorMessage();
-                LOG_ERROR("Profile 列表加载失败: " + profilesError);
-            }
-        }
-
         std::vector<ClaudeService::CallLogEntry> recent;
-        if (!svc) {
-            callsError = "服务未就绪（ClaudeService 未注册）";
-        } else {
-            auto rR = svc->recentCalls(3);
-            if (rR.isOk()) {
-                recent = std::move(rR).value();
-            } else {
-                callsError = rR.errorMessage();
-                LOG_ERROR("调用记录加载失败: " + callsError);
-            }
-        }
-
         Profile activeProfile;
         bool hasActive = false;
-        if (svc) {
-            auto aR = svc->getActiveProfile();
-            if (aR.isOk()) {
-                activeProfile = std::move(aR).value();
-                hasActive = true;
-            }
+        if (!svc) {
+            profilesError = "服务未就绪（ClaudeService 未注册）";
+            callsError = "服务未就绪（ClaudeService 未注册）";
+            dataDirty_ = true;   // 服务未就绪查不了，保持脏等下帧
+        } else {
+            refreshDataCache(svc);
+            profiles = cachedProfiles_;
+            recent = cachedRecent_;
+            activeProfile = cachedActive_;
+            hasActive = cachedHasActive_;
+            profilesError = cachedProfilesError_;
+            callsError = cachedCallsError_;
         }
 
         // 详情面板展示的 profile：优先用户选中的，其次激活的
@@ -954,6 +942,7 @@ public:
 
     void onStart() override {
         LOG_INFO("Claude 模块启动");
+        dataDirty_ = true;   // 审计 perf [13]：启动即标记缓存待查
         ClaudeService* svc = ClaudeService::global();
         if (!svc) {
             LOG_WARN("onStart: ClaudeService::global() 为 null");
@@ -974,6 +963,10 @@ public:
             LOG_INFO("onStart: 代理未运行（默认不自动启动，等待用户手动启动）");
         }
     }
+
+    // 审计 perf [13]：进入页面（切页回来/同页重入）标记缓存脏，下一帧 compose
+    // 重查三类数据（Home 仪表盘进页刷新同款模式）
+    void onPageEnter() override { dataDirty_ = true; }
 
     void onStop() override {
         LOG_INFO("Claude 模块停止");
@@ -1024,6 +1017,49 @@ public:
     }
 
 private:
+    // ============ 审计 perf [13]：compose 数据缓存 ============
+    // 脏 = 页面进入/写操作后的重查帧，profiles/active/recent 三类全查；
+    // recent 另在 callLogVersion 变化（代理落新日志）时重查。list 查询成功
+    // 才清脏（失败保持脏下帧重试 = 旧「每帧查」的退化等价）；recent 成功时
+    // 记录的是查询**前**的版本号快照——查询期间落库的调用会让下一帧版本再
+    // 对不上，宁可多查一次不漏显。
+    void refreshDataCache(ClaudeService* svc) {
+        const bool refreshedAll = dataDirty_;
+        if (refreshedAll) {
+            auto listR = svc->listProfiles();
+            if (listR.isOk()) {
+                cachedProfiles_ = std::move(listR).value();
+                cachedProfilesError_.clear();
+            } else {
+                cachedProfiles_.clear();
+                cachedProfilesError_ = listR.errorMessage();
+                LOG_ERROR("Profile 列表加载失败: " + cachedProfilesError_);
+            }
+            auto aR = svc->getActiveProfile();
+            if (aR.isOk()) {
+                cachedActive_ = std::move(aR).value();
+                cachedHasActive_ = true;
+            } else {
+                cachedActive_ = Profile();
+                cachedHasActive_ = false;   // 旧语义：激活查询失败静默按无激活
+            }
+            if (cachedProfilesError_.empty()) dataDirty_ = false;
+        }
+        const uint64_t verBefore = svc->callLogVersion();
+        if (refreshedAll || verBefore != seenCallLogVersion_) {
+            auto rR = svc->recentCalls(3);
+            if (rR.isOk()) {
+                cachedRecent_ = std::move(rR).value();
+                cachedCallsError_.clear();
+                seenCallLogVersion_ = verBefore;
+            } else {
+                cachedRecent_.clear();
+                cachedCallsError_ = rR.errorMessage();
+                LOG_ERROR("调用记录加载失败: " + cachedCallsError_);
+            }
+        }
+    }
+
     // ============ Profile 卡片（点击选中，选中/激活高亮） ============
     void drawProfileCard(eui::Ui& ui,
                          const std::string& id,
@@ -1317,6 +1353,7 @@ private:
             formError_ = "服务未就绪（ClaudeService 未注册）";
             return;
         }
+        dataDirty_ = true;   // 审计 perf [13]：写操作前即标脏（失败也不伤，下帧重查）
         if (formName_.empty() || formUrl_.empty()) {
             formError_ = "名称和 Base URL 不能为空";
             return;
@@ -2189,6 +2226,7 @@ private:
     void doSetActive(int64_t id) {
         ClaudeService* svc = ClaudeService::global();
         if (!svc) return;
+        dataDirty_ = true;   // 审计 perf [13]：写操作标脏
         auto r = svc->setActiveProfile(id);
         if (r.isFail()) {
             showToast("启用失败", r.errorMessage(), true);
@@ -2201,6 +2239,7 @@ private:
     void doDelete(int64_t id) {
         ClaudeService* svc = ClaudeService::global();
         if (!svc) return;
+        dataDirty_ = true;   // 审计 perf [13]：写操作标脏
         // 产品审计 2026-09-23 [1]（§7 安全第 5 条）：删除激活 Profile 且代理
         // 运行中 → service 层已停代理并还原 settings.json，proxyStopped 出参
         // 告知这里，toast 明示（否则用户只见「已删除」，不知道 Claude Code
@@ -2269,6 +2308,18 @@ private:
     // ============ 状态 ============
 
     int64_t selectedId_ = 0;   // 0 = 跟随激活 profile
+
+    // 审计 perf [13]：compose 数据缓存（刷新语义见 refreshDataCache 注释）。
+    // 初值脏 = 首帧 compose 必查；seenCallLogVersion_ 初值 ~0 保证 recent
+    // 首帧必查（真实版本号从 0 起，不会撞上）。
+    std::vector<Profile> cachedProfiles_;
+    std::string cachedProfilesError_;
+    std::vector<ClaudeService::CallLogEntry> cachedRecent_;
+    std::string cachedCallsError_;
+    Profile cachedActive_;
+    bool cachedHasActive_ = false;
+    bool dataDirty_ = true;
+    uint64_t seenCallLogVersion_ = ~0ull;
 
     // 新建/编辑表单（tabs 三页，§6.1）
     bool formOpen_ = false;
