@@ -81,6 +81,7 @@
 - DevDesk Phase 3 把预览拆成逐块 `components::markdown`（块模型 `md_block_model`，等价性由 `md_block_model_render_equivalence` 回归锁定）。「编辑只重算受影响块」的省析收益**完整成立的条件是文档 ≤8 块**：上游 `components/markdown.h` 的 `cachedMarkdownDocument` 按 source 串键、LRU 容量仅 **8 条**（`kCacheCapacity`），块数 >8 时任何一次编辑触发的全块重建会把未变块互相逐出 → 逐块重新 md4c 解析（总字节量与整篇重析相同，成本中性不恶化，但无增量收益）。
 - 更贵的行内布局（文本测量/折行）有独立缓存 `cachedInlineLayout`（256 条、按块 runs+宽度键控），逐块与整篇两种模式命中效果相同——这是当前增量收益的真实来源，块级拆分对它的命中无帮助也无损害。
 - DevDesk 侧无法绕过：markdown 组件只吃 source 串、不暴露预解析注入；元素树每帧整体重建是框架前提。升级路径（EUI-NEO 上游 PR 候选）：① `cachedMarkdownDocument` 容量随活跃 markdown 实例数伸缩（或 ≥64）；② 暴露块级解析/渲染 API（只提交脏块）；③ markdown 组件消费 `dirtyKey`（runtime 机制已有，见 `core/runtime/runtime_update.h`）。上游任一落地后 DevDesk 零改动自动受益（分块结构与 stableId 身份已就绪）。来源：Phase 3 首块②上游勘察（2026-09-24）。
+- P3-③ 补充（2026-09-24）：代码块**着色**高亮在上游通路上不存在（code block 单色、无预解析注入）——CodeFence 块的预览改由 DevDesk 侧自绘（`md_preview_highlight` 产出 md_highlight 色表 runs + `drawPreviewCodeBlock` 几何公式逐项对齐上游 `renderCodeBlock`；runs 消费的是 EUI-NEO 既有 styled-runs DSL `.runs()`，零上游改动、零新词法器）。其余块型仍走逐块 `components::markdown`，本条 ①②③ 升级路径对其继续有效；上游 ② 落地后 CodeFence 自绘可并回。
 
 ### 测试
 

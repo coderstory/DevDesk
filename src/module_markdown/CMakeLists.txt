@@ -8,6 +8,7 @@ add_library(devdesk_module_markdown STATIC
     md_tree.cpp
     md_view_state.cpp
     md_block_model.cpp
+    md_preview_highlight.cpp
 )
 
 devdesk_apply_warnings(devdesk_module_markdown)

@@ -1,0 +1,132 @@
+// src/module_markdown/md_preview_highlight.cpp
+// 预览代码块高亮纯函数 + 脏块缓存（Phase 3 ③，接口语义见头文件）。
+#include "md_preview_highlight.h"
+
+#include <algorithm>
+#include <unordered_set>
+
+namespace module::markdown {
+
+namespace {
+
+bool isFenceSpace(char c) { return c == ' ' || c == '\t'; }
+
+bool colorsEqual(const MdHighlightColors& a, const MdHighlightColors& b) {
+    const auto same = [](const eui::Color& x, const eui::Color& y) {
+        return x.r == y.r && x.g == y.g && x.b == y.b && x.a == y.a;
+    };
+    return same(a.marker, b.marker) && same(a.code, b.code) &&
+           same(a.link, b.link) && same(a.listMarker, b.listMarker) &&
+           same(a.quote, b.quote);
+}
+
+// 行尾 \r 剔除，返回剔除后的视图（CRLF 文档：显示与 md4c 的换行语义一致，
+// \r 不进 glyph；参数按值传视图，调用方接收返回值才生效）
+std::string_view trimTrailingCr(std::string_view line) {
+    while (!line.empty() && line.back() == '\r') line.remove_suffix(1);
+    return line;
+}
+
+} // namespace
+
+MdPreviewCodeHighlight mdPreviewCodeHighlight(std::string_view blockSource,
+                                              const MdHighlightColors& colors) {
+    MdPreviewCodeHighlight out;
+    const std::string src(blockSource);
+    const std::vector<MdFenceBlock> fences = scanFences(src);
+    // CodeFence 块 = 恰好一个围栏（块切分器与 scanFences 同源保证）；解析不出
+    // 单围栏 → 交给调用方回退整块 components::markdown，绝不错画
+    if (fences.size() != 1) return out;
+    const MdFenceBlock& f = fences[0];
+    if (f.openLineStart > f.contentStart || f.contentStart > f.contentEnd ||
+        f.contentEnd > src.size()) {
+        return out;  // 防御：区间不自洽（理论不可达）
+    }
+
+    // 开栏行 → lang 标签：跳过 ≤3 前导空格与 ≥3 围栏字符，info 取首词
+    //（md4c MD_LANG 语义；与上游 codeBlockDisplayText 的 lang 行显示对齐）
+    const size_t openLineEnd = src.find('\n', f.openLineStart);
+    std::string_view openLine(src.data() + f.openLineStart,
+                              (openLineEnd == std::string::npos
+                                   ? src.size()
+                                   : openLineEnd) - f.openLineStart);
+    openLine = trimTrailingCr(openLine);
+    size_t i = 0;
+    while (i < openLine.size() && isFenceSpace(openLine[i])) ++i;
+    if (i >= openLine.size()) return out;  // 空行不可能开栏（防御）
+    const char fenceChar = openLine[i];
+    if (fenceChar != '`' && fenceChar != '~') return out;  // 防御
+    size_t ticks = 0;
+    while (i + ticks < openLine.size() && openLine[i + ticks] == fenceChar) {
+        ++ticks;
+    }
+    std::string_view info = openLine.substr(std::min(i + ticks, openLine.size()));
+    size_t s = 0;
+    while (s < info.size() && isFenceSpace(info[s])) ++s;
+    size_t e = s;
+    while (e < info.size() && !isFenceSpace(info[e])) ++e;
+    out.lang.assign(info.substr(s, e - s));
+
+    // 显示串：[lang\n] + 内容行以 \n 连接（无尾换行，对齐 codeBlockDisplayText）
+    if (!out.lang.empty()) {
+        out.runs.push_back({0, static_cast<int>(out.lang.size()), colors.marker});
+        out.displayText = out.lang;
+        out.displayText += '\n';
+    }
+    size_t pos = f.contentStart;
+    while (pos < f.contentEnd) {
+        size_t nl = src.find('\n', pos);
+        if (nl == std::string::npos || nl > f.contentEnd) nl = f.contentEnd;
+        std::string_view line(src.data() + pos, nl - pos);
+        const size_t len = trimTrailingCr(line).size();
+        const int lineStart = static_cast<int>(out.displayText.size());
+        out.displayText.append(src, pos, len);
+        if (len > 0) {
+            // 内容行整行 code 色（编辑器围栏分支同源语义：整行单色、无行内识别）
+            out.runs.push_back(
+                {lineStart, lineStart + static_cast<int>(len), colors.code});
+        }
+        pos = (nl < f.contentEnd) ? nl + 1 : f.contentEnd;
+        if (pos < f.contentEnd) out.displayText += '\n';
+    }
+    out.ok = true;
+    return out;
+}
+
+void MdPreviewCodeCache::setColors(const MdHighlightColors& colors) {
+    if (colorsSet_ && colorsEqual(colors_, colors)) return;
+    if (colorsSet_) entries_.clear();  // 主题切换：旧色条目全部作废
+    colors_ = colors;
+    colorsSet_ = true;
+}
+
+const MdPreviewCodeHighlight* MdPreviewCodeCache::get(int stableId,
+                                                      uint64_t hash) const {
+    auto it = entries_.find(stableId);
+    if (it != entries_.end() && it->second.hash == hash) {
+        ++hits_;
+        return &it->second.highlight;
+    }
+    ++misses_;
+    return nullptr;
+}
+
+void MdPreviewCodeCache::put(int stableId,
+                             uint64_t hash,
+                             MdPreviewCodeHighlight highlight) {
+    entries_[stableId] = Entry{hash, std::move(highlight)};
+}
+
+void MdPreviewCodeCache::pruneActive(const std::vector<int>& activeStableIds) {
+    std::unordered_set<int> active(activeStableIds.begin(),
+                                   activeStableIds.end());
+    for (auto it = entries_.begin(); it != entries_.end();) {
+        if (active.find(it->first) == active.end()) {
+            it = entries_.erase(it);
+        } else {
+            ++it;
+        }
+    }
+}
+
+} // namespace module::markdown
