@@ -120,7 +120,7 @@ DevDesk 是一个**本地优先**的开发者桌面工具集（C++ 原生应用�
 | **Claude 代理**（仅 Claude 开启时） | 「随应用启动代理」开关（默认**关**）；「代理端口」输入框（回车或点「应用」）；认证 Token（只读 · 默认脱敏，眼睛按钮临时显形、离开本页即恢复掩码；「重新生成」换新 Token）；「Claude Code 接管」状态行 | 自启开关下次启动生效；改端口**代理运行中自动重启（Token 不变）**；重新生成同步重写 `proxy_token.txt` |
 | **调用日志保留** | 下拉：「永久保留」「7 天」「30 天」「90 天」「180 天」「365 天」（默认 30 天；永久 = 不清理） | **切换立即执行一次清理**并反馈「已清理 N 条历史日志」（旧说法「下次启动才生效」已过期） |
 
-配置持久化在 `%APPDATA%\DevDesk\config.json`（字段：`theme` / `fontScalePercentV3` / `logRetentionDays` / `claudeProxyAutoStart` / `claudeProxyPort` / `windowEffect` / `sidebarCollapsed` / `enabledModules`；文件损坏或字段缺失时自动回退默认值，数值越界收敛到合法范围）。
+配置持久化在 `%APPDATA%\DevDesk\config.json`（共 11 键，与 `SettingsStore::save` 一一对应：`theme` / `themeMode` / `editorFontSize` / `logLevel` / `fontScalePercentV3` / `logRetentionDays` / `claudeProxyAutoStart` / `claudeProxyPort` / `windowEffect` / `sidebarCollapsed` / `enabledModules`。`themeMode` 是用户意图档（`auto`/`light`/`dark`，默认 `auto` 跟随系统），`theme` 与其双写、存当前解析出的深浅档供启动路径直读；字体缩放只认 `fontScalePercentV3`，旧键 `fontScalePercent` / `fontScalePercentV2` 刻意不读、写了也无效；文件损坏或字段缺失时自动回退默认值，数值越界收敛到合法范围）。
 
 ### 3.6 桌宠
 
@@ -181,7 +181,7 @@ DevDesk 是一个**本地优先**的开发者桌面工具集（C++ 原生应用�
 |------|------|------|
 | `%APPDATA%\DevDesk\notes\` | **所有笔记** | 普通 `.md` 文件树，可直接备份 / 同步 |
 | `%APPDATA%\DevDesk\devdesk.db` | SQLite 数据库 | Todo 列与任务、Profile 元数据、笔记索引（FTS5）与笔记标签、代理调用日志 |
-| `%APPDATA%\DevDesk\config.json` | 应用配置 | `theme` / `fontScalePercentV3` / `logRetentionDays` / `claudeProxyAutoStart` / `claudeProxyPort` / `windowEffect` / `sidebarCollapsed` / `enabledModules`（见 [§3.5](#35-设置)） |
+| `%APPDATA%\DevDesk\config.json` | 应用配置 | 共 11 键：`theme` / `themeMode` / `editorFontSize` / `logLevel` / `fontScalePercentV3` / `logRetentionDays` / `claudeProxyAutoStart` / `claudeProxyPort` / `windowEffect` / `sidebarCollapsed` / `enabledModules`（键义与旧键忽略规则见 [§3.5](#35-设置)） |
 | `%APPDATA%\DevDesk\keychain\` | 凭据密文 | `<service>\<account>.key`，DPAPI 加密（绑定当前 Windows 用户），存 API Key 明文的唯一位置 |
 | `%APPDATA%\DevDesk\logs\devdesk.log` | 运行日志 | 排查问题先看这里；调用日志的保留天数在设置页配置 |
 | `%APPDATA%\DevDesk\proxy_token.txt` | 代理凭据 | port + token，见 [§4.3](#43-手工配置不想让-devdesk-碰-settingsjson-时的备选) |
