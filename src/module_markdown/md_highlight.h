@@ -30,10 +30,17 @@ namespace module::markdown {
 // 保持正文色——只有 ** 标记弱化）
 struct MdHighlightColors {
     eui::Color marker;      // 标记符号：# 前缀 / ** / ` / > / | / []()   ← textTertiary
-    eui::Color code;        // 行内代码 + 围栏内容                       ← success
+    eui::Color code;        // 行内代码 + 围栏内容（含关键字着色的 default 段）← success
     eui::Color link;        // 链接文字 / 斜体内容（同 info，§6.2）      ← info
     eui::Color listMarker;  // 列表符号 - * + N.                         ← primary
     eui::Color quote;       // 引用行正文                                ← textSecondary
+    // 预览代码块关键字多色（Phase 3 ⑤，md_keyword_highlight 消费；编辑器
+    // 行级高亮器不读这四字段，仍整行 code 单色）。未覆盖语言回退逐行
+    // code 单色，与编辑器 token 等价不变
+    eui::Color codeKeyword; // C++/Python 关键字 + C++ 预处理指令        ← info
+    eui::Color codeString;  // 字符串 / 字符字面量 / 三引号串             ← warning
+    eui::Color codeComment; // 行注释 / 块注释                            ← textTertiary
+    eui::Color codeNumber;  // 整数字面量（含十六进制）/ 浮点             ← primaryText
 };
 
 // 色表映射（token 已齐，无需新增语义色）

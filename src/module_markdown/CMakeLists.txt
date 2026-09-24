@@ -2,6 +2,7 @@ add_library(devdesk_module_markdown STATIC
     markdown_module.cpp
     markdown_service.cpp
     md_highlight.cpp
+    md_keyword_highlight.cpp
     md_keyboard.cpp
     md_line_scanner.cpp
     md_file_open.cpp

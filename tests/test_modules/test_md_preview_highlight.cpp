@@ -36,9 +36,15 @@ const eui::Color kCode{0.0f, 1.0f, 0.0f, 1.0f};
 const eui::Color kLink{0.0f, 0.0f, 1.0f, 1.0f};
 const eui::Color kList{1.0f, 1.0f, 0.0f, 1.0f};
 const eui::Color kQuote{1.0f, 0.0f, 1.0f, 1.0f};
+// 关键字多色 4 token（Phase 3 ⑤）
+const eui::Color kKw{0.2f, 0.2f, 0.9f, 1.0f};
+const eui::Color kStr{0.9f, 0.6f, 0.1f, 1.0f};
+const eui::Color kCmt{0.5f, 0.5f, 0.5f, 1.0f};
+const eui::Color kNum{0.8f, 0.3f, 0.2f, 1.0f};
 
 MdHighlightColors testColors() {
-    return MdHighlightColors{kMark, kCode, kLink, kList, kQuote};
+    return MdHighlightColors{kMark, kCode, kLink, kList, kQuote,
+                             kKw,   kStr,  kCmt,  kNum};
 }
 
 bool colorEq(const eui::Color& a, const eui::Color& b) {
@@ -74,25 +80,38 @@ std::string fenceSourceOf(const std::string& doc) {
     return "";
 }
 
+// displayText 中恰为 [from,to) 的 run（无 = nullptr）
+const eui::TextRun* exactRun(const MdPreviewCodeHighlight& hl, size_t from,
+                             size_t to) {
+    for (const auto& r : hl.runs) {
+        if (static_cast<size_t>(r.byteStart) == from &&
+            static_cast<size_t>(r.byteEnd) == to) {
+            return &r;
+        }
+    }
+    return nullptr;
+}
+
 } // namespace
 
-REGISTER_TEST(md_preview_hl_basic, "md_preview_highlight: lang 行 + 逐行 code run", {
-    const std::string src = "```cpp\nint a;\nint b;\n```\n";
+REGISTER_TEST(md_preview_hl_basic,
+              "md_preview_highlight: lang 行 + 未覆盖 lang 逐行 code run（fallback）", {
+    const std::string src = "```text\nint a;\nint b;\n```\n";
     const auto hl = mdPreviewCodeHighlight(src, testColors());
     DOCTEST_CHECK(hl.ok);
-    DOCTEST_CHECK_EQ(hl.lang, std::string("cpp"));
-    DOCTEST_CHECK_EQ(hl.displayText, std::string("cpp\nint a;\nint b;"));
+    DOCTEST_CHECK_EQ(hl.lang, std::string("text"));
+    DOCTEST_CHECK_EQ(hl.displayText, std::string("text\nint a;\nint b;"));
     // lang run：整段 marker 色
     DOCTEST_REQUIRE(hl.runs.size() >= 1);
     DOCTEST_CHECK_EQ(hl.runs[0].byteStart, 0);
-    DOCTEST_CHECK_EQ(hl.runs[0].byteEnd, 3);
+    DOCTEST_CHECK_EQ(hl.runs[0].byteEnd, 4);
     DOCTEST_CHECK(colorEq(hl.runs[0].color, kMark));
-    // 内容行整行 code 色，空行无 run（"cpp\nint a;\nint b;"：line1 [4,10)、line2 [11,17)）
-    DOCTEST_CHECK(colorEq(runAtByte(hl, 4)->color, kCode));   // "int a;" 首字节
-    DOCTEST_CHECK(colorEq(runAtByte(hl, 9)->color, kCode));   // "int a;" 行内
-    DOCTEST_CHECK_EQ(runAtByte(hl, 4)->byteStart, 4);
-    DOCTEST_CHECK_EQ(runAtByte(hl, 4)->byteEnd, 10);
-    DOCTEST_CHECK_EQ(runAtByte(hl, 11)->byteEnd, 17);
+    // 内容行整行 code 色，空行无 run（"text\nint a;\nint b;"：line1 [5,11)、line2 [12,18)）
+    DOCTEST_CHECK(colorEq(runAtByte(hl, 5)->color, kCode));   // "int a;" 首字节
+    DOCTEST_CHECK(colorEq(runAtByte(hl, 10)->color, kCode));  // "int a;" 行内
+    DOCTEST_CHECK_EQ(runAtByte(hl, 5)->byteStart, 5);
+    DOCTEST_CHECK_EQ(runAtByte(hl, 5)->byteEnd, 11);
+    DOCTEST_CHECK_EQ(runAtByte(hl, 12)->byteEnd, 18);
     return true;
 })
 
@@ -107,11 +126,14 @@ REGISTER_TEST(md_preview_hl_no_lang, "md_preview_highlight: 无 lang 无标签�
 })
 
 REGISTER_TEST(md_preview_hl_editor_equivalence,
-              "md_preview_highlight: 与编辑器 MdHighlighter token 同源等价", {
+              "md_preview_highlight: 未覆盖 lang 与编辑器 MdHighlighter token 同源等价", {
     // 编辑器：全文档 runsForLine；围栏内容行 → 整行单 run（色 = colors.code）
     // 预览：块源码 → displayText 坐标逐行 code run
-    // 等价断言：去掉 lang 标签行后，两者逐行 run 的行内字节区间 + 颜色完全一致
-    const std::string doc = "# Title\n\n```python\nx = 1\ny = 2\n```\n\ntail\n";
+    // 等价断言：去掉 lang 标签行后，两者逐行 run 的行内字节区间 + 颜色完全一致。
+    // 注意：受支持语言（cpp/python）的预览多色是与编辑器的【有意分叉】
+    //（编辑器本批仍逐行单色，见 md_preview_hl_cpp_multicolor），等价锁
+    // 只对 fallback 路径成立
+    const std::string doc = "# Title\n\n```text\nx = 1\ny = 2\n```\n\ntail\n";
     const std::string src = fenceSourceOf(doc);
     DOCTEST_REQUIRE(!src.empty());
 
@@ -130,7 +152,7 @@ REGISTER_TEST(md_preview_hl_editor_equivalence,
 
     const auto hl = mdPreviewCodeHighlight(src, testColors());
     DOCTEST_REQUIRE(hl.ok);
-    // displayText = "python\nx = 1\ny = 2"，"x = 1" 的 run 行内区间 = [0, 5)
+    // displayText = "text\nx = 1\ny = 2"，"x = 1" 的 run 行内区间 = [0, 5)
     const size_t dispStart = hl.displayText.find(line);
     DOCTEST_REQUIRE(dispStart != std::string::npos);
     const eui::TextRun* prevRun = runAtByte(hl, dispStart);
@@ -147,6 +169,59 @@ REGISTER_TEST(md_preview_hl_editor_equivalence,
     DOCTEST_CHECK(colorEq(c1.code, c2.code));
     DOCTEST_CHECK(colorEq(c1.marker, c2.marker));
     DOCTEST_CHECK(colorEq(c1.code, tokens.colors.success));
+    return true;
+})
+
+REGISTER_TEST(md_preview_hl_cpp_multicolor,
+              "md_preview_highlight: cpp lang → 关键字/串/注释/数字多色 runs", {
+    const std::string src = "```cpp\nint a = \"hi\"; // c\nint b = 7;\n```\n";
+    const auto hl = mdPreviewCodeHighlight(src, testColors());
+    DOCTEST_CHECK(hl.ok);
+    const std::string disp = "cpp\nint a = \"hi\"; // c\nint b = 7;";
+    DOCTEST_CHECK_EQ(hl.displayText, disp);
+    DOCTEST_REQUIRE(!hl.runs.empty());
+    DOCTEST_CHECK(colorEq(hl.runs[0].color, kMark));  // lang 标签仍 marker 色
+    const size_t kw1 = disp.find("int");              // = 4
+    DOCTEST_REQUIRE(kw1 != std::string::npos);
+    DOCTEST_CHECK(colorEq(exactRun(hl, kw1, kw1 + 3)->color, kKw));
+    const size_t str = disp.find("\"hi\"");           // = 12
+    DOCTEST_CHECK(colorEq(exactRun(hl, str, str + 4)->color, kStr));
+    const size_t cmt = disp.find("// c");             // = 18
+    DOCTEST_CHECK(colorEq(exactRun(hl, cmt, cmt + 4)->color, kCmt));
+    const size_t seven = disp.find("7;");             // = 31
+    DOCTEST_CHECK(colorEq(exactRun(hl, seven, seven + 1)->color, kNum));
+    // 默认段（标识符/运算符）= code 色，与编辑器现状视觉连续
+    const size_t aeq = disp.find("a =");
+    DOCTEST_CHECK(colorEq(runAtByte(hl, aeq)->color, kCode));
+    // 空白间隙（\n）不被覆盖：结构不变式与 fallback 一致
+    DOCTEST_CHECK(runAtByte(hl, 3) == nullptr);
+    return true;
+})
+
+REGISTER_TEST(md_preview_hl_python_multicolor,
+              "md_preview_highlight: python lang → 多色 + 编辑器有意分叉（编辑器仍单色）", {
+    const std::string src = "```python\ndef f():  # go\n    return \"s\"\n```\n";
+    const auto hl = mdPreviewCodeHighlight(src, testColors());
+    DOCTEST_CHECK(hl.ok);
+    const std::string disp = "python\ndef f():  # go\n    return \"s\"";
+    DOCTEST_CHECK_EQ(hl.displayText, disp);
+    const size_t df = disp.find("def");         // = 7
+    DOCTEST_CHECK(colorEq(exactRun(hl, df, df + 3)->color, kKw));
+    const size_t cmt = disp.find("# go");       // = 17
+    DOCTEST_CHECK(colorEq(exactRun(hl, cmt, cmt + 4)->color, kCmt));
+    const size_t ret = disp.find("return");     // = 26
+    DOCTEST_CHECK(colorEq(exactRun(hl, ret, ret + 6)->color, kKw));
+    const size_t str = disp.find("\"s\"");      // = 33
+    DOCTEST_CHECK(colorEq(exactRun(hl, str, str + 3)->color, kStr));
+    DOCTEST_CHECK(runAtByte(hl, 21) == nullptr);  // \n 间隙
+    DOCTEST_CHECK(runAtByte(hl, 22) == nullptr);  // 缩进空格不入 run
+    // 有意分叉：编辑器同文本仍是整行单 code 色（本批只改预览）
+    const std::string doc = "```python\ndef f():  # go\n```\n";
+    MdHighlighter h;
+    h.setColors(testColors());
+    const auto er = h.runsForLine(doc, "def f():  # go", 10);
+    DOCTEST_REQUIRE_EQ(er.size(), static_cast<size_t>(1));
+    DOCTEST_CHECK(colorEq(er[0].color, kCode));
     return true;
 })
 
@@ -213,6 +288,10 @@ REGISTER_TEST(md_preview_hl_info_word, "md_preview_highlight: lang 取 info 首�
     DOCTEST_CHECK(hl.ok);
     DOCTEST_CHECK_EQ(hl.lang, std::string("python"));
     DOCTEST_CHECK_EQ(hl.displayText, std::string("python\npass"));
+    // python 受支持 → pass 走关键字色（lang 标签 marker 色不受影响）
+    DOCTEST_REQUIRE(hl.runs.size() >= 2);
+    DOCTEST_CHECK(colorEq(hl.runs[0].color, kMark));
+    DOCTEST_CHECK(colorEq(runAtByte(hl, 7)->color, kKw));
     return true;
 })
 

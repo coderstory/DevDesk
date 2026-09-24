@@ -13,16 +13,20 @@
 //     与编辑器完全同源）
 //   - run 载体：eui::TextRun（上游 styled-runs：颜色只改顶点色，不动 layout/测量，
 //     DSL TextBuilder .runs() 消费）
+//   - 关键字多色：md_keyword_highlight（C++/Python 手写词法器，纯函数）
 //
-// 着色语义 = 与编辑器 MdHighlighter 的 token 序列等价（回归锁
-// md_preview_highlight_editor_equivalence）：
+// 着色语义：
 //   - 编辑器围栏行（```lang 开栏 / 闭栏）整行 marker 色 → 预览不显示围栏线、
 //     仅显示 lang 标签（显示串结构对齐上游 codeBlockDisplayText：
 //     lang\n + 内容行以 \n 连接），lang 段 marker 色
-//   - 编辑器围栏内容行整行 code 色（不做行内识别——v1 无语言词法器，真语言
-//     tokenize 是 ux-design §8 #8 的「P3 或不做」项）→ 预览逐行 code 色 run，
-//     空行无 run，未覆盖段兜底 style.codeText 基色（防御，正常不触发）
-//   - 未来接语言词法器只换本文件的 run 产出器，自绘/缓存/接线零改动
+//   - 受支持语言（C++/Python，Phase 3 ⑤）：内容按关键字/字符串/注释/数字/
+//     默认 五色 runs（md_keyword_highlight；默认段 = code 色，与编辑器现状
+//     视觉连续）
+//   - 未覆盖 / 空 lang：逐行 code 色单 run，空行无 run（与编辑器 MdHighlighter
+//     围栏内容 token 等价——回归锁 md_preview_hl_editor_equivalence 锁的就是
+//     这条 fallback 路径；编辑器侧本身仍全 lang 单色，多色仅预览）
+//   - 未来加语言 = md_keyword_highlight 加一张词法配置表；接编辑器多色是
+//     另批对称工程（改 MdHighlighter，本批不动）
 #pragma once
 
 #include "md_highlight.h"

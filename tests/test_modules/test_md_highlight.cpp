@@ -43,9 +43,15 @@ const eui::Color kCode{0.0f, 1.0f, 0.0f, 1.0f};
 const eui::Color kLink{0.0f, 0.0f, 1.0f, 1.0f};
 const eui::Color kList{1.0f, 1.0f, 0.0f, 1.0f};
 const eui::Color kQuote{1.0f, 0.0f, 1.0f, 1.0f};
+// 关键字多色 4 token（编辑器行级高亮器不消费，给可辨值保持聚合初始化完整）
+const eui::Color kKw{0.2f, 0.2f, 0.9f, 1.0f};
+const eui::Color kStr{0.9f, 0.6f, 0.1f, 1.0f};
+const eui::Color kCmt{0.5f, 0.5f, 0.5f, 1.0f};
+const eui::Color kNum{0.8f, 0.3f, 0.2f, 1.0f};
 
 MdHighlightColors testColors() {
-    return MdHighlightColors{kMark, kCode, kLink, kList, kQuote};
+    return MdHighlightColors{kMark, kCode, kLink, kList, kQuote,
+                             kKw,   kStr,  kCmt,  kNum};
 }
 
 // 单行文档（行 = 全文，行首偏移 0）

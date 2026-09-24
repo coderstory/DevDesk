@@ -22,6 +22,12 @@ MdHighlightColors mdHighlightColors(const core::theme::Tokens& tokens) {
         tokens.colors.primaryText,    // listMarker（审计 [27]：文字色走
                                       // primaryText，浅色下达标深一档）
         tokens.colors.textSecondary,  // quote
+        // 预览代码块关键字多色（Phase 3 ⑤）：全部取既有语义 token，
+        // 浅/深两档自动适配且均按文字对比度校准过（审计 [27] 同源）
+        tokens.colors.info,           // codeKeyword
+        tokens.colors.warning,        // codeString
+        tokens.colors.textTertiary,   // codeComment
+        tokens.colors.primaryText,    // codeNumber
     };
 }
 

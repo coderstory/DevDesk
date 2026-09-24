@@ -2,6 +2,8 @@
 // 预览代码块高亮纯函数 + 脏块缓存（Phase 3 ③，接口语义见头文件）。
 #include "md_preview_highlight.h"
 
+#include "md_keyword_highlight.h"
+
 #include <algorithm>
 #include <unordered_set>
 
@@ -17,7 +19,10 @@ bool colorsEqual(const MdHighlightColors& a, const MdHighlightColors& b) {
     };
     return same(a.marker, b.marker) && same(a.code, b.code) &&
            same(a.link, b.link) && same(a.listMarker, b.listMarker) &&
-           same(a.quote, b.quote);
+           same(a.quote, b.quote) && same(a.codeKeyword, b.codeKeyword) &&
+           same(a.codeString, b.codeString) &&
+           same(a.codeComment, b.codeComment) &&
+           same(a.codeNumber, b.codeNumber);
 }
 
 // 行尾 \r 剔除，返回剔除后的视图（CRLF 文档：显示与 md4c 的换行语义一致，
@@ -73,6 +78,14 @@ MdPreviewCodeHighlight mdPreviewCodeHighlight(std::string_view blockSource,
         out.displayText = out.lang;
         out.displayText += '\n';
     }
+    // 内容行先入显示串（不产 run）：受支持语言交给关键字词法器，
+    // 未覆盖/空 lang 保持 ③ 的逐行整行 code 单色（与编辑器 token 等价）
+    struct LineSpan {
+        int start;
+        int len;
+    };
+    std::vector<LineSpan> lineSpans;
+    const int contentDispStart = static_cast<int>(out.displayText.size());
     size_t pos = f.contentStart;
     while (pos < f.contentEnd) {
         size_t nl = src.find('\n', pos);
@@ -81,13 +94,34 @@ MdPreviewCodeHighlight mdPreviewCodeHighlight(std::string_view blockSource,
         const size_t len = trimTrailingCr(line).size();
         const int lineStart = static_cast<int>(out.displayText.size());
         out.displayText.append(src, pos, len);
-        if (len > 0) {
-            // 内容行整行 code 色（编辑器围栏分支同源语义：整行单色、无行内识别）
-            out.runs.push_back(
-                {lineStart, lineStart + static_cast<int>(len), colors.code});
-        }
+        if (len > 0) lineSpans.push_back({lineStart, static_cast<int>(len)});
         pos = (nl < f.contentEnd) ? nl + 1 : f.contentEnd;
         if (pos < f.contentEnd) out.displayText += '\n';
+    }
+    if (!lineSpans.empty()) {
+        const std::string_view content(out.displayText.data() +
+                                           contentDispStart,
+                                       out.displayText.size() -
+                                           static_cast<size_t>(contentDispStart));
+        const MdKeywordHighlight kw =
+            mdKeywordHighlight(content, out.lang, colors);
+        if (kw.supported) {
+            // 词法器 runs 坐标 = content 内偏移 → 平移进 displayText 坐标系；
+            // 升序不重叠由词法器保证（lang 标签 run 在最前，不冲突）
+            out.runs.reserve(out.runs.size() + kw.runs.size());
+            for (const eui::TextRun& r : kw.runs) {
+                out.runs.push_back({r.byteStart + contentDispStart,
+                                    r.byteEnd + contentDispStart,
+                                    r.color});
+            }
+        } else {
+            for (const LineSpan& ls : lineSpans) {
+                // 内容行整行 code 色（编辑器围栏分支同源语义：整行单色、
+                // 无行内识别）
+                out.runs.push_back(
+                    {ls.start, ls.start + ls.len, colors.code});
+            }
+        }
     }
     out.ok = true;
     return out;
