@@ -27,6 +27,7 @@
 #include <map>
 #include <memory>
 #include <string>
+#include <unordered_set>
 #include <vector>
 
 namespace module::todo {
@@ -241,9 +242,9 @@ public:
             setStatus("搜索失败：" + r.errorMessage(), true);
             return;
         }
-        searchMatchIds_.reserve(r.value().size());
+        // 审计 perf [40]：unordered_set 命中表（filterBySearch O(1) 查）
         for (const auto& t : r.value()) {
-            searchMatchIds_.push_back(t.id);
+            searchMatchIds_.insert(t.id);
         }
     }
 
@@ -2402,7 +2403,7 @@ private:
 
     // 搜索（三件套 1）：query + service_->search 的命中任务 id 集
     std::string searchQuery_;
-    std::vector<int64_t> searchMatchIds_;
+    std::unordered_set<int64_t> searchMatchIds_;
 
     // 逾期视图（三件套 2）：badge 数量 + 弹窗数据（打开时刷新）
     size_t overdueCount_ = 0;

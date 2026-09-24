@@ -1676,7 +1676,9 @@ REGISTER_TEST(todo_ui_feature_pure_helpers,
     DOCTEST_CHECK_EQ(overdueDays(localMidnight(3), localMidnight(0)), 3);
     DOCTEST_CHECK_EQ(overdueDays(localMidnight(0) + 3600, localMidnight(0) + 7200), 0);
 
-    // 搜索过滤：命中 id 集内保留且顺序不变；未激活 → 全保留
+    // 搜索过滤：命中 id 集内保留且顺序不变；未激活 → 全保留。
+    // 审计 perf [40]：命中表为 unordered_set——过滤只取决于「是否命中」，
+    // 与旧 vector+std::find 版结果集完全一致（下面双序构建锁这一点）
     std::vector<module::todo::Task> tasks;
     tasks.push_back(makeTask(1, 10, 0));
     tasks.push_back(makeTask(2, 10, 1));
@@ -1685,14 +1687,32 @@ REGISTER_TEST(todo_ui_feature_pure_helpers,
     ptrs.push_back(&tasks[0]);
     ptrs.push_back(&tasks[1]);
     ptrs.push_back(&tasks[2]);
-    std::vector<int64_t> matched;
-    matched.push_back(3);
-    matched.push_back(2);
+    std::unordered_set<int64_t> matched;
+    matched.insert(3);
+    matched.insert(2);
     const auto out = filterBySearch(ptrs, matched, true);
     DOCTEST_REQUIRE_EQ(out.size(), static_cast<size_t>(2));
     DOCTEST_CHECK_EQ(out[0]->id, static_cast<int64_t>(2));
     DOCTEST_CHECK_EQ(out[1]->id, static_cast<int64_t>(3));
     DOCTEST_CHECK_EQ(filterBySearch(ptrs, matched, false).size(),
+                     static_cast<size_t>(3));
+    // 命中表插入序无关（set 语义 = 旧 find 语义的等价点：成员判定不因序变）
+    std::unordered_set<int64_t> matchedRev;
+    matchedRev.insert(2);
+    matchedRev.insert(3);
+    const auto out2 = filterBySearch(ptrs, matchedRev, true);
+    DOCTEST_REQUIRE_EQ(out2.size(), out.size());
+    DOCTEST_CHECK_EQ(out2[0]->id, out[0]->id);
+    DOCTEST_CHECK_EQ(out2[1]->id, out[1]->id);
+    // 空集 + 全命中两个边界
+    std::unordered_set<int64_t> empty;
+    DOCTEST_CHECK_EQ(filterBySearch(ptrs, empty, true).size(),
+                     static_cast<size_t>(0));
+    std::unordered_set<int64_t> all;
+    all.insert(1);
+    all.insert(2);
+    all.insert(3);
+    DOCTEST_CHECK_EQ(filterBySearch(ptrs, all, true).size(),
                      static_cast<size_t>(3));
 
     return true;

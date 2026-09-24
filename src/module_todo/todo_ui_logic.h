@@ -10,6 +10,7 @@
 #include <algorithm>
 #include <ctime>
 #include <optional>
+#include <unordered_set>
 #include <vector>
 
 #include "core/time.h"
@@ -197,13 +198,16 @@ inline int overdueDays(int64_t dueAt, int64_t now) {
 
 // 搜索过滤：搜索激活时只保留命中 id 集合内的任务（列内排序不变）。
 // matchedIds 来自 TodoService::search（title/description LIKE）。
+// 审计 perf [40]：命中表用 unordered_set——旧版对每任务线性 std::find，
+// 搜索激活时每帧 compose O(任务数×命中数)；集合查找 O(1)（过滤结果只依赖
+// 「是否命中」，与命中表原有顺序无关，语义不变）。
 inline std::vector<const Task*> filterBySearch(const std::vector<const Task*>& tasks,
-                                               const std::vector<int64_t>& matchedIds,
+                                               const std::unordered_set<int64_t>& matchedIds,
                                                bool searching) {
     if (!searching) return tasks;
     std::vector<const Task*> out;
     for (const Task* t : tasks) {
-        if (std::find(matchedIds.begin(), matchedIds.end(), t->id) != matchedIds.end()) {
+        if (matchedIds.count(t->id) != 0) {
             out.push_back(t);
         }
     }
