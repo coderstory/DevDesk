@@ -2,7 +2,8 @@
 // 常驻侧边栏 + 折叠/展开实现（接口见 app_sidebar.h）
 //
 // 折叠态规格（2026-09-23）：
-//   - 宽度 260 → 72；brand 文字隐藏，留居中字母 D
+//   - 宽度 208 → 72；brand 展开 = logo 图标 + "DevDesk"（logo 在左），
+//     折叠 = 只显示居中 logo 图标（2026-09-24：字母 D 换成 logo）
 //   - 导航项只显图标（水平居中），label 不渲染，hover tooltip 补模块名
 //     （components/tooltip 走 hoverOpacityFrom，非 hover 时透明度 0 且
 //     不参与命中测试，不挡页面点击）
@@ -108,7 +109,7 @@ void drawSidebar(eui::Ui& ui, const eui::Screen& screen) {
     static const bool mounted = [] {
         LOG_INFO("侧边栏导航已挂载（" +
                  std::to_string(::core::appRouter()->modules().size()) +
-                 " 个模块入口，宽 260/72 可折叠）");
+                 " 个模块入口，宽 208/72 可折叠）");
         return true;
     }();
     (void)mounted;
@@ -133,22 +134,31 @@ void drawSidebar(eui::Ui& ui, const eui::Screen& screen) {
                 .color(t.colors.borderMuted)
                 .build();
 
-            // brand 行：折叠 = 居中字母 D（文字隐藏）；展开 = "DevDesk"（现状）
+            // brand 行（2026-09-24）：展开 = logo 图标 + "DevDesk" 横排
+            //（logo 品牌色，在文字左侧）；折叠 = 只显示居中 logo 图标
             if (collapsed) {
                 ui.text("app.sidebar.brand")
                     .position(0.0f, 24.0f)
                     .size(kWidth, 32.0f)
-                    .text("D")
+                    .icon(eui::utf8(0xF5FC))  // fa-laptop-code logo
                     .fontSize(t.sizes.fontSizePage)
-                    .fontWeight(700)
                     .horizontalAlign(eui::HorizontalAlign::Center)
                     .verticalAlign(eui::VerticalAlign::Center)
-                    .color(t.colors.textPrimary)
+                    .color(t.colors.primary)
                     .build();
             } else {
-                ui.text("app.sidebar.brand")
+                ui.text("app.sidebar.brand.logo")
                     .position(padX, 24.0f)
-                    .size(kWidth - padX * 2.0f, 32.0f)
+                    .size(kIconW, 32.0f)
+                    .icon(eui::utf8(0xF5FC))  // fa-laptop-code logo
+                    .fontSize(t.sizes.fontSizePage)
+                    .horizontalAlign(eui::HorizontalAlign::Center)
+                    .verticalAlign(eui::VerticalAlign::Center)
+                    .color(t.colors.primary)
+                    .build();
+                ui.text("app.sidebar.brand")
+                    .position(padX + kIconW + 8.0f, 24.0f)
+                    .size(kWidth - padX * 2.0f - kIconW - 8.0f, 32.0f)
                     .text("DevDesk")
                     .fontSize(t.sizes.fontSizePage)
                     .fontWeight(700)
@@ -180,12 +190,15 @@ void drawSidebar(eui::Ui& ui, const eui::Screen& screen) {
                 // 图标与文字分开两个元素：.icon() 用的 Icon 字体
                 //（FontAwesome）不能和正文字体混排在一个 Text 里
                 if (collapsed) {
-                    // 折叠：图标水平居中，label 不渲染（tooltip 补模块名）
+                    // 折叠：图标水平居中（框位置居中 + 框内 horizontalAlign
+                    // Center——2026-09-24 修复：glyph 默认贴框左缘导致视觉
+                    // 偏左、右侧空白多），label 不渲染（tooltip 补模块名）
                     ui.text(id + ".icon")
                         .position((kWidth - kIconW) * 0.5f, y)
                         .size(kIconW, itemH)
                         .icon(m->iconGlyph())
                         .fontSize(t.sizes.fontSizeBody)
+                        .horizontalAlign(eui::HorizontalAlign::Center)
                         .verticalAlign(eui::VerticalAlign::Center)
                         .color(active ? t.colors.primary
                                       : t.colors.textSecondary)

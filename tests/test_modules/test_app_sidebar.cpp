@@ -4,7 +4,7 @@
 //   2. setSidebarCollapsed：内存态 + 落盘（含其他字段不被覆盖）
 //   3. 无头 compose（真实 app::compose + 桩 Router）：
 //      折叠态宽 72 / label 不渲染 / 图标水平居中 / tooltip 挂载 / 模块内容区
-//      宽度 = 窗口宽 - 72；展开态 260 / label 回来 / tooltip 无 / 宽 - 260
+//      宽度 = 窗口宽 - 72；展开态 208 / label 回来 / tooltip 无 / 宽 - 208
 #include "doctest.h"
 
 #include "app_sidebar.h"
@@ -156,7 +156,7 @@ REGISTER_TEST(sidebar_toggle_persists,
 // ============ 3. 无头 compose：折叠态 / 展开态 ============
 
 REGISTER_TEST(sidebar_collapsed_compose,
-              "sidebar: 折叠态 72px、label 隐藏、图标居中、tooltip、内容区 +188", {
+              "sidebar: 折叠态 72px、label 隐藏、图标居中、tooltip、内容区 +136", {
     app::setSidebarCollapsed(true);  // 只改内存，不动真实 config.json
     RecordingModule home(::core::PageId::Home, "首页");
     RecordingModule md(::core::PageId::Markdown, "笔记");
@@ -177,8 +177,10 @@ REGISTER_TEST(sidebar_collapsed_compose,
     DOCTEST_CHECK(floatEq(sidebar->width.value, 72.0f));
     DOCTEST_CHECK(floatEq(ui.find("app.sidebar.divider")->x, 71.0f));
 
-    // brand 折叠为字母 D
-    DOCTEST_CHECK(ui.find("app.sidebar.brand")->text == "D");
+    // brand 折叠 = 只显示 logo 图标（icon 模式：text 存 glyph 的 UTF-8 串）
+    const auto* collapsedBrand = ui.find("app.sidebar.brand");
+    DOCTEST_CHECK(collapsedBrand != nullptr);
+    DOCTEST_CHECK(collapsedBrand->text == eui::utf8(0xF5FC));  // fa-laptop-code
 
     // label 不渲染（折叠态模块名只走 tooltip）
     DOCTEST_CHECK(ui.find("app.sidebar.item.Home.label") == nullptr);
@@ -197,7 +199,7 @@ REGISTER_TEST(sidebar_collapsed_compose,
     DOCTEST_CHECK(toggle != nullptr);
     DOCTEST_CHECK(floatEq(toggle->x, 18.0f));
 
-    // 模块内容区宽度跟随：1600 - 72 = 1528（展开 1340 → 折叠 +188）
+    // 模块内容区宽度跟随：1600 - 72 = 1528（展开 1392 → 折叠 +136）
     DOCTEST_CHECK(floatEq(app::pageContentWidth(1600.0f), 1528.0f));
     DOCTEST_CHECK(floatEq(RecordingModule::lastScreenWidth, 1528.0f));
     DOCTEST_CHECK(floatEq(RecordingModule::lastScreenHeight, 1000.0f));
@@ -207,7 +209,7 @@ REGISTER_TEST(sidebar_collapsed_compose,
 })
 
 REGISTER_TEST(sidebar_expanded_compose,
-              "sidebar: 展开态 260px、label/icon 现状不变、tooltip 无、内容区 -260", {
+              "sidebar: 展开态 208px、label/icon 现状不变、tooltip 无、内容区 -208", {
     app::setSidebarCollapsed(false);
     RecordingModule home(::core::PageId::Home, "首页");
     RecordingModule md(::core::PageId::Markdown, "笔记");
@@ -224,10 +226,13 @@ REGISTER_TEST(sidebar_expanded_compose,
 
     const auto* sidebar = ui.find("app.sidebar");
     DOCTEST_CHECK(sidebar != nullptr);
-    DOCTEST_CHECK(floatEq(sidebar->width.value, 260.0f));
+    DOCTEST_CHECK(floatEq(sidebar->width.value, 208.0f));
 
-    // brand / label / 图标现状不变
+    // brand 文字不变 + logo 图标在文字左侧（2026-09-24）
     DOCTEST_CHECK(ui.find("app.sidebar.brand")->text == "DevDesk");
+    const auto* logo = ui.find("app.sidebar.brand.logo");
+    DOCTEST_CHECK(logo != nullptr);
+    DOCTEST_CHECK(floatEq(logo->x, 16.0f));  // padX
     const auto* label = ui.find("app.sidebar.item.Home.label");
     DOCTEST_CHECK(label != nullptr);
     DOCTEST_CHECK(label->text == "首页");
@@ -241,8 +246,8 @@ REGISTER_TEST(sidebar_expanded_compose,
     // 开关：左对齐 padX
     DOCTEST_CHECK(floatEq(ui.find("app.sidebar.toggle")->x, 16.0f));
 
-    // 内容区宽度 1600 - 260 = 1340
-    DOCTEST_CHECK(floatEq(app::pageContentWidth(1600.0f), 1340.0f));
-    DOCTEST_CHECK(floatEq(RecordingModule::lastScreenWidth, 1340.0f));
+    // 内容区宽度 1600 - 208 = 1392
+    DOCTEST_CHECK(floatEq(app::pageContentWidth(1600.0f), 1392.0f));
+    DOCTEST_CHECK(floatEq(RecordingModule::lastScreenWidth, 1392.0f));
     return true;
 })

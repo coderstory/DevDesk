@@ -678,7 +678,7 @@ const DslAppConfig& dslAppConfig() {
             // 气泡内容源③（M2 §4.5，审计 [18]）：同款桥查 claude_proxy 最近
             // 请求事件（take 语义一次一泡），无事件 pet 自动回退②→①
             module::pet::startPetWindow(module::pet::PetWindowConfig{
-                petCfg.skinName, petCfg.x, petCfg.y, petCfg.clickThrough,
+                petCfg.skinName, petCfg.x, petCfg.y,
                 &getOverdueTaskCount, &getProxyEventStatus});
         } else {
             LOG_INFO("桌宠已关闭（enabledModules 不含 pet），不开宠物窗口");

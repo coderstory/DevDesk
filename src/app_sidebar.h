@@ -14,8 +14,9 @@
 
 namespace app {
 
-// 宽度 token：展开 260（spec §6.5.2，不是 200-220）；折叠 72 = 图标 28 + 余量
-constexpr float kSidebarWidthExpanded = 260.0f;
+// 宽度 token：展开 208（2026-09-24 用户要求自 260 缩 20%；spec 原值 260）；
+// 折叠 72 = 图标 28 + 余量
+constexpr float kSidebarWidthExpanded = 208.0f;
 constexpr float kSidebarWidthCollapsed = 72.0f;
 
 // ---- 运行时折叠状态（进程内单值；启动由 main 从 config.json 恢复）----
