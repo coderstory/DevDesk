@@ -82,6 +82,7 @@
 - 更贵的行内布局（文本测量/折行）有独立缓存 `cachedInlineLayout`（256 条、按块 runs+宽度键控），逐块与整篇两种模式命中效果相同——这是当前增量收益的真实来源，块级拆分对它的命中无帮助也无损害。
 - DevDesk 侧无法绕过：markdown 组件只吃 source 串、不暴露预解析注入；元素树每帧整体重建是框架前提。升级路径（EUI-NEO 上游 PR 候选）：① `cachedMarkdownDocument` 容量随活跃 markdown 实例数伸缩（或 ≥64）；② 暴露块级解析/渲染 API（只提交脏块）；③ markdown 组件消费 `dirtyKey`（runtime 机制已有，见 `core/runtime/runtime_update.h`）。上游任一落地后 DevDesk 零改动自动受益（分块结构与 stableId 身份已就绪）。来源：Phase 3 首块②上游勘察（2026-09-24）。
 - P3-③ 补充（2026-09-24）：代码块**着色**高亮在上游通路上不存在（code block 单色、无预解析注入）——CodeFence 块的预览改由 DevDesk 侧自绘（`md_preview_highlight` 产出 md_highlight 色表 runs + `drawPreviewCodeBlock` 几何公式逐项对齐上游 `renderCodeBlock`；runs 消费的是 EUI-NEO 既有 styled-runs DSL `.runs()`，零上游改动、零新词法器）。其余块型仍走逐块 `components::markdown`，本条 ①②③ 升级路径对其继续有效；上游 ② 落地后 CodeFence 自绘可并回。
+- P3-⑤ 补充（2026-09-24）：上游 `components::markdown` **无逐块命中/指针事件 API**（组件纯展示：无 interactive/onTap/onHover，link 渲染后也不可点、无 hover 反馈）——块级交互（点击定位编辑器 + hover 高亮）由 DevDesk 侧「逐块 wrapper stack（固定高 = MdSyncMap 块几何 H_k）+ 透明 MouseArea 覆盖层」达成，CodeFence 自绘块与上游块同等覆盖（并非只接自绘块）。代价与边界：① hit/hover 几何建立在 ④ 的「estimateHeight == 实际布局」同源恒等上——上游布局公式若改动，点击/hover 区域会偏移（编辑器光标落点不受影响，反查与正向共用同一张表，自动跟变）；② 每块多一层 stack + 一个全尺寸透明 rect 节点（列内累计高度不变 → 渲染几何零回归）；③ 点击只映射到**行首**列位（预览折行宽度与编辑器布局不同源，行内列无歧义映射不存在）。升级路径：本条 ②（块级 API）落地后，wrapper/覆盖层可整体退役换原生逐块事件；EUI-NEO 上游 PR 候选同时包含「markdown 块级 hit 回调」一项。来源：Phase 3 ⑤ 上游勘察（grep `components/markdown.h` 无任何 press/hover/interactive 挂载点，2026-09-24）。
 
 ### 测试
 

@@ -10,7 +10,7 @@ namespace {
 
 // 块占编辑器行数：span 内 '\n' 个数 +（span 未以 '\n' 结尾时）1。
 // 与 md_line_scanner::countLines 的行定义一致（CRLF 的行由 '\n' 界定）。
-int blockLineCount(const std::string& text, const MdBlock& b) {
+int spanLineCount(const std::string& text, const MdBlock& b) {
     int nl = 0;
     for (size_t i = b.start; i < b.end && i < text.size(); ++i) {
         if (text[i] == '\n') ++nl;
@@ -58,7 +58,7 @@ void MdSyncMap::rebuild(const std::string& text,
     for (size_t k = 0; k < n_; ++k) {
         const MdBlock& b = blocks[k];
         firstLine_[k] = curLine;
-        lineCount_[k] = blockLineCount(text, b);
+        lineCount_[k] = spanLineCount(text, b);
         curLine += lineCount_[k];
 
         float h = 0.0f;
@@ -98,6 +98,14 @@ float MdSyncMap::blockTopY(size_t k) const {
 
 int MdSyncMap::blockFirstLine(size_t k) const {
     return k < n_ ? firstLine_[k] : 0;
+}
+
+float MdSyncMap::blockHeight(size_t k) const {
+    return k < n_ ? height_[k] : 0.0f;
+}
+
+int MdSyncMap::blockLineCount(size_t k) const {
+    return k < n_ ? lineCount_[k] : 0;
 }
 
 float MdSyncMap::previewYForEditorLine(double editorLine) const {
