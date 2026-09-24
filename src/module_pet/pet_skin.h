@@ -5,7 +5,7 @@
 //               "states":{"idle":["f0.png",...],"poked":[...]}}
 //
 // 设计决策：
-//   - 内置皮肤（clay-cat + duck/slime/robot/ghost）全部**程序生成**：pet.json
+//   - 内置皮肤（robot + ghost）全部**程序生成**：pet.json
 //     + 帧由本文件在运行时首次生成（简单形状 + 1px 抗锯齿边缘），格式真实、
 //     素材可整体替换为真皮肤包（把 assets/pets/<name> 换成美术资源即可）
 //   - 解析是纯函数（parsePetSkinJson），不碰文件系统，供单测
@@ -24,7 +24,7 @@
 namespace module::pet {
 
 // 内置占位皮肤名（pet_config 的 skinName 默认值与此一致）
-inline constexpr const char* kDefaultSkinName = "clay-cat";
+inline constexpr const char* kDefaultSkinName = "robot";
 
 struct PetSkin {
     std::string name;                 // 皮肤名（= 目录名）
@@ -63,7 +63,7 @@ core::Result<PetSkin> loadSkin(const std::filesystem::path& dir);
 // 直接加载；但内置占位皮肤缺 M2 帧时重新生成升级（用户替换过的皮肤不动）
 core::Result<PetSkin> ensureDefaultSkin(const std::filesystem::path& dir);
 
-// 全部内置皮肤名（clay-cat + 程序生成的 duck/slime/robot/ghost）
+// 全部内置皮肤名（程序生成的 robot/ghost）
 const std::vector<std::string>& builtinSkinNames();
 
 // 在 root 下生成/升级全部内置皮肤（ensureDefaultSkin 同款语义对每款适用：

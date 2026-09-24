@@ -140,7 +140,6 @@ struct Rgba {
     unsigned char r, g, b, a;
 };
 
-constexpr Rgba kClayBody{0xD9, 0x77, 0x57, 0xFF};   // Claude Clay
 constexpr Rgba kInk{0x2B, 0x1D, 0x16, 0xFF};        // 深墨
 
 struct Canvas {
@@ -232,37 +231,6 @@ void drawZ(Canvas& c, float x, float y, float scale, const Rgba& color = kInk) {
     fillRect(c, x, y + h - t, w, t, color);         // 下横
 }
 
-// 画一只"黏土猫"帧：身体椭圆 + 三角耳 + 眼睛/嘴表情
-Canvas drawCatFrame(int size, int bob, Eyes eyes, Mouth mouth, bool squash) {
-    Canvas c(size, size);
-    const float s = size / 128.0f;  // 参数按 128 设计，按比例缩放
-    const float bodyY = (80.0f + bob) * s;
-    c.ellipse(64.0f * s, bodyY, 44.0f * s, (squash ? 28.0f : 34.0f) * s, kClayBody);
-    // 耳朵（squash 时贴着压扁的身体）
-    const float earBase = (squash ? 60.0f : 52.0f + bob) * s;
-    c.triangle(30.0f * s, earBase, 40.0f * s, (14.0f + bob) * s, 56.0f * s, earBase, kClayBody);
-    c.triangle(98.0f * s, earBase, 88.0f * s, (14.0f + bob) * s, 72.0f * s, earBase, kClayBody);
-    // 眼睛
-    const float eyeY = (72.0f + bob) * s;
-    if (eyes == Eyes::Open) {
-        c.ellipse(46.0f * s, eyeY, 6.0f * s, 7.0f * s, kInk);
-        c.ellipse(82.0f * s, eyeY, 6.0f * s, 7.0f * s, kInk);
-    } else if (eyes == Eyes::Closed) {
-        c.ellipse(46.0f * s, eyeY, 6.0f * s, 1.5f * s, kInk);
-        c.ellipse(82.0f * s, eyeY, 6.0f * s, 1.5f * s, kInk);
-    } else {  // Wide（被戳）
-        c.ellipse(46.0f * s, eyeY, 8.0f * s, 9.0f * s, kInk);
-        c.ellipse(82.0f * s, eyeY, 8.0f * s, 9.0f * s, kInk);
-    }
-    // 嘴
-    if (mouth == Mouth::Smile) {
-        c.ellipse(64.0f * s, (88.0f + bob) * s, 8.0f * s, 3.0f * s, kInk);
-    } else {
-        c.ellipse(64.0f * s, (90.0f + bob) * s, 7.0f * s, 6.0f * s, kInk);
-    }
-    return c;
-}
-
 bool writeFrame(const std::filesystem::path& dir, const char* file, Canvas&& canvas) {
     const std::filesystem::path target = dir / file;
     if (!writePngRgba(target, canvas.w, canvas.h, canvas.px)) {
@@ -293,264 +261,6 @@ bool writePetJson(const std::filesystem::path& dir, const char* jsonText) {
     out << jsonText;
     out.close();
     return out.good();
-}
-
-// idle 6 帧（frameRate 4 → 1.5s 周期，眨眼 0.25s）：静-轻浮-静-静-闭眼-静
-// poked 2 帧（0.5s）：瞪眼张嘴 → 压扁闭眼
-// sleep 3 帧（M2）：闭眼 + Zzz（两枚 Z 逐帧放大/上浮）
-// typing 2 帧（M2）：代理流式"打字"——张嘴前倾与回弹交替
-bool generatePlaceholderSkin(const std::filesystem::path& dir) {
-    if (!ensureSkinDir(dir)) {
-        return false;
-    }
-    struct FrameSpec {
-        const char* file;
-        int bob;
-        Eyes eyes;
-        Mouth mouth;
-        bool squash;
-    };
-    const FrameSpec frames[] = {
-        {"f0.png", 0, Eyes::Open, Mouth::Smile, false},
-        {"f1.png", -3, Eyes::Open, Mouth::Smile, false},
-        {"f2.png", 0, Eyes::Open, Mouth::Smile, false},
-        {"f3.png", 0, Eyes::Open, Mouth::Smile, false},
-        {"f4.png", 0, Eyes::Closed, Mouth::Smile, false},
-        {"f5.png", 0, Eyes::Open, Mouth::Smile, false},
-        {"p0.png", 0, Eyes::Wide, Mouth::Open, false},
-        {"p1.png", 0, Eyes::Closed, Mouth::Open, true},
-    };
-    for (const FrameSpec& spec : frames) {
-        if (!writeFrame(dir, spec.file, drawCatFrame(128, spec.bob, spec.eyes, spec.mouth, spec.squash))) {
-            return false;
-        }
-    }
-    // sleep：闭眼安睡 + Zzz（第 0 帧小 Z，逐帧放大上浮，循环 0.75s）
-    for (int i = 0; i < 3; ++i) {
-        Canvas c = drawCatFrame(128, 0, Eyes::Closed, Mouth::Smile, false);
-        drawZ(c, 86.0f, 34.0f - static_cast<float>(i) * 4.0f, 0.8f + 0.25f * i);
-        drawZ(c, 100.0f, 20.0f - static_cast<float>(i) * 3.0f, 0.5f + 0.2f * i);
-        if (!writeFrame(dir, ("s" + std::to_string(i) + ".png").c_str(), std::move(c))) {
-            return false;
-        }
-    }
-    // typing：前倾张嘴（squash 压低 = 按键）与回弹交替
-    {
-        Canvas t0 = drawCatFrame(128, -2, Eyes::Open, Mouth::Open, false);
-        Canvas t1 = drawCatFrame(128, 1, Eyes::Open, Mouth::Open, true);
-        if (!writeFrame(dir, "t0.png", std::move(t0)) ||
-            !writeFrame(dir, "t1.png", std::move(t1))) {
-            return false;
-        }
-    }
-    constexpr const char* kPetJson =
-        "{\n"
-        "  \"name\": \"clay-cat\",\n"
-        "  \"frameSize\": [128, 128],\n"
-        "  \"frameRate\": 4,\n"
-        "  \"license\": \"CC0（程序生成占位皮肤，可整体替换为美术资源）\",\n"
-        "  \"source\": \"DevDesk 内置生成\",\n"
-        "  \"phrases\": [\"喵~\", \"在忙吗？\", \"摸鱼中…\", \"休息一下吧\", \"Zzz…\"],\n"
-        "  \"states\": {\n"
-        "    \"idle\": [\"f0.png\", \"f1.png\", \"f2.png\", \"f3.png\", \"f4.png\", \"f5.png\"],\n"
-        "    \"poked\": [\"p0.png\", \"p1.png\"],\n"
-        "    \"sleep\": [\"s0.png\", \"s1.png\", \"s2.png\"],\n"
-        "    \"typing\": [\"t0.png\", \"t1.png\"]\n"
-        "  }\n"
-        "}\n";
-    return writePetJson(dir, kPetJson);
-}
-
-// ============ duck（小黄鸭：黄圆头 + 橙嘴，sleep 低头埋翅）============
-
-constexpr Rgba kDuckBody{0xFF, 0xD4, 0x2E, 0xFF};   // 鸭黄
-constexpr Rgba kDuckWing{0xE8, 0xB4, 0x1E, 0xFF};   // 翅膀深黄
-constexpr Rgba kDuckBeak{0xFF, 0x8A, 0x3D, 0xFF};   // 橙嘴
-
-// 大圆头 + 小身 + 上下两瓣橙嘴（beakOpen 下瓣下移张口）；headDown = 低头
-Canvas drawDuckFrame(int size, int bob, Eyes eyes, bool beakOpen, bool headDown) {
-    Canvas c(size, size);
-    const float s = size / 128.0f;
-    const float hb = (bob + (headDown ? 12.0f : 0.0f)) * s;
-    // 身体（小）+ 翅膀
-    c.ellipse(64.0f * s, (92.0f + bob * 0.4f) * s, 34.0f * s, 20.0f * s, kDuckBody);
-    c.ellipse(86.0f * s, (92.0f + bob * 0.4f) * s, 10.0f * s, 7.0f * s, kDuckWing);
-    // 头（大）
-    c.ellipse(64.0f * s, (52.0f + hb) * s, 27.0f * s, 25.0f * s, kDuckBody);
-    // 嘴（上下两瓣）
-    c.ellipse(64.0f * s, (60.0f + hb) * s, 10.0f * s, 3.5f * s, kDuckBeak);
-    c.ellipse(64.0f * s, (64.0f + hb + (beakOpen ? 4.0f : 0.0f)) * s, 8.0f * s, 2.8f * s,
-              kDuckBeak);
-    // 眼睛
-    const float eyeY = (46.0f + hb) * s;
-    if (eyes == Eyes::Open) {
-        c.ellipse(52.0f * s, eyeY, 5.0f * s, 6.0f * s, kInk);
-        c.ellipse(76.0f * s, eyeY, 5.0f * s, 6.0f * s, kInk);
-    } else if (eyes == Eyes::Closed) {
-        c.ellipse(52.0f * s, eyeY, 5.0f * s, 1.5f * s, kInk);
-        c.ellipse(76.0f * s, eyeY, 5.0f * s, 1.5f * s, kInk);
-    } else {
-        c.ellipse(52.0f * s, eyeY, 7.0f * s, 8.0f * s, kInk);
-        c.ellipse(76.0f * s, eyeY, 7.0f * s, 8.0f * s, kInk);
-    }
-    return c;
-}
-
-// idle：静-轻浮-静-静-闭眼-静；poked：张嘴瞪眼（嘎！）→ 闭眼后仰
-// sleep：低头埋翅 + Zzz；typing：张嘴/闭嘴交替（边打字边嘎嘎）
-bool generateDuckSkin(const std::filesystem::path& dir) {
-    if (!ensureSkinDir(dir)) {
-        return false;
-    }
-    struct Spec {
-        const char* file;
-        int bob;
-        Eyes eyes;
-        bool beakOpen;
-    };
-    const Spec frames[] = {
-        {"f0.png", 0, Eyes::Open, false},   {"f1.png", -3, Eyes::Open, false},
-        {"f2.png", 0, Eyes::Open, false},   {"f3.png", 0, Eyes::Open, false},
-        {"f4.png", 0, Eyes::Closed, false}, {"f5.png", 0, Eyes::Open, false},
-        {"p0.png", 0, Eyes::Wide, true},    {"p1.png", 2, Eyes::Closed, true},
-    };
-    for (const Spec& spec : frames) {
-        if (!writeFrame(dir, spec.file,
-                        drawDuckFrame(128, spec.bob, spec.eyes, spec.beakOpen, false))) {
-            return false;
-        }
-    }
-    for (int i = 0; i < 3; ++i) {
-        Canvas c = drawDuckFrame(128, 0, Eyes::Closed, false, true);
-        drawZ(c, 88.0f, 36.0f - static_cast<float>(i) * 4.0f, 0.8f + 0.25f * i);
-        drawZ(c, 102.0f, 22.0f - static_cast<float>(i) * 3.0f, 0.5f + 0.2f * i);
-        if (!writeFrame(dir, ("s" + std::to_string(i) + ".png").c_str(), std::move(c))) {
-            return false;
-        }
-    }
-    {
-        Canvas t0 = drawDuckFrame(128, -3, Eyes::Open, true, false);
-        Canvas t1 = drawDuckFrame(128, 1, Eyes::Open, false, false);
-        if (!writeFrame(dir, "t0.png", std::move(t0)) ||
-            !writeFrame(dir, "t1.png", std::move(t1))) {
-            return false;
-        }
-    }
-    constexpr const char* kPetJson =
-        "{\n"
-        "  \"name\": \"duck\",\n"
-        "  \"frameSize\": [128, 128],\n"
-        "  \"frameRate\": 4,\n"
-        "  \"license\": \"CC0（程序生成皮肤，可整体替换为美术资源）\",\n"
-        "  \"source\": \"DevDesk 内置生成\",\n"
-        "  \"phrases\": [\"嘎~\", \"鸭力全开！\", \"今天游泳了吗\", \"面包屑！谢谢\", \"嘎嘎嘎…\"],\n"
-        "  \"states\": {\n"
-        "    \"idle\": [\"f0.png\", \"f1.png\", \"f2.png\", \"f3.png\", \"f4.png\", \"f5.png\"],\n"
-        "    \"poked\": [\"p0.png\", \"p1.png\"],\n"
-        "    \"sleep\": [\"s0.png\", \"s1.png\", \"s2.png\"],\n"
-        "    \"typing\": [\"t0.png\", \"t1.png\"]\n"
-        "  }\n"
-        "}\n";
-    return writePetJson(dir, kPetJson);
-}
-
-// ============ slime（果冻史莱姆：半透明薄荷色块 + 高光，poked 抖动变形）============
-
-constexpr Rgba kSlimeBody{0x64, 0xD8, 0xAE, 0xB0};   // 半透明薄荷
-constexpr Rgba kSlimeShine{0xFF, 0xFF, 0xFF, 0xD8};  // 高光
-
-// 果冻blob：wobble 正负 = 横向胀/纵向压（体积守恒式抖动）；
-// alphaScale < 1 时整体渐隐（sleep 淡出）
-Canvas drawSlimeFrame(int size, int bob, Eyes eyes, Mouth mouth, int wobble,
-                      float alphaScale = 1.0f) {
-    Canvas c(size, size);
-    const float s = size / 128.0f;
-    Rgba body = kSlimeBody;
-    body.a = static_cast<unsigned char>(body.a * alphaScale);
-    c.ellipse(64.0f * s, (84.0f + bob) * s, (40.0f + wobble) * s, (32.0f - wobble) * s, body);
-    c.ellipse(50.0f * s, (68.0f + bob) * s, 9.0f * s, 5.0f * s, kSlimeShine);  // 高光
-    // 眼睛
-    const float eyeY = (80.0f + bob) * s;
-    if (eyes == Eyes::Open) {
-        c.ellipse(54.0f * s, eyeY, 5.0f * s, 6.0f * s, kInk);
-        c.ellipse(74.0f * s, eyeY, 5.0f * s, 6.0f * s, kInk);
-    } else if (eyes == Eyes::Closed) {
-        c.ellipse(54.0f * s, eyeY, 5.0f * s, 1.5f * s, kInk);
-        c.ellipse(74.0f * s, eyeY, 5.0f * s, 1.5f * s, kInk);
-    } else {
-        c.ellipse(54.0f * s, eyeY, 7.0f * s, 8.0f * s, kInk);
-        c.ellipse(74.0f * s, eyeY, 7.0f * s, 8.0f * s, kInk);
-    }
-    if (mouth == Mouth::Smile) {
-        c.ellipse(64.0f * s, (92.0f + bob) * s, 7.0f * s, 2.5f * s, kInk);
-    } else {
-        c.ellipse(64.0f * s, (93.0f + bob) * s, 6.0f * s, 5.0f * s, kInk);
-    }
-    return c;
-}
-
-// idle：轻微果冻晃动（wobble ±2）+ 眨眼；poked：压扁瞪眼 → 拉长闭眼（变形）
-// sleep：摊平 + 整体渐隐 + Zzz；typing：上下弹跳（bob -4/+2）
-bool generateSlimeSkin(const std::filesystem::path& dir) {
-    if (!ensureSkinDir(dir)) {
-        return false;
-    }
-    struct Spec {
-        const char* file;
-        int bob;
-        Eyes eyes;
-        Mouth mouth;
-        int wobble;
-    };
-    const Spec frames[] = {
-        {"f0.png", 0, Eyes::Open, Mouth::Smile, 0},
-        {"f1.png", 0, Eyes::Open, Mouth::Smile, 2},
-        {"f2.png", 0, Eyes::Open, Mouth::Smile, 0},
-        {"f3.png", 0, Eyes::Open, Mouth::Smile, -2},
-        {"f4.png", 0, Eyes::Closed, Mouth::Smile, 0},
-        {"f5.png", 0, Eyes::Open, Mouth::Smile, 0},
-        {"p0.png", 0, Eyes::Wide, Mouth::Open, 8},
-        {"p1.png", 0, Eyes::Closed, Mouth::Open, -7},
-    };
-    for (const Spec& spec : frames) {
-        if (!writeFrame(dir, spec.file,
-                        drawSlimeFrame(128, spec.bob, spec.eyes, spec.mouth, spec.wobble))) {
-            return false;
-        }
-    }
-    for (int i = 0; i < 3; ++i) {
-        Canvas c = drawSlimeFrame(128, 2, Eyes::Closed, Mouth::Smile, 6,
-                                  1.0f - 0.25f * i);  // 摊平 + 逐帧渐隐
-        drawZ(c, 88.0f, 44.0f - static_cast<float>(i) * 4.0f, 0.8f + 0.25f * i);
-        drawZ(c, 102.0f, 30.0f - static_cast<float>(i) * 3.0f, 0.5f + 0.2f * i);
-        if (!writeFrame(dir, ("s" + std::to_string(i) + ".png").c_str(), std::move(c))) {
-            return false;
-        }
-    }
-    {
-        Canvas t0 = drawSlimeFrame(128, -4, Eyes::Open, Mouth::Open, -3);
-        Canvas t1 = drawSlimeFrame(128, 2, Eyes::Open, Mouth::Open, 3);
-        if (!writeFrame(dir, "t0.png", std::move(t0)) ||
-            !writeFrame(dir, "t1.png", std::move(t1))) {
-            return false;
-        }
-    }
-    constexpr const char* kPetJson =
-        "{\n"
-        "  \"name\": \"slime\",\n"
-        "  \"frameSize\": [128, 128],\n"
-        "  \"frameRate\": 4,\n"
-        "  \"license\": \"CC0（程序生成皮肤，可整体替换为美术资源）\",\n"
-        "  \"source\": \"DevDesk 内置生成\",\n"
-        "  \"phrases\": [\"布噜布噜…\", \"Q 弹一下\", \"软软的，揉揉我\", \"变形中…\", \"果冻时间\"],\n"
-        "  \"states\": {\n"
-        "    \"idle\": [\"f0.png\", \"f1.png\", \"f2.png\", \"f3.png\", \"f4.png\", \"f5.png\"],\n"
-        "    \"poked\": [\"p0.png\", \"p1.png\"],\n"
-        "    \"sleep\": [\"s0.png\", \"s1.png\", \"s2.png\"],\n"
-        "    \"typing\": [\"t0.png\", \"t1.png\"]\n"
-        "  }\n"
-        "}\n";
-    return writePetJson(dir, kPetJson);
 }
 
 // ============ robot（方头机器人：天线 + 屏幕脸，typing 屏幕滚字）============
@@ -933,8 +643,7 @@ struct BuiltinSkinEntry {
 };
 
 constexpr BuiltinSkinEntry kBuiltinSkins[] = {
-    {"clay-cat", generatePlaceholderSkin}, {"duck", generateDuckSkin},
-    {"slime", generateSlimeSkin},          {"robot", generateRobotSkin},
+    {"robot", generateRobotSkin},
     {"ghost", generateGhostSkin},
 };
 
@@ -962,7 +671,9 @@ Result<PetSkin> ensureGeneratedSkin(const std::filesystem::path& dir,
 } // namespace
 
 Result<PetSkin> ensureDefaultSkin(const std::filesystem::path& dir) {
-    return ensureGeneratedSkin(dir, generatePlaceholderSkin);
+    // 默认皮肤 = 内置 robot（kDefaultSkinName）；原 clay-cat 占位生成器已删，
+    // 兜底语义不变：目录缺皮肤/缺 M2 帧时重新生成 robot
+    return ensureGeneratedSkin(dir, generateRobotSkin);
 }
 
 const std::vector<std::string>& builtinSkinNames() {

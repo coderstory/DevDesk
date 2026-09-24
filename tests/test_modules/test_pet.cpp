@@ -11,7 +11,7 @@
 //   7. M2 气泡：超时消失纯函数 + 短语表（皮肤语料/内置回退）
 //   8. M2 多皮肤：sleep/typing/phrases 解析、占位皮肤 M2 帧升级重生成、
 //      discoverSkins 发现消费、applyPetSkin/resetPetPosition 持久化行为
-//   9. 内置皮肤全集（duck/slime/robot/ghost）：四态帧齐全、五款互异、
+//   9. 内置皮肤全集（robot/ghost 两款）：四态帧齐全、两款互异、
 //      discoverSkins 发现、短语表区分、用户替换保留
 //  10. 内置美术皮肤 anime-girl（真实 CC0 素材包）：四态帧齐全 + 全帧
 //      128×128 RGBA PNG + license 自带（素材纪律 R7）
@@ -319,11 +319,11 @@ REGISTER_TEST(pet_settings_roundtrip, "pet: pet_config.json 读写往返 + 钳�
     DOCTEST_CHECK_EQ(loaded.skinName, "my-cat");
     DOCTEST_CHECK_EQ(loaded.x, 1600);
     DOCTEST_CHECK_EQ(loaded.y, 800);
-    // 皮肤名白名单：路径分隔符/空 → 收敛默认 clay-cat；坐标钳制保留 -1 哨兵
+    // 皮肤名白名单：路径分隔符/空 → 收敛默认 robot；坐标钳制保留 -1 哨兵
     cfg.skinName = "../evil";
     cfg.x = 999999;
     const PetConfig sanitizedCfg = PetConfigStore::sanitized(cfg);
-    DOCTEST_CHECK_EQ(sanitizedCfg.skinName, "clay-cat");
+    DOCTEST_CHECK_EQ(sanitizedCfg.skinName, "robot");
     DOCTEST_CHECK_EQ(sanitizedCfg.x, 32767);
     DOCTEST_CHECK_EQ(PetConfigStore::sanitized(PetConfig{}).x, -1);
     std::filesystem::remove(file, ec);
@@ -364,8 +364,8 @@ REGISTER_TEST(pet_start_window_request, "pet: 开窗请求逐字段断言（无�
     // Alt+F4/菜单隐藏/应用退出所有路径覆盖）
     DOCTEST_CHECK(static_cast<bool>(req.onWindowCreated));
     DOCTEST_CHECK(static_cast<bool>(req.onWindowDestroyed));
-    // 占位皮肤已生成在测试隔离目录
-    DOCTEST_CHECK(std::filesystem::exists(petsRoot / "clay-cat" / "pet.json"));
+    // 默认皮肤已生成在测试隔离目录
+    DOCTEST_CHECK(std::filesystem::exists(petsRoot / "robot" / "pet.json"));
 
     // 未知皮肤名 → 回退默认皮肤，窗口照常入队
     module::pet::startPetWindow(module::pet::PetWindowConfig{"no-such-skin", -1, -1});
@@ -755,23 +755,23 @@ REGISTER_TEST(pet_default_skin_m2_frames, "pet: 占位皮肤含 M2 帧 + 旧版�
     return true;
 });
 
-// 新内置皮肤名（宏外声明：REGISTER_TEST 宏体内不能出现裸逗号）
-const char* kNewBuiltinSkins[] = {"duck", "slime", "robot", "ghost"};
+// 内置皮肤名（宏外声明：REGISTER_TEST 宏体内不能出现裸逗号）
+const char* kNewBuiltinSkins[] = {"robot", "ghost"};
 
-REGISTER_TEST(pet_builtin_skins, "pet: 四款新内置皮肤（四态帧/互异/发现/短语表/替换保留）", {
+REGISTER_TEST(pet_builtin_skins, "pet: 两款内置皮肤（四态帧/互异/发现/短语表/替换保留）", {
     using namespace module::pet;
     const PetsDirEnv pets("builtin_skins");
     const std::filesystem::path& root = pets.root;
-    // ensureBuiltinSkins 生成全部 5 款（clay-cat + 四款新皮肤）
+    // ensureBuiltinSkins 生成全部 2 款（robot + ghost）
     const std::vector<std::string> generated = ensureBuiltinSkins(root);
-    DOCTEST_CHECK_EQ(generated.size(), static_cast<size_t>(5));
-    // discoverSkins 发现全部 5 款（设置页下拉/右键换肤菜单数据源，零改动）
+    DOCTEST_CHECK_EQ(generated.size(), static_cast<size_t>(2));
+    // discoverSkins 发现全部 2 款（设置页下拉/右键换肤菜单数据源，零改动）
     const std::vector<std::string> found = discoverSkins();
-    DOCTEST_CHECK_EQ(found.size(), static_cast<size_t>(5));
+    DOCTEST_CHECK_EQ(found.size(), static_cast<size_t>(2));
     for (const std::string& name : builtinSkinNames()) {
         DOCTEST_CHECK(std::find(found.begin(), found.end(), name) != found.end());
     }
-    // 四款新皮肤 + clay-cat 全部载入（后者做互异/短语对比基准）
+    // 两款内置皮肤全部载入
     std::vector<PetSkin> skins;
     for (const char* name : kNewBuiltinSkins) {
         auto r = loadSkin(root / name);
@@ -780,12 +780,7 @@ REGISTER_TEST(pet_builtin_skins, "pet: 四款新内置皮肤（四态帧/互异/
             skins.push_back(std::move(r.unsafeValue()));
         }
     }
-    auto catR = loadSkin(root / "clay-cat");
-    DOCTEST_CHECK(catR.isOk());
-    if (catR.isOk()) {
-        skins.push_back(std::move(catR.unsafeValue()));
-    }
-    DOCTEST_CHECK_EQ(skins.size(), static_cast<size_t>(5));
+    DOCTEST_CHECK_EQ(skins.size(), static_cast<size_t>(2));
     // 每款：四态帧数齐全 + 128×128 + 全帧 PNG 结构有效 + 短语表非空
     for (const PetSkin& skin : skins) {
         DOCTEST_CHECK_EQ(skin.idleFrames.size(), static_cast<size_t>(6));
@@ -808,7 +803,7 @@ REGISTER_TEST(pet_builtin_skins, "pet: 四款新内置皮肤（四态帧/互异/
             DOCTEST_CHECK(pngLooksValid(skin.dir / skin.typingFrames[i], 128, 128));
         }
     }
-    // 五款互异：idle 首帧 PNG 原始字节两两不同（stored-deflate 不压缩，
+    // 两款互异：idle 首帧 PNG 原始字节两两不同（stored-deflate 不压缩，
     // 像素不同 → 字节必不同）
     std::vector<std::string> blobs;
     for (const PetSkin& skin : skins) {
@@ -823,21 +818,23 @@ REGISTER_TEST(pet_builtin_skins, "pet: 四款新内置皮肤（四态帧/互异/
             DOCTEST_CHECK(blobs[i] != blobs[j]);
         }
     }
-    // 新皮肤短语表 ≠ clay-cat 语料（性格区分；clay-cat 是 skins.back()）
-    for (size_t i = 0; i + 1 < skins.size(); ++i) {
-        DOCTEST_CHECK(skins[i].phrases != skins.back().phrases);
+    // 两款短语表互异（性格区分）
+    for (size_t i = 0; i < skins.size(); ++i) {
+        for (size_t j = i + 1; j < skins.size(); ++j) {
+            DOCTEST_CHECK(skins[i].phrases != skins[j].phrases);
+        }
     }
-    // 用户替换语义：duck 换成美术包（source 非内置标记）→ 原样保留
+    // 用户替换语义：robot 换成美术包（source 非内置标记）→ 原样保留
     {
-        std::ofstream out(root / "duck" / "pet.json", std::ios::trunc);
-        out << "{\"name\":\"duck\",\"source\":\"artist\","
+        std::ofstream out(root / "robot" / "pet.json", std::ios::trunc);
+        out << "{\"name\":\"robot\",\"source\":\"artist\","
                "\"states\":{\"idle\":[\"a0.png\"]}}";
     }
     const std::vector<std::string> again = ensureBuiltinSkins(root);
-    DOCTEST_CHECK_EQ(again.size(), static_cast<size_t>(5));
-    auto duck = loadSkin(root / "duck");
-    DOCTEST_CHECK(duck.isOk());
-    DOCTEST_CHECK_EQ(duck.unsafeValue().idleFrames.size(), static_cast<size_t>(1));
+    DOCTEST_CHECK_EQ(again.size(), static_cast<size_t>(2));
+    auto replaced = loadSkin(root / "robot");
+    DOCTEST_CHECK(replaced.isOk());
+    DOCTEST_CHECK_EQ(replaced.unsafeValue().idleFrames.size(), static_cast<size_t>(1));
     return true;
 });
 
@@ -891,7 +888,7 @@ REGISTER_TEST(pet_discover_skins, "pet: 皮肤发现（下拉/换肤菜单的数
     std::filesystem::create_directories(root);
     DOCTEST_CHECK(discoverSkins().empty());
     // 生成默认皮肤 + 手工放第二个皮肤包 → 都被发现
-    DOCTEST_CHECK(ensureDefaultSkin(root / "clay-cat").isOk());
+    DOCTEST_CHECK(ensureDefaultSkin(root / "robot").isOk());
     std::filesystem::create_directories(root / "pixel-dog");
     {
         std::ofstream out(root / "pixel-dog" / "pet.json", std::ios::trunc);
@@ -899,7 +896,7 @@ REGISTER_TEST(pet_discover_skins, "pet: 皮肤发现（下拉/换肤菜单的数
     }
     const std::vector<std::string> skins = discoverSkins();
     DOCTEST_CHECK_EQ(skins.size(), static_cast<size_t>(2));
-    DOCTEST_CHECK(std::find(skins.begin(), skins.end(), "clay-cat") !=
+    DOCTEST_CHECK(std::find(skins.begin(), skins.end(), "robot") !=
                   skins.end());
     DOCTEST_CHECK(std::find(skins.begin(), skins.end(), "pixel-dog") !=
                   skins.end());
@@ -919,7 +916,7 @@ REGISTER_TEST(pet_apply_skin_and_reset, "pet: applyPetSkin 校验/持久化 + �
     using namespace module::pet;
     const PetsDirEnv pets("applyskin");
     const std::filesystem::path& root = pets.root;
-    DOCTEST_CHECK(ensureDefaultSkin(root / "clay-cat").isOk());
+    DOCTEST_CHECK(ensureDefaultSkin(root / "robot").isOk());
     std::filesystem::create_directories(root / "pixel-dog");
     {
         std::ofstream out(root / "pixel-dog" / "pet.json", std::ios::trunc);
@@ -930,7 +927,7 @@ REGISTER_TEST(pet_apply_skin_and_reset, "pet: applyPetSkin 校验/持久化 + �
     {
         PetConfigStore store(cfgFile);
         PetConfig cfg;
-        cfg.skinName = "clay-cat";
+        cfg.skinName = "robot";
         cfg.x = 500;
         cfg.y = 600;
         DOCTEST_CHECK(store.save(cfg).isOk());
@@ -939,7 +936,7 @@ REGISTER_TEST(pet_apply_skin_and_reset, "pet: applyPetSkin 校验/持久化 + �
     applyPetSkin("no-such-skin");
     {
         const PetConfig cfg = PetConfigStore(cfgFile).load();
-        DOCTEST_CHECK_EQ(cfg.skinName, "clay-cat");
+        DOCTEST_CHECK_EQ(cfg.skinName, "robot");
     }
     // 合法皮肤名 → 持久化生效，位置不动（窗口未开）
     applyPetSkin("pixel-dog");
@@ -1250,7 +1247,7 @@ REGISTER_TEST(pet_negative_coord_persist, "pet: 副屏负坐标落盘往返（M2
     PetConfigStore store(file);
     // 左副屏坐标落盘 → 读回原值（旧 sanitize 的 x<-1→-1 会把它吞成「未设置」）
     PetConfig cfg;
-    cfg.skinName = "clay-cat";
+    cfg.skinName = "robot";
     cfg.x = -1500;
     cfg.y = 500;
     DOCTEST_CHECK(store.save(cfg).isOk());
