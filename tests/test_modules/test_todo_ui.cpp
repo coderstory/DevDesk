@@ -16,6 +16,7 @@
 
 #include <eui/dsl.h>
 #include <eui/types.h>
+#include <components/input.h>  // InputState（程序赋值光标修复的测试显式置光标）
 #include "core/input/input_types.h"
 
 #include <cstdlib>
@@ -1749,6 +1750,11 @@ REGISTER_TEST(todo_ui_detail_actions_save_form,
         const auto* input = f2.ui.find("todo.dialog.detail.input.title.hit");
         DOCTEST_REQUIRE(input != nullptr);
         DOCTEST_REQUIRE(input->onTextInput != nullptr);
+        // input.h 程序赋值未聚焦时光标置 0（d1f55a3）；显式置文末让 onTextInput 追加而非前插
+        {
+            auto& st = f2.ui.state<components::input_detail::InputModel::InputState>("todo.dialog.detail.input.title");
+            st.cursor = st.selectionStart = st.selectionEnd = (int)st.text.size();
+        }
         core::TextInputEvent tie;
         tie.text = "NEW";
         input->onTextInput(tie);  // 真实链路：onTextInput → onChange → detailTitle_
@@ -1781,6 +1787,11 @@ REGISTER_TEST(todo_ui_detail_actions_save_form,
         const auto* input = f2.ui.find("todo.dialog.detail.input.title.hit");
         DOCTEST_REQUIRE(input != nullptr);
         DOCTEST_REQUIRE(input->onTextInput != nullptr);
+        // input.h 程序赋值未聚焦时光标置 0（d1f55a3）；显式置文末让 onTextInput 追加而非前插
+        {
+            auto& st = f2.ui.state<components::input_detail::InputModel::InputState>("todo.dialog.detail.input.title");
+            st.cursor = st.selectionStart = st.selectionEnd = (int)st.text.size();
+        }
         core::TextInputEvent tie;
         tie.text = "M";
         input->onTextInput(tie);
