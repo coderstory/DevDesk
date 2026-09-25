@@ -7,14 +7,14 @@ DevDesk 桌宠皮肤 = 一个目录：`pet.json`（帧时序/状态映射/授权
 
 皮肤根候选（`skinRootCandidates()`，先者优先）：
 
-1. `assets/pets/`（exe/工作目录旁边）——随仓库分发的内置美术皮肤在这里（构建期 POST_BUILD 自动拷到 build 目录）
+1. `assets/pets/`（exe/工作目录旁边）——随仓库分发（2026-09-25 起本目录仅留本 README，内置美术皮肤已移除；用户自装皮肤放 petsDir）
 2. `petsDir()`（appData 目录下的 `pets/`）——**用户自装皮肤放这里**，不动仓库
 
 ## pet.json 格式
 
 ```json
 {
-  "name": "anime-girl",
+  "name": "my-pet",
   "frameSize": [128, 128],
   "frameRate": 6,
   "license": "CC0（作者 …）",
@@ -37,8 +37,9 @@ DevDesk 桌宠皮肤 = 一个目录：`pet.json`（帧时序/状态映射/授权
 
 | 皮肤 | 来源 | 方式 |
 |------|------|------|
-| clay-cat / duck / slime / robot / ghost | DevDesk 程序生成（首次启动落 petsDir） | 代码生成 |
-| anime-girl | OpenGameArt "Anime Girl" (Michona) by Alicahordana，**CC0** | 本目录随仓库分发 |
+| robot / ghost | DevDesk 程序生成（首次启动落 petsDir） | 代码生成 |
+
+> 2026-09-25：clay-cat/duck/slime 已删，anime-girl CC0 美术皮肤已从仓库移除；现内置仅 robot/ghost，另支持用户自装（如 tatsu-pet，见下）。
 
 ## 手动安装第三方皮肤（如 itch.io 素材包）
 

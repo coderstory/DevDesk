@@ -13,8 +13,8 @@
 //      discoverSkins 发现消费、applyPetSkin/resetPetPosition 持久化行为
 //   9. 内置皮肤全集（robot/ghost 两款）：四态帧齐全、两款互异、
 //      discoverSkins 发现、短语表区分、用户替换保留
-//  10. 内置美术皮肤 anime-girl（真实 CC0 素材包）：四态帧齐全 + 全帧
-//      128×128 RGBA PNG + license 自带（素材纪律 R7）
+//  10. （已移除 2026-09-25）内置美术皮肤 anime-girl CC0 四态测试——皮肤
+//      随用户要求只留 robot/ghost 而删，测试同步移除（见 §10 占位注释）
 //  11. 审计修复（2026-09-23 pet 簇）：帧名路径穿越拒绝 [28] + 已知坐标
 //      钳进工作区纯函数 [12]（[0][1] 的 onWindowDestroyed 接线断言在 §5）
 //  12. M2 收尾（2026-09-23 pet-m2）：多显示器按位置选屏钳制 + 负坐标持久化

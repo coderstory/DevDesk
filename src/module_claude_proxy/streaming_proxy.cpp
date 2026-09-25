@@ -297,7 +297,12 @@ sendStreamingClaude(const platform::http::Request& req,
             core::ErrorCode::ValidationError, "上游 URL 为空（profile.baseUrl 未配置）");
     }
 
-    // 2. 注入 API key（覆盖客户端传来的 x-api-key）
+    // 2. 注入 API key：先剥离客户端可能发的 Authorization 大小写变体
+    //    （streaming 路径 upstream=req 直接拷客户端头，大小写敏感 map 会
+    //    让小写 authorization 与注入的 Authorization 并存→上游收到重复
+    //    鉴权头）；再注入 profile 的 key
+    upstream.headers.erase("authorization");
+    upstream.headers.erase("Authorization");
     if (!profile.apiKeyPlain.empty()) {
         upstream.headers["x-api-key"] = profile.apiKeyPlain;
         upstream.headers["Authorization"] = "Bearer " + profile.apiKeyPlain;  // 兼容期望 Bearer 的网关（bailian 等）；真 Anthropic API 忽略 Bearer
