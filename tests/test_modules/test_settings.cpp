@@ -100,6 +100,23 @@ struct PruneEnv {
     }
 };
 
+// ---- Task B tab 化：tab 点击助手 ----
+// 在一次性元素树上点 tabs 命中矩形（无头等价真实点击：onClick 把 tab 索引
+// 写进模块成员），此后 compose 渲染对应 tab 的卡。tab 选择是模块实例状态，
+// 与调用方自己的 eui::Ui 互不干扰。找不到 tab 栏返回 false（调用方用
+// DOCTEST_REQUIRE 包，失败时用例早退、错误原因明确）
+bool clickSettingsTab(::core::Module& mod, const eui::Screen& screen,
+                      int tab) {
+    eui::Ui ui;
+    ui.begin("settings_tab_click");
+    mod.compose(ui, screen);
+    ui.end();
+    const auto* hit = ui.find("settings.tabs.hit." + std::to_string(tab));
+    if (hit == nullptr || hit->onClick == nullptr) return false;
+    hit->onClick();
+    return true;
+}
+
 } // namespace
 
 REGISTER_TEST(settings_defaults_on_missing_file, "settings: missing file -> defaults", {
@@ -395,33 +412,99 @@ REGISTER_TEST(settings_save_clamps_before_write, "settings: save clamps, load re
 
 // ---- 模块 compose 无头冒烟（DSL 元素树构建，无需窗口/GL） ----
 
-REGISTER_TEST(settings_module_compose_renders, "settings: module compose builds page (headless)", {
+REGISTER_TEST(settings_module_compose_renders, "settings: module compose builds page (headless, tab 化)", {
+    // 隔离真机 config（本机可能开了 pet 等）：临时 config 无文件 → 默认档
+    // （claude/markdown 开、pet 关），逐 tab 断言卡互斥渲染
+    PruneEnv env("composetab");
     std::unique_ptr<::core::Module> mod(create_settings_module());
-    mod->onStart();  // 读取真实 config.json（只读；无文件则默认值）
+    mod->onStart();
     // 注意：REGISTER_TEST 宏体内不能出现裸逗号（花括号初始化列表会被预处理器
     // 当成宏参数分隔符），Screen 用字段赋值构造
     eui::Screen screen;
     screen.width = 1600.0f;
     screen.height = 1000.0f;
     eui::Ui ui;
-    ui.begin("smoke");
-    mod->compose(ui, screen);
-    ui.end();
+    auto frame = [&](const char* page) {
+        ui.begin(page);
+        mod->compose(ui, screen);
+        ui.end();
+    };
 
-    // 关键元素存在 = 设置页可渲染（4 张设置卡；页面底色载体是主窗口
-    // clearColor 不再自铺——settings.pagebg 已删，见下方回归守卫）
+    // tab 栏（4 个命中矩形）+ 卡区 scrollView 存在；默认 tab=通用
+    frame("smoke");
+    DOCTEST_CHECK(ui.find("settings.tabs.hit.0") != nullptr);
+    DOCTEST_CHECK(ui.find("settings.tabs.hit.1") != nullptr);
+    DOCTEST_CHECK(ui.find("settings.tabs.hit.2") != nullptr);
+    DOCTEST_CHECK(ui.find("settings.tabs.hit.3") != nullptr);
+    DOCTEST_CHECK(ui.find("settings.cards.scroll") != nullptr);
+    // 通用 tab：外观卡 + 编辑器字号卡（Task B 自日志卡迁出）
     DOCTEST_CHECK(ui.find("settings.card.appearance.bg") != nullptr);
     DOCTEST_CHECK(ui.find("settings.card.appearance.effect.ddwrap") != nullptr);
+    DOCTEST_CHECK(ui.find("settings.card.editor.dd") != nullptr);
+    // tab 划分 = 互斥：其余 tab 的卡不渲染
+    DOCTEST_CHECK(ui.find("settings.card.modules.bg") == nullptr);
+    DOCTEST_CHECK(ui.find("settings.card.log.bg") == nullptr);
+    DOCTEST_CHECK(ui.find("settings.card.about.bg") == nullptr);
+
+    // 模块 tab：插拔开关 + 目录 + 代理（ClaudeService::global() 为 null 时
+    // 代理卡仍渲染）。W10 复审项在此 tab 依旧有效（多卡超小窗可滚）
+    DOCTEST_REQUIRE(clickSettingsTab(*mod, screen, 1));
+    frame("modtab");
+    DOCTEST_CHECK(ui.find("settings.card.modules.bg") != nullptr);
+    DOCTEST_CHECK(ui.find("settings.card.modules.sw.0") != nullptr);
     DOCTEST_CHECK(ui.find("settings.card.directory.bg") != nullptr);
     DOCTEST_CHECK(ui.find("settings.card.proxy.bg") != nullptr);
-    DOCTEST_CHECK(ui.find("settings.card.log.bg") != nullptr);
-    // ClaudeService::global() 为 null（测试环境）时代理卡仍应渲染
     DOCTEST_CHECK(ui.find("settings.card.proxy.token.value") != nullptr);
-    // W10 复审项：卡片区套 scrollView（4 卡总高 > 小窗口可视高，可滚动）
-    DOCTEST_CHECK(ui.find("settings.cards.scroll") != nullptr);
+    DOCTEST_CHECK(ui.find("settings.card.appearance.bg") == nullptr);
+
+    // 日志 tab：设置卡（保留天数 + 级别）+ 日志查看卡（tail + 刷新按钮）
+    DOCTEST_REQUIRE(clickSettingsTab(*mod, screen, 2));
+    frame("logtab");
+    DOCTEST_CHECK(ui.find("settings.card.log.bg") != nullptr);
+    DOCTEST_CHECK(ui.find("settings.card.log.level.dd") != nullptr);
+    DOCTEST_CHECK(ui.find("settings.tab.log.scroll") != nullptr);
+    DOCTEST_CHECK(ui.find("settings.tab.log.refresh.bg") != nullptr);
+    DOCTEST_CHECK(ui.find("settings.card.appearance.theme.dd") == nullptr);
+
+    // 关于 tab：版本 + 路径
+    DOCTEST_REQUIRE(clickSettingsTab(*mod, screen, 3));
+    frame("abouttab");
+    DOCTEST_CHECK(ui.find("settings.card.about.bg") != nullptr);
+    DOCTEST_CHECK(ui.find("settings.card.about.version") != nullptr);
 
     mod->onStop();
     ::core::theme::setDark();  // 恢复全局默认主题，不影响其他用例
+    return true;
+})
+
+// ---- Task B：日志查看卡 —— 刷新按钮点击 → 重读 tail（读盘在 compose 顶部，
+// 不在 scrollView content lambda 内）；日志文件缺失时渲染空态不崩 ----
+
+REGISTER_TEST(settings_log_viewer_refresh_button,
+              "settings: 日志查看 tail 渲染 + 刷新按钮重读（Task B headless）", {
+    PruneEnv env("logviewer");
+    std::unique_ptr<::core::Module> mod(create_settings_module());
+    mod->onStart();
+    eui::Screen screen;
+    screen.width = 1600.0f;
+    screen.height = 1000.0f;
+    eui::Ui ui;
+    DOCTEST_REQUIRE(clickSettingsTab(*mod, screen, 2));
+    ui.begin("lv1");
+    mod->compose(ui, screen);
+    ui.end();
+
+    auto* refresh = ui.find("settings.tab.log.refresh.bg");
+    DOCTEST_REQUIRE(refresh != nullptr);
+    DOCTEST_REQUIRE(refresh->onClick != nullptr);
+    refresh->onClick();   // 置重读标记；下一帧 compose 顶部读一次 tail
+    ui.begin("lv2");
+    mod->compose(ui, screen);
+    ui.end();
+    DOCTEST_CHECK(ui.find("settings.tab.log.scroll") != nullptr);
+
+    mod->onStop();
+    ::core::theme::setDark();
     return true;
 })
 
@@ -438,6 +521,8 @@ REGISTER_TEST(settings_port_error_clear_on_input,
     eui::Screen screen;
     screen.width = 1600.0f;
     screen.height = 1000.0f;
+    // Task B tab 化：代理卡在「模块」tab
+    DOCTEST_REQUIRE(clickSettingsTab(*mod, screen, 1));
     eui::Ui ui;
     auto frame = [&](const char* page) {
         ui.begin(page);
@@ -520,14 +605,16 @@ REGISTER_TEST(settings_log_dropdown_popup_stays_in_window, "settings: log dropdo
     std::unique_ptr<::core::Module> mod(create_settings_module());
     mod->onStart();
 
-    // 模块插拔后设置页 5 卡（外观/模块/目录/代理/日志），日志卡在小窗里被
-    // 滚出视口——取「日志卡贴近底部、字段可见」的最小窗口 1200×1000：
-    // 向下展开的弹层会超出窗体，应改向上展开（弹层整体留在窗体内且位于
-    // 字段上方）。注意：spec 缩水 B 的编辑器字号收在日志卡行 2（末卡自身
-    // 变高不移动任何字段基线），日志卡顶位置保持 822
+    // Task B tab 化后日志卡位于「日志」tab 顶部（cardsTopY = 40 pad + 64
+    // header + 16 gap + 40 tab + 16 gap = 176）。1200×1000 向下展开空间充足
+    // （保留字段底 264 + 8 gap + 弹层 216 = 488 ≤ 984）→ 默认 openDown；
+    // 短窗 1200×500 下同一弹层越出窗底（488 > 484）→ 应改 openUp 向上展开
+    //（弹层整体留在窗体内且位于字段上方）。卡顶游标只累计本 tab 的卡，
+    // 全量累加会把这里算错——即审计裁决「日志卡 openUp 游标」的回归位）
     eui::Screen screen;
     screen.width = 1200.0f;
-    screen.height = 1000.0f;
+    screen.height = 500.0f;
+    DOCTEST_REQUIRE(clickSettingsTab(*mod, screen, 2));
     eui::Ui ui;
     ui.begin("small");
     mod->compose(ui, screen);
@@ -542,10 +629,11 @@ REGISTER_TEST(settings_log_dropdown_popup_stays_in_window, "settings: log dropdo
     DOCTEST_CHECK(popup->frame.y + popup->frame.height <= screen.height);
     DOCTEST_CHECK(popup->frame.y + popup->frame.height <= field->frame.y);
 
-    // 大窗口 1600×1300：下方空间充足，保持默认向下展开（弹层在字段下方）
+    // 高窗口 1600×1300：下方空间充足，保持默认向下展开（弹层在字段下方）
     eui::Screen tall;
     tall.width = 1600.0f;
     tall.height = 1300.0f;
+    DOCTEST_REQUIRE(clickSettingsTab(*mod, tall, 2));
     ui.begin("tall");
     mod->compose(ui, tall);
     ui.end();
@@ -572,6 +660,8 @@ REGISTER_TEST(settings_token_text_vertically_centered, "settings: token text ver
     eui::Screen screen;
     screen.width = 1600.0f;
     screen.height = 1000.0f;
+    // Task B tab 化：代理/目录卡在「模块」tab
+    DOCTEST_REQUIRE(clickSettingsTab(*mod, screen, 1));
     eui::Ui ui;
     ui.begin("center");
     mod->compose(ui, screen);
@@ -619,6 +709,8 @@ REGISTER_TEST(settings_retention_change_prunes_immediately, "settings: retention
     eui::Screen screen;
     screen.width = 1600.0f;
     screen.height = 1000.0f;
+    // Task B tab 化：日志（保留天数）下拉在「日志」tab
+    DOCTEST_REQUIRE(clickSettingsTab(*mod, screen, 2));
     eui::Ui ui;
     ui.begin("prune");
     mod->compose(ui, screen);
@@ -694,6 +786,8 @@ REGISTER_TEST(settings_takeover_status_row,
     eui::Screen screen;
     screen.width = 1600.0f;
     screen.height = 1000.0f;
+    // Task B tab 化：接管状态行随代理卡在「模块」tab
+    DOCTEST_REQUIRE(clickSettingsTab(*mod, screen, 1));
     // CHECK 宏内含 return false，不能进返回 string 的 lambda —— out 参数收敛
     auto composeTakeoverText = [&](std::string* out) -> bool {
         eui::Ui ui;
@@ -864,6 +958,8 @@ REGISTER_TEST(settings_modules_card_renders, "settings: 模块管理卡渲染（
     eui::Screen screen;
     screen.width = 1600.0f;
     screen.height = 1000.0f;
+    // Task B tab 化：模块管理卡在「模块」tab
+    DOCTEST_REQUIRE(clickSettingsTab(*mod, screen, 1));
     eui::Ui ui;
     ui.begin("modcard");
     mod->compose(ui, screen);
@@ -899,6 +995,8 @@ REGISTER_TEST(settings_gated_proxy_card_hidden, "settings: claude 模块关闭 �
     screen.width = 1600.0f;
     screen.height = 1000.0f;
     eui::Ui ui;
+    // Task B tab 化：代理/目录/模块卡在「模块」tab，日志卡在「日志」tab
+    DOCTEST_REQUIRE(clickSettingsTab(*mod, screen, 1));
     ui.begin("gateclaude");
     mod->compose(ui, screen);
     ui.end();
@@ -906,8 +1004,13 @@ REGISTER_TEST(settings_gated_proxy_card_hidden, "settings: claude 模块关闭 �
     DOCTEST_CHECK(ui.find("settings.card.proxy.bg") == nullptr);  // 整卡隐藏
     DOCTEST_CHECK(ui.find("settings.card.proxy.token.value") == nullptr);
     DOCTEST_CHECK(ui.find("settings.card.directory.bg") != nullptr);  // markdown 开
-    DOCTEST_CHECK(ui.find("settings.card.log.bg") != nullptr);
     DOCTEST_CHECK(ui.find("settings.card.modules.bg") != nullptr);
+
+    DOCTEST_REQUIRE(clickSettingsTab(*mod, screen, 2));
+    ui.begin("gateclaude_log");
+    mod->compose(ui, screen);
+    ui.end();
+    DOCTEST_CHECK(ui.find("settings.card.log.bg") != nullptr);
     mod->onStop();
     ::core::theme::setDark();
     return true;
@@ -929,6 +1032,8 @@ REGISTER_TEST(settings_gated_directory_card_hidden, "settings: markdown 模块�
     eui::Screen screen;
     screen.width = 1600.0f;
     screen.height = 1000.0f;
+    // Task B tab 化：目录/代理卡在「模块」tab
+    DOCTEST_REQUIRE(clickSettingsTab(*mod, screen, 1));
     eui::Ui ui;
     ui.begin("gatemd");
     mod->compose(ui, screen);
@@ -1042,6 +1147,8 @@ REGISTER_TEST(settings_pet_dropdown_z_escape, "settings: pet skin dropdown popup
     eui::Screen screen;
     screen.width = 1600.0f;
     screen.height = 1000.0f;
+    // Task B tab 化：pet/目录卡同在「模块」tab（弹层 z 逃逸断言的兄弟关系不变）
+    DOCTEST_REQUIRE(clickSettingsTab(*mod, screen, 1));
     eui::Ui ui;
     ui.begin("petz");
     mod->compose(ui, screen);
@@ -1056,8 +1163,8 @@ REGISTER_TEST(settings_pet_dropdown_z_escape, "settings: pet skin dropdown popup
     DOCTEST_REQUIRE(dirCard != nullptr);
 
     // 下拉自带 zIndex(20) 沿祖先链传播：pet 卡子树上界 > 目录卡（z 0）。
-    // spec 缩水 B 的编辑器字号没有收进目录卡（抬目录卡 z 会反向压住 pet
-    // 弹层，z 逃逸互斥），而是收进末卡日志卡——目录卡维持 z0，本断言不变
+    // spec 缩水 B 的编辑器字号 Task B 起在「通用」tab 独立卡（不同 tab 不同
+    // 屏，无 z 竞争）；目录卡维持 z0，本断言不变
     DOCTEST_CHECK(dd->subtreeMaxZIndex >= 20);
     DOCTEST_CHECK(petCard->subtreeMaxZIndex >= 20);
     DOCTEST_CHECK_EQ(dirCard->subtreeMaxZIndex, 0);
@@ -1086,6 +1193,8 @@ REGISTER_TEST(settings_port_esc_discards_draft,
     eui::Screen screen;
     screen.width = 1600.0f;
     screen.height = 1000.0f;
+    // Task B tab 化：端口输入在代理卡（「模块」tab）
+    DOCTEST_REQUIRE(clickSettingsTab(*mod, screen, 1));
     eui::Ui ui;
     auto frame = [&](const char* page) {
         ui.begin(page);
@@ -1154,6 +1263,8 @@ REGISTER_TEST(settings_ctrl_s_save_shortcut,
     eui::Screen screen;
     screen.width = 1600.0f;
     screen.height = 1000.0f;
+    // Task B tab 化：端口输入 / 重新生成按钮在「模块」tab
+    DOCTEST_REQUIRE(clickSettingsTab(*mod, screen, 1));
     eui::Ui ui;
     auto frame = [&](const char* page) {
         ui.begin(page);
@@ -1432,9 +1543,10 @@ REGISTER_TEST(settings_editor_font_dropdown_applies_channel,
     mod->compose(ui, screen);
     ui.end();
 
-    DOCTEST_CHECK(ui.find("settings.card.log.font.dd") != nullptr);
+    // Task B tab 化：编辑器字号自日志卡迁到「通用」tab 独立卡（默认 tab，无需切）
+    DOCTEST_CHECK(ui.find("settings.card.editor.dd") != nullptr);
     // 点第 3 档「大 17px」→ 通道即时生效 + 持久化
-    const auto* item = ui.find("settings.card.log.font.dd.item.2");
+    const auto* item = ui.find("settings.card.editor.dd.item.2");
     DOCTEST_REQUIRE(item != nullptr);
     DOCTEST_REQUIRE(item->onClick != nullptr);
     item->onClick();
@@ -1457,6 +1569,8 @@ REGISTER_TEST(settings_about_card_renders,
     eui::Screen screen;
     screen.width = 1600.0f;
     screen.height = 1000.0f;
+    // Task B tab 化：关于卡在「关于」tab
+    DOCTEST_REQUIRE(clickSettingsTab(*mod, screen, 3));
     eui::Ui ui;
     ui.begin("aboutc");
     mod->compose(ui, screen);
@@ -1555,6 +1669,8 @@ REGISTER_TEST(settings_log_level_applied_on_start_and_click,
     eui::Screen screen;
     screen.width = 1600.0f;
     screen.height = 1000.0f;
+    // Task B tab 化：日志级别下拉在「日志」tab
+    DOCTEST_REQUIRE(clickSettingsTab(*mod, screen, 2));
     eui::Ui ui;
     ui.begin("loglvl");
     mod->compose(ui, screen);

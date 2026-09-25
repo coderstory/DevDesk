@@ -95,6 +95,33 @@ bool checkPageIcon(::core::Module* (*factory)(), const char* elId,
     return true;
 }
 
+// Task B tab 化变体：元素在指定 tab 的 pane 里时，先在默认 tab 的树上点
+// tabs 命中矩形（无头等价真实点击），重新 compose 后再断言 icon 元素
+bool checkPageIconTab(::core::Module* (*factory)(), int tab,
+                      const char* elId, unsigned int codepoint) {
+    std::unique_ptr<::core::Module> mod(factory());
+    DOCTEST_REQUIRE(mod != nullptr);
+    eui::Screen screen;
+    screen.width = 1600.0f;
+    screen.height = 1000.0f;
+    eui::Ui ui;
+    ui.begin("probe_tab");
+    mod->compose(ui, screen);
+    ui.end();
+    auto* hit = ui.find("settings.tabs.hit." + std::to_string(tab));
+    DOCTEST_REQUIRE(hit != nullptr);
+    DOCTEST_REQUIRE(hit->onClick != nullptr);
+    hit->onClick();
+    ui.begin("probe_page");
+    mod->compose(ui, screen);
+    ui.end();
+    const core::dsl::Element* el = ui.find(elId);
+    DOCTEST_REQUIRE(el != nullptr);
+    DOCTEST_CHECK_EQ(el->fontFamily, std::string("Icon"));
+    DOCTEST_CHECK_EQ(el->text, eui::utf8(codepoint));
+    return true;
+}
+
 } // namespace
 
 REGISTER_TEST(module_icons_page_emoji_replaced,
@@ -108,9 +135,10 @@ REGISTER_TEST(module_icons_page_emoji_replaced,
     if (!checkPageIcon(create_claude_module, "claude.guide.icon", 0xF05A)) return false;
     // 设置页（fa-arrows-rotate 重新生成）。原「深色/浅色」按钮（fa-moon/
     // fa-sun）在 spec 缩水 A 中被主题模式三档下拉替代，下拉无图标通道，
-    // 两条 icon 断言随之删除
-    if (!checkPageIcon(create_settings_module,
-                       "settings.card.proxy.token.regen.icon", 0xF021)) return false;
+    // 两条 icon 断言随之删除。Task B tab 化后代理卡在「模块」tab（tab 1）
+    if (!checkPageIconTab(create_settings_module, 1,
+                          "settings.card.proxy.token.regen.icon", 0xF021))
+        return false;
     // Markdown 页（fa-magnifying-glass 搜索浮层；ficon/fa-folder 树在
     // test_markdown.cpp 的空目录用例里断言——icons 探针无服务无数据）
     if (!checkPageIcon(create_markdown_module, "md.search.icon", 0xF002)) return false;

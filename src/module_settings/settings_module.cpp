@@ -22,8 +22,9 @@
 //      生成新 token；代理未运行时按钮置灰，不允许顺带拉起代理）
 //      + Claude Code 接管状态（Phase D UI 接入，数据源 ClaudeService）
 //   4. Markdown 笔记目录只读展示（改目录属于范围外，仅展示）+ 编辑器字号
-//      档位（spec §8.5「编辑器字体大小」，spec 缩水 B；收在日志卡行 2——
-//      末卡弹层逃逸路径已验证，目录卡抬 z 会压桌宠下拉）。值经
+//      档位（spec §8.5「编辑器字体大小」，spec 缩水 B；Task B tab 化后收在
+//      「通用」tab 的编辑器字号卡——原宿主日志卡行 2 的 z 逃逸理由已随
+//      分 tab 消失：不同 tab 的卡不再同屏叠放）。值经
 //      core::theme::editorFontSize 全局通道传 markdown（模块隔离）
 //   5. 调用日志保留天数（0=永久）——切换档位立即执行一次滚动清理并
 //      反馈「已清理 N 条」（core::pruneCallLogs，经 appDatabase() 共享
@@ -36,6 +37,9 @@
 //      对应模块关闭时其专属卡片整卡隐藏（代理卡/目录卡，不显示故障态）
 //   7. 关于卡（spec §8.5「关于」，spec 缩水 C）：DevDesk 版本/构建类型/
 //      构建时间戳 + EUI-NEO rev（CMake 注入宏）+ 配置/日志文件路径，恒显
+//   8. 页面结构（Task B tab 化）：通用 / 模块 / 日志 / 关于 四 tab
+//      （components::tabs）；「日志」tab 含日志查看卡（core::paths::logFile()
+//      末尾 500 行 tail + 刷新按钮，读盘在 compose 顶部一次性完成）
 //
 // 入口说明：设置入口在 main.cpp 的常驻侧边栏（app.sidebar，spec §2/§6.5.2），
 // 与其他四个模块同列。
@@ -89,6 +93,7 @@ std::string currentSkinName();
 #include <components/input.h>
 #include <components/scrollview.h>
 #include <components/switch.h>
+#include <components/tabs.h>
 #include <components/theme.h>
 
 #include <algorithm>
@@ -97,6 +102,7 @@ std::string currentSkinName();
 #include <fstream>
 #include <memory>
 #include <string>
+#include <vector>
 
 namespace module::settings {
 
@@ -146,14 +152,29 @@ const char* kLogLevelPresetLabels[] = {
 // spacing.compact=8 / spacing.small=6），若将来主题覆写 metrics 需同步。
 constexpr float kLogDropdownOffsetY = 48.0f;    // ddwrap 在日志卡内 y 偏移
 constexpr float kLogDropdownHeight = 40.0f;     // dropdown 控件高度
-constexpr float kLogEditorFontOffsetY = 92.0f;  // 编辑器字号行 y 偏移（spec 缩水 B）
+constexpr float kEditorFontDdOffsetY = 42.0f;   // 编辑器字号卡内 dropdown y（Task B 独立卡）
 constexpr float kLogEditorFontHeight = 36.0f;   // 编辑器字号 dropdown 高
-constexpr float kLogLevelOffsetY = 136.0f;      // 日志级别行 y 偏移（spec 缩水 D）
+constexpr float kLogLevelOffsetY = 92.0f;       // 日志级别行 y 偏移（spec 缩水 D；编辑器字号行迁出通用 tab 后上移）
 constexpr float kLogLevelHeight = 36.0f;        // 日志级别 dropdown 高
 constexpr float kDropdownPopupGap = 8.0f;       // 字段底边与弹层间距（spacing.compact）
 constexpr float kDropdownItemHeight = 34.0f;    // 单个菜单项高（control.menuItem）
 constexpr float kDropdownPopupPadding = 12.0f;  // 弹层上下 padding（spacing.small × 2）
 constexpr float kWindowBottomMargin = 16.0f;    // 窗口底边安全留白，越界 = 有裁剪风险
+
+// ---- 设置页 4 tab（Task B：页面太长拆 tab + 日志查看）----
+// 通用 = 外观 + 编辑器字号；模块 = 插拔开关 + 桌宠 + 代理 + 目录；
+// 日志 = 保留天数 + 级别 + tail 查看；关于 = 版本/路径
+const char* kSettingTabLabels[] = {"通用", "模块", "日志", "关于"};
+constexpr int kSettingTabCount = 4;
+constexpr int kTabGeneral = 0;
+constexpr int kTabModules = 1;
+constexpr int kTabLog = 2;
+constexpr int kTabAbout = 3;
+constexpr float kSettingsTabHeight = 40.0f;       // tab 栏高
+constexpr float kLogSettingsCardHeight = 148.0f;  // 日志卡（编辑器字号迁出后收窄）
+constexpr float kEditorFontCardHeight = 108.0f;   // 编辑器字号卡（通用 tab）
+constexpr int kLogTailMaxLines = 500;             // 日志查看 tail 行数上限
+constexpr long kLogTailReadWindow = 256 * 1024;   // tail 只读末尾 256KB，防大文件卡顿
 
 int nearestIndex(int value, const int* presets, int count) {
     int best = 0;
@@ -534,6 +555,34 @@ public:
         // 磨砂 Phase B/D）——不自铺不透明底，半透/磨砂档主体才生效
 
         const float headerH = 64.0f;
+        const float tabH = kSettingsTabHeight;
+        // 日志 tail 只在「切到日志 tab / 点刷新」后读一次（读盘进 compose 顶部
+        // 而非 scrollView content lambda：后者被 measure/paint 多次调用）
+        if (settingsTab_ == kTabLog && logTailDirty_) {
+            readLogTail();
+            logTailDirty_ = false;
+        }
+        // 代理卡高度动态：端口行 +34（审计 [14]）+ 接管状态行 + 上层覆盖警告行
+        //（§6.3）。contentKey 带 proxyH：警告行数变化时滚动高度缓存失效重测
+        auto* svc = ::module::claude::ClaudeService::global();
+        const bool managed = svc && svc->isClaudeCodeManaged();
+        size_t warnLines = 0;
+        if (managed && svc) {
+            warnLines = std::min<size_t>(
+                svc->lastSyncWarnings().size(), 2);
+        }
+        const float proxyH = 174.0f + 28.0f +
+            (managed ? 20.0f : 0.0f) +
+            static_cast<float>(warnLines) * 16.0f;
+        // 模块插拔门控（§5.4）：claude 关 → 代理卡整卡隐藏；markdown
+        // 关 → 目录卡整卡隐藏（不显示故障态）。读 cfg_（= 启动时注册
+        // 状态的来源），拨动开关即时预览下次启动的卡片布局
+        const bool claudeOn =
+            moduleEnabled(cfg_, kModuleIdClaudeProxy);
+        const bool mdOn = moduleEnabled(cfg_, kModuleIdMarkdown);
+        const bool petOn = moduleEnabled(cfg_, kModuleIdPet);
+        const auto compTheme = core::theme::componentTokens(t);
+
         ui.column("settings.root")
             .size(screen.width, screen.height)
             .padding(pad)
@@ -541,42 +590,44 @@ public:
             .content([&] {
                 drawHeader(ui, contentW, headerH, t);
 
-                // 卡片区套 scrollView（W10 复审项：4 卡总高约 580 > 720 高
-                // 窗口可视 552，第 4 卡被裁；仿 Todo 列内滚动，小窗口可滚动）
-                const float cardsTopY = pad + headerH + t.sizes.spacingLarge;
-                const float cardsH =
-                    screen.height - cardsTopY - pad;
-                // 代理卡高度动态：接管状态行 + 上层覆盖警告行（§6.3）。
-                // contentKey 带 proxyH：警告行数变化时滚动高度缓存失效重测
-                auto* svc = ::module::claude::ClaudeService::global();
-                const bool managed = svc && svc->isClaudeCodeManaged();
-                size_t warnLines = 0;
-                if (managed && svc) {
-                    warnLines = std::min<size_t>(
-                        svc->lastSyncWarnings().size(), 2);
-                }
-                // 代理卡高度动态：端口行 +34（审计 [14]）+ 接管状态行 + 上层
-                // 覆盖警告行（§6.3）。contentKey 带 proxyH：警告行数变化时滚动
-                // 高度缓存失效重测
-                const float proxyH = 174.0f + 28.0f +
-                    (managed ? 20.0f : 0.0f) +
-                    static_cast<float>(warnLines) * 16.0f;
-                // 模块插拔门控（§5.4）：claude 关 → 代理卡整卡隐藏；markdown
-                // 关 → 目录卡整卡隐藏（不显示故障态）。读 cfg_（= 启动时注册
-                // 状态的来源），拨动开关即时预览下次启动的卡片布局
-                const bool claudeOn =
-                    moduleEnabled(cfg_, kModuleIdClaudeProxy);
-                const bool mdOn = moduleEnabled(cfg_, kModuleIdMarkdown);
-                const bool petOn = moduleEnabled(cfg_, kModuleIdPet);
-                const auto compTheme = core::theme::componentTokens(t);
+                // tab 栏（Task B：长页拆 4 tab）。components::tabs 无
+                // .position → 套定位 stack（仿 claude detail tabs.wrap 写法；
+                // 本列是 column 流式布局，stack 自然排在 header 下方）
+                ui.stack("settings.tabs.wrap")
+                    .size(contentW, tabH)
+                    .content([&] {
+                        components::tabs(ui, "settings.tabs")
+                            .size(contentW, tabH)
+                            .items(std::vector<std::string>(
+                                kSettingTabLabels,
+                                kSettingTabLabels + kSettingTabCount))
+                            .selected(settingsTab_)
+                            .fontSize(t.sizes.fontSizeSmall)
+                            .theme(compTheme)
+                            .onChange([this](int idx) {
+                                settingsTab_ = idx;
+                                // 切到日志 tab：下一帧 compose 顶部重读 tail
+                                if (idx == kTabLog) logTailDirty_ = true;
+                            })
+                            .build();
+                    })
+                    .build();
+
+                // 当前 tab 的卡区仍套 scrollView（W10 复审项结论在模块 tab
+                // 依旧成立：4+ 卡总高可超小窗口可视高）
+                const float cardsTopY = pad + headerH +
+                    t.sizes.spacingLarge + tabH + t.sizes.spacingLarge;
+                const float cardsH = screen.height - cardsTopY - pad;
                 components::scrollView(ui, "settings.cards.scroll")
                     .size(contentW, cardsH)
                     .gap(t.sizes.spacingLarge)
                     .step(60.0f)
                     .theme(compTheme)
-                    // contentKey 带代理卡高 + 卡片显隐签名：卡片增减时滚动
-                    // 高度缓存失效重测
-                    .contentKey("settings.cards." +
+                    // contentKey 带 tab 索引 + 代理卡高 + 卡片显隐签名：切
+                    // tab / 卡片增减时滚动高度缓存失效重测（不带 tab 索引会
+                    // 沿用上 tab 的内容高 → 滚动范围错）
+                    .contentKey("settings.cards.t" +
+                                std::to_string(settingsTab_) + "." +
                                 std::to_string(static_cast<int>(proxyH)) +
                                 (claudeOn ? "C" : "c") + (mdOn ? "M" : "m") +
                                 (petOn ? "P" : "p"))
@@ -585,41 +636,70 @@ public:
                     .content([&](eui::Ui& inner, float contentWidth,
                                  float viewportHeight) {
                         (void)viewportHeight;
-                        // 卡片纵向游标（scrollView 内容空间，顶 = 0）。日志卡
-                        // 下拉 openUp 判断需要页面绝对 Y：滚动后字段页内位置
-                        // = cardsTopY + 内容Y - 滚动偏移
+                        // 卡片纵向游标（scrollView 内容空间，顶 = 0）。带下拉
+                        // 的卡算 openUp 需页面绝对 Y：字段页内位置
+                        // = cardsTopY + 内容Y - 滚动偏移。游标只累计**本 tab
+                        // 参与绘制**的卡（tab 过滤后卡序列变了，全量累加会让
+                        // 下拉方向算错）
                         const float gapY = t.sizes.spacingLarge;
                         float cardY = 0.0f;
-                        drawAppearanceCard(inner, "settings.card.appearance",
-                                           contentWidth, 160.0f, t);
-                        cardY += 160.0f + gapY;
-                        drawModulesCard(inner, "settings.card.modules",
-                                        contentWidth, 288.0f, t);
-                        cardY += 288.0f + gapY;
-                        if (petOn) {
-                            // ⑥：卡内加「鼠标穿透」toggle 行（恢复路径），120→168
-                            drawPetCard(inner, "settings.card.pet",
-                                        contentWidth, 168.0f, t);
-                            cardY += 168.0f + gapY;
+                        switch (settingsTab_) {
+                        case kTabLog: {
+                            drawLogCard(inner, "settings.card.log",
+                                        contentWidth, kLogSettingsCardHeight,
+                                        t,
+                                        cardsTopY + cardY -
+                                            cardsScrollOffset_,
+                                        screen.height);
+                            cardY += kLogSettingsCardHeight + gapY;
+                            // 日志查看卡吃掉剩余视口高（内容恰好一屏，避免
+                            // 内外双层滚动条并存）；极小窗口兜底 260 由外层
+                            // scrollView 负责滚动
+                            const float viewH =
+                                std::max(260.0f, cardsH - cardY);
+                            drawLogViewCard(inner, "settings.tab.log",
+                                            contentWidth, viewH, t);
+                            break;
                         }
-                        if (mdOn) {
-                            drawDirectoryCard(inner, "settings.card.directory",
-                                              contentWidth, 108.0f, t);
-                            cardY += 108.0f + gapY;
+                        case kTabAbout:
+                            // 关于卡恒显（不受模块开关门控，自身就是排障信息源）
+                            drawAboutCard(inner, "settings.card.about",
+                                          contentWidth, 150.0f, t);
+                            break;
+                        case kTabModules:
+                            drawModulesCard(inner, "settings.card.modules",
+                                            contentWidth, 288.0f, t);
+                            cardY += 288.0f + gapY;
+                            if (petOn) {
+                                // ⑥：卡内加「鼠标穿透」toggle 行（恢复路径），120→168
+                                drawPetCard(inner, "settings.card.pet",
+                                            contentWidth, 168.0f, t);
+                                cardY += 168.0f + gapY;
+                            }
+                            if (mdOn) {
+                                drawDirectoryCard(
+                                    inner, "settings.card.directory",
+                                    contentWidth, 108.0f, t);
+                                cardY += 108.0f + gapY;
+                            }
+                            if (claudeOn) {
+                                drawProxyCard(inner, "settings.card.proxy",
+                                              contentWidth, proxyH, t);
+                            }
+                            break;
+                        case kTabGeneral:
+                        default:
+                            drawAppearanceCard(
+                                inner, "settings.card.appearance",
+                                contentWidth, 160.0f, t);
+                            cardY += 160.0f + gapY;
+                            drawEditorFontCard(
+                                inner, "settings.card.editor",
+                                contentWidth, kEditorFontCardHeight, t,
+                                cardsTopY + cardY - cardsScrollOffset_,
+                                screen.height);
+                            break;
                         }
-                        if (claudeOn) {
-                            drawProxyCard(inner, "settings.card.proxy",
-                                          contentWidth, proxyH, t);
-                            cardY += proxyH + gapY;
-                        }
-                        drawLogCard(inner, "settings.card.log", contentWidth,
-                                    192.0f, t,
-                                    cardsTopY + cardY - cardsScrollOffset_,
-                                    screen.height);
-                        cardY += 192.0f + gapY;
-                        // 关于卡恒显（不受模块开关门控，自身就是排障信息源）
-                        drawAboutCard(inner, "settings.card.about",
-                                      contentWidth, 150.0f, t);
                     })
                     .build();
             })
@@ -1346,14 +1426,12 @@ private:
             .build();
     }
 
-    // ---------- 卡片 5/6：调用日志保留 + 编辑器字号 ----------
-    // 日志卡是页面最后一张卡（关于卡之后无下拉），行内下拉的弹层用
-    // cardTopY/screenH 几何估算判断向下展开是否出界，出界则 openUp 向上
-    //（修复菜单被窗体裁剪）。spec 缩水 B 的编辑器字号收在本卡行 2：目录卡
-    // 若抬 z 压过日志/代理卡，会反向压住桌宠卡下拉弹层（z 逃逸互斥），
-    // 末卡是唯一无冲突宿主
-    // cardTopY/screenH：弹层几何用文件顶部 kDropdown* / kLogDropdown* 常量
-    // 估算（与 dropdown 内部 metrics 一致）
+    // ---------- 卡片 5：日志（保留天数 + 级别，日志 tab） ----------
+    // 行内下拉的弹层用 cardTopY/screenH 几何估算判断向下展开是否出界，出界则
+    // openUp 向上（修复菜单被窗体裁剪）。spec 缩水 B 的编辑器字号 Task B 起
+    // 迁到「通用」tab 独立卡（不同 tab 的卡不同屏，原「末卡 z 逃逸宿主」
+    // 理由失效）。cardTopY/screenH：弹层几何用文件顶部 kDropdown* /
+    // kLogDropdown* 常量估算（与 dropdown 内部 metrics 一致）
     void drawLogCard(eui::Ui& ui, const std::string& id, float w, float h,
                      const core::theme::Tokens& t, float cardTopY,
                      float screenH) {
@@ -1366,7 +1444,7 @@ private:
                 ui.text(id + ".title")
                     .position(28.0f, 16.0f)
                     .size(w - 56.0f, 22.0f)
-                    .text("日志与编辑器")
+                    .text("日志")
                     .fontSize(t.sizes.fontSizeLarge)
                     .lineHeight(22.0f)
                     .fontWeight(600)
@@ -1416,64 +1494,12 @@ private:
                     .color(t.colors.textTertiary)
                     .build();
 
-                // ---- 行 2：编辑器字号（spec §8.5「编辑器字体大小」，spec
-                // 缩水 B）：档位写 core::theme::editorFontSize 通道，markdown
-                // 下一帧生效；默认 15px = fontSizeBody token 基准 ----
-                ui.text(id + ".font.label")
-                    .position(28.0f, 100.0f)
-                    .size(84.0f, 20.0f)
-                    .text("编辑器字号")
-                    .fontSize(fs(12.0f))
-                    .lineHeight(20.0f)
-                    .color(t.colors.textSecondary)
-                    .build();
-                ui.stack(id + ".font.ddwrap")
-                    .position(124.0f, kLogEditorFontOffsetY)
-                    .size(150.0f, kLogEditorFontHeight)
-                    .content([&] {
-                        const float efontFieldBottomY = cardTopY +
-                            kLogEditorFontOffsetY + kLogEditorFontHeight;
-                        const float efontPopupH =
-                            static_cast<float>(kEditorFontPresetCount) *
-                                    kDropdownItemHeight +
-                                kDropdownPopupPadding;
-                        const bool efontOpenUp = efontFieldBottomY +
-                                    kDropdownPopupGap + efontPopupH >
-                                screenH - kWindowBottomMargin;
-                        components::dropdown(ui, id + ".font.dd")
-                            .size(150.0f, kLogEditorFontHeight)
-                            .theme(compTheme)
-                            .items(std::vector<std::string>(
-                                kEditorFontPresetLabels,
-                                kEditorFontPresetLabels +
-                                    kEditorFontPresetCount))
-                            .selected(nearestIndex(cfg_.editorFontSize,
-                                                   kEditorFontPresets,
-                                                   kEditorFontPresetCount))
-                            .openUp(efontOpenUp)
-                            .open(editorFontDropdownOpen_)
-                            .onOpenChange(
-                                [this](bool v) { editorFontDropdownOpen_ = v; })
-                            .onChange([this](int idx) {
-                                applyEditorFontPreset(idx);
-                            })
-                            .build();
-                    })
-                    .build();
-                ui.text(id + ".font.hint")
-                    .position(288.0f, 100.0f)
-                    .size(w - 316.0f, 18.0f)
-                    .text("Markdown 编辑器正文字号；默认 15px（标准）。切换即时生效。")
-                    .fontSize(fs(12.0f))
-                    .lineHeight(18.0f)
-                    .color(t.colors.textTertiary)
-                    .build();
-
-                // ---- 行 3：日志级别（spec §8.5「日志级别」，spec 缩水 D）：
+                // ---- 行 2：日志级别（spec §8.5「日志级别」，spec 缩水 D；
+                // Task B：原行 2 编辑器字号迁至「通用」tab 独立卡后上移）：
                 // 切档即时 core::log::setLevel（DEBUG 起打 LOG_DEBUG 详录），
                 // 重启由 onStart 恢复持久化档 ----
                 ui.text(id + ".level.label")
-                    .position(28.0f, 144.0f)
+                    .position(28.0f, 100.0f)
                     .size(84.0f, 20.0f)
                     .text("日志级别")
                     .fontSize(fs(12.0f))
@@ -1511,7 +1537,7 @@ private:
                     })
                     .build();
                 ui.text(id + ".level.hint")
-                    .position(288.0f, 144.0f)
+                    .position(288.0f, 100.0f)
                     .size(w - 316.0f, 18.0f)
                     .text("DEBUG 最详尽（排障）；默认 INFO。切档即时生效。")
                     .fontSize(fs(12.0f))
@@ -1573,6 +1599,196 @@ private:
                     .fontSize(fs(12.0f))
                     .lineHeight(16.0f)
                     .color(t.colors.textTertiary)
+                    .build();
+            })
+            .build();
+    }
+
+    // ---------- 日志 tail 读取（Task B，日志 tab） ----------
+    // 仅在「切到日志 tab / 点刷新」后的 compose 顶部调用一次：scrollView
+    // content lambda 被 measure/paint 多次调用，读盘绝不能进那里。只读文件
+    // 末尾窗口（kLogTailReadWindow）防大日志整档进内存；保留末尾
+    // kLogTailMaxLines 行（滑动裁剪，避免逐行 erase 的 O(n²)）
+    void readLogTail() {
+        std::vector<std::string> lines;
+        std::ifstream f(::core::paths::logFile(), std::ios::binary);
+        if (f) {
+            f.seekg(0, std::ios::end);
+            const std::streamoff size = f.tellg();
+            if (size > static_cast<std::streamoff>(kLogTailReadWindow)) {
+                f.seekg(size - static_cast<std::streamoff>(
+                              kLogTailReadWindow));
+                // 落点在半行中：丢掉开头半行
+                std::string partial;
+                std::getline(f, partial);
+            } else {
+                f.seekg(0);
+            }
+            std::string line;
+            while (std::getline(f, line)) {
+                if (!line.empty() && line.back() == '\r') {
+                    line.pop_back();  // CRLF 行尾去 \r
+                }
+                lines.push_back(std::move(line));
+                if (lines.size() >
+                    static_cast<size_t>(kLogTailMaxLines) * 2) {
+                    lines.erase(lines.begin(), lines.begin() +
+                        static_cast<long>(lines.size() -
+                                          kLogTailMaxLines));
+                }
+            }
+            if (lines.size() > static_cast<size_t>(kLogTailMaxLines)) {
+                lines.erase(lines.begin(), lines.begin() +
+                    static_cast<long>(lines.size() - kLogTailMaxLines));
+            }
+        }
+        logTail_ = std::move(lines);
+        ++logTailVersion_;
+        LOG_INFO("Settings: 日志 tail 刷新，读取 " +
+                 std::to_string(logTail_.size()) + " 行");
+    }
+
+    // ---------- 编辑器字号卡（Task B：自日志卡行 2 迁入「通用」tab） ----------
+    // spec §8.5「编辑器字体大小」（spec 缩水 B）：档位写 core::theme::
+    // editorFontSize 通道，markdown 下一帧生效；默认 15px = fontSizeBody
+    // token 基准。cardTopY/screenH：下拉弹层 openUp 几何估算（同款日志卡）
+    void drawEditorFontCard(eui::Ui& ui, const std::string& id, float w,
+                            float h, const core::theme::Tokens& t,
+                            float cardTopY, float screenH) {
+        const auto compTheme = core::theme::componentTokens(t);
+        ui.stack(id)
+            .size(w, h)
+            .zIndex(30)
+            .content([&] {
+                cardFrame(ui, id, w, h, t);
+                ui.text(id + ".title")
+                    .position(28.0f, 16.0f)
+                    .size(w - 56.0f, 22.0f)
+                    .text("编辑器字号")
+                    .fontSize(t.sizes.fontSizeLarge)
+                    .lineHeight(22.0f)
+                    .fontWeight(600)
+                    .color(t.colors.textPrimary)
+                    .build();
+                ui.stack(id + ".ddwrap")
+                    .position(28.0f, kEditorFontDdOffsetY)
+                    .size(150.0f, kLogEditorFontHeight)
+                    .content([&] {
+                        const float efontFieldBottomY = cardTopY +
+                            kEditorFontDdOffsetY + kLogEditorFontHeight;
+                        const float efontPopupH =
+                            static_cast<float>(kEditorFontPresetCount) *
+                                    kDropdownItemHeight +
+                                kDropdownPopupPadding;
+                        const bool efontOpenUp = efontFieldBottomY +
+                                    kDropdownPopupGap + efontPopupH >
+                                screenH - kWindowBottomMargin;
+                        components::dropdown(ui, id + ".dd")
+                            .size(150.0f, kLogEditorFontHeight)
+                            .theme(compTheme)
+                            .items(std::vector<std::string>(
+                                kEditorFontPresetLabels,
+                                kEditorFontPresetLabels +
+                                    kEditorFontPresetCount))
+                            .selected(nearestIndex(cfg_.editorFontSize,
+                                                   kEditorFontPresets,
+                                                   kEditorFontPresetCount))
+                            .openUp(efontOpenUp)
+                            .open(editorFontDropdownOpen_)
+                            .onOpenChange(
+                                [this](bool v) { editorFontDropdownOpen_ = v; })
+                            .onChange([this](int idx) {
+                                applyEditorFontPreset(idx);
+                            })
+                            .build();
+                    })
+                    .build();
+                ui.text(id + ".hint")
+                    .position(190.0f, 48.0f)
+                    .size(w - 218.0f, 18.0f)
+                    .text("Markdown 编辑器正文字号；默认 15px（标准）。切换即时生效。")
+                    .fontSize(fs(12.0f))
+                    .lineHeight(18.0f)
+                    .color(t.colors.textTertiary)
+                    .build();
+            })
+            .build();
+    }
+
+    // ---------- 日志查看卡（Task B，日志 tab）：日志文件 tail + 刷新 ----------
+    // logTail_ 是内存快照（读盘见 readLogTail，只发生在切 tab / 点刷新后），
+    // 本方法只渲染字符串。逐行一个 text（固定行高，超宽行由 scrollView clip
+    // 右侧裁切）；刷新按钮只置 dirty 标记，实际重读在下一帧 compose 顶部
+    void drawLogViewCard(eui::Ui& ui, const std::string& id, float w, float h,
+                         const core::theme::Tokens& t) {
+        const auto compTheme = core::theme::componentTokens(t);
+        const float lineH = 16.0f;
+        ui.stack(id)
+            .size(w, h)
+            .content([&] {
+                cardFrame(ui, id, w, h, t);
+                const float btnW = 96.0f;
+                ui.text(id + ".title")
+                    .position(28.0f, 16.0f)
+                    .size(w - 56.0f - btnW - 12.0f, 22.0f)
+                    .text("运行日志（末尾 500 行）")
+                    .fontSize(t.sizes.fontSizeLarge)
+                    .lineHeight(22.0f)
+                    .fontWeight(600)
+                    .color(t.colors.textPrimary)
+                    .build();
+                components::button(ui, id + ".refresh")
+                    .position(w - 28.0f - btnW, 14.0f)
+                    .size(btnW, 28.0f)
+                    .text("刷新")
+                    .icon(0xF021)  // fa-arrows-rotate
+                    .fontSize(fs(12.0f))
+                    .colors(t.colors.surfaceElevated, t.colors.hover,
+                            t.colors.active)
+                    .textColor(t.colors.textPrimary)
+                    .radius(t.sizes.radiusSmall)
+                    .border(1.0f, t.colors.borderDefault)
+                    .onClick([this] { logTailDirty_ = true; })
+                    .build();
+                const float areaTop = 48.0f;
+                components::scrollView(ui, id + ".scroll")
+                    .position(28.0f, areaTop)
+                    .size(w - 56.0f, h - areaTop - 16.0f)
+                    .gap(0.0f)
+                    .step(lineH)
+                    .theme(compTheme)
+                    // contentKey 带 tail 版本号：刷新重读后内容高缓存失效重测
+                    .contentKey(id + ".scroll.v" +
+                                std::to_string(logTailVersion_))
+                    .offset(logViewScrollOffset_)
+                    .onChange([this](float v) {
+                        logViewScrollOffset_ = v;
+                    })
+                    .content([&](eui::Ui& inner, float cw, float vh) {
+                        (void)vh;
+                        if (logTail_.empty()) {
+                            inner.text(id + ".empty")
+                                .position(8.0f, 8.0f)
+                                .size(cw - 16.0f, 20.0f)
+                                .text("（暂无日志内容，或日志文件尚未生成）")
+                                .fontSize(fs(12.0f))
+                                .lineHeight(20.0f)
+                                .color(t.colors.textTertiary)
+                                .build();
+                            return;
+                        }
+                        for (size_t i = 0; i < logTail_.size(); ++i) {
+                            inner.text(id + ".line." + std::to_string(i))
+                                .position(
+                                    8.0f, static_cast<float>(i) * lineH)
+                                .size(cw - 16.0f, lineH)
+                                .text(logTail_[i])
+                                .fontSize(fs(11.0f))
+                                .lineHeight(lineH)
+                                .color(t.colors.textSecondary)
+                                .build();
+                        }
+                    })
                     .build();
             })
             .build();
@@ -1665,6 +1881,12 @@ private:
     // onPageEnter 复位——截屏验收时默认为掩码形态
     bool proxyTokenRevealed_ = false;
     float cardsScrollOffset_ = 0.0f;      // 卡片区 scrollView 滚动位置
+    // ---- Task B：tab 化 + 日志查看 ----
+    int settingsTab_ = 0;                 // 当前 tab（通用/模块/日志/关于）
+    std::vector<std::string> logTail_;    // 日志文件末尾行内存快照（compose 只渲染）
+    unsigned logTailVersion_ = 0;         // tail 读取版本号（进日志查看卡 contentKey）
+    bool logTailDirty_ = true;            // 待重读标记（切日志 tab / 点刷新置位）
+    float logViewScrollOffset_ = 0.0f;    // 日志查看卡内滚动位置
     std::string statusMessage_;
     bool statusIsError_ = false;
 };
