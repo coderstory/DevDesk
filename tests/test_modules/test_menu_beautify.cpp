@@ -18,6 +18,7 @@
 
 #include <components/styledmenu.h>
 
+#include <set>
 #include <string>
 #include <vector>
 
@@ -179,6 +180,95 @@ REGISTER_TEST(menuBeautifyStyledFlattenPaths, "menu: styled flatten 行序/path/
     return true;
 });
 
+// ---- 5b. styled 组折叠（opt-in collapsedByDefault，不破坏既有展平行为）----
+
+// 构造一个 collapsedByDefault=true 的换肤组（2 皮肤子项）
+static std::vector<components::StyledMenuItem> menuBeautifyFoldableSkinMenu() {
+    std::vector<components::StyledMenuItem> out;
+    components::StyledMenuItem skinGroup;
+    skinGroup.text = "换肤";
+    skinGroup.iconCodepoint = 0xF53F;
+    skinGroup.collapsedByDefault = true;
+    components::StyledMenuItem skinA;
+    skinA.text = "robot";
+    skinGroup.children.push_back(std::move(skinA));
+    components::StyledMenuItem skinB;
+    skinB.text = "ghost";
+    skinGroup.children.push_back(std::move(skinB));
+    out.push_back(std::move(skinGroup));
+    return out;
+}
+
+REGISTER_TEST(menuBeautifyStyledFlattenCollapsedGroup, "menu: styled 折叠组默认只出组头（opt-in）", {
+    const auto rows = components::styledMenuFlatten(menuBeautifyFoldableSkinMenu());
+    // 折叠态：仅 1 行组头（子行不展平）——旧行为会出 3 行，opt-in 后默认折叠
+    DOCTEST_REQUIRE_EQ(rows.size(), static_cast<size_t>(1));
+    DOCTEST_CHECK(rows[0].kind == components::StyledMenuRowKind::GroupHeader);
+    DOCTEST_CHECK(rows[0].collapsible);
+    DOCTEST_CHECK((rows[0].path == std::vector<int>{0}));
+    DOCTEST_CHECK_EQ(rows[0].text, std::string("换肤"));
+    return true;
+});
+
+REGISTER_TEST(menuBeautifyStyledFlattenExpandedGroup, "menu: styled 展开组出组头+缩进子行", {
+    std::set<std::vector<int>> expanded;
+    expanded.insert(std::vector<int>{0});
+    const auto rows = components::styledMenuFlatten(menuBeautifyFoldableSkinMenu(), expanded);
+    // 展开态：组头 + 2 子行
+    DOCTEST_REQUIRE_EQ(rows.size(), static_cast<size_t>(3));
+    DOCTEST_CHECK(rows[0].kind == components::StyledMenuRowKind::GroupHeader);
+    DOCTEST_CHECK(rows[0].collapsible);
+    DOCTEST_CHECK(rows[1].kind == components::StyledMenuRowKind::Item);
+    DOCTEST_CHECK((rows[1].path == std::vector<int>{0, 0}));
+    DOCTEST_CHECK_EQ(rows[1].depth, 1);
+    DOCTEST_CHECK(rows[2].kind == components::StyledMenuRowKind::Item);
+    DOCTEST_CHECK((rows[2].path == std::vector<int>{0, 1}));
+    return true;
+});
+
+REGISTER_TEST(menuBeautifyStyledFullExpandedCount, "menu: styled 全展开预留行数（高度预留基础）", {
+    // 全展开（忽略 collapsedByDefault）= 旧行为，用于开窗高度预留
+    const auto rows = components::styledMenuFlattenAllExpanded(menuBeautifyFoldableSkinMenu());
+    DOCTEST_REQUIRE_EQ(rows.size(), static_cast<size_t>(3));
+    DOCTEST_CHECK(rows[0].kind == components::StyledMenuRowKind::GroupHeader);
+    DOCTEST_CHECK(rows[1].kind == components::StyledMenuRowKind::Item);
+    DOCTEST_CHECK(rows[2].kind == components::StyledMenuRowKind::Item);
+    return true;
+});
+
+REGISTER_TEST(menuBeautifyStyledFoldedPetMenuSelectable, "menu: 折叠态桌宠式菜单仍可选（不降级原生）", {
+    // 桌宠式菜单：折叠换肤组 + 位置重置/隐藏/分隔线/退出（顶层可选）
+    std::vector<components::StyledMenuItem> items = menuBeautifyFoldableSkinMenu();
+    items.push_back(components::StyledMenuItem("位置重置"));
+    items.push_back(components::StyledMenuItem("隐藏桌宠"));
+    components::StyledMenuItem sep;
+    sep.text = "-";
+    items.push_back(std::move(sep));
+    items.push_back(components::StyledMenuItem("退出 DevDesk"));
+    const auto rows = components::styledMenuFlatten(items);  // 折叠态
+    // 折叠态：换肤组头 + 位置重置 + 隐藏 + 分隔线 + 退出 = 5 行
+    DOCTEST_REQUIRE_EQ(rows.size(), static_cast<size_t>(5));
+    // 位置重置/隐藏/退出 3 个顶层可选行 → selectableCount>0，不触发降级
+    DOCTEST_CHECK(components::styledMenuSelectableCount(rows) > static_cast<size_t>(0));
+    DOCTEST_CHECK_EQ(components::styledMenuSelectableCount(rows), static_cast<size_t>(3));
+    return true;
+});
+
+REGISTER_TEST(menuBeautifyPetActionPathFoldIndependent, "menu: path→动作与折叠态无关（组头None/子项Skin）", {
+    // path 语义基于原始 items 向量下标，与运行期折叠/展开态无关：
+    // 组头 {0} → None；子项 {0,j} → Skin（无论折叠态 flatten 是否列出子行）
+    int skinIndex = -1;
+    DOCTEST_CHECK(module::pet::petMenuActionForPath(std::vector<int>{0}, 2, skinIndex) ==
+                  module::pet::PetMenuAction::None);
+    DOCTEST_CHECK(module::pet::petMenuActionForPath(std::vector<int>{0, 0}, 2, skinIndex) ==
+                  module::pet::PetMenuAction::Skin);
+    DOCTEST_CHECK_EQ(skinIndex, 0);
+    DOCTEST_CHECK(module::pet::petMenuActionForPath(std::vector<int>{0, 1}, 2, skinIndex) ==
+                  module::pet::PetMenuAction::Skin);
+    DOCTEST_CHECK_EQ(skinIndex, 1);
+    return true;
+});
+
 REGISTER_TEST(menuBeautifyStyledPanelHeight, "menu: styled 面板高度行数和+分隔线+inset", {
     const auto rows = components::styledMenuFlatten(menuBeautifySampleMenu());
     components::StyledMenuStyle style;
@@ -190,7 +280,6 @@ REGISTER_TEST(menuBeautifyStyledPanelHeight, "menu: styled 面板高度行数和
     DOCTEST_CHECK_EQ(components::styledMenuPanelHeight(rows, style), expected);
     return true;
 });
-
 REGISTER_TEST(menuBeautifyStyledClampPosition, "menu: styled 位置钳制（贴右/上翻/贴顶/副屏/无头）", {
     using components::styledMenuClampPosition;
     // 界内原样

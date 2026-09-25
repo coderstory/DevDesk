@@ -279,6 +279,8 @@ void executePetMenuSelection(const std::vector<int>& path) {
 }
 
 // styled 菜单构建（PetMenuItemData → StyledMenuItem，图标按语义注入）
+// 换肤子组（有 children）设 collapsedByDefault=true：默认只显"换肤 ▸"，
+// 点组头/chevron 展开才列皮肤（不破坏其他菜单——opt-in 仅此组折叠）
 bool showPetStyledMenu(const std::vector<PetMenuItemData>& menu, float x, float y) {
     std::vector<components::StyledMenuItem> items;
     for (const PetMenuItemData& data : menu) {
@@ -286,6 +288,9 @@ bool showPetStyledMenu(const std::vector<PetMenuItemData>& menu, float x, float 
         item.text = data.text;
         item.disabled = data.disabled;
         item.iconCodepoint = data.iconCodepoint;
+        if (!data.children.empty()) {
+            item.collapsedByDefault = true;  // 子项组默认折叠
+        }
         for (const PetMenuItemData& child : data.children) {
             components::StyledMenuItem childItem;
             childItem.text = child.text;
