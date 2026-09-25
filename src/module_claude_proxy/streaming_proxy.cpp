@@ -300,6 +300,7 @@ sendStreamingClaude(const platform::http::Request& req,
     // 2. 注入 API key（覆盖客户端传来的 x-api-key）
     if (!profile.apiKeyPlain.empty()) {
         upstream.headers["x-api-key"] = profile.apiKeyPlain;
+        upstream.headers["Authorization"] = "Bearer " + profile.apiKeyPlain;  // 兼容期望 Bearer 的网关（bailian 等）；真 Anthropic API 忽略 Bearer
     }
     if (upstream.headers.find("anthropic-version") == upstream.headers.end()) {
         upstream.headers["anthropic-version"] = "2023-06-01";

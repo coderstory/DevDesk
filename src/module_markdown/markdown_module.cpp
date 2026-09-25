@@ -335,12 +335,20 @@ private:
                             .fontWeight(700)
                             .color(t.colors.textPrimary)
                             .build();
-                        ui.text("md.subtitle")
-                            .size(contentW - 320.0f - segW - t.sizes.spacingSmall, 18.0f)
-                            .text(subtitle)
-                            .fontSize(t.sizes.fontSizeSmall)
-                            .lineHeight(18.0f)
-                            .color(t.colors.textSecondary)
+                        // subtitle 包 clip 栈：长快捷键提示超宽时裁掉，不溢出压到右侧 segmented
+                        const float subW = contentW - 320.0f - segW - t.sizes.spacingSmall;
+                        ui.stack("md.subtitle.clip")
+                            .size(subW, 18.0f)
+                            .clip()
+                            .content([&] {
+                                ui.text("md.subtitle")
+                                    .size(subW, 18.0f)
+                                    .text(subtitle)
+                                    .fontSize(t.sizes.fontSizeSmall)
+                                    .lineHeight(18.0f)
+                                    .color(t.colors.textSecondary)
+                                    .build();
+                            })
                             .build();
                     })
                     .build();
