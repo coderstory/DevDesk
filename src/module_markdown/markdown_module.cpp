@@ -154,8 +154,14 @@ enum class ViewMode { Edit = 0, Split = 1, Preview = 2 };
 // 常量一致 15 = fontSizeBody token 基准）。行高 = 字号 × 1.2 运行时算
 constexpr float kDefaultEditorFontSize = 15.0f;
 constexpr float kEditorLineHeightFactor = 1.2f;  // input 内部行高系数
-constexpr float kEditTextColumnWidth = 720.0f;  // 仅编辑态的居中文本列宽（Typora 写作宽度）
+constexpr float kEditTextColumnWidth = 720.0f;  // 仅编辑/实时态的居中文本列宽（Typora 写作宽度）
 constexpr float kPreviewColumnWidth = 760.0f;   // 仅预览态的居中阅读列宽
+
+// M0 spike V1b（C1 修复）：input 组件的聚焦判定是 ui.isFocused(id + ".hit")
+// （components/input.h:113）——编程式聚焦必须发「基 id + .hit」，发基 id 只会把
+// 焦点挂到 stack 元素上：组件判定未聚焦（不画 caret、不挂键处理器），按键静默
+// 落回模块 keyEventHandler_。编辑器四处 requestFocus 统一走本常量。
+constexpr const char* kEditorInputHitId = "md.editor.input.hit";
 
 // "已保存 HH:MM"
 std::string formatSaveTime(std::time_t t) {
@@ -1632,7 +1638,7 @@ private:
         st.dragAnchor = st.cursor;
         st.hasPreferredCursorX = false;
         st.followCaret = true;
-        ui.requestFocus("md.editor.input");  // 帧末消费（Runtime 机制，同回车聚焦）
+        ui.requestFocus(kEditorInputHitId);  // 帧末消费（Runtime 机制，同回车聚焦）
         LOG_INFO("预览块点击: 块#" + std::to_string(jump.blockIndex) +
                  " stableId=" + std::to_string(jump.stableId) +
                  " kind=" +
@@ -2452,7 +2458,7 @@ private:
             refreshList();
             openNote(relPath);
             showToast("笔记已存在", "已直接打开 " + relPath, false);
-            if (currentPath_ == relPath) ui.requestFocus("md.editor.input");
+            if (currentPath_ == relPath) ui.requestFocus(kEditorInputHitId);
             return;
         }
         if (defaultedName) {
@@ -2480,7 +2486,7 @@ private:
         // 「新建后自动 focus 编辑器」（ux-design §4 #6，审计 [13][31]）：
         // EUI-NEO Ui::requestFocus 为上游小增量（Runtime 帧末消费），回车即
         // 可打字；openNote 守卫失败（未保存改动阻塞切换）时不聚焦
-        if (currentPath_ == relPath) ui.requestFocus("md.editor.input");
+        if (currentPath_ == relPath) ui.requestFocus(kEditorInputHitId);
         LOG_INFO("新建笔记: " + relPath);
     }
 
@@ -2643,7 +2649,7 @@ private:
         EditBuffer buf{st.text, st.cursor, st.selectionStart, st.selectionEnd};
         module::markdown::applyInsertTable(buf, rows, cols);
         commitEditBuffer(ui, buf);
-        ui.requestFocus("md.editor.input");
+        ui.requestFocus(kEditorInputHitId);
     }
 
     // 删除确认弹窗（与 todo 删任务 / claude 删 Profile 同款「不可恢复」文案）

@@ -14,6 +14,7 @@
 #include "module_markdown/md_tree.h"
 
 #include <components/input.h>
+#include <core/dsl_runtime.h>
 #include <eui/dsl.h>
 
 #include <algorithm>
@@ -2639,6 +2640,99 @@ REGISTER_TEST(md_esc_closes_topmost_dialog,
     frame("esc6");
     DOCTEST_CHECK_EQ(ui.find("md.dialog.del.panel")->opacity, 0.0f);
     DOCTEST_CHECK(fs::exists(env.dir / "a.md"));
+
+    mod->onStop();
+    return true;
+})
+
+// ---- M0 spike V1b（C1 修复）：编程式聚焦的目标必须是 <input id>.hit ----
+// input 组件的聚焦判定是 ui.isFocused(id + ".hit")（components/input.h:113），
+// 发基 id 时焦点落在 stack 元素上 → 组件判定未聚焦（不画 caret、按键落回模块
+// keyEventHandler_，编辑器收不到字）。本用例走真实入口「预览块点击 → 编辑器
+// 定位」验证；用 Runtime 逐帧 compose 才能驱动帧末的 requestFocus 消费端
+//（core/runtime/runtime_lifecycle.h:38-42），plain Ui 不会消费挂起请求。
+namespace {
+// 无头帧驱动（pageId 固定，焦点/状态前缀随之固定；Ui 常驻故指针跨帧有效）
+struct FocusEnv {
+    core::dsl::Runtime rt;
+    eui::Ui* ui = nullptr;
+    template <typename Fn>
+    void frame(Fn&& body) {
+        rt.compose("mdfocus", 1600.0f, 1000.0f,
+                   [&](eui::Ui& u, const eui::Screen&) {
+                       ui = &u;
+                       body(u);
+                   });
+    }
+};
+} // namespace
+
+REGISTER_TEST(md_editor_focus_target_is_hit,
+              "markdown_module: 预览块点击后聚焦 md.editor.input.hit（M0 C1，headless）", {
+    const std::string text = "# T\n\npara one\npara two\n";
+    MdUiEnv env("focushit");
+    DOCTEST_REQUIRE(env.db != nullptr);
+    DOCTEST_REQUIRE(writeTextFile(env.dir / "focus.md", text));
+
+    std::unique_ptr<::core::Module> mod(create_markdown_module());
+    mod->onStart();
+
+    eui::Screen screen;
+    screen.width = 1600.0f;
+    screen.height = 1000.0f;
+    FocusEnv env2;
+    auto frame = [&] { env2.frame([&](eui::Ui& u) { mod->compose(u, screen); }); };
+
+    frame();
+    const auto* fileRow = env2.ui->find("md.tree.node.1.row");
+    DOCTEST_REQUIRE(fileRow != nullptr);
+    DOCTEST_REQUIRE(fileRow->onClick != nullptr);
+    fileRow->onClick();
+
+    // 进双栏态（预览块点击是双栏/预览通路）：循环推进，不依赖「按几次」
+    //（默认态与态序随版本演进，见 md_module_split_layout 同款写法）
+    eui::KeyEvent p;
+    p.key = eui::InputKey::P;
+    p.modifiers.control = true;
+    p.modifiers.shift = true;
+    auto inSplit = [&] {
+        return env2.ui->find("md.editor.input") != nullptr &&
+               env2.ui->find("md.preview.blk.0.hit") != nullptr;
+    };
+    for (int i = 0; i < 4 && !inSplit(); ++i) {
+        DOCTEST_REQUIRE(mod->onKeyEvent(p));
+        frame();
+    }
+    DOCTEST_REQUIRE(inSplit());
+    const auto* hit = env2.ui->find("md.preview.blk.0.hit");
+    DOCTEST_REQUIRE(hit != nullptr);
+    DOCTEST_REQUIRE(hit->onPress != nullptr);
+    DOCTEST_REQUIRE(hit->onRelease != nullptr);
+
+    // 点渲染块（mouseArea 的 onTap = onPress + onRelease，与既有用例同款驱动）
+    eui::Rect bounds(0.0, 0.0, 100.0, 100.0);
+    eui::PointerEvent down;
+    down.action = eui::PointerAction::Press;
+    down.button = eui::PointerButton::Left;
+    down.x = 50.0;
+    down.y = 0.0;
+    eui::PointerEvent up;
+    up.action = eui::PointerAction::Release;
+    up.button = eui::PointerButton::Left;
+    up.x = 50.0;
+    up.y = 0.0;
+    hit->onPress(down, bounds);
+    hit->onRelease(up, bounds);
+    frame();  // 帧末消费 requestFocus → focusedId_ 本帧更新
+    DOCTEST_CHECK(env2.ui->isFocused("md.editor.input.hit"));
+    // 反向观测：基 id 不是聚焦目标（修复前发基 id，本行会红）
+    DOCTEST_CHECK_FALSE(env2.ui->isFocused("md.editor.input"));
+    // 组件按「本帧收到的 focused」画 caret/边框 → 焦点生效的观感在次帧出现
+    //（M0 V1：requestFocus 帧末消费，≈16ms 延迟）
+    frame();
+    DOCTEST_CHECK(env2.ui->isFocused("md.editor.input.hit"));
+    // 用户可见后果：组件判定聚焦 → 画 caret
+    DOCTEST_CHECK(env2.ui->find("md.editor.input.cursor") != nullptr);
 
     mod->onStop();
     return true;
