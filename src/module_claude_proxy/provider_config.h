@@ -55,6 +55,18 @@ core::Result<std::string> serializeExtraEnv(
 core::Result<std::map<std::string, std::string>> parseExtraEnv(
     const std::string& json);
 
+// ---- 认证字段（鉴权头三态；2026-09-27 profile-auth-field 设计 §3/§4）----
+// both    = 双发 x-api-key + Authorization: Bearer（默认，两种网关都兼容）
+// bearer  = 只发 Authorization: Bearer
+// api_key = 只发 x-api-key
+enum class AuthField { Both, Bearer, ApiKey };
+
+// 文本 → 枚举：'bearer' / 'api_key' / 其余（'both'、未知、空串）→ Both（设计 D-8 读侧兜底）
+AuthField authFieldFromText(const std::string& text);
+
+// 枚举 → 文本：规范值（写侧规范化用，保证库里只有三个规范值之一）
+const char* authFieldToText(AuthField field);
+
 // 旧数据兼容读取（§4.2）：
 //   - models_config 为空串 / 非法 JSON → 全空槽位（读路径容错，不炸）
 //   - default 槽位为空且旧 model 列非空 → 旧值填入 default 槽位（fallback）
@@ -86,6 +98,10 @@ struct ImportedConfig {
     std::vector<std::string> unrecognizedKeys;    // 警告角标（透传，行为自负）
     std::vector<std::string> warnings;            // 其他警告（API_KEY/AUTH_TOKEN 同现等）
     int recognizedSlots = 0;  // 预览用：model 非空的槽位数
+    // 粘贴里两个键名的证据（设计 §5）：'api_key'（只出现 ANTHROPIC_API_KEY）/
+    // 'bearer'（只出现 ANTHROPIC_AUTH_TOKEN）/ 'both'（同现）/ ""（都没出现
+    // = 无证据，UI 不覆盖表单现值）
+    std::string authFieldFromEnv;
     // 反向同步（§3.3 守卫表）专用：命中守卫而跳过的键名（含别名归一后的键名
     // 与 G2 联动跳过的 token 键）——语义是「不写也不清」。mergeReverseSyncEnv
     // 靠它区分 G5「键缺席（清空）」与 G1–G4/G6「跳过（保持 profile 原值）」；

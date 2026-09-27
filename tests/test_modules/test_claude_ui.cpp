@@ -1984,3 +1984,201 @@ REGISTER_TEST(claude_module_takeover_warn_summary,
     mod->onStop();
     return true;
 })
+
+// ---- 认证字段下拉（鉴权头三态 UI；2026-09-27 profile-auth-field 设计 §6）----
+
+REGISTER_TEST(claude_ui_form_auth_field_dropdown_exists,
+              "claude_module: 表单基础页认证字段下拉渲染（无服务不崩）", {
+    module::claude::ClaudeService::setGlobal(nullptr);   // 保险：确保干净起点
+    std::unique_ptr<::core::Module> mod(create_claude_module());
+    eui::Screen screen;
+    screen.width = 1600.0f;
+    screen.height = 1000.0f;
+    auto compose = [&](eui::Ui& ui, const char* tag) {
+        ui.begin(tag);
+        mod->compose(ui, screen);
+        ui.end();
+    };
+    auto click = [](eui::Ui& ui, const std::string& id) -> bool {
+        const auto* node = ui.find(id);
+        if (node == nullptr || node->onClick == nullptr) {
+            std::cerr << "missing clickable: " << id << std::endl;
+            return false;
+        }
+        node->onClick();
+        return true;
+    };
+
+    {
+        eui::Ui ui;
+        compose(ui, "authfield_ns1");
+        DOCTEST_CHECK(click(ui, "claude.profiles.new.bg"));
+    }
+    {
+        eui::Ui ui;
+        compose(ui, "authfield_ns2");
+        DOCTEST_CHECK(ui.find("claude.form.basic.authfield.label") != nullptr);
+        DOCTEST_CHECK(ui.find("claude.form.basic.authfield.hint") != nullptr);
+        DOCTEST_CHECK(ui.find("claude.form.basic.authfield.ddwrap") != nullptr);
+        DOCTEST_CHECK(ui.find("claude.dialog.form.authfield.dd") != nullptr);
+        // 默认选中第 0 项（双发）
+        const auto* label = ui.find("claude.dialog.form.authfield.dd.label");
+        DOCTEST_REQUIRE(label != nullptr);
+        DOCTEST_CHECK_EQ(label->text, std::string("双发（默认）"));
+    }
+
+    mod->onStop();
+    return true;
+})
+
+REGISTER_TEST(claude_ui_auth_field_create_persists,
+              "claude_module: 新建表单选「只发 x-api-key」保存后落库", {
+    TestEnv env;
+    std::unique_ptr<::core::Module> mod(create_claude_module());
+    eui::Screen screen;
+    screen.width = 1600.0f;
+    screen.height = 1000.0f;
+    auto compose = [&](eui::Ui& ui, const char* tag) {
+        ui.begin(tag);
+        mod->compose(ui, screen);
+        ui.end();
+    };
+    auto click = [](eui::Ui& ui, const std::string& id) -> bool {
+        const auto* node = ui.find(id);
+        if (node == nullptr || node->onClick == nullptr) {
+            std::cerr << "missing clickable: " << id << std::endl;
+            return false;
+        }
+        node->onClick();
+        return true;
+    };
+    auto type = [](eui::Ui& ui, const std::string& id,
+                   const std::string& txt) -> bool {
+        const auto* node = ui.find(id);
+        if (node == nullptr || node->onTextInput == nullptr) {
+            std::cerr << "missing input: " << id << std::endl;
+            return false;
+        }
+        core::TextInputEvent ev;
+        ev.text = txt;
+        node->onTextInput(ev);
+        return true;
+    };
+
+    // 新建表单 → 填名称 / URL / Key
+    {
+        eui::Ui ui;
+        compose(ui, "authfield_c1");
+        DOCTEST_CHECK(click(ui, "claude.profiles.new.bg"));
+    }
+    {
+        eui::Ui ui;
+        compose(ui, "authfield_c2");
+        DOCTEST_CHECK(type(ui, "claude.dialog.form.name.hit", "认证字段建档"));
+        DOCTEST_CHECK(type(ui, "claude.dialog.form.url.hit",
+                           "https://af.example.com"));
+        DOCTEST_CHECK(type(ui, "claude.dialog.form.key.hit", "sk-ant-af-00001"));
+    }
+    // 下拉：打开 → 选 index 2（只发 x-api-key）
+    {
+        eui::Ui ui;
+        compose(ui, "authfield_c3");
+        DOCTEST_CHECK(click(ui, "claude.dialog.form.authfield.dd.field"));
+    }
+    {
+        eui::Ui ui;
+        compose(ui, "authfield_c4");
+        DOCTEST_CHECK(ui.find("claude.dialog.form.authfield.dd.item.2") != nullptr);
+        DOCTEST_CHECK(click(ui, "claude.dialog.form.authfield.dd.item.2"));
+    }
+    // 选中回显 → 保存
+    {
+        eui::Ui ui;
+        compose(ui, "authfield_c5");
+        const auto* label = ui.find("claude.dialog.form.authfield.dd.label");
+        DOCTEST_REQUIRE(label != nullptr);
+        DOCTEST_CHECK_EQ(label->text, std::string("只发 x-api-key"));
+        DOCTEST_CHECK(click(ui, "claude.dialog.form.confirm.bg"));
+    }
+    // DB 断言：新建路径把表单选择传进了 createProfile（落库 = api_key）
+    {
+        auto list = env.svc->listProfiles();
+        DOCTEST_REQUIRE(list.isOk());
+        DOCTEST_REQUIRE_EQ(list.value().size(), 1u);
+        DOCTEST_CHECK_EQ(list.value()[0].name, std::string("认证字段建档"));
+        DOCTEST_CHECK_EQ(list.value()[0].authField, std::string("api_key"));
+        // 首建自动激活 → 代理转发主路径（getActiveProfile）也必须读到
+        auto act = env.svc->getActiveProfile();
+        DOCTEST_REQUIRE(act.isOk());
+        DOCTEST_CHECK_EQ(act.value().authField, std::string("api_key"));
+        cleanupKey(list.value()[0].id);
+    }
+
+    mod->onStop();
+    return true;
+})
+
+REGISTER_TEST(claude_ui_auth_field_edit_shows_current,
+              "claude_module: 编辑 api_key 的 profile 下拉回显当前值", {
+    TestEnv env;
+    auto a = env.svc->createProfile("回显", "https://af-edit.example.com",
+                                    "sk-ant-afe-00001", "m",
+                                    /*activateIfNoneActive=*/false,
+                                    /*sharedConfigId=*/0, "api_key");
+    DOCTEST_REQUIRE(a.isOk());
+
+    std::unique_ptr<::core::Module> mod(create_claude_module());
+    eui::Screen screen;
+    screen.width = 1600.0f;
+    screen.height = 1000.0f;
+    auto compose = [&](eui::Ui& ui, const char* tag) {
+        ui.begin(tag);
+        mod->compose(ui, screen);
+        ui.end();
+    };
+    auto click = [](eui::Ui& ui, const std::string& id) -> bool {
+        const auto* node = ui.find(id);
+        if (node == nullptr || node->onClick == nullptr) {
+            std::cerr << "missing clickable: " << id << std::endl;
+            return false;
+        }
+        node->onClick();
+        return true;
+    };
+
+    // 选中卡片 → 点「编辑」
+    {
+        eui::Ui ui;
+        compose(ui, "authfield_e1");
+        DOCTEST_CHECK(click(ui, "claude.profile.0.bg"));
+    }
+    {
+        eui::Ui ui;
+        compose(ui, "authfield_e2");
+        DOCTEST_CHECK(click(ui, "claude.act.edit.bg"));
+    }
+    // 回显 = index 2（只发 x-api-key），而非默认的「双发」
+    {
+        eui::Ui ui;
+        compose(ui, "authfield_e3");
+        const auto* label = ui.find("claude.dialog.form.authfield.dd.label");
+        DOCTEST_REQUIRE(label != nullptr);
+        DOCTEST_CHECK_EQ(label->text, std::string("只发 x-api-key"));
+    }
+
+    // 保存后仍是 api_key（编辑路径写 p.authField）
+    {
+        eui::Ui ui;
+        compose(ui, "authfield_e4");
+        DOCTEST_CHECK(click(ui, "claude.dialog.form.confirm.bg"));
+    }
+    {
+        auto g = env.svc->getProfile(a.value().id);
+        DOCTEST_REQUIRE(g.isOk());
+        DOCTEST_CHECK_EQ(g.value().authField, std::string("api_key"));
+        cleanupKey(a.value().id);
+    }
+
+    mod->onStop();
+    return true;
+})

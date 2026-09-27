@@ -206,8 +206,8 @@ REGISTER_TEST(migrate_call_logs_usage_columns,
         DOCTEST_REQUIRE(r.isOk());
         DOCTEST_REQUIRE(r.value().migrate().isOk());
         auto& db = r.value().db();
-        // v6（共享配置片段）已执行：全量迁移后 schema_version = 6
-        DOCTEST_CHECK_EQ(db.schemaVersion(), 6);
+        // v7（认证字段）已执行：全量迁移后 schema_version = 7
+        DOCTEST_CHECK_EQ(db.schemaVersion(), 7);
 
         auto prep = db.prepare(
             "SELECT status_code, latency_ms, request_bytes, response_bytes, "
@@ -282,13 +282,13 @@ REGISTER_TEST(migrate_shared_configs_v6,
                             .isOk());
     } // 句柄关闭（Windows 文件锁）
 
-    // 重新打开 + 全量 migrate → v6 建表 + 加列
+    // 重新打开 + 全量 migrate → v6 建表 + 加列（v7 认证字段一并执行）
     {
         auto r = core::Database::open(path);
         DOCTEST_REQUIRE(r.isOk());
         DOCTEST_REQUIRE(r.value().migrate().isOk());
         auto& db = r.value().db();
-        DOCTEST_CHECK_EQ(db.schemaVersion(), 6);
+        DOCTEST_CHECK_EQ(db.schemaVersion(), 7);
 
         // 新表存在且可插入片段行
         DOCTEST_REQUIRE(db.exec(
@@ -303,6 +303,14 @@ REGISTER_TEST(migrate_shared_configs_v6,
         auto rows = q.value().fetchAll();
         DOCTEST_REQUIRE_EQ(rows.value().size(), 1u);
         DOCTEST_CHECK_EQ(rows.value()[0].getInt64("shared_config_id").value(), 0);
+        // v7 认证字段：存量行零迁移 → 默认 'both'
+        auto afQ = db.prepare(
+            "SELECT auth_field FROM claude_profiles WHERE id = 1");
+        DOCTEST_REQUIRE(afQ.isOk());
+        auto afRows = afQ.value().fetchAll();
+        DOCTEST_REQUIRE_EQ(afRows.value().size(), 1u);
+        DOCTEST_CHECK_EQ(afRows.value()[0].getString("auth_field").value(),
+                         std::string("both"));
 
         // 绑定可用（service 层 UPDATE 依赖该列存在）
         DOCTEST_REQUIRE(db.exec(

@@ -329,7 +329,8 @@ sendStreamingClaude(const platform::http::Request& req,
     // 2. 按上游方言归一（鉴权头 / UA / 会话头 / 模型名标记）——
     //    各网关差异全部收敛在 UpstreamDialect 里，此处不再有 provider if
     const UpstreamDialect dialect = UpstreamDialect::forBaseUrl(profile.baseUrl);
-    dialect.applyHeaders(upstream.headers, profile.apiKeyPlain);
+    dialect.applyHeaders(upstream.headers, profile.apiKeyPlain,
+                         authFieldFromText(profile.authField));
     if (dialect.normalizeBody(upstream.body)) {
         LOG_INFO("流式代理：按上游方言剥掉模型名 [1M] 标记（" + profile.baseUrl + "）");
     }

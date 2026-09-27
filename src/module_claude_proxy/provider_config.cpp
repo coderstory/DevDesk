@@ -226,6 +226,21 @@ EnvAliasMapping applyEnvAliases(const std::map<std::string, std::string>& env) {
     return out;
 }
 
+AuthField authFieldFromText(const std::string& text) {
+    if (text == "bearer") return AuthField::Bearer;
+    if (text == "api_key") return AuthField::ApiKey;
+    return AuthField::Both;   // 'both' / 未知 / 空串
+}
+
+const char* authFieldToText(AuthField field) {
+    switch (field) {
+        case AuthField::Bearer: return "bearer";
+        case AuthField::ApiKey: return "api_key";
+        case AuthField::Both: break;
+    }
+    return "both";
+}
+
 core::Result<ImportedConfig> parseImportedEnv(const std::string& text) {
     ImportedConfig out;
     if (isBlankText(text)) {
@@ -338,6 +353,15 @@ core::Result<ImportedConfig> parseImportedEnv(const std::string& text) {
     if (sawApiKey && sawAuthToken) {
         out.warnings.push_back(
             "同时含 ANTHROPIC_API_KEY 与 ANTHROPIC_AUTH_TOKEN，已采用 AUTH_TOKEN");
+    }
+
+    // 认证字段证据（设计 §5）：键名 = 该配置原本以哪种形态发送且可用
+    if (sawApiKey && sawAuthToken) {
+        out.authFieldFromEnv = "both";
+    } else if (sawApiKey) {
+        out.authFieldFromEnv = "api_key";
+    } else if (sawAuthToken) {
+        out.authFieldFromEnv = "bearer";
     }
 
     // 其余键走别名归一（§4.3 规则 6）：别名映射 + 未识别键警告

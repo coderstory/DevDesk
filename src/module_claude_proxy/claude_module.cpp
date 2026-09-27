@@ -77,6 +77,11 @@ constexpr int kCallsStatusCount = 6;
 // 日志弹窗每页条数（审计 [11]；总设计只承诺「过滤、搜索」，条数由 UI 自定）
 constexpr int kCallsPageSize = 20;
 
+// 认证字段下拉选项（**顺序必须与 AuthField 枚举声明一致**：Both/Bearer/ApiKey）
+constexpr const char* kAuthFieldLabels[] = {
+    "双发（默认）", "只发 Authorization: Bearer", "只发 x-api-key"};
+constexpr int kAuthFieldCount = 3;
+
 // 模型映射摘要（§6.2 详情面板一行式）：「默认 <model> · 槽位已配 N/6」
 std::string modelsSummary(const Profile& p) {
     const ModelsConfig mc = effectiveModelsConfig(p.modelsConfigJson, p.model);
@@ -1368,6 +1373,8 @@ private:
         formImportWarn_.clear();
         formModels_ = ModelsConfig{};
         formEnvRows_.clear();
+        formAuthField_ = AuthField::Both;
+        formAuthFieldOpen_ = false;
         resetImportState();
         formOpen_ = true;
     }
@@ -1383,6 +1390,9 @@ private:
         formImportWarn_.clear();
         // 槽位：models_config + 旧 model 列 fallback（§4.2 兼容读取）
         formModels_ = effectiveModelsConfig(p.modelsConfigJson, p.model);
+        // 认证字段：编辑必须回显当前值（否则用户以为看到的是默认值，一保存就坐实覆盖）
+        formAuthField_ = authFieldFromText(p.authField);
+        formAuthFieldOpen_ = false;
         // env 行：非法 JSON 读路径容错为空表（不炸）
         formEnvRows_.clear();
         auto ee = parseExtraEnv(p.extraEnvJson);
@@ -1443,6 +1453,10 @@ private:
                 }
             }
             if (!replaced) formEnvRows_.emplace_back(k, v);
+        }
+        // 认证字段：按键名证据填（空串 = 无证据，不覆盖表单现值；设计 §5）
+        if (!importPreview_.authFieldFromEnv.empty()) {
+            formAuthField_ = authFieldFromText(importPreview_.authFieldFromEnv);
         }
         importReady_ = false;
         importText_.clear();
@@ -1568,7 +1582,9 @@ private:
             // 产品审计 2026-09-23 [6]：activateIfNoneActive=true——当前无激活
             // Profile 时 service 层自动激活这条（首次体验闭环）；已有激活则不抢占
             auto r = svc->createProfile(formName_, formUrl_, formKey_,
-                                        formModels_.def.model, /*activateIfNoneActive=*/true);
+                                        formModels_.def.model, /*activateIfNoneActive=*/true,
+                                        /*sharedConfigId=*/0,
+                                        authFieldToText(formAuthField_));
             if (r.isFail()) {
                 formError_ = r.errorMessage();
                 return;
@@ -1614,6 +1630,7 @@ private:
             p.modelsConfigJson = modelsJson;
             p.extraEnvJson = envJson;
             p.apiKeyPlain = formKey_;   // 空 = 不换 key
+            p.authField = authFieldToText(formAuthField_);
             auto r = svc->updateProfile(p);
             if (r.isFail()) {
                 formError_ = r.errorMessage();
@@ -1670,19 +1687,51 @@ private:
             .onCancel([this] { formOpen_ = false; })  // 审计 [21]：Esc=取消
             .build();
 
+        // 认证字段（鉴权头三态；2026-09-27 profile-auth-field 设计 §6）：
+        // 标签与灰字说明同行，下拉紧随其后；其下三块（副提示/错误/接管警告）
+        // 整体下移 64px 让位
+        ui.text("claude.form.basic.authfield.label")
+            .position(28.0f, 314.0f).size(72.0f, 16.0f)
+            .text("认证字段").fontSize(11.0f).lineHeight(16.0f)
+            .color(t.colors.textTertiary).build();
+        ui.text("claude.form.basic.authfield.hint")
+            .position(104.0f, 314.0f).size(w - 132.0f, 16.0f)
+            .text("网关只接受一种鉴权头时切换；默认两种都发")
+            .fontSize(11.0f).lineHeight(16.0f)
+            .color(t.colors.textTertiary).build();
+        ui.stack("claude.form.basic.authfield.ddwrap")
+            .position(28.0f, 332.0f)
+            .size(w - 56.0f, 40.0f)
+            .content([&] {
+                components::dropdown(ui, "claude.dialog.form.authfield.dd")
+                    .size(w - 56.0f, 40.0f)
+                    .theme(themeTokens)
+                    .items(std::vector<std::string>(
+                        kAuthFieldLabels, kAuthFieldLabels + kAuthFieldCount))
+                    .selected(static_cast<int>(formAuthField_))
+                    .open(formAuthFieldOpen_)
+                    .onOpenChange([this](bool v) { formAuthFieldOpen_ = v; })
+                    .onChange([this](int idx) {
+                        formAuthField_ = static_cast<AuthField>(
+                            std::clamp(idx, 0, kAuthFieldCount - 1));
+                    })
+                    .build();
+            })
+            .build();
+
         ui.text("claude.form.basic.hint.icon")
-            .position(28.0f, 316.0f).size(14.0f, 18.0f)
+            .position(28.0f, 380.0f).size(14.0f, 18.0f)
             .icon(0xF05A).fontSize(12.0f).lineHeight(18.0f)
             .color(t.colors.textTertiary).build();
         ui.text("claude.form.basic.hint")
-            .position(46.0f, 316.0f).size(w - 74.0f, 18.0f)
+            .position(46.0f, 380.0f).size(w - 74.0f, 18.0f)
             .text("模型映射和高级 env 在另外两个标签页配置")
             .fontSize(12.0f).lineHeight(18.0f)
             .color(t.colors.textTertiary).build();
 
         if (!formError_.empty()) {
             ui.text("claude.dialog.form.error")
-                .position(28.0f, 340.0f).size(w - 56.0f, 18.0f)
+                .position(28.0f, 404.0f).size(w - 56.0f, 18.0f)
                 .text(formError_).fontSize(12.0f).lineHeight(18.0f)
                 .color(t.colors.error).build();
         }
@@ -1690,11 +1739,11 @@ private:
         // 「导入当前配置」接管态警告（不阻断，仅提示；⚠ 图标 + 文字两元素）
         if (!formImportWarn_.empty()) {
             ui.text("claude.dialog.form.importwarn.icon")
-                .position(28.0f, 362.0f).size(14.0f, 18.0f)
+                .position(28.0f, 426.0f).size(14.0f, 18.0f)
                 .icon(0xF071).fontSize(12.0f).lineHeight(18.0f)
                 .color(t.colors.warning).build();
             ui.text("claude.dialog.form.importwarn")
-                .position(46.0f, 362.0f).size(w - 74.0f, 36.0f)
+                .position(46.0f, 426.0f).size(w - 74.0f, 36.0f)
                 .text(formImportWarn_).fontSize(12.0f).lineHeight(18.0f)
                 .color(t.colors.warning).build();
         }
@@ -2571,6 +2620,8 @@ private:
     std::string formKeyHint_;  // 编辑时显示现有 key 脱敏提示
     std::string formError_;
     std::string formImportWarn_;  // 导入当前配置的接管态警告（弹窗内展示，不阻断）
+    AuthField formAuthField_ = AuthField::Both;  // 认证字段（鉴权头三态）
+    bool formAuthFieldOpen_ = false;             // 下拉展开态
     ModelsConfig formModels_;  // 6 槽位（默认模型 = def 槽位，旧 formModel_ 并入）
     std::vector<std::pair<std::string, std::string>> formEnvRows_;  // env 键值行
 
