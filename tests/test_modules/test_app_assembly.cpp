@@ -8,6 +8,7 @@
 //      创建 + setGlobal）严格早于一切模块 onStart（W3 的结构性保证）
 //   3. 退出接线：atexit 只挂一次（armExitHook 幂等）、handler 真的触发 stopAll
 //   4. dispatchFileOpen / pageForTrayAction 既有语义（映射表 + 负载/降级路径）
+//   5. captureOpenFileFromArgv 直测（argv 接缝：有路径 / flag / 幂等；F 残留 ②）
 // 注：门控**语义**（enabledModules 配置 / moduleEnabled 谓词）已由
 // test_module_gating 覆盖，这里只测**接线**，不重复它的断言。
 #include "doctest.h"
@@ -303,5 +304,39 @@ REGISTER_TEST(assembly_dispatch_and_tray_mapping,
     app::assembly::dispatchFileOpen(nullptr, (notesDir / "note.md").string(), notesDir);
 
     std::filesystem::remove_all(notesDir, ec);
+    return true;
+})
+
+REGISTER_TEST(assembly_capture_open_file_from_argv,
+              "assembly: argv 捕获直测 captureOpenFileFromArgv（有路径→pending+目标页 / flag→不写 / 幂等，F 残留 ②）", {
+    using app::assembly::captureOpenFileFromArgv;
+    using app::assembly::pendingOpenFilePath;
+    using app::assembly::resetArgvCaptureForTest;
+
+    // ---- 1. 无文件参数（只有 exe）→ 不写 pending ----
+    resetArgvCaptureForTest();
+    pendingOpenFilePath().clear();
+    captureOpenFileFromArgv({"devdesk.exe"});
+    DOCTEST_CHECK(pendingOpenFilePath().empty());
+
+    // ---- 2. flag 参数（'-' 开头）→ 不写 pending ----
+    resetArgvCaptureForTest();
+    captureOpenFileFromArgv({"devdesk.exe", "--update"});
+    DOCTEST_CHECK(pendingOpenFilePath().empty());
+
+    // ---- 3. 有文件路径 → 写入 pending，且由它推出的目标页正确 ----
+    resetArgvCaptureForTest();
+    captureOpenFileFromArgv({"devdesk.exe", "note.md"});
+    DOCTEST_CHECK_EQ(pendingOpenFilePath(), std::string("note.md"));
+    DOCTEST_CHECK(app::assembly::dispatchPageForFile(pendingOpenFilePath()) ==
+                  ::core::PageId::Markdown);
+
+    // ---- 4. 幂等：重复调用只捕获一次（第二次的路径不覆盖已捕获值）----
+    captureOpenFileFromArgv({"devdesk.exe", "other.md"});
+    DOCTEST_CHECK_EQ(pendingOpenFilePath(), std::string("note.md"));
+
+    // 收尾：不留进程级状态（pending 会被真实启动分发读取）
+    resetArgvCaptureForTest();
+    pendingOpenFilePath().clear();
     return true;
 })

@@ -76,6 +76,16 @@ std::string& pendingOpenFilePath();
 // 否则 LOG_INFO 会丢失）。平台差异在 platform/file_open_* 内隔离
 void captureOpenFileFromArgv();
 
+// 测试缝（审计 2026-09-27 F 残留 ②：本函数会消费测试进程自身 argv 并写进程级
+// pending，无法直测）：argv 来源参数化——传「已解码为 UTF-8 的 argv 数组」
+//（argv[0] = exe）。选择逻辑与生产同源（platform::file_open::selectOpenFileArg：
+// 取 argv[1]、跳过 '-' 开头的 flag），幂等门与上方无参版本共用。
+// main.cpp 只走无参版本，本重载仅供单测直接驱动捕获语义。
+void captureOpenFileFromArgv(const std::vector<std::string>& utf8Args);
+
+// 测试缝：复位「已捕获」门（幂等状态是进程级的，单测需逐个用例独立驱动）
+void resetArgvCaptureForTest();
+
 // ---- 文件打开分发（原 main.cpp dispatchPageForFile / dispatchFileOpen）----
 
 // 根据文件扩展名返回目标 PageId（仅作目标选择；内容加载由 dispatchFileOpen
