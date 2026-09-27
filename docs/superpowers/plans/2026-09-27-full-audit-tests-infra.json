@@ -1,0 +1,244 @@
+{
+  "area": "tests-infra",
+  "baseline_sha": "7e86964",
+  "scope": "tests/**（doctest.h / test_main.cpp / test_core / test_modules / test_platform）+ scripts/** 里与测试/构建/一致性检查相关的部分",
+  "method": "只读：静态阅读 + grep 取证；未跑构建/测试/app（禁跑），涉及运行行为的结论均标为存疑",
+  "findings": [
+    {
+      "id": "TIN-01",
+      "severity": "high",
+      "lens": "arch",
+      "kind": "architecture",
+      "title": "模块隔离靠读源码文本做 grep 断言，并把当前耦合（settings→claude_service.h）钉成不变量",
+      "evidence": [
+        {"file": "tests/test_modules/test_settings.cpp", "symbol": "settings_module_isolation_guard", "line": 1733},
+        {"file": "tests/test_modules/test_settings.cpp", "symbol": "readWholeFile(root/\"src/module_settings/settings_module.cpp\")", "line": 1741},
+        {"file": "tests/test_modules/test_settings.cpp", "symbol": "CHECK(src.find(\"module_pet/\") == npos)", "line": 1744},
+        {"file": "tests/test_modules/test_settings.cpp", "symbol": "CHECK(src.find(\"#include \\\"claude_service.h\\\"\") != npos)", "line": 1762},
+        {"file": "tests/test_modules/test_settings.cpp", "symbol": "findRepoRoot()（靠 __FILE__ 与 cwd 逐级上溯）", "line": 1708},
+        {"file": "tests/test_modules/test_settings.cpp", "symbol": "readWholeFile(root/\"src/module_settings/CMakeLists.txt\") 逐行扫文本", "line": 1765}
+      ],
+      "impact": "断言对象是源码文本不是行为：注释里出现 module_pet/ 就误红，删注释就误绿（子串语义与 include 语义不等价）；1762 这条正向断言把 settings 直调 ClaudeService 的耦合写成必须存在，而 R0（在飞：跨模块耦合消解）落地删掉该 include 时此用例必红，会被当成回归而不是预期；findRepoRoot 依赖源码树在场并按 cwd 上溯，仅 build 目录/打包环境会退化成 REQUIRE 失败而非有意义的结果；CMakeLists 文本扫描同理（注释被放行、行重排即误判）。",
+      "check": "grep -n 'readWholeFile(root' tests/test_modules/test_settings.cpp ；再注释掉 src/module_settings/settings_module.cpp 里的 #include \"claude_service.h\" 后跑 ./build/tests/devdesk_tests.exe settings → 该用例变红（证明它锁文本不锁行为）",
+      "suggested_fix": "把两条静态约束移出单测，改成 scripts/check-module-isolation.sh（构建期/CI 检查，失败退非 0，可自由 grep 源码文本）；单测只留行为断言。若坚持留在单测，至少删掉 1762 这条正向断言。",
+      "already_registered": false,
+      "registered_ref": ""
+    },
+    {
+      "id": "TIN-02",
+      "severity": "high",
+      "lens": "test",
+      "kind": "maintainability",
+      "title": "worktree 隔离被机器级共享资源击穿：脚本杀全机同名进程 + 用例临时路径全是 %TEMP% 固定名",
+      "evidence": [
+        {"file": "scripts/build-test-run.sh", "symbol": "taskkill -F -IM devdesk_tests.exe / DevDesk.exe（默认 RUN_APP=1 即执行）", "line": 35},
+        {"file": "tests/test_modules/test_app_assembly.cpp", "symbol": "tempNotesDir() → %TEMP%/devdesk_test_assembly_notes", "line": 141},
+        {"file": "tests/test_modules/test_settings.cpp", "symbol": "tempConfigFile() → %TEMP%/devdesk_test_settings_<name>.json", "line": 51},
+        {"file": "tests/test_modules/test_theme_hierarchy.cpp", "symbol": "%TEMP%/devdesk_hier_md（无进程唯一后缀）", "line": 178},
+        {"file": "tests/test_core/test_sqlite.cpp", "symbol": "%TEMP%/devdesk_test.db", "line": 18},
+        {"file": "tests/test_modules/test_pet.cpp", "symbol": "%TEMP%/devdesk_test_pet_config.json", "line": 299},
+        {"file": "tests/test_modules/test_todo_ui.cpp", "symbol": "%TEMP%/devdesk_test_todo_retry.db", "line": 890}
+      ],
+      "impact": "仓库既定工作方式是并发多 worktree（并发上限 7、构建/测试类子任务强制 worktree 隔离），但隔离只隔离了工作树、没隔离机器级资源：一个会话启动脚本会 taskkill 掉另一个会话正在跑的 devdesk_tests.exe（结果被记成测试失败）或正在被点验的 DevDesk.exe；两套 ctest 并发时固定名临时 DB/笔记目录互相 remove_all 与覆写，产生随机红——表象与已登记的 editor_font/theme_hierarchy 视图态 flake 相同，归因成本极高。部分助手用 static counter 唯一化（test_md_highlight.cpp:100、test_theme_hierarchy.cpp:68），但计数每进程从 0 起，跨进程仍撞名。",
+      "check": "grep -rn 'temp_directory_path()' tests/ | grep -v getpid | wc -l（固定名站点数）；两个 worktree 同时跑 bash scripts/build-test-run.sh --no-run，观察一方 devdesk_tests.exe 被另一方 kill",
+      "suggested_fix": "临时名统一加进程唯一后缀（一行 _getpid()/随机数，或每进程独立 TMPDIR）；脚本 taskkill 前比对自己 build 出的 exe 路径或写 pidfile，只杀自己启动的进程。",
+      "already_registered": false,
+      "registered_ref": ""
+    },
+    {
+      "id": "TIN-03",
+      "severity": "medium",
+      "lens": "test",
+      "kind": "correctness",
+      "title": "运行器统计口径三处失真：0 用例命中=退出码 0 且脚本判「全绿」、[SKIP] 计入 Passed、filter 参数无防护",
+      "evidence": [
+        {"file": "tests/test_main.cpp", "symbol": "main()：过滤后 total==0 仍走 return failed == 0 ? 0 : 1", "line": 128},
+        {"file": "scripts/build-test-run.sh", "symbol": "*) FILTER=\"$arg\"（未知开关静默降级成过滤器）", "line": 27},
+        {"file": "scripts/build-test-run.sh", "symbol": "grep -q \"Failed: 0\" → 打印「✅ 测试全绿」", "line": 66},
+        {"file": "scripts/build-test-run.sh", "symbol": "./build/tests/devdesk_tests.exe $FILTER（未加引号，含空格/通配即分词）", "line": 61},
+        {"file": "tests/test_modules/test_streaming_stress.cpp", "symbol": "soak 300s：DEVDESK_SOAK 未设时打印 [SKIP] 后 return true（计入 Passed）", "line": 884},
+        {"file": "tests/test_modules/test_markdown_service.cpp", "symbol": "stub 平台 [SKIP] 后直接通过", "line": 850}
+      ],
+      "impact": "「未运行测试 = 未完成」的纪律可被工具静默绕过：--no-run 误拼成 --no_run 会变成过滤器，Total: 0 / Passed: 0 / Failed: 0 仍输出 ✅ 测试全绿、退出码 0；同理 filter 关键词打错一次就得到一次假绿。缺省套件里 [SKIP] 的 soak 300s、Windows-only 内存采样、stub 平台用例都计入 Passed，使文档里「530/530 全绿」无法自证覆盖范围；`$FILTER` 未加引号，含空格或通配的关键词会被分词成多个参数。",
+      "check": "./build/tests/devdesk_tests.exe zzz_no_such_case; echo $? → 当前为 0；bash scripts/build-test-run.sh --no_run → 观察仍打印 ✅ 测试全绿",
+      "suggested_fix": "main() 在 total==0 时打印 [WARN] 0 用例命中并返回非 0；脚本判绿条件改为 total>0 && failed==0；参数只接受白名单开关、$FILTER 加引号；harness 加 DOCTEST_SKIP() 单独计数并在 Summary 打 Skipped 行。",
+      "already_registered": false,
+      "registered_ref": ""
+    },
+    {
+      "id": "TIN-04",
+      "severity": "medium",
+      "lens": "test",
+      "kind": "maintainability",
+      "title": "墙钟红线同类残留两处（去 flake 那批只删了 md_highlight / md_preview_highlight 的绝对阈值）",
+      "evidence": [
+        {"file": "tests/test_modules/test_md_block_model.cpp", "symbol": "DOCTEST_CHECK_MESSAGE(warmUs < 8000, ...)（3MB 中文文档切块，8ms 绝对预算）", "line": 401},
+        {"file": "tests/test_modules/test_md_preview_highlight.cpp", "symbol": "DOCTEST_CHECK(hitMs / 100000.0 < computeMs)（时间派生断言）", "line": 331}
+      ],
+      "impact": "与 1fd57e8 刚刚删掉的两处（md_highlight `worst < 8.0`、md_preview_highlight `computeMs < 8.0`）完全同类：Debug 构建 + 多 worktree 并发编译负载下 8ms 绝对红线会随机翻红，而红一次必须人肉重跑整轮才能确认是负载而非回归。md_preview_highlight 已被该批改造过，但仍留了同源的相对时间断言（余量大，属同类残留）。",
+      "check": "grep -rn 'Us < \\|Ms < \\|/ 100000.0 <' tests/test_modules | head → 三处命中；构建机同时跑两条 ninja 观察该用例耗时抖动",
+      "suggested_fix": "照该批既定做法：printf 记录实测 ms + 换非时间断言（blocks 数、命中计数等）；最省是删断言、保留 printf 记录。",
+      "already_registered": false,
+      "registered_ref": ""
+    },
+    {
+      "id": "TIN-05",
+      "severity": "medium",
+      "lens": "test",
+      "kind": "maintainability",
+      "title": "文件头声明覆盖 trayMenuSpecFiltered，实际零用例（该函数是 main.cpp 的原生托盘降级路径）",
+      "evidence": [
+        {"file": "tests/test_modules/test_tray_dynamic.cpp", "symbol": "文件头把 item 2「trayMenuSpecFiltered(pred)：不可用项整体移除」列为该文件职责", "line": 6},
+        {"file": "tests/test_modules/test_tray_dynamic.cpp", "symbol": "文件内仅 2 个 REGISTER_TEST（:36 全可用基线、:54 toast 状态）", "line": 36},
+        {"file": "src/main.cpp", "symbol": "trayMenuSpecFiltered(trayNavAvailableFromConfig) 唯一调用点", "line": 378}
+      ],
+      "impact": "注释让人以为有护栏：「不可用项整体移除 + 全禁用时相邻分隔线合并」两条逻辑零覆盖，而它是模块门控在原生托盘上的唯一降级路径（模块关掉时菜单项怎么消失）。函数就在 core/tray_menu_spec.h 内联、headless 可测，补护栏成本仅 1 条用例；同属「main.cpp 装配线零测试」的余波（审计 M2 只搬走了 Router 装配）。",
+      "check": "grep -rn \"trayMenuSpecFiltered\" tests/ → 只命中注释，无断言",
+      "suggested_fix": "补一条 headless 用例：pred 全 false 时断言导航项被移除、剩余项顺序与下标连续、相邻分隔线合一且首尾无分隔线。",
+      "already_registered": false,
+      "registered_ref": ""
+    },
+    {
+      "id": "TIN-06",
+      "severity": "medium",
+      "lens": "test",
+      "kind": "pattern",
+      "title": "51 个用例文件零共享测试支撑头，同一 fixture 重写 3~7 份，环境隔离口径散落各处",
+      "evidence": [
+        {"file": "tests/test_modules/test_app_assembly.cpp", "symbol": "class ScopedAppRouter", "line": 80},
+        {"file": "tests/test_modules/test_app_sidebar.cpp", "symbol": "class ScopedAppRouter", "line": 53},
+        {"file": "tests/test_modules/test_module_gating.cpp", "symbol": "class ScopedAppRouter", "line": 56},
+        {"file": "tests/test_modules/test_markdown.cpp", "symbol": "struct RouterGuard（第四份，写在用例体内）", "line": 1409},
+        {"file": "tests/test_modules/test_provider_config.cpp", "symbol": "struct TestDb（4 份之一，另见 test_claude_service.cpp:45 / test_proxy_router.cpp:54 / test_settings_sync.cpp:127）", "line": 62},
+        {"file": "tests/test_modules/test_settings.cpp", "symbol": "void setEnvVar（7 份之一，注释自陈「与 test_markdown 同款」）", "line": 69}
+      ],
+      "impact": "哪些全局要复位、临时目录怎么隔离、临时 DB 怎么开——口径在 51 个文件里各写一份（tests/ 根目录除 doctest.h 外无任何共享头）；新用例只能靠抄，口径漂移的直接后果就是 TIN-07（框架级重置漏项）与历次 flake。TestEnv 有 5 份、TempDir 2 份、setEnvVar 7 份，同一语义多种入参签名（const char* / std::string）。",
+      "check": "grep -rn \"class ScopedAppRouter\\|struct ScopedAppRouter\\|struct TestDb\\|void setEnvVar\" tests/ | wc -l → 当前 13 处",
+      "suggested_fix": "新增 tests/test_support.h 收 EnvGuard / TempDir / ScopedAppRouter / TestDb 四件套，新用例一律用它；存量按触达渐进迁移，不做一次性大改。",
+      "already_registered": false,
+      "registered_ref": ""
+    },
+    {
+      "id": "TIN-07",
+      "severity": "medium",
+      "lens": "test",
+      "kind": "testability",
+      "title": "进程级全局靠「手工登记」清理：resetCaseGlobals 白名单漏掉日志级别 / ClaudeService 单例 / proxy_stats / appRouter",
+      "evidence": [
+        {"file": "tests/test_main.cpp", "symbol": "resetCaseGlobals()：只覆盖 core::theme 四项 + registerAppDatabase(nullptr) + 4 个 DEVDESK_* 环境变量", "line": 40},
+        {"file": "tests/test_core/test_logging.cpp", "symbol": "logging_no_crash 设 setLevel(Trace) 且不复位（fail-fast 提前 return 会跳过任何尾部恢复）", "line": 17},
+        {"file": "tests/test_modules/test_settings.cpp", "symbol": "core::log::setLevel(prev) 手工保存恢复", "line": 1694},
+        {"file": "tests/test_modules/test_claude_ui.cpp", "symbol": "ClaudeService::setGlobal(nullptr) 手工清（另 :66/:70 在 TestEnv 里成对设置）", "line": 165},
+        {"file": "tests/test_modules/test_home.cpp", "symbol": "core::proxy_stats::resetForTest() 由各用例自行调用", "line": 213},
+        {"file": "tests/doctest.h", "symbol": "断言失败即 return false（fail-fast 语义）", "line": 33}
+      ],
+      "impact": "框架级的「clean room」是一张手工维护的清单，每新增一个进程级全局就多一个静默跨用例泄漏点（本批刚把 g_console/g_level 改原子，仍不在清单里）；而 doctest.h 的 fail-fast 让「用例尾部恢复」结构性不可靠——test_main.cpp 的注释已经记录过这类 flake，只是漏项没补全。日志级别尤其明显：一个失败的 test_logging/test_settings 用例会让后续所有用例跑在 Trace/Debug 下。",
+      "check": "sed -n '40,66p' tests/test_main.cpp 对照 grep -rn \"resetForTest\\|setGlobal(nullptr)\\|registerAppRouter(nullptr)\\|setLevel(\" tests/ 的站点差集；把 logging_no_crash 首行改成 CHECK(false) 触发早退，观察后续用例是否继承 Trace",
+      "suggested_fix": "把 resetCaseGlobals 扩成显式清单（theme / log::level / appDatabase / appRouter / ClaudeService::global / proxy_stats 各一行）并在函数头注释「新增进程级全局必须在此登记」；日志级别不在用例尾部恢复，交由下一个用例前的重置兜底。",
+      "already_registered": false,
+      "registered_ref": ""
+    },
+    {
+      "id": "TIN-08",
+      "severity": "low",
+      "lens": "test",
+      "kind": "oop",
+      "title": "自制框架的宏约束反向塑造用例写法：REGISTER_TEST 的 body 是宏实参，裸逗号被切参（18 处规避注释）",
+      "evidence": [
+        {"file": "tests/doctest.h", "symbol": "#define REGISTER_TEST(unique_name, description, body)", "line": 75},
+        {"file": "tests/test_modules/test_provider_config.cpp", "symbol": "「REGISTER_TEST 宏实参不能有裸逗号（模板实参也算），统一用别名」", "line": 32},
+        {"file": "tests/test_modules/test_pet.cpp", "symbol": "「宏体内不能有含逗号的初始化列表，拆出函数」（同类注释 5 处：748/918/1033/1073/1117）", "line": 918},
+        {"file": "tests/test_modules/test_tray_dynamic.cpp", "symbol": "「谓词构造走 unavailableOnly」", "line": 10},
+        {"file": "tests/doctest.h", "symbol": "CHECK_EQ 用 auto _a = (a) 取拷贝而非 const 引用", "line": 24}
+      ],
+      "impact": "18 处规避注释分布在 13 个文件里：断言体被拆到宏外函数、期望值表搬到文件作用域（kExpectedOrder 之类）、std::map<int,float> / 花括号初始化列表 / eui::Screen{...} 都不能直写，读一条用例要在两处跳。CHECK_EQ 拷操作数使非可拷贝类型无法比较（只能退回 CHECK），并让 const char* 与 string 比较多一次构造。",
+      "check": "grep -rn \"裸逗号\" tests/ | wc -l → 18",
+      "suggested_fix": "REGISTER_TEST 改可变参宏（#define REGISTER_TEST(name, desc, ...) 体内用 __VA_ARGS__）——逗号被变参吸收，一处改动消灭全部规避注释；CHECK_EQ 的 auto 改 const auto&。",
+      "already_registered": false,
+      "registered_ref": ""
+    },
+    {
+      "id": "TIN-09",
+      "severity": "low",
+      "lens": "test",
+      "kind": "maintainability",
+      "title": "用例文件归属错位：test_todo.cpp 装的是 core::PageId 枚举契约（与 todo 无关）",
+      "evidence": [
+        {"file": "tests/test_modules/test_todo.cpp", "symbol": "todo_pageid：全文件唯一用例，断言 PageId 严格单调 + 编号钉死 0..4", "line": 7},
+        {"file": "src/core/module_interface.h", "symbol": "enum class PageId（契约来源）", "line": 11}
+      ],
+      "impact": "要找 PageId 契约的人不会去翻 test_todo.cpp；新增一个 PageId 模块时，除审计 L3 已登记的 core 侧 5 处 switch 与 main.cpp 那张表外，还要改这个「不在 core 测试里的 core 契约测试」，且 grep 模块名找不到它。",
+      "check": "cat tests/test_modules/test_todo.cpp → 27 行，0 条 todo 逻辑断言",
+      "suggested_fix": "用例挪进 tests/test_core/test_router.cpp（或改名 test_core/test_pageid.cpp），并在 module_interface.h 的 PageId 处留一行指针注释。",
+      "already_registered": false,
+      "registered_ref": ""
+    },
+    {
+      "id": "TIN-10",
+      "severity": "low",
+      "lens": "test",
+      "kind": "architecture",
+      "title": "测试目标构建接线三处结构债：手工枚举 53 个用例文件（漏加即静默不编译）、只开两个模块私有头、生产 TU 双份编译且编译选项与发布副本不同",
+      "evidence": [
+        {"file": "tests/CMakeLists.txt", "symbol": "add_executable(devdesk_tests ...) 逐文件枚举 53 个用例源（test_modules 36 / test_core 11 / test_platform 6）", "line": 1},
+        {"file": "tests/CMakeLists.txt", "symbol": "target_include_directories 只开 module_claude_proxy 与 module_settings（其余模块须写 module_x/ 前缀）", "line": 65},
+        {"file": "CMakeLists.txt", "symbol": "add_executable(DevDesk src/main.cpp src/app_sidebar.cpp src/app_assembly.cpp)", "line": 99},
+        {"file": "CMakeLists.txt", "symbol": "eui_neo_configure_app(DevDesk)（Release 下给 app 强加 -fno-exceptions/-fno-rtti，测试 target 只有 devdesk_apply_warnings）", "line": 101}
+      ],
+      "impact": "①新用例文件漏进 CMakeLists 就永不编译、永不运行且无任何提示（当前 36/36、11/11、6/6 已齐平，属潜在陷阱；本仓库用例数已 481→514→530 多次漂移，说明手工同步确实会掉队）；②两种 include 风格并存（claude_service.h vs module_pet/pet_bubble.h），加模块要记得同时改 include 路径；③被测的 app_assembly/app_sidebar 副本与发布副本由两个 target 各自编译，选项不同（Debug 等价，Release 下 app 侧带 -fno-exceptions/-fno-rtti 与 MinGW 的 -Os 摘除补丁，且该差异正是审计 C 类裁定 Result::value() 行为的依据）→ 测试绿的副本不是出厂的副本。",
+      "check": "ls tests/test_modules/*.cpp | wc -l 对比 grep -c 'test_modules/' tests/CMakeLists.txt（当前 36/36；core 11/11、platform 6/6）；grep -n 'devdesk_apply_warnings(devdesk_tests)' -A3 tests/CMakeLists.txt 看有无 eui_neo_configure_app",
+      "suggested_fix": "在 tests/CMakeLists.txt 顶部加自检（file(GLOB) 计数 != 显式清单时 FATAL_ERROR）；把 app_sidebar.cpp/app_assembly.cpp 抽成 devdesk_app_support 静态库，DevDesk 与 devdesk_tests 共同链接——顺带消灭编译选项分叉。",
+      "already_registered": false,
+      "registered_ref": ""
+    },
+    {
+      "id": "TIN-11",
+      "severity": "low",
+      "lens": "test",
+      "kind": "maintainability",
+      "title": "platform::http_client 的测试文件只回显结构体默认值，错误路径/超时/TLS 语义零直测",
+      "evidence": [
+        {"file": "tests/test_platform/test_http_client.cpp", "symbol": "http_build_request：断言 method/url/timeoutMs/verifyTls 的默认值", "line": 4},
+        {"file": "tests/test_platform/test_http_client.cpp", "symbol": "http_build_response / http_chunk_result_enum：断言字段默认值与三枚举互不相等", "line": 22}
+      ],
+      "impact": "http_client.cpp 是 platform 层最重的 TU（流式读、低速超时、cancel 语义，审计 H1 就落在这里），其专属测试文件 30 行全是「常量回显」；正常路径由代理用例经 httplib 间接覆盖，但 networkError 映射、timeoutMs 是否真生效、verifyTls 语义、readChunk 的 Error 终态没有护栏，后续改动只能靠间接用例碰运气。",
+      "check": "wc -l tests/test_platform/test_http_client.cpp → 30；grep -rn \"verifyTls\" tests/ → 只命中该文件的默认值断言",
+      "suggested_fix": "补 2-3 条直测：连本机不存在端口 → networkError==true 且 errorMessage 非空；小 timeoutMs 打慢上游 → 超时可辨；复用 test_streaming_proxy 的 AbruptCloseUpstream 造 readChunk 的 Error 终态。",
+      "already_registered": false,
+      "registered_ref": ""
+    },
+    {
+      "id": "TIN-12",
+      "severity": "low",
+      "lens": "test",
+      "kind": "maintainability",
+      "title": "用例总数写死在文档里且与静态登记数不符（当前静态 561，文档写 530）",
+      "evidence": [
+        {"file": "CLAUDE.md", "symbol": "「共 530 个用例（2026-09-27 在 master 上实测 530/530 全绿）」", "line": 183},
+        {"file": "tests/", "symbol": "REGISTER_TEST 行首登记计数（静态）", "line": 1}
+      ],
+      "impact": "数字既漂移又无法自证：写 530 的那次提交 b025864 处静态登记已是 555，其后 M5 收口又新增用例；每次加用例都要人肉改文档，改错也无人发现——属已登记 L2/V6 的现场复现，也是「文档数字 vs 运行输出」两套真源的老问题。",
+      "check": "grep -rh \"REGISTER_TEST(\" tests/ | grep -c \"^[[:space:]]*REGISTER_TEST(\" → 561；git grep -c -e \"^[[:space:]]*REGISTER_TEST(\" b025864 -- tests/ | awk -F: '{s+=$NF} END {print s}' → 555",
+      "suggested_fix": "文档改为「以运行输出 Total 为准」不写死数字（或由脚本回写一次运行结果）；需要精确数时跑一次与静态数对账（本轮禁跑，561 与 530 的差额未解释，见存疑）。",
+      "already_registered": true,
+      "registered_ref": "expert-audit L2（用例数漂移）+ 存疑 V6（已由 530/530 实测定案）；HANDOFF §9.3"
+    },
+    {
+      "id": "TIN-13",
+      "severity": "low",
+      "lens": "test",
+      "kind": "maintainability",
+      "title": "一致性检查脚本仍是 macOS-only（screencapture / open -a / python3），Windows 主平台上不可用",
+      "evidence": [
+        {"file": "scripts/check-consistency.sh", "symbol": "文件头前置条件「macOS 27+（screencapture TCC 权限）」", "line": 18},
+        {"file": "scripts/check-consistency.sh", "symbol": "PYTHON3=$(command -v python3) 缺失即 exit 1", "line": 66},
+        {"file": "scripts/check-consistency.sh", "symbol": "open -a \"$CPP_BIN\" / screencapture -x", "line": 133}
+      ],
+      "impact": "已登记（CLAUDE.md 迁移缺口表标 🟢 仍开放），但它是本仓库唯一的自动化「HTML demo ↔ C++ 渲染」视觉一致性闸门；迁移到 Windows 11 后等于没有闸门，视觉回归只能靠人工截屏，而「未截屏 = 未完成」是项目验证原则之一。",
+      "check": "grep -n \"screencapture\\|open -a\\|python3\" scripts/check-consistency.sh",
+      "suggested_fix": "不改脚本（已裁定属开发工具非运行时）：在文件头写明「macOS-only，Windows 走人工截屏」或直接归档到 docs/ 以免误用。",
+      "already_registered": true,
+      "registered_ref": "CLAUDE.md『Windows 迁移缺口』表 check-consistency.sh 行（🟢 仍开放）"
+    }
+  ]
+}
