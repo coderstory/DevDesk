@@ -21,6 +21,8 @@
 //      往返 + Sleep 零渲染暂停门（电源事件真触发属人工点验）
 //  13. 气泡内容源（产品审计 [18]，§4.5 ①②）：②逾期计数 mock 桥三分支
 //      （N>0 计数文案 / N=0 正面文案 / 无数据回退）+ ①静态语料逐条往返
+//  14. 气泡调度纯函数（PAB-05）：dt/状态/roll → 「文案来源 + 停留时长」的
+//      来源判定与边界（门控/阈值/不足一帧）+ 节拍数字与注释对齐
 // 子窗口真实渲染/拖拽/穿透/气泡视觉属人工点验（设计 §6 M2 验收项）。
 #include "doctest.h"
 
@@ -674,6 +676,87 @@ REGISTER_TEST(pet_bubble_three_level_fallback,
     std::function<std::optional<int>()> noProxy;
     std::function<std::optional<int64_t>()> noOverdue;
     DOCTEST_CHECK(petDataBubbleText(noProxy, noOverdue).first.empty());
+    return true;
+});
+
+// 气泡调度纯函数（PAB-05）：调度原先内联在 pet_window.cpp 的 onTimer 闭包里
+// 无法单测——这里固定 dt / 状态 / roll 输入，断言「弹哪一级 + 停多久」与各边界
+REGISTER_TEST(pet_bubble_schedule_pure,
+              "pet: 气泡调度纯函数（来源/停留/门控/边界）", {
+    using namespace module::pet;
+    // dt = 1s 时的两个阈值：数据槽位 1/150 ≈ 0.00667，两级共享槽位上界 1/60
+    const double tData = 1.0 / kPetDataSlotSec;
+    const double tAny = 1.0 / kPetAnyBubbleSlotSec;
+    // 命中数据槽位（③代理事件 > ②逾期）→ 停留 = 桥无数据降级静态语料的兜底
+    const PetBubblePlan data = petBubbleSchedule(1.0, false, true, 0.0);
+    DOCTEST_CHECK(data.source == PetBubbleSource::Data);
+    DOCTEST_CHECK_EQ(data.holdSec, 3.0);
+    // 槽位内贴近上界仍是数据槽位；恰好压在上界（严格小于）→ 落①静态语料
+    DOCTEST_CHECK(petBubbleSchedule(1.0, false, true, tData - 1e-9).source ==
+                  PetBubbleSource::Data);
+    DOCTEST_CHECK(petBubbleSchedule(1.0, false, true, tData).source ==
+                  PetBubbleSource::Static);
+    // 无可用文案（③②两桥都无数据 → petDataBubbleText 空串）：调用方据此走
+    // ①静态语料兜底，兜底停留就是计划里的 holdSec（3.0，非 0——0 会让气泡立消）
+    std::function<std::optional<int>()> noProxy;
+    std::function<std::optional<int64_t>()> noOverdue;
+    DOCTEST_CHECK(petDataBubbleText(noProxy, noOverdue).first.empty());
+    DOCTEST_CHECK_EQ(data.holdSec, kPetBubbleHoldSec);
+    // 静态语料带区间 [1/150, 1/60)
+    const PetBubblePlan stat = petBubbleSchedule(1.0, false, true, tAny - 1e-9);
+    DOCTEST_CHECK(stat.source == PetBubbleSource::Static);
+    DOCTEST_CHECK_EQ(stat.holdSec, 3.0);
+    // roll 达到 1/60 / 接近 1（抽样上界）→ 本轮不弹
+    const PetBubblePlan none = petBubbleSchedule(1.0, false, true, tAny);
+    DOCTEST_CHECK(none.source == PetBubbleSource::None);
+    DOCTEST_CHECK_EQ(none.holdSec, 0.0);
+    DOCTEST_CHECK(petBubbleSchedule(1.0, false, true, 0.999999).source ==
+                  PetBubbleSource::None);
+    // 门控：气泡在场（上一泡没走不让位）/ 非 Idle（Poked/Sleep/Typing）→ 不弹
+    DOCTEST_CHECK(petBubbleSchedule(1.0, true, true, 0.0).source ==
+                  PetBubbleSource::None);
+    DOCTEST_CHECK(petBubbleSchedule(1.0, false, false, 0.0).source ==
+                  PetBubbleSource::None);
+    // dt 不足一帧：首帧 dt = 0（阈值 0，roll 再小也不命中）必不弹
+    DOCTEST_CHECK(petBubbleSchedule(0.0, false, true, 0.0).source ==
+                  PetBubbleSource::None);
+    DOCTEST_CHECK(petBubbleSchedule(-1.0, false, true, 0.0).source ==
+                  PetBubbleSource::None);
+    // 1ms 帧：阈值同比缩小（6.7e-6），常规 roll 不命中、极小 roll 才命中
+    DOCTEST_CHECK(petBubbleSchedule(0.001, false, true, 0.5).source ==
+                  PetBubbleSource::None);
+    DOCTEST_CHECK(petBubbleSchedule(0.001, false, true, 1e-6).source ==
+                  PetBubbleSource::Data);
+    return true;
+});
+
+// 调度节拍 = 注释数字（PAB-05 核心：旧注释写「①静态语料平均 ~60s 一句」，代码
+// 实为 ~100s）。dt = 1s 上用整数网格数各级命中占比（全固定算术、无随机源）：
+//   数据槽位 = 1/150 → 1000/150000 点；静态 = 1/60 − 1/150 = 1/100 → 1500 点。
+// 断言钉死这两个数，注释与代码再漂移即红
+REGISTER_TEST(pet_bubble_schedule_cadence,
+              "pet: 气泡调度节拍与注释数字一致（静态 ~100s 非 ~60s）", {
+    using namespace module::pet;
+    DOCTEST_CHECK_EQ(kPetDataSlotSec, 150.0);
+    DOCTEST_CHECK_EQ(kPetAnyBubbleSlotSec, 60.0);
+    DOCTEST_CHECK_EQ(kPetBubbleHoldSec, 3.0);
+    constexpr int kGrid = 150000;
+    int dataHits = 0;
+    int staticHits = 0;
+    for (int i = 0; i < kGrid; ++i) {
+        const double roll = (i + 0.5) / kGrid;  // 避开 0/1 端点的均匀网格
+        const PetBubblePlan plan = petBubbleSchedule(1.0, false, true, roll);
+        if (plan.source == PetBubbleSource::Data) ++dataHits;
+        if (plan.source == PetBubbleSource::Static) ++staticHits;
+    }
+    DOCTEST_CHECK_EQ(dataHits, 1000);    // 1/150（~2.5min 一泡）
+    DOCTEST_CHECK_EQ(staticHits, 1500);  // 1/100（~100s；按 1/60 算才是旧注释）
+    // 计划 → 气泡接线语义：按计划的停留时长装上气泡，到点消失
+    PetBubble bubble;
+    bubble.show("按调度弹一句", kPetBubbleHoldSec);
+    DOCTEST_CHECK(bubble.visible);
+    bubble.tick(kPetBubbleHoldSec + 0.01);
+    DOCTEST_CHECK(!bubble.visible);
     return true;
 });
 
