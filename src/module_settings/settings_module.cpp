@@ -37,7 +37,9 @@
 //      构建时间戳 + EUI-NEO rev（CMake 注入宏）+ 配置/日志文件路径，恒显
 //   8. 页面结构（Task B tab 化）：通用 / 模块 / 日志 / 关于 四 tab
 //      （components::tabs）；「日志」tab 含日志查看卡（core::paths::logFile()
-//      末尾 500 行 tail + 刷新按钮，读盘在 compose 顶部一次性完成）
+//      末尾 500 行 tail + 刷新按钮；审计 H2 后读盘在后台线程，compose 只读
+//      快照——首次装载在 onStart，此后切 tab / 点刷新都经 refreshLogTailCache
+//      发意图，结果下一帧收割）
 //
 // 入口说明：设置入口在 main.cpp 的常驻侧边栏（app.sidebar，spec §2/§6.5.2），
 // 与其他四个模块同列。
@@ -85,9 +87,11 @@
 #include <components/theme.h>
 
 #include <algorithm>
+#include <chrono>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
+#include <future>
 #include <memory>
 #include <string>
 #include <vector>
@@ -211,6 +215,11 @@ public:
                  ", 编辑器字号=" + std::to_string(cfg_.editorFontSize) + "px" +
                  ", 日志级别=" + cfg_.logLevel +
                  ", 日志保留=" + retentionLabel() + "）");
+        // 审计 H2：日志 tail 首次装载同步做一次（onStart = 启动期，非渲染路径）。
+        // compose 恒读快照，首帧必须有值——异步首刷会让日志查看卡先闪一帧
+        // 「暂无日志内容」占位（硬约束：不得空帧/闪空）。此后每次重读（切 tab /
+        // 点刷新）都走 refreshLogTailCache 的后台线程
+        applyLogTail(readLogTailLines());
     }
 
     void onStop() override {
@@ -491,11 +500,11 @@ public:
 
         const float headerH = 64.0f;
         const float tabH = kSettingsTabHeight;
-        // 日志 tail 只在「切到日志 tab / 点刷新」后读一次（读盘进 compose 顶部
-        // 而非 scrollView content lambda：后者被 measure/paint 多次调用）
-        if (settingsTab_ == kTabLog && logTailDirty_) {
-            readLogTail();
-            logTailDirty_ = false;
+        // 审计 H2：日志 tail 读盘已移出渲染路径（refreshLogTailCache 只发意图 /
+        // 搬已就绪结果，读盘在后台线程；快照 logTail_ 由 onStart 首次装载）。
+        // 渲染路径恒读快照 → 切 tab / 首帧不会闪空
+        if (settingsTab_ == kTabLog) {
+            refreshLogTailCache();
         }
         // contentKey 带 proxyH：警告行数变化时滚动高度缓存失效重测
         auto* svc = ::module::claude::ClaudeService::global();
@@ -1473,12 +1482,11 @@ private:
             .build();
     }
 
-    // ---------- 日志 tail 读取（Task B，日志 tab） ----------
-    // 仅在「切到日志 tab / 点刷新」后的 compose 顶部调用一次：scrollView
-    // content lambda 被 measure/paint 多次调用，读盘绝不能进那里。只读文件
+    // ---------- 日志 tail 读取（Task B，日志 tab；审计 H2 迁出渲染路径） ----------
+    // readLogTailLines 是纯读盘（static、不碰成员 → 可跑在后台线程）：只读文件
     // 末尾窗口（kLogTailReadWindow）防大日志整档进内存；保留末尾
     // kLogTailMaxLines 行（滑动裁剪，避免逐行 erase 的 O(n²)）
-    void readLogTail() {
+    static std::vector<std::string> readLogTailLines() {
         std::vector<std::string> lines;
         std::ifstream f(::core::paths::logFile(), std::ios::binary);
         if (f) {
@@ -1511,10 +1519,43 @@ private:
                     static_cast<long>(lines.size() - kLogTailMaxLines));
             }
         }
+        return lines;
+    }
+
+    // 把读盘结果落成快照（只在渲染线程调：onStart 首次装载 + compose 收割/兜底）
+    void applyLogTail(std::vector<std::string> lines) {
+        const size_t n = lines.size();
         logTail_ = std::move(lines);
         ++logTailVersion_;
-        LOG_INFO("Settings: 日志 tail 刷新，读取 " +
-                 std::to_string(logTail_.size()) + " 行");
+        logTailLoaded_ = true;   // 快照已装载：此后重读全走后台
+        LOG_INFO("Settings: 日志 tail 刷新，读取 " + std::to_string(n) + " 行");
+    }
+
+    // 审计 H2：compose 只读快照 + 只发意图。本函数每帧只做两件无 IO 的事：
+    // ①上一轮读已就绪 → 搬进快照（wait_for(0) 不阻塞，未就绪直接跳过，快照
+    //   沿用上次值，不丢不改）；②脏标记置位且无在途读 → 发一次读意图
+    //   （std::async 后台线程跑 readLogTailLines，结果经 future 值回渲染线程）。
+    // 等价性：读盘失败/文件缺失与旧实现同样落成空快照；可见时机最多晚一个
+    // tick（结果下一帧收割），交互语义不变（切 tab / 点刷新仍是「置脏 → 重读」）
+    void refreshLogTailCache() {
+        if (logTailFuture_.valid() &&
+            logTailFuture_.wait_for(std::chrono::seconds(0)) ==
+                std::future_status::ready) {
+            applyLogTail(logTailFuture_.get());
+        }
+        if (!logTailLoaded_) {
+            // 冷启动兜底：快照从未装载过（调用方未走 onStart）时本帧同步读一次。
+            // 首帧必须有值（硬约束：不得空帧）——异步首刷会先渲染一帧「暂无日志
+            // 内容」占位文案；这一帧的同步读是刻意的、只发生一次，装载即转后台
+            applyLogTail(readLogTailLines());
+            logTailDirty_ = false;
+            return;
+        }
+        if (!logTailDirty_ || logTailFuture_.valid()) {
+            return;
+        }
+        logTailDirty_ = false;
+        logTailFuture_ = std::async(std::launch::async, readLogTailLines);
     }
 
     // ---------- 编辑器字号卡（Task B：自日志卡行 2 迁入「通用」tab） ----------
@@ -1585,9 +1626,9 @@ private:
     }
 
     // ---------- 日志查看卡（Task B，日志 tab）：日志文件 tail + 刷新 ----------
-    // logTail_ 是内存快照（读盘见 readLogTail，只发生在切 tab / 点刷新后），
+    // logTail_ 是内存快照（读盘见 readLogTailLines，跑在后台线程，见审计 H2），
     // 本方法只渲染字符串。逐行一个 text（固定行高，超宽行由 scrollView clip
-    // 右侧裁切）；刷新按钮只置 dirty 标记，实际重读在下一帧 compose 顶部
+    // 右侧裁切）；刷新按钮只置 dirty 标记，实际重读由 refreshLogTailCache 发意图
     void drawLogViewCard(eui::Ui& ui, const std::string& id, float w, float h,
                          const core::theme::Tokens& t) {
         const auto compTheme = core::theme::componentTokens(t);
@@ -1686,6 +1727,10 @@ private:
     std::vector<std::string> logTail_;    // 日志文件末尾行内存快照（compose 只渲染）
     unsigned logTailVersion_ = 0;         // tail 读取版本号（进日志查看卡 contentKey）
     bool logTailDirty_ = true;            // 待重读标记（切日志 tab / 点刷新置位）
+    bool logTailLoaded_ = false;          // 快照是否装载过（冷启动兜底，见 refreshLogTailCache）
+    // 审计 H2：后台读盘的在途 future（读盘线程不碰成员，结果经值回渲染线程；
+    // 成员析构 = future 析构，自动等读盘结束 → 无悬垂）
+    std::future<std::vector<std::string>> logTailFuture_;
     float logViewScrollOffset_ = 0.0f;    // 日志查看卡内滚动位置
     std::string statusMessage_;
     bool statusIsError_ = false;

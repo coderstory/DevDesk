@@ -11,6 +11,7 @@
 #include "claude_service.h"
 #include "core/database.h"
 #include "core/module_interface.h"
+#include "core/paths.h"
 #include "core/theme.h"
 #include "platform/keychain.h"
 #include "platform/system_theme.h"
@@ -20,12 +21,14 @@
 #include <eui/dsl.h>
 #include <eui/dsl_app.h>
 
+#include <chrono>
 #include <ctime>
 #include <filesystem>
 #include <fstream>
 #include <sstream>
 #include <memory>
 #include <string>
+#include <thread>
 
 extern "C" ::core::Module* create_settings_module();
 
@@ -105,6 +108,45 @@ struct PruneEnv {
         ::core::registerAppDatabase(nullptr);
         removeQuietly(cfgPath);
         removeQuietly(dbPath);
+    }
+};
+
+// RAII：把 APPDATA 重定向到临时目录（审计 H2 用）——日志路径
+// core::paths::logFile() = %APPDATA%/DevDesk/logs/devdesk.log（paths_win.cpp），
+// 重定向后用例自造的日志内容与真机日志互不污染；析构恢复原值，fail-fast
+// 早退也不影响后续用例
+struct AppDataEnv {
+    std::string saved;
+    std::filesystem::path dir;
+
+    explicit AppDataEnv(const char* tag) {
+        const char* cur = std::getenv("APPDATA");
+        saved = cur ? cur : "";
+        dir = std::filesystem::temp_directory_path() /
+              ("devdesk_test_settings_appdata_" + std::string(tag));
+        std::error_code ec;
+        std::filesystem::remove_all(dir, ec);
+        std::filesystem::create_directories(dir, ec);
+        setEnvVar("APPDATA", dir.string());
+    }
+
+    ~AppDataEnv() {
+        setEnvVar("APPDATA", saved);
+        std::error_code ec;
+        std::filesystem::remove_all(dir, ec);
+    }
+
+    // 写/追加测试日志（模块 tail 读的就是这个文件）
+    void writeLog(const std::string& content) const {
+        const auto p = ::core::paths::logFile();
+        std::error_code ec;
+        std::filesystem::create_directories(p.parent_path(), ec);
+        std::ofstream(p, std::ios::binary | std::ios::trunc) << content;
+    }
+
+    void appendLog(const std::string& content) const {
+        std::ofstream(::core::paths::logFile(), std::ios::binary | std::ios::app)
+            << content;
     }
 };
 
@@ -1731,5 +1773,71 @@ REGISTER_TEST(settings_module_isolation_guard,
         DOCTEST_CHECK(line.find("devdesk_module_pet") == std::string::npos);
         DOCTEST_CHECK(line.find("devdesk_module_claude_proxy") == std::string::npos);
     }
+    return true;
+})
+
+// ---- 审计 H2：日志 tail 读盘在后台线程，compose 只读快照 ----
+// 回归：此前 compose 顶部同步读 256KB 日志文件（在渲染帧里与代理 worker 的
+// DB 写抢同一把锁）。现在切 tab / 点刷新只置脏标记 → 发一次读意图
+// （std::async 后台线程），结果下一帧收割；快照恒非空沿用上次值（不闪空、不丢行）。
+REGISTER_TEST(settings_h2_log_tail_snapshot,
+              "settings: 日志 tail 后台重读快照（H2 tick 前旧值/后新值）", {
+    PruneEnv env("h2tail");
+    AppDataEnv appdata("h2tail");   // 日志文件隔离到临时 APPDATA
+    appdata.writeLog("H2-TAIL-ONE\n");
+
+    std::unique_ptr<::core::Module> mod(create_settings_module());
+    mod->onStart();   // 首次装载在启动期同步做（非渲染路径）
+    eui::Screen screen;
+    screen.width = 1600.0f;
+    screen.height = 1000.0f;
+
+    // 探针：跑一帧 compose，返回日志查看卡渲染出的全部行（"" 结束）
+    auto tailLines = [&]() -> std::vector<std::string> {
+        eui::Ui ui;
+        ui.begin("settings_h2_probe");
+        mod->compose(ui, screen);
+        ui.end();
+        ui.layout(screen.width, screen.height);   // scrollView 内容在 layout 期展开
+        std::vector<std::string> out;
+        for (size_t i = 0;; ++i) {
+            const auto* e =
+                ui.find("settings.tab.log.line." + std::to_string(i));
+            if (e == nullptr) break;
+            out.push_back(e->text);
+        }
+        return out;
+    };
+    auto hasLine = [](const std::vector<std::string>& lines,
+                      const char* needle) {
+        for (const auto& l : lines) {
+            if (l.find(needle) != std::string::npos) return true;
+        }
+        return false;
+    };
+
+    // 切到日志 tab（置脏）+ 外部追加新行 → 下一帧 compose 才发出读意图
+    DOCTEST_REQUIRE(clickSettingsTab(*mod, screen, 2));
+    appdata.appendLog("H2-TAIL-TWO\n");
+
+    // tick 前：本帧才发读意图（读盘本帧上路），快照 = 上次装载值且不含新行
+    const auto before = tailLines();
+    DOCTEST_CHECK(!before.empty());                 // 非空（不闪空）
+    DOCTEST_CHECK(hasLine(before, "H2-TAIL-ONE"));  // = 上次值
+    DOCTEST_CHECK(!hasLine(before, "H2-TAIL-TWO")); // 新值未到（确定，非时序）
+
+    // tick 后：后台结果被收割 → 新行可见（有界轮询，不依赖固定睡眠）
+    bool updated = false;
+    for (int i = 0; i < 200 && !updated; ++i) {
+        updated = hasLine(tailLines(), "H2-TAIL-TWO");
+        if (!updated) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        }
+    }
+    DOCTEST_CHECK(updated);
+    DOCTEST_CHECK(hasLine(tailLines(), "H2-TAIL-ONE"));   // 旧行不丢
+
+    mod->onStop();
+    ::core::theme::setDark();
     return true;
 })

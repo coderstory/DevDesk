@@ -5,8 +5,8 @@
 //   新建/编辑 Profile（dialog 表单）→ createProfile / updateProfile
 //   启用 → setActiveProfile；删除（确认 dialog）→ deleteProfile
 //   测试连通 → testConnection；代理开关 → startProxy / stopProxy
-//   每次操作后标脏 compose 数据缓存，下一帧 compose 重查（审计 perf [13]：
-//   缓存命中帧零 SQLite；代理日志经 callLogVersion 感知）
+//   每次操作后标脏 compose 数据缓存，下一帧发一次刷新意图（审计 perf [13]
+//   + H2：命中帧零 SQLite，查询全在后台线程跑，渲染线程只读快照）
 #include "claude_service.h"
 #include "env_var_hints.h"
 #include "provider_config.h"
@@ -32,10 +32,12 @@
 
 #include <atomic>
 #include <algorithm>
+#include <chrono>
 #include <cstdio>
 #include <ctime>
 #include <filesystem>
 #include <fstream>
+#include <future>
 #include <map>
 #include <sstream>
 #include <string>
@@ -124,6 +126,8 @@ public:
     ~ClaudeModule() override {
         // 后台测试线程必须先收（最坏阻塞到 HTTP 超时 15s，避免悬垂 this）
         if (testThread_.joinable()) testThread_.join();
+        // 审计 H2：后台刷新经 future 回传（工作线程不触碰 this），成员析构
+        // 自动等本轮查询结束，无需显式 join
     }
 
     // ============ UI ============
@@ -164,11 +168,12 @@ public:
         std::string profilesError;
         std::string callsError;
 
-        // 审计 perf [13]：profiles/recent/active 缓存为成员，重组合只从内存拷贝，
-        // 不再每帧同步跑 3 条 SQLite 查询。脏标记（onStart/onPageEnter/写操作）
-        // 触发三类重查；recent 另按 ClaudeService::callLogVersion 感知代理 worker
-        // 异步落库，保住「新调用下一帧可见」与优化前等价；查询失败保持脏、下帧
-        // 重试（错误态照常每帧显示），与旧「每帧查」同退化路径。
+        // 审计 perf [13] + H2：profiles/recent/active 缓存为成员，重组合只从
+        // 内存拷贝，SQLite 查询全部在后台线程（refreshDataCache 只发意图 /
+        // 搬已就绪结果，零 IO）。脏标记（onStart/onPageEnter/写操作）触发三类
+        // 重查；recent 另按 ClaudeService::callLogVersion 感知代理 worker 异步
+        // 落库（刷新最多晚一个 200ms 节流 tick + 1 帧，不丢数据）；
+        // 查询失败保持脏、按节流窗口重试（错误态照常显示），同旧退化路径。
         std::vector<Profile> profiles;
         std::vector<ClaudeService::CallLogEntry> recent;
         Profile activeProfile;
@@ -993,12 +998,16 @@ public:
 
     void onStart() override {
         LOG_INFO("Claude 模块启动");
-        dataDirty_ = true;   // 审计 perf [13]：启动即标记缓存待查
         ClaudeService* svc = ClaudeService::global();
         if (!svc) {
             LOG_WARN("onStart: ClaudeService::global() 为 null");
+            dataDirty_ = true;   // 服务未就绪查不了：保持脏，进页后由后台刷新补上
             return;
         }
+        // 审计 H2：首次装载同步做一次（onStart = 启动期，非渲染路径）。compose
+        // 恒读快照，首帧必须有值——异步首刷会让页面先闪一帧空列表（硬约束：
+        // 不得空帧/闪空）；此后每次刷新都走 refreshDataCache 的后台线程
+        applyDataRefresh(runDataRefresh(svc, true, true));
         // 启动时孤儿密钥清理（一次扫描，删除无对应 profile 的 keychain 条目）
         auto orphan = svc->cleanupOrphanKeychainEntries();
         if (orphan.isFail()) {
@@ -1082,47 +1091,138 @@ private:
         return false;
     }
 
-    // ============ 审计 perf [13]：compose 数据缓存 ============
-    // 脏 = 页面进入/写操作后的重查帧，profiles/active/recent 三类全查；
-    // recent 另在 callLogVersion 变化（代理落新日志）时重查。list 查询成功
-    // 才清脏（失败保持脏下帧重试 = 旧「每帧查」的退化等价）；recent 成功时
-    // 记录的是查询**前**的版本号快照——查询期间落库的调用会让下一帧版本再
-    // 对不上，宁可多查一次不漏显。
-    void refreshDataCache(ClaudeService* svc) {
-        const bool refreshedAll = dataDirty_;
-        if (refreshedAll) {
+    // ============ 审计 perf [13] + H2：compose 只读快照，刷新意图走后台 ============
+    // 旧实现（perf [13]）把三类查询从「每帧」收敛到「脏帧」，但查询仍同步跑在
+    // 渲染线程的 compose 里——与代理 worker 的 logCall INSERT 争同一把
+    // recursive_mutex（事务全程持锁，见 core/sqlite_db.cpp），代理忙时整帧被
+    // 卡住。现在查询全部挪到后台线程（std::async），渲染线程只做两件无 IO 的
+    // 事：搬已就绪结果进快照 + 发下一次刷新意图。
+    // 工作线程产物：一次刷新的三类数据（不触碰 this——结果经 future 值回渲染
+    // 线程再落成员）。wantProfiles/wantRecent 保留旧语义：脏标记刷三类，
+    // 纯版本轮询只刷 recent（不重复查没变的 profile 列表）。
+    struct DataRefresh {
+        bool wantProfiles = false;
+        bool wantRecent = false;
+        std::vector<Profile> profiles;
+        std::string profilesError;
+        Profile active;
+        bool hasActive = false;
+        std::vector<ClaudeService::CallLogEntry> recent;
+        bool recentOk = false;
+        std::string callsError;
+        uint64_t verBefore = 0;
+    };
+
+    // 唯一跑在后台线程的 DB 入口（static：不碰成员，可安全脱离渲染线程）
+    static DataRefresh runDataRefresh(ClaudeService* svc, bool wantProfiles,
+                                      bool wantRecent) {
+        DataRefresh r;
+        r.wantProfiles = wantProfiles;
+        r.wantRecent = wantRecent;
+        if (wantProfiles) {
             auto listR = svc->listProfiles();
             if (listR.isOk()) {
-                cachedProfiles_ = std::move(listR).value();
-                cachedProfilesError_.clear();
+                r.profiles = std::move(listR).value();
             } else {
-                cachedProfiles_.clear();
-                cachedProfilesError_ = listR.errorMessage();
-                LOG_ERROR("Profile 列表加载失败: " + cachedProfilesError_);
+                r.profilesError = listR.errorMessage();
             }
+            // 激活查询失败静默按无激活（旧语义不变）
             auto aR = svc->getActiveProfile();
             if (aR.isOk()) {
-                cachedActive_ = std::move(aR).value();
-                cachedHasActive_ = true;
-            } else {
-                cachedActive_ = Profile();
-                cachedHasActive_ = false;   // 旧语义：激活查询失败静默按无激活
+                r.active = std::move(aR).value();
+                r.hasActive = true;
             }
-            if (cachedProfilesError_.empty()) dataDirty_ = false;
         }
-        const uint64_t verBefore = svc->callLogVersion();
-        if (refreshedAll || verBefore != seenCallLogVersion_) {
+        if (wantRecent) {
+            // 版本号取**查询前**快照（同旧实现）：查询期间落库的调用会让下一帧
+            // 版本再对不上，宁可多查一次不漏显
+            r.verBefore = svc->callLogVersion();
             auto rR = svc->recentCalls(3);
             if (rR.isOk()) {
-                cachedRecent_ = std::move(rR).value();
+                r.recent = std::move(rR).value();
+                r.recentOk = true;
+            } else {
+                r.callsError = rR.errorMessage();
+            }
+        }
+        return r;
+    }
+
+    // 落快照（只在渲染线程调：onStart 首次装载 + compose 收割/兜底）
+    void applyDataRefresh(DataRefresh r) {
+        if (r.wantProfiles) {
+            if (r.profilesError.empty()) {
+                cachedProfiles_ = std::move(r.profiles);
+                cachedProfilesError_.clear();
+                dataDirty_ = false;   // list 查询成功才清脏（失败保持脏下帧重试）
+                dataLoaded_ = true;   // 快照已装载：此后刷新全走后台
+            } else {
+                cachedProfiles_.clear();
+                cachedProfilesError_ = r.profilesError;
+                LOG_ERROR("Profile 列表加载失败: " + cachedProfilesError_);
+            }
+            cachedActive_ = std::move(r.active);
+            cachedHasActive_ = r.hasActive;
+        }
+        if (r.wantRecent) {
+            if (r.recentOk) {
+                cachedRecent_ = std::move(r.recent);
                 cachedCallsError_.clear();
-                seenCallLogVersion_ = verBefore;
+                seenCallLogVersion_ = r.verBefore;
             } else {
                 cachedRecent_.clear();
-                cachedCallsError_ = rR.errorMessage();
+                cachedCallsError_ = r.callsError;
                 LOG_ERROR("调用记录加载失败: " + cachedCallsError_);
             }
         }
+    }
+
+    // 收割：后台结果就绪才搬（wait_for(0) 不阻塞；未就绪直接跳过，快照沿用
+    // 上次值——不丢不改，无空帧）
+    void harvestDataRefresh() {
+        if (!refreshFuture_.valid()) return;
+        if (refreshFuture_.wait_for(std::chrono::seconds(0)) !=
+            std::future_status::ready) {
+            return;   // 还在跑
+        }
+        applyDataRefresh(refreshFuture_.get());
+    }
+
+    // 审计 H2：节流窗口。版本轮询在代理高频落库时每帧都能看到新版本，不节流
+    // 会退化成每帧一个后台查询（仍与 logCall INSERT 抢同一把 recursive_mutex）；
+    // 失败重试同窗口（脏标记不清 → 按窗口重发，不按帧起线程）
+    bool refreshDue() const {
+        return std::chrono::steady_clock::now() - lastRefreshPost_ >=
+               std::chrono::milliseconds(kRefreshIntervalMs);
+    }
+
+    // compose 每帧调：只发意图 + 搬快照，零 IO（语义同旧 refreshDataCache：
+    // 脏 = 进页/写操作后的重查；recent 另在 callLogVersion 变化时重查）
+    void refreshDataCache(ClaudeService* svc) {
+        harvestDataRefresh();
+        if (!dataLoaded_) {
+            // 冷启动兜底：快照从未装载过（服务晚就绪 / 调用方未走 onStart）时
+            // 本帧同步装载一次。首帧必须有快照（硬约束：不得空帧），异步首刷
+            // 必然先渲染一帧空列表 → 这一帧的同步查询是刻意的、只发生一次；
+            // 装载成功即转后台（失败保持本路径逐帧重试 = 旧「每帧查」同退化）
+            applyDataRefresh(runDataRefresh(svc, true, true));
+            return;
+        }
+        if (refreshFuture_.valid()) {
+            return;   // 上一轮在途：不叠加（脏/版本条件下帧仍成立，意图不丢）
+        }
+        const uint64_t ver = svc->callLogVersion();
+        const bool wantProfiles = dataDirty_;
+        const bool verChanged = (ver != seenCallLogVersion_);
+        if (!wantProfiles && !verChanged) {
+            return;   // 空闲帧零开销（与旧实现一致：版本没动就不查）
+        }
+        if (!refreshDue()) {
+            return;   // 节流窗口内：下帧再判（可见最多晚一个节流 tick + 1 帧）
+        }
+        lastRefreshPost_ = std::chrono::steady_clock::now();
+        refreshFuture_ = std::async(std::launch::async, runDataRefresh, svc,
+                                    wantProfiles, wantProfiles || verChanged);
     }
 
     // ============ Profile 卡片（点击选中，选中/激活高亮） ============
@@ -2407,7 +2507,13 @@ private:
     Profile cachedActive_;
     bool cachedHasActive_ = false;
     bool dataDirty_ = true;
+    bool dataLoaded_ = false;   // 快照是否装载过（冷启动兜底判据，见 refreshDataCache）
     uint64_t seenCallLogVersion_ = ~0ull;
+    // 审计 H2：后台刷新在途 future（工作线程不触碰 this，结果经值回渲染线程；
+    // 成员析构 = future 析构，自动等本轮查询结束 → 无悬垂）
+    std::future<DataRefresh> refreshFuture_;
+    std::chrono::steady_clock::time_point lastRefreshPost_{};  // 节流窗口起点
+    static constexpr int64_t kRefreshIntervalMs = 200;         // 刷新节流窗口
 
     // 新建/编辑表单（tabs 三页，§6.1）
     bool formOpen_ = false;

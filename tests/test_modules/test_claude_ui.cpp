@@ -1427,6 +1427,18 @@ REGISTER_TEST(claude_module_compose_cache_equivalence,
         const auto* node = ui.find(id);
         return node == nullptr ? std::string("<missing>") : node->text;
     };
+    // 审计 H2：DB 查询挪到后台线程 → 「变更可见」最多晚 1 帧（本帧发刷新
+    // 意图、下帧收割）。以下三处原为「一次 compose 即断言」，改为有界轮询
+    // 等可见——契约不变（脏标记 / callLogVersion / onPageEnter 各自仍驱动重查）
+    auto composeUntil = [&](auto&& pred) -> bool {
+        for (int i = 0; i < 200; ++i) {
+            eui::Ui ui;
+            compose(ui);
+            if (pred(ui)) return true;
+            std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        }
+        return false;
+    };
 
     // 1) 首帧（脏标记全查）记录渲染，次帧（缓存命中，零 SQLite）必须一致
     std::string name0;
@@ -1462,11 +1474,15 @@ REGISTER_TEST(claude_module_compose_cache_equivalence,
         e.latencyMs = 42;
         e.startedAt = std::time(nullptr);
         DOCTEST_REQUIRE(env.svc->logCall(e).isOk());
-        eui::Ui ui;
-        compose(ui);
-        DOCTEST_CHECK(ui.find("claude.calls.empty") == nullptr);
-        DOCTEST_CHECK(textOf(ui, "claude.calls.p.0").find("/v1/cache-probe") !=
-                      std::string::npos);
+        DOCTEST_REQUIRE(composeUntil([](eui::Ui& ui) {
+            return ui.find("claude.calls.empty") == nullptr;
+        }));
+        {
+            eui::Ui ui;
+            compose(ui);
+            DOCTEST_CHECK(textOf(ui, "claude.calls.p.0").find("/v1/cache-probe") !=
+                          std::string::npos);
+        }
     }
 
     // 3) 外部直写绕过模块：缓存帧不可见（新语义），onPageEnter 后可见
@@ -1479,6 +1495,10 @@ REGISTER_TEST(claude_module_compose_cache_equivalence,
         DOCTEST_CHECK(ui.find("claude.profile.2.name") == nullptr);
     }
     mod->onPageEnter();
+    // 脏标记 → 本帧发刷新意图、下帧收割（H2 异步）：有界轮询等到 C 可见
+    DOCTEST_REQUIRE(composeUntil([](eui::Ui& ui) {
+        return ui.find("claude.profile.2.name") != nullptr;
+    }));
     {
         eui::Ui ui;
         compose(ui);
@@ -1498,6 +1518,11 @@ REGISTER_TEST(claude_module_compose_cache_equivalence,
         compose(ui);
         DOCTEST_CHECK(click(ui, "claude.act.enable.bg"));  // doSetActive(A)
     }
+    // 启用写操作标脏 → 后台重查、下帧收割（H2 异步）：有界轮询等 A 排到 index 0
+    DOCTEST_REQUIRE(composeUntil([](eui::Ui& ui) {
+        const auto* n0 = ui.find("claude.profile.0.name");
+        return n0 != nullptr && n0->text == std::string("A缓存");
+    }));
     {
         eui::Ui ui;
         compose(ui);
@@ -1574,5 +1599,84 @@ REGISTER_TEST(claude_ui_esc_closes_delete_confirm,
 
     mod->onStop();
     cleanupKey(pid);
+    return true;
+})
+
+// ---- 审计 H2：compose 只读快照 + DB 查询在后台线程 ----
+// 回归：此前 refreshDataCache 在 compose 里同步跑 listProfiles /
+// getActiveProfile / recentCalls，与代理 worker 的 logCall INSERT 争同一把
+// recursive_mutex（事务全程持锁，core/sqlite_db.cpp）→ 代理忙时整帧被卡。
+// 现在渲染路径只发刷新意图 + 搬已就绪结果，查询在后台线程（std::async）。
+REGISTER_TEST(claude_h2_compose_snapshot_async,
+              "claude_module: compose 只读快照 DB 后台刷新（H2 tick 前旧值/后新值）", {
+    TestEnv env;
+    auto a = env.svc->createProfile("官方", "https://api.anthropic.com",
+                                    "sk-ant-aaaa-1111", "claude-sonnet-4-5");
+    DOCTEST_REQUIRE(a.isOk());
+
+    std::unique_ptr<::core::Module> mod(create_claude_module());
+    mod->onStart();   // 首次装载在启动期同步做（非渲染路径）
+    eui::Screen screen;
+    screen.width = 1600.0f;
+    screen.height = 1000.0f;
+
+    // 探针：跑一帧 compose，返回渲染出的全部 profile 卡名（列表序 =
+    // is_active DESC, name ASC → 断言按名字集合，不绑 index）
+    auto cardNames = [&]() -> std::vector<std::string> {
+        eui::Ui ui;
+        ui.begin("claude_h2_probe");
+        mod->compose(ui, screen);
+        ui.end();
+        std::vector<std::string> out;
+        for (size_t i = 0;; ++i) {
+            const auto* n =
+                ui.find("claude.profile." + std::to_string(i) + ".name");
+            if (n == nullptr) break;
+            out.push_back(n->text);
+        }
+        return out;
+    };
+    auto hasName = [](const std::vector<std::string>& names,
+                      const char* want) {
+        for (const auto& n : names) {
+            if (n == want) return true;
+        }
+        return false;
+    };
+
+    // ① 首帧快照非空（= onStart 装载值）：异步首刷不允许闪空
+    {
+        const auto names = cardNames();
+        DOCTEST_REQUIRE_EQ(names.size(), static_cast<size_t>(1));
+        DOCTEST_CHECK_EQ(names[0], std::string("官方"));
+    }
+
+    // ② 外部新增一条（不经模块写路径）+ 模拟进页 → 置脏（= 发刷新意图）
+    auto b = env.svc->createProfile("中转", "https://relay.example.com",
+                                    "sk-ant-bbbb-2222", "claude-opus-4-5");
+    DOCTEST_REQUIRE(b.isOk());
+    mod->onPageEnter();
+    {
+        // tick 前：本帧才发出刷新意图（查询本帧上路），快照恒为上次值。
+        // 同一次 compose 内断言 → 不依赖时序
+        const auto names = cardNames();
+        DOCTEST_CHECK(hasName(names, "官方"));    // 非空 + = 上次值
+        DOCTEST_CHECK(!hasName(names, "中转"));   // 新值未到（确定，非时序）
+    }
+
+    // ③ tick 后：后台结果被收割 → 新值可见（有界轮询，不依赖固定睡眠）
+    bool updated = false;
+    for (int i = 0; i < 200 && !updated; ++i) {
+        updated = hasName(cardNames(), "中转");
+        if (!updated) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        }
+    }
+    DOCTEST_CHECK(updated);
+    DOCTEST_CHECK(hasName(cardNames(), "官方"));   // 旧卡不丢
+
+    mod->onStop();
+    cleanupKey(a.value().id);
+    cleanupKey(b.value().id);
     return true;
 })
