@@ -22,6 +22,7 @@
 #include <filesystem>
 #include <fstream>
 #include <map>
+#include <memory>
 #include <sstream>
 #include <stdexcept>
 #include <string>
@@ -44,7 +45,9 @@ std::filesystem::path tempDbPath(const std::string& tag) {
 // RAII：创建已 migrate 的临时数据库
 struct TestDb {
     std::filesystem::path path;
-    core::Database db;
+    // 审计 CP-07：Database/SqliteDb 已不可默认构造（open() 是唯一入口），
+    // 「先占位、后 move 进来」改用指针表达
+    std::unique_ptr<core::Database> db;
 
     explicit TestDb(const std::string& tag) {
         path = tempDbPath(tag);
@@ -55,8 +58,8 @@ struct TestDb {
             throw std::runtime_error("Database::open failed: " +
                                      r.errorMessage());
         }
-        db = std::move(r.unsafeValue());
-        auto m = db.migrate();
+        db = std::make_unique<core::Database>(std::move(r.unsafeValue()));
+        auto m = db->migrate();
         if (m.isFail()) {
             throw std::runtime_error("migrate failed: " + m.errorMessage());
         }
@@ -69,7 +72,7 @@ struct TestDb {
         std::filesystem::remove(path.string() + "-shm", ec);
     }
 
-    core::data::SqliteDb& handle() { return db.db(); }
+    core::data::SqliteDb& handle() { return db->db(); }
 };
 
 // 在测试用 Keychain service 下清理某个 profile 的密钥

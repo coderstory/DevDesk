@@ -45,7 +45,9 @@ std::filesystem::path tempDbPath() {
 // RAII：临时库 + 注册全局 ClaudeService（析构时一定解除注册，防悬垂污染后续用例）
 struct TestEnv {
     std::filesystem::path path;
-    core::Database db;
+    // 审计 CP-07：Database/SqliteDb 已不可默认构造（open() 是唯一入口），
+    // 「先占位、后 move 进来」改用指针表达
+    std::unique_ptr<core::Database> db;
     std::unique_ptr<module::claude::ClaudeService> svc;
 
     TestEnv() {
@@ -56,12 +58,12 @@ struct TestEnv {
         if (r.isFail()) {
             throw std::runtime_error("Database::open failed: " + r.errorMessage());
         }
-        db = std::move(r.unsafeValue());
-        auto m = db.migrate();
+        db = std::make_unique<core::Database>(std::move(r.unsafeValue()));
+        auto m = db->migrate();
         if (m.isFail()) {
             throw std::runtime_error("migrate failed: " + m.errorMessage());
         }
-        svc = std::make_unique<module::claude::ClaudeService>(db.db(),
+        svc = std::make_unique<module::claude::ClaudeService>(db->db(),
                                                               kTestKeychainService);
         module::claude::ClaudeService::setGlobal(svc.get());
     }

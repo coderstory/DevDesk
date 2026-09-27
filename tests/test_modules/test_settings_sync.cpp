@@ -125,7 +125,9 @@ std::filesystem::path tempDbPath(const std::string& tag) {
 // RAII：已 migrate 的临时数据库
 struct TestDb {
     std::filesystem::path path;
-    core::Database db;
+    // 审计 CP-07：Database/SqliteDb 已不可默认构造（open() 是唯一入口），
+    // 「先占位、后 move 进来」改用指针表达
+    std::unique_ptr<core::Database> db;
 
     explicit TestDb(const std::string& tag) {
         path = tempDbPath(tag);
@@ -135,8 +137,8 @@ struct TestDb {
         if (r.isFail()) {
             throw std::runtime_error("Database::open failed");
         }
-        db = std::move(r.unsafeValue());
-        if (db.migrate().isFail()) {
+        db = std::make_unique<core::Database>(std::move(r.unsafeValue()));
+        if (db->migrate().isFail()) {
             throw std::runtime_error("migrate failed");
         }
     }
@@ -146,7 +148,7 @@ struct TestDb {
         std::filesystem::remove(path.string() + "-wal", ec);
         std::filesystem::remove(path.string() + "-shm", ec);
     }
-    core::data::SqliteDb& handle() { return db.db(); }
+    core::data::SqliteDb& handle() { return db->db(); }
 };
 
 } // namespace

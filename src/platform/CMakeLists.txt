@@ -13,6 +13,7 @@ if(WIN32)
         file_open_win.cpp
         system_theme_win.cpp
         file_watcher_win.cpp
+        http_client_ca_win.cpp
     )
 elseif(APPLE)
     target_sources(devdesk_platform PRIVATE
@@ -20,6 +21,7 @@ elseif(APPLE)
         file_open_macos.cpp
         system_theme_posix.cpp
         file_watcher_stub.cpp
+        http_client_ca_posix.cpp
     )
 else()
     target_sources(devdesk_platform PRIVATE
@@ -27,6 +29,7 @@ else()
         file_open_posix.cpp
         system_theme_posix.cpp
         file_watcher_stub.cpp
+        http_client_ca_posix.cpp
     )
 endif()
 
