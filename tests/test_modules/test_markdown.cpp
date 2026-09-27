@@ -12,6 +12,7 @@
 #include "module_markdown/md_block_model.h"
 #include "module_markdown/md_line_scanner.h"
 #include "module_markdown/md_tree.h"
+#include "module_markdown/md_view_state.h"
 
 #include <components/input.h>
 #include <core/dsl_runtime.h>
@@ -516,15 +517,21 @@ REGISTER_TEST(md_module_compose_phase1, "markdown_module: Phase 1 三态/大纲/
     frame("f3b");
     DOCTEST_CHECK(ui.find("md.outline.panel") == nullptr);
 
-    // Ctrl+Shift+P 三态循环：Edit（默认）→ Split → Preview → Edit
+    // Ctrl+Shift+P 四态循环：Edit（默认）→ Live → Split → Preview → Edit
     eui::KeyEvent p;
     p.key = eui::InputKey::P;
     p.modifiers.control = true;
     p.modifiers.shift = true;
+    DOCTEST_CHECK(mod->onKeyEvent(p));   // → Live（M1 新增第四态）
+    frame("f3c");
+    DOCTEST_CHECK(ui.find("md.live.scroll") != nullptr);
+    DOCTEST_CHECK(ui.find("md.editor.input") == nullptr);
+    DOCTEST_CHECK(ui.find("md.preview.scroll") == nullptr);
     DOCTEST_CHECK(mod->onKeyEvent(p));   // → Split
     frame("f4");
     DOCTEST_CHECK(ui.find("md.editor.input") != nullptr);
     DOCTEST_CHECK(ui.find("md.preview.scroll") != nullptr);
+    DOCTEST_CHECK(ui.find("md.live.scroll") == nullptr);
     DOCTEST_CHECK(mod->onKeyEvent(p));   // → Preview
     frame("f5");
     DOCTEST_CHECK(ui.find("md.editor.input") == nullptr);
@@ -533,6 +540,7 @@ REGISTER_TEST(md_module_compose_phase1, "markdown_module: Phase 1 三态/大纲/
     frame("f6");
     DOCTEST_CHECK(ui.find("md.editor.input") != nullptr);
     DOCTEST_CHECK(ui.find("md.preview.scroll") == nullptr);
+    DOCTEST_CHECK(ui.find("md.live.scroll") == nullptr);
 
     mod->onStop();
     return true;
@@ -2143,7 +2151,8 @@ REGISTER_TEST(md_module_split_scroll_cache_equivalence,
     p.key = eui::InputKey::P;
     p.modifiers.control = true;
     p.modifiers.shift = true;
-    DOCTEST_CHECK(mod->onKeyEvent(p));
+    DOCTEST_CHECK(mod->onKeyEvent(p));   // → 实时（M1 第四态）
+    DOCTEST_CHECK(mod->onKeyEvent(p));   // → 双栏
     frame();
     frame();
     DOCTEST_CHECK(ui.find("md.editor.input") != nullptr);
@@ -2274,7 +2283,8 @@ REGISTER_TEST(md_module_split_block_anchor_precision,
     p.key = eui::InputKey::P;
     p.modifiers.control = true;
     p.modifiers.shift = true;
-    DOCTEST_CHECK(mod->onKeyEvent(p));
+    DOCTEST_CHECK(mod->onKeyEvent(p));   // → 实时（M1 第四态）
+    DOCTEST_CHECK(mod->onKeyEvent(p));   // → 双栏
     frame();
     frame();  // 首帧建宽度、次帧同步滚动稳定（同缓存等价用例）
     const auto* pvScroll = ui.find("md.preview.scroll");
@@ -2459,7 +2469,8 @@ REGISTER_TEST(md_module_split_block_click_hover,
     p.key = eui::InputKey::P;
     p.modifiers.control = true;
     p.modifiers.shift = true;
-    mod->onKeyEvent(p);  // Editor → Split（④ 同款通道）
+    mod->onKeyEvent(p);  // Editor → 实时（M1 第四态）
+    mod->onKeyEvent(p);  // → Split（④ 同款通道）
     frame();
     frame();
 
@@ -2735,5 +2746,145 @@ REGISTER_TEST(md_editor_focus_target_is_hit,
     DOCTEST_CHECK(env2.ui->find("md.editor.input.cursor") != nullptr);
 
     mod->onStop();
+    return true;
+})
+
+// ==================== M1：第四态「实时」骨架（只读） ====================
+
+// 四态循环逐态断言可见元素集合 + segmented 视觉顺序/逆映射（与枚举值顺序解耦）
+REGISTER_TEST(md_module_live_mode_skeleton,
+              "markdown_module: 第四态（实时）骨架 四态循环/元素集合/分段映射（headless）", {
+    const std::string text = "# T\n\npara one\n\n```\nfence\n```\n\ntail\n";
+    MdUiEnv env("live");
+    DOCTEST_REQUIRE(env.db != nullptr);
+    DOCTEST_REQUIRE(writeTextFile(env.dir / "live.md", text));
+
+    std::unique_ptr<::core::Module> mod(create_markdown_module());
+    mod->onStart();
+
+    eui::Screen screen;
+    screen.width = 1600.0f;
+    screen.height = 1000.0f;
+    eui::Ui ui;
+    auto frame = [&](void) {
+        ui.begin("lv");
+        mod->compose(ui, screen);
+        ui.end();
+    };
+    frame();
+    const auto* fileRow = ui.find("md.tree.node.1.row");
+    DOCTEST_REQUIRE(fileRow != nullptr);
+    DOCTEST_REQUIRE(fileRow->onClick != nullptr);
+    fileRow->onClick();
+    frame();
+
+    // 编辑态（默认）：编辑器在、实时/预览列都不在
+    DOCTEST_CHECK(ui.find("md.editor.input") != nullptr);
+    DOCTEST_CHECK(ui.find("md.live.scroll") == nullptr);
+    DOCTEST_CHECK(ui.find("md.preview.scroll") == nullptr);
+
+    // segmented 视觉顺序 = 编辑 | 实时 | 双栏 | 预览（枚举值是 0/1/2/3 = 编辑/
+    // 双栏/预览/实时，故顺序必须经映射表，不能按枚举值排）
+    DOCTEST_REQUIRE(ui.find("md.mode.label.0") != nullptr);
+    DOCTEST_CHECK_EQ(ui.find("md.mode.label.0")->text, std::string("编辑"));
+    DOCTEST_CHECK_EQ(ui.find("md.mode.label.1")->text, std::string("实时"));
+    DOCTEST_CHECK_EQ(ui.find("md.mode.label.2")->text, std::string("双栏"));
+    DOCTEST_CHECK_EQ(ui.find("md.mode.label.3")->text, std::string("预览"));
+
+    eui::KeyEvent p;
+    p.key = eui::InputKey::P;
+    p.modifiers.control = true;
+    p.modifiers.shift = true;
+
+    // → 实时（第四态）：单栏块级渲染；无 input，也不出现预览列
+    DOCTEST_CHECK(mod->onKeyEvent(p));
+    frame();
+    DOCTEST_REQUIRE(ui.find("md.live.scroll") != nullptr);
+    DOCTEST_CHECK(ui.find("md.live.bg") != nullptr);
+    DOCTEST_CHECK(ui.find("md.live.blocks") != nullptr);
+    DOCTEST_CHECK(ui.find("md.live.blk.0.hit") != nullptr);  // 首块渲染 + hit 覆盖层
+    DOCTEST_CHECK(ui.find("md.editor.input") == nullptr);
+    DOCTEST_CHECK(ui.find("md.preview.scroll") == nullptr);
+    // 左树 / 顶栏动作 / 状态栏 / segmented：四态共享（零改动）
+    DOCTEST_CHECK(ui.find("md.tree.bg") != nullptr);
+    DOCTEST_CHECK(ui.find("md.actions") != nullptr);
+    DOCTEST_CHECK(ui.find("md.status.bg") != nullptr);
+    DOCTEST_CHECK(ui.find("md.mode") != nullptr);
+
+    // → 双栏
+    DOCTEST_CHECK(mod->onKeyEvent(p));
+    frame();
+    DOCTEST_CHECK(ui.find("md.editor.input") != nullptr);
+    DOCTEST_CHECK(ui.find("md.preview.scroll") != nullptr);
+    DOCTEST_CHECK(ui.find("md.live.scroll") == nullptr);
+
+    // → 预览
+    DOCTEST_CHECK(mod->onKeyEvent(p));
+    frame();
+    DOCTEST_CHECK(ui.find("md.editor.input") == nullptr);
+    DOCTEST_CHECK(ui.find("md.preview.scroll") != nullptr);
+    DOCTEST_CHECK(ui.find("md.live.scroll") == nullptr);
+
+    // → 编辑（循环回起点）
+    DOCTEST_CHECK(mod->onKeyEvent(p));
+    frame();
+    DOCTEST_CHECK(ui.find("md.editor.input") != nullptr);
+    DOCTEST_CHECK(ui.find("md.live.scroll") == nullptr);
+    DOCTEST_CHECK(ui.find("md.preview.scroll") == nullptr);
+
+    // segmented 点击走逆映射（不是 static_cast）：第 2 段 = 实时，不是双栏
+    const auto* segLive = ui.find("md.mode.hit.1");
+    DOCTEST_REQUIRE(segLive != nullptr);
+    DOCTEST_REQUIRE(segLive->onClick != nullptr);
+    segLive->onClick();
+    frame();
+    DOCTEST_CHECK(ui.find("md.live.scroll") != nullptr);
+    DOCTEST_CHECK(ui.find("md.editor.input") == nullptr);
+
+    mod->onStop();
+    return true;
+})
+
+// 持久化：mode=3（实时）通过净化与存读往返；旧文件 mode 0-2 语义不变；越界回落 0
+REGISTER_TEST(md_view_state_mode_live,
+              "markdown: 视图状态 mode 3（实时）通过净化 + 0-2 旧语义不变（M1）", {
+    using module::markdown::MarkdownViewState;
+    using module::markdown::MarkdownViewStateStore;
+    const fs::path file =
+        fs::temp_directory_path() / "devdesk_md_view_state_live.json";
+    std::error_code ec;
+    fs::remove(file, ec);
+
+    // 旧版落盘文件（同格式 JSON）→ mode 0-2 语义完全不变
+    for (int m = 0; m <= 2; ++m) {
+        {
+            std::ofstream f(file, std::ios::trunc);
+            f << "{\"lastPath\": \"old.md\", \"mode\": " << m
+              << ", \"collapsedDirs\": []}";
+        }
+        const MarkdownViewState loaded = MarkdownViewStateStore(file).load();
+        DOCTEST_CHECK_EQ(loaded.mode, m);
+        DOCTEST_CHECK_EQ(loaded.lastPath, std::string("old.md"));
+    }
+
+    // mode=3（Live）在合法域内：净化保留 + 存读往返
+    MarkdownViewState live;
+    live.mode = 3;
+    DOCTEST_CHECK_EQ(MarkdownViewStateStore::sanitized(live).mode, 3);
+    {
+        MarkdownViewStateStore store(file);
+        DOCTEST_CHECK(store.save(live).isOk());
+    }
+    DOCTEST_CHECK_EQ(MarkdownViewStateStore(file).load().mode, 3);
+
+    // 越界回落 0（新域上界为 3）
+    MarkdownViewState over;
+    over.mode = 4;
+    DOCTEST_CHECK_EQ(MarkdownViewStateStore::sanitized(over).mode, 0);
+    MarkdownViewState neg;
+    neg.mode = -1;
+    DOCTEST_CHECK_EQ(MarkdownViewStateStore::sanitized(neg).mode, 0);
+
+    fs::remove(file, ec);
     return true;
 })

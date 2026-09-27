@@ -17,7 +17,7 @@ namespace {
 constexpr const char* kKeyLastPath = "lastPath";
 constexpr const char* kKeyMode = "mode";
 constexpr const char* kKeyCollapsedDirs = "collapsedDirs";
-constexpr int kMaxMode = 2;  // ViewMode::Preview（0=Edit 1=Split 2=Preview）
+constexpr int kMaxMode = 3;  // ViewMode::Live（0=Edit 1=Split 2=Preview 3=Live）
 
 // 路径穿越守卫：笔记路径一律 POSIX 相对路径，含 ".." 段即拒
 bool hasTraversal(const std::string& p) {
