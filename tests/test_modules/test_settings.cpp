@@ -897,6 +897,81 @@ REGISTER_TEST(settings_takeover_status_row,
     return true;
 })
 
+// ---- 审计 CPX-02 残（波 1 L7）：未接管 + 警告非空时警告行仍要渲染 ----
+// 接管失败（settings.json 坏 JSON → takeOver 在写 sidecar 之前中止）⇒
+// isClaudeCodeManaged()=false（sidecar 不存在），但失败原因已进
+// lastSyncWarnings。旧渲染门是 managed && svc → 该行永不显示，而卡高仍按
+// 警告行数预留（渲染门与高度算源不一致）。本用例锁「行画出来 + 状态行仍
+// 如实写未接管」
+REGISTER_TEST(settings_takeover_warn_unmanaged,
+              "settings: 未接管 + 警告非空 → 警告行仍渲染（CPX-02）", {
+    namespace fs = std::filesystem;
+    const fs::path dir =
+        test_temp::tempPath("devdesk_test_settings_warn_unmanaged");
+    std::error_code ec;
+    fs::remove_all(dir, ec);
+    fs::create_directories(dir, ec);
+    const fs::path cfgPath = dir / "config.json";
+
+    auto r = ::core::Database::open(dir / "db.sqlite");
+    DOCTEST_REQUIRE(r.isOk());
+    auto db = std::make_unique<::core::Database>(std::move(r.unsafeValue()));
+    DOCTEST_REQUIRE(db->migrate().isOk());
+    module::claude::ClaudeService svc(db->db(), "DevDeskTestWarnUnmanaged");
+    module::claude::ClaudeService::setGlobal(&svc);
+    module::claude::settings_sync::Paths paths;
+    paths.settingsFile = dir / "settings.json";
+    paths.sidecarFile = dir / "snapshot.json";
+    svc.setSettingsSyncPaths(paths);
+    svc.setSettingsTakeOverEnabled(true);
+    setEnvVar("DEVDESK_CONFIG_PATH", cfgPath.string());
+
+    auto pr = svc.createProfile("警告未接管", "https://up.example.com",
+                                "sk-warn-unmanaged-0001", "");
+    DOCTEST_REQUIRE(pr.isOk());
+    DOCTEST_REQUIRE(svc.setActiveProfile(pr.value().id).isOk());
+
+    std::unique_ptr<::core::Module> mod(create_settings_module());
+    mod->onStart();
+    eui::Screen screen;
+    screen.width = 1600.0f;
+    screen.height = 1000.0f;
+    DOCTEST_REQUIRE(clickSettingsTab(*mod, screen, 1));  // 模块 tab
+
+    // 起代理：settings.json 是坏 JSON → 接管失败（写 sidecar 之前中止）
+    {
+        std::ofstream out(paths.settingsFile);
+        out << "{ not valid json !!!";
+    }
+    auto started = svc.startProxy("127.0.0.1", 0);
+    DOCTEST_REQUIRE(started.isOk());
+    DOCTEST_REQUIRE(!svc.lastSyncWarnings().empty());
+    DOCTEST_CHECK(!svc.isClaudeCodeManaged());   // 未接管
+    DOCTEST_CHECK_FALSE(fs::exists(paths.sidecarFile));  // 失败在写盘之前
+
+    mod->onPageEnter();  // 刷新接管状态快照（真实流程同款刷新点）
+    eui::Ui ui;
+    ui.begin("warn_unmanaged");
+    mod->compose(ui, screen);
+    ui.end();
+    const auto* warn = ui.find("settings.card.proxy.takeover.warn.0");
+    DOCTEST_REQUIRE(warn != nullptr);
+    DOCTEST_CHECK(warn->text.find("接管失败") != std::string::npos);
+    // 状态行不受影响：仍如实写「未接管」（managed 只留给文案/色）
+    const auto* value = ui.find("settings.card.proxy.takeover.value");
+    DOCTEST_REQUIRE(value != nullptr);
+    DOCTEST_CHECK(value->text.find("未接管") != std::string::npos);
+
+    svc.stopProxy();
+    mod->onStop();
+    module::claude::ClaudeService::setGlobal(nullptr);
+    setEnvVar("DEVDESK_CONFIG_PATH", "");
+    platform::keychain::deleteSecret(
+        "DevDeskTestWarnUnmanaged", "claude:" + std::to_string(pr.value().id));
+    fs::remove_all(dir, ec);
+    return true;
+})
+
 // ---- 窗口效果三档（磨砂 Phase D）----
 
 // REGISTER_TEST 宏体内不能出现裸逗号，档位数组放宏外
@@ -1231,6 +1306,51 @@ REGISTER_TEST(settings_pet_dropdown_z_escape, "settings: pet skin dropdown popup
     }
     DOCTEST_REQUIRE(parent != nullptr);
     DOCTEST_CHECK(orderedIndexOf(parent, petCard) > orderedIndexOf(parent, dirCard));
+
+    mod->onStop();
+    ::core::theme::setDark();
+    return true;
+})
+
+// ---- PAB-13（波 1 L7）：桌宠卡「显示桌宠」按钮 ----
+// 无头渲染断言：按钮在「位置重置」左侧同排（间距 8）、文案/点击回调齐备。
+// 卡高保持 120（内容底沿 104 不变 → contentKey 不变，不触发滚动高度重测）
+REGISTER_TEST(settings_pet_show_button_renders,
+              "settings: 桌宠卡「显示桌宠」按钮渲染（PAB-13）", {
+    PruneEnv env("petshow");
+    {
+        std::ofstream out(env.cfgPath);
+        out << "{\"theme\":\"dark\",\"enabledModules\":["
+               "\"home\",\"markdown\",\"todo\",\"claude_proxy\",\"settings\",\"pet\"]}";
+    }
+    std::unique_ptr<::core::Module> mod(create_settings_module());
+    mod->onStart();
+    eui::Screen screen;
+    screen.width = 1600.0f;
+    screen.height = 1000.0f;
+    DOCTEST_REQUIRE(clickSettingsTab(*mod, screen, 1));  // pet 卡在「模块」tab
+    eui::Ui ui;
+    ui.begin("petshow");
+    mod->compose(ui, screen);
+    ui.end();
+    ui.layout(screen.width, screen.height);  // scrollView 内容在 layout 期展开
+
+    const auto* show = ui.find("settings.card.pet.show");
+    const auto* reset = ui.find("settings.card.pet.reset");
+    const auto* label = ui.find("settings.card.pet.show.text");
+    const auto* hit = ui.find("settings.card.pet.show.bg");
+    DOCTEST_REQUIRE(show != nullptr);
+    DOCTEST_REQUIRE(reset != nullptr);
+    DOCTEST_REQUIRE(label != nullptr);
+    DOCTEST_REQUIRE(hit != nullptr);
+    DOCTEST_CHECK_EQ(label->text, std::string("显示桌宠"));
+    DOCTEST_CHECK(hit->onClick != nullptr);
+    // 同排 y=64，居「位置重置」左侧：160 宽按钮 + 8 间隙 = 168 的 x 差
+    DOCTEST_CHECK(show->hasX);
+    DOCTEST_CHECK(show->hasY);
+    DOCTEST_CHECK_EQ(show->y, 64.0f);
+    DOCTEST_CHECK_EQ(reset->y, 64.0f);
+    DOCTEST_CHECK_EQ(reset->x - show->x, 168.0f);
 
     mod->onStop();
     ::core::theme::setDark();

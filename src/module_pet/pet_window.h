@@ -49,8 +49,6 @@ struct PetMenuItemData {
 
 // 构建桌宠右键菜单：（有皮肤时）换肤子组 / 位置重置 / 隐藏 /
 // 分隔线 / 退出。顺序即 path 语义基础
-//（挂机穿透 toggle 项已于 2026-09-24 移除：死锁设计——开启后鼠标穿透致
-// 右键也点不中桌宠，只能设置页关，用户易被困住）
 std::vector<PetMenuItemData> petContextMenuItems(const std::vector<std::string>& skins);
 
 enum class PetMenuAction {
@@ -145,6 +143,15 @@ std::pair<int, int> clampPetPosToMonitors(int x, int y,
                                           const std::vector<PetWorkArea>& areas,
                                           int frameW, int frameH);
 
+// 皮肤四态定义见 pet_skin.h——只作函数参数的前置声明，避免本头拖进
+// core/result.h（本头刻意只依赖标准库）
+struct PetSkin;
+
+// 随机挑一句气泡短语（短语表随皮肤 = phraseTable(skin)，皮肤无 phrases 时
+// 回退内置语料）。纯函数，单测断言「随机源可真出多种短语」用；随机数走
+// <random>（mt19937 + 进程级单例种子），不再用 std::rand 的全局序列
+std::string pickPetPhrase(const PetSkin& skin);
+
 // M2 Sleep 零渲染：系统挂起（PBT_APMSUSPEND）置 true、唤醒置 false。
 // petCompose 入口检查 isPetRenderPaused()，true 则整帧跳过（不重建成命令 /
 // 不推动画 / 不跑 onTimer / 不计气泡倒计时），唤醒后自动恢复。回调由
@@ -155,6 +162,15 @@ bool isPetRenderPaused();
 // 打开桌宠窗口（主循环起来前调用；openWindow 入队、首帧消费）。
 // 皮肤缺失时自动生成内置占位皮肤；位置钳制进主显示器工作区。
 void startPetWindow(const PetWindowConfig& config);
+
+// 重新显示桌宠窗口（PAB-13，波 1 L7）：设置页「显示桌宠」按钮用（经
+// module_pet_bridge.h 的声明桥，settings 不 include 本头）。门控语义：
+// ① 本会话 main 从未装配过桌宠（模块开关关 = startPetWindow 从未被调用）
+//    → 返回 false，不凭空开窗（该开关本就「重启生效」）；
+// ② 窗口已开着（handle 非空）→ 返回 false（隐藏走右键「隐藏桌宠」，隐藏后
+//    handle 被 onWindowDestroyed 清空，本函数即可重开）。
+// 返回 true = 已按 rt.config（皮肤/位置/气泡数据源桥原样）重新入队开窗请求
+bool showPetWindow();
 
 // 换肤（M2）：校验 skinName 是 discoverSkins() 发现到的皮肤后写盘并热切换
 //（关旧窗 → 按新皮肤重开，位置沿用当前窗口）；未知名字拒绝不动。

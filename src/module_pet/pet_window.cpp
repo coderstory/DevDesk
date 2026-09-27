@@ -3,8 +3,8 @@
 //（EUI-NEO G1-G5 扩展，见 ../EUI-NEO docs/DSL.md「子窗口配置」）。
 // M2 状态机（设计 §4.4/§4.5）：Idle（眨眼循环）→ 点击 → Poked（播一遍）；
 // 无交互 5min → Sleep（闭眼+Zzz）；代理活动流 → Typing（打字帧）。
-// 气泡对话（点击/随机闲聊，短语表随皮肤）；右键菜单（穿透/换肤/位置
-// 重置/隐藏/退出——退出为二段确认，审计 [25]）；拖拽移动窗口（onDrag + setWindowPos，结束持久化）。
+// 气泡对话（点击/随机闲聊，短语表随皮肤）；右键菜单（换肤子组/位置重置/
+// 隐藏/退出——退出为二段确认，审计 [25]）；拖拽移动窗口（onDrag + setWindowPos，结束持久化）。
 // 代理联动读 core::proxy_stats 共享统计（module_pet → core 合法依赖，
 // 不碰 module_claude_proxy）
 #include "module_pet/pet_window.h"
@@ -14,6 +14,7 @@
 #include <cmath>
 #include <cstdlib>
 #include <filesystem>
+#include <random>
 #include <utility>
 
 #include "core/component_theme.h"
@@ -44,6 +45,10 @@ struct PetRuntime {
     core::window::Handle handle = nullptr;
     PetWindowConfig config;
     std::vector<std::string> skins;  // 发现到的皮肤（换肤菜单/设置页消费）
+    // PAB-13：本会话 main 是否装配过桌宠（startPetWindow 入口置 true）——
+    // 设置页「显示桌宠」按钮据此区分「模块开关关 → 拒绝凭空开窗」与
+    // 「隐藏后再显示」
+    bool windowRequested = false;
     // M2 Sleep 零渲染：系统挂起置位 / 唤醒清零（回调在主线程，compose 同线程
     // 读，无并发，普通 bool 即可）
     bool renderPaused = false;
@@ -52,6 +57,14 @@ struct PetRuntime {
 PetRuntime& runtime() {
     static PetRuntime instance;
     return instance;
+}
+
+// 气泡短语的随机源（PAB-12）：进程级 mt19937 单例，ctor 用 random_device
+// 播种（std::rand 的全局序列跨进程每次相同 = 每次启动同一套短语顺序）。
+// 只被渲染线程（onTimer 回调）与单测调用，无并发保护需求
+std::mt19937& phraseRng() {
+    static std::mt19937 engine(std::random_device{}());
+    return engine;
 }
 
 double steadyMs() {
@@ -108,12 +121,6 @@ void clampPetPosIntoWorkAreaInPlace(int& x, int& y) {
     y = (cy == -1) ? -2 : cy;
 }
 
-// 随机挑一句短语（短语表随皮肤，见 pet_skin.h phraseTable）
-std::string pickPhrase(const PetSkin& skin) {
-    const std::vector<std::string>& table = phraseTable(skin);
-    return table[static_cast<size_t>(std::rand()) % table.size()];
-}
-
 // ---- 持久化（读-改-写 petsDir()/pet_config.json，只含 pet 字段；模块隔离，
 // 不依赖 module_settings）----
 
@@ -141,15 +148,14 @@ struct PetUiState {
     PetBubble bubble;              // 气泡对话（M2 设计 §4.5）
     bool initialized = false;
     bool wasDragged = false;   // 拖拽结束抑制误触 poke（设计 §4.4 Dragged 语义）
-    // 穿透状态在 PetRuntime::config（原生菜单切换，热换肤重开窗后仍在）
     double lastInteractionMs = 0.0;  // 最近交互时刻（入睡判定用）
     double lastTickMs = 0.0;         // 上次 onTimer 时刻（气泡倒计时 dt 用）
     PetDragAnchor dragAnchor;        // 拖拽锚点（见 pet_window.h，抖动修复）
 };
 
 // ---- styled 右键菜单（菜单美化 2026-09-23）----
-// FontAwesome 码点（fa-solid）：穿透=mouse-pointer / 换肤=palette /
-// 位置重置=crosshairs / 隐藏=eye-slash / 退出=power-off
+// FontAwesome 码点（fa-solid）：换肤=palette / 位置重置=crosshairs /
+// 隐藏=eye-slash / 退出=power-off
 constexpr int kIconSkin = 0xF53F;
 constexpr int kIconReset = 0xF05B;
 constexpr int kIconHide = 0xF070;
@@ -364,18 +370,19 @@ void petCompose(eui::Ui& ui, const eui::Screen& screen) {
                              if (!state.bubble.visible &&
                                  state.anim.state == PetAnimState::Idle) {
                                  const double roll =
-                                     static_cast<double>(std::rand()) / RAND_MAX;
+                                     std::uniform_real_distribution<double>(
+                                         0.0, 1.0)(phraseRng());
                                  if (roll < dt / 150.0) {
                                      const auto [dataText, dataSec] =
                                          petDataBubbleText(
                                              runtime().config.getProxyEvent,
                                              runtime().config.getOverdueCount);
                                      state.bubble.show(
-                                         dataText.empty() ? pickPhrase(s)
+                                         dataText.empty() ? pickPetPhrase(s)
                                                           : dataText,
                                          dataText.empty() ? 3.0 : dataSec);
                                  } else if (roll < dt / 60.0) {
-                                     state.bubble.show(pickPhrase(s), 3.0);
+                                     state.bubble.show(pickPetPhrase(s), 3.0);
                                  }
                              }
                          })
@@ -386,7 +393,7 @@ void petCompose(eui::Ui& ui, const eui::Screen& screen) {
                     }
                     state.wasDragged = false;
                     // 点击说一句话（M2 §4.5：交互触发的气泡）
-                    state.bubble.show(pickPhrase(runtime().skin), 3.0);
+                    state.bubble.show(pickPetPhrase(runtime().skin), 3.0);
                 })
                 .onDrag([&state](const core::dsl::DragEvent& event) {
                     state.lastInteractionMs = steadyMs();  // 拖拽也是交互
@@ -506,6 +513,15 @@ std::filesystem::path resolveSkinDir(const std::string& skinName) {
 
 } // namespace
 
+// 随机挑一句气泡短语（声明见 pet_window.h；短语表随皮肤，见 pet_skin.h
+// phraseTable）。PAB-12：改用 <random>（phraseRng = mt19937 + random_device
+// 播种），替换 std::rand 的进程固定序列
+std::string pickPetPhrase(const PetSkin& skin) {
+    const std::vector<std::string>& table = phraseTable(skin);
+    return table[std::uniform_int_distribution<size_t>(0, table.size() - 1)(
+        phraseRng())];
+}
+
 std::pair<int, int> petDragMove(PetDragAnchor& anchor, int windowX, int windowY,
                                 double cursorX, double cursorY) {
     // 光标屏幕位 = 窗口原点 + 窗口内光标（两参同为 GLFW 屏幕坐标系实时值，
@@ -593,6 +609,9 @@ bool isPetRenderPaused() { return runtime().renderPaused; }
 void startPetWindow(const PetWindowConfig& config) {
     PetRuntime& rt = runtime();
     rt.config = config;
+    // PAB-13：本会话已装配桌宠——设置页「显示桌宠」据此区分「模块开关关
+    // （从未装配 → 拒绝凭空开窗）」与「隐藏后再显示」
+    rt.windowRequested = true;
 
     // 内置皮肤全集落盘（幂等；用户替换过的原样保留）——换肤菜单/设置页
     // 下拉靠 discoverSkins 发现，皮肤须先存在于 petsDir
@@ -690,6 +709,19 @@ void startPetWindow(const PetWindowConfig& config) {
              "fps，位置=" + std::to_string(x) + "," + std::to_string(y) + "）");
 }
 
+// PAB-13：重新显示桌宠窗口（设置页「显示桌宠」按钮，声明见 pet_window.h）
+bool showPetWindow() {
+    PetRuntime& rt = runtime();
+    if (!rt.windowRequested) {
+        return false;  // 本会话从未装配（模块开关关）——不凭空开窗
+    }
+    if (rt.handle != nullptr) {
+        return false;  // 窗口已开着（隐藏后 handle 被 onWindowDestroyed 清空）
+    }
+    startPetWindow(rt.config);  // 皮肤/位置/气泡数据源桥沿用上次装配
+    return true;
+}
+
 void applyPetSkin(const std::string& skinName) {
     PetRuntime& rt = runtime();
     // 只接受发现到的皮肤名（名字会拼进文件系统路径，防手改配置注入）
@@ -771,8 +803,8 @@ bool petExitConfirmChosen(const std::vector<int>& path) {
 }
 
 // ---- 右键菜单结构（菜单美化 2026-09-23，纯数据层，声明见 pet_window.h）----
-// 顺序 = path 语义基础：0 穿透切换 /（有皮肤时）1 换肤子组 / 位置重置 /
-// 隐藏 / 分隔线 / 退出。图标码点只被 styled 菜单消费，原生降级忽略。
+// 顺序 = path 语义基础：（有皮肤时）换肤子组 / 位置重置 / 隐藏 / 分隔线 /
+// 退出。图标码点只被 styled 菜单消费，原生降级忽略。
 std::vector<PetMenuItemData> petContextMenuItems(const std::vector<std::string>& skins) {
     std::vector<PetMenuItemData> items;
     if (!skins.empty()) {
@@ -795,7 +827,7 @@ PetMenuAction petMenuActionForPath(const std::vector<int>& path, size_t skinCoun
                                    int& skinIndex) {
     skinIndex = -1;
     const bool hasSkinMenu = skinCount > 0;
-    // 子项组 path = {0, j}（换肤组现居首项；穿透 toggle 项已移除，下标整体前移）
+    // 子项组 path = {0, j}（换肤组居首项）
     if (path.size() == 2) {
         if (hasSkinMenu && path[0] == 0 && path[1] >= 0 &&
             static_cast<size_t>(path[1]) < skinCount) {
@@ -807,7 +839,7 @@ PetMenuAction petMenuActionForPath(const std::vector<int>& path, size_t skinCoun
     if (path.size() != 1) {
         return PetMenuAction::None;
     }
-    // 顶层下标随换肤子组有无整体偏移（与历史实现同一数学，穿透项删除后各 -1）。
+    // 顶层下标随换肤子组有无整体偏移（有子组时各 +1）。
     // 退出项在「隐藏」+ 分隔线之后 = idxHide + 2——分隔线不可选但在
     // items 向量占下标（styled/native 两条 path 语义都是向量原始下标）。
     const int idxReset = hasSkinMenu ? 1 : 0;

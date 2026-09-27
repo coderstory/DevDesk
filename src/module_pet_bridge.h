@@ -1,12 +1,12 @@
 // src/module_pet_bridge.h
 // 设置页 ↔ 桌宠的进程内自由函数桥（专家审计 2026-09-27 M1 短期项）：
-// 把原先只写在 settings_module.cpp 里的 4 个 extern 声明收口到单一头。
+// 把原先只写在 settings_module.cpp 里的 5 个 extern 声明收口到单一头。
 // 落点是 **src 根（应用层，与 app_sidebar.h 同级）**而非任一 module_* 目录：
 // 模块间零 include 铁律（CLAUDE.md「架构要点」）管的是 module_* 互相依赖，
 // 本头不属任何模块——settings include 它不构成"include 兄弟模块的头"。
 //
 // 边界（审计 [5][36] 的刻意裁决，本次不动）：module_* 之间不互相依赖
-// （防循环，CLAUDE.md「架构要点」）。设置页桌宠卡要用这 4 个操作，但 settings
+// （防循环，CLAUDE.md「架构要点」）。设置页桌宠卡要用这 5 个操作，但 settings
 // 不 include pet 的实体头（pet_window.h / pet_skin.h——会拖进 EUI-NEO 类型与
 // PetSkin/PetConfig 布局，跨 TU 各自重定义是 ODR 风险），CMake 也不 link
 // devdesk_module_pet：只在本头取声明，符号在最终可执行文件（DevDesk /
@@ -14,7 +14,7 @@
 // （string/vector），不引任何 EUI-NEO / pet 内部类型。全部不抛异常（项目
 // Result 口径）：pet 侧失败时记日志并保持原状，调用方无需接错误。
 //
-// 签名漂移防线（本项新增）：末尾 static_assert 把 4 个声明钉死在函数指针
+// 签名漂移防线（本项新增）：末尾 static_assert 把 5 个声明钉死在函数指针
 // 类型上，改本头任一声明立刻编译报错；pet 侧定义 TU（pet_window.cpp /
 // pet_skin.cpp）直接 include 本头，故「pet 侧改签名漏改本头」也在编译期炸，
 // 而不是拖到链接期才 undefined symbol。
@@ -44,6 +44,10 @@ std::string currentSkinName();
 void applyPetSkin(const std::string& skinName);
 // 位置重置：持久化坐标清回未设置哨兵，窗口开着则立刻移回默认位
 void resetPetPosition();
+// 重新显示桌宠窗口（PAB-13，波 1 L7）：返回 true = 已重新入队开窗请求；
+// false 有两种（调用方只需一句提示）：① 本会话从未装配过桌宠（模块开关关，
+// 重启后生效）② 窗口已开着。隐藏走右键「隐藏桌宠」，隐藏后本函数可重开
+bool showPetWindow();
 
 } // namespace module::pet
 
@@ -61,3 +65,6 @@ static_assert(std::is_same_v<decltype(&module::pet::applyPetSkin),
 static_assert(std::is_same_v<decltype(&module::pet::resetPetPosition),
                              void (*)()>,
               "module_pet_bridge: resetPetPosition 签名漂移");
+static_assert(std::is_same_v<decltype(&module::pet::showPetWindow),
+                             bool (*)()>,
+              "module_pet_bridge: showPetWindow 签名漂移");

@@ -272,7 +272,7 @@ void compose(eui::Ui& ui, const eui::Screen& screen) {
     ::core::Router* router = ::core::appRouter();
     if (!router) return;
     // 布局：row(常驻侧边栏, 页面内容)——spec §2"左侧侧边栏切换工具，右侧主区"；
-    // 侧边栏宽随折叠态 260/72，页面区拿剩余宽度（折叠后 +188px）
+    // 侧边栏宽随折叠态 208/72，页面区拿剩余宽度（折叠后 +136px）
     ui.row("app.root")
         .size(screen.width, screen.height)
         .content([&] {
