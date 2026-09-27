@@ -1,5 +1,13 @@
 #pragma once
 // 极简测试框架
+//
+// 断言语义三条（写用例前必读）：
+// 1) 所有 DOCTEST_REQUIRE* 宏都只是对应 DOCTEST_CHECK* 宏的别名（见下方 #define），
+//    没有"致命 / 非致命"之分——与真 doctest 语义不同，不要按名字推断。
+// 2) 断言失败即 `return false`（fail-fast）：同一用例里后续断言不再执行、一次失败只报 1 条；
+//    想在一个场景里看完多处失败，得拆成多个用例。
+// 3) 断言只能写在返回 bool 的函数/用例体里（宏展开含 `return false`）；
+//    返回非 bool 的 helper 中不能直接用，helper 需把结果回传、由调用方断言。
 #include <cstdio>
 #include <iostream>
 #include <sstream>
@@ -30,6 +38,7 @@
 
 #define DOCTEST_CHECK_TRUE(expr) DOCTEST_CHECK(expr)
 #define DOCTEST_CHECK_FALSE(expr) DOCTEST_CHECK(!(expr))
+// 名实不符提示：REQUIRE == CHECK（同样是"失败即中断"，不是真 doctest 的"失败可续"语义）
 #define DOCTEST_REQUIRE(expr) DOCTEST_CHECK(expr)
 #define DOCTEST_REQUIRE_EQ(a, b) DOCTEST_CHECK_EQ(a, b)
 #define DOCTEST_REQUIRE_NE(a, b) DOCTEST_CHECK_NE(a, b)

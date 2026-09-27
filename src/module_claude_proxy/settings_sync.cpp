@@ -131,8 +131,9 @@ ParsedDoc parseJsonObjectFile(const fs::path& p) {
 }
 
 // sidecar 结构：{"managedKeys": {<键名>: "", ...}, "envSnapshot": {...}}。
-// managedKeys 用对象而不是数组：platform::json 的 JsonValue 不支持读数组元素
-//（size() 恒 0），键名集合用 keys() 取
+// managedKeys 以对象存键名集合（读侧统一走 keys()）是有意保留的形态，不必改成数组。
+// 原注"platform::json 不支持读数组元素（size() 恒 0）"已过时：size()/operator[] 早已实装
+//（见 "platform/json.h"，模块插拔 enabledModules 是首个消费者）。
 JsonObject managedKeysObject(const std::vector<std::string>& keys) {
     JsonObject obj;
     for (const auto& k : keys) {
