@@ -1956,6 +1956,12 @@ private:
             .inset(kLiveInputInset)
             .theme(*live.theme)
             .onChange([this](const std::string& v) { syncDocumentFromLiveInput(v); })
+            // M4 键盘流（spec §3.4）：块内编辑键 + 块边界键，passthrough 先于
+            // 内置（返回 true 即拦截）。捕获 &ui 与编辑态 onKeyEvent 同款 ——
+            // Runtime 常驻 Ui，state store 跨帧持久
+            .onKeyEvent([this, &ui](const eui::KeyEvent& event) {
+                return handleLiveKey(ui, event);
+            })
             // M3 失焦提交（语义见 commitLiveInputOnBlur）：焦点离开活动 input
             // （点渲染块 / 左树 / 切态 / 弹窗）时收口。捕获 &ui 与编辑态
             // onKeyEvent 同款 —— Runtime 常驻 Ui，state store 跨帧持久。
@@ -2076,6 +2082,144 @@ private:
         const std::string pending = st.text;   // 取副本：上行会换掉 blockModel_ 内部文本
         LOG_DEBUG("[live] 失焦提交未上行文本 len=" + std::to_string(pending.size()));
         syncDocumentFromLiveInput(pending);
+    }
+
+    // ---- Phase 3 M4：块边界键（spec §3.4 / 已定决策 D-C）----
+    // 核心决策：块边界【不做块结构操作】，只做普通文本编辑，块身份始终跟随光标
+    //（锚 = 文档字节偏移 D3）。两条路：
+    //   ① 块内按键（Tab/Shift+Tab、Ctrl+B/I/K、Enter 续列表）→ md_keyboard 纯函数
+    //      → 写回活动 input（commitLiveEditBuffer）→ 上行拼文档；
+    //      Enter 非列表行不拦截 → 内置在块内插 '\n'（= spec「块内插 \n，按一次
+    //      Enter 不新建块」；连续 Enter 造出空行后分块器自然重切，零特判）。
+    //   ② 块边界键（±↑↓ 跨块、块首退格、块尾删除）→ md_live_edit 纯函数
+    //      → 直接改文档 + setLiveCursor（唯一光标写点）；活动块随后按锚自动跟随。
+    // 组字在飞一律不拦截（R3：换文本/换块会撕裂预编辑）。
+    bool handleLiveKey(eui::Ui& ui, const eui::KeyEvent& event) {
+        using InputState = components::input_detail::InputModel::InputState;
+        if (mode_ != ViewMode::Live) return false;
+        if (!event.isDown()) return false;   // 释放/重复：内置只认按下（同 handleEditorKey）
+        InputState& st = ui.state<InputState>(kLiveInputId);
+        if (mdLiveCompositionFrozen(st.compositionText)) return false;
+
+        const bool shortcut = event.modifiers.shortcut();
+        const bool alt = event.modifiers.alt;
+        const bool plain = !shortcut && !event.modifiers.shift && !alt &&
+                           !event.modifiers.super;
+
+        // ① 块内按键：与编辑态 handleEditorKey 同一批纯函数（spec §3.4）
+        EditBuffer buf{st.text, st.cursor, st.selectionStart, st.selectionEnd};
+        bool handled = false;
+        if (event.key == eui::InputKey::Tab && !shortcut && !alt) {
+            if (!applyTabTable(buf, event.modifiers.shift)) {
+                applyTab(buf, event.modifiers.shift);
+            }
+            handled = true;
+        } else if (event.key == eui::InputKey::Enter && plain) {
+            handled = applyEnterList(buf);   // 列表行续行；其余交回内置插 '\n'
+        } else if (shortcut && !event.modifiers.shift && !alt) {
+            if (event.key == eui::InputKey::B) {
+                applyWrapAround(buf, "**");
+                handled = true;
+            } else if (event.key == eui::InputKey::I) {
+                applyWrapAround(buf, "*");
+                handled = true;
+            } else if (event.key == eui::InputKey::K) {
+                applyLinkSkeleton(buf);
+                handled = true;
+            }
+        }
+        if (handled) {
+            commitLiveEditBuffer(ui, buf);
+            return true;
+        }
+
+        // ② 块边界键：文档字节偏移口径（与每帧锚重推同一公式：输入框文本起点 +
+        //    块内光标）。Ctrl/Alt/Super 组合一律不碰（Ctrl+Z/Y 归 M5）。
+        if (shortcut || alt || event.modifiers.super) return false;
+        const std::vector<MdBlock>& blocks = blockModel_.blocks();
+        if (blocks.empty()) return false;
+        const size_t local = st.cursor > 0 ? static_cast<size_t>(st.cursor) : 0;
+        const size_t docByte = liveInputStart_ + local;
+        const bool hasSelection = st.selectionStart != st.selectionEnd;
+
+        if (event.key == eui::InputKey::Up || event.key == eui::InputKey::Down) {
+            // Shift+↑↓ 与块内选区照旧（spec §3.4：跨块选区不做）
+            if (event.modifiers.shift || hasSelection) return false;
+            const int dir = (event.key == eui::InputKey::Up) ? -1 : 1;
+            const size_t target =
+                mdLiveVerticalBlockTarget(editorText_, blocks, docByte, dir);
+            if (target == kMdLiveNoConsume) return false;   // 首块 ↑ / 末块 ↓：内置
+            setLiveCursor(target, dir < 0 ? "跨块上移" : "跨块下移");
+            LOG_DEBUG(std::string("[live] 跨块") + (dir < 0 ? "上移" : "下移") +
+                      " byte=" + std::to_string(docByte) + " → " +
+                      std::to_string(target));
+            return true;
+        }
+        if (event.key == eui::InputKey::Backspace || event.key == eui::InputKey::Delete) {
+            if (hasSelection) return false;   // 块内选区删除交回内置
+            MdLiveBoundaryEdit edit;
+            const int dir = (event.key == eui::InputKey::Backspace) ? -1 : 1;
+            if (!mdLiveBoundaryEdit(editorText_, blocks, docByte, dir, edit)) {
+                return false;   // 不在块边界 / 首块退格 / 文末删除 / 普通字符删除
+            }
+            applyLiveBoundaryEdit(edit, dir < 0 ? "块首退格" : "块尾删除");
+            return true;
+        }
+        return false;
+    }
+
+    // 块内编辑键的写回（编辑态 commitEditBuffer 的实时态对应物，写的是活动
+    // input）：纯函数改的是 InputState，不是组件内部编辑 → 不触发 onChange，
+    // 故文本有变化时必须显式上行（syncDocumentFromLiveInput 拼整篇 + 唯一写点）。
+    void commitLiveEditBuffer(eui::Ui& ui, EditBuffer& buf) {
+        using InputState = components::input_detail::InputModel::InputState;
+        InputState& st = ui.state<InputState>(kLiveInputId);
+        if (buf.text == st.text) {
+            // 纯光标/选区移动（表格跳格落点）：只更新位置，不进 undo / 不 bump
+            // 修订号（同编辑态口径）
+            if (buf.cursor == st.cursor && buf.selStart == st.selectionStart &&
+                buf.selEnd == st.selectionEnd) {
+                return;
+            }
+            st.cursor = buf.cursor;
+            st.selectionStart = buf.selStart;
+            st.selectionEnd = buf.selEnd;
+            st.dragAnchor = buf.cursor;
+            st.hasPreferredCursorX = false;
+            st.followCaret = true;
+            return;
+        }
+        components::input_detail::InputModel::pushUndoState(st);
+        st.text = std::move(buf.text);
+        ++st.textRevision;
+        st.cursor = buf.cursor;
+        st.selectionStart = buf.selStart;
+        st.selectionEnd = buf.selEnd;
+        st.dragAnchor = buf.cursor;
+        st.hasPreferredCursorX = false;
+        st.followCaret = true;
+        syncDocumentFromLiveInput(st.text);
+    }
+
+    // 边界删除落地：删的是【块外】的接缝换行（活动 input 的文本里没有它），故
+    // 直接改整篇文档，再按删除点重定光标（setLiveCursor = 唯一光标写点）。顺序
+    // 不能反：先 onEditorTextChanged（分块重切）再 setLiveCursor，活动块才按
+    // 【新】块序列取；反了锚会按旧块序列解释。
+    // 不走 input 内置编辑 → framework undo 栈不增（已定决策 D5：实时态撤销归
+    // 模块层快照栈，M5 交付；本路径的撤销因此要等 M5 —— 不把块局部快照塞进
+    // framework 栈：那条栈恢复的是【块文本】，重切后块已换，恢复会写错块）。
+    void applyLiveBoundaryEdit(const MdLiveBoundaryEdit& edit, const char* reason) {
+        if (edit.eraseEnd <= edit.eraseStart || edit.eraseEnd > editorText_.size()) {
+            return;
+        }
+        std::string next = editorText_;
+        next.erase(edit.eraseStart, edit.eraseEnd - edit.eraseStart);
+        onEditorTextChanged(next);
+        setLiveCursor(edit.cursor, reason);
+        LOG_INFO(std::string("实时态边界键(") + reason + "): 删 [" +
+                 std::to_string(edit.eraseStart) + "," +
+                 std::to_string(edit.eraseEnd) + ") 光标 " +
+                 std::to_string(edit.cursor));
     }
 
     // 双栏同步滚动（§5.3，Phase 3 ④ 块模型精确锚）：编辑器视口顶行 →

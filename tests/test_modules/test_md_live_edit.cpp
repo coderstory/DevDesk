@@ -247,3 +247,193 @@ REGISTER_TEST(md_live_composition_frozen,
     DOCTEST_CHECK_FALSE(mdLiveCompositionFrozen(std::string()));
     return true;
 })
+
+// ==================== M4：块边界键（spec §3.4）====================
+// 验收（spec §7 M4 行）：mdLiveVerticalBlockTarget 与边界偏移的单测 —— 覆盖
+// 首块 / 末块 / 空文档 / cursor==size / CRLF 五类边界。
+
+// ---- 跨块 ↑↓：目标 = 相邻块边界行行首（列尽量保持，CRLF 的 '\r' 不计内容）----
+
+REGISTER_TEST(md_live_vertical_block_updown,
+              "md_live_edit: 跨块 ↑↓ 目标（首块/末块/列保持/非边界行不消费）", {
+    using module::markdown::kMdLiveNoConsume;
+    using module::markdown::mdLiveVerticalBlockTarget;
+
+    // 夹具：三块文档 —— 标题自足成块、空行并入【后一块】头部
+    //   [0,8)   "one\ntwo\n"   段落
+    //   [8,13)  "\n# H\n"      标题（前导空行折叠）
+    //   [13,20) "\nthree\n"    段落
+    const std::string doc = "one\ntwo\n\n# H\n\nthree\n";
+    const MdBlockModel m = modelOf(doc);
+    const auto& bs = m.blocks();
+    DOCTEST_REQUIRE_EQ(bs.size(), static_cast<size_t>(3));
+    DOCTEST_REQUIRE_EQ(bs[0].start, static_cast<size_t>(0));
+    DOCTEST_REQUIRE_EQ(bs[0].end, static_cast<size_t>(8));
+    DOCTEST_REQUIRE_EQ(bs[1].start, static_cast<size_t>(8));
+    DOCTEST_REQUIRE_EQ(bs[1].end, static_cast<size_t>(13));
+    DOCTEST_REQUIRE_EQ(bs[2].start, static_cast<size_t>(13));
+    DOCTEST_REQUIRE_EQ(bs[2].end, doc.size());
+
+    // ↑：块 1 首行（前导空行，行首 8）→ 块 0 末行（"two" 行首 4）
+    DOCTEST_CHECK_EQ(mdLiveVerticalBlockTarget(doc, bs, 8, -1),
+                     static_cast<size_t>(4));
+    // 块 2 首行（行首 13）→ 块 1 末行（"# H" 行首 9）
+    DOCTEST_CHECK_EQ(mdLiveVerticalBlockTarget(doc, bs, 13, -1),
+                     static_cast<size_t>(9));
+    // 首块 ↑ 不消费（块 0 的两行都在首块内 → 交回内置块内移动）
+    DOCTEST_CHECK_EQ(mdLiveVerticalBlockTarget(doc, bs, 0, -1), kMdLiveNoConsume);
+    DOCTEST_CHECK_EQ(mdLiveVerticalBlockTarget(doc, bs, 4, -1), kMdLiveNoConsume);
+    // 不在块首行 → 不消费（块 1 第二行 "# H" 行首 9 / 块 2 第二行行首 14）
+    DOCTEST_CHECK_EQ(mdLiveVerticalBlockTarget(doc, bs, 9, -1), kMdLiveNoConsume);
+    DOCTEST_CHECK_EQ(mdLiveVerticalBlockTarget(doc, bs, 12, -1), kMdLiveNoConsume);
+    DOCTEST_CHECK_EQ(mdLiveVerticalBlockTarget(doc, bs, 15, -1), kMdLiveNoConsume);
+
+    // ↓：块 0 末行 → 块 1 首行（行首 8；首行是空行 → 列被钳到 0）
+    DOCTEST_CHECK_EQ(mdLiveVerticalBlockTarget(doc, bs, 4, 1),
+                     static_cast<size_t>(8));
+    DOCTEST_CHECK_EQ(mdLiveVerticalBlockTarget(doc, bs, 6, 1),
+                     static_cast<size_t>(8));
+    // 末块 ↓ / 不在块末行（块 0 首行 "one" 不是块末行）→ 不消费
+    DOCTEST_CHECK_EQ(mdLiveVerticalBlockTarget(doc, bs, 14, 1), kMdLiveNoConsume);
+    DOCTEST_CHECK_EQ(mdLiveVerticalBlockTarget(doc, bs, 0, 1), kMdLiveNoConsume);
+    // direction == 0 不消费
+    DOCTEST_CHECK_EQ(mdLiveVerticalBlockTarget(doc, bs, 8, 0), kMdLiveNoConsume);
+
+    // 列保持 + 钳到目标行内容末（两块紧邻标题：块首行首即块首字节）
+    const std::string doc2 = "# A\n# longlong\n";
+    const MdBlockModel m2 = modelOf(doc2);
+    const auto& bs2 = m2.blocks();
+    DOCTEST_REQUIRE_EQ(bs2.size(), static_cast<size_t>(2));
+    DOCTEST_REQUIRE_EQ(bs2[1].start, static_cast<size_t>(4));
+    DOCTEST_REQUIRE_EQ(bs2[1].end, doc2.size());
+    DOCTEST_CHECK_EQ(mdLiveVerticalBlockTarget(doc2, bs2, 6, -1),
+                     static_cast<size_t>(2));   // 列 2 → "# A" 行首 0 + 2
+    DOCTEST_CHECK_EQ(mdLiveVerticalBlockTarget(doc2, bs2, 13, -1),
+                     static_cast<size_t>(3));   // 列 9 → 钳到 "# A" 内容末
+    DOCTEST_CHECK_EQ(mdLiveVerticalBlockTarget(doc2, bs2, 2, 1),
+                     static_cast<size_t>(6));   // ↓ 列 2 → 4 + 2
+    // cursor == size（文末光标）：按末块末行处理，↑ 落回上一块末行同列
+    DOCTEST_CHECK_EQ(mdLiveVerticalBlockTarget(doc2, bs2, doc2.size(), -1),
+                     static_cast<size_t>(3));
+    DOCTEST_CHECK_EQ(mdLiveVerticalBlockTarget(doc2, bs2, doc2.size(), 1),
+                     kMdLiveNoConsume);         // 末块 ↓ 仍不消费
+
+    // 空文档 / 空块序列：
+    const MdBlockModel empty = modelOf("");
+    DOCTEST_CHECK(empty.blocks().empty());
+    DOCTEST_CHECK_EQ(mdLiveVerticalBlockTarget("", empty.blocks(), 0, -1),
+                     kMdLiveNoConsume);
+    DOCTEST_CHECK_EQ(mdLiveVerticalBlockTarget("", empty.blocks(), 0, 1),
+                     kMdLiveNoConsume);
+    DOCTEST_CHECK_EQ(mdLiveVerticalBlockTarget("", {}, 0, -1), kMdLiveNoConsume);
+    return true;
+})
+
+// ---- 跨块 ↑↓：CRLF 行尾（'\r' 属行终结符，不计内容宽）----
+
+REGISTER_TEST(md_live_vertical_block_crlf,
+              "md_live_edit: 跨块 ↑↓ CRLF 行尾（列钳到 '\r' 之前）", {
+    using module::markdown::kMdLiveNoConsume;
+    using module::markdown::mdLiveVerticalBlockTarget;
+    //   [0,5)  "# A\r\n"
+    //   [5,17) "# longlong\r\n"
+    const std::string doc = "# A\r\n# longlong\r\n";
+    const MdBlockModel m = modelOf(doc);
+    const auto& bs = m.blocks();
+    DOCTEST_REQUIRE_EQ(bs.size(), static_cast<size_t>(2));
+    DOCTEST_REQUIRE_EQ(bs[1].start, static_cast<size_t>(5));
+    DOCTEST_REQUIRE_EQ(bs[1].end, doc.size());
+    // ↑：块 1 行内列 2 → 块 0 行 "# A"（内容 [0,3)，'\r' 在 3）
+    DOCTEST_CHECK_EQ(mdLiveVerticalBlockTarget(doc, bs, 7, -1),
+                     static_cast<size_t>(2));
+    // 列 4（'\r' 前）→ 钳到内容末 3，不落到 '\r' 之后
+    DOCTEST_CHECK_EQ(mdLiveVerticalBlockTarget(doc, bs, 9, -1),
+                     static_cast<size_t>(3));
+    DOCTEST_CHECK_EQ(mdLiveVerticalBlockTarget(doc, bs, 10, -1),
+                     static_cast<size_t>(3));
+    // 文末光标（== size）→ 按末行同列 → 仍钳到 3
+    DOCTEST_CHECK_EQ(mdLiveVerticalBlockTarget(doc, bs, doc.size(), -1),
+                     static_cast<size_t>(3));
+    // ↓：块 0 行末（列 4）→ 块 1 首行 5 + min(4, 内容长 10) = 9
+    DOCTEST_CHECK_EQ(mdLiveVerticalBlockTarget(doc, bs, 4, 1),
+                     static_cast<size_t>(9));
+    DOCTEST_CHECK_EQ(mdLiveVerticalBlockTarget(doc, bs, 1, 1),
+                     static_cast<size_t>(6));
+    DOCTEST_CHECK_EQ(mdLiveVerticalBlockTarget(doc, bs, doc.size(), 1),
+                     kMdLiveNoConsume);
+    return true;
+})
+
+// ---- 块边界退格 / 删除：只删接缝换行（CRLF 成对），不做块结构操作 ----
+
+REGISTER_TEST(md_live_boundary_edit,
+              "md_live_edit: 块边界退格/删除（首块/末块/文末/CRLF 成对）", {
+    using module::markdown::MdLiveBoundaryEdit;
+    using module::markdown::mdLiveBoundaryEdit;
+
+    const std::string doc = "one\ntwo\n\n# H\n\nthree\n";
+    const MdBlockModel m = modelOf(doc);
+    const auto& bs = m.blocks();
+    DOCTEST_REQUIRE_EQ(bs.size(), static_cast<size_t>(3));
+
+    MdLiveBoundaryEdit e;
+    // Backspace 于块 1 块首（8）→ 删前一个 '\n'（[7,8)），光标 = 接缝
+    DOCTEST_CHECK(mdLiveBoundaryEdit(doc, bs, 8, -1, e));
+    DOCTEST_CHECK_EQ(e.eraseStart, static_cast<size_t>(7));
+    DOCTEST_CHECK_EQ(e.eraseEnd, static_cast<size_t>(8));
+    DOCTEST_CHECK_EQ(e.cursor, static_cast<size_t>(7));
+    // Backspace 于块 2 块首（13）→ [12,13)
+    DOCTEST_CHECK(mdLiveBoundaryEdit(doc, bs, 13, -1, e));
+    DOCTEST_CHECK_EQ(e.eraseStart, static_cast<size_t>(12));
+    DOCTEST_CHECK_EQ(e.eraseEnd, static_cast<size_t>(13));
+    DOCTEST_CHECK_EQ(e.cursor, static_cast<size_t>(12));
+    // 首块块首 → 不消费（前面没有换行）
+    DOCTEST_CHECK_FALSE(mdLiveBoundaryEdit(doc, bs, 0, -1, e));
+    // 不在块边界（块内任意字节）→ 不消费（块内删除交回内置）
+    DOCTEST_CHECK_FALSE(mdLiveBoundaryEdit(doc, bs, 1, -1, e));
+    DOCTEST_CHECK_FALSE(mdLiveBoundaryEdit(doc, bs, 15, -1, e));
+    // 文末（cursor == size）→ 不消费
+    DOCTEST_CHECK_FALSE(mdLiveBoundaryEdit(doc, bs, doc.size(), -1, e));
+
+    // Delete 于块边界且该字节是行终结符 → 删它（块终点的"后一个 \n"）
+    DOCTEST_CHECK(mdLiveBoundaryEdit(doc, bs, 8, 1, e));
+    DOCTEST_CHECK_EQ(e.eraseStart, static_cast<size_t>(8));
+    DOCTEST_CHECK_EQ(e.eraseEnd, static_cast<size_t>(9));
+    DOCTEST_CHECK_EQ(e.cursor, static_cast<size_t>(8));
+    DOCTEST_CHECK(mdLiveBoundaryEdit(doc, bs, 13, 1, e));
+    DOCTEST_CHECK_EQ(e.eraseStart, static_cast<size_t>(13));
+    DOCTEST_CHECK_EQ(e.eraseEnd, static_cast<size_t>(14));
+    // 边界字节不是换行（块 0 块首 'o'）→ 不消费（普通字符删除交回内置）
+    DOCTEST_CHECK_FALSE(mdLiveBoundaryEdit(doc, bs, 0, 1, e));
+    // 不是块边界 → 不消费
+    DOCTEST_CHECK_FALSE(mdLiveBoundaryEdit(doc, bs, 9, 1, e));
+    // 文末 → 不消费（末块后面没有可删的换行）
+    DOCTEST_CHECK_FALSE(mdLiveBoundaryEdit(doc, bs, doc.size(), 1, e));
+    DOCTEST_CHECK_FALSE(mdLiveBoundaryEdit(doc, bs, doc.size() + 5, 1, e));
+
+    // CRLF：块 1 块首落在空行首字节 '\r' 上 → 两个方向都把 "\r\n" 当一个终结符删
+    //   [0,5)  "# A\r\n"     [5,12) "\r\n# B\r\n"
+    const std::string crlf = "# A\r\n\r\n# B\r\n";
+    const MdBlockModel cm = modelOf(crlf);
+    const auto& cb = cm.blocks();
+    DOCTEST_REQUIRE_EQ(cb.size(), static_cast<size_t>(2));
+    DOCTEST_REQUIRE_EQ(cb[1].start, static_cast<size_t>(5));
+    DOCTEST_REQUIRE_EQ(cb[1].end, crlf.size());
+    DOCTEST_CHECK(mdLiveBoundaryEdit(crlf, cb, 5, -1, e));
+    DOCTEST_CHECK_EQ(e.eraseStart, static_cast<size_t>(3));   // "\r\n" 成对
+    DOCTEST_CHECK_EQ(e.eraseEnd, static_cast<size_t>(5));
+    DOCTEST_CHECK_EQ(e.cursor, static_cast<size_t>(3));
+    DOCTEST_CHECK(mdLiveBoundaryEdit(crlf, cb, 5, 1, e));
+    DOCTEST_CHECK_EQ(e.eraseStart, static_cast<size_t>(5));
+    DOCTEST_CHECK_EQ(e.eraseEnd, static_cast<size_t>(7));     // "\r\n" 成对
+    DOCTEST_CHECK_EQ(e.cursor, static_cast<size_t>(5));
+    // 块 1 的第二行行首（7）是块内位置（不是块边界）→ 不消费
+    DOCTEST_CHECK_FALSE(mdLiveBoundaryEdit(crlf, cb, 7, 1, e));
+
+    // 空文档 / 空块序列 / direction == 0
+    const MdBlockModel em = modelOf("");
+    DOCTEST_CHECK_FALSE(mdLiveBoundaryEdit("", em.blocks(), 0, -1, e));
+    DOCTEST_CHECK_FALSE(mdLiveBoundaryEdit("", em.blocks(), 0, 1, e));
+    DOCTEST_CHECK_FALSE(mdLiveBoundaryEdit(doc, bs, 8, 0, e));
+    return true;
+})
