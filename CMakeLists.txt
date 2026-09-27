@@ -23,8 +23,9 @@ endif()
 # 尚未 push 到 origin 的提交（push 与否是用户决策门控），故此处**不做硬钉扎**
 # （他人克隆只有 v0.6.0，硬 fail 会造成误阻断）；EUI-NEO push 后可将本诊断
 # 升级为硬检查。最低依赖 rev 与 CLAUDE.md「当前依赖 rev」保持一致，消费
-# EUI-NEO 新 API 后两处同步更新。
-set(DEVDESK_EUI_NEO_MIN_REV "d5e302c")
+# EUI-NEO 新 API 后两处同步更新（当前门槛取 U1 尺度契约合入点，含
+# app::contentScale / core::dsl::Screen::scale 与 yyjson writer 放开）。
+set(DEVDESK_EUI_NEO_MIN_REV "269a8c4")
 execute_process(
     COMMAND git -C "${EUI_NEO_DIR}" rev-parse --short HEAD
     OUTPUT_VARIABLE EUI_NEO_GIT_REV
