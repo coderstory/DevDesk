@@ -190,4 +190,23 @@ bool MdLiveUndoStack::redo(std::string& text, size_t& cursorByte) {
     return true;
 }
 
+// ---- M6：滚动锚定与光标跟随（说明见头注释）----
+
+MdLiveFollowDecision mdLiveFollowOffset(float caretDocY, float viewportH,
+                                        float currentOffset, float maxOffset) {
+    MdLiveFollowDecision d;
+    if (maxOffset < 0.0f) maxOffset = 0.0f;
+    d.offset = std::clamp(currentOffset, 0.0f, maxOffset);
+    if (viewportH <= 0.0f) return d;   // 无视口：安全带无从谈起，不判不动
+    const float rel = caretDocY - d.offset;
+    if (rel >= kMdLiveFollowTopRatio * viewportH &&
+        rel <= kMdLiveFollowBottomRatio * viewportH) {
+        return d;                      // 安全带内：不干预用户滚动
+    }
+    d.pull = true;
+    d.offset = std::clamp(caretDocY - kMdLiveFollowAnchorRatio * viewportH,
+                          0.0f, maxOffset);
+    return d;
+}
+
 } // namespace module::markdown
