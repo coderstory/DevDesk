@@ -13,8 +13,10 @@ namespace platform {
 // true = 系统当前为深色；false = 浅色或无法检测。
 //   Windows: 注册表 HKCU\Software\Microsoft\Windows\CurrentVersion
 //            \Themes\Personalize\AppsUseLightTheme（DWORD，0=深色；读取失败按浅色）
-//   其他:    兜底 false（浅色）。macOS 可后续经 CFPreferences 读
-//            AppleInterfaceStyle 接入，当前 Windows 主开发周期不做。
+//            → system_theme_win.cpp
+//   macOS:   CFPreferences 读 NSGlobalDomain 的 AppleInterfaceStyle，等于 "Dark"
+//            为深色（浅色系统不写该键、无 GUI 会话一律按浅色）→ system_theme_macos.cpp
+//   Linux 等: 恒 false（浅色兜底）→ system_theme_posix.cpp
 bool prefersDarkTheme();
 
 } // namespace platform
