@@ -5,6 +5,7 @@
 #include <atomic>
 #include <chrono>
 #include <filesystem>
+#include <optional>
 #include <thread>
 
 REGISTER_TEST(sqlite_open_memory, "SqliteDb: open in-memory", {
@@ -121,5 +122,40 @@ REGISTER_TEST(sqlite_transaction_serializes_concurrent_writers,
     auto c = rows.value()[0].getInt64("c");
     DOCTEST_REQUIRE(c.isOk());
     DOCTEST_CHECK_EQ(c.value(), static_cast<int64_t>(1));
+    return true;
+})
+
+// 审计 L5 回归：析构时仍有未 finalize 的语句。旧实现用 sqlite3_close（返回
+// SQLITE_BUSY 且被忽略）→ 连接静默不关、文件句柄泄漏；改 sqlite3_close_v2
+// 后是延迟关闭：db 析构只是把连接变 zombie，最后一条语句 finalize 时才真正
+// 回收。用例断言：析构不炸 + 语句 finalize 后 db 文件句柄确实还回来了
+// （Windows 上「文件能否删除」即句柄是否泄漏的判据）。
+REGISTER_TEST(sqlite_close_with_unfinalized_stmt,
+              "SqliteDb: 未 finalize 语句存在时析构延迟关闭、句柄随 finalize 回收（审计 L5）", {
+    auto path = std::filesystem::temp_directory_path() / "devdesk_test_close_v2.db";
+    std::error_code ec;
+    std::filesystem::remove(path, ec);
+    std::filesystem::remove(path.string() + "-wal", ec);
+    std::filesystem::remove(path.string() + "-shm", ec);
+
+    std::optional<core::data::Statement> kept;
+    {
+        auto r = core::data::SqliteDb::open(path);
+        DOCTEST_REQUIRE(r.isOk());
+        auto& db = r.value();
+        DOCTEST_REQUIRE(db.exec("CREATE TABLE t (id INTEGER)").isOk());
+        auto prep = db.prepare("SELECT id FROM t");
+        DOCTEST_REQUIRE(prep.isOk());
+        // 语句比 db 活得久（移出内层作用域）；注意语句析构前不可再 step/bind：
+        // Statement 持有 db 的 mutex 引用，db 没了就是悬垂（本用例只让它析构）
+        kept.emplace(std::move(prep.value()));
+    } // db 在此析构：有未 finalize 的语句 → 延迟关闭，不得崩
+
+    kept.reset(); // Statement 析构 → sqlite3_finalize → 延迟关闭此时生效
+
+    DOCTEST_CHECK(std::filesystem::remove(path, ec)); // 句柄已归还（旧实现此处必失败）
+    DOCTEST_CHECK_FALSE(std::filesystem::exists(path));
+    std::filesystem::remove(path.string() + "-wal", ec);
+    std::filesystem::remove(path.string() + "-shm", ec);
     return true;
 })

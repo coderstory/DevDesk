@@ -100,24 +100,31 @@ Statement::~Statement() {
     if (stmt_) sqlite3_finalize(stmt_);
 }
 
+// 审计 L5：bind 原不持锁（step/currentRow 持），跨线程共用同一语句时
+// bind 与 step 可以交错——全部统一到同一把 recursive_mutex
 Result<void> Statement::bind(int index, int64_t value) {
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
     return checkRc(db_, sqlite3_bind_int64(stmt_, index, value), "bind_int64");
 }
 
 Result<void> Statement::bind(int index, double value) {
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
     return checkRc(db_, sqlite3_bind_double(stmt_, index, value), "bind_double");
 }
 
 Result<void> Statement::bind(int index, const std::string& value) {
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
     return checkRc(db_, sqlite3_bind_text(stmt_, index, value.c_str(),
         static_cast<int>(value.size()), SQLITE_TRANSIENT), "bind_text");
 }
 
 Result<void> Statement::bind(int index, std::nullptr_t) {
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
     return checkRc(db_, sqlite3_bind_null(stmt_, index), "bind_null");
 }
 
 Result<void> Statement::bind(int index, const std::vector<uint8_t>& blob) {
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
     return checkRc(db_, sqlite3_bind_blob(stmt_, index, blob.data(),
         static_cast<int>(blob.size()), SQLITE_TRANSIENT), "bind_blob");
 }
@@ -210,7 +217,10 @@ Result<SqliteDb> SqliteDb::open(const std::filesystem::path& file) {
 
 SqliteDb::~SqliteDb() {
     if (handle_) {
-        sqlite3_close(handle_);
+        // 审计 L5：原用 sqlite3_close，未 finalize 的语句会让它返回 SQLITE_BUSY
+        // 且被忽略——句柄静默不关（Windows 上文件句柄泄漏）。close_v2 是延迟
+        // 关闭语义：连接变 zombie，最后一条语句 finalize 时真正回收。
+        sqlite3_close_v2(handle_);
         handle_ = nullptr;
     }
 }
@@ -242,6 +252,8 @@ Result<void> SqliteDb::exec(const std::string& sql) {
 }
 
 Result<Statement> SqliteDb::prepare(const std::string& sql) {
+    // 审计 L5：prepare 与 exec/step/currentRow 共用同一把锁
+    std::lock_guard<std::recursive_mutex> lock(mutex_);
     sqlite3_stmt* stmt = nullptr;
     int rc = sqlite3_prepare_v2(handle_, sql.c_str(), -1, &stmt, nullptr);
     if (rc != SQLITE_OK) {
