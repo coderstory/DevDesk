@@ -579,6 +579,11 @@ REGISTER_TEST(md_kbd_wiring_table_insert_menu,
     DOCTEST_REQUIRE(fileRow != nullptr);
     fileRow->onClick();
     frame();
+    // input.h 程序赋值未聚焦时光标置 0（d1f55a3）；显式置文末还原本测试"光标在文末空行"场景
+    {
+        auto& st = ui.state<InputState>("md.editor.input");
+        st.cursor = st.selectionStart = st.selectionEnd = (int)st.text.size();
+    }
 
     // 编辑器右键 → 挂到 .hit 的 onContextMenu 置菜单打开态（审计 [12]）
     const auto* hit = ui.find("md.editor.input.hit");

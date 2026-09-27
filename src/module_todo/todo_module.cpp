@@ -987,7 +987,7 @@ private:
         components::button(ui, id + ".rename")
             .position(width - 70.0f, 14.0f)
             .size(28.0f, 28.0f)
-            .icon(0xF044)  // fa-pen
+            .icon(0xF303)  // fa-pencil-alt（对称铅笔；原 fa-edit 0xf044 字形右重偏右，换之）
             .iconSize(t.sizes.fontSizeSmall)
             .colors(t.colors.surfaceElevated, t.colors.hover, t.colors.active)
             .iconColor(t.colors.textSecondary)

@@ -23,6 +23,7 @@
 
 #include <eui/dsl.h>
 #include <eui/dsl_app.h>
+#include <core/render/text.h>  // TextPrimitive::setDefaultFontFiles（默认 UI 字体覆盖）
 
 #include <filesystem>
 #include <fstream>
@@ -508,6 +509,12 @@ const DslAppConfig& dslAppConfig() {
     static const bool themeRestored = []() {
         ::core::paths::ensureDirectoriesExist();
         setupLogging();
+        // 默认 UI 字体改 Noto Sans SC（OFL 开源、跨平台 Win/macOS 同一份、非粗、
+        // CJK+Latin 全覆盖），替代打包的 JingNanJunJunTi-Bold（奇怪+全局粗）。
+        // setDefaultFontFiles 必须在首次文本渲染前调（themeRestored 块在 config
+        // 构造前跑一次，早于任何 render）。图标字体保持 FA 不变。
+        ::core::TextPrimitive::setDefaultFontFiles(
+            "NotoSansSC-VF.ttf", "Font Awesome 7 Free-Solid-900.otf");
         // 标题栏深浅主题联动（磨砂设计 Phase A）：core 不依赖 EUI-NEO，
         // 通过 theme 回调注入——先装回调再恢复主题，启动恢复与运行时切换
         // （设置页 theme::setDark/setLight → 回调 → app::setTitleBarAppearance）

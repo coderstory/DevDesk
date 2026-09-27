@@ -13,8 +13,8 @@
 //      discoverSkins 发现消费、applyPetSkin/resetPetPosition 持久化行为
 //   9. 内置皮肤全集（robot/ghost 两款）：四态帧齐全、两款互异、
 //      discoverSkins 发现、短语表区分、用户替换保留
-//  10. 内置美术皮肤 anime-girl（真实 CC0 素材包）：四态帧齐全 + 全帧
-//      128×128 RGBA PNG + license 自带（素材纪律 R7）
+//  10. （已移除 2026-09-25）内置美术皮肤 anime-girl CC0 四态测试——皮肤
+//      随用户要求只留 robot/ghost 而删，测试同步移除（见 §10 占位注释）
 //  11. 审计修复（2026-09-23 pet 簇）：帧名路径穿越拒绝 [28] + 已知坐标
 //      钳进工作区纯函数 [12]（[0][1] 的 onWindowDestroyed 接线断言在 §5）
 //  12. M2 收尾（2026-09-23 pet-m2）：多显示器按位置选屏钳制 + 负坐标持久化
@@ -144,16 +144,6 @@ const char* kM2SkinJson =
     "    \"typing\": [\"t0.png\", \"t1.png\"]"
     "  }"
     "}";
-
-// 全部帧 PNG 结构有效（REGISTER_TEST 宏体内不能有裸逗号，也不能套断言
-// 宏——DOCTEST_CHECK 展开含 return，进不了 lambda；辅助函数绕开两者）
-bool allFramesPngValid(const std::filesystem::path& dir,
-                       const std::vector<std::string>& frames) {
-    for (const std::string& frame : frames) {
-        if (!pngLooksValid(dir / frame, 128, 128)) return false;
-    }
-    return true;
-}
 
 } // namespace
 
@@ -838,47 +828,9 @@ REGISTER_TEST(pet_builtin_skins, "pet: 两款内置皮肤（四态帧/互异/发
     return true;
 });
 
-// ============ 10. 内置美术皮肤（真实素材包）============
-
-// 仓库自带的真实美术素材包（assets/pets/anime-girl，OpenGameArt
-// "Anime Girl" Michona by Alicahordana，CC0 可再分发）：随源码树分发，
-// CMake POST_BUILD 拷到 build/assets/pets 供运行期发现。本用例直接从
-// 源码树加载（__FILE__ 相对定位，不依赖 cwd），断言四态帧齐全 + 授权
-// 字段自带（R7 素材纪律：内置分发的素材必须 CC0/宽松许可）
-REGISTER_TEST(pet_anime_girl_asset_skin, "pet: 内置美术皮肤 anime-girl（CC0 四态断言）", {
-    using namespace module::pet;
-    const std::filesystem::path skinDir =
-        std::filesystem::path(__FILE__).parent_path() / ".." / ".." / "assets" /
-        "pets" / "anime-girl";
-    auto r = loadSkin(skinDir.lexically_normal());
-    DOCTEST_CHECK_MESSAGE(r.isOk(), r.isFail() ? r.errorMessage() : "");
-    if (r.isFail()) return false;
-    const PetSkin& skin = r.unsafeValue();
-    // 元数据：名字/尺寸/帧率在合法区间；license/source 自带（含 CC0 标记）
-    DOCTEST_CHECK_EQ(skin.name, "anime-girl");
-    DOCTEST_CHECK_EQ(skin.frameWidth, 128);
-    DOCTEST_CHECK_EQ(skin.frameHeight, 128);
-    DOCTEST_CHECK(skin.frameRate >= 1.0 && skin.frameRate <= 30.0);
-    DOCTEST_CHECK(skin.license.find("CC0") != std::string::npos);
-    DOCTEST_CHECK(!skin.source.empty());
-    // 四态帧齐全（blink→idle / jump→poked / walk→typing / 闭眼帧→sleep）
-    DOCTEST_CHECK_EQ(skin.idleFrames.size(), static_cast<size_t>(5));
-    DOCTEST_CHECK_EQ(skin.pokedFrames.size(), static_cast<size_t>(13));
-    DOCTEST_CHECK_EQ(skin.typingFrames.size(), static_cast<size_t>(11));
-    DOCTEST_CHECK_EQ(skin.sleepFrames.size(), static_cast<size_t>(1));
-    DOCTEST_CHECK(!skin.phrases.empty());
-    // 全部状态帧都是结构合法的 128×128 RGBA PNG（美术包与占位皮肤同规格）
-    DOCTEST_CHECK(allFramesPngValid(skinDir, skin.idleFrames));
-    DOCTEST_CHECK(allFramesPngValid(skinDir, skin.pokedFrames));
-    DOCTEST_CHECK(allFramesPngValid(skinDir, skin.sleepFrames));
-    DOCTEST_CHECK(allFramesPngValid(skinDir, skin.typingFrames));
-    // 名字合法（会拼回路径：discoverSkins/applyPetSkin 白名单同款字符集）
-    DOCTEST_CHECK(skin.name.find_first_not_of(
-                      "abcdefghijklmnopqrstuvwxyz"
-                      "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_") ==
-                  std::string::npos);
-    return true;
-});
+// ============ 10. （已移除）内置美术皮肤 anime-girl 测试 ============
+// 2026-09-25：用户要求只留 robot/ghost + 本地 tatsu-pet，anime-girl CC0
+// 美术皮肤已从 assets/pets 删除，本 CC0 四态断言用例随之移除。
 
 REGISTER_TEST(pet_discover_skins, "pet: 皮肤发现（下拉/换肤菜单的数据源）", {
     using namespace module::pet;

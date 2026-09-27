@@ -200,6 +200,9 @@ void ProxyRouter::handleRequest(
         fwd["anthropic-version"] = "2023-06-01";
     }
     fwd["x-api-key"] = apiKey;
+    if (!apiKey.empty()) {
+        fwd["Authorization"] = "Bearer " + apiKey;  // 兼容 Anthropic-compatible 网关（如 bailian）期望 Bearer；真 Anthropic API 收 x-api-key 忽略 Bearer
+    }
     fwd["Host"] = "";  // 让 libcurl 自己填
 
     upstream.headers = std::move(fwd);
