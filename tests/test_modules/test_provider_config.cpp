@@ -10,6 +10,8 @@
 //   - displayName 派生（剥 [1M] 等标记）
 //   - 别名映射（AUTO_COMPACT_ENABLED → DISABLE_AUTO_COMPACT 值取反 + 透传标记）
 //   - ClaudeService 读写 API 往返 + 旧库升级（migration v3）
+//   - 槽位单一真相源（审计 CPX-08）：表行驱动的派生面一致性（用例遍历
+//     modelSlotTable()，加一行槽位即自动进入覆盖，无需改用例）
 #include "doctest.h"
 
 #include "claude_service.h"
@@ -20,11 +22,13 @@
 #include "env_var_hints.h"
 #include "provider_config.h"
 
+#include <algorithm>
 #include <filesystem>
 #include <map>
 #include <memory>
 #include <stdexcept>
 #include <string>
+#include <vector>
 
 namespace {
 
@@ -1031,6 +1035,174 @@ REGISTER_TEST(provider_config_copyname,
     DOCTEST_CHECK_EQ(makeCopyName("X", full), std::string(""));
     Names nearly(full.begin(), full.end() - 1);
     DOCTEST_CHECK_EQ(makeCopyName("X", nearly), std::string("X 副本 100"));
+    return true;
+})
+
+// ============================================================================
+// 槽位单一真相源（审计 CPX-08）
+//
+// 这三个用例全部**遍历 modelSlotTable()** 断言派生面：新增一个槽位（表加一行）
+// 后无需改用例即自动进入覆盖——表行声明什么，接管写入 / 导入识别 / 反向回填 /
+// models_config 键 / UI 文案就必须是什么，多写、少写、串槽三种漏改都会红。
+// ============================================================================
+
+// 表 → 托管键全集 + 接管实际写入（「遍历表得到的键集合 == 接管里实际写出的键集合」）
+REGISTER_TEST(provider_config_slot_table_managed_keys,
+              "provider_config: 槽位表派生托管键与接管写入（slot table CPX-08）", {
+    using namespace module::claude;
+    const auto table = modelSlotTable();
+    DOCTEST_CHECK_EQ(table.size(), kModelSlotCount);   // 表长 == 派生的槽位数
+
+    // 表行元数据自洽：键名/文案齐备，声明的 env 键不重复
+    std::vector<std::string> declared;
+    for (const auto& m : table) {
+        DOCTEST_REQUIRE(m.jsonKey != nullptr);
+        DOCTEST_REQUIRE(m.envKey != nullptr);
+        DOCTEST_REQUIRE(m.label != nullptr);
+        DOCTEST_REQUIRE(m.formLabel != nullptr);
+        DOCTEST_CHECK(!std::string(m.envKey).empty());
+        DOCTEST_CHECK(!std::string(m.label).empty());
+        DOCTEST_CHECK(!std::string(m.formLabel).empty());
+        declared.push_back(m.envKey);
+        if (m.nameKey != nullptr) declared.push_back(m.nameKey);
+    }
+    std::sort(declared.begin(), declared.end());
+    DOCTEST_CHECK(std::adjacent_find(declared.begin(), declared.end()) == declared.end());
+
+    // 托管键全集 == 2 个固定键 ∪ 表声明键（计数 + 逐键命中 → 集合相等）
+    const auto managed = managedEnvKeyNames();
+    DOCTEST_CHECK_EQ(managed.size(), 2u + declared.size());
+    DOCTEST_CHECK(hasEntry(managed, "ANTHROPIC_BASE_URL"));
+    DOCTEST_CHECK(hasEntry(managed, "ANTHROPIC_AUTH_TOKEN"));
+    for (const auto& k : declared) DOCTEST_CHECK(hasEntry(managed, k.c_str()));
+
+    // 逐行：只填该槽位 → 接管写出的槽位键恰好 = 该行声明（多写/少写都红）
+    for (const auto& m : table) {
+        ModelsConfig mc;
+        (mc.*m.slot).model = std::string("m-") + m.jsonKey;
+        (mc.*m.slot).name = std::string("n-") + m.jsonKey;
+        auto text = serializeModelsConfig(mc);
+        DOCTEST_REQUIRE(text.isOk());
+        const auto env = buildProxyEnv(text.value(), "", "", 8888);
+        std::vector<std::string> written;
+        for (const auto& kv : env) {
+            if (kv.first == "ANTHROPIC_BASE_URL" ||
+                kv.first == "ANTHROPIC_AUTH_TOKEN") {
+                continue;
+            }
+            written.push_back(kv.first);
+        }
+        DOCTEST_REQUIRE_EQ(written.size(), m.nameKey != nullptr ? 2u : 1u);
+        DOCTEST_CHECK_EQ(written[0], std::string(m.envKey));
+        DOCTEST_CHECK_EQ(env.at(m.envKey), std::string("m-") + m.jsonKey);
+        if (m.nameKey != nullptr) {
+            DOCTEST_CHECK_EQ(written[1], std::string(m.nameKey));
+            DOCTEST_CHECK_EQ(env.at(m.nameKey), std::string("n-") + m.jsonKey);
+        }
+        for (const auto& k : written) DOCTEST_CHECK(hasEntry(managed, k.c_str()));
+    }
+
+    // 全体槽位填满 → 接管写出的槽位键集合 == 表声明键集合（两条路径同集合）
+    {
+        ModelsConfig all;
+        for (const auto& m : table) {
+            (all.*m.slot).model = std::string("m-") + m.jsonKey;
+            (all.*m.slot).name = std::string("n-") + m.jsonKey;
+        }
+        auto text = serializeModelsConfig(all);
+        DOCTEST_REQUIRE(text.isOk());
+        const auto env = buildProxyEnv(text.value(), "", "", 8888);
+        std::vector<std::string> written;
+        for (const auto& kv : env) {
+            if (kv.first == "ANTHROPIC_BASE_URL" ||
+                kv.first == "ANTHROPIC_AUTH_TOKEN") {
+                continue;
+            }
+            written.push_back(kv.first);
+        }
+        std::sort(written.begin(), written.end());
+        DOCTEST_CHECK_EQ(written, declared);
+    }
+    return true;
+})
+
+// 表 → 导入识别 + 反向回填（逐行：该行的 env 键 → 恰好落到该槽位）
+REGISTER_TEST(provider_config_slot_table_import_and_reverse,
+              "provider_config: 槽位表派生导入识别与反向回填（slot table CPX-08）", {
+    using namespace module::claude;
+    for (const auto& m : modelSlotTable()) {
+        std::string json = std::string("{\"") + m.envKey + "\": \"m-x\"";
+        if (m.nameKey != nullptr) {
+            json += std::string(", \"") + m.nameKey + "\": \"n-x\"";
+        }
+        json += "}";
+
+        // 粘贴导入：只认该槽位；槽位键不落 extra_env
+        auto imp = parseImportedEnv(json);
+        DOCTEST_REQUIRE(imp.isOk());
+        DOCTEST_CHECK_EQ(imp.value().recognizedSlots, 1);
+        DOCTEST_CHECK_EQ((imp.value().models.*m.slot).model, std::string("m-x"));
+        DOCTEST_CHECK(imp.value().extraEnv.empty());
+        if (m.nameKey != nullptr) {
+            DOCTEST_CHECK_EQ((imp.value().models.*m.slot).name, std::string("n-x"));
+        }
+
+        // 反向同步：同输入落同一槽位，合并结果能原样读回
+        auto rp = parseEnvForReverseSync(json, {});
+        DOCTEST_REQUIRE(rp.ok);
+        DOCTEST_CHECK_EQ(rp.cfg.recognizedSlots, 1);
+        DOCTEST_CHECK_EQ((rp.cfg.models.*m.slot).model, std::string("m-x"));
+        auto merged = mergeReverseSyncEnv(rp.cfg, "", "", "");
+        DOCTEST_CHECK(merged.modelsChanged);
+        auto back = parseModelsConfig(merged.modelsConfigJson);
+        DOCTEST_REQUIRE(back.isOk());
+        DOCTEST_CHECK_EQ((back.value().*m.slot).model, std::string("m-x"));
+    }
+    return true;
+})
+
+// 表 → models_config JSON 键 + UI 文案（UI 遍历派生的前提：文案齐备且互异）
+REGISTER_TEST(provider_config_slot_table_json_and_labels,
+              "provider_config: 槽位表 JSON 键与 UI 文案（slot table CPX-08）", {
+    using namespace module::claude;
+    // REGISTER_TEST 实参不能有裸逗号：三条声明分开写
+    std::vector<std::string> labels;
+    std::vector<std::string> formLabels;
+    std::vector<std::string> jsonKeys;
+    for (const auto& m : modelSlotTable()) {
+        // 单槽位填充 → 序列化含该行 JSON 键、反序列化回同一槽位、其余槽位仍空
+        ModelsConfig mc;
+        (mc.*m.slot).model = "m-x";
+        auto text = serializeModelsConfig(mc);
+        DOCTEST_REQUIRE(text.isOk());
+        DOCTEST_CHECK(text.value().find(std::string("\"") + m.jsonKey + "\"") !=
+                      std::string::npos);
+        auto back = parseModelsConfig(text.value());
+        DOCTEST_REQUIRE(back.isOk());
+        DOCTEST_CHECK_EQ((back.value().*m.slot).model, std::string("m-x"));
+        int filled = 0;
+        for (const auto& n : modelSlotTable()) {
+            if (!(back.value().*n.slot).model.empty()) ++filled;
+        }
+        DOCTEST_CHECK_EQ(filled, 1);   // JSON 键不串槽
+
+        labels.push_back(m.label);
+        formLabels.push_back(m.formLabel);
+        jsonKeys.push_back(m.jsonKey);
+    }
+    // 两套 UI 文案 + JSON 键各自互异（同屏 N 行不重名）
+    for (const auto* v : {&labels, &formLabels, &jsonKeys}) {
+        auto sorted = *v;
+        std::sort(sorted.begin(), sorted.end());
+        DOCTEST_CHECK(std::unique(sorted.begin(), sorted.end()) == sorted.end());
+    }
+    // 既有 UI 外观取样（详情面板 / 表单页两套文案），防收敛时误改外观
+    const auto table = modelSlotTable();
+    DOCTEST_REQUIRE(!table.empty());
+    DOCTEST_CHECK_EQ(std::string(table.front().label), std::string("默认"));
+    DOCTEST_CHECK_EQ(std::string(table.front().formLabel), std::string("默认 (MODEL)"));
+    DOCTEST_CHECK_EQ(std::string(table.back().label), std::string("子代理"));
+    DOCTEST_CHECK_EQ(std::string(table.back().formLabel), std::string("Subagent"));
     return true;
 })
 

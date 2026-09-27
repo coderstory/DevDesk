@@ -11,20 +11,9 @@ namespace module::claude {
 
 namespace {
 
-// 槽位 key ↔ ModelsConfig 成员 的映射表（§4.1 的 6 个槽位）
-struct SlotRef {
-    const char* key;
-    ModelSlot ModelsConfig::*slot;
-};
-
-constexpr SlotRef kSlots[] = {
-    {"default",  &ModelsConfig::def},
-    {"sonnet",   &ModelsConfig::sonnet},
-    {"opus",     &ModelsConfig::opus},
-    {"haiku",    &ModelsConfig::haiku},
-    {"fable",    &ModelsConfig::fable},
-    {"subagent", &ModelsConfig::subagent},
-};
+// 槽位映射表的真源只有一个：provider_config.h 的 DEVDESK_MODEL_SLOT_LIST
+//（审计 CPX-08 收敛）。此处只提供基于 modelSlotTable() 的派生判定，不再各自
+// 维护 kSlots / kImportSlots / kSlotEnvRows 三张平行表（曾因三表不同步而静默漏键）。
 
 // 非官方变量别名表（§4.3 规则 6）。
 // 目前唯一条目：AUTO_COMPACT_ENABLED 非官方，官方关闭自动压缩用 DISABLE_AUTO_COMPACT
@@ -38,13 +27,20 @@ constexpr EnvAlias kEnvAliases[] = {
     {"AUTO_COMPACT_ENABLED", "DISABLE_AUTO_COMPACT", true},
 };
 
-// DevDesk 自造的扩展键（审计 CPX-09）：不在 env_var_hints.h 的官方清单里，
-// 但属本应用生成 / 托管的槽位变体，不按「未识别」标记。
-// 官方键判定源 = env_var_hints.h（官方文档全量清单）；两处都不含的键 →
-// 原样透传 + 警告角标（unrecognizedKeys）
-bool isDevDeskExtendedEnvKey(const std::string& key) {
-    return key == "ANTHROPIC_DEFAULT_FABLE_MODEL" ||
-           key == "ANTHROPIC_DEFAULT_FABLE_MODEL_NAME";
+// 键是否属于槽位表托管的模型键（envKey 或 *_NAME 键）
+bool isModelSlotEnvKey(const std::string& key) {
+    for (const auto& m : modelSlotTable()) {
+        if (key == m.envKey) return true;
+        if (m.nameKey != nullptr && key == m.nameKey) return true;
+    }
+    return false;
+}
+
+// 「未识别键」判定（审计 CPX-09 + CPX-08）：官方清单（env_var_hints.h 全量）里
+// 没有、也不是槽位表派生的托管键，才算未识别——原实现把 FABLE 两个自造键硬编码
+// 在一处单独的判定函数里，现在由槽位表派生，加槽位不必再改这里
+bool isUnrecognizedEnvKey(const std::string& key) {
+    return envVarHint(key) == nullptr && !isModelSlotEnvKey(key);
 }
 
 // 别名值取反：真值（开启自动压缩）→ DISABLE_AUTO_COMPACT="0"；
@@ -56,40 +52,6 @@ std::string invertedBoolValue(const std::string& v) {
     }
     return "0";
 }
-
-// 导入键 → 槽位成员的映射表（§6.1 导入解析规则）
-struct ImportSlotRef {
-    const char* modelKey;             // 发往上游的模型名键
-    const char* nameKey;              // 显示名键（nullptr = 该槽位无 _NAME 变体）
-    ModelSlot ModelsConfig::*slot;
-};
-
-constexpr ImportSlotRef kImportSlots[] = {
-    {"ANTHROPIC_MODEL",                 nullptr,                              &ModelsConfig::def},
-    {"ANTHROPIC_DEFAULT_SONNET_MODEL",  "ANTHROPIC_DEFAULT_SONNET_MODEL_NAME",  &ModelsConfig::sonnet},
-    {"ANTHROPIC_DEFAULT_OPUS_MODEL",    "ANTHROPIC_DEFAULT_OPUS_MODEL_NAME",    &ModelsConfig::opus},
-    {"ANTHROPIC_DEFAULT_HAIKU_MODEL",   "ANTHROPIC_DEFAULT_HAIKU_MODEL_NAME",   &ModelsConfig::haiku},
-    {"ANTHROPIC_DEFAULT_FABLE_MODEL",   "ANTHROPIC_DEFAULT_FABLE_MODEL_NAME",   &ModelsConfig::fable},
-    {"CLAUDE_CODE_SUBAGENT_MODEL",      nullptr,                              &ModelsConfig::subagent},
-};
-
-// 槽位 → 接管 env 键表（§4.3 规则 3/4）：nameKey 为空表示该槽位无官方 _NAME
-// 变体，不生成。既驱动 buildProxyEnv 的写入，也驱动 managedEnvKeyNames()
-//（托管键全集：与槽位是否有值无关）——两处必须同表，否则覆盖检测会漏键
-struct SlotEnvRow {
-    ModelSlot ModelsConfig::*slot;
-    const char* envKey;
-    const char* nameKey;
-};
-
-constexpr SlotEnvRow kSlotEnvRows[] = {
-    {&ModelsConfig::def,      "ANTHROPIC_MODEL",                 nullptr},
-    {&ModelsConfig::sonnet,   "ANTHROPIC_DEFAULT_SONNET_MODEL",  "ANTHROPIC_DEFAULT_SONNET_MODEL_NAME"},
-    {&ModelsConfig::opus,     "ANTHROPIC_DEFAULT_OPUS_MODEL",    "ANTHROPIC_DEFAULT_OPUS_MODEL_NAME"},
-    {&ModelsConfig::haiku,    "ANTHROPIC_DEFAULT_HAIKU_MODEL",   "ANTHROPIC_DEFAULT_HAIKU_MODEL_NAME"},
-    {&ModelsConfig::fable,    "ANTHROPIC_DEFAULT_FABLE_MODEL",   "ANTHROPIC_DEFAULT_FABLE_MODEL_NAME"},
-    {&ModelsConfig::subagent, "CLAUDE_CODE_SUBAGENT_MODEL",      nullptr},
-};
 
 // 键名格式硬校验已于 2026-09-24 移除：env 块内的变量名一律可导入
 //（用户要求——小写/连字符/数字开头等非标准键也收；「不在官方清单」
@@ -113,11 +75,11 @@ std::string deriveDisplayName(const std::string& model) {
 
 core::Result<std::string> serializeModelsConfig(const ModelsConfig& config) {
     platform::json::JsonObject obj;
-    for (const auto& s : kSlots) {
+    for (const auto& m : modelSlotTable()) {
         platform::json::JsonObject slot;
-        slot.set("model", platform::json::makeString((config.*s.slot).model));
-        slot.set("name", platform::json::makeString((config.*s.slot).name));
-        obj.set(s.key, platform::json::JsonValue(std::move(slot)));
+        slot.set("model", platform::json::makeString((config.*m.slot).model));
+        slot.set("name", platform::json::makeString((config.*m.slot).name));
+        obj.set(m.jsonKey, platform::json::JsonValue(std::move(slot)));
     }
     return platform::json::stringify(platform::json::JsonValue(std::move(obj)));
 }
@@ -138,14 +100,14 @@ core::Result<ModelsConfig> parseModelsConfig(const std::string& json) {
             "models_config 顶层必须是 JSON 对象");
     }
     auto obj = parsed.value().asObject();
-    for (const auto& s : kSlots) {
-        auto sv = obj.get(s.key);
+    for (const auto& m : modelSlotTable()) {
+        auto sv = obj.get(m.jsonKey);
         if (!sv.isObject()) continue;  // 槽位缺失/非对象 → 空（容错）
         auto so = sv.asObject();
         auto mv = so.get("model");
         auto nv = so.get("name");
-        if (mv.isString()) (out.*s.slot).model = mv.asString();
-        if (nv.isString()) (out.*s.slot).name = nv.asString();
+        if (mv.isString()) (out.*m.slot).model = mv.asString();
+        if (nv.isString()) (out.*m.slot).name = nv.asString();
     }
     return core::Result<ModelsConfig>::ok(std::move(out));
 }
@@ -219,9 +181,9 @@ EnvAliasMapping applyEnvAliases(const std::map<std::string, std::string>& env) {
             out.aliasMappedKeys.push_back(key);
         } else {
             out.env[key] = value;
-            // 官方键判定由 env_var_hints.h 清单驱动（审计 CPX-09：原手写 18 条
-            // 与官方清单交集仅 16 → 240 条官方键被误标「未识别」）
-            if (envVarHint(key) == nullptr && !isDevDeskExtendedEnvKey(key)) {
+            // 未识别键判定：官方键源自 env_var_hints.h 清单（审计 CPX-09），
+            // 槽位托管键源自槽位表（CPX-08）——两处都不命中才标未识别
+            if (isUnrecognizedEnvKey(key)) {
                 out.unrecognizedKeys.push_back(key);
             }
         }
@@ -335,16 +297,16 @@ core::Result<ImportedConfig> parseImportedEnv(const std::string& text) {
             continue;
         }
 
-        // 模型槽位键
+        // 模型槽位键（槽位表派生）
         bool matchedSlot = false;
-        for (const auto& s : kImportSlots) {
-            if (key == s.modelKey) {
-                (out.models.*s.slot).model = v;
+        for (const auto& m : modelSlotTable()) {
+            if (key == m.envKey) {
+                (out.models.*m.slot).model = v;
                 matchedSlot = true;
                 break;
             }
-            if (s.nameKey != nullptr && key == s.nameKey) {
-                (out.models.*s.slot).name = v;
+            if (m.nameKey != nullptr && key == m.nameKey) {
+                (out.models.*m.slot).name = v;
                 matchedSlot = true;
                 break;
             }
@@ -373,8 +335,8 @@ core::Result<ImportedConfig> parseImportedEnv(const std::string& text) {
     out.aliasMappedKeys = std::move(aliased.aliasMappedKeys);
     out.unrecognizedKeys = std::move(aliased.unrecognizedKeys);
 
-    for (const auto& s : kSlots) {
-        if (!(out.models.*s.slot).model.empty()) ++out.recognizedSlots;
+    for (const auto& m : modelSlotTable()) {
+        if (!(out.models.*m.slot).model.empty()) ++out.recognizedSlots;
     }
     return core::Result<ImportedConfig>::ok(std::move(out));
 }
@@ -408,12 +370,12 @@ std::map<std::string, std::string> buildProxyEnv(
     out["ANTHROPIC_AUTH_TOKEN"] = kProxyAuthPlaceholder;
 
     const ModelsConfig mc = effectiveModelsConfig(modelsConfigJson, legacyModel);
-    for (const auto& row : kSlotEnvRows) {
-        const ModelSlot& slot = mc.*row.slot;
+    for (const auto& m : modelSlotTable()) {
+        const ModelSlot& slot = mc.*m.slot;
         if (slot.model.empty()) continue;  // 空槽位跳过（规则 3）
-        out[row.envKey] = slot.model;
-        if (row.nameKey != nullptr) {
-            out[row.nameKey] = slot.name.empty()
+        out[m.envKey] = slot.model;
+        if (m.nameKey != nullptr) {
+            out[m.nameKey] = slot.name.empty()
                 ? deriveDisplayName(slot.model)  // 显示名派生（规则 4）
                 : slot.name;
         }
@@ -421,16 +383,17 @@ std::map<std::string, std::string> buildProxyEnv(
     return out;
 }
 
-// 托管键全集（审计 CPX-12）：BASE_URL + 占位 token + 6 槽位键 + 4 个 _NAME，
-// 与槽位是否有值无关（buildProxyEnv 只在槽位非空时写槽位键，检测侧需要全集）
+// 托管键全集（审计 CPX-12 + CPX-08）：BASE_URL + 占位 token + 槽位表派生的
+// 每行 envKey / *_NAME 键，与槽位是否有值无关（buildProxyEnv 只在槽位非空时
+// 写槽位键，检测侧需要全集）
 std::vector<std::string> managedEnvKeyNames() {
     std::vector<std::string> out;
-    out.reserve(12);
+    out.reserve(2 + 2 * kModelSlotCount);  // 2 个固定键 + 每行至多 2 个槽位键
     out.push_back("ANTHROPIC_BASE_URL");
     out.push_back("ANTHROPIC_AUTH_TOKEN");
-    for (const auto& row : kSlotEnvRows) {
-        out.push_back(row.envKey);
-        if (row.nameKey != nullptr) out.push_back(row.nameKey);
+    for (const auto& m : modelSlotTable()) {
+        out.push_back(m.envKey);
+        if (m.nameKey != nullptr) out.push_back(m.nameKey);
     }
     return out;
 }
@@ -474,11 +437,11 @@ bool isLoopbackIpv4(const std::string& host) {
     return seg == 4;
 }
 
-// 6 槽位逐字段相等（model + name）
+// 槽位逐字段相等（model + name；槽位集合遍历槽位表）
 bool modelsConfigEqual(const ModelsConfig& a, const ModelsConfig& b) {
-    for (const auto& s : kSlots) {
-        const ModelSlot& x = a.*s.slot;
-        const ModelSlot& y = b.*s.slot;
+    for (const auto& m : modelSlotTable()) {
+        const ModelSlot& x = a.*m.slot;
+        const ModelSlot& y = b.*m.slot;
         if (x.model != y.model || x.name != y.name) return false;
     }
     return true;
@@ -644,17 +607,17 @@ ReverseSyncParse parseEnvForReverseSync(
         valid.erase("ANTHROPIC_API_KEY");
     }
 
-    // 模型槽位 / *_NAME 槽位（映射表复用 kImportSlots）
-    for (const auto& s : kImportSlots) {
-        auto mit = valid.find(s.modelKey);
+    // 模型槽位 / *_NAME 槽位（遍历槽位表派生）
+    for (const auto& m : modelSlotTable()) {
+        auto mit = valid.find(m.envKey);
         if (mit != valid.end()) {
-            (out.cfg.models.*s.slot).model = mit->second;
+            (out.cfg.models.*m.slot).model = mit->second;
             valid.erase(mit);
         }
-        if (s.nameKey == nullptr) continue;  // def / subagent 无 _NAME 变体
-        auto nit = valid.find(s.nameKey);
+        if (m.nameKey == nullptr) continue;  // 该槽位无 _NAME 变体
+        auto nit = valid.find(m.nameKey);
         if (nit != valid.end()) {
-            (out.cfg.models.*s.slot).name = nit->second;
+            (out.cfg.models.*m.slot).name = nit->second;
             valid.erase(nit);
         }
     }
@@ -665,8 +628,8 @@ ReverseSyncParse parseEnvForReverseSync(
     out.cfg.aliasMappedKeys = std::move(aliased.aliasMappedKeys);
     out.cfg.unrecognizedKeys = std::move(aliased.unrecognizedKeys);
 
-    for (const auto& s : kSlots) {
-        if (!(out.cfg.models.*s.slot).model.empty()) ++out.cfg.recognizedSlots;
+    for (const auto& m : modelSlotTable()) {
+        if (!(out.cfg.models.*m.slot).model.empty()) ++out.cfg.recognizedSlots;
     }
     std::sort(out.cfg.skippedKeys.begin(), out.cfg.skippedKeys.end());
     out.cfg.skippedKeys.erase(
@@ -691,13 +654,13 @@ ReverseSyncMerge mergeReverseSyncEnv(const ImportedConfig& cfg,
     const ModelsConfig cur =
         effectiveModelsConfig(curModelsConfigJson, curLegacyModel);
     ModelsConfig merged = cur;
-    for (const auto& s : kImportSlots) {
-        if (!isKeep(s.modelKey)) {
-            (merged.*s.slot).model = (cfg.models.*s.slot).model;  // 出现覆盖 / 缺席清空（G5）
+    for (const auto& m : modelSlotTable()) {
+        if (!isKeep(m.envKey)) {
+            (merged.*m.slot).model = (cfg.models.*m.slot).model;  // 出现覆盖 / 缺席清空（G5）
         }
-        // def / subagent 无官方 _NAME 变体 → name 不属托管字段，任何情况下不动
-        if (s.nameKey != nullptr && !isKeep(s.nameKey)) {
-            (merged.*s.slot).name = (cfg.models.*s.slot).name;
+        // nameKey 为空的槽位无官方 _NAME 变体 → name 不属托管字段，任何情况下不动
+        if (m.nameKey != nullptr && !isKeep(m.nameKey)) {
+            (merged.*m.slot).name = (cfg.models.*m.slot).name;
         }
     }
     out.modelsConfigJson = curModelsConfigJson;
