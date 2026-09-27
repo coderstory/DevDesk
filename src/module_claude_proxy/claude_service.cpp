@@ -118,7 +118,11 @@ core::Result<void> TwoPhaseKeyWrite::writeKey(const std::string& newKey) {
         ? platform::keychain::deleteSecret(service_, account_)
         : platform::keychain::storeSecret(service_, account_, newKey);
     if (r.isFail()) {
-        // 段一失败也可能已破坏旧值（各平台存储不承诺失败时旧值完好）→ 尽力回写
+        // 段一失败也可能已破坏旧值 → 尽力回写。CP-11 后 Windows 侧 storeSecret
+        // 走 core::atomicWriteFile（tmp 全量写成功才做覆盖式替换，原有「trunc 写
+        // 留半截文件」通道已消除），但替换阶段（remove 后 rename）失败仍会丢旧值；
+        // POSIX 兜底仍是 ofstream 原地覆盖写、macOS 是先删后加——三者都不承诺
+        // 失败时旧值完好，故回写照做
         keyTouched_ = true;
         compensate();
         return r;
@@ -742,8 +746,9 @@ core::Result<Profile> ClaudeService::getActiveProfile() {
     }
     if (!stepR.value()) {
         // 产品审计 2026-09-23 [6]：错误 message 补可操作指引——503 的 JSON
-        // body 原样透传此文案（proxy_router 三处 no_active_profile），用户
-        // 在 Claude Code 侧即可看到去 DevDesk 启用的路径，不用再猜原因
+        // body 原样透传此文案（proxy_router 的 writeNoProfileError 是唯一出口，
+        // CPX-10 后缓冲 / 流式两条路径共用它、不再内联副本），用户在 Claude Code
+        // 侧即可看到去 DevDesk 启用的路径，不用再猜原因
         return core::Result<Profile>::fail(core::ErrorCode::NoActiveProfile,
             "没有激活的 Claude profile，请在 DevDesk 的 Claude 页选中 Profile "
             "并点击「启用」");

@@ -163,9 +163,9 @@ PAB-08 皮肤生成器保留不动；THS-12 不加 `(position)` 唯一索引；T
 #### THS-14（拍板：补 kind='archive'）
 
 - **现状**：`todo_module.cpp:1006 const bool isArchive = (col.title == "已归档");`（漂移 +4），用于 `:1073` 空态文案；`findColumnByKind` 注释在 `:297-298`（漂移 +1）；`TODO` 迁移最高版本 **v6**（`migrations.h:205-218`）；v4 先例 `migrations.h:163-171 kTodoColumnKind`（ALTER + 两条 UPDATE 按 title 回填）；`src/` 内 `已归档` 命中为 `src/core/migrations.h:138` + `src/module_todo/todo_module.cpp:1006`（`:1073` 的文案实为「归档的任务在这里」，不含「已归档」）。
-- **改法**：新增 `migrations.h` v7 条目 `UPDATE todo_columns SET kind = 'archive' WHERE title = '已归档';`（kind 列 v4 已建，**无需 ALTER**），append 进 `all()` 末尾（`:221-231`）；`todo_module.cpp:1006` 改 `col.kind == "archive"`；`todo_service.h:30-32` kind 值域注释补 `'archive'`。**必带 4 处测试改**：`tests/test_modules/test_todo_service.cpp:617`（断言 `list.value()[3].kind == ""` → 改 `"archive"`）、`tests/test_core/test_migrations.cpp:210` 与 `:291`（`schemaVersion()==6` → `==7`）、`tests/test_modules/test_provider_config.cpp:380`（`schemaVersion` 6→7；该文件属 L3，需跨线协调）。
+- **改法**：新增 `migrations.h` **v8** 条目 `UPDATE todo_columns SET kind = 'archive' WHERE title = '已归档';`（master 上 v7 已被 profile 认证字段 `kClaudeProfileAuthField` 占用，归档 kind 迁移顺延为 v8；kind 列 v4 已建，**无需 ALTER**），append 进 `all()` 末尾（`:221-231`）；`todo_module.cpp:1006` 改 `col.kind == "archive"`；`todo_service.h:30-32` kind 值域注释补 `'archive'`。**必带 4 处测试改**：`tests/test_modules/test_todo_service.cpp:617`（断言 `list.value()[3].kind == ""` → 改 `"archive"`）、`tests/test_core/test_migrations.cpp:210` 与 `:291`（`schemaVersion()==6` → `==8`）、`tests/test_modules/test_provider_config.cpp:380`（`schemaVersion` 6→8；该文件属 L3，需跨线协调）。
 - **已知限制（与 v4 同病，不引入新机制）**：升级前已改过归档列名的库回填落空。
-- **验收**：`migrate`、`列 kind`；新增 `migrate_archive_kind_v7`。
+- **验收**：`migrate`、`列 kind`；新增 `migrate_archive_kind_v8`。
 
 #### THS-17（拍板：零迁移版）
 
@@ -354,7 +354,7 @@ PAB-08 皮肤生成器保留不动；THS-12 不加 `(position)` 唯一索引；T
 |---|---|
 | CP-12 | macOS 不可编译：本机为 Windows，`system_theme_macos.cpp` 该 TU 无法编译验证（未取证）；无 GUI 会话/SSH 下 `CFPreferencesCopyAppValue` 返回值未取证 |
 | THS-16 | DST 不可复现：本机为 CST（无 DST），DST 修复效果无法复现 |
-| THS-14 | 已改名库回填落空：升级前已改过归档列名的库，v7 按 title 回填落空（与 v4 同病，不引入新机制） |
+| THS-14 | 已改名库回填落空：升级前已改过归档列名的库，v8 按 title 回填落空（与 v4 同病，不引入新机制） |
 | TIN-13 | 截屏黑图与 playwright 缺失：RDP 断开/锁屏时 `CopyFromScreen` 可能黑图（未取证）；透明帧缓冲窗口可能截到桌面背景（未取证）；「PIL/playwright 未安装」只对 MSYS2 python3(3.14.7) 成立——Python311 已装 PIL 12.2.0 + playwright 1.60.0，但脚本 pip3 指 3.11、实际运行用 3.14 → 解释器错配，待人工判 |
 | FileWatcher | 回调析构 UB 未复现：detach 后 `running` 串改与 Impl 生命周期两项由本批侦察补出，**未做运行期复现** |
 | CPX-12 | 噪音统计：真实环境的 `*_NAME` 出现频率未取证 |

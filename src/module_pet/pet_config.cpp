@@ -17,8 +17,9 @@ namespace {
 constexpr const char* kKeySkin = "skinName";
 constexpr const char* kKeyX = "x";
 constexpr const char* kKeyY = "y";
-// clickThrough 字段已于 2026-09-24 移除（挂机穿透功能删除）；旧
-// pet_config.json 残留的 clickThrough 键被 load 静默忽略（向后兼容）
+// 【历史】clickThrough 键随「挂机穿透」功能于 2026-09-24 一并移除：save 只写
+// skinName/x/y 三个键，旧 pet_config.json 残留的 clickThrough 键被 load 静默
+// 忽略（向后兼容：不报错、也不做迁移），下次 save 重写整文件后自然消失
 } // namespace
 
 std::filesystem::path petConfigFile() {

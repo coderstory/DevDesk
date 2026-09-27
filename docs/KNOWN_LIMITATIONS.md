@@ -19,10 +19,11 @@
 - **边界**：v1 接受此形态；字体等资源未通过 windres 嵌入 exe，嵌入留待需要时。字体文件按 `.gitignore` 约定不入 git（`fonts/Inter-*.ttf`、`fonts/JetBrainsMono-*.ttf`），目录为空时应用以系统字体回退运行。
 - **参考**：Release 构建 15.6 MiB（16,402,944 字节，2026-09-22 终验实测；T3 验收时点 15.4 MiB，W3 增码后 +250 KB），`objdump` 仅 16 个 Windows 系统 DLL。
 
-### 3. 开发脚本 check-consistency.sh 在 Windows 不可用
+### 3. check-consistency.sh 截屏依赖交互式桌面会话（原「Windows 不可用」已消除，波 1 TIN-13）
 
-- **现象**：`scripts/check-consistency.sh` 使用 macOS 的 `screencapture` / `open -a`，Windows 上无法运行。
-- **定位**：开发工具，非运行时功能，暂不处理。
+- **原条目（已消除）**：脚本曾用 macOS 的 `screencapture` / `open -a`，Windows 上完全无法运行。**波 1 TIN-13 已 Windows 化**：HTML 侧走 Playwright headless Chromium，主窗口走 PowerShell `CopyFromScreen`，两者都不可用时回退 Pillow 合成占位图；二进制名也按 `uname` 分平台取 `build/DevDesk.exe`（原写死 `build/DevDesk` + `-x`，Windows 上必失败）。
+- **残留限制（Windows 侧，TIN-13 登记）**：① `CopyFromScreen` 需要未锁屏、RDP 未断开的交互式会话，否则截到全黑——脚本会打印平均亮度并 WARN，截到黑图的图不可当视觉验收依据；② HTML 截图需 python3 带 playwright、回退合成需 Pillow，缺失只 WARN 不 fail；本机 MSYS2 python3(3.14.7) 未装而 Python311 已装 PIL 12.2.0 + playwright 1.60.0，解释器错配是否影响脚本实际运行待人工判。
+- **定位**：开发工具，非运行时功能。
 
 ### 4. 主窗「最小化」期间桌宠动画暂停（Pet-Fix 2026-09-23 登记）
 

@@ -185,6 +185,8 @@ ALTER TABLE claude_profiles ADD COLUMN shared_config_id INTEGER NOT NULL DEFAULT
 | 其余 4xx（404 / 408 等） | ✅ | 采「负列表之外都试」：404 可能是「该网关没有这个模型」，failover 恰好能救 |
 | DevDesk 自身 503 `no_active_profile` / 500 `keychain_read_failed` | ❌ | 本地配置错误，非上游故障；503 时连候选都没 key |
 
+> **注记（波 2 收口，2026-09-28）**：本行的「DevDesk 自身错误」清单是设计时口径，实现侧已变——CPX-10 把「取 profile 失败」收成唯一出口 `proxy_router::writeNoProfileError`（缓冲 / 流式两条路径共用），响应恒为 `503 no_active_profile`，**`500 keychain_read_failed` 这个 error slug 在代码里已不存在**（`src/` 内仅剩 `proxy_router.cpp:103` 的一句历史注释）。类别结论（本地配置错误 → 不换）不受影响；failover 落地时 `shouldFailoverTo` 需按新口径重定「不换」的错误类别，别照抄本行。
+
 纯函数 `shouldFailoverTo(int statusCode, const std::string& errorKind)`（放 `provider_config.*` 或新 `failover_policy.*`，单测逐条覆盖）——两条转发路径共用，避免 if 表漂移。
 **不做**：同一 profile 内重试（key 级 429 重试要退避，收益低）；客户端可见的重试提示（`/v1/messages` 一跳重试对客户端完全透明）。
 
