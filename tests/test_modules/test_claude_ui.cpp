@@ -80,6 +80,20 @@ void cleanupKey(int64_t profileId) {
         kTestKeychainService, "claude:" + std::to_string(profileId));
 }
 
+// 动态空闲端口（审计 L2 / HANDOFF 排队 #9 测试脆弱点）：借 platform::http::Server
+// 的 bind 0 支持（http_server.cpp：port==0 → bind_to_any_port）向系统要一个空闲
+// 端口随即释放，交还调用方独占——多 worktree / 残留进程并发跑测试时不再撞写死的
+// 端口号。失败返回 0（调用方 REQUIRE 拦）。
+int pickFreePort() {
+    platform::http::Server probe("127.0.0.1", 0);
+    if (!probe.start()) {
+        return 0;
+    }
+    const int port = probe.actualPort();
+    probe.stop();
+    return port;
+}
+
 // RAII 临时目录（「导入当前配置」测试：临时 settings.json / sidecar 注入，
 // 绝不碰真实 ~/.claude——settings_sync 的 Paths 注入模式）
 struct ImportTempDir {
@@ -1249,7 +1263,7 @@ REGISTER_TEST(claude_module_form_esc_cancels,
 
 // ---- 产品审计 [22]：Claude 页级快捷键 Ctrl+N / Ctrl+S / Ctrl+Enter（headless）----
 // 通道 = Module::onKeyEvent（模拟 app 级 onKeyEvent → Router 派发到当前页
-// 模块，与 todo_ui_keyboard_move 同款直调）。端口用冷门 28888 避让冲突。
+// 模块，与 todo_ui_keyboard_move 同款直调）。端口动态取空闲端口避让冲突。
 REGISTER_TEST(claude_module_keyboard_shortcuts,
               "claude: Ctrl+N 新建 / Ctrl+S 保存表单 / Ctrl+Enter 启停代理（审计 [22]）", {
     TestEnv env;
@@ -1347,10 +1361,20 @@ REGISTER_TEST(claude_module_keyboard_shortcuts,
     // 5) Ctrl+Enter 启停：无弹窗开着 → 按一次启动（端口 = configuredProxyPort）、
     //    再按一次停止。（原「token 文件写进重定向的临时 APPDATA」一项随代理
     //    鉴权移除，2026-09-27——启动代理不再向用户目录写任何凭据文件）
-    env.svc->setConfiguredProxyPort(28888);
-    DOCTEST_CHECK(mod->onKeyEvent(ctrlPress(eui::InputKey::Enter)));
-    DOCTEST_CHECK(env.svc->isProxyRunning());
-    DOCTEST_CHECK_EQ(env.svc->proxyPort(), 28888);
+    //    端口动态取（原写死 28888：多实例/残留进程会撞端口）——取系统空闲端口，
+    //    万一在探测与 bind 之间被抢则换端口重试 ≤3 次；断言语义不变
+    //    （启动后监听在配置的端口上）
+    int port = 0;
+    bool started = false;
+    for (int attempt = 0; attempt < 3 && !started; ++attempt) {
+        port = pickFreePort();
+        DOCTEST_REQUIRE(port > 0);
+        env.svc->setConfiguredProxyPort(port);
+        DOCTEST_CHECK(mod->onKeyEvent(ctrlPress(eui::InputKey::Enter)));
+        started = env.svc->isProxyRunning();
+    }
+    DOCTEST_CHECK(started);
+    DOCTEST_CHECK_EQ(env.svc->proxyPort(), port);
     DOCTEST_CHECK(mod->onKeyEvent(ctrlPress(eui::InputKey::Enter)));
     DOCTEST_CHECK(!env.svc->isProxyRunning());
 
