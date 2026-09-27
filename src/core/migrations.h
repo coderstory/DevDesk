@@ -217,15 +217,31 @@ inline const Migration kClaudeSharedConfigs = {
     )"
 };
 
-// Todo 归档列语义标记回填（version 7，波 1 THS-14）
+// Profile 认证字段（version 7，2026-09-27 profile-auth-field 设计 §3）
+//   - 三态：'both'（默认，双发 x-api-key + Authorization: Bearer）/ 'bearer' /
+//     'api_key'——代理转发按 profile 的该字段决定注入哪个鉴权头
+//   - 读侧对未知值 / 空串兜底为 'both'（auth_field_from_text）
+// 注意：ALTER TABLE ADD COLUMN 无 IF NOT EXISTS，靠 schema_version 版本号保证
+// 只执行一次（runMigrations 事务内，失败整体回滚）。
+inline const Migration kClaudeProfileAuthField = {
+    .version = 7,
+    .description = "claude profiles add auth field (both/bearer/api_key)",
+    .sql = R"(
+        ALTER TABLE claude_profiles ADD COLUMN auth_field TEXT NOT NULL DEFAULT 'both';
+    )"
+};
+
+// Todo 归档列语义标记回填（version 8，波 1 THS-14）
 //   - 种子列「已归档」此前没有 kind，UI 的空态文案靠标题字符串判断
 //     （todo_module.cpp 曾写 col.title == "已归档"），用户重命名即静默失效
 //   - kind 列由 v4 建立（'todo' / 'done'），本次只按标题回填 'archive' 一次，
 //     此后 kind 是唯一权威（重命名不再影响语义）
 //   - 已知限制（与 v4 同病，不引入新机制）：升级前已改过归档列名的库，
 //     按 title 回填会落空
+// 版本号 8：合并 master 时由 v7 顺延——master 的 kClaudeProfileAuthField 已先占
+// v7 且可能已落库，改号会让 v7 旧库重跑 ALTER；本迁移此前只存在于本分支，顺延零副作用。
 inline const Migration kTodoArchiveColumnKind = {
-    .version = 7,
+    .version = 8,
     .description = "todo columns backfill 'archive' kind",
     .sql = R"(
         UPDATE todo_columns SET kind = 'archive' WHERE title = '已归档';
@@ -241,6 +257,7 @@ inline const std::vector<core::data::Migration>& all() {
         kTodoColumnKind,
         kClaudeCallLogUsageColumns,
         kClaudeSharedConfigs,
+        kClaudeProfileAuthField,
         kTodoArchiveColumnKind,
     };
     return kMigrations;

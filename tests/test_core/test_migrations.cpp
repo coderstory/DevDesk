@@ -206,8 +206,8 @@ REGISTER_TEST(migrate_call_logs_usage_columns,
         DOCTEST_REQUIRE(r.isOk());
         DOCTEST_REQUIRE(r.value().migrate().isOk());
         auto& db = r.value().db();
-        // v7（归档列 kind 回填）已执行：全量迁移后 schema_version = 7
-        DOCTEST_CHECK_EQ(db.schemaVersion(), 7);
+        // v7（认证字段）+ v8（归档列 kind 回填）已执行：全量迁移后 schema_version = 8
+        DOCTEST_CHECK_EQ(db.schemaVersion(), 8);
 
         auto prep = db.prepare(
             "SELECT status_code, latency_ms, request_bytes, response_bytes, "
@@ -282,14 +282,14 @@ REGISTER_TEST(migrate_shared_configs_v6,
                             .isOk());
     } // 句柄关闭（Windows 文件锁）
 
-    // 重新打开 + 全量 migrate → v6 建表 + 加列
+    // 重新打开 + 全量 migrate → v6 建表 + 加列（v7 认证字段 / v8 归档列 kind 一并执行）
     {
         auto r = core::Database::open(path);
         DOCTEST_REQUIRE(r.isOk());
         DOCTEST_REQUIRE(r.value().migrate().isOk());
         auto& db = r.value().db();
-        // v7（归档列 kind 回填）随后执行：全量迁移后 schema_version = 7
-        DOCTEST_CHECK_EQ(db.schemaVersion(), 7);
+        // v7（认证字段）/ v8（归档列 kind 回填）随后执行：全量迁移后 schema_version = 8
+        DOCTEST_CHECK_EQ(db.schemaVersion(), 8);
 
         // 新表存在且可插入片段行
         DOCTEST_REQUIRE(db.exec(
@@ -304,6 +304,14 @@ REGISTER_TEST(migrate_shared_configs_v6,
         auto rows = q.value().fetchAll();
         DOCTEST_REQUIRE_EQ(rows.value().size(), 1u);
         DOCTEST_CHECK_EQ(rows.value()[0].getInt64("shared_config_id").value(), 0);
+        // v7 认证字段：存量行零迁移 → 默认 'both'
+        auto afQ = db.prepare(
+            "SELECT auth_field FROM claude_profiles WHERE id = 1");
+        DOCTEST_REQUIRE(afQ.isOk());
+        auto afRows = afQ.value().fetchAll();
+        DOCTEST_REQUIRE_EQ(afRows.value().size(), 1u);
+        DOCTEST_CHECK_EQ(afRows.value()[0].getString("auth_field").value(),
+                         std::string("both"));
 
         // 绑定可用（service 层 UPDATE 依赖该列存在）
         DOCTEST_REQUIRE(db.exec(
@@ -325,10 +333,10 @@ REGISTER_TEST(migrate_shared_configs_v6,
     return true;
 })
 
-// migration v7（归档列 kind 回填）：v6 旧库里「已归档」列 kind 为 NULL，
-// 升级后回填 'archive'，其余列 kind 零改动（普通列仍 NULL）
-REGISTER_TEST(migrate_archive_kind_v7,
-              "Database: migrate v7 回填归档列 kind('archive')", {
+// migration v8（归档列 kind 回填，合并 master 时由 v7 顺延）：v6 旧库里「已归档」
+// 列 kind 为 NULL，升级后回填 'archive'，其余列 kind 零改动（普通列仍 NULL）
+REGISTER_TEST(migrate_archive_kind_v8,
+              "Database: migrate v8 回填归档列 kind('archive')", {
     auto path = tempDbPath("archive_kind");
     std::error_code ec;
     std::filesystem::remove(path, ec);
@@ -350,13 +358,13 @@ REGISTER_TEST(migrate_archive_kind_v7,
         DOCTEST_CHECK(rows.value()[0].isNull("kind"));
     } // 句柄关闭（Windows 文件锁）
 
-    // 重新打开 + 全量 migrate → v7 回填
+    // 重新打开 + 全量 migrate → v8 回填
     {
         auto r = core::Database::open(path);
         DOCTEST_REQUIRE(r.isOk());
         DOCTEST_REQUIRE(r.value().migrate().isOk());
         auto& db = r.value().db();
-        DOCTEST_CHECK_EQ(db.schemaVersion(), 7);
+        DOCTEST_CHECK_EQ(db.schemaVersion(), 8);
 
         struct Expect { const char* title; const char* kind; };
         Expect expects[4];

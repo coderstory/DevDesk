@@ -1010,7 +1010,7 @@ private:
         // 搜索激活时只显示命中卡（命中列照常渲染；命中集来自 service_->search）
         colTasks = ui::filterBySearch(colTasks, searchMatchIds_,
                                       !searchQuery_.empty());
-        // 归档列语义走 kind（migration v7 起回填 'archive'）：按标题判会在
+        // 归档列语义走 kind（migration v8 起回填 'archive'）：按标题判会在
         // 用户重命名后静默失效
         const bool isArchive = (col.kind == "archive");
 

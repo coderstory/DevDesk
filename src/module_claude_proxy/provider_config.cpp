@@ -4,6 +4,7 @@
 
 #include <algorithm>
 
+#include "env_var_hints.h"
 #include "platform/json.h"
 
 namespace module::claude {
@@ -37,31 +38,13 @@ constexpr EnvAlias kEnvAliases[] = {
     {"AUTO_COMPACT_ENABLED", "DISABLE_AUTO_COMPACT", true},
 };
 
-// 官方已知 env 键集合（§2.2 表 + 用户模板中的官方变量）。
-// 不在此集合也不在别名表的键 → 原样透传 + 警告角标（unrecognizedKeys）。
-// ponytail: 白名单按设计文档已知键收录，Phase D 导入 UI 如遇漏报再补
-const std::map<std::string, std::string>& knownOfficialEnvKeys() {
-    static const std::map<std::string, std::string> kKeys = {
-        {"ANTHROPIC_API_KEY", ""},
-        {"ANTHROPIC_AUTH_TOKEN", ""},
-        {"ANTHROPIC_BASE_URL", ""},
-        {"ANTHROPIC_MODEL", ""},
-        {"ANTHROPIC_DEFAULT_SONNET_MODEL", ""},
-        {"ANTHROPIC_DEFAULT_OPUS_MODEL", ""},
-        {"ANTHROPIC_DEFAULT_HAIKU_MODEL", ""},
-        {"ANTHROPIC_DEFAULT_FABLE_MODEL", ""},
-        {"ANTHROPIC_DEFAULT_SONNET_MODEL_NAME", ""},
-        {"ANTHROPIC_DEFAULT_OPUS_MODEL_NAME", ""},
-        {"ANTHROPIC_DEFAULT_HAIKU_MODEL_NAME", ""},
-        {"ANTHROPIC_DEFAULT_FABLE_MODEL_NAME", ""},
-        {"CLAUDE_CODE_SUBAGENT_MODEL", ""},
-        {"DISABLE_AUTO_COMPACT", ""},
-        {"DISABLE_AUTOUPDATER", ""},
-        {"CLAUDE_CODE_AUTO_COMPACT_WINDOW", ""},
-        {"CLAUDE_CODE_DISABLE_ADAPTIVE_THINKING", ""},
-        {"CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS", ""},
-    };
-    return kKeys;
+// DevDesk 自造的扩展键（审计 CPX-09）：不在 env_var_hints.h 的官方清单里，
+// 但属本应用生成 / 托管的槽位变体，不按「未识别」标记。
+// 官方键判定源 = env_var_hints.h（官方文档全量清单）；两处都不含的键 →
+// 原样透传 + 警告角标（unrecognizedKeys）
+bool isDevDeskExtendedEnvKey(const std::string& key) {
+    return key == "ANTHROPIC_DEFAULT_FABLE_MODEL" ||
+           key == "ANTHROPIC_DEFAULT_FABLE_MODEL_NAME";
 }
 
 // 别名值取反：真值（开启自动压缩）→ DISABLE_AUTO_COMPACT="0"；
@@ -88,6 +71,24 @@ constexpr ImportSlotRef kImportSlots[] = {
     {"ANTHROPIC_DEFAULT_HAIKU_MODEL",   "ANTHROPIC_DEFAULT_HAIKU_MODEL_NAME",   &ModelsConfig::haiku},
     {"ANTHROPIC_DEFAULT_FABLE_MODEL",   "ANTHROPIC_DEFAULT_FABLE_MODEL_NAME",   &ModelsConfig::fable},
     {"CLAUDE_CODE_SUBAGENT_MODEL",      nullptr,                              &ModelsConfig::subagent},
+};
+
+// 槽位 → 接管 env 键表（§4.3 规则 3/4）：nameKey 为空表示该槽位无官方 _NAME
+// 变体，不生成。既驱动 buildProxyEnv 的写入，也驱动 managedEnvKeyNames()
+//（托管键全集：与槽位是否有值无关）——两处必须同表，否则覆盖检测会漏键
+struct SlotEnvRow {
+    ModelSlot ModelsConfig::*slot;
+    const char* envKey;
+    const char* nameKey;
+};
+
+constexpr SlotEnvRow kSlotEnvRows[] = {
+    {&ModelsConfig::def,      "ANTHROPIC_MODEL",                 nullptr},
+    {&ModelsConfig::sonnet,   "ANTHROPIC_DEFAULT_SONNET_MODEL",  "ANTHROPIC_DEFAULT_SONNET_MODEL_NAME"},
+    {&ModelsConfig::opus,     "ANTHROPIC_DEFAULT_OPUS_MODEL",    "ANTHROPIC_DEFAULT_OPUS_MODEL_NAME"},
+    {&ModelsConfig::haiku,    "ANTHROPIC_DEFAULT_HAIKU_MODEL",   "ANTHROPIC_DEFAULT_HAIKU_MODEL_NAME"},
+    {&ModelsConfig::fable,    "ANTHROPIC_DEFAULT_FABLE_MODEL",   "ANTHROPIC_DEFAULT_FABLE_MODEL_NAME"},
+    {&ModelsConfig::subagent, "CLAUDE_CODE_SUBAGENT_MODEL",      nullptr},
 };
 
 // 键名格式硬校验已于 2026-09-24 移除：env 块内的变量名一律可导入
@@ -218,12 +219,29 @@ EnvAliasMapping applyEnvAliases(const std::map<std::string, std::string>& env) {
             out.aliasMappedKeys.push_back(key);
         } else {
             out.env[key] = value;
-            if (knownOfficialEnvKeys().find(key) == knownOfficialEnvKeys().end()) {
+            // 官方键判定由 env_var_hints.h 清单驱动（审计 CPX-09：原手写 18 条
+            // 与官方清单交集仅 16 → 240 条官方键被误标「未识别」）
+            if (envVarHint(key) == nullptr && !isDevDeskExtendedEnvKey(key)) {
                 out.unrecognizedKeys.push_back(key);
             }
         }
     }
     return out;
+}
+
+AuthField authFieldFromText(const std::string& text) {
+    if (text == "bearer") return AuthField::Bearer;
+    if (text == "api_key") return AuthField::ApiKey;
+    return AuthField::Both;   // 'both' / 未知 / 空串
+}
+
+const char* authFieldToText(AuthField field) {
+    switch (field) {
+        case AuthField::Bearer: return "bearer";
+        case AuthField::ApiKey: return "api_key";
+        case AuthField::Both: break;
+    }
+    return "both";
 }
 
 core::Result<ImportedConfig> parseImportedEnv(const std::string& text) {
@@ -340,6 +358,15 @@ core::Result<ImportedConfig> parseImportedEnv(const std::string& text) {
             "同时含 ANTHROPIC_API_KEY 与 ANTHROPIC_AUTH_TOKEN，已采用 AUTH_TOKEN");
     }
 
+    // 认证字段证据（设计 §5）：键名 = 该配置原本以哪种形态发送且可用
+    if (sawApiKey && sawAuthToken) {
+        out.authFieldFromEnv = "both";
+    } else if (sawApiKey) {
+        out.authFieldFromEnv = "api_key";
+    } else if (sawAuthToken) {
+        out.authFieldFromEnv = "bearer";
+    }
+
     // 其余键走别名归一（§4.3 规则 6）：别名映射 + 未识别键警告
     auto aliased = applyEnvAliases(leftover);
     out.extraEnv = std::move(aliased.env);
@@ -381,28 +408,29 @@ std::map<std::string, std::string> buildProxyEnv(
     out["ANTHROPIC_AUTH_TOKEN"] = kProxyAuthPlaceholder;
 
     const ModelsConfig mc = effectiveModelsConfig(modelsConfigJson, legacyModel);
-    // 槽位 → env 键（nameKey 为空表示该槽位无官方 _NAME 变体，不生成）
-    struct SlotEnv {
-        const ModelSlot* slot;
-        const char* envKey;
-        const char* nameKey;
-    };
-    const SlotEnv rows[] = {
-        {&mc.def,      "ANTHROPIC_MODEL",                    nullptr},
-        {&mc.sonnet,   "ANTHROPIC_DEFAULT_SONNET_MODEL",     "ANTHROPIC_DEFAULT_SONNET_MODEL_NAME"},
-        {&mc.opus,     "ANTHROPIC_DEFAULT_OPUS_MODEL",       "ANTHROPIC_DEFAULT_OPUS_MODEL_NAME"},
-        {&mc.haiku,    "ANTHROPIC_DEFAULT_HAIKU_MODEL",      "ANTHROPIC_DEFAULT_HAIKU_MODEL_NAME"},
-        {&mc.fable,    "ANTHROPIC_DEFAULT_FABLE_MODEL",      "ANTHROPIC_DEFAULT_FABLE_MODEL_NAME"},
-        {&mc.subagent, "CLAUDE_CODE_SUBAGENT_MODEL",         nullptr},
-    };
-    for (const auto& row : rows) {
-        if (row.slot->model.empty()) continue;  // 空槽位跳过（规则 3）
-        out[row.envKey] = row.slot->model;
+    for (const auto& row : kSlotEnvRows) {
+        const ModelSlot& slot = mc.*row.slot;
+        if (slot.model.empty()) continue;  // 空槽位跳过（规则 3）
+        out[row.envKey] = slot.model;
         if (row.nameKey != nullptr) {
-            out[row.nameKey] = row.slot->name.empty()
-                ? deriveDisplayName(row.slot->model)  // 显示名派生（规则 4）
-                : row.slot->name;
+            out[row.nameKey] = slot.name.empty()
+                ? deriveDisplayName(slot.model)  // 显示名派生（规则 4）
+                : slot.name;
         }
+    }
+    return out;
+}
+
+// 托管键全集（审计 CPX-12）：BASE_URL + 占位 token + 6 槽位键 + 4 个 _NAME，
+// 与槽位是否有值无关（buildProxyEnv 只在槽位非空时写槽位键，检测侧需要全集）
+std::vector<std::string> managedEnvKeyNames() {
+    std::vector<std::string> out;
+    out.reserve(12);
+    out.push_back("ANTHROPIC_BASE_URL");
+    out.push_back("ANTHROPIC_AUTH_TOKEN");
+    for (const auto& row : kSlotEnvRows) {
+        out.push_back(row.envKey);
+        if (row.nameKey != nullptr) out.push_back(row.nameKey);
     }
     return out;
 }

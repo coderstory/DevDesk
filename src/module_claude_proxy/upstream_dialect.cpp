@@ -4,6 +4,7 @@
 
 #include "claude_service.h"  // claudeUpstreamSessionId()
 #include "core/logging.h"
+#include "json_scan.h"
 #include "platform/json.h"
 
 #include <algorithm>
@@ -95,128 +96,15 @@ std::string trimTrailingWs(const std::string& s) {
 // platform::json 的序列化按 std::map 输出（键序变字母序）且浮点走 %.17g
 // （0.7 → 0.69999999999999996）——对透明代理来说是无谓的扰动。这里只做
 // 值区间的定点替换，不做全量重写。
-
-void skipWs(const std::string& s, size_t& i) {
-    while (i < s.size() &&
-           (s[i] == ' ' || s[i] == '\t' || s[i] == '\n' || s[i] == '\r')) {
-        ++i;
-    }
-}
-
-// 读出 s[i]（应指向 '"'）处的 JSON 字符串，返回其文本并推进 i 过闭引号。
-// 转义按 \\X → X 处理（不展开 \uXXXX）：本函数只用于比对键名与推进游标，
-// 真值解码交给 platform::json::parse。
-std::string readJsonString(const std::string& s, size_t& i) {
-    std::string out;
-    if (i >= s.size() || s[i] != '"') return out;
-    ++i;  // 开引号
-    while (i < s.size()) {
-        const char c = s[i];
-        if (c == '\\') {
-            if (i + 1 < s.size()) {
-                out.push_back(s[i + 1]);
-                i += 2;
-                continue;
-            }
-            break;
-        }
-        if (c == '"') {
-            ++i;  // 闭引号
-            break;
-        }
-        out.push_back(c);
-        ++i;
-    }
-    return out;
-}
-
-// 跳过 s[i] 处的一个 JSON 值（字符串 / 对象 / 数组 / 字面量）
-bool skipJsonValue(const std::string& s, size_t& i) {
-    skipWs(s, i);
-    if (i >= s.size()) return false;
-    const char c = s[i];
-    if (c == '"') {
-        readJsonString(s, i);
-        return true;
-    }
-    if (c == '{' || c == '[') {
-        const char open = c;
-        const char close = (c == '{') ? '}' : ']';
-        int depth = 0;
-        while (i < s.size()) {
-            const char x = s[i];
-            if (x == '"') {
-                readJsonString(s, i);
-                continue;
-            }
-            if (x == open) {
-                ++depth;
-            } else if (x == close) {
-                --depth;
-                ++i;
-                if (depth == 0) return true;
-                continue;
-            }
-            ++i;
-        }
-        return false;
-    }
-    // null / true / false / 数字：吃到分隔符
-    while (i < s.size() && s[i] != ',' && s[i] != '}' && s[i] != ']' &&
-           s[i] != ' ' && s[i] != '\t' && s[i] != '\n' && s[i] != '\r') {
-        ++i;
-    }
-    return true;
-}
+// 通用扫描器在 json_scan.h（CPX-11 与 streaming_proxy 的重复实现合并），
+// 本文件只保留「值必须是字符串」这一层判定。
 
 // 在顶层对象里找字符串字段 key，回填其值（含引号）的字节区间 [begin, end)；
 // 非顶层同名键 / 值不是字符串 / 结构非法 → false
 bool findTopLevelStringSpan(const std::string& s, const std::string& key,
                             size_t& begin, size_t& end) {
-    size_t i = 0;
-    skipWs(s, i);
-    if (i >= s.size() || s[i] != '{') return false;
-    ++i;
-
-    int depth = 1;
-    while (i < s.size()) {
-        skipWs(s, i);
-        if (i >= s.size()) return false;
-        if (s[i] == ',') {
-            ++i;
-            continue;
-        }
-        if (s[i] == '}') {
-            --depth;
-            ++i;
-            if (depth == 0) return false;
-            continue;
-        }
-        if (s[i] != '"') {
-            ++i;  // 非预期 token：跳过，防死循环
-            continue;
-        }
-
-        const std::string fieldKey = readJsonString(s, i);
-        skipWs(s, i);
-        if (i >= s.size() || s[i] != ':') {
-            if (i < s.size()) ++i;
-            continue;
-        }
-        ++i;  // ':'
-        skipWs(s, i);
-
-        if (depth == 1 && fieldKey == key) {
-            if (i >= s.size() || s[i] != '"') return false;  // 值不是字符串
-            const size_t valueBegin = i;
-            if (!skipJsonValue(s, i)) return false;
-            begin = valueBegin;
-            end = i;
-            return true;
-        }
-        if (!skipJsonValue(s, i)) return false;
-    }
-    return false;
+    if (!json_scan::findTopLevelValueSpan(s, key, begin, end)) return false;
+    return begin < s.size() && s[begin] == '"';
 }
 
 } // namespace
@@ -242,16 +130,21 @@ bool UpstreamDialect::stripModelSuffix() const {
 }
 
 void UpstreamDialect::applyHeaders(std::map<std::string, std::string>& headers,
-                                   const std::string& apiKey) const {
+                                   const std::string& apiKey,
+                                   AuthField authField) const {
     // 1. 鉴权：客户端的凭据一律丢弃（代理只用 profile 的 key，客户端那份
-    //    打到这个网关本来就无效），再注入
+    //    打到这个网关本来就无效），再按认证字段注入
     eraseHeaderCI(headers, "x-api-key");
     eraseHeaderCI(headers, "authorization");
     if (!apiKey.empty()) {
-        headers["x-api-key"] = apiKey;
-        // 兼容期望 Bearer 的 Anthropic-compatible 网关（bailian 等）；
-        // 真 Anthropic API 收 x-api-key、忽略 Bearer
-        headers["Authorization"] = "Bearer " + apiKey;
+        if (authField != AuthField::Bearer) {
+            headers["x-api-key"] = apiKey;
+        }
+        if (authField != AuthField::ApiKey) {
+            // 兼容期望 Bearer 的 Anthropic-compatible 网关（bailian 等）；
+            // 真 Anthropic API 收 x-api-key、忽略 Bearer
+            headers["Authorization"] = "Bearer " + apiKey;
+        }
     }
 
     // 2. User-Agent：无条件覆盖（理由见 kProxyUserAgent 注释）

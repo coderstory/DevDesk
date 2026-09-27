@@ -66,6 +66,10 @@ core::Result<Response> send(const Request& req) {
     curl_easy_setopt(curl, CURLOPT_CUSTOMREQUEST, req.method.c_str());
     curl_easy_setopt(curl, CURLOPT_TIMEOUT_MS, req.timeoutMs);
     curl_easy_setopt(curl, CURLOPT_NOSIGNAL, 1L);
+    // 回环地址永远不走代理（NOPROXY）：libcurl 默认读 http_proxy / ALL_PROXY /
+    // no_proxy 环境变量，公司代理在场时对 127.0.0.1 的请求会被劫持。字面量是
+    // 静态存储期，libcurl 只存指针不拷贝，安全。
+    curl_easy_setopt(curl, CURLOPT_NOPROXY, "localhost,127.0.0.1,::1");
     curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, writeCallback);
     curl_easy_setopt(curl, CURLOPT_WRITEDATA, &resp);
     curl_easy_setopt(curl, CURLOPT_HEADERFUNCTION, headerCallback);
@@ -450,6 +454,8 @@ core::Result<std::unique_ptr<StreamingResponse>> sendStreaming(const Request& re
         curl_easy_setopt(curl, CURLOPT_LOW_SPEED_TIME, req.lowSpeedTimeSec);
     }
     curl_easy_setopt(curl, CURLOPT_NOSIGNAL, 1L);
+    // 回环地址永远不走代理（NOPROXY），与同步 send() 同口径
+    curl_easy_setopt(curl, CURLOPT_NOPROXY, "localhost,127.0.0.1,::1");
     curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, streamWriteCb);
     curl_easy_setopt(curl, CURLOPT_WRITEDATA, sr->impl_);
     curl_easy_setopt(curl, CURLOPT_HEADERFUNCTION, streamHeaderCb);

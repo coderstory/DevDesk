@@ -8,6 +8,9 @@
 
 namespace core {
 
+// 枚举序 = 侧边栏顺序 + Router 分发编号，是跨模块契约（重排会静默改变默认
+// 导航顺序）。契约测试：tests/test_core/test_router.cpp 的 `core_pageid_order`
+//（审计 TIN-09：该用例原放在 test_modules/test_todo.cpp，与 todo 无关）。
 enum class PageId {
     Home,
     Markdown,

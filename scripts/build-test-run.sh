@@ -97,9 +97,7 @@ if [ "$CLEAN" = "1" ] || [ ! -f build/build.ninja ]; then
   CONF_OUT=$(cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Debug \
     -DEUI_NEO_DIR="$EUI_DIR" \
     "${CCACHE_ARGS[@]}" \
-    -DOPENSSL_ROOT_DIR=C:/msys64/mingw64 \
-    -DZLIB_LIBRARY=C:/msys64/mingw64/lib/libz.dll.a \
-    -DZLIB_INCLUDE_DIR="$EUI_DIR/3rd/zlib-1.3.1" 2>&1) || {
+    -DOPENSSL_ROOT_DIR=C:/msys64/mingw64 2>&1) || {
     echo "$CONF_OUT" | tail -30
     echo "❌ configure 失败（上方为错误摘要）"; exit 1; }
   echo "✅ configure 完成"
@@ -110,6 +108,35 @@ BUILD_OUT=$(cmake --build build 2>&1) || {
   echo "❌ 构建失败（上方为错误摘要）"; exit 1; }
 echo "$BUILD_OUT" | tail -2
 echo "✅ 构建成功"
+
+# ---- 2b. 发布形态守卫（PAB-06）----
+# 发布契约 = 单 exe / 零外部 DLL（CLAUDE.md「发布目标」）。DEVDESK_STATIC=OFF
+# 会把 sqlite3/curl/ssl/crypto 静默换成外部 DLL 依赖，构建与测试都照过；这里
+# 在测试前单点断言。判据 = objdump 列出的每个 DLL 名必须存在于 %SystemRoot%/System32
+# （按名字判存在性，MSYS2 升级新增 api-ms-win-* 不会误报）。只查 DevDesk.exe，
+# 测试产物 devdesk_tests.exe 不入发布约束。
+if [ ! -f build/DevDesk.exe ]; then
+  echo "⚠ 发布形态守卫跳过：build/DevDesk.exe 不存在"
+elif ! command -v objdump >/dev/null 2>&1; then
+  echo "⚠ 发布形态守卫跳过：objdump 不可用"
+else
+  SYS32="$(printf '%s' "${SystemRoot:-C:/Windows}" | tr '\\\\' '/')/System32"
+  BAD_DLLS=""
+  while read -r dll; do
+    [ -n "$dll" ] || continue
+    if [ ! -f "$SYS32/$dll" ]; then BAD_DLLS="$BAD_DLLS $dll"; fi
+  done < <(objdump -p build/DevDesk.exe 2>/dev/null | awk '/DLL Name:/{print $3}')
+  if [ -n "$BAD_DLLS" ]; then
+    echo "❌ 发布形态：DevDesk.exe 依赖非系统 DLL:$BAD_DLLS（期望单 exe 零外部 DLL）"
+    exit 1
+  fi
+  if grep -q "DEVDESK_STATIC:BOOL=ON" build/CMakeCache.txt; then
+    echo "✅ 发布形态（单 exe / 零外部 DLL；DEVDESK_STATIC=ON）"
+  else
+    echo "❌ 发布形态：build/CMakeCache.txt 缺 DEVDESK_STATIC:BOOL=ON（静态链接被关掉）"
+    exit 1
+  fi
+fi
 
 # ---- 3. 测试（直接跑 devdesk_tests：输出格式稳定，Total/Passed/Failed 必有）----
 if [ "$RUN_TEST" = "1" ]; then
@@ -125,6 +152,19 @@ if [ "$RUN_TEST" = "1" ]; then
     echo "❌ 测试有失败（上方为 FAIL 摘要；要看完整输出跑: ./build/tests/devdesk_tests.exe）"
     exit 1
   fi
+fi
+
+# ---- 3b. 模块隔离静态守卫（TIN-01；纯静态检查，--no-test 也跑）----
+# 原守卫编在 test_settings.cpp 里、靠 __FILE__ 上溯仓库根，ccache 把 __FILE__
+# 相对化后 cwd=仓库根 必误报「找不到仓库根」；改由独立脚本承担（脚本自身不读
+# $PWD、全程绝对路径）。失败 → 退出码 1，不静默绿。
+echo "── 模块隔离守卫 ──"
+# 路径用「相对仓库根」而非 $(dirname "$0")：本脚本第 22 行已 cd 到仓库根，
+# 且 $0 可能是裸文件名（bash build-test-run.sh 从 scripts/ 内调用），
+# 那种形态下 dirname "$0" 会解析错目录。相对根的写法与下方 ./build/... 同风格。
+if ! bash scripts/check-module-isolation.sh; then
+  echo "❌ 模块隔离守卫失败（上方为 文件:行:命中行；修 settings 侧，勿越模块 link）"
+  exit 1
 fi
 
 # ---- 4. 启动 app ----

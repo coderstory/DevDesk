@@ -28,6 +28,8 @@ public:
     void setStatus(int code);
     void setHeader(const std::string& key, const std::string& value);
     void write(const std::string& data);
+    // 空操作（CP-10）：响应在 handler 返回时统一提交，end() 无状态可置。
+    // 保留签名是为 20+ 既有调用点（属调用协议的一部分）。
     void end();
 
     // ---- 流式 API（spec §10.4）----
@@ -53,7 +55,6 @@ public:
     int status() const { return status_; }
     const std::map<std::string, std::string>& headers() const { return headers_; }
     const std::string& body() const { return body_; }
-    bool ended() const { return ended_; }
 
     bool isStreaming() const { return streaming_; }
     const std::string& streamingContentType() const { return streamingContentType_; }
@@ -65,7 +66,6 @@ private:
     int status_ = 200;
     std::map<std::string, std::string> headers_;
     std::string body_;
-    bool ended_ = false;
 
     bool streaming_ = false;
     std::string streamingContentType_;

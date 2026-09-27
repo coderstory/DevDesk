@@ -36,6 +36,7 @@
 #include "core/migrations.h"
 #include "core/proxy_stats.h"
 #include "core/sqlite_db.h"
+#include "json_scan.h"
 #include "platform/http_client.h"
 #include "platform/http_server.h"
 #include "platform/json.h"
@@ -1451,5 +1452,263 @@ REGISTER_TEST(streaming_call_log_usage_absent,
     proxy.stop();
     upstream.stop();
     core::proxy_stats::resetForTest();
+    return true;
+})
+
+// ==================== json_scan：与旧实现逐字节等价（CPX-11） ====================
+// CPX-11 把两套重复的顶层 JSON 扫描器（streaming_proxy 的 findTopLevelField、
+// upstream_dialect 的 findTopLevelStringSpan，外加三份逐字节相同的 helper）合并
+// 进 json_scan.h。旧实现逐字留在这里做对照 corpus：同一批 body 上，新扫描器的
+// 结论必须与两份旧实现逐一相同——顶层 key / 嵌套同名 key / 非字符串值 /
+// 值含逗号 / 截断 body / 非对象。
+namespace {
+
+// —— 旧实现（原 streaming_proxy.cpp 副本；helper 与原 upstream_dialect.cpp 的
+//    同名实现逐字节相同，故只留一份） ——
+
+void legacySkipWs(const std::string& s, size_t& i) {
+    while (i < s.size() &&
+           (s[i] == ' ' || s[i] == '\t' || s[i] == '\n' || s[i] == '\r')) {
+        ++i;
+    }
+}
+
+std::string legacyReadJsonString(const std::string& s, size_t& i) {
+    std::string out;
+    if (i >= s.size() || s[i] != '"') return out;
+    ++i;  // 跳过开引号
+    while (i < s.size()) {
+        const char c = s[i];
+        if (c == '\\') {
+            if (i + 1 < s.size()) {
+                out.push_back(s[i + 1]);
+                i += 2;
+                continue;
+            }
+            break;
+        }
+        if (c == '"') {
+            ++i;  // 跳过闭引号
+            break;
+        }
+        out.push_back(c);
+        ++i;
+    }
+    return out;
+}
+
+bool legacySkipJsonValue(const std::string& s, size_t& i) {
+    legacySkipWs(s, i);
+    if (i >= s.size()) return false;
+    const char c = s[i];
+    if (c == '"') {
+        legacyReadJsonString(s, i);
+        return true;
+    }
+    if (c == '{' || c == '[') {
+        const char open = c;
+        const char close = (c == '{') ? '}' : ']';
+        int depth = 0;
+        while (i < s.size()) {
+            const char x = s[i];
+            if (x == '"') {
+                legacyReadJsonString(s, i);
+                continue;
+            }
+            if (x == open) ++depth;
+            else if (x == close) {
+                --depth;
+                ++i;
+                if (depth == 0) return true;
+                continue;
+            }
+            ++i;
+        }
+        return false;
+    }
+    // null / true / false / 数字：吃到分隔符
+    while (i < s.size() && s[i] != ',' && s[i] != '}' && s[i] != ']' &&
+           s[i] != ' ' && s[i] != '\t' && s[i] != '\n' && s[i] != '\r') {
+        ++i;
+    }
+    return true;
+}
+
+// 旧 streaming 侧：回填原始值文本（不做类型判定）
+bool legacyFindTopLevelField(const std::string& body,
+                             const std::string& wantedKey,
+                             std::string& rawValueOut) {
+    size_t i = 0;
+    legacySkipWs(body, i);
+    if (i >= body.size() || body[i] != '{') return false;
+    ++i;  // 进入对象
+
+    int depth = 1;
+    while (i < body.size()) {
+        legacySkipWs(body, i);
+        if (i >= body.size()) break;
+        if (body[i] == '}') {
+            --depth;
+            ++i;
+            if (depth == 0) break;
+            continue;
+        }
+        if (body[i] == ',') {
+            ++i;
+            continue;
+        }
+        if (body[i] != '"') {
+            ++i;
+            continue;
+        }
+
+        const size_t keyStart = i;
+        const std::string key = legacyReadJsonString(body, i);
+        legacySkipWs(body, i);
+        if (i >= body.size() || body[i] != ':') {
+            if (i < body.size()) ++i;
+            continue;
+        }
+        ++i;  // 跳过 ':'
+        legacySkipWs(body, i);
+
+        if (depth == 1 && key == wantedKey) {
+            const size_t valStart = i;
+            if (!legacySkipJsonValue(body, i)) return false;
+            rawValueOut = body.substr(valStart, i - valStart);
+            return true;
+        }
+        if (!legacySkipJsonValue(body, i)) return false;
+        (void)keyStart;
+    }
+    return false;
+}
+
+// 旧 dialect 侧：多一层「值必须是字符串」判定
+bool legacyFindTopLevelStringSpan(const std::string& s, const std::string& key,
+                                  size_t& begin, size_t& end) {
+    size_t i = 0;
+    legacySkipWs(s, i);
+    if (i >= s.size() || s[i] != '{') return false;
+    ++i;
+
+    int depth = 1;
+    while (i < s.size()) {
+        legacySkipWs(s, i);
+        if (i >= s.size()) return false;
+        if (s[i] == ',') {
+            ++i;
+            continue;
+        }
+        if (s[i] == '}') {
+            --depth;
+            ++i;
+            if (depth == 0) return false;
+            continue;
+        }
+        if (s[i] != '"') {
+            ++i;
+            continue;
+        }
+
+        const std::string fieldKey = legacyReadJsonString(s, i);
+        legacySkipWs(s, i);
+        if (i >= s.size() || s[i] != ':') {
+            if (i < s.size()) ++i;
+            continue;
+        }
+        ++i;
+        legacySkipWs(s, i);
+
+        if (depth == 1 && fieldKey == key) {
+            if (i >= s.size() || s[i] != '"') return false;  // 值不是字符串
+            const size_t valueBegin = i;
+            if (!legacySkipJsonValue(s, i)) return false;
+            begin = valueBegin;
+            end = i;
+            return true;
+        }
+        if (!legacySkipJsonValue(s, i)) return false;
+    }
+    return false;
+}
+
+} // namespace
+
+REGISTER_TEST(json_scan_top_level_span_equivalence,
+              "streaming: json_scan 顶层值区间与旧实现逐字节等价", {
+    using module::claude::json_scan::findTopLevelValueSpan;
+
+    std::vector<std::string> bodies;
+    // 顶层 key 命中
+    bodies.push_back(R"({"stream":true})");
+    bodies.push_back(R"({"stream":true,"model":"m"})");
+    bodies.push_back(R"({"model":"m","stream":true})");
+    bodies.push_back("{\n  \"stream\":\n  true\n}");
+    bodies.push_back(R"({"stream" : true , "model" : "m" })");
+    bodies.push_back(R"({"a":1,"stream":true,"b":[1,2,3]})");
+    // 嵌套同名 key：只有顶层生效
+    bodies.push_back(R"({"a":{"stream":true}})");
+    bodies.push_back(R"({"model":"deepseek[1M]","x":{"model":"nested[1M]"}})");
+    // 非字符串值 / 各种值类型
+    bodies.push_back(R"({"model":123})");
+    bodies.push_back(R"({"model":null,"stream":false})");
+    bodies.push_back(R"({"stream":{"x":1}})");
+    bodies.push_back(R"({"stream":truex})");
+    bodies.push_back(R"({"model":"a\"b","stream":true})");
+    // 值含逗号 / 括号（字符串内与数组内）
+    bodies.push_back(R"({"model":"a,b[1M]"})");
+    bodies.push_back(R"({"model":"a,b","stream":true})");
+    bodies.push_back(R"({"b":[1,2],"stream":true})");
+    // 截断 body
+    bodies.push_back(R"({"model":"a)");
+    bodies.push_back(R"({"stream":tru)");
+    bodies.push_back(R"({"model":)");
+    bodies.push_back(R"({"model")");
+    bodies.push_back(R"({"stream":true)");
+    bodies.push_back(R"(  {"model":"a","stream")");
+    // 空对象 / 非对象 / 非法
+    bodies.push_back(R"({})");
+    bodies.push_back("  ");
+    bodies.push_back("");
+    bodies.push_back("not json at all");
+    bodies.push_back("123");
+    bodies.push_back(R"([1,2,3])");
+    bodies.push_back(R"("just a string")");
+
+    std::vector<std::string> keys;
+    keys.push_back("stream");
+    keys.push_back("model");
+    keys.push_back("absent");
+
+    for (const std::string& body : bodies) {
+        for (const std::string& key : keys) {
+            // 1) 与旧 streaming 侧等价：命中与否一致 + 原始值文本逐字节相同
+            std::string legacyRaw;
+            const bool legacyFound = legacyFindTopLevelField(body, key, legacyRaw);
+            size_t begin = 0;
+            size_t end = 0;
+            const bool found = findTopLevelValueSpan(body, key, begin, end);
+            DOCTEST_CHECK_EQ(found, legacyFound);
+            if (found) {
+                DOCTEST_CHECK_EQ(body.substr(begin, end - begin), legacyRaw);
+            }
+
+            // 2) 与旧 dialect 侧等价：它额外要求「值必须是字符串」——生产侧
+            //    那层判定就是 upstream_dialect.cpp 的一行 s[begin] == '"'
+            //    （该路径另有 dialect_normalize_body_* 端到端覆盖）
+            size_t legacyBegin = 0;
+            size_t legacyEnd = 0;
+            const bool legacyStr =
+                legacyFindTopLevelStringSpan(body, key, legacyBegin, legacyEnd);
+            const bool strFound =
+                found && begin < body.size() && body[begin] == '"';
+            DOCTEST_CHECK_EQ(strFound, legacyStr);
+            if (strFound) {
+                DOCTEST_CHECK_EQ(begin, legacyBegin);
+                DOCTEST_CHECK_EQ(end, legacyEnd);
+            }
+        }
+    }
     return true;
 })

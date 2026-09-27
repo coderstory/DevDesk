@@ -89,7 +89,6 @@ public:
     Result<void> runMigrations(const std::vector<Migration>& migrations);
 
     int schemaVersion() const;
-    void setSchemaVersion(int version);
 
     std::recursive_mutex& mutex() { return mutex_; }
     sqlite3* handle() { return handle_; }

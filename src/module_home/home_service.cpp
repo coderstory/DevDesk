@@ -24,11 +24,12 @@ std::string formatRelativeTime(int64_t modifiedAt, std::time_t now) {
     const int64_t diff = static_cast<int64_t>(now) - modifiedAt;
     if (diff < 60) return "刚刚";  // 含未来时间（时钟偏差）兜底
 
-    // 先按本地日界分桶（同一天内才显示 "N 小时前"）
-    const int64_t todayStart = startOfDayEpoch(now);
-    const int64_t modDayStart =
-        startOfDayEpoch(static_cast<std::time_t>(modifiedAt));
-    const int64_t dayGap = (todayStart - modDayStart) / 86400;
+    // 先按本地日历日分桶（同一天内才显示 "N 小时前"）
+    // THS-16：直接比较日历日序号（core::time::localDayNumber），不再用两个
+    // 本地零点相减 —— 后者在 DST 切换日（23h / 25h 的一天）会 ±1 天偏差。
+    const int64_t dayGap =
+        core::time::localDayNumber(now) -
+        core::time::localDayNumber(static_cast<std::time_t>(modifiedAt));
 
     if (dayGap <= 0) {
         if (diff < 3600) {
@@ -86,40 +87,17 @@ std::string formatRateTps(double tps) {
 
 HomeService::HomeService(core::data::SqliteDb& db) : db_(db) {}
 
-core::Result<int64_t> HomeService::countBySql(const char* sql) {
+core::Result<int64_t> HomeService::countBySql(
+    const char* sql, std::optional<int64_t> boundValue) {
     auto prep = db_.prepare(sql);
     if (prep.isFail()) {
         return core::Result<int64_t>::fail(prep.errorCode(), prep.errorMessage());
     }
     auto& stmt = prep.value();
-    auto step = stmt.step();
-    if (step.isFail()) {
-        return core::Result<int64_t>::fail(step.errorCode(), step.errorMessage());
-    }
-    if (!step.value()) {
-        return core::Result<int64_t>::fail(core::ErrorCode::Internal,
-                                           "count 查询没有返回行");
-    }
-    auto row = stmt.currentRow();
-    if (row.isFail()) {
-        return core::Result<int64_t>::fail(row.errorCode(), row.errorMessage());
-    }
-    auto n = row.value().getInt64("n");
-    if (n.isFail()) {
-        return core::Result<int64_t>::fail(n.errorCode(), n.errorMessage());
-    }
-    return core::Result<int64_t>::ok(n.value());
-}
-
-core::Result<int64_t> HomeService::countBySql(const char* sql,
-                                              int64_t boundValue) {
-    auto prep = db_.prepare(sql);
-    if (prep.isFail()) {
-        return core::Result<int64_t>::fail(prep.errorCode(), prep.errorMessage());
-    }
-    auto& stmt = prep.value();
-    if (auto b = stmt.bind(1, boundValue); b.isFail()) {
-        return core::Result<int64_t>::fail(b.errorCode(), b.errorMessage());
+    if (boundValue.has_value()) {
+        if (auto b = stmt.bind(1, *boundValue); b.isFail()) {
+            return core::Result<int64_t>::fail(b.errorCode(), b.errorMessage());
+        }
     }
     auto step = stmt.step();
     if (step.isFail()) {

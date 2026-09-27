@@ -11,7 +11,12 @@ function(devdesk_apply_warnings target_name)
         message(FATAL_ERROR "devdesk_apply_warnings: target ${target_name} does not exist")
     endif()
 
-    if(CMAKE_CXX_COMPILER_ID STREQUAL "Clang" OR CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
+    # Apple Clang 的 CMAKE_CXX_COMPILER_ID 是 "AppleClang"（CMP0025 NEW，
+    # CMake 4.x 恒为 NEW），不匹配下面的 "Clang" —— 漏掉它会让 macOS 上
+    # -Wall -Wextra -Wpedantic -Werror 整段静默失效（编译器 id 判据从未命中）
+    if(CMAKE_CXX_COMPILER_ID STREQUAL "Clang"
+       OR CMAKE_CXX_COMPILER_ID STREQUAL "AppleClang"
+       OR CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
         if(CMAKE_BUILD_TYPE STREQUAL "Debug")
             target_compile_options(${target_name} PRIVATE -Wall -Wextra -Wpedantic -Werror)
         else()

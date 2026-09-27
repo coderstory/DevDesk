@@ -4,158 +4,14 @@
 
 #include "core/logging.h"
 #include "core/proxy_stats.h"
+#include "json_scan.h"
 #include "platform/json.h"
 #include "upstream_dialect.h"
 
-#include <cctype>
 #include <chrono>
 #include <string>
 
 namespace module::claude {
-
-namespace {
-
-// 跳过 JSON 空白
-void skipWs(const std::string& s, size_t& i) {
-    while (i < s.size() &&
-           (s[i] == ' ' || s[i] == '\t' || s[i] == '\n' || s[i] == '\r')) {
-        ++i;
-    }
-}
-
-// 从 s[i]（应指向 '"'）读出一个 JSON 字符串，返回其内容并推进 i
-// 简单实现：不支持 \uXXXX 转义（对检测 key 名足够）
-std::string readJsonString(const std::string& s, size_t& i) {
-    std::string out;
-    if (i >= s.size() || s[i] != '"') return out;
-    ++i;  // 跳过开引号
-    while (i < s.size()) {
-        const char c = s[i];
-        if (c == '\\') {
-            if (i + 1 < s.size()) {
-                out.push_back(s[i + 1]);
-                i += 2;
-                continue;
-            }
-            break;
-        }
-        if (c == '"') {
-            ++i;  // 跳过闭引号
-            break;
-        }
-        out.push_back(c);
-        ++i;
-    }
-    return out;
-}
-
-// 跳过 JSON 值（用于跨过我们不需要的字段）
-// 返回 false 表示解析到非法字符
-bool skipJsonValue(const std::string& s, size_t& i) {
-    skipWs(s, i);
-    if (i >= s.size()) return false;
-    const char c = s[i];
-    if (c == '"') {
-        readJsonString(s, i);
-        return true;
-    }
-    if (c == '{' || c == '[') {
-        const char open = c;
-        const char close = (c == '{') ? '}' : ']';
-        int depth = 0;
-        while (i < s.size()) {
-            const char x = s[i];
-            if (x == '"') {
-                readJsonString(s, i);
-                continue;
-            }
-            if (x == open) ++depth;
-            else if (x == close) {
-                --depth;
-                ++i;
-                if (depth == 0) return true;
-                continue;
-            }
-            ++i;
-        }
-        return false;
-    }
-    // null / true / false / 数字：吃到分隔符
-    while (i < s.size() && s[i] != ',' && s[i] != '}' && s[i] != ']' &&
-           s[i] != ' ' && s[i] != '\t' && s[i] != '\n' && s[i] != '\r') {
-        ++i;
-    }
-    return true;
-}
-
-// 在顶层对象里找 key，返回其原始值文本（未做类型转换）
-bool findTopLevelField(const std::string& body,
-                       const std::string& wantedKey,
-                       std::string& rawValueOut) {
-    size_t i = 0;
-    skipWs(body, i);
-    if (i >= body.size() || body[i] != '{') return false;
-    ++i;  // 进入对象
-
-    int depth = 1;
-    while (i < body.size()) {
-        skipWs(body, i);
-        if (i >= body.size()) break;
-        if (body[i] == '}') {
-            --depth;
-            ++i;
-            if (depth == 0) break;
-            continue;
-        }
-        if (body[i] == ',') {
-            ++i;
-            continue;
-        }
-        if (body[i] != '"') {
-            // 非预期 token：跳过它，避免死循环
-            ++i;
-            continue;
-        }
-
-        const size_t keyStart = i;
-        const std::string key = readJsonString(body, i);
-        skipWs(body, i);
-        if (i >= body.size() || body[i] != ':') {
-            // 非法结构：跳过
-            if (i < body.size()) ++i;
-            continue;
-        }
-        ++i;  // 跳过 ':'
-        skipWs(body, i);
-
-        if (depth == 1 && key == wantedKey) {
-            const size_t valStart = i;
-            if (!skipJsonValue(body, i)) return false;
-            rawValueOut = body.substr(valStart, i - valStart);
-            return true;
-        }
-        if (!skipJsonValue(body, i)) return false;
-        (void)keyStart;
-    }
-    return false;
-}
-
-// 判断原始 JSON 值文本是否为 true
-bool isJsonTrue(const std::string& raw) {
-    size_t i = 0;
-    skipWs(raw, i);
-    return raw.compare(i, 4, "true") == 0;
-}
-
-// 去掉字符串首尾空白
-std::string trim(const std::string& s) {
-    size_t b = 0, e = s.size();
-    while (b < e && std::isspace(static_cast<unsigned char>(s[b]))) ++b;
-    while (e > b && std::isspace(static_cast<unsigned char>(s[e - 1]))) --e;
-    return s.substr(b, e - b);
-}
-
-} // namespace
 
 // ---------- SSE 事件重组 + usage 解析（设计 §3） ----------
 
@@ -184,7 +40,7 @@ int64_t parseUsageFromEvent(const std::string& event, StreamUsage& out) {
         std::string line = event.substr(lineStart, end - lineStart);
         if (!line.empty() && line.back() == '\r') line.pop_back();
         if (line.compare(0, 5, "data:") == 0) {
-            std::string payload = trim(line.substr(5));
+            std::string payload = json_scan::trim(line.substr(5));
             if (payload == "[DONE]" || payload.empty()) return -1;
             do { // 单次 do：用 break 模拟 goto skip
                 auto r = platform::json::parse(payload);
@@ -267,9 +123,13 @@ std::vector<int64_t> SseUsageParser::feed(const std::string& chunk) {
 
 bool wantsStream(const std::string& body) {
     if (body.empty()) return false;
-    std::string raw;
-    if (!findTopLevelField(body, "stream", raw)) return false;
-    return isJsonTrue(raw);
+    size_t begin = 0;
+    size_t end = 0;
+    if (!json_scan::findTopLevelValueSpan(body, "stream", begin, end)) {
+        return false;
+    }
+    // 与旧 isJsonTrue 同口径：值区间前 4 字节是 "true" 即为真
+    return body.compare(begin, 4, "true") == 0;
 }
 
 bool isStreamablePath(const std::string& path) {
@@ -279,7 +139,7 @@ bool isStreamablePath(const std::string& path) {
 
 std::string buildUpstreamUrl(const std::string& baseUrl,
                              const std::string& pathOrUrl) {
-    const std::string p = trim(pathOrUrl);
+    const std::string p = json_scan::trim(pathOrUrl);
     if (p.compare(0, 7, "http://") == 0 || p.compare(0, 8, "https://") == 0) {
         return p;  // 已是绝对 URL
     }
@@ -329,7 +189,8 @@ sendStreamingClaude(const platform::http::Request& req,
     // 2. 按上游方言归一（鉴权头 / UA / 会话头 / 模型名标记）——
     //    各网关差异全部收敛在 UpstreamDialect 里，此处不再有 provider if
     const UpstreamDialect dialect = UpstreamDialect::forBaseUrl(profile.baseUrl);
-    dialect.applyHeaders(upstream.headers, profile.apiKeyPlain);
+    dialect.applyHeaders(upstream.headers, profile.apiKeyPlain,
+                         authFieldFromText(profile.authField));
     if (dialect.normalizeBody(upstream.body)) {
         LOG_INFO("流式代理：按上游方言剥掉模型名 [1M] 标记（" + profile.baseUrl + "）");
     }

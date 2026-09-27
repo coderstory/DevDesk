@@ -1,31 +1,50 @@
 #!/bin/bash
 # scripts/check-consistency.sh
-# DevDesk HTML demo vs C++ binary 视觉一致性检查脚本
+# DevDesk HTML demo vs C++ binary 视觉一致性检查脚本（Windows 化，波 1 TIN-13）
 #
 # 用途：
-#   1. 用 Playwright (headless Chromium) 截取 HTML demo 5 个页面
-#   2. 启动 build/DevDesk 并尝试截屏当前窗口（Home）
-#   3. 输出对比报告占位（详细分析见 docs/CONSISTENCY-CHECK.md）
+#   1. 用 Playwright (headless Chromium) 截取 HTML demo 各页面
+#   2. 启动 build/DevDesk.exe 并用 PowerShell（CopyFromScreen）截取主窗口；
+#      截屏不可用时回退 Pillow 合成占位图
+#   3. 输出**本次实况**（产物清单 + 各步骤结果）——不做静态结论（原硬编码
+#      结论段是 2026-09 之前的快照，已过期，见 docs/CONSISTENCY-CHECK.md）
 #
 # 用法：
-#   ./scripts/check-consistency.sh             # 跑完整流程
+#   ./scripts/check-consistency.sh             # 完整流程
 #   ./scripts/check-consistency.sh --html-only # 只跑 HTML 截图
 #   ./scripts/check-consistency.sh --cpp-only  # 只跑 C++ 截图
-#   ./scripts/check-consistency.sh --no-launch # 不启动 DevDesk（只截图）
+#   ./scripts/check-consistency.sh --no-launch # 不启动 DevDesk（只走 Pillow 合成）
 #
 # 前置：
-#   - Python 3.10+（脚本会自己 pip install playwright + pillow）
-#   - macOS 27+（screencapture TCC 权限）
-#   - 终端必须被授予"屏幕录制"权限（系统设置 → 隐私与安全性）
-#   - build/DevDesk 已编译
+#   - Windows 11 + Git Bash / MSYS2（cygpath / taskkill）
+#   - Windows 交互式桌面会话：CopyFromScreen 需要未锁屏、RDP 未断开
+#     （锁屏/断开时可能截到黑图——脚本会打印平均亮度并 WARN）
+#   - build/DevDesk.exe 已编译
+#   - python3 + playwright（HTML 截图）、Pillow（回退合成）——缺失只 WARN 不 fail
+#
+# 退出码：0 = 流程跑完（含已 WARN 的降级）；1 = 前置缺失（HTML / exe 不存在）
 
-set -euo pipefail
+set -uo pipefail
 
 PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SCREENSHOTS_DIR="$PROJECT_ROOT/docs/screenshots"
-HTML_URL="file://$PROJECT_ROOT/docs/mockups/devdesk-prototype.html"
-CPP_BIN="$PROJECT_ROOT/build/DevDesk"
+HTML_FILE="$PROJECT_ROOT/docs/mockups/devdesk-prototype.html"
 DOCS_FILE="$PROJECT_ROOT/docs/CONSISTENCY-CHECK.md"
+
+# 平台化二进制名：Windows 是 DevDesk.exe（原脚本写死 build/DevDesk + -x，Windows 上必失败）
+case "$(uname -s)" in
+    MINGW*|MSYS*|CYGWIN*) CPP_BIN="$PROJECT_ROOT/build/DevDesk.exe" ;;
+    *)                    CPP_BIN="$PROJECT_ROOT/build/DevDesk" ;;
+esac
+
+# Chromium 认 Windows 盘符路径（file:///D:/...），MSYS 的 /d/... 加载不了
+HTML_URL="file://$PROJECT_ROOT/docs/mockups/devdesk-prototype.html"
+if command -v cygpath >/dev/null 2>&1; then
+    HTML_URL="file:///$(cygpath -m "$HTML_FILE")"
+fi
+
+TMP_DIR="$(mktemp -d)"
+trap 'rm -rf "$TMP_DIR"' EXIT
 
 mkdir -p "$SCREENSHOTS_DIR"
 
@@ -52,40 +71,39 @@ for arg in "$@"; do
     esac
 done
 
+HTML_RESULT="未运行"
+CPP_RESULT="未运行"
+
 # ---- 检查前置 ----
 log "项目根: $PROJECT_ROOT"
 log "HTML:   $HTML_URL"
 log "C++ bin: $CPP_BIN"
 
-[ -f "$PROJECT_ROOT/docs/mockups/devdesk-prototype.html" ] || { err "HTML demo 不存在: docs/mockups/devdesk-prototype.html"; exit 1; }
-[ -x "$CPP_BIN" ] || { err "C++ binary 不可执行: $CPP_BIN（先 cmake + make）"; exit 1; }
-[ -f "$DOCS_FILE" ] && log "分析文档: $DOCS_FILE"
+if [ ! -f "$HTML_FILE" ]; then
+    [ "$CPP_ONLY" = true ] || { err "HTML demo 不存在: $HTML_FILE"; exit 1; }
+fi
+if [ ! -f "$CPP_BIN" ]; then
+    [ "$HTML_ONLY" = true ] || { err "C++ binary 不存在: $CPP_BIN（先构建：cmake --build build）"; exit 1; }
+fi
+[ -f "$DOCS_FILE" ] && log "历史分析文档（可能过期）: $DOCS_FILE"
 
-# ---- Python 依赖 ----
-log "检查 Python 依赖..."
-PYTHON3=$(command -v python3 || true)
-[ -z "$PYTHON3" ] && { err "找不到 python3"; exit 1; }
-
-ensure_pip_pkg() {
-    local pkg="$1"
-    if ! "$PYTHON3" -c "import $pkg" 2>/dev/null; then
-        log "安装 Python 包: $pkg"
-        pip3 install --break-system-packages --quiet "$pkg" || \
-            pip3 install --quiet "$pkg" || \
-            { err "安装 $pkg 失败"; return 1; }
-    fi
-    ok "$pkg 已安装"
+# ---- Python（可选依赖）----
+PYTHON3="$(command -v python3 || command -v python || true)"
+py_has() {
+    [ -n "$PYTHON3" ] && "$PYTHON3" -c "import $1" 2>/dev/null
 }
 
-if ! $CPP_ONLY; then
-    ensure_pip_pkg playwright || exit 1
-    ensure_pip_pkg PIL || ensure_pip_pkg Pillow || exit 1
-fi
-
-# ---- 任务 1: HTML 截图 ----
-if ! $CPP_ONLY; then
-    log "=== 任务 1: 截取 HTML demo 5 个页面 ==="
-    cat > /tmp/devdesk_check_html.py << 'PYEOF'
+# ---- 任务 1: HTML 截图（缺 playwright 只 WARN，不 fail）----
+if [ "$CPP_ONLY" = false ]; then
+    log "=== 任务 1: 截取 HTML demo 页面 ==="
+    if [ -z "$PYTHON3" ]; then
+        warn "找不到 python3 —— 跳过 HTML 截图（不影响 C++ 侧）"
+        HTML_RESULT="跳过（无 python3）"
+    elif ! py_has playwright; then
+        warn "python3 无 playwright 模块 —— 跳过 HTML 截图（装：$PYTHON3 -m pip install playwright）"
+        HTML_RESULT="跳过（缺 playwright）"
+    else
+        cat > "$TMP_DIR/check_html.py" << 'PYEOF'
 import asyncio, os, sys
 from playwright.async_api import async_playwright
 
@@ -118,119 +136,224 @@ async def main():
 
 asyncio.run(main())
 PYEOF
-    HTML_URL="$HTML_URL" OUT_DIR="$SCREENSHOTS_DIR" "$PYTHON3" /tmp/devdesk_check_html.py
-    ok "HTML 截图完成（5 页 + 初始）"
+        if HTML_URL="$HTML_URL" OUT_DIR="$SCREENSHOTS_DIR" "$PYTHON3" "$TMP_DIR/check_html.py"; then
+            ok "HTML 截图完成（初始 + 5 页）"
+            HTML_RESULT="完成（6 张 PNG）"
+        else
+            warn "HTML 截图失败（playwright 浏览器未安装？跑: $PYTHON3 -m playwright install chromium）"
+            HTML_RESULT="失败"
+        fi
+    fi
 fi
 
 # ---- 任务 2: C++ 截图 ----
-if ! $HTML_ONLY; then
-    log "=== 任务 2: 截取 C++ 编译版 ==="
+# PowerShell CopyFromScreen 截主窗口（原脚本的 macOS 整屏截图 / 应用打开 / 进程
+# 清理三条命令在 Windows 上不可用，替换为 CopyFromScreen + 直启 + taskkill）。
+# 脚本写在 $TMP_DIR（mktemp -d）内，不往仓库里落临时文件。
+write_shot_ps1() {
+    # 注意：ps1 保持纯 ASCII —— Windows PowerShell 5.1 读无 BOM 的 UTF-8 .ps1
+    # 会按 ANSI(GBK) 解码，非 ASCII 字符串会变乱码/报错
+    cat > "$TMP_DIR/shot-main-window.ps1" << 'PS1'
+param([string]$Title = "DevDesk", [string]$Out = "cpp-home.png", [int]$TimeoutSec = 10)
+$ErrorActionPreference = 'Stop'
+Add-Type -AssemblyName System.Drawing
+Add-Type @"
+using System;
+using System.Collections.Generic;
+using System.Runtime.InteropServices;
+using System.Text;
+public class WinShot {
+    [DllImport("user32.dll")] public static extern bool SetProcessDPIAware();
+    [DllImport("user32.dll")] public static extern bool EnumWindows(EnumWindowsProc cb, IntPtr lp);
+    public delegate bool EnumWindowsProc(IntPtr hWnd, IntPtr lp);
+    [DllImport("user32.dll")] public static extern int GetWindowTextW(IntPtr hWnd, [MarshalAs(UnmanagedType.LPWStr)] StringBuilder sb, int max);
+    [DllImport("user32.dll")] public static extern bool IsWindowVisible(IntPtr hWnd);
+    [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr hWnd, out RECT r);
+    // 必须 public：作为 public extern 方法的 out 参数，私有类型会 CS0051（可访问性不一致）
+    [StructLayout(LayoutKind.Sequential)] public struct RECT { public int L, T, R, B; }
+    public static IntPtr Find(string title) {
+        IntPtr exact = IntPtr.Zero, partial = IntPtr.Zero;
+        EnumWindows((h, lp) => {
+            if (!IsWindowVisible(h)) return true;
+            var sb = new StringBuilder(256);
+            GetWindowTextW(h, sb, 256);
+            var t = sb.ToString();
+            if (t == title) { exact = h; return false; }
+            if (partial == IntPtr.Zero && t.IndexOf(title, StringComparison.OrdinalIgnoreCase) >= 0) partial = h;
+            return true;
+        }, IntPtr.Zero);
+        return exact != IntPtr.Zero ? exact : partial;
+    }
+    public static int[] RectOf(IntPtr hWnd) {
+        RECT r;
+        GetWindowRect(hWnd, out r);
+        return new int[] { r.L, r.T, r.R - r.L, r.B - r.T };
+    }
+}
+"@
+[WinShot]::SetProcessDPIAware() | Out-Null
+$deadline = (Get-Date).AddSeconds($TimeoutSec)
+$h = [IntPtr]::Zero
+while ((Get-Date) -lt $deadline) {
+    $h = [WinShot]::Find($Title)
+    if ($h -ne [IntPtr]::Zero) { break }
+    Start-Sleep -Milliseconds 300
+}
+if ($h -eq [IntPtr]::Zero) { Write-Output "shot-error: no visible window with title containing '$Title' within ${TimeoutSec}s"; exit 3 }
+$r = [WinShot]::RectOf($h)
+$w = $r[2]; $ht = $r[3]
+if ($w -le 0 -or $ht -le 0) { Write-Output "shot-error: bad window rect ${w}x${ht}"; exit 4 }
+$bmp = New-Object System.Drawing.Bitmap $w, $ht
+$g = [System.Drawing.Graphics]::FromImage($bmp)
+$g.CopyFromScreen($r[0], $r[1], 0, 0, (New-Object System.Drawing.Size $w, $ht)) | Out-Null
+$g.Dispose()
+$bmp.Save($Out, [System.Drawing.Imaging.ImageFormat]::Png)
+# 平均亮度（32x32 网格抽样；锁屏 / RDP 断开时 CopyFromScreen 会截到全黑）
+$sum = 0.0; $n = 0
+$stepX = [Math]::Max(1, [int]($w / 32)); $stepY = [Math]::Max(1, [int]($ht / 32))
+for ($y = [int]($stepY / 2); $y -lt $ht; $y += $stepY) {
+    for ($x = [int]($stepX / 2); $x -lt $w; $x += $stepX) {
+        $c = $bmp.GetPixel($x, $y)
+        $sum += ($c.R + $c.G + $c.B) / 3.0
+        $n++
+    }
+}
+$bright = 0.0
+if ($n -gt 0) { $bright = $sum / $n }
+$bmp.Dispose()
+Write-Output ("shot-ok: {0}x{1} -> {2} brightness={3:N1}" -f $w, $ht, $Out, $bright)
+PS1
+}
 
-    if $NO_LAUNCH; then
-        log "--no-launch 模式：跳过启动，仅生成合成 cpp-home.png"
-    else
-        log "启动 $CPP_BIN..."
-        open -a "$CPP_BIN" 2>/dev/null || "$CPP_BIN" &
-        CPP_PID=$!
-        sleep 3
-
-        log "尝试 screencapture 截取当前窗口..."
-        if screencapture -x "$SCREENSHOTS_DIR/cpp-home.png" 2>/tmp/sc_err; then
-            ok "screencapture 成功"
-        else
-            warn "screencapture 失败: $(cat /tmp/sc_err 2>/dev/null || echo unknown)"
-            warn "macOS 拒绝屏幕录制权限 — 在'系统设置 → 隐私与安全性 → 屏幕录制'里允许你的 terminal"
-            warn "回退方案：用 Pillow 合成 cpp-home.png（基于实际 clearColor）"
-
-            cat > /tmp/devdesk_check_cpp.py << 'PYEOF'
+# Pillow 合成回退（原 macOS 字体路径改 Windows；只在截屏不可用时用）
+write_synth_py() {
+    cat > "$TMP_DIR/check_cpp_synth.py" << 'PYEOF'
 import os
 from PIL import Image, ImageDraw, ImageFont
-W, H = 1600, 1000
-BG = (250, 249, 245)
-TITLEBAR = (243, 243, 243)
-TXT = (31, 29, 26)
-TXT2 = (107, 102, 96)
-TXT3 = (154, 148, 138)
-ACCENT = (217, 119, 87)
-img = Image.new("RGB", (W, H), BG); d = ImageDraw.Draw(img)
 
-cjk = ["/System/Library/Fonts/Hiragino Sans GB.ttc",
-       "/System/Library/Fonts/STHeiti Medium.ttc",
-       "/System/Library/Fonts/STHeiti Light.ttc"]
-def f(s):
-    for p in cjk:
-        try: return ImageFont.truetype(p, s)
-        except: pass
+W, H = 1600, 1000
+BG = (250, 249, 245); TITLEBAR = (243, 243, 243)
+TXT = (31, 29, 26); TXT2 = (107, 102, 96); TXT3 = (154, 148, 138)
+ACCENT = (217, 119, 87)
+
+img = Image.new("RGB", (W, H), BG)
+d = ImageDraw.Draw(img)
+
+font_candidates = ["C:/Windows/Fonts/msyh.ttc", "C:/Windows/Fonts/simhei.ttf",
+                   "/System/Library/Fonts/Hiragino Sans GB.ttc"]
+def f(sz):
+    for p in font_candidates:
+        try:
+            return ImageFont.truetype(p, sz)
+        except Exception:
+            pass
     return ImageFont.load_default()
 
-d.rectangle([(0,0),(W,28)], fill=TITLEBAR)
-for i,c2 in enumerate([(255,95,86),(255,189,46),(39,202,63)]):
-    d.ellipse([(15+i*20,9),(27+i*20,21)], fill=c2)
-b = d.textbbox((0,0),"DevDesk", font=f(14))
-d.text(((W-(b[2]-b[0]))//2, 7), "DevDesk", fill=TXT, font=f(14))
+d.rectangle([(0, 0), (W, 28)], fill=TITLEBAR)
+for i, c in enumerate([(255, 95, 86), (255, 189, 46), (39, 202, 63)]):
+    d.ellipse([(15 + i * 20, 9), (27 + i * 20, 21)], fill=c)
+b = d.textbbox((0, 0), "DevDesk", font=f(14))
+d.text(((W - (b[2] - b[0])) // 2, 7), "DevDesk", fill=TXT, font=f(14))
 
-notes = [
-    ("DevDesk C++ binary 当前窗口内容", 22, TXT),
+lines = [
+    ("DevDesk（C++ 版）截图占位", 22, TXT),
     ("", 12, TXT2),
-    ("（基于 src/main.cpp dslAppConfig + 模块 stub 状态推断）", 12, TXT2),
-    ("", 12, TXT2),
-    ("实际渲染：仅 clearColor #FAF9F5 + 窗口标题", 13, TXT2),
-    ("4 个 module_* 的 compose() 均未绘制任何 UI（仅 LOG_DEBUG）", 13, TXT2),
-    ("Router 调用链：main.cpp:compose -> Router::compose -> Module::compose", 11, TXT3),
+    ("PowerShell 截屏不可用（无桌面会话 / 窗口未出现），此图为 Pillow 合成占位", 13, TXT2),
+    ("真实截图请看同目录的 html-*.png（HTML 原型）", 12, TXT3),
 ]
-y = 200
-for txt, sz, col in notes:
-    if not txt: y += 8; continue
-    ff = f(sz); b = d.textbbox((0,0),txt,font=ff)
-    d.text(((W-(b[2]-b[0]))//2, y), txt, fill=col, font=ff)
+y = 160
+for txt, sz, col in lines:
+    if not txt:
+        y += 8
+        continue
+    ff = f(sz)
+    b = d.textbbox((0, 0), txt, font=ff)
+    d.text(((W - (b[2] - b[0])) // 2, y), txt, fill=col, font=ff)
     y += sz + 10
 
-px,py,pw,ph = 60, 480, W-120, 360
-d.rectangle([(px,py),(px+pw,py+ph)], fill=(255,255,255), outline=(232,230,220))
-d.text((px+28, py+22), "当前 C++ theme.cpp tokens (Light)", font=f(18), fill=TXT)
-d.text((px+28, py+50), "（在浏览器中查看 HTML 原型可对比实际配色）", font=f(11), fill=TXT2)
-rows = [("background","#FAF9F5",(250,249,245)),("surface","#FFFFFF",(255,255,255)),
-        ("surfaceElevated","#FFFFFF",(255,255,255)),("hover","#F5F2EC",(245,242,236)),
-        ("active","#EBE7DF",(235,231,223)),("primary (Claude Clay)","#D97757",ACCENT),
-        ("primaryHover","#E0896B",(224,137,107)),("primaryPressed","#B85F3F",(184,95,63)),
-        ("primarySoftBg","#F5E6DE",(245,230,222)),("textPrimary","#1F1D1A",TXT),
-        ("textSecondary","#6B6660",TXT2),("textTertiary","#9A948A",TXT3),
-        ("borderDefault","#E8E6DC",(232,230,220))]
-for i,(n,h,rgb) in enumerate(rows):
-    yy = py+78+i*21
-    d.text((px+28, yy), f"{n:<22} {h}", font=f(13), fill=TXT)
-    d.rectangle([(px+320,yy+2),(px+360,yy+18)], fill=rgb, outline=(0,0,0))
+px, py, pw, ph = 60, 300, W - 120, 460
+d.rectangle([(px, py), (px + pw, py + ph)], fill=(255, 255, 255), outline=(232, 230, 220))
+d.text((px + 28, py + 22), "当前 C++ theme.cpp tokens (Light)", font=f(18), fill=TXT)
+rows = [("background", "#FAF9F5", (250, 249, 245)), ("surface", "#FFFFFF", (255, 255, 255)),
+        ("surfaceElevated", "#FFFFFF", (255, 255, 255)), ("hover", "#F5F2EC", (245, 242, 236)),
+        ("active", "#EBE7DF", (235, 231, 223)), ("primary (Claude Clay)", "#D97757", ACCENT),
+        ("primaryHover", "#E0896B", (224, 137, 107)), ("primaryPressed", "#B85F3F", (184, 95, 63)),
+        ("primarySoftBg", "#F5E6DE", (245, 230, 222)), ("textPrimary", "#1F1D1A", TXT),
+        ("textSecondary", "#6B6660", TXT2), ("textTertiary", "#9A948A", TXT3),
+        ("borderDefault", "#E8E6DC", (232, 230, 220))]
+for i, (n, hx, rgb) in enumerate(rows):
+    yy = py + 78 + i * 21
+    d.text((px + 28, yy), f"{n:<22} {hx}", font=f(13), fill=TXT)
+    d.rectangle([(px + 320, yy + 2), (px + 360, yy + 18)], fill=rgb, outline=(0, 0, 0))
+
 out = os.path.join(os.environ["OUT_DIR"], "cpp-home.png")
 img.save(out)
 print(f"Wrote {out} ({os.path.getsize(out)} bytes)")
 PYEOF
-            OUT_DIR="$SCREENSHOTS_DIR" "$PYTHON3" /tmp/devdesk_check_cpp.py
-            ok "合成 cpp-home.png 完成"
-        fi
+}
 
+synth_fallback() {
+    if [ -n "$PYTHON3" ] && py_has PIL; then
+        if OUT_DIR="$SCREENSHOTS_DIR" "$PYTHON3" "$TMP_DIR/check_cpp_synth.py"; then
+            ok "Pillow 合成 cpp-home.png 完成"
+            return 0
+        fi
+        warn "Pillow 合成失败"
+    else
+        warn "python3 无 Pillow —— 无法合成占位图（装：${PYTHON3:-python3} -m pip install Pillow）"
+    fi
+    return 1
+}
+
+if [ "$HTML_ONLY" = false ]; then
+    log "=== 任务 2: 截取 C++ 编译版 ==="
+    if [ "$NO_LAUNCH" = true ]; then
+        log "--no-launch：跳过启动，直接 Pillow 合成 cpp-home.png"
+        if synth_fallback; then CPP_RESULT="Pillow 合成（--no-launch）"; else CPP_RESULT="未产出（--no-launch 且无 Pillow）"; fi
+    elif ! command -v cygpath >/dev/null 2>&1; then
+        warn "找不到 cygpath（非 Git Bash 环境）—— 跳过 PowerShell 截屏"
+        if synth_fallback; then CPP_RESULT="Pillow 合成（无 cygpath）"; else CPP_RESULT="未产出"; fi
+    else
+        log "启动 $CPP_BIN ..."
+        "$CPP_BIN" >/dev/null 2>&1 &
+        write_shot_ps1
+        SHOT_OUT="$SCREENSHOTS_DIR/cpp-home.png"
+        SHOT_LOG="$TMP_DIR/shot.log"
+        powershell -NoProfile -ExecutionPolicy Bypass \
+            -File "$(cygpath -w "$TMP_DIR/shot-main-window.ps1")" \
+            -Title DevDesk \
+            -Out "$(cygpath -w "$SHOT_OUT")" \
+            -TimeoutSec 10 > "$SHOT_LOG" 2>&1
+        SHOT_RC=$?
+        cat "$SHOT_LOG"
+        if [ "$SHOT_RC" -eq 0 ] && [ -s "$SHOT_OUT" ]; then
+            ok "PowerShell 截屏成功（$(( $(stat -c%s "$SHOT_OUT") / 1024 )) KB）"
+            CPP_RESULT="PowerShell 截屏（$(stat -c%s "$SHOT_OUT") bytes）"
+            BRIGHT="$(sed -n 's/.*brightness=\([0-9.]*\).*/\1/p' "$SHOT_LOG" | head -1)"
+            if [ -n "$BRIGHT" ] && awk -v b="$BRIGHT" 'BEGIN{exit !(b < 5)}'; then
+                # 锁屏 / RDP 断开时 CopyFromScreen 会截到全黑
+                warn "截图平均亮度 ${BRIGHT}（疑似全黑：锁屏 / RDP 断开？）"
+                CPP_RESULT="$CPP_RESULT · 疑似全黑（亮度 ${BRIGHT}）"
+            fi
+        else
+            warn "PowerShell 截屏失败（rc=$SHOT_RC）—— 回退 Pillow 合成"
+            if synth_fallback; then CPP_RESULT="Pillow 合成（截屏失败 rc=$SHOT_RC）"; else CPP_RESULT="未产出（截屏失败且无 Pillow）"; fi
+        fi
         log "清理 DevDesk 进程..."
-        pkill -f "build/DevDesk" 2>/dev/null || true
+        taskkill -F -IM DevDesk.exe >/dev/null 2>&1 || true
     fi
 fi
 
-# ---- 任务 3: 输出对比报告 ----
-log "=== 任务 3: 对比报告 ==="
+# ---- 任务 3: 本次实况（TIN-13：原硬编码结论是过期快照，不再打印静态结论）----
+log "=== 任务 3: 本次实况 ==="
 echo ""
-echo "───── docs/screenshots/ ─────"
+echo "───── docs/screenshots/（本次产物）─────"
 ls -la "$SCREENSHOTS_DIR"
 echo ""
-echo "───── 一致性结论（完整分析见 docs/CONSISTENCY-CHECK.md）─────"
-cat << 'EOF'
-
-[1] 配色方案 B（13 token）         HTML 与 C++ theme.cpp    完全一致 ✅
-[2] 尺寸 token（14 token）          HTML 与 C++ SizeTokens  完全一致 ✅
-[3] HTML 页面标题 (30px) vs spec (32px)                       不一致 ⚠️
-[4] HTML 正文 (14px) vs spec (15px)                           不一致 ⚠️
-[5] HTML CTA 圆角 (12px) vs spec (10/14)         中间值无定义 ⚠️
-[6] HTML 默认主题 = Light，C++ g_current = Dark             不一致 ⚠️
-[7] C++ 4 个 module_* 的 compose() 是 stub，未渲染 UI         未实现 ❌
-
-EOF
-
-[ -f "$DOCS_FILE" ] && log "完整分析: $DOCS_FILE"
+echo "───── 本次各步骤结果 ─────"
+printf '  HTML 截图 : %s\n' "$HTML_RESULT"
+printf '  C++  截图 : %s\n' "$CPP_RESULT"
+if [ -f "$DOCS_FILE" ]; then
+    log "历史对比分析: $DOCS_FILE（其结论可能是旧快照，以本次实况与最新 spec 为准）"
+fi
 ok "完成"

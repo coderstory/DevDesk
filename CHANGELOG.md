@@ -10,6 +10,10 @@
 
 master `c48546e`（`[Batch-0927-B]` 收口）→ `9dd9ee2`：**36 个 `--no-ff` 合并批次 + 3 个直接提交** / 96 文件（+8840 −805）。内容 = 六片全量审计（A–F）+ 汇总（79 条 → 去重 77 行 / Top10 / 三波计划 / 8 条待拍板）+ 审计修复批（CP-01 / CP-02 / CPX-02 / CPX-03 / MD-01 / PAB-01 等）+ EUI-NEO 上游 U8 消费侧与 U1 采纳 + 写路径与值语义收口（原子写两批 / JsonValue 去镜像 / SqliteDb 非法态不可表达）+ 共享配置片段批 1（migration v6）+ Markdown Phase3 M1·M2 + ccache 编译缓存闭环。按合并时间倒序（`fe0b990` 反向同步 M5 收口的内容已见 `[Batch-0927-C]`，本节只列时间线）：
 
+### [AuthField] `77c7f6e` —— Profile 认证字段（鉴权头三态、migration v7）
+- 新增 profile 级「认证字段」：`both`（默认，双发 x-api-key + Authorization: Bearer，= 原行为）/ `bearer` / `api_key`；由代理转发按 profile 决定注入哪个鉴权头（流式 / 非流式 / 连通测试三处同源）。
+- 接管 settings.json 的占位符仍固定 `ANTHROPIC_AUTH_TOKEN=PROXY_MANAGED`（不随该字段变）；粘贴导入按键名证据自动选（只带 ANTHROPIC_API_KEY → 只发 x-api-key）。
+
 ### [Ccache] `dc727cd` —— CMake 自动探测 ccache 成为仓库默认 + worktree 预设（`649bea3`，直接提交 `3e7a600`）
 - `scripts/build-test-run.sh` 默认带 `-DCMAKE_{C,CXX}_COMPILER_LAUNCHER=ccache`（未装 ccache 自动降级、行为同从前）；新增 CMakePresets worktree 预设 + `-DDEVDESK_CCACHE=OFF` 开关；并行度封顶 `DEVDESK_JOBS=3`。
 - 三件套落 ccache **持久配置**（`%LOCALAPPDATA%\ccache\ccache.conf`：`cache_dir D:/software/ccache-devdesk` / `base_dir D:/project/gui` / `hash_dir=false` / `max_size=20G`），**不需要任何 `CCACHE_*` 环境变量**；实测冷 647 s → 热 35 s（239 次查找 237 命中 = 99.2%，全 direct 命中）。

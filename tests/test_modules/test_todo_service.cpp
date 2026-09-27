@@ -680,7 +680,7 @@ REGISTER_TEST(todo_svc_column_kind,
     DOCTEST_CHECK_EQ(list.value()[0].kind, std::string("todo"));
     DOCTEST_CHECK_EQ(list.value()[1].kind, std::string(""));
     DOCTEST_CHECK_EQ(list.value()[2].kind, std::string("done"));
-    DOCTEST_CHECK_EQ(list.value()[3].kind, std::string("archive"));  // v7 回填
+    DOCTEST_CHECK_EQ(list.value()[3].kind, std::string("archive"));  // v8 回填
 
     // 重命名后 kind 保留（语义不随标题变）
     DOCTEST_REQUIRE(env.svc->renameColumn(list.value()[2].id, "Finished").isOk());

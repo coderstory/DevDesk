@@ -9,6 +9,9 @@
 #include "core/database.h"
 #include "core/module_interface.h"
 #include "module_markdown/md_keyboard.h"
+#include "module_markdown/md_ids.h"
+
+using module::markdown::kEditorInputId;
 
 #include <components/input.h>
 #include <eui/dsl.h>
@@ -425,7 +428,7 @@ REGISTER_TEST(md_kbd_wiring_input_passthrough,
 
     // 光标挪到第一行末（tree 行点击后光标默认文末）
     {
-        auto& st = ui.state<InputState>("md.editor.input");
+        auto& st = ui.state<InputState>(kEditorInputId);
         st.cursor = st.selectionStart = st.selectionEnd = 11;  // "- 列表项"行末（2+9 字节）
     }
 
@@ -433,7 +436,7 @@ REGISTER_TEST(md_kbd_wiring_input_passthrough,
     DOCTEST_CHECK(pressKey(eui::InputKey::Enter));
     frame();
     {
-        const auto& st = ui.state<InputState>("md.editor.input");
+        const auto& st = ui.state<InputState>(kEditorInputId);
         DOCTEST_CHECK_EQ(st.text, std::string("- 列表项\n- \n正文\n"));
     }
     // 副作用：onChange 链路跑了（状态栏转「未保存」）
@@ -445,7 +448,7 @@ REGISTER_TEST(md_kbd_wiring_input_passthrough,
     DOCTEST_CHECK(pressKey(eui::InputKey::Tab));
     frame();
     {
-        const auto& st = ui.state<InputState>("md.editor.input");
+        const auto& st = ui.state<InputState>(kEditorInputId);
         DOCTEST_CHECK_EQ(st.text, std::string("- 列表项\n-     \n正文\n"));
     }
 
@@ -453,20 +456,20 @@ REGISTER_TEST(md_kbd_wiring_input_passthrough,
     DOCTEST_CHECK(pressKey(eui::InputKey::B, true));
     frame();
     {
-        const auto& st = ui.state<InputState>("md.editor.input");
+        const auto& st = ui.state<InputState>(kEditorInputId);
         DOCTEST_CHECK_EQ(st.text, std::string("- 列表项\n-     ****\n正文\n"));
         DOCTEST_CHECK_EQ(st.cursor, st.selectionStart);
     }
 
     // Shift+Tab（无前导空格的行）：消费但无变化（不制造脏标记）
     {
-        auto& st = ui.state<InputState>("md.editor.input");
+        auto& st = ui.state<InputState>(kEditorInputId);
         st.cursor = st.selectionStart = st.selectionEnd = 2;  // 第一行「列」前
     }
     DOCTEST_CHECK(pressKey(eui::InputKey::Tab, false, true));
     frame();
     {
-        const auto& st = ui.state<InputState>("md.editor.input");
+        const auto& st = ui.state<InputState>(kEditorInputId);
         DOCTEST_CHECK_EQ(st.text, std::string("- 列表项\n-     ****\n正文\n"));
     }
 
@@ -514,7 +517,7 @@ REGISTER_TEST(md_kbd_wiring_table_tab, "md_keyboard: 编辑器 Tab 表格跳格�
 
     // 光标进 'a' 格 → Tab 跳 'b'：只动光标，文本不变、不转「未保存」
     {
-        auto& st = ui.state<InputState>("md.editor.input");
+        auto& st = ui.state<InputState>(kEditorInputId);
         st.cursor = st.selectionStart = st.selectionEnd = 2;
     }
     {
@@ -525,7 +528,7 @@ REGISTER_TEST(md_kbd_wiring_table_tab, "md_keyboard: 编辑器 Tab 表格跳格�
     }
     frame();
     {
-        const auto& st = ui.state<InputState>("md.editor.input");
+        const auto& st = ui.state<InputState>(kEditorInputId);
         DOCTEST_CHECK_EQ(st.text, std::string("| a | b |\n|---|---|\n| c | d |\n"));
         DOCTEST_CHECK_EQ(st.selectionStart, 6);
         DOCTEST_CHECK_EQ(st.selectionEnd, 7);
@@ -536,7 +539,7 @@ REGISTER_TEST(md_kbd_wiring_table_tab, "md_keyboard: 编辑器 Tab 表格跳格�
 
     // 表外（文末空行，光标越过末行 '\n'）Tab 仍是 4 空格缩进（[12] 不回归缩进语义）
     {
-        auto& st = ui.state<InputState>("md.editor.input");
+        auto& st = ui.state<InputState>(kEditorInputId);
         st.cursor = st.selectionStart = st.selectionEnd = 30;  // 末空行（EOF）
     }
     {
@@ -546,7 +549,7 @@ REGISTER_TEST(md_kbd_wiring_table_tab, "md_keyboard: 编辑器 Tab 表格跳格�
     }
     frame();
     {
-        const auto& st = ui.state<InputState>("md.editor.input");
+        const auto& st = ui.state<InputState>(kEditorInputId);
         DOCTEST_CHECK_EQ(st.text, std::string("| a | b |\n|---|---|\n| c | d |\n    "));
     }
 
@@ -581,7 +584,7 @@ REGISTER_TEST(md_kbd_wiring_table_insert_menu,
     frame();
     // input.h 程序赋值未聚焦时光标置 0（d1f55a3）；显式置文末还原本测试"光标在文末空行"场景
     {
-        auto& st = ui.state<InputState>("md.editor.input");
+        auto& st = ui.state<InputState>(kEditorInputId);
         st.cursor = st.selectionStart = st.selectionEnd = (int)st.text.size();
     }
 
@@ -612,7 +615,7 @@ REGISTER_TEST(md_kbd_wiring_table_insert_menu,
     frame();
 
     {
-        const auto& st = ui.state<InputState>("md.editor.input");
+        const auto& st = ui.state<InputState>(kEditorInputId);
         // 光标在文末空行 → 表格整块落在那里（行首含 5 列分隔行）
         DOCTEST_CHECK_EQ(st.text,
                          std::string("# t\n"

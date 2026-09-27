@@ -148,7 +148,7 @@ REGISTER_TEST(dialect_for_base_url,
 REGISTER_TEST(dialect_apply_headers_default,
               "upstream_dialect: 默认方言覆盖 UA + 鉴权头（无重复头）", {
     HeaderMap h = clientHeaders();
-    UpstreamDialect::anthropicDefault().applyHeaders(h, "sk-profile-key");
+    UpstreamDialect::anthropicDefault().applyHeaders(h, "sk-profile-key", module::claude::AuthField::Both);
 
     // UA 无条件覆盖：客户端是 python-urllib（会被 Cloudflare 403 封）也不能泄漏
     DOCTEST_CHECK_EQ(headerCI(h, "user-agent"),
@@ -180,7 +180,7 @@ REGISTER_TEST(dialect_apply_headers_client_variants,
     h["X-Api-Key"] = "sk-client";
     h["Authorization"] = "Bearer sk-client";
     h["Anthropic-Version"] = "2024-06-01";
-    UpstreamDialect::anthropicDefault().applyHeaders(h, "sk-profile-key");
+    UpstreamDialect::anthropicDefault().applyHeaders(h, "sk-profile-key", module::claude::AuthField::Both);
 
     DOCTEST_CHECK_EQ(countCI(h, "user-agent"), 1);
     DOCTEST_CHECK_EQ(headerCI(h, "user-agent"),
@@ -194,7 +194,7 @@ REGISTER_TEST(dialect_apply_headers_client_variants,
 
     // 空 key：不发鉴权头（http_client 会跳过空值头，这里直接清掉更干净）
     HeaderMap h2 = clientHeaders();
-    UpstreamDialect::anthropicDefault().applyHeaders(h2, "");
+    UpstreamDialect::anthropicDefault().applyHeaders(h2, "", module::claude::AuthField::Both);
     DOCTEST_CHECK_EQ(countCI(h2, "x-api-key"), 0);
     DOCTEST_CHECK_EQ(countCI(h2, "authorization"), 0);
     return true;
@@ -204,7 +204,7 @@ REGISTER_TEST(dialect_apply_headers_opencode_session,
               "upstream_dialect: opencodeZen 注入会话头但不覆盖客户端已有值", {
     // 客户端没带 → 注入代理实例级 id（进程内稳定，保上游缓存亲和）
     HeaderMap h = clientHeaders();
-    UpstreamDialect::opencodeZen().applyHeaders(h, "sk-profile-key");
+    UpstreamDialect::opencodeZen().applyHeaders(h, "sk-profile-key", module::claude::AuthField::Both);
     DOCTEST_CHECK_EQ(headerCI(h, "x-opencode-session"),
                      module::claude::claudeUpstreamSessionId());
     DOCTEST_CHECK_EQ(countCI(h, "x-opencode-session"), 1);
@@ -212,7 +212,7 @@ REGISTER_TEST(dialect_apply_headers_opencode_session,
     // 客户端带了 → 原样保留（尊重其会话亲和意图）
     HeaderMap h2 = clientHeaders();
     h2["x-opencode-session"] = "client-session-42";
-    UpstreamDialect::opencodeZen().applyHeaders(h2, "sk-profile-key");
+    UpstreamDialect::opencodeZen().applyHeaders(h2, "sk-profile-key", module::claude::AuthField::Both);
     DOCTEST_CHECK_EQ(headerCI(h2, "x-opencode-session"),
                      std::string("client-session-42"));
     DOCTEST_CHECK_EQ(countCI(h2, "x-opencode-session"), 1);
@@ -220,10 +220,74 @@ REGISTER_TEST(dialect_apply_headers_opencode_session,
     // 大写变体也算"客户端已带"
     HeaderMap h3 = clientHeaders();
     h3["X-Opencode-Session"] = "client-session-43";
-    UpstreamDialect::opencodeZen().applyHeaders(h3, "sk-profile-key");
+    UpstreamDialect::opencodeZen().applyHeaders(h3, "sk-profile-key", module::claude::AuthField::Both);
     DOCTEST_CHECK_EQ(headerCI(h3, "x-opencode-session"),
                      std::string("client-session-43"));
     DOCTEST_CHECK_EQ(countCI(h3, "x-opencode-session"), 1);
+    return true;
+})
+
+// ---- 3b. 认证字段三态（2026-09-27 profile-auth-field 设计 §4.1/§4.2）----
+
+REGISTER_TEST(dialect_apply_headers_auth_field_three_states,
+              "upstream_dialect: 认证字段三态（both/bearer/api_key × 有 key/空 key）", {
+    const std::string key = "sk-test";
+    HeaderMap both;
+    HeaderMap bearer;
+    HeaderMap apiKeyOnly;
+    HeaderMap emptyKey;
+    const auto dialect = UpstreamDialect::anthropicDefault();
+    dialect.applyHeaders(both, key, module::claude::AuthField::Both);
+    dialect.applyHeaders(bearer, key, module::claude::AuthField::Bearer);
+    dialect.applyHeaders(apiKeyOnly, key, module::claude::AuthField::ApiKey);
+    dialect.applyHeaders(emptyKey, "", module::claude::AuthField::Both);
+    // both：两个头都在
+    DOCTEST_CHECK_EQ(countCI(both, "x-api-key"), 1);
+    DOCTEST_CHECK_EQ(countCI(both, "authorization"), 1);
+    // bearer：只有 Authorization（负断言是核心）
+    DOCTEST_CHECK_EQ(countCI(bearer, "x-api-key"), 0);
+    DOCTEST_CHECK_EQ(countCI(bearer, "authorization"), 1);
+    // api_key：只有 x-api-key
+    DOCTEST_CHECK_EQ(countCI(apiKeyOnly, "x-api-key"), 1);
+    DOCTEST_CHECK_EQ(countCI(apiKeyOnly, "authorization"), 0);
+    // 空 key：两个都不注入
+    DOCTEST_CHECK_EQ(countCI(emptyKey, "x-api-key"), 0);
+    DOCTEST_CHECK_EQ(countCI(emptyKey, "authorization"), 0);
+    // UA 与上游契约头不受影响
+    DOCTEST_CHECK_EQ(countCI(bearer, "user-agent"), 1);
+    DOCTEST_CHECK_EQ(countCI(bearer, "anthropic-version"), 1);
+    return true;
+})
+
+REGISTER_TEST(dialect_apply_headers_auth_field_clears_client_creds,
+              "upstream_dialect: 三态都清客户端凭据（大小写变体）", {
+    const auto dialect = UpstreamDialect::anthropicDefault();
+    // bearer 态：客户端两个大小写变体 x-api-key 都必须消失
+    HeaderMap hb;
+    hb["x-api-key"] = "sk-client-bogus";
+    hb["X-Api-Key"] = "sk-client-bogus-2";
+    hb["authorization"] = "Bearer sk-client-bogus";
+    dialect.applyHeaders(hb, "sk-profile-key", module::claude::AuthField::Bearer);
+    DOCTEST_CHECK_EQ(countCI(hb, "x-api-key"), 0);
+    DOCTEST_CHECK_EQ(countCI(hb, "authorization"), 1);
+    DOCTEST_CHECK_EQ(headerCI(hb, "authorization"),
+                     std::string("Bearer sk-profile-key"));
+    // api_key 态：客户端的 authorization 必须消失
+    HeaderMap ha;
+    ha["Authorization"] = "Bearer sk-client-bogus";
+    ha["X-Api-Key"] = "sk-client-bogus";
+    dialect.applyHeaders(ha, "sk-profile-key", module::claude::AuthField::ApiKey);
+    DOCTEST_CHECK_EQ(countCI(ha, "authorization"), 0);
+    DOCTEST_CHECK_EQ(countCI(ha, "x-api-key"), 1);
+    DOCTEST_CHECK_EQ(headerCI(ha, "x-api-key"), std::string("sk-profile-key"));
+    // both 态：客户端值被 profile key 覆盖且不残留变体
+    HeaderMap hboth = clientHeaders();
+    dialect.applyHeaders(hboth, "sk-profile-key", module::claude::AuthField::Both);
+    DOCTEST_CHECK_EQ(countCI(hboth, "x-api-key"), 1);
+    DOCTEST_CHECK_EQ(countCI(hboth, "authorization"), 1);
+    DOCTEST_CHECK_EQ(headerCI(hboth, "x-api-key"), std::string("sk-profile-key"));
+    DOCTEST_CHECK_EQ(headerCI(hboth, "authorization"),
+                     std::string("Bearer sk-profile-key"));
     return true;
 })
 

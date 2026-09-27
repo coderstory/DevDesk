@@ -5,6 +5,7 @@
 // 非 ASCII 路径（如中文文件名）不再经 ANSI 代码页转换而乱码
 //（旧实现用 MinGW CRT 的 ANSI __argv，该限制已在 2026-09-22 升级消除）。
 #include "file_open.h"
+#include "file_open_win.h"   // 测试缝声明（win-only 符号不进平台无关头）
 
 #include <windows.h>
 #include <shellapi.h>
@@ -28,6 +29,8 @@ static std::string wideToUtf8(const wchar_t* wstr, int wlen) {
 
 // 测试缝（审计 [17]）：暴露 wideToUtf8 编码链供回归用例直接调用（非 ASCII
 // 往返），与 openFileFromArgv 用的是同一函数，锁的就是真实转换路径。
+// 声明在本目录的 win 专用头 file_open_win.h（平台无关头 file_open.h 不放
+// win-only 符号）。
 std::string wideToUtf8ForTest(const std::wstring& w) {
     return wideToUtf8(w.data(), static_cast<int>(w.size()));
 }
