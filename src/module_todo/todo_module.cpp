@@ -11,6 +11,7 @@
 #include "todo_ui_logic.h"
 #include "todo_view_state.h"
 
+#include <eui/app.h>
 #include <eui/dsl.h>
 
 #include <components/button.h>
@@ -557,21 +558,24 @@ public:
         // colScrollOffset 会在拖拽途中列被滚动时两帧混值，板面顶边整体错位
         in.scrollOffset = drag_.pressScrollOffset;
         in.cardIndex = drag_.cardIndex;
-        // 审计 M4：指针 → compose 的换算吃显式 dpiScale。onPress / onDrag 通道
-        // 的指针是**原始**值（runtime 只对 onContextMenu / onMove 做 /dpiScale），
-        // 尺度取拖拽锚点实测值；探针自此只是"断言"（下面告警），不再是几何
-        // 换算的唯一手段。外部权威 dpiScale（EUI-NEO / app 层注入）接入后只改
-        // 这几行取值。
+        // U1 尺度契约：指针 → compose 的换算吃**框架显式**尺度，不再由锚点
+        // 反推。onPress / onDrag / onRelease 通道的指针是**原始**值（runtime
+        // 只对 onContextMenu / onMove 做 /dpiScale），故尺度 = 主窗口内容缩放
+        // ::app::contentScale()（物理 = 逻辑 * scale，与 compose 收到的
+        // Screen::scale 同源同值）。todo 是 Router 页面模块、渲染在主窗口，
+        // 故取主窗口值（子窗才用自己 compose 的 Screen::scale）。
         const ::core::Router* router = ::core::appRouter();
         in.pageOriginX = router ? router->pageOriginX() : 0.0f;
-        in.dpiScale = ui::dragAnchorScale(in);
-        // 探针降级为断言：实测尺度 ≠ 1 = 指针空间与 compose 空间不同尺度（换算
-        // 已按显式 dpiScale 处理，不是错误），只告警一次避免拖动中刷屏；同时
-        // 作为 100%/125%/150% 三档点验的实测值输出（审计 V2）
-        if (!dpiProbeWarned_ && std::fabs(in.dpiScale - 1.0f) > 0.001f) {
+        in.dpiScale = ::app::contentScale();
+        // 探针降级为**断言**：几何实测尺度（按下卡片 bounds 宽 / compose 卡宽）
+        // 只在"自称 ≠1 却对不上框架值"时告警一次（拖动中不刷屏），留痕供
+        // 100%/125%/150% 三档点验比对（审计 V2）。换算本体不吃探针值。
+        const float probe = ui::dragAnchorScale(in);
+        if (!dpiProbeWarned_ && ui::dragScaleMismatch(in.dpiScale, probe)) {
             dpiProbeWarned_ = true;
-            LOG_WARN("Todo: 拖拽指针空间/compose 空间尺度 = " +
-                     std::to_string(in.dpiScale) + "（≠1，换算走显式 dpiScale）");
+            LOG_WARN("Todo: 拖拽尺度口径不一致——框架 contentScale=" +
+                     std::to_string(in.dpiScale) + "，锚点探针实测=" +
+                     std::to_string(probe) + "（换算走框架值）");
         }
         return ui::dragDropTarget(in, x, y);
     }
