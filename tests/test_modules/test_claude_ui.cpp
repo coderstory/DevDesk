@@ -181,9 +181,25 @@ REGISTER_TEST(claude_module_compose_null_service,
     DOCTEST_CHECK(ui.find("claude.act.test") != nullptr);
     DOCTEST_CHECK(ui.find("claude.act.edit") != nullptr);
     DOCTEST_CHECK(ui.find("claude.act.del") != nullptr);
+    DOCTEST_CHECK(ui.find("claude.act.dup") != nullptr);   // 第 5 键（M5）
     // 无服务时显示错误态（W7：不再静默吞错显示假空态）
     DOCTEST_CHECK(ui.find("claude.profiles.error") != nullptr);
     DOCTEST_CHECK(ui.find("claude.profiles.empty") == nullptr);
+
+    // 无选中（shown.id == 0）+ 无服务：点「复制」不崩，toast 提示先选 Profile
+    {
+        const auto* dupBtn = ui.find("claude.act.dup.bg");
+        DOCTEST_REQUIRE(dupBtn != nullptr);
+        DOCTEST_REQUIRE(dupBtn->onClick != nullptr);
+        dupBtn->onClick();
+        eui::Ui ui2;
+        ui2.begin("claude_null2");
+        mod->compose(ui2, screen);
+        ui2.end();
+        const auto* msg = ui2.find("claude.toast.message");
+        DOCTEST_REQUIRE(msg != nullptr);
+        DOCTEST_CHECK(msg->text.find("请先选择 Profile") != std::string::npos);
+    }
 
     mod->onStop();
     return true;
@@ -231,6 +247,7 @@ REGISTER_TEST(claude_module_compose_with_data,
     DOCTEST_CHECK(ui.find("claude.act.test") != nullptr);
     DOCTEST_CHECK(ui.find("claude.act.edit") != nullptr);
     DOCTEST_CHECK(ui.find("claude.act.del") != nullptr);
+    DOCTEST_CHECK(ui.find("claude.act.dup") != nullptr);   // 第 5 键（M5）
     DOCTEST_CHECK(ui.find("claude.btn.proxy") != nullptr);
 
     mod->onStop();
@@ -1674,6 +1691,195 @@ REGISTER_TEST(claude_h2_compose_snapshot_async,
     }
     DOCTEST_CHECK(updated);
     DOCTEST_CHECK(hasName(cardNames(), "官方"));   // 旧卡不丢
+
+    mod->onStop();
+    cleanupKey(a.value().id);
+    cleanupKey(b.value().id);
+    return true;
+})
+
+// ---- M5（复制 UI）：详情页第 5 键「复制」→ 建副本、不激活、选中态不变 ----
+// 设计 §4.1/§4.4；服务层 duplicateProfile 由 M4 落地，这里只验 UI 接线。
+// 卡片列表走后台刷新（H2）→ 新卡片用有界轮询；toast / 选中态同帧即定。
+REGISTER_TEST(claude_module_duplicate_profile_ui,
+              "claude_module: 复制键建副本不激活且选中态不变（headless）", {
+    TestEnv env;
+    auto a = env.svc->createProfile("官方", "https://api.anthropic.com",
+                                    "sk-ant-aaaa-1111", "claude-sonnet-4-5");
+    DOCTEST_REQUIRE(a.isOk());
+    auto b = env.svc->createProfile("中转", "https://relay.example.com",
+                                    "sk-ant-bbbb-2222", "claude-opus-4-5");
+    DOCTEST_REQUIRE(b.isOk());
+    DOCTEST_REQUIRE(env.svc->setActiveProfile(a.value().id).isOk());
+
+    std::unique_ptr<::core::Module> mod(create_claude_module());
+    eui::Screen screen;
+    screen.width = 1600.0f;
+    screen.height = 1000.0f;
+    auto compose = [&](eui::Ui& ui) {
+        ui.begin("claude_dup");
+        mod->compose(ui, screen);
+        ui.end();
+    };
+    auto click = [](eui::Ui& ui, const std::string& id) -> bool {
+        const auto* node = ui.find(id);
+        if (node == nullptr || node->onClick == nullptr) {
+            std::cerr << "missing clickable: " << id << std::endl;
+            return false;
+        }
+        node->onClick();
+        return true;
+    };
+
+    // 第 5 键存在且可点（.bg 点击节点，与同区其他键同款）；列表序 =
+    // is_active DESC, name ASC → index 1 =「中转」，选中它
+    {
+        eui::Ui ui;
+        compose(ui);
+        DOCTEST_CHECK(ui.find("claude.act.dup") != nullptr);
+        DOCTEST_CHECK(ui.find("claude.act.dup.bg") != nullptr);
+        DOCTEST_CHECK(click(ui, "claude.profile.1.bg"));
+    }
+    // 详情面板跟随选中项 → 复制源就是它（shown）
+    {
+        eui::Ui ui;
+        compose(ui);
+        const auto* nameV = ui.find("claude.field.name.value");
+        DOCTEST_REQUIRE(nameV != nullptr);
+        DOCTEST_CHECK_EQ(nameV->text, std::string("中转"));
+        DOCTEST_CHECK(click(ui, "claude.act.dup.bg"));
+    }
+    // 成功 toast（同帧可见）：副本名 + 明示未激活
+    {
+        eui::Ui ui;
+        compose(ui);
+        const auto* msg = ui.find("claude.toast.message");
+        DOCTEST_REQUIRE(msg != nullptr);
+        DOCTEST_CHECK(msg->text.find("中转 副本") != std::string::npos);
+        DOCTEST_CHECK(msg->text.find("未激活") != std::string::npos);
+        // 选中态未变：详情仍显示「中转」，未跳去副本
+        const auto* nameV = ui.find("claude.field.name.value");
+        DOCTEST_REQUIRE(nameV != nullptr);
+        DOCTEST_CHECK_EQ(nameV->text, std::string("中转"));
+    }
+    // DB 层对账：3 条；副本 key 同源、is_active 未变、源行未动
+    int64_t copyId = 0;
+    {
+        auto list = env.svc->listProfiles();
+        DOCTEST_REQUIRE(list.isOk());
+        DOCTEST_REQUIRE_EQ(list.value().size(), static_cast<size_t>(3));
+        for (const auto& p : list.value()) {
+            if (p.name == "中转 副本") copyId = p.id;
+        }
+        DOCTEST_REQUIRE(copyId != 0);
+        auto got = env.svc->getProfile(copyId);
+        DOCTEST_REQUIRE(got.isOk());
+        DOCTEST_CHECK_EQ(got.value().baseUrl,
+                         std::string("https://relay.example.com"));
+        DOCTEST_CHECK(!got.value().isActive);   // 副本不激活（S-4）
+        auto key = env.svc->loadApiKey(copyId);
+        DOCTEST_REQUIRE(key.isOk());
+        DOCTEST_CHECK_EQ(key.value(), std::string("sk-ant-bbbb-2222"));
+        auto gotA = env.svc->getProfile(a.value().id);
+        DOCTEST_REQUIRE(gotA.isOk());
+        DOCTEST_CHECK(gotA.value().isActive);   // 原激活未被副本顶掉
+    }
+    // UI 层：新卡片出现（后台刷新 → 有界轮询），激活徽标仍在 index 0
+    bool sawCopy = false;
+    for (int i = 0; i < 250 && !sawCopy; ++i) {
+        eui::Ui ui;
+        compose(ui);
+        const auto* n = ui.find("claude.profile.2.name");
+        if (n != nullptr && n->text == "中转 副本") {
+            sawCopy = true;
+            DOCTEST_CHECK(ui.find("claude.profile.0.active.text") != nullptr);
+            DOCTEST_CHECK(ui.find("claude.profile.2.active.text") == nullptr);
+        } else {
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        }
+    }
+    DOCTEST_CHECK(sawCopy);
+
+    mod->onStop();
+    cleanupKey(a.value().id);
+    cleanupKey(b.value().id);
+    cleanupKey(copyId);
+    return true;
+})
+
+// ---- M5 验收（spec §5 无头 UI 行）：选中卡 → 点启用 → settings.json 的值
+// 收编进原激活 profile（M3 反向同步链路的 UI 侧证据）----
+REGISTER_TEST(claude_module_ui_enable_captures_settings,
+              "claude_module: 详情页启用触发反向同步（headless）", {
+    TestEnv env;
+    ImportTempDir d("uienable");
+    env.svc->setSettingsSyncPaths(d.paths());
+    // Claude Code 侧（或 cc-switch）改过的真实上游值：非守卫键 → 会被收编
+    d.write("settings.json", R"({"env": {
+        "ANTHROPIC_BASE_URL": "https://new.example.com/",
+        "ANTHROPIC_AUTH_TOKEN": "sk-new-upstream-9876543210"
+    }})");
+
+    auto a = env.svc->createProfile("源A", "https://old.example.com",
+                                    "sk-old-key-0123456789abcdef", "");
+    DOCTEST_REQUIRE(a.isOk());
+    // 首次激活：无激活 profile → G0 跳过（不读文件）
+    DOCTEST_REQUIRE(env.svc->setActiveProfile(a.value().id).isOk());
+    auto b = env.svc->createProfile("目标B", "https://b.example.com",
+                                    "sk-b-key-0123456789abcdef", "");
+    DOCTEST_REQUIRE(b.isOk());
+
+    std::unique_ptr<::core::Module> mod(create_claude_module());
+    eui::Screen screen;
+    screen.width = 1600.0f;
+    screen.height = 1000.0f;
+    auto compose = [&](eui::Ui& ui) {
+        ui.begin("claude_ui_rev");
+        mod->compose(ui, screen);
+        ui.end();
+    };
+    auto click = [](eui::Ui& ui, const std::string& id) -> bool {
+        const auto* node = ui.find(id);
+        if (node == nullptr || node->onClick == nullptr) {
+            std::cerr << "missing clickable: " << id << std::endl;
+            return false;
+        }
+        node->onClick();
+        return true;
+    };
+
+    // 选中「目标B」（列表序：激活的 A 在前 → index 1）
+    {
+        eui::Ui ui;
+        compose(ui);
+        DOCTEST_CHECK(click(ui, "claude.profile.1.bg"));
+    }
+    // 点启用 → setActiveProfile(B)：先反向收编 A，再切激活
+    {
+        eui::Ui ui;
+        compose(ui);
+        const auto* nameV = ui.find("claude.field.name.value");
+        DOCTEST_REQUIRE(nameV != nullptr);
+        DOCTEST_CHECK_EQ(nameV->text, std::string("目标B"));
+        DOCTEST_CHECK(click(ui, "claude.act.enable.bg"));
+    }
+    // 断言：settings.json 的值已进原 profile（A）
+    {
+        auto gotA = env.svc->getProfile(a.value().id);
+        DOCTEST_REQUIRE(gotA.isOk());
+        DOCTEST_CHECK_EQ(gotA.value().baseUrl,
+                         std::string("https://new.example.com"));
+        auto keyA = env.svc->loadApiKey(a.value().id);
+        DOCTEST_REQUIRE(keyA.isOk());
+        DOCTEST_CHECK_EQ(keyA.value(),
+                         std::string("sk-new-upstream-9876543210"));
+        // B 正常激活且未被误写；A 不再激活
+        auto gotB = env.svc->getProfile(b.value().id);
+        DOCTEST_REQUIRE(gotB.isOk());
+        DOCTEST_CHECK(gotB.value().isActive);
+        DOCTEST_CHECK_EQ(gotB.value().baseUrl, std::string("https://b.example.com"));
+        DOCTEST_CHECK(!gotA.value().isActive);
+    }
 
     mod->onStop();
     cleanupKey(a.value().id);
