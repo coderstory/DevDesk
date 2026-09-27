@@ -101,9 +101,11 @@ REGISTER_TEST(file_open_select_arg_non_ascii,
 })
 
 // ============ ② Windows UTF-16 → UTF-8 编码链（W5 乱码修复 90d5792 回归锁） ============
-// wideToUtf8ForTest 仅 file_open_win.cpp 定义，用例整体 _WIN32 守卫，
-// macOS/Linux 不编译（避免未定义符号）。
+// wideToUtf8ForTest 仅 file_open_win.cpp 定义，其声明在 win 专用头
+// platform/file_open_win.h（平台无关头不放 win-only 符号），用例整体 _WIN32 守卫，
+// macOS/Linux 既不包含该头也不引用该符号（避免未定义符号）。
 #if defined(_WIN32)
+#include "platform/file_open_win.h"
 
 REGISTER_TEST(file_open_win_wide_to_utf8,
               "file_open: Windows wideToUtf8 编码链 ASCII/非 ASCII/空（审计 [17]）", {

@@ -23,10 +23,10 @@ std::string openFileFromArgv();
 // 各平台 openFileFromArgv 负责原始命令行 → UTF-8 的解码，选择逻辑共用本函数。
 std::string selectOpenFileArg(const std::vector<std::string>& utf8Args);
 
-// 测试缝（审计 [17]）：Windows UTF-16 → UTF-8 转换，与 openFileFromArgv 的
-// 编码链同实现。仅 file_open_win.cpp 提供定义；macOS/Linux 链接目标不含此
-// 符号——引用点必须留在 _WIN32 守卫内（tests/test_modules/test_file_open.cpp）。
-std::string wideToUtf8ForTest(const std::wstring& w);
+// Windows 专用测试缝 wideToUtf8ForTest 的声明**不在这里**：平台无关头不放
+// win-only 符号（审计：契约被打破——声明在平台无关头、定义只在 file_open_win.cpp）。
+// 改由 Windows 侧专用头 src/platform/file_open_win.h 承载，只有 Windows 编译单元
+// （file_open_win.cpp）与 _WIN32 守卫内的用例包含它。
 
 // 在系统文件管理器中打开目录（path 为 UTF-8 路径，目录存在与否由调用方
 // 决定——Win/macOS 对不存在路径返回失败）。不抛异常，失败走 Result：
