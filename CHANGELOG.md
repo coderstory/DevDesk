@@ -6,6 +6,116 @@
 
 > **当前基线（2026-09-24，master @ 817af80）**：用例 **407**（`grep REGISTER_TEST` 口径，本会话 324 → 407；全绿与否以主会话终验为准）。各波次条目内的测试数为该波时点事实，不代表当前总数；波次按合并时间倒序排列。
 
+## [Batch-0927-D] 2026-09-27 深夜 —— 第三批：审计分片 A–F 与汇总 + U8/U1 上游采纳 + 写路径收口 + ccache 闭环（`c48546e` → `9dd9ee2`）
+
+master `c48546e`（`[Batch-0927-B]` 收口）→ `9dd9ee2`：**36 个 `--no-ff` 合并批次 + 3 个直接提交** / 96 文件（+8840 −805）。内容 = 六片全量审计（A–F）+ 汇总（79 条 → 去重 77 行 / Top10 / 三波计划 / 8 条待拍板）+ 审计修复批（CP-01 / CP-02 / CPX-02 / CPX-03 / MD-01 / PAB-01 等）+ EUI-NEO 上游 U8 消费侧与 U1 采纳 + 写路径与值语义收口（原子写两批 / JsonValue 去镜像 / SqliteDb 非法态不可表达）+ 共享配置片段批 1（migration v6）+ Markdown Phase3 M1·M2 + ccache 编译缓存闭环。按合并时间倒序（`fe0b990` 反向同步 M5 收口的内容已见 `[Batch-0927-C]`，本节只列时间线）：
+
+### [Ccache] `dc727cd` —— CMake 自动探测 ccache 成为仓库默认 + worktree 预设（`649bea3`，直接提交 `3e7a600`）
+- `scripts/build-test-run.sh` 默认带 `-DCMAKE_{C,CXX}_COMPILER_LAUNCHER=ccache`（未装 ccache 自动降级、行为同从前）；新增 CMakePresets worktree 预设 + `-DDEVDESK_CCACHE=OFF` 开关；并行度封顶 `DEVDESK_JOBS=3`。
+- 三件套落 ccache **持久配置**（`%LOCALAPPDATA%\ccache\ccache.conf`：`cache_dir D:/software/ccache-devdesk` / `base_dir D:/project/gui` / `hash_dir=false` / `max_size=20G`），**不需要任何 `CCACHE_*` 环境变量**；实测冷 647 s → 热 35 s（239 次查找 237 命中 = 99.2%，全 direct 命中）。
+
+### [Docs-Eui-Rev] `9dd9ee2` —— EUI 依赖 rev 记录三处失真修正（`d5e302c` → `269a8c4`，`be9b44f`）
+- `CLAUDE.md` 两处 + `docs/superpowers/plans/2026-09-27-HANDOFF.md` 的 EUI rev 行按实测对齐到 `269a8c4`；标注 EUI-NEO 本地 main 领先 `origin/main` 70 个提交未 push。
+
+### [Md-Anchor] `1784a37` —— 实时态活动块锚跟随真实光标（审计 MD-01，`e09feb8`）
+- 修 M2 引入的真缺陷：回车/标题/列表造块后输入框换前块（锚只初始化不推进 → 块边界一变就换文本 + 光标归零）；改为选活动块前用活动块起点回填锚（`setLiveCursor` 最小版）。
+
+### [Settings-NoIO] `af3f4d3` —— 设置页 compose 里 4 组 fs 调用移出渲染路径（审计 THS-01，`c72c060`）
+- 快照 + 显式刷新点，渲染路径零文件系统查询。
+
+### [Cpx-Ui] `4c74e69` —— 接管/覆盖警告接到 Claude 详情页（审计 CPX-02 UI 侧，`fab039e`）
+- 去掉被吞的展示门，`lastSyncWarnings` 在 Claude 页可见；服务侧上报已随 `71b13a9` 落地（`syncRestore` 仍 void，剩余半见审计汇总表）。
+
+### [Eui-Rev-U1] `de63bba` —— EUI 最低依赖 rev 抬到 `269a8c4` + todo 视图状态注释对齐（`1687cbf`、`2a972b9`）
+
+### [Audit-Consolidated] `5215b94` —— 六片审计汇总（`807deff`）
+- 79 条 → 去重 **77 行**（已修 10 / 部分已修 3 / 待排 66）；含 Top10、三波修复计划（波内按线、线内串行、线间文件不冲突）、8 条待拍板；产出 `docs/superpowers/plans/2026-09-27-full-audit-consolidated.md`。
+
+### [U8-Consume] `6dc03a9` —— U8 消费侧清理（`1b67687`、`481cf11`、`4e74966`、`bfd641f`）
+- 摘掉 EUI-NEO `-Os` workaround（上游 U8 已不向消费者 app target 强加）；`json.cpp` 手写序列化器换 yyjson writer，并补**逐字节快照用例**锁新格式；`json.cpp` 注释对齐上游 writer 放开现状。
+
+### [U1-Consume] `29d459f` —— todo 拖拽改吃框架 `contentScale` + `windowToCompose` 入参改源（`13e31fb`、`459a5be`）
+- dpi 探针降级为断言；坐标换算唯一入口 `core::windowToCompose` 的入参语义改指框架尺度（U1 契约）。
+
+### [Shared-Fragment-1] `2d2ebfa` —— 共享配置片段批 1（`a6cfac9`、`d6419bc`、`ee3505a`）
+- migration v6：共享配置片段表 + profile 绑定列；服务层片段 CRUD、绑定与生命周期（合并 + G10 接线）；合并优先级与 G10 防污染守卫（纯函数层 + 接管入口）。
+
+### [Audit-Shard-D] `4ad16e3` —— 全量审计分片 D（markdown）8 条（高 1，`81e8e40`）
+- 高 1 = MD-01 实时态锚冻结（已由 `1784a37` 修复）；其余 3 中 / 4 低见汇总表。
+
+### [Sqlitedb-Ca] `5ffa2a2` —— SqliteDb 非法态不可表达 + 平台宏收进 CA 拆分点（审计 CP-07 / CP-03，`f06da47`、`0b60c49`）
+- `SqliteDb` 默认构造私有化、`open()` 成为唯一入口；CA 策略按平台拆文件，`http_client.cpp` 回到平台无关。
+
+### [Md-Phase3-M2] `ad82fbc` —— Markdown Phase3 M2 活动块单输入 + 内容贴合高度（`8c2359c`、`8cf37df`）
+- 纯函数层（活动块推导 / 块局部偏移 / 内容贴合高度）+ UI 接线与无头用例；`[live] input over=0` 达标。
+
+### [God-Class-Design] `d483f5b` —— spec：上帝类治理设计（CPX-01 / CPX-05 / THS-02，`1f5e15b`）
+- 产出 `docs/superpowers/specs/2026-09-27-god-class-refactor-design.md`（Q1–Q3 待拍板）。
+
+### [Atomic-Write-2] `63a6d64` —— 截断写收口第二批（`e1f173b`）
+- markdown 视图状态 / pet 配置与皮肤三个写点改用 `core::atomicWriteFile`。
+
+### [Test-Runner] `e7eab8c` —— 运行器统计口径（审计 TIN-03，`fc8eda1`）
+- 0 用例命中不再假绿、`[SKIP]` 单列 Skipped。
+
+### [Core-No-Draw] `3515e28` —— core 不再直接绘制（审计 CP-01 分层违规，`61ecab6`）
+- 空态兜底文案改为 app 层注入回调，`core` 零 `ui.` 调用（spec §4.2.1 边界恢复）。
+
+### [Script-Worktree] `27d9a82` —— 构建脚本自带 EUI-NEO 路径解析 + 首建自动 configure（审计 PAB-01，`0efa088`）
+- worktree 里直接 `bash scripts/build-test-run.sh` 即可（`EUI_NEO_DIR` → 同级 `../EUI-NEO` → git 主工作树同级，三段式探测）。
+
+### [Usage-Log] `cc7d4ca` —— 用量落库（cc-switch ref §3-4 第一批，`1d8cbf2`、`ba929d4`）
+- migration v5：`claude_call_logs` 加 token 四类 + 首事件毫秒；流末回填本次流的用量。
+
+### [Ccswitch-Ref-1] `71b13a9` —— cc-switch 可抄项批次 1（`2f82c7c`、`2a5bb77`、`a8c950e`、`e33c244`）
+- takeOver 写 env 前先删上一轮托管、本轮不再生成的键；接管快照污染守卫 + 无 sidecar 时清除残留代理形态键；接管写 live 失败从静默升级为可上报（`lastSyncWarnings`）；反向同步守卫表 G1–G6 拆成每守卫一条专测。
+
+### [Json-Value] `d443b8c` —— JsonValue 去镜像字段（审计 CP-02，`fb92d51`）
+- 类型与取值统一从 `JsonImpl` 派生，修左值拷贝/移动静默错值。
+
+### [Atomic-Write-1] `cf5edf7` —— 原子写收口（审计 THS-03 + 审计漏项，`a9d3116`、`8401b5a`）
+- 新增 `core::atomicWriteFile` 原子写唯一实现；todo 视图状态 / 设置配置落盘迁移。
+
+### [Audit-Shard-F] `8f6cd72` —— 全量审计分片 F（tests + 基建）13 条（高 2，`c9fcb4f`）
+
+### [Audit-Shard-E] `3c9b60b` —— 全量审计分片 E（pet + app + 构建）13 条（1 高，`d627c4e`）
+
+### [Shared-Fragment-Design] `a588085` —— 共享配置片段 + Failover 交互设计（295 行，`7012b98`）
+- 产出 `docs/superpowers/specs/2026-09-27-shared-config-and-failover-design.md`；含流程图与 5 条待拍板。
+
+### [Md-Phase3-M1] `534cd57` —— Markdown Phase3 M1 第四态骨架（只读）+ C1 聚焦 `.hit` 修复（`1624655`、`ec578c6`）
+- 编程式聚焦统一改发 input 的 `.hit` id（M0 spike C1 结论落地）。
+
+### [Audit-Shard-B] `a02f05b` —— 全量审计分片 B（todo + home + settings）18 条（0 高 / 6 中，`5b4cfb2`）
+
+### [Audit-Shard-A] `c0374e6` —— 全量审计分片 A（core + platform）12 条（高 2，`7b6f64b`）
+
+### [Audit-Shard-C] `f154618` —— 全量审计分片 C（claude_proxy）15 条（架构 / OOP / 可维护性为主轴，`3e68183`）
+
+### [Eui-Candidates] `7e86964` —— EUI-NEO 上游候选清单（13 条：S6 / M6 / L1 + 建议顺序，`2c663a2`）
+- 产出 `docs/superpowers/plans/2026-09-27-eui-upstream-candidates.md`（含不建议上游清单）。
+
+### [Timeline] `fe0b990` —— 反向同步 M5 收口：详情页第 5 键「复制」+ `doDuplicate` + 无头 UI 用例
+- 内容见 `[Batch-0927-C]`（本节只列时间线以免重复）。
+
+### [Ccswitch-Ref-Docs] `a3d13f4` / `c073db7`（直接提交）—— cc-switch 参考两份
+- 代理侧（`c073db7`）与配置 / 反向同步侧（`a3d13f4`）：机制速览 + 逐项对照 + 可抄项（6 + 8）+ 不该抄（7 + 8 类）+ 各 5 条待拍板；落 `docs/superpowers/plans/2026-09-27-cc-switch-ref-proxy.md` 与 `...-provider-sync.md`。
+
+### [Compose-IO-1] `f47766b` —— compose 里 3 处 IO/DB 移出渲染路径（审计 H2 第一批，`f50e1ac`）
+- 只读快照 + 后台 tick。
+
+### [Eui-Capability-M0] `03b56b0` —— EUI-NEO 能力盘点补 M0 spike 实测口径（`621eee7`）
+- 焦点 / pin 命中 id / 流式 input / 换文本残留。
+
+### [Coord-Unify] `2518545` —— 坐标 / DPI 收成唯一换算 `windowToCompose`（审计 M4，`cc5ed26`、`9916f3e`）
+- core 新增唯一坐标换算；markdown / todo 调用点改走它，dpi 探针降级为断言。
+
+### [Docs-Closeout] `a901489` —— 文档收口（`b025864`）
+- CHANGELOG 第二批 12 merge 条目 + 用例数 514 → 530 + HANDOFF 刷新 + 审计存疑 V1 标 REFUTED。
+
+### [Flake-Fix] `9f35eb7` —— 测试去 flake（`1fd57e8`）
+- 墙钟红线改记录式路径断言 + 实测值记录；`test_claude_ui.cpp` 固定端口 28888 改动态端口。
+
 ## [Batch-0927-C] 2026-09-27 —— 反向同步 M5 收口：Profile 复制的 UI（`f47766b` → `82577ed`）
 
 ### [Reverse-Sync-M5] `82577ed` —— 详情页第 5 键「复制」+ `doDuplicate` + 无头 UI 用例
