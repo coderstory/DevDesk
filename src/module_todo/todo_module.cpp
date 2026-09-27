@@ -287,7 +287,7 @@ public:
         }
         overdueTasks_ = std::move(r).value();
         overdueCount_ = overdueTasks_.size();
-        overdueOpen_ = true;
+        openPopup(Popup::Overdue);
     }
 
     // 错误态重试：数据库晚注册（onStart 时为 null）或读取失败后手动恢复
@@ -740,34 +740,85 @@ public:
     }
 
 private:
-    // 审计 M5：Esc 关「最上层」弹窗（顺序 = z 序倒序：确认删除 1100 > 日期
-    // 选择 1100 > 右键菜单 1050 > 重命名/逾期/详情/新建列/新建任务）。
+    // ============ 最上层弹窗的单一持有者（审计 THS-05） ============
+    // 此前「谁在最上层」由三处各自维护：每个弹窗一个 bool、closeTopmostPopup
+    // 手写关闭顺序、绘制时手挑 zIndex——新增一个弹窗要同时改三处，漏改即静默
+    // 降级（Esc 关错层 / 层级错乱）。现在只有一个真相源 openStack_：
+    //   · 谁最后打开谁在最上（= 栈顶）
+    //   · 绘制 zIndex = 栈内位置（不再手挑）
+    //   · Esc 关栈顶，因此天然与 z 序一致
+    // toast 不入栈：它不是互相竞争层级的弹窗，而是自动消失的状态提示
+    //（toastOpen_ 独立保留）。
+    enum class Popup {
+        NewTask,
+        NewColumn,
+        Detail,
+        Overdue,
+        Ctx,
+        DatePick,
+        Rename,
+        Confirm,
+    };
+    // 栈底 z / 每层增量：整栈上界须留在 toast 之下（EUI-NEO toast 默认
+    // 1100）——8 个弹窗全叠满也只有 1070，状态提示不会被弹窗盖住
+    static constexpr int kPopupBaseZ = 1000;
+    static constexpr int kPopupZStep = 10;
+
+    bool isPopupOpen(Popup p) const {
+        return std::find(openStack_.begin(), openStack_.end(), p) !=
+               openStack_.end();
+    }
+    void closePopup(Popup p) {
+        openStack_.erase(std::remove(openStack_.begin(), openStack_.end(), p),
+                         openStack_.end());
+    }
+    // 打开：已在栈中则提到栈顶（「最后打开的在最上」），否则入栈
+    void openPopup(Popup p) {
+        closePopup(p);
+        openStack_.push_back(p);
+    }
+    // 组件 onOpenChange 通道（弹窗遮罩点击 / 下拉字段点击）
+    void setPopupOpen(Popup p, bool open) {
+        if (open) openPopup(p);
+        else closePopup(p);
+    }
+    // 栈内位置 → 绘制 z（栈顶最高）；不在栈中 = 未显示，返回栈底值
+    int popupZ(Popup p) const {
+        const auto it = std::find(openStack_.begin(), openStack_.end(), p);
+        if (it == openStack_.end()) return kPopupBaseZ;
+        return kPopupBaseZ +
+               kPopupZStep * static_cast<int>(it - openStack_.begin());
+    }
+
+    // 审计 M5：Esc 关「最上层」弹窗（= 栈顶，与绘制 z 序同源）。
     // 返回 true = 本键已消费；无弹窗返回 false（按键继续走既有路径）
     bool closeTopmostPopup() {
-        if (confirmOpen_) { confirmOpen_ = false; return true; }
-        if (datePickOpen_) { datePickOpen_ = false; return true; }
-        if (ctxOpen_) { ctxOpen_ = false; return true; }
-        if (renameOpen_) { renameOpen_ = false; return true; }
-        if (overdueOpen_) { overdueOpen_ = false; return true; }
-        if (detailOpen_) { requestCloseDetailDialog(); return true; }
-        if (newColumnOpen_) { newColumnOpen_ = false; return true; }
-        if (newTaskOpen_) { newTaskOpen_ = false; return true; }
-        return false;
+        if (openStack_.empty()) return false;
+        const Popup top = openStack_.back();
+        if (top == Popup::Detail) {
+            // 未存改动守卫：第一次只警告不关（栈保持不动，再按一次才真关）
+            requestCloseDetailDialog();
+            return true;
+        }
+        closePopup(top);
+        return true;
     }
 
     // 详情弹窗关闭统一入口（审计 M5：Esc 兜底与 backdrop 点击共用同一份守卫，
-    // 避免两处各写一遍「未存改动先警告」而语义漂移）
-    void requestCloseDetailDialog() {
+    // 避免两处各写一遍「未存改动先警告」而语义漂移）。
+    // 返回 true = 本次真的关了；false = 被未存改动守卫拦下（弹窗仍在栈顶）
+    bool requestCloseDetailDialog() {
         // 产品审计 2026-09-23 [2]：有未存改动时第一次只警告不关，再触发一次
         // = 明确放弃修改才关。EUI-NEO dialog 无 dismissable 开关（中期上游补），
         // 两击语义是当前组件能力下的守卫
         if (detailFormDirty() && !detailDiscardArmed_) {
             detailDiscardArmed_ = true;
             setStatus("有未保存修改：点「保存」落库，或再点一次遮罩放弃", true);
-            return;
+            return false;
         }
         detailDiscardArmed_ = false;
-        detailOpen_ = false;
+        closePopup(Popup::Detail);
+        return true;
     }
 
     // ---------- 顶部 Header ----------
@@ -1307,7 +1358,7 @@ private:
         newTaskColumnId_ = columnId;
         newTaskTitle_.clear();
         newTaskError_.clear();   // 审计 [19]：打开清（claude formError_ 模式）
-        newTaskOpen_ = true;
+        openPopup(Popup::NewTask);
     }
 
     // 审计 [19]：提交失败（空标题/服务错误）→ 弹窗内嵌红字、弹窗不关；
@@ -1320,7 +1371,7 @@ private:
             newTaskError_ = err;
             return;
         }
-        newTaskOpen_ = false;
+        closePopup(Popup::NewTask);
     }
 
     void drawNewTaskDialog(eui::Ui& ui, const eui::Screen& screen,
@@ -1330,11 +1381,12 @@ private:
         const float h = 230.0f;
 
         components::dialog(ui, "todo.dialog.newtask")
-            .open(newTaskOpen_)
+            .open(isPopupOpen(Popup::NewTask))
             .screen(screen.width, screen.height)
             .size(w, h)
             .theme(themeTokens)
-            .onOpenChange([this](bool v) { newTaskOpen_ = v; })
+            .zIndex(popupZ(Popup::NewTask))
+            .onOpenChange([this](bool v) { setPopupOpen(Popup::NewTask, v); })
             .content([&] {
                 ui.text("todo.dialog.newtask.title")
                     .position(28.0f, 24.0f)
@@ -1373,7 +1425,7 @@ private:
                     })
                     .onEnter([this] { submitNewTask(); })
                     // 审计 [21]：Esc=取消（关弹窗不落库，同「取消」按钮）
-                    .onCancel([this] { newTaskOpen_ = false; })
+                    .onCancel([this] { closePopup(Popup::NewTask); })
                     .build();
 
                 // 审计 [19]：内嵌红字错误行（照抄 claude formError_ 渲染——
@@ -1398,7 +1450,7 @@ private:
                     .textColor(t.colors.textPrimary)
                     .radius(t.sizes.radius)
                     .border(1.0f, t.colors.borderDefault)
-                    .onClick([this] { newTaskOpen_ = false; })
+                    .onClick([this] { closePopup(Popup::NewTask); })
                     .build();
 
                 components::button(ui, "todo.dialog.newtask.confirm")
@@ -1425,7 +1477,7 @@ private:
     void openNewColumnDialog() {
         newColumnTitle_.clear();
         newColumnError_.clear();   // 审计 [19]：打开清（claude formError_ 模式）
-        newColumnOpen_ = true;
+        openPopup(Popup::NewColumn);
     }
 
     std::string defaultColumnTitle() const {
@@ -1447,7 +1499,7 @@ private:
             newColumnError_ = err;
             return;
         }
-        newColumnOpen_ = false;
+        closePopup(Popup::NewColumn);
     }
 
     void drawNewColumnDialog(eui::Ui& ui, const eui::Screen& screen,
@@ -1457,11 +1509,12 @@ private:
         const float h = 230.0f;
 
         components::dialog(ui, "todo.dialog.newcol")
-            .open(newColumnOpen_)
+            .open(isPopupOpen(Popup::NewColumn))
             .screen(screen.width, screen.height)
             .size(w, h)
             .theme(themeTokens)
-            .onOpenChange([this](bool v) { newColumnOpen_ = v; })
+            .zIndex(popupZ(Popup::NewColumn))
+            .onOpenChange([this](bool v) { setPopupOpen(Popup::NewColumn, v); })
             .content([&] {
                 ui.text("todo.dialog.newcol.title")
                     .position(28.0f, 24.0f)
@@ -1497,7 +1550,7 @@ private:
                     // 审计 [21]：Esc=取消走 onCancel（原 per-dialog onKeyEvent
                     // passthrough 拦截 hack 已由上游 onCancel 取代移除）。
                     // 输入框未聚焦的兜底走 app 级 Module::onKeyEvent（见下）。
-                    .onCancel([this] { newColumnOpen_ = false; })
+                    .onCancel([this] { closePopup(Popup::NewColumn); })
                     .build();
 
                 // 审计 [19]：内嵌红字错误行（claude formError_ 同款渲染）
@@ -1521,7 +1574,7 @@ private:
                     .textColor(t.colors.textPrimary)
                     .radius(t.sizes.radius)
                     .border(1.0f, t.colors.borderDefault)
-                    .onClick([this] { newColumnOpen_ = false; })
+                    .onClick([this] { closePopup(Popup::NewColumn); })
                     .build();
 
                 components::button(ui, "todo.dialog.newcol.confirm")
@@ -1547,7 +1600,7 @@ private:
         ctxColumnId_ = 0;
         ctxColumnIndex_ = columnIndex;
         ctxCardIndex_ = cardIndex;
-        ctxOpen_ = true;
+        openPopup(Popup::Ctx);
     }
 
     void openColumnContextMenu(const Column& col, int columnIndex) {
@@ -1555,7 +1608,7 @@ private:
         ctxColumnId_ = col.id;
         ctxColumnIndex_ = columnIndex;
         ctxCardIndex_ = -1;
-        ctxOpen_ = true;
+        openPopup(Popup::Ctx);
     }
 
     void drawContextMenu(eui::Ui& ui, const eui::Screen& screen,
@@ -1598,14 +1651,15 @@ private:
             : g.boardTop + 4.0f;
 
         components::contextMenu(ui, "todo.ctx")
-            .open(ctxOpen_)
+            .open(isPopupOpen(Popup::Ctx))
             .screen(screen.width, screen.height)
             .position(x, y)
             .size(menuW, 36.0f)
             .items(std::move(items))
             .theme(themeTokens)
+            .zIndex(popupZ(Popup::Ctx))
             .onSelectPath([this](const std::vector<int>& path) { onContextSelectPath(path); })
-            .onOpenChange([this](bool v) { ctxOpen_ = v; })
+            .onOpenChange([this](bool v) { setPopupOpen(Popup::Ctx, v); })
             .build();
     }
 
@@ -1650,7 +1704,7 @@ private:
                 confirmTaskId_ = ctxTaskId_;
                 confirmTaskTitle_ = self->title;
                 confirmColumnId_ = 0;
-                confirmOpen_ = true;
+                openPopup(Popup::Confirm);
                 return;
             }
             int k = index - 3;
@@ -1678,7 +1732,7 @@ private:
             case 3:
                 confirmColumnId_ = col->id;
                 confirmTaskId_ = 0;
-                confirmOpen_ = true;
+                openPopup(Popup::Confirm);
                 break;
             default: break;
         }
@@ -1690,7 +1744,7 @@ private:
         renameColumnId_ = col.id;
         renameTitle_ = col.title;
         renameError_.clear();   // 审计 [19]：打开清（claude formError_ 模式）
-        renameOpen_ = true;
+        openPopup(Popup::Rename);
     }
 
     // 审计 [19]：重命名提交——空名此前静默返回（弹窗已关、零反馈），
@@ -1703,7 +1757,7 @@ private:
             renameError_ = err;
             return;
         }
-        renameOpen_ = false;
+        closePopup(Popup::Rename);
     }
 
     void drawRenameDialog(eui::Ui& ui, const eui::Screen& screen,
@@ -1713,11 +1767,12 @@ private:
         const float h = 210.0f;
 
         components::dialog(ui, "todo.dialog.rename")
-            .open(renameOpen_)
+            .open(isPopupOpen(Popup::Rename))
             .screen(screen.width, screen.height)
             .size(w, h)
             .theme(themeTokens)
-            .onOpenChange([this](bool v) { renameOpen_ = v; })
+            .zIndex(popupZ(Popup::Rename))
+            .onOpenChange([this](bool v) { setPopupOpen(Popup::Rename, v); })
             .content([&] {
                 ui.text("todo.dialog.rename.title")
                     .position(28.0f, 24.0f)
@@ -1742,7 +1797,7 @@ private:
                     })
                     .onEnter([this] { submitRenameColumn(); })
                     // 审计 [21]：Esc=取消（关弹窗不改名，同「取消」按钮）
-                    .onCancel([this] { renameOpen_ = false; })
+                    .onCancel([this] { closePopup(Popup::Rename); })
                     .build();
 
                 // 审计 [19]：内嵌红字错误行（claude formError_ 同款渲染）
@@ -1766,7 +1821,7 @@ private:
                     .textColor(t.colors.textPrimary)
                     .radius(t.sizes.radius)
                     .border(1.0f, t.colors.borderDefault)
-                    .onClick([this] { renameOpen_ = false; })
+                    .onClick([this] { closePopup(Popup::Rename); })
                     .build();
 
                 components::button(ui, "todo.dialog.rename.confirm")
@@ -1807,14 +1862,14 @@ private:
                   std::to_string(taskCount) + " 个任务，不可恢复。";
 
         components::dialog(ui, "todo.dialog.delcol")
-            .open(confirmOpen_)
+            .open(isPopupOpen(Popup::Confirm))
             .screen(screen.width, screen.height)
             .size(w, h)
             .theme(themeTokens)
-            // 审计 2026-09-23 [2]：从详情弹窗发起的删除确认叠在详情之上，
-            // 需盖住详情弹窗（默认 zIndex 1000），同 datepicker 先例
-            .zIndex(1100)
-            .onOpenChange([this](bool v) { confirmOpen_ = v; })
+            // 审计 2026-09-23 [2]：从详情弹窗发起的删除确认叠在详情之上
+            //（z 由打开顺序给出，见 popupZ）
+            .zIndex(popupZ(Popup::Confirm))
+            .onOpenChange([this](bool v) { setPopupOpen(Popup::Confirm, v); })
             .content([&] {
                 ui.text("todo.dialog.delcol.title")
                     .position(28.0f, 24.0f)
@@ -1843,7 +1898,7 @@ private:
                     .textColor(t.colors.textPrimary)
                     .radius(t.sizes.radius)
                     .border(1.0f, t.colors.borderDefault)
-                    .onClick([this] { confirmOpen_ = false; })
+                    .onClick([this] { closePopup(Popup::Confirm); })
                     .build();
 
                 components::button(ui, "todo.dialog.delcol.confirm")
@@ -1857,17 +1912,17 @@ private:
                     .onClick([this] {
                         if (confirmTaskId_ != 0) {
                             const int64_t taskId = confirmTaskId_;
-                            confirmOpen_ = false;
+                            closePopup(Popup::Confirm);
                             confirmTaskId_ = 0;
                             // 详情弹窗发起的删除：确认后才关详情（取消路径
                             // 不关，回到弹窗——审计 2026-09-23 [2]）
-                            detailOpen_ = false;
+                            closePopup(Popup::Detail);
                             detailDiscardArmed_ = false;
                             doDeleteTask(taskId);
                             return;
                         }
                         const int64_t id = confirmColumnId_;
-                        confirmOpen_ = false;
+                        closePopup(Popup::Confirm);
                         doDeleteColumn(id);
                     })
                     .build();
@@ -1878,7 +1933,7 @@ private:
     // ---------- 截止日期选择（EUI-NEO datepicker 滚轮，替代 4 个固定预设） ----------
     void drawDatePicker(eui::Ui& ui, const eui::Screen& screen,
                         const core::theme::Tokens& t) {
-        if (!datePickOpen_) return;
+        if (!isPopupOpen(Popup::DatePick)) return;
         const auto themeTokens = core::theme::componentTokens(t);
         int y = 0, m = 0, d = 0;
         if (!ui::epochToYmd(detailDueAt_.value_or(0), y, m, d)) {
@@ -1890,11 +1945,11 @@ private:
             .size(380.0f, 260.0f)
             .date(y, m, d)
             .theme(themeTokens)
-            .zIndex(1100)  // 盖在详情弹窗（zIndex 1000）之上
+            .zIndex(popupZ(Popup::DatePick))  // 由打开顺序给出（详情之上）
             .onChange([this](int yy, int mm, int dd) {
                 detailDueAt_ = ui::ymdToEpoch(yy, mm, dd);
             })
-            .onOpenChange([this](bool v) { datePickOpen_ = v; })
+            .onOpenChange([this](bool v) { setPopupOpen(Popup::DatePick, v); })
             .build();
     }
 
@@ -1916,11 +1971,12 @@ private:
             std::min(kMaxDialogH, 96.0f + rowH * static_cast<float>(shown));
 
         components::dialog(ui, "todo.dialog.overdue")
-            .open(overdueOpen_)
+            .open(isPopupOpen(Popup::Overdue))
             .screen(screen.width, screen.height)
             .size(w, h)
             .theme(themeTokens)
-            .onOpenChange([this](bool v) { overdueOpen_ = v; })
+            .zIndex(popupZ(Popup::Overdue))
+            .onOpenChange([this](bool v) { setPopupOpen(Popup::Overdue, v); })
             .content([&] {
                 ui.text("todo.dialog.overdue.title.icon")
                     .position(28.0f, 20.0f)
@@ -1965,7 +2021,7 @@ private:
                         .states(t.colors.surfaceElevated, t.colors.hover, t.colors.active)
                         .radius(t.sizes.radius)
                         .onClick([this, taskId = task.id] {
-                            overdueOpen_ = false;
+                            closePopup(Popup::Overdue);
                             if (const Task* task = findTask(taskId)) {
                                 openDetailDialog(*task);
                             }
@@ -2027,7 +2083,7 @@ private:
         detailTags_ = task.tags;
         detailTagInput_.clear();
         detailDiscardArmed_ = false;
-        detailOpen_ = true;
+        openPopup(Popup::Detail);
     }
 
     // 标签输入回车 → 追加（去空白 / 去重 / 空忽略；保存时才落库）
@@ -2108,10 +2164,11 @@ private:
         const float h = 640.0f + 40.0f * static_cast<float>(std::max(0, moveRows - 1));
 
         components::dialog(ui, "todo.dialog.detail")
-            .open(detailOpen_)
+            .open(isPopupOpen(Popup::Detail))
             .screen(screen.width, screen.height)
             .size(w, h)
             .theme(themeTokens)
+            .zIndex(popupZ(Popup::Detail))
             .onOpenChange([this](bool v) {
                 // 产品审计 2026-09-23 [2]：backdrop 点击（dialog 唯一外部关闭
                 // 通道）→ 与 Esc 兜底共用同一份守卫（requestCloseDetailDialog）
@@ -2230,7 +2287,7 @@ private:
                     .textColor(hasDue ? t.colors.primaryText : t.colors.textSecondary)
                     .radius(t.sizes.radius)
                     .border(1.0f, hasDue ? t.colors.primary : t.colors.borderDefault)
-                    .onClick([this] { datePickOpen_ = true; })
+                    .onClick([this] { openPopup(Popup::DatePick); })
                     .build();
 
                 // 标签（三件套 3）：chip × 删除 + 输入回车添加；保存时随
@@ -2319,7 +2376,7 @@ private:
                             // 编辑中的改动不再被静默丢弃；保存失败保持弹窗
                             if (!saveDetailForm()) return;
                             detailColumnId_ = toCol;
-                            detailOpen_ = false;
+                            closePopup(Popup::Detail);
                             detailDiscardArmed_ = false;
                             doMoveTask(taskId, toCol,
                                        ui::computeAppendPosition(tasks_, toCol));
@@ -2338,14 +2395,14 @@ private:
                     .textColor(t.colors.error)
                     .radius(t.sizes.radius)
                     .border(1.0f, t.colors.borderDefault)
-                    // 与右键菜单删除同路径：先弹确认（confirmOpen_），不再直接落库。
+                    // 与右键菜单删除同路径：先弹确认（Popup::Confirm），不再直接落库。
                     // 产品审计 2026-09-23 [2]：不关详情弹窗——确认取消后回到
-                    // 弹窗继续编辑（confirm 弹窗 zIndex 1100 压在详情之上）
+                    // 弹窗继续编辑（确认弹窗按打开顺序压在详情之上）
                     .onClick([this] {
                         confirmTaskId_ = detailTaskId_;
                         confirmTaskTitle_ = detailTitle_;
                         confirmColumnId_ = 0;
-                        confirmOpen_ = true;
+                        openPopup(Popup::Confirm);
                     })
                     .build();
 
@@ -2367,7 +2424,7 @@ private:
                         // 产品审计 2026-09-23 [2]：先落表单再切完成态，
                         // 编辑中的改动不再被静默丢弃；保存失败保持弹窗
                         if (!saveDetailForm()) return;
-                        detailOpen_ = false;
+                        closePopup(Popup::Detail);
                         detailDiscardArmed_ = false;
                         if (wasDone) doUncompleteTask(taskId);
                         else doCompleteTask(taskId);
@@ -2387,7 +2444,7 @@ private:
                         // saveDetailForm（与动作按钮同一份语义）；
                         // 保存失败保持弹窗打开（错误已 setStatus 提示）
                         if (!saveDetailForm()) return;
-                        detailOpen_ = false;
+                        closePopup(Popup::Detail);
                         detailDiscardArmed_ = false;
                     })
                     .build();
@@ -2433,14 +2490,16 @@ private:
     // const 且每帧调用，故 mutable + 一次性）
     mutable bool dpiProbeWarned_ = false;
 
+    // 弹窗打开栈（审计 THS-05）：唯一的「谁在最上层」真相源——
+    // 开关/判读/z 序都走它（见 Popup / openPopup / popupZ）
+    std::vector<Popup> openStack_;
+
     // 新建任务弹窗
-    bool newTaskOpen_ = false;
     int64_t newTaskColumnId_ = 0;
     std::string newTaskTitle_;
     std::string newTaskError_;  // 审计 [19]：内嵌红字（claude formError_ 模式）
 
     // 详情弹窗
-    bool detailOpen_ = false;
     // backdrop 关闭守卫（审计 2026-09-23 [2]）：有未存改动时第一次点遮罩
     // 只警告（置位），再点一次才真正关闭放弃修改
     bool detailDiscardArmed_ = false;
@@ -2458,27 +2517,20 @@ private:
     int64_t selectedTaskId_ = 0;
 
     // 右键菜单（ctxTaskId_ > 0 = 任务菜单；否则 ctxColumnId_ > 0 = 列菜单）
-    bool ctxOpen_ = false;
     int64_t ctxTaskId_ = 0;
     int64_t ctxColumnId_ = 0;
     int ctxColumnIndex_ = 0;
     int ctxCardIndex_ = -1;
 
-    // 截止日期 datepicker
-    bool datePickOpen_ = false;
-
     // 重命名列 / 删除确认弹窗（确认弹窗双模式：任务 / 列）
-    bool renameOpen_ = false;
     int64_t renameColumnId_ = 0;
     std::string renameTitle_;
     // 审计 [19]：弹窗内嵌红字错误行（照抄 claude formError_ 模式）——
     // 校验/创建失败不再静默、不再「关弹窗 + toast」，就地可见
     std::string renameError_;
     // 新建列弹窗（审计 [24]）：「+ 列」先命名后落库
-    bool newColumnOpen_ = false;
     std::string newColumnTitle_;
     std::string newColumnError_;  // 审计 [19]：同款内嵌错误行
-    bool confirmOpen_ = false;
     int64_t confirmColumnId_ = 0;
     int64_t confirmTaskId_ = 0;
     std::string confirmTaskTitle_;
@@ -2494,7 +2546,6 @@ private:
 
     // 逾期视图（三件套 2）：badge 数量 + 弹窗数据（打开时刷新）
     size_t overdueCount_ = 0;
-    bool overdueOpen_ = false;
     std::vector<Task> overdueTasks_;
 
     // 数据加载错误（空 = 正常；与空态区分，见 drawBoard）

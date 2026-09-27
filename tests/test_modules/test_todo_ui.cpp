@@ -2682,3 +2682,139 @@ REGISTER_TEST(todo_ui_esc_closes_topmost_dialog,
     mod->onStop();
     return true;
 })
+
+// ---- 审计 THS-05：弹窗打开栈（「谁在最上层」的唯一持有者）----
+// 断言两件事：① 绘制 z 序由打开顺序给出（不再手挑 zIndex）——与栈序一致；
+// ② Esc 关栈顶 = 后开先关：依次开 A=详情 / B=日期 / C=确认，连按 Esc 关序 C→B→A。
+// 三层嵌套由各弹窗自己的开函数驱动（无头直调回调，跳过遮罩命中判定）。
+
+namespace {
+// 顶层元素的绘制位次（orderedRoots 按子树 z 上界升序排好 = 绘制序，
+// 见 EUI-NEO core/dsl.h rebuildOrderedElements；弹窗各自是顶层元素）
+int paintOrderOf(const core::dsl::Ui& ui, const core::dsl::Element* e) {
+    const auto& order = ui.orderedRoots();
+    for (size_t i = 0; i < order.size(); ++i) {
+        if (order[i] == e) return static_cast<int>(i);
+    }
+    return -1;
+}
+} // namespace
+
+REGISTER_TEST(todo_ui_esc_stack_lifo,
+              "todo_ui: 弹窗打开栈 LIFO——z 序随打开顺序，连按 Esc 关序 C→B→A（审计 THS-05）", {
+    TestEnv env;
+    DOCTEST_REQUIRE(env.ready);
+    auto col = env.svc->createColumn("栈列");
+    DOCTEST_REQUIRE(col.isOk());
+    DOCTEST_REQUIRE(env.svc->createTask(col.value().id, "栈任务").isOk());
+
+    std::unique_ptr<::core::Module> mod(create_todo_module());
+    mod->onStart();
+
+    auto escPress = [] {
+        eui::KeyEvent e;
+        e.key = eui::InputKey::Escape;
+        e.action = eui::KeyAction::Press;
+        return e;
+    };
+
+    // 0) 栈空：Esc 不消费（兜底不越权吃键）
+    DOCTEST_CHECK(!mod->onKeyEvent(escPress()));
+
+    // 目标列索引（模块自建默认列在前，按 service 顺序定位）
+    auto cols = env.svc->listColumns();
+    DOCTEST_REQUIRE(cols.isOk());
+    int colIdx = -1;
+    for (size_t i = 0; i < cols.value().size(); ++i) {
+        if (cols.value()[i].id == col.value().id) colIdx = static_cast<int>(i);
+    }
+    DOCTEST_REQUIRE(colIdx >= 0);
+
+    Frame frame(mod.get());
+
+    // A = 详情（点卡片）
+    {
+        const auto* card =
+            frame.ui.find("todo.col." + std::to_string(colIdx) + ".card.0.bg");
+        DOCTEST_REQUIRE(card != nullptr);
+        DOCTEST_REQUIRE(card->onClick != nullptr);
+        card->onClick();
+        frame.refresh();
+        DOCTEST_REQUIRE(frame.ui.find("todo.dialog.detail.panel") != nullptr);
+        DOCTEST_CHECK_EQ(frame.ui.find("todo.dialog.detail.panel")->opacity, 1.0f);
+    }
+
+    // B = 日期选择（详情「选择日期…」）
+    {
+        auto* pick = frame.ui.find("todo.dialog.detail.due.pick.bg");
+        DOCTEST_REQUIRE(pick != nullptr);
+        DOCTEST_REQUIRE(pick->onClick != nullptr);
+        pick->onClick();
+        frame.refresh();
+        DOCTEST_REQUIRE(frame.ui.find("todo.datepicker.panel") != nullptr);
+        DOCTEST_CHECK_EQ(frame.ui.find("todo.datepicker.panel")->opacity, 1.0f);
+    }
+
+    // C = 删除确认（详情「删除」）
+    {
+        auto* del = frame.ui.find("todo.dialog.detail.delete.bg");
+        DOCTEST_REQUIRE(del != nullptr);
+        DOCTEST_REQUIRE(del->onClick != nullptr);
+        del->onClick();
+        frame.refresh();
+        DOCTEST_REQUIRE(frame.ui.find("todo.dialog.delcol.panel") != nullptr);
+        DOCTEST_CHECK_EQ(frame.ui.find("todo.dialog.delcol.panel")->opacity, 1.0f);
+    }
+
+    // 三层同时在：z 序 = 打开顺序（A < B < C），且整栈仍在 toast 之下
+    const auto* dlgDetail = frame.ui.find("todo.dialog.detail");
+    const auto* dlgDate = frame.ui.find("todo.datepicker");
+    const auto* dlgConfirm = frame.ui.find("todo.dialog.delcol");
+    DOCTEST_REQUIRE(dlgDetail != nullptr);
+    DOCTEST_REQUIRE(dlgDate != nullptr);
+    DOCTEST_REQUIRE(dlgConfirm != nullptr);
+    DOCTEST_CHECK(dlgDetail->zIndex < dlgDate->zIndex);
+    DOCTEST_CHECK(dlgDate->zIndex < dlgConfirm->zIndex);
+    DOCTEST_CHECK(dlgConfirm->zIndex < 1100);   // toast（EUI-NEO 默认 1100）恒在上
+
+    // 渲染序与 z 序一致（不是「手挑 zIndex」而是同源的栈序）
+    frame.ui.layout(1600.0f, 1000.0f);
+    const int orderDetail = paintOrderOf(frame.ui, dlgDetail);
+    const int orderDate = paintOrderOf(frame.ui, dlgDate);
+    const int orderConfirm = paintOrderOf(frame.ui, dlgConfirm);
+    DOCTEST_REQUIRE(orderDetail >= 0);
+    DOCTEST_REQUIRE(orderDate >= 0);
+    DOCTEST_REQUIRE(orderConfirm >= 0);
+    DOCTEST_CHECK(orderDetail < orderDate);
+    DOCTEST_CHECK(orderDate < orderConfirm);
+
+    // Esc①：关 C（确认删除），B / A 保持打开
+    DOCTEST_CHECK(mod->onKeyEvent(escPress()));
+    frame.refresh();
+    DOCTEST_REQUIRE(frame.ui.find("todo.dialog.delcol.panel") != nullptr);
+    DOCTEST_CHECK_EQ(frame.ui.find("todo.dialog.delcol.panel")->opacity, 0.0f);
+    DOCTEST_CHECK(frame.ui.find("todo.datepicker") != nullptr);   // B 仍在
+    DOCTEST_CHECK_EQ(frame.ui.find("todo.dialog.detail.panel")->opacity, 1.0f);
+    {
+        auto ts = env.svc->listTasks(col.value().id);
+        DOCTEST_REQUIRE(ts.isOk());
+        DOCTEST_CHECK_EQ(ts.value().size(), static_cast<size_t>(1));   // Esc=取消，未删
+    }
+
+    // Esc②：关 B（日期选择），A 仍打开
+    DOCTEST_CHECK(mod->onKeyEvent(escPress()));
+    frame.refresh();
+    DOCTEST_CHECK(frame.ui.find("todo.datepicker") == nullptr);   // 关后不再入树
+    DOCTEST_CHECK_EQ(frame.ui.find("todo.dialog.detail.panel")->opacity, 1.0f);
+
+    // Esc③：关 A（详情；无未存改动 → 一击即关）
+    DOCTEST_CHECK(mod->onKeyEvent(escPress()));
+    frame.refresh();
+    DOCTEST_CHECK_EQ(frame.ui.find("todo.dialog.detail.panel")->opacity, 0.0f);
+
+    // Esc④：栈空，回到不消费
+    DOCTEST_CHECK(!mod->onKeyEvent(escPress()));
+
+    mod->onStop();
+    return true;
+})
