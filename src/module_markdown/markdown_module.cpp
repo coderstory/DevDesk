@@ -1677,6 +1677,20 @@ private:
             ui, "md.live", bodyH, midW, true, t, componentTheme,
             [&](const TextColumnGeometry& g) {
                 const components::MarkdownStyle style(componentTheme);
+                // ---- M3 / M0 C2：输入框状态换代（释放点）----
+                // enterLiveState（切实时态 / 换笔记 / 启动恢复）置位，本帧先释放
+                // 再建 input：新的一代从空状态开始（无上一篇的块文本、无在飞的
+                // 组字、framework undo 栈清零）。释放会命中前缀清掉焦点
+                //（runtime_lifecycle 帧末消费 releaseStateScopes），故【必须】与
+                // liveFocusPending_ 的同帧补发配对 —— 本帧先释放，帧末按 pending
+                // 聚焦（M0 V2c 已验证的"先释放、后补发"顺序）。
+                // 单输入方案下【切块】不释放：id 一旦落在被释放的前缀下，每次
+                // 切块都会清焦点 + 清 InputState（M0 C2 硬约束 / spec D1）。
+                if (liveInputStateFresh_) {
+                    liveInputStateFresh_ = false;
+                    ui.releaseStateScope(kLiveInputId);
+                    LOG_DEBUG("[live] release scope=md.live.input");
+                }
                 // ---- M2：活动块锚（文档字节偏移，spec D3）----
                 // 进实时态首次：以编辑器的文档光标为初始锚（此刻编辑器列已不在帧树，
                 // 但 InputState 按 id 跨帧存活，见 M0 V1）；之后换块/跳转由 M3 的
@@ -1702,7 +1716,16 @@ private:
                         // 本帧 input 还未与本块同步（它的块内光标属于上一次会话），
                         // 基准只能取块起点；真实落点由换文本帧反向写入块局部光标
                         liveInputStart_ = bs[liveActiveBlock_].start;
-                    } else {
+                    } else if (liveCaretPending_) {
+                        // 本帧锚由 setLiveCursor（点击渲染块 / 大纲跳转）显式定下：
+                        // 此刻输入框的光标仍是【上一块】的局部坐标（换文本发生在
+                        // 本帧 build 里），拿它反推会得到「新块起点 + 旧块光标」的
+                        // 错位落点 —— 锚即权威，本帧跳过重推（下一帧输入框光标已
+                        // 按锚写对，重推与锚同值）。
+                    } else if (!mdLiveCompositionFrozen(lst.compositionText)) {
+                        // 组字在飞（compositionText 非空）→ 走上面的 if 落空分支：
+                        // 锚 / 活动块 / 输入框文本一律保持上一帧（不重推、不换文本），
+                        // 组字结束后下一帧一次性重算（spec §3.4 / R3）。
                         // MD-01：锚必须跟着真实光标走，不能冻结在进态时的旧值上。
                         // 活动 input 的 InputState 持有块内光标（用户每次按键由组件
                         // 推进），【文档字节 = 输入框文本起点 + 块内光标】即用户此刻
@@ -1776,10 +1799,17 @@ private:
                         (void)viewportHeight;
                         // 活动块 input 由 drawBlockFlow 建在 inner（content 回调交给的
                         // Ui）上——测量 pass 也走本回调，元素必须挂在同一层
-                        drawBlockFlow(inner, contentWidth, t, style, "md.live", {},
+                        drawBlockFlow(inner, contentWidth, t, style, "md.live",
+                                      [this, &ui](size_t k, float y) {
+                                          handleLiveBlockClick(ui, k, y);
+                                      },
                                       hooks);
                     })
                     .build();
+                // 本帧的「写光标」一次性请求已由 drawLiveInputBlock 消费（切块帧
+                // 走换文本路径，同块点击走 liveCaretPending_）—— 帧末统一清位，
+                // 避免下一帧再写一次（下一帧锚由真实光标重推，写了也是同值）。
+                liveCaretPending_ = false;
 
                 // M0 C1/C5：进实时态首帧同帧补发 requestFocus（目标必须已是当帧树中
                 // 的元素，早发/事后补都被丢弃），且只发 <input id>.hit —— 组件聚焦
@@ -1925,14 +1955,33 @@ private:
             .inset(kLiveInputInset)
             .theme(*live.theme)
             .onChange([this](const std::string& v) { syncDocumentFromLiveInput(v); })
+            // M3 失焦提交（语义见 commitLiveInputOnBlur）：焦点离开活动 input
+            // （点渲染块 / 左树 / 切态 / 弹窗）时收口。捕获 &ui 与编辑态
+            // onKeyEvent 同款 —— Runtime 常驻 Ui，state store 跨帧持久。
+            .onFocus([this, &ui](bool focused) {
+                if (!focused) commitLiveInputOnBlur(ui);
+            })
             .build();
-        if (swapped) {
+        // 写光标的两条来路（都必须在 build 之后：聚焦时框架走"外部改值"把光标
+        // 搬到新文本末尾，早写会被 build 内的重载覆盖）：
+        //   swapped           = 换文本帧（切块 / 换笔记 / 撤销跳转）
+        //   liveCaretPending_ = 同块定位帧（点本块 / 大纲跳转：文本没变，框架不
+        //                       会动光标，只能由 setLiveCursor 请求写）
+        if (swapped || liveCaretPending_) {
             st.cursor =
                 static_cast<int>(mdLiveBlockLocalOffset(b, liveCursorByte_));
             st.selectionStart = st.cursor;
             st.selectionEnd = st.cursor;
-            st.verticalScroll = 0.0f;
+            st.dragAnchor = st.cursor;
+            st.hasPreferredCursorX = false;
+            st.followCaret = true;     // 落点即目标（贴合高度下框内无滚动）
+            st.verticalScroll = 0.0f;  // M0 C3：切块/定位帧清上一块的滚动残余
+            st.horizontalScroll = 0.0f;
         }
+        // 失焦提交的安全判据（见 commitLiveInputOnBlur）：输入框文本 == 当前块源
+        // 即「输入框已与文档对齐到本修订号」——外部重载/撤销把文档换掉、输入框
+        // 还持旧块文本的那一帧不满足该条，故失焦不会把旧文本灌回新文档。
+        if (st.text == blockText) liveSyncedRev_ = editorTextRev_;
         // spec §5 #4 记录式校验：活动 input 必须内容贴合（maxVerticalScroll == 0
         // ⇒ 不吃外层滚轮、无内部滚动条）。框架不暴露 maxVerticalScroll，用组件
         // "是否注册滚轮处理器"做探针（components/input.h：仅 maxVerticalScroll > 0
@@ -1947,6 +1996,85 @@ private:
         } else {
             LOG_DEBUG("[live] input over=0");
         }
+    }
+
+    // ---- Phase 3 M3：光标写点 / 块点击定位 / 失焦提交 ----
+
+    // 实时态唯一光标写点（spec §4.2 数据流第二支）：文档字节偏移 = 活动块身份锚
+    //（D3）。一次做完三件事：
+    //   ① 锚 = docByte（钳进 [0, size]）
+    //   ② 活动块 / 输入框文本起点按锚重算（本帧之后的第一次 compose 里，输入框
+    //      光标还是上一块的局部坐标 —— 由 liveCaretPending_ 让那一帧跳过重推，
+    //      锚即权威；从再下一帧起输入框光标已按锚写对，重推与锚同值）
+    //   ③ 记账两个一次性请求 —— liveCaretPending_（文本未变时框架不会动光标，
+    //      必须显式写）与 liveFocusPending_（指针按下已把焦点从 input 上摘掉，
+    //      不补发就"点完不能直接打字"）；两者都在下一次 compose 内同帧消费
+    //      （M0 C1/C5：requestFocus 的目标必须与请求同帧存在）。
+    void setLiveCursor(size_t docByte, const char* reason) {
+        const size_t size = editorText_.size();
+        liveCursorByte_ = docByte < size ? docByte : size;
+        liveCursorValid_ = true;
+        const std::vector<MdBlock>& bs = blockModel_.blocks();
+        if (!bs.empty()) {
+            liveActiveBlock_ = mdLiveActiveBlockIndex(blockModel_, liveCursorByte_);
+            liveInputStart_ = bs[liveActiveBlock_].start;
+        }
+        liveCaretPending_ = true;
+        liveFocusPending_ = true;
+        LOG_DEBUG(std::string("[live] setLiveCursor(") + reason + ") byte=" +
+                  std::to_string(liveCursorByte_) + " block=" +
+                  std::to_string(liveActiveBlock_));
+    }
+
+    // 点击渲染块 → 该块变源码态 + 光标落到点击行（复用 ⑤ 预览点击的同一套反查：
+    // 块内局部 y → 编辑器行 → 行首字节；spec §1.1 目标 3 / §3.3）。活动块的覆盖
+    // 层已关命中（点击落进 input 自身，指针→caret 由框架做），故本函数只服务非
+    // 活动块。组字在飞时【拒绝切块】（R3）：不换块不换文本，并补发聚焦把组字
+    // 会话留在原块（焦点已被框架的指针按下摘掉）。
+    void handleLiveBlockClick(eui::Ui& ui, size_t blockIndex, float localY) {
+        if (mode_ != ViewMode::Live || editorText_.empty()) return;
+        using InputState = components::input_detail::InputModel::InputState;
+        if (mdLiveCompositionFrozen(
+                ui.state<InputState>(kLiveInputId).compositionText)) {
+            liveFocusPending_ = true;
+            LOG_DEBUG("[live] 组字中拒绝切块: 块#" + std::to_string(blockIndex));
+            return;
+        }
+        const MdPreviewJump jump = mdResolvePreviewJump(
+            editorText_, blockModel_.blocks(), syncMap_, blockIndex, localY);
+        if (!jump.ok) return;
+        setLiveCursor(jump.cursorByte, "点击渲染块");
+        LOG_INFO("实时态块点击: 块#" + std::to_string(jump.blockIndex) +
+                 " stableId=" + std::to_string(jump.stableId) +
+                 " → 文档字节 " + std::to_string(jump.cursorByte) + "（行 " +
+                 std::to_string(jump.targetLine + 1) + "）");
+    }
+
+    // 失焦提交（spec §7 M3）——焦点离开活动 input 时的两条收口：
+    //   ① 清在飞的组字：焦点已走 = IME 会话结束，而框架不会自己清
+    //      compositionText（input.h 只在组字事件里改它）。不清的两个后果：幽灵
+    //      预编辑继续显示；冻结谓词（组字非空）恒真 → 切块被永久拒绝。
+    //   ② 上行未提交的块局部文本：只在「输入框与文档对齐到同一修订号」时做
+    //      （liveSyncedRev_ == editorTextRev_，drawLiveInputBlock 每帧核对）——
+    //      否则就是在文档已被外部重载/撤销换代、输入框还持旧块文本的那一帧，
+    //      把旧文本灌回新文档 = 数据丢失。而键盘流下每键都已上行，值相同 →
+    //      setEditorText 同串守卫直接返回，零成本。
+    void commitLiveInputOnBlur(eui::Ui& ui) {
+        using InputState = components::input_detail::InputModel::InputState;
+        InputState& st = ui.state<InputState>(kLiveInputId);
+        if (mdLiveCompositionFrozen(st.compositionText)) {
+            st.compositionText.clear();
+            ++st.compositionRevision;
+            LOG_DEBUG("[live] 失焦清组字");
+        }
+        const std::vector<MdBlock>& bs = blockModel_.blocks();
+        if (liveActiveBlock_ >= bs.size()) return;
+        // 状态被换代（释放后重建）时 text 为空、修订号也对不上 —— 两道门都挡住
+        if (st.text.empty() || liveSyncedRev_ != editorTextRev_) return;
+        if (st.text == liveBlockText(bs[liveActiveBlock_])) return;   // 无未提交内容
+        const std::string pending = st.text;   // 取副本：上行会换掉 blockModel_ 内部文本
+        LOG_DEBUG("[live] 失焦提交未上行文本 len=" + std::to_string(pending.size()));
+        syncDocumentFromLiveInput(pending);
     }
 
     // 双栏同步滚动（§5.3，Phase 3 ④ 块模型精确锚）：编辑器视口顶行 →
@@ -2318,6 +2446,11 @@ private:
         liveCursorValid_ = false;
         liveFocusPending_ = true;
         liveOffset_ = 0.0f;
+        // M3 / M0 C2：输入框状态也换代（下一帧 compose 里 release md.live.input）。
+        // 换笔记 / 切实时态 / 启动恢复三条路径都经本函数 —— 只复位锚不复位状态
+        // 时，上一篇的块文本、在飞的组字（compositionText）、framework 内置 undo
+        // 栈会跟着稳定 id「复活」（M0 V2a 重挂载复活 / R7 状态累积）。
+        liveInputStateFresh_ = true;
         LOG_DEBUG(std::string("Markdown 实时态状态复位: ") + reason);
     }
 
@@ -2775,6 +2908,14 @@ private:
     }
 
     // 从磁盘重读当前笔记（不经过 openNote 的「先保存旧笔记」路径）
+    //
+    // ⚠ 已知缺口（MD-01 残留入口，M3 未覆盖，见 open-questions-review-B 第 1 条）：
+    // 静默重载 / 冲突重载把文档整篇换成磁盘版本后，实时态的活动块锚仍是【旧文档
+    // 的字节偏移】，被新文档重新解释 → 活动块落到"覆盖该字节的新块"上（实测：
+    // 前插一段后活动块从旧文档的块 3 跳到新文档里含该字节的块）。当帧即收敛、
+    // 不丢字（输入框文本恒等于新文档某块原文，外部改值不触发 onChange），但
+    // 「跟内容走」不成立——需要块身份映射（旧块起点 / stableId → 新文档），属
+    // spec D3「块身份锚 = 文档字节偏移」的拍板项：本批不自行发明映射方案。
     void reloadCurrentNote(bool silent) {
         auto r = service_->read(currentPath_);
         if (r.isFail()) {
@@ -3375,6 +3516,12 @@ private:
     size_t liveInputStart_ = 0;        // 活动 input 文本在文档中的起点（= 其所属块 start，MD-01 锚推导基准）
     bool liveCursorValid_ = false;     // 锚是否已按当前文档初始化（enterLiveState 复位）
     bool liveFocusPending_ = false;    // 进实时态首帧同帧补发 requestFocus（M0 C1；enterLiveState 置位）
+    // ---- Phase 3 M3：焦点/切块状态机 ----
+    bool liveInputStateFresh_ = false; // 输入框状态待换代：enterLiveState 置位，
+                                       // 下一帧 compose 释放 md.live.input（M0 C2）
+    bool liveCaretPending_ = false;    // 待写块局部光标（setLiveCursor 置位；文本未变
+                                       // 的同块定位帧也要写，帧末统一清位）
+    uint64_t liveSyncedRev_ = 0;       // 输入框文本与文档对齐的修订号（失焦提交安全判据）
     // 贴合高度备忘（键 = stableId + 内容 hash + 文本宽 + 字号）：活动块整块
     // shaping 不逐帧重付；内容/宽度/字号任一变化即失效重测
     struct LiveHeightMemo {

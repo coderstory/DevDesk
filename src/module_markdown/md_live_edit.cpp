@@ -18,6 +18,10 @@ size_t mdLiveBlockLocalOffset(const MdBlock& block, size_t cursorByte) {
     return std::min(cursorByte - block.start, len);
 }
 
+bool mdLiveCompositionFrozen(const std::string& compositionText) {
+    return !compositionText.empty();
+}
+
 float mdLiveInputHeight(const std::string& blockText, float textWidth,
                         float fontSize, float inset,
                         const MdLiveLineCountFn& lineCount) {

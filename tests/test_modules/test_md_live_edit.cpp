@@ -232,3 +232,18 @@ REGISTER_TEST(md_live_input_height_wrap,
     DOCTEST_CHECK(narrow > wide);
     return true;
 })
+
+// ---- M3：IME 冻结谓词（spec §3.4 / 风险 R3）----
+// 语义 = 「组字文本非空即冻结」。两侧都要钉死：空 ≠ 冻结（否则永远不能切块）、
+// 非空 = 冻结（含纯空白组字——IME 预编辑里空格本身也是组字内容）。
+
+REGISTER_TEST(md_live_composition_frozen,
+              "md_live_edit: IME 冻结谓词（组字非空即冻结，spec R3）", {
+    using module::markdown::mdLiveCompositionFrozen;
+    DOCTEST_CHECK_FALSE(mdLiveCompositionFrozen(""));       // 无组字 → 放行
+    DOCTEST_CHECK(mdLiveCompositionFrozen("n"));            // 拼音在飞
+    DOCTEST_CHECK(mdLiveCompositionFrozen("你好"));          // 多字节组字
+    DOCTEST_CHECK(mdLiveCompositionFrozen(" "));            // 纯空白仍是组字内容
+    DOCTEST_CHECK_FALSE(mdLiveCompositionFrozen(std::string()));
+    return true;
+})
