@@ -61,18 +61,23 @@ public:
     JsonValue& operator=(JsonValue&& other) noexcept;
     ~JsonValue();
 
-    Type type() const { return type_; }
-    bool isNull() const { return type_ == T_Null; }
-    bool isBool() const { return type_ == T_Bool; }
-    bool isNumber() const { return type_ == T_Number; }
-    bool isString() const { return type_ == T_String; }
-    bool isObject() const { return type_ == T_Object; }
-    bool isArray() const { return type_ == T_Array; }
+    // 类型与取值一律从堆上的 JsonImpl 派生（唯一真值源，见 json.cpp 顶部）
+    // CP-02（2026-09-27 全量审计，high）：此前 JsonValue 另存一份 public 镜像字段
+    // （type_/boolVal_/intVal_/dblVal_/strVal_），但 4 个特殊成员只搬 data_ → 左值
+    // 拷贝/移动后 asString()/asInt() 静默返回默认值。删掉镜像后不存在两份真值，
+    // 也就不存在"漏同步"这一种漏法。
+    Type type() const;
+    bool isNull() const { return type() == T_Null; }
+    bool isBool() const { return type() == T_Bool; }
+    bool isNumber() const { return type() == T_Number; }
+    bool isString() const { return type() == T_String; }
+    bool isObject() const { return type() == T_Object; }
+    bool isArray() const { return type() == T_Array; }
 
-    bool asBool() const { return boolVal_; }
-    int64_t asInt() const { return intVal_; }
-    double asDouble() const { return dblVal_; }
-    std::string asString() const { return strVal_; }
+    bool asBool() const;
+    int64_t asInt() const;
+    double asDouble() const;
+    std::string asString() const;
     JsonObject asObject() const;  // 按值 = 整对象子树深拷贝（同 JsonObject）
 
     // 数组访问（模块插拔 enabledModules 首个消费者；仅支持读，元素按值返回 =
@@ -82,13 +87,8 @@ public:
 
     void* internal() const { return data_; }
 
-    // 类型和值（公开，便于 makeFromImpl 等内部函数访问）
-    Type type_ = T_Null;
+private:
     void* data_ = nullptr;
-    bool boolVal_ = false;
-    int64_t intVal_ = 0;
-    double dblVal_ = 0;
-    std::string strVal_;
 };
 
 // 解析
