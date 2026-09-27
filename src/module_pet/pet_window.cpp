@@ -631,7 +631,7 @@ void startPetWindow(const PetWindowConfig& config) {
         LOG_ERROR("桌宠皮肤不可用（" + skin.errorMessage() + "），不开窗口");
         return;
     }
-    rt.skin = std::move(skin.unsafeValue());
+    rt.skin = std::move(skin.value());
     rt.config.skinName = skinName;
     rt.skins = discoverSkins();
 

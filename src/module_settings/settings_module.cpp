@@ -382,9 +382,9 @@ public:
         auto pruned = ::core::pruneCallLogs(*db, cfg_.logRetentionDays);
         if (pruned.isOk()) {
             setStatus("日志保留：" + retentionLabel() + "，已清理 " +
-                      std::to_string(pruned.unsafeValue()) + " 条历史日志");
+                      std::to_string(pruned.value()) + " 条历史日志");
             LOG_INFO("Settings: 日志保留 → " + retentionLabel() + "，已清理 " +
-                     std::to_string(pruned.unsafeValue()) + " 条");
+                     std::to_string(pruned.value()) + " 条");
         } else {
             setStatus("日志保留：" + retentionLabel() +
                       "（清理失败：" + pruned.errorMessage() + "）", true);

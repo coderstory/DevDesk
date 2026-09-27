@@ -66,11 +66,11 @@ PetConfig PetConfigStore::load() const {
     f.close();
 
     auto parsed = platform::json::parse(ss.str());
-    if (parsed.isFail() || !parsed.unsafeValue().isObject()) {
+    if (parsed.isFail() || !parsed.value().isObject()) {
         LOG_WARN("Pet: 配置文件解析失败，使用默认值: " + file_.string());
         return cfg;
     }
-    platform::json::JsonObject obj = parsed.unsafeValue().asObject();
+    platform::json::JsonObject obj = parsed.value().asObject();
 
     if (obj.has(kKeySkin) && obj.get(kKeySkin).isString()) {
         cfg.skinName = obj.get(kKeySkin).asString();
@@ -114,7 +114,7 @@ core::Result<void> PetConfigStore::save(const PetConfig& cfgRaw) const {
     // 第二批收口）：旧的 std::ofstream(file_, trunc) 原地写在写窗口内崩溃/断电
     // 会把 pet_config.json 截成半截，load 走解析失败分支静默回落默认值（桌宠
     // 坐标回到「未设置」、皮肤选择回 robot）。尾处理照旧实现：serialize + "\n"
-    return core::atomicWriteFile(file_, text.unsafeValue() + "\n", "配置文件");
+    return core::atomicWriteFile(file_, text.value() + "\n", "配置文件");
 }
 
 } // namespace module::pet

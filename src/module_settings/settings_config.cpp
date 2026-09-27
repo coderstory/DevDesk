@@ -248,7 +248,7 @@ SettingsConfig SettingsStore::load() const {
     f.close();
 
     auto parsed = platform::json::parse(ss.str());
-    if (parsed.isFail() || !parsed.unsafeValue().isObject()) {
+    if (parsed.isFail() || !parsed.value().isObject()) {
         // M3（2026-09-27）：解析失败仍回落默认（不阻断启动、不引入新失败态），
         // 但先把坏内容另存一份 config.json.bak —— 否则截断 / 手改坏的 config 被
         // 静默换成全默认值（用户关掉的模块"复活"），原始内容无处可查
@@ -266,7 +266,7 @@ SettingsConfig SettingsStore::load() const {
         }
         return cfg;
     }
-    platform::json::JsonObject obj = parsed.unsafeValue().asObject();
+    platform::json::JsonObject obj = parsed.value().asObject();
 
     if (obj.has(kKeyTheme) && obj.get(kKeyTheme).isString()) {
         // 只认 "light" 为浅色，其余一律深色（默认值安全）
@@ -383,7 +383,7 @@ core::Result<void> SettingsStore::save(const SettingsConfig& cfgRaw) const {
     // 原子写（tmp → remove → rename，core/atomic_write.h 唯一实现）：
     // 原地 trunc 写在写窗口内崩溃会让 config.json 半截，load 静默回落全默认
     // （被用户关掉的模块"复活"，比"保存失败"更难察觉）
-    return core::atomicWriteFile(file_, text.unsafeValue() + "\n", "配置文件");
+    return core::atomicWriteFile(file_, text.value() + "\n", "配置文件");
 }
 
 } // namespace module::settings

@@ -76,11 +76,11 @@ TodoViewState TodoViewStateStore::load() const {
     f.close();
 
     auto parsed = platform::json::parse(ss.str());
-    if (parsed.isFail() || !parsed.unsafeValue().isObject()) {
+    if (parsed.isFail() || !parsed.value().isObject()) {
         LOG_WARN("Todo: 视图状态文件解析失败，使用默认值: " + file_.string());
         return st;
     }
-    platform::json::JsonObject obj = parsed.unsafeValue().asObject();
+    platform::json::JsonObject obj = parsed.value().asObject();
 
     if (obj.has(kKeyScrolls) && obj.get(kKeyScrolls).isObject()) {
         platform::json::JsonObject scrolls = obj.get(kKeyScrolls).asObject();
@@ -140,7 +140,7 @@ core::Result<void> TodoViewStateStore::save(const TodoViewState& stRaw) const {
     // 旧的 std::ofstream(file_, trunc) 原地写在写窗口内崩溃/断电会把文件截成
     // 半截，load 走解析失败分支静默回落默认值（列滚动位置/选中任务丢失；
     // 本函数由卡片点击/右键高频触发，暴露窗口最多）
-    return core::atomicWriteFile(file_, text.unsafeValue() + "\n", "视图状态");
+    return core::atomicWriteFile(file_, text.value() + "\n", "视图状态");
 }
 
 size_t TodoViewStateStore::pruneScrolls(std::map<int64_t, float>& scrolls,

@@ -67,11 +67,11 @@ MarkdownViewState MarkdownViewStateStore::load() const {
     f.close();
 
     auto parsed = platform::json::parse(ss.str());
-    if (parsed.isFail() || !parsed.unsafeValue().isObject()) {
+    if (parsed.isFail() || !parsed.value().isObject()) {
         LOG_WARN("Markdown: 视图状态文件解析失败，使用默认值: " + file_.string());
         return st;
     }
-    platform::json::JsonObject obj = parsed.unsafeValue().asObject();
+    platform::json::JsonObject obj = parsed.value().asObject();
 
     if (obj.has(kKeyLastPath) && obj.get(kKeyLastPath).isString()) {
         st.lastPath = obj.get(kKeyLastPath).asString();
@@ -119,7 +119,7 @@ core::Result<void> MarkdownViewStateStore::save(const MarkdownViewState& stRaw) 
     // 第二批收口）：旧的 std::ofstream(file_, trunc) 原地写在写窗口内崩溃/断电
     // 会把文件截成半截，load 走解析失败分支静默回落默认值（上次笔记路径/视图
     // 模式/目录折叠全丢）。逐字节尾处理照旧实现：serialize 结果 + "\n"
-    return core::atomicWriteFile(file_, text.unsafeValue() + "\n", "视图状态");
+    return core::atomicWriteFile(file_, text.value() + "\n", "视图状态");
 }
 
 } // namespace module::markdown

@@ -45,7 +45,7 @@ REGISTER_TEST(markdown_editor_uses_font_channel,
     std::filesystem::remove(dbPath, ec);
     auto r = core::Database::open(dbPath);
     DOCTEST_REQUIRE(r.isOk());
-    auto db = std::make_unique<core::Database>(std::move(r.unsafeValue()));
+    auto db = std::make_unique<core::Database>(std::move(r.value()));
     DOCTEST_REQUIRE(db->migrate().isOk());
     core::registerAppDatabase(&db->db());
 

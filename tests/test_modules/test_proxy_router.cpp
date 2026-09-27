@@ -66,7 +66,7 @@ struct TestDb {
         if (r.isFail()) {
             throw std::runtime_error("Database::open failed: " + r.errorMessage());
         }
-        db = std::make_unique<core::Database>(std::move(r.unsafeValue()));
+        db = std::make_unique<core::Database>(std::move(r.value()));
         auto m = db->migrate();
         if (m.isFail()) {
             throw std::runtime_error("migrate failed: " + m.errorMessage());
@@ -105,7 +105,7 @@ platform::http::Response syncSend(const std::string& method,
         err.networkError = true;
         return err;
     }
-    return std::move(r.unsafeValue());
+    return std::move(r.value());
 }
 
 // 头名大小写不敏感取头（转发后头名拼写由上游方言层决定）

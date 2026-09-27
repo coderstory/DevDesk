@@ -62,7 +62,7 @@ core::data::SqliteDb makeDb() {
     if (r.isFail()) {
         std::abort();
     }
-    return std::move(r.unsafeValue());
+    return std::move(r.value());
 }
 
 void runMigrations(core::data::SqliteDb& db) {

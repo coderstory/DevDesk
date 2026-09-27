@@ -81,8 +81,8 @@ struct DbEnv {
         std::filesystem::remove(path, ec);
         auto r = core::Database::open(path);
         if (r.isFail()) return;
-        if (r.unsafeValue().migrate().isFail()) return;
-        db = std::make_unique<core::Database>(std::move(r.unsafeValue()));
+        if (r.value().migrate().isFail()) return;
+        db = std::make_unique<core::Database>(std::move(r.value()));
         ::core::registerAppDatabase(&db->db());
         ready = true;
     }

@@ -251,7 +251,7 @@ void ProxyRouter::handleRequest(
         return;
     }
 
-    auto& resp = respR.unsafeValue();
+    auto& resp = respR.value();
 
     // ---- 4. 写回客户端 ----
     out.setStatus(resp.statusCode);

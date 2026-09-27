@@ -145,7 +145,7 @@ const char* kM2SkinJson =
 REGISTER_TEST(pet_skin_parse_valid, "pet: pet.json 合法解析", {
     auto r = module::pet::parsePetSkinJson(kValidSkinJson);
     DOCTEST_CHECK(r.isOk());
-    const module::pet::PetSkin& skin = r.unsafeValue();
+    const module::pet::PetSkin& skin = r.value();
     DOCTEST_CHECK_EQ(skin.name, "clay-cat");
     DOCTEST_CHECK_EQ(skin.frameWidth, 128);
     DOCTEST_CHECK_EQ(skin.frameHeight, 128);
@@ -186,12 +186,12 @@ REGISTER_TEST(pet_skin_parse_clamps, "pet: frameRate/frameSize 越界收敛默�
         " \"states\": {\"idle\": [\"f.png\"]}}";
     auto r = module::pet::parsePetSkinJson(json);
     DOCTEST_CHECK(r.isOk());
-    DOCTEST_CHECK_EQ(r.unsafeValue().frameRate, 4.0);
-    DOCTEST_CHECK_EQ(r.unsafeValue().frameWidth, 128);
-    DOCTEST_CHECK_EQ(r.unsafeValue().frameHeight, 128);
+    DOCTEST_CHECK_EQ(r.value().frameRate, 4.0);
+    DOCTEST_CHECK_EQ(r.value().frameWidth, 128);
+    DOCTEST_CHECK_EQ(r.value().frameHeight, 128);
     // poked 可选：缺失 → pokedFrames 空，frames(true) 回落 idle
-    DOCTEST_CHECK(r.unsafeValue().pokedFrames.empty());
-    DOCTEST_CHECK_EQ(r.unsafeValue().frames(true).size(), static_cast<size_t>(1));
+    DOCTEST_CHECK(r.value().pokedFrames.empty());
+    DOCTEST_CHECK_EQ(r.value().frames(true).size(), static_cast<size_t>(1));
     return true;
 });
 
@@ -202,11 +202,11 @@ REGISTER_TEST(pet_anim_idle_cycle, "pet: idle 帧循环推进", {
     DOCTEST_CHECK(r.isOk());
     module::pet::PetAnimation anim;
     DOCTEST_CHECK(anim.state == module::pet::PetAnimState::Idle);
-    DOCTEST_CHECK_EQ(anim.currentPath(r.unsafeValue()).filename().string(), "f0.png");
-    anim.tick(r.unsafeValue());
+    DOCTEST_CHECK_EQ(anim.currentPath(r.value()).filename().string(), "f0.png");
+    anim.tick(r.value());
     DOCTEST_CHECK_EQ(anim.frame, 1);
-    anim.tick(r.unsafeValue());
-    anim.tick(r.unsafeValue());
+    anim.tick(r.value());
+    anim.tick(r.value());
     DOCTEST_CHECK_EQ(anim.frame, 0);  // 3 帧循环回卷
     return true;
 });
@@ -214,7 +214,7 @@ REGISTER_TEST(pet_anim_idle_cycle, "pet: idle 帧循环推进", {
 REGISTER_TEST(pet_anim_poke_once, "pet: poke 反应帧播一遍回 Idle", {
     auto r = module::pet::parsePetSkinJson(kValidSkinJson);
     DOCTEST_CHECK(r.isOk());
-    const module::pet::PetSkin& skin = r.unsafeValue();
+    const module::pet::PetSkin& skin = r.value();
     module::pet::PetAnimation anim;
     anim.poke(skin);
     DOCTEST_CHECK(anim.state == module::pet::PetAnimState::Poked);
@@ -235,7 +235,7 @@ REGISTER_TEST(pet_anim_no_poked_frames, "pet: 无 poked 帧皮肤 poke 无反应
         "{\"states\": {\"idle\": [\"f.png\", \"g.png\"]}}");
     DOCTEST_CHECK(r.isOk());
     module::pet::PetAnimation anim;
-    anim.poke(r.unsafeValue());
+    anim.poke(r.value());
     DOCTEST_CHECK(anim.state == module::pet::PetAnimState::Idle);
     return true;
 });
@@ -247,7 +247,7 @@ REGISTER_TEST(pet_default_skin_generate, "pet: 占位皮肤生成（PNG 结构 +
     removeTreeQuietly(dir);
     auto r = module::pet::ensureDefaultSkin(dir);
     DOCTEST_CHECK_MESSAGE(r.isOk(), r.isFail() ? r.errorMessage() : "");
-    const module::pet::PetSkin& skin = r.unsafeValue();
+    const module::pet::PetSkin& skin = r.value();
     DOCTEST_CHECK_EQ(skin.frameWidth, 128);
     DOCTEST_CHECK_EQ(skin.frameHeight, 128);
     DOCTEST_CHECK_EQ(skin.frameRate, 4.0);
@@ -263,7 +263,7 @@ REGISTER_TEST(pet_default_skin_generate, "pet: 占位皮肤生成（PNG 结构 +
     // 幂等：已存在直接加载（帧数不变，不重画）
     auto again = module::pet::ensureDefaultSkin(dir);
     DOCTEST_CHECK(again.isOk());
-    DOCTEST_CHECK_EQ(again.unsafeValue().idleFrames.size(), skin.idleFrames.size());
+    DOCTEST_CHECK_EQ(again.value().idleFrames.size(), skin.idleFrames.size());
     removeTreeQuietly(dir);
     return true;
 });
@@ -374,7 +374,7 @@ REGISTER_TEST(pet_anim_sleep_cycle, "pet: 无交互超时入睡 + 交互唤醒",
     using namespace module::pet;
     auto r = parsePetSkinJson(kM2SkinJson);
     DOCTEST_CHECK(r.isOk());
-    const PetSkin& skin = r.unsafeValue();
+    const PetSkin& skin = r.value();
     PetAnimation anim;
     // 未到阈值不入睡
     anim.considerSleep(kSleepAfterSeconds - 1.0, skin);
@@ -394,7 +394,7 @@ REGISTER_TEST(pet_anim_sleep_cycle, "pet: 无交互超时入睡 + 交互唤醒",
     DOCTEST_CHECK(anim.state == PetAnimState::Idle);
     DOCTEST_CHECK_EQ(anim.currentPath(skin).filename().string(), "f0.png");
     // 无 sleep 帧的皮肤永不入睡（睡了也看不出来）
-    const PetSkin noSleepSkin = parsePetSkinJson(kValidSkinJson).unsafeValue();
+    const PetSkin noSleepSkin = parsePetSkinJson(kValidSkinJson).value();
     PetAnimation noSleepAnim;
     noSleepAnim.considerSleep(kSleepAfterSeconds * 10.0, noSleepSkin);
     DOCTEST_CHECK(noSleepAnim.state == PetAnimState::Idle);
@@ -405,7 +405,7 @@ REGISTER_TEST(pet_anim_typing, "pet: typing 态进出 + 帧回落 + 优先级", 
     using namespace module::pet;
     auto r = parsePetSkinJson(kM2SkinJson);
     DOCTEST_CHECK(r.isOk());
-    const PetSkin& skin = r.unsafeValue();
+    const PetSkin& skin = r.value();
     PetAnimation anim;
     anim.setStreaming(true, skin);
     DOCTEST_CHECK(anim.state == PetAnimState::Typing);
@@ -428,7 +428,7 @@ REGISTER_TEST(pet_anim_typing, "pet: typing 态进出 + 帧回落 + 优先级", 
     sleeper.setStreaming(true, skin);
     DOCTEST_CHECK(sleeper.state == PetAnimState::Typing);
     // 无 typing 帧的皮肤：状态语义仍在，视觉回落 idle 帧
-    const PetSkin plainSkin = parsePetSkinJson(kValidSkinJson).unsafeValue();
+    const PetSkin plainSkin = parsePetSkinJson(kValidSkinJson).value();
     PetAnimation plain;
     plain.setStreaming(true, plainSkin);
     DOCTEST_CHECK(plain.state == PetAnimState::Typing);
@@ -444,7 +444,7 @@ REGISTER_TEST(pet_anim_proxy_stats_linkage, "pet: proxy_stats 活动流驱动 ty
     core::proxy_stats::setTestClock([&nowMs] { return nowMs; });
     auto r = parsePetSkinJson(kM2SkinJson);
     DOCTEST_CHECK(r.isOk());
-    const PetSkin& skin = r.unsafeValue();
+    const PetSkin& skin = r.value();
     // 模拟 UI 层 onTimer：读快照 activeStreams → setStreaming
     auto activeStreams = [] {
         return core::proxy_stats::snapshot().activeStreams;
@@ -496,18 +496,18 @@ REGISTER_TEST(pet_phrase_table, "pet: 短语表皮肤语料优先 + 内置回退
     using namespace module::pet;
     auto r = parsePetSkinJson(kM2SkinJson);
     DOCTEST_CHECK(r.isOk());
-    DOCTEST_CHECK_EQ(r.unsafeValue().phrases.size(), static_cast<size_t>(2));
-    DOCTEST_CHECK_EQ(phraseTable(r.unsafeValue()).size(), static_cast<size_t>(2));
-    DOCTEST_CHECK_EQ(phraseTable(r.unsafeValue())[0], "你好呀");
+    DOCTEST_CHECK_EQ(r.value().phrases.size(), static_cast<size_t>(2));
+    DOCTEST_CHECK_EQ(phraseTable(r.value()).size(), static_cast<size_t>(2));
+    DOCTEST_CHECK_EQ(phraseTable(r.value())[0], "你好呀");
     // 无 phrases 皮肤 → 内置语料（非空，换肤可换性格）
     auto plain = parsePetSkinJson(kValidSkinJson);
-    DOCTEST_CHECK(plain.unsafeValue().phrases.empty());
-    DOCTEST_CHECK(!phraseTable(plain.unsafeValue()).empty());
+    DOCTEST_CHECK(plain.value().phrases.empty());
+    DOCTEST_CHECK(!phraseTable(plain.value()).empty());
     // 非法 phrases 数组（非字符串成员）静默忽略 → 回退内置
     auto bad = parsePetSkinJson(
         "{\"phrases\":[42],\"states\":{\"idle\":[\"f.png\"]}}");
     DOCTEST_CHECK(bad.isOk());
-    DOCTEST_CHECK(bad.unsafeValue().phrases.empty());
+    DOCTEST_CHECK(bad.value().phrases.empty());
     return true;
 });
 
@@ -755,7 +755,7 @@ REGISTER_TEST(pet_skin_parse_m2_states, "pet: pet.json sleep/typing 帧解析", 
     using namespace module::pet;
     auto r = parsePetSkinJson(kM2SkinJson);
     DOCTEST_CHECK(r.isOk());
-    const PetSkin& skin = r.unsafeValue();
+    const PetSkin& skin = r.value();
     DOCTEST_CHECK_EQ(skin.sleepFrames.size(), static_cast<size_t>(3));
     DOCTEST_CHECK_EQ(skin.typingFrames.size(), static_cast<size_t>(2));
     DOCTEST_CHECK_EQ(skin.sleepFrames[2], "s2.png");
@@ -765,7 +765,7 @@ REGISTER_TEST(pet_skin_parse_m2_states, "pet: pet.json sleep/typing 帧解析", 
     DOCTEST_CHECK_EQ(&stateFrames(skin, PetAnimState::Typing),
                      &skin.typingFrames);
     DOCTEST_CHECK_EQ(&stateFrames(skin, PetAnimState::Idle), &skin.idleFrames);
-    const PetSkin plainSkin = parsePetSkinJson(kValidSkinJson).unsafeValue();
+    const PetSkin plainSkin = parsePetSkinJson(kValidSkinJson).value();
     DOCTEST_CHECK_EQ(&stateFrames(plainSkin, PetAnimState::Sleep),
                      &plainSkin.idleFrames);  // 无 sleep 帧 → idle
     return true;
@@ -777,7 +777,7 @@ REGISTER_TEST(pet_default_skin_m2_frames, "pet: 占位皮肤含 M2 帧 + 旧版�
     removeTreeQuietly(dir);
     auto r = ensureDefaultSkin(dir);
     DOCTEST_CHECK_MESSAGE(r.isOk(), r.isFail() ? r.errorMessage() : "");
-    const PetSkin& skin = r.unsafeValue();
+    const PetSkin& skin = r.value();
     DOCTEST_CHECK(skin.sleepFrames.size() >= 3);
     DOCTEST_CHECK(skin.typingFrames.size() >= 2);
     DOCTEST_CHECK(!skin.phrases.empty());
@@ -790,7 +790,7 @@ REGISTER_TEST(pet_default_skin_m2_frames, "pet: 占位皮肤含 M2 帧 + 旧版�
     // 幂等：新版直接加载（帧数不变）
     auto again = ensureDefaultSkin(dir);
     DOCTEST_CHECK(again.isOk());
-    DOCTEST_CHECK_EQ(again.unsafeValue().sleepFrames.size(),
+    DOCTEST_CHECK_EQ(again.value().sleepFrames.size(),
                      skin.sleepFrames.size());
     // 旧版内置皮肤（缺 M2 帧，source 是内置标记）→ 重新生成升级
     removeTreeQuietly(dir);
@@ -802,7 +802,7 @@ REGISTER_TEST(pet_default_skin_m2_frames, "pet: 占位皮肤含 M2 帧 + 旧版�
     }
     auto upgraded = ensureDefaultSkin(dir);
     DOCTEST_CHECK(upgraded.isOk());
-    DOCTEST_CHECK(!upgraded.unsafeValue().sleepFrames.empty());
+    DOCTEST_CHECK(!upgraded.value().sleepFrames.empty());
     // 用户替换过的皮肤（source 非内置标记）缺 M2 帧也原样保留
     removeTreeQuietly(dir);
     std::filesystem::create_directories(dir);
@@ -813,8 +813,8 @@ REGISTER_TEST(pet_default_skin_m2_frames, "pet: 占位皮肤含 M2 帧 + 旧版�
     }
     auto kept = ensureDefaultSkin(dir);
     DOCTEST_CHECK(kept.isOk());
-    DOCTEST_CHECK(kept.unsafeValue().sleepFrames.empty());
-    DOCTEST_CHECK_EQ(kept.unsafeValue().idleFrames.size(), static_cast<size_t>(1));
+    DOCTEST_CHECK(kept.value().sleepFrames.empty());
+    DOCTEST_CHECK_EQ(kept.value().idleFrames.size(), static_cast<size_t>(1));
     removeTreeQuietly(dir);
     return true;
 });
@@ -841,7 +841,7 @@ REGISTER_TEST(pet_builtin_skins, "pet: 两款内置皮肤（四态帧/互异/发
         auto r = loadSkin(root / name);
         DOCTEST_CHECK_MESSAGE(r.isOk(), r.isFail() ? r.errorMessage() : name);
         if (r.isOk()) {
-            skins.push_back(std::move(r.unsafeValue()));
+            skins.push_back(std::move(r.value()));
         }
     }
     DOCTEST_CHECK_EQ(skins.size(), static_cast<size_t>(2));
@@ -898,7 +898,7 @@ REGISTER_TEST(pet_builtin_skins, "pet: 两款内置皮肤（四态帧/互异/发
     DOCTEST_CHECK_EQ(again.size(), static_cast<size_t>(2));
     auto replaced = loadSkin(root / "robot");
     DOCTEST_CHECK(replaced.isOk());
-    DOCTEST_CHECK_EQ(replaced.unsafeValue().idleFrames.size(), static_cast<size_t>(1));
+    DOCTEST_CHECK_EQ(replaced.value().idleFrames.size(), static_cast<size_t>(1));
     return true;
 });
 
@@ -1165,8 +1165,8 @@ REGISTER_TEST(pet_skin_frame_name_traversal, "pet: 帧名路径穿越拒绝（�
         "{\"states\":{\"idle\":[\"ok.png\"],\"poked\":[\"../x.png\"]}}";
     const auto pokedResult = module::pet::parsePetSkinJson(pokedJson);
     DOCTEST_CHECK(pokedResult.isOk());
-    DOCTEST_CHECK(pokedResult.unsafeValue().pokedFrames.empty());
-    DOCTEST_CHECK_EQ(pokedResult.unsafeValue().frames(true).size(),
+    DOCTEST_CHECK(pokedResult.value().pokedFrames.empty());
+    DOCTEST_CHECK_EQ(pokedResult.value().frames(true).size(),
                      static_cast<size_t>(1));
     // phrases 是展示文本不是路径：含路径字符不拖垮解析
     const std::string phraseJson =
@@ -1174,7 +1174,7 @@ REGISTER_TEST(pet_skin_frame_name_traversal, "pet: 帧名路径穿越拒绝（�
         "\"phrases\":[\"走之前去C:/Downloads拿东西\",\"嗯……/../没什么\"]}";
     const auto phraseResult = module::pet::parsePetSkinJson(phraseJson);
     DOCTEST_CHECK(phraseResult.isOk());
-    DOCTEST_CHECK_EQ(phraseResult.unsafeValue().phrases.size(),
+    DOCTEST_CHECK_EQ(phraseResult.value().phrases.size(),
                      static_cast<size_t>(2));
     return true;
 });
@@ -1496,7 +1496,7 @@ REGISTER_TEST(pet_phrase_randomized, "pet: 气泡短语随机化（64 次抽样�
     using namespace module::pet;
     auto parsed = parsePetSkinJson(kM2SkinJson);
     DOCTEST_REQUIRE(parsed.isOk());
-    const PetSkin& skin = parsed.unsafeValue();
+    const PetSkin& skin = parsed.value();
     DOCTEST_REQUIRE(skin.phrases.size() >= static_cast<size_t>(2));
 
     std::set<std::string> seen;

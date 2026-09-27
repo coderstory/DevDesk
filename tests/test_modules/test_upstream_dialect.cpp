@@ -484,7 +484,7 @@ REGISTER_TEST(dialect_streaming_path_applies_dialect,
 
     auto r = module::claude::sendStreamingClaude(req, p);
     DOCTEST_REQUIRE(r.isOk());
-    auto sr = std::move(r.unsafeValue());
+    auto sr = std::move(r.value());
     DOCTEST_REQUIRE(sr != nullptr);
     DOCTEST_REQUIRE(sr->waitForStatus(5000));
     DOCTEST_CHECK_EQ(sr->statusCode(), 200);
