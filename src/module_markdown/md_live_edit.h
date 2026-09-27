@@ -13,6 +13,7 @@
 //   - 块级 undo 栈（M5）——独立纯函数，加在本文件尾部即可，不改变下列签名的语义。
 // M4 已补：跨块 ↑↓ 目标 + 块边界删除（文档尾部），二者仍是纯字节算术。
 // M5 已补：块级 undo / redo 快照栈（文档最尾部，独立类，不改上面任何签名）。
+// M6 已补：光标跟随的「越界才拉」判定 + 目标偏移（同在最尾部，仍无状态）。
 #pragma once
 
 #include <cstddef>
@@ -174,5 +175,45 @@ private:
     int64_t lastPushMs_ = 0;
     bool groupOpen_ = false;   // 合并组是否还开着（push/markBoundary/undo 改它）
 };
+
+// ---- M6：滚动锚定与光标跟随（spec §3.3 / §4.7 / 已定决策 D-B「越界才拉」）----
+// 外层 scrollView 是实时态【唯一】滚动权威（活动块 input 内容贴合 → 内部无滚动、
+// 不吃滚轮，spec §2.1 证据）。本层只回答一个问题：「此刻要不要把视口拉一次，
+// 拉到哪」——纯算术、无状态、可单测（消费侧的状态机与容器重建见 markdown_module）。
+//
+// 判据（spec §3.3 原文「仅当 caret 落在视口之外时把 offset 拉到 caretDocY − 0.4H
+// （一次性，不逐帧强制）」）：caret 落在视口【安全带】内 → 不干预滚动；越出
+// （上方或下方）→ 拉一次，目标 = caretDocY − anchor × H。
+//
+// caretDocY 的消费侧口径（与本层无关，但决定入参含义）：
+//     caretDocY = syncMap_.blockTopY(活动块) + input inset + 光标显示行 × 行高
+// 显示行（软折行参与）由 InputModel::measureLines + lineIndexFor 现算，与 input
+// 组件内部的 cursorLine 同源 —— 逻辑行口径会在折行段落里系统性低估 caret 的 y，
+// 恰是「块底部连续打字」最需要跟手的场景（spec §8.3 手工点验 ③）。
+inline constexpr float kMdLiveFollowTopRatio = 0.15f;
+inline constexpr float kMdLiveFollowBottomRatio = 0.75f;
+inline constexpr float kMdLiveFollowAnchorRatio = 0.4f;
+
+struct MdLiveFollowDecision {
+    // 真值 = 「caret 越出安全带」（spec 的越界判据本身），不是「必须动滚动」
+    bool pull = false;
+    // pull = true 时的目标偏移（已钳 [0, maxOffset]）与 pull = false 时的
+    // 现状值（= currentOffset 钳进 [0, maxOffset]）——调用侧只在 pull 且
+    // offset != 记账值时才落地（no-op 抑制，见下）。
+    float offset = 0.0f;
+};
+
+// 越界判定 + 目标偏移。参数：
+//   caretDocY      光标在内容坐标的 y（见上）
+//   viewportH      外层 scrollView 视口高（≤ 0 = 无视口，不判不动）
+//   currentOffset  调用侧记账的当前偏移（滚轮写回 / 上次拉的目标）
+//   maxOffset      最大可滚动偏移（= 内容高 − 视口高，越界值按 0 处理）
+// 【no-op 抑制是调用侧的义务】：文档尾连续打字时 caret 恒贴在视口底部、每帧都会
+// 判「越界」，此时目标会被 maxOffset 钳成与记账值相同的数 —— 调用侧比较
+// offset == currentOffset 后不落地，才能满足「一次性，不逐帧强制」（否则每帧
+// 重建滚动容器 = 每帧全量重绘）。本函数不做该判断：它是「判据 + 目标」的纯算术，
+// 是否值得落地取决于调用侧的落地代价。
+MdLiveFollowDecision mdLiveFollowOffset(float caretDocY, float viewportH,
+                                        float currentOffset, float maxOffset);
 
 } // namespace module::markdown

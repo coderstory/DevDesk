@@ -4812,3 +4812,343 @@ REGISTER_TEST(md_module_live_boundary_undo,
     mod->onStop();
     return true;
 })
+
+// ==================== M6：滚动锚定与光标跟随（spec §3.3 / D-B「越界才拉」）====================
+// 判定与目标在纯函数层（test_md_live_edit 的 md_live_follow_*）钉死；本组验接线：
+//   · 越界才拉：点击 / 打字把 caret 落到视口安全带之外才动一次滚动，落点 = caret − 0.4H
+//   · 安全带内不干预：caret 已在视口里时滚动位置一动不动
+//   · 用户滚轮关跟随（spec §3.3）：滚轮后即便 caret 深深越界也不把视口拽回，
+//     直到下一次光标事件（打字 / 方向键 / 点击）才恢复跟随 —— 这是「越界才拉」
+//     与「用户优先」的交界，对应手工点验 ④。
+// 观测口径（诚实声明）：无头没有真实 Runtime 渲染 → 看不到内容位移。可观测的是
+//   scrollView 的【声明值】（scrollOffset / scrollMaxOffset = 模块记账经框架钳位
+//   后的那一版）与滚动容器代 id（框架缺口下"程序化拉一次"的唯一手段，见模块
+//   kLiveScrollIdGen0 注释）。真实滚动位移 / 观感 / 帧率由手工点验 ③④ 补（spec §8.3）。
+namespace {
+
+// 实时态 scrollView id（代 0 = 主档）
+constexpr const char* kLiveScrollId0 = "md.live.scroll";
+// 代 1（程序化拉一次时轮转；模块注释里有框架缺口说明）
+constexpr const char* kLiveScrollId1 = "md.live.scroll.g1";
+
+// 活动 input 的光标 y（与模块同一口径：块顶 + input inset 10 + 显示行 × 行高）。
+// 坐标系与 blockTopY 入参一致 —— 调用侧传【绝对页面坐标】的块顶（元素的 frame.y
+// 就是绝对坐标），若要内容坐标自己再减去 scrollView 的 frame.y（= 内容原点）。
+float liveCaretDocY(eui::Ui& ui, const std::string& blockText, float blockTopY) {
+    const auto& st = ui.state<MdInputState>("md.live.input");
+    using InputModel = components::input_detail::InputModel;
+    const auto* blocks = ui.find("md.live.blocks");
+    const float textW = (blocks != nullptr ? blocks->frame.width : 0.0f) - 20.0f;
+    const float fontSize = core::theme::editorFontSize();
+    const auto lines = InputModel::measureLines(blockText, "Microsoft YaHei",
+                                               fontSize, textW);
+    const int caretLine = InputModel::lineIndexFor(lines, st.cursor);
+    return blockTopY + 10.0f +
+           static_cast<float>(caretLine) * fontSize *
+               module::markdown::kInputLineHeightFactor;
+}
+
+} // namespace
+
+// M6 验收（spec §8.3 手工 ③ 的无头对应）：把 caret 落到视口下方的块 —— 越出下边界
+// → 下一帧拉一次到 caret − 0.4H（容器换代 id 才让框架采纳，见模块注释）；随后在
+// 安全带内打字不再动滚动（「一次性，不逐帧强制」）。
+REGISTER_TEST(md_module_live_scroll_follow_pull,
+              "markdown_module: 实时态光标跟随 越界才拉一次（M6，headless）", {
+    const std::string doc = tallNoteDoc("F", 40);
+    test_support::MdHeadlessEnv env(kDirPrefix, "livefollow", kDbName);
+    DOCTEST_REQUIRE(env.db != nullptr);
+    DOCTEST_REQUIRE(writeTextFile(env.dir / "follow.md", doc));
+
+    std::unique_ptr<::core::Module> mod(create_markdown_module());
+    mod->onStart();
+    eui::Screen screen;
+    screen.width = 1600.0f;
+    screen.height = 1000.0f;
+    MdLiveEnv e;
+    auto frame = [&](void) { e.frame([&](eui::Ui& u) { mod->compose(u, screen); }); };
+
+    frame();
+    DOCTEST_REQUIRE(openFirstNote(*e.ui));
+    frame();
+    DOCTEST_REQUIRE(e.ui->find(kEditorInputId) != nullptr);
+    DOCTEST_REQUIRE(cycleMode(mod.get()));   // → 实时
+    frame();
+
+    const auto* sv0 = e.ui->find(kLiveScrollId0);
+    DOCTEST_REQUIRE(sv0 != nullptr);
+    DOCTEST_REQUIRE(sv0->scrollMaxOffset > 200.0f);   // 高文档前提：可滚
+    DOCTEST_CHECK_EQ(sv0->scrollOffset, 0.0f);        // 进态归零
+    const float viewH = sv0->frame.height;
+
+    // 点一个在视口下界之外的块（内容坐标 y > 0.75H）：caret 越出下边界
+    const std::vector<int> sids = liveBlockSidsByY(*e.ui);
+    DOCTEST_REQUIRE(sids.size() >= 20);
+    const int deepSid = sids[sids.size() * 2 / 3];
+    const auto* deepWrap = e.ui->find("md.live.blk." + std::to_string(deepSid));
+    DOCTEST_REQUIRE(deepWrap != nullptr);
+    // 元素 frame 是【页面绝对坐标】，blocks 列顶 = scrollView 顶（offset 0 时）
+    // → 内容坐标 = 绝对 y − sv.y（本用例不模拟运行时位移，故该换算是稳定的）
+    const float contentOrigin = sv0->frame.y;
+    DOCTEST_REQUIRE_MESSAGE(
+        deepWrap->frame.y - contentOrigin > viewH * 0.75f,
+        "被测块须在视口安全带下方：块内容 y=" +
+            std::to_string(deepWrap->frame.y - contentOrigin) +
+            " 视口=" + std::to_string(viewH));
+    // 点块的第 2 行（块首行是块间空行）：落点在视口外 → 下一帧拉一次
+    DOCTEST_REQUIRE(clickLiveBlock(*e.ui, deepSid, 0.75f * deepWrap->frame.height));
+    frame();   // 定位帧：锚 + 换文本（本帧不评估，见 setLiveCursor 注释）
+    // 定位帧不动滚动、不换代（评估帧才动作）
+    DOCTEST_CHECK(e.ui->find(kLiveScrollId0) != nullptr);
+    DOCTEST_CHECK(e.ui->find(kLiveScrollId1) == nullptr);
+    DOCTEST_CHECK_EQ(e.ui->find(kLiveScrollId0)->scrollOffset, 0.0f);
+    // 活动块顶（几何表 blockTopY 的口径）：定位帧后重读 —— 定位前活动块是首块，
+    // 它的包裹高是 input 贴合高（≠ 几何表 H_k），其下各块的列内累计会随之位移
+    const auto* actWrap = e.ui->find("md.live.blk." + std::to_string(deepSid));
+    DOCTEST_REQUIRE(actWrap != nullptr);
+    const float caretY = liveCaretDocY(*e.ui, e.ui->state<MdInputState>(
+                                                        "md.live.input").text,
+                                      actWrap->frame.y) -
+                         contentOrigin;   // → 内容坐标
+
+    frame();   // 跟随评估帧：越界 → 拉一次
+    // ① 容器换代 id（框架缺口下"程序化改滚动位置"的唯一手段，见模块注释）
+    DOCTEST_CHECK(e.ui->find(kLiveScrollId0) == nullptr);
+    const auto* sv1 = e.ui->find(kLiveScrollId1);
+    DOCTEST_REQUIRE(sv1 != nullptr);
+    // ② 落点 = caret − 0.4H（目标未被 maxOffset 钳时的精确值）
+    const float expected = caretY - module::markdown::kMdLiveFollowAnchorRatio * viewH;
+    DOCTEST_CHECK_MESSAGE(std::fabs(sv1->scrollOffset - expected) <= 2.0f,
+                          "拉后偏移 " + std::to_string(sv1->scrollOffset) +
+                              " 期望 " + std::to_string(expected));
+    // ③ 判据闭环：拉完后 caret 落在视口安全带内（[0.15H, 0.75H]）
+    const float rel = caretY - sv1->scrollOffset;
+    DOCTEST_CHECK_MESSAGE(
+        rel >= module::markdown::kMdLiveFollowTopRatio * viewH &&
+            rel <= module::markdown::kMdLiveFollowBottomRatio * viewH,
+        "拉后 caret 视口相对位置 " + std::to_string(rel) + " 不在安全带内");
+
+    // ④ 安全带内不干预：再走一帧（caret 没动）→ 既不换代也不改偏移
+    const float pulledOffset = sv1->scrollOffset;   // 元素每帧重建：存值不存指针
+    frame();
+    DOCTEST_CHECK(e.ui->find(kLiveScrollId1) != nullptr);
+    DOCTEST_CHECK_EQ(e.ui->find(kLiveScrollId1)->scrollOffset, pulledOffset);
+    // ⑤ 打字也在安全带内 → 不拉（「一次性，不逐帧强制」）
+    DOCTEST_REQUIRE(typeIntoLiveInput(*e.ui, "X"));
+    frame();
+    DOCTEST_CHECK(e.ui->find(kLiveScrollId1) != nullptr);
+    DOCTEST_CHECK_EQ(e.ui->find(kLiveScrollId1)->scrollOffset, pulledOffset);
+    DOCTEST_CHECK(e.ui->state<MdInputState>("md.live.input").text.find('X') !=
+                  std::string::npos);
+
+    mod->onStop();
+    return true;
+})
+
+// M6 验收（spec §8.3 手工 ④ 的无头对应）：用户先滚动、再打字 ——
+//   · 滚轮（框架 setScrollOffset → scrollView.onChange）关跟随：caret 再越界也不拽回
+//     （「其余时候不干预滚动」）；
+//   · 下一次光标事件（打字）恢复跟随 → 越界 → 拉一次把 caret 带回安全带。
+REGISTER_TEST(md_module_live_scroll_follow_wheel_disarms,
+              "markdown_module: 实时态用户滚动关跟随 打字才回拉（M6，headless）", {
+    const std::string doc = tallNoteDoc("G", 40);
+    test_support::MdHeadlessEnv env(kDirPrefix, "livefollowwheel", kDbName);
+    DOCTEST_REQUIRE(env.db != nullptr);
+    DOCTEST_REQUIRE(writeTextFile(env.dir / "wheel.md", doc));
+
+    std::unique_ptr<::core::Module> mod(create_markdown_module());
+    mod->onStart();
+    eui::Screen screen;
+    screen.width = 1600.0f;
+    screen.height = 1000.0f;
+    MdLiveEnv e;
+    auto frame = [&](void) { e.frame([&](eui::Ui& u) { mod->compose(u, screen); }); };
+
+    frame();
+    DOCTEST_REQUIRE(openFirstNote(*e.ui));
+    frame();
+    DOCTEST_REQUIRE(e.ui->find(kEditorInputId) != nullptr);
+    DOCTEST_REQUIRE(cycleMode(mod.get()));   // → 实时
+    frame();
+
+    const auto* sv0 = e.ui->find(kLiveScrollId0);
+    DOCTEST_REQUIRE(sv0 != nullptr);
+    DOCTEST_REQUIRE(sv0->scrollMaxOffset > 200.0f);
+    const float viewH = sv0->frame.height;
+    const float contentOrigin = sv0->frame.y;
+
+    // 元素每帧重建、stableId 也可能随编辑重继承 → 一律按【块序号】现取当下元素
+    auto wrapAt = [&](size_t ordinal) -> const core::dsl::Element* {
+        const std::vector<int> cur = liveBlockSidsByY(*e.ui);
+        if (ordinal >= cur.size()) return nullptr;
+        return e.ui->find("md.live.blk." + std::to_string(cur[ordinal]));
+    };
+    // caret 的内容坐标 y（与模块同口径：块顶 + inset + 显示行 × 行高）
+    auto caretContentY = [&](size_t ordinal) -> float {
+        const core::dsl::Element* w = wrapAt(ordinal);
+        if (w == nullptr) return -1.0f;
+        return liveCaretDocY(*e.ui,
+                             e.ui->state<MdInputState>("md.live.input").text,
+                             w->frame.y) -
+               contentOrigin;
+    };
+
+    // 把 caret 点到视口下方的块（越界）→ 跟随评估帧拉一次
+    const std::vector<int> sids0 = liveBlockSidsByY(*e.ui);
+    DOCTEST_REQUIRE(sids0.size() >= 20);
+    const size_t deepOrdinal = sids0.size() * 2 / 3;
+    const auto* deepWrap = wrapAt(deepOrdinal);
+    DOCTEST_REQUIRE(deepWrap != nullptr);
+    DOCTEST_REQUIRE(clickLiveBlock(*e.ui, sids0[deepOrdinal],
+                                   0.75f * deepWrap->frame.height));
+    frame();
+    frame();
+    const auto* svG1 = e.ui->find(kLiveScrollId1);
+    DOCTEST_REQUIRE(svG1 != nullptr);
+    DOCTEST_REQUIRE(svG1->scrollOffset > 0.0f);   // 跟随拉过一次
+
+    // ① 用户滚轮回到顶部：关跟随（spec §3.3「用户滚轮 → onChange 写回并置 false」）
+    DOCTEST_REQUIRE(svG1->onScrollOffsetChanged != nullptr);
+    svG1->onScrollOffsetChanged(0.0f);
+    frame();
+    DOCTEST_REQUIRE(e.ui->find(kLiveScrollId1) != nullptr);
+    DOCTEST_CHECK_EQ(e.ui->find(kLiveScrollId1)->scrollOffset, 0.0f);
+
+    // ② caret 此刻远在视口下方（越界），但跟随已关 → 连续多帧都不拽回
+    const float caretY = caretContentY(deepOrdinal);
+    DOCTEST_REQUIRE_MESSAGE(caretY > viewH, "caret 须越出视口下缘（实测 " +
+                                                std::to_string(caretY) + "）");
+    for (int i = 0; i < 3; ++i) {
+        frame();
+        DOCTEST_REQUIRE(e.ui->find(kLiveScrollId1) != nullptr);
+        DOCTEST_CHECK_EQ(e.ui->find(kLiveScrollId1)->scrollOffset, 0.0f);
+    }
+
+    // ③ 打字 = 光标事件 → 恢复跟随 → 越界才拉：一次回到 caret − 0.4H
+    DOCTEST_REQUIRE(typeIntoLiveInput(*e.ui, "X"));
+    frame();
+    const auto* svBack = e.ui->find(kLiveScrollId0);   // 又换代（拉 = 换容器 id）
+    DOCTEST_REQUIRE(svBack != nullptr);
+    const float caretY2 = caretContentY(deepOrdinal);
+    DOCTEST_REQUIRE(caretY2 > 0.0f);
+    const float expected =
+        caretY2 - module::markdown::kMdLiveFollowAnchorRatio * viewH;
+    DOCTEST_CHECK_MESSAGE(std::fabs(svBack->scrollOffset - expected) <= 2.0f,
+                          "打字回拉后偏移 " + std::to_string(svBack->scrollOffset) +
+                              " 期望 " + std::to_string(expected));
+    mod->onStop();
+    return true;
+})
+
+// M6：caret 的 y 用【显示行】（软折行参与计数），不是逻辑行 ——
+// 折行段落里按逻辑行算会系统性低估 caret 的 y，恰是"块底部连续打字"最需要
+// 跟手的场景（spec §8.3 手工 ③）。用例把两种口径的差异做成可判定的下界：
+// 拉后目标必须比"逻辑行口径的期望值"至少高出半个折行高度。
+REGISTER_TEST(md_module_live_scroll_follow_wrapped_caret,
+              "markdown_module: 实时态折行段落 caret 按显示行跟随（M6，headless）", {
+    // 长段落在中间：30 段短段 → 1 段超长（软折行多行）→ 30 段短段（保证下方有
+    // 内容 → 拉的目标不会被 maxOffset 钳掉 → 能验精确值）
+    const std::string longLine = "W " + std::string(600, 'w');
+    std::string doc;
+    for (int i = 0; i < 30; ++i) doc += "head " + std::to_string(i) + "\n\n";
+    doc += longLine + "\n\n";
+    for (int i = 0; i < 30; ++i) doc += "tail " + std::to_string(i) + "\n\n";
+
+    test_support::MdHeadlessEnv env(kDirPrefix, "livefollowwrap", kDbName);
+    DOCTEST_REQUIRE(env.db != nullptr);
+    DOCTEST_REQUIRE(writeTextFile(env.dir / "wrap.md", doc));
+
+    std::unique_ptr<::core::Module> mod(create_markdown_module());
+    mod->onStart();
+    eui::Screen screen;
+    screen.width = 1600.0f;
+    screen.height = 1000.0f;
+    MdLiveEnv e;
+    auto frame = [&](void) { e.frame([&](eui::Ui& u) { mod->compose(u, screen); }); };
+
+    frame();
+    DOCTEST_REQUIRE(openFirstNote(*e.ui));
+    frame();
+    DOCTEST_REQUIRE(e.ui->find(kEditorInputId) != nullptr);
+    DOCTEST_REQUIRE(cycleMode(mod.get()));   // → 实时
+    frame();
+
+    const auto* sv0 = e.ui->find(kLiveScrollId0);
+    DOCTEST_REQUIRE(sv0 != nullptr);
+    DOCTEST_REQUIRE(sv0->scrollMaxOffset > 200.0f);
+    const float viewH = sv0->frame.height;
+    const float contentOrigin = sv0->frame.y;
+    const float fontSize = core::theme::editorFontSize();
+
+    // 长段落 = 第 30 块（0 起：30 个短段之后）；先点它 → 它成活动块
+    const std::vector<int> sids = liveBlockSidsByY(*e.ui);
+    DOCTEST_REQUIRE(sids.size() >= 40);
+    const int wrappedSid = sids[30];
+    const auto* wrap = e.ui->find("md.live.blk." + std::to_string(wrappedSid));
+    DOCTEST_REQUIRE(wrap != nullptr);
+    const float wrapTop = wrap->frame.y - contentOrigin;
+    DOCTEST_REQUIRE_MESSAGE(wrapTop > viewH * 0.75f, "长段落须在视口下方");
+    DOCTEST_REQUIRE(clickLiveBlock(*e.ui, wrappedSid, wrap->frame.height - 2.0f));
+    frame();   // 定位帧
+    const auto* act = e.ui->find("md.live.blk." + std::to_string(wrappedSid));
+    DOCTEST_REQUIRE(act != nullptr);
+    const std::string blockText = e.ui->state<MdInputState>("md.live.input").text;
+    // 块文本 = 段前空行 + 长段落（分块器把块间空行并入下一块头部）
+    DOCTEST_REQUIRE_MESSAGE(blockText.find(longLine) != std::string::npos,
+                            "活动块文本应包含长段落：[" + blockText.substr(0, 40) +
+                                "...]");
+    const float blockTop = act->frame.y - contentOrigin;
+    // 点击只把 caret 放到【源码行的行首】（P3-⑤ 逐行跳转语义）——折行后的位置
+    // 要落在段内后段，故直接把块内光标推到段末（等价于用户在段内按 End / 一路
+    // 打字到折行处；与其它 live 用例直接驱动 InputState 同一口径）。
+    // 取 size() − 1 而不是 size()：块尾字节 == 下一块块首（块边界字节归后一块，
+    // spec D3 口径），落到那一字节会把活动块切换成下一块（光标回到 0）。
+    {
+        auto& st = e.ui->state<MdInputState>("md.live.input");
+        st.cursor = static_cast<int>(blockText.size()) - 1;
+        st.selectionStart = st.cursor;
+        st.selectionEnd = st.cursor;
+    }
+    frame();   // 光标事件帧（锚重推 + 跟随恢复；安全带判定在下一帧见分晓）
+
+    // 期望口径（测试侧独立算）：显示行号由组件同源函数给出，行高 = 字号 × 1.2
+    using InputModel = components::input_detail::InputModel;
+    DOCTEST_REQUIRE(e.ui->find("md.live.blocks") != nullptr);
+    const float textW = e.ui->find("md.live.blocks")->frame.width - 20.0f;
+    const auto lines = InputModel::measureLines(blockText, "Microsoft YaHei",
+                                                fontSize, textW);
+    DOCTEST_REQUIRE(lines.size() >= 3);   // 前提：确实折行了（否则本用例无意义）
+    const int caretLine =
+        InputModel::lineIndexFor(lines, e.ui->state<MdInputState>("md.live.input").cursor);
+    DOCTEST_REQUIRE(caretLine >= 1);
+    const float caretY = blockTop + 10.0f + static_cast<float>(caretLine) *
+                                             fontSize * module::markdown::kInputLineHeightFactor;
+
+    frame();   // 跟随评估帧
+    const auto* sv1 = e.ui->find(kLiveScrollId1);
+    DOCTEST_REQUIRE(sv1 != nullptr);
+    const float expected =
+        caretY - module::markdown::kMdLiveFollowAnchorRatio * viewH;
+    DOCTEST_CHECK_MESSAGE(std::fabs(sv1->scrollOffset - expected) <= 2.0f,
+                          "折行 caret 拉后偏移 " + std::to_string(sv1->scrollOffset) +
+                              " 期望 " + std::to_string(expected));
+    // 证伪逻辑行口径：按逻辑行（该段只有 1 个 '\n' → 行 0/1）算的期望值必须
+    // 明显不同于实际落点 —— 两个口径的差 = (显示行 − 逻辑行) × 行高
+    const float logicalExpected =
+        blockTop + 10.0f + fontSize * module::markdown::kInputLineHeightFactor -
+        module::markdown::kMdLiveFollowAnchorRatio * viewH;
+    DOCTEST_CHECK_MESSAGE(
+        sv1->scrollOffset - logicalExpected >=
+            0.5f * static_cast<float>(caretLine) * fontSize *
+                module::markdown::kInputLineHeightFactor,
+        "落点未体现显示行：实际 " + std::to_string(sv1->scrollOffset) +
+            " 逻辑行口径 " + std::to_string(logicalExpected) + " 显示行数 " +
+            std::to_string(lines.size()));
+    // 拉完 caret 落在安全带内
+    const float rel = caretY - sv1->scrollOffset;
+    DOCTEST_CHECK(rel >= module::markdown::kMdLiveFollowTopRatio * viewH &&
+                  rel <= module::markdown::kMdLiveFollowBottomRatio * viewH);
+
+    mod->onStop();
+    return true;
+})
