@@ -222,7 +222,10 @@ std::optional<int64_t> getOverdueTaskCount() {
     if (stats.isFail()) {
         return std::nullopt;
     }
-    return stats.value().overdueTodos;
+    // .value() 的错误分支是 throw，而本文件在非 Debug 档被 EUI 的
+    // -fno-exceptions genex 编译（Release 档连编译都过不了："exception handling
+    // disabled"）——按 main.cpp:81 的既有约定走 unsafeValue()，上面已提前 return
+    return stats.unsafeValue().overdueTodos;
 }
 
 // 桌宠气泡内容源③（M2 §4.5，产品审计 [18]）：代理事件桥。读 ClaudeService
