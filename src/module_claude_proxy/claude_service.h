@@ -48,7 +48,20 @@ struct Profile {
     std::string model;          // 默认模型（旧列；语义降级为 default 槽位未配置时的 fallback）
     std::string modelsConfigJson; // 6 槽位模型配置 JSON 原文（空串 = 未配置；provider-config §4.1）
     std::string extraEnvJson;   // 额外 env 键值 JSON 原文（空串 = 未配置）
+    int64_t sharedConfigId = 0; // 绑定共享配置片段 id（0 = 未绑定；0..1、不嵌套）
     bool isActive = false;
+    std::time_t createdAt = 0;
+    std::time_t updatedAt = 0;
+};
+
+// 共享配置片段（2026-09-27 shared-config-and-failover 设计 §2.1/§2.2）：
+// 纯 env 装饰层——只有名字 + extra_env，**不含 base_url / 密钥**，故不进路由、
+// 不进凭据链（Keychain 零交互、is_active 唯一性零影响）；一个 profile 绑定
+// 0..1 个片段，不嵌套（片段不引用片段）
+struct SharedConfig {
+    int64_t id = 0;
+    std::string name;
+    std::string extraEnvJson;   // 与 Profile::extraEnvJson 同构同语义（空串 = 未配置）
     std::time_t createdAt = 0;
     std::time_t updatedAt = 0;
 };
@@ -79,11 +92,14 @@ public:
     // 「启动代理」不再 503）。已有激活 Profile 时不抢占，返回值 isActive=false，
     // UI 据此分 toast 文案。默认 false：既有调用方与单测行为不变。
     // 自动激活走 setActiveProfile（代理运行中会同步接管 settings.json）。
+    // sharedConfigId：建时直接绑定的共享片段 id（0 = 不绑定；与表单「新建」路
+    // 径一致——先建后 update 会留下一次「未绑片段」的中间态，故走尾部默认参数）
     core::Result<Profile> createProfile(const std::string& name,
                                        const std::string& baseUrl,
                                        const std::string& apiKey,
                                        const std::string& model,
-                                       bool activateIfNoneActive = false);
+                                       bool activateIfNoneActive = false,
+                                       int64_t sharedConfigId = 0);
 
     // 更新 profile（profile.id 必须已存在）
     //   - 若 profile.apiKeyPlain 非空，则覆盖 Keychain
@@ -120,7 +136,31 @@ public:
     // fail，不建无 key 的副本），**副本不激活**（S-4）。
     // 二段补写（models_config / extra_env）失败 → best-effort 删除刚建的副本
     // 回滚：回滚成功 = fail 且零残留；回滚失败 = fail 且文案注明不完整副本 id
+    // shared_config_id 一并复制（属于配置，设计 §2.6）
     core::Result<Profile> duplicateProfile(int64_t srcId);
+
+    // ---- 共享配置片段（设计 §2.1/§2.6）----
+    // 生命周期语义（改动当场生效，避免 cc-switch 的「改了片段不生效」头号 bug）：
+    //   改（改名 / 改 env）→ 绑定它的 profile 下次接管生效；代理在跑且属激活
+    //     profile → 立即 re-takeover
+    //   删 → 同事务解绑绑定它的 profile（shared_config_id = 0，不留悬空 id），
+    //     随后若代理在跑且激活 profile 在其中 → re-takeover
+    //   解绑（经 updateProfile 把 sharedConfigId 置 0）→ 同款当场生效，同名键
+    //     回落 profile 自身值（片段值从不写进 profile 行）
+    core::Result<std::vector<SharedConfig>> listSharedConfigs();
+    core::Result<SharedConfig> createSharedConfig(const std::string& name,
+                                                 const std::string& extraEnvJson);
+    core::Result<void> updateSharedConfig(const SharedConfig& config);
+    core::Result<void> deleteSharedConfig(int64_t id);
+
+    // 片段冻结键集（G10，设计 §2.4）：profile 所绑片段 extra_env 的全部键
+    //（别名归一后，与写进 live 的键形一致）。未绑定 / 片段已删 / JSON 非法 →
+    // 空集（读路径容错）
+    core::Result<std::vector<std::string>> sharedEnvKeysFor(int64_t profileId);
+
+    // 立即用当前激活 profile（含所绑片段）重写 settings.json（设计 §2.5：片段
+    // 保存后必须当场生效）。通道未注入 / 接管开关关 → no-op 成功
+    core::Result<void> reapplyTakeOver() { return syncTakeOver(); }
 
     // ---- 连通性测试 ----
 
@@ -275,6 +315,16 @@ public:
 private:
     // 从一行 SqlRow 构造 Profile（不含 apiKeyPlain）
     core::Result<Profile> rowToProfile(const core::data::SqlRow& row) const;
+
+    // 从一行 SqlRow 构造 SharedConfig
+    core::Result<SharedConfig> rowToSharedConfig(const core::data::SqlRow& row) const;
+
+    // 片段 extra_env 原文（0 / 片段不存在 / 读失败 → 空串 = 未绑定；读路径容错，
+    // 悬空 id 退化成「未绑定」而不是让接管/G10 失败）
+    std::string sharedExtraEnvJsonFor(int64_t sharedConfigId) const;
+
+    // 片段存在性校验（update / delete 前置，缺失 → NotFound）
+    core::Result<void> requireSharedConfigExists(int64_t id) const;
 
     static std::string sha256HexPrefix(const std::string& s);
     static std::string makeApiKeyHint(const std::string& apiKey);

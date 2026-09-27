@@ -37,7 +37,7 @@ std::set<std::string> listTables(core::data::SqliteDb& db) {
 
 } // namespace
 
-REGISTER_TEST(migrate_creates_all_tables, "Database: migrate creates all 7 tables", {
+REGISTER_TEST(migrate_creates_all_tables, "Database: migrate creates all 8 tables", {
     auto path = tempDbPath("create");
     // 预清理：无异常版本（Windows 上 remove 失败不应炸掉整个套件）
     std::error_code ec;
@@ -51,7 +51,7 @@ REGISTER_TEST(migrate_creates_all_tables, "Database: migrate creates all 7 table
 
         auto tables = listTables(r.value().db());
 
-        // 7 个应用表（用 insert 避免在宏实参里写逗号，触发 C 预处理器 arg-split）
+        // 8 个应用表（用 insert 避免在宏实参里写逗号，触发 C 预处理器 arg-split）
         std::set<std::string> expected;
         expected.insert("markdown_index");
         expected.insert("markdown_tags");
@@ -60,6 +60,7 @@ REGISTER_TEST(migrate_creates_all_tables, "Database: migrate creates all 7 table
         expected.insert("todo_tasks");
         expected.insert("claude_profiles");
         expected.insert("claude_call_logs");
+        expected.insert("claude_shared_configs");  // v6 共享配置片段
         for (const auto& t : expected) {
             bool found = tables.count(t) > 0;
             DOCTEST_CHECK(found);
@@ -205,7 +206,8 @@ REGISTER_TEST(migrate_call_logs_usage_columns,
         DOCTEST_REQUIRE(r.isOk());
         DOCTEST_REQUIRE(r.value().migrate().isOk());
         auto& db = r.value().db();
-        DOCTEST_CHECK_EQ(db.schemaVersion(), 5);
+        // v6（共享配置片段）已执行：全量迁移后 schema_version = 6
+        DOCTEST_CHECK_EQ(db.schemaVersion(), 6);
 
         auto prep = db.prepare(
             "SELECT status_code, latency_ms, request_bytes, response_bytes, "
@@ -249,6 +251,73 @@ REGISTER_TEST(migrate_call_logs_usage_columns,
         DOCTEST_CHECK_EQ(r2.value()[0].getInt64("cache_read_tokens").value(), 2);
         DOCTEST_CHECK_EQ(r2.value()[0].getInt64("cache_write_tokens").value(), 5);
         DOCTEST_CHECK_EQ(r2.value()[0].getInt64("first_event_ms").value(), 123);
+    } // Database 在此析构（关闭 sqlite 句柄）
+
+    std::filesystem::remove(path, ec);
+    return true;
+})
+
+// migration v6（共享配置片段）：旧库升级后新增 claude_shared_configs 表，且
+// claude_profiles.shared_config_id 默认 0（存量 profile 零迁移 = 未绑定）
+REGISTER_TEST(migrate_shared_configs_v6,
+              "migration v6: 旧库升级加片段表与 profile 绑定列", {
+    auto path = tempDbPath("shared_cfg");
+    std::error_code ec;
+    std::filesystem::remove(path, ec);
+
+    // 手工构造 v5 旧库（只跑前 5 条 migration）+ 存量 profile 行
+    {
+        auto openR = core::data::SqliteDb::open(path);
+        DOCTEST_REQUIRE(openR.isOk());
+        auto& db = openR.value();
+        auto oldMigrations = core::migrations::all();
+        oldMigrations.resize(5);  // v1..v5
+        DOCTEST_REQUIRE(db.runMigrations(oldMigrations).isOk());
+
+        DOCTEST_REQUIRE(db.exec(
+            "INSERT INTO claude_profiles (id, name, base_url, api_key_hint, "
+            "api_key_check, keychain_account, model, is_active, created_at, "
+            "updated_at) VALUES (1, '旧供应商', 'https://old.example.com', "
+            "'sk-***abcd', 'deadbeef', 'claude:1', 'claude-3-5-haiku', 1, 0, 0)")
+                            .isOk());
+    } // 句柄关闭（Windows 文件锁）
+
+    // 重新打开 + 全量 migrate → v6 建表 + 加列
+    {
+        auto r = core::Database::open(path);
+        DOCTEST_REQUIRE(r.isOk());
+        DOCTEST_REQUIRE(r.value().migrate().isOk());
+        auto& db = r.value().db();
+        DOCTEST_CHECK_EQ(db.schemaVersion(), 6);
+
+        // 新表存在且可插入片段行
+        DOCTEST_REQUIRE(db.exec(
+            "INSERT INTO claude_shared_configs (name, extra_env, created_at, "
+            "updated_at) VALUES ('片段A', '{\"CLAUDE_CODE_MAX_OUTPUT_TOKENS\": "
+            "\"32000\"}', 0, 0)")
+                            .isOk());
+        // 存量 profile 零迁移：shared_config_id = 0（未绑定）
+        auto q = db.prepare(
+            "SELECT shared_config_id FROM claude_profiles WHERE id = 1");
+        DOCTEST_REQUIRE(q.isOk());
+        auto rows = q.value().fetchAll();
+        DOCTEST_REQUIRE_EQ(rows.value().size(), 1u);
+        DOCTEST_CHECK_EQ(rows.value()[0].getInt64("shared_config_id").value(), 0);
+
+        // 绑定可用（service 层 UPDATE 依赖该列存在）
+        DOCTEST_REQUIRE(db.exec(
+            "UPDATE claude_profiles SET shared_config_id = 1 WHERE id = 1")
+                            .isOk());
+        auto q2 = db.prepare(
+            "SELECT shared_config_id FROM claude_profiles WHERE id = 1");
+        DOCTEST_REQUIRE(q2.isOk());
+        auto r2 = q2.value().fetchAll();
+        DOCTEST_REQUIRE_EQ(r2.value().size(), 1u);
+        DOCTEST_CHECK_EQ(r2.value()[0].getInt64("shared_config_id").value(), 1);
+        // 片段名 UNIQUE（service 层把冲突映射成 AlreadyExists）
+        DOCTEST_CHECK(db.exec(
+            "INSERT INTO claude_shared_configs (name, extra_env, created_at, "
+            "updated_at) VALUES ('片段A', '', 0, 0)").isFail());
     } // Database 在此析构（关闭 sqlite 句柄）
 
     std::filesystem::remove(path, ec);

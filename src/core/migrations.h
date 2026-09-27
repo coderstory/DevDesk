@@ -190,6 +190,33 @@ inline const Migration kClaudeCallLogUsageColumns = {
     )"
 };
 
+// 共享配置片段（version 6，2026-09-27 shared-config-and-failover 设计 §2.1）
+//   - claude_shared_configs：**独立表**（name UNIQUE + extra_env，与
+//     claude_profiles.extra_env 同构同语义的 JSON 文本列，空串 = 未配置）
+//   - claude_profiles.shared_config_id：0 = 未绑定（0..1 绑定、不嵌套）
+// 为什么独立表而不是「特殊 profile」：claude_profiles 的每一行都被当成「可选路的
+// 上游」（is_active 唯一索引 / listProfiles / 自动激活 / 复制命名 / 孤儿密钥清理 /
+// 代理 getActiveProfile），塞一行没有 base_url/密钥的特殊行等于给这 6 条路径各加
+// 一个 kind 判断，漏判一次就把片段当供应商转发。
+// 为什么片段不含 base_url / 密钥：片段定位为纯 env 装饰层——不进路由、不进凭据链
+//（base_url 不进路由表、Keychain 零交互、is_active 唯一性零影响）。
+// 注意：ALTER TABLE ADD COLUMN 无 IF NOT EXISTS，靠 schema_version 版本号保证
+// 只执行一次（runMigrations 事务内，失败整体回滚）。
+inline const Migration kClaudeSharedConfigs = {
+    .version = 6,
+    .description = "claude shared config fragments (table + profile binding)",
+    .sql = R"(
+        CREATE TABLE IF NOT EXISTS claude_shared_configs (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT UNIQUE NOT NULL,
+            extra_env TEXT NOT NULL DEFAULT '',
+            created_at INTEGER NOT NULL,
+            updated_at INTEGER NOT NULL
+        );
+        ALTER TABLE claude_profiles ADD COLUMN shared_config_id INTEGER NOT NULL DEFAULT 0;
+    )"
+};
+
 // 所有 migrations 的权威列表（顺序敏感，必须按 version 升序）
 inline const std::vector<core::data::Migration>& all() {
     static const std::vector<core::data::Migration> kMigrations = {
@@ -198,6 +225,7 @@ inline const std::vector<core::data::Migration>& all() {
         kClaudeProviderConfigColumns,
         kTodoColumnKind,
         kClaudeCallLogUsageColumns,
+        kClaudeSharedConfigs,
     };
     return kMigrations;
 }

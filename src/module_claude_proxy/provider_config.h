@@ -119,6 +119,10 @@ inline constexpr size_t kMaxImportTextBytes = 1u * 1024u * 1024u;
 //      变体，不生成）；name 空则 deriveDisplayName 派生
 //   5. extra_env 经 parseExtraEnv（非法则整体忽略，读路径容错）+ applyEnvAliases
 //      别名归一后平铺；与 1-4 冲突时 1-4 优先（导入数据可能带旧 BASE_URL/token）
+//   6. sharedExtraEnvJson（profile 所绑共享配置片段的 extra_env 原文，空串 =
+//      未绑定）叠在 profile 自身 extra_env **之上**（片段赢，设计 §2.3 优先级
+//      2 > 3）：冻结 = 该键值由片段单点决定，profile 的同名值不生效（行里保留，
+//      解绑后恢复生效）；片段键仍被 1-4 的托管键覆盖（优先级 1 最高）
 
 // 接管时写入 settings.json 的占位凭据（代理仅监听 127.0.0.1、无鉴权；
 // 真实上游 key 由代理转发时注入）
@@ -127,7 +131,7 @@ inline constexpr const char* kProxyAuthPlaceholder = "PROXY_MANAGED";
 std::map<std::string, std::string> buildProxyEnv(
     const std::string& modelsConfigJson, const std::string& legacyModel,
     const std::string& extraEnvJson,
-    int proxyPort);
+    int proxyPort, const std::string& sharedExtraEnvJson = "");
 
 // ---- 反向同步（settings.json env → profile，设计 §3.2/§3.3，M1/M2）----
 // 全部为纯函数（无 IO / 无 DB / 无日志），单测直接覆盖。
@@ -159,6 +163,15 @@ bool isLoopbackUrl(const std::string& url);
 //      ｜provider_config_guard_G5_absent_clears（语义落在 mergeReverseSyncEnv）
 //   G6 值形态非法（非字符串 / 长度 > 4096）        → 跳过该键 + WARN，不整体 fail
 //      ｜provider_config_guard_G6_invalid_value
+//   G10 键 ∈ ownedKeys（捕获目标所绑共享配置片段的键集）→ 跳过该键 + 警告
+//      ｜provider_config_guard_G10_shared_config_key
+//      ownedKeys 语义 = 「该 profile 绑定的片段」的键集，不是「全部片段的并集」：
+//      live 里的片段键恒由「绑定了该片段的那个 profile」的接管写入，切换时正好
+//      收编回它自己，按绑定关系挡即可；取并集会让没绑该片段的 profile 无法收编
+//      用户在 live 的改动（误伤面更大，设计 §2.4）
+//      **G10 判在 G1 之前**（设计 §2.9 流程图把 G1 列在前）：takeOver 会把片段键
+//      并入 sidecar managedKeys，故捕获时它们通常也命中 G1 —— 两者处置相同
+//      （不写也不清），但只有先判 G10 才能给出「被片段冻结」这条更准确的警告
 struct ReverseSyncParse {
     bool ok = false;
     std::string error;
@@ -169,7 +182,8 @@ struct ReverseSyncParse {
 
 ReverseSyncParse parseEnvForReverseSync(
     const std::string& envJson,
-    const std::vector<std::string>& managedKeys);
+    const std::vector<std::string>& managedKeys,
+    const std::vector<std::string>& ownedKeys = {});
 
 // 反向同步的第二段（§3.4 出现/缺席语义）：把 cfg 对齐到 profile 现值上。
 //   - 出现（cfg 非空）→ 覆盖；缺席 → 清空；命中守卫（skippedKeys）→ 保持原值
