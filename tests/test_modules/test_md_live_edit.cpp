@@ -437,3 +437,171 @@ REGISTER_TEST(md_live_boundary_edit,
     DOCTEST_CHECK_FALSE(mdLiveBoundaryEdit(doc, bs, 8, 0, e));
     return true;
 })
+
+// ---- M5：块级 undo / redo 快照栈（spec §4.5 / §8.1）----
+
+// 推栈顺序 / 跨块撤销序列 / 撤销后再编辑截断重做链
+REGISTER_TEST(md_live_undo_push_order_and_cross_block,
+              "md_live_undo: 推栈顺序 / 跨块撤销序列 / 撤销后编辑截断重做（M5）", {
+    using module::markdown::MdLiveUndoStack;
+    MdLiveUndoStack s;
+    s.reset("A", 1);                    // 进实时态的基线
+    // 首次编辑的前置状态 == 基线 → 不重复记条目（撤销一次即回到基线）
+    s.push("A", 1, true, 0);
+    DOCTEST_CHECK_EQ(s.size(), static_cast<size_t>(1));
+    // 600ms 后的同块按键 = 新的一次编辑
+    s.push("Ab", 2, true, 1000);
+    DOCTEST_CHECK_EQ(s.size(), static_cast<size_t>(2));
+    // 块切换收口后在新块编辑 = 第三次编辑（不是第二次的续）
+    s.markBoundary();
+    s.push("Abc", 3, false, 1100);
+    DOCTEST_CHECK_EQ(s.size(), static_cast<size_t>(3));
+
+    std::string t = "Abcd";             // 当前文档（"d" 与 "c" 同组，已合并）
+    size_t c = 4;
+    DOCTEST_REQUIRE(s.undo(t, c));
+    DOCTEST_CHECK_EQ(t, std::string("Abc"));
+    DOCTEST_CHECK_EQ(c, static_cast<size_t>(3));   // 光标随快照回到编辑前位置
+    DOCTEST_REQUIRE(s.undo(t, c));
+    DOCTEST_CHECK_EQ(t, std::string("Ab"));
+    DOCTEST_REQUIRE(s.undo(t, c));
+    DOCTEST_CHECK_EQ(t, std::string("A"));
+    DOCTEST_CHECK_EQ(c, static_cast<size_t>(1));
+    DOCTEST_CHECK_FALSE(s.undo(t, c));             // 到基线：不成功、不改文档
+    DOCTEST_CHECK_EQ(t, std::string("A"));
+    DOCTEST_CHECK_FALSE(s.canUndo());
+    DOCTEST_CHECK_TRUE(s.canRedo());
+
+    // 重做沿原路回
+    DOCTEST_REQUIRE(s.redo(t, c));
+    DOCTEST_CHECK_EQ(t, std::string("Ab"));
+    DOCTEST_REQUIRE(s.redo(t, c));
+    DOCTEST_CHECK_EQ(t, std::string("Abc"));
+    DOCTEST_REQUIRE(s.redo(t, c));
+    DOCTEST_CHECK_EQ(t, std::string("Abcd"));
+    DOCTEST_CHECK_FALSE(s.redo(t, c));
+
+    // 撤销后再编辑 → 重做链被截断（新时间线）
+    DOCTEST_REQUIRE(s.undo(t, c));
+    DOCTEST_REQUIRE(s.undo(t, c));
+    DOCTEST_CHECK_EQ(t, std::string("Ab"));
+    DOCTEST_CHECK_EQ(s.redoSize(), static_cast<size_t>(2));
+    s.push("Ab", 2, true, 9000);
+    DOCTEST_CHECK_EQ(s.redoSize(), static_cast<size_t>(0));
+    DOCTEST_CHECK_FALSE(s.redo(t, c));
+    return true;
+})
+
+// 600ms 同块合并 / 换块分栈 / markBoundary 关组
+REGISTER_TEST(md_live_undo_merge_window_and_boundary,
+              "md_live_undo: 600ms 同块合并 / 换块分栈 / markBoundary 关组（M5）", {
+    using module::markdown::MdLiveUndoStack;
+    MdLiveUndoStack s;
+    s.reset("X", 0);
+    s.push("X", 0, true, 0);          // 与基线同文本 → 只开组，不占条目
+    DOCTEST_CHECK_EQ(s.size(), static_cast<size_t>(1));
+    s.push("Xa", 1, true, 100);       // 同块 + <600ms → 合并
+    DOCTEST_CHECK_EQ(s.size(), static_cast<size_t>(1));
+    s.push("Xab", 2, true, 599);      // 仍在窗口内（对上次推栈计时）→ 合并
+    DOCTEST_CHECK_EQ(s.size(), static_cast<size_t>(1));
+    s.push("Xabc", 3, true, 700);     // ≥600ms → 新的一次编辑
+    DOCTEST_CHECK_EQ(s.size(), static_cast<size_t>(2));
+    s.push("Xabcd", 4, false, 750);   // 换块（sameBlock=false）→ 不合并
+    DOCTEST_CHECK_EQ(s.size(), static_cast<size_t>(3));
+    s.markBoundary();
+    s.push("Xabcde", 5, true, 800);   // 关组后的"同块"输入 → 新条目
+    DOCTEST_CHECK_EQ(s.size(), static_cast<size_t>(4));
+
+    // 撤销粒度 = 一组一条，逐级回到基线
+    std::string t = "Xabcdef";
+    size_t c = 7;
+    DOCTEST_REQUIRE(s.undo(t, c));
+    DOCTEST_CHECK_EQ(t, std::string("Xabcde"));
+    DOCTEST_REQUIRE(s.undo(t, c));
+    DOCTEST_CHECK_EQ(t, std::string("Xabcd"));
+    DOCTEST_REQUIRE(s.undo(t, c));
+    DOCTEST_CHECK_EQ(t, std::string("Xabc"));   // "Xab"/"Xa" 与 "X" 同组，不单列
+    DOCTEST_REQUIRE(s.undo(t, c));
+    DOCTEST_CHECK_EQ(t, std::string("X"));
+    return true;
+})
+
+// 容量上限 200 / 大文档降级 50 / 最老条目被挤出窗口
+REGISTER_TEST(md_live_undo_cap_and_large_doc_downgrade,
+              "md_live_undo: 容量上限 200 / 大文档降级 50 / 最老条目挤出（M5）", {
+    using module::markdown::MdLiveUndoStack;
+    using module::markdown::kMdLiveUndoCap;
+    using module::markdown::kMdLiveUndoCapLargeDoc;
+    using module::markdown::kMdLiveUndoLargeDocBytes;
+
+    MdLiveUndoStack s;
+    s.reset("d0", 0);
+    DOCTEST_CHECK_EQ(s.capacity(), kMdLiveUndoCap);
+    for (size_t i = 1; i <= kMdLiveUndoCap + 30; ++i) {
+        s.push("d" + std::to_string(i), i, false,
+               static_cast<int64_t>(i) * 1000);
+    }
+    DOCTEST_CHECK_EQ(s.size(), kMdLiveUndoCap);   // 封顶
+    std::string t = "end";
+    size_t c = 0;
+    size_t steps = 0;
+    while (s.undo(t, c)) ++steps;
+    DOCTEST_CHECK_EQ(steps, kMdLiveUndoCap);      // 每条都有效（无可撤销的伪步）
+    DOCTEST_CHECK_EQ(t, std::string("d31"));      // 基线 d0 已被挤出窗口
+    DOCTEST_CHECK_EQ(c, static_cast<size_t>(31));
+
+    // 大文档：容量降级为 50（spec §4.5「> 2MB 降为 50，登记日志」；本层只给
+    // 容量，日志由消费侧记）
+    MdLiveUndoStack big;
+    big.reset("s", 0);
+    const std::string huge(kMdLiveUndoLargeDocBytes + 1, 'x');
+    big.push(huge, 0, false, 0);
+    DOCTEST_CHECK_EQ(big.capacity(), kMdLiveUndoCapLargeDoc);
+    DOCTEST_CHECK_EQ(big.size(), static_cast<size_t>(2));
+    big.push(huge + "y", 1, false, 1000);
+    DOCTEST_CHECK_EQ(big.capacity(), kMdLiveUndoCapLargeDoc);
+    // 文档缩回阈值内 → 容量回到常规上限
+    big.push("small", 0, false, 2000);
+    DOCTEST_CHECK_EQ(big.capacity(), kMdLiveUndoCap);
+    return true;
+})
+
+// 基线光标钳位 / 重复快照不占条目 / 无变化步不消耗撤销 / markBoundary 不动 redo
+REGISTER_TEST(md_live_undo_baseline_clamp_and_noop_steps,
+              "md_live_undo: 基线光标钳位 / 重复快照 / 无变化步不消耗撤销（M5）", {
+    using module::markdown::MdLiveUndoStack;
+    MdLiveUndoStack s;
+    s.reset("doc", 999);              // 越界光标钳到文本长
+    std::string t = "docX";
+    size_t c = 4;
+    DOCTEST_REQUIRE(s.undo(t, c));
+    DOCTEST_CHECK_EQ(t, std::string("doc"));
+    DOCTEST_CHECK_EQ(c, static_cast<size_t>(3));
+
+    // 重复快照（同文本）不新增条目：连推 5 次仍只有基线一条
+    MdLiveUndoStack d;
+    d.reset("A", 0);
+    for (int i = 0; i < 5; ++i) d.push("A", 0, false, i * 1000);
+    DOCTEST_CHECK_EQ(d.size(), static_cast<size_t>(1));
+    // 无变化步不消耗撤销：唯一的快照 == 当前文本 → false，且不改文档/光标
+    std::string t2 = "A";
+    size_t c2 = 7;
+    DOCTEST_CHECK_FALSE(d.undo(t2, c2));
+    DOCTEST_CHECK_EQ(t2, std::string("A"));
+    DOCTEST_CHECK_EQ(c2, static_cast<size_t>(7));
+
+    // markBoundary 只关合并组：不动 redo 栈（撤销后切块 / 点别的块不该丢重做）
+    MdLiveUndoStack b;
+    b.reset("A", 0);
+    b.push("AB", 1, false, 0);
+    std::string t3 = "ABC";
+    size_t c3 = 3;
+    DOCTEST_REQUIRE(b.undo(t3, c3));
+    DOCTEST_CHECK_EQ(t3, std::string("AB"));
+    DOCTEST_CHECK_EQ(b.redoSize(), static_cast<size_t>(1));
+    b.markBoundary();
+    DOCTEST_CHECK_EQ(b.redoSize(), static_cast<size_t>(1));
+    DOCTEST_REQUIRE(b.redo(t3, c3));
+    DOCTEST_CHECK_EQ(t3, std::string("ABC"));
+    return true;
+})

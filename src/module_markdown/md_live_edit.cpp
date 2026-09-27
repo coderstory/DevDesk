@@ -130,4 +130,64 @@ bool mdLiveBoundaryEdit(const std::string& text,
     return false;   // 后面不是行终结符：普通块内字符删除，交回内置
 }
 
+// ---- M5：块级 undo / redo（语义见头注释）----
+
+void MdLiveUndoStack::reset(std::string text, size_t cursorByte) {
+    undo_.clear();
+    redo_.clear();
+    if (cursorByte > text.size()) cursorByte = text.size();
+    undo_.push_back(Entry{std::move(text), cursorByte});
+    capacity_ = kMdLiveUndoCap;
+    lastPushMs_ = 0;
+    groupOpen_ = false;
+}
+
+void MdLiveUndoStack::push(std::string text, size_t cursorByte, bool sameBlock,
+                           int64_t nowMs) {
+    // 合并：同块 + 距上次推栈 < 600ms = 同一次编辑（逐键不堆快照）。
+    // lastPushMs_ 取「上一次真的记了条目的时刻」而不随合并滑动：这样一组最多
+    // 覆盖 600ms 的连续输入，长时间连打仍会定期留下撤销点（不会整段只剩一栈）。
+    if (groupOpen_ && sameBlock && nowMs - lastPushMs_ < kMdLiveUndoMergeMs) return;
+    // 走到这里 = 新的一次编辑：旧的重做链作废（同任何编辑器的语义）
+    redo_.clear();
+    groupOpen_ = true;
+    lastPushMs_ = nowMs;
+    // 与栈顶同文本 = 重复快照（撤销到它等于什么都不做）→ 不新增条目
+    if (!undo_.empty() && undo_.back().text == text) return;
+    capacity_ = text.size() > kMdLiveUndoLargeDocBytes ? kMdLiveUndoCapLargeDoc
+                                                       : kMdLiveUndoCap;
+    undo_.push_back(Entry{std::move(text), cursorByte});
+    while (undo_.size() > capacity_) undo_.pop_front();   // 挤掉最老的一条
+}
+
+void MdLiveUndoStack::markBoundary() { groupOpen_ = false; }
+
+bool MdLiveUndoStack::undo(std::string& text, size_t& cursorByte) {
+    // 与当前文本相同的快照 = 无变化步 → 跳过（不消耗用户的一次撤销）
+    while (!undo_.empty() && undo_.back().text == text) undo_.pop_back();
+    if (undo_.empty()) return false;
+    redo_.push_back(Entry{text, cursorByte});
+    Entry prev = std::move(undo_.back());
+    undo_.pop_back();
+    text = std::move(prev.text);
+    cursorByte = prev.cursorByte;
+    // 撤销后必须新开一组：否则紧接着的同块输入会被并进「已被撤销的那一次编辑」，
+    // 下一次 Ctrl+Z 会连它一起撤销
+    groupOpen_ = false;
+    return true;
+}
+
+bool MdLiveUndoStack::redo(std::string& text, size_t& cursorByte) {
+    while (!redo_.empty() && redo_.back().text == text) redo_.pop_back();
+    if (redo_.empty()) return false;
+    undo_.push_back(Entry{text, cursorByte});
+    while (undo_.size() > capacity_) undo_.pop_front();
+    Entry next = std::move(redo_.back());
+    redo_.pop_back();
+    text = std::move(next.text);
+    cursorByte = next.cursorByte;
+    groupOpen_ = false;
+    return true;
+}
+
 } // namespace module::markdown
