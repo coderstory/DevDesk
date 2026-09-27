@@ -2,6 +2,8 @@
 #include "core/window_layout.h"
 
 #include <limits>
+#include <map>
+#include <string>
 
 using core::window_layout::decideInitialWindow;
 using core::window_layout::FrameInsets;
@@ -143,5 +145,38 @@ REGISTER_TEST(window_layout_frame_insets_baseline, "window_layout: 外框经验�
     const FrameInsets fallback = frameInsetsForScale(-3.0f);
     DOCTEST_CHECK_EQ(fallback.width, 15);
     DOCTEST_CHECK_EQ(fallback.height, 38);
+    return true;
+})
+
+// ==================== TIN-08 回归护栏 ====================
+// REGISTER_TEST 改用可变参宏（`...` / `__VA_ARGS__`）承接 body 后，用例体内的
+// **顶层裸逗号**不再被预处理器当成宏实参分隔符。下面四类过去必须规避
+//（工厂函数 / 括号包裹 / 逐条 push_back / 类型别名），现在可直接写在用例体内；
+// 本用例一旦因宏回退成 3 参数而编译不过，即护栏生效。
+REGISTER_TEST(window_layout_tin08_bare_comma_in_body,
+              "window_layout: [TIN-08] REGISTER_TEST 用例体内裸逗号（初始化列表/模板逗号）直接可用", {
+    // ① 聚合初始化列表：顶层裸逗号（旧写法需经 request1600x1000() 工厂函数绕开）
+    const InitialWindowRequest req{1600, 1000, 1200, 720};
+    DOCTEST_CHECK_EQ(req.minLogicalWidth, 1200);
+    DOCTEST_CHECK_EQ(req.minLogicalHeight, 720);
+
+    // ② 同一处再套一层：花括号直接写在函数实参位置（旧写法需先建变量）
+    const auto decision = decideInitialWindow(InitialWindowRequest{1600, 1000, 1200, 720},
+                                              WorkArea{0, 0, 1920, 1080}, 1.0f,
+                                              frameInsetsForScale(1.0f));
+    DOCTEST_CHECK_FALSE(decision.maximize);
+    DOCTEST_CHECK_EQ(decision.width, 1600);
+    DOCTEST_CHECK_EQ(decision.height, 1000);
+
+    // ③ 模板实参里的逗号：std::map<std::string, int> 式（旧写法需类型别名）
+    const std::map<std::string, int> sizes{{"w", decision.width}, {"h", decision.height}};
+    DOCTEST_CHECK_EQ(sizes.size(), static_cast<size_t>(2));
+    DOCTEST_CHECK_EQ(sizes.at("w"), 1600);
+    DOCTEST_CHECK_EQ(sizes.at("h"), 1000);
+
+    // ④ 一条语句两个声明：声明列表里的逗号（旧写法需拆成两句）
+    const int expectedW = 1600, expectedH = 1000;
+    DOCTEST_CHECK_EQ(expectedW, decision.width);
+    DOCTEST_CHECK_EQ(expectedH, decision.height);
     return true;
 })

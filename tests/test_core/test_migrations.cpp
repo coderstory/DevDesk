@@ -51,16 +51,18 @@ REGISTER_TEST(migrate_creates_all_tables, "Database: migrate creates all 8 table
 
         auto tables = listTables(r.value().db());
 
-        // 8 个应用表（用 insert 避免在宏实参里写逗号，触发 C 预处理器 arg-split）
-        std::set<std::string> expected;
-        expected.insert("markdown_index");
-        expected.insert("markdown_tags");
-        expected.insert("markdown_note_tags");
-        expected.insert("todo_columns");
-        expected.insert("todo_tasks");
-        expected.insert("claude_profiles");
-        expected.insert("claude_call_logs");
-        expected.insert("claude_shared_configs");  // v6 共享配置片段
+        // 8 个应用表（TIN-08 后 REGISTER_TEST 走 __VA_ARGS__，裸逗号初始化
+        // 列表可直接写在用例体内，不再需要逐条 insert 规避宏切参）
+        std::set<std::string> expected{
+            "markdown_index",
+            "markdown_tags",
+            "markdown_note_tags",
+            "todo_columns",
+            "todo_tasks",
+            "claude_profiles",
+            "claude_call_logs",
+            "claude_shared_configs",  // v6 共享配置片段
+        };
         for (const auto& t : expected) {
             bool found = tables.count(t) > 0;
             DOCTEST_CHECK(found);
