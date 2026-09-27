@@ -78,3 +78,26 @@ REGISTER_TEST(paths_claude_settings_dir_override,
     setEnvVar("DEVDESK_CLAUDE_CONFIG_DIR", savedValue);
     return true;
 })
+
+// 平台 API 真机断言（Windows 走 GetModuleFileNameW；macOS/POSIX 同语义）：
+// 失败时必须返回空 path，绝不用 cwd 冒充 —— 所以"非空 + 绝对 + 存在"三条
+// 都断言；再用"目录里有测试二进制本体"反证返回的不是别的目录
+REGISTER_TEST(paths_executable_dir, "paths: executableDir = 当前可执行文件所在目录", {
+    auto dir = core::paths::executableDir();
+    DOCTEST_CHECK_FALSE(dir.empty());
+    DOCTEST_CHECK(dir.is_absolute());
+    std::error_code ec;
+    DOCTEST_CHECK(std::filesystem::is_directory(dir, ec) && !ec);
+    // 注意：本宏体内不能出现裸逗号（预处理器按逗号切分实参），迭代器分两句声明
+    bool foundSelf = false;
+    std::filesystem::directory_iterator it(dir, ec);
+    const std::filesystem::directory_iterator end;
+    for (; !ec && it != end; it.increment(ec)) {
+        if (it->path().stem().string() == "devdesk_tests") {
+            foundSelf = true;
+            break;
+        }
+    }
+    DOCTEST_CHECK(foundSelf);
+    return true;
+})
