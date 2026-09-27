@@ -312,11 +312,20 @@ REGISTER_TEST(sync_retakeover_keeps_first_snapshot, "settings_sync: 热切换保
     DOCTEST_REQUIRE(settings_sync::takeOver(b, 8888, paths).ok);
     {
         const auto env = readEnv(paths.settingsFile);
-        DOCTEST_CHECK_EQ(env.at("ANTHROPIC_DEFAULT_SONNET_MODEL"),
-                         std::string("m-a"));  // 旧托管值仍在（未被清理）
+        // 条目 1：上一轮托管、本轮不再生成的键从 env 删除（槽位清空后旧模型名
+        // 不得继续被客户端使用）
+        DOCTEST_CHECK(env.find("ANTHROPIC_DEFAULT_SONNET_MODEL") == env.end());
         DOCTEST_CHECK_EQ(env.at("ANTHROPIC_DEFAULT_OPUS_MODEL"),
                          std::string("m-b"));
         DOCTEST_CHECK_EQ(env.at("MY_KEY"), std::string("user"));
+    }
+    // 但 sidecar 仍记录它（还原语义不回归：旧托管键仍归 DevDesk 管）
+    {
+        const auto sidecarText = d.read(paths.sidecarFile);
+        DOCTEST_CHECK(sidecarText.find("ANTHROPIC_DEFAULT_SONNET_MODEL") !=
+                      std::string::npos);
+        DOCTEST_CHECK(sidecarText.find("ANTHROPIC_DEFAULT_OPUS_MODEL") !=
+                      std::string::npos);
     }
 
     // 还原：A/B 的托管键全部退场（并集生效），用户键保留

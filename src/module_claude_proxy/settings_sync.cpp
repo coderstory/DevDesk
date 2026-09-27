@@ -261,13 +261,30 @@ SyncResult takeOver(const Profile& profile, int proxyPort, const Paths& paths) {
     }
     // 快照先落地、settings.json 后改：中间崩溃 → 补还原恢复的是相同内容，安全
 
-    // 3. 合并写入 env（托管键覆盖，用户 env 键保留），非 env 顶层字段不动
+    // 3. 先删「上一轮托管、本轮不再生成」的键（条目 1）：槽位被清空后旧模型名
+    //    不能继续留在 env 里被客户端拿去请求新供应商；这些键仍在 managedKeys
+    //    并集内，还原语义不变（重建对象实现删除，JsonObject 无 erase）
+    {
+        JsonObject kept;
+        for (const auto& key : env.keys()) {
+            const bool generatedThisRound = managed.find(key) != managed.end();
+            const bool staleManaged =
+                !generatedThisRound &&
+                std::find(managedKeys.begin(), managedKeys.end(), key) !=
+                    managedKeys.end();
+            if (staleManaged) continue;
+            kept.set(key, env.get(key));
+        }
+        env = std::move(kept);
+    }
+
+    // 4. 合并写入 env（托管键覆盖，用户 env 键保留），非 env 顶层字段不动
     for (const auto& [k, v] : managed) {
         env.set(k, platform::json::makeString(v));
     }
     root.set("env", JsonValue(env));
 
-    // 4. 原子写
+    // 5. 原子写
     auto text = platform::json::stringify(JsonValue(root), /*pretty=*/true);
     if (text.isFail()) {
         out.error = "settings.json 序列化失败: " + text.errorMessage();
@@ -281,7 +298,7 @@ SyncResult takeOver(const Profile& profile, int proxyPort, const Paths& paths) {
         return out;
     }
 
-    // 5. 上层覆盖检测（只警告不代改）
+    // 6. 上层覆盖检测（只警告不代改）
     out.warnings = detectOverlayConflicts(paths);
     for (const auto& warn : out.warnings) {
         LOG_WARN("settings_sync: " + warn);
