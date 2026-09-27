@@ -14,6 +14,8 @@
 //   - 原子性：无 .devdesk-tmp 残留
 //   - ClaudeService 接线：startProxy 接管 / stopProxy 还原 / 运行中切 profile 跟随
 //   - 接管开关关闭：启动补还原 / startProxy / stopProxy 三条路径都不写文件
+//   - 共享配置片段：合并优先级（片段 > profile，托管键最上）+ 片段键进托管键集
+//     随还原撤走 + 解绑后同名键回落 profile 值
 #include "doctest.h"
 
 #include "claude_service.h"
@@ -1031,5 +1033,100 @@ REGISTER_TEST(sync_reverse_read_env_and_sidecar,
         DOCTEST_CHECK(r.managedKeys.empty());
         DOCTEST_CHECK(!r.envJson.empty());
     }
+    return true;
+})
+
+// ---- 15. 共享配置片段：合并优先级 + 接管（托管键集含片段键）+ 还原 ----
+// 优先级（低→高）：profile 自身 extra_env → 共享片段 extra_env → 代理托管键；
+// 片段在这批只做数据层/服务层，UI 留下批，故这里全走纯函数与 takeOver 直调。
+
+REGISTER_TEST(sync_build_proxy_env_shared_config,
+              "settings_sync: 共享片段覆盖 profile env，托管键仍最高", {
+    using module::claude::buildProxyEnv;
+
+    const std::string profileEnv =
+        R"({"MY_KEY": "from-profile", "PROFILE_ONLY": "1"})";
+    const std::string sharedEnv =
+        R"({"MY_KEY": "from-shared", "SHARED_ONLY": "1"})";
+
+    // 同键 → 片段赢；各自独有键都在
+    const auto env = buildProxyEnv("", "", profileEnv, 8888, sharedEnv);
+    DOCTEST_CHECK_EQ(env.at("MY_KEY"), std::string("from-shared"));
+    DOCTEST_CHECK_EQ(env.at("PROFILE_ONLY"), std::string("1"));
+    DOCTEST_CHECK_EQ(env.at("SHARED_ONLY"), std::string("1"));
+    // 托管键赢两者（片段里塞 BASE_URL/token 也不生效）
+    DOCTEST_CHECK_EQ(env.at("ANTHROPIC_BASE_URL"),
+                     std::string("http://127.0.0.1:8888"));
+    DOCTEST_CHECK_EQ(env.at("ANTHROPIC_AUTH_TOKEN"),
+                     std::string("PROXY_MANAGED"));
+
+    // 托管键（模型槽位）赢片段：default 槽位与片段同键 → 槽位值生效
+    const auto slotWins = buildProxyEnv(
+        R"({"default": {"model": "slot-model"}})", "", profileEnv, 8888,
+        R"({"ANTHROPIC_MODEL": "shared-model"})");
+    DOCTEST_CHECK_EQ(slotWins.at("ANTHROPIC_MODEL"), std::string("slot-model"));
+
+    // 未绑定片段（空串）→ 与改动前逐字一致
+    const auto noShared = buildProxyEnv("", "", profileEnv, 8888);
+    DOCTEST_CHECK_EQ(noShared.at("MY_KEY"), std::string("from-profile"));
+    DOCTEST_CHECK(noShared.find("SHARED_ONLY") == noShared.end());
+
+    // 片段 JSON 非法 → 读路径容错整体忽略（不炸、不部分生效）
+    const auto badShared = buildProxyEnv("", "", profileEnv, 8888, "{bad-json");
+    DOCTEST_CHECK_EQ(badShared.at("MY_KEY"), std::string("from-profile"));
+    return true;
+})
+
+REGISTER_TEST(sync_takeover_with_shared_config,
+              "settings_sync: 接管写合并 env，片段键进托管集随还原撤走", {
+    using namespace module::claude;
+    TempDir d("shared");
+    auto paths = makePaths(d);
+    d.write(paths.settingsFile, R"({"env": {"MY_KEY": "user"}})");
+
+    Profile p;
+    p.model = "m-1";
+    p.extraEnvJson = R"({"MY_KEY": "profile", "PROFILE_ONLY": "1"})";
+    const std::string sharedEnv =
+        R"({"MY_KEY": "shared", "SHARED_ONLY": "1"})";
+
+    auto r = settings_sync::takeOver(p, 8888, paths, sharedEnv);
+    DOCTEST_REQUIRE(r.ok);
+    {
+        const auto env = readEnv(paths.settingsFile);
+        DOCTEST_CHECK_EQ(env.at("MY_KEY"), std::string("shared"));  // 片段赢
+        DOCTEST_CHECK_EQ(env.at("SHARED_ONLY"), std::string("1"));
+        DOCTEST_CHECK_EQ(env.at("PROFILE_ONLY"), std::string("1"));
+        DOCTEST_CHECK_EQ(env.at("ANTHROPIC_MODEL"), std::string("m-1"));
+        // settings.json 里不留片段痕迹（只有合并后的扁平 env，无出处标记）
+        DOCTEST_CHECK(d.read(paths.settingsFile).find("shared_config") ==
+                      std::string::npos);
+    }
+    // 片段键进 sidecar 托管键集：还原时随快照撤走（活文件不留片段键）
+    {
+        auto rd = readSettingsEnvForSync(paths);
+        DOCTEST_REQUIRE(rd.ok);
+        DOCTEST_CHECK(hasKeyEntry(rd.managedKeys, "SHARED_ONLY"));
+        DOCTEST_CHECK(hasKeyEntry(rd.managedKeys, "MY_KEY"));
+    }
+    DOCTEST_REQUIRE(settings_sync::restore(paths).ok);
+    {
+        const auto env = readEnv(paths.settingsFile);
+        DOCTEST_CHECK_EQ(env.at("MY_KEY"), std::string("user"));  // 快照原值恢复
+        DOCTEST_CHECK(env.find("SHARED_ONLY") == env.end());   // 原本不存在 → 删
+        DOCTEST_CHECK(env.find("PROFILE_ONLY") == env.end());
+        DOCTEST_CHECK(env.find("ANTHROPIC_MODEL") == env.end());
+    }
+
+    // 解绑后重接管（同一路径、片段参数改空）：片段键从 live 撤走，同名键回落
+    // profile 自身值（不写也不清从未删过 profile 行里的原值）
+    DOCTEST_REQUIRE(settings_sync::takeOver(p, 8888, paths).ok);
+    {
+        const auto env = readEnv(paths.settingsFile);
+        DOCTEST_CHECK_EQ(env.at("MY_KEY"), std::string("profile"));
+        DOCTEST_CHECK(env.find("SHARED_ONLY") == env.end());
+        DOCTEST_CHECK_EQ(env.at("PROFILE_ONLY"), std::string("1"));
+    }
+    DOCTEST_REQUIRE(settings_sync::restore(paths).ok);
     return true;
 })
