@@ -18,6 +18,7 @@
 #include "core/component_theme.h"
 #include "platform/json.h"
 #include <ui_kit/dialog_form.h>
+#include <ui_kit/metrics.h>
 #include <ui_kit/toast.h>
 
 #include <eui/dsl.h>
@@ -158,8 +159,8 @@ public:
         const float contentW = screen.width - pad * 2.0f;
         const float contentH = screen.height - pad * 2.0f;
         const std::time_t now = std::time(nullptr);   // 调用时间列「今天/昨天」判定
-        const float headerH = 64.0f;
-        const float gap = 16.0f;
+        const float headerH = ui_kit::kHeaderH;
+        const float gap = t.sizes.spacingLarge;
         const float leftW = 400.0f;
         const float rightW = contentW - leftW - gap;
         // 审计 M6：header 右侧操作区宽（标题列 = contentW - 本值）——header 行

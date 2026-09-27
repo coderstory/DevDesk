@@ -19,6 +19,7 @@
 #include "core/router.h"
 #include "core/theme.h"
 #include "settings_config.h"
+#include <ui_kit/metrics.h>
 #include <ui_kit/toast.h>
 
 #include <components/tooltip.h>
@@ -114,9 +115,9 @@ void drawSidebar(eui::Ui& ui, const eui::Screen& screen) {
     }();
     (void)mounted;
 
-    const float itemH = 40.0f;         // 导航项高 40
+    const float itemH = ui_kit::kNavItemH;  // 导航项高 40（ui_kit/metrics.h）
     const float gap = 4.0f;            // 导航项 gap 4
-    const float padX = 16.0f;          // 左右 padding 16
+    const float padX = t.sizes.spacingLarge;  // 左右 padding 16
     constexpr float kIconW = 28.0f;
     constexpr float kItemInset = 12.0f;  // 内容距高亮条左缘内边距（用户反馈文字贴边）
 

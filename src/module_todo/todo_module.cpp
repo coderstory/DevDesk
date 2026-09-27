@@ -8,6 +8,7 @@
 #include "core/component_theme.h"
 #include "core/time.h"
 #include <ui_kit/dialog_form.h>
+#include <ui_kit/metrics.h>
 #include <ui_kit/toast.h>
 #include "todo_service.h"
 #include "todo_ui_logic.h"
@@ -104,7 +105,7 @@ BoardGeom boardGeom(const eui::Screen& screen, size_t columnCount,
     const float contentW = screen.width - g.pad * 2.0f;
     const auto n = static_cast<float>(columnCount == 0 ? 1 : columnCount);
     g.colW = (contentW - g.colGap * (n - 1.0f)) / n;
-    g.boardTop = g.pad + 64.0f /*headerH*/ + t.sizes.spacingLarge;
+    g.boardTop = g.pad + ui_kit::kHeaderH + t.sizes.spacingLarge;
     return g;
 }
 
@@ -675,7 +676,7 @@ public:
         const float pad = t.sizes.spacingXXLarge;        // 40
         const float contentW = screen.width - pad * 2.0f;
         const float contentH = screen.height - pad * 2.0f;
-        const float headerH = 64.0f;
+        const float headerH = ui_kit::kHeaderH;
         const float bodyH = contentH - headerH - t.sizes.spacingLarge;
 
         // 页面底色 = 主窗口 clearColor（随主题/窗口效果档运行时跟随，

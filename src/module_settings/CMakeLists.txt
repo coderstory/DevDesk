@@ -18,10 +18,14 @@ target_include_directories(devdesk_module_settings PUBLIC
 #   连头都不经模块目录。
 # 两侧都在最终可执行文件链接期解析（DevDesk / devdesk_tests 直接链接全部
 # module_*），module_* 互不依赖铁律保持。
+# R3：settings 是四个页面模块里唯一此前没链接 devdesk_ui_kit 的（无 toast /
+# 无对话框）；表头几何改用 ui_kit/metrics.h 的 kHeaderH 后补上这条边。ui_kit
+# 是 presentation 层（非兄弟 module_*），守卫脚本 B 项只禁兄弟模块库，不受影响。
 
 target_link_libraries(devdesk_module_settings PUBLIC
     devdesk_core
     devdesk_platform
+    devdesk_ui_kit
 )
 
 # 关于卡（spec §8.5，spec 缩水 C）：版本/构建信息注入。PROJECT_VERSION 来自

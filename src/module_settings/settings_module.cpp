@@ -83,6 +83,8 @@
 // static_assert 见该头。
 #include "module_pet_bridge.h"
 
+#include <ui_kit/metrics.h>
+
 #include <eui/app.h>
 #include <eui/dsl.h>
 
@@ -525,7 +527,7 @@ public:
         // 页面底色 = 主窗口 clearColor（随主题/窗口效果档运行时跟随，
         // 磨砂 Phase B/D）——不自铺不透明底，半透/磨砂档主体才生效
 
-        const float headerH = 64.0f;
+        const float headerH = ui_kit::kHeaderH;
         const float tabH = kSettingsTabHeight;
         // 审计 H2：日志 tail 读盘已移出渲染路径（refreshLogTailCache 只发意图 /
         // 搬已就绪结果，读盘在后台线程；快照 logTail_ 由 onStart 首次装载）。

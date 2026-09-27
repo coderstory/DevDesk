@@ -7,22 +7,6 @@
 
 namespace ui_kit {
 
-float dialogWidthPx(DialogWidth width) {
-    switch (width) {
-        case DialogWidth::Compact:
-            return 420.0f;
-        case DialogWidth::Standard:
-            return 460.0f;
-        case DialogWidth::Wide:
-            return 560.0f;
-        case DialogWidth::ExtraWide:
-            return 720.0f;
-        case DialogWidth::Form:
-            return 760.0f;
-    }
-    return 460.0f;  // 兜底：枚举穷举，仅为满足「所有路径有返回」
-}
-
 void drawDialogFrame(eui::Ui& ui, const eui::Screen& screen, const DialogFrame& frame,
                      const components::theme::ThemeColorTokens& themeTokens,
                      const std::function<void()>& content) {
@@ -79,14 +63,15 @@ void drawDialogTitle(eui::Ui& ui, const std::string& id, float dialogWidth,
 
 namespace {
 
-// 标准按钮对的公共几何：取消在左、确定在右，各占 (w-68)/2，高位 h-60。
-constexpr float kDialogButtonInsetX = 28.0f;
+// 标准按钮对的公共几何：取消在左、确定在右，各占 (w - 2×内缩 - gap)/2，行底
+// 距弹窗底 60；左内缩与标题 / 正文同源（metrics.h 的 kDialogInsetX）。
 constexpr float kDialogButtonGap = 12.0f;
 constexpr float kDialogButtonRowOffsetY = 60.0f;
 constexpr float kDialogButtonHeight = 40.0f;
 
+// 现状取值为 (w-68)/2 —— 68 = 28×2 + 12，这里还原它的构成，不留裸 68
 float buttonWidth(float dialogWidth) {
-    return (dialogWidth - 68.0f) * 0.5f;
+    return (dialogWidth - kDialogInsetX * 2.0f - kDialogButtonGap) * 0.5f;
 }
 
 // 单按钮：几何 + 文案字号 + 该站点现状的样式组合，最后统一 onClick。
@@ -151,8 +136,8 @@ void drawDialogButtons(eui::Ui& ui, const std::string& id, float dialogWidth,
                        const components::theme::ThemeColorTokens& themeTokens) {
     const float w = buttonWidth(dialogWidth);
     const float y = dialogHeight - kDialogButtonRowOffsetY;
-    buildDialogButton(ui, id + ".cancel", kDialogButtonInsetX, y, w, cancel, t, themeTokens);
-    buildDialogButton(ui, id + ".confirm", kDialogButtonInsetX + w + kDialogButtonGap, y,
+    buildDialogButton(ui, id + ".cancel", kDialogInsetX, y, w, cancel, t, themeTokens);
+    buildDialogButton(ui, id + ".confirm", kDialogInsetX + w + kDialogButtonGap, y,
                       w, confirm, t, themeTokens);
 }
 
