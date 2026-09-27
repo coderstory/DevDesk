@@ -14,6 +14,7 @@
 #include "core/theme.h"
 #include "module_todo/todo_service.h"
 #include "module_todo/todo_ui_logic.h"
+#include "ui_kit/metrics.h"  // kHeaderH（R5 看板几何断言）
 
 #include <eui/dsl.h>
 #include <eui/types.h>
@@ -22,6 +23,7 @@
 
 #include <cstdlib>
 #include <filesystem>
+#include <map>
 #include <memory>
 #include <string>
 #include <vector>
@@ -2779,5 +2781,79 @@ REGISTER_TEST(todo_ui_esc_stack_lifo,
     DOCTEST_CHECK(!mod->onKeyEvent(escPress()));
 
     mod->onStop();
+    return true;
+})
+
+// ---- 8. R5 拆分：从 todo_module.cpp 匿名命名空间提升的纯函数等价断言 ----
+// 这些函数拆分前住在 todo_module.cpp 的匿名命名空间里（无头用例够不着），
+// R5 按 god-class spec §4.4 P-C1「补等价断言」搬进 todo_ui_logic.h。这里钉住的
+// 是**搬运前**的取值口径（几何公式 / 查找语义 / chip 估宽），不是新增行为。
+REGISTER_TEST(todo_ui_r5_pure_helpers,
+              "todo_ui: R5 看板几何/查找纯函数取值口径（搬运自匿名 ns）", {
+    using namespace module::todo;
+    const core::theme::Tokens& t = core::theme::current();
+
+    // 板面几何：pad = spacingXXLarge、列间隙 = spacingLarge、
+    // 顶边 = pad + kHeaderH + spacingLarge，剩余宽度按列数均分
+    const ui::BoardGeom g3 = ui::boardGeom(1600.0f, 3, t);
+    DOCTEST_CHECK_EQ(g3.pad, t.sizes.spacingXXLarge);
+    DOCTEST_CHECK_EQ(g3.colGap, t.sizes.spacingLarge);
+    const float contentW = 1600.0f - t.sizes.spacingXXLarge * 2.0f;
+    DOCTEST_CHECK_EQ(g3.colW, (contentW - t.sizes.spacingLarge * 2.0f) / 3.0f);
+    DOCTEST_CHECK_EQ(g3.boardTop, g3.pad + ui_kit::kHeaderH + t.sizes.spacingLarge);
+    // 零列不除零（按 1 列算，与 drawBoard 空态分支同款兜底）
+    DOCTEST_CHECK_EQ(ui::boardGeom(1600.0f, 0, t).colW, contentW);
+
+    // 列 / 卡片左上角：列步进 = 列宽 + 间隙，卡步进 = 卡高 + 卡间距
+    DOCTEST_CHECK_EQ(ui::cardLeft(g3, 0), g3.pad);
+    DOCTEST_CHECK_EQ(ui::cardLeft(g3, 2), g3.pad + 2.0f * (g3.colW + g3.colGap));
+    DOCTEST_CHECK_EQ(ui::cardTop(g3, 0), g3.boardTop + ui::kColumnHeaderHeight);
+    DOCTEST_CHECK_EQ(ui::cardTop(g3, 3),
+                     g3.boardTop + ui::kColumnHeaderHeight +
+                         3.0f * (ui::kCardHeight + ui::kCardGap));
+
+    // chip 估宽：基础 20 + ASCII 5.5/字节、非 ASCII 4/字节（UTF-8 下汉字 3 字节）
+    DOCTEST_CHECK_EQ(ui::chipWidth(""), 20.0f);
+    DOCTEST_CHECK_EQ(ui::chipWidth("ab"), 31.0f);
+    DOCTEST_CHECK_EQ(ui::chipWidth("中"), 32.0f);
+
+    // 查找辅助：列内任务按 position 升序、任务/列按 id、语义列按 kind
+    std::vector<Task> tasks;
+    tasks.push_back(makeTask(1, 10, 3));
+    tasks.push_back(makeTask(2, 10, 1));
+    tasks.push_back(makeTask(3, 20, 0));
+    const auto colTasks = ui::tasksInColumn(tasks, 10);
+    DOCTEST_REQUIRE(colTasks.size() == 2);
+    DOCTEST_CHECK_EQ(colTasks[0]->id, 2);
+    DOCTEST_CHECK_EQ(colTasks[1]->id, 1);
+    DOCTEST_CHECK(ui::findTask(tasks, 3) != nullptr);
+    DOCTEST_CHECK(ui::findTask(tasks, 99) == nullptr);
+
+    std::vector<Column> cols;
+    Column c{};
+    c.id = 7; c.title = "待办"; c.kind = "todo"; c.position = 0;
+    cols.push_back(c);
+    c.id = 8; c.title = "已完成"; c.kind = "done"; c.position = 1;
+    cols.push_back(c);
+    DOCTEST_CHECK(ui::findColumn(cols, 8) != nullptr);
+    DOCTEST_CHECK(ui::findColumn(cols, 9) == nullptr);
+    DOCTEST_CHECK_EQ(ui::findColumnByKind(cols, "done"), 8);
+    DOCTEST_CHECK_EQ(ui::findColumnByKind(cols, "archive"), 0);   // 找不到 = 0
+    DOCTEST_CHECK(ui::columnTitleTaken(cols, "待办", 0));
+    DOCTEST_CHECK(!ui::columnTitleTaken(cols, "待办", 7));        // 改名为自己不算撞
+    DOCTEST_CHECK_EQ(ui::defaultColumnTitle(cols.size()), "新列 3");
+
+    // 列内滚动按列 id 记忆（列重排/删列不串列）；无记录 / 越界 = 0
+    std::map<int64_t, float> scrolls;
+    scrolls[8] = 42.0f;
+    DOCTEST_CHECK_EQ(ui::columnScrollOffset(cols, scrolls, 0), 0.0f);
+    DOCTEST_CHECK_EQ(ui::columnScrollOffset(cols, scrolls, 1), 42.0f);
+    DOCTEST_CHECK_EQ(ui::columnScrollOffset(cols, scrolls, 2), 0.0f);
+
+    // 优先级标签下标 = 枚举值；越界（脏数据）走 None；无截止日期不逾期
+    DOCTEST_CHECK_EQ(std::string(ui::priorityLabel(Priority::High)), "●高");
+    DOCTEST_CHECK_EQ(std::string(ui::priorityLabel(static_cast<Priority>(99))), "无");
+    DOCTEST_CHECK_EQ(ui::formatDue(0), std::string());
+    DOCTEST_CHECK(!ui::isOverdue(Task{}));
     return true;
 })

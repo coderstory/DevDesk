@@ -9,13 +9,19 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdio>
 #include <ctime>
+#include <iterator>
+#include <map>
 #include <optional>
+#include <string>
 #include <unordered_set>
 #include <vector>
 
+#include "core/theme.h"
 #include "core/time.h"
 #include "core/ui_geometry.h"
+#include "ui_kit/metrics.h"
 
 namespace module::todo::ui {
 
@@ -239,5 +245,178 @@ inline std::vector<const Task*> filterBySearch(const std::vector<const Task*>& t
     }
     return out;
 }
+
+// ==================== R5：任务/列的取值与筛选 ====================
+// 以下三族原为 TodoModule 的成员方法（findTask / findColumn / tasksInColumn）与
+// 匿名命名空间里的表驱动映射（优先级标签/配色、截止日期排版）。R5 把看板与
+// 弹窗拆成两个绘制单元后，两处都要用同一份实现，故按「不碰 Ui、不碰 DB 的纯
+// 逻辑住本头」的约定（god-class spec §5.2 第 4 条）收在这里，语义逐字未变。
+// 传 vector 而不是模块成员：调用方（模块 / 看板单元 / 弹窗单元）各自持有或
+// 引用同一份数据，纯函数只读。
+
+// 优先级 → 中文标签（●/○ 是文本字形，随 chip 前景色调色；
+// 旧 🔴🟡🔵⚪ 是系统彩色 emoji，风格不统一已换）
+// 下标 = Priority 枚举值（None=0 … High=3）：新增枚举成员时 static_assert
+// 编译期失败，不会像原 switch + default 那样静默吞掉漏改。越界（脏数据）走 [0]。
+inline const char* priorityLabel(Priority p) {
+    static constexpr const char* kLabels[] = {"无", "●低", "●中", "●高"};
+    static_assert(std::size(kLabels) == static_cast<size_t>(Priority::High) + 1);
+    const size_t idx = static_cast<size_t>(p);
+    return kLabels[idx <= static_cast<size_t>(Priority::High) ? idx : 0];
+}
+
+inline eui::Color priorityColor(Priority p, const core::theme::Tokens& t) {
+    // 表里存的是 ColorTokens 成员指针（不是色值）：色值随主题 t 在运行期解析，
+    // 编译期常量表因此不会把首帧主题的颜色缓存住。下标 = Priority 值域，
+    // static_assert 保证枚举新增时编译期失败；越界走 [0]（None 色）。
+    static constexpr eui::Color core::theme::ColorTokens::*kColorFields[] = {
+        &core::theme::ColorTokens::textTertiary,  // None
+        &core::theme::ColorTokens::info,          // Low
+        &core::theme::ColorTokens::warning,       // Medium
+        &core::theme::ColorTokens::error,         // High
+    };
+    static_assert(std::size(kColorFields) == static_cast<size_t>(Priority::High) + 1);
+    const size_t idx = static_cast<size_t>(p);
+    return t.colors.*kColorFields[idx <= static_cast<size_t>(Priority::High) ? idx : 0];
+}
+
+// epoch 秒 → "MM-DD"；-1 表示无截止日期
+inline std::string formatDue(int64_t epoch) {
+    if (epoch <= 0) return {};
+    std::time_t tt = static_cast<std::time_t>(epoch);
+    std::tm tmv{};
+    core::time::localTime(tt, &tmv);
+    char buf[16];
+    std::snprintf(buf, sizeof(buf), "%02d-%02d", tmv.tm_mon + 1, tmv.tm_mday);
+    return std::string(buf);
+}
+
+inline bool isOverdue(const Task& task) {
+    if (!task.dueAt.has_value() || task.completedAt.has_value()) return false;
+    return task.dueAt.value() < static_cast<int64_t>(std::time(nullptr));
+}
+
+inline const Task* findTask(const std::vector<Task>& tasks, int64_t id) {
+    for (const auto& t : tasks) {
+        if (t.id == id) return &t;
+    }
+    return nullptr;
+}
+
+inline const Column* findColumn(const std::vector<Column>& columns, int64_t id) {
+    for (const auto& c : columns) {
+        if (c.id == id) return &c;
+    }
+    return nullptr;
+}
+
+// 列内任务（按 position 升序）——看板列内容与删除确认弹窗的任务计数共用
+inline std::vector<const Task*> tasksInColumn(const std::vector<Task>& tasks,
+                                              int64_t columnId) {
+    std::vector<const Task*> out;
+    for (const auto& t : tasks) {
+        if (t.columnId == columnId) out.push_back(&t);
+    }
+    std::sort(out.begin(), out.end(), [](const Task* a, const Task* b) {
+        return a->position < b->position;
+    });
+    return out;
+}
+
+// 按语义标记找列 id（'done'=已完成列 / 'todo'=待办列；找不到返回 0）
+// 不按标题找：用户重命名列后标题不可靠（migration v4 起 kind 是权威）
+inline int64_t findColumnByKind(const std::vector<Column>& columns,
+                                const std::string& kind) {
+    for (const auto& c : columns) {
+        if (c.kind == kind) return c.id;
+    }
+    return 0;
+}
+
+// 列标题是否已被占用（exceptId = 改名列自身 id，重命名为自己的
+// 当前名不算撞名；0 = 不排除）。审计 [19]：撞名校验错误经弹窗
+// 内嵌红字呈现（此前重命名空名静默返回、无任何反馈）。
+inline bool columnTitleTaken(const std::vector<Column>& columns,
+                             const std::string& title, int64_t exceptId) {
+    for (const auto& c : columns) {
+        if (c.id != exceptId && c.title == title) return true;
+    }
+    return false;
+}
+
+// 留空采用默认列名「新列 N」（N = 现有列数 + 1）
+inline std::string defaultColumnTitle(size_t columnCount) {
+    return "新列 " + std::to_string(columnCount + 1);
+}
+
+// 列内滚动位置（审计 [23]：按列 id 记忆——列重排/删列不再串列）
+inline float columnScrollOffset(const std::vector<Column>& columns,
+                                const std::map<int64_t, float>& scrolls,
+                                size_t colIndex) {
+    if (colIndex >= columns.size()) return 0.0f;
+    auto it = scrolls.find(columns[colIndex].id);
+    return it == scrolls.end() ? 0.0f : it->second;
+}
+
+// ==================== R5：看板几何 ====================
+// drawBoard 与右键菜单定位共用（菜单坐标走模块自身布局空间，
+// 不用指针事件的窗口坐标——页面在侧边栏右侧，两者相差一个侧边栏宽）
+struct BoardGeom {
+    float pad = 0.0f;
+    float colW = 0.0f;
+    float colGap = 0.0f;
+    float boardTop = 0.0f;  // 看板区（列背景）顶边的模块空间 y
+};
+
+// screenWidth = 页面逻辑宽（调用点传 Screen::width）。收宽度而不是收
+// eui::Screen：Screen 在 eui/dsl.h 里，本头是不碰 Ui 的纯函数层，
+// 引 DSL 应用头只为拿一个 float 不值当（eui/types.h 的值类型桥接足够）。
+inline BoardGeom boardGeom(float screenWidth, size_t columnCount,
+                           const core::theme::Tokens& t) {
+    BoardGeom g;
+    g.pad = t.sizes.spacingXXLarge;
+    g.colGap = t.sizes.spacingLarge;
+    const float contentW = screenWidth - g.pad * 2.0f;
+    const auto n = static_cast<float>(columnCount == 0 ? 1 : columnCount);
+    g.colW = (contentW - g.colGap * (n - 1.0f)) / n;
+    g.boardTop = g.pad + ui_kit::kHeaderH + t.sizes.spacingLarge;
+    return g;
+}
+
+inline float cardLeft(const BoardGeom& g, int columnIndex) {
+    return g.pad + static_cast<float>(columnIndex) * (g.colW + g.colGap);
+}
+
+inline float cardTop(const BoardGeom& g, int cardIndex) {
+    return g.boardTop + kColumnHeaderHeight +
+           static_cast<float>(cardIndex) * (kCardHeight + kCardGap);
+}
+
+// chip 宽度估算（fontSizeSmall-3 ≈ 11px：CJK ≈ 11px/字（3 字节），ASCII ≈ 5.5px/字节）
+// ponytail: 估宽不发 FontRegistry 实测；偏差只影响 chip 间留白，可接受
+inline float chipWidth(const std::string& text) {
+    float w = 20.0f;
+    for (unsigned char c : text) {
+        w += (c >= 0x80) ? 4.0f : 5.5f;
+    }
+    return w;
+}
+
+// 改色预设（token 与 columnDotColor 的映射表一一对应；spec §8.2 承诺）
+// 右键菜单「改色」子项与菜单分发共用：标签给 UI，token 给 service。
+struct ColorPreset {
+    const char* token;
+    const char* label;
+};
+inline constexpr ColorPreset kColorPresets[] = {
+    {"claude-clay", "Claude 橘"},
+    {"warm-amber",  "暖琥珀"},
+    {"muted-sage",  "鼠尾草绿"},
+    {"warm-gray",   "暖灰"},
+    {"dusty-blue",  "雾蓝"},
+    {"rose-red",    "玫瑰红"},
+};
+inline constexpr int kColorPresetCount =
+    static_cast<int>(sizeof(kColorPresets) / sizeof(kColorPresets[0]));
 
 } // namespace module::todo::ui
