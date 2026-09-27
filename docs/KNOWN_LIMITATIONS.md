@@ -1,6 +1,6 @@
 # DevDesk 已知限制
 
-> 如实记录，不做粉饰。基线：2026-09-23，Windows 11，330/330 测试全绿，单 exe 零外部 DLL。
+> 如实记录，不做粉饰。基线：2026-09-23，Windows 11，单 exe 零外部 DLL。**测试用例数以运行输出 `Total:` 为准，不在文档写死**（当前快照 2026-09-28：`Total: 646 / Passed: 645 / Failed: 0`；330/330 是 09-23 的历史快照）。
 > 分「Windows 已知限制」与「跨平台已知限制」两节；每条附来源 / 升级路径（如有）。
 > 这些条目大多是各任务 notes 中登记的**范围外项**，不是未发现的缺陷。
 > 已修复的历史条目移入文末「已解决」小节存档（含修复 commit），不静默删除。
@@ -125,12 +125,27 @@
 
 - 设计 §5.3 曾写「写入前复制 `.devdesk.bak.<n>` 保留 10 份（学 cc-switch）」，实现时未做且决定**不做**：原子写（tmp+rename，不产生半写文件）+ 首份快照 sidecar（接管前原 env 完整保存、停止/退出/崩溃补还原三个还原路径）已覆盖数据安全面；轮换备份的增量收益仅是「接管期间用户手改托管键被覆盖后的历史找回」（该场景语义上托管键本就归 DevDesk 管理，§5.3 已接受的边界）。文档两处（CHANGELOG / 设计 §5.3、§7.3）已同步改为实际行为。升级路径：若未来出现真实诉求，在 `settings_sync.cpp` 写入前复制并做 ≤10 份轮换清理。
 
+#### 17. `settings.json` 存在但读不出时，接管 / 还原改为中止不写（波 1 G8/G9，2026-09-28 登记）
+
+- **行为变更**：`settings.json` **存在但读不出**（IO 错误 / 权限不足 / 被独占句柄占住）时，`takeOver`（接管）与 `restore`（还原）**由原先「静默当空文件、然后整体重写」改为「中止不写」**，错误串含文件路径（形如 `读取失败（IO/权限）: <path>`）。修掉的是两条**潜在数据破坏路径**：① 还原曾会把快照里没有的字段（`permissions` / `hooks` 等）一并抹掉；② 接管曾会把读不出的用户原值当空对象覆盖。
+- **仍是 no-op 的形态**：文件**不存在**、以及 **0 字节空文件**（读得出来、内容为空）都按「不存在」处理——`ok=true` 且不写盘。副作用：`clearResidualProxyKeys` 在这条路径上由「静默 no-op」变为多打一条 WARN。
+- **定位**：`src/module_claude_proxy/settings_sync.cpp`（`readTextFile` 出口带 `readFailed` 信号，`parseJsonObjectFile` 分开处置）。用户可见后果：文件真存在却读不出时会看到一条「接管失败」而非静默成功——这是刻意的，因为原先那条路径**会**改盘。
+- **来源**：波 1 L3，merge `6d6932e`（文档登记归 L11）。
+
 ### 平台验证
 
 #### 6. macOS 侧自 2026-09-21 迁移后未重新构建验证
 
 - P0–P8 曾在 macOS 上 66 测试通过（含 .app bundle 与文件关联）。
 - T2–T11 的全部改动只在 Windows 上编译、测试过；macOS 分支代码（`*_macos.cpp`、`.app` target、Security.framework 链接）保留且按接口隔离模式组织，但**未验证**。回到 macOS 开发时需先全量构建 + 跑测试。
+
+#### 18. macOS 侧 `system_theme_macos.cpp` 编译未验证（波 1 CP-12，2026-09-28 登记）
+
+- **现象**：`src/platform/system_theme_macos.cpp`（用纯 C 的 `CFPreferencesCopyAppValue(CFSTR("AppleInterfaceStyle"), CFSTR("NSGlobalDomain"))` 与 `CFSTR("Dark")` 比较，实现「跟随系统主题」）已写好并接进 `src/platform/CMakeLists.txt` 的 `elseif(APPLE)` 分支（同处加 `-framework CoreFoundation`），但**从未在 macOS 上编译过**——本机为 Windows、无 macOS 工具链，该 TU 不可达；它也不在 Windows 基线源列表里，故不影响 Windows 构建。
+- **背景**：此前 macOS 分支编的是 `system_theme_posix.cpp`，`prefersDarkTheme()` 恒 false → 设置页「跟随系统主题」在 macOS 上一律解析成浅色。
+- **验证条件（两项都过才算关闭此条）**：① macOS 侧 `cmake --build` 通过（含 `-framework CoreFoundation` 链接成功）；② 浅色 / 深色两种系统外观下，`prefersDarkTheme()` 返回值与系统一致（即 `settings_theme_auto_follows_platform` 用例在 macOS 上跑绿）。
+- **未取证**：无 GUI 会话 / SSH 登录下 `CFPreferencesCopyAppValue` 的返回值；`kCFPreferencesCurrentUser` vs `AnyUser` 的选择。
+- **来源**：波 1 L2，merge `e50d82b`；spec §4 风险表同项（文档登记归 L11）。
 
 ### EUI-NEO 上游 PR 候选（修上游，不在 DevDesk hack）
 
@@ -152,7 +167,7 @@
 - **无 OS 文件拖入**（无 onFileDrop）——DevDesk 的 Markdown 导入只能走目录扫描；
 - **单字重**（只打包 Bold 一份字重，`fontWeight` 运行时切换无效，SemiBold/Medium 不生效）；
 - **无全局 OS hotkey**（窗口失焦时收不到键盘事件）；
-- 其他：无 tree 组件、Toast 单实例、无 Collapse/Accordion、无 skeleton loader、无 Tab 焦点循环、无 onResize/onMove 回调。（0.6.0 的「无自定义托盘菜单（只硬编码 Show/Exit）」已过时：上游已加 `trayMenu` / `onTrayMenu` / `styledMenu`，DevDesk 托盘与桌宠 / Todo 列菜单均已换 styled 菜单 + 按模块动态收缩；本清单是当时快照，以 `docs/EUI-NEO-CAPABILITIES.md` 复核为准。）
+- 其他：无 tree 组件、Toast 单实例、无 Collapse/Accordion、无 skeleton loader、无 Tab 焦点循环、无 onResize/onMove 回调。（0.6.0 的「无自定义托盘菜单（只硬编码 Show/Exit）」已过时：上游已加 `trayMenu` / `onTrayMenu` / `styledMenu`，DevDesk 托盘与桌宠 / Todo 列菜单均已换 styled 菜单；本清单是当时快照，以 `docs/EUI-NEO-CAPABILITIES.md` 复核为准。）
 
 ---
 
