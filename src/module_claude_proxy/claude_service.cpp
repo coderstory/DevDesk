@@ -59,6 +59,14 @@ std::string stripTrailingSlash(const std::string& s) {
     return s;
 }
 
+// 方言覆盖文本规范化（审计 CPX-13，同 authField 的写侧口径）：命中值域 → 规范
+// 文本；空串 / 未知 / 拼写错误 → 空串（未覆盖 = 回落 base_url 的 host 推断）。
+// 写侧与读侧各调一次，保证库里与内存里都只有两个规范值之一或空串
+std::string normalizeDialectOverride(const std::string& text) {
+    const auto kind = dialectKindFromText(text);
+    return kind ? std::string(dialectKindToText(*kind)) : std::string();
+}
+
 // CPX-07：Keychain 当前是否处于给定值（读不到 = 条目不存在，按空串比较）。
 // 反向同步写库失败后用「实际状态」判断密钥是否已回到旧值，不信补偿返回值。
 bool keyAtOldValue(const std::string& keychainService,
@@ -198,6 +206,7 @@ core::Result<Profile> ClaudeService::rowToProfile(const core::data::SqlRow& row)
     auto extraEnv = row.getString("extra_env");
     auto sharedCfg = row.getInt64("shared_config_id");
     auto authField = row.getString("auth_field");
+    auto dialectOverride = row.getString("dialect_override");
     auto active = row.getInt64("is_active");
     auto created = row.getInt64("created_at");
     auto updated = row.getInt64("updated_at");
@@ -215,6 +224,10 @@ core::Result<Profile> ClaudeService::rowToProfile(const core::data::SqlRow& row)
     if (authField.isOk()) {
         p.authField = authFieldToText(authFieldFromText(authField.value()));
     }
+    // 读侧规范化：未知/空值一律按「未覆盖」读回空串（同 authField 口径，CPX-13）
+    if (dialectOverride.isOk()) {
+        p.dialectOverride = normalizeDialectOverride(dialectOverride.value());
+    }
     if (active.isOk()) p.isActive = (active.value() != 0);
     if (created.isOk()) p.createdAt = static_cast<std::time_t>(created.value());
     if (updated.isOk()) p.updatedAt = static_cast<std::time_t>(updated.value());
@@ -229,7 +242,8 @@ core::Result<std::vector<Profile>> ClaudeService::listProfiles() {
     auto prep = db_.prepare(
         "SELECT id, name, base_url, api_key_hint, api_key_check, "
         "keychain_account, model, models_config, extra_env, "
-        "shared_config_id, auth_field, is_active, created_at, updated_at "
+        "shared_config_id, auth_field, dialect_override, is_active, "
+        "created_at, updated_at "
         "FROM claude_profiles ORDER BY is_active DESC, name ASC");
     if (prep.isFail()) {
         return core::Result<std::vector<Profile>>::fail(
@@ -259,7 +273,8 @@ core::Result<Profile> ClaudeService::getProfile(int64_t id) {
     auto prep = db_.prepare(
         "SELECT id, name, base_url, api_key_hint, api_key_check, "
         "keychain_account, model, models_config, extra_env, "
-        "shared_config_id, auth_field, is_active, created_at, updated_at "
+        "shared_config_id, auth_field, dialect_override, is_active, "
+        "created_at, updated_at "
         "FROM claude_profiles WHERE id = ?");
     if (prep.isFail()) {
         return core::Result<Profile>::fail(prep.errorCode(), prep.errorMessage());
@@ -290,7 +305,8 @@ core::Result<Profile> ClaudeService::createProfile(const std::string& name,
                                                    const std::string& model,
                                                    bool activateIfNoneActive,
                                                    int64_t sharedConfigId,
-                                                   const std::string& authField) {
+                                                   const std::string& authField,
+                                                   const std::string& dialectOverride) {
     // 校验
     if (trim(name).empty()) {
         return core::Result<Profile>::fail(core::ErrorCode::ValidationError,
@@ -311,6 +327,9 @@ core::Result<Profile> ClaudeService::createProfile(const std::string& name,
     const std::string cleanedModel = trim(model);
     const std::string cleanedAuthField =
         authFieldToText(authFieldFromText(authField));   // 写侧规范化（D-8）
+    // 写侧规范化（CPX-13）：非法值 → 空串（未覆盖）
+    const std::string cleanedDialectOverride =
+        normalizeDialectOverride(dialectOverride);
     const std::string hint = makeApiKeyHint(apiKey);
     const std::string check = sha256HexPrefix(apiKey);
 
@@ -325,8 +344,9 @@ core::Result<Profile> ClaudeService::createProfile(const std::string& name,
     auto prep = db_.prepare(
         "INSERT INTO claude_profiles "
         "(name, base_url, api_key_hint, api_key_check, keychain_account, "
-        " model, shared_config_id, auth_field, is_active, created_at, updated_at) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?) RETURNING id");
+        " model, shared_config_id, auth_field, dialect_override, is_active, "
+        " created_at, updated_at) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?) RETURNING id");
     if (prep.isFail()) {
         return core::Result<Profile>::fail(prep.errorCode(), prep.errorMessage());
     }
@@ -339,8 +359,9 @@ core::Result<Profile> ClaudeService::createProfile(const std::string& name,
     stmt.bind(6, cleanedModel);
     stmt.bind(7, sharedConfigId);    // 建时即绑定（0 = 不绑定）
     stmt.bind(8, cleanedAuthField);  // 认证字段（写侧已规范化）
-    stmt.bind(9, static_cast<int64_t>(now));
+    stmt.bind(9, cleanedDialectOverride);  // 方言覆盖（写侧已规范化，空串 = 未覆盖）
     stmt.bind(10, static_cast<int64_t>(now));
+    stmt.bind(11, static_cast<int64_t>(now));
 
     auto stepR = stmt.step();
     if (stepR.isFail()) {
@@ -476,6 +497,7 @@ core::Result<Profile> ClaudeService::createProfile(const std::string& name,
     out.model = cleanedModel;
     out.sharedConfigId = sharedConfigId;
     out.authField = cleanedAuthField;   // 必须带上：二段补写以本返回值为基
+    out.dialectOverride = cleanedDialectOverride;   // 同上（CPX-13）
     out.isActive = autoActivated;
     out.createdAt = now;
     out.updatedAt = now;
@@ -504,6 +526,9 @@ core::Result<void> ClaudeService::updateProfile(const Profile& profile) {
     const std::time_t now = nowUnix();
     const std::string cleanedAuthField =
         authFieldToText(authFieldFromText(profile.authField));   // 写侧规范化（D-8）
+    // 写侧规范化（CPX-13）：非法值 → 空串（未覆盖）
+    const std::string cleanedDialectOverride =
+        normalizeDialectOverride(profile.dialectOverride);
 
     // 写入前校验两个 JSON 原文（信任边界：不把坏 JSON 落库；读侧另有容错）
     if (!profile.modelsConfigJson.empty()) {
@@ -551,7 +576,7 @@ core::Result<void> ClaudeService::updateProfile(const Profile& profile) {
                 "UPDATE claude_profiles SET "
                 "name = ?, base_url = ?, api_key_hint = ?, api_key_check = ?, "
                 "model = ?, models_config = ?, extra_env = ?, shared_config_id = ?, "
-                "auth_field = ?, "
+                "auth_field = ?, dialect_override = ?, "
                 "updated_at = ? "
                 "WHERE id = ?");
             if (prep.isFail()) {
@@ -568,8 +593,9 @@ core::Result<void> ClaudeService::updateProfile(const Profile& profile) {
             stmt.bind(7, profile.extraEnvJson);
             stmt.bind(8, profile.sharedConfigId);
             stmt.bind(9, cleanedAuthField);
-            stmt.bind(10, static_cast<int64_t>(now));
-            stmt.bind(11, profile.id);
+            stmt.bind(10, cleanedDialectOverride);
+            stmt.bind(11, static_cast<int64_t>(now));
+            stmt.bind(12, profile.id);
             auto step = stmt.step();
             if (step.isFail()) {
                 std::string msg = step.errorMessage();
@@ -592,6 +618,7 @@ core::Result<void> ClaudeService::updateProfile(const Profile& profile) {
             "UPDATE claude_profiles SET "
             "name = ?, base_url = ?, model = ?, models_config = ?, "
             "extra_env = ?, shared_config_id = ?, auth_field = ?, "
+            "dialect_override = ?, "
             "updated_at = ? WHERE id = ?");
         if (prep.isFail()) {
             return core::Result<void>::fail(prep.errorCode(), prep.errorMessage());
@@ -604,8 +631,9 @@ core::Result<void> ClaudeService::updateProfile(const Profile& profile) {
         stmt.bind(5, profile.extraEnvJson);
         stmt.bind(6, profile.sharedConfigId);
         stmt.bind(7, cleanedAuthField);
-        stmt.bind(8, static_cast<int64_t>(now));
-        stmt.bind(9, profile.id);
+        stmt.bind(8, cleanedDialectOverride);
+        stmt.bind(9, static_cast<int64_t>(now));
+        stmt.bind(10, profile.id);
         auto stepR = stmt.step();
         if (stepR.isFail()) {
             std::string msg = stepR.errorMessage();
@@ -735,7 +763,8 @@ core::Result<Profile> ClaudeService::getActiveProfile() {
     auto prep = db_.prepare(
         "SELECT id, name, base_url, api_key_hint, api_key_check, "
         "keychain_account, model, models_config, extra_env, "
-        "shared_config_id, auth_field, is_active, created_at, updated_at "
+        "shared_config_id, auth_field, dialect_override, is_active, "
+        "created_at, updated_at "
         "FROM claude_profiles WHERE is_active = 1 LIMIT 1");
     if (prep.isFail()) {
         return core::Result<Profile>::fail(prep.errorCode(), prep.errorMessage());
@@ -867,7 +896,8 @@ core::Result<Profile> ClaudeService::duplicateProfile(int64_t srcId) {
         effectiveModelsConfig(src.modelsConfigJson, src.model).def.model;
     auto createdR = createProfile(copyName, src.baseUrl, keyR.value(), defModel,
                                   /*activateIfNoneActive=*/false,
-                                  src.sharedConfigId, src.authField);
+                                  src.sharedConfigId, src.authField,
+                                  src.dialectOverride);
     if (createdR.isFail()) {
         return core::Result<Profile>::fail(createdR.errorCode(),
                                            createdR.errorMessage());

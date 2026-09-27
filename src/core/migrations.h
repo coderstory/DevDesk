@@ -248,6 +248,25 @@ inline const Migration kTodoArchiveColumnKind = {
     )"
 };
 
+// Profile 上游方言覆盖（version 9，审计 CPX-13）
+//   - 空串 = 未覆盖 = 按 claude_profiles.base_url 的 host 推断
+//     （UpstreamDialect::forBaseUrl 的缺省行为，存量行零迁移）
+//   - 值域：'anthropic_default' / 'opencode_zen'（未知 / 空串读侧回落 host 推断，
+//     写侧规范化为空串——同 v7 auth_field 的两侧兜底口径）
+//   - 为什么需要：自建网关 / 内网镜像的 host 后缀推断不出正确方言（zen 镜像被判
+//     成 opencodeZen → 多注入 x-opencode-session；或本地反代被当成默认 → 模型名
+//     的 [1M] 标记不剥，上游 400），此前只能改代码
+// 版本号 9：v1..v8 已落库（v8 = 波 1 归档列 kind 回填），顺延为 v9
+// 注意：ALTER TABLE ADD COLUMN 无 IF NOT EXISTS，靠 schema_version 版本号保证
+// 只执行一次（runMigrations 事务内，失败整体回滚）。
+inline const Migration kClaudeProfileDialectOverride = {
+    .version = 9,
+    .description = "claude profiles add dialect override",
+    .sql = R"(
+        ALTER TABLE claude_profiles ADD COLUMN dialect_override TEXT NOT NULL DEFAULT '';
+    )"
+};
+
 // 所有 migrations 的权威列表（顺序敏感，必须按 version 升序）
 inline const std::vector<core::data::Migration>& all() {
     static const std::vector<core::data::Migration> kMigrations = {
@@ -259,6 +278,7 @@ inline const std::vector<core::data::Migration>& all() {
         kClaudeSharedConfigs,
         kClaudeProfileAuthField,
         kTodoArchiveColumnKind,
+        kClaudeProfileDialectOverride,
     };
     return kMigrations;
 }

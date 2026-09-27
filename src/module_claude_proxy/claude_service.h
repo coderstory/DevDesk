@@ -52,6 +52,12 @@ struct Profile {
     std::string extraEnvJson;   // 额外 env 键值 JSON 原文（空串 = 未配置）
     int64_t sharedConfigId = 0; // 绑定共享配置片段 id（0 = 未绑定；0..1、不嵌套）
     std::string authField = "both";  // 认证字段三态（'both'/'bearer'/'api_key'；未知/空串按 both 读）
+    // 上游方言覆盖（审计 CPX-13）：空串 = 未覆盖 = 按 baseUrl 的 host 推断
+    //（UpstreamDialect::forBaseUrl 的第二参数）；值域 'anthropic_default' /
+    // 'opencode_zen'，未知 / 空串读侧回落 host 推断、写侧归一为空串。
+    // 自建网关 / 内网镜像的 host 后缀推断不出正确方言时用它钉住；
+    // UI 未暴露（经 DB / 配置文件设置），取值域见 upstream_dialect.h
+    std::string dialectOverride;
     bool isActive = false;
     std::time_t createdAt = 0;
     std::time_t updatedAt = 0;
@@ -140,13 +146,17 @@ public:
     // 径一致——先建后 update 会留下一次「未绑片段」的中间态，故走尾部默认参数）
     // authField：认证字段三态文本（'both'/'bearer'/'api_key'；非法值写侧规范化为
     // 'both'，见 2026-09-27 profile-auth-field 设计 §3 D-8）
+    // dialectOverride：上游方言覆盖文本（空串 = 未覆盖 = 按 baseUrl 的 host 推断；
+    // 非法值写侧归一为空串，审计 CPX-13。副本复制经本参数带上，见 duplicateProfile）
     core::Result<Profile> createProfile(const std::string& name,
                                        const std::string& baseUrl,
                                        const std::string& apiKey,
                                        const std::string& model,
                                        bool activateIfNoneActive = false,
                                        int64_t sharedConfigId = 0,
-                                       const std::string& authField = "both");
+                                       const std::string& authField = "both",
+                                       const std::string& dialectOverride =
+                                           std::string());
 
     // 更新 profile（profile.id 必须已存在）
     //   - 若 profile.apiKeyPlain 非空，则覆盖 Keychain
@@ -183,7 +193,8 @@ public:
     // fail，不建无 key 的副本），**副本不激活**（S-4）。
     // 二段补写（models_config / extra_env）失败 → best-effort 删除刚建的副本
     // 回滚：回滚成功 = fail 且零残留；回滚失败 = fail 且文案注明不完整副本 id
-    // shared_config_id 一并复制（属于配置，设计 §2.6）
+    // shared_config_id 一并复制（属于配置，设计 §2.6）；
+    // dialect_override 一并复制（同上，审计 CPX-13）
     core::Result<Profile> duplicateProfile(int64_t srcId);
 
     // ---- 共享配置片段（设计 §2.1/§2.6）----

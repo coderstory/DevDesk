@@ -407,8 +407,9 @@ REGISTER_TEST(provider_config_migration_upgrade,
         // v3 供应商配置迁移 + v4 todo kind 迁移（W9 批次并入后全量到 4）
         // + v5 调用日志用量列（cc-switch 对照 §3.4）
         // + v6 共享配置片段表与 profile 绑定列
-        // + v7 profile 认证字段 + v8 todo 归档列 kind 回填 → 全量到 8
-        DOCTEST_CHECK_EQ(db.schemaVersion(), 8);
+        // + v7 profile 认证字段 + v8 todo 归档列 kind 回填
+        // + v9 profile 方言覆盖列（CPX-13）→ 全量到 9
+        DOCTEST_CHECK_EQ(db.schemaVersion(), 9);
 
         module::claude::ClaudeService svc(db, kTestKeychainService);
         auto profiles = svc.listProfiles();
@@ -419,6 +420,7 @@ REGISTER_TEST(provider_config_migration_upgrade,
         DOCTEST_CHECK_EQ(p.model, std::string("claude-3-5-haiku"));
         DOCTEST_CHECK(p.modelsConfigJson.empty());  // 存量行零迁移
         DOCTEST_CHECK(p.extraEnvJson.empty());
+        DOCTEST_CHECK(p.dialectOverride.empty());   // 存量行零迁移（v9，CPX-13）
 
         // 旧数据经兼容读取 → default 槽位 = 旧 model
         auto eff = module::claude::effectiveModelsConfig(

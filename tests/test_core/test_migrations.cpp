@@ -206,8 +206,9 @@ REGISTER_TEST(migrate_call_logs_usage_columns,
         DOCTEST_REQUIRE(r.isOk());
         DOCTEST_REQUIRE(r.value().migrate().isOk());
         auto& db = r.value().db();
-        // v7（认证字段）+ v8（归档列 kind 回填）已执行：全量迁移后 schema_version = 8
-        DOCTEST_CHECK_EQ(db.schemaVersion(), 8);
+        // v7（认证字段）+ v8（归档列 kind 回填）+ v9（方言覆盖列）已执行：
+        // 全量迁移后 schema_version = 9
+        DOCTEST_CHECK_EQ(db.schemaVersion(), 9);
 
         auto prep = db.prepare(
             "SELECT status_code, latency_ms, request_bytes, response_bytes, "
@@ -288,8 +289,9 @@ REGISTER_TEST(migrate_shared_configs_v6,
         DOCTEST_REQUIRE(r.isOk());
         DOCTEST_REQUIRE(r.value().migrate().isOk());
         auto& db = r.value().db();
-        // v7（认证字段）/ v8（归档列 kind 回填）随后执行：全量迁移后 schema_version = 8
-        DOCTEST_CHECK_EQ(db.schemaVersion(), 8);
+        // v7（认证字段）/ v8（归档列 kind 回填）/ v9（方言覆盖列）随后执行：
+        // 全量迁移后 schema_version = 9
+        DOCTEST_CHECK_EQ(db.schemaVersion(), 9);
 
         // 新表存在且可插入片段行
         DOCTEST_REQUIRE(db.exec(
@@ -364,7 +366,7 @@ REGISTER_TEST(migrate_archive_kind_v8,
         DOCTEST_REQUIRE(r.isOk());
         DOCTEST_REQUIRE(r.value().migrate().isOk());
         auto& db = r.value().db();
-        DOCTEST_CHECK_EQ(db.schemaVersion(), 8);
+        DOCTEST_CHECK_EQ(db.schemaVersion(), 9);
 
         struct Expect { const char* title; const char* kind; };
         Expect expects[4];
@@ -388,6 +390,66 @@ REGISTER_TEST(migrate_archive_kind_v8,
                                  std::string(e.kind));
             }
         }
+    } // Database 在此析构（关闭 sqlite 句柄）
+
+    std::filesystem::remove(path, ec);
+    return true;
+})
+
+// migration v9（Profile 方言覆盖列，审计 CPX-13）：旧库升级后 claude_profiles 多出
+// dialect_override 列，存量行零迁移（默认空串 = 未覆盖 = 按 base_url 的 host 推断）
+REGISTER_TEST(migrate_dialect_override_v9,
+              "migration v9: 旧库升级加 profile 方言覆盖列", {
+    auto path = tempDbPath("dialect_override");
+    std::error_code ec;
+    std::filesystem::remove(path, ec);
+
+    // 手工构造 v8 旧库（只跑前 8 条 migration）+ 存量 profile 行
+    {
+        auto openR = core::data::SqliteDb::open(path);
+        DOCTEST_REQUIRE(openR.isOk());
+        auto& db = openR.value();
+        auto oldMigrations = core::migrations::all();
+        oldMigrations.resize(8);  // v1..v8
+        DOCTEST_REQUIRE(db.runMigrations(oldMigrations).isOk());
+
+        DOCTEST_REQUIRE(db.exec(
+            "INSERT INTO claude_profiles (id, name, base_url, api_key_hint, "
+            "api_key_check, keychain_account, model, is_active, created_at, "
+            "updated_at) VALUES (1, '旧供应商', 'https://old.example.com', "
+            "'sk-***abcd', 'deadbeef', 'claude:1', 'claude-3-5-haiku', 1, 0, 0)")
+                            .isOk());
+    } // 句柄关闭（Windows 文件锁）
+
+    // 重新打开 + 全量 migrate → v9 加列
+    {
+        auto r = core::Database::open(path);
+        DOCTEST_REQUIRE(r.isOk());
+        DOCTEST_REQUIRE(r.value().migrate().isOk());
+        auto& db = r.value().db();
+        DOCTEST_CHECK_EQ(db.schemaVersion(), 9);
+
+        // 存量行零迁移：新列为空串（未覆盖 = 回落 host 推断）
+        auto q = db.prepare(
+            "SELECT dialect_override FROM claude_profiles WHERE id = 1");
+        DOCTEST_REQUIRE(q.isOk());
+        auto rows = q.value().fetchAll();
+        DOCTEST_REQUIRE_EQ(rows.value().size(), 1u);
+        DOCTEST_CHECK_EQ(rows.value()[0].getString("dialect_override").valueOr("?"),
+                         std::string(""));
+
+        // 新列可写（配置文件 / DB 直配路径；UI 本线不暴露）
+        DOCTEST_REQUIRE(db.exec(
+            "UPDATE claude_profiles SET dialect_override = 'opencode_zen' "
+            "WHERE id = 1")
+                            .isOk());
+        auto q2 = db.prepare(
+            "SELECT dialect_override FROM claude_profiles WHERE id = 1");
+        DOCTEST_REQUIRE(q2.isOk());
+        auto rows2 = q2.value().fetchAll();
+        DOCTEST_REQUIRE_EQ(rows2.value().size(), 1u);
+        DOCTEST_CHECK_EQ(rows2.value()[0].getString("dialect_override").valueOr("?"),
+                         std::string("opencode_zen"));
     } // Database 在此析构（关闭 sqlite 句柄）
 
     std::filesystem::remove(path, ec);

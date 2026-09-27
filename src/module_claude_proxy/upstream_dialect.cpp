@@ -119,7 +119,14 @@ UpstreamDialect UpstreamDialect::opencodeZen() {
     return UpstreamDialect{Kind::OpencodeZen};
 }
 
-UpstreamDialect UpstreamDialect::forBaseUrl(const std::string& baseUrl) {
+UpstreamDialect UpstreamDialect::forBaseUrl(const std::string& baseUrl,
+                                            const std::string& overrideText) {
+    // 显式覆盖优先（审计 CPX-13）：host 推断对自建网关 / 内网镜像无效
+    //（后缀像 opencode.ai 的镜像被判成 zen，或反过来），profile 可钉住方言。
+    // 未覆盖（空串 / 未知值）→ 原样走 host 推断，行为与从前逐项一致
+    if (const auto forced = dialectKindFromText(overrideText)) {
+        return UpstreamDialect{*forced};
+    }
     return isOpencodeHost(hostOf(baseUrl)) ? opencodeZen() : anthropicDefault();
 }
 
@@ -165,6 +172,24 @@ void UpstreamDialect::applyHeaders(std::map<std::string, std::string>& headers,
 bool UpstreamDialect::normalizeBody(std::string& body) const {
     if (!stripModelSuffix()) return false;
     return normalizeModelInBody(body);
+}
+
+// ==================== 方言覆盖文本（CPX-13） ====================
+
+std::optional<UpstreamDialect::Kind> dialectKindFromText(const std::string& text) {
+    if (text == "anthropic_default") {
+        return UpstreamDialect::Kind::AnthropicDefault;
+    }
+    if (text == "opencode_zen") return UpstreamDialect::Kind::OpencodeZen;
+    return std::nullopt;   // 空串 / 未知 / 拼写错误 → 未覆盖（读侧兜底）
+}
+
+const char* dialectKindToText(UpstreamDialect::Kind kind) {
+    switch (kind) {
+        case UpstreamDialect::Kind::OpencodeZen: return "opencode_zen";
+        case UpstreamDialect::Kind::AnthropicDefault: break;
+    }
+    return "anthropic_default";
 }
 
 // ==================== 模型名归一 ====================

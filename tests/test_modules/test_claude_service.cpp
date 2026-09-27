@@ -2325,6 +2325,238 @@ REGISTER_TEST(claude_service_auth_field_invalid_normalized,
     return true;
 })
 
+// ---- 32. 方言覆盖：默认空串 + 三处 SELECT 往返（CPX-13）----
+// getActiveProfile 是「漏改 SELECT 列静默失效」的回归闸：rowToProfile 的
+// if (isOk()) 守卫会把缺列吞成默认值
+
+REGISTER_TEST(claude_service_dialect_override_default_and_roundtrip,
+              "claude_service: dialectOverride 默认空串 + 三处 SELECT 往返", {
+    using namespace module::claude;
+    TestDb tdb("dialect_rt");
+    ClaudeService svc(tdb.handle(), kTestKeychainService);
+
+    // 不传尾参 → 空串（未覆盖 = 按 host 推断；存量调用零变化）
+    auto d = svc.createProfile("方言默认", "https://d.example.com",
+                               "sk-dial-default-0123456789abcdef", "m");
+    DOCTEST_REQUIRE(d.isOk());
+    DOCTEST_CHECK(d.value().dialectOverride.empty());
+    auto gd = svc.getProfile(d.value().id);
+    DOCTEST_REQUIRE(gd.isOk());
+    DOCTEST_CHECK(gd.value().dialectOverride.empty());
+
+    // 显式 opencode_zen：getProfile / getActiveProfile / listProfiles 三条 SELECT 都要读到
+    auto z = svc.createProfile("方言Zen", "https://zen.example.com",
+                               "sk-dial-zen-0123456789abcdef", "m",
+                               /*activateIfNoneActive=*/false,
+                               /*sharedConfigId=*/0, "both", "opencode_zen");
+    DOCTEST_REQUIRE(z.isOk());
+    DOCTEST_CHECK_EQ(z.value().dialectOverride, std::string("opencode_zen"));
+    auto gz = svc.getProfile(z.value().id);
+    DOCTEST_REQUIRE(gz.isOk());
+    DOCTEST_CHECK_EQ(gz.value().dialectOverride, std::string("opencode_zen"));
+    DOCTEST_REQUIRE(svc.setActiveProfile(z.value().id).isOk());
+    auto gact = svc.getActiveProfile();
+    DOCTEST_REQUIRE(gact.isOk());
+    DOCTEST_CHECK_EQ(gact.value().id, z.value().id);
+    DOCTEST_CHECK_EQ(gact.value().dialectOverride, std::string("opencode_zen"));
+    auto all = svc.listProfiles();
+    DOCTEST_REQUIRE(all.isOk());
+    bool listed = false;
+    for (const auto& p : all.value()) {
+        if (p.id == z.value().id) {
+            listed = true;
+            DOCTEST_CHECK_EQ(p.dialectOverride, std::string("opencode_zen"));
+        }
+    }
+    DOCTEST_CHECK(listed);
+
+    // ① 覆盖值对 profile 生效：host 后缀普通（默认方言）也被钉成 zen 方言
+    const UpstreamDialect pinned =
+        UpstreamDialect::forBaseUrl(gz.value().baseUrl,
+                                    gz.value().dialectOverride);
+    DOCTEST_CHECK(pinned.kind == UpstreamDialect::Kind::OpencodeZen);
+
+    cleanupKey(d.value().id);
+    cleanupKey(z.value().id);
+    return true;
+})
+
+// ---- 33. updateProfile 两条 UPDATE 分支都能改该字段 ----
+
+REGISTER_TEST(claude_service_dialect_override_update_both_branches,
+              "claude_service: dialectOverride updateProfile 两分支（换 key / 不换 key）", {
+    using namespace module::claude;
+    TestDb tdb("dialect_upd");
+    ClaudeService svc(tdb.handle(), kTestKeychainService);
+
+    auto a = svc.createProfile("方言双分支", "https://zen.example.com",
+                               "sk-dial-upd-0123456789abcdef", "m",
+                               /*activateIfNoneActive=*/false,
+                               /*sharedConfigId=*/0, "both", "opencode_zen");
+    DOCTEST_REQUIRE(a.isOk());
+
+    // 分支一：apiKeyPlain 非空（换 key 分支）——覆盖改成通用方言
+    Profile p1 = a.value();
+    p1.apiKeyPlain = "sk-dial-upd-newkey-0123456789";
+    p1.dialectOverride = "anthropic_default";
+    DOCTEST_REQUIRE(svc.updateProfile(p1).isOk());
+    auto g1 = svc.getProfile(a.value().id);
+    DOCTEST_REQUIRE(g1.isOk());
+    DOCTEST_CHECK_EQ(g1.value().dialectOverride, std::string("anthropic_default"));
+
+    // 分支二：apiKeyPlain 留空（不换 key 分支）——覆盖改回 zen
+    Profile p2 = g1.value();
+    p2.dialectOverride = "opencode_zen";
+    DOCTEST_REQUIRE(svc.updateProfile(p2).isOk());
+    auto g2 = svc.getProfile(a.value().id);
+    DOCTEST_REQUIRE(g2.isOk());
+    DOCTEST_CHECK_EQ(g2.value().dialectOverride, std::string("opencode_zen"));
+
+    // 清空 = 回到 host 推断（空串是合法值，不是"写不进去"）
+    Profile p3 = g2.value();
+    p3.dialectOverride.clear();
+    DOCTEST_REQUIRE(svc.updateProfile(p3).isOk());
+    auto g3 = svc.getProfile(a.value().id);
+    DOCTEST_REQUIRE(g3.isOk());
+    DOCTEST_CHECK(g3.value().dialectOverride.empty());
+
+    cleanupKey(a.value().id);
+    return true;
+})
+
+// ---- 34. 二段补写不覆盖（createProfile 返回值必须带上该字段）----
+
+REGISTER_TEST(claude_service_dialect_override_survives_two_stage_update,
+              "claude_service: dialectOverride 经二段补写（models/env）仍保持", {
+    using namespace module::claude;
+    TestDb tdb("dialect_two");
+    ClaudeService svc(tdb.handle(), kTestKeychainService);
+
+    auto c = svc.createProfile("方言二段", "https://two.example.com",
+                               "sk-dial-two-0123456789abcdef", "m",
+                               /*activateIfNoneActive=*/false,
+                               /*sharedConfigId=*/0, "both", "opencode_zen");
+    DOCTEST_REQUIRE(c.isOk());
+    // 模拟 UI 新建：以 createProfile 返回值为基，二段补写 models/env
+    Profile p = c.value();
+    p.modelsConfigJson = R"({"default": {"model": "m-def"}})";
+    p.extraEnvJson = R"({"EXTRA_A": "1"})";
+    DOCTEST_REQUIRE(svc.updateProfile(p).isOk());
+
+    auto g = svc.getProfile(c.value().id);
+    DOCTEST_REQUIRE(g.isOk());
+    DOCTEST_CHECK_EQ(g.value().dialectOverride, std::string("opencode_zen"));
+    DOCTEST_CHECK_EQ(g.value().modelsConfigJson, p.modelsConfigJson);
+
+    cleanupKey(c.value().id);
+    return true;
+})
+
+// ---- 35. 复制保留该字段 ----
+
+REGISTER_TEST(claude_service_duplicate_keeps_dialect_override,
+              "claude_service: 复制 profile 保留 dialectOverride", {
+    using namespace module::claude;
+    TestDb tdb("dialect_dup");
+    ClaudeService svc(tdb.handle(), kTestKeychainService);
+
+    auto a = svc.createProfile("方言复制源", "https://src3.example.com",
+                               "sk-dial-src-0123456789abcdef", "m",
+                               /*activateIfNoneActive=*/false,
+                               /*sharedConfigId=*/0, "both", "opencode_zen");
+    DOCTEST_REQUIRE(a.isOk());
+    DOCTEST_CHECK_EQ(a.value().dialectOverride, std::string("opencode_zen"));
+
+    auto dup = svc.duplicateProfile(a.value().id);
+    DOCTEST_REQUIRE(dup.isOk());
+    DOCTEST_CHECK_EQ(dup.value().dialectOverride, std::string("opencode_zen"));
+    auto g = svc.getProfile(dup.value().id);
+    DOCTEST_REQUIRE(g.isOk());
+    DOCTEST_CHECK_EQ(g.value().dialectOverride, std::string("opencode_zen"));
+
+    cleanupKey(a.value().id);
+    cleanupKey(dup.value().id);
+    return true;
+})
+
+// ---- 36. 写侧 / 读侧规范化（非法值 → 空串 = 未覆盖，同 authField 口径）----
+
+REGISTER_TEST(claude_service_dialect_override_invalid_normalized,
+              "claude_service: dialectOverride 非法值写侧归一为空串", {
+    using namespace module::claude;
+    TestDb tdb("dialect_norm");
+    ClaudeService svc(tdb.handle(), kTestKeychainService);
+
+    // createProfile 传非法串 → 落库与返回值都是空串（未覆盖）
+    auto a = svc.createProfile("方言规范化", "https://n.example.com",
+                               "sk-dial-norm-0123456789abcdef", "m",
+                               /*activateIfNoneActive=*/false,
+                               /*sharedConfigId=*/0, "both", "OpencodeZen");
+    DOCTEST_REQUIRE(a.isOk());
+    DOCTEST_CHECK(a.value().dialectOverride.empty());
+    auto ga = svc.getProfile(a.value().id);
+    DOCTEST_REQUIRE(ga.isOk());
+    DOCTEST_CHECK(ga.value().dialectOverride.empty());
+
+    // updateProfile 传非法串（直接构造 Profile）→ 读回空串
+    Profile p;
+    p.id = a.value().id;
+    p.name = "方言规范化";
+    p.baseUrl = "https://n.example.com";
+    p.dialectOverride = "zen";
+    DOCTEST_REQUIRE(svc.updateProfile(p).isOk());
+    auto g = svc.getProfile(a.value().id);
+    DOCTEST_REQUIRE(g.isOk());
+    DOCTEST_CHECK(g.value().dialectOverride.empty());
+
+    cleanupKey(a.value().id);
+    return true;
+})
+
+// ---- 37. 反向同步不丢该字段（settings.json env 无对应键 = 不适用，但也不清）----
+
+REGISTER_TEST(claude_service_dialect_override_survives_reverse_sync,
+              "claude_service: 反向同步不丢 dialectOverride", {
+    using namespace module::claude;
+    TestDb tdb("dialect_sync");
+    TempDir d("dialect_sync");
+    auto paths = makeSyncPaths(d);
+
+    ClaudeService svc(tdb.handle(), kTestKeychainService);
+    svc.setSettingsSyncPaths(paths);
+
+    auto a = svc.createProfile("方言同步源", "https://old.example.com",
+                               "sk-dial-sync-a-0123456789abcdef", "m",
+                               /*activateIfNoneActive=*/false,
+                               /*sharedConfigId=*/0, "both", "opencode_zen");
+    DOCTEST_REQUIRE(a.isOk());
+    DOCTEST_REQUIRE(svc.setActiveProfile(a.value().id).isOk());
+
+    auto b = svc.createProfile("方言同步目标", "https://b.example.com",
+                               "sk-dial-sync-b-0123456789abcdef", "m");
+    DOCTEST_REQUIRE(b.isOk());
+
+    // live 侧带一条非守卫变化，保证确实发生了一次写库（不是整次 no-op 白过）
+    d.write(paths.settingsFile, R"({"env": {
+        "ANTHROPIC_BASE_URL": "https://new.example.com/",
+        "ANTHROPIC_AUTH_TOKEN": "sk-new-upstream-9876543210",
+        "MY_EXTRA": "extra-value"
+    }})");
+
+    DOCTEST_REQUIRE(svc.setActiveProfile(b.value().id).isOk());
+
+    auto gotA = svc.getProfile(a.value().id);
+    DOCTEST_REQUIRE(gotA.isOk());
+    // 确实被反向同步写过（base_url 已收编）…
+    DOCTEST_CHECK_EQ(gotA.value().baseUrl, std::string("https://new.example.com"));
+    // …而方言覆盖原样保留（反向同步只碰 models/env/base_url/token，不碰它）
+    DOCTEST_CHECK_EQ(gotA.value().dialectOverride, std::string("opencode_zen"));
+
+    cleanupKey(a.value().id);
+    cleanupKey(b.value().id);
+    return true;
+})
+
 // ---- 运行（profile-run 设计 §5/§8；D-1 顺序：代理 → 激活 → 启动会话）----
 
 REGISTER_TEST(claude_service_run_profile_starts_proxy_and_passes_spec,
