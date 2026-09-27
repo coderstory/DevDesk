@@ -89,8 +89,10 @@ TodoViewState TodoViewStateStore::load() const {
             if (!parseColumnId(key, id)) continue;
             platform::json::JsonValue v = scrolls.get(key);
             if (v.isNumber()) {
-                // 数字双分支读取：本平台 stringify 用 %.17g，整值浮点（如
-                // 512.0）输出 "512" 回读走 Int 分支，只有 asDouble() 会丢值
+                // 数字双分支读取：两种历史落盘形态都要认——旧版 %.17g 把整值
+                // 浮点（如 512.0）写成 "512"，回读走 Int 分支；新版 yyjson
+                // writer 写成 "512.0"，走 Double 分支。只有 asDouble() 会丢值
+                // （走 Int 分支时 dblVal 为 0），故 Int 分支回退 asInt()。
                 const double d = v.asDouble() != 0.0
                                      ? v.asDouble()
                                      : static_cast<double>(v.asInt());
