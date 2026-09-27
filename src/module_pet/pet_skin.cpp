@@ -537,11 +537,11 @@ Result<std::vector<std::string>> parseFrameArray(const platform::json::JsonValue
 
 Result<PetSkin> parsePetSkinJson(const std::string& jsonText) {
     auto parsed = platform::json::parse(jsonText);
-    if (parsed.isFail() || !parsed.unsafeValue().isObject()) {
+    if (parsed.isFail() || !parsed.value().isObject()) {
         return Result<PetSkin>::fail(ErrorCode::JsonParseError,
                                      "pet.json 必须是 JSON object");
     }
-    const platform::json::JsonObject obj = parsed.unsafeValue().asObject();
+    const platform::json::JsonObject obj = parsed.value().asObject();
 
     PetSkin skin;
     if (obj.has("name") && obj.get("name").isString()) {
@@ -580,31 +580,31 @@ Result<PetSkin> parsePetSkinJson(const std::string& jsonText) {
     if (idle.isFail()) {
         return Result<PetSkin>::fail(idle.errorCode(), "states.idle: " + idle.errorMessage());
     }
-    skin.idleFrames = std::move(idle.unsafeValue());
+    skin.idleFrames = std::move(idle.value());
     // 可选状态/字段（M2）：sleep/typing 帧缺失或非法一律静默忽略——
     // 状态机各自回落 idle，老皮肤包零迁移（poked 同款容错）
     if (states.has("poked")) {
         auto poked = parseFrameArray(states.get("poked"), /*asFrameNames=*/true);
         if (poked.isOk()) {
-            skin.pokedFrames = std::move(poked.unsafeValue());
+            skin.pokedFrames = std::move(poked.value());
         }
     }
     if (states.has("sleep")) {
         auto sleep = parseFrameArray(states.get("sleep"), /*asFrameNames=*/true);
         if (sleep.isOk()) {
-            skin.sleepFrames = std::move(sleep.unsafeValue());
+            skin.sleepFrames = std::move(sleep.value());
         }
     }
     if (states.has("typing")) {
         auto typing = parseFrameArray(states.get("typing"), /*asFrameNames=*/true);
         if (typing.isOk()) {
-            skin.typingFrames = std::move(typing.unsafeValue());
+            skin.typingFrames = std::move(typing.value());
         }
     }
     if (obj.has("phrases")) {
         auto phrases = parseFrameArray(obj.get("phrases"), /*asFrameNames=*/false);
         if (phrases.isOk()) {
-            skin.phrases = std::move(phrases.unsafeValue());
+            skin.phrases = std::move(phrases.value());
         }
     }
     return Result<PetSkin>::ok(std::move(skin));
@@ -629,9 +629,9 @@ Result<PetSkin> loadSkin(const std::filesystem::path& dir) {
     if (skin.isFail()) {
         return skin;
     }
-    skin.unsafeValue().dir = dir;
-    if (skin.unsafeValue().name.empty()) {
-        skin.unsafeValue().name = dir.filename().string();
+    skin.value().dir = dir;
+    if (skin.value().name.empty()) {
+        skin.value().name = dir.filename().string();
     }
     return skin;
 }
@@ -654,7 +654,7 @@ constexpr BuiltinSkinEntry kBuiltinSkins[] = {
 Result<PetSkin> ensureGeneratedSkin(const std::filesystem::path& dir,
                                     bool (*generate)(const std::filesystem::path&)) {
     if (auto existing = loadSkin(dir); existing.isOk()) {
-        const PetSkin& s = existing.unsafeValue();
+        const PetSkin& s = existing.value();
         const bool userReplaced = s.source != "DevDesk 内置生成";
         const bool hasM2 =
             !s.sleepFrames.empty() && !s.typingFrames.empty() && !s.phrases.empty();

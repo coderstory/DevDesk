@@ -2,6 +2,7 @@
 // DevDesk 统一错误处理（不抛异常，对非 C++ 用户友好）
 #pragma once
 
+#include <cstdlib>
 #include <stdexcept>
 #include <string>
 #include <utility>
@@ -88,19 +89,24 @@ public:
     bool isOk() const { return data_.index() == 1; }
     bool isFail() const { return !isOk(); }
 
-    // 安全取值
+    // 安全取值：**可能失败**时的唯一取值口
     T valueOr(T defaultValue) const {
         if (isOk()) return std::get<1>(data_);
         return defaultValue;
     }
 
-    // 显式取值（错误时 LOG_FATAL + 抛 logic_error）。
-    // app 以 -fno-exceptions 编译时 throw 退化为无日志 abort，所以 throw 前
-    // 必须先落一条 FATAL 日志（spec §11.2 承诺的 LOG_FATAL，审计 2026-09-23 [23]）
+    // 显式取值：只在「按不变量不可能失败」处调用；失败即**明确终止**——
+    // 先落一条带 errorMessage() 的 FATAL 日志，再 std::abort()。
+    // 失败路径只有这一条，且与 TU 的编译选项无关（CP-08 取值口收敛）：
+    // 不用异常——抛在 -fno-exceptions 的 TU 里编译不过、在带异常的 TU 里
+    // 又能被捕获，行为就随编译选项漂移了（spec §11.2 承诺的 LOG_FATAL
+    // 先于终止落盘，审计 2026-09-23 [23]）。原「不检查错误的直接取值」
+    // 口（std::get<1> 错索引 = 无上下文 terminate）与 Rust 风格 expect
+    // 口已随之删除：可能失败的取值一律走 valueOr()。
     const T& value() const {
         if (!isOk()) {
             LOG_FATAL("Result::value() called on error: " + errorMessage());
-            throw std::logic_error("Result::value() called on error: " + errorMessage());
+            std::abort();
         }
         return std::get<1>(data_);
     }
@@ -109,34 +115,8 @@ public:
     T& value() {
         if (!isOk()) {
             LOG_FATAL("Result::value() called on error: " + errorMessage());
-            throw std::logic_error("Result::value() called on error: " + errorMessage());
+            std::abort();
         }
-        return std::get<1>(data_);
-    }
-
-    // Rust 风格 expect
-    const T& expect(const std::string& context) const {
-        if (!isOk()) {
-            LOG_FATAL(context + ": " + errorMessage());
-            throw std::logic_error(context + ": " + errorMessage());
-        }
-        return std::get<1>(data_);
-    }
-
-    T& expect(const std::string& context) {
-        if (!isOk()) {
-            LOG_FATAL(context + ": " + errorMessage());
-            throw std::logic_error(context + ": " + errorMessage());
-        }
-        return std::get<1>(data_);
-    }
-
-    // 不检查错误的取值（性能敏感）
-    const T& unsafeValue() const {
-        return std::get<1>(data_);
-    }
-
-    T& unsafeValue() {
         return std::get<1>(data_);
     }
 

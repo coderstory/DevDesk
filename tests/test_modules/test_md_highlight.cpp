@@ -113,7 +113,7 @@ struct MdHlEnv {
         dir = test_support::makeTempDir("devdesk_mdhl_", tag);
         auto r = core::Database::open(dir / "mdhl_test.db");
         if (r.isFail()) return;
-        db = std::make_unique<core::Database>(std::move(r.unsafeValue()));
+        db = std::make_unique<core::Database>(std::move(r.value()));
         if (db->migrate().isFail()) {
             db.reset();
             return;

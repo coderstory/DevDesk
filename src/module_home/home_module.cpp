@@ -167,7 +167,7 @@ public:
         if (!service_) return;
         auto r = service_->getStats(kRecentNoteLimit);
         if (r.isOk()) {
-            stats_ = std::move(r.unsafeValue());
+            stats_ = std::move(r.value());
             statsLoaded_ = true;
             statsError_.clear();
             LOG_INFO("Home 仪表盘数据：今日笔记 " +

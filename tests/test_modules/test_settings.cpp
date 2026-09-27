@@ -82,7 +82,7 @@ struct PruneEnv {
         removeQuietly(dbPath);
         auto r = ::core::Database::open(dbPath);
         if (r.isFail()) return;
-        db = std::make_unique<::core::Database>(std::move(r.unsafeValue()));
+        db = std::make_unique<::core::Database>(std::move(r.value()));
         if (db->migrate().isFail()) {
             db.reset();
             return;
@@ -710,7 +710,7 @@ REGISTER_TEST(settings_retention_change_prunes_immediately, "settings: retention
     DOCTEST_CHECK(prep.value().step().isOk());
     auto row = prep.value().currentRow();
     DOCTEST_REQUIRE(row.isOk());
-    DOCTEST_CHECK_EQ(row.unsafeValue().getInt64("n").unsafeValue(),
+    DOCTEST_CHECK_EQ(row.value().getInt64("n").value(),
                      static_cast<int64_t>(1));
 
     // 状态反馈「已清理 2 条」渲染在副标题
@@ -747,7 +747,7 @@ REGISTER_TEST(settings_takeover_status_row,
 
     auto r = ::core::Database::open(dir / "db.sqlite");
     DOCTEST_REQUIRE(r.isOk());
-    auto db = std::make_unique<::core::Database>(std::move(r.unsafeValue()));
+    auto db = std::make_unique<::core::Database>(std::move(r.value()));
     DOCTEST_REQUIRE(db->migrate().isOk());
     module::claude::ClaudeService svc(db->db(), "DevDeskTestTakeover");
     module::claude::ClaudeService::setGlobal(&svc);
@@ -848,7 +848,7 @@ REGISTER_TEST(settings_takeover_warn_unmanaged,
 
     auto r = ::core::Database::open(dir / "db.sqlite");
     DOCTEST_REQUIRE(r.isOk());
-    auto db = std::make_unique<::core::Database>(std::move(r.unsafeValue()));
+    auto db = std::make_unique<::core::Database>(std::move(r.value()));
     DOCTEST_REQUIRE(db->migrate().isOk());
     module::claude::ClaudeService svc(db->db(), "DevDeskTestWarnUnmanaged");
     module::claude::ClaudeService::setGlobal(&svc);

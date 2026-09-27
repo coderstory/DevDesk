@@ -156,10 +156,10 @@ void dispatchFileOpen(::core::Router* router, const std::string& path,
     const ::core::PageId target = dispatchPageForFile(path);
     if (target == ::core::PageId::Markdown &&
         router->isRegistered(::core::PageId::Markdown)) {
-        // main.cpp 用 -fno-exceptions 编译：取失败信息外的值走 unsafeValue()
+        // 已先判 isOk()：取失败信息外的值走 value()（失败即 LOG_FATAL + abort）
         auto r = module::markdown::captureFileIntoNotesDir(notesDir, path);
         if (r.isOk()) {
-            const std::string payload = "open:" + r.unsafeValue();
+            const std::string payload = "open:" + r.value();
             LOG_INFO("文件打开分发: " + path + " → " + payload);
             router->navigateTo(target, payload);
             return;

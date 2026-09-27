@@ -357,7 +357,7 @@ struct MdUiEnv {
         dir = test_support::makeTempDir("devdesk_md_ui_", tag);
         auto r = core::Database::open(dir / "ui_test.db");
         if (r.isFail()) return;
-        db = std::make_unique<core::Database>(std::move(r.unsafeValue()));
+        db = std::make_unique<core::Database>(std::move(r.value()));
         if (db->migrate().isFail()) {
             db.reset();
             return;

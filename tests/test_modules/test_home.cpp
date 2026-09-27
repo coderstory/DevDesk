@@ -41,8 +41,8 @@ struct TestEnv {
         std::filesystem::remove(path, ec);
         auto r = core::Database::open(path);
         if (r.isFail()) return;
-        if (r.unsafeValue().migrate().isFail()) return;
-        db = std::make_unique<core::Database>(std::move(r.unsafeValue()));
+        if (r.value().migrate().isFail()) return;
+        db = std::make_unique<core::Database>(std::move(r.value()));
         ready = true;
     }
 
@@ -105,7 +105,7 @@ REGISTER_TEST(home_service_real_stats,
     module::home::HomeService svc(sq);
     auto r = svc.getStats(5);
     DOCTEST_REQUIRE_MESSAGE(r.isOk(), "getStats 失败: " + r.errorMessage());
-    const auto& s = r.unsafeValue();
+    const auto& s = r.value();
     DOCTEST_CHECK_EQ(s.todayNotes, 2);        // a + b
     DOCTEST_CHECK_EQ(s.pendingTodos, 3);      // t1 t2 t3
     DOCTEST_CHECK_EQ(s.overdueTodos, 1);      // t2（t4 已完成不计）
@@ -174,7 +174,7 @@ REGISTER_TEST(home_prune_call_logs,
     // 第一次清理：删 2 条（40 天 / 35 天前）
     auto first = env.db->pruneCallLogs(30);
     DOCTEST_REQUIRE_MESSAGE(first.isOk(), "pruneCallLogs 失败: " + first.errorMessage());
-    DOCTEST_CHECK_EQ(first.unsafeValue(), static_cast<int64_t>(2));
+    DOCTEST_CHECK_EQ(first.value(), static_cast<int64_t>(2));
 
     // 只剩 5 天前那条
     auto prep = sq.prepare("SELECT COUNT(*) AS n FROM claude_call_logs");
@@ -182,13 +182,13 @@ REGISTER_TEST(home_prune_call_logs,
     DOCTEST_CHECK(prep.value().step().isOk());
     auto row = prep.value().currentRow();
     DOCTEST_REQUIRE(row.isOk());
-    DOCTEST_CHECK_EQ(row.unsafeValue().getInt64("n").unsafeValue(),
+    DOCTEST_CHECK_EQ(row.value().getInt64("n").value(),
                      static_cast<int64_t>(1));
 
     // 幂等：再跑一遍删 0 条
     auto second = env.db->pruneCallLogs(30);
     DOCTEST_REQUIRE(second.isOk());
-    DOCTEST_CHECK_EQ(second.unsafeValue(), static_cast<int64_t>(0));
+    DOCTEST_CHECK_EQ(second.value(), static_cast<int64_t>(0));
     return true;
 })
 
@@ -349,7 +349,7 @@ REGISTER_TEST(home_todo_overdue_consistency,
                             "listOverdue 失败: " + overdue.errorMessage());
 
     // 三方一致：首页计数 == Todo 条数 == core 谓词判定
-    DOCTEST_CHECK_EQ(stats.unsafeValue().overdueTodos, expected);
+    DOCTEST_CHECK_EQ(stats.value().overdueTodos, expected);
     DOCTEST_CHECK_EQ(static_cast<int64_t>(overdue.value().size()), expected);
     return true;
 })

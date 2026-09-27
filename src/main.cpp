@@ -78,7 +78,8 @@ void setupLogging() {
 }
 
 // 打开应用数据库并跑 migrations
-// 注意：main.cpp 用 -fno-exceptions 编译，所以用 unsafeValue() 而非 .value()
+// 已先判 isFail()：取失败信息外的值走 value()（失败即 LOG_FATAL + abort，
+// 与 TU 的编译选项无关，CP-08 取值口收敛）
 ::core::Database& openAppDatabase() {
     static std::unique_ptr<::core::Database> db;
     static bool initialized = false;
@@ -88,9 +89,9 @@ void setupLogging() {
             LOG_FATAL("无法打开数据库: " + r.errorMessage());
             std::abort();
         }
-        // unsafeValue() 是 Result 的非抛出版本，返回 T&。再用 std::move 转成 xvalue
-        // 触发 Database 的 move ctor。
-        auto raw = new ::core::Database(std::move(r.unsafeValue()));
+        // value() 非 const 重载返回 T&，再用 std::move 转成 xvalue 触发
+        // Database 的 move ctor。
+        auto raw = new ::core::Database(std::move(r.value()));
         db.reset(raw);
         auto migrateResult = db->migrate();
         if (migrateResult.isFail()) {
@@ -109,8 +110,8 @@ void setupLogging() {
         if (retentionDays > 0) {
             const auto pruned = db->pruneCallLogs(retentionDays);
             if (pruned.isOk()) {
-                if (pruned.unsafeValue() > 0) {
-                    LOG_INFO("已清理 " + std::to_string(pruned.unsafeValue()) +
+                if (pruned.value() > 0) {
+                    LOG_INFO("已清理 " + std::to_string(pruned.value()) +
                              " 条 " + std::to_string(retentionDays) +
                              " 天前的调用日志");
                 }

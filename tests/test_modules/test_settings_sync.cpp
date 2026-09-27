@@ -110,7 +110,7 @@ struct TestDb {
         if (r.isFail()) {
             throw std::runtime_error("Database::open failed");
         }
-        db = std::make_unique<core::Database>(std::move(r.unsafeValue()));
+        db = std::make_unique<core::Database>(std::move(r.value()));
         if (db->migrate().isFail()) {
             throw std::runtime_error("migrate failed");
         }
@@ -636,7 +636,7 @@ REGISTER_TEST(sync_service_wiring, "claude_service: 接管通道三触发点接�
     {
         auto r = svc.startProxy("127.0.0.1", 0);
         DOCTEST_REQUIRE(r.isOk());
-        const int port = static_cast<int>(r.unsafeValue());
+        const int port = static_cast<int>(r.value());
         const auto env = readEnv(paths.settingsFile);
         DOCTEST_CHECK_EQ(env.at("ANTHROPIC_BASE_URL"),
                          std::string("http://127.0.0.1:") + std::to_string(port));

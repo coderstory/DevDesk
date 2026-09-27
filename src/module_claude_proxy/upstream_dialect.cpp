@@ -218,9 +218,9 @@ bool normalizeModelInBody(std::string& body) {
 
     // 真值走 platform::json（解码语义统一），字节区间由上面的扫描给出
     auto parsed = platform::json::parse(body);
-    if (parsed.isFail() || !parsed.unsafeValue().isObject()) return false;
+    if (parsed.isFail() || !parsed.value().isObject()) return false;
     const platform::json::JsonValue modelVal =
-        parsed.unsafeValue().asObject().get("model");
+        parsed.value().asObject().get("model");
     if (!modelVal.isString()) return false;
 
     const std::string model = modelVal.asString();
@@ -229,13 +229,13 @@ bool normalizeModelInBody(std::string& body) {
 
     auto encoded = platform::json::stringify(platform::json::makeString(stripped));
     if (encoded.isFail()) return false;
-    const std::string& newValue = encoded.unsafeValue();
+    const std::string& newValue = encoded.value();
 
     // 一致性护栏：扫描到的原文片段必须就是解析出来的那个值（转义/重复键
     // 等罕见形态下两者可能不一致）——不一致就放弃改写，绝不改坏 body
     auto oldEncoded = platform::json::stringify(platform::json::makeString(model));
     if (oldEncoded.isFail() ||
-        body.compare(begin, end - begin, oldEncoded.unsafeValue()) != 0) {
+        body.compare(begin, end - begin, oldEncoded.value()) != 0) {
         LOG_WARN("上游方言：模型名区间与解析值不一致，跳过 [1M] 剥离");
         return false;
     }

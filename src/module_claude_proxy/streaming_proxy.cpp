@@ -44,8 +44,8 @@ int64_t parseUsageFromEvent(const std::string& event, StreamUsage& out) {
             if (payload == "[DONE]" || payload.empty()) return -1;
             do { // 单次 do：用 break 模拟 goto skip
                 auto r = platform::json::parse(payload);
-                if (r.isFail() || !r.unsafeValue().isObject()) break;
-                platform::json::JsonObject obj = r.unsafeValue().asObject();
+                if (r.isFail() || !r.value().isObject()) break;
+                platform::json::JsonObject obj = r.value().asObject();
                 const auto type = obj.get("type");
                 if (!type.isString()) break;
 

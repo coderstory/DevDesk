@@ -53,8 +53,8 @@ struct TestEnv {
         std::filesystem::remove(path, ec);
         auto r = core::Database::open(path);
         if (r.isFail()) return;
-        if (r.unsafeValue().migrate().isFail()) return;
-        db = std::make_unique<core::Database>(std::move(r.unsafeValue()));
+        if (r.value().migrate().isFail()) return;
+        db = std::make_unique<core::Database>(std::move(r.value()));
         ::core::registerAppDatabase(&db->db());
         svc = std::make_unique<module::todo::TodoService>(db->db());
         statePath = path.string() + ".view_state.json";
@@ -965,8 +965,8 @@ REGISTER_TEST(todo_ui_error_state_and_retry,
         std::filesystem::remove(path, ec2);
         auto r = ::core::Database::open(path);
         DOCTEST_REQUIRE(r.isOk());
-        DOCTEST_REQUIRE(r.unsafeValue().migrate().isOk());
-        auto db = std::make_unique<::core::Database>(std::move(r.unsafeValue()));
+        DOCTEST_REQUIRE(r.value().migrate().isOk());
+        auto db = std::make_unique<::core::Database>(std::move(r.value()));
         ::core::registerAppDatabase(&db->db());
         retry->onClick();
     }
@@ -2007,7 +2007,7 @@ REGISTER_TEST(todo_ui_detail_actions_save_form,
         DOCTEST_REQUIRE(got.isOk());
         bool found = false;
         for (const auto& tk : got.value()) {
-            if (tk.id == a.unsafeValue().id) {
+            if (tk.id == a.value().id) {
                 found = true;
                 DOCTEST_CHECK_EQ(tk.title, std::string("旧标题NEW"));  // 编辑未丢（修复前会丢）
                 DOCTEST_CHECK(tk.completedAt.has_value());             // 动作照常执行
@@ -2043,9 +2043,9 @@ REGISTER_TEST(todo_ui_detail_actions_save_form,
         auto got = env.svc->listAllTasks();
         DOCTEST_REQUIRE(got.isOk());
         for (const auto& tk : got.value()) {
-            if (tk.id == b.unsafeValue().id) {
+            if (tk.id == b.value().id) {
                 DOCTEST_CHECK_EQ(tk.title, std::string("移动前编辑M"));
-                DOCTEST_CHECK_EQ(tk.columnId, col2.unsafeValue().id);
+                DOCTEST_CHECK_EQ(tk.columnId, col2.value().id);
             }
         }
     }
@@ -2076,7 +2076,7 @@ REGISTER_TEST(todo_ui_detail_actions_save_form,
         auto got1 = env.svc->listAllTasks();
         DOCTEST_REQUIRE(got1.isOk());
         for (const auto& tk : got1.value()) {
-            if (tk.id == c.unsafeValue().id) stillThere = true;
+            if (tk.id == c.value().id) stillThere = true;
         }
         DOCTEST_CHECK(stillThere);  // 取消 = 什么都没发生
         // 再删 → 确认 → 任务消失 + 详情关闭
@@ -2095,7 +2095,7 @@ REGISTER_TEST(todo_ui_detail_actions_save_form,
         auto got2 = env.svc->listAllTasks();
         DOCTEST_REQUIRE(got2.isOk());
         for (const auto& tk : got2.value()) {
-            if (tk.id == c.unsafeValue().id) gone = false;
+            if (tk.id == c.value().id) gone = false;
         }
         DOCTEST_CHECK(gone);
     }
@@ -2124,7 +2124,7 @@ REGISTER_TEST(todo_ui_detail_actions_save_form,
         auto got = env.svc->listAllTasks();
         DOCTEST_REQUIRE(got.isOk());
         for (const auto& tk : got.value()) {
-            if (tk.id == e.unsafeValue().id && tk.title == std::string("遮罩守卫")) {
+            if (tk.id == e.value().id && tk.title == std::string("遮罩守卫")) {
                 dbUnchanged = true;
             }
         }
@@ -2139,7 +2139,7 @@ REGISTER_TEST(todo_ui_detail_actions_save_form,
         auto got2 = env.svc->listAllTasks();
         DOCTEST_REQUIRE(got2.isOk());
         for (const auto& tk : got2.value()) {
-            if (tk.id == e.unsafeValue().id && tk.title == std::string("遮罩守卫")) {
+            if (tk.id == e.value().id && tk.title == std::string("遮罩守卫")) {
                 discarded = true;  // 放弃语义：改动不入库
             }
         }

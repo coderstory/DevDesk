@@ -70,7 +70,7 @@ struct TestDb {
             throw std::runtime_error("Database::open failed: " +
                                      r.errorMessage());
         }
-        db = std::make_unique<core::Database>(std::move(r.unsafeValue()));
+        db = std::make_unique<core::Database>(std::move(r.value()));
         auto m = db->migrate();
         if (m.isFail()) {
             throw std::runtime_error("migrate failed: " + m.errorMessage());
