@@ -13,6 +13,7 @@
 #include <atomic>
 #include <cstdint>
 #include <ctime>
+#include <functional>
 #include <memory>
 #include <mutex>
 #include <optional>
@@ -65,6 +66,47 @@ struct SharedConfig {
     std::string extraEnvJson;   // 与 Profile::extraEnvJson 同构同语义（空串 = 未配置）
     std::time_t createdAt = 0;
     std::time_t updatedAt = 0;
+};
+
+// 审计 CPX-07：两段写助手。
+// 「先写 Keychain、再写 DB 元数据」原本在 ClaudeService 里手写多份、补偿策略
+// 各不相同（删行 / 回写旧值 / 干脆没有补偿）。收敛到本类后语义统一为：
+//   段一 writeKey()：把 Keychain 写成新值（空串 = 删除该条目）
+//   段二 writeDb() ：落 DB 元数据
+// 任一段失败 → 按构造时捕获的旧值回写 Keychain（旧值为空 = 删除条目），
+// 保证密钥与 DB 里的 api_key_hint / api_key_check 始终对得上（失败时回到
+// 「改之前」的状态，而不是「密钥已换、元数据没换」的中间态）。
+//
+// 用法：
+//   TwoPhaseKeyWrite tx = TwoPhaseKeyWrite::capture(keychainService_, account);
+//   auto kc = tx.writeKey(newKey);
+//   if (kc.isFail()) return fail(kc...);          // 段一失败：已回写旧值
+//   return tx.writeDb([&] { ...UPDATE...; });     // 段二失败：已回写旧值
+class TwoPhaseKeyWrite {
+public:
+    TwoPhaseKeyWrite(std::string keychainService, std::string account,
+                     std::string oldKey);
+
+    // 捕获 Keychain 当前值作为旧值（读不到 = 该条目不存在，按空串处理）
+    static TwoPhaseKeyWrite capture(const std::string& keychainService,
+                                    const std::string& account);
+
+    // 段一：把 Keychain 写成 newKey（空串 = 删除条目）。
+    // 失败 → 尽力回写旧值后返回该错误；调用方不应继续段二。
+    core::Result<void> writeKey(const std::string& newKey);
+
+    // 段二：执行 DB 写；失败 → 尽力回写旧值后返回 DB 的错误。
+    core::Result<void> writeDb(const std::function<core::Result<void>()>& dbWrite);
+
+private:
+    // Keychain 已改且尚未回到旧值 → 回写旧值（失败只记 ERROR：结果由调用方
+    // 从 Keychain 实际状态判断）
+    void compensate();
+
+    std::string service_;
+    std::string account_;
+    std::string oldKey_;
+    bool keyTouched_ = false;   // 段一改动过 Keychain 且尚未回到旧值
 };
 
 class ClaudeService {
