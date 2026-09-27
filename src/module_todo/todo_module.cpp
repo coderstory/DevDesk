@@ -7,6 +7,7 @@
 #include "core/theme.h"
 #include "core/component_theme.h"
 #include "core/time.h"
+#include <ui_kit/toast.h>
 #include "todo_service.h"
 #include "todo_ui_logic.h"
 #include "todo_view_state.h"
@@ -21,7 +22,6 @@
 #include <components/input.h>
 #include <components/scrollview.h>
 #include <components/theme.h>
-#include <components/toast.h>
 
 #include <algorithm>
 #include <cmath>
@@ -653,24 +653,15 @@ public:
     // 此前写进 header subtitle 永久驻留，静态操作说明被最后一条
     // 操作结果永久顶掉；现在 subtitle 始终保持静态说明。
     void setStatus(const std::string& msg, bool isError = false) {
-        toastTitle_ = msg;
-        toastError_ = isError;
-        toastOpen_ = true;
+        // 正文留空 = 不设正文（本模块 toast 现状即只有标题：组件自带默认正文
+        // 文案随之保留，R1 零行为变化）
+        toast_.show(msg, "", isError);
     }
 
-    // ---------- Toast（画在弹窗之上，超时消失） ----------
+    // ---------- Toast（画在弹窗之上，超时消失；状态位 + 绘制接线走 ui_kit） ----------
     void drawToast(eui::Ui& ui, const eui::Screen& screen,
                    const components::theme::ThemeColorTokens& themeTokens) {
-        components::toast(ui, "todo.toast")
-            .theme(themeTokens)
-            .screen(screen.width, screen.height)
-            .visible(toastOpen_)
-            .duration(3.5f)
-            .title(toastTitle_)
-            .icon(toastError_ ? 0xF071 : 0xF00C)  // fa-triangle-exclamation / fa-check
-            .onAutoDismiss([this] { toastOpen_ = false; })
-            .onDismiss([this] { toastOpen_ = false; })
-            .build();
+        ui_kit::drawToast(ui, screen, "todo.toast", toast_, themeTokens);
     }
 
     // ============ UI ============
@@ -748,7 +739,7 @@ private:
     //   · 绘制 zIndex = 栈内位置（不再手挑）
     //   · Esc 关栈顶，因此天然与 z 序一致
     // toast 不入栈：它不是互相竞争层级的弹窗，而是自动消失的状态提示
-    //（toastOpen_ 独立保留）。
+    //（toast_.open 独立保留）。
     enum class Popup {
         NewTask,
         NewColumn,
@@ -2535,10 +2526,8 @@ private:
     int64_t confirmTaskId_ = 0;
     std::string confirmTaskTitle_;
 
-    // 状态反馈 toast（超时消失；subtitle 保持静态说明）
-    bool toastOpen_ = false;
-    bool toastError_ = false;  // toast 图标用（fa-triangle-exclamation / fa-check）
-    std::string toastTitle_;
+    // 状态反馈 toast（超时消失；subtitle 保持静态说明；状态位 + 绘制走 ui_kit）
+    ui_kit::ToastState toast_;
 
     // 搜索（三件套 1）：query + service_->search 的命中任务 id 集
     std::string searchQuery_;

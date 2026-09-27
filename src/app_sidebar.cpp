@@ -19,8 +19,8 @@
 #include "core/router.h"
 #include "core/theme.h"
 #include "settings_config.h"
+#include <ui_kit/toast.h>
 
-#include <components/toast.h>
 #include <components/tooltip.h>
 #include <eui/types.h>
 
@@ -34,9 +34,8 @@ bool g_sidebarCollapsed = false;
 
 // 应用级 toast 通知（审计 [7]）：托盘失效入口点击的解释反馈。
 // 调用方（main.cpp）写状态，compose 顶层每帧读状态绘制；单实例。
-bool g_appNoticeOpen = false;
-std::string g_appNoticeTitle;
-std::string g_appNoticeMessage;
+// 状态位与绘制接线统一走 ui_kit（任务 D / R1），对外 API 不变。
+ui_kit::ToastState g_appNotice;
 
 // 折叠态 tooltip 样式：EUI-NEO TooltipStyle 默认用上游 dark tokens，
 // 这里换成 DevDesk 自己的主题 token（与侧边栏文字/卡片同源）
@@ -74,20 +73,21 @@ float sidebarWidth() {
 
 // ---- 应用级 toast 通知（审计 [7]：托盘失效入口点击的解释通道）----
 void showAppNotice(const std::string& title, const std::string& message) {
-    g_appNoticeTitle = title;
-    g_appNoticeMessage = message;
-    g_appNoticeOpen = true;
+    g_appNotice.show(title, message, false);
 }
 
 void clearAppNotice() {
-    g_appNoticeOpen = false;
-    g_appNoticeTitle.clear();
-    g_appNoticeMessage.clear();
+    g_appNotice.dismiss();
+    g_appNotice.title.clear();
+    g_appNotice.body.clear();
 }
 
-bool appNoticeVisible() { return g_appNoticeOpen; }
-std::string appNoticeTitle() { return g_appNoticeTitle; }
-std::string appNoticeMessage() { return g_appNoticeMessage; }
+bool appNoticeVisible() { return g_appNotice.open; }
+// 无通知时一律空串：拆分前的 onAutoDismiss/onDismiss 回调直接调 clearAppNotice
+//（连内容一起清），改走 ui_kit 后回调只落状态位，故在此保持同一可观察语义
+//（open=false 时旧实现的内容必已被清空，二者输出逐字相同）。
+std::string appNoticeTitle() { return g_appNotice.open ? g_appNotice.title : std::string{}; }
+std::string appNoticeMessage() { return g_appNotice.open ? g_appNotice.body : std::string{}; }
 
 float pageContentWidth(float windowWidth) {
     return windowWidth - sidebarWidth();
@@ -295,18 +295,11 @@ void compose(eui::Ui& ui, const eui::Screen& screen) {
         })
         .build();
     // 应用级 toast（审计 [7]）：row 之后顶层绘制盖过侧边栏/页面；每帧无条件
-    // 调用、visible 控状态（同各模块 drawToast 模式），自动消失回写 clear
-    components::toast(ui, "app.notice")
-        .theme(core::theme::componentTokens(core::theme::current()))
-        .screen(screen.width, screen.height)
-        .visible(appNoticeVisible())
-        .duration(4.5f)
-        .icon(0xF05A)  // fa-circle-info
-        .title(appNoticeTitle())
-        .message(appNoticeMessage())
-        .onAutoDismiss([] { clearAppNotice(); })
-        .onDismiss([] { clearAppNotice(); })
-        .build();
+    // 调用、visible 控状态（同各模块 drawToast 模式），自动消失回写 clear。
+    // 应用级通知用 info 图标、无失败态，时长 4.5s（现状逐字保留）
+    ui_kit::drawToast(ui, screen, "app.notice", g_appNotice,
+                      core::theme::componentTokens(core::theme::current()),
+                      ui_kit::ToastOptions{.durationSec = 4.5f, .okIcon = 0xF05A});
 }
 
 } // namespace app
