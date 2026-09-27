@@ -1250,8 +1250,12 @@ ClaudeService::testConnection(const Profile& profile) {
     req.url = stripTrailingSlash(profile.baseUrl) + "/v1/models";
     // 与真实转发同源：探测请求也经上游方言层装配头部（鉴权头形态 / UA 覆盖 /
     // 方言专属会话头），否则探测结果与转发结果会不一致——如 opencode.ai/zen
-    // 缺 x-opencode-session、或 Cloudflare 按 UA 拦截时，转得通而探测误报失败
-    const UpstreamDialect dialect = UpstreamDialect::forBaseUrl(profile.baseUrl);
+    // 缺 x-opencode-session、或 Cloudflare 按 UA 拦截时，转得通而探测误报失败。
+    // dialectOverride 与两条转发路径（proxy_router / streaming_proxy）同样传参：
+    // 漏传会让配了覆盖的 profile 出现「探测按 A 方言、转发按 B 方言」的错位
+    //（空串 = 未覆盖 → 方言层回落 host 推断，与不传该参逐项一致）
+    const UpstreamDialect dialect =
+        UpstreamDialect::forBaseUrl(profile.baseUrl, profile.dialectOverride);
     dialect.applyHeaders(req.headers, key, authFieldFromText(profile.authField));
     req.timeoutMs = 15000;
 

@@ -187,8 +187,11 @@ sendStreamingClaude(const platform::http::Request& req,
     }
 
     // 2. 按上游方言归一（鉴权头 / UA / 会话头 / 模型名标记）——
-    //    各网关差异全部收敛在 UpstreamDialect 里，此处不再有 provider if
-    const UpstreamDialect dialect = UpstreamDialect::forBaseUrl(profile.baseUrl);
+    //    各网关差异全部收敛在 UpstreamDialect 里，此处不再有 provider if。
+    //    方言由 profile.dialectOverride 钉住（空串 = 未覆盖 → host 推断，
+    //    与不传该参逐项一致；CPX-13 接线），与缓冲转发 / 连通性探测同源
+    const UpstreamDialect dialect =
+        UpstreamDialect::forBaseUrl(profile.baseUrl, profile.dialectOverride);
     dialect.applyHeaders(upstream.headers, profile.apiKeyPlain,
                          authFieldFromText(profile.authField));
     if (dialect.normalizeBody(upstream.body)) {

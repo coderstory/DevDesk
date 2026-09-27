@@ -662,6 +662,93 @@ REGISTER_TEST(proxy_router_applies_upstream_dialect,
     return true;
 })
 
+// ---- 9b. profile.dialectOverride 接通转发路径（CPX-13 接线） ----
+// 承载断言的必须是**转发路径的实际效果**（上游收到的头 / body），不是
+// forBaseUrl 的返回值：host 是 loopback（host 推断 = 默认方言），profile 钉住
+// opencode_zen → 上游必须收到会话头、模型名 [1M] 必须被剥。覆盖值经生产路径
+//（createProfile 落库 → 激活 → resolveProfile 读回）注入，不绕过 DB。
+// 后半段把覆盖清空（空串 = 未覆盖）→ 与改动前逐项一致：无会话头 + body 逐字节不变。
+
+REGISTER_TEST(proxy_router_dialect_override_wired,
+              "proxy_router: profile.dialectOverride 接通转发（空串等价未覆盖）", {
+    platform::http::Server upstream("127.0.0.1", 0);
+    HeaderMap seen;
+    std::string seenBody;
+    upstream.route("POST", R"(/(.*))",
+                   [&](const platform::http::RequestCtx& ctx,
+                       platform::http::ResponseWriter& w) {
+                       seen = ctx.headers;
+                       seenBody = ctx.body;
+                       w.setStatus(200);
+                       w.setHeader("Content-Type", "application/json");
+                       w.write(R"({"id":"msg_ovr","type":"message","content":[]})");
+                       w.end();
+                   });
+    DOCTEST_REQUIRE(upstream.start());
+    std::this_thread::sleep_for(std::chrono::milliseconds(30));
+
+    TestDb tdb("dialect_ovr");
+    module::claude::ClaudeService svc(tdb.handle(), kTestKeychainService);
+    // 第 8 个参数 = dialectOverride（值域见 upstream_dialect.h）
+    auto created = svc.createProfile(
+        "Ovr", "http://127.0.0.1:" + std::to_string(upstream.actualPort()),
+        "sk-ant-ovr-key-0001", "deepseek-v4-flash",
+        /*activateIfNoneActive=*/false, /*sharedConfigId=*/0, "both",
+        "opencode_zen");
+    DOCTEST_REQUIRE(created.isOk());
+    DOCTEST_REQUIRE(svc.setActiveProfile(created.value().id).isOk());
+    auto active = svc.getActiveProfile();
+    DOCTEST_REQUIRE(active.isOk());
+    DOCTEST_CHECK_EQ(active.value().dialectOverride, std::string("opencode_zen"));
+
+    platform::http::Server proxyServer("127.0.0.1", 0);
+    module::claude::ProxyRouter router(svc, proxyServer);
+    router.registerRoutes();
+
+    const std::string reqBody =
+        R"({"model":"deepseek-v4-flash[1M]","max_tokens":16,"messages":[{"role":"user","content":"hi"}]})";
+    auto r = directCall(router, "POST", "/v1/messages", reqBody);
+    DOCTEST_CHECK_EQ(r.status, 200);
+    // loopback host 推断不出 zen → 会话头出现即证明覆盖值真的走进了转发路径
+    DOCTEST_CHECK_EQ(headerCI(seen, "x-opencode-session"),
+                     module::claude::claudeUpstreamSessionId());
+    DOCTEST_CHECK_EQ(countCI(seen, "x-opencode-session"), 1);
+    // 方言全量生效（不只头）：模型名 [1M] 被剥掉
+    DOCTEST_CHECK(seenBody.find("[1M]") == std::string::npos);
+    DOCTEST_CHECK(seenBody.find("deepseek-v4-flash") != std::string::npos);
+    DOCTEST_CHECK(seenBody.find("\"model\":\"deepseek-v4-flash\"") !=
+                  std::string::npos);
+
+    // ---- 空串 = 未覆盖：与改动前逐项一致（无会话头 + body 逐字节不变）----
+    module::claude::Profile p = active.value();
+    p.dialectOverride.clear();
+    DOCTEST_REQUIRE(svc.updateProfile(p).isOk());
+    auto cleared = svc.getProfile(created.value().id);
+    DOCTEST_REQUIRE(cleared.isOk());
+    DOCTEST_CHECK(cleared.value().dialectOverride.empty());
+
+    seen.clear();
+    seenBody.clear();
+    auto r2 = directCall(router, "POST", "/v1/messages", reqBody);
+    DOCTEST_CHECK_EQ(r2.status, 200);
+    DOCTEST_CHECK_EQ(countCI(seen, "x-opencode-session"), 0);
+    DOCTEST_CHECK_EQ(seenBody, reqBody);
+    // 方言层其余行为照旧（鉴权 / UA / 版本头）
+    DOCTEST_CHECK_EQ(headerCI(seen, "user-agent"),
+                     std::string(module::claude::kProxyUserAgent));
+    DOCTEST_CHECK_EQ(countCI(seen, "user-agent"), 1);
+    DOCTEST_CHECK_EQ(headerCI(seen, "x-api-key"),
+                     std::string("sk-ant-ovr-key-0001"));
+    DOCTEST_CHECK_EQ(headerCI(seen, "authorization"),
+                     std::string("Bearer sk-ant-ovr-key-0001"));
+    DOCTEST_CHECK_EQ(headerCI(seen, "anthropic-version"), std::string("2023-06-01"));
+
+    upstream.stop();
+    platform::keychain::deleteSecret(
+        kTestKeychainService, "claude:" + std::to_string(created.value().id));
+    return true;
+})
+
 // ---- 10. httplib 注入的本地连接伪头不转发（缓冲路径：直接调 handleRequest） ----
 
 REGISTER_TEST(proxy_router_drops_httplib_pseudo_headers,

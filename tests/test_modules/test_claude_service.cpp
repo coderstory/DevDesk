@@ -1166,6 +1166,83 @@ REGISTER_TEST(claude_service_test_connection_uses_dialect,
     return true;
 })
 
+// ---- 8c. testConnection 接 profile.dialectOverride（CPX-13 接线）----
+// 「探测与转发同源」的最后一环：profile 钉住方言时，探测请求必须和两条转发
+// 路径（proxy_router / streaming_proxy）按同一方言装头，否则配了覆盖的
+// profile 会出现「探测按 A 方言、转发按 B 方言」的错位。
+// 断言的是上游实际收到的头（探测路径的真实效果），不是 forBaseUrl 的返回值：
+// host 是 loopback（推断 = 默认方言），覆盖 opencode_zen → 会话头必须出现。
+
+REGISTER_TEST(claude_service_test_connection_dialect_override,
+              "claude_service: testConnection 接 profile.dialectOverride", {
+    platform::http::Server upstream("127.0.0.1", 0);
+    HeaderMap seen;
+    int hitCount = 0;
+    upstream.route("GET", ".*",
+                   [&](const platform::http::RequestCtx& ctx,
+                       platform::http::ResponseWriter& w) {
+                       ++hitCount;
+                       seen = ctx.headers;
+                       w.setStatus(200);
+                       w.setHeader("Content-Type", "application/json");
+                       w.write(R"({"data":[{"id":"claude-sonnet-4-5"}]})");
+                       w.end();
+                   });
+    DOCTEST_REQUIRE(upstream.start());
+    const int port = upstream.actualPort();
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+
+    TestDb tdb("conn_ovr");
+    module::claude::ClaudeService svc(tdb.handle(), kTestKeychainService);
+
+    const std::string loopbackUrl = "http://127.0.0.1:" + std::to_string(port);
+    // 第 8 个参数 = dialectOverride（值域见 upstream_dialect.h）
+    auto created = svc.createProfile("ConnOvr", loopbackUrl,
+                                     "sk-ant-conn-ovr-0001", "m",
+                                     /*activateIfNoneActive=*/false,
+                                     /*sharedConfigId=*/0, "both",
+                                     "opencode_zen");
+    DOCTEST_REQUIRE(created.isOk());
+
+    // ---- (1) 覆盖 opencode_zen：loopback 推断不出 zen → 会话头出现即证明接了覆盖 ----
+    auto resp = svc.testConnection(created.value());
+    DOCTEST_REQUIRE(resp.isOk());
+    DOCTEST_CHECK_EQ(resp.value().statusCode, 200);
+    DOCTEST_CHECK_EQ(hitCount, 1);
+    DOCTEST_CHECK_EQ(headerCI(seen, "x-opencode-session"),
+                     module::claude::claudeUpstreamSessionId());
+    DOCTEST_CHECK_EQ(countCI(seen, "x-opencode-session"), 1);
+    // 方言层其余行为照旧
+    DOCTEST_CHECK_EQ(headerCI(seen, "user-agent"),
+                     std::string(module::claude::kProxyUserAgent));
+    DOCTEST_CHECK_EQ(countCI(seen, "user-agent"), 1);
+    DOCTEST_CHECK_EQ(headerCI(seen, "x-api-key"),
+                     std::string("sk-ant-conn-ovr-0001"));
+    DOCTEST_CHECK_EQ(headerCI(seen, "anthropic-version"), std::string("2023-06-01"));
+
+    // ---- (2) 空串 = 未覆盖：与改动前逐项一致（不注入会话头）----
+    module::claude::Profile p = created.value();
+    p.dialectOverride.clear();
+    seen.clear();
+    auto resp2 = svc.testConnection(p);
+    DOCTEST_REQUIRE(resp2.isOk());
+    DOCTEST_CHECK_EQ(resp2.value().statusCode, 200);
+    DOCTEST_CHECK_EQ(hitCount, 2);
+    DOCTEST_CHECK_EQ(countCI(seen, "x-opencode-session"), 0);
+    DOCTEST_CHECK_EQ(headerCI(seen, "user-agent"),
+                     std::string(module::claude::kProxyUserAgent));
+    DOCTEST_CHECK_EQ(countCI(seen, "user-agent"), 1);
+    DOCTEST_CHECK_EQ(headerCI(seen, "x-api-key"),
+                     std::string("sk-ant-conn-ovr-0001"));
+    DOCTEST_CHECK_EQ(headerCI(seen, "authorization"),
+                     std::string("Bearer sk-ant-conn-ovr-0001"));
+    DOCTEST_CHECK_EQ(headerCI(seen, "anthropic-version"), std::string("2023-06-01"));
+
+    upstream.stop();
+    cleanupKey(created.value().id);
+    return true;
+})
+
 // ---- 9. testConnection 网络不可达 ----
 
 REGISTER_TEST(claude_service_test_connection_unreachable,
