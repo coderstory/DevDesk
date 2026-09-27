@@ -104,6 +104,30 @@ REGISTER_TEST(todo_svc_rename_column,
     return true;
 })
 
+// THS-11：头文件承诺「id 不存在 → NotFound」——旧实现只发 UPDATE 就 ok()，
+// 重命名不存在的列静默成功
+REGISTER_TEST(todo_svc_rename_missing_notfound,
+              "TodoService: renameColumn id 不存在 → NotFound", {
+    TestEnv env("rename_notfound");
+    DOCTEST_REQUIRE(env.ready);
+
+    auto list = env.svc->listColumns();
+    DOCTEST_REQUIRE(list.isOk());
+    const int64_t existing = list.value()[0].id;
+    const int64_t missing = 999999;
+
+    auto miss = env.svc->renameColumn(missing, "幽灵列");
+    DOCTEST_REQUIRE(miss.isFail());
+    DOCTEST_CHECK(miss.errorCode() == core::ErrorCode::NotFound);
+
+    // 正向对照：存在的列仍能改名并返回 ok（校验不误伤正常路径）
+    DOCTEST_CHECK(env.svc->renameColumn(existing, "仍可改").isOk());
+    auto list2 = env.svc->listColumns();
+    DOCTEST_REQUIRE(list2.isOk());
+    DOCTEST_CHECK_EQ(list2.value()[0].title, std::string("仍可改"));
+    return true;
+})
+
 REGISTER_TEST(todo_svc_set_column_color,
               "TodoService: setColumnColor 设置/清除/读回",
               {
@@ -343,6 +367,48 @@ REGISTER_TEST(todo_svc_update_task,
     DOCTEST_CHECK_EQ(got.tags.size(), 3u);
     DOCTEST_CHECK_EQ(got.tags[0], std::string("work"));
     DOCTEST_CHECK_EQ(got.tags[2], std::string("P0"));
+    return true;
+})
+
+// THS-18：updateTask 只改内容字段——调用方误填 columnId/position 时不再
+// 静默挪列 / 改序（改列改序的唯一路径是 moveTask）
+REGISTER_TEST(todo_svc_update_task_ignores_column,
+              "TodoService: updateTask 不再改 column/position（编辑保存不改序）", {
+    TestEnv env("update_ignores_column");
+    DOCTEST_REQUIRE(env.ready);
+
+    auto cols = env.svc->listColumns();
+    DOCTEST_REQUIRE(cols.isOk());
+    const int64_t colA = cols.value()[0].id;
+    const int64_t colB = cols.value()[1].id;
+
+    auto t1 = env.svc->createTask(colA, "原任务");
+    auto t2 = env.svc->createTask(colA, "占位任务");
+    DOCTEST_REQUIRE(t1.isOk());
+    DOCTEST_REQUIRE(t2.isOk());
+
+    module::todo::Task upd = t1.value();
+    upd.title = "改了标题";
+    upd.columnId = colB;  // 误传：期望被忽略
+    upd.position = 9;     // 误传：期望被忽略
+    DOCTEST_REQUIRE(env.svc->updateTask(upd).isOk());
+
+    auto inA = env.svc->listTasks(colA);
+    auto inB = env.svc->listTasks(colB);
+    DOCTEST_REQUIRE(inA.isOk());
+    DOCTEST_REQUIRE(inB.isOk());
+    DOCTEST_REQUIRE_EQ(inA.value().size(), 2u);
+    DOCTEST_CHECK_EQ(inB.value().size(), 0u);  // 任务没有被挪到 colB
+
+    bool checked = false;
+    for (const auto& task : inA.value()) {
+        if (task.id != t1.value().id) continue;
+        checked = true;
+        DOCTEST_CHECK_EQ(task.title, std::string("改了标题"));  // 内容字段照改
+        DOCTEST_CHECK_EQ(task.columnId, colA);                  // 列不变
+        DOCTEST_CHECK_EQ(task.position, t1.value().position);   // 序不变
+    }
+    DOCTEST_CHECK(checked);
     return true;
 })
 
@@ -614,7 +680,7 @@ REGISTER_TEST(todo_svc_column_kind,
     DOCTEST_CHECK_EQ(list.value()[0].kind, std::string("todo"));
     DOCTEST_CHECK_EQ(list.value()[1].kind, std::string(""));
     DOCTEST_CHECK_EQ(list.value()[2].kind, std::string("done"));
-    DOCTEST_CHECK_EQ(list.value()[3].kind, std::string(""));
+    DOCTEST_CHECK_EQ(list.value()[3].kind, std::string("archive"));  // v7 回填
 
     // 重命名后 kind 保留（语义不随标题变）
     DOCTEST_REQUIRE(env.svc->renameColumn(list.value()[2].id, "Finished").isOk());

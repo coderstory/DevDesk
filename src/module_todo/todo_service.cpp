@@ -9,23 +9,20 @@
 
 #include <cstring>
 #include <ctime>
+#include <mutex>
 #include <utility>
+
+#include <sqlite3.h>
 
 namespace module::todo {
 
 namespace {
 
 Priority intToPriority(int v) {
-    switch (v) {
-        case 3: return Priority::High;
-        case 2: return Priority::Medium;
-        case 1: return Priority::Low;
-        default: return Priority::None;
-    }
-}
-
-int priorityToInt(Priority p) {
-    return static_cast<int>(p);
+    // 值域检查 + 转换（枚举连续：None=0, Low=1, Medium=2, High=3）。
+    // 越界（旧库脏数据 / 未来枚举值）→ None，与旧 switch 的 default 同语义。
+    if (v < 0 || v > static_cast<int>(Priority::High)) return Priority::None;
+    return static_cast<Priority>(v);
 }
 
 // LIKE 模式转义 % _ \（配合 SQL 的 ESCAPE '\'），防止用户查询串里的通配符被当作
@@ -47,8 +44,8 @@ TodoService::TodoService(core::data::SqliteDb& db) : db_(db) {}
 
 // ============ 内部辅助 ============
 
-core::Result<int64_t> TodoService::nowEpochSeconds() {
-    return core::Result<int64_t>::ok(static_cast<int64_t>(std::time(nullptr)));
+int64_t TodoService::nowEpochSeconds() {
+    return static_cast<int64_t>(std::time(nullptr));
 }
 
 core::Result<int> TodoService::nextColumnPosition() {
@@ -244,13 +241,8 @@ core::Result<Column> TodoService::createColumn(const std::string& title) {
     if (nextPosResult.isFail()) {
         return core::Result<Column>::fail(nextPosResult.errorCode(), nextPosResult.errorMessage());
     }
-    auto nowResult = nowEpochSeconds();
-    if (nowResult.isFail()) {
-        return core::Result<Column>::fail(nowResult.errorCode(), nowResult.errorMessage());
-    }
-
     int pos = nextPosResult.value();
-    int64_t now = nowResult.value();
+    const int64_t now = nowEpochSeconds();
 
     // INSERT ... RETURNING id（SQLite ≥3.35）单语句原子取回新 rowid
     // （审计 2026-09-23 [7] 残留）：旧实现是事务内 INSERT + COMMIT 后再
@@ -316,10 +308,9 @@ core::Result<Column> TodoService::createColumn(const std::string& title) {
 }
 
 core::Result<void> TodoService::renameColumn(int64_t id, const std::string& title) {
-    auto nowResult = nowEpochSeconds();
-    if (nowResult.isFail()) {
-        return core::Result<void>::fail(nowResult.errorCode(), nowResult.errorMessage());
-    }
+    // 持锁覆盖 UPDATE + changes() 取数，避免并发语句插队导致计数失真
+    //（照先例 core::pruneCallLogs；recursive_mutex，Statement 内部加锁可重入）
+    std::lock_guard<std::recursive_mutex> lock(db_.mutex());
 
     auto prep = db_.prepare("UPDATE todo_columns SET title = ? WHERE id = ?");
     if (prep.isFail()) {
@@ -332,7 +323,11 @@ core::Result<void> TodoService::renameColumn(int64_t id, const std::string& titl
     if (stepResult.isFail()) {
         return core::Result<void>::fail(stepResult.errorCode(), stepResult.errorMessage());
     }
-    // SQLite 没有 rowsAffected 公开 API，但我们能用 changes() 验证
+    // 头文件承诺「id 不存在 → NotFound」：UPDATE 影响 0 行即目标行不存在
+    //（旧实现只发 UPDATE 就 return ok()，注释提到的 changes() 从未调用）。
+    if (sqlite3_changes(db_.handle()) == 0) {
+        return core::Result<void>::fail(core::ErrorCode::NotFound, "column not found");
+    }
     return core::Result<void>::ok();
 }
 
@@ -372,17 +367,11 @@ core::Result<void> TodoService::deleteColumn(int64_t id) {
 
 core::Result<void> TodoService::reorderColumns(const std::vector<int64_t>& ids) {
     auto txResult = db_.transaction([&]() -> core::Result<void> {
-        // 先全部设为 -(position + 1) - 1000000（避免唯一约束冲突）
-        auto prep1 = db_.prepare("UPDATE todo_columns SET position = -(position + 1) - 1000000");
-        if (prep1.isFail()) {
-            return core::Result<void>::fail(prep1.errorCode(), prep1.errorMessage());
-        }
-        auto step1 = prep1.value().step();
-        if (step1.isFail()) {
-            return core::Result<void>::fail(step1.errorCode(), step1.errorMessage());
-        }
-
         // 按 ids 顺序重新设置 position = 0, 1, 2, ...
+        // v1 建表 position 无唯一约束（migrations 里 todo_columns 既无 UNIQUE
+        // 列也无 (position) 唯一索引），逐行覆盖即可，无需负位段过渡。
+        // 边界：ids 必须是全部列的一次排列——同列内出现重复 id 时后写者胜；
+        // 唯一调用点 doShiftColumn 按 columns_ 顺序传全集，非全集不可达。
         // 每次重新 prepare（sqlite3 不允许同一 stmt 多次 step）
         for (size_t i = 0; i < ids.size(); ++i) {
             auto onePrep = db_.prepare("UPDATE todo_columns SET position = ? WHERE id = ?");
@@ -461,13 +450,8 @@ core::Result<Task> TodoService::createTask(int64_t columnId, const std::string& 
     if (nextPosResult.isFail()) {
         return core::Result<Task>::fail(nextPosResult.errorCode(), nextPosResult.errorMessage());
     }
-    auto nowResult = nowEpochSeconds();
-    if (nowResult.isFail()) {
-        return core::Result<Task>::fail(nowResult.errorCode(), nowResult.errorMessage());
-    }
-
     int pos = nextPosResult.value();
-    int64_t now = nowResult.value();
+    const int64_t now = nowEpochSeconds();
 
     // 同 createColumn：INSERT ... RETURNING id 取代「事务内 INSERT +
     // COMMIT 后 SELECT last_insert_rowid()」（审计 2026-09-23 [7] 残留），
@@ -531,45 +515,41 @@ core::Result<Task> TodoService::createTask(int64_t columnId, const std::string& 
 }
 
 core::Result<void> TodoService::updateTask(const Task& task) {
-    auto nowResult = nowEpochSeconds();
-    if (nowResult.isFail()) {
-        return core::Result<void>::fail(nowResult.errorCode(), nowResult.errorMessage());
-    }
-    int64_t now = nowResult.value();
+    const int64_t now = nowEpochSeconds();
 
     std::string tagsJson = serializeTags(task.tags);
 
+    // 只更新内容字段：column_id / position 不在此处——改列 / 改序一律走
+    // moveTask（避免 updateTask 被误用时静默把任务挪列或顶到列首）。
     auto prep = db_.prepare(
         "UPDATE todo_tasks SET "
-        "column_id = ?, title = ?, description = ?, priority = ?, "
-        "due_at = ?, tags = ?, position = ?, completed_at = ?, updated_at = ? "
+        "title = ?, description = ?, priority = ?, "
+        "due_at = ?, tags = ?, completed_at = ?, updated_at = ? "
         "WHERE id = ?");
     if (prep.isFail()) {
         return core::Result<void>::fail(prep.errorCode(), prep.errorMessage());
     }
     auto& stmt = prep.value();
-    if (auto r = stmt.bind(1, task.columnId); r.isFail()) return r;
-    if (auto r = stmt.bind(2, task.title); r.isFail()) return r;
+    if (auto r = stmt.bind(1, task.title); r.isFail()) return r;
     if (task.description.has_value()) {
-        if (auto r = stmt.bind(3, task.description.value()); r.isFail()) return r;
+        if (auto r = stmt.bind(2, task.description.value()); r.isFail()) return r;
     } else {
-        if (auto r = stmt.bind(3, nullptr); r.isFail()) return r;
+        if (auto r = stmt.bind(2, nullptr); r.isFail()) return r;
     }
-    if (auto r = stmt.bind(4, static_cast<int64_t>(priorityToInt(task.priority))); r.isFail()) return r;
+    if (auto r = stmt.bind(3, static_cast<int64_t>(task.priority)); r.isFail()) return r;
     if (task.dueAt.has_value()) {
-        if (auto r = stmt.bind(5, task.dueAt.value()); r.isFail()) return r;
+        if (auto r = stmt.bind(4, task.dueAt.value()); r.isFail()) return r;
     } else {
-        if (auto r = stmt.bind(5, nullptr); r.isFail()) return r;
+        if (auto r = stmt.bind(4, nullptr); r.isFail()) return r;
     }
-    if (auto r = stmt.bind(6, tagsJson); r.isFail()) return r;
-    if (auto r = stmt.bind(7, static_cast<int64_t>(task.position)); r.isFail()) return r;
+    if (auto r = stmt.bind(5, tagsJson); r.isFail()) return r;
     if (task.completedAt.has_value()) {
-        if (auto r = stmt.bind(8, task.completedAt.value()); r.isFail()) return r;
+        if (auto r = stmt.bind(6, task.completedAt.value()); r.isFail()) return r;
     } else {
-        if (auto r = stmt.bind(8, nullptr); r.isFail()) return r;
+        if (auto r = stmt.bind(6, nullptr); r.isFail()) return r;
     }
-    if (auto r = stmt.bind(9, now); r.isFail()) return r;
-    if (auto r = stmt.bind(10, task.id); r.isFail()) return r;
+    if (auto r = stmt.bind(7, now); r.isFail()) return r;
+    if (auto r = stmt.bind(8, task.id); r.isFail()) return r;
     auto stepResult = stmt.step();
     if (stepResult.isFail()) {
         return core::Result<void>::fail(stepResult.errorCode(), stepResult.errorMessage());
@@ -671,16 +651,13 @@ core::Result<void> TodoService::moveTask(int64_t taskId, int64_t toColumnId, int
         }
 
         // 6. updated_at 刷新
-        auto nowR = nowEpochSeconds();
-        if (nowR.isFail()) {
-            return core::Result<void>::fail(nowR.errorCode(), nowR.errorMessage());
-        }
+        const int64_t now = nowEpochSeconds();
         auto prep6 = db_.prepare("UPDATE todo_tasks SET updated_at = ? WHERE id = ?");
         if (prep6.isFail()) {
             return core::Result<void>::fail(prep6.errorCode(), prep6.errorMessage());
         }
         auto& stmt6 = prep6.value();
-        if (auto r = stmt6.bind(1, nowR.value()); r.isFail()) return r;
+        if (auto r = stmt6.bind(1, now); r.isFail()) return r;
         if (auto r = stmt6.bind(2, taskId); r.isFail()) return r;
         auto step6 = stmt6.step();
         if (step6.isFail()) {
@@ -693,11 +670,7 @@ core::Result<void> TodoService::moveTask(int64_t taskId, int64_t toColumnId, int
 }
 
 core::Result<void> TodoService::completeTask(int64_t id) {
-    auto nowResult = nowEpochSeconds();
-    if (nowResult.isFail()) {
-        return core::Result<void>::fail(nowResult.errorCode(), nowResult.errorMessage());
-    }
-    int64_t now = nowResult.value();
+    const int64_t now = nowEpochSeconds();
 
     auto prep = db_.prepare(
         "UPDATE todo_tasks SET completed_at = ?, updated_at = ? WHERE id = ?");
@@ -716,11 +689,7 @@ core::Result<void> TodoService::completeTask(int64_t id) {
 }
 
 core::Result<void> TodoService::uncompleteTask(int64_t id) {
-    auto nowResult = nowEpochSeconds();
-    if (nowResult.isFail()) {
-        return core::Result<void>::fail(nowResult.errorCode(), nowResult.errorMessage());
-    }
-    int64_t now = nowResult.value();
+    const int64_t now = nowEpochSeconds();
 
     auto prep = db_.prepare(
         "UPDATE todo_tasks SET completed_at = NULL, updated_at = ? WHERE id = ?");
@@ -776,11 +745,7 @@ core::Result<std::vector<Task>> TodoService::search(const std::string& query) {
 }
 
 core::Result<std::vector<Task>> TodoService::listOverdue() {
-    auto nowResult = nowEpochSeconds();
-    if (nowResult.isFail()) {
-        return core::Result<std::vector<Task>>::fail(nowResult.errorCode(), nowResult.errorMessage());
-    }
-    int64_t now = nowResult.value();
+    const int64_t now = nowEpochSeconds();
 
     auto prep = db_.prepare(
         "SELECT id, column_id, title, description, priority, due_at, tags, position, completed_at "

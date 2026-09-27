@@ -1561,6 +1561,49 @@ REGISTER_TEST(todo_ui_overdue_zero_grey,
     return true;
 })
 
+// THS-13：入选按秒级（due_at < now），日历日差却可能是 0（1 秒前到期）——
+// 行文案必须至少 1 天，不再显示「逾期0天」
+REGISTER_TEST(todo_ui_overdue_min_one_day,
+              "todo_ui: 逾期 1 秒仍显示「逾期1天」（max(1,…)，headless）", {
+    TestEnv env;
+    DOCTEST_REQUIRE(env.ready);
+    auto list = env.svc->listColumns();
+    DOCTEST_REQUIRE(list.isOk());
+    const int64_t todoCol = list.value()[0].id;
+
+    auto t = env.svc->createTask(todoCol, "刚过期");
+    DOCTEST_REQUIRE(t.isOk());
+    {
+        module::todo::Task u = t.value();
+        u.dueAt = static_cast<int64_t>(std::time(nullptr)) - 1;  // 1 秒前到期
+        DOCTEST_REQUIRE(env.svc->updateTask(u).isOk());
+    }
+
+    std::unique_ptr<::core::Module> mod(create_todo_module());
+    mod->onStart();
+
+    {
+        Frame frame(mod.get());
+        const auto* badge = frame.ui.find("todo.btn.overdue.text");
+        DOCTEST_REQUIRE(badge != nullptr);
+        DOCTEST_CHECK(badge->text.find("1") != std::string::npos);  // 计数 = 1
+        const auto* btn = frame.ui.find("todo.btn.overdue.bg");
+        DOCTEST_REQUIRE(btn != nullptr);
+        DOCTEST_REQUIRE(btn->onClick != nullptr);
+        btn->onClick();
+        frame.refresh();
+        const auto* rowTitle = frame.ui.find("todo.dialog.overdue.row.0.title");
+        const auto* rowDays = frame.ui.find("todo.dialog.overdue.row.0.days");
+        DOCTEST_REQUIRE(rowTitle != nullptr);
+        DOCTEST_REQUIRE(rowDays != nullptr);
+        DOCTEST_CHECK_EQ(rowTitle->text, std::string("刚过期"));
+        DOCTEST_CHECK_EQ(rowDays->text, std::string("逾期1天"));
+    }
+
+    mod->onStop();
+    return true;
+})
+
 // tags 编辑：回车添加 / × 删除 / 保存往返（JSON 序列化）/ 卡片渲染前 2 个 + 超出 +N
 REGISTER_TEST(todo_ui_tags_edit_roundtrip,
               "todo_ui: 详情 tags 编辑往返 + 卡片 chip 渲染（headless）", {

@@ -206,8 +206,8 @@ REGISTER_TEST(migrate_call_logs_usage_columns,
         DOCTEST_REQUIRE(r.isOk());
         DOCTEST_REQUIRE(r.value().migrate().isOk());
         auto& db = r.value().db();
-        // v6（共享配置片段）已执行：全量迁移后 schema_version = 6
-        DOCTEST_CHECK_EQ(db.schemaVersion(), 6);
+        // v7（归档列 kind 回填）已执行：全量迁移后 schema_version = 7
+        DOCTEST_CHECK_EQ(db.schemaVersion(), 7);
 
         auto prep = db.prepare(
             "SELECT status_code, latency_ms, request_bytes, response_bytes, "
@@ -288,7 +288,8 @@ REGISTER_TEST(migrate_shared_configs_v6,
         DOCTEST_REQUIRE(r.isOk());
         DOCTEST_REQUIRE(r.value().migrate().isOk());
         auto& db = r.value().db();
-        DOCTEST_CHECK_EQ(db.schemaVersion(), 6);
+        // v7（归档列 kind 回填）随后执行：全量迁移后 schema_version = 7
+        DOCTEST_CHECK_EQ(db.schemaVersion(), 7);
 
         // 新表存在且可插入片段行
         DOCTEST_REQUIRE(db.exec(
@@ -318,6 +319,67 @@ REGISTER_TEST(migrate_shared_configs_v6,
         DOCTEST_CHECK(db.exec(
             "INSERT INTO claude_shared_configs (name, extra_env, created_at, "
             "updated_at) VALUES ('片段A', '', 0, 0)").isFail());
+    } // Database 在此析构（关闭 sqlite 句柄）
+
+    std::filesystem::remove(path, ec);
+    return true;
+})
+
+// migration v7（归档列 kind 回填）：v6 旧库里「已归档」列 kind 为 NULL，
+// 升级后回填 'archive'，其余列 kind 零改动（普通列仍 NULL）
+REGISTER_TEST(migrate_archive_kind_v7,
+              "Database: migrate v7 回填归档列 kind('archive')", {
+    auto path = tempDbPath("archive_kind");
+    std::error_code ec;
+    std::filesystem::remove(path, ec);
+
+    // 手工构造 v6 旧库（只跑前 6 条 migration）
+    {
+        auto openR = core::data::SqliteDb::open(path);
+        DOCTEST_REQUIRE(openR.isOk());
+        auto& db = openR.value();
+        auto oldMigrations = core::migrations::all();
+        oldMigrations.resize(6);  // v1..v6
+        DOCTEST_REQUIRE(db.runMigrations(oldMigrations).isOk());
+
+        // 前置：v6 时「已归档」列尚无 kind（v4 只回填 '待办' / '已完成'）
+        auto q = db.prepare("SELECT kind FROM todo_columns WHERE title = '已归档'");
+        DOCTEST_REQUIRE(q.isOk());
+        auto rows = q.value().fetchAll();
+        DOCTEST_REQUIRE_EQ(rows.value().size(), 1u);
+        DOCTEST_CHECK(rows.value()[0].isNull("kind"));
+    } // 句柄关闭（Windows 文件锁）
+
+    // 重新打开 + 全量 migrate → v7 回填
+    {
+        auto r = core::Database::open(path);
+        DOCTEST_REQUIRE(r.isOk());
+        DOCTEST_REQUIRE(r.value().migrate().isOk());
+        auto& db = r.value().db();
+        DOCTEST_CHECK_EQ(db.schemaVersion(), 7);
+
+        struct Expect { const char* title; const char* kind; };
+        Expect expects[4];
+        // 外层括号保护初始化列表逗号被宏拆成实参（同文件上方用法）
+        expects[0] = (Expect{"待办", "todo"});
+        expects[1] = (Expect{"进行中", ""});     // 普通列：kind 仍 NULL
+        expects[2] = (Expect{"已完成", "done"});
+        expects[3] = (Expect{"已归档", "archive"});
+        for (const auto& e : expects) {
+            auto q = db.prepare("SELECT kind FROM todo_columns WHERE title = ?");
+            DOCTEST_REQUIRE(q.isOk());
+            auto& stmt = q.value();
+            DOCTEST_REQUIRE(stmt.bind(1, std::string(e.title)).isOk());
+            auto rows = stmt.fetchAll();
+            DOCTEST_REQUIRE_EQ(rows.value().size(), 1u);
+            const auto& row = rows.value()[0];
+            if (e.kind[0] == '\0') {
+                DOCTEST_CHECK(row.isNull("kind"));  // 普通列零改动
+            } else {
+                DOCTEST_CHECK_EQ(row.getString("kind").valueOr(""),
+                                 std::string(e.kind));
+            }
+        }
     } // Database 在此析构（关闭 sqlite 句柄）
 
     std::filesystem::remove(path, ec);

@@ -26,6 +26,7 @@
 #include <algorithm>
 #include <cmath>
 #include <ctime>
+#include <iterator>
 #include <map>
 #include <memory>
 #include <string>
@@ -44,22 +45,28 @@ using module::todo::ui::kColumnHeaderHeight;
 
 // 优先级 → 中文标签（●/○ 是文本字形，随 chip 前景色调色；
 // 旧 🔴🟡🔵⚪ 是系统彩色 emoji，风格不统一已换）
+// 下标 = Priority 枚举值（None=0 … High=3）：新增枚举成员时 static_assert
+// 编译期失败，不会像原 switch + default 那样静默吞掉漏改。越界（脏数据）走 [0]。
 const char* priorityLabel(Priority p) {
-    switch (p) {
-        case Priority::High:   return "●高";
-        case Priority::Medium: return "●中";
-        case Priority::Low:    return "●低";
-        default:               return "无";
-    }
+    static constexpr const char* kLabels[] = {"无", "●低", "●中", "●高"};
+    static_assert(std::size(kLabels) == static_cast<size_t>(Priority::High) + 1);
+    const size_t idx = static_cast<size_t>(p);
+    return kLabels[idx <= static_cast<size_t>(Priority::High) ? idx : 0];
 }
 
 eui::Color priorityColor(Priority p, const core::theme::Tokens& t) {
-    switch (p) {
-        case Priority::High:   return t.colors.error;
-        case Priority::Medium: return t.colors.warning;
-        case Priority::Low:    return t.colors.info;
-        default:               return t.colors.textTertiary;
-    }
+    // 表里存的是 ColorTokens 成员指针（不是色值）：色值随主题 t 在运行期解析，
+    // 编译期常量表因此不会把首帧主题的颜色缓存住。下标 = Priority 值域，
+    // static_assert 保证枚举新增时编译期失败；越界走 [0]（None 色）。
+    static constexpr eui::Color core::theme::ColorTokens::*kColorFields[] = {
+        &core::theme::ColorTokens::textTertiary,  // None
+        &core::theme::ColorTokens::info,          // Low
+        &core::theme::ColorTokens::warning,       // Medium
+        &core::theme::ColorTokens::error,         // High
+    };
+    static_assert(std::size(kColorFields) == static_cast<size_t>(Priority::High) + 1);
+    const size_t idx = static_cast<size_t>(p);
+    return t.colors.*kColorFields[idx <= static_cast<size_t>(Priority::High) ? idx : 0];
 }
 
 // epoch 秒 → "MM-DD"；-1 表示无截止日期
@@ -1003,7 +1010,9 @@ private:
         // 搜索激活时只显示命中卡（命中列照常渲染；命中集来自 service_->search）
         colTasks = ui::filterBySearch(colTasks, searchMatchIds_,
                                       !searchQuery_.empty());
-        const bool isArchive = (col.title == "已归档");
+        // 归档列语义走 kind（migration v7 起回填 'archive'）：按标题判会在
+        // 用户重命名后静默失效
+        const bool isArchive = (col.kind == "archive");
 
         // 列头右键热区（重命名/左移/右移/删除列）。纯命中区：Rect 不设
         // color 时默认不透明白色（Element::color 默认 {1,1,1,1}），深色主题
@@ -1973,8 +1982,10 @@ private:
                     ui.text(rowId + ".days")
                         .position(w - 68.0f, y + 10.0f)
                         .size(48.0f, 20.0f)
+                        // 入选按秒级（listOverdue 的 due_at < now），日历日差却
+                        // 可能为 0（1 秒前到期）→ 行文案至少 1 天，与「已逾期」一致
                         .text("逾期" + std::to_string(
-                                   ui::overdueDays(task.dueAt.value_or(0), now)) + "天")
+                                   std::max(1, ui::overdueDays(task.dueAt.value_or(0), now))) + "天")
                         .fontSize(t.sizes.fontSizeSmall)
                         .lineHeight(20.0f)
                         .color(t.colors.error)
