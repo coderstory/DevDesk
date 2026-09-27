@@ -32,6 +32,8 @@
 #include "doctest.h"
 
 #include "claude_service.h"
+#include "core/database.h"
+#include "core/migrations.h"
 #include "core/proxy_stats.h"
 #include "core/sqlite_db.h"
 #include "platform/http_client.h"
@@ -289,6 +291,18 @@ struct TestEnv {
     }
 
     module::claude::ClaudeService& svc() const { return *service; }
+};
+
+// 把测试用的内存库注册成「app 连接」（core::appDatabase）——生产里 main 注册的
+// 就是 ClaudeService 用的同一个连接，流末用量回填要经它拿库写。必须成对使用：
+// 析构注销，否则库销毁后把悬垂指针留给后面的用例。
+struct AppDbScope {
+    explicit AppDbScope(core::data::SqliteDb& db) {
+        core::registerAppDatabase(&db);
+    }
+    ~AppDbScope() { core::registerAppDatabase(nullptr); }
+    AppDbScope(const AppDbScope&) = delete;
+    AppDbScope& operator=(const AppDbScope&) = delete;
 };
 
 Profile makeProfile(const std::string& baseUrl) {
@@ -1243,5 +1257,199 @@ REGISTER_TEST(streaming_cancel_silent_upstream_prompt,
                               std::to_string(cancelMs) +
                               "ms（要求 <2000ms；修复前挂在低速超时上，"
                               "本用例配置实测 ~10.6s）");
+    return true;
+})
+
+// ==================== 21. 流末用量落库（migration v5） ====================
+
+REGISTER_TEST(streaming_sse_usage_parser_tokens,
+              "SseUsageParser: 四类累计 token（input/output/cache read/cache write）", {
+    using module::claude::SseUsageParser;
+
+    // message_start：四类都在 message.usage（嵌套一层）
+    SseUsageParser p;
+    p.feed("data: {\"type\":\"message_start\",\"message\":{\"usage\":"
+           "{\"input_tokens\":10,\"output_tokens\":3,"
+           "\"cache_read_input_tokens\":2,\"cache_creation_input_tokens\":5}}}\n\n");
+    DOCTEST_CHECK_EQ(p.usage().inputTokens, 10);
+    DOCTEST_CHECK_EQ(p.usage().outputTokens, 3);
+    DOCTEST_CHECK_EQ(p.usage().cacheReadTokens, 2);
+    DOCTEST_CHECK_EQ(p.usage().cacheWriteTokens, 5);
+
+    // message_delta 只带 output_tokens：其余字段保持原值（缺字段不清零）
+    const auto v = p.feed("data: {\"type\":\"message_delta\",\"delta\":{},"
+                          "\"usage\":{\"output_tokens\":40}}\n\n");
+    DOCTEST_CHECK_EQ(v.size(), static_cast<size_t>(1));
+    DOCTEST_CHECK_EQ(p.usage().outputTokens, 40);
+    DOCTEST_CHECK_EQ(p.usage().inputTokens, 10);
+    DOCTEST_CHECK_EQ(p.usage().cacheReadTokens, 2);
+    DOCTEST_CHECK_EQ(p.usage().cacheWriteTokens, 5);
+
+    // 整个流没有 usage → 四类都保持 -1（落库时写 NULL，不写 0）
+    SseUsageParser p2;
+    p2.feed("data: {\"type\":\"content_block_delta\",\"index\":0}\n\n");
+    DOCTEST_CHECK_EQ(p2.usage().inputTokens, -1);
+    DOCTEST_CHECK_EQ(p2.usage().outputTokens, -1);
+    DOCTEST_CHECK_EQ(p2.usage().cacheReadTokens, -1);
+    DOCTEST_CHECK_EQ(p2.usage().cacheWriteTokens, -1);
+    return true;
+})
+
+REGISTER_TEST(streaming_call_log_usage_columns,
+              "streaming: 流末回填 claude_call_logs 的 token 四列 + 首事件毫秒", {
+    core::proxy_stats::resetForTest();
+    MockSseServer upstream;
+    DOCTEST_REQUIRE(upstream.start());
+
+    // message_start 给四类累计值，message_delta 给最终 output（累计口径）
+    MockScript script;
+    script.chunks.push_back(
+        "data: {\"type\":\"message_start\",\"message\":{\"usage\":"
+        "{\"input_tokens\":10,\"output_tokens\":3,"
+        "\"cache_read_input_tokens\":2,\"cache_creation_input_tokens\":5}}}\n\n");
+    script.chunks.push_back(
+        "data: {\"type\":\"message_delta\",\"delta\":{},"
+        "\"usage\":{\"output_tokens\":40}}\n\n");
+    script.chunks.push_back("data: [DONE]\n\n");
+    upstream.onMessages(script);
+
+    TestEnv env;
+    DOCTEST_REQUIRE(env.service != nullptr);
+    AppDbScope appDb(env.dbResult.value());
+    // TestEnv 只 open(":memory:")、没建表 → 本用例要真落库，先跑全量迁移；
+    // claude_call_logs.profile_id 有外键（open 即 PRAGMA foreign_keys=ON），
+    // 而 makeProfile 的 id=1 只是内存里的号 → 再补一行 profile 供外键落地
+    DOCTEST_REQUIRE(
+        env.dbResult.value().runMigrations(core::migrations::all()).isOk());
+    DOCTEST_REQUIRE(env.dbResult.value().exec(
+        "INSERT INTO claude_profiles (id, name, base_url, api_key_hint, "
+        "api_key_check, keychain_account, model, is_active, created_at, updated_at) "
+        "VALUES (1, 'streaming-usage', 'http://127.0.0.1', 'sk-***', 'x', "
+        "'claude:1', 'claude-sonnet-4-5', 1, 0, 0)")
+                        .isOk());
+
+    platform::http::Server proxy("127.0.0.1", 0);
+    module::claude::ProxyRouter router(env.svc(), proxy);
+    const std::string upstreamBase = upstream.baseUrl();
+    router.setProfileProvider([upstreamBase]() {
+        return core::Result<Profile>::ok(makeProfile(upstreamBase));
+    });
+    router.registerRoutes();
+    DOCTEST_REQUIRE(proxy.start());
+
+    httplib::Client cli("127.0.0.1", proxy.actualPort());
+    cli.set_read_timeout(15, 0);
+    auto res = clientPostStream(cli, "/v1/messages",
+                                R"({"model":"claude-sonnet-4-5","stream":true})",
+                                false);
+    DOCTEST_CHECK(res.ok);
+    DOCTEST_CHECK_EQ(res.status, 200);
+
+    // 落库是两步：响应头就绪时插行（status/latency），流末 UPDATE 回填用量。
+    // 客户端读完整流时回填可能还差几毫秒 → 轮询等
+    core::data::SqliteDb& db = env.dbResult.value();
+    auto usageWritten = [&db]() {
+        auto prep = db.prepare("SELECT COUNT(*) AS n FROM claude_call_logs "
+                               "WHERE output_tokens IS NOT NULL");
+        if (prep.isFail()) return false;
+        auto rows = prep.value().fetchAll();
+        if (rows.isFail() || rows.value().empty()) return false;
+        return std::get<int64_t>(rows.value()[0].values[0]) == 1;
+    };
+    DOCTEST_CHECK(waitUntil(usageWritten, 5000));
+
+    auto prep = db.prepare(
+        "SELECT status_code, input_tokens, output_tokens, cache_read_tokens, "
+        "cache_write_tokens, first_event_ms FROM claude_call_logs");
+    DOCTEST_REQUIRE(prep.isOk());
+    auto rows = prep.value().fetchAll();
+    DOCTEST_REQUIRE(rows.isOk());
+    DOCTEST_REQUIRE_EQ(rows.value().size(), 1u);
+    const auto& row = rows.value()[0];
+    DOCTEST_CHECK_EQ(row.getInt64("status_code").value(), 200);
+    DOCTEST_CHECK_EQ(row.getInt64("input_tokens").value(), 10);
+    DOCTEST_CHECK_EQ(row.getInt64("output_tokens").value(), 40);
+    DOCTEST_CHECK_EQ(row.getInt64("cache_read_tokens").value(), 2);
+    DOCTEST_CHECK_EQ(row.getInt64("cache_write_tokens").value(), 5);
+    DOCTEST_CHECK(row.getInt64("first_event_ms").value() >= 0);
+
+    proxy.stop();
+    upstream.stop();
+    core::proxy_stats::resetForTest();
+    return true;
+})
+
+REGISTER_TEST(streaming_call_log_usage_absent,
+              "streaming: 流里没有 usage → token 列写 NULL（与 0 区分）", {
+    core::proxy_stats::resetForTest();
+    MockSseServer upstream;
+    DOCTEST_REQUIRE(upstream.start());
+
+    // 只有正文事件、没有 usage（上游不给 usage / 非 Anthropic 方言）
+    MockScript script;
+    script.chunks.push_back(sseChunk(0));
+    script.chunks.push_back("data: [DONE]\n\n");
+    upstream.onMessages(script);
+
+    TestEnv env;
+    DOCTEST_REQUIRE(env.service != nullptr);
+    AppDbScope appDb(env.dbResult.value());
+    // 同 streaming_call_log_usage_columns：先迁移建表，再补 profile 行满足外键
+    DOCTEST_REQUIRE(
+        env.dbResult.value().runMigrations(core::migrations::all()).isOk());
+    DOCTEST_REQUIRE(env.dbResult.value().exec(
+        "INSERT INTO claude_profiles (id, name, base_url, api_key_hint, "
+        "api_key_check, keychain_account, model, is_active, created_at, updated_at) "
+        "VALUES (1, 'streaming-no-usage', 'http://127.0.0.1', 'sk-***', 'x', "
+        "'claude:1', 'claude-sonnet-4-5', 1, 0, 0)")
+                        .isOk());
+
+    platform::http::Server proxy("127.0.0.1", 0);
+    module::claude::ProxyRouter router(env.svc(), proxy);
+    const std::string upstreamBase = upstream.baseUrl();
+    router.setProfileProvider([upstreamBase]() {
+        return core::Result<Profile>::ok(makeProfile(upstreamBase));
+    });
+    router.registerRoutes();
+    DOCTEST_REQUIRE(proxy.start());
+
+    httplib::Client cli("127.0.0.1", proxy.actualPort());
+    cli.set_read_timeout(15, 0);
+    auto res = clientPostStream(cli, "/v1/messages",
+                                R"({"model":"claude-sonnet-4-5","stream":true})",
+                                false);
+    DOCTEST_CHECK(res.ok);
+    DOCTEST_CHECK_EQ(res.status, 200);
+
+    // 回填本身仍要发生（首事件毫秒有值）——否则下面的 NULL 断言分不清
+    // 「写成了 NULL」与「还没回填」
+    core::data::SqliteDb& db = env.dbResult.value();
+    auto backfilled = [&db]() {
+        auto prep = db.prepare("SELECT COUNT(*) AS n FROM claude_call_logs "
+                               "WHERE first_event_ms IS NOT NULL");
+        if (prep.isFail()) return false;
+        auto rows = prep.value().fetchAll();
+        if (rows.isFail() || rows.value().empty()) return false;
+        return std::get<int64_t>(rows.value()[0].values[0]) == 1;
+    };
+    DOCTEST_CHECK(waitUntil(backfilled, 5000));
+
+    auto prep = db.prepare(
+        "SELECT input_tokens, output_tokens, cache_read_tokens, "
+        "cache_write_tokens, first_event_ms FROM claude_call_logs");
+    DOCTEST_REQUIRE(prep.isOk());
+    auto rows = prep.value().fetchAll();
+    DOCTEST_REQUIRE(rows.isOk());
+    DOCTEST_REQUIRE_EQ(rows.value().size(), 1u);
+    const auto& row = rows.value()[0];
+    DOCTEST_CHECK(row.isNull("input_tokens"));
+    DOCTEST_CHECK(row.isNull("output_tokens"));
+    DOCTEST_CHECK(row.isNull("cache_read_tokens"));
+    DOCTEST_CHECK(row.isNull("cache_write_tokens"));
+    DOCTEST_CHECK(row.getInt64("first_event_ms").value() >= 0);
+
+    proxy.stop();
+    upstream.stop();
+    core::proxy_stats::resetForTest();
     return true;
 })

@@ -161,8 +161,21 @@ std::string trim(const std::string& s) {
 
 namespace {
 
-// 从一条完整 SSE 事件里解析出累计 output tokens；没有/解析失败返回 -1
-int64_t parseUsageFromEvent(const std::string& event) {
+// 从 usage 对象里取一个数值 token 字段：存在且是数字才写入 dest 并返回 true
+// （累计值口径：字段缺失/非数字时保持 dest 原值，绝不用 0 冒充）
+bool takeTokenField(const platform::json::JsonObject& usage, const char* key,
+                    int64_t& dest) {
+    const auto v = usage.get(key);
+    if (!v.isNumber()) return false;
+    dest = v.asInt();
+    return true;
+}
+
+// 从一条完整 SSE 事件里解析累计 usage：四类 token 写进 out（缺失的不动），
+// 返回本事件的累计 output tokens（没有 / 解析失败返回 -1，与旧实现同口径）。
+//   - message_start：usage 嵌在 message 里（message.usage）
+//   - message_delta：usage 在顶层（usage）
+int64_t parseUsageFromEvent(const std::string& event, StreamUsage& out) {
     // 逐行找 "data:" 行（事件行以 \n 分隔，容忍 \r 结尾）
     size_t lineStart = 0;
     while (lineStart <= event.size()) {
@@ -173,30 +186,44 @@ int64_t parseUsageFromEvent(const std::string& event) {
         if (line.compare(0, 5, "data:") == 0) {
             std::string payload = trim(line.substr(5));
             if (payload == "[DONE]" || payload.empty()) return -1;
-            int64_t v = -1;
             do { // 单次 do：用 break 模拟 goto skip
                 auto r = platform::json::parse(payload);
                 if (r.isFail() || !r.unsafeValue().isObject()) break;
                 platform::json::JsonObject obj = r.unsafeValue().asObject();
                 const auto type = obj.get("type");
                 if (!type.isString()) break;
+
+                platform::json::JsonObject usage;
+                bool haveUsage = false;
                 if (type.asString() == "message_start") {
-                    // usage 嵌套在 message 里
                     const auto msg = obj.get("message");
-                    if (!msg.isObject()) break;
-                    const auto usage = msg.asObject().get("usage");
-                    if (!usage.isObject()) break;
-                    const auto out = usage.asObject().get("output_tokens");
-                    if (out.isNumber()) v = out.asInt();
+                    if (msg.isObject()) {
+                        const auto u = msg.asObject().get("usage");
+                        if (u.isObject()) {
+                            usage = u.asObject();
+                            haveUsage = true;
+                        }
+                    }
                 } else if (type.asString() == "message_delta") {
-                    // usage 在顶层
-                    const auto usage = obj.get("usage");
-                    if (!usage.isObject()) break;
-                    const auto out = usage.asObject().get("output_tokens");
-                    if (out.isNumber()) v = out.asInt();
+                    const auto u = obj.get("usage");
+                    if (u.isObject()) {
+                        usage = u.asObject();
+                        haveUsage = true;
+                    }
                 }
+                if (!haveUsage) break;
+
+                const bool hasOutput =
+                    takeTokenField(usage, "output_tokens", out.outputTokens);
+                takeTokenField(usage, "input_tokens", out.inputTokens);
+                takeTokenField(usage, "cache_read_input_tokens",
+                               out.cacheReadTokens);
+                takeTokenField(usage, "cache_creation_input_tokens",
+                               out.cacheWriteTokens);
+                if (!hasOutput) break;   // 本事件没给 output_tokens
+                return out.outputTokens; // 本事件带 output_tokens（累计口径）
             } while (false);
-            return v; // 一条事件只看第一个 data: 行
+            return -1; // 一条事件只看第一个 data: 行；没给 usage/output 就是 -1
         }
         if (lineEnd == std::string::npos) break;
         lineStart = lineEnd + 1;
@@ -226,7 +253,8 @@ std::vector<int64_t> SseUsageParser::feed(const std::string& chunk) {
             sep = pCr;
             sepLen = 4;
         }
-        const int64_t usage = parseUsageFromEvent(buf_.substr(start, sep - start));
+        const int64_t usage =
+            parseUsageFromEvent(buf_.substr(start, sep - start), usage_);
         if (usage >= 0) out.push_back(usage);
         start = sep + sepLen;
     }
@@ -319,7 +347,8 @@ sendStreamingClaude(const platform::http::Request& req,
 
 void forwardStream(platform::http::ResponseWriter& out,
                    std::shared_ptr<platform::http::StreamingResponse> upstream,
-                   const std::string& contentType) {
+                   const std::string& contentType,
+                   StreamUsageSink onUsage) {
     if (!upstream) {
         out.setStatus(502);
         out.setHeader("Content-Type", "application/json");
@@ -331,12 +360,22 @@ void forwardStream(platform::http::ResponseWriter& out,
     // 统计接线（设计 §3）：流生命周期内共享一个重组器 + 流 id，
     // endStream 幂等，provider 三条 return false 路径 + releaser 都调
     const uint64_t statsId = core::proxy_stats::beginStream();
-    auto sse = std::make_shared<SseUsageParser>();
+
+    // 用量状态（migration v5）：parser 与「首个 chunk 时刻」都随流生命周期。
+    // provider 与 releaser 由 cpp-httplib 在同一 worker 线程顺序调用（releaser
+    // 必在 provider 收尾之后），故这两个字段不需要加锁。
+    struct UsageState {
+        SseUsageParser parser;      // 只由 provider 写
+        int64_t firstEventMs = -1;  // provider 写，releaser 读
+    };
+    auto usageState = std::make_shared<UsageState>();
+    const auto streamStart = std::chrono::steady_clock::now();
 
     // provider 由 cpp-httplib 反复调用，每轮拉一个 chunk 写给客户端
     auto provider =
-        [upstream, statsId, sse](platform::http::ResponseWriter::ChunkWriter writeChunk,
-                   platform::http::ResponseWriter::IsWritableFn isWritable) -> bool {
+        [upstream, statsId, usageState, streamStart](
+            platform::http::ResponseWriter::ChunkWriter writeChunk,
+            platform::http::ResponseWriter::IsWritableFn isWritable) -> bool {
         // 客户端已断开 → 立即停止上游（spec §10.4 取消语义）
         if (isWritable && !isWritable()) {
             LOG_INFO("客户端断开，取消上游流式请求");
@@ -372,8 +411,16 @@ void forwardStream(platform::http::ResponseWriter& out,
         if (chunk.empty()) {
             return true;  // 空 chunk：继续
         }
+        // 首事件毫秒：流开始 → 第一个非空 chunk（上游边产边发，一个 chunk
+        // 至少含一条事件的开头；只在第一次记录）
+        if (usageState->firstEventMs < 0) {
+            usageState->firstEventMs =
+                std::chrono::duration_cast<std::chrono::milliseconds>(
+                    std::chrono::steady_clock::now() - streamStart)
+                    .count();
+        }
         // 顺路看一眼 SSE 事件（不影响转发，解析失败自动跳过）
-        for (const int64_t cum : sse->feed(chunk)) {
+        for (const int64_t cum : usageState->parser.feed(chunk)) {
             core::proxy_stats::updateStream(statsId, cum);
         }
         if (!writeChunk(chunk.data(), chunk.size())) {
@@ -385,10 +432,16 @@ void forwardStream(platform::http::ResponseWriter& out,
         return true;
     };
 
-    // releaser：响应彻底结束时触发（含客户端断开），确保上游被取消 + 线程回收
-    auto releaser = [upstream, statsId](bool /*success*/) {
+    // releaser：响应彻底结束时触发（含客户端断开），确保上游被取消 + 线程回收；
+    // 也是用量回执的唯一出口（此刻累计值已定格，且只回调一次）
+    auto releaser = [upstream, statsId, usageState, onUsage](bool /*success*/) {
         upstream->cancel();
         core::proxy_stats::endStream(statsId);
+        if (onUsage) {
+            StreamUsage u = usageState->parser.usage();
+            u.firstEventMs = usageState->firstEventMs;
+            onUsage(u);
+        }
     };
 
     out.setChunkProvider(contentType, provider, releaser);

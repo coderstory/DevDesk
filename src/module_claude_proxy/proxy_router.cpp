@@ -4,6 +4,7 @@
 //   - 其余 → 缓冲转发（P9）
 #include "proxy_router.h"
 
+#include "core/database.h"
 #include "core/logging.h"
 #include "platform/http_client.h"
 #include "streaming_proxy.h"
@@ -13,6 +14,7 @@
 #include <chrono>
 #include <ctime>
 #include <memory>
+#include <mutex>
 #include <string>
 
 namespace module::claude {
@@ -92,6 +94,47 @@ void writeErrorJson(platform::http::ResponseWriter& out, int status,
     out.write(std::string("{\"error\":\"") + error +
               "\",\"message\":\"" + jsonEscape(message) + "\"}");
     out.end();
+}
+
+// 取本连接最后一次 INSERT 的 rowid（调用方须持 db.mutex()，见调用点注释）。
+// 失败返回 0 —— 0 不是合法 rowid，调用方据此跳过用量回填（降级，不报错）。
+int64_t lastInsertRowId(core::data::SqliteDb& db) {
+    auto prep = db.prepare("SELECT last_insert_rowid() AS id");
+    if (prep.isFail()) return 0;
+    auto rows = prep.value().fetchAll();
+    if (rows.isFail() || rows.value().empty()) return 0;
+    auto id = rows.value()[0].getInt64("id");
+    return id.isOk() ? id.value() : 0;
+}
+
+// 流末回填 claude_call_logs 的用量列（migration v5）：
+// 四个 token 列 + 首事件毫秒，-1（没拿到）一律写 NULL——
+// 与真实的 0 区分（"没采集到" ≠ "0 个 token"）
+void writeCallLogUsage(core::data::SqliteDb& db, int64_t callLogId,
+                       const StreamUsage& u) {
+    auto prep = db.prepare(
+        "UPDATE claude_call_logs SET input_tokens = ?, output_tokens = ?, "
+        "cache_read_tokens = ?, cache_write_tokens = ?, first_event_ms = ? "
+        "WHERE id = ?");
+    if (prep.isFail()) return;
+    auto& stmt = prep.value();
+    const auto bindMaybeNull = [&stmt](int idx, int64_t v) {
+        if (v < 0) {
+            stmt.bind(idx, nullptr);
+        } else {
+            stmt.bind(idx, v);
+        }
+    };
+    bindMaybeNull(1, u.inputTokens);
+    bindMaybeNull(2, u.outputTokens);
+    bindMaybeNull(3, u.cacheReadTokens);
+    bindMaybeNull(4, u.cacheWriteTokens);
+    bindMaybeNull(5, u.firstEventMs);
+    stmt.bind(6, callLogId);
+    auto stepR = stmt.step();
+    if (stepR.isFail()) {
+        LOG_WARN("流式代理：回填用量列失败: " + stepR.errorMessage());
+    }
 }
 
 } // namespace
@@ -403,8 +446,6 @@ void ProxyRouter::handleStreamingRequest(
     out.setHeader("Connection", "keep-alive");
     out.setHeader("X-Accel-Buffering", "no");   // 反向代理场景禁用缓冲
 
-    forwardStream(out, upstreamStream, contentType);
-
     const int64_t latencyMs = std::chrono::duration_cast<std::chrono::milliseconds>(
         std::chrono::steady_clock::now() - startTime).count();
 
@@ -416,10 +457,34 @@ void ProxyRouter::handleStreamingRequest(
     entry.latencyMs = latencyMs;
     entry.requestBytes = static_cast<int64_t>(body.size());
     entry.startedAt = startedAt;
-    auto logR = service_.logCall(entry);
-    if (logR.isFail()) {
-        LOG_WARN("流式代理：写 claude_call_logs 失败: " + logR.errorMessage());
+
+    // 用量回填（migration v5）：token 只有流末才知道，故先插行（status/latency
+    // 此刻已知，与旧时序一致），把 rowid 交给流末的回调。
+    // 持 db 锁跨「插行 + 取 rowid」：并发请求的 rowid 不会被串认到本次上
+    // （core/database.cpp 的 pruneCallLogs 同款用法；锁可重入，logCall 内部
+    // 自己也会加同一把）。未注册 app 连接时（单测直连内存库）跳过取号 →
+    // 行照写，用量列留 NULL。
+    int64_t callLogId = 0;
+    core::data::SqliteDb* appDb = core::appDatabase();
+    {
+        std::unique_lock<std::recursive_mutex> lock;
+        if (appDb) lock = std::unique_lock<std::recursive_mutex>(appDb->mutex());
+        auto logR = service_.logCall(entry);
+        if (logR.isFail()) {
+            LOG_WARN("流式代理：写 claude_call_logs 失败: " + logR.errorMessage());
+        } else if (appDb) {
+            callLogId = lastInsertRowId(*appDb);
+        }
     }
+
+    // 流末回执（releaser，恰好一次）：把本次流的 token 四类 + 首事件毫秒写进
+    // 刚插的那一行。token 只有流末才知道，故这里是 UPDATE 而不是插行时写。
+    forwardStream(out, upstreamStream, contentType,
+                  [appDb, callLogId](const StreamUsage& u) {
+                      if (!appDb || callLogId == 0) return;  // 降级：不写用量
+                      writeCallLogUsage(*appDb, callLogId, u);
+                  });
+
     // 气泡③：流式转发完成（4xx/5xx 上游状态码原样记录，pet 侧分类文案）
     service_.recordProxyEvent(upstreamStatus);
 

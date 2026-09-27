@@ -27,7 +27,9 @@
 
 #include <atomic>
 #include <condition_variable>
+#include <cstdint>
 #include <deque>
+#include <functional>
 #include <memory>
 #include <mutex>
 #include <string>
@@ -74,6 +76,20 @@ inline const char* kDoneMarker = "data: [DONE]\n\n";
 inline const char* kContentType = "text/event-stream";
 } // namespace sse
 
+// 一次流式请求的用量快照（流末经 forwardStream 的 onUsage 交给调用方落库）
+//
+// -1 = 该项没拿到（上游没给该字段 / 一个 chunk 都没来）→ 落库时写 NULL，
+// 与真实的 0 区分开。四个 token 字段是累计值口径（message_delta 里带的就是
+// 累计）。本结构由 SseUsageParser 填四个 token 字段；firstEventMs 由
+// forwardStream 填（parser 不参与）。
+struct StreamUsage {
+    int64_t inputTokens = -1;
+    int64_t outputTokens = -1;
+    int64_t cacheReadTokens = -1;
+    int64_t cacheWriteTokens = -1;
+    int64_t firstEventMs = -1;   // 流开始 → 首个上游 SSE chunk 的毫秒数
+};
+
 // SSE 事件重组器 + usage 解析（首页 Token 速率卡片，设计 §3）
 //
 // 网络 chunk 可能把一条 SSE 事件从中间切断（TCP 分段边界 ≠ 事件边界），
@@ -89,8 +105,12 @@ public:
     // 解析出的全部累计 output token 值（时间序）
     std::vector<int64_t> feed(const std::string& chunk);
 
+    // 截至当前解析到的四类累计 token（-1 = 该字段从未出现）；流末取用
+    const StreamUsage& usage() const { return usage_; }
+
 private:
     std::string buf_;
+    StreamUsage usage_;
 };
 
 // 检测请求 body 是否要求流式响应（JSON 中 "stream": true）
@@ -137,8 +157,16 @@ core::Result<std::unique_ptr<platform::http::StreamingResponse>>
 //
 // upstream 用 shared_ptr 共享给 provider 与 releaser，保证在响应彻底
 // 结束前不被销毁。
+//
+// onUsage（可选）：流收尾时回调恰好一次，带本次流的用量（token 四类 + 首事件
+// 毫秒）。回调点在 releaser（响应彻底结束时触发，含客户端断开），此刻累计值
+// 已定格；回调在 cpp-httplib worker 线程执行，本模块不碰数据库，落库由调用方
+// 在回调里自己做（Result 口径，不要抛异常）。
+using StreamUsageSink = std::function<void(const StreamUsage&)>;
+
 void forwardStream(platform::http::ResponseWriter& out,
                    std::shared_ptr<platform::http::StreamingResponse> upstream,
-                   const std::string& contentType);
+                   const std::string& contentType,
+                   StreamUsageSink onUsage = nullptr);
 
 } // namespace module::claude
