@@ -37,6 +37,7 @@
 #include "core/ui_geometry.h"
 #include "core/component_theme.h"
 #include "core/time.h"
+#include <ui_kit/dialog_form.h>
 #include <ui_kit/toast.h>
 #include "markdown_service.h"
 #include "md_block_model.h"
@@ -2163,34 +2164,24 @@ private:
                            const eui::Screen& screen,
                            const core::theme::Tokens& t,
                            const components::theme::ThemeColorTokens& componentTheme) {
-        const float w = 460.0f;
+        const float w = ui_kit::dialogWidthPx(ui_kit::DialogWidth::Standard);
         const float h = 220.0f;   // 错误行走输入框(y84+44=128)与按钮(y160)间 32px 空档，不撑高
 
-        components::dialog(ui, "md.dialog.new")
-            .open(newNoteOpen_)
-            .screen(screen.width, screen.height)
-            .size(w, h)
-            .theme(componentTheme)
-            .onOpenChange([this](bool v) { newNoteOpen_ = v; })
-            .content([&] {
-                ui.text("md.dialog.new.title")
-                    .position(28.0f, 24.0f)
-                    .size(w - 56.0f, 28.0f)
-                    .text("新建笔记")
-                    .fontSize(t.sizes.fontSizeLarge)
-                    .lineHeight(28.0f)
-                    .fontWeight(700)
-                    .color(t.colors.textPrimary)
-                    .build();
+        ui_kit::DialogFrame frame;
+        frame.id = "md.dialog.new";
+        frame.width = ui_kit::DialogWidth::Standard;
+        frame.height = h;
+        frame.open = newNoteOpen_;
+        frame.onOpenChange = [this](bool v) { newNoteOpen_ = v; };
 
-                ui.text("md.dialog.new.hint")
-                    .position(28.0f, 56.0f)
-                    .size(w - 56.0f, 18.0f)
-                    .text("支持子目录，例如 工作/周会.md")
-                    .fontSize(t.sizes.fontSizeSmall)
-                    .lineHeight(18.0f)
-                    .color(t.colors.textTertiary)
-                    .build();
+        ui_kit::drawDialogFrame(ui, screen, frame, componentTheme, [&] {
+                ui_kit::drawDialogTitle(ui, "md.dialog.new.title", w, "新建笔记",
+                                        t.sizes.fontSizeLarge, t.colors.textPrimary);
+
+                ui_kit::drawDialogText(ui, "md.dialog.new.hint", w,
+                                       "支持子目录，例如 工作/周会.md",
+                                       t.sizes.fontSizeSmall, t.colors.textTertiary,
+                                       {.y = 56.0f, .height = 18.0f, .lineHeight = 18.0f});
 
                 components::input(ui, "md.dialog.new.input")
                     .position(28.0f, 84.0f)
@@ -2210,41 +2201,24 @@ private:
 
                 // 审计 [30]：内嵌红字错误行（claude formError_ 模式）——弹窗里
                 // 的校验/创建失败就地可见，不再隔 toast 指到弹窗外
-                if (!newNoteError_.empty()) {
-                    ui.text("md.dialog.new.error")
-                        .position(28.0f, 134.0f)
-                        .size(w - 56.0f, 18.0f)
-                        .text(newNoteError_)
-                        .fontSize(12.0f)
-                        .lineHeight(18.0f)
-                        .color(t.colors.error)
-                        .build();
-                }
+                ui_kit::drawDialogText(ui, "md.dialog.new.error", w, newNoteError_, 12.0f,
+                                       t.colors.error,
+                                       {.y = 134.0f, .height = 18.0f, .lineHeight = 18.0f,
+                                        .skipIfEmpty = true});
 
-                components::button(ui, "md.dialog.new.cancel")
-                    .position(28.0f, h - 60.0f)
-                    .size((w - 68.0f) * 0.5f, 40.0f)
-                    .text("取消")
-                    .fontSize(t.sizes.fontSizeBody)
-                    .theme(componentTheme, false)
-                    .textColor(t.colors.textPrimary)
-                    .radius(t.sizes.radius)
-                    .border(1.0f, t.colors.borderDefault)
-                    .onClick([this] { newNoteOpen_ = false; })
-                    .build();
-
-                components::button(ui, "md.dialog.new.confirm")
-                    .position(28.0f + (w - 68.0f) * 0.5f + 12.0f, h - 60.0f)
-                    .size((w - 68.0f) * 0.5f, 40.0f)
-                    .text("创建")
-                    .fontSize(t.sizes.fontSizeBody)
-                    .theme(componentTheme, true)
-                    .textColor(t.colors.onPrimary)
-                    .radius(t.sizes.radius)
-                    .onClick([this, &ui] { commitNewNote(ui); })
-                    .build();
-            })
-            .build();
+                ui_kit::DialogButtonSpec cancel;
+                cancel.label = "取消";
+                cancel.fontSize = t.sizes.fontSizeBody;
+                cancel.style = ui_kit::DialogButtonStyle::SecondaryThemed;
+                cancel.onClick = [this] { newNoteOpen_ = false; };
+                ui_kit::DialogButtonSpec confirm;
+                confirm.label = "创建";
+                confirm.fontSize = t.sizes.fontSizeBody;
+                confirm.style = ui_kit::DialogButtonStyle::PrimaryThemed;
+                confirm.onClick = [this, &ui] { commitNewNote(ui); };
+                ui_kit::drawDialogButtons(ui, "md.dialog.new", w, h, cancel, confirm, t,
+                                          componentTheme);
+        });
     }
 
     // ---- 新建文件夹弹窗（W9：左栏「+ 文件夹」入口；W10：加父目录下拉）----
@@ -2252,7 +2226,7 @@ private:
                              const eui::Screen& screen,
                              const core::theme::Tokens& t,
                              const components::theme::ThemeColorTokens& componentTheme) {
-        const float w = 460.0f;
+        const float w = ui_kit::dialogWidthPx(ui_kit::DialogWidth::Standard);
         const float h = 320.0f;
 
         // 父目录候选：根目录占位 + 顶层夹（两级上限下，父目录只能是根或顶层夹，
@@ -2263,43 +2237,28 @@ private:
         const int parentCount = static_cast<int>(parents.size());
         const int parentIdx = std::clamp(newFolderParentIdx_, 0, parentCount - 1);
 
-        components::dialog(ui, "md.dialog.newfolder")
-            .open(newFolderOpen_)
-            .screen(screen.width, screen.height)
-            .size(w, h)
-            .theme(componentTheme)
-            .onOpenChange([this](bool v) {
-                newFolderOpen_ = v;
-                if (!v) newFolderParentOpen_ = false;  // 关弹窗顺手收下拉
-            })
-            .content([&] {
-                ui.text("md.dialog.newfolder.title")
-                    .position(28.0f, 24.0f)
-                    .size(w - 56.0f, 28.0f)
-                    .text("新建文件夹")
-                    .fontSize(t.sizes.fontSizeLarge)
-                    .lineHeight(28.0f)
-                    .fontWeight(700)
-                    .color(t.colors.textPrimary)
-                    .build();
+        ui_kit::DialogFrame frame;
+        frame.id = "md.dialog.newfolder";
+        frame.width = ui_kit::DialogWidth::Standard;
+        frame.height = h;
+        frame.open = newFolderOpen_;
+        frame.onOpenChange = [this](bool v) {
+            newFolderOpen_ = v;
+            if (!v) newFolderParentOpen_ = false;  // 关弹窗顺手收下拉
+        };
 
-                ui.text("md.dialog.newfolder.hint")
-                    .position(28.0f, 56.0f)
-                    .size(w - 56.0f, 18.0f)
-                    .text("最多两级（顶层 / 子目录）；空文件夹也会显示在树里")
-                    .fontSize(t.sizes.fontSizeSmall)
-                    .lineHeight(18.0f)
-                    .color(t.colors.textTertiary)
-                    .build();
+        ui_kit::drawDialogFrame(ui, screen, frame, componentTheme, [&] {
+                ui_kit::drawDialogTitle(ui, "md.dialog.newfolder.title", w, "新建文件夹",
+                                        t.sizes.fontSizeLarge, t.colors.textPrimary);
 
-                ui.text("md.dialog.newfolder.parent.label")
-                    .position(28.0f, 84.0f)
-                    .size(w - 56.0f, 16.0f)
-                    .text("父目录")
-                    .fontSize(12.0f)
-                    .lineHeight(16.0f)
-                    .color(t.colors.textTertiary)
-                    .build();
+                ui_kit::drawDialogText(ui, "md.dialog.newfolder.hint", w,
+                                       "最多两级（顶层 / 子目录）；空文件夹也会显示在树里",
+                                       t.sizes.fontSizeSmall, t.colors.textTertiary,
+                                       {.y = 56.0f, .height = 18.0f, .lineHeight = 18.0f});
+
+                ui_kit::drawDialogText(ui, "md.dialog.newfolder.parent.label", w, "父目录",
+                                       12.0f, t.colors.textTertiary,
+                                       {.y = 84.0f, .height = 16.0f, .lineHeight = 16.0f});
 
                 // 下拉弹层要盖住下方输入框/按钮：dropdown 自带 zIndex=20，经
                 // dsl 的 subtreeMaxZIndex 把整个子树抬到后续兄弟之上（与设置页
@@ -2322,14 +2281,9 @@ private:
                     })
                     .build();
 
-                ui.text("md.dialog.newfolder.name.label")
-                    .position(28.0f, 156.0f)
-                    .size(w - 56.0f, 16.0f)
-                    .text("文件夹名")
-                    .fontSize(12.0f)
-                    .lineHeight(16.0f)
-                    .color(t.colors.textTertiary)
-                    .build();
+                ui_kit::drawDialogText(ui, "md.dialog.newfolder.name.label", w, "文件夹名",
+                                       12.0f, t.colors.textTertiary,
+                                       {.y = 156.0f, .height = 16.0f, .lineHeight = 16.0f});
 
                 components::input(ui, "md.dialog.newfolder.input")
                     .position(28.0f, 174.0f)
@@ -2348,41 +2302,24 @@ private:
                     .build();
 
                 // 审计 [30]：内嵌红字错误行，同新建笔记弹窗
-                if (!newFolderError_.empty()) {
-                    ui.text("md.dialog.newfolder.error")
-                        .position(28.0f, 228.0f)
-                        .size(w - 56.0f, 18.0f)
-                        .text(newFolderError_)
-                        .fontSize(12.0f)
-                        .lineHeight(18.0f)
-                        .color(t.colors.error)
-                        .build();
-                }
+                ui_kit::drawDialogText(ui, "md.dialog.newfolder.error", w, newFolderError_,
+                                       12.0f, t.colors.error,
+                                       {.y = 228.0f, .height = 18.0f, .lineHeight = 18.0f,
+                                        .skipIfEmpty = true});
 
-                components::button(ui, "md.dialog.newfolder.cancel")
-                    .position(28.0f, h - 60.0f)
-                    .size((w - 68.0f) * 0.5f, 40.0f)
-                    .text("取消")
-                    .fontSize(t.sizes.fontSizeBody)
-                    .theme(componentTheme, false)
-                    .textColor(t.colors.textPrimary)
-                    .radius(t.sizes.radius)
-                    .border(1.0f, t.colors.borderDefault)
-                    .onClick([this] { newFolderOpen_ = false; })
-                    .build();
-
-                components::button(ui, "md.dialog.newfolder.confirm")
-                    .position(28.0f + (w - 68.0f) * 0.5f + 12.0f, h - 60.0f)
-                    .size((w - 68.0f) * 0.5f, 40.0f)
-                    .text("创建")
-                    .fontSize(t.sizes.fontSizeBody)
-                    .theme(componentTheme, true)
-                    .textColor(t.colors.onPrimary)
-                    .radius(t.sizes.radius)
-                    .onClick([this] { commitNewFolder(); })
-                    .build();
-            })
-            .build();
+                ui_kit::DialogButtonSpec cancel;
+                cancel.label = "取消";
+                cancel.fontSize = t.sizes.fontSizeBody;
+                cancel.style = ui_kit::DialogButtonStyle::SecondaryThemed;
+                cancel.onClick = [this] { newFolderOpen_ = false; };
+                ui_kit::DialogButtonSpec confirm;
+                confirm.label = "创建";
+                confirm.fontSize = t.sizes.fontSizeBody;
+                confirm.style = ui_kit::DialogButtonStyle::PrimaryThemed;
+                confirm.onClick = [this] { commitNewFolder(); };
+                ui_kit::drawDialogButtons(ui, "md.dialog.newfolder", w, h, cancel, confirm, t,
+                                          componentTheme);
+        });
     }
 
     // ---- 外部修改冲突提示（W8 → 本批改版）：dialog → toast action ----
@@ -3204,57 +3141,38 @@ private:
                           const eui::Screen& screen,
                           const core::theme::Tokens& t,
                           const components::theme::ThemeColorTokens& componentTheme) {
-        const float w = 460.0f;
+        const float w = ui_kit::dialogWidthPx(ui_kit::DialogWidth::Standard);
         const float h = 200.0f;
-        components::dialog(ui, "md.dialog.del")
-            .open(deleteConfirmOpen_)
-            .screen(screen.width, screen.height)
-            .size(w, h)
-            .theme(componentTheme)
-            .onOpenChange([this](bool v) { deleteConfirmOpen_ = v; })
-            .content([&] {
-                ui.text("md.dialog.del.title")
-                    .position(28.0f, 24.0f)
-                    .size(w - 56.0f, 28.0f)
-                    .text("删除笔记")
-                    .fontSize(t.sizes.fontSizeLarge + 2.0f)
-                    .lineHeight(28.0f)
-                    .fontWeight(700)
-                    .color(t.colors.textPrimary)
-                    .build();
-                ui.text("md.dialog.del.body")
-                    .position(28.0f, 60.0f)
-                    .size(w - 56.0f, 40.0f)
-                    .text("将删除笔记「" + deleteTargetPath_ + "」及其磁盘文件，不可恢复。")
-                    .fontSize(t.sizes.fontSizeBody - 1.0f)
-                    .lineHeight(20.0f)
-                    .wrap()
-                    .color(t.colors.textSecondary)
-                    .build();
-                components::button(ui, "md.dialog.del.cancel")
-                    .position(28.0f, h - 60.0f)
-                    .size((w - 68.0f) * 0.5f, 40.0f)
-                    .text("取消")
-                    .fontSize(t.sizes.fontSizeBody - 1.0f)
-                    .theme(componentTheme, false)
-                    .textColor(t.colors.textPrimary)
-                    .radius(t.sizes.radius)
-                    .border(1.0f, t.colors.borderDefault)
-                    .onClick([this] { deleteConfirmOpen_ = false; })
-                    .build();
-                components::button(ui, "md.dialog.del.confirm")
-                    .position(28.0f + (w - 68.0f) * 0.5f + 12.0f, h - 60.0f)
-                    .size((w - 68.0f) * 0.5f, 40.0f)
-                    .text("删除")
-                    .fontSize(t.sizes.fontSizeBody - 1.0f)
-                    .theme(componentTheme, false)
-                    .colors(t.colors.error, t.colors.error, t.colors.error)
-                    .textColor(t.colors.onPrimary)
-                    .radius(t.sizes.radius)
-                    .onClick([this] { doDeleteNote(); })
-                    .build();
-            })
-            .build();
+
+        ui_kit::DialogFrame frame;
+        frame.id = "md.dialog.del";
+        frame.width = ui_kit::DialogWidth::Standard;
+        frame.height = h;
+        frame.open = deleteConfirmOpen_;
+        frame.onOpenChange = [this](bool v) { deleteConfirmOpen_ = v; };
+
+        ui_kit::drawDialogFrame(ui, screen, frame, componentTheme, [&] {
+                ui_kit::drawDialogTitle(ui, "md.dialog.del.title", w, "删除笔记",
+                                        t.sizes.fontSizeLarge + 2.0f, t.colors.textPrimary);
+                ui_kit::drawDialogText(
+                    ui, "md.dialog.del.body", w,
+                    "将删除笔记「" + deleteTargetPath_ + "」及其磁盘文件，不可恢复。",
+                    t.sizes.fontSizeBody - 1.0f, t.colors.textSecondary,
+                    {.y = 60.0f, .height = 40.0f, .lineHeight = 20.0f, .wrap = true});
+
+                ui_kit::DialogButtonSpec cancel;
+                cancel.label = "取消";
+                cancel.fontSize = t.sizes.fontSizeBody - 1.0f;
+                cancel.style = ui_kit::DialogButtonStyle::SecondaryThemed;
+                cancel.onClick = [this] { deleteConfirmOpen_ = false; };
+                ui_kit::DialogButtonSpec confirm;
+                confirm.label = "删除";
+                confirm.fontSize = t.sizes.fontSizeBody - 1.0f;
+                confirm.style = ui_kit::DialogButtonStyle::DangerThemed;
+                confirm.onClick = [this] { doDeleteNote(); };
+                ui_kit::drawDialogButtons(ui, "md.dialog.del", w, h, cancel, confirm, t,
+                                          componentTheme);
+        });
     }
 
     // 重命名对话框（预填当前相对路径；改名 = 换名，填含 / 的路径 = 移动文件）
@@ -3262,32 +3180,23 @@ private:
                           const eui::Screen& screen,
                           const core::theme::Tokens& t,
                           const components::theme::ThemeColorTokens& componentTheme) {
-        const float w = 460.0f;
+        const float w = ui_kit::dialogWidthPx(ui_kit::DialogWidth::Standard);
         const float h = 220.0f;
-        components::dialog(ui, "md.dialog.rename")
-            .open(renameOpen_)
-            .screen(screen.width, screen.height)
-            .size(w, h)
-            .theme(componentTheme)
-            .onOpenChange([this](bool v) { renameOpen_ = v; })
-            .content([&] {
-                ui.text("md.dialog.rename.title")
-                    .position(28.0f, 24.0f)
-                    .size(w - 56.0f, 28.0f)
-                    .text("重命名笔记")
-                    .fontSize(t.sizes.fontSizeLarge)
-                    .lineHeight(28.0f)
-                    .fontWeight(700)
-                    .color(t.colors.textPrimary)
-                    .build();
-                ui.text("md.dialog.rename.hint")
-                    .position(28.0f, 56.0f)
-                    .size(w - 56.0f, 18.0f)
-                    .text("相对笔记目录；填「工作/新名」可同时移动，无 .md 自动补全")
-                    .fontSize(t.sizes.fontSizeSmall)
-                    .lineHeight(18.0f)
-                    .color(t.colors.textTertiary)
-                    .build();
+
+        ui_kit::DialogFrame frame;
+        frame.id = "md.dialog.rename";
+        frame.width = ui_kit::DialogWidth::Standard;
+        frame.height = h;
+        frame.open = renameOpen_;
+        frame.onOpenChange = [this](bool v) { renameOpen_ = v; };
+
+        ui_kit::drawDialogFrame(ui, screen, frame, componentTheme, [&] {
+                ui_kit::drawDialogTitle(ui, "md.dialog.rename.title", w, "重命名笔记",
+                                        t.sizes.fontSizeLarge, t.colors.textPrimary);
+                ui_kit::drawDialogText(ui, "md.dialog.rename.hint", w,
+                                       "相对笔记目录；填「工作/新名」可同时移动，无 .md 自动补全",
+                                       t.sizes.fontSizeSmall, t.colors.textTertiary,
+                                       {.y = 56.0f, .height = 18.0f, .lineHeight = 18.0f});
                 components::input(ui, "md.dialog.rename.input")
                     .position(28.0f, 84.0f)
                     .size(w - 56.0f, 44.0f)
@@ -3306,39 +3215,23 @@ private:
                 // 审计 [19] 收尾：重命名弹窗校验/落盘失败内嵌红字（原走 toast
                 // 隔到弹窗外，与 [30] 的新建笔记/文件夹弹窗不一致）；弹窗保持
                 // 打开让用户改输入
-                if (!renameError_.empty()) {
-                    ui.text("md.dialog.rename.error")
-                        .position(28.0f, 134.0f)
-                        .size(w - 56.0f, 18.0f)
-                        .text(renameError_)
-                        .fontSize(12.0f)
-                        .lineHeight(18.0f)
-                        .color(t.colors.error)
-                        .build();
-                }
-                components::button(ui, "md.dialog.rename.cancel")
-                    .position(28.0f, h - 60.0f)
-                    .size((w - 68.0f) * 0.5f, 40.0f)
-                    .text("取消")
-                    .fontSize(t.sizes.fontSizeBody)
-                    .theme(componentTheme, false)
-                    .textColor(t.colors.textPrimary)
-                    .radius(t.sizes.radius)
-                    .border(1.0f, t.colors.borderDefault)
-                    .onClick([this] { renameOpen_ = false; })
-                    .build();
-                components::button(ui, "md.dialog.rename.confirm")
-                    .position(28.0f + (w - 68.0f) * 0.5f + 12.0f, h - 60.0f)
-                    .size((w - 68.0f) * 0.5f, 40.0f)
-                    .text("重命名")
-                    .fontSize(t.sizes.fontSizeBody)
-                    .theme(componentTheme, true)
-                    .textColor(t.colors.onPrimary)
-                    .radius(t.sizes.radius)
-                    .onClick([this] { commitRenameNote(); })
-                    .build();
-            })
-            .build();
+                ui_kit::drawDialogText(ui, "md.dialog.rename.error", w, renameError_,
+                                       12.0f, t.colors.error,
+                                       {.y = 134.0f, .height = 18.0f, .lineHeight = 18.0f,
+                                        .skipIfEmpty = true});
+                ui_kit::DialogButtonSpec cancel;
+                cancel.label = "取消";
+                cancel.fontSize = t.sizes.fontSizeBody;
+                cancel.style = ui_kit::DialogButtonStyle::SecondaryThemed;
+                cancel.onClick = [this] { renameOpen_ = false; };
+                ui_kit::DialogButtonSpec confirm;
+                confirm.label = "重命名";
+                confirm.fontSize = t.sizes.fontSizeBody;
+                confirm.style = ui_kit::DialogButtonStyle::PrimaryThemed;
+                confirm.onClick = [this] { commitRenameNote(); };
+                ui_kit::drawDialogButtons(ui, "md.dialog.rename", w, h, cancel, confirm, t,
+                                          componentTheme);
+        });
     }
 
     void doDeleteNote() {

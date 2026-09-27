@@ -17,6 +17,7 @@
 #include "core/time.h"
 #include "core/component_theme.h"
 #include "platform/json.h"
+#include <ui_kit/dialog_form.h>
 #include <ui_kit/toast.h>
 
 #include <eui/dsl.h>
@@ -2069,26 +2070,22 @@ private:
     void drawProfileFormDialog(eui::Ui& ui, const eui::Screen& screen,
                                const core::theme::Tokens& t,
                                const components::theme::ThemeColorTokens& themeTokens) {
-        const float w = 760.0f;
+        const float w = ui_kit::dialogWidthPx(ui_kit::DialogWidth::Form);
         const float h = 600.0f;
         const bool isEdit = (formEditId_ != 0);
 
-        components::dialog(ui, "claude.dialog.form")
-            .open(formOpen_)
-            .screen(screen.width, screen.height)
-            .size(w, h)
-            .theme(themeTokens)
-            .onOpenChange([this](bool v) { formOpen_ = v; })
-            .content([&] {
-                ui.text("claude.dialog.form.title")
-                    .position(28.0f, 20.0f)
-                    .size(w - 56.0f, 26.0f)
-                    .text(isEdit ? "编辑 Profile" : "新建 Profile")
-                    .fontSize(20.0f)
-                    .lineHeight(26.0f)
-                    .fontWeight(700)
-                    .color(t.colors.textPrimary)
-                    .build();
+        ui_kit::DialogFrame frame;
+        frame.id = "claude.dialog.form";
+        frame.width = ui_kit::DialogWidth::Form;
+        frame.height = h;
+        frame.open = formOpen_;
+        frame.onOpenChange = [this](bool v) { formOpen_ = v; };
+
+        ui_kit::drawDialogFrame(ui, screen, frame, themeTokens, [&] {
+                ui_kit::drawDialogTitle(
+                    ui, "claude.dialog.form.title", w,
+                    isEdit ? "编辑 Profile" : "新建 Profile", 20.0f, t.colors.textPrimary,
+                    {.y = 20.0f, .height = 26.0f, .lineHeight = 26.0f});
 
                 // tabs（§6.1：基础 / 模型映射 / 高级 env）。
                 // TabsBuilder 无 position，套 stack 定位（字号下拉同款包装）
@@ -2116,105 +2113,70 @@ private:
                 }
 
                 // 错误信息（基础页之外也要能看到校验错误）
-                if (!formError_.empty() && formTab_ != 0) {
-                    ui.text("claude.dialog.form.error")
-                        .position(28.0f, h - 104.0f)
-                        .size(w - 56.0f, 18.0f)
-                        .text(formError_)
-                        .fontSize(12.0f)
-                        .lineHeight(18.0f)
-                        .color(t.colors.error)
-                        .build();
+                if (formTab_ != 0) {
+                    ui_kit::drawDialogText(ui, "claude.dialog.form.error", w, formError_,
+                                           12.0f, t.colors.error,
+                                           {.y = h - 104.0f, .height = 18.0f,
+                                            .lineHeight = 18.0f, .skipIfEmpty = true});
                 }
 
                 // 底部按钮
-                components::button(ui, "claude.dialog.form.cancel")
-                    .position(28.0f, h - 60.0f)
-                    .size((w - 68.0f) * 0.5f, 40.0f)
-                    .text("取消")
-                    .fontSize(14.0f)
-                    .colors(t.colors.surfaceElevated, t.colors.hover, t.colors.active)
-                    .textColor(t.colors.textPrimary)
-                    .radius(t.sizes.radius)
-                    .border(1.0f, t.colors.borderDefault)
-                    .onClick([this] { formOpen_ = false; })
-                    .build();
-                components::button(ui, "claude.dialog.form.confirm")
-                    .position(28.0f + (w - 68.0f) * 0.5f + 12.0f, h - 60.0f)
-                    .size((w - 68.0f) * 0.5f, 40.0f)
-                    .text(isEdit ? "保存" : "创建")
-                    .fontSize(14.0f)
-                    .colors(t.colors.primary, t.colors.primaryHover,
-                            t.colors.primaryPressed)
-                    .textColor(t.colors.onPrimary)
-                    .radius(t.sizes.radius)
-                    .onClick([this] { submitForm(); })
-                    .build();
-            })
-            .build();
+                ui_kit::DialogButtonSpec cancel;
+                cancel.label = "取消";
+                cancel.fontSize = 14.0f;
+                cancel.style = ui_kit::DialogButtonStyle::Secondary;
+                cancel.onClick = [this] { formOpen_ = false; };
+                ui_kit::DialogButtonSpec confirm;
+                confirm.label = isEdit ? "保存" : "创建";
+                confirm.fontSize = 14.0f;
+                confirm.style = ui_kit::DialogButtonStyle::Primary;
+                confirm.onClick = [this] { submitForm(); };
+                ui_kit::drawDialogButtons(ui, "claude.dialog.form", w, h, cancel, confirm, t,
+                                          themeTokens);
+        });
     }
 
     // ============ 删除确认弹窗 ============
     void drawDeleteConfirmDialog(eui::Ui& ui, const eui::Screen& screen,
                                  const core::theme::Tokens& t,
                                  const components::theme::ThemeColorTokens& themeTokens) {
-        const float w = 420.0f;
+        const float w = ui_kit::dialogWidthPx(ui_kit::DialogWidth::Compact);
         const float h = 190.0f;
 
-        components::dialog(ui, "claude.dialog.delete")
-            .open(deleteConfirmOpen_)
-            .screen(screen.width, screen.height)
-            .size(w, h)
-            .theme(themeTokens)
-            .onOpenChange([this](bool v) { deleteConfirmOpen_ = v; })
-            .content([&] {
-                ui.text("claude.dialog.delete.title")
-                    .position(28.0f, 24.0f)
-                    .size(w - 56.0f, 28.0f)
-                    .text("确认删除？")
-                    .fontSize(20.0f)
-                    .lineHeight(28.0f)
-                    .fontWeight(700)
-                    .color(t.colors.textPrimary)
-                    .build();
-                ui.text("claude.dialog.delete.msg")
-                    .position(28.0f, 58.0f)
-                    .size(w - 56.0f, 40.0f)
-                    .text("将删除 Profile「" + deleteTargetName_ +
-                          "」及其 Keychain 中的 API Key，不可恢复。")
-                    .fontSize(t.sizes.fontSizeSmall)
-                    .lineHeight(20.0f)
-                    .color(t.colors.textSecondary)
-                    .build();
+        ui_kit::DialogFrame frame;
+        frame.id = "claude.dialog.delete";
+        frame.width = ui_kit::DialogWidth::Compact;
+        frame.height = h;
+        frame.open = deleteConfirmOpen_;
+        frame.onOpenChange = [this](bool v) { deleteConfirmOpen_ = v; };
 
-                components::button(ui, "claude.dialog.delete.cancel")
-                    .position(28.0f, h - 60.0f)
-                    .size((w - 68.0f) * 0.5f, 40.0f)
-                    .text("取消")
-                    .fontSize(14.0f)
-                    .colors(t.colors.surfaceElevated, t.colors.hover, t.colors.active)
-                    .textColor(t.colors.textPrimary)
-                    .radius(t.sizes.radius)
-                    .border(1.0f, t.colors.borderDefault)
-                    .onClick([this] { deleteConfirmOpen_ = false; })
-                    .build();
-                components::button(ui, "claude.dialog.delete.confirm")
-                    .position(28.0f + (w - 68.0f) * 0.5f + 12.0f, h - 60.0f)
-                    .size((w - 68.0f) * 0.5f, 40.0f)
-                    .text("确认删除")
-                    .fontSize(14.0f)
-                    .colors(t.colors.surfaceElevated, t.colors.hover, t.colors.active)
-                    .textColor(t.colors.error)
-                    .radius(t.sizes.radius)
-                    .border(1.0f, t.colors.borderDefault)
-                    .onClick([this] {
-                        const int64_t id = deleteTargetId_;
-                        deleteConfirmOpen_ = false;
-                        doDelete(id);
-                    })
-                    .build();
-            })
-            .build();
+        ui_kit::drawDialogFrame(ui, screen, frame, themeTokens, [&] {
+                ui_kit::drawDialogTitle(ui, "claude.dialog.delete.title", w, "确认删除？",
+                                        20.0f, t.colors.textPrimary);
+                ui_kit::drawDialogText(
+                    ui, "claude.dialog.delete.msg", w,
+                    "将删除 Profile「" + deleteTargetName_ +
+                        "」及其 Keychain 中的 API Key，不可恢复。",
+                    t.sizes.fontSizeSmall, t.colors.textSecondary,
+                    {.y = 58.0f, .height = 40.0f, .lineHeight = 20.0f});
+
+                ui_kit::DialogButtonSpec cancel;
+                cancel.label = "取消";
+                cancel.fontSize = 14.0f;
+                cancel.style = ui_kit::DialogButtonStyle::Secondary;
+                cancel.onClick = [this] { deleteConfirmOpen_ = false; };
+                ui_kit::DialogButtonSpec confirm;
+                confirm.label = "确认删除";
+                confirm.fontSize = 14.0f;
+                confirm.style = ui_kit::DialogButtonStyle::DangerOutline;
+                confirm.onClick = [this] {
+                    const int64_t id = deleteTargetId_;
+                    deleteConfirmOpen_ = false;
+                    doDelete(id);
+                };
+                ui_kit::drawDialogButtons(ui, "claude.dialog.delete", w, h, cancel, confirm,
+                                          t, themeTokens);
+        });
     }
 
     // ============ 完整调用记录弹窗（「查看全部」入口） ============
@@ -2350,26 +2312,20 @@ private:
         // 两件事——搬已就绪结果 + 发一次读意图（见 refreshCallsCache）
         if (callsDialogOpen_) refreshCallsCache();
 
-        const float w = 720.0f;
+        const float w = ui_kit::dialogWidthPx(ui_kit::DialogWidth::ExtraWide);
         const float h = 560.0f;
         const int rowH = 22;
 
-        components::dialog(ui, "claude.dialog.calls")
-            .open(callsDialogOpen_)
-            .screen(screen.width, screen.height)
-            .size(w, h)
-            .theme(themeTokens)
-            .onOpenChange([this](bool v) { callsDialogOpen_ = v; })
-            .content([&] {
-                ui.text("claude.dialog.calls.title")
-                    .position(28.0f, 20.0f)
-                    .size(w - 56.0f, 28.0f)
-                    .text("调用记录")
-                    .fontSize(20.0f)
-                    .lineHeight(28.0f)
-                    .fontWeight(700)
-                    .color(t.colors.textPrimary)
-                    .build();
+        ui_kit::DialogFrame frame;
+        frame.id = "claude.dialog.calls";
+        frame.width = ui_kit::DialogWidth::ExtraWide;
+        frame.height = h;
+        frame.open = callsDialogOpen_;
+        frame.onOpenChange = [this](bool v) { callsDialogOpen_ = v; };
+
+        ui_kit::drawDialogFrame(ui, screen, frame, themeTokens, [&] {
+                ui_kit::drawDialogTitle(ui, "claude.dialog.calls.title", w, "调用记录",
+                                        20.0f, t.colors.textPrimary, {.y = 20.0f});
 
                 // ---- 工具行：搜索框 + 状态码过滤 + 匹配总数 ----
                 components::input(ui, "claude.dialog.calls.search")
@@ -2573,8 +2529,7 @@ private:
                     .border(1.0f, t.colors.borderDefault)
                     .onClick([this] { callsDialogOpen_ = false; })
                     .build();
-            })
-            .build();
+        });
     }
 
     // ============ Toast 反馈 ============
