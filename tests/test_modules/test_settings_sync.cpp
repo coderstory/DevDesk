@@ -678,6 +678,55 @@ REGISTER_TEST(sync_service_warnings_surface, "claude_service: 接管警告经 la
     return true;
 })
 
+// ---- 10b. 接管失败并入 lastSyncWarnings（条目 3）：失败不阻断起代理 / 切 profile ----
+REGISTER_TEST(sync_service_takeover_failure_reported,
+              "claude_service: 接管失败并入 lastSyncWarnings 且不阻断操作", {
+    using namespace module::claude;
+    TestDb tdb("tofail");
+    TempDir d("tofail");
+    auto paths = makePaths(d);
+
+    ClaudeService svc(tdb.handle(), kTestKeychainService);
+    svc.setSettingsSyncPaths(paths);
+    svc.setSettingsTakeOverEnabled(true);
+    auto a = svc.createProfile("接管失败A", "https://gw.example.com",
+                               "sk-ind-test-0123456789abcdef", "");
+    DOCTEST_REQUIRE(a.isOk());
+    DOCTEST_REQUIRE(svc.setActiveProfile(a.value().id).isOk());
+
+    // 起代理：settings.json 是坏 JSON → 接管失败，但代理照常可用
+    d.write(paths.settingsFile, "{ not valid json !!!");
+    auto started = svc.startProxy("127.0.0.1", 0);
+    DOCTEST_REQUIRE(started.isOk());
+    DOCTEST_CHECK(svc.isProxyRunning());
+    DOCTEST_REQUIRE(!svc.lastSyncWarnings().empty());
+    DOCTEST_CHECK(svc.lastSyncWarnings()[0].find("接管失败") != std::string::npos);
+
+    // 运行中切 profile：settings.json 恢复可读、sidecar 损坏 → 接管仍失败，
+    // 但切换必须成功（DB 已切），失败原因经 lastSyncWarnings 可见
+    d.write(paths.settingsFile, R"({"env": {"MY_KEY": "user"}})");
+    d.write(paths.sidecarFile, "{broken");
+    auto b = svc.createProfile("接管失败B", "https://gw2.example.com",
+                               "sk-ind-test-fedcba9876543210", "");
+    DOCTEST_REQUIRE(b.isOk());
+    DOCTEST_REQUIRE(svc.setActiveProfile(b.value().id).isOk());
+    {
+        auto g = svc.getProfile(b.value().id);
+        DOCTEST_REQUIRE(g.isOk());
+        DOCTEST_CHECK(g.value().isActive);  // 切换成功（不因接管失败回滚）
+        DOCTEST_REQUIRE(!svc.lastSyncWarnings().empty());
+        DOCTEST_CHECK(svc.lastSyncWarnings()[0].find("接管失败") !=
+                      std::string::npos);
+    }
+
+    svc.stopProxy();  // sidecar 损坏 → 还原报错并保留文件，不崩
+    platform::keychain::deleteSecret(
+        kTestKeychainService, "claude:" + std::to_string(a.value().id));
+    platform::keychain::deleteSecret(
+        kTestKeychainService, "claude:" + std::to_string(b.value().id));
+    return true;
+})
+
 // ---- 11. 应用退出序列（W2 终验问题 1）：Router::stopAll → onStop → 还原 ----
 // main.cpp 的 atexit handler 走的正是这条链；这里模拟该退出序列，断言
 // 接管状态下退出后 settings.json 还原、sidecar 被消费、代理已停。

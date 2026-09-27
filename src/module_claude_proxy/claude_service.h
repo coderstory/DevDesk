@@ -279,8 +279,11 @@ private:
     static std::string sha256HexPrefix(const std::string& s);
     static std::string makeApiKeyHint(const std::string& apiKey);
 
-    // 接管/还原的内部入口（settingsFile 为空 = 通道未启用，直接返回）
-    void syncTakeOver();
+    // 接管/还原的内部入口（settingsFile 为空 = 通道未启用，直接返回）。
+    // syncTakeOver 返回失败原因（settings.json / sidecar 读写或解析失败），供
+    // 调用方决定呈现方式；**接管失败不阻断上层操作**（启代理/切 profile 照常），
+    // 失败原因一并并入 lastSyncWarnings_（UI 经 getter 可读）
+    core::Result<void> syncTakeOver();
     void syncRestore();
 
     // 反向同步（设计 §3.1/§3.4/§3.5，M3）：读 settings.json 的 env → 对齐到
