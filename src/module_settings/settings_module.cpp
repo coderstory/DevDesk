@@ -40,6 +40,11 @@
 //      末尾 500 行 tail + 刷新按钮；审计 H2 后读盘在后台线程，compose 只读
 //      快照——首次装载在 onStart，此后切 tab / 点刷新都经 refreshLogTailCache
 //      发意图，结果下一帧收割）
+//   8b. 渲染路径不做文件系统查询（审计 THS-01，与 H2 同款「读一次 → 存成员
+//      → compose 只读」）：接管状态（sidecar stat）/ 笔记目录存在性 /
+//      桌宠皮肤清单（目录遍历）统一收在 refreshExternalState，触发点 =
+//      onStart 首次装载 + 进页面 / 切模块 tab / 打开目录后各一次，compose
+//      只读快照（不再 stat / getcwd / 扫目录）
 //
 // 入口说明：设置入口在 main.cpp 的常驻侧边栏（app.sidebar，spec §2/§6.5.2），
 // 与其他四个模块同列。
@@ -220,6 +225,9 @@ public:
         // 「暂无日志内容」占位（硬约束：不得空帧/闪空）。此后每次重读（切 tab /
         // 点刷新）都走 refreshLogTailCache 的后台线程
         applyLogTail(readLogTailLines());
+        // 审计 THS-01：外部状态（接管 / 笔记目录存在性 / 皮肤清单）同点首次
+        // 装载——compose 只读快照，首帧即有值（不闪空）
+        refreshExternalState();
     }
 
     void onStop() override {
@@ -235,6 +243,9 @@ public:
         if (cfg_.themeMode == kThemeModeAuto) {
             applyThemeRuntime();
         }
+        // 审计 THS-01：进页面 = 外部状态（接管 / 笔记目录 / 皮肤清单）的刷新
+        // 点；变化频率低，不需要每帧重查（原实现每帧 stat）
+        refreshExternalState();
     }
 
     // 产品审计 [22]：Ctrl+S 显式保存。设置页除端口草稿外全部即时落盘
@@ -422,6 +433,10 @@ public:
         }
         svc->stopProxy();
         auto r = svc->startProxy("127.0.0.1", port);
+        // 审计 THS-01：stop→start 会改写/删除 sidecar（= 接管状态变化）——
+        // 本页动作引起的状态变化就地刷新快照，卡片不会停在旧值（成败都刷：
+        // 重启失败时代理已停、接管已还原）
+        refreshExternalState();
         if (r.isFail()) {
             setStatus("端口已保存为 " + std::to_string(port) +
                           "，但代理重启失败（" + r.errorMessage() +
@@ -508,7 +523,13 @@ public:
         }
         // contentKey 带 proxyH：警告行数变化时滚动高度缓存失效重测
         auto* svc = ::module::claude::ClaudeService::global();
-        const bool managed = svc && svc->isClaudeCodeManaged();
+        // 审计 THS-01：接管状态读快照（原 isClaudeCodeManaged → fs::exists
+        // 每帧 stat sidecar）。冷启动兜底：快照从未装载过时本帧同步刷新一次
+        //（与 H2 的 logTail 同款，只发生一次）——首帧必须有值，不闪空
+        if (!externalStateLoaded_) {
+            refreshExternalState();
+        }
+        const bool managed = takeoverManaged_;
         size_t warnLines = 0;
         if (managed && svc) {
             warnLines = std::min<size_t>(
@@ -556,6 +577,9 @@ public:
                                 settingsTab_ = idx;
                                 // 切到日志 tab：下一帧 compose 顶部重读 tail
                                 if (idx == kTabLog) logTailDirty_ = true;
+                                // 切到模块 tab：刷新外部状态快照（审计 THS-01；
+                                // 代理 / 目录 / 桌宠三卡都在这 tab，进 tab 即取新值）
+                                if (idx == kTabModules) refreshExternalState();
                             })
                             .build();
                     })
@@ -968,15 +992,10 @@ private:
     //（换肤热切换/位置直接挪窗），与开关不同（开关重启生效）
     void drawPetCard(eui::Ui& ui, const std::string& id, float w, float h,
                      const core::theme::Tokens& t) {
-        // 皮肤清单/当前皮肤首帧惰性加载（目录扫描不进每帧路径）
-        if (!petSkinDataLoaded_) {
-            petSkinDataLoaded_ = true;
-            petSkins_ = ::module::pet::discoverSkins();
-            // 审计 [5][36]：原「构造盘 store 读一次快照」换成 pet 侧只读桥
-            //（两次独立读盘代替一次快照——初值展示语义，
-            // 与 apply 双写路径无竞态顾虑）
-            petSkinName_ = ::module::pet::currentSkinName();
-        }
+        // 审计 THS-01：皮肤清单（discoverSkins = 目录遍历 + 每皮肤 pet.json
+        // stat）与当前皮肤名（读 pet_config.json）已移出渲染路径——快照由
+        // refreshExternalState 装载（原为「首帧惰性加载」，仍在渲染路径上），
+        // 这里只读成员；审计 [5][36] 的 pet 侧只读桥调用点随之搬家
         const auto compTheme = core::theme::componentTokens(t);
         ui.stack(id)
             .size(w, h)
@@ -1067,6 +1086,9 @@ private:
                       ": " + ec.message());
             return;
         }
+        // 审计 THS-01：「打开目录」是唯一创建笔记目录的动作——刷新存在性
+        // 快照，目录卡本帧起不再显示「尚未创建」（不必等下次进页面）
+        refreshExternalState();
         auto r = ::platform::file_open::openDirectory(mdDir.string());
         if (r.isFail()) {
             setStatus("打开目录失败：" + r.errorMessage(), true);
@@ -1094,11 +1116,11 @@ private:
                     .color(t.colors.textPrimary)
                     .build();
 
+                // 审计 THS-01：存在性读快照（原每帧 fs::exists(mdDir)），
+                // 刷新点见 refreshExternalState
                 const std::filesystem::path mdDir =
                     ::core::paths::markdownDir();
-                std::error_code ec;
-                const bool exists =
-                    std::filesystem::exists(mdDir, ec) && !ec;
+                const bool exists = notesDirExists_;
                 const float dirBtnW = 110.0f;
                 ui.rect(id + ".path.bg")
                     .position(28.0f, 46.0f)
@@ -1253,7 +1275,7 @@ private:
 
                 // Claude Code 接管状态（Phase D，§6.3）：sidecar 是否存在推导，
                 // 让还原机制对用户可见；上层覆盖警告（§5.3 检测命中时）逐行展示
-                const bool managed = svc && svc->isClaudeCodeManaged();
+                const bool managed = takeoverManaged_;  // 审计 THS-01：读快照
                 ui.text(id + ".takeover.label")
                     .position(28.0f, 98.0f)
                     .size(150.0f, 18.0f)
@@ -1262,9 +1284,12 @@ private:
                     .lineHeight(18.0f)
                     .color(t.colors.textSecondary)
                     .build();
+                // 审计 THS-01：路径读 ClaudeService 内存态（main 启动期注入的
+                // defaultPaths()，正是接管实际使用的路径）——不再每帧调
+                // defaultPaths()（内含 fs::current_path / getcwd）
                 const std::string ccPath =
-                    ::module::claude::settings_sync::defaultPaths()
-                        .settingsFile.string();
+                    svc ? svc->settingsSyncPaths().settingsFile.string()
+                        : std::string();
                 ui.text(id + ".takeover.value")
                     .position(190.0f, 98.0f)
                     .size(w - 190.0f - 28.0f, 18.0f)
@@ -1558,6 +1583,27 @@ private:
         logTailFuture_ = std::async(std::launch::async, readLogTailLines);
     }
 
+    // 审计 THS-01：外部状态只读快照的刷新点（H2 同款：读一次 → 存成员 →
+    // compose 只读）。原先直接落在渲染路径上的三处文件系统查询：
+    //   ① isClaudeCodeManaged → hasPendingSnapshot → fs::exists(sidecar)
+    //      （compose 顶部 + 代理卡，每帧 stat）
+    //   ② fs::exists(markdownDir())（目录卡，每帧 stat）
+    //   ③ discoverSkins（目录遍历 + 每皮肤 pet.json stat）+ currentSkinName
+    //      （读 pet_config.json）（桌宠卡，改动前为首帧一次性）
+    // 调用点全在非渲染路径：onStart / onPageEnter / 切模块 tab / 打开目录后，
+    // 另有 compose 顶部一次性冷启动兜底（见 compose）——四处覆盖了「进页面 /
+    // 相关操作后」的全部可见变化时机；单次成本几十微秒，远低于原先每帧一次
+    void refreshExternalState() {
+        auto* svc = ::module::claude::ClaudeService::global();
+        takeoverManaged_ = svc && svc->isClaudeCodeManaged();
+        std::error_code ec;
+        notesDirExists_ =
+            std::filesystem::exists(::core::paths::markdownDir(), ec) && !ec;
+        petSkins_ = ::module::pet::discoverSkins();
+        petSkinName_ = ::module::pet::currentSkinName();
+        externalStateLoaded_ = true;
+    }
+
     // ---------- 编辑器字号卡（Task B：自日志卡行 2 迁入「通用」tab） ----------
     // spec §8.5「编辑器字体大小」（spec 缩水 B）：档位写 core::theme::
     // editorFontSize 通道，markdown 下一帧生效；默认 15px = fontSizeBody
@@ -1714,9 +1760,8 @@ private:
     bool editorFontDropdownOpen_ = false;  // 编辑器字号下拉（spec 缩水 B）
     bool logLevelDropdownOpen_ = false;    // 日志级别下拉（spec 缩水 D）
     bool petSkinDropdownOpen_ = false;     // 桌宠皮肤下拉（M2）
-    bool petSkinDataLoaded_ = false;       // 皮肤清单惰性加载标记（M2）
-    std::vector<std::string> petSkins_;    // 发现到的皮肤（M2）
-    std::string petSkinName_;              // 当前皮肤名（M2）
+    std::vector<std::string> petSkins_;    // 发现到的皮肤（M2，快照见 THS-01）
+    std::string petSkinName_;              // 当前皮肤名（M2，快照见 THS-01）
     // 桌宠挂机穿透功能已于 2026-09-24 移除（本成员删除）
     // 代理端口输入草稿（审计 [14]）：空 = 未编辑，compose 显示 cfg_.proxyPort；
     // applyProxyPort 成功后由 persist 侧刷新（下次进页恢复显示配置值）
@@ -1731,6 +1776,10 @@ private:
     // 审计 H2：后台读盘的在途 future（读盘线程不碰成员，结果经值回渲染线程；
     // 成员析构 = future 析构，自动等读盘结束 → 无悬垂）
     std::future<std::vector<std::string>> logTailFuture_;
+    // ---- 审计 THS-01：外部状态只读快照（compose 不做 fs 查询）----
+    bool externalStateLoaded_ = false;    // 首次装载标记（compose 冷启动兜底）
+    bool takeoverManaged_ = false;        // Claude Code 接管（sidecar 存在性）
+    bool notesDirExists_ = false;         // Markdown 笔记目录存在性
     float logViewScrollOffset_ = 0.0f;    // 日志查看卡内滚动位置
     std::string statusMessage_;
     bool statusIsError_ = false;
