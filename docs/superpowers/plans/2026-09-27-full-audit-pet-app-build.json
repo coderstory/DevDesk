@@ -1,0 +1,246 @@
+{
+  "area": "pet-app-build",
+  "baseline_sha": "7e86964",
+  "findings": [
+    {
+      "id": "PAB-01",
+      "severity": "high",
+      "lens": "arch",
+      "kind": "maintainability",
+      "title": "唯一推荐的一体化构建脚本在 git worktree 里不可用（不传 EUI_NEO_DIR，而 worktree 没有 ../EUI-NEO → configure 直接 FATAL_ERROR）",
+      "evidence": [
+        {"file": "scripts/build-test-run.sh", "symbol": "configure 段（cmake -B build ...）", "line": 45},
+        {"file": "scripts/build-test-run.sh", "symbol": "工具链 PATH 硬编码 /d/software + /c/msys64", "line": 18},
+        {"file": "CMakeLists.txt", "symbol": "EUI_NEO_DIR 默认值 + FATAL_ERROR", "line": 16},
+        {"file": "docs/superpowers/plans/2026-09-27-HANDOFF.md", "symbol": "worktree 约定（以人肉知识承载 -DEUI_NEO_DIR）", "line": 11}
+      ],
+      "impact": "仓库既有铁律要求“涉及编译/测试的子任务必须走 worktree 隔离开发”，而脚本既不能传 -DEUI_NEO_DIR、也不探测 worktree 形态；于是每个 worktree 的首建都必须绕开被 CLAUDE.md 标为“推荐”的脚本、手敲带 -DEUI_NEO_DIR 的 configure（该知识只写在 HANDOFF/编排板/spec 里）。人换批次/换会话就丢，属结构性摩擦：脚本越被推荐，实际使用越少，双轨构建最终互相不知道对方的存在。",
+      "check": "cd 到任一 worktree（如 .claude/worktrees/<agent>/）执行 `bash scripts/build-test-run.sh --clean`，必得 `CMake Error ... EUI-NEO not found at <worktree>/.claude/worktrees/EUI-NEO`；随后手敲 `cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Debug -DEUI_NEO_DIR=D:/project/gui/EUI-NEO` 才可继续。",
+      "suggested_fix": "脚本开头按三段式探测 EUI-NEO（env EUI_NEO_DIR → 脚本目录 ../EUI-NEO → 主仓库同级），探测到就以 `-DEUI_NEO_DIR=<abs>` 透传；--clean 与增量两种路径都走同一变量。",
+      "already_registered": false,
+      "registered_ref": ""
+    },
+    {
+      "id": "PAB-02",
+      "severity": "medium",
+      "lens": "arch",
+      "kind": "maintainability",
+      "title": "新增一个页面模块的接入点分散在装配层公开结构 + 两张无测映射表 + 构建/测试 target 列表（L3 已覆盖的 core 侧 switch 不重复计）",
+      "evidence": [
+        {"file": "src/app_assembly.h", "symbol": "ModuleSet（定长 5 字段，注册顺序 = 字段声明顺序，仅注释保证）", "line": 39},
+        {"file": "src/app_assembly.cpp", "symbol": "assembleAndStart（三段手写 if/else 门控 + home/settings 硬编码恒注册）", "line": 65},
+        {"file": "src/main.cpp", "symbol": "getRouter（extern 工厂声明 + 5 个 unique_ptr + ModuleSet 装配）", "line": 40},
+        {"file": "src/main.cpp", "symbol": "trayNavAvailableFromConfig（动作→模块 ID 表，无测）", "line": 331},
+        {"file": "src/main.cpp", "symbol": "executeTrayAction（动作→页面表，无测）", "line": 345},
+        {"file": "CMakeLists.txt", "symbol": "add_subdirectory + target_link_libraries + include 三处模块清单", "line": 86},
+        {"file": "tests/CMakeLists.txt", "symbol": "target_link_libraries 模块清单", "line": 71}
+      ],
+      "impact": "新增模块要改 5~7 处才能编译通过（加模块库、加 add_subdirectory、加链接、加 include、加 ModuleSet 字段、加门控分支、加托盘动作分支），其中 ModuleSet 是公开头里的定长结构、门控是 3 段复制粘贴式 if/else、注册顺序这一不变量没有编译期约束（谁把字段顺序调换，注册顺序静默变化）。模块插拔是这个项目的核心卖点之一，接入成本直接决定第 4~7 个模块的演进速度。",
+      "check": "数编辑点：`grep -rn \"devdesk_module_settings\" CMakeLists.txt tests/CMakeLists.txt src/` 看一个既有模块在构建/装配系统里的全部出现位置；再对照 app_assembly.cpp:65-81 与 app_assembly.h:39-45 是否能用加字段以外的方式扩展。",
+      "suggested_fix": "ModuleSet 改 `std::vector<::core::Module*>`（或 std::array）+ 门控改一行表 `{moduleId, module}`（恒启用项 moduleId 留空），注册顺序由调用方传入的列表顺序决定；托盘两张表按 PAB-03 收口。",
+      "already_registered": false,
+      "registered_ref": "L3 已登记 core 侧 5 处 switch（pageIdToString/dispatchPageForFile/pageForTrayAction/trayPageDisplayName/trayNavAvailableFromConfig），本项只计装配层结构与构建清单，不重复"
+    },
+    {
+      "id": "PAB-03",
+      "severity": "medium",
+      "lens": "arch",
+      "kind": "maintainability",
+      "title": "托盘动作 → 页面/模块的映射存在 3 张平行表，其中 2 张位于无测试的 main.cpp",
+      "evidence": [
+        {"file": "src/app_assembly.cpp", "symbol": "pageForTrayAction（有测：assembly_dispatch_and_tray_mapping）", "line": 164},
+        {"file": "src/main.cpp", "symbol": "executeTrayAction（同一映射硬编码再现，无测）", "line": 345},
+        {"file": "src/main.cpp", "symbol": "trayNavAvailableFromConfig（第三张表：动作→kModuleId*，无测）", "line": 331}
+      ],
+      "impact": "同一个 TrayMenuAction 枚举在三处各映射一次：新增页面/新增托盘项要同时改三处，漏改任何一处都是“菜单点了没反应”或“置灰/可用判定与实际注册相反”这一类难复现的问题；两张无测表正好落在无护栏的 main.cpp 里，且注释（main.cpp:316-330）用“必然一致”的文字担保代替了结构保证。",
+      "check": "`grep -n \"NavigateTodo\" -r src/` 看同一枚举分支出现几次；再 `grep -n \"pageForTrayAction\\|executeTrayAction\" tests/` 确认只有前者有测。",
+      "suggested_fix": "executeTrayAction 改为 `if (auto p = app::assembly::pageForTrayAction(action)) { navigateFromTray(getRouter(), *p); return; }` + ShowMainWindow/Exit 两个特例；trayNavAvailableFromConfig 由新的 core::tray 单一函数 pageModuleId(PageId)→const char*（或 tray 侧谓词注入）派生，替掉手写 switch。",
+      "already_registered": false,
+      "registered_ref": ""
+    },
+    {
+      "id": "PAB-04",
+      "severity": "medium",
+      "lens": "test",
+      "kind": "testability",
+      "title": "启动顺序契约只由注释与语句位置保证，且三段 static 初始化 lambda 与 pet 开窗顺序全在无测试的 main.cpp",
+      "evidence": [
+        {"file": "src/main.cpp", "symbol": "dslAppConfig::themeRestored（必须先于 DslAppConfig 构造：主题/字号/窗口效果接线）", "line": 483},
+        {"file": "src/main.cpp", "symbol": "dslAppConfig::initialWindow（必须在 config 之前求值）", "line": 534},
+        {"file": "src/main.cpp", "symbol": "dslAppConfig::initialized（captureOpenFileFromArgv 必须在 setupLogging 之后；getRouter 在 openAppDatabase 之后；pet 开窗在 getRouter 之后）", "line": 609},
+        {"file": "src/main.cpp", "symbol": "getRouter（static 初始化块 + dispatchFileOpen）", "line": 145},
+        {"file": "src/main.cpp", "symbol": "startPetWindow 门控调用点", "line": 630}
+      ],
+      "impact": "这些顺序错了不会编译失败、不会挂测试，只会静默降级（标题栏不跟随主题、窗口尺寸决策读到 1.0 缩放、日志丢行、pet 在 Router 就绪前开窗）。M2 已登记“装配层零测试”并抽走了模块表/注册顺序/退出接线（app_assembly.*），但 dslAppConfig 的三段 static 初始化与 pet 开窗时序不在 M2 覆盖范围内，仍是零护栏区——历史上两次启动事故（W2/W3）都属这一类。",
+      "check": "`grep -rn \"dslAppConfig\\|resolveInitialWindowDecision\\|themeRestored\" tests/` 零命中；把 main.cpp:483 段与 :534 段的顺序对调后跑全量测试，应全绿（即无护栏）。",
+      "suggested_fix": "把三段收进 `app_boot.{h,cpp}` 的可测函数（参数化 configFile/notesDir/DB 打开回调），main.cpp 只留调用顺序；补 3 条用例：主题恢复先于 config 快照、argv 捕获晚于 setupLogging（已有 captureOpenFileFromArgv 测试缝可复用）、pet 开窗晚于 Router 装配。",
+      "already_registered": false,
+      "registered_ref": "M2 已登记装配层零测试（getRouter/isModuleEnabled/dispatchFileOpen/navigateFromTray/pageForTrayAction）；本项为 M2 修复批次未覆盖的 dslAppConfig 顺序契约，属相邻但不重复"
+    },
+    {
+      "id": "PAB-05",
+      "severity": "medium",
+      "lens": "arch",
+      "kind": "maintainability",
+      "title": "petCompose 单函数 176 行，气泡三级内容源的调度概率内联在 onTimer 闭包里（不可测），且注释的节奏与代码数学不符",
+      "evidence": [
+        {"file": "src/module_pet/pet_window.cpp", "symbol": "petCompose（316-492；含动画推进、气泡倒计时、三级内容源选词、菜单锚点）", "line": 316},
+        {"file": "src/module_pet/pet_window.cpp", "symbol": "onTimer 内 roll < dt/150 / else if roll < dt/60 调度（注释称静态语料“平均 ~60s”，else-if 扣掉前段后实为 ~100s）", "line": 366},
+        {"file": "src/module_pet/pet_bubble.h", "symbol": "petDataBubbleText（同一特性的纯函数部分，有测）", "line": 91}
+      ],
+      "impact": "气泡的“多久说一句/优先说哪一级”是产品可感知节奏，却与帧回调、动画状态机、菜单定位耦合在一个 176 行函数里，只能靠改代码+肉眼观察调参；注释里写的是 60s，代码算出来是 100s（每次 tick 的静态语料概率 = dt/60−dt/150 = dt/100），后续没人能靠读代码核对节奏。桌面宠物的主要维护动作就是“调行为”，这里的改动成本直接偏高。",
+      "check": "读 pet_window.cpp:364-380 自行推算：4fps、dt≈0.25s 时期望 400 tick ≈ 100s；或把该分支抽成纯函数后写一条“语音节奏”用例即可暴露。",
+      "suggested_fix": "把调度抽成 pet_bubble.h 里的纯函数（输入 dt、anim 状态、两个桥是否有数据、roll → 返回 {文案来源, 停留秒, 是否显示}），petCompose 只做“调用 + 派发”；顺便把注释改成与代码一致的期望值。",
+      "already_registered": false,
+      "registered_ref": ""
+    },
+    {
+      "id": "PAB-06",
+      "severity": "medium",
+      "lens": "arch",
+      "kind": "testability",
+      "title": "发布形态约束“单 exe 零外部 DLL”无任何自动守护：无脚本断言 DLL 集合/体积，DEVDESK_STATIC 可被单点关闭而全流程无提示",
+      "evidence": [
+        {"file": "scripts/build-test-run.sh", "symbol": "构建+测试段（只判 exit code 与 Total/Passed/Failed，不检查产物 DLL）", "line": 58},
+        {"file": "CMakeLists.txt", "symbol": "option(DEVDESK_STATIC ... ON)（-DDEVDESK_STATIC=OFF 静默退回 DLL 形态）", "line": 57},
+        {"file": "cmake/Dependencies.cmake", "symbol": "全静态闭包与 CURL::libcurl 属性覆写（生效与否只在 message 里体现）", "line": 105},
+        {"file": "docs/KNOWN_LIMITATIONS.md", "symbol": "“objdump 仅 16 个 Windows 系统 DLL”以文字记录为唯一证据", "line": 20}
+      ],
+      "impact": "这是 spec §16 的 P14 必选交付约束，却完全靠人肉 objdump + 文档复述来维持：任何一次依赖查找路径变化（例如 PAB-11 的 ZLIB/CURL 口径、或有人 -DDEVDESK_STATIC=OFF 图快）都不会让构建或测试失败，直到发版前才被发现——而“零外部 DLL”是用户可感知的发布承诺（拷贝到无 MSYS2 的机器能跑）。",
+      "check": "`grep -rn \"objdump\" scripts/ cmake/ CMakeLists.txt` 零命中（仅 docs/CHANGELOG 有文字记录）；`cmake -B build -DDEVDESK_STATIC=OFF && cmake --build build` 后 `objdump -p build/DevDesk.exe | grep \"DLL Name\"` 会出现 libcurl-4.dll/ssleay 等，但构建全绿。",
+      "suggested_fix": "在 build-test-run.sh 的构建段后加 5 行：`objdump -p build/DevDesk.exe | grep \"DLL Name\"` 取集合，与白名单（Windows 系统 DLL）求差，非空即 `exit 1`；顺带打印体积供与 CHANGELOG 对账。",
+      "already_registered": false,
+      "registered_ref": ""
+    },
+    {
+      "id": "PAB-07",
+      "severity": "low",
+      "lens": "cpp",
+      "kind": "maintainability",
+      "title": "原子写助手已被抄成 3 份，而 M3 只修了 config.json：pet_config.json 仍是 trunc 原地写 + 解析失败静默回默认（同类未修还有 md/todo 的 view_state）",
+      "evidence": [
+        {"file": "src/module_pet/pet_config.cpp", "symbol": "PetConfigStore::save（std::ios::trunc 原地写，无 tmp+rename）", "line": 111},
+        {"file": "src/module_pet/pet_config.cpp", "symbol": "PetConfigStore::load（解析失败/读失败只 WARN，静默回默认）", "line": 67},
+        {"file": "src/module_claude_proxy/settings_sync.cpp", "symbol": "atomicWrite（第 1 份实现）", "line": 57},
+        {"file": "src/module_markdown/markdown_service.cpp", "symbol": "atomicWriteFile（第 2 份实现，注释自陈同模式）", "line": 650},
+        {"file": "src/module_settings/settings_config.cpp", "symbol": "第 3 份实现（注释自陈“在本文件抄一份而不复用”）", "line": 346},
+        {"file": "src/module_markdown/md_view_state.cpp", "symbol": "view_state 仍是 trunc 原地写", "line": 117},
+        {"file": "src/module_todo/todo_view_state.cpp", "symbol": "view_state 仍是 trunc 原地写", "line": 136}
+      ],
+      "impact": "M3（已登记、已修 config.json）的结论是“抽一个 core 级 atomicWriteFile 即可”，但实际只落成 settings_config.cpp 里的第 3 份拷贝，三个同类 store 未覆盖。代价有两面：重复逻辑随模块数继续增长（每加一个持久化点就再抄一次），且 pet_config.json 写一半崩 → 皮肤的 skinName/位置丢回默认（桌宠静默换皮/跳位，用户无从理解）。",
+      "check": "`grep -rn \"std::ios::trunc\" src/` 列出 5 处非原子写（含 pet_config.cpp:111）；`grep -rn \"atomicWrite\" src/` 列出 3 份实现；对照 M3 行（expert-audit.md:21）确认修复范围仅 config.json。",
+      "suggested_fix": "在 core 增 `core::atomicWriteFile(path, text, bool appendNewline)`（core 可被所有模块依赖，不违模块隔离），settings_sync/markdown_service/settings_config 三处改为调用它，pet_config/md_view_state/todo_view_state 的 save 一并切换。",
+      "already_registered": false,
+      "registered_ref": "M3 已登记 config.json 非原子写（已修 a840713/9e9e354）；本项是同一模式的兄弟实例与重复实现，M3 未覆盖"
+    },
+    {
+      "id": "PAB-08",
+      "severity": "low",
+      "lens": "arch",
+      "kind": "pattern",
+      "title": "内置皮肤位图合成器约 490 行（含手写 PNG/zlib stored-block 编码器与 Canvas 光栅）只为 2 款占位皮肤，而皮肤扩展机制 assets/pets 现为空目录",
+      "evidence": [
+        {"file": "src/module_pet/pet_skin.cpp", "symbol": "crc32Of/adler32Of/appendPngChunk/writePngRgba（自研 PNG+zlib 写出）", "line": 28},
+        {"file": "src/module_pet/pet_skin.cpp", "symbol": "Canvas/ellipse/triangle/fillRect/drawZ（自研光栅器）", "line": 147},
+        {"file": "src/module_pet/pet_skin.cpp", "symbol": "generateRobotSkin / generateGhostSkin（两款各约 100 行的逐帧绘制脚本）", "line": 329},
+        {"file": "assets/pets/README.md", "symbol": "皮肤包格式与安装说明（目录仅 README，内置美术皮肤已移除）", "line": 10},
+        {"file": "CMakeLists.txt", "symbol": "assets/pets 拷贝到构建目录（机制保留）", "line": 162}
+      ],
+      "impact": "为了两款内置占位皮肤，仓库常驻一个自研 PNG 编码器 + 光栅器 + 两份逐帧绘制脚本（约 490/745 行，占本模块三分之二），而它们唯一的产出是首次启动时写进 petsDir 的一组 PNG。任何美术/动作微调都要改 C++ 并重编译，改不了 assets（目录里只剩 README）；同时这套代码是路径校验（审计 [28]）与帧升级逻辑（ensureGeneratedSkin）的宿主，维护面被放大。",
+      "check": "`find assets/pets -type f` 只有 README；`wc -l src/module_pet/pet_skin.cpp` = 745，其中 26-488 行为生成器；把 robot/ghost 的帧直接入库后删除生成器，`grep -rn \"generateRobotSkin\\|generateGhostSkin\" src/` 应只余 0 命中。",
+      "suggested_fix": "把两款皮肤的帧一次性生成为 assets/pets/{robot,ghost}/ 资产随仓库分发（CMake 已经在拷 assets/pets），删除生成器与 PNG 编码器，保留 loadSkin/discoverSkins/解析校验；ensureBuiltinSkins 退化为“首次运行把资产拷到 petsDir（若缺）”。",
+      "already_registered": false,
+      "registered_ref": "U11/整窗命中与 KNOWN_LIMITATIONS 的桌宠条目无关；本条为过度设计项"
+    },
+    {
+      "id": "PAB-09",
+      "severity": "low",
+      "lens": "arch",
+      "kind": "maintainability",
+      "title": "“挂机穿透”删除（2026-09-24）后的陈旧注释与用例名残留，含与断言不符的用例标题",
+      "evidence": [
+        {"file": "src/module_pet/pet_window.cpp", "symbol": "文件头注释“右键菜单（穿透/换肤/位置重置/隐藏/退出…）”", "line": 7},
+        {"file": "src/module_pet/pet_window.cpp", "symbol": "PetUiState 注释“穿透状态在 PetRuntime::config（原生菜单切换…）”（字段已不存在）", "line": 144},
+        {"file": "src/module_pet/pet_window.cpp", "symbol": "图标码点注释仍列“穿透=mouse-pointer”", "line": 151},
+        {"file": "src/module_pet/pet_window.cpp", "symbol": "petContextMenuItems 注释“顺序 = path 语义基础：0 穿透切换…”（实际 0 = 换肤子组）", "line": 774},
+        {"file": "tests/test_modules/test_menu_beautify.cpp", "symbol": "用例标题“桌宠菜单含换肤子组（6 顶层项）”实际断言 5", "line": 54},
+        {"file": "tests/test_modules/test_menu_beautify.cpp", "symbol": "用例标题“无皮肤时 5 顶层项（穿透文案随态）”实际断言 4", "line": 64},
+        {"file": "src/app_sidebar.cpp", "symbol": "compose 注释“侧边栏宽随折叠态 260/72…折叠后 +188px”（实际 208/72）", "line": 275}
+      ],
+      "impact": "petMenuActionForPath 的下标算术（idxReset/idxHide/idxExit 相对偏移）正是靠这些顺序注释推理的，注释停留在“穿透项还在”的世界里，会误导后续调整菜单的人；用例名与断言数量不符则让“测试清单即文档”的作用失效（读用例名以为覆盖了 6 项菜单）。",
+      "check": "`grep -rn \"穿透\" src/ tests/` 看残留；对照 test_menu_beautify.cpp:50-66 的标题与 REQUIRE_EQ 数值。",
+      "suggested_fix": "一次性清理：注释改为当前菜单顺序（换肤子组/位置重置/隐藏/分隔线/退出），删除图标码点注释里的穿透行，用例名改成“5 顶层项（含换肤子组）”“4 顶层项（无皮肤）”，app_sidebar.cpp:275 的 260 改 208（+136px）。",
+      "already_registered": false,
+      "registered_ref": "L4 已登记 settings_sync.cpp:133-135 的陈旧注释（另一处）；本条为 pet/app 侧同类残留，不重复"
+    },
+    {
+      "id": "PAB-10",
+      "severity": "low",
+      "lens": "cpp",
+      "kind": "maintainability",
+      "title": "-Werror 只在 Debug 生效，而发布物（Release）与默认 configure 都不带它：只在优化档出现的告警永不失败",
+      "evidence": [
+        {"file": "cmake/CompilerWarnings.cmake", "symbol": "devdesk_apply_warnings（if(CMAKE_BUILD_TYPE STREQUAL \"Debug\") 才加 -Werror）", "line": 16},
+        {"file": "CMakeLists.txt", "symbol": "未指定 CMAKE_BUILD_TYPE 时默认 Release", "line": 10},
+        {"file": "scripts/build-test-run.sh", "symbol": "脚本固定 -DCMAKE_BUILD_TYPE=Debug（测试永远跑在带 -Werror 的那一档）", "line": 45}
+      ],
+      "impact": "两档口径相反：开发/测试档把告警当错误，真正发布的那一档（Release，15.4MiB 单 exe）不设防。-O2/-O3 才触发的告警类别（如 -Wmaybe-uninitialized、-Wstringop-overflow 的部分实例）在 Debug 里根本不会出现，因此 CI/本地全绿并不覆盖发布档；而裸 `cmake -B build`（CLAUDE.md 记录的另一种用法）默认就是 Release，等于默认关闭告警门禁。",
+      "check": "`grep -n \"Werror\" -A2 -B2 cmake/CompilerWarnings.cmake`；再 `cmake -B /tmp/b -DCMAKE_BUILD_TYPE=Release` 后 `grep -r \"Werror\" /tmp/b/build.ninja` 无命中。",
+      "suggested_fix": "两档都加 -Werror（Release 保留现有 -Wno-error=missing-field-initializers 白名单），或至少让发布脚本在 Release 档上跑一次构建；若担心第三方头告警，继续用 -Wno-error=<具体类别> 逐条白名单。",
+      "already_registered": false,
+      "registered_ref": ""
+    },
+    {
+      "id": "PAB-11",
+      "severity": "low",
+      "lens": "arch",
+      "kind": "maintainability",
+      "title": "构建脚本与 CMake 的 zlib/工具链口径相反：脚本 --clean 传入 DLL 导入库并压掉 DEVDESK_STATIC 的静态默认，与“裸 configure 零 -D”“全静态”两处声明矛盾",
+      "evidence": [
+        {"file": "scripts/build-test-run.sh", "symbol": "--clean 传 -DZLIB_LIBRARY=C:/msys64/mingw64/lib/libz.dll.a 与 -DOPENSSL_ROOT_DIR=C:/msys64/mingw64", "line": 45},
+        {"file": "cmake/Dependencies.cmake", "symbol": "DEVDESK_STATIC 下若未定义 ZLIB_LIBRARY 则设 libz.a（脚本的 -D 使其被跳过）", "line": 26},
+        {"file": "cmake/Dependencies.cmake", "symbol": "“裸 cmake configure 零 -D 参数即可用”的声明", "line": 3},
+        {"file": "../EUI-NEO/3rd/libpng-1.6.43/CMakeLists.txt", "symbol": "png_static PUBLIC 链接 ZLIB::ZLIB（ZLIB_LIBRARY 会影响该 target 的解析结果）", "line": 733}
+      ],
+      "impact": "同一决策有两套口径且方向相反（脚本要 DLL 导入库、CMake 要静态库），维护者无法从任一处判断“发布物里到底链的是哪个 zlib”；CURL 静态闭包那段注释恰恰说明这类“脚本 -D 与 CMake 默认不一致”曾导致过导入 libcurl-4.dll 的问题。是否真影响最终 exe 未取证（png_static 是否进入 eui_neo 链接线未确认），但作为配置一致性问题已足够：脚本里的 -D 属历史 workaround 残留。",
+      "check": "`grep -n \"ZLIB_LIBRARY\" build/CMakeCache.txt` 看生效值；`objdump -p build/DevDesk.exe | grep -i \"zlib\\|z1.dll\\|libz\"`。用带 -D 与不带 -D 两种 configure 各跑一次比较上述输出即可定性。",
+      "suggested_fix": "删掉脚本里的 -DZLIB_LIBRARY/-DZLIB_INCLUDE_DIR/-DOPENSSL_ROOT_DIR（Dependencies.cmake 已按编译器位置推导，且这些路径在本机硬编码），只保留 PATH 设置；若确需覆盖，改成与 DEVDESK_STATIC 同源的变量。",
+      "already_registered": false,
+      "registered_ref": ""
+    },
+    {
+      "id": "PAB-12",
+      "severity": "low",
+      "lens": "cpp",
+      "kind": "correctness",
+      "title": "桌宠的“随机”从未播种：全仓无 srand，std::rand() 直接使用 → 每次启动同一短语/同一闲聊序列，且 % size 有低位偏置",
+      "evidence": [
+        {"file": "src/module_pet/pet_window.cpp", "symbol": "pickPhrase（table[std::rand() % table.size()]）", "line": 114},
+        {"file": "src/module_pet/pet_window.cpp", "symbol": "onTimer 内 roll = std::rand() / RAND_MAX（气泡调度同样依赖它）", "line": 367}
+      ],
+      "impact": "功能上“随机闲聊/随机短语”是可感知卖点，未播种意味着每次启动的短语顺序与气泡节奏完全一致（用户体感为“就那几句按固定顺序念”）；同时 rand() 是进程级共享状态，未来任何模块引入 rand 都会互相干扰序列。属低危但零成本可修。",
+      "check": "`grep -rn \"srand\" src/ tests/` 零命中；连续启动两次 DevDesk 记录桌宠前 5 句短语，两次应完全相同。",
+      "suggested_fix": "在 pet_window.cpp 匿名命名空间放一个 `std::mt19937& rng()`（用 std::random_device/steady_clock 播种一次），pickPhrase 与 roll 改用它 + std::uniform_int_distribution / uniform_real_distribution（同时消掉 % 偏置）。",
+      "already_registered": false,
+      "registered_ref": ""
+    },
+    {
+      "id": "PAB-13",
+      "severity": "low",
+      "lens": "arch",
+      "kind": "pattern",
+      "title": "“隐藏桌宠（本次会话）”是会话内不可逆操作：菜单/设置页都没有重新显示的入口，换肤也只在窗口开着时才热切换",
+      "evidence": [
+        {"file": "src/module_pet/pet_window.cpp", "symbol": "executePetMenuSelection 的 Hide 分支（savePetPosition + requestWindowClose，无恢复）", "line": 274},
+        {"file": "src/module_pet/pet_window.cpp", "symbol": "applyPetSkin（rt.handle == nullptr 时只落盘，日志“下次启动生效”）", "line": 718},
+        {"file": "src/module_pet/pet_window.cpp", "symbol": "petContextMenuItems（菜单只有隐藏，无显示）", "line": 776},
+        {"file": "src/module_settings/settings_module.cpp", "symbol": "桌宠卡只有皮肤下拉 + 位置重置按钮（无显示/隐藏）", "line": 966}
+      ],
+      "impact": "用户误点“隐藏桌宠”后，本次会话内没有任何恢复路径：设置页的换肤/位置重置都不开窗（只落盘），模块开关改的是“重启生效”。菜单项自陈“本次会话”，也就是设计上确实想要一个可恢复的临时隐藏，但缺逆操作；结果是一次误点要重启应用。低危但是典型的“一个操作有去无回”的接口不对称。",
+      "check": "真机：右键桌宠 → 隐藏桌宠，然后在设置页切换皮肤、点位置重置、切模块开关，确认桌宠都不再出现（需重启）；亦可静态核对：`grep -rn \"startPetWindow\" src/` 只有 main.cpp 启动处与 applyPetSkin 的热切换两处调用点。",
+      "suggested_fix": "设置页桌宠卡加一个“显示桌宠”按钮（或把菜单项拆成“隐藏/显示”一项随状态切换），走既有 startPetWindow(PetWindowConfig{...}) 同一入口（handle == nullptr 时按盘上位置重开）。",
+      "already_registered": false,
+      "registered_ref": ""
+    }
+  ]
+}
