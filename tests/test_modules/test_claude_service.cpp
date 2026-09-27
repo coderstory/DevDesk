@@ -2792,7 +2792,7 @@ REGISTER_TEST(claude_service_dialect_override_survives_reverse_sync,
               "claude_service: 反向同步不丢 dialectOverride", {
     using namespace module::claude;
     TestDb tdb("dialect_sync");
-    TempDir d("dialect_sync");
+    test_support::TempDir d("dialect_sync");
     auto paths = makeSyncPaths(d);
 
     ClaudeService svc(tdb.handle(), kTestKeychainService);
