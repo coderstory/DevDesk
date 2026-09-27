@@ -1,0 +1,310 @@
+{
+  "area": "todo-home-settings",
+  "baseline_sha": "f47766b",
+  "findings": [
+    {
+      "id": "THS-01",
+      "severity": "medium",
+      "kind": "architecture",
+      "lens": "arch",
+      "title": "settings 渲染路径仍有 4 处文件系统调用：H2 刚立的「compose 不做 IO」硬约束在同一文件内被自己违反",
+      "evidence": [
+        {"file": "src/module_settings/settings_module.cpp", "symbol": "SettingsModule::compose", "line": 511},
+        {"file": "src/module_settings/settings_module.cpp", "symbol": "SettingsModule::drawProxyCard", "line": 1256},
+        {"file": "src/module_settings/settings_module.cpp", "symbol": "SettingsModule::drawProxyCard", "line": 1265},
+        {"file": "src/module_settings/settings_module.cpp", "symbol": "SettingsModule::drawDirectoryCard", "line": 1100},
+        {"file": "src/module_settings/settings_module.cpp", "symbol": "SettingsModule::drawPetCard", "line": 972}
+      ],
+      "impact": "compose 顶部无条件调 svc->isClaudeCodeManaged()，其实现落在 settings_sync::hasPendingSnapshot → fileExists → fs::exists（stat 系统调用）；行 1265 的 settings_sync::defaultPaths() 内含 fs::current_path（getcwd 系统调用）；drawDirectoryCard 每帧 fs::exists(markdownDir)；drawPetCard 首帧在内容 lambda 内做目录扫描 + 读文件。前两者每帧、每个 tab 都执行。这不是性能问题（量级几十微秒），而是规则落地问题：本批刚把「compose 不做 IO」写成硬约束并迁走 3 处 IO，同一文件里却留下 4 处反例，下一位维护者读代码时无法判断哪类调用被允许，规则退化为注释——同类 IO 还会被继续加进渲染路径。",
+      "check": "grep -n \"isClaudeCodeManaged\\|defaultPaths()\\|filesystem::exists\" src/module_settings/settings_module.cpp → 命中 511/1256/1265/1100；再 grep -n \"hasPendingSnapshot\" -A2 src/module_claude_proxy/settings_sync.cpp（= fileExists → fs::exists）与 grep -n \"defaultPaths\" -A6 src/module_claude_proxy/settings_sync.cpp（含 fs::current_path）。",
+      "suggested_fix": "把「存在性/清单」这类外部状态一并纳入快照刷新（与 logTail 同款：后台读一次 → 成员 bool/list → compose 只读），最小版本是：代理卡/目录卡/桌宠卡的状态在 onStart 与切 tab 时各刷新一次，存成 bool/vector 成员，compose 只读。",
+      "already_registered": false,
+      "registered_ref": "与已登记 H2（compose 内读盘/DB）同类但非同一处——H2 的 evidence 只列 :506-509 与 :1491（日志 tail），本批 f50e1ac 迁移的正是那 3 处 IO；本条是文件系统元数据查询/目录扫描，未被迁移也未被登记"
+    },
+    {
+      "id": "THS-02",
+      "severity": "medium",
+      "kind": "maintainability",
+      "lens": "arch",
+      "title": "TodoModule 是 2474 行 / ~55 成员 / 14 个 draw 方法的 God 类：任何 Todo 需求都要改同一个文件",
+      "evidence": [
+        {"file": "src/module_todo/todo_module.cpp", "symbol": "class TodoModule", "line": 170},
+        {"file": "src/module_todo/todo_module.cpp", "symbol": "成员声明块", "line": 2366}
+      ],
+      "impact": "一个类同时承担：看板渲染、拖拽状态机、9 个弹窗（各自 open 状态 + 表单字段 + 渲染 + 提交）、视图状态持久化、搜索/逾期派生数据、toast。变更成本直接体现为：加一个卡片字段要动 drawCard + 详情弹窗 + collectDetailFormTask + 迁移；加一个弹窗要动成员块 + compose 的 9 行 draw 调用 + closeTopmostPopup + zIndex。状态不变量（如 detailDiscardArmed_ 只在 detailOpen_ 时有效、confirmTaskId_ 与 confirmColumnId_ 二选一）无法在类型上表达，只能靠注释维持；单文件 2474 行也让任何并发开发在同一文件上碰撞。",
+      "check": "wc -l src/module_todo/todo_module.cpp（2474）；grep -c \"    void draw\" src/module_todo/todo_module.cpp（14）；sed -n '2366,2468p' 看成员清单。",
+      "suggested_fix": "最小切分：把每个弹窗收成一个独立 struct（open 状态 + 表单字段 + draw + submit 四者同居，类型名即语义），TodoModule 只保留看板主体/数据/拖拽；不引入新抽象层、不改 DSL 用法，先把散落成员与手写 bool 消掉。",
+      "already_registered": false,
+      "registered_ref": ""
+    },
+    {
+      "id": "THS-03",
+      "severity": "medium",
+      "kind": "correctness",
+      "lens": "cpp",
+      "title": "todo_view_state.json 仍是截断写：M3 修的原子写只扫到 config.json，同类第 4 份实现漏修",
+      "evidence": [
+        {"file": "src/module_todo/todo_view_state.cpp", "symbol": "TodoViewStateStore::save", "line": 136},
+        {"file": "src/module_settings/settings_config.cpp", "symbol": "atomicWriteConfig", "line": 355},
+        {"file": "src/module_todo/todo_module.cpp", "symbol": "TodoModule::saveViewState", "line": 530}
+      ],
+      "impact": "写窗口内崩溃/断电 → 文件半截 → load 走 platform::json 解析失败分支静默回默认值（列滚动位置与选中任务丢失，属可接受损失）；更贵的代价是模式维护：仓库现有 4 份「JSON 落盘」实现，原子写 3 份拷贝（settings_sync.cpp:57 / markdown_service.cpp:650 / settings_config.cpp:355）+ 本处非原子，M3 修复时只覆盖了 config.json 一处——下一次同类修复仍需人工逐文件排查，而 saveViewState 由卡片点击/右键（todo_module.cpp:1514、1986）高频触发，暴露窗口最多。",
+      "check": "grep -rn \"ios::trunc\" src/module_*/ | grep -v tests → 仍可见 todo_view_state.cpp:136（另 pet_config.cpp:111 同款，属 module_pet 范围）；grep -rn \"devdesk-tmp\" src/ → 列出已有 3 份原子写拷贝。",
+      "suggested_fix": "照抄 settings_config.cpp:355 的 20 行（tmp + remove + rename），本文件内私有实现即可（模块隔离铁律）；中期与 THS-15 一起把该 helper 下沉 core 并修正被引错的 KNOWN_LIMITATIONS 条目。",
+      "already_registered": false,
+      "registered_ref": "M3 已登记并已修（a840713 / 9e9e354），但其 evidence 只含 settings_config.cpp:368-378；本条是同类缺陷的未修实例，非重复"
+    },
+    {
+      "id": "THS-04",
+      "severity": "medium",
+      "kind": "architecture",
+      "lens": "arch",
+      "title": "Home 跨模块直读他人表，且「逾期」这一条业务规则在仓内有 3 份各自维护的实现",
+      "evidence": [
+        {"file": "src/module_home/home_service.cpp", "symbol": "HomeService::getStats", "line": 206},
+        {"file": "src/module_todo/todo_service.cpp", "symbol": "TodoService::listOverdue", "line": 788},
+        {"file": "src/module_todo/todo_module.cpp", "symbol": "isOverdue", "line": 75}
+      ],
+      "impact": "首页「逾期 N」、Todo 页 badge、卡片红字逾期标记三处判定分别由 SQL 文本、SQL 文本、内存函数给出，一致性只靠 home_service.cpp:191-192 的一句注释维持，没有任何编译期/运行期/测试约束。演进代价：Todo 侧调整口径（例如把「已完成不计逾期」改成「逾期后完成也算历史逾期」）或改名 due_at 列，Home 会静默给出不同数字，用户看到首页说 3 条、Todo 页说 4 条且无从判断谁对；同时 Home 与 Todo/Markdown 的表结构形成隐式契约（home_service.h:5-6 自陈「稳定 schema 可独立只读查询」），schema 变更的影响面不再局限于属主模块。",
+      "check": "grep -n \"completed_at IS NULL\" src/module_home/home_service.cpp src/module_todo/todo_service.cpp → 两处同谓词；grep -n \"isOverdue\" src/module_todo/todo_module.cpp → 第三份内存实现；把三处谓词并排读一遍即可确认无共享来源。",
+      "suggested_fix": "把「逾期」定义收成 core 侧一行可复用谓词/SQL 片段（core 已持有 migrations，天然有 schema 知识），Home 与 Todo 引用同一来源；内存版 isOverdue 改为调用它，并补一条「Home 计数 == Todo listOverdue().size()」的跨模块一致性用例当护栏。",
+      "already_registered": false,
+      "registered_ref": ""
+    },
+    {
+      "id": "THS-05",
+      "severity": "medium",
+      "kind": "pattern",
+      "lens": "arch",
+      "title": "弹窗/下拉的「谁在最上层」没有单一持有者：9 个 bool + 手写关闭顺序 + 手挑 zIndex 数字",
+      "evidence": [
+        {"file": "src/module_todo/todo_module.cpp", "symbol": "TodoModule::closeTopmostPopup", "line": 717},
+        {"file": "src/module_todo/todo_module.cpp", "symbol": "弹窗状态成员块", "line": 2404},
+        {"file": "src/module_todo/todo_module.cpp", "symbol": "drawConfirmDeleteDialog.zIndex", "line": 1785},
+        {"file": "src/module_settings/settings_module.cpp", "symbol": "下拉 open 状态成员块", "line": 1710}
+      ],
+      "impact": "不变量「同时只有一个弹窗处于最上层」被拆成三份手工清单：成员 bool、closeTopmostPopup 的 if 链顺序、zIndex 字面量（1000 默认 / 1100 两处）。新增一个弹窗必须同时改三处且顺序要与 z 序一致，漏改的后果是静默降级（Esc 关掉下面那个而不是最上面那个，或关不掉）——Esc 兜底是本批 M5 刚做的能力，缺护栏。settings 侧同构：7 个 *DropdownOpen_ bool 各自 onOpenChange 写回（21 处引用），加一个下拉要改 7 处形状相同的代码。",
+      "check": "grep -n \"zIndex\" src/module_todo/todo_module.cpp（1785/1862 手挑 1100）；sed -n '717,727p' 读 if 链；grep -c \"DropdownOpen_\" src/module_settings/settings_module.cpp（21）。",
+      "suggested_fix": "todo：用 std::vector<PopupId> openStack_ 替代 bool 群，closeTopmostPopup 直接 pop_back，zIndex 由栈深派生（消除手挑数字）。settings：7 个 bool 收成一个 int openDropdown_ = -1（值 = 下拉 id），onOpenChange 统一写回。",
+      "already_registered": false,
+      "registered_ref": "M5 登记并已修「Esc 关弹窗语义」（b148a2c/86e3be1），修的是行为；本条是承载该行为的结构形状（状态所有权），非重复"
+    },
+    {
+      "id": "THS-06",
+      "severity": "medium",
+      "kind": "correctness",
+      "lens": "cpp",
+      "title": "4 处次生失败被吞：用户看到伪成功（「任务已完成」但没移动）与伪空（逾期列表变空）",
+      "evidence": [
+        {"file": "src/module_todo/todo_module.cpp", "symbol": "TodoModule::doCompleteTask", "line": 356},
+        {"file": "src/module_todo/todo_module.cpp", "symbol": "TodoModule::doUncompleteTask", "line": 384},
+        {"file": "src/module_todo/todo_module.cpp", "symbol": "TodoModule::openOverdueDialog", "line": 262},
+        {"file": "src/module_todo/todo_module.cpp", "symbol": "TodoModule::refreshOverdueCount", "line": 252}
+      ],
+      "impact": "完成路径：completeTask 成功但 moveTask（迁移到 done 列）失败时只 LOG_WARN，随后仍 setStatus(\"任务已完成\")——用户看到成功提示而卡片留在原列，且再次点击看不出原因；取消完成同款。读取路径：openOverdueDialog 的 listOverdue 失败时 overdueTasks_ 留空且 overdueCount_ 被写成 0，弹窗显示「逾期任务（0）」与空提示，用户会以为数据没同步（入口按钮刚刚还显示 N 条）；refreshOverdueCount 失败静默（无 else 无日志），badge 恒 0 且无从察觉。错误反馈口径与同文件其余路径（setStatus(…, true)）不一致。",
+      "check": "读 todo_module.cpp:356-370 与 383-394 的 isFail 分支（只有 LOG_WARN）；grep -n \"if (r.isOk())\" src/module_todo/todo_module.cpp → 252/262 两处无 else 分支。",
+      "suggested_fix": "完成/取消完成的「状态迁移 + 列迁移」合成一次可失败操作（service 侧一个方法，或调用方在 mv 失败时 setStatus(错误, true) 并 reloadAll）；两处查询失败改走 setStatus(错误文案, true)，不静默改写计数。",
+      "already_registered": false,
+      "registered_ref": ""
+    },
+    {
+      "id": "THS-07",
+      "severity": "low",
+      "kind": "pattern",
+      "lens": "cpp",
+      "title": "nowEpochSeconds() 恒成功却返回 Result，迫使 8 个写方法各写 3 行不可达错误分支",
+      "evidence": [
+        {"file": "src/module_todo/todo_service.cpp", "symbol": "TodoService::nowEpochSeconds", "line": 50},
+        {"file": "src/module_todo/todo_service.cpp", "symbol": "调用点分布", "line": 247}
+      ],
+      "impact": "std::time(nullptr) 不可能失败，函数却声明为 core::Result<int64_t>，8 个调用点（247/319/464/534/674/696/719/779）各写 3 行 `if (nowResult.isFail()) return fail(...)`。后果不是错误，而是错误模型的信噪比：真实失败路径与仪式分支形状相同，审阅时无法用形状区分；新增一个 todo 写方法会照抄这段仪式，噪声按调用点线性增长（当前占每个方法头部约 1/5）。同类仪式也出现在 Result<X>::ok 的层层手工包装。",
+      "check": "sed -n '50,52p' src/module_todo/todo_service.cpp（唯一 return 恒 ok）；grep -c \"nowEpochSeconds()\" src/module_todo/todo_service.cpp = 9（含定义）。",
+      "suggested_fix": "签名改回 int64_t（一行），8 个调用点各删 3 行；错误模型不会因此变弱——真需要失败语义的只有 DB 调用本身。",
+      "already_registered": false,
+      "registered_ref": ""
+    },
+    {
+      "id": "THS-08",
+      "severity": "low",
+      "kind": "maintainability",
+      "lens": "arch",
+      "title": "Home 的「模块 → 卡片/按钮」映射在同一个函数里硬编码 4 处",
+      "evidence": [
+        {"file": "src/module_home/home_module.cpp", "symbol": "statCount 计算", "line": 207},
+        {"file": "src/module_home/home_module.cpp", "symbol": "统计卡绘制", "line": 330},
+        {"file": "src/module_home/home_module.cpp", "symbol": "快捷按钮组", "line": 491},
+        {"file": "src/module_home/home_module.cpp", "symbol": "最近编辑卡", "line": 373}
+      ],
+      "impact": "新增一个工具模块（或给某模块加/减一张卡）要同时改 4 处，且每处都要重算宽度（statW/actW 由计数派生，漏改即卡片宽度之和 ≠ contentW → 右缘错位，或模态入口消失）；门控条件（claudeOn/mdOn/todoOn）在 3 组代码里重复出现。这与已登记 L3（新增模块要改 5 处 PageId switch）是同一类「模块清单多源」欠账在 Home 内的复制，位置不同、同样无编译期护栏（多算了宽度不会报错，只会错位）。",
+      "check": "grep -n \"claudeOn\\|mdOn\\|todoOn\" src/module_home/home_module.cpp → 命中 202-208、330-366、373-487、491-553 四组。",
+      "suggested_fix": "把「卡片清单」「按钮清单」收成两张 static 表（{PageId, 标题, 取值 lambda, 点击负载}），宽度按表长度现算；门控只在一处判断。",
+      "already_registered": false,
+      "registered_ref": "与已登记 L3 同类（模块清单多源），L3 管 core/main.cpp 的 5 处 switch，本条是 Home 内的 4 处，非重复"
+    },
+    {
+      "id": "THS-09",
+      "severity": "low",
+      "kind": "oop",
+      "lens": "cpp",
+      "title": "拖拽命中的几何输入 boardCardW_ 由渲染副作用写入（画卡片时赋值），命中结果依赖「本帧画过什么」",
+      "evidence": [
+        {"file": "src/module_todo/todo_module.cpp", "symbol": "TodoModule::drawCard", "line": 1118},
+        {"file": "src/module_todo/todo_module.cpp", "symbol": "TodoModule::drawBoard", "line": 951},
+        {"file": "src/module_todo/todo_module.cpp", "symbol": "TodoModule::hitDropColumn", "line": 552}
+      ],
+      "impact": "命中测试的输入不是模型值而是「最后一张被绘制卡片的宽度」：drawCard 在画卡片时写 boardCardW_，命中换算再读它（boardColW_/boardColGap_/boardH_ 由 drawBoard 写）。这条契约只存在于 3 行注释里，后果是任何渲染侧演进（卡片宽自适应、列虚拟化、卡片复用、某列无卡片）都会静默改变命中判定，而编译与测试都不报错；boardCardW_ 在「所有列都空」时依赖上一帧的残留值。同一份板面几何已有纯函数 boardGeom() 可算，却有两套并存（drawBoard 的局部列宽公式 + 成员快照）。",
+      "check": "grep -n \"boardCardW_\" src/module_todo/todo_module.cpp → 仅 1118（写）与 552（读）；把 1118 行删掉仍能编译，拖拽命中全变 -1（无编译期护栏）。",
+      "suggested_fix": "把板面几何收成一个值对象（colW/colGap/boardH/cardW/pageOriginX），由 drawBoard 一次算好并只读传递；命中测试收 BoardGeom 参数而不是读成员，顺带消掉「渲染写、逻辑读」的隐式顺序依赖。",
+      "already_registered": false,
+      "registered_ref": "M4 已登记并已修坐标换算（9916f3e，dpi 探针显式化），本条是同一处剩余的几何所有权问题（谁写谁读），非重复"
+    },
+    {
+      "id": "THS-10",
+      "severity": "low",
+      "kind": "maintainability",
+      "lens": "arch",
+      "title": "HomeService::countBySql 两个重载 90% 重复（唯一差别是有无 bind）",
+      "evidence": [
+        {"file": "src/module_home/home_service.cpp", "symbol": "HomeService::countBySql(const char*)", "line": 89},
+        {"file": "src/module_home/home_service.cpp", "symbol": "HomeService::countBySql(const char*, int64_t)", "line": 114}
+      ],
+      "impact": "25 行 prepare/step/currentRow/取值/三条错误映射抄成两份，只有 bind 一行之差。修正一处必然漏改另一处（同类已知实例：createColumn 与 createTask 的 drain 收尾也是逐字复制，todo_service.cpp:303 / 517）。变更成本随重载数线性增长，且两份的错误文案开始各自漂移时没人会发现。",
+      "check": "sed -n '89,141p' src/module_home/home_service.cpp 逐行对比（差异仅在 121-123 的 bind 三行）。",
+      "suggested_fix": "合成一个 `countBySql(const char* sql, std::optional<int64_t> bound = std::nullopt)`，bind 段条件执行。",
+      "already_registered": false,
+      "registered_ref": ""
+    },
+    {
+      "id": "THS-11",
+      "severity": "low",
+      "kind": "deadcode",
+      "lens": "cpp",
+      "title": "公共头承诺的 NotFound 语义未实现，注释承诺的 changes() 校验也不存在（renameColumn / updateTask）",
+      "evidence": [
+        {"file": "src/module_todo/todo_service.h", "symbol": "renameColumn 文档注释", "line": 59},
+        {"file": "src/module_todo/todo_service.cpp", "symbol": "TodoService::renameColumn", "line": 335},
+        {"file": "src/module_todo/todo_service.cpp", "symbol": "TodoService::updateTask", "line": 533}
+      ],
+      "impact": "todo_service.h:59 写「id 不存在 → NotFound」、:81 写「id 必须已存在」，实现只发一条 UPDATE 就恒返回 ok（唯一的 NotFound 在 moveTask:608）。注释与实现不符的代价是双向的：调用方会照着头文件写依赖 NotFound 的分支（今天还没人写，但头文件在鼓励），而 UI 侧会把「改了个不存在的 id」当成成功（setStatus(\"已重命名列\") + reloadAll）；同时 :335-336 那句「我们能用 changes() 验证」是本次审计全仓唯一提及 changes() 的地方，而它从未被调用。",
+      "check": "grep -rn \"changes()\" src/ → 只有 todo_service.cpp:335 的注释；grep -n \"NotFound\" src/module_todo/todo_service.cpp → 只有 608；读 318-337 可见无行存在性校验。",
+      "suggested_fix": "二选一：删掉头里两处 NotFound 承诺（最小、零风险）；或在 rename/update 后查 `SELECT changes()`（Statement::step 后无法直接取，可用 `db_.prepare(\"SELECT changes() AS n\")`）判 0 行返回 NotFound，顺手兑现注释里承诺的校验。",
+      "already_registered": false,
+      "registered_ref": ""
+    },
+    {
+      "id": "THS-12",
+      "severity": "low",
+      "kind": "pattern",
+      "lens": "cpp",
+      "title": "reorderColumns 为 schema 里不存在的唯一约束写了两段式防冲突",
+      "evidence": [
+        {"file": "src/module_todo/todo_service.cpp", "symbol": "TodoService::reorderColumns", "line": 375},
+        {"file": "src/core/migrations.h", "symbol": "todo_columns 建表", "line": 59}
+      ],
+      "impact": "重排被实现为「先整表置 -(position+1)-1000000 再逐行赋 0..n-1」，共 n+1 条 UPDATE，注释给的理由是「避免唯一约束冲突」；而 todo_columns 只有 id 是 PRIMARY KEY，position 既无 UNIQUE 也无唯一索引（migrations.h:59-65）。防御不存在的约束让一段低频逻辑背上 2n 条语句与一个负位中间态，更要紧的是注释把一个当前不成立的前提写成事实，后续维护者要么照信（在别处复制这个模式），要么得先翻 schema 才能证伪。",
+      "check": "sed -n '59,65p' src/core/migrations.h（todo_columns：id/title/position/color/created_at，无 UNIQUE）；grep -n \"CREATE.*INDEX\" src/core/migrations.h → 只有 idx_tasks_column / idx_tasks_due，均非唯一且在 todo_tasks 上。",
+      "suggested_fix": "若确实打算加 (position) 唯一性，就在 migrations 里补上该索引（让注释的前提成立）并保留两段式；否则删掉负位那一段（n 条 UPDATE 即可）并改注释为实际理由。",
+      "already_registered": false,
+      "registered_ref": ""
+    },
+    {
+      "id": "THS-13",
+      "severity": "low",
+      "kind": "correctness",
+      "lens": "cpp",
+      "title": "逾期弹窗可显示「逾期 0 天」：入选按秒级、显示按日历日",
+      "evidence": [
+        {"file": "src/module_todo/todo_module.cpp", "symbol": "drawOverdueDialog 逾期天数行", "line": 1972},
+        {"file": "src/module_todo/todo_ui_logic.h", "symbol": "ui::overdueDays", "line": 194},
+        {"file": "src/module_todo/todo_service.cpp", "symbol": "TodoService::listOverdue", "line": 788}
+      ],
+      "impact": "listOverdue 用 `due_at < now`（秒级）入选，同一行却用 overdueDays（日历日差）渲染 → 刚过截止时间的任务进入列表与 badge，行内显示「逾期 0 天」。用户看到入口写「逾期 1」、点进去看到 0 天，会怀疑统计错；跨午夜情形（23:59 到期、次日 00:01 查看）同源且更常见（首页徽标/卡片红字与列表天数给出不同答案）。",
+      "check": "造一条 due_at = now-1 的任务后打开逾期弹窗观察「逾期0天」；或直接断言 ui::overdueDays(now-1, now) == 0 与 listOverdue 包含该任务同时成立（tests/test_modules/test_todo_ui.cpp 已有 overdue 用例可扩展）。",
+      "suggested_fix": "显示侧取 std::max(1, overdueDays(...))（既然入选就至少 1 天），或把入选条件也改为日历日口径（due 所在日的 00:00 起算）；二者择一并在函数注释里写明口径（当前注释只解释了 23:59 那一半）。",
+      "already_registered": false,
+      "registered_ref": ""
+    },
+    {
+      "id": "THS-14",
+      "severity": "low",
+      "kind": "maintainability",
+      "lens": "arch",
+      "title": "「已归档」列语义靠标题字符串识别，与同文件刚确立的「不按标题找」原则冲突",
+      "evidence": [
+        {"file": "src/module_todo/todo_module.cpp", "symbol": "TodoModule::drawColumnContent", "line": 1002},
+        {"file": "src/module_todo/todo_module.cpp", "symbol": "TodoModule::findColumnByKind 注释", "line": 296},
+        {"file": "src/module_todo/todo_service.h", "symbol": "Column::kind 取值说明", "line": 30}
+      ],
+      "impact": "完成态流转已在迁移 v4 里改为按 kind（注释明写「不按标题找：用户重命名列后标题不可靠」），归档态却仍是 `col.title == \"已归档\"`：用户把该列改名后空态文案静默退回「暂无任务」，把别的列改名成「已归档」也会出现归档文案。根因是数据层没有 archive 语义（kind 只回填 done/todo），于是语义只存在于 UI 字符串里——这类「语义住在文案里」的欠账每次涉及列重命名都会被重新踩到。",
+      "check": "grep -n \"已归档\" src/module_todo/todo_module.cpp src/core/migrations.h → UI 判标题（:1002）、迁移只作种子标题（:138）；比对 :296-303 的 kind 判法与 todo_service.h:30-32 的 kind 值域。",
+      "suggested_fix": "迁移 v5 增补 kind='archive'（按当前标题回填一次，同 v4 手法），UI 改按 kind；或明确放弃归档语义（删掉 isArchive 特判与那句文案）——两者都优于按标题。",
+      "already_registered": false,
+      "registered_ref": ""
+    },
+    {
+      "id": "THS-15",
+      "severity": "low",
+      "kind": "deadcode",
+      "lens": "arch",
+      "title": "「为什么不把原子写下沉 core」的唯一书面依据引用了不存在的登记项（KNOWN_LIMITATIONS #16 实为另一件事）",
+      "evidence": [
+        {"file": "src/module_settings/settings_config.cpp", "symbol": "atomicWriteConfig 注释", "line": 354},
+        {"file": "docs/KNOWN_LIMITATIONS.md", "symbol": "第 16 条标题", "line": 124}
+      ],
+      "impact": "该注释是第 3 份原子写拷贝的正当性来源，指向的 #16 却是「settings.json 备份轮换不实现」，与原子写无关（同一错误引用也出现在 module_markdown/markdown_service.cpp:645）。代价在演进时兑现：当一个原语被抄第 4、第 5 份（THS-03 就是第 4 份漏修的那一处）时，唯一能解释「为什么允许复制」的记录指向空处，后来者只能要么继续复制、要么在无据的情况下做大范围下沉。",
+      "check": "grep -n \"#16\" docs/KNOWN_LIMITATIONS.md → 只命中 :124「settings.json 备份轮换不实现」；grep -rn \"KNOWN_LIMITATIONS #16\" src/ → settings_config.cpp:354 与 markdown_service.cpp:645。",
+      "suggested_fix": "把该取舍补成一条真实条目（例如「17. 原子写原语按模块各抄一份，不下沉 core：跨模块解耦优先于三处 20 行的复用」）并让两处注释指向它；若将来下沉 core::atomicWriteFile，则删注释与引用即可。",
+      "already_registered": false,
+      "registered_ref": ""
+    },
+    {
+      "id": "THS-16",
+      "severity": "low",
+      "kind": "correctness",
+      "lens": "cpp",
+      "title": "「昨天」判定用相邻午夜秒差 /86400，在有夏令时的时区会错一天",
+      "evidence": [
+        {"file": "src/module_home/home_service.cpp", "symbol": "formatRelativeTime", "line": 31},
+        {"file": "src/module_todo/todo_ui_logic.h", "symbol": "ui::ymdToEpoch（对照实现）", "line": 161}
+      ],
+      "impact": "相邻两个本地午夜不一定是 86400 秒：春季前进日只有 23 小时（82800s），82800/86400 = 0 → 落入 dayGap<=0 分支，昨天修改的笔记显示成「23 小时前」，跨日语义丢失（秋季回拨日 25 小时恰好 90000/86400 = 1，正常）。仓库别处已刻意用「正午取 epoch」规避 DST（todo_ui_logic.h:161），此处是唯一漏网；只在有夏令时的时区体现，当前开发机（CST 无夏令时）与常规测试跑不出来。",
+      "check": "设 TZ=Europe/Berlin 或 America/New_York 后断言 startOfDayEpoch(now) - startOfDayEpoch(now - 86400) == 86400（春季前进日实得 82800），或给 formatRelativeTime 喂固定时间戳做单测。",
+      "suggested_fix": "改用日历日序号比较（todo_ui_logic.h:201-212 已有 days_from_civil 实现，可上收 core 复用），不再做秒差除法。",
+      "already_registered": false,
+      "registered_ref": ""
+    },
+    {
+      "id": "THS-17",
+      "severity": "low",
+      "kind": "maintainability",
+      "lens": "arch",
+      "title": "Priority 的四个映射函数散在 UI 与服务两个文件，且都带 default 掩盖新枚举",
+      "evidence": [
+        {"file": "src/module_todo/todo_module.cpp", "symbol": "priorityLabel / priorityColor", "line": 46},
+        {"file": "src/module_todo/todo_service.cpp", "symbol": "intToPriority / priorityToInt", "line": 18}
+      ],
+      "impact": "同一个枚举的「文案+颜色」映射住在 UI 文件、「持久化整数」映射住在服务文件；两处 switch 都写了 default，于是新增一个优先级档位时 -Wall -Wextra -Werror 不会报警（缺 default 才触发 -Wswitch）——新档位静默落成「无」标签 + 灰色 + 整数 0，只能靠肉眼发现；同时「优先级有哪些档」这件事在 4 个函数里各写一遍。",
+      "check": "grep -n \"case Priority::\" src/module_todo/todo_module.cpp（3 处 + 各自 default）；删掉 priorityLabel 的 default 重新编译即可见 -Wswitch 提示（作为验证手段）。",
+      "suggested_fix": "把文案/颜色收成以枚举值索引的单一映射表（含 None 槽），switch 去掉 default 让编译器当守卫；持久化映射留在服务侧但同样去 default。",
+      "already_registered": false,
+      "registered_ref": ""
+    },
+    {
+      "id": "THS-18",
+      "severity": "low",
+      "kind": "pattern",
+      "lens": "arch",
+      "title": "「同列内 position 连续」这条不变量只由 moveTask 维护，而 updateTask 能同时改 column_id 与 position",
+      "evidence": [
+        {"file": "src/module_todo/todo_service.cpp", "symbol": "TodoService::updateTask", "line": 543},
+        {"file": "src/module_todo/todo_module.cpp", "symbol": "TodoModule::collectDetailFormTask", "line": 2019},
+        {"file": "src/module_todo/todo_service.h", "symbol": "moveTask 文档注释", "line": 87}
+      ],
+      "impact": "列内位置压实（两侧重排 + 空洞消除）只在 moveTask 的事务里做，但 updateTask 的 UPDATE 列表同样包含 column_id 与 position（调用方从内存 Task 直接复制 position）。今天详情弹窗的调用顺序（先 saveDetailForm 再 doMoveTask）恰好不破坏不变量，但这是调用顺序的巧合而非接口保证：下一个复用 updateTask 的调用点（批量编辑、导入、脚本）改列时会静默留下位置空洞，表现为卡片顺序错乱、追加位置（MAX+1）偏大——且没有任何断言或测试会失败。",
+      "check": "读 todo_service.cpp:542-546 的 UPDATE 字段列表（含 column_id/position）；grep -rn \"updateTask(\" src/ 查看现有调用点是否只有详情弹窗。",
+      "suggested_fix": "updateTask 只管内容字段（title/description/priority/due_at/tags/completed_at），把 column_id/position 移出它的 UPDATE，改列一律走 moveTask；或在 updateTask 内加一条 position 必须等于原值的校验式断言。",
+      "already_registered": false,
+      "registered_ref": ""
+    }
+  ]
+}
