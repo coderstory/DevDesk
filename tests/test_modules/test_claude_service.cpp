@@ -38,7 +38,7 @@ std::filesystem::path tempDbPath(const std::string& tag) {
     ++counter;
     auto name = "devdesk_test_claude_" + tag + "_" +
                 std::to_string(counter) + ".db";
-    return std::filesystem::temp_directory_path() / name;
+    return test_temp::tempPath(name);
 }
 
 // RAII：创建已 migrate 的临时数据库
@@ -159,9 +159,8 @@ struct TempDir {
     explicit TempDir(const std::string& tag) {
         static int counter = 0;
         ++counter;
-        path = std::filesystem::temp_directory_path() /
-               ("devdesk_test_claude_rev_" + tag + "_" +
-                std::to_string(counter));
+        path = test_temp::tempPath("devdesk_test_claude_rev_" + tag + "_" +
+                                   std::to_string(counter));
         std::error_code ec;
         std::filesystem::remove_all(path, ec);
         std::filesystem::create_directories(path, ec);

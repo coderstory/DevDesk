@@ -22,7 +22,7 @@ REGISTER_TEST(logging_no_crash, "logging: logMessage doesn't crash", {
 })
 
 REGISTER_TEST(logging_file_output, "logging: addFileOutput", {
-    auto tmp = std::filesystem::temp_directory_path() / "devdesk_test_log.log";
+    auto tmp = test_temp::tempPath("devdesk_test_log.log");
     // 预清理：无异常版本
     std::error_code ec;
     std::filesystem::remove(tmp, ec);
@@ -38,7 +38,7 @@ REGISTER_TEST(logging_file_output, "logging: addFileOutput", {
 // 审计 M7 回归：启动打开日志时按大小轮转（>8MB → 当前文件改名 .1，
 // 旧的依次后移，最多保留 2 份，最老的一份删除）
 REGISTER_TEST(logging_rotate_by_size, "logging: 超阈值轮转 + 保留份数上限（审计 M7）", {
-    const auto base = std::filesystem::temp_directory_path() / "devdesk_test_rotate.log";
+    const auto base = test_temp::tempPath("devdesk_test_rotate.log");
     const auto r1 = std::filesystem::path(base.string() + ".1");
     const auto r2 = std::filesystem::path(base.string() + ".2");
     const auto r3 = std::filesystem::path(base.string() + ".3");

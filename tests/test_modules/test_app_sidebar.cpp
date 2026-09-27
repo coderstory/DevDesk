@@ -59,8 +59,8 @@ public:
 };
 
 std::filesystem::path tempConfigFile(const char* name) {
-    return std::filesystem::temp_directory_path() /
-           ("devdesk_test_sidebar_" + std::string(name) + ".json");
+    return test_temp::tempPath(
+        "devdesk_test_sidebar_" + std::string(name) + ".json");
 }
 
 void writeRawConfig(const std::filesystem::path& file,

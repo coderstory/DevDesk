@@ -48,8 +48,8 @@ namespace {
 
 // 每个用例独立的临时配置文件（避免用例间串扰）
 std::filesystem::path tempConfigFile(const char* name) {
-    return std::filesystem::temp_directory_path() /
-           ("devdesk_test_settings_" + std::string(name) + ".json");
+    return test_temp::tempPath(
+        "devdesk_test_settings_" + std::string(name) + ".json");
 }
 
 void removeQuietly(const std::filesystem::path& p) {
@@ -86,10 +86,10 @@ struct PruneEnv {
     std::unique_ptr<::core::Database> db;
 
     explicit PruneEnv(const char* tag) {
-        cfgPath = std::filesystem::temp_directory_path() /
-                  ("devdesk_test_settings_" + std::string(tag) + "_cfg.json");
-        dbPath = std::filesystem::temp_directory_path() /
-                 ("devdesk_test_settings_" + std::string(tag) + ".db");
+        cfgPath = test_temp::tempPath(
+            "devdesk_test_settings_" + std::string(tag) + "_cfg.json");
+        dbPath = test_temp::tempPath(
+            "devdesk_test_settings_" + std::string(tag) + ".db");
         removeQuietly(cfgPath);
         removeQuietly(dbPath);
         auto r = ::core::Database::open(dbPath);
@@ -122,8 +122,8 @@ struct AppDataEnv {
     explicit AppDataEnv(const char* tag) {
         const char* cur = std::getenv("APPDATA");
         saved = cur ? cur : "";
-        dir = std::filesystem::temp_directory_path() /
-              ("devdesk_test_settings_appdata_" + std::string(tag));
+        dir = test_temp::tempPath(
+            "devdesk_test_settings_appdata_" + std::string(tag));
         std::error_code ec;
         std::filesystem::remove_all(dir, ec);
         std::filesystem::create_directories(dir, ec);
@@ -770,7 +770,7 @@ REGISTER_TEST(settings_takeover_status_row,
               "settings: Claude Code 接管状态行 + 覆盖警告（headless）", {
     namespace fs = std::filesystem;
     const fs::path dir =
-        fs::temp_directory_path() / "devdesk_test_settings_takeover";
+        test_temp::tempPath("devdesk_test_settings_takeover");
     std::error_code ec;
     fs::remove_all(dir, ec);
     fs::create_directories(dir, ec);

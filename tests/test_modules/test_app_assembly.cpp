@@ -138,8 +138,7 @@ const char* const kExpectedStartLog[] = {
 
 // 临时笔记目录（dispatchFileOpen 的 notesDir 注入点）
 std::filesystem::path tempNotesDir() {
-    return std::filesystem::temp_directory_path() /
-           "devdesk_test_assembly_notes";
+    return test_temp::tempPath("devdesk_test_assembly_notes");
 }
 
 } // namespace

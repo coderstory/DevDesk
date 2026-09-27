@@ -28,8 +28,7 @@ REGISTER_TEST(file_open_directory_empty_rejected,
 REGISTER_TEST(file_open_directory_missing_fails,
               "file_open: openDirectory 不存在目录 → 失败返回（不弹窗）", {
     namespace fs = std::filesystem;
-    const auto p = fs::temp_directory_path() /
-                   "devdesk_file_open_no_such_dir_9e31";
+    const auto p = test_temp::tempPath("devdesk_file_open_no_such_dir_9e31");
     std::error_code ec;
     fs::remove_all(p, ec);  // 确保不存在（幂等，防上次残留）
     auto r = platform::file_open::openDirectory(p.string());

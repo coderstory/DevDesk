@@ -55,7 +55,7 @@ std::filesystem::path tempDbPath(const std::string& tag) {
     ++counter;
     auto name = "devdesk_test_pconfig_" + tag + "_" +
                 std::to_string(counter) + ".db";
-    return std::filesystem::temp_directory_path() / name;
+    return test_temp::tempPath(name);
 }
 
 // RAII：已 migrate 的临时数据库（复用 test_claude_service 模式）

@@ -338,8 +338,8 @@ namespace {
 fs::path makeTempNotesDir(const char* tag) {
     static int counter = 0;
     ++counter;
-    const fs::path dir = fs::temp_directory_path() /
-        ("devdesk_md_ui_" + std::string(tag) + "_" + std::to_string(counter));
+    const fs::path dir = test_temp::tempPath(
+        "devdesk_md_ui_" + std::string(tag) + "_" + std::to_string(counter));
     std::error_code ec;
     fs::remove_all(dir, ec);
     fs::create_directories(dir, ec);
@@ -2851,7 +2851,7 @@ REGISTER_TEST(md_view_state_mode_live,
     using module::markdown::MarkdownViewState;
     using module::markdown::MarkdownViewStateStore;
     const fs::path file =
-        fs::temp_directory_path() / "devdesk_md_view_state_live.json";
+        test_temp::tempPath("devdesk_md_view_state_live.json");
     std::error_code ec;
     fs::remove(file, ec);
 

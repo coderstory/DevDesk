@@ -17,7 +17,7 @@
 namespace {
 
 std::filesystem::path tempFile(const std::string& name) {
-    return std::filesystem::temp_directory_path() / name;
+    return test_temp::tempPath(name);
 }
 
 void removeFile(const std::filesystem::path& p) {

@@ -8,11 +8,19 @@
 //    想在一个场景里看完多处失败，得拆成多个用例。
 // 3) 断言只能写在返回 bool 的函数/用例体里（宏展开含 `return false`）；
 //    返回非 bool 的 helper 中不能直接用，helper 需把结果回传、由调用方断言。
+#include <atomic>
 #include <cstdio>
+#include <filesystem>
 #include <iostream>
 #include <sstream>
 #include <string>
 #include <vector>
+
+#if defined(_WIN32)
+#include <process.h> // _getpid
+#else
+#include <unistd.h> // getpid
+#endif
 
 #define DOCTEST_CHECK(expr) \
     do { if (!(expr)) { \
@@ -67,6 +75,35 @@ inline void register_test(const std::string& name, TestFunc f) {
 }
 
 } // namespace test_registry
+
+// ==================== 临时路径唯一化（审计 TIN-02）====================
+// 仓库按「并发多 worktree」开发：多个会话可能同时跑同一个 devdesk_tests.exe，
+// %TEMP% 下的固定名临时路径会被另一进程 remove_all / 覆写 → 随机红。
+// 统一走 tempPath()：pid（进程间唯一）+ 进程内自增序号（进程内唯一），
+// 扩展名原样保留（.db / .json 语义不变）。
+namespace test_temp {
+
+inline long processId() {
+#if defined(_WIN32)
+    return static_cast<long>(::_getpid());
+#else
+    return static_cast<long>(::getpid());
+#endif
+}
+
+// tempPath("devdesk_test.db") → %TEMP%/devdesk_test-<pid>-<n>.db
+inline std::filesystem::path tempPath(const std::string& name) {
+    static std::atomic<unsigned long long> seq{0};
+    const auto n = seq.fetch_add(1, std::memory_order_relaxed);
+    std::filesystem::path p(name);
+    const std::string ext = p.extension().string();
+    p.replace_extension();
+    return std::filesystem::temp_directory_path() /
+           (p.string() + "-" + std::to_string(processId()) + "-" +
+            std::to_string(n) + ext);
+}
+
+} // namespace test_temp
 
 // 直接注册测试：REGISTER_TEST(unique_name, "Description", { body })
 // unique_name 必须是合法 C++ 标识符（驼峰命名）

@@ -55,8 +55,9 @@ void resetCaseGlobals() {
     setEnvVar("DEVDESK_PETS_DIR", "");
     setEnvVar("DEVDESK_CLAUDE_CONFIG_DIR", "");
     std::error_code ec;
-    const auto scratch = std::filesystem::temp_directory_path() /
-                         "devdesk_test_env_scratch";
+    // 审计 TIN-02：临时路径带 pid + 进程内自增后缀——并发 ctest（多 worktree
+    // 同时跑同一 exe）不会互删 / 互覆写这份视图状态草案文件
+    const auto scratch = test_temp::tempPath("devdesk_test_env_scratch");
     const std::string mdVs = (scratch / "md_view_state.json").string();
     const std::string todoVs = (scratch / "todo_view_state.json").string();
     std::filesystem::remove(mdVs, ec);
