@@ -1,7 +1,9 @@
 #include "router.h"
 #include "logging.h"
 
-#include <eui/dsl.h>
+// 注：本文件不再包含任何 EUI-NEO 头（eui::Ui/Screen/KeyEvent 经
+// module_interface.h 的 header-only 类型桥接进来，仅作签名透传）——
+// 空态兜底的绘制归属 app 层，结构性断言见 spec §4.2.1 + 审计 CP-01。
 
 #include <atomic>
 
@@ -71,6 +73,10 @@ bool Router::dispatchKeyEvent(const eui::KeyEvent& key) {
     return false;
 }
 
+void Router::setFallbackCompose(FallbackCompose fn) {
+    fallbackCompose_ = std::move(fn);
+}
+
 void Router::compose(eui::Ui& ui, const eui::Screen& screen) {
     for (auto* m : modules_) {
         if (m && m->pageId() == current_) {
@@ -78,8 +84,11 @@ void Router::compose(eui::Ui& ui, const eui::Screen& screen) {
             return;
         }
     }
-    // 没有匹配 → 显示空
-    ui.text("empty").text("无页面").build();
+    // 没有匹配模块：交给 app 层注入的兜底渲染（文案/样式归 app 层持有，
+    // core 只调用不绘制——spec §4.2.1）；未注入则不画，保持静默降级不崩
+    if (fallbackCompose_) {
+        fallbackCompose_(ui, screen);
+    }
 }
 
 void Router::startAll() {
