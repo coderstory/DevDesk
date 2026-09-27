@@ -248,7 +248,21 @@ SettingsConfig SettingsStore::load() const {
 
     auto parsed = platform::json::parse(ss.str());
     if (parsed.isFail() || !parsed.unsafeValue().isObject()) {
-        LOG_WARN("Settings: 配置文件解析失败，使用默认值: " + file_.string());
+        // M3（2026-09-27）：解析失败仍回落默认（不阻断启动、不引入新失败态），
+        // 但先把坏内容另存一份 config.json.bak —— 否则截断 / 手改坏的 config 被
+        // 静默换成全默认值（用户关掉的模块"复活"），原始内容无处可查
+        std::filesystem::path bak = file_;
+        bak += ".bak";
+        std::error_code cpEc;
+        std::filesystem::copy_file(
+            file_, bak, std::filesystem::copy_options::overwrite_existing, cpEc);
+        if (cpEc) {
+            LOG_WARN("Settings: 配置文件解析失败，使用默认值（备份失败: " +
+                     cpEc.message() + "）: " + file_.string());
+        } else {
+            LOG_WARN("Settings: 配置文件解析失败，使用默认值（原内容已备份: " +
+                     bak.string() + "）");
+        }
         return cfg;
     }
     platform::json::JsonObject obj = parsed.unsafeValue().asObject();

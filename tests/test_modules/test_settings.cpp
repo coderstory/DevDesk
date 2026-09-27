@@ -54,6 +54,14 @@ void removeQuietly(const std::filesystem::path& p) {
     std::filesystem::remove(p, ec);
 }
 
+// 原样读回文件（二进制，不做换行转换）——用于比对原子写/备份落盘的字节内容
+std::string readFileRaw(const std::filesystem::path& p) {
+    std::ifstream f(p, std::ios::binary);
+    std::ostringstream ss;
+    ss << f.rdbuf();
+    return ss.str();
+}
+
 // 环境变量设置（Windows 用 _putenv_s，空串清除；与 test_markdown 同款）
 void setEnvVar(const char* name, const std::string& value) {
 #if defined(_WIN32)
@@ -244,10 +252,14 @@ REGISTER_TEST(settings_zero_days_permanent, "settings: 0 days = permanent retent
 
 REGISTER_TEST(settings_corrupted_json_fallback, "settings: corrupted json -> defaults", {
     const auto path = tempConfigFile("corrupt");
+    auto bak = path;
+    bak += ".bak";
     removeQuietly(path);
+    removeQuietly(bak);
+    const std::string broken = "{ this is not valid json !!!";
     {
         std::ofstream f(path, std::ios::trunc);
-        f << "{ this is not valid json !!!";
+        f << broken;
         f.close();
     }
     module::settings::SettingsStore store(path);
@@ -255,7 +267,14 @@ REGISTER_TEST(settings_corrupted_json_fallback, "settings: corrupted json -> def
     DOCTEST_CHECK(cfg.darkTheme);
     DOCTEST_CHECK_EQ(cfg.fontScalePercent, 100);  // 解析失败 → 默认
     DOCTEST_CHECK_EQ(cfg.logRetentionDays, 30);
+    // M3（2026-09-27）：坏内容另存 .bak；原文件既不被删除也不被改写
+    // （回落默认的既有行为不变，只是不再无声无息）
+    DOCTEST_REQUIRE(std::filesystem::exists(bak));
+    DOCTEST_CHECK_EQ(readFileRaw(bak), broken);
+    DOCTEST_REQUIRE(std::filesystem::exists(path));
+    DOCTEST_CHECK_EQ(readFileRaw(path), broken);
     removeQuietly(path);
+    removeQuietly(bak);
     return true;
 })
 

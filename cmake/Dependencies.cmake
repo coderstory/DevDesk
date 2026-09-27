@@ -74,6 +74,26 @@ find_package(OpenSSL REQUIRED)
 find_package(Threads REQUIRED)
 
 # ---------------------------------------------------------------------------
+# L1（2026-09-27）：发布物可追溯 —— 单 exe 静态链入 OpenSSL / libcurl（安全相关），
+# 出 CVE 时要能回答"这个 exe 里的 OpenSSL 是哪个版本"。版本来自在 include 目录里
+# 解析出的 opensslv.h / curlver.h（由 FindOpenSSL / FindCURL 完成，不额外拉依赖）。
+# 探测不到只打印"未检测到"，不 fail——版本探测失败不该阻断构建。
+# 与顶层 CMakeLists 打印 EUI-NEO rev 同款做法；当前版本组合记在 CHANGELOG 顶部。
+# ---------------------------------------------------------------------------
+if(OPENSSL_VERSION)
+    message(STATUS "OpenSSL version: ${OPENSSL_VERSION}")
+else()
+    message(STATUS "OpenSSL version: 未检测到（未解析到 opensslv.h）")
+endif()
+if(CURL_VERSION)
+    message(STATUS "libcurl version: ${CURL_VERSION}")
+elseif(CURL_VERSION_STRING)
+    message(STATUS "libcurl version: ${CURL_VERSION_STRING}")
+else()
+    message(STATUS "libcurl version: 未检测到（未解析到 curlver.h）")
+endif()
+
+# ---------------------------------------------------------------------------
 # T3：libcurl.a 静态传递依赖闭包
 #
 # MSYS2 的 libcurl.a 是全功能构建（SSH / HTTP2 / HTTP3(QUIC) / brotli / zstd /
