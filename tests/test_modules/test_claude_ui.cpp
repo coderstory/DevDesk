@@ -24,12 +24,19 @@
 #include <ctime>
 #include <filesystem>
 #include <fstream>
+#include <functional>
 #include <memory>
 #include <stdexcept>
 #include <string>
 #include <thread>
 
 extern "C" ::core::Module* create_claude_module();
+// 审计 CPX-06 测试缝（claude_module.cpp 文件末尾同名导出）：调用记录后台查询的
+// 累计派发次数（派发点即增，同帧可读）/ 最近一次实际执行查询的线程 id 哈希
+// （worker 写，0 = 未跑过）。用于把「弹窗打开那一帧只发意图」「搜索防抖把逐键
+// 多次意图合并成一次派发」写成计数断言
+extern "C" int claude_calls_query_dispatches_for_test();
+extern "C" unsigned long long claude_calls_query_last_thread_for_test();
 
 namespace {
 
@@ -971,14 +978,41 @@ REGISTER_TEST(claude_module_calls_dialog,
         const auto* node = ui.find(id);
         return node == nullptr ? std::string("<missing>") : node->text;
     };
+    // 审计 CPX-06：取数已后台化（开弹窗 / 改过滤 / 翻页后结果下一帧起才可见），
+    // 断言前先有界轮询——每轮新起一帧 compose（帧内收割后台结果），不靠固定睡眠
+    auto waitFrame = [&](auto&& pred) -> bool {
+        for (int i = 0; i < 400; ++i) {
+            eui::Ui ui;
+            compose(ui);
+            if (pred(ui)) return true;
+            std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        }
+        return false;
+    };
+    auto waitCount = [&](const std::string& want) -> bool {
+        return waitFrame([&](eui::Ui& ui) {
+            return textOf(ui, "claude.dialog.calls.count") == want;
+        });
+    };
+    auto waitRows = [&](int n) -> bool {   // 当页恰有 n 行（新页到位的判据）
+        return waitFrame([&](eui::Ui& ui) {
+            return (n == 0 || ui.find("claude.dialog.calls.row." +
+                                       std::to_string(n - 1) + ".wrap") != nullptr) &&
+                   ui.find("claude.dialog.calls.row." + std::to_string(n) +
+                           ".wrap") == nullptr;
+        });
+    };
 
-    // 1. 点「查看全部 →」开弹窗
+    // 1. 点「查看全部 →」开弹窗（CPX-06：渲染路径不再同步查库，数据由后台取）
     {
         eui::Ui ui;
         compose(ui);
         DOCTEST_CHECK(click(ui, "claude.calls.viewall.hit"));
     }
-    // 2. 弹窗首帧：搜索框 / 状态下拉 / scrollView / 首页 20 行 / 页码 / 总数
+    // 2. 弹窗数据到齐（等后台结果）：搜索框 / 状态下拉 / scrollView / 首页 20 行
+    //    / 页码 / 总数 / 超时行错误摘要
+    DOCTEST_REQUIRE(waitCount("25 条匹配"));
+    DOCTEST_REQUIRE(waitRows(20));
     {
         eui::Ui ui;
         compose(ui);
@@ -1000,12 +1034,13 @@ REGISTER_TEST(claude_module_calls_dialog,
         // disabled/onClick 都挂在按钮的 .bg rect 上（button build 结构）
         DOCTEST_CHECK(ui.find("claude.dialog.calls.prev.bg")->disabled);
     }
-    // 3. 下一页：剩 5 行，下一页置灰
+    // 3. 下一页：剩 5 行，下一页置灰（翻页后等新页到位）
     {
         eui::Ui ui;
         compose(ui);
         DOCTEST_CHECK(click(ui, "claude.dialog.calls.next.bg"));
     }
+    DOCTEST_REQUIRE(waitRows(5));
     {
         eui::Ui ui;
         compose(ui);
@@ -1023,6 +1058,7 @@ REGISTER_TEST(claude_module_calls_dialog,
         compose(ui);
         DOCTEST_CHECK(click(ui, "claude.dialog.calls.prev.bg"));
     }
+    DOCTEST_REQUIRE(waitRows(20));
     {
         eui::Ui ui;
         compose(ui);
@@ -1030,11 +1066,13 @@ REGISTER_TEST(claude_module_calls_dialog,
                          std::string("第 1 / 2 页"));
     }
     // 5. 搜索框过滤（path 子串）：3 条命中，单页
+    //（CPX-06：按键 → 防抖窗口满后一次后台查询 → 等结果再断言）
     {
         eui::Ui ui;
         compose(ui);
         DOCTEST_CHECK(type(ui, "claude.dialog.calls.search.hit", "complete"));
     }
+    DOCTEST_REQUIRE(waitCount("3 条匹配"));
     {
         eui::Ui ui;
         compose(ui);
@@ -1059,10 +1097,14 @@ REGISTER_TEST(claude_module_calls_dialog,
         DOCTEST_CHECK(ui.find("claude.dialog.calls.status.dd.item.3") != nullptr);
         DOCTEST_CHECK(click(ui, "claude.dialog.calls.status.dd.item.3"));  // 4xx
     }
+    // complete 全是 429 → 4xx 命中不变（下拉立即重查：等一轮后台结果落地）
+    DOCTEST_REQUIRE(waitFrame([&](eui::Ui& ui) {
+        return ui.find("claude.dialog.calls.row.2.wrap") != nullptr &&
+               ui.find("claude.dialog.calls.row.3.wrap") == nullptr;
+    }));
     {
         eui::Ui ui;
         compose(ui);
-        // complete 全是 429 → 4xx 命中不变
         DOCTEST_CHECK_EQ(textOf(ui, "claude.dialog.calls.count"),
                          std::string("3 条匹配"));
     }
@@ -1076,6 +1118,7 @@ REGISTER_TEST(claude_module_calls_dialog,
         compose(ui);
         DOCTEST_CHECK(click(ui, "claude.dialog.calls.status.dd.item.1"));  // 2xx
     }
+    DOCTEST_REQUIRE(waitCount("0 条匹配"));
     {
         eui::Ui ui;
         compose(ui);
@@ -1095,6 +1138,7 @@ REGISTER_TEST(claude_module_calls_dialog,
         compose(ui);
         DOCTEST_CHECK(click(ui, "claude.dialog.calls.status.dd.item.0"));
     }
+    DOCTEST_REQUIRE(waitCount("3 条匹配"));
     {
         eui::Ui ui;
         compose(ui);
@@ -1113,6 +1157,10 @@ REGISTER_TEST(claude_module_calls_dialog,
         compose(ui);
         DOCTEST_CHECK(click(ui, "claude.calls.viewall.hit"));
     }
+    DOCTEST_REQUIRE(waitFrame([&](eui::Ui& ui) {
+        return textOf(ui, "claude.dialog.calls.count") == std::string("3 条匹配") &&
+               ui.find("claude.dialog.calls.row.2.wrap") != nullptr;
+    }));
     {
         eui::Ui ui;
         compose(ui);
@@ -1120,6 +1168,162 @@ REGISTER_TEST(claude_module_calls_dialog,
                          std::string("3 条匹配"));
         DOCTEST_CHECK(ui.find("claude.dialog.calls.row.2.wrap") != nullptr);
     }
+
+    mod->onStop();
+    cleanupKey(pid);
+    return true;
+})
+
+// ---- 审计 CPX-06：调用记录弹窗取数后台化 + 搜索防抖（渲染路径零 DB）----
+// 回归：原实现开弹窗 / 搜索框逐键都在回调里同步查库（queryCalls 分页行 +
+// countCalls 总数两条 SQL），代理 worker 持同一把 SQLite 锁时开弹窗/打字会卡帧。
+// H2 立的「渲染路径不做 IO/DB」硬约束此前只落了 compose 的 profiles/recent/
+// active 三处，弹窗侧全靠注释维持——本用例把它锁成可回归的行为：
+//   1. 弹窗关着 compose 多帧零查询；
+//   2. 开弹窗那一帧只发意图：数据未到（加载态）、恰好派发一次；查询由 worker
+//      线程跑完才回填（渲染线程同步查库会在线程 id 上现形）；
+//   3. 空闲帧不重复派发；数据由后台结果回填（下一帧起可见）；
+//   4. 搜索框同一防抖窗口内 3 次按键只派发一次查询，停手后按最终文本出结果。
+// 查询次数走 claude_module.cpp 的测试缝计数（不靠墙钟 / 不靠固定睡眠）
+REGISTER_TEST(claude_cpx06_calls_query_async_debounce,
+              "claude_module: 调用记录取数后台化 + 搜索防抖单次派发（CPX-06）", {
+    TestEnv env;
+    auto p = env.svc->createProfile("异步弹窗", "https://async.example.com",
+                                    "sk-ant-cpx06-01", "m");
+    DOCTEST_REQUIRE(p.isOk());
+    const int64_t pid = p.value().id;
+    const std::time_t base = std::time(nullptr);
+    auto addRow = [&](const std::string& m, const std::string& path, int st,
+                      const std::string& err, std::time_t ts) -> bool {
+        module::claude::ClaudeService::CallLogEntry e;
+        e.profileId = pid;
+        e.method = m;
+        e.path = path;
+        e.statusCode = st;
+        e.error = err;
+        e.latencyMs = 5;
+        e.startedAt = ts;
+        DOCTEST_REQUIRE(env.svc->logCall(e).isOk());
+        return true;
+    };
+    // 2×messages + 1×complete + 1×hold（共 4 条；搜 "com" 只命中 complete）
+    DOCTEST_REQUIRE(addRow("POST", "/v1/messages", 200, "", base + 1));
+    DOCTEST_REQUIRE(addRow("POST", "/v1/messages", 200, "", base + 2));
+    DOCTEST_REQUIRE(addRow("POST", "/v1/complete", 429, "", base + 3));
+    DOCTEST_REQUIRE(addRow("GET", "/v1/hold", 0, "timeout", base + 4));
+
+    std::unique_ptr<::core::Module> mod(create_claude_module());
+    eui::Screen screen;
+    screen.width = 1600.0f;
+    screen.height = 1000.0f;
+    auto compose = [&](eui::Ui& ui) {
+        ui.begin("claude_cpx06");
+        mod->compose(ui, screen);
+        ui.end();
+    };
+    auto click = [](eui::Ui& ui, const std::string& id) -> bool {
+        const auto* node = ui.find(id);
+        if (node == nullptr || node->onClick == nullptr) {
+            std::cerr << "missing clickable: " << id << std::endl;
+            return false;
+        }
+        node->onClick();
+        return true;
+    };
+    auto type = [](eui::Ui& ui, const std::string& id,
+                   const std::string& txt) -> bool {
+        const auto* node = ui.find(id);
+        if (node == nullptr || node->onTextInput == nullptr) {
+            std::cerr << "missing input: " << id << std::endl;
+            return false;
+        }
+        core::TextInputEvent ev;
+        ev.text = txt;
+        node->onTextInput(ev);
+        return true;
+    };
+    auto countText = [](eui::Ui& ui) -> std::string {
+        const auto* n = ui.find("claude.dialog.calls.count");
+        return n == nullptr ? std::string("<missing>") : n->text;
+    };
+
+    const int q0 = claude_calls_query_dispatches_for_test();
+    const unsigned long long selfThread = static_cast<unsigned long long>(
+        std::hash<std::thread::id>{}(std::this_thread::get_id()));
+
+    // ① 弹窗关着：compose 多帧不查库（不预查、不按帧轮询）
+    for (int i = 0; i < 5; ++i) {
+        eui::Ui ui;
+        compose(ui);
+    }
+    DOCTEST_CHECK_EQ(claude_calls_query_dispatches_for_test(), q0);
+
+    // ② 开弹窗那一帧：只发意图（查询在后台）——数据未到 + 恰好派发一次
+    //   （同步查库会让本帧就把行画出来，且派发计数按每次点击 +1 而非 +1/帧）
+    {
+        eui::Ui ui;
+        compose(ui);
+        DOCTEST_REQUIRE(click(ui, "claude.calls.viewall.hit"));
+    }
+    {
+        eui::Ui ui;
+        compose(ui);
+        DOCTEST_CHECK_EQ(claude_calls_query_dispatches_for_test(), q0 + 1);
+        DOCTEST_CHECK(ui.find("claude.dialog.calls.loading") != nullptr);
+        DOCTEST_CHECK(ui.find("claude.dialog.calls.row.0.wrap") == nullptr);
+    }
+    // ③ 后台结果回填（下一帧起可见，有界等待）——到这一步查询确实已在非渲染
+    //    线程跑完（线程 id 是 worker 写的，同步查库会让它等于渲染线程）
+    {
+        bool loaded = false;
+        for (int i = 0; i < 200 && !loaded; ++i) {
+            eui::Ui ui;
+            compose(ui);
+            loaded = ui.find("claude.dialog.calls.row.0.wrap") != nullptr;
+            if (!loaded) std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        }
+        DOCTEST_CHECK(loaded);
+    }
+    DOCTEST_CHECK(claude_calls_query_last_thread_for_test() != selfThread);
+    DOCTEST_CHECK_EQ(claude_calls_query_dispatches_for_test(), q0 + 1);
+    // ④ 空闲帧零派发（一次置脏 = 一次查询，不按帧重查）
+    for (int i = 0; i < 5; ++i) {
+        eui::Ui ui;
+        compose(ui);
+    }
+    DOCTEST_CHECK_EQ(claude_calls_query_dispatches_for_test(), q0 + 1);
+
+    // ⑤ 搜索防抖：同一窗口内逐键 3 次 → 只派发一次查询（关键计数断言）
+    const int q1 = claude_calls_query_dispatches_for_test();
+    {
+        eui::Ui ui;
+        compose(ui);
+        DOCTEST_REQUIRE(type(ui, "claude.dialog.calls.search.hit", "c"));
+        DOCTEST_REQUIRE(type(ui, "claude.dialog.calls.search.hit", "o"));
+        DOCTEST_REQUIRE(type(ui, "claude.dialog.calls.search.hit", "m"));
+    }
+    {   // 防抖窗口内的一帧：未派发，快照沿用上次值（不闪空/不逐键查）
+        eui::Ui ui;
+        compose(ui);
+        DOCTEST_CHECK_EQ(claude_calls_query_dispatches_for_test(), q1);
+        DOCTEST_CHECK_EQ(countText(ui), std::string("4 条匹配"));
+    }
+    {   // 停手满一个窗口 → 一次查询按最终文本 "com" 出结果
+        bool searched = false;
+        for (int i = 0; i < 300 && !searched; ++i) {
+            eui::Ui ui;
+            compose(ui);
+            searched = countText(ui) == std::string("1 条匹配");
+            if (!searched) std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        }
+        DOCTEST_CHECK(searched);
+    }
+    DOCTEST_CHECK_EQ(claude_calls_query_dispatches_for_test(), q1 + 1);
+    for (int i = 0; i < 5; ++i) {   // 收敛后仍零重查
+        eui::Ui ui;
+        compose(ui);
+    }
+    DOCTEST_CHECK_EQ(claude_calls_query_dispatches_for_test(), q1 + 1);
 
     mod->onStop();
     cleanupKey(pid);
