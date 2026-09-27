@@ -2,6 +2,7 @@
 // DevDesk 入口 - EUI-NEO 提供 main 函数，我们只需提供
 // app::dslAppConfig() 和 app::compose()
 
+#include "app_assembly.h"
 #include "app_sidebar.h"
 #include "claude_service.h"
 #include "core/component_theme.h"
@@ -16,8 +17,6 @@
 #include "module_home/home_service.h"
 #include "module_pet/pet_config.h"
 #include "module_pet/pet_window.h"
-#include "module_markdown/md_file_open.h"
-#include "platform/file_open.h"
 #include "settings_config.h"
 
 #include <components/styledmenu.h>
@@ -49,88 +48,28 @@ namespace {
 // ---- 模块开关（模块插拔方案 A：编译期内置 + 运行时注册门控）----
 // 关闭 = 不注册进 Router（onStart/compose/onKeyEvent 全部不可达，零执行）
 // + 其专属服务不启动（Claude 代理）。生效时机：重启（注册是启动期行为，
-// 设计 §5.4）。新模块必须在 getRouter() 装配处走 isModuleEnabled() 门控，
-// 否则无法被用户关闭（设计 §8 风险约定）。
-bool isModuleEnabled(const char* moduleId) {
-    // 进程内读一次 config.json（static 局部缓存；设置页改开关只影响下次启动）
-    static const std::vector<std::string> enabled = [] {
+// 设计 §5.4）。**装配处的门控注册已移至 app_assembly**（可无头单测，专家
+// 审计 2026-09-27 M2）；这里保留同一份判定，供 pet 开窗与托盘菜单可用性。
+//
+// 进程内读一次 config.json（原 isModuleEnabled 的 static 局部缓存；设置页改
+// 开关只影响下次启动）。判定复用设置页同一个谓词 module::settings::moduleEnabled
+//（恒启用 home/settings、未知 ID 恒 false，语义已由 test_module_gating 覆盖）
+const module::settings::SettingsConfig& gatingConfigSnapshot() {
+    static const module::settings::SettingsConfig cfg = [] {
         const module::settings::SettingsStore store(
             ::core::paths::configFile());
-        return store.load().enabledModules;
+        return store.load();
     }();
-    if (std::string(moduleId) == module::settings::kModuleIdHome ||
-        std::string(moduleId) == module::settings::kModuleIdSettings) {
-        return true;  // 恒启用：落地页 + 开关 UI 宿主
-    }
-    return std::find(enabled.begin(), enabled.end(), moduleId) != enabled.end();
+    return cfg;
 }
 
-// 全局：Finder "打开方式" 传入的文件路径
-// 两条来源都写这里：命令行 argv（启动时）/ Apple Event（Finder 双击、打开方式）
-// 审计 2026-09-23 [5] 后不再只留档：dispatchFileOpen 把路径解析进笔记目录后
-// 以 "open:" 负载分发给 Markdown 模块，文件内容真实加载
-std::string& pendingOpenFilePath() {
-    static std::string path;
-    return path;
+bool isModuleEnabled(const char* moduleId) {
+    return module::settings::moduleEnabled(gatingConfigSnapshot(), moduleId);
 }
 
-// 从 argv 捕获要打开的文件（仅在第一次 dslAppConfig() 调用时执行）
-// 注意：必须在 setupLogging() 之后调用，否则 LOG_INFO 会丢失
-// 平台差异在 platform/file_open_* 内隔离（macOS 读 _NSGetArgv，Windows 读标准 argv）
-void captureOpenFileFromArgv() {
-    static bool captured = false;
-    if (captured) return;
-    captured = true;
-
-    // argv[1] 是文件路径；跳过 flag 类参数（以 '-' 开头）
-    const std::string path = platform::file_open::openFileFromArgv();
-    if (path.empty()) return;
-
-    pendingOpenFilePath() = path;
-    LOG_INFO("捕获到待打开文件（命令行 argv）: " + pendingOpenFilePath());
-}
-
-// 根据文件扩展名返回目标 PageId（审计 [5] 后仅作目标选择；内容加载由
-// dispatchFileOpen 带负载完成）
-::core::PageId dispatchPageForFile(const std::string& path) {
-    auto endsWith = [&](const char* suffix) {
-        size_t n = std::string(suffix).size();
-        return path.size() >= n &&
-               path.compare(path.size() - n, n, suffix) == 0;
-    };
-    if (endsWith(".md") || endsWith(".markdown")) return ::core::PageId::Markdown;
-    if (endsWith(".json")) return ::core::PageId::ClaudeProxy;
-    if (endsWith(".js") || endsWith(".html") || endsWith(".htm") ||
-        endsWith(".txt")) return ::core::PageId::Markdown;  // 文本类用 Markdown 模块查看
-    return ::core::PageId::Home;
-}
-
-// 文件打开分发（审计 2026-09-23 [5]）：旧版只切页、文件内容永远不加载。
-// 现在把绝对路径经 md_file_open 解析成笔记目录内相对路径（目录内 → 直接
-// 相对化；目录外 → 复制捕获进笔记目录，强制 .md），再以 "open:<相对路径>"
-// 负载走 Markdown 模块 consumeNavPayload 的既有通道（Home 最近编辑同款）。
-// 降级路径：Markdown 模块被关（未注册）→ Router 自带回退 Home 且不投递
-// 负载（不往关掉的模块目录里写文件）；解析失败 → 只切页 + WARN 日志。
-// .json → Claude 页维持无负载切页（该模块暂无消费方，不属本审计项）。
-void dispatchFileOpen(::core::Router* router, const std::string& path) {
-    if (router == nullptr || path.empty()) return;
-    const ::core::PageId target = dispatchPageForFile(path);
-    if (target == ::core::PageId::Markdown &&
-        router->isRegistered(::core::PageId::Markdown)) {
-        // main.cpp 用 -fno-exceptions 编译：取失败信息外的值走 unsafeValue()
-        auto r = module::markdown::captureFileIntoNotesDir(
-            ::core::paths::markdownDir(), path);
-        if (r.isOk()) {
-            const std::string payload = "open:" + r.unsafeValue();
-            LOG_INFO("文件打开分发: " + path + " → " + payload);
-            router->navigateTo(target, payload);
-            return;
-        }
-        LOG_WARN("文件打开分发：无法纳入笔记目录，仅切页 — " + path + ": " +
-                 r.errorMessage());
-    }
-    router->navigateTo(target);
-}
+// 待打开文件的捕获（argv / Apple Event 两条来源）与文件打开分发
+//（dispatchPageForFile / dispatchFileOpen）已移至 app_assembly（可无头单测，
+// 专家审计 2026-09-27 M2）——notesDir 改为显式参数，行为与搬运前逐字一致。
 
 void setupLogging() {
     core::log::addFileOutput(::core::paths::logFile());
@@ -187,8 +126,16 @@ void setupLogging() {
     return *db;
 }
 
+// 启动前置段（定义在 getClaudeService/startClaudeProxy 之后：三者的定义顺序
+// 保持搬运前原样）。getRouter() 经 app::assembly::PreStartHook 调用它 ——
+// 结构上保证 ClaudeService 创建 + setGlobal 早于模块 onStart（W3 事故点）
+void prepareClaudeServiceBeforeModules();
+
 ::core::Router* getRouter() {
     static ::core::Router router;
+    // 模块工厂 + 生命周期持有仍在本文件：静态对象必须构造在 armExitHook()
+    //（由 assembleAndStart 在注册后调用）之前 —— atexit 的 LIFO 才能保证
+    // handler 先于 modules/router 静态析构运行，stopAll 时模块仍活着。
     static std::unique_ptr<::core::Module> home(create_home_module());
     static std::unique_ptr<::core::Module> markdown(create_markdown_module());
     static std::unique_ptr<::core::Module> todo(create_todo_module());
@@ -197,47 +144,20 @@ void setupLogging() {
 
     static bool initialized = false;
     if (!initialized) {
-        // 注册给 module_* 层（快捷按钮/卡片点击通过 core::appRouter() 导航）
-        ::core::registerAppRouter(&router);
-        // 注册门控（方案 A）：home/settings 恒注册；三个工具模块按
-        // enabledModules 决定——不注册 = onStart/compose/菜单项全部不可达，
-        // "零执行零菜单项"是结构性保证，不靠模块自觉检查开关
-        router.registerModule(home.get());
-        if (isModuleEnabled(module::settings::kModuleIdMarkdown)) {
-            router.registerModule(markdown.get());
-        } else {
-            LOG_INFO("模块已关闭（enabledModules 不含 markdown），不注册");
-        }
-        if (isModuleEnabled(module::settings::kModuleIdTodo)) {
-            router.registerModule(todo.get());
-        } else {
-            LOG_INFO("模块已关闭（enabledModules 不含 todo），不注册");
-        }
-        if (isModuleEnabled(module::settings::kModuleIdClaudeProxy)) {
-            router.registerModule(claude.get());
-        } else {
-            LOG_INFO("模块已关闭（enabledModules 不含 claude_proxy），不注册");
-        }
-        router.registerModule(settings.get());
-        router.startAll();
-
-        // 应用退出还原接线（W2 终验问题 1）：EUI-NEO 无 onExit 回调，
-        // main() 由 glfw_app_main 提供（eui_app_run → return → main return），
-        // 返回后进程只剩静态析构/atexit 栈。关窗（glfwWindowShouldClose）
-        // 与托盘 Exit（trayExitRequested → break）都汇合于 eui_app_run 的
-        // 同一 return，因此这里注册的 atexit 在两条退出路径都会执行。
-        // 必须在全部模块静态对象构造完成之后注册（LIFO：handler 先于
-        // modules/router 静态析构运行，stopAll 时模块仍活着）→
-        // Router::stopAll → ClaudeModule::onStop → stopProxy →
-        // settings.json 还原，接管状态下退出不留死代理 BASE_URL。
-        std::atexit([] {
-            if (auto* r = ::core::appRouter()) {
-                r->stopAll();
-            }
-        });
+        // 装配（注册顺序 / 门控 / startAll / 退出接线）收在 app_assembly：
+        // preStart（ClaudeService 就绪）→ 门控注册 → startAll → atexit。
+        // 接线语义与搬运前逐字一致（专家审计 2026-09-27 M2），差异仅在
+        // 「这些顺序现在有 headless 用例守着」
+        app::assembly::assembleAndStart(
+            router, gatingConfigSnapshot(),
+            app::assembly::ModuleSet{home.get(), markdown.get(), todo.get(),
+                                     claude.get(), settings.get()},
+            prepareClaudeServiceBeforeModules);
 
         // 启动时若有待打开文件（argv 捕获），解析成笔记负载分发（审计 [5]）
-        dispatchFileOpen(&router, pendingOpenFilePath());
+        app::assembly::dispatchFileOpen(
+            &router, app::assembly::pendingOpenFilePath(),
+            ::core::paths::markdownDir());
         initialized = true;
     }
     return &router;
@@ -249,11 +169,12 @@ void setupLogging() {
 void handleAppleEventOpenFile(const std::string& path) {
     if (path.empty()) return;
 
-    pendingOpenFilePath() = path;
+    app::assembly::pendingOpenFilePath() = path;
     LOG_INFO("捕获到待打开文件（Apple Event）: " + path);
 
     // 与 argv 启动路径同一分发逻辑：解析 + open: 负载（审计 [5]）
-    dispatchFileOpen(getRouter(), path);
+    app::assembly::dispatchFileOpen(getRouter(), path,
+                                    ::core::paths::markdownDir());
 }
 
 // ---- Claude 代理（全局唯一，spec §10.4）----
@@ -343,32 +264,54 @@ void startClaudeProxy() {
     // 启动成功日志由 ClaudeService::startProxy 统一输出一次，这里不重复记录
 }
 
+// 启动前置段（原 dslAppConfig 的 initialized lambda 里的 Claude 分支，逐字
+// 搬运；专家审计 2026-09-27 M2）。由 getRouter() 经 app_assembly 的 preStart
+// 钩子调用 → 结构上早于模块注册与 onStart，W3 修过的启动顺序不回退。
+// 模块插拔门控（方案 A §5.2）：claude 模块关闭 = 该功能整体下线，含后台服务
+// ——不创建 ClaudeService（global() 保持 null）、不 bind 8888
+void prepareClaudeServiceBeforeModules() {
+    const module::settings::SettingsStore settingsStore(
+        ::core::paths::configFile());
+    const auto settingsCfg = settingsStore.load();
+    if (!module::settings::moduleEnabled(
+            settingsCfg, module::settings::kModuleIdClaudeProxy)) {
+        LOG_INFO("Claude 模块已关闭：代理/ClaudeService 整体下线（端口 " +
+                 std::to_string(settingsCfg.proxyPort) +
+                 " 不监听；重新启用需改设置并重启）");
+        return;
+    }
+    // ClaudeService 创建 + Claude Code 接管通道注入（spec §10.4）。
+    // ClaudeService 的创建 + setGlobal 在 getClaudeService() 内完成，模块
+    // onStart 才能拿到非 null 的 global()——W3 修过的启动顺序不能因为
+    // 「默认不启动代理」回退，所以无论是否启动代理都必须先调它。
+    auto* claudeSvc = getClaudeService();
+    // 配置端口注入（审计 [14]）：Claude 页手动启动 / 下方自启都经
+    // service 的 configuredProxyPort 读值；设置页改端口时会再同步一次
+    if (claudeSvc) {
+        claudeSvc->setConfiguredProxyPort(settingsCfg.proxyPort);
+    }
+    // 崩溃补还原（provider-config Phase C §5.3）：上次异常退出时
+    // sidecar 残留 → 先还原，且必须先于任何 startProxy（否则残留的
+    // 托管键会被误快照为用户原值）
+    if (claudeSvc) {
+        claudeSvc->recoverPendingSettingsRestore();
+    }
+    // 硬性需求 1（provider-config Phase B）：代理默认不启动，
+    // claudeProxyAutoStart 门控；启动/停止按钮在 Claude 页
+    if (settingsCfg.claudeProxyAutoStart) {
+        startClaudeProxy();
+    } else {
+        LOG_INFO("Claude 代理未自动启动（claudeProxyAutoStart=false，"
+                 "可在设置页或 Claude 页手动启动）");
+    }
+}
+
 // ---- 托盘菜单（菜单美化 2026-09-23；审计 [7] 动态收缩 2026-09-24）----
 // 唯一数据源 core::tray::trayMenuSpec：styled 独立菜单窗（主路径）与
 // 原生托盘菜单（降级路径）都从 spec 按模块实际可用性生成，动作路由共用
 // executeTrayAction。可用性与侧边栏同源（Router 注册门控 enabledModules）。
-
-std::optional<::core::PageId> pageForTrayAction(::core::tray::TrayMenuAction action) {
-    using Action = ::core::tray::TrayMenuAction;
-    switch (action) {
-        case Action::NavigateHome: return ::core::PageId::Home;
-        case Action::NavigateMarkdown: return ::core::PageId::Markdown;
-        case Action::NavigateTodo: return ::core::PageId::Todo;
-        case Action::NavigateClaude: return ::core::PageId::ClaudeProxy;
-        default: return std::nullopt;
-    }
-}
-
-const char* trayPageDisplayName(::core::PageId page) {
-    switch (page) {
-        case ::core::PageId::Home: return "首页";
-        case ::core::PageId::Markdown: return "笔记";
-        case ::core::PageId::Todo: return "待办";
-        case ::core::PageId::ClaudeProxy: return "Claude";
-        case ::core::PageId::Settings: return "设置";
-    }
-    return "?";
-}
+// 动作→页面映射（pageForTrayAction）、页名（trayPageDisplayName）与导航
+//（navigateFromTray）已移至 app_assembly（可无头单测，专家审计 2026-09-27 M2）。
 
 // styled 路径可用性谓词：每次右键重建 spec 时查 Router::isRegistered——
 // 与侧边栏 router->modules() 动态渲染完全同一真值。
@@ -377,7 +320,7 @@ bool trayNavRegisteredInRouter(::core::tray::TrayMenuAction action) {
     if (!router) {
         return true;  // 理论上不可达（回调在主循环、Router 已装配），保守不置灰
     }
-    const auto page = pageForTrayAction(action);
+    const auto page = app::assembly::pageForTrayAction(action);
     return !page || router->isRegistered(*page);
 }
 
@@ -399,26 +342,6 @@ bool trayNavAvailableFromConfig(::core::tray::TrayMenuAction action) {
     }
 }
 
-// 导航到托盘指定页；模块未注册时不再静默回退 Home（审计 [7]）——唤起主窗 +
-// 应用级 toast 解释「怎么启用」，仍落到首页（有落点，但用户知道为什么）
-void navigateFromTray(::core::PageId page) {
-    auto* router = getRouter();
-    if (!router) {
-        return;
-    }
-    if (router->isRegistered(page)) {
-        router->navigateTo(page);
-        app::requestUpdate();
-        return;
-    }
-    router->navigateTo(::core::PageId::Home);
-    app::requestShow();
-    app::showAppNotice("模块已关闭",
-                       std::string("「") + trayPageDisplayName(page) +
-                           "」模块未启用，已转到首页。可在 设置 → 模块开关 中启用，重启后生效。");
-    app::requestUpdate();
-}
-
 void executeTrayAction(::core::tray::TrayMenuAction action) {
     using Action = ::core::tray::TrayMenuAction;
     switch (action) {
@@ -426,16 +349,16 @@ void executeTrayAction(::core::tray::TrayMenuAction action) {
             app::requestShow();
             break;
         case Action::NavigateHome:
-            navigateFromTray(::core::PageId::Home);
+            app::assembly::navigateFromTray(getRouter(), ::core::PageId::Home);
             break;
         case Action::NavigateMarkdown:
-            navigateFromTray(::core::PageId::Markdown);
+            app::assembly::navigateFromTray(getRouter(), ::core::PageId::Markdown);
             break;
         case Action::NavigateTodo:
-            navigateFromTray(::core::PageId::Todo);
+            app::assembly::navigateFromTray(getRouter(), ::core::PageId::Todo);
             break;
         case Action::NavigateClaude:
-            navigateFromTray(::core::PageId::ClaudeProxy);
+            app::assembly::navigateFromTray(getRouter(), ::core::PageId::ClaudeProxy);
             break;
         case Action::Exit:
             app::requestExit();
@@ -686,52 +609,20 @@ const DslAppConfig& dslAppConfig() {
     static bool initialized = []() {
         using namespace core;
         // 必须在 setupLogging() 之后（themeRestored 里已完成）：内部有 LOG_INFO
-        captureOpenFileFromArgv();
+        app::assembly::captureOpenFileFromArgv();
         LOG_INFO("DevDesk 启动中...");
         LOG_INFO("应用数据目录: " + paths::appDataDir().string());
         openAppDatabase();
-        // 模块插拔门控（方案 A §5.2）：claude 模块关闭 = 该功能整体下线，
-        // 含后台服务——不创建 ClaudeService（global() 保持 null）、不 bind
-        // 8888。W3 的启动顺序约定（service 先于 getRouter）只在模块启用时
-        // 原样保留
         const module::settings::SettingsStore settingsStore(
             paths::configFile());
         const auto settingsCfg = settingsStore.load();
         // 侧边栏折叠启动恢复（app_sidebar）：config.json → 运行时状态。
         // 空路径 = 只改内存不回写（保存发生在用户切换时）
         app::setSidebarCollapsed(settingsCfg.sidebarCollapsed);
-        if (!module::settings::moduleEnabled(
-                settingsCfg, module::settings::kModuleIdClaudeProxy)) {
-            LOG_INFO("Claude 模块已关闭：代理/ClaudeService 整体下线（端口 " +
-                     std::to_string(settingsCfg.proxyPort) +
-                     " 不监听；重新启用需改设置并重启）");
-        } else {
-            // ClaudeService 创建 + Claude Code 接管通道注入（spec §10.4）。
-            // 必须在 getRouter()（内部 Router::startAll → 各模块 onStart）之前：
-            // ClaudeService 的创建 + setGlobal 在 getClaudeService() 内完成，
-            // 模块 onStart 才能拿到非 null 的 global()——W3 修过的启动顺序不能
-            // 因为「默认不启动代理」回退，所以无论是否启动代理都必须先调它。
-            auto* claudeSvc = getClaudeService();
-            // 配置端口注入（审计 [14]）：Claude 页手动启动 / 下方自启都经
-            // service 的 configuredProxyPort 读值；设置页改端口时会再同步一次
-            if (claudeSvc) {
-                claudeSvc->setConfiguredProxyPort(settingsCfg.proxyPort);
-            }
-            // 崩溃补还原（provider-config Phase C §5.3）：上次异常退出时
-            // sidecar 残留 → 先还原，且必须先于任何 startProxy（否则残留的
-            // 托管键会被误快照为用户原值）
-            if (claudeSvc) {
-                claudeSvc->recoverPendingSettingsRestore();
-            }
-            // 硬性需求 1（provider-config Phase B）：代理默认不启动，
-            // claudeProxyAutoStart 门控；启动/停止按钮在 Claude 页
-            if (settingsCfg.claudeProxyAutoStart) {
-                startClaudeProxy();
-            } else {
-                LOG_INFO("Claude 代理未自动启动（claudeProxyAutoStart=false，"
-                         "可在设置页或 Claude 页手动启动）");
-            }
-        }
+        // Claude 前置段（ClaudeService 创建 + setGlobal + 端口注入 + 崩溃补
+        // 还原 + 条件自启）已随装配收进 getRouter() 的 preStart 钩子
+        //（prepareClaudeServiceBeforeModules）——结构上仍早于模块 onStart，
+        // W3 修过的启动顺序（service 先于 getRouter）不回退，见 app_assembly.h
         getRouter();
         // 桌宠（2026-09-22-desktop-pet-design.md §4.1）：不是 Router 页面模块，
         // 经同一 enabledModules 门控（含 "pet" 才开窗，默认关 = 零执行）。
