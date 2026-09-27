@@ -403,8 +403,8 @@ REGISTER_TEST(provider_config_migration_upgrade,
         // v3 供应商配置迁移 + v4 todo kind 迁移（W9 批次并入后全量到 4）
         // + v5 调用日志用量列（cc-switch 对照 §3.4）
         // + v6 共享配置片段表与 profile 绑定列
-        // + v7 profile 认证字段 → 全量到 7
-        DOCTEST_CHECK_EQ(db.schemaVersion(), 7);
+        // + v7 profile 认证字段 + v8 todo 归档列 kind 回填 → 全量到 8
+        DOCTEST_CHECK_EQ(db.schemaVersion(), 8);
 
         module::claude::ClaudeService svc(db, kTestKeychainService);
         auto profiles = svc.listProfiles();

@@ -231,6 +231,23 @@ inline const Migration kClaudeProfileAuthField = {
     )"
 };
 
+// Todo 归档列语义标记回填（version 8，波 1 THS-14）
+//   - 种子列「已归档」此前没有 kind，UI 的空态文案靠标题字符串判断
+//     （todo_module.cpp 曾写 col.title == "已归档"），用户重命名即静默失效
+//   - kind 列由 v4 建立（'todo' / 'done'），本次只按标题回填 'archive' 一次，
+//     此后 kind 是唯一权威（重命名不再影响语义）
+//   - 已知限制（与 v4 同病，不引入新机制）：升级前已改过归档列名的库，
+//     按 title 回填会落空
+// 版本号 8：合并 master 时由 v7 顺延——master 的 kClaudeProfileAuthField 已先占
+// v7 且可能已落库，改号会让 v7 旧库重跑 ALTER；本迁移此前只存在于本分支，顺延零副作用。
+inline const Migration kTodoArchiveColumnKind = {
+    .version = 8,
+    .description = "todo columns backfill 'archive' kind",
+    .sql = R"(
+        UPDATE todo_columns SET kind = 'archive' WHERE title = '已归档';
+    )"
+};
+
 // 所有 migrations 的权威列表（顺序敏感，必须按 version 升序）
 inline const std::vector<core::data::Migration>& all() {
     static const std::vector<core::data::Migration> kMigrations = {
@@ -241,6 +258,7 @@ inline const std::vector<core::data::Migration>& all() {
         kClaudeCallLogUsageColumns,
         kClaudeSharedConfigs,
         kClaudeProfileAuthField,
+        kTodoArchiveColumnKind,
     };
     return kMigrations;
 }

@@ -27,8 +27,9 @@ struct Column {
     std::string title;
     int position;
     std::optional<std::string> color;
-    // 语义标记（migration v3）：'done' = 已完成列，'todo' = 默认待办列，
-    // 空 = 普通列。完成态流转按它定位目标列，不靠标题字符串。
+    // 语义标记（migration v3，v8 起含 'archive'）：'done' = 已完成列，
+    // 'todo' = 默认待办列，'archive' = 归档列，空 = 普通列。完成态流转与
+    // 归档空态文案按它定位目标列，不靠标题字符串。
     std::string kind;
 };
 
@@ -78,7 +79,7 @@ public:
     // 新建任务（追加到列末尾）
     core::Result<Task> createTask(int64_t columnId, const std::string& title);
 
-    // 整字段更新（id 必须已存在）
+    // 整字段更新（只改内容字段；改列 / 改序一律走 moveTask）（id 必须已存在）
     core::Result<void> updateTask(const Task& task);
 
     // 删除任务
@@ -103,8 +104,8 @@ private:
     core::data::SqliteDb& db_;
 
     // ============ 内部辅助 ============
-    // 获取当前 Unix 秒
-    static core::Result<int64_t> nowEpochSeconds();
+    // 获取当前 Unix 秒（无失败路径：std::time 不返回错误）
+    static int64_t nowEpochSeconds();
 
     // 计算新列 position（MAX + 1）
     core::Result<int> nextColumnPosition();
