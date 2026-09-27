@@ -141,7 +141,17 @@ public:
     }
 
     ErrorCode errorCode() const { return code_; }
-    const std::string& errorMessage() const { return std::get<2>(data_); }
+
+    // 默认构造态（variant 索引 0 = monostate）没有错误信息：返回占位串，
+    // 而不是走 std::get<2> 抛 std::bad_variant_access——app 以
+    // -fno-exceptions 编译，抛即 terminate。静态存储保证返回的引用有效
+    //（M8，2026-09-27：默认态 isOk()==false 是"伪失败态"，调用方据此取
+    // 错误信息必须安全）。
+    const std::string& errorMessage() const {
+        static const std::string kUninitialized = "（未初始化）";
+        if (data_.index() == 0) return kUninitialized;
+        return std::get<2>(data_);
+    }
 
 private:
     // variant<monostate, T, string> 索引 0=未初始化, 1=值, 2=错误信息
