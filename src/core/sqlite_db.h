@@ -71,7 +71,9 @@ private:
 
 class SqliteDb {
 public:
-    SqliteDb() = default;
+    // 审计 CP-07：默认构造私有化——「未打开的空连接」不再是可表达状态，
+    // open() 是唯一入口（返回 Result，失败即失败，不留半成品对象）。
+    // 确实需要可空/延迟打开语义的调用方用指针或 std::optional 表达。
     static Result<SqliteDb> open(const std::filesystem::path& file);
     ~SqliteDb();
 
@@ -93,6 +95,8 @@ public:
     sqlite3* handle() { return handle_; }
 
 private:
+    SqliteDb() = default;   // 仅 open()（本类静态成员）可用，见上方说明
+
     sqlite3* handle_ = nullptr;
     std::recursive_mutex mutex_;
 };

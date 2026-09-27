@@ -1,4 +1,5 @@
 #include "doctest.h"
+#include "core/database.h"
 #include "core/sqlite_db.h"
 #include "core/result.h"
 
@@ -7,6 +8,7 @@
 #include <filesystem>
 #include <optional>
 #include <thread>
+#include <type_traits>
 
 REGISTER_TEST(sqlite_open_memory, "SqliteDb: open in-memory", {
     auto r = core::data::SqliteDb::open(":memory:");
@@ -157,5 +159,18 @@ REGISTER_TEST(sqlite_close_with_unfinalized_stmt,
     DOCTEST_CHECK_FALSE(std::filesystem::exists(path));
     std::filesystem::remove(path.string() + "-wal", ec);
     std::filesystem::remove(path.string() + "-shm", ec);
+    return true;
+})
+
+// 审计 CP-07 回归：「未打开的空连接」不再是可表达状态——SqliteDb/Database 的
+// 默认构造已私有化（open() 是唯一入口），下面两条 static_assert 在**编译期**
+// 就拒绝 `SqliteDb db;` / `core::Database db;`；若有谁把默认构造放回 public，
+// 本文件编译失败（用例跑到这里即通过）。
+REGISTER_TEST(sqlite_no_default_ctor,
+              "SqliteDb/Database: 默认构造已禁用，非法态不可表达（审计 CP-07）", {
+    static_assert(!std::is_default_constructible_v<core::data::SqliteDb>,
+                  "SqliteDb 不应可默认构造：SqliteDb::open() 是唯一入口");
+    static_assert(!std::is_default_constructible_v<core::Database>,
+                  "Database 不应可默认构造：Database::open() 是唯一入口");
     return true;
 })
