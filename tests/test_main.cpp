@@ -2,11 +2,14 @@
 // 唯一定义 main() 的文件
 #define DOCTEST_CONFIG_IMPLEMENT_WITH_MAIN
 #include "doctest.h"
+#include "app_assembly.h"
+#include "app_sidebar.h"
 #include "claude_service.h"
 #include "core/database.h"
 #include "core/logging.h"
 #include "core/proxy_stats.h"
 #include "core/router.h"
+#include "core/service_locator.h"
 #include "core/theme.h"
 #include <chrono>
 #include <cstdlib>
@@ -52,6 +55,9 @@ void setEnvVar(const char* key, const std::string& value) {
 //   5. core::proxy_stats    流式统计 + 注入的假时钟      ← core/proxy_stats.h
 //   6. core::log 级别       日志级别（回到命令行基线）      ← core/logging.h
 //   7. 路径环境变量          DEVDESK_* 系列              ← 本文件（setEnvVar）
+//   8. ServiceLocator 槽位   全部接口类型（清空=未注册）      ← core/service_locator.h
+//   9. argv 捕获（装配层）    待打开文件路径 + 已捕获门        ← app_assembly.h
+//  10. 应用级通知（侧边栏）    ui_kit::ToastState 单例        ← app_sidebar.h
 // ==========================================================================
 // 日志级别的「出厂态」= 命令行选定的基线：--log → Debug，否则 Info。重置必须回到
 // 这个基线而不是硬编码 Info——硬编码会把 --log 的 Debug 在第一个用例前冲掉，
@@ -103,6 +109,21 @@ void resetCaseGlobals() {
     std::filesystem::remove(todoVs, ec);
     setEnvVar("DEVDESK_MARKDOWN_VIEW_STATE_PATH", mdVs);
     setEnvVar("DEVDESK_TODO_VIEW_STATE_PATH", todoVs);
+    // 8) ServiceLocator 槽位（core/service_locator.h，R0 新增的进程级槽）：
+    // 用例体内 set<T>(&栈上对象) 后提前返回会把悬垂指针留在槽里，后续用例经
+    // requireService<T>() 取到已析构对象（生产 main.cpp 注册的是常驻适配器）。
+    // 出厂态 = 全部未注册；resetForTest 类型无关地全清（槽位按类型实例化，
+    // 测试本地桩类型——如 test_app_assembly 的 IProbeService——本文件无法点名）
+    ::core::ServiceLocator::resetForTest();
+    // 9) 装配层 argv 捕获（app_assembly.h）：pendingOpenFilePath 的静态串与
+    // 「已捕获」幂等门都是进程级。不复位则后续用例的 captureOpenFileFromArgv
+    // 静默 no-op（门已置位）+ 残留上一用例的路径。出厂态 = 未捕获 + 空路径
+    ::app::assembly::resetArgvCaptureForTest();
+    ::app::assembly::pendingOpenFilePath().clear();
+    // 10) 应用级通知（app_sidebar.h，R1 收口成 ui_kit::ToastState 单例）：托盘
+    // 失效入口的反馈通道，tray 用例在入口就断言「不可见」——上一用例 fail-fast
+    // 跳过 clearAppNotice 会让断言连锁翻车。出厂态 = 无通知（open=false、内容空）
+    ::app::clearAppNotice();
 }
 
 } // namespace
@@ -188,3 +209,54 @@ int main(int argc, char** argv) {
     }
     return failed == 0 ? 0 : 1;
 }
+
+// ==================== TIN-07 登记清单的复位自证（R0 收尾） ====================
+// 清单的价值全在「复位真的发生」——条目写进去还不够，得证明它真把跨用例的脏态
+// 清回出厂态。这里用两件套自证（同一 TU 内用例按声明序执行，① 必先于 ②）：
+//   ① 注册定位器槽位 / 写待打开文件 / 弹应用通知，**故意不清理**就返回；
+//   ② 断言三者都已回到出厂态——② 内没有任何清理代码，能恢复只可能来自
+//      resetCaseGlobals（运行器在每个用例体之前调用）。
+// 证伪对照：临时注掉 resetCaseGlobals 里任一条复位，② 立即在对应断言转红。
+namespace {
+
+// 本文件私有的桩接口：证明复位是「类型无关」的——它声明在匿名空间，测试运行器
+// 无从按名字逐类型清零（与 test_app_assembly 的 IProbeService 同款形态）
+class ISlotProbe {
+public:
+    virtual ~ISlotProbe() = default;
+    virtual int value() const = 0;
+};
+
+class SlotProbe final : public ISlotProbe {
+public:
+    int value() const override { return 7; }
+};
+
+} // namespace
+
+REGISTER_TEST(tin07_probe_leaves_globals_dirty,
+              "TIN-07: 复位自证①——定位器槽位/待打开文件/应用通知留脏不清理", {
+    // 进程级槽位指向的对象必须活过本用例（故意留脏，不能是栈上对象）
+    static SlotProbe probe;
+    ::core::ServiceLocator::set<ISlotProbe>(&probe);
+    ::app::assembly::resetArgvCaptureForTest();
+    ::app::assembly::captureOpenFileFromArgv({"devdesk_tests.exe", "dirty.md"});
+    ::app::showAppNotice("脏态", "留给下一用例");
+    // 反向自检：脏态确实留下了——否则 ② 全绿也不能证明复位发生过（可能本来就干净）
+    DOCTEST_CHECK(::core::ServiceLocator::requireService<ISlotProbe>().isOk());
+    DOCTEST_CHECK_EQ(::app::assembly::pendingOpenFilePath(), std::string("dirty.md"));
+    DOCTEST_CHECK(::app::appNoticeVisible());
+    return true;
+})
+
+REGISTER_TEST(tin07_reset_clears_globals_between_cases,
+              "TIN-07: 复位自证②——上一用例的三处脏态被 resetCaseGlobals 清回出厂态", {
+    // 本用例体内零清理代码：以下断言全绿 = 复位真的发生
+    DOCTEST_CHECK(::core::ServiceLocator::requireService<ISlotProbe>().isFail());
+    DOCTEST_CHECK(::app::assembly::pendingOpenFilePath().empty());
+    DOCTEST_CHECK_FALSE(::app::appNoticeVisible());
+    // 「已捕获」幂等门也复位了（否则本进程内再也捕获不到 argv）：空态下捕获应写入
+    ::app::assembly::captureOpenFileFromArgv({"devdesk_tests.exe", "fresh.md"});
+    DOCTEST_CHECK_EQ(::app::assembly::pendingOpenFilePath(), std::string("fresh.md"));
+    return true;
+})
