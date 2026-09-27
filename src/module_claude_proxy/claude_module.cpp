@@ -139,6 +139,9 @@ public:
         const float gap = 16.0f;
         const float leftW = 400.0f;
         const float rightW = contentW - leftW - gap;
+        // 审计 M6：header 右侧操作区宽（标题列 = contentW - 本值）——header 行
+        // gap=0，两段必须相加等于 contentW；字面量写死两处改一处忘一处就右缘错位
+        constexpr float kHeaderActionsW = 360.0f;
 
         // ---- 读真实状态（ClaudeService 全局单例，由 main.cpp 注册）----
         ClaudeService* svc = ClaudeService::global();
@@ -211,11 +214,11 @@ public:
                     .content([&] {
                         // 左侧标题 + 状态
                         ui.column("claude.title.col")
-                            .size(contentW - 360.0f, headerH)
+                            .size(contentW - kHeaderActionsW, headerH)
                             .gap(6.0f)
                             .content([&] {
                                 ui.row("claude.title.row")
-                                    .size(contentW - 360.0f, 28.0f)
+                                    .size(contentW - kHeaderActionsW, 28.0f)
                                     .gap(12.0f)
                                     .alignItems(eui::Align::CENTER)
                                     .content([&] {
@@ -258,7 +261,7 @@ public:
                                        portStr)
                                     : std::string("管理多套 Claude API 配置 · 代理已停止，点右上角启动");
                                 ui.text("claude.subtitle")
-                                    .size(contentW - 360.0f, 16.0f)
+                                    .size(contentW - kHeaderActionsW, 16.0f)
                                     .text(subtitle)
                                     .fontSize(t.sizes.fontSizeSmall)
                                     .lineHeight(16.0f)
@@ -269,7 +272,7 @@ public:
 
                         // 右侧操作
                         ui.row("claude.actions")
-                            .size(360.0f, 40.0f)
+                            .size(kHeaderActionsW, 40.0f)
                             .justifyContent(eui::Align::END)
                             .alignItems(eui::Align::CENTER)
                             .gap(t.sizes.spacingSmall)
