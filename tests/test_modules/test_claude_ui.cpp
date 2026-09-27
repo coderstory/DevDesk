@@ -14,6 +14,7 @@
 #include "core/time.h"
 #include "platform/http_server.h"
 #include "platform/keychain.h"
+#include "platform/terminal_launch.h"
 #include "provider_config.h"
 #include "settings_sync.h"
 
@@ -208,6 +209,37 @@ REGISTER_TEST(claude_module_compose_null_service,
         DOCTEST_REQUIRE(msg != nullptr);
         DOCTEST_CHECK(msg->text.find("请先选择 Profile") != std::string::npos);
     }
+
+    mod->onStop();
+    return true;
+})
+
+// ---- 1b. 6 键均分几何：第 6 键右缘对齐分隔线（回归闸）----
+// actW = (w0 - actGap*5)/6 —— EUI 的 row spacing 只在相邻子项之间生效，n 项只有
+// n−1 个间隙。旧算式扣 6 个 gap 会让第 6 键右缘比分隔线短一整个 gap（12px）。
+// 跑真实 layout 后比对计算 frame，无头也能锁死这个几何。
+
+REGISTER_TEST(claude_module_actions_row_alignment,
+              "claude_module: 6 键均分——第 6 键右缘对齐分隔线（headless layout）", {
+    module::claude::ClaudeService::setGlobal(nullptr);
+    std::unique_ptr<::core::Module> mod(create_claude_module());
+    eui::Screen screen;
+    screen.width = 1600.0f;
+    screen.height = 1000.0f;
+    eui::Ui ui;
+    ui.begin("claude_actions_align");
+    mod->compose(ui, screen);
+    ui.end();
+    ui.layout(screen.width, screen.height);
+
+    const auto* divider = ui.find("claude.act.divider");
+    const auto* run6 = ui.find("claude.act.run.bg");   // 第 6 键（profile-run）
+    DOCTEST_REQUIRE(divider != nullptr);
+    DOCTEST_REQUIRE(run6 != nullptr);
+    const float dividerRight = divider->frame.x + divider->frame.width;
+    const float runRight = run6->frame.x + run6->frame.width;
+    DOCTEST_CHECK(runRight >= dividerRight - 0.5f);
+    DOCTEST_CHECK(runRight <= dividerRight + 0.5f);
 
     mod->onStop();
     return true;
@@ -2384,5 +2416,108 @@ REGISTER_TEST(claude_ui_auth_field_edit_shows_current,
     }
 
     mod->onStop();
+    return true;
+})
+
+// ---- 运行第 6 键（2026-09-28 profile-run 设计 §6/§8）----
+// ⚠️ 本文件用真实 ClaudeService（setGlobal）：点「运行」前**必须**注入假 launch，
+//    否则测试会真的启动 wt/powershell + claude（spec §6 第 4 项）
+REGISTER_TEST(claude_module_run_button_headless,
+              "claude_module: 「运行」按钮存在 + 无选中 toast + 假 launch 被调用一次", {
+    TestEnv env;
+    std::unique_ptr<::core::Module> mod(create_claude_module());
+    eui::Screen screen;
+    screen.width = 1600.0f;
+    screen.height = 1000.0f;
+    auto compose = [&](eui::Ui& ui) {
+        ui.begin("claude_run");
+        mod->compose(ui, screen);
+        ui.end();
+    };
+    auto click = [](eui::Ui& ui, const std::string& id) -> bool {
+        const auto* node = ui.find(id);
+        if (node == nullptr || node->onClick == nullptr) {
+            std::cerr << "missing clickable: " << id << std::endl;
+            return false;
+        }
+        node->onClick();
+        return true;
+    };
+    // 审计 H2：DB 查询在后台线程 + 200ms 节流 → 「变更可见」最多晚一帧，
+    // 有界轮询等可见（同本文件「compose 缓存等价」用例的 composeUntil）
+    auto composeUntil = [&](auto&& pred) -> bool {
+        for (int i = 0; i < 200; ++i) {
+            eui::Ui ui;
+            compose(ui);
+            if (pred(ui)) return true;
+            std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        }
+        return false;
+    };
+
+    int launchCalls = 0;
+    platform::terminal::LaunchSpec got;
+    env.svc->setTerminalLauncher([&](const platform::terminal::LaunchSpec& s) {
+        ++launchCalls;
+        got = s;
+        return core::Result<void>::ok();
+    });
+    // runProfile 会真起代理：端口用动态空闲口（写死端口在多 worktree 下会撞）
+    const int port = pickFreePort();
+    DOCTEST_REQUIRE(port != 0);
+    env.svc->setConfiguredProxyPort(port);
+
+    // 第 6 键存在且可点（无 profile 时：无选中 → toast「请先选择 Profile」，不启动）
+    {
+        eui::Ui ui;
+        compose(ui);
+        DOCTEST_CHECK(ui.find("claude.act.run") != nullptr);
+        DOCTEST_CHECK(ui.find("claude.act.run.bg") != nullptr);
+        DOCTEST_CHECK(ui.find("claude.act.run.hint") != nullptr);   // 副提示（D-1）
+        DOCTEST_CHECK(click(ui, "claude.act.run.bg"));
+    }
+    {
+        eui::Ui ui;
+        compose(ui);
+        const auto* msg = ui.find("claude.toast.message");
+        DOCTEST_REQUIRE(msg != nullptr);
+        DOCTEST_CHECK(msg->text.find("请先选择 Profile") != std::string::npos);
+        DOCTEST_CHECK_EQ(launchCalls, 0);          // 无选中不开会话
+        DOCTEST_CHECK(!env.svc->isProxyRunning()); // 也没起代理
+    }
+
+    // 有 profile 且选中 → 点击后假 launch 被调用一次、参数正确、代理已起
+    auto a = env.svc->createProfile("运行目标", "https://run.example.com",
+                                    "sk-ant-run-ui-0001", "");
+    DOCTEST_REQUIRE(a.isOk());
+    DOCTEST_REQUIRE(env.svc->setActiveProfile(a.value().id).isOk());
+    // 外部直写 service 绕过模块的缓存帧 → 打脏（onPageEnter 语义），并轮询等
+    // 列表可见：否则 profile 列表仍是空的、选不中卡片
+    mod->onPageEnter();
+    {
+        DOCTEST_CHECK(composeUntil([&](eui::Ui& ui) {
+            if (ui.find("claude.profile.0.bg") == nullptr) return false;
+            return click(ui, "claude.profile.0.bg");   // 选中
+        }));
+    }
+    {
+        eui::Ui ui;
+        compose(ui);
+        DOCTEST_CHECK(click(ui, "claude.act.run.bg"));
+    }
+    {
+        eui::Ui ui;
+        compose(ui);
+        DOCTEST_CHECK_EQ(launchCalls, 1);
+        DOCTEST_CHECK_EQ(got.title, std::string("运行目标 · Claude Code"));
+        DOCTEST_CHECK_EQ(got.program, std::string("claude"));
+        DOCTEST_CHECK(env.svc->isProxyRunning());          // 顺带把代理拉起来了
+        const auto* msg = ui.find("claude.toast.message");
+        DOCTEST_REQUIRE(msg != nullptr);
+        // D-9 的提示文案（会话不受 DevDesk 管理）
+        DOCTEST_CHECK(msg->text.find("不受 DevDesk 管理") != std::string::npos);
+    }
+    cleanupKey(a.value().id);
+    env.svc->stopProxy();
     return true;
 })

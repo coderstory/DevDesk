@@ -10,6 +10,11 @@
 
 master `c48546e`（`[Batch-0927-B]` 收口）→ `9dd9ee2`：**36 个 `--no-ff` 合并批次 + 3 个直接提交** / 96 文件（+8840 −805）。内容 = 六片全量审计（A–F）+ 汇总（79 条 → 去重 77 行 / Top10 / 三波计划 / 8 条待拍板）+ 审计修复批（CP-01 / CP-02 / CPX-02 / CPX-03 / MD-01 / PAB-01 等）+ EUI-NEO 上游 U8 消费侧与 U1 采纳 + 写路径与值语义收口（原子写两批 / JsonValue 去镜像 / SqliteDb 非法态不可表达）+ 共享配置片段批 1（migration v6）+ Markdown Phase3 M1·M2 + ccache 编译缓存闭环。按合并时间倒序（`fe0b990` 反向同步 M5 收口的内容已见 `[Batch-0927-C]`，本节只列时间线）：
 
+### [Profile-Run] `a93cf58` —— Profile「运行」：用该 profile 在新终端打开 Claude Code
+- 详情页第 6 键「运行」：确保本地代理在跑（用 `configuredProxyPort()`）→ 目标 profile 非激活则先切激活 → 在新终端里用该 profile 的托管配置打开 `claude` 会话。密钥零落盘、零进命令行/进程环境（会话走本地代理，真实密钥留 Keychain 由代理转发注入）。
+- 新增平台层 `platform::terminal`（`src/platform/terminal_launch*.{h,cpp}`）：Windows = Windows Terminal 优先（`%LOCALAPPDATA%\Microsoft\WindowsApps\wt.exe` 探测），缺失退化传统控制台并提示；macOS = 写 `appDataDir()/run-scripts/run-<id>-<ts>.command` → `open`（跟随默认终端）；其他平台 `NotImplemented`。命令文本拼装为跨平台纯函数，单测逐字比对（含 `-EncodedCommand` 的 UTF-16LE+base64 载荷解码回读）。
+- 已知边界（spec §10）：起始目录默认用户主目录（首次进入新目录会弹 workspace trust）；运行中的会话不受 DevDesk 管理（停代理/退出只提示）；macOS 侧本机无 Mac，未实机验证。
+
 ### [AuthField] `77c7f6e` —— Profile 认证字段（鉴权头三态、migration v7）
 - 新增 profile 级「认证字段」：`both`（默认，双发 x-api-key + Authorization: Bearer，= 原行为）/ `bearer` / `api_key`；由代理转发按 profile 决定注入哪个鉴权头（流式 / 非流式 / 连通测试三处同源）。
 - 接管 settings.json 的占位符仍固定 `ANTHROPIC_AUTH_TOKEN=PROXY_MANAGED`（不随该字段变）；粘贴导入按键名证据自动选（只带 ANTHROPIC_API_KEY → 只发 x-api-key）。
