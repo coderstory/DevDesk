@@ -747,6 +747,47 @@ REGISTER_TEST(md_create_folder_and_list_top,
     return true;
 })
 
+REGISTER_TEST(md_list_all_folders,
+              "MarkdownService: listAllFolders 全层递归枚举（含空目录，W10 两级树用）", {
+    const auto dir = makeTempDir("allfolders");
+    auto db = makeDb();
+    runMigrations(db);
+    module::markdown::MarkdownService svc(db, dir);
+
+    // 空目录 → 空清单
+    auto empty = svc.listAllFolders();
+    DOCTEST_REQUIRE(empty.isOk());
+    DOCTEST_CHECK_EQ(empty.value().size(), static_cast<size_t>(0));
+
+    // 多级（含空目录）→ 全层 POSIX 相对路径，字母序（短的排前）
+    DOCTEST_REQUIRE(svc.createFolder("工作").isOk());
+    DOCTEST_REQUIRE(svc.createFolder("工作/周会").isOk());
+    DOCTEST_REQUIRE(svc.createFolder("工作/周会/旧").isOk());
+    DOCTEST_REQUIRE(svc.createFolder("归档").isOk());
+    auto all = svc.listAllFolders();
+    DOCTEST_REQUIRE(all.isOk());
+    DOCTEST_CHECK_EQ(all.value().size(), static_cast<size_t>(4));
+    // std::sort 按 UTF-8 字节序：E5B7(工) < E5BD(归)；同前缀短的在前
+    DOCTEST_CHECK_EQ(all.value()[0], std::string("工作"));
+    DOCTEST_CHECK_EQ(all.value()[1], std::string("工作/周会"));
+    DOCTEST_CHECK_EQ(all.value()[2], std::string("工作/周会/旧"));
+    DOCTEST_CHECK_EQ(all.value()[3], std::string("归档"));
+    for (const auto& f : all.value()) {
+        DOCTEST_CHECK(f.front() != '/');   // 相对路径
+        DOCTEST_CHECK(f.back() != '/');    // 无尾部 '/'
+    }
+
+    // 只建了笔记的目录同样在清单里（与 listTopFolders 语义一致）
+    DOCTEST_REQUIRE(svc.create("inbox/idea.md").isOk());
+    auto withFile = svc.listAllFolders();
+    DOCTEST_REQUIRE(withFile.isOk());
+    DOCTEST_CHECK_EQ(withFile.value().size(), static_cast<size_t>(5));
+    DOCTEST_CHECK_EQ(withFile.value()[0], std::string("inbox"));
+
+    fs::remove_all(dir);
+    return true;
+})
+
 REGISTER_TEST(md_poll_changed_and_file_mtime,
               "MarkdownService: pollChanged/fileMtime 轮询底座", {
     const auto dir = makeTempDir("poll");

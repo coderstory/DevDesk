@@ -1333,6 +1333,28 @@ core::Result<std::vector<std::string>> MarkdownService::listTopFolders() const {
     return core::Result<std::vector<std::string>>::ok(std::move(out));
 }
 
+// W10：全层目录清单（两级目录树用；递归、含空目录，POSIX 相对路径）
+core::Result<std::vector<std::string>> MarkdownService::listAllFolders() const {
+    std::vector<std::string> out;
+    std::error_code ec;
+    if (!fs::exists(notesDir_, ec) || ec) {
+        return core::Result<std::vector<std::string>>::ok(std::move(out));
+    }
+    for (auto it = fs::recursive_directory_iterator(
+                    notesDir_, fs::directory_options::skip_permission_denied, ec);
+         !ec && it != fs::recursive_directory_iterator(); it.increment(ec)) {
+        if (ec) break;
+        std::error_code dec;
+        if (!it->is_directory(dec) || dec) continue;
+        // 相对路径统一 POSIX 形态（与索引里的笔记路径同构，可直接比对前缀）
+        const auto rel = fs::relative(it->path(), notesDir_, dec);
+        if (dec || rel.empty()) continue;
+        out.push_back(rel.generic_string());
+    }
+    std::sort(out.begin(), out.end());
+    return core::Result<std::vector<std::string>>::ok(std::move(out));
+}
+
 core::Result<void> MarkdownService::createFolder(const std::string& name) {
     if (!isSafeNewNotePath(name)) {
         return core::Result<void>::fail(core::ErrorCode::ValidationError,
