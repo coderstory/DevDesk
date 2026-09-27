@@ -1,5 +1,11 @@
 add_library(devdesk_module_claude_proxy STATIC
     claude_module.cpp
+    claude_ui_list.cpp
+    claude_ui_detail.cpp
+    claude_ui_form.cpp
+    claude_ui_logs.cpp
+    claude_ui_logic.cpp
+    claude_ui_state.cpp
     claude_service.cpp
     provider_config.cpp
     proxy_router.cpp

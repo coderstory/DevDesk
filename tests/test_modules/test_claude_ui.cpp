@@ -8,6 +8,7 @@
 #include "test_support.h"
 
 #include "claude_service.h"
+#include "claude_ui_logic.h"
 #include "core/database.h"
 #include "core/input/input_types.h"
 #include "core/module_interface.h"
@@ -2477,5 +2478,62 @@ REGISTER_TEST(claude_module_run_button_headless,
     }
     cleanupProfileKey(kTestKeychainService, a.value().id);
     env.svc->stopProxy();
+    return true;
+})
+
+// ---- R4（P-B1）：claude_ui_logic 抽出的 4 个纯函数等价断言 ----
+// 目的：证明「匿名 ns → claude_ui_logic.{h,cpp}」的搬迁**逐字等价**（spec
+// 2026-09-27-refactor-incremental N9：只在抽出的纯函数上补等价断言，不算
+// 新功能测试）。取值按搬迁前实现逐条钉死（边界 + 分支各一）。
+REGISTER_TEST(claude_ui_logic_pure_functions,
+              "claude_ui_logic: 纯函数等价断言（延时/UTF-8 截断/模型摘要/导入名）", {
+    using module::claude::formatLatency;
+    using module::claude::modelsSummary;
+    using module::claude::suggestImportName;
+    using module::claude::truncateUtf8;
+
+    // formatLatency：<=0 → "-"；<1000 → "<n>ms"；否则 "%.1fs"
+    DOCTEST_CHECK_EQ(formatLatency(0), std::string("-"));
+    DOCTEST_CHECK_EQ(formatLatency(-5), std::string("-"));
+    DOCTEST_CHECK_EQ(formatLatency(42), std::string("42ms"));
+    DOCTEST_CHECK_EQ(formatLatency(999), std::string("999ms"));
+    DOCTEST_CHECK_EQ(formatLatency(1000), std::string("1.0s"));
+    DOCTEST_CHECK_EQ(formatLatency(1500), std::string("1.5s"));
+
+    // truncateUtf8：不超限原样；超限回退到字符边界再补省略号
+    DOCTEST_CHECK_EQ(truncateUtf8("abc", 3), std::string("abc"));
+    DOCTEST_CHECK_EQ(truncateUtf8("abcdefghij", 5), std::string("abcde…"));
+    // "αααα" = 8 字节；截 5 会落在第 3 个 α 的续字节上 → 回退到第 4 字节
+    DOCTEST_CHECK_EQ(truncateUtf8("αααα", 5), std::string("αα…"));
+
+    // modelsSummary：空配置 → "-"；仅旧 model 列 → 默认 + 1/6；
+    // 仅槽位 → 「默认未配」+ 1/6（分母取自槽位表，不再硬编码 /6）
+    module::claude::Profile emptyProfile;
+    DOCTEST_CHECK_EQ(modelsSummary(emptyProfile), std::string("-"));
+
+    module::claude::Profile legacyOnly;
+    legacyOnly.model = "claude-sonnet-4-5";
+    DOCTEST_CHECK_EQ(modelsSummary(legacyOnly),
+                     std::string("默认 claude-sonnet-4-5 · 槽位已配 1/6"));
+
+    module::claude::ModelsConfig mc;
+    mc.sonnet.model = "fangzhou/glm-5.3[1M]";
+    auto mcJson = module::claude::serializeModelsConfig(mc);
+    DOCTEST_REQUIRE(mcJson.isOk());
+    module::claude::Profile slotOnly;
+    slotOnly.modelsConfigJson = mcJson.value();
+    DOCTEST_CHECK_EQ(modelsSummary(slotOnly),
+                     std::string("（默认未配）· 槽位已配 1/6"));
+
+    // suggestImportName：剥 scheme / 路径 / 端口；无 host → 「导入 <日期>」
+    DOCTEST_CHECK_EQ(suggestImportName("https://api.example.com/v1"),
+                     std::string("导入 api.example.com"));
+    DOCTEST_CHECK_EQ(suggestImportName("https://api.example.com:8443/v1"),
+                     std::string("导入 api.example.com"));
+    DOCTEST_CHECK_EQ(suggestImportName("api.example.com"),
+                     std::string("导入 api.example.com"));
+    const std::string fallback = suggestImportName("");
+    DOCTEST_CHECK_EQ(fallback.rfind("导入 ", 0), static_cast<size_t>(0));
+    DOCTEST_CHECK_EQ(fallback.size(), static_cast<size_t>(17));   // 7 + YYYY-MM-DD
     return true;
 })
