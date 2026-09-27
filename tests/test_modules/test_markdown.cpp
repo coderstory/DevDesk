@@ -3317,3 +3317,263 @@ REGISTER_TEST(md_module_live_split_anchor_list,
     return liveSplitAnchorScenario("livesplitls", "para one\npara two\n", 9,
                                    {"-", " "});
 })
+
+// ==================== W2 波 2：MD-02 / MD-05 回归 ====================
+
+namespace {
+
+// 实时态长文档：内容高度必须大于视口高度，滚动偏移才有作用面——否则
+//「换笔记后偏移为 0」可能是被 maxOffset 钳出来的假绿
+std::string tallNoteDoc(const char* marker, int paragraphs) {
+    std::string doc;
+    for (int i = 0; i < paragraphs; ++i) {
+        doc += std::string(marker) + " paragraph " + std::to_string(i) + "\n\n";
+    }
+    return doc;
+}
+
+// 树行（按文件名找，避免同秒 mtime 下根组内顺序不稳定）
+const core::dsl::Element* findFileRowByName(eui::Ui& ui,
+                                            const std::string& name) {
+    for (int i = 0; i < 8; ++i) {
+        const auto* nm = ui.find("md.tree.node." + std::to_string(i) + ".name");
+        if (nm != nullptr && nm->text == name) {
+            return ui.find("md.tree.node." + std::to_string(i) + ".row");
+        }
+    }
+    return nullptr;
+}
+
+} // namespace
+
+// MD-05：换笔记 = 实时态状态群换代。修复前这里只复位活动块锚，liveOffset_
+// 残留上一篇的滚动位置（换笔记后仍停在上篇的偏移上、与新旧内容高度错配）
+REGISTER_TEST(md_module_live_state_reset_note_switch,
+              "markdown_module: 实时态换笔记复位滚动位置（W2 MD-05，headless）", {
+    const std::string docA = tallNoteDoc("A", 60);
+    const std::string docB = tallNoteDoc("B", 60);
+    MdUiEnv env("livereset");
+    DOCTEST_REQUIRE(env.db != nullptr);
+    DOCTEST_REQUIRE(writeTextFile(env.dir / "a.md", docA));
+    DOCTEST_REQUIRE(writeTextFile(env.dir / "b.md", docB));
+
+    std::unique_ptr<::core::Module> mod(create_markdown_module());
+    mod->onStart();
+    eui::Screen screen;
+    screen.width = 1600.0f;
+    screen.height = 1000.0f;
+    MdLiveEnv e;
+    auto frame = [&](void) {
+        e.frame([&](eui::Ui& u) { mod->compose(u, screen); });
+    };
+
+    frame();
+    const auto* rowA = findFileRowByName(*e.ui, "a.md");
+    DOCTEST_REQUIRE(rowA != nullptr);
+    DOCTEST_REQUIRE(rowA->onClick != nullptr);
+    rowA->onClick();
+    frame();
+    DOCTEST_REQUIRE(cycleMode(mod.get()));   // → 实时
+    frame();
+
+    const auto* scroll = e.ui->find("md.live.scroll");
+    DOCTEST_REQUIRE(scroll != nullptr);
+    DOCTEST_CHECK_EQ(scroll->scrollOffset, 0.0f);
+    DOCTEST_REQUIRE(scroll->scrollMaxOffset >= 200.0f);   // 可滚（长文档前提）
+
+    // 手动滚动：onChange 是模块写 liveOffset_ 的唯一入口
+    DOCTEST_REQUIRE(scroll->onScrollOffsetChanged != nullptr);
+    scroll->onScrollOffsetChanged(200.0f);
+    frame();
+    DOCTEST_CHECK_EQ(e.ui->find("md.live.scroll")->scrollOffset, 200.0f);
+
+    // 换笔记 → 滚动位置随新文档归零（修复前滞留 200）
+    const auto* rowB = findFileRowByName(*e.ui, "b.md");
+    DOCTEST_REQUIRE(rowB != nullptr);
+    DOCTEST_REQUIRE(rowB->onClick != nullptr);
+    rowB->onClick();
+    frame();
+    const auto* scrollB = e.ui->find("md.live.scroll");
+    DOCTEST_REQUIRE(scrollB != nullptr);
+    DOCTEST_REQUIRE(scrollB->scrollMaxOffset >= 200.0f);  // 新文档同样可滚
+    DOCTEST_CHECK_EQ(scrollB->scrollOffset, 0.0f);
+
+    mod->onStop();
+    return true;
+})
+
+// MD-05 第二条路径：切实时态与换笔记共用同一复位点（偏移归零 + 首帧聚焦）
+REGISTER_TEST(md_module_live_state_reset_on_enter,
+              "markdown_module: 切实时态复位状态位群 + 首帧聚焦（W2 MD-05）", {
+    MdUiEnv env("liveenter");
+    DOCTEST_REQUIRE(env.db != nullptr);
+    DOCTEST_REQUIRE(writeTextFile(env.dir / "a.md", tallNoteDoc("E", 60)));
+
+    std::unique_ptr<::core::Module> mod(create_markdown_module());
+    mod->onStart();
+    eui::Screen screen;
+    screen.width = 1600.0f;
+    screen.height = 1000.0f;
+    MdLiveEnv e;
+    auto frame = [&](void) {
+        e.frame([&](eui::Ui& u) { mod->compose(u, screen); });
+    };
+
+    frame();
+    DOCTEST_REQUIRE(openFirstNote(*e.ui));
+    frame();
+    DOCTEST_REQUIRE(cycleMode(mod.get()));   // → 实时
+    frame();
+    const auto* scroll = e.ui->find("md.live.scroll");
+    DOCTEST_REQUIRE(scroll != nullptr);
+    DOCTEST_REQUIRE(scroll->scrollMaxOffset >= 200.0f);
+    DOCTEST_REQUIRE(scroll->onScrollOffsetChanged != nullptr);
+    scroll->onScrollOffsetChanged(200.0f);
+    frame();
+    DOCTEST_CHECK_EQ(e.ui->find("md.live.scroll")->scrollOffset, 200.0f);
+
+    // 切走（实时 → 双栏 → 预览 → 编辑）
+    for (int i = 0; i < 3; ++i) {
+        DOCTEST_REQUIRE(cycleMode(mod.get()));
+        frame();
+    }
+    DOCTEST_CHECK(e.ui->find("md.live.scroll") == nullptr);
+
+    // 切回 → 同一 enterLiveState：偏移归零 + 首帧同帧补发 requestFocus（M0 C1）
+    DOCTEST_REQUIRE(cycleMode(mod.get()));
+    frame();
+    const auto* back = e.ui->find("md.live.scroll");
+    DOCTEST_REQUIRE(back != nullptr);
+    DOCTEST_CHECK_EQ(back->scrollOffset, 0.0f);
+    DOCTEST_CHECK(e.ui->isFocused("md.live.input.hit"));
+
+    mod->onStop();
+    return true;
+})
+
+// MD-05 第三条路径：启动恢复进实时态（loadViewState）与切实时态同语义——
+// 修复前这条路径完全不复位状态位群（首帧不聚焦活动 input）
+REGISTER_TEST(md_module_live_state_reset_on_restore,
+              "markdown_module: 启动恢复实时态走同一复位点（W2 MD-05）", {
+    MdUiEnv env("liverestore");
+    DOCTEST_REQUIRE(env.db != nullptr);
+    DOCTEST_REQUIRE(writeTextFile(env.dir / "a.md", tallNoteDoc("R", 60)));
+    // 预置视图状态：mode=3（实时）+ 上次笔记，onStart 尾部恢复
+    {
+        std::ofstream f(env.dir / "view_state.json", std::ios::trunc);
+        f << "{\"lastPath\": \"a.md\", \"mode\": 3, \"collapsedDirs\": []}";
+        DOCTEST_REQUIRE(f.good());
+    }
+
+    std::unique_ptr<::core::Module> mod(create_markdown_module());
+    mod->onStart();
+    eui::Screen screen;
+    screen.width = 1600.0f;
+    screen.height = 1000.0f;
+    MdLiveEnv e;
+    auto frame = [&](void) {
+        e.frame([&](eui::Ui& u) { mod->compose(u, screen); });
+    };
+
+    frame();
+    DOCTEST_REQUIRE(e.ui->find("md.live.scroll") != nullptr);  // 恢复了实时态
+    DOCTEST_CHECK(e.ui->find(kEditorInputId) == nullptr);
+    DOCTEST_CHECK_EQ(e.ui->find("md.live.scroll")->scrollOffset, 0.0f);
+    DOCTEST_CHECK(e.ui->isFocused("md.live.input.hit"));       // 首帧聚焦
+
+    mod->onStop();
+    return true;
+})
+
+// MD-02：编辑态与实时态的列壳是同一份实现（drawTextColumnChrome）——同屏宽下
+// 两态文本列几何必须逐项相同；两个 clampColumn 分支（编辑态单栏钳 720 居中 /
+// 双栏态不钳）保持原样。本用例是抽出后「几何零变化」的回归锁。
+REGISTER_TEST(md_module_text_column_chrome_shared,
+              "markdown_module: 编辑/实时文本列壳几何逐项相同（W2 MD-02）", {
+    MdUiEnv env("textchrome");
+    DOCTEST_REQUIRE(env.db != nullptr);
+    DOCTEST_REQUIRE(writeTextFile(env.dir / "a.md", "# A\n\nbody\n"));
+
+    std::unique_ptr<::core::Module> mod(create_markdown_module());
+    mod->onStart();
+    eui::Screen screen;
+    screen.width = 1600.0f;
+    screen.height = 1000.0f;
+    eui::Ui ui;
+    auto frame = [&](void) {
+        ui.begin("tc");
+        mod->compose(ui, screen);
+        ui.end();
+        ui.layout(screen.width, screen.height);
+    };
+    const float pad = 40.0f;
+    const float sideW = 240.0f;
+    const float gap = 16.0f;
+
+    // (1) 空态（未选笔记）：提示条 + 状态栏，chip 行不画
+    frame();
+    DOCTEST_CHECK(ui.find("md.editor.hint") != nullptr);
+    DOCTEST_CHECK(ui.find("md.tags.add.hit") == nullptr);
+    DOCTEST_CHECK(ui.find("md.status.bg") != nullptr);
+
+    // (2) 打开笔记 → 编辑态（单栏：文本列钳 720 居中）
+    const auto* row = findFileRowByName(ui, "a.md");
+    DOCTEST_REQUIRE(row != nullptr);
+    DOCTEST_REQUIRE(row->onClick != nullptr);
+    row->onClick();
+    frame();
+    const auto* edCol = ui.find("md.editor");
+    const auto* edInput = ui.find(kEditorInputId);
+    DOCTEST_REQUIRE(edCol != nullptr);
+    DOCTEST_REQUIRE(edInput != nullptr);
+    DOCTEST_CHECK(ui.find("md.tags.add.hit") != nullptr);   // chip 行在
+    const float fullW = screen.width - pad * 2.0f - sideW - gap;
+    DOCTEST_CHECK_EQ(edInput->frame.width, 720.0f);
+    DOCTEST_CHECK_EQ(edInput->frame.x - edCol->frame.x,
+                     (fullW - 720.0f) * 0.5f);
+    DOCTEST_CHECK_EQ(edInput->frame.y - edCol->frame.y, 48.0f);
+    const float edX = edInput->frame.x;
+    const float edY = edInput->frame.y;
+    const float edW = edInput->frame.width;
+    const float edH = edInput->frame.height;
+
+    // (3) 切实时态：同屏宽下几何逐项相同（同一列壳；列槽位也不变）
+    DOCTEST_REQUIRE(cycleMode(mod.get()));   // 编辑 → 实时
+    frame();
+    const auto* live = ui.find("md.live.scroll");
+    DOCTEST_REQUIRE(live != nullptr);
+    DOCTEST_CHECK_EQ(live->frame.x, edX);
+    DOCTEST_CHECK_EQ(live->frame.y, edY);
+    DOCTEST_CHECK_EQ(live->frame.width, edW);
+    DOCTEST_CHECK_EQ(live->frame.height, edH);
+    DOCTEST_CHECK(ui.find("md.tags.add.hit") != nullptr);
+    DOCTEST_CHECK(ui.find("md.status.bg") != nullptr);
+
+    // (4) 宽窗口 2400：双栏态不钳（原条件 mode_ == ViewMode::Edit）——左半栏
+    //     编辑器文本列贴左 16px 且宽于 720；回到编辑态同一列壳又钳回 720 居中
+    screen.width = 2400.0f;
+    DOCTEST_REQUIRE(cycleMode(mod.get()));   // 实时 → 双栏
+    frame();
+    const auto* edSplit = ui.find(kEditorInputId);
+    DOCTEST_REQUIRE(edSplit != nullptr);
+    DOCTEST_REQUIRE(ui.find("md.preview.scroll") != nullptr);
+    const auto* edColSplit = ui.find("md.editor");
+    DOCTEST_REQUIRE(edColSplit != nullptr);
+    DOCTEST_CHECK_EQ(edSplit->frame.x - edColSplit->frame.x, 16.0f);
+    DOCTEST_CHECK(edSplit->frame.width > 720.0f);
+    DOCTEST_REQUIRE(cycleMode(mod.get()));   // 双栏 → 预览
+    frame();
+    DOCTEST_REQUIRE(cycleMode(mod.get()));   // 预览 → 编辑
+    frame();
+    const auto* edWide = ui.find(kEditorInputId);
+    const auto* edColWide = ui.find("md.editor");
+    DOCTEST_REQUIRE(edWide != nullptr);
+    DOCTEST_REQUIRE(edColWide != nullptr);
+    const float fullWide = screen.width - pad * 2.0f - sideW - gap;
+    DOCTEST_CHECK_EQ(edWide->frame.width, 720.0f);
+    DOCTEST_CHECK_EQ(edWide->frame.x - edColWide->frame.x,
+                     (fullWide - 720.0f) * 0.5f);
+
+    mod->onStop();
+    return true;
+})
