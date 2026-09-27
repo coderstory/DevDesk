@@ -13,9 +13,14 @@
 //                 （唯一来源，app 层每帧写入）；y 方向页面区纵跨整窗，
 //                 原点恒 0，传 0.0f
 //   dpiScale      指针空间 → compose 空间的缩放（1.0 = 两空间同尺度）。
-//                 EUI-NEO 各指针通道口径不同（onContextMenu / onMove 派发前
-//                 已做 /dpiScale，onPress / onRelease / onDrag 是原始值），
-//                 尺度由调用点声明，不要在本函数里猜
+//                 **入参取框架值**，不要在本函数里猜、也不要用几何反推：
+//                 主窗口（Router 页面）取 app::contentScale()；子窗取该窗
+//                 compose 拿到的 core::dsl::Screen::scale（各窗可能落在缩放
+//                 不同的显示器上）。U1 尺度契约定义 **物理 = 逻辑 * scale**，
+//                 框架三处同源同值：app::contentScale() / Screen::scale /
+//                 PointerEvent::scale（DragEvent::scale）。EUI-NEO 各指针通道
+//                 口径仍不同——onContextMenu / onMove 派发前已做 /dpiScale
+//                 （传 1.0），onPress / onRelease / onDrag 是原始值（传框架值）
 //
 // 分层：**纯函数**——零 include，不调用 EUI-NEO 运行时行为、不依赖 platform
 // （core 层约束），可直接无头单测（tests/test_core/test_router.cpp）。
