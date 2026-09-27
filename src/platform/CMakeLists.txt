@@ -19,7 +19,7 @@ elseif(APPLE)
     target_sources(devdesk_platform PRIVATE
         keychain_macos.cpp
         file_open_macos.cpp
-        system_theme_posix.cpp
+        system_theme_macos.cpp
         file_watcher_stub.cpp
         http_client_ca_posix.cpp
     )
@@ -55,9 +55,13 @@ target_compile_definitions(devdesk_platform PUBLIC
     CPPHTTPLIB_OPENSSL_SUPPORT
 )
 
-# macOS Security.framework (Keychain)
+# macOS Security.framework (Keychain) + CoreFoundation（APPLE 分支系统深浅检测
+# 实现读 NSGlobalDomain AppleInterfaceStyle 用；两者都只在 APPLE 分支链接）
 if(APPLE)
-    target_link_libraries(devdesk_platform PUBLIC "-framework Security")
+    target_link_libraries(devdesk_platform PUBLIC
+        "-framework Security"
+        "-framework CoreFoundation"
+    )
 endif()
 
 # Windows：Winsock2（http_client/http_server 网络）+ Crypt32（TLS 证书链）

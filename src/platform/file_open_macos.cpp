@@ -3,6 +3,7 @@
 // （EUI-NEO 的 main 不接 argc/argv；这是 Apple 自 10.0 起长期稳定的私有 API）
 // ⚠️ 签名注意：这两个函数返回的是 argc/argv 的【地址】，必须解引用一次。
 #include "file_open.h"
+#include "file_open_common.h"
 
 #include <cstdlib>
 #include <string>
@@ -24,17 +25,6 @@ std::string openFileFromArgv() {
     utf8Args.push_back(argv[0] != nullptr ? argv[0] : "");
     utf8Args.push_back(argv[1] != nullptr ? argv[1] : "");
     return selectOpenFileArg(utf8Args);
-}
-
-// shell 单引号转义（' 拆成 '\''）：路径含空格/引号不破坏命令边界
-static std::string shellSingleQuote(const std::string& s) {
-    std::string out = "'";
-    for (const char c : s) {
-        if (c == '\'') out += "'\\''";
-        else out += c;
-    }
-    out += "'";
-    return out;
 }
 
 core::Result<void> openDirectory(const std::string& path) {

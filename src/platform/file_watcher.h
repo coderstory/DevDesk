@@ -57,7 +57,9 @@ using FileWatchCallback = std::function<void(std::vector<FileWatchEvent>)>;
 class FileWatcher {
 public:
     FileWatcher();
-    ~FileWatcher();  // 自动 stop()：join 后台线程，回调保证不再触碰消费方
+    // 析构自动 stop()（join 后台线程）；对象必须活到回调返回——回调内析构
+    // 属误用（detached/在跑的 worker 会摸已析构的 Impl，见 stop() 契约）
+    ~FileWatcher();
 
     FileWatcher(const FileWatcher&) = delete;
     FileWatcher& operator=(const FileWatcher&) = delete;
@@ -72,7 +74,10 @@ public:
                              std::chrono::milliseconds debounceMs =
                                  std::chrono::milliseconds(200));
 
-    // 停止监听并 join 后台线程；幂等；回调线程内调用安全（跳过自 join）。
+    // 停止监听并 join 后台线程；幂等。
+    // 回调线程内调用 = 只请求停止（置 running=false + SetEvent；不 join、
+    // 不关句柄），worker 收到请求后自行收尾退出；join 由之后非回调线程的
+    // stop()/析构完成。故消费方必须保证对象活到回调返回（回调内析构 = 误用）。
     void stop();
 
     // 真监听是否在跑（Win 且目录句柄/线程存活；stub 平台恒 false）

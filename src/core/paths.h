@@ -37,6 +37,11 @@ std::filesystem::path logFile();
 // 也是 spec 开放问题 3「自定义 .claude 目录」的预留入口）
 std::filesystem::path claudeSettingsFile();
 
+// DEVDESK_CLAUDE_CONFIG_DIR 覆盖分支（审计 CP-09：三平台 paths_*.cpp 逐字
+// 相同实现的下沉）：环境变量已设 → 返回 <env>/settings.json；
+// 未设（或设了空串以外含义不变）→ 返回空 path，调用方走各平台 home 默认分支
+std::filesystem::path claudeConfigDirOverride();
+
 // Claude Code 企业托管 managed-settings.json（上层覆盖检测用，只读不写）
 //   Windows: C:\ProgramData\ClaudeCode\managed-settings.json
 //   macOS:   /Library/Application Support/ClaudeCode/managed-settings.json
