@@ -6,6 +6,50 @@
 
 > **当前基线（2026-09-24，master @ 817af80）**：用例 **407**（`grep REGISTER_TEST` 口径，本会话 324 → 407；全绿与否以主会话终验为准）。各波次条目内的测试数为该波时点事实，不代表当前总数；波次按合并时间倒序排列。
 
+## [Batch-0927-B] 2026-09-27 晚 —— 第二批 12 个 merge（`e99ee21` → `c48546e`，master 实测 530/530 全绿）
+
+master `e99ee21`（第一批收口 docs）→ `c48546e`：12 个 `--no-ff` 合并批次 / 16 个子提交 / 46 文件（+4269 −314）。内容 = 专家审计修复批（M1/M2/M3 残项/M5/M6/M7 + L1/L2/L4/L5/L6/L7）+ 反向同步 M1–M4 + Markdown Phase3 M0 门禁 spike + 装配层与 extern 桥两笔重构。按合并时间倒序：
+
+### [Json-Bridge] `c48546e` —— JSON 深拷贝语义注释 + 粘贴导入 1MB 上限 + argv 直测（审计 L6 / F 残留）
+- `platform/json.h` 深拷贝语义显式注释 + 粘贴导入整体文本上限 1MB（含用例，审计 L6，`25e6327`）。
+- `app_assembly` 的 `captureOpenFileFromArgv` 加可测接缝 + argv 捕获直测（F 残留 ②，`2cd781a`）。
+
+### [Md-Phase3-M0] `cdb481a` —— Markdown Phase3 M0 门禁 spike（V1–V4 结论）
+- 结论：**四项全部有解，可进入 M1**，带 3 条接线硬约束（C1 编程式聚焦只发 `<input id>.hit`；C2 单输入 id 不得落在 `releaseStateScope` 释放的前缀下；C5 焦点帧末消费 ⇒ caret 次帧出现 ≈16ms）。
+- 产出 `docs/superpowers/plans/2026-09-27-md-phase3-m0-spike.md`（结论 + 13 项用户点验清单）+ `tests/test_modules/test_md_live_spike.cpp` 9 条无头证据用例（`7a794e8`）。
+
+### [Reverse-Sync-M3M4] `4a34eb0` —— 反向同步接线 + Profile 复制
+- M3 `syncCaptureActiveProfile`（`d1d880f`）：插入点 = `setActiveProfile` 的 `getProfile` 校验之后、清零/置位事务之前（先于既有 `syncTakeOver`）→ 读侧 → 纯函数 → 逐字段比较 → 仅真变化时 `updateProfile`；G0 无激活不读文件；守卫键不写也不清、非守卫托管字段缺席即清空；坏 JSON/读不了 → fail 中止（S-2，profile 一字未改）；key 清空走现成 `deleteSecret` + 最小 UPDATE；写序 Keychain → DB、DB 失败 best-effort 回写；新增 service 用例 ①-⑧（+711 行）。
+- M4 `duplicateProfile`（`db0f15f`）：含 key 全复制、副本不激活（⇒ 不触发 M3，零耦合）、`name + " 副本"` 重名递增避让（100 次上限）、二段 `updateProfile` 失败用 `deleteProfile` 回滚（回滚失败文案注明残留 id）。
+
+### [Ui-Esc-Header] `0f09f1d` —— header 对偶宽度常量 + 三模块 Esc 关最上层弹窗（审计 M6/M5）
+- header 对偶宽度字面量抽 `kHeaderActionsW`（M6，`b148a2c`）；claude/markdown/todo 三模块 Esc 关最上层弹窗兜底（M5，`86e3be1`，三份 UI 用例 +238 行）。
+
+### [Doc-Align] `4e297cc` —— doctest 语义注释 + 用例数对齐 + 陈旧注释（审计 L2/L4/V6）
+- `tests/doctest.h` 注释注明 `DOCTEST_REQUIRE` == `DOCTEST_CHECK`（fail-fast：断言失败即 `return false`，同用例后续断言不再执行）；用例总数 481 → 514 对齐（`CLAUDE.md` + 反向同步 spec §6 验收基线）；`settings_sync.cpp` sidecar 过期注释修正（`e1469d7`）。
+
+### [Audit-Doc-Reconcile] `122d40a` —— 审计文档对账 + HANDOFF 刷新
+- 消 M1↔C 类裁决矛盾 + 编号列状态标注（`d9c940c`）；HANDOFF 第二批收口刷新。
+
+### [App-Assembly] `0b04d29` —— 装配层抽到 `app_assembly` + 4 条 headless 护栏（审计 M2）
+- `src/main.cpp` 装配段抽成 `src/app_assembly.{h,cpp}`（+191 / +106 行），main.cpp 净减 ~110 行（+93 / −202）；新增 `tests/test_modules/test_app_assembly.cpp` 4 条 headless 护栏用例（`9351c28`）。
+
+### [Pet-Bridge] `85f6144` —— extern 桥收口到中立头 `module_pet_bridge.h`（审计 M1 短期项）
+- settings↔pet 的 extern 自由函数声明收进 `src/module_pet_bridge.h`，双方各自 include 同一份契约头（链接期解耦裁决保留、模块隔离实质不变）；`test_settings.cpp` 模块隔离守卫按新形状重写（`805772e`）。
+
+### [Core-Hardening] `4a41f4b` —— 日志轮转 + 日志开关原子化 + `SqliteDb` 关闭/加锁对齐（审计 M7/L7/L5）
+- 日志按大小轮转（M7）；`g_level` / `g_console` 改 `std::atomic`（L7）；`SqliteDb` 析构改 `sqlite3_close_v2`、`bind()` / `prepare()` 加锁（L5）；`test_logging.cpp` / `test_sqlite.cpp` 补用例（`538abcf`）。
+
+### [Dead-Code] `f57e8b8` —— 删死代码 `sendWithRetry` + `Result` 默认态 `errorMessage()` 不抛
+- `http_client` 删 `sendWithRetry`；`Result` 默认态（未真正报错时）的 `errorMessage()` 返回文案不再抛异常；+用例（`b6efb37`）。**H1（取消即中止）经核实早在 `797b3a8` 已落地**，与本 merge 无关。
+
+### [Config-Bak] `9e9e354` —— `config.json` 解析失败保留 `.bak` + configure 打印依赖版本
+- settings `config.json` 解析失败保留 `.bak` + WARN 出路径（审计 M3 残项，`6e4b32f`）；configure 打印 OpenSSL / libcurl 版本并记 CHANGELOG 当前组合（审计 L1，`6ec6c8d`）。
+
+### [Reverse-Sync-M1M2] `0b68bc9` —— 反向同步 M1 读侧 + M2 纯函数（+11 用例）
+- M1 `settings_sync::readSettingsEnvForSync`：只读、复用既有 IO 助手；六种文件形态分别处置（缺失 / 0 字节空文件 / 无 env → no-op 成功；坏 JSON / 顶层非对象 / env 非对象 → fail 待中止）、sidecar 损坏只 WARN 不失败。
+- M2 `provider_config` 四个纯函数（全部追加在文件末尾，不改既有函数行为）：`isLoopbackUrl`（127/8 全段 + localhost + ::1，不做前缀匹配）、`parseEnvForReverseSync`（容错映射，守卫 G1–G6 登记 `skippedKeys`）、`mergeReverseSyncEnv`（出现覆盖 / 缺席清空 / 守卫保持）、`makeCopyName`（「副本 N」避让，100 次上限）；用例 +11（子串 `reverse` / `loopback` / `copyname`）。
+
 ## [Session-0923] 2026-09-23 晚 → 09-24 —— 代码/产品审计修复波 + 特性波（f602599 → 817af80，23+ 批，测试 324 → 407）
 
 master `f602599`（侧边栏折叠 merge 点）→ `817af80`：100 commits，22 个 `--no-ff` 合并批次 + 直接提交（审计批、docs 流程批、桌宠气泡①②、HEAD todo 搜索收尾）。文中 `[N]` 编号全部指向两份审计总账：代码质量 49 条（`25e1e67`，2H/20M/27L）+ 产品视角 52 条（`4a81135`，4H/30M/18L），两总账文档批随欠登批一并补登（见文末「欠登补登」节）。按合并时间倒序：

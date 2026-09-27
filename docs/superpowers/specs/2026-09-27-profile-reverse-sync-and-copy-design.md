@@ -190,7 +190,7 @@
 |--------|------|------|------|
 | **M1** 读侧（≈0.5d） | `settings_sync` 新增 `readSettingsEnvForSync` + 单测 | — | 6 种文件形态（缺失/空/坏 JSON/无 env/env 非对象/正常）——“缺失/空文件”（no-op；**空文件视为不存在**——2026-09-27 主会话裁定）与“存在但读不了/解析失败”（中止）必须分别处置、结果可区分 + sidecar 损坏不阻断 |
 | **M2** 纯函数（≈0.5d） | `isLoopbackUrl` / `parseEnvForReverseSync` / `mergeReverseSyncEnv` / `makeCopyName` + 单测 | — | §5 纯函数用例全绿（守卫表逐条有对应用例） |
-| **M3** 反向同步接线（≈0.5d） | `syncCaptureActiveProfile` + `setActiveProfile` 插入点 + 一致性补偿 + service 用例 | M1, M2 | §5 service ①-⑨ 全绿；既有 514 用例零回归 |
+| **M3** 反向同步接线（≈0.5d） | `syncCaptureActiveProfile` + `setActiveProfile` 插入点 + 一致性补偿 + service 用例 | M1, M2 | §5 service ①-⑨ 全绿；既有 530 用例零回归 |
 | **M4** 复制（≈0.5d） | `duplicateProfile` + 命名避让 + 失败回滚 + 用例 | M2（`makeCopyName`） | §5 复制用例全绿 |
 | **M5** UI + 收尾（≈0.5d） | 第 5 按钮 + `doDuplicate` + 无头 UI 用例 + 截屏 + CHANGELOG/spec 索引登记 | M3, M4 | 按钮可见可点、toast 正确、截屏留档 |
 
