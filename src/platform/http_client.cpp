@@ -46,6 +46,19 @@ void globalInit() {
     std::call_once(once, [] { curl_global_init(CURL_GLOBAL_DEFAULT); });
 }
 
+// TLS 根证书配置。静态链接的 MinGW libcurl 编译期 CA 路径（C:/msys64/...）
+// 在用户机上不存在，表现为请求失败 "Problem with the SSL CA cert (path?
+// access rights?)"——Windows 上改用系统证书库（CURLSSLOPT_NATIVE_CA，让
+// OpenSSL 导入 Windows ROOT 存储），免依赖外部 ca-bundle 文件；macOS/Linux
+// 保持 libcurl 默认（系统 CA 路径本就存在）。可用 CURL_CA_BUNDLE 环境变量
+// 覆盖（libcurl 自己会读）。
+void applyCaOptions(CURL* curl) {
+#if defined(_WIN32)
+    curl_easy_setopt(curl, CURLOPT_SSL_OPTIONS,
+                     static_cast<long>(CURLSSLOPT_NATIVE_CA));
+#endif
+}
+
 } // anonymous namespace
 
 // ============ 同步 send / sendWithRetry ============
@@ -71,6 +84,7 @@ core::Result<Response> send(const Request& req) {
     curl_easy_setopt(curl, CURLOPT_HEADERDATA, &resp);
     curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, req.verifyTls ? 1L : 0L);
     curl_easy_setopt(curl, CURLOPT_SSL_VERIFYHOST, req.verifyTls ? 2L : 0L);
+    applyCaOptions(curl);
 
     if (req.method == "POST" || req.method == "PUT" || req.method == "PATCH") {
         curl_easy_setopt(curl, CURLOPT_POSTFIELDS, req.body.c_str());
@@ -79,6 +93,8 @@ core::Result<Response> send(const Request& req) {
 
     struct curl_slist* headers = nullptr;
     for (const auto& [k, v] : req.headers) {
+        if (v.empty()) continue;  // 空值头不发送（`X: ` 是畸形请求头，实测 CF 回
+                                  // 400 Bad Request）
         std::string h = k + ": " + v;
         headers = curl_slist_append(headers, h.c_str());
     }
@@ -141,6 +157,9 @@ core::Result<Response> sendWithRetry(const Request& req, int maxRetries) {
 //     - 消费者立即解除阻塞（Error/"cancelled"）
 //     - 被背压阻塞的生产者醒来返回 0 → libcurl 以 CURLE_WRITE_ERROR 中止
 //       并关闭上游连接（上游随即观察到断开）
+//     - 上游静默（连着不发数据）时上述两条都不在：由进度回调
+//       streamXferInfoCb 兜底，返回非零 → CURLE_ABORTED_BY_CALLBACK 中止
+//       （H1，2026-09-27；修复前这里要等低速空闲超时 60~70s）
 //
 // 上游截断（CURLE_PARTIAL_FILE，如 chunked 流未写终止 chunk 即断开）：
 //   已到达的数据保留，流按正常结束（End）处理，不算 Error。
@@ -169,6 +188,14 @@ struct StreamingResponse::Impl {
     bool statusReady = false;
     // 上游 Content-Type（如 text/event-stream）
     std::string contentType;
+
+    // 请求体副本：CURLOPT_POSTFIELDS 只存指针、不拷贝数据（libcurl 语义），
+    // 而 sendStreaming() 是**异步**的——发起后立刻返回，真正读 body 的是
+    // libcurl 线程。调用方传进来的 Request 常常是临时对象（streaming_proxy
+    // 里的局部 upstream，函数出栈即析构），指针随即悬垂，发出去的 body 变成
+    // 堆里的垃圾字节（实测上游收到乱码 → 400/401 "Model is not supported"）。
+    // 拷一份挂在自己身上，与 StreamingResponse 同生命周期（析构先 join 线程）。
+    std::string requestBody;
 
     // CURL handle + 执行线程
     CURL* curl = nullptr;
@@ -275,6 +302,34 @@ size_t streamHeaderCb(char* buffer, size_t size, size_t nitems, void* userp) {
     }
 
     return total;
+}
+
+// libcurl 进度回调（CURLOPT_XFERINFOFUNCTION + CURLOPT_NOPROGRESS=0）
+//
+// 【为什么需要它（H1 修复，2026-09-27）】
+// 取消只有两条既有唤醒路径，二者都要求「有人正好堵在队列上」：
+//   (a) 被背压阻塞在 write callback 里的生产者（醒来返回 0）
+//   (b) 阻塞在 readChunk 的消费者（它醒了只是不再读，libcurl 线程照旧）
+// 若上游**连着但一个字节都不发**（请求已送出、响应头未到），write callback
+// 从未进入、(b) 也叫不动 libcurl 线程 → 它一直等到低速空闲超时
+// （生产 lowSpeedTimeSec=60s，libcurl 按 ~5s 滑窗采样，实测 60~70s）才退。
+// 「停止代理 / 退出应用」在 cancelActiveStreams() 之后要等 worker join，
+// 于是被拖着一起挂 60~70s。
+//
+// 进度回调是 libcurl 在传输期间**周期性（约每秒）调用**的钩子，上游静默时
+// 同样照调（低速超时判定本身就跑在这个进度节拍上）。回调返回非零 → libcurl
+// 立即以 CURLE_ABORTED_BY_CALLBACK 中止传输，取消延迟从 60s 降到秒级。
+//
+// 【约束】回调跑在 libcurl 线程：只读一个 atomic 标志，不加锁、不做重活。
+// 【与既有路径的关系】只新增一条唤醒通道，(a)/(b) 全部保留不动——上游在
+// 产出时生产者路径更快（无需等进度节拍）。
+// 【状态机】收尾分类里 cancelled 判定排在 rc 判空之前，所以
+// CURLE_ABORTED_BY_CALLBACK 仍走「主动取消」分支，cancelReason 语义
+//（"cancelled" / "proxy stopping"）与下游 streaming_proxy 的键控不变。
+int streamXferInfoCb(void* clientp, curl_off_t /*dltotal*/, curl_off_t /*dlnow*/,
+                     curl_off_t /*ultotal*/, curl_off_t /*ulnow*/) {
+    auto* cancelled = static_cast<std::atomic<bool>*>(clientp);
+    return cancelled->load(std::memory_order_acquire) ? 1 : 0;
 }
 
 // ============ StreamingResponse 公开接口 ============
@@ -425,16 +480,29 @@ core::Result<std::unique_ptr<StreamingResponse>> sendStreaming(const Request& re
     curl_easy_setopt(curl, CURLOPT_WRITEDATA, sr->impl_);
     curl_easy_setopt(curl, CURLOPT_HEADERFUNCTION, streamHeaderCb);
     curl_easy_setopt(curl, CURLOPT_HEADERDATA, sr->impl_);
+    // 取消唤醒通道（H1）：进度回调周期被调（含上游静默期），读 cancelled
+    // 原子量决定是否中止。NOPROGRESS=0 是启用该回调的开关；数据指针指向
+    // Impl 内的原子标志（Impl 生命周期覆盖 libcurl 线程：线程 join 在
+    // ~StreamingResponse 里，早于 delete impl_）。
+    curl_easy_setopt(curl, CURLOPT_NOPROGRESS, 0L);
+    curl_easy_setopt(curl, CURLOPT_XFERINFOFUNCTION, streamXferInfoCb);
+    curl_easy_setopt(curl, CURLOPT_XFERINFODATA, &sr->impl_->cancelled);
     curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, req.verifyTls ? 1L : 0L);
     curl_easy_setopt(curl, CURLOPT_SSL_VERIFYHOST, req.verifyTls ? 2L : 0L);
+    applyCaOptions(curl);
 
     if (req.method == "POST" || req.method == "PUT" || req.method == "PATCH") {
-        curl_easy_setopt(curl, CURLOPT_POSTFIELDS, req.body.c_str());
-        curl_easy_setopt(curl, CURLOPT_POSTFIELDSIZE, static_cast<long>(req.body.size()));
+        sr->impl_->requestBody = req.body;  // 保活：见 Impl::requestBody 注释
+        curl_easy_setopt(curl, CURLOPT_POSTFIELDS,
+                         sr->impl_->requestBody.c_str());
+        curl_easy_setopt(curl, CURLOPT_POSTFIELDSIZE,
+                         static_cast<long>(sr->impl_->requestBody.size()));
     }
 
     struct curl_slist* headers = nullptr;
     for (const auto& [k, v] : req.headers) {
+        if (v.empty()) continue;  // 空值头不发送（`X: ` 是畸形请求头，实测 CF 回
+                                  // 400 Bad Request）
         std::string h = k + ": " + v;
         headers = curl_slist_append(headers, h.c_str());
     }
