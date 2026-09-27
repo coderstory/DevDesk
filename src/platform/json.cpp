@@ -119,8 +119,14 @@ namespace {
     }
 
     // JsonImpl → JSON 文本（递归）
-    // 注意：yyjson 库被 EUI-NEO 以 YYJSON_DISABLE_WRITER=1 编译（共享库无 writer），
-    // 序列化自实现；DevDesk 场景（扁平对象 + 标量）足够，双精度用 %.17g 保证往返
+    // 仍手写的原因：已实测换 yyjson writer 会有两类输出字节形态差异（double 文本
+    // 形态、控制字符 \u00XX 的十六进制大小写），"逐字节等价"不成立 → 属待拍板项
+    // （上游 U8 已放开 writer，EUI-NEO 3d231be 起 writer 可用；
+    //  plan 见 docs/superpowers/plans/2026-09-27-eui-upstream-candidates.md U8，
+    //  逐字节差异证据见 tests/test_platform/test_json.cpp 的
+    //  json_stringify_bytes_snapshot 快照用例）。
+    // 双精度用 %.17g 保证往返；整值浮点（如 512.0）写成 "512" 回读走 Int 分支
+    // （读侧双分支适配见 module_todo/todo_view_state.cpp）。
     void implToString(const JsonImpl& impl, std::string& out, bool pretty,
                       int depth) {
         switch (impl.kind) {
@@ -350,7 +356,8 @@ core::Result<JsonValue> parse(const std::string& text) {
     return core::Result<JsonValue>::ok(std::move(out));
 }
 
-// 序列化（自实现，见 implToString 注释——yyjson 共享库无 writer）
+// 序列化（手写实现，保留缘由与拍板项见 implToString 注释；换 yyjson writer 的实现
+// 已实测：除两类文本形态外逐字节等价，差异与证据见 json_stringify_bytes_snapshot 用例）
 core::Result<std::string> stringify(const JsonValue& value, bool pretty) {
     std::string out;
     out.reserve(64);
