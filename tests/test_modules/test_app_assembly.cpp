@@ -9,6 +9,7 @@
 //   3. 退出接线：atexit 只挂一次（armExitHook 幂等）、handler 真的触发 stopAll
 //   4. dispatchFileOpen / pageForTrayAction 既有语义（映射表 + 负载/降级路径）
 //   5. captureOpenFileFromArgv 直测（argv 接缝：有路径 / flag / 幂等；F 残留 ②）
+//   6. 空态兜底注入：装配后「当前页无模块」画出 app 层占位（CP-01 回归护栏）
 // 注：门控**语义**（enabledModules 配置 / moduleEnabled 谓词）已由
 // test_module_gating 覆盖，这里只测**接线**，不重复它的断言。
 #include "doctest.h"
@@ -338,5 +339,33 @@ REGISTER_TEST(assembly_capture_open_file_from_argv,
     // 收尾：不留进程级状态（pending 会被真实启动分发读取）
     resetArgvCaptureForTest();
     pendingOpenFilePath().clear();
+    return true;
+})
+
+// 空态兜底渲染的注入接线（专家审计 2026-09-27 CP-01）：core 侧的 Router 不再
+// 自行绘制「无页面」占位（spec §4.2.1：eui::Ui 仅可透传），文案与样式搬到装配
+// 段注入。本用例证明装配后「当前页无模块」真的会画出 app 层的占位。
+
+REGISTER_TEST(assembly_injects_empty_page_fallback,
+              "assembly: 装配时注入空态兜底（无模块可显示 → 「无页面」由 app 层画）", {
+    ScopedAppRouter scoped;
+    ::core::Router router;
+    // 全 nullptr 的 ModuleSet：装配后一个模块都没注册（registerModule 的既有
+    // 容错分支）→ compose 落到「当前页无模块」。这是经装配后的 Router 唯一能
+    // 走到兜底的形态（生产恒注册 home/settings，Home 未注册时 navigateTo 也
+    // 只停在当前页）
+    app::assembly::assembleAndStart(router, allOnConfig(),
+                                    app::assembly::ModuleSet{},
+                                    app::assembly::PreStartHook{});
+
+    eui::Screen screen;
+    screen.width = 800.0f;
+    screen.height = 600.0f;
+    eui::Ui ui;
+    ui.begin("a1");
+    router.compose(ui, screen);
+    ui.end();
+    // 占位真被画出来：id/文案逐字搬自 core 旧内联实现（"empty" / 「无页面」）
+    DOCTEST_CHECK(ui.find("empty") != nullptr);
     return true;
 })

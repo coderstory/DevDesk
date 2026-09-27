@@ -1,6 +1,7 @@
 // tests/test_core/test_router.cpp
 // Router 模块列表只读访问（modules() getter，侧边栏渲染数据源）+
 // compose 只渲染当前页（侧边栏布局的前提语义）+
+// compose 空态兜底由 app 层注入（core 只派发不绘制，spec §4.2.1 / 审计 CP-01）+
 // 跨模块跳转负载（payload）设/取/一次性消费语义/默认空/页面隔离/纯导航不清负载
 #include "doctest.h"
 #include "core/module_interface.h"
@@ -72,6 +73,59 @@ REGISTER_TEST(router_compose_renders_current_page_only, "router: compose renders
     ui.end();
     DOCTEST_CHECK(ui.find("stub.todo") != nullptr);
     DOCTEST_CHECK(ui.find("stub.home") == nullptr);
+    return true;
+})
+
+// compose 空态兜底（专家审计 2026-09-27 CP-01）：当前页无对应模块时 core 不再
+// 自行绘制，改为调用 app 层注入的回调（生产注入点 = app_assembly.cpp 装配段）；
+// 未注入则不画、不崩。
+
+REGISTER_TEST(router_compose_calls_injected_fallback,
+              "router: 当前页无模块 → 调 app 层注入的兜底回调（只在不匹配时）", {
+    core::Router r;
+    int calls = 0;
+    // 测试用等价回调：记账 + 画一个标记元素（证明回调真被调用且进了 Ui）
+    r.setFallbackCompose([&calls](eui::Ui& ui, const eui::Screen&) {
+        ++calls;
+        ui.text("test.fallback").text("无页面").build();
+    });
+
+    eui::Screen screen;
+    screen.width = 800.0f;
+    screen.height = 600.0f;
+    eui::Ui ui;
+
+    // 一个模块都没注册（既有防御分支）→ 兜底回调被调用一次
+    ui.begin("f1");
+    r.compose(ui, screen);
+    ui.end();
+    DOCTEST_CHECK_EQ(calls, 1);
+    DOCTEST_CHECK(ui.find("test.fallback") != nullptr);
+
+    // 有匹配模块 → 模块自己画，兜底回调不再被调用
+    StubModule home(core::PageId::Home, "home");
+    r.registerModule(&home);
+    ui.begin("f2");
+    r.compose(ui, screen);
+    ui.end();
+    DOCTEST_CHECK_EQ(calls, 1);
+    DOCTEST_CHECK(ui.find("stub.home") != nullptr);
+    return true;
+})
+
+REGISTER_TEST(router_compose_without_fallback_degrades_silently,
+              "router: 未注入兜底 → 不绘制不崩（保持静默降级语义）", {
+    core::Router r;  // 无模块 + 未调 setFallbackCompose
+    eui::Screen screen;
+    screen.width = 800.0f;
+    screen.height = 600.0f;
+    eui::Ui ui;
+
+    ui.begin("n1");
+    r.compose(ui, screen);  // 不崩
+    ui.end();
+    // core 侧不再画任何东西：app 层占位 id（"empty"）不存在于本帧
+    DOCTEST_CHECK(ui.find("empty") == nullptr);
     return true;
 })
 

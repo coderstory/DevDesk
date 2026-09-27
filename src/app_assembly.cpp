@@ -50,6 +50,15 @@ std::vector<::core::PageId> assembleAndStart(
     // 2) 注册给 module_* 层（快捷按钮/卡片点击通过 core::appRouter() 导航）
     ::core::registerAppRouter(&router);
 
+    // 2b) 空态兜底渲染注入（专家审计 2026-09-27 CP-01）：当前页无对应模块时
+    // Router 不再自行绘制，改由 app 层注入这里。文案与样式**逐字搬自**
+    // Router::compose 旧内联实现（id "empty" / 文案「无页面」/ 默认样式），
+    // 观感零变化；core 侧只剩 std::function 成员与调用，恢复 spec §4.2.1
+    // 「eui::Ui 仅可透传」边界（core 不 include EUI 组件头、不调其成员）
+    router.setFallbackCompose([](eui::Ui& ui, const eui::Screen&) {
+        ui.text("empty").text("无页面").build();
+    });
+
     std::vector<::core::PageId> registered;
     const auto registerOne = [&](::core::Module* module) {
         if (module == nullptr) {

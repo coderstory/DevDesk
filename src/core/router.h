@@ -1,6 +1,7 @@
 // src/core/router.h
 #pragma once
 
+#include <functional>
 #include <string>
 #include <vector>
 
@@ -54,6 +55,15 @@ public:
 
     void compose(eui::Ui& ui, const eui::Screen& screen);
 
+    // 空态兜底渲染回调（app 层注入）：当前页没有对应模块时，Router **不再自行
+    // 绘制**任何东西（core 只派发、不绘制——spec §4.2.1 例外边界「eui::Ui/
+    // eui::Screen 仅可透传，不在 core 内调用其成员」），改为调用本回调，把
+    // 「无页面」占位文案与样式的持有权交回 app 层（app_assembly.cpp 装配时注入）。
+    // 未注入 = 不绘制（compose 静默返回，不崩）：与「一个模块都没注册」的防御
+    // 分支同款降级，不发明新行为。
+    using FallbackCompose = std::function<void(eui::Ui&, const eui::Screen&)>;
+    void setFallbackCompose(FallbackCompose fn);
+
     void startAll();
     void stopAll();
 
@@ -66,6 +76,9 @@ private:
     // 目标页 compose 时取走。同一时刻最多一个挂起负载。
     PageId pendingPayloadPage_ = PageId::Home;
     std::string pendingPayload_;
+
+    // 空态兜底渲染回调：空 = 未注入 → compose 不绘制（见 setFallbackCompose）
+    FallbackCompose fallbackCompose_;
 };
 
 // ============ 进程级 Router 共享访问器 ============
