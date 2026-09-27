@@ -21,6 +21,15 @@ public:
     void navigateTo(PageId page, const std::string& payload = "");
     PageId currentPage() const;
 
+    // 页面区原点 x（窗口坐标）：app 层布局 row(侧边栏, app.page) 把页面子树
+    // 放在侧边栏右侧，模块 compose 内元素/浮层的坐标原点因此是页面区左上而非
+    // 窗口左上；而指针事件携带的是窗口坐标（runtime_input 只做 /dpiScale）。
+    // 模块把指针位置换算成菜单/浮层坐标时减去本值（y 方向页面区纵跨整窗，
+    // 原点恒 0，无需换算）。app 层每帧 compose 写入（app_sidebar.cpp）；
+    // 默认 0 = 未接入时行为与旧版一致（无偏移）。
+    float pageOriginX() const { return pageOriginX_; }
+    void setPageOriginX(float x) { pageOriginX_ = x; }
+
     // 已注册模块的只读访问（侧边栏渲染 displayName/iconGlyph/pageId 用）
     const std::vector<Module*>& modules() const { return modules_; }
 
@@ -51,6 +60,7 @@ public:
 private:
     std::vector<Module*> modules_;
     PageId current_ = PageId::Home;
+    float pageOriginX_ = 0.0f;  // 页面区原点 x（app_sidebar compose 每帧写入）
 
     // 跨模块跳转负载（单槽）：navigateTo 带 payload 时记录目标页，
     // 目标页 compose 时取走。同一时刻最多一个挂起负载。

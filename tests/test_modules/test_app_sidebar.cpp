@@ -251,3 +251,45 @@ REGISTER_TEST(sidebar_expanded_compose,
     DOCTEST_CHECK(floatEq(RecordingModule::lastScreenWidth, 1392.0f));
     return true;
 })
+
+// ============ 4. 页面区原点写入 Router（右键菜单坐标系修复） ============
+
+REGISTER_TEST(sidebar_compose_writes_page_origin,
+              "sidebar: compose 每帧写入页面区原点 x（展开 208 / 折叠 72）", {
+    RecordingModule home(::core::PageId::Home, "首页");
+    RecordingModule md(::core::PageId::Markdown, "笔记");
+    ::core::Router router = makeStubRouter(home, md);
+    ScopedAppRouter scoped(&router);
+
+    eui::Screen screen;
+    screen.width = 1600.0f;
+    screen.height = 1000.0f;
+
+    // 展开态：页面区原点 = 侧边栏占宽 208（模块把窗口坐标换算成页面
+    // 坐标时减本值；不写入 → 菜单右移一个侧边栏宽，跑进右侧详情区）
+    app::setSidebarCollapsed(false);
+    {
+        eui::Ui ui;
+        ui.begin("page_origin_expanded");
+        app::compose(ui, screen);
+        ui.end();
+    }
+    DOCTEST_CHECK(floatEq(router.pageOriginX(), 208.0f));
+
+    // 折叠态：原点随侧边栏收窄到 72
+    app::setSidebarCollapsed(true);
+    {
+        eui::Ui ui;
+        ui.begin("page_origin_collapsed");
+        app::compose(ui, screen);
+        ui.end();
+    }
+    DOCTEST_CHECK(floatEq(router.pageOriginX(), 72.0f));
+
+    // 未接入 app 布局的 Router：默认 0 = 模块侧换算无偏移（旧行为）
+    ::core::Router fresh;
+    DOCTEST_CHECK(floatEq(fresh.pageOriginX(), 0.0f));
+
+    app::setSidebarCollapsed(false);  // 还原，不污染后续用例
+    return true;
+})
