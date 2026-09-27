@@ -290,3 +290,43 @@ REGISTER_TEST(todo_view_state_save_failure_keeps_old, "todo: 视图状态原子�
     removeFile(file);
     return true;
 });
+
+REGISTER_TEST(markdown_view_state_save_failure_keeps_old, "markdown: 视图状态原子写失败不破坏旧文件（THS-03）", {
+    using namespace module::markdown;
+    const auto file = tempFile("devdesk_test_md_view_state_atomic.json");
+    const auto tmp = tmpPathOf(file);
+    std::error_code ec;
+    std::filesystem::remove_all(tmp, ec);
+    removeFile(file);
+
+    MarkdownViewStateStore store(file);
+    MarkdownViewState st;
+    st.lastPath = "工作/周报.md";
+    st.mode = 2;
+    st.collapsedDirs = (std::vector<std::string>{"工作", "笔记"});
+    DOCTEST_REQUIRE(store.save(st).isOk());
+    // 成功后字节与旧实现一致：serialize 结果 + "\n" 尾
+    {
+        const std::string bytes = readAllBytes(file);
+        DOCTEST_CHECK(!bytes.empty());
+        DOCTEST_CHECK(bytes.find("工作/周报.md") != std::string::npos);
+        DOCTEST_CHECK_EQ(bytes.back(), '\n');
+    }
+
+    // 落盘通道被占住 → 保存失败，但上一次成功落盘的状态必须原样可读
+    DOCTEST_REQUIRE(std::filesystem::create_directory(tmp, ec));
+    MarkdownViewState changed;
+    changed.lastPath = "别的.md";
+    changed.mode = 0;
+    DOCTEST_CHECK(store.save(changed).isFail());
+
+    MarkdownViewStateStore reopened(file);
+    const MarkdownViewState loaded = reopened.load();
+    DOCTEST_CHECK_EQ(loaded.lastPath, std::string("工作/周报.md"));
+    DOCTEST_CHECK_EQ(loaded.mode, 2);
+    DOCTEST_CHECK_EQ(loaded.collapsedDirs.size(), static_cast<size_t>(2));
+
+    std::filesystem::remove(tmp, ec);
+    removeFile(file);
+    return true;
+});

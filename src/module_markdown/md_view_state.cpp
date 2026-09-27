@@ -7,6 +7,7 @@
 #include <sstream>
 #include <utility>
 
+#include "core/atomic_write.h"
 #include "core/logging.h"
 #include "core/paths.h"
 #include "platform/json.h"
@@ -114,18 +115,11 @@ core::Result<void> MarkdownViewStateStore::save(const MarkdownViewState& stRaw) 
         }
     }
 
-    std::ofstream f(file_, std::ios::trunc);
-    if (!f) {
-        return core::Result<void>::fail(core::ErrorCode::Internal,
-                                        "视图状态写入失败: " + file_.string());
-    }
-    f << text.unsafeValue() << "\n";
-    f.close();
-    if (!f) {
-        return core::Result<void>::fail(core::ErrorCode::Internal,
-                                        "视图状态写入未完成: " + file_.string());
-    }
-    return core::Result<void>::ok();
+    // 原子写（tmp → remove → rename，core/atomic_write.h 唯一实现，审计 THS-03
+    // 第二批收口）：旧的 std::ofstream(file_, trunc) 原地写在写窗口内崩溃/断电
+    // 会把文件截成半截，load 走解析失败分支静默回落默认值（上次笔记路径/视图
+    // 模式/目录折叠全丢）。逐字节尾处理照旧实现：serialize 结果 + "\n"
+    return core::atomicWriteFile(file_, text.unsafeValue() + "\n", "视图状态");
 }
 
 } // namespace module::markdown

@@ -40,6 +40,7 @@
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
+#include <sstream>
 #include <string>
 #include <vector>
 
@@ -1267,4 +1268,112 @@ REGISTER_TEST(pet_bridge_readonly_accessors,
     DOCTEST_CHECK(!PetConfigStore(petConfigFile()).save(cfg).isFail());
     DOCTEST_CHECK_EQ(currentSkinName(), std::string("bridge-skin"));
     return true;
-})
+});
+
+// ---- 审计 THS-03 第二批：pet 侧两个写点的原子写收口 ----
+// 失败注入照上一批（test_view_state.cpp）约定：把临时文件路径 <目标>.devdesk-tmp
+// 用目录占住（打开必失败），不 sleep、不杀进程，且可顺带断言「失败时旧内容一字未变」。
+
+namespace {
+
+std::string readAllBytes(const std::filesystem::path& p) {
+    std::ifstream f(p, std::ios::binary);
+    std::ostringstream ss;
+    ss << f.rdbuf();
+    return ss.str();
+}
+
+void writeTextFile(const std::filesystem::path& p, const std::string& text) {
+    std::ofstream f(p, std::ios::binary | std::ios::trunc);
+    f << text;
+}
+
+std::filesystem::path tmpPathOf(const std::filesystem::path& p) {
+    return std::filesystem::path(p.string() + ".devdesk-tmp");
+}
+
+} // namespace
+
+REGISTER_TEST(pet_config_save_failure_keeps_old, "pet: 配置原子写失败不破坏旧文件（THS-03）", {
+    using namespace module::pet;
+    const std::filesystem::path file =
+        std::filesystem::temp_directory_path() / "devdesk_test_pet_config_atomic.json";
+    const std::filesystem::path tmp = tmpPathOf(file);
+    std::error_code ec;
+    std::filesystem::remove_all(tmp, ec);
+    std::filesystem::remove(file, ec);
+
+    PetConfigStore store(file);
+    PetConfig cfg;
+    cfg.skinName = "my-cat";
+    cfg.x = 1600;
+    cfg.y = 800;
+    DOCTEST_REQUIRE(store.save(cfg).isOk());
+    // 成功后字节与旧实现一致：serialize 结果 + "\n" 尾
+    const std::string bytes = readAllBytes(file);
+    DOCTEST_CHECK(!bytes.empty());
+    DOCTEST_CHECK_EQ(bytes.back(), '\n');
+
+    // 落盘通道被占住 → 保存失败，但上一次成功落盘的配置必须原样可读
+    DOCTEST_REQUIRE(std::filesystem::create_directory(tmp, ec));
+    PetConfig changed;
+    changed.skinName = "robot";
+    changed.x = 0;
+    changed.y = 0;
+    DOCTEST_CHECK(store.save(changed).isFail());
+
+    PetConfigStore reopened(file);
+    const PetConfig loaded = reopened.load();
+    DOCTEST_CHECK_EQ(loaded.skinName, std::string("my-cat"));
+    DOCTEST_CHECK_EQ(loaded.x, 1600);
+    DOCTEST_CHECK_EQ(loaded.y, 800);
+
+    std::filesystem::remove(tmp, ec);
+    std::filesystem::remove(file, ec);
+    return true;
+});
+
+REGISTER_TEST(pet_skin_json_write_failure_keeps_old, "pet: 皮肤清单原子写失败不破坏旧 pet.json（THS-03）", {
+    using namespace module::pet;
+    const std::filesystem::path dir = tempDir("skin_json_fail");
+    removeTreeQuietly(dir);
+    std::error_code ec;
+    DOCTEST_REQUIRE(std::filesystem::create_directories(dir, ec));
+    // 旧版内置皮肤（source 是内置标记、缺 M2 帧）→ ensureDefaultSkin 走重生成升级，
+    // 盘上现存的 pet.json 即「旧内容」
+    const std::string oldJson =
+        "{\"name\":\"robot\",\"source\":\"DevDesk 内置生成\","
+        "\"states\":{\"idle\":[\"f0.png\"]}}";
+    writeTextFile(dir / "pet.json", oldJson);
+    // 清单落盘通道被目录占住（帧文件通道是空的，PNG 照常写出）→ 最后一步 pet.json 失败
+    DOCTEST_REQUIRE(std::filesystem::create_directory(tmpPathOf(dir / "pet.json"), ec));
+    const auto r = ensureDefaultSkin(dir);
+    DOCTEST_CHECK(r.isFail());
+    DOCTEST_CHECK_EQ(readAllBytes(dir / "pet.json"), oldJson);  // 旧清单一字未变
+
+    std::filesystem::remove_all(tmpPathOf(dir / "pet.json"), ec);
+    removeTreeQuietly(dir);
+    return true;
+});
+
+REGISTER_TEST(pet_skin_frame_write_failure_keeps_old, "pet: 皮肤帧原子写失败不破坏旧帧（THS-03）", {
+    using namespace module::pet;
+    const std::filesystem::path dir = tempDir("skin_frame_fail");
+    removeTreeQuietly(dir);
+    std::error_code ec;
+    DOCTEST_REQUIRE(std::filesystem::create_directories(dir, ec));
+    writeTextFile(dir / "pet.json",
+                  "{\"name\":\"robot\",\"source\":\"DevDesk 内置生成\","
+                  "\"states\":{\"idle\":[\"f0.png\"]}}");
+    const std::string oldFrame = "OLD-FRAME-BYTES";
+    writeTextFile(dir / "f0.png", oldFrame);
+    // 首帧通道被占住 → 重生成在第一帧就失败（旧实现 trunc 原地写会先毁掉旧帧）
+    DOCTEST_REQUIRE(std::filesystem::create_directory(tmpPathOf(dir / "f0.png"), ec));
+    const auto r = ensureDefaultSkin(dir);
+    DOCTEST_CHECK(r.isFail());
+    DOCTEST_CHECK_EQ(readAllBytes(dir / "f0.png"), oldFrame);  // 旧帧一字未变
+
+    std::filesystem::remove_all(tmpPathOf(dir / "f0.png"), ec);
+    removeTreeQuietly(dir);
+    return true;
+});
