@@ -28,8 +28,12 @@
         return false; \
     }} while (0)
 
+// _a/_b 为**值拷贝**而非 const auto&（TIN-08 实证：本仓库大量 `Result::value()`
+// 链式调用返回"指向临时量的引用"，绑引用即 GCC 16 -Wdangling-reference 真阳性，
+// 50 处既有用例被 -Werror 拦停；拷贝才是这些表达式的安全形态）。此处只取审计
+// 建议里的 const 部分：加 const 防止断言过程意外改写被比较值。
 #define DOCTEST_CHECK_EQ(a, b) \
-    do { auto _a = (a); auto _b = (b); \
+    do { const auto _a = (a); const auto _b = (b); \
          if (!(_a == _b)) { \
             std::ostringstream oss; \
             oss << "FAIL [" << __FILE__ << ":" << __LINE__ << "] " #a " != " #b; \
@@ -134,9 +138,15 @@ inline std::filesystem::path tempPath(const std::string& name) {
 // unique_name 必须是合法 C++ 标识符（驼峰命名）
 // body 是返回 bool 的代码块；return true 表示通过
 // 例：REGISTER_TEST(test_addition, "1+1=2", { return 1+1 == 2; })
-#define REGISTER_TEST(unique_name, description, body) \
+//
+// body 走可变参 `...` / `__VA_ARGS__` 承接（审计 TIN-08）：预处理器只在
+// 「顶层」逗号处切分实参，body 从第 3 个实参起被整体收进 __VA_ARGS__，
+// 因此用例体里的裸逗号（聚合初始化列表、`std::map<int, float>` 模板逗号、
+// 多声明语句等）**不再**需要写成括号包裹 / 逐条 push_back / 搬出宏外等规避式。
+// 签名对既有调用点完全兼容（原来第 3 个实参就是 body）。
+#define REGISTER_TEST(unique_name, description, ...) \
     namespace { \
-        static bool unique_name() body \
+        static bool unique_name() __VA_ARGS__ \
         struct UniqueRegistrar_##unique_name { \
             UniqueRegistrar_##unique_name() { \
                 test_registry::register_test(description, unique_name); \

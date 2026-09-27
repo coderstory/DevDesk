@@ -111,10 +111,9 @@ REGISTER_TEST(paths_executable_dir, "paths: executableDir = 当前可执行文�
     DOCTEST_CHECK(dir.is_absolute());
     std::error_code ec;
     DOCTEST_CHECK(std::filesystem::is_directory(dir, ec) && !ec);
-    // 注意：本宏体内不能出现裸逗号（预处理器按逗号切分实参），迭代器分两句声明
+    // TIN-08 后宏体走 __VA_ARGS__，声明列表里的逗号可直接写
     bool foundSelf = false;
-    std::filesystem::directory_iterator it(dir, ec);
-    const std::filesystem::directory_iterator end;
+    std::filesystem::directory_iterator it(dir, ec), end;
     for (; !ec && it != end; it.increment(ec)) {
         if (it->path().stem().string() == "devdesk_tests") {
             foundSelf = true;

@@ -300,19 +300,20 @@ REGISTER_TEST(home_todo_overdue_consistency,
     const int64_t day = 86400;
 
     // 种子：覆盖「无截止 / 逾期未完成 / 逾期已完成 / 未到期」四种组合
-    // （逐条 push_back(Seed{...})：花括号初始化列表的顶层逗号会被 REGISTER_TEST
-    //  宏当成实参分隔符拆开，套在调用括号里才安全）
+    // （TIN-08 后 REGISTER_TEST 走 __VA_ARGS__，花括号初始化列表的顶层逗号
+    //  不再被当宏实参分隔符，可直接在用例体内初始化）
     struct Seed {
         const char* title;
         std::optional<int64_t> dueAt;
         std::optional<int64_t> completedAt;
     };
-    std::vector<Seed> seeds;
-    seeds.push_back(Seed{"s1-no-due", std::nullopt, std::nullopt});
-    seeds.push_back(Seed{"s2-past-open", now - 3600, std::nullopt});
-    seeds.push_back(Seed{"s3-past-done", now - 7200, now - 60});
-    seeds.push_back(Seed{"s4-future", now + day, std::nullopt});
-    seeds.push_back(Seed{"s5-past-open2", now - 7 * day, std::nullopt});
+    std::vector<Seed> seeds{
+        Seed{"s1-no-due", std::nullopt, std::nullopt},
+        Seed{"s2-past-open", now - 3600, std::nullopt},
+        Seed{"s3-past-done", now - 7200, now - 60},
+        Seed{"s4-future", now + day, std::nullopt},
+        Seed{"s5-past-open2", now - 7 * day, std::nullopt},
+    };
 
     std::string insert =
         "INSERT INTO todo_tasks (column_id, title, priority, position, due_at, "
