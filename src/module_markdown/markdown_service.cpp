@@ -490,7 +490,34 @@ core::Result<void> MarkdownService::rescanLocked() {
             "无法创建笔记目录: " + ec.message());
     }
 
-    // 1) 递归遍历磁盘，把所有 .md 文件 upsert 到索引
+    // 1) 先取索引快照（= 待剪枝候选集），再遍历磁盘。
+    //    这个顺序不能反（MD-08）：旧实现「先遍历攒 foundPaths → 再 SELECT」留下
+    //    一个窗口——UI 线程的 write/create/rename 在遍历期间落索引的行，遍历
+    //    可能已经扫过它所在目录（3000 篇量级约 700ms），于是它不在 foundPaths
+    //    里，被当成「磁盘上已不存在」删掉（FTS 行同步删，标签关联 ON DELETE
+    //    CASCADE 后不可恢复），要等下一轮 rescan 才自愈。先取快照后，快照之后
+    //    新增的任何行都不是删除候选，窗口消失。
+    auto prep = db_.prepare("SELECT path FROM markdown_index");
+    if (prep.isFail()) {
+        return core::Result<void>::fail(prep.errorCode(),
+            "prepare select paths: " + prep.errorMessage());
+    }
+    std::vector<std::string> indexedPaths;
+    {
+        auto& stmt = prep.value();
+        auto rowsResult = stmt.fetchAll();
+        if (rowsResult.isFail()) {
+            return core::Result<void>::fail(rowsResult.errorCode(),
+                "fetch paths: " + rowsResult.errorMessage());
+        }
+        indexedPaths.reserve(rowsResult.value().size());
+        for (const auto& row : rowsResult.value()) {
+            auto p = row.getString("path");
+            if (p.isOk()) indexedPaths.push_back(p.value());
+        }
+    }
+
+    // 2) 递归遍历磁盘，把所有 .md 文件 upsert 到索引
     std::set<std::string> foundPaths; // POSIX 风格相对路径
     for (auto it = fs::recursive_directory_iterator(
                     notesDir_, fs::directory_options::skip_permission_denied, ec);
@@ -517,38 +544,24 @@ core::Result<void> MarkdownService::rescanLocked() {
         }
     }
     if (ec) {
-        LOG_WARN("遍历笔记目录时出错: " + ec.message());
+        // MD-08：遍历中途出错 → foundPaths 残缺，此时按它剪枝会把磁盘上真实
+        // 存在的笔记当「已删除」成批清掉（含标签级联）。本轮放弃剪枝（FTS
+        // 孤儿清理同理），只保留已完成的 upsert，下一轮 rescan 再以磁盘为准
+        // 收敛。调用方已按 fail 分支只记日志/提示，不会误报成功。
+        return core::Result<void>::fail(core::ErrorCode::FileReadFailed,
+            "遍历笔记目录时出错，本轮跳过索引剪枝: " + ec.message());
     }
 
-    // 2) 删除索引中存在但磁盘上已不存在的条目
-    auto prep = db_.prepare("SELECT path FROM markdown_index");
-    if (prep.isFail()) {
-        return core::Result<void>::fail(prep.errorCode(),
-            "prepare select paths: " + prep.errorMessage());
-    }
-    std::vector<std::string> toRemove;
-    {
-        auto& stmt = prep.value();
-        auto rowsResult = stmt.fetchAll();
-        if (rowsResult.isFail()) {
-            return core::Result<void>::fail(rowsResult.errorCode(),
-                "fetch paths: " + rowsResult.errorMessage());
-        }
-        for (const auto& row : rowsResult.value()) {
-            auto p = row.getString("path");
-            if (p.isOk() && foundPaths.find(p.value()) == foundPaths.end()) {
-                toRemove.push_back(p.value());
-            }
-        }
-    }
-    for (const auto& p : toRemove) {
+    // 3) 删除「快照里有、磁盘上已不存在」的条目
+    for (const auto& p : indexedPaths) {
+        if (foundPaths.find(p) != foundPaths.end()) continue;
         auto delResult = deleteFromIndex(p);
         if (delResult.isFail()) {
             LOG_WARN("删除索引失败 " + p + ": " + delResult.errorMessage());
         }
     }
 
-    // 3) 清理 FTS 里的孤儿行（path 已不在 markdown_index 中）
+    // 4) 清理 FTS 里的孤儿行（path 已不在 markdown_index 中）
     //    历史版本用过 INSERT OR REPLACE（对 FTS5 不去重），可能留下重复行
     if (auto cleanup = db_.exec(
             "DELETE FROM markdown_fts WHERE path NOT IN "
