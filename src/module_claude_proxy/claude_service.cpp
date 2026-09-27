@@ -633,6 +633,21 @@ core::Result<void> ClaudeService::setActiveProfile(int64_t id) {
         return core::Result<void>::fail(p.errorCode(), p.errorMessage());
     }
 
+    // 反向同步（设计 §3.1 调用序号 2-3）：把 settings.json 的 env 收编进**当前
+    // 激活 profile**——必须发生在「代理运行中 syncTakeOver」（下方）之前，
+    // 否则会把自己刚写进去的托管值当用户值捕获。
+    // 无激活 profile（首建自动激活 / 首次点「启用」）→ 直接跳过、不读文件：
+    // 否则一个坏 settings.json 会把 profile 首建路径整个挡死（G0）。
+    // 失败 = 文件存在但读不了/解析失败（G8）→ 中止本次切换（S-2），profile
+    // 一字未改；错误经既有 doSetActive 的 toast 呈现，UI 零改动。
+    auto curActive = getActiveProfile();
+    if (curActive.isOk()) {
+        auto capture = syncCaptureActiveProfile();
+        if (capture.isFail()) {
+            return capture;
+        }
+    }
+
     // 事务内：清零 → 设置目标
     auto result = db_.transaction([this, id]() -> core::Result<void> {
         auto c = db_.prepare("UPDATE claude_profiles SET is_active = 0 "
@@ -666,6 +681,84 @@ core::Result<void> ClaudeService::setActiveProfile(int64_t id) {
         syncTakeOver();
     }
     return result;
+}
+
+// ---------- Profile 复制（设计 §4.2/§4.3）----------
+
+core::Result<Profile> ClaudeService::duplicateProfile(int64_t srcId) {
+    auto srcR = getProfile(srcId);
+    if (srcR.isFail()) {
+        return core::Result<Profile>::fail(srcR.errorCode(),
+                                          srcR.errorMessage());
+    }
+    const Profile src = std::move(srcR).value();
+
+    // 副本命名（§4.2）：name + " 副本"，重名递增避让既有 UNIQUE 约束；
+    // 100 次仍冲突 → 返回 fail 且不建行（不空转死循环）
+    auto listR = listProfiles();
+    if (listR.isFail()) {
+        return core::Result<Profile>::fail(listR.errorCode(),
+                                           listR.errorMessage());
+    }
+    std::vector<std::string> names;
+    names.reserve(listR.value().size());
+    for (const auto& p : listR.value()) names.push_back(p.name);
+    const std::string copyName = makeCopyName(src.name, names);
+    if (copyName.empty()) {
+        return core::Result<Profile>::fail(
+            core::ErrorCode::ProfileAlreadyExists,
+            "副本命名连续 100 次冲突，请先重命名或删除部分 Profile");
+    }
+
+    // 源 key 缺失（Keychain 孤儿）→ fail：不建无 key 的副本
+    //（与 createProfile 的「apiKey 必填」约束一致）
+    auto keyR = loadApiKey(srcId);
+    if (keyR.isFail() || keyR.value().empty()) {
+        return core::Result<Profile>::fail(core::ErrorCode::InvalidApiKey,
+            "源 Profile 的密钥缺失，无法复制");
+    }
+
+    // 一行 SQLite + 一条 Keychain（account 自动为 claude:<新 id>，与源不同）；
+    // 副本不激活（S-4）→ 不触发 setActiveProfile、也不触发反向同步
+    const std::string defModel =
+        effectiveModelsConfig(src.modelsConfigJson, src.model).def.model;
+    auto createdR = createProfile(copyName, src.baseUrl, keyR.value(), defModel,
+                                  /*activateIfNoneActive=*/false);
+    if (createdR.isFail()) {
+        return core::Result<Profile>::fail(createdR.errorCode(),
+                                           createdR.errorMessage());
+    }
+    const int64_t newId = createdR.value().id;
+    Profile out = createdR.value();
+
+    // 二段补写 models_config / extra_env（同 UI 新建流程：createProfile 只带
+    // 得走 default 模型名）
+    if (!src.modelsConfigJson.empty() || !src.extraEnvJson.empty()) {
+        Profile upd = out;
+        upd.modelsConfigJson = src.modelsConfigJson;
+        upd.extraEnvJson = src.extraEnvJson;
+        upd.model = defModel;
+        auto u = updateProfile(upd);
+        if (u.isFail()) {
+            // 回滚（§4.3）：deleteProfile 先清 Keychain 再删行
+            auto rb = deleteProfile(newId);
+            if (rb.isOk()) {
+                return core::Result<Profile>::fail(
+                    u.errorCode(), "复制失败（已回滚）: " + u.errorMessage());
+            }
+            LOG_ERROR("复制回滚失败，存在不完整副本 id=" + std::to_string(newId) +
+                      ": " + rb.errorMessage());
+            return core::Result<Profile>::fail(u.errorCode(),
+                "复制失败: " + u.errorMessage() + "；已创建不完整副本 id=" +
+                std::to_string(newId) + "，请手动删除");
+        }
+        out = std::move(upd);
+    }
+
+    LOG_INFO("已复制 Claude profile id=" + std::to_string(newId) +
+             " name=" + copyName + "（源 id=" + std::to_string(srcId) +
+             "，副本未激活）");
+    return core::Result<Profile>::ok(std::move(out));
 }
 
 // ---------- 连通性测试 ----------
@@ -1075,6 +1168,166 @@ void ClaudeService::recoverPendingSettingsRestore() {
     if (!r.ok) {
         LOG_WARN("Claude Code 接管崩溃补还原失败: " + r.error);
     }
+}
+
+// ---------- 反向同步（settings.json → 激活 profile，设计 §3.1/§3.4/§3.5）----------
+
+core::Result<void> ClaudeService::syncCaptureActiveProfile() {
+    if (syncPaths_.settingsFile.empty()) {
+        return core::Result<void>::ok();  // 通道未注入（§3.6 唯一开关）
+    }
+
+    // G0 由调用方（setActiveProfile）判断：「无激活 profile 不读文件」。此处
+    // 防御式再查一次，避免被其它入口误调时把值写进错误的 profile
+    auto activeR = getActiveProfile();
+    if (activeR.isFail()) {
+        return core::Result<void>::ok();
+    }
+    const Profile prof = std::move(activeR).value();
+
+    // 读侧（M1）：不存在 / 0 字节空文件 / 无 env → present=false（no-op 成功，
+    // 照常切换）；存在但读不了 / 解析失败 / env 非对象 → ok=false（G8 → S-2）
+    auto read = settings_sync::readSettingsEnvForSync(syncPaths_);
+    if (!read.ok) {
+        return core::Result<void>::fail(core::ErrorCode::FileReadFailed,
+                                        read.error);
+    }
+    if (!read.present) {
+        return core::Result<void>::ok();
+    }
+
+    // 纯函数层（M2）：映射表 + 守卫表（G1–G4/G6 跳过的键记在 skippedKeys）
+    auto parsed = parseEnvForReverseSync(read.envJson, read.managedKeys);
+    if (!parsed.ok) {
+        return core::Result<void>::fail(core::ErrorCode::JsonParseError,
+            "settings.json env 解析失败（" +
+            syncPaths_.settingsFile.string() + "）: " + parsed.error);
+    }
+    for (const auto& w : parsed.cfg.warnings) {
+        LOG_WARN("反向同步（settings.json → profile）: " + w);
+    }
+
+    const std::vector<std::string>& skipped = parsed.cfg.skippedKeys;
+    const auto isSkipped = [&skipped](const char* key) {
+        return std::find(skipped.begin(), skipped.end(), key) != skipped.end();
+    };
+
+    const ReverseSyncMerge merged = mergeReverseSyncEnv(
+        parsed.cfg, prof.modelsConfigJson, prof.model, prof.extraEnvJson);
+
+    // ---- 逐字段比较（§3.5 无变化 → 零写入，不 bump updated_at）----
+    // base_url：G2 命中（loopback 本地代理形态）→ 保持 profile 原值，不清
+    const std::string newBaseUrl = isSkipped("ANTHROPIC_BASE_URL")
+        ? prof.baseUrl
+        : stripTrailingSlash(trim(parsed.cfg.baseUrl));
+    const bool baseUrlChanged = (newBaseUrl != prof.baseUrl);
+
+    // token：G1/G2 联动/G3 占位/G4 空值/G6 非法 → 不写也不清（保持原密钥）
+    const bool tokenSkipped = isSkipped("ANTHROPIC_AUTH_TOKEN") ||
+                              isSkipped("ANTHROPIC_API_KEY");
+    auto curKeyR =
+        platform::keychain::loadSecret(keychainService_, prof.keychainAccount);
+    const std::string curKey = curKeyR.isOk() ? curKeyR.value() : std::string();
+    bool keyWrite = false;  // 出现 → 覆盖 Keychain（经 updateProfile）
+    bool keyClear = false;  // 缺席 → 清空（Keychain 条目 + 三列元数据）
+    if (!tokenSkipped) {
+        if (!parsed.cfg.authToken.empty()) {
+            keyWrite = (parsed.cfg.authToken != curKey);
+        } else {
+            keyClear = !curKey.empty();
+        }
+    }
+
+    if (!baseUrlChanged && !merged.modelsChanged && !merged.extraEnvChanged &&
+        !keyWrite && !keyClear) {
+        return core::Result<void>::ok();  // 无变化：不 UPDATE、不写 Keychain
+    }
+
+    // ---- 目标值 ----
+    Profile upd = prof;
+    upd.baseUrl = newBaseUrl;
+    if (merged.modelsChanged) {
+        upd.modelsConfigJson = merged.modelsConfigJson;
+        // 旧 model 列显式跟随 default 槽位：updateProfile 内虽有同款跟随，但
+        // 「default 槽位被清空」时它拿不到空值，旧 model 会经
+        // effectiveModelsConfig 的 legacy fallback 复活，清空就落不了库
+        upd.model = effectiveModelsConfig(merged.modelsConfigJson, "").def.model;
+    }
+    if (merged.extraEnvChanged) {
+        upd.extraEnvJson = merged.extraEnvJson;
+    }
+
+    // 失败补偿（§3.5 表末行）：用事先 loadSecret 取到的旧值 best-effort 回写。
+    // 返回 false = 补偿也失败 → 调用方文案注明密钥可能不可用（元数据与其余
+    // 字段完好）。Windows 覆盖写是 trunc 后写（keychain_win.cpp），不承诺旧值
+    // 必然完好——该风险如实登记于设计 §8.5
+    const auto compensateKey = [&]() -> bool {
+        if (curKey.empty()) return true;
+        auto r = platform::keychain::storeSecret(keychainService_,
+                                                 prof.keychainAccount, curKey);
+        if (r.isFail()) {
+            LOG_ERROR("反向同步补偿回写 Keychain 失败（profile id=" +
+                      std::to_string(prof.id) + "）: " + r.errorMessage());
+            return false;
+        }
+        return true;
+    };
+
+    // key 缺席清空：先删 Keychain 条目（同 deleteProfile 的顺序——先 Keychain
+    // 后落库，失败即中止且 profile 一字未改；keychain 层不新增 API）
+    if (keyClear) {
+        auto del = platform::keychain::deleteSecret(keychainService_,
+                                                    prof.keychainAccount);
+        if (del.isFail()) {
+            LOG_ERROR("反向同步清理 Keychain 失败，中止本次切换（profile id=" +
+                      std::to_string(prof.id) + "）: " + del.errorMessage());
+            return core::Result<void>::fail(del.errorCode(),
+                "清理该 Profile 的密钥失败，已中止本次切换: " + del.errorMessage());
+        }
+    }
+
+    // 字段（+ key 写入）：updateProfile 内部顺序 Keychain → DB，失败即中止
+    if (baseUrlChanged || merged.modelsChanged || merged.extraEnvChanged ||
+        keyWrite) {
+        if (keyWrite) upd.apiKeyPlain = parsed.cfg.authToken;
+        auto u = updateProfile(upd);
+        if (u.isFail()) {
+            std::string msg =
+                "反向同步写库失败，已中止本次切换: " + u.errorMessage();
+            if ((keyWrite || keyClear) && !compensateKey()) {
+                msg += "；该 Profile 的密钥可能处于不可用态，"
+                       "重新填一次 API Key 即可恢复";
+            }
+            return core::Result<void>::fail(u.errorCode(), msg);
+        }
+    }
+
+    // 三列元数据清除（keychain_account / api_key_hint / api_key_check）：
+    // updateProfile 的空 apiKeyPlain 分支不触碰它们，故走这条最小 UPDATE
+    if (keyClear) {
+        auto prep = db_.prepare(
+            "UPDATE claude_profiles SET keychain_account = '', "
+            "api_key_hint = '', api_key_check = '', updated_at = ? "
+            "WHERE id = ?");
+        if (prep.isFail()) {
+            compensateKey();
+            return core::Result<void>::fail(prep.errorCode(),
+                                            prep.errorMessage());
+        }
+        auto& stmt = prep.value();
+        stmt.bind(1, static_cast<int64_t>(nowUnix()));
+        stmt.bind(2, prof.id);
+        auto stepR = stmt.step();
+        if (stepR.isFail()) {
+            compensateKey();
+            return core::Result<void>::fail(stepR.errorCode(),
+                                            stepR.errorMessage());
+        }
+    }
+
+    LOG_INFO("反向同步：已把 " + syncPaths_.settingsFile.string() +
+             " 的 env 收编进激活 profile id=" + std::to_string(prof.id));
+    return core::Result<void>::ok();
 }
 
 void ClaudeService::syncTakeOver() {

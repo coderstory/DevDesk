@@ -115,6 +115,13 @@ public:
     core::Result<Profile> getActiveProfile();
     core::Result<void> setActiveProfile(int64_t id);
 
+    // 复制 Profile（设计 §4.2/§4.3，M4）：名称自动加「副本」后缀（重名递增
+    // 避让，100 次仍冲突 → fail 不建行），API key 一并复制（源 key 缺失 →
+    // fail，不建无 key 的副本），**副本不激活**（S-4）。
+    // 二段补写（models_config / extra_env）失败 → best-effort 删除刚建的副本
+    // 回滚：回滚成功 = fail 且零残留；回滚失败 = fail 且文案注明不完整副本 id
+    core::Result<Profile> duplicateProfile(int64_t srcId);
+
     // ---- 连通性测试 ----
 
     core::Result<platform::http::Response> testConnection(const Profile& profile);
@@ -275,6 +282,17 @@ private:
     // 接管/还原的内部入口（settingsFile 为空 = 通道未启用，直接返回）
     void syncTakeOver();
     void syncRestore();
+
+    // 反向同步（设计 §3.1/§3.4/§3.5，M3）：读 settings.json 的 env → 对齐到
+    // **当前激活 profile**（出现覆盖 / 缺席清空 / 守卫键不写也不清）。
+    // 由 setActiveProfile 在「校验目标存在之后、清零置位事务之前」调用，
+    // 无激活 profile 时调用方已跳过（G0，不读文件）。
+    //   - 文件不存在 / 空文件 / 无 env → no-op 成功（照常切换）
+    //   - 存在但读不了 / 解析失败 → fail（S-2：中止本次切换，profile 一字未改）
+    //   - 无变化 → 零写入（不 UPDATE、不写 Keychain、不 bump updated_at）
+    // 不受 settingsTakeOverEnabled_ 门控（只读外部文件）；唯一开关是
+    // syncPaths_.settingsFile 为空 → 直接返回
+    core::Result<void> syncCaptureActiveProfile();
 
     core::data::SqliteDb& db_;
     std::string keychainService_;
