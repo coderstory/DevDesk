@@ -21,11 +21,14 @@
 //     fail 后就地转成自己的缺省语义（见 settings_module.cpp 的 claudeProxy()）。
 //
 // 线程模型：注册 / 注销只发生在启动装配段与测试用例体内（单线程），运行期只读；
-// 与 core::appRouter / core::appDatabase 同款「进程级单例槽」，故新增槽位需要
-// 在 tests/test_main.cpp 的 TIN-07 全局清单里登记复位（见该文件说明）。
+// 与 core::appRouter / core::appDatabase 同款「进程级单例槽」，故复位收在
+// tests/test_main.cpp 的 TIN-07 全局清单里——清单调 resetForTest() 全清，
+// 新增槽位（新接口类型）无需再逐类型登记（登记在 set<T> 首次调用时自动发生）。
 #pragma once
 
 #include "core/result.h"
+
+#include <vector>
 
 namespace core {
 
@@ -37,6 +40,25 @@ struct ServiceSlot {
     static inline T* instance = nullptr;
 };
 
+// 已用槽位的「清零回调」登记表（类型擦除）：槽位按类型实例化，要一次清空全部
+// 槽位就得有一份类型清单——C++ 无反射，清单只能由 set<T>() 首次调用时登记
+//（见 ensureSlotResettable）。供 ServiceLocator::resetForTest() 遍历清零。
+inline std::vector<void (*)()>& slotResetters() {
+    static std::vector<void (*)()> resetters;
+    return resetters;
+}
+
+// 幂等登记：同一类型只登记一次（函数局部 static）。线程模型同 set——只从装配段
+// / 测试用例体内（单线程）调用，故登记表不做同步。
+template <typename T>
+void ensureSlotResettable() {
+    static const bool registered = [] {
+        slotResetters().push_back([] { ServiceSlot<T>::instance = nullptr; });
+        return true;
+    }();
+    (void)registered;
+}
+
 } // namespace detail
 
 // 纯静态门面（不构造实例）
@@ -47,6 +69,7 @@ public:
     // 注册（传 nullptr = 注销）；返回旧值，便于调用方保存 / 还原
     template <typename T>
     static T* set(T* service) {
+        detail::ensureSlotResettable<T>(); // 幂等：登记本类型的清零回调
         T* previous = detail::ServiceSlot<T>::instance;
         detail::ServiceSlot<T>::instance = service;
         return previous;
@@ -63,6 +86,17 @@ public:
                 "core::ServiceLocator：服务未注册（装配段漏注册，或提供方已被注销）");
         }
         return Result<T*>::ok(service);
+    }
+
+    // 清零**全部**已用槽位（出厂态 = 全部未注册）。测试 per-case 复位入口：
+    // tests/test_main.cpp 的 TIN-07 进程级全局清单在每用例前调用（生产路径不调）。
+    // 类型无关——含测试本地桩接口（如 test_app_assembly 的 IProbeService，
+    // 声明在匿名空间、本文件无从点名），这正是逐类型 set<T>(nullptr) 白名单式
+    // 清零覆盖不到的；新增接口类型也不必回来补登记。
+    static void resetForTest() {
+        for (void (*clear)() : detail::slotResetters()) {
+            clear();
+        }
     }
 };
 
