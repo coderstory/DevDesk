@@ -12,6 +12,7 @@
 #include "core/router.h"
 #include "core/theme.h"
 #include "core/tray_menu_spec.h"
+#include "core/window_layout.h"
 #include "module_home/home_service.h"
 #include "module_pet/pet_config.h"
 #include "module_pet/pet_window.h"
@@ -24,6 +25,9 @@
 #include <eui/dsl.h>
 #include <eui/dsl_app.h>
 #include <core/render/text.h>  // TextPrimitive::setDefaultFontFiles（默认 UI 字体覆盖）
+// 主显示器工作区 / 显示器缩放系数（启动期窗口尺寸决策的取值来源）：
+// EUI-NEO 目前只经 core/platform/platform.h → eui/app.h 传递该头，这里显式引入
+#include <core/window/window_backend.h>
 
 #include <filesystem>
 #include <fstream>
@@ -336,12 +340,7 @@ void startClaudeProxy() {
         LOG_ERROR("Claude 代理启动失败: " + r.errorMessage());
         return;
     }
-    // -fno-exceptions：用 unsafeValue() 而非 value()
-    const int port = static_cast<int>(r.unsafeValue());
-    // 启动成功日志由 ClaudeService::startProxy 统一输出一次
-    // （claude_service.cpp "Claude 代理已启动 <host>:<port> (auth=on)"），
-    // 这里不再重复记录，避免一次启动打两条"已启动"
-    ::module::claude::writeProxyTokenFile(svc->proxyAuthToken(), port);
+    // 启动成功日志由 ClaudeService::startProxy 统一输出一次，这里不重复记录
 }
 
 // ---- 托盘菜单（菜单美化 2026-09-23；审计 [7] 动态收缩 2026-09-24）----
@@ -492,6 +491,58 @@ bool showTrayStyledMenu(int x, int y) {
                                       });
 }
 
+// ---- 启动期主窗口尺寸决策（2026-09-27 修复：贴底内容被任务栏吃掉）----
+// 缺陷：.windowSize(1600, 1000) 直达后端 glfwCreateWindow，语义是**客户区物理
+// 像素**；本机 1920×1080 @125%（工作区 1920×1020 物理、任务栏 60）下窗口外框
+// 1618×1047 超出工作区高度 → 客户区底部约 52 物理 px 压在任务栏后面，md 笔记树
+// 底部的「+ 笔记 / + 文件夹」按钮、编辑区状态栏、侧边栏折叠钮全部被切。
+// 修法：请求尺寸按目标显示器缩放系数换算成物理像素、加上非客户区外框经验值后
+// 与工作区比较——放得下用请求尺寸，放不下则**启动即最大化**（用户可再拖）。
+// 决策本身是不含 EUI-NEO/平台依赖的纯函数（core::window_layout，单测
+// tests/test_core/test_window_layout.cpp），这里只负责取值与落地。
+constexpr int kInitialWindowLogicalWidth = 1600;
+constexpr int kInitialWindowLogicalHeight = 1000;
+// 最小尺寸语义（与下方 minWindowSize 同源；决策函数用它兜底，保证不小于它）
+constexpr int kMinWindowLogicalWidth = 1200;
+constexpr int kMinWindowLogicalHeight = 720;
+
+core::window_layout::InitialWindowDecision resolveInitialWindowDecision() {
+    // 目标显示器 = 主显示器（窗口走 centerWindow，无显式位置，落在主屏）
+    int workX = 0;
+    int workY = 0;
+    int workW = 0;
+    int workH = 0;
+    core::window::getPrimaryMonitorWorkArea(workX, workY, workW, workH);
+
+    // 缩放系数按工作区中心点取自该显示器 DPI（窗口实际所在显示器）。
+    // 工作区未知时不查（中心点无意义），按 1.0 降级——决策函数见工作区无效
+    // 会原样保留请求尺寸，与修复前行为一致
+    const float scale =
+        (workW > 0 && workH > 0)
+            ? core::window::windowScaleForPoint(
+                  static_cast<float>(workX) + static_cast<float>(workW) * 0.5f,
+                  static_cast<float>(workY) + static_cast<float>(workH) * 0.5f)
+            : 1.0f;
+    const core::window_layout::FrameInsets frame =
+        core::window_layout::frameInsetsForScale(scale);
+    const core::window_layout::InitialWindowDecision decision =
+        core::window_layout::decideInitialWindow(
+            core::window_layout::InitialWindowRequest{
+                kInitialWindowLogicalWidth, kInitialWindowLogicalHeight,
+                kMinWindowLogicalWidth, kMinWindowLogicalHeight},
+            core::window_layout::WorkArea{workX, workY, workW, workH}, scale,
+            frame);
+    LOG_INFO("初始窗口尺寸决策：工作区 " + std::to_string(workW) + "x" +
+             std::to_string(workH) + "@(" + std::to_string(workX) + "," +
+             std::to_string(workY) + ") 物理px，缩放 " + std::to_string(scale) +
+             "，外框 +" + std::to_string(frame.width) + "x+" +
+             std::to_string(frame.height) + "，客户区 " +
+             std::to_string(decision.width) + "x" + std::to_string(decision.height) +
+             (decision.maximize ? " → 启动即最大化（外框放不进工作区）"
+                                : " → 用请求尺寸"));
+    return decision;
+}
+
 } // namespace
 
 namespace app {
@@ -509,12 +560,16 @@ const DslAppConfig& dslAppConfig() {
     static const bool themeRestored = []() {
         ::core::paths::ensureDirectoriesExist();
         setupLogging();
-        // 默认 UI 字体改 Noto Sans SC（OFL 开源、跨平台 Win/macOS 同一份、非粗、
-        // CJK+Latin 全覆盖），替代打包的 JingNanJunJunTi-Bold（奇怪+全局粗）。
-        // setDefaultFontFiles 必须在首次文本渲染前调（themeRestored 块在 config
-        // 构造前跑一次，早于任何 render）。图标字体保持 FA 不变。
-        ::core::TextPrimitive::setDefaultFontFiles(
-            "NotoSansSC-VF.ttf", "Font Awesome 7 Free-Solid-900.otf");
+        // 默认 UI 字体：这里**不调** setDefaultFontFiles（调了即置 override、
+        // 优先生效）。EUI-NEO resolveDefaultUiFontPath() 的优先级是
+        // 「override → 系统 CJK 字体 → 打包兜底」，所以成品实际用的是系统字体：
+        // Windows = C:/Windows/Fonts/msyh.ttc（微软雅黑），macOS = 苹方，
+        // Linux = Noto CJK；打包的装饰体只作兜底（2026-09-27 EUI-NEO 改）。
+        // 下面这行保持注释：NotoSansSC-VF 是变量字体，FreeType 加载不稳，
+        // override 设了也会渲染回退 Bold → measureTextWidth(Noto)≠渲染(Bold)
+        // → 布局错位，需换静态 Noto/Source Han 才可启用。
+        // ::core::TextPrimitive::setDefaultFontFiles(
+        //     "NotoSansSC-VF.ttf", "Font Awesome 7 Free-Solid-900.otf");
         // 标题栏深浅主题联动（磨砂设计 Phase A）：core 不依赖 EUI-NEO，
         // 通过 theme 回调注入——先装回调再恢复主题，启动恢复与运行时切换
         // （设置页 theme::setDark/setLight → 回调 → app::setTitleBarAppearance）
@@ -549,6 +604,13 @@ const DslAppConfig& dslAppConfig() {
     }();
     (void)themeRestored;
 
+    // 初始窗口尺寸/形态决策（必须在 config 之前求值：config 静态初始化时消费）。
+    // 取值时机：dslAppConfig() 首次调用发生在 EUI-NEO eui_app_run 的 glfwInit()
+    // 之后（glfw_app_main.cpp:503 → :509 读 initialWindowWidth），此时显示器
+    // 枚举/DPI 查询可用；万一不可用（无头、无显示器）决策函数原样保留请求尺寸。
+    static const core::window_layout::InitialWindowDecision initialWindow =
+        resolveInitialWindowDecision();
+
     static const DslAppConfig config = DslAppConfig{}
         .title("DevDesk")
         // Debug 构建下 EUI-NEO 默认把 FPS/CPU/GPU 拼进窗口标题
@@ -556,8 +618,17 @@ const DslAppConfig& dslAppConfig() {
         .showDebugStatsInTitle(false)
         .pageId("devdesk")
         .clearColor(::core::theme::current().colors.background)  // 跟随主题
-        .windowSize(1600, 1000)
-        .minWindowSize(1200, 720)
+        // 初始尺寸（物理像素，见 initialWindow 计算）：能覆盖显示器工作区就用
+        // 请求的 1600×1000（逻辑单位 × 缩放），否则启动即最大化——修 2026-09-27
+        // 「窗口比工作区高、贴底内容被任务栏吃掉」缺陷（决策细节见上方
+        // resolveInitialWindowDecision 与 core/window_layout.h）
+        .windowSize(initialWindow.width, initialWindow.height)
+        .minWindowSize(kMinWindowLogicalWidth, kMinWindowLogicalHeight)
+        // 最大化通道：DslAppConfig::maximized → app::windowMaximized()
+        //（dsl_app_impl.h:288）→ WindowCreateRequest::maximized
+        //（glfw_app_main.cpp:522）→ glfwWindowHint(GLFW_MAXIMIZED)
+        //（window_backend.cpp:776），创建期生效、用户可再拖回
+        .maximized(initialWindow.maximize)
         .highDpi(true)
         .resizable(true)
         // 窗口效果（磨砂 Phase D）：透明帧缓冲 hint 常开（创建期属性不可逆，
@@ -621,8 +692,8 @@ const DslAppConfig& dslAppConfig() {
         openAppDatabase();
         // 模块插拔门控（方案 A §5.2）：claude 模块关闭 = 该功能整体下线，
         // 含后台服务——不创建 ClaudeService（global() 保持 null）、不 bind
-        // 8888、不写 proxy_token.txt。W3 的启动顺序约定（service 先于
-        // getRouter）只在模块启用时原样保留
+        // 8888。W3 的启动顺序约定（service 先于 getRouter）只在模块启用时
+        // 原样保留
         const module::settings::SettingsStore settingsStore(
             paths::configFile());
         const auto settingsCfg = settingsStore.load();
@@ -634,16 +705,6 @@ const DslAppConfig& dslAppConfig() {
             LOG_INFO("Claude 模块已关闭：代理/ClaudeService 整体下线（端口 " +
                      std::to_string(settingsCfg.proxyPort) +
                      " 不监听；重新启用需改设置并重启）");
-            // 陈旧凭据清理（设计 §8 风险表）：上一次运行留下的 token 已失效，
-            // 删掉避免外部脚本误连（删不掉只记日志，不阻断启动）
-            std::error_code ec;
-            const auto tokenFile =
-                paths::appDataDir() / "proxy_token.txt";
-            if (std::filesystem::exists(tokenFile, ec) && !ec) {
-                std::filesystem::remove(tokenFile, ec);
-                LOG_INFO(ec ? "无法删除过期的 proxy_token.txt: " + ec.message()
-                            : "已删除过期的 proxy_token.txt（模块关闭）");
-            }
         } else {
             // ClaudeService 创建 + Claude Code 接管通道注入（spec §10.4）。
             // 必须在 getRouter()（内部 Router::startAll → 各模块 onStart）之前：
