@@ -170,6 +170,26 @@ inline const Migration kTodoColumnKind = {
     )"
 };
 
+// Claude 调用日志用量列（version 5，cc-switch 对照 §3.4）
+//   - 流式转发在流末回填「本次流」的四类累计 token + 首事件耗时（proxy_router.cpp）
+//   - 五列全部可空：老行 / 非流式行 / 上游没给 usage 的流 = NULL（未采集），
+//     与真实的 0 区分开（0 是合法的 token 数，NULL 才是"没拿到"）
+//   - 单位：四个 token 列 = token 数；first_event_ms = 流开始到首个上游 SSE chunk
+//     的毫秒数
+// 注意：ALTER TABLE ADD COLUMN 无 IF NOT EXISTS，靠 schema_version 版本号保证
+// 只执行一次（runMigrations 事务内，失败整体回滚）。
+inline const Migration kClaudeCallLogUsageColumns = {
+    .version = 5,
+    .description = "claude call logs add usage token columns",
+    .sql = R"(
+        ALTER TABLE claude_call_logs ADD COLUMN input_tokens INTEGER;
+        ALTER TABLE claude_call_logs ADD COLUMN output_tokens INTEGER;
+        ALTER TABLE claude_call_logs ADD COLUMN cache_read_tokens INTEGER;
+        ALTER TABLE claude_call_logs ADD COLUMN cache_write_tokens INTEGER;
+        ALTER TABLE claude_call_logs ADD COLUMN first_event_ms INTEGER;
+    )"
+};
+
 // 所有 migrations 的权威列表（顺序敏感，必须按 version 升序）
 inline const std::vector<core::data::Migration>& all() {
     static const std::vector<core::data::Migration> kMigrations = {
@@ -177,6 +197,7 @@ inline const std::vector<core::data::Migration>& all() {
         kSeedDefaultTodoColumns,
         kClaudeProviderConfigColumns,
         kTodoColumnKind,
+        kClaudeCallLogUsageColumns,
     };
     return kMigrations;
 }
