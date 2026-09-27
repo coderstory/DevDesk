@@ -140,7 +140,7 @@ git log --oneline master..wave2/MD-03; git log --oneline master..wave2/TIN-08
 | R0 收尾 | `resetCaseGlobals` 登记定位器槽位（新增最小入口 `ServiceLocator::resetForTest`）+ 本夜新增的 argv 捕获与 `appNotice` 一并登记；两条自证用例 + 逐项变异检验 | `5bad7d4`（06:04） |
 | R6 | `settings_module` **1866 → 936 行**（compose 178 → 115），9 张卡改注册表遍历 + 新增 `ui_kit/card.{h,cpp}`（`cardFrame`）+ `settings_ui_logic/cards` 拆出；**等价性主证据 = 无头元素树 dump 逐字节相等（4 tab / 239 元素 / 97526B）** + 变异检验；隔离守卫 exit=0 | `2edf604`（06:19） |
 | MD-01（**查实早已修**） | 活动块锚冻结致「换块后输入被整段换成前一块」—— 审计落笔（22:21:42）后约 8 分钟即修；**agent 独立证伪：回退修复 → 3/3 红**（`md_module_live_split_anchor_enter/_heading/_list` 三条由修复提交引入）。**残留入口未修** = 外部改文件触发静默重载后活动块跟错内容，需块身份 stableId / 旧块起点在新文档的映射 = **spec D3 拍板项** | 修复 `e09feb8`（09-27 22:29）→ merge `1784a37`（22:31） |
-| M6（滚动跟随） | **在飞**：worktree `wave3-M6`（分支 `wave3/M6`）tip = `9829acd`、工作区 5 文件已改**未提交**（`markdown_module.cpp` / `md_live_edit.h/.cpp` / `test_markdown.cpp` / `test_md_live_edit.cpp`，`git worktree list` + `git status` 实测）→ 本报告落笔时尚未合并 | 见 master 历史 |
+| M6（滚动跟随） | **已合并**：滚动跟随（越界才拉，安全带 `0.15H~0.75H`、目标 `caret−0.4H`、仅光标事件帧评估、滚轮后不拽回；caret 按显示行口径；`contentKey` 追加活动块 stableId；证伪三向）—— 原「在飞」状态（worktree `wave3-M6`，工作区 5 文件未提交）已落地 | merge `252b7f8`（分支 `wave3/M6`，子提交 `927b22d`） |
 
 ### 5.2 后半夜新增的实证发现
 
@@ -162,9 +162,12 @@ git log --oneline master..wave2/MD-03; git log --oneline master..wave2/TIN-08
 6. **CPX-13 只交付能力、未交付生效**
    `dialectOverride` 加了字段、加了 v9 迁移、`forBaseUrl` 也加了可选参数，但三个调用点（`testConnection` / `proxy_router` / `streaming_proxy`）全走缺省行为 = 功能等于没上。补接线线 `4105db6`（03:17）后用变异检验证明（回退传参则 3 用例全红）。**规则：能力线必须跟一条接线线**（§0.3 已沿用）。
 
+7. **上游 EUI-NEO 缺口（M6 实测）**
+   `scrollView` 只在实例首次 init 时采纳 `.offset()`（唯一读取点 `core/runtime/runtime_state_bindings.h:87-103` 被 `!instance.initialized` 守着），之后实例内部值是唯一权威 → 程序化滚动只能靠**滚动容器 id 两档轮转**逼实例重建（代价：拉的那一帧全量重绘 + 拉过后容器 id 不稳定）。M6 已把升级路径写进代码注释：上游补 `Ui::setScrollOffset(stateId, offset)` 后可删掉 2 个 id 常量 + `liveScrollGen_` + `liveScrollId()`，判定与跟随逻辑不变。**建议登记进 EUI-NEO 上游候选清单。**
+
 ### 5.3 最终口径
 
-- **最近一次全量**（主工作树，`bash scripts/build-test-run.sh --no-run`）：**`Total: 737 / Passed: 736 / Failed: 0`** + 两条守卫（发布形态 ✅ / 模块隔离 ✅）—— 主会话实测值。**本文落笔时仓库内无运行留档**（`build/` 下无测试日志，只有 `.ninja_log` / 产物），故该数字以主会话实测为准、未作独立复核。静态对账：`grep -rE '^\s*REGISTER_TEST\(' tests/test_{core,platform,modules}` = **738**（比运行 `Total` 多 1，未逐条对账 —— 与波 2 时 708 vs 707 同形）。
+- **最近一次全量**（主工作树，`bash scripts/build-test-run.sh --no-run`）：**`Total: 744 / Passed: 743 / Failed: 0`** + 两条守卫（发布形态 ✅ / 模块隔离 ✅）—— **主会话在主工作树实测值**，master tip `252b7f8`。**本文落笔时仓库内无运行留档**（`build/` 下无测试日志，只有 `.ninja_log` / 产物），故该数字以主会话实测为准、未作独立复核。静态对账（先前的快照）：`grep -rE '^\s*REGISTER_TEST\(' tests/test_{core,platform,modules}` = **738**（当时比运行 `Total` 多 1，未逐条对账 —— 与波 2 时 708 vs 707 同形）。
 - **本夜提交与 merge**（`git log --oneline` 实测）：`--since='2026-09-27 20:00'` → **267 个提交 / 111 个 merge**；其中 `--since='2026-09-28 03:00'` → **55 个提交 / 26 个 merge**；§5.1 覆盖的续做批（03:52 → 06:19）= **18 个 merge + 1 个直接提交**（`6df00e4`）。
 - **用例总数口径仍为「以运行输出 `Total:` 为准」**，不在文档写死；上面 `737` 只是**当时快照**。
 
@@ -178,7 +181,7 @@ git log --oneline master..wave2/MD-03; git log --oneline master..wave2/TIN-08
 | ✅ | MD-01 本体（`e09feb8` → `1784a37`）+ 残留入口就地注释登记（`daa6c4b`） |
 | ✅ | 审计表口径刷新（`6df00e4`）；CPX-13 接线 + 变异检验（`4105db6`）；CPX-08 的 UI 用例 pin 剩余项已清（`4d37216` + `632e673`，无需再排） |
 | ⬜ | **R7** `markdown_module` 拆分（MD-04）、**R8** 装配层收口（PAB-02/03/04 + THS-08）、**R10** `ClaudeService` 拆分（CPX-01）—— **R9 已放弃**（用户决策；pet 项改走 1g / 2j 两条独立线，均已交付） |
-| ⬜ | **Markdown Phase3 M7–M10**（依赖链 `M3 → {M4,M5,M6} → M7 → M8 → M9 → M10`；M6 在飞，见 §5.1 末行） |
+| ⬜ | **Markdown Phase3 M7–M10**（依赖链 `M3 → {M4,M5,M6} → M7 → M8 → M9 → M10`；M3–M6 均已落地，M6 = `252b7f8`） |
 | ⬜ | **MD-01 残留入口**（外部静默重载后活动块跟错内容）—— 需 spec D3 块身份拍板；最小修也要 stableId / 旧块起点映射 |
 | ⬜ | **共享配置片段 UI 批 + failover 批**（spec `2026-09-27-shared-config-and-failover-design.md`）—— spec 内 `500 keychain_read_failed` 口径已过时 → 统一为 `503 no_active_profile`（CPX-10 后） |
 | ⬜ | **TIN-06 剩余未迁项**：`test_streaming_proxy::TestEnv`、`SpikeEnv`/`FocusEnv`/`MdLiveEnv`（建议单列 `tests/frame_env.h`）、`test_settings::PruneEnv`、`test_streaming_proxy::AppDbScope`、`test_pet` 的 `writeTextFile` |
