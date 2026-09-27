@@ -43,6 +43,7 @@
 #include "md_highlight.h"
 #include "md_keyboard.h"
 #include "md_line_scanner.h"
+#include "md_live_edit.h"
 #include "md_preview_highlight.h"
 #include "md_sync_map.h"
 #include "md_tree.h"
@@ -188,6 +189,19 @@ constexpr float kPreviewColumnWidth = 760.0f;   // 仅预览态的居中阅读�
 // 焦点挂到 stack 元素上：组件判定未聚焦（不画 caret、不挂键处理器），按键静默
 // 落回模块 keyEventHandler_。编辑器四处 requestFocus 统一走本常量。
 constexpr const char* kEditorInputHitId = "md.editor.input.hit";
+
+// ---- Phase 3 M2：实时态单输入（活动块）----
+// 单输入方案（spec §4.1 D1）：全局只有一个 input，切块时换文本 + 搬位置，焦点
+// **永不迁移**（每块一个 input 会在拆块/并块的瞬间丢焦点 = 丢输入）。id 固定且
+// 不得落在任何 releaseStateScope 释放的前缀下（M0 约束 C2：命中即清焦点 +
+// 销毁 InputState），故本模块实时态不释放 "md.live" 前缀。
+constexpr const char* kLiveInputId = "md.live.input";
+constexpr const char* kLiveInputHitId = "md.live.input.hit";  // 聚焦只发 .hit（M0 C1）
+constexpr float kLiveInputInset = 10.0f;   // 与编辑态 input 同款内边距
+// 高度公式的测量输入必须与 input 内部同源：同字体族（InputBuilder 默认
+// "Microsoft YaHei"，见 components/input.h）、同字号（全局编辑器字号）、
+// 同文本宽（声明宽 − inset×2，本模块不给活动 input 开滚动条 → 无槽位扣减）。
+constexpr const char* kLiveInputFontFamily = "Microsoft YaHei";
 
 // "已保存 HH:MM"
 std::string formatSaveTime(std::time_t t) {
@@ -1422,6 +1436,13 @@ private:
         }).build();
     }
 
+    // ---- 实时态活动块注入（M2）----
+    // 只给 drawBlockFlow 用的窄上下文；nullptr = 预览通路（行为与 M1 完全一致）。
+    struct LiveBlockCtx {
+        size_t activeBlock = static_cast<size_t>(-1);  // 活动块下标（其余值不命中）
+        const components::theme::ThemeColorTokens* theme = nullptr;  // input 主题
+    };
+
     // ---- 逐块渲染（预览 / 第四态「实时」共用同一条通路）----
     // Phase 3 增量块渲染：按块模型逐块 components::markdown（每块 = 一段自足源码，
     // 切分器保证与整篇渲染等价——逐块 md4c 解析结果与整篇逐块一致，由
@@ -1451,7 +1472,8 @@ private:
                        const core::theme::Tokens& t,
                        const components::MarkdownStyle& style,
                        const std::string& prefix,
-                       const std::function<void(size_t, float)>& onBlockTap) {
+                       const std::function<void(size_t, float)>& onBlockTap,
+                       const LiveBlockCtx* live = nullptr) {
         if (blockModel_.text() != editorText_) {
             blockModel_.update(editorText_);  // 防御：理论不可达
         }
@@ -1473,6 +1495,18 @@ private:
                     const MdBlock& b = blocks[k];
                     const bool hovered = previewHover_.hovered(b.stableId);
                     const float hk = syncMap_.blockHeight(k);
+                    // ---- M2：活动块 = 源码态 input（内容贴合高度）----
+                    // 包裹高改取 input 的贴合高（不由渲染块高 H_k 决定：源码行数
+                    // 与渲染高度天然不等，用 H_k 会切成输入框内部滚动 = 吃滚轮）。
+                    // 代价：本块之后各块的列内累计偏移与几何表 H_k 不再逐块恒等
+                    //（spec §2.2 V5 已登记：只影响覆盖层/命中矩形落点，M6 处理）。
+                    const bool isActive = live != nullptr && k == live->activeBlock;
+                    float wrapH = hk;
+                    std::string activeText;
+                    if (isActive) {
+                        activeText = liveBlockText(b);
+                        wrapH = liveFitHeight(b, activeText, contentWidth);
+                    }
                     // ---- P3-⑤ 逐块交互包裹 ----
                     // 上游 components::markdown 无逐块命中/指针事件（纯展示，
                     // link 亦不可点——KNOWN_LIMITATIONS #9 补 ⑤），DevDesk 侧给
@@ -1486,20 +1520,25 @@ private:
                         prefix + ".blk." + std::to_string(b.stableId);
                     ui.stack(wrapId)
                         .width(contentWidth)
-                        .height(hk)
+                        .height(wrapH)
                         .content([&] {
                             // hover 底衬（上游块文字底透明 → 直接透出成背景高亮；
                             // CodeFence 自带不透明 bg 盖在其下 → 走混色参数由块自身
                             // 呈现）
                             ui.rect(wrapId + ".hl")
-                                .size(contentWidth, hk)
+                                .size(contentWidth, wrapH)
                                 .radius(style.radius)
                                 .color(hovered
                                            ? hoverTint
                                            : eui::Color{0.0f, 0.0f, 0.0f, 0.0f})
                                 .build();
                             bool codeDrawn = false;
-                            if (b.kind == MdBlockKind::CodeFence) {
+                            if (isActive) {
+                                // 活动块：源码态 input 取代渲染内容（spec §4.4 互斥）
+                                drawLiveInputBlock(ui, b, activeText, contentWidth,
+                                                   wrapH, *live);
+                                codeDrawn = true;  // 跳过下方渲染通路
+                            } else if (b.kind == MdBlockKind::CodeFence) {
                                 // CodeFence 块走 DevDesk 侧自绘：md_highlight 色表
                                 // 产出着色 runs 喂给带 runs 的 text 节点（上游
                                 // markdown 代码块单色且不暴露预解析注入——
@@ -1545,7 +1584,7 @@ private:
                             // onTap 的 y 为区域局部坐标，经反查表映射回编辑器行）
                             auto hit =
                                 components::mouseArea(ui, wrapId + ".hit")
-                                    .size(contentWidth, hk);
+                                    .size(contentWidth, wrapH);
                             if (onBlockTap) {
                                 hit.onTap([onBlockTap, k](
                                               const components::MouseEvent& ev) {
@@ -1557,6 +1596,15 @@ private:
                                    else previewHover_.leave(sid);
                                })
                                 .build();
+                            // M2：活动块的覆盖层仍建（元素集合稳定 + 块身份可查），
+                            // 但必须关掉命中 —— 它建在 input 之后，而命中测试对兄弟
+                            // 走反向遍历取最上层（runtime_input.hitTest），不关则透明
+                            // 覆盖层会抢走 input 的点击与焦点（打字点不进去）
+                            if (isActive) {
+                                if (auto* hitEl = ui.find(wrapId + ".hit")) {
+                                    hitEl->hitTestMode = core::dsl::HitTestMode::None;
+                                }
+                            }
                         })
                         .build();
                 }
@@ -1565,11 +1613,12 @@ private:
         previewCodeCache_.pruneActive(activeCodeIds);
     }
 
-    // ---- 第四态：实时（块级实时渲染骨架，M1 只读）----
+    // ---- 第四态：实时（块级实时渲染；M1 只读骨架 + M2 活动块输入）----
     // 单栏 + 720px 写作列（与编辑态同宽），块级渲染走 drawBlockFlow —— 与预览
     // 同一条通路、同一张 MdSyncMap 几何表（spec §3.2：两者观感必须一致）。
-    // M1 无活动块 input：不进任何输入接线，纯只读；空文档/无笔记/加载失败沿用
-    // 既有 hint 文案路径。
+    // M2：活动块位置改放单输入 md.live.input（内容贴合高度），其余块仍是只读
+    // 渲染（spec §4.4：活动块只出 input、不出渲染内容，避免重复渲染与命中歧义）；
+    // 上行链路 onChange → syncDocumentFromLiveInput → setEditorText。
     void drawLiveColumn(eui::Ui& ui,
                         float bodyH,
                         float midW,
@@ -1607,6 +1656,27 @@ private:
             const float lvH = std::max(0.0f, bodyH - lvY - 22.0f - 8.0f);
 
             const components::MarkdownStyle style(componentTheme);
+            // ---- M2：活动块锚（文档字节偏移，spec D3）----
+            // 进实时态首次：以编辑器的文档光标为初始锚（此刻编辑器列已不在帧树，
+            // 但 InputState 按 id 跨帧存活，见 M0 V1）；之后换块/跳转由 M3 的
+            // setLiveCursor 写入（M2 只在切块帧反向写入块局部光标）。
+            LiveBlockCtx live;
+            live.theme = &componentTheme;
+            bool hasActive = false;
+            if (!blockModel_.blocks().empty()) {
+                if (!liveCursorValid_) {
+                    const auto& ed = ui.state<
+                        components::input_detail::InputModel::InputState>(
+                        "md.editor.input");
+                    liveCursorByte_ =
+                        ed.cursor > 0 ? static_cast<size_t>(ed.cursor) : 0;
+                    liveCursorValid_ = true;
+                }
+                liveActiveBlock_ =
+                    mdLiveActiveBlockIndex(blockModel_, liveCursorByte_);
+                live.activeBlock = liveActiveBlock_;
+                hasActive = true;
+            }
             // 单一滚动权威 = 本 scrollView（M1 手动滚动；光标跟随留 M6）
             components::scrollView(ui, "md.live.scroll")
                 .position(lvX, lvY)
@@ -1623,9 +1693,21 @@ private:
                 .onChange([this](float v) { liveOffset_ = v; })
                 .content([&](eui::Ui& inner, float contentWidth, float viewportHeight) {
                     (void)viewportHeight;
-                    drawBlockFlow(inner, contentWidth, t, style, "md.live", {});
+                    // 活动块 input 由 drawBlockFlow 建在 inner（content 回调交给的
+                    // Ui）上——测量 pass 也走本回调，元素必须挂在同一层
+                    drawBlockFlow(inner, contentWidth, t, style, "md.live", {},
+                                  &live);
                 })
                 .build();
+
+            // M0 C1/C5：进实时态首帧同帧补发 requestFocus（目标必须已是当帧树中
+            // 的元素，早发/事后补都被丢弃），且只发 <input id>.hit —— 组件聚焦
+            // 判定用 ui.isFocused(id + ".hit")，发基 id 会不画 caret、按键落空。
+            // 空文档（无块 → 无 input）不聚焦。
+            if (liveFocusPending_) {
+                liveFocusPending_ = false;
+                if (hasActive) ui.requestFocus(kLiveInputHitId);
+            }
 
             drawStatusBar(ui, 0.0f, bodyH - 22.0f, midW, t);
         }).build();
@@ -1678,6 +1760,114 @@ private:
                     .build();
             })
             .build();
+    }
+
+    // ================= Phase 3 M2：实时态活动块输入 =================
+
+    // 块源码文本（块模型与 editorText_ 同源，块区间连续覆盖文档）
+    std::string liveBlockText(const MdBlock& b) const {
+        return blockModel_.text().substr(b.start, b.end - b.start);
+    }
+
+    // 活动块内容贴合高度（spec D2 / M0 约束 C4）：测量函数注入
+    // InputModel::measureLines —— 与 input 内部排版同源（同字体族/字号/文本宽），
+    // 故公式值与框架 contentHeight 严格同口径（+1px 余量 ⇒ maxVerticalScroll==0）。
+    // 备忘键 (stableId, hash, 文本宽, 字号)：整块 shaping 不逐帧重付（M9 帧率前提）。
+    float liveFitHeight(const MdBlock& b, const std::string& blockText,
+                        float contentWidth) {
+        const float fontSize = core::theme::editorFontSize();
+        const float textWidth =
+            std::max(0.0f, contentWidth - kLiveInputInset * 2.0f);
+        if (liveHeight_.stableId == b.stableId && liveHeight_.hash == b.hash &&
+            liveHeight_.width == textWidth && liveHeight_.fontSize == fontSize) {
+            return liveHeight_.height;
+        }
+        const MdLiveLineCountFn lineCount =
+            [fontSize](const std::string& text, float width) {
+                using InputModel = components::input_detail::InputModel;
+                return static_cast<int>(
+                    InputModel::measureLines(text, kLiveInputFontFamily, fontSize,
+                                             width).size());
+            };
+        liveHeight_ = LiveHeightMemo{b.stableId, b.hash, textWidth, fontSize,
+                                     mdLiveInputHeight(blockText, textWidth,
+                                                       fontSize, kLiveInputInset,
+                                                       lineCount)};
+        return liveHeight_.height;
+    }
+
+    // 上行链路（spec §4.2 D4 单向写）：活动块局部文本 → 拼回整篇 → 既有唯一文档
+    // 写点 onEditorTextChanged（= setEditorText + 脏标记 + 400ms 防抖时间戳）。
+    // 分块器保证块区间连续覆盖 [0,size)：前段 + 局部 + 后段 ≡ 在编辑态对同一处
+    // 做的同一编辑（逐字节），故保存语义/冲突检测/索引全部零改动。
+    void syncDocumentFromLiveInput(const std::string& blockText) {
+        const std::vector<MdBlock>& blocks = blockModel_.blocks();
+        if (liveActiveBlock_ >= blocks.size()) return;   // 防御：无块不写
+        const size_t start = blocks[liveActiveBlock_].start;
+        const size_t end = blocks[liveActiveBlock_].end;
+        const std::string& doc = blockModel_.text();
+        if (start > end || end > doc.size()) return;
+        // 拼装必须在 onEditorTextChanged 之前完成：它进 setEditorText →
+        // blockModel_.update，blocks/doc 两个引用随即失效（故不能先拷贝整篇）
+        std::string next;
+        next.reserve(doc.size() + blockText.size());
+        next.append(doc, 0, start);
+        next.append(blockText);
+        next.append(doc, end, std::string::npos);
+        onEditorTextChanged(next);
+    }
+
+    // 活动块源码态 input（M2 单输入）：建在块包裹 stack 内（0,0），尺寸 =
+    // 列宽 × 贴合高。调用方保证：
+    //   · 元素建在 scrollView content 回调交给的 Ui 上（M1 开发期回归教训：
+    //     建到外层 Ui 会让测量 pass 量到空内容）
+    //   · 同一帧只建一个 input（活动块互斥，spec §4.4）
+    void drawLiveInputBlock(eui::Ui& ui,
+                            const MdBlock& b,
+                            const std::string& blockText,
+                            float contentWidth,
+                            float fitHeight,
+                            const LiveBlockCtx& live) {
+        using InputState = components::input_detail::InputModel::InputState;
+        InputState& st = ui.state<InputState>(kLiveInputId);
+        // 换文本帧（切块 / 换笔记 / M5 撤销跳转）：input 内部走"外部改值"路径，
+        // 聚焦时把光标搬到新文本末尾（components/input.h）——必须在 build 之后
+        // 反向写入正确落点（文档锚 → 块局部偏移），早写会被 build 内的重载覆盖；
+        // 同时显式清掉上一块的滚动残余（M0 约束 C3；贴合高度下残余本就被钳 0，
+        // 这里是兜底）。
+        const bool swapped = (st.text != blockText);
+        components::input(ui, kLiveInputId)
+            .position(0.0f, 0.0f)
+            .size(contentWidth, fitHeight)
+            .value(blockText)
+            .placeholder("")  // 活动块恒有源码（空文档无块 = 不建 input）
+            .multiline(true)
+            .fontSize(core::theme::editorFontSize())
+            .inset(kLiveInputInset)
+            .theme(*live.theme)
+            .onChange([this](const std::string& v) { syncDocumentFromLiveInput(v); })
+            .build();
+        if (swapped) {
+            st.cursor =
+                static_cast<int>(mdLiveBlockLocalOffset(b, liveCursorByte_));
+            st.selectionStart = st.cursor;
+            st.selectionEnd = st.cursor;
+            st.verticalScroll = 0.0f;
+        }
+        // spec §5 #4 记录式校验：活动 input 必须内容贴合（maxVerticalScroll == 0
+        // ⇒ 不吃外层滚轮、无内部滚动条）。框架不暴露 maxVerticalScroll，用组件
+        // "是否注册滚轮处理器"做探针（components/input.h：仅 maxVerticalScroll > 0
+        // 才挂 onScroll；M0 V3a ③ 同款判据）——故 N 是 0/1 探针而非像素值
+        //（像素超出量由高度公式保证恒 0，打它只是同义反复）。
+        const auto* hit = ui.find(kLiveInputHitId);
+        const int over = (hit != nullptr && hit->onScroll) ? 1 : 0;
+        if (over > 0) {
+            LOG_WARN("[live] input over=1 活动块高度未贴合（应 0）: stableId=" +
+                     std::to_string(b.stableId) +
+                     " 声明高=" + std::to_string(fitHeight));
+        } else {
+            LOG_DEBUG("[live] input over=0");
+        }
     }
 
     // 双栏同步滚动（§5.3，Phase 3 ④ 块模型精确锚）：编辑器视口顶行 →
@@ -2041,6 +2231,12 @@ private:
 
     void setMode(ViewMode m) {
         if (m == mode_) return;
+        // Phase 3 M2：进实时态 → 活动块锚失效（下次 compose 用编辑器光标重取），
+        // 并请求一次聚焦（首帧同帧补发，M0 C1/C5）
+        if (m == ViewMode::Live) {
+            liveCursorValid_ = false;
+            liveFocusPending_ = true;
+        }
         mode_ = m;
         // 进预览态时把滚动位置对齐编辑器当前位置（compose 里延迟计算，
         // 因为需要预览列宽和主题样式）
@@ -2321,6 +2517,7 @@ private:
         outlineDirty_ = true;
         activeOutlineIdx_ = -1;
         previewHover_.reset();  // P3-⑤：换笔记 = 块身份换代，旧 hover 作废
+        liveCursorValid_ = false;  // M2：换笔记 = 活动块锚换代（下次 compose 重取）
         tagInput_.clear();  // 终验复审：标签输入框残留上一篇的半截输入
         // 标签行随笔记切换
         if (auto tr = service_->tagsForNote(relPath); tr.isOk()) {
@@ -3080,6 +3277,21 @@ private:
     int activeOutlineIdx_ = -1;        // 仅预览态用（无编辑器光标可读）
     float previewOffset_ = 0.0f;       // 仅预览态的手动滚动位置
     float liveOffset_ = 0.0f;          // 实时态的手动滚动位置（M1；M6 接光标跟随）
+    // ---- Phase 3 M2：实时态活动块（单输入跟随 + 内容贴合高度）----
+    size_t liveCursorByte_ = 0;        // 文档字节偏移 = 活动块身份锚（spec D3）
+    size_t liveActiveBlock_ = 0;       // 本帧活动块下标（每帧由锚重算）
+    bool liveCursorValid_ = false;     // 锚是否已按当前文档初始化（进实时态/换笔记置 false）
+    bool liveFocusPending_ = false;    // 进实时态首帧同帧补发 requestFocus（M0 C1）
+    // 贴合高度备忘（键 = stableId + 内容 hash + 文本宽 + 字号）：活动块整块
+    // shaping 不逐帧重付；内容/宽度/字号任一变化即失效重测
+    struct LiveHeightMemo {
+        int stableId = -1;
+        uint64_t hash = 0;
+        float width = -1.0f;
+        float fontSize = 0.0f;
+        float height = 0.0f;
+    };
+    LiveHeightMemo liveHeight_;
     bool syncPreviewOnEnter_ = false;  // 刚切入预览态 → 对齐编辑器位置
     float lastPvContentWidth_ = 0.0f;  // 预览内容宽（estimateHeight 用，滞后一帧）
     std::time_t lastSavedAt_ = 0;      // 上次落盘时刻（状态栏 "✓ 已保存 HH:MM"）
