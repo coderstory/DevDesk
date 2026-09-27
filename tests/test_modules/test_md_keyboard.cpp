@@ -40,40 +40,12 @@ EditBuffer buf(std::string text, int cursor = -1, int selStart = -2, int selEnd 
     return {std::move(text), cursor, selStart, selEnd};
 }
 
-bool writeTextFile(const fs::path& path, const std::string& content) {
-    std::ofstream ofs(path, std::ios::binary | std::ios::trunc);
-    if (!ofs) return false;
-    ofs.write(content.data(), static_cast<std::streamsize>(content.size()));
-    return ofs.good();
-}
+// 笔记临时目录前缀 + 写文件 / 无头笔记环境：共享实现（TIN-06b，原 MdKbEnv
+// 与本地 writeTextFile 同款合流）
+constexpr const char* kDirPrefix = "devdesk_mdkb_";
+constexpr const char* kDbName = "kbd_test.db";
 
-struct MdKbEnv {
-    fs::path dir;
-    std::unique_ptr<core::Database> db;
-
-    explicit MdKbEnv(const char* tag) {
-        dir = test_support::makeTempDir("devdesk_mdkb_", tag);
-        auto r = core::Database::open(dir / "kbd_test.db");
-        if (r.isFail()) return;
-        db = std::make_unique<core::Database>(std::move(r.value()));
-        if (db->migrate().isFail()) {
-            db.reset();
-            return;
-        }
-        core::registerAppDatabase(&db->db());
-        // 视图状态文件隔离（审计 [23]）：无头用例不碰真实 %APPDATA% 状态
-        test_support::setEnvVar("DEVDESK_MARKDOWN_VIEW_STATE_PATH", (dir / "view_state.json").string());
-        test_support::setEnvVar("DEVDESK_NOTES_DIR", dir.string());
-    }
-
-    ~MdKbEnv() {
-        test_support::setEnvVar("DEVDESK_NOTES_DIR", "");
-        test_support::setEnvVar("DEVDESK_MARKDOWN_VIEW_STATE_PATH", "");
-        core::registerAppDatabase(nullptr);
-        std::error_code ec;
-        fs::remove_all(dir, ec);
-    }
-};
+using test_support::writeTextFile;
 
 } // namespace
 
@@ -348,7 +320,7 @@ REGISTER_TEST(md_kbd_table_tab_cells, "md_keyboard: Tab/Shift+Tab 表格跳格�
 
 REGISTER_TEST(md_kbd_wiring_input_passthrough,
               "md_keyboard: 编辑器 onKeyEvent 接线（Tab/Enter/Ctrl+B 写回 InputState）", {
-    MdKbEnv env("wiring");
+    test_support::MdHeadlessEnv env(kDirPrefix, "wiring", kDbName);
     DOCTEST_REQUIRE(env.db != nullptr);
     DOCTEST_REQUIRE(writeTextFile(env.dir / "note.md", "- 列表项\n正文\n"));
 
@@ -449,7 +421,7 @@ REGISTER_TEST(md_kbd_wiring_input_passthrough,
 // ---- 审计 [12] 接线：Tab 表格跳格 + 右键「插入表格」级联（headless）----
 
 REGISTER_TEST(md_kbd_wiring_table_tab, "md_keyboard: 编辑器 Tab 表格跳格接线（headless）", {
-    MdKbEnv env("tabjump");
+    test_support::MdHeadlessEnv env(kDirPrefix, "tabjump", kDbName);
     DOCTEST_REQUIRE(env.db != nullptr);
     DOCTEST_REQUIRE(writeTextFile(env.dir / "tb.md", "| a | b |\n|---|---|\n| c | d |\n"));
 
@@ -525,7 +497,7 @@ REGISTER_TEST(md_kbd_wiring_table_tab, "md_keyboard: 编辑器 Tab 表格跳格�
 
 REGISTER_TEST(md_kbd_wiring_table_insert_menu,
               "md_keyboard: 编辑器右键插入表格级联（headless，审计 [12]）", {
-    MdKbEnv env("tabmenu");
+    test_support::MdHeadlessEnv env(kDirPrefix, "tabmenu", kDbName);
     DOCTEST_REQUIRE(env.db != nullptr);
     DOCTEST_REQUIRE(writeTextFile(env.dir / "menu.md", "# t\n"));
 

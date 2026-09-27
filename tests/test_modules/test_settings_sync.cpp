@@ -88,41 +88,8 @@ std::string topLevelString(const std::filesystem::path& f, const char* key) {
     return obj.get(key).asString();
 }
 
-std::filesystem::path tempDbPath(const std::string& tag) {
-    static int counter = 0;
-    ++counter;
-    return test_temp::tempPath("devdesk_test_sync_db_" + tag + "_" +
-                               std::to_string(counter) + ".db");
-}
-
-// RAII：已 migrate 的临时数据库
-struct TestDb {
-    std::filesystem::path path;
-    // 审计 CP-07：Database/SqliteDb 已不可默认构造（open() 是唯一入口），
-    // 「先占位、后 move 进来」改用指针表达
-    std::unique_ptr<core::Database> db;
-
-    explicit TestDb(const std::string& tag) {
-        path = tempDbPath(tag);
-        std::error_code ec;
-        std::filesystem::remove(path, ec);
-        auto r = core::Database::open(path);
-        if (r.isFail()) {
-            throw std::runtime_error("Database::open failed");
-        }
-        db = std::make_unique<core::Database>(std::move(r.value()));
-        if (db->migrate().isFail()) {
-            throw std::runtime_error("migrate failed");
-        }
-    }
-    ~TestDb() {
-        std::error_code ec;
-        std::filesystem::remove(path, ec);
-        std::filesystem::remove(path.string() + "-wal", ec);
-        std::filesystem::remove(path.string() + "-shm", ec);
-    }
-    core::data::SqliteDb& handle() { return db->db(); }
-};
+// 临时 db 文件名前缀（共享工厂 test_support::tempDbPath / TestDb 的第一实参）
+constexpr const char* kDbPrefix = "devdesk_test_sync_db_";
 
 } // namespace
 
@@ -602,7 +569,7 @@ REGISTER_TEST(sync_crash_recovery_and_atomic, "settings_sync: 崩溃补还原与
 // ---- 9. ClaudeService 接线：start 接管 / stop 还原 / 运行中切 profile 跟随 ----
 REGISTER_TEST(sync_service_wiring, "claude_service: 接管通道三触发点接线", {
     using namespace module::claude;
-    TestDb tdb("wiring");
+    test_support::TestDb tdb(kDbPrefix, "wiring");
     test_support::TempDir d("wiring", kSyncTempDirPrefix);
     auto paths = makePaths(d);
 
@@ -684,7 +651,7 @@ REGISTER_TEST(sync_service_wiring, "claude_service: 接管通道三触发点接�
 // ---- 10. 上层覆盖警告经 ClaudeService 暴露（Phase D UI 数据源）----
 REGISTER_TEST(sync_service_warnings_surface, "claude_service: 接管警告经 lastSyncWarnings 暴露", {
     using namespace module::claude;
-    TestDb tdb("warn");
+    test_support::TestDb tdb(kDbPrefix, "warn");
     test_support::TempDir d("warn", kSyncTempDirPrefix);
     auto paths = makePaths(d);
     const auto overlay = d.file("managed-settings.json");
@@ -708,7 +675,7 @@ REGISTER_TEST(sync_service_warnings_surface, "claude_service: 接管警告经 la
 REGISTER_TEST(sync_service_takeover_failure_reported,
               "claude_service: 接管失败并入 lastSyncWarnings 且不阻断操作", {
     using namespace module::claude;
-    TestDb tdb("tofail");
+    test_support::TestDb tdb(kDbPrefix, "tofail");
     test_support::TempDir d("tofail", kSyncTempDirPrefix);
     auto paths = makePaths(d);
 
@@ -761,7 +728,7 @@ extern "C" ::core::Module* create_claude_module();
 REGISTER_TEST(sync_exit_sequence_stop_all,
               "claude_module: 退出序列 Router::stopAll 触发还原", {
     using namespace module::claude;
-    TestDb tdb("exit");
+    test_support::TestDb tdb(kDbPrefix, "exit");
     test_support::TempDir d("exit", kSyncTempDirPrefix);
     auto paths = makePaths(d);
     d.write(paths.settingsFile, R"({"env": {"MY_KEY": "user"}})");
@@ -807,7 +774,7 @@ REGISTER_TEST(sync_exit_sequence_stop_all,
 REGISTER_TEST(sync_delete_active_profile_stops_proxy,
               "claude_service: 删激活 Profile 停代理并还原 settings（审计 [1]）", {
     using namespace module::claude;
-    TestDb tdb("delact");
+    test_support::TestDb tdb(kDbPrefix, "delact");
     test_support::TempDir d("delact", kSyncTempDirPrefix);
     auto paths = makePaths(d);
     d.write(paths.settingsFile, R"({"env": {"MY_KEY": "user"}})");
@@ -875,7 +842,7 @@ REGISTER_TEST(sync_delete_active_profile_stops_proxy,
 REGISTER_TEST(sync_switch_off_no_write,
               "claude_service: 接管开关关闭时不写 settings.json", {
     using namespace module::claude;
-    TestDb tdb("off");
+    test_support::TestDb tdb(kDbPrefix, "off");
     test_support::TempDir d("off", kSyncTempDirPrefix);
     auto paths = makePaths(d);
     const std::string original = R"({"env": {"MY_KEY": "user"}})";
@@ -1195,7 +1162,7 @@ REGISTER_TEST(sync_takeover_with_shared_config,
 REGISTER_TEST(sync_service_g10_frozen_key_not_captured,
               "claude_service: G10 绑定片段键不被反向同步收编", {
     using namespace module::claude;
-    TestDb tdb("g10svc");
+    test_support::TestDb tdb(kDbPrefix, "g10svc");
     test_support::TempDir d("g10svc", kSyncTempDirPrefix);
     auto paths = makePaths(d);
 
@@ -1250,7 +1217,7 @@ REGISTER_TEST(sync_service_g10_frozen_key_not_captured,
 REGISTER_TEST(sync_service_shared_config_delete_retakeover,
               "claude_service: 删片段当场解绑并重写 live（回落 profile 值）", {
     using namespace module::claude;
-    TestDb tdb("fragdel");
+    test_support::TestDb tdb(kDbPrefix, "fragdel");
     test_support::TempDir d("fragdel", kSyncTempDirPrefix);
     auto paths = makePaths(d);
 

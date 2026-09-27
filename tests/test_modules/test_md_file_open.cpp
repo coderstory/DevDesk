@@ -14,13 +14,8 @@
 namespace fs = std::filesystem;
 
 namespace {
-bool writeText(const fs::path& p, const std::string& text) {
-    fs::create_directories(p.parent_path());
-    std::ofstream f(p, std::ios::binary | std::ios::trunc);
-    if (!f) return false;
-    f << text;
-    return f.good();
-}
+// 写文本文件 —— 共享实现（TIN-06b，六份 writeTextFile/writeText 合流）
+using test_support::writeTextFile;
 
 std::string readText(const fs::path& p) {
     std::ifstream f(p, std::ios::binary);
@@ -37,7 +32,7 @@ REGISTER_TEST(md_open_relative_inside_root,
               "md_file_open: 笔记目录内的文件直接相对化，不复制", {
     const auto notes = test_support::makeTempDir("devdesk_mdopen_test_", "inside");
     const auto file = notes / "note.md";
-    DOCTEST_REQUIRE(writeText(file, "# N\n"));
+    DOCTEST_REQUIRE(writeTextFile(file, "# N\n"));
 
     auto r = captureFileIntoNotesDir(notes, file.string());
     DOCTEST_REQUIRE(r.isOk());
@@ -56,7 +51,7 @@ REGISTER_TEST(md_open_relative_inside_nested,
               "md_file_open: 嵌套子目录内相对化（POSIX 分隔符）", {
     const auto notes = test_support::makeTempDir("devdesk_mdopen_test_", "nested");
     const auto file = notes / "inbox" / "idea.md";
-    DOCTEST_REQUIRE(writeText(file, "# idea\n"));
+    DOCTEST_REQUIRE(writeTextFile(file, "# idea\n"));
 
     auto r = captureFileIntoNotesDir(notes, file.string());
     DOCTEST_REQUIRE(r.isOk());
@@ -71,7 +66,7 @@ REGISTER_TEST(md_open_external_copied_as_md,
     const auto notes = test_support::makeTempDir("devdesk_mdopen_test_", "capture");
     const auto srcDir = test_support::makeTempDir("devdesk_mdopen_test_", "capture_src");
     const auto src = srcDir / "report.txt";
-    DOCTEST_REQUIRE(writeText(src, "外部正文ABC\n"));
+    DOCTEST_REQUIRE(writeTextFile(src, "外部正文ABC\n"));
 
     auto r = captureFileIntoNotesDir(notes, src.string());
     DOCTEST_REQUIRE(r.isOk());
@@ -105,7 +100,7 @@ REGISTER_TEST(md_open_rejects_bad_inputs,
 
     // 笔记目录尚未创建 + 有效外部文件 → 自动建目录并捕获成功
     const auto src = tmp / "data.json.md";
-    DOCTEST_REQUIRE(writeText(src, "x\n"));
+    DOCTEST_REQUIRE(writeTextFile(src, "x\n"));
     const auto freshNotes = tmp / "brand_new_notes";
     auto r = captureFileIntoNotesDir(freshNotes, src.string());
     DOCTEST_REQUIRE(r.isOk());

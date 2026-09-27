@@ -47,11 +47,10 @@ const app::DslAppConfig& dslAppConfig() {
 
 namespace {
 
-// 每个用例独立的临时配置文件（避免用例间串扰）
-std::filesystem::path tempConfigFile(const char* name) {
-    return test_temp::tempPath(
-        "devdesk_test_settings_" + std::string(name) + ".json");
-}
+// 每个用例独立的临时配置文件（避免用例间串扰）—— 共享工厂（TIN-06b，
+// 原三份 tempConfigFile 合流），调用点统一 test_support::tempConfigFile(
+// kCfgPrefix, name)
+constexpr const char* kCfgPrefix = "devdesk_test_settings_";
 
 void removeQuietly(const std::filesystem::path& p) {
     std::error_code ec;
@@ -133,7 +132,7 @@ bool clickSettingsTab(::core::Module& mod, const eui::Screen& screen,
 } // namespace
 
 REGISTER_TEST(settings_defaults_on_missing_file, "settings: missing file -> defaults", {
-    const auto path = tempConfigFile("missing");
+    const auto path = test_support::tempConfigFile(kCfgPrefix, "missing");
     removeQuietly(path);
     module::settings::SettingsStore store(path);
     const auto cfg = store.load();
@@ -145,7 +144,7 @@ REGISTER_TEST(settings_defaults_on_missing_file, "settings: missing file -> defa
 
 REGISTER_TEST(settings_proxy_autostart_default_off, "settings: claudeProxyAutoStart 默认 false + 读写往返", {
     // 硬性需求 1（provider-config Phase B）：默认不启动代理
-    const auto path = tempConfigFile("autostart");
+    const auto path = test_support::tempConfigFile(kCfgPrefix, "autostart");
     removeQuietly(path);
     module::settings::SettingsStore store(path);
 
@@ -170,7 +169,7 @@ REGISTER_TEST(settings_proxy_autostart_default_off, "settings: claudeProxyAutoSt
 
 REGISTER_TEST(settings_proxy_port_roundtrip_clamp, "settings: proxyPort 默认/读写往返/非法回落/输入解析", {
     using namespace module::settings;
-    const auto path = tempConfigFile("proxyport");
+    const auto path = test_support::tempConfigFile(kCfgPrefix, "proxyport");
     removeQuietly(path);
     SettingsStore store(path);
 
@@ -220,7 +219,7 @@ REGISTER_TEST(settings_proxy_port_roundtrip_clamp, "settings: proxyPort 默认/�
 })
 
 REGISTER_TEST(settings_save_load_roundtrip, "settings: save/load roundtrip", {
-    const auto path = tempConfigFile("roundtrip");
+    const auto path = test_support::tempConfigFile(kCfgPrefix, "roundtrip");
     removeQuietly(path);
     module::settings::SettingsStore store(path);
 
@@ -240,7 +239,7 @@ REGISTER_TEST(settings_save_load_roundtrip, "settings: save/load roundtrip", {
 })
 
 REGISTER_TEST(settings_zero_days_permanent, "settings: 0 days = permanent retention", {
-    const auto path = tempConfigFile("zero");
+    const auto path = test_support::tempConfigFile(kCfgPrefix, "zero");
     removeQuietly(path);
     module::settings::SettingsStore store(path);
 
@@ -256,7 +255,7 @@ REGISTER_TEST(settings_zero_days_permanent, "settings: 0 days = permanent retent
 })
 
 REGISTER_TEST(settings_corrupted_json_fallback, "settings: corrupted json -> defaults", {
-    const auto path = tempConfigFile("corrupt");
+    const auto path = test_support::tempConfigFile(kCfgPrefix, "corrupt");
     auto bak = path;
     bak += ".bak";
     removeQuietly(path);
@@ -284,7 +283,7 @@ REGISTER_TEST(settings_corrupted_json_fallback, "settings: corrupted json -> def
 })
 
 REGISTER_TEST(settings_partial_file_uses_defaults, "settings: partial file -> per-field defaults", {
-    const auto path = tempConfigFile("partial");
+    const auto path = test_support::tempConfigFile(kCfgPrefix, "partial");
     removeQuietly(path);
     {
         // 只有 theme 字段；fontScale / logRetention 缺失 → 各自默认值
@@ -305,7 +304,7 @@ REGISTER_TEST(settings_partial_file_uses_defaults, "settings: partial file -> pe
 // 旧键 fontScalePercent / fontScalePercentV2 的存量值（85/115/130）都是
 // 缩水语义下选的 → 一律忽略、回落默认 100；V3 键下的值按字面生效
 REGISTER_TEST(settings_legacy_fontscale_migration, "settings: legacy font scale keys reset to 100", {
-    const auto path = tempConfigFile("legacy");
+    const auto path = test_support::tempConfigFile(kCfgPrefix, "legacy");
     removeQuietly(path);
     {
         std::ofstream f(path, std::ios::trunc);
@@ -334,7 +333,7 @@ REGISTER_TEST(settings_legacy_fontscale_migration, "settings: legacy font scale 
 })
 
 REGISTER_TEST(settings_theme_value_mapping, "settings: theme string mapping", {
-    const auto path = tempConfigFile("theme");
+    const auto path = test_support::tempConfigFile(kCfgPrefix, "theme");
     removeQuietly(path);
     {
         std::ofstream f(path, std::ios::trunc);
@@ -381,7 +380,7 @@ REGISTER_TEST(settings_clamp_out_of_range, "settings: out-of-range values clampe
 })
 
 REGISTER_TEST(settings_save_clamps_before_write, "settings: save clamps, load returns clamped", {
-    const auto path = tempConfigFile("clampwrite");
+    const auto path = test_support::tempConfigFile(kCfgPrefix, "clampwrite");
     removeQuietly(path);
     module::settings::SettingsStore store(path);
 
@@ -919,7 +918,7 @@ bool windowEffectRoundtripOne(module::settings::SettingsStore& store,
 } // namespace
 
 REGISTER_TEST(settings_window_effect_defaults_and_roundtrip, "settings: windowEffect 默认 off + 三档读写往返", {
-    const auto path = tempConfigFile("wineffect");
+    const auto path = test_support::tempConfigFile(kCfgPrefix, "wineffect");
     removeQuietly(path);
     module::settings::SettingsStore store(path);
 
@@ -1463,7 +1462,7 @@ REGISTER_TEST(settings_ctrl_s_save_shortcut,
 REGISTER_TEST(settings_theme_mode_roundtrip_and_legacy,
               "settings: themeMode 默认 auto/读写往返/旧 theme 键派生/未知收敛（spec缩水 A）", {
     using namespace module::settings;
-    const auto path = tempConfigFile("thememode");
+    const auto path = test_support::tempConfigFile(kCfgPrefix, "thememode");
     removeQuietly(path);
     SettingsStore store(path);
 
@@ -1588,7 +1587,7 @@ REGISTER_TEST(settings_theme_mode_dropdown_click_persists,
 REGISTER_TEST(settings_editor_font_size_roundtrip_clamp,
               "settings: editorFontSize 默认 15/读写往返/越界钳制（spec缩水 B）", {
     using namespace module::settings;
-    const auto path = tempConfigFile("edfont");
+    const auto path = test_support::tempConfigFile(kCfgPrefix, "edfont");
     removeQuietly(path);
     SettingsStore store(path);
 
@@ -1704,7 +1703,7 @@ REGISTER_TEST(settings_about_text_helpers,
 REGISTER_TEST(settings_log_level_roundtrip_matrix,
               "settings: logLevel 默认 INFO/读写往返/未知收敛/parseLogLevel 矩阵（spec缩水 D）", {
     using namespace module::settings;
-    const auto path = tempConfigFile("loglevel");
+    const auto path = test_support::tempConfigFile(kCfgPrefix, "loglevel");
     removeQuietly(path);
     SettingsStore store(path);
 

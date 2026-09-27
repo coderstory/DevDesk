@@ -35,14 +35,8 @@ void settleWatcher(module::markdown::MarkdownService& svc) {
     (void)svc.rescan();  // 消费 credit + 以磁盘为准对齐（幂等）
 }
 
-// 把字符串写入文件（覆盖）
-bool writeTextFile(const fs::path& path, const std::string& content) {
-    fs::create_directories(path.parent_path());
-    std::ofstream ofs(path, std::ios::binary | std::ios::trunc);
-    if (!ofs) return false;
-    ofs.write(content.data(), static_cast<std::streamsize>(content.size()));
-    return ofs.good();
-}
+// 把字符串写入文件（覆盖）—— 共享实现（TIN-06b，原五份 writeTextFile 合流）
+using test_support::writeTextFile;
 
 // MD-08 注入工具：造一个「悬空 junction」（mklink /J 指向不存在的目标）。
 // 目录枚举器把 junction 当成普通目录递归进入、opendir 报 ENOENT → 遍历当场

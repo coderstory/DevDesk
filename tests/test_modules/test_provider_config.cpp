@@ -13,6 +13,7 @@
 //   - 槽位单一真相源（审计 CPX-08）：表行驱动的派生面一致性（用例遍历
 //     modelSlotTable()，加一行槽位即自动进入覆盖，无需改用例）
 #include "doctest.h"
+#include "test_support.h"
 
 #include "claude_service.h"
 #include "core/database.h"
@@ -55,46 +56,8 @@ bool slotEq(const module::claude::ModelSlot& a,
     return a.model == b.model && a.name == b.name;
 }
 
-std::filesystem::path tempDbPath(const std::string& tag) {
-    static int counter = 0;
-    ++counter;
-    auto name = "devdesk_test_pconfig_" + tag + "_" +
-                std::to_string(counter) + ".db";
-    return test_temp::tempPath(name);
-}
-
-// RAII：已 migrate 的临时数据库（复用 test_claude_service 模式）
-struct TestDb {
-    std::filesystem::path path;
-    // 审计 CP-07：Database/SqliteDb 已不可默认构造（open() 是唯一入口），
-    // 「先占位、后 move 进来」改用指针表达
-    std::unique_ptr<core::Database> db;
-
-    explicit TestDb(const std::string& tag) {
-        path = tempDbPath(tag);
-        std::error_code ec;
-        std::filesystem::remove(path, ec);
-        auto r = core::Database::open(path);
-        if (r.isFail()) {
-            throw std::runtime_error("Database::open failed: " +
-                                     r.errorMessage());
-        }
-        db = std::make_unique<core::Database>(std::move(r.value()));
-        auto m = db->migrate();
-        if (m.isFail()) {
-            throw std::runtime_error("migrate failed: " + m.errorMessage());
-        }
-    }
-
-    ~TestDb() {
-        std::error_code ec;
-        std::filesystem::remove(path, ec);
-        std::filesystem::remove(path.string() + "-wal", ec);
-        std::filesystem::remove(path.string() + "-shm", ec);
-    }
-
-    core::data::SqliteDb& handle() { return db->db(); }
-};
+// 临时 db 文件名前缀（共享工厂 test_support::tempDbPath / TestDb 的第一实参）
+constexpr const char* kDbPrefix = "devdesk_test_pconfig_";
 
 } // namespace
 
@@ -319,7 +282,7 @@ REGISTER_TEST(provider_config_official_keys_derived_from_hints,
 // ---- 8. ClaudeService 读写往返 + model 列同步 ----
 REGISTER_TEST(provider_config_service_roundtrip,
               "claude_service: models_config/extra_env 读写往返", {
-    TestDb tdb("svc_roundtrip");
+    test_support::TestDb tdb(kDbPrefix, "svc_roundtrip");
     module::claude::ClaudeService svc(tdb.handle(), kTestKeychainService);
 
     auto created = svc.createProfile("官方中转", "https://gw.example.com/anthropic",
@@ -374,7 +337,7 @@ REGISTER_TEST(provider_config_service_roundtrip,
 // ---- 9. 旧库升级（v2 → v3）：存量行零迁移，读出为空串 ----
 REGISTER_TEST(provider_config_migration_upgrade,
               "migration v3: 旧库升级加列，存量行 models_config/extra_env 为空串", {
-    auto path = tempDbPath("upgrade");
+    auto path = test_support::tempDbPath(kDbPrefix, "upgrade");
     std::error_code ec;
     std::filesystem::remove(path, ec);
 

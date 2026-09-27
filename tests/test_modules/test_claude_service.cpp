@@ -45,81 +45,14 @@ namespace {
 
 constexpr const char* kTestKeychainService = "DevDeskTestClaudeService";
 
-// 每个测试用一个独立的临时数据库文件
-std::filesystem::path tempDbPath(const std::string& tag) {
-    static int counter = 0;
-    ++counter;
-    auto name = "devdesk_test_claude_" + tag + "_" +
-                std::to_string(counter) + ".db";
-    return test_temp::tempPath(name);
-}
+// 临时 db 文件名前缀（共享工厂 test_support::tempDbPath / TestDb 的第一实参）
+constexpr const char* kDbPrefix = "devdesk_test_claude_";
 
-// RAII：创建已 migrate 的临时数据库
-struct TestDb {
-    std::filesystem::path path;
-    // 审计 CP-07：Database/SqliteDb 已不可默认构造（open() 是唯一入口），
-    // 「先占位、后 move 进来」改用指针表达
-    std::unique_ptr<core::Database> db;
-
-    explicit TestDb(const std::string& tag) {
-        path = tempDbPath(tag);
-        std::error_code ec;
-        std::filesystem::remove(path, ec);
-        auto r = core::Database::open(path);
-        if (r.isFail()) {
-            throw std::runtime_error("Database::open failed: " +
-                                     r.errorMessage());
-        }
-        db = std::make_unique<core::Database>(std::move(r.value()));
-        auto m = db->migrate();
-        if (m.isFail()) {
-            throw std::runtime_error("migrate failed: " + m.errorMessage());
-        }
-    }
-
-    ~TestDb() {
-        std::error_code ec;
-        std::filesystem::remove(path, ec);
-        std::filesystem::remove(path.string() + "-wal", ec);
-        std::filesystem::remove(path.string() + "-shm", ec);
-    }
-
-    core::data::SqliteDb& handle() { return db->db(); }
-};
-
-// 在测试用 Keychain service 下清理某个 profile 的密钥
-void cleanupKey(int64_t profileId) {
-    platform::keychain::deleteSecret(
-        kTestKeychainService, "claude:" + std::to_string(profileId));
-}
-
-// 探测请求发出的头部（探测经上游方言层装配后头名拼写由方言决定，
-// 断言一律大小写不敏感；见 testConnection 方言用例）
-using HeaderMap = std::map<std::string, std::string>;
-
-std::string headerCI(const HeaderMap& h, const std::string& lowerKey) {
-    for (const auto& kv : h) {
-        std::string k = kv.first;
-        for (auto& c : k) {
-            c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
-        }
-        if (k == lowerKey) return kv.second;
-    }
-    return std::string();
-}
-
-// 统计同名头（大小写不敏感）出现次数：>1 说明大小写变体并存（上游会收到重复头）
-int countCI(const HeaderMap& h, const std::string& lowerKey) {
-    int n = 0;
-    for (const auto& kv : h) {
-        std::string k = kv.first;
-        for (auto& c : k) {
-            c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
-        }
-        if (k == lowerKey) ++n;
-    }
-    return n;
-}
+// 清某个 profile 的测试密钥 / 头名大小写不敏感取头与计数：共享实现
+// （原 cleanupKey / headerCI / countCI 同款合流，TIN-06b；service 传本文件常量）
+using test_support::countCI;
+using test_support::headerCI;
+using test_support::HeaderMap;
 
 // 测试用：作用域内把 http_proxy 指到本地 mock、清空 no_proxy，析构还原原值。
 // 用途：让 baseUrl host 为 opencode.ai 的探测请求仍落到本地 mock——curl 走
@@ -171,7 +104,7 @@ struct TempSyncPaths {
     std::filesystem::path sidecar;
 
     explicit TempSyncPaths(const std::string& tag) {
-        const std::string base = tempDbPath(tag).string();   // 复用同一 tempPath 工厂
+        const std::string base = test_support::tempDbPath(kDbPrefix, tag).string();   // 复用同一 tempPath 工厂
         settings = base + ".settings.json";
         sidecar = base + ".sidecar.json";
         std::error_code ec;
@@ -271,7 +204,7 @@ module::claude::settings_sync::Paths makeSyncPaths(const test_support::TempDir& 
 
 REGISTER_TEST(claude_service_create_get_profile,
               "claude_service: createProfile + getProfile 往返", {
-    TestDb tdb("create_get");
+    test_support::TestDb tdb(kDbPrefix, "create_get");
     module::claude::ClaudeService svc(tdb.handle(), kTestKeychainService);
 
     auto created = svc.createProfile("官方", "https://api.anthropic.com",
@@ -305,7 +238,7 @@ REGISTER_TEST(claude_service_create_get_profile,
     DOCTEST_CHECK(missing.isFail());
     DOCTEST_CHECK(missing.errorCode() == core::ErrorCode::ProfileNotFound);
 
-    cleanupKey(p.id);
+    test_support::cleanupProfileKey(kTestKeychainService, p.id);
     return true;
 })
 
@@ -313,7 +246,7 @@ REGISTER_TEST(claude_service_create_get_profile,
 
 REGISTER_TEST(claude_service_list_profiles,
               "claude_service: listProfiles 返回全部 profile", {
-    TestDb tdb("list");
+    test_support::TestDb tdb(kDbPrefix, "list");
     module::claude::ClaudeService svc(tdb.handle(), kTestKeychainService);
 
     auto a = svc.createProfile("A", "https://a.example.com",
@@ -331,8 +264,8 @@ REGISTER_TEST(claude_service_list_profiles,
         DOCTEST_CHECK(p.apiKeyPlain.empty());
     }
 
-    cleanupKey(a.value().id);
-    cleanupKey(b.value().id);
+    test_support::cleanupProfileKey(kTestKeychainService, a.value().id);
+    test_support::cleanupProfileKey(kTestKeychainService, b.value().id);
     return true;
 })
 
@@ -340,7 +273,7 @@ REGISTER_TEST(claude_service_list_profiles,
 
 REGISTER_TEST(claude_service_set_active_profile,
               "claude_service: setActiveProfile 切换激活（唯一）", {
-    TestDb tdb("active");
+    test_support::TestDb tdb(kDbPrefix, "active");
     module::claude::ClaudeService svc(tdb.handle(), kTestKeychainService);
 
     auto a = svc.createProfile("Active-A", "https://a.example.com",
@@ -389,8 +322,8 @@ REGISTER_TEST(claude_service_set_active_profile,
     DOCTEST_CHECK(bad.isFail());
     DOCTEST_CHECK(bad.errorCode() == core::ErrorCode::ProfileNotFound);
 
-    cleanupKey(a.value().id);
-    cleanupKey(b.value().id);
+    test_support::cleanupProfileKey(kTestKeychainService, a.value().id);
+    test_support::cleanupProfileKey(kTestKeychainService, b.value().id);
     return true;
 })
 
@@ -398,7 +331,7 @@ REGISTER_TEST(claude_service_set_active_profile,
 
 REGISTER_TEST(claude_service_first_create_auto_activates,
               "claude_service: createProfile 首建自动激活 + 不抢占 + 503 指引文案", {
-    TestDb tdb("autoactivate");
+    test_support::TestDb tdb(kDbPrefix, "autoactivate");
     module::claude::ClaudeService svc(tdb.handle(), kTestKeychainService);
 
     // 1) 默认参数保持旧行为：不激活（既有调用方/测试零影响）
@@ -407,7 +340,7 @@ REGISTER_TEST(claude_service_first_create_auto_activates,
     DOCTEST_REQUIRE(legacy.isOk());
     DOCTEST_CHECK_FALSE(legacy.value().isActive);
     DOCTEST_CHECK(svc.getActiveProfile().isFail());
-    cleanupKey(legacy.value().id);
+    test_support::cleanupProfileKey(kTestKeychainService, legacy.value().id);
 
     // 2) activateIfNoneActive=true 且无激活 → 自动激活，返回 isActive=true
     auto first = svc.createProfile("First", "https://first.example.com",
@@ -435,7 +368,7 @@ REGISTER_TEST(claude_service_first_create_auto_activates,
     DOCTEST_CHECK(none.errorCode() == core::ErrorCode::NoActiveProfile);
     DOCTEST_CHECK(none.errorMessage().find("并点击「启用」") != std::string::npos);
 
-    cleanupKey(second.value().id);
+    test_support::cleanupProfileKey(kTestKeychainService, second.value().id);
     return true;
 })
 
@@ -443,7 +376,7 @@ REGISTER_TEST(claude_service_first_create_auto_activates,
 
 REGISTER_TEST(claude_service_configured_proxy_port,
               "claude_service: setConfiguredProxyPort 默认/钳制 + 换端口重启保 token", {
-    TestDb tdb("cfgport");
+    test_support::TestDb tdb(kDbPrefix, "cfgport");
     module::claude::ClaudeService svc(tdb.handle(), kTestKeychainService);
 
     // 默认 = 历史硬编码 8888
@@ -477,7 +410,7 @@ REGISTER_TEST(claude_service_configured_proxy_port,
 
 REGISTER_TEST(claude_service_load_api_key,
               "claude_service: loadApiKey 从 Keychain 读明文", {
-    TestDb tdb("loadkey");
+    test_support::TestDb tdb(kDbPrefix, "loadkey");
     module::claude::ClaudeService svc(tdb.handle(), kTestKeychainService);
 
     const std::string secret = "sk-ant-api03-XYZ-super-secret-key";
@@ -505,7 +438,7 @@ REGISTER_TEST(claude_service_load_api_key,
     // hint 应含末 4 位
     DOCTEST_CHECK(hint.find("key") != std::string::npos);
 
-    cleanupKey(id);
+    test_support::cleanupProfileKey(kTestKeychainService, id);
     return true;
 })
 
@@ -513,7 +446,7 @@ REGISTER_TEST(claude_service_load_api_key,
 
 REGISTER_TEST(claude_service_update_profile,
               "claude_service: updateProfile 改字段 + 可选换 key", {
-    TestDb tdb("update");
+    test_support::TestDb tdb(kDbPrefix, "update");
     module::claude::ClaudeService svc(tdb.handle(), kTestKeychainService);
 
     auto created = svc.createProfile("Before", "https://old.example.com",
@@ -553,7 +486,7 @@ REGISTER_TEST(claude_service_update_profile,
     DOCTEST_REQUIRE(got2.isOk());
     DOCTEST_CHECK(got2.value().apiKeyCheck != p.apiKeyCheck);
 
-    cleanupKey(p.id);
+    test_support::cleanupProfileKey(kTestKeychainService, p.id);
     return true;
 })
 
@@ -561,7 +494,7 @@ REGISTER_TEST(claude_service_update_profile,
 
 REGISTER_TEST(claude_service_update_db_fail_rolls_back_keychain,
               "claude_service: updateProfile DB 写失败按旧值回写 Keychain（CPX-07）", {
-    TestDb tdb("updcomp");
+    test_support::TestDb tdb(kDbPrefix, "updcomp");
     module::claude::ClaudeService svc(tdb.handle(), kTestKeychainService);
 
     auto a = svc.createProfile("NameA", "https://a.example.com",
@@ -622,10 +555,10 @@ REGISTER_TEST(claude_service_update_db_fail_rolls_back_keychain,
     DOCTEST_REQUIRE(key2.isOk());
     DOCTEST_CHECK_EQ(key2.value(), std::string("sk-ant-bbb-9999"));
 
-    cleanupKey(a.value().id);
-    cleanupKey(bid);
-    cleanupKey(twin.value().id);
-    cleanupKey(other.value().id);
+    test_support::cleanupProfileKey(kTestKeychainService, a.value().id);
+    test_support::cleanupProfileKey(kTestKeychainService, bid);
+    test_support::cleanupProfileKey(kTestKeychainService, twin.value().id);
+    test_support::cleanupProfileKey(kTestKeychainService, other.value().id);
     return true;
 })
 
@@ -749,7 +682,7 @@ struct ScopedFakeKeychain {
 // 段一（Keychain 写）失败 → 按捕获到的旧值回写
 REGISTER_TEST(claude_cpx14_stage1_key_write_fail_restores_old,
               "claude_service: CPX-14 段一 Keychain 写失败回写旧值", {
-    TestDb tdb("cpx14stage1");
+    test_support::TestDb tdb(kDbPrefix, "cpx14stage1");
     ScopedFakeKeychain kc;
     module::claude::ClaudeService svc(tdb.handle(), kTestKeychainService);
 
@@ -788,7 +721,7 @@ REGISTER_TEST(claude_cpx14_stage1_key_write_fail_restores_old,
 // 段二（DB 删行）失败 → 密钥已删时补偿回写 + 行保留可重试
 REGISTER_TEST(claude_cpx14_delete_stage2_fail_restores_key,
               "claude_service: CPX-14 段二删行失败回写已删密钥", {
-    TestDb tdb("cpx14delstage2");
+    test_support::TestDb tdb(kDbPrefix, "cpx14delstage2");
     ScopedFakeKeychain kc;
     module::claude::ClaudeService svc(tdb.handle(), kTestKeychainService);
 
@@ -824,7 +757,7 @@ REGISTER_TEST(claude_cpx14_delete_stage2_fail_restores_key,
 // 段二（回填 keychain_account）失败 → 删行回滚 + 段一写入的密钥被清掉
 REGISTER_TEST(claude_cpx14_create_stage2_fail_rolls_back,
               "claude_service: CPX-14 回填 account 失败删行回滚", {
-    TestDb tdb("cpx14createstage2");
+    test_support::TestDb tdb(kDbPrefix, "cpx14createstage2");
     ScopedFakeKeychain kc;
     module::claude::ClaudeService svc(tdb.handle(), kTestKeychainService);
 
@@ -869,7 +802,7 @@ REGISTER_TEST(claude_cpx14_create_stage2_fail_rolls_back,
 
 REGISTER_TEST(claude_service_delete_profile,
               "claude_service: deleteProfile 清 SQLite + Keychain", {
-    TestDb tdb("delete");
+    test_support::TestDb tdb(kDbPrefix, "delete");
     module::claude::ClaudeService svc(tdb.handle(), kTestKeychainService);
 
     auto created = svc.createProfile("ToDelete", "https://del.example.com",
@@ -900,7 +833,7 @@ REGISTER_TEST(claude_service_delete_profile,
 #if defined(_WIN32)
 REGISTER_TEST(claude_service_delete_profile_keychain_fail,
               "claude_service: Keychain 删除失败时中止 deleteProfile", {
-    TestDb tdb("delfail");
+    test_support::TestDb tdb(kDbPrefix, "delfail");
     module::claude::ClaudeService svc(tdb.handle(), kTestKeychainService);
 
     auto created = svc.createProfile("Stuck", "https://stuck.example.com",
@@ -946,7 +879,7 @@ REGISTER_TEST(claude_service_delete_profile_keychain_fail,
 
 REGISTER_TEST(claude_service_orphan_keychain_cleanup,
               "claude_service: cleanupOrphanKeychainEntries 清孤儿密钥", {
-    TestDb tdb("orphan");
+    test_support::TestDb tdb(kDbPrefix, "orphan");
     module::claude::ClaudeService svc(tdb.handle(), kTestKeychainService);
 
     auto a = svc.createProfile("KeepA", "https://a.example.com",
@@ -979,8 +912,8 @@ REGISTER_TEST(claude_service_orphan_keychain_cleanup,
     DOCTEST_REQUIRE(again.isOk());
     DOCTEST_CHECK_EQ(again.value(), 0);
 
-    cleanupKey(a.value().id);
-    cleanupKey(b.value().id);
+    test_support::cleanupProfileKey(kTestKeychainService, a.value().id);
+    test_support::cleanupProfileKey(kTestKeychainService, b.value().id);
     return true;
 })
 
@@ -988,7 +921,7 @@ REGISTER_TEST(claude_service_orphan_keychain_cleanup,
 
 REGISTER_TEST(claude_service_create_validation,
               "claude_service: createProfile 校验重名 + 空字段", {
-    TestDb tdb("validate");
+    test_support::TestDb tdb(kDbPrefix, "validate");
     module::claude::ClaudeService svc(tdb.handle(), kTestKeychainService);
 
     // 空 name
@@ -1017,7 +950,7 @@ REGISTER_TEST(claude_service_create_validation,
     DOCTEST_CHECK(dup.isFail());
     DOCTEST_CHECK(dup.errorCode() == core::ErrorCode::ProfileAlreadyExists);
 
-    cleanupKey(ok1.value().id);
+    test_support::cleanupProfileKey(kTestKeychainService, ok1.value().id);
     return true;
 })
 
@@ -1045,7 +978,7 @@ REGISTER_TEST(claude_service_test_connection,
     DOCTEST_REQUIRE(upstream.start());
     const int port = upstream.actualPort();
 
-    TestDb tdb("testconn");
+    test_support::TestDb tdb(kDbPrefix, "testconn");
     module::claude::ClaudeService svc(tdb.handle(), kTestKeychainService);
 
     const std::string baseUrl = "http://127.0.0.1:" + std::to_string(port);
@@ -1086,7 +1019,7 @@ REGISTER_TEST(claude_service_test_connection,
     DOCTEST_CHECK_EQ(resp401.value().statusCode, 401);
     upstream401.stop();
 
-    cleanupKey(id);
+    test_support::cleanupProfileKey(kTestKeychainService, id);
     return true;
 })
 
@@ -1115,7 +1048,7 @@ REGISTER_TEST(claude_service_test_connection_uses_dialect,
     const int port = upstream.actualPort();
     std::this_thread::sleep_for(std::chrono::milliseconds(50));
 
-    TestDb tdb("conn_dialect");
+    test_support::TestDb tdb(kDbPrefix, "conn_dialect");
     module::claude::ClaudeService svc(tdb.handle(), kTestKeychainService);
 
     // ---- (1) 默认方言（loopback host）：统一 UA + 鉴权头由方言层注入 ----
@@ -1162,7 +1095,7 @@ REGISTER_TEST(claude_service_test_connection_uses_dialect,
                      std::string("sk-ant-conn-dialect-9999"));
 
     upstream.stop();
-    cleanupKey(created.value().id);
+    test_support::cleanupProfileKey(kTestKeychainService, created.value().id);
     return true;
 })
 
@@ -1192,7 +1125,7 @@ REGISTER_TEST(claude_service_test_connection_dialect_override,
     const int port = upstream.actualPort();
     std::this_thread::sleep_for(std::chrono::milliseconds(50));
 
-    TestDb tdb("conn_ovr");
+    test_support::TestDb tdb(kDbPrefix, "conn_ovr");
     module::claude::ClaudeService svc(tdb.handle(), kTestKeychainService);
 
     const std::string loopbackUrl = "http://127.0.0.1:" + std::to_string(port);
@@ -1239,7 +1172,7 @@ REGISTER_TEST(claude_service_test_connection_dialect_override,
     DOCTEST_CHECK_EQ(headerCI(seen, "anthropic-version"), std::string("2023-06-01"));
 
     upstream.stop();
-    cleanupKey(created.value().id);
+    test_support::cleanupProfileKey(kTestKeychainService, created.value().id);
     return true;
 })
 
@@ -1247,7 +1180,7 @@ REGISTER_TEST(claude_service_test_connection_dialect_override,
 
 REGISTER_TEST(claude_service_test_connection_unreachable,
               "claude_service: testConnection 上游不可达返回失败", {
-    TestDb tdb("connfail");
+    test_support::TestDb tdb(kDbPrefix, "connfail");
     module::claude::ClaudeService svc(tdb.handle(), kTestKeychainService);
 
     // 用一个几乎肯定会拒绝连接的端口
@@ -1259,7 +1192,7 @@ REGISTER_TEST(claude_service_test_connection_unreachable,
     DOCTEST_CHECK(resp.isFail());
     DOCTEST_CHECK(resp.errorCode() == core::ErrorCode::NetworkUnreachable);
 
-    cleanupKey(created.value().id);
+    test_support::cleanupProfileKey(kTestKeychainService, created.value().id);
     return true;
 })
 
@@ -1267,7 +1200,7 @@ REGISTER_TEST(claude_service_test_connection_unreachable,
 
 REGISTER_TEST(claude_service_call_logs,
               "claude_service: logCall + recentCalls 往返", {
-    TestDb tdb("logs");
+    test_support::TestDb tdb(kDbPrefix, "logs");
     module::claude::ClaudeService svc(tdb.handle(), kTestKeychainService);
 
     auto created = svc.createProfile("LogTest", "https://x.example.com",
@@ -1309,7 +1242,7 @@ REGISTER_TEST(claude_service_call_logs,
     DOCTEST_REQUIRE(afterDelete.isOk());
     DOCTEST_CHECK_EQ(afterDelete.value().size(), 0u);
 
-    cleanupKey(id);
+    test_support::cleanupProfileKey(kTestKeychainService, id);
     return true;
 })
 
@@ -1319,7 +1252,7 @@ REGISTER_TEST(claude_service_call_logs,
 
 REGISTER_TEST(claude_proxy_event_slot,
               "claude_service: 代理事件槽 take-once/覆盖/过期语义", {
-    TestDb tdb("proxy_event");
+    test_support::TestDb tdb(kDbPrefix, "proxy_event");
     module::claude::ClaudeService svc(tdb.handle(), kTestKeychainService);
 
     // 初始无事件
@@ -1368,7 +1301,7 @@ REGISTER_TEST(claude_proxy_event_slot,
 
 REGISTER_TEST(claude_call_log_query,
               "claude_service: queryCalls 搜索/状态码过滤/翻页 + countCalls", {
-    TestDb tdb("callquery");
+    test_support::TestDb tdb(kDbPrefix, "callquery");
     module::claude::ClaudeService svc(tdb.handle(), kTestKeychainService);
 
     auto created = svc.createProfile("QueryTest", "https://q.example.com",
@@ -1516,7 +1449,7 @@ REGISTER_TEST(claude_call_log_query,
     DOCTEST_CHECK_EQ(rClamp.value().size(), 20u);
     DOCTEST_CHECK_EQ(rClamp.value()[0].id, rAll.value()[0].id);
 
-    cleanupKey(pid);
+    test_support::cleanupProfileKey(kTestKeychainService, pid);
     return true;
 })
 
@@ -1524,7 +1457,7 @@ REGISTER_TEST(claude_call_log_query,
 
 REGISTER_TEST(claude_service_proxy_lifecycle,
               "claude_service: startProxy / stopProxy 生命周期", {
-    TestDb tdb("proxy");
+    test_support::TestDb tdb(kDbPrefix, "proxy");
     module::claude::ClaudeService svc(tdb.handle(), kTestKeychainService);
 
     // 初始未运行
@@ -1567,7 +1500,7 @@ REGISTER_TEST(claude_service_proxy_lifecycle,
 REGISTER_TEST(claude_reverse_capture_on_switch,
               "claude_service: 反向同步① 切 profile 前捕获 settings.json", {
     using namespace module::claude;
-    TestDb tdb("revcap");
+    test_support::TestDb tdb(kDbPrefix, "revcap");
     test_support::TempDir d("revcap", kRevTempDirPrefix);
     auto paths = makeSyncPaths(d);
 
@@ -1634,8 +1567,8 @@ REGISTER_TEST(claude_reverse_capture_on_switch,
     DOCTEST_CHECK_EQ(gotB.value().baseUrl, std::string("https://b.example.com"));
     DOCTEST_CHECK(!gotA.value().isActive);
 
-    cleanupKey(pa.id);
-    cleanupKey(b.value().id);
+    test_support::cleanupProfileKey(kTestKeychainService, pa.id);
+    test_support::cleanupProfileKey(kTestKeychainService, b.value().id);
     return true;
 })
 
@@ -1647,7 +1580,7 @@ REGISTER_TEST(claude_reverse_capture_on_switch,
 REGISTER_TEST(claude_reverse_guard_keys_not_touched,
               "claude_service: 反向同步② 守卫键不写也不清", {
     using namespace module::claude;
-    TestDb tdb("revguard");
+    test_support::TestDb tdb(kDbPrefix, "revguard");
     test_support::TempDir d("revguard", kRevTempDirPrefix);
     auto paths = makeSyncPaths(d);
 
@@ -1727,8 +1660,8 @@ REGISTER_TEST(claude_reverse_guard_keys_not_touched,
         DOCTEST_CHECK_EQ(ee.value().at("MY_EXTRA"), std::string("extra-v3"));
     }
 
-    cleanupKey(a.value().id);
-    cleanupKey(b.value().id);
+    test_support::cleanupProfileKey(kTestKeychainService, a.value().id);
+    test_support::cleanupProfileKey(kTestKeychainService, b.value().id);
     return true;
 })
 
@@ -1737,7 +1670,7 @@ REGISTER_TEST(claude_reverse_guard_keys_not_touched,
 REGISTER_TEST(claude_reverse_absent_clears,
               "claude_service: 反向同步③ 缺席即清空", {
     using namespace module::claude;
-    TestDb tdb("revclear");
+    test_support::TestDb tdb(kDbPrefix, "revclear");
     test_support::TempDir d("revclear", kRevTempDirPrefix);
     auto paths = makeSyncPaths(d);
 
@@ -1782,7 +1715,7 @@ REGISTER_TEST(claude_reverse_absent_clears,
     DOCTEST_CHECK_EQ(static_cast<int>(ee.value().size()), 1);
     DOCTEST_CHECK_EQ(ee.value().at("NEW_KEY"), std::string("n"));
 
-    cleanupKey(b.value().id);
+    test_support::cleanupProfileKey(kTestKeychainService, b.value().id);
     return true;
 })
 
@@ -1791,7 +1724,7 @@ REGISTER_TEST(claude_reverse_absent_clears,
 REGISTER_TEST(claude_reverse_broken_json_aborts,
               "claude_service: 反向同步④ 坏 JSON 中止切换且 profile 一字未改", {
     using namespace module::claude;
-    TestDb tdb("revbad");
+    test_support::TestDb tdb(kDbPrefix, "revbad");
     test_support::TempDir d("revbad", kRevTempDirPrefix);
     auto paths = makeSyncPaths(d);
 
@@ -1854,8 +1787,8 @@ REGISTER_TEST(claude_reverse_broken_json_aborts,
                          std::string("sk-old-key-0123456789abcdef"));
     }
 
-    cleanupKey(pa.id);
-    cleanupKey(b.value().id);
+    test_support::cleanupProfileKey(kTestKeychainService, pa.id);
+    test_support::cleanupProfileKey(kTestKeychainService, b.value().id);
     return true;
 })
 
@@ -1864,7 +1797,7 @@ REGISTER_TEST(claude_reverse_broken_json_aborts,
 REGISTER_TEST(claude_reverse_missing_or_empty_noop,
               "claude_service: 反向同步⑤ 缺失或空文件 no-op 且照常切换", {
     using namespace module::claude;
-    TestDb tdb("revnoop");
+    test_support::TestDb tdb(kDbPrefix, "revnoop");
     test_support::TempDir d("revnoop", kRevTempDirPrefix);
     auto paths = makeSyncPaths(d);
 
@@ -1932,8 +1865,8 @@ REGISTER_TEST(claude_reverse_missing_or_empty_noop,
                          std::string("sk-old-key-0123456789abcdef"));
     }
 
-    cleanupKey(pa.id);
-    cleanupKey(b.value().id);
+    test_support::cleanupProfileKey(kTestKeychainService, pa.id);
+    test_support::cleanupProfileKey(kTestKeychainService, b.value().id);
     return true;
 })
 
@@ -1942,7 +1875,7 @@ REGISTER_TEST(claude_reverse_missing_or_empty_noop,
 REGISTER_TEST(claude_reverse_no_active_skips,
               "claude_service: 反向同步⑥ 无激活 profile 时不读文件", {
     using namespace module::claude;
-    TestDb tdb("revnoact");
+    test_support::TestDb tdb(kDbPrefix, "revnoact");
     test_support::TempDir d("revnoact", kRevTempDirPrefix);
     auto paths = makeSyncPaths(d);
 
@@ -1960,7 +1893,7 @@ REGISTER_TEST(claude_reverse_no_active_skips,
     DOCTEST_REQUIRE(act.isOk());
     DOCTEST_CHECK_EQ(act.value().id, c.value().id);
 
-    cleanupKey(c.value().id);
+    test_support::cleanupProfileKey(kTestKeychainService, c.value().id);
     return true;
 })
 
@@ -1969,7 +1902,7 @@ REGISTER_TEST(claude_reverse_no_active_skips,
 REGISTER_TEST(claude_reverse_no_change_zero_write,
               "claude_service: 反向同步⑦ 无变化零写入 updated_at 不变", {
     using namespace module::claude;
-    TestDb tdb("revsame");
+    test_support::TestDb tdb(kDbPrefix, "revsame");
     test_support::TempDir d("revsame", kRevTempDirPrefix);
     auto paths = makeSyncPaths(d);
 
@@ -2019,8 +1952,8 @@ REGISTER_TEST(claude_reverse_no_change_zero_write,
     DOCTEST_REQUIRE(k.isOk());
     DOCTEST_CHECK_EQ(k.value(), key);
 
-    cleanupKey(pa.id);
-    cleanupKey(b.value().id);
+    test_support::cleanupProfileKey(kTestKeychainService, pa.id);
+    test_support::cleanupProfileKey(kTestKeychainService, b.value().id);
     return true;
 })
 
@@ -2029,7 +1962,7 @@ REGISTER_TEST(claude_reverse_no_change_zero_write,
 REGISTER_TEST(claude_reverse_sidecar_managed_key_skipped,
               "claude_service: 反向同步⑧ sidecar 托管键不被覆盖", {
     using namespace module::claude;
-    TestDb tdb("revside");
+    test_support::TestDb tdb(kDbPrefix, "revside");
     test_support::TempDir d("revside", kRevTempDirPrefix);
     auto paths = makeSyncPaths(d);
 
@@ -2071,8 +2004,8 @@ REGISTER_TEST(claude_reverse_sidecar_managed_key_skipped,
     DOCTEST_REQUIRE(ee.isOk());
     DOCTEST_CHECK_EQ(ee.value().at("NEW_KEY"), std::string("n"));
 
-    cleanupKey(pa.id);
-    cleanupKey(b.value().id);
+    test_support::cleanupProfileKey(kTestKeychainService, pa.id);
+    test_support::cleanupProfileKey(kTestKeychainService, b.value().id);
     return true;
 })
 
@@ -2083,7 +2016,7 @@ REGISTER_TEST(claude_reverse_sidecar_managed_key_skipped,
 REGISTER_TEST(claude_dup_profile_basic,
               "claude_service: 复制 profile 全等同源且不激活", {
     using namespace module::claude;
-    TestDb tdb("dup");
+    test_support::TestDb tdb(kDbPrefix, "dup");
     test_support::TempDir d("dup", kRevTempDirPrefix);
     auto paths = makeSyncPaths(d);
 
@@ -2148,10 +2081,10 @@ REGISTER_TEST(claude_dup_profile_basic,
     // 源不存在 → fail
     DOCTEST_CHECK(svc.duplicateProfile(99999).isFail());
 
-    cleanupKey(pa.id);
-    cleanupKey(cp.id);
-    cleanupKey(dup2.value().id);
-    cleanupKey(dup3.value().id);
+    test_support::cleanupProfileKey(kTestKeychainService, pa.id);
+    test_support::cleanupProfileKey(kTestKeychainService, cp.id);
+    test_support::cleanupProfileKey(kTestKeychainService, dup2.value().id);
+    test_support::cleanupProfileKey(kTestKeychainService, dup3.value().id);
     return true;
 })
 
@@ -2160,13 +2093,13 @@ REGISTER_TEST(claude_dup_profile_basic,
 REGISTER_TEST(claude_dup_missing_key_fails,
               "claude_service: 复制时源密钥缺失 fail 且无新行", {
     using namespace module::claude;
-    TestDb tdb("dupkey");
+    test_support::TestDb tdb(kDbPrefix, "dupkey");
     ClaudeService svc(tdb.handle(), kTestKeychainService);
 
     auto a = svc.createProfile("缺钥源", "https://src.example.com",
                                "sk-src-key-0123456789abcdef", "");
     DOCTEST_REQUIRE(a.isOk());
-    cleanupKey(a.value().id);            // 造 Keychain 孤儿
+    test_support::cleanupProfileKey(kTestKeychainService, a.value().id);            // 造 Keychain 孤儿
 
     auto before = svc.listProfiles();
     DOCTEST_REQUIRE(before.isOk());
@@ -2187,7 +2120,7 @@ REGISTER_TEST(claude_dup_missing_key_fails,
 REGISTER_TEST(claude_dup_stage2_rollback,
               "claude_service: 复制二段失败回滚且零残留", {
     using namespace module::claude;
-    TestDb tdb("duprb");
+    test_support::TestDb tdb(kDbPrefix, "duprb");
     ClaudeService svc(tdb.handle(), kTestKeychainService);
 
     // 先归零孤儿基线（清掉同套件其它用例可能残留在测试 Keychain 命名空间
@@ -2221,7 +2154,7 @@ REGISTER_TEST(claude_dup_stage2_rollback,
     DOCTEST_REQUIRE(k.isOk());
     DOCTEST_CHECK_EQ(k.value(), std::string("sk-src-key-0123456789abcdef"));
 
-    cleanupKey(a.value().id);
+    test_support::cleanupProfileKey(kTestKeychainService, a.value().id);
     return true;
 })
 
@@ -2230,7 +2163,7 @@ REGISTER_TEST(claude_dup_stage2_rollback,
 REGISTER_TEST(claude_shared_config_crud_and_binding,
               "claude_service: 片段 CRUD 与 profile 绑定/解绑", {
     using namespace module::claude;
-    TestDb tdb("sharedcrud");
+    test_support::TestDb tdb(kDbPrefix, "sharedcrud");
     ClaudeService svc(tdb.handle(), kTestKeychainService);
 
     // 建：空名 / 非法 JSON 拒绝
@@ -2313,7 +2246,7 @@ REGISTER_TEST(claude_shared_config_crud_and_binding,
     DOCTEST_REQUIRE(ga2.isOk());
     DOCTEST_CHECK_EQ(ga2.value().sharedConfigId, 0);
 
-    cleanupKey(a.value().id);
+    test_support::cleanupProfileKey(kTestKeychainService, a.value().id);
     return true;
 })
 
@@ -2322,7 +2255,7 @@ REGISTER_TEST(claude_shared_config_crud_and_binding,
 REGISTER_TEST(claude_shared_config_delete_unbinds,
               "claude_service: 删片段同事务解绑绑定它的 profile", {
     using namespace module::claude;
-    TestDb tdb("shareddel");
+    test_support::TestDb tdb(kDbPrefix, "shareddel");
     ClaudeService svc(tdb.handle(), kTestKeychainService);
 
     auto f = svc.createSharedConfig("片段S", R"({"K": "1"})");
@@ -2367,9 +2300,9 @@ REGISTER_TEST(claude_shared_config_delete_unbinds,
     DOCTEST_REQUIRE(keys.isOk());
     DOCTEST_CHECK(keys.value().empty());
 
-    cleanupKey(a.value().id);
-    cleanupKey(b.value().id);
-    cleanupKey(c.value().id);
+    test_support::cleanupProfileKey(kTestKeychainService, a.value().id);
+    test_support::cleanupProfileKey(kTestKeychainService, b.value().id);
+    test_support::cleanupProfileKey(kTestKeychainService, c.value().id);
     return true;
 })
 
@@ -2378,7 +2311,7 @@ REGISTER_TEST(claude_shared_config_delete_unbinds,
 REGISTER_TEST(claude_shared_config_duplicate_copies_binding,
               "claude_service: 复制 profile 携带片段绑定", {
     using namespace module::claude;
-    TestDb tdb("shareddup");
+    test_support::TestDb tdb(kDbPrefix, "shareddup");
     ClaudeService svc(tdb.handle(), kTestKeychainService);
 
     auto f = svc.createSharedConfig("片段D", R"({"K": "1"})");
@@ -2399,8 +2332,8 @@ REGISTER_TEST(claude_shared_config_duplicate_copies_binding,
     DOCTEST_REQUIRE(keys.isOk());
     DOCTEST_CHECK_EQ(keys.value().size(), 1u);
 
-    cleanupKey(a.value().id);
-    cleanupKey(dup.value().id);
+    test_support::cleanupProfileKey(kTestKeychainService, a.value().id);
+    test_support::cleanupProfileKey(kTestKeychainService, dup.value().id);
     return true;
 })
 
@@ -2409,7 +2342,7 @@ REGISTER_TEST(claude_shared_config_duplicate_copies_binding,
 REGISTER_TEST(claude_shared_config_unbound_regression,
               "claude_service: 未绑定片段读路径零值（回归）", {
     using namespace module::claude;
-    TestDb tdb("sharednone");
+    test_support::TestDb tdb(kDbPrefix, "sharednone");
     ClaudeService svc(tdb.handle(), kTestKeychainService);
 
     DOCTEST_CHECK(svc.listSharedConfigs().value().empty());
@@ -2424,7 +2357,7 @@ REGISTER_TEST(claude_shared_config_unbound_regression,
     DOCTEST_REQUIRE(keys.isOk());
     DOCTEST_CHECK(keys.value().empty());
 
-    cleanupKey(a.value().id);
+    test_support::cleanupProfileKey(kTestKeychainService, a.value().id);
     return true;
 })
 
@@ -2436,7 +2369,7 @@ REGISTER_TEST(claude_shared_config_unbound_regression,
 REGISTER_TEST(claude_service_auth_field_default_and_roundtrip,
               "claude_service: 认证字段默认 both + getProfile/getActiveProfile 往返", {
     using namespace module::claude;
-    TestDb tdb("authfield_rt");
+    test_support::TestDb tdb(kDbPrefix, "authfield_rt");
     ClaudeService svc(tdb.handle(), kTestKeychainService);
 
     // 不传尾参 → 默认 'both'
@@ -2474,8 +2407,8 @@ REGISTER_TEST(claude_service_auth_field_default_and_roundtrip,
     }
     DOCTEST_CHECK(listed);
 
-    cleanupKey(d.value().id);
-    cleanupKey(b.value().id);
+    test_support::cleanupProfileKey(kTestKeychainService, d.value().id);
+    test_support::cleanupProfileKey(kTestKeychainService, b.value().id);
     return true;
 })
 
@@ -2484,7 +2417,7 @@ REGISTER_TEST(claude_service_auth_field_default_and_roundtrip,
 REGISTER_TEST(claude_service_auth_field_update_both_branches,
               "claude_service: 认证字段 updateProfile 两分支（换 key / 不换 key）", {
     using namespace module::claude;
-    TestDb tdb("authfield_upd");
+    test_support::TestDb tdb(kDbPrefix, "authfield_upd");
     ClaudeService svc(tdb.handle(), kTestKeychainService);
 
     auto a = svc.createProfile("双分支", "https://u.example.com",
@@ -2508,7 +2441,7 @@ REGISTER_TEST(claude_service_auth_field_update_both_branches,
     DOCTEST_REQUIRE(g2.isOk());
     DOCTEST_CHECK_EQ(g2.value().authField, std::string("bearer"));
 
-    cleanupKey(a.value().id);
+    test_support::cleanupProfileKey(kTestKeychainService, a.value().id);
     return true;
 })
 
@@ -2517,7 +2450,7 @@ REGISTER_TEST(claude_service_auth_field_update_both_branches,
 REGISTER_TEST(claude_service_auth_field_survives_two_stage_update,
               "claude_service: 认证字段经二段补写（models/env）仍保持", {
     using namespace module::claude;
-    TestDb tdb("authfield_two");
+    test_support::TestDb tdb(kDbPrefix, "authfield_two");
     ClaudeService svc(tdb.handle(), kTestKeychainService);
 
     auto c = svc.createProfile("二段", "https://two.example.com",
@@ -2536,7 +2469,7 @@ REGISTER_TEST(claude_service_auth_field_survives_two_stage_update,
     DOCTEST_CHECK_EQ(g.value().authField, std::string("bearer"));
     DOCTEST_CHECK_EQ(g.value().modelsConfigJson, p.modelsConfigJson);
 
-    cleanupKey(c.value().id);
+    test_support::cleanupProfileKey(kTestKeychainService, c.value().id);
     return true;
 })
 
@@ -2545,7 +2478,7 @@ REGISTER_TEST(claude_service_auth_field_survives_two_stage_update,
 REGISTER_TEST(claude_service_duplicate_keeps_auth_field,
               "claude_service: 复制 profile 保留认证字段", {
     using namespace module::claude;
-    TestDb tdb("authfield_dup");
+    test_support::TestDb tdb(kDbPrefix, "authfield_dup");
     ClaudeService svc(tdb.handle(), kTestKeychainService);
 
     auto a = svc.createProfile("复制源", "https://src2.example.com",
@@ -2562,8 +2495,8 @@ REGISTER_TEST(claude_service_duplicate_keeps_auth_field,
     DOCTEST_REQUIRE(g.isOk());
     DOCTEST_CHECK_EQ(g.value().authField, std::string("api_key"));
 
-    cleanupKey(a.value().id);
-    cleanupKey(dup.value().id);
+    test_support::cleanupProfileKey(kTestKeychainService, a.value().id);
+    test_support::cleanupProfileKey(kTestKeychainService, dup.value().id);
     return true;
 })
 
@@ -2572,7 +2505,7 @@ REGISTER_TEST(claude_service_duplicate_keeps_auth_field,
 REGISTER_TEST(claude_service_auth_field_invalid_normalized,
               "claude_service: 认证字段非法值写侧规范化为 both", {
     using namespace module::claude;
-    TestDb tdb("authfield_norm");
+    test_support::TestDb tdb(kDbPrefix, "authfield_norm");
     ClaudeService svc(tdb.handle(), kTestKeychainService);
 
     // createProfile 传非法串 → 落库与返回值都是 'both'
@@ -2594,7 +2527,7 @@ REGISTER_TEST(claude_service_auth_field_invalid_normalized,
     DOCTEST_REQUIRE(g.isOk());
     DOCTEST_CHECK_EQ(g.value().authField, std::string("both"));
 
-    cleanupKey(a.value().id);
+    test_support::cleanupProfileKey(kTestKeychainService, a.value().id);
     return true;
 })
 
@@ -2605,7 +2538,7 @@ REGISTER_TEST(claude_service_auth_field_invalid_normalized,
 REGISTER_TEST(claude_service_dialect_override_default_and_roundtrip,
               "claude_service: dialectOverride 默认空串 + 三处 SELECT 往返", {
     using namespace module::claude;
-    TestDb tdb("dialect_rt");
+    test_support::TestDb tdb(kDbPrefix, "dialect_rt");
     ClaudeService svc(tdb.handle(), kTestKeychainService);
 
     // 不传尾参 → 空串（未覆盖 = 按 host 推断；存量调用零变化）
@@ -2649,8 +2582,8 @@ REGISTER_TEST(claude_service_dialect_override_default_and_roundtrip,
                                     gz.value().dialectOverride);
     DOCTEST_CHECK(pinned.kind == UpstreamDialect::Kind::OpencodeZen);
 
-    cleanupKey(d.value().id);
-    cleanupKey(z.value().id);
+    test_support::cleanupProfileKey(kTestKeychainService, d.value().id);
+    test_support::cleanupProfileKey(kTestKeychainService, z.value().id);
     return true;
 })
 
@@ -2659,7 +2592,7 @@ REGISTER_TEST(claude_service_dialect_override_default_and_roundtrip,
 REGISTER_TEST(claude_service_dialect_override_update_both_branches,
               "claude_service: dialectOverride updateProfile 两分支（换 key / 不换 key）", {
     using namespace module::claude;
-    TestDb tdb("dialect_upd");
+    test_support::TestDb tdb(kDbPrefix, "dialect_upd");
     ClaudeService svc(tdb.handle(), kTestKeychainService);
 
     auto a = svc.createProfile("方言双分支", "https://zen.example.com",
@@ -2693,7 +2626,7 @@ REGISTER_TEST(claude_service_dialect_override_update_both_branches,
     DOCTEST_REQUIRE(g3.isOk());
     DOCTEST_CHECK(g3.value().dialectOverride.empty());
 
-    cleanupKey(a.value().id);
+    test_support::cleanupProfileKey(kTestKeychainService, a.value().id);
     return true;
 })
 
@@ -2702,7 +2635,7 @@ REGISTER_TEST(claude_service_dialect_override_update_both_branches,
 REGISTER_TEST(claude_service_dialect_override_survives_two_stage_update,
               "claude_service: dialectOverride 经二段补写（models/env）仍保持", {
     using namespace module::claude;
-    TestDb tdb("dialect_two");
+    test_support::TestDb tdb(kDbPrefix, "dialect_two");
     ClaudeService svc(tdb.handle(), kTestKeychainService);
 
     auto c = svc.createProfile("方言二段", "https://two.example.com",
@@ -2721,7 +2654,7 @@ REGISTER_TEST(claude_service_dialect_override_survives_two_stage_update,
     DOCTEST_CHECK_EQ(g.value().dialectOverride, std::string("opencode_zen"));
     DOCTEST_CHECK_EQ(g.value().modelsConfigJson, p.modelsConfigJson);
 
-    cleanupKey(c.value().id);
+    test_support::cleanupProfileKey(kTestKeychainService, c.value().id);
     return true;
 })
 
@@ -2730,7 +2663,7 @@ REGISTER_TEST(claude_service_dialect_override_survives_two_stage_update,
 REGISTER_TEST(claude_service_duplicate_keeps_dialect_override,
               "claude_service: 复制 profile 保留 dialectOverride", {
     using namespace module::claude;
-    TestDb tdb("dialect_dup");
+    test_support::TestDb tdb(kDbPrefix, "dialect_dup");
     ClaudeService svc(tdb.handle(), kTestKeychainService);
 
     auto a = svc.createProfile("方言复制源", "https://src3.example.com",
@@ -2747,8 +2680,8 @@ REGISTER_TEST(claude_service_duplicate_keeps_dialect_override,
     DOCTEST_REQUIRE(g.isOk());
     DOCTEST_CHECK_EQ(g.value().dialectOverride, std::string("opencode_zen"));
 
-    cleanupKey(a.value().id);
-    cleanupKey(dup.value().id);
+    test_support::cleanupProfileKey(kTestKeychainService, a.value().id);
+    test_support::cleanupProfileKey(kTestKeychainService, dup.value().id);
     return true;
 })
 
@@ -2757,7 +2690,7 @@ REGISTER_TEST(claude_service_duplicate_keeps_dialect_override,
 REGISTER_TEST(claude_service_dialect_override_invalid_normalized,
               "claude_service: dialectOverride 非法值写侧归一为空串", {
     using namespace module::claude;
-    TestDb tdb("dialect_norm");
+    test_support::TestDb tdb(kDbPrefix, "dialect_norm");
     ClaudeService svc(tdb.handle(), kTestKeychainService);
 
     // createProfile 传非法串 → 落库与返回值都是空串（未覆盖）
@@ -2782,7 +2715,7 @@ REGISTER_TEST(claude_service_dialect_override_invalid_normalized,
     DOCTEST_REQUIRE(g.isOk());
     DOCTEST_CHECK(g.value().dialectOverride.empty());
 
-    cleanupKey(a.value().id);
+    test_support::cleanupProfileKey(kTestKeychainService, a.value().id);
     return true;
 })
 
@@ -2791,7 +2724,7 @@ REGISTER_TEST(claude_service_dialect_override_invalid_normalized,
 REGISTER_TEST(claude_service_dialect_override_survives_reverse_sync,
               "claude_service: 反向同步不丢 dialectOverride", {
     using namespace module::claude;
-    TestDb tdb("dialect_sync");
+    test_support::TestDb tdb(kDbPrefix, "dialect_sync");
     test_support::TempDir d("dialect_sync");
     auto paths = makeSyncPaths(d);
 
@@ -2825,8 +2758,8 @@ REGISTER_TEST(claude_service_dialect_override_survives_reverse_sync,
     // …而方言覆盖原样保留（反向同步只碰 models/env/base_url/token，不碰它）
     DOCTEST_CHECK_EQ(gotA.value().dialectOverride, std::string("opencode_zen"));
 
-    cleanupKey(a.value().id);
-    cleanupKey(b.value().id);
+    test_support::cleanupProfileKey(kTestKeychainService, a.value().id);
+    test_support::cleanupProfileKey(kTestKeychainService, b.value().id);
     return true;
 })
 
@@ -2834,7 +2767,7 @@ REGISTER_TEST(claude_service_dialect_override_survives_reverse_sync,
 
 REGISTER_TEST(claude_service_run_profile_starts_proxy_and_passes_spec,
               "claude_service: runProfile 拉起代理（configuredProxyPort）+ 假 launch 收到正确参数", {
-    TestDb tdb("runprofile1");
+    test_support::TestDb tdb(kDbPrefix, "runprofile1");
     module::claude::ClaudeService svc(tdb.handle(), kTestKeychainService);
     const int port = pickFreePort();
     DOCTEST_REQUIRE(port != 0);
@@ -2871,13 +2804,13 @@ REGISTER_TEST(claude_service_run_profile_starts_proxy_and_passes_spec,
     DOCTEST_CHECK(got.args.empty());
 
     svc.stopProxy();
-    cleanupKey(a.value().id);
+    test_support::cleanupProfileKey(kTestKeychainService, a.value().id);
     return true;
 })
 
 REGISTER_TEST(claude_service_run_profile_proxy_start_failure_aborts,
               "claude_service: runProfile 代理起不来 → 返回 fail 且不开会话", {
-    TestDb tdb("runprofile2");
+    test_support::TestDb tdb(kDbPrefix, "runprofile2");
     module::claude::ClaudeService svc(tdb.handle(), kTestKeychainService);
     const int port = pickFreePort();
     DOCTEST_REQUIRE(port != 0);
@@ -2901,13 +2834,13 @@ REGISTER_TEST(claude_service_run_profile_proxy_start_failure_aborts,
     DOCTEST_CHECK_EQ(calls, 0);    // 不打开会话
 
     // 占位随 blocker 作用域结束自动释放（RAII），无需显式 stop
-    cleanupKey(a.value().id);
+    test_support::cleanupProfileKey(kTestKeychainService, a.value().id);
     return true;
 })
 
 REGISTER_TEST(claude_service_run_profile_switches_only_when_inactive,
               "claude_service: runProfile 非激活 → 先切激活（失败即中止）；已激活 → 不切", {
-    TestDb tdb("runprofile3");
+    test_support::TestDb tdb(kDbPrefix, "runprofile3");
     module::claude::ClaudeService svc(tdb.handle(), kTestKeychainService);
 
     // 注入接管通道路径（不注入 → 反向同步整段跳过，②③ 就无从区分）
@@ -2949,14 +2882,14 @@ REGISTER_TEST(claude_service_run_profile_switches_only_when_inactive,
     DOCTEST_CHECK_EQ(active.value().id, a.value().id);  // 激活态未被改（中止在事务前）
 
     svc.stopProxy();
-    cleanupKey(a.value().id);
-    cleanupKey(b.value().id);
+    test_support::cleanupProfileKey(kTestKeychainService, a.value().id);
+    test_support::cleanupProfileKey(kTestKeychainService, b.value().id);
     return true;
 })
 
 REGISTER_TEST(claude_service_run_profile_invalid_id,
               "claude_service: runProfile id=0 / 不存在 → fail（不开会话）", {
-    TestDb tdb("runprofile4");
+    test_support::TestDb tdb(kDbPrefix, "runprofile4");
     module::claude::ClaudeService svc(tdb.handle(), kTestKeychainService);
 
     int calls = 0;

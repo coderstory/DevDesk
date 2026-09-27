@@ -57,9 +57,9 @@ void compose(eui::Ui&, const eui::Screen&);
 
 namespace {
 
-std::filesystem::path tempDir(const char* name) {
-    return test_temp::tempPath("devdesk_test_pet_" + std::string(name));
-}
+// 临时目录路径前缀 —— 共享工厂 test_support::makeTempDir（TIN-06b，原 tempDir
+// 合流；makeTempDir 先清残骸再建空目录，各调用点随后的 remove / 建目录保持原样）
+constexpr const char* kPetDirPrefix = "devdesk_test_pet_";
 
 void removeTreeQuietly(const std::filesystem::path& p) {
     std::error_code ec;
@@ -72,7 +72,7 @@ void removeTreeQuietly(const std::filesystem::path& p) {
 // 环境/磁盘泄漏给同进程后续用例（旧版手工 set/clear 配对失败即跳尾）。
 struct PetsDirEnv {
     const std::filesystem::path root;
-    explicit PetsDirEnv(const std::string& tag) : root(tempDir(tag.c_str())) {
+    explicit PetsDirEnv(const std::string& tag) : root(test_support::makeTempDir(kPetDirPrefix, tag.c_str())) {
         removeTreeQuietly(root);
         test_support::setEnvVar("DEVDESK_PETS_DIR", root.string());
     }
@@ -243,7 +243,7 @@ REGISTER_TEST(pet_anim_no_poked_frames, "pet: 无 poked 帧皮肤 poke 无反应
 // ============ 3. 占位皮肤生成 ============
 
 REGISTER_TEST(pet_default_skin_generate, "pet: 占位皮肤生成（PNG 结构 + 幂等）", {
-    const std::filesystem::path dir = tempDir("skin");
+    const std::filesystem::path dir = test_support::makeTempDir(kPetDirPrefix, "skin");
     removeTreeQuietly(dir);
     auto r = module::pet::ensureDefaultSkin(dir);
     DOCTEST_CHECK_MESSAGE(r.isOk(), r.isFail() ? r.errorMessage() : "");
@@ -773,7 +773,7 @@ REGISTER_TEST(pet_skin_parse_m2_states, "pet: pet.json sleep/typing 帧解析", 
 
 REGISTER_TEST(pet_default_skin_m2_frames, "pet: 占位皮肤含 M2 帧 + 旧版升级重生成", {
     using namespace module::pet;
-    const std::filesystem::path dir = tempDir("skin_m2");
+    const std::filesystem::path dir = test_support::makeTempDir(kPetDirPrefix, "skin_m2");
     removeTreeQuietly(dir);
     auto r = ensureDefaultSkin(dir);
     DOCTEST_CHECK_MESSAGE(r.isOk(), r.isFail() ? r.errorMessage() : "");
@@ -1445,7 +1445,7 @@ REGISTER_TEST(pet_config_save_failure_keeps_old, "pet: 配置原子写失败不�
 
 REGISTER_TEST(pet_skin_json_write_failure_keeps_old, "pet: 皮肤清单原子写失败不破坏旧 pet.json（THS-03）", {
     using namespace module::pet;
-    const std::filesystem::path dir = tempDir("skin_json_fail");
+    const std::filesystem::path dir = test_support::makeTempDir(kPetDirPrefix, "skin_json_fail");
     removeTreeQuietly(dir);
     std::error_code ec;
     DOCTEST_REQUIRE(std::filesystem::create_directories(dir, ec));
@@ -1468,7 +1468,7 @@ REGISTER_TEST(pet_skin_json_write_failure_keeps_old, "pet: 皮肤清单原子写
 
 REGISTER_TEST(pet_skin_frame_write_failure_keeps_old, "pet: 皮肤帧原子写失败不破坏旧帧（THS-03）", {
     using namespace module::pet;
-    const std::filesystem::path dir = tempDir("skin_frame_fail");
+    const std::filesystem::path dir = test_support::makeTempDir(kPetDirPrefix, "skin_frame_fail");
     removeTreeQuietly(dir);
     std::error_code ec;
     DOCTEST_REQUIRE(std::filesystem::create_directories(dir, ec));

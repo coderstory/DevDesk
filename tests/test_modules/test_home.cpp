@@ -1,6 +1,7 @@
 // tests/test_modules/test_home.cpp
 // Home 模块测试：P12 仪表盘真实数据（HomeService）+ 调用日志清理
 #include "doctest.h"
+#include "test_support.h"
 #include "core/database.h"
 #include "core/module_interface.h"
 #include "core/overdue.h"
@@ -21,37 +22,8 @@
 
 namespace {
 
-std::filesystem::path tempDbPath(const std::string& tag) {
-    static int counter = 0;
-    ++counter;
-    auto name = "devdesk_test_homesvc_" + tag + "_" +
-                std::to_string(counter) + ".db";
-    return test_temp::tempPath(name);
-}
-
-// 一次性环境：开临时 db → migrate（默认列 todo_columns 1..4 已就位）
-struct TestEnv {
-    std::filesystem::path path;
-    std::unique_ptr<core::Database> db;
-    bool ready = false;
-
-    explicit TestEnv(const std::string& tag) {
-        path = tempDbPath(tag);
-        std::error_code ec;
-        std::filesystem::remove(path, ec);
-        auto r = core::Database::open(path);
-        if (r.isFail()) return;
-        if (r.value().migrate().isFail()) return;
-        db = std::make_unique<core::Database>(std::move(r.value()));
-        ready = true;
-    }
-
-    ~TestEnv() {
-        db.reset();
-        std::error_code ec;
-        std::filesystem::remove(path, ec);
-    }
-};
+// 临时 db 文件名前缀（共享工厂 test_support::tempDbPath / TestEnv 的第一实参）
+constexpr const char* kDbPrefix = "devdesk_test_homesvc_";
 
 } // namespace
 
@@ -63,7 +35,7 @@ REGISTER_TEST(home_pageid_first, "home: PageId Home is first", {
 REGISTER_TEST(home_service_real_stats,
               "HomeService: 仪表盘统计聚合 + 纯函数",
               {
-    TestEnv env("stats");
+    test_support::TestEnv env(kDbPrefix, "stats");
     DOCTEST_REQUIRE(env.ready);
 
     const int64_t now = static_cast<int64_t>(std::time(nullptr));
@@ -152,7 +124,7 @@ REGISTER_TEST(home_service_real_stats,
 REGISTER_TEST(home_prune_call_logs,
               "Database::pruneCallLogs: 30 天滚动清理 + 幂等",
               {
-    TestEnv env("prune");
+    test_support::TestEnv env(kDbPrefix, "prune");
     DOCTEST_REQUIRE(env.ready);
 
     const int64_t now = static_cast<int64_t>(std::time(nullptr));
@@ -293,7 +265,7 @@ REGISTER_TEST(home_todo_overdue_consistency,
     DOCTEST_CHECK_FALSE(isOverdue(100, std::nullopt, 100));  // 截止当秒不算
     DOCTEST_CHECK(isOverdue(99, std::nullopt, 100));
 
-    TestEnv env("overdue_xmod");
+    test_support::TestEnv env(kDbPrefix, "overdue_xmod");
     DOCTEST_REQUIRE(env.ready);
 
     const int64_t now = static_cast<int64_t>(std::time(nullptr));

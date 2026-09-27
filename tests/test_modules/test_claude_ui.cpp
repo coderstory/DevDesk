@@ -44,34 +44,15 @@ namespace {
 
 constexpr const char* kTestKeychainService = "DevDeskTestClaudeModule";
 
-std::filesystem::path tempDbPath() {
-    static int counter = 0;
-    ++counter;
-    return test_temp::tempPath(
-        "devdesk_test_claude_ui_" + std::to_string(counter) + ".db");
-}
+// 临时 db 文件名前缀（共享工厂 test_support::TestDb 的第一实参）
+constexpr const char* kDbPrefix = "devdesk_test_claude_ui_";
 
-// RAII：临时库 + 注册全局 ClaudeService（析构时一定解除注册，防悬垂污染后续用例）
-struct TestEnv {
-    std::filesystem::path path;
-    // 审计 CP-07：Database/SqliteDb 已不可默认构造（open() 是唯一入口），
-    // 「先占位、后 move 进来」改用指针表达
-    std::unique_ptr<core::Database> db;
+// RAII：临时库（共享 test_support::TestDb）+ 注册全局 ClaudeService
+//（析构时一定解除注册，防悬垂污染后续用例）
+struct TestEnv : test_support::TestDb {
     std::unique_ptr<module::claude::ClaudeService> svc;
 
-    TestEnv() {
-        path = tempDbPath();
-        std::error_code ec;
-        std::filesystem::remove(path, ec);
-        auto r = core::Database::open(path);
-        if (r.isFail()) {
-            throw std::runtime_error("Database::open failed: " + r.errorMessage());
-        }
-        db = std::make_unique<core::Database>(std::move(r.value()));
-        auto m = db->migrate();
-        if (m.isFail()) {
-            throw std::runtime_error("migrate failed: " + m.errorMessage());
-        }
+    TestEnv() : test_support::TestDb(kDbPrefix, "") {
         svc = std::make_unique<module::claude::ClaudeService>(db->db(),
                                                               kTestKeychainService);
         module::claude::ClaudeService::setGlobal(svc.get());
@@ -79,17 +60,11 @@ struct TestEnv {
 
     ~TestEnv() {
         module::claude::ClaudeService::setGlobal(nullptr);
-        std::error_code ec;
-        std::filesystem::remove(path, ec);
-        std::filesystem::remove(path.string() + "-wal", ec);
-        std::filesystem::remove(path.string() + "-shm", ec);
     }
 };
 
-void cleanupKey(int64_t profileId) {
-    platform::keychain::deleteSecret(
-        kTestKeychainService, "claude:" + std::to_string(profileId));
-}
+// 清某个 profile 的测试密钥（共享实现，TIN-06b）
+using test_support::cleanupProfileKey;
 
 // 动态空闲端口（审计 L2 / HANDOFF 排队 #9 测试脆弱点）：借 platform::http::Server
 // 的 bind 0 支持（http_server.cpp：port==0 → bind_to_any_port）向系统要一个空闲
@@ -273,8 +248,8 @@ REGISTER_TEST(claude_module_compose_with_data,
     DOCTEST_CHECK(ui.find("claude.btn.proxy") != nullptr);
 
     mod->onStop();
-    cleanupKey(a.value().id);
-    cleanupKey(b.value().id);
+    cleanupProfileKey(kTestKeychainService, a.value().id);
+    cleanupProfileKey(kTestKeychainService, b.value().id);
     return true;
 })
 
@@ -348,7 +323,7 @@ REGISTER_TEST(claude_module_test_connection_async,
 
     mod->onStop();
     upstream.stop();
-    cleanupKey(a.value().id);
+    cleanupProfileKey(kTestKeychainService, a.value().id);
     return true;
 })
 
@@ -515,7 +490,7 @@ REGISTER_TEST(claude_module_form_tabs_roundtrip,
     }
 
     mod->onStop();
-    cleanupKey(pid);
+    cleanupProfileKey(kTestKeychainService, pid);
     return true;
 })
 
@@ -636,7 +611,7 @@ REGISTER_TEST(claude_module_import_flow,
         DOCTEST_CHECK_EQ(ee.value().at("DISABLE_AUTOUPDATER"),
                          std::string("1"));
         DOCTEST_CHECK_EQ(p.model, std::string("m-default[1M]"));
-        cleanupKey(p.id);
+        cleanupProfileKey(kTestKeychainService, p.id);
     }
 
     mod->onStop();
@@ -756,7 +731,7 @@ REGISTER_TEST(claude_module_import_current_full_chain,
         DOCTEST_REQUIRE(ee.isOk());
         DOCTEST_CHECK_EQ(ee.value().at("DISABLE_AUTOUPDATER"), std::string("1"));
         DOCTEST_CHECK_EQ(p.model, std::string("m-cur-default"));
-        cleanupKey(p.id);
+        cleanupProfileKey(kTestKeychainService, p.id);
     }
 
     mod->onStop();
@@ -1184,7 +1159,7 @@ REGISTER_TEST(claude_module_calls_dialog,
     }
 
     mod->onStop();
-    cleanupKey(pid);
+    cleanupProfileKey(kTestKeychainService, pid);
     return true;
 })
 
@@ -1340,7 +1315,7 @@ REGISTER_TEST(claude_cpx06_calls_query_async_debounce,
     DOCTEST_CHECK_EQ(claude_calls_query_dispatches_for_test(), q1 + 1);
 
     mod->onStop();
-    cleanupKey(pid);
+    cleanupProfileKey(kTestKeychainService, pid);
     return true;
 })
 
@@ -1401,7 +1376,7 @@ REGISTER_TEST(claude_profiles_scrollview,
     }
 
     mod->onStop();
-    for (size_t i = 0; i < ids.size(); ++i) cleanupKey(ids[i]);
+    for (size_t i = 0; i < ids.size(); ++i) cleanupProfileKey(kTestKeychainService, ids[i]);
     return true;
 })
 
@@ -1615,7 +1590,7 @@ REGISTER_TEST(claude_module_keyboard_shortcuts,
     DOCTEST_CHECK(!env.svc->isProxyRunning());
 
     mod->onStop();
-    cleanupKey(pid);
+    cleanupProfileKey(kTestKeychainService, pid);
     return true;
 })
 
@@ -1770,9 +1745,9 @@ REGISTER_TEST(claude_module_compose_cache_equivalence,
     }
 
     mod->onStop();
-    cleanupKey(a.value().id);
-    cleanupKey(b.value().id);
-    cleanupKey(c.value().id);
+    cleanupProfileKey(kTestKeychainService, a.value().id);
+    cleanupProfileKey(kTestKeychainService, b.value().id);
+    cleanupProfileKey(kTestKeychainService, c.value().id);
     return true;
 })
 
@@ -1834,7 +1809,7 @@ REGISTER_TEST(claude_ui_esc_closes_delete_confirm,
     }
 
     mod->onStop();
-    cleanupKey(pid);
+    cleanupProfileKey(kTestKeychainService, pid);
     return true;
 })
 
@@ -1912,8 +1887,8 @@ REGISTER_TEST(claude_h2_compose_snapshot_async,
     DOCTEST_CHECK(hasName(cardNames(), "官方"));   // 旧卡不丢
 
     mod->onStop();
-    cleanupKey(a.value().id);
-    cleanupKey(b.value().id);
+    cleanupProfileKey(kTestKeychainService, a.value().id);
+    cleanupProfileKey(kTestKeychainService, b.value().id);
     return true;
 })
 
@@ -2020,9 +1995,9 @@ REGISTER_TEST(claude_module_duplicate_profile_ui,
     DOCTEST_CHECK(sawCopy);
 
     mod->onStop();
-    cleanupKey(a.value().id);
-    cleanupKey(b.value().id);
-    cleanupKey(copyId);
+    cleanupProfileKey(kTestKeychainService, a.value().id);
+    cleanupProfileKey(kTestKeychainService, b.value().id);
+    cleanupProfileKey(kTestKeychainService, copyId);
     return true;
 })
 
@@ -2101,8 +2076,8 @@ REGISTER_TEST(claude_module_ui_enable_captures_settings,
     }
 
     mod->onStop();
-    cleanupKey(a.value().id);
-    cleanupKey(b.value().id);
+    cleanupProfileKey(kTestKeychainService, a.value().id);
+    cleanupProfileKey(kTestKeychainService, b.value().id);
     return true;
 })
 
@@ -2329,7 +2304,7 @@ REGISTER_TEST(claude_ui_auth_field_create_persists,
         auto act = env.svc->getActiveProfile();
         DOCTEST_REQUIRE(act.isOk());
         DOCTEST_CHECK_EQ(act.value().authField, std::string("api_key"));
-        cleanupKey(list.value()[0].id);
+        cleanupProfileKey(kTestKeychainService, list.value()[0].id);
     }
 
     mod->onStop();
@@ -2394,7 +2369,7 @@ REGISTER_TEST(claude_ui_auth_field_edit_shows_current,
         auto g = env.svc->getProfile(a.value().id);
         DOCTEST_REQUIRE(g.isOk());
         DOCTEST_CHECK_EQ(g.value().authField, std::string("api_key"));
-        cleanupKey(a.value().id);
+        cleanupProfileKey(kTestKeychainService, a.value().id);
     }
 
     mod->onStop();
@@ -2499,7 +2474,7 @@ REGISTER_TEST(claude_module_run_button_headless,
         // D-9 的提示文案（会话不受 DevDesk 管理）
         DOCTEST_CHECK(msg->text.find("不受 DevDesk 管理") != std::string::npos);
     }
-    cleanupKey(a.value().id);
+    cleanupProfileKey(kTestKeychainService, a.value().id);
     env.svc->stopProxy();
     return true;
 })
