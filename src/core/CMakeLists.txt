@@ -8,6 +8,7 @@ add_library(devdesk_core STATIC
     proxy_stats.cpp
     database.cpp
     window_layout.cpp
+    atomic_write.cpp
 )
 
 # 平台适配实现按平台选择编译（接口隔离：头文件平台无关，实现 *_win/_macos/_posix，
