@@ -5,9 +5,11 @@
 #include "doctest.h"
 #include "core/module_interface.h"
 #include "core/router.h"
+#include "core/ui_geometry.h"
 
 #include <eui/dsl.h>
 
+#include <limits>
 #include <string>
 
 namespace {
@@ -302,5 +304,44 @@ REGISTER_TEST(router_navigate_nothing_registered_stays, "router: 全未注册时
     // 一个模块都没注册（Home 也未注册的极端防御分支）：不崩溃、停留当前页
     r.navigateTo(core::PageId::Markdown, "open:x.md");
     DOCTEST_CHECK_EQ(r.currentPage(), core::PageId::Home);
+    return true;
+})
+
+// ============ 唯一换算 core::windowToCompose（审计 M4）============
+//
+// 指针空间 → 页面 compose 坐标：compose = 指针 / dpiScale - 页面原点。
+// 覆盖 100%/125%/150% 三档 × 侧边栏展开(208)/折叠(72) 两个页面原点。
+// 取值为二进制精确值，故直接按 == 断言（100 物理 = 80 逻辑 等换算见下）。
+
+REGISTER_TEST(core_window_to_compose_three_scales_both_origins,
+              "core: windowToCompose 三档 DPI × 侧边栏展开/折叠", {
+    // 同一 compose 落点（页面内 x=192）在三档缩放下对应的指针 x：
+    //   100% → 192 + 208 = 400；125% → 240 + 260 = 500；150% → 288 + 312 = 600
+    // 展开（原点 208）：指针 400/500/600 → 192
+    DOCTEST_CHECK_EQ(core::windowToCompose(400.0f, 208.0f, 1.0f), 192.0f);
+    DOCTEST_CHECK_EQ(core::windowToCompose(500.0f, 208.0f, 1.25f), 192.0f);
+    DOCTEST_CHECK_EQ(core::windowToCompose(600.0f, 208.0f, 1.5f), 192.0f);
+    // 折叠（原点 72）：同样指针位置整体左移 136 compose px（展开-折叠宽差）
+    DOCTEST_CHECK_EQ(core::windowToCompose(400.0f, 72.0f, 1.0f), 328.0f);
+    DOCTEST_CHECK_EQ(core::windowToCompose(500.0f, 72.0f, 1.25f), 328.0f);
+    DOCTEST_CHECK_EQ(core::windowToCompose(600.0f, 72.0f, 1.5f), 328.0f);
+    // 展开/折叠差恒等于原点差（换算对原点只是平移）
+    DOCTEST_CHECK_EQ(core::windowToCompose(500.0f, 72.0f, 1.25f) -
+                         core::windowToCompose(500.0f, 208.0f, 1.25f),
+                     136.0f);
+    // y 轴：页面区纵跨整窗，原点恒 0
+    DOCTEST_CHECK_EQ(core::windowToCompose(300.0f, 0.0f, 1.25f), 240.0f);
+    return true;
+})
+
+REGISTER_TEST(core_window_to_compose_degenerate_and_legacy,
+              "core: windowToCompose 退化 dpiScale 归一化 + 旧行为等价", {
+    // 无 Router / 无缩放（原点 0、尺度 1）= 旧版 windowToPageX 的直通语义
+    DOCTEST_CHECK_EQ(core::windowToCompose(400.0f, 0.0f, 1.0f), 400.0f);
+    // 退化尺度（0 / 负数 / NaN）按同尺度处理，不产生 inf/NaN 坐标
+    DOCTEST_CHECK_EQ(core::windowToCompose(400.0f, 208.0f, 0.0f), 192.0f);
+    DOCTEST_CHECK_EQ(core::windowToCompose(400.0f, 208.0f, -2.0f), 192.0f);
+    const float nan = std::numeric_limits<float>::quiet_NaN();
+    DOCTEST_CHECK_EQ(core::windowToCompose(400.0f, 208.0f, nan), 192.0f);
     return true;
 })
