@@ -10,8 +10,8 @@
 // md_sync_map 的解耦约定。
 //
 // 本批（M2）刻意不做、留给后续里程碑的接口（不提前挖坑，故此处不出现）：
-//   - 块级 undo 栈（M5）、跨块 ↑↓ 目标（M4）——二者各自独立纯函数，加在
-//     本文件尾部即可，不改变下列签名的语义。
+//   - 块级 undo 栈（M5）——独立纯函数，加在本文件尾部即可，不改变下列签名的语义。
+// M4 已补：跨块 ↑↓ 目标 + 块边界删除（文档尾部），二者仍是纯字节算术。
 #pragma once
 
 #include <cstddef>
@@ -66,5 +66,49 @@ bool mdLiveCompositionFrozen(const std::string& compositionText);
 float mdLiveInputHeight(const std::string& blockText, float textWidth,
                         float fontSize, float inset,
                         const MdLiveLineCountFn& lineCount);
+
+// ---- M4：块边界键（spec §3.4 / §4.7）----
+// 核心决策（spec §3.4 / 已定决策 D-C）：块边界【不做块结构操作】，只做普通文本
+// 编辑 —— 块身份始终跟随光标（锚 = 文档字节偏移，D3）。所以本层只回答两件事：
+//   「↑↓ 该跳到哪个字节」与「边界退格/删除该删哪个字节范围」，不拥有任何状态。
+
+// 「不消费」哨兵：交回 input 内置（块内移动 / 什么也不做）。
+inline constexpr size_t kMdLiveNoConsume = static_cast<size_t>(-1);
+
+// 跨块 ↑↓ 目标（spec §3.4）：direction < 0 = ↑、> 0 = ↓；返回目标【文档字节
+// 偏移】或 kMdLiveNoConsume。
+//   ↑：光标在活动块【首行】→ 目标 = 上一块末行（行首 + 列尽量保持）
+//   ↓：光标在活动块【末行】→ 目标 = 下一块首行（行首 + 列尽量保持）
+// 不消费：空块序列 / 空文档 / direction == 0 / 首块 ↑ / 末块 ↓ / 光标不在边界行。
+// 术语按【源码行】（软折行不参与判定 —— 真实折行位置只有 input 的内部 layout
+// 知道，本层不 include 组件头，故折行内的 ↑↓ 也按源码行处理；块首行内的 ↑ 一律
+// 跨块，这是 spec §3.4 的原文口径）。
+// 列 = 光标在当前行的行内字节偏移，落到目标行时钳到该行【内容】长（行终结符
+// 不计 —— "\r\n" 的 '\r' 不算内容，光标不会落到 '\r' 之后）。块下标与
+// blockIndexAt 同口径：块边界字节归后一块；块首恒为行首（分块器按行切）。
+size_t mdLiveVerticalBlockTarget(const std::string& text,
+                                 const std::vector<MdBlock>& blocks,
+                                 size_t cursorByte, int direction);
+
+// 块边界删除（spec §3.4）的待执行编辑：删 [eraseStart, eraseEnd) 后光标落
+// cursor（== eraseStart，即两个块粘连的接缝字节）。
+struct MdLiveBoundaryEdit {
+    size_t eraseStart = 0;
+    size_t eraseEnd = 0;
+    size_t cursor = 0;
+};
+
+// 块首退格 / 块尾删除（direction < 0 = Backspace、> 0 = Delete）：都要求光标
+// 正好落在【块边界字节】上（docByte == 某块 start —— 也就是"后一块块首 == 前
+// 一块块尾"的同一字节，spec §3.4 的「文档偏移 == 块起点 / 块终点」）：
+//   Backspace：k ≥ 1 → 删光标【前】一个行终结符（'\n'，CRLF 成对删 '\r\n'）
+//   Delete   ：光标处就是行终结符 → 删它（CRLF 成对删）；否则不消费
+// 返回 false = 不消费（交回内置）：
+//   空块序列 / direction == 0 / 光标不在块边界 / 首块 Backspace / 文末 Delete
+//   （cursorByte ≥ size）/ Delete 处不是行终结符（= 普通块内字符删除，内置口径
+//   与「只做普通文本编辑」一致）。有选区时调用侧不得进来（内置负责删选区）。
+bool mdLiveBoundaryEdit(const std::string& text,
+                        const std::vector<MdBlock>& blocks, size_t cursorByte,
+                        int direction, MdLiveBoundaryEdit& out);
 
 } // namespace module::markdown

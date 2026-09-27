@@ -4159,3 +4159,378 @@ REGISTER_TEST(md_module_live_state_release_note_switch,
     mod->onStop();
     return true;
 })
+
+// ==================== M4：块边界键（spec §3.4 / 已定决策 D-C）====================
+// 验收（spec §7 M4 行）：Enter/Backspace/Delete/↑↓ 边界语义 + 边界偏移单测
+//（纯函数侧在 test_md_live_edit.cpp）+ 手工。
+//
+// 无头边界（诚实声明）：本组直驱活动 input 的 onKeyEvent（= Runtime 内部同一
+// 入口：用户 passthrough 先于内置，返回 true 即拦截）。因此「不消费」的判定
+// 在无头下拿不到（内置对 Up/Down/Backspace 也会返回 true），故负向断言一律
+// 走【行为】：文档不变 + 活动块不跳；正向断言走【状态】：活动块/光标/文档。
+
+namespace {
+
+// 控制字符转义（CRLF 用例的失败信息里 '\r'/'\n' 直接打印会和终端行为纠缠，
+// 无法分辨差异）
+std::string escapeCr(const std::string& s) {
+    std::string out;
+    out.reserve(s.size());
+    for (char c : s) {
+        if (c == '\r') out += "\\r";
+        else if (c == '\n') out += "\\n";
+        else out.push_back(c);
+    }
+    return out;
+}
+
+// 给活动 input 派发一次按键（走 input 组件注册的复合处理器：passthrough → 内置）
+bool pressLiveKey(eui::Ui& ui, eui::InputKey key, bool shift = false,
+                  bool control = false) {
+    const auto* hit = ui.find("md.live.input.hit");
+    if (hit == nullptr || !hit->onKeyEvent) return false;
+    eui::KeyEvent ev;
+    ev.key = key;
+    ev.action = eui::KeyAction::Press;
+    ev.modifiers.shift = shift;
+    ev.modifiers.control = control;
+    return hit->onKeyEvent(ev);
+}
+
+// 进实时态并把活动块锚定到 docByte（编辑器光标 → 切态 → 锚 = 编辑器光标）
+bool enterLiveAt(MdLiveEnv& e, ::core::Module* mod, const eui::Screen& screen,
+                 size_t docByte) {
+    e.frame([&](eui::Ui& u) { mod->compose(u, screen); });
+    if (!openFirstNote(*e.ui)) return false;
+    e.frame([&](eui::Ui& u) { mod->compose(u, screen); });
+    if (e.ui->find(kEditorInputId) == nullptr) return false;
+    e.ui->state<MdInputState>(kEditorInputId).cursor = static_cast<int>(docByte);
+    if (!cycleMode(mod)) return false;   // → 实时
+    e.frame([&](eui::Ui& u) { mod->compose(u, screen); });
+    return e.ui->find("md.live.input") != nullptr;
+}
+
+} // namespace
+
+// M4 验收 ①：Backspace 于块首 = 删前一个换行（与上一块粘连、活动块自动跟随），
+// 首块块首不消费（文档不变）；CRLF 成对删。
+REGISTER_TEST(md_module_live_boundary_backspace,
+              "markdown_module: 实时态块首退格删接缝换行（M4，headless）", {
+    //   [0,8)   "one\ntwo\n"   段落
+    //   [8,13)  "\n# H\n"      标题（前导空行折叠）
+    //   [13,20) "\nthree\n"    段落
+    const std::string text = "one\ntwo\n\n# H\n\nthree\n";
+    test_support::MdHeadlessEnv env(kDirPrefix, "livebksp", kDbName);
+    DOCTEST_REQUIRE(env.db != nullptr);
+    DOCTEST_REQUIRE(writeTextFile(env.dir / "bs.md", text));
+
+    module::markdown::MdBlockModel model;
+    model.update(text);
+    const auto& bs = model.blocks();
+    DOCTEST_REQUIRE_EQ(bs.size(), static_cast<size_t>(3));
+    DOCTEST_REQUIRE_EQ(bs[1].start, static_cast<size_t>(8));
+
+    std::unique_ptr<::core::Module> mod(create_markdown_module());
+    mod->onStart();
+    eui::Screen screen;
+    screen.width = 1600.0f;
+    screen.height = 1000.0f;
+    MdLiveEnv e;
+    auto frame = [&](void) { e.frame([&](eui::Ui& u) { mod->compose(u, screen); }); };
+
+    DOCTEST_REQUIRE(enterLiveAt(e, mod.get(), screen, bs[1].start));
+    DOCTEST_CHECK_EQ(e.ui->state<MdInputState>("md.live.input").text,
+                     text.substr(bs[1].start, bs[1].end - bs[1].start));
+    DOCTEST_CHECK_EQ(e.ui->state<MdInputState>("md.live.input").cursor, 0);
+
+    // ① 块首退格 → 消费（删 [7,8) 的 '\n'），文档粘连、光标落在接缝
+    DOCTEST_REQUIRE(pressLiveKey(*e.ui, eui::InputKey::Backspace));
+    frame();
+    // 期望文档 = 原文档去掉块 0 末尾的 '\n'
+    const std::string expect = "one\ntwo\n# H\n\nthree\n";
+    // 重切后块 0 = [0,8)（"one\ntwo\n"），光标 7 落在块 0 内 → 活动块跟随 + 块内光标 7
+    module::markdown::MdBlockModel m2;
+    m2.update(expect);
+    DOCTEST_REQUIRE(m2.blocks().size() >= 2);
+    DOCTEST_REQUIRE_EQ(m2.blockIndexAt(7), static_cast<size_t>(0));
+    DOCTEST_CHECK_MESSAGE(
+        e.ui->state<MdInputState>("md.live.input").text ==
+            expect.substr(m2.blocks()[0].start,
+                          m2.blocks()[0].end - m2.blocks()[0].start),
+        "块首退格后活动块文本 [" +
+            e.ui->state<MdInputState>("md.live.input").text + "] 文档 [" + expect + "]");
+    DOCTEST_CHECK_EQ(e.ui->state<MdInputState>("md.live.input").cursor, 7);
+    // ② 落盘逐字节（证明删的是接缝换行，不是活动块的字节）
+    std::this_thread::sleep_for(std::chrono::milliseconds(520));
+    frame();
+    std::string saved;
+    DOCTEST_REQUIRE(readFileBytes(env.dir / "bs.md", &saved));
+    DOCTEST_CHECK_MESSAGE(saved == expect, "落盘 [" + saved + "] 期望 [" + expect + "]");
+
+    // ③ 首块块首退格 → 不消费（前面没有换行）：文档与活动块都不动
+    //    （无头下拿不到 passthrough 的返回值 —— 内置对 Backspace 恒返回 true，
+    //      故负向断言一律走行为：文档逐字节不变）
+    e.ui->state<MdInputState>("md.live.input").cursor = 0;
+    frame();
+    DOCTEST_REQUIRE_EQ(e.ui->state<MdInputState>("md.live.input").text,
+                       expect.substr(m2.blocks()[0].start,
+                                     m2.blocks()[0].end - m2.blocks()[0].start));
+    pressLiveKey(*e.ui, eui::InputKey::Backspace);
+    frame();
+    std::this_thread::sleep_for(std::chrono::milliseconds(520));
+    frame();
+    DOCTEST_REQUIRE(readFileBytes(env.dir / "bs.md", &saved));
+    DOCTEST_CHECK_MESSAGE(saved == expect, "首块块首退格后落盘 [" + saved + "]");
+    DOCTEST_CHECK_EQ(e.ui->state<MdInputState>("md.live.input").text,
+                     expect.substr(m2.blocks()[0].start,
+                                   m2.blocks()[0].end - m2.blocks()[0].start));
+    mod->onStop();
+    return true;
+})
+
+// M4 验收 ②：Delete 于块边界（块终点字节）删该处的换行；文末不消费、块内普通
+// 字符删除交回内置。
+// CRLF 说明（本次实证）：Windows 文本模式读（markdown_service.cpp:641 的
+// std::ifstream 未开 ios::binary）把 CRLF 归一成 LF，落盘走 core::atomic_write
+// 的 binary 写（atomic_write.cpp:14）→ 模块内文档恒为 LF，CRLF 文件首次保存后
+// 磁盘字节也变 LF。故模块路径按 LF 验证；CRLF 的字节语义（'\r\n' 成对删、列钳到
+// '\r' 前）在 test_md_live_edit.cpp 的纯函数用例里覆盖。
+REGISTER_TEST(md_module_live_boundary_delete,
+              "markdown_module: 实时态块尾删除删接缝换行（M4，headless）", {
+    //   [0,4)  "# A\n"     标题
+    //   [4,10) "\n# B\n"   标题（前导空行折叠 —— 块边界字节 = 行首 '\n'）
+    const std::string text = "# A\n\n# B\n";
+    test_support::MdHeadlessEnv env(kDirPrefix, "livedel", kDbName);
+    DOCTEST_REQUIRE(env.db != nullptr);
+    DOCTEST_REQUIRE(writeTextFile(env.dir / "del.md", text));
+
+    module::markdown::MdBlockModel model;
+    model.update(text);
+    const auto& bs = model.blocks();
+    DOCTEST_REQUIRE_EQ(bs.size(), static_cast<size_t>(2));
+    DOCTEST_REQUIRE_EQ(bs[1].start, static_cast<size_t>(4));   // == 块 0 块尾
+    DOCTEST_REQUIRE(bs[1].end == text.size());
+
+    std::unique_ptr<::core::Module> mod(create_markdown_module());
+    mod->onStart();
+    eui::Screen screen;
+    screen.width = 1600.0f;
+    screen.height = 1000.0f;
+    MdLiveEnv e;
+    auto frame = [&](void) { e.frame([&](eui::Ui& u) { mod->compose(u, screen); }); };
+
+    DOCTEST_REQUIRE(enterLiveAt(e, mod.get(), screen, bs[1].start));
+    const std::string blockSrc =
+        text.substr(bs[1].start, bs[1].end - bs[1].start);
+    DOCTEST_CHECK_MESSAGE(
+        e.ui->state<MdInputState>("md.live.input").text == blockSrc,
+        "初始活动块文本 [" + escapeCr(e.ui->state<MdInputState>("md.live.input").text) +
+            "] 期望 [" + escapeCr(blockSrc) + "] 文档 [" + escapeCr(text) + "]");
+    DOCTEST_CHECK_EQ(e.ui->state<MdInputState>("md.live.input").cursor, 0);
+
+    // ① 块尾删除 → 消费：删块边界处的 '\n'（块 0 与块 1 粘连）
+    DOCTEST_REQUIRE(pressLiveKey(*e.ui, eui::InputKey::Delete));
+    frame();
+    const std::string expect = "# A\n# B\n";
+    module::markdown::MdBlockModel m2;
+    m2.update(expect);
+    DOCTEST_REQUIRE_EQ(m2.blocks().size(), static_cast<size_t>(2));
+    DOCTEST_REQUIRE_EQ(m2.blockIndexAt(4), static_cast<size_t>(1));
+    DOCTEST_CHECK_MESSAGE(
+        e.ui->state<MdInputState>("md.live.input").text ==
+            "# B\n",
+        "块尾删除后活动块文本 [" +
+            escapeCr(e.ui->state<MdInputState>("md.live.input").text) + "]");
+    DOCTEST_CHECK_EQ(e.ui->state<MdInputState>("md.live.input").cursor, 0);
+    // 证伪探针（本用例的 M4 判据）：删除走【模块层边界路径】（直接改文档 + 重锚），
+    // 不走 input 内置编辑 —— 故 framework undo 栈不增（已定决策 D5：实时态撤销归
+    // 模块层快照栈 = M5）。卸载 M4 接线后本断言必红（内置 Delete 先 pushUndoState）。
+    // 注意：LF 文本下两条路径的【文档字节结果相同】（都删掉那个 '\n'），故文档断言
+    // 骗不过 —— CRLF 成对删的字节语义由纯函数用例 md_live_boundary_edit 锁死。
+    DOCTEST_CHECK_EQ(e.ui->state<MdInputState>("md.live.input").undoStack.size(),
+                     static_cast<size_t>(0));
+    std::this_thread::sleep_for(std::chrono::milliseconds(520));
+    frame();
+    std::string saved;
+    DOCTEST_REQUIRE(readFileBytes(env.dir / "del.md", &saved));
+    DOCTEST_CHECK_MESSAGE(saved == expect,
+                          "落盘 [" + escapeCr(saved) + "] 期望 [" + escapeCr(expect) +
+                              "]");
+
+    // ② 文末（文档尾）Delete → 不消费：文档不变
+    //    末块文本 "# B\n" 长 4，光标推到文本末尾 → 锚 = 文档尾（块边界归后一块，
+    //    末块无后一块 → 仍归末块，块内光标 = 文本长）
+    e.ui->state<MdInputState>("md.live.input").cursor =
+        static_cast<int>(e.ui->state<MdInputState>("md.live.input").text.size());
+    frame();
+    pressLiveKey(*e.ui, eui::InputKey::Delete);
+    frame();
+    std::this_thread::sleep_for(std::chrono::milliseconds(520));
+    frame();
+    DOCTEST_REQUIRE(readFileBytes(env.dir / "del.md", &saved));
+    DOCTEST_CHECK_MESSAGE(saved == expect, "文末删除后落盘 [" + escapeCr(saved) + "]");
+
+    // ③ 块内（非块边界）Delete → 不消费，交回内置删普通字符：文档少一个字节
+    //    （块 1 文本 "# B\n"，光标 0 → 该字节是 '#'，不是行终结符）
+    DOCTEST_REQUIRE(e.ui->state<MdInputState>("md.live.input").cursor == 4);
+    e.ui->state<MdInputState>("md.live.input").cursor = 0;
+    frame();
+    pressLiveKey(*e.ui, eui::InputKey::Delete);   // 不消费 → 内置删 '#'（并重切块）
+    frame();
+    std::this_thread::sleep_for(std::chrono::milliseconds(520));
+    frame();
+    DOCTEST_REQUIRE(readFileBytes(env.dir / "del.md", &saved));
+    DOCTEST_CHECK_MESSAGE(saved == "# A\n B\n",
+                          "内置块内删除后落盘 [" + escapeCr(saved) + "]");
+    mod->onStop();
+    return true;
+})
+
+// M4 验收 ③：跨块 ↑↓ —— 边界行按 ↑/↓ 跳相邻块（列保持），非边界行交回内置。
+REGISTER_TEST(md_module_live_vertical_block_move,
+              "markdown_module: 实时态跨块 ↑↓（边界行跳块 + 块内行交回内置，M4）", {
+    const std::string text = "one\ntwo\n\n# H\n\nthree\n";
+    test_support::MdHeadlessEnv env(kDirPrefix, "livevert", kDbName);
+    DOCTEST_REQUIRE(env.db != nullptr);
+    DOCTEST_REQUIRE(writeTextFile(env.dir / "vt.md", text));
+
+    module::markdown::MdBlockModel model;
+    model.update(text);
+    const auto& bs = model.blocks();
+    DOCTEST_REQUIRE_EQ(bs.size(), static_cast<size_t>(3));
+
+    std::unique_ptr<::core::Module> mod(create_markdown_module());
+    mod->onStart();
+    eui::Screen screen;
+    screen.width = 1600.0f;
+    screen.height = 1000.0f;
+    MdLiveEnv e;
+    auto frame = [&](void) { e.frame([&](eui::Ui& u) { mod->compose(u, screen); }); };
+
+    DOCTEST_REQUIRE(enterLiveAt(e, mod.get(), screen, bs[1].start));   // 活动块 = 1
+
+    // ① 块 1 首行 ↑ → 块 0 末行行首（目标字节 4）
+    DOCTEST_REQUIRE(pressLiveKey(*e.ui, eui::InputKey::Up));
+    frame();
+    DOCTEST_CHECK_MESSAGE(
+        e.ui->state<MdInputState>("md.live.input").text ==
+            text.substr(bs[0].start, bs[0].end - bs[0].start),
+        "↑ 后活动块文本 [" + e.ui->state<MdInputState>("md.live.input").text + "]");
+    DOCTEST_CHECK_EQ(e.ui->state<MdInputState>("md.live.input").cursor, 4);
+
+    // ② 块 0 第二行 ↓/↑ → 非边界行交回内置：文档与活动块不跳（↑ 落到块内上一行）
+    DOCTEST_CHECK_EQ(e.ui->state<MdInputState>("md.live.input").text,
+                     text.substr(bs[0].start, bs[0].end - bs[0].start));
+    DOCTEST_REQUIRE(pressLiveKey(*e.ui, eui::InputKey::Up));   // 块内上移（内置）
+    frame();
+    DOCTEST_CHECK_EQ(e.ui->state<MdInputState>("md.live.input").text,
+                     text.substr(bs[0].start, bs[0].end - bs[0].start));
+    DOCTEST_CHECK_EQ(e.ui->state<MdInputState>("md.live.input").cursor, 0);
+    // 首块首行再 ↑ → 不消费（交回内置，停在首行）；活动块不许跳
+    pressLiveKey(*e.ui, eui::InputKey::Up);
+    frame();
+    DOCTEST_CHECK_EQ(e.ui->state<MdInputState>("md.live.input").text,
+                     text.substr(bs[0].start, bs[0].end - bs[0].start));
+    DOCTEST_CHECK_EQ(e.ui->state<MdInputState>("md.live.input").cursor, 0);
+
+    // ③ 块 0 首行 ↓ → 非块末行，交回内置块内下移（"two" 行）；再 ↓ 从块末行跨到块 1
+    pressLiveKey(*e.ui, eui::InputKey::Down);   // 内置：块内下移一行
+    frame();
+    DOCTEST_CHECK_EQ(e.ui->state<MdInputState>("md.live.input").text,
+                     text.substr(bs[0].start, bs[0].end - bs[0].start));
+    DOCTEST_CHECK_EQ(e.ui->state<MdInputState>("md.live.input").cursor, 4);
+    DOCTEST_REQUIRE(pressLiveKey(*e.ui, eui::InputKey::Down));   // 块 0 末行 → 块 1
+    frame();
+    DOCTEST_CHECK_MESSAGE(
+        e.ui->state<MdInputState>("md.live.input").text ==
+            text.substr(bs[1].start, bs[1].end - bs[1].start),
+        "↓ 跨块后活动块文本 [" + e.ui->state<MdInputState>("md.live.input").text +
+            "] 期望 [" + text.substr(bs[1].start, bs[1].end - bs[1].start) + "]");
+    DOCTEST_CHECK_EQ(e.ui->state<MdInputState>("md.live.input").cursor, 0);
+
+    // ④ 继续 ↓：块 1 首行（空行）不是块末行 → 交回内置块内下移；再 ↓ 从块 1 末行
+    //    进块 2（末块）——块末行才跨块
+    pressLiveKey(*e.ui, eui::InputKey::Down);   // 内置：块内下移一行
+    frame();
+    DOCTEST_CHECK_EQ(e.ui->state<MdInputState>("md.live.input").text,
+                     text.substr(bs[1].start, bs[1].end - bs[1].start));
+    DOCTEST_REQUIRE(pressLiveKey(*e.ui, eui::InputKey::Down));   // 块 1 末行 → 块 2
+    frame();
+    DOCTEST_CHECK_EQ(e.ui->state<MdInputState>("md.live.input").text,
+                     text.substr(bs[2].start, bs[2].end - bs[2].start));
+    DOCTEST_CHECK_EQ(e.ui->state<MdInputState>("md.live.input").cursor, 0);
+    // ⑤ 末块 ↓：非末行交回内置（进 "three" 行）；末行 ↓ 不消费（活动块不跳）
+    pressLiveKey(*e.ui, eui::InputKey::Down);   // 内置：进 "three" 行
+    frame();
+    const std::string before = e.ui->state<MdInputState>("md.live.input").text;
+    DOCTEST_CHECK_EQ(before,
+                     text.substr(bs[2].start, bs[2].end - bs[2].start));
+    pressLiveKey(*e.ui, eui::InputKey::Down);   // 末块末行 → 不消费
+    frame();
+    DOCTEST_CHECK_MESSAGE(e.ui->state<MdInputState>("md.live.input").text == before,
+                          "末块 ↓ 后活动块跳走了：[" +
+                              e.ui->state<MdInputState>("md.live.input").text + "]");
+
+    // ⑥ 全程零编辑：文档逐字节未变
+    std::this_thread::sleep_for(std::chrono::milliseconds(520));
+    frame();
+    std::string saved;
+    DOCTEST_REQUIRE(readFileBytes(env.dir / "vt.md", &saved));
+    DOCTEST_CHECK_MESSAGE(saved == text, "跨块 ↑↓ 不应改文档：[" + saved + "]");
+    mod->onStop();
+    return true;
+})
+
+// M4 验收 ④：块内按键走既有 md_keyboard 纯函数（Enter 续列表 / Tab 缩进 / Ctrl+B
+// 包裹）——写回活动 input 并上行拼文档（spec §3.4「全部走既有 md_keyboard」）。
+REGISTER_TEST(md_module_live_inblock_keys,
+              "markdown_module: 实时态块内按键（Enter 续列表/Tab/Ctrl+B，M4）", {
+    const std::string text = "- a\n";
+    test_support::MdHeadlessEnv env(kDirPrefix, "livekeys", kDbName);
+    DOCTEST_REQUIRE(env.db != nullptr);
+    DOCTEST_REQUIRE(writeTextFile(env.dir / "kb.md", text));
+
+    std::unique_ptr<::core::Module> mod(create_markdown_module());
+    mod->onStart();
+    eui::Screen screen;
+    screen.width = 1600.0f;
+    screen.height = 1000.0f;
+    MdLiveEnv e;
+    auto frame = [&](void) { e.frame([&](eui::Ui& u) { mod->compose(u, screen); }); };
+
+    DOCTEST_REQUIRE(enterLiveAt(e, mod.get(), screen, 3));   // 光标 "- a" 之后
+    DOCTEST_CHECK_EQ(e.ui->state<MdInputState>("md.live.input").text, text);
+
+    // ① 光标行是列表项 → applyEnterList：插 "\n" + 续行前缀 "- "
+    DOCTEST_REQUIRE(pressLiveKey(*e.ui, eui::InputKey::Enter));
+    frame();
+    std::string want = "- a\n- \n";
+    DOCTEST_CHECK_MESSAGE(e.ui->state<MdInputState>("md.live.input").text == want,
+                          "Enter 续列表后块文本 [" +
+                              e.ui->state<MdInputState>("md.live.input").text +
+                              "] 期望 [" + want + "]");
+    // ② Tab → applyTab：光标处插 4 空格（续行前缀之后再缩进）
+    DOCTEST_REQUIRE(pressLiveKey(*e.ui, eui::InputKey::Tab));
+    frame();
+    want = "- a\n-     \n";
+    DOCTEST_CHECK_MESSAGE(e.ui->state<MdInputState>("md.live.input").text == want,
+                          "Tab 后块文本 [" +
+                              e.ui->state<MdInputState>("md.live.input").text +
+                              "] 期望 [" + want + "]");
+    // ③ Ctrl+B → applyWrapAround：无选区插成对 "**"，光标居中
+    DOCTEST_REQUIRE(pressLiveKey(*e.ui, eui::InputKey::B, false, true));
+    frame();
+    want = "- a\n-     ****\n";
+    DOCTEST_CHECK_MESSAGE(e.ui->state<MdInputState>("md.live.input").text == want,
+                          "Ctrl+B 后块文本 [" +
+                              e.ui->state<MdInputState>("md.live.input").text +
+                              "] 期望 [" + want + "]");
+    // ④ 端到端：三键结果全部落盘（逐字节）
+    std::this_thread::sleep_for(std::chrono::milliseconds(520));
+    frame();
+    std::string saved;
+    DOCTEST_REQUIRE(readFileBytes(env.dir / "kb.md", &saved));
+    DOCTEST_CHECK_MESSAGE(saved == want, "落盘 [" + saved + "] 期望 [" + want + "]");
+    mod->onStop();
+    return true;
+})
