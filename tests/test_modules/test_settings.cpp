@@ -5,9 +5,12 @@
 //       日志保留下拉弹层不出窗体（openUp）/ 切换档位立即清理 / 文本垂直居中 /
 //       窗口效果三档（磨砂 Phase D）：默认值/往返/非法值收敛、档位→alpha/
 //       backdrop 映射、降级提示矩阵、applyWindowVisuals 接线（无头）
+//       R6（spec §5.2）：settings_ui_logic 纯件等价（openUp 几何/档位表/最近邻/
+//       字号缩放/保留档文案/下拉持有者语义）+ 卡片注册表（tab 归属/顺序/门控）
 #include "doctest.h"
 #include "test_support.h"
 #include "settings_config.h"
+#include "settings_ui_logic.h"
 
 #include "claude_service.h"
 #include "core/claude_proxy_service.h"
@@ -2247,3 +2250,205 @@ REGISTER_TEST(settings_service_locator_contract,
                   adapter.stopProxy();                   // no-op，不崩
                   return true;
               })
+
+// ==================== R6：settings_module 拆分 + 卡片表驱动 ====================
+// spec 2026-09-27-refactor-incremental-design §5.2 要求 R6 零行为变化。以下两
+// 条用例是「拆出的纯件 / 注册表」与拆分前逐字等价的护栏（N9 允许新增纯函数
+// 等价断言）：纯件断言逐点复刻拆分前的内联式；注册表断言 tab 归属、绘制顺序
+// 与模块门控（拆分前是 compose 内 switch 的 9 个分支）。
+
+REGISTER_TEST(settings_ui_logic_equivalence,
+              "settings: R6 纯件等价——openUp 几何/档位表/最近邻/字号缩放/保留档/下拉持有者", {
+    namespace ms = module::settings;
+    // 1) openUp 几何：与拆分前三处内联式逐点比对（右侧字面量 = 拆分前取值）
+    auto legacyOverflows = [](float cardTopY, float fieldOffsetY,
+                              float fieldHeight, int itemCount,
+                              float screenH) {
+        const float fieldBottomY = cardTopY + fieldOffsetY + fieldHeight;
+        const float popupH = static_cast<float>(itemCount) * 34.0f + 12.0f;
+        return fieldBottomY + 8.0f + popupH > screenH - 16.0f;
+    };
+    int gridHits = 0;
+    for (float top : {0.0f, 100.0f, 176.0f, 400.0f, 984.0f}) {
+        for (float off : {ms::kLogDropdownOffsetY, ms::kEditorFontDdOffsetY,
+                          ms::kLogLevelOffsetY}) {
+            for (float fh : {ms::kLogDropdownHeight, ms::kLogEditorFontHeight,
+                             ms::kLogLevelHeight}) {
+                for (int n : {ms::kRetentionPresetCount,
+                              ms::kEditorFontPresetCount,
+                              ms::kLogLevelPresetCount}) {
+                    for (float sh : {484.0f, 500.0f, 1000.0f, 1300.0f}) {
+                        DOCTEST_CHECK_EQ(
+                            ms::dropdownPopupOverflows(top, off, fh, n, sh),
+                            legacyOverflows(top, off, fh, n, sh));
+                        ++gridHits;
+                    }
+                }
+            }
+        }
+    }
+    DOCTEST_CHECK_EQ(gridHits, 5 * 3 * 3 * 3 * 4);
+
+    // 2) 弹层几何 / 卡片高度常量取值（拆分前后同源，值不得漂）
+    DOCTEST_CHECK_EQ(ms::kDropdownItemHeight, 34.0f);
+    DOCTEST_CHECK_EQ(ms::kDropdownPopupPadding, 12.0f);
+    DOCTEST_CHECK_EQ(ms::kDropdownPopupGap, 8.0f);
+    DOCTEST_CHECK_EQ(ms::kWindowBottomMargin, 16.0f);
+    DOCTEST_CHECK_EQ(ms::kSettingsTabHeight, 40.0f);
+    DOCTEST_CHECK_EQ(ms::kAppearanceCardHeight, 160.0f);
+    DOCTEST_CHECK_EQ(ms::kEditorFontCardHeight, 108.0f);
+    DOCTEST_CHECK_EQ(ms::kModulesCardHeight, 288.0f);
+    DOCTEST_CHECK_EQ(ms::kPetCardHeight, 120.0f);
+    DOCTEST_CHECK_EQ(ms::kDirectoryCardHeight, 108.0f);
+    DOCTEST_CHECK_EQ(ms::kLogSettingsCardHeight, 148.0f);
+    DOCTEST_CHECK_EQ(ms::kAboutCardHeight, 150.0f);
+
+    // 3) 档位表（值 + 标签，逐项钉死）
+    DOCTEST_CHECK_EQ(ms::kFontPresetCount, 4);
+    DOCTEST_CHECK_EQ(ms::kFontPresets[0], 85);
+    DOCTEST_CHECK_EQ(ms::kFontPresets[3], 130);
+    DOCTEST_CHECK(std::string(ms::kFontPresetLabels[2]) == "大 115%");
+    DOCTEST_CHECK_EQ(ms::kRetentionPresetCount, 6);
+    DOCTEST_CHECK_EQ(ms::kRetentionPresets[0], 0);
+    DOCTEST_CHECK_EQ(ms::kRetentionPresets[5], 365);
+    DOCTEST_CHECK_EQ(ms::kWindowEffectPresetCount, 3);
+    DOCTEST_CHECK(std::string(ms::kWindowEffectPresets[2]) ==
+                  ms::kWindowEffectFrosted);
+    DOCTEST_CHECK(std::string(ms::kWindowEffectPresetLabels[0]) == "关闭（默认）");
+    DOCTEST_CHECK_EQ(ms::kThemeModePresetCount, 3);
+    DOCTEST_CHECK(std::string(ms::kThemeModePresets[0]) == ms::kThemeModeAuto);
+    DOCTEST_CHECK(std::string(ms::kThemeModePresetLabels[2]) == "深色");
+    DOCTEST_CHECK_EQ(ms::kEditorFontPresetCount, 4);
+    DOCTEST_CHECK_EQ(ms::kEditorFontPresets[1], 15);   // 默认 = fontSizeBody 基准
+    DOCTEST_CHECK_EQ(ms::kLogLevelPresetCount, 4);
+    DOCTEST_CHECK(std::string(ms::kLogLevelPresets[0]) == ms::kLogLevelDebug);
+    DOCTEST_CHECK(std::string(ms::kLogLevelPresetLabels[1]) == "INFO（默认）");
+
+    // 4) nearestIndex：命中 / 最近 / 越界回落（拆分前同实现）
+    DOCTEST_CHECK_EQ(ms::nearestIndex(100, ms::kFontPresets, ms::kFontPresetCount), 1);
+    DOCTEST_CHECK_EQ(ms::nearestIndex(86, ms::kFontPresets, ms::kFontPresetCount), 0);
+    DOCTEST_CHECK_EQ(ms::nearestIndex(0, ms::kFontPresets, ms::kFontPresetCount), 0);
+    DOCTEST_CHECK_EQ(ms::nearestIndex(999, ms::kFontPresets, ms::kFontPresetCount), 3);
+    DOCTEST_CHECK_EQ(ms::nearestIndex(90, ms::kRetentionPresets, ms::kRetentionPresetCount), 3);  // 恰好命中 90
+    DOCTEST_CHECK_EQ(ms::nearestIndex(91, ms::kRetentionPresets, ms::kRetentionPresetCount), 3);  // 90 更近（1 vs 89）
+    DOCTEST_CHECK_EQ(ms::nearestIndex(20, ms::kRetentionPresets, ms::kRetentionPresetCount), 2);  // 30 更近（10 vs 13）
+    DOCTEST_CHECK_EQ(ms::nearestIndex(15, ms::kEditorFontPresets, ms::kEditorFontPresetCount), 1);
+
+    // 5) fs：非 token 字号跟随全局缩放（同一来源 core::theme::fontScale）
+    const float savedScale = ::core::theme::fontScale();
+    ::core::theme::setFontScale(1.0f);
+    DOCTEST_CHECK_EQ(ms::fs(12.0f), 12.0f);
+    ::core::theme::setFontScale(1.5f);
+    DOCTEST_CHECK_EQ(ms::fs(12.0f), 18.0f);
+    ::core::theme::setFontScale(savedScale);
+
+    // 6) retentionLabel：0 = 永久保留
+    DOCTEST_CHECK(ms::retentionLabel(0) == "永久保留");
+    DOCTEST_CHECK(ms::retentionLabel(30) == "30 天");
+    DOCTEST_CHECK(ms::retentionLabel(365) == "365 天");
+
+    // 7) 下拉唯一持有者（THS-05）：开 = 独占；关 = 只关自己（迟到回调不误关）
+    DOCTEST_CHECK(ms::isDropdownOpen(1, ms::Dropdown::Font));
+    DOCTEST_CHECK_FALSE(ms::isDropdownOpen(-1, ms::Dropdown::Font));
+    DOCTEST_CHECK_EQ(ms::applyDropdownOpen(-1, ms::Dropdown::Theme, true),
+                     static_cast<int>(ms::Dropdown::Theme));
+    DOCTEST_CHECK_EQ(ms::applyDropdownOpen(static_cast<int>(ms::Dropdown::Theme),
+                                           ms::Dropdown::Font, true),
+                     static_cast<int>(ms::Dropdown::Font));   // 开第二个关第一个
+    DOCTEST_CHECK_EQ(ms::applyDropdownOpen(static_cast<int>(ms::Dropdown::Font),
+                                           ms::Dropdown::Font, false), -1);
+    DOCTEST_CHECK_EQ(ms::applyDropdownOpen(static_cast<int>(ms::Dropdown::Font),
+                                           ms::Dropdown::Theme, false),
+                     static_cast<int>(ms::Dropdown::Font));   // 迟到回调不误关
+    return true;
+})
+
+REGISTER_TEST(settings_card_registry_order,
+              "settings: R6 卡片注册表——tab 归属 / 绘制顺序 / 模块门控（headless）", {
+    // 卡根 id 序列 = scrollView 内容列的直接子元素（创建序 = 绘制序）
+    auto cardIdsOf = [](::core::Module& mod, const eui::Screen& screen) {
+        eui::Ui ui;
+        ui.begin("registry");
+        mod.compose(ui, screen);
+        ui.end();
+        std::vector<std::string> ids;
+        const auto* content = ui.find("settings.cards.scroll.content");
+        if (content == nullptr) return ids;
+        for (const auto& child : content->children) {
+            const auto pos = child->id.find("settings.");
+            ids.push_back(pos == std::string::npos ? child->id
+                                                   : child->id.substr(pos));
+        }
+        return ids;
+    };
+    // 断言宏展开含 return false，只许写在用例体（返回 bool）里；helper 只回传值
+    auto join = [](const std::vector<std::string>& ids) {
+        std::string s;
+        for (const auto& id : ids) s += id + " | ";
+        return s;
+    };
+
+    eui::Screen screen{1600.0f, 1000.0f};
+
+    // ① 全模块开启：四 tab 各自的卡序列（含受门控的卡）
+    {
+        PruneEnv env("registryall");
+        {
+            std::ofstream out(env.cfgPath);
+            out << "{\"theme\":\"dark\",\"enabledModules\":[\"home\","
+                   "\"markdown\",\"todo\",\"claude_proxy\",\"settings\",\"pet\"]}";
+        }
+        std::unique_ptr<::core::Module> mod(create_settings_module());
+        mod->onStart();
+        const std::vector<std::string> wantGeneral = {
+            "settings.card.appearance",
+            "settings.card.editor"};
+        const auto t0 = cardIdsOf(*mod, screen);
+        DOCTEST_CHECK_MESSAGE(t0 == wantGeneral, "通用 tab 实测：" + join(t0));
+        DOCTEST_REQUIRE(clickSettingsTab(*mod, screen, 1));
+        const std::vector<std::string> wantModulesAll = {
+            "settings.card.modules",
+            "settings.card.pet",
+            "settings.card.directory",
+            "settings.card.proxy"};
+        const auto t1 = cardIdsOf(*mod, screen);
+        DOCTEST_CHECK_MESSAGE(t1 == wantModulesAll, "模块 tab（全开） 实测：" + join(t1));
+        DOCTEST_REQUIRE(clickSettingsTab(*mod, screen, 2));
+        const std::vector<std::string> wantLog = {
+            "settings.card.log",
+            "settings.tab.log"};
+        const auto t2 = cardIdsOf(*mod, screen);
+        DOCTEST_CHECK_MESSAGE(t2 == wantLog, "日志 tab 实测：" + join(t2));
+        DOCTEST_REQUIRE(clickSettingsTab(*mod, screen, 3));
+        const std::vector<std::string> wantAbout = {
+            "settings.card.about"};
+        const auto t3 = cardIdsOf(*mod, screen);
+        DOCTEST_CHECK_MESSAGE(t3 == wantAbout, "关于 tab 实测：" + join(t3));
+        mod->onStop();
+    }
+    // ② pet / markdown / claude 关：模块 tab 只剩插拔卡（其余整卡隐藏）
+    {
+        PruneEnv env("registrygated");
+        {
+            std::ofstream out(env.cfgPath);
+            out << "{\"theme\":\"dark\",\"enabledModules\":[\"home\","
+                   "\"settings\"]}";
+        }
+        std::unique_ptr<::core::Module> mod(create_settings_module());
+        mod->onStart();
+        DOCTEST_REQUIRE(clickSettingsTab(*mod, screen, 1));
+        const std::vector<std::string> wantModulesGated = {
+            "settings.card.modules"};
+        const auto g1 = cardIdsOf(*mod, screen);
+        DOCTEST_CHECK_MESSAGE(g1 == wantModulesGated, "模块 tab（门控全关） 实测：" + join(g1));
+        DOCTEST_REQUIRE(clickSettingsTab(*mod, screen, 0));
+        const std::vector<std::string> wantGeneralGated = {
+            "settings.card.appearance",
+            "settings.card.editor"};
+        const auto g0 = cardIdsOf(*mod, screen);
+        DOCTEST_CHECK_MESSAGE(g0 == wantGeneralGated, "通用 tab（门控不影响） 实测：" + join(g0));
+        mod->onStop();
+    }
+    ::core::theme::setDark();
+    return true;
+})

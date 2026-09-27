@@ -47,6 +47,16 @@
 //      onStart 首次装载 + 进页面 / 切模块 tab / 打开目录后各一次，compose
 //      只读快照（不再 stat / getcwd / 扫目录）
 //
+// 文件结构（R6 拆分，spec 2026-09-27-refactor-incremental-design §5.2）：
+//   settings_module.cpp    本文件 —— Module 接口实现（pageId/displayName/
+//                          compose 骨架）、生命周期、设置变更动作、日志 tail
+//                          与外部状态快照、**卡片注册表**（kCardSpecs）
+//   settings_ui_cards.*    9 张卡的绘制（自由函数 + 只读入参/回调显式入参）
+//   settings_ui_logic.*    不碰 Ui / 不碰 DB 的纯件：档位表 / 卡片高度 /
+//                          openUp 几何常量 / nearestIndex / fs / 下拉持有者语义
+// 卡片绘制按 kCardSpecs 表遍历（原 compose 内 switch(settingsTab_) 的 9 个
+// 分支）；卡片高度常量与 openUp 几何同源于 settings_ui_logic.h。
+//
 // 入口说明：设置入口在 main.cpp 的常驻侧边栏（app.sidebar，spec §2/§6.5.2），
 // 与其他四个模块同列。
 //
@@ -58,11 +68,14 @@
 // ClaudeService::global()（该单例的另一消费方 claude_module 属同模块内读取，
 // 不在 R0 范围）。pet 侧（审计 [5][36]）
 // 同样不 include、不 link：桌宠卡全部调用（discoverSkins/applyPetSkin/
-// resetPetPosition/currentSkinName）走中立桥头 module_pet_bridge.h 的自由
-// 函数，实现在 pet 模块内。两条边均单向（claude/pet 不反向依赖 settings），
-// 无环；桌宠非 Router 页面模块，设计 2026-09-22 §4.7 接线表明确设置页承载
-// 桌宠卡。
+// resetPetPosition/currentSkinName/showPetWindow）走中立桥头
+// module_pet_bridge.h 的自由函数，实现在 pet 模块内，**调用点集中在本文
+// 件**（卡片单元只经回调触达，不知道 pet 模块存在）。两条边均单向
+//（claude/pet 不反向依赖 settings），无环；桌宠非 Router 页面模块，
+// 设计 2026-09-22 §4.7 接线表明确设置页承载桌宠卡。
 #include "settings_config.h"
+#include "settings_ui_cards.h"
+#include "settings_ui_logic.h"
 
 #include "core/claude_proxy_service.h"
 #include "core/database.h"
@@ -85,21 +98,14 @@
 
 #include <ui_kit/metrics.h>
 
-#include <eui/app.h>
 #include <eui/dsl.h>
 
-#include <components/button.h>
-#include <components/dialog.h>
-#include <components/dropdown.h>
-#include <components/input.h>
 #include <components/scrollview.h>
-#include <components/switch.h>
 #include <components/tabs.h>
 #include <components/theme.h>
 
 #include <algorithm>
 #include <chrono>
-#include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <future>
@@ -111,86 +117,51 @@ namespace module::settings {
 
 namespace {
 
-// 字号缩放档位（%）
-constexpr int kFontPresets[] = {85, 100, 115, 130};
-constexpr int kFontPresetCount = 4;
-const char* kFontPresetLabels[] = {"小 85%", "标准 100%", "大 115%", "特大 130%"};
+// ---- 卡片注册表（R6，spec §5.2）----
+// 每行 = 一张卡：tab 归属 / 门控 / 卡高种类 / 是否吃页面几何 / 绘制函数。
+// 顺序 = 绘制顺序 = 兄弟绘制序（含下拉的卡整卡 z30，见各卡实现）。
+// 原来 compose 内 switch(settingsTab_) 的 9 个分支收成这一张表——加卡只改表。
+enum class CardHeightKind {
+    Fixed,          // 用 spec.height
+    ProxyWarnings,  // 代理卡：由同步警告行数推导（compose 顶部算好的 proxyH）
+    FillRemainder,  // 日志查看卡：吃 scrollView 剩余视口高（外层负责滚动）
+};
 
-// 日志保留档位（天；0 = 永久）
-constexpr int kRetentionPresets[] = {0, 7, 30, 90, 180, 365};
-constexpr int kRetentionPresetCount = 6;
+struct CardSpec {
+    int tab;                // 所属 tab（kTabGeneral / kTabModules / kTabLog / kTabAbout）
+    const char* id;         // 卡根元素 id
+    const char* gate;       // nullptr = 恒显；否则 = 模块开关门控键（插拔方案 A §5.4）
+    CardHeightKind heightKind;
+    float height;           // Fixed 档生效
+    bool pageGeom;          // 下发卡顶页面绝对 y + 屏高（下拉 openUp 几何）
+    void (*draw)(const CardDrawArgs&);
+};
 
-// 窗口效果档位（磨砂 Phase D；与 settings_config 的三档字符串一一对应）
-const char* kWindowEffectPresets[] = {
-    kWindowEffectOff, kWindowEffectTranslucent, kWindowEffectFrosted};
-constexpr int kWindowEffectPresetCount = 3;
-const char* kWindowEffectPresetLabels[] = {"关闭（默认）", "半透", "磨砂（Acrylic）"};
-
-// 主题模式三档（spec §8.5「跟随系统主题」，spec 缩水 A；与 settings_config
-// 的 kThemeMode* 一一对应）
-const char* kThemeModePresets[] = {kThemeModeAuto, kThemeModeLight,
-                                   kThemeModeDark};
-constexpr int kThemeModePresetCount = 3;
-const char* kThemeModePresetLabels[] = {"跟随系统", "浅色", "深色"};
-
-// 编辑器字号档位（px；spec 缩水 B；15 = fontSizeBody token 基准 = 旧硬编值）
-constexpr int kEditorFontPresets[] = {13, 15, 17, 20};
-constexpr int kEditorFontPresetCount = 4;
-const char* kEditorFontPresetLabels[] = {
-    "小 13px", "标准 15px", "大 17px", "特大 20px"};
-
-// 日志级别四档（spec 缩水 D；与 settings_config 的 kLogLevel* 一一对应，
-// 核心档用裸大写词 = 与 core::log::levelToString 输出对齐）
-const char* kLogLevelPresets[] = {kLogLevelDebug, kLogLevelInfo,
-                                  kLogLevelWarn, kLogLevelError};
-constexpr int kLogLevelPresetCount = 4;
-const char* kLogLevelPresetLabels[] = {
-    "DEBUG（详尽）", "INFO（默认）", "WARN", "ERROR"};
-
-// —— 日志保留下拉 openUp 越界判定几何（tech-debt A，原为裸魔数）——
-// 日志卡是页面最后一张卡，下拉向下展开可能被窗体底边裁剪；这里用同一套
-// 几何预先判断"向下展开是否出界"，出界则置 openUp 让 dropdown 向上展开。
-// 弹层三项必须与 EUI-NEO dropdown 实际渲染一致，否则判定失真：取值来源是
-// EUI-NEO components/theme.h 的默认 metrics（control.menuItem=34 /
-// spacing.compact=8 / spacing.small=6），若将来主题覆写 metrics 需同步。
-constexpr float kLogDropdownOffsetY = 48.0f;    // ddwrap 在日志卡内 y 偏移
-constexpr float kLogDropdownHeight = 40.0f;     // dropdown 控件高度
-constexpr float kEditorFontDdOffsetY = 42.0f;   // 编辑器字号卡内 dropdown y（Task B 独立卡）
-constexpr float kLogEditorFontHeight = 36.0f;   // 编辑器字号 dropdown 高
-constexpr float kLogLevelOffsetY = 92.0f;       // 日志级别行 y 偏移（spec 缩水 D；编辑器字号行迁出通用 tab 后上移）
-constexpr float kLogLevelHeight = 36.0f;        // 日志级别 dropdown 高
-constexpr float kDropdownPopupGap = 8.0f;       // 字段底边与弹层间距（spacing.compact）
-constexpr float kDropdownItemHeight = 34.0f;    // 单个菜单项高（control.menuItem）
-constexpr float kDropdownPopupPadding = 12.0f;  // 弹层上下 padding（spacing.small × 2）
-constexpr float kWindowBottomMargin = 16.0f;    // 窗口底边安全留白，越界 = 有裁剪风险
-
-// ---- 设置页 4 tab（Task B：页面太长拆 tab + 日志查看）----
-// 通用 = 外观 + 编辑器字号；模块 = 插拔开关 + 桌宠 + 代理 + 目录；
-// 日志 = 保留天数 + 级别 + tail 查看；关于 = 版本/路径
-const char* kSettingTabLabels[] = {"通用", "模块", "日志", "关于"};
-constexpr int kSettingTabCount = 4;
-constexpr int kTabGeneral = 0;
-constexpr int kTabModules = 1;
-constexpr int kTabLog = 2;
-constexpr int kTabAbout = 3;
-constexpr float kSettingsTabHeight = 40.0f;       // tab 栏高
-constexpr float kLogSettingsCardHeight = 148.0f;  // 日志卡（编辑器字号迁出后收窄）
-constexpr float kEditorFontCardHeight = 108.0f;   // 编辑器字号卡（通用 tab）
-constexpr int kLogTailMaxLines = 500;             // 日志查看 tail 行数上限
-constexpr long kLogTailReadWindow = 256 * 1024;   // tail 只读末尾 256KB，防大文件卡顿
-
-int nearestIndex(int value, const int* presets, int count) {
-    int best = 0;
-    int bestDist = 1 << 30;
-    for (int i = 0; i < count; ++i) {
-        const int d = std::abs(presets[i] - value);
-        if (d < bestDist) {
-            bestDist = d;
-            best = i;
-        }
-    }
-    return best;
-}
+// 门控读的是「下次启动的卡布局」的同一份配置（cfg_）——拨开关即时预览
+const CardSpec kCardSpecs[] = {
+    // 通用 tab：外观（主题 + 字号缩放 + 窗口效果）+ 编辑器字号
+    {kTabGeneral, "settings.card.appearance", nullptr, CardHeightKind::Fixed,
+     kAppearanceCardHeight, false, &drawAppearanceCard},
+    {kTabGeneral, "settings.card.editor", nullptr, CardHeightKind::Fixed,
+     kEditorFontCardHeight, true, &drawEditorFontCard},
+    // 模块 tab：插拔开关 + 桌宠 + 目录 + 代理（后三者按模块开关整卡隐藏）
+    {kTabModules, "settings.card.modules", nullptr, CardHeightKind::Fixed,
+     kModulesCardHeight, false, &drawModulesCard},
+    {kTabModules, "settings.card.pet", kModuleIdPet, CardHeightKind::Fixed,
+     kPetCardHeight, false, &drawPetCard},
+    {kTabModules, "settings.card.directory", kModuleIdMarkdown,
+     CardHeightKind::Fixed, kDirectoryCardHeight, false, &drawDirectoryCard},
+    {kTabModules, "settings.card.proxy", kModuleIdClaudeProxy,
+     CardHeightKind::ProxyWarnings, 0.0f, false, &drawProxyCard},
+    // 日志 tab：保留天数 + 级别卡 + tail 查看卡（后者吃剩余视口高）
+    {kTabLog, "settings.card.log", nullptr, CardHeightKind::Fixed,
+     kLogSettingsCardHeight, true, &drawLogCard},
+    {kTabLog, "settings.tab.log", nullptr, CardHeightKind::FillRemainder,
+     0.0f, false, &drawLogViewCard},
+    // 关于 tab：恒显（不受模块开关门控，自身就是排障信息源）
+    {kTabAbout, "settings.card.about", nullptr, CardHeightKind::Fixed,
+     kAboutCardHeight, false, &drawAboutCard},
+};
 
 } // namespace
 
@@ -225,7 +196,7 @@ public:
                  ", 字号=" + std::to_string(cfg_.fontScalePercent) + "%" +
                  ", 编辑器字号=" + std::to_string(cfg_.editorFontSize) + "px" +
                  ", 日志级别=" + cfg_.logLevel +
-                 ", 日志保留=" + retentionLabel() + "）");
+                 ", 日志保留=" + retentionLabel(cfg_.logRetentionDays) + "）");
         // 审计 H2：日志 tail 首次装载同步做一次（onStart = 启动期，非渲染路径）。
         // compose 恒读快照，首帧必须有值——异步首刷会让日志查看卡先闪一帧
         // 「暂无日志内容」占位（硬约束：不得空帧/闪空）。此后每次重读（切 tab /
@@ -308,13 +279,6 @@ public:
         cfg_.darkTheme = dark;
     }
 
-    // cfg_.themeMode（三档字符串）→ 下拉索引；sanitized 保证只会是三档之一
-    int themeModeIndex() const {
-        if (cfg_.themeMode == kThemeModeLight) return 1;
-        if (cfg_.themeMode == kThemeModeDark) return 2;
-        return 0;  // auto
-    }
-
     void applyThemeMode(int index) {
         if (index < 0 || index >= kThemeModePresetCount) return;
         cfg_.themeMode = kThemeModePresets[index];
@@ -380,19 +344,21 @@ public:
         }
         auto* db = ::core::appDatabase();
         if (db == nullptr) {
-            setStatus("日志保留：" + retentionLabel() +
+            setStatus("日志保留：" + retentionLabel(cfg_.logRetentionDays) +
                       "（数据库未就绪，重启后生效）");
             LOG_WARN("Settings: appDatabase 未注册，跳过立即清理");
             return;
         }
         auto pruned = ::core::pruneCallLogs(*db, cfg_.logRetentionDays);
         if (pruned.isOk()) {
-            setStatus("日志保留：" + retentionLabel() + "，已清理 " +
+            setStatus("日志保留：" + retentionLabel(cfg_.logRetentionDays) +
+                      "，已清理 " +
                       std::to_string(pruned.value()) + " 条历史日志");
-            LOG_INFO("Settings: 日志保留 → " + retentionLabel() + "，已清理 " +
+            LOG_INFO("Settings: 日志保留 → " +
+                     retentionLabel(cfg_.logRetentionDays) + "，已清理 " +
                      std::to_string(pruned.value()) + " 条");
         } else {
-            setStatus("日志保留：" + retentionLabel() +
+            setStatus("日志保留：" + retentionLabel(cfg_.logRetentionDays) +
                       "（清理失败：" + pruned.errorMessage() + "）", true);
             LOG_ERROR("Settings: 立即清理失败: " + pruned.errorMessage());
         }
@@ -476,12 +442,43 @@ public:
         LOG_INFO("Settings: 日志级别 → " + cfg_.logLevel + "（core::log::setLevel）");
     }
 
-    // cfg_.logLevel（四档字符串）→ 下拉索引；sanitized 保证只会是四档之一
-    int logLevelIndex() const {
-        if (cfg_.logLevel == kLogLevelDebug) return 0;
-        if (cfg_.logLevel == kLogLevelWarn) return 2;
-        if (cfg_.logLevel == kLogLevelError) return 3;
-        return 1;  // INFO 默认档
+    // 端口输入变更（原代理卡 onCh 内联体）：写草稿 + 校验错误随下一次输入清除
+    void setProxyPortDraft(const std::string& v) {
+        proxyPortDraft_ = v;
+        // 审计 [19]：校验错误（红字状态行）随下一次输入清除，对齐 claude
+        // formError_ 的「就地红字 + 输入即清」语义；成功提示（非红字）不打断，
+        // 保留到下一次操作
+        if (statusIsError_) {
+            statusMessage_.clear();
+            statusIsError_ = false;
+        }
+    }
+
+    // 桌宠换肤（原桌宠卡 onChange 内联体）：下标越界守卫（含空清单）→ 桥调用
+    // → 状态行。守卫读的就是卡片渲染用的同一份皮肤清单快照
+    void changePetSkinAt(int idx) {
+        if (idx < 0 || idx >= static_cast<int>(petSkins_.size())) {
+            return;
+        }
+        petSkinName_ = petSkins_[static_cast<size_t>(idx)];
+        ::module::pet::applyPetSkin(petSkinName_);
+        setStatus("桌宠皮肤已切换：" + petSkinName_);
+    }
+
+    // 位置重置（原桌宠卡 onClick 内联体）：回主屏右下角，持久化坐标清回未设置
+    void resetPetPosition() {
+        ::module::pet::resetPetPosition();
+        setStatus("桌宠位置已重置（主屏右下角）");
+    }
+
+    // 显示桌宠（PAB-13，原桌宠卡 onClick 内联体）。返回值 false 有两种：模块
+    // 开关关（本会话未装配）或窗口已开着——都只需一句提示，不阻断
+    void showPetWindow() {
+        if (::module::pet::showPetWindow()) {
+            setStatus("已请求显示桌宠");
+        } else {
+            setStatus("桌宠本次会话未启用，重启后生效");
+        }
     }
 
     // 模块开关（插拔方案 A §5.4）：只写 config.json，注册门控在下次启动的
@@ -626,71 +623,8 @@ public:
                     .content([&](eui::Ui& inner, float contentWidth,
                                  float viewportHeight) {
                         (void)viewportHeight;
-                        // 卡片纵向游标（scrollView 内容空间，顶 = 0）。带下拉
-                        // 的卡算 openUp 需页面绝对 Y：字段页内位置
-                        // = cardsTopY + 内容Y - 滚动偏移。游标只累计**本 tab
-                        // 参与绘制**的卡（tab 过滤后卡序列变了，全量累加会让
-                        // 下拉方向算错）
-                        const float gapY = t.sizes.spacingLarge;
-                        float cardY = 0.0f;
-                        switch (settingsTab_) {
-                        case kTabLog: {
-                            drawLogCard(inner, "settings.card.log",
-                                        contentWidth, kLogSettingsCardHeight,
-                                        t,
-                                        cardsTopY + cardY -
-                                            cardsScrollOffset_,
-                                        screen.height);
-                            cardY += kLogSettingsCardHeight + gapY;
-                            // 日志查看卡吃掉剩余视口高（内容恰好一屏，避免
-                            // 内外双层滚动条并存）；极小窗口兜底 260 由外层
-                            // scrollView 负责滚动
-                            const float viewH =
-                                std::max(260.0f, cardsH - cardY);
-                            drawLogViewCard(inner, "settings.tab.log",
-                                            contentWidth, viewH, t);
-                            break;
-                        }
-                        case kTabAbout:
-                            // 关于卡恒显（不受模块开关门控，自身就是排障信息源）
-                            drawAboutCard(inner, "settings.card.about",
-                                          contentWidth, 150.0f, t);
-                            break;
-                        case kTabModules:
-                            drawModulesCard(inner, "settings.card.modules",
-                                            contentWidth, 288.0f, t);
-                            cardY += 288.0f + gapY;
-                            if (petOn) {
-                                // 卡高 = 内容底沿 104（皮肤下拉 64+40，与同排的
-                                // 显示/位置重置按钮同底）+ 16px 卡内下边距 = 120
-                                drawPetCard(inner, "settings.card.pet",
-                                            contentWidth, 120.0f, t);
-                                cardY += 120.0f + gapY;
-                            }
-                            if (mdOn) {
-                                drawDirectoryCard(
-                                    inner, "settings.card.directory",
-                                    contentWidth, 108.0f, t);
-                                cardY += 108.0f + gapY;
-                            }
-                            if (claudeOn) {
-                                drawProxyCard(inner, "settings.card.proxy",
-                                              contentWidth, proxyH, t);
-                            }
-                            break;
-                        case kTabGeneral:
-                        default:
-                            drawAppearanceCard(
-                                inner, "settings.card.appearance",
-                                contentWidth, 160.0f, t);
-                            cardY += 160.0f + gapY;
-                            drawEditorFontCard(
-                                inner, "settings.card.editor",
-                                contentWidth, kEditorFontCardHeight, t,
-                                cardsTopY + cardY - cardsScrollOffset_,
-                                screen.height);
-                            break;
-                        }
+                        drawCardRegion(inner, contentWidth, cardsTopY, cardsH,
+                                       screen.height, t, proxyH, svc);
                     })
                     .build();
             })
@@ -713,49 +647,94 @@ private:
     }
 
     // ============ 下拉「谁打开着」的单一持有者（审计 THS-05） ============
-    // 此前 7 个下拉各持一个 bool：开一个不会关掉先前那个，判断/维护要逐个点名。
-    // 现在只有一个索引：打开任一项时其它自动关（同时最多一个下拉展开），
-    // -1 = 全关。新增下拉只需在 Dropdown 里加一项 + 传自己的枚举值。
-    enum class Dropdown {
-        Theme,
-        Font,
-        Effect,
-        Retention,
-        LogLevel,
-        EditorFont,
-        PetSkin,
-    };
-
-    bool isDropdownOpen(Dropdown d) const {
-        return openDropdown_ == static_cast<int>(d);
-    }
-    // 组件 onOpenChange 通道：v=true → 独占打开（自动关掉先前那个）；
-    // v=false → 只有当前打开的是自己才关（避免迟到回调误关别人的下拉）
+    // 7 个下拉共用一个索引（取值语义见 settings_ui_logic.h 的
+    // isDropdownOpen / applyDropdownOpen）；卡片侧只读入参 + 回写回调
     void setDropdownOpen(Dropdown d, bool v) {
-        if (v) {
-            openDropdown_ = static_cast<int>(d);
-        } else if (isDropdownOpen(d)) {
-            openDropdown_ = -1;
+        openDropdown_ = applyDropdownOpen(openDropdown_, d, v);
+    }
+
+    // 卡片回调装配（compose 每帧）。lambda 只捕获 this（SBO 无堆分配）；
+    // 卡片把它们**按值**拷进元素回调 → 元素树比一帧活得久也不悬垂
+    SettingsCardActions cardActions() {
+        SettingsCardActions a;
+        a.applyThemeMode = [this](int idx) { applyThemeMode(idx); };
+        a.applyFontPreset = [this](int idx) { applyFontPreset(idx); };
+        a.applyWindowEffect = [this](int idx) { applyWindowEffectPreset(idx); };
+        a.applyModuleEnabled = [this](const std::string& moduleId, bool on) {
+            applyModuleEnabled(moduleId, on);
+        };
+        a.setDropdownOpen = [this](Dropdown d, bool v) { setDropdownOpen(d, v); };
+        a.changePetSkinAt = [this](int idx) { changePetSkinAt(idx); };
+        a.resetPetPosition = [this] { resetPetPosition(); };
+        a.showPetWindow = [this] { showPetWindow(); };
+        a.openNotesDirectory = [this] { openNotesDirectory(); };
+        a.applyProxyAutoStart = [this](bool on) { applyAutoStart(on); };
+        a.applyProxyPort = [this] { applyProxyPort(); };
+        a.setProxyPortDraft = [this](const std::string& v) {
+            setProxyPortDraft(v);
+        };
+        // 审计 [21]：Esc=丢弃端口草稿（不清红字状态——与输入变更的语义分开）
+        a.discardProxyPortDraft = [this] { proxyPortDraft_.clear(); };
+        a.applyRetentionPreset = [this](int idx) { applyRetentionPreset(idx); };
+        a.applyLogLevelPreset = [this](int idx) { applyLogLevelPreset(idx); };
+        a.applyEditorFontPreset = [this](int idx) { applyEditorFontPreset(idx); };
+        a.requestLogTailReload = [this] { logTailDirty_ = true; };
+        a.logViewScrolled = [this](float v) { logViewScrollOffset_ = v; };
+        return a;
+    }
+
+    // 注册表卡高解析：Fixed = 表内常量；ProxyWarnings = 代理卡（警告行数推导，
+    // 公式见 compose 顶部）；FillRemainder = 日志查看卡吃掉剩余视口高（内容
+    // 恰好一屏，避免内外双层滚动条并存；极小窗口兜底 260 由外层 scrollView
+    // 负责滚动）
+    static float cardHeight(const CardSpec& spec, float proxyH, float remain) {
+        switch (spec.heightKind) {
+        case CardHeightKind::Fixed:
+            return spec.height;
+        case CardHeightKind::ProxyWarnings:
+            return proxyH;
+        case CardHeightKind::FillRemainder:
+            return std::max(260.0f, remain);
         }
+        return spec.height;  // 兜底：枚举穷举，仅为满足「所有路径有返回」
     }
 
-    // 非 token 的硬编码字号跟随全局缩放（单一来源 core::theme::fontScale；
-    // token 字号已在 theme 层缩放，不要再经 fs() 包一层，避免双重缩放）
-    float fs(float base) const {
-        return base * ::core::theme::fontScale();
-    }
-
-    std::string retentionLabel() const {
-        return cfg_.logRetentionDays == 0
-                   ? "永久保留"
-                   : std::to_string(cfg_.logRetentionDays) + " 天";
-    }
-
-    // cfg_.windowEffect（三档字符串）→ 下拉索引；sanitized 保证只会是三档之一
-    int windowEffectIndex() const {
-        if (cfg_.windowEffect == kWindowEffectTranslucent) return 1;
-        if (cfg_.windowEffect == kWindowEffectFrosted) return 2;
-        return 0;
+    // 卡区（R6）：遍历注册表画本 tab 的卡（原 switch(settingsTab_) 的 9 个
+    // 分支）。卡片纵向游标（scrollView 内容空间，顶 = 0）只累计**本 tab
+    // 参与绘制**的卡（tab 过滤后卡序列变了，全量累加会让下拉方向算错）；
+    // 带下拉的卡算 openUp 需页面绝对 Y：字段页内位置
+    // = cardsTopY + 内容Y - 滚动偏移
+    void drawCardRegion(eui::Ui& ui, float contentWidth, float cardsTopY,
+                        float cardsH, float screenH,
+                        const core::theme::Tokens& t, float proxyH,
+                        ::core::IClaudeProxyService* svc) {
+        SettingsCardsIn in{cfg_, petSkins_, petSkinName_, proxyPortDraft_,
+                           logTail_};
+        in.logTailVersion = logTailVersion_;
+        in.logViewScrollOffset = logViewScrollOffset_;
+        in.takeoverManaged = takeoverManaged_;
+        in.notesDirExists = notesDirExists_;
+        in.openDropdown = openDropdown_;
+        in.proxy = svc;
+        const SettingsCardActions a = cardActions();
+        const float gapY = t.sizes.spacingLarge;
+        float cardY = 0.0f;
+        // 原 switch 的 `case kTabGeneral: default:`——越界 tab（不可达）回落通用页
+        const int tab = (settingsTab_ >= 0 && settingsTab_ < kSettingTabCount)
+                            ? settingsTab_
+                            : kTabGeneral;
+        for (const CardSpec& spec : kCardSpecs) {
+            if (spec.tab != tab) continue;
+            if (spec.gate != nullptr && !moduleEnabled(cfg_, spec.gate)) {
+                continue;  // 模块关 → 整卡隐藏（不显示故障态）
+            }
+            const float h = cardHeight(spec, proxyH, cardsH - cardY);
+            CardDrawArgs args{ui, spec.id, contentWidth, h, t,
+                              cardsTopY + cardY - cardsScrollOffset_, screenH,
+                              in, a};
+            spec.draw(args);
+            cardY += h + gapY;
+        }
     }
 
     // ---------- 顶部 Header ----------
@@ -794,363 +773,7 @@ private:
             .build();
     }
 
-    // ---------- 卡片公共背景 ----------
-    void cardFrame(eui::Ui& ui, const std::string& id, float w, float h,
-                   const core::theme::Tokens& t) {
-        ui.rect(id + ".bg")
-            .position(0.0f, 0.0f)
-            .size(w, h)
-            .color(t.colors.surface)
-            .radius(t.sizes.radiusLarge)
-            .border(1.0f, t.colors.borderDefault)
-            .build();
-    }
-
-    // ---------- 卡片 1：外观（主题 + 字号） ----------
-    // zIndex(30)：字号下拉的弹出层要盖过下方卡片（zIndex 只在兄弟间排序，
-    // 弹层在卡片子树内，需整卡抬层）
-    void drawAppearanceCard(eui::Ui& ui, const std::string& id, float w,
-                            float h, const core::theme::Tokens& t) {
-        const auto compTheme = core::theme::componentTokens(t);
-        ui.stack(id)
-            .size(w, h)
-            .zIndex(30)
-            .content([&] {
-                cardFrame(ui, id, w, h, t);
-                ui.text(id + ".title")
-                    .position(28.0f, 18.0f)
-                    .size(w - 56.0f, 24.0f)
-                    .text("外观")
-                    .fontSize(t.sizes.fontSizeLarge)
-                    .lineHeight(24.0f)
-                    .fontWeight(600)
-                    .color(t.colors.textPrimary)
-                    .build();
-                ui.text(id + ".desc")
-                    .position(28.0f, 44.0f)
-                    .size(w - 56.0f, 18.0f)
-                    .text("主题与窗口底色即时生效；字号缩放全局生效")
-                    .fontSize(fs(12.0f))
-                    .lineHeight(18.0f)
-                    .color(t.colors.textTertiary)
-                    .build();
-
-                // 左：主题切换
-                ui.text(id + ".theme.label")
-                    .position(28.0f, 72.0f)
-                    .size(200.0f, 16.0f)
-                    .text("主题")
-                    .fontSize(fs(12.0f))
-                    .lineHeight(16.0f)
-                    .color(t.colors.textSecondary)
-                    .build();
-                // 主题模式下拉（spec 缩水 A）：跟随系统/浅色/深色三档，替代
-                // 原「深色/浅色」双按钮（原按钮只能表达显式档，无法表达 auto）。
-                // 右缘 28+240=268，窄窗自适应后 fontX≥324，不碰撞（见
-                // settings_effect_dropdown_fits_min_window）
-                ui.stack(id + ".theme.ddwrap")
-                    .position(28.0f, 94.0f)
-                    .size(240.0f, 40.0f)
-                    .content([&] {
-                        components::dropdown(ui, id + ".theme.dd")
-                            .size(240.0f, 40.0f)
-                            .theme(compTheme)
-                            .items(std::vector<std::string>(
-                                kThemeModePresetLabels,
-                                kThemeModePresetLabels +
-                                    kThemeModePresetCount))
-                            .selected(themeModeIndex())
-                            .open(isDropdownOpen(Dropdown::Theme))
-                            .onOpenChange(
-                                [this](bool v) { setDropdownOpen(Dropdown::Theme, v); })
-                            .onChange(
-                                [this](int idx) { applyThemeMode(idx); })
-                            .build();
-                    })
-                    .build();
-
-                // 右：字号缩放 + 右二：窗口效果三档（磨砂 Phase D），即时生效。
-                // 终验复审：固定 x=380/680 在 1200 最小窗（页面宽 940、卡内宽
-                // 860）下效果下拉右缘到 920，超出卡片 60px——右缘自适应：
-                // 宽窗保持原位，窄窗右对齐收进卡内（列宽 240、列距 28、右缘留 28）
-                const float effectX = std::min(680.0f, w - 28.0f - 240.0f);
-                const float fontX = std::min(380.0f, effectX - 240.0f - 28.0f);
-                ui.text(id + ".font.label")
-                    .position(fontX, 72.0f)
-                    .size(240.0f, 16.0f)
-                    .text("字号缩放（正文基准 15px）")
-                    .fontSize(fs(12.0f))
-                    .lineHeight(16.0f)
-                    .color(t.colors.textSecondary)
-                    .build();
-                ui.stack(id + ".font.ddwrap")
-                    .position(fontX, 94.0f)
-                    .size(240.0f, 40.0f)
-                    .content([&] {
-                        components::dropdown(ui, id + ".font.dd")
-                            .size(240.0f, 40.0f)
-                            .theme(compTheme)
-                            .items(std::vector<std::string>(
-                                kFontPresetLabels,
-                                kFontPresetLabels + kFontPresetCount))
-                            .selected(nearestIndex(cfg_.fontScalePercent,
-                                                   kFontPresets, kFontPresetCount))
-                            .open(isDropdownOpen(Dropdown::Font))
-                            .onOpenChange(
-                                [this](bool v) { setDropdownOpen(Dropdown::Font, v); })
-                            .onChange([this](int idx) { applyFontPreset(idx); })
-                            .build();
-                    })
-                    .build();
-
-                // 右二：窗口效果三档（磨砂 Phase D），即时生效（effectX 见上）
-                ui.text(id + ".effect.label")
-                    .position(effectX, 72.0f)
-                    .size(240.0f, 16.0f)
-                    .text("窗口效果")
-                    .fontSize(fs(12.0f))
-                    .lineHeight(16.0f)
-                    .color(t.colors.textSecondary)
-                    .build();
-                ui.stack(id + ".effect.ddwrap")
-                    .position(effectX, 94.0f)
-                    .size(240.0f, 40.0f)
-                    .content([&] {
-                        components::dropdown(ui, id + ".effect.dd")
-                            .size(240.0f, 40.0f)
-                            .theme(compTheme)
-                            .items(std::vector<std::string>(
-                                kWindowEffectPresetLabels,
-                                kWindowEffectPresetLabels +
-                                    kWindowEffectPresetCount))
-                            .selected(windowEffectIndex())
-                            .open(isDropdownOpen(Dropdown::Effect))
-                            .onOpenChange(
-                                [this](bool v) { setDropdownOpen(Dropdown::Effect, v); })
-                            .onChange(
-                                [this](int idx) { applyWindowEffectPreset(idx); })
-                            .build();
-                    })
-                    .build();
-                // 降级提示行（activeWindowEffect 回查实际生效值；一致时为空不显示）
-                const std::string degraded = windowEffectDegradedHint(
-                    cfg_.windowEffect, app::activeWindowEffect());
-                if (!degraded.empty()) {
-                    // ⚠ 字符换 FA：图标/文字拆两个元素（icon 字体通道）
-                    ui.text(id + ".effect.hint.icon")
-                        .position(effectX, 140.0f)
-                        .size(14.0f, 16.0f)
-                        .icon(0xF071)  // fa-triangle-exclamation
-                        .fontSize(fs(11.0f))
-                        .lineHeight(16.0f)
-                        .color(t.colors.warning)
-                        .build();
-                    ui.text(id + ".effect.hint")
-                        .position(effectX + 16.0f, 140.0f)
-                        .size(w - effectX - 16.0f - 28.0f, 16.0f)
-                        .text(degraded)
-                        .fontSize(fs(11.0f))
-                        .lineHeight(16.0f)
-                        .color(t.colors.warning)
-                        .build();
-                }
-            })
-            .build();
-    }
-
-    // ---------- 卡片 2：模块管理（插拔方案 A §5.4） ----------
-    // 三个工具模块各一行开关；关闭 = 下次启动不注册进 Router（不执行代码、
-    // 不显示侧边栏入口）。home/settings 恒启用，不提供开关
-    void drawModulesCard(eui::Ui& ui, const std::string& id, float w, float h,
-                         const core::theme::Tokens& t) {
-        struct ModuleMeta {
-            const char* moduleId;
-            const char* name;
-            const char* desc;
-        };
-        static const ModuleMeta kToggleable[] = {
-            {kModuleIdMarkdown, "Markdown 笔记本",
-             "本地文件存储 + SQLite FTS5 全文搜索"},
-            {kModuleIdTodo, "Todo 看板", "待办任务管理，多列卡片看板"},
-            {kModuleIdClaudeProxy, "Claude 配置切换器",
-             "Profile 管理 + 本地代理（关闭后 8888 不再监听）"},
-            {kModuleIdPet, "桌宠",
-             "桌面小宠物：透明置顶小窗，可拖拽/点击互动（默认关闭）"},
-        };
-        constexpr int kToggleCount = static_cast<int>(sizeof(kToggleable) / sizeof(kToggleable[0]));
-        const auto compTheme = core::theme::componentTokens(t);
-        ui.stack(id)
-            .size(w, h)
-            .content([&] {
-                cardFrame(ui, id, w, h, t);
-                ui.text(id + ".title")
-                    .position(28.0f, 16.0f)
-                    .size(w - 56.0f, 22.0f)
-                    .text("模块")
-                    .fontSize(t.sizes.fontSizeLarge)
-                    .lineHeight(22.0f)
-                    .fontWeight(600)
-                    .color(t.colors.textPrimary)
-                    .build();
-                ui.text(id + ".desc")
-                    .position(28.0f, 40.0f)
-                    .size(w - 56.0f, 16.0f)
-                    .text("关闭模块后需重启应用生效（关闭 = 该模块代码不再执行、"
-                          "侧边栏不显示入口）")
-                    .fontSize(fs(12.0f))
-                    .lineHeight(16.0f)
-                    .color(t.colors.textTertiary)
-                    .build();
-
-                for (int i = 0; i < kToggleCount; ++i) {
-                    const ModuleMeta& meta = kToggleable[i];
-                    const float rowY = 68.0f + static_cast<float>(i) * 56.0f;
-                    const std::string suffix = std::to_string(i);
-                    ui.text(id + ".name." + suffix)
-                        .position(28.0f, rowY)
-                        .size(w - 160.0f, 18.0f)
-                        .text(meta.name)
-                        .fontSize(t.sizes.fontSizeBody - 1.0f)
-                        .lineHeight(18.0f)
-                        .fontWeight(500)
-                        .color(t.colors.textPrimary)
-                        .build();
-                    ui.text(id + ".rowdesc." + suffix)
-                        .position(28.0f, rowY + 20.0f)
-                        .size(w - 160.0f, 16.0f)
-                        .text(meta.desc)
-                        .fontSize(fs(12.0f))
-                        .lineHeight(16.0f)
-                        .color(t.colors.textTertiary)
-                        .build();
-                    // SwitchBuilder 无 position，套 stack 定位（与代理卡同款）
-                    ui.stack(id + ".sw.wrap." + suffix)
-                        .position(w - 28.0f - 80.0f, rowY - 2.0f)
-                        .size(80.0f, 32.0f)
-                        .content([&] {
-                            components::toggleSwitch(ui, id + ".sw." + suffix)
-                                .size(80.0f, 32.0f)
-                                .checked(moduleEnabled(cfg_, meta.moduleId))
-                                .theme(compTheme)
-                                .onChange([this, mid = meta.moduleId](
-                                              bool v) {
-                                    applyModuleEnabled(mid, v);
-                                })
-                                .build();
-                        })
-                        .build();
-                }
-            })
-            .build();
-    }
-
-    // ---------- 卡片 3：桌宠（M2 多皮肤 UI，设计 §4.5/§4.6） ----------
-    // 皮肤下拉（discoverSkins 发现列表）+ 位置重置按钮；两者即时生效
-    //（换肤热切换/位置直接挪窗），与开关不同（开关重启生效）
-    void drawPetCard(eui::Ui& ui, const std::string& id, float w, float h,
-                     const core::theme::Tokens& t) {
-        // 审计 THS-01：皮肤清单（discoverSkins = 目录遍历 + 每皮肤 pet.json
-        // stat）与当前皮肤名（读 pet_config.json）已移出渲染路径——快照由
-        // refreshExternalState 装载（原为「首帧惰性加载」，仍在渲染路径上），
-        // 这里只读成员；审计 [5][36] 的 pet 侧只读桥调用点随之搬家
-        const auto compTheme = core::theme::componentTokens(t);
-        ui.stack(id)
-            .size(w, h)
-            .content([&] {
-                cardFrame(ui, id, w, h, t);
-                ui.text(id + ".title")
-                    .position(28.0f, 16.0f)
-                    .size(w - 56.0f, 22.0f)
-                    .text("桌宠")
-                    .fontSize(t.sizes.fontSizeLarge)
-                    .lineHeight(22.0f)
-                    .fontWeight(600)
-                    .color(t.colors.textPrimary)
-                    .build();
-                ui.text(id + ".desc")
-                    .position(28.0f, 40.0f)
-                    .size(w - 56.0f, 16.0f)
-                    .text("换肤与位置重置即时生效；开关桌宠需重启应用")
-                    .fontSize(fs(12.0f))
-                    .lineHeight(16.0f)
-                    .color(t.colors.textTertiary)
-                    .build();
-                // 皮肤下拉（列表为空时占位一项，选择被忽略）
-                std::vector<std::string> items = petSkins_;
-                if (items.empty()) {
-                    items.emplace_back("（未发现皮肤）");
-                }
-                int selected = 0;
-                for (size_t i = 0; i < petSkins_.size(); ++i) {
-                    if (petSkins_[i] == petSkinName_) {
-                        selected = static_cast<int>(i);
-                        break;
-                    }
-                }
-                ui.stack(id + ".skin.ddwrap")
-                    .position(28.0f, 64.0f)
-                    .size(240.0f, 40.0f)
-                    .content([&] {
-                        components::dropdown(ui, id + ".skin.dd")
-                            .size(240.0f, 40.0f)
-                            .theme(compTheme)
-                            .items(items)
-                            .selected(selected)
-                            .open(isDropdownOpen(Dropdown::PetSkin))
-                            .onOpenChange(
-                                [this](bool v) { setDropdownOpen(Dropdown::PetSkin, v); })
-                            .onChange([this](int idx) {
-                                if (petSkins_.empty() || idx < 0 ||
-                                    idx >= static_cast<int>(petSkins_.size())) {
-                                    return;
-                                }
-                                petSkinName_ = petSkins_[static_cast<size_t>(idx)];
-                                ::module::pet::applyPetSkin(petSkinName_);
-                                setStatus("桌宠皮肤已切换：" + petSkinName_);
-                            })
-                            .build();
-                    })
-                    .build();
-                // 位置重置按钮（回主屏右下角，持久化坐标清回未设置）
-                components::button(ui, id + ".reset")
-                    .position(w - 28.0f - 160.0f, 64.0f)
-                    .size(160.0f, 40.0f)
-                    .text("位置重置")
-                    .fontSize(14.0f)
-                    .theme(compTheme, /*primary=*/false)
-                    .textColor(t.colors.textPrimary)
-                    .border(1.0f, t.colors.borderDefault)
-                    .onClick([this] {
-                        ::module::pet::resetPetPosition();
-                        setStatus("桌宠位置已重置（主屏右下角）");
-                    })
-                    .build();
-                // 显示桌宠（PAB-13）：隐藏后的恢复入口（隐藏走右键「隐藏桌宠」
-                // 菜单项，之后本按钮即可重新开窗）。同排 y=64、居「位置重置」
-                // 左侧 8px；卡高保持 120（内容底沿 104 不变，故 contentKey 不变）
-                components::button(ui, id + ".show")
-                    .position(w - 28.0f - 160.0f - 168.0f, 64.0f)
-                    .size(160.0f, 40.0f)
-                    .text("显示桌宠")
-                    .fontSize(14.0f)
-                    .theme(compTheme, /*primary=*/false)
-                    .textColor(t.colors.textPrimary)
-                    .border(1.0f, t.colors.borderDefault)
-                    .onClick([this] {
-                        // 返回值 false 有两种：模块开关关（本会话未装配）或
-                        // 窗口已开着——都只需一句提示，不阻断
-                        if (::module::pet::showPetWindow()) {
-                            setStatus("已请求显示桌宠");
-                        } else {
-                            setStatus("桌宠本次会话未启用，重启后生效");
-                        }
-                    })
-                    .build();
-            })
-            .build();
-    }
-
-    // ---------- 卡片 4：Markdown 笔记目录（只读 + 打开目录） ----------
+    // ---------- Markdown 笔记目录：打开目录（卡片 4 的动作） ----------
     // 打开笔记目录（总设计 §8.5 第 2 条「打开目录」按钮，审计 [15] 短期项）：
     // 目录不存在先创建（点「打开」的预期是能看到能用的目录），再交平台
     // 文件管理器打开（Win ShellExecuteW / macOS open / xdg-open）
@@ -1176,414 +799,6 @@ private:
         }
         setStatus("已在文件管理器中打开笔记目录");
         LOG_INFO("Settings: 已打开笔记目录 " + mdDir.string());
-    }
-
-    void drawDirectoryCard(eui::Ui& ui, const std::string& id, float w,
-                           float h, const core::theme::Tokens& t) {
-        ui.stack(id)
-            .size(w, h)
-            .content([&] {
-                cardFrame(ui, id, w, h, t);
-                ui.text(id + ".title")
-                    .position(28.0f, 16.0f)
-                    .size(w - 56.0f, 22.0f)
-                    .text("Markdown 笔记目录（只读）")
-                    .fontSize(t.sizes.fontSizeLarge)
-                    .lineHeight(22.0f)
-                    .fontWeight(600)
-                    .color(t.colors.textPrimary)
-                    .build();
-
-                // 审计 THS-01：存在性读快照（原每帧 fs::exists(mdDir)），
-                // 刷新点见 refreshExternalState
-                const std::filesystem::path mdDir =
-                    ::core::paths::markdownDir();
-                const bool exists = notesDirExists_;
-                const float dirBtnW = 110.0f;
-                ui.rect(id + ".path.bg")
-                    .position(28.0f, 46.0f)
-                    .size(w - 56.0f - dirBtnW - 12.0f, 34.0f)
-                    .color(t.colors.surfaceElevated)
-                    .radius(t.sizes.radiusSmall)
-                    .border(1.0f, t.colors.borderMuted)
-                    .build();
-                ui.text(id + ".path.value")
-                    .position(40.0f, 46.0f)
-                    .size(w - 80.0f - dirBtnW - 12.0f, 34.0f)
-                    .text(mdDir.string() + (exists ? "" : "（尚未创建）"))
-                    .fontSize(fs(13.0f))
-                    .verticalAlign(eui::VerticalAlign::Center)
-                    .color(t.colors.textSecondary)
-                    .build();
-                // 「打开目录」按钮（审计 [15]：路径在 APPDATA 深处，此前用户
-                // 只能手拼路径；改目录本身仍属后续功能，登记 KNOWN_LIMITATIONS）
-                components::button(ui, id + ".open")
-                    .position(w - 28.0f - dirBtnW, 46.0f)
-                    .size(dirBtnW, 34.0f)
-                    .text("打开目录")
-                    .icon(0xF07C)  // fa-folder-open
-                    .fontSize(fs(13.0f))
-                    .colors(t.colors.surfaceElevated, t.colors.hover,
-                            t.colors.active)
-                    .textColor(t.colors.textPrimary)
-                    .radius(t.sizes.radiusSmall)
-                    .border(1.0f, t.colors.borderDefault)
-                    .onClick([this] { openNotesDirectory(); })
-                    .build();
-                ui.text(id + ".hint")
-                    .position(28.0f, 86.0f)
-                    .size(w - 56.0f, 14.0f)
-                    .text("修改笔记目录属于后续功能，当前仅展示（可用「打开目录」"
-                          "定位后迁移笔记）")
-                    .fontSize(fs(11.0f))
-                    .lineHeight(14.0f)
-                    .color(t.colors.textTertiary)
-                    .build();
-            })
-            .build();
-    }
-
-    // ---------- 卡片 4：Claude 代理 token（claude 模块关闭时整卡隐藏） ----------
-    void drawProxyCard(eui::Ui& ui, const std::string& id, float w, float h,
-                       const core::theme::Tokens& t) {
-        ui.stack(id)
-            .size(w, h)
-            .content([&] {
-                cardFrame(ui, id, w, h, t);
-                auto* svc = claudeProxy();
-                const bool running = svc && svc->isProxyRunning();
-                const int port = running ? svc->proxyPort() : 0;
-
-                ui.text(id + ".title")
-                    .position(28.0f, 16.0f)
-                    .size(240.0f, 22.0f)
-                    .text("Claude 代理")
-                    .fontSize(t.sizes.fontSizeLarge)
-                    .lineHeight(22.0f)
-                    .fontWeight(600)
-                    .color(t.colors.textPrimary)
-                    .build();
-
-                // 随应用启动代理（Phase B 硬性需求 1，默认关）——放卡片右上，
-                // 不新增卡片高度（SwitchBuilder 无 position，套 stack 定位，
-                // 与字号下拉同款包装）
-                const auto compTheme = core::theme::componentTokens(t);
-                ui.stack(id + ".autostart.wrap")
-                    .position(w - 28.0f - 240.0f, 12.0f)
-                    .size(240.0f, 28.0f)
-                    .content([&] {
-                        components::toggleSwitch(ui, id + ".autostart")
-                            .size(240.0f, 28.0f)
-                            .text("随应用启动代理")
-                            .fontSize(fs(13.0f))
-                            .checked(cfg_.claudeProxyAutoStart)
-                            .theme(compTheme)
-                            .onChange([this](bool v) { applyAutoStart(v); })
-                            .build();
-                    })
-                    .build();
-
-                ui.text(id + ".desc")
-                    .position(28.0f, 40.0f)
-                    .size(w - 56.0f, 16.0f)
-                    .text(running
-                          ? "本地代理 http://127.0.0.1:" + std::to_string(port) +
-                                "（仅本机可访问，无需凭据）"
-                          : "本地代理未运行（默认不随应用启动，可在 Claude 页手动启动）")
-                    .fontSize(fs(12.0f))
-                    .lineHeight(16.0f)
-                    .color(t.colors.textTertiary)
-                    .build();
-
-                // ---- 代理端口行（总设计 §8.5 第 5 条，审计 2026-09-23 [14]）----
-                // 数字输入 + Enter/应用按钮提交；代理运行中改端口自动 stop→start
-                // 重启（保持 token，只换端口），未运行则下次启动生效
-                const std::string portText = proxyPortDraft_.empty()
-                    ? std::to_string(cfg_.proxyPort)
-                    : proxyPortDraft_;
-                ui.text(id + ".port.label")
-                    .position(28.0f, 62.0f)
-                    .size(72.0f, 18.0f)
-                    .text("代理端口")
-                    .fontSize(fs(12.0f))
-                    .lineHeight(28.0f)
-                    .color(t.colors.textSecondary)
-                    .build();
-                components::input(ui, id + ".port.input")
-                    .position(104.0f, 60.0f)
-                    .size(96.0f, 28.0f)
-                    .value(portText)
-                    .placeholder("8888")
-                    .fontSize(fs(13.0f))
-                    .theme(compTheme)
-                    .onChange([this](const std::string& v) {
-                        proxyPortDraft_ = v;
-                        // 审计 [19]：校验错误（红字状态行）随下一次输入清除，
-                        // 对齐 claude formError_ 的「就地红字 + 输入即清」语义；
-                        // 成功提示（非红字）不打断，保留到下一次操作
-                        if (statusIsError_) {
-                            statusMessage_.clear();
-                            statusIsError_ = false;
-                        }
-                    })
-                    .onEnter([this] { applyProxyPort(); })
-                    // 审计 [21]：Esc=丢弃端口草稿（回落已应用端口，不再误触发
-                    // applyProxyPort——旧映射下 Esc 会提交端口并重启代理）
-                    .onCancel([this] { proxyPortDraft_.clear(); })
-                    .build();
-                components::button(ui, id + ".port.apply")
-                    .position(208.0f, 60.0f)
-                    .size(64.0f, 28.0f)
-                    .text("应用")
-                    .fontSize(fs(13.0f))
-                    .colors(t.colors.primary, t.colors.primaryHover,
-                            t.colors.primaryPressed)
-                    .textColor(t.colors.onPrimary)
-                    .radius(t.sizes.radiusSmall)
-                    .onClick([this] { applyProxyPort(); })
-                    .build();
-                ui.text(id + ".port.hint")
-                    .position(282.0f, 62.0f)
-                    .size(w - 282.0f - 28.0f, 18.0f)
-                    .text("改后回车或点「应用」；代理运行中自动重启")
-                    .fontSize(fs(12.0f))
-                    .lineHeight(18.0f)
-                    .color(t.colors.textTertiary)
-                    .build();
-
-                // Claude Code 接管状态（Phase D，§6.3）：sidecar 是否存在推导，
-                // 让还原机制对用户可见；上层覆盖警告（§5.3 检测命中时）逐行展示
-                const bool managed = takeoverManaged_;  // 审计 THS-01：读快照
-                ui.text(id + ".takeover.label")
-                    .position(28.0f, 98.0f)
-                    .size(150.0f, 18.0f)
-                    .text("Claude Code 接管")
-                    .fontSize(fs(12.0f))
-                    .lineHeight(18.0f)
-                    .color(t.colors.textSecondary)
-                    .build();
-                // 审计 THS-01：路径读 Claude 运行面内存态（main 启动期注入的
-                // defaultPaths()，正是接管实际使用的路径）——不再每帧调
-                // defaultPaths()（内含 fs::current_path / getcwd）
-                const std::string ccPath =
-                    svc ? svc->settingsFilePath() : std::string();
-                ui.text(id + ".takeover.value")
-                    .position(190.0f, 98.0f)
-                    .size(w - 190.0f - 28.0f, 18.0f)
-                    .text(managed
-                          ? ("● 已接管 " + ccPath)
-                          : std::string("○ 未接管（启动代理后自动接管，停止时还原）"))
-                    .fontSize(fs(12.0f))
-                    .lineHeight(18.0f)
-                    .color(managed ? t.colors.success : t.colors.textTertiary)
-                    .build();
-                // 审计 CPX-02：渲染门与卡高计算同源（svc 而非 managed）——
-                // 未接管但警告非空（接管失败）时行必须画出来，否则卡高留了位
-                if (svc) {
-                    const auto& warns = svc->lastSyncWarnings();
-                    // ponytail: 最多展示 2 条（卡片高度约束），更多警告在
-                    // 日志（LOG_WARN 全量）可查；⚠ 换 FA（图标/文字拆两个元素）
-                    const size_t shown =
-                        std::min<size_t>(warns.size(), 2);
-                    for (size_t i = 0; i < shown; ++i) {
-                        ui.text(id + ".takeover.warn.icon." + std::to_string(i))
-                            .position(28.0f, 118.0f + static_cast<float>(i) * 16.0f)
-                            .size(12.0f, 16.0f)
-                            .icon(0xF071)  // fa-triangle-exclamation
-                            .fontSize(fs(11.0f))
-                            .lineHeight(16.0f)
-                            .color(t.colors.warning)
-                            .build();
-                        ui.text(id + ".takeover.warn." + std::to_string(i))
-                            .position(42.0f, 118.0f + static_cast<float>(i) * 16.0f)
-                            .size(w - 42.0f - 28.0f, 16.0f)
-                            .text(warns[i])
-                            .fontSize(fs(11.0f))
-                            .lineHeight(16.0f)
-                            .color(t.colors.warning)
-                            .build();
-                    }
-                }
-            })
-            .build();
-    }
-
-    // ---------- 卡片 5：日志（保留天数 + 级别，日志 tab） ----------
-    // 行内下拉的弹层用 cardTopY/screenH 几何估算判断向下展开是否出界，出界则
-    // openUp 向上（修复菜单被窗体裁剪）。spec 缩水 B 的编辑器字号 Task B 起
-    // 迁到「通用」tab 独立卡（不同 tab 的卡不同屏，原「末卡 z 逃逸宿主」
-    // 理由失效）。cardTopY/screenH：弹层几何用文件顶部 kDropdown* /
-    // kLogDropdown* 常量估算（与 dropdown 内部 metrics 一致）
-    void drawLogCard(eui::Ui& ui, const std::string& id, float w, float h,
-                     const core::theme::Tokens& t, float cardTopY,
-                     float screenH) {
-        const auto compTheme = core::theme::componentTokens(t);
-        ui.stack(id)
-            .size(w, h)
-            .zIndex(30)
-            .content([&] {
-                cardFrame(ui, id, w, h, t);
-                ui.text(id + ".title")
-                    .position(28.0f, 16.0f)
-                    .size(w - 56.0f, 22.0f)
-                    .text("日志")
-                    .fontSize(t.sizes.fontSizeLarge)
-                    .lineHeight(22.0f)
-                    .fontWeight(600)
-                    .color(t.colors.textPrimary)
-                    .build();
-
-                // 档位说明（0 = 永久）；存的是原始天数 int，T10 清理任务按值读取
-                static const char* kRetentionLabels[] = {
-                    "永久保留", "7 天", "30 天", "90 天", "180 天", "365 天"};
-                ui.stack(id + ".ddwrap")
-                    .position(28.0f, kLogDropdownOffsetY)
-                    .size(240.0f, kLogDropdownHeight)
-                    .content([&] {
-                        // 字段绝对底边 = 卡顶 + 卡内 y 偏移 + 字段高
-                        const float fieldBottomY =
-                            cardTopY + kLogDropdownOffsetY + kLogDropdownHeight;
-                        const float popupH = static_cast<float>(kRetentionPresetCount) *
-                                                 kDropdownItemHeight +
-                                             kDropdownPopupPadding;
-                        const bool openUp = fieldBottomY + kDropdownPopupGap +
-                                                popupH >
-                                            screenH - kWindowBottomMargin;
-                        components::dropdown(ui, id + ".dd")
-                            .size(240.0f, kLogDropdownHeight)
-                            .theme(compTheme)
-                            .items(std::vector<std::string>(
-                                kRetentionLabels,
-                                kRetentionLabels + kRetentionPresetCount))
-                            .selected(nearestIndex(cfg_.logRetentionDays,
-                                                   kRetentionPresets,
-                                                   kRetentionPresetCount))
-                            .open(isDropdownOpen(Dropdown::Retention))
-                            .openUp(openUp)
-                            .onOpenChange(
-                                [this](bool v) { setDropdownOpen(Dropdown::Retention, v); })
-                            .onChange(
-                                [this](int idx) { applyRetentionPreset(idx); })
-                            .build();
-                    })
-                    .build();
-                ui.text(id + ".hint")
-                    .position(288.0f, 60.0f)
-                    .size(w - 316.0f, 18.0f)
-                    .text("0 = 永久保留；30 天为默认。切换档位立即清理一次。")
-                    .fontSize(fs(12.0f))
-                    .lineHeight(18.0f)
-                    .color(t.colors.textTertiary)
-                    .build();
-
-                // ---- 行 2：日志级别（spec §8.5「日志级别」，spec 缩水 D；
-                // Task B：原行 2 编辑器字号迁至「通用」tab 独立卡后上移）：
-                // 切档即时 core::log::setLevel（DEBUG 起打 LOG_DEBUG 详录），
-                // 重启由 onStart 恢复持久化档 ----
-                ui.text(id + ".level.label")
-                    .position(28.0f, 100.0f)
-                    .size(84.0f, 20.0f)
-                    .text("日志级别")
-                    .fontSize(fs(12.0f))
-                    .lineHeight(20.0f)
-                    .color(t.colors.textSecondary)
-                    .build();
-                ui.stack(id + ".level.ddwrap")
-                    .position(124.0f, kLogLevelOffsetY)
-                    .size(150.0f, kLogLevelHeight)
-                    .content([&] {
-                        const float levelFieldBottomY =
-                            cardTopY + kLogLevelOffsetY + kLogLevelHeight;
-                        const float levelPopupH =
-                            static_cast<float>(kLogLevelPresetCount) *
-                                    kDropdownItemHeight +
-                                kDropdownPopupPadding;
-                        const bool levelOpenUp = levelFieldBottomY +
-                                    kDropdownPopupGap + levelPopupH >
-                                screenH - kWindowBottomMargin;
-                        components::dropdown(ui, id + ".level.dd")
-                            .size(150.0f, kLogLevelHeight)
-                            .theme(compTheme)
-                            .items(std::vector<std::string>(
-                                kLogLevelPresetLabels,
-                                kLogLevelPresetLabels + kLogLevelPresetCount))
-                            .selected(logLevelIndex())
-                            .openUp(levelOpenUp)
-                            .open(isDropdownOpen(Dropdown::LogLevel))
-                            .onOpenChange(
-                                [this](bool v) { setDropdownOpen(Dropdown::LogLevel, v); })
-                            .onChange([this](int idx) {
-                                applyLogLevelPreset(idx);
-                            })
-                            .build();
-                    })
-                    .build();
-                ui.text(id + ".level.hint")
-                    .position(288.0f, 100.0f)
-                    .size(w - 316.0f, 18.0f)
-                    .text("DEBUG 最详尽（排障）；默认 INFO。切档即时生效。")
-                    .fontSize(fs(12.0f))
-                    .lineHeight(18.0f)
-                    .color(t.colors.textTertiary)
-                    .build();
-            })
-            .build();
-    }
-
-    // ---------- 卡片 6：关于（spec §8.5「关于」卡，spec 缩水 C） ----------
-    // 版本/构建信息（CMake 注入宏，见 settings_config.cpp aboutVersionLine/
-    // aboutEuiNeoLine）+ 配置/日志文件路径（排障入口：路径都在 APPDATA 深处，
-    // 审计 [15] 同款痛点）。纯展示无交互控件 → 无弹层，维持 z0 不影响任何
-    // 兄弟卡的 z 逃逸。GitHub 链接暂未展示（DevDesk 无公开仓库，登记决策项）
-    void drawAboutCard(eui::Ui& ui, const std::string& id, float w, float h,
-                       const core::theme::Tokens& t) {
-        ui.stack(id)
-            .size(w, h)
-            .content([&] {
-                cardFrame(ui, id, w, h, t);
-                ui.text(id + ".title")
-                    .position(28.0f, 16.0f)
-                    .size(w - 56.0f, 22.0f)
-                    .text("关于")
-                    .fontSize(t.sizes.fontSizeLarge)
-                    .lineHeight(22.0f)
-                    .fontWeight(600)
-                    .color(t.colors.textPrimary)
-                    .build();
-                ui.text(id + ".version")
-                    .position(28.0f, 50.0f)
-                    .size(w - 56.0f, 18.0f)
-                    .text(aboutVersionLine())
-                    .fontSize(fs(13.0f))
-                    .lineHeight(18.0f)
-                    .color(t.colors.textSecondary)
-                    .build();
-                ui.text(id + ".eui")
-                    .position(28.0f, 72.0f)
-                    .size(w - 56.0f, 18.0f)
-                    .text(aboutEuiNeoLine())
-                    .fontSize(fs(13.0f))
-                    .lineHeight(18.0f)
-                    .color(t.colors.textSecondary)
-                    .build();
-                ui.text(id + ".config")
-                    .position(28.0f, 98.0f)
-                    .size(w - 56.0f, 16.0f)
-                    .text("配置文件: " + ::core::paths::configFile().string())
-                    .fontSize(fs(12.0f))
-                    .lineHeight(16.0f)
-                    .color(t.colors.textTertiary)
-                    .build();
-                ui.text(id + ".logfile")
-                    .position(28.0f, 118.0f)
-                    .size(w - 56.0f, 16.0f)
-                    .text("日志文件: " + ::core::paths::logFile().string())
-                    .fontSize(fs(12.0f))
-                    .lineHeight(16.0f)
-                    .color(t.colors.textTertiary)
-                    .build();
-            })
-            .build();
     }
 
     // ---------- 日志 tail 读取（Task B，日志 tab；审计 H2 迁出渲染路径） ----------
@@ -1683,157 +898,12 @@ private:
         externalStateLoaded_ = true;
     }
 
-    // ---------- 编辑器字号卡（Task B：自日志卡行 2 迁入「通用」tab） ----------
-    // spec §8.5「编辑器字体大小」（spec 缩水 B）：档位写 core::theme::
-    // editorFontSize 通道，markdown 下一帧生效；默认 15px = fontSizeBody
-    // token 基准。cardTopY/screenH：下拉弹层 openUp 几何估算（同款日志卡）
-    void drawEditorFontCard(eui::Ui& ui, const std::string& id, float w,
-                            float h, const core::theme::Tokens& t,
-                            float cardTopY, float screenH) {
-        const auto compTheme = core::theme::componentTokens(t);
-        ui.stack(id)
-            .size(w, h)
-            .zIndex(30)
-            .content([&] {
-                cardFrame(ui, id, w, h, t);
-                ui.text(id + ".title")
-                    .position(28.0f, 16.0f)
-                    .size(w - 56.0f, 22.0f)
-                    .text("编辑器字号")
-                    .fontSize(t.sizes.fontSizeLarge)
-                    .lineHeight(22.0f)
-                    .fontWeight(600)
-                    .color(t.colors.textPrimary)
-                    .build();
-                ui.stack(id + ".ddwrap")
-                    .position(28.0f, kEditorFontDdOffsetY)
-                    .size(150.0f, kLogEditorFontHeight)
-                    .content([&] {
-                        const float efontFieldBottomY = cardTopY +
-                            kEditorFontDdOffsetY + kLogEditorFontHeight;
-                        const float efontPopupH =
-                            static_cast<float>(kEditorFontPresetCount) *
-                                    kDropdownItemHeight +
-                                kDropdownPopupPadding;
-                        const bool efontOpenUp = efontFieldBottomY +
-                                    kDropdownPopupGap + efontPopupH >
-                                screenH - kWindowBottomMargin;
-                        components::dropdown(ui, id + ".dd")
-                            .size(150.0f, kLogEditorFontHeight)
-                            .theme(compTheme)
-                            .items(std::vector<std::string>(
-                                kEditorFontPresetLabels,
-                                kEditorFontPresetLabels +
-                                    kEditorFontPresetCount))
-                            .selected(nearestIndex(cfg_.editorFontSize,
-                                                   kEditorFontPresets,
-                                                   kEditorFontPresetCount))
-                            .openUp(efontOpenUp)
-                            .open(isDropdownOpen(Dropdown::EditorFont))
-                            .onOpenChange(
-                                [this](bool v) { setDropdownOpen(Dropdown::EditorFont, v); })
-                            .onChange([this](int idx) {
-                                applyEditorFontPreset(idx);
-                            })
-                            .build();
-                    })
-                    .build();
-                ui.text(id + ".hint")
-                    .position(190.0f, 48.0f)
-                    .size(w - 218.0f, 18.0f)
-                    .text("Markdown 编辑器正文字号；默认 15px（标准）。切换即时生效。")
-                    .fontSize(fs(12.0f))
-                    .lineHeight(18.0f)
-                    .color(t.colors.textTertiary)
-                    .build();
-            })
-            .build();
-    }
-
-    // ---------- 日志查看卡（Task B，日志 tab）：日志文件 tail + 刷新 ----------
-    // logTail_ 是内存快照（读盘见 readLogTailLines，跑在后台线程，见审计 H2），
-    // 本方法只渲染字符串。逐行一个 text（固定行高，超宽行由 scrollView clip
-    // 右侧裁切）；刷新按钮只置 dirty 标记，实际重读由 refreshLogTailCache 发意图
-    void drawLogViewCard(eui::Ui& ui, const std::string& id, float w, float h,
-                         const core::theme::Tokens& t) {
-        const auto compTheme = core::theme::componentTokens(t);
-        const float lineH = 16.0f;
-        ui.stack(id)
-            .size(w, h)
-            .content([&] {
-                cardFrame(ui, id, w, h, t);
-                const float btnW = 96.0f;
-                ui.text(id + ".title")
-                    .position(28.0f, 16.0f)
-                    .size(w - 56.0f - btnW - 12.0f, 22.0f)
-                    .text("运行日志（末尾 500 行）")
-                    .fontSize(t.sizes.fontSizeLarge)
-                    .lineHeight(22.0f)
-                    .fontWeight(600)
-                    .color(t.colors.textPrimary)
-                    .build();
-                components::button(ui, id + ".refresh")
-                    .position(w - 28.0f - btnW, 14.0f)
-                    .size(btnW, 28.0f)
-                    .text("刷新")
-                    .icon(0xF021)  // fa-arrows-rotate
-                    .fontSize(fs(12.0f))
-                    .colors(t.colors.surfaceElevated, t.colors.hover,
-                            t.colors.active)
-                    .textColor(t.colors.textPrimary)
-                    .radius(t.sizes.radiusSmall)
-                    .border(1.0f, t.colors.borderDefault)
-                    .onClick([this] { logTailDirty_ = true; })
-                    .build();
-                const float areaTop = 48.0f;
-                components::scrollView(ui, id + ".scroll")
-                    .position(28.0f, areaTop)
-                    .size(w - 56.0f, h - areaTop - 16.0f)
-                    .gap(0.0f)
-                    .step(lineH)
-                    .theme(compTheme)
-                    // contentKey 带 tail 版本号：刷新重读后内容高缓存失效重测
-                    .contentKey(id + ".scroll.v" +
-                                std::to_string(logTailVersion_))
-                    .offset(logViewScrollOffset_)
-                    .onChange([this](float v) {
-                        logViewScrollOffset_ = v;
-                    })
-                    .content([&](eui::Ui& inner, float cw, float vh) {
-                        (void)vh;
-                        if (logTail_.empty()) {
-                            inner.text(id + ".empty")
-                                .position(8.0f, 8.0f)
-                                .size(cw - 16.0f, 20.0f)
-                                .text("（暂无日志内容，或日志文件尚未生成）")
-                                .fontSize(fs(12.0f))
-                                .lineHeight(20.0f)
-                                .color(t.colors.textTertiary)
-                                .build();
-                            return;
-                        }
-                        for (size_t i = 0; i < logTail_.size(); ++i) {
-                            inner.text(id + ".line." + std::to_string(i))
-                                .position(
-                                    8.0f, static_cast<float>(i) * lineH)
-                                .size(cw - 16.0f, lineH)
-                                .text(logTail_[i])
-                                .fontSize(fs(11.0f))
-                                .lineHeight(lineH)
-                                .color(t.colors.textSecondary)
-                                .build();
-                        }
-                    })
-                    .build();
-            })
-            .build();
-    }
-
     // ---------- 状态 ----------
     std::unique_ptr<SettingsStore> store_;
     SettingsConfig cfg_;
     // 当前打开的下拉（审计 THS-05：7 个 bool 收成一个索引，-1 = 全关）。
-    // 取值 = static_cast<int>(Dropdown)，判读/开关走 isDropdownOpen/setDropdownOpen
+    // 取值 = static_cast<int>(Dropdown)，判读/开关走 settings_ui_logic.h 的
+    // isDropdownOpen / applyDropdownOpen
     int openDropdown_ = -1;
     std::vector<std::string> petSkins_;    // 发现到的皮肤（M2，快照见 THS-01）
     std::string petSkinName_;              // 当前皮肤名（M2，快照见 THS-01）
