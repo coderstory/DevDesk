@@ -98,40 +98,12 @@ double msSince(std::chrono::steady_clock::time_point t) {
         .count();
 }
 
-bool writeTextFile(const fs::path& path, const std::string& content) {
-    std::ofstream ofs(path, std::ios::binary | std::ios::trunc);
-    if (!ofs) return false;
-    ofs.write(content.data(), static_cast<std::streamsize>(content.size()));
-    return ofs.good();
-}
+// 笔记临时目录前缀 + 写文件 / 无头笔记环境：共享实现（TIN-06b，原 MdHlEnv
+// 与本地 writeTextFile 同款合流）
+constexpr const char* kDirPrefix = "devdesk_mdhl_";
+constexpr const char* kDbName = "mdhl_test.db";
 
-struct MdHlEnv {
-    fs::path dir;
-    std::unique_ptr<core::Database> db;
-
-    explicit MdHlEnv(const char* tag) {
-        dir = test_support::makeTempDir("devdesk_mdhl_", tag);
-        auto r = core::Database::open(dir / "mdhl_test.db");
-        if (r.isFail()) return;
-        db = std::make_unique<core::Database>(std::move(r.value()));
-        if (db->migrate().isFail()) {
-            db.reset();
-            return;
-        }
-        core::registerAppDatabase(&db->db());
-        // 视图状态文件隔离（审计 [23]）：无头用例不碰真实 %APPDATA% 状态
-        test_support::setEnvVar("DEVDESK_MARKDOWN_VIEW_STATE_PATH", (dir / "view_state.json").string());
-        test_support::setEnvVar("DEVDESK_NOTES_DIR", dir.string());
-    }
-
-    ~MdHlEnv() {
-        test_support::setEnvVar("DEVDESK_NOTES_DIR", "");
-        test_support::setEnvVar("DEVDESK_MARKDOWN_VIEW_STATE_PATH", "");
-        core::registerAppDatabase(nullptr);
-        std::error_code ec;
-        fs::remove_all(dir, ec);
-    }
-};
+using test_support::writeTextFile;
 
 } // namespace
 
@@ -444,7 +416,7 @@ REGISTER_TEST(md_highlight_theme_colors, "md_highlight: §6.2 色表 → theme t
 
 REGISTER_TEST(md_highlight_wiring,
               "md_highlight: 编辑器 lineStyles 接线 + 主题切换重高亮", {
-    MdHlEnv env("wiring");
+    test_support::MdHeadlessEnv env(kDirPrefix, "wiring", kDbName);
     DOCTEST_REQUIRE(env.db != nullptr);
     DOCTEST_REQUIRE(writeTextFile(env.dir / "note.md",
                                   "# 标题\n`代码` 正文\n"));

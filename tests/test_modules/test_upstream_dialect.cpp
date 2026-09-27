@@ -18,6 +18,7 @@
 #include "platform/http_client.h"
 #include "platform/http_server.h"
 #include "streaming_proxy.h"
+#include "test_support.h"
 #include "upstream_dialect.h"
 
 #include <cctype>
@@ -28,29 +29,11 @@
 
 namespace {
 
-using HeaderMap = std::map<std::string, std::string>;
+// 大小写不敏感取头值 / 计数 + 别名：共享实现（TIN-06b，原三份同款合流）
 using module::claude::UpstreamDialect;
-
-// 大小写不敏感取头值（转发后头名拼写由方言层决定，可能与客户端不同）
-std::string headerCI(const HeaderMap& h, const std::string& lowerKey) {
-    for (const auto& kv : h) {
-        std::string k = kv.first;
-        for (auto& c : k) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
-        if (k == lowerKey) return kv.second;
-    }
-    return std::string();
-}
-
-// 统计同名头（大小写不敏感）出现次数：>1 说明大小写变体并存（上游会收到重复头）
-int countCI(const HeaderMap& h, const std::string& lowerKey) {
-    int n = 0;
-    for (const auto& kv : h) {
-        std::string k = kv.first;
-        for (auto& c : k) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
-        if (k == lowerKey) ++n;
-    }
-    return n;
-}
+using test_support::countCI;
+using test_support::headerCI;
+using test_support::HeaderMap;
 
 // 客户端（Claude Code / python-urllib 直测）发来的头部形态
 HeaderMap clientHeaders() {

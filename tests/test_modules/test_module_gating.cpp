@@ -41,10 +41,9 @@ private:
     std::string name_;
 };
 
-std::filesystem::path tempConfigFile(const char* name) {
-    return test_temp::tempPath(
-        "devdesk_test_gating_" + std::string(name) + ".json");
-}
+// 每个用例独立的临时配置文件 —— 共享工厂（TIN-06b，原三份 tempConfigFile
+// 合流），调用点统一 test_support::tempConfigFile(kCfgPrefix, name)
+constexpr const char* kCfgPrefix = "devdesk_test_gating_";
 
 void writeRawConfig(const std::filesystem::path& file,
                     const std::string& json) {
@@ -92,7 +91,7 @@ REGISTER_TEST(gating_config_defaults, "gating: enabledModules 缺省全启用 + 
 
 REGISTER_TEST(gating_config_roundtrip, "gating: enabledModules 保存-加载往返", {
     using namespace module::settings;
-    const auto file = tempConfigFile("roundtrip");
+    const auto file = test_support::tempConfigFile(kCfgPrefix, "roundtrip");
     SettingsConfig cfg;
     cfg.enabledModules.assign(1, kModuleIdMarkdown);
     cfg.enabledModules.push_back(kModuleIdHome);
@@ -113,7 +112,7 @@ REGISTER_TEST(gating_config_roundtrip, "gating: enabledModules 保存-加载往�
 
 REGISTER_TEST(gating_config_unknown_ids_filtered, "gating: 未知模块 ID 忽略 + 恒启用补齐", {
     using namespace module::settings;
-    const auto file = tempConfigFile("unknown");
+    const auto file = test_support::tempConfigFile(kCfgPrefix, "unknown");
     // 手改 config 写入未知 ID + 漏掉恒启用项 + 重复项
     writeRawConfig(file,
                    "{\"enabledModules\": [\"home\", \"todo\", \"bogus\", "
@@ -131,7 +130,7 @@ REGISTER_TEST(gating_config_unknown_ids_filtered, "gating: 未知模块 ID 忽�
 
 REGISTER_TEST(gating_config_empty_array, "gating: 空数组 = 三工具模块全关（home/settings 补齐）", {
     using namespace module::settings;
-    const auto file = tempConfigFile("empty");
+    const auto file = test_support::tempConfigFile(kCfgPrefix, "empty");
     writeRawConfig(file, "{\"enabledModules\": []}");
     const SettingsConfig loaded = SettingsStore(file).load();
     DOCTEST_CHECK(!moduleEnabled(loaded, kModuleIdMarkdown));
@@ -146,7 +145,7 @@ REGISTER_TEST(gating_config_empty_array, "gating: 空数组 = 三工具模块全
 
 REGISTER_TEST(gating_config_corrupt_falls_back, "gating: 字段损坏回退默认全启用", {
     using namespace module::settings;
-    const auto file = tempConfigFile("corrupt");
+    const auto file = test_support::tempConfigFile(kCfgPrefix, "corrupt");
     // 数组里的非字符串项被跳过，但数组本身有效 → 列表按字面生效（只含 todo）
     writeRawConfig(file, "{\"enabledModules\": [\"todo\", 42, true]}");
     SettingsConfig loaded = SettingsStore(file).load();
@@ -166,7 +165,7 @@ REGISTER_TEST(gating_config_corrupt_falls_back, "gating: 字段损坏回退默�
 
 REGISTER_TEST(gating_registration_respects_config, "gating: 关闭模块不注册进 Router（modules() 不含它）", {
     using namespace module::settings;
-    const auto file = tempConfigFile("registration");
+    const auto file = test_support::tempConfigFile(kCfgPrefix, "registration");
     SettingsConfig cfg;
     cfg.enabledModules.clear();
     cfg.enabledModules.push_back(kModuleIdHome);

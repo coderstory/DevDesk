@@ -23,6 +23,7 @@
 #include "platform/json.h"
 #include "platform/keychain.h"
 #include "proxy_router.h"
+#include "test_support.h"
 #include "upstream_dialect.h"
 
 #include <cctype>
@@ -44,44 +45,8 @@ namespace {
 
 constexpr const char* kTestKeychainService = "DevDeskTestProxyRouter";
 
-std::filesystem::path tempDbPath(const std::string& tag) {
-    static int counter = 0;
-    ++counter;
-    auto name = "devdesk_test_proxy_" + tag + "_" +
-                std::to_string(counter) + ".db";
-    return test_temp::tempPath(name);
-}
-
-struct TestDb {
-    std::filesystem::path path;
-    // 审计 CP-07：Database/SqliteDb 已不可默认构造（open() 是唯一入口），
-    // 「先占位、后 move 进来」改用指针表达
-    std::unique_ptr<core::Database> db;
-
-    explicit TestDb(const std::string& tag) {
-        path = tempDbPath(tag);
-        std::error_code ec;
-        std::filesystem::remove(path, ec);
-        auto r = core::Database::open(path);
-        if (r.isFail()) {
-            throw std::runtime_error("Database::open failed: " + r.errorMessage());
-        }
-        db = std::make_unique<core::Database>(std::move(r.value()));
-        auto m = db->migrate();
-        if (m.isFail()) {
-            throw std::runtime_error("migrate failed: " + m.errorMessage());
-        }
-    }
-
-    ~TestDb() {
-        std::error_code ec;
-        std::filesystem::remove(path, ec);
-        std::filesystem::remove(path.string() + "-wal", ec);
-        std::filesystem::remove(path.string() + "-shm", ec);
-    }
-
-    core::data::SqliteDb& handle() { return db->db(); }
-};
+// 临时 db 文件名前缀（共享工厂 test_support::tempDbPath / TestDb 的第一实参）
+constexpr const char* kDbPrefix = "devdesk_test_proxy_";
 
 // 用 platform::http::send 发同步请求（测试用，走 libcurl）
 platform::http::Response syncSend(const std::string& method,
@@ -108,29 +73,11 @@ platform::http::Response syncSend(const std::string& method,
     return std::move(r.value());
 }
 
-// 头名大小写不敏感取头（转发后头名拼写由上游方言层决定）
-// 注：别名供 REGISTER_TEST body 使用——doctest.h 的宏**大括号不保护逗号**，
-// 带逗号的类型名不能直接写在 body 里
-using HeaderMap = std::map<std::string, std::string>;
-
-std::string headerCI(const HeaderMap& h, const std::string& lowerKey) {
-    for (const auto& kv : h) {
-        std::string k = kv.first;
-        for (auto& c : k) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
-        if (k == lowerKey) return kv.second;
-    }
-    return std::string();
-}
-
-int countCI(const HeaderMap& h, const std::string& lowerKey) {
-    int n = 0;
-    for (const auto& kv : h) {
-        std::string k = kv.first;
-        for (auto& c : k) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
-        if (k == lowerKey) ++n;
-    }
-    return n;
-}
+// 头名大小写不敏感取头 / 计数：共享实现（原 test_claude_service /
+// test_upstream_dialect 三份同款合流，TIN-06b）
+using test_support::countCI;
+using test_support::headerCI;
+using test_support::HeaderMap;
 
 // 在原始 Headers（multimap，未去重）里按大小写不敏感取首个值
 std::string headerValueCI(const httplib::Headers& h, const std::string& lowerKey) {
@@ -253,7 +200,7 @@ REGISTER_TEST(proxy_router_forward_200,
     const int upstreamPort = upstream.actualPort();
     std::this_thread::sleep_for(std::chrono::milliseconds(30));
 
-    TestDb tdb("fwd200");
+    test_support::TestDb tdb(kDbPrefix, "fwd200");
     module::claude::ClaudeService svc(tdb.handle(), kTestKeychainService);
 
     auto created = svc.createProfile(
@@ -309,7 +256,7 @@ REGISTER_TEST(proxy_router_upstream_401,
     DOCTEST_REQUIRE(upstream.start());
     std::this_thread::sleep_for(std::chrono::milliseconds(30));
 
-    TestDb tdb("fwd401");
+    test_support::TestDb tdb(kDbPrefix, "fwd401");
     module::claude::ClaudeService svc(tdb.handle(), kTestKeychainService);
 
     auto created = svc.createProfile(
@@ -354,7 +301,7 @@ REGISTER_TEST(proxy_router_upstream_404,
     DOCTEST_REQUIRE(upstream.start());
     std::this_thread::sleep_for(std::chrono::milliseconds(30));
 
-    TestDb tdb("fwd404");
+    test_support::TestDb tdb(kDbPrefix, "fwd404");
     module::claude::ClaudeService svc(tdb.handle(), kTestKeychainService);
 
     auto created = svc.createProfile(
@@ -386,7 +333,7 @@ REGISTER_TEST(proxy_router_upstream_404,
 
 REGISTER_TEST(proxy_router_upstream_unreachable,
               "proxy_router: 上游不可达返回 502", {
-    TestDb tdb("fwd502");
+    test_support::TestDb tdb(kDbPrefix, "fwd502");
     module::claude::ClaudeService svc(tdb.handle(), kTestKeychainService);
 
     // 指向一个没有监听的端口
@@ -420,7 +367,7 @@ REGISTER_TEST(proxy_router_upstream_unreachable,
 
 REGISTER_TEST(proxy_router_no_active_profile,
               "proxy_router: 无激活 profile 返回 503", {
-    TestDb tdb("noactive");
+    test_support::TestDb tdb(kDbPrefix, "noactive");
     module::claude::ClaudeService svc(tdb.handle(), kTestKeychainService);
 
     // 建一个 profile 但不激活
@@ -450,7 +397,7 @@ REGISTER_TEST(proxy_router_no_active_profile,
 
 REGISTER_TEST(proxy_router_missing_api_key,
               "proxy_router: Keychain 缺 key 缓冲/流式统一 503 no_active_profile", {
-    TestDb tdb("nokey");
+    test_support::TestDb tdb(kDbPrefix, "nokey");
     module::claude::ClaudeService svc(tdb.handle(), kTestKeychainService);
 
     auto created = svc.createProfile("NoKey", "http://127.0.0.1:1",
@@ -509,7 +456,7 @@ REGISTER_TEST(proxy_router_end_to_end,
     DOCTEST_REQUIRE(upstream.start());
     std::this_thread::sleep_for(std::chrono::milliseconds(30));
 
-    TestDb tdb("e2e");
+    test_support::TestDb tdb(kDbPrefix, "e2e");
     module::claude::ClaudeService svc(tdb.handle(), kTestKeychainService);
     auto created = svc.createProfile(
         "E2E", "http://127.0.0.1:" + std::to_string(upstream.actualPort()),
@@ -557,7 +504,7 @@ REGISTER_TEST(proxy_router_end_to_end,
 
 REGISTER_TEST(proxy_router_error_json_escaped,
               "proxy_router: 错误 JSON 转义（message 含引号/反斜杠）", {
-    TestDb tdb("escjson");
+    test_support::TestDb tdb(kDbPrefix, "escjson");
     module::claude::ClaudeService svc(tdb.handle(), kTestKeychainService);
 
     platform::http::Server proxyServer("127.0.0.1", 0);
@@ -614,7 +561,7 @@ REGISTER_TEST(proxy_router_applies_upstream_dialect,
     DOCTEST_REQUIRE(upstream.start());
     std::this_thread::sleep_for(std::chrono::milliseconds(30));
 
-    TestDb tdb("dialect");
+    test_support::TestDb tdb(kDbPrefix, "dialect");
     module::claude::ClaudeService svc(tdb.handle(), kTestKeychainService);
     auto created = svc.createProfile(
         "Dialect", "http://127.0.0.1:" + std::to_string(upstream.actualPort()),
@@ -687,7 +634,7 @@ REGISTER_TEST(proxy_router_dialect_override_wired,
     DOCTEST_REQUIRE(upstream.start());
     std::this_thread::sleep_for(std::chrono::milliseconds(30));
 
-    TestDb tdb("dialect_ovr");
+    test_support::TestDb tdb(kDbPrefix, "dialect_ovr");
     module::claude::ClaudeService svc(tdb.handle(), kTestKeychainService);
     // 第 8 个参数 = dialectOverride（值域见 upstream_dialect.h）
     auto created = svc.createProfile(
@@ -760,7 +707,7 @@ REGISTER_TEST(proxy_router_drops_httplib_pseudo_headers,
     DOCTEST_REQUIRE(upstream.start());
     std::this_thread::sleep_for(std::chrono::milliseconds(30));
 
-    TestDb tdb("hdrdrop");
+    test_support::TestDb tdb(kDbPrefix, "hdrdrop");
     module::claude::ClaudeService svc(tdb.handle(), kTestKeychainService);
     auto created = svc.createProfile("HdrDrop", upstream.baseUrl(),
                                      "sk-ant-hdr-key-0001", "claude-sonnet-4-5");
@@ -829,7 +776,7 @@ REGISTER_TEST(proxy_router_pseudo_headers_filtered_end_to_end,
     DOCTEST_REQUIRE(upstream.start());
     std::this_thread::sleep_for(std::chrono::milliseconds(30));
 
-    TestDb tdb("hdre2e");
+    test_support::TestDb tdb(kDbPrefix, "hdre2e");
     module::claude::ClaudeService svc(tdb.handle(), kTestKeychainService);
     auto created = svc.createProfile("HdrE2E", upstream.baseUrl(),
                                      "sk-ant-hdr-e2e-0001", "claude-sonnet-4-5");

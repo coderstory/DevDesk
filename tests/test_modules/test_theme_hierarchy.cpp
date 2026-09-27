@@ -61,47 +61,15 @@ struct Frame {
     bool absent(const std::string& id) { return ui.find(id) == nullptr; }
 };
 
-std::filesystem::path tempDbPath(const char* tag) {
-    static int counter = 0;
-    ++counter;
-    char buf[128];
-    std::snprintf(buf, sizeof(buf), "devdesk_test_hier_%s_%d.db", tag, counter);
-    return test_temp::tempPath(buf);
-}
-
-// RAII：临时库 + 注册全局 appDatabase（析构注销，防污染其他用例）
-struct DbEnv {
-    std::filesystem::path path;
-    std::unique_ptr<core::Database> db;
-    bool ready = false;
-
-    explicit DbEnv(const char* tag) {
-        path = tempDbPath(tag);
-        std::error_code ec;
-        std::filesystem::remove(path, ec);
-        auto r = core::Database::open(path);
-        if (r.isFail()) return;
-        if (r.value().migrate().isFail()) return;
-        db = std::make_unique<core::Database>(std::move(r.value()));
-        ::core::registerAppDatabase(&db->db());
-        ready = true;
-    }
-    ~DbEnv() {
-        ::core::registerAppDatabase(nullptr);
-        db.reset();
-        std::error_code ec;
-        std::filesystem::remove(path, ec);
-        std::filesystem::remove(path.string() + "-wal", ec);
-        std::filesystem::remove(path.string() + "-shm", ec);
-    }
-};
+// 临时 db 文件名前缀（共享工厂 test_support::tempDbPath / TestEnv 的第一实参）
+constexpr const char* kDbPrefix = "devdesk_test_hier_";
 
 } // namespace
 
 // ---- 看板列（结构性容器）/ 卡片 / 弹窗：todo 模块三tier 一次断言 ----
 REGISTER_TEST(theme_hierarchy_todo,
               "theme_hierarchy: 看板列=background 卡片/dialog=surface（light+dark）", {
-    DbEnv env("todo");
+    test_support::TestEnv env(kDbPrefix, "todo", true);
     DOCTEST_REQUIRE(env.ready);
 
     // 先建列/任务再 onStart（模块 onStart 快照列集；新列 = 迁移默认 4 列后第 5 列）
@@ -174,7 +142,7 @@ REGISTER_TEST(theme_hierarchy_markdown,
     }
     test_support::setEnvVar("DEVDESK_NOTES_DIR", dir.string());
 
-    DbEnv env("md");
+    test_support::TestEnv env(kDbPrefix, "md", true);
     DOCTEST_REQUIRE(env.ready);
 
     std::unique_ptr<::core::Module> mod(create_markdown_module());
@@ -214,7 +182,7 @@ REGISTER_TEST(theme_hierarchy_markdown,
 // ---- 左栏 Profile 列表 / 右栏详情面板：claude 结构性面板 ----
 REGISTER_TEST(theme_hierarchy_claude,
               "theme_hierarchy: claude 左栏/详情面板=background（light+dark）", {
-    DbEnv env("claude");
+    test_support::TestEnv env(kDbPrefix, "claude", true);
     DOCTEST_REQUIRE(env.ready);
 
     module::claude::ClaudeService svc(env.db->db(),

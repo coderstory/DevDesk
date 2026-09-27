@@ -1,6 +1,7 @@
 // tests/test_core/test_migrations.cpp
 // 测试 Database + migrations
 #include "doctest.h"
+#include "test_support.h"
 #include "core/database.h"
 #include "core/migrations.h"
 #include "core/result.h"
@@ -13,13 +14,9 @@
 namespace {
 
 // 给测试生成一个临时 db 路径，不污染应用数据库
-std::filesystem::path tempDbPath(const std::string& tag) {
-    static int counter = 0;
-    ++counter;
-    auto name = "devdesk_test_migrations_" + tag + "_" +
-                std::to_string(counter) + ".db";
-    return test_temp::tempPath(name);
-}
+// —— 共享工厂 test_support::tempDbPath（TIN-06b，原十份同款合流），
+//    调用点统一 test_support::tempDbPath(kDbPrefix, tag)，前缀沿用原样
+constexpr const char* kDbPrefix = "devdesk_test_migrations_";
 
 // 读 sqlite_master，返回当前 db 里所有表名
 std::set<std::string> listTables(core::data::SqliteDb& db) {
@@ -38,7 +35,7 @@ std::set<std::string> listTables(core::data::SqliteDb& db) {
 } // namespace
 
 REGISTER_TEST(migrate_creates_all_tables, "Database: migrate creates all 8 tables", {
-    auto path = tempDbPath("create");
+    auto path = test_support::tempDbPath(kDbPrefix, "create");
     // 预清理：无异常版本（Windows 上 remove 失败不应炸掉整个套件）
     std::error_code ec;
     std::filesystem::remove(path, ec);
@@ -78,7 +75,7 @@ REGISTER_TEST(migrate_creates_all_tables, "Database: migrate creates all 8 table
 
 REGISTER_TEST(migrate_seeds_default_todo_columns,
               "Database: migrate inserts 4 default Todo columns", {
-    auto path = tempDbPath("seed");
+    auto path = test_support::tempDbPath(kDbPrefix, "seed");
     // 预清理：无异常版本
     std::error_code ec;
     std::filesystem::remove(path, ec);
@@ -105,7 +102,7 @@ REGISTER_TEST(migrate_seeds_default_todo_columns,
 })
 
 REGISTER_TEST(migrate_is_idempotent, "Database: migrate is idempotent", {
-    auto path = tempDbPath("idempotent");
+    auto path = test_support::tempDbPath(kDbPrefix, "idempotent");
     // 预清理：无异常版本
     std::error_code ec;
     std::filesystem::remove(path, ec);
@@ -140,7 +137,7 @@ REGISTER_TEST(migrate_is_idempotent, "Database: migrate is idempotent", {
 
 REGISTER_TEST(migrate_rejects_newer_schema,
               "Database: migrate rejects newer schema_version (downgrade guard)", {
-    auto path = tempDbPath("newer");
+    auto path = test_support::tempDbPath(kDbPrefix, "newer");
     std::error_code ec;
     std::filesystem::remove(path, ec);
 
@@ -172,7 +169,7 @@ REGISTER_TEST(migrate_rejects_newer_schema,
 // 不被破坏（新列全 NULL = 未采集，不是 0），并且新列可写可读回
 REGISTER_TEST(migrate_call_logs_usage_columns,
               "migration v5: 旧库升级加调用日志用量列，存量行零迁移", {
-    auto path = tempDbPath("usage_cols");
+    auto path = test_support::tempDbPath(kDbPrefix, "usage_cols");
     std::error_code ec;
     std::filesystem::remove(path, ec);
 
@@ -264,7 +261,7 @@ REGISTER_TEST(migrate_call_logs_usage_columns,
 // claude_profiles.shared_config_id 默认 0（存量 profile 零迁移 = 未绑定）
 REGISTER_TEST(migrate_shared_configs_v6,
               "migration v6: 旧库升级加片段表与 profile 绑定列", {
-    auto path = tempDbPath("shared_cfg");
+    auto path = test_support::tempDbPath(kDbPrefix, "shared_cfg");
     std::error_code ec;
     std::filesystem::remove(path, ec);
 
@@ -341,7 +338,7 @@ REGISTER_TEST(migrate_shared_configs_v6,
 // 列 kind 为 NULL，升级后回填 'archive'，其余列 kind 零改动（普通列仍 NULL）
 REGISTER_TEST(migrate_archive_kind_v8,
               "Database: migrate v8 回填归档列 kind('archive')", {
-    auto path = tempDbPath("archive_kind");
+    auto path = test_support::tempDbPath(kDbPrefix, "archive_kind");
     std::error_code ec;
     std::filesystem::remove(path, ec);
 
@@ -402,7 +399,7 @@ REGISTER_TEST(migrate_archive_kind_v8,
 // dialect_override 列，存量行零迁移（默认空串 = 未覆盖 = 按 base_url 的 host 推断）
 REGISTER_TEST(migrate_dialect_override_v9,
               "migration v9: 旧库升级加 profile 方言覆盖列", {
-    auto path = tempDbPath("dialect_override");
+    auto path = test_support::tempDbPath(kDbPrefix, "dialect_override");
     std::error_code ec;
     std::filesystem::remove(path, ec);
 

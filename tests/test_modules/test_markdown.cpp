@@ -342,43 +342,12 @@ REGISTER_TEST(md_tree_root_group_always, "md_tree: 根组标题常显（无根�
 // ==================== Phase 1 UI 无头 compose 冒烟 ====================
 
 namespace {
-bool writeTextFile(const fs::path& path, const std::string& content) {
-    fs::create_directories(path.parent_path());  // 支持子目录笔记（W8 目录树）
-    std::ofstream ofs(path, std::ios::binary | std::ios::trunc);
-    if (!ofs) return false;
-    ofs.write(content.data(), static_cast<std::streamsize>(content.size()));
-    return ofs.good();
-}
+// 笔记临时目录前缀 / 库名 + 写文件：共享实现（TIN-06b，原 MdUiEnv 与本地
+// writeTextFile 同款合流）
+constexpr const char* kDirPrefix = "devdesk_md_ui_";
+constexpr const char* kDbName = "ui_test.db";
 
-// RAII：临时笔记目录 + 临时 DB 注册为 appDatabase（析构注销，防污染其他用例）
-struct MdUiEnv {
-    fs::path dir;
-    std::unique_ptr<core::Database> db;
-
-    explicit MdUiEnv(const char* tag) {
-        dir = test_support::makeTempDir("devdesk_md_ui_", tag);
-        auto r = core::Database::open(dir / "ui_test.db");
-        if (r.isFail()) return;
-        db = std::make_unique<core::Database>(std::move(r.value()));
-        if (db->migrate().isFail()) {
-            db.reset();
-            return;
-        }
-        core::registerAppDatabase(&db->db());
-        // 视图状态文件隔离（审计 [23]）：无头用例不碰真实 %APPDATA% 状态
-        test_support::setEnvVar("DEVDESK_MARKDOWN_VIEW_STATE_PATH", (dir / "view_state.json").string());
-        // 笔记目录隔离：只对本用例生效
-        test_support::setEnvVar("DEVDESK_NOTES_DIR", dir.string());
-    }
-
-    ~MdUiEnv() {
-        test_support::setEnvVar("DEVDESK_NOTES_DIR", "");
-        test_support::setEnvVar("DEVDESK_MARKDOWN_VIEW_STATE_PATH", "");
-        core::registerAppDatabase(nullptr);
-        std::error_code ec;
-        fs::remove_all(dir, ec);
-    }
-};
+using test_support::writeTextFile;
 
 } // namespace
 
@@ -415,7 +384,7 @@ REGISTER_TEST(md_module_compose_no_service, "markdown_module: 无服务 compose 
 
 REGISTER_TEST(md_module_compose_phase1, "markdown_module: Phase 1 三态/大纲/状态栏 compose（headless）", {
     const std::string text = "# 标题一\n正文一\n\n## 标题二\n正文二\n";
-    MdUiEnv env("phase1");
+    test_support::MdHeadlessEnv env(kDirPrefix, "phase1", kDbName);
     DOCTEST_REQUIRE(env.db != nullptr);
     DOCTEST_REQUIRE(writeTextFile(env.dir / "note.md", text));
 
@@ -521,7 +490,7 @@ REGISTER_TEST(md_module_compose_phase1, "markdown_module: Phase 1 三态/大纲/
 // ---- 2b. W8：目录树展开/收起 + 缩进 layout 级验证 ----
 
 REGISTER_TEST(md_module_compose_tree, "markdown_module: W8 目录树展开收起/缩进 layout（headless）", {
-    MdUiEnv env("tree");
+    test_support::MdHeadlessEnv env(kDirPrefix, "tree", kDbName);
     DOCTEST_REQUIRE(env.db != nullptr);
     DOCTEST_REQUIRE(writeTextFile(env.dir / "inbox" / "idea.md", "# idea\n"));
     DOCTEST_REQUIRE(writeTextFile(env.dir / "work" / "week.md", "# week\n"));
@@ -594,7 +563,7 @@ REGISTER_TEST(md_module_compose_tree, "markdown_module: W8 目录树展开收起
 // ---- 2b3. W9：空目录树 = 根组标题 + 空态提示同显；搜索 placeholder 常显 ----
 
 REGISTER_TEST(md_module_empty_tree, "markdown_module: W9 空目录根组标题+空态提示同显 / 搜索框 placeholder（headless）", {
-    MdUiEnv env("empty");
+    test_support::MdHeadlessEnv env(kDirPrefix, "empty", kDbName);
     DOCTEST_REQUIRE(env.db != nullptr);  // 不写任何笔记 → 空目录
 
     std::unique_ptr<::core::Module> mod(create_markdown_module());
@@ -638,7 +607,7 @@ REGISTER_TEST(md_module_empty_tree, "markdown_module: W9 空目录根组标题+�
 // ---- 2b4. W9：新建文件夹入口（左栏按钮 → 弹窗 → 空文件夹行入树）----
 
 REGISTER_TEST(md_module_new_folder, "markdown_module: W9 新建文件夹入口真实链路（headless）", {
-    MdUiEnv env("newfolder");
+    test_support::MdHeadlessEnv env(kDirPrefix, "newfolder", kDbName);
     DOCTEST_REQUIRE(env.db != nullptr);
     DOCTEST_REQUIRE(writeTextFile(env.dir / "solo.md", "# solo\n"));
 
@@ -720,7 +689,7 @@ REGISTER_TEST(md_module_new_folder, "markdown_module: W9 新建文件夹入口�
 
 REGISTER_TEST(md_module_new_folder_parent,
               "markdown_module: W10 新建子夹（父目录下拉）/ 空子夹行 / 两级上限（headless）", {
-    MdUiEnv env("newfolder2");
+    test_support::MdHeadlessEnv env(kDirPrefix, "newfolder2", kDbName);
     DOCTEST_REQUIRE(env.db != nullptr);
     DOCTEST_REQUIRE(writeTextFile(env.dir / "工作" / "周报.md", "# 周报\n"));
 
@@ -848,7 +817,7 @@ REGISTER_TEST(md_module_new_folder_parent,
 
 REGISTER_TEST(md_module_tree_empty_folders_only,
               "markdown_module: W10 只有空文件夹（零笔记）→ 顶层夹/子夹行都在，空态提示不覆盖（headless）", {
-    MdUiEnv env("folders0");
+    test_support::MdHeadlessEnv env(kDirPrefix, "folders0", kDbName);
     DOCTEST_REQUIRE(env.db != nullptr);
     // 磁盘上只有空目录（含一级子目录），一个 .md 都没有
     std::error_code ec;
@@ -881,7 +850,7 @@ REGISTER_TEST(md_module_tree_empty_folders_only,
 
 REGISTER_TEST(md_module_dialog_form_error,
               "markdown_module: 弹窗创建错误内嵌红字 + 下一次输入清除（headless，审计 [30]）", {
-    MdUiEnv env("formerror");
+    test_support::MdHeadlessEnv env(kDirPrefix, "formerror", kDbName);
     DOCTEST_REQUIRE(env.db != nullptr);
     DOCTEST_REQUIRE(writeTextFile(env.dir / "solo.md", "# solo\n"));
 
@@ -970,7 +939,7 @@ REGISTER_TEST(md_module_dialog_form_error,
 // ---- 2b2. W9：双栏宽度公式（layout 级——midW 笔误回归）----
 
 REGISTER_TEST(md_module_split_layout, "markdown_module: W9 双栏三列铺满 contentW 无残隙（headless layout）", {
-    MdUiEnv env("split");
+    test_support::MdHeadlessEnv env(kDirPrefix, "split", kDbName);
     DOCTEST_REQUIRE(env.db != nullptr);
     DOCTEST_REQUIRE(writeTextFile(env.dir / "note.md", "# A\n"));
 
@@ -1036,7 +1005,7 @@ REGISTER_TEST(md_module_split_layout, "markdown_module: W9 双栏三列铺满 co
 
 REGISTER_TEST(md_tree_column_layout_semantics,
               "markdown_module: md.tree 单 stack 列语义锁 bg 重合+绝对内容+每列一槽（tech-debt C）", {
-    MdUiEnv env("tree_layout");
+    test_support::MdHeadlessEnv env(kDirPrefix, "tree_layout", kDbName);
     DOCTEST_REQUIRE(env.db != nullptr);
     DOCTEST_REQUIRE(writeTextFile(env.dir / "a.md", "# A\nx\n"));
 
@@ -1090,7 +1059,7 @@ REGISTER_TEST(md_tree_column_layout_semantics,
 // ---- 2c. W8：大纲浮动面板不挤压编辑区（layout 级）----
 
 REGISTER_TEST(md_module_compose_outline_float, "markdown_module: W8 大纲浮动面板 zIndex/不挤压（headless layout）", {
-    MdUiEnv env("outline");
+    test_support::MdHeadlessEnv env(kDirPrefix, "outline", kDbName);
     DOCTEST_REQUIRE(env.db != nullptr);
     DOCTEST_REQUIRE(writeTextFile(env.dir / "note.md", "# A\n\n## B\n"));
 
@@ -1137,7 +1106,7 @@ REGISTER_TEST(md_module_compose_outline_float, "markdown_module: W8 大纲浮动
 
 REGISTER_TEST(md_module_compose_w7, "markdown_module: W7 pagebg/toast compose（headless）", {
     const std::string text = "# W7\n\n冒烟内容。\n";
-    MdUiEnv env("w7");
+    test_support::MdHeadlessEnv env(kDirPrefix, "w7", kDbName);
     DOCTEST_REQUIRE(env.db != nullptr);
     DOCTEST_REQUIRE(writeTextFile(env.dir / "note.md", text));
 
@@ -1176,7 +1145,7 @@ REGISTER_TEST(md_module_compose_w7, "markdown_module: W7 pagebg/toast compose（
 // ---- 2d. 标签系统（spec §8.1）：编辑器标签行 + 左栏标签筛选（headless）----
 
 REGISTER_TEST(md_module_tags_ui, "markdown_module: 标签 chip 行 + 左栏标签筛选（headless）", {
-    MdUiEnv env("tags");
+    test_support::MdHeadlessEnv env(kDirPrefix, "tags", kDbName);
     DOCTEST_REQUIRE(env.db != nullptr);
     DOCTEST_REQUIRE(writeTextFile(env.dir / "note.md", "# A\n"));
     DOCTEST_REQUIRE(writeTextFile(env.dir / "other.md", "# B\n"));
@@ -1277,7 +1246,7 @@ REGISTER_TEST(md_module_tags_ui, "markdown_module: 标签 chip 行 + 左栏标�
 // ---- 2e. 生命周期（审计 [4][20]）：树行右键菜单 → 删除/重命名 真实链路 ----
 
 REGISTER_TEST(md_module_delete_note_ui, "markdown_module: 右键→删除→确认弹窗（取消保留/确认落删），编辑器联动清空（headless）", {
-    MdUiEnv env("delui");
+    test_support::MdHeadlessEnv env(kDirPrefix, "delui", kDbName);
     DOCTEST_REQUIRE(env.db != nullptr);
     DOCTEST_REQUIRE(writeTextFile(env.dir / "a.md", "# A\n正文A\n"));
     DOCTEST_REQUIRE(writeTextFile(env.dir / "b.md", "# B\n正文B\n"));
@@ -1379,7 +1348,7 @@ REGISTER_TEST(md_module_delete_note_ui, "markdown_module: 右键→删除→确�
 // 侧边栏宽（展开 208 / 折叠 72），跑进右侧详情区（2026-09-27 修复回归护栏）
 
 REGISTER_TEST(md_ctx_menu_page_origin, "markdown_module: 右键菜单坐标扣页面区原点（窗口→页面坐标，headless）", {
-    MdUiEnv env("ctxorigin");
+    test_support::MdHeadlessEnv env(kDirPrefix, "ctxorigin", kDbName);
     DOCTEST_REQUIRE(env.db != nullptr);
     DOCTEST_REQUIRE(writeTextFile(env.dir / "a.md", "# A\n正文A\n"));
 
@@ -1456,7 +1425,7 @@ REGISTER_TEST(md_ctx_menu_page_origin, "markdown_module: 右键菜单坐标扣�
 REGISTER_TEST(md_module_rename_note_ui, "markdown_module: 右键→重命名→预填原路径→选区替换输入→落盘，编辑器跟随（headless）", {
     using InputState = components::input_detail::InputModel::InputState;
 
-    MdUiEnv env("renui");
+    test_support::MdHeadlessEnv env(kDirPrefix, "renui", kDbName);
     DOCTEST_REQUIRE(env.db != nullptr);
     DOCTEST_REQUIRE(writeTextFile(env.dir / "old.md", "# Old\n正文\n"));
 
@@ -1545,7 +1514,7 @@ REGISTER_TEST(md_module_rename_note_ui, "markdown_module: 右键→重命名→�
 // ---- 2f. 新建笔记即时性（审计 [13][31]）：默认名快速创建 + 编辑器聚焦接线 ----
 
 REGISTER_TEST(md_module_default_name_create, "markdown_module: 空名提交=「无标题笔记」秒建+撞名编号，编辑器随开（headless）", {
-    MdUiEnv env("defname");
+    test_support::MdHeadlessEnv env(kDirPrefix, "defname", kDbName);
     DOCTEST_REQUIRE(env.db != nullptr);
 
     std::unique_ptr<::core::Module> mod(create_markdown_module());
@@ -1594,7 +1563,7 @@ REGISTER_TEST(md_module_default_name_create, "markdown_module: 空名提交=「�
 // 提示且永久驻留。新行为：subtitle 恒为静态说明；操作结果走 toast（status_
 // 成员已删）；笔记数进编辑器底部状态栏右侧
 REGISTER_TEST(md_module_subtitle_static, "markdown_module: subtitle 静态快捷键说明 + 笔记数在状态栏（审计[30]，headless）", {
-    MdUiEnv env("subtitle");
+    test_support::MdHeadlessEnv env(kDirPrefix, "subtitle", kDbName);
     DOCTEST_REQUIRE(env.db != nullptr);
     DOCTEST_REQUIRE(writeTextFile(env.dir / "note.md", "# 标题\n正文\n"));
 
@@ -1653,7 +1622,7 @@ REGISTER_TEST(md_module_esc_cancel_dialogs,
               "markdown_module: 新建笔记/文件夹/重命名 Esc=取消不落盘；标签 Esc=丢草稿（headless，审计 [21]）", {
     using InputState = components::input_detail::InputModel::InputState;
 
-    MdUiEnv env("esccancel");
+    test_support::MdHeadlessEnv env(kDirPrefix, "esccancel", kDbName);
     DOCTEST_REQUIRE(env.db != nullptr);
     DOCTEST_REQUIRE(writeTextFile(env.dir / "old2.md", "# Old2\n"));
 
@@ -1776,7 +1745,7 @@ REGISTER_TEST(md_module_ctrl_n_new_note,
               "markdown_module: Ctrl+N 开新建笔记弹窗；弹窗开着再按不重置草稿；完整创建链路（headless）", {
     using InputState = components::input_detail::InputModel::InputState;
 
-    MdUiEnv env("ctrln");
+    test_support::MdHeadlessEnv env(kDirPrefix, "ctrln", kDbName);
     DOCTEST_REQUIRE(env.db != nullptr);
 
     std::unique_ptr<::core::Module> mod(create_markdown_module());
@@ -1847,7 +1816,7 @@ REGISTER_TEST(md_module_rename_form_error,
               "markdown_module: 重命名空名/撞名/非法路径 → 内嵌红字 + 弹窗不关 + 输入清除 + 打开清残留（headless）", {
     using InputState = components::input_detail::InputModel::InputState;
 
-    MdUiEnv env("rferr");
+    test_support::MdHeadlessEnv env(kDirPrefix, "rferr", kDbName);
     DOCTEST_REQUIRE(env.db != nullptr);
     DOCTEST_REQUIRE(writeTextFile(env.dir / "a.md", "# A\n"));
     DOCTEST_REQUIRE(writeTextFile(env.dir / "b.md", "# B\n"));
@@ -1978,7 +1947,7 @@ REGISTER_TEST(md_module_rename_form_error,
 REGISTER_TEST(md_module_status_bar_cache_equivalence,
               "markdown_module: 状态栏缓存=独立复算（headless，perf [39]）", {
     const std::string text = "# 标题一\n正文一二三\n\n## 标题二\n正文二\n";
-    MdUiEnv env("statuscache");
+    test_support::MdHeadlessEnv env(kDirPrefix, "statuscache", kDbName);
     DOCTEST_REQUIRE(env.db != nullptr);
     DOCTEST_REQUIRE(writeTextFile(env.dir / "note.md", text));
 
@@ -2092,7 +2061,7 @@ REGISTER_TEST(md_module_split_scroll_cache_equivalence,
         }
         text += "\n";
     }
-    MdUiEnv env("splitcache");
+    test_support::MdHeadlessEnv env(kDirPrefix, "splitcache", kDbName);
     DOCTEST_REQUIRE(env.db != nullptr);
     DOCTEST_REQUIRE(writeTextFile(env.dir / "long.md", text));
 
@@ -2227,7 +2196,7 @@ REGISTER_TEST(md_module_split_block_anchor_precision,
         text += "```\nr" + tag + " f1\nr" + tag + " f2\nr" + tag + " f3\n```\n\n";
     }
     text += "final tail line\n";
-    MdUiEnv env("blockanchor");
+    test_support::MdHeadlessEnv env(kDirPrefix, "blockanchor", kDbName);
     DOCTEST_REQUIRE(env.db != nullptr);
     DOCTEST_REQUIRE(writeTextFile(env.dir / "anchors.md", text));
 
@@ -2413,7 +2382,7 @@ REGISTER_TEST(md_module_split_block_anchor_precision,
 REGISTER_TEST(md_module_split_block_click_hover,
               "markdown_module: 预览块点击编辑器定位 + hover 高亮（headless，Phase 3 ⑤）", {
     std::string text = "# T\n\npara one\npara two\n\n```\nfence a\nfence b\nfence c\n```\n\ntail line\n";
-    MdUiEnv env("interact");
+    test_support::MdHeadlessEnv env(kDirPrefix, "interact", kDbName);
     DOCTEST_REQUIRE(env.db != nullptr);
     DOCTEST_REQUIRE(writeTextFile(env.dir / "inter.md", text));
 
@@ -2551,7 +2520,7 @@ REGISTER_TEST(md_module_split_block_click_hover,
 // （app 级 onKeyEvent → Router 派发到当前页）。
 REGISTER_TEST(md_esc_closes_topmost_dialog,
               "markdown_module: Esc 关最上层弹窗/菜单（删除确认无输入框，审计 M5）", {
-    MdUiEnv env("escui");
+    test_support::MdHeadlessEnv env(kDirPrefix, "escui", kDbName);
     DOCTEST_REQUIRE(env.db != nullptr);
     DOCTEST_REQUIRE(writeTextFile(env.dir / "a.md", "# A\n正文A\n"));
 
@@ -2649,7 +2618,7 @@ struct FocusEnv {
 REGISTER_TEST(md_editor_focus_target_is_hit,
               "markdown_module: 预览块点击后聚焦 md.editor.input.hit（M0 C1，headless）", {
     const std::string text = "# T\n\npara one\npara two\n";
-    MdUiEnv env("focushit");
+    test_support::MdHeadlessEnv env(kDirPrefix, "focushit", kDbName);
     DOCTEST_REQUIRE(env.db != nullptr);
     DOCTEST_REQUIRE(writeTextFile(env.dir / "focus.md", text));
 
@@ -2723,7 +2692,7 @@ REGISTER_TEST(md_editor_focus_target_is_hit,
 REGISTER_TEST(md_module_live_mode_skeleton,
               "markdown_module: 第四态（实时）骨架 四态循环/元素集合/分段映射（headless）", {
     const std::string text = "# T\n\npara one\n\n```\nfence\n```\n\ntail\n";
-    MdUiEnv env("live");
+    test_support::MdHeadlessEnv env(kDirPrefix, "live", kDbName);
     DOCTEST_REQUIRE(env.db != nullptr);
     DOCTEST_REQUIRE(writeTextFile(env.dir / "live.md", text));
 
@@ -2929,7 +2898,7 @@ bool cycleMode(::core::Module* mod) {
 REGISTER_TEST(md_module_live_active_input,
               "markdown_module: 实时态活动块 input 就位 + 内容贴合高度（M2，headless）", {
     const std::string text = "# T\n\npara one\npara two\npara three\n";
-    MdUiEnv env("liveinput");
+    test_support::MdHeadlessEnv env(kDirPrefix, "liveinput", kDbName);
     DOCTEST_REQUIRE(env.db != nullptr);
     DOCTEST_REQUIRE(writeTextFile(env.dir / "live2.md", text));
 
@@ -3018,7 +2987,7 @@ REGISTER_TEST(md_module_live_active_input,
 REGISTER_TEST(md_module_live_input_roundtrip,
               "markdown_module: 实时态上行回写 == 编辑态同编辑（逐字节，M2）", {
     const std::string text = "# T\n\npara one\npara two\n";
-    MdUiEnv env("liveround");
+    test_support::MdHeadlessEnv env(kDirPrefix, "liveround", kDbName);
     DOCTEST_REQUIRE(env.db != nullptr);
 
     module::markdown::MdBlockModel model;
@@ -3155,7 +3124,7 @@ bool liveSplitAnchorScenario(const char* tag,
                              const std::string& text,
                              size_t cursorByte,
                              const std::vector<std::string>& typed) {
-    MdUiEnv env(tag);
+    test_support::MdHeadlessEnv env(kDirPrefix, tag, kDbName);
     DOCTEST_REQUIRE(env.db != nullptr);
     DOCTEST_REQUIRE(writeTextFile(env.dir / "split.md", text));
 
@@ -3314,7 +3283,7 @@ REGISTER_TEST(md_module_live_state_reset_note_switch,
               "markdown_module: 实时态换笔记复位滚动位置（W2 MD-05，headless）", {
     const std::string docA = tallNoteDoc("A", 60);
     const std::string docB = tallNoteDoc("B", 60);
-    MdUiEnv env("livereset");
+    test_support::MdHeadlessEnv env(kDirPrefix, "livereset", kDbName);
     DOCTEST_REQUIRE(env.db != nullptr);
     DOCTEST_REQUIRE(writeTextFile(env.dir / "a.md", docA));
     DOCTEST_REQUIRE(writeTextFile(env.dir / "b.md", docB));
@@ -3367,7 +3336,7 @@ REGISTER_TEST(md_module_live_state_reset_note_switch,
 // MD-05 第二条路径：切实时态与换笔记共用同一复位点（偏移归零 + 首帧聚焦）
 REGISTER_TEST(md_module_live_state_reset_on_enter,
               "markdown_module: 切实时态复位状态位群 + 首帧聚焦（W2 MD-05）", {
-    MdUiEnv env("liveenter");
+    test_support::MdHeadlessEnv env(kDirPrefix, "liveenter", kDbName);
     DOCTEST_REQUIRE(env.db != nullptr);
     DOCTEST_REQUIRE(writeTextFile(env.dir / "a.md", tallNoteDoc("E", 60)));
 
@@ -3417,7 +3386,7 @@ REGISTER_TEST(md_module_live_state_reset_on_enter,
 // 修复前这条路径完全不复位状态位群（首帧不聚焦活动 input）
 REGISTER_TEST(md_module_live_state_reset_on_restore,
               "markdown_module: 启动恢复实时态走同一复位点（W2 MD-05）", {
-    MdUiEnv env("liverestore");
+    test_support::MdHeadlessEnv env(kDirPrefix, "liverestore", kDbName);
     DOCTEST_REQUIRE(env.db != nullptr);
     DOCTEST_REQUIRE(writeTextFile(env.dir / "a.md", tallNoteDoc("R", 60)));
     // 预置视图状态：mode=3（实时）+ 上次笔记，onStart 尾部恢复
@@ -3452,7 +3421,7 @@ REGISTER_TEST(md_module_live_state_reset_on_restore,
 // 双栏态不钳）保持原样。本用例是抽出后「几何零变化」的回归锁。
 REGISTER_TEST(md_module_text_column_chrome_shared,
               "markdown_module: 编辑/实时文本列壳几何逐项相同（W2 MD-02）", {
-    MdUiEnv env("textchrome");
+    test_support::MdHeadlessEnv env(kDirPrefix, "textchrome", kDbName);
     DOCTEST_REQUIRE(env.db != nullptr);
     DOCTEST_REQUIRE(writeTextFile(env.dir / "a.md", "# A\n\nbody\n"));
 
@@ -3553,7 +3522,7 @@ REGISTER_TEST(md_module_text_column_chrome_shared,
 REGISTER_TEST(md_module_blockflow_hook_contrast,
               "markdown_module: 块流注入点对照（md_live 活动块特判 / 预览态空实现，MD-03）", {
     const std::string text = "# T\n\npara one\npara two\npara three\n";
-    MdUiEnv env("bflowhook");
+    test_support::MdHeadlessEnv env(kDirPrefix, "bflowhook", kDbName);
     DOCTEST_REQUIRE(env.db != nullptr);
     DOCTEST_REQUIRE(writeTextFile(env.dir / "hook.md", text));
 

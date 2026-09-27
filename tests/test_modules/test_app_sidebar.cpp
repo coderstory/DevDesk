@@ -48,10 +48,9 @@ private:
 
 float RecordingModule::lastScreenWidth = 0.0f;
 float RecordingModule::lastScreenHeight = 0.0f;
-std::filesystem::path tempConfigFile(const char* name) {
-    return test_temp::tempPath(
-        "devdesk_test_sidebar_" + std::string(name) + ".json");
-}
+// 每个用例独立的临时配置文件 —— 共享工厂（TIN-06b，原三份 tempConfigFile
+// 合流），调用点统一 test_support::tempConfigFile(kCfgPrefix, name)
+constexpr const char* kCfgPrefix = "devdesk_test_sidebar_";
 
 void writeRawConfig(const std::filesystem::path& file,
                     const std::string& json) {
@@ -75,7 +74,7 @@ bool floatEq(float a, float b) { return std::fabs(a - b) < 0.01f; }
 
 REGISTER_TEST(sidebar_config_default_and_roundtrip,
               "sidebar: sidebarCollapsed 默认 false + 存取往返", {
-    const std::filesystem::path file = tempConfigFile("roundtrip");
+    const std::filesystem::path file = test_support::tempConfigFile(kCfgPrefix, "roundtrip");
     std::error_code ec;
     std::filesystem::remove(file, ec);
 
@@ -97,7 +96,7 @@ REGISTER_TEST(sidebar_config_default_and_roundtrip,
 
 REGISTER_TEST(sidebar_config_legacy_missing_key,
               "sidebar: 老配置无 sidebarCollapsed 键 → 默认展开", {
-    const std::filesystem::path file = tempConfigFile("legacy");
+    const std::filesystem::path file = test_support::tempConfigFile(kCfgPrefix, "legacy");
     // 老格式：只有 theme（其余字段缺省）
     writeRawConfig(file, R"({"theme": "light"})");
     const module::settings::SettingsStore store(file);
@@ -112,7 +111,7 @@ REGISTER_TEST(sidebar_config_legacy_missing_key,
 
 REGISTER_TEST(sidebar_toggle_persists,
               "sidebar: setSidebarCollapsed 翻内存态并落盘（保留其他字段）", {
-    const std::filesystem::path file = tempConfigFile("toggle");
+    const std::filesystem::path file = test_support::tempConfigFile(kCfgPrefix, "toggle");
     std::error_code ec;
     std::filesystem::remove(file, ec);
 

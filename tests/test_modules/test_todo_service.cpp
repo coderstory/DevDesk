@@ -1,6 +1,7 @@
 // tests/test_modules/test_todo_service.cpp
 // TodoService 单元测试（详见 spec §8.2）
 #include "doctest.h"
+#include "test_support.h"
 #include "core/database.h"
 #include "core/sqlite_db.h"
 #include "module_todo/todo_service.h"
@@ -12,39 +13,17 @@
 
 namespace {
 
-std::filesystem::path tempDbPath(const std::string& tag) {
-    static int counter = 0;
-    ++counter;
-    auto name = "devdesk_test_todosvc_" + tag + "_" +
-                std::to_string(counter) + ".db";
-    return test_temp::tempPath(name);
-}
+// 临时 db 文件名前缀（共享工厂 test_support::TestEnv 的第一实参）
+constexpr const char* kDbPrefix = "devdesk_test_todosvc_";
 
-// 一次性环境：开临时 db → migrate → 创建 TodoService
-// RAII 自动清理
-struct TestEnv {
-    std::filesystem::path path;
-    std::unique_ptr<core::Database> db;
+// 一次性环境：开临时 db → migrate（共享 test_support::TestEnv，RAII 自动清理）
+// → 创建 TodoService
+struct TestEnv : test_support::TestEnv {
     std::unique_ptr<module::todo::TodoService> svc;
-    bool ready = false;
 
-    explicit TestEnv(const std::string& tag) {
-        path = tempDbPath(tag);
-        std::error_code ec;
-        std::filesystem::remove(path, ec);
-        auto r = core::Database::open(path);
-        if (r.isFail()) return;
-        if (r.value().migrate().isFail()) return;
-        db = std::make_unique<core::Database>(std::move(r.value()));
+    explicit TestEnv(const std::string& tag)
+        : test_support::TestEnv(kDbPrefix, tag) {
         svc = std::make_unique<module::todo::TodoService>(db->db());
-        ready = true;
-    }
-
-    ~TestEnv() {
-        db.reset();
-        svc.reset();
-        std::error_code ec;
-        std::filesystem::remove(path, ec);
     }
 };
 

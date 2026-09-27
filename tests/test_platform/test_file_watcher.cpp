@@ -27,13 +27,8 @@ namespace fs = std::filesystem;
 
 namespace {
 
-bool writeTextFile(const fs::path& path, const std::string& content) {
-    fs::create_directories(path.parent_path());
-    std::ofstream ofs(path, std::ios::binary | std::ios::trunc);
-    if (!ofs) return false;
-    ofs.write(content.data(), static_cast<std::streamsize>(content.size()));
-    return ofs.good();
-}
+// 写文本文件 —— 共享实现（TIN-06b，六份 writeTextFile/writeText 合流）
+using test_support::writeTextFile;
 
 // 事件收集器（回调线程 → 测试线程）。内部 shared 状态 → 本体可拷贝，
 // 满足 std::function 的 CopyConstructible 要求。

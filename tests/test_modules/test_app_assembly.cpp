@@ -131,9 +131,8 @@ const char* const kExpectedStartLog[] = {
 };
 
 // 临时笔记目录（dispatchFileOpen 的 notesDir 注入点）
-std::filesystem::path tempNotesDir() {
-    return test_temp::tempPath("devdesk_test_assembly_notes");
-}
+// —— 共享工厂 test_support::makeTempDir（TIN-06b，原 tempNotesDir 合流）
+constexpr const char* kNotesDirPrefix = "devdesk_test_assembly_notes";
 
 // ---- R0/D6：跨模块服务的装配契约（core 只读服务定位器） ----
 // 需求（重构 spec R0 / 审计 D6）：跨模块服务由装配段在模块 onStart **之前**
@@ -286,7 +285,8 @@ REGISTER_TEST(assembly_dispatch_and_tray_mapping,
     DOCTEST_CHECK_EQ(std::string(app::assembly::trayPageDisplayName(::core::PageId::Settings)), std::string("设置"));
 
     // ---- 4. dispatchFileOpen：笔记目录内文件 → "open:<相对路径>" 负载 + 切页 ----
-    const std::filesystem::path notesDir = tempNotesDir();
+    const std::filesystem::path notesDir =
+        test_support::makeTempDir(kNotesDirPrefix, "tray");
     std::error_code ec;
     std::filesystem::remove_all(notesDir, ec);
     std::filesystem::create_directories(notesDir, ec);

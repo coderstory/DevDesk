@@ -30,49 +30,29 @@ extern "C" ::core::Module* create_todo_module();
 
 namespace {
 
-std::filesystem::path tempDbPath() {
-    static int counter = 0;
-    ++counter;
-    return test_temp::tempPath(
-        "devdesk_test_todoui_" + std::to_string(counter) + ".db");
-}
+// 临时 db 文件名前缀（共享工厂 test_support::TestEnv 的第一实参）
+constexpr const char* kDbPrefix = "devdesk_test_todoui_";
 
-// RAII：临时库 + 注册全局 appDatabase（todo 模块 onStart 依赖）
-// 析构时一定解除注册，防悬垂污染后续用例
-struct TestEnv {
-    std::filesystem::path path;
+// RAII：临时库（共享 test_support::TestEnv；注册全局 appDatabase，todo 模块
+// onStart 依赖，析构时一定解除注册防悬垂污染后续用例）+ TodoService
+struct TestEnv : test_support::TestEnv {
     std::filesystem::path statePath;  // 审计 [23]：视图状态文件按用例隔离
-    std::unique_ptr<core::Database> db;
     std::unique_ptr<module::todo::TodoService> svc;
-    bool ready = false;
 
     // 视图状态路径经环境变量注入（无头用例不碰真实 %APPDATA% 状态文件）
-    TestEnv() {
-        path = tempDbPath();
-        std::error_code ec;
-        std::filesystem::remove(path, ec);
-        auto r = core::Database::open(path);
-        if (r.isFail()) return;
-        if (r.value().migrate().isFail()) return;
-        db = std::make_unique<core::Database>(std::move(r.value()));
-        ::core::registerAppDatabase(&db->db());
+    TestEnv() : test_support::TestEnv(kDbPrefix, "", true) {
         svc = std::make_unique<module::todo::TodoService>(db->db());
         statePath = path.string() + ".view_state.json";
+        std::error_code ec;
         std::filesystem::remove(statePath, ec);
-        test_support::setEnvVar("DEVDESK_TODO_VIEW_STATE_PATH", statePath.string());
-        ready = true;
+        test_support::setEnvVar("DEVDESK_TODO_VIEW_STATE_PATH",
+                                statePath.string());
     }
 
     ~TestEnv() {
         test_support::setEnvVar("DEVDESK_TODO_VIEW_STATE_PATH", "");
-        ::core::registerAppDatabase(nullptr);
-        svc.reset();
-        db.reset();
         std::error_code ec;
         std::filesystem::remove(statePath, ec);
-        std::filesystem::remove(path, ec);
-        std::filesystem::remove(path.string() + "-wal", ec);
-        std::filesystem::remove(path.string() + "-shm", ec);
     }
 };
 
