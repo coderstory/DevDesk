@@ -1604,6 +1604,131 @@ REGISTER_TEST(todo_ui_overdue_min_one_day,
     return true;
 })
 
+// THS-06：逾期查询失败不得伪装成「逾期 0」——此前 openOverdueDialog 把失败
+// 当空结果开弹窗（「逾期任务（0）」），refreshOverdueCount 静默改写为 0
+REGISTER_TEST(todo_ui_overdue_query_fail,
+              "todo_ui: 逾期查询失败 → 报错不开伪空弹窗（THS-06，headless）", {
+    TestEnv env;
+    DOCTEST_REQUIRE(env.ready);
+    auto list = env.svc->listColumns();
+    DOCTEST_REQUIRE(list.isOk());
+    const int64_t todoCol = list.value()[0].id;
+    auto t = env.svc->createTask(todoCol, "逾期任务甲");
+    DOCTEST_REQUIRE(t.isOk());
+    {
+        module::todo::Task u = t.value();
+        u.dueAt = static_cast<int64_t>(std::time(nullptr)) - 2 * 86400;
+        DOCTEST_REQUIRE(env.svc->updateTask(u).isOk());
+    }
+
+    std::unique_ptr<::core::Module> mod(create_todo_module());
+    mod->onStart();
+
+    {
+        Frame frame(mod.get());
+        const auto* badge = frame.ui.find("todo.btn.overdue.text");
+        DOCTEST_REQUIRE(badge != nullptr);
+        DOCTEST_CHECK(badge->text.find("1") != std::string::npos);  // 计数 = 1
+
+        // 注入查询失败：删任务表 → listOverdue 的 SELECT 失败
+        DOCTEST_REQUIRE(env.db->db().exec("DROP TABLE todo_tasks").isOk());
+
+        // ① 点 badge：失败 → 不开弹窗（旧行为开成「逾期任务（0）」）+ 报错
+        const auto* btn = frame.ui.find("todo.btn.overdue.bg");
+        DOCTEST_REQUIRE(btn != nullptr);
+        DOCTEST_REQUIRE(btn->onClick != nullptr);
+        btn->onClick();
+        frame.refresh();
+        const auto* panel = frame.ui.find("todo.dialog.overdue.panel");
+        DOCTEST_REQUIRE(panel != nullptr);
+        DOCTEST_CHECK_EQ(panel->opacity, 0.0f);
+        const auto* toast = frame.ui.find("todo.toast.title");
+        DOCTEST_REQUIRE(toast != nullptr);
+        DOCTEST_CHECK(toast->text.find("逾期任务加载失败") != std::string::npos);
+
+        // ② 刷新路径（列右移成功 → reloadAll → refreshOverdueCount 失败）：
+        //    失败不得静默把 badge 改写为 0，须报错且保留上次计数
+        eui::PointerEvent pe;
+        eui::Rect rect;
+        const auto* head = frame.ui.find("todo.col.0.head");
+        DOCTEST_REQUIRE(head != nullptr);
+        head->onContextMenu(pe, rect);
+        frame.refresh();
+        const auto* shiftRight = frame.ui.find("todo.ctx.level.0.item.2");
+        DOCTEST_REQUIRE(shiftRight != nullptr);
+        shiftRight->onClick();
+        frame.refresh();
+        const auto* toast2 = frame.ui.find("todo.toast.title");
+        DOCTEST_REQUIRE(toast2 != nullptr);
+        DOCTEST_CHECK(toast2->text.find("逾期任务查询失败") != std::string::npos);
+        const auto* badge2 = frame.ui.find("todo.btn.overdue.text");
+        DOCTEST_REQUIRE(badge2 != nullptr);
+        DOCTEST_CHECK(badge2->text.find("1") != std::string::npos);  // 保留计数
+    }
+
+    mod->onStop();
+    return true;
+})
+
+// THS-06：完成态流转的「列迁移」失败不得再提示成功——此前只 LOG_WARN 后被吞，
+// 用户看到「任务已完成」而卡片留在原列，再点一次也看不出原因
+REGISTER_TEST(todo_ui_complete_move_fail,
+              "todo_ui: 完成后列迁移失败 → 报错不报成功（THS-06，headless）", {
+    TestEnv env;
+    DOCTEST_REQUIRE(env.ready);
+    auto list = env.svc->listColumns();
+    DOCTEST_REQUIRE(list.isOk());
+    const int64_t todoCol = list.value()[0].id;
+    auto a = env.svc->createTask(todoCol, "列迁移失败任务");
+    DOCTEST_REQUIRE(a.isOk());
+
+    std::unique_ptr<::core::Module> mod(create_todo_module());
+    mod->onStart();
+
+    {
+        Frame frame(mod.get());
+        eui::PointerEvent pe;
+        eui::Rect rect;
+        const auto* card = frame.ui.find("todo.col.0.card.0.bg");
+        DOCTEST_REQUIRE(card != nullptr);
+        card->onContextMenu(pe, rect);
+        frame.refresh();
+        const auto* edit = frame.ui.find("todo.ctx.level.0.item.0");
+        DOCTEST_REQUIRE(edit != nullptr);
+        edit->onClick();
+        frame.refresh();
+
+        // 注入列迁移失败：只挡 moveTask 的 SET column_id（状态迁移不经该列，
+        // 详情表单保存的 updateTask 也不经它）
+        DOCTEST_REQUIRE(
+            env.db->db()
+                .exec("CREATE TRIGGER ths06_block_move BEFORE UPDATE OF column_id "
+                      "ON todo_tasks BEGIN SELECT RAISE(ABORT, 'THS-06 injected'); END")
+                .isOk());
+
+        const auto* toggle = frame.ui.find("todo.dialog.detail.toggle.bg");
+        DOCTEST_REQUIRE(toggle != nullptr);
+        DOCTEST_REQUIRE(toggle->onClick != nullptr);
+        toggle->onClick();
+        frame.refresh();
+
+        const auto* toast = frame.ui.find("todo.toast.title");
+        DOCTEST_REQUIRE(toast != nullptr);
+        DOCTEST_CHECK(toast->text.find("移入已完成列失败") != std::string::npos);
+    }
+
+    // 诚实的中途态：状态迁移已生效（已完成），卡片仍留原列——但用户已被明确告知
+    {
+        auto inTodo = env.svc->listTasks(todoCol);
+        DOCTEST_REQUIRE(inTodo.isOk());
+        DOCTEST_REQUIRE_EQ(inTodo.value().size(), 1u);
+        DOCTEST_CHECK(inTodo.value()[0].completedAt.has_value());
+    }
+
+    mod->onStop();
+    return true;
+})
+
 // tags 编辑：回车添加 / × 删除 / 保存往返（JSON 序列化）/ 卡片渲染前 2 个 + 超出 +N
 REGISTER_TEST(todo_ui_tags_edit_roundtrip,
               "todo_ui: 详情 tags 编辑往返 + 卡片 chip 渲染（headless）", {

@@ -258,18 +258,34 @@ public:
     }
 
     void refreshOverdueCount() {
-        overdueCount_ = 0;
         if (!service_) return;
         auto r = service_->listOverdue();
-        if (r.isOk()) overdueCount_ = r.value().size();
+        if (r.isFail()) {
+            // 审计 THS-06：读取失败不得降级成「0 条」——badge 保留上次已知
+            // 计数（不假装为空），并把失败报出去。此前无 else、无日志，
+            // badge 恒 0 且用户无从察觉。
+            LOG_ERROR("Todo: 逾期计数查询失败（badge 保留上次值）: " + r.errorMessage());
+            setStatus("逾期任务查询失败：" + r.errorMessage(), true);
+            return;
+        }
+        overdueCount_ = r.value().size();
     }
 
     void openOverdueDialog() {
-        overdueTasks_.clear();
-        if (service_) {
-            auto r = service_->listOverdue();
-            if (r.isOk()) overdueTasks_ = std::move(r).value();
+        if (!service_) {
+            setStatus("服务未就绪（TodoService 未注册）", true);
+            return;
         }
+        auto r = service_->listOverdue();
+        if (r.isFail()) {
+            // 审计 THS-06：查询失败不得当成空结果开弹窗——入口刚显示 N 条，
+            // 弹「逾期任务（0）」会让用户以为数据丢了。改为报错 + 不开弹窗
+            //（overdueTasks_ 保持上次内容，不写入伪空）。
+            LOG_ERROR("Todo: 逾期弹窗查询失败: " + r.errorMessage());
+            setStatus("逾期任务加载失败：" + r.errorMessage(), true);
+            return;
+        }
+        overdueTasks_ = std::move(r).value();
         overdueCount_ = overdueTasks_.size();
         overdueOpen_ = true;
     }
@@ -360,22 +376,7 @@ public:
             return;
         }
         // 看板行为：完成后移到已完成列（kind='done'），追加到列尾
-        const int64_t doneCol = findColumnByKind("done");
-        if (doneCol != 0) {
-            auto mv = service_->moveTask(
-                taskId, doneCol, ui::computeAppendPosition(tasks_, doneCol));
-            if (mv.isFail()) {
-                LOG_WARN("Todo: 完成后移动到已完成列失败: " + mv.errorMessage());
-            }
-        } else {
-            // 明示而非静默：没有 done 列时任务留在原列，用户需要知道为什么
-            setStatus("任务已完成（未找到 kind='done' 的列，任务留在原列）");
-            reloadAll();
-            return;
-        }
-        // toast 图标通道已带 fa-check（drawToast），正文不再混排 ✓ 字符
-        setStatus("任务已完成");
-        reloadAll();
+        finishCompletionMove(taskId, "done");
     }
 
     void doUncompleteTask(int64_t taskId) {
@@ -385,22 +386,39 @@ public:
             setStatus("取消完成失败：" + r.errorMessage(), true);
             return;
         }
-        // 撤回到待办列（kind='todo'），追加到列尾。
-        // 此前假设 columns_.front() 是待办列——用户重排列后会把任务
-        // 撤到错误的列，改为按语义标记定位。
-        const int64_t todoCol = findColumnByKind("todo");
-        if (todoCol != 0) {
-            auto mv = service_->moveTask(
-                taskId, todoCol, ui::computeAppendPosition(tasks_, todoCol));
-            if (mv.isFail()) {
-                LOG_WARN("Todo: 取消完成后移回待办列失败: " + mv.errorMessage());
-            }
-        } else {
-            setStatus("已取消完成（未找到 kind='todo' 的列，任务留在原列）");
+        finishCompletionMove(taskId, "todo");
+    }
+
+    // 状态迁移成功后的列迁移收尾——「状态迁移 + 列迁移」合起来才算一次操作
+    //（审计 THS-06）：列迁移失败时不得再提示成功，改报错并按真实状态刷新。
+    // 此前只 LOG_WARN 就接着 setStatus("任务已完成")，用户看到成功提示而卡片
+    // 留在原列，再点一次也看不出原因。
+    // 目标列按语义标记 kind（'done' / 'todo'）定位，不按标题也不按
+    // columns_.front()：用户重命名/重排列后标题与下标都不可靠。
+    void finishCompletionMove(int64_t taskId, const std::string& kind) {
+        const bool toDone = (kind == "done");
+        const std::string successMsg = toDone ? "任务已完成" : "已取消完成";
+        const int64_t targetCol = findColumnByKind(kind);
+        if (targetCol == 0) {
+            // 明示而非静默：没有语义列时任务留在原列，用户需要知道为什么
+            setStatus(successMsg + "（未找到 kind='" + kind + "' 的列，任务留在原列）");
             reloadAll();
             return;
         }
-        setStatus("已取消完成");
+        auto mv = service_->moveTask(
+            taskId, targetCol, ui::computeAppendPosition(tasks_, targetCol));
+        if (mv.isFail()) {
+            LOG_ERROR("Todo: 完成态流转的列迁移失败（kind=" + kind +
+                      "）: " + mv.errorMessage());
+            setStatus((toDone ? "任务已标记完成，但移入已完成列失败："
+                              : "已取消完成，但移回待办列失败：") +
+                          mv.errorMessage(),
+                      true);
+            reloadAll();
+            return;
+        }
+        // toast 图标通道已带 fa-check（drawToast），正文不再混排 ✓ 字符
+        setStatus(successMsg);
         reloadAll();
     }
 
