@@ -156,8 +156,12 @@ constexpr int kIconExit = 0xF011;
 constexpr int kIconConfirm = 0xF071;   // 退出确认：triangle-exclamation
 constexpr int kIconCancel = 0xF00D;    // 取消：xmark
 
-// 菜单位置：x 取光标屏位；y 锚到宠物窗顶上方 menuHeight 处——菜单向下
+// 菜单位置：x 取光标屏位；y 锚到宠物窗顶上方「菜单窗实际高」处——菜单向下
 // 展开不叠宠物（2026-09-24 用户要求；styledMenuClampPosition 兜底越顶贴顶）
+// menuHeight 入参是逻辑单位（inset/行高/margin 之和），菜单窗实际高是它的
+// 「显示器缩放 × 用户缩放」倍（styledmenu.h openWindow 的 windowSize 按物理
+// 像素创建）——不按同一口径抬升，125% 显示器上菜单会向下多压宠物
+// (系数−1)×高 ≈ 26px。显示器按锚点所在位置选（菜单 x 屏位 × 宠物窗顶）。
 std::pair<float, float> petMenuAnchorPos(float menuHeight) {
     double cursorX = 0.0;
     double cursorY = 0.0;
@@ -165,8 +169,11 @@ std::pair<float, float> petMenuAnchorPos(float menuHeight) {
     int winX = 0;
     int winY = 0;
     core::window::getWindowPos(runtime().handle, winX, winY);
-    return {static_cast<float>(winX) + static_cast<float>(cursorX),
-            static_cast<float>(winY) - menuHeight};
+    const float anchorX = static_cast<float>(winX) + static_cast<float>(cursorX);
+    const float anchorY = static_cast<float>(winY);
+    const float menuWindowHeight =
+        menuHeight * core::window::windowScaleForPoint(anchorX, anchorY) * app::uiScale();
+    return {anchorX, anchorY - menuWindowHeight};
 }
 
 components::StyledMenuStyle petMenuStyle() {
