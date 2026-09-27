@@ -15,6 +15,9 @@
 #include "core/theme.h"
 #include "module_markdown/md_highlight.h"
 #include "module_markdown/md_line_scanner.h"
+#include "module_markdown/md_ids.h"
+
+using module::markdown::kEditorInputId;
 
 #include <components/input.h>
 #include <eui/dsl.h>
@@ -501,7 +504,7 @@ REGISTER_TEST(md_highlight_wiring,
     frame();
     using InputState = components::input_detail::InputModel::InputState;
     {
-        auto& st = ui.state<InputState>("md.editor.input");
+        auto& st = ui.state<InputState>(kEditorInputId);
         st.followCaret = false;
         st.verticalScroll = 0.0f;
     }
@@ -528,12 +531,12 @@ REGISTER_TEST(md_highlight_wiring,
                           core::theme::current().colors.success));
 
     // 主题切换：styleRevision++ 且可视行 runs 换色（Phase B 语义）
-    const auto revBefore = ui.state<InputState>("md.editor.input").styleRevision;
+    const auto revBefore = ui.state<InputState>(kEditorInputId).styleRevision;
     const std::string themeBefore = core::theme::currentThemeName();
     core::theme::setLight();
     frame();
     {
-        const auto& st = ui.state<InputState>("md.editor.input");
+        const auto& st = ui.state<InputState>(kEditorInputId);
         DOCTEST_CHECK_EQ(st.styleRevision, revBefore + 1);
     }
     const auto* line1Light = ui.find("md.editor.input.text.1");

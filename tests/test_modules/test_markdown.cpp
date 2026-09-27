@@ -13,6 +13,9 @@
 #include "module_markdown/md_line_scanner.h"
 #include "module_markdown/md_tree.h"
 #include "module_markdown/md_view_state.h"
+#include "module_markdown/md_ids.h"
+
+using module::markdown::kEditorInputId;
 
 #include <components/input.h>
 #include <core/dsl_runtime.h>
@@ -477,13 +480,13 @@ REGISTER_TEST(md_module_compose_phase1, "markdown_module: Phase 1 三态/大纲/
     // 帧2：默认编辑态（W9）——只有树 + 编辑器两个可见列，预览列不渲染；
     // 编辑列内 720px 写作列 clamp 居中（1600 宽 → editor x 明显右移）
     frame("f2");
-    DOCTEST_CHECK(ui.find("md.editor.input") != nullptr);
+    DOCTEST_CHECK(ui.find(kEditorInputId) != nullptr);
     DOCTEST_CHECK(ui.find("md.preview.scroll") == nullptr);
     const auto* save = ui.find("md.status.save");
     DOCTEST_REQUIRE(save != nullptr);
     DOCTEST_CHECK(save->text.find("note.md") != std::string::npos);
     DOCTEST_CHECK(save->text.find("已保存") != std::string::npos);
-    const auto* edDefault = ui.find("md.editor.input");
+    const auto* edDefault = ui.find(kEditorInputId);
     DOCTEST_REQUIRE(edDefault != nullptr);
     DOCTEST_CHECK(edDefault->x > 100.0f);
 
@@ -507,7 +510,7 @@ REGISTER_TEST(md_module_compose_phase1, "markdown_module: Phase 1 三态/大纲/
     DOCTEST_REQUIRE(out2 != nullptr);
     DOCTEST_REQUIRE(out2->onClick != nullptr);
     out2->onClick();
-    const auto& st = ui.state<components::input_detail::InputModel::InputState>("md.editor.input");
+    const auto& st = ui.state<components::input_detail::InputModel::InputState>(kEditorInputId);
     const auto headings = scanHeadings(text);
     DOCTEST_REQUIRE(headings.size() == 2);
     DOCTEST_CHECK_EQ(st.cursor, static_cast<int>(headings[1].byteOffset));
@@ -528,20 +531,20 @@ REGISTER_TEST(md_module_compose_phase1, "markdown_module: Phase 1 三态/大纲/
     DOCTEST_CHECK(mod->onKeyEvent(p));   // → Live（M1 新增第四态）
     frame("f3c");
     DOCTEST_CHECK(ui.find("md.live.scroll") != nullptr);
-    DOCTEST_CHECK(ui.find("md.editor.input") == nullptr);
+    DOCTEST_CHECK(ui.find(kEditorInputId) == nullptr);
     DOCTEST_CHECK(ui.find("md.preview.scroll") == nullptr);
     DOCTEST_CHECK(mod->onKeyEvent(p));   // → Split
     frame("f4");
-    DOCTEST_CHECK(ui.find("md.editor.input") != nullptr);
+    DOCTEST_CHECK(ui.find(kEditorInputId) != nullptr);
     DOCTEST_CHECK(ui.find("md.preview.scroll") != nullptr);
     DOCTEST_CHECK(ui.find("md.live.scroll") == nullptr);
     DOCTEST_CHECK(mod->onKeyEvent(p));   // → Preview
     frame("f5");
-    DOCTEST_CHECK(ui.find("md.editor.input") == nullptr);
+    DOCTEST_CHECK(ui.find(kEditorInputId) == nullptr);
     DOCTEST_CHECK(ui.find("md.preview.scroll") != nullptr);
     DOCTEST_CHECK(mod->onKeyEvent(p));   // → Edit（回默认）
     frame("f6");
-    DOCTEST_CHECK(ui.find("md.editor.input") != nullptr);
+    DOCTEST_CHECK(ui.find(kEditorInputId) != nullptr);
     DOCTEST_CHECK(ui.find("md.preview.scroll") == nullptr);
     DOCTEST_CHECK(ui.find("md.live.scroll") == nullptr);
 
@@ -616,7 +619,7 @@ REGISTER_TEST(md_module_compose_tree, "markdown_module: W8 目录树展开收起
     DOCTEST_REQUIRE(fileRow != nullptr);
     fileRow->onClick();
     frame("t4");
-    DOCTEST_CHECK(ui.find("md.editor.input") != nullptr);
+    DOCTEST_CHECK(ui.find(kEditorInputId) != nullptr);
 
     mod->onStop();
     return true;
@@ -1033,7 +1036,7 @@ REGISTER_TEST(md_module_split_layout, "markdown_module: W9 双栏三列铺满 co
     bool split = false;
     for (int i = 0; i < 3 && !split; ++i) {
         frame("sp");
-        split = ui.find("md.editor.input") != nullptr &&
+        split = ui.find(kEditorInputId) != nullptr &&
                ui.find("md.preview.scroll") != nullptr;
         if (!split) mod->onKeyEvent(p);
     }
@@ -1156,7 +1159,7 @@ REGISTER_TEST(md_module_compose_outline_float, "markdown_module: W8 大纲浮动
     DOCTEST_CHECK(panel->frame.x + panel->frame.width <= screen.width);
 
     // 不挤压编辑区：开面板前后编辑器宽度一致（同一屏宽）
-    const auto* ed = ui.find("md.editor.input");
+    const auto* ed = ui.find(kEditorInputId);
     DOCTEST_REQUIRE(ed != nullptr);
     DOCTEST_CHECK(ed->width.value > 400.0f);   // 默认编辑态编辑列全宽（W9）
 
@@ -1200,7 +1203,7 @@ REGISTER_TEST(md_module_compose_w7, "markdown_module: W7 pagebg/toast compose（
     DOCTEST_REQUIRE(row->onClick != nullptr);
     row->onClick();
     frame("w7_f2");
-    DOCTEST_CHECK(ui.find("md.editor.input") != nullptr);
+    DOCTEST_CHECK(ui.find(kEditorInputId) != nullptr);
     mod->onStop();
     return true;
 })
@@ -1350,7 +1353,7 @@ REGISTER_TEST(md_module_delete_note_ui, "markdown_module: 右键→删除→确�
     DOCTEST_REQUIRE(row1->onContextMenu != nullptr);
     row1->onClick();
     frame("d2");
-    DOCTEST_CHECK(ui.find("md.editor.input") != nullptr);
+    DOCTEST_CHECK(ui.find(kEditorInputId) != nullptr);
 
     eui::PointerEvent pe;
     pe.x = 150.0;
@@ -1377,7 +1380,7 @@ REGISTER_TEST(md_module_delete_note_ui, "markdown_module: 右键→删除→确�
     cancelBtn->onClick();
     frame("d5");
     DOCTEST_CHECK(fs::exists(env.dir / "a.md"));
-    DOCTEST_CHECK(ui.find("md.editor.input") != nullptr);  // 编辑器未受影响
+    DOCTEST_CHECK(ui.find(kEditorInputId) != nullptr);  // 编辑器未受影响
 
     // 确认路径：再右键 → 删除 → 确认 → 文件删除、树消失、编辑器清回空态；
     // b.md 不受牵连
@@ -1567,7 +1570,7 @@ REGISTER_TEST(md_module_rename_note_ui, "markdown_module: 右键→重命名→�
     DOCTEST_CHECK_FALSE(treeHas("old.md"));
     // 编辑器继续跟随这篇笔记：非空态、内容保留、状态栏文件名已更新
     DOCTEST_CHECK(ui.find("md.editor.hint") == nullptr);
-    const auto& est = ui.state<InputState>("md.editor.input");
+    const auto& est = ui.state<InputState>(kEditorInputId);
     DOCTEST_CHECK_EQ(est.text, std::string("# Old\n正文\n"));
     const auto* status = ui.find("md.status.save");
     DOCTEST_REQUIRE(status != nullptr);
@@ -2047,7 +2050,7 @@ REGISTER_TEST(md_module_status_bar_cache_equivalence,
         return n == nullptr ? std::string("<missing>") : n->text;
     };
     auto checkMatchesRecompute = [&](void) -> bool {
-        const auto& st = ui.state<IS>("md.editor.input");
+        const auto& st = ui.state<IS>(kEditorInputId);
         const std::string o = oracle(st.text, st.cursor);
         const std::string s = statusPos();
         if (s.compare(0, o.size(), o) != 0) {
@@ -2092,13 +2095,13 @@ REGISTER_TEST(md_module_status_bar_cache_equivalence,
     DOCTEST_REQUIRE(hit != nullptr);
     DOCTEST_REQUIRE(hit->onTextInput != nullptr);
     const size_t charsBefore = module::markdown::utf8Length(
-        ui.state<IS>("md.editor.input").text);
+        ui.state<IS>(kEditorInputId).text);
     core::TextInputEvent ev;
     ev.text = "汉";
     hit->onTextInput(ev);
     frame();
     DOCTEST_CHECK_EQ(module::markdown::utf8Length(
-                         ui.state<IS>("md.editor.input").text),
+                         ui.state<IS>(kEditorInputId).text),
                      charsBefore + 1);
     DOCTEST_CHECK(checkMatchesRecompute());
     const std::string s7 = statusPos();
@@ -2158,7 +2161,7 @@ REGISTER_TEST(md_module_split_scroll_cache_equivalence,
     DOCTEST_CHECK(mod->onKeyEvent(p));   // → 双栏
     frame();
     frame();
-    DOCTEST_CHECK(ui.find("md.editor.input") != nullptr);
+    DOCTEST_CHECK(ui.find(kEditorInputId) != nullptr);
     const auto* pvScroll = ui.find("md.preview.scroll");
     DOCTEST_REQUIRE(pvScroll != nullptr);
     DOCTEST_CHECK(pvScroll->scrollMaxOffset > 0.0f);   // 内容高于视口才可滚
@@ -2243,7 +2246,7 @@ REGISTER_TEST(md_module_split_scroll_cache_equivalence,
 //   ③ 同型块跨 rep 步长一致（累计漂移为零）
 //   ④ 文首插入一个与已测 paraA 逐字同源的段落块后，深层未变块首行读数
 //      位移 == 插入块高（= s_A×lc_A）+ gap（锚点跟随块几何，不按节摊分漂移）
-// 编辑器行高 = editorFontSize()×1.2，与模块 kEditorLineHeightFactor 同步。
+// 编辑器行高 = editorFontSize()×1.2，与模块 kInputLineHeightFactor 同步。
 // 注：REGISTER_TEST 是宏，body 内裸逗号（如 std::map<int, float> 的模板
 // 逗号）会被当宏参数分隔——逗号一律藏进括号或类型别名。
 namespace {
@@ -2308,7 +2311,7 @@ REGISTER_TEST(md_module_split_block_anchor_precision,
     auto atLine = [&](int line) -> float {
         auto it = probeCache.find(line);
         if (it != probeCache.end()) return it->second;
-        auto& st = ui.state<IS>("md.editor.input");
+        auto& st = ui.state<IS>(kEditorInputId);
         st.followCaret = false;  // 不清则组件每帧把滚动拽回光标位（同 md_highlight 用例）
         st.verticalScroll = static_cast<float>(line) * lineH;
         frame();
@@ -2395,7 +2398,7 @@ REGISTER_TEST(md_module_split_block_anchor_precision,
     const float offA = atLine(fl[tgt]);
     DOCTEST_CHECK(offA > 0.0f);
     {
-        auto& st = ui.state<IS>("md.editor.input");
+        auto& st = ui.state<IS>(kEditorInputId);
         st.cursor = 0;
         st.selectionStart = 0;
         st.selectionEnd = 0;
@@ -2410,7 +2413,7 @@ REGISTER_TEST(md_module_split_block_anchor_precision,
     frame();
     frame();
     const std::string text2 = aSrc + text;
-    DOCTEST_CHECK(ui.state<IS>("md.editor.input").text == text2);
+    DOCTEST_CHECK(ui.state<IS>(kEditorInputId).text == text2);
     const auto blocksNew = module::markdown::segmentMarkdownBlocks(text2);
     DOCTEST_REQUIRE(blocksNew.size() == blocks.size() + 1);
     const std::string targetSrc =
@@ -2426,7 +2429,7 @@ REGISTER_TEST(md_module_split_block_anchor_precision,
     DOCTEST_REQUIRE(tgtNew < blocksNew.size());
     const int flTgtNew = static_cast<int>(std::count(
         text2.begin(), text2.begin() + static_cast<long>(blocksNew[tgtNew].start), '\n'));
-    auto& stPoke = ui.state<IS>("md.editor.input");
+    auto& stPoke = ui.state<IS>(kEditorInputId);
     stPoke.followCaret = false;
     stPoke.verticalScroll = static_cast<float>(flTgtNew) * lineH;
     frame();
@@ -2522,7 +2525,7 @@ REGISTER_TEST(md_module_split_block_click_hover,
     // ① 点击 CodeFence 块顶 → 光标 = 块起始字节（``` 开栏行行首）
     tap(fenceHit, 0.0f);
     {
-        const auto& st = ui.state<IS>("md.editor.input");
+        const auto& st = ui.state<IS>(kEditorInputId);
         DOCTEST_CHECK_EQ(st.cursor, static_cast<int>(blocks[kf].start));
         DOCTEST_CHECK_EQ(st.selectionStart, st.cursor);
         DOCTEST_CHECK_EQ(st.selectionEnd, st.cursor);
@@ -2535,10 +2538,10 @@ REGISTER_TEST(md_module_split_block_click_hover,
         module::markdown::lineStartOffset(text, flNext - 1);
     DOCTEST_REQUIRE(closeByte > blocks[kf].start);
     tap(fenceHit, 1.0f);
-    DOCTEST_CHECK_EQ(ui.state<IS>("md.editor.input").cursor,
+    DOCTEST_CHECK_EQ(ui.state<IS>(kEditorInputId).cursor,
                      static_cast<int>(closeByte));
     frame();
-    DOCTEST_CHECK_EQ(ui.state<IS>("md.editor.input").cursor,
+    DOCTEST_CHECK_EQ(ui.state<IS>(kEditorInputId).cursor,
                      static_cast<int>(closeByte));
 
     // ③ hover：上游 Heading 块底衬 idle 透明 → enter 后 = 主题 hover 色
@@ -2710,7 +2713,7 @@ REGISTER_TEST(md_editor_focus_target_is_hit,
     p.modifiers.control = true;
     p.modifiers.shift = true;
     auto inSplit = [&] {
-        return env2.ui->find("md.editor.input") != nullptr &&
+        return env2.ui->find(kEditorInputId) != nullptr &&
                env2.ui->find("md.preview.blk.0.hit") != nullptr;
     };
     for (int i = 0; i < 4 && !inSplit(); ++i) {
@@ -2740,7 +2743,7 @@ REGISTER_TEST(md_editor_focus_target_is_hit,
     frame();  // 帧末消费 requestFocus → focusedId_ 本帧更新
     DOCTEST_CHECK(env2.ui->isFocused("md.editor.input.hit"));
     // 反向观测：基 id 不是聚焦目标（修复前发基 id，本行会红）
-    DOCTEST_CHECK_FALSE(env2.ui->isFocused("md.editor.input"));
+    DOCTEST_CHECK_FALSE(env2.ui->isFocused(kEditorInputId));
     // 组件按「本帧收到的 focused」画 caret/边框 → 焦点生效的观感在次帧出现
     //（M0 V1：requestFocus 帧末消费，≈16ms 延迟）
     frame();
@@ -2782,7 +2785,7 @@ REGISTER_TEST(md_module_live_mode_skeleton,
     frame();
 
     // 编辑态（默认）：编辑器在、实时/预览列都不在
-    DOCTEST_CHECK(ui.find("md.editor.input") != nullptr);
+    DOCTEST_CHECK(ui.find(kEditorInputId) != nullptr);
     DOCTEST_CHECK(ui.find("md.live.scroll") == nullptr);
     DOCTEST_CHECK(ui.find("md.preview.scroll") == nullptr);
 
@@ -2806,7 +2809,7 @@ REGISTER_TEST(md_module_live_mode_skeleton,
     DOCTEST_CHECK(ui.find("md.live.bg") != nullptr);
     DOCTEST_CHECK(ui.find("md.live.blocks") != nullptr);
     DOCTEST_CHECK(ui.find("md.live.blk.0.hit") != nullptr);  // 首块渲染 + hit 覆盖层
-    DOCTEST_CHECK(ui.find("md.editor.input") == nullptr);
+    DOCTEST_CHECK(ui.find(kEditorInputId) == nullptr);
     DOCTEST_CHECK(ui.find("md.preview.scroll") == nullptr);
     // 左树 / 顶栏动作 / 状态栏 / segmented：四态共享（零改动）
     DOCTEST_CHECK(ui.find("md.tree.bg") != nullptr);
@@ -2817,21 +2820,21 @@ REGISTER_TEST(md_module_live_mode_skeleton,
     // → 双栏
     DOCTEST_CHECK(mod->onKeyEvent(p));
     frame();
-    DOCTEST_CHECK(ui.find("md.editor.input") != nullptr);
+    DOCTEST_CHECK(ui.find(kEditorInputId) != nullptr);
     DOCTEST_CHECK(ui.find("md.preview.scroll") != nullptr);
     DOCTEST_CHECK(ui.find("md.live.scroll") == nullptr);
 
     // → 预览
     DOCTEST_CHECK(mod->onKeyEvent(p));
     frame();
-    DOCTEST_CHECK(ui.find("md.editor.input") == nullptr);
+    DOCTEST_CHECK(ui.find(kEditorInputId) == nullptr);
     DOCTEST_CHECK(ui.find("md.preview.scroll") != nullptr);
     DOCTEST_CHECK(ui.find("md.live.scroll") == nullptr);
 
     // → 编辑（循环回起点）
     DOCTEST_CHECK(mod->onKeyEvent(p));
     frame();
-    DOCTEST_CHECK(ui.find("md.editor.input") != nullptr);
+    DOCTEST_CHECK(ui.find(kEditorInputId) != nullptr);
     DOCTEST_CHECK(ui.find("md.live.scroll") == nullptr);
     DOCTEST_CHECK(ui.find("md.preview.scroll") == nullptr);
 
@@ -2842,7 +2845,7 @@ REGISTER_TEST(md_module_live_mode_skeleton,
     segLive->onClick();
     frame();
     DOCTEST_CHECK(ui.find("md.live.scroll") != nullptr);
-    DOCTEST_CHECK(ui.find("md.editor.input") == nullptr);
+    DOCTEST_CHECK(ui.find(kEditorInputId) == nullptr);
 
     mod->onStop();
     return true;
@@ -2991,15 +2994,15 @@ REGISTER_TEST(md_module_live_active_input,
     frame();
     DOCTEST_REQUIRE(openFirstNote(*e.ui));
     frame();
-    DOCTEST_REQUIRE(e.ui->find("md.editor.input") != nullptr);
+    DOCTEST_REQUIRE(e.ui->find(kEditorInputId) != nullptr);
     // 编辑态放入文档光标（进实时态时作为活动块锚的初始来源）
-    e.ui->state<MdInputState>("md.editor.input").cursor =
+    e.ui->state<MdInputState>(kEditorInputId).cursor =
         static_cast<int>(cursorByte);
 
     DOCTEST_REQUIRE(cycleMode(mod.get()));   // → 实时
     frame();
     DOCTEST_REQUIRE(e.ui->find("md.live.scroll") != nullptr);
-    DOCTEST_CHECK(e.ui->find("md.editor.input") == nullptr);
+    DOCTEST_CHECK(e.ui->find(kEditorInputId) == nullptr);
     DOCTEST_CHECK(e.ui->find("md.preview.scroll") == nullptr);
 
     // ① 活动块源码态 input 就位：内容 = 活动块源码（逐字节）
@@ -3086,8 +3089,8 @@ REGISTER_TEST(md_module_live_input_roundtrip,
         frame();
         DOCTEST_REQUIRE(openFirstNote(*e.ui));
         frame();
-        DOCTEST_REQUIRE(e.ui->find("md.editor.input") != nullptr);
-        e.ui->state<MdInputState>("md.editor.input").cursor =
+        DOCTEST_REQUIRE(e.ui->find(kEditorInputId) != nullptr);
+        e.ui->state<MdInputState>(kEditorInputId).cursor =
             static_cast<int>(cursorByte);
         DOCTEST_REQUIRE(cycleMode(mod.get()));   // → 实时
         frame();
@@ -3140,7 +3143,7 @@ REGISTER_TEST(md_module_live_input_roundtrip,
         const auto* hit = e.ui->find("md.editor.input.hit");
         DOCTEST_REQUIRE(hit != nullptr);
         DOCTEST_REQUIRE(hit->onTextInput != nullptr);
-        e.ui->state<MdInputState>("md.editor.input").cursor =
+        e.ui->state<MdInputState>(kEditorInputId).cursor =
             static_cast<int>(cursorByte);
         core::TextInputEvent ev;
         ev.text = "Z";
@@ -3207,8 +3210,8 @@ bool liveSplitAnchorScenario(const char* tag,
     frame();
     DOCTEST_REQUIRE(openFirstNote(*e.ui));
     frame();
-    DOCTEST_REQUIRE(e.ui->find("md.editor.input") != nullptr);
-    e.ui->state<MdInputState>("md.editor.input").cursor =
+    DOCTEST_REQUIRE(e.ui->find(kEditorInputId) != nullptr);
+    e.ui->state<MdInputState>(kEditorInputId).cursor =
         static_cast<int>(cursorByte);
     DOCTEST_REQUIRE(cycleMode(mod.get()));   // → 实时
     frame();

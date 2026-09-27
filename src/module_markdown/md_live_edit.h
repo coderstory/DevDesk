@@ -22,6 +22,11 @@
 
 namespace module::markdown {
 
+// 活动 input 的行高系数：与 EUI-NEO components/input.h 的 textLineHeight =
+// fontSize × 1.2 同源（上游真值 input.h:128）。改本值必须与上游同步——高度
+// 比内容矮一像素，活动 input 就会长出内部滚动并吃掉外层滚轮（M0 约束 C4 / spec D2）。
+inline constexpr float kInputLineHeightFactor = 1.2f;
+
 // 活动块下标：块身份锚 = 文档字节偏移（spec D3，不用 stableId —— 拆块/并块时
 // stableId 会变，偏移天然跟随光标）。语义 = MdBlockModel::blockIndexAt：
 //   - 空文档（无块）→ 0（消费侧按「块序列为空」决定不建 input）

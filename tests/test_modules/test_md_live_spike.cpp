@@ -37,6 +37,9 @@
 //     同时成立时换文本首帧跳位，按 R5 同帧归零消除。
 
 #include "doctest.h"
+#include "module_markdown/md_ids.h"
+
+using module::markdown::kEditorInputId;
 
 #include <eui/dsl.h>
 #include <eui/types.h>
@@ -228,7 +231,7 @@ REGISTER_TEST(mdspike_v1_relocate_keeps_identity,
 })
 
 // ---- V1b：焦点 id 口径陷阱（requestFocus 必须打到 <id>.hit，否则静默失效）----
-// 事故面：DevDesk 现有 4 处 `ui.requestFocus("md.editor.input")`
+// 事故面：DevDesk 现有 4 处 `ui.requestFocus(kEditorInputId)`
 // （markdown_module.cpp:1611/2425/2453/2616）发的是**基 id**，而 input 组件认的
 // 是 `<id>.hit`（input.h:114 `ui_.isFocused(id + ".hit")`）——本用例把两种口径的
 // 可观测差异钉死，供 M3 接线前拍板。
