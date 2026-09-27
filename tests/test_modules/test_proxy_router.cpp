@@ -446,10 +446,10 @@ REGISTER_TEST(proxy_router_no_active_profile,
     return true;
 })
 
-// ---- 6. Keychain 缺 key → 500 ----
+// ---- 6. Keychain 缺 key → 两条路径统一 503 no_active_profile ----
 
 REGISTER_TEST(proxy_router_missing_api_key,
-              "proxy_router: Keychain 缺 key 返回 500", {
+              "proxy_router: Keychain 缺 key 缓冲/流式统一 503 no_active_profile", {
     TestDb tdb("nokey");
     module::claude::ClaudeService svc(tdb.handle(), kTestKeychainService);
 
@@ -466,16 +466,25 @@ REGISTER_TEST(proxy_router_missing_api_key,
     module::claude::ProxyRouter router(svc, proxyServer);
     router.registerRoutes();
 
-    auto r = directCall(router, "POST", "/v1/messages", "{}");
-    DOCTEST_CHECK_EQ(r.status, 500);
-    DOCTEST_CHECK(r.body.find("keychain_read_failed") != std::string::npos);
+    // 同一失败（profile 已激活、Keychain 无 key）分别打两条转发路径：
+    // 缓冲（body 无 stream）/ 流式（POST /v1/messages + "stream":true）
+    auto buffered = directCall(router, "POST", "/v1/messages",
+                               R"({"model":"m","messages":[]})");
+    auto streaming = directCall(router, "POST", "/v1/messages",
+                                R"({"model":"m","stream":true,"messages":[]})");
 
+    // CPX-10：两条路径必须报同一状态码且响应体逐字一致（含 message）
+    DOCTEST_CHECK_EQ(buffered.status, 503);
+    DOCTEST_CHECK_EQ(streaming.status, 503);
+    DOCTEST_CHECK_EQ(streaming.body, buffered.body);
+    DOCTEST_CHECK(buffered.body.find("no_active_profile") != std::string::npos);
+    // 错误类别统一了，但 message 仍点名 Keychain（排障不被抹平）
+    DOCTEST_CHECK(buffered.body.find("读取 API key 失败") != std::string::npos);
+
+    // 取 profile 失败不写调用日志（与「无激活 profile」同口径，两条路径一致）
     auto logs = svc.recentCalls(10);
     DOCTEST_REQUIRE(logs.isOk());
-    DOCTEST_CHECK_EQ(logs.value().size(), 1u);
-    DOCTEST_CHECK_EQ(logs.value()[0].statusCode, 500);
-    DOCTEST_CHECK_EQ(logs.value()[0].error,
-                     std::string("keychain_read_failed"));
+    DOCTEST_CHECK_EQ(logs.value().size(), 0u);
 
     return true;
 })
