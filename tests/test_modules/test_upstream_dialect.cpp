@@ -9,9 +9,6 @@
 //   4. normalizeBody：只剥顶层 model 的 [1M]，其余字节原样透传
 //   5. 端到端：sendStreamingClaude 的请求头确实经过方言层（UA 不再泄漏）
 //
-// 注意：tests/doctest.h 的 REGISTER_TEST 是宏 —— **大括号不保护逗号**，
-// 测试体内不要出现顶层逗号（带逗号的类型名用命名空间别名 HeaderMap，
-// 初始化列表一律拆成逐条赋值）。
 #include "doctest.h"
 
 #include "claude_service.h"
@@ -252,11 +249,12 @@ REGISTER_TEST(dialect_apply_headers_default,
 
 REGISTER_TEST(dialect_apply_headers_client_variants,
               "upstream_dialect: 客户端头大小写变体被清干净 + 不覆盖显式版本", {
-    HeaderMap h;
-    h["User-Agent"] = "curl/8.22.0";
-    h["X-Api-Key"] = "sk-client";
-    h["Authorization"] = "Bearer sk-client";
-    h["Anthropic-Version"] = "2024-06-01";
+    HeaderMap h = {
+        {"User-Agent", "curl/8.22.0"},
+        {"X-Api-Key", "sk-client"},
+        {"Authorization", "Bearer sk-client"},
+        {"Anthropic-Version", "2024-06-01"},
+    };
     UpstreamDialect::anthropicDefault().applyHeaders(h, "sk-profile-key", module::claude::AuthField::Both);
 
     DOCTEST_CHECK_EQ(countCI(h, "user-agent"), 1);
@@ -340,19 +338,21 @@ REGISTER_TEST(dialect_apply_headers_auth_field_clears_client_creds,
               "upstream_dialect: 三态都清客户端凭据（大小写变体）", {
     const auto dialect = UpstreamDialect::anthropicDefault();
     // bearer 态：客户端两个大小写变体 x-api-key 都必须消失
-    HeaderMap hb;
-    hb["x-api-key"] = "sk-client-bogus";
-    hb["X-Api-Key"] = "sk-client-bogus-2";
-    hb["authorization"] = "Bearer sk-client-bogus";
+    HeaderMap hb = {
+        {"x-api-key", "sk-client-bogus"},
+        {"X-Api-Key", "sk-client-bogus-2"},
+        {"authorization", "Bearer sk-client-bogus"},
+    };
     dialect.applyHeaders(hb, "sk-profile-key", module::claude::AuthField::Bearer);
     DOCTEST_CHECK_EQ(countCI(hb, "x-api-key"), 0);
     DOCTEST_CHECK_EQ(countCI(hb, "authorization"), 1);
     DOCTEST_CHECK_EQ(headerCI(hb, "authorization"),
                      std::string("Bearer sk-profile-key"));
     // api_key 态：客户端的 authorization 必须消失
-    HeaderMap ha;
-    ha["Authorization"] = "Bearer sk-client-bogus";
-    ha["X-Api-Key"] = "sk-client-bogus";
+    HeaderMap ha = {
+        {"Authorization", "Bearer sk-client-bogus"},
+        {"X-Api-Key", "sk-client-bogus"},
+    };
     dialect.applyHeaders(ha, "sk-profile-key", module::claude::AuthField::ApiKey);
     DOCTEST_CHECK_EQ(countCI(ha, "authorization"), 0);
     DOCTEST_CHECK_EQ(countCI(ha, "x-api-key"), 1);

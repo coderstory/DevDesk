@@ -43,9 +43,6 @@
 
 namespace {
 
-// REGISTER_TEST 宏实参不能有裸逗号（Phase A 报告的坑），模板类型统一用别名
-using EnvMap = std::map<std::string, std::string>;
-
 constexpr const char* kTestKeychainService = "DevDeskTestSettingsSync";
 
 // 临时 settings.json / sidecar 目录（共享头 test_support::TempDir，前缀沿用原样）
@@ -59,8 +56,8 @@ module::claude::settings_sync::Paths makePaths(const test_support::TempDir& d) {
 }
 
 // 读 settings.json 的 env 块为 map（不存在 / 无 env → 空表）
-EnvMap readEnv(const std::filesystem::path& f) {
-    EnvMap out;
+std::map<std::string, std::string> readEnv(const std::filesystem::path& f) {
+    std::map<std::string, std::string> out;
     std::ifstream i(f, std::ios::binary);
     if (!i) return out;
     std::ostringstream ss;
@@ -502,8 +499,7 @@ REGISTER_TEST(sync_overlay_detection_managed_derived,
     d.write(overlayName,
             R"({"env": {"ANTHROPIC_DEFAULT_SONNET_MODEL_NAME": "x"}})");
     d.write(overlayExtra, R"({"env": {"MY_KEY": "1"}})");
-    paths.overlayFiles = {overlayName};  // 裸逗号会拆 REGISTER_TEST 实参，逐条 push
-    paths.overlayFiles.push_back(overlayExtra);
+    paths.overlayFiles = {overlayName, overlayExtra};
     auto r = settings_sync::takeOver(p, 8888, paths);
     DOCTEST_REQUIRE(r.ok);
     DOCTEST_REQUIRE_EQ(r.warnings.size(), 2u);

@@ -2,7 +2,6 @@
 // 共享流式统计测试（首页 Token 速率卡片，设计 §2.5 / §2.7 / §6.3）
 //
 // 全部注入假时钟（steady 毫秒），测试前后 resetForTest 隔离全局状态。
-// 注意：REGISTER_TEST body 是宏参数，测试体内避免顶层逗号。
 #include "doctest.h"
 #include "core/proxy_stats.h"
 

@@ -51,7 +51,7 @@ bool colorEq(const eui::Color& a, const eui::Color& b) {
     return a.r == b.r && a.g == b.g && a.b == b.b && a.a == b.a;
 }
 
-// 毫秒计时（REGISTER_TEST 宏体内不可出现尖括号模板逗号，helper 放这层）
+// 毫秒计时（与 test_md_highlight.cpp 同款工具函数）
 double msSince(std::chrono::steady_clock::time_point t) {
     return std::chrono::duration<double, std::milli>(
                std::chrono::steady_clock::now() - t)

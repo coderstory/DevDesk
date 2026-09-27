@@ -327,7 +327,7 @@ REGISTER_TEST(todo_svc_update_task,
     updated.description = std::string("详细描述");
     updated.priority = module::todo::Priority::High;
     updated.dueAt = static_cast<int64_t>(1234567890);
-    updated.tags = (std::vector<std::string>{"work", "urgent", "P0"});
+    updated.tags = {"work", "urgent", "P0"};
     updated.position = 0;
 
     auto r = env.svc->updateTask(updated);
@@ -676,9 +676,6 @@ REGISTER_TEST(todo_svc_column_kind,
 })
 
 // ---- 审计 2026-09-23 [26]：tags 序列化迁 platform::json 后的往返回归 ----
-// 注意：REGISTER_TEST 的 body 是单个宏实参，花括号初始化列表里的顶层逗号
-// 会被预处理器当参数分隔符（本文件上方 updateTask 用例的额外括号即为此）。
-// 新增用例一律用 push_back / 括号保护规避。
 
 // serializeTags/deserializeTags 是私有方法，经 updateTask → listTasks 公开路径
 // 覆盖往返；特殊字符（引号/反斜杠/换行/制表/控制字符/CJK/空串）必须原样恢复。
@@ -695,14 +692,15 @@ REGISTER_TEST(todo_svc_tags_roundtrip_special_chars,
     auto t = env.svc->createTask(colId, "标签往返");
     DOCTEST_REQUIRE(t.isOk());
 
-    std::vector<std::string> tags;
-    tags.push_back("简单");                          // CJK 原样透传
-    tags.push_back("带\"引号\"");                    // 双引号转义
-    tags.push_back("反斜杠\\");                      // 反斜杠转义
-    tags.push_back("换行\n制表\t");                  // 命名转义
-    tags.push_back(std::string(1, '\x01') + "控制"); // \u00xx 数字转义
-    tags.push_back("");                              // 空串元素
-    tags.push_back(" 前后空格 ");                    // 空格保留
+    std::vector<std::string> tags = {
+        "简单",                           // CJK 原样透传
+        "带\"引号\"",                     // 双引号转义
+        "反斜杠\\",                       // 反斜杠转义
+        "换行\n制表\t",                   // 命名转义
+        std::string(1, '\x01') + "控制",  // \u00xx 数字转义
+        "",                               // 空串元素
+        " 前后空格 ",                     // 空格保留
+    };
 
     module::todo::Task updated = t.value();
     updated.tags = tags;
@@ -818,12 +816,12 @@ REGISTER_TEST(todo_svc_returning_id_consistency,
         auto probe = core::data::SqliteDb::open(env.path);
         DOCTEST_REQUIRE(probe.isOk());
         struct Expect { const char* sql; int64_t id; const char* want; };
-        Expect checks[4];
-        // 外层括号保护初始化列表逗号不被 REGISTER_TEST 宏拆成实参
-        checks[0] = (Expect{"SELECT title FROM todo_columns WHERE id = ?", c1.value().id, "列一"});
-        checks[1] = (Expect{"SELECT title FROM todo_columns WHERE id = ?", c2.value().id, "列二"});
-        checks[2] = (Expect{"SELECT title FROM todo_tasks WHERE id = ?", t1.value().id, "任务一"});
-        checks[3] = (Expect{"SELECT title FROM todo_tasks WHERE id = ?", t2.value().id, "任务二"});
+        Expect checks[4] = {
+            {"SELECT title FROM todo_columns WHERE id = ?", c1.value().id, "列一"},
+            {"SELECT title FROM todo_columns WHERE id = ?", c2.value().id, "列二"},
+            {"SELECT title FROM todo_tasks WHERE id = ?", t1.value().id, "任务一"},
+            {"SELECT title FROM todo_tasks WHERE id = ?", t2.value().id, "任务二"},
+        };
         for (const auto& e : checks) {
             auto prep = probe.value().prepare(e.sql);
             DOCTEST_REQUIRE(prep.isOk());

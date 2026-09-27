@@ -119,17 +119,6 @@ bool trayPageIsNone(Action action) {
     return !app::assembly::pageForTrayAction(action).has_value();
 }
 
-// 全启用下的期望注册顺序（REGISTER_TEST 宏体内不能有裸逗号，清单放宏外）
-const ::core::PageId kExpectedOrder[] = {
-    ::core::PageId::Home,       ::core::PageId::Markdown,
-    ::core::PageId::Todo,       ::core::PageId::ClaudeProxy,
-    ::core::PageId::Settings,
-};
-const char* const kExpectedStartLog[] = {
-    "start:home", "start:markdown", "start:todo", "start:claude",
-    "start:settings",
-};
-
 // 临时笔记目录（dispatchFileOpen 的 notesDir 注入点）
 // —— 共享工厂 test_support::makeTempDir（TIN-06b，原 tempNotesDir 合流）
 constexpr const char* kNotesDirPrefix = "devdesk_test_assembly_notes";
@@ -214,6 +203,16 @@ REGISTER_TEST(assembly_registration_order_prestart_first,
         [&mods] { mods.log().push_back("pre:claude-service"); });
 
     DOCTEST_REQUIRE_EQ(order.size(), static_cast<size_t>(5));
+    // 全启用下的期望注册顺序
+    const ::core::PageId kExpectedOrder[] = {
+        ::core::PageId::Home,       ::core::PageId::Markdown,
+        ::core::PageId::Todo,       ::core::PageId::ClaudeProxy,
+        ::core::PageId::Settings,
+    };
+    const char* const kExpectedStartLog[] = {
+        "start:home", "start:markdown", "start:todo", "start:claude",
+        "start:settings",
+    };
     for (size_t i = 0; i < 5; ++i) {
         DOCTEST_CHECK(order[i] == kExpectedOrder[i]);
     }

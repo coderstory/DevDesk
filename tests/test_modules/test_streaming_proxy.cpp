@@ -26,9 +26,7 @@
 //
 // 全部使用 127.0.0.1 随机端口 + 短超时，不依赖外网。
 //
-// 注意：tests/doctest.h 是极简框架（DOCTEST_CHECK 失败即 `return false`），
-// 且 REGISTER_TEST 的 body 是宏参数 —— **大括号不保护逗号**，所以测试体内
-// 避免顶层逗号（聚合初始化用括号包裹或改成分步赋值）。
+// 注意：tests/doctest.h 是极简框架（DOCTEST_CHECK 失败即 `return false`）。
 #include "doctest.h"
 
 #include "claude_service.h"
@@ -931,8 +929,7 @@ REGISTER_TEST(streaming_context_contract,
 
     {
         std::lock_guard<std::mutex> lock(ctx.mutex);
-        ctx.queue.push_back("a");
-        ctx.queue.push_back("b");
+        ctx.queue = {"a", "b"};
     }
     DOCTEST_CHECK_EQ(ctx.depth(), 2u);
 
@@ -1055,16 +1052,15 @@ REGISTER_TEST(streaming_stats_end_to_end,
 
     // message_start + 2 个 message_delta（累计 3 → 18 → 40）+ [DONE]
     MockScript script;
-    script.chunks.push_back(
+    script.chunks = {
         "data: {\"type\":\"message_start\",\"message\":{\"usage\":"
-        "{\"input_tokens\":10,\"output_tokens\":3}}}\n\n");
-    script.chunks.push_back(
+        "{\"input_tokens\":10,\"output_tokens\":3}}}\n\n",
         "data: {\"type\":\"message_delta\",\"delta\":{},"
-        "\"usage\":{\"output_tokens\":18}}\n\n");
-    script.chunks.push_back(
+        "\"usage\":{\"output_tokens\":18}}\n\n",
         "data: {\"type\":\"message_delta\",\"delta\":{},"
-        "\"usage\":{\"output_tokens\":40}}\n\n");
-    script.chunks.push_back("data: [DONE]\n\n");
+        "\"usage\":{\"output_tokens\":40}}\n\n",
+        "data: [DONE]\n\n",
+    };
     upstream.onMessages(script);
 
     TestEnv env;
@@ -1371,14 +1367,14 @@ REGISTER_TEST(streaming_call_log_usage_columns,
 
     // message_start 给四类累计值，message_delta 给最终 output（累计口径）
     MockScript script;
-    script.chunks.push_back(
+    script.chunks = {
         "data: {\"type\":\"message_start\",\"message\":{\"usage\":"
         "{\"input_tokens\":10,\"output_tokens\":3,"
-        "\"cache_read_input_tokens\":2,\"cache_creation_input_tokens\":5}}}\n\n");
-    script.chunks.push_back(
+        "\"cache_read_input_tokens\":2,\"cache_creation_input_tokens\":5}}}\n\n",
         "data: {\"type\":\"message_delta\",\"delta\":{},"
-        "\"usage\":{\"output_tokens\":40}}\n\n");
-    script.chunks.push_back("data: [DONE]\n\n");
+        "\"usage\":{\"output_tokens\":40}}\n\n",
+        "data: [DONE]\n\n",
+    };
     upstream.onMessages(script);
 
     TestEnv env;
@@ -1455,8 +1451,7 @@ REGISTER_TEST(streaming_call_log_usage_absent,
 
     // 只有正文事件、没有 usage（上游不给 usage / 非 Anthropic 方言）
     MockScript script;
-    script.chunks.push_back(sseChunk(0));
-    script.chunks.push_back("data: [DONE]\n\n");
+    script.chunks = {sseChunk(0), "data: [DONE]\n\n"};
     upstream.onMessages(script);
 
     TestEnv env;
@@ -1706,47 +1701,49 @@ REGISTER_TEST(json_scan_top_level_span_equivalence,
               "streaming: json_scan 顶层值区间与旧实现逐字节等价", {
     using module::claude::json_scan::findTopLevelValueSpan;
 
-    std::vector<std::string> bodies;
-    // 顶层 key 命中
-    bodies.push_back(R"({"stream":true})");
-    bodies.push_back(R"({"stream":true,"model":"m"})");
-    bodies.push_back(R"({"model":"m","stream":true})");
-    bodies.push_back("{\n  \"stream\":\n  true\n}");
-    bodies.push_back(R"({"stream" : true , "model" : "m" })");
-    bodies.push_back(R"({"a":1,"stream":true,"b":[1,2,3]})");
-    // 嵌套同名 key：只有顶层生效
-    bodies.push_back(R"({"a":{"stream":true}})");
-    bodies.push_back(R"({"model":"deepseek[1M]","x":{"model":"nested[1M]"}})");
-    // 非字符串值 / 各种值类型
-    bodies.push_back(R"({"model":123})");
-    bodies.push_back(R"({"model":null,"stream":false})");
-    bodies.push_back(R"({"stream":{"x":1}})");
-    bodies.push_back(R"({"stream":truex})");
-    bodies.push_back(R"({"model":"a\"b","stream":true})");
-    // 值含逗号 / 括号（字符串内与数组内）
-    bodies.push_back(R"({"model":"a,b[1M]"})");
-    bodies.push_back(R"({"model":"a,b","stream":true})");
-    bodies.push_back(R"({"b":[1,2],"stream":true})");
-    // 截断 body
-    bodies.push_back(R"({"model":"a)");
-    bodies.push_back(R"({"stream":tru)");
-    bodies.push_back(R"({"model":)");
-    bodies.push_back(R"({"model")");
-    bodies.push_back(R"({"stream":true)");
-    bodies.push_back(R"(  {"model":"a","stream")");
-    // 空对象 / 非对象 / 非法
-    bodies.push_back(R"({})");
-    bodies.push_back("  ");
-    bodies.push_back("");
-    bodies.push_back("not json at all");
-    bodies.push_back("123");
-    bodies.push_back(R"([1,2,3])");
-    bodies.push_back(R"("just a string")");
+    std::vector<std::string> bodies = {
+        // 顶层 key 命中
+        R"({"stream":true})",
+        R"({"stream":true,"model":"m"})",
+        R"({"model":"m","stream":true})",
+        "{\n  \"stream\":\n  true\n}",
+        R"({"stream" : true , "model" : "m" })",
+        R"({"a":1,"stream":true,"b":[1,2,3]})",
+        // 嵌套同名 key：只有顶层生效
+        R"({"a":{"stream":true}})",
+        R"({"model":"deepseek[1M]","x":{"model":"nested[1M]"}})",
+        // 非字符串值 / 各种值类型
+        R"({"model":123})",
+        R"({"model":null,"stream":false})",
+        R"({"stream":{"x":1}})",
+        R"({"stream":truex})",
+        R"({"model":"a\"b","stream":true})",
+        // 值含逗号 / 括号（字符串内与数组内）
+        R"({"model":"a,b[1M]"})",
+        R"({"model":"a,b","stream":true})",
+        R"({"b":[1,2],"stream":true})",
+        // 截断 body
+        R"({"model":"a)",
+        R"({"stream":tru)",
+        R"({"model":)",
+        R"({"model")",
+        R"({"stream":true)",
+        R"(  {"model":"a","stream")",
+        // 空对象 / 非对象 / 非法
+        R"({})",
+        "  ",
+        "",
+        "not json at all",
+        "123",
+        R"([1,2,3])",
+        R"("just a string")",
+    };
 
-    std::vector<std::string> keys;
-    keys.push_back("stream");
-    keys.push_back("model");
-    keys.push_back("absent");
+    std::vector<std::string> keys = {
+        "stream",
+        "model",
+        "absent",
+    };
 
     for (const std::string& body : bodies) {
         for (const std::string& key : keys) {

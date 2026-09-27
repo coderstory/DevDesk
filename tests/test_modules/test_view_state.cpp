@@ -30,11 +30,6 @@ void writeGarbage(const std::filesystem::path& p) {
     f << "{ this is ]not json[";
 }
 
-// REGISTER_TEST 宏体会按顶层逗号切分参数（尖括号不保护），多参模板类型
-// 声明一律经此 helper + auto 规避
-std::map<int64_t, float> makeIdFloatMap(std::initializer_list<std::pair<const int64_t, float>> items) {
-    return std::map<int64_t, float>(items);
-}
 } // namespace
 
 // ==================== markdown ====================
@@ -48,7 +43,7 @@ REGISTER_TEST(markdown_view_state_roundtrip, "markdown: 视图状态存读往返
         MarkdownViewState st;
         st.lastPath = "工作/周报.md";
         st.mode = 2;  // Preview
-        st.collapsedDirs = (std::vector<std::string>{"工作", "草稿"});
+        st.collapsedDirs = {"工作", "草稿"};
         DOCTEST_CHECK(store.save(st).isOk());
     }
     // 新 store 读同一文件 = 模拟重启
@@ -97,7 +92,7 @@ REGISTER_TEST(markdown_view_state_sanitized, "markdown: 视图状态 mode 钳制
     MarkdownViewState st;
     st.lastPath = "../outside.md";
     st.mode = 7;
-    st.collapsedDirs = (std::vector<std::string>{"../../etc", "好目录", ""});
+    st.collapsedDirs = {"../../etc", "好目录", ""};
     const MarkdownViewState out = MarkdownViewStateStore::sanitized(st);
     DOCTEST_CHECK(out.lastPath.empty());   // 含 ".." → 整条丢弃
     DOCTEST_CHECK_EQ(out.mode, 0);         // 越界 → Edit
@@ -124,7 +119,7 @@ REGISTER_TEST(todo_view_state_roundtrip, "todo: 视图状态存读往返含整�
     {
         TodoViewStateStore store(file);
         TodoViewState st;
-        st.columnScrolls = (std::map<int64_t, float>{{7, 0.0f}, {11, 512.0f}, {10, 150.25f}});
+        st.columnScrolls = {{7, 0.0f}, {11, 512.0f}, {10, 150.25f}};
         st.selectedTaskId = 42;
         DOCTEST_CHECK(store.save(st).isOk());
     }
@@ -167,7 +162,7 @@ REGISTER_TEST(todo_view_state_fallback, "todo: 视图状态缺失/损坏回退�
 REGISTER_TEST(todo_view_state_sanitize_prune, "todo: 负值/乱 id 净化 + pruneScrolls 删列收敛（[23]）", {
     using namespace module::todo;
     TodoViewState st;
-    st.columnScrolls = (std::map<int64_t, float>{{3, -5.0f}, {4, 80.0f}, {0, 10.0f}, {-2, 10.0f}});
+    st.columnScrolls = {{3, -5.0f}, {4, 80.0f}, {0, 10.0f}, {-2, 10.0f}};
     st.selectedTaskId = -7;
     const TodoViewState out = TodoViewStateStore::sanitized(st);
     DOCTEST_CHECK_EQ(out.columnScrolls.size(), static_cast<size_t>(2));  // id<=0 剔除
@@ -176,8 +171,8 @@ REGISTER_TEST(todo_view_state_sanitize_prune, "todo: 负值/乱 id 净化 + prun
     DOCTEST_CHECK_EQ(out.selectedTaskId, static_cast<int64_t>(0));
 
     // 审计 [23] 串列 bug 的持久层等价验证：偏移跟 id 走，列重排/删除不串
-    auto scrolls = makeIdFloatMap({{10, 200.0f}, {11, 50.0f}});
-    const size_t removed = TodoViewStateStore::pruneScrolls(scrolls, (std::vector<int64_t>{11}));  // 列 10 已删
+    std::map<int64_t, float> scrolls = {{10, 200.0f}, {11, 50.0f}};
+    const size_t removed = TodoViewStateStore::pruneScrolls(scrolls, std::vector<int64_t>{11});  // 列 10 已删
     DOCTEST_CHECK_EQ(removed, static_cast<size_t>(1));
     DOCTEST_CHECK_EQ(scrolls.size(), static_cast<size_t>(1));
     DOCTEST_CHECK_EQ(scrolls.at(11), 50.0f);  // 存活列的偏移原样保留
@@ -269,14 +264,14 @@ REGISTER_TEST(todo_view_state_save_failure_keeps_old, "todo: 视图状态原子�
 
     TodoViewStateStore store(file);
     TodoViewState st;
-    st.columnScrolls = (std::map<int64_t, float>{{7, 120.0f}});
+    st.columnScrolls = {{7, 120.0f}};
     st.selectedTaskId = 42;
     DOCTEST_REQUIRE(store.save(st).isOk());
 
     // 落盘通道被占住 → 保存失败，但上一次成功落盘的状态必须原样可读
     DOCTEST_REQUIRE(std::filesystem::create_directory(tmp, ec));
     TodoViewState changed;
-    changed.columnScrolls = (std::map<int64_t, float>{{9, 999.0f}});
+    changed.columnScrolls = {{9, 999.0f}};
     changed.selectedTaskId = 7;
     DOCTEST_CHECK(store.save(changed).isFail());
 
@@ -303,7 +298,7 @@ REGISTER_TEST(markdown_view_state_save_failure_keeps_old, "markdown: 视图状�
     MarkdownViewState st;
     st.lastPath = "工作/周报.md";
     st.mode = 2;
-    st.collapsedDirs = (std::vector<std::string>{"工作", "笔记"});
+    st.collapsedDirs = {"工作", "笔记"};
     DOCTEST_REQUIRE(store.save(st).isOk());
     // 成功后字节与旧实现一致：serialize 结果 + "\n" 尾
     {

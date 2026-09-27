@@ -130,10 +130,7 @@ REGISTER_TEST(claude_module_compose_null_service,
               "claude_module: compose 无服务不崩（headless）", {
     module::claude::ClaudeService::setGlobal(nullptr);   // 保险：确保干净起点
     std::unique_ptr<::core::Module> mod(create_claude_module());
-    // 注意：REGISTER_TEST 宏体内不能出现裸逗号，Screen 用字段赋值构造
-    eui::Screen screen;
-    screen.width = 1600.0f;
-    screen.height = 1000.0f;
+    eui::Screen screen{1600.0f, 1000.0f};
     eui::Ui ui;
     ui.begin("claude_null");
     mod->compose(ui, screen);
@@ -2151,9 +2148,7 @@ REGISTER_TEST(claude_module_takeover_warn_summary,
     test_support::TempDir d("warnover", kImportTempDirPrefix);
     auto paths = importPaths(d);
     // managed（企业策略）+ project 两层各含冲突 env 键 → 2 条覆盖警告
-    // （注：REGISTER_TEST 宏体内不能出现裸逗号，故用两次 push_back）
-    paths.overlayFiles.push_back(d.file("managed.json"));
-    paths.overlayFiles.push_back(d.file("project.json"));
+    paths.overlayFiles = {d.file("managed.json"), d.file("project.json")};
     env.svc->setSettingsSyncPaths(paths);
     env.svc->setSettingsTakeOverEnabled(true);
     d.write(d.file("settings.json"), R"({"env": {"MY_KEY": "user"}})");
