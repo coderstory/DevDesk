@@ -14,6 +14,8 @@
 #include "platform/http_server.h"
 #include "platform/keychain.h"
 #include "provider_config.h"
+#include "settings_sync.h"
+#include "platform/terminal_launch.h"
 
 #include <cctype>
 #include <chrono>
@@ -28,6 +30,15 @@
 #include <string>
 #include <thread>
 #include <vector>
+
+#if defined(_WIN32)
+#include <winsock2.h>   // ExclusivePortGuard：SO_EXCLUSIVEADDRUSE（见该 struct 注释）
+#else
+#include <arpa/inet.h>
+#include <netinet/in.h>
+#include <sys/socket.h>
+#include <unistd.h>
+#endif
 
 namespace {
 
@@ -151,6 +162,107 @@ struct ScopedProxyEnv {
     }
     ScopedProxyEnv(const ScopedProxyEnv&) = delete;
     ScopedProxyEnv& operator=(const ScopedProxyEnv&) = delete;
+};
+
+// 动态空闲端口（借 Server bind 0 向系统要一个随即释放）：多 worktree / 残留进程
+// 并发跑测试时不再撞写死端口；失败返回 0（调用方 REQUIRE 拦）
+int pickFreePort() {
+    platform::http::Server probe("127.0.0.1", 0);
+    if (!probe.start()) return 0;
+    const int port = probe.actualPort();
+    probe.stop();
+    return port;
+}
+
+// 接管通道路径用的临时文件（settings.json + sidecar；绝不碰真实 ~/.claude）。
+// runProfile 的「非激活 → 先切激活」分支要靠「坏 settings.json 让反向同步失败」
+// 来观察，故必须注入通道路径。
+struct TempSyncPaths {
+    std::filesystem::path settings;
+    std::filesystem::path sidecar;
+
+    explicit TempSyncPaths(const std::string& tag) {
+        const std::string base = tempDbPath(tag).string();   // 复用同一 tempPath 工厂
+        settings = base + ".settings.json";
+        sidecar = base + ".sidecar.json";
+        std::error_code ec;
+        std::filesystem::remove(settings, ec);
+        std::filesystem::remove(sidecar, ec);
+    }
+    ~TempSyncPaths() {
+        std::error_code ec;
+        std::filesystem::remove(settings, ec);
+        std::filesystem::remove(sidecar, ec);
+    }
+
+    void writeSettings(const std::string& content) const {
+        std::ofstream(settings, std::ios::binary | std::ios::trunc) << content;
+    }
+    module::claude::settings_sync::Paths paths() const {
+        module::claude::settings_sync::Paths p;
+        p.settingsFile = settings;
+        p.sidecarFile = sidecar;
+        return p;
+    }
+};
+
+// 「把端口占住」的**独占**绑定守卫（profile-run 的 startProxy 失败用例专用）。
+// ⚠️ 不能用第二个 platform::http::Server 占位：cpp-httplib 给监听 socket 设了
+// SO_REUSEADDR（Windows）/ SO_REUSEPORT（POSIX），两个 Server 能**同时**绑上同一
+// 端口（占位方与被占方的 start() 都返回 true）→ 占位语义不成立（本机实测）。
+// 这里改用独占语义的裸 socket，后到的 bind 必定失败：
+//   Windows：SO_EXCLUSIVEADDRUSE → 带 SO_REUSEADDR 的二次 bind 也报 WSAEADDRINUSE
+//   POSIX：  不设 REUSEADDR/REUSEPORT 的裸 bind → 对端单方设 REUSEPORT 也绑不上
+struct ExclusivePortGuard {
+#if defined(_WIN32)
+    using NativeSocket = SOCKET;
+    static constexpr NativeSocket kInvalidSocket = INVALID_SOCKET;
+#else
+    using NativeSocket = int;
+    static constexpr NativeSocket kInvalidSocket = -1;
+#endif
+
+    NativeSocket sock = kInvalidSocket;
+
+    explicit ExclusivePortGuard(int port) {
+#if defined(_WIN32)
+        WSADATA wsa{};
+        if (WSAStartup(MAKEWORD(2, 2), &wsa) != 0) return;
+#endif
+        sock = ::socket(AF_INET, SOCK_STREAM, 0);
+        if (sock == kInvalidSocket) return;
+#if defined(_WIN32)
+        const BOOL exclusive = TRUE;
+        ::setsockopt(sock, SOL_SOCKET, SO_EXCLUSIVEADDRUSE,
+                     reinterpret_cast<const char*>(&exclusive),
+                     static_cast<int>(sizeof(exclusive)));
+#endif
+        sockaddr_in addr{};
+        addr.sin_family = AF_INET;
+        addr.sin_port = htons(static_cast<unsigned short>(port));
+        addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+        if (::bind(sock, reinterpret_cast<sockaddr*>(&addr),
+                   static_cast<int>(sizeof(addr))) != 0) {
+            closeSocket();
+        }
+    }
+    ~ExclusivePortGuard() { closeSocket(); }
+    ExclusivePortGuard(const ExclusivePortGuard&) = delete;
+    ExclusivePortGuard& operator=(const ExclusivePortGuard&) = delete;
+
+    bool ok() const { return sock != kInvalidSocket; }
+
+private:
+    void closeSocket() {
+        if (sock == kInvalidSocket) return;
+#if defined(_WIN32)
+        ::closesocket(sock);
+        WSACleanup();
+#else
+        ::close(sock);
+#endif
+        sock = kInvalidSocket;
+    }
 };
 
 // ---- 反向同步（M3）测试基建：临时 settings.json 目录（仿 test_settings_sync
@@ -2139,5 +2251,148 @@ REGISTER_TEST(claude_service_auth_field_invalid_normalized,
     DOCTEST_CHECK_EQ(g.value().authField, std::string("both"));
 
     cleanupKey(a.value().id);
+    return true;
+})
+
+// ---- 运行（profile-run 设计 §5/§8；D-1 顺序：代理 → 激活 → 启动会话）----
+
+REGISTER_TEST(claude_service_run_profile_starts_proxy_and_passes_spec,
+              "claude_service: runProfile 拉起代理（configuredProxyPort）+ 假 launch 收到正确参数", {
+    TestDb tdb("runprofile1");
+    module::claude::ClaudeService svc(tdb.handle(), kTestKeychainService);
+    const int port = pickFreePort();
+    DOCTEST_REQUIRE(port != 0);
+    svc.setConfiguredProxyPort(port);
+    DOCTEST_CHECK_EQ(svc.configuredProxyPort(), port);
+
+    auto a = svc.createProfile("官方", "https://api.anthropic.com",
+                               "sk-ant-run-0001", "");
+    DOCTEST_REQUIRE(a.isOk());
+    DOCTEST_REQUIRE(svc.setActiveProfile(a.value().id).isOk());
+
+    int calls = 0;
+    platform::terminal::LaunchSpec got;
+    svc.setTerminalLauncher([&](const platform::terminal::LaunchSpec& s) {
+        ++calls;
+        got = s;
+        return core::Result<void>::ok();
+    });
+
+    // ① 代理未运行 → 用 configuredProxyPort 拉起（不是默认 8888）
+    DOCTEST_CHECK(!svc.isProxyRunning());
+    std::string hint;
+    auto r = svc.runProfile(a.value().id, &hint);
+    DOCTEST_REQUIRE(r.isOk());
+    DOCTEST_CHECK(svc.isProxyRunning());
+    DOCTEST_CHECK_EQ(svc.proxyPort(), port);
+
+    // ④ 调用参数（title / cwd / program / args）
+    DOCTEST_CHECK_EQ(calls, 1);
+    DOCTEST_CHECK_EQ(got.title, std::string("官方 · Claude Code"));
+    DOCTEST_CHECK_EQ(got.workingDir, platform::terminal::homeDir());
+    DOCTEST_CHECK(!got.workingDir.empty());
+    DOCTEST_CHECK_EQ(got.program, std::string("claude"));
+    DOCTEST_CHECK(got.args.empty());
+
+    svc.stopProxy();
+    cleanupKey(a.value().id);
+    return true;
+})
+
+REGISTER_TEST(claude_service_run_profile_proxy_start_failure_aborts,
+              "claude_service: runProfile 代理起不来 → 返回 fail 且不开会话", {
+    TestDb tdb("runprofile2");
+    module::claude::ClaudeService svc(tdb.handle(), kTestKeychainService);
+    const int port = pickFreePort();
+    DOCTEST_REQUIRE(port != 0);
+    // 占住该端口 → startProxy 必失败（**独占**绑定：见 ExclusivePortGuard 注释）
+    ExclusivePortGuard blocker(port);
+    DOCTEST_REQUIRE(blocker.ok());
+    svc.setConfiguredProxyPort(port);
+
+    auto a = svc.createProfile("官方", "https://api.anthropic.com",
+                               "sk-ant-run-0002", "");
+    DOCTEST_REQUIRE(a.isOk());
+    DOCTEST_REQUIRE(svc.setActiveProfile(a.value().id).isOk());
+
+    int calls = 0;
+    svc.setTerminalLauncher([&](const platform::terminal::LaunchSpec&) {
+        ++calls;
+        return core::Result<void>::ok();
+    });
+    auto r = svc.runProfile(a.value().id, nullptr);
+    DOCTEST_CHECK(r.isFail());     // 中止
+    DOCTEST_CHECK_EQ(calls, 0);    // 不打开会话
+
+    // 占位随 blocker 作用域结束自动释放（RAII），无需显式 stop
+    cleanupKey(a.value().id);
+    return true;
+})
+
+REGISTER_TEST(claude_service_run_profile_switches_only_when_inactive,
+              "claude_service: runProfile 非激活 → 先切激活（失败即中止）；已激活 → 不切", {
+    TestDb tdb("runprofile3");
+    module::claude::ClaudeService svc(tdb.handle(), kTestKeychainService);
+
+    // 注入接管通道路径（不注入 → 反向同步整段跳过，②③ 就无从区分）
+    TempSyncPaths paths("runprofile3");
+    svc.setSettingsSyncPaths(paths.paths());
+
+    auto a = svc.createProfile("甲", "https://a.example.com", "sk-ant-run-a", "");
+    auto b = svc.createProfile("乙", "https://b.example.com", "sk-ant-run-b", "");
+    DOCTEST_REQUIRE(a.isOk());
+    DOCTEST_REQUIRE(b.isOk());
+    DOCTEST_REQUIRE(svc.setActiveProfile(a.value().id).isOk());
+
+    const int port = pickFreePort();
+    DOCTEST_REQUIRE(port != 0);
+    svc.setConfiguredProxyPort(port);
+    // 先起代理：避免 runProfile 内的 takeOver 覆盖掉下面写入的坏 settings.json
+    DOCTEST_REQUIRE(svc.startProxy("127.0.0.1", port).isOk());
+
+    int calls = 0;
+    svc.setTerminalLauncher([&](const platform::terminal::LaunchSpec&) {
+        ++calls;
+        return core::Result<void>::ok();
+    });
+
+    // ③ 目标 = 激活 profile：跳过 setActiveProfile → 坏 settings.json 不参与 → 成功
+    paths.writeSettings("{ 这不是合法 JSON");
+    std::string hint;
+    auto r3 = svc.runProfile(a.value().id, &hint);
+    DOCTEST_CHECK(r3.isOk());
+    DOCTEST_CHECK_EQ(calls, 1);
+
+    // ② 目标 ≠ 激活 profile：会调 setActiveProfile → 反向同步读坏文件失败 → 中止且不开会话
+    paths.writeSettings("{ 这不是合法 JSON");
+    auto r2 = svc.runProfile(b.value().id, nullptr);
+    DOCTEST_CHECK(r2.isFail());
+    DOCTEST_CHECK_EQ(calls, 1);                       // 未新增调用
+    auto active = svc.getActiveProfile();
+    DOCTEST_REQUIRE(active.isOk());
+    DOCTEST_CHECK_EQ(active.value().id, a.value().id);  // 激活态未被改（中止在事务前）
+
+    svc.stopProxy();
+    cleanupKey(a.value().id);
+    cleanupKey(b.value().id);
+    return true;
+})
+
+REGISTER_TEST(claude_service_run_profile_invalid_id,
+              "claude_service: runProfile id=0 / 不存在 → fail（不开会话）", {
+    TestDb tdb("runprofile4");
+    module::claude::ClaudeService svc(tdb.handle(), kTestKeychainService);
+
+    int calls = 0;
+    svc.setTerminalLauncher([&](const platform::terminal::LaunchSpec&) {
+        ++calls;
+        return core::Result<void>::ok();
+    });
+    auto zero = svc.runProfile(0, nullptr);
+    DOCTEST_CHECK(zero.isFail());
+    DOCTEST_CHECK(zero.errorCode() == core::ErrorCode::ValidationError);
+    auto missing = svc.runProfile(9999, nullptr);
+    DOCTEST_CHECK(missing.isFail());
+    DOCTEST_CHECK_EQ(calls, 0);
     return true;
 })

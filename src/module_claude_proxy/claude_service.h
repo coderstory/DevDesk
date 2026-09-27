@@ -13,6 +13,7 @@
 #include <atomic>
 #include <cstdint>
 #include <ctime>
+#include <functional>
 #include <memory>
 #include <mutex>
 #include <optional>
@@ -22,6 +23,7 @@
 #include "core/sqlite_db.h"
 #include "core/result.h"
 #include "platform/http_client.h"
+#include "platform/terminal_launch.h"
 #include "settings_sync.h"
 
 namespace platform::http { class Server; }
@@ -254,6 +256,24 @@ public:
     bool isProxyRunning() const;
     int proxyPort() const;            // 0 if not running
 
+    // ---- 运行：用该 Profile 打开一个新的 Claude Code 会话（2026-09-28
+    //      profile-run 设计 §5/§6；D-1：代理托管式，密钥零落盘）----
+    // 顺序**固定**：确保代理运行 → 必要时 setActiveProfile → 启动会话。
+    // 理由：startProxy 内部会 syncTakeOver()；随后 setActiveProfile 的
+    // syncCaptureActiveProfile 读回的正是它自己刚写的受保护托管值（G2/G3 守卫
+    // 跳过）——顺序反了会把 live 值误收编进 profile。
+    //   - id：目标 profile；0 / 不存在 / 代理起不来 / 切换失败 → fail（不开会话）
+    //   - hint：可选**非致命提示**出参（如 Windows 无 wt 已退化传统控制台，D-5）；
+    //     成功时写入，无提示时清空。失败原因仍走 Result（与既有接口一致）
+    core::Result<void> runProfile(int64_t id, std::string* hint = nullptr);
+
+    // 终端启动注入点（默认指向真实现 platform::terminal::launch）。
+    // 镜像既有 setSettingsSyncPaths / setProfileProvider 的值注入先例：
+    // 测试注入假实现以断言调用参数，而不真起终端进程。
+    void setTerminalLauncher(
+        std::function<core::Result<void>(const platform::terminal::LaunchSpec&)>
+            launcher);
+
     // ---- 配置端口（产品审计 2026-09-23 [14]）----
     // 设置页「代理端口」的运行时镜像：main.cpp 启动时从 SettingsConfig 注入，
     // 设置页改端口时同步注入。手动启动路径（Claude 页按钮）用这个值而不是
@@ -366,6 +386,11 @@ private:
 
     // 设置页配置的代理端口（审计 [14]；默认 8888 = 历史硬编码值）
     int configuredProxyPort_ = kDefaultProxyPort;
+
+    // 终端启动实现（profile-run 设计 §6）：默认 = platform::terminal::launch；
+    // 测试经 setTerminalLauncher 注入假实现（断言参数、不真起进程）
+    std::function<core::Result<void>(const platform::terminal::LaunchSpec&)>
+        terminalLauncher_ = &platform::terminal::launch;
 
     // 最近代理请求事件单槽（气泡③，审计 [18]）：proxy worker 写 / UI take 读
     std::mutex proxyEventMutex_;
