@@ -35,6 +35,58 @@ void settleWatcher(module::markdown::MarkdownService& svc) {
     (void)svc.rescan();  // 消费 credit + 以磁盘为准对齐（幂等）
 }
 
+// watcher 武装等待（flake 归因，2026-09-28）：`FileWatcher::start()` 在调用线程
+// 开目录句柄，但**首次 ReadDirectoryChangesW 由 worker 线程异步发出**，而
+// Windows 只上报「首次读之后」发生的改动——读之前写入的改动不会被补发
+// （独立探针实测：读前写入 4/4 未捕获、读后写入 4/4 捕获；对照组成立）。
+// 用例在构造 service 后立刻制造外部改动，写操作一旦抢在 worker 武装前完成，
+// 事件就永久丢失——等待再久也命中不了（实测失败时 credit=0，手动 rescan 立刻
+// 命中）。真实进程里 watcher 在启动阶段就已武装、用户操作远在其后，所以这里
+// 等武装完成只是还原真实时序，判据本身不变：外部改动仍不被显式 rescan。
+void waitWatcherArmed() {
+    std::this_thread::sleep_for(std::chrono::milliseconds(400));
+}
+
+// 有界等待「watcher 把外部改动同步进索引」（不显式 rescan），失败时打印诊断。
+//   预算 15s（原 5s）：事件链路天然异步（原生去抖 200ms + 线程调度 + DB 往返），
+//   5s 在满载机器上会被真实耗时吃满；放宽的是容忍度，不是判据——仍然是「靠
+//   watcher 事件、在有限时间内生效」，失败照样判红。
+//   诊断：credit=0 说明事件没到（武装竞态/事件丢失）；credit=1 而手动 rescan 才
+//   命中，说明事件到了但同步失败——两类故障下次可自证，不必再猜。
+bool waitExternalChangeIndexed(module::markdown::MarkdownService& svc,
+                               const std::string& token,
+                               const fs::path& notePath) {
+    constexpr int kIterations = 150;  // 150 × 100ms = 15s 预算
+    bool hit = false;
+    for (int i = 0; i < kIterations && !hit; ++i) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        if (auto sr = svc.search(token); sr.isOk() && !sr.value().empty()) {
+            hit = true;
+        }
+    }
+    if (!hit) {
+        // 失败路径专用（调用方紧接着 DOCTEST_CHECK 会 fail-fast 退出，
+        // 下面的 rescan 不会影响任何后续断言）
+        std::error_code ec;
+        const bool credit = svc.hasWatchCredit();
+        const auto post = svc.rescan();  // 手动兜底：能命中说明磁盘/索引链路正常
+        const auto srAfter = svc.search(token);
+        std::cout << "[DIAG] " << kIterations * 100 << "ms 内未命中 token="
+                  << token << " fileExists=" << fs::exists(notePath, ec)
+                  << " watcherActive=" << svc.watcherActive()
+                  << " credit(事件曾到达)=" << credit
+                  << " rescanOk=" << post.isOk()
+                  << " rescanErr="
+                  << (post.isFail() ? post.errorMessage() : std::string("(none)"))
+                  << " searchAfterRescan="
+                  << (srAfter.isOk()
+                          ? std::to_string(srAfter.value().size())
+                          : std::string("ERR:" + srAfter.errorMessage()))
+                  << std::endl;
+    }
+    return hit;
+}
+
 // 把字符串写入文件（覆盖）—— 共享实现（TIN-06b，原五份 writeTextFile 合流）
 using test_support::writeTextFile;
 
@@ -893,15 +945,11 @@ REGISTER_TEST(md_service_watcher_external_new_file,
         DOCTEST_SKIP("FileWatcher 非活跃平台（stub），事件链路用例跳过");
     }
 
+    waitWatcherArmed();  // 先让 worker 武装（见该函数注释），再制造外部改动
     writeTextFile(dir / "ext_new.md", "# 外部新建\n\nuniquetoken73f9 body");
-    // 不显式 rescan：watcher 线程 force-sync 应让搜索在几秒内命中
-    bool hit = false;
-    for (int i = 0; i < 50 && !hit; ++i) {
-        std::this_thread::sleep_for(std::chrono::milliseconds(100));
-        if (auto sr = svc.search("uniquetoken73f9"); sr.isOk() && !sr.value().empty()) {
-            hit = true;
-        }
-    }
+    // 不显式 rescan：watcher 线程 force-sync 应让搜索在有限时间内命中
+    const bool hit =
+        waitExternalChangeIndexed(svc, "uniquetoken73f9", dir / "ext_new.md");
     DOCTEST_CHECK(hit);
     // credit：事件到达后置位且无人消费 → pollChanged 必须 true（哪怕
     // watcher 线程已把索引同步好、mtime 比对已无差异——UI 仍需刷新一轮）
@@ -909,7 +957,13 @@ REGISTER_TEST(md_service_watcher_external_new_file,
     DOCTEST_REQUIRE(c.isOk());
     DOCTEST_CHECK(c.value());
 
-    fs::remove_all(dir);
+    // 清场用非抛出版 remove_all：watcher 线程可能正持 .md 读句柄
+    // （MinGW ifstream 不带 FILE_SHARE_DELETE），抛出版会以 filesystem_error
+    // （共享冲突）把用例判红在「无断言行可定位」处——实测 114 次跑里触发 3 次
+    // （异常文本已抓到：cannot remove all ... [eq.md]，即共享冲突）。
+    // 非抛出版最坏情况只是残留 temp 残骸，不会误判。
+    std::error_code cleanupEc;
+    fs::remove_all(dir, cleanupEc);
     return true;
 })
 
@@ -929,21 +983,19 @@ REGISTER_TEST(md_service_watcher_same_len_external_edit,
     const std::string bodyB = "# eq\n\nzzzxywwvv732 body padding xx";
     DOCTEST_REQUIRE_EQ(bodyA.size(), bodyB.size());
 
+    waitWatcherArmed();  // 同 :886 用例：先武装再让磁盘动起来
     writeTextFile(dir / "eq.md", bodyA);
     DOCTEST_REQUIRE(svc.rescan().isOk());
 
     // 外部等长改写；全程不再 rescan——搜索命中只可能来自 watcher 事件 force-sync
     writeTextFile(dir / "eq.md", bodyB);
-    bool hit = false;
-    for (int i = 0; i < 50 && !hit; ++i) {
-        std::this_thread::sleep_for(std::chrono::milliseconds(100));
-        if (auto sr = svc.search("zzzxywwvv732"); sr.isOk() && !sr.value().empty()) {
-            hit = true;
-        }
-    }
+    const bool hit =
+        waitExternalChangeIndexed(svc, "zzzxywwvv732", dir / "eq.md");
     DOCTEST_CHECK(hit);
 
-    fs::remove_all(dir);
+    // 清场用非抛出版 remove_all（同 :886 用例：避免与 watcher 读句柄竞态抛异常）
+    std::error_code cleanupEc;
+    fs::remove_all(dir, cleanupEc);
     return true;
 })
 
