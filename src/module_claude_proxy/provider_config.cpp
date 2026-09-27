@@ -2,6 +2,8 @@
 // 供应商完整配置纯函数实现（platform::json）
 #include "provider_config.h"
 
+#include <algorithm>
+
 #include "platform/json.h"
 
 namespace module::claude {
@@ -385,6 +387,298 @@ std::map<std::string, std::string> buildProxyEnv(
         }
     }
     return out;
+}
+
+// ---- 反向同步（settings.json env → profile，设计 §3.2 映射表 / §3.3 守卫表）----
+
+namespace {
+
+// ASCII 小写（URL host 大小写不敏感）
+std::string toLowerAscii(std::string s) {
+    for (char& c : s) {
+        if (c >= 'A' && c <= 'Z') c = static_cast<char>(c - 'A' + 'a');
+    }
+    return s;
+}
+
+// 严格点分四段十进制（每段 ≤ 255）且首段为 127 —— "127.0.0.1.evil.com" /
+// "127.0.0.1evil" / 短写 "127.1" 都不算（不做前缀匹配）
+bool isLoopbackIpv4(const std::string& host) {
+    int seg = 0;
+    int value = 0;
+    bool hasDigit = false;
+    for (size_t i = 0; i <= host.size(); ++i) {
+        const bool atEnd = (i == host.size());
+        if (!atEnd && host[i] != '.') {
+            const char c = host[i];
+            if (c < '0' || c > '9') return false;
+            value = value * 10 + (c - '0');
+            if (value > 255) return false;
+            hasDigit = true;
+            continue;
+        }
+        if (!hasDigit) return false;  // 空段：连续点 / 首点 / 尾点
+        if (seg == 0 && value != 127) return false;
+        ++seg;
+        if (seg > 4) return false;
+        value = 0;
+        hasDigit = false;
+        if (atEnd) break;
+    }
+    return seg == 4;
+}
+
+// 6 槽位逐字段相等（model + name）
+bool modelsConfigEqual(const ModelsConfig& a, const ModelsConfig& b) {
+    for (const auto& s : kSlots) {
+        const ModelSlot& x = a.*s.slot;
+        const ModelSlot& y = b.*s.slot;
+        if (x.model != y.model || x.name != y.name) return false;
+    }
+    return true;
+}
+
+bool containsKey(const std::vector<std::string>& keys, const std::string& key) {
+    return std::find(keys.begin(), keys.end(), key) != keys.end();
+}
+
+} // namespace
+
+bool isLoopbackUrl(const std::string& url) {
+    std::string s = url;
+    // 1. 剥 scheme（任意 "xxx://"）
+    const auto scheme = s.find("://");
+    if (scheme != std::string::npos) s = s.substr(scheme + 3);
+    // 2. 截到 path / query / fragment 之前
+    const auto tail = s.find_first_of("/?#");
+    if (tail != std::string::npos) s = s.substr(0, tail);
+    if (s.empty()) return false;
+
+    // 3. host[:port]（IPv6 去方括号；无方括号的多冒号形式按整个 host 处理）
+    std::string host;
+    if (s.front() == '[') {
+        const auto close = s.find(']');
+        if (close == std::string::npos) return false;
+        host = s.substr(1, close - 1);
+    } else {
+        const auto first = s.find(':');
+        const bool singleColon =
+            first != std::string::npos && first == s.rfind(':');
+        host = singleColon ? s.substr(0, first) : s;
+    }
+
+    host = toLowerAscii(host);
+    if (host == "localhost" || host == "::1") return true;
+    return isLoopbackIpv4(host);
+}
+
+ReverseSyncParse parseEnvForReverseSync(
+    const std::string& envJson,
+    const std::vector<std::string>& managedKeys) {
+    ReverseSyncParse out;
+    if (envJson.empty()) {  // 空 = 空 env 对象（无真相源，读侧已按 no-op 拦下）
+        out.ok = true;
+        return out;
+    }
+    auto parsed = platform::json::parse(envJson);
+    if (parsed.isFail()) {
+        out.error = "env JSON 解析失败: " + parsed.errorMessage();
+        return out;
+    }
+    if (!parsed.value().isObject()) {
+        out.error = "env 必须是 JSON 对象";
+        return out;
+    }
+    auto env = parsed.value().asObject();
+
+    // 跳过键登记：原始键名 + 别名归一后的键名都要记（profile 的 extra_env 存
+    // 的是归一后的键，只记原始键名会漏保护 DISABLE_AUTO_COMPACT 一类）
+    auto markSkipped = [&out](const std::string& key) {
+        out.cfg.skippedKeys.push_back(key);
+        for (const auto& a : kEnvAliases) {
+            if (key == a.alias) out.cfg.skippedKeys.push_back(a.official);
+        }
+    };
+    // token 目标只有一个（Keychain 条目）：任一 token 键命中守卫都按「整个
+    // token 字段不写也不清」登记
+    auto markTokenSkipped = [&markSkipped]() {
+        markSkipped("ANTHROPIC_AUTH_TOKEN");
+        markSkipped("ANTHROPIC_API_KEY");
+    };
+
+    // 第一遍：G1 托管键 / G4 空值 / G6 非字符串或超长 → 跳过（不写也不清）
+    std::map<std::string, std::string> valid;
+    for (const auto& key : env.keys()) {
+        if (containsKey(managedKeys, key)) {  // G1
+            markSkipped(key);
+            continue;
+        }
+        auto val = env.get(key);
+        if (!val.isString()) {  // G6
+            out.cfg.warnings.push_back("env 值非字符串，已跳过: " + key);
+            markSkipped(key);
+            continue;
+        }
+        const std::string v = val.asString();
+        if (v.size() > 4096) {  // G6
+            out.cfg.warnings.push_back("env 值超过 4KB 上限，已跳过: " + key);
+            markSkipped(key);
+            continue;
+        }
+        if (v.empty()) {  // G4
+            markSkipped(key);
+            continue;
+        }
+        valid[key] = v;
+    }
+
+    // G2：loopback BASE_URL（本地代理形态）→ base_url 与本次 token 都不写也不清
+    bool loopbackBaseUrl = false;
+    {
+        auto it = valid.find("ANTHROPIC_BASE_URL");
+        if (it != valid.end() && isLoopbackUrl(it->second)) {
+            loopbackBaseUrl = true;
+        }
+    }
+    if (loopbackBaseUrl) {
+        valid.erase("ANTHROPIC_BASE_URL");
+        valid.erase("ANTHROPIC_AUTH_TOKEN");
+        valid.erase("ANTHROPIC_API_KEY");
+        markSkipped("ANTHROPIC_BASE_URL");
+        markTokenSkipped();
+    } else {
+        auto it = valid.find("ANTHROPIC_BASE_URL");
+        if (it != valid.end()) {
+            out.cfg.baseUrl = it->second;  // 尾斜杠清洗与 updateProfile 同款，交上层
+            valid.erase(it);
+        }
+    }
+
+    // token：AUTH_TOKEN 优先，其次 API_KEY（同现 → AUTH_TOKEN + warning）；
+    // G3 占位符 → 不写也不清（保持 profile 原密钥）
+    {
+        auto auth = valid.find("ANTHROPIC_AUTH_TOKEN");
+        auto api = valid.find("ANTHROPIC_API_KEY");
+        if (auth != valid.end() && auth->second != kProxyAuthPlaceholder) {
+            out.cfg.authToken = auth->second;
+            if (api != valid.end()) {
+                out.cfg.warnings.push_back(
+                    "同时含 ANTHROPIC_API_KEY 与 ANTHROPIC_AUTH_TOKEN，"
+                    "已采用 AUTH_TOKEN");
+            }
+        } else if (auth != valid.end()) {  // AUTH_TOKEN 占位符 → G3
+            markTokenSkipped();
+        } else if (api != valid.end() && api->second != kProxyAuthPlaceholder) {
+            out.cfg.authToken = api->second;
+        } else if (api != valid.end()) {  // API_KEY 占位符 → G3
+            markTokenSkipped();
+        }
+        valid.erase("ANTHROPIC_AUTH_TOKEN");
+        valid.erase("ANTHROPIC_API_KEY");
+    }
+
+    // 模型槽位 / *_NAME 槽位（映射表复用 kImportSlots）
+    for (const auto& s : kImportSlots) {
+        auto mit = valid.find(s.modelKey);
+        if (mit != valid.end()) {
+            (out.cfg.models.*s.slot).model = mit->second;
+            valid.erase(mit);
+        }
+        if (s.nameKey == nullptr) continue;  // def / subagent 无 _NAME 变体
+        auto nit = valid.find(s.nameKey);
+        if (nit != valid.end()) {
+            (out.cfg.models.*s.slot).name = nit->second;
+            valid.erase(nit);
+        }
+    }
+
+    // 其余键 → extra_env（别名归一复用 applyEnvAliases；未识别键照收）
+    auto aliased = applyEnvAliases(valid);
+    out.cfg.extraEnv = std::move(aliased.env);
+    out.cfg.aliasMappedKeys = std::move(aliased.aliasMappedKeys);
+    out.cfg.unrecognizedKeys = std::move(aliased.unrecognizedKeys);
+
+    for (const auto& s : kSlots) {
+        if (!(out.cfg.models.*s.slot).model.empty()) ++out.cfg.recognizedSlots;
+    }
+    std::sort(out.cfg.skippedKeys.begin(), out.cfg.skippedKeys.end());
+    out.cfg.skippedKeys.erase(
+        std::unique(out.cfg.skippedKeys.begin(), out.cfg.skippedKeys.end()),
+        out.cfg.skippedKeys.end());
+    out.skippedKeys = out.cfg.skippedKeys;
+
+    out.ok = true;
+    return out;
+}
+
+ReverseSyncMerge mergeReverseSyncEnv(const ImportedConfig& cfg,
+                                     const std::string& curModelsConfigJson,
+                                     const std::string& curLegacyModel,
+                                     const std::string& curExtraEnvJson) {
+    ReverseSyncMerge out;
+    const auto isKeep = [&cfg](const std::string& key) {
+        return containsKey(cfg.skippedKeys, key);
+    };
+
+    // ---- models_config：以 effectiveModelsConfig(现值, 旧 model 列) 为基底 ----
+    const ModelsConfig cur =
+        effectiveModelsConfig(curModelsConfigJson, curLegacyModel);
+    ModelsConfig merged = cur;
+    for (const auto& s : kImportSlots) {
+        if (!isKeep(s.modelKey)) {
+            (merged.*s.slot).model = (cfg.models.*s.slot).model;  // 出现覆盖/缺席清空
+        }
+        // def / subagent 无官方 _NAME 变体 → name 不属托管字段，任何情况下不动
+        if (s.nameKey != nullptr && !isKeep(s.nameKey)) {
+            (merged.*s.slot).name = (cfg.models.*s.slot).name;
+        }
+    }
+    out.modelsConfigJson = curModelsConfigJson;
+    if (!modelsConfigEqual(merged, cur)) {
+        auto text = serializeModelsConfig(merged);
+        if (text.isOk()) {
+            out.modelsConfigJson = text.value();
+            out.modelsChanged = true;
+        }
+        // 序列化失败（理论不可达）→ 保持现值不写，避免半写
+    }
+
+    // ---- extra_env：键集合完全由 settings.json 决定（出现覆盖 / 缺席删除）----
+    std::map<std::string, std::string> curExtra;
+    auto parsedCur = parseExtraEnv(curExtraEnvJson);
+    if (parsedCur.isOk()) curExtra = parsedCur.value();  // 非法 JSON → 容错为空表
+
+    std::map<std::string, std::string> mergedExtra;
+    for (const auto& [k, v] : cfg.extraEnv) {
+        if (!isKeep(k)) mergedExtra[k] = v;  // 出现覆盖 / 新增（守卫键不写）
+    }
+    for (const auto& [k, v] : curExtra) {
+        if (isKeep(k)) mergedExtra[k] = v;  // 守卫键保持原值（不清）
+    }
+    out.extraEnvJson = curExtraEnvJson;
+    if (mergedExtra != curExtra) {
+        if (mergedExtra.empty()) {
+            out.extraEnvJson.clear();  // 空表 = 未配置（本层空串约定）
+            out.extraEnvChanged = true;
+        } else {
+            auto text = serializeExtraEnv(mergedExtra);
+            if (text.isOk()) {
+                out.extraEnvJson = text.value();
+                out.extraEnvChanged = true;
+            }
+        }
+    }
+    return out;
+}
+
+std::string makeCopyName(const std::string& baseName,
+                         const std::vector<std::string>& existingNames) {
+    for (int i = 1; i <= 100; ++i) {
+        std::string candidate = baseName + " 副本";
+        if (i > 1) candidate += " " + std::to_string(i);
+        if (!containsKey(existingNames, candidate)) return candidate;
+    }
+    return {};  // 100 次仍冲突：调用方按命名失败处理
 }
 
 } // namespace module::claude

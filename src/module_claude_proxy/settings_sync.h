@@ -59,6 +59,27 @@ struct SyncResult {
     std::vector<std::string> warnings;  // 上层覆盖检测命中（Phase D UI 展示）
 };
 
+// 反向同步读侧（设计 §3.3 G7/G8/G9）：把 settings.json 的 env 读成「原文 JSON
+// + sidecar 托管键集」，供切 profile 前的反向同步（settings.json → profile）
+// 使用。**只读，不写任何文件、不碰 profile**。
+//   - 文件不存在 / 0 字节空文件 / 无 env 键 → ok=true, present=false
+//     （no-op 成功：调用方照常完成本次切换，不清空任何 profile 字段）
+//   - 读取失败 / 非法 JSON / 顶层非对象 / env 非对象 → ok=false + error
+//     （含路径与原因；调用方据此中止本次切换 S-2）
+//     ——与「不存在」是两种处置，不得合并
+//   - 正常 → ok=true, present=true + envJson（env 对象原文）+ managedKeys
+//     （sidecar 的 managedKeys 键集；sidecar 缺失 → 空集；sidecar 损坏 →
+//     空集 + WARN，绝不因此失败）
+struct SettingsEnvRead {
+    bool ok = true;
+    bool present = false;
+    std::string error;
+    std::string envJson;
+    std::vector<std::string> managedKeys;
+};
+
+SettingsEnvRead readSettingsEnvForSync(const Paths& paths);
+
 // 接管。profile 可为默认构造（无激活 profile 时只写 BASE_URL + 占位凭据）
 SyncResult takeOver(const Profile& profile, int proxyPort, const Paths& paths);
 

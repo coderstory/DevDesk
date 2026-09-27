@@ -565,3 +565,268 @@ REGISTER_TEST(claude_env_var_hints,
     return true;
 })
 
+// ---- 反向同步（设计 §3.2 映射表 / §3.3 守卫表 / §3.4 出现缺席语义）----
+
+namespace {
+
+bool hasEntry(const std::vector<std::string>& keys, const char* key) {
+    for (const auto& k : keys) {
+        if (k == key) return true;
+    }
+    return false;
+}
+
+} // namespace
+
+// ---- isLoopbackUrl（G2）----
+REGISTER_TEST(provider_config_reverse_loopback_url,
+              "provider_config: isLoopbackUrl 数字段/大小写/方括号（reverse loopback）", {
+    using module::claude::isLoopbackUrl;
+    DOCTEST_CHECK(isLoopbackUrl("http://127.0.0.1:8888"));
+    DOCTEST_CHECK(isLoopbackUrl("http://127.5.5.5"));  // 127/8 全段
+    DOCTEST_CHECK(isLoopbackUrl("LocalHost"));         // 大小写
+    DOCTEST_CHECK(isLoopbackUrl("http://LocalHost:15721"));
+    DOCTEST_CHECK(isLoopbackUrl("[::1]:8888"));
+    DOCTEST_CHECK(isLoopbackUrl("https://[::1]/v1"));
+    DOCTEST_CHECK(isLoopbackUrl("http://127.0.0.1:15721/v1/messages"));  // 带路径
+    DOCTEST_CHECK(!isLoopbackUrl(""));
+    DOCTEST_CHECK(!isLoopbackUrl("https://api.anthropic.com"));
+    DOCTEST_CHECK(!isLoopbackUrl("http://192.168.1.1:8080"));
+    DOCTEST_CHECK(!isLoopbackUrl("http://10.0.0.1"));
+    DOCTEST_CHECK(!isLoopbackUrl("http://127.0.0.1.evil.com"));  // 不做前缀误判
+    DOCTEST_CHECK(!isLoopbackUrl("http://127.0.0.1evil"));       // 非数字段
+    DOCTEST_CHECK(!isLoopbackUrl("http://127.1"));               // 短写不认
+    DOCTEST_CHECK(!isLoopbackUrl("http://[::2]:8888"));
+    return true;
+})
+
+// ---- 映射表 14 条（§3.2）----
+REGISTER_TEST(provider_config_reverse_parse_mapping,
+              "provider_config: parseEnvForReverseSync 映射表 14 条（reverse）", {
+    const std::string env = R"json({
+        "ANTHROPIC_BASE_URL": "https://gw.example.com/anthropic",
+        "ANTHROPIC_AUTH_TOKEN": "sk-token",
+        "ANTHROPIC_MODEL": "m-def",
+        "ANTHROPIC_DEFAULT_SONNET_MODEL": "m-sonnet",
+        "ANTHROPIC_DEFAULT_SONNET_MODEL_NAME": "Sonnet 显示名",
+        "ANTHROPIC_DEFAULT_OPUS_MODEL": "m-opus",
+        "ANTHROPIC_DEFAULT_OPUS_MODEL_NAME": "Opus 显示名",
+        "ANTHROPIC_DEFAULT_HAIKU_MODEL": "m-haiku",
+        "ANTHROPIC_DEFAULT_FABLE_MODEL": "m-fable",
+        "ANTHROPIC_DEFAULT_FABLE_MODEL_NAME": "Fable 显示名",
+        "CLAUDE_CODE_SUBAGENT_MODEL": "m-sub",
+        "AUTO_COMPACT_ENABLED": "1",
+        "DISABLE_AUTOUPDATER": "1",
+        "CLAUDE_AUTOCOMPACT_PCT_OVERRIDE": "75"
+    })json";
+    auto r = module::claude::parseEnvForReverseSync(env, {});
+    DOCTEST_REQUIRE(r.ok);
+    const auto& c = r.cfg;
+    DOCTEST_CHECK_EQ(c.baseUrl, std::string("https://gw.example.com/anthropic"));
+    DOCTEST_CHECK_EQ(c.authToken, std::string("sk-token"));
+    DOCTEST_CHECK_EQ(c.models.def.model, std::string("m-def"));
+    DOCTEST_CHECK_EQ(c.models.sonnet.model, std::string("m-sonnet"));
+    DOCTEST_CHECK_EQ(c.models.sonnet.name, std::string("Sonnet 显示名"));
+    DOCTEST_CHECK_EQ(c.models.opus.model, std::string("m-opus"));
+    DOCTEST_CHECK_EQ(c.models.opus.name, std::string("Opus 显示名"));
+    DOCTEST_CHECK_EQ(c.models.haiku.model, std::string("m-haiku"));
+    DOCTEST_CHECK(c.models.haiku.name.empty());
+    DOCTEST_CHECK_EQ(c.models.fable.model, std::string("m-fable"));
+    DOCTEST_CHECK_EQ(c.models.fable.name, std::string("Fable 显示名"));
+    DOCTEST_CHECK_EQ(c.models.subagent.model, std::string("m-sub"));
+    DOCTEST_CHECK_EQ(c.recognizedSlots, 6);
+    // 别名归一复用 kEnvAliases：AUTO_COMPACT_ENABLED=1 → DISABLE_AUTO_COMPACT=0
+    DOCTEST_REQUIRE_EQ(c.extraEnv.count("DISABLE_AUTO_COMPACT"), 1u);
+    DOCTEST_CHECK_EQ(c.extraEnv.at("DISABLE_AUTO_COMPACT"), std::string("0"));
+    DOCTEST_CHECK_EQ(c.extraEnv.at("DISABLE_AUTOUPDATER"), std::string("1"));
+    DOCTEST_CHECK_EQ(c.extraEnv.at("CLAUDE_AUTOCOMPACT_PCT_OVERRIDE"),
+                     std::string("75"));
+    DOCTEST_CHECK_EQ(c.unrecognizedKeys.size(), 1u);  // 未识别键照收，不阻断
+    DOCTEST_CHECK(r.skippedKeys.empty());             // 无守卫命中
+
+    // API_KEY 仅当 AUTH_TOKEN 缺席时生效；同现取 AUTH_TOKEN + warning
+    auto keyOnly = module::claude::parseEnvForReverseSync(
+        R"({"ANTHROPIC_API_KEY": "sk-key"})", {});
+    DOCTEST_REQUIRE(keyOnly.ok);
+    DOCTEST_CHECK_EQ(keyOnly.cfg.authToken, std::string("sk-key"));
+    DOCTEST_CHECK(keyOnly.cfg.warnings.empty());
+
+    auto both = module::claude::parseEnvForReverseSync(
+        R"({"ANTHROPIC_API_KEY": "sk-key", "ANTHROPIC_AUTH_TOKEN": "sk-token"})",
+        {});
+    DOCTEST_REQUIRE(both.ok);
+    DOCTEST_CHECK_EQ(both.cfg.authToken, std::string("sk-token"));
+    DOCTEST_REQUIRE_EQ(both.cfg.warnings.size(), 1u);
+    DOCTEST_CHECK(both.cfg.warnings[0].find("AUTH_TOKEN") != std::string::npos);
+    return true;
+})
+
+// ---- 守卫 G1-G6（§3.3）----
+REGISTER_TEST(provider_config_reverse_parse_guards,
+              "provider_config: parseEnvForReverseSync 守卫 G1-G6（reverse）", {
+    using module::claude::parseEnvForReverseSync;
+
+    // G1 sidecar 托管键 → 跳过（不写也不清）
+    auto g1 = parseEnvForReverseSync(
+        R"({"ANTHROPIC_MODEL": "m-cc", "MY_KEY": "x"})", {"ANTHROPIC_MODEL"});
+    DOCTEST_REQUIRE(g1.ok);
+    DOCTEST_CHECK(g1.cfg.models.def.model.empty());  // 未被收编
+    DOCTEST_CHECK_EQ(g1.cfg.extraEnv.at("MY_KEY"), std::string("x"));
+    DOCTEST_CHECK(hasEntry(g1.skippedKeys, "ANTHROPIC_MODEL"));
+
+    // G2 loopback BASE_URL → base_url + token 联动跳过（本机 cc-switch 形态：
+    // 127.0.0.1 + 非占位符的本地 token 不得被当上游 key 收编）
+    auto g2 = parseEnvForReverseSync(
+        R"({"ANTHROPIC_BASE_URL": "http://127.0.0.1:15721", "ANTHROPIC_AUTH_TOKEN": "local-token"})",
+        {});
+    DOCTEST_REQUIRE(g2.ok);
+    DOCTEST_CHECK(g2.cfg.baseUrl.empty());
+    DOCTEST_CHECK(g2.cfg.authToken.empty());
+    DOCTEST_CHECK(hasEntry(g2.skippedKeys, "ANTHROPIC_BASE_URL"));
+    DOCTEST_CHECK(hasEntry(g2.skippedKeys, "ANTHROPIC_AUTH_TOKEN"));
+    DOCTEST_CHECK(hasEntry(g2.skippedKeys, "ANTHROPIC_API_KEY"));
+
+    // G3 占位 token → 跳过（保持 profile 原密钥）
+    auto g3 = parseEnvForReverseSync(
+        R"({"ANTHROPIC_AUTH_TOKEN": "PROXY_MANAGED"})", {});
+    DOCTEST_REQUIRE(g3.ok);
+    DOCTEST_CHECK(g3.cfg.authToken.empty());
+    DOCTEST_CHECK(hasEntry(g3.skippedKeys, "ANTHROPIC_AUTH_TOKEN"));
+
+    // G4 空值 → 跳过（不拿空串覆盖，也不清空）；别名键同时登记归一后的键名
+    auto g4 = parseEnvForReverseSync(
+        R"({"DISABLE_AUTOUPDATER": "", "AUTO_COMPACT_ENABLED": ""})", {});
+    DOCTEST_REQUIRE(g4.ok);
+    DOCTEST_CHECK(g4.cfg.extraEnv.empty());
+    DOCTEST_CHECK(hasEntry(g4.skippedKeys, "DISABLE_AUTOUPDATER"));
+    DOCTEST_CHECK(hasEntry(g4.skippedKeys, "AUTO_COMPACT_ENABLED"));
+    DOCTEST_CHECK(hasEntry(g4.skippedKeys, "DISABLE_AUTO_COMPACT"));
+
+    // G6 非字符串 / 超长 → 跳过该键 + warning，不整体 fail
+    auto g6 = parseEnvForReverseSync(
+        R"({"NUM_KEY": 1, "BOOL_KEY": true, "OK_KEY": "v"})", {});
+    DOCTEST_REQUIRE(g6.ok);
+    DOCTEST_CHECK_EQ(g6.cfg.extraEnv.size(), 1u);
+    DOCTEST_CHECK(hasEntry(g6.skippedKeys, "NUM_KEY"));
+    DOCTEST_CHECK(hasEntry(g6.skippedKeys, "BOOL_KEY"));
+    DOCTEST_CHECK_EQ(g6.cfg.warnings.size(), 2u);
+    {
+        const std::string big =
+            "{ \"BIG_KEY\": \"" + std::string(4097, 'x') + "\" }";
+        auto rb = parseEnvForReverseSync(big, {});
+        DOCTEST_REQUIRE(rb.ok);
+        DOCTEST_CHECK(rb.cfg.extraEnv.empty());
+        DOCTEST_CHECK(hasEntry(rb.skippedKeys, "BIG_KEY"));
+        DOCTEST_CHECK_EQ(rb.cfg.warnings.size(), 1u);
+    }
+
+    // 只有 env 本身非法才 ok=false（与 G6 的单键容错分界）
+    DOCTEST_CHECK(!parseEnvForReverseSync("{not json", {}).ok);
+    DOCTEST_CHECK(!parseEnvForReverseSync("[1,2]", {}).ok);
+    return true;
+})
+
+// ---- 合并语义（§3.4 出现覆盖 / 缺席清空 / 守卫不写也不清）----
+REGISTER_TEST(provider_config_reverse_merge_clear_keep_override,
+              "provider_config: mergeReverseSyncEnv 缺席清空/守卫跳过/出现覆盖（reverse）", {
+    using module::claude::mergeReverseSyncEnv;
+    using module::claude::parseEnvForReverseSync;
+
+    // 现值：3 个槽位 + 2 个 extra 键
+    const std::string curModels = R"json({
+        "default": {"model": "m-old", "name": ""},
+        "sonnet":  {"model": "s-old", "name": "old-name"},
+        "opus":    {"model": "o-old", "name": "o-name"}
+    })json";
+    const std::string curExtra =
+        R"json({"DISABLE_AUTOUPDATER": "1", "MY_KEY": "keep"})json";
+
+    // settings.json：default 由 sidecar 托管（G1，不清）；sonnet 出现覆盖
+    //（_NAME 缺席 → 清）；opus 全缺席 → 清；haiku 仅 _NAME 出现（其 model 缺席
+    // → 清）；MY_KEY 空值（G4，不清）；OTHER 新增；DISABLE_AUTOUPDATER 缺席 → 删
+    const std::string env = R"json({
+        "ANTHROPIC_MODEL": "m-cc",
+        "ANTHROPIC_DEFAULT_SONNET_MODEL": "s-new",
+        "ANTHROPIC_DEFAULT_HAIKU_MODEL_NAME": "haiku-name",
+        "MY_KEY": "",
+        "OTHER": "new"
+    })json";
+    auto parsed = parseEnvForReverseSync(env, {"ANTHROPIC_MODEL"});
+    DOCTEST_REQUIRE(parsed.ok);
+
+    auto m = mergeReverseSyncEnv(parsed.cfg, curModels, "", curExtra);
+    DOCTEST_CHECK(m.modelsChanged);
+    DOCTEST_CHECK(m.extraEnvChanged);
+
+    auto mc = module::claude::parseModelsConfig(m.modelsConfigJson);
+    DOCTEST_REQUIRE(mc.isOk());
+    const auto& s = mc.value();
+    DOCTEST_CHECK_EQ(s.def.model, std::string("m-old"));  // G1：不写也不清
+    DOCTEST_CHECK_EQ(s.sonnet.model, std::string("s-new"));  // 出现覆盖
+    DOCTEST_CHECK(s.sonnet.name.empty());                    // _NAME 缺席 → 清空
+    DOCTEST_CHECK(s.opus.model.empty());                     // 缺席 → 清空
+    DOCTEST_CHECK(s.opus.name.empty());
+    DOCTEST_CHECK_EQ(s.haiku.name, std::string("haiku-name"));  // _NAME 出现覆盖
+    DOCTEST_CHECK(s.haiku.model.empty());  // 同一槽位 model 键缺席 → 清空
+    DOCTEST_CHECK(s.subagent.model.empty());
+
+    auto ec = module::claude::parseExtraEnv(m.extraEnvJson);
+    DOCTEST_REQUIRE(ec.isOk());
+    DOCTEST_CHECK_EQ(ec.value().at("MY_KEY"), std::string("keep"));  // G4：不清
+    DOCTEST_CHECK_EQ(ec.value().at("OTHER"), std::string("new"));    // 新增
+    DOCTEST_CHECK(ec.value().find("DISABLE_AUTOUPDATER") == ec.value().end());
+    DOCTEST_CHECK_EQ(ec.value().size(), 2u);
+    return true;
+})
+
+REGISTER_TEST(provider_config_reverse_merge_no_change,
+              "provider_config: mergeReverseSyncEnv 无变化不落库 + 空表约定（reverse）", {
+    using module::claude::mergeReverseSyncEnv;
+    using module::claude::parseEnvForReverseSync;
+
+    // 无变化：env 与现值逐字段一致（含旧 model 列 fallback 等价——models_config
+    // 空 + 旧列 m-1，env 给 m-1 → 不算变化，零写入）
+    auto parsed = parseEnvForReverseSync(
+        R"({"ANTHROPIC_MODEL": "m-1", "DISABLE_AUTOUPDATER": "1"})", {});
+    DOCTEST_REQUIRE(parsed.ok);
+    auto m = mergeReverseSyncEnv(parsed.cfg, "", "m-1",
+                                 R"({"DISABLE_AUTOUPDATER": "1"})");
+    DOCTEST_CHECK(!m.modelsChanged);
+    DOCTEST_CHECK(!m.extraEnvChanged);
+    DOCTEST_CHECK(m.modelsConfigJson.empty());  // 回传原文（空 = 未配置）
+    DOCTEST_CHECK(m.extraEnvJson.find("DISABLE_AUTOUPDATER") != std::string::npos);
+
+    // extra_env 全清 → 空串（本层「空串 = 未配置」约定）
+    auto empty = parseEnvForReverseSync("{}", {});
+    DOCTEST_REQUIRE(empty.ok);
+    auto m2 = mergeReverseSyncEnv(empty.cfg, "", "", R"({"K": "v"})");
+    DOCTEST_CHECK(!m2.modelsChanged);   // 两侧都空 → 不算变化
+    DOCTEST_CHECK(m2.extraEnvChanged);  // 缺席 → 清空
+    DOCTEST_CHECK(m2.extraEnvJson.empty());
+    return true;
+})
+
+// ---- 副本命名（§4.2）----
+REGISTER_TEST(provider_config_copyname,
+              "provider_config: makeCopyName 副本命名与避让（copyname）", {
+    using module::claude::makeCopyName;
+    using Names = std::vector<std::string>;
+
+    DOCTEST_CHECK_EQ(makeCopyName("官方中转", {}), std::string("官方中转 副本"));
+    DOCTEST_CHECK_EQ(makeCopyName("官方中转", Names({"官方中转 副本"})),
+                     std::string("官方中转 副本 2"));
+    DOCTEST_CHECK_EQ(
+        makeCopyName("官方中转", Names({"官方中转 副本", "官方中转 副本 2"})),
+        std::string("官方中转 副本 3"));
+    DOCTEST_CHECK_EQ(makeCopyName("", {}), std::string(" 副本"));  // 空名
+
+    // 100 次上限：占满 100 个候选 → 空串（调用方按命名失败处理）；退一个可用
+    Names full;
+    full.push_back("X 副本");
+    for (int i = 2; i <= 100; ++i) full.push_back("X 副本 " + std::to_string(i));
+    DOCTEST_CHECK_EQ(makeCopyName("X", full), std::string(""));
+    Names nearly(full.begin(), full.end() - 1);
+    DOCTEST_CHECK_EQ(makeCopyName("X", nearly), std::string("X 副本 100"));
+    return true;
+})
+
