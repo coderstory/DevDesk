@@ -102,4 +102,56 @@ inline std::pair<std::string, double> petDataBubbleText(
     return {};
 }
 
+// ---- 气泡调度（PAB-05）：本轮「弹哪一级内容源 / 停多久」的纯函数 ----
+// 抽取自 pet_window.cpp 的 onTimer 闭包（内联在闭包里时不可单测）：输入 dt +
+// 当前状态（气泡在场 / 是否 Idle）+ 一个 roll 值 → 计划；不依赖 EUI、不读全局、
+// 不碰随机源（roll 由调用方给，固定输入必得同一结果）。
+// 命中口径（与抽取前逐字一致）：
+//   - 气泡在场 或 非 Idle → 不弹（上一泡没走不让位；Poked/Sleep/Typing 不刷屏）
+//   - dt <= 0（首帧 / 时钟未推进）→ 不弹
+//   - roll < dt/150 → 数据槽位：③代理事件 > ②逾期（取词见 petDataBubbleText；
+//     其桥为 take 语义，调用方只能在命中本槽位时才读，未命中不得消费事件）
+//   - roll < dt/60  → ①静态语料（dt/150 ⊂ dt/60：一个 roll 即表达两级优先）
+//   - 其余 → 不弹
+// 平均间隔（每 tick 命中概率 = dt/节拍 → 期望等待 = 节拍）：
+//   数据槽位 150s（2.5min）；任意一泡 60s（两级合计）；静态语料单独 ~100s——
+//   两级共享一个 roll，静态的净概率是 dt/60 − dt/150 = dt/100。
+// 旧注释写「①静态语料——平均 ~60s 一句」，把"任意一泡"的节拍安在了静态单列头
+// 上，与代码行为不符：PAB-05 数字对齐以代码行为为准，只改注释、不改行为。
+enum class PetBubbleSource {
+    None,    // 本轮不弹
+    Data,    // 数据槽位：③代理事件 > ②逾期（文案/秒数由 petDataBubbleText 定）
+    Static,  // ①静态语料（皮肤短语表，见 pet_skin.h pickPetPhrase）
+};
+
+struct PetBubblePlan {
+    PetBubbleSource source = PetBubbleSource::None;
+    // 计划停留秒数。Static = 静态语料停留；Data = 桥无数据时降级静态语料的
+    // 兜底停留（桥有数据时被 petDataBubbleText 的秒数覆盖）；None = 0
+    double holdSec = 0.0;
+};
+
+// 调度节拍（秒）——命名常量 = 注释与代码的单源真相（PAB-05 数字对齐：
+// 上一版注释的 60s/100s 口径差就出在裸字面量上）
+inline constexpr double kPetDataSlotSec = 150.0;      // ③②数据槽位
+inline constexpr double kPetAnyBubbleSlotSec = 60.0;  // 两级共享槽位上界
+inline constexpr double kPetBubbleHoldSec = 3.0;      // 静态语料 / 数据降级停留
+
+inline PetBubblePlan petBubbleSchedule(double dtSec, bool bubbleVisible, bool idle,
+                                       double roll) {
+    if (bubbleVisible || !idle) {
+        return {};
+    }
+    if (dtSec <= 0.0) {
+        return {};
+    }
+    if (roll < dtSec / kPetDataSlotSec) {
+        return {PetBubbleSource::Data, kPetBubbleHoldSec};
+    }
+    if (roll < dtSec / kPetAnyBubbleSlotSec) {
+        return {PetBubbleSource::Static, kPetBubbleHoldSec};
+    }
+    return {};
+}
+
 } // namespace module::pet

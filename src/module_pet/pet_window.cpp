@@ -358,32 +358,29 @@ void petCompose(eui::Ui& ui, const eui::Screen& screen) {
                                  (now - state.lastInteractionMs) / 1000.0, s);
                              state.anim.tick(s);
                              state.bubble.tick(dt);
-                             // Idle 且无气泡时按三级内容源选词（M2 §4.5，审计 [18]）：
-                             // ③代理事件 > ②逾期提醒 > ①静态语料——数据源都经 main
-                             //   注入的 app 级只读桥（pet 不 include claude_proxy/home，
-                             //   隔离不破）。③②共用「数据气泡」槽位 roll（平均 ~2.5min
-                             //   一次，低频节奏按审计建议）：③为 take 语义，代理繁忙
-                             //   期最多 2.5min 一泡不刷屏；桥都无数据（空串）本轮降级，
-                             //   不显示死数据（M2 验收条款）
-                             // ①静态语料——平均 ~60s 一句（dt/150 ⊂ dt/60，roll 复用
-                             //   一个随机数即可表达两级优先，闲聊频率几乎不变）
-                             if (!state.bubble.visible &&
-                                 state.anim.state == PetAnimState::Idle) {
-                                 const double roll =
-                                     std::uniform_real_distribution<double>(
-                                         0.0, 1.0)(phraseRng());
-                                 if (roll < dt / 150.0) {
-                                     const auto [dataText, dataSec] =
-                                         petDataBubbleText(
-                                             runtime().config.getProxyEvent,
-                                             runtime().config.getOverdueCount);
-                                     state.bubble.show(
-                                         dataText.empty() ? pickPetPhrase(s)
-                                                          : dataText,
-                                         dataText.empty() ? 3.0 : dataSec);
-                                 } else if (roll < dt / 60.0) {
-                                     state.bubble.show(pickPetPhrase(s), 3.0);
-                                 }
+                             // 三级内容源调度（M2 §4.5，审计 [18]）：本轮弹哪一级 /
+                             // 停多久由 pet_bubble.h 的 petBubbleSchedule 纯函数决定
+                             //（PAB-05：从本闭包抽出以便单测，节拍与命中口径见该头，
+                             // 注释与代码数字同源）。数据源都经 main 注入的 app 级只读桥
+                             //（pet 不 include claude_proxy/home，隔离不破）；③为 take
+                             // 语义——只在调度命中数据槽位时才读桥，未命中不消费事件；
+                             // 桥都无数据（空串）降级①静态语料，不显示死数据（验收条款）
+                             const double roll =
+                                 std::uniform_real_distribution<double>(0.0, 1.0)(
+                                     phraseRng());
+                             const PetBubblePlan bubblePlan = petBubbleSchedule(
+                                 dt, state.bubble.visible,
+                                 state.anim.state == PetAnimState::Idle, roll);
+                             if (bubblePlan.source == PetBubbleSource::Data) {
+                                 const auto [dataText, dataSec] = petDataBubbleText(
+                                     runtime().config.getProxyEvent,
+                                     runtime().config.getOverdueCount);
+                                 state.bubble.show(
+                                     dataText.empty() ? pickPetPhrase(s) : dataText,
+                                     dataText.empty() ? bubblePlan.holdSec : dataSec);
+                             } else if (bubblePlan.source == PetBubbleSource::Static) {
+                                 state.bubble.show(pickPetPhrase(s),
+                                                   bubblePlan.holdSec);
                              }
                          })
                 .onClick([&state]() {
