@@ -1887,3 +1887,100 @@ REGISTER_TEST(claude_module_ui_enable_captures_settings,
     cleanupKey(b.value().id);
     return true;
 })
+
+// ---- 审计 CPX-02（UI 半边）：接管失败/上层覆盖警告在 Claude 页详情可见 ----
+// 服务侧已把失败原因与覆盖警告并入 ClaudeService::lastSyncWarnings_；此前详情页
+// 只在「已接管」分支渲染警告，接管失败（无 sidecar → 未接管）时用户只看到
+// 「未接管」而看不到原因。空警告时不显示（不留空占位）。
+REGISTER_TEST(claude_module_takeover_warn_visible,
+              "claude_module: 接管失败警告在详情页可见（headless）", {
+    TestEnv env;
+    ImportTempDir d("warnfail");
+    env.svc->setSettingsSyncPaths(d.paths());
+    env.svc->setSettingsTakeOverEnabled(true);
+    // 坏 settings.json（非法 JSON）→ takeOver 解析失败中止，全程不写 sidecar
+    d.write("settings.json", "{ 这不是合法 JSON");
+
+    std::unique_ptr<::core::Module> mod(create_claude_module());
+    eui::Screen screen;
+    screen.width = 1600.0f;
+    screen.height = 1000.0f;
+    auto compose = [&](eui::Ui& ui) {
+        ui.begin("claude_warn_fail");
+        mod->compose(ui, screen);
+        ui.end();
+    };
+
+    // 代理未启动、从未接管 → 无警告：警告元素不存在（空时不显示）
+    {
+        eui::Ui ui;
+        compose(ui);
+        DOCTEST_CHECK(ui.find("claude.field.takeover.warn") == nullptr);
+        DOCTEST_CHECK(ui.find("claude.field.takeover.warn.icon") == nullptr);
+    }
+
+    // 起代理 → 接管失败（不阻断起代理），原因并入 lastSyncWarnings_
+    const int port = pickFreePort();
+    DOCTEST_REQUIRE(port != 0);
+    DOCTEST_REQUIRE(env.svc->startProxy("127.0.0.1", port).isOk());
+    DOCTEST_CHECK(!env.svc->lastSyncWarnings().empty());
+    DOCTEST_CHECK(!env.svc->isClaudeCodeManaged());   // 失败 → 未接管
+
+    // 无需额外刷新调用：下一次 compose（进页面/启停代理后的首帧）即见警告，
+    // 文案含失败原因；状态行仍如实显示「未接管」
+    {
+        eui::Ui ui;
+        compose(ui);
+        const auto* warn = ui.find("claude.field.takeover.warn");
+        DOCTEST_REQUIRE(warn != nullptr);
+        DOCTEST_CHECK(warn->text.find("接管失败") != std::string::npos);
+        DOCTEST_CHECK(warn->text.find("解析失败") != std::string::npos);
+        DOCTEST_CHECK(ui.find("claude.field.takeover.warn.icon") != nullptr);
+        const auto* st = ui.find("claude.field.takeover.value");
+        DOCTEST_REQUIRE(st != nullptr);
+        DOCTEST_CHECK(st->text.find("未接管") != std::string::npos);
+    }
+
+    mod->onStop();
+    return true;
+})
+
+// 上层覆盖警告（接管成功路径）：多条 → 摘要 + 条数（本地注入两层 overlay 文件）
+REGISTER_TEST(claude_module_takeover_warn_summary,
+              "claude_module: 上层覆盖警告条数+摘要（headless）", {
+    TestEnv env;
+    ImportTempDir d("warnover");
+    auto paths = d.paths();
+    // managed（企业策略）+ project 两层各含冲突 env 键 → 2 条覆盖警告
+    // （注：REGISTER_TEST 宏体内不能出现裸逗号，故用两次 push_back）
+    paths.overlayFiles.push_back(d.file("managed.json"));
+    paths.overlayFiles.push_back(d.file("project.json"));
+    env.svc->setSettingsSyncPaths(paths);
+    env.svc->setSettingsTakeOverEnabled(true);
+    d.write("settings.json", R"({"env": {"MY_KEY": "user"}})");
+    d.write("managed.json",
+            R"({"env": {"ANTHROPIC_BASE_URL": "https://corp.example.com"}})");
+    d.write("project.json", R"({"env": {"ANTHROPIC_MODEL": "m-override"}})");
+
+    std::unique_ptr<::core::Module> mod(create_claude_module());
+    eui::Screen screen;
+    screen.width = 1600.0f;
+    screen.height = 1000.0f;
+    const int port = pickFreePort();
+    DOCTEST_REQUIRE(port != 0);
+    DOCTEST_REQUIRE(env.svc->startProxy("127.0.0.1", port).isOk());
+    DOCTEST_REQUIRE_EQ(env.svc->lastSyncWarnings().size(),
+                       static_cast<size_t>(2));
+
+    eui::Ui ui;
+    ui.begin("claude_warn_over");
+    mod->compose(ui, screen);
+    ui.end();
+    const auto* warn = ui.find("claude.field.takeover.warn");
+    DOCTEST_REQUIRE(warn != nullptr);
+    DOCTEST_CHECK(warn->text.find("覆盖") != std::string::npos);
+    DOCTEST_CHECK(warn->text.find("共 2 条") != std::string::npos);
+
+    mod->onStop();
+    return true;
+})
