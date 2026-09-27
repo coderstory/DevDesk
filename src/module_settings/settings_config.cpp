@@ -7,6 +7,7 @@
 #include <sstream>
 #include <utility>
 
+#include "core/atomic_write.h"
 #include "core/logging.h"
 #include "core/theme.h"
 #include "platform/json.h"
@@ -340,56 +341,6 @@ SettingsConfig SettingsStore::load() const {
     return sanitized(cfg);
 }
 
-namespace {
-
-// 原子写（同目录 tmp → remove → rename），与 module_claude_proxy 的
-// settings_sync::atomicWrite / module_markdown 的 atomicWriteFile 同一模式
-// （M3，2026-09-27）：旧的 std::ofstream(file_, trunc) 原地写在写窗口内崩溃/
-// 断电会把 config.json 截成半截，load 解析失败 → 静默回落**全默认值**——
-// 被用户关掉的模块会"复活"，比"保存失败"更难察觉。
-// rename 之后目标要么是旧的完整内容、要么是新的完整内容；替换窗口内崩溃时
-// 旧内容已被 remove、新内容完整躺在 config.json.devdesk-tmp 里，不丢数据。
-// 为什么在本文件抄一份而不复用：module_* 互不依赖是架构硬约束（atomicWrite
-// 在 module_claude_proxy 内），下沉 core 公共 util 的改动面大于本批收益
-// （与 KNOWN_LIMITATIONS #16 同一取舍）。
-core::Result<void> atomicWriteConfig(const std::filesystem::path& target,
-                                     const std::string& content) {
-    std::filesystem::path tmp = target;
-    tmp += ".devdesk-tmp";
-    {
-        std::ofstream f(tmp, std::ios::binary | std::ios::trunc);
-        if (!f) {
-            return core::Result<void>::fail(
-                core::ErrorCode::Internal,
-                "配置文件写入失败: " + tmp.string());
-        }
-        f << content;
-        f.close();
-        if (!f) {
-            std::error_code rmEc;
-            std::filesystem::remove(tmp, rmEc);
-            return core::Result<void>::fail(
-                core::ErrorCode::Internal,
-                "配置文件写入未完成: " + tmp.string());
-        }
-    }
-    // MinGW 的 std::filesystem::rename 不覆盖已存在目标（底层 _wrename
-    // 语义），先删再 rename（设计 §5.3 开放问题 6：最后写者胜，窗口期可接受）
-    std::error_code ec;
-    std::filesystem::remove(target, ec);
-    std::filesystem::rename(tmp, target, ec);
-    if (ec) {
-        std::error_code rmEc;
-        std::filesystem::remove(tmp, rmEc);
-        return core::Result<void>::fail(
-            core::ErrorCode::Internal,
-            "配置文件替换失败: " + target.string() + ": " + ec.message());
-    }
-    return core::Result<void>::ok();
-}
-
-} // namespace
-
 core::Result<void> SettingsStore::save(const SettingsConfig& cfgRaw) const {
     const SettingsConfig cfg = sanitized(cfgRaw);
 
@@ -429,9 +380,10 @@ core::Result<void> SettingsStore::save(const SettingsConfig& cfgRaw) const {
         }
     }
 
-    // 原子写（tmp + rename）：见 atomicWriteConfig 注释——原地 trunc 写在
-    // 写窗口内崩溃会让 config.json 半截，load 静默回落全默认（模块"复活"）
-    return atomicWriteConfig(file_, text.unsafeValue() + "\n");
+    // 原子写（tmp → remove → rename，core/atomic_write.h 唯一实现）：
+    // 原地 trunc 写在写窗口内崩溃会让 config.json 半截，load 静默回落全默认
+    // （被用户关掉的模块"复活"，比"保存失败"更难察觉）
+    return core::atomicWriteFile(file_, text.unsafeValue() + "\n", "配置文件");
 }
 
 } // namespace module::settings

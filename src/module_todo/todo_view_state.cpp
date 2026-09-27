@@ -10,6 +10,7 @@
 #include <sstream>
 #include <utility>
 
+#include "core/atomic_write.h"
 #include "core/logging.h"
 #include "core/paths.h"
 #include "platform/json.h"
@@ -133,18 +134,11 @@ core::Result<void> TodoViewStateStore::save(const TodoViewState& stRaw) const {
         }
     }
 
-    std::ofstream f(file_, std::ios::trunc);
-    if (!f) {
-        return core::Result<void>::fail(core::ErrorCode::Internal,
-                                        "视图状态写入失败: " + file_.string());
-    }
-    f << text.unsafeValue() << "\n";
-    f.close();
-    if (!f) {
-        return core::Result<void>::fail(core::ErrorCode::Internal,
-                                        "视图状态写入未完成: " + file_.string());
-    }
-    return core::Result<void>::ok();
+    // 原子写（tmp → remove → rename，core/atomic_write.h 唯一实现，审计 THS-03）：
+    // 旧的 std::ofstream(file_, trunc) 原地写在写窗口内崩溃/断电会把文件截成
+    // 半截，load 走解析失败分支静默回落默认值（列滚动位置/选中任务丢失；
+    // 本函数由卡片点击/右键高频触发，暴露窗口最多）
+    return core::atomicWriteFile(file_, text.unsafeValue() + "\n", "视图状态");
 }
 
 size_t TodoViewStateStore::pruneScrolls(std::map<int64_t, float>& scrolls,
