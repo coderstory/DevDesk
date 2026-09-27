@@ -218,12 +218,15 @@ public:
                     .size(contentW, 72.0f)
                     .alignItems(eui::Align::CENTER)
                     .content([&] {
+                        // 标题列宽 = contentW - 右侧按钮组宽 212（对偶写法，同
+                        // Todo 560/560、Claude 360/360）：旧 240 让整行比下方满宽
+                        // 卡内缩 28px，右缘不齐（home.header 行 gap=0，两段和=contentW）
                         ui.column("home.greeting")
-                            .size(std::max(280.0f, contentW - 240.0f), 72.0f)
+                            .size(std::max(280.0f, contentW - 212.0f), 72.0f)
                             .gap(6.0f)
                             .content([&] {
                                 ui.text("home.h1")
-                                    .size(std::max(280.0f, contentW - 240.0f), 40.0f)
+                                    .size(std::max(280.0f, contentW - 212.0f), 40.0f)
                                     .text("欢迎回到 DevDesk")
                                     .fontSize(t.sizes.fontSizePage)
                                     .lineHeight(40.0f)
@@ -231,7 +234,7 @@ public:
                                     .color(t.colors.textPrimary)
                                     .build();
                                 ui.text("home.date")
-                                    .size(std::max(280.0f, contentW - 240.0f), 18.0f)
+                                    .size(std::max(280.0f, contentW - 212.0f), 18.0f)
                                     .text("今天是 " + formatTodayCn(now))
                                     .fontSize(t.sizes.fontSizeSmall)
                                     .lineHeight(18.0f)

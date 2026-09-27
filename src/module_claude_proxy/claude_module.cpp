@@ -310,9 +310,9 @@ public:
                                 .build();
                             ui.text("claude.guide.takeover")
                                 .size(contentW - 20.0f, 18.0f)
-                                .text("启动代理后将自动接管 Claude Code 配置（" +
+                                .text("启动代理将接管 Claude Code 配置（" +
                                       settings_sync::defaultPaths().settingsFile.string() +
-                                      "），停止代理时自动还原；其余字段原样保留")
+                                      " 指向本地代理），停止代理时自动还原")
                                 .fontSize(t.sizes.fontSizeSmall)
                                 .lineHeight(18.0f)
                                 .color(t.colors.textSecondary)
@@ -643,9 +643,21 @@ public:
                                     } else {
                                         const float keyColW = std::min(220.0f, w0 * 0.45f);
                                         const int keyMaxChars = std::max(6, static_cast<int>(keyColW / 7.0f));
+                                        // 行数上限（2026-09-27 修）：此前无上限，行一多 paneBottom
+                                        // 一路下探，把下方按钮组/最近调用表/「查看全部」顶出面板
+                                        // 下沿，被 app.page clip 裁掉点不到。下方固定占用 236px
+                                        //（actY = paneBottom+20，查看全部命中区底 = actY+236）+
+                                        // 20px「另有 N 项」提示；超出部分不画只提示（不引 scrollView：
+                                        // 行绘制用 overlay 绝对坐标，进 content lambda 需整段改相对
+                                        // 坐标 + 新增滚动 offset 成员，改动面大；表单 env 编辑器
+                                        // 已有 kMaxVisibleRows + 溢出提示同款先例）
+                                        const size_t envMaxRows = std::max<size_t>(
+                                            1, static_cast<size_t>(
+                                                   std::max(0.0f, bodyH - paneY - 276.0f) / 54.0f));
                                         float ey = paneY;
                                         int ei2 = 0;
                                         for (const auto& kv : envMap) {
+                                            if (static_cast<size_t>(ei2) >= envMaxRows) break;
                                             const std::string& k = kv.first;
                                             const std::string& v = kv.second;
                                             std::string shownVal = v;
@@ -677,8 +689,11 @@ public:
                                                 .position(x0 + 12.0f, ey).size(keyColW, 20.0f)
                                                 .text(kDisp).fontSize(12.0f).lineHeight(20.0f)
                                                 .color(t.colors.primary).build();
+                                            // 值列单行：超宽（最小窗 valW≈194px）裁掉，
+                                            // 不溢出面板/压到右栏外（clip = 自身 frame 取景）
                                             ui.text(std::string("claude.env.val.") + rid)
                                                 .position(valX, ey).size(valW, 48.0f)
+                                                .clip()
                                                 .text(shownVal).fontSize(12.0f).lineHeight(20.0f)
                                                 .verticalAlign(eui::VerticalAlign::Center)
                                                 .color(t.colors.textSecondary).build();
@@ -689,6 +704,19 @@ public:
                                                 .color(t.colors.textTertiary).build();
                                             ey += 54.0f;
                                             ++ei2;
+                                        }
+                                        if (envMap.size() > static_cast<size_t>(ei2)) {
+                                            // 溢出提示（与表单 env 页「另有 N 项」同款口径）：
+                                            // 未画出的行全量保存在 Profile 里，编辑时可见
+                                            ui.text("claude.env.overflow")
+                                                .position(x0, ey).size(w0, 18.0f)
+                                                .text("另有 " +
+                                                      std::to_string(envMap.size() -
+                                                                     static_cast<size_t>(ei2)) +
+                                                      " 项未显示（编辑该 Profile 可查看全部）")
+                                                .fontSize(11.0f).lineHeight(18.0f)
+                                                .color(t.colors.textTertiary).build();
+                                            ey += 20.0f;
                                         }
                                         paneBottom = ey;
                                     }
@@ -1777,17 +1805,22 @@ private:
                  i < importPreview_.warnings.size() && notes.size() < 3; ++i) {
                 notes.push_back(importPreview_.warnings[i]);
             }
-            for (size_t i = 0; i < notes.size(); ++i) {
-                ui.text("claude.form.import.note.icon." + std::to_string(i))
-                    .position(270.0f, 486.0f + static_cast<float>(i) * 15.0f)
-                    .size(13.0f, 15.0f)
-                    .icon(0xF071).fontSize(10.0f).lineHeight(15.0f)
-                    .color(t.colors.warning).build();
-                ui.text("claude.form.import.note." + std::to_string(i))
-                    .position(286.0f, 486.0f + static_cast<float>(i) * 15.0f)
-                    .size(w - 286.0f - 28.0f, 15.0f)
-                    .text(notes[i]).fontSize(10.0f).lineHeight(15.0f)
-                    .color(t.colors.warning).build();
+            // 角标与底部校验错误行（dialog 里 y=h-104，formTab_!=0 时画）
+            // 同屏重叠：有校验错误时让位，只显示校验错误（提交失败更可行动；
+            // 角标信息全量在保存后的 settings.json 与日志可查）
+            if (formError_.empty()) {
+                for (size_t i = 0; i < notes.size(); ++i) {
+                    ui.text("claude.form.import.note.icon." + std::to_string(i))
+                        .position(270.0f, 486.0f + static_cast<float>(i) * 15.0f)
+                        .size(13.0f, 15.0f)
+                        .icon(0xF071).fontSize(10.0f).lineHeight(15.0f)
+                        .color(t.colors.warning).build();
+                    ui.text("claude.form.import.note." + std::to_string(i))
+                        .position(286.0f, 486.0f + static_cast<float>(i) * 15.0f)
+                        .size(w - 286.0f - 28.0f, 15.0f)
+                        .text(notes[i]).fontSize(10.0f).lineHeight(15.0f)
+                        .color(t.colors.warning).build();
+                }
             }
         } else {
             ui.text("claude.form.import.hint.icon")
@@ -2256,9 +2289,6 @@ private:
             showToast("启动代理失败", r.errorMessage(), true);
             return;
         }
-        // 手动启动是 Phase B 后的主启动路径，凭据文件同步重写
-        //（此前只有 main 自启 / 设置页重生成两条路径写）
-        writeProxyTokenFile(svc->proxyAuthToken(), r.value());
         showToast("代理已启动",
                   "监听 http://127.0.0.1:" + std::to_string(r.value()), false);
     }
