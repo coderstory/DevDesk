@@ -31,6 +31,7 @@
 
 #include "core/platform/window_effect.h"
 #include "core/logging.h"
+#include "core/proxy_port.h"
 #include "core/result.h"
 
 namespace module::settings {
@@ -47,11 +48,13 @@ constexpr int kMaxFontScalePercent = 130;
 // 日志保留天数上限（0 = 永久）
 constexpr int kMaxLogRetentionDays = 3650;
 // Claude 代理端口（总设计 §8.5 第 5 条「数字输入框（默认 8888；改后自动重启
-// 代理）」，产品审计 2026-09-23 [14]；范围/默认值与 ClaudeService 的
-// k*ProxyPort 常量保持字面一致——模块隔离不互相 include）
-constexpr int kDefaultProxyPort = 8888;
-constexpr int kMinProxyPort = 1;
-constexpr int kMaxProxyPort = 65535;
+// 代理）」，产品审计 2026-09-23 [14]）。**取值唯一来源 = core/proxy_port.h**
+//（R0/D7）：原先与 ClaudeService 的 k*ProxyPort 各自定义同值常量、靠注释约定
+// 「保持字面一致」——现两侧同源，范围/默认值只有一个落点。名字保留，本页
+// 与 settings_config.cpp 的既有引用不变
+constexpr int kDefaultProxyPort = ::core::kDefaultProxyPort;
+constexpr int kMinProxyPort = ::core::kMinProxyPort;
+constexpr int kMaxProxyPort = ::core::kMaxProxyPort;
 
 // ---- 模块开关 ID（模块插拔方案 A，设计 2026-09-22 §5.1）----
 // 字符串与 pageIdToString 的小写对齐；config.json 的 enabledModules 数组用。

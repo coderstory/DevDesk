@@ -5,12 +5,14 @@
 #include "app_assembly.h"
 #include "app_sidebar.h"
 #include "claude_service.h"
+#include "core/claude_proxy_service.h"
 #include "core/component_theme.h"
 #include "core/database.h"
 #include "core/logging.h"
 #include "core/module_interface.h"
 #include "core/paths.h"
 #include "core/router.h"
+#include "core/service_locator.h"
 #include "core/theme.h"
 #include "core/tray_menu_spec.h"
 #include "core/window_layout.h"
@@ -180,6 +182,20 @@ void handleAppleEventOpenFile(const std::string& path) {
 
 // ---- Claude 代理（全局唯一，spec §10.4）----
 
+// R0 / 审计 D6：core 只读服务定位器的「代理运行面」提供者。消费方（设置页）
+// 不再 include 兄弟模块头、不再直呼 ClaudeService::global()——它经
+// core::ServiceLocator::requireService<IClaudeProxyService>() 取本适配器；
+// 适配器每次转发到 global() 单例，故「单例未装配（claude 模块关闭）」与解耦
+// 前的 svc == nullptr 同义（各方法按服务不可用返回 false / 0 / 空串 / no-op）。
+// 本对象常驻（进程级静态）、不持有 ClaudeService——所有权仍在 getClaudeService
+// 的 unique_ptr 里，定位器只做只读查找。
+::core::GlobalClaudeProxyService<::module::claude::ClaudeService>&
+claudeProxyProvider() {
+    static ::core::GlobalClaudeProxyService<::module::claude::ClaudeService>
+        provider;
+    return provider;
+}
+
 // ClaudeService 单例（ClaudeModule 通过 ClaudeService::global() 读状态）
 // 持有 Database 的 db() 引用；生命周期与 openAppDatabase() 一致
 ::module::claude::ClaudeService* getClaudeService() {
@@ -194,6 +210,13 @@ void handleAppleEventOpenFile(const std::string& path) {
         svc->setSettingsSyncPaths(
             ::module::claude::settings_sync::defaultPaths());
         ::module::claude::ClaudeService::setGlobal(svc.get());
+        // R0 / 审计 D6：与 setGlobal 同一时刻把代理运行面注册进 core 只读服务
+        // 定位器（设置页经它取，不再直呼 global()）。注册点选在此 =
+        //「单例已创建 ⟺ 定位器可解析」，与解耦前「global() 非空」逐字对应；
+        // claude 模块关闭时本函数根本不被调用（prepareClaudeServiceBeforeModules
+        // 提前 return）→ 定位器保持未注册 = 解耦前的 global() == nullptr
+        ::core::ServiceLocator::set<::core::IClaudeProxyService>(
+            &claudeProxyProvider());
         initialized = true;
     }
     return svc.get();

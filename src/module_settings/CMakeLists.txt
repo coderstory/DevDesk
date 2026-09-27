@@ -10,14 +10,14 @@ target_include_directories(devdesk_module_settings PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/..
 )
 
-# claude_service.h 所在目录（settings_module.cpp 经 ClaudeService::global()
-# 读 main 注册的单例——审计 [5][36]：仅头声明通道，不 link 模块库；符号在
-# DevDesk/devdesk_tests 最终链接期由直接链接的 devdesk_module_claude_proxy
-# 解析）。pet 侧连头都不经：extern 自由函数桥（见 settings_module.cpp），
-# module_* 互不依赖铁律恢复（不再 PUBLIC 链 devdesk_module_pet）。
-target_include_directories(devdesk_module_settings PRIVATE
-    ${CMAKE_CURRENT_SOURCE_DIR}/../module_claude_proxy
-)
+# R0 / 审计 D6：本模块**零兄弟模块 include 目录、零兄弟模块库边**。
+#   claude 侧：改经 core 只读服务定位器（core/claude_proxy_service.h 的窄接口，
+#   装配段 main.cpp 注册适配器转发到它持有的 ClaudeService 单例）——不再经
+#   claude_service.h，故删掉原先 PRIVATE 指向 ../module_claude_proxy 的 include；
+#   pet 侧：中立桥头 module_pet_bridge.h 的自由函数（见 settings_module.cpp），
+#   连头都不经模块目录。
+# 两侧都在最终可执行文件链接期解析（DevDesk / devdesk_tests 直接链接全部
+# module_*），module_* 互不依赖铁律保持。
 
 target_link_libraries(devdesk_module_settings PUBLIC
     devdesk_core

@@ -20,6 +20,7 @@
 #include <string>
 #include <vector>
 
+#include "core/proxy_port.h"
 #include "core/sqlite_db.h"
 #include "core/result.h"
 #include "platform/http_client.h"
@@ -288,9 +289,9 @@ public:
 
     // 启动本地 HTTP 代理（固定绑定 127.0.0.1，仅本机可访问，无鉴权）
     //   - bindAddress：默认 "127.0.0.1"
-    //   - port：0 = 由 OS 分配
+    //   - port：0 = 由 OS 分配；默认值同样取 core/proxy_port.h 的唯一来源
     core::Result<int> startProxy(const std::string& bindAddress = "127.0.0.1",
-                                 int port = 8888);
+                                 int port = kDefaultProxyPort);
 
     // 停止代理
     void stopProxy();
@@ -329,9 +330,9 @@ public:
     // ---- 配置端口（产品审计 2026-09-23 [14]）----
     // 设置页「代理端口」的运行时镜像：main.cpp 启动时从 SettingsConfig 注入，
     // 设置页改端口时同步注入。手动启动路径（Claude 页按钮）用这个值而不是
-    // 硬编码 8888——module_claude_proxy 不能依赖 module_settings，端口经由
+    // 常量默认端口——module_claude_proxy 不能依赖 module_settings，端口经由
     // service 单例桥接（与 ClaudeService::global() 同款模式），无环。
-    // setter 钳制到 [kMinConfiguredProxyPort, kMaxConfiguredProxyPort]。
+    // setter 钳制到 [kMinProxyPort, kMaxProxyPort]（取值见 core/proxy_port.h）。
     int configuredProxyPort() const { return configuredProxyPort_; }
     void setConfiguredProxyPort(int port);
 
@@ -381,12 +382,13 @@ public:
     }
 
 public:
-    // 代理端口合法范围与默认值（审计 [14]；与 module_settings 的
-    // SettingsConfig::proxyPort 钳制范围/默认值保持字面一致——两模块不能
-    // 互相依赖，故各自定义同值常量）
-    static constexpr int kDefaultProxyPort = 8888;
-    static constexpr int kMinProxyPort = 1;
-    static constexpr int kMaxProxyPort = 65535;
+    // 代理端口合法范围与默认值（审计 [14]）。**取值唯一来源 = core/proxy_port.h**
+    //（R0/D7）：此前本类与 module_settings 的 SettingsConfig 各自定义同值常量、
+    // 靠注释约定「保持字面一致」；现两侧都从 core 取，改值的唯一落点在那里。
+    // 名字保留（本文件与 .cpp 的既有引用不变）
+    static constexpr int kDefaultProxyPort = ::core::kDefaultProxyPort;
+    static constexpr int kMinProxyPort = ::core::kMinProxyPort;
+    static constexpr int kMaxProxyPort = ::core::kMaxProxyPort;
 
 private:
     // 从一行 SqlRow 构造 Profile（不含 apiKeyPlain）
@@ -436,7 +438,7 @@ private:
     std::vector<std::weak_ptr<platform::http::StreamingResponse>> activeStreams_;
     bool streamsStopping_ = false;
 
-    // 设置页配置的代理端口（审计 [14]；默认 8888 = 历史硬编码值）
+    // 设置页配置的代理端口（审计 [14]；默认 = core/proxy_port.h 的默认端口）
     int configuredProxyPort_ = kDefaultProxyPort;
 
     // 终端启动实现（profile-run 设计 §6）：默认 = platform::terminal::launch；
