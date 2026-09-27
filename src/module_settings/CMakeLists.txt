@@ -1,6 +1,8 @@
 add_library(devdesk_module_settings STATIC
     settings_module.cpp
     settings_config.cpp
+    settings_ui_logic.cpp
+    settings_ui_cards.cpp
 )
 
 devdesk_apply_warnings(devdesk_module_settings)
