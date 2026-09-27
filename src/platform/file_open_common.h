@@ -5,7 +5,7 @@
 //   - platform::detail::utf8ToWide / wideToUtf8：UTF-8 ↔ UTF-16 编码链，
 //     file_open_win.cpp 与 file_watcher_win.cpp 共用。因实现依赖
 //     <windows.h>，定义放在仅 Windows 编译的 file_open_win.cpp——与
-//     file_open.h 的 wideToUtf8ForTest「仅 Windows 提供定义、引用点留
+//     file_open_win.h 的 wideToUtf8ForTest「仅 Windows 提供定义、引用点留
 //     _WIN32 守卫」同一先例，避免给全平台 TU 塞平台宏（项目核心约束 5）。
 #pragma once
 

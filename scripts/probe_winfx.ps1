@@ -173,7 +173,12 @@ public class NativeInput {
         $g = [System.Drawing.Graphics]::FromImage($bmp)
         $g.CopyFromScreen($m0.L, $m0.T, 0, 0, (New-Object System.Drawing.Size $w, $h)) | Out-Null
         $g.Dispose()
-        $shot = "D:\project\gui\wt-winfx\build\pet_menu_proof.png"
+        # 输出到本脚本所属仓库的 build/probe/：原先硬编码的 wt-winfx worktree 早已删除，
+        # 且 build/ 已在 .gitignore 内（截图不污染工作区）；目录缺了就建，
+        # 否则 GDI+（Bitmap.Save）在目录不存在时会直接抛错
+        $shotDir = Join-Path (Split-Path $PSScriptRoot -Parent) 'build\probe'
+        New-Item -ItemType Directory -Force -Path $shotDir | Out-Null
+        $shot = Join-Path $shotDir 'pet_menu_proof.png'
         $bmp.Save($shot, [System.Drawing.Imaging.ImageFormat]::Png)
         $bmp.Dispose()
         Write-Output "menu-screenshot: $shot"

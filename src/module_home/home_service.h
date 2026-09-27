@@ -11,6 +11,7 @@
 
 #include <cstdint>
 #include <ctime>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -62,9 +63,10 @@ private:
     core::data::SqliteDb& db_;
 
     // 单值 COUNT 查询（sql 必须形如 "SELECT COUNT(*) AS n ..."）
-    // 无参数版本用于没有 WHERE 绑定值的查询
-    core::Result<int64_t> countBySql(const char* sql);
-    core::Result<int64_t> countBySql(const char* sql, int64_t boundValue);
+    // boundValue 有值（THS-10）→ 绑定到第 1 个占位符；无 WHERE 绑定值的查询
+    // 省略实参（默认 nullopt）。
+    core::Result<int64_t> countBySql(
+        const char* sql, std::optional<int64_t> boundValue = std::nullopt);
 
     // 最近编辑笔记（modified_at DESC）
     core::Result<std::vector<RecentNote>> queryRecentNotes(int limit);

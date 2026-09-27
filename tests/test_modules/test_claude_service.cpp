@@ -1971,3 +1971,173 @@ REGISTER_TEST(claude_shared_config_unbound_regression,
     cleanupKey(a.value().id);
     return true;
 })
+
+// ===== 认证字段三态（鉴权头；2026-09-27 profile-auth-field 设计 §3/§4）=====
+
+// ---- 27. 默认 both + 三处 SELECT 往返（getActiveProfile 是「漏改 SELECT 列
+//      静默失效」的回归闸：rowToProfile 的 if (isOk()) 守卫会把缺列吞成默认值）----
+
+REGISTER_TEST(claude_service_auth_field_default_and_roundtrip,
+              "claude_service: 认证字段默认 both + getProfile/getActiveProfile 往返", {
+    using namespace module::claude;
+    TestDb tdb("authfield_rt");
+    ClaudeService svc(tdb.handle(), kTestKeychainService);
+
+    // 不传尾参 → 默认 'both'
+    auto d = svc.createProfile("默认", "https://d.example.com",
+                               "sk-def-test-0123456789abcdef", "m");
+    DOCTEST_REQUIRE(d.isOk());
+    DOCTEST_CHECK_EQ(d.value().authField, std::string("both"));
+    auto gd = svc.getProfile(d.value().id);
+    DOCTEST_REQUIRE(gd.isOk());
+    DOCTEST_CHECK_EQ(gd.value().authField, std::string("both"));
+
+    // 显式 'bearer'：getProfile / getActiveProfile / listProfiles 三条 SELECT 都要读到
+    auto b = svc.createProfile("Bearer", "https://b.example.com",
+                               "sk-bear-test-0123456789abcdef", "m",
+                               /*activateIfNoneActive=*/false,
+                               /*sharedConfigId=*/0, "bearer");
+    DOCTEST_REQUIRE(b.isOk());
+    DOCTEST_CHECK_EQ(b.value().authField, std::string("bearer"));
+    auto gb = svc.getProfile(b.value().id);
+    DOCTEST_REQUIRE(gb.isOk());
+    DOCTEST_CHECK_EQ(gb.value().authField, std::string("bearer"));
+    DOCTEST_REQUIRE(svc.setActiveProfile(b.value().id).isOk());
+    auto gact = svc.getActiveProfile();
+    DOCTEST_REQUIRE(gact.isOk());
+    DOCTEST_CHECK_EQ(gact.value().id, b.value().id);
+    DOCTEST_CHECK_EQ(gact.value().authField, std::string("bearer"));
+    auto all = svc.listProfiles();
+    DOCTEST_REQUIRE(all.isOk());
+    bool listed = false;
+    for (const auto& p : all.value()) {
+        if (p.id == b.value().id) {
+            listed = true;
+            DOCTEST_CHECK_EQ(p.authField, std::string("bearer"));
+        }
+    }
+    DOCTEST_CHECK(listed);
+
+    cleanupKey(d.value().id);
+    cleanupKey(b.value().id);
+    return true;
+})
+
+// ---- 28. updateProfile 两条 UPDATE 分支都能改该字段 ----
+
+REGISTER_TEST(claude_service_auth_field_update_both_branches,
+              "claude_service: 认证字段 updateProfile 两分支（换 key / 不换 key）", {
+    using namespace module::claude;
+    TestDb tdb("authfield_upd");
+    ClaudeService svc(tdb.handle(), kTestKeychainService);
+
+    auto a = svc.createProfile("双分支", "https://u.example.com",
+                               "sk-upd-test-0123456789abcdef", "m");
+    DOCTEST_REQUIRE(a.isOk());
+
+    // 分支一：apiKeyPlain 非空（换 key 分支）
+    Profile p1 = a.value();
+    p1.apiKeyPlain = "sk-upd-test-newkey-0123456789";
+    p1.authField = "api_key";
+    DOCTEST_REQUIRE(svc.updateProfile(p1).isOk());
+    auto g1 = svc.getProfile(a.value().id);
+    DOCTEST_REQUIRE(g1.isOk());
+    DOCTEST_CHECK_EQ(g1.value().authField, std::string("api_key"));
+
+    // 分支二：apiKeyPlain 留空（不换 key 分支）
+    Profile p2 = g1.value();
+    p2.authField = "bearer";
+    DOCTEST_REQUIRE(svc.updateProfile(p2).isOk());
+    auto g2 = svc.getProfile(a.value().id);
+    DOCTEST_REQUIRE(g2.isOk());
+    DOCTEST_CHECK_EQ(g2.value().authField, std::string("bearer"));
+
+    cleanupKey(a.value().id);
+    return true;
+})
+
+// ---- 29. 二段补写不覆盖（createProfile 返回值必须带上该字段）----
+
+REGISTER_TEST(claude_service_auth_field_survives_two_stage_update,
+              "claude_service: 认证字段经二段补写（models/env）仍保持", {
+    using namespace module::claude;
+    TestDb tdb("authfield_two");
+    ClaudeService svc(tdb.handle(), kTestKeychainService);
+
+    auto c = svc.createProfile("二段", "https://two.example.com",
+                               "sk-two-test-0123456789abcdef", "m",
+                               /*activateIfNoneActive=*/false,
+                               /*sharedConfigId=*/0, "bearer");
+    DOCTEST_REQUIRE(c.isOk());
+    // 模拟 UI 新建：以 createProfile 返回值为基，二段补写 models/env
+    Profile p = c.value();
+    p.modelsConfigJson = R"({"default": {"model": "m-def"}})";
+    p.extraEnvJson = R"({"EXTRA_A": "1"})";
+    DOCTEST_REQUIRE(svc.updateProfile(p).isOk());
+
+    auto g = svc.getProfile(c.value().id);
+    DOCTEST_REQUIRE(g.isOk());
+    DOCTEST_CHECK_EQ(g.value().authField, std::string("bearer"));
+    DOCTEST_CHECK_EQ(g.value().modelsConfigJson, p.modelsConfigJson);
+
+    cleanupKey(c.value().id);
+    return true;
+})
+
+// ---- 30. 复制保留该字段 ----
+
+REGISTER_TEST(claude_service_duplicate_keeps_auth_field,
+              "claude_service: 复制 profile 保留认证字段", {
+    using namespace module::claude;
+    TestDb tdb("authfield_dup");
+    ClaudeService svc(tdb.handle(), kTestKeychainService);
+
+    auto a = svc.createProfile("复制源", "https://src2.example.com",
+                               "sk-src-test-0123456789abcdef", "m",
+                               /*activateIfNoneActive=*/false,
+                               /*sharedConfigId=*/0, "api_key");
+    DOCTEST_REQUIRE(a.isOk());
+    DOCTEST_CHECK_EQ(a.value().authField, std::string("api_key"));
+
+    auto dup = svc.duplicateProfile(a.value().id);
+    DOCTEST_REQUIRE(dup.isOk());
+    DOCTEST_CHECK_EQ(dup.value().authField, std::string("api_key"));
+    auto g = svc.getProfile(dup.value().id);
+    DOCTEST_REQUIRE(g.isOk());
+    DOCTEST_CHECK_EQ(g.value().authField, std::string("api_key"));
+
+    cleanupKey(a.value().id);
+    cleanupKey(dup.value().id);
+    return true;
+})
+
+// ---- 31. 写侧规范化（非法值 → both，设计 D-8）----
+
+REGISTER_TEST(claude_service_auth_field_invalid_normalized,
+              "claude_service: 认证字段非法值写侧规范化为 both", {
+    using namespace module::claude;
+    TestDb tdb("authfield_norm");
+    ClaudeService svc(tdb.handle(), kTestKeychainService);
+
+    // createProfile 传非法串 → 落库与返回值都是 'both'
+    auto a = svc.createProfile("规范化建", "https://n.example.com",
+                               "sk-norm-test-0123456789abcdef", "m",
+                               /*activateIfNoneActive=*/false,
+                               /*sharedConfigId=*/0, "X");
+    DOCTEST_REQUIRE(a.isOk());
+    DOCTEST_CHECK_EQ(a.value().authField, std::string("both"));
+
+    // updateProfile 传非法串（直接构造 Profile）→ 读回 'both'
+    Profile p;
+    p.id = a.value().id;
+    p.name = "规范化建";
+    p.baseUrl = "https://n.example.com";
+    p.authField = "X";
+    DOCTEST_REQUIRE(svc.updateProfile(p).isOk());
+    auto g = svc.getProfile(a.value().id);
+    DOCTEST_REQUIRE(g.isOk());
+    DOCTEST_CHECK_EQ(g.value().authField, std::string("both"));
+
+    cleanupKey(a.value().id);
+    return true;
+})

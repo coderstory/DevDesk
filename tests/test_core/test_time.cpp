@@ -38,3 +38,43 @@ REGISTER_TEST(core_local_time, "core: localTime fixed timestamp vs std::localtim
 
     return true;
 })
+
+// THS-16（波 1 L6）：本地日历日序号。home 相对时间分桶与 todo 逾期天数此前
+// 各自内联 days_from_civil / 用两个本地零点相减；统一为 core::time 提供，
+// 本用例锁住其数值契约（纪元原点 / 闰日 / 相邻日差 / 跨年）。
+REGISTER_TEST(core_time_days_from_civil,
+              "core: time daysFromCivil 日历日序号（1970→0 / 闰日 / 相邻日差）", {
+    // 1) 纪元原点：1970-01-01 → 0
+    DOCTEST_CHECK_EQ(core::time::daysFromCivil(1970, 1, 1),
+                     static_cast<int64_t>(0));
+
+    // 2) 闰日：1970-01-01 → 2024-02-29 共 19782 天
+    DOCTEST_CHECK_EQ(core::time::daysFromCivil(2024, 2, 29),
+                     static_cast<int64_t>(19782));
+
+    // 3) 相邻日差 1（含闰日次日）
+    DOCTEST_CHECK_EQ(core::time::daysFromCivil(2024, 2, 29) -
+                         core::time::daysFromCivil(2024, 2, 28),
+                     static_cast<int64_t>(1));
+    DOCTEST_CHECK_EQ(core::time::daysFromCivil(2024, 3, 1) -
+                         core::time::daysFromCivil(2024, 2, 29),
+                     static_cast<int64_t>(1));
+
+    // 4) 跨年：2024-12-31 → 2025-01-01 差 1
+    DOCTEST_CHECK_EQ(core::time::daysFromCivil(2025, 1, 1) -
+                         core::time::daysFromCivil(2024, 12, 31),
+                     static_cast<int64_t>(1));
+
+    // 5) localDayNumber：与 libc 本地时间的日期字段一致（时区无关写法，
+    //    参考值取自 std::localtime 另一实现路径）
+    const std::time_t ts = 1700000000; // 2023-11-14T22:13:20Z（UTC）
+    const std::tm* ref = std::localtime(&ts);
+    DOCTEST_REQUIRE(ref != nullptr);
+    DOCTEST_CHECK_EQ(core::time::localDayNumber(ts),
+                     core::time::daysFromCivil(
+                         ref->tm_year + 1900,
+                         static_cast<unsigned>(ref->tm_mon) + 1,
+                         static_cast<unsigned>(ref->tm_mday)));
+
+    return true;
+})

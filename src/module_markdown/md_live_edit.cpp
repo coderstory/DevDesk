@@ -6,15 +6,6 @@
 
 namespace module::markdown {
 
-namespace {
-
-// input 内部行高系数：components/input.h 的 textLineHeight = fontSize × 1.2。
-// 改本值必须与上游同步 —— 高度比内容矮一像素，活动 input 就会长出内部滚动并
-// 吃掉外层滚轮（M0 约束 C4）。
-constexpr float kMdLiveLineHeightFactor = 1.2f;
-
-} // namespace
-
 size_t mdLiveActiveBlockIndex(const MdBlockModel& model, size_t cursorByte) {
     if (model.blocks().empty()) return 0;
     // 二分查找已在 blockIndexAt 内处理两端（< 首块 end → 首块；≥ 末块 end → 末块）
@@ -35,7 +26,7 @@ float mdLiveInputHeight(const std::string& blockText, float textWidth,
     if (lines < 1) lines = 1;
     if (inset < 0.0f) inset = 0.0f;
     return inset * 2.0f + static_cast<float>(lines) * fontSize *
-                              kMdLiveLineHeightFactor + 1.0f;
+                              kInputLineHeightFactor + 1.0f;
 }
 
 } // namespace module::markdown

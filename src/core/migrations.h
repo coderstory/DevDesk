@@ -217,6 +217,20 @@ inline const Migration kClaudeSharedConfigs = {
     )"
 };
 
+// Profile 认证字段（version 7，2026-09-27 profile-auth-field 设计 §3）
+//   - 三态：'both'（默认，双发 x-api-key + Authorization: Bearer）/ 'bearer' /
+//     'api_key'——代理转发按 profile 的该字段决定注入哪个鉴权头
+//   - 读侧对未知值 / 空串兜底为 'both'（auth_field_from_text）
+// 注意：ALTER TABLE ADD COLUMN 无 IF NOT EXISTS，靠 schema_version 版本号保证
+// 只执行一次（runMigrations 事务内，失败整体回滚）。
+inline const Migration kClaudeProfileAuthField = {
+    .version = 7,
+    .description = "claude profiles add auth field (both/bearer/api_key)",
+    .sql = R"(
+        ALTER TABLE claude_profiles ADD COLUMN auth_field TEXT NOT NULL DEFAULT 'both';
+    )"
+};
+
 // 所有 migrations 的权威列表（顺序敏感，必须按 version 升序）
 inline const std::vector<core::data::Migration>& all() {
     static const std::vector<core::data::Migration> kMigrations = {
@@ -226,6 +240,7 @@ inline const std::vector<core::data::Migration>& all() {
         kTodoColumnKind,
         kClaudeCallLogUsageColumns,
         kClaudeSharedConfigs,
+        kClaudeProfileAuthField,
     };
     return kMigrations;
 }

@@ -49,6 +49,7 @@ struct Profile {
     std::string modelsConfigJson; // 6 槽位模型配置 JSON 原文（空串 = 未配置；provider-config §4.1）
     std::string extraEnvJson;   // 额外 env 键值 JSON 原文（空串 = 未配置）
     int64_t sharedConfigId = 0; // 绑定共享配置片段 id（0 = 未绑定；0..1、不嵌套）
+    std::string authField = "both";  // 认证字段三态（'both'/'bearer'/'api_key'；未知/空串按 both 读）
     bool isActive = false;
     std::time_t createdAt = 0;
     std::time_t updatedAt = 0;
@@ -94,12 +95,15 @@ public:
     // 自动激活走 setActiveProfile（代理运行中会同步接管 settings.json）。
     // sharedConfigId：建时直接绑定的共享片段 id（0 = 不绑定；与表单「新建」路
     // 径一致——先建后 update 会留下一次「未绑片段」的中间态，故走尾部默认参数）
+    // authField：认证字段三态文本（'both'/'bearer'/'api_key'；非法值写侧规范化为
+    // 'both'，见 2026-09-27 profile-auth-field 设计 §3 D-8）
     core::Result<Profile> createProfile(const std::string& name,
                                        const std::string& baseUrl,
                                        const std::string& apiKey,
                                        const std::string& model,
                                        bool activateIfNoneActive = false,
-                                       int64_t sharedConfigId = 0);
+                                       int64_t sharedConfigId = 0,
+                                       const std::string& authField = "both");
 
     // 更新 profile（profile.id 必须已存在）
     //   - 若 profile.apiKeyPlain 非空，则覆盖 Keychain

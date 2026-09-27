@@ -234,7 +234,7 @@ void ProxyRouter::handleRequest(
     // 各网关的差异全部收敛在 UpstreamDialect 里，此处不再有 provider if
     auto fwd = copyHeaders(headers);
     const UpstreamDialect dialect = UpstreamDialect::forBaseUrl(profile.baseUrl);
-    dialect.applyHeaders(fwd, apiKey);
+    dialect.applyHeaders(fwd, apiKey, authFieldFromText(profile.authField));
     upstream.headers = std::move(fwd);
     if (dialect.normalizeBody(upstream.body)) {
         LOG_INFO("代理：按上游方言剥掉模型名 [1M] 标记（" + profile.baseUrl + "）");

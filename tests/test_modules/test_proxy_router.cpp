@@ -159,8 +159,9 @@ bool anyHeaderValueContains(const httplib::Headers& h, const std::string& frag) 
 
 // 原始 httplib mock 上游：伪头断言需要**未去重**的 Headers multimap
 // （get_header_value_count / count）。platform::http::Server 的 ctx.headers
-// 已按精确键去重，且它自己对每封收到的请求也注入同名大写伪头
-// （httplib.h:7186-7192），无法区分「代理转发来的」与「mock 自己注入的」。
+// 已按小写键去重（CP-06：httplib 的大小写不敏感 multimap 降级时键统一小写），
+// 且它自己对每封收到的请求也注入同名伪头（httplib.h:7186-7192，键同样被降为
+// 小写），无法区分「代理转发来的」与「mock 自己注入的」。
 class RawUpstream {
 public:
     RawUpstream() = default;

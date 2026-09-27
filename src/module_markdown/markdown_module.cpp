@@ -41,6 +41,7 @@
 #include "md_block_model.h"
 #include "md_block_interact.h"
 #include "md_highlight.h"
+#include "md_ids.h"
 #include "md_keyboard.h"
 #include "md_line_scanner.h"
 #include "md_live_edit.h"
@@ -180,15 +181,8 @@ ViewMode nextMode(ViewMode m) {
 // 模块隔离不经本模块 include；通道写入方 = settings onStart/切档，默认与本
 // 常量一致 15 = fontSizeBody token 基准）。行高 = 字号 × 1.2 运行时算
 constexpr float kDefaultEditorFontSize = 15.0f;
-constexpr float kEditorLineHeightFactor = 1.2f;  // input 内部行高系数
 constexpr float kEditTextColumnWidth = 720.0f;  // 仅编辑/实时态的居中文本列宽（Typora 写作宽度）
 constexpr float kPreviewColumnWidth = 760.0f;   // 仅预览态的居中阅读列宽
-
-// M0 spike V1b（C1 修复）：input 组件的聚焦判定是 ui.isFocused(id + ".hit")
-// （components/input.h:113）——编程式聚焦必须发「基 id + .hit」，发基 id 只会把
-// 焦点挂到 stack 元素上：组件判定未聚焦（不画 caret、不挂键处理器），按键静默
-// 落回模块 keyEventHandler_。编辑器四处 requestFocus 统一走本常量。
-constexpr const char* kEditorInputHitId = "md.editor.input.hit";
 
 // ---- Phase 3 M2：实时态单输入（活动块）----
 // 单输入方案（spec §4.1 D1）：全局只有一个 input，切块时换文本 + 搬位置，焦点
@@ -316,7 +310,7 @@ public:
             highlightThemeName_ = themeName;
             highlighter_.setColors(mdHighlightColors(t));
             ++ui.state<components::input_detail::InputModel::InputState>(
-                      "md.editor.input")
+                      kEditorInputId)
                  .styleRevision;
         }
 
@@ -1027,7 +1021,7 @@ private:
             const float edY = 48.0f;  // 16 顶距 + 24 chip 行 + 8 间距
             const float edH = std::max(0.0f, bodyH - edY - 22.0f - 8.0f);
 
-            components::input(ui, "md.editor.input")
+            components::input(ui, kEditorInputId)
                 .position(edX, edY)
                 .size(edW, edH)
                 .value(editorText_)
@@ -1056,7 +1050,7 @@ private:
                     (void)lineNo;
                     using InputState =
                         components::input_detail::InputModel::InputState;
-                    auto& st = ui.state<InputState>("md.editor.input");
+                    auto& st = ui.state<InputState>(kEditorInputId);
                     return highlighter_.runsForLine(
                         st.preedit ? st.preedit->text : st.text, lineText,
                         lineStartByte);
@@ -1067,7 +1061,7 @@ private:
             // 右键入口，runtime 的 contextMenu 只派发给最上层交互元素（即 .hit，
             // 见 runtime_input updateInteraction），故 build 后直接把回调挂到该
             // 元素上（ui.begin() 每帧重建元素树 → 每帧 compose 内重新挂）。
-            if (auto* hit = ui.find("md.editor.input.hit")) {
+            if (auto* hit = ui.find(kEditorInputHitId)) {
                 hit->onContextMenu = [this](const eui::PointerEvent& ev,
                                             const eui::Rect&) {
                     // 同树行菜单：窗口坐标 → 页面坐标（减去页面区原点 x）
@@ -1089,7 +1083,7 @@ private:
     bool handleEditorKey(eui::Ui& ui, const eui::KeyEvent& event) {
         using InputState = components::input_detail::InputModel::InputState;
         if (!event.isDown()) return false;
-        auto& st = ui.state<InputState>("md.editor.input");
+        auto& st = ui.state<InputState>(kEditorInputId);
         // IME 预编辑中不拦截（避免打断组字；Ctrl 类修饰键 IME 也可能用）
         if (!st.compositionText.empty()) return false;
 
@@ -1127,7 +1121,7 @@ private:
     // 副作用。无变化只消费不动状态——不制造空 undo / 脏标记。
     void commitEditBuffer(eui::Ui& ui, EditBuffer& buf) {
         using InputState = components::input_detail::InputModel::InputState;
-        auto& st = ui.state<InputState>("md.editor.input");
+        auto& st = ui.state<InputState>(kEditorInputId);
         if (buf.text == st.text) {
             // 纯光标/选区移动（表格跳格落点、无变化消费）：只更新位置，不进
             // undo 栈、不 bump revision、不打脏——否则 Tab 一次「未保存」上头
@@ -1315,7 +1309,7 @@ private:
         if (!currentPath_.empty()) {
             // 审计 perf [39]：(行, 列, 字数) 按 (文本修订, 光标) 缓存，文本与
             // 光标都没变的帧直接复用；变化帧才付一次扫描（旧行为每帧都付）
-            const auto& st = ui.state<components::input_detail::InputModel::InputState>("md.editor.input");
+            const auto& st = ui.state<components::input_detail::InputModel::InputState>(kEditorInputId);
             const size_t cursor = static_cast<size_t>(st.cursor);
             if (statusCacheRev_ != editorTextRev_ || statusCacheCursor_ != cursor) {
                 const int line = byteOffsetToLine(st.text, cursor);
@@ -1672,7 +1666,7 @@ private:
                 if (!liveCursorValid_) {
                     const auto& ed = ui.state<
                         components::input_detail::InputModel::InputState>(
-                        "md.editor.input");
+                        kEditorInputId);
                     liveCursorByte_ =
                         ed.cursor > 0 ? static_cast<size_t>(ed.cursor) : 0;
                     liveCursorValid_ = true;
@@ -1919,10 +1913,10 @@ private:
                             float pvH,
                             const components::MarkdownStyle& style) {
         if (editorText_.empty()) return 0.0f;
-        const auto& st = ui.state<components::input_detail::InputModel::InputState>("md.editor.input");
+        const auto& st = ui.state<components::input_detail::InputModel::InputState>(kEditorInputId);
         const float topLine =
             st.verticalScroll /
-            (core::theme::editorFontSize() * kEditorLineHeightFactor);
+            (core::theme::editorFontSize() * kInputLineHeightFactor);
         const float width = lastPvContentWidth_ > 0.0f ? lastPvContentWidth_ : pvW;
         rebuildSyncMap(width, style);
         const float y = syncMap_.previewYForEditorLine(topLine);
@@ -1961,7 +1955,7 @@ private:
             editorText_, blockModel_.blocks(), syncMap_, blockIndex, localY);
         if (!jump.ok) return;
         auto& st =
-            ui.state<components::input_detail::InputModel::InputState>("md.editor.input");
+            ui.state<components::input_detail::InputModel::InputState>(kEditorInputId);
         st.cursor = static_cast<int>(jump.cursorByte);
         st.selectionStart = st.cursor;
         st.selectionEnd = st.cursor;
@@ -2320,7 +2314,7 @@ private:
     int activeOutlineIndex(eui::Ui& ui) {
         if (outline_.empty()) return -1;
         if (mode_ == ViewMode::Preview) return activeOutlineIdx_;
-        const auto& st = ui.state<components::input_detail::InputModel::InputState>("md.editor.input");
+        const auto& st = ui.state<components::input_detail::InputModel::InputState>(kEditorInputId);
         const int line = byteOffsetToLine(st.text, static_cast<size_t>(st.cursor));
         int idx = -1;
         for (size_t i = 0; i < outline_.size(); ++i) {
@@ -2346,7 +2340,7 @@ private:
             syncPreviewOnEnter_ = false;
             return;
         }
-        auto& st = ui.state<components::input_detail::InputModel::InputState>("md.editor.input");
+        auto& st = ui.state<components::input_detail::InputModel::InputState>(kEditorInputId);
         st.cursor = static_cast<int>(h.byteOffset);
         st.selectionStart = st.cursor;
         st.selectionEnd = st.cursor;
@@ -2982,8 +2976,8 @@ private:
     void insertTableAtCursor(eui::Ui& ui, int rows, int cols) {
         using InputState = components::input_detail::InputModel::InputState;
         if (!service_ || currentPath_.empty()) return;
-        if (ui.find("md.editor.input.hit") == nullptr) return;  // 预览态无编辑器
-        auto& st = ui.state<InputState>("md.editor.input");
+        if (ui.find(kEditorInputHitId) == nullptr) return;  // 预览态无编辑器
+        auto& st = ui.state<InputState>(kEditorInputId);
         EditBuffer buf{st.text, st.cursor, st.selectionStart, st.selectionEnd};
         module::markdown::applyInsertTable(buf, rows, cols);
         commitEditBuffer(ui, buf);
