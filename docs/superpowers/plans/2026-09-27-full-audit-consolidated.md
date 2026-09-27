@@ -5,6 +5,162 @@
 - 口径：**只汇总不改判**。证据一律沿用分片原文的 `file:符号名`（行号会漂移，动手前按符号名重定位）；"已修"以 merge 消息 + 文件级核对为准，个别标「待核」。
 - 本文未改代码、未跑构建/测试/应用。
 
+---
+
+## 0. 口径刷新（2026-09-28 夜班后）
+
+> **快照基线 = master `48a62cc`（2026-09-28 04:08，含 R0）**。§2–§7 是 2026-09-27 22:21（merge `5215b94`）的快照；其后整夜连做**波 1**（11 线 / 34 条，见 `2026-09-28-wave1-delivery-report.md`）与**波 2 夜班批**（21 线 + 2 条收尾线，见 `2026-09-28-wave2-delivery-report.md`），R0 又在 04:08 单独合入。**§2 的「状态」列与 §3 / §4 的排序已大面积过期 —— 状态一律以本节为准**；§2 只作 finding 原文与 `file:符号名` 证据索引读，§4 只作当时的排线记录读。
+>
+> 复核方式：两份交付报告逐线清单 + `git log --merges --since='2026-09-27 20:00'`（sha 全部实测，不采信转述）+ 对关键断言回源码/文件系统复核（如 `syncRestore` 仍 `void`、`warmUs < 8000` 零命中、`boardCardW_` 仍渲染侧赋值、`scripts/check-module-isolation.sh` 与 `src/core/proxy_port.h` 存在）。
+>
+> **计数（79 条 findings）：✅ 已修 67 ｜⬜ 未做 9 ｜◐ 部分 2 ｜🚫 保留 1**。换算成 §2 的行口径 = **66 行 ✅ / 8 行 ⬜**（`THS-03+PAB-07` 两条已修并为一行、`PAB-02+THS-08` 两条未做并为一行）；下表**按前缀逐条列**，这两组合并行的两条各出现一次。
+
+### 0.1 点名：写「待排」但早已修（两条，会误导排期）
+
+| 编号 | §2 / §3 里的写法 | 实况（sha 实测） |
+|---|---|---|
+| **MD-01**（高） | §2「待排（与 Phase3 M3 同批）」；§3 Top10 **第 1 位** | 审计落笔（22:21:42）后 **~8 分钟**即修：`e09feb8`（22:29:51 修复）→ merge `1784a37`（22:31:55）。**但残留入口未修**（外部改文件触发静默重载后活动块跟错内容）—— 仍须与 M3 同批，见 §0.3 第 4 条 |
+| **THS-01**（中） | §2「待排」；§3 Top10 第 7 位 | 同一时段的**第三批**（HANDOFF §10：`c48546e`→`9dd9ee2`，20:23→22:49）就已修：`c72c060`（22:28:53）→ merge `af3f4d3`（22:29:29）—— 渲染路径零 fs 查询（快照 + 显式刷新点），并带反证用例（open-questions review-B 第 2 条：按旧实现逐条对齐断言，能抓住回归） |
+
+- 另补记（**不算过期**）：**CPX-02 的 UI 半边**也在审计落笔后 4 分钟合入（`4c74e69`，22:25），settings 侧门控 `ac1b8fb`（01:42）才合；但该行判「部分」的核心残留（`syncRestore()` 仍 `void`，`claude_service.h:413`）确实仍在，故仍按 ◐ 计。
+- **除 MD-01 / THS-01 外没有第三条**：其余在 §2 标「待排 / 部分已修」的条目，其修复 merge 时间均晚于 22:21（逐条见下表）。
+
+### 0.2 状态一览（编号 → 状态 → 证据）
+
+**CP（12 条：全部 ✅）**
+
+| 编号 | 状态 | 证据 |
+|---|---|---|
+| CP-01 | ✅ | `3515e28`/`61ecab6` — core 不再直接绘制（兜底文案改 app 层注入回调） |
+| CP-02 | ✅ | `d443b8c`/`fb92d51` — JsonValue 去镜像字段（真值单源） |
+| CP-03 | ✅ | `5ffa2a2`/`0b60c49` — CA 策略按平台拆文件，`http_client.cpp` 回到平台无关 |
+| CP-04 | ✅ | 波 2 `8bceec0` — 单一 `DEVDESK_DATA_ROOT` 派生全部路径（`appDataDir` 唯一入口）+ `pet_skin` 去 getenv |
+| CP-05 | ✅ | 拍板「删」→ 波 1 L9 `fed73ab` — 托盘收缩链（谓词表 / `disabled` / 后缀）全删，文档同步 |
+| CP-06 | ✅ | 波 1 L1 `58e740b` — `toLowerKeyHeaderMap`（请求侧）/ `findHeaderCI`（响应侧） |
+| CP-07 | ✅ | `5ffa2a2`/`f06da47` — `SqliteDb` 默认构造私有化，`open()` 唯一入口 |
+| CP-08 | ✅ | 波 2 `35efad7` — 取值口收敛 `valueOr` + `value`，删 `unsafeValue`/`expect` 共 117 处 + 源码/SFINAE 双护栏 |
+| CP-09 | ✅ | 波 1 L2 `e50d82b` — 新增 `src/platform/file_open_common.cpp`，平台族去重 |
+| CP-10 | ✅ | 波 1 L1 `58e740b` — `ended_` 死代码删（`http_server.cpp:127` 留注释）；`setSchemaVersion` 全仓零命中 |
+| CP-11 | ✅ | 波 2 `ccac5ce` — account 文件名改 %XX 可逆编码 + 双读兼容 + 原子落盘 |
+| CP-12 | ✅ | 拍板「补齐」→ 波 1 L2 `e50d82b` — 补 `src/platform/system_theme_macos.cpp`；**macOS 未编译验证**（`docs/KNOWN_LIMITATIONS.md` §18） |
+
+**CPX（15 条：✅ 12 ／ ⬜ 2 ／ ◐ 1）**
+
+| 编号 | 状态 | 证据 |
+|---|---|---|
+| CPX-01 | ⬜ | R10 未开工（god-class §2 设计就绪）；`syncRestore()` 仍 `void`、God 类未拆 |
+| CPX-02 | ◐ | 残：`syncRestore()` 仍 `void`（`claude_service.h:413`）；已修半边：takeOver 结果上报 `71b13a9`/`2f82c7c`、UI 展示门 `4c74e69`、settings 门控 `ac1b8fb` |
+| CPX-03 | ✅ | `71b13a9`/`2a5bb77` — 快照污染守卫 + 无 sidecar 兜底重建 |
+| CPX-04 | ✅ | `71b13a9`/`a8c950e` — takeOver 写前先删 stale 托管键 |
+| CPX-05 | ⬜ | R4 未开工（`claude_module.cpp` 现 2857 行，`compose` 单体仍在） |
+| CPX-06 | ✅ | 波 2 `fcb78cd` — 调用记录取数后台化（future）+ 搜索 250ms 防抖并合并单次派发 |
+| CPX-07 | ✅ | 波 2 `ea9de34` — `TwoPhaseKeyWrite` 助手 + 四处复用，`updateProfile` 补补偿 |
+| CPX-08 | ✅ | 波 2 `1fd73b2` — 槽位/键名/显示名 X 宏单表 + UI 遍历 + 编译期守卫；两处硬编码 pin 于 `4d37216` 清 |
+| CPX-09 | ✅ | 波 1 L3 `6d6932e` — 官方键改由 hints 派生（240 个误报噪点清零） |
+| CPX-10 | ✅ | 波 2 `08db1bc` — 缓冲路径改走 `resolveProfile`，统一 `503 / no_active_profile`（旧 `500` 口径于 `4d37216` 加注记） |
+| CPX-11 | ✅ | 波 1 L4 `bc072c8` — 抽 `src/module_claude_proxy/json_scan.h` 统一扫描器 |
+| CPX-12 | ✅ | 波 1 L3 `6d6932e` — 覆盖检测改 `managedEnvKeyNames()` 12 键（未照抄审计建议，避免回归） |
+| CPX-13 | ✅ | 波 2 `f52a249`（字段 + v9 迁移 + `forBaseUrl` 覆盖参数）+ 接线 `4105db6`（三处调用点，变异检验） |
+| CPX-14 | ✅ | 波 2 `b3051b1` — keychain 最小注入缝（函数指针表）+ 三条补偿失败分支单测 |
+| CPX-15 | ✅ | 波 1 L3 `6d6932e` — 写入口契约注释 + 入参小视图；头注释写明唯一 IO 边界 |
+
+**THS（18 条：✅ 15 ／ ⬜ 3）**
+
+| 编号 | 状态 | 证据 |
+|---|---|---|
+| THS-01 | ✅ | **过期项**：`c72c060`（22:28:53）→ `af3f4d3`（22:29:29）— 渲染路径零 fs 查询 |
+| THS-02 | ⬜ | R5 未开工（`todo_module.cpp` 现 2558 行 / 仍单文件） |
+| THS-03 + PAB-07 | ✅ | 第一批 `cf5edf7`（`a9d3116` 新增 `core::atomicWriteFile` + `8401b5a`）；第二批 `63a6d64`（`e1f173b`：markdown 视图状态 / pet 配置与皮肤） |
+| THS-04 | ✅ | 波 2 `a88ccce` — 逾期谓词单源 `src/core/overdue.h` + 首页/Todo/谓词三向一致性用例 |
+| THS-05 | ✅ | 波 2 `f0b90ec` — todo 8 弹窗打开栈（z 序派生）+ settings 7 下拉单索引 + LIFO/Esc 用例 |
+| THS-06 | ✅ | 波 2 `7324442` — 补回 4 处被吞的次生失败（伪成功/伪空），禁降级成 0 |
+| THS-07 | ✅ | 波 1 L5 `7d5693f` — `nowEpochSeconds()` 签名改回 `int64_t`，8 处仪式分支删 |
+| THS-08 + PAB-02 | ⬜ | R8 未开工（`ModuleSet` 仍公开结构、`home_module.cpp:207` 仍硬编码计数、装配层与 Home 双源） |
+| THS-09 | ⬜ | R5 未开工（`boardCardW_` 仍由渲染副作用写：`todo_module.cpp:1200` 写 / `:578` 读） |
+| THS-10 | ✅ | 波 1 L6 `32162ce` — `countBySql` 合 `optional` 重载 |
+| THS-11 | ✅ | 波 1 L5 `7d5693f` — `renameColumn` 加 `sqlite3_changes()==0` → `NotFound`（未扩散到其它方法） |
+| THS-12 | ✅ | 波 1 L5 `7d5693f` — 删负位两段式 + 改注释（不加唯一索引） |
+| THS-13 | ✅ | 波 1 L5 `7d5693f` — 显示侧 `max(1, …)`，文案与入选口径不变 |
+| THS-14 | ✅ | 波 1 L5 `7d5693f` — 归档 kind 迁移（**v8**，master 已占 v7 故顺延）；对升级前已改列名的库会落空（与 v4 同病） |
+| THS-15 | ✅ | 波 1 L8 `2e6632e` — 本地原子写改调 `core::atomicWriteFile` + 错误码映射（由 ◐ 转全修） |
+| THS-16 | ✅ | 波 1 L6 `32162ce` — 日历日序号 `core::time::daysFromCivil`（本机 CST 无 DST，不可复现） |
+| THS-17 | ✅ | 波 1 L5 `7d5693f` — 零迁移版：映射收口 + switch 去 default |
+| THS-18 | ✅ | 波 1 L5 `7d5693f` — `updateTask` 不再改列（改列一律走 `moveTask`） |
+
+**PAB（13 条：✅ 9 ／ ⬜ 3 ／ 🚫 1）**
+
+| 编号 | 状态 | 证据 |
+|---|---|---|
+| PAB-01 | ✅ | `27d9a82`/`0efa088` — 脚本自成 EUI-NEO 路径解析 + worktree 首建自动 configure |
+| PAB-02 + THS-08 | ⬜ | R8 未开工（同上） |
+| PAB-03 | ⬜ | R8 未开工（`pageForTrayAction`@`app_assembly.cpp:173` 与 `executeTrayAction`@`main.cpp:320` 仍是两处平行表） |
+| PAB-04 | ⬜ | R8 未开工（启动顺序契约仍在无测试的 `main.cpp`） |
+| PAB-05 | ✅ | 波 2 `0f9c880` — 气泡调度抽 `pet_bubble.h` 纯函数 + 节拍常量单源 + 注释 60s→100s 对齐 |
+| PAB-06 | ✅ | 波 1 L10 `6456c61` — 发布形态守卫进 `build-test-run.sh`（DLL 名必须存在于 `%SystemRoot%/System32`） |
+| PAB-07 | ✅ | 与 THS-03 同行（见上） |
+| PAB-08 | 🚫 | 用户拍板**保留**皮肤生成器（波 1 spec §1.4 不做清单明列）；PAB-08 一栏的「建议改法」作废 |
+| PAB-09 | ✅ | 波 1 L7 `ac1b8fb` — 穿透残留注释/用例名清理 + `app_sidebar` 宽度数字 |
+| PAB-10 | ✅ | 拍板「两档全开」→ 波 2 `dfa24db` — `-Werror` 全档生效 + GNU 误报白名单 4 条；**实证 Release 档此前根本编译不过**（`main.cpp` 的 `.value()`） |
+| PAB-11 | ✅ | 波 1 L10 `6456c61` — 删脚本里与 CMake 默认相反的两处 `-D` |
+| PAB-12 | ✅ | 波 1 L7 `ac1b8fb` — 桌宠随机 `mt19937` 播种 |
+| PAB-13 | ✅ | 波 1 L7 `ac1b8fb` — 设置页「显示桌宠」入口 |
+
+**TIN（13 条：✅ 12 ／ ◐ 1）**
+
+| 编号 | 状态 | 证据 |
+|---|---|---|
+| TIN-01 | ✅ | 波 1 L10 `6456c61` — 守卫迁 `scripts/check-module-isolation.sh`（无 cwd 依赖，退出码 0/1/2），由 `build-test-run.sh` 串跑；R0 (`48a62cc`) 落地后守卫 `exit=0` |
+| TIN-02 | ✅ | 由 ◐ 转全修：`51ad034` 临时路径 pid 唯一化 + 波 2 `8272476` 改按 exe 路径只杀自己的进程（含同名诱饵反证） |
+| TIN-03 | ✅ | `e7eab8c`/`fc8eda1` — 0 用例命中不再假绿、`[SKIP]` 单列 |
+| TIN-04 | ✅ | 波 1 L10 `6456c61` — `warmUs < 8000` 全仓零命中（改记录式 + 等价性断言） |
+| TIN-05 | ✅ | 波 1 L9 `fed73ab` — 删失效声明与恒真用例（函数本体已随 CP-05 删除） |
+| TIN-06 | ◐ | 波 2 `296d3c4` 已建 `tests/test_support.h` 四件套 + 迁 29 处；**残**：`TestDb ×4` 与 TestEnv 家族 11 个等未迁 —— **在飞**，见 §0.3 第 10 条 |
+| TIN-07 | ✅ | 波 2 `8272476` — `resetCaseGlobals` 显式清单（补日志级别基线 / 单例 / stats / appRouter） |
+| TIN-08 | ✅ | 波 2 `c10c73e` — `REGISTER_TEST` 改可变参宏（裸逗号不再切参）+ `CHECK_EQ` 加 `const`；存量绕法清理见 §0.3 第 11 条 |
+| TIN-09 | ✅ | 波 1 L10 `6456c61` — PageId 契约用例归位 `tests/test_core/` |
+| TIN-10 | ✅ | 波 2 `8272476` — 用例漏登记 configure 期自检（`GLOB` 计数对账） |
+| TIN-11 | ✅ | 波 1 L10 `6456c61` — `http_client` 3 条直测（连接被拒 / 超时 / readChunk 三终态） |
+| TIN-12 | ✅ | 波 1 L11 `78df404` — 全仓改「以运行输出 `Total:` 为准」，不写死数字 |
+| TIN-13 | ✅ | 波 1 L10 `6456c61` — `check-consistency.sh` Windows 化；残留未取证见 §0.3 第 15 条 |
+
+**MD（8 条：✅ 7 ／ ⬜ 1）**
+
+| 编号 | 状态 | 证据 |
+|---|---|---|
+| MD-01 | ✅ | **过期项**：`e09feb8`（22:29:51）→ merge `1784a37`（22:31:55）— 活动块锚跟随真实光标；**残留入口**（外部改文件静默重载）见 §0.3 第 4 条 |
+| MD-02 | ✅ | 波 2 `6fc40be` — 列壳抽 `drawTextColumnChrome`（等价性含逐项字面量对照） |
+| MD-03 | ✅ | 波 2 `6d8d633`（03:53 合并，晚于两份交付报告落笔）— `drawBlockFlow` 活动块特判收成 `BlockFlowHooks` 注入点 |
+| MD-04 | ⬜ | R7 未开工（`markdown_module.cpp` 现 3420 行，较审计时 3327 再 +93） |
+| MD-05 | ✅ | 波 2 `6fc40be` — 实时态状态群收 `enterLiveState`（补 `liveOffset_` 漏复位） |
+| MD-06 | ✅ | 波 1 L8 `2e6632e` — `md_ids.h` 常量替换 12+58 处 |
+| MD-07 | ✅ | 波 1 L8 `2e6632e` — 行高系数单源（`md_live_edit.h`） |
+| MD-08 | ✅ | 波 2 `e8621f9` — 索引剪枝先取快照再遍历 + 遍历出错不剪枝（修索引误删） |
+
+### 0.3 剩余待办（波 2 之后的起点）
+
+按优先级；依赖写在行内。**当前最大的两块 = R 重构线（R0 刚合，R1 起）与 Markdown Phase 3（M3 起）**；R 线整条依据 `2026-09-27-refactor-incremental-design.md`（§5 里程碑 R0–R9）与 `2026-09-27-god-class-refactor-design.md`（R10 / R4 / R5 / R8 增补）。
+
+| # | 待办 | 依赖 / 前置 |
+|---|---|---|
+| 1 | **R1** `ui_kit` 基座 + Toast 统一（新增 `src/ui_kit/{CMakeLists.txt,toast.h,toast.cpp}` + 顶层 `add_subdirectory`；`claude/markdown/todo/app_sidebar` 四处 toast 改调） | R0 **已合**（`48a62cc`，04:08）；本项目第一次引入第 5 个库 → **构建图变更必须单独一次闭环**，不与其它线并行 |
+| 2 | **R2** 对话框表单脚手架（`ui_kit/dialog_form.{h,cpp}` + 13 处调用点，按模块 3 批：todo 6 → markdown 4 → claude 3） | R1；**与 R3 串行**（R2 先，R3 替换面随之变小）；风险 = 13 个对话框尺寸/文案/按钮序必须逐字不变 |
+| 3 | **R3** 设计数值收口（`ui_kit/metrics.h` + 按模块 4 批替换布局字面量） | R1、R2；每批**必须肉眼 + 截屏**逐像素比对 |
+| 4 | **Markdown Phase 3 M3–M10**（spec `2026-09-27-markdown-phase3-block-render-design.md` §7；依赖链 `M0 → M2 → M3 → {M4,M5,M6} → M7 → M8 → M9 → M10`，M1 只依赖 M0；M0/M1/M2 已合 master） | M2 已合；**MD-01 的残留入口必须与 M3 同批** —— 外部改文件触发静默重载后活动块跟错内容（需块身份 stableId / 旧块起点在新文档的映射），本夜已无头复现（`2026-09-27-open-questions-review-B.md` 第 1 条，结论 CONFIRMED；**不要**照抄「reload 时 `liveCursorValid_ = false`」—— 实测同场景结果逐位相同，属 M3 锚语义拍板项） |
+| 5 | **R4** `claude_module` 拆分 ‖ **R5** `todo_module` 拆分（`claude_ui_*.cpp` / `todo_ui_{dialogs,board,logic}`） | R1–R3 已合 + Phase 3 落地（P2）；spec §5.3 组 1 可并行；承接 CPX-05、THS-02、THS-09；手法（拆文件 + 状态 struct）先在 R4/R5 跑通 |
+| 6 | **R6** `settings_module` 拆分（9 卡片表驱动）‖ **R7** `markdown_module` 拆分 | R1/R3；spec §5.3 组 2 可并行；R7 须等 Phase 3 全落地（撞 `markdown_module.cpp`）；承接 MD-04 |
+| 7 | **R8** 装配层收口（`home_module` + `app_sidebar` + `main.cpp` 合成一张 `{PageId, 短名, 图标, 工厂, 门控键}` 表） | R1/R3；承接 PAB-02/PAB-03/PAB-04/THS-08；`Module::shortName()` 虚函数是**不可回退项**，须拆 2 commit |
+| 8 | **R10** `ClaudeService` 拆分（`ProfileRepository` / `ProxyRuntime` / `SettingsTakeOver`，A1–A4 串行、A4 依赖 A2） | R spec §5.1 P1–P4（P1/P3 已满足；「profile 反向同步」spec 已落地）；god-class §2 建议 R4/R5 先跑通手法；承接 CPX-01 + CPX-02 的 `syncRestore` 收尾（CPX-07/CPX-14 已前置完成） |
+| 9 | **共享配置片段 UI 批 + failover 批**（spec `2026-09-27-shared-config-and-failover-design.md`） | 服务层/守卫（批 1，`2d2ebfa`）已合，编辑器 UI 与 failover 未开工。**注意 spec 里 `500 keychain_read_failed` 口径已过时** —— CPX-10（`08db1bc`）后统一为 `503 no_active_profile`（spec 已加注记，代码侧注释于 `4d37216` 注记） |
+| 10 | **TIN-06 剩余迁移**（`TestDb ×4`：`test_claude_service.cpp:58` / `test_provider_config.cpp:67` / `test_proxy_router.cpp:55` / `test_settings_sync.cpp:99`；TestEnv 家族 11 个等） | **在飞**：worktree `wave2-TIN-06b`（分支 `wave2/TIN-06b`，23 个 `tests/*` 已改**未提交**、零 commit）→ 清理/接管前先按反事故红线判活 |
+| 11 | **TIN-08 存量绕法清理**（宏已可变参，仅 3 处示范清理） | 约 29 处 `tests/` 的「裸逗号」注释/绕法仍在（`grep -n '裸逗号\|切参' tests/` 实测 30 命中，含 `doctest.h` 新护栏注释本身=非绕法）—— 纯清理、无行为风险 |
+| 12 | **codegraph 索引瘦身**（9 份 worktree 副本） | `codegraph.json` 已排除 `**/.claude/worktrees/**` / `wt-*/**` / `**/build/**`（出处 `2026-09-27-session-handoff.md:39`：当时索引 2.4GB、含 9 份副本）；本轮实测库已 ~583MB 且 `files` 表 worktree 路径命中 **0** —— 仍待闲时跑一次 `codegraph index D:/project/gui` 重建确认，并纳入本夜新增文件 |
+| 13 | **EUI-NEO push** | 本地 main 领先 origin 70 个提交（依赖 rev `269a8c4`）；**本机无推送通道** → 阻塞在用户侧（CLAUDE.md「常用命令」段）；push 后启用硬版本检查 |
+| 14 | 已关闭项：CPX-08 的 UI 用例 pin 剩余项 | 已清（`4d37216`/`632e673`：槽位分母改由槽位表派生 + 变异检验两向）—— **无需再排** |
+| 15 | 低优先 / 未取证（§7 存疑表残留） | CP-12 macOS `system_theme_macos.cpp` 未编译（`KNOWN_LIMITATIONS.md` §18）、THS-16 DST 本机不可复现、TIN-13 截屏限制（PIL/playwright 解释器错配 + 锁屏/RDP 黑图）、FileWatcher 回调线程内析构未做运行期复现 |
+
+> R 线顺序与并行分组（spec §5.3 / §5.4）：**R0 → R1 → R2 → R3 → {R4 ‖ R5} → {R6 ‖ R7} → {R8 ‖ R9}**；**R9 `module_pet` 已按用户决策放弃**（HANDOFF §4），pet 项改走 1g / 2j 两条独立线（均已交付）。
+> 波 2 暴露的两条纪律（沿用）：① **每次合并后必须真编译一次**（`merge-tree` 无冲突 ≠ 能编译，本夜两次踩中）；② **能力线要跟一条接线线**（CPX-13 加字段/迁移后三个调用点全走缺省 = 功能等于没上，补接线后还需变异检验）。
+
 ## 1. 概览
 
 | 分片 | 前缀 | 条数 | 高 | 中 | 低 | 分片基线 |
