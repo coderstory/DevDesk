@@ -11,6 +11,31 @@ if(NOT CMAKE_BUILD_TYPE)
     set(CMAKE_BUILD_TYPE Release)
 endif()
 
+# ---- 编译缓存 ccache 自动探测（2026-09-27 起为仓库默认，不再依赖手敲 -D）----
+# 背景：scripts/ 一体化脚本本来就带 launcher，但手工 configure 的路径全靠人记得加
+# -DCMAKE_*_COMPILER_LAUNCHER——新会话 / 新 worktree / 新 agent 读不到这个约定就吃不到缓存。
+# 这里在 configure 期探测一次，命中即全树生效（含 EUI-NEO 子目录，普通变量会继承下去；
+# 也覆盖 Dependencies.cmake 里的 try_compile 探测）。视作**默认开**，两条路可显式关闭：
+#   1) -DDEVDESK_CCACHE=OFF
+#   2) 自行传 CMAKE_C/CXX_COMPILER_LAUNCHER（含 -DCMAKE_CXX_COMPILER_LAUNCHER= 置空）
+# 未安装 ccache 时只打一行 STATUS 说明，不 warning、构建行为与从前完全一致。
+option(DEVDESK_CCACHE "自动探测 ccache 并作为编译缓存（-DDEVDESK_CCACHE=OFF 显式关闭）" ON)
+if(DEFINED CACHE{CMAKE_C_COMPILER_LAUNCHER} OR DEFINED CACHE{CMAKE_CXX_COMPILER_LAUNCHER})
+    # 调用方自己指定了 launcher（含显式置空）→ 完全尊重，不覆盖
+    message(STATUS "ccache: 跳过（调用方已指定 launcher: C='${CMAKE_C_COMPILER_LAUNCHER}' CXX='${CMAKE_CXX_COMPILER_LAUNCHER}'）")
+elseif(NOT DEVDESK_CCACHE)
+    message(STATUS "ccache: 已关闭（DEVDESK_CCACHE=OFF）")
+else()
+    find_program(DEVDESK_CCACHE_BIN NAMES ccache)
+    if(DEVDESK_CCACHE_BIN)
+        set(CMAKE_C_COMPILER_LAUNCHER "${DEVDESK_CCACHE_BIN}")
+        set(CMAKE_CXX_COMPILER_LAUNCHER "${DEVDESK_CCACHE_BIN}")
+        message(STATUS "ccache: 已启用 (${DEVDESK_CCACHE_BIN})")
+    else()
+        message(STATUS "ccache: 未找到（构建不受影响）")
+    endif()
+endif()
+
 # EUI-NEO 作为子项目（dev 时使用绝对路径，生产用 submodule）
 # 注意：必须在 include(Dependencies.cmake) 之前定义——ZLIB 查找提示要引用自带 zlib 头
 set(EUI_NEO_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../EUI-NEO" CACHE PATH "EUI-NEO source dir")
