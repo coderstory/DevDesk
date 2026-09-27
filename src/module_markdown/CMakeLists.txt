@@ -25,4 +25,5 @@ target_include_directories(devdesk_module_markdown PUBLIC
 target_link_libraries(devdesk_module_markdown PUBLIC
     devdesk_core
     devdesk_platform
+    devdesk_ui_kit
 )

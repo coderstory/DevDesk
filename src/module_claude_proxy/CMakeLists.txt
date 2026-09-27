@@ -18,4 +18,5 @@ target_include_directories(devdesk_module_claude_proxy PUBLIC
 target_link_libraries(devdesk_module_claude_proxy PUBLIC
     devdesk_core
     devdesk_platform
+    devdesk_ui_kit
 )

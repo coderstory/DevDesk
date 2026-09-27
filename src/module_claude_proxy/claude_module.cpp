@@ -17,6 +17,7 @@
 #include "core/time.h"
 #include "core/component_theme.h"
 #include "platform/json.h"
+#include <ui_kit/toast.h>
 
 #include <eui/dsl.h>
 
@@ -28,7 +29,6 @@
 #include <components/scrollview.h>
 #include <components/tabs.h>
 #include <components/theme.h>
-#include <components/toast.h>
 
 #include <atomic>
 #include <algorithm>
@@ -2578,27 +2578,16 @@ private:
     }
 
     // ============ Toast 反馈 ============
+    // 状态位与绘制接线走 ui_kit（D1 去重）；勾/叹图标仍走 toast 自带 Icon 字体
+    // 通道（⚠/✓ 前缀混排正文不可行）——成功用 fa-circle-check（现状逐字保留）
     void drawToast(eui::Ui& ui, const eui::Screen& screen,
                    const components::theme::ThemeColorTokens& themeTokens) {
-        components::toast(ui, "claude.toast")
-            .theme(themeTokens)
-            .screen(screen.width, screen.height)
-            .visible(toastOpen_)
-            .duration(3.5f)
-            // 图标走 toast 自带 Icon 字体通道（⚠/✓ 前缀混排正文不可行）
-            .icon(toastIsError_ ? 0xF071 : 0xF058)  // fa-triangle-exclamation / fa-circle-check
-            .title(toastTitle_)
-            .message(toastMessage_)
-            .onAutoDismiss([this] { toastOpen_ = false; })
-            .onDismiss([this] { toastOpen_ = false; })
-            .build();
+        ui_kit::drawToast(ui, screen, "claude.toast", toast_, themeTokens,
+                          ui_kit::ToastOptions{.okIcon = 0xF058});
     }
 
     void showToast(const std::string& title, const std::string& msg, bool isError) {
-        toastTitle_ = title;
-        toastMessage_ = msg;
-        toastIsError_ = isError;
-        toastOpen_ = true;
+        toast_.show(title, msg, isError);
     }
 
     // ============ 操作（全部真接 ClaudeService） ============
@@ -2821,11 +2810,8 @@ private:
     // Profile 列表滚动位置（审计 [26]：卡片超界可滚，不再压底部按钮）
     float profilesScrollOffset_ = 0.0f;
 
-    // Toast
-    bool toastOpen_ = false;
-    std::string toastTitle_;
-    std::string toastMessage_;
-    bool toastIsError_ = false;
+    // Toast（状态位 + 绘制接线统一走 ui_kit，任务 D / R1）
+    ui_kit::ToastState toast_;
 
     // 测试连通后台线程（结果经 testDone_ 原子标志回 compose 收割；
     // 普通成员的发布顺序由 release/acquire + join 保证）

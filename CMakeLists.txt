@@ -94,6 +94,10 @@ add_subdirectory(${EUI_NEO_DIR} ${CMAKE_BINARY_DIR}/_eui_neo_build EXCLUDE_FROM_
 add_subdirectory(src/core)
 add_subdirectory(src/platform)
 
+# presentation 能力层（任务 D / R1）：跨模块重复的 UI 接线（当前 = toast）。
+# 顺序：晚于 src/core（依赖 devdesk_core）、早于消费它的 module_* 与主程序
+add_subdirectory(src/ui_kit)
+
 # EUI-NEO include 路径（暴露给所有目标）
 set(EUI_NEO_INCLUDE_DIR "${EUI_NEO_DIR}/include")
 include_directories(${EUI_NEO_INCLUDE_DIR})
@@ -136,6 +140,7 @@ eui_neo_configure_app(DevDesk)
 target_link_libraries(DevDesk PRIVATE
     devdesk_core
     devdesk_platform
+    devdesk_ui_kit
     devdesk_module_home
     devdesk_module_markdown
     devdesk_module_todo

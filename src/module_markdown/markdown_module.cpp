@@ -37,6 +37,7 @@
 #include "core/ui_geometry.h"
 #include "core/component_theme.h"
 #include "core/time.h"
+#include <ui_kit/toast.h>
 #include "markdown_service.h"
 #include "md_block_model.h"
 #include "md_block_interact.h"
@@ -2266,44 +2267,45 @@ private:
     // ==================== 业务动作 ====================
 
     // ---- Toast 反馈（仿 claude_module；⚠/✓ 前缀已换 icon 码点）----
+    // 普通状态提示走 ui_kit（D1 去重）；外部修改冲突是 markdown 专用形态
+    //（带 action 按钮 + 不自动超时，见上），就地绘制、不进 ui_kit——二者共用
+    // md.toast 单实例且互斥，故每帧仍只调用一次 builder。
     void drawToast(eui::Ui& ui, const eui::Screen& screen,
                    const components::theme::ThemeColorTokens& themeTokens) {
-        const bool conflict = conflictOpen_;
+        if (!conflictOpen_) {
+            ui_kit::drawToast(ui, screen, "md.toast", toast_, themeTokens);
+            return;
+        }
         components::toast(ui, "md.toast")
             .theme(themeTokens)
             .screen(screen.width, screen.height)
-            .visible(conflict || toastOpen_)
-            .size(360.0f, conflict ? 128.0f : 88.0f)  // 带 action 按钮加高一档
-            .duration(conflict ? 0.0f : 3.5f)
-            .title(conflict ? "文件已被外部修改" : toastTitle_)
-            .message(conflict
-                         ? "「" + currentPath_ + "」在磁盘上被其他程序修改，"
-                           "与未保存的本地编辑冲突。\n✕ 关闭 = 保留本地编辑"
-                         : toastMessage_)
-            .icon(conflict ? 0xF071 : (toastError_ ? 0xF071 : 0xF00C))
-            .action(conflict ? "重载磁盘版本" : "", [this] { resolveConflict(true); })
+            .visible(true)  // = 原 `conflict || toastOpen_`：本分支 conflict 必真
+            .size(360.0f, 128.0f)  // 带 action 按钮加高一档
+            .duration(0.0f)
+            .title("文件已被外部修改")
+            .message("「" + currentPath_ + "」在磁盘上被其他程序修改，"
+                     "与未保存的本地编辑冲突。\n✕ 关闭 = 保留本地编辑")
+            .icon(0xF071)
+            .action("重载磁盘版本", [this] { resolveConflict(true); })
             .onAutoDismiss([this] {
                 if (conflictOpen_) {
                     resolveConflict(false);
                 } else {
-                    toastOpen_ = false;
+                    toast_.open = false;
                 }
             })
             .onDismiss([this] {
                 if (conflictOpen_) {
                     resolveConflict(false);
                 } else {
-                    toastOpen_ = false;
+                    toast_.open = false;
                 }
             })
             .build();
     }
 
     void showToast(const std::string& title, const std::string& msg, bool isError) {
-        toastTitle_ = title;
-        toastMessage_ = msg;
-        toastError_ = isError;
-        toastOpen_ = true;
+        toast_.show(title, msg, isError);
     }
 
     // ---- Phase 1：四态切换 / 大纲 ----
@@ -2697,7 +2699,7 @@ private:
             saveBackoffMs_ = (saveBackoffMs_ == 0)
                 ? 500 : std::min(saveBackoffMs_ * 2, kMaxSaveBackoffMs);
             // toast 单实例：失败重试风暴期间只在无 toast 展示时弹一次
-            if (!toastOpen_) {
+            if (!toast_.open) {
                 showToast("保存失败",
                           "「" + currentPath_ + "」" + r.errorMessage() +
                               "，已自动重试",
@@ -3354,11 +3356,8 @@ private:
     std::string renameInput_;        // 重命名输入框内容
     std::string renameError_;        // 审计 [19] 收尾：弹窗内嵌红字错误行（照 [30] newNoteError_ 模式）
 
-    // ---- Toast（EUI-NEO 单实例，复用一个状态位）----
-    bool toastOpen_ = false;
-    bool toastError_ = false;         // toast 图标用（fa-triangle-exclamation / fa-check）
-    std::string toastTitle_;
-    std::string toastMessage_;
+    // ---- Toast（EUI-NEO 单实例，复用一个状态位；状态位 + 绘制接线走 ui_kit）----
+    ui_kit::ToastState toast_;
 
     // ---- Phase 1 状态 ----
     // 四态视图（W9：默认编辑态 = 左树 + 右编辑两栏；实时/双栏/预览经顶栏
