@@ -7,6 +7,7 @@
 // 侧边栏（app_sidebar app.sidebar.bg）同样已删自铺底（磨砂/半透要求透出
 // 窗口 clearColor，d923f0f），由 app 层窗口色承担，不在模块断言范围。
 #include "doctest.h"
+#include "test_support.h"
 
 #include "claude_service.h"
 #include "core/database.h"
@@ -66,20 +67,6 @@ std::filesystem::path tempDbPath(const char* tag) {
     char buf[128];
     std::snprintf(buf, sizeof(buf), "devdesk_test_hier_%s_%d.db", tag, counter);
     return test_temp::tempPath(buf);
-}
-
-// DEVDESK_NOTES_DIR 隔离（平台差异收在这里；REGISTER_TEST 宏体内不能
-// 嵌 #if 指令——pedantic 直接报错）
-void setNotesDirEnv(const std::string& value) {
-#if defined(_WIN32)
-    ::_putenv_s("DEVDESK_NOTES_DIR", value.c_str());
-#else
-    if (value.empty()) {
-        ::unsetenv("DEVDESK_NOTES_DIR");
-    } else {
-        ::setenv("DEVDESK_NOTES_DIR", value.c_str(), 1);
-    }
-#endif
 }
 
 // RAII：临时库 + 注册全局 appDatabase（析构注销，防污染其他用例）
@@ -185,7 +172,7 @@ REGISTER_TEST(theme_hierarchy_markdown,
         std::fputs("# 标题\n正文\n", f);
         std::fclose(f);
     }
-    setNotesDirEnv(dir.string());
+    test_support::setEnvVar("DEVDESK_NOTES_DIR", dir.string());
 
     DbEnv env("md");
     DOCTEST_REQUIRE(env.ready);
@@ -218,7 +205,7 @@ REGISTER_TEST(theme_hierarchy_markdown,
     { Frame frame(mod.get()); DOCTEST_CHECK(checkFrame(frame, core::theme::current())); }
 
     mod->onStop();
-    setNotesDirEnv("");
+    test_support::setEnvVar("DEVDESK_NOTES_DIR", "");
     std::filesystem::remove_all(dir, ec);
     core::theme::setDark();
     return true;

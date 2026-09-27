@@ -8,6 +8,7 @@
 //      验证 ReadDirectoryChangesW 线程 + 去抖 + 路径转换（UTF-8、'/' 分隔、
 //      子目录递归、中文文件名）。stub 平台（POSIX/macOS）跳过并打印 [SKIP]。
 #include "doctest.h"
+#include "test_support.h"
 
 #include "platform/file_watcher.h"
 
@@ -25,17 +26,6 @@
 namespace fs = std::filesystem;
 
 namespace {
-
-fs::path makeTempDir(const std::string& tag) {
-    static int counter = 0;
-    ++counter;
-    fs::path dir = test_temp::tempPath("devdesk_fwatch_test_" + tag + "_" +
-                                       std::to_string(counter));
-    std::error_code ec;
-    fs::remove_all(dir, ec);
-    fs::create_directories(dir, ec);
-    return dir;
-}
 
 bool writeTextFile(const fs::path& path, const std::string& content) {
     fs::create_directories(path.parent_path());
@@ -96,7 +86,7 @@ REGISTER_TEST(fwatch_start_validation,
     DOCTEST_CHECK(r1.isFail());
     DOCTEST_CHECK(r1.errorCode() == core::ErrorCode::ValidationError);
 
-    auto r2 = w.start(makeTempDir("nullcb"), nullptr);
+    auto r2 = w.start(test_support::makeTempDir("devdesk_fwatch_test_", "nullcb"), nullptr);
     DOCTEST_CHECK(r2.isFail());
     DOCTEST_CHECK(r2.errorCode() == core::ErrorCode::ValidationError);
 
@@ -108,13 +98,13 @@ REGISTER_TEST(fwatch_start_validation,
     DOCTEST_CHECK(r3.isFail());
     DOCTEST_CHECK(r3.errorCode() == core::ErrorCode::FileNotFound);
 
-    fs::remove_all(makeTempDir("cleanup_ignore"), ec);
+    fs::remove_all(test_support::makeTempDir("devdesk_fwatch_test_", "cleanup_ignore"), ec);
     return true;
 })
 
 REGISTER_TEST(fwatch_start_stop_idempotent,
               "FileWatcher: 真实目录 start ok + stop 幂等（可重复）", {
-    const auto dir = makeTempDir("lifecycle");
+    const auto dir = test_support::makeTempDir("devdesk_fwatch_test_", "lifecycle");
     EventSink sink;
     platform::FileWatcher w;
 
@@ -142,7 +132,7 @@ REGISTER_TEST(fwatch_start_stop_idempotent,
 
 REGISTER_TEST(fwatch_event_create_modify_delete,
               "FileWatcher[Win]: 新建/改写/删除 → 回调带正确相对路径与动作", {
-    const auto dir = makeTempDir("events");
+    const auto dir = test_support::makeTempDir("devdesk_fwatch_test_", "events");
     EventSink sink;
     platform::FileWatcher w;
     DOCTEST_REQUIRE(w.start(dir, sink).isOk());
@@ -187,7 +177,7 @@ REGISTER_TEST(fwatch_event_create_modify_delete,
 
 REGISTER_TEST(fwatch_event_subdir_and_nonascii,
               "FileWatcher[Win]: 子目录递归（box/deep.md）+ 中文文件名 UTF-8 送达", {
-    const auto dir = makeTempDir("subdir");
+    const auto dir = test_support::makeTempDir("devdesk_fwatch_test_", "subdir");
     EventSink sink;
     platform::FileWatcher w;
     DOCTEST_REQUIRE(w.start(dir, sink).isOk());
@@ -216,7 +206,7 @@ REGISTER_TEST(fwatch_event_subdir_and_nonascii,
 
 REGISTER_TEST(fwatch_event_burst_debounce_merges,
               "FileWatcher[Win]: 突发 5 文件在去抖窗口内合并为 ≤2 次批量交付", {
-    const auto dir = makeTempDir("debounce");
+    const auto dir = test_support::makeTempDir("devdesk_fwatch_test_", "debounce");
     struct {
         std::mutex mtx;
         int deliveries = 0;
@@ -256,7 +246,7 @@ REGISTER_TEST(fwatch_event_burst_debounce_merges,
 })
 REGISTER_TEST(fwatch_stop_from_callback_thread,
               "FileWatcher[Win]: 回调线程内 stop() 只请求停止（不崩、join 后可再启）", {
-    const auto dir = makeTempDir("cbstop");
+    const auto dir = test_support::makeTempDir("devdesk_fwatch_test_", "cbstop");
     platform::FileWatcher w;
     EventSink sink;
     std::atomic<int> deliveries(0);

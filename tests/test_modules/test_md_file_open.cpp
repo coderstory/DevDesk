@@ -2,6 +2,7 @@
 // 「打开方式」文件分发路径解析（审计 2026-09-23 [5]）无头单测：
 //   目录内相对化 / 目录外复制捕获 / 撞名编号 / 非法输入拒绝
 #include "doctest.h"
+#include "test_support.h"
 #include "module_markdown/md_file_open.h"
 
 #include <filesystem>
@@ -13,18 +14,6 @@
 namespace fs = std::filesystem;
 
 namespace {
-
-fs::path makeTempDir(const std::string& tag) {
-    static int counter = 0;
-    ++counter;
-    fs::path dir = test_temp::tempPath("devdesk_mdopen_test_" + tag + "_" +
-                                       std::to_string(counter));
-    std::error_code ec;
-    fs::remove_all(dir, ec);
-    fs::create_directories(dir, ec);
-    return dir;
-}
-
 bool writeText(const fs::path& p, const std::string& text) {
     fs::create_directories(p.parent_path());
     std::ofstream f(p, std::ios::binary | std::ios::trunc);
@@ -46,7 +35,7 @@ using module::markdown::captureFileIntoNotesDir;
 
 REGISTER_TEST(md_open_relative_inside_root,
               "md_file_open: 笔记目录内的文件直接相对化，不复制", {
-    const auto notes = makeTempDir("inside");
+    const auto notes = test_support::makeTempDir("devdesk_mdopen_test_", "inside");
     const auto file = notes / "note.md";
     DOCTEST_REQUIRE(writeText(file, "# N\n"));
 
@@ -65,7 +54,7 @@ REGISTER_TEST(md_open_relative_inside_root,
 
 REGISTER_TEST(md_open_relative_inside_nested,
               "md_file_open: 嵌套子目录内相对化（POSIX 分隔符）", {
-    const auto notes = makeTempDir("nested");
+    const auto notes = test_support::makeTempDir("devdesk_mdopen_test_", "nested");
     const auto file = notes / "inbox" / "idea.md";
     DOCTEST_REQUIRE(writeText(file, "# idea\n"));
 
@@ -79,8 +68,8 @@ REGISTER_TEST(md_open_relative_inside_nested,
 
 REGISTER_TEST(md_open_external_copied_as_md,
               "md_file_open: 目录外文件复制进笔记根并强制 .md（原文件保留）", {
-    const auto notes = makeTempDir("capture");
-    const auto srcDir = makeTempDir("capture_src");
+    const auto notes = test_support::makeTempDir("devdesk_mdopen_test_", "capture");
+    const auto srcDir = test_support::makeTempDir("devdesk_mdopen_test_", "capture_src");
     const auto src = srcDir / "report.txt";
     DOCTEST_REQUIRE(writeText(src, "外部正文ABC\n"));
 
@@ -103,7 +92,7 @@ REGISTER_TEST(md_open_external_copied_as_md,
 
 REGISTER_TEST(md_open_rejects_bad_inputs,
               "md_file_open: 不存在/目录/空路径拒绝；笔记目录缺失时自动创建", {
-    const auto tmp = makeTempDir("reject");
+    const auto tmp = test_support::makeTempDir("devdesk_mdopen_test_", "reject");
 
     // 不存在的路径 → FileNotFound
     DOCTEST_CHECK(captureFileIntoNotesDir(tmp / "notes",

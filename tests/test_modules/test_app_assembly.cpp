@@ -13,6 +13,7 @@
 // 注：门控**语义**（enabledModules 配置 / moduleEnabled 谓词）已由
 // test_module_gating 覆盖，这里只测**接线**，不重复它的断言。
 #include "doctest.h"
+#include "test_support.h"
 
 #include "app_assembly.h"
 #include "settings_config.h"
@@ -73,15 +74,6 @@ private:
     StubModule todo_{::core::PageId::Todo, "todo", &log_};
     StubModule claude_{::core::PageId::ClaudeProxy, "claude", &log_};
     StubModule settings_{::core::PageId::Settings, "settings", &log_};
-};
-
-// scoped appRouter 复位：assembleAndStart 会把 Router 注册进进程级访问器
-//（armExitHook 的 handler 经它取 Router），而用例里的 Router 是栈对象——
-// 出作用域必须复位 null，否则进程退出时 atexit 会摸到已析构的 Router
-class ScopedAppRouter {
-public:
-    ScopedAppRouter() { ::core::registerAppRouter(nullptr); }
-    ~ScopedAppRouter() { ::core::registerAppRouter(nullptr); }
 };
 
 // 全启用配置（SettingsConfig 默认值 = 五个模块全开）
@@ -146,7 +138,7 @@ std::filesystem::path tempNotesDir() {
 
 REGISTER_TEST(assembly_modules_all_off,
               "assembly: 三模块全关 → 只注册 home/settings（被关模块零 onStart）", {
-    ScopedAppRouter scoped;
+    test_support::ScopedAppRouter scoped;
     ::core::Router router;
     StubModules mods;
 
@@ -173,7 +165,7 @@ REGISTER_TEST(assembly_modules_all_off,
 
 REGISTER_TEST(assembly_registration_order_prestart_first,
               "assembly: 注册顺序 home→markdown→todo→claude→settings 且 preStart 先于一切 onStart", {
-    ScopedAppRouter scoped;
+    test_support::ScopedAppRouter scoped;
     ::core::Router router;
     StubModules mods;
 
@@ -200,7 +192,7 @@ REGISTER_TEST(assembly_registration_order_prestart_first,
 
 REGISTER_TEST(assembly_exit_hook_armed_idempotent,
               "assembly: 退出接线只挂一次（幂等）+ handler 触发各模块 onStop", {
-    ScopedAppRouter scoped;
+    test_support::ScopedAppRouter scoped;
     ::core::Router router;
     StubModules mods;
 
@@ -223,7 +215,7 @@ REGISTER_TEST(assembly_exit_hook_armed_idempotent,
 
 REGISTER_TEST(assembly_dispatch_and_tray_mapping,
               "assembly: dispatchFileOpen / pageForTrayAction 既有语义", {
-    ScopedAppRouter scoped;
+    test_support::ScopedAppRouter scoped;
 
     // ---- 1. 扩展名 → 目标页（纯映射，搬运前 main.cpp 匿名空间内同款）----
     DOCTEST_CHECK(app::assembly::dispatchPageForFile("a.md") == ::core::PageId::Markdown);
@@ -347,7 +339,7 @@ REGISTER_TEST(assembly_capture_open_file_from_argv,
 
 REGISTER_TEST(assembly_injects_empty_page_fallback,
               "assembly: 装配时注入空态兜底（无模块可显示 → 「无页面」由 app 层画）", {
-    ScopedAppRouter scoped;
+    test_support::ScopedAppRouter scoped;
     ::core::Router router;
     // 全 nullptr 的 ModuleSet：装配后一个模块都没注册（registerModule 的既有
     // 容错分支）→ compose 落到「当前页无模块」。这是经装配后的 Router 唯一能

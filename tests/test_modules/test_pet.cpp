@@ -25,6 +25,7 @@
 //      来源判定与边界（门控/阈值/不足一帧）+ 节拍数字与注释对齐
 // 子窗口真实渲染/拖拽/穿透/气泡视觉属人工点验（设计 §6 M2 验收项）。
 #include "doctest.h"
+#include "test_support.h"
 
 #include "module_pet/pet_bubble.h"
 #include "module_pet/pet_config.h"
@@ -64,18 +65,6 @@ void removeTreeQuietly(const std::filesystem::path& p) {
     std::filesystem::remove_all(p, ec);
 }
 
-void setEnvVar(const char* name, const std::string& value) {
-#if defined(_WIN32)
-    ::_putenv_s(name, value.c_str());
-#else
-    if (value.empty()) {
-        ::unsetenv(name);
-    } else {
-        ::setenv(name, value.c_str(), 1);
-    }
-#endif
-}
-
 // 审计 [16]：DEVDESK_PETS_DIR 隔离的 RAII 守卫（test_settings.cpp PruneEnv
 // 同款约定）。构造 = 清残留 + 建临时目录 + 指环境变量；析构 = 环境变量拉回
 // 未设置 + 删临时目录。断言 fail-fast 提前 return false 也会走析构，不留
@@ -84,12 +73,12 @@ struct PetsDirEnv {
     const std::filesystem::path root;
     explicit PetsDirEnv(const std::string& tag) : root(tempDir(tag.c_str())) {
         removeTreeQuietly(root);
-        setEnvVar("DEVDESK_PETS_DIR", root.string());
+        test_support::setEnvVar("DEVDESK_PETS_DIR", root.string());
     }
     PetsDirEnv(const PetsDirEnv&) = delete;
     PetsDirEnv& operator=(const PetsDirEnv&) = delete;
     ~PetsDirEnv() {
-        setEnvVar("DEVDESK_PETS_DIR", "");
+        test_support::setEnvVar("DEVDESK_PETS_DIR", "");
         removeTreeQuietly(root);
     }
 };

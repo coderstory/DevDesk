@@ -7,6 +7,7 @@
 //   3. Home 降级渲染：scoped appRouter 注入注册状态，无头 compose 断言
 //      统计卡 / 快捷按钮 / 最近编辑按目标模块注册状态隐藏，全关出空态文案
 #include "doctest.h"
+#include "test_support.h"
 #include "settings_config.h"
 
 #include "core/module_interface.h"
@@ -50,16 +51,6 @@ void writeRawConfig(const std::filesystem::path& file,
     std::ofstream f(file, std::ios::trunc);
     f << json;
 }
-
-// scoped appRouter 注入（Home 降级渲染读注册状态）；离开作用域复位 null，
-// 不影响后续无 Router 假设的用例（既有 home 测试 compose 时 appRouter()==null）
-class ScopedAppRouter {
-public:
-    explicit ScopedAppRouter(::core::Router* router) {
-        ::core::registerAppRouter(router);
-    }
-    ~ScopedAppRouter() { ::core::registerAppRouter(nullptr); }
-};
 
 // REGISTER_TEST 宏体内不能出现裸逗号（花括号初始化列表会被预处理器当成
 // 宏参数分隔符），全量 ID 清单放宏外（test_settings.cpp 同款约定）
@@ -216,7 +207,7 @@ REGISTER_TEST(gating_home_all_modules_off, "gating: Home 三模块全关 → 卡
     StubModule settings(::core::PageId::Settings, "settings");
     router.registerModule(&home);
     router.registerModule(&settings);
-    ScopedAppRouter scoped(&router);
+    test_support::ScopedAppRouter scoped(&router);
 
     std::unique_ptr<::core::Module> mod(create_home_module());
     eui::Screen screen;
@@ -254,7 +245,7 @@ REGISTER_TEST(gating_home_partial_modules, "gating: Home 部分模块关闭 → 
     router.registerModule(&home);
     router.registerModule(&markdown);
     router.registerModule(&settings);
-    ScopedAppRouter scoped(&router);
+    test_support::ScopedAppRouter scoped(&router);
 
     std::unique_ptr<::core::Module> mod(create_home_module());
     eui::Screen screen;
@@ -294,7 +285,7 @@ REGISTER_TEST(gating_home_all_on_unchanged, "gating: 全注册时 Home 与现状
     router.registerModule(&todo);
     router.registerModule(&claude);
     router.registerModule(&settings);
-    ScopedAppRouter scoped(&router);
+    test_support::ScopedAppRouter scoped(&router);
 
     std::unique_ptr<::core::Module> mod(create_home_module());
     eui::Screen screen;

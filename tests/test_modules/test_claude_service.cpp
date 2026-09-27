@@ -5,6 +5,7 @@
 //   - 数据库用临时文件（std::filesystem::temp_directory_path）
 //   - Keychain service 用 "DevDeskTestClaudeService"，不污染生产数据
 #include "doctest.h"
+#include "test_support.h"
 
 #include "claude_service.h"
 #include "upstream_dialect.h"
@@ -124,18 +125,6 @@ int countCI(const HeaderMap& h, const std::string& lowerKey) {
 // 用途：让 baseUrl host 为 opencode.ai 的探测请求仍落到本地 mock——curl 走
 // 代理时请求行是绝对 URI（GET http://opencode.ai/... HTTP/1.1），不解析该
 // 域名，请求不出本机（libcurl 从环境变量取代理，send() 未显式设置 CURLOPT_PROXY）。
-void setEnvVar(const char* name, const char* value) {
-#if defined(_WIN32)
-    _putenv_s(name, value);
-#else
-    if (value && *value) {
-        setenv(name, value, 1);
-    } else {
-        unsetenv(name);
-    }
-#endif
-}
-
 struct ScopedProxyEnv {
     std::string savedProxy;
     std::string savedNoProxy;
@@ -153,12 +142,12 @@ struct ScopedProxyEnv {
             hadNoProxy = true;
             savedNoProxy = n;
         }
-        setEnvVar("http_proxy", proxyUrl.c_str());
-        setEnvVar("no_proxy", "");
+        test_support::setEnvVar("http_proxy", proxyUrl.c_str());
+        test_support::setEnvVar("no_proxy", "");
     }
     ~ScopedProxyEnv() {
-        setEnvVar("http_proxy", hadProxy ? savedProxy.c_str() : "");
-        setEnvVar("no_proxy", hadNoProxy ? savedNoProxy.c_str() : "");
+        test_support::setEnvVar("http_proxy", hadProxy ? savedProxy.c_str() : "");
+        test_support::setEnvVar("no_proxy", hadNoProxy ? savedNoProxy.c_str() : "");
     }
     ScopedProxyEnv(const ScopedProxyEnv&) = delete;
     ScopedProxyEnv& operator=(const ScopedProxyEnv&) = delete;
@@ -265,41 +254,11 @@ private:
     }
 };
 
-// ---- 反向同步（M3）测试基建：临时 settings.json 目录（仿 test_settings_sync
-// 的 TempDir；绝不碰真实 ~/.claude）----
+// 反向同步（M3）测试基建：临时 settings.json 目录（共享头 test_support::TempDir，
+// 前缀沿用原样；绝不碰真实 ~/.claude）
+constexpr const char* kRevTempDirPrefix = "devdesk_test_claude_rev_";
 
-struct TempDir {
-    std::filesystem::path path;
-
-    explicit TempDir(const std::string& tag) {
-        static int counter = 0;
-        ++counter;
-        path = test_temp::tempPath("devdesk_test_claude_rev_" + tag + "_" +
-                                   std::to_string(counter));
-        std::error_code ec;
-        std::filesystem::remove_all(path, ec);
-        std::filesystem::create_directories(path, ec);
-        if (ec) throw std::runtime_error("temp dir create failed");
-    }
-    ~TempDir() {
-        std::error_code ec;
-        std::filesystem::remove_all(path, ec);
-    }
-
-    std::filesystem::path file(const char* name) const {
-        return path / name;
-    }
-    void write(const std::filesystem::path& f, const std::string& content) const {
-        std::ofstream o(f, std::ios::binary | std::ios::trunc);
-        o << content;
-    }
-    void remove(const std::filesystem::path& f) const {
-        std::error_code ec;
-        std::filesystem::remove(f, ec);
-    }
-};
-
-module::claude::settings_sync::Paths makeSyncPaths(const TempDir& d) {
+module::claude::settings_sync::Paths makeSyncPaths(const test_support::TempDir& d) {
     module::claude::settings_sync::Paths p;
     p.settingsFile = d.file("settings.json");
     p.sidecarFile = d.file("snapshot.json");
@@ -1532,7 +1491,7 @@ REGISTER_TEST(claude_reverse_capture_on_switch,
               "claude_service: 反向同步① 切 profile 前捕获 settings.json", {
     using namespace module::claude;
     TestDb tdb("revcap");
-    TempDir d("revcap");
+    test_support::TempDir d("revcap", kRevTempDirPrefix);
     auto paths = makeSyncPaths(d);
 
     ClaudeService svc(tdb.handle(), kTestKeychainService);
@@ -1612,7 +1571,7 @@ REGISTER_TEST(claude_reverse_guard_keys_not_touched,
               "claude_service: 反向同步② 守卫键不写也不清", {
     using namespace module::claude;
     TestDb tdb("revguard");
-    TempDir d("revguard");
+    test_support::TempDir d("revguard", kRevTempDirPrefix);
     auto paths = makeSyncPaths(d);
 
     ClaudeService svc(tdb.handle(), kTestKeychainService);
@@ -1702,7 +1661,7 @@ REGISTER_TEST(claude_reverse_absent_clears,
               "claude_service: 反向同步③ 缺席即清空", {
     using namespace module::claude;
     TestDb tdb("revclear");
-    TempDir d("revclear");
+    test_support::TempDir d("revclear", kRevTempDirPrefix);
     auto paths = makeSyncPaths(d);
 
     ClaudeService svc(tdb.handle(), kTestKeychainService);
@@ -1756,7 +1715,7 @@ REGISTER_TEST(claude_reverse_broken_json_aborts,
               "claude_service: 反向同步④ 坏 JSON 中止切换且 profile 一字未改", {
     using namespace module::claude;
     TestDb tdb("revbad");
-    TempDir d("revbad");
+    test_support::TempDir d("revbad", kRevTempDirPrefix);
     auto paths = makeSyncPaths(d);
 
     ClaudeService svc(tdb.handle(), kTestKeychainService);
@@ -1829,7 +1788,7 @@ REGISTER_TEST(claude_reverse_missing_or_empty_noop,
               "claude_service: 反向同步⑤ 缺失或空文件 no-op 且照常切换", {
     using namespace module::claude;
     TestDb tdb("revnoop");
-    TempDir d("revnoop");
+    test_support::TempDir d("revnoop", kRevTempDirPrefix);
     auto paths = makeSyncPaths(d);
 
     ClaudeService svc(tdb.handle(), kTestKeychainService);
@@ -1907,7 +1866,7 @@ REGISTER_TEST(claude_reverse_no_active_skips,
               "claude_service: 反向同步⑥ 无激活 profile 时不读文件", {
     using namespace module::claude;
     TestDb tdb("revnoact");
-    TempDir d("revnoact");
+    test_support::TempDir d("revnoact", kRevTempDirPrefix);
     auto paths = makeSyncPaths(d);
 
     ClaudeService svc(tdb.handle(), kTestKeychainService);
@@ -1934,7 +1893,7 @@ REGISTER_TEST(claude_reverse_no_change_zero_write,
               "claude_service: 反向同步⑦ 无变化零写入 updated_at 不变", {
     using namespace module::claude;
     TestDb tdb("revsame");
-    TempDir d("revsame");
+    test_support::TempDir d("revsame", kRevTempDirPrefix);
     auto paths = makeSyncPaths(d);
 
     ClaudeService svc(tdb.handle(), kTestKeychainService);
@@ -1994,7 +1953,7 @@ REGISTER_TEST(claude_reverse_sidecar_managed_key_skipped,
               "claude_service: 反向同步⑧ sidecar 托管键不被覆盖", {
     using namespace module::claude;
     TestDb tdb("revside");
-    TempDir d("revside");
+    test_support::TempDir d("revside", kRevTempDirPrefix);
     auto paths = makeSyncPaths(d);
 
     ClaudeService svc(tdb.handle(), kTestKeychainService);
@@ -2048,7 +2007,7 @@ REGISTER_TEST(claude_dup_profile_basic,
               "claude_service: 复制 profile 全等同源且不激活", {
     using namespace module::claude;
     TestDb tdb("dup");
-    TempDir d("dup");
+    test_support::TempDir d("dup", kRevTempDirPrefix);
     auto paths = makeSyncPaths(d);
 
     ClaudeService svc(tdb.handle(), kTestKeychainService);

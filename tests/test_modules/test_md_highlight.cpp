@@ -10,6 +10,7 @@
 //      落色）+ 主题切换 bump styleRevision 且 runs 换色
 //   5. 性能冒烟：万行文档可视窗重高亮耗时记录（设计 §7 预算 8ms 仅打印，不设红线）
 #include "doctest.h"
+#include "test_support.h"
 #include "core/database.h"
 #include "core/module_interface.h"
 #include "core/theme.h"
@@ -97,17 +98,6 @@ double msSince(std::chrono::steady_clock::time_point t) {
         .count();
 }
 
-fs::path makeTempNotesDir(const char* tag) {
-    static int counter = 0;
-    ++counter;
-    const fs::path dir = test_temp::tempPath(
-        "devdesk_mdhl_" + std::string(tag) + "_" + std::to_string(counter));
-    std::error_code ec;
-    fs::remove_all(dir, ec);
-    fs::create_directories(dir, ec);
-    return dir;
-}
-
 bool writeTextFile(const fs::path& path, const std::string& content) {
     std::ofstream ofs(path, std::ios::binary | std::ios::trunc);
     if (!ofs) return false;
@@ -119,32 +109,8 @@ struct MdHlEnv {
     fs::path dir;
     std::unique_ptr<core::Database> db;
 
-    static void setEnvVar(const std::string& value) {
-#if defined(_WIN32)
-        ::_putenv_s("DEVDESK_NOTES_DIR", value.c_str());
-#else
-        if (value.empty()) {
-            ::unsetenv("DEVDESK_NOTES_DIR");
-        } else {
-            ::setenv("DEVDESK_NOTES_DIR", value.c_str(), 1);
-        }
-#endif
-    }
-
-    static void setViewStateEnv(const std::string& value) {
-#if defined(_WIN32)
-        ::_putenv_s("DEVDESK_MARKDOWN_VIEW_STATE_PATH", value.c_str());
-#else
-        if (value.empty()) {
-            ::unsetenv("DEVDESK_MARKDOWN_VIEW_STATE_PATH");
-        } else {
-            ::setenv("DEVDESK_MARKDOWN_VIEW_STATE_PATH", value.c_str(), 1);
-        }
-#endif
-    }
-
     explicit MdHlEnv(const char* tag) {
-        dir = makeTempNotesDir(tag);
+        dir = test_support::makeTempDir("devdesk_mdhl_", tag);
         auto r = core::Database::open(dir / "mdhl_test.db");
         if (r.isFail()) return;
         db = std::make_unique<core::Database>(std::move(r.unsafeValue()));
@@ -154,13 +120,13 @@ struct MdHlEnv {
         }
         core::registerAppDatabase(&db->db());
         // 视图状态文件隔离（审计 [23]）：无头用例不碰真实 %APPDATA% 状态
-        setViewStateEnv((dir / "view_state.json").string());
-        setEnvVar(dir.string());
+        test_support::setEnvVar("DEVDESK_MARKDOWN_VIEW_STATE_PATH", (dir / "view_state.json").string());
+        test_support::setEnvVar("DEVDESK_NOTES_DIR", dir.string());
     }
 
     ~MdHlEnv() {
-        setEnvVar("");
-        setViewStateEnv("");
+        test_support::setEnvVar("DEVDESK_NOTES_DIR", "");
+        test_support::setEnvVar("DEVDESK_MARKDOWN_VIEW_STATE_PATH", "");
         core::registerAppDatabase(nullptr);
         std::error_code ec;
         fs::remove_all(dir, ec);

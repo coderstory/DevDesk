@@ -6,6 +6,7 @@
 //      折叠态宽 72 / label 不渲染 / 图标水平居中 / tooltip 挂载 / 模块内容区
 //      宽度 = 窗口宽 - 72；展开态 208 / label 回来 / tooltip 无 / 宽 - 208
 #include "doctest.h"
+#include "test_support.h"
 
 #include "app_sidebar.h"
 #include "settings_config.h"
@@ -47,17 +48,6 @@ private:
 
 float RecordingModule::lastScreenWidth = 0.0f;
 float RecordingModule::lastScreenHeight = 0.0f;
-
-// scoped appRouter 注入（test_module_gating 同款）：离开作用域复位 null，
-// 不污染其他无 Router 假设的用例
-class ScopedAppRouter {
-public:
-    explicit ScopedAppRouter(::core::Router* router) {
-        ::core::registerAppRouter(router);
-    }
-    ~ScopedAppRouter() { ::core::registerAppRouter(nullptr); }
-};
-
 std::filesystem::path tempConfigFile(const char* name) {
     return test_temp::tempPath(
         "devdesk_test_sidebar_" + std::string(name) + ".json");
@@ -161,7 +151,7 @@ REGISTER_TEST(sidebar_collapsed_compose,
     RecordingModule home(::core::PageId::Home, "首页");
     RecordingModule md(::core::PageId::Markdown, "笔记");
     ::core::Router router = makeStubRouter(home, md);
-    ScopedAppRouter scoped(&router);
+    test_support::ScopedAppRouter scoped(&router);
 
     eui::Screen screen;
     screen.width = 1600.0f;
@@ -214,7 +204,7 @@ REGISTER_TEST(sidebar_expanded_compose,
     RecordingModule home(::core::PageId::Home, "首页");
     RecordingModule md(::core::PageId::Markdown, "笔记");
     ::core::Router router = makeStubRouter(home, md);
-    ScopedAppRouter scoped(&router);
+    test_support::ScopedAppRouter scoped(&router);
 
     eui::Screen screen;
     screen.width = 1600.0f;
@@ -259,7 +249,7 @@ REGISTER_TEST(sidebar_compose_writes_page_origin,
     RecordingModule home(::core::PageId::Home, "首页");
     RecordingModule md(::core::PageId::Markdown, "笔记");
     ::core::Router router = makeStubRouter(home, md);
-    ScopedAppRouter scoped(&router);
+    test_support::ScopedAppRouter scoped(&router);
 
     eui::Screen screen;
     screen.width = 1600.0f;

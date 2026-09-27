@@ -6,6 +6,7 @@
 //      卡片点击选中 → Ctrl+↑/↓ 键盘移动落库、datepicker 打开渲染
 // 证据链 = 代码路径 + 本无头 compose 测试；真实鼠标点验留给用户人工确认
 #include "doctest.h"
+#include "test_support.h"
 
 #include "core/database.h"
 #include "core/module_interface.h"
@@ -46,18 +47,6 @@ struct TestEnv {
     bool ready = false;
 
     // 视图状态路径经环境变量注入（无头用例不碰真实 %APPDATA% 状态文件）
-    static void setViewStateEnv(const std::string& value) {
-#if defined(_WIN32)
-        ::_putenv_s("DEVDESK_TODO_VIEW_STATE_PATH", value.c_str());
-#else
-        if (value.empty()) {
-            ::unsetenv("DEVDESK_TODO_VIEW_STATE_PATH");
-        } else {
-            ::setenv("DEVDESK_TODO_VIEW_STATE_PATH", value.c_str(), 1);
-        }
-#endif
-    }
-
     TestEnv() {
         path = tempDbPath();
         std::error_code ec;
@@ -70,12 +59,12 @@ struct TestEnv {
         svc = std::make_unique<module::todo::TodoService>(db->db());
         statePath = path.string() + ".view_state.json";
         std::filesystem::remove(statePath, ec);
-        setViewStateEnv(statePath.string());
+        test_support::setEnvVar("DEVDESK_TODO_VIEW_STATE_PATH", statePath.string());
         ready = true;
     }
 
     ~TestEnv() {
-        setViewStateEnv("");
+        test_support::setEnvVar("DEVDESK_TODO_VIEW_STATE_PATH", "");
         ::core::registerAppDatabase(nullptr);
         svc.reset();
         db.reset();

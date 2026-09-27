@@ -6,6 +6,7 @@
 //   - 每个测试独立目录，独立 in-memory DB
 //   - 覆盖：rescan / write+read / delete / search / listInDirectory / 索引同步
 #include "doctest.h"
+#include "test_support.h"
 #include "core/database.h"
 #include "core/paths.h"
 #include "core/sqlite_db.h"
@@ -25,19 +26,6 @@
 namespace fs = std::filesystem;
 
 namespace {
-
-// 创建一个临时目录，返回路径（已确保干净）
-fs::path makeTempDir(const std::string& tag) {
-    static int counter = 0;
-    ++counter;
-    fs::path dir = test_temp::tempPath("devdesk_md_test_" + tag + "_" +
-                                       std::to_string(counter));
-    std::error_code ec;
-    fs::remove_all(dir, ec);           // 清掉上次失败留下的残骸
-    fs::create_directories(dir, ec);
-    return dir;
-}
-
 // P3 watcher 接入后的确定性辅助：等待原生文件监听把此前磁盘操作的突发
 // 通知送达（Win 去抖 200ms + 线程调度余量），再 rescan 兑现/消费 credit。
 // stub 平台事件永不到达 → credit 恒 false → pollChanged 回到 mtime 比对，
@@ -115,7 +103,7 @@ void runMigrations(core::data::SqliteDb& db) {
 
 REGISTER_TEST(md_rescan_finds_new_files,
               "MarkdownService: rescan discovers new .md files", {
-    const auto dir = makeTempDir("rescan_new");
+    const auto dir = test_support::makeTempDir("devdesk_md_test_", "rescan_new");
     auto db = makeDb();
     runMigrations(db);
     module::markdown::MarkdownService svc(db, dir);
@@ -145,7 +133,7 @@ REGISTER_TEST(md_rescan_finds_new_files,
 
 REGISTER_TEST(md_rescan_removes_deleted_files,
               "MarkdownService: rescan removes deleted files from index", {
-    const auto dir = makeTempDir("rescan_del");
+    const auto dir = test_support::makeTempDir("devdesk_md_test_", "rescan_del");
     auto db = makeDb();
     runMigrations(db);
     module::markdown::MarkdownService svc(db, dir);
@@ -171,7 +159,7 @@ REGISTER_TEST(md_rescan_removes_deleted_files,
 
 REGISTER_TEST(md_rescan_updates_modified_files,
               "MarkdownService: rescan detects file modification", {
-    const auto dir = makeTempDir("rescan_mod");
+    const auto dir = test_support::makeTempDir("devdesk_md_test_", "rescan_mod");
     auto db = makeDb();
     runMigrations(db);
     module::markdown::MarkdownService svc(db, dir);
@@ -203,7 +191,7 @@ REGISTER_TEST(md_rescan_updates_modified_files,
 // 之间，出错点之后同层条目 z_keep.md 这轮遍历根本没看见。
 REGISTER_TEST(md_rescan_traversal_error_keeps_index,
               "MarkdownService: traversal error must not prune the index", {
-    const auto dir = makeTempDir("rescan_err");
+    const auto dir = test_support::makeTempDir("devdesk_md_test_", "rescan_err");
     auto db = makeDb();
     runMigrations(db);
     module::markdown::MarkdownService svc(db, dir);
@@ -248,7 +236,7 @@ REGISTER_TEST(md_rescan_traversal_error_keeps_index,
 
 REGISTER_TEST(md_write_read_roundtrip,
               "MarkdownService: write + read roundtrip preserves content", {
-    const auto dir = makeTempDir("rw");
+    const auto dir = test_support::makeTempDir("devdesk_md_test_", "rw");
     auto db = makeDb();
     runMigrations(db);
     module::markdown::MarkdownService svc(db, dir);
@@ -272,7 +260,7 @@ REGISTER_TEST(md_write_read_roundtrip,
 
 REGISTER_TEST(md_create_new_note,
               "MarkdownService: create new note with template", {
-    const auto dir = makeTempDir("create");
+    const auto dir = test_support::makeTempDir("devdesk_md_test_", "create");
     auto db = makeDb();
     runMigrations(db);
     module::markdown::MarkdownService svc(db, dir);
@@ -298,7 +286,7 @@ REGISTER_TEST(md_create_new_note,
 
 REGISTER_TEST(md_remove_deletes_file_and_index,
               "MarkdownService: remove deletes file and clears index", {
-    const auto dir = makeTempDir("remove");
+    const auto dir = test_support::makeTempDir("devdesk_md_test_", "remove");
     auto db = makeDb();
     runMigrations(db);
     module::markdown::MarkdownService svc(db, dir);
@@ -323,7 +311,7 @@ REGISTER_TEST(md_remove_deletes_file_and_index,
 
 REGISTER_TEST(md_rename_moves_file_updates_index_and_keeps_tags,
               "MarkdownService: rename 移动文件+更新索引/FTS，标签（FK 挂 id）保留", {
-    const auto dir = makeTempDir("rename_basic");
+    const auto dir = test_support::makeTempDir("devdesk_md_test_", "rename_basic");
     auto db = makeDb();
     runMigrations(db);
     module::markdown::MarkdownService svc(db, dir);
@@ -366,7 +354,7 @@ REGISTER_TEST(md_rename_moves_file_updates_index_and_keeps_tags,
 
 REGISTER_TEST(md_rename_normalizes_and_rejects,
               "MarkdownService: rename 补 .md/子目录移动/目标冲突/源缺失/不安全名拒绝", {
-    const auto dir = makeTempDir("rename_reject");
+    const auto dir = test_support::makeTempDir("devdesk_md_test_", "rename_reject");
     auto db = makeDb();
     runMigrations(db);
     module::markdown::MarkdownService svc(db, dir);
@@ -409,7 +397,7 @@ REGISTER_TEST(md_rename_normalizes_and_rejects,
 
 REGISTER_TEST(md_search_finds_matching_notes,
               "MarkdownService: FTS5 search returns matching notes", {
-    const auto dir = makeTempDir("search");
+    const auto dir = test_support::makeTempDir("devdesk_md_test_", "search");
     auto db = makeDb();
     runMigrations(db);
     module::markdown::MarkdownService svc(db, dir);
@@ -447,7 +435,7 @@ REGISTER_TEST(md_search_finds_matching_notes,
 
 REGISTER_TEST(md_search_unicode,
               "MarkdownService: FTS5 search handles Chinese (CJK)", {
-    const auto dir = makeTempDir("search_cjk");
+    const auto dir = test_support::makeTempDir("devdesk_md_test_", "search_cjk");
     auto db = makeDb();
     runMigrations(db);
     module::markdown::MarkdownService svc(db, dir);
@@ -469,7 +457,7 @@ REGISTER_TEST(md_search_unicode,
 
 REGISTER_TEST(md_list_by_directory,
               "MarkdownService: listInDirectory filters by parent directory", {
-    const auto dir = makeTempDir("listdir");
+    const auto dir = test_support::makeTempDir("devdesk_md_test_", "listdir");
     auto db = makeDb();
     runMigrations(db);
     module::markdown::MarkdownService svc(db, dir);
@@ -533,7 +521,7 @@ REGISTER_TEST(md_extract_title,
 
 REGISTER_TEST(md_index_sync_correct,
               "MarkdownService: write triggers index + FTS sync", {
-    const auto dir = makeTempDir("sync");
+    const auto dir = test_support::makeTempDir("devdesk_md_test_", "sync");
     auto db = makeDb();
     runMigrations(db);
     module::markdown::MarkdownService svc(db, dir);
@@ -593,7 +581,7 @@ REGISTER_TEST(md_mtime_epoch_sane,
     // W7 P0-5 回归防护：旧代码直接 duration_cast(file_clock)，MinGW 的
     // file_clock epoch 非 1970，写入的时间戳荒谬（Home「今日笔记」恒 0）。
     // 旧测试用 SQL 直插合成时间戳绕过了这条链路，本用例走真实 write/rescan。
-    const auto dir = makeTempDir("mtime");
+    const auto dir = test_support::makeTempDir("devdesk_md_test_", "mtime");
     auto db = makeDb();
     runMigrations(db);
     module::markdown::MarkdownService svc(db, dir);
@@ -616,7 +604,7 @@ REGISTER_TEST(md_mtime_epoch_sane,
 
 REGISTER_TEST(md_search_in_query_escape,
               "MarkdownService: search safely handles FTS5 operators", {
-    const auto dir = makeTempDir("escape");
+    const auto dir = test_support::makeTempDir("devdesk_md_test_", "escape");
     auto db = makeDb();
     runMigrations(db);
     module::markdown::MarkdownService svc(db, dir);
@@ -640,7 +628,7 @@ REGISTER_TEST(md_search_in_query_escape,
 // 全失真查询跳过 FTS 只走 LIKE 字面子串；混合失真查询 LIKE 兜底补命中
 REGISTER_TEST(md_search_symbol_tokens,
               "MarkdownService: 符号词元（c++）不前缀误命中且能搜到", {
-    const auto dir = makeTempDir("search_symbol");
+    const auto dir = test_support::makeTempDir("devdesk_md_test_", "search_symbol");
     auto db = makeDb();
     runMigrations(db);
     module::markdown::MarkdownService svc(db, dir);
@@ -677,7 +665,7 @@ REGISTER_TEST(md_search_symbol_tokens,
 
 REGISTER_TEST(md_path_posix_separator,
               "MarkdownService: relativePath uses POSIX separators", {
-    const auto dir = makeTempDir("posix");
+    const auto dir = test_support::makeTempDir("devdesk_md_test_", "posix");
     auto db = makeDb();
     runMigrations(db);
     module::markdown::MarkdownService svc(db, dir);
@@ -735,7 +723,7 @@ REGISTER_TEST(md_is_safe_new_note_path,
 
 REGISTER_TEST(md_create_rejects_unsafe_path,
               "MarkdownService: create 拒绝不合法路径（trust boundary 兜底）", {
-    const auto dir = makeTempDir("unsafe_create");
+    const auto dir = test_support::makeTempDir("devdesk_md_test_", "unsafe_create");
     auto db = makeDb();
     runMigrations(db);
     module::markdown::MarkdownService svc(db, dir);
@@ -751,7 +739,7 @@ REGISTER_TEST(md_create_rejects_unsafe_path,
 
 REGISTER_TEST(md_create_subpath_makes_dirs,
               "MarkdownService: create 带子路径时自动建中间目录（W9）", {
-    const auto dir = makeTempDir("subpath_create");
+    const auto dir = test_support::makeTempDir("devdesk_md_test_", "subpath_create");
     auto db = makeDb();
     runMigrations(db);
     module::markdown::MarkdownService svc(db, dir);
@@ -768,7 +756,7 @@ REGISTER_TEST(md_create_subpath_makes_dirs,
 
 REGISTER_TEST(md_create_folder_and_list_top,
               "MarkdownService: createFolder + listTopFolders（W9 新建文件夹入口）", {
-    const auto dir = makeTempDir("folder");
+    const auto dir = test_support::makeTempDir("devdesk_md_test_", "folder");
     auto db = makeDb();
     runMigrations(db);
     module::markdown::MarkdownService svc(db, dir);
@@ -809,7 +797,7 @@ REGISTER_TEST(md_create_folder_and_list_top,
 
 REGISTER_TEST(md_list_all_folders,
               "MarkdownService: listAllFolders 全层递归枚举（含空目录，W10 两级树用）", {
-    const auto dir = makeTempDir("allfolders");
+    const auto dir = test_support::makeTempDir("devdesk_md_test_", "allfolders");
     auto db = makeDb();
     runMigrations(db);
     module::markdown::MarkdownService svc(db, dir);
@@ -850,7 +838,7 @@ REGISTER_TEST(md_list_all_folders,
 
 REGISTER_TEST(md_poll_changed_and_file_mtime,
               "MarkdownService: pollChanged/fileMtime 轮询底座", {
-    const auto dir = makeTempDir("poll");
+    const auto dir = test_support::makeTempDir("devdesk_md_test_", "poll");
     auto db = makeDb();
     runMigrations(db);
     module::markdown::MarkdownService svc(db, dir);
@@ -902,7 +890,7 @@ REGISTER_TEST(md_poll_changed_and_file_mtime,
 
 REGISTER_TEST(md_service_watcher_external_new_file,
               "MarkdownService: 外部新建文件 → watcher 即时入索引（不显式 rescan）+ pollChanged credit", {
-    const auto dir = makeTempDir("fwatch_new");
+    const auto dir = test_support::makeTempDir("devdesk_md_test_", "fwatch_new");
     auto db = makeDb();
     runMigrations(db);
     module::markdown::MarkdownService svc(db, dir);
@@ -933,7 +921,7 @@ REGISTER_TEST(md_service_watcher_external_new_file,
 
 REGISTER_TEST(md_service_watcher_same_len_external_edit,
               "MarkdownService: 同秒等长外部改写 → watcher 事件路径看见（mtime/size 盲区，#5 根治点）", {
-    const auto dir = makeTempDir("fwatch_eq");
+    const auto dir = test_support::makeTempDir("devdesk_md_test_", "fwatch_eq");
     auto db = makeDb();
     runMigrations(db);
     module::markdown::MarkdownService svc(db, dir);
@@ -969,7 +957,7 @@ REGISTER_TEST(md_service_watcher_same_len_external_edit,
 
 REGISTER_TEST(md_tags_set_roundtrip,
               "MarkdownService: setTags 全量替换往返 + 清洗去重", {
-    const auto dir = makeTempDir("tags_rw");
+    const auto dir = test_support::makeTempDir("devdesk_md_test_", "tags_rw");
     auto db = makeDb();
     runMigrations(db);
     module::markdown::MarkdownService svc(db, dir);
@@ -1012,7 +1000,7 @@ REGISTER_TEST(md_tags_set_roundtrip,
 
 REGISTER_TEST(md_tags_list_all_counts,
               "MarkdownService: listAllTags 计数 + 孤儿标签清理", {
-    const auto dir = makeTempDir("tags_list");
+    const auto dir = test_support::makeTempDir("devdesk_md_test_", "tags_list");
     auto db = makeDb();
     runMigrations(db);
     module::markdown::MarkdownService svc(db, dir);
@@ -1058,7 +1046,7 @@ REGISTER_TEST(md_tags_list_all_counts,
 
 REGISTER_TEST(md_tags_filter_notes,
               "MarkdownService: notesWithTag 按标签过滤笔记", {
-    const auto dir = makeTempDir("tags_filter");
+    const auto dir = test_support::makeTempDir("devdesk_md_test_", "tags_filter");
     auto db = makeDb();
     runMigrations(db);
     module::markdown::MarkdownService svc(db, dir);
@@ -1090,7 +1078,7 @@ REGISTER_TEST(md_tags_filter_notes,
 
 REGISTER_TEST(md_tags_removed_note_cleans_associations,
               "MarkdownService: 删除笔记清理标签关联（cascade + 孤儿清理）", {
-    const auto dir = makeTempDir("tags_del");
+    const auto dir = test_support::makeTempDir("devdesk_md_test_", "tags_del");
     auto db = makeDb();
     runMigrations(db);
     module::markdown::MarkdownService svc(db, dir);
@@ -1146,7 +1134,7 @@ REGISTER_TEST(md_tags_removed_note_cleans_associations,
 //   3. create()（旧实现写失败连检查都没有）同样原子化且内容完整
 REGISTER_TEST(md_write_atomic_no_tmp_leftover,
               "MarkdownService: write/create 原子写不留 tmp 残骸", {
-    const auto dir = makeTempDir("atomic_write");
+    const auto dir = test_support::makeTempDir("devdesk_md_test_", "atomic_write");
     auto db = makeDb();
     runMigrations(db);
     module::markdown::MarkdownService svc(db, dir);

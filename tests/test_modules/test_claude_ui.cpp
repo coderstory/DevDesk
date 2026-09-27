@@ -5,6 +5,7 @@
 //      全部操作按钮（新建/启用/测试连通/编辑/删除/代理开关）
 // 接线证据 = 代码路径 + 本无头 compose 测试 + 启动冒烟；真实鼠标点击留给用户人工点验
 #include "doctest.h"
+#include "test_support.h"
 
 #include "claude_service.h"
 #include "core/database.h"
@@ -104,35 +105,16 @@ int pickFreePort() {
     return port;
 }
 
-// RAII 临时目录（「导入当前配置」测试：临时 settings.json / sidecar 注入，
-// 绝不碰真实 ~/.claude——settings_sync 的 Paths 注入模式）
-struct ImportTempDir {
-    std::filesystem::path path;
+// 「导入当前配置」测试的 settings.json / sidecar 路径（共享头 test_support::TempDir，
+// 前缀沿用原样；绝不碰真实 ~/.claude——settings_sync 的 Paths 注入模式）
+constexpr const char* kImportTempDirPrefix = "devdesk_test_import_cur_";
 
-    explicit ImportTempDir(const std::string& tag) {
-        static int counter = 0;
-        path = test_temp::tempPath("devdesk_test_import_cur_" + tag + "_" +
-                                   std::to_string(++counter));
-        std::error_code ec;
-        std::filesystem::remove_all(path, ec);
-        std::filesystem::create_directories(path, ec);
-    }
-    ~ImportTempDir() {
-        std::error_code ec;
-        std::filesystem::remove_all(path, ec);
-    }
-
-    std::filesystem::path file(const char* name) const { return path / name; }
-    void write(const char* name, const std::string& content) const {
-        std::ofstream(file(name), std::ios::binary | std::ios::trunc) << content;
-    }
-    module::claude::settings_sync::Paths paths() const {
-        module::claude::settings_sync::Paths p;
-        p.settingsFile = file("settings.json");
-        p.sidecarFile = file("snapshot.json");
-        return p;
-    }
-};
+module::claude::settings_sync::Paths importPaths(const test_support::TempDir& d) {
+    module::claude::settings_sync::Paths p;
+    p.settingsFile = d.file("settings.json");
+    p.sidecarFile = d.file("snapshot.json");
+    return p;
+}
 
 } // namespace
 
@@ -668,12 +650,12 @@ REGISTER_TEST(claude_module_import_flow,
 REGISTER_TEST(claude_module_import_current_full_chain,
               "claude_module: 导入当前配置读settings.json预填表单（headless）", {
     TestEnv env;
-    ImportTempDir d("full");
-    const auto paths = d.paths();
+    test_support::TempDir d("full", kImportTempDirPrefix);
+    const auto paths = importPaths(d);
     env.svc->setSettingsSyncPaths(paths);
     env.svc->setSettingsTakeOverEnabled(true);
     // 整段 settings.json 形状（含非 env 顶层字段，验证取 env 子对象）
-    d.write("settings.json", R"({
+    d.write(d.file("settings.json"), R"({
         "permissions": {"allow": ["Bash"]},
         "env": {
             "ANTHROPIC_BASE_URL": "https://gw.example.com/v1",
@@ -785,8 +767,8 @@ REGISTER_TEST(claude_module_import_current_full_chain,
 REGISTER_TEST(claude_module_import_current_missing_file,
               "claude_module: 导入当前配置文件缺失toast不弹窗（headless）", {
     TestEnv env;
-    ImportTempDir d("miss");
-    const auto paths = d.paths();   // settings.json 不创建
+    test_support::TempDir d("miss", kImportTempDirPrefix);
+    const auto paths = importPaths(d);   // settings.json 不创建
     env.svc->setSettingsSyncPaths(paths);
     env.svc->setSettingsTakeOverEnabled(true);
 
@@ -835,7 +817,7 @@ REGISTER_TEST(claude_module_import_current_missing_file,
 
     // 补充分支：settings.json 存在但没有 env 块 → 明确提示（而非共享解析器
     // 把整段当裸 env 对象报「键名非法」的误报）
-    d.write("settings.json", R"({"permissions": {"allow": ["Bash"]}})");
+    d.write(d.file("settings.json"), R"({"permissions": {"allow": ["Bash"]}})");
     {
         eui::Ui ui;
         compose(ui);
@@ -865,19 +847,19 @@ REGISTER_TEST(claude_module_import_current_missing_file,
 REGISTER_TEST(claude_module_import_current_takeover_warn,
               "claude_module: 导入当前配置接管态警告不阻断（headless）", {
     TestEnv env;
-    ImportTempDir d("takeover");
-    const auto paths = d.paths();
+    test_support::TempDir d("takeover", kImportTempDirPrefix);
+    const auto paths = importPaths(d);
     env.svc->setSettingsSyncPaths(paths);
     env.svc->setSettingsTakeOverEnabled(true);
     // 模拟接管态：settings.json 是代理托管值 + sidecar 快照残留
-    d.write("settings.json", R"({
+    d.write(d.file("settings.json"), R"({
         "env": {
             "ANTHROPIC_BASE_URL": "http://127.0.0.1:8888",
             "ANTHROPIC_AUTH_TOKEN": "devdesk-proxy-token",
             "MY_KEY": "user"
         }
     })");
-    d.write("snapshot.json",
+    d.write(d.file("snapshot.json"),
             R"({"env": {"ANTHROPIC_BASE_URL": "https://orig.example.com"}})");
 
     std::unique_ptr<::core::Module> mod(create_claude_module());
@@ -2049,10 +2031,10 @@ REGISTER_TEST(claude_module_duplicate_profile_ui,
 REGISTER_TEST(claude_module_ui_enable_captures_settings,
               "claude_module: 详情页启用触发反向同步（headless）", {
     TestEnv env;
-    ImportTempDir d("uienable");
-    env.svc->setSettingsSyncPaths(d.paths());
+    test_support::TempDir d("uienable", kImportTempDirPrefix);
+    env.svc->setSettingsSyncPaths(importPaths(d));
     // Claude Code 侧（或 cc-switch）改过的真实上游值：非守卫键 → 会被收编
-    d.write("settings.json", R"({"env": {
+    d.write(d.file("settings.json"), R"({"env": {
         "ANTHROPIC_BASE_URL": "https://new.example.com/",
         "ANTHROPIC_AUTH_TOKEN": "sk-new-upstream-9876543210"
     }})");
@@ -2131,11 +2113,11 @@ REGISTER_TEST(claude_module_ui_enable_captures_settings,
 REGISTER_TEST(claude_module_takeover_warn_visible,
               "claude_module: 接管失败警告在详情页可见（headless）", {
     TestEnv env;
-    ImportTempDir d("warnfail");
-    env.svc->setSettingsSyncPaths(d.paths());
+    test_support::TempDir d("warnfail", kImportTempDirPrefix);
+    env.svc->setSettingsSyncPaths(importPaths(d));
     env.svc->setSettingsTakeOverEnabled(true);
     // 坏 settings.json（非法 JSON）→ takeOver 解析失败中止，全程不写 sidecar
-    d.write("settings.json", "{ 这不是合法 JSON");
+    d.write(d.file("settings.json"), "{ 这不是合法 JSON");
 
     std::unique_ptr<::core::Module> mod(create_claude_module());
     eui::Screen screen;
@@ -2185,18 +2167,18 @@ REGISTER_TEST(claude_module_takeover_warn_visible,
 REGISTER_TEST(claude_module_takeover_warn_summary,
               "claude_module: 上层覆盖警告条数+摘要（headless）", {
     TestEnv env;
-    ImportTempDir d("warnover");
-    auto paths = d.paths();
+    test_support::TempDir d("warnover", kImportTempDirPrefix);
+    auto paths = importPaths(d);
     // managed（企业策略）+ project 两层各含冲突 env 键 → 2 条覆盖警告
     // （注：REGISTER_TEST 宏体内不能出现裸逗号，故用两次 push_back）
     paths.overlayFiles.push_back(d.file("managed.json"));
     paths.overlayFiles.push_back(d.file("project.json"));
     env.svc->setSettingsSyncPaths(paths);
     env.svc->setSettingsTakeOverEnabled(true);
-    d.write("settings.json", R"({"env": {"MY_KEY": "user"}})");
-    d.write("managed.json",
+    d.write(d.file("settings.json"), R"({"env": {"MY_KEY": "user"}})");
+    d.write(d.file("managed.json"),
             R"({"env": {"ANTHROPIC_BASE_URL": "https://corp.example.com"}})");
-    d.write("project.json", R"({"env": {"ANTHROPIC_MODEL": "m-override"}})");
+    d.write(d.file("project.json"), R"({"env": {"ANTHROPIC_MODEL": "m-override"}})");
 
     std::unique_ptr<::core::Module> mod(create_claude_module());
     eui::Screen screen;

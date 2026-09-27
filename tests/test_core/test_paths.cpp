@@ -1,4 +1,5 @@
 #include "doctest.h"
+#include "test_support.h"
 #include "core/paths.h"
 
 #include <cstdlib>
@@ -6,19 +7,6 @@
 #include <string>
 
 namespace {
-
-// 环境变量通道（与 test_main.cpp 同款：Windows 传空串即删除变量，POSIX 空串走 unsetenv）
-void setEnvVar(const char* key, const std::string& value) {
-#if defined(_WIN32)
-    ::_putenv_s(key, value.c_str());
-#else
-    if (value.empty()) {
-        ::unsetenv(key);
-    } else {
-        ::setenv(key, value.c_str(), 1);
-    }
-#endif
-}
 
 } // namespace
 
@@ -63,19 +51,19 @@ REGISTER_TEST(paths_claude_settings_dir_override,
 
     // 分支 1：环境变量已设 → <env>/settings.json
     const auto overrideDir = test_temp::tempPath("devdesk_claude_cfg_override");
-    setEnvVar("DEVDESK_CLAUDE_CONFIG_DIR", overrideDir.string());
+    test_support::setEnvVar("DEVDESK_CLAUDE_CONFIG_DIR", overrideDir.string());
     const auto overridden = core::paths::claudeSettingsFile();
     DOCTEST_CHECK(overridden == overrideDir / "settings.json");
 
     // 分支 2：清掉（空串=删除变量）→ 回落平台 home 默认：~/.claude/settings.json
-    setEnvVar("DEVDESK_CLAUDE_CONFIG_DIR", "");
+    test_support::setEnvVar("DEVDESK_CLAUDE_CONFIG_DIR", "");
     const auto fallback = core::paths::claudeSettingsFile();
     DOCTEST_CHECK(fallback.string().find(overrideDir.string()) == std::string::npos);
     DOCTEST_CHECK(fallback.string().find(".claude") != std::string::npos);
     DOCTEST_CHECK(fallback.filename().string() == std::string("settings.json"));
 
     // 恢复原值
-    setEnvVar("DEVDESK_CLAUDE_CONFIG_DIR", savedValue);
+    test_support::setEnvVar("DEVDESK_CLAUDE_CONFIG_DIR", savedValue);
     return true;
 })
 

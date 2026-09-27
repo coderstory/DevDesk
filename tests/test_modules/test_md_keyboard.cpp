@@ -6,6 +6,7 @@
 //      Tab/Enter/Ctrl+B 变换写回 InputState + onChange 副作用（状态栏转「未保存」）
 // 真实 IME / 焦点行为留给人工点验（见批次报告）
 #include "doctest.h"
+#include "test_support.h"
 #include "core/database.h"
 #include "core/module_interface.h"
 #include "module_markdown/md_keyboard.h"
@@ -39,17 +40,6 @@ EditBuffer buf(std::string text, int cursor = -1, int selStart = -2, int selEnd 
     return {std::move(text), cursor, selStart, selEnd};
 }
 
-fs::path makeTempNotesDir(const char* tag) {
-    static int counter = 0;
-    ++counter;
-    const fs::path dir = test_temp::tempPath(
-        "devdesk_mdkb_" + std::string(tag) + "_" + std::to_string(counter));
-    std::error_code ec;
-    fs::remove_all(dir, ec);
-    fs::create_directories(dir, ec);
-    return dir;
-}
-
 bool writeTextFile(const fs::path& path, const std::string& content) {
     std::ofstream ofs(path, std::ios::binary | std::ios::trunc);
     if (!ofs) return false;
@@ -61,32 +51,8 @@ struct MdKbEnv {
     fs::path dir;
     std::unique_ptr<core::Database> db;
 
-    static void setEnvVar(const std::string& value) {
-#if defined(_WIN32)
-        ::_putenv_s("DEVDESK_NOTES_DIR", value.c_str());
-#else
-        if (value.empty()) {
-            ::unsetenv("DEVDESK_NOTES_DIR");
-        } else {
-            ::setenv("DEVDESK_NOTES_DIR", value.c_str(), 1);
-        }
-#endif
-    }
-
-    static void setViewStateEnv(const std::string& value) {
-#if defined(_WIN32)
-        ::_putenv_s("DEVDESK_MARKDOWN_VIEW_STATE_PATH", value.c_str());
-#else
-        if (value.empty()) {
-            ::unsetenv("DEVDESK_MARKDOWN_VIEW_STATE_PATH");
-        } else {
-            ::setenv("DEVDESK_MARKDOWN_VIEW_STATE_PATH", value.c_str(), 1);
-        }
-#endif
-    }
-
     explicit MdKbEnv(const char* tag) {
-        dir = makeTempNotesDir(tag);
+        dir = test_support::makeTempDir("devdesk_mdkb_", tag);
         auto r = core::Database::open(dir / "kbd_test.db");
         if (r.isFail()) return;
         db = std::make_unique<core::Database>(std::move(r.unsafeValue()));
@@ -96,13 +62,13 @@ struct MdKbEnv {
         }
         core::registerAppDatabase(&db->db());
         // 视图状态文件隔离（审计 [23]）：无头用例不碰真实 %APPDATA% 状态
-        setViewStateEnv((dir / "view_state.json").string());
-        setEnvVar(dir.string());
+        test_support::setEnvVar("DEVDESK_MARKDOWN_VIEW_STATE_PATH", (dir / "view_state.json").string());
+        test_support::setEnvVar("DEVDESK_NOTES_DIR", dir.string());
     }
 
     ~MdKbEnv() {
-        setEnvVar("");
-        setViewStateEnv("");
+        test_support::setEnvVar("DEVDESK_NOTES_DIR", "");
+        test_support::setEnvVar("DEVDESK_MARKDOWN_VIEW_STATE_PATH", "");
         core::registerAppDatabase(nullptr);
         std::error_code ec;
         fs::remove_all(dir, ec);

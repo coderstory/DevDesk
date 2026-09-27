@@ -5,6 +5,7 @@
 //   （三态切换 / 大纲浮动面板 / 目录树展开收起 / 缩进布局）
 // 接线证据 = 代码路径 + 本无头 compose/layout 测试 + 启动冒烟；真实鼠标点验留给用户人工
 #include "doctest.h"
+#include "test_support.h"
 #include "core/database.h"
 #include "core/module_interface.h"
 #include "core/router.h"
@@ -339,19 +340,6 @@ REGISTER_TEST(md_tree_root_group_always, "md_tree: 根组标题常显（无根�
 // ==================== Phase 1 UI 无头 compose 冒烟 ====================
 
 namespace {
-
-// 无头测试用临时笔记目录（经 DEVDESK_NOTES_DIR 环境变量隔离真实目录）
-fs::path makeTempNotesDir(const char* tag) {
-    static int counter = 0;
-    ++counter;
-    const fs::path dir = test_temp::tempPath(
-        "devdesk_md_ui_" + std::string(tag) + "_" + std::to_string(counter));
-    std::error_code ec;
-    fs::remove_all(dir, ec);
-    fs::create_directories(dir, ec);
-    return dir;
-}
-
 bool writeTextFile(const fs::path& path, const std::string& content) {
     fs::create_directories(path.parent_path());  // 支持子目录笔记（W8 目录树）
     std::ofstream ofs(path, std::ios::binary | std::ios::trunc);
@@ -365,32 +353,8 @@ struct MdUiEnv {
     fs::path dir;
     std::unique_ptr<core::Database> db;
 
-    static void setEnvVar(const std::string& value) {
-#if defined(_WIN32)
-        ::_putenv_s("DEVDESK_NOTES_DIR", value.c_str());
-#else
-        if (value.empty()) {
-            ::unsetenv("DEVDESK_NOTES_DIR");
-        } else {
-            ::setenv("DEVDESK_NOTES_DIR", value.c_str(), 1);
-        }
-#endif
-    }
-
-    static void setViewStateEnv(const std::string& value) {
-#if defined(_WIN32)
-        ::_putenv_s("DEVDESK_MARKDOWN_VIEW_STATE_PATH", value.c_str());
-#else
-        if (value.empty()) {
-            ::unsetenv("DEVDESK_MARKDOWN_VIEW_STATE_PATH");
-        } else {
-            ::setenv("DEVDESK_MARKDOWN_VIEW_STATE_PATH", value.c_str(), 1);
-        }
-#endif
-    }
-
     explicit MdUiEnv(const char* tag) {
-        dir = makeTempNotesDir(tag);
+        dir = test_support::makeTempDir("devdesk_md_ui_", tag);
         auto r = core::Database::open(dir / "ui_test.db");
         if (r.isFail()) return;
         db = std::make_unique<core::Database>(std::move(r.unsafeValue()));
@@ -400,14 +364,14 @@ struct MdUiEnv {
         }
         core::registerAppDatabase(&db->db());
         // 视图状态文件隔离（审计 [23]）：无头用例不碰真实 %APPDATA% 状态
-        setViewStateEnv((dir / "view_state.json").string());
+        test_support::setEnvVar("DEVDESK_MARKDOWN_VIEW_STATE_PATH", (dir / "view_state.json").string());
         // 笔记目录隔离：只对本用例生效
-        setEnvVar(dir.string());
+        test_support::setEnvVar("DEVDESK_NOTES_DIR", dir.string());
     }
 
     ~MdUiEnv() {
-        setEnvVar("");
-        setViewStateEnv("");
+        test_support::setEnvVar("DEVDESK_NOTES_DIR", "");
+        test_support::setEnvVar("DEVDESK_MARKDOWN_VIEW_STATE_PATH", "");
         core::registerAppDatabase(nullptr);
         std::error_code ec;
         fs::remove_all(dir, ec);
@@ -1420,11 +1384,7 @@ REGISTER_TEST(md_ctx_menu_page_origin, "markdown_module: 右键菜单坐标扣�
     // 模拟 app 层：页面区原点由 app_sidebar compose 每帧写入 Router
     ::core::Router router;
     router.setPageOriginX(208.0f);  // 侧边栏展开态
-    ::core::registerAppRouter(&router);
-    struct RouterGuard {
-        ~RouterGuard() { ::core::registerAppRouter(nullptr); }
-    } routerGuard;
-    (void)routerGuard;
+    test_support::ScopedAppRouter routerGuard(&router);
 
     std::unique_ptr<::core::Module> mod(create_markdown_module());
     mod->onStart();
