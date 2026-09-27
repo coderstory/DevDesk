@@ -22,7 +22,8 @@ struct PetConfig {
     // 静默忽略（本结构只有 skinName/x/y 三个键），下次 save 时随整文件重写消失
 };
 
-// 默认配置文件位置（core::paths::petsDir() 下；DEVDESK_PETS_DIR 可隔离）
+// 默认配置文件位置（core::paths::petsDir() 下；DEVDESK_PETS_DIR 单项覆盖
+// 或 DEVDESK_DATA_ROOT 整体隔离）
 std::filesystem::path petConfigFile();
 
 // pet_config.json 读写（不抛异常；文件不存在/损坏一律回退默认值）。

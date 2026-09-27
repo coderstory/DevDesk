@@ -71,8 +71,8 @@ const std::vector<std::string>& builtinSkinNames();
 // 供 startPetWindow 落盘后，discoverSkins/设置页下拉/右键换肤菜单零改动发现
 std::vector<std::string> ensureBuiltinSkins(const std::filesystem::path& root);
 
-// 皮肤根目录候选（依次：appDataDir/pets → 可执行文件旁 assets/pets）
-// 注：DEVDESK_PETS_DIR 覆盖时只返回 appDataDir/pets 一条（测试隔离）
+// 皮肤根目录候选（纯派生，不读任何环境变量：依次 petsDir() → 可执行文件旁
+// assets/pets；exe 目录解析失败时跳过后者——空路径拼接会退化成相对 cwd）
 std::vector<std::filesystem::path> skinRootCandidates();
 
 // 发现可用皮肤（M2 多皮肤 UI 消费）：扫皮肤根候选下所有含 pet.json 的
