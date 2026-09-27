@@ -9,7 +9,7 @@
 - **设置** —— 六张卡：外观（主题 / 字号 / 窗口效果三档）/ 模块开关（重启生效）/ 桌宠 / 笔记目录（打开目录）/ Claude 代理（自启 · 端口 · Token 脱敏 · 接管状态）/ 日志保留（切换即时清理）
 - **桌宠** —— 无边框置顶透明小窗宠物（module_pet，非页面模块）：拖拽 / 四态动画（待机·被戳·打字·睡觉）/ 气泡对话（含逾期任务数提醒）/ 右键菜单（穿透·换肤·位置重置·隐藏·退出 DevDesk 二段确认）/ 程序化与美术皮肤体系；默认关闭，经设置页「模块」卡启用（重启生效）
 
-当前状态（2026-09-23，Windows 11）：**330/330 测试全绿；单 exe 零外部 DLL（Release 15.6 MiB）；10MB 流式端到端吞吐实测约 240–320 MB/s；60s soak 0% 丢失**。macOS 分支代码保留（接口隔离模式），自 2026-09-21 迁移后未重新验证。
+当前状态（2026-09-23，Windows 11）：**全量测试绿（用例总数以运行输出 `Total:` 为准，不在文档写死；2026-09-28 波 1 合并后快照 `Total: 646 / Passed: 645 / Failed: 0`）；单 exe 零外部 DLL（Release 15.6 MiB）；10MB 流式端到端吞吐实测约 240–320 MB/s；60s soak 0% 丢失**。macOS 分支代码保留（接口隔离模式），自 2026-09-21 迁移后未重新验证。
 
 GUI 框架为 [EUI-NEO](https://sudoevolve.github.io/EUI-NEO/)（源码同级目录集成，非 submodule）。
 
@@ -46,7 +46,7 @@ cmake --build build-release
 
 ```bash
 cd build
-ctest --output-on-failure                  # 全量 330 例（不含默认 SKIP 的 300s soak）
+ctest --output-on-failure                  # 全量测试（用例数见运行输出 Total:；不含默认 SKIP 的 300s soak）
 ```
 
 测试二进制支持**按名子串过滤**与调试日志（自制轻量框架，没有 `--list-test-cases` 之类参数，子串即过滤）：

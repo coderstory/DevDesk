@@ -101,8 +101,8 @@
 | TIN-09 | 低 | maintainability/test | 用例文件归属错位：`test_todo.cpp` 装的是 `core::PageId` 枚举契约（与 todo 无关） | `tests/test_modules/test_todo.cpp:todo_pageid`、`src/core/module_interface.h:PageId` | 找 PageId 契约的人不会翻 test_todo.cpp；grep 模块名找不到它 | 用例挪进 `tests/test_core/`，并在 PageId 处留指针注释 | 待排 |
 | TIN-10 | 低 | architecture/test | 测试目标构建接线三处结构债：手工枚举 53 个用例文件、只开两个模块私有头、生产 TU 双份编译且选项不同 | `tests/CMakeLists.txt:add_executable(devdesk_tests ...)` | 新用例文件漏进清单就永不编译、永不运行且无提示 | 顶部加 GLOB 计数自检 FATAL_ERROR；app 侧抽 `devdesk_app_support` 库 | 待排 |
 | TIN-11 | 低 | maintainability/test | `platform::http_client` 的测试文件只回显结构体默认值，错误路径/超时/TLS 语义零直测 | `tests/test_platform/test_http_client.cpp:http_build_request` | H1 就落在 http_client.cpp，改动只能靠间接用例碰运气 | 补 2~3 条直测（连不存在端口、小 timeout 打慢上游、readChunk Error 终态） | 待排 |
-| TIN-12 | 低 | maintainability/test | 用例总数写死在文档里且与静态登记数不符（静态 561 vs 文档 530） | `CLAUDE.md:「共 530 个用例」`、`tests/:REGISTER_TEST 计数` | 数字既漂移又无法自证；每次加用例都要人肉改文档 | 改为「以运行输出 Total 为准」不写死数字 | 待排（差额未解释） |
-| TIN-13 | 低 | maintainability/test | 一致性检查脚本仍是 macOS-only（screencapture / open -a / python3），Windows 主平台不可用 | `scripts/check-consistency.sh:文件头前置条件` | 唯一的「HTML demo ↔ C++ 渲染」视觉闸门在迁移后等于没有 | 文件头写明 macOS-only（或归档 docs/），Windows 走人工截屏 | 待排（已登记） |
+| TIN-12 | 低 | maintainability/test | 用例总数写死在文档里且与静态登记数不符（审计时静态 561 vs 文档 530） | `CLAUDE.md:测试框架段`、`HANDOFF.md` 7 处、`README.md:12`、`docs/KNOWN_LIMITATIONS.md:3`、`docs/USER_GUIDE.md:3` | 数字既漂移又无法自证；每次加用例都要人肉改文档 | 改为「以运行输出 `Total:` 为准」不写死数字 | **已修（波 1 L11，2026-09-28）**：全部改为不写死口径并记「当时快照」；差额已解释——旧审计「静态 561」是过期快照，本轮按同一 grep 口径（`^\s*REGISTER_TEST(` 于 `tests/test_{core,platform,modules}`）实测与运行输出一致：波 1 前 `Total: 621`、波 1 后 `Total: 646` |
+| TIN-13 | 低 | maintainability/test | 一致性检查脚本仍是 macOS-only（screencapture / open -a / python3），Windows 主平台不可用 | `scripts/check-consistency.sh:文件头前置条件` | 唯一的「HTML demo ↔ C++ 渲染」视觉闸门在迁移后等于没有 | **已拍板：补齐实现（Windows 化），不采「仅标注 macOS-only」** | **已修（波 1 L10，merge `6456c61`，2026-09-28）**：`CPP_BIN` 按平台取 `build/DevDesk.exe` 并用 `-f`（原 `-x` 在 Windows 必失败）；`screencapture`→PowerShell `CopyFromScreen`（复用 `probe_winfx.ps1` 范式）；`open -a`→直启；`pkill`→`taskkill -F -IM DevDesk.exe`；临时目录→`mktemp -d`；`HTML_URL` 走 `cygpath -m`；原硬编码结论段改写为「本次实况」；playwright / PIL 缺失降级 WARN 不 fail。**未取证**：RDP 断开/锁屏时 `CopyFromScreen` 可能黑图、透明帧缓冲窗口可能截到桌面背景 |
 
 ## 3. Top 10 优先项
 
@@ -177,20 +177,22 @@
 - **必须另开（现无归属）**：`CP-04`（测试隔离中心入口）、`CP-06`/`CP-09`/`CP-10`/`CP-11`/`CP-12`（core/platform 小收口）、`CPX-08`/`CPX-09`/`CPX-12`/`CPX-13`（provider 配置表驱动，建议并入 `2026-09-27-shared-config-and-failover-design.md` 的后续批）、`CPX-10`/`CPX-11`（claude_proxy 内部去重）、`CPX-07`/`CPX-14`/`CPX-15`（写协议与注入缝，R10 P-A2 前置）、`THS-04`/`THS-06`/`THS-11`~`THS-18`（todo/home 服务层小线）、`PAB-05`/`PAB-08`（pet，R9 已放弃）、全部 `TIN-*`（测试基建不在 R 线内）、`CP-08`（Result 取值口收敛）。
 - **文档同步义务**：凡落地 1a（CP-05）、1i（PAB-06/11）、2h（TIN-01/02）者，必须同批改 `HANDOFF.md`/`CLAUDE.md`（这三处的旧描述已被本轮审计证伪）。
 
-## 6. 需要用户拍板的清单（8 条）
+## 6. 需要用户拍板的清单（8 条 —— 2026-09-28 全部已拍板，结果见末列）
 
-| # | 决策 | 选项 | 推荐 |
-|---|---|---|---|
-| 1 | CP-05 托盘「按模块收缩」死代码 | ① 加回导航项复活谓词链 ② 删 disabled/谓词/后缀 + 改注释与文档 | **② 删**（托盘只管开/关，删完护栏与文档才有真值） |
-| 2 | THS-12 `reorderColumns` 负位两段式 | ① 补 `(position)` 唯一索引保住前提 ② 删负位段、改注释 | **② 删**（当前无唯一约束，防御的是不存在的约束） |
-| 3 | THS-14 归档列语义 | ① 迁移补 `kind='archive'` ② 放弃归档语义（删特判与文案） | **① 补 kind**（同 v4 手法，成本一档迁移） |
-| 4 | THS-11 rename/update 的 NotFound 承诺 | ① 删头文件承诺（最小） ② 实现 `SELECT changes()` 校验 | **② 实现**（合约兑现，成本低） |
-| 5 | THS-13 逾期天数口径 | ① 显示 `max(1, overdueDays)` ② 入选也改日历日 | **① max(1)**（最小改动、不动入选语义） |
-| 6 | PAB-08 内置皮肤生成器（约 490 行） | ① 帧一次性生成为 `assets/pets/*` 资产，删编码器/光栅器 ② 保留 | **① 转资产**（美术可改、模块瘦身；需一次冒烟） |
-| 7 | PAB-10 `-Werror` 覆盖面 | ① Debug+Release 两档都开 ② 只在发布脚本额外跑一次 Release 构建 | **① 两档都开**（保留现有 `-Wno-error=` 白名单） |
-| 8 | macOS 侧能力/工具声明不一致（CP-12 + TIN-13） | ① 补 `system_theme_macos.cpp` + Windows 化 check-consistency ② 明确标注「仅 Windows 支持」 | **② 标注**（补齐不在当前 Windows 周期；先把静默承诺去掉） |
+| # | 决策 | 选项 | 推荐 | 拍板结果（2026-09-28） |
+|---|---|---|---|---|
+| 1 | CP-05 托盘「按模块收缩」死代码 | ① 加回导航项复活谓词链 ② 删 disabled/谓词/后缀 + 改注释与文档 | **② 删**（托盘只管开/关，删完护栏与文档才有真值） | **② 删** —— 波 1 L9（merge `fed73ab`）：`trayMenuSpecFiltered` / `isNavigationAction` / `trayDisabledHintSuffix` / `TrayMenuSpecItem::disabled` 与 `main.cpp` 两个未用谓词全删；文档侧（`USER_GUIDE.md:37` / `KNOWN_LIMITATIONS.md:155`）归 L11 |
+| 2 | THS-12 `reorderColumns` 负位两段式 | ① 补 `(position)` 唯一索引保住前提 ② 删负位段、改注释 | **② 删**（当前无唯一约束，防御的是不存在的约束） | **② 删** —— 波 1 L5（merge `7d5693f`）；不加 `(position)` 唯一索引 |
+| 3 | THS-14 归档列语义 | ① 迁移补 `kind='archive'` ② 放弃归档语义（删特判与文案） | **① 补 kind**（同 v4 手法，成本一档迁移） | **① 补 kind**（迁移号**实为 v8 不是 v7**）—— 波 1 L5（merge `7d5693f` / 解冲突 `ba3f88a`）：master 上 v7 已被 profile 认证字段（`kClaudeProfileAuthField`）占用且可能已落库，归档 kind 迁移顺延到 **v8**；`src/core/migrations.h:241-244` 有顺延理由注释；`provider_config` 跨线断言同批 7→8 |
+| 4 | THS-11 rename/update 的 NotFound 承诺 | ① 删头文件承诺（最小） ② 实现 `SELECT changes()` 校验 | **② 实现**（合约兑现，成本低） | **② 实现** —— 波 1 L5（merge `7d5693f`）：只做 `renameColumn`（`sqlite3_changes()==0` → `NotFound`），不扩散到 delete/create 系列 |
+| 5 | THS-13 逾期天数口径 | ① 显示 `max(1, overdueDays)` ② 入选也改日历日 | **① max(1)**（最小改动、不动入选语义） | **① max(1)**，**文案不变**（仍是「逾期N天」，入选仍按秒级）—— 波 1 L5（merge `7d5693f`） |
+| 6 | PAB-08 内置皮肤生成器（约 490 行） | ① 帧一次性生成为 `assets/pets/*` 资产，删编码器/光栅器 ② 保留 | **① 转资产**（美术可改、模块瘦身；需一次冒烟） | **② 保留**（改选）—— 波 1 **不动**：spec §1.4 不做清单明列「PAB-08 皮肤生成器保留不动」 |
+| 7 | PAB-10 `-Werror` 覆盖面 | ① Debug+Release 两档都开 ② 只在发布脚本额外跑一次 Release 构建 | **① 两档都开**（保留现有 `-Wno-error=` 白名单） | 波 1 未涉及（沿用推荐 ①，待排） |
+| 8 | macOS 侧能力/工具声明不一致（CP-12 + TIN-13） | ① 补 `system_theme_macos.cpp` + Windows 化 check-consistency ② 明确标注「仅 Windows 支持」 | **② 标注**（补齐不在当前 Windows 周期；先把静默承诺去掉） | **① 补齐实现**（改选）—— 两项都在波 1 落地：CP-12 补 `src/platform/system_theme_macos.cpp` + CMake `elseif(APPLE)`（L2，merge `e50d82b`；**macOS 侧编译未验证** → 登记 `docs/KNOWN_LIMITATIONS.md` §18）、TIN-13 Windows 化 `scripts/check-consistency.sh`（L10，merge `6456c61`） |
+| 9 | **NOPROXY（波 1 新增，超出原审计）** | ① `http_client.cpp` 加 `CURLOPT_NOPROXY=localhost,127.0.0.1,::1` ② 不动 | —（本轮侦察发现） | **① 加** —— 波 1 L1（merge `58e740b`）：否则 curl 读 `http_proxy`/`no_proxy` 会把 127.0.0.1 直连交给公司代理；**未取证**公司代理实际劫持路径 |
 
-> 另两条可直接按 finding 推荐执行、无需拍板但需排期：CPX-13（Profile 加 `dialectOverride`，UI 暂不暴露）、PAB-11（删脚本三处 `-D`）。
+> 另两条可直接按 finding 推荐执行、无需拍板但需排期：CPX-13（Profile 加 `dialectOverride`，UI 暂不暴露）、PAB-11（删脚本三处 `-D`）。**PAB-11 已在波 1 L10 落地**（merge `6456c61`：`scripts/build-test-run.sh` 删 `-DZLIB_LIBRARY` / `-DZLIB_INCLUDE_DIR` 两处与 CMake 默认相反的 `-D`，产物 DLL 集不变）；CPX-13 待排。
+> **波 1 另有三条已拍板但不在上表**（原 findings 表内已写推荐、未单列决策）：**THS-17 零迁移版**（不迁移函数文件、不做「可测版」）、**PAB-06 System32 存在性判据**（只查 `DevDesk.exe`，判据 = DLL 名是否存在于 `%SystemRoot%/System32`）、**THS-15 切 core + 码映射**（删本地 `atomicWriteFile` 改调 `core::atomicWriteFile`，失败码映射回 `FileWriteFailed`）。三条均在波 1 落地（THS-17 见 L5 merge `7d5693f`；PAB-06 / THS-15 见 L10 merge `6456c61` 与 L8 merge `2e6632e`）。
 
 ## 7. 存疑 / 未取证项归拢
 
