@@ -1490,3 +1490,65 @@ REGISTER_TEST(claude_module_compose_cache_equivalence,
     cleanupKey(c.value().id);
     return true;
 })
+
+// ---- 审计 M5：Esc 关最上层弹窗（删除确认无输入框）----
+// 表单弹窗的输入框聚焦时 Esc 走 input.onCancel（既有链路，天然让位）；
+// 确认删除弹窗没有输入框、Esc 修复前无任何响应 → 模块级兜底补上。
+REGISTER_TEST(claude_ui_esc_closes_delete_confirm,
+              "claude_ui: Esc 关删除确认弹窗（无输入框，审计 M5）", {
+    TestEnv env;
+    auto created = env.svc->createProfile("Esc目标", "https://esc.example.com",
+                                          "sk-ant-esc-00001", "claude-sonnet-4-5");
+    DOCTEST_REQUIRE(created.isOk());
+    const int64_t pid = created.value().id;
+
+    std::unique_ptr<::core::Module> mod(create_claude_module());
+    eui::Screen screen;
+    screen.width = 1600.0f;
+    screen.height = 1000.0f;
+    eui::Ui ui;
+    auto frame = [&](const char* page) {
+        ui.begin(page);
+        mod->compose(ui, screen);
+        ui.end();
+    };
+    auto click = [](eui::Ui& u, const std::string& id) -> bool {
+        const auto* node = u.find(id);
+        if (node == nullptr || node->onClick == nullptr) {
+            std::cerr << "missing clickable: " << id << std::endl;
+            return false;
+        }
+        node->onClick();
+        return true;
+    };
+    auto escPress = [] {
+        eui::KeyEvent e;
+        e.key = eui::InputKey::Escape;
+        e.action = eui::KeyAction::Press;
+        return e;
+    };
+
+    // 0) 无弹窗：不消费（兜底不越权吃键）
+    DOCTEST_CHECK(!mod->onKeyEvent(escPress()));
+
+    // 1) 选中 profile → 「删除」→ 确认弹窗（无输入框）→ Esc = 取消，profile 不删
+    frame("esc1");
+    DOCTEST_CHECK(click(ui, "claude.profile.0.bg"));   // 详情面板需要选中项
+    frame("esc2");
+    DOCTEST_CHECK(click(ui, "claude.act.del.bg"));
+    frame("esc3");
+    DOCTEST_REQUIRE(ui.find("claude.dialog.delete.panel") != nullptr);
+    DOCTEST_CHECK_EQ(ui.find("claude.dialog.delete.panel")->opacity, 1.0f);
+    DOCTEST_CHECK(mod->onKeyEvent(escPress()));
+    frame("esc4");
+    DOCTEST_CHECK_EQ(ui.find("claude.dialog.delete.panel")->opacity, 0.0f);
+    {
+        auto listed = env.svc->listProfiles();
+        DOCTEST_REQUIRE(listed.isOk());
+        DOCTEST_CHECK_EQ(listed.value().size(), static_cast<size_t>(1));  // 未删
+    }
+
+    mod->onStop();
+    cleanupKey(pid);
+    return true;
+})
