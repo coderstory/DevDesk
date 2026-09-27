@@ -17,16 +17,19 @@ if(WIN32)
     target_sources(devdesk_core PRIVATE
         paths_win.cpp
         time_win.cpp
+        atomic_write_win.cpp
     )
 elseif(APPLE)
     target_sources(devdesk_core PRIVATE
         paths_macos.cpp
         time_posix.cpp
+        atomic_write_posix.cpp
     )
 else()
     target_sources(devdesk_core PRIVATE
         paths_posix.cpp
         time_posix.cpp
+        atomic_write_posix.cpp
     )
 endif()
 
