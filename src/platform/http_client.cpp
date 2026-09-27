@@ -1,4 +1,5 @@
 #include "http_client.h"
+#include "http_client_ca.h"
 #include <core/logging.h>
 
 #include <atomic>
@@ -44,19 +45,6 @@ size_t headerCallback(char* buffer, size_t size, size_t nitems, void* userp) {
 void globalInit() {
     static std::once_flag once;
     std::call_once(once, [] { curl_global_init(CURL_GLOBAL_DEFAULT); });
-}
-
-// TLS 根证书配置。静态链接的 MinGW libcurl 编译期 CA 路径（C:/msys64/...）
-// 在用户机上不存在，表现为请求失败 "Problem with the SSL CA cert (path?
-// access rights?)"——Windows 上改用系统证书库（CURLSSLOPT_NATIVE_CA，让
-// OpenSSL 导入 Windows ROOT 存储），免依赖外部 ca-bundle 文件；macOS/Linux
-// 保持 libcurl 默认（系统 CA 路径本就存在）。可用 CURL_CA_BUNDLE 环境变量
-// 覆盖（libcurl 自己会读）。
-void applyCaOptions(CURL* curl) {
-#if defined(_WIN32)
-    curl_easy_setopt(curl, CURLOPT_SSL_OPTIONS,
-                     static_cast<long>(CURLSSLOPT_NATIVE_CA));
-#endif
 }
 
 } // anonymous namespace
