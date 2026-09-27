@@ -1675,7 +1675,7 @@ REGISTER_TEST(settings_module_isolation_guard,
     DOCTEST_REQUIRE_MESSAGE(!root.empty(),
                             "找不到仓库根，守卫失效（检查 __FILE__/cwd 定位）");
 
-    // 1) settings 源文件：pet 头零 include、盘 store 零触碰；桥为 extern 声明
+    // 1) settings 源文件：pet 头零 include、盘 store 零触碰；声明走中立桥头
     const std::string src =
         readWholeFile(root / "src/module_settings/settings_module.cpp");
     DOCTEST_REQUIRE_MESSAGE(!src.empty(), "settings_module.cpp 读取失败");
@@ -1683,9 +1683,20 @@ REGISTER_TEST(settings_module_isolation_guard,
     DOCTEST_CHECK(src.find("module_pet/") == std::string::npos);
     DOCTEST_CHECK(src.find("PetConfigStore") == std::string::npos);
     DOCTEST_CHECK(src.find("petConfigFile") == std::string::npos);
-    // 正向：extern 自由函数桥存在（解耦而非删功能），claude 头通道按设计保留
-    DOCTEST_CHECK(src.find("namespace module::pet") != std::string::npos);
-    DOCTEST_CHECK(src.find("currentSkinName") != std::string::npos);
+    // 正向：桥声明唯一来源 = src 根中立头（恰好 include 一次，解耦而非删功能）
+    // 且四个桥函数仍真在调用点被用到（`::module::pet::X` 调用形）
+    const std::string bridgeInclude = "#include \"module_pet_bridge.h\"";
+    const size_t bridgeAt = src.find(bridgeInclude);
+    DOCTEST_CHECK(bridgeAt != std::string::npos);
+    DOCTEST_CHECK(src.find(bridgeInclude, bridgeAt + bridgeInclude.size()) ==
+                  std::string::npos);
+    for (const char* fn : {"discoverSkins", "applyPetSkin", "resetPetPosition",
+                           "currentSkinName"}) {
+        DOCTEST_CHECK(src.find(std::string("::module::pet::") + fn) !=
+                      std::string::npos);
+    }
+    // 声明已搬去中立头：本文件不得再有内联 pet 函数声明块
+    DOCTEST_CHECK(src.find("namespace module::pet") == std::string::npos);
     // currentClickThrough 桥已随挂机穿透功能移除（2026-09-24）
     DOCTEST_CHECK(src.find("#include \"claude_service.h\"") != std::string::npos);
 

@@ -12,6 +12,8 @@
 
 #include "core/logging.h"
 #include "core/paths.h"
+// 桥函数契约（discoverSkins 定义在本 TU）：签名漂移由该头末尾 static_assert 拦
+#include "module_pet_bridge.h"
 #include "platform/json.h"
 
 namespace module::pet {
