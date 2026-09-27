@@ -52,7 +52,7 @@
 
 | # | 存疑点 | 验证方法 |
 |---|---|---|
-| V1 | `testConnection` **不走** `UpstreamDialect`（不覆盖 UA、不注入 `x-opencode-session`、不剥 `[1M]`），而两条转发路径都走 —— 用户在 Claude 页点"测试连通"会对当前在用的 zen 网关报"连通异常/400"，与代理实际可用矛盾。**与在飞 upstream_dialect 直接相关**，故未列为缺陷 | 把 profile 指向 opencode.ai/zen（模型名带 `[1M]`），分别点"测试连通"与走代理发一次请求，比对状态码 |
+| V1 | `testConnection` **不走** `UpstreamDialect`（不覆盖 UA、不注入 `x-opencode-session`、不剥 `[1M]`），而两条转发路径都走 —— 用户在 Claude 页点"测试连通"会对当前在用的 zen 网关报"连通异常/400"，与代理实际可用矛盾。**与在飞 upstream_dialect 直接相关**，故未列为缺陷。**→ REFUTED（2026-09-27 取证：不成立，无需修复）**：`testConnection` 已走同一方言入口（`claude_service.cpp:784-785` 的 `UpstreamDialect::forBaseUrl` + `applyHeaders`；UA 覆盖 / `x-opencode-session` 注入见 `upstream_dialect.cpp:258`、`:266-269`；剥 `[1M]` 结构上不适用——探测请求无 body/model），由 `aeff341` 落地 + 回归用例 `claude_service_test_connection_uses_dialect`（`tests/test_modules/test_claude_service.cpp:718`）覆盖 | 把 profile 指向 opencode.ai/zen（模型名带 `[1M]`），分别点"测试连通"与走代理发一次请求，比对状态码 |
 | V2 | todo 拖拽的 dpi 探针（`pressWidth / cardWidth`）在 125%/150% 缩放下是否真对齐 | 三档缩放下各实拖一次跨列，看落点与幻影位置 |
 | V3 | `compose` 内 SQLite 查询与代理 worker 写锁的实际竞争耗时（是否真能感知卡帧） | 开着 DEBUG 日志 + 并发压测（`DEVDESK_SOAK=1` 场景），打印相邻帧间隔分布 |
 | V4 | 13 个对话框里，除 `todo.dialog.delcol`/`newcol` 外，还有哪些在"无输入框聚焦"时 Esc 无效 | 逐个打开 → 点空白处（失焦）→ 按 Esc，记录是否关闭；M5 的修法需要这张清单定范围 |
