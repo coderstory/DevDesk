@@ -634,7 +634,7 @@ ReverseSyncMerge mergeReverseSyncEnv(const ImportedConfig& cfg,
     ModelsConfig merged = cur;
     for (const auto& s : kImportSlots) {
         if (!isKeep(s.modelKey)) {
-            (merged.*s.slot).model = (cfg.models.*s.slot).model;  // 出现覆盖/缺席清空
+            (merged.*s.slot).model = (cfg.models.*s.slot).model;  // 出现覆盖 / 缺席清空（G5）
         }
         // def / subagent 无官方 _NAME 变体 → name 不属托管字段，任何情况下不动
         if (s.nameKey != nullptr && !isKeep(s.nameKey)) {
@@ -661,7 +661,7 @@ ReverseSyncMerge mergeReverseSyncEnv(const ImportedConfig& cfg,
         if (!isKeep(k)) mergedExtra[k] = v;  // 出现覆盖 / 新增（守卫键不写）
     }
     for (const auto& [k, v] : curExtra) {
-        if (isKeep(k)) mergedExtra[k] = v;  // 守卫键保持原值（不清）
+        if (isKeep(k)) mergedExtra[k] = v;  // 守卫键保持原值（G1–G4/G6：不清）
     }
     out.extraEnvJson = curExtraEnvJson;
     if (mergedExtra != curExtra) {

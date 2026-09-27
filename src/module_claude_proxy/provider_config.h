@@ -144,6 +144,21 @@ bool isLoopbackUrl(const std::string& url);
 // 输出 cfg 复用 ImportedConfig；cfg.skippedKeys 是「不写也不清」的键名集合
 //（G1–G4/G6；含别名归一后的键名，因 profile 的 extra_env 存的是归一后的键）。
 // 仅 env 本身非法（非 JSON 对象）才 ok=false。
+//
+// 守卫表 G1–G6：**每条守卫一个专测**，编号与用例名一一对应（增键/改守卫时同批
+// 更新，漏改测试则名字对不上、一眼可见）：
+//   G1 sidecar 托管键（键 ∈ managedKeys）        → 跳过该键（不写也不清）
+//      ｜provider_config_guard_G1_sidecar_managed_key
+//   G2 loopback BASE_URL（isLoopbackUrl 命中）   → base_url 与本次 token 都跳过
+//      ｜provider_config_guard_G2_loopback_base_url
+//   G3 占位 token（值 == kProxyAuthPlaceholder） → 跳过 token（保持 profile 原密钥）
+//      ｜provider_config_guard_G3_placeholder_token
+//   G4 空值（键存在但值为空串）                   → 跳过该键（不写也不清）
+//      ｜provider_config_guard_G4_empty_value
+//   G5 键缺席（非守卫托管字段不在 env 里）         → 清空 profile 对应值
+//      ｜provider_config_guard_G5_absent_clears（语义落在 mergeReverseSyncEnv）
+//   G6 值形态非法（非字符串 / 长度 > 4096）        → 跳过该键 + WARN，不整体 fail
+//      ｜provider_config_guard_G6_invalid_value
 struct ReverseSyncParse {
     bool ok = false;
     std::string error;
