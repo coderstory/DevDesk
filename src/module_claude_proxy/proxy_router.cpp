@@ -102,6 +102,8 @@ void writeErrorJson(platform::http::ResponseWriter& out, int status,
 // ——审计 CPX-10：此前缓冲路径内联另一套取 profile 逻辑，同一个 Keychain 读
 // 失败在 stream:false 报 500/keychain_read_failed、stream:true 报
 // 503/no_active_profile，排障要在两条路径间分叉。
+// （注：`keychain_read_failed` 是已消失的旧口径——CPX-10 合并后本函数是唯一
+// 出口，恒 503/no_active_profile，全项目只剩这句历史记录，勿照抄。）
 // logTag 只进日志（保留「缓冲 / 流式」路径标签），不进响应体。
 void writeNoProfileError(platform::http::ResponseWriter& out,
                          ClaudeService& service,

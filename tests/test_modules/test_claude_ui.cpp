@@ -584,13 +584,17 @@ REGISTER_TEST(claude_module_import_flow,
         type(ui, "claude.form.import.text.hit", tpl);
         DOCTEST_CHECK(click(ui, "claude.form.import.parse.bg"));
     }
-    // 解析预览：槽位 2/6 + 别名 1 + 未识别 1；别名提示行存在
+    // 解析预览：槽位 2/<槽位表行数> + 别名 1 + 未识别 1；别名提示行存在
     {
         eui::Ui ui;
         compose(ui);
         const auto* preview = ui.find("claude.form.import.preview");
         DOCTEST_REQUIRE(preview != nullptr);
-        DOCTEST_CHECK(preview->text.find("槽位 2/6") != std::string::npos);
+        // 分母从槽位表派生（CPX-08）：表加一行 → UI 预览分母自动跟随，
+        // 此处不再钉死 6（否则新增槽位就让本断言红）
+        const std::string slotTag =
+            "槽位 2/" + std::to_string(module::claude::modelSlotTable().size());
+        DOCTEST_CHECK(preview->text.find(slotTag) != std::string::npos);
         DOCTEST_CHECK(preview->text.find("别名映射 1") != std::string::npos);
         const auto* note0 = ui.find("claude.form.import.note.0");
         DOCTEST_REQUIRE(note0 != nullptr);
@@ -725,7 +729,7 @@ REGISTER_TEST(claude_module_import_current_full_chain,
                          std::string("m-cur-sonnet"));
         DOCTEST_CHECK(click(ui, "claude.form.tabs.hit.2"));
     }
-    // 高级 env 页：env 行预填 + 预览标记保留（识别槽位 2/6 · env 1 项）
+    // 高级 env 页：env 行预填 + 预览标记保留（识别槽位 2/<槽位表行数> · env 1 项）
     {
         eui::Ui ui;
         compose(ui);
@@ -735,7 +739,9 @@ REGISTER_TEST(claude_module_import_current_full_chain,
                          std::string("1"));
         const auto* preview = ui.find("claude.form.import.preview");
         DOCTEST_REQUIRE(preview != nullptr);
-        DOCTEST_CHECK(preview->text.find("槽位 2/6") != std::string::npos);
+        const std::string slotTag =
+            "槽位 2/" + std::to_string(module::claude::modelSlotTable().size());
+        DOCTEST_CHECK(preview->text.find(slotTag) != std::string::npos);
         DOCTEST_CHECK(preview->text.find("env 1 项") != std::string::npos);
         DOCTEST_CHECK(click(ui, "claude.dialog.form.confirm.bg"));
     }
