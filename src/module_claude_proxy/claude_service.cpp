@@ -132,6 +132,7 @@ core::Result<Profile> ClaudeService::rowToProfile(const core::data::SqlRow& row)
     auto modelsCfg = row.getString("models_config");
     auto extraEnv = row.getString("extra_env");
     auto sharedCfg = row.getInt64("shared_config_id");
+    auto authField = row.getString("auth_field");
     auto active = row.getInt64("is_active");
     auto created = row.getInt64("created_at");
     auto updated = row.getInt64("updated_at");
@@ -145,6 +146,10 @@ core::Result<Profile> ClaudeService::rowToProfile(const core::data::SqlRow& row)
     if (modelsCfg.isOk()) p.modelsConfigJson = modelsCfg.value();
     if (extraEnv.isOk()) p.extraEnvJson = extraEnv.value();
     if (sharedCfg.isOk()) p.sharedConfigId = sharedCfg.value();
+    // 读侧规范化：未知/空值一律兜底 both（设计 D-8 双保险之一）
+    if (authField.isOk()) {
+        p.authField = authFieldToText(authFieldFromText(authField.value()));
+    }
     if (active.isOk()) p.isActive = (active.value() != 0);
     if (created.isOk()) p.createdAt = static_cast<std::time_t>(created.value());
     if (updated.isOk()) p.updatedAt = static_cast<std::time_t>(updated.value());
@@ -159,7 +164,7 @@ core::Result<std::vector<Profile>> ClaudeService::listProfiles() {
     auto prep = db_.prepare(
         "SELECT id, name, base_url, api_key_hint, api_key_check, "
         "keychain_account, model, models_config, extra_env, "
-        "shared_config_id, is_active, created_at, updated_at "
+        "shared_config_id, auth_field, is_active, created_at, updated_at "
         "FROM claude_profiles ORDER BY is_active DESC, name ASC");
     if (prep.isFail()) {
         return core::Result<std::vector<Profile>>::fail(
@@ -189,7 +194,7 @@ core::Result<Profile> ClaudeService::getProfile(int64_t id) {
     auto prep = db_.prepare(
         "SELECT id, name, base_url, api_key_hint, api_key_check, "
         "keychain_account, model, models_config, extra_env, "
-        "shared_config_id, is_active, created_at, updated_at "
+        "shared_config_id, auth_field, is_active, created_at, updated_at "
         "FROM claude_profiles WHERE id = ?");
     if (prep.isFail()) {
         return core::Result<Profile>::fail(prep.errorCode(), prep.errorMessage());
@@ -219,7 +224,8 @@ core::Result<Profile> ClaudeService::createProfile(const std::string& name,
                                                    const std::string& apiKey,
                                                    const std::string& model,
                                                    bool activateIfNoneActive,
-                                                   int64_t sharedConfigId) {
+                                                   int64_t sharedConfigId,
+                                                   const std::string& authField) {
     // 校验
     if (trim(name).empty()) {
         return core::Result<Profile>::fail(core::ErrorCode::ValidationError,
@@ -238,6 +244,8 @@ core::Result<Profile> ClaudeService::createProfile(const std::string& name,
     const std::string cleanedUrl = stripTrailingSlash(trim(baseUrl));
     const std::string cleanedName = trim(name);
     const std::string cleanedModel = trim(model);
+    const std::string cleanedAuthField =
+        authFieldToText(authFieldFromText(authField));   // 写侧规范化（D-8）
     const std::string hint = makeApiKeyHint(apiKey);
     const std::string check = sha256HexPrefix(apiKey);
 
@@ -252,8 +260,8 @@ core::Result<Profile> ClaudeService::createProfile(const std::string& name,
     auto prep = db_.prepare(
         "INSERT INTO claude_profiles "
         "(name, base_url, api_key_hint, api_key_check, keychain_account, "
-        " model, shared_config_id, is_active, created_at, updated_at) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?, ?) RETURNING id");
+        " model, shared_config_id, auth_field, is_active, created_at, updated_at) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?) RETURNING id");
     if (prep.isFail()) {
         return core::Result<Profile>::fail(prep.errorCode(), prep.errorMessage());
     }
@@ -265,8 +273,9 @@ core::Result<Profile> ClaudeService::createProfile(const std::string& name,
     stmt.bind(5, std::string(""));   // 插入后用 UPDATE 回填真实 account
     stmt.bind(6, cleanedModel);
     stmt.bind(7, sharedConfigId);    // 建时即绑定（0 = 不绑定）
-    stmt.bind(8, static_cast<int64_t>(now));
+    stmt.bind(8, cleanedAuthField);  // 认证字段（写侧已规范化）
     stmt.bind(9, static_cast<int64_t>(now));
+    stmt.bind(10, static_cast<int64_t>(now));
 
     auto stepR = stmt.step();
     if (stepR.isFail()) {
@@ -382,6 +391,7 @@ core::Result<Profile> ClaudeService::createProfile(const std::string& name,
     out.keychainAccount = account;
     out.model = cleanedModel;
     out.sharedConfigId = sharedConfigId;
+    out.authField = cleanedAuthField;   // 必须带上：二段补写以本返回值为基
     out.isActive = autoActivated;
     out.createdAt = now;
     out.updatedAt = now;
@@ -408,6 +418,8 @@ core::Result<void> ClaudeService::updateProfile(const Profile& profile) {
     const std::string cleanedUrl = stripTrailingSlash(trim(profile.baseUrl));
     const std::string cleanedName = trim(profile.name);
     const std::time_t now = nowUnix();
+    const std::string cleanedAuthField =
+        authFieldToText(authFieldFromText(profile.authField));   // 写侧规范化（D-8）
 
     // 写入前校验两个 JSON 原文（信任边界：不把坏 JSON 落库；读侧另有容错）
     if (!profile.modelsConfigJson.empty()) {
@@ -450,6 +462,7 @@ core::Result<void> ClaudeService::updateProfile(const Profile& profile) {
             "UPDATE claude_profiles SET "
             "name = ?, base_url = ?, api_key_hint = ?, api_key_check = ?, "
             "model = ?, models_config = ?, extra_env = ?, shared_config_id = ?, "
+            "auth_field = ?, "
             "updated_at = ? "
             "WHERE id = ?");
         if (prep.isFail()) {
@@ -464,8 +477,9 @@ core::Result<void> ClaudeService::updateProfile(const Profile& profile) {
         stmt.bind(6, profile.modelsConfigJson);
         stmt.bind(7, profile.extraEnvJson);
         stmt.bind(8, profile.sharedConfigId);
-        stmt.bind(9, static_cast<int64_t>(now));
-        stmt.bind(10, profile.id);
+        stmt.bind(9, cleanedAuthField);
+        stmt.bind(10, static_cast<int64_t>(now));
+        stmt.bind(11, profile.id);
         auto stepR = stmt.step();
         if (stepR.isFail()) {
             std::string msg = stepR.errorMessage();
@@ -481,7 +495,8 @@ core::Result<void> ClaudeService::updateProfile(const Profile& profile) {
         auto prep = db_.prepare(
             "UPDATE claude_profiles SET "
             "name = ?, base_url = ?, model = ?, models_config = ?, "
-            "extra_env = ?, shared_config_id = ?, updated_at = ? WHERE id = ?");
+            "extra_env = ?, shared_config_id = ?, auth_field = ?, "
+            "updated_at = ? WHERE id = ?");
         if (prep.isFail()) {
             return core::Result<void>::fail(prep.errorCode(), prep.errorMessage());
         }
@@ -492,8 +507,9 @@ core::Result<void> ClaudeService::updateProfile(const Profile& profile) {
         stmt.bind(4, profile.modelsConfigJson);
         stmt.bind(5, profile.extraEnvJson);
         stmt.bind(6, profile.sharedConfigId);
-        stmt.bind(7, static_cast<int64_t>(now));
-        stmt.bind(8, profile.id);
+        stmt.bind(7, cleanedAuthField);
+        stmt.bind(8, static_cast<int64_t>(now));
+        stmt.bind(9, profile.id);
         auto stepR = stmt.step();
         if (stepR.isFail()) {
             std::string msg = stepR.errorMessage();
@@ -614,7 +630,7 @@ core::Result<Profile> ClaudeService::getActiveProfile() {
     auto prep = db_.prepare(
         "SELECT id, name, base_url, api_key_hint, api_key_check, "
         "keychain_account, model, models_config, extra_env, "
-        "shared_config_id, is_active, created_at, updated_at "
+        "shared_config_id, auth_field, is_active, created_at, updated_at "
         "FROM claude_profiles WHERE is_active = 1 LIMIT 1");
     if (prep.isFail()) {
         return core::Result<Profile>::fail(prep.errorCode(), prep.errorMessage());
@@ -745,7 +761,7 @@ core::Result<Profile> ClaudeService::duplicateProfile(int64_t srcId) {
         effectiveModelsConfig(src.modelsConfigJson, src.model).def.model;
     auto createdR = createProfile(copyName, src.baseUrl, keyR.value(), defModel,
                                   /*activateIfNoneActive=*/false,
-                                  src.sharedConfigId);
+                                  src.sharedConfigId, src.authField);
     if (createdR.isFail()) {
         return core::Result<Profile>::fail(createdR.errorCode(),
                                            createdR.errorMessage());
@@ -1100,7 +1116,7 @@ ClaudeService::testConnection(const Profile& profile) {
     // 方言专属会话头），否则探测结果与转发结果会不一致——如 opencode.ai/zen
     // 缺 x-opencode-session、或 Cloudflare 按 UA 拦截时，转得通而探测误报失败
     const UpstreamDialect dialect = UpstreamDialect::forBaseUrl(profile.baseUrl);
-    dialect.applyHeaders(req.headers, key);
+    dialect.applyHeaders(req.headers, key, authFieldFromText(profile.authField));
     req.timeoutMs = 15000;
 
     auto resp = platform::http::send(req);

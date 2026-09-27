@@ -10,6 +10,8 @@
 #include <map>
 #include <string>
 
+#include "provider_config.h"   // AuthField（鉴权头三态）
+
 namespace module::claude {
 
 // 代理对外 User-Agent（所有上游统一使用，不透传客户端 UA）
@@ -41,14 +43,15 @@ struct UpstreamDialect {
     bool stripModelSuffix() const;
 
     // 就地把请求头调整成该方言期望的形态：
-    //   - 鉴权：清掉客户端送来的**所有大小写变体**凭据，改注入 profile 的 key
-    //     （x-api-key + Authorization: Bearer，兼容期望 Bearer 的网关）
+    //   - 鉴权：清掉客户端送来的**所有大小写变体**凭据，再按 authField 注入：
+    //     both → x-api-key + Authorization: Bearer；bearer → 只 Authorization；
+    //     api_key → 只 x-api-key；空 key 一律不注入
     //   - User-Agent：无条件覆盖为 kProxyUserAgent（见其注释）
     //   - anthropic-version：客户端没带时补默认值
     //   - x-opencode-session（仅 OpencodeZen）：客户端没带时注入代理实例级 id；
     //     客户端已带则不覆盖（尊重其会话亲和意图）
     void applyHeaders(std::map<std::string, std::string>& headers,
-                      const std::string& apiKey) const;
+                      const std::string& apiKey, AuthField authField) const;
 
     // 就地把请求体归一化成该方言能接受的形态（当前仅 OpencodeZen 剥模型名后缀）。
     // 返回 true 表示 body 被改写；不需要改写时 body 一个字节都不动。

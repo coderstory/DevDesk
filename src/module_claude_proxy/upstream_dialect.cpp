@@ -242,16 +242,21 @@ bool UpstreamDialect::stripModelSuffix() const {
 }
 
 void UpstreamDialect::applyHeaders(std::map<std::string, std::string>& headers,
-                                   const std::string& apiKey) const {
+                                   const std::string& apiKey,
+                                   AuthField authField) const {
     // 1. 鉴权：客户端的凭据一律丢弃（代理只用 profile 的 key，客户端那份
-    //    打到这个网关本来就无效），再注入
+    //    打到这个网关本来就无效），再按认证字段注入
     eraseHeaderCI(headers, "x-api-key");
     eraseHeaderCI(headers, "authorization");
     if (!apiKey.empty()) {
-        headers["x-api-key"] = apiKey;
-        // 兼容期望 Bearer 的 Anthropic-compatible 网关（bailian 等）；
-        // 真 Anthropic API 收 x-api-key、忽略 Bearer
-        headers["Authorization"] = "Bearer " + apiKey;
+        if (authField != AuthField::Bearer) {
+            headers["x-api-key"] = apiKey;
+        }
+        if (authField != AuthField::ApiKey) {
+            // 兼容期望 Bearer 的 Anthropic-compatible 网关（bailian 等）；
+            // 真 Anthropic API 收 x-api-key、忽略 Bearer
+            headers["Authorization"] = "Bearer " + apiKey;
+        }
     }
 
     // 2. User-Agent：无条件覆盖（理由见 kProxyUserAgent 注释）

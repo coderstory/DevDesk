@@ -376,8 +376,9 @@ REGISTER_TEST(provider_config_migration_upgrade,
         auto& db = r.value().db();
         // v3 供应商配置迁移 + v4 todo kind 迁移（W9 批次并入后全量到 4）
         // + v5 调用日志用量列（cc-switch 对照 §3.4）
-        // + v6 共享配置片段表与 profile 绑定列 → 全量到 6
-        DOCTEST_CHECK_EQ(db.schemaVersion(), 6);
+        // + v6 共享配置片段表与 profile 绑定列
+        // + v7 profile 认证字段 → 全量到 7
+        DOCTEST_CHECK_EQ(db.schemaVersion(), 7);
 
         module::claude::ClaudeService svc(db, kTestKeychainService);
         auto profiles = svc.listProfiles();
@@ -570,6 +571,54 @@ REGISTER_TEST(provider_config_parse_import_key_conflict,
     DOCTEST_REQUIRE(r2.isOk());
     DOCTEST_CHECK_EQ(r2.value().authToken, std::string("sk-key"));
     DOCTEST_CHECK(r2.value().warnings.empty());
+    return true;
+})
+
+// ---- 认证字段三态（2026-09-27 profile-auth-field 设计 §3/§4/§5）----
+
+REGISTER_TEST(provider_config_auth_field_text_roundtrip,
+              "provider_config: 认证字段文本/枚举往返 + 未知/空串兜底 both", {
+    using module::claude::AuthField;
+    using module::claude::authFieldFromText;
+    using module::claude::authFieldToText;
+    DOCTEST_CHECK_EQ(authFieldFromText(authFieldToText(AuthField::Both)),
+                     AuthField::Both);
+    DOCTEST_CHECK_EQ(authFieldFromText(authFieldToText(AuthField::Bearer)),
+                     AuthField::Bearer);
+    DOCTEST_CHECK_EQ(authFieldFromText(authFieldToText(AuthField::ApiKey)),
+                     AuthField::ApiKey);
+    DOCTEST_CHECK_EQ(authFieldFromText("x"), AuthField::Both);
+    DOCTEST_CHECK_EQ(authFieldFromText(""), AuthField::Both);
+    // 规范值写侧输出（库内只应出现这三个）
+    DOCTEST_CHECK_EQ(std::string(authFieldToText(AuthField::Both)),
+                     std::string("both"));
+    DOCTEST_CHECK_EQ(std::string(authFieldToText(AuthField::Bearer)),
+                     std::string("bearer"));
+    DOCTEST_CHECK_EQ(std::string(authFieldToText(AuthField::ApiKey)),
+                     std::string("api_key"));
+    return true;
+})
+
+REGISTER_TEST(provider_config_parse_import_auth_field_evidence,
+              "parseImportedEnv: 键名证据四态（api_key/bearer/both/无）", {
+    using module::claude::parseImportedEnv;
+    // 只有 ANTHROPIC_API_KEY → api_key
+    auto onlyKey = parseImportedEnv("{ \"ANTHROPIC_API_KEY\": \"k\" }");
+    DOCTEST_REQUIRE(onlyKey.isOk());
+    DOCTEST_CHECK_EQ(onlyKey.value().authFieldFromEnv, std::string("api_key"));
+    // 只有 ANTHROPIC_AUTH_TOKEN → bearer
+    auto onlyToken = parseImportedEnv("{ \"ANTHROPIC_AUTH_TOKEN\": \"k\" }");
+    DOCTEST_REQUIRE(onlyToken.isOk());
+    DOCTEST_CHECK_EQ(onlyToken.value().authFieldFromEnv, std::string("bearer"));
+    // 两键同现 → both（保守取超集）
+    auto both = parseImportedEnv(
+        "{ \"ANTHROPIC_API_KEY\": \"k\", \"ANTHROPIC_AUTH_TOKEN\": \"k\" }");
+    DOCTEST_REQUIRE(both.isOk());
+    DOCTEST_CHECK_EQ(both.value().authFieldFromEnv, std::string("both"));
+    // 都没出现 → 空串（无证据，UI 不覆盖表单现值）
+    auto none = parseImportedEnv("{ \"ANTHROPIC_BASE_URL\": \"https://x\" }");
+    DOCTEST_REQUIRE(none.isOk());
+    DOCTEST_CHECK(none.value().authFieldFromEnv.empty());
     return true;
 })
 
