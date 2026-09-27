@@ -38,6 +38,7 @@
 #include "core/component_theme.h"
 #include "core/time.h"
 #include <ui_kit/dialog_form.h>
+#include <ui_kit/metrics.h>
 #include <ui_kit/toast.h>
 #include "markdown_service.h"
 #include "md_block_model.h"
@@ -320,12 +321,12 @@ public:
         const float contentW = screen.width - pad * 2.0f;
         const float contentH = screen.height - pad * 2.0f;
         const float sideW = 240.0f;
-        const float gap = 16.0f;
+        const float gap = t.sizes.spacingLarge;
         // 双栏态中栏宽：md.body row 实际只有左栏一个 sideW（树）+ 编辑 + 预览
         // 两列 + 两个 gap（W9 修复：旧公式多减一个 sideW，双栏各窄 128px、
         // 右侧 240px 死白）
         const float midW = (contentW - sideW - gap * 2.0f) / 2.0f;
-        const float bodyH = contentH - 64.0f - t.sizes.spacingLarge;
+        const float bodyH = contentH - ui_kit::kHeaderH - t.sizes.spacingLarge;
 
         // 页面底色 = 主窗口 clearColor（随主题/窗口效果档运行时跟随，
         // 磨砂 Phase B/D）——不自铺不透明底，半透/磨砂档主体才生效
@@ -397,12 +398,12 @@ private:
                 : "尚未初始化笔记目录";
 
         ui.row("md.header")
-            .size(contentW, 64.0f)
+            .size(contentW, ui_kit::kHeaderH)
             .alignItems(eui::Align::CENTER)
             .content([&] {
                 const float segW = 264.0f;
                 ui.column("md.title")
-                    .size(contentW - 320.0f - segW, 64.0f)
+                    .size(contentW - 320.0f - segW, ui_kit::kHeaderH)
                     .gap(2.0f)
                     .content([&] {
                         ui.text("md.h1")
@@ -861,10 +862,10 @@ private:
         if (!outlineOpen_) return;
         const float pad = t.sizes.spacingXXLarge; // 与 compose 同基准（40）
         const float panelW = 264.0f;
-        const float panelH = screen.height - pad * 2.0f - 64.0f -
+        const float panelH = screen.height - pad * 2.0f - ui_kit::kHeaderH -
                              t.sizes.spacingLarge;
         const float x = screen.width - pad - panelW;
-        const float y = pad + 64.0f + t.sizes.spacingLarge;
+        const float y = pad + ui_kit::kHeaderH + t.sizes.spacingLarge;
 
         ui.stack("md.outline.panel")
             .position(x, y)
@@ -1433,7 +1434,7 @@ private:
             auto scroll = components::scrollView(ui, "md.preview.scroll")
                 .position(pvX, pvY)
                 .size(pvW, pvH)
-                .gap(8.0f)
+                .gap(t.sizes.spacing)
                 .step(56.0f)
                 .theme(componentTheme)
                 .offset(scrollOffset)
@@ -1787,7 +1788,7 @@ private:
                 components::scrollView(ui, "md.live.scroll")
                     .position(g.x, g.y)
                     .size(g.w, g.h)
-                    .gap(8.0f)
+                    .gap(t.sizes.spacing)
                     .step(56.0f)
                     .theme(componentTheme)
                     .offset(liveOffset_)
