@@ -115,6 +115,13 @@ public:
     core::Result<Profile> getActiveProfile();
     core::Result<void> setActiveProfile(int64_t id);
 
+    // 复制 Profile（设计 §4.2/§4.3，M4）：名称自动加「副本」后缀（重名递增
+    // 避让，100 次仍冲突 → fail 不建行），API key 一并复制（源 key 缺失 →
+    // fail，不建无 key 的副本），**副本不激活**（S-4）。
+    // 二段补写（models_config / extra_env）失败 → best-effort 删除刚建的副本
+    // 回滚：回滚成功 = fail 且零残留；回滚失败 = fail 且文案注明不完整副本 id
+    core::Result<Profile> duplicateProfile(int64_t srcId);
+
     // ---- 连通性测试 ----
 
     core::Result<platform::http::Response> testConnection(const Profile& profile);

@@ -1617,3 +1617,152 @@ REGISTER_TEST(claude_reverse_sidecar_managed_key_skipped,
     cleanupKey(b.value().id);
     return true;
 })
+
+// ===== Profile 复制（M4，设计 §4.1/§4.2/§4.3）=====
+
+// ---- 20. 副本字段 / Keychain 全等同源、id 与 account 不同、不激活、源行未动 ----
+
+REGISTER_TEST(claude_dup_profile_basic,
+              "claude_service: 复制 profile 全等同源且不激活", {
+    using namespace module::claude;
+    TestDb tdb("dup");
+    TempDir d("dup");
+    auto paths = makeSyncPaths(d);
+
+    ClaudeService svc(tdb.handle(), kTestKeychainService);
+    svc.setSettingsSyncPaths(paths);
+
+    auto a = svc.createProfile("复制源", "https://src.example.com",
+                               "sk-src-key-0123456789abcdef", "");
+    DOCTEST_REQUIRE(a.isOk());
+    Profile pa = a.value();
+    pa.modelsConfigJson = R"({"default": {"model": "m-def"},)"
+                          R"("sonnet": {"model": "m-son"}})";
+    pa.extraEnvJson = R"({"EXTRA_A": "1"})";
+    DOCTEST_REQUIRE(svc.updateProfile(pa).isOk());
+    DOCTEST_REQUIRE(svc.setActiveProfile(pa.id).isOk());
+
+    // 此刻 settings.json 有别的值：复制若误触发反向同步就会污染源
+    d.write(paths.settingsFile, R"({"env": {
+        "ANTHROPIC_BASE_URL": "https://other.example.com",
+        "ANTHROPIC_AUTH_TOKEN": "sk-other-key-0987654321"
+    }})");
+
+    auto dup = svc.duplicateProfile(pa.id);
+    DOCTEST_REQUIRE(dup.isOk());
+    const Profile cp = dup.value();
+    DOCTEST_CHECK_NE(cp.id, pa.id);
+    DOCTEST_CHECK_EQ(cp.name, std::string("复制源 副本"));
+    DOCTEST_CHECK_EQ(cp.baseUrl, pa.baseUrl);
+    DOCTEST_CHECK_EQ(cp.modelsConfigJson, pa.modelsConfigJson);
+    DOCTEST_CHECK_EQ(cp.extraEnvJson, pa.extraEnvJson);
+    DOCTEST_CHECK_EQ(cp.model, std::string("m-def"));
+    DOCTEST_CHECK_EQ(cp.apiKeyCheck, pa.apiKeyCheck);
+    DOCTEST_CHECK(!cp.isActive);                       // S-4：副本不激活
+    DOCTEST_CHECK_EQ(cp.keychainAccount,
+                     std::string("claude:") + std::to_string(cp.id));
+    DOCTEST_CHECK_NE(cp.keychainAccount, pa.keychainAccount);
+    // Keychain：副本 account 下是同一条源密钥
+    auto k = svc.loadApiKey(cp.id);
+    DOCTEST_REQUIRE(k.isOk());
+    DOCTEST_CHECK_EQ(k.value(), std::string("sk-src-key-0123456789abcdef"));
+
+    // 源行未动、激活态未变、未被反向同步污染（副本不激活 ⇒ 两需求零耦合）
+    auto src = svc.getProfile(pa.id);
+    DOCTEST_REQUIRE(src.isOk());
+    DOCTEST_CHECK(src.value().isActive);
+    DOCTEST_CHECK_EQ(src.value().name, std::string("复制源"));
+    DOCTEST_CHECK_EQ(src.value().baseUrl, std::string("https://src.example.com"));
+    DOCTEST_CHECK_EQ(src.value().modelsConfigJson, pa.modelsConfigJson);
+    DOCTEST_CHECK_EQ(src.value().extraEnvJson, pa.extraEnvJson);
+    auto act = svc.getActiveProfile();
+    DOCTEST_REQUIRE(act.isOk());
+    DOCTEST_CHECK_EQ(act.value().id, pa.id);
+
+    // 重名避让：「副本 2」「副本 3」
+    auto dup2 = svc.duplicateProfile(pa.id);
+    DOCTEST_REQUIRE(dup2.isOk());
+    DOCTEST_CHECK_EQ(dup2.value().name, std::string("复制源 副本 2"));
+    auto dup3 = svc.duplicateProfile(pa.id);
+    DOCTEST_REQUIRE(dup3.isOk());
+    DOCTEST_CHECK_EQ(dup3.value().name, std::string("复制源 副本 3"));
+
+    // 源不存在 → fail
+    DOCTEST_CHECK(svc.duplicateProfile(99999).isFail());
+
+    cleanupKey(pa.id);
+    cleanupKey(cp.id);
+    cleanupKey(dup2.value().id);
+    cleanupKey(dup3.value().id);
+    return true;
+})
+
+// ---- 21. 源 key 缺失（Keychain 孤儿）→ fail 且不建行 ----
+
+REGISTER_TEST(claude_dup_missing_key_fails,
+              "claude_service: 复制时源密钥缺失 fail 且无新行", {
+    using namespace module::claude;
+    TestDb tdb("dupkey");
+    ClaudeService svc(tdb.handle(), kTestKeychainService);
+
+    auto a = svc.createProfile("缺钥源", "https://src.example.com",
+                               "sk-src-key-0123456789abcdef", "");
+    DOCTEST_REQUIRE(a.isOk());
+    cleanupKey(a.value().id);            // 造 Keychain 孤儿
+
+    auto before = svc.listProfiles();
+    DOCTEST_REQUIRE(before.isOk());
+    DOCTEST_CHECK_EQ(static_cast<int>(before.value().size()), 1);
+
+    auto dup = svc.duplicateProfile(a.value().id);
+    DOCTEST_CHECK(dup.isFail());
+    DOCTEST_CHECK(dup.errorMessage().find("密钥缺失") != std::string::npos);
+
+    auto after = svc.listProfiles();
+    DOCTEST_REQUIRE(after.isOk());
+    DOCTEST_CHECK_EQ(static_cast<int>(after.value().size()), 1);
+    return true;
+})
+
+// ---- 22. 二段写失败 → 回滚（零残留：行没了、Keychain 条目也清了）----
+
+REGISTER_TEST(claude_dup_stage2_rollback,
+              "claude_service: 复制二段失败回滚且零残留", {
+    using namespace module::claude;
+    TestDb tdb("duprb");
+    ClaudeService svc(tdb.handle(), kTestKeychainService);
+
+    // 先归零孤儿基线（清掉同套件其它用例可能残留在测试 Keychain 命名空间
+    // 的条目，让下面的孤儿计数断言只反映本用例）
+    auto orphansBase = svc.cleanupOrphanKeychainEntries();
+    DOCTEST_REQUIRE(orphansBase.isOk());
+
+    auto a = svc.createProfile("脏行源", "https://src.example.com",
+                               "sk-src-key-0123456789abcdef", "");
+    DOCTEST_REQUIRE(a.isOk());
+    // 直接 SQL 写坏 models_config 造 legacy 脏行：createProfile 阶段不读它，
+    // 二段 updateProfile 会校验 JSON 并拒绝 → 触发回滚
+    auto bad = tdb.handle().exec(
+        "UPDATE claude_profiles SET models_config = '{bad-json' WHERE id = " +
+        std::to_string(a.value().id));
+    DOCTEST_REQUIRE(bad.isOk());
+
+    auto dup = svc.duplicateProfile(a.value().id);
+    DOCTEST_CHECK(dup.isFail());
+
+    // 行已回滚：只剩源这一行
+    auto list = svc.listProfiles();
+    DOCTEST_REQUIRE(list.isOk());
+    DOCTEST_CHECK_EQ(static_cast<int>(list.value().size()), 1);
+    // Keychain 条目也已清（无残留孤儿）
+    auto orphansAfter = svc.cleanupOrphanKeychainEntries();
+    DOCTEST_REQUIRE(orphansAfter.isOk());
+    DOCTEST_CHECK_EQ(orphansAfter.value(), 0);
+    // 源 key 未受影响
+    auto k = svc.loadApiKey(a.value().id);
+    DOCTEST_REQUIRE(k.isOk());
+    DOCTEST_CHECK_EQ(k.value(), std::string("sk-src-key-0123456789abcdef"));
+
+    cleanupKey(a.value().id);
+    return true;
+})

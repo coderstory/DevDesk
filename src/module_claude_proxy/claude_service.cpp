@@ -683,6 +683,84 @@ core::Result<void> ClaudeService::setActiveProfile(int64_t id) {
     return result;
 }
 
+// ---------- Profile 复制（设计 §4.2/§4.3）----------
+
+core::Result<Profile> ClaudeService::duplicateProfile(int64_t srcId) {
+    auto srcR = getProfile(srcId);
+    if (srcR.isFail()) {
+        return core::Result<Profile>::fail(srcR.errorCode(),
+                                          srcR.errorMessage());
+    }
+    const Profile src = std::move(srcR).value();
+
+    // 副本命名（§4.2）：name + " 副本"，重名递增避让既有 UNIQUE 约束；
+    // 100 次仍冲突 → 返回 fail 且不建行（不空转死循环）
+    auto listR = listProfiles();
+    if (listR.isFail()) {
+        return core::Result<Profile>::fail(listR.errorCode(),
+                                           listR.errorMessage());
+    }
+    std::vector<std::string> names;
+    names.reserve(listR.value().size());
+    for (const auto& p : listR.value()) names.push_back(p.name);
+    const std::string copyName = makeCopyName(src.name, names);
+    if (copyName.empty()) {
+        return core::Result<Profile>::fail(
+            core::ErrorCode::ProfileAlreadyExists,
+            "副本命名连续 100 次冲突，请先重命名或删除部分 Profile");
+    }
+
+    // 源 key 缺失（Keychain 孤儿）→ fail：不建无 key 的副本
+    //（与 createProfile 的「apiKey 必填」约束一致）
+    auto keyR = loadApiKey(srcId);
+    if (keyR.isFail() || keyR.value().empty()) {
+        return core::Result<Profile>::fail(core::ErrorCode::InvalidApiKey,
+            "源 Profile 的密钥缺失，无法复制");
+    }
+
+    // 一行 SQLite + 一条 Keychain（account 自动为 claude:<新 id>，与源不同）；
+    // 副本不激活（S-4）→ 不触发 setActiveProfile、也不触发反向同步
+    const std::string defModel =
+        effectiveModelsConfig(src.modelsConfigJson, src.model).def.model;
+    auto createdR = createProfile(copyName, src.baseUrl, keyR.value(), defModel,
+                                  /*activateIfNoneActive=*/false);
+    if (createdR.isFail()) {
+        return core::Result<Profile>::fail(createdR.errorCode(),
+                                           createdR.errorMessage());
+    }
+    const int64_t newId = createdR.value().id;
+    Profile out = createdR.value();
+
+    // 二段补写 models_config / extra_env（同 UI 新建流程：createProfile 只带
+    // 得走 default 模型名）
+    if (!src.modelsConfigJson.empty() || !src.extraEnvJson.empty()) {
+        Profile upd = out;
+        upd.modelsConfigJson = src.modelsConfigJson;
+        upd.extraEnvJson = src.extraEnvJson;
+        upd.model = defModel;
+        auto u = updateProfile(upd);
+        if (u.isFail()) {
+            // 回滚（§4.3）：deleteProfile 先清 Keychain 再删行
+            auto rb = deleteProfile(newId);
+            if (rb.isOk()) {
+                return core::Result<Profile>::fail(
+                    u.errorCode(), "复制失败（已回滚）: " + u.errorMessage());
+            }
+            LOG_ERROR("复制回滚失败，存在不完整副本 id=" + std::to_string(newId) +
+                      ": " + rb.errorMessage());
+            return core::Result<Profile>::fail(u.errorCode(),
+                "复制失败: " + u.errorMessage() + "；已创建不完整副本 id=" +
+                std::to_string(newId) + "，请手动删除");
+        }
+        out = std::move(upd);
+    }
+
+    LOG_INFO("已复制 Claude profile id=" + std::to_string(newId) +
+             " name=" + copyName + "（源 id=" + std::to_string(srcId) +
+             "，副本未激活）");
+    return core::Result<Profile>::ok(std::move(out));
+}
+
 // ---------- 连通性测试 ----------
 
 core::Result<platform::http::Response>
