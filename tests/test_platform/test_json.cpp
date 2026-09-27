@@ -238,11 +238,15 @@ REGISTER_TEST(json_stringify_object_roundtrip, "json: object stringify -> parse 
     return true;
 })
 
-// ---- U8 消费侧对照（2026-09-27）：序列化输出逐字节快照 ----
-// 背景：上游 U8（EUI-NEO rev 3d231be 起）已放开 yyjson writer，json.cpp 的手写序列化
-// （implToString + escapeTo）能否换用 yyjson writer 取决于"输出逐字节等价"。本用例把
-// 当前手写实现对一批 fixture 的实测输出落成字节快照——换实现时它就是逐字节闸门，
-// 差异会以"哪个 fixture / pretty|compact / 逐字节字面量"形式暴露。
+// ---- U8 消费侧：序列化输出逐字节快照（2026-09-27，yyjson writer 形态锁定） ----
+// 上游 U8 放开 yyjson writer 后，json.cpp 的手写序列化（implToString + escapeTo）已换成
+// yyjson writer，本用例把切换后的输出字节锁住（防回退/防再漂移）。
+// 与旧手写实现的差异只有两类，均为文本形态、语义等价（解析结果不变）：
+//   ① double：旧 %.17g（512.0→"512"、1e17→"1e+17"、0.1→"0.10000000000000001"），
+//      新 yyjson 最短形（512.0→"512.0"、1e17→"100000000000000000.0"、0.1→"0.1"）；
+//   ② 控制字符转义十六进制大小写：旧 "\u000b" 小写，新 "\u000B" 大写。
+// 其余形态逐字节一致（含 settings.json 形状 fixture）：两空格缩进、键按 std::map 序、
+// ": " 分隔、空容器写 [] / {}、无尾换行、"/" 不转义、UTF-8 原样透传、整数/转义串。
 // fixture 一律走 parse → stringify（settings.json 等持久化路径的真实形态）。
 namespace {
 
@@ -272,13 +276,13 @@ std::string jsonByteLiteral(const std::string& s) {
 struct JsonByteSnapshot {
     const char* name;
     const char* input;   // 源 JSON 文本（parse 后序列化）
-    const char* pretty;  // 手写实现的 pretty 输出字节快照
-    const char* compact; // 手写实现的 compact 输出字节快照
+    const char* pretty;  // 期望的 pretty 输出字节（yyjson writer 形态）
+    const char* compact; // 期望的 compact 输出字节（yyjson writer 形态）
 };
 
 } // namespace
 
-REGISTER_TEST(json_stringify_bytes_snapshot, "json: stringify 输出逐字节快照（U8 换 writer 对照基线）", {
+REGISTER_TEST(json_stringify_bytes_snapshot, "json: stringify 输出逐字节快照（U8：yyjson writer 形态锁定）", {
     std::vector<JsonByteSnapshot> cases;
     cases.push_back({"null", "null", "null", "null"});
     cases.push_back({"bool_true", "true", "true", "true"});
@@ -288,14 +292,14 @@ REGISTER_TEST(json_stringify_bytes_snapshot, "json: stringify 输出逐字节快
     cases.push_back({"str_empty", "\"\"", "\"\"", "\"\""});
     cases.push_back({"str_escapes", "\"a\\\"b\\\\c/d\\ne\\tf\"", "\"a\\\"b\\\\c/d\\ne\\tf\"",
                      "\"a\\\"b\\\\c/d\\ne\\tf\""});
-    cases.push_back({"str_ctl", "\"\\u0001\\u000b\\u000f\\u001f x\"", "\"\\u0001\\u000b\\u000f\\u001f x\"",
-                     "\"\\u0001\\u000b\\u000f\\u001f x\""});
+    cases.push_back({"str_ctl", "\"\\u0001\\u000b\\u000f\\u001f x\"", "\"\\u0001\\u000B\\u000F\\u001F x\"",
+                     "\"\\u0001\\u000B\\u000F\\u001F x\""});
     cases.push_back({"str_utf8", "\"\xe4\xb8\xad\xe6\x96\x87 \xf0\x9f\x98\x80\"",
                      "\"\344\270\255\346\226\207 \360\237\230\200\"",
                      "\"\344\270\255\346\226\207 \360\237\230\200\""});
-    cases.push_back({"dbl_frac", "0.1", "0.10000000000000001", "0.10000000000000001"});
-    cases.push_back({"dbl_intlike", "512.0", "512", "512"});
-    cases.push_back({"dbl_big", "1e17", "1e+17", "1e+17"});
+    cases.push_back({"dbl_frac", "0.1", "0.1", "0.1"});
+    cases.push_back({"dbl_intlike", "512.0", "512.0", "512.0"});
+    cases.push_back({"dbl_big", "1e17", "100000000000000000.0", "100000000000000000.0"});
     cases.push_back({"arr_empty", "[]", "[]", "[]"});
     cases.push_back({"obj_empty", "{}", "{}", "{}"});
     cases.push_back({"arr_nested", "[1,\"s\",null,true,[2,3],{\"k\":\"v\"}]",
@@ -319,9 +323,9 @@ REGISTER_TEST(json_stringify_bytes_snapshot, "json: stringify 输出逐字节快
     cases.push_back(
         {"view_state_like",
          "{\"columnScrolls\": {\"7\": 512.0, \"10\": 150.25, \"11\": 0.0}, \"selectedTaskId\": 3}",
-         "{\n  \"columnScrolls\": {\n    \"10\": 150.25,\n    \"11\": 0,\n    \"7\": 512\n  },\n  "
+         "{\n  \"columnScrolls\": {\n    \"10\": 150.25,\n    \"11\": 0.0,\n    \"7\": 512.0\n  },\n  "
          "\"selectedTaskId\": 3\n}",
-         "{\"columnScrolls\":{\"10\":150.25,\"11\":0,\"7\":512},\"selectedTaskId\":3}"});
+         "{\"columnScrolls\":{\"10\":150.25,\"11\":0.0,\"7\":512.0},\"selectedTaskId\":3}"});
 
     // 不在循环里逐条 FAIL（框架 fail-fast，只会暴露第一处）：先把全部差异打出来
     // （含可直接粘回本表的字面量），最后一次断言收口

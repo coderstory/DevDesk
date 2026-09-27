@@ -2,9 +2,8 @@
 
 #include <yyjson.h>
 
-#include <cstdio>
+#include <cstdlib>
 #include <map>
-#include <sstream>
 #include <string>
 #include <utility>
 #include <vector>
@@ -88,103 +87,53 @@ namespace {
         return out;
     }
 
-    // JsonImpl 字符串转义（RFC 8259：引号/反斜杠/控制字符；UTF-8 原样透传）
-    void escapeTo(const std::string& s, std::string& out) {
-        out.push_back('"');
-        for (char c : s) {
-            switch (c) {
-                case '"': out += "\\\""; break;
-                case '\\': out += "\\\\"; break;
-                case '\b': out += "\\b"; break;
-                case '\f': out += "\\f"; break;
-                case '\n': out += "\\n"; break;
-                case '\r': out += "\\r"; break;
-                case '\t': out += "\\t"; break;
-                default:
-                    if (static_cast<unsigned char>(c) < 0x20) {
-                        char buf[8];
-                        std::snprintf(buf, sizeof(buf), "\\u%04x",
-                                      static_cast<unsigned>(c) & 0xFFu);
-                        out += buf;
-                    } else {
-                        out.push_back(c);
-                    }
-            }
-        }
-        out.push_back('"');
-    }
-
-    void indentTo(std::string& out, int depth) {
-        out.append(static_cast<size_t>(depth) * 2u, ' ');
-    }
-
-    // JsonImpl → JSON 文本（递归）
-    // 仍手写的原因：已实测换 yyjson writer 会有两类输出字节形态差异（double 文本
-    // 形态、控制字符 \u00XX 的十六进制大小写），"逐字节等价"不成立 → 属待拍板项
-    // （上游 U8 已放开 writer，EUI-NEO 3d231be 起 writer 可用；
-    //  plan 见 docs/superpowers/plans/2026-09-27-eui-upstream-candidates.md U8，
-    //  逐字节差异证据见 tests/test_platform/test_json.cpp 的
-    //  json_stringify_bytes_snapshot 快照用例）。
-    // 双精度用 %.17g 保证往返；整值浮点（如 512.0）写成 "512" 回读走 Int 分支
-    // （读侧双分支适配见 module_todo/todo_view_state.cpp）。
-    void implToString(const JsonImpl& impl, std::string& out, bool pretty,
-                      int depth) {
+    // JsonImpl → yyjson 可变文档（写侧）。键序照 std::map 序（= 旧手写实现的输出序），
+    // 缩进/分隔交给 yyjson 的 YYJSON_WRITE_PRETTY_TWO_SPACES。
+    // 与旧手写实现（implToString + escapeTo，2026-09-27 删除）的字节差异只有两类，
+    // 均为文本形态、语义等价（解析结果不变）：
+    //   ① double：旧用 %.17g（512.0→"512"、1e17→"1e+17"），新用 yyjson 最短形
+    //      （512.0→"512.0"、1e17→"100000000000000000.0"、0.1→"0.1"）；
+    //   ② 控制字符转义十六进制大小写：旧 "\u000b" 小写，新 "\u000B" 大写。
+    // 其余形态（两空格缩进 / 键序 / ": " 分隔 / 空容器 [] {} / 无尾换行 / "/" 不转义 /
+    // UTF-8 原样透传 / 整数）逐字节一致；期望值锁在 tests/test_platform/test_json.cpp
+    // 的 json_stringify_bytes_snapshot 用例（U8 消费侧）。
+    yyjson_mut_val* implToMut(yyjson_mut_doc* doc, const JsonImpl& impl) {
         switch (impl.kind) {
             case JsonImpl::Kind::Null:
-                out += "null";
-                break;
+                return yyjson_mut_null(doc);
             case JsonImpl::Kind::Bool:
-                out += impl.boolVal ? "true" : "false";
-                break;
+                return yyjson_mut_bool(doc, impl.boolVal);
             case JsonImpl::Kind::Int:
-                out += std::to_string(impl.intVal);
-                break;
-            case JsonImpl::Kind::Double: {
-                char buf[64];
-                std::snprintf(buf, sizeof(buf), "%.17g", impl.dblVal);
-                out += buf;
-                break;
-            }
+                return yyjson_mut_sint(doc, impl.intVal);
+            case JsonImpl::Kind::Double:
+                return yyjson_mut_real(doc, impl.dblVal);
             case JsonImpl::Kind::String:
-                escapeTo(impl.strVal, out);
-                break;
+                return yyjson_mut_strncpy(doc, impl.strVal.data(), impl.strVal.size());
             case JsonImpl::Kind::Array: {
-                if (impl.arrVal.empty()) {
-                    out += "[]";
-                    break;
+                yyjson_mut_val* arr = yyjson_mut_arr(doc);
+                if (arr == nullptr) return nullptr;
+                for (const auto& item : impl.arrVal) {
+                    yyjson_mut_val* child = implToMut(doc, item);
+                    if (child == nullptr || !yyjson_mut_arr_add_val(arr, child)) {
+                        return nullptr;
+                    }
                 }
-                out += pretty ? "[\n" : "[";
-                for (size_t i = 0; i < impl.arrVal.size(); ++i) {
-                    if (i > 0) out += pretty ? ",\n" : ",";
-                    if (pretty) indentTo(out, depth + 1);
-                    implToString(impl.arrVal[i], out, pretty, depth + 1);
-                }
-                out += pretty ? "\n" : "";
-                if (pretty) indentTo(out, depth);
-                out += "]";
-                break;
+                return arr;
             }
             case JsonImpl::Kind::Object: {
-                if (impl.objVal.empty()) {
-                    out += "{}";
-                    break;
-                }
-                out += pretty ? "{\n" : "{";
-                bool first = true;
+                yyjson_mut_val* obj = yyjson_mut_obj(doc);
+                if (obj == nullptr) return nullptr;
                 for (const auto& [k, v] : impl.objVal) {
-                    if (!first) out += pretty ? ",\n" : ",";
-                    first = false;
-                    if (pretty) indentTo(out, depth + 1);
-                    escapeTo(k, out);
-                    out += pretty ? ": " : ":";
-                    implToString(v, out, pretty, depth + 1);
+                    yyjson_mut_val* child = implToMut(doc, v);
+                    if (child == nullptr ||
+                        !yyjson_mut_obj_add_val(doc, obj, k.c_str(), child)) {
+                        return nullptr;
+                    }
                 }
-                out += pretty ? "\n" : "";
-                if (pretty) indentTo(out, depth);
-                out += "}";
-                break;
+                return obj;
             }
         }
+        return nullptr;  // 枚举全覆盖，仅为消除 -Wreturn-type
     }
 } // anonymous
 
@@ -356,12 +305,40 @@ core::Result<JsonValue> parse(const std::string& text) {
     return core::Result<JsonValue>::ok(std::move(out));
 }
 
-// 序列化（手写实现，保留缘由与拍板项见 implToString 注释；换 yyjson writer 的实现
-// 已实测：除两类文本形态外逐字节等价，差异与证据见 json_stringify_bytes_snapshot 用例）
+// 序列化（yyjson writer；上游 U8 已放开 YYJSON_DISABLE_WRITER，DevDesk 不再自实现。
+// 与旧手写实现的字节差异、以及锁定的期望值见 implToMut 注释与
+// json_stringify_bytes_snapshot 用例）
 core::Result<std::string> stringify(const JsonValue& value, bool pretty) {
-    std::string out;
-    out.reserve(64);
-    implToString(*getImpl(value.internal()), out, pretty, 0);
+    yyjson_mut_doc* doc = yyjson_mut_doc_new(nullptr);
+    if (doc == nullptr) {
+        return core::Result<std::string>::fail(core::ErrorCode::Internal,
+                                               "JSON 序列化失败（yyjson 文档创建失败）");
+    }
+    yyjson_mut_val* root = implToMut(doc, *getImpl(value.internal()));
+    if (root == nullptr) {
+        yyjson_mut_doc_free(doc);
+        return core::Result<std::string>::fail(core::ErrorCode::Internal,
+                                               "JSON 序列化失败（yyjson 节点构造失败）");
+    }
+    yyjson_mut_doc_set_root(doc, root);
+    // ALLOW_INVALID_UNICODE / ALLOW_INF_AND_NAN：与旧实现的"原样透传"语义对齐，
+    // 不让此前能成功序列化的值变成失败（非法字节转义为替换字符、inf/nan 写
+    // Infinity/NaN，旧实现分别写原字节与 inf/nan——均非 DevDesk 读写路径的形状）
+    yyjson_write_flag flags =
+        YYJSON_WRITE_ALLOW_INVALID_UNICODE | YYJSON_WRITE_ALLOW_INF_AND_NAN;
+    if (pretty) flags |= YYJSON_WRITE_PRETTY_TWO_SPACES;  // 两空格缩进 = 旧实现缩进
+    yyjson_write_err err{};
+    size_t len = 0;
+    char* text = yyjson_mut_write_opts(doc, flags, nullptr, &len, &err);
+    yyjson_mut_doc_free(doc);
+    if (text == nullptr) {
+        return core::Result<std::string>::fail(
+            core::ErrorCode::Internal,
+            std::string("JSON 序列化失败（yyjson_mut_write: ") +
+                (err.msg != nullptr ? err.msg : "unknown") + "）");
+    }
+    std::string out(text, len);
+    std::free(text);
     return core::Result<std::string>::ok(std::move(out));
 }
 
