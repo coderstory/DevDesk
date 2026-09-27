@@ -25,11 +25,11 @@ core::Result<void> atomicWriteFile(const std::filesystem::path& target,
                 core::ErrorCode::Internal, label + "写入未完成: " + tmp.string());
         }
     }
-    // MinGW 的 std::filesystem::rename 不覆盖已存在目标（底层 _wrename
-    // 语义），先删再 rename（设计 §5.3 开放问题 6：最后写者胜，窗口期可接受）
+    // 覆盖式替换：平台语义差异（POSIX 的 rename 即原子替换；MinGW 走先删再 rename）
+    // 收在 core::detail::replaceFile 的两个平台实现里（atomic_write_win.cpp /
+    // atomic_write_posix.cpp，CMake 按平台选源），此处只判成败。
     std::error_code ec;
-    std::filesystem::remove(target, ec);
-    std::filesystem::rename(tmp, target, ec);
+    detail::replaceFile(tmp, target, ec);
     if (ec) {
         std::error_code rmEc;
         std::filesystem::remove(tmp, rmEc);

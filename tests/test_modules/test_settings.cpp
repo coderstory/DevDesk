@@ -124,27 +124,44 @@ struct PruneEnv {
     }
 };
 
-// RAII：把 APPDATA 重定向到临时目录（审计 H2 用）——日志路径
-// core::paths::logFile() = %APPDATA%/DevDesk/logs/devdesk.log（paths_win.cpp），
-// 重定向后用例自造的日志内容与真机日志互不污染；析构恢复原值，fail-fast
-// 早退也不影响后续用例
+// RAII：把「应用数据根目录的环境变量」重定向到临时目录（审计 H2 用）——
+// 日志路径 core::paths::logFile() 的平台来源不同：
+//   Windows: %APPDATA%/DevDesk/logs/devdesk.log  （paths_win.cpp）
+//   macOS:   $HOME/Library/Application Support/DevDesk/logs/devdesk.log（paths_macos.cpp）
+//   Linux:   $HOME/.local/share/DevDesk/logs/devdesk.log（paths_posix.cpp）
+// 只重定向 APPDATA 的话，macOS/Linux 上本用例会把自造日志写进**真实**用户目录；
+// 故两套变量都在此隔离（Windows 侧只动 APPDATA，行为与从前一字不差）。
+// 析构恢复原值，fail-fast 早退也不影响后续用例。
 struct AppDataEnv {
     std::string saved;
+#if !defined(_WIN32)
+    std::string savedHome;   // macOS/Linux 的日志路径来源是 $HOME
+#endif
     std::filesystem::path dir;
 
     explicit AppDataEnv(const char* tag) {
         const char* cur = std::getenv("APPDATA");
         saved = cur ? cur : "";
+#if !defined(_WIN32)
+        const char* curHome = std::getenv("HOME");
+        savedHome = curHome ? curHome : "";
+#endif
         dir = test_temp::tempPath(
             "devdesk_test_settings_appdata_" + std::string(tag));
         std::error_code ec;
         std::filesystem::remove_all(dir, ec);
         std::filesystem::create_directories(dir, ec);
         setEnvVar("APPDATA", dir.string());
+#if !defined(_WIN32)
+        setEnvVar("HOME", dir.string());
+#endif
     }
 
     ~AppDataEnv() {
         setEnvVar("APPDATA", saved);
+#if !defined(_WIN32)
+        setEnvVar("HOME", savedHome);
+#endif
         std::error_code ec;
         std::filesystem::remove_all(dir, ec);
     }
