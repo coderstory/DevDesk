@@ -9,6 +9,9 @@
 #include "core/database.h"
 #include "core/module_interface.h"
 #include "core/theme.h"
+#include "module_markdown/md_ids.h"
+
+using module::markdown::kEditorInputId;
 
 #include <eui/dsl.h>
 
@@ -78,7 +81,7 @@ REGISTER_TEST(markdown_editor_uses_font_channel,
     DOCTEST_REQUIRE(fileRow->onClick != nullptr);
     fileRow->onClick();
     frame("ef1b");
-    DOCTEST_REQUIRE(ui.find("md.editor.input") != nullptr);
+    DOCTEST_REQUIRE(ui.find(kEditorInputId) != nullptr);
 
     // 通道设 21 → 重新 compose，渲染文本行 fontSize == 21
     core::theme::setEditorFontSize(21.0f);

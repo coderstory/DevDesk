@@ -1,6 +1,7 @@
 // src/module_markdown/markdown_service.cpp
 #include "markdown_service.h"
 
+#include "core/atomic_write.h"
 #include "core/logging.h"
 
 #include <algorithm>
@@ -635,51 +636,6 @@ core::Result<std::string> MarkdownService::read(const fs::path& relPath) {
     return core::Result<std::string>::ok(oss.str());
 }
 
-namespace {
-
-// 笔记正文原子写（审计 2026-09-23 [2]）：先写同目录临时文件，再 remove +
-// rename 替换目标。旧的 ofstream(trunc) 直写在崩溃/断电落在写窗口内会把
-// 笔记截断甚至清空，而保存走 400ms 自动保存通道，落窗概率不小。替换后
-// 目标文件要么保持旧完整内容、要么得到新完整内容，不会出现半截（rename
-// 窗口内崩溃时旧内容已被 remove、新内容完整躺在 *.devdesk-tmp 里，不会
-// 丢数据；与 settings_sync::atomicWrite 同一模式，KNOWN_LIMITATIONS #16
-// 语义推广到笔记正文）。
-// 为什么在本文件抄一份而不是复用 module_claude_proxy 的实现：module_*
-// 互不依赖是架构硬约束；下沉 core 公共 util 要动 core 的文件 IO 面，
-// 改动/回归面大于本批收益，维持最小改动。
-core::Result<void> atomicWriteFile(const fs::path& target,
-                                   const std::string& content) {
-    fs::path tmp = target;
-    tmp += ".devdesk-tmp";
-    {
-        std::ofstream f(tmp, std::ios::binary | std::ios::trunc);
-        if (!f) {
-            return core::Result<void>::fail(core::ErrorCode::FileWriteFailed,
-                "无法打开临时文件写入: " + tmp.string());
-        }
-        f.write(content.data(), static_cast<std::streamsize>(content.size()));
-        f.close();
-        if (!f) {
-            std::error_code rmEc;
-            fs::remove(tmp, rmEc);
-            return core::Result<void>::fail(core::ErrorCode::FileWriteFailed,
-                "临时文件写入未完成: " + tmp.string());
-        }
-    }
-    std::error_code ec;
-    fs::remove(target, ec);  // MinGW 的 rename 不覆盖已存在目标，先删
-    fs::rename(tmp, target, ec);
-    if (ec) {
-        std::error_code rmEc;
-        fs::remove(tmp, rmEc);
-        return core::Result<void>::fail(core::ErrorCode::FileWriteFailed,
-            "原子替换失败 " + target.string() + ": " + ec.message());
-    }
-    return core::Result<void>::ok();
-}
-
-} // namespace
-
 core::Result<void> MarkdownService::write(const fs::path& relPath,
                                           const std::string& content) {
     const std::string relPosix = toPosix(relPath);
@@ -695,9 +651,12 @@ core::Result<void> MarkdownService::write(const fs::path& relPath,
     }
 
     // 原子写（覆盖）
-    auto wr = atomicWriteFile(absPath, content);
+    // 原子写走 core 公共实现（THS-15 下沉 core::atomicWriteFile）；失败码映射回
+    // FileWriteFailed —— 文本保存路径统一用文件写失败码，不混用 Internal
+    auto wr = core::atomicWriteFile(absPath, content, "笔记");
     if (wr.isFail()) {
-        return wr;
+        return core::Result<void>::fail(core::ErrorCode::FileWriteFailed,
+                                        wr.errorMessage());
     }
 
     // 同步索引
@@ -742,9 +701,12 @@ core::Result<void> MarkdownService::create(const fs::path& relPath) {
     }
 
     // 写文件（原子写；旧实现连写失败都不检查，审计 2026-09-23 [2] 一并修）
-    auto wr = atomicWriteFile(absPath, content);
+    // 原子写走 core 公共实现（THS-15 下沉 core::atomicWriteFile）；失败码映射回
+    // FileWriteFailed —— 文本保存路径统一用文件写失败码，不混用 Internal
+    auto wr = core::atomicWriteFile(absPath, content, "笔记");
     if (wr.isFail()) {
-        return wr;
+        return core::Result<void>::fail(core::ErrorCode::FileWriteFailed,
+                                        wr.errorMessage());
     }
 
     // 同步索引
