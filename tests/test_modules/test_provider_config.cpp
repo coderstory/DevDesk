@@ -518,6 +518,36 @@ REGISTER_TEST(provider_config_parse_import_rejects,
     return true;
 })
 
+REGISTER_TEST(provider_config_parse_import_text_limit,
+              "provider_config: parseImportedEnv 整体文本上限 1MB（超限整体 fail + 文案含上限，审计 L6）", {
+    using module::claude::kMaxImportTextBytes;
+    using module::claude::parseImportedEnv;
+
+    // 恰好到上限仍是合法输入：在对象收尾 } 前用空白填充到上限（JSON 允许空白）
+    const std::string prefix = "{ \"ANTHROPIC_BASE_URL\": \"http://127.0.0.1:9\"";
+    const std::string suffix = " }";
+    DOCTEST_REQUIRE(kMaxImportTextBytes > prefix.size() + suffix.size());
+    const std::string atLimit =
+        prefix +
+        std::string(kMaxImportTextBytes - prefix.size() - suffix.size(), ' ') +
+        suffix;
+    DOCTEST_REQUIRE_EQ(atLimit.size(), kMaxImportTextBytes);
+    auto ok = parseImportedEnv(atLimit);
+    DOCTEST_REQUIRE(ok.isOk());
+    DOCTEST_CHECK_EQ(ok.value().baseUrl, std::string("http://127.0.0.1:9"));
+
+    // 超上限 → 整体 fail，文案含上限（不是 JSON 语法错误）
+    auto over = parseImportedEnv(atLimit + " ");
+    DOCTEST_REQUIRE(over.isFail());
+    DOCTEST_CHECK(over.errorMessage().find("1MB") != std::string::npos);
+
+    // 超长非法内容同样先被长度挡下（检查在 parse 之前，不进 JSON 解析）
+    auto huge = parseImportedEnv(std::string(kMaxImportTextBytes + 1, 'x'));
+    DOCTEST_REQUIRE(huge.isFail());
+    DOCTEST_CHECK(huge.errorMessage().find("1MB") != std::string::npos);
+    return true;
+})
+
 REGISTER_TEST(provider_config_parse_import_key_conflict,
               "parseImportedEnv: API_KEY 与 AUTH_TOKEN 同现取 AUTH_TOKEN", {
     const std::string both =

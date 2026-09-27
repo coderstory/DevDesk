@@ -94,8 +94,15 @@ struct ImportedConfig {
 };
 
 // 校验（§7.4）：env 值必须字符串（数字/布尔拒绝）；键名 ^[A-Z][A-Z0-9_]*$；
-// 值 ≤ 4KB/键；键数 ≤ 64。非法输入整体 fail，不部分导入。
+// 值 ≤ 4KB/键；键数 ≤ 64；整体文本 ≤ kMaxImportTextBytes（1MB）。非法输入整体
+// fail，不部分导入。
 core::Result<ImportedConfig> parseImportedEnv(const std::string& text);
+
+// 粘贴导入的整体文本上限（审计 2026-09-27 L6，参考 platform/http_server.h 的
+// kMaxBodyBytes 口径）：挡在 JSON 解析之前，避免超大输入进入解析 / 深拷贝链
+//（platform::json 按值 = 整树深拷贝，见 platform/json.h）。合法载荷上限约
+// 64 键 × 4KB 值 ≈ 256KB，1MB 留 ~4x 余量。超限整体 fail（文案含上限）。
+inline constexpr size_t kMaxImportTextBytes = 1u * 1024u * 1024u;
 
 // ---- 接管 env 生成（§4.3，Phase C 接管通道的输入）----
 // 输入：profile 的三个数据源字段 + 代理端口；输出：要写入

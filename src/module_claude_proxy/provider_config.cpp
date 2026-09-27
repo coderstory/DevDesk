@@ -233,6 +233,14 @@ core::Result<ImportedConfig> parseImportedEnv(const std::string& text) {
             core::ErrorCode::ValidationError, "粘贴内容为空");
     }
 
+    // 整体文本上限（审计 2026-09-27 L6）：先于 parse 检查——超大输入不进
+    // JSON 解析 / 深拷贝链（platform::json 按值 = 整树深拷贝）
+    if (text.size() > kMaxImportTextBytes) {
+        return core::Result<ImportedConfig>::fail(
+            core::ErrorCode::ValidationError,
+            "导入文本超过 1MB 上限: " + std::to_string(text.size()) + " 字节");
+    }
+
     auto parsed = platform::json::parse(text);
     if (parsed.isFail()) {
         return core::Result<ImportedConfig>::fail(parsed.errorCode(),

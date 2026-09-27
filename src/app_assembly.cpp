@@ -22,6 +22,19 @@ namespace {
 // 退出接线是否已挂（armExitHook 幂等；atexit 无法撤销，只记账不重复挂）
 bool g_exitHookArmed = false;
 
+// argv 捕获门：仅在第一次调用时生效（captureOpenFileFromArgv 幂等）
+bool g_argvCaptureDone = false;
+
+// 捕获落点：写进程级 pending 路径 + 日志。空路径（无文件参数 / 只有 flag）不写
+void capturePendingOpenFile(const std::string& path) {
+    if (g_argvCaptureDone) return;
+    g_argvCaptureDone = true;
+    if (path.empty()) return;
+
+    pendingOpenFilePath() = path;
+    LOG_INFO("捕获到待打开文件（命令行 argv）: " + pendingOpenFilePath());
+}
+
 } // namespace
 
 std::vector<::core::PageId> assembleAndStart(
@@ -104,17 +117,16 @@ std::string& pendingOpenFilePath() {
 }
 
 void captureOpenFileFromArgv() {
-    static bool captured = false;
-    if (captured) return;
-    captured = true;
-
-    // argv[1] 是文件路径；跳过 flag 类参数（以 '-' 开头）
-    const std::string path = platform::file_open::openFileFromArgv();
-    if (path.empty()) return;
-
-    pendingOpenFilePath() = path;
-    LOG_INFO("捕获到待打开文件（命令行 argv）: " + pendingOpenFilePath());
+    // 生产路径：平台层读进程自身命令行（argv[1] 是文件路径；跳过 flag 类参数）
+    capturePendingOpenFile(platform::file_open::openFileFromArgv());
 }
+
+void captureOpenFileFromArgv(const std::vector<std::string>& utf8Args) {
+    // 测试缝：argv 来源参数化；选择逻辑与生产同源（selectOpenFileArg）
+    capturePendingOpenFile(platform::file_open::selectOpenFileArg(utf8Args));
+}
+
+void resetArgvCaptureForTest() { g_argvCaptureDone = false; }
 
 ::core::PageId dispatchPageForFile(const std::string& path) {
     auto endsWith = [&](const char* suffix) {
