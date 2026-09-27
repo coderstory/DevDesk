@@ -59,6 +59,15 @@ std::string stripTrailingSlash(const std::string& s) {
     return s;
 }
 
+// CPX-07：Keychain 当前是否处于给定值（读不到 = 条目不存在，按空串比较）。
+// 反向同步写库失败后用「实际状态」判断密钥是否已回到旧值，不信补偿返回值。
+bool keyAtOldValue(const std::string& keychainService,
+                   const std::string& account,
+                   const std::string& expected) {
+    auto r = platform::keychain::loadSecret(keychainService, account);
+    return (r.isOk() ? r.value() : std::string()) == expected;
+}
+
 } // namespace
 
 // ---------- 静态工具 ----------
@@ -87,6 +96,58 @@ std::string ClaudeService::makeApiKeyHint(const std::string& apiKey) {
     hint.append("***");
     hint.append(apiKey.substr(apiKey.size() - 4));
     return hint;
+}
+
+// ---------- 两段写助手（CPX-07）----------
+
+TwoPhaseKeyWrite::TwoPhaseKeyWrite(std::string keychainService,
+                                   std::string account, std::string oldKey)
+    : service_(std::move(keychainService)),
+      account_(std::move(account)),
+      oldKey_(std::move(oldKey)) {}
+
+TwoPhaseKeyWrite TwoPhaseKeyWrite::capture(const std::string& keychainService,
+                                           const std::string& account) {
+    auto old = platform::keychain::loadSecret(keychainService, account);
+    return TwoPhaseKeyWrite(keychainService, account,
+                            old.isOk() ? old.value() : std::string());
+}
+
+core::Result<void> TwoPhaseKeyWrite::writeKey(const std::string& newKey) {
+    auto r = newKey.empty()
+        ? platform::keychain::deleteSecret(service_, account_)
+        : platform::keychain::storeSecret(service_, account_, newKey);
+    if (r.isFail()) {
+        // 段一失败也可能已破坏旧值（各平台存储不承诺失败时旧值完好）→ 尽力回写
+        keyTouched_ = true;
+        compensate();
+        return r;
+    }
+    keyTouched_ = true;
+    return r;
+}
+
+core::Result<void> TwoPhaseKeyWrite::writeDb(
+    const std::function<core::Result<void>()>& dbWrite) {
+    auto r = dbWrite();
+    if (r.isFail()) {
+        compensate();   // 段二失败 → Keychain 回到旧值
+    }
+    return r;
+}
+
+void TwoPhaseKeyWrite::compensate() {
+    if (!keyTouched_) return;   // 没改过（或已回写）→ 无需动作
+    auto r = oldKey_.empty()
+        ? platform::keychain::deleteSecret(service_, account_)
+        : platform::keychain::storeSecret(service_, account_, oldKey_);
+    if (r.isFail()) {
+        // 保留 keyTouched_：Keychain 还没回到旧值（密钥可能不可用）
+        LOG_ERROR("两段写补偿：回写 Keychain 旧值失败（account=" + account_ +
+                  "）: " + r.errorMessage());
+        return;
+    }
+    keyTouched_ = false;
 }
 
 // ---------- 构造 / 行解析 ----------
@@ -316,43 +377,62 @@ core::Result<Profile> ClaudeService::createProfile(const std::string& name,
                  drain.errorMessage());
     }
 
-    // 把 API key 入 Keychain
+    // 两段写（CPX-07）：段一 Keychain（account 由自增 id 生成，旧值必为空 =
+    // 该条目尚不存在）→ 段二 DB 回填 keychain_account。任一段失败都回滚本次
+    // INSERT 的行（恢复「没建过」的原状），Keychain 侧由助手按旧值回写
+    // （旧值为空 = 删除条目，不留半截密钥）。
     const std::string account = keychainAccountFor(newId);
-    auto kcStore = platform::keychain::storeSecret(keychainService_, account, apiKey);
-    if (kcStore.isFail()) {
-        // Keychain 失败 → 回滚（删 SQLite 行）。回滚本身再失败会留下无密钥的
-        // 幽灵 profile 行，至少留 ERROR 痕迹可诊断（审计 2026-09-23 [25]）
+    TwoPhaseKeyWrite keyTx(keychainService_, account, std::string());
+    // 回滚本次 INSERT；回滚本身再失败会留下无密钥的幽灵 profile 行，
+    // 至少留 ERROR 痕迹可诊断（审计 2026-09-23 [25]）
+    const auto rollbackInsertedRow = [&]() {
         auto delPrep = db_.prepare("DELETE FROM claude_profiles WHERE id = ?");
         if (delPrep.isOk()) {
             auto& delStmt = delPrep.value();
             delStmt.bind(1, newId);
             auto delStep = delStmt.step();
             if (delStep.isFail()) {
-                LOG_ERROR("Keychain 失败后的回滚 DELETE 也失败，存在悬空 "
+                LOG_ERROR("createProfile 失败后的回滚 DELETE 也失败，存在悬空 "
                           "profile 行 id=" + std::to_string(newId) + ": " +
                           delStep.errorMessage());
             }
         } else {
-            LOG_ERROR("Keychain 失败后的回滚 DELETE prepare 失败，存在悬空 "
+            LOG_ERROR("createProfile 失败后的回滚 DELETE prepare 失败，存在悬空 "
                       "profile 行 id=" + std::to_string(newId) + ": " +
                       delPrep.errorMessage());
         }
+    };
+
+    auto kcStore = keyTx.writeKey(apiKey);
+    if (kcStore.isFail()) {
+        rollbackInsertedRow();
         return core::Result<Profile>::fail(kcStore.errorCode(),
             "Keychain 存储失败: " + kcStore.errorMessage());
     }
 
-    // 回填 keychain_account
-    auto updPrep = db_.prepare(
-        "UPDATE claude_profiles SET keychain_account = ? WHERE id = ?");
-    if (updPrep.isFail()) {
-        return core::Result<Profile>::fail(updPrep.errorCode(), updPrep.errorMessage());
-    }
-    auto& updStmt = updPrep.value();
-    updStmt.bind(1, account);
-    updStmt.bind(2, newId);
-    auto uStep = updStmt.step();
-    if (uStep.isFail()) {
-        return core::Result<Profile>::fail(uStep.errorCode(), uStep.errorMessage());
+    // 段二：回填 keychain_account
+    auto backfill = keyTx.writeDb([&]() -> core::Result<void> {
+        auto updPrep = db_.prepare(
+            "UPDATE claude_profiles SET keychain_account = ? WHERE id = ?");
+        if (updPrep.isFail()) {
+            return core::Result<void>::fail(updPrep.errorCode(),
+                                            updPrep.errorMessage());
+        }
+        auto& updStmt = updPrep.value();
+        updStmt.bind(1, account);
+        updStmt.bind(2, newId);
+        auto uStep = updStmt.step();
+        if (uStep.isFail()) {
+            return core::Result<void>::fail(uStep.errorCode(),
+                                            uStep.errorMessage());
+        }
+        return core::Result<void>::ok();
+    });
+    if (backfill.isFail()) {
+        // 行缺 keychain_account = 密钥不可达，与段一失败同等对待 → 一并回滚
+        rollbackInsertedRow();
+        return core::Result<Profile>::fail(backfill.errorCode(),
+                                           backfill.errorMessage());
     }
 
     LOG_INFO("已创建 Claude profile id=" + std::to_string(newId) +
@@ -451,44 +531,56 @@ core::Result<void> ClaudeService::updateProfile(const Profile& profile) {
     if (!profile.apiKeyPlain.empty()) {
         const std::string newCheck = sha256HexPrefix(profile.apiKeyPlain);
         const std::string newHint = makeApiKeyHint(profile.apiKeyPlain);
-        auto kcStore = platform::keychain::storeSecret(
-            keychainService_, old.value().keychainAccount, profile.apiKeyPlain);
+        // 两段写（CPX-07）：段一 Keychain（旧值 = 当前密钥，先捕获）→ 段二 DB。
+        // 段二失败时按旧值回写 Keychain——原实现没有补偿，留下「密钥已换、
+        // api_key_hint / api_key_check 没换」的不一致态，事后无从判断。
+        TwoPhaseKeyWrite keyTx = TwoPhaseKeyWrite::capture(
+            keychainService_, old.value().keychainAccount);
+        auto kcStore = keyTx.writeKey(profile.apiKeyPlain);
         if (kcStore.isFail()) {
             return core::Result<void>::fail(kcStore.errorCode(),
                 "Keychain 更新失败: " + kcStore.errorMessage());
         }
 
-        auto prep = db_.prepare(
-            "UPDATE claude_profiles SET "
-            "name = ?, base_url = ?, api_key_hint = ?, api_key_check = ?, "
-            "model = ?, models_config = ?, extra_env = ?, shared_config_id = ?, "
-            "auth_field = ?, "
-            "updated_at = ? "
-            "WHERE id = ?");
-        if (prep.isFail()) {
-            return core::Result<void>::fail(prep.errorCode(), prep.errorMessage());
-        }
-        auto& stmt = prep.value();
-        stmt.bind(1, cleanedName);
-        stmt.bind(2, cleanedUrl);
-        stmt.bind(3, newHint);
-        stmt.bind(4, newCheck);
-        stmt.bind(5, cleanedModel);
-        stmt.bind(6, profile.modelsConfigJson);
-        stmt.bind(7, profile.extraEnvJson);
-        stmt.bind(8, profile.sharedConfigId);
-        stmt.bind(9, cleanedAuthField);
-        stmt.bind(10, static_cast<int64_t>(now));
-        stmt.bind(11, profile.id);
-        auto stepR = stmt.step();
-        if (stepR.isFail()) {
-            std::string msg = stepR.errorMessage();
-            if (msg.find("UNIQUE") != std::string::npos) {
-                return core::Result<void>::fail(
-                    core::ErrorCode::ProfileAlreadyExists,
-                    "Profile name 已存在: " + cleanedName);
+        auto stepR = keyTx.writeDb([&]() -> core::Result<void> {
+            auto prep = db_.prepare(
+                "UPDATE claude_profiles SET "
+                "name = ?, base_url = ?, api_key_hint = ?, api_key_check = ?, "
+                "model = ?, models_config = ?, extra_env = ?, shared_config_id = ?, "
+                "auth_field = ?, "
+                "updated_at = ? "
+                "WHERE id = ?");
+            if (prep.isFail()) {
+                return core::Result<void>::fail(prep.errorCode(),
+                                                prep.errorMessage());
             }
-            return core::Result<void>::fail(stepR.errorCode(), msg);
+            auto& stmt = prep.value();
+            stmt.bind(1, cleanedName);
+            stmt.bind(2, cleanedUrl);
+            stmt.bind(3, newHint);
+            stmt.bind(4, newCheck);
+            stmt.bind(5, cleanedModel);
+            stmt.bind(6, profile.modelsConfigJson);
+            stmt.bind(7, profile.extraEnvJson);
+            stmt.bind(8, profile.sharedConfigId);
+            stmt.bind(9, cleanedAuthField);
+            stmt.bind(10, static_cast<int64_t>(now));
+            stmt.bind(11, profile.id);
+            auto step = stmt.step();
+            if (step.isFail()) {
+                std::string msg = step.errorMessage();
+                if (msg.find("UNIQUE") != std::string::npos) {
+                    return core::Result<void>::fail(
+                        core::ErrorCode::ProfileAlreadyExists,
+                        "Profile name 已存在: " + cleanedName);
+                }
+                return core::Result<void>::fail(step.errorCode(), msg);
+            }
+            return core::Result<void>::ok();
+        });
+        if (stepR.isFail()) {
+            return core::Result<void>::fail(stepR.errorCode(),
+                                            stepR.errorMessage());
         }
     } else {
         // 只更新 name / url / model / 片段绑定
@@ -548,10 +640,12 @@ core::Result<void> ClaudeService::deleteProfile(int64_t id, bool* proxyStopped) 
     }
     const bool wasActive = p.value().isActive;
 
-    // 先清 Keychain，失败则中止删除并返回错误（SQLite 行保留，用户可重试，
-    // API key 不丢）。顺序不能反：先删行会让 Keychain 失败时留下永久孤儿密钥。
-    auto kcDel = platform::keychain::deleteSecret(
+    // 两段写（CPX-07）：段一清 Keychain（旧值先捕获）→ 段二删 SQLite 行。
+    // 顺序不能反：先删行会让 Keychain 失败时留下永久孤儿密钥。段二失败时按
+    // 旧值回写 Keychain（原实现无补偿：密钥已删、行还在，用户重试时密钥已丢）。
+    TwoPhaseKeyWrite keyTx = TwoPhaseKeyWrite::capture(
         keychainService_, p.value().keychainAccount);
+    auto kcDel = keyTx.writeKey(std::string());   // 空串 = 删除该条目
     if (kcDel.isFail()) {
         LOG_ERROR("清理 Keychain 失败，中止删除 profile id=" +
                   std::to_string(id) + ": " + kcDel.errorMessage());
@@ -560,16 +654,23 @@ core::Result<void> ClaudeService::deleteProfile(int64_t id, bool* proxyStopped) 
             "清理 Keychain 失败，profile 未删除: " + kcDel.errorMessage());
     }
 
-    // 再删 SQLite 行（FK CASCADE 会清空 claude_call_logs）
-    auto prep = db_.prepare("DELETE FROM claude_profiles WHERE id = ?");
-    if (prep.isFail()) {
-        return core::Result<void>::fail(prep.errorCode(), prep.errorMessage());
-    }
-    auto& stmt = prep.value();
-    stmt.bind(1, id);
-    auto stepR = stmt.step();
-    if (stepR.isFail()) {
-        return core::Result<void>::fail(stepR.errorCode(), stepR.errorMessage());
+    // 段二：删 SQLite 行（FK CASCADE 会清空 claude_call_logs）
+    auto delRow = keyTx.writeDb([&]() -> core::Result<void> {
+        auto prep = db_.prepare("DELETE FROM claude_profiles WHERE id = ?");
+        if (prep.isFail()) {
+            return core::Result<void>::fail(prep.errorCode(), prep.errorMessage());
+        }
+        auto& stmt = prep.value();
+        stmt.bind(1, id);
+        auto stepR = stmt.step();
+        if (stepR.isFail()) {
+            return core::Result<void>::fail(stepR.errorCode(),
+                                            stepR.errorMessage());
+        }
+        return core::Result<void>::ok();
+    });
+    if (delRow.isFail()) {
+        return core::Result<void>::fail(delRow.errorCode(), delRow.errorMessage());
     }
 
     LOG_INFO("已删除 Claude profile id=" + std::to_string(id));
@@ -1601,27 +1702,16 @@ core::Result<void> ClaudeService::syncCaptureActiveProfile() {
         upd.extraEnvJson = merged.extraEnvJson;
     }
 
-    // 失败补偿（§3.5 表末行）：用事先 loadSecret 取到的旧值 best-effort 回写。
-    // 返回 false = 补偿也失败 → 调用方文案注明密钥可能不可用（元数据与其余
-    // 字段完好）。Windows 覆盖写是 trunc 后写（keychain_win.cpp），不承诺旧值
-    // 必然完好——该风险如实登记于设计 §8.5
-    const auto compensateKey = [&]() -> bool {
-        if (curKey.empty()) return true;
-        auto r = platform::keychain::storeSecret(keychainService_,
-                                                 prof.keychainAccount, curKey);
-        if (r.isFail()) {
-            LOG_ERROR("反向同步补偿回写 Keychain 失败（profile id=" +
-                      std::to_string(prof.id) + "）: " + r.errorMessage());
-            return false;
-        }
-        return true;
-    };
+    // 两段写（CPX-07）：Keychain 侧统一走助手（§3.5 表末行的失败补偿即其
+    // 内置行为），旧值 = 上面 loadSecret 取到的 curKey。任一落库段失败 → 按
+    // 旧值回写 Keychain，profile 回到「改之前」的状态。回写失败的风险如实
+    // 登记于设计 §8.5
+    TwoPhaseKeyWrite keyTx(keychainService_, prof.keychainAccount, curKey);
 
     // key 缺席清空：先删 Keychain 条目（同 deleteProfile 的顺序——先 Keychain
     // 后落库，失败即中止且 profile 一字未改；keychain 层不新增 API）
     if (keyClear) {
-        auto del = platform::keychain::deleteSecret(keychainService_,
-                                                    prof.keychainAccount);
+        auto del = keyTx.writeKey(std::string());   // 空串 = 删除该条目
         if (del.isFail()) {
             LOG_ERROR("反向同步清理 Keychain 失败，中止本次切换（profile id=" +
                       std::to_string(prof.id) + "）: " + del.errorMessage());
@@ -1630,42 +1720,55 @@ core::Result<void> ClaudeService::syncCaptureActiveProfile() {
         }
     }
 
-    // 字段（+ key 写入）：updateProfile 内部顺序 Keychain → DB，失败即中止
+    // 字段（+ key 写入）与元数据清除同属段二：updateProfile 内部也是
+    // Keychain → DB 的两段写（同一助手语义），keyClear 的「清三列」紧随其后；
+    // 任一步失败都由助手把 Keychain 回写到旧值
     if (baseUrlChanged || merged.modelsChanged || merged.extraEnvChanged ||
-        keyWrite) {
+        keyWrite || keyClear) {
         if (keyWrite) upd.apiKeyPlain = parsed.cfg.authToken;
-        auto u = updateProfile(upd);
-        if (u.isFail()) {
+        auto w = keyTx.writeDb([&]() -> core::Result<void> {
+            if (baseUrlChanged || merged.modelsChanged ||
+                merged.extraEnvChanged || keyWrite) {
+                auto u = updateProfile(upd);
+                if (u.isFail()) {
+                    return core::Result<void>::fail(u.errorCode(),
+                                                    u.errorMessage());
+                }
+            }
+            // 三列元数据清除（keychain_account / api_key_hint / api_key_check）：
+            // updateProfile 的空 apiKeyPlain 分支不触碰它们，故走这条最小 UPDATE
+            if (keyClear) {
+                auto prep = db_.prepare(
+                    "UPDATE claude_profiles SET keychain_account = '', "
+                    "api_key_hint = '', api_key_check = '', updated_at = ? "
+                    "WHERE id = ?");
+                if (prep.isFail()) {
+                    return core::Result<void>::fail(prep.errorCode(),
+                                                    prep.errorMessage());
+                }
+                auto& stmt = prep.value();
+                stmt.bind(1, static_cast<int64_t>(nowUnix()));
+                stmt.bind(2, prof.id);
+                auto stepR = stmt.step();
+                if (stepR.isFail()) {
+                    return core::Result<void>::fail(stepR.errorCode(),
+                                                    stepR.errorMessage());
+                }
+            }
+            return core::Result<void>::ok();
+        });
+        if (w.isFail()) {
             std::string msg =
-                "反向同步写库失败，已中止本次切换: " + u.errorMessage();
-            if ((keyWrite || keyClear) && !compensateKey()) {
+                "反向同步写库失败，已中止本次切换: " + w.errorMessage();
+            // 是否要提示「密钥可能不可用」只看 Keychain 的实际状态，不信补偿
+            // 返回值：仍在旧值 = 已回到改之前（含「压根没写成」这种情形）
+            if ((keyWrite || keyClear) && !keyAtOldValue(keychainService_,
+                                                         prof.keychainAccount,
+                                                         curKey)) {
                 msg += "；该 Profile 的密钥可能处于不可用态，"
                        "重新填一次 API Key 即可恢复";
             }
-            return core::Result<void>::fail(u.errorCode(), msg);
-        }
-    }
-
-    // 三列元数据清除（keychain_account / api_key_hint / api_key_check）：
-    // updateProfile 的空 apiKeyPlain 分支不触碰它们，故走这条最小 UPDATE
-    if (keyClear) {
-        auto prep = db_.prepare(
-            "UPDATE claude_profiles SET keychain_account = '', "
-            "api_key_hint = '', api_key_check = '', updated_at = ? "
-            "WHERE id = ?");
-        if (prep.isFail()) {
-            compensateKey();
-            return core::Result<void>::fail(prep.errorCode(),
-                                            prep.errorMessage());
-        }
-        auto& stmt = prep.value();
-        stmt.bind(1, static_cast<int64_t>(nowUnix()));
-        stmt.bind(2, prof.id);
-        auto stepR = stmt.step();
-        if (stepR.isFail()) {
-            compensateKey();
-            return core::Result<void>::fail(stepR.errorCode(),
-                                            stepR.errorMessage());
+            return core::Result<void>::fail(w.errorCode(), msg);
         }
     }
 

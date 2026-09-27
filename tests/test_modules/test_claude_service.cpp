@@ -486,6 +486,77 @@ REGISTER_TEST(claude_service_update_profile,
     return true;
 })
 
+// ---- 5b. CPX-07：两段写失败补偿（审计「Keychain + DB 两段写」条目） ----
+
+REGISTER_TEST(claude_service_update_db_fail_rolls_back_keychain,
+              "claude_service: updateProfile DB 写失败按旧值回写 Keychain（CPX-07）", {
+    TestDb tdb("updcomp");
+    module::claude::ClaudeService svc(tdb.handle(), kTestKeychainService);
+
+    auto a = svc.createProfile("NameA", "https://a.example.com",
+                               "sk-ant-aaa-0001", "m");
+    DOCTEST_REQUIRE(a.isOk());
+    auto b = svc.createProfile("NameB", "https://b.example.com",
+                               "sk-ant-bbb-0002", "m");
+    DOCTEST_REQUIRE(b.isOk());
+    const int64_t bid = b.value().id;
+
+    // 失败注入：把 B 的 name 改成 A 的 name → UPDATE 撞 claude_profiles.name 的
+    // UNIQUE 约束 = 段二（DB 写）确定性失败。Keychain 没有注入缝（CPX-14 未做），
+    // 故用这条必然失败的 DB 路径，断言「段一已写成新密钥、段二失败后被回写」。
+    module::claude::Profile pb = b.value();
+    pb.name = "NameA";
+    pb.apiKeyPlain = "sk-ant-bbb-9999";
+    auto upd = svc.updateProfile(pb);
+    DOCTEST_CHECK(upd.isFail());
+    DOCTEST_CHECK(upd.errorCode() == core::ErrorCode::ProfileAlreadyExists);
+
+    // 补偿生效：Keychain 里是旧密钥，而不是刚写进去的新密钥
+    auto key = svc.loadApiKey(bid);
+    DOCTEST_REQUIRE(key.isOk());
+    DOCTEST_CHECK_EQ(key.value(), std::string("sk-ant-bbb-0002"));
+
+    // DB 行一字未改 → 元数据与 Keychain 里的密钥一致
+    auto got = svc.getProfile(bid);
+    DOCTEST_REQUIRE(got.isOk());
+    DOCTEST_CHECK_EQ(got.value().name, std::string("NameB"));
+    DOCTEST_CHECK_EQ(got.value().apiKeyHint, b.value().apiKeyHint);
+    DOCTEST_CHECK_EQ(got.value().apiKeyCheck, b.value().apiKeyCheck);
+
+    // 一致性锚：hint / check 是密钥的纯函数——同一把旧密钥另建一条必须算出相同
+    // 值（证明「元数据 = Keychain 实际值」），新密钥必须算出不同的值（证明本
+    // 断言有鉴别力，不是「怎么写都一样」）
+    auto twin = svc.createProfile("Twin", "https://t.example.com",
+                                  "sk-ant-bbb-0002", "m");
+    DOCTEST_REQUIRE(twin.isOk());
+    DOCTEST_CHECK_EQ(got.value().apiKeyHint, twin.value().apiKeyHint);
+    DOCTEST_CHECK_EQ(got.value().apiKeyCheck, twin.value().apiKeyCheck);
+    auto other = svc.createProfile("Other", "https://o.example.com",
+                                   "sk-ant-bbb-9999", "m");
+    DOCTEST_REQUIRE(other.isOk());
+    DOCTEST_CHECK(got.value().apiKeyHint != other.value().apiKeyHint);
+    DOCTEST_CHECK(got.value().apiKeyCheck != other.value().apiKeyCheck);
+
+    // 撞名的那条（A）不受影响
+    auto ga = svc.getProfile(a.value().id);
+    DOCTEST_REQUIRE(ga.isOk());
+    DOCTEST_CHECK_EQ(ga.value().apiKeyHint, a.value().apiKeyHint);
+
+    // 改回原名 + 换 key 仍是正常路径（补偿没有把正常写路径带坏）
+    pb.name = "NameB";
+    pb.apiKeyPlain = "sk-ant-bbb-9999";
+    DOCTEST_CHECK(svc.updateProfile(pb).isOk());
+    auto key2 = svc.loadApiKey(bid);
+    DOCTEST_REQUIRE(key2.isOk());
+    DOCTEST_CHECK_EQ(key2.value(), std::string("sk-ant-bbb-9999"));
+
+    cleanupKey(a.value().id);
+    cleanupKey(bid);
+    cleanupKey(twin.value().id);
+    cleanupKey(other.value().id);
+    return true;
+})
+
 // ---- 6. deleteProfile 清理 SQLite + Keychain ----
 
 REGISTER_TEST(claude_service_delete_profile,
