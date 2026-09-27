@@ -34,6 +34,7 @@
 #include "core/paths.h"
 #include "core/router.h"
 #include "core/theme.h"
+#include "core/ui_geometry.h"
 #include "core/component_theme.h"
 #include "core/time.h"
 #include "markdown_service.h"
@@ -182,9 +183,15 @@ float estimateTextWidth(const std::string& s, float fontSize) {
 // 故窗口坐标换算成页面坐标需减去 Router 上的页面区原点 x（app_sidebar
 // compose 每帧写入，折叠/展开随侧边栏宽变化）。y 方向页面区纵跨整窗
 // （原点恒 0）不换算。无 Router（无头测试等）按原点 0 处理 = 旧行为。
+//
+// 换成本体统一在 core::windowToCompose（审计 M4）；本模块走的是
+// onContextMenu / onMove 通道，runtime 派发前**已**做 /dpiScale（见 EUI-NEO
+// runtime_input updateInteraction 的 logicalEvent），故指针空间与 compose
+// 空间同尺度 → dpiScale 传 1.0。
 float windowToPageX(float windowX) {
     const ::core::Router* router = ::core::appRouter();
-    return router ? windowX - router->pageOriginX() : windowX;
+    return ::core::windowToCompose(windowX, router ? router->pageOriginX() : 0.0f,
+                                   1.0f);
 }
 
 } // namespace

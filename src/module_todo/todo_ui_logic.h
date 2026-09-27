@@ -14,6 +14,7 @@
 #include <vector>
 
 #include "core/time.h"
+#include "core/ui_geometry.h"
 
 namespace module::todo::ui {
 
@@ -82,26 +83,41 @@ inline int computeAppendPosition(const std::vector<Task>& tasks, int64_t columnI
     return maxPos + 1;
 }
 
-// W8 拖拽命中输入：拖拽锚点 = 按下时被拖卡片的 bounds（指针像素空间），
-// 板面几何 = compose 空间（drawBoard 每帧快照）。两个空间相差统一的
-// 缩放（dpi）与偏移（侧边栏等），锚定卡片自身即可同时消掉两者：
-// dpi 用 pressWidth / cardWidth 探测，板面原点用卡片左缘回推。
+// W8 拖拽命中输入：拖拽锚点 = 按下时被拖卡片的 bounds（指针空间），
+// 板面几何 = compose 空间（drawBoard 每帧快照）。
+//
+// 审计 M4：指针 → compose 的换算统一走 core::windowToCompose，尺度由调用点
+// 显式声明（dpiScale）；板面原点由卡片左缘回推（卡片 bg 左缘 = 所在列左缘），
+// 换算后全部几何在 compose 空间比较，不再把 colWidth / 板高逐个乘 dpi。
+// onPress / onDrag 通道的指针值是**原始**值（runtime_input 对 onContextMenu /
+// onMove 才做 /dpiScale），故 hitDropColumn 侧传拖拽锚点实测尺度。
+//
 // ⚠ 同帧契约（tech-debt B）：pressY 与 scrollOffset 必须是"按下那一帧"的
 // 成对值——bounds.y 里含的是按下时刻的列滚动，还原板面顶边只能减同一个值。
 // 调用方（hitDropColumn）在 DragState 里快照，拖拽中途列被滚动也不会错位。
 struct DragHitInput {
     int fromColIndex = 0;
     int colCount = 0;
-    float pressX = 0.0f;        // 按下时卡片 bounds（指针像素空间）
+    float pressX = 0.0f;        // 按下时卡片 bounds（指针空间）
     float pressY = 0.0f;
-    float pressWidth = 0.0f;
-    float cardWidth = 0.0f;     // compose 空间卡宽（dpi 探针）
+    float pressWidth = 0.0f;    // 按下时卡片 bounds 宽（dpi 探针的分子）
+    float cardWidth = 0.0f;     // compose 空间卡宽（dpi 探针的分母）
     float colWidth = 0.0f;      // compose 空间列宽
     float colGap = 0.0f;
     float boardHeight = 0.0f;   // compose 空间板高
     float scrollOffset = 0.0f;  // 源列滚动偏移（compose 空间，按下时刻快照）
+    float pageOriginX = 0.0f;   // 页面区原点 x（compose 空间；无头/未接入 = 0）
+    float dpiScale = 1.0f;      // 指针空间 → compose 空间缩放（显式；1.0 = 同尺度）
     int cardIndex = 0;
 };
+
+// dpi 探针（审计 M4：由"唯一手段"降级为断言）：按下时卡片 bounds 宽 /
+// compose 空间卡宽 = 指针空间相对 compose 空间的**实测**尺度。hitDropColumn
+// 拿它当 dpiScale 的取值来源并与 1.0 对照告警；换算本体不吃本值，退化
+// （无卡宽）返回 0。纯函数，无副作用。
+inline float dragAnchorScale(const DragHitInput& in) {
+    return in.cardWidth > 0.0f ? in.pressWidth / in.cardWidth : 0.0f;
+}
 
 // 指针位置 → 目标列索引。列间隙 / 板面外 / 输入退化 → -1（拖放取消）。
 // 卡片 bounds.y 已含列内滚动偏移（滚动走 transform，命中框跟随），
@@ -112,24 +128,26 @@ inline int dragDropTarget(const DragHitInput& in, double pointerX, double pointe
         in.fromColIndex >= in.colCount || in.cardIndex < 0) {
         return -1;
     }
-    const float dpi = in.pressWidth / in.cardWidth;
-    const float stride = (in.colWidth + in.colGap) * dpi;
-    // 板面原点：卡片 bg 左缘 = 所在列左缘
-    const float originX = in.pressX - static_cast<float>(in.fromColIndex) * stride;
+    const float dpi = in.dpiScale;
+    const float stride = in.colWidth + in.colGap;
+    // 板面原点：按下锚点（→ compose）左移若干列步长 = 源列左缘
+    const float originX = ::core::windowToCompose(in.pressX, in.pageOriginX, dpi) -
+                          static_cast<float>(in.fromColIndex) * stride;
     // 板面顶边：卡片在列内的未滚动 y = 列头高 + 序号 * (卡高+间距) - 滚动偏移
     const float cardTopInCol =
         kColumnHeaderHeight +
         static_cast<float>(in.cardIndex) * (kCardHeight + kCardGap) - in.scrollOffset;
-    const float boardTop = in.pressY - cardTopInCol * dpi;
-    const float boardBottom = boardTop + in.boardHeight * dpi;
+    const float boardTop = ::core::windowToCompose(in.pressY, 0.0f, dpi) - cardTopInCol;
+    const float boardBottom = boardTop + in.boardHeight;
 
-    const float y = static_cast<float>(pointerY);
+    const float y = ::core::windowToCompose(static_cast<float>(pointerY), 0.0f, dpi);
     if (y < boardTop || y > boardBottom) return -1;
 
+    const float x = ::core::windowToCompose(static_cast<float>(pointerX),
+                                            in.pageOriginX, dpi);
     for (int j = 0; j < in.colCount; ++j) {
         const float left = originX + static_cast<float>(j) * stride;
-        const float x = static_cast<float>(pointerX);
-        if (x >= left && x <= left + in.colWidth * dpi) return j;
+        if (x >= left && x <= left + in.colWidth) return j;
     }
     return -1;
 }
