@@ -4,10 +4,12 @@
 // 转发代码（proxy_router / streaming_proxy）不再散落 "某个网关才这样" 的 if。
 //
 // 新增一个网关时只改本文件：Kind 加一项、forBaseUrl 加 host 分派、
-// applyHeaders/normalizeBody 加分支，两个转发路径零改动。
+// dialectKindToText/dialectKindFromText 加一对文本值、applyHeaders/normalizeBody
+// 加分支，两个转发路径零改动。
 #pragma once
 
 #include <map>
+#include <optional>
 #include <string>
 
 #include "provider_config.h"   // AuthField（鉴权头三态）
@@ -35,8 +37,13 @@ struct UpstreamDialect {
     static UpstreamDialect anthropicDefault();
     // opencode.ai zen：额外要求 x-opencode-session，且不认 [1M] 模型标记
     static UpstreamDialect opencodeZen();
-    // 按 baseUrl 的 host 选择（opencode.ai 及其子域 → opencodeZen，其余默认）
-    static UpstreamDialect forBaseUrl(const std::string& baseUrl);
+    // 按 baseUrl 的 host 选择（opencode.ai 及其子域 → opencodeZen，其余默认）。
+    // overrideText 非空 = 显式覆盖（审计 CPX-13）：自建网关 / 内网镜像的 host
+    // 后缀推断不出正确方言，Profile::dialectOverride 用它钉住；空串 / 未知值
+    // = 未覆盖 → 回落 host 推断（既有调用点不传该参，行为零变化）
+    static UpstreamDialect forBaseUrl(
+        const std::string& baseUrl,
+        const std::string& overrideText = std::string());
 
     // 该方言是否要求剥掉模型名尾部的 [1M]（Claude Code 的本地 1M 上下文标记，
     // 上游通常不认识这个后缀，模型名带它会被判 "Model is unavailable"）
@@ -57,6 +64,16 @@ struct UpstreamDialect {
     // 返回 true 表示 body 被改写；不需要改写时 body 一个字节都不动。
     bool normalizeBody(std::string& body) const;
 };
+
+// ---- 方言覆盖文本 ↔ Kind（Profile::dialectOverride 的值域，审计 CPX-13）----
+// 值域：'anthropic_default' / 'opencode_zen'（空串 = 未覆盖）。UI 本线不暴露，
+// 经 DB / 配置文件设置。
+// 文本 → Kind：精确命中值域 → 有值；空串 / 未知 / 拼写错误 → nullopt（未覆盖，
+// 调用方回落 forBaseUrl 的 host 推断——读侧兜底，与 authFieldFromText 同口径）
+std::optional<UpstreamDialect::Kind> dialectKindFromText(const std::string& text);
+
+// Kind → 规范文本（写侧规范化：库里只存两个规范值之一或空串）
+const char* dialectKindToText(UpstreamDialect::Kind kind);
 
 // 模型名剥尾部 [1M]：大小写不敏感（[1m] 同样命中），容忍标记前后空白
 // （形如 "deepseek-v4-pro [1M] "，上游侧配置里带空格很常见）。
