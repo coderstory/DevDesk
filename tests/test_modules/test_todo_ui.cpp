@@ -712,6 +712,7 @@ REGISTER_TEST(todo_ui_move_appends_to_end,
 REGISTER_TEST(todo_ui_drag_hit_pure,
               "todo_ui: dragDropTarget 命中/列隙/板外/滚动/dpi（纯函数）", {
     using module::todo::ui::DragHitInput;
+    using module::todo::ui::dragAnchorScale;
     using module::todo::ui::dragDropTarget;
     // 锚定卡在列 1 第 0 张：板面（dpi=1）originX=80，列 [80,280][300,500][520,720]，
     // boardTop=144，boardBottom=644
@@ -738,12 +739,29 @@ REGISTER_TEST(todo_ui_drag_hit_pure,
     DOCTEST_CHECK_EQ(dragDropTarget(in, 400.0, 700.0), -1);  // 板下方
 
     // HiDPI（dpi=2）：指针空间坐标全翻倍，命中结果不变
+    // （审计 M4 后尺度由调用点显式声明 → dpiScale 字段；探针值同源）
     DragHitInput hi = in;
     hi.pressX = 600.0f;
     hi.pressY = 400.0f;
     hi.pressWidth = 400.0f;
+    hi.dpiScale = 2.0f;
+    DOCTEST_CHECK_EQ(dragAnchorScale(hi), 2.0f);  // 探针仍与显式尺度一致
     DOCTEST_CHECK_EQ(dragDropTarget(hi, 700.0, 600.0), 1);   // 源列
     DOCTEST_CHECK_EQ(dragDropTarget(hi, 1100.0, 600.0), 2);  // 右列
+
+    // 页面区原点（侧边栏展开/折叠）在指针与锚点上同减 → 命中结果不变
+    // （审计 M4：拖拽换算改吃 compose 空间，pageOriginX 两侧对消）
+    DragHitInput orig = in;
+    orig.pageOriginX = 208.0f;
+    DOCTEST_CHECK_EQ(dragAnchorScale(orig), 1.0f);
+    DOCTEST_CHECK_EQ(dragDropTarget(orig, 400.0, 300.0), 1);
+    DOCTEST_CHECK_EQ(dragDropTarget(orig, 550.0, 300.0), 2);
+    DOCTEST_CHECK_EQ(dragDropTarget(orig, 290.0, 300.0), -1);  // 列间隙仍为间隙
+
+    // 探针退化（无卡宽）→ 0（调用方 hitDropColumn 侧跳过断言）
+    DragHitInput noProbe = in;
+    noProbe.cardWidth = 0.0f;
+    DOCTEST_CHECK_EQ(dragAnchorScale(noProbe), 0.0f);
 
     // 列内滚动 100：boardTop 随可视上移下推到 244
     DragHitInput sc = in;

@@ -23,6 +23,7 @@
 #include <components/toast.h>
 
 #include <algorithm>
+#include <cmath>
 #include <ctime>
 #include <map>
 #include <memory>
@@ -556,6 +557,22 @@ public:
         // colScrollOffset 会在拖拽途中列被滚动时两帧混值，板面顶边整体错位
         in.scrollOffset = drag_.pressScrollOffset;
         in.cardIndex = drag_.cardIndex;
+        // 审计 M4：指针 → compose 的换算吃显式 dpiScale。onPress / onDrag 通道
+        // 的指针是**原始**值（runtime 只对 onContextMenu / onMove 做 /dpiScale），
+        // 尺度取拖拽锚点实测值；探针自此只是"断言"（下面告警），不再是几何
+        // 换算的唯一手段。外部权威 dpiScale（EUI-NEO / app 层注入）接入后只改
+        // 这几行取值。
+        const ::core::Router* router = ::core::appRouter();
+        in.pageOriginX = router ? router->pageOriginX() : 0.0f;
+        in.dpiScale = ui::dragAnchorScale(in);
+        // 探针降级为断言：实测尺度 ≠ 1 = 指针空间与 compose 空间不同尺度（换算
+        // 已按显式 dpiScale 处理，不是错误），只告警一次避免拖动中刷屏；同时
+        // 作为 100%/125%/150% 三档点验的实测值输出（审计 V2）
+        if (!dpiProbeWarned_ && std::fabs(in.dpiScale - 1.0f) > 0.001f) {
+            dpiProbeWarned_ = true;
+            LOG_WARN("Todo: 拖拽指针空间/compose 空间尺度 = " +
+                     std::to_string(in.dpiScale) + "（≠1，换算走显式 dpiScale）");
+        }
         return ui::dragDropTarget(in, x, y);
     }
 
@@ -2378,6 +2395,10 @@ private:
     float boardColGap_ = 0.0f;
     float boardH_ = 0.0f;
     float boardCardW_ = 0.0f;
+
+    // 拖拽 dpi 探针告警只出一次（审计 M4：探针降级为断言；hitDropColumn 是
+    // const 且每帧调用，故 mutable + 一次性）
+    mutable bool dpiProbeWarned_ = false;
 
     // 新建任务弹窗
     bool newTaskOpen_ = false;
