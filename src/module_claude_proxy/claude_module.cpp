@@ -764,8 +764,11 @@ public:
                                     .size(w0, 1.0f)
                                     .color(t.colors.borderDefault).build();
                                 const float actGap = 12.0f;
-                                // 5 键均分（设计 §4.1，M5）：启用/测试连通/编辑/删除/复制
-                                const float actW = (w0 - actGap * 4.0f) / 5.0f;
+                                // 6 键均分（设计 §4.1，M5 + profile-run：启用/测试连通/
+                                // 编辑/删除/复制/运行）——按钮数改一处，gap 数也要跟着改。
+                                // 扣 **5** 个 gap：EUI 的 row spacing 只在相邻子项之间生效，
+                                // n 项只有 n−1 个间隙；旧 5 键式 (w0-actGap*4)/5 恰好齐右缘。
+                                const float actW = (w0 - actGap * 5.0f) / 6.0f;
                                 ui.row("claude.detail.actions")
                                     .position(x0, actY)
                                     .size(w0, 36.0f)
@@ -877,7 +880,41 @@ public:
                                                 doDuplicate(shownId);
                                             })
                                             .build();
+                                        // 运行（第 6 键，2026-09-28 profile-run 设计
+                                        // D-1/D-2/D-4）：在新终端里用该 Profile 打开
+                                        // 一个 claude 会话
+                                        components::button(ui, "claude.act.run")
+                                            .size(actW, 36.0f)
+                                            .text("运行")
+                                            .fontSize(t.sizes.fontSizeSmall)
+                                            .colors(t.colors.surfaceElevated,
+                                                    t.colors.hover, t.colors.active)
+                                            .textColor(t.colors.textPrimary)
+                                            .radius(t.sizes.radius)
+                                            .border(1.0f, t.colors.borderDefault)
+                                            .onClick([this, shownId] {
+                                                if (shownId == 0) {
+                                                    showToast("运行失败",
+                                                              "请先选择 Profile",
+                                                              true);
+                                                    return;
+                                                }
+                                                doRun(shownId);
+                                            })
+                                            .build();
                                     })
+                                    .build();
+
+                                // 「运行」副提示（设计 §6：D-1 副作用必须明示；§3 措辞
+                                // 按「选中 ≠ 激活才切」表述，避免用户以为每次都改全局）
+                                ui.text("claude.act.run.hint")
+                                    .position(x0, actY + 40.0f)
+                                    .size(w0, 16.0f)
+                                    .text("以该 Profile 打开新的 Claude Code 会话"
+                                          "（起始目录 = 用户主目录）；未激活会先切为激活")
+                                    .fontSize(11.0f)
+                                    .lineHeight(16.0f)
+                                    .color(t.colors.textTertiary)
                                     .build();
 
                                 // 分隔线
@@ -2599,6 +2636,33 @@ private:
         }
         selectedId_ = id;
         showToast("已启用", "该 Profile 已设为激活（ACTIVE）", false);
+    }
+
+    // 运行：确保代理 + 必要时切激活 + 在终端里开一个新的 claude 会话（D-1）
+    void doRun(int64_t id) {
+        ClaudeService* svc = ClaudeService::global();
+        if (svc == nullptr) {
+            showToast("运行失败", "服务未就绪（ClaudeService 未注册）", true);
+            return;
+        }
+        if (id == 0) {
+            showToast("运行失败", "请先选择 Profile", true);
+            return;
+        }
+        std::string hint;
+        auto r = svc->runProfile(id, &hint);
+        if (r.isFail()) {
+            showToast("运行失败", r.errorMessage(), true);
+            return;
+        }
+        // 成功：D-5 的退化提示（hint 非空时）+ D-9 的「会话不受 DevDesk 管理」
+        const std::string head = hint.empty()
+            ? std::string("已在新终端里打开 Claude Code 会话（起始目录 = 用户主目录）。")
+            : (hint + std::string("。"));
+        showToast("已启动",
+                  head + "运行中的会话不受 DevDesk 管理，停代理/退出后可能失败。",
+                  false);
+        dataDirty_ = true;   // 可能刚起代理 / 刚切激活 → 下帧重查（状态点、ACTIVE 徽标）
     }
 
     // 复制（设计 §4.1/§4.2，M5）：建副本但不激活 → 选中态/激活态都不动

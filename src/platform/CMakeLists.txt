@@ -3,6 +3,7 @@ add_library(devdesk_platform STATIC
     http_server.cpp
     json.cpp
     file_open_common.cpp
+    terminal_launch_common.cpp          # 跨平台纯函数（三支之外，无条件编译）
 )
 
 # 平台适配实现按平台选择编译（接口隔离：头文件平台无关，实现 *_win/_macos/_posix，
@@ -14,6 +15,7 @@ if(WIN32)
         system_theme_win.cpp
         file_watcher_win.cpp
         http_client_ca_win.cpp
+        terminal_launch_win.cpp
     )
 elseif(APPLE)
     target_sources(devdesk_platform PRIVATE
@@ -22,6 +24,7 @@ elseif(APPLE)
         system_theme_macos.cpp
         file_watcher_stub.cpp
         http_client_ca_posix.cpp
+        terminal_launch_macos.cpp
     )
 else()
     target_sources(devdesk_platform PRIVATE
@@ -30,6 +33,7 @@ else()
         system_theme_posix.cpp
         file_watcher_stub.cpp
         http_client_ca_posix.cpp
+        terminal_launch_posix.cpp
     )
 endif()
 

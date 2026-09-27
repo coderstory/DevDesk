@@ -1538,6 +1538,70 @@ void ClaudeService::setConfiguredProxyPort(int port) {
     configuredProxyPort_ = port;
 }
 
+void ClaudeService::setTerminalLauncher(
+    std::function<core::Result<void>(const platform::terminal::LaunchSpec&)>
+        launcher) {
+    if (launcher) terminalLauncher_ = std::move(launcher);
+}
+
+core::Result<void> ClaudeService::runProfile(int64_t id, std::string* hint) {
+    if (hint != nullptr) hint->clear();
+    if (id == 0) {
+        return core::Result<void>::fail(core::ErrorCode::ValidationError,
+            "profile.id 不能为 0");
+    }
+
+    // 目标 profile 必须存在（标题、激活态判定都取自它）
+    auto prof = getProfile(id);
+    if (prof.isFail()) {
+        return core::Result<void>::fail(prof.errorCode(), prof.errorMessage());
+    }
+
+    // 顺序 1：代理必须先跑起来（会话只指向本地代理，密钥由代理转发时注入，D-8）。
+    // 已在跑时**不重复 startProxy**（server 已存在会硬失败）；端口必须显式传
+    // configuredProxyPort()——设置页改过端口后，无参默认 8888 会起错端口。
+    if (!isProxyRunning()) {
+        auto started = startProxy("127.0.0.1", configuredProxyPort());
+        if (started.isFail()) {
+            return core::Result<void>::fail(started.errorCode(),
+                "启动本地代理失败，未打开会话: " + started.errorMessage());
+        }
+    }
+
+    // 顺序 2：目标非激活 → 先切激活（全局 settings.json 托管键随之改写，
+    // UI 侧已用副提示明示）。失败（含反向同步读不到/解析不了 settings.json）
+    // → 中止本次运行，不打开会话。
+    if (!prof.value().isActive) {
+        auto switched = setActiveProfile(id);
+        if (switched.isFail()) {
+            return core::Result<void>::fail(switched.errorCode(),
+                "切换激活 Profile 失败，未打开会话: " + switched.errorMessage());
+        }
+    }
+
+    // 顺序 3：派发终端（分离式；命令文本由平台层内部拼装，业务层只传语义参数）。
+    // D-3：起始目录默认用户主目录；D-8：不带任何密钥/临时配置。
+    platform::terminal::LaunchSpec spec;
+    spec.title = prof.value().name + " · Claude Code";
+    spec.workingDir = platform::terminal::homeDir();
+    spec.program = "claude";
+
+    auto launched = terminalLauncher_(spec);
+    if (launched.isFail()) {
+        return launched;
+    }
+
+    // D-5：wt 缺失 → 平台层已退化传统控制台，这里补一句非致命提示（不静默、不阻断）。
+    // 文案保持中性：「传统控制台」只说「不是 Windows Terminal 那条路径」，
+    // 不臆断机器上没装——系统默认终端本身可能就是 Windows Terminal（此时措辞仍成立）。
+    if (hint != nullptr && platform::terminal::windowsTerminalMissing()) {
+        *hint = "未检测到 Windows Terminal，已用系统默认终端打开会话";
+    }
+    LOG_INFO("已在终端里用 profile id=" + std::to_string(id) +
+             " 打开 Claude Code 会话（" + spec.workingDir + "）");
+    return core::Result<void>::ok();
+}
+
 // ---------- 在途流式上游登记（审计 2026-09-23 [9]）----------
 
 void ClaudeService::registerActiveStream(
