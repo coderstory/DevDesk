@@ -14,9 +14,8 @@ using core::window_layout::WorkArea;
 namespace {
 
 // 本机实测基线：1920×1080 @125%（工作区 1920×1020 物理），请求 1600×1000。
-// 注意：REGISTER_TEST 是 3 参数宏，宏体内**语句级**的 `Type{a, b}` 花括号
-// 初始化会让逗号被当作宏参数分隔符——故结构体一律经下面这些工厂函数构造
-//（逗号落在函数调用的括号内，预处理器不再切分）
+// 下面三个工厂是命名场景 / 简写便利：TIN-08 后 REGISTER_TEST 已支持用例体内的
+// 裸逗号（聚合初始化列表，见文件末护栏用例），不再需要工厂规避宏切参。
 InitialWindowRequest request1600x1000() {
     return InitialWindowRequest{1600, 1000, 1200, 720};
 }

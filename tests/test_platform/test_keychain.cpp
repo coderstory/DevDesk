@@ -212,13 +212,6 @@ core::Result<std::vector<std::string>> countingSweep(
     return core::Result<std::vector<std::string>>::ok({"swept"});
 }
 
-// 注入表由函数造（不是在 REGISTER_TEST 体内直接聚合初始化：宏实参按逗号切分，
-// 花括号里的逗号不受保护，会撞「passed N arguments」编译错）
-platform::keychain::Backend makeCountingBackend() {
-    return platform::keychain::Backend{&countingStore, &countingLoad,
-                                       &countingDelete, &countingSweep};
-}
-
 } // namespace
 
 REGISTER_TEST(keychain_backend_injection,
@@ -230,7 +223,8 @@ REGISTER_TEST(keychain_backend_injection,
     CountingKeychain fake;
     CountingKeychain* prevFake = g_counting;
     g_counting = &fake;
-    const platform::keychain::Backend table = makeCountingBackend();
+    const platform::keychain::Backend table = {&countingStore, &countingLoad,
+                                               &countingDelete, &countingSweep};
     const platform::keychain::Backend* prev =
         platform::keychain::setBackendForTest(&table);
     // 安装返回被替换的旧后端 = 默认（真实）后端

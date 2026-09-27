@@ -45,18 +45,6 @@ MdBlockModel modelOf(const std::string& text) {
     return m;
 }
 
-// 手工构造一个块（不用花括号初始化列表：REGISTER_TEST 按顶层逗号切参，
-// 宏体内 `{a, b, c}` 会破坏用例体）
-MdBlock blockOf(size_t start, size_t end) {
-    MdBlock b;
-    b.kind = module::markdown::MdBlockKind::Paragraph;
-    b.start = start;
-    b.end = end;
-    b.hash = 0;
-    b.stableId = 7;
-    return b;
-}
-
 } // namespace
 
 // ---- 活动块推导：空文档 / 单块 / cursor==size 归末块 ----
@@ -171,7 +159,8 @@ REGISTER_TEST(md_live_active_block_utf8,
 
 REGISTER_TEST(md_live_block_local_offset_clamp,
               "md_live_edit: 块局部偏移 两端钳制", {
-    const MdBlock b = blockOf(10, 16);   // [10,16) → 块长 6
+    const MdBlock b{.kind = module::markdown::MdBlockKind::Paragraph, .start = 10,
+                    .end = 16, .hash = 0, .stableId = 7};   // [10,16) → 块长 6
     DOCTEST_CHECK_EQ(mdLiveBlockLocalOffset(b, 0), static_cast<size_t>(0));
     DOCTEST_CHECK_EQ(mdLiveBlockLocalOffset(b, 9), static_cast<size_t>(0));
     DOCTEST_CHECK_EQ(mdLiveBlockLocalOffset(b, 10), static_cast<size_t>(0));

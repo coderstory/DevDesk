@@ -21,9 +21,8 @@
 //      记录本进程工作集内存，断言增量 < 100MB（宽松阈值：防泄漏而非精确测量）
 //
 // 注意：
-//   - REGISTER_TEST 的 body 是宏参数——括号内的逗号安全，顶层裸逗号（聚合
-//     初始化 / 多参数模板）不行，测试体内避免；预处理器指令（#ifdef 等）
-//     也不能出现在 body 里，需要条件编译的逻辑放到 body 外的普通函数。
+//   - REGISTER_TEST 的 body 是宏参数：**预处理器指令（#ifdef 等）不能出现在
+//     body 里**，需要条件编译的逻辑放到 body 外的普通函数（见用例 6 内存采样）。
 //   - mock 上游 provider 结束时必须 sink.done() + return true（返回 false 会被
 //     cpp-httplib 当作 Canceled，不写终止 chunk，客户端看到的是截断）。
 #include "doctest.h"

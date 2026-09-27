@@ -35,9 +35,6 @@ namespace {
 
 constexpr const char* kTestKeychainService = "DevDeskTestProviderConfig";
 
-// REGISTER_TEST 宏实参不能有裸逗号（模板实参也算），统一用别名
-using EnvMap = std::map<std::string, std::string>;
-
 // 构造全填的 6 槽位配置
 module::claude::ModelsConfig fullConfig() {
     module::claude::ModelsConfig c;
@@ -164,11 +161,11 @@ REGISTER_TEST(provider_config_legacy_model_fallback,
 // ---- 5. extra_env 序列化往返 + 非字符串值拒绝 ----
 REGISTER_TEST(provider_config_extra_env_roundtrip,
               "provider_config: extra_env 序列化往返与值校验", {
-    // ponytail: REGISTER_TEST 宏实参不能有裸逗号，map 用逐项赋值构造
-    EnvMap env;
-    env["AUTO_COMPACT_ENABLED"] = "1";
-    env["DISABLE_AUTOUPDATER"] = "1";
-    env["CLAUDE_AUTOCOMPACT_PCT_OVERRIDE"] = "75";
+    std::map<std::string, std::string> env = {
+        {"AUTO_COMPACT_ENABLED", "1"},
+        {"DISABLE_AUTOUPDATER", "1"},
+        {"CLAUDE_AUTOCOMPACT_PCT_OVERRIDE", "75"},
+    };
     auto json = module::claude::serializeExtraEnv(env);
     DOCTEST_REQUIRE(json.isOk());
 
@@ -236,10 +233,11 @@ REGISTER_TEST(provider_config_env_alias_mapping,
 
     // 混合：官方键透传无警告；别名表外未知键透传 + unrecognized 标记
     {
-        EnvMap env;
-        env["AUTO_COMPACT_ENABLED"] = "0";
-        env["DISABLE_AUTOUPDATER"] = "1";              // 官方已知键
-        env["NOT_A_REAL_VAR_XX"] = "75";               // 别名表外、官方清单外未知键
+        std::map<std::string, std::string> env = {
+            {"AUTO_COMPACT_ENABLED", "0"},
+            {"DISABLE_AUTOUPDATER", "1"},              // 官方已知键
+            {"NOT_A_REAL_VAR_XX", "75"},               // 别名表外、官方清单外未知键
+        };
         auto r = applyEnvAliases(env);
         DOCTEST_CHECK_EQ(r.env.size(), 3u);
         DOCTEST_CHECK_EQ(r.env["DISABLE_AUTO_COMPACT"], std::string("1"));
@@ -264,9 +262,10 @@ REGISTER_TEST(provider_config_official_keys_derived_from_hints,
     }
     // DevDesk 自造的 FABLE 扩展键（不在 hints）→ 仍不标未识别
     {
-        EnvMap env;
-        env["ANTHROPIC_DEFAULT_FABLE_MODEL"] = "m-fable";
-        env["ANTHROPIC_DEFAULT_FABLE_MODEL_NAME"] = "Fable 显示名";
+        std::map<std::string, std::string> env = {
+            {"ANTHROPIC_DEFAULT_FABLE_MODEL", "m-fable"},
+            {"ANTHROPIC_DEFAULT_FABLE_MODEL_NAME", "Fable 显示名"},
+        };
         auto r = applyEnvAliases(env);
         DOCTEST_CHECK(r.unrecognizedKeys.empty());
     }
@@ -346,9 +345,10 @@ REGISTER_TEST(provider_config_migration_upgrade,
         auto openR = core::data::SqliteDb::open(path);
         DOCTEST_REQUIRE(openR.isOk());
         auto& db = openR.value();
-        std::vector<core::data::Migration> oldMigrations;
-        oldMigrations.push_back(core::migrations::kCreateInitialTables);
-        oldMigrations.push_back(core::migrations::kSeedDefaultTodoColumns);
+        std::vector<core::data::Migration> oldMigrations = {
+            core::migrations::kCreateInitialTables,
+            core::migrations::kSeedDefaultTodoColumns,
+        };
         DOCTEST_REQUIRE(db.runMigrations(oldMigrations).isOk());
 
         auto ins = db.prepare(
@@ -1130,10 +1130,7 @@ REGISTER_TEST(provider_config_slot_table_import_and_reverse,
 REGISTER_TEST(provider_config_slot_table_json_and_labels,
               "provider_config: 槽位表 JSON 键与 UI 文案（slot table CPX-08）", {
     using namespace module::claude;
-    // REGISTER_TEST 实参不能有裸逗号：三条声明分开写
-    std::vector<std::string> labels;
-    std::vector<std::string> formLabels;
-    std::vector<std::string> jsonKeys;
+    std::vector<std::string> labels, formLabels, jsonKeys;
     for (const auto& m : modelSlotTable()) {
         // 单槽位填充 → 序列化含该行 JSON 键、反序列化回同一槽位、其余槽位仍空
         ModelsConfig mc;

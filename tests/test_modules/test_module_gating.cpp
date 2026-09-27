@@ -51,20 +51,6 @@ void writeRawConfig(const std::filesystem::path& file,
     f << json;
 }
 
-// REGISTER_TEST 宏体内不能出现裸逗号（花括号初始化列表会被预处理器当成
-// 宏参数分隔符），全量 ID 清单放宏外（test_settings.cpp 同款约定）
-const char* const kAllModuleIds[] = {
-    module::settings::kModuleIdHome,      module::settings::kModuleIdMarkdown,
-    module::settings::kModuleIdTodo,      module::settings::kModuleIdClaudeProxy,
-    module::settings::kModuleIdSettings,
-};
-
-// 全启用时 Home 应渲染的全部卡片/按钮元素 ID（gating_home_all_on_unchanged）
-const char* const kHomeAllOnElementIds[] = {
-    "home.stat.tokens", "home.stat.notes", "home.stat.todo",
-    "home.stat.overdue", "home.stat.api", "home.recent",
-    "home.act.newnote", "home.act.newtodo", "home.act.claude"};
-
 } // namespace
 
 // ============ 1. enabledModules 配置 ============
@@ -73,7 +59,11 @@ REGISTER_TEST(gating_config_defaults, "gating: enabledModules 缺省全启用 + 
     using namespace module::settings;
     const SettingsConfig cfg;  // 默认构造 = 字段缺失的回退语义
     DOCTEST_CHECK_EQ(cfg.enabledModules.size(), static_cast<size_t>(5));
-    for (const char* id : kAllModuleIds) {
+    for (const char* id : {module::settings::kModuleIdHome,
+                           module::settings::kModuleIdMarkdown,
+                           module::settings::kModuleIdTodo,
+                           module::settings::kModuleIdClaudeProxy,
+                           module::settings::kModuleIdSettings}) {
         DOCTEST_CHECK(moduleEnabled(cfg, id));
     }
     // home/settings 从列表里删掉也恒启用（sanitized 强制补齐 + 谓词硬编码）
@@ -93,9 +83,7 @@ REGISTER_TEST(gating_config_roundtrip, "gating: enabledModules 保存-加载往�
     using namespace module::settings;
     const auto file = test_support::tempConfigFile(kCfgPrefix, "roundtrip");
     SettingsConfig cfg;
-    cfg.enabledModules.assign(1, kModuleIdMarkdown);
-    cfg.enabledModules.push_back(kModuleIdHome);
-    cfg.enabledModules.push_back(kModuleIdSettings);
+    cfg.enabledModules = {kModuleIdMarkdown, kModuleIdHome, kModuleIdSettings};
     const SettingsStore store(file);
     DOCTEST_CHECK(store.save(cfg).isOk());
     const SettingsConfig loaded = store.load();
@@ -167,10 +155,7 @@ REGISTER_TEST(gating_registration_respects_config, "gating: 关闭模块不注�
     using namespace module::settings;
     const auto file = test_support::tempConfigFile(kCfgPrefix, "registration");
     SettingsConfig cfg;
-    cfg.enabledModules.clear();
-    cfg.enabledModules.push_back(kModuleIdHome);
-    cfg.enabledModules.push_back(kModuleIdMarkdown);
-    cfg.enabledModules.push_back(kModuleIdSettings);
+    cfg.enabledModules = {kModuleIdHome, kModuleIdMarkdown, kModuleIdSettings};
     DOCTEST_CHECK(SettingsStore(file).save(cfg).isOk());
 
     // 以下复刻 main.cpp getRouter() 的装配门控
@@ -295,7 +280,9 @@ REGISTER_TEST(gating_home_all_on_unchanged, "gating: 全注册时 Home 与现状
     mod->compose(ui, screen);
     ui.end();
 
-    for (const char* id : kHomeAllOnElementIds) {
+    for (const char* id : {"home.stat.tokens", "home.stat.notes", "home.stat.todo",
+                           "home.stat.overdue", "home.stat.api", "home.recent",
+                           "home.act.newnote", "home.act.newtodo", "home.act.claude"}) {
         DOCTEST_CHECK(ui.find(id) != nullptr);
     }
     DOCTEST_CHECK(ui.find("home.stats.alloff") == nullptr);

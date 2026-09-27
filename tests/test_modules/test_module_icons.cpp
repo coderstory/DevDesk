@@ -31,7 +31,7 @@ struct Entry {
     const char* name;
 };
 
-// 实际断言体（REGISTER_TEST 宏体内不能出现裸逗号，逻辑放函数里）
+// 实际断言体（5 个模块共用的单模块图标断言）
 bool checkOneIcon(::core::Module* (*factory)(), unsigned int codepoint) {
     std::unique_ptr<::core::Module> mod(factory());
     DOCTEST_REQUIRE(mod != nullptr);

@@ -819,9 +819,6 @@ REGISTER_TEST(pet_default_skin_m2_frames, "pet: 占位皮肤含 M2 帧 + 旧版�
     return true;
 });
 
-// 内置皮肤名（宏外声明：REGISTER_TEST 宏体内不能出现裸逗号）
-const char* kNewBuiltinSkins[] = {"robot", "ghost"};
-
 REGISTER_TEST(pet_builtin_skins, "pet: 两款内置皮肤（四态帧/互异/发现/短语表/替换保留）", {
     using namespace module::pet;
     const PetsDirEnv pets("builtin_skins");
@@ -837,7 +834,7 @@ REGISTER_TEST(pet_builtin_skins, "pet: 两款内置皮肤（四态帧/互异/发
     }
     // 两款内置皮肤全部载入
     std::vector<PetSkin> skins;
-    for (const char* name : kNewBuiltinSkins) {
+    for (const char* name : {"robot", "ghost"}) {
         auto r = loadSkin(root / name);
         DOCTEST_CHECK_MESSAGE(r.isOk(), r.isFail() ? r.errorMessage() : name);
         if (r.isOk()) {
@@ -939,9 +936,9 @@ REGISTER_TEST(pet_discover_skins, "pet: 皮肤发现（下拉/换肤菜单的数
 });
 
 // ---- 审计 CP-04：皮肤根候选不再看环境变量 ----
-// 辅助（REGISTER_TEST 宏体不能有裸逗号，照本文件先例拆出函数）：候选里是否含
-// 「安装目录」那条（exe 旁 assets/pets）。exe 目录解析失败时本就没有该候选，
-// 此时不评（返回 true，与 skinRootCandidates 的跳过语义一致）
+// 辅助：候选里是否含「安装目录」那条（exe 旁 assets/pets）。exe 目录解析
+// 失败时本就没有该候选，此时不评（返回 true，与 skinRootCandidates 的跳过
+// 语义一致）
 static bool rootsContainPackaged(const std::vector<std::filesystem::path>& roots) {
     const std::filesystem::path exeDir = core::paths::executableDir();
     if (exeDir.empty()) return true;
@@ -1026,18 +1023,6 @@ REGISTER_TEST(pet_apply_skin_and_reset, "pet: applyPetSkin 校验/持久化 + �
 // +10/-5/+10 振荡；锚点方案：首个拖拽事件捕获锚点（窗口原地起步），
 // 此后窗口逐事件精确移动光标屏幕位移（1:1，无振荡无累积漂移）。
 
-// 光标轨迹步进（REGISTER_TEST 宏体内不能有含逗号的初始化列表，拆出函数）
-namespace {
-int petDragStepX(int i) {
-    static const int dx[5] = {8, 5, 5, 7, 6};
-    return dx[i];
-}
-int petDragStepY(int i) {
-    static const int dy[5] = {0, 3, 4, 2, 5};
-    return dy[i];
-}
-} // namespace
-
 REGISTER_TEST(pet_drag_anchor_follow, "pet: 拖拽锚点跟随——1:1 跟光标，无反馈抖动", {
     module::pet::PetDragAnchor anchor;
     int winX = 500;
@@ -1048,9 +1033,12 @@ REGISTER_TEST(pet_drag_anchor_follow, "pet: 拖拽锚点跟随——1:1 跟光�
     int prevTargetY = winY;
     int prevScreenXi = static_cast<int>(screenX);
     int prevScreenYi = static_cast<int>(screenY);
+    // 光标轨迹步进（模拟真机轨迹：单调右移 + 下移）
+    const int stepX[5] = {8, 5, 5, 7, 6};
+    const int stepY[5] = {0, 3, 4, 2, 5};
     for (int i = 0; i < 5; ++i) {
-        screenX += petDragStepX(i);
-        screenY += petDragStepY(i);
+        screenX += stepX[i];
+        screenY += stepY[i];
         // GLFW 会报的窗口内光标位（窗口移动后参考系已变——抖动根源所在）
         const double relX = screenX - static_cast<double>(winX);
         const double relY = screenY - static_cast<double>(winY);
@@ -1140,8 +1128,8 @@ REGISTER_TEST(pet_pos_clamp_work_area, "pet: 已知坐标钳进工作区（审�
     return true;
 });
 
-// 帧名穿越拒绝判定（合法皮肤包/单点扩展名必须放行）。辅助函数绕开
-// REGISTER_TEST 宏体裸逗号限制
+// 帧名穿越拒绝判定（合法皮肤包/单点扩展名必须放行）。辅助函数避免 9 处
+// 断言重复拼 JSON
 static bool frameNameRejected(const char* frameName) {
     const std::string json =
         std::string("{\"states\":{\"idle\":[\"") + frameName + "\"]}}";
@@ -1181,14 +1169,6 @@ REGISTER_TEST(pet_skin_frame_name_traversal, "pet: 帧名路径穿越拒绝（�
 
 // ---- 审计 [25]：退出二段确认 ----
 
-// 嵌套路径构造（宏体裸逗号限制，见文件头注释）
-static std::vector<int> petExitNestedPath() {
-    std::vector<int> p;
-    p.push_back(2);
-    p.push_back(1);
-    return p;
-}
-
 REGISTER_TEST(pet_exit_confirm_menu, "pet: 退出确认菜单文本结构（审计[25]）", {
     const auto items = module::pet::petExitConfirmItems();
     DOCTEST_REQUIRE_EQ(items.size(), static_cast<size_t>(4));
@@ -1215,7 +1195,7 @@ REGISTER_TEST(pet_exit_confirm_decision, "pet: 只有「确认退出」路径触
     DOCTEST_CHECK(!petExitConfirmChosen(std::vector<int>{3}));
     DOCTEST_CHECK(!petExitConfirmChosen(std::vector<int>{0}));
     DOCTEST_CHECK(!petExitConfirmChosen(std::vector<int>{1}));
-    DOCTEST_CHECK(!petExitConfirmChosen(petExitNestedPath()));
+    DOCTEST_CHECK(!petExitConfirmChosen(std::vector<int>{2, 1}));
     // 空选择（Esc/点别处/平台不支持）→ 不退
     DOCTEST_CHECK(!petExitConfirmChosen(std::vector<int>{}));
     return true;
@@ -1225,38 +1205,19 @@ REGISTER_TEST(pet_exit_confirm_decision, "pet: 只有「确认退出」路径触
 
 namespace {
 
-// 工作区 mock 构造（REGISTER_TEST 宏体不能有含逗号的初始化列表，照
-// frameNameRejected 先例拆出）
-module::pet::PetWorkArea mockArea(int x, int y, int w, int h) {
-    module::pet::PetWorkArea a;
-    a.x = x;
-    a.y = y;
-    a.width = w;
-    a.height = h;
-    return a;
-}
-
 // 左副屏布局：主屏 [0,1920) + 副屏 [-1920,0)（负坐标区）
 std::vector<module::pet::PetWorkArea> dualMonitorLeft() {
-    std::vector<module::pet::PetWorkArea> v;
-    v.push_back(mockArea(0, 0, 1920, 1080));
-    v.push_back(mockArea(-1920, 0, 1920, 1080));
-    return v;
+    return {{0, 0, 1920, 1080}, {-1920, 0, 1920, 1080}};
 }
 
 // 右副屏布局：主屏 [0,1920) + 副屏 [1920,3840)
 std::vector<module::pet::PetWorkArea> dualMonitorRight() {
-    std::vector<module::pet::PetWorkArea> v;
-    v.push_back(mockArea(0, 0, 1920, 1080));
-    v.push_back(mockArea(1920, 0, 1920, 1080));
-    return v;
+    return {{0, 0, 1920, 1080}, {1920, 0, 1920, 1080}};
 }
 
 // 仅主屏（M1 形态回归基准）
 std::vector<module::pet::PetWorkArea> primaryOnly() {
-    std::vector<module::pet::PetWorkArea> v;
-    v.push_back(mockArea(0, 0, 1920, 1080));
-    return v;
+    return {{0, 0, 1920, 1080}};
 }
 
 } // namespace
@@ -1293,9 +1254,8 @@ REGISTER_TEST(pet_multi_monitor_clamp, "pet: 多显示器按位置选屏钳制�
     DOCTEST_CHECK_EQ(headless.first, -50);
     DOCTEST_CHECK_EQ(headless.second, -60);
     // 无效块（宽高 0）不参与选屏：[无效, 主屏] 布局下仍按主屏钳
-    std::vector<module::pet::PetWorkArea> withInvalid;
-    withInvalid.push_back(mockArea(5000, 5000, 0, 0));
-    withInvalid.push_back(mockArea(0, 0, 1920, 1080));
+    std::vector<module::pet::PetWorkArea> withInvalid = {{5000, 5000, 0, 0},
+                                                         {0, 0, 1920, 1080}};
     const auto skipInvalid = clampPetPosToMonitors(99999, 300, withInvalid, 128, 128);
     DOCTEST_CHECK_EQ(skipInvalid.first, 1792);
     return true;

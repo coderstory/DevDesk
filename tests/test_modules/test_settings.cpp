@@ -573,11 +573,7 @@ REGISTER_TEST(settings_module_compose_renders, "settings: module compose builds 
     PruneEnv env("composetab");
     std::unique_ptr<::core::Module> mod(create_settings_module());
     mod->onStart();
-    // 注意：REGISTER_TEST 宏体内不能出现裸逗号（花括号初始化列表会被预处理器
-    // 当成宏参数分隔符），Screen 用字段赋值构造
-    eui::Screen screen;
-    screen.width = 1600.0f;
-    screen.height = 1000.0f;
+    eui::Screen screen{1600.0f, 1000.0f};
     eui::Ui ui;
     auto frame = [&](const char* page) {
         ui.begin(page);
@@ -1078,17 +1074,6 @@ REGISTER_TEST(settings_takeover_warn_unmanaged,
 
 // ---- 窗口效果三档（磨砂 Phase D）----
 
-// REGISTER_TEST 宏体内不能出现裸逗号，档位数组放宏外
-namespace {
-bool windowEffectRoundtripOne(module::settings::SettingsStore& store,
-                              const char* mode) {
-    module::settings::SettingsConfig cfg;
-    cfg.windowEffect = mode;
-    if (store.save(cfg).isFail()) return false;
-    return store.load().windowEffect == mode;
-}
-} // namespace
-
 REGISTER_TEST(settings_window_effect_defaults_and_roundtrip, "settings: windowEffect 默认 off + 三档读写往返", {
     const auto path = test_support::tempConfigFile(kCfgPrefix, "wineffect");
     removeQuietly(path);
@@ -1103,9 +1088,14 @@ REGISTER_TEST(settings_window_effect_defaults_and_roundtrip, "settings: windowEf
     DOCTEST_CHECK_EQ(store.load().windowEffect, std::string(module::settings::kWindowEffectOff));
 
     // 三档逐一保存-读回
-    DOCTEST_CHECK(windowEffectRoundtripOne(store, module::settings::kWindowEffectOff));
-    DOCTEST_CHECK(windowEffectRoundtripOne(store, module::settings::kWindowEffectTranslucent));
-    DOCTEST_CHECK(windowEffectRoundtripOne(store, module::settings::kWindowEffectFrosted));
+    for (const char* mode : {module::settings::kWindowEffectOff,
+                             module::settings::kWindowEffectTranslucent,
+                             module::settings::kWindowEffectFrosted}) {
+        module::settings::SettingsConfig cfg;
+        cfg.windowEffect = mode;
+        DOCTEST_CHECK(store.save(cfg).isOk() &&
+                      store.load().windowEffect == std::string(mode));
+    }
 
     // 非法值：save 前 sanitized 收敛为 off；手写进文件同样收敛
     module::settings::SettingsConfig bad;
@@ -1216,11 +1206,10 @@ REGISTER_TEST(settings_gated_proxy_card_hidden, "settings: claude 模块关闭 �
     PruneEnv env("gateclaude");
     // claude_proxy 关闭（markdown/todo 开）
     module::settings::SettingsConfig cfg;
-    cfg.enabledModules.clear();
-    cfg.enabledModules.push_back(module::settings::kModuleIdHome);
-    cfg.enabledModules.push_back(module::settings::kModuleIdMarkdown);
-    cfg.enabledModules.push_back(module::settings::kModuleIdTodo);
-    cfg.enabledModules.push_back(module::settings::kModuleIdSettings);
+    cfg.enabledModules = {module::settings::kModuleIdHome,
+                          module::settings::kModuleIdMarkdown,
+                          module::settings::kModuleIdTodo,
+                          module::settings::kModuleIdSettings};
     DOCTEST_REQUIRE(module::settings::SettingsStore(env.cfgPath).save(cfg).isOk());
 
     std::unique_ptr<::core::Module> mod(create_settings_module());
@@ -1253,11 +1242,10 @@ REGISTER_TEST(settings_gated_directory_card_hidden, "settings: markdown 模块�
     PruneEnv env("gatemd");
     // markdown 关闭（claude 开）
     module::settings::SettingsConfig cfg;
-    cfg.enabledModules.clear();
-    cfg.enabledModules.push_back(module::settings::kModuleIdHome);
-    cfg.enabledModules.push_back(module::settings::kModuleIdTodo);
-    cfg.enabledModules.push_back(module::settings::kModuleIdClaudeProxy);
-    cfg.enabledModules.push_back(module::settings::kModuleIdSettings);
+    cfg.enabledModules = {module::settings::kModuleIdHome,
+                          module::settings::kModuleIdTodo,
+                          module::settings::kModuleIdClaudeProxy,
+                          module::settings::kModuleIdSettings};
     DOCTEST_REQUIRE(module::settings::SettingsStore(env.cfgPath).save(cfg).isOk());
 
     std::unique_ptr<::core::Module> mod(create_settings_module());
@@ -2034,11 +2022,10 @@ REGISTER_TEST(settings_ths01_fs_snapshot,
     PruneEnv env("ths01");
     // 模块插拔门控：目录卡 + 桌宠卡都要渲染（pet 不在默认启用集合里）
     module::settings::SettingsConfig cfg;
-    cfg.enabledModules.clear();
-    cfg.enabledModules.push_back(module::settings::kModuleIdHome);
-    cfg.enabledModules.push_back(module::settings::kModuleIdMarkdown);
-    cfg.enabledModules.push_back(module::settings::kModuleIdSettings);
-    cfg.enabledModules.push_back(module::settings::kModuleIdPet);
+    cfg.enabledModules = {module::settings::kModuleIdHome,
+                          module::settings::kModuleIdMarkdown,
+                          module::settings::kModuleIdSettings,
+                          module::settings::kModuleIdPet};
     DOCTEST_REQUIRE(module::settings::SettingsStore(env.cfgPath).save(cfg).isOk());
 
     const auto notesDir = test_temp::tempPath("devdesk_ths01_notes");

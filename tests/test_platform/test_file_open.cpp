@@ -135,11 +135,8 @@ REGISTER_TEST(file_open_win_wide_to_utf8,
                      std::string("\xE4\xB8\xAD\xE6\x96\x87 note.md"));
 
     // 编码链 + 选参数端到端：宽中文 argv[1] → UTF-8 → selectOpenFileArg 返回同串
-    //（不用花括号初始化列表：REGISTER_TEST 宏按逗号切参，见本仓库既有约定）
     const std::wstring fileW = L"D:/\x7B14\x8BB0\x672C/note.md";
-    std::vector<std::string> argvUtf8;
-    argvUtf8.push_back("devdesk.exe");
-    argvUtf8.push_back(wideToUtf8ForTest(fileW));
+    const std::vector<std::string> argvUtf8 = {"devdesk.exe", wideToUtf8ForTest(fileW)};
     DOCTEST_CHECK_EQ(platform::file_open::selectOpenFileArg(argvUtf8),
                      wideToUtf8ForTest(fileW));
     return true;

@@ -98,12 +98,12 @@ eui::KeyEvent ctrlArrow(eui::InputKey key) {
 REGISTER_TEST(todo_ui_move_logic,
               "todo_ui: computeKeyboardMove 上移/下移/边界/空洞", {
     using module::todo::ui::computeKeyboardMove;
-    // 注意：REGISTER_TEST 宏体内不能出现裸逗号，vector 用 push_back 构造
-    std::vector<module::todo::Task> tasks;
-    tasks.push_back(makeTask(1, 10, 0));
-    tasks.push_back(makeTask(2, 10, 1));
-    tasks.push_back(makeTask(3, 10, 2));
-    tasks.push_back(makeTask(4, 20, 0));  // 另一列，不应干扰
+    std::vector<module::todo::Task> tasks = {
+        makeTask(1, 10, 0),
+        makeTask(2, 10, 1),
+        makeTask(3, 10, 2),
+        makeTask(4, 20, 0),   // 另一列，不应干扰
+    };
 
     // 中间任务上移：目标 position = 上方任务的 position（它会挤下去）
     auto up = computeKeyboardMove(tasks, 2, true);
@@ -128,10 +128,11 @@ REGISTER_TEST(todo_ui_move_logic,
     DOCTEST_CHECK(!computeKeyboardMove(tasks, 4, false).has_value());
 
     // position 带空洞（moveTask 留洞后的真实形态）：按真实 position 计算
-    std::vector<module::todo::Task> gappy;
-    gappy.push_back(makeTask(11, 30, 0));
-    gappy.push_back(makeTask(12, 30, 2));
-    gappy.push_back(makeTask(13, 30, 5));
+    std::vector<module::todo::Task> gappy = {
+        makeTask(11, 30, 0),
+        makeTask(12, 30, 2),
+        makeTask(13, 30, 5),
+    };
     auto gUp = computeKeyboardMove(gappy, 12, true);
     DOCTEST_REQUIRE(gUp.has_value());
     DOCTEST_CHECK_EQ(gUp->position, 0);           // 挪到 pos 0 任务之前
@@ -501,14 +502,9 @@ REGISTER_TEST(todo_ui_move_appends_to_end,
         ui.end();
         ui.layout(screen);
     };
-    // Element::frame（LayoutRect）→ 回调参数的 Rect（宏体内不能出现裸逗号，逐字段赋值）
+    // Element::frame（LayoutRect）→ 回调参数的 Rect
     auto boundsOf = [](const core::dsl::Element* e) {
-        eui::Rect r;
-        r.x = e->frame.x;
-        r.y = e->frame.y;
-        r.width = e->frame.width;
-        r.height = e->frame.height;
-        return r;
+        return eui::Rect{e->frame.x, e->frame.y, e->frame.width, e->frame.height};
     };
 
     // 拖拽（W8 真 drop 语义）：press 记锚点 → drag 中间态 → release 按落点落库。
@@ -1900,14 +1896,12 @@ REGISTER_TEST(todo_ui_feature_pure_helpers,
     // 搜索过滤：命中 id 集内保留且顺序不变；未激活 → 全保留。
     // 审计 perf [40]：命中表为 unordered_set——过滤只取决于「是否命中」，
     // 与旧 vector+std::find 版结果集完全一致（下面双序构建锁这一点）
-    std::vector<module::todo::Task> tasks;
-    tasks.push_back(makeTask(1, 10, 0));
-    tasks.push_back(makeTask(2, 10, 1));
-    tasks.push_back(makeTask(3, 20, 0));
-    std::vector<const module::todo::Task*> ptrs;
-    ptrs.push_back(&tasks[0]);
-    ptrs.push_back(&tasks[1]);
-    ptrs.push_back(&tasks[2]);
+    std::vector<module::todo::Task> tasks = {
+        makeTask(1, 10, 0),
+        makeTask(2, 10, 1),
+        makeTask(3, 20, 0),
+    };
+    std::vector<const module::todo::Task*> ptrs = {&tasks[0], &tasks[1], &tasks[2]};
     std::unordered_set<int64_t> matched;
     matched.insert(3);
     matched.insert(2);

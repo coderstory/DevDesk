@@ -10,7 +10,6 @@
 //   5. styledMenu 组件纯函数：flatten（行序/path 对齐原生 contextMenuCommandPaths
 //      语义）、panelHeight、clampPosition（越界钳制/上翻/无头兜底）
 //   6. showStyledMenu 参数守卫：空项/无可选行 → false（调用方降级原生）
-// REGISTER_TEST 宏体内不能有裸逗号（预处理切参），容器初始化一律走 push_back。
 #include "doctest.h"
 
 #include "core/tray_menu_spec.h"
@@ -43,10 +42,7 @@ REGISTER_TEST(menuBeautifyTraySpecStructure,
 // ---- 2. 桌宠右键菜单结构 ----
 
 REGISTER_TEST(menuBeautifyPetMenuItemsWithSkins, "menu: 桌宠菜单含换肤子组（5 顶层项）", {
-    std::vector<std::string> skins;
-    skins.push_back("duck");
-    skins.push_back("slime");
-    skins.push_back("robot");
+    const std::vector<std::string> skins = {"duck", "slime", "robot"};
     const auto items = module::pet::petContextMenuItems(skins);
     DOCTEST_REQUIRE_EQ(items.size(), static_cast<size_t>(5));
     DOCTEST_CHECK_EQ(items[0].text, std::string("换肤"));

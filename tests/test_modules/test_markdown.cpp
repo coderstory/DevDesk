@@ -206,13 +206,12 @@ NoteMeta makeNote(const std::string& path, int64_t mtime) {
 
 REGISTER_TEST(md_tree_grouping, "md_tree: 根组常显置顶 + 顶层文件夹/二级文件分组", {
     // mtime 倒序（listAll 语义），同目录内保持该序。
-    // 注意：REGISTER_TEST 宏按逗号切参，vector 初始化列表里的逗号会破坏宏
-    // 展开（编译报 "passed 7 arguments"），必须用 push_back —— W8 踩坑。
-    std::vector<NoteMeta> notes;
-    notes.push_back(makeNote("inbox/b.md", 4));
-    notes.push_back(makeNote("work/a.md", 2));
-    notes.push_back(makeNote("root.md", 5));
-    notes.push_back(makeNote("inbox/c.md", 3));
+    std::vector<NoteMeta> notes = {
+        makeNote("inbox/b.md", 4),
+        makeNote("work/a.md", 2),
+        makeNote("root.md", 5),
+        makeNote("inbox/c.md", 3),
+    };
     const auto rows = buildTreeRows(notes, {}, {});
     // W9：根组「根目录」常显且置顶，其后一级目录按字母序（inbox, work）
     DOCTEST_CHECK_EQ(rows.size(), static_cast<size_t>(7));
@@ -237,11 +236,12 @@ REGISTER_TEST(md_tree_grouping, "md_tree: 根组常显置顶 + 顶层文件夹/�
 })
 
 REGISTER_TEST(md_tree_collapse_and_deep_files, "md_tree: 收起隐藏文件 / 更深层文件显示剩余子路径", {
-    std::vector<NoteMeta> notes;
-    notes.push_back(makeNote("a/deep/more/x.md", 1));  // 三级夹下的文件
-    notes.push_back(makeNote("a/deep/y.md", 2));
-    notes.push_back(makeNote("a/top.md", 3));
-    notes.push_back(makeNote("solo.md", 4));
+    std::vector<NoteMeta> notes = {
+        makeNote("a/deep/more/x.md", 1),   // 三级夹下的文件
+        makeNote("a/deep/y.md", 2),
+        makeNote("a/top.md", 3),
+        makeNote("solo.md", 4),
+    };
     // 收起一级夹 a → a 的文件行与子夹行一起隐藏；根目录组不受影响（常显置顶）
     const auto collapsed = buildTreeRows(notes, {}, {"a"});
     DOCTEST_CHECK_EQ(collapsed.size(), static_cast<size_t>(3));
@@ -2178,12 +2178,6 @@ REGISTER_TEST(md_module_split_scroll_cache_equivalence,
 //   ④ 文首插入一个与已测 paraA 逐字同源的段落块后，深层未变块首行读数
 //      位移 == 插入块高（= s_A×lc_A）+ gap（锚点跟随块几何，不按节摊分漂移）
 // 编辑器行高 = editorFontSize()×1.2，与模块 kInputLineHeightFactor 同步。
-// 注：REGISTER_TEST 是宏，body 内裸逗号（如 std::map<int, float> 的模板
-// 逗号）会被当宏参数分隔——逗号一律藏进括号或类型别名。
-namespace {
-using IntFloatMap = std::map<int, float>;
-} // namespace
-
 REGISTER_TEST(md_module_split_block_anchor_precision,
               "markdown_module: 双栏同步滚动块模型精确锚（headless，Phase 3 ④）", {
     std::string text = "# Section\n\n";
@@ -2238,7 +2232,7 @@ REGISTER_TEST(md_module_split_block_anchor_precision,
 
     using IS = components::input_detail::InputModel::InputState;
     const float lineH = core::theme::editorFontSize() * 1.2f;
-    IntFloatMap probeCache;
+    std::map<int, float> probeCache;
     auto atLine = [&](int line) -> float {
         auto it = probeCache.find(line);
         if (it != probeCache.end()) return it->second;
@@ -2439,8 +2433,7 @@ REGISTER_TEST(md_module_split_block_click_hover,
 
     using IS = components::input_detail::InputModel::InputState;
     auto tap = [&](const auto* el, float fracY) {
-        // REGISTER_TEST 宏体：逗号藏进括号（C++20 聚合圆括号初始化）
-        eui::Rect bounds(0.0, 0.0, 100.0, 100.0);
+        eui::Rect bounds{0.0, 0.0, 100.0, 100.0};
         eui::PointerEvent down;
         down.action = eui::PointerAction::Press;
         down.x = 50.0;
@@ -2658,7 +2651,7 @@ REGISTER_TEST(md_editor_focus_target_is_hit,
     DOCTEST_REQUIRE(hit->onRelease != nullptr);
 
     // 点渲染块（mouseArea 的 onTap = onPress + onRelease，与既有用例同款驱动）
-    eui::Rect bounds(0.0, 0.0, 100.0, 100.0);
+    eui::Rect bounds{0.0, 0.0, 100.0, 100.0};
     eui::PointerEvent down;
     down.action = eui::PointerAction::Press;
     down.button = eui::PointerButton::Left;

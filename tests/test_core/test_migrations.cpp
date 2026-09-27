@@ -178,11 +178,12 @@ REGISTER_TEST(migrate_call_logs_usage_columns,
         auto openR = core::data::SqliteDb::open(path);
         DOCTEST_REQUIRE(openR.isOk());
         auto& db = openR.value();
-        std::vector<core::data::Migration> oldMigrations;
-        oldMigrations.push_back(core::migrations::kCreateInitialTables);
-        oldMigrations.push_back(core::migrations::kSeedDefaultTodoColumns);
-        oldMigrations.push_back(core::migrations::kClaudeProviderConfigColumns);
-        oldMigrations.push_back(core::migrations::kTodoColumnKind);
+        std::vector<core::data::Migration> oldMigrations = {
+            core::migrations::kCreateInitialTables,
+            core::migrations::kSeedDefaultTodoColumns,
+            core::migrations::kClaudeProviderConfigColumns,
+            core::migrations::kTodoColumnKind,
+        };
         DOCTEST_REQUIRE(db.runMigrations(oldMigrations).isOk());
 
         // profile_id 有外键（open 即 PRAGMA foreign_keys=ON）→ 先补 profile 行
@@ -368,12 +369,12 @@ REGISTER_TEST(migrate_archive_kind_v8,
         DOCTEST_CHECK_EQ(db.schemaVersion(), 9);
 
         struct Expect { const char* title; const char* kind; };
-        Expect expects[4];
-        // 外层括号保护初始化列表逗号被宏拆成实参（同文件上方用法）
-        expects[0] = (Expect{"待办", "todo"});
-        expects[1] = (Expect{"进行中", ""});     // 普通列：kind 仍 NULL
-        expects[2] = (Expect{"已完成", "done"});
-        expects[3] = (Expect{"已归档", "archive"});
+        Expect expects[4] = {
+            {"待办", "todo"},
+            {"进行中", ""},     // 普通列：kind 仍 NULL
+            {"已完成", "done"},
+            {"已归档", "archive"},
+        };
         for (const auto& e : expects) {
             auto q = db.prepare("SELECT kind FROM todo_columns WHERE title = ?");
             DOCTEST_REQUIRE(q.isOk());
