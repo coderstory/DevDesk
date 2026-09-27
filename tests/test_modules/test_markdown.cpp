@@ -19,6 +19,8 @@
 #include <eui/dsl.h>
 
 #include <algorithm>
+#include <chrono>
+#include <cmath>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
@@ -26,6 +28,7 @@
 #include <memory>
 #include <string>
 #include <system_error>
+#include <thread>
 #include <vector>
 
 extern "C" ::core::Module* create_markdown_module();
@@ -2886,5 +2889,284 @@ REGISTER_TEST(md_view_state_mode_live,
     DOCTEST_CHECK_EQ(MarkdownViewStateStore::sanitized(neg).mode, 0);
 
     fs::remove(file, ec);
+    return true;
+})
+
+// ==================== M2：实时态活动块单输入 + 内容贴合高度 ====================
+
+namespace {
+
+using MdInputState = components::input_detail::InputModel::InputState;
+
+// 无头驱动：Runtime 逐帧 compose（requestFocus 的帧末消费端在
+// Runtime::compose，plain Ui 不消费挂起请求）。pageId 恒定 —— state / 焦点 /
+// 元素 id 都以 pageId 起头做命名空间，换名等于换命名空间。
+struct MdLiveEnv {
+    core::dsl::Runtime rt;
+    eui::Ui* ui = nullptr;
+
+    template <typename Fn>
+    void frame(Fn&& body) {
+        rt.compose("mdlive", 1600.0f, 1000.0f,
+                   [&](eui::Ui& u, const eui::Screen&) {
+                       ui = &u;
+                       body(u);
+                   });
+    }
+};
+
+// 本帧渲染出的块包裹 id 列表（prefix = "md.live" / "md.preview"）——
+// 用于比较两种模式下「块序列」是否一致
+std::vector<int> renderedBlockIds(eui::Ui& ui, const std::string& prefix) {
+    std::vector<int> ids;
+    for (int i = 0; i < 16; ++i) {
+        if (ui.find(prefix + ".blk." + std::to_string(i)) != nullptr) {
+            ids.push_back(i);
+        }
+    }
+    return ids;
+}
+
+// 读回磁盘内容（保存链路 = 模块既有 400ms 防抖 + service_->write 整篇写）
+bool readFileBytes(const fs::path& path, std::string* out) {
+    std::ifstream ifs(path, std::ios::binary);
+    if (!ifs) return false;
+    ifs.seekg(0, std::ios::end);
+    const std::streamoff n = ifs.tellg();
+    if (n < 0) return false;
+    out->resize(static_cast<size_t>(n));
+    ifs.seekg(0, std::ios::beg);
+    if (n > 0) ifs.read(&(*out)[0], n);
+    return !ifs.fail();
+}
+
+// 打开左栏首个文件（单文件目录：node.0 = 根目录组，node.1 = 文件行）
+bool openFirstNote(eui::Ui& ui) {
+    const auto* row = ui.find("md.tree.node.1.row");
+    if (row == nullptr || row->onClick == nullptr) return false;
+    row->onClick();
+    return true;
+}
+
+// Ctrl+Shift+P（四态循环推进一次）
+bool cycleMode(::core::Module* mod) {
+    eui::KeyEvent p;
+    p.key = eui::InputKey::P;
+    p.modifiers.control = true;
+    p.modifiers.shift = true;
+    return mod->onKeyEvent(p);
+}
+
+} // namespace
+
+// M2 验收（spec §8.2 #4 + M0 C1/C4）：活动块 input 就位、内容贴合高度、
+// 不吃外层滚轮、聚焦打 .hit、非活动块仍是只读渲染
+REGISTER_TEST(md_module_live_active_input,
+              "markdown_module: 实时态活动块 input 就位 + 内容贴合高度（M2，headless）", {
+    const std::string text = "# T\n\npara one\npara two\npara three\n";
+    MdUiEnv env("liveinput");
+    DOCTEST_REQUIRE(env.db != nullptr);
+    DOCTEST_REQUIRE(writeTextFile(env.dir / "live2.md", text));
+
+    // 期望值口径 = 块模型（与实现同源）：把文档光标放在第二块块首
+    module::markdown::MdBlockModel model;
+    model.update(text);
+    DOCTEST_REQUIRE(model.blocks().size() >= 2);
+    const size_t cursorByte = model.blocks()[1].start;
+    const size_t k = model.blockIndexAt(cursorByte);
+    const std::string blockText =
+        text.substr(model.blocks()[k].start,
+                    model.blocks()[k].end - model.blocks()[k].start);
+    DOCTEST_CHECK(k == 1);
+
+    std::unique_ptr<::core::Module> mod(create_markdown_module());
+    mod->onStart();
+
+    eui::Screen screen;
+    screen.width = 1600.0f;
+    screen.height = 1000.0f;
+    MdLiveEnv e;
+    auto frame = [&] { e.frame([&](eui::Ui& u) { mod->compose(u, screen); }); };
+
+    frame();
+    DOCTEST_REQUIRE(openFirstNote(*e.ui));
+    frame();
+    DOCTEST_REQUIRE(e.ui->find("md.editor.input") != nullptr);
+    // 编辑态放入文档光标（进实时态时作为活动块锚的初始来源）
+    e.ui->state<MdInputState>("md.editor.input").cursor =
+        static_cast<int>(cursorByte);
+
+    DOCTEST_REQUIRE(cycleMode(mod.get()));   // → 实时
+    frame();
+    DOCTEST_REQUIRE(e.ui->find("md.live.scroll") != nullptr);
+    DOCTEST_CHECK(e.ui->find("md.editor.input") == nullptr);
+    DOCTEST_CHECK(e.ui->find("md.preview.scroll") == nullptr);
+
+    // ① 活动块源码态 input 就位：内容 = 活动块源码（逐字节）
+    const auto* input = e.ui->find("md.live.input");
+    DOCTEST_REQUIRE(input != nullptr);
+    DOCTEST_CHECK_EQ(e.ui->state<MdInputState>("md.live.input").text, blockText);
+
+    // ② 内容贴合高度（spec §8.2 #4）：同一 measureLines + 同字体族/字号/文本宽
+    //    （inset=10、未开滚动条 → 文本宽 = 声明宽 − 20），容差 ±1px
+    const float fs = core::theme::editorFontSize();
+    const float textW = std::max(0.0f, input->frame.width - 20.0f);
+    const int lines = static_cast<int>(
+        components::input_detail::InputModel::measureLines(
+            blockText, "Microsoft YaHei", fs, textW).size());
+    const float expectH = 20.0f + static_cast<float>(lines) * fs * 1.2f + 1.0f;
+    DOCTEST_CHECK(std::fabs(input->frame.height - expectH) <= 1.0f);
+
+    // ③ 真不变量（M0 C4）：贴合 ⇒ 组件不注册滚轮处理器（不吃外层滚轮、无内部
+    //    滚动条）。偏矮一像素都会让本行变红 —— 这就是 §5 #4 日志校验的判据
+    const auto* hit = e.ui->find("md.live.input.hit");
+    DOCTEST_REQUIRE(hit != nullptr);
+    DOCTEST_CHECK(hit->onScroll == nullptr);
+
+    // ④ M0 C1：聚焦目标是 .hit（组件判定 = ui.isFocused(id + ".hit")）
+    DOCTEST_CHECK(e.ui->isFocused("md.live.input.hit"));
+
+    // ⑤ input 建在活动块包裹内：包裹高 = 贴合高（不是渲染块高 H_k）
+    const auto* wrap = e.ui->find("md.live.blk.1");
+    DOCTEST_REQUIRE(wrap != nullptr);
+    DOCTEST_CHECK(std::fabs(wrap->frame.height - input->frame.height) <= 0.01f);
+    DOCTEST_CHECK(input->frame.y >= wrap->frame.y - 0.5f);
+    DOCTEST_CHECK(input->frame.y <= wrap->frame.y + wrap->frame.height + 0.5f);
+    // 活动块的 hit 覆盖层仍建（元素集合稳定）但关掉命中 —— 否则它建在 input
+    // 之后会抢走指针（打字点不进去）
+    const auto* activeHit = e.ui->find("md.live.blk.1.hit");
+    DOCTEST_REQUIRE(activeHit != nullptr);
+    DOCTEST_CHECK(activeHit->hitTestMode == core::dsl::HitTestMode::None);
+    // 非活动块的覆盖层仍是正常命中（hover / M3 点击定位）
+    const auto* otherHit = e.ui->find("md.live.blk.0.hit");
+    DOCTEST_REQUIRE(otherHit != nullptr);
+    DOCTEST_CHECK(otherHit->hitTestMode != core::dsl::HitTestMode::None);
+    // 非活动块仍是只读渲染（渲染内容在，input 只此一个）
+    DOCTEST_CHECK(e.ui->find("md.live.block.0") != nullptr);
+
+    mod->onStop();
+    return true;
+})
+
+// M2 验收（spec §8.2 #3）：实时态上行回写 == 编辑态做同一编辑（逐字节），
+// 且两种模式下块序列一致
+REGISTER_TEST(md_module_live_input_roundtrip,
+              "markdown_module: 实时态上行回写 == 编辑态同编辑（逐字节，M2）", {
+    const std::string text = "# T\n\npara one\npara two\n";
+    MdUiEnv env("liveround");
+    DOCTEST_REQUIRE(env.db != nullptr);
+
+    module::markdown::MdBlockModel model;
+    model.update(text);
+    DOCTEST_REQUIRE(model.blocks().size() >= 2);
+    const size_t cursorByte = model.blocks()[1].start;
+    const std::string expect =
+        text.substr(0, cursorByte) + "Z" + text.substr(cursorByte);
+
+    // 自动保存是 400ms 防抖 + 每帧 flush（停止输入后写盘）：睡过阈值再走一帧
+    // 让模块 compose（flush 在 compose 内）→ 读回磁盘做逐字节比对
+    auto idleFlush = [] {
+        std::this_thread::sleep_for(std::chrono::milliseconds(520));
+    };
+
+    // ---- 路径 A：实时态打字（真实 input 事件 → onChange → 拼文档 → 写盘）----
+    std::string liveDoc;
+    std::vector<int> liveBlocks;
+    {
+        DOCTEST_REQUIRE(writeTextFile(env.dir / "rt.md", text));
+        std::unique_ptr<::core::Module> mod(create_markdown_module());
+        mod->onStart();
+        eui::Screen screen;
+        screen.width = 1600.0f;
+        screen.height = 1000.0f;
+        MdLiveEnv e;
+        auto frame = [&](void) {
+            e.frame([&](eui::Ui& u) { mod->compose(u, screen); });
+        };
+        frame();
+        DOCTEST_REQUIRE(openFirstNote(*e.ui));
+        frame();
+        DOCTEST_REQUIRE(e.ui->find("md.editor.input") != nullptr);
+        e.ui->state<MdInputState>("md.editor.input").cursor =
+            static_cast<int>(cursorByte);
+        DOCTEST_REQUIRE(cycleMode(mod.get()));   // → 实时
+        frame();
+        const auto* hit = e.ui->find("md.live.input.hit");
+        DOCTEST_REQUIRE(hit != nullptr);
+        DOCTEST_REQUIRE(hit->onTextInput != nullptr);
+        // 换文本帧反向写入：活动 input 的块内光标落在活动块块首
+        DOCTEST_CHECK_EQ(e.ui->state<MdInputState>("md.live.input").cursor, 0);
+        core::TextInputEvent ev;
+        ev.text = "Z";
+        hit->onTextInput(ev);
+        frame();
+        // onChange 上行 + 分块器重算：活动 input 文本已含新字符
+        DOCTEST_CHECK_EQ(e.ui->state<MdInputState>("md.live.input").text,
+                         std::string("Z") +
+                             text.substr(model.blocks()[1].start,
+                                         model.blocks()[1].end -
+                                             model.blocks()[1].start));
+        idleFlush();
+        frame();   // 本帧 compose 内 flushEditorIfIdle → 整篇写盘
+        DOCTEST_REQUIRE(readFileBytes(env.dir / "rt.md", &liveDoc));
+        // 块序列（实时态渲染出的块包裹集合）
+        liveBlocks = renderedBlockIds(*e.ui, "md.live");
+        mod->onStop();
+    }
+
+    // ---- 路径 B：编辑态做同一编辑（同文档偏移、同插入文本）----
+    std::string editDoc;
+    std::vector<int> editBlocks;
+    {
+        DOCTEST_REQUIRE(writeTextFile(env.dir / "rt.md", text));  // 复位文档
+        // 路径 A 退出时处于实时态 → 视图状态文件会把 mode=3 带到下一次启动
+        //（M1 起四态都持久化）。本段要在【编辑态】做对照编辑，故清掉状态文件
+        {
+            std::error_code ec;
+            fs::remove(env.dir / "view_state.json", ec);
+        }
+        std::unique_ptr<::core::Module> mod(create_markdown_module());
+        mod->onStart();
+        eui::Screen screen;
+        screen.width = 1600.0f;
+        screen.height = 1000.0f;
+        MdLiveEnv e;
+        auto frame = [&](void) {
+            e.frame([&](eui::Ui& u) { mod->compose(u, screen); });
+        };
+        frame();
+        DOCTEST_REQUIRE(openFirstNote(*e.ui));
+        frame();
+        const auto* hit = e.ui->find("md.editor.input.hit");
+        DOCTEST_REQUIRE(hit != nullptr);
+        DOCTEST_REQUIRE(hit->onTextInput != nullptr);
+        e.ui->state<MdInputState>("md.editor.input").cursor =
+            static_cast<int>(cursorByte);
+        core::TextInputEvent ev;
+        ev.text = "Z";
+        hit->onTextInput(ev);
+        frame();
+        idleFlush();
+        frame();   // 本帧 compose 内 flushEditorIfIdle → 整篇写盘
+        DOCTEST_REQUIRE(readFileBytes(env.dir / "rt.md", &editDoc));
+        // 收块序列：切到预览态（与实时态同一套逐块渲染通路）
+        DOCTEST_REQUIRE(cycleMode(mod.get()));   // 实时
+        frame();
+        DOCTEST_REQUIRE(cycleMode(mod.get()));   // 双栏
+        frame();
+        DOCTEST_REQUIRE(cycleMode(mod.get()));   // 预览
+        frame();
+        DOCTEST_REQUIRE(e.ui->find("md.preview.scroll") != nullptr);
+        editBlocks = renderedBlockIds(*e.ui, "md.preview");
+        mod->onStop();
+    }
+
+    // ① 文档逐字节相等（实时回写 == 编辑态同编辑），且等于期望文档
+    DOCTEST_CHECK_EQ(liveDoc, editDoc);
+    // 失败时打出两侧原文（逐字节用例的差异定位）
+    DOCTEST_CHECK_MESSAGE(liveDoc == expect,
+                          "live=[" + liveDoc + "] expect=[" + expect + "]");
+    // ② 块序列一致（实时 vs 预览，同一文档同一分块器）
+    DOCTEST_CHECK(liveBlocks == editBlocks);
     return true;
 })
