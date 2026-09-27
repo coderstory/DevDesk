@@ -20,6 +20,7 @@
 
 #include "core/module_interface.h"
 #include "core/router.h"
+#include "core/service_locator.h"
 
 #include <eui/dsl.h>
 
@@ -133,6 +134,43 @@ const char* const kExpectedStartLog[] = {
 std::filesystem::path tempNotesDir() {
     return test_temp::tempPath("devdesk_test_assembly_notes");
 }
+
+// ---- R0/D6：跨模块服务的装配契约（core 只读服务定位器） ----
+// 需求（重构 spec R0 / 审计 D6）：跨模块服务由装配段在模块 onStart **之前**
+// 注册进 core 只读服务定位器（生产 = main.cpp 的 preStart 注册 ClaudeService
+// 适配器），模块 onStart 时即可解析；未注册时 requireService fail（模块显式
+// 处理缺失，而不是拿到裸空指针）。这里用桩接口验证**接线**，不引任何
+// module_* 头。
+class IProbeService {
+public:
+    virtual ~IProbeService() = default;
+    virtual int value() const = 0;
+};
+
+class ProbeService final : public IProbeService {
+public:
+    int value() const override { return 42; }
+};
+
+// onStart 里经定位器解析 IProbeService，把结果记进账本
+class ProbeConsumerModule : public ::core::Module {
+public:
+    explicit ProbeConsumerModule(std::vector<std::string>* log) : log_(log) {}
+    ::core::PageId pageId() const override { return ::core::PageId::Settings; }
+    std::string displayName() const override { return "probe"; }
+    std::string iconGlyph() const override { return "•"; }
+    void compose(eui::Ui&, const eui::Screen&) override {}
+    void onStart() override {
+        auto resolved = ::core::ServiceLocator::requireService<IProbeService>();
+        log_->push_back(resolved.isOk()
+                            ? "start:probe:" +
+                                  std::to_string(resolved.value()->value())
+                            : std::string("start:probe:missing"));
+    }
+
+private:
+    std::vector<std::string>* log_;
+};
 
 } // namespace
 
@@ -358,5 +396,49 @@ REGISTER_TEST(assembly_injects_empty_page_fallback,
     ui.end();
     // 占位真被画出来：id/文案逐字搬自 core 旧内联实现（"empty" / 「无页面」）
     DOCTEST_CHECK(ui.find("empty") != nullptr);
+    return true;
+})
+
+// R0/D6 装配契约：preStart 注册的服务 → 模块 onStart 可解析；未注册 → 显式缺失
+
+REGISTER_TEST(assembly_service_locator_registration_precedes_onstart,
+              "assembly: R0/D6 —— preStart 注册的服务在模块 onStart 可解析（未注册则显式缺失）", {
+    // 场景 1：preStart 里注册（生产 main.cpp 的适配器注册点同位置——严格早于
+    // 模块 onStart）→ 模块 onStart 解析到同一实例
+    {
+        test_support::ScopedAppRouter scoped;
+        ::core::Router router;
+        std::vector<std::string> log;
+        ProbeService probe;
+        ProbeConsumerModule probeModule(&log);
+        // RAII 记账：作用域结束把槽位还原成「未注册」（用例 fail-fast 提前
+        // return 也不会把栈上 probe 的地址留在进程级槽里）
+        ::core::ScopedService<IProbeService> restore{nullptr};
+
+        app::assembly::assembleAndStart(
+            router, markdownOnlyConfig(),
+            app::assembly::ModuleSet{nullptr, nullptr, nullptr, nullptr,
+                                     &probeModule},
+            [&probe] { ::core::ServiceLocator::set<IProbeService>(&probe); });
+
+        DOCTEST_REQUIRE_EQ(log.size(), static_cast<size_t>(1));
+        DOCTEST_CHECK_EQ(log[0], std::string("start:probe:42"));
+    }
+    // 场景 2：preStart 不注册 → 模块 onStart 拿到 fail（显式缺失，不是裸空指针）
+    {
+        test_support::ScopedAppRouter scoped;
+        ::core::Router router;
+        std::vector<std::string> log;
+        ProbeConsumerModule probeModule(&log);
+
+        app::assembly::assembleAndStart(
+            router, markdownOnlyConfig(),
+            app::assembly::ModuleSet{nullptr, nullptr, nullptr, nullptr,
+                                     &probeModule},
+            app::assembly::PreStartHook{});
+
+        DOCTEST_REQUIRE_EQ(log.size(), static_cast<size_t>(1));
+        DOCTEST_CHECK_EQ(log[0], std::string("start:probe:missing"));
+    }
     return true;
 })

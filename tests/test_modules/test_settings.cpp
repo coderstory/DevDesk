@@ -10,9 +10,11 @@
 #include "settings_config.h"
 
 #include "claude_service.h"
+#include "core/claude_proxy_service.h"
 #include "core/database.h"
 #include "core/module_interface.h"
 #include "core/paths.h"
+#include "core/service_locator.h"
 #include "core/theme.h"
 #include "platform/keychain.h"
 #include "platform/system_theme.h"
@@ -128,6 +130,174 @@ bool clickSettingsTab(::core::Module& mod, const eui::Screen& screen,
     if (hit == nullptr || hit->onClick == nullptr) return false;
     hit->onClick();
     return true;
+}
+
+// ---- R0/D6：设置页的代理运行面经 core 只读服务定位器取 ----
+// 设置页不再直呼 ClaudeService::global()（见源码护栏用例）；用例把自己 setGlobal
+// 的 service 用**生产同一个适配器**（core::GlobalClaudeProxyService，转发到
+// global()）暴露给定位器，生产 / 测试走同一条取用路径。RAII：作用域结束自动
+// 注销（用例体内 fail-fast 提前 return 也不留悬垂注册）。
+struct ScopedClaudeProxy {
+    ::core::GlobalClaudeProxyService<module::claude::ClaudeService> adapter;
+    ::core::ScopedService<::core::IClaudeProxyService> registration{&adapter};
+};
+
+// ==================== R0 护栏（源码级） ====================
+// 需求（重构 spec R0 / 审计 D6/D7）两条：
+//   D6 —— settings_module.cpp 不得再直连 ClaudeService 单例：零
+//        `claude_service.h`、零 `module::claude`、**代码里**零 `ClaudeService`
+//        （注释里的历史说明允许 → 逐行剥掉 `//` 之后的部分再查）；同时必须
+//        真的经 core 只读服务定位器取（防「解耦 = 把功能删了」）。
+//   D7 —— 代理端口常量单一来源 = core/proxy_port.h：字面量只在该头定义，
+//        两个消费方（settings_config.h / claude_service.h）只从 core 取。
+// 仓库根靠 cwd 上溯（**不用** __FILE__：ccache 会把绝对路径相对化，TIN-01
+// 教训）；定位失败返回明确报告，不静默绿。
+
+std::filesystem::path findRepoRoot() {
+    std::error_code ec;
+    std::filesystem::path dir = std::filesystem::current_path(ec);
+    if (ec) return {};
+    for (int up = 0; up < 8; ++up) {
+        if (std::filesystem::exists(dir / "src" / "core" / "proxy_port.h", ec) &&
+            std::filesystem::exists(dir / "tests" / "CMakeLists.txt", ec)) {
+            return dir;
+        }
+        const std::filesystem::path parent = dir.parent_path();
+        if (parent == dir) break;  // 已到根
+        dir = parent;
+    }
+    return {};
+}
+
+std::string readWholeFile(const std::filesystem::path& path) {
+    std::ifstream in(path, std::ios::binary);
+    if (!in) return {};
+    return std::string(std::istreambuf_iterator<char>(in),
+                       std::istreambuf_iterator<char>());
+}
+
+// 逐行扫针，命中拼成「相对路径:行号: 行内容」；stripLineComment=true 时先剥掉
+// 行内 `//` 之后的部分（注释豁免——注释里点名历史机制是有意保留的说明）
+std::vector<std::string> scanFileForTokens(
+    const std::filesystem::path& root, const std::string& relPath,
+    const std::vector<std::string>& needles, bool stripLineComment) {
+    std::vector<std::string> hits;
+    std::ifstream in(root / relPath);
+    if (!in) {
+        hits.push_back(relPath + ":0: 读不到该文件（护栏无法取证）");
+        return hits;
+    }
+    std::string line;
+    int lineNo = 0;
+    while (std::getline(in, line)) {
+        ++lineNo;
+        std::string code = line;
+        if (stripLineComment) {
+            const auto pos = code.find("//");
+            if (pos != std::string::npos) code.erase(pos);
+        }
+        for (const std::string& needle : needles) {
+            if (code.find(needle) != std::string::npos) {
+                hits.push_back(relPath + ":" + std::to_string(lineNo) + ": " +
+                               line);
+                break;
+            }
+        }
+    }
+    return hits;
+}
+
+// 空串 = 通过；非空 = 失败报告（含逐条命中）
+std::string r0CouplingGuardReport() {
+    const std::filesystem::path root = findRepoRoot();
+    if (root.empty()) {
+        std::error_code ec;
+        return "护栏无法定位仓库根（cwd=" +
+               std::filesystem::current_path(ec).string() +
+               "）：请从仓库根或 build/ 下运行 devdesk_tests —— 护栏靠 cwd 上溯"
+               "定位（不能用 __FILE__：ccache 会把绝对路径相对化，TIN-01 教训）";
+    }
+    const std::string rel = "src/module_settings/settings_module.cpp";
+
+    std::string report;
+    // 1) 硬针：跨模块 include 与限定名，注释里也不许出现（历史说明不点名它们）
+    for (const std::string& hit : scanFileForTokens(
+             root, rel, {"claude_service.h", "module::claude"}, false)) {
+        report += "设置页又直接引用了兄弟模块 claude：" + hit + "\n";
+    }
+    // 2) 软针：类型名本身——按行剥注释后再查（代码里出现即违规）
+    for (const std::string& hit :
+         scanFileForTokens(root, rel, {"ClaudeService"}, true)) {
+        report += "设置页代码里又直呼了 ClaudeService：" + hit + "\n";
+    }
+    // 3) 正向：必须真的经 core 只读服务定位器取（解耦不是删功能）
+    const std::string src = readWholeFile(root / rel);
+    if (src.find("core/service_locator.h") == std::string::npos) {
+        report += "设置页没有 include core/service_locator.h —— 代理运行面应由"
+                  " core 只读服务定位器取（R0/D6）\n";
+    }
+    if (src.find("::core::IClaudeProxyService") == std::string::npos) {
+        report += "设置页没有用 core::IClaudeProxyService —— 定位器通道被摘掉了？"
+                  "（解耦不是删功能）\n";
+    }
+    // 4) 提供方：装配段必须真的注册（否则设置页会永久静默降级成「无服务」，
+    //    而用例侧各自注册、覆盖不到这条生产接线）
+    const std::string mainSrc = readWholeFile(root / "src/main.cpp");
+    if (mainSrc.find("ServiceLocator::set<::core::IClaudeProxyService>") ==
+        std::string::npos) {
+        report += "src/main.cpp 没有把代理运行面注册进 core 服务定位器"
+                  "（ServiceLocator::set<::core::IClaudeProxyService> 缺失）——"
+                  "生产装配段漏注册，设置页会静默降级\n";
+    }
+    return report;
+}
+
+std::string proxyPortSingleSourceReport() {
+    const std::filesystem::path root = findRepoRoot();
+    if (root.empty()) {
+        std::error_code ec;
+        return "护栏无法定位仓库根（cwd=" +
+               std::filesystem::current_path(ec).string() + "）";
+    }
+    const std::string coreHeader = "src/core/proxy_port.h";
+    const std::vector<std::string> consumers = {
+        "src/module_settings/settings_config.h",
+        "src/module_claude_proxy/claude_service.h",
+    };
+
+    std::string report;
+    // 唯一来源头：三个字面量必须在这里定义
+    const std::string coreSrc = readWholeFile(root / coreHeader);
+    if (coreSrc.empty()) {
+        return "读不到 " + coreHeader + "（端口常量唯一来源头缺失）";
+    }
+    for (const char* def : {"kDefaultProxyPort = 8888", "kMinProxyPort = 1",
+                            "kMaxProxyPort = 65535"}) {
+        if (coreSrc.find(def) == std::string::npos) {
+            report += coreHeader + " 缺少定义 '" + def + "'\n";
+        }
+    }
+    // 消费方：不得自带字面量，必须从 core 取
+    for (const std::string& rel : consumers) {
+        for (const std::string& hit :
+             scanFileForTokens(root, rel,
+                               {"kDefaultProxyPort = 8888", "kMinProxyPort = 1",
+                                "kMaxProxyPort = 65535"},
+                               false)) {
+            report += rel + " 又自带端口字面量定义（应取 core/proxy_port.h）：" +
+                      hit + "\n";
+        }
+        const std::string src = readWholeFile(root / rel);
+        for (const char* ref : {"::core::kDefaultProxyPort",
+                                "::core::kMinProxyPort",
+                                "::core::kMaxProxyPort"}) {
+            if (src.find(ref) == std::string::npos) {
+                report += rel + " 没有引用 " + ref +
+                          "（端口常量未从唯一来源取）\n";
+            }
+        }
+    }
+    return report;
 }
 
 } // namespace
@@ -751,6 +921,7 @@ REGISTER_TEST(settings_takeover_status_row,
     DOCTEST_REQUIRE(db->migrate().isOk());
     module::claude::ClaudeService svc(db->db(), "DevDeskTestTakeover");
     module::claude::ClaudeService::setGlobal(&svc);
+    ScopedClaudeProxy proxyForSettings;  // R0/D6：设置页经定位器取代理运行面
     module::claude::settings_sync::Paths paths;
     paths.settingsFile = dir / "settings.json";
     paths.sidecarFile = dir / "snapshot.json";
@@ -852,6 +1023,7 @@ REGISTER_TEST(settings_takeover_warn_unmanaged,
     DOCTEST_REQUIRE(db->migrate().isOk());
     module::claude::ClaudeService svc(db->db(), "DevDeskTestWarnUnmanaged");
     module::claude::ClaudeService::setGlobal(&svc);
+    ScopedClaudeProxy proxyForSettings;  // R0/D6：设置页经定位器取代理运行面
     module::claude::settings_sync::Paths paths;
     paths.settingsFile = dir / "settings.json";
     paths.sidecarFile = dir / "snapshot.json";
@@ -1364,6 +1536,7 @@ REGISTER_TEST(settings_ctrl_s_save_shortcut,
     PruneEnv env("ctrls");
     module::claude::ClaudeService svc(env.db->db(), "DevDeskTestCtrlS");
     module::claude::ClaudeService::setGlobal(&svc);
+    ScopedClaudeProxy proxyForSettings;  // R0/D6：设置页经定位器取代理运行面
     std::unique_ptr<::core::Module> mod(create_settings_module());
     mod->onStart();
     eui::Screen screen;
@@ -2019,3 +2192,72 @@ REGISTER_TEST(settings_dropdown_single_holder,
     ::core::theme::setDark();
     return true;
 })
+
+// ==================== R0 / 审计 D6・D7 护栏用例 ====================
+
+REGISTER_TEST(settings_no_direct_claude_service_coupling,
+              "settings: R0/D6 —— 设置页零 ClaudeService 直连（改经 core 只读服务定位器）", {
+                  const std::string report = r0CouplingGuardReport();
+                  DOCTEST_CHECK_MESSAGE(report.empty(), report);
+                  return true;
+              })
+
+REGISTER_TEST(settings_proxy_port_single_source,
+              "settings: R0/D7 —— 代理端口常量单一来源 core/proxy_port.h", {
+                  // 1) 取值钉死（R0 是唯一改链接期契约的重构：两侧仍须 8888/1/65535）
+                  DOCTEST_CHECK_EQ(::core::kDefaultProxyPort, 8888);
+                  DOCTEST_CHECK_EQ(::core::kMinProxyPort, 1);
+                  DOCTEST_CHECK_EQ(::core::kMaxProxyPort, 65535);
+                  // 2) 两个消费方都跟随 core（改值只有一个落点，不会单边漂移）
+                  DOCTEST_CHECK_EQ(module::settings::kDefaultProxyPort,
+                                   ::core::kDefaultProxyPort);
+                  DOCTEST_CHECK_EQ(module::settings::kMinProxyPort,
+                                   ::core::kMinProxyPort);
+                  DOCTEST_CHECK_EQ(module::settings::kMaxProxyPort,
+                                   ::core::kMaxProxyPort);
+                  DOCTEST_CHECK_EQ(module::claude::ClaudeService::kDefaultProxyPort,
+                                   ::core::kDefaultProxyPort);
+                  DOCTEST_CHECK_EQ(module::claude::ClaudeService::kMinProxyPort,
+                                   ::core::kMinProxyPort);
+                  DOCTEST_CHECK_EQ(module::claude::ClaudeService::kMaxProxyPort,
+                                   ::core::kMaxProxyPort);
+                  // 3) 源码级：字面量只许在 core/proxy_port.h 定义（防再次各自硬编码）
+                  const std::string report = proxyPortSingleSourceReport();
+                  DOCTEST_CHECK_MESSAGE(report.empty(), report);
+                  return true;
+              })
+
+REGISTER_TEST(settings_service_locator_contract,
+              "settings: R0/D6 —— core 只读服务定位器契约（未注册 fail / 注册可解析 / RAII 还原）", {
+                  using ::core::IClaudeProxyService;
+                  using ::core::ServiceLocator;
+
+                  // 未注册 → fail（不返回裸空指针）；注册 → 可解析；RAII 结束 → 复原
+                  DOCTEST_CHECK(
+                      ServiceLocator::requireService<IClaudeProxyService>().isFail());
+                  ::core::GlobalClaudeProxyService<module::claude::ClaudeService>
+                      adapter;
+                  {
+                      ::core::ScopedService<IClaudeProxyService> registration(
+                          &adapter);
+                      auto resolved =
+                          ServiceLocator::requireService<IClaudeProxyService>();
+                      DOCTEST_REQUIRE(resolved.isOk());
+                      DOCTEST_CHECK(resolved.value() == &adapter);
+                  }
+                  DOCTEST_CHECK(
+                      ServiceLocator::requireService<IClaudeProxyService>().isFail());
+
+                  // 适配器「空单例」语义（未 setGlobal / claude 模块关闭）：与解耦前
+                  // `auto* svc = ClaudeService::global(); if (svc) {...}` 的降级逐字一致
+                  DOCTEST_CHECK_FALSE(adapter.isProxyRunning());
+                  DOCTEST_CHECK_EQ(adapter.proxyPort(), 0);
+                  DOCTEST_CHECK_EQ(adapter.lastSyncWarnings().size(),
+                                   static_cast<size_t>(0));
+                  DOCTEST_CHECK_EQ(adapter.settingsFilePath(), std::string());
+                  DOCTEST_CHECK_FALSE(adapter.isClaudeCodeManaged());
+                  DOCTEST_CHECK(adapter.startProxy("127.0.0.1", 0).isFail());
+                  adapter.setConfiguredProxyPort(9000);  // no-op，不崩
+                  adapter.stopProxy();                   // no-op，不崩
+                  return true;
+              })

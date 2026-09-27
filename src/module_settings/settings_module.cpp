@@ -16,8 +16,9 @@
 //      经 t.sizes.fontSize* 取字号的模块零改动受益；本页非 token 的硬编码
 //      小字号经 fs() 辅助函数跟随同一缩放
 //   3. Claude 代理：随应用启动开关（Phase B 硬性需求 1，默认关）+ 代理端口
-//      数字输入（总设计 §8.5 第 5 条，审计 [14]：默认 8888，改后运行中自动
-//      重启）+ Claude Code 接管状态（Phase D UI 接入，数据源 ClaudeService）。
+//      数字输入（总设计 §8.5 第 5 条，审计 [14]：默认 core::kDefaultProxyPort，
+//      改后运行中自动重启）+ Claude Code 接管状态（Phase D UI 接入，数据源 =
+//      core 只读服务定位器取的代理运行面，见下「依赖说明」）。
 //      代理仅监听 127.0.0.1、无鉴权，无 token 展示/生成（2026-09-27 移除）
 //   4. Markdown 笔记目录只读展示（改目录属于范围外，仅展示）+ 编辑器字号
 //      档位（spec §8.5「编辑器字体大小」，spec 缩水 B；Task B tab 化后收在
@@ -49,23 +50,26 @@
 // 入口说明：设置入口在 main.cpp 的常驻侧边栏（app.sidebar，spec §2/§6.5.2），
 // 与其他四个模块同列。
 //
-// 依赖说明：module_* 之间原则上不互相依赖（防循环）。claude 侧（审计
-// [5][36] 修复后）settings 不再 link devdesk_module_claude_proxy，仅经
-// claude_service.h（CMake PRIVATE include 目录 ../module_claude_proxy）读取
-// main.cpp 注册的 ClaudeService::global() 单例——头声明 + 最终可执行文件
-// 解析符号，无 CMake 依赖边。pet 侧（同审计项）不 include、不 link：
-// 桌宠卡全部调用（discoverSkins/applyPetSkin/resetPetPosition/
-// currentSkinName）走下方 extern
-// 自由函数桥，实现在 pet 模块内。两条边均单向（claude/pet 不反向依赖
-// settings），无环；桌宠非 Router 页面模块，设计 2026-09-22 §4.7 接线表
-// 明确设置页承载桌宠卡。
+// 依赖说明：module_* 之间不互相依赖（防循环）。claude 侧（R0 / 审计 D6 起）
+// **零 include、零 CMake 边**：本页要用的代理运行面（是否在跑 / 实际端口 /
+// 接管状态 / 上层覆盖警告 / 改端口时 stop→start）经 core 只读服务定位器取
+// ——core/claude_proxy_service.h 的窄接口，由装配段 main.cpp 注册的适配器
+// 转发到它持有的 ClaudeService 单例；本页不再 include 兄弟模块的头、不再直呼
+// ClaudeService::global()（该单例的另一消费方 claude_module 属同模块内读取，
+// 不在 R0 范围）。pet 侧（审计 [5][36]）
+// 同样不 include、不 link：桌宠卡全部调用（discoverSkins/applyPetSkin/
+// resetPetPosition/currentSkinName）走中立桥头 module_pet_bridge.h 的自由
+// 函数，实现在 pet 模块内。两条边均单向（claude/pet 不反向依赖 settings），
+// 无环；桌宠非 Router 页面模块，设计 2026-09-22 §4.7 接线表明确设置页承载
+// 桌宠卡。
 #include "settings_config.h"
 
-#include "claude_service.h"
+#include "core/claude_proxy_service.h"
 #include "core/database.h"
 #include "core/logging.h"
 #include "core/module_interface.h"
 #include "core/paths.h"
+#include "core/service_locator.h"
 #include "core/theme.h"
 #include "core/component_theme.h"
 #include "platform/file_open.h"
@@ -406,8 +410,9 @@ public:
     }
 
     // 应用代理端口（总设计 §8.5 第 5 条，审计 2026-09-23 [14]）：
-    // 解析 draft → 写 config.json → 同步 ClaudeService::configuredProxyPort
-    //（Claude 页手动启动 / main 自启读它）→ 运行中自动 stop→start 重启。
+    // 解析 draft → 写 config.json → 同步运行面端口镜像
+    //（service.setConfiguredProxyPort；Claude 页手动启动 / main 自启读它）
+    // → 运行中自动 stop→start 重启。
     // 重启失败：代理已停、settings.json 已被 stopProxy 还原（不会指向死端口），
     // 状态栏提示可换端口重试。
     void applyProxyPort() {
@@ -427,7 +432,7 @@ public:
         persist();
         proxyPortDraft_ = std::to_string(port);   // 规范化显示（"08888" → "8888"）
 
-        auto* svc = ::module::claude::ClaudeService::global();
+        auto* svc = claudeProxy();
         if (svc) {
             svc->setConfiguredProxyPort(port);
         }
@@ -529,7 +534,7 @@ public:
             refreshLogTailCache();
         }
         // contentKey 带 proxyH：警告行数变化时滚动高度缓存失效重测
-        auto* svc = ::module::claude::ClaudeService::global();
+        auto* svc = claudeProxy();
         // 审计 THS-01：接管状态读快照（原 isClaudeCodeManaged → fs::exists
         // 每帧 stat sidecar）。冷启动兜底：快照从未装载过时本帧同步刷新一次
         //（与 H2 的 logTail 同款，只发生一次）——首帧必须有值，不闪空
@@ -693,6 +698,18 @@ public:
     }
 
 private:
+    // ============ 跨模块服务取用（R0 / 审计 D6） ============
+    // 本页对 Claude 运行时的全部引用都经 core 只读服务定位器：不再 include
+    // 兄弟模块的头、不再直呼 ClaudeService::global()（装配段 main.cpp 注册的
+    // 适配器负责转发到它持有的单例）。未注册 = claude 模块关闭 / 服务未装配
+    //（与解耦前 `ClaudeService::global() == nullptr` 同义）→ 返回 nullptr，
+    // 各调用点按「服务不可用」降级，结果与解耦前逐字一致（判空口径只此一处）
+    static ::core::IClaudeProxyService* claudeProxy() {
+        auto r =
+            ::core::ServiceLocator::requireService<::core::IClaudeProxyService>();
+        return r.isOk() ? r.value() : nullptr;
+    }
+
     // ============ 下拉「谁打开着」的单一持有者（审计 THS-05） ============
     // 此前 7 个下拉各持一个 bool：开一个不会关掉先前那个，判断/维护要逐个点名。
     // 现在只有一个索引：打开任一项时其它自动关（同时最多一个下拉展开），
@@ -1231,7 +1248,7 @@ private:
             .size(w, h)
             .content([&] {
                 cardFrame(ui, id, w, h, t);
-                auto* svc = ::module::claude::ClaudeService::global();
+                auto* svc = claudeProxy();
                 const bool running = svc && svc->isProxyRunning();
                 const int port = running ? svc->proxyPort() : 0;
 
@@ -1343,12 +1360,11 @@ private:
                     .lineHeight(18.0f)
                     .color(t.colors.textSecondary)
                     .build();
-                // 审计 THS-01：路径读 ClaudeService 内存态（main 启动期注入的
+                // 审计 THS-01：路径读 Claude 运行面内存态（main 启动期注入的
                 // defaultPaths()，正是接管实际使用的路径）——不再每帧调
                 // defaultPaths()（内含 fs::current_path / getcwd）
                 const std::string ccPath =
-                    svc ? svc->settingsSyncPaths().settingsFile.string()
-                        : std::string();
+                    svc ? svc->settingsFilePath() : std::string();
                 ui.text(id + ".takeover.value")
                     .position(190.0f, 98.0f)
                     .size(w - 190.0f - 28.0f, 18.0f)
@@ -1655,7 +1671,7 @@ private:
     // 另有 compose 顶部一次性冷启动兜底（见 compose）——四处覆盖了「进页面 /
     // 相关操作后」的全部可见变化时机；单次成本几十微秒，远低于原先每帧一次
     void refreshExternalState() {
-        auto* svc = ::module::claude::ClaudeService::global();
+        auto* svc = claudeProxy();
         takeoverManaged_ = svc && svc->isClaudeCodeManaged();
         std::error_code ec;
         notesDirExists_ =
