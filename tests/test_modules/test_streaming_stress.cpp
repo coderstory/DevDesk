@@ -768,9 +768,7 @@ bool stressMemoryBody() {
 }
 #else
 bool stressMemoryBody() {
-    std::cout << "[SKIP] stress: memory sampling is Windows-only (psapi)"
-              << std::endl;
-    return true;
+    DOCTEST_SKIP("stress: memory sampling is Windows-only (psapi)");
 }
 #endif
 
@@ -885,9 +883,8 @@ REGISTER_TEST(stress_soak_300s_gated,
     const bool enabled =
         gate != nullptr && *gate != '\0' && std::strcmp(gate, "0") != 0;
     if (!enabled) {
-        std::cout << "[SKIP] stress: soak 300s 需要 DEVDESK_SOAK=1（常规套件"
-                     "不背 5 分钟）" << std::endl;
-        return true;
+        DOCTEST_SKIP(
+            "stress: soak 300s 需要 DEVDESK_SOAK=1（常规套件不背 5 分钟）");
     }
     return soakRun(300);
 })

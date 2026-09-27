@@ -39,8 +39,7 @@ void setNotesDirEnv(const std::string& value) {
 REGISTER_TEST(markdown_editor_uses_font_channel,
               "markdown: 编辑器字号读 core::theme 通道（spec缩水 B 消费端 headless）", {
     // 隔离笔记目录 + 临时 DB（仿 test_theme_hierarchy 的 md 用例）
-    const auto dir =
-        std::filesystem::temp_directory_path() / "devdesk_efont_md";
+    const auto dir = test_temp::tempPath("devdesk_efont_md");
     std::error_code ec;
     std::filesystem::remove_all(dir, ec);
     std::filesystem::create_directories(dir, ec);
@@ -50,8 +49,7 @@ REGISTER_TEST(markdown_editor_uses_font_channel,
     }
     setNotesDirEnv(dir.string());
 
-    const auto dbPath = std::filesystem::temp_directory_path() /
-                        "devdesk_efont_md.db";
+    const auto dbPath = test_temp::tempPath("devdesk_efont_md.db");
     std::filesystem::remove(dbPath, ec);
     auto r = core::Database::open(dbPath);
     DOCTEST_REQUIRE(r.isOk());

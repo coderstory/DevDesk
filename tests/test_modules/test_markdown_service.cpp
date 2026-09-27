@@ -30,9 +30,8 @@ namespace {
 fs::path makeTempDir(const std::string& tag) {
     static int counter = 0;
     ++counter;
-    fs::path base = fs::temp_directory_path();
-    fs::path dir = base / ("devdesk_md_test_" + tag + "_" +
-                          std::to_string(counter));
+    fs::path dir = test_temp::tempPath("devdesk_md_test_" + tag + "_" +
+                                       std::to_string(counter));
     std::error_code ec;
     fs::remove_all(dir, ec);           // 清掉上次失败留下的残骸
     fs::create_directories(dir, ec);
@@ -847,9 +846,8 @@ REGISTER_TEST(md_service_watcher_external_new_file,
     runMigrations(db);
     module::markdown::MarkdownService svc(db, dir);
     if (!svc.watcherActive()) {  // POSIX/macOS stub：事件链路不存在，跳过
-        std::printf("[SKIP] FileWatcher 非活跃平台（stub），事件链路用例跳过\n");
         fs::remove_all(dir);
-        return true;
+        DOCTEST_SKIP("FileWatcher 非活跃平台（stub），事件链路用例跳过");
     }
 
     writeTextFile(dir / "ext_new.md", "# 外部新建\n\nuniquetoken73f9 body");
@@ -879,9 +877,8 @@ REGISTER_TEST(md_service_watcher_same_len_external_edit,
     runMigrations(db);
     module::markdown::MarkdownService svc(db, dir);
     if (!svc.watcherActive()) {
-        std::printf("[SKIP] FileWatcher 非活跃平台（stub），等长改写用例跳过\n");
         fs::remove_all(dir);
-        return true;
+        DOCTEST_SKIP("FileWatcher 非活跃平台（stub），等长改写用例跳过");
     }
 
     // 等长两条内容（仅 token 不同）→ (mtime,size) 元组理论上不变

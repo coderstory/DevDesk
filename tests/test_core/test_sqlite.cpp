@@ -15,7 +15,7 @@ REGISTER_TEST(sqlite_open_memory, "SqliteDb: open in-memory", {
 })
 
 REGISTER_TEST(sqlite_open_file, "SqliteDb: open file", {
-    auto path = std::filesystem::temp_directory_path() / "devdesk_test.db";
+    auto path = test_temp::tempPath("devdesk_test.db");
     // 预清理：无异常版本
     std::error_code ec;
     std::filesystem::remove(path, ec);
@@ -132,7 +132,7 @@ REGISTER_TEST(sqlite_transaction_serializes_concurrent_writers,
 // （Windows 上「文件能否删除」即句柄是否泄漏的判据）。
 REGISTER_TEST(sqlite_close_with_unfinalized_stmt,
               "SqliteDb: 未 finalize 语句存在时析构延迟关闭、句柄随 finalize 回收（审计 L5）", {
-    auto path = std::filesystem::temp_directory_path() / "devdesk_test_close_v2.db";
+    auto path = test_temp::tempPath("devdesk_test_close_v2.db");
     std::error_code ec;
     std::filesystem::remove(path, ec);
     std::filesystem::remove(path.string() + "-wal", ec);

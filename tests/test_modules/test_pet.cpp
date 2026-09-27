@@ -52,8 +52,7 @@ void compose(eui::Ui&, const eui::Screen&);
 namespace {
 
 std::filesystem::path tempDir(const char* name) {
-    return std::filesystem::temp_directory_path() /
-           ("devdesk_test_pet_" + std::string(name));
+    return test_temp::tempPath("devdesk_test_pet_" + std::string(name));
 }
 
 void removeTreeQuietly(const std::filesystem::path& p) {
@@ -296,7 +295,7 @@ REGISTER_TEST(pet_gating_defaults, "pet: 默认关闭、已知 ID 可持久化",
 REGISTER_TEST(pet_settings_roundtrip, "pet: pet_config.json 读写往返 + 钳制", {
     using namespace module::pet;
     const std::filesystem::path file =
-        std::filesystem::temp_directory_path() / "devdesk_test_pet_config.json";
+        test_temp::tempPath("devdesk_test_pet_config.json");
     std::error_code ec;
     std::filesystem::remove(file, ec);
     PetConfigStore store(file);
@@ -1193,7 +1192,7 @@ REGISTER_TEST(pet_multi_monitor_clamp, "pet: 多显示器按位置选屏钳制�
 REGISTER_TEST(pet_negative_coord_persist, "pet: 副屏负坐标落盘往返（M2 任务A 哨兵）", {
     using namespace module::pet;
     const std::filesystem::path file =
-        std::filesystem::temp_directory_path() / "devdesk_test_pet_config_neg.json";
+        test_temp::tempPath("devdesk_test_pet_config_neg.json");
     std::error_code ec;
     std::filesystem::remove(file, ec);
     PetConfigStore store(file);

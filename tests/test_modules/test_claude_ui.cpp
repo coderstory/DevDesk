@@ -38,8 +38,8 @@ constexpr const char* kTestKeychainService = "DevDeskTestClaudeModule";
 std::filesystem::path tempDbPath() {
     static int counter = 0;
     ++counter;
-    return std::filesystem::temp_directory_path() /
-           ("devdesk_test_claude_ui_" + std::to_string(counter) + ".db");
+    return test_temp::tempPath(
+        "devdesk_test_claude_ui_" + std::to_string(counter) + ".db");
 }
 
 // RAII：临时库 + 注册全局 ClaudeService（析构时一定解除注册，防悬垂污染后续用例）
@@ -101,9 +101,8 @@ struct ImportTempDir {
 
     explicit ImportTempDir(const std::string& tag) {
         static int counter = 0;
-        path = std::filesystem::temp_directory_path() /
-               ("devdesk_test_import_cur_" + tag + "_" +
-                std::to_string(++counter));
+        path = test_temp::tempPath("devdesk_test_import_cur_" + tag + "_" +
+                                   std::to_string(++counter));
         std::error_code ec;
         std::filesystem::remove_all(path, ec);
         std::filesystem::create_directories(path, ec);

@@ -17,8 +17,8 @@ namespace {
 fs::path makeTempDir(const std::string& tag) {
     static int counter = 0;
     ++counter;
-    fs::path dir = fs::temp_directory_path() /
-                   ("devdesk_mdopen_test_" + tag + "_" + std::to_string(counter));
+    fs::path dir = test_temp::tempPath("devdesk_mdopen_test_" + tag + "_" +
+                                       std::to_string(counter));
     std::error_code ec;
     fs::remove_all(dir, ec);
     fs::create_directories(dir, ec);

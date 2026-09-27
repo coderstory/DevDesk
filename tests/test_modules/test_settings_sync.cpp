@@ -48,8 +48,8 @@ struct TempDir {
     explicit TempDir(const std::string& tag) {
         static int counter = 0;
         ++counter;
-        path = std::filesystem::temp_directory_path() /
-               ("devdesk_test_sync_" + tag + "_" + std::to_string(counter));
+        path = test_temp::tempPath(
+            "devdesk_test_sync_" + tag + "_" + std::to_string(counter));
         std::error_code ec;
         std::filesystem::remove_all(path, ec);
         std::filesystem::create_directories(path, ec);
@@ -118,9 +118,8 @@ std::string topLevelString(const std::filesystem::path& f, const char* key) {
 std::filesystem::path tempDbPath(const std::string& tag) {
     static int counter = 0;
     ++counter;
-    return std::filesystem::temp_directory_path() /
-           ("devdesk_test_sync_db_" + tag + "_" + std::to_string(counter) +
-            ".db");
+    return test_temp::tempPath("devdesk_test_sync_db_" + tag + "_" +
+                               std::to_string(counter) + ".db");
 }
 
 // RAII：已 migrate 的临时数据库

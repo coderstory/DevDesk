@@ -32,8 +32,8 @@ namespace {
 std::filesystem::path tempDbPath() {
     static int counter = 0;
     ++counter;
-    return std::filesystem::temp_directory_path() /
-           ("devdesk_test_todoui_" + std::to_string(counter) + ".db");
+    return test_temp::tempPath(
+        "devdesk_test_todoui_" + std::to_string(counter) + ".db");
 }
 
 // RAII：临时库 + 注册全局 appDatabase（todo 模块 onStart 依赖）
@@ -887,7 +887,7 @@ REGISTER_TEST(todo_ui_error_state_and_retry,
     // 前置：确保全局无注册数据库（TestEnv 析构后即此状态，显式再清一次防串扰）
     ::core::registerAppDatabase(nullptr);
     const std::filesystem::path path =
-        std::filesystem::temp_directory_path() / "devdesk_test_todo_retry.db";
+        test_temp::tempPath("devdesk_test_todo_retry.db");
     std::error_code ec;
     std::filesystem::remove(path, ec);
 

@@ -65,7 +65,7 @@ std::filesystem::path tempDbPath(const char* tag) {
     ++counter;
     char buf[128];
     std::snprintf(buf, sizeof(buf), "devdesk_test_hier_%s_%d.db", tag, counter);
-    return std::filesystem::temp_directory_path() / buf;
+    return test_temp::tempPath(buf);
 }
 
 // DEVDESK_NOTES_DIR 隔离（平台差异收在这里；REGISTER_TEST 宏体内不能
@@ -175,7 +175,7 @@ REGISTER_TEST(theme_hierarchy_todo,
 REGISTER_TEST(theme_hierarchy_markdown,
               "theme_hierarchy: md 左栏/编辑/预览面板=background（light+dark）", {
     // 隔离笔记目录（DEVDESK_NOTES_DIR），写一篇笔记保证三栏都渲染
-    const auto dir = std::filesystem::temp_directory_path() / "devdesk_hier_md";
+    const auto dir = test_temp::tempPath("devdesk_hier_md");
     std::error_code ec;
     std::filesystem::remove_all(dir, ec);
     std::filesystem::create_directories(dir, ec);

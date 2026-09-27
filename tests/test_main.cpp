@@ -55,8 +55,9 @@ void resetCaseGlobals() {
     setEnvVar("DEVDESK_PETS_DIR", "");
     setEnvVar("DEVDESK_CLAUDE_CONFIG_DIR", "");
     std::error_code ec;
-    const auto scratch = std::filesystem::temp_directory_path() /
-                         "devdesk_test_env_scratch";
+    // 审计 TIN-02：临时路径带 pid + 进程内自增后缀——并发 ctest（多 worktree
+    // 同时跑同一 exe）不会互删 / 互覆写这份视图状态草案文件
+    const auto scratch = test_temp::tempPath("devdesk_test_env_scratch");
     const std::string mdVs = (scratch / "md_view_state.json").string();
     const std::string todoVs = (scratch / "todo_view_state.json").string();
     std::filesystem::remove(mdVs, ec);
@@ -73,7 +74,7 @@ void resetCaseGlobals() {
 //   --log    → 打开控制台日志 + Debug 级别（排查流式/代理问题时用）
 int main(int argc, char** argv) {
     using Clock = std::chrono::steady_clock;
-    int passed = 0, failed = 0, total = 0;
+    int passed = 0, failed = 0, skipped = 0, total = 0;
     std::string filter;
     for (int i = 1; i < argc; ++i) {
         const std::string arg = argv[i] ? argv[i] : "";
@@ -107,8 +108,15 @@ int main(int argc, char** argv) {
         const auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(
                             Clock::now() - t0)
                             .count();
+        // 审计 TIN-03：用例体内 DOCTEST_SKIP(...) 会置跳过标记——单独计
+        // Skipped（不再混进 Passed），Skipped 不算失败、不影响退出码
+        const bool skippedCase = test_registry::consumeSkipped();
         // std::endl 强制 flush，重定向到文件时结果实时可见
-        if (ok) {
+        if (ok && skippedCase) {
+            std::cout << "[SKIP] " << t.first << " [" << ms << "ms]"
+                      << std::endl;
+            ++skipped;
+        } else if (ok) {
             std::cout << "[PASS] " << t.first << " [" << ms << "ms]"
                       << std::endl;
             ++passed;
@@ -125,5 +133,17 @@ int main(int argc, char** argv) {
     std::cout << "Total:  " << total << std::endl;
     std::cout << "Passed: " << passed << std::endl;
     std::cout << "Failed: " << failed << std::endl;
+    std::cout << "Skipped: " << skipped << std::endl;
+    // 审计 TIN-03：过滤命中 0 个用例 ≠ 全绿。旧口径在此返回 0，上层脚本
+    // grep "Failed: 0" 会把「一个用例都没跑」（如 --no_run 误拼降级成过滤器、
+    // 过滤词打错）判成 ✅ 全绿——静默绕过「未运行测试 = 未完成」纪律。
+    if (total == 0) {
+        std::cout << "[ERROR] 未命中任何用例"
+                  << (filter.empty() ? std::string()
+                                     : "（过滤词 \"" + filter + "\"）")
+                  << "—— 视为失败（退出码 2），防上层脚本误判「全绿」"
+                  << std::endl;
+        return 2;
+    }
     return failed == 0 ? 0 : 1;
 }

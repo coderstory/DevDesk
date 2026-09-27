@@ -21,7 +21,7 @@ std::filesystem::path tempDbPath(const std::string& tag) {
     ++counter;
     auto name = "devdesk_test_homesvc_" + tag + "_" +
                 std::to_string(counter) + ".db";
-    return std::filesystem::temp_directory_path() / name;
+    return test_temp::tempPath(name);
 }
 
 // 一次性环境：开临时 db → migrate（默认列 todo_columns 1..4 已就位）

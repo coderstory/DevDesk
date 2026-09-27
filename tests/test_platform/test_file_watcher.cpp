@@ -29,8 +29,8 @@ namespace {
 fs::path makeTempDir(const std::string& tag) {
     static int counter = 0;
     ++counter;
-    fs::path dir = fs::temp_directory_path() /
-                   ("devdesk_fwatch_test_" + tag + "_" + std::to_string(counter));
+    fs::path dir = test_temp::tempPath("devdesk_fwatch_test_" + tag + "_" +
+                                       std::to_string(counter));
     std::error_code ec;
     fs::remove_all(dir, ec);
     fs::create_directories(dir, ec);
@@ -101,7 +101,7 @@ REGISTER_TEST(fwatch_start_validation,
     DOCTEST_CHECK(r2.errorCode() == core::ErrorCode::ValidationError);
 
     const auto missing =
-        fs::temp_directory_path() / "devdesk_fwatch_no_such_dir_7c02";
+        test_temp::tempPath("devdesk_fwatch_no_such_dir_7c02");
     std::error_code ec;
     fs::remove_all(missing, ec);
     auto r3 = w.start(missing, sink);

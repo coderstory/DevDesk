@@ -48,7 +48,7 @@ std::filesystem::path tempDbPath(const std::string& tag) {
     ++counter;
     auto name = "devdesk_test_proxy_" + tag + "_" +
                 std::to_string(counter) + ".db";
-    return std::filesystem::temp_directory_path() / name;
+    return test_temp::tempPath(name);
 }
 
 struct TestDb {
