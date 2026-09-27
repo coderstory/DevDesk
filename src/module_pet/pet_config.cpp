@@ -6,6 +6,7 @@
 #include <sstream>
 #include <utility>
 
+#include "core/atomic_write.h"
 #include "core/logging.h"
 #include "core/paths.h"
 #include "platform/json.h"
@@ -108,18 +109,11 @@ core::Result<void> PetConfigStore::save(const PetConfig& cfgRaw) const {
         }
     }
 
-    std::ofstream f(file_, std::ios::trunc);
-    if (!f) {
-        return core::Result<void>::fail(core::ErrorCode::Internal,
-                                        "配置文件写入失败: " + file_.string());
-    }
-    f << text.unsafeValue() << "\n";
-    f.close();
-    if (!f) {
-        return core::Result<void>::fail(core::ErrorCode::Internal,
-                                        "配置文件写入未完成: " + file_.string());
-    }
-    return core::Result<void>::ok();
+    // 原子写（tmp → remove → rename，core/atomic_write.h 唯一实现，审计 THS-03
+    // 第二批收口）：旧的 std::ofstream(file_, trunc) 原地写在写窗口内崩溃/断电
+    // 会把 pet_config.json 截成半截，load 走解析失败分支静默回落默认值（桌宠
+    // 坐标回到「未设置」、皮肤选择回 robot）。尾处理照旧实现：serialize + "\n"
+    return core::atomicWriteFile(file_, text.unsafeValue() + "\n", "配置文件");
 }
 
 } // namespace module::pet

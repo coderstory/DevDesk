@@ -10,6 +10,7 @@
 #include <fstream>
 #include <sstream>
 
+#include "core/atomic_write.h"
 #include "core/logging.h"
 #include "core/paths.h"
 // 桥函数契约（discoverSkins 定义在本 TU）：签名漂移由该头末尾 static_assert 拦
@@ -126,14 +127,12 @@ bool writePngRgba(const std::filesystem::path& path, int width, int height,
     appendPngChunk(png, "IDAT", zlibStream.data(), zlibStream.size());
     appendPngChunk(png, "IEND", nullptr, 0);
 
-    std::ofstream file(path, std::ios::binary | std::ios::trunc);
-    if (!file) {
-        return false;
-    }
-    file.write(reinterpret_cast<const char*>(png.data()),
-               static_cast<std::streamsize>(png.size()));
-    file.close();
-    return file.good();
+    // 原子写（tmp → remove → rename，core/atomic_write.h 唯一实现，审计 THS-03
+    // 第二批收口）：旧的 binary+trunc 原地写中途失败会留下半截 PNG（帧永远解不
+    // 出来，且原帧已被截断覆盖）；改为写全或保留旧帧。字节照旧实现逐字相同
+    return core::atomicWriteFile(path, std::string(png.begin(), png.end()),
+                                 "皮肤帧")
+        .isOk();
 }
 
 // ============ 占位皮肤绘制（简单形状 + 1px 覆盖率抗锯齿边缘）============
@@ -255,14 +254,15 @@ bool ensureSkinDir(const std::filesystem::path& dir) {
 }
 
 bool writePetJson(const std::filesystem::path& dir, const char* jsonText) {
-    std::ofstream out(dir / "pet.json", std::ios::trunc);
-    if (!out) {
-        LOG_ERROR("桌宠皮肤 pet.json 写出失败: " + (dir / "pet.json").string());
+    const std::filesystem::path target = dir / "pet.json";
+    // 原子写（core/atomic_write.h 唯一实现，审计 THS-03 第二批收口）：旧实现
+    // trunc 原地写，中途失败会把皮肤清单截成半截 → loadSkin 解析失败 → 皮肤
+    // 整个不可用（帧文件还在）；改后失败时旧 pet.json 原样保留
+    if (!core::atomicWriteFile(target, jsonText, "皮肤清单").isOk()) {
+        LOG_ERROR("桌宠皮肤 pet.json 写出失败: " + target.string());
         return false;
     }
-    out << jsonText;
-    out.close();
-    return out.good();
+    return true;
 }
 
 // ============ robot（方头机器人：天线 + 屏幕脸，typing 屏幕滚字）============
