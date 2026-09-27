@@ -374,9 +374,4 @@ int SqliteDb::schemaVersion() const {
     return v;
 }
 
-void SqliteDb::setSchemaVersion(int version) {
-    // 不直接使用，runMigrations 管理
-    (void)version;
-}
-
 } // namespace core::data

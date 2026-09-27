@@ -2,8 +2,10 @@
 #include "platform/http_server.h"
 
 #include <chrono>
+#include <string>
 #include <thread>
 #include <utility>
+#include <vector>
 
 #include <curl/curl.h>
 
@@ -28,6 +30,13 @@ const CurlGlobalInit& curlInit() {
     return g;
 }
 
+// 本文件所有客户端请求都打 127.0.0.1（本用例自己起的 server）：
+// 与产品侧 http_client.cpp 同口径设 NOPROXY，否则环境里存在 http_proxy 时
+// 请求会被送到代理（验收要求在 HTTP_PROXY=… 的 shell 下同样全绿）。
+void setNoProxy(CURL* curl) {
+    curl_easy_setopt(curl, CURLOPT_NOPROXY, "localhost,127.0.0.1,::1");
+}
+
 // 同步 GET，返回 statusCode（输出参数：body）
 long httpGet(const std::string& url, std::string& body,
              const std::string& bearerToken = "") {
@@ -38,6 +47,7 @@ long httpGet(const std::string& url, std::string& body,
     curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
     curl_easy_setopt(curl, CURLOPT_TIMEOUT_MS, 5000L);
     curl_easy_setopt(curl, CURLOPT_NOSIGNAL, 1L);
+    setNoProxy(curl);
     curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, curlWriteCb);
     curl_easy_setopt(curl, CURLOPT_WRITEDATA, &body);
 
@@ -68,6 +78,7 @@ long httpPost(const std::string& url, const std::string& payload,
     curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
     curl_easy_setopt(curl, CURLOPT_TIMEOUT_MS, 5000L);
     curl_easy_setopt(curl, CURLOPT_NOSIGNAL, 1L);
+    setNoProxy(curl);
     curl_easy_setopt(curl, CURLOPT_POST, 1L);
     curl_easy_setopt(curl, CURLOPT_POSTFIELDS, payload.c_str());
     curl_easy_setopt(curl, CURLOPT_POSTFIELDSIZE,
@@ -90,6 +101,47 @@ long httpPost(const std::string& url, const std::string& payload,
         curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &status);
     }
     curl_slist_free_all(headers);
+    curl_easy_cleanup(curl);
+    return status;
+}
+
+// libcurl header callback：把响应头原始行追加到 out（含状态行）
+size_t curlHeaderCb(char* buffer, size_t size, size_t nitems, void* userp) {
+    auto* out = static_cast<std::string*>(userp);
+    out->append(buffer, size * nitems);
+    return size * nitems;
+}
+
+// 同步 GET：可带多份自定义请求头（同名不同拼写也照发），并抓取原始响应头文本
+long httpGetFull(const std::string& url,
+                 const std::vector<std::string>& reqHeaders,
+                 std::string& respBody, std::string& rawRespHeaders) {
+    curlInit();
+    CURL* curl = curl_easy_init();
+    if (!curl) return 0;
+    respBody.clear();
+    rawRespHeaders.clear();
+    curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
+    curl_easy_setopt(curl, CURLOPT_TIMEOUT_MS, 5000L);
+    curl_easy_setopt(curl, CURLOPT_NOSIGNAL, 1L);
+    setNoProxy(curl);
+    curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, curlWriteCb);
+    curl_easy_setopt(curl, CURLOPT_WRITEDATA, &respBody);
+    curl_easy_setopt(curl, CURLOPT_HEADERFUNCTION, curlHeaderCb);
+    curl_easy_setopt(curl, CURLOPT_HEADERDATA, &rawRespHeaders);
+
+    struct curl_slist* headers = nullptr;
+    for (const auto& h : reqHeaders) {
+        headers = curl_slist_append(headers, h.c_str());
+    }
+    if (headers) curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
+
+    CURLcode rc = curl_easy_perform(curl);
+    long status = 0;
+    if (rc == CURLE_OK) {
+        curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &status);
+    }
+    if (headers) curl_slist_free_all(headers);
     curl_easy_cleanup(curl);
     return status;
 }
@@ -318,6 +370,50 @@ REGISTER_TEST(http_server_body_size_limit,
         "http://127.0.0.1:" + std::to_string(port) + "/echo", over, body);
     DOCTEST_CHECK_EQ(statusOver, 413L);
     DOCTEST_CHECK_EQ(handlerCalls, callsBefore);
+
+    srv.stop();
+    return true;
+})
+
+// ---- 头名大小写：请求侧键归一（去重）+ 响应侧大小写不敏感命中（CP-06） ----
+
+REGISTER_TEST(http_server_header_case_insensitive_dedup,
+              "http_server: 头名大小写不敏感（请求去重 + 响应 Content-Type 命中）", {
+    platform::http::Server srv("127.0.0.1", 0);
+    std::size_t authCount = 0;
+    bool anyUpperKey = false;
+    srv.route("GET", "/hdr", [&](const platform::http::RequestCtx& ctx,
+                                 platform::http::ResponseWriter& w) {
+        authCount = ctx.headers.count("authorization");
+        for (const auto& kv : ctx.headers) {
+            for (char c : kv.first) {
+                if (c >= 'A' && c <= 'Z') { anyUpperKey = true; break; }
+            }
+        }
+        // 故意用小写拼写写响应头：响应侧必须大小写不敏感地命中它
+        w.setStatus(200);
+        w.setHeader("content-type", "application/json");
+        w.write("{}");
+        w.end();
+    });
+    DOCTEST_CHECK(srv.start());
+    const int port = srv.actualPort();
+    DOCTEST_CHECK(waitForReady(port));
+
+    std::string body;
+    std::string rawRespHeaders;
+    const long status = httpGetFull(
+        "http://127.0.0.1:" + std::to_string(port) + "/hdr",
+        {"Authorization: Bearer first", "authorization: Bearer second"}, body,
+        rawRespHeaders);
+    DOCTEST_CHECK_EQ(status, 200L);
+    // 请求侧：同名不同拼写降级后归一到 1 条（httplib 侧本是 2 条）
+    DOCTEST_CHECK_EQ(authCount, 1u);
+    // 请求侧：map 里不再有大写键（httplib 注入的 REMOTE_ADDR 等也已归一）
+    DOCTEST_CHECK_FALSE(anyUpperKey);
+    // 响应侧：Content-Type 被认出 → 不得回退成 text/plain
+    DOCTEST_CHECK(rawRespHeaders.find("text/plain") == std::string::npos);
+    DOCTEST_CHECK(rawRespHeaders.find("application/json") != std::string::npos);
 
     srv.stop();
     return true;
