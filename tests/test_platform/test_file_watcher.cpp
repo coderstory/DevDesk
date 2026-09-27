@@ -17,6 +17,8 @@
 #include <condition_variable>
 #include <filesystem>
 #include <fstream>
+#include <functional>
+#include <iostream>
 #include <memory>
 #include <mutex>
 #include <string>
@@ -60,7 +62,70 @@ struct EventSink {
         std::lock_guard<std::mutex> lock(st->mtx);
         st->events.clear();
     }
+    // 是否已收到某相对路径的事件（武装探针用；只读快照，不等待）
+    bool hasPath(const std::string& relPath) const {
+        std::lock_guard<std::mutex> lock(st->mtx);
+        for (const auto& e : st->events) {
+            if (e.relativePath == relPath) return true;
+        }
+        return false;
+    }
 };
+
+// ── 武装等待（flake 归因 2026-09-28，见 file_watcher.h「启动武装窗口」）──
+#if defined(_WIN32)
+// start() 在调用线程开目录句柄，而首个 ReadDirectoryChangesW 由 worker 线程
+// 异步发出；Windows 只上报「首读发出之后」的改动，之前的改动**永久丢失**
+// （等再久也不会补发）。用例在 start() 后立刻写文件就会踩进这个窗口——
+// 高负载时线程启动慢，写操作稳赢首读 → 事件丢失必红；本机实测过。
+// 判据（不放宽）：往被监听目录写探针文件 → **有界**等待 watcher 把它报上来；
+// 收到即证明首读已发出（此后任何改动都会被捕获），此后用例才动真文件。
+// 探针每轮换名，避免上一轮的迟到事件造成假阳性；预算内始终收不到 → 打印
+// 诊断并返回 false，由调用方 DOCTEST_REQUIRE 判红。等武装只是还原真实时序
+// （真实进程里用户操作远在启动之后），不改任何断言语义。
+bool waitWatcherArmed(const fs::path& dir,
+                      const std::function<bool(const std::string&)>& seen,
+                      const char* label) {
+    constexpr int kRounds = 10;        // 10 × 500ms = 5s 上限（有界，不会无限挂）
+    constexpr int kPerRoundMs = 500;
+    constexpr int kPollMs = 20;
+    for (int i = 0; i < kRounds; ++i) {
+        const std::string probe = "arm_probe_" + std::to_string(i) + ".md";
+        if (!writeTextFile(dir / probe, "# arm\n")) {
+            std::cout << "[DIAG] watcher 武装等待：探针写入失败 " << probe
+                      << " label=" << label << " dir=" << dir.string() << std::endl;
+            return false;
+        }
+        const auto deadline =
+            std::chrono::steady_clock::now() + std::chrono::milliseconds(kPerRoundMs);
+        while (std::chrono::steady_clock::now() < deadline) {
+            if (seen(probe)) return true;
+            std::this_thread::sleep_for(std::chrono::milliseconds(kPollMs));
+        }
+    }
+    std::cout << "[DIAG] watcher 武装等待超时（" << kRounds * kPerRoundMs
+              << "ms，探针始终未被上报）：label=" << label
+              << " dir=" << dir.string() << std::endl;
+    return false;
+}
+#endif  // _WIN32（stub 平台不产生事件，武装等待无用武之地 → 不编入避免
+        // -Wunused-function -Werror）
+
+// 清场（best-effort，非抛出版本）：整棵删掉临时目录；删不干净只打印残留
+// 诊断、不把用例判红（残留路径带 pid + 序号，不复用、不干扰后续用例）。
+// 调用方须先 stop()/析构 watcher——监听存活时回调线程可能在读被监听文件，
+// MinGW 的 ifstream 句柄不带 FILE_SHARE_DELETE，期间的删除会失败。
+void cleanupTempDir(const fs::path& dir, const char* label) {
+    std::error_code ec;
+    fs::remove_all(dir, ec);           // 非抛出版本：删不掉也不抛、不算用例失败
+    if (!fs::exists(dir, ec)) return;  // 干净（exists 的 error_code 重载会重置 ec）
+    std::error_code ecRetry;
+    fs::remove_all(dir, ecRetry);      // best-effort 重试一次（句柄刚释放的竞态）
+    if (!fs::exists(dir, ecRetry)) return;
+    std::cout << "[DIAG] 临时目录残留 " << dir.string() << " label=" << label
+              << " exists=" << ec.message() << " retry=" << ecRetry.message()
+              << std::endl;
+}
 
 // 平台谓词（文件作用域指令合法；REGISTER_TEST 宏体内嵌指令会被
 // -Wpedantic -Werror 拒绝）。true = 本平台 FileWatcher 为原生真实现。
@@ -81,7 +146,8 @@ REGISTER_TEST(fwatch_start_validation,
     DOCTEST_CHECK(r1.isFail());
     DOCTEST_CHECK(r1.errorCode() == core::ErrorCode::ValidationError);
 
-    auto r2 = w.start(test_support::makeTempDir("devdesk_fwatch_test_", "nullcb"), nullptr);
+    const auto nullCbDir = test_support::makeTempDir("devdesk_fwatch_test_", "nullcb");
+    auto r2 = w.start(nullCbDir, nullptr);
     DOCTEST_CHECK(r2.isFail());
     DOCTEST_CHECK(r2.errorCode() == core::ErrorCode::ValidationError);
 
@@ -93,7 +159,11 @@ REGISTER_TEST(fwatch_start_validation,
     DOCTEST_CHECK(r3.isFail());
     DOCTEST_CHECK(r3.errorCode() == core::ErrorCode::FileNotFound);
 
-    fs::remove_all(test_support::makeTempDir("devdesk_fwatch_test_", "cleanup_ignore"), ec);
+    // 清场：本用例两次 makeTempDir 都要收（原 nullcb 那个建完就没人删，每跑一次
+    // 就往 %TEMP% 留一个空目录）
+    cleanupTempDir(test_support::makeTempDir("devdesk_fwatch_test_", "cleanup_ignore"),
+                   "start_validation");
+    cleanupTempDir(nullCbDir, "start_validation/nullcb");
     return true;
 })
 
@@ -115,8 +185,7 @@ REGISTER_TEST(fwatch_start_stop_idempotent,
     DOCTEST_CHECK(r2.isOk());
     w.stop();
 
-    std::error_code ec;
-    fs::remove_all(dir, ec);
+    cleanupTempDir(dir, "start_stop_idempotent");
     return true;
 })
 
@@ -132,6 +201,13 @@ REGISTER_TEST(fwatch_event_create_modify_delete,
     platform::FileWatcher w;
     DOCTEST_REQUIRE(w.start(dir, sink).isOk());
     DOCTEST_REQUIRE(w.active());
+
+    // 先等 worker 武装（见 waitWatcherArmed）：否则下面的写入可能落在启动武装
+    // 窗口内 → 事件永久丢失（本用例的失败模式正是「等 5s 也收不到」）
+    const auto probeSeen = [&](const std::string& rel) { return sink.hasPath(rel); };
+    const bool armed = waitWatcherArmed(dir, probeSeen, "create_modify_delete");
+    DOCTEST_REQUIRE(armed);
+    sink.clear();  // 探针文件的事件不参与断言
 
     // 新建
     DOCTEST_REQUIRE(writeTextFile(dir / "note_a.md", "# a\n"));
@@ -166,7 +242,7 @@ REGISTER_TEST(fwatch_event_create_modify_delete,
         5000));
 
     w.stop();
-    fs::remove_all(dir, ec);
+    cleanupTempDir(dir, "create_modify_delete");
     return true;
 })
 
@@ -176,6 +252,12 @@ REGISTER_TEST(fwatch_event_subdir_and_nonascii,
     EventSink sink;
     platform::FileWatcher w;
     DOCTEST_REQUIRE(w.start(dir, sink).isOk());
+
+    // 先等 worker 武装（见 waitWatcherArmed），再把磁盘弄动
+    const auto probeSeen = [&](const std::string& rel) { return sink.hasPath(rel); };
+    const bool armed = waitWatcherArmed(dir, probeSeen, "subdir_and_nonascii");
+    DOCTEST_REQUIRE(armed);
+    sink.clear();
 
     // 子目录内的新文件：相对路径必须含子目录且用 '/' 分隔
     const std::string cn = "\xe4\xb8\xad\xe6\x96\x87\xe7\xac\x94\xe8\xae\xb0.md";  // 中文笔记.md
@@ -194,8 +276,7 @@ REGISTER_TEST(fwatch_event_subdir_and_nonascii,
         5000));
 
     w.stop();
-    std::error_code ec;
-    fs::remove_all(dir, ec);
+    cleanupTempDir(dir, "subdir_and_nonascii");
     return true;
 })
 
@@ -216,6 +297,26 @@ REGISTER_TEST(fwatch_event_burst_debounce_merges,
     platform::FileWatcher w;
     DOCTEST_REQUIRE(w.start(dir, cb, std::chrono::milliseconds(300)).isOk());
 
+    // 先等 worker 武装（见 waitWatcherArmed）——突发必须整批落在首读之后，
+    // 否则头几个文件的事件丢在启动窗口内、下面的 hit >= 5 直接不成立
+    const auto probeSeen = [&](const std::string& rel) {
+        std::lock_guard<std::mutex> lock(sink.mtx);
+        for (const auto& e : sink.all) {
+            if (e.relativePath == rel) return true;
+        }
+        return false;
+    };
+    const bool armed = waitWatcherArmed(dir, probeSeen, "burst_debounce_merges");
+    DOCTEST_REQUIRE(armed);
+    // 探针不参与本用例计数：先放掉探针那批的余量（同一写入的后续通知）走完
+    // 一个去抖窗口，再清零 —— 下面的 deliveries 从 0 起算
+    std::this_thread::sleep_for(std::chrono::milliseconds(400));
+    {
+        std::lock_guard<std::mutex> lock(sink.mtx);
+        sink.deliveries = 0;
+        sink.all.clear();
+    }
+
     // 一次性突发 5 个文件（都在 300ms 去抖窗口内）
     for (int i = 0; i < 5; ++i) {
         DOCTEST_REQUIRE(writeTextFile(dir / ("burst_" + std::to_string(i) + ".md"),
@@ -235,8 +336,7 @@ REGISTER_TEST(fwatch_event_burst_debounce_merges,
     // 合并语义：交付次数应远小于文件数（去抖生效；极端调度抖动放宽到 ≤4）
     DOCTEST_CHECK(sink.deliveries <= 4);
 
-    std::error_code ec;
-    fs::remove_all(dir, ec);
+    cleanupTempDir(dir, "burst_debounce_merges");
     return true;
 })
 REGISTER_TEST(fwatch_stop_from_callback_thread,
@@ -263,10 +363,12 @@ REGISTER_TEST(fwatch_stop_from_callback_thread,
     };
     DOCTEST_REQUIRE(w.start(dir, cb).isOk());
     DOCTEST_REQUIRE(w.active());
-    // settle：等 worker 第一发 ReadDirectoryChangesW 落地再写文件——该请求
-    // 之前发生的改动不进变更缓冲（start 与首读之间的固有窗口，机器高负载时
-    // 实测偶发丢通知）
-    std::this_thread::sleep_for(std::chrono::milliseconds(300));
+    // 先等 worker 武装（见 waitWatcherArmed）再写文件——start 与首读之间的
+    // 固有窗口里发生的改动不进变更缓冲（机器高负载时实测偶发丢通知）
+    const auto probeSeen = [&](const std::string& rel) { return sink.hasPath(rel); };
+    const bool armed = waitWatcherArmed(dir, probeSeen, "stop_from_callback_thread");
+    DOCTEST_REQUIRE(armed);
+    sink.clear();  // 探针文件的事件不参与断言
 
     DOCTEST_REQUIRE(writeTextFile(dir / "cb_stop.md", "# s\n"));
     DOCTEST_CHECK(sink.waitFor(
@@ -284,7 +386,10 @@ REGISTER_TEST(fwatch_stop_from_callback_thread,
     EventSink sink2;
     DOCTEST_REQUIRE(w.start(dir, sink2).isOk());
     DOCTEST_CHECK(w.active());
-    std::this_thread::sleep_for(std::chrono::milliseconds(300));  // 同上 settle
+    const auto probeSeen2 = [&](const std::string& rel) { return sink2.hasPath(rel); };
+    const bool armed2 = waitWatcherArmed(dir, probeSeen2, "stop_from_callback_thread#2");
+    DOCTEST_REQUIRE(armed2);  // 同上：重启后同样要等武装
+    sink2.clear();
     DOCTEST_REQUIRE(writeTextFile(dir / "cb_stop2.md", "# s2\n"));
     DOCTEST_CHECK(sink2.waitFor(
         [](const platform::FileWatchEvent& e) {
@@ -293,8 +398,7 @@ REGISTER_TEST(fwatch_stop_from_callback_thread,
         5000));
     w.stop();
 
-    std::error_code ec;
-    fs::remove_all(dir, ec);
+    cleanupTempDir(dir, "stop_from_callback_thread");
     return true;
 })
 #endif  // _WIN32

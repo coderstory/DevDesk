@@ -19,10 +19,24 @@
 // 不抛异常（devdesk 约定），启动失败一律 Result 返回。
 //
 // 已知边界（Win）：
+//   - 启动武装窗口（arming window）：start() 在**调用线程**打开目录句柄，而
+//     首个 ReadDirectoryChangesW 由 worker 线程**异步**发出（线程创建 + 循环
+//     首轮），两端之间存在长度取决于线程调度的窗口。Windows 只上报「首次读
+//     请求发出之后」发生的改动——此窗口内发生的改动**不会被上报**，事后等待
+//     也不会补发（与下条微秒空窗同源，属平台语义、非本实现缺陷）。
+//     消费方指引：需要「零丢失」的调用方不应把 start() 返回当作监听已生效，
+//     应在 start() 之后（例如等到确实收到过一次事件）才认为进入有效状态，
+//     或依赖上层周期性兜底——本仓 markdown_service 有 5s tick 的 pollChanged
+//     → rescan 兜底，属可接受依赖。
 //   - 事件到达即同步，编辑器可能仍在写尾部字节 → 单次可能同步到半截内容；
 //     写完后 mtime 推进会被下一次事件或消费方轮询修正（200ms 去抖已把
 //     窗口压到编辑器批量 flush 级别）。
 //   - 读请求完成与重发之间的微秒级间隙事件可能丢失，由消费方轮询兜底。
+//   - 监听存活期间 watcher 持目录句柄；在回调线程里读被监听文件的消费方
+//     （如 markdown_service 的 rescan）会瞬时持文件读句柄，而 MinGW 的
+//     ifstream 句柄不带 FILE_SHARE_DELETE → 这段时间里外部删除该文件会失败
+//     （fs::remove 返 false / remove_all 抛 filesystem_error）。清场方应先
+//     stop()（或析构）并等回调返回再删，不要假设「删了就行」。
 #pragma once
 
 #include "core/result.h"
