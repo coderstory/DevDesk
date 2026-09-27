@@ -254,4 +254,62 @@ REGISTER_TEST(fwatch_event_burst_debounce_merges,
     fs::remove_all(dir, ec);
     return true;
 })
+REGISTER_TEST(fwatch_stop_from_callback_thread,
+              "FileWatcher[Win]: 回调线程内 stop() 只请求停止（不崩、join 后可再启）", {
+    const auto dir = makeTempDir("cbstop");
+    platform::FileWatcher w;
+    EventSink sink;
+    std::atomic<int> deliveries(0);
+    // 回调线程内首次收到事件即 stop()（review-A 实锤的 UAF 场景：旧实现 detach
+    // + 关句柄 → detached worker 继续摸 Impl/句柄；新实现只请求停止，句柄与
+    // 线程由 worker 退出路径 + 随后的非回调线程 join 收尾）
+    auto cb = [&](std::vector<platform::FileWatchEvent> batch) {
+        bool sawOwnFile = false;
+        for (const auto& e : batch) {
+            if (e.relativePath == "cb_stop.md") sawOwnFile = true;
+        }
+        // 首次交付到本用例文件的事件时，在回调线程内 stop()（review-A 实锤的
+        // UAF 场景：旧实现 detach + 关句柄 → detached worker 继续摸 Impl/句柄；
+        // 新实现只请求停止，句柄与线程由 worker 退出路径 + 随后的非回调线程
+        // join 收尾）。判据不取「首次交付」——%TEMP% 下无关通知（杀软/索引器）
+        // 可能抢先投递，会把监听提前收掉、真事件反而收不到（实测 flake 1 次）
+        if (sawOwnFile && deliveries.fetch_add(1) == 0) w.stop();
+        sink(batch);
+    };
+    DOCTEST_REQUIRE(w.start(dir, cb).isOk());
+    DOCTEST_REQUIRE(w.active());
+    // settle：等 worker 第一发 ReadDirectoryChangesW 落地再写文件——该请求
+    // 之前发生的改动不进变更缓冲（start 与首读之间的固有窗口，机器高负载时
+    // 实测偶发丢通知）
+    std::this_thread::sleep_for(std::chrono::milliseconds(300));
+
+    DOCTEST_REQUIRE(writeTextFile(dir / "cb_stop.md", "# s\n"));
+    DOCTEST_CHECK(sink.waitFor(
+        [](const platform::FileWatchEvent& e) {
+            return e.relativePath == "cb_stop.md";
+        },
+        5000));
+    DOCTEST_CHECK(deliveries.load() >= 1);
+
+    // 回调已返回（stop() 在其内部调用过）；非回调线程 stop() 完成 join
+    w.stop();
+    DOCTEST_CHECK(!w.active());
+
+    // 可再次 start() 并收到事件（句柄/线程干净回收，无失效 HANDLE）
+    EventSink sink2;
+    DOCTEST_REQUIRE(w.start(dir, sink2).isOk());
+    DOCTEST_CHECK(w.active());
+    std::this_thread::sleep_for(std::chrono::milliseconds(300));  // 同上 settle
+    DOCTEST_REQUIRE(writeTextFile(dir / "cb_stop2.md", "# s2\n"));
+    DOCTEST_CHECK(sink2.waitFor(
+        [](const platform::FileWatchEvent& e) {
+            return e.relativePath == "cb_stop2.md";
+        },
+        5000));
+    w.stop();
+
+    std::error_code ec;
+    fs::remove_all(dir, ec);
+    return true;
+})
 #endif  // _WIN32

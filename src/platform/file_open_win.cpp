@@ -5,6 +5,7 @@
 // 非 ASCII 路径（如中文文件名）不再经 ANSI 代码页转换而乱码
 //（旧实现用 MinGW CRT 的 ANSI __argv，该限制已在 2026-09-22 升级消除）。
 #include "file_open.h"
+#include "file_open_common.h"  // CP-09：detail::utf8ToWide/wideToUtf8 共享声明
 #include "file_open_win.h"   // 测试缝声明（win-only 符号不进平台无关头）
 
 #include <windows.h>
@@ -13,10 +14,12 @@
 #include <string>
 #include <vector>
 
-namespace platform::file_open {
+namespace platform::detail {
 
-// UTF-16 → UTF-8（Windows API，无 locale 依赖）
-static std::string wideToUtf8(const wchar_t* wstr, int wlen) {
+// UTF-16 → UTF-8（Windows API，无 locale 依赖）——审计 CP-09：file_open_win
+// 与 file_watcher_win 共用的编码链，定义在本 Windows-only TU（全平台 TU 的
+// file_open_common.cpp 放不下 <windows.h>，见 file_open_common.h 说明）
+std::string wideToUtf8(const wchar_t* wstr, int wlen) {
     if (wstr == nullptr || wlen <= 0) return {};
     const int needed = WideCharToMultiByte(CP_UTF8, 0, wstr, wlen,
                                            nullptr, 0, nullptr, nullptr);
@@ -27,12 +30,29 @@ static std::string wideToUtf8(const wchar_t* wstr, int wlen) {
     return out;
 }
 
+// UTF-8 → UTF-16（openDirectory / 监听目录打开用；空串/非法输入返回空 wstring）
+std::wstring utf8ToWide(const std::string& s) {
+    if (s.empty()) return {};
+    const int wlen = MultiByteToWideChar(CP_UTF8, 0, s.data(),
+                                         static_cast<int>(s.size()),
+                                         nullptr, 0);
+    if (wlen <= 0) return {};
+    std::wstring out(static_cast<size_t>(wlen), L'\0');
+    MultiByteToWideChar(CP_UTF8, 0, s.data(), static_cast<int>(s.size()),
+                        out.data(), wlen);
+    return out;
+}
+
+} // namespace platform::detail
+
+namespace platform::file_open {
+
 // 测试缝（审计 [17]）：暴露 wideToUtf8 编码链供回归用例直接调用（非 ASCII
 // 往返），与 openFileFromArgv 用的是同一函数，锁的就是真实转换路径。
 // 声明在本目录的 win 专用头 file_open_win.h（平台无关头 file_open.h 不放
 // win-only 符号）。
 std::string wideToUtf8ForTest(const std::wstring& w) {
-    return wideToUtf8(w.data(), static_cast<int>(w.size()));
+    return detail::wideToUtf8(w.data(), static_cast<int>(w.size()));
 }
 
 std::string openFileFromArgv() {
@@ -45,24 +65,11 @@ std::string openFileFromArgv() {
     std::vector<std::string> utf8Args;
     for (int i = 0; i < argc && i <= 1; ++i) {
         utf8Args.push_back(argvW[i] != nullptr
-                               ? wideToUtf8(argvW[i], lstrlenW(argvW[i]))
+                               ? detail::wideToUtf8(argvW[i], lstrlenW(argvW[i]))
                                : std::string{});
     }
     LocalFree(argvW);
     return selectOpenFileArg(utf8Args);
-}
-
-// UTF-8 → UTF-16（openDirectory 用；空串/非法输入返回空 wstring）
-static std::wstring utf8ToWide(const std::string& s) {
-    if (s.empty()) return {};
-    const int wlen = MultiByteToWideChar(CP_UTF8, 0, s.data(),
-                                         static_cast<int>(s.size()),
-                                         nullptr, 0);
-    if (wlen <= 0) return {};
-    std::wstring out(static_cast<size_t>(wlen), L'\0');
-    MultiByteToWideChar(CP_UTF8, 0, s.data(), static_cast<int>(s.size()),
-                        out.data(), wlen);
-    return out;
 }
 
 core::Result<void> openDirectory(const std::string& path) {
@@ -70,7 +77,7 @@ core::Result<void> openDirectory(const std::string& path) {
         return core::Result<void>::fail(core::ErrorCode::ValidationError,
                                         "目录路径为空");
     }
-    const std::wstring wpath = utf8ToWide(path);
+    const std::wstring wpath = detail::utf8ToWide(path);
     if (wpath.empty()) {
         return core::Result<void>::fail(core::ErrorCode::ValidationError,
                                         "目录路径 UTF-8 转换失败");

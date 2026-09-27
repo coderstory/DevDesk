@@ -15,8 +15,10 @@ fs::path appDataDir() {
 }
 
 fs::path claudeSettingsFile() {
-    if (const char* env = std::getenv("DEVDESK_CLAUDE_CONFIG_DIR")) {
-        return fs::path(env) / "settings.json";
+    // 审计 CP-09：覆盖分支下沉到 paths.cpp::claudeConfigDirOverride()（三平台共用）
+    const fs::path overridePath = claudeConfigDirOverride();
+    if (!overridePath.empty()) {
+        return overridePath;
     }
     const char* home = std::getenv("HOME");
     fs::path base(home ? home : "");

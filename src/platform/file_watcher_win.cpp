@@ -6,8 +6,9 @@
 //   worker   常驻循环：保持一个未决 ReadDirectoryChangesW →
 //            WaitForMultipleObjects(事件 | 停止) → 解析 → 去抖 → 回调
 //   stop()   置 running=false + SetEvent 唤醒 worker，worker 自行
-//            CancelIoEx 作废未决读并退出；stop() join。句柄只在 join 后关闭，
-//            保证 worker 不会碰到失效 HANDLE。
+//            CancelIoEx 作废未决读并退出。句柄的关闭责任归 worker 退出路径
+//            （回调线程内 stop 不 join、不关句柄，见 joinWorker 注释）——
+//            不会再有「句柄已关、worker 仍在用」的失效 HANDLE 场景。
 //
 // 去抖策略：pending 为空时无限期等待（零空转）；收到事件后解析、立刻重发
 // 读请求（事件捕获无间隙），再按 debounceMs 静默窗口等待——窗口内再来事件
@@ -18,6 +19,7 @@
 #include "platform/file_watcher.h"
 
 #include "core/logging.h"
+#include "platform/file_open_common.h"
 
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
@@ -117,33 +119,56 @@ std::string lastWinError(unsigned long code) {
 struct FileWatcher::Impl {
     std::atomic<bool> running{false};
     std::thread worker;
-    HANDLE dirHandle = nullptr;   // 被监听目录（OVERLAPPED 打开）
-    HANDLE stopEvent = nullptr;   // 手动重置，stop() SetEvent 唤醒 worker
+    // 句柄归属（review-A 修复）：start() 写入；关闭责任在 worker 退出路径
+    // （runWorker 收尾 / 启动失败分支）或 join 之后的 closeHandles()。
+    // atomic：stop() 可能与 worker 退出并发读写这两项（回调线程内 stop 不
+    // join——见 joinWorker），用原子避免数据竞争。
+    std::atomic<HANDLE> dirHandle{nullptr};   // 被监听目录（OVERLAPPED 打开）
+    std::atomic<HANDLE> stopEvent{nullptr};   // 手动重置，stop() SetEvent 唤醒 worker
     FileWatchCallback callback;
     DWORD debounceMs = 200;
 
+    // 关句柄（判空幂等；exchange 保证不重复关）。仅 join 成功之后调用才安全。
+    void closeHandles() {
+        if (HANDLE h = dirHandle.exchange(nullptr)) CloseHandle(h);
+        if (HANDLE e = stopEvent.exchange(nullptr)) CloseHandle(e);
+    }
+
+    // worker 退出路径：先把仍指向自己副本的 Impl 字段置空，再关副本（判空
+    // 幂等）。字段可能已被 start() 换成新句柄——只在相等时清，不动新句柄。
+    void releaseOwnHandles(HANDLE dh, HANDLE se) {
+        if (dirHandle.load() == dh) dirHandle.store(nullptr);
+        if (stopEvent.load() == se) stopEvent.store(nullptr);
+        if (dh) CloseHandle(dh);
+        if (se) CloseHandle(se);
+    }
+
     void joinWorker() {
         running.store(false);
-        if (stopEvent) SetEvent(stopEvent);
+        if (HANDLE e = stopEvent.load()) SetEvent(e);
         if (worker.joinable()) {
-            // 回调线程内自 stop → 跳过 join（服务析构发生在主线程，此处仅防御）
-            if (worker.get_id() == std::this_thread::get_id()) {
-                worker.detach();
-            } else {
-                worker.join();
-            }
+            // 回调线程内自 stop（review-A 实锤 UAF 源）：只请求停止——不
+            // detach（否则 worker 继续在 Impl 成员函数里跑，对象析构即 UAF）、
+            // 不 join、不关句柄（worker 自己会退出并收句柄）。join 由之后
+            // 非回调线程的 stop()/析构完成；对象必须活到回调返回（头文件契约）。
+            if (worker.get_id() == std::this_thread::get_id()) return;
+            worker.join();
         }
-        if (dirHandle) { CloseHandle(dirHandle); dirHandle = nullptr; }
-        if (stopEvent) { CloseHandle(stopEvent); stopEvent = nullptr; }
+        closeHandles();
     }
 
     // 后台线程主体（Impl 成员：匿名 ns 自由函数无权命名私有嵌套类型）
     void runWorker() {
+        // 局部句柄副本（review-A 修复）：循环内只用副本，stop() 并发置空
+        // Impl 字段也不影响本线程；副本的关闭由本线程收尾负责
+        const HANDLE dh = dirHandle.load();
+        const HANDLE se = stopEvent.load();
         std::vector<char> buffer(kBufBytes);
         OVERLAPPED ov{};
         ov.hEvent = CreateEventW(nullptr, TRUE, FALSE, nullptr);
         if (!ov.hEvent) {
             running.store(false);
+            releaseOwnHandles(dh, se);
             return;
         }
 
@@ -155,7 +180,7 @@ struct FileWatcher::Impl {
                 ResetEvent(ov.hEvent);
                 DWORD transferredNow = 0;
                 const BOOL ok = ReadDirectoryChangesW(
-                    dirHandle, buffer.data(), kBufBytes, TRUE,
+                    dh, buffer.data(), kBufBytes, TRUE,
                     kWatchMask, &transferredNow, &ov, nullptr);
                 if (!ok) {
                     const DWORD err = GetLastError();
@@ -171,14 +196,14 @@ struct FileWatcher::Impl {
 
             // pending 空 → INFINITE（零空转）；有货 → 去抖静默窗口
             const DWORD timeout = pending.empty() ? INFINITE : debounceMs;
-            HANDLE waits[2] = {ov.hEvent, stopEvent};
+            HANDLE waits[2] = {ov.hEvent, se};
             const DWORD r = WaitForMultipleObjects(2, waits, FALSE, timeout);
 
             if (r == WAIT_OBJECT_0 + 1) {
                 // stop()：作废未决读，等其真正结束后退出（本批 pending 丢弃）
-                CancelIoEx(dirHandle, &ov);
+                CancelIoEx(dh, &ov);
                 DWORD dummy = 0;
-                GetOverlappedResult(dirHandle, &ov, &dummy, TRUE);
+                GetOverlappedResult(dh, &ov, &dummy, TRUE);
                 break;
             }
             if (r == WAIT_TIMEOUT) {
@@ -197,7 +222,7 @@ struct FileWatcher::Impl {
             }
 
             DWORD transferred = 0;
-            if (!GetOverlappedResult(dirHandle, &ov, &transferred, FALSE)) {
+            if (!GetOverlappedResult(dh, &ov, &transferred, FALSE)) {
                 const DWORD err = GetLastError();
                 if (err == ERROR_OPERATION_ABORTED) {
                     readIssued = false;  // 罕见：刚被 cancel，循环顶部处理 stop
@@ -218,6 +243,7 @@ struct FileWatcher::Impl {
 
         running.store(false);  // 线程退出 = 监听失效（active() 随之变 false）
         CloseHandle(ov.hEvent);
+        releaseOwnHandles(dh, se);  // 退出前收自己的句柄副本（判空幂等）
     }
 };
 
@@ -231,8 +257,9 @@ core::Result<void> FileWatcher::start(const std::filesystem::path& dir,
                                       FileWatchCallback onChange,
                                       std::chrono::milliseconds debounceMs) {
     if (impl_->worker.get_id() == std::this_thread::get_id()) {
-        // 回调线程内重启会让 joinWorker 走 detach 兜底、旧线程继续持旧句柄——
-        // 属误用（消费方线程模型不允许），显式拒绝
+        // 回调线程内重启是误用（消费方线程模型不允许），显式拒绝：旧 worker
+        // 尚未 join 就给它赋新 std::thread = 对 joinable thread 赋值 →
+        // std::terminate；且旧线程仍持旧句柄
         return core::Result<void>::fail(core::ErrorCode::ValidationError,
                                         "FileWatcher: 不能在回调线程内重启监听");
     }
@@ -253,15 +280,10 @@ core::Result<void> FileWatcher::start(const std::filesystem::path& dir,
     }
 
     // fs::path ←UTF-8 std::string 的窄→宽转换走 ACP，中文路径会乱码；
-    // 显式 UTF-8 → UTF-16（与 file_open_win.cpp 同一编码链）
+    // 显式 UTF-8 → UTF-16（审计 CP-09：与 file_open_win.cpp 共用编码链）
     const std::u8string u8 = dir.u8string();
     const std::string utf8Path(reinterpret_cast<const char*>(u8.data()), u8.size());
-    const int wlen = MultiByteToWideChar(CP_UTF8, 0, utf8Path.c_str(),
-                                         static_cast<int>(utf8Path.size()),
-                                         nullptr, 0);
-    std::wstring wpath(static_cast<size_t>(wlen), L'\0');
-    MultiByteToWideChar(CP_UTF8, 0, utf8Path.c_str(),
-                        static_cast<int>(utf8Path.size()), wpath.data(), wlen);
+    const std::wstring wpath = detail::utf8ToWide(utf8Path);
 
     HANDLE h = CreateFileW(wpath.c_str(), FILE_LIST_DIRECTORY,
                            FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
@@ -282,8 +304,8 @@ core::Result<void> FileWatcher::start(const std::filesystem::path& dir,
                                             lastWinError(err) + "）");
     }
 
-    impl_->dirHandle = h;
-    impl_->stopEvent = stopEv;
+    impl_->dirHandle.store(h);
+    impl_->stopEvent.store(stopEv);
     impl_->callback = std::move(onChange);
     impl_->debounceMs = static_cast<DWORD>(
         std::chrono::milliseconds(debounceMs).count() > 0
@@ -298,8 +320,8 @@ core::Result<void> FileWatcher::start(const std::filesystem::path& dir,
         impl_->running.store(false);
         CloseHandle(h);
         CloseHandle(stopEv);
-        impl_->dirHandle = nullptr;
-        impl_->stopEvent = nullptr;
+        impl_->dirHandle.store(nullptr);
+        impl_->stopEvent.store(nullptr);
         return core::Result<void>::fail(core::ErrorCode::Internal,
                                         std::string("FileWatcher: 无法启动监听线程: ") +
                                             e.what());

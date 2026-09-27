@@ -2,6 +2,7 @@
 // 其他平台（Linux 等）实现：openFileFromArgv 暂不支持返回空（与原行为一致）；
 // openDirectory 走 xdg-open
 #include "file_open.h"
+#include "file_open_common.h"
 
 #include <cstdlib>
 
@@ -9,17 +10,6 @@ namespace platform::file_open {
 
 std::string openFileFromArgv() {
     return {};
-}
-
-// shell 单引号转义（' 拆成 '\''）：路径含空格/引号不破坏命令边界
-static std::string shellSingleQuote(const std::string& s) {
-    std::string out = "'";
-    for (const char c : s) {
-        if (c == '\'') out += "'\\''";
-        else out += c;
-    }
-    out += "'";
-    return out;
 }
 
 core::Result<void> openDirectory(const std::string& path) {

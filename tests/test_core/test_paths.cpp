@@ -1,7 +1,26 @@
 #include "doctest.h"
 #include "core/paths.h"
 
+#include <cstdlib>
 #include <filesystem>
+#include <string>
+
+namespace {
+
+// 环境变量通道（与 test_main.cpp 同款：Windows 传空串即删除变量，POSIX 空串走 unsetenv）
+void setEnvVar(const char* key, const std::string& value) {
+#if defined(_WIN32)
+    ::_putenv_s(key, value.c_str());
+#else
+    if (value.empty()) {
+        ::unsetenv(key);
+    } else {
+        ::setenv(key, value.c_str(), 1);
+    }
+#endif
+}
+
+} // namespace
 
 REGISTER_TEST(paths_app_data_dir, "paths: appDataDir not empty", {
     auto p = core::paths::appDataDir();
@@ -30,5 +49,32 @@ REGISTER_TEST(paths_sqlite_ext, "paths: sqliteDbFile is .db", {
 REGISTER_TEST(paths_log_file, "paths: logFile in logs dir", {
     auto lf = core::paths::logFile();
     DOCTEST_CHECK(lf.string().find("logs") != std::string::npos);
+    return true;
+})
+
+// 审计 CP-09：DEVDESK_CLAUDE_CONFIG_DIR 覆盖分支已下沉到 paths.cpp 的
+// claudeConfigDirOverride()，三平台 claudeSettingsFile() 共用——本用例锁死
+// 设（覆盖生效）/ 清（回落平台 home 默认）两分支的行为，防下沉改坏语义。
+REGISTER_TEST(paths_claude_settings_dir_override,
+              "paths: DEVDESK_CLAUDE_CONFIG_DIR 覆盖 claudeSettingsFile（设/清两分支）", {
+    // 备份原值（外部环境可能已设；用例末尾恢复，防污染后续用例）
+    const char* saved = std::getenv("DEVDESK_CLAUDE_CONFIG_DIR");
+    const std::string savedValue = saved ? saved : std::string();
+
+    // 分支 1：环境变量已设 → <env>/settings.json
+    const auto overrideDir = test_temp::tempPath("devdesk_claude_cfg_override");
+    setEnvVar("DEVDESK_CLAUDE_CONFIG_DIR", overrideDir.string());
+    const auto overridden = core::paths::claudeSettingsFile();
+    DOCTEST_CHECK(overridden == overrideDir / "settings.json");
+
+    // 分支 2：清掉（空串=删除变量）→ 回落平台 home 默认：~/.claude/settings.json
+    setEnvVar("DEVDESK_CLAUDE_CONFIG_DIR", "");
+    const auto fallback = core::paths::claudeSettingsFile();
+    DOCTEST_CHECK(fallback.string().find(overrideDir.string()) == std::string::npos);
+    DOCTEST_CHECK(fallback.string().find(".claude") != std::string::npos);
+    DOCTEST_CHECK(fallback.filename().string() == std::string("settings.json"));
+
+    // 恢复原值
+    setEnvVar("DEVDESK_CLAUDE_CONFIG_DIR", savedValue);
     return true;
 })

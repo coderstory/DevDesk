@@ -47,6 +47,13 @@ fs::path logFile() {
     return logsDir() / "devdesk.log";
 }
 
+fs::path claudeConfigDirOverride() {
+    if (const char* env = std::getenv("DEVDESK_CLAUDE_CONFIG_DIR")) {
+        return fs::path(env) / "settings.json";
+    }
+    return {};
+}
+
 void ensureDirectoriesExist() {
     std::error_code ec;
     for (const auto& dir : {appDataDir(), markdownDir(), logsDir(), petsDir()}) {

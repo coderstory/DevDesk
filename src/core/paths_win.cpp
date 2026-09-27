@@ -15,9 +15,11 @@ fs::path appDataDir() {
 }
 
 fs::path claudeSettingsFile() {
-    // 覆盖入口（测试隔离 / 自定义 .claude 目录，见 paths.h 注释）
-    if (const char* env = std::getenv("DEVDESK_CLAUDE_CONFIG_DIR")) {
-        return fs::path(env) / "settings.json";
+    // 覆盖入口（测试隔离 / 自定义 .claude 目录，见 paths.h 注释）；审计 CP-09
+    // 起与 macOS/POSIX 共用 paths.cpp 的 claudeConfigDirOverride()
+    const fs::path overridePath = claudeConfigDirOverride();
+    if (!overridePath.empty()) {
+        return overridePath;
     }
     const char* home = std::getenv("USERPROFILE");
     fs::path base(home ? home : "");
