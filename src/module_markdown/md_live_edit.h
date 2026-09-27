@@ -12,9 +12,12 @@
 // 本批（M2）刻意不做、留给后续里程碑的接口（不提前挖坑，故此处不出现）：
 //   - 块级 undo 栈（M5）——独立纯函数，加在本文件尾部即可，不改变下列签名的语义。
 // M4 已补：跨块 ↑↓ 目标 + 块边界删除（文档尾部），二者仍是纯字节算术。
+// M5 已补：块级 undo / redo 快照栈（文档最尾部，独立类，不改上面任何签名）。
 #pragma once
 
 #include <cstddef>
+#include <cstdint>
+#include <deque>
 #include <functional>
 #include <string>
 
@@ -110,5 +113,66 @@ struct MdLiveBoundaryEdit {
 bool mdLiveBoundaryEdit(const std::string& text,
                         const std::vector<MdBlock>& blocks, size_t cursorByte,
                         int direction, MdLiveBoundaryEdit& out);
+
+// ---- M5：块级 undo / redo（spec §4.5 / §4.7 接口 / 已定决策 D5）----
+// 快照 = (整篇文本, 文档光标偏移)，存的是【编辑前】的状态：消费侧在把改动写进
+// 文档【之前】push(当前文档)，撤销 = 弹回上一个记录的状态、重做 = 反向。
+//
+// 为什么不用框架内置栈（D5）：内置栈是 per-instance 的【块局部文本】快照，单输入
+// 方案下会跨块混叠（换块后恢复 = 把旧块文本灌进新块，语义不可解释）；本层是唯一
+// 一套整篇口径的快照，跨块序列因此连贯。
+//
+// 容量（spec §4.5）：常规 200 条；文档 > 2MB 时降为 50（内存 ≈ 快照数 × 文档
+// 大小，降级记日志由消费侧做——本层不依赖日志）。
+inline constexpr size_t kMdLiveUndoCap = 200;
+inline constexpr size_t kMdLiveUndoCapLargeDoc = 50;
+inline constexpr size_t kMdLiveUndoLargeDocBytes = 2u * 1024u * 1024u;
+// 同块连续输入的合并窗口：距上次推栈 < 600ms 视为同一次编辑（避免逐键一栈）
+inline constexpr int64_t kMdLiveUndoMergeMs = 600;
+
+class MdLiveUndoStack {
+public:
+    // 基线换代（进实时态 / 换笔记 / 外部重载）：清栈并以 (text, cursorByte) 为
+    // 基线——撤销最多回到这一版。进态之前的编辑属于别的编辑会话（编辑态有自己的
+    // 框架栈），本栈不接管；不换代就会用旧文档的快照覆盖新文档。cursorByte 越界
+    // 时钳到文本长。
+    void reset(std::string text, size_t cursorByte);
+
+    // 推栈：text/cursorByte = 本次编辑【前】的整篇文本与文档光标偏移。
+    // sameBlock = 本次编辑与上次推栈是否同属一个活动块（消费侧口径：
+    // 当前活动块 == 上次推栈时的活动块）。同块 且 距上次推栈 < kMdLiveUndoMergeMs
+    // → 合并（同一次编辑，不新增条目）；否则开新的一次编辑（作废 redo 链）。
+    // 与栈顶同文本的推栈属于重复快照 → 不新增条目（撤销到它等于什么都不做）。
+    void push(std::string text, size_t cursorByte, bool sameBlock, int64_t nowMs);
+
+    // 块切换 / 模式切换前的收口（spec §4.5「块切换前、模式切换前」推栈）：
+    // 只关掉合并组，不新增条目、不动 redo 栈。边界处那条「下一次编辑的前置状态」
+    // 由编辑自己的 push 带上来，撤销目标因此不会多出无意义的中间站。
+    void markBoundary();
+
+    // 撤销 / 重做：成功时写回 (text, cursorByte) 并返回 true；无可用快照返回
+    // false（调用侧不改文档）。与当前文本相同的快照是「无变化步」（例如打字后
+    // 又被并进同组、或只剩基线那一版），直接跳过——不消耗用户的一次撤销。
+    bool undo(std::string& text, size_t& cursorByte);
+    bool redo(std::string& text, size_t& cursorByte);
+
+    bool canUndo() const { return !undo_.empty(); }
+    bool canRedo() const { return !redo_.empty(); }
+    size_t size() const { return undo_.size(); }
+    size_t redoSize() const { return redo_.size(); }
+    // 生效容量：由最近一次推栈的文档大小决定（> 2MB 降级为 50）；未推过栈 = 上限值
+    size_t capacity() const { return capacity_; }
+
+private:
+    struct Entry {
+        std::string text;
+        size_t cursorByte = 0;
+    };
+    std::deque<Entry> undo_;   // 前出（容量满时挤掉最老的一条）
+    std::deque<Entry> redo_;
+    size_t capacity_ = kMdLiveUndoCap;
+    int64_t lastPushMs_ = 0;
+    bool groupOpen_ = false;   // 合并组是否还开着（push/markBoundary/undo 改它）
+};
 
 } // namespace module::markdown

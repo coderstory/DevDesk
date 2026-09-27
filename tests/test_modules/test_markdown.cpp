@@ -4534,3 +4534,281 @@ REGISTER_TEST(md_module_live_inblock_keys,
     mod->onStop();
     return true;
 })
+
+// M5 验收 ①：块级撤销/重做（spec §7 M5 / §4.5 D5）——跨块编辑序列后 Ctrl+Z
+// 逐级回退（每级 = 一次编辑组），Ctrl+Y / Ctrl+Shift+Z 逐级重做；快照栈在模块层，
+// 【拦截证据】= framework per-instance 栈的大小在被拦截的 Ctrl+Z 前后不变。
+// 跨块序列是 D5 的立身之本：框架栈存的是【块局部文本】，换块后恢复会写错块。
+REGISTER_TEST(md_module_live_undo_redo,
+              "markdown_module: 实时态块级撤销/重做（跨块序列 + Ctrl+Z/Y/Shift+Z，M5）", {
+    const std::string text = "alpha\n\nbeta\n";
+    test_support::MdHeadlessEnv env(kDirPrefix, "liveundo", kDbName);
+    DOCTEST_REQUIRE(env.db != nullptr);
+    DOCTEST_REQUIRE(writeTextFile(env.dir / "uo.md", text));
+
+    module::markdown::MdBlockModel model;
+    model.update(text);
+    const auto& bs = model.blocks();
+    DOCTEST_REQUIRE_EQ(bs.size(), static_cast<size_t>(2));
+    DOCTEST_REQUIRE_EQ(bs[1].start, static_cast<size_t>(6));
+
+    std::unique_ptr<::core::Module> mod(create_markdown_module());
+    mod->onStart();
+    eui::Screen screen;
+    screen.width = 1600.0f;
+    screen.height = 1000.0f;
+    MdLiveEnv e;
+    auto frame = [&](void) { e.frame([&](eui::Ui& u) { mod->compose(u, screen); }); };
+
+    DOCTEST_REQUIRE(enterLiveAt(e, mod.get(), screen, bs[1].start));   // 活动块 = 1
+    DOCTEST_CHECK_EQ(e.ui->state<MdInputState>("md.live.input").text,
+                     std::string("\nbeta\n"));
+
+    // ① 块 1 末尾打字 "x"（块末追加：不产生新块也不粘连上一块）→ 文档
+    //    "alpha\n\nbeta\nx"
+    e.ui->state<MdInputState>("md.live.input").cursor = static_cast<int>(
+        e.ui->state<MdInputState>("md.live.input").text.size());
+    frame();
+    DOCTEST_REQUIRE(typeIntoLiveInput(*e.ui, "x"));
+    frame();
+    DOCTEST_CHECK_MESSAGE(
+        e.ui->state<MdInputState>("md.live.input").text == "\nbeta\nx",
+        "块 1 打字后 [" + escapeCr(e.ui->state<MdInputState>("md.live.input").text) + "]");
+
+    // ② 点击块 0（渲染块点击 = 块切换 → 撤销合并组收口）→ 光标落块 0 行首
+    const std::vector<int> sids = liveBlockSidsByY(*e.ui);
+    DOCTEST_REQUIRE_EQ(sids.size(), static_cast<size_t>(2));
+    const auto* wrap0 = e.ui->find("md.live.blk." + std::to_string(sids[0]));
+    DOCTEST_REQUIRE(wrap0 != nullptr);
+    DOCTEST_REQUIRE(clickLiveBlock(*e.ui, sids[0], wrap0->frame.height * 0.5f));
+    frame();
+    DOCTEST_CHECK_MESSAGE(
+        e.ui->state<MdInputState>("md.live.input").text == "alpha\n",
+        "点击块 0 后活动块 [" +
+            escapeCr(e.ui->state<MdInputState>("md.live.input").text) + "]");
+
+    // ③ 块 0 打字 "y" → 文档 "yalpha\n\nbeta\nx"
+    DOCTEST_REQUIRE(typeIntoLiveInput(*e.ui, "y"));
+    frame();
+    DOCTEST_CHECK_MESSAGE(
+        e.ui->state<MdInputState>("md.live.input").text == "yalpha\n",
+        "块 0 打字后 [" + escapeCr(e.ui->state<MdInputState>("md.live.input").text) + "]");
+
+    // ④ Ctrl+Z → 撤销块 0 的编辑；内置栈大小前后不变 = 按键被模块层消费
+    const size_t fwUndo =
+        e.ui->state<MdInputState>("md.live.input").undoStack.size();
+    DOCTEST_REQUIRE(pressLiveKey(*e.ui, eui::InputKey::Z, false, true));
+    frame();
+    DOCTEST_CHECK_MESSAGE(
+        e.ui->state<MdInputState>("md.live.input").text == "alpha\n",
+        "撤销块 0 编辑后 [" +
+            escapeCr(e.ui->state<MdInputState>("md.live.input").text) + "]");
+    DOCTEST_CHECK_EQ(e.ui->state<MdInputState>("md.live.input").cursor, 0);
+    DOCTEST_CHECK_EQ(e.ui->state<MdInputState>("md.live.input").undoStack.size(),
+                     fwUndo);   // framework per-instance 栈未被消费
+
+    // ⑤ Ctrl+Z → 跨块撤销到进态基线（撤销 "x"，活动块随快照回到块 1）。光标取
+    //    基线快照的进态光标（= 进态时编辑器的文档字节 6 → 块 1 局部 0）
+    DOCTEST_REQUIRE(pressLiveKey(*e.ui, eui::InputKey::Z, false, true));
+    frame();
+    DOCTEST_CHECK_MESSAGE(
+        e.ui->state<MdInputState>("md.live.input").text == "\nbeta\n",
+        "跨块撤销后活动块 [" +
+            escapeCr(e.ui->state<MdInputState>("md.live.input").text) + "]");
+    DOCTEST_CHECK_MESSAGE(
+        e.ui->state<MdInputState>("md.live.input").cursor == 0,
+        "跨块撤销后块内光标 [" +
+            std::to_string(e.ui->state<MdInputState>("md.live.input").cursor) + "]");
+    DOCTEST_CHECK_EQ(e.ui->state<MdInputState>("md.live.input").undoStack.size(),
+                     fwUndo);
+
+    // ⑥ Ctrl+Z → 已到基线：不改文档、也不报错
+    DOCTEST_REQUIRE(pressLiveKey(*e.ui, eui::InputKey::Z, false, true));
+    frame();
+    DOCTEST_CHECK_EQ(e.ui->state<MdInputState>("md.live.input").text,
+                     std::string("\nbeta\n"));
+
+    // ⑦ Ctrl+Y → 重做 "x"（活动块随快照回到块 0）
+    DOCTEST_REQUIRE(pressLiveKey(*e.ui, eui::InputKey::Y, false, true));
+    frame();
+    DOCTEST_CHECK_MESSAGE(
+        e.ui->state<MdInputState>("md.live.input").text == "alpha\n",
+        "重做 x 后 [" + escapeCr(e.ui->state<MdInputState>("md.live.input").text) + "]");
+
+    // ⑧ Ctrl+Shift+Z → 重做 "y"
+    DOCTEST_REQUIRE(pressLiveKey(*e.ui, eui::InputKey::Z, true, true));
+    frame();
+    DOCTEST_CHECK_MESSAGE(
+        e.ui->state<MdInputState>("md.live.input").text == "yalpha\n",
+        "重做 y 后 [" + escapeCr(e.ui->state<MdInputState>("md.live.input").text) + "]");
+
+    // ⑨ 撤销/重做的结果就是最终落盘的文档（逐字节）
+    std::this_thread::sleep_for(std::chrono::milliseconds(520));
+    frame();
+    std::string saved;
+    DOCTEST_REQUIRE(readFileBytes(env.dir / "uo.md", &saved));
+    DOCTEST_CHECK_MESSAGE(saved == "yalpha\n\nbeta\nx",
+                          "撤销/重做后落盘 [" + escapeCr(saved) + "]");
+    mod->onStop();
+    return true;
+})
+
+// M5 验收 ③：切态往返 = 撤销栈换代（spec §4.5「模式切换前推栈」+「退出实时态
+// 不清栈」的落地口径）——编辑态改过的内容不许被实时态的旧快照撤销掉。快照只覆盖
+// 一个实时态编辑会话；进态那一帧按当前文档重取基线（否则 Ctrl+Z 会静默吞掉
+// 编辑态/外部编辑器的改动，还会被落盘防抖写进磁盘）。
+REGISTER_TEST(md_module_live_undo_mode_roundtrip,
+              "markdown_module: 切态往返后撤销栈换代（旧快照不跨编辑会话，M5）", {
+    const std::string text = "para";
+    test_support::MdHeadlessEnv env(kDirPrefix, "liveurt", kDbName);
+    DOCTEST_REQUIRE(env.db != nullptr);
+    DOCTEST_REQUIRE(writeTextFile(env.dir / "urt.md", text));
+
+    module::markdown::MdBlockModel model;
+    model.update(text);
+    DOCTEST_REQUIRE_EQ(model.blocks().size(), static_cast<size_t>(1));
+
+    std::unique_ptr<::core::Module> mod(create_markdown_module());
+    mod->onStart();
+    eui::Screen screen;
+    screen.width = 1600.0f;
+    screen.height = 1000.0f;
+    MdLiveEnv e;
+    auto frame = [&](void) { e.frame([&](eui::Ui& u) { mod->compose(u, screen); }); };
+
+    DOCTEST_REQUIRE(enterLiveAt(e, mod.get(), screen, 4));   // 光标在 "para" 末尾
+    DOCTEST_CHECK_MESSAGE(
+        e.ui->state<MdInputState>("md.live.input").cursor == 4,
+        "进实时态块内光标 [" +
+            std::to_string(e.ui->state<MdInputState>("md.live.input").cursor) + "]");
+    DOCTEST_REQUIRE(typeIntoLiveInput(*e.ui, "x"));
+    frame();
+    DOCTEST_CHECK_MESSAGE(
+        e.ui->state<MdInputState>("md.live.input").text == "parax",
+        "实时态打 x 后活动块 [" +
+            escapeCr(e.ui->state<MdInputState>("md.live.input").text) + "]");
+
+    // 实时 → 编辑（Live→Split→Preview→Edit）：离开实时态
+    for (int i = 0; i < 3; ++i) {
+        DOCTEST_REQUIRE(cycleMode(mod.get()));
+        frame();
+    }
+    DOCTEST_REQUIRE(e.ui->find(kEditorInputId) != nullptr);
+    // 编辑态改一个字（不属于实时态那一次编辑会话）。两步：先走一帧让编辑器文本
+    // 与文档对齐（值替换帧会把光标搬到新文本末尾），再把光标摆到文末；元素指针
+    // 不能跨帧持有（ui.begin 每帧重建树），故最后重新 find 再派发输入
+    frame();
+    e.ui->state<MdInputState>(kEditorInputId).cursor = static_cast<int>(
+        e.ui->state<MdInputState>(kEditorInputId).text.size());
+    frame();
+    const auto* edHit = e.ui->find("md.editor.input.hit");
+    DOCTEST_REQUIRE(edHit != nullptr);
+    DOCTEST_REQUIRE(edHit->onTextInput != nullptr);
+    core::TextInputEvent ev;
+    ev.text = "Z";
+    edHit->onTextInput(ev);
+    frame();
+
+    // 编辑 → 实时（循环一格）：基线按当前文档重取
+    DOCTEST_REQUIRE(cycleMode(mod.get()));
+    frame();
+    DOCTEST_REQUIRE(e.ui->find("md.live.input") != nullptr);
+    DOCTEST_CHECK_MESSAGE(
+        e.ui->state<MdInputState>("md.live.input").text == "paraxZ",
+        "切回实时后活动块 [" +
+            escapeCr(e.ui->state<MdInputState>("md.live.input").text) + "]");
+
+    // Ctrl+Z → 新会话无可用快照：编辑态那一笔不许被撤销掉
+    DOCTEST_REQUIRE(pressLiveKey(*e.ui, eui::InputKey::Z, false, true));
+    frame();
+    DOCTEST_CHECK_MESSAGE(
+        e.ui->state<MdInputState>("md.live.input").text == "paraxZ",
+        "切态后撤销动了编辑态的内容 [" +
+            escapeCr(e.ui->state<MdInputState>("md.live.input").text) + "]");
+    std::this_thread::sleep_for(std::chrono::milliseconds(520));
+    frame();
+    std::string saved;
+    DOCTEST_REQUIRE(readFileBytes(env.dir / "urt.md", &saved));
+    DOCTEST_CHECK_MESSAGE(saved == "paraxZ", "落盘 [" + escapeCr(saved) + "]");
+    mod->onStop();
+    return true;
+})
+
+// M5 验收 ②：M4 遗留收口——块边界删除【不走 input 内置编辑】，故 framework 栈
+// 不增（M4 用例 md_module_live_boundary_delete 已把这条锁死为 0）；M5 之前这条路
+// 径因此不可撤销。本用例：块首退格改文档 → Ctrl+Z 走模块层快照栈撤回来。
+REGISTER_TEST(md_module_live_boundary_undo,
+              "markdown_module: 实时态块首退格可撤销（M4 遗留 → M5 快照栈）", {
+    const std::string text = "# A\n\n# B\n";
+    test_support::MdHeadlessEnv env(kDirPrefix, "livebund", kDbName);
+    DOCTEST_REQUIRE(env.db != nullptr);
+    DOCTEST_REQUIRE(writeTextFile(env.dir / "bu.md", text));
+
+    module::markdown::MdBlockModel model;
+    model.update(text);
+    const auto& bs = model.blocks();
+    DOCTEST_REQUIRE_EQ(bs.size(), static_cast<size_t>(2));
+    DOCTEST_REQUIRE_EQ(bs[1].start, static_cast<size_t>(4));
+
+    std::unique_ptr<::core::Module> mod(create_markdown_module());
+    mod->onStart();
+    eui::Screen screen;
+    screen.width = 1600.0f;
+    screen.height = 1000.0f;
+    MdLiveEnv e;
+    auto frame = [&](void) { e.frame([&](eui::Ui& u) { mod->compose(u, screen); }); };
+
+    DOCTEST_REQUIRE(enterLiveAt(e, mod.get(), screen, bs[1].start));
+    DOCTEST_CHECK_EQ(e.ui->state<MdInputState>("md.live.input").text,
+                     std::string("\n# B\n"));
+
+    // ① 块首退格（M4 边界路径）：删接缝 '\n' → 两块粘连；光标落接缝字节 3，
+    //    而块边界字节归【后一块】→ 粘连后块 0 = [0,4) "# A\n"、块 1 = [4,8)
+    //    "# B\n"，接缝字节 3 落在块 0 → 活动块跟随到块 0（M4 语义，非本线改动）
+    DOCTEST_REQUIRE(pressLiveKey(*e.ui, eui::InputKey::Backspace));
+    frame();
+    const std::string merged = "# A\n# B\n";
+    DOCTEST_CHECK_MESSAGE(
+        e.ui->state<MdInputState>("md.live.input").text == "# A\n",
+        "块首退格后活动块 [" +
+            escapeCr(e.ui->state<MdInputState>("md.live.input").text) + "]");
+    DOCTEST_CHECK_EQ(e.ui->state<MdInputState>("md.live.input").cursor, 3);
+    // 证伪探针（M4 已锁的同一事实）：边界路径不产生 framework 快照
+    DOCTEST_CHECK_EQ(e.ui->state<MdInputState>("md.live.input").undoStack.size(),
+                     static_cast<size_t>(0));
+
+    // ② Ctrl+Z → 模块层快照栈把这次边界删除撤销回来（M4 遗留缺口）
+    DOCTEST_REQUIRE(pressLiveKey(*e.ui, eui::InputKey::Z, false, true));
+    frame();
+    DOCTEST_CHECK_MESSAGE(
+        e.ui->state<MdInputState>("md.live.input").text == "\n# B\n",
+        "撤销边界删除后活动块 [" +
+            escapeCr(e.ui->state<MdInputState>("md.live.input").text) + "]");
+    DOCTEST_CHECK_EQ(e.ui->state<MdInputState>("md.live.input").cursor, 0);
+    // 内置栈依旧为空：撤销走的是模块层快照栈（不是把框架栈喂出来）
+    DOCTEST_CHECK_EQ(e.ui->state<MdInputState>("md.live.input").undoStack.size(),
+                     static_cast<size_t>(0));
+
+    // ③ 落盘逐字节 = 原文档（撤销结果被持久化）
+    std::this_thread::sleep_for(std::chrono::milliseconds(520));
+    frame();
+    std::string saved;
+    DOCTEST_REQUIRE(readFileBytes(env.dir / "bu.md", &saved));
+    DOCTEST_CHECK_MESSAGE(saved == text, "撤销后落盘 [" + escapeCr(saved) + "]");
+
+    // ④ 反向：Ctrl+Y 重做这次边界删除 → 回到粘连文档（光标 = 撤销前的接缝字节 3，
+    //    重切后落在块 0 内 —— 与正向删除同一落点口径）
+    DOCTEST_REQUIRE(pressLiveKey(*e.ui, eui::InputKey::Y, false, true));
+    frame();
+    DOCTEST_CHECK_MESSAGE(
+        e.ui->state<MdInputState>("md.live.input").text == "# A\n",
+        "重做边界删除后活动块 [" +
+            escapeCr(e.ui->state<MdInputState>("md.live.input").text) + "]");
+    DOCTEST_CHECK_EQ(e.ui->state<MdInputState>("md.live.input").cursor, 3);
+    std::this_thread::sleep_for(std::chrono::milliseconds(520));
+    frame();
+    DOCTEST_REQUIRE(readFileBytes(env.dir / "bu.md", &saved));
+    DOCTEST_CHECK_MESSAGE(saved == merged, "重做后落盘 [" + escapeCr(saved) + "]");
+    mod->onStop();
+    return true;
+})

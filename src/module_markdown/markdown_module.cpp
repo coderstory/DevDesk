@@ -1719,6 +1719,7 @@ private:
                         // 本帧 input 还未与本块同步（它的块内光标属于上一次会话），
                         // 基准只能取块起点；真实落点由换文本帧反向写入块局部光标
                         liveInputStart_ = bs[liveActiveBlock_].start;
+                        resetLiveUndoBaseline();   // M5：撤销栈基线换代
                     } else if (liveCaretPending_) {
                         // 本帧锚由 setLiveCursor（点击渲染块 / 大纲跳转）显式定下：
                         // 此刻输入框的光标仍是【上一块】的局部坐标（换文本发生在
@@ -1926,6 +1927,9 @@ private:
         next.append(doc, 0, start);
         next.append(blockText);
         next.append(doc, end, std::string::npos);
+        // M5：撤销快照必须在写文档之前推（快照 = 本次编辑【前】的那一版）；
+        // 连续同块键入由纯层的 600ms 合并窗口收成一次编辑，不逐键一栈
+        pushLiveUndoSnapshot();
         onEditorTextChanged(next);
     }
 
@@ -2027,6 +2031,15 @@ private:
         if (!bs.empty()) {
             liveActiveBlock_ = mdLiveActiveBlockIndex(blockModel_, liveCursorByte_);
             liveInputStart_ = bs[liveActiveBlock_].start;
+            // M5 块切换前收口（spec §4.5「块切换前推栈」）：活动块变了就关掉
+            // 撤销合并组——否则「切走又切回同一块」会把两次编辑并成一次撤销。
+            // 只关组不推条目：那一站的撤销目标由下一次编辑的 push 带上前置状态
+            //（多推一条会多出一个"撤销了却什么都没变"的中间站，且会把 redo
+            //  链作废——markBoundary 不动 redo，撤销后的定位帧因此也安全）。
+            if (liveUndoSeeded_ && liveActiveBlock_ != liveUndoBlock_) {
+                liveUndo_.markBoundary();
+                liveUndoBlock_ = liveActiveBlock_;
+            }
         }
         liveCaretPending_ = true;
         liveFocusPending_ = true;
@@ -2108,6 +2121,24 @@ private:
         const bool plain = !shortcut && !event.modifiers.shift && !alt &&
                            !event.modifiers.super;
 
+        // ⓪ 撤销 / 重做（M5，spec §4.5 / 已定决策 D5）：模块层快照栈，无论有无
+        //    可用快照一律消费（返回 true）——交回内置会走 framework 的
+        //    per-instance 栈（存的是【块局部文本】，单输入方案下跨块混叠：
+        //    换块后恢复会把旧块文本灌进新块），语义不可解释。
+        if (shortcut && !alt && !event.modifiers.super) {
+            const bool redoKey = event.key == eui::InputKey::Y ||
+                                 (event.key == eui::InputKey::Z &&
+                                  event.modifiers.shift);
+            if (redoKey) {
+                applyLiveRedo();
+                return true;
+            }
+            if (event.key == eui::InputKey::Z) {
+                applyLiveUndo();
+                return true;
+            }
+        }
+
         // ① 块内按键：与编辑态 handleEditorKey 同一批纯函数（spec §3.4）
         EditBuffer buf{st.text, st.cursor, st.selectionStart, st.selectionEnd};
         bool handled = false;
@@ -2136,7 +2167,8 @@ private:
         }
 
         // ② 块边界键：文档字节偏移口径（与每帧锚重推同一公式：输入框文本起点 +
-        //    块内光标）。Ctrl/Alt/Super 组合一律不碰（Ctrl+Z/Y 归 M5）。
+        //    块内光标）。带 Ctrl/Alt/Super 的其它组合一律不碰（Ctrl+Z/Y/Shift+Z
+        //    已在 ⓪ 消费）。
         if (shortcut || alt || event.modifiers.super) return false;
         const std::vector<MdBlock>& blocks = blockModel_.blocks();
         if (blocks.empty()) return false;
@@ -2207,21 +2239,89 @@ private:
     // 直接改整篇文档，再按删除点重定光标（setLiveCursor = 唯一光标写点）。顺序
     // 不能反：先 onEditorTextChanged（分块重切）再 setLiveCursor，活动块才按
     // 【新】块序列取；反了锚会按旧块序列解释。
-    // 不走 input 内置编辑 → framework undo 栈不增（已定决策 D5：实时态撤销归
-    // 模块层快照栈，M5 交付；本路径的撤销因此要等 M5 —— 不把块局部快照塞进
-    // framework 栈：那条栈恢复的是【块文本】，重切后块已换，恢复会写错块）。
+    // 不走 input 内置编辑 → framework undo 栈不增 —— 撤销由 M5 的模块层快照栈
+    // 接管（已定决策 D5）：故这里必须先 push 编辑前的整篇文本，否则这条路径
+    // 无可撤销（M4 的既有缺口）。不把块局部快照塞进 framework 栈：那条栈恢复的
+    // 是【块文本】，重切后块已换，恢复会写错块。
     void applyLiveBoundaryEdit(const MdLiveBoundaryEdit& edit, const char* reason) {
         if (edit.eraseEnd <= edit.eraseStart || edit.eraseEnd > editorText_.size()) {
             return;
         }
         std::string next = editorText_;
         next.erase(edit.eraseStart, edit.eraseEnd - edit.eraseStart);
+        pushLiveUndoSnapshot();   // 必须在改文档之前（快照 = 改之前的那一版）
         onEditorTextChanged(next);
         setLiveCursor(edit.cursor, reason);
         LOG_INFO(std::string("实时态边界键(") + reason + "): 删 [" +
                  std::to_string(edit.eraseStart) + "," +
                  std::to_string(edit.eraseEnd) + ") 光标 " +
                  std::to_string(edit.cursor));
+    }
+
+    // ---- Phase 3 M5：块级 undo / redo（spec §4.5 / D5）----
+
+    // 推栈：快照 = 编辑【前】的整篇文本 + 文档光标偏移。调用点 = 每一条真正改
+    // 文档的实时态路径（键击上行 / 块内按键写回 / 失焦提交 / 边界删），一律在写
+    // 文档之前。光标取 liveCursorByte_（唯一光标写点 + 每帧按真实光标重推）——
+    // 它就是本次编辑发生前的落点，撤销后光标回到那里（消费侧按锚重推活动块）。
+    void pushLiveUndoSnapshot() {
+        if (!liveUndoSeeded_) return;   // 基线未就位（空文档 / 尚未进实时态）
+        const int64_t nowMs = std::chrono::duration_cast<std::chrono::milliseconds>(
+                                  std::chrono::steady_clock::now().time_since_epoch())
+                                  .count();
+        const size_t capBefore = liveUndo_.capacity();
+        liveUndo_.push(editorText_, liveCursorByte_,
+                       liveActiveBlock_ == liveUndoBlock_, nowMs);
+        liveUndoBlock_ = liveActiveBlock_;
+        if (liveUndo_.capacity() != capBefore) {
+            // spec §4.5「文档 > 2MB 时降为 50，登记日志」——只在档位切换的那一次
+            // 记（容量稳定后本分支不再命中，不会逐键刷日志）
+            LOG_WARN("[live] 撤销栈降级：文档 " + std::to_string(editorText_.size()) +
+                     " 字节 > 2MB，容量 " + std::to_string(capBefore) + " → " +
+                     std::to_string(liveUndo_.capacity()));
+        }
+    }
+
+    // 撤销 / 重做落地：快照栈在模块层（spec D5），一次到位改两样东西 ——
+    // 文档（唯一写点 onEditorTextChanged，顺带分块重切 + 脏标记 + 落盘防抖）与
+    // 光标（唯一写点 setLiveCursor，顺带换活动块 + 输入框文本 + 同帧补发聚焦）。
+    // 无可用快照时静默返回：调用侧已经把按键消费掉（不回退给框架栈）。
+    void applyLiveUndo() {
+        std::string text = editorText_;
+        size_t cursor = liveCursorByte_;
+        if (!liveUndo_.undo(text, cursor)) {
+            LOG_DEBUG("[live] Ctrl+Z: 无可撤销快照");
+            return;
+        }
+        LOG_INFO("实时态撤销: " + std::to_string(editorText_.size()) + " → " +
+                 std::to_string(text.size()) + " 字节, 光标 " + std::to_string(cursor));
+        onEditorTextChanged(text);
+        setLiveCursor(cursor, "撤销");
+    }
+
+    void applyLiveRedo() {
+        std::string text = editorText_;
+        size_t cursor = liveCursorByte_;
+        if (!liveUndo_.redo(text, cursor)) {
+            LOG_DEBUG("[live] Ctrl+Y: 无可重做快照");
+            return;
+        }
+        LOG_INFO("实时态重做: " + std::to_string(editorText_.size()) + " → " +
+                 std::to_string(text.size()) + " 字节, 光标 " + std::to_string(cursor));
+        onEditorTextChanged(text);
+        setLiveCursor(cursor, "重做");
+    }
+
+    // M5：撤销栈基线换代（以当前文档为基线重开栈）——撤销最多回到这一版。
+    // 调用点都是"整篇文档换了一版、旧快照不再适用"的时刻：
+    //   · 进实时态的首帧锚初始化（enterLiveState 把 seeded 位清零后走到这）
+    //   · 外部重载（reloadCurrentNote：磁盘版本覆盖内存版本）
+    // 不换代就有旧文档快照残留：Ctrl+Z 会把别处（编辑态 / 外部编辑器）的改动
+    // 整篇盖回旧版本，且落盘防抖会把它写进磁盘。
+    void resetLiveUndoBaseline() {
+        liveUndo_.reset(editorText_, liveCursorByte_);
+        liveUndoBlock_ = mdLiveActiveBlockIndex(blockModel_, liveCursorByte_);
+        liveUndoSeeded_ = true;
     }
 
     // 双栏同步滚动（§5.3，Phase 3 ④ 块模型精确锚）：编辑器视口顶行 →
@@ -2535,11 +2635,19 @@ private:
         // 时，上一篇的块文本、在飞的组字（compositionText）、framework 内置 undo
         // 栈会跟着稳定 id「复活」（M0 V2a 重挂载复活 / R7 状态累积）。
         liveInputStateFresh_ = true;
+        // M5：撤销栈随之换代（下一帧 compose 的锚初始化分支按当前文档重建基线）。
+        // 退出实时态本身不清栈（spec §4.5）——基线换代发生在【进态】那一帧，
+        // 保证撤销永不跨越"别的编辑会话"改过的文档版本。
+        liveUndoSeeded_ = false;
         LOG_DEBUG(std::string("Markdown 实时态状态复位: ") + reason);
     }
 
     void setMode(ViewMode m) {
         if (m == mode_) return;
+        // M5：离开实时态前收口（spec §4.5「模式切换前推栈」）——关掉撤销合并组，
+        // 别让跨态的前后两次键入并成同一次撤销（进实时态那侧由 enterLiveState
+        // 换代基线，见该函数）
+        if (mode_ == ViewMode::Live) liveUndo_.markBoundary();
         // Phase 3 M2：进实时态 → 状态位群复位（锚 / 聚焦 / 滚动，见 enterLiveState）
         if (m == ViewMode::Live) enterLiveState("切换视图");
         mode_ = m;
@@ -3009,6 +3117,14 @@ private:
             return;
         }
         setEditorText(r.value());
+        // M5：外部重载 = 撤销基线换代（旧快照属于被换掉的那一版；不换代时
+        // Ctrl+Z 会把外部改动整篇盖回本地旧版本，并被落盘防抖写进磁盘）。
+        // 不在实时态则留待进态时重建（enterLiveState 已把 seeded 位清零）
+        if (mode_ == ViewMode::Live) {
+            resetLiveUndoBaseline();
+        } else {
+            liveUndoSeeded_ = false;
+        }
         lastSavedText_ = editorText_;
         editorDirty_ = false;
         outlineDirty_ = true;
@@ -3559,6 +3675,10 @@ private:
     bool liveCaretPending_ = false;    // 待写块局部光标（setLiveCursor 置位；文本未变
                                        // 的同块定位帧也要写，帧末统一清位）
     uint64_t liveSyncedRev_ = 0;       // 输入框文本与文档对齐的修订号（失焦提交安全判据）
+    // ---- Phase 3 M5：块级 undo/redo（模块层快照栈，spec §4.5 / 已定决策 D5）----
+    MdLiveUndoStack liveUndo_;         // 快照 = (整篇文本, 文档光标偏移)，只在实时态推栈
+    size_t liveUndoBlock_ = 0;         // 上次推栈时的活动块（合并判据 sameBlock 的基准）
+    bool liveUndoSeeded_ = false;      // 本会话基线是否已就位（enterLiveState 复位）
     // 贴合高度备忘（键 = stableId + 内容 hash + 文本宽 + 字号）：活动块整块
     // shaping 不逐帧重付；内容/宽度/字号任一变化即失效重测
     struct LiveHeightMemo {
