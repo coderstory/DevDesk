@@ -1,0 +1,295 @@
+{
+  "area": "claude-proxy",
+  "baseline_sha": "a3d13f4",
+  "scope": "src/module_claude_proxy/** (claude_service / claude_module / proxy_router / streaming_proxy / upstream_dialect / provider_config / settings_sync)",
+  "mode": "read-only static audit; no build/test/app run",
+  "findings": [
+    {
+      "id": "CPX-01",
+      "severity": "high",
+      "lens": "arch",
+      "kind": "oop",
+      "title": "ClaudeService 是 God 类：7 类职责 + 6 组独立状态挤在一个类里（DB CRUD / Keychain / 代理生命周期 / 在途流登记 / settings.json 接管 / 反向同步 / 桌宠事件邮箱 / 全局单例）",
+      "evidence": [
+        {"file": "src/module_claude_proxy/claude_service.h", "symbol": "class ClaudeService", "line": 56},
+        {"file": "src/module_claude_proxy/claude_service.h", "symbol": "Profile CRUD 区（list/get/create/update/delete/cleanupOrphan）", "line": 67},
+        {"file": "src/module_claude_proxy/claude_service.h", "symbol": "调用日志查询区（CallLogQuery/queryCalls/countCalls）", "line": 129},
+        {"file": "src/module_claude_proxy/claude_service.h", "symbol": "桌宠事件邮箱（recordProxyEvent/takeProxyEvent，为 module_pet 服务）", "line": 174},
+        {"file": "src/module_claude_proxy/claude_service.h", "symbol": "代理生命周期 + 端口配置 + 在途流登记", "line": 189},
+        {"file": "src/module_claude_proxy/claude_service.h", "symbol": "settings.json 接管区（Paths/开关/isManaged/recover）", "line": 222},
+        {"file": "src/module_claude_proxy/claude_service.h", "symbol": "全局单例 setGlobal/global", "line": 255},
+        {"file": "src/module_claude_proxy/claude_service.h", "symbol": "成员状态 6 组（db_/server_+router_/streamsMutex_ 组/configuredProxyPort_/proxyEventMutex_ 组/syncPaths_ 组/callLogVersion_）各带不同线程约定", "line": 297},
+        {"file": "src/module_claude_proxy/claude_service.cpp", "symbol": "deleteProfile 内联「删激活 profile 则停代理」策略 + proxyStopped 出参", "line": 544},
+        {"file": "src/module_claude_proxy/claude_service.cpp", "symbol": "syncCaptureActiveProfile（157 行反向同步协议整体塞在 CRUD 类里）", "line": 1175}
+      ],
+      "impact": "维护成本：公开方法 33 个、跨 7 类职责，任何一处协议（如反向同步、接管）改动都要在一个 1409 行的类里动手；演进代价：想给代理加能力（多 profile 故障转移、用量落库、鉴权回归）只能继续往这个类堆，且新接口默认继承全部状态与线程约定。反向后果已在代码里显形——为别的模块（pet 气泡）加的邮箱、为 CRUD 加的「顺带停代理」策略都被塞进 service。",
+      "check": "sed -n '56,266p' src/module_claude_proxy/claude_service.h | grep -cE '^    (core::Result|void |bool |int |uint64_t |std::optional|const std::vector|const settings_sync)' → 实测 33；再按上表行号逐个归属职责，可见无一组能独立成类。",
+      "suggested_fix": "先做最小切分（不动调用方语义）：① ProfileRepository（DB 行 + Keychain + CRUD）② ProxyRuntime（server_/router_/activeStreams_/端口）③ SettingsTakeOver（syncPaths_/takeOver/restore/reverse-sync）。ClaudeService 退化为组合三个成员的门面并保留既有公开签名，测试与 UI 零改动。",
+      "already_registered": false,
+      "registered_ref": ""
+    },
+    {
+      "id": "CPX-02",
+      "severity": "high",
+      "lens": "arch",
+      "kind": "architecture",
+      "title": "状态变更的失败/跳过对用户不可见：接管与还原返回 void（与全仓 Result 口径不一致），startProxy/setActiveProfile 完全丢弃结果；反向同步跳过的键只进日志",
+      "evidence": [
+        {"file": "src/module_claude_proxy/claude_service.h", "symbol": "private void syncTakeOver(); void syncRestore();", "line": 283},
+        {"file": "src/module_claude_proxy/claude_service.cpp", "symbol": "startProxy 调 syncTakeOver() 后无条件 return ok（用户 toast「代理已启动」）", "line": 1067},
+        {"file": "src/module_claude_proxy/claude_service.cpp", "symbol": "syncTakeOver 失败只有 LOG_WARN，warnings 也只活在 lastSyncWarnings_ 且渲染仅覆盖一半分支", "line": 1352},
+        {"file": "src/module_claude_proxy/claude_service.cpp", "symbol": "syncRestore 失败只有 LOG_WARN（settings.json 可能仍指向已停的代理）", "line": 1374},
+        {"file": "src/module_claude_proxy/claude_service.cpp", "symbol": "setActiveProfile 同样 `if (result.isOk() && isProxyRunning()) syncTakeOver();` 后返回 ok", "line": 680},
+        {"file": "src/module_claude_proxy/claude_service.cpp", "symbol": "反向同步 warnings（值非字符串/超长/别名等被跳过的键）仅 LOG_WARN，未进 lastSyncWarnings_", "line": 1206},
+        {"file": "src/module_claude_proxy/claude_module.cpp", "symbol": "接手侧只展示 takeover 的 warnings（且要求 ccManaged==true）", "line": 592}
+      ],
+      "impact": "演进/维护代价：全仓唯一不用 Result 的写入路径就是这三处，调用方（模块 UI、main）无从区分「真的接管了」与「解析失败/写失败/开关关掉」，只能靠用户自己发现 Claude Code 没走代理；反向同步把 settings.json 里 4 类键静默丢弃（G4 空值、G6 非法/超长）时用户同样只看到「已启用」。日后要在 UI 上补接线，得先给这三处补返回值。",
+      "check": "grep -n 'syncTakeOver\\|syncRestore' src/module_claude_proxy/*.cpp → 4 个调用点全部丢弃返回值（:1067 / :681 / :1083 / :1361 线索）；反向同步 warnings：grep -n 'parsed.cfg.warnings' claude_service.cpp。",
+      "suggested_fix": "把 syncTakeOver/syncRestore 改成 `core::Result<void>`（内部已拿到 SyncResult.error），startProxy 在 ok 时附带 takeOver 结果；反向同步把 cfg.warnings + skippedKeys 并入 lastSyncWarnings_，再由 claude_module 统一展示（旁证：cc-switch-ref-provider-sync §3-2/§3-3 同款建议）。",
+      "already_registered": false,
+      "registered_ref": ""
+    },
+    {
+      "id": "CPX-03",
+      "severity": "high",
+      "lens": "arch",
+      "kind": "correctness",
+      "title": "接管快照无来源判定：sidecar 丢失后，settings.json 里「上一次接管的残留值/别的工具的托管值」会被当成用户原值永久写回",
+      "evidence": [
+        {"file": "src/module_claude_proxy/settings_sync.cpp", "symbol": "takeOver：首份快照 = 现有 env 全量（无 loopback/占位符判定）", "line": 220},
+        {"file": "src/module_claude_proxy/settings_sync.cpp", "symbol": "restore：无 sidecar 直接 no-op（settings.json 留在托管态）", "line": 294},
+        {"file": "src/module_claude_proxy/claude_service.cpp", "symbol": "isClaudeCodeManaged 只由 sidecar 存在与否推导 → UI 显示「未接管」而文件仍指向 127.0.0.1:8888", "line": 1151},
+        {"file": "src/module_claude_proxy/claude_service.cpp", "symbol": "recoverPendingSettingsRestore 同样以 sidecar 为唯一前提", "line": 1160},
+        {"file": "src/module_claude_proxy/provider_config.h", "symbol": "kProxyAuthPlaceholder（可做判定依据，但目前只在写侧与反向同步 G3 用）", "line": 125}
+      ],
+      "impact": "数据完整性：用户清 AppData/换机器（带 ~/.claude 不带 DevDesk 数据）后，BASE_URL=http://127.0.0.1:8888 与 ANTHROPIC_AUTH_TOKEN=PROXY_MANAGED 被拍进新快照，此后每次 restore 都把死地址写回，真实上游地址（原快照）不可恢复；同时 UI 显示「未接管」，用户没有排查线索。与 cc-switch 互写同源：其 loopback 值也会被当用户原值固化。",
+      "check": "临时目录注入路径跑 settings_sync::takeOver，预置 settings.json = {\"env\":{\"ANTHROPIC_BASE_URL\":\"http://127.0.0.1:8888\",\"ANTHROPIC_AUTH_TOKEN\":\"PROXY_MANAGED\"}} 且 sidecarFile 不存在 → 断言生成的 sidecar.envSnapshot 是否含这两个键（当前会含 = 缺陷成立）。",
+      "suggested_fix": "加纯函数 isExternallyManagedEnv(env)（复用 isLoopbackUrl + kProxyAuthPlaceholder，命中「loopback 且非本机代理端口」或「凭据=占位符」）→ hit 的键不进 envSnapshot；restore 在无 sidecar 但 env 带上述特征时走「按 buildProxyEnv 重建或删键」兜底而不是 no-op（旁证：cc-switch-ref-provider-sync §3-2）。",
+      "already_registered": false,
+      "registered_ref": ""
+    },
+    {
+      "id": "CPX-04",
+      "severity": "medium",
+      "lens": "arch",
+      "kind": "correctness",
+      "title": "热切换不清理「上一轮托管、本轮不再生成」的键：清空槽位后旧模型名留在 settings.json，客户端拿旧模型名请求新供应商",
+      "evidence": [
+        {"file": "src/module_claude_proxy/settings_sync.cpp", "symbol": "takeOver 只对 managed 逐键 env.set，从不删旧托管键", "line": 264},
+        {"file": "src/module_claude_proxy/settings_sync.cpp", "symbol": "managedKeys 走并集（旧键只在 restore 时才退场）", "line": 232},
+        {"file": "src/module_claude_proxy/provider_config.cpp", "symbol": "buildProxyEnv 对空槽位直接 skip（本轮不再产出该键）", "line": 388},
+        {"file": "tests/test_modules/test_settings_sync.cpp", "symbol": "sync_retakeover_keeps_first_snapshot 已把该行为固定为断言（\"旧托管值仍在（未被清理）\"）", "line": 315}
+      ],
+      "impact": "正确性/维护：A（配 sonnet）→ B（未配 sonnet）热切换后，settings.json 里的 ANTHROPIC_DEFAULT_SONNET_MODEL 仍是 A 的模型名，Claude Code 用它请求 B 的上游 → 400/模型不可用，直到用户停代理还原；修这一条要同时改代码与既有断言，属于「改了没效果也说不清」的典型面。",
+      "check": "既有用例即复现：tests/test_modules/test_settings_sync.cpp:293 起的用例第 315 行断言 sonnet 键仍为 m-a。修好后该断言应改为「env 不含 ANTHROPIC_DEFAULT_SONNET_MODEL」，即成为回归护栏。",
+      "suggested_fix": "takeOver 在写 managed 之前，先 erase「sidecar.managedKeys − 本轮 managedKeys」的键（集合已在手边，约 10 行；旁证：cc-switch-ref-proxy §3-1 的 env.remove 12 键做法）。",
+      "already_registered": false,
+      "registered_ref": ""
+    },
+    {
+      "id": "CPX-05",
+      "severity": "medium",
+      "lens": "arch",
+      "kind": "maintainability",
+      "title": "claude_module.cpp 的 UI 与逻辑未分离：compose 单体 863 行，三个详情 pane 用行号级绝对坐标内联在 if/else 里（模块 2577 行、40+ 成员状态）",
+      "evidence": [
+        {"file": "src/module_claude_proxy/claude_module.cpp", "symbol": "void compose(...) 起止（863 行）", "line": 135},
+        {"file": "src/module_claude_proxy/claude_module.cpp", "symbol": "基础/模型映射/环境变量三个 pane 与操作按钮、最近调用表全部内联", "line": 526},
+        {"file": "src/module_claude_proxy/claude_module.cpp", "symbol": "header + 引导条内联（含硬编码 360/400/64/16 等布局字面量）", "line": 216},
+        {"file": "src/module_claude_proxy/claude_module.cpp", "symbol": "纯逻辑与 UI 混在同文件（modelsSummary/formatLatency/truncateUtf8/suggestImportName 放匿名命名空间，导入合并 doApplyImport 直接改 UI 状态）", "line": 81},
+        {"file": "src/module_claude_proxy/claude_module.cpp", "symbol": "成员状态区（40+ 项：缓存/分页/滚动/导入/表单/弹窗/toast 混排）", "line": 2495}
+      ],
+      "impact": "维护成本：任何字段增删都要在这 863 行的行号坐标系里找位置并重算上下相邻块的 y（审计 M5/M6 那类「对偶字面量」缺陷正是这种写法的直接产物）；无组件级边界 → 只能整页渲染式断言，无法对单个面板做渲染用例；演进代价：新增一个详情页签或一块操作区都是「再往 compose 里加一段」而不是「加一个组件」。",
+      "check": "awk 'NR>=135&&NR<=997' src/module_claude_proxy/claude_module.cpp | wc -l → 863；对比同文件已抽出的函数只有 drawProfileCard / drawForm*Tab / draw*Dialog 等 6 只，而右栏详情（含 3 个 pane）与左栏列表全在 compose 内。",
+      "suggested_fix": "按已存在的 drawFormBasicTab/drawCallsDialog 先例，把右栏三 pane 抽成 drawDetailBasic/Models/Env(pane, x0, y0, w)，返回内容底沿供按钮组定位；再抽 drawHeaderSection / drawProfileListSection。纯提取、零行为变化，可分两次提交。",
+      "already_registered": false,
+      "registered_ref": ""
+    },
+    {
+      "id": "CPX-06",
+      "severity": "medium",
+      "lens": "arch",
+      "kind": "maintainability",
+      "title": "H2「渲染路径不做 IO/DB」只落地了 compose 三处：调用记录弹窗在事件回调里同步查库（搜索框逐键两查），compose 内还留 defaultPaths()/fs::current_path",
+      "evidence": [
+        {"file": "src/module_claude_proxy/claude_module.cpp", "symbol": "reloadCallsPage：同步 queryCalls + countCalls（每条 SQL 走同一把 SQLite recursive_mutex）", "line": 2112},
+        {"file": "src/module_claude_proxy/claude_module.cpp", "symbol": "搜索框 onChange 逐字符调 applyCallsFilter → reloadCallsPage", "line": 2183},
+        {"file": "src/module_claude_proxy/claude_module.cpp", "symbol": "翻页按钮内联同步重查", "line": 2317},
+        {"file": "src/module_claude_proxy/claude_module.cpp", "symbol": "compose 内直接调 settings_sync::defaultPaths()（含 fs::current_path）显示接管路径", "line": 583},
+        {"file": "src/module_claude_proxy/claude_module.cpp", "symbol": "对比：同一模块的「导入当前配置」已改为优先用注入路径（svc->settingsSyncPaths()）——两处路径来源不一致", "line": 1430}
+      ],
+      "impact": "维护/一致性：H2 的约束（渲染线程零 IO）现在靠注释维持，弹窗这条路径不受它保护——代理忙时（worker 正持锁 INSERT）打开调用记录或打字搜索会卡帧；且同一份「接管路径」在页面上有两个来源（defaultPaths 与注入路径），测试注入时 UI 显示的是真实用户路径。",
+      "check": "grep -n 'reloadCallsPage\\|defaultPaths()' src/module_claude_proxy/claude_module.cpp → 确认 reloadCallsPage 无 async/后台（与 :1094-1226 的后台刷新机制对照）；开 DEBUG 后在搜索框连续输入，每字符后应看到两条 SQL 日志。",
+      "suggested_fix": "① 弹窗查询复用既有 future 刷新模式（或至少在 onChange 上加防抖 + 只在 Enter 时查）；② 页面统一用 svc->settingsSyncPaths()（未注入再回落 defaultPaths()），把 defaultPaths() 从 compose 里挪走。",
+      "already_registered": true,
+      "registered_ref": "expert-audit H2（已合 f47766b 第一批只迁 compose 三处；本条为未覆盖的弹窗/onChange 残留，非重复上报）"
+    },
+    {
+      "id": "CPX-07",
+      "severity": "medium",
+      "lens": "arch",
+      "kind": "architecture",
+      "title": "「Keychain + DB 两段写」在四处手写、三种补偿策略：updateProfile 走完 Keychain 后 DB 失败无任何回滚（密钥已换、元数据没换）",
+      "evidence": [
+        {"file": "src/module_claude_proxy/claude_service.cpp", "symbol": "updateProfile：先 storeSecret 覆盖 Keychain", "line": 434},
+        {"file": "src/module_claude_proxy/claude_service.cpp", "symbol": "随后 UPDATE 失败直接 return（无补偿；hint/check 与真实密钥从此不一致）", "line": 462},
+        {"file": "src/module_claude_proxy/claude_service.cpp", "symbol": "策略三：syncCaptureActiveProfile 有 best-effort 补偿回写", "line": 1264},
+        {"file": "src/module_claude_proxy/claude_service.cpp", "symbol": "策略一：createProfile 失败按 id 精确 DELETE 回滚", "line": 308},
+        {"file": "src/module_claude_proxy/claude_service.cpp", "symbol": "策略二：duplicateProfile 二段失败调 deleteProfile 回滚并区分「回滚也失败」文案", "line": 743}
+      ],
+      "impact": "数据完整性 + 维护成本：同一个「先写 Keychain 再写 DB」的协议有四种实现、三种失败策略，新增字段/新调用点必须先读懂这四段才知道该抄哪一段；updateProfile 这条最常用的路径恰恰没有补偿——UI 上 api_key_hint 与实际密钥不一致时用户无从判断（本机 Keychain 覆盖写是 trunc 后写，失败还会毁掉旧值）。",
+      "check": "对比读 :434-499（无 compensate）与 :1264-1274（有 compensateKey）：同一失败形态两种处置；keychain 侧无注入点，故失败分支只能靠读代码判定（见 CPX-14）。",
+      "suggested_fix": "抽一个最小的两段写助手（如 `Result<void> writeKeyThenDb(account, newKey, dbWriteFn)`：先存 Keychain → 执行 DB 写入 lambda → 失败时按旧值回写 Keychain），四处改为复用它；updateProfile 至少先补与 reverse-sync 同款的 compensateKey。",
+      "already_registered": false,
+      "registered_ref": ""
+    },
+    {
+      "id": "CPX-08",
+      "severity": "medium",
+      "lens": "arch",
+      "kind": "maintainability",
+      "title": "变更成本：加一个模型槽位/官方 env 键要改 9 处（数据模型 1 + 纯函数 4 + UI 3 + 冲突键清单 1），无编译期提醒",
+      "evidence": [
+        {"file": "src/module_claude_proxy/provider_config.h", "symbol": "struct ModelsConfig（6 个 ModelSlot 成员）", "line": 28},
+        {"file": "src/module_claude_proxy/provider_config.cpp", "symbol": "kSlots（序列化/解析/等价比较共用）", "line": 19},
+        {"file": "src/module_claude_proxy/provider_config.cpp", "symbol": "kImportSlots（导入 + 反向同步映射）", "line": 84},
+        {"file": "src/module_claude_proxy/provider_config.cpp", "symbol": "buildProxyEnv 内 SlotEnv rows[]（env 键 / _NAME 键）", "line": 380},
+        {"file": "src/module_claude_proxy/provider_config.cpp", "symbol": "knownOfficialEnvKeys（官方键白名单）", "line": 43},
+        {"file": "src/module_claude_proxy/settings_sync.cpp", "symbol": "conflictingEnvKeys（上层覆盖检测清单，独立维护）", "line": 26},
+        {"file": "src/module_claude_proxy/claude_module.cpp", "symbol": "modelsSummary 摘要用的槽位数组", "line": 83},
+        {"file": "src/module_claude_proxy/claude_module.cpp", "symbol": "详情 pane slots[6] + 表单 kRows[] + doApplyImport 六个 mergeSlot + serializeFormData slots[]", "line": 614},
+        {"file": "src/module_claude_proxy/claude_module.cpp", "symbol": "表单槽位表 kRows", "line": 1679},
+        {"file": "src/module_claude_proxy/claude_module.cpp", "symbol": "doApplyImport 的 mergeSlot ×6", "line": 1398}
+      ],
+      "impact": "演进代价：模型槽位是这套配置的主轴（已在 6→7 的路上，fable 就是后加的），每加一个槽位/键要在 4 个文件 9 处同步；漏一处的表现分别是「UI 不显示、导入不识别、接管不写、反向同步不回填、覆盖检测漏报」，且全部静默。",
+      "check": "grep -rn 'ModelsConfig::def\\|ANTHROPIC_DEFAULT_SONNET_MODEL' src/module_claude_proxy/ → 逐处核对上表；或新增一个槽位后跑测试看哪一处先暴露（预期无编译错误）。",
+      "suggested_fix": "把「槽位 ↔ 键名 ↔ 显示名」收敛成一张表（现已有 kSlots/kImportSlots 两个雏形），补上 envKey/nameKey 字段；UI 侧的 slots[6]/kRows/mergeSlot 从该表派生（遍历而非逐条列举），可达 9 处 → 3 处。",
+      "already_registered": false,
+      "registered_ref": ""
+    },
+    {
+      "id": "CPX-09",
+      "severity": "medium",
+      "lens": "arch",
+      "kind": "maintainability",
+      "title": "「官方 env 键」有两份来源不同的清单：env_var_hints.h 收了 256 条，provider_config.cpp 只认 18 条 → 导入 240 个官方键被标「未识别」+ 画红框",
+      "evidence": [
+        {"file": "src/module_claude_proxy/env_var_hints.h", "symbol": "kEnvVarHints（官方文档全量清单，256 条）", "line": 16},
+        {"file": "src/module_claude_proxy/provider_config.cpp", "symbol": "knownOfficialEnvKeys（手挑 18 条）", "line": 43},
+        {"file": "src/module_claude_proxy/provider_config.cpp", "symbol": "applyEnvAliases 用它判 unrecognizedKeys", "line": 221},
+        {"file": "src/module_claude_proxy/claude_module.cpp", "symbol": "未识别键 → 警告角标「未识别键将透传」", "line": 1915},
+        {"file": "src/module_claude_proxy/claude_module.cpp", "symbol": "env 表单未知键画红框", "line": 1791}
+      ],
+      "impact": "正确性/维护：同一个仓库里对「哪些是官方键」有两套事实（256 vs 18，差集 240，例如 ANTHROPIC_CUSTOM_HEADERS / CLAUDE_CODE_MAX_OUTPUT_TOKENS / CLAUDE_CODE_USE_BEDROCK 都在 hints 里却不在白名单），用户导入 cc-switch 配置时会被大面积误报「未识别」并标红，噪音淹没真正的异常键；两清单各自更新时无任何机制对齐。",
+      "check": "统计脚本（本次实测）：env_var_hints.h 取 256 条、provider_config.cpp 取 18 条，差集 240 条；抽查 ANTHROPIC_CUSTOM_HEADERS 是否落在差集内。",
+      "suggested_fix": "让 knownOfficialEnvKeys 直接由 kEnvVarHints 派生（`envVarHint(k) != nullptr` 即官方），删掉手写白名单；别名表（kEnvAliases）保持独立。",
+      "already_registered": false,
+      "registered_ref": ""
+    },
+    {
+      "id": "CPX-10",
+      "severity": "medium",
+      "lens": "arch",
+      "kind": "correctness",
+      "title": "proxy_router 两条转发路径各写一套取 profile 逻辑：resolveProfile 已存在却只被流式路径用；同一 Keychain 读失败在两路上报不同状态码/文案",
+      "evidence": [
+        {"file": "src/module_claude_proxy/proxy_router.cpp", "symbol": "缓冲路径内联 getActiveProfile + loadApiKey（keychain 失败 → 500 keychain_read_failed + 写日志）", "line": 151},
+        {"file": "src/module_claude_proxy/proxy_router.cpp", "symbol": "resolveProfile（同样的两步，keychain 失败 → InvalidApiKey）", "line": 281},
+        {"file": "src/module_claude_proxy/proxy_router.cpp", "symbol": "流式路径用 resolveProfile，失败一律 503 no_active_profile", "line": 315},
+        {"file": "src/module_claude_proxy/proxy_router.cpp", "symbol": "另一分支差异：profileProvider_ 注入时缓冲路径也走 resolveProfile", "line": 139}
+      ],
+      "impact": "同一故障（Keychain 读不到 key）在 stream:false 与 stream:true 下给 Claude Code 的 HTTP 状态与 error 文案不同（500 keychain_read_failed vs 503 no_active_profile），排障时要按业务形态分叉判断；且内联分支会随协议演进漂移（注入路径的 500 分支就少了一条 logCall）。",
+      "check": "grep -n 'resolveProfile\\|no_active_profile\\|keychain_read_failed' src/module_claude_proxy/proxy_router.cpp → :151-178 与 :281-302 重复；伪造 Keychain 缺 key（删条目）分别发 stream:false / stream:true 请求比对状态码。",
+      "suggested_fix": "缓冲路径改为直接调 resolveProfile()，把「keychain 读失败 → 500」的语义放进 resolveProfile 的 errorCode（或让两处统一为 503 + 明确 message），删掉内联副本。",
+      "already_registered": false,
+      "registered_ref": ""
+    },
+    {
+      "id": "CPX-11",
+      "severity": "low",
+      "lens": "arch",
+      "kind": "maintainability",
+      "title": "同模块内两套同构的 JSON 顶层字段扫描器（约 130 行）+ 4 个重复小工具函数（trim/toLowerAscii/stripTrailingSlash 各 2 份）",
+      "evidence": [
+        {"file": "src/module_claude_proxy/streaming_proxy.cpp", "symbol": "skipWs/readJsonString/skipJsonValue/findTopLevelField/isJsonTrue（stream 检测用）", "line": 19},
+        {"file": "src/module_claude_proxy/upstream_dialect.cpp", "symbol": "同名同实现的一套（skipWs/readJsonString/skipJsonValue/findTopLevelStringSpan）", "line": 99},
+        {"file": "src/module_claude_proxy/claude_service.cpp", "symbol": "trim / stripTrailingSlash（另见 streaming_proxy.cpp:151 与 proxy_router.cpp:23 的副本）", "line": 48},
+        {"file": "src/module_claude_proxy/provider_config.cpp", "symbol": "toLowerAscii（upstream_dialect.cpp:22 另有一份；proxy_router.cpp:42 内联第三份）", "line": 405}
+      ],
+      "impact": "维护成本：JSON 边界处理（转义、嵌套深度、非预期 token 的防死循环）是易错面，两处实现不同步时只会在某种 payload 下静默分歧；两个函数各自被不同路径使用，改动时极易只改一处。",
+      "check": "diff <(sed -n '19,148p' src/module_claude_proxy/streaming_proxy.cpp) <(sed -n '99,220p' src/module_claude_proxy/upstream_dialect.cpp) → 结构逐段对应。",
+      "suggested_fix": "抽一个模块内私有头（如 json_scan.h，仅本模块使用，不违反模块隔离）承载扫描器与小工具，两处 include；上游方言额外需要的「字节区间」变体可作参数化的第二个重载。",
+      "already_registered": false,
+      "registered_ref": ""
+    },
+    {
+      "id": "CPX-12",
+      "severity": "low",
+      "lens": "arch",
+      "kind": "maintainability",
+      "title": "托管键集合的唯一来源是 buildProxyEnv（动态），但上层覆盖检测另维护一份 8 键硬编码清单 → 自己写进去的键反而检测不到",
+      "evidence": [
+        {"file": "src/module_claude_proxy/settings_sync.cpp", "symbol": "conflictingEnvKeys（8 键：BASE_URL/AUTH_TOKEN/MODEL/四个 DEFAULT_*_MODEL/SUBAGENT）", "line": 26},
+        {"file": "src/module_claude_proxy/provider_config.cpp", "symbol": "buildProxyEnv：除上述外还写 4 个 *_MODEL_NAME + 全部 extra_env（含别名产物 DISABLE_AUTO_COMPACT）", "line": 380},
+        {"file": "src/module_claude_proxy/provider_config.cpp", "symbol": "别名表产物（DISABLE_AUTO_COMPACT）不在任何检测清单内", "line": 36}
+      ],
+      "impact": "维护：槽位/别名/extra_env 演进后清单不会自动跟随，project 级 settings.json 里恰好覆盖 DevDesk 自己写的键时（如 DISABLE_AUTO_COMPACT、任意 extra_env 键）不会给用户任何警告——而「上层覆盖静默压过接管」正是这份检测存在的唯一理由。",
+      "check": "对比 settings_sync.cpp:26-38 与 provider_config.cpp:380-396：后者写出的键集 ⊃ 前者；grep -n 'DISABLE_AUTO_COMPACT' src/ 确认无人检测。",
+      "suggested_fix": "检测键集改为「buildProxyEnv(空 profile, 端口) 的键集 ∪ extra_env 键集」动态派生（调用处已有 Profile，代价是一次纯函数调用）。",
+      "already_registered": false,
+      "registered_ref": ""
+    },
+    {
+      "id": "CPX-13",
+      "severity": "low",
+      "lens": "arch",
+      "kind": "architecture",
+      "title": "上游方言只能按 baseUrl 的 host 后缀推断，Profile 上无覆盖入口 → 新增/自建网关必须改代码发版",
+      "evidence": [
+        {"file": "src/module_claude_proxy/upstream_dialect.h", "symbol": "forBaseUrl(const std::string& baseUrl)（无 override 参数；Kind 枚举见 :25）", "line": 37},
+        {"file": "src/module_claude_proxy/upstream_dialect.cpp", "symbol": "isOpencodeHost：仅识别 opencode.ai 及其子域", "line": 73},
+        {"file": "src/module_claude_proxy/upstream_dialect.cpp", "symbol": "forBaseUrl 二选一分派", "line": 234}
+      ],
+      "impact": "扩展点：同一上游经自定义域名/内网镜像访问时（企业代理、反代）方言丢失——UA 不覆盖可能被 Cloudflare 403、[1M] 不剥可能 400，用户侧无法配置，只能改代码；这与「Profile 是用户可编辑的数据模型」的设计不一致（已有 6 个槽位 + extra_env 可配，唯独方言不可）。",
+      "check": "grep -rn 'forBaseUrl' src/module_claude_proxy/ → 3 处调用全部只传 baseUrl；Profile 结构（claude_service.h:40-54）无 dialect 字段。",
+      "suggested_fix": "Profile 加一个可空字段 dialectOverride（''/auto|anthropic|opencode），forBaseUrl 增加可选覆盖参数；默认仍按 host 推断，UI 可暂不暴露。",
+      "already_registered": false,
+      "registered_ref": ""
+    },
+    {
+      "id": "CPX-14",
+      "severity": "low",
+      "lens": "test",
+      "kind": "testability",
+      "title": "keychain 是自由函数、无注入点 → 多步写协议的失败分支（存失败/删失败/补偿失败）无法单测，只能靠读代码",
+      "evidence": [
+        {"file": "src/platform/keychain.h", "symbol": "storeSecret/loadSecret/deleteSecret/deleteSecretsNotIn（命名空间自由函数，无接口）", "line": 13},
+        {"file": "src/module_claude_proxy/claude_service.cpp", "symbol": "四处直接调用（createProfile/updateProfile/deleteProfile/反向同步补偿）", "line": 308},
+        {"file": "tests/test_modules/test_claude_ui.cpp", "symbol": "测试隔离手段 = 换 keychain service 名（\"DevDeskTestClaudeModule\" / test_claude_service.cpp:33 同款），无法注入「写失败」", "line": 36}
+      ],
+      "impact": "可测性：CPX-07 里三种补偿策略、CPX-02 的失败可见性都无法用测试钉住（写失败/删失败/补偿失败三条路径零覆盖），日后重构这类时序无护栏；反过来也说明为什么四处协议会各自漂移。",
+      "check": "grep -rn 'keychain::' src/module_claude_proxy/ | wc -l 见直接调用；tests 侧 grep -n 'deleteSecret\\|storeSecret' tests/test_modules/test_claude_service.cpp 只见间接路径，无失败注入用例。",
+      "suggested_fix": "给 platform::keychain 加一层可选注入（默认走真实实现的函数指针 / 极薄的 struct 接口），测试可让在第 N 次调用返回 fail；再把「Keychain 成功 + DB 失败」用例补进 test_claude_service.cpp。",
+      "already_registered": false,
+      "registered_ref": ""
+    },
+    {
+      "id": "CPX-15",
+      "severity": "low",
+      "lens": "arch",
+      "kind": "architecture",
+      "title": "职责边界：settings_sync 一个文件承载方向相反的两套协议（profile→settings.json 接管 / settings.json→profile 反向同步读侧），并吃 service 层 DB 行模型 Profile",
+      "evidence": [
+        {"file": "src/module_claude_proxy/settings_sync.h", "symbol": "文件头：接管/还原协议（方向一，含 sidecar 崩溃兜底）", "line": 4},
+        {"file": "src/module_claude_proxy/settings_sync.h", "symbol": "SettingsEnvRead + readSettingsEnvForSync（方向二的读侧，G7/G8/G9 语义）", "line": 62},
+        {"file": "src/module_claude_proxy/settings_sync.h", "symbol": "takeOver(const Profile& profile, ...) —— IO/协议层依赖 service 层数据模型", "line": 84},
+        {"file": "src/module_claude_proxy/settings_sync.cpp", "symbol": "为此 include claude_service.h（整个 service 头，含 sqlite_db/http_client）", "line": 10}
+      ],
+      "impact": "维护：一条守卫语义要横跨三层才能读懂（settings_sync 的三态读 → claude_service 的 S-2 中止 → provider_config 的 G1–G6 判定），HANDOFF §9.4.2 登记的「G8 与 G9 不可区分」正是这种切法的副产物；Profile 是 12 字段 DB 行 + 内存明文 key 的混合体，作为 IO 层入参意味着以后任何 Profile 字段变动都会牵动这一层。",
+      "check": "grep -n 'Profile' src/module_claude_proxy/settings_sync.cpp → 仅 takeOver 入参用到（为它 include 了整个 claude_service.h）；协议两方向对照 settings_sync.h:4-31 与 :62-81。",
+      "suggested_fix": "takeOver 入参换成小的视图结构（modelsConfigJson / model / extraEnvJson / proxyPort），Profile 的转换留给 claude_service；反向同步读侧若继续放在本文件，头里补一句「本文件是 settings.json 的唯一 IO 边界，两个方向共用」作为显式契约。",
+      "already_registered": false,
+      "registered_ref": ""
+    }
+  ]
+}
