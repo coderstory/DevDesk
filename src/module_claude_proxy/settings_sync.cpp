@@ -150,6 +150,96 @@ std::vector<std::string> managedKeysFromSidecar(const JsonObject& sidecar) {
     return out;
 }
 
+// 本机代理形态的凭据键（条目 2）：值 == kProxyAuthPlaceholder 即「托管值」
+const std::vector<std::string>& proxyCredentialKeys() {
+    static const std::vector<std::string> kKeys = {
+        "ANTHROPIC_AUTH_TOKEN",
+        "ANTHROPIC_API_KEY",
+    };
+    return kKeys;
+}
+
+// 找出 env 里属于「本机代理形态」的键（条目 2）：BASE_URL 指向回环地址，或
+// 凭据键等于占位符。命中说明这些值是上次接管残留 / 别的工具（cc-switch 等）
+// 写进去的托管值，**不是用户原值**——既不该进首份快照，也该在无快照时清除
+std::vector<std::string> findProxyFormKeys(const JsonObject& env) {
+    std::vector<std::string> out;
+    if (env.has("ANTHROPIC_BASE_URL") &&
+        env.get("ANTHROPIC_BASE_URL").isString() &&
+        isLoopbackUrl(env.get("ANTHROPIC_BASE_URL").asString())) {
+        out.push_back("ANTHROPIC_BASE_URL");
+    }
+    for (const auto& key : proxyCredentialKeys()) {
+        if (env.has(key) && env.get(key).isString() &&
+            env.get(key).asString() == kProxyAuthPlaceholder) {
+            out.push_back(key);
+        }
+    }
+    return out;
+}
+
+std::string joinKeys(const std::vector<std::string>& keys) {
+    std::string out;
+    for (const auto& k : keys) {
+        if (!out.empty()) out += ", ";
+        out += k;
+    }
+    return out;
+}
+
+// 无 sidecar 兜底（条目 2②）：无接管快照、settings.json 却仍是本机代理形态
+// （loopback BASE_URL / 占位凭据）→ 做**最小清除**：只删这些键，不按 active
+// profile 重建 env（那会引入新的写路径）。env 无这些特征 → 真 no-op（一字不改）
+SyncResult clearResidualProxyKeys(const Paths& paths) {
+    SyncResult out;
+    out.ok = true;
+    if (!fileExists(paths.settingsFile)) return out;
+
+    auto doc = parseJsonObjectFile(paths.settingsFile);
+    if (!doc.ok) {
+        out.ok = false;
+        out.error = "settings.json 解析失败，跳过残留清理: " + doc.error;
+        LOG_WARN("settings_sync: " + out.error);
+        return out;
+    }
+    if (!doc.exists) return out;
+    JsonObject root = std::move(doc.obj);
+    if (!root.has("env") || !root.get("env").isObject()) return out;
+    JsonObject env = root.get("env").asObject();
+
+    const std::vector<std::string> residual = findProxyFormKeys(env);
+    if (residual.empty()) return out;
+
+    // 重建 env 对象实现删除（JsonObject 无 erase）
+    JsonObject rebuilt;
+    for (const auto& key : env.keys()) {
+        if (std::find(residual.begin(), residual.end(), key) != residual.end()) {
+            continue;
+        }
+        rebuilt.set(key, env.get(key));
+    }
+    root.set("env", JsonValue(rebuilt));
+
+    auto text = platform::json::stringify(JsonValue(root), /*pretty=*/true);
+    if (text.isFail()) {
+        out.ok = false;
+        out.error = "settings.json 序列化失败: " + text.errorMessage();
+        LOG_WARN("settings_sync: " + out.error);
+        return out;
+    }
+    auto w = atomicWrite(paths.settingsFile, text.value() + "\n");
+    if (w.isFail()) {
+        out.ok = false;
+        out.error = "settings.json 写入失败: " + w.errorMessage();
+        LOG_WARN("settings_sync: " + out.error);
+        return out;
+    }
+    LOG_WARN("settings_sync: 无接管快照但 settings.json 仍是本机代理形态，"
+             "已清除残留键（" + joinKeys(residual) + "）: " +
+             paths.settingsFile.string());
+    return out;
+}
+
 // 上层覆盖检测（§5.3）：只提示不代改
 std::vector<std::string> detectOverlayConflicts(const Paths& paths) {
     std::vector<std::string> warnings;
@@ -221,6 +311,7 @@ SyncResult takeOver(const Profile& profile, int proxyPort, const Paths& paths) {
     //    已混入上次托管值，重拍会把托管值误当用户原值；仅并入新托管键。
     //    sidecar 存在但损坏 → 中止，同理）
     JsonObject snapshotEnv = env;  // 首次接管：接管前的原 env
+    std::vector<std::string> snapshotWarnings;  // 快照污染守卫命中（条目 2①）
     if (fileExists(paths.sidecarFile)) {
         auto sidecar = parseJsonObjectFile(paths.sidecarFile);
         if (!sidecar.ok || !sidecar.exists) {
@@ -237,6 +328,25 @@ SyncResult takeOver(const Profile& profile, int proxyPort, const Paths& paths) {
         if (sidecar.obj.has("envSnapshot") &&
             sidecar.obj.get("envSnapshot").isObject()) {
             snapshotEnv = sidecar.obj.get("envSnapshot").asObject();
+        }
+    } else {
+        // 首份快照污染守卫（条目 2①）：现有 env 里的本机代理形态键是上次残留
+        // 或别的工具（cc-switch 等）的托管值，不是用户原值——不进快照，否则
+        // 还原会把死代理地址固化成「用户配置」（用户清 AppData / 两边互抢时）
+        const std::vector<std::string> polluted = findProxyFormKeys(snapshotEnv);
+        if (!polluted.empty()) {
+            JsonObject cleaned;
+            for (const auto& key : snapshotEnv.keys()) {
+                if (std::find(polluted.begin(), polluted.end(), key) !=
+                    polluted.end()) {
+                    continue;
+                }
+                cleaned.set(key, snapshotEnv.get(key));
+            }
+            snapshotEnv = std::move(cleaned);
+            snapshotWarnings.push_back(
+                "settings.json 的 env 已是本机代理形态（" + joinKeys(polluted) +
+                "），这些键不计入接管快照（还原时不恢复）");
         }
     }
     std::sort(managedKeys.begin(), managedKeys.end());
@@ -298,8 +408,10 @@ SyncResult takeOver(const Profile& profile, int proxyPort, const Paths& paths) {
         return out;
     }
 
-    // 6. 上层覆盖检测（只警告不代改）
+    // 6. 上层覆盖检测（只警告不代改）+ 快照污染守卫命中
     out.warnings = detectOverlayConflicts(paths);
+    out.warnings.insert(out.warnings.end(), snapshotWarnings.begin(),
+                        snapshotWarnings.end());
     for (const auto& warn : out.warnings) {
         LOG_WARN("settings_sync: " + warn);
     }
@@ -311,8 +423,9 @@ SyncResult takeOver(const Profile& profile, int proxyPort, const Paths& paths) {
 SyncResult restore(const Paths& paths) {
     SyncResult out;
     if (!fileExists(paths.sidecarFile)) {
-        out.ok = true;  // 无快照 = 没接管过，no-op
-        return out;
+        // 无快照 = 没接管过 → 通常 no-op；但 settings.json 仍留本机代理形态键
+        //（sidecar 被清掉 / 与其它工具互抢）时做最小清除（条目 2②）
+        return clearResidualProxyKeys(paths);
     }
 
     // 读 sidecar（损坏 → 报错并保留，供人工恢复）

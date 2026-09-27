@@ -402,6 +402,107 @@ REGISTER_TEST(sync_parse_failure_aborts, "settings_sync: settings.json 解析失
     return true;
 })
 
+// ---- 6b. 首份快照污染守卫（条目 2①）：代理形态键不进快照 ----
+REGISTER_TEST(sync_takeover_snapshot_skips_proxy_form,
+              "settings_sync: 首份快照跳过本机代理形态键（污染守卫）", {
+    using namespace module::claude;
+    TempDir d("pollute");
+    auto paths = makePaths(d);
+
+    // 上次残留 / 别的工具（cc-switch 等）写的代理形态值 + 一个用户自有键
+    d.write(paths.settingsFile, R"({
+        "model": "claude-sonnet-4-5",
+        "env": {
+            "ANTHROPIC_BASE_URL": "http://127.0.0.1:8888",
+            "ANTHROPIC_AUTH_TOKEN": "PROXY_MANAGED",
+            "MY_KEY": "user"
+        }
+    })");
+
+    Profile p;
+    p.model = "m-new";
+    auto r = settings_sync::takeOver(p, 9999, paths);
+    DOCTEST_REQUIRE(r.ok);
+    // 命中污染守卫 → 经 warnings 上报（UI 可透传）
+    DOCTEST_REQUIRE_EQ(r.warnings.size(), 1u);
+    DOCTEST_CHECK(r.warnings[0].find("ANTHROPIC_BASE_URL") != std::string::npos);
+    DOCTEST_CHECK(r.warnings[0].find("ANTHROPIC_AUTH_TOKEN") != std::string::npos);
+
+    // 还原：代理形态值不被"恢复"（它们从来不是用户原值），用户键/非 env 字段保留
+    DOCTEST_REQUIRE(settings_sync::restore(paths).ok);
+    const auto env = readEnv(paths.settingsFile);
+    DOCTEST_CHECK(env.find("ANTHROPIC_BASE_URL") == env.end());
+    DOCTEST_CHECK(env.find("ANTHROPIC_AUTH_TOKEN") == env.end());
+    DOCTEST_CHECK_EQ(env.at("MY_KEY"), std::string("user"));
+    DOCTEST_CHECK_EQ(topLevelString(paths.settingsFile, "model"),
+                     std::string("claude-sonnet-4-5"));
+    return true;
+})
+
+// ---- 6c. 无 sidecar 兜底（条目 2②）：仍指向死代理 → 最小清除 ----
+REGISTER_TEST(sync_restore_without_sidecar_clears_residual,
+              "settings_sync: 无快照但仍是代理形态 → 最小清除（restore）", {
+    using namespace module::claude;
+    TempDir d("residual");
+    auto paths = makePaths(d);
+    d.write(paths.settingsFile, R"({
+        "model": "claude-sonnet-4-5",
+        "env": {
+            "ANTHROPIC_BASE_URL": "http://127.0.0.1:8888",
+            "ANTHROPIC_AUTH_TOKEN": "PROXY_MANAGED",
+            "ANTHROPIC_API_KEY": "sk-user-real",
+            "ANTHROPIC_MODEL": "m-keep",
+            "MY_KEY": "user"
+        }
+    })");
+
+    auto r = settings_sync::restore(paths);
+    DOCTEST_REQUIRE(r.ok);
+    const auto env = readEnv(paths.settingsFile);
+    DOCTEST_CHECK(env.find("ANTHROPIC_BASE_URL") == env.end());    // 回环 → 删
+    DOCTEST_CHECK(env.find("ANTHROPIC_AUTH_TOKEN") == env.end());  // 占位符 → 删
+    // 非占位符凭据 / 非代理形态键 / 顶层字段一律不动
+    DOCTEST_CHECK_EQ(env.at("ANTHROPIC_API_KEY"), std::string("sk-user-real"));
+    DOCTEST_CHECK_EQ(env.at("ANTHROPIC_MODEL"), std::string("m-keep"));
+    DOCTEST_CHECK_EQ(env.at("MY_KEY"), std::string("user"));
+    DOCTEST_CHECK_EQ(topLevelString(paths.settingsFile, "model"),
+                     std::string("claude-sonnet-4-5"));
+    DOCTEST_CHECK(!d.exists(paths.sidecarFile));  // 不新增 sidecar
+    return true;
+})
+
+// ---- 6d. 无 sidecar 且无代理形态 → 真 no-op（一字不改）----
+REGISTER_TEST(sync_restore_without_sidecar_noop,
+              "settings_sync: 无快照且非代理形态 → 真 no-op（restore）", {
+    using namespace module::claude;
+    TempDir d("noop");
+    auto paths = makePaths(d);
+    const std::string original = R"({
+        "permissions": {"allow": ["Bash"]},
+        "env": {
+            "ANTHROPIC_BASE_URL": "https://api.example.com",
+            "ANTHROPIC_AUTH_TOKEN": "sk-user-own",
+            "MY_KEY": "user"
+        }
+    })";
+    d.write(paths.settingsFile, original);
+    auto r = settings_sync::restore(paths);
+    DOCTEST_REQUIRE(r.ok);
+    DOCTEST_CHECK_EQ(d.read(paths.settingsFile), original);  // 逐字节不变
+    DOCTEST_CHECK(!d.exists(paths.sidecarFile));
+
+    // settings.json 不存在 / 无 env 块 → 同样 no-op（不创建文件、不改内容）
+    TempDir d2("noop2");
+    auto paths2 = makePaths(d2);
+    DOCTEST_CHECK(settings_sync::restore(paths2).ok);
+    DOCTEST_CHECK(!d2.exists(paths2.settingsFile));
+    d2.write(paths2.settingsFile, R"({"permissions": {}})");
+    const std::string noEnv = d2.read(paths2.settingsFile);
+    DOCTEST_CHECK(settings_sync::restore(paths2).ok);
+    DOCTEST_CHECK_EQ(d2.read(paths2.settingsFile), noEnv);
+    return true;
+})
+
 // ---- 7. 上层覆盖检测：命中 / 未命中 ----
 REGISTER_TEST(sync_overlay_detection, "settings_sync: managed/project 层覆盖检测", {
     using namespace module::claude;

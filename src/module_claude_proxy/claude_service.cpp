@@ -1363,14 +1363,18 @@ void ClaudeService::syncTakeOver() {
 
 void ClaudeService::syncRestore() {
     if (syncPaths_.settingsFile.empty()) return;
-    if (!settings_sync::hasPendingSnapshot(syncPaths_)) return;
     if (!settingsTakeOverEnabled_) {
         // 接管关闭：不改写 settings.json。确有遗留接管态时只告警不代改
         //（该文件由 cc-switch 等工具负责，DevDesk 不抢写）
-        LOG_WARN("检测到遗留的 Claude Code 接管快照，但接管已关闭——不改写 " +
-                 syncPaths_.settingsFile.string());
+        if (settings_sync::hasPendingSnapshot(syncPaths_)) {
+            LOG_WARN("检测到遗留的 Claude Code 接管快照，但接管已关闭——不改写 " +
+                     syncPaths_.settingsFile.string());
+        }
         return;
     }
+    // 无 sidecar 也走 restore（条目 2②）：其中的「残留代理形态键」兜底负责把
+    // settings.json 里仍指向死代理的键清掉；无该形态时 restore 内部是真 no-op
+    //（不写文件）。启动补还原仍以 sidecar 为前提——不在每次启动就动别人的配置
     auto r = settings_sync::restore(syncPaths_);
     if (!r.ok) {
         LOG_WARN("Claude Code settings 还原失败: " + r.error);
