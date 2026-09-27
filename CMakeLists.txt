@@ -100,22 +100,13 @@ add_executable(DevDesk src/main.cpp src/app_sidebar.cpp src/app_assembly.cpp)
 devdesk_apply_warnings(DevDesk)
 eui_neo_configure_app(DevDesk)
 
-# EUI-NEO 会给非 Debug 的 app target 强加 -Os -fno-exceptions -fno-rtti
-# （eui_apply_compile_options，无缓存开关）。其中 -Os 在 MSYS2 GCC 16.2 下
-# 踩中 C4 ABI 缺口：-Os 时 GCC 对 std::string 移动构造发出新式 C4 引用
-# （constexpr 构造的压缩 mangling，C++20 起 string 移动构造为 constexpr），
-# 而 libstdc++.a 只提供 C1/C2 定义 → Release 链接 undefined reference
-# （-O3 不触发，已实测；Debug 的 genex 本来就不展开，不受影响）。
-# 这里只摘 -Os（app 回到 CMake 默认的 -O3），保留 EUI 的 -fno-exceptions/-fno-rtti。
-# 根治应走上游：EUI 不应给消费者 app target 强加优化级别，或工具链补 C4 别名。
-if(MINGW)
-    get_target_property(_devdesk_compile_opts DevDesk COMPILE_OPTIONS)
-    if(_devdesk_compile_opts)
-        list(FILTER _devdesk_compile_opts EXCLUDE REGEX ":-Os>")
-        set_target_properties(DevDesk PROPERTIES COMPILE_OPTIONS "${_devdesk_compile_opts}")
-    endif()
-    unset(_devdesk_compile_opts)
-endif()
+# EUI-NEO 曾给非 Debug 的 app target 强加 -Os（eui_apply_compile_options），
+# 该 -Os 在 MSYS2 GCC 16.2 下踩中 C4 ABI 缺口：-Os 时 GCC 对 std::string 移动
+# 构造发出新式 C4 引用（constexpr 构造的压缩 mangling），而 libstdc++.a 只提供
+# C1/C2 定义 → Release 链接 undefined reference。上游 U8 已改：eui_neo_configure_app
+# 传 NO_SIZE_OPT，不再向消费者 app target 强加优化级别（EUI-NEO rev 3d231be），
+# DevDesk 侧摘 -Os 的 workaround 于 2026-09-27 随之删除（此处不再需要改写编译选项；
+# EUI 的 -fno-exceptions/-fno-rtti 仍由其 genex 提供，未受影响）。
 target_link_libraries(DevDesk PRIVATE
     devdesk_core
     devdesk_platform

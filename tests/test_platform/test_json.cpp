@@ -1,6 +1,7 @@
 #include "doctest.h"
 #include "platform/json.h"
 
+#include <cstdio>
 #include <utility>
 #include <vector>
 
@@ -234,5 +235,115 @@ REGISTER_TEST(json_stringify_object_roundtrip, "json: object stringify -> parse 
     DOCTEST_CHECK_EQ(back.get("theme").asString(), std::string("dark"));
     DOCTEST_CHECK_EQ(back.get("fontScalePercent").asInt(), static_cast<int64_t>(100));
     DOCTEST_CHECK_EQ(back.get("logRetentionDays").asInt(), static_cast<int64_t>(30));
+    return true;
+})
+
+// ---- U8 消费侧：序列化输出逐字节快照（2026-09-27，yyjson writer 形态锁定） ----
+// 上游 U8 放开 yyjson writer 后，json.cpp 的手写序列化（implToString + escapeTo）已换成
+// yyjson writer，本用例把切换后的输出字节锁住（防回退/防再漂移）。
+// 与旧手写实现的差异只有两类，均为文本形态、语义等价（解析结果不变）：
+//   ① double：旧 %.17g（512.0→"512"、1e17→"1e+17"、0.1→"0.10000000000000001"），
+//      新 yyjson 最短形（512.0→"512.0"、1e17→"100000000000000000.0"、0.1→"0.1"）；
+//   ② 控制字符转义十六进制大小写：旧 "\u000b" 小写，新 "\u000B" 大写。
+// 其余形态逐字节一致（含 settings.json 形状 fixture）：两空格缩进、键按 std::map 序、
+// ": " 分隔、空容器写 [] / {}、无尾换行、"/" 不转义、UTF-8 原样透传、整数/转义串。
+// fixture 一律走 parse → stringify（settings.json 等持久化路径的真实形态）。
+namespace {
+
+// 任意字节串 → 可直接粘回 C++ 源码的字面量体（非可打印字节用三位八进制）
+std::string jsonByteLiteral(const std::string& s) {
+    std::string out;
+    for (unsigned char c : s) {
+        switch (c) {
+            case '\\': out += "\\\\"; break;
+            case '"': out += "\\\""; break;
+            case '\n': out += "\\n"; break;
+            case '\r': out += "\\r"; break;
+            case '\t': out += "\\t"; break;
+            default:
+                if (c < 0x20 || c >= 0x7F) {
+                    char buf[8];
+                    std::snprintf(buf, sizeof(buf), "\\%03o", static_cast<unsigned>(c));
+                    out += buf;
+                } else {
+                    out.push_back(static_cast<char>(c));
+                }
+        }
+    }
+    return out;
+}
+
+struct JsonByteSnapshot {
+    const char* name;
+    const char* input;   // 源 JSON 文本（parse 后序列化）
+    const char* pretty;  // 期望的 pretty 输出字节（yyjson writer 形态）
+    const char* compact; // 期望的 compact 输出字节（yyjson writer 形态）
+};
+
+} // namespace
+
+REGISTER_TEST(json_stringify_bytes_snapshot, "json: stringify 输出逐字节快照（U8：yyjson writer 形态锁定）", {
+    std::vector<JsonByteSnapshot> cases;
+    cases.push_back({"null", "null", "null", "null"});
+    cases.push_back({"bool_true", "true", "true", "true"});
+    cases.push_back({"int_neg", "-42", "-42", "-42"});
+    cases.push_back({"int_max", "9223372036854775807", "9223372036854775807", "9223372036854775807"});
+    cases.push_back({"str_plain", "\"hi\"", "\"hi\"", "\"hi\""});
+    cases.push_back({"str_empty", "\"\"", "\"\"", "\"\""});
+    cases.push_back({"str_escapes", "\"a\\\"b\\\\c/d\\ne\\tf\"", "\"a\\\"b\\\\c/d\\ne\\tf\"",
+                     "\"a\\\"b\\\\c/d\\ne\\tf\""});
+    cases.push_back({"str_ctl", "\"\\u0001\\u000b\\u000f\\u001f x\"", "\"\\u0001\\u000B\\u000F\\u001F x\"",
+                     "\"\\u0001\\u000B\\u000F\\u001F x\""});
+    cases.push_back({"str_utf8", "\"\xe4\xb8\xad\xe6\x96\x87 \xf0\x9f\x98\x80\"",
+                     "\"\344\270\255\346\226\207 \360\237\230\200\"",
+                     "\"\344\270\255\346\226\207 \360\237\230\200\""});
+    cases.push_back({"dbl_frac", "0.1", "0.1", "0.1"});
+    cases.push_back({"dbl_intlike", "512.0", "512.0", "512.0"});
+    cases.push_back({"dbl_big", "1e17", "100000000000000000.0", "100000000000000000.0"});
+    cases.push_back({"arr_empty", "[]", "[]", "[]"});
+    cases.push_back({"obj_empty", "{}", "{}", "{}"});
+    cases.push_back({"arr_nested", "[1,\"s\",null,true,[2,3],{\"k\":\"v\"}]",
+                     "[\n  1,\n  \"s\",\n  null,\n  true,\n  [\n    2,\n    3\n  ],\n  {\n    \"k\": \"v\"\n  }\n]",
+                     "[1,\"s\",null,true,[2,3],{\"k\":\"v\"}]"});
+    cases.push_back({"obj_key_order", "{\"z\": 1, \"a\": 2, \"M\": 3}",
+                     "{\n  \"M\": 3,\n  \"a\": 2,\n  \"z\": 1\n}",
+                     "{\"M\":3,\"a\":2,\"z\":1}"});
+    cases.push_back(
+        {"settings_like",
+         "{\"env\": {\"ANTHROPIC_BASE_URL\": \"http://127.0.0.1:8787\", \"ANTHROPIC_MODEL\": "
+         "\"claude-sonnet-4-5-1m\"}, \"permissions\": {\"allow\": [\"Bash(git:*)\", \"Read\"], "
+         "\"deny\": []}, \"theme\": \"light\", \"fontScalePercent\": 115, \"ok\": true}",
+         "{\n  \"env\": {\n    \"ANTHROPIC_BASE_URL\": \"http://127.0.0.1:8787\",\n    \"ANTHROPIC_MODEL\": "
+         "\"claude-sonnet-4-5-1m\"\n  },\n  \"fontScalePercent\": 115,\n  \"ok\": true,\n  \"permissions\": "
+         "{\n    \"allow\": [\n      \"Bash(git:*)\",\n      \"Read\"\n    ],\n    \"deny\": []\n  },\n  "
+         "\"theme\": \"light\"\n}",
+         "{\"env\":{\"ANTHROPIC_BASE_URL\":\"http://127.0.0.1:8787\",\"ANTHROPIC_MODEL\":"
+         "\"claude-sonnet-4-5-1m\"},\"fontScalePercent\":115,\"ok\":true,\"permissions\":{\"allow\":"
+         "[\"Bash(git:*)\",\"Read\"],\"deny\":[]},\"theme\":\"light\"}"});
+    cases.push_back(
+        {"view_state_like",
+         "{\"columnScrolls\": {\"7\": 512.0, \"10\": 150.25, \"11\": 0.0}, \"selectedTaskId\": 3}",
+         "{\n  \"columnScrolls\": {\n    \"10\": 150.25,\n    \"11\": 0.0,\n    \"7\": 512.0\n  },\n  "
+         "\"selectedTaskId\": 3\n}",
+         "{\"columnScrolls\":{\"10\":150.25,\"11\":0.0,\"7\":512.0},\"selectedTaskId\":3}"});
+
+    // 不在循环里逐条 FAIL（框架 fail-fast，只会暴露第一处）：先把全部差异打出来
+    // （含可直接粘回本表的字面量），最后一次断言收口
+    size_t bad = 0;
+    for (const auto& c : cases) {
+        auto parsed = parse(c.input);
+        DOCTEST_REQUIRE(parsed.isOk());
+        auto p = stringify(parsed.value(), /*pretty=*/true);
+        auto k = stringify(parsed.value(), /*pretty=*/false);
+        DOCTEST_REQUIRE(p.isOk());
+        DOCTEST_REQUIRE(k.isOk());
+        if (p.value() != c.pretty || k.value() != c.compact) {
+            ++bad;
+            std::printf("SNAPSHOT-MISMATCH %s\n    {\"%s\",\n     \"%s\",\n     \"%s\",\n     \"%s\"},\n",
+                        c.name, c.name, c.input, jsonByteLiteral(p.value()).c_str(),
+                        jsonByteLiteral(k.value()).c_str());
+        }
+    }
+    DOCTEST_CHECK_EQ(bad, static_cast<size_t>(0));
     return true;
 })
