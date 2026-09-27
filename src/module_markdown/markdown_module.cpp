@@ -973,19 +973,32 @@ private:
             .build();
     }
 
-    // ---- 中栏：编辑器（真实读 / 写文件）----
-    // Phase 1：栏内小标题移到状态栏（§5.7 去密度）；仅编辑态文本列居中 720px。
-    void drawEditorColumn(eui::Ui& ui,
-                          float bodyH,
-                          float midW,
-                          const core::theme::Tokens& t,
-                          const components::theme::ThemeColorTokens& componentTheme) {
-        (void)componentTheme;
-        // W9 修复：同左栏——column+overlay 兄弟双占位改单 stack
-        // （布局语义与耦合点见 drawTreeColumn 注释，测试统一锁在
-        // md_tree_column_layout_semantics）
-        ui.stack("md.editor").size(midW, bodyH).content([&] {
-            ui.rect("md.editor.bg")
+    // ---- W2 MD-02：编辑 / 实时两态共用的列壳（单点维护）----
+    // 两态的列壳本就逐行相同：面板底 + 空态提示条 + 标签 chip 行 + 文本列几何 +
+    // 底部状态栏。差异只有两处——id 前缀、以及是否把文本列钳到 720px（编辑态
+    // 单栏钳 720 居中 = 无干扰写作宽，双栏态与实时态占满列宽）。抽出前靠注释
+    //「与编辑态同款」口头同步，任一侧调整都要改两遍且易漏。
+    // 几何回传给调用方，正文在 chip 行之下、状态栏之上绘制；元素创建顺序与
+    // 抽出前逐字一致（底 → 提示 / 正文 → 状态栏），命中层级不变。
+    struct TextColumnGeometry {
+        float x = 0.0f;  // 文本列左缘
+        float y = 0.0f;  // 文本列顶缘（16 顶距 + 24 chip 行 + 8 间距）
+        float w = 0.0f;  // 文本列宽
+        float h = 0.0f;  // 文本列高（已扣状态栏与底部间距，钳 >= 0）
+    };
+
+    // 未选笔记（空文档）只出提示条 + 状态栏，正文回调不执行
+    template <typename Body>
+    void drawTextColumnChrome(eui::Ui& ui,
+                              const std::string& columnId,
+                              float bodyH,
+                              float midW,
+                              bool clampColumn,
+                              const core::theme::Tokens& t,
+                              const components::theme::ThemeColorTokens& componentTheme,
+                              Body&& body) {
+        ui.stack(columnId).size(midW, bodyH).content([&] {
+            ui.rect(columnId + ".bg")
                 .size(midW, bodyH)
                 // 编辑区面板是页面结构 → background（spec §6.5 层级：结构性
                 // 面板不浮起，卡片白只给浮动元素）
@@ -994,10 +1007,8 @@ private:
                 .border(1.0f, t.colors.borderDefault)
                 .build();
 
-            const bool hasNote = !currentPath_.empty();
-
-            if (!hasNote) {
-                ui.text("md.editor.hint")
+            if (currentPath_.empty()) {
+                ui.text(columnId + ".hint")
                     .position(24.0f, 50.0f)
                     .size(midW - 48.0f, 40.0f)
                     .text("从左栏选一篇笔记开始编辑")
@@ -1009,70 +1020,88 @@ private:
                 return;
             }
 
-            float edX = 16.0f;
-            float edW = midW - 32.0f;
-            if (mode_ == ViewMode::Edit) {
+            float colX = 16.0f;
+            float colW = midW - 32.0f;
+            if (clampColumn) {
                 // 无干扰写作：文本列 clamp 720px 居中（Typora 写作宽度）
-                edW = std::min(edW, kEditTextColumnWidth);
-                edX = std::max(0.0f, (midW - edW) * 0.5f);
+                colW = std::min(colW, kEditTextColumnWidth);
+                colX = std::max(0.0f, (midW - colW) * 0.5f);
             }
-            // 标签 chip 行（spec §8.1 标签 UI；与编辑器文本列同列对齐）
-            drawTagBar(ui, edX, edW, t, componentTheme);
-            const float edY = 48.0f;  // 16 顶距 + 24 chip 行 + 8 间距
-            const float edH = std::max(0.0f, bodyH - edY - 22.0f - 8.0f);
+            // 标签 chip 行（spec §8.1 标签 UI；与文本列同列对齐）
+            drawTagBar(ui, colX, colW, t, componentTheme);
+            const float colY = 48.0f;  // 16 顶距 + 24 chip 行 + 8 间距
+            const float colH = std::max(0.0f, bodyH - colY - 22.0f - 8.0f);
 
-            components::input(ui, kEditorInputId)
-                .position(edX, edY)
-                .size(edW, edH)
-                .value(editorText_)
-                .placeholder("在这里写 Markdown…")
-                .multiline(true)
-                .scrollbar(true)
-                .fontSize(core::theme::editorFontSize())
-                .inset(10.0f)
-                .theme(componentTheme)
-                .onChange([this](const std::string& v) {
-                    // 每次输入都更新内存缓冲；落盘走防抖（见 flushEditorIfIdle）
-                    onEditorTextChanged(v);
-                })
-                // Phase 2 键盘流（spec §5.2 通道 A）：聚焦时先于内置处理收到
-                // 按键，返回 true = 拦截。ui 引用即 Runtime 的常驻 Ui（状态
-                // store 跨帧持久），lambda 捕获安全
-                .onKeyEvent([this, &ui](const eui::KeyEvent& event) {
-                    return handleEditorKey(ui, event);
-                })
-                // Phase C 行级语法高亮（styled-runs）：回调只给行文本与行首
-                // 偏移，围栏状态需要全文——从 InputState 取当前 display 文本
-                // （IME 组合期间是 preedit 快照，与框架坐标系同源，字节偏移
-                // 不会错位）。返回全文档坐标 runs，框架裁剪平移归一化。
-                .lineStyles([this, &ui](const std::string& lineText,
-                                        int lineStartByte, int lineNo) {
-                    (void)lineNo;
-                    using InputState =
-                        components::input_detail::InputModel::InputState;
-                    auto& st = ui.state<InputState>(kEditorInputId);
-                    return highlighter_.runsForLine(
-                        st.preedit ? st.preedit->text : st.text, lineText,
-                        lineStartByte);
-                })
-                .build();
-
-            // 审计 [12]：编辑器右键 → 插入表格菜单。EUI-NEO input 组件不透出
-            // 右键入口，runtime 的 contextMenu 只派发给最上层交互元素（即 .hit，
-            // 见 runtime_input updateInteraction），故 build 后直接把回调挂到该
-            // 元素上（ui.begin() 每帧重建元素树 → 每帧 compose 内重新挂）。
-            if (auto* hit = ui.find(kEditorInputHitId)) {
-                hit->onContextMenu = [this](const eui::PointerEvent& ev,
-                                            const eui::Rect&) {
-                    // 同树行菜单：窗口坐标 → 页面坐标（减去页面区原点 x）
-                    editorCtxX_ = windowToPageX(static_cast<float>(ev.x));
-                    editorCtxY_ = static_cast<float>(ev.y);
-                    editorCtxOpen_ = true;
-                };
-            }
+            body(TextColumnGeometry{colX, colY, colW, colH});
 
             drawStatusBar(ui, 0.0f, bodyH - 22.0f, midW, t);
         }).build();
+    }
+
+    // ---- 中栏：编辑器（真实读 / 写文件）----
+    // Phase 1：栏内小标题移到状态栏（§5.7 去密度）；仅编辑态文本列居中 720px。
+    void drawEditorColumn(eui::Ui& ui,
+                          float bodyH,
+                          float midW,
+                          const core::theme::Tokens& t,
+                          const components::theme::ThemeColorTokens& componentTheme) {
+        (void)componentTheme;
+        // W9 修复：同左栏——column+overlay 兄弟双占位改单 stack
+        // （布局语义与耦合点见 drawTreeColumn 注释，测试统一锁在
+        // md_tree_column_layout_semantics）
+        drawTextColumnChrome(
+            ui, "md.editor", bodyH, midW, mode_ == ViewMode::Edit, t,
+            componentTheme, [&](const TextColumnGeometry& g) {
+                components::input(ui, kEditorInputId)
+                    .position(g.x, g.y)
+                    .size(g.w, g.h)
+                    .value(editorText_)
+                    .placeholder("在这里写 Markdown…")
+                    .multiline(true)
+                    .scrollbar(true)
+                    .fontSize(core::theme::editorFontSize())
+                    .inset(10.0f)
+                    .theme(componentTheme)
+                    .onChange([this](const std::string& v) {
+                        // 每次输入都更新内存缓冲；落盘走防抖（见 flushEditorIfIdle）
+                        onEditorTextChanged(v);
+                    })
+                    // Phase 2 键盘流（spec §5.2 通道 A）：聚焦时先于内置处理收到
+                    // 按键，返回 true = 拦截。ui 引用即 Runtime 的常驻 Ui（状态
+                    // store 跨帧持久），lambda 捕获安全
+                    .onKeyEvent([this, &ui](const eui::KeyEvent& event) {
+                        return handleEditorKey(ui, event);
+                    })
+                    // Phase C 行级语法高亮（styled-runs）：回调只给行文本与行首
+                    // 偏移，围栏状态需要全文——从 InputState 取当前 display 文本
+                    // （IME 组合期间是 preedit 快照，与框架坐标系同源，字节偏移
+                    // 不会错位）。返回全文档坐标 runs，框架裁剪平移归一化。
+                    .lineStyles([this, &ui](const std::string& lineText,
+                                            int lineStartByte, int lineNo) {
+                        (void)lineNo;
+                        using InputState =
+                            components::input_detail::InputModel::InputState;
+                        auto& st = ui.state<InputState>(kEditorInputId);
+                        return highlighter_.runsForLine(
+                            st.preedit ? st.preedit->text : st.text, lineText,
+                            lineStartByte);
+                    })
+                    .build();
+
+                // 审计 [12]：编辑器右键 → 插入表格菜单。EUI-NEO input 组件不透出
+                // 右键入口，runtime 的 contextMenu 只派发给最上层交互元素（即 .hit，
+                // 见 runtime_input updateInteraction），故 build 后直接把回调挂到该
+                // 元素上（ui.begin() 每帧重建元素树 → 每帧 compose 内重新挂）。
+                if (auto* hit = ui.find(kEditorInputHitId)) {
+                    hit->onContextMenu = [this](const eui::PointerEvent& ev,
+                                                const eui::Rect&) {
+                        // 同树行菜单：窗口坐标 → 页面坐标（减去页面区原点 x）
+                        editorCtxX_ = windowToPageX(static_cast<float>(ev.x));
+                        editorCtxY_ = static_cast<float>(ev.y);
+                        editorCtxOpen_ = true;
+                    };
+                }
+            });
     }
 
     // ---- Phase 2 键盘流：onKeyEvent 接线（纯函数在 md_keyboard）----
@@ -1618,119 +1647,91 @@ private:
                         float midW,
                         const core::theme::Tokens& t,
                         const components::theme::ThemeColorTokens& componentTheme) {
-        ui.stack("md.live").size(midW, bodyH).content([&] {
-            ui.rect("md.live.bg")
-                .size(midW, bodyH)
-                // 实时列与编辑/预览列同层级：结构性面板 → background
-                .color(t.colors.background)
-                .radius(t.sizes.radiusLarge)
-                .border(1.0f, t.colors.borderDefault)
-                .build();
-
-            if (currentPath_.empty()) {
-                ui.text("md.live.hint")
-                    .position(24.0f, 50.0f)
-                    .size(midW - 48.0f, 40.0f)
-                    .text("从左栏选一篇笔记开始编辑")
-                    .fontSize(t.sizes.fontSizeBody)
-                    .lineHeight(20.0f)
-                    .color(t.colors.textTertiary)
-                    .build();
-                drawStatusBar(ui, 0.0f, bodyH - 22.0f, midW, t);
-                return;
-            }
-
-            // 写作列 clamp 720px 居中（与编辑态同款，spec §3.2）
-            float lvW = midW - 32.0f;
-            lvW = std::min(lvW, kEditTextColumnWidth);
-            const float lvX = std::max(0.0f, (midW - lvW) * 0.5f);
-            // 标签 chip 行（四态共享，位置与编辑态同列对齐）
-            drawTagBar(ui, lvX, lvW, t, componentTheme);
-            const float lvY = 48.0f;  // 16 顶距 + 24 chip 行 + 8 间距（同编辑态）
-            const float lvH = std::max(0.0f, bodyH - lvY - 22.0f - 8.0f);
-
-            const components::MarkdownStyle style(componentTheme);
-            // ---- M2：活动块锚（文档字节偏移，spec D3）----
-            // 进实时态首次：以编辑器的文档光标为初始锚（此刻编辑器列已不在帧树，
-            // 但 InputState 按 id 跨帧存活，见 M0 V1）；之后换块/跳转由 M3 的
-            // setLiveCursor 写入（M2 只在切块帧反向写入块局部光标）。
-            // 此后【每帧】锚都跟着活动 input 的真实光标推进（MD-01 修复）。
-            LiveBlockCtx live;
-            live.theme = &componentTheme;
-            bool hasActive = false;
-            if (!blockModel_.blocks().empty()) {
-                const std::vector<MdBlock>& bs = blockModel_.blocks();
-                const auto& lst = ui.state<
-                    components::input_detail::InputModel::InputState>(
-                    kLiveInputId);
-                if (!liveCursorValid_) {
-                    const auto& ed = ui.state<
+        // 列壳（面板底 / 标签 chip 行 / 720px 写作列 / 状态栏）与编辑态共用同一
+        // 实现（W2 MD-02）；本态恒钳 720 居中的写作列（spec §3.2）
+        drawTextColumnChrome(
+            ui, "md.live", bodyH, midW, true, t, componentTheme,
+            [&](const TextColumnGeometry& g) {
+                const components::MarkdownStyle style(componentTheme);
+                // ---- M2：活动块锚（文档字节偏移，spec D3）----
+                // 进实时态首次：以编辑器的文档光标为初始锚（此刻编辑器列已不在帧树，
+                // 但 InputState 按 id 跨帧存活，见 M0 V1）；之后换块/跳转由 M3 的
+                // setLiveCursor 写入（M2 只在切块帧反向写入块局部光标）。
+                // 此后【每帧】锚都跟着活动 input 的真实光标推进（MD-01 修复）。
+                LiveBlockCtx live;
+                live.theme = &componentTheme;
+                bool hasActive = false;
+                if (!blockModel_.blocks().empty()) {
+                    const std::vector<MdBlock>& bs = blockModel_.blocks();
+                    const auto& lst = ui.state<
                         components::input_detail::InputModel::InputState>(
-                        kEditorInputId);
-                    liveCursorByte_ =
-                        ed.cursor > 0 ? static_cast<size_t>(ed.cursor) : 0;
-                    liveCursorValid_ = true;
-                    liveActiveBlock_ =
-                        mdLiveActiveBlockIndex(blockModel_, liveCursorByte_);
-                    // 本帧 input 还未与本块同步（它的块内光标属于上一次会话），
-                    // 基准只能取块起点；真实落点由换文本帧反向写入块局部光标
-                    liveInputStart_ = bs[liveActiveBlock_].start;
-                } else {
-                    // MD-01：锚必须跟着真实光标走，不能冻结在进态时的旧值上。
-                    // 活动 input 的 InputState 持有块内光标（用户每次按键由组件
-                    // 推进），【文档字节 = 输入框文本起点 + 块内光标】即用户此刻
-                    // 的真实光标；据此重定位活动块后，分块器因回车空行 / 行首
-                    // `# ` `- ` 重切出的【新块】才是活动块。否则锚停在切块前的
-                    // 旧值（仍落在前一块区间内）→ 下一帧 input 被整段换成前一块
-                    // 文本、光标跳块首，用户刚敲的内容从输入框消失，此后每次按
-                    // 键都写进前块。
-                    // 基准取上一帧定下的 liveInputStart_，不用本帧重算出的块起点：
-                    // 重切后 input 文本可从旧块起点一路盖进新块，拿新块起点解释
-                    // 同一块内光标会把光标推到错位置。
-                    const size_t local =
-                        lst.cursor > 0 ? static_cast<size_t>(lst.cursor) : 0;
-                    liveCursorByte_ = liveInputStart_ + local;
-                    liveActiveBlock_ =
-                        mdLiveActiveBlockIndex(blockModel_, liveCursorByte_);
-                    liveInputStart_ = bs[liveActiveBlock_].start;
+                        kLiveInputId);
+                    if (!liveCursorValid_) {
+                        const auto& ed = ui.state<
+                            components::input_detail::InputModel::InputState>(
+                            kEditorInputId);
+                        liveCursorByte_ =
+                            ed.cursor > 0 ? static_cast<size_t>(ed.cursor) : 0;
+                        liveCursorValid_ = true;
+                        liveActiveBlock_ =
+                            mdLiveActiveBlockIndex(blockModel_, liveCursorByte_);
+                        // 本帧 input 还未与本块同步（它的块内光标属于上一次会话），
+                        // 基准只能取块起点；真实落点由换文本帧反向写入块局部光标
+                        liveInputStart_ = bs[liveActiveBlock_].start;
+                    } else {
+                        // MD-01：锚必须跟着真实光标走，不能冻结在进态时的旧值上。
+                        // 活动 input 的 InputState 持有块内光标（用户每次按键由组件
+                        // 推进），【文档字节 = 输入框文本起点 + 块内光标】即用户此刻
+                        // 的真实光标；据此重定位活动块后，分块器因回车空行 / 行首
+                        // `# ` `- ` 重切出的【新块】才是活动块。否则锚停在切块前的
+                        // 旧值（仍落在前一块区间内）→ 下一帧 input 被整段换成前一块
+                        // 文本、光标跳块首，用户刚敲的内容从输入框消失，此后每次按
+                        // 键都写进前块。
+                        // 基准取上一帧定下的 liveInputStart_，不用本帧重算出的块起点：
+                        // 重切后 input 文本可从旧块起点一路盖进新块，拿新块起点解释
+                        // 同一块内光标会把光标推到错位置。
+                        const size_t local =
+                            lst.cursor > 0 ? static_cast<size_t>(lst.cursor) : 0;
+                        liveCursorByte_ = liveInputStart_ + local;
+                        liveActiveBlock_ =
+                            mdLiveActiveBlockIndex(blockModel_, liveCursorByte_);
+                        liveInputStart_ = bs[liveActiveBlock_].start;
+                    }
+                    live.activeBlock = liveActiveBlock_;
+                    hasActive = true;
                 }
-                live.activeBlock = liveActiveBlock_;
-                hasActive = true;
-            }
-            // 单一滚动权威 = 本 scrollView（M1 手动滚动；光标跟随留 M6）
-            components::scrollView(ui, "md.live.scroll")
-                .position(lvX, lvY)
-                .size(lvW, lvH)
-                .gap(8.0f)
-                .step(56.0f)
-                .theme(componentTheme)
-                .offset(liveOffset_)
-                // contentKey 用内容 hash（setEditorText 维护；照抄预览 perf [15]
-                // 做法，不回退到按 text.size() 键控）、宽度由 MeasureCache 的
-                // entry 自带 —— 同长度换字符时高度缓存必须失效
-                .contentKey("md.live.scroll." + currentPath_ + "." +
-                            std::to_string(previewTextHash_))
-                .onChange([this](float v) { liveOffset_ = v; })
-                .content([&](eui::Ui& inner, float contentWidth, float viewportHeight) {
-                    (void)viewportHeight;
-                    // 活动块 input 由 drawBlockFlow 建在 inner（content 回调交给的
-                    // Ui）上——测量 pass 也走本回调，元素必须挂在同一层
-                    drawBlockFlow(inner, contentWidth, t, style, "md.live", {},
-                                  &live);
-                })
-                .build();
+                // 单一滚动权威 = 本 scrollView（M1 手动滚动；光标跟随留 M6）
+                components::scrollView(ui, "md.live.scroll")
+                    .position(g.x, g.y)
+                    .size(g.w, g.h)
+                    .gap(8.0f)
+                    .step(56.0f)
+                    .theme(componentTheme)
+                    .offset(liveOffset_)
+                    // contentKey 用内容 hash（setEditorText 维护；照抄预览 perf [15]
+                    // 做法，不回退到按 text.size() 键控）、宽度由 MeasureCache 的
+                    // entry 自带 —— 同长度换字符时高度缓存必须失效
+                    .contentKey("md.live.scroll." + currentPath_ + "." +
+                                std::to_string(previewTextHash_))
+                    .onChange([this](float v) { liveOffset_ = v; })
+                    .content([&](eui::Ui& inner, float contentWidth, float viewportHeight) {
+                        (void)viewportHeight;
+                        // 活动块 input 由 drawBlockFlow 建在 inner（content 回调交给的
+                        // Ui）上——测量 pass 也走本回调，元素必须挂在同一层
+                        drawBlockFlow(inner, contentWidth, t, style, "md.live", {},
+                                      &live);
+                    })
+                    .build();
 
-            // M0 C1/C5：进实时态首帧同帧补发 requestFocus（目标必须已是当帧树中
-            // 的元素，早发/事后补都被丢弃），且只发 <input id>.hit —— 组件聚焦
-            // 判定用 ui.isFocused(id + ".hit")，发基 id 会不画 caret、按键落空。
-            // 空文档（无块 → 无 input）不聚焦。
-            if (liveFocusPending_) {
-                liveFocusPending_ = false;
-                if (hasActive) ui.requestFocus(kLiveInputHitId);
-            }
-
-            drawStatusBar(ui, 0.0f, bodyH - 22.0f, midW, t);
-        }).build();
+                // M0 C1/C5：进实时态首帧同帧补发 requestFocus（目标必须已是当帧树中
+                // 的元素，早发/事后补都被丢弃），且只发 <input id>.hit —— 组件聚焦
+                // 判定用 ui.isFocused(id + ".hit")，发基 id 会不画 caret、按键落空。
+                // 空文档（无块 → 无 input）不聚焦。
+                if (liveFocusPending_) {
+                    liveFocusPending_ = false;
+                    if (hasActive) ui.requestFocus(kLiveInputHitId);
+                }
+            });
     }
 
     // P3-③ CodeFence 块预览自绘（上游 markdown 代码块单色 + 无预解析注入，
@@ -2249,14 +2250,23 @@ private:
 
     // ---- Phase 1：四态切换 / 大纲 ----
 
+    // W2 MD-05：实时态状态位群（文档锚 / 首帧聚焦 / 滚动位置）的单一复位点。
+    // 三个位语义上是「一份状态」：锚失效（下次 compose 用编辑器光标重取）、
+    // 首帧同帧补发 requestFocus（M0 C1/C5）、滚动位置归零。原先散在各路径手写
+    // ——换笔记那条漏了滚动复位（换笔记后仍停在上篇的滚动位置），且新增入口
+    // 容易再漏一个。故收成一处，进入实时态的三条路径（setMode 切态 / openNote
+    // 换笔记 / loadViewState 启动恢复）统一调用。
+    void enterLiveState(const char* reason) {
+        liveCursorValid_ = false;
+        liveFocusPending_ = true;
+        liveOffset_ = 0.0f;
+        LOG_DEBUG(std::string("Markdown 实时态状态复位: ") + reason);
+    }
+
     void setMode(ViewMode m) {
         if (m == mode_) return;
-        // Phase 3 M2：进实时态 → 活动块锚失效（下次 compose 用编辑器光标重取），
-        // 并请求一次聚焦（首帧同帧补发，M0 C1/C5）
-        if (m == ViewMode::Live) {
-            liveCursorValid_ = false;
-            liveFocusPending_ = true;
-        }
+        // Phase 3 M2：进实时态 → 状态位群复位（锚 / 聚焦 / 滚动，见 enterLiveState）
+        if (m == ViewMode::Live) enterLiveState("切换视图");
         mode_ = m;
         // 进预览态时把滚动位置对齐编辑器当前位置（compose 里延迟计算，
         // 因为需要预览列宽和主题样式）
@@ -2537,7 +2547,9 @@ private:
         outlineDirty_ = true;
         activeOutlineIdx_ = -1;
         previewHover_.reset();  // P3-⑤：换笔记 = 块身份换代，旧 hover 作废
-        liveCursorValid_ = false;  // M2：换笔记 = 活动块锚换代（下次 compose 重取）
+        // M2：换笔记 = 实时态状态群换代（锚 / 聚焦 / 滚动，见 enterLiveState；
+        // W2 MD-05 前这里只复位锚，滚动位置残留在上一篇的偏移上）
+        enterLiveState("换笔记");
         tagInput_.clear();  // 终验复审：标签输入框残留上一篇的半截输入
         // 标签行随笔记切换
         if (auto tr = service_->tagsForNote(relPath); tr.isOk()) {
@@ -2565,6 +2577,8 @@ private:
             // saveViewState 会冗余落一次同样的值
             mode_ = static_cast<ViewMode>(st.mode);
             if (mode_ == ViewMode::Preview) syncPreviewOnEnter_ = true;
+            // W2 MD-05：恢复进实时态与切实时态同语义（状态位群复位）
+            if (mode_ == ViewMode::Live) enterLiveState("启动恢复视图");
         }
         collapsedDirs_.insert(st.collapsedDirs.begin(), st.collapsedDirs.end());
         if (st.lastPath.empty()) return;
@@ -3296,13 +3310,13 @@ private:
     bool outlineDirty_ = true;
     int activeOutlineIdx_ = -1;        // 仅预览态用（无编辑器光标可读）
     float previewOffset_ = 0.0f;       // 仅预览态的手动滚动位置
-    float liveOffset_ = 0.0f;          // 实时态的手动滚动位置（M1；M6 接光标跟随）
+    float liveOffset_ = 0.0f;          // 实时态的手动滚动位置（M1；M6 接光标跟随；enterLiveState 归零）
     // ---- Phase 3 M2：实时态活动块（单输入跟随 + 内容贴合高度）----
     size_t liveCursorByte_ = 0;        // 文档字节偏移 = 活动块身份锚（spec D3）
     size_t liveActiveBlock_ = 0;       // 本帧活动块下标（每帧由锚重算）
     size_t liveInputStart_ = 0;        // 活动 input 文本在文档中的起点（= 其所属块 start，MD-01 锚推导基准）
-    bool liveCursorValid_ = false;     // 锚是否已按当前文档初始化（进实时态/换笔记置 false）
-    bool liveFocusPending_ = false;    // 进实时态首帧同帧补发 requestFocus（M0 C1）
+    bool liveCursorValid_ = false;     // 锚是否已按当前文档初始化（enterLiveState 复位）
+    bool liveFocusPending_ = false;    // 进实时态首帧同帧补发 requestFocus（M0 C1；enterLiveState 置位）
     // 贴合高度备忘（键 = stableId + 内容 hash + 文本宽 + 字号）：活动块整块
     // shaping 不逐帧重付；内容/宽度/字号任一变化即失效重测
     struct LiveHeightMemo {
