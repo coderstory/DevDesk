@@ -2017,3 +2017,72 @@ REGISTER_TEST(settings_ths01_fs_snapshot,
     ::core::theme::setDark();
     return true;
 })
+
+// ---- 审计 THS-05：下拉「谁打开着」的唯一持有者（7 个 bool → 1 个索引）----
+// 断言：① 打开第二个下拉会自动关掉先前那个（同时最多一个展开）；
+// ② Esc 关当前打开的下拉，全关时 Esc 不消费（不越权吃键）。
+
+REGISTER_TEST(settings_dropdown_single_holder,
+              "settings: 下拉唯一持有者——开第二个自动关第一个 + Esc 关当前项（审计 THS-05）", {
+    PruneEnv env("ddholder");
+    std::unique_ptr<::core::Module> mod(create_settings_module());
+    mod->onStart();
+    eui::Screen screen;
+    screen.width = 1600.0f;
+    screen.height = 1000.0f;
+
+    eui::Ui ui;
+    auto frame = [&](const char* page) {
+        ui.begin(page);
+        mod->compose(ui, screen);
+        ui.end();
+    };
+    // 两个下拉同在「通用」tab 的外观卡（默认 tab，无需切换）
+    const std::string themeDd = "settings.card.appearance.theme.dd";
+    const std::string fontDd = "settings.card.appearance.font.dd";
+    // 展开态 = 弹层 opacity（EUI-NEO dropdown 收起时 opacity 0，元素仍在树上）
+    auto popupOpacity = [&](const std::string& dd) -> float {
+        const auto* p = ui.find(dd + ".popup");
+        return p != nullptr ? p->opacity : -1.0f;
+    };
+    auto clickField = [&](const std::string& dd) {
+        auto* f = ui.find(dd + ".field");
+        if (f == nullptr || f->onClick == nullptr) return false;
+        f->onClick();
+        return true;
+    };
+    auto escPress = [] {
+        eui::KeyEvent e;
+        e.key = eui::InputKey::Escape;
+        e.action = eui::KeyAction::Press;
+        return e;
+    };
+
+    // 0) 初始全关；无下拉时 Esc 不消费
+    frame("dd0");
+    DOCTEST_CHECK_EQ(popupOpacity(themeDd), 0.0f);
+    DOCTEST_CHECK_EQ(popupOpacity(fontDd), 0.0f);
+    DOCTEST_CHECK(!mod->onKeyEvent(escPress()));
+
+    // 1) 开主题下拉 → 只有它展开
+    DOCTEST_REQUIRE(clickField(themeDd));
+    frame("dd1");
+    DOCTEST_CHECK_EQ(popupOpacity(themeDd), 1.0f);
+    DOCTEST_CHECK_EQ(popupOpacity(fontDd), 0.0f);
+
+    // 2) 再开字号下拉 → 主题自动关（唯一持有者：同时最多一个展开）
+    DOCTEST_REQUIRE(clickField(fontDd));
+    frame("dd2");
+    DOCTEST_CHECK_EQ(popupOpacity(fontDd), 1.0f);
+    DOCTEST_CHECK_EQ(popupOpacity(themeDd), 0.0f);
+
+    // 3) Esc 关当前项；再按一次（已全关）不消费
+    DOCTEST_CHECK(mod->onKeyEvent(escPress()));
+    frame("dd3");
+    DOCTEST_CHECK_EQ(popupOpacity(fontDd), 0.0f);
+    DOCTEST_CHECK(!mod->onKeyEvent(escPress()));
+
+    mod->onStop();
+    ::core::theme::setDark();
+    return true;
+})

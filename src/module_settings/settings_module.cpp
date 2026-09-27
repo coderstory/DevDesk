@@ -261,6 +261,13 @@ public:
         if (key.action != eui::KeyAction::Press) {
             return false;
         }
+        // 审计 THS-05：Esc 关当前打开的下拉（下拉独占打开 → 关它 = 关「最上层」）。
+        // 全关时不消费（本页其余 Esc 语义属于焦点元素，走 input.onCancel 通道）
+        if (key.key == eui::InputKey::Escape) {
+            if (openDropdown_ < 0) return false;
+            openDropdown_ = -1;
+            return true;
+        }
         if (!key.modifiers.shortcut() || key.modifiers.alt) {
             return false;
         }
@@ -686,6 +693,33 @@ public:
     }
 
 private:
+    // ============ 下拉「谁打开着」的单一持有者（审计 THS-05） ============
+    // 此前 7 个下拉各持一个 bool：开一个不会关掉先前那个，判断/维护要逐个点名。
+    // 现在只有一个索引：打开任一项时其它自动关（同时最多一个下拉展开），
+    // -1 = 全关。新增下拉只需在 Dropdown 里加一项 + 传自己的枚举值。
+    enum class Dropdown {
+        Theme,
+        Font,
+        Effect,
+        Retention,
+        LogLevel,
+        EditorFont,
+        PetSkin,
+    };
+
+    bool isDropdownOpen(Dropdown d) const {
+        return openDropdown_ == static_cast<int>(d);
+    }
+    // 组件 onOpenChange 通道：v=true → 独占打开（自动关掉先前那个）；
+    // v=false → 只有当前打开的是自己才关（避免迟到回调误关别人的下拉）
+    void setDropdownOpen(Dropdown d, bool v) {
+        if (v) {
+            openDropdown_ = static_cast<int>(d);
+        } else if (isDropdownOpen(d)) {
+            openDropdown_ = -1;
+        }
+    }
+
     // 非 token 的硬编码字号跟随全局缩放（单一来源 core::theme::fontScale；
     // token 字号已在 theme 层缩放，不要再经 fs() 包一层，避免双重缩放）
     float fs(float base) const {
@@ -807,9 +841,9 @@ private:
                                 kThemeModePresetLabels +
                                     kThemeModePresetCount))
                             .selected(themeModeIndex())
-                            .open(themeDropdownOpen_)
+                            .open(isDropdownOpen(Dropdown::Theme))
                             .onOpenChange(
-                                [this](bool v) { themeDropdownOpen_ = v; })
+                                [this](bool v) { setDropdownOpen(Dropdown::Theme, v); })
                             .onChange(
                                 [this](int idx) { applyThemeMode(idx); })
                             .build();
@@ -842,8 +876,9 @@ private:
                                 kFontPresetLabels + kFontPresetCount))
                             .selected(nearestIndex(cfg_.fontScalePercent,
                                                    kFontPresets, kFontPresetCount))
-                            .open(fontDropdownOpen_)
-                            .onOpenChange([this](bool v) { fontDropdownOpen_ = v; })
+                            .open(isDropdownOpen(Dropdown::Font))
+                            .onOpenChange(
+                                [this](bool v) { setDropdownOpen(Dropdown::Font, v); })
                             .onChange([this](int idx) { applyFontPreset(idx); })
                             .build();
                     })
@@ -870,9 +905,9 @@ private:
                                 kWindowEffectPresetLabels +
                                     kWindowEffectPresetCount))
                             .selected(windowEffectIndex())
-                            .open(effectDropdownOpen_)
+                            .open(isDropdownOpen(Dropdown::Effect))
                             .onOpenChange(
-                                [this](bool v) { effectDropdownOpen_ = v; })
+                                [this](bool v) { setDropdownOpen(Dropdown::Effect, v); })
                             .onChange(
                                 [this](int idx) { applyWindowEffectPreset(idx); })
                             .build();
@@ -1042,9 +1077,9 @@ private:
                             .theme(compTheme)
                             .items(items)
                             .selected(selected)
-                            .open(petSkinDropdownOpen_)
+                            .open(isDropdownOpen(Dropdown::PetSkin))
                             .onOpenChange(
-                                [this](bool v) { petSkinDropdownOpen_ = v; })
+                                [this](bool v) { setDropdownOpen(Dropdown::PetSkin, v); })
                             .onChange([this](int idx) {
                                 if (petSkins_.empty() || idx < 0 ||
                                     idx >= static_cast<int>(petSkins_.size())) {
@@ -1405,10 +1440,10 @@ private:
                             .selected(nearestIndex(cfg_.logRetentionDays,
                                                    kRetentionPresets,
                                                    kRetentionPresetCount))
-                            .open(retentionDropdownOpen_)
+                            .open(isDropdownOpen(Dropdown::Retention))
                             .openUp(openUp)
                             .onOpenChange(
-                                [this](bool v) { retentionDropdownOpen_ = v; })
+                                [this](bool v) { setDropdownOpen(Dropdown::Retention, v); })
                             .onChange(
                                 [this](int idx) { applyRetentionPreset(idx); })
                             .build();
@@ -1456,9 +1491,9 @@ private:
                                 kLogLevelPresetLabels + kLogLevelPresetCount))
                             .selected(logLevelIndex())
                             .openUp(levelOpenUp)
-                            .open(logLevelDropdownOpen_)
+                            .open(isDropdownOpen(Dropdown::LogLevel))
                             .onOpenChange(
-                                [this](bool v) { logLevelDropdownOpen_ = v; })
+                                [this](bool v) { setDropdownOpen(Dropdown::LogLevel, v); })
                             .onChange([this](int idx) {
                                 applyLogLevelPreset(idx);
                             })
@@ -1676,9 +1711,9 @@ private:
                                                    kEditorFontPresets,
                                                    kEditorFontPresetCount))
                             .openUp(efontOpenUp)
-                            .open(editorFontDropdownOpen_)
+                            .open(isDropdownOpen(Dropdown::EditorFont))
                             .onOpenChange(
-                                [this](bool v) { editorFontDropdownOpen_ = v; })
+                                [this](bool v) { setDropdownOpen(Dropdown::EditorFont, v); })
                             .onChange([this](int idx) {
                                 applyEditorFontPreset(idx);
                             })
@@ -1779,13 +1814,9 @@ private:
     // ---------- 状态 ----------
     std::unique_ptr<SettingsStore> store_;
     SettingsConfig cfg_;
-    bool fontDropdownOpen_ = false;
-    bool retentionDropdownOpen_ = false;
-    bool effectDropdownOpen_ = false;      // 窗口效果下拉（磨砂 Phase D）
-    bool themeDropdownOpen_ = false;       // 主题模式下拉（spec 缩水 A）
-    bool editorFontDropdownOpen_ = false;  // 编辑器字号下拉（spec 缩水 B）
-    bool logLevelDropdownOpen_ = false;    // 日志级别下拉（spec 缩水 D）
-    bool petSkinDropdownOpen_ = false;     // 桌宠皮肤下拉（M2）
+    // 当前打开的下拉（审计 THS-05：7 个 bool 收成一个索引，-1 = 全关）。
+    // 取值 = static_cast<int>(Dropdown)，判读/开关走 isDropdownOpen/setDropdownOpen
+    int openDropdown_ = -1;
     std::vector<std::string> petSkins_;    // 发现到的皮肤（M2，快照见 THS-01）
     std::string petSkinName_;              // 当前皮肤名（M2，快照见 THS-01）
     // 代理端口输入草稿（审计 [14]）：空 = 未编辑，compose 显示 cfg_.proxyPort；
