@@ -131,6 +131,7 @@ core::Result<Profile> ClaudeService::rowToProfile(const core::data::SqlRow& row)
     auto model = row.getString("model");
     auto modelsCfg = row.getString("models_config");
     auto extraEnv = row.getString("extra_env");
+    auto sharedCfg = row.getInt64("shared_config_id");
     auto active = row.getInt64("is_active");
     auto created = row.getInt64("created_at");
     auto updated = row.getInt64("updated_at");
@@ -143,6 +144,7 @@ core::Result<Profile> ClaudeService::rowToProfile(const core::data::SqlRow& row)
     if (model.isOk()) p.model = model.value();
     if (modelsCfg.isOk()) p.modelsConfigJson = modelsCfg.value();
     if (extraEnv.isOk()) p.extraEnvJson = extraEnv.value();
+    if (sharedCfg.isOk()) p.sharedConfigId = sharedCfg.value();
     if (active.isOk()) p.isActive = (active.value() != 0);
     if (created.isOk()) p.createdAt = static_cast<std::time_t>(created.value());
     if (updated.isOk()) p.updatedAt = static_cast<std::time_t>(updated.value());
@@ -157,7 +159,7 @@ core::Result<std::vector<Profile>> ClaudeService::listProfiles() {
     auto prep = db_.prepare(
         "SELECT id, name, base_url, api_key_hint, api_key_check, "
         "keychain_account, model, models_config, extra_env, "
-        "is_active, created_at, updated_at "
+        "shared_config_id, is_active, created_at, updated_at "
         "FROM claude_profiles ORDER BY is_active DESC, name ASC");
     if (prep.isFail()) {
         return core::Result<std::vector<Profile>>::fail(
@@ -187,7 +189,7 @@ core::Result<Profile> ClaudeService::getProfile(int64_t id) {
     auto prep = db_.prepare(
         "SELECT id, name, base_url, api_key_hint, api_key_check, "
         "keychain_account, model, models_config, extra_env, "
-        "is_active, created_at, updated_at "
+        "shared_config_id, is_active, created_at, updated_at "
         "FROM claude_profiles WHERE id = ?");
     if (prep.isFail()) {
         return core::Result<Profile>::fail(prep.errorCode(), prep.errorMessage());
@@ -216,7 +218,8 @@ core::Result<Profile> ClaudeService::createProfile(const std::string& name,
                                                    const std::string& baseUrl,
                                                    const std::string& apiKey,
                                                    const std::string& model,
-                                                   bool activateIfNoneActive) {
+                                                   bool activateIfNoneActive,
+                                                   int64_t sharedConfigId) {
     // 校验
     if (trim(name).empty()) {
         return core::Result<Profile>::fail(core::ErrorCode::ValidationError,
@@ -249,8 +252,8 @@ core::Result<Profile> ClaudeService::createProfile(const std::string& name,
     auto prep = db_.prepare(
         "INSERT INTO claude_profiles "
         "(name, base_url, api_key_hint, api_key_check, keychain_account, "
-        " model, is_active, created_at, updated_at) "
-        "VALUES (?, ?, ?, ?, ?, ?, 0, ?, ?) RETURNING id");
+        " model, shared_config_id, is_active, created_at, updated_at) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, 0, ?, ?) RETURNING id");
     if (prep.isFail()) {
         return core::Result<Profile>::fail(prep.errorCode(), prep.errorMessage());
     }
@@ -261,8 +264,9 @@ core::Result<Profile> ClaudeService::createProfile(const std::string& name,
     stmt.bind(4, check);
     stmt.bind(5, std::string(""));   // 插入后用 UPDATE 回填真实 account
     stmt.bind(6, cleanedModel);
-    stmt.bind(7, static_cast<int64_t>(now));
+    stmt.bind(7, sharedConfigId);    // 建时即绑定（0 = 不绑定）
     stmt.bind(8, static_cast<int64_t>(now));
+    stmt.bind(9, static_cast<int64_t>(now));
 
     auto stepR = stmt.step();
     if (stepR.isFail()) {
@@ -377,6 +381,7 @@ core::Result<Profile> ClaudeService::createProfile(const std::string& name,
     out.apiKeyCheck = check;
     out.keychainAccount = account;
     out.model = cleanedModel;
+    out.sharedConfigId = sharedConfigId;
     out.isActive = autoActivated;
     out.createdAt = now;
     out.updatedAt = now;
@@ -444,7 +449,8 @@ core::Result<void> ClaudeService::updateProfile(const Profile& profile) {
         auto prep = db_.prepare(
             "UPDATE claude_profiles SET "
             "name = ?, base_url = ?, api_key_hint = ?, api_key_check = ?, "
-            "model = ?, models_config = ?, extra_env = ?, updated_at = ? "
+            "model = ?, models_config = ?, extra_env = ?, shared_config_id = ?, "
+            "updated_at = ? "
             "WHERE id = ?");
         if (prep.isFail()) {
             return core::Result<void>::fail(prep.errorCode(), prep.errorMessage());
@@ -457,8 +463,9 @@ core::Result<void> ClaudeService::updateProfile(const Profile& profile) {
         stmt.bind(5, cleanedModel);
         stmt.bind(6, profile.modelsConfigJson);
         stmt.bind(7, profile.extraEnvJson);
-        stmt.bind(8, static_cast<int64_t>(now));
-        stmt.bind(9, profile.id);
+        stmt.bind(8, profile.sharedConfigId);
+        stmt.bind(9, static_cast<int64_t>(now));
+        stmt.bind(10, profile.id);
         auto stepR = stmt.step();
         if (stepR.isFail()) {
             std::string msg = stepR.errorMessage();
@@ -470,11 +477,11 @@ core::Result<void> ClaudeService::updateProfile(const Profile& profile) {
             return core::Result<void>::fail(stepR.errorCode(), msg);
         }
     } else {
-        // 只更新 name / url / model
+        // 只更新 name / url / model / 片段绑定
         auto prep = db_.prepare(
             "UPDATE claude_profiles SET "
             "name = ?, base_url = ?, model = ?, models_config = ?, "
-            "extra_env = ?, updated_at = ? WHERE id = ?");
+            "extra_env = ?, shared_config_id = ?, updated_at = ? WHERE id = ?");
         if (prep.isFail()) {
             return core::Result<void>::fail(prep.errorCode(), prep.errorMessage());
         }
@@ -484,8 +491,9 @@ core::Result<void> ClaudeService::updateProfile(const Profile& profile) {
         stmt.bind(3, cleanedModel);
         stmt.bind(4, profile.modelsConfigJson);
         stmt.bind(5, profile.extraEnvJson);
-        stmt.bind(6, static_cast<int64_t>(now));
-        stmt.bind(7, profile.id);
+        stmt.bind(6, profile.sharedConfigId);
+        stmt.bind(7, static_cast<int64_t>(now));
+        stmt.bind(8, profile.id);
         auto stepR = stmt.step();
         if (stepR.isFail()) {
             std::string msg = stepR.errorMessage();
@@ -499,6 +507,15 @@ core::Result<void> ClaudeService::updateProfile(const Profile& profile) {
     }
 
     LOG_INFO("已更新 Claude profile id=" + std::to_string(profile.id));
+
+    // 片段绑定发生变化（绑定 / 解绑）→ 当场生效（设计 §2.6）：代理在跑且改的
+    // 正是激活 profile 时立即重写 live。解绑 = 片段键从 live 撤走、与片段同名的
+    // profile 自身值恢复生效（片段值从未写进 profile 行，故「回落」无需搬数据）。
+    // 只在绑定变化时触发：既有 updateProfile 不重写 live 的行为逐字不变
+    if (profile.sharedConfigId != old.value().sharedConfigId &&
+        old.value().isActive && isProxyRunning()) {
+        (void)syncTakeOver();
+    }
     return core::Result<void>::ok();
 }
 
@@ -597,7 +614,7 @@ core::Result<Profile> ClaudeService::getActiveProfile() {
     auto prep = db_.prepare(
         "SELECT id, name, base_url, api_key_hint, api_key_check, "
         "keychain_account, model, models_config, extra_env, "
-        "is_active, created_at, updated_at "
+        "shared_config_id, is_active, created_at, updated_at "
         "FROM claude_profiles WHERE is_active = 1 LIMIT 1");
     if (prep.isFail()) {
         return core::Result<Profile>::fail(prep.errorCode(), prep.errorMessage());
@@ -721,11 +738,14 @@ core::Result<Profile> ClaudeService::duplicateProfile(int64_t srcId) {
     }
 
     // 一行 SQLite + 一条 Keychain（account 自动为 claude:<新 id>，与源不同）；
-    // 副本不激活（S-4）→ 不触发 setActiveProfile、也不触发反向同步
+    // 副本不激活（S-4）→ 不触发 setActiveProfile、也不触发反向同步。
+    // 片段绑定在 createProfile 处一并带上（设计 §2.6：它属于配置）——若留到
+    // 二段补写才设，二段条件（models/extra_env 非空）不成立时就会丢掉绑定
     const std::string defModel =
         effectiveModelsConfig(src.modelsConfigJson, src.model).def.model;
     auto createdR = createProfile(copyName, src.baseUrl, keyR.value(), defModel,
-                                  /*activateIfNoneActive=*/false);
+                                  /*activateIfNoneActive=*/false,
+                                  src.sharedConfigId);
     if (createdR.isFail()) {
         return core::Result<Profile>::fail(createdR.errorCode(),
                                            createdR.errorMessage());
@@ -761,6 +781,302 @@ core::Result<Profile> ClaudeService::duplicateProfile(int64_t srcId) {
              " name=" + copyName + "（源 id=" + std::to_string(srcId) +
              "，副本未激活）");
     return core::Result<Profile>::ok(std::move(out));
+}
+
+// ---------- 共享配置片段（设计 §2.1/§2.4/§2.6）----------
+
+core::Result<SharedConfig> ClaudeService::rowToSharedConfig(
+    const core::data::SqlRow& row) const {
+    SharedConfig c;
+    auto id = row.getInt64("id");
+    if (id.isFail()) {
+        return core::Result<SharedConfig>::fail(id.errorCode(), id.errorMessage());
+    }
+    c.id = id.value();
+    auto name = row.getString("name");
+    auto env = row.getString("extra_env");
+    auto created = row.getInt64("created_at");
+    auto updated = row.getInt64("updated_at");
+    if (name.isOk()) c.name = name.value();
+    if (env.isOk()) c.extraEnvJson = env.value();
+    if (created.isOk()) c.createdAt = static_cast<std::time_t>(created.value());
+    if (updated.isOk()) c.updatedAt = static_cast<std::time_t>(updated.value());
+    return core::Result<SharedConfig>::ok(std::move(c));
+}
+
+core::Result<std::vector<SharedConfig>> ClaudeService::listSharedConfigs() {
+    auto prep = db_.prepare(
+        "SELECT id, name, extra_env, created_at, updated_at "
+        "FROM claude_shared_configs ORDER BY name ASC");
+    if (prep.isFail()) {
+        return core::Result<std::vector<SharedConfig>>::fail(
+            prep.errorCode(), prep.errorMessage());
+    }
+    auto rows = prep.value().fetchAll();
+    if (rows.isFail()) {
+        return core::Result<std::vector<SharedConfig>>::fail(
+            rows.errorCode(), rows.errorMessage());
+    }
+    std::vector<SharedConfig> out;
+    out.reserve(rows.value().size());
+    for (const auto& row : rows.value()) {
+        auto c = rowToSharedConfig(row);
+        if (c.isFail()) {
+            return core::Result<std::vector<SharedConfig>>::fail(
+                c.errorCode(), c.errorMessage());
+        }
+        out.push_back(std::move(c).value());
+    }
+    return core::Result<std::vector<SharedConfig>>::ok(std::move(out));
+}
+
+core::Result<SharedConfig> ClaudeService::createSharedConfig(
+    const std::string& name, const std::string& extraEnvJson) {
+    const std::string cleanedName = trim(name);
+    if (cleanedName.empty()) {
+        return core::Result<SharedConfig>::fail(core::ErrorCode::ValidationError,
+            "共享配置片段名不能为空");
+    }
+    // 信任边界：不把坏 JSON 落库（读侧另有容错，见 parseExtraEnv）
+    if (!extraEnvJson.empty()) {
+        auto ee = parseExtraEnv(extraEnvJson);
+        if (ee.isFail()) {
+            return core::Result<SharedConfig>::fail(ee.errorCode(),
+                "共享配置片段 extra_env 非法: " + ee.errorMessage());
+        }
+    }
+
+    const std::time_t now = nowUnix();
+    auto prep = db_.prepare(
+        "INSERT INTO claude_shared_configs (name, extra_env, created_at, "
+        "updated_at) VALUES (?, ?, ?, ?) RETURNING id");
+    if (prep.isFail()) {
+        return core::Result<SharedConfig>::fail(prep.errorCode(),
+                                               prep.errorMessage());
+    }
+    auto& stmt = prep.value();
+    stmt.bind(1, cleanedName);
+    stmt.bind(2, extraEnvJson);
+    stmt.bind(3, static_cast<int64_t>(now));
+    stmt.bind(4, static_cast<int64_t>(now));
+    auto stepR = stmt.step();
+    if (stepR.isFail()) {
+        std::string msg = stepR.errorMessage();
+        if (msg.find("UNIQUE") != std::string::npos) {
+            return core::Result<SharedConfig>::fail(core::ErrorCode::AlreadyExists,
+                "共享配置片段名已存在: " + cleanedName);
+        }
+        return core::Result<SharedConfig>::fail(stepR.errorCode(), msg);
+    }
+    if (!stepR.value()) {
+        return core::Result<SharedConfig>::fail(core::ErrorCode::Internal,
+            "INSERT ... RETURNING id 未返回行");
+    }
+    auto idRow = stmt.currentRow();
+    if (idRow.isFail()) {
+        return core::Result<SharedConfig>::fail(idRow.errorCode(),
+                                                idRow.errorMessage());
+    }
+    auto idVal = idRow.value().getInt64("id");
+    if (idVal.isFail()) {
+        return core::Result<SharedConfig>::fail(idVal.errorCode(),
+                                                idVal.errorMessage());
+    }
+    const int64_t newId = idVal.value();
+
+    // 步进到 DONE 释放连接上的 in-progress 状态（同 createProfile 的 [7]：
+    // 语句停在结果行时，随后在同一连接上开事务会被 SQLite 拒绝）
+    auto drain = stmt.step();
+    if (drain.isFail()) {
+        LOG_WARN("共享片段 INSERT RETURNING 收尾 step 失败（行已写入，继续）: " +
+                 drain.errorMessage());
+    }
+
+    LOG_INFO("已创建共享配置片段 id=" + std::to_string(newId) +
+             " name=" + cleanedName);
+    SharedConfig out;
+    out.id = newId;
+    out.name = cleanedName;
+    out.extraEnvJson = extraEnvJson;
+    out.createdAt = now;
+    out.updatedAt = now;
+    return core::Result<SharedConfig>::ok(std::move(out));
+}
+
+core::Result<void> ClaudeService::requireSharedConfigExists(int64_t id) const {
+    auto prep = db_.prepare("SELECT id FROM claude_shared_configs WHERE id = ?");
+    if (prep.isFail()) {
+        return core::Result<void>::fail(prep.errorCode(), prep.errorMessage());
+    }
+    auto& stmt = prep.value();
+    stmt.bind(1, id);
+    auto stepR = stmt.step();
+    if (stepR.isFail()) {
+        return core::Result<void>::fail(stepR.errorCode(), stepR.errorMessage());
+    }
+    if (!stepR.value()) {
+        return core::Result<void>::fail(core::ErrorCode::NotFound,
+            "共享配置片段不存在: id=" + std::to_string(id));
+    }
+    return core::Result<void>::ok();
+}
+
+core::Result<void> ClaudeService::updateSharedConfig(const SharedConfig& config) {
+    if (config.id == 0) {
+        return core::Result<void>::fail(core::ErrorCode::ValidationError,
+            "共享配置片段 id 不能为 0");
+    }
+    const std::string cleanedName = trim(config.name);
+    if (cleanedName.empty()) {
+        return core::Result<void>::fail(core::ErrorCode::ValidationError,
+            "共享配置片段名不能为空");
+    }
+    if (!config.extraEnvJson.empty()) {
+        auto ee = parseExtraEnv(config.extraEnvJson);
+        if (ee.isFail()) {
+            return core::Result<void>::fail(ee.errorCode(),
+                "共享配置片段 extra_env 非法: " + ee.errorMessage());
+        }
+    }
+    auto exists = requireSharedConfigExists(config.id);
+    if (exists.isFail()) {
+        return exists;
+    }
+
+    auto prep = db_.prepare(
+        "UPDATE claude_shared_configs SET name = ?, extra_env = ?, "
+        "updated_at = ? WHERE id = ?");
+    if (prep.isFail()) {
+        return core::Result<void>::fail(prep.errorCode(), prep.errorMessage());
+    }
+    auto& stmt = prep.value();
+    stmt.bind(1, cleanedName);
+    stmt.bind(2, config.extraEnvJson);
+    stmt.bind(3, static_cast<int64_t>(nowUnix()));
+    stmt.bind(4, config.id);
+    auto stepR = stmt.step();
+    if (stepR.isFail()) {
+        std::string msg = stepR.errorMessage();
+        if (msg.find("UNIQUE") != std::string::npos) {
+            return core::Result<void>::fail(core::ErrorCode::AlreadyExists,
+                "共享配置片段名已存在: " + cleanedName);
+        }
+        return core::Result<void>::fail(stepR.errorCode(), msg);
+    }
+    LOG_INFO("已更新共享配置片段 id=" + std::to_string(config.id));
+
+    // 改了就生效（设计 §2.6）：代理在跑且激活 profile 绑定了它 → 立即重写
+    // settings.json（否则 live 会留旧片段值到下次切换——cc-switch 的
+    // 「改了片段不生效」头号 bug）
+    auto active = getActiveProfile();
+    if (active.isOk() && active.value().sharedConfigId == config.id &&
+        isProxyRunning()) {
+        (void)syncTakeOver();
+    }
+    return core::Result<void>::ok();
+}
+
+core::Result<void> ClaudeService::deleteSharedConfig(int64_t id) {
+    if (id == 0) {
+        return core::Result<void>::fail(core::ErrorCode::ValidationError,
+            "id 不能为 0");
+    }
+    auto exists = requireSharedConfigExists(id);
+    if (exists.isFail()) {
+        return exists;
+    }
+
+    // 删除前先看激活 profile 是否绑定它：只有它的键在 live 里（片段值由绑定它
+    // 的那个 profile 的接管写入），故只有这种情况删完需要重写 settings.json
+    auto active = getActiveProfile();
+    const bool activeBound = active.isOk() && active.value().sharedConfigId == id;
+
+    // 同事务解绑 + 删行（设计 §2.6）：不留悬空 shared_config_id；不做级联删
+    // profile（删片段 = 交回控制权，不是丢配置）
+    auto tx = db_.transaction([this, id]() -> core::Result<void> {
+        auto u = db_.prepare(
+            "UPDATE claude_profiles SET shared_config_id = 0, updated_at = ? "
+            "WHERE shared_config_id = ?");
+        if (u.isFail()) {
+            return core::Result<void>::fail(u.errorCode(), u.errorMessage());
+        }
+        auto& ust = u.value();
+        ust.bind(1, static_cast<int64_t>(nowUnix()));
+        ust.bind(2, id);
+        auto us = ust.step();
+        if (us.isFail()) {
+            return core::Result<void>::fail(us.errorCode(), us.errorMessage());
+        }
+
+        auto d = db_.prepare("DELETE FROM claude_shared_configs WHERE id = ?");
+        if (d.isFail()) {
+            return core::Result<void>::fail(d.errorCode(), d.errorMessage());
+        }
+        auto& dst = d.value();
+        dst.bind(1, id);
+        auto ds = dst.step();
+        if (ds.isFail()) {
+            return core::Result<void>::fail(ds.errorCode(), ds.errorMessage());
+        }
+        return core::Result<void>::ok();
+    });
+    if (tx.isFail()) {
+        return tx;
+    }
+
+    LOG_INFO("已删除共享配置片段 id=" + std::to_string(id) +
+             (activeBound ? "（激活 profile 已解绑）" : ""));
+    // 解绑当场生效：代理在跑且激活 profile 绑定了它 → 重写 live（片段键撤走、
+    // 与片段同名的 profile 自身值恢复生效）
+    if (activeBound && isProxyRunning()) {
+        (void)syncTakeOver();
+    }
+    return core::Result<void>::ok();
+}
+
+std::string ClaudeService::sharedExtraEnvJsonFor(int64_t sharedConfigId) const {
+    if (sharedConfigId == 0) return {};  // 未绑定
+    auto prep = db_.prepare(
+        "SELECT extra_env FROM claude_shared_configs WHERE id = ?");
+    if (prep.isFail()) {
+        LOG_WARN("读共享配置片段失败（按未绑定处理）: " + prep.errorMessage());
+        return {};
+    }
+    auto& stmt = prep.value();
+    stmt.bind(1, sharedConfigId);
+    auto stepR = stmt.step();
+    if (stepR.isFail()) {
+        LOG_WARN("读共享配置片段失败（按未绑定处理）: " + stepR.errorMessage());
+        return {};
+    }
+    if (!stepR.value()) return {};  // 片段已被删 → 悬空 id 视作未绑定
+    auto row = stmt.currentRow();
+    if (row.isFail()) return {};
+    auto txt = row.value().getString("extra_env");
+    return txt.isOk() ? txt.value() : std::string();
+}
+
+core::Result<std::vector<std::string>> ClaudeService::sharedEnvKeysFor(
+    int64_t profileId) {
+    auto p = getProfile(profileId);
+    if (p.isFail()) {
+        return core::Result<std::vector<std::string>>::fail(p.errorCode(),
+                                                            p.errorMessage());
+    }
+    std::vector<std::string> keys;
+    const std::string json = sharedExtraEnvJsonFor(p.value().sharedConfigId);
+    if (json.empty()) {
+        return core::Result<std::vector<std::string>>::ok(std::move(keys));
+    }
+    // 键集口径与写侧一致（applyEnvAliases 归一后）：live 里的片段键就是这个形状
+    auto parsed = parseExtraEnv(json);
+    if (parsed.isOk()) {
+        for (const auto& [k, v] : applyEnvAliases(parsed.value()).env) {
+            keys.push_back(k);
+        }
+    }
+    // JSON 非法 → 空集（读路径容错：宁可少挡几个键，不让整次切换失败）
+    return core::Result<std::vector<std::string>>::ok(std::move(keys));
 }
 
 // ---------- 连通性测试 ----------
@@ -1199,8 +1515,17 @@ core::Result<void> ClaudeService::syncCaptureActiveProfile() {
         return core::Result<void>::ok();
     }
 
-    // 纯函数层（M2）：映射表 + 守卫表（G1–G4/G6 跳过的键记在 skippedKeys）
-    auto parsed = parseEnvForReverseSync(read.envJson, read.managedKeys);
+    // 纯函数层（M2）：映射表 + 守卫表（G1–G4/G6 + G10 跳过的键记在 skippedKeys）
+    // G10（设计 §2.4）：捕获目标（= 即将离场的旧 active，此刻 getActiveProfile()
+    // 仍指向它）所绑片段的键集 —— 按「绑定关系」取，不取全片段并集：live 里的
+    // 片段键恒由绑定了该片段的那个 profile 的接管写入，按绑定关系挡即可，取并集
+    // 会让没绑该片段的 profile 无法收编用户在 live 的改动（误伤面更大）
+    std::vector<std::string> ownedKeys;
+    auto keysR = sharedEnvKeysFor(prof.id);
+    if (keysR.isOk()) {
+        ownedKeys = std::move(keysR).value();
+    }
+    auto parsed = parseEnvForReverseSync(read.envJson, read.managedKeys, ownedKeys);
     if (!parsed.ok) {
         return core::Result<void>::fail(core::ErrorCode::JsonParseError,
             "settings.json env 解析失败（" +
@@ -1350,7 +1675,11 @@ core::Result<void> ClaudeService::syncTakeOver() {
     if (a.isOk()) {
         active = std::move(a).value();
     }
-    auto r = settings_sync::takeOver(active, proxyPort(), syncPaths_);
+    // 写进 settings.json 的是**合并后**的 env（片段 → profile 自身 → 托管键，
+    // 设计 §2.5）：片段值不留痕迹（env 是扁平 map，无处放出处），片段键一并进
+    // sidecar 托管键集 → 停代理还原时随快照撤走
+    auto r = settings_sync::takeOver(active, proxyPort(), syncPaths_,
+                                     sharedExtraEnvJsonFor(active.sharedConfigId));
     lastSyncWarnings_ = std::move(r.warnings);
     if (!r.ok) {
         // 条目 3：失败不再只进日志——并入 lastSyncWarnings_（与 getter 一起

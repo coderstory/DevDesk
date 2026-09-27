@@ -1,5 +1,5 @@
 // tests/test_modules/test_claude_service.cpp
-// ClaudeService 单元测试：Profile CRUD + Keychain + 激活 + 连通性
+// ClaudeService 单元测试：Profile CRUD + Keychain + 激活 + 连通性 + 共享配置片段
 //
 // 测试环境隔离：
 //   - 数据库用临时文件（std::filesystem::temp_directory_path）
@@ -1762,6 +1762,209 @@ REGISTER_TEST(claude_dup_stage2_rollback,
     auto k = svc.loadApiKey(a.value().id);
     DOCTEST_REQUIRE(k.isOk());
     DOCTEST_CHECK_EQ(k.value(), std::string("sk-src-key-0123456789abcdef"));
+
+    cleanupKey(a.value().id);
+    return true;
+})
+
+// ---- 23. 共享配置片段：CRUD + 绑定/解绑（设计 §2.1/§2.2/§2.6）----
+
+REGISTER_TEST(claude_shared_config_crud_and_binding,
+              "claude_service: 片段 CRUD 与 profile 绑定/解绑", {
+    using namespace module::claude;
+    TestDb tdb("sharedcrud");
+    ClaudeService svc(tdb.handle(), kTestKeychainService);
+
+    // 建：空名 / 非法 JSON 拒绝
+    DOCTEST_CHECK(svc.createSharedConfig("   ", "{}").isFail());
+    DOCTEST_CHECK(svc.createSharedConfig("片段A", "{bad-json").isFail());
+
+    auto f = svc.createSharedConfig("片段A", R"({"MY_KEY": "from-shared"})");
+    DOCTEST_REQUIRE(f.isOk());
+    DOCTEST_CHECK(f.value().id > 0);
+    // 重名 → AlreadyExists（name UNIQUE）
+    auto dupName = svc.createSharedConfig("片段A", "{}");
+    DOCTEST_CHECK(dupName.isFail());
+    DOCTEST_CHECK(dupName.errorCode() == core::ErrorCode::AlreadyExists);
+
+    // 列
+    auto list = svc.listSharedConfigs();
+    DOCTEST_REQUIRE(list.isOk());
+    DOCTEST_REQUIRE_EQ(list.value().size(), 1u);
+    DOCTEST_CHECK_EQ(list.value()[0].name, std::string("片段A"));
+    DOCTEST_CHECK_EQ(list.value()[0].extraEnvJson, f.value().extraEnvJson);
+
+    // 改（改名 + 改 env）；不存在的 id → NotFound
+    SharedConfig upd = f.value();
+    upd.name = "片段A2";
+    upd.extraEnvJson = R"({"MY_KEY": "v2", "SECOND_KEY": "1"})";
+    DOCTEST_REQUIRE(svc.updateSharedConfig(upd).isOk());
+    auto list2 = svc.listSharedConfigs();
+    DOCTEST_REQUIRE(list2.isOk());
+    DOCTEST_REQUIRE_EQ(list2.value().size(), 1u);
+    DOCTEST_CHECK_EQ(list2.value()[0].name, std::string("片段A2"));
+    SharedConfig ghost;
+    ghost.id = 9999;
+    ghost.name = "x";
+    DOCTEST_CHECK(svc.updateSharedConfig(ghost).isFail());
+
+    // 绑定：createProfile 尾部参数可建时即绑
+    auto a = svc.createProfile("绑片段", "https://a.example.com",
+                               "sk-ind-test-0123456789abcdef", "", false,
+                               f.value().id);
+    DOCTEST_REQUIRE(a.isOk());
+    DOCTEST_CHECK_EQ(a.value().sharedConfigId, f.value().id);  // 返回值带上
+    // 读路径带该列（getProfile / listProfiles）
+    auto ga = svc.getProfile(a.value().id);
+    DOCTEST_REQUIRE(ga.isOk());
+    DOCTEST_CHECK_EQ(ga.value().sharedConfigId, f.value().id);
+    auto la = svc.listProfiles();
+    DOCTEST_REQUIRE(la.isOk());
+    DOCTEST_REQUIRE_EQ(la.value().size(), 1u);
+    DOCTEST_CHECK_EQ(la.value()[0].sharedConfigId, f.value().id);
+
+    // 冻结键集（G10 用）= 片段 extra_env 的键
+    auto keys = svc.sharedEnvKeysFor(a.value().id);
+    DOCTEST_REQUIRE(keys.isOk());
+    DOCTEST_CHECK_EQ(keys.value().size(), 2u);
+    bool hasMyKey = false;
+    for (const auto& k : keys.value()) {
+        if (k == "MY_KEY") hasMyKey = true;
+    }
+    DOCTEST_CHECK(hasMyKey);
+
+    // 别名归一：键集口径与写侧一致（AUTO_COMPACT_ENABLED → DISABLE_AUTO_COMPACT）
+    auto f2 = svc.createSharedConfig("片段别名", R"({"AUTO_COMPACT_ENABLED": "1"})");
+    DOCTEST_REQUIRE(f2.isOk());
+    Profile aliased = ga.value();
+    aliased.sharedConfigId = f2.value().id;
+    DOCTEST_REQUIRE(svc.updateProfile(aliased).isOk());
+    auto keysAlias = svc.sharedEnvKeysFor(a.value().id);
+    DOCTEST_REQUIRE(keysAlias.isOk());
+    DOCTEST_REQUIRE_EQ(keysAlias.value().size(), 1u);
+    DOCTEST_CHECK_EQ(keysAlias.value()[0], std::string("DISABLE_AUTO_COMPACT"));
+
+    // 解绑（updateProfile 置 0）→ 键集空、DB 列回 0
+    Profile unbind = ga.value();
+    unbind.sharedConfigId = 0;
+    DOCTEST_REQUIRE(svc.updateProfile(unbind).isOk());
+    auto keys2 = svc.sharedEnvKeysFor(a.value().id);
+    DOCTEST_REQUIRE(keys2.isOk());
+    DOCTEST_CHECK(keys2.value().empty());
+    auto ga2 = svc.getProfile(a.value().id);
+    DOCTEST_REQUIRE(ga2.isOk());
+    DOCTEST_CHECK_EQ(ga2.value().sharedConfigId, 0);
+
+    cleanupKey(a.value().id);
+    return true;
+})
+
+// ---- 24. 删除片段：同事务解绑绑定它的 profile（不留悬空 id）----
+
+REGISTER_TEST(claude_shared_config_delete_unbinds,
+              "claude_service: 删片段同事务解绑绑定它的 profile", {
+    using namespace module::claude;
+    TestDb tdb("shareddel");
+    ClaudeService svc(tdb.handle(), kTestKeychainService);
+
+    auto f = svc.createSharedConfig("片段S", R"({"K": "1"})");
+    DOCTEST_REQUIRE(f.isOk());
+    auto a = svc.createProfile("绑A", "https://a.example.com",
+                               "sk-ind-test-a-0123456789ab", "", false,
+                               f.value().id);
+    auto b = svc.createProfile("绑B", "https://b.example.com",
+                               "sk-ind-test-b-0123456789ab", "", false,
+                               f.value().id);
+    auto c = svc.createProfile("没绑", "https://c.example.com",
+                               "sk-ind-test-c-0123456789ab", "");
+    DOCTEST_REQUIRE(a.isOk());
+    DOCTEST_REQUIRE(b.isOk());
+    DOCTEST_REQUIRE(c.isOk());
+
+    DOCTEST_REQUIRE(svc.deleteSharedConfig(f.value().id).isOk());
+
+    // 绑定行解绑、未绑行不受影响、profile 行一条不删（不做级联删）
+    auto ga = svc.getProfile(a.value().id);
+    auto gb = svc.getProfile(b.value().id);
+    auto gc = svc.getProfile(c.value().id);
+    DOCTEST_REQUIRE(ga.isOk());
+    DOCTEST_REQUIRE(gb.isOk());
+    DOCTEST_REQUIRE(gc.isOk());
+    DOCTEST_CHECK_EQ(ga.value().sharedConfigId, 0);
+    DOCTEST_CHECK_EQ(gb.value().sharedConfigId, 0);
+    DOCTEST_CHECK_EQ(gc.value().sharedConfigId, 0);
+    DOCTEST_CHECK_EQ(svc.listProfiles().value().size(), 3u);
+    auto list = svc.listSharedConfigs();
+    DOCTEST_REQUIRE(list.isOk());
+    DOCTEST_CHECK(list.value().empty());
+
+    // 再删 → NotFound（不静默成功）；id=0 拒绝
+    auto again = svc.deleteSharedConfig(f.value().id);
+    DOCTEST_CHECK(again.isFail());
+    DOCTEST_CHECK(again.errorCode() == core::ErrorCode::NotFound);
+    DOCTEST_CHECK(svc.deleteSharedConfig(0).isFail());
+
+    // 悬空 id 的读路径容错：解绑后冻结键集为空，不炸
+    auto keys = svc.sharedEnvKeysFor(a.value().id);
+    DOCTEST_REQUIRE(keys.isOk());
+    DOCTEST_CHECK(keys.value().empty());
+
+    cleanupKey(a.value().id);
+    cleanupKey(b.value().id);
+    cleanupKey(c.value().id);
+    return true;
+})
+
+// ---- 25. 复制 profile 携带片段绑定（设计 §2.6）----
+
+REGISTER_TEST(claude_shared_config_duplicate_copies_binding,
+              "claude_service: 复制 profile 携带片段绑定", {
+    using namespace module::claude;
+    TestDb tdb("shareddup");
+    ClaudeService svc(tdb.handle(), kTestKeychainService);
+
+    auto f = svc.createSharedConfig("片段D", R"({"K": "1"})");
+    DOCTEST_REQUIRE(f.isOk());
+    auto a = svc.createProfile("源", "https://a.example.com",
+                               "sk-ind-test-0123456789abcdef", "", false,
+                               f.value().id);
+    DOCTEST_REQUIRE(a.isOk());
+
+    // 二段补写条件（models/extra_env 非空）不成立时也必须带上绑定
+    auto dup = svc.duplicateProfile(a.value().id);
+    DOCTEST_REQUIRE(dup.isOk());
+    DOCTEST_CHECK_EQ(dup.value().sharedConfigId, f.value().id);
+    auto gd = svc.getProfile(dup.value().id);
+    DOCTEST_REQUIRE(gd.isOk());
+    DOCTEST_CHECK_EQ(gd.value().sharedConfigId, f.value().id);
+    auto keys = svc.sharedEnvKeysFor(dup.value().id);
+    DOCTEST_REQUIRE(keys.isOk());
+    DOCTEST_CHECK_EQ(keys.value().size(), 1u);
+
+    cleanupKey(a.value().id);
+    cleanupKey(dup.value().id);
+    return true;
+})
+
+// ---- 26. 未绑定片段的回归：列为 0、键集空（既有行为零变化）----
+
+REGISTER_TEST(claude_shared_config_unbound_regression,
+              "claude_service: 未绑定片段读路径零值（回归）", {
+    using namespace module::claude;
+    TestDb tdb("sharednone");
+    ClaudeService svc(tdb.handle(), kTestKeychainService);
+
+    DOCTEST_CHECK(svc.listSharedConfigs().value().empty());
+    auto a = svc.createProfile("不绑", "https://a.example.com",
+                               "sk-ind-test-0123456789abcdef", "");
+    DOCTEST_REQUIRE(a.isOk());
+    DOCTEST_CHECK_EQ(a.value().sharedConfigId, 0);
+    auto ga = svc.getProfile(a.value().id);
+    DOCTEST_REQUIRE(ga.isOk());
+    DOCTEST_CHECK_EQ(ga.value().sharedConfigId, 0);
+    auto keys = svc.sharedEnvKeysFor(a.value().id);
+    DOCTEST_REQUIRE(keys.isOk());
+    DOCTEST_CHECK(keys.value().empty());
 
     cleanupKey(a.value().id);
     return true;

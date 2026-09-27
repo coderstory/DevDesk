@@ -1130,3 +1130,102 @@ REGISTER_TEST(sync_takeover_with_shared_config,
     DOCTEST_REQUIRE(settings_sync::restore(paths).ok);
     return true;
 })
+
+// ---- 16. 服务级 G10：片段键在 live 被改 → 切换时不写也不清 ----
+// 场景刻意把 sidecar 拿掉（模拟与其它工具互抢 / 手工清理）：此时 G1 无托管键集
+// 可依据，只有 G10 能挡住片段键被反向收编 —— 这正是「按绑定关系取键集」的证明。
+
+REGISTER_TEST(sync_service_g10_frozen_key_not_captured,
+              "claude_service: G10 绑定片段键不被反向同步收编", {
+    using namespace module::claude;
+    TestDb tdb("g10svc");
+    TempDir d("g10svc");
+    auto paths = makePaths(d);
+
+    ClaudeService svc(tdb.handle(), kTestKeychainService);
+    svc.setSettingsSyncPaths(paths);
+    svc.setSettingsTakeOverEnabled(true);
+
+    auto frag = svc.createSharedConfig("片段S", R"({"MY_KEY": "from-shared"})");
+    DOCTEST_REQUIRE(frag.isOk());
+    auto a = svc.createProfile("绑片段", "https://a.example.com",
+                               "sk-ind-test-0123456789abcdef", "");
+    DOCTEST_REQUIRE(a.isOk());
+    Profile pa = a.value();
+    pa.extraEnvJson = R"({"MY_KEY": "from-profile"})";  // 被片段覆盖，行里保留
+    pa.sharedConfigId = frag.value().id;
+    DOCTEST_REQUIRE(svc.updateProfile(pa).isOk());
+    DOCTEST_REQUIRE(svc.setActiveProfile(pa.id).isOk());
+    DOCTEST_REQUIRE(svc.startProxy("127.0.0.1", 0).isOk());
+    DOCTEST_CHECK_EQ(readEnv(paths.settingsFile).at("MY_KEY"),
+                     std::string("from-shared"));  // 片段值进 live
+
+    // 拿掉 sidecar + 用户在 live 手工改片段键（其余字段的缺席清空是既有 G5 语义，
+    // 与本守卫无关，这里只看片段键的处置）
+    std::error_code ec;
+    std::filesystem::remove(paths.sidecarFile, ec);
+    d.write(paths.settingsFile, R"({"env": {"MY_KEY": "live-edited"}})");
+
+    auto b = svc.createProfile("不绑", "https://b.example.com",
+                               "sk-ind-test-fedcba9876543210", "");
+    DOCTEST_REQUIRE(b.isOk());
+    DOCTEST_REQUIRE(svc.setActiveProfile(b.value().id).isOk());
+
+    // 不写：A 行的 MY_KEY 仍是 profile 原值（没被 live-edited 覆盖）
+    auto ga = svc.getProfile(pa.id);
+    DOCTEST_REQUIRE(ga.isOk());
+    auto parsed = parseExtraEnv(ga.value().extraEnvJson);
+    DOCTEST_REQUIRE(parsed.isOk());
+    DOCTEST_CHECK_EQ(parsed.value().at("MY_KEY"), std::string("from-profile"));
+    // 不清：冻结键仍在（缺席清空不适用于它）
+    DOCTEST_CHECK_EQ(parsed.value().size(), 1u);
+
+    svc.stopProxy();
+    platform::keychain::deleteSecret(kTestKeychainService,
+                                     "claude:" + std::to_string(pa.id));
+    platform::keychain::deleteSecret(kTestKeychainService,
+                                     "claude:" + std::to_string(b.value().id));
+    return true;
+})
+
+// ---- 17. 服务级：删片段 → 同事务解绑 + 代理在跑则立即 re-takeover ----
+
+REGISTER_TEST(sync_service_shared_config_delete_retakeover,
+              "claude_service: 删片段当场解绑并重写 live（回落 profile 值）", {
+    using namespace module::claude;
+    TestDb tdb("fragdel");
+    TempDir d("fragdel");
+    auto paths = makePaths(d);
+
+    ClaudeService svc(tdb.handle(), kTestKeychainService);
+    svc.setSettingsSyncPaths(paths);
+    svc.setSettingsTakeOverEnabled(true);
+
+    auto frag = svc.createSharedConfig("片段S", R"({"MY_KEY": "from-shared"})");
+    DOCTEST_REQUIRE(frag.isOk());
+    auto a = svc.createProfile("绑片段", "https://a.example.com",
+                               "sk-ind-test-0123456789abcdef", "");
+    DOCTEST_REQUIRE(a.isOk());
+    Profile pa = a.value();
+    pa.extraEnvJson = R"({"MY_KEY": "from-profile"})";
+    pa.sharedConfigId = frag.value().id;
+    DOCTEST_REQUIRE(svc.updateProfile(pa).isOk());
+    DOCTEST_REQUIRE(svc.setActiveProfile(pa.id).isOk());
+    DOCTEST_REQUIRE(svc.startProxy("127.0.0.1", 0).isOk());
+    DOCTEST_CHECK_EQ(readEnv(paths.settingsFile).at("MY_KEY"),
+                     std::string("from-shared"));
+
+    // 删片段：同事务解绑 + 代理在跑 → 当场 re-takeover（片段键撤走、同名键回落
+    // profile 自身值）；「改了不生效」不会被留到下次切换
+    DOCTEST_REQUIRE(svc.deleteSharedConfig(frag.value().id).isOk());
+    DOCTEST_CHECK_EQ(readEnv(paths.settingsFile).at("MY_KEY"),
+                     std::string("from-profile"));
+    auto ga = svc.getProfile(pa.id);
+    DOCTEST_REQUIRE(ga.isOk());
+    DOCTEST_CHECK_EQ(ga.value().sharedConfigId, 0);
+
+    svc.stopProxy();
+    platform::keychain::deleteSecret(kTestKeychainService,
+                                     "claude:" + std::to_string(pa.id));
+    return true;
+})
