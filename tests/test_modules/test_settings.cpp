@@ -78,6 +78,19 @@ void setEnvVar(const char* name, const std::string& value) {
 #endif
 }
 
+// RAII：临时环境变量（析构恢复为「未设置」）——审计 THS-01 用例把笔记目录 /
+// 皮肤目录指到临时路径，与真机目录互不污染
+struct EnvVarGuard {
+    const char* name;
+    std::string saved;
+    EnvVarGuard(const char* n, const std::string& value) : name(n) {
+        const char* cur = std::getenv(n);
+        saved = cur ? cur : "";
+        setEnvVar(n, value);
+    }
+    ~EnvVarGuard() { setEnvVar(name, saved); }
+};
+
 // RAII：临时 config.json（DEVDESK_CONFIG_PATH）+ 临时 DB（appDatabase），
 // 析构注销/清除，fail-fast 断言提前返回也不污染其他用例
 struct PruneEnv {
@@ -830,6 +843,10 @@ REGISTER_TEST(settings_takeover_status_row,
     // 启动代理 → takeOver → 已接管 + 路径 + 覆盖警告行
     auto start = svc.startProxy("127.0.0.1", 0);
     DOCTEST_REQUIRE(start.isOk());
+    // 审计 THS-01：接管状态改为只读快照（compose 不再每帧 stat sidecar），
+    // 刷新点 = onStart / 进页面 / 切模块 tab / 本页改端口后。代理是页外
+    // 启动的，故这里显式走一次「进页面」取新值（真实流程同款）
+    mod->onPageEnter();
     {
         std::string text;
         DOCTEST_CHECK(composeTakeoverText(&text));
@@ -845,8 +862,9 @@ REGISTER_TEST(settings_takeover_status_row,
                       std::string::npos);
     }
 
-    // 停止代理 → 还原 → 未接管
+    // 停止代理 → 还原 → 未接管（同样经进页面刷新点取新值）
     svc.stopProxy();
+    mod->onPageEnter();
     {
         std::string text;
         DOCTEST_CHECK(composeTakeoverText(&text));
@@ -1838,6 +1856,107 @@ REGISTER_TEST(settings_h2_log_tail_snapshot,
     DOCTEST_CHECK(hasLine(tailLines(), "H2-TAIL-ONE"));   // 旧行不丢
 
     mod->onStop();
+    ::core::theme::setDark();
+    return true;
+})
+// ---- 审计 THS-01：外部状态只读快照（compose 不做文件系统查询）----
+// 回归：接管状态（isClaudeCodeManaged → sidecar stat，compose 顶部 + 代理卡
+// 每帧）、笔记目录存在性（fs::exists(markdownDir)，目录卡每帧）、桌宠皮肤清单
+// （discoverSkins 目录遍历 + 每皮肤 pet.json stat，桌宠卡首帧）原先都直接落在
+// 渲染路径上。改后与 H2（logTail）同款——读一次存成员，compose 只读快照，
+// 刷新点 = onStart / onPageEnter / 切模块 tab / 打开目录后。本用例验：
+// ① 刷新前快照非空且等于上次值（不闪空、不闪变）；② 刷新入口后取新值；
+// ③ 目录消失 / 出现的边界下不崩、不闪空。
+REGISTER_TEST(settings_ths01_fs_snapshot,
+              "settings: 外部状态快照——刷新前旧值 / 刷新后新值（THS-01）", {
+    PruneEnv env("ths01");
+    // 模块插拔门控：目录卡 + 桌宠卡都要渲染（pet 不在默认启用集合里）
+    module::settings::SettingsConfig cfg;
+    cfg.enabledModules.clear();
+    cfg.enabledModules.push_back(module::settings::kModuleIdHome);
+    cfg.enabledModules.push_back(module::settings::kModuleIdMarkdown);
+    cfg.enabledModules.push_back(module::settings::kModuleIdSettings);
+    cfg.enabledModules.push_back(module::settings::kModuleIdPet);
+    DOCTEST_REQUIRE(module::settings::SettingsStore(env.cfgPath).save(cfg).isOk());
+
+    const auto notesDir = test_temp::tempPath("devdesk_ths01_notes");
+    const auto petsDir = test_temp::tempPath("devdesk_ths01_pets");
+    std::error_code ec;
+    std::filesystem::remove_all(notesDir, ec);
+    std::filesystem::remove_all(petsDir, ec);
+    const EnvVarGuard notesEnv("DEVDESK_NOTES_DIR", notesDir.string());
+    const EnvVarGuard petsEnv("DEVDESK_PETS_DIR", petsDir.string());
+
+    std::unique_ptr<::core::Module> mod(create_settings_module());
+    mod->onStart();   // 首次装载在启动期（非渲染路径）
+    eui::Screen screen;
+    screen.width = 1600.0f;
+    screen.height = 1000.0f;
+    DOCTEST_REQUIRE(clickSettingsTab(*mod, screen, 1));   // 模块 tab
+
+    // 探针：跑一帧 compose，返回 [目录卡路径文本, 皮肤下拉清单]
+    auto probe = [&]() {
+        eui::Ui ui;
+        ui.begin("settings_ths01_probe");
+        mod->compose(ui, screen);
+        ui.end();
+        ui.layout(screen.width, screen.height);  // scrollView 内容在 layout 期展开
+        const auto* path = ui.find("settings.card.directory.path.value");
+        std::vector<std::string> skins;
+        for (size_t i = 0;; ++i) {
+            const auto* e = ui.find(
+                "settings.card.pet.skin.dd.item.label." + std::to_string(i));
+            if (e == nullptr) break;
+            skins.push_back(e->text);
+        }
+        return std::make_pair(path ? path->text : std::string(), skins);
+    };
+    auto notCreated = [](const std::string& t) {
+        return t.find("（尚未创建）") != std::string::npos;
+    };
+    auto hasSkin = [](const std::vector<std::string>& skins, const char* n) {
+        for (const auto& s : skins) {
+            if (s == n) return true;
+        }
+        return false;
+    };
+
+    // ① onStart 快照：笔记目录不存在（标「尚未创建」），皮肤清单为空
+    const auto initial = probe();
+    DOCTEST_CHECK(!initial.first.empty());        // 非空（不闪空）
+    DOCTEST_CHECK(notCreated(initial.first));
+    DOCTEST_CHECK_FALSE(hasSkin(initial.second, "skinA"));
+
+    // ② 盘上出现目录 + 新皮肤，但未到刷新点 → 快照沿用上次值（不闪变）
+    std::filesystem::create_directories(notesDir, ec);
+    DOCTEST_REQUIRE(!ec);
+    std::filesystem::create_directories(petsDir / "skinA", ec);
+    DOCTEST_REQUIRE(!ec);
+    {
+        std::ofstream(petsDir / "skinA" / "pet.json", std::ios::binary) << "{}";
+    }
+    const auto stale = probe();
+    DOCTEST_CHECK(notCreated(stale.first));                  // = 上次值
+    DOCTEST_CHECK_FALSE(hasSkin(stale.second, "skinA"));     // = 上次值
+
+    // ③ 刷新入口（进页面）→ 快照更新为新值，文本仍非空
+    mod->onPageEnter();
+    const auto refreshed = probe();
+    DOCTEST_CHECK(!refreshed.first.empty());
+    DOCTEST_CHECK_FALSE(notCreated(refreshed.first));        // 新值
+    DOCTEST_CHECK(hasSkin(refreshed.second, "skinA"));       // 新值
+
+    // ④ 边界：目录消失 → 刷新前仍显示上次值（不闪空），刷新后回到未创建态
+    std::filesystem::remove_all(notesDir, ec);
+    DOCTEST_CHECK_FALSE(notCreated(probe().first));          // 上次值仍在
+    mod->onPageEnter();
+    const auto gone = probe();
+    DOCTEST_CHECK(!gone.first.empty());
+    DOCTEST_CHECK(notCreated(gone.first));
+
+    mod->onStop();
+    std::filesystem::remove_all(notesDir, ec);
+    std::filesystem::remove_all(petsDir, ec);
     ::core::theme::setDark();
     return true;
 })
