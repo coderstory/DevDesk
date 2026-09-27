@@ -9,7 +9,9 @@
 //   - 空串 = 未配置（存量数据零迁移，读时兼容）
 #pragma once
 
+#include <cstddef>
 #include <map>
+#include <span>
 #include <string>
 #include <vector>
 
@@ -24,21 +26,85 @@ struct ModelSlot {
     std::string name;
 };
 
-// 6 个模型槽位（§4.1）
+// ---- 槽位单一真相源（审计 CPX-08）----
+// 「数据成员 ↔ models_config JSON 键 ↔ 官方 env 键 ↔ *_NAME 键 ↔ UI 显示名」
+// 的唯一声明处。新增一个模型槽位 = 在本表加一行，其余全链自动派生：
+//   ModelsConfig 数据成员 / models_config 序列化与反序列化 / 粘贴导入解析 /
+//   接管 env 写入 / 托管键全集（managedEnvKeyNames）/ 反向同步映射 /
+//   UI 详情面板行 · 表单页行 · 摘要计数 · 导入预览计数
+//
+// 行参数（X 宏契约）：
+//   X(成员名, JSON键, 详情显示名, 表单显示名, 官方env键, *_NAME键)
+//     - 成员名     ModelsConfig 字段名（表行引用它 → 写错即编译期报错）
+//     - JSON键     models_config 里该槽位的键
+//     - 详情/表单   两套 UI 文案（既有外观两处措辞不同，故各留一列）
+//     - env键      发往上游 / settings.json 的模型键
+//     - _NAME键    官方 *_NAME 变体；nullptr = 无该变体（def / subagent 不生成）
+//
+// 为什么用 X 宏：C++ 无反射，成员名与全部元数据必须由同一处声明生成，才能做到
+// 「加一行、全链生效」且「漏改不静默」——表行引用不存在的成员 = 编译期报错；
+// 成员没进表 = 紧随其后的 static_assert 报错。
+#define DEVDESK_MODEL_SLOT_LIST(X)                                             \
+    X(def,      "default",  "默认",   "默认 (MODEL)", "ANTHROPIC_MODEL",      \
+      nullptr)                                                                \
+    X(sonnet,   "sonnet",   "Sonnet", "Sonnet",                               \
+      "ANTHROPIC_DEFAULT_SONNET_MODEL", "ANTHROPIC_DEFAULT_SONNET_MODEL_NAME") \
+    X(opus,     "opus",     "Opus",   "Opus",                                 \
+      "ANTHROPIC_DEFAULT_OPUS_MODEL", "ANTHROPIC_DEFAULT_OPUS_MODEL_NAME")     \
+    X(haiku,    "haiku",    "Haiku",  "Haiku",                                \
+      "ANTHROPIC_DEFAULT_HAIKU_MODEL", "ANTHROPIC_DEFAULT_HAIKU_MODEL_NAME")   \
+    X(fable,    "fable",    "Fable",  "Fable",                                \
+      "ANTHROPIC_DEFAULT_FABLE_MODEL", "ANTHROPIC_DEFAULT_FABLE_MODEL_NAME")   \
+    X(subagent, "subagent", "子代理", "Subagent",                              \
+      "CLAUDE_CODE_SUBAGENT_MODEL", nullptr)
+
+// 模型槽位（§4.1）：成员由槽位表生成，声明顺序 = 表顺序
 struct ModelsConfig {
-    ModelSlot def;      // "default"  → ANTHROPIC_MODEL
-    ModelSlot sonnet;   // → ANTHROPIC_DEFAULT_SONNET_MODEL
-    ModelSlot opus;     // → ANTHROPIC_DEFAULT_OPUS_MODEL
-    ModelSlot haiku;    // → ANTHROPIC_DEFAULT_HAIKU_MODEL
-    ModelSlot fable;    // → ANTHROPIC_DEFAULT_FABLE_MODEL
-    ModelSlot subagent; // → CLAUDE_CODE_SUBAGENT_MODEL
+#define DEVDESK_MODEL_SLOT_MEMBER(name, jsonKey, label, formLabel, envKey, nameKey) \
+    ModelSlot name;
+    DEVDESK_MODEL_SLOT_LIST(DEVDESK_MODEL_SLOT_MEMBER)
+#undef DEVDESK_MODEL_SLOT_MEMBER
 };
+
+// 槽位元数据（表行）
+struct ModelSlotMeta {
+    const char* jsonKey;    // models_config 槽位键
+    const char* label;      // 详情面板 / 摘要显示名
+    const char* formLabel;  // 表单页槽位列名
+    const char* envKey;     // 发往上游的模型键
+    const char* nameKey;    // 官方 *_NAME 键；nullptr = 无该变体
+    ModelSlot ModelsConfig::*slot;  // 对应数据成员
+};
+
+// 槽位表（顺序 = UI 展示顺序 = managedEnvKeyNames 的槽位键顺序）。
+// 消费方一律遍历本表派生，不再手写 N 个槽位分支
+#define DEVDESK_MODEL_SLOT_ROW(name, jsonKey, label, formLabel, envKey, nameKey) \
+    ModelSlotMeta{jsonKey, label, formLabel, envKey, nameKey, &ModelsConfig::name},
+inline constexpr ModelSlotMeta kModelSlotMetas[] = {
+    DEVDESK_MODEL_SLOT_LIST(DEVDESK_MODEL_SLOT_ROW)
+};
+#undef DEVDESK_MODEL_SLOT_ROW
+
+// 槽位数（由表派生：加一行即 +1；全项目不再硬编码 6）
+#define DEVDESK_MODEL_SLOT_COUNT_ONE(name, jsonKey, label, formLabel, envKey, nameKey) +1
+inline constexpr std::size_t kModelSlotCount =
+    0 DEVDESK_MODEL_SLOT_LIST(DEVDESK_MODEL_SLOT_COUNT_ONE);
+#undef DEVDESK_MODEL_SLOT_COUNT_ONE
+
+// 编译期守卫：成员数必须 == 表行数——给 ModelsConfig 加了成员却忘了在
+// DEVDESK_MODEL_SLOT_LIST 加行，两侧构型大小对不上，这里直接编译失败。
+//（ModelsConfig 成员全是 ModelSlot、无填充，故可按下式比较）
+static_assert(sizeof(ModelsConfig) == kModelSlotCount * sizeof(ModelSlot),
+              "新增/删除模型槽位后请同步 DEVDESK_MODEL_SLOT_LIST："
+              "ModelsConfig 成员数必须与槽位表行数一致");
+
+inline std::span<const ModelSlotMeta> modelSlotTable() { return kModelSlotMetas; }
 
 // 显示名派生：剥除尾部 [1M]/[200K]/[1m] 等上下文窗口标记（§2.2）
 std::string deriveDisplayName(const std::string& model);
 
 // ---- models_config 序列化 / 反序列化 ----
-// 序列化固定写全 6 槽位（空槽位写空串，roundtrip 稳定）
+// 序列化固定写全槽位表所有行（空槽位写空串，roundtrip 稳定）
 core::Result<std::string> serializeModelsConfig(const ModelsConfig& config);
 
 // 容错语义：
@@ -129,11 +195,10 @@ inline constexpr size_t kMaxImportTextBytes = 1u * 1024u * 1024u;
 //      settings.json，由代理注入）
 //   2. ANTHROPIC_AUTH_TOKEN = kProxyAuthPlaceholder（占位符：代理无鉴权，
 //      此键只是让 Claude Code 有值可发）
-//   3. 模型槽位（effectiveModelsConfig 兼容旧 model 列）→ ANTHROPIC_MODEL /
-//      ANTHROPIC_DEFAULT_{SONNET|OPUS|HAIKU|FABLE}_MODEL / CLAUDE_CODE_SUBAGENT_MODEL；
-//      槽位空则跳过（Claude Code 回落内置映射）
-//   4. 显示名 → 对应 *_MODEL_NAME（ANTHROPIC_MODEL / SUBAGENT 无官方 _NAME
-//      变体，不生成）；name 空则 deriveDisplayName 派生
+//   3. 模型槽位（effectiveModelsConfig 兼容旧 model 列）→ 槽位表每行的 envKey
+//      （见 DEVDESK_MODEL_SLOT_LIST）；槽位空则跳过（Claude Code 回落内置映射）
+//   4. 显示名 → 对应行的 *_MODEL_NAME 键（表行 nameKey 为 nullptr 的槽位无官方
+//      _NAME 变体，不生成）；name 空则 deriveDisplayName 派生
 //   5. extra_env 经 parseExtraEnv（非法则整体忽略，读路径容错）+ applyEnvAliases
 //      别名归一后平铺；与 1-4 冲突时 1-4 优先（导入数据可能带旧 BASE_URL/token）
 //   6. sharedExtraEnvJson（profile 所绑共享配置片段的 extra_env 原文，空串 =
@@ -150,9 +215,10 @@ std::map<std::string, std::string> buildProxyEnv(
     const std::string& extraEnvJson,
     int proxyPort, const std::string& sharedExtraEnvJson = "");
 
-// 托管键全集（审计 CPX-12，12 键）：BASE_URL + 占位 token + 6 槽位键 +
-// 4 个 *_NAME——见 buildProxyEnv 的槽位表；与槽位是否有值无关（槽位为空时
-// buildProxyEnv 不生成该键，但上层同名键仍会压过接管，检测侧需要全集）。
+// 托管键全集（审计 CPX-12）：BASE_URL + 占位 token + 槽位表派生的 env 键与
+// *_NAME 键（CPX-08 收敛后由 modelSlotTable() 遍历生成，当前 6 槽位 = 12 键）；
+// 与槽位是否有值无关（槽位为空时 buildProxyEnv 不生成该键，但上层同名键仍会
+// 压过接管，检测侧需要全集）。
 // 消费方：settings_sync 的上层覆盖检测（与「本轮实际写入的托管键」取并集）
 std::vector<std::string> managedEnvKeyNames();
 

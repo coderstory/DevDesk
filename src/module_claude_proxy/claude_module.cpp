@@ -86,22 +86,22 @@ constexpr const char* kAuthFieldLabels[] = {
     "双发（默认）", "只发 Authorization: Bearer", "只发 x-api-key"};
 constexpr int kAuthFieldCount = 3;
 
-// 模型映射摘要（§6.2 详情面板一行式）：「默认 <model> · 槽位已配 N/6」
+// 模型映射摘要（§6.2 详情面板一行式）：「默认 <model> · 槽位已配 N/M」
+// 与分母 M 都取自槽位表（审计 CPX-08：不再手写槽位清单与硬编码 /6）
 std::string modelsSummary(const Profile& p) {
     const ModelsConfig mc = effectiveModelsConfig(p.modelsConfigJson, p.model);
-    const ModelSlot slots[] = {mc.def, mc.sonnet, mc.opus,
-                               mc.haiku, mc.fable, mc.subagent};
     int configured = 0;
-    for (const auto& s : slots) {
-        if (!s.model.empty()) ++configured;
+    for (const auto& meta : modelSlotTable()) {
+        if (!(mc.*meta.slot).model.empty()) ++configured;
     }
+    const std::string total = std::to_string(kModelSlotCount);
     if (mc.def.model.empty()) {
         return configured > 0
-            ? ("（默认未配）· 槽位已配 " + std::to_string(configured) + "/6")
+            ? ("（默认未配）· 槽位已配 " + std::to_string(configured) + "/" + total)
             : std::string("-");
     }
     return "默认 " + mc.def.model + " · 槽位已配 " +
-           std::to_string(configured) + "/6";
+           std::to_string(configured) + "/" + total;
 }
 
 // 「导入当前配置」名称建议：BASE_URL host（剥 scheme/路径/端口），
@@ -633,7 +633,7 @@ public:
                                     }
                                     paneBottom = toY + (!ccWarnings.empty() ? 32.0f : 16.0f);
                                 } else if (detailTab_ == 1) {
-                                    // ---- 模型映射 pane：6 槽位逐行（parseModelsConfig 解析 JSON 原文）----
+                                    // ---- 模型映射 pane：槽位逐行（遍历槽位表派生；widget id 序号 = 表序）----
                                     ModelsConfig mc{};
                                     if (shown && !shown->modelsConfigJson.empty()) {
                                         auto mr = parseModelsConfig(shown->modelsConfigJson);
@@ -641,26 +641,23 @@ public:
                                     }
                                     if (mc.def.model.empty() && shown && !shown->model.empty())
                                         mc.def.model = shown->model;  // 旧列 fallback
-                                    struct SlotRow { const char* name; const ModelSlot& slot; };
-                                    const SlotRow slots[6] = {
-                                        {"默认", mc.def}, {"Sonnet", mc.sonnet},
-                                        {"Opus", mc.opus}, {"Haiku", mc.haiku},
-                                        {"Fable", mc.fable}, {"子代理", mc.subagent},
-                                    };
                                     float sy = paneY;
-                                    for (int i = 0; i < 6; ++i) {
-                                        const bool filled = !slots[i].slot.model.empty();
-                                        ui.rect(std::string("claude.slot.bg.") + std::to_string(i))
+                                    int slotIdx = 0;
+                                    for (const auto& meta : modelSlotTable()) {
+                                        const ModelSlot& slot = mc.*meta.slot;
+                                        const bool filled = !slot.model.empty();
+                                        const std::string idx = std::to_string(slotIdx++);
+                                        ui.rect("claude.slot.bg." + idx)
                                             .position(x0, sy).size(w0, 32.0f)
                                             .color(t.colors.surfaceElevated).radius(t.sizes.radiusSmall)
                                             .border(1.0f, t.colors.borderMuted).build();
-                                        ui.text(std::string("claude.slot.name.") + std::to_string(i))
+                                        ui.text("claude.slot.name." + idx)
                                             .position(x0 + 12.0f, sy).size(80.0f, 32.0f)
-                                            .text(slots[i].name).fontSize(12.0f).lineHeight(32.0f)
+                                            .text(meta.label).fontSize(12.0f).lineHeight(32.0f)
                                             .color(t.colors.textTertiary).build();
-                                        ui.text(std::string("claude.slot.val.") + std::to_string(i))
+                                        ui.text("claude.slot.val." + idx)
                                             .position(x0 + 100.0f, sy).size(w0 - 112.0f, 32.0f)
-                                            .text(filled ? slots[i].slot.model : std::string("未配置"))
+                                            .text(filled ? slot.model : std::string("未配置"))
                                             .fontSize(13.0f).lineHeight(32.0f)
                                             .color(filled ? t.colors.textPrimary : t.colors.textTertiary).build();
                                         sy += 38.0f;
@@ -1448,16 +1445,11 @@ private:
         if (!importPreview_.authToken.empty()) {
             formKey_ = importPreview_.authToken;
         }
-        auto mergeSlot = [this](ModelSlot ModelsConfig::* m) {
-            const ModelSlot& src = importPreview_.models.*m;
-            if (!src.model.empty()) formModels_.*m = src;
-        };
-        mergeSlot(&ModelsConfig::def);
-        mergeSlot(&ModelsConfig::sonnet);
-        mergeSlot(&ModelsConfig::opus);
-        mergeSlot(&ModelsConfig::haiku);
-        mergeSlot(&ModelsConfig::fable);
-        mergeSlot(&ModelsConfig::subagent);
+        // 槽位：非空则覆盖（遍历槽位表派生，CPX-08）
+        for (const auto& meta : modelSlotTable()) {
+            const ModelSlot& src = importPreview_.models.*meta.slot;
+            if (!src.model.empty()) formModels_.*meta.slot = src;
+        }
         for (const auto& [k, v] : importPreview_.extraEnv) {
             bool replaced = false;
             for (auto& row : formEnvRows_) {
@@ -1542,11 +1534,9 @@ private:
 
     // 表单 → models_config / extra_env JSON（全空 = 空串，保持「未配置」语义）
     bool serializeFormData(std::string* modelsJson, std::string* envJson) {
-        const ModelSlot slots[] = {formModels_.def, formModels_.sonnet,
-                                   formModels_.opus, formModels_.haiku,
-                                   formModels_.fable, formModels_.subagent};
         bool anySlot = false;
-        for (const auto& s : slots) {
+        for (const auto& meta : modelSlotTable()) {   // 槽位表派生（CPX-08）
+            const ModelSlot& s = formModels_.*meta.slot;
             if (!s.model.empty() || !s.name.empty()) { anySlot = true; break; }
         }
         if (anySlot) {
@@ -1764,22 +1754,11 @@ private:
         }
     }
 
-    // ---- 模型映射页（6 槽位 × model/name，§6.1 线框）----
+    // ---- 模型映射页（槽位逐行 × model/name，§6.1 线框；行 = 槽位表派生，CPX-08）----
     void drawFormModelsTab(eui::Ui& ui, float w,
                             const core::theme::Tokens& t,
                             const components::theme::ThemeColorTokens& themeTokens) {
-        struct SlotRow {
-            const char* label;
-            ModelSlot ModelsConfig::*slot;
-        };
-        static const SlotRow kRows[] = {
-            {"默认 (MODEL)", &ModelsConfig::def},
-            {"Sonnet",      &ModelsConfig::sonnet},
-            {"Opus",        &ModelsConfig::opus},
-            {"Haiku",       &ModelsConfig::haiku},
-            {"Fable",       &ModelsConfig::fable},
-            {"Subagent",    &ModelsConfig::subagent},
-        };
+        const auto slotTable = modelSlotTable();
 
         // 表头
         ui.text("claude.form.slots.h.slot")
@@ -1795,14 +1774,14 @@ private:
             .text("显示名（CC 界面）").fontSize(11.0f).lineHeight(14.0f)
             .color(t.colors.textTertiary).build();
 
-        for (size_t i = 0; i < 6; ++i) {
+        for (size_t i = 0; i < slotTable.size(); ++i) {
             const float y = 126.0f + static_cast<float>(i) * 52.0f;
-            const SlotRow& row = kRows[i];
+            const auto& row = slotTable[i];
             const ModelSlot& slot = formModels_.*row.slot;
             const std::string idx = std::to_string(i);
             ui.text("claude.form.slot.label." + idx)
                 .position(28.0f, y + 10.0f).size(110.0f, 16.0f)
-                .text(row.label).fontSize(12.0f).lineHeight(16.0f)
+                .text(row.formLabel).fontSize(12.0f).lineHeight(16.0f)
                 .color(t.colors.textSecondary).build();
             components::input(ui, "claude.form.slot." + idx + ".model")
                 .position(150.0f, y).size(330.0f, 36.0f)
@@ -1993,7 +1972,8 @@ private:
             ui.text("claude.form.import.preview")
                 .position(270.0f, 468.0f).size(w - 270.0f - 28.0f, 16.0f)
                 .text("识别：槽位 " + std::to_string(importPreview_.recognizedSlots) +
-                      "/6 · env " + std::to_string(importPreview_.extraEnv.size()) +
+                      "/" + std::to_string(kModelSlotCount) +
+                      " · env " + std::to_string(importPreview_.extraEnv.size()) +
                       " 项 · 别名映射 " +
                       std::to_string(importPreview_.aliasMappedKeys.size()) +
                       " · 未识别 " +
@@ -2739,7 +2719,7 @@ private:
     std::string formImportWarn_;  // 导入当前配置的接管态警告（弹窗内展示，不阻断）
     AuthField formAuthField_ = AuthField::Both;  // 认证字段（鉴权头三态）
     bool formAuthFieldOpen_ = false;             // 下拉展开态
-    ModelsConfig formModels_;  // 6 槽位（默认模型 = def 槽位，旧 formModel_ 并入）
+    ModelsConfig formModels_;  // 槽位表全行（默认模型 = def 槽位，旧 formModel_ 并入）
     std::vector<std::pair<std::string, std::string>> formEnvRows_;  // env 键值行
 
     // cc-switch 粘贴导入（高级 env 页）
