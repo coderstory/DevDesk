@@ -12,6 +12,7 @@
 #include "core/theme.h"
 #include "module_markdown/md_block_model.h"
 #include "module_markdown/md_line_scanner.h"
+#include "module_markdown/md_live_edit.h"
 #include "module_markdown/md_tree.h"
 #include "module_markdown/md_view_state.h"
 #include "module_markdown/md_ids.h"
@@ -28,6 +29,7 @@ using module::markdown::kEditorInputId;
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
+#include <iterator>
 #include <map>
 #include <memory>
 #include <string>
@@ -3535,5 +3537,260 @@ REGISTER_TEST(md_module_text_column_chrome_shared,
                      (fullWide - 720.0f) * 0.5f);
 
     mod->onStop();
+    return true;
+})
+
+// ================= MD-03：块流注入点（BlockFlowHooks）验收 =================
+// 审计条目 MD-03：drawBlockFlow 曾是四合一路径（几何表重建 + 逐块渲染 + 解析缓存 +
+// hover + 活动块特判），多加一个视图态就要多加参数 + 多加一串 isActive 分支。改法 =
+// 把活动块特判收成一个注入点（BlockFlowHooks）：预览 / 双栏态传空实现、实时态传自己
+// 的特判。硬约束 = 零行为变化，故下面两条用例分头钉：
+//   ① 行为（md_module_blockflow_hook_contrast）：同一文档同宽下，预览态「无块被特判」
+//      与实时态「恰活动块一个被特判」各自的元素 / 几何逐项钉死，且非活动块的包裹几何
+//      跨两态逐项相同（默认路径只有一条）；
+//   ② 形态（md_module_blockflow_hook_source_guard）：注入点在位 + 两条路径分别传入 +
+//      drawBlockFlow 本体不再含活动块特判符号。
+REGISTER_TEST(md_module_blockflow_hook_contrast,
+              "markdown_module: 块流注入点对照（md_live 活动块特判 / 预览态空实现，MD-03）", {
+    const std::string text = "# T\n\npara one\npara two\npara three\n";
+    MdUiEnv env("bflowhook");
+    DOCTEST_REQUIRE(env.db != nullptr);
+    DOCTEST_REQUIRE(writeTextFile(env.dir / "hook.md", text));
+
+    // 期望值口径 = 块模型（与实现同源）：文档光标放第二块块首 → 活动块 = 第二块
+    module::markdown::MdBlockModel model;
+    model.update(text);
+    const auto& bs = model.blocks();
+    DOCTEST_REQUIRE(bs.size() >= 2);
+    const size_t cursorByte = bs[1].start;
+    const size_t kA = module::markdown::mdLiveActiveBlockIndex(model, cursorByte);
+    DOCTEST_CHECK_EQ(kA, static_cast<size_t>(1));
+    const std::string activeText =
+        text.substr(bs[kA].start, bs[kA].end - bs[kA].start);
+
+    std::unique_ptr<::core::Module> mod(create_markdown_module());
+    mod->onStart();
+    eui::Screen screen;
+    screen.width = 1600.0f;
+    screen.height = 1000.0f;
+    MdLiveEnv e;
+    auto frame = [&](void) {
+        e.frame([&](eui::Ui& u) { mod->compose(u, screen); });
+    };
+
+    frame();
+    DOCTEST_REQUIRE(openFirstNote(*e.ui));
+    frame();
+    DOCTEST_REQUIRE(e.ui->find(kEditorInputId) != nullptr);
+
+    // ---- ① 预览态：注入点是空实现 → 零特判（逐块都走默认路径）----
+    DOCTEST_REQUIRE(cycleMode(mod.get()));   // 编辑 → 实时
+    DOCTEST_REQUIRE(cycleMode(mod.get()));   // 实时 → 双栏
+    DOCTEST_REQUIRE(cycleMode(mod.get()));   // 双栏 → 预览
+    frame();
+    DOCTEST_REQUIRE(e.ui->find("md.preview.scroll") != nullptr);
+    DOCTEST_CHECK(e.ui->find(kEditorInputId) == nullptr);   // 确在预览（双栏还有编辑器）
+    std::vector<float> previewWrapH;
+    for (size_t k = 0; k < bs.size(); ++k) {
+        const std::string base =
+            "md.preview.blk." + std::to_string(bs[k].stableId);
+        const auto* wrap = e.ui->find(base);
+        DOCTEST_REQUIRE(wrap != nullptr);
+        const auto* hit = e.ui->find(base + ".hit");
+        DOCTEST_REQUIRE(hit != nullptr);
+        DOCTEST_CHECK(hit->hitTestMode != core::dsl::HitTestMode::None);
+        // 无块被取代：逐块渲染内容都在（空 drawContent ⇒ 恒走渲染通路）
+        DOCTEST_CHECK(e.ui->find("md.preview.block." +
+                                 std::to_string(bs[k].stableId)) != nullptr);
+        previewWrapH.push_back(wrap->frame.height);
+    }
+    DOCTEST_CHECK(e.ui->find("md.preview.input") == nullptr);   // 也无活动 input
+
+    // ---- ② 实时态：注入点是实时态自己的特判 → 恰活动块一个被特判 ----
+    DOCTEST_REQUIRE(cycleMode(mod.get()));   // 预览 → 编辑
+    frame();
+    DOCTEST_REQUIRE(e.ui->find(kEditorInputId) != nullptr);
+    e.ui->state<MdInputState>(kEditorInputId).cursor =
+        static_cast<int>(cursorByte);
+    DOCTEST_REQUIRE(cycleMode(mod.get()));   // 编辑 → 实时
+    frame();
+    DOCTEST_REQUIRE(e.ui->find("md.live.scroll") != nullptr);
+    const auto* input = e.ui->find("md.live.input");
+    DOCTEST_REQUIRE(input != nullptr);
+    DOCTEST_CHECK_EQ(e.ui->state<MdInputState>("md.live.input").text, activeText);
+    size_t decorated = 0;
+    for (size_t k = 0; k < bs.size(); ++k) {
+        const std::string base =
+            "md.live.blk." + std::to_string(bs[k].stableId);
+        const auto* wrap = e.ui->find(base);
+        DOCTEST_REQUIRE(wrap != nullptr);
+        const auto* hit = e.ui->find(base + ".hit");
+        DOCTEST_REQUIRE(hit != nullptr);
+        const std::string rendered =
+            "md.live.block." + std::to_string(bs[k].stableId);
+        if (k == kA) {
+            ++decorated;
+            DOCTEST_CHECK(hit->hitTestMode == core::dsl::HitTestMode::None);
+            DOCTEST_CHECK(e.ui->find(rendered) == nullptr);   // input 取代渲染内容
+            DOCTEST_CHECK(std::fabs(wrap->frame.height - input->frame.height) <=
+                          0.01f);   // 包裹高 = 贴合高
+        } else {
+            DOCTEST_CHECK(hit->hitTestMode != core::dsl::HitTestMode::None);
+            DOCTEST_CHECK(e.ui->find(rendered) != nullptr);   // 仍是只读渲染
+            // 默认路径只有一条：同文档同宽下非活动块包裹几何与预览态逐项相同
+            DOCTEST_CHECK(std::fabs(wrap->frame.height - previewWrapH[k]) <= 0.01f);
+        }
+    }
+    DOCTEST_CHECK_EQ(decorated, static_cast<size_t>(1));   // 特判只落活动块
+
+    mod->onStop();
+    return true;
+})
+
+// ---- MD-03 源码守卫（只读断言）----
+// 与 tests/test_core/test_result.cpp 的源码护栏同款：靠 cwd 上溯定位仓库根，**不**用
+// __FILE__（ccache 会把它相对化，TIN-01 教训）；定位 / 取体失败一律大声失败，不静默绿。
+namespace {
+
+// 仓库根：cwd 或它的祖先里同时有 src/module_markdown/markdown_module.cpp 与
+// tests/CMakeLists.txt
+fs::path mdRepoRoot() {
+    std::error_code ec;
+    fs::path dir = fs::current_path(ec);
+    if (ec) return {};
+    for (int up = 0; up < 8; ++up) {
+        if (fs::exists(dir / "src" / "module_markdown" / "markdown_module.cpp",
+                       ec) &&
+            fs::exists(dir / "tests" / "CMakeLists.txt", ec)) {
+            return dir;
+        }
+        const fs::path parent = dir.parent_path();
+        if (parent == dir) break;   // 已到根
+        dir = parent;
+    }
+    return {};
+}
+
+std::string mdReadWholeFile(const fs::path& path) {
+    std::ifstream in(path, std::ios::binary);
+    if (!in) return {};
+    return std::string(std::istreambuf_iterator<char>(in),
+                       std::istreambuf_iterator<char>());
+}
+
+// 从 src[start] 的开括号起做配对（跳过字符串 / 字符字面量与注释），返回配对段文本
+// （含两端括号）；不配对 → 空串（调用方必须判空，不许静默通过）
+std::string mdBalanced(const std::string& src, size_t start, char openCh,
+                       char closeCh) {
+    if (start >= src.size() || src[start] != openCh) return {};
+    int depth = 0;
+    for (size_t i = start; i < src.size(); ++i) {
+        const char c = src[i];
+        if (c == '/' && i + 1 < src.size() && src[i + 1] == '/') {
+            while (i < src.size() && src[i] != '\n') ++i;   // 行注释
+            continue;
+        }
+        if (c == '/' && i + 1 < src.size() && src[i + 1] == '*') {
+            while (i + 1 < src.size() && !(src[i] == '*' && src[i + 1] == '/')) ++i;
+            ++i;   // 跨过 '*/'
+            continue;
+        }
+        if (c == '"' || c == '\'') {
+            const char quote = c;
+            ++i;
+            while (i < src.size() && src[i] != quote) {
+                if (src[i] == '\\') ++i;
+                ++i;
+            }
+            continue;
+        }
+        if (c == openCh) {
+            ++depth;
+        } else if (c == closeCh) {
+            --depth;
+            if (depth == 0) return src.substr(start, i - start + 1);
+        }
+    }
+    return {};
+}
+
+// 成员函数体：`signature` 之后的首个 '{' 起配对
+std::string mdFunctionBody(const std::string& src, const std::string& signature) {
+    const size_t sig = src.find(signature);
+    if (sig == std::string::npos) return {};
+    const size_t open = src.find('{', sig);
+    if (open == std::string::npos) return {};
+    return mdBalanced(src, open, '{', '}');
+}
+
+} // namespace
+
+REGISTER_TEST(md_module_blockflow_hook_source_guard,
+              "markdown_module: 块流注入点形态守卫 —— drawBlockFlow 无活动块特判分支（MD-03）", {
+    const fs::path root = mdRepoRoot();
+    DOCTEST_CHECK_MESSAGE(!root.empty(),
+                          "守卫定位不到仓库根（cwd 上溯，不用 __FILE__：ccache 会"
+                          "把绝对路径相对化）");
+    const std::string src = mdReadWholeFile(
+        root / "src" / "module_markdown" / "markdown_module.cpp");
+    DOCTEST_REQUIRE(!src.empty());
+
+    // (1) 注入点在位：结构体 + drawBlockFlow 末参收它
+    DOCTEST_CHECK(src.find("struct BlockFlowHooks") != std::string::npos);
+    DOCTEST_CHECK(src.find("const BlockFlowHooks& hooks)") != std::string::npos);
+
+    // (2) drawBlockFlow 本体：视图态特判的符号一个都不许在（分支长回来即变红）
+    const std::string body = mdFunctionBody(src, "void drawBlockFlow(");
+    DOCTEST_CHECK_MESSAGE(!body.empty(),
+                          "取不到 drawBlockFlow 函数体（签名或括号被改？）");
+    for (const char* bad :
+         {"isActive", "activeBlock", "LiveBlockCtx", "live->", "liveBlockText",
+          "liveFitHeight", "drawLiveInputBlock", "codeDrawn"}) {
+        DOCTEST_CHECK_MESSAGE(body.find(bad) == std::string::npos,
+                              std::string("drawBlockFlow 内又出现视图态特判：") + bad);
+    }
+    // 三处决策都在本体里走 hooks（缺一 = 注入点没接线）
+    for (const char* wired : {"hooks.wrapHeight", "hooks.drawContent",
+                              "hooks.afterHitOverlay"}) {
+        DOCTEST_CHECK_MESSAGE(body.find(wired) != std::string::npos,
+                              std::string("注入点未接线：") + wired);
+    }
+    // 默认路径仍在：包裹高缺省 = 几何表 H_k、渲染通路仍是上游 markdown
+    DOCTEST_CHECK(body.find("syncMap_.blockHeight(k)") != std::string::npos);
+    DOCTEST_CHECK(body.find("components::markdown(") != std::string::npos);
+
+    // (3) 两条调用路径分别传入：预览态传空实现、实时态传自己的特判
+    constexpr size_t kNameLen = sizeof("drawBlockFlow") - 1;
+    std::vector<std::string> calls;
+    for (size_t at = src.find("drawBlockFlow("); at != std::string::npos;
+         at = src.find("drawBlockFlow(", at + 1)) {
+        if (at >= 5 && src.compare(at - 5, 5, "void ") == 0) continue;  // 声明非调用
+        const std::string call = mdBalanced(src, at + kNameLen, '(', ')');
+        DOCTEST_REQUIRE(!call.empty());   // 括号不配对 = 守卫自身失效，不许静默
+        calls.push_back(call);
+    }
+    DOCTEST_CHECK_EQ(calls.size(), static_cast<size_t>(2));   // 只有两条视图态路径
+    bool sawPreview = false;
+    bool sawLive = false;
+    for (const std::string& call : calls) {
+        if (call.find("\"md.preview\"") != std::string::npos) {
+            sawPreview = true;
+            DOCTEST_CHECK_MESSAGE(call.find("hooks") == std::string::npos,
+                                  "预览态必须传空实现（不得带视图态特判）");
+            DOCTEST_CHECK_MESSAGE(call.find("{}") != std::string::npos,
+                                  "预览态的注入点是空实现 {}");
+        } else if (call.find("\"md.live\"") != std::string::npos) {
+            sawLive = true;
+            DOCTEST_CHECK_MESSAGE(call.find("hooks") != std::string::npos,
+                                  "实时态必须传自己的特判（hooks）");
+        } else {
+            DOCTEST_CHECK_MESSAGE(
+                false,
+                std::string("drawBlockFlow 出现未登记的第三条调用路径（请一并钉死）：") +
+                    call);
+        }
+    }
+    DOCTEST_CHECK(sawPreview);
+    DOCTEST_CHECK(sawLive);
     return true;
 })
