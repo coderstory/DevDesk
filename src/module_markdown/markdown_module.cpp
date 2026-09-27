@@ -52,6 +52,7 @@
 #include <components/button.h>
 #include <components/contextmenu.h>
 #include <components/dialog.h>
+#include <components/dropdown.h>
 #include <components/input.h>
 #include <components/markdown.h>
 #include <components/mousearea.h>
@@ -173,6 +174,17 @@ float estimateTextWidth(const std::string& s, float fontSize) {
         w += (ch < 0x80) ? fontSize * 0.55f : fontSize / 3.0f;
     }
     return w;
+}
+
+// 指针事件坐标是窗口坐标（runtime_input 派发时只做 /dpiScale，原点 = 窗口
+// 客户区左上），而本模块的浮层（右键菜单）构建在页面子树内——app 布局
+// row(侧边栏, app.page) 把页面区放在侧边栏右侧，其坐标原点是页面区左上，
+// 故窗口坐标换算成页面坐标需减去 Router 上的页面区原点 x（app_sidebar
+// compose 每帧写入，折叠/展开随侧边栏宽变化）。y 方向页面区纵跨整窗
+// （原点恒 0）不换算。无 Router（无头测试等）按原点 0 处理 = 旧行为。
+float windowToPageX(float windowX) {
+    const ::core::Router* router = ::core::appRouter();
+    return router ? windowX - router->pageOriginX() : windowX;
 }
 
 } // namespace
@@ -324,11 +336,11 @@ private:
             .content([&] {
                 const float segW = 264.0f;
                 ui.column("md.title")
-                    .size(contentW - 320.0f - segW - t.sizes.spacingSmall, 64.0f)
+                    .size(contentW - 320.0f - segW, 64.0f)
                     .gap(2.0f)
                     .content([&] {
                         ui.text("md.h1")
-                            .size(contentW - 320.0f - segW - t.sizes.spacingSmall, 32.0f)
+                            .size(contentW - 320.0f - segW, 32.0f)
                             .text("Markdown 笔记本")
                             .fontSize(t.sizes.fontSizeTitle)
                             .lineHeight(32.0f)
@@ -336,7 +348,7 @@ private:
                             .color(t.colors.textPrimary)
                             .build();
                         // subtitle 包 clip 栈：长快捷键提示超宽时裁掉，不溢出压到右侧 segmented
-                        const float subW = contentW - 320.0f - segW - t.sizes.spacingSmall;
+                        const float subW = contentW - 320.0f - segW;
                         ui.stack("md.subtitle.clip")
                             .size(subW, 18.0f)
                             .clip()
@@ -562,15 +574,19 @@ private:
                     // 空目录：根组标题 + 空态提示同显（W9——组标题行常显，
                     // 提示挪到标题行下方，不再独占替换掉树结构）
                     drawTreeList(ui, listY, listH, sideW, t, componentTheme);
-                    ui.text("md.tree.empty")
-                        .position(36.0f, listY + 40.0f)
-                        .size(sideW - 48.0f, 40.0f)
-                        .text("还没有笔记\n点下面「+ 笔记」开始")
-                        .fontSize(t.sizes.fontSizeSmall)
-                        .lineHeight(18.0f)
-                        .wrap()
-                        .color(t.colors.textTertiary)
-                        .build();
+                    // W10：已有文件夹时只留树——提示行（listY+40）会压在
+                    // 第一个文件夹行上，而「有空文件夹」本身就是内容不是空态
+                    if (allFolders_.empty()) {
+                        ui.text("md.tree.empty")
+                            .position(36.0f, listY + 40.0f)
+                            .size(sideW - 48.0f, 40.0f)
+                            .text("还没有笔记\n点下面「+ 笔记」开始")
+                            .fontSize(t.sizes.fontSizeSmall)
+                            .lineHeight(18.0f)
+                            .wrap()
+                            .color(t.colors.textTertiary)
+                            .build();
+                    }
                 } else {
                     ui.text("md.tree.empty")
                         .position(16.0f, listY + 8.0f)
@@ -615,6 +631,8 @@ private:
                     newFolderOpen_ = true;
                     newFolderName_.clear();
                     newFolderError_.clear();
+                    newFolderParentIdx_ = 0;      // W10：父目录默认根目录
+                    newFolderParentOpen_ = false;
                 })
                 .build();
         }).build();
@@ -661,14 +679,14 @@ private:
             .build();
     }
 
-    // ---- 左栏：二级目录树（W8，md_tree 纯函数分组）----
+    // ---- 左栏：两级目录树（W8，md_tree 纯函数分组；W10 升两级+空文件夹）----
     void drawTreeList(eui::Ui& ui,
                       float listY,
                       float listH,
                       float sideW,
                       const core::theme::Tokens& t,
                       const components::theme::ThemeColorTokens& componentTheme) {
-        const std::vector<MdTreeRow> rows = buildTreeRows(notes_, topFolders_,
+        const std::vector<MdTreeRow> rows = buildTreeRows(notes_, allFolders_,
                                                           collapsedDirs_);
         const float rowW = sideW - 16.0f;
         // contentKey：行内容（类型+名字+路径）组合 hash，内容变即重建
@@ -694,6 +712,8 @@ private:
                     if (r.isFolder) {
                         // 文件夹行：▸/▾ 展开指示 + fa-folder，点击收起/展开
                         // （同样包 stack，position 只在 stack 内生效；📁 emoji 已换 FA）
+                        // W10：缩进按 depth（顶层夹 0 / 子夹 1），每级 16px
+                        const float indent = static_cast<float>(r.depth) * 16.0f;
                         const bool expanded = collapsedDirs_.count(r.relPath) == 0;
                         inner.stack(id)
                             .size(w, 32.0f)
@@ -713,7 +733,7 @@ private:
                                     })
                                     .build();
                                 inner.text(id + ".arrow")
-                                    .position(6.0f, 0.0f)
+                                    .position(6.0f + indent, 0.0f)
                                     .size(16.0f, 32.0f)
                                     .text(expanded ? "▾" : "▸")
                                     .fontSize(t.sizes.fontSizeSmall)
@@ -721,7 +741,7 @@ private:
                                     .color(t.colors.textTertiary)
                                     .build();
                                 inner.text(id + ".ficon")
-                                    .position(26.0f, 0.0f)
+                                    .position(26.0f + indent, 0.0f)
                                     .size(16.0f, 32.0f)
                                     .icon(0xF07B)  // fa-folder
                                     .fontSize(t.sizes.fontSizeSmall)
@@ -729,8 +749,8 @@ private:
                                     .color(t.colors.textTertiary)
                                     .build();
                                 inner.text(id + ".name")
-                                    .position(46.0f, 0.0f)
-                                    .size(std::max(0.0f, w - 58.0f), 32.0f)
+                                    .position(46.0f + indent, 0.0f)
+                                    .size(std::max(0.0f, w - 58.0f - indent), 32.0f)
                                     .text(r.name)
                                     .fontSize(t.sizes.fontSizeSmall)
                                     .lineHeight(32.0f)
@@ -740,11 +760,14 @@ private:
                             })
                             .build();
                     } else {
-                        // 文件行：depth=1 缩进 32px（文件夹名 x=46，
-                        // 子文件名 36+32=68——层级差 ≥20px，缩进可辨）
+                        // 文件行：缩进 = 32 + (depth-1)*16（depth 1 = 顶层夹/根目录
+                        // 下的文件，2 = 子夹下的文件；文件名 x = 36+indent，与上一级
+                        // 文件夹名 x 差 22px，层级可辨）
+                        const float indent =
+                            32.0f + static_cast<float>(std::max(0, r.depth - 1)) * 16.0f;
                         drawFileTreeItem(inner, id, w, t, 0xF15C, r.name,
                                          r.relPath == currentPath_,
-                                         32.0f,
+                                         indent,
                                          [this, path = r.relPath] { openNote(path); },
                                          [this, path = r.relPath](
                                              const eui::PointerEvent& ev,
@@ -971,7 +994,8 @@ private:
             if (auto* hit = ui.find("md.editor.input.hit")) {
                 hit->onContextMenu = [this](const eui::PointerEvent& ev,
                                             const eui::Rect&) {
-                    editorCtxX_ = static_cast<float>(ev.x);
+                    // 同树行菜单：窗口坐标 → 页面坐标（减去页面区原点 x）
+                    editorCtxX_ = windowToPageX(static_cast<float>(ev.x));
                     editorCtxY_ = static_cast<float>(ev.y);
                     editorCtxOpen_ = true;
                 };
@@ -1196,9 +1220,13 @@ private:
                 leftColor = t.colors.success;
             }
         }
+        // 左框右缘 = 右串左缘（x+w-244）留 24px 间距：旧宽 w*0.6 在双栏态
+        // （midW≈520）需 w≥670 才不相撞，长文件名/保存状态压到右侧行列字数上
+        const float statusLeftW = w - 24.0f - 220.0f - 24.0f;
         ui.text("md.status.save")
             .position(x + 24.0f, y)
-            .size(w * 0.6f, 22.0f)
+            .size(statusLeftW, 22.0f)
+            .clip()  // 超长文件名裁掉，不越过右缘压右侧文本
             .text(left)
             .fontSize(11.0f)
             .lineHeight(22.0f)
@@ -1677,20 +1705,31 @@ private:
             .build();
     }
 
-    // ---- 新建文件夹弹窗（W9：左栏「+ 文件夹」入口）----
+    // ---- 新建文件夹弹窗（W9：左栏「+ 文件夹」入口；W10：加父目录下拉）----
     void drawNewFolderDialog(eui::Ui& ui,
                              const eui::Screen& screen,
                              const core::theme::Tokens& t,
                              const components::theme::ThemeColorTokens& componentTheme) {
         const float w = 460.0f;
-        const float h = 220.0f;
+        const float h = 320.0f;
+
+        // 父目录候选：根目录占位 + 顶层夹（两级上限下，父目录只能是根或顶层夹，
+        // 所以二级夹不进候选——选中它建出来的三级夹在树里没有行位可挂）
+        std::vector<std::string> parents;
+        parents.push_back("根目录");
+        for (const auto& d : topLevelFolders()) parents.push_back(d);
+        const int parentCount = static_cast<int>(parents.size());
+        const int parentIdx = std::clamp(newFolderParentIdx_, 0, parentCount - 1);
 
         components::dialog(ui, "md.dialog.newfolder")
             .open(newFolderOpen_)
             .screen(screen.width, screen.height)
             .size(w, h)
             .theme(componentTheme)
-            .onOpenChange([this](bool v) { newFolderOpen_ = v; })
+            .onOpenChange([this](bool v) {
+                newFolderOpen_ = v;
+                if (!v) newFolderParentOpen_ = false;  // 关弹窗顺手收下拉
+            })
             .content([&] {
                 ui.text("md.dialog.newfolder.title")
                     .position(28.0f, 24.0f)
@@ -1705,14 +1744,53 @@ private:
                 ui.text("md.dialog.newfolder.hint")
                     .position(28.0f, 56.0f)
                     .size(w - 56.0f, 18.0f)
-                    .text("在笔记目录下创建，可用 / 建多级；新建后树里出现空文件夹行")
+                    .text("最多两级（顶层 / 子目录）；空文件夹也会显示在树里")
                     .fontSize(t.sizes.fontSizeSmall)
                     .lineHeight(18.0f)
                     .color(t.colors.textTertiary)
                     .build();
 
-                components::input(ui, "md.dialog.newfolder.input")
+                ui.text("md.dialog.newfolder.parent.label")
                     .position(28.0f, 84.0f)
+                    .size(w - 56.0f, 16.0f)
+                    .text("父目录")
+                    .fontSize(12.0f)
+                    .lineHeight(16.0f)
+                    .color(t.colors.textTertiary)
+                    .build();
+
+                // 下拉弹层要盖住下方输入框/按钮：dropdown 自带 zIndex=20，经
+                // dsl 的 subtreeMaxZIndex 把整个子树抬到后续兄弟之上（与设置页
+                // 同一机制），故这里只需包一层定位 stack
+                ui.stack("md.dialog.newfolder.parent")
+                    .position(28.0f, 102.0f)
+                    .size(w - 56.0f, 40.0f)
+                    .content([&] {
+                        components::dropdown(ui, "md.dialog.newfolder.parent.dd")
+                            .size(w - 56.0f, 40.0f)
+                            .items(parents)
+                            .selected(parentIdx)
+                            .placeholder("根目录")
+                            .theme(componentTheme)
+                            .open(newFolderParentOpen_)
+                            .onOpenChange(
+                                [this](bool v) { newFolderParentOpen_ = v; })
+                            .onChange([this](int idx) { newFolderParentIdx_ = idx; })
+                            .build();
+                    })
+                    .build();
+
+                ui.text("md.dialog.newfolder.name.label")
+                    .position(28.0f, 156.0f)
+                    .size(w - 56.0f, 16.0f)
+                    .text("文件夹名")
+                    .fontSize(12.0f)
+                    .lineHeight(16.0f)
+                    .color(t.colors.textTertiary)
+                    .build();
+
+                components::input(ui, "md.dialog.newfolder.input")
+                    .position(28.0f, 174.0f)
                     .size(w - 56.0f, 44.0f)
                     .value(newFolderName_)
                     .placeholder("文件夹名，如 工作")
@@ -1730,7 +1808,7 @@ private:
                 // 审计 [30]：内嵌红字错误行，同新建笔记弹窗
                 if (!newFolderError_.empty()) {
                     ui.text("md.dialog.newfolder.error")
-                        .position(28.0f, 134.0f)
+                        .position(28.0f, 228.0f)
                         .size(w - 56.0f, 18.0f)
                         .text(newFolderError_)
                         .fontSize(12.0f)
@@ -1932,13 +2010,14 @@ private:
     void refreshList() {
         if (!service_) {
             notes_.clear();
-            topFolders_.clear();
+            allFolders_.clear();
             allTags_.clear();
             return;
         }
-        // W9：磁盘一级目录实时枚举（含空目录），目录树据此显示空文件夹行
-        if (auto fr = service_->listTopFolders(); fr.isOk()) {
-            topFolders_ = std::set<std::string>(fr.value().begin(), fr.value().end());
+        // W9/W10：磁盘全层目录实时枚举（含空目录），目录树据此显示
+        // 空文件夹行（顶层夹 + 子夹）
+        if (auto fr = service_->listAllFolders(); fr.isOk()) {
+            allFolders_ = std::set<std::string>(fr.value().begin(), fr.value().end());
         }
         auto r = searchQuery_.empty() ? service_->listAll()
                                       : service_->search(searchQuery_);
@@ -2375,7 +2454,25 @@ private:
         LOG_INFO("新建笔记: " + relPath);
     }
 
-    // ---- W9：新建文件夹（左栏「+ 文件夹」入口）----
+    // ---- W9/W10：新建文件夹（左栏「+ 文件夹」入口）----
+
+    // W10：父目录候选 = 顶层夹（两级上限下，二级夹不能再当父目录）
+    std::vector<std::string> topLevelFolders() const {
+        std::vector<std::string> out;
+        for (const auto& d : allFolders_) {
+            if (d.find('/') == std::string::npos) out.push_back(d);
+        }
+        return out;
+    }
+
+    // 父目录下拉下标 → 相对路径（0 = 根目录 → ""；越界/夹已消失兜底为根目录）
+    std::string parentFolderForIndex(int idx) const {
+        if (idx <= 0) return std::string();
+        const std::vector<std::string> tops = topLevelFolders();
+        const size_t i = static_cast<size_t>(idx) - 1;
+        return i < tops.size() ? tops[i] : std::string();
+    }
+
     void commitNewFolder() {
         std::string name = newFolderName_;
         // 去掉首尾空白与多余的尾部 '/'
@@ -2393,27 +2490,45 @@ private:
         }
         if (!service_) return;
 
-        auto r = service_->createFolder(name);
+        // W10：父目录下拉（默认根目录）+ 名字 → 完整相对路径
+        const std::string parent = parentFolderForIndex(newFolderParentIdx_);
+        const std::string relPath = parent.empty() ? name : parent + "/" + name;
+        // 树只渲染两级（顶层夹 + 一层子夹）：'/' ≥ 2 即三级夹，建出来在树里
+        // 没有文件夹行可挂（用户看不见）→ 就地红字拦下。service 层仍支持更深
+        // （createFolder 走 create_directories），这里只是 UI 侧的层级约束
+        int slashes = 0;
+        for (char c : relPath) {
+            if (c == '/') ++slashes;
+        }
+        if (slashes >= 2) {
+            newFolderError_ = "最多支持两级目录（顶层 / 子目录）";
+            return;
+        }
+
+        auto r = service_->createFolder(relPath);
         if (r.isFail()) {
-            LOG_ERROR("新建文件夹失败 " + name + ": " + r.errorMessage());
+            LOG_ERROR("新建文件夹失败 " + relPath + ": " + r.errorMessage());
             // 审计 [30]：service 创建失败就地红字，弹窗不关
             newFolderError_ = "新建失败：" + r.errorMessage();
             return;
         }
         newFolderOpen_ = false;
-        refreshList();  // listTopFolders 磁盘枚举 → 树里立即出现空文件夹行
-        showToast("已创建文件夹", name, false);
-        LOG_INFO("新建文件夹: " + name);
+        newFolderParentOpen_ = false;
+        refreshList();  // listAllFolders 磁盘枚举 → 树里立即出现空文件夹行
+        showToast("已创建文件夹", relPath, false);
+        LOG_INFO("新建文件夹: " + relPath);
     }
 
     // ---- 生命周期：右键菜单 / 删除 / 重命名（审计 [4][20]：service remove
     //      早已就绪且被单测覆盖，本段补 UI 入口）----
 
-    // 右键文件行 → 菜单弹出位置用指针事件的逻辑坐标（runtime 派发时已换算到
-    // compose 同一坐标系，见 runtime_input updateInteraction），标准右键菜单语义
+    // 右键文件行 → 菜单弹出位置用指针事件的逻辑坐标（runtime 派发时已做
+    // /dpiScale，见 runtime_input updateInteraction），标准右键菜单语义。
+    // 指针坐标是窗口坐标、菜单浮层在页面子树内 → x 经 windowToPageX 减去
+    // 页面区原点（y 方向原点恒 0 不换算）
     void openFileContextMenu(const std::string& relPath, const eui::PointerEvent& ev) {
         ctxMenuPath_ = relPath;
-        ctxMenuX_ = static_cast<float>(ev.x);
+        ctxMenuX_ = windowToPageX(static_cast<float>(ev.x));
         ctxMenuY_ = static_cast<float>(ev.y);
         ctxMenuOpen_ = true;
     }
@@ -2776,7 +2891,12 @@ private:
     bool newFolderOpen_ = false;       // W9：新建文件夹弹窗
     std::string newFolderName_;
     std::string newFolderError_;       // 审计 [30]：同款内嵌错误行
-    std::set<std::string> topFolders_; // W9：磁盘一级目录（含空目录，树显示用）
+    // W10：父目录下拉（0 = 根目录，1..n = 顶层夹下标；只列顶层夹——
+    // 两级上限下，二级夹不能再当父目录）
+    int newFolderParentIdx_ = 0;
+    bool newFolderParentOpen_ = false; // 下拉展开态（组件自带 popup 显隐）
+    // W10：磁盘全层目录（POSIX 相对路径，含空目录；树渲染 + 父目录下拉用）
+    std::set<std::string> allFolders_;
 
     // ---- 生命周期（审计 [4][20]）：树行右键菜单 + 删除确认 + 重命名 ----
     bool ctxMenuOpen_ = false;

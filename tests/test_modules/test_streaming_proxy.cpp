@@ -215,6 +215,24 @@ public:
                  });
     }
 
+    // 注册 POST /v1/messages 的「静默」处理器：请求收下后一字节都不回
+    //（模拟「上游连着但不发数据」——取消只能靠 libcurl 进度回调叫醒的实现
+    // 就是在这一档上翻车的，见用例 20）。releaseSilent() 放行以便 join。
+    void onMessagesSilent() {
+        auto gate = silentGate_;
+        svr_.Post("/v1/messages",
+                  [gate](const httplib::Request&, httplib::Response& res) {
+                      while (!gate->load()) {
+                          std::this_thread::sleep_for(
+                              std::chrono::milliseconds(20));
+                      }
+                      res.set_content("{}", "application/json");
+                  });
+    }
+
+    // 放行静默处理器（必须在 stop() 之前调用，否则 stop 会等 handler 收工）
+    void releaseSilent() { silentGate_->store(true); }
+
     std::string lastRequestBody() const { return lastRequestBody_->get(); }
     std::string lastApiKey() const { return lastApiKey_->get(); }
     size_t emitted() const { return emitted_->load(); }
@@ -251,6 +269,9 @@ private:
     };
     std::shared_ptr<StringSlot> lastApiKey_ = std::make_shared<StringSlot>();
     std::shared_ptr<StringSlot> lastRequestBody_ = std::make_shared<StringSlot>();
+    // 静默 handler 的放行闸（onMessagesSilent / releaseSilent）
+    std::shared_ptr<std::atomic<bool>> silentGate_ =
+        std::make_shared<std::atomic<bool>>(false);
 };
 
 // ---------- 测试用 ClaudeService（内存库，不触碰 Keychain）----------
@@ -1158,5 +1179,69 @@ REGISTER_TEST(streaming_proxy_stop_unblocks_inflight_stream,
     DOCTEST_CHECK(upstream.emitted() < many.size());
 
     upstream.stop();
+    return true;
+})
+
+// ==================== 20. 上游静默（连着不发数据）时取消必须秒级生效 ====================
+// 回归（H1，2026-09-27）：cancelWithReason 只置 cancelled 标志 + notify_all，
+// 旧实现的两条唤醒路径都要求「有人正好堵在队列/回调上」——上游**连着但不发
+// 一个字节**（请求已送出、响应头未到）时 write callback 从未进入，消费者
+// 醒来也叫不动 libcurl 线程，于是 libcurl 一直等到低速空闲超时
+//（生产 lowSpeedTimeSec=60s → 实测 60~70s）才退；而 stopProxy / 退出应用要
+// 等 worker join，就被拖着挂同样时长。
+// 修复：进度回调（CURLOPT_XFERINFOFUNCTION + NOPROGRESS=0）在上游静默期也按
+// 秒级节拍被调用，回调里读 cancelled 原子量 → 立即 CURLE_ABORTED_BY_CALLBACK。
+// 本用例把低速超时设为 5s（生产值 60s）以限制回归时用例自身的挂起时长；
+// 断言 cancel → libcurl 线程 join 完成 ≤ 2s。取消原因语义一并断言。
+// 实测（2026-09-27，本机）：带修复 ~500ms 稳定复现；把进度回调关掉
+//（NOPROGRESS=1，等价修复前）同一用例 10592ms —— 即旧实现挂在低速空闲
+// 超时上（生产 60s 配置对应 60~70s）。
+REGISTER_TEST(streaming_cancel_silent_upstream_prompt,
+              "streaming: cancel is prompt when upstream stays silent", {
+    MockSseServer upstream;
+    DOCTEST_REQUIRE(upstream.start());
+    upstream.onMessagesSilent();
+
+    platform::http::Request req;
+    req.method = "POST";
+    req.url = "/v1/messages";
+    req.body = R"({"stream":true})";
+    req.timeoutMs = 0;               // 无总墙钟上限（与生产一致）
+    req.lowSpeedBytesPerSec = 1;
+    req.lowSpeedTimeSec = 5;         // 生产 60；测试缩到 5 以限制回归挂起时长
+
+    auto r =
+        module::claude::sendStreamingClaude(req, makeProfile(upstream.baseUrl()));
+    DOCTEST_REQUIRE(r.isOk());
+    auto sr = takeStream(r);
+    DOCTEST_REQUIRE(sr != nullptr);
+
+    // 静默 500ms：确保请求已送出、libcurl 真卡在「等响应头」而不是还没连上
+    std::this_thread::sleep_for(milliseconds(500));
+
+    std::string chunk;
+    std::string err;
+    const auto t0 = steady_clock::now();
+    sr->cancelWithReason("proxy stopping");
+    const auto cr = sr->readChunk(chunk, err);   // 消费者路径：立即 Error
+    sr.reset();   // 析构 = cancel + join：join 返回即 libcurl 线程真的退出了
+    const auto cancelMs =
+        duration_cast<milliseconds>(steady_clock::now() - t0).count();
+
+    upstream.releaseSilent();
+    upstream.stop();
+
+    // 实测值打出来（同 [stress] 系列风格）：回归时一眼看出是从 1s 级退化到
+    // 低速超时量级，还是别的路径变慢
+    std::cout << "[stream] 静默上游 cancel→libcurl 线程退出: " << cancelMs
+              << "ms" << std::endl;
+
+    DOCTEST_CHECK(cr == platform::http::ChunkResult::Error);
+    DOCTEST_CHECK_EQ(err, std::string("proxy stopping"));
+    DOCTEST_CHECK_MESSAGE(cancelMs < 2000,
+                          "cancel→libcurl 线程退出实测 " +
+                              std::to_string(cancelMs) +
+                              "ms（要求 <2000ms；修复前挂在低速超时上，"
+                              "本用例配置实测 ~10.6s）");
     return true;
 })

@@ -1,0 +1,329 @@
+// src/module_claude_proxy/upstream_dialect.cpp
+// 上游方言实现：鉴权头 / 必需会话头 / UA 策略 / 模型名归一
+#include "upstream_dialect.h"
+
+#include "claude_service.h"  // claudeUpstreamSessionId()
+#include "core/logging.h"
+#include "platform/json.h"
+
+#include <algorithm>
+#include <cctype>
+#include <cstddef>
+
+namespace module::claude {
+
+namespace {
+
+// ==================== 头部键大小写不敏感操作 ====================
+// HTTP 头名大小写不敏感，而 headers 是 std::map<std::string,...>（大小写敏感）：
+// 同名不同大小写在 map 里会并存 → 上游收到重复头（流式路径曾踩过：
+// 客户端的小写 authorization 与注入的 Authorization 并存）。一律先清干净。
+
+std::string toLowerAscii(std::string s) {
+    std::transform(s.begin(), s.end(), s.begin(),
+                   [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+    return s;
+}
+
+void eraseHeaderCI(std::map<std::string, std::string>& headers,
+                   const std::string& keyLower) {
+    for (auto it = headers.begin(); it != headers.end();) {
+        if (toLowerAscii(it->first) == keyLower) {
+            it = headers.erase(it);
+        } else {
+            ++it;
+        }
+    }
+}
+
+bool hasHeaderCI(const std::map<std::string, std::string>& headers,
+                 const std::string& keyLower) {
+    for (const auto& kv : headers) {
+        if (toLowerAscii(kv.first) == keyLower) return true;
+    }
+    return false;
+}
+
+// 覆盖写入一个头：先清掉同名的大小写变体，再以 canonicalName 的拼写写入
+void putHeader(std::map<std::string, std::string>& headers,
+               const std::string& canonicalName, const std::string& value) {
+    eraseHeaderCI(headers, toLowerAscii(canonicalName));
+    headers[canonicalName] = value;
+}
+
+// ==================== URL host 解析 ====================
+
+// 取 URL 的 host（小写，去 scheme / userinfo / port / path）；解析不出返回空串
+std::string hostOf(const std::string& url) {
+    size_t begin = 0;
+    const size_t scheme = url.find("://");
+    if (scheme != std::string::npos) begin = scheme + 3;
+    size_t end = url.find_first_of("/?#", begin);
+    if (end == std::string::npos) end = url.size();
+
+    std::string authority = url.substr(begin, end - begin);
+    const size_t at = authority.find('@');       // 去掉 userinfo
+    if (at != std::string::npos) authority.erase(0, at + 1);
+    const size_t colon = authority.find(':');    // 去掉端口
+    if (colon != std::string::npos) authority.erase(colon);
+    return toLowerAscii(authority);
+}
+
+// host 是 opencode.ai 本身或其子域（zen.opencode.ai）；notopencode.ai 不算
+bool isOpencodeHost(const std::string& host) {
+    const std::string suffix = "opencode.ai";
+    if (host == suffix) return true;
+    if (host.size() <= suffix.size() + 1) return false;
+    return host.compare(host.size() - suffix.size() - 1, suffix.size() + 1,
+                        "." + suffix) == 0;
+}
+
+// ==================== 模型名标记 ====================
+
+constexpr const char* kOneMMarker = "[1M]";
+constexpr size_t kOneMMarkerLen = 4;
+
+std::string trimTrailingWs(const std::string& s) {
+    size_t e = s.size();
+    while (e > 0 && std::isspace(static_cast<unsigned char>(s[e - 1]))) --e;
+    return s.substr(0, e);
+}
+
+// ==================== 顶层 JSON 字段定位（只读扫描） ====================
+// 目标：拿到顶层 "model" 值的**原始字节区间**，从而只替换这一小段，
+// 其余字节原样发给上游。不用「解析整个 body 再重新序列化」的理由：
+// platform::json 的序列化按 std::map 输出（键序变字母序）且浮点走 %.17g
+// （0.7 → 0.69999999999999996）——对透明代理来说是无谓的扰动。这里只做
+// 值区间的定点替换，不做全量重写。
+
+void skipWs(const std::string& s, size_t& i) {
+    while (i < s.size() &&
+           (s[i] == ' ' || s[i] == '\t' || s[i] == '\n' || s[i] == '\r')) {
+        ++i;
+    }
+}
+
+// 读出 s[i]（应指向 '"'）处的 JSON 字符串，返回其文本并推进 i 过闭引号。
+// 转义按 \\X → X 处理（不展开 \uXXXX）：本函数只用于比对键名与推进游标，
+// 真值解码交给 platform::json::parse。
+std::string readJsonString(const std::string& s, size_t& i) {
+    std::string out;
+    if (i >= s.size() || s[i] != '"') return out;
+    ++i;  // 开引号
+    while (i < s.size()) {
+        const char c = s[i];
+        if (c == '\\') {
+            if (i + 1 < s.size()) {
+                out.push_back(s[i + 1]);
+                i += 2;
+                continue;
+            }
+            break;
+        }
+        if (c == '"') {
+            ++i;  // 闭引号
+            break;
+        }
+        out.push_back(c);
+        ++i;
+    }
+    return out;
+}
+
+// 跳过 s[i] 处的一个 JSON 值（字符串 / 对象 / 数组 / 字面量）
+bool skipJsonValue(const std::string& s, size_t& i) {
+    skipWs(s, i);
+    if (i >= s.size()) return false;
+    const char c = s[i];
+    if (c == '"') {
+        readJsonString(s, i);
+        return true;
+    }
+    if (c == '{' || c == '[') {
+        const char open = c;
+        const char close = (c == '{') ? '}' : ']';
+        int depth = 0;
+        while (i < s.size()) {
+            const char x = s[i];
+            if (x == '"') {
+                readJsonString(s, i);
+                continue;
+            }
+            if (x == open) {
+                ++depth;
+            } else if (x == close) {
+                --depth;
+                ++i;
+                if (depth == 0) return true;
+                continue;
+            }
+            ++i;
+        }
+        return false;
+    }
+    // null / true / false / 数字：吃到分隔符
+    while (i < s.size() && s[i] != ',' && s[i] != '}' && s[i] != ']' &&
+           s[i] != ' ' && s[i] != '\t' && s[i] != '\n' && s[i] != '\r') {
+        ++i;
+    }
+    return true;
+}
+
+// 在顶层对象里找字符串字段 key，回填其值（含引号）的字节区间 [begin, end)；
+// 非顶层同名键 / 值不是字符串 / 结构非法 → false
+bool findTopLevelStringSpan(const std::string& s, const std::string& key,
+                            size_t& begin, size_t& end) {
+    size_t i = 0;
+    skipWs(s, i);
+    if (i >= s.size() || s[i] != '{') return false;
+    ++i;
+
+    int depth = 1;
+    while (i < s.size()) {
+        skipWs(s, i);
+        if (i >= s.size()) return false;
+        if (s[i] == ',') {
+            ++i;
+            continue;
+        }
+        if (s[i] == '}') {
+            --depth;
+            ++i;
+            if (depth == 0) return false;
+            continue;
+        }
+        if (s[i] != '"') {
+            ++i;  // 非预期 token：跳过，防死循环
+            continue;
+        }
+
+        const std::string fieldKey = readJsonString(s, i);
+        skipWs(s, i);
+        if (i >= s.size() || s[i] != ':') {
+            if (i < s.size()) ++i;
+            continue;
+        }
+        ++i;  // ':'
+        skipWs(s, i);
+
+        if (depth == 1 && fieldKey == key) {
+            if (i >= s.size() || s[i] != '"') return false;  // 值不是字符串
+            const size_t valueBegin = i;
+            if (!skipJsonValue(s, i)) return false;
+            begin = valueBegin;
+            end = i;
+            return true;
+        }
+        if (!skipJsonValue(s, i)) return false;
+    }
+    return false;
+}
+
+} // namespace
+
+// ==================== UpstreamDialect ====================
+
+UpstreamDialect UpstreamDialect::anthropicDefault() {
+    return UpstreamDialect{Kind::AnthropicDefault};
+}
+
+UpstreamDialect UpstreamDialect::opencodeZen() {
+    return UpstreamDialect{Kind::OpencodeZen};
+}
+
+UpstreamDialect UpstreamDialect::forBaseUrl(const std::string& baseUrl) {
+    return isOpencodeHost(hostOf(baseUrl)) ? opencodeZen() : anthropicDefault();
+}
+
+bool UpstreamDialect::stripModelSuffix() const {
+    // 只有明确不认该标记的网关才剥；默认方言保持透传（既有的 bailian
+    // 网关带 [1M] 能正常返回，剥了反而可能改行为）
+    return kind == Kind::OpencodeZen;
+}
+
+void UpstreamDialect::applyHeaders(std::map<std::string, std::string>& headers,
+                                   const std::string& apiKey) const {
+    // 1. 鉴权：客户端的凭据一律丢弃（代理只用 profile 的 key，客户端那份
+    //    打到这个网关本来就无效），再注入
+    eraseHeaderCI(headers, "x-api-key");
+    eraseHeaderCI(headers, "authorization");
+    if (!apiKey.empty()) {
+        headers["x-api-key"] = apiKey;
+        // 兼容期望 Bearer 的 Anthropic-compatible 网关（bailian 等）；
+        // 真 Anthropic API 收 x-api-key、忽略 Bearer
+        headers["Authorization"] = "Bearer " + apiKey;
+    }
+
+    // 2. User-Agent：无条件覆盖（理由见 kProxyUserAgent 注释）
+    putHeader(headers, "User-Agent", kProxyUserAgent);
+
+    // 3. 上游契约头：客户端没带才补（带了说明客户端更清楚要哪个版本）
+    if (!hasHeaderCI(headers, "anthropic-version")) {
+        headers["anthropic-version"] = "2023-06-01";
+    }
+
+    // 4. 方言专属头
+    if (kind == Kind::OpencodeZen &&
+        !hasHeaderCI(headers, "x-opencode-session")) {
+        headers["x-opencode-session"] = claudeUpstreamSessionId();
+    }
+}
+
+bool UpstreamDialect::normalizeBody(std::string& body) const {
+    if (!stripModelSuffix()) return false;
+    return normalizeModelInBody(body);
+}
+
+// ==================== 模型名归一 ====================
+
+std::string stripOneMSuffix(const std::string& model) {
+    const std::string trimmed = trimTrailingWs(model);
+    if (trimmed.size() < kOneMMarkerLen) return model;
+
+    const size_t pos = trimmed.size() - kOneMMarkerLen;
+    for (size_t k = 0; k < kOneMMarkerLen; ++k) {
+        if (std::toupper(static_cast<unsigned char>(trimmed[pos + k])) !=
+            static_cast<unsigned char>(kOneMMarker[k])) {
+            return model;  // 未命中：原样返回（含尾部空白）
+        }
+    }
+    return trimTrailingWs(trimmed.substr(0, pos));
+}
+
+bool normalizeModelInBody(std::string& body) {
+    if (body.empty()) return false;
+
+    // 先定位顶层 "model" 值的字节区间（不命中就直接返回，body 零扰动）
+    size_t begin = 0;
+    size_t end = 0;
+    if (!findTopLevelStringSpan(body, "model", begin, end)) return false;
+
+    // 真值走 platform::json（解码语义统一），字节区间由上面的扫描给出
+    auto parsed = platform::json::parse(body);
+    if (parsed.isFail() || !parsed.unsafeValue().isObject()) return false;
+    const platform::json::JsonValue modelVal =
+        parsed.unsafeValue().asObject().get("model");
+    if (!modelVal.isString()) return false;
+
+    const std::string model = modelVal.asString();
+    const std::string stripped = stripOneMSuffix(model);
+    if (stripped == model) return false;
+
+    auto encoded = platform::json::stringify(platform::json::makeString(stripped));
+    if (encoded.isFail()) return false;
+    const std::string& newValue = encoded.unsafeValue();
+
+    // 一致性护栏：扫描到的原文片段必须就是解析出来的那个值（转义/重复键
+    // 等罕见形态下两者可能不一致）——不一致就放弃改写，绝不改坏 body
+    auto oldEncoded = platform::json::stringify(platform::json::makeString(model));
+    if (oldEncoded.isFail() ||
+        body.compare(begin, end - begin, oldEncoded.unsafeValue()) != 0) {
+        LOG_WARN("上游方言：模型名区间与解析值不一致，跳过 [1M] 剥离");
+        return false;
+    }
+
+    body.replace(begin, end - begin, newValue);
+    return true;
+}
+
+} // namespace module::claude

@@ -717,13 +717,21 @@ private:
                             .fontWeight(700)
                             .color(t.colors.textPrimary)
                             .build();
-                        // subtitle 保持静态操作说明（动态反馈走 toast）
-                        ui.text("todo.subtitle")
+                        // subtitle 保持静态操作说明（动态反馈走 toast）；
+                        // 包 clip 栈：41 字文案实宽 ≈545px，窄窗（≲1400）会压到
+                        // 右侧搜索框/按钮（同 md.subtitle.clip 写法）
+                        ui.stack("todo.subtitle.clip")
                             .size(contentW - 560.0f, 18.0f)
-                            .text("点击卡片查看详情 · Ctrl+↑/↓ 移动选中任务 · 右键卡片/列头更多操作 · 拖动卡片跨列移动")
-                            .fontSize(t.sizes.fontSizeSmall)
-                            .lineHeight(18.0f)
-                            .color(t.colors.textSecondary)
+                            .clip()
+                            .content([&] {
+                                ui.text("todo.subtitle")
+                                    .size(contentW - 560.0f, 18.0f)
+                                    .text("点击卡片查看详情 · Ctrl+↑/↓ 移动选中任务 · 右键卡片/列头更多操作 · 拖动卡片跨列移动")
+                                    .fontSize(t.sizes.fontSizeSmall)
+                                    .lineHeight(18.0f)
+                                    .color(t.colors.textSecondary)
+                                    .build();
+                            })
                             .build();
                     })
                     .build();
@@ -1170,8 +1178,12 @@ private:
             }
             if (task.tags.size() > shown) {
                 const std::string more = "+" + std::to_string(task.tags.size() - shown);
-                drawChip(ui, id + ".tag.more", tagX, y + 44.0f, chipWidth(more), t,
-                         more, t.colors.textTertiary, t.colors.surface, cardOpacity);
+                const float moreW = chipWidth(more);
+                // 放不下就不画（旧代码无条件画，chip 右缘可越出卡片 ~19px）
+                if (tagX + moreW <= width - 12.0f) {
+                    drawChip(ui, id + ".tag.more", tagX, y + 44.0f, moreW, t,
+                             more, t.colors.textTertiary, t.colors.surface, cardOpacity);
+                }
             }
         }
 

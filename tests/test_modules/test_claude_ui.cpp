@@ -80,19 +80,6 @@ void cleanupKey(int64_t profileId) {
         kTestKeychainService, "claude:" + std::to_string(profileId));
 }
 
-// 环境变量设置（Windows 用 _putenv_s，空串清除；与 test_settings 同款）
-void setEnvVar(const char* name, const std::string& value) {
-#if defined(_WIN32)
-    ::_putenv_s(name, value.c_str());
-#else
-    if (value.empty()) {
-        ::unsetenv(name);
-    } else {
-        ::setenv(name, value.c_str(), 1);
-    }
-#endif
-}
-
 // RAII 临时目录（「导入当前配置」测试：临时 settings.json / sidecar 注入，
 // 绝不碰真实 ~/.claude——settings_sync 的 Paths 注入模式）
 struct ImportTempDir {
@@ -613,6 +600,7 @@ REGISTER_TEST(claude_module_import_current_full_chain,
     ImportTempDir d("full");
     const auto paths = d.paths();
     env.svc->setSettingsSyncPaths(paths);
+    env.svc->setSettingsTakeOverEnabled(true);
     // 整段 settings.json 形状（含非 env 顶层字段，验证取 env 子对象）
     d.write("settings.json", R"({
         "permissions": {"allow": ["Bash"]},
@@ -729,6 +717,7 @@ REGISTER_TEST(claude_module_import_current_missing_file,
     ImportTempDir d("miss");
     const auto paths = d.paths();   // settings.json 不创建
     env.svc->setSettingsSyncPaths(paths);
+    env.svc->setSettingsTakeOverEnabled(true);
 
     std::unique_ptr<::core::Module> mod(create_claude_module());
     eui::Screen screen;
@@ -808,6 +797,7 @@ REGISTER_TEST(claude_module_import_current_takeover_warn,
     ImportTempDir d("takeover");
     const auto paths = d.paths();
     env.svc->setSettingsSyncPaths(paths);
+    env.svc->setSettingsTakeOverEnabled(true);
     // 模拟接管态：settings.json 是代理托管值 + sidecar 快照残留
     d.write("settings.json", R"({
         "env": {
@@ -1259,9 +1249,7 @@ REGISTER_TEST(claude_module_form_esc_cancels,
 
 // ---- 产品审计 [22]：Claude 页级快捷键 Ctrl+N / Ctrl+S / Ctrl+Enter（headless）----
 // 通道 = Module::onKeyEvent（模拟 app 级 onKeyEvent → Router 派发到当前页
-// 模块，与 todo_ui_keyboard_move 同款直调）。Ctrl+Enter 段把 APPDATA 重定向
-// 到临时目录：doToggleProxy 成功路径会写 proxy_token.txt 到 appDataDir()
-//（%APPDATA%/DevDesk），不能污染真实用户目录；端口用冷门 28888 避让冲突。
+// 模块，与 todo_ui_keyboard_move 同款直调）。端口用冷门 28888 避让冲突。
 REGISTER_TEST(claude_module_keyboard_shortcuts,
               "claude: Ctrl+N 新建 / Ctrl+S 保存表单 / Ctrl+Enter 启停代理（审计 [22]）", {
     TestEnv env;
@@ -1357,26 +1345,14 @@ REGISTER_TEST(claude_module_keyboard_shortcuts,
     }
 
     // 5) Ctrl+Enter 启停：无弹窗开着 → 按一次启动（端口 = configuredProxyPort）、
-    //    再按一次停止；token 文件写进重定向后的临时 APPDATA
-    const std::filesystem::path tmpData =
-        std::filesystem::temp_directory_path() /
-        "devdesk_test_claude_ctrlenter_appdata";
-    std::error_code ec;
-    std::filesystem::remove_all(tmpData, ec);
-    std::filesystem::create_directories(tmpData / "DevDesk", ec);
-    std::string savedAppdata;
-    if (const char* a = std::getenv("APPDATA")) {
-        savedAppdata = a;
-    }
-    setEnvVar("APPDATA", tmpData.string());
+    //    再按一次停止。（原「token 文件写进重定向的临时 APPDATA」一项随代理
+    //    鉴权移除，2026-09-27——启动代理不再向用户目录写任何凭据文件）
     env.svc->setConfiguredProxyPort(28888);
     DOCTEST_CHECK(mod->onKeyEvent(ctrlPress(eui::InputKey::Enter)));
     DOCTEST_CHECK(env.svc->isProxyRunning());
     DOCTEST_CHECK_EQ(env.svc->proxyPort(), 28888);
-    DOCTEST_CHECK(std::filesystem::exists(tmpData / "DevDesk" / "proxy_token.txt"));
     DOCTEST_CHECK(mod->onKeyEvent(ctrlPress(eui::InputKey::Enter)));
     DOCTEST_CHECK(!env.svc->isProxyRunning());
-    setEnvVar("APPDATA", savedAppdata);
 
     mod->onStop();
     cleanupKey(pid);

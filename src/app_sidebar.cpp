@@ -278,6 +278,9 @@ void compose(eui::Ui& ui, const eui::Screen& screen) {
         .content([&] {
             drawSidebar(ui, screen);
             const float pageW = pageContentWidth(screen.width);
+            // 页面区原点 x = 侧边栏实际占宽：模块把窗口坐标的指针位置换算成
+            // 页面坐标（右键菜单定位等）时经 Router 取本值（见 router.h）
+            router->setPageOriginX(sidebarWidth());
             ui.stack("app.page")
                 .size(pageW, screen.height)
                 .clip()

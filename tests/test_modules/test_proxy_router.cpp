@@ -23,15 +23,21 @@
 #include "platform/json.h"
 #include "platform/keychain.h"
 #include "proxy_router.h"
+#include "upstream_dialect.h"
 
+#include <cctype>
 #include <chrono>
 #include <ctime>
 #include <filesystem>
+#include <functional>
+#include <map>
 #include <stdexcept>
 #include <string>
 #include <thread>
+#include <vector>
 
 #include <curl/curl.h>
+#include <httplib.h>
 
 namespace {
 
@@ -98,6 +104,104 @@ platform::http::Response syncSend(const std::string& method,
     }
     return std::move(r.unsafeValue());
 }
+
+// 头名大小写不敏感取头（转发后头名拼写由上游方言层决定）
+// 注：别名供 REGISTER_TEST body 使用——doctest.h 的宏**大括号不保护逗号**，
+// 带逗号的类型名不能直接写在 body 里
+using HeaderMap = std::map<std::string, std::string>;
+
+std::string headerCI(const HeaderMap& h, const std::string& lowerKey) {
+    for (const auto& kv : h) {
+        std::string k = kv.first;
+        for (auto& c : k) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+        if (k == lowerKey) return kv.second;
+    }
+    return std::string();
+}
+
+int countCI(const HeaderMap& h, const std::string& lowerKey) {
+    int n = 0;
+    for (const auto& kv : h) {
+        std::string k = kv.first;
+        for (auto& c : k) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+        if (k == lowerKey) ++n;
+    }
+    return n;
+}
+
+// 在原始 Headers（multimap，未去重）里按大小写不敏感取首个值
+std::string headerValueCI(const httplib::Headers& h, const std::string& lowerKey) {
+    for (const auto& kv : h) {
+        std::string k = kv.first;
+        for (auto& c : k) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+        if (k == lowerKey) return kv.second;
+    }
+    return std::string();
+}
+
+// 上游收到的任一头值 == v / 含 frag？（伪头以任意拼写形态泄漏的兜底断言）
+bool anyHeaderValueEq(const httplib::Headers& h, const std::string& v) {
+    for (const auto& kv : h) {
+        if (kv.second == v) return true;
+    }
+    return false;
+}
+
+bool anyHeaderValueContains(const httplib::Headers& h, const std::string& frag) {
+    for (const auto& kv : h) {
+        if (kv.second.find(frag) != std::string::npos) return true;
+    }
+    return false;
+}
+
+// 原始 httplib mock 上游：伪头断言需要**未去重**的 Headers multimap
+// （get_header_value_count / count）。platform::http::Server 的 ctx.headers
+// 已按精确键去重，且它自己对每封收到的请求也注入同名大写伪头
+// （httplib.h:7186-7192），无法区分「代理转发来的」与「mock 自己注入的」。
+class RawUpstream {
+public:
+    RawUpstream() = default;
+    ~RawUpstream() { stop(); }
+    RawUpstream(const RawUpstream&) = delete;
+    RawUpstream& operator=(const RawUpstream&) = delete;
+
+    bool start() {
+        port_ = svr_.bind_to_any_port("127.0.0.1");
+        if (port_ <= 0) return false;
+        thread_ = std::thread([this] { svr_.listen_after_bind(); });
+        svr_.wait_until_ready();
+        return true;
+    }
+    void stop() {
+        svr_.stop();
+        if (thread_.joinable()) thread_.join();
+    }
+    int port() const { return port_; }
+    std::string baseUrl() const {
+        return "http://127.0.0.1:" + std::to_string(port_);
+    }
+
+    // 处理 POST /v1/messages：把请求头原始快照交给 cb，再回 200 JSON
+    void onMessages(std::function<void(const httplib::Headers&)> cb) {
+        svr_.Post("/v1/messages",
+                  [cb](const httplib::Request& req, httplib::Response& res) {
+                      cb(req.headers);
+                      res.set_content(
+                          R"({"id":"msg_hdr","type":"message","content":[]})",
+                          "application/json");
+                  });
+    }
+
+private:
+    httplib::Server svr_;
+    std::thread thread_;
+    int port_ = 0;
+};
+
+// cpp-httplib 服务端对**每封收到的请求**注入的本地连接伪头（httplib.h:7186-7192），
+// 就是代理必须从客户端头里过滤掉的那 4 个名字
+const char* const kPseudoHeaders[] = {"REMOTE_ADDR", "REMOTE_PORT",
+                                      "LOCAL_ADDR", "LOCAL_PORT"};
 
 // 直接调 ProxyRouter::handleRequest（绕过 HTTP server）的便捷封装
 struct DirectResult {
@@ -400,9 +504,8 @@ REGISTER_TEST(proxy_router_end_to_end,
     DOCTEST_REQUIRE(created.isOk());
     DOCTEST_REQUIRE(svc.setActiveProfile(created.value().id).isOk());
 
-    // 通过 ClaudeService 起真正的代理（含 auth token）
-    const std::string token = "e2e-test-token-xyz";
-    auto started = svc.startProxy("127.0.0.1", 0, token);
+    // 通过 ClaudeService 起真正的代理（仅本机监听，无鉴权）
+    auto started = svc.startProxy("127.0.0.1", 0);
     DOCTEST_REQUIRE(started.isOk());
     const int proxyPort = started.value();
     DOCTEST_CHECK(svc.isProxyRunning());
@@ -411,24 +514,22 @@ REGISTER_TEST(proxy_router_end_to_end,
     const std::string payload =
         R"({"model":"claude-sonnet-4-5","max_tokens":8,"messages":[{"role":"user","content":"ping"}]})";
 
-    // (a) 不带 token → 401（pre_routing_handler 拦截）
+    // (a) 不带 Authorization → 直接放行（代理不看该头）
     auto noAuth = syncSend("POST", proxyUrl + "/v1/messages", payload, "");
-    DOCTEST_CHECK_EQ(noAuth.statusCode, 401);
+    DOCTEST_CHECK_EQ(noAuth.statusCode, 200);
+    DOCTEST_CHECK(noAuth.body.find("msg_e2e") != std::string::npos);
 
-    // (b) 错误 token → 401
-    auto badAuth = syncSend("POST", proxyUrl + "/v1/messages", payload, "wrong");
-    DOCTEST_CHECK_EQ(badAuth.statusCode, 401);
+    // (b) 带任意 Authorization → 同样放行
+    auto anyAuth = syncSend("POST", proxyUrl + "/v1/messages", payload, "whatever");
+    DOCTEST_CHECK_EQ(anyAuth.statusCode, 200);
 
-    // (c) 正确 token → 200 + 转发
-    auto ok = syncSend("POST", proxyUrl + "/v1/messages", payload, token);
-    DOCTEST_CHECK_EQ(ok.statusCode, 200);
-    DOCTEST_CHECK(ok.body.find("msg_e2e") != std::string::npos);
+    // 上游拿到的始终是 profile 的真实 key（代理覆盖客户端发来的值）
     DOCTEST_CHECK_EQ(seenApiKey, std::string("sk-ant-e2e-key-0001"));
 
-    // (d) 只有 (c) 写进了日志
+    // (c) 两次请求都写进了日志
     auto logs = svc.recentCalls(10);
     DOCTEST_REQUIRE(logs.isOk());
-    DOCTEST_CHECK_EQ(logs.value().size(), 1u);
+    DOCTEST_CHECK_EQ(logs.value().size(), 2u);
     DOCTEST_CHECK_EQ(logs.value()[0].statusCode, 200);
 
     svc.stopProxy();
@@ -477,5 +578,227 @@ REGISTER_TEST(proxy_router_error_json_escaped,
         auto err = parsed.value().asObject().get("error");
         DOCTEST_CHECK_EQ(err.asString(), std::string("no_active_profile"));
     }
+    return true;
+})
+
+// ---- 9. 转发经上游方言层：客户端 UA 不泄漏、鉴权头被覆盖 ----
+
+REGISTER_TEST(proxy_router_applies_upstream_dialect,
+              "proxy_router: 转发覆盖 UA + 鉴权头（客户端 python-urllib 不泄漏）", {
+    platform::http::Server upstream("127.0.0.1", 0);
+    HeaderMap seen;
+    std::string seenBody;
+    upstream.route("POST", R"(/(.*))",
+                   [&](const platform::http::RequestCtx& ctx,
+                       platform::http::ResponseWriter& w) {
+                       seen = ctx.headers;
+                       seenBody = ctx.body;
+                       w.setStatus(200);
+                       w.setHeader("Content-Type", "application/json");
+                       w.write(R"({"id":"msg_dialect","type":"message","content":[]})");
+                       w.end();
+                   });
+    DOCTEST_REQUIRE(upstream.start());
+    std::this_thread::sleep_for(std::chrono::milliseconds(30));
+
+    TestDb tdb("dialect");
+    module::claude::ClaudeService svc(tdb.handle(), kTestKeychainService);
+    auto created = svc.createProfile(
+        "Dialect", "http://127.0.0.1:" + std::to_string(upstream.actualPort()),
+        "sk-ant-dialect-key-0001", "deepseek-v4-flash");
+    DOCTEST_REQUIRE(created.isOk());
+    DOCTEST_REQUIRE(svc.setActiveProfile(created.value().id).isOk());
+
+    platform::http::Server proxyServer("127.0.0.1", 0);
+    module::claude::ProxyRouter router(svc, proxyServer);
+    router.registerRoutes();
+
+    // 客户端形态 = doc/scripts/proxy_smoke_test.py（python-urllib：
+    // UA 会被 Cloudflare 判 browser_signature_banned，鉴权头是假 key）
+    HeaderMap clientH;
+    clientH["user-agent"] = "Python-urllib/3.14";
+    clientH["x-api-key"] = "sk-client-bogus";
+    clientH["authorization"] = "Bearer sk-client-bogus";
+    clientH["content-type"] = "application/json";
+
+    const std::string reqBody =
+        R"({"model":"deepseek-v4-flash[1M]","max_tokens":16,"messages":[{"role":"user","content":"hi"}]})";
+    auto r = directCall(router, "POST", "/v1/messages", reqBody, clientH);
+    DOCTEST_CHECK_EQ(r.status, 200);
+
+    // UA 被无条件覆盖（客户端签名不泄漏给上游），且没有大小写变体重复头
+    DOCTEST_CHECK_EQ(headerCI(seen, "user-agent"),
+                     std::string(module::claude::kProxyUserAgent));
+    DOCTEST_CHECK_EQ(countCI(seen, "user-agent"), 1);
+    // 鉴权头换成 profile 的 key（客户端那份作废）
+    DOCTEST_CHECK_EQ(headerCI(seen, "x-api-key"),
+                     std::string("sk-ant-dialect-key-0001"));
+    DOCTEST_CHECK_EQ(countCI(seen, "x-api-key"), 1);
+    DOCTEST_CHECK_EQ(headerCI(seen, "authorization"),
+                     std::string("Bearer sk-ant-dialect-key-0001"));
+    DOCTEST_CHECK_EQ(countCI(seen, "authorization"), 1);
+    // 客户端没带 anthropic-version → 补默认值
+    DOCTEST_CHECK_EQ(headerCI(seen, "anthropic-version"), std::string("2023-06-01"));
+    // 127.0.0.1 是默认方言：不注入会话头、不剥模型标记（body 原样上行）
+    DOCTEST_CHECK_EQ(countCI(seen, "x-opencode-session"), 0);
+    DOCTEST_CHECK_EQ(seenBody, reqBody);
+
+    upstream.stop();
+    platform::keychain::deleteSecret(
+        kTestKeychainService, "claude:" + std::to_string(created.value().id));
+    return true;
+})
+
+// ---- 10. httplib 注入的本地连接伪头不转发（缓冲路径：直接调 handleRequest） ----
+
+REGISTER_TEST(proxy_router_drops_httplib_pseudo_headers,
+              "proxy_router: 不转发 httplib 注入伪头（LOCAL_ADDR/REMOTE_PORT 等）", {
+    // mock 上游：捕获原始请求头（未去重的 Headers multimap）
+    RawUpstream upstream;
+    httplib::Headers seen;
+    upstream.onMessages([&seen](const httplib::Headers& h) { seen = h; });
+    DOCTEST_REQUIRE(upstream.start());
+    std::this_thread::sleep_for(std::chrono::milliseconds(30));
+
+    TestDb tdb("hdrdrop");
+    module::claude::ClaudeService svc(tdb.handle(), kTestKeychainService);
+    auto created = svc.createProfile("HdrDrop", upstream.baseUrl(),
+                                     "sk-ant-hdr-key-0001", "claude-sonnet-4-5");
+    DOCTEST_REQUIRE(created.isOk());
+    DOCTEST_REQUIRE(svc.setActiveProfile(created.value().id).isOk());
+
+    platform::http::Server proxyServer("127.0.0.1", 0);
+    module::claude::ProxyRouter router(svc, proxyServer);
+    router.registerRoutes();
+
+    // 模拟路由收到的头：httplib 注入的大写伪头（值换成本机不可能出现的标记值）
+    // + 客户端大小写变体 + 必须保留的正常头
+    HeaderMap clientH;
+    clientH["REMOTE_ADDR"] = "198.51.100.21";
+    clientH["REMOTE_PORT"] = "19861";
+    clientH["LOCAL_ADDR"] = "198.51.100.22";
+    clientH["LOCAL_PORT"] = "19862";
+    clientH["remote_addr"] = "198.51.100.23";
+    clientH["remote_port"] = "19863";
+    clientH["local_addr"] = "198.51.100.24";
+    clientH["local_port"] = "19864";
+    clientH["anthropic-version"] = "2023-06-01";
+    clientH["content-type"] = "application/json";
+    clientH["x-devdesk-keep"] = "yes";
+
+    const std::string reqBody =
+        R"({"model":"claude-sonnet-4-5","max_tokens":16,"messages":[{"role":"user","content":"hi"}]})";
+    auto r = directCall(router, "POST", "/v1/messages", reqBody, clientH);
+    DOCTEST_CHECK_EQ(r.status, 200);
+
+    // 上游 mock 自己也对每封收到的请求注入一份伪头（httplib.h:7186-7192 服务端
+    // 行为）；Headers 键大小写不敏感（httplib.h:506-508），所以每个伪头名在
+    // 上游应**恰好 1 条**——就是 mock 自注入那条；≥2 即代理转发了伪头（任何拼写）
+    for (const char* name : kPseudoHeaders) {
+        DOCTEST_CHECK_EQ(seen.count(name), 1u);
+    }
+    // 兜底：标记值以任意拼写/键名出现 = 泄漏
+    DOCTEST_CHECK_FALSE(anyHeaderValueContains(seen, "198.51.100."));
+    DOCTEST_CHECK_FALSE(anyHeaderValueEq(seen, "19861"));
+    DOCTEST_CHECK_FALSE(anyHeaderValueEq(seen, "19862"));
+    DOCTEST_CHECK_FALSE(anyHeaderValueEq(seen, "19863"));
+    DOCTEST_CHECK_FALSE(anyHeaderValueEq(seen, "19864"));
+    // 正常头必须继续透传
+    DOCTEST_CHECK_EQ(headerValueCI(seen, "anthropic-version"),
+                     std::string("2023-06-01"));
+    DOCTEST_CHECK_EQ(headerValueCI(seen, "content-type"),
+                     std::string("application/json"));
+    DOCTEST_CHECK_EQ(headerValueCI(seen, "x-devdesk-keep"), std::string("yes"));
+
+    upstream.stop();
+    platform::keychain::deleteSecret(
+        kTestKeychainService, "claude:" + std::to_string(created.value().id));
+    return true;
+})
+
+// ---- 11. 端到端（真 httplib 注入）：缓冲 + 流式两条路径都不转发伪头 ----
+
+REGISTER_TEST(proxy_router_pseudo_headers_filtered_end_to_end,
+              "proxy_router: 端到端不转发伪头（缓冲 + 流式，真 httplib 注入）", {
+    // 上游 mock 捕获每封请求的原始头
+    RawUpstream upstream;
+    std::vector<httplib::Headers> snaps;
+    upstream.onMessages([&snaps](const httplib::Headers& h) {
+        snaps.push_back(h);
+    });
+    DOCTEST_REQUIRE(upstream.start());
+    std::this_thread::sleep_for(std::chrono::milliseconds(30));
+
+    TestDb tdb("hdre2e");
+    module::claude::ClaudeService svc(tdb.handle(), kTestKeychainService);
+    auto created = svc.createProfile("HdrE2E", upstream.baseUrl(),
+                                     "sk-ant-hdr-e2e-0001", "claude-sonnet-4-5");
+    DOCTEST_REQUIRE(created.isOk());
+    DOCTEST_REQUIRE(svc.setActiveProfile(created.value().id).isOk());
+
+    // 起真代理 server（其 httplib 会对每封收到的请求注入 LOCAL_ADDR 等伪头）
+    auto started = svc.startProxy("127.0.0.1", 0);
+    DOCTEST_REQUIRE(started.isOk());
+    DOCTEST_CHECK(svc.isProxyRunning());
+    const std::string proxyUrl =
+        "http://127.0.0.1:" + std::to_string(started.value());
+
+    // 客户端头：正常头 + 小写伪头 canary（与代理端注入的大写伪头同属 CI 同名）
+    HeaderMap reqH;
+    reqH["Content-Type"] = "application/json";
+    reqH["anthropic-version"] = "2023-06-01";
+    reqH["x-devdesk-keep"] = "yes";
+    reqH["local_port"] = "19871";
+    reqH["local_addr"] = "198.51.100.31";
+    reqH["remote_port"] = "19872";
+    reqH["remote_addr"] = "198.51.100.32";
+
+    auto doSend = [&](const std::string& body) {
+        platform::http::Request creq;
+        creq.method = "POST";
+        creq.url = proxyUrl + "/v1/messages";
+        creq.body = body;
+        creq.timeoutMs = 8000;
+        creq.headers = reqH;
+        return platform::http::send(creq);
+    };
+
+    // (a) 缓冲路径（body 无 stream:true）
+    auto r1 = doSend(
+        R"({"model":"claude-sonnet-4-5","max_tokens":8,"messages":[{"role":"user","content":"ping"}]})");
+    DOCTEST_REQUIRE(r1.isOk());
+    DOCTEST_CHECK_EQ(r1.value().statusCode, 200);
+    DOCTEST_CHECK(r1.value().body.find("msg_hdr") != std::string::npos);
+
+    // (b) 流式路径（POST /v1/messages + stream:true）
+    auto r2 = doSend(
+        R"({"model":"claude-sonnet-4-5","max_tokens":8,"stream":true,"messages":[{"role":"user","content":"ping"}]})");
+    DOCTEST_REQUIRE(r2.isOk());
+    DOCTEST_CHECK_EQ(r2.value().statusCode, 200);
+    DOCTEST_CHECK(r2.value().body.find("msg_hdr") != std::string::npos);
+
+    DOCTEST_REQUIRE_EQ(snaps.size(), 2u);
+    for (const auto& h : snaps) {
+        // 每个伪头名恰好 1 条（上游自注入）——代理注入的（大写）与客户端
+        // canary（小写）都被过滤；≥2 即泄漏
+        for (const char* name : kPseudoHeaders) {
+            DOCTEST_CHECK_EQ(h.count(name), 1u);
+        }
+        DOCTEST_CHECK_FALSE(anyHeaderValueContains(h, "198.51.100."));
+        DOCTEST_CHECK_FALSE(anyHeaderValueEq(h, "19871"));
+        DOCTEST_CHECK_FALSE(anyHeaderValueEq(h, "19872"));
+        // 正常头仍在
+        DOCTEST_CHECK_EQ(headerValueCI(h, "anthropic-version"),
+                         std::string("2023-06-01"));
+        DOCTEST_CHECK_EQ(headerValueCI(h, "content-type"),
+                         std::string("application/json"));
+        DOCTEST_CHECK_EQ(headerValueCI(h, "x-devdesk-keep"), std::string("yes"));
+    }
+
+    svc.stopProxy();
+    DOCTEST_CHECK_FALSE(svc.isProxyRunning());
+    upstream.stop();
+    platform::keychain::deleteSecret(
+        kTestKeychainService, "claude:" + std::to_string(created.value().id));
     return true;
 })

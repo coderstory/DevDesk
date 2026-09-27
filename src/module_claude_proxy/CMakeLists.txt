@@ -5,6 +5,7 @@ add_library(devdesk_module_claude_proxy STATIC
     proxy_router.cpp
     settings_sync.cpp
     streaming_proxy.cpp
+    upstream_dialect.cpp
 )
 
 devdesk_apply_warnings(devdesk_module_claude_proxy)

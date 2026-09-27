@@ -206,44 +206,6 @@ REGISTER_TEST(settings_proxy_port_roundtrip_clamp, "settings: proxyPort 默认/�
     return true;
 })
 
-REGISTER_TEST(settings_proxy_token_mask, "settings: maskProxyToken 默认脱敏策略（审计 [16]）", {
-    using module::settings::maskProxyToken;
-
-    // 常规 32-hex token：前 4 + *** + 后 4（provider-config §7 示例形态）
-    const std::string token = "a3f8b2c1d4e5f60718293a4b5c6d7e8f";
-    DOCTEST_CHECK_EQ(maskProxyToken(token), std::string("a3f8***7e8f"));
-    // 掩码绝不等于原文、不含中段
-    DOCTEST_CHECK(maskProxyToken(token) != token);
-    DOCTEST_CHECK(maskProxyToken(token).find("18293") == std::string::npos);
-
-    // 恰 8 位走前后缀分支
-    DOCTEST_CHECK_EQ(maskProxyToken("abcdefgh"), std::string("abcd***efgh"));
-    // 短于 8 位全掩且固定形态（不泄露真实长度、不输出真实字符）
-    DOCTEST_CHECK_EQ(maskProxyToken("abcdefg"), std::string("****"));
-    DOCTEST_CHECK_EQ(maskProxyToken("a"), std::string("****"));
-    // 空串原样（调用方以「代理未运行」分支为主，防御式定义）
-    DOCTEST_CHECK(maskProxyToken("").empty());
-
-    // 「显形不持久化」结构性保证：token 与显形态都不进 SettingsConfig——
-    // 任意 save 后 config.json 文本不含 token / revealed 键
-    const auto path = tempConfigFile("tokenmask");
-    removeQuietly(path);
-    module::settings::SettingsStore store(path);
-    module::settings::SettingsConfig cfg;
-    DOCTEST_REQUIRE(store.save(cfg).isOk());
-    {
-        std::ifstream f(path);
-        std::stringstream ss;
-        ss << f.rdbuf();
-        const std::string text = ss.str();
-        DOCTEST_CHECK_FALSE(text.empty());
-        DOCTEST_CHECK(text.find("token") == std::string::npos);
-        DOCTEST_CHECK(text.find("revealed") == std::string::npos);
-    }
-    removeQuietly(path);
-    return true;
-})
-
 REGISTER_TEST(settings_save_load_roundtrip, "settings: save/load roundtrip", {
     const auto path = tempConfigFile("roundtrip");
     removeQuietly(path);
@@ -454,7 +416,6 @@ REGISTER_TEST(settings_module_compose_renders, "settings: module compose builds 
     DOCTEST_CHECK(ui.find("settings.card.modules.sw.0") != nullptr);
     DOCTEST_CHECK(ui.find("settings.card.directory.bg") != nullptr);
     DOCTEST_CHECK(ui.find("settings.card.proxy.bg") != nullptr);
-    DOCTEST_CHECK(ui.find("settings.card.proxy.token.value") != nullptr);
     DOCTEST_CHECK(ui.find("settings.card.appearance.bg") == nullptr);
 
     // 日志 tab：设置卡（保留天数 + 级别）+ 日志查看卡（tail + 刷新按钮）
@@ -652,9 +613,9 @@ REGISTER_TEST(settings_log_dropdown_popup_stays_in_window, "settings: log dropdo
     return true;
 })
 
-// ---- 代理 token 文本框文字垂直居中（W8） ----
+// ---- 目录路径文本框文字垂直居中（W8；原同测的代理 token 框已于 2026-09-27 随鉴权移除） ----
 
-REGISTER_TEST(settings_token_text_vertically_centered, "settings: token text vertically centered", {
+REGISTER_TEST(settings_path_text_vertically_centered, "settings: path text vertically centered", {
     std::unique_ptr<::core::Module> mod(create_settings_module());
     mod->onStart();
     eui::Screen screen;
@@ -667,13 +628,10 @@ REGISTER_TEST(settings_token_text_vertically_centered, "settings: token text ver
     mod->compose(ui, screen);
     ui.end();
 
-    // token 值与目录路径都是"可见圆角框内的单行文本"，必须显式 Center
+    // 目录路径是"可见圆角框内的单行文本"，必须显式 Center
     //（缺省 Top 会贴框顶，W7 侧边栏同款问题）
-    const auto* token = ui.find("settings.card.proxy.token.value");
     const auto* path = ui.find("settings.card.directory.path.value");
-    DOCTEST_REQUIRE(token != nullptr);
     DOCTEST_REQUIRE(path != nullptr);
-    DOCTEST_CHECK(token->verticalAlign == eui::VerticalAlign::Center);
     DOCTEST_CHECK(path->verticalAlign == eui::VerticalAlign::Center);
 
     mod->onStop();
@@ -774,6 +732,7 @@ REGISTER_TEST(settings_takeover_status_row,
     paths.sidecarFile = dir / "snapshot.json";
     paths.overlayFiles.push_back(overlay);
     svc.setSettingsSyncPaths(paths);
+    svc.setSettingsTakeOverEnabled(true);
     setEnvVar("DEVDESK_CONFIG_PATH", cfgPath.string());
 
     auto pr = svc.createProfile("接管", "https://up.example.com",
@@ -1002,7 +961,6 @@ REGISTER_TEST(settings_gated_proxy_card_hidden, "settings: claude 模块关闭 �
     ui.end();
 
     DOCTEST_CHECK(ui.find("settings.card.proxy.bg") == nullptr);  // 整卡隐藏
-    DOCTEST_CHECK(ui.find("settings.card.proxy.token.value") == nullptr);
     DOCTEST_CHECK(ui.find("settings.card.directory.bg") != nullptr);  // markdown 开
     DOCTEST_CHECK(ui.find("settings.card.modules.bg") != nullptr);
 
@@ -1250,11 +1208,10 @@ REGISTER_TEST(settings_port_esc_discards_draft,
 
 // ---- 产品审计 [22]：设置页 Ctrl+S 保存快捷键（headless）----
 // 设置页除端口草稿外全部即时落盘，Ctrl+S 语义 = 提交待决草稿（=「应用」按钮
-// 全链路，含 ClaudeService 端口同步），无待决时显式重写落盘 + 状态行回显；
-// 「重新生成 Token」确认弹窗开着时不消费。服务注册 + 代理启动仅为了让
-// 置灰的「重新生成」按钮变可点，验证弹窗门控分支。
+// 全链路，含 ClaudeService 端口同步），无待决时显式重写落盘 + 状态行回显。
+// 服务注册 + 代理启动用于验证代理运行中的 Ctrl+S 分支。
 REGISTER_TEST(settings_ctrl_s_save_shortcut,
-              "settings: Ctrl+S 提交端口草稿 / 显式落盘 / 弹窗门控（审计 [22]）", {
+              "settings: Ctrl+S 提交端口草稿 / 显式落盘（审计 [22]）", {
     PruneEnv env("ctrls");
     module::claude::ClaudeService svc(env.db->db(), "DevDeskTestCtrlS");
     module::claude::ClaudeService::setGlobal(&svc);
@@ -1338,26 +1295,11 @@ REGISTER_TEST(settings_ctrl_s_save_shortcut,
         DOCTEST_REQUIRE(sub != nullptr);
         DOCTEST_CHECK(sub->text.find("代理端口已保存") != std::string::npos);
     }
-    // 4) 「重新生成 Token」确认弹窗开着 → Ctrl+S 不消费（确认弹窗优先，
-    //    不得顺带产生写盘/应用副作用）
+    // 4) 代理运行中再按 Ctrl+S：draft 已应用（"9001" == cfg），走显式落盘分支
+    //（原「重新生成 Token 确认弹窗门控」一项随鉴权移除，2026-09-27）
     auto started = svc.startProxy("127.0.0.1", 0);
     DOCTEST_REQUIRE(started.isOk());
     frame("css4");
-    {
-        auto* regen = ui.find("settings.card.proxy.token.regen.bg");
-        DOCTEST_REQUIRE(regen != nullptr);
-        DOCTEST_REQUIRE(regen->onClick != nullptr);
-        regen->onClick();                       // 打开确认弹窗
-    }
-    DOCTEST_CHECK(!mod->onKeyEvent(ctrlS(eui::KeyAction::Press)));
-    frame("css5");
-    {
-        auto* cancel = ui.find("settings.dialog.regen.cancel.bg");
-        DOCTEST_REQUIRE(cancel != nullptr);
-        DOCTEST_REQUIRE(cancel->onClick != nullptr);
-        cancel->onClick();                      // 关弹窗
-    }
-    // 5) 弹窗关闭后恢复：draft 已应用（"9001" == cfg），Ctrl+S 走显式落盘分支
     DOCTEST_CHECK(mod->onKeyEvent(ctrlS(eui::KeyAction::Press)));
 
     svc.stopProxy();

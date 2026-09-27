@@ -19,7 +19,6 @@ struct RequestCtx {
     std::map<std::string, std::string> headers;
     std::string body;
     std::string clientAddress;
-    bool authenticated = false;
     // 客户端连接是否已断开（由 cpp-httplib 提供，流式写循环用于提前停止上游）
     std::function<bool()> isConnectionClosed;
 };
@@ -78,7 +77,7 @@ using RouteHandler = std::function<void(const RequestCtx&, ResponseWriter&)>;
 
 class Server {
 public:
-    Server(std::string bindAddress, int port, std::string authToken = "");
+    Server(std::string bindAddress, int port);
     ~Server();
 
     void route(const std::string& method, const std::string& path, RouteHandler handler);
@@ -88,14 +87,11 @@ public:
 
     bool isRunning() const { return running_; }
     int actualPort() const { return port_; }
-    bool requiresAuth() const { return !authToken_.empty(); }
-    const std::string& authToken() const { return authToken_; }
 
 private:
     struct Impl;
     std::string bindAddress_;
     int port_;
-    std::string authToken_;
     bool running_ = false;
     Impl* impl_ = nullptr;
 };

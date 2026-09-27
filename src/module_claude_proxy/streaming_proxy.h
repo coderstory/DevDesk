@@ -116,7 +116,9 @@ std::string buildUpstreamErrorFrame(const std::string& upstreamError);
 //
 // 行为：
 //   1. 克隆 req，把 url 补全为 profile.baseUrl + req.url（若 req.url 是相对路径）
-//   2. 注入 x-api-key = profile.apiKeyPlain（覆盖客户端传来的）
+//   2. 按 profile.baseUrl 选出的上游方言（UpstreamDialect）归一请求头与模型名：
+//      覆盖 x-api-key / User-Agent、补 anthropic-version、按需注入会话头、
+//      剥模型名 [1M] 标记（各网关差异集中在 upstream_dialect.h/.cpp）
 //   3. 调用 platform::http::sendStreaming 启动 Thread B
 //
 // 返回的 StreamingResponse 由调用方持有：

@@ -7,6 +7,7 @@
 #include "core/logging.h"
 #include "platform/http_client.h"
 #include "streaming_proxy.h"
+#include "upstream_dialect.h"
 
 #include <algorithm>
 #include <chrono>
@@ -44,21 +45,15 @@ std::map<std::string, std::string> copyHeaders(
             k == "connection" || k == "transfer-encoding") {
             continue;
         }
+        // cpp-httplib 解析请求时注入的本地连接伪头（httplib.h:7186-7192）：
+        // 转发到上游毫无意义，还会泄漏本机地址/端口、干扰网关的头校验
+        if (k == "remote_addr" || k == "remote_port" ||
+            k == "local_addr" || k == "local_port") {
+            continue;
+        }
         out.emplace(kv.first, kv.second);
     }
     return out;
-}
-
-// 检查 headers 是否大小写不敏感地包含某个 key
-bool hasHeader(const std::map<std::string, std::string>& headers,
-               const std::string& keyLower) {
-    for (const auto& kv : headers) {
-        std::string k = kv.first;
-        std::transform(k.begin(), k.end(), k.begin(),
-                       [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
-        if (k == keyLower) return true;
-    }
-    return false;
 }
 
 // JSON 字符串转义（RFC 8259：引号/反斜杠/控制字符；UTF-8 原样透传）
@@ -191,21 +186,16 @@ void ProxyRouter::handleRequest(
     upstream.timeoutMs = 120000;     // 2 分钟
     upstream.verifyTls = true;
 
-    // 复制客户端 headers（去掉 hop-by-hop / authorization）
+    // 复制客户端 headers（去掉 hop-by-hop / authorization），
+    // 再按上游方言归一（鉴权头 / UA / 会话头 / 模型名标记）——
+    // 各网关的差异全部收敛在 UpstreamDialect 里，此处不再有 provider if
     auto fwd = copyHeaders(headers);
-
-    // 强制覆盖：x-api-key 用 profile 的 API key
-    // 如果客户端没指定 anthropic-version，用默认
-    if (!hasHeader(fwd, "anthropic-version")) {
-        fwd["anthropic-version"] = "2023-06-01";
-    }
-    fwd["x-api-key"] = apiKey;
-    if (!apiKey.empty()) {
-        fwd["Authorization"] = "Bearer " + apiKey;  // 兼容 Anthropic-compatible 网关（如 bailian）期望 Bearer；真 Anthropic API 收 x-api-key 忽略 Bearer
-    }
-    fwd["Host"] = "";  // 让 libcurl 自己填
-
+    const UpstreamDialect dialect = UpstreamDialect::forBaseUrl(profile.baseUrl);
+    dialect.applyHeaders(fwd, apiKey);
     upstream.headers = std::move(fwd);
+    if (dialect.normalizeBody(upstream.body)) {
+        LOG_INFO("代理：按上游方言剥掉模型名 [1M] 标记（" + profile.baseUrl + "）");
+    }
 
     // ---- 3. 转发 ----
     auto respR = platform::http::send(upstream);
@@ -344,9 +334,8 @@ void ProxyRouter::handleStreamingRequest(
     upstream.lowSpeedTimeSec = 60;      // 持续 60s → CURLE_OPERATION_TIMEDOUT
     upstream.verifyTls = true;
     upstream.headers = copyHeaders(headers);
-    if (!hasHeader(upstream.headers, "anthropic-version")) {
-        upstream.headers["anthropic-version"] = "2023-06-01";
-    }
+    // 头与 body 的上游方言化（鉴权 / UA / 会话头 / 模型名标记）由
+    // sendStreamingClaude 内的 UpstreamDialect 统一处理
 
     // ---- 3. 启动三线程流式转发（libcurl 线程 + 队列 + backpressure）----
     auto streamR = sendStreamingClaude(upstream, profile);

@@ -7,6 +7,7 @@
 #include "doctest.h"
 #include "core/database.h"
 #include "core/module_interface.h"
+#include "core/router.h"
 #include "core/theme.h"
 #include "module_markdown/md_block_model.h"
 #include "module_markdown/md_line_scanner.h"
@@ -226,10 +227,11 @@ REGISTER_TEST(md_tree_grouping, "md_tree: 根组常显置顶 + 顶层文件夹/�
 
 REGISTER_TEST(md_tree_collapse_and_deep_files, "md_tree: 收起隐藏文件 / 更深层文件显示剩余子路径", {
     std::vector<NoteMeta> notes;
-    notes.push_back(makeNote("a/deep/x.md", 1));
-    notes.push_back(makeNote("a/top.md", 2));
-    notes.push_back(makeNote("solo.md", 3));
-    // 收起 a → a 组只剩文件夹行；根目录组不受影响（常显置顶）
+    notes.push_back(makeNote("a/deep/more/x.md", 1));  // 三级夹下的文件
+    notes.push_back(makeNote("a/deep/y.md", 2));
+    notes.push_back(makeNote("a/top.md", 3));
+    notes.push_back(makeNote("solo.md", 4));
+    // 收起一级夹 a → a 的文件行与子夹行一起隐藏；根目录组不受影响（常显置顶）
     const auto collapsed = buildTreeRows(notes, {}, {"a"});
     DOCTEST_CHECK_EQ(collapsed.size(), static_cast<size_t>(3));
     DOCTEST_CHECK(collapsed[0].isFolder);
@@ -238,18 +240,60 @@ REGISTER_TEST(md_tree_collapse_and_deep_files, "md_tree: 收起隐藏文件 / �
     DOCTEST_CHECK_EQ(collapsed[1].name, std::string("solo.md"));
     DOCTEST_CHECK(collapsed[2].isFolder);
     DOCTEST_CHECK_EQ(collapsed[2].name, std::string("a"));
-    // 更深层文件（a/deep/x.md）挂在一级目录 a 下，显示剩余子路径（二级树不递归）；
-    // 组内保持传入顺序（listAll 的 mtime 倒序）
+    // W10 两级：组内「文件行在前（mtime 序）、子夹行在后」（与顶层根组→顶层夹同序）；
+    // 更深层文件（a/deep/more/x.md）挂在二级夹 a/deep 下，显示剩余子路径（内容不丢）
     const auto rows = buildTreeRows(notes, {}, {});
-    DOCTEST_CHECK_EQ(rows.size(), static_cast<size_t>(5));
+    DOCTEST_CHECK_EQ(rows.size(), static_cast<size_t>(7));
     DOCTEST_CHECK(rows[0].isFolder);
     DOCTEST_CHECK_EQ(rows[0].name, std::string("根目录"));
     DOCTEST_CHECK_EQ(rows[1].name, std::string("solo.md"));
+    DOCTEST_CHECK_EQ(rows[1].depth, 1);
     DOCTEST_CHECK(rows[2].isFolder);
     DOCTEST_CHECK_EQ(rows[2].name, std::string("a"));
-    DOCTEST_CHECK_EQ(rows[3].name, std::string("deep/x.md"));
-    DOCTEST_CHECK_EQ(rows[4].name, std::string("top.md"));
-    DOCTEST_CHECK_EQ(rows[3].relPath, std::string("a/deep/x.md"));
+    DOCTEST_CHECK_EQ(rows[2].depth, 0);
+    DOCTEST_CHECK_EQ(rows[3].name, std::string("top.md"));  // a 的直接子文件
+    DOCTEST_CHECK_EQ(rows[3].relPath, std::string("a/top.md"));
+    DOCTEST_CHECK_EQ(rows[3].depth, 1);
+    DOCTEST_CHECK(rows[4].isFolder);                        // 二级夹行
+    DOCTEST_CHECK_EQ(rows[4].name, std::string("deep"));
+    DOCTEST_CHECK_EQ(rows[4].relPath, std::string("a/deep"));
+    DOCTEST_CHECK_EQ(rows[4].depth, 1);
+    DOCTEST_CHECK_EQ(rows[5].name, std::string("more/x.md"));  // 残余子路径
+    DOCTEST_CHECK_EQ(rows[5].relPath, std::string("a/deep/more/x.md"));
+    DOCTEST_CHECK_EQ(rows[5].depth, 2);
+    DOCTEST_CHECK_EQ(rows[6].name, std::string("y.md"));
+    DOCTEST_CHECK_EQ(rows[6].depth, 2);
+    // 收起二级夹 → 只剩子夹行（一级夹自己的文件行不受影响）
+    const auto subCollapsed = buildTreeRows(notes, {}, {"a/deep"});
+    DOCTEST_CHECK_EQ(subCollapsed.size(), static_cast<size_t>(5));
+    DOCTEST_CHECK_EQ(subCollapsed[3].name, std::string("top.md"));
+    DOCTEST_CHECK(subCollapsed[4].isFolder);
+    DOCTEST_CHECK_EQ(subCollapsed[4].name, std::string("deep"));
+    return true;
+})
+
+REGISTER_TEST(md_tree_two_level_empty_subfolders, "md_tree: W10 空子夹行（磁盘枚举）+ 三级目录不进树", {
+    // 只有磁盘枚举的目录（没有任何笔记）：顶层夹与空子夹都有文件夹行、零文件行
+    const std::vector<NoteMeta> none;
+    const auto rows = buildTreeRows(none, {"工作", "工作/周会", "归档"}, {});
+    DOCTEST_CHECK_EQ(rows.size(), static_cast<size_t>(4));
+    DOCTEST_CHECK(rows[0].isFolder);
+    DOCTEST_CHECK_EQ(rows[0].name, std::string("根目录"));  // 常显置顶
+    DOCTEST_CHECK_EQ(rows[1].name, std::string("工作"));    // UTF-8 字节序：工 < 归
+    DOCTEST_CHECK_EQ(rows[1].depth, 0);
+    DOCTEST_CHECK_EQ(rows[2].name, std::string("周会"));    // 空子夹行（W10）
+    DOCTEST_CHECK_EQ(rows[2].relPath, std::string("工作/周会"));
+    DOCTEST_CHECK_EQ(rows[2].depth, 1);
+    DOCTEST_CHECK_EQ(rows[3].name, std::string("归档"));
+    DOCTEST_CHECK_EQ(rows[3].depth, 0);
+
+    // 三级目录（磁盘枚举）不进树：两级上限下没有它的行位，两级仍有行
+    const auto deep = buildTreeRows(none, {"a", "a/b", "a/b/c"}, {});
+    DOCTEST_CHECK_EQ(deep.size(), static_cast<size_t>(3));
+    DOCTEST_CHECK_EQ(deep[1].name, std::string("a"));
+    DOCTEST_CHECK_EQ(deep[2].name, std::string("b"));
+    DOCTEST_CHECK_EQ(deep[2].relPath, std::string("a/b"));
+    DOCTEST_CHECK_EQ(deep[2].depth, 1);
     return true;
 })
 
@@ -686,6 +730,167 @@ REGISTER_TEST(md_module_new_folder, "markdown_module: W9 新建文件夹入口�
     DOCTEST_CHECK(fs::is_regular_file(env.dir / "工作" / "周会.md"));
     DOCTEST_CHECK_EQ(ui.find("md.tree.node.2.name")->text, std::string("工作"));
     DOCTEST_CHECK_EQ(ui.find("md.tree.node.3.name")->text, std::string("周会.md"));
+
+    mod->onStop();
+    return true;
+})
+
+// ---- 2b4b. W10：两级目录——父目录下拉建子夹 + 空子夹行 + 两级上限拦截 ----
+
+REGISTER_TEST(md_module_new_folder_parent,
+              "markdown_module: W10 新建子夹（父目录下拉）/ 空子夹行 / 两级上限（headless）", {
+    MdUiEnv env("newfolder2");
+    DOCTEST_REQUIRE(env.db != nullptr);
+    DOCTEST_REQUIRE(writeTextFile(env.dir / "工作" / "周报.md", "# 周报\n"));
+
+    std::unique_ptr<::core::Module> mod(create_markdown_module());
+    mod->onStart();
+
+    eui::Screen screen;
+    screen.width = 1600.0f;
+    screen.height = 1000.0f;
+    eui::Ui ui;
+    auto frame = [&](const char* page) {
+        ui.begin(page);
+        mod->compose(ui, screen);
+        ui.end();
+    };
+
+    // 帧1：树 = [根目录, 工作, 周报.md]；打开新建文件夹弹窗
+    frame("np1");
+    DOCTEST_CHECK_EQ(ui.find("md.tree.node.0.name")->text, std::string("根目录"));
+    DOCTEST_CHECK_EQ(ui.find("md.tree.node.1.name")->text, std::string("工作"));
+    DOCTEST_CHECK_EQ(ui.find("md.tree.node.2.name")->text, std::string("周报.md"));
+    const auto* folderBtn = ui.find("md.tree.newfolder.bg");
+    DOCTEST_REQUIRE(folderBtn != nullptr);
+    folderBtn->onClick();
+    frame("np2");
+
+    // 父目录下拉默认第 0 项（根目录）；点开选「工作」（真实 onClick 链路）
+    const auto* ddLabel = ui.find("md.dialog.newfolder.parent.dd.label");
+    DOCTEST_REQUIRE(ddLabel != nullptr);
+    DOCTEST_CHECK_EQ(ddLabel->text, std::string("根目录"));
+    const auto* ddField = ui.find("md.dialog.newfolder.parent.dd.field");
+    DOCTEST_REQUIRE(ddField != nullptr);
+    DOCTEST_REQUIRE(ddField->onClick != nullptr);
+    ddField->onClick();
+    frame("np3");
+    const auto* parentItem1 = ui.find("md.dialog.newfolder.parent.dd.item.1");
+    DOCTEST_REQUIRE(parentItem1 != nullptr);
+    DOCTEST_REQUIRE(parentItem1->onClick != nullptr);
+    parentItem1->onClick();
+    frame("np4");
+    DOCTEST_CHECK_EQ(ui.find("md.dialog.newfolder.parent.dd.label")->text,
+                     std::string("工作"));
+
+    // 输入子夹名 + 创建 → 父目录 工作 ⇒ 工作/周会（磁盘真实建出）
+    const auto* input = ui.find("md.dialog.newfolder.input.hit");
+    DOCTEST_REQUIRE(input != nullptr);
+    DOCTEST_REQUIRE(input->onTextInput != nullptr);
+    core::TextInputEvent tie;
+    tie.text = "周会";
+    input->onTextInput(tie);
+    frame("np5");
+    const auto* confirm = ui.find("md.dialog.newfolder.confirm.bg");
+    DOCTEST_REQUIRE(confirm != nullptr);
+    DOCTEST_REQUIRE(confirm->onClick != nullptr);
+    confirm->onClick();
+    frame("np6");
+    DOCTEST_CHECK(fs::is_directory(env.dir / "工作" / "周会"));
+    // 空子夹行入树并嵌在「工作」组下（工作 的文件行在前、子夹行在后）
+    DOCTEST_CHECK_EQ(ui.find("md.tree.node.0.name")->text, std::string("根目录"));
+    DOCTEST_CHECK_EQ(ui.find("md.tree.node.1.name")->text, std::string("工作"));
+    DOCTEST_CHECK_EQ(ui.find("md.tree.node.2.name")->text, std::string("周报.md"));
+    DOCTEST_CHECK_EQ(ui.find("md.tree.node.3.name")->text, std::string("周会"));
+    DOCTEST_CHECK_EQ(ui.find("md.tree.node.3.arrow")->text, std::string("▾"));
+    DOCTEST_CHECK(ui.find("md.tree.node.4.name") == nullptr);  // 空子夹无子行
+
+    // layout 级：子夹行比顶层夹行更靠右（depth=1 缩进真实生效）
+    ui.layout(screen.width, screen.height);
+    const auto* topName = ui.find("md.tree.node.1.name");
+    const auto* subName = ui.find("md.tree.node.3.name");
+    DOCTEST_REQUIRE(topName != nullptr);
+    DOCTEST_REQUIRE(subName != nullptr);
+    DOCTEST_CHECK(subName->frame.x > topName->frame.x + 8.0f);
+
+    // 两级上限：父目录=根目录 + 名字 "a/b/c"（三级）→ 就地红字，不建目录
+    const auto* folderBtn2 = ui.find("md.tree.newfolder.bg");
+    DOCTEST_REQUIRE(folderBtn2 != nullptr);
+    folderBtn2->onClick();
+    frame("np7");
+    const auto* input2 = ui.find("md.dialog.newfolder.input.hit");
+    DOCTEST_REQUIRE(input2 != nullptr);
+    core::TextInputEvent tie2;
+    tie2.text = "a/b/c";
+    input2->onTextInput(tie2);
+    frame("np8");
+    const auto* confirm2 = ui.find("md.dialog.newfolder.confirm.bg");
+    DOCTEST_REQUIRE(confirm2 != nullptr);
+    confirm2->onClick();
+    frame("np9");
+    const auto* err = ui.find("md.dialog.newfolder.error");
+    DOCTEST_REQUIRE(err != nullptr);
+    DOCTEST_CHECK_EQ(err->text, std::string("最多支持两级目录（顶层 / 子目录）"));
+    DOCTEST_CHECK(!fs::exists(env.dir / "a"));
+
+    // 关掉再开（按钮 onClick 清名字/错误）→ 改成两级名字 "a/b" 建成功
+    const auto* cancelBtn = ui.find("md.dialog.newfolder.cancel.bg");
+    DOCTEST_REQUIRE(cancelBtn != nullptr);
+    cancelBtn->onClick();
+    frame("np10");
+    const auto* folderBtn3 = ui.find("md.tree.newfolder.bg");
+    DOCTEST_REQUIRE(folderBtn3 != nullptr);
+    folderBtn3->onClick();
+    frame("np11");
+    const auto* input3 = ui.find("md.dialog.newfolder.input.hit");
+    DOCTEST_REQUIRE(input3 != nullptr);
+    core::TextInputEvent tie3;
+    tie3.text = "a/b";
+    input3->onTextInput(tie3);
+    frame("np12");
+    const auto* confirm3 = ui.find("md.dialog.newfolder.confirm.bg");
+    DOCTEST_REQUIRE(confirm3 != nullptr);
+    confirm3->onClick();
+    frame("np13");
+    DOCTEST_CHECK(fs::is_directory(env.dir / "a" / "b"));
+    // 树 = [根目录, a, a/b, 工作, 周报.md, 周会]（顶层夹按字节序：a < 工作）
+    DOCTEST_CHECK_EQ(ui.find("md.tree.node.1.name")->text, std::string("a"));
+    DOCTEST_CHECK_EQ(ui.find("md.tree.node.2.name")->text, std::string("b"));
+    DOCTEST_CHECK_EQ(ui.find("md.tree.node.3.name")->text, std::string("工作"));
+    DOCTEST_CHECK_EQ(ui.find("md.tree.node.5.name")->text, std::string("周会"));
+
+    mod->onStop();
+    return true;
+})
+
+// ---- 2b4c. W10：只有空文件夹（零笔记）→ 树照样出文件夹行，不叠空态提示 ----
+
+REGISTER_TEST(md_module_tree_empty_folders_only,
+              "markdown_module: W10 只有空文件夹（零笔记）→ 顶层夹/子夹行都在，空态提示不覆盖（headless）", {
+    MdUiEnv env("folders0");
+    DOCTEST_REQUIRE(env.db != nullptr);
+    // 磁盘上只有空目录（含一级子目录），一个 .md 都没有
+    std::error_code ec;
+    fs::create_directories(env.dir / "工作" / "周会", ec);
+    DOCTEST_REQUIRE(!ec);
+
+    std::unique_ptr<::core::Module> mod(create_markdown_module());
+    mod->onStart();
+
+    eui::Screen screen;
+    screen.width = 1600.0f;
+    screen.height = 1000.0f;
+    eui::Ui ui;
+    ui.begin("e1");
+    mod->compose(ui, screen);
+    ui.end();
+
+    DOCTEST_CHECK_EQ(ui.find("md.tree.node.0.name")->text, std::string("根目录"));
+    DOCTEST_CHECK_EQ(ui.find("md.tree.node.1.name")->text, std::string("工作"));
+    DOCTEST_CHECK_EQ(ui.find("md.tree.node.2.name")->text, std::string("周会"));
+    DOCTEST_CHECK_EQ(ui.find("md.tree.node.2.arrow")->text, std::string("▾"));
+    // 空态提示不再叠在文件夹行上（「还没有笔记」只在连文件夹都没有时出）
+    DOCTEST_CHECK(ui.find("md.tree.empty") == nullptr);
 
     mod->onStop();
     return true;
@@ -1182,6 +1387,90 @@ REGISTER_TEST(md_module_delete_note_ui, "markdown_module: 右键→删除→确�
     DOCTEST_CHECK(treeHas("b.md"));
     // 删的是当前打开的笔记 → 编辑器回到空态提示
     DOCTEST_CHECK(ui.find("md.editor.hint") != nullptr);
+
+    mod->onStop();
+    return true;
+})
+
+// ---- 2e2. 右键菜单坐标：窗口坐标 → 页面坐标（减页面区原点） ----
+// 指针事件是窗口坐标（runtime_input 派发只做 /dpiScale），而菜单浮层构建在
+// 页面子树内（app.page，原点 = 侧边栏右侧）——不换算则菜单整体右移一个
+// 侧边栏宽（展开 208 / 折叠 72），跑进右侧详情区（2026-09-27 修复回归护栏）
+
+REGISTER_TEST(md_ctx_menu_page_origin, "markdown_module: 右键菜单坐标扣页面区原点（窗口→页面坐标，headless）", {
+    MdUiEnv env("ctxorigin");
+    DOCTEST_REQUIRE(env.db != nullptr);
+    DOCTEST_REQUIRE(writeTextFile(env.dir / "a.md", "# A\n正文A\n"));
+
+    // 模拟 app 层：页面区原点由 app_sidebar compose 每帧写入 Router
+    ::core::Router router;
+    router.setPageOriginX(208.0f);  // 侧边栏展开态
+    ::core::registerAppRouter(&router);
+    struct RouterGuard {
+        ~RouterGuard() { ::core::registerAppRouter(nullptr); }
+    } routerGuard;
+    (void)routerGuard;
+
+    std::unique_ptr<::core::Module> mod(create_markdown_module());
+    mod->onStart();
+
+    eui::Screen screen;
+    screen.width = 1392.0f;  // 页面区宽 = 窗口 1600 - 侧边栏 208
+    screen.height = 1000.0f;
+    eui::Ui ui;
+    auto frame = [&](const char* page) {
+        ui.begin(page);
+        mod->compose(ui, screen);
+        ui.end();
+    };
+    auto findRow = [&](const std::string& name) -> core::dsl::Element* {
+        for (int i = 0; i < 8; ++i) {
+            const auto* nm = ui.find("md.tree.node." + std::to_string(i) + ".name");
+            if (nm != nullptr && nm->text == name) {
+                return ui.find("md.tree.node." + std::to_string(i) + ".row");
+            }
+        }
+        return nullptr;
+    };
+    auto menuLevelX = [&]() -> float {
+        const auto* level = ui.find("md.ctx.level.0");
+        return level != nullptr ? level->x : -1.0f;
+    };
+
+    frame("co1");
+
+    // 窗口坐标 x=400 → 菜单页面坐标 400 - 208 = 192（y 方向不换算）
+    eui::PointerEvent pe;
+    pe.x = 400.0;
+    pe.y = 230.0;
+    auto* row1 = findRow("a.md");
+    DOCTEST_REQUIRE(row1 != nullptr);
+    DOCTEST_REQUIRE(row1->onContextMenu != nullptr);
+    row1->onContextMenu(pe, eui::Rect{});
+    frame("co2");
+    const auto* level = ui.find("md.ctx.level.0");
+    DOCTEST_REQUIRE(level != nullptr);
+    DOCTEST_CHECK(std::fabs(level->x - 192.0f) < 0.01f);
+    DOCTEST_CHECK(std::fabs(level->y - 230.0f) < 0.01f);
+
+    // 折叠侧边栏（可证伪预测：偏移量从 208 降到 72）→ 同一窗口坐标 = 328
+    router.setPageOriginX(72.0f);
+    auto* row2 = findRow("a.md");
+    DOCTEST_REQUIRE(row2 != nullptr);
+    row2->onContextMenu(pe, eui::Rect{});
+    frame("co3");
+    DOCTEST_CHECK(std::fabs(menuLevelX() - 328.0f) < 0.01f);
+
+    // 反证：不接 Router（无页面区原点）时窗口坐标原样传出 = 修复前行为
+    // （菜单落在 400 → 右移一个侧边栏宽）。此断言同时证明 level.x 就是
+    // 浮层真实位置，192/328 是减原点后的结果而非被别的机制改写
+    ::core::registerAppRouter(nullptr);
+    auto* row3 = findRow("a.md");
+    DOCTEST_REQUIRE(row3 != nullptr);
+    row3->onContextMenu(pe, eui::Rect{});
+    frame("co4");
+    DOCTEST_CHECK(std::fabs(menuLevelX() - 400.0f) < 0.01f);
+    ::core::registerAppRouter(&router);  // 复位（guard 负责最终注销）
 
     mod->onStop();
     return true;

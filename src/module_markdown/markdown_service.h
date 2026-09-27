@@ -142,6 +142,12 @@ public:
     // 返回目录名（不含路径），按字母序。
     core::Result<std::vector<std::string>> listTopFolders() const;
 
+    // W10：**全层**子目录清单（磁盘实时递归枚举，含空目录），供两级目录树用。
+    // 返回 POSIX 相对路径（如 "工作" / "工作/周会" / "工作/周会/旧"），
+    // 无尾部 '/'，按字母序。目录树渲染只取前两级，更深层由调用方折叠，
+    // 但枚举本身不截断（更深层目录下的文件仍要能挂到二级夹下显示）。
+    core::Result<std::vector<std::string>> listAllFolders() const;
+
     // 新建文件夹（相对路径，安全规则同 isSafeNewNotePath；已存在不算错）
     core::Result<void> createFolder(const std::string& name);
 

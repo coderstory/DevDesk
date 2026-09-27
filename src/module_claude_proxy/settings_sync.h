@@ -59,9 +59,8 @@ struct SyncResult {
     std::vector<std::string> warnings;  // 上层覆盖检测命中（Phase D UI 展示）
 };
 
-// 接管。profile 可为默认构造（无激活 profile 时只写 BASE_URL + AUTH_TOKEN）
-SyncResult takeOver(const Profile& profile, int proxyPort,
-                    const std::string& proxyToken, const Paths& paths);
+// 接管。profile 可为默认构造（无激活 profile 时只写 BASE_URL + 占位凭据）
+SyncResult takeOver(const Profile& profile, int proxyPort, const Paths& paths);
 
 // 还原（无 sidecar → no-op ok；settings.json 解析失败 → fail 且保留 sidecar
 // 供人工恢复）

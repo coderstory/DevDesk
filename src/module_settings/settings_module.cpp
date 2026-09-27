@@ -17,10 +17,8 @@
 //      小字号经 fs() 辅助函数跟随同一缩放
 //   3. Claude 代理：随应用启动开关（Phase B 硬性需求 1，默认关）+ 代理端口
 //      数字输入（总设计 §8.5 第 5 条，审计 [14]：默认 8888，改后运行中自动
-//      重启并保持 token）+ token 只读
-//      显示 + 重新生成（确认弹窗后 stopProxy + startProxy 同端口重启 → 服务端
-//      生成新 token；代理未运行时按钮置灰，不允许顺带拉起代理）
-//      + Claude Code 接管状态（Phase D UI 接入，数据源 ClaudeService）
+//      重启）+ Claude Code 接管状态（Phase D UI 接入，数据源 ClaudeService）。
+//      代理仅监听 127.0.0.1、无鉴权，无 token 展示/生成（2026-09-27 移除）
 //   4. Markdown 笔记目录只读展示（改目录属于范围外，仅展示）+ 编辑器字号
 //      档位（spec §8.5「编辑器字体大小」，spec 缩水 B；Task B tab 化后收在
 //      「通用」tab 的编辑器字号卡——原宿主日志卡行 2 的 z 逃逸理由已随
@@ -189,10 +187,6 @@ int nearestIndex(int value, const int* presets, int count) {
     return best;
 }
 
-// 代理凭据文件写入已收敛到 module_claude_proxy 的
-// module::claude::writeProxyTokenFile（claude_service.h），本模块直接复用
-//（此前这里与 main.cpp 各有一份复制粘贴实现）
-
 } // namespace
 
 class SettingsModule : public ::core::Module {
@@ -234,10 +228,8 @@ public:
         LOG_INFO("Settings 模块停止");
     }
 
-    // 重新进入设置页：token 显形状态复位（审计 [16]：「临时显形不持久化」——
-    // 显形只在该次停留内有效，切页再回来恢复掩码，不残留到截图）
+    // 重新进入设置页（EUI-NEO 无系统主题变更回调，auto 模式回到本页重新解析）
     void onPageEnter() override {
-        proxyTokenRevealed_ = false;
         // auto 模式的跟随点：系统深浅在运行中变更后，回到本页即重新解析
         //（EUI-NEO 无系统主题变更回调，无法做到任意页面实时跟随——已登记
         // 为限制；切档/启动两处的解析见 applyThemeRuntime）
@@ -263,9 +255,6 @@ public:
             return false;
         }
         if (key.key != eui::InputKey::S) {
-            return false;
-        }
-        if (regenConfirmOpen_) {
             return false;
         }
         if (!proxyPortDraft_.empty() &&
@@ -389,46 +378,6 @@ public:
     // 请求重新生成 token：代理未运行 → 不可生成（token 随 startProxy 生成，
     // 没有「预生成」概念，也不允许顺带把代理拉起来——Phase B 修的怪行为）；
     // 运行中 → 先弹确认（一键作废在用 token）
-    void requestRegenerateToken() {
-        auto* svc = ::module::claude::ClaudeService::global();
-        if (!svc) {
-            setStatus("Claude 服务不可用", true);
-            return;
-        }
-        if (!svc->isProxyRunning()) {
-            setStatus("代理未运行，无法重新生成（Token 随代理启动时生成）", true);
-            LOG_INFO("Settings: 重新生成被拒——代理未运行（不拉起代理）");
-            return;
-        }
-        regenConfirmOpen_ = true;
-    }
-
-    // 确认弹窗「确认重新生成」回调：stop + start 同端口重启（服务端生成
-    // 新 token），并同步重写 proxy_token.txt
-    void doRegenerateToken() {
-        auto* svc = ::module::claude::ClaudeService::global();
-        if (!svc) {
-            setStatus("Claude 服务不可用", true);
-            return;
-        }
-        if (!svc->isProxyRunning()) {  // 双保险：弹窗期间代理可能已被停止
-            setStatus("代理未运行，无法重新生成", true);
-            return;
-        }
-        const int port = svc->proxyPort();
-        svc->stopProxy();
-        // startProxy 不传 token → 服务端生成新 token（claude_service 现有 API）
-        auto r = svc->startProxy("127.0.0.1", port);
-        if (r.isFail()) {
-            setStatus("重新生成失败：" + r.errorMessage(), true);
-            LOG_ERROR("Settings: 代理 token 重新生成失败: " + r.errorMessage());
-            return;
-        }
-        ::module::claude::writeProxyTokenFile(svc->proxyAuthToken(), port);
-        setStatus("已重新生成代理 Token（端口 " + std::to_string(port) + "）");
-        LOG_INFO("Settings: 代理 token 已重新生成 port=" + std::to_string(port));
-    }
-
     // 「随应用启动代理」开关（provider-config Phase B 硬性需求 1）
     void applyAutoStart(bool on) {
         cfg_.claudeProxyAutoStart = on;
@@ -441,10 +390,9 @@ public:
 
     // 应用代理端口（总设计 §8.5 第 5 条，审计 2026-09-23 [14]）：
     // 解析 draft → 写 config.json → 同步 ClaudeService::configuredProxyPort
-    //（Claude 页手动启动 / main 自启读它）→ 运行中自动 stop→start 重启，
-    // **保持当前 token 只换端口**（改端口不是轮换凭据，不该强制客户端换
-    // token——与「重新生成」按钮语义区分）。重启失败：代理已停、settings.json
-    // 已被 stopProxy 还原（不会指向死端口），状态栏提示可换端口重试。
+    //（Claude 页手动启动 / main 自启读它）→ 运行中自动 stop→start 重启。
+    // 重启失败：代理已停、settings.json 已被 stopProxy 还原（不会指向死端口），
+    // 状态栏提示可换端口重试。
     void applyProxyPort() {
         int port = 0;
         if (!parseProxyPortInput(proxyPortDraft_, port)) {
@@ -473,9 +421,8 @@ public:
                      std::to_string(port) + "（代理未运行，下次启动生效）");
             return;
         }
-        const std::string keepToken = svc->proxyAuthToken();
         svc->stopProxy();
-        auto r = svc->startProxy("127.0.0.1", port, keepToken);
+        auto r = svc->startProxy("127.0.0.1", port);
         if (r.isFail()) {
             setStatus("端口已保存为 " + std::to_string(port) +
                           "，但代理重启失败（" + r.errorMessage() +
@@ -485,9 +432,7 @@ public:
                       " 重启失败: " + r.errorMessage());
             return;
         }
-        ::module::claude::writeProxyTokenFile(svc->proxyAuthToken(), port);
-        setStatus("代理端口已改为 " + std::to_string(port) +
-                  " 并自动重启（Token 不变）");
+        setStatus("代理端口已改为 " + std::to_string(port) + " 并自动重启");
         LOG_INFO("Settings: 代理端口 " + std::to_string(oldPort) + " → " +
                  std::to_string(port) + "，代理已自动重启");
     }
@@ -562,8 +507,7 @@ public:
             readLogTail();
             logTailDirty_ = false;
         }
-        // 代理卡高度动态：端口行 +34（审计 [14]）+ 接管状态行 + 上层覆盖警告行
-        //（§6.3）。contentKey 带 proxyH：警告行数变化时滚动高度缓存失效重测
+        // contentKey 带 proxyH：警告行数变化时滚动高度缓存失效重测
         auto* svc = ::module::claude::ClaudeService::global();
         const bool managed = svc && svc->isClaudeCodeManaged();
         size_t warnLines = 0;
@@ -571,9 +515,14 @@ public:
             warnLines = std::min<size_t>(
                 svc->lastSyncWarnings().size(), 2);
         }
-        const float proxyH = 174.0f + 28.0f +
-            (managed ? 20.0f : 0.0f) +
-            static_cast<float>(warnLines) * 16.0f;
+        // 代理卡高 = 内容底沿 + 16px 卡内下边距（与本 tab 其它卡一致）。内容底沿：
+        // 接管状态行 98+18=116；有警告时改为警告行区底（118 + 16×行数，首行与
+        // 上一行留 2px）。旧公式 174+28+(managed?20:0) 的基数是「鼠标穿透」行等
+        // 已移除内容的残留，卡底留 50~100px 空白
+        const float proxyBottom = warnLines > 0
+            ? 118.0f + static_cast<float>(warnLines) * 16.0f
+            : 116.0f;
+        const float proxyH = proxyBottom + 16.0f;
         // 模块插拔门控（§5.4）：claude 关 → 代理卡整卡隐藏；markdown
         // 关 → 目录卡整卡隐藏（不显示故障态）。读 cfg_（= 启动时注册
         // 状态的来源），拨动开关即时预览下次启动的卡片布局
@@ -671,10 +620,12 @@ public:
                                             contentWidth, 288.0f, t);
                             cardY += 288.0f + gapY;
                             if (petOn) {
-                                // ⑥：卡内加「鼠标穿透」toggle 行（恢复路径），120→168
+                                // 卡高 = 内容底沿 104（皮肤下拉 64+40）+ 16px 下边距。
+                                // （「鼠标穿透」toggle 行 2026-09-24 已移除，120→168
+                                // 的加高是残留 → 回 120，卡底不再留 64px 空白）
                                 drawPetCard(inner, "settings.card.pet",
-                                            contentWidth, 168.0f, t);
-                                cardY += 168.0f + gapY;
+                                            contentWidth, 120.0f, t);
+                                cardY += 120.0f + gapY;
                             }
                             if (mdOn) {
                                 drawDirectoryCard(
@@ -704,9 +655,6 @@ public:
                     .build();
             })
             .build();
-
-        // 重新生成 Token 确认弹窗（画在最上层；仿 claude_module 删除确认弹窗）
-        drawRegenConfirmDialog(ui, screen, t);
 
         LOG_DEBUG("Settings 模块 compose 完成");
     }
@@ -1206,14 +1154,6 @@ private:
                 auto* svc = ::module::claude::ClaudeService::global();
                 const bool running = svc && svc->isProxyRunning();
                 const int port = running ? svc->proxyPort() : 0;
-                // token 默认脱敏展示（provider-config §7 安全第 2 条，审计 [16]）：
-                // 本仓库截屏验收流程会把设置页整页归档，明文 token 会直接进截图。
-                // 显形仅 UI 态成员（proxyTokenRevealed_），不写 config.json，
-                // 离开设置页（onPageEnter 重进）即恢复掩码
-                const std::string tokenText = running
-                    ? (proxyTokenRevealed_ ? svc->proxyAuthToken()
-                                           : maskProxyToken(svc->proxyAuthToken()))
-                    : std::string("（代理未运行）");
 
                 ui.text(id + ".title")
                     .position(28.0f, 16.0f)
@@ -1249,7 +1189,7 @@ private:
                     .size(w - 56.0f, 16.0f)
                     .text(running
                           ? "本地代理 http://127.0.0.1:" + std::to_string(port) +
-                                " · 客户端调用需携带 Authorization: Bearer <token>"
+                                "（仅本机可访问，无需凭据）"
                           : "本地代理未运行（默认不随应用启动，可在 Claude 页手动启动）")
                     .fontSize(fs(12.0f))
                     .lineHeight(16.0f)
@@ -1306,78 +1246,17 @@ private:
                 ui.text(id + ".port.hint")
                     .position(282.0f, 62.0f)
                     .size(w - 282.0f - 28.0f, 18.0f)
-                    .text("改后回车或点「应用」；代理运行中自动重启（Token 不变）")
+                    .text("改后回车或点「应用」；代理运行中自动重启")
                     .fontSize(fs(12.0f))
                     .lineHeight(18.0f)
                     .color(t.colors.textTertiary)
-                    .build();
-
-                ui.text(id + ".token.label")
-                    .position(28.0f, 98.0f)
-                    .size(w - 56.0f, 16.0f)
-                    .text("认证 Token（只读 · 默认脱敏；眼睛按钮临时显形，"
-                          "离开本页即恢复）")
-                    .fontSize(fs(12.0f))
-                    .lineHeight(16.0f)
-                    .color(t.colors.textSecondary)
-                    .build();
-                const float btnW = 140.0f;
-                const float eyeW = 44.0f;
-                ui.rect(id + ".token.bg")
-                    .position(28.0f, 120.0f)
-                    .size(w - 56.0f - btnW - 12.0f - eyeW - 12.0f, 40.0f)
-                    .color(t.colors.surfaceElevated)
-                    .radius(t.sizes.radiusSmall)
-                    .border(1.0f, t.colors.borderMuted)
-                    .build();
-                ui.text(id + ".token.value")
-                    .position(40.0f, 120.0f)
-                    .size(w - 80.0f - btnW - 12.0f - eyeW - 12.0f, 40.0f)
-                    .text(tokenText)
-                    .fontSize(fs(13.0f))
-                    .verticalAlign(eui::VerticalAlign::Center)
-                    .color(running ? t.colors.textSecondary : t.colors.textTertiary)
-                    .build();
-
-                // token 显形/掩码切换（审计 [16]）：仅 UI 临时态，不持久化
-                components::button(ui, id + ".token.reveal")
-                    .position(w - 28.0f - btnW - 12.0f - eyeW, 120.0f)
-                    .size(eyeW, 40.0f)
-                    .icon(proxyTokenRevealed_ ? 0xF070 : 0xF06E)  // eye-slash / eye
-                    .iconColor(proxyTokenRevealed_ ? t.colors.primary
-                                                   : t.colors.textSecondary)
-                    .fontSize(fs(14.0f))
-                    .colors(t.colors.surfaceElevated, t.colors.hover,
-                            t.colors.active)
-                    .textColor(t.colors.textSecondary)
-                    .radius(t.sizes.radiusSmall)
-                    .border(1.0f, t.colors.borderDefault)
-                    .disabled(!running)
-                    .onClick([this] { proxyTokenRevealed_ = !proxyTokenRevealed_; })
-                    .build();
-
-                // 未运行时置灰（token 随 startProxy 生成，无「预生成」概念；
-                // 且绝不允许此按钮顺带拉起代理——Phase B）
-                components::button(ui, id + ".token.regen")
-                    .position(w - 28.0f - btnW, 120.0f)
-                    .size(btnW, 40.0f)
-                    .text("重新生成")
-                    .icon(0xF021)  // fa-arrows-rotate
-                    .fontSize(fs(14.0f))
-                    .colors(t.colors.primary, t.colors.primaryHover,
-                            t.colors.primaryPressed)
-                    .textColor(t.colors.onPrimary)
-                    .iconColor(t.colors.onPrimary)
-                    .radius(t.sizes.radius)
-                    .disabled(!running)
-                    .onClick([this] { requestRegenerateToken(); })
                     .build();
 
                 // Claude Code 接管状态（Phase D，§6.3）：sidecar 是否存在推导，
                 // 让还原机制对用户可见；上层覆盖警告（§5.3 检测命中时）逐行展示
                 const bool managed = svc && svc->isClaudeCodeManaged();
                 ui.text(id + ".takeover.label")
-                    .position(28.0f, 168.0f)
+                    .position(28.0f, 98.0f)
                     .size(150.0f, 18.0f)
                     .text("Claude Code 接管")
                     .fontSize(fs(12.0f))
@@ -1388,7 +1267,7 @@ private:
                     ::module::claude::settings_sync::defaultPaths()
                         .settingsFile.string();
                 ui.text(id + ".takeover.value")
-                    .position(190.0f, 168.0f)
+                    .position(190.0f, 98.0f)
                     .size(w - 190.0f - 28.0f, 18.0f)
                     .text(managed
                           ? ("● 已接管 " + ccPath)
@@ -1405,7 +1284,7 @@ private:
                         std::min<size_t>(warns.size(), 2);
                     for (size_t i = 0; i < shown; ++i) {
                         ui.text(id + ".takeover.warn.icon." + std::to_string(i))
-                            .position(28.0f, 188.0f + static_cast<float>(i) * 16.0f)
+                            .position(28.0f, 118.0f + static_cast<float>(i) * 16.0f)
                             .size(12.0f, 16.0f)
                             .icon(0xF071)  // fa-triangle-exclamation
                             .fontSize(fs(11.0f))
@@ -1413,7 +1292,7 @@ private:
                             .color(t.colors.warning)
                             .build();
                         ui.text(id + ".takeover.warn." + std::to_string(i))
-                            .position(42.0f, 188.0f + static_cast<float>(i) * 16.0f)
+                            .position(42.0f, 118.0f + static_cast<float>(i) * 16.0f)
                             .size(w - 42.0f - 28.0f, 16.0f)
                             .text(warns[i])
                             .fontSize(fs(11.0f))
@@ -1794,71 +1673,6 @@ private:
             .build();
     }
 
-    // ---------- 重新生成 Token 确认弹窗 ----------
-    // 一键作废在用 token 是破坏性操作，先确认再执行（provider-config Phase B；
-    // W9 批次「删除确认同款」需求并入此处）
-    void drawRegenConfirmDialog(eui::Ui& ui, const eui::Screen& screen,
-                                const core::theme::Tokens& t) {
-        const float w = 460.0f;
-        const float h = 210.0f;
-        const auto compTheme = core::theme::componentTokens(t);
-        components::dialog(ui, "settings.dialog.regen")
-            .open(regenConfirmOpen_)
-            .screen(screen.width, screen.height)
-            .size(w, h)
-            .theme(compTheme)
-            .onOpenChange([this](bool v) { regenConfirmOpen_ = v; })
-            .content([&] {
-                ui.text("settings.dialog.regen.title")
-                    .position(28.0f, 24.0f)
-                    .size(w - 56.0f, 28.0f)
-                    .text("重新生成代理 Token？")
-                    .fontSize(20.0f)
-                    .lineHeight(28.0f)
-                    .fontWeight(700)
-                    .color(t.colors.textPrimary)
-                    .build();
-                ui.text("settings.dialog.regen.msg")
-                    .position(28.0f, 58.0f)
-                    .size(w - 56.0f, 60.0f)
-                    .text("将立即作废当前正在使用的 Token（同端口重启代理生成新 "
-                          "Token）。正在调用代理的客户端需要更新凭据后才能继续。")
-                    .fontSize(t.sizes.fontSizeSmall)
-                    .lineHeight(20.0f)
-                    .color(t.colors.textSecondary)
-                    .build();
-
-                components::button(ui, "settings.dialog.regen.cancel")
-                    .position(28.0f, h - 60.0f)
-                    .size((w - 68.0f) * 0.5f, 40.0f)
-                    .text("取消")
-                    .fontSize(14.0f)
-                    .colors(t.colors.surfaceElevated, t.colors.hover,
-                            t.colors.active)
-                    .textColor(t.colors.textPrimary)
-                    .radius(t.sizes.radius)
-                    .border(1.0f, t.colors.borderDefault)
-                    .onClick([this] { regenConfirmOpen_ = false; })
-                    .build();
-                components::button(ui, "settings.dialog.regen.confirm")
-                    .position(28.0f + (w - 68.0f) * 0.5f + 12.0f, h - 60.0f)
-                    .size((w - 68.0f) * 0.5f, 40.0f)
-                    .text("确认重新生成")
-                    .fontSize(14.0f)
-                    .colors(t.colors.surfaceElevated, t.colors.hover,
-                            t.colors.active)
-                    .textColor(t.colors.error)
-                    .radius(t.sizes.radius)
-                    .border(1.0f, t.colors.borderDefault)
-                    .onClick([this] {
-                        regenConfirmOpen_ = false;
-                        doRegenerateToken();
-                    })
-                    .build();
-            })
-            .build();
-    }
-
     // ---------- 状态 ----------
     std::unique_ptr<SettingsStore> store_;
     SettingsConfig cfg_;
@@ -1873,13 +1687,9 @@ private:
     std::vector<std::string> petSkins_;    // 发现到的皮肤（M2）
     std::string petSkinName_;              // 当前皮肤名（M2）
     // 桌宠挂机穿透功能已于 2026-09-24 移除（本成员删除）
-    bool regenConfirmOpen_ = false;       // 重新生成 token 确认弹窗
     // 代理端口输入草稿（审计 [14]）：空 = 未编辑，compose 显示 cfg_.proxyPort；
     // applyProxyPort 成功后由 persist 侧刷新（下次进页恢复显示配置值）
     std::string proxyPortDraft_;
-    // 代理 token 显形开关（审计 [16]）：仅 UI 内存态，**不写 config.json**，
-    // onPageEnter 复位——截屏验收时默认为掩码形态
-    bool proxyTokenRevealed_ = false;
     float cardsScrollOffset_ = 0.0f;      // 卡片区 scrollView 滚动位置
     // ---- Task B：tab 化 + 日志查看 ----
     int settingsTab_ = 0;                 // 当前 tab（通用/模块/日志/关于）

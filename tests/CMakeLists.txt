@@ -11,6 +11,7 @@ add_executable(devdesk_tests
     test_core/test_migrations.cpp
     test_core/test_proxy_stats.cpp
     test_core/test_time.cpp
+    test_core/test_window_layout.cpp
     test_platform/test_http_client.cpp
     test_platform/test_http_server.cpp
     test_platform/test_keychain.cpp
@@ -39,6 +40,7 @@ add_executable(devdesk_tests
     test_modules/test_proxy_router.cpp
     test_modules/test_streaming_proxy.cpp
     test_modules/test_streaming_stress.cpp
+    test_modules/test_upstream_dialect.cpp
     test_modules/test_home.cpp
     test_modules/test_settings.cpp
     test_modules/test_module_icons.cpp

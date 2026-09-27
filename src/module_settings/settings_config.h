@@ -145,12 +145,6 @@ bool moduleEnabled(const SettingsConfig& cfg, const std::string& moduleId);
 // 0 / 越界一律 false。out 仅在 true 时写入
 bool parseProxyPortInput(const std::string& text, int& out);
 
-// ---- 代理 token 脱敏（纯函数，供设置页与单测；审计 2026-09-23 [16]）----
-// provider-config §7 安全第 2 条：展示默认掩码（前 4 + "***" + 后 4，
-// 形如 a3f8***c21e）。短于 8 位整体替换为固定 "****"（不输出任何真实
-// 字符、不泄露长度）；空串原样返回（调用方按「代理未运行」分支处理）。
-std::string maskProxyToken(const std::string& token);
-
 // ---- 主题模式解析（纯函数，供 SettingsModule 与单测；spec 缩水 A）----
 // themeMode + 系统深浅检测 → 实际生效的深色档。core 不可依赖 platform，
 // 所以「系统是否深色」由调用方（module 层可依赖 platform）探测后传入。
