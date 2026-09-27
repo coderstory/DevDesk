@@ -1,5 +1,5 @@
 // src/core/paths_win.cpp
-// Windows 平台实现：appDataDir = %APPDATA%/DevDesk；
+// Windows 平台实现：platformDefaultAppDataDir = %APPDATA%/DevDesk；
 // executableDir = GetModuleFileNameW（宽字符）取 exe 所在目录
 #include "paths.h"
 
@@ -51,7 +51,9 @@ fs::path executableDir() {
     return exe.parent_path();
 }
 
-fs::path appDataDir() {
+// 平台**默认**数据根（DEVDESK_DATA_ROOT 覆盖与优先级见 paths.h / paths.cpp；
+// 业务代码不要直接调用本函数）
+fs::path platformDefaultAppDataDir() {
     const char* appdata = std::getenv("APPDATA");
     fs::path base(appdata ? appdata : "");
     return base / "DevDesk";

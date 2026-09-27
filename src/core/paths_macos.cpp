@@ -1,5 +1,5 @@
 // src/core/paths_macos.cpp
-// macOS 平台实现：appDataDir = ~/Library/Application Support/DevDesk；
+// macOS 平台实现：platformDefaultAppDataDir = ~/Library/Application Support/DevDesk；
 // executableDir = _NSGetExecutablePath 所在目录（.app 内为 Contents/MacOS）
 #include "paths.h"
 
@@ -30,7 +30,9 @@ fs::path executableDir() {
     return exe.parent_path();
 }
 
-fs::path appDataDir() {
+// 平台**默认**数据根（DEVDESK_DATA_ROOT 覆盖与优先级见 paths.h / paths.cpp；
+// 业务代码不要直接调用本函数）
+fs::path platformDefaultAppDataDir() {
     const char* home = std::getenv("HOME");
     fs::path base(home ? home : "");
     return base / "Library" / "Application Support" / "DevDesk";

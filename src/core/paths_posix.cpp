@@ -1,5 +1,5 @@
 // src/core/paths_posix.cpp
-// 其他平台（Linux 等）实现：appDataDir = ~/.local/share/DevDesk；
+// 其他平台（Linux 等）实现：platformDefaultAppDataDir = ~/.local/share/DevDesk；
 // executableDir = /proc/self/exe 所在目录（无 /proc 的平台返回空 path）
 #include "paths.h"
 
@@ -31,7 +31,9 @@ fs::path executableDir() {
     }
 }
 
-fs::path appDataDir() {
+// 平台**默认**数据根（DEVDESK_DATA_ROOT 覆盖与优先级见 paths.h / paths.cpp；
+// 业务代码不要直接调用本函数）
+fs::path platformDefaultAppDataDir() {
     const char* home = std::getenv("HOME");
     fs::path base(home ? home : "");
     return base / ".local" / "share" / "DevDesk";
