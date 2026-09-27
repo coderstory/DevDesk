@@ -22,32 +22,23 @@ namespace {
 using platform::json::JsonObject;
 using platform::json::JsonValue;
 
-// 覆盖检测关注的 env 键（§5.3：上层文件含这些键会静默压过用户级接管）
-const std::vector<std::string>& conflictingEnvKeys() {
-    static const std::vector<std::string> kKeys = {
-        "ANTHROPIC_BASE_URL",
-        "ANTHROPIC_AUTH_TOKEN",
-        "ANTHROPIC_MODEL",
-        "ANTHROPIC_DEFAULT_SONNET_MODEL",
-        "ANTHROPIC_DEFAULT_OPUS_MODEL",
-        "ANTHROPIC_DEFAULT_HAIKU_MODEL",
-        "ANTHROPIC_DEFAULT_FABLE_MODEL",
-        "CLAUDE_CODE_SUBAGENT_MODEL",
-    };
-    return kKeys;
-}
-
 bool fileExists(const fs::path& p) {
     std::error_code ec;
     return fs::exists(p, ec) && !ec;
 }
 
-// 读文本文件（不存在 → 空串；失败 → 空串，调用方按解析失败处理）
-std::string readTextFile(const fs::path& p) {
+// 读文本文件（不存在 → 空串；失败 → 空串 + *readFailed=true）。
+// 打开失败与 0 字节曾同为「空串」，调用方无法区分「空文件」与「读不出」
+//（审计 G8/G9）——出口带上失败信号，由 parseJsonObjectFile 分开处置
+std::string readTextFile(const fs::path& p, bool* readFailed = nullptr) {
     std::ifstream f(p, std::ios::binary);
-    if (!f) return {};
+    if (!f) {
+        if (readFailed) *readFailed = true;
+        return {};
+    }
     std::ostringstream ss;
     ss << f.rdbuf();
+    if (readFailed && f.bad()) *readFailed = true;  // 读中断（IO 错）同款上报
     return ss.str();
 }
 
@@ -111,9 +102,16 @@ ParsedDoc parseJsonObjectFile(const fs::path& p) {
         return out;
     }
     out.exists = true;
-    const std::string text = readTextFile(p);
+    bool readFailed = false;
+    const std::string text = readTextFile(p, &readFailed);
+    if (readFailed) {
+        // G8（审计）：存在但读不出（IO/权限）≠ 0 字节空文件——不静默当空。
+        // 旧行为下 takeOver/restore 会把读不出的文件按空对象整体重写为空
+        out.error = "读取失败（IO/权限）: " + p.string();
+        return out;
+    }
     if (text.empty()) {
-        out.ok = true;  // 空文件视同不存在
+        out.ok = true;  // 0 字节空文件视同不存在（G9 no-op）
         return out;
     }
     auto parsed = platform::json::parse(text);
@@ -240,8 +238,19 @@ SyncResult clearResidualProxyKeys(const Paths& paths) {
     return out;
 }
 
-// 上层覆盖检测（§5.3）：只提示不代改
-std::vector<std::string> detectOverlayConflicts(const Paths& paths) {
+// 上层覆盖检测（§5.3）：只提示不代改。检测集 = 托管键全集
+//（managedEnvKeyNames()：BASE_URL / 占位 token / 6 槽位键 / 4 个 _NAME——与槽位
+// 是否有值无关）∪ extraManaged（本轮实际写入的托管键 = profile extra_env 与共享
+// 片段键）。旧实现只查硬编码 8 键，且槽位为空时 buildProxyEnv 不生成这些键 →
+// 检测集随之缩水、上层同名键压过接管也不报警（审计 CPX-12）
+std::vector<std::string> detectOverlayConflicts(
+    const Paths& paths, const std::vector<std::string>& extraManaged) {
+    std::vector<std::string> managed = managedEnvKeyNames();
+    for (const auto& key : extraManaged) {
+        if (std::find(managed.begin(), managed.end(), key) == managed.end()) {
+            managed.push_back(key);  // 去重：两集天然重叠，重复会在命中清单里刷两遍
+        }
+    }
     std::vector<std::string> warnings;
     for (const auto& file : paths.overlayFiles) {
         if (!fileExists(file)) continue;
@@ -250,7 +259,7 @@ std::vector<std::string> detectOverlayConflicts(const Paths& paths) {
         if (!doc.obj.has("env") || !doc.obj.get("env").isObject()) continue;
         auto env = doc.obj.get("env").asObject();
         std::string hits;
-        for (const auto& key : conflictingEnvKeys()) {
+        for (const auto& key : managed) {
             if (env.has(key)) {
                 if (!hits.empty()) hits += ", ";
                 hits += key;
@@ -412,7 +421,7 @@ SyncResult takeOver(const Profile& profile, int proxyPort, const Paths& paths,
     }
 
     // 6. 上层覆盖检测（只警告不代改）+ 快照污染守卫命中
-    out.warnings = detectOverlayConflicts(paths);
+    out.warnings = detectOverlayConflicts(paths, managedKeys);
     out.warnings.insert(out.warnings.end(), snapshotWarnings.begin(),
                         snapshotWarnings.end());
     for (const auto& warn : out.warnings) {
@@ -535,8 +544,8 @@ SettingsEnvRead readSettingsEnvForSync(const Paths& paths) {
         return out;
     }
     // G7/G9：不存在（doc.exists=false）/ 0 字节空文件（视同不存在）/ 无 env 键
-    // → 无真相源，no-op 成功。注：readTextFile 对「存在但读不出」（IO/权限）
-    // 也返回空串，该形态下与空文件同处置（复用既有 IO 助手，不新增读取通道）
+    // → 无真相源，no-op 成功。「存在但读不出」（IO/权限）已在 parseJsonObjectFile
+    // 里单独判失败（G8 中止），不走本分支
     if (!doc.exists || !doc.obj.has("env")) {
         return out;
     }

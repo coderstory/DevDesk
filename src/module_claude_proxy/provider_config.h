@@ -79,7 +79,8 @@ struct EnvAliasMapping {
     std::map<std::string, std::string> env;
     // 命中别名表的原始键（UI 提示「已映射为官方变量」）
     std::vector<std::string> aliasMappedKeys;
-    // 别名表外、且不在官方已知键集合中的键（原样透传 + 警告角标，行为由用户自负）
+    // 别名表外、且不在官方键清单（env_var_hints.h 全量官方变量 + DevDesk 自造
+    // 的 FABLE 扩展键）中的键（原样透传 + 警告角标，行为由用户自负）
     std::vector<std::string> unrecognizedKeys;
 };
 
@@ -148,6 +149,12 @@ std::map<std::string, std::string> buildProxyEnv(
     const std::string& modelsConfigJson, const std::string& legacyModel,
     const std::string& extraEnvJson,
     int proxyPort, const std::string& sharedExtraEnvJson = "");
+
+// 托管键全集（审计 CPX-12，12 键）：BASE_URL + 占位 token + 6 槽位键 +
+// 4 个 *_NAME——见 buildProxyEnv 的槽位表；与槽位是否有值无关（槽位为空时
+// buildProxyEnv 不生成该键，但上层同名键仍会压过接管，检测侧需要全集）。
+// 消费方：settings_sync 的上层覆盖检测（与「本轮实际写入的托管键」取并集）
+std::vector<std::string> managedEnvKeyNames();
 
 // ---- 反向同步（settings.json env → profile，设计 §3.2/§3.3，M1/M2）----
 // 全部为纯函数（无 IO / 无 DB / 无日志），单测直接覆盖。

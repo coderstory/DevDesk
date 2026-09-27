@@ -271,17 +271,43 @@ REGISTER_TEST(provider_config_env_alias_mapping,
     {
         EnvMap env;
         env["AUTO_COMPACT_ENABLED"] = "0";
-        env["DISABLE_AUTOUPDATER"] = "1";                  // 官方已知键
-        env["CLAUDE_AUTOCOMPACT_PCT_OVERRIDE"] = "75";     // 别名表外未知键
+        env["DISABLE_AUTOUPDATER"] = "1";              // 官方已知键
+        env["NOT_A_REAL_VAR_XX"] = "75";               // 别名表外、官方清单外未知键
         auto r = applyEnvAliases(env);
         DOCTEST_CHECK_EQ(r.env.size(), 3u);
         DOCTEST_CHECK_EQ(r.env["DISABLE_AUTO_COMPACT"], std::string("1"));
         DOCTEST_CHECK_EQ(r.env["DISABLE_AUTOUPDATER"], std::string("1"));
-        DOCTEST_CHECK_EQ(r.env["CLAUDE_AUTOCOMPACT_PCT_OVERRIDE"],
+        DOCTEST_CHECK_EQ(r.env["NOT_A_REAL_VAR_XX"],
                          std::string("75"));  // 原样透传
         DOCTEST_CHECK_EQ(r.unrecognizedKeys.size(), 1u);
-        DOCTEST_CHECK_EQ(r.unrecognizedKeys[0],
-                         std::string("CLAUDE_AUTOCOMPACT_PCT_OVERRIDE"));
+        DOCTEST_CHECK_EQ(r.unrecognizedKeys[0], std::string("NOT_A_REAL_VAR_XX"));
+    }
+    return true;
+})
+
+// ---- 7b. 官方键判定源 = env_var_hints（审计 CPX-09）----
+REGISTER_TEST(provider_config_official_keys_derived_from_hints,
+              "provider_config: 官方键判定源自 env_var_hints 清单", {
+    using module::claude::applyEnvAliases;
+
+    // hints 收录的官方键（含 *_MODEL_NAME 变体）→ 不标未识别
+    {
+        auto r = applyEnvAliases({{"ANTHROPIC_DEFAULT_SONNET_MODEL_NAME", "x"}});
+        DOCTEST_CHECK(r.unrecognizedKeys.empty());
+    }
+    // DevDesk 自造的 FABLE 扩展键（不在 hints）→ 仍不标未识别
+    {
+        EnvMap env;
+        env["ANTHROPIC_DEFAULT_FABLE_MODEL"] = "m-fable";
+        env["ANTHROPIC_DEFAULT_FABLE_MODEL_NAME"] = "Fable 显示名";
+        auto r = applyEnvAliases(env);
+        DOCTEST_CHECK(r.unrecognizedKeys.empty());
+    }
+    // 真未知键 → 仍标记
+    {
+        auto r = applyEnvAliases({{"NOT_A_REAL_VAR_XX", "1"}});
+        DOCTEST_REQUIRE_EQ(r.unrecognizedKeys.size(), 1u);
+        DOCTEST_CHECK_EQ(r.unrecognizedKeys[0], std::string("NOT_A_REAL_VAR_XX"));
     }
     return true;
 })
@@ -420,7 +446,7 @@ static const char* kImportTemplate = R"json({
         "ANTHROPIC_DEFAULT_SONNET_MODEL_NAME": "fangzhou/glm-5.3",
         "ANTHROPIC_MODEL": "fangzhou/glm-5.3[1M]",
         "AUTO_COMPACT_ENABLED": "1",
-        "CLAUDE_AUTOCOMPACT_PCT_OVERRIDE": "75",
+        "NOT_A_REAL_VAR_XX": "75",
         "CLAUDE_CODE_AUTO_COMPACT_WINDOW": "800000",
         "CLAUDE_CODE_DISABLE_ADAPTIVE_THINKING": "1",
         "CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS": "1",
@@ -465,8 +491,8 @@ REGISTER_TEST(provider_config_parse_import_full_settings,
     // 非官方键警告角标透传
     DOCTEST_REQUIRE_EQ(c.unrecognizedKeys.size(), 1u);
     DOCTEST_CHECK_EQ(c.unrecognizedKeys[0],
-                     std::string("CLAUDE_AUTOCOMPACT_PCT_OVERRIDE"));
-    DOCTEST_CHECK_EQ(c.extraEnv.at("CLAUDE_AUTOCOMPACT_PCT_OVERRIDE"),
+                     std::string("NOT_A_REAL_VAR_XX"));
+    DOCTEST_CHECK_EQ(c.extraEnv.at("NOT_A_REAL_VAR_XX"),
                      std::string("75"));
     DOCTEST_CHECK(c.warnings.empty());   // 无 API_KEY/AUTH_TOKEN 同现
     return true;
@@ -701,7 +727,7 @@ REGISTER_TEST(provider_config_reverse_parse_mapping,
         "CLAUDE_CODE_SUBAGENT_MODEL": "m-sub",
         "AUTO_COMPACT_ENABLED": "1",
         "DISABLE_AUTOUPDATER": "1",
-        "CLAUDE_AUTOCOMPACT_PCT_OVERRIDE": "75"
+        "NOT_A_REAL_VAR_XX": "75"
     })json";
     auto r = module::claude::parseEnvForReverseSync(env, {});
     DOCTEST_REQUIRE(r.ok);
@@ -723,7 +749,7 @@ REGISTER_TEST(provider_config_reverse_parse_mapping,
     DOCTEST_REQUIRE_EQ(c.extraEnv.count("DISABLE_AUTO_COMPACT"), 1u);
     DOCTEST_CHECK_EQ(c.extraEnv.at("DISABLE_AUTO_COMPACT"), std::string("0"));
     DOCTEST_CHECK_EQ(c.extraEnv.at("DISABLE_AUTOUPDATER"), std::string("1"));
-    DOCTEST_CHECK_EQ(c.extraEnv.at("CLAUDE_AUTOCOMPACT_PCT_OVERRIDE"),
+    DOCTEST_CHECK_EQ(c.extraEnv.at("NOT_A_REAL_VAR_XX"),
                      std::string("75"));
     DOCTEST_CHECK_EQ(c.unrecognizedKeys.size(), 1u);  // 未识别键照收，不阻断
     DOCTEST_CHECK(r.skippedKeys.empty());             // 无守卫命中

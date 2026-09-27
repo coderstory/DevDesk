@@ -1,6 +1,10 @@
 // src/module_claude_proxy/settings_sync.h
 // Claude Code settings.json 接管通道（provider-config Phase C，设计 §5.3）
 //
+// 边界声明（审计 CPX-15）：本模块是 DevDesk 对 settings.json 的**唯一写入口**
+//（读-改-写 + 原子写 + sidecar 协议）；读侧另有导入路径直读
+//（claude_module 的 doImportCurrentConfig），不经本模块。
+//
 // 接管协议（takeOver，代理启动 / 运行中切 profile 触发）：
 //   1. 读现有 settings.json（不存在 → 视为空对象；解析失败 → **中止不写**——
 //      宁可不让用户自动接入，不能弄坏用户文件）
@@ -20,9 +24,10 @@
 //      （读-改-写，platform::json；注意序列化会统一 pretty 格式，字段值不变）
 //   4. 原子写：同目录临时文件 + rename
 //   5. 上层覆盖检测（§5.3）：managed（企业策略）/ project（cwd 的
-//      .claude/settings.json + settings.local.json）层 env 含
-//      ANTHROPIC_BASE_URL / AUTH_TOKEN / MODEL 等同名键 → LOG_WARN + 警告
-//      信息随 SyncResult 返回（UI 展示留给 Phase D），**提示不代改**
+//      .claude/settings.json + settings.local.json）层 env 含托管键
+//      （managedEnvKeyNames() 的 12 键全集 ∪ 本轮实际写入的托管键：profile
+//      extra_env 与共享片段键）→ LOG_WARN + 警告信息随 SyncResult 返回
+//      （UI 展示留给 Phase D），**提示不代改**
 //
 // 还原协议（restore，代理停止 / 应用退出触发）：
 //   - 按 sidecar 快照按键级还原：快照里有值 → 恢复原值；原本不存在的键 →
@@ -71,9 +76,9 @@ struct SyncResult {
 // 使用。**只读，不写任何文件、不碰 profile**。
 //   - 文件不存在 / 0 字节空文件 / 无 env 键 → ok=true, present=false
 //     （no-op 成功：调用方照常完成本次切换，不清空任何 profile 字段）
-//   - 读取失败 / 非法 JSON / 顶层非对象 / env 非对象 → ok=false + error
-//     （含路径与原因；调用方据此中止本次切换 S-2）
-//     ——与「不存在」是两种处置，不得合并
+//   - 存在但读不出（IO/权限）/ 非法 JSON / 顶层非对象 / env 非对象
+//     → ok=false + error（含路径与原因；调用方据此中止本次切换 S-2）
+//     ——「存在但读不出」与「不存在 / 0 字节」是两种处置，不得合并
 //   - 正常 → ok=true, present=true + envJson（env 对象原文）+ managedKeys
 //     （sidecar 的 managedKeys 键集；sidecar 缺失 → 空集；sidecar 损坏 →
 //     空集 + WARN，绝不因此失败）
