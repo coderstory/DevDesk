@@ -96,6 +96,22 @@ void writeErrorJson(platform::http::ResponseWriter& out, int status,
     out.end();
 }
 
+// 取 profile 失败（无激活 profile / Keychain 读不到 key）的统一出口：
+// 两条转发路径（缓冲 handleRequest / 流式 handleStreamingRequest）共用同一
+// 状态码与文案，保证同一个失败在 stream:false 与 stream:true 下响应逐字一致
+// ——审计 CPX-10：此前缓冲路径内联另一套取 profile 逻辑，同一个 Keychain 读
+// 失败在 stream:false 报 500/keychain_read_failed、stream:true 报
+// 503/no_active_profile，排障要在两条路径间分叉。
+// logTag 只进日志（保留「缓冲 / 流式」路径标签），不进响应体。
+void writeNoProfileError(platform::http::ResponseWriter& out,
+                         ClaudeService& service,
+                         const std::string& logTag,
+                         const std::string& message) {
+    LOG_WARN(logTag + "取 profile 失败 (" + message + ")");
+    writeErrorJson(out, 503, "no_active_profile", message);
+    service.recordProxyEvent(503);
+}
+
 // 取本连接最后一次 INSERT 的 rowid（调用方须持 db.mutex()，见调用点注释）。
 // 失败返回 0 —— 0 不是合法 rowid，调用方据此跳过用量回填（降级，不报错）。
 int64_t lastInsertRowId(core::data::SqliteDb& db) {
@@ -175,50 +191,16 @@ void ProxyRouter::handleRequest(
     const std::time_t startedAt = std::time(nullptr);
 
     // ---- 1. 取 profile（含明文 API key）----
-    // 注入路径（测试 / UI）：profileProvider_ 直接给出完整 profile（与流式
-    // 路径一致），绕过 DB / Keychain——否则测试的内存库里没有 profile，
-    // 缓冲转发永远 503（Windows 首跑 stream:false 用例失败根因）。
-    Profile profile;
-    if (profileProvider_) {
-        auto profileR = resolveProfile();
-        if (profileR.isFail()) {
-            LOG_WARN("代理：取 profile 失败 (" + profileR.errorMessage() + ")");
-            writeErrorJson(out, 503, "no_active_profile", profileR.errorMessage());
-            // 气泡③（审计 [18]）：503 也是请求终态，记录之（下详各出口同）
-            service_.recordProxyEvent(503);
-            return;
-        }
-        profile = std::move(profileR).value();
-    } else {
-        // 生产路径：SQLite 取 active profile → Keychain 取明文 key（P9 原行为）
-        auto activeR = service_.getActiveProfile();
-        if (activeR.isFail()) {
-            LOG_WARN("代理：无激活 profile (" + activeR.errorMessage() + ")");
-            writeErrorJson(out, 503, "no_active_profile", activeR.errorMessage());
-            service_.recordProxyEvent(503);
-            return;
-        }
-        profile = std::move(activeR).value();
-
-        auto keyR = service_.loadApiKey(profile.id);
-        if (keyR.isFail()) {
-            LOG_ERROR("代理：读取 API key 失败: " + keyR.errorMessage());
-            writeErrorJson(out, 500, "keychain_read_failed", keyR.errorMessage());
-            service_.recordProxyEvent(500);
-
-            // 记录日志（status=500, error=keychain）
-            ClaudeService::CallLogEntry entry;
-            entry.profileId = profile.id;
-            entry.method = method;
-            entry.path = path;
-            entry.statusCode = 500;
-            entry.error = "keychain_read_failed";
-            entry.startedAt = startedAt;
-            service_.logCall(entry);
-            return;
-        }
-        profile.apiKeyPlain = std::move(keyR).value();
+    // 唯一入口 resolveProfile：注入路径（测试 / UI 的 profileProvider_，直接
+    // 给出完整 profile、绕过 DB / Keychain——否则测试的内存库里没有 profile，
+    // 缓冲转发永远 503）与生产路径（SQLite 取 active profile → Keychain 取明文
+    // key）都在它内部收口，与流式路径共用同一失败语义（见 writeNoProfileError）。
+    auto profileR = resolveProfile();
+    if (profileR.isFail()) {
+        writeNoProfileError(out, service_, "代理：", profileR.errorMessage());
+        return;
     }
+    Profile profile = std::move(profileR).value();
     const std::string apiKey = profile.apiKeyPlain;
 
     // ---- 2. 构造上游请求 ----
@@ -322,6 +304,10 @@ bool ProxyRouter::shouldUseStreaming(const std::string& path,
 }
 
 core::Result<Profile> ProxyRouter::resolveProfile() {
+    // 两条转发路径（缓冲 / 流式）唯一的取 profile 入口：调用方失败一律经
+    // writeNoProfileError 出同一份响应，不要在任何一条路径里再内联一套取
+    // profile 逻辑（CPX-10）。
+    //
     // 测试 / UI 注入路径：直接返回（已含 apiKeyPlain）
     if (profileProvider_) {
         return profileProvider_();
@@ -355,11 +341,10 @@ void ProxyRouter::handleStreamingRequest(
     const std::time_t startedAt = std::time(nullptr);
 
     // ---- 1. 取 profile（含明文 API key）----
+    // 与缓冲路径共用同一入口 + 同一失败出口（CPX-10）
     auto profileR = resolveProfile();
     if (profileR.isFail()) {
-        LOG_WARN("流式代理：取 profile 失败 (" + profileR.errorMessage() + ")");
-        writeErrorJson(out, 503, "no_active_profile", profileR.errorMessage());
-        service_.recordProxyEvent(503);
+        writeNoProfileError(out, service_, "流式代理：", profileR.errorMessage());
         return;
     }
     Profile profile = std::move(profileR).value();
