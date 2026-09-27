@@ -691,21 +691,27 @@ REGISTER_TEST(provider_config_reverse_parse_mapping,
     return true;
 })
 
-// ---- 守卫 G1-G6（§3.3）----
-REGISTER_TEST(provider_config_reverse_parse_guards,
-              "provider_config: parseEnvForReverseSync 守卫 G1-G6（reverse）", {
-    using module::claude::parseEnvForReverseSync;
+// ---- 守卫表 G1–G6（§3.3）：每条守卫一个专测，编号与用例名一一对应
+//（provider_config.h 的守卫表注释列出同样的编号 ↔ 用例名映射）----
 
-    // G1 sidecar 托管键 → 跳过（不写也不清）
+// G1 sidecar 托管键 → 跳过（不写也不清）
+REGISTER_TEST(provider_config_guard_G1_sidecar_managed_key,
+              "provider_config: 守卫 G1 sidecar 托管键跳过（reverse）", {
+    using module::claude::parseEnvForReverseSync;
     auto g1 = parseEnvForReverseSync(
         R"({"ANTHROPIC_MODEL": "m-cc", "MY_KEY": "x"})", {"ANTHROPIC_MODEL"});
     DOCTEST_REQUIRE(g1.ok);
     DOCTEST_CHECK(g1.cfg.models.def.model.empty());  // 未被收编
     DOCTEST_CHECK_EQ(g1.cfg.extraEnv.at("MY_KEY"), std::string("x"));
     DOCTEST_CHECK(hasEntry(g1.skippedKeys, "ANTHROPIC_MODEL"));
+    return true;
+})
 
-    // G2 loopback BASE_URL → base_url + token 联动跳过（本机 cc-switch 形态：
-    // 127.0.0.1 + 非占位符的本地 token 不得被当上游 key 收编）
+// G2 loopback BASE_URL → base_url + token 联动跳过
+//（本机 cc-switch 形态：127.0.0.1 + 非占位符的本地 token 不得被当上游 key 收编）
+REGISTER_TEST(provider_config_guard_G2_loopback_base_url,
+              "provider_config: 守卫 G2 loopback BASE_URL 联动跳过（reverse）", {
+    using module::claude::parseEnvForReverseSync;
     auto g2 = parseEnvForReverseSync(
         R"({"ANTHROPIC_BASE_URL": "http://127.0.0.1:15721", "ANTHROPIC_AUTH_TOKEN": "local-token"})",
         {});
@@ -715,15 +721,25 @@ REGISTER_TEST(provider_config_reverse_parse_guards,
     DOCTEST_CHECK(hasEntry(g2.skippedKeys, "ANTHROPIC_BASE_URL"));
     DOCTEST_CHECK(hasEntry(g2.skippedKeys, "ANTHROPIC_AUTH_TOKEN"));
     DOCTEST_CHECK(hasEntry(g2.skippedKeys, "ANTHROPIC_API_KEY"));
+    return true;
+})
 
-    // G3 占位 token → 跳过（保持 profile 原密钥）
+// G3 占位 token → 跳过（保持 profile 原密钥）
+REGISTER_TEST(provider_config_guard_G3_placeholder_token,
+              "provider_config: 守卫 G3 占位 token 跳过（reverse）", {
+    using module::claude::parseEnvForReverseSync;
     auto g3 = parseEnvForReverseSync(
         R"({"ANTHROPIC_AUTH_TOKEN": "PROXY_MANAGED"})", {});
     DOCTEST_REQUIRE(g3.ok);
     DOCTEST_CHECK(g3.cfg.authToken.empty());
     DOCTEST_CHECK(hasEntry(g3.skippedKeys, "ANTHROPIC_AUTH_TOKEN"));
+    return true;
+})
 
-    // G4 空值 → 跳过（不拿空串覆盖，也不清空）；别名键同时登记归一后的键名
+// G4 空值 → 跳过（不拿空串覆盖，也不清空）；别名键同时登记归一后的键名
+REGISTER_TEST(provider_config_guard_G4_empty_value,
+              "provider_config: 守卫 G4 空值跳过（reverse）", {
+    using module::claude::parseEnvForReverseSync;
     auto g4 = parseEnvForReverseSync(
         R"({"DISABLE_AUTOUPDATER": "", "AUTO_COMPACT_ENABLED": ""})", {});
     DOCTEST_REQUIRE(g4.ok);
@@ -731,8 +747,41 @@ REGISTER_TEST(provider_config_reverse_parse_guards,
     DOCTEST_CHECK(hasEntry(g4.skippedKeys, "DISABLE_AUTOUPDATER"));
     DOCTEST_CHECK(hasEntry(g4.skippedKeys, "AUTO_COMPACT_ENABLED"));
     DOCTEST_CHECK(hasEntry(g4.skippedKeys, "DISABLE_AUTO_COMPACT"));
+    return true;
+})
 
-    // G6 非字符串 / 超长 → 跳过该键 + warning，不整体 fail
+// G5 键缺席（非守卫托管字段不在 env 里）→ 清空 profile 对应值
+//（语义落在 mergeReverseSyncEnv，不在 parse）
+REGISTER_TEST(provider_config_guard_G5_absent_clears,
+              "provider_config: 守卫 G5 缺席即清空（reverse）", {
+    using module::claude::mergeReverseSyncEnv;
+    using module::claude::parseEnvForReverseSync;
+    using module::claude::parseModelsConfig;
+
+    const std::string curModels = R"json({
+        "default": {"model": "m-old", "name": ""},
+        "sonnet":  {"model": "s-old", "name": "s-name"}
+    })json";
+    // env 空 → 全部非守卫托管字段缺席 → 清空（models 槽位 + extra_env）
+    auto parsed = parseEnvForReverseSync("{}", {});
+    DOCTEST_REQUIRE(parsed.ok);
+    auto m = mergeReverseSyncEnv(parsed.cfg, curModels, "", R"({"K": "v"})");
+    DOCTEST_CHECK(m.modelsChanged);
+    DOCTEST_CHECK(m.extraEnvChanged);
+
+    auto mc = parseModelsConfig(m.modelsConfigJson);
+    DOCTEST_REQUIRE(mc.isOk());
+    DOCTEST_CHECK(mc.value().def.model.empty());  // 缺席 → 清空
+    DOCTEST_CHECK(mc.value().sonnet.model.empty());
+    DOCTEST_CHECK(mc.value().sonnet.name.empty());
+    DOCTEST_CHECK(m.extraEnvJson.empty());  // extra_env 缺席 → 清空（空串约定）
+    return true;
+})
+
+// G6 非字符串 / 超长 → 跳过该键 + warning，不整体 fail
+REGISTER_TEST(provider_config_guard_G6_invalid_value,
+              "provider_config: 守卫 G6 值形态非法跳过（reverse）", {
+    using module::claude::parseEnvForReverseSync;
     auto g6 = parseEnvForReverseSync(
         R"({"NUM_KEY": 1, "BOOL_KEY": true, "OK_KEY": "v"})", {});
     DOCTEST_REQUIRE(g6.ok);
@@ -749,7 +798,6 @@ REGISTER_TEST(provider_config_reverse_parse_guards,
         DOCTEST_CHECK(hasEntry(rb.skippedKeys, "BIG_KEY"));
         DOCTEST_CHECK_EQ(rb.cfg.warnings.size(), 1u);
     }
-
     // 只有 env 本身非法才 ok=false（与 G6 的单键容错分界）
     DOCTEST_CHECK(!parseEnvForReverseSync("{not json", {}).ok);
     DOCTEST_CHECK(!parseEnvForReverseSync("[1,2]", {}).ok);

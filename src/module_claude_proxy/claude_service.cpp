@@ -676,9 +676,11 @@ core::Result<void> ClaudeService::setActiveProfile(int64_t id) {
     });
 
     // 代理运行中切 profile → settings.json env 跟随（§5.2 触发点 2）；
-    // 代理未运行 → 只更新 DB，不动 settings.json（写了反而制造死指向）
+    // 代理未运行 → 只更新 DB，不动 settings.json（写了反而制造死指向）。
+    // 条目 3：接管失败**不阻断**本次切换（DB 已切成功），失败原因已并入
+    // lastSyncWarnings_ 供 UI 透传
     if (result.isOk() && isProxyRunning()) {
-        syncTakeOver();
+        (void)syncTakeOver();
     }
     return result;
 }
@@ -1063,8 +1065,9 @@ core::Result<int> ClaudeService::startProxy(const std::string& bindAddress,
              "（仅本机可访问，无鉴权）");
 
     // 接管 Claude Code settings.json（§5.2 触发点 1；含手动启动、设置页
-    // 改端口的重启）。失败只 WARN：代理已可用，接入失败用户可感知
-    syncTakeOver();
+    // 改端口的重启）。失败不阻断：代理已可用，接入失败经 lastSyncWarnings_
+    // 上报（条目 3），用户可感知
+    (void)syncTakeOver();
     return core::Result<int>::ok(actual);
 }
 
@@ -1330,15 +1333,15 @@ core::Result<void> ClaudeService::syncCaptureActiveProfile() {
     return core::Result<void>::ok();
 }
 
-void ClaudeService::syncTakeOver() {
-    if (syncPaths_.settingsFile.empty()) return;
+core::Result<void> ClaudeService::syncTakeOver() {
+    if (syncPaths_.settingsFile.empty()) return core::Result<void>::ok();
     // 接管默认开（2026-09-27 恢复）：起代理即接管 settings.json，停代理还原。
     // 显式关掉开关才走下面这条——此时 DevDesk 完全不碰该文件（本机另装
     // cc-switch 等同类工具、不愿两边互相覆盖时的用法）。
     if (!settingsTakeOverEnabled_) {
         LOG_INFO("Claude Code settings 接管未开启：不动 " +
                  syncPaths_.settingsFile.string());
-        return;
+        return core::Result<void>::ok();
     }
     // 无激活 profile：仍接管 BASE_URL/api key 占位（接入路径先就位，转发层会报
     // 503 提示用户先启用 profile）
@@ -1350,8 +1353,11 @@ void ClaudeService::syncTakeOver() {
     auto r = settings_sync::takeOver(active, proxyPort(), syncPaths_);
     lastSyncWarnings_ = std::move(r.warnings);
     if (!r.ok) {
+        // 条目 3：失败不再只进日志——并入 lastSyncWarnings_（与 getter 一起
+        // 供 UI 透传）。调用方语义不变：接管失败不阻断起代理/切 profile
+        lastSyncWarnings_.push_back("Claude Code settings 接管失败: " + r.error);
         LOG_WARN("Claude Code settings 接管失败: " + r.error);
-        return;
+        return core::Result<void>::fail(core::ErrorCode::Internal, r.error);
     }
     LOG_INFO("Claude Code settings 已接管: " +
              syncPaths_.settingsFile.string() +
@@ -1359,18 +1365,23 @@ void ClaudeService::syncTakeOver() {
                   ? std::string("")
                   : "（含 " + std::to_string(lastSyncWarnings_.size()) +
                         " 条上层覆盖警告）"));
+    return core::Result<void>::ok();
 }
 
 void ClaudeService::syncRestore() {
     if (syncPaths_.settingsFile.empty()) return;
-    if (!settings_sync::hasPendingSnapshot(syncPaths_)) return;
     if (!settingsTakeOverEnabled_) {
         // 接管关闭：不改写 settings.json。确有遗留接管态时只告警不代改
         //（该文件由 cc-switch 等工具负责，DevDesk 不抢写）
-        LOG_WARN("检测到遗留的 Claude Code 接管快照，但接管已关闭——不改写 " +
-                 syncPaths_.settingsFile.string());
+        if (settings_sync::hasPendingSnapshot(syncPaths_)) {
+            LOG_WARN("检测到遗留的 Claude Code 接管快照，但接管已关闭——不改写 " +
+                     syncPaths_.settingsFile.string());
+        }
         return;
     }
+    // 无 sidecar 也走 restore（条目 2②）：其中的「残留代理形态键」兜底负责把
+    // settings.json 里仍指向死代理的键清掉；无该形态时 restore 内部是真 no-op
+    //（不写文件）。启动补还原仍以 sidecar 为前提——不在每次启动就动别人的配置
     auto r = settings_sync::restore(syncPaths_);
     if (!r.ok) {
         LOG_WARN("Claude Code settings 还原失败: " + r.error);
