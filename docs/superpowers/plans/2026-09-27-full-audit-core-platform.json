@@ -1,0 +1,239 @@
+{
+  "area": "core-platform",
+  "baseline_sha": "f47766b",
+  "scope": "src/core/** + src/platform/**（result / sqlite_db / logging / theme / router / ui_geometry / module_interface / paths(含三平台) / time / file_open / json / http_client / http_server / keychain(含 win) / proxy_stats / window_layout / database / migrations / tray_menu_spec / component_theme + file_watcher / system_theme）",
+  "method": "只读：Read 源码 + grep + git log/spec 取证，未构建、未跑测试、未改代码。基线与已登记项见 docs/superpowers/plans/2026-09-27-expert-audit.md 与 2026-09-27-HANDOFF.md §9.4。双视角（C++20 系统开发 + 软件架构师）各完整过一遍范围。",
+  "findings": [
+    {
+      "id": "CP-01",
+      "severity": "high",
+      "kind": "architecture",
+      "lens": "arch",
+      "title": "core 在 Router::compose 内调用 eui::Ui 成员渲染兜底页，违反 spec §4.2.1 自定的「只透传」边界",
+      "evidence": [
+        {"file": "src/core/router.cpp", "symbol": "Router::compose（兜底分支 ui.text(...).build()）", "line": 82},
+        {"file": "docs/superpowers/specs/2026-09-20-devdesk-design.md", "symbol": "§4.2.1 core → EUI-NEO header-only 类型桥接例外（「eui::Ui/eui::Screen 仅可透传…不在 core 内调用其成员」）", "line": 139},
+        {"file": "../EUI-NEO/core/dsl.h", "symbol": "Ui::text → addElement（header-only，但会改 Ui 的元素树）", "line": 1453}
+      ],
+      "impact": "分层纪律是本仓库最强的验收口径（CLAUDE.md 与 spec §4.2 都写成硬规则），这一处恰好落在规则的例外条款内部：§4.2.1 明确只允许透传、且写明「不在 core 内调用其成员」，而 Router::compose 的兜底分支用 DSL 造了一个 Text 元素。后果：① core 持有 UI 内容策略（「无页面」占位文案与形态），改文案/换空态设计要动 core；② 「core 只做类型桥接」从此无法机械化验收（`grep -n 'ui\\.' src/core/*.cpp` 已有命中），未来在 core 里加 UI 调用的门槛降为零，该例外会从 1 处扩到 N 处；③ Router 同时承担路由 + 空页渲染，将来要把空态/骨架页交回 app 层时先得拆职责。",
+      "check": "`grep -rn 'ui\\.' --include=*.cpp src/core/` → 当前唯一命中 router.cpp:82 `ui.text(\"empty\").text(\"无页面\").build()`；对照 spec §4.2.1（该文件行 139）逐字读「仅可透传…不在 core 内调用其成员」。判「是否真的是运行时行为」看 ../EUI-NEO/core/dsl.h:1453 起 Ui::text/addElement 会改 Ui 内部元素树。",
+      "suggested_fix": "Router 只留 `hasCurrentPage()`/`currentPage()`（或让 compose 直接 return 表示「无页」），把「无页面」占位交 app 层（main.cpp 组装 compose 处）或模块层渲染；core 侧恢复零 `ui.` 调用，并把该结论写回 spec §4.2.1 的「现状消费点」。",
+      "already_registered": false,
+      "registered_ref": ""
+    },
+    {
+      "id": "CP-02",
+      "severity": "high",
+      "kind": "oop",
+      "lens": "cpp",
+      "title": "JsonValue 的值有两份表示（public 镜像字段 + 堆上 JsonImpl），而拷贝构造/拷贝赋值/移动构造/移动赋值 4 个特殊成员都不维护镜像 → asString/asInt/asBool 静默返回默认值",
+      "evidence": [
+        {"file": "src/platform/json.cpp", "symbol": "JsonValue::JsonValue(const JsonValue&)（只初始化 type_/data_）", "line": 264},
+        {"file": "src/platform/json.cpp", "symbol": "JsonValue::operator=(const JsonValue&)（只同步 type_）", "line": 265},
+        {"file": "src/platform/json.cpp", "symbol": "JsonValue::JsonValue(JsonValue&&) noexcept（目标侧镜像同样不同步；且 noexcept 里 new）", "line": 273},
+        {"file": "src/platform/json.cpp", "symbol": "JsonValue::operator=(JsonValue&&)", "line": 274},
+        {"file": "src/platform/json.h", "symbol": "JsonValue public 镜像字段 type_/data_/boolVal_/intVal_/dblVal_/strVal_（封装完整性缺口）", "line": 86},
+        {"file": "src/platform/json.cpp", "symbol": "makeFromImpl（唯一手工同步镜像的地方）", "line": 29},
+        {"file": "src/platform/json.h", "symbol": "asString()/asInt()/asBool() 直接返回镜像字段", "line": 72}
+      ],
+      "impact": "std::string/int64_t/double 的镜像只在 makeFromImpl 与各标量构造函数里被写，4 个复制/移动成员一律漏同步：任何真正执行到拷贝构造或移动构造的场合（左值拷贝、放进容器、按值传参、关闭 C++17 省略），新对象的 strVal_/intVal_/dblVal_/boolVal_ 都是默认空值 → asString() 返回 \"\"、asInt() 返回 0，**静默错值**而非报错。当前线上未爆只因全部调用点恰好都是 prvalue 初始化（C++17 保证省略：settings_config.cpp:326、md_view_state.cpp:84、todo_view_state.cpp:89、pet_skin.cpp:517 等），也就是「靠语言特性躲过的一个手写不变量」；任何一次看似无害的重构（把 `obj.get(k)` 换成先存 `JsonValue v`、把参数改成按值、引入 vector<JsonValue> 缓存）都会静默数据丢失。维护代价：这个类还必须被理解成「镜像 + 堆实体」双份状态才敢改。",
+      "check": "在 tests/test_platform/test_json.cpp 追加三条（当前都会失败）：`JsonValue a = makeString(\"x\"); JsonValue b = a; DOCTEST_CHECK_EQ(b.asString(), std::string(\"x\"));`、`JsonValue c; c = a; CHECK_EQ(c.asString(), std::string(\"x\"));`、`JsonValue d = std::move(a); CHECK_EQ(d.asString(), std::string(\"x\"));`。也可直接读 json.cpp:264-284 与 json.h:86-91 对照成员初始化列表。",
+      "suggested_fix": "删掉镜像字段，asString/asInt/asBool/asDouble 改为读 `getImpl(data_)->strVal` 等（唯一真值源），type_/isXxx 也由 `getImpl(data_)->kind` 派生；若必须保留缓存，抽一个 `syncMirror(const JsonImpl&)` 让 6 个位置（2 个构造函数 + makeFromImpl + 4 个特殊成员）全部经它。顺带消掉 `noexcept` 移动构造里的 `new`（json.cpp:190/273：noexcept 中分配失败直接 terminate，与仓库 Result 约定冲突）。",
+      "already_registered": false,
+      "registered_ref": ""
+    },
+    {
+      "id": "CP-03",
+      "severity": "medium",
+      "kind": "architecture",
+      "lens": "arch",
+      "title": "src/ 里唯一的平台宏回流：platform/http_client.cpp 用 #if defined(_WIN32) 选 CA 策略，「业务代码零平台宏」的 W2 验收口径失效",
+      "evidence": [
+        {"file": "src/platform/http_client.cpp", "symbol": "applyCaOptions（#if defined(_WIN32) → CURLSSLOPT_NATIVE_CA）", "line": 56},
+        {"file": "src/platform/CMakeLists.txt", "symbol": "平台分源惯例（WIN32/APPLE/else 三支 target_sources）", "line": 10},
+        {"file": "src/platform/file_open.h", "symbol": "零平台宏约定的书面位置（此处的 _WIN32 只是注释）", "line": 28}
+      ],
+      "impact": "该宏让 http_client.cpp 同时扮演共享层与平台层，破坏了仓库最有价值的一条可机械验收的规则（T6/W2 的「grep src/ 零命中」）。维护代价：① 后续每一个新的 TLS/CA 差异（证书路径、企业代理、ALPN）都会优先照抄「就地加 #if」的写法，`*_win.cpp` 拆分约定逐步被侵蚀；② 回归审计无法再用 grep 判定「有没有新的平台宏」，只能逐条人工辨认「这是注释还是代码」，机械护栏失效；③ CA 策略属平台适配，藏在共享文件里，改 macOS/Linux 构建的人看不到它。",
+      "check": "`grep -rn '_WIN32\\|__APPLE__' --include=*.cpp --include=*.h src/` → 当前仅 http_client.cpp:56 一处代码命中（file_open.h:28 为注释）。对照 CLAUDE.md「平台适配代码必须接口隔离…禁止在业务代码里散布 #ifdef _WIN32 / __APPLE__」与 W2 验收记录。",
+      "suggested_fix": "抽 platform/tls_ca_win.cpp + tls_ca_posix.cpp（或 _macos），各自实现 `void applyCaOptions(CURL*)`，CMake 按平台选源；http_client.cpp 只调用，恢复零平台宏。",
+      "already_registered": false,
+      "registered_ref": ""
+    },
+    {
+      "id": "CP-04",
+      "severity": "medium",
+      "kind": "testability",
+      "lens": "test",
+      "title": "测试隔离缝是「环境变量约定」且散落 3 层（core::paths + 3 个模块），无中心入口；harness 手工同步，漏设即读写真实 %APPDATA%，其中 DEVDESK_PETS_DIR 还改产品行为",
+      "evidence": [
+        {"file": "src/core/paths.cpp", "symbol": "configFile / markdownDir / petsDir 各自的 getenv 覆盖（DEVDESK_CONFIG_PATH / DEVDESK_NOTES_DIR / DEVDESK_PETS_DIR）", "line": 16},
+        {"file": "src/core/paths.cpp", "symbol": "logsDir / logFile / sqliteDbFile / appDataDir 无覆盖入口", "line": 42},
+        {"file": "src/module_markdown/md_view_state.cpp", "symbol": "DEVDESK_MARKDOWN_VIEW_STATE_PATH（生产模块里的测试缝）", "line": 30},
+        {"file": "src/module_todo/todo_view_state.cpp", "symbol": "DEVDESK_TODO_VIEW_STATE_PATH", "line": 40},
+        {"file": "src/module_pet/pet_skin.cpp", "symbol": "DEVDESK_PETS_DIR 存在时「独占候选列表」——同一个开关同时是路径隔离与行为分支", "line": 707},
+        {"file": "tests/test_main.cpp", "symbol": "resetCaseGlobals（harness 手工重置清单 + 自陈曾因此偶发失败）", "line": 53}
+      ],
+      "impact": "① 每新增一条持久化路径，就多一个「必须记得加进 resetCaseGlobals、并在用例里显式隔离」的隐式约定；无编译期约束，漏一处就是测试读写真实用户数据 + 跨用例状态泄漏（test_main.cpp:31-39 的注释已自陈这是全量 ctest 偶发失败的历史根因）。② 生产模块代码长期保留 `getenv` 分支（markdown / todo / pet 三处），模块与测试基建耦合。③ pet_skin 用同一环境变量走另一条候选列表分支，等于让一个「测试隔离」开关参与产品行为决策——paths.h 里 petsDir 的注释又说是「测试隔离用」，而用户可能真去设它。④ 新写者要回答「这个用例会不会碰真实数据」只能逐个 grep 出 7 个变量名。",
+      "check": "`grep -rn 'DEVDESK_[A-Z_]*' --include=*.cpp src/ | grep getenv` 逐条与 tests/test_main.cpp:53-65 的重置清单比对（无编译期同步机制）；再 `sed -n '42,48p' src/core/paths.cpp` 确认 logsDir/logFile/sqliteDbFile 无覆盖。",
+      "suggested_fix": "给 core::paths::appDataDir() 加唯一覆盖入口（如 DEVDESK_DATA_ROOT），config/notes/pets/logs/db 全部由它派生，删除模块侧 3 个 *_PATH 缝；pet_skin 的独占分支改成按「皮肤目录内容」判断，不看环境变量；test_main 只需设这一个变量。",
+      "already_registered": false,
+      "registered_ref": ""
+    },
+    {
+      "id": "CP-05",
+      "severity": "medium",
+      "kind": "maintainability",
+      "lens": "arch",
+      "title": "托盘「按模块开关动态收缩」整链已成死代码：基线 spec 只剩 2 项、谓词恒不命中，但谓词表/disabled 机制/测试注释/HANDOFF 说明都还在描述这个已删除的功能",
+      "evidence": [
+        {"file": "src/core/tray_menu_spec.h", "symbol": "isNavigationAction（唯一决定谓词是否生效的判据）", "line": 48},
+        {"file": "src/core/tray_menu_spec.h", "symbol": "trayMenuSpec() 基线（2026-09-24 精简后只剩 ShowMainWindow/Exit，无任何 Navigate* 项）", "line": 58},
+        {"file": "src/core/tray_menu_spec.h", "symbol": "trayDisabledHintSuffix / disabled 字段（无生产者可达）", "line": 44},
+        {"file": "src/main.cpp", "symbol": "trayNavAvailableFromConfig 与 trayNavRegisteredInRouter 两张 Navigate* switch 表（分支不可达）", "line": 330},
+        {"file": "src/main.cpp", "symbol": "trayMenuSpecFiltered(trayNavAvailableFromConfig) / trayMenuSpec(trayNavRegisteredInRouter) 两个消费点（谓词无效果）", "line": 378},
+        {"file": "tests/test_modules/test_tray_dynamic.cpp", "symbol": "文件头注释描述的 2 条行为 + 唯一实质用例退化为「等于基线」", "line": 1}
+      ],
+      "impact": "① 后来者（人或 agent）读到该注释与 HANDOFF §9.3「审计 [7] 动态收缩」会认为收缩逻辑在跑，改动托盘/模块开关时基于错误前提推理（本轮审计过程中就实际发生过：需要逐行读实现才能判定它已死）。② 两张 switch 表 + disabled 字段 + 后缀函数 + pred 重载常驻为维护面：每次加模块或加托盘项都要重新判断它们是否还有用。③ 测试对回归零价值（恒真断言），但会给人「该功能有护栏」的错觉。④ 「同一事实有 3 处描述（实现/注释/文档）」本身是本仓库变更成本的主要来源之一。",
+      "check": "写一条断言即可证伪：`trayMenuSpec([](TrayMenuAction){ return false; })` 与 `trayMenuSpec()` 逐项相等（当前相等 = 谓词无效果）；`grep -rn 'Navigate[HMTC]' src/core/tray_menu_spec.h` 零命中即基线不含导航项。",
+      "suggested_fix": "二选一：① 若产品上仍要按模块收缩，把导航项加回 trayMenuSpec 基线（谓词链随之复活）；② 若确认托盘只管开/关，删掉 disabled/isNavigationAction/trayDisabledHintSuffix/pred 重载与 main 的两张 switch 表，同步改 tray_menu_spec.h 与 test_tray_dynamic.cpp 的注释、以及 HANDOFF/审计 [7] 的交付描述。",
+      "already_registered": false,
+      "registered_ref": ""
+    },
+    {
+      "id": "CP-06",
+      "severity": "medium",
+      "kind": "maintainability",
+      "lens": "arch",
+      "title": "toHeaderMap 把 cpp-httplib 的大小写不敏感 Headers（unordered_multimap + case_ignore）降级成大小写敏感的 std::map，HTTP 头语义在平台边界处丢失，消费方只能「猜」线上大小写",
+      "evidence": [
+        {"file": "src/platform/http_server.cpp", "symbol": "toHeaderMap（注释自称「保留首个同名 value」）", "line": 33},
+        {"file": "src/platform/http_server.cpp", "symbol": "响应体兜底：hmap.find(\"Content-Type\") 大小写敏感查找", "line": 107},
+        {"file": "src/module_claude_proxy/proxy_router.cpp", "symbol": "伪头过滤按小写字面量精确比对（依赖 httplib 注入时的大小写）", "line": 50},
+        {"file": "src/platform/http_client.cpp", "symbol": "同步路径 headerCallback（大小写原样保留）", "line": 26},
+        {"file": "src/platform/http_client.cpp", "symbol": "流式路径 streamHeaderCb（小写化后只认 content-type）——两条客户端解析口径不同", "line": 266},
+        {"file": "3rd/cpp-httplib/httplib.h", "symbol": "Headers = unordered_multimap<..., case_ignore::hash, case_ignore::equal_to>", "line": 506}
+      ],
+      "impact": "① 「保留首个同名 value」在 hash 序容器上没有确定含义，且同名单不同大小写（Content-Type / content-type）会双双成活成两个键 → 同一请求在不同大小写下行为不同。② 每个消费方（本地伪头过滤、hop-by-hop 过滤、Content-Type 回写、方言注入、日志）都得复刻同一份大小写约定，新增一处就是新增一处潜在漏判；③ 客户端两条路径解析口径不一致（同步保留原样、流式小写化），H1 那类「只补了流式一路」的偏差正是这种重复结构造成的；④ 响应侧 find(\"Content-Type\") 现在只靠「所有生产者恰好都写对大小写」成立（今天是，明天不一定）。",
+      "check": "读 3rd/cpp-httplib/httplib.h:506-508 与 src/platform/http_server.cpp:33-41 对照；`grep -rn 'headers\\[' src/module_claude_proxy/` 与 `grep -rn 'setHeader(\"content-type\"' src/` 数消费点/生产点的大小写写法差异。",
+      "suggested_fix": "toHeaderMap 统一把小写化后的 key 作为 map 键（值保留原样），消费方一律小写查找；响应侧 find 改小写或换大小写不敏感比较；把两条 header 回调合并成一份共享解析函数，避免再次只改一路。",
+      "already_registered": false,
+      "registered_ref": ""
+    },
+    {
+      "id": "CP-07",
+      "severity": "medium",
+      "kind": "oop",
+      "lens": "cpp",
+      "title": "core::data::SqliteDb / core::Database 公开默认构造 = 「未 open 但合法」的对象可表达，所有方法对 handle_ == nullptr 无守卫，不变量只靠约定",
+      "evidence": [
+        {"file": "src/core/sqlite_db.h", "symbol": "SqliteDb() = default 与 handle_ = nullptr", "line": 74},
+        {"file": "src/core/sqlite_db.cpp", "symbol": "exec/prepare/transaction 直接使用 handle_，无 null 检查", "line": 242},
+        {"file": "src/core/database.h", "symbol": "Database() = default（同样绕过 open 工厂）", "line": 28}
+      ],
+      "impact": "① `SqliteDb db;` / `Database db;` 能编译、能传递、能取 mutex()，直到第一次 exec 才以 SQLITE_MISUSE / schemaVersion() 静默返回 0 的形式暴露，错误文案不含「未打开」，排查成本高；② 同一类型有两种构造语义（默认构造 vs `static Result<SqliteDb> open()` 工厂），读者必须读实现才知道哪个合法——这正是「工厂 + 公开默认构造」并存时的经典歧义；③ 将来加只读连接、多连接池时，第一件事就是先清理这层模糊态，等于把成本推给下一个人。",
+      "check": "`grep -n '= default' src/core/sqlite_db.h src/core/database.h`（两处）+ 读 sqlite_db.cpp:242-264（无 null 分支）+ `grep -rn 'SqliteDb \\w*;\\|Database \\w*;' src/ tests/ | head` 看是否存在默认构造实例。",
+      "suggested_fix": "把两个默认构造降为 private（open 保持唯一入口）；确实需要可空语义的地方用 `std::optional<SqliteDb>`。若暂不改，至少在 exec/prepare/transaction 首行 `if (!handle_) return Result::fail(DatabaseOpenFailed, \"连接未打开\")`。",
+      "already_registered": false,
+      "registered_ref": ""
+    },
+    {
+      "id": "CP-08",
+      "severity": "medium",
+      "kind": "pattern",
+      "lens": "arch",
+      "title": "Result 的取值口有 4 种语义（value/expect/unsafeValue/valueOr），且同一个 value() 在 app TU（-fno-exceptions）与库 TU 行为不同；unsafeValue() 完全无守卫",
+      "evidence": [
+        {"file": "src/core/result.h", "symbol": "value()/expect()/unsafeValue()/valueOr() 四个取值口", "line": 92},
+        {"file": "src/core/result.h", "symbol": "unsafeValue() = std::get<1>(data_)（失败态抛 bad_variant_access，无日志、无断言）", "line": 135},
+        {"file": "src/main.cpp", "symbol": "app 侧因 -fno-exceptions 一律改用 unsafeValue()", "line": 93},
+        {"file": "src/module_home/home_module.cpp", "symbol": "同一接口在库 TU 里用 value()/unsafeValue() 混用", "line": 170}
+      ],
+      "impact": "① 同一个 API 的失败行为取决于调用方所在 TU 的编译选项（app 用 -fno-exceptions、库不用），读代码无法判断「出错时会发生什么」；② unsafeValue 是 app 侧事实上的主取值口（20+ 处），但它对失败态调用 std::get<1> → bad_variant_access，在 app 里等于 terminate 且不带 LOG_FATAL 上下文——比它取代的 value() 更难诊断；③ 4 个取值口的取舍靠人记，任何一次「顺手换成更短的写法」都不报错。",
+      "check": "`grep -rn 'unsafeValue()' src/ | wc -l`（当前 20+）与 `grep -n 'unsafeValue' src/core/result.h`；`grep -rn 'value()' src/main.cpp` 看 app 侧是否一律避开 value()。",
+      "suggested_fix": "收敛成两个：`valueOr(default)` 与 `value()`（失败时统一 LOG_FATAL + 返回静态默认值，不抛），删 unsafeValue/expect；或至少在 unsafeValue 里加 assert + 失败态返回静态 T（把 terminate 变成可诊断日志）。",
+      "already_registered": true,
+      "registered_ref": "专家审计 C 类表「Result::value() 在 -fno-exceptions 的 app 里退化为 abort」+ M8（默认态 errorMessage 占位）；本条新增的是「unsafeValue 无守卫 + 同 API 两套行为」的视角"
+    },
+    {
+      "id": "CP-09",
+      "severity": "low",
+      "kind": "maintainability",
+      "lens": "cpp",
+      "title": "平台实现族内部有逐字重复逻辑且缺公共落点：shellSingleQuote ×2、UTF-8↔UTF-16 转换 ×2（健壮性已漂移）、claudeSettingsFile 的环境分支 ×3",
+      "evidence": [
+        {"file": "src/platform/file_open_macos.cpp", "symbol": "shellSingleQuote", "line": 30},
+        {"file": "src/platform/file_open_posix.cpp", "symbol": "shellSingleQuote（与上一处逐字相同）", "line": 15},
+        {"file": "src/platform/file_open_win.cpp", "symbol": "utf8ToWide（空串/失败有保护）", "line": 53},
+        {"file": "src/platform/file_watcher_win.cpp", "symbol": "同款 MultiByteToWideChar 转换内联实现（无 wlen<=0 检查）", "line": 257},
+        {"file": "src/core/paths_win.cpp", "symbol": "claudeSettingsFile 的 DEVDESK_CLAUDE_CONFIG_DIR 分支（macOS/POSIX 两份逐字相同）", "line": 17}
+      ],
+      "impact": "修一处编码/转义 bug 要在 2-3 个文件里同步；重复已经造成实际漂移（file_watcher_win 的路径转换缺 wlen<=0 校验，失败时会把空路径交给 CreateFileW 并报成 FileNotFound，而 file_open_win 的同名逻辑有保护）。新增第 4 个平台时要判断 3 份拷贝里哪份是权威。",
+      "check": "`grep -rn 'shellSingleQuote\\|MultiByteToWideChar' src/platform/` 对比重复实现；`diff <(sed -n '17,25p' src/core/paths_win.cpp) <(sed -n '17,24p' src/core/paths_macos.cpp)` 看环境分支是否只差最后一行。",
+      "suggested_fix": "file_open_common.cpp 承载 shellSingleQuote 与 utf8↔wide 帮助函数（file_watcher_win 改调它）；claudeSettingsFile 的 env 分支下沉到 paths.cpp（共享），平台文件只留 fallback 路径。",
+      "already_registered": false,
+      "registered_ref": ""
+    },
+    {
+      "id": "CP-10",
+      "severity": "low",
+      "kind": "deadcode",
+      "lens": "arch",
+      "title": "两处公开 API 无消费者/无效果：SqliteDb::setSchemaVersion() 是空实现，ResponseWriter::ended_/end()/ended() 写而不用",
+      "evidence": [
+        {"file": "src/core/sqlite_db.cpp", "symbol": "SqliteDb::setSchemaVersion（空实现，(void)version）", "line": 377},
+        {"file": "src/core/sqlite_db.h", "symbol": "setSchemaVersion 的 public 声明（对外像可用能力）", "line": 90},
+        {"file": "src/platform/http_server.h", "symbol": "ended_/ended() 公开访问器", "line": 56},
+        {"file": "src/platform/http_server.cpp", "symbol": "write() 把 ended_ 置回 false / end() 置 true（无读者）", "line": 126}
+      ],
+      "impact": "读者与工具（含 AI agent）会把「公开且有注释」的 API 当成可用能力：setSchemaVersion 看起来能改 schema 版本（实则无操作，且注释只写「不直接使用」），ended() 看起来能判断响应已结束。谁真用一次就会掉进「调用成功但什么都没发生」的坑，然后要么回滚要么补实现——典型的「公开 API 面 ≫ 实际契约」造成的返工。",
+      "check": "`grep -rn 'setSchemaVersion\\|\\\\.ended()' src/ tests/` → 除声明/实现外零调用。",
+      "suggested_fix": "删除 setSchemaVersion 与 ended_/end()/ended()；若确实需要写版本号，做成 runMigrations 内的私有步骤（当前语义由 runMigrations 独占，是正确的）。",
+      "already_registered": false,
+      "registered_ref": ""
+    },
+    {
+      "id": "CP-11",
+      "severity": "low",
+      "kind": "security",
+      "lens": "security",
+      "title": "keychain(win) 的 sanitize() 把非白名单字符统一替换为 '_' → 不同 account 可能折叠到同一密钥文件（孤儿清理又以 sanitize 后的名字比对），且密钥文件是非原子截断写",
+      "evidence": [
+        {"file": "src/platform/keychain_win.cpp", "symbol": "sanitize（[A-Za-z0-9-_] 之外一律 '_'）", "line": 32},
+        {"file": "src/platform/keychain_win.cpp", "symbol": "keyFilePath = keychain/<sanitize(service)>/<sanitize(account)>.key", "line": 46},
+        {"file": "src/platform/keychain_win.cpp", "symbol": "deleteSecretsNotIn（keep 集合同样按 sanitize 后比较）", "line": 158},
+        {"file": "src/platform/keychain_win.cpp", "symbol": "storeSecret 用 ofstream(trunc) 直写（无 tmp+rename）", "line": 84}
+      ],
+      "impact": "① 若两个 account 只在 ':' / '-' / '.' 之类字符上不同（注释自陈现状是 `claude:5` → `claude_5`），第 2 个密钥会覆盖第 1 个，且 deleteSecretsNotIn 的 keep 判断随之失真——可能删掉仍在用的密钥或漏删孤儿；当前命名固定为 `claude:<db id>`（claude_service.cpp:378）才没爆，安全性靠命名习惯维持。② 截断写中途崩溃 → 密文半截，loadSecret 报 Internal（而非 NotFound），调用方无法区分「没配」与「损坏」，也无法自动重试。",
+      "check": "读 keychain_win.cpp:32-43：`sanitize(\"claude:5\") == sanitize(\"claude-5\") == \"claude_5\"`（可直接在 tests/test_platform/test_keychain.cpp 加一条断言）；再读 :158-189 确认 keep 用 sanitize 名。",
+      "suggested_fix": "account 文件名改用可逆编码（如 ':'→'%3A'）或 `hex(sha1(account))` 并把明文名旁存进小 meta；落盘改 tmp+rename（与 settings_sync 的 atomicWrite 同款）。",
+      "already_registered": false,
+      "registered_ref": ""
+    },
+    {
+      "id": "CP-12",
+      "severity": "low",
+      "kind": "architecture",
+      "lens": "arch",
+      "title": "平台族形状不一致：system_theme 没有 *_macos 实现（CMake 把 system_theme_posix.cpp 复用给 macOS），于是 macOS 上「跟随系统主题」恒解析为浅色",
+      "evidence": [
+        {"file": "src/platform/CMakeLists.txt", "symbol": "APPLE 分支复用 system_theme_posix.cpp（其他族都各有 *_macos.cpp）", "line": 21},
+        {"file": "src/platform/system_theme_posix.cpp", "symbol": "prefersDarkTheme() 恒 false（注释自陈「不在当前 Windows 主开发周期范围」）", "line": 11},
+        {"file": "src/platform/system_theme.h", "symbol": "接口文档承诺 macOS 可后续经 CFPreferences 接入", "line": 14}
+      ],
+      "impact": "macOS 是仓库声明的目标平台（CLAUDE.md：Windows 11 + macOS 27+），但同一功能在 macOS 上静默失效：设置页选「跟随系统」永远得到浅色，用户看到的是「跟随系统没生效」而无任何日志。同时族形状不一致（keychain/file_open/time/paths 都有 *_macos.cpp，只有它没有）→ 将来补 macOS 要在 CMake 里加分支而不是加文件，做的人得先判断这是遗漏还是有意。产品侧的静默降级比崩溃更难被发现。",
+      "check": "`ls src/platform/*_macos.cpp src/platform/system_theme*`（无 system_theme_macos.cpp）+ `sed -n '17,23p' src/platform/CMakeLists.txt`。",
+      "suggested_fix": "补 system_theme_macos.cpp（CFPreferences AppleInterfaceStyle）并给 CMake 加 APPLE 分支；补齐前把 system_theme.h 注释与设置页文案改成「当前仅 Windows 支持跟随系统」，去掉静默承诺。",
+      "already_registered": false,
+      "registered_ref": ""
+    }
+  ],
+  "zero_finding_notes": [
+    "C++20 系统开发视角（lifecycle/concurrency/UB/资源/异常口径）复查结果：未发现新的可证伪缺陷。已逐点核过并判定为「非缺陷」或「已登记」：StreamingResponse 的 cancel/join/背压/进度回调四路唤醒闭环（http_client.cpp:387-575，含 deadline 兜底与 CURLE_PARTIAL_FILE 分类）自洽；FileWatcher(win) 的句柄只在 join 后关闭、CancelIoEx + GetOverlappedResult 收尾正确（file_watcher_win.cpp:125-221，唯一缺口是「回调线程内 stop」的自 detach 路径，见下「存疑」）；SqliteDb 的锁/关闭不一致（bind/prepare 原无锁、move 赋值仍 sqlite3_close、columnCount 无锁）已登记 HANDOFF §9.4.3，未重复上报；logging 的级别/控制台已改 atomic、日志按大小轮转（M7 ✅）；proxy_stats 的采样环与速率窗口计算（含 found=false 分支不用 baseT=0）核对无误；window_layout / ui_geometry / paths / time 的纯函数层边界处理（非法 scale 归一化、非有限输入、边界等于工作区不最大化）逐条核对正确。",
+    "软件架构师视角复查结果：分层方向无违反（core 零 platform include，grep `platform/` in src/core 零命中）；模块间零 include 交叉；HTTP/数据库/日志/主题的跨层耦合问题（全局态无同步、compose 内 IO）已在专家审计 H2 登记，未重复。"
+  ],
+  "open_questions": [
+    "FileWatcher::stop() 在回调线程内调用时会走 `worker.detach()` 分支，随后立即 CloseHandle(dirHandle)/CloseHandle(stopEvent)，而分离后的 worker 可能仍在 WaitForMultipleObjects/CancelIoEx 上使用这两个句柄（http_server 无关，见 file_watcher_win.cpp:125-138 vs 头文件 :75-76「回调线程内调用安全（跳过自 join）」的承诺）。当前 markdown_service 的回调不 stop（审计已核），未构成现网缺陷，故未单列为 finding；若将来任何消费方在回调里 stop/析构 watcher，即有句柄复用与 CancelIoEx 打错对象的风险。验证：写一条「回调里调 stop() 并在其后断言 active()==false、无异常」的用例，或改成在回调线程内只置标志 + 由主线程 join。",
+    "Server::start() 依赖 `running_`（普通 bool）+ `listenStarted`（atomic）双标志；当前唯一调用方（claude_service）每次 start 都新建 Server（claude_service.cpp:1047）并在 stop 后 reset，未观察到重启同一实例的路径，故未列为缺陷。若要支持「同实例 stop→start」，需验证 cpp-httplib 在 stop() 后能否重新 listen_after_bind。",
+    "json.cpp 的 2 次深拷贝开销（`JsonValue(JsonObject obj)` 按值传参 + 内部再整树复制，settings_sync.cpp:250/271/353 每次写 settings.json 都走这条）在 KB 级配置上不可测；若将来出现大 JSON（用户粘贴导入已设 kMaxImportTextBytes 上限）需重新评估。"
+  ]
+}
