@@ -1449,18 +1449,44 @@ private:
                     // 逐块渲染 + 几何：与第四态「实时」共用同一条通路
                     // （见 drawBlockFlow；观感一致是 spec §3.2 的硬要求）。
                     // 元素建在 inner（测量 pass 会给一次性 Ui）；点击定位要写的是
-                    // 模块 Ui 的编辑器状态 → 回调里闭包捕获外层 ui
+                    // 模块 Ui 的编辑器状态 → 回调里闭包捕获外层 ui。
+                    // 第 7 参 = 块流注入点（MD-03）：预览 / 双栏态没有块级特判
+                    // → 传空实现（三回调全空 = 全部走默认路径）。
                     drawBlockFlow(inner, contentWidth, t, style, "md.preview",
                                   [this, &ui](size_t k, float y) {
                                       handlePreviewBlockClick(ui, k, y);
-                                  });
+                                  },
+                                  {});
                 })
                 .build();
         }).build();
     }
 
-    // ---- 实时态活动块注入（M2）----
-    // 只给 drawBlockFlow 用的窄上下文；nullptr = 预览通路（行为与 M1 完全一致）。
+    // ---- 块流注入点（MD-03）----
+    // drawBlockFlow 只做「几何表重建 + 逐块包裹 + 渲染通路」这三件与视图态无关的
+    // 事；视图态对【单个块】的额外特判（活动块 = 源码态 input 取代渲染内容等）
+    // 一律经本注入点传入 —— 新增视图态只传自己的 hooks，不必回头改 drawBlockFlow
+    // 的分支 / 加参数（旧形态：加一个视图态就给 drawBlockFlow 加一个参数 + 一串
+    // isActive 分支）。
+    // 三个回调都可空（空 = 该维度走默认行为），预览态传的就是三空实现：
+    //   wrapHeight      空 = 包裹高取几何表 H_k（P3-⑤ 的既有包裹高口径）
+    //   drawContent     空 = 该块走上游渲染通路（CodeFence 仍走 DevDesk 自绘）
+    //   afterHitOverlay 空 = 覆盖层建完不做额外处理
+    // 回调参数里的 k = 块下标、b = 块、wrapId = 该块包裹 stack 的元素 id。
+    struct BlockFlowHooks {
+        std::function<float(size_t k, const MdBlock& b, float geometryHeight,
+                            float contentWidth)>
+            wrapHeight;
+        std::function<bool(eui::Ui& ui, size_t k, const MdBlock& b,
+                           const std::string& wrapId, float contentWidth,
+                           float wrapHeight)>
+            drawContent;
+        std::function<void(eui::Ui& ui, size_t k, const std::string& hitId)>
+            afterHitOverlay;
+    };
+
+    // 实时态自己的块级特判上下文（活动块锚 + input 主题）。drawBlockFlow 不认识
+    // 它 —— 特判经上面的 hooks 注入（MD-03）；本结构只在实时态内部传递。
     struct LiveBlockCtx {
         size_t activeBlock = static_cast<size_t>(-1);  // 活动块下标（其余值不命中）
         const components::theme::ThemeColorTokens* theme = nullptr;  // input 主题
@@ -1496,7 +1522,7 @@ private:
                        const components::MarkdownStyle& style,
                        const std::string& prefix,
                        const std::function<void(size_t, float)>& onBlockTap,
-                       const LiveBlockCtx* live = nullptr) {
+                       const BlockFlowHooks& hooks) {
         if (blockModel_.text() != editorText_) {
             blockModel_.update(editorText_);  // 防御：理论不可达
         }
@@ -1518,18 +1544,15 @@ private:
                     const MdBlock& b = blocks[k];
                     const bool hovered = previewHover_.hovered(b.stableId);
                     const float hk = syncMap_.blockHeight(k);
-                    // ---- M2：活动块 = 源码态 input（内容贴合高度）----
-                    // 包裹高改取 input 的贴合高（不由渲染块高 H_k 决定：源码行数
-                    // 与渲染高度天然不等，用 H_k 会切成输入框内部滚动 = 吃滚轮）。
-                    // 代价：本块之后各块的列内累计偏移与几何表 H_k 不再逐块恒等
-                    //（spec §2.2 V5 已登记：只影响覆盖层/命中矩形落点，M6 处理）。
-                    const bool isActive = live != nullptr && k == live->activeBlock;
-                    float wrapH = hk;
-                    std::string activeText;
-                    if (isActive) {
-                        activeText = liveBlockText(b);
-                        wrapH = liveFitHeight(b, activeText, contentWidth);
-                    }
+                    // 包裹高默认取几何表 H_k（P3-⑤ / ④ 同源的既有口径）；注入点可
+                    // 覆盖 —— 实时态活动块改取 input 内容贴合高（不由渲染块高 H_k
+                    // 决定：源码行数与渲染高度天然不等，用 H_k 会切成输入框内部滚动
+                    // = 吃滚轮）。代价：本块之后各块的列内累计偏移与几何表 H_k 不再
+                    // 逐块恒等（spec §2.2 V5 已登记：只影响覆盖层/命中矩形落点，
+                    // M6 处理）。
+                    const float wrapH =
+                        hooks.wrapHeight ? hooks.wrapHeight(k, b, hk, contentWidth)
+                                         : hk;
                     // ---- P3-⑤ 逐块交互包裹 ----
                     // 上游 components::markdown 无逐块命中/指针事件（纯展示，
                     // link 亦不可点——KNOWN_LIMITATIONS #9 补 ⑤），DevDesk 侧给
@@ -1555,13 +1578,15 @@ private:
                                            ? hoverTint
                                            : eui::Color{0.0f, 0.0f, 0.0f, 0.0f})
                                 .build();
-                            bool codeDrawn = false;
-                            if (isActive) {
-                                // 活动块：源码态 input 取代渲染内容（spec §4.4 互斥）
-                                drawLiveInputBlock(ui, b, activeText, contentWidth,
-                                                   wrapH, *live);
-                                codeDrawn = true;  // 跳过下方渲染通路
-                            } else if (b.kind == MdBlockKind::CodeFence) {
+                            // 注入点：视图态可自绘本块内容（返回 true = 已画，
+                            // 跳过下方渲染通路）。预览态三空 → 恒 false，逐块渲染
+                            // 与引入注入点之前逐项一致。
+                            bool contentDrawn =
+                                hooks.drawContent &&
+                                hooks.drawContent(ui, k, b, wrapId, contentWidth,
+                                                  wrapH);
+                            if (!contentDrawn &&
+                                b.kind == MdBlockKind::CodeFence) {
                                 // CodeFence 块走 DevDesk 侧自绘：md_highlight 色表
                                 // 产出着色 runs 喂给带 runs 的 text 节点（上游
                                 // markdown 代码块单色且不暴露预解析注入——
@@ -1588,10 +1613,10 @@ private:
                                     drawPreviewCodeBlock(ui, wrapId + ".code", *hl,
                                                          contentWidth, style,
                                                          hovered, hoverTint);
-                                    codeDrawn = true;
+                                    contentDrawn = true;
                                 }
                             }
-                            if (!codeDrawn) {
+                            if (!contentDrawn) {
                                 components::markdown(
                                     ui,
                                     prefix + ".block." +
@@ -1619,14 +1644,13 @@ private:
                                    else previewHover_.leave(sid);
                                })
                                 .build();
-                            // M2：活动块的覆盖层仍建（元素集合稳定 + 块身份可查），
-                            // 但必须关掉命中 —— 它建在 input 之后，而命中测试对兄弟
-                            // 走反向遍历取最上层（runtime_input.hitTest），不关则透明
-                            // 覆盖层会抢走 input 的点击与焦点（打字点不进去）
-                            if (isActive) {
-                                if (auto* hitEl = ui.find(wrapId + ".hit")) {
-                                    hitEl->hitTestMode = core::dsl::HitTestMode::None;
-                                }
+                            // 注入点收尾：覆盖层建完后交给视图态处理（实时态活动块
+                            // 在此关命中 —— 覆盖层建在 input 之后，命中测试对兄弟走
+                            // 反向遍历取最上层（runtime_input.hitTest），不关则透明
+                            // 覆盖层会抢走 input 的点击与焦点「打字点不进去」）。
+                            // 预览态三空 → 无动作。
+                            if (hooks.afterHitOverlay) {
+                                hooks.afterHitOverlay(ui, k, wrapId + ".hit");
                             }
                         })
                         .build();
@@ -1700,6 +1724,40 @@ private:
                     live.activeBlock = liveActiveBlock_;
                     hasActive = true;
                 }
+                // ---- MD-03：实时态的块级特判经注入点传入（drawBlockFlow 自身已
+                // 不含活动块分支）----
+                // 活动块 = 源码态 input，与渲染内容互斥（spec §4.4），故三处决策：
+                //   wrapHeight      → 包裹高改 input 内容贴合高（换块后列内累计随之
+                //                     变化，V5 已登记）
+                //   drawContent     → 本块内容改由 input 呈现（跳过渲染通路）
+                //   afterHitOverlay → 关掉本块覆盖层的命中（它建在 input 之后，不关
+                //                     会抢走点击与焦点）
+                // 非活动块一律 false / 默认值 = 与预览态逐块渲染完全同一条默认路。
+                BlockFlowHooks hooks;
+                hooks.wrapHeight = [this, &live](size_t k, const MdBlock& b,
+                                                 float geometryHeight,
+                                                 float contentWidth) {
+                    if (k != live.activeBlock) return geometryHeight;
+                    return liveFitHeight(b, liveBlockText(b), contentWidth);
+                };
+                hooks.drawContent = [this, &live](eui::Ui& inner, size_t k,
+                                                  const MdBlock& b,
+                                                  const std::string& wrapId,
+                                                  float contentWidth,
+                                                  float wrapHeight) {
+                    (void)wrapId;
+                    if (k != live.activeBlock) return false;
+                    drawLiveInputBlock(inner, b, liveBlockText(b), contentWidth,
+                                       wrapHeight, live);
+                    return true;  // 已画：跳过下方渲染通路
+                };
+                hooks.afterHitOverlay = [this, &live](eui::Ui& inner, size_t k,
+                                                      const std::string& hitId) {
+                    if (k != live.activeBlock) return;
+                    if (auto* hitEl = inner.find(hitId)) {
+                        hitEl->hitTestMode = core::dsl::HitTestMode::None;
+                    }
+                };
                 // 单一滚动权威 = 本 scrollView（M1 手动滚动；光标跟随留 M6）
                 components::scrollView(ui, "md.live.scroll")
                     .position(g.x, g.y)
@@ -1719,7 +1777,7 @@ private:
                         // 活动块 input 由 drawBlockFlow 建在 inner（content 回调交给的
                         // Ui）上——测量 pass 也走本回调，元素必须挂在同一层
                         drawBlockFlow(inner, contentWidth, t, style, "md.live", {},
-                                      &live);
+                                      hooks);
                     })
                     .build();
 
