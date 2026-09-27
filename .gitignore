@@ -46,3 +46,7 @@ fonts/JetBrainsMono-*.ttf
 Thumbs.db
 desktop.ini
 build-release/
+
+# 打包产物（安装器/DMG 输出目录，spec §3.2/§5）
+installer/**/out/
+*.dmg
