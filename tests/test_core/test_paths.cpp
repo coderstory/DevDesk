@@ -8,6 +8,41 @@
 
 namespace {
 
+// ---- 审计 CP-04：单一数据根 DEVDESK_DATA_ROOT 的断言辅助 ----
+// 统一分隔符 + 词法归一（Windows 上 '/' 与 '\' 混写会让朴素字符串前缀判定
+// 假阴性），再判前缀
+std::string normPath(const std::filesystem::path& p) {
+    return p.lexically_normal().generic_string();
+}
+
+// p 落在 root 之下（或就是 root 本身）
+bool isUnderOrEqual(const std::filesystem::path& p,
+                    const std::filesystem::path& root) {
+    std::string s = normPath(p);
+    std::string r = normPath(root);
+    if (!r.empty() && r.back() == '/') {
+        r.pop_back();
+    }
+    if (s == r) {
+        return true;
+    }
+    return s.size() > r.size() && s.compare(0, r.size(), r) == 0 &&
+           s[r.size()] == '/';
+}
+
+// 「全部应用数据路径」派生清单逐条断言：新增一条数据路径时在这里登记——
+// 漏登记等于新路径不受数据根管辖，正是本审计项要堵的缝
+bool allDataPathsUnder(const std::filesystem::path& root) {
+    DOCTEST_CHECK(isUnderOrEqual(core::paths::appDataDir(), root));
+    DOCTEST_CHECK(isUnderOrEqual(core::paths::configFile(), root));
+    DOCTEST_CHECK(isUnderOrEqual(core::paths::markdownDir(), root));
+    DOCTEST_CHECK(isUnderOrEqual(core::paths::petsDir(), root));
+    DOCTEST_CHECK(isUnderOrEqual(core::paths::sqliteDbFile(), root));
+    DOCTEST_CHECK(isUnderOrEqual(core::paths::logsDir(), root));
+    DOCTEST_CHECK(isUnderOrEqual(core::paths::logFile(), root));
+    return true;
+}
+
 } // namespace
 
 REGISTER_TEST(paths_app_data_dir, "paths: appDataDir not empty", {
@@ -87,5 +122,128 @@ REGISTER_TEST(paths_executable_dir, "paths: executableDir = 当前可执行文�
         }
     }
     DOCTEST_CHECK(foundSelf);
+    return true;
+})
+
+// ==================== 审计 CP-04：单一数据根 DEVDESK_DATA_ROOT ====================
+// 旧形态：configFile / markdownDir / petsDir 各自读自己的环境变量，隔离缝散落
+// 三层且无中心入口——漏设一个就静默读写真实 %APPDATA%（污染真实用户数据）。
+// 新契约：只设 DEVDESK_DATA_ROOT 一处，全部应用数据路径都由它派生。
+
+// ① 只设数据根 → 全部派生路径落在其下
+REGISTER_TEST(paths_data_root_derives_all,
+              "paths: DEVDESK_DATA_ROOT 单一入口派生全部数据路径（CP-04）", {
+    // 自足隔离：细粒度单项覆盖一律清掉（空串 = 删除变量），只留数据根
+    const test_support::ScopedEnv cfgEnv("DEVDESK_CONFIG_PATH", "");
+    const test_support::ScopedEnv notesEnv("DEVDESK_NOTES_DIR", "");
+    const test_support::ScopedEnv petsEnv("DEVDESK_PETS_DIR", "");
+
+    const std::filesystem::path tempRoot =
+        test_temp::tempPath("devdesk_test_data_root");
+    const test_support::ScopedEnv dataRoot("DEVDESK_DATA_ROOT",
+                                           tempRoot.string());
+
+    // 先证「覆盖真的生效」并与平台默认根不同——否则变量漏设时下面每条断言
+    // 都还成立（用例会在真实 %APPDATA% 上假绿），这正是要防的静默
+    DOCTEST_CHECK_EQ(normPath(core::paths::appDataDir()), normPath(tempRoot));
+    DOCTEST_CHECK_NE(normPath(core::paths::appDataDir()),
+                     normPath(core::paths::platformDefaultAppDataDir()));
+
+    DOCTEST_CHECK(allDataPathsUnder(tempRoot));
+    // 派生的是「根下的固定名」，不是等于根本身（防止只把 appDataDir 换了、
+    // 别的路径仍指向真实目录这种半吊子改动）
+    DOCTEST_CHECK_EQ(normPath(core::paths::configFile()),
+                     normPath(tempRoot / "config.json"));
+    DOCTEST_CHECK_EQ(normPath(core::paths::markdownDir()),
+                     normPath(tempRoot / "notes"));
+    DOCTEST_CHECK_EQ(normPath(core::paths::petsDir()),
+                     normPath(tempRoot / "pets"));
+    DOCTEST_CHECK_EQ(normPath(core::paths::sqliteDbFile()),
+                     normPath(tempRoot / "devdesk.db"));
+    DOCTEST_CHECK_EQ(normPath(core::paths::logsDir()),
+                     normPath(tempRoot / "logs"));
+    DOCTEST_CHECK_EQ(normPath(core::paths::logFile()),
+                     normPath(tempRoot / "logs" / "devdesk.log"));
+    return true;
+})
+
+// ② 不设数据根 → 落平台真实默认根（本用例自身就是「没设」与「设了」的区分器：
+// 两条路径走不同断言分支，只有两者结果确实不同才都成立）
+REGISTER_TEST(paths_data_root_absent_uses_platform_default,
+              "paths: 未设 DEVDESK_DATA_ROOT 时落平台默认根（CP-04）", {
+    const test_support::ScopedEnv clearRoot("DEVDESK_DATA_ROOT", "");
+    const test_support::ScopedEnv cfgEnv("DEVDESK_CONFIG_PATH", "");
+    const test_support::ScopedEnv notesEnv("DEVDESK_NOTES_DIR", "");
+    const test_support::ScopedEnv petsEnv("DEVDESK_PETS_DIR", "");
+
+    const std::filesystem::path def = core::paths::platformDefaultAppDataDir();
+    DOCTEST_CHECK_FALSE(def.empty());
+    DOCTEST_CHECK(def.string().find("DevDesk") != std::string::npos);
+    // 没设 → 恰好是平台默认根（不是任何临时目录、不是空 path）
+    DOCTEST_CHECK_EQ(normPath(core::paths::appDataDir()), normPath(def));
+    DOCTEST_CHECK(allDataPathsUnder(def));
+
+    // 「设了」的一侧（同进程内对照）：结果必须与默认根不同
+    const std::filesystem::path tempRoot =
+        test_temp::tempPath("devdesk_test_data_root_absent");
+    const test_support::ScopedEnv dataRoot("DEVDESK_DATA_ROOT",
+                                           tempRoot.string());
+    DOCTEST_CHECK_NE(normPath(core::paths::appDataDir()), normPath(def));
+    DOCTEST_CHECK(allDataPathsUnder(tempRoot));
+    return true;
+})
+
+// ③ 覆盖优先级三档：细粒度单项 > DEVDESK_DATA_ROOT > 平台默认
+// 单项覆盖保留是向后兼容（既有测试按老变量隔离单条路径），但不能因此让数据根
+// 失效——这里是两档的边界
+REGISTER_TEST(paths_override_precedence,
+              "paths: 覆盖优先级 单项 > DEVDESK_DATA_ROOT > 平台默认（CP-04）", {
+    const std::filesystem::path tempRoot =
+        test_temp::tempPath("devdesk_test_data_root_prec");
+    const std::filesystem::path notes =
+        test_temp::tempPath("devdesk_test_notes_prec");
+    const std::filesystem::path config =
+        test_temp::tempPath("devdesk_test_config_prec");
+    const std::filesystem::path pets = test_temp::tempPath("devdesk_test_pets_prec");
+    const test_support::ScopedEnv dataRoot("DEVDESK_DATA_ROOT",
+                                           tempRoot.string());
+    const test_support::ScopedEnv notesEnv("DEVDESK_NOTES_DIR", notes.string());
+    const test_support::ScopedEnv cfgEnv("DEVDESK_CONFIG_PATH", config.string());
+    const test_support::ScopedEnv petsEnv("DEVDESK_PETS_DIR", pets.string());
+
+    // 单项覆盖压过数据根
+    DOCTEST_CHECK_EQ(normPath(core::paths::markdownDir()), normPath(notes));
+    DOCTEST_CHECK_EQ(normPath(core::paths::configFile()), normPath(config));
+    DOCTEST_CHECK_EQ(normPath(core::paths::petsDir()), normPath(pets));
+    // 没有单项覆盖的路径照常跟数据根
+    DOCTEST_CHECK(isUnderOrEqual(core::paths::appDataDir(), tempRoot));
+    DOCTEST_CHECK(isUnderOrEqual(core::paths::sqliteDbFile(), tempRoot));
+    DOCTEST_CHECK(isUnderOrEqual(core::paths::logsDir(), tempRoot));
+
+    // 清掉单项覆盖 → 三条立即回落到数据根派生（三档顺序里的第二档）
+    test_support::setEnvVar("DEVDESK_NOTES_DIR", "");
+    test_support::setEnvVar("DEVDESK_CONFIG_PATH", "");
+    test_support::setEnvVar("DEVDESK_PETS_DIR", "");
+    DOCTEST_CHECK(allDataPathsUnder(tempRoot));
+    return true;
+})
+
+// ④ 刻意排除项（边界锁定，不是遗漏）：Claude Code 用户级 settings.json 是
+// 外部集成点——数据根若把它改到 <根>/.claude，接管功能就失去意义（Claude Code
+// 读的是 ~/.claude）。这一路隔离仍走 DEVDESK_CLAUDE_CONFIG_DIR。
+REGISTER_TEST(paths_claude_config_outside_data_root,
+              "paths: claudeSettingsFile 不随 DEVDESK_DATA_ROOT 迁移（CP-04）", {
+    const test_support::ScopedEnv claudeEnv("DEVDESK_CLAUDE_CONFIG_DIR", "");
+    const std::filesystem::path tempRoot =
+        test_temp::tempPath("devdesk_test_data_root_claude");
+    const test_support::ScopedEnv dataRoot("DEVDESK_DATA_ROOT",
+                                           tempRoot.string());
+
+    const std::filesystem::path claude = core::paths::claudeSettingsFile();
+    DOCTEST_CHECK_FALSE(isUnderOrEqual(claude, tempRoot));
+    DOCTEST_CHECK_EQ(claude.filename().string(), std::string("settings.json"));
+    DOCTEST_CHECK(claude.string().find(".claude") != std::string::npos);
+    // 数据根在同一进程内确实生效（排除「只是没读环境变量」的假象）
+    DOCTEST_CHECK_EQ(normPath(core::paths::appDataDir()), normPath(tempRoot));
     return true;
 })

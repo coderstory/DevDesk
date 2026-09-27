@@ -34,6 +34,7 @@
 #include "module_pet/pet_window.h"
 #include "settings_config.h"
 
+#include "core/paths.h"
 #include "core/proxy_stats.h"
 
 #include <eui/app.h>
@@ -936,6 +937,43 @@ REGISTER_TEST(pet_discover_skins, "pet: 皮肤发现（下拉/换肤菜单的数
     DOCTEST_CHECK_EQ(filtered.size(), static_cast<size_t>(2));
     return true;
 });
+
+// ---- 审计 CP-04：皮肤根候选不再看环境变量 ----
+// 辅助（REGISTER_TEST 宏体不能有裸逗号，照本文件先例拆出函数）：候选里是否含
+// 「安装目录」那条（exe 旁 assets/pets）。exe 目录解析失败时本就没有该候选，
+// 此时不评（返回 true，与 skinRootCandidates 的跳过语义一致）
+static bool rootsContainPackaged(const std::vector<std::filesystem::path>& roots) {
+    const std::filesystem::path exeDir = core::paths::executableDir();
+    if (exeDir.empty()) return true;
+    const std::filesystem::path packaged = exeDir / "assets" / "pets";
+    for (const std::filesystem::path& root : roots) {
+        if (root == packaged) return true;
+    }
+    return false;
+}
+
+// 旧实现：DEVDESK_PETS_DIR 已设 → 候选列表只剩 petsDir 一条（整个丢掉 exe 旁
+// 随包皮肤候选），环境变量因此参与**产品行为**。新契约：候选纯派生（数据根 +
+// 安装目录），环境变量只搬 petsDir() 的位置，不改候选形态。
+REGISTER_TEST(pet_skin_roots_env_independent,
+              "pet: 皮肤根候选不随 DEVDESK_PETS_DIR 变化（CP-04）", {
+    using namespace module::pet;
+    const PetsDirEnv pets("roots_env");
+    const std::vector<std::filesystem::path> withEnv = skinRootCandidates();
+    DOCTEST_REQUIRE(!withEnv.empty());
+    // 设着 env 时 petsDir 仍被隔离——向后兼容没退化（它既是第一条候选，
+    // 也是换肤写盘处）
+    DOCTEST_CHECK_EQ(withEnv[0], pets.root);
+
+    // 清掉 env（空串 = 删除变量）→ 候选形态必须与设着时一致
+    test_support::setEnvVar("DEVDESK_PETS_DIR", "");
+    const std::vector<std::filesystem::path> withoutEnv = skinRootCandidates();
+    DOCTEST_CHECK_EQ(withEnv.size(), withoutEnv.size());
+    // 关键回归：设了 env 也不能丢掉安装目录候选（旧实现正是在这里提前 return）
+    DOCTEST_CHECK(rootsContainPackaged(withEnv));
+    DOCTEST_CHECK(rootsContainPackaged(withoutEnv));
+    return true;
+})
 
 REGISTER_TEST(pet_apply_skin_and_reset, "pet: applyPetSkin 校验/持久化 + 位置重置", {
     using namespace module::pet;

@@ -700,15 +700,17 @@ std::vector<std::string> ensureBuiltinSkins(const std::filesystem::path& root) {
 }
 
 std::vector<std::filesystem::path> skinRootCandidates() {
-    // 生成/默认皮肤落在 petsDir()（appData，恒可写）；exe 旁 assets/pets 是
-    // 随包分发的只读皮肤候选（安装包/DMG 里与可执行文件同级；开发期 = 构建目录）
+    // 皮肤根**纯派生**（审计 CP-04）：数据根 → 安装目录，两条都在此列齐，
+    // 这里不读任何环境变量。旧实现在 DEVDESK_PETS_DIR 已设时直接丢掉安装
+    // 目录候选——环境变量因此参与了**产品行为**（隔离环境下"看不见"随包
+    // 皮肤），生产代码长期留着 getenv 分支；测试隔离改由数据根统一承担
+    // （DEVDESK_DATA_ROOT / DEVDESK_PETS_DIR 只搬 petsDir()，不再改候选形态）。
+    //
+    //   1) petsDir()（appData，恒可写）：生成/默认皮肤落这里，也是换肤写盘处
+    //   2) exe 旁 assets/pets：随包分发的只读美术皮肤（安装包/DMG 里与可执行
+    //      文件同级；开发期 = 构建目录，由顶层 CMake POST_BUILD 拷贝）
     std::vector<std::filesystem::path> roots;
     roots.push_back(core::paths::petsDir());
-    // DEVDESK_PETS_DIR 覆盖时独占候选列表（测试隔离语义，与 DEVDESK_NOTES_DIR 一致）——
-    // 否则 exe 旁 assets 里的内置美术皮肤会泄漏进隔离环境，破坏计数断言
-    if (std::getenv("DEVDESK_PETS_DIR") != nullptr) {
-        return roots;
-    }
     // exe 目录解析失败时 executableDir() 返回空 path，此时必须跳过该候选：
     // 空路径与 "assets/pets" 拼接会退化成相对 cwd 的路径
     const std::filesystem::path exeDir = core::paths::executableDir();
