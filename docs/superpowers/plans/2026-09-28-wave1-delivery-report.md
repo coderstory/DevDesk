@@ -13,7 +13,7 @@
 | L4 proxy-json | CPX-11 | `bc072c8`（线内 `1188028`） | streaming 24/24、dialect 8/8、proxy 22/22、SseUsageParser 2/2；反向对照（把「值必须是字符串」判定注入共享扫描器）该等价性用例 `Failed: 1` → 用例可判别 |
 | L5 todo | THS-07 / THS-11 / THS-12 / THS-13 / THS-14 / THS-17 / THS-18 | `7d5693f`（线内 `ed7aeea`；解冲突 `ba3f88a`） | 新增 `todo_svc_rename_missing_notfound` / `todo_svc_update_task_ignores_column` / `todo_ui_overdue_min_one_day` / `migrate_archive_kind_v8`；`TodoService` / `todo_ui` / `migrate` 过滤词全绿 |
 | L6 home | THS-10 / THS-16 | `32162ce`（线内 `a9bd3c3`） | 新增 `core_time_days_from_civil`（1970-01-01→0 / 2024-02-29→19782 / 相邻日差 1 / 跨年差 1）；`HomeService` 过滤词全绿 |
-| **L7 pet+settings** | PAB-09 / PAB-12 / PAB-13 / CPX-02 残 | **未合并** | **无**。`wave1-L7` worktree 存在但分支 tip = `e50d82b`（master 祖先），**零提交零产物**：`grep -rn "showPetWindow\|pickPetPhrase\|settings_takeover_warn_unmanaged" src/ tests/` 零命中；`grep -rn 穿透 src/` 仍 13 处（PAB-09 的删除清单全覆盖：`pet_window.cpp:6/144/151/774/798/810`、`pet_window.h:52`、`pet_config.h:19-20`、`pet_config.cpp:20`、`settings_module.cpp:540/647/1765`）；`test_menu_beautify.cpp:45/62` 用例名仍是「6 顶层项 / 5 顶层项」 |
+| **L7 pet+settings** | PAB-09 / PAB-12 / PAB-13 / CPX-02 残 | **当时未合并**（**同夜 01:42 已补交**，见 §8.1 → merge `ac1b8fb`） | **无**。`wave1-L7` worktree 存在但分支 tip = `e50d82b`（master 祖先），**零提交零产物**：`grep -rn "showPetWindow\|pickPetPhrase\|settings_takeover_warn_unmanaged" src/ tests/` 零命中；`grep -rn 穿透 src/` 仍 13 处（PAB-09 的删除清单全覆盖：`pet_window.cpp:6/144/151/774/798/810`、`pet_window.h:52`、`pet_config.h:19-20`、`pet_config.cpp:20`、`settings_module.cpp:540/647/1765`）；`test_menu_beautify.cpp:45/62` 用例名仍是「6 顶层项 / 5 顶层项」 |
 | L8 markdown | MD-06 / MD-07 / THS-15 | `2e6632e`（线内 `27f0dd4`） | markdown 43/43、md_live 7/7、mdspike 9/9、MarkdownService 30/30、core 5/5 |
 | L9 tray | CP-05 / TIN-05 | `fed73ab`（线内 `abe5ab2`） | menu 16/16、tray 1/1（基线 17/17、2/2）；`src/` + `tests/` 下 `trayMenuSpecFiltered` / `isNavigationAction` / `trayDisabledHintSuffix` / `unavailableOnly` / 「已关闭）」全零命中 |
 | L10 基建 | TIN-01 / TIN-04 / TIN-09 / TIN-11 / PAB-06 / PAB-11 / TIN-13 | `6456c61`（线内 `4477d10`） | 隔离守卫脚本化后全量由 `Failed: 1`（cwd 误报）转 `Failed: 0`；`md_block_model` 去墙钟红线改 `[perf]` 记录 + 逐块等价性断言；`PageId` 契约归位（`core: PageId ordering contract`）；`http_` 新增 3 条直测（连接被拒 / 超时提前返回 / readChunk 三终态）；发布形态守卫 + 隔离守卫串进 `build-test-run.sh` |
@@ -21,9 +21,11 @@
 
 ## 2. 全量验收（2026-09-28，master）
 
-- **全量**：`Total: 646 / Passed: 645 / Failed: 0`（`Skipped: 1` = `DEVDESK_SOAK=1` 门控的 300s soak；`tests/test_main.cpp` 里每条用例恰好落进 passed / failed / skipped 之一，故 Total 比 Passed 多 1）
+> **用例数快照（2026-09-28 03:4x 更新）**：**`Total: 707 / Passed: 706 / Failed: 0`**，两条守卫（发布形态 ✅、模块隔离 ✅）全绿 —— 波 2 夜班批全部合并后的最新实测（详见 §8「后续（同夜）」与 `2026-09-28-wave2-delivery-report.md`）。下面 §2 各条是**波 1 合并当时**的快照，保留作沿革。
+
+- **波 1 合并当时全量**：`Total: 646 / Passed: 645 / Failed: 0`（`Skipped: 1` = `DEVDESK_SOAK=1` 门控的 300s soak；`tests/test_main.cpp` 里每条用例恰好落进 passed / failed / skipped 之一，故 Total 比 Passed 多 1）
 - **波 1 之前基线**（spec §1.2 记录）：`Total: 621 / Passed: 619 / Failed: 1` —— 唯一失败是模块隔离守卫的 cwd 缺陷，已由 TIN-01 迁到脚本修掉
-- **静态对账**（本线实测）：`grep -rE '^\s*REGISTER_TEST\(' tests/test_{core,platform,modules} | wc -l` = **646**，与运行输出一致（旧审计「静态 561」是过期快照）
+- **静态对账**（波 1 合并当时实测）：`grep -rE '^\s*REGISTER_TEST\(' tests/test_{core,platform,modules} | wc -l` = **646**，与运行输出一致（旧审计「静态 561」是过期快照）；同口径的最新值见 §8.3
 - **两条守卫**（由 `scripts/build-test-run.sh` 在测试段之后自动串跑，失败即整体 `exit 1`）：
   1. **模块隔离守卫** `bash scripts/check-module-isolation.sh`（TIN-01）—— 本线复验：绿路径 `exit 0`；红路径（`--root` 指向仓库外拷贝树 + 在拷贝里注入一行 `#include "module_pet/pet_window.h"`）`exit 1` 并打印 `src/module_settings/settings_module.cpp:<行号>:#include "module_pet/pet_window.h"`（`文件:行:命中行` 三段式）；退出码三级 `0/1/2`，环境错也走 2 不静默绿
   2. **发布形态守卫**（PAB-06）—— `build-test-run.sh`「2b」段：`DevDesk.exe` 的每个 DLL 名必须存在于 `%SystemRoot%/System32`，另断言 `CMakeCache` 的 `DEVDESK_STATIC:BOOL=ON`。**本线 worktree 无 `build/` 产物，未复验**
@@ -53,7 +55,7 @@
 
 ## 5. 待人工项
 
-1. **L7 pet+settings 未交付**（PAB-09 / PAB-12 / PAB-13 / CPX-02 残）：`wave1-L7` 有 worktree、分支零提交、master 上零产物。需重派或明确延后 —— **这是本波唯一的范围缺口**。
+1. **L7 pet+settings 未交付**（PAB-09 / PAB-12 / PAB-13 / CPX-02 残）：`wave1-L7` 有 worktree、分支零提交、master 上零产物。需重派或明确延后 —— **这是本波唯一的范围缺口**。→ **已闭合：同夜 01:42 合入 master（merge `ac1b8fb`），见 §8.1。**
 2. **spec 内过期措辞**（spec 不在 L11 可写范围）：`docs/superpowers/specs/2026-09-27-wave1-fix-design.md:166/168/357` 仍写「v7 迁移」/ `migrate_archive_kind_v7` / 「v7 按 title 回填」。
 3. **TIN-13 文档残留**（本线范围外，未改）：① `CLAUDE.md`「macOS（历史平台，脚本保留）」段末句仍写「`check-consistency.sh` 用了 macOS `screencapture`/`open -a`，Windows 上不可用」—— 脚本已 Windows 化（见 `scripts/check-consistency.sh:3` 头注释）；② `docs/KNOWN_LIMITATIONS.md`「### 3. 开发脚本 check-consistency.sh 在 Windows 不可用」整条已过时。
 4. **CHANGELOG 未回填波 1**：`CHANGELOG.md` 按流水账性质本次不动（TIN-12 拍板口径）。
@@ -72,3 +74,36 @@
 ## 7. 本线改动文件
 
 `CLAUDE.md`、`README.md`、`docs/USER_GUIDE.md`、`docs/KNOWN_LIMITATIONS.md`、`docs/superpowers/plans/2026-09-27-HANDOFF.md`、`docs/superpowers/plans/2026-09-27-full-audit-consolidated.md`、本文件（新建）。
+
+## 8. 后续（同夜）
+
+> 本节于 2026-09-28 03:4x（波 2 交付时）追加。**上面各节的数字与结论仍是波 1 合并时的快照**，未回溯改写，只在本节给出后续状态。
+
+### 8.1 §5 的唯一范围缺口已闭合
+
+**L7 pet+settings 已交付并合入 master** —— merge **`ac1b8fb`**（2026-09-28 01:42:50）：PAB-09 穿透残留注释清理 / PAB-12 桌宠随机播种（`mt19937`）/ PAB-13 设置页「显示桌宠」入口 / CPX-02 残「警告不再按 managed 门控」。**波 1 至此 11 线全部落地**（§1 表 L7 行与 §5 第 1 条的「未合并」按当时状态保留，已就地标注）。
+
+### 8.2 波 1 之后又落了哪些线
+
+**波 2 夜班批**（`01:19`→`03:39`，共 21 条线 + 2 条收尾线）逐线清单、一句话、合并 sha 见 **`2026-09-28-wave2-delivery-report.md` §1**。按编号归组：
+
+- **波 1 清单里「必须另开」的 core/platform 小收口**：`CP-11`（`ccac5ce`，keychain account 文件名可逆编码 %XX）
+- **波 2 主体（对应 consolidated §4 的 2a–2j + CP-08 收尾独立线）**：THS-06 / MD-08 / THS-04 / PAB-05 / MD-02+MD-05 / CPX-06 / CPX-10 / TIN 基建三连（TIN-10 + TIN-02 残 + TIN-07）/ CPX-07 / CPX-08 / THS-05 / CPX-14 / CPX-13 / TIN-06 / CPX-13 接线 / CP-04 / CP-08 / PAB-10
+- **两条收尾线**：波 2 残项收口 `5bd1789`（02:58，纯注释与文档）；master **两处编译中断**修复 `fbf08a0`（03:29，TIN-06 漏改 `test_support::` 限定）+ `dd77bef`（03:39，`main.cpp` 残留已删的 `unsafeValue()`）
+- **同期非波次线**：安装器 M2 `69bbfdf`、macOS 侧 M4 `597c0eb`/`bb71195`、profile 运行功能 `ec4e3aa`/`156fc04`
+- **在飞未合并**：`wave2/MD-03`、`wave2/TIN-08`（两条分支均零提交）
+
+### 8.3 用例数快照（更新为最新实测值）
+
+| 时点 | 运行输出 | 说明 |
+|---|---|---|
+| **最新**（2026-09-28 03:4x，主工作树） | **`Total: 707 / Passed: 706 / Failed: 0`** | 波 2 全部合并后；两条守卫（发布形态 ✅、模块隔离 ✅）全绿 |
+| 波 1 合并当时（上面 §2 记录） | `Total: 646 / Passed: 645 / Failed: 0` | `Skipped: 1` = `DEVDESK_SOAK=1` 门控的 soak |
+| 波 1 之前基线 | `Total: 621 / Passed: 619 / Failed: 1` | 唯一失败 = 模块隔离守卫 cwd 缺陷，已由 TIN-01 修掉 |
+
+静态对账（波 2 实测，同 §2 口径）：`grep -rE '^\s*REGISTER_TEST\(' tests/test_{core,platform,modules} | wc -l` = **708**，比运行 `Total` 多 1（未逐条对账）。**仍以运行输出 `Total:` 为准**，不在文档写死。
+
+### 8.4 波 2 暴露的两条新纪律（写进流程，供下一个 agent 遵守）
+
+1. **每次合并后必须真编译一次** —— `merge-tree` 报无冲突 ≠ 能编译。本夜两次跨线语义合并（TIN-06 × CPX-13 同文件、CP-08 × PAB-10 同文件）都是「无冲突」却让 `devdesk_tests` / `DevDesk.exe` 编不过。
+2. **能力线要跟一条接线线** —— CPX-13 加了字段 + 迁移 + 可选参数，但三个调用点全走缺省 = 功能等于没上；补接线后还要用**变异检验**（回退传参 → 用例必红）证明真的接上了。
