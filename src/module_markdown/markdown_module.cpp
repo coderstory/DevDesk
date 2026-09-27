@@ -7,7 +7,7 @@
 //                改即写盘）/ 右栏预览（components::markdown 渲染成 eui 节点）
 //
 // Phase 1 编辑体验（docs/superpowers/specs/2026-09-22-markdown-editor-ux-design.md）：
-//   - 编辑 / 双栏 / 预览三态切换（顶栏 segmented + Ctrl+Shift+P 循环）
+//   - 编辑 / 实时 / 双栏 / 预览四态切换（顶栏 segmented + Ctrl+Shift+P 循环）
 //   - 双栏同步滚动（标题锚点 + 段内线性插值，编辑器单向驱动预览）
 //   - 编辑器底部状态栏（保存状态 ●/✓ + 行:列 · N 字）
 //
@@ -145,8 +145,34 @@ std::string noteDisplayPath(const NoteMeta& n) {
 
 // ---------- Phase 1 常量 ----------
 
-// 三态视图（值 = 顶栏 segmented 的选中下标）
-enum class ViewMode { Edit = 0, Split = 1, Preview = 2 };
+// 四态视图（枚举值 = md_view_state.json 的持久化口径，不是 segmented 下标）：
+// 0=Edit 1=Split 2=Preview 是已落盘语义，Live 只做追加（免迁移）
+enum class ViewMode { Edit = 0, Split = 1, Preview = 2, Live = 3 };
+
+// 四态视觉顺序（= Ctrl+Shift+P 循环顺序）：编辑 | 实时 | 双栏 | 预览。
+// 与枚举值顺序**解耦**（枚举顺序受持久化约束不可改）——segmented 下标与
+// ViewMode 的换算只经本表正反查，调用点不再 static_cast。
+constexpr ViewMode kModeOrder[] = {ViewMode::Edit, ViewMode::Live,
+                                   ViewMode::Split, ViewMode::Preview};
+constexpr int kModeCount = 4;
+
+// ViewMode → segmented 下标（表外值兜底 0）
+int modeOrderIndex(ViewMode m) {
+    for (int i = 0; i < kModeCount; ++i) {
+        if (kModeOrder[i] == m) return i;
+    }
+    return 0;
+}
+
+// segmented 下标 → ViewMode（越界兜底 Edit）
+ViewMode modeFromOrderIndex(int index) {
+    return (index >= 0 && index < kModeCount) ? kModeOrder[index] : ViewMode::Edit;
+}
+
+// Ctrl+Shift+P 循环：编辑 → 实时 → 双栏 → 预览 → 编辑
+ViewMode nextMode(ViewMode m) {
+    return kModeOrder[(modeOrderIndex(m) + 1) % kModeCount];
+}
 
 // 编辑器字号（spec §8.5「编辑器字体大小」，spec 缩水 B）：运行时值改从
 // core::theme::editorFontSize() 全局通道读（SettingsConfig 在 module_settings，
@@ -154,8 +180,14 @@ enum class ViewMode { Edit = 0, Split = 1, Preview = 2 };
 // 常量一致 15 = fontSizeBody token 基准）。行高 = 字号 × 1.2 运行时算
 constexpr float kDefaultEditorFontSize = 15.0f;
 constexpr float kEditorLineHeightFactor = 1.2f;  // input 内部行高系数
-constexpr float kEditTextColumnWidth = 720.0f;  // 仅编辑态的居中文本列宽（Typora 写作宽度）
+constexpr float kEditTextColumnWidth = 720.0f;  // 仅编辑/实时态的居中文本列宽（Typora 写作宽度）
 constexpr float kPreviewColumnWidth = 760.0f;   // 仅预览态的居中阅读列宽
+
+// M0 spike V1b（C1 修复）：input 组件的聚焦判定是 ui.isFocused(id + ".hit")
+// （components/input.h:113）——编程式聚焦必须发「基 id + .hit」，发基 id 只会把
+// 焦点挂到 stack 元素上：组件判定未聚焦（不画 caret、不挂键处理器），按键静默
+// 落回模块 keyEventHandler_。编辑器四处 requestFocus 统一走本常量。
+constexpr const char* kEditorInputHitId = "md.editor.input.hit";
 
 // "已保存 HH:MM"
 std::string formatSaveTime(std::time_t t) {
@@ -389,17 +421,18 @@ private:
                     })
                     .build();
 
-                // 三态切换：编辑 / 双栏 / 预览（Ctrl+Shift+P 循环）。
+                // 四态切换：编辑 / 实时 / 双栏 / 预览（Ctrl+Shift+P 循环）。
                 // 旧文案带 ✎/⇔/👁 符号——👁 是彩色 emoji（系统 emoji 字体渲染，
-                // 风格不统一），segmented 只支持纯文本，故整体去符号
+                // 风格不统一），segmented 只支持纯文本，故整体去符号。
+                // 视觉顺序经 kModeOrder 映射（不是枚举值顺序，也不是 static_cast）
                 components::segmented(ui, "md.mode")
                     .size(segW, 36.0f)
-                    .items({"编辑", "双栏", "预览"})
-                    .selected(static_cast<int>(mode_))
+                    .items({"编辑", "实时", "双栏", "预览"})
+                    .selected(modeOrderIndex(mode_))
                     .fontSize(t.sizes.fontSizeSmall)
                     .theme(componentTheme)
                     .onChange([this](int index) {
-                        setMode(static_cast<ViewMode>(index));
+                        setMode(modeFromOrderIndex(index));
                     })
                     .build();
 
@@ -435,7 +468,7 @@ private:
             .build();
     }
 
-    // ---------- 三栏主区（按视图模式裁剪：编辑/双栏/预览） ----------
+    // ---------- 主区（按视图模式裁剪：编辑/实时/双栏/预览） ----------
     void drawBody(eui::Ui& ui,
                   float contentW,
                   float bodyH,
@@ -450,6 +483,11 @@ private:
             .gap(gap)
             .content([&] {
                 drawTreeColumn(ui, bodyH, sideW, t, componentTheme);
+                if (mode_ == ViewMode::Live) {
+                    // 第四态（M1 骨架，只读）：单栏块级渲染，替换编辑+预览两列
+                    drawLiveColumn(ui, bodyH, fullW, t, componentTheme);
+                    return;
+                }
                 if (mode_ != ViewMode::Preview) {
                     drawEditorColumn(ui, bodyH, mode_ == ViewMode::Split ? midW : fullW,
                                      t, componentTheme);
@@ -1371,143 +1409,225 @@ private:
             scroll.content([&](eui::Ui& inner, float contentWidth, float viewportHeight) {
                     (void)viewportHeight;
                     lastPvContentWidth_ = contentWidth;  // 供同步滚动 estimateHeight 用
-                    // 预览的文本排版全部在 EUI-NEO markdown/text 组件内完成
-                    // （DevDesk 零字形级布局）。带重音符（combining accent，
-                    // U+0300–036F）字形轻微跨行属上游 TextPrimitive 行框问题，
-                    // 根因与升级路径见 KNOWN_LIMITATIONS #8，DevDesk 侧无可修点。
-                    //
-                    // Phase 3 增量块渲染：按块模型逐块 components::markdown
-                    // （每块 = 一段自足源码，切分器保证与整篇渲染等价——逐块
-                    // md4c 解析结果与整篇逐块一致，由
-                    // md_block_model_render_equivalence 回归锁定）。收益构成：
-                    //   - ≤8 块文档：未变块命中上游 cachedMarkdownDocument
-                    //     （LRU 8 槽）→ 编辑只重析脏块；
-                    //   - 大文档：解析缓存 8 槽不够会抖动，但昂贵的行内布局
-                    //     （cachedInlineLayout，256 槽、按块 runs 键控）与整篇
-                    //     模式同等命中 → 成本与整篇模式同量级；
-                    //   - 块模型 dirty 区间 + stableId 身份 = 后续块级编辑/
-                    //     高亮接线的基础（Phase 3 余下项）。
-                    // 上游能力边界登记 KNOWN_LIMITATIONS #9（markdown 无块级
-                    // 增量 API，增量全靠内容键控缓存）。块间隙用 column.gap =
-                    // MarkdownStyle.blockGap，与单实例内部 gap 同源，观感一致。
-                    if (blockModel_.text() != editorText_) {
-                        blockModel_.update(editorText_);  // 防御：理论不可达
-                    }
-                    // P3-③ 色表注入（每帧）：主题切换时缓存旧色条目自动作废
-                    previewCodeCache_.setColors(mdHighlightColors(t));
-                    // P3-⑤ 逐块 hit/hover 几何表：与 ④ 同一张表。Split 态
-                    // computeSyncOffset 已重建（(rev,width,gap,块数) 全等 →
-                    // 本调用零成本）；Preview 态这里是唯一重建点（表本就常驻
-                    // 成员，无额外状态）。
-                    rebuildSyncMap(contentWidth, style);
-                    const auto& blocks = blockModel_.blocks();
-                    std::vector<int> activeCodeIds;  // 本帧 CodeFence 块，供缓存回收
-                    // hover 高亮底色（token 随浅/深主题，同树行 hover 语义）
-                    const eui::Color hoverTint = t.colors.hover;
-                    inner.column("md.preview.blocks")
-                        .width(contentWidth)
-                        .gap(style.blockGap)
-                        .content([&] {
-                            for (size_t k = 0; k < blocks.size(); ++k) {
-                                const MdBlock& b = blocks[k];
-                                const bool hovered = previewHover_.hovered(b.stableId);
-                                const float hk = syncMap_.blockHeight(k);
-                                // ---- P3-⑤ 逐块交互包裹 ----
-                                // 上游 components::markdown 无逐块命中/指针
-                                // 事件（纯展示，link 亦不可点——KNOWN_LIMITATIONS
-                                // #9 补 ⑤），DevDesk 侧给每个块（含上游块，不只
-                                // CodeFence）包一层固定高 stack：hover 底衬垫最
-                                // 下、块内容居中、透明 MouseArea 覆盖层在最上。
-                                // 包裹高 = H_k 取自几何表（④ 同源 = 实际布局，
-                                // 列内累计与旧逐块直挂完全一致 → 内容总高不变、
-                                // 不回归 ②③④）。滚轮路由走 hitTestScrollable
-                                // （只匹配 scrollStateId/onScroll 元素），透明
-                                // mouseArea 不劫持预览滚动。
-                                const std::string wrapId =
-                                    "md.preview.blk." + std::to_string(b.stableId);
-                                inner.stack(wrapId)
-                                    .width(contentWidth)
-                                    .height(hk)
-                                    .content([&] {
-                                        // hover 底衬（上游块文字底透明 → 直接
-                                        // 透出成背景高亮；CodeFence 自带不透明
-                                        // bg 盖在其下 → 走混色参数由块自身呈现）
-                                        inner.rect(wrapId + ".hl")
-                                            .size(contentWidth, hk)
-                                            .radius(style.radius)
-                                            .color(hovered
-                                                       ? hoverTint
-                                                       : eui::Color{0.0f, 0.0f, 0.0f, 0.0f})
-                                            .build();
-                                        bool codeDrawn = false;
-                                        if (b.kind == MdBlockKind::CodeFence) {
-                                            // CodeFence 块走 DevDesk 侧自绘：md_highlight 色表
-                                            // 产出着色 runs 喂给带 runs 的 text 节点（上游
-                                            // markdown 代码块单色且不暴露预解析注入——
-                                            // KNOWN_LIMITATIONS #9，本块是唯一不能走上游通路的
-                                            // 类型）。未变块命中 (stableId, hash) 缓存零重算。
-                                            // 解析不出单围栏（防御）→ 落到下方上游通路兜底。
-                                            const MdPreviewCodeHighlight* hl =
-                                                previewCodeCache_.get(b.stableId, b.hash);
-                                            if (!hl) {
-                                                MdPreviewCodeHighlight fresh =
-                                                    mdPreviewCodeHighlight(
-                                                        blockModel_.text().substr(
-                                                            b.start, b.end - b.start),
-                                                        mdHighlightColors(t));
-                                                if (fresh.ok) {
-                                                    previewCodeCache_.put(
-                                                        b.stableId, b.hash,
-                                                        std::move(fresh));
-                                                    hl = previewCodeCache_.get(b.stableId,
-                                                                               b.hash);
-                                                }
-                                            }
-                                            if (hl) {
-                                                activeCodeIds.push_back(b.stableId);
-                                                drawPreviewCodeBlock(
-                                                    inner,
-                                                    wrapId + ".code",
-                                                    *hl, contentWidth, style,
-                                                    hovered, hoverTint);
-                                                codeDrawn = true;
-                                            }
-                                        }
-                                        if (!codeDrawn) {
-                                            components::markdown(
-                                                inner,
-                                                "md.preview.block." +
-                                                    std::to_string(b.stableId))
-                                                .markdown(blockModel_.text().substr(
-                                                    b.start, b.end - b.start))
-                                                .width(contentWidth)
-                                                .wrapContentHeight()
-                                                .style(style)
-                                                .build();
-                                        }
-                                        // 透明 hit 覆盖层（默认手型光标 = 点击
-                                        // 定位可点性提示；onTap 的 y 为区域局部
-                                        // 坐标，经反查表映射回编辑器行）
-                                        components::mouseArea(inner, wrapId + ".hit")
-                                            .size(contentWidth, hk)
-                                            .onTap([this, &ui, k](
-                                                       const components::MouseEvent& ev) {
-                                                handlePreviewBlockClick(
-                                                    ui, k, static_cast<float>(ev.y));
-                                            })
-                                            .onHover([this, sid = b.stableId](bool h) {
-                                                if (h) previewHover_.enter(sid);
-                                                else previewHover_.leave(sid);
-                                            })
-                                            .build();
-                                    })
-                                    .build();
-                            }
-                        })
-                        .build();
-                    previewCodeCache_.pruneActive(activeCodeIds);
+                    // 逐块渲染 + 几何：与第四态「实时」共用同一条通路
+                    // （见 drawBlockFlow；观感一致是 spec §3.2 的硬要求）。
+                    // 元素建在 inner（测量 pass 会给一次性 Ui）；点击定位要写的是
+                    // 模块 Ui 的编辑器状态 → 回调里闭包捕获外层 ui
+                    drawBlockFlow(inner, contentWidth, t, style, "md.preview",
+                                  [this, &ui](size_t k, float y) {
+                                      handlePreviewBlockClick(ui, k, y);
+                                  });
                 })
                 .build();
+        }).build();
+    }
+
+    // ---- 逐块渲染（预览 / 第四态「实时」共用同一条通路）----
+    // Phase 3 增量块渲染：按块模型逐块 components::markdown（每块 = 一段自足源码，
+    // 切分器保证与整篇渲染等价——逐块 md4c 解析结果与整篇逐块一致，由
+    // md_block_model_render_equivalence 回归锁定）。收益构成：
+    //   - ≤8 块文档：未变块命中上游 cachedMarkdownDocument（LRU 8 槽）→ 编辑只
+    //     重析脏块；
+    //   - 大文档：解析缓存 8 槽不够会抖动，但昂贵的行内布局（cachedInlineLayout，
+    //     256 槽、按块 runs 键控）与整篇模式同等命中 → 成本与整篇模式同量级。
+    // 上游能力边界登记 KNOWN_LIMITATIONS #9（markdown 无块级增量 API，增量全靠
+    // 内容键控缓存）。块间隙用 column.gap = MarkdownStyle.blockGap，与单实例内部
+    // gap 同源，观感一致。排版全在上游组件内完成（DevDesk 零字形级布局）；带重音
+    // 符（combining accent，U+0300–036F）字形轻微跨行属上游 TextPrimitive 行框
+    // 问题，根因与升级路径见 KNOWN_LIMITATIONS #8，DevDesk 侧无可修点。
+    //
+    // 预览与实时共用本函数（spec §3.2：两者观感必须一致，不复制第二份）。
+    // prefix 决定键控 id：预览 "md.preview" → md.preview.blk.<stableId> /
+    // 实时 "md.live" → md.live.blk.<stableId>；onBlockTap 为空 = 块只 hover 不可点
+    //（M1 实时态无活动块可定位，点击定位接线留 M3）。
+    //
+    // ⚠ ui 必是 scrollView content 回调交给我们的那个 Ui：该回调同时用于真实
+    // compose 与「测量 pass」（scrollview.h measureContentHeight 用一次性
+    // measureUi 调 content_），元素必须建在传入的 Ui 上——建到外层 Ui 会让测量
+    // pass 量到空内容（可滚高度恒 0、预览不滚）。点击回调要写的那个 Ui 由调用方
+    // 在自己的 onBlockTap 里闭包捕获（测量 pass 不会触发回调）。
+    void drawBlockFlow(eui::Ui& ui,
+                       float contentWidth,
+                       const core::theme::Tokens& t,
+                       const components::MarkdownStyle& style,
+                       const std::string& prefix,
+                       const std::function<void(size_t, float)>& onBlockTap) {
+        if (blockModel_.text() != editorText_) {
+            blockModel_.update(editorText_);  // 防御：理论不可达
+        }
+        // P3-③ 色表注入（每帧）：主题切换时缓存旧色条目自动作废
+        previewCodeCache_.setColors(mdHighlightColors(t));
+        // P3-⑤ 逐块 hit/hover 几何表：与 ④ 同一张表。Split 态 computeSyncOffset
+        // 已重建（(rev,width,gap,块数) 全等 → 本调用零成本）；Preview / Live 态这里
+        // 是唯一重建点（表本就常驻成员，无额外状态）。
+        rebuildSyncMap(contentWidth, style);
+        const auto& blocks = blockModel_.blocks();
+        std::vector<int> activeCodeIds;  // 本帧 CodeFence 块，供缓存回收
+        // hover 高亮底色（token 随浅/深主题，同树行 hover 语义）
+        const eui::Color hoverTint = t.colors.hover;
+        ui.column(prefix + ".blocks")
+            .width(contentWidth)
+            .gap(style.blockGap)
+            .content([&] {
+                for (size_t k = 0; k < blocks.size(); ++k) {
+                    const MdBlock& b = blocks[k];
+                    const bool hovered = previewHover_.hovered(b.stableId);
+                    const float hk = syncMap_.blockHeight(k);
+                    // ---- P3-⑤ 逐块交互包裹 ----
+                    // 上游 components::markdown 无逐块命中/指针事件（纯展示，
+                    // link 亦不可点——KNOWN_LIMITATIONS #9 补 ⑤），DevDesk 侧给
+                    // 每个块（含上游块，不只 CodeFence）包一层固定高 stack：hover
+                    // 底衬垫最下、块内容居中、透明 MouseArea 覆盖层在最上。
+                    // 包裹高 = H_k 取自几何表（④ 同源 = 实际布局，列内累计与旧
+                    // 逐块直挂完全一致 → 内容总高不变、不回归 ②③④）。滚轮路由走
+                    // hitTestScrollable（只匹配 scrollStateId/onScroll 元素），透明
+                    // mouseArea 不劫持滚动。
+                    const std::string wrapId =
+                        prefix + ".blk." + std::to_string(b.stableId);
+                    ui.stack(wrapId)
+                        .width(contentWidth)
+                        .height(hk)
+                        .content([&] {
+                            // hover 底衬（上游块文字底透明 → 直接透出成背景高亮；
+                            // CodeFence 自带不透明 bg 盖在其下 → 走混色参数由块自身
+                            // 呈现）
+                            ui.rect(wrapId + ".hl")
+                                .size(contentWidth, hk)
+                                .radius(style.radius)
+                                .color(hovered
+                                           ? hoverTint
+                                           : eui::Color{0.0f, 0.0f, 0.0f, 0.0f})
+                                .build();
+                            bool codeDrawn = false;
+                            if (b.kind == MdBlockKind::CodeFence) {
+                                // CodeFence 块走 DevDesk 侧自绘：md_highlight 色表
+                                // 产出着色 runs 喂给带 runs 的 text 节点（上游
+                                // markdown 代码块单色且不暴露预解析注入——
+                                // KNOWN_LIMITATIONS #9，本块是唯一不能走上游通路的
+                                // 类型）。未变块命中 (stableId, hash) 缓存零重算。
+                                // 解析不出单围栏（防御）→ 落到下方上游通路兜底。
+                                const MdPreviewCodeHighlight* hl =
+                                    previewCodeCache_.get(b.stableId, b.hash);
+                                if (!hl) {
+                                    MdPreviewCodeHighlight fresh =
+                                        mdPreviewCodeHighlight(
+                                            blockModel_.text().substr(
+                                                b.start, b.end - b.start),
+                                            mdHighlightColors(t));
+                                    if (fresh.ok) {
+                                        previewCodeCache_.put(
+                                            b.stableId, b.hash, std::move(fresh));
+                                        hl = previewCodeCache_.get(b.stableId,
+                                                                   b.hash);
+                                    }
+                                }
+                                if (hl) {
+                                    activeCodeIds.push_back(b.stableId);
+                                    drawPreviewCodeBlock(ui, wrapId + ".code", *hl,
+                                                         contentWidth, style,
+                                                         hovered, hoverTint);
+                                    codeDrawn = true;
+                                }
+                            }
+                            if (!codeDrawn) {
+                                components::markdown(
+                                    ui,
+                                    prefix + ".block." +
+                                        std::to_string(b.stableId))
+                                    .markdown(blockModel_.text().substr(
+                                        b.start, b.end - b.start))
+                                    .width(contentWidth)
+                                    .wrapContentHeight()
+                                    .style(style)
+                                    .build();
+                            }
+                            // 透明 hit 覆盖层（默认手型光标 = 点击定位可点性提示；
+                            // onTap 的 y 为区域局部坐标，经反查表映射回编辑器行）
+                            auto hit =
+                                components::mouseArea(ui, wrapId + ".hit")
+                                    .size(contentWidth, hk);
+                            if (onBlockTap) {
+                                hit.onTap([onBlockTap, k](
+                                              const components::MouseEvent& ev) {
+                                    onBlockTap(k, static_cast<float>(ev.y));
+                                });
+                            }
+                            hit.onHover([this, sid = b.stableId](bool h) {
+                                   if (h) previewHover_.enter(sid);
+                                   else previewHover_.leave(sid);
+                               })
+                                .build();
+                        })
+                        .build();
+                }
+            })
+            .build();
+        previewCodeCache_.pruneActive(activeCodeIds);
+    }
+
+    // ---- 第四态：实时（块级实时渲染骨架，M1 只读）----
+    // 单栏 + 720px 写作列（与编辑态同宽），块级渲染走 drawBlockFlow —— 与预览
+    // 同一条通路、同一张 MdSyncMap 几何表（spec §3.2：两者观感必须一致）。
+    // M1 无活动块 input：不进任何输入接线，纯只读；空文档/无笔记/加载失败沿用
+    // 既有 hint 文案路径。
+    void drawLiveColumn(eui::Ui& ui,
+                        float bodyH,
+                        float midW,
+                        const core::theme::Tokens& t,
+                        const components::theme::ThemeColorTokens& componentTheme) {
+        ui.stack("md.live").size(midW, bodyH).content([&] {
+            ui.rect("md.live.bg")
+                .size(midW, bodyH)
+                // 实时列与编辑/预览列同层级：结构性面板 → background
+                .color(t.colors.background)
+                .radius(t.sizes.radiusLarge)
+                .border(1.0f, t.colors.borderDefault)
+                .build();
+
+            if (currentPath_.empty()) {
+                ui.text("md.live.hint")
+                    .position(24.0f, 50.0f)
+                    .size(midW - 48.0f, 40.0f)
+                    .text("从左栏选一篇笔记开始编辑")
+                    .fontSize(t.sizes.fontSizeBody)
+                    .lineHeight(20.0f)
+                    .color(t.colors.textTertiary)
+                    .build();
+                drawStatusBar(ui, 0.0f, bodyH - 22.0f, midW, t);
+                return;
+            }
+
+            // 写作列 clamp 720px 居中（与编辑态同款，spec §3.2）
+            float lvW = midW - 32.0f;
+            lvW = std::min(lvW, kEditTextColumnWidth);
+            const float lvX = std::max(0.0f, (midW - lvW) * 0.5f);
+            // 标签 chip 行（四态共享，位置与编辑态同列对齐）
+            drawTagBar(ui, lvX, lvW, t, componentTheme);
+            const float lvY = 48.0f;  // 16 顶距 + 24 chip 行 + 8 间距（同编辑态）
+            const float lvH = std::max(0.0f, bodyH - lvY - 22.0f - 8.0f);
+
+            const components::MarkdownStyle style(componentTheme);
+            // 单一滚动权威 = 本 scrollView（M1 手动滚动；光标跟随留 M6）
+            components::scrollView(ui, "md.live.scroll")
+                .position(lvX, lvY)
+                .size(lvW, lvH)
+                .gap(8.0f)
+                .step(56.0f)
+                .theme(componentTheme)
+                .offset(liveOffset_)
+                // contentKey 用内容 hash（setEditorText 维护；照抄预览 perf [15]
+                // 做法，不回退到按 text.size() 键控）、宽度由 MeasureCache 的
+                // entry 自带 —— 同长度换字符时高度缓存必须失效
+                .contentKey("md.live.scroll." + currentPath_ + "." +
+                            std::to_string(previewTextHash_))
+                .onChange([this](float v) { liveOffset_ = v; })
+                .content([&](eui::Ui& inner, float contentWidth, float viewportHeight) {
+                    (void)viewportHeight;
+                    drawBlockFlow(inner, contentWidth, t, style, "md.live", {});
+                })
+                .build();
+
+            drawStatusBar(ui, 0.0f, bodyH - 22.0f, midW, t);
         }).build();
     }
 
@@ -1632,7 +1752,7 @@ private:
         st.dragAnchor = st.cursor;
         st.hasPreferredCursorX = false;
         st.followCaret = true;
-        ui.requestFocus("md.editor.input");  // 帧末消费（Runtime 机制，同回车聚焦）
+        ui.requestFocus(kEditorInputHitId);  // 帧末消费（Runtime 机制，同回车聚焦）
         LOG_INFO("预览块点击: 块#" + std::to_string(jump.blockIndex) +
                  " stableId=" + std::to_string(jump.stableId) +
                  " kind=" +
@@ -1917,7 +2037,7 @@ private:
         toastOpen_ = true;
     }
 
-    // ---- Phase 1：三态切换 / 大纲 ----
+    // ---- Phase 1：四态切换 / 大纲 ----
 
     void setMode(ViewMode m) {
         if (m == mode_) return;
@@ -1925,15 +2045,16 @@ private:
         // 进预览态时把滚动位置对齐编辑器当前位置（compose 里延迟计算，
         // 因为需要预览列宽和主题样式）
         if (m == ViewMode::Preview) syncPreviewOnEnter_ = true;
-        saveViewState();  // 审计 [23]：三态视图跨会话记忆
+        saveViewState();  // 审计 [23]：四态视图跨会话记忆
         LOG_INFO("Markdown 视图切换: " + std::to_string(static_cast<int>(m)));
     }
 
-    // Ctrl+Shift+P 循环切换三态 / Ctrl+N 新建笔记。通道 = app 级 onKeyEvent →
-    // Router 派发到当前页模块（EUI-NEO InputBuilder 无逐组件按键 passthrough，那是
-    // Phase 2 上游 PR；本快捷键不涉及编辑器文本变换，走全局通道无 undo 问题）。
-    // 焦点在编辑器/搜索框/弹窗输入时 runtime_input 把内置未消费的键回调出来，
-    // Ctrl+N 不在 EUI-NEO input 内置键位表（只吃 A/C/X/V/Z/Y），能到达这里
+    // Ctrl+Shift+P 循环切换四态（编辑 → 实时 → 双栏 → 预览 → 编辑）/ Ctrl+N
+    // 新建笔记。通道 = app 级 onKeyEvent → Router 派发到当前页模块（EUI-NEO
+    // InputBuilder 无逐组件按键 passthrough，那是 Phase 2 上游 PR；本快捷键不涉及
+    // 编辑器文本变换，走全局通道无 undo 问题）。焦点在编辑器/搜索框/弹窗输入时
+    // runtime_input 把内置未消费的键回调出来，Ctrl+N 不在 EUI-NEO input 内置键位表
+    //（只吃 A/C/X/V/Z/Y），能到达这里
     bool onKeyEvent(const eui::KeyEvent& key) override {
         // 审计 M5：Esc 关最上层弹窗/浮层。键走得到本通道 = 焦点元素没消费
         //（新建笔记/新建文件夹/重命名三个弹窗的输入框均挂 onCancel，聚焦时
@@ -1943,7 +2064,7 @@ private:
         }
         if (key.isDown() && key.modifiers.shortcut() && key.modifiers.shift &&
             key.key == eui::InputKey::P) {
-            setMode(static_cast<ViewMode>((static_cast<int>(mode_) + 1) % 3));
+            setMode(nextMode(mode_));
             return true;
         }
         // ux-design §4 #6 P1：Ctrl+N 打开新建笔记弹窗（与「+ 新建笔记」按钮/
@@ -2216,7 +2337,7 @@ private:
 
     // ==================== 视图状态持久化（审计 [23]） ====================
 
-    // onStart 尾部调用（refreshList 之后）：恢复上次选中笔记 / 三态视图 /
+    // onStart 尾部调用（refreshList 之后）：恢复上次选中笔记 / 四态视图 /
     // 收起目录。笔记可能已被外部删除——只在当前列表里能找到才重开，找不到
     // 静默跳过（下次成功 openNote 会覆盖旧值）。
     void loadViewState() {
@@ -2452,7 +2573,7 @@ private:
             refreshList();
             openNote(relPath);
             showToast("笔记已存在", "已直接打开 " + relPath, false);
-            if (currentPath_ == relPath) ui.requestFocus("md.editor.input");
+            if (currentPath_ == relPath) ui.requestFocus(kEditorInputHitId);
             return;
         }
         if (defaultedName) {
@@ -2480,7 +2601,7 @@ private:
         // 「新建后自动 focus 编辑器」（ux-design §4 #6，审计 [13][31]）：
         // EUI-NEO Ui::requestFocus 为上游小增量（Runtime 帧末消费），回车即
         // 可打字；openNote 守卫失败（未保存改动阻塞切换）时不聚焦
-        if (currentPath_ == relPath) ui.requestFocus("md.editor.input");
+        if (currentPath_ == relPath) ui.requestFocus(kEditorInputHitId);
         LOG_INFO("新建笔记: " + relPath);
     }
 
@@ -2643,7 +2764,7 @@ private:
         EditBuffer buf{st.text, st.cursor, st.selectionStart, st.selectionEnd};
         module::markdown::applyInsertTable(buf, rows, cols);
         commitEditBuffer(ui, buf);
-        ui.requestFocus("md.editor.input");
+        ui.requestFocus(kEditorInputHitId);
     }
 
     // 删除确认弹窗（与 todo 删任务 / claude 删 Profile 同款「不可恢复」文案）
@@ -2951,13 +3072,14 @@ private:
     std::string toastMessage_;
 
     // ---- Phase 1 状态 ----
-    // 三态视图（W9：默认编辑态 = 左树 + 右编辑两栏；预览/双栏经顶栏
+    // 四态视图（W9：默认编辑态 = 左树 + 右编辑两栏；实时/双栏/预览经顶栏
     // segmented 或 Ctrl+Shift+P 切换——用户确认期望「左侧目录树、右侧编辑区」）
     ViewMode mode_ = ViewMode::Edit;
     std::vector<MdHeading> outline_;   // 大纲（标题扫描结果）
     bool outlineDirty_ = true;
     int activeOutlineIdx_ = -1;        // 仅预览态用（无编辑器光标可读）
     float previewOffset_ = 0.0f;       // 仅预览态的手动滚动位置
+    float liveOffset_ = 0.0f;          // 实时态的手动滚动位置（M1；M6 接光标跟随）
     bool syncPreviewOnEnter_ = false;  // 刚切入预览态 → 对齐编辑器位置
     float lastPvContentWidth_ = 0.0f;  // 预览内容宽（estimateHeight 用，滞后一帧）
     std::time_t lastSavedAt_ = 0;      // 上次落盘时刻（状态栏 "✓ 已保存 HH:MM"）

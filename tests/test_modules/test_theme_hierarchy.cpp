@@ -194,11 +194,13 @@ REGISTER_TEST(theme_hierarchy_markdown,
     mod->onStart();
 
     // 默认 Edit 态不渲染预览列：Ctrl+Shift+P 切到 Split（编辑+预览双栏全出）
+    // —— M1 加第四态「实时」后态序为 编辑→实时→双栏→预览，故按两次到双栏
     eui::KeyEvent p;
     p.key = eui::InputKey::P;
     p.modifiers.control = true;
     p.modifiers.shift = true;
-    DOCTEST_CHECK(mod->onKeyEvent(p));
+    DOCTEST_CHECK(mod->onKeyEvent(p));  // → 实时（第四态）
+    DOCTEST_CHECK(mod->onKeyEvent(p));  // → 双栏
 
     const auto checkFrame = [&](Frame& frame,
                                 const core::theme::Tokens& t) -> bool {

@@ -12,10 +12,12 @@
 
 namespace module::markdown {
 
-// 用户重启后最想恢复的三项（审计 [23] evidence：选中笔记 / 三态视图 / 收起的目录）
+// 用户重启后最想恢复的三项（审计 [23] evidence：选中笔记 / 四态视图 / 收起的目录）
 struct MarkdownViewState {
     std::string lastPath;                    // 打开的笔记（POSIX 相对路径，空 = 无）
-    int mode = 0;                            // ViewMode：0=Edit 1=Split 2=Preview（越界 → 0）
+    // ViewMode：0=Edit 1=Split 2=Preview 3=Live（越界 → 0）。
+    // 前三值是已落盘文件的既有语义，Live 只做追加（免迁移）
+    int mode = 0;
     std::vector<std::string> collapsedDirs;  // 已收起的一级目录（POSIX 相对路径）
 };
 
