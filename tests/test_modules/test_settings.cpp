@@ -6,6 +6,7 @@
 //       窗口效果三档（磨砂 Phase D）：默认值/往返/非法值收敛、档位→alpha/
 //       backdrop 映射、降级提示矩阵、applyWindowVisuals 接线（无头）
 #include "doctest.h"
+#include "test_support.h"
 #include "settings_config.h"
 
 #include "claude_service.h"
@@ -65,32 +66,6 @@ std::string readFileRaw(const std::filesystem::path& p) {
     return ss.str();
 }
 
-// 环境变量设置（Windows 用 _putenv_s，空串清除；与 test_markdown 同款）
-void setEnvVar(const char* name, const std::string& value) {
-#if defined(_WIN32)
-    ::_putenv_s(name, value.c_str());
-#else
-    if (value.empty()) {
-        ::unsetenv(name);
-    } else {
-        ::setenv(name, value.c_str(), 1);
-    }
-#endif
-}
-
-// RAII：临时环境变量（析构恢复为「未设置」）——审计 THS-01 用例把笔记目录 /
-// 皮肤目录指到临时路径，与真机目录互不污染
-struct EnvVarGuard {
-    const char* name;
-    std::string saved;
-    EnvVarGuard(const char* n, const std::string& value) : name(n) {
-        const char* cur = std::getenv(n);
-        saved = cur ? cur : "";
-        setEnvVar(n, value);
-    }
-    ~EnvVarGuard() { setEnvVar(name, saved); }
-};
-
 // RAII：临时 config.json（DEVDESK_CONFIG_PATH）+ 临时 DB（appDatabase），
 // 析构注销/清除，fail-fast 断言提前返回也不污染其他用例
 struct PruneEnv {
@@ -113,72 +88,30 @@ struct PruneEnv {
             return;
         }
         ::core::registerAppDatabase(&db->db());
-        setEnvVar("DEVDESK_CONFIG_PATH", cfgPath.string());
+        test_support::setEnvVar("DEVDESK_CONFIG_PATH", cfgPath.string());
     }
 
     ~PruneEnv() {
-        setEnvVar("DEVDESK_CONFIG_PATH", "");
+        test_support::setEnvVar("DEVDESK_CONFIG_PATH", "");
         ::core::registerAppDatabase(nullptr);
         removeQuietly(cfgPath);
         removeQuietly(dbPath);
     }
 };
 
-// RAII：把「应用数据根目录的环境变量」重定向到临时目录（审计 H2 用）——
-// 日志路径 core::paths::logFile() 的平台来源不同：
-//   Windows: %APPDATA%/DevDesk/logs/devdesk.log  （paths_win.cpp）
-//   macOS:   $HOME/Library/Application Support/DevDesk/logs/devdesk.log（paths_macos.cpp）
-//   Linux:   $HOME/.local/share/DevDesk/logs/devdesk.log（paths_posix.cpp）
-// 只重定向 APPDATA 的话，macOS/Linux 上本用例会把自造日志写进**真实**用户目录；
-// 故两套变量都在此隔离（Windows 侧只动 APPDATA，行为与从前一字不差）。
-// 析构恢复原值，fail-fast 早退也不影响后续用例。
-struct AppDataEnv {
-    std::string saved;
-#if !defined(_WIN32)
-    std::string savedHome;   // macOS/Linux 的日志路径来源是 $HOME
-#endif
-    std::filesystem::path dir;
+// 数据根（APPDATA / HOME）隔离已收进共享头 test_support::AppDataEnv；
+// 以下两个是「模块 tail 读的就是这个文件」的写/追加助手，只读 ::core::paths::logFile()
+void writeLogFile(const std::string& content) {
+    const auto p = ::core::paths::logFile();
+    std::error_code ec;
+    std::filesystem::create_directories(p.parent_path(), ec);
+    std::ofstream(p, std::ios::binary | std::ios::trunc) << content;
+}
 
-    explicit AppDataEnv(const char* tag) {
-        const char* cur = std::getenv("APPDATA");
-        saved = cur ? cur : "";
-#if !defined(_WIN32)
-        const char* curHome = std::getenv("HOME");
-        savedHome = curHome ? curHome : "";
-#endif
-        dir = test_temp::tempPath(
-            "devdesk_test_settings_appdata_" + std::string(tag));
-        std::error_code ec;
-        std::filesystem::remove_all(dir, ec);
-        std::filesystem::create_directories(dir, ec);
-        setEnvVar("APPDATA", dir.string());
-#if !defined(_WIN32)
-        setEnvVar("HOME", dir.string());
-#endif
-    }
-
-    ~AppDataEnv() {
-        setEnvVar("APPDATA", saved);
-#if !defined(_WIN32)
-        setEnvVar("HOME", savedHome);
-#endif
-        std::error_code ec;
-        std::filesystem::remove_all(dir, ec);
-    }
-
-    // 写/追加测试日志（模块 tail 读的就是这个文件）
-    void writeLog(const std::string& content) const {
-        const auto p = ::core::paths::logFile();
-        std::error_code ec;
-        std::filesystem::create_directories(p.parent_path(), ec);
-        std::ofstream(p, std::ios::binary | std::ios::trunc) << content;
-    }
-
-    void appendLog(const std::string& content) const {
-        std::ofstream(::core::paths::logFile(), std::ios::binary | std::ios::app)
-            << content;
-    }
-};
+void appendLogFile(const std::string& content) {
+    std::ofstream(::core::paths::logFile(), std::ios::binary | std::ios::app)
+        << content;
+}
 
 // ---- Task B tab 化：tab 点击助手 ----
 // 在一次性元素树上点 tabs 命中矩形（无头等价真实点击：onClick 把 tab 索引
@@ -824,7 +757,7 @@ REGISTER_TEST(settings_takeover_status_row,
     paths.overlayFiles.push_back(overlay);
     svc.setSettingsSyncPaths(paths);
     svc.setSettingsTakeOverEnabled(true);
-    setEnvVar("DEVDESK_CONFIG_PATH", cfgPath.string());
+    test_support::setEnvVar("DEVDESK_CONFIG_PATH", cfgPath.string());
 
     auto pr = svc.createProfile("接管", "https://up.example.com",
                                 "sk-takeover-0001", "");
@@ -890,7 +823,7 @@ REGISTER_TEST(settings_takeover_status_row,
 
     mod->onStop();
     module::claude::ClaudeService::setGlobal(nullptr);
-    setEnvVar("DEVDESK_CONFIG_PATH", "");
+    test_support::setEnvVar("DEVDESK_CONFIG_PATH", "");
     platform::keychain::deleteSecret(
         "DevDeskTestTakeover", "claude:" + std::to_string(pr.value().id));
     fs::remove_all(dir, ec);
@@ -924,7 +857,7 @@ REGISTER_TEST(settings_takeover_warn_unmanaged,
     paths.sidecarFile = dir / "snapshot.json";
     svc.setSettingsSyncPaths(paths);
     svc.setSettingsTakeOverEnabled(true);
-    setEnvVar("DEVDESK_CONFIG_PATH", cfgPath.string());
+    test_support::setEnvVar("DEVDESK_CONFIG_PATH", cfgPath.string());
 
     auto pr = svc.createProfile("警告未接管", "https://up.example.com",
                                 "sk-warn-unmanaged-0001", "");
@@ -965,7 +898,7 @@ REGISTER_TEST(settings_takeover_warn_unmanaged,
     svc.stopProxy();
     mod->onStop();
     module::claude::ClaudeService::setGlobal(nullptr);
-    setEnvVar("DEVDESK_CONFIG_PATH", "");
+    test_support::setEnvVar("DEVDESK_CONFIG_PATH", "");
     platform::keychain::deleteSecret(
         "DevDeskTestWarnUnmanaged", "claude:" + std::to_string(pr.value().id));
     fs::remove_all(dir, ec);
@@ -1858,8 +1791,8 @@ REGISTER_TEST(settings_log_level_applied_on_start_and_click,
 REGISTER_TEST(settings_h2_log_tail_snapshot,
               "settings: 日志 tail 后台重读快照（H2 tick 前旧值/后新值）", {
     PruneEnv env("h2tail");
-    AppDataEnv appdata("h2tail");   // 日志文件隔离到临时 APPDATA
-    appdata.writeLog("H2-TAIL-ONE\n");
+    test_support::AppDataEnv appdata("h2tail");   // 日志文件隔离到临时 APPDATA
+    writeLogFile("H2-TAIL-ONE\n");
 
     std::unique_ptr<::core::Module> mod(create_settings_module());
     mod->onStart();   // 首次装载在启动期同步做（非渲染路径）
@@ -1893,7 +1826,7 @@ REGISTER_TEST(settings_h2_log_tail_snapshot,
 
     // 切到日志 tab（置脏）+ 外部追加新行 → 下一帧 compose 才发出读意图
     DOCTEST_REQUIRE(clickSettingsTab(*mod, screen, 2));
-    appdata.appendLog("H2-TAIL-TWO\n");
+    appendLogFile("H2-TAIL-TWO\n");
 
     // tick 前：本帧才发读意图（读盘本帧上路），快照 = 上次装载值且不含新行
     const auto before = tailLines();
@@ -1941,8 +1874,8 @@ REGISTER_TEST(settings_ths01_fs_snapshot,
     std::error_code ec;
     std::filesystem::remove_all(notesDir, ec);
     std::filesystem::remove_all(petsDir, ec);
-    const EnvVarGuard notesEnv("DEVDESK_NOTES_DIR", notesDir.string());
-    const EnvVarGuard petsEnv("DEVDESK_PETS_DIR", petsDir.string());
+    const test_support::ScopedEnv notesEnv("DEVDESK_NOTES_DIR", notesDir.string());
+    const test_support::ScopedEnv petsEnv("DEVDESK_PETS_DIR", petsDir.string());
 
     std::unique_ptr<::core::Module> mod(create_settings_module());
     mod->onStart();   // 首次装载在启动期（非渲染路径）

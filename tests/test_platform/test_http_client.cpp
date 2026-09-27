@@ -1,4 +1,5 @@
 #include "doctest.h"
+#include "test_support.h"
 #include "platform/http_client.h"
 #include "platform/http_server.h"
 
@@ -44,19 +45,7 @@ namespace {
 // 作用域内把 no_proxy/NO_PROXY 指到回环：curl 从环境变量取代理
 //（http_client.cpp 未显式设 CURLOPT_PROXY），公司代理环境下 127.0.0.1 的
 // 请求可能被劫持。大小写两份都设（curl 先查小写；Windows 部分运行时只认
-// 一份），析构还原原值——写法照 test_claude_service.cpp 的 setEnvVar 作用域还原。
-void setEnvVar(const char* name, const char* value) {
-#if defined(_WIN32)
-    _putenv_s(name, value);
-#else
-    if (value && *value) {
-        setenv(name, value, 1);
-    } else {
-        unsetenv(name);
-    }
-#endif
-}
-
+// 一份），析构还原原值——写法照 test_support.h 的 setEnvVar 作用域还原。
 bool readEnvVar(const char* name, std::string& out) {
     const char* v = std::getenv(name);
     if (!v) return false;
@@ -73,12 +62,12 @@ struct ScopedLoopbackNoProxy {
     ScopedLoopbackNoProxy() {
         hadLower = readEnvVar("no_proxy", savedLower);
         hadUpper = readEnvVar("NO_PROXY", savedUpper);
-        setEnvVar("no_proxy", "127.0.0.1,localhost,::1");
-        setEnvVar("NO_PROXY", "127.0.0.1,localhost,::1");
+        test_support::setEnvVar("no_proxy", "127.0.0.1,localhost,::1");
+        test_support::setEnvVar("NO_PROXY", "127.0.0.1,localhost,::1");
     }
     ~ScopedLoopbackNoProxy() {
-        setEnvVar("no_proxy", hadLower ? savedLower.c_str() : "");
-        setEnvVar("NO_PROXY", hadUpper ? savedUpper.c_str() : "");
+        test_support::setEnvVar("no_proxy", hadLower ? savedLower.c_str() : "");
+        test_support::setEnvVar("NO_PROXY", hadUpper ? savedUpper.c_str() : "");
     }
     ScopedLoopbackNoProxy(const ScopedLoopbackNoProxy&) = delete;
     ScopedLoopbackNoProxy& operator=(const ScopedLoopbackNoProxy&) = delete;

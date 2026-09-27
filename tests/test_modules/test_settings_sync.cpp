@@ -17,6 +17,7 @@
 //   - 共享配置片段：合并优先级（片段 > profile，托管键最上）+ 片段键进托管键集
 //     随还原撤走 + 解绑后同名键回落 profile 值
 #include "doctest.h"
+#include "test_support.h"
 
 #include "claude_service.h"
 #include "core/database.h"
@@ -47,44 +48,10 @@ using EnvMap = std::map<std::string, std::string>;
 
 constexpr const char* kTestKeychainService = "DevDeskTestSettingsSync";
 
-// RAII 临时目录
-struct TempDir {
-    std::filesystem::path path;
+// 临时 settings.json / sidecar 目录（共享头 test_support::TempDir，前缀沿用原样）
+constexpr const char* kSyncTempDirPrefix = "devdesk_test_sync_";
 
-    explicit TempDir(const std::string& tag) {
-        static int counter = 0;
-        ++counter;
-        path = test_temp::tempPath(
-            "devdesk_test_sync_" + tag + "_" + std::to_string(counter));
-        std::error_code ec;
-        std::filesystem::remove_all(path, ec);
-        std::filesystem::create_directories(path, ec);
-        if (ec) throw std::runtime_error("temp dir create failed");
-    }
-    ~TempDir() {
-        std::error_code ec;
-        std::filesystem::remove_all(path, ec);
-    }
-
-    std::filesystem::path file(const char* name) const { return path / name; }
-
-    void write(const std::filesystem::path& f, const std::string& content) const {
-        std::ofstream o(f, std::ios::binary | std::ios::trunc);
-        o << content;
-    }
-    std::string read(const std::filesystem::path& f) const {
-        std::ifstream i(f, std::ios::binary);
-        std::ostringstream ss;
-        ss << i.rdbuf();
-        return ss.str();
-    }
-    bool exists(const std::filesystem::path& f) const {
-        std::error_code ec;
-        return std::filesystem::exists(f, ec) && !ec;
-    }
-};
-
-module::claude::settings_sync::Paths makePaths(const TempDir& d) {
+module::claude::settings_sync::Paths makePaths(const test_support::TempDir& d) {
     module::claude::settings_sync::Paths p;
     p.settingsFile = d.file("settings.json");
     p.sidecarFile = d.file("snapshot.json");
@@ -236,7 +203,7 @@ REGISTER_TEST(sync_build_proxy_env_extra, "settings_sync: extra_env 别名与优
 // ---- 3. takeOver 合并 + restore 往返（含原本不存在键的删除）----
 REGISTER_TEST(sync_takeover_restore_roundtrip, "settings_sync: 接管合并与还原往返", {
     using namespace module::claude;
-    TempDir d("roundtrip");
+    test_support::TempDir d("roundtrip", kSyncTempDirPrefix);
     auto paths = makePaths(d);
 
     // 用户已有配置：非 env 字段 + 自有 env 键（有的键与托管键同名但值不同）
@@ -299,7 +266,7 @@ REGISTER_TEST(sync_takeover_restore_roundtrip, "settings_sync: 接管合并与�
 // ---- 4. 重复 takeOver：首份快照保留 + 托管键并集 ----
 REGISTER_TEST(sync_retakeover_keeps_first_snapshot, "settings_sync: 热切换保留首份快照并并入托管键", {
     using namespace module::claude;
-    TempDir d("retake");
+    test_support::TempDir d("retake", kSyncTempDirPrefix);
     auto paths = makePaths(d);
 
     d.write(paths.settingsFile,
@@ -349,7 +316,7 @@ REGISTER_TEST(sync_retakeover_keeps_first_snapshot, "settings_sync: 热切换保
 // ---- 5. settings.json 不存在 → 创建仅含 env 的最小文件；还原后干净 ----
 REGISTER_TEST(sync_takeover_missing_file, "settings_sync: 无 settings.json 时创建最小文件", {
     using namespace module::claude;
-    TempDir d("missing");
+    test_support::TempDir d("missing", kSyncTempDirPrefix);
     auto paths = makePaths(d);
 
     Profile p;
@@ -383,7 +350,7 @@ REGISTER_TEST(sync_takeover_missing_file, "settings_sync: 无 settings.json 时�
 // ---- 6. 解析失败 → 中止不写（宁可不让接入，不能弄坏用户文件）----
 REGISTER_TEST(sync_parse_failure_aborts, "settings_sync: settings.json 解析失败中止不写", {
     using namespace module::claude;
-    TempDir d("parsefail");
+    test_support::TempDir d("parsefail", kSyncTempDirPrefix);
     auto paths = makePaths(d);
 
     const std::string broken = "{ not valid json !!!";
@@ -413,7 +380,7 @@ REGISTER_TEST(sync_parse_failure_aborts, "settings_sync: settings.json 解析失
 REGISTER_TEST(sync_takeover_snapshot_skips_proxy_form,
               "settings_sync: 首份快照跳过本机代理形态键（污染守卫）", {
     using namespace module::claude;
-    TempDir d("pollute");
+    test_support::TempDir d("pollute", kSyncTempDirPrefix);
     auto paths = makePaths(d);
 
     // 上次残留 / 别的工具（cc-switch 等）写的代理形态值 + 一个用户自有键
@@ -450,7 +417,7 @@ REGISTER_TEST(sync_takeover_snapshot_skips_proxy_form,
 REGISTER_TEST(sync_restore_without_sidecar_clears_residual,
               "settings_sync: 无快照但仍是代理形态 → 最小清除（restore）", {
     using namespace module::claude;
-    TempDir d("residual");
+    test_support::TempDir d("residual", kSyncTempDirPrefix);
     auto paths = makePaths(d);
     d.write(paths.settingsFile, R"({
         "model": "claude-sonnet-4-5",
@@ -482,7 +449,7 @@ REGISTER_TEST(sync_restore_without_sidecar_clears_residual,
 REGISTER_TEST(sync_restore_without_sidecar_noop,
               "settings_sync: 无快照且非代理形态 → 真 no-op（restore）", {
     using namespace module::claude;
-    TempDir d("noop");
+    test_support::TempDir d("noop", kSyncTempDirPrefix);
     auto paths = makePaths(d);
     const std::string original = R"({
         "permissions": {"allow": ["Bash"]},
@@ -499,7 +466,7 @@ REGISTER_TEST(sync_restore_without_sidecar_noop,
     DOCTEST_CHECK(!d.exists(paths.sidecarFile));
 
     // settings.json 不存在 / 无 env 块 → 同样 no-op（不创建文件、不改内容）
-    TempDir d2("noop2");
+    test_support::TempDir d2("noop2", kSyncTempDirPrefix);
     auto paths2 = makePaths(d2);
     DOCTEST_CHECK(settings_sync::restore(paths2).ok);
     DOCTEST_CHECK(!d2.exists(paths2.settingsFile));
@@ -513,7 +480,7 @@ REGISTER_TEST(sync_restore_without_sidecar_noop,
 // ---- 7. 上层覆盖检测：命中 / 未命中 ----
 REGISTER_TEST(sync_overlay_detection, "settings_sync: managed/project 层覆盖检测", {
     using namespace module::claude;
-    TempDir d("overlay");
+    test_support::TempDir d("overlay", kSyncTempDirPrefix);
     auto paths = makePaths(d);
 
     // 伪造 project 级 settings.local.json 含同名 env 键
@@ -549,7 +516,7 @@ REGISTER_TEST(sync_overlay_detection, "settings_sync: managed/project 层覆盖�
 REGISTER_TEST(sync_overlay_detection_managed_derived,
               "settings_sync: 覆盖检测含托管键全集与 profile 实键", {
     using namespace module::claude;
-    TempDir d("overlayderived");
+    test_support::TempDir d("overlayderived", kSyncTempDirPrefix);
     auto paths = makePaths(d);
 
     // profile：sonnet 槽位有值 + extra_env 一个自有键
@@ -600,7 +567,7 @@ REGISTER_TEST(sync_overlay_detection_managed_derived,
 // ---- 8. 崩溃补还原 + 原子性（无 tmp 残留）----
 REGISTER_TEST(sync_crash_recovery_and_atomic, "settings_sync: 崩溃补还原与原子写残留", {
     using namespace module::claude;
-    TempDir d("crash");
+    test_support::TempDir d("crash", kSyncTempDirPrefix);
     auto paths = makePaths(d);
 
     const std::string original = R"({"env": {"MY_KEY": "user"}})";
@@ -636,7 +603,7 @@ REGISTER_TEST(sync_crash_recovery_and_atomic, "settings_sync: 崩溃补还原与
 REGISTER_TEST(sync_service_wiring, "claude_service: 接管通道三触发点接线", {
     using namespace module::claude;
     TestDb tdb("wiring");
-    TempDir d("wiring");
+    test_support::TempDir d("wiring", kSyncTempDirPrefix);
     auto paths = makePaths(d);
 
     d.write(paths.settingsFile, R"({"env": {"MY_KEY": "user"}})");
@@ -718,7 +685,7 @@ REGISTER_TEST(sync_service_wiring, "claude_service: 接管通道三触发点接�
 REGISTER_TEST(sync_service_warnings_surface, "claude_service: 接管警告经 lastSyncWarnings 暴露", {
     using namespace module::claude;
     TestDb tdb("warn");
-    TempDir d("warn");
+    test_support::TempDir d("warn", kSyncTempDirPrefix);
     auto paths = makePaths(d);
     const auto overlay = d.file("managed-settings.json");
     d.write(overlay, R"({"env": {"ANTHROPIC_BASE_URL": "https://corp.example.com"}})");
@@ -742,7 +709,7 @@ REGISTER_TEST(sync_service_takeover_failure_reported,
               "claude_service: 接管失败并入 lastSyncWarnings 且不阻断操作", {
     using namespace module::claude;
     TestDb tdb("tofail");
-    TempDir d("tofail");
+    test_support::TempDir d("tofail", kSyncTempDirPrefix);
     auto paths = makePaths(d);
 
     ClaudeService svc(tdb.handle(), kTestKeychainService);
@@ -795,7 +762,7 @@ REGISTER_TEST(sync_exit_sequence_stop_all,
               "claude_module: 退出序列 Router::stopAll 触发还原", {
     using namespace module::claude;
     TestDb tdb("exit");
-    TempDir d("exit");
+    test_support::TempDir d("exit", kSyncTempDirPrefix);
     auto paths = makePaths(d);
     d.write(paths.settingsFile, R"({"env": {"MY_KEY": "user"}})");
 
@@ -841,7 +808,7 @@ REGISTER_TEST(sync_delete_active_profile_stops_proxy,
               "claude_service: 删激活 Profile 停代理并还原 settings（审计 [1]）", {
     using namespace module::claude;
     TestDb tdb("delact");
-    TempDir d("delact");
+    test_support::TempDir d("delact", kSyncTempDirPrefix);
     auto paths = makePaths(d);
     d.write(paths.settingsFile, R"({"env": {"MY_KEY": "user"}})");
 
@@ -909,7 +876,7 @@ REGISTER_TEST(sync_switch_off_no_write,
               "claude_service: 接管开关关闭时不写 settings.json", {
     using namespace module::claude;
     TestDb tdb("off");
-    TempDir d("off");
+    test_support::TempDir d("off", kSyncTempDirPrefix);
     auto paths = makePaths(d);
     const std::string original = R"({"env": {"MY_KEY": "user"}})";
     d.write(paths.settingsFile, original);
@@ -976,7 +943,7 @@ bool hasKeyEntry(const std::vector<std::string>& keys, const char* key) {
 REGISTER_TEST(sync_reverse_read_missing_empty_noenv,
               "settings_sync: 反向读——缺失/空文件/无 env 均 no-op 成功（reverse G7/G9）", {
     using module::claude::settings_sync::readSettingsEnvForSync;
-    TempDir d("revnoop");
+    test_support::TempDir d("revnoop", kSyncTempDirPrefix);
     auto paths = makePaths(d);
 
     // G7：文件不存在 → no-op 成功（调用方照常完成本次切换）
@@ -1010,7 +977,7 @@ REGISTER_TEST(sync_reverse_read_missing_empty_noenv,
 REGISTER_TEST(sync_reverse_read_aborts_on_broken,
               "settings_sync: 反向读——坏 JSON/顶层非对象/env 非对象中止（reverse G8）", {
     using module::claude::settings_sync::readSettingsEnvForSync;
-    TempDir d("revbad");
+    test_support::TempDir d("revbad", kSyncTempDirPrefix);
     auto paths = makePaths(d);
 
     // 非法 JSON → 中止（S-2：调用方据此不切换，profile 一字未改）
@@ -1046,7 +1013,7 @@ REGISTER_TEST(sync_reverse_read_aborts_on_broken,
 REGISTER_TEST(sync_reverse_read_unreadable_aborts,
               "settings_sync: 反向读——存在但打不开中止（reverse G8 读失败）", {
     using module::claude::settings_sync::readSettingsEnvForSync;
-    TempDir d("revunreadable");
+    test_support::TempDir d("revunreadable", kSyncTempDirPrefix);
     auto paths = makePaths(d);
     d.write(paths.settingsFile, R"({"env": {"MY_KEY": "user"}})");
 
@@ -1076,7 +1043,7 @@ REGISTER_TEST(sync_reverse_read_unreadable_aborts,
 REGISTER_TEST(sync_reverse_read_env_and_sidecar,
               "settings_sync: 反向读——env 原文与 sidecar 托管键（reverse）", {
     using module::claude::settings_sync::readSettingsEnvForSync;
-    TempDir d("revok");
+    test_support::TempDir d("revok", kSyncTempDirPrefix);
     auto paths = makePaths(d);
     d.write(paths.settingsFile, R"json({
         "permissions": {"allow": ["Bash"]},
@@ -1170,7 +1137,7 @@ REGISTER_TEST(sync_build_proxy_env_shared_config,
 REGISTER_TEST(sync_takeover_with_shared_config,
               "settings_sync: 接管写合并 env，片段键进托管集随还原撤走", {
     using namespace module::claude;
-    TempDir d("shared");
+    test_support::TempDir d("shared", kSyncTempDirPrefix);
     auto paths = makePaths(d);
     d.write(paths.settingsFile, R"({"env": {"MY_KEY": "user"}})");
 
@@ -1229,7 +1196,7 @@ REGISTER_TEST(sync_service_g10_frozen_key_not_captured,
               "claude_service: G10 绑定片段键不被反向同步收编", {
     using namespace module::claude;
     TestDb tdb("g10svc");
-    TempDir d("g10svc");
+    test_support::TempDir d("g10svc", kSyncTempDirPrefix);
     auto paths = makePaths(d);
 
     ClaudeService svc(tdb.handle(), kTestKeychainService);
@@ -1284,7 +1251,7 @@ REGISTER_TEST(sync_service_shared_config_delete_retakeover,
               "claude_service: 删片段当场解绑并重写 live（回落 profile 值）", {
     using namespace module::claude;
     TestDb tdb("fragdel");
-    TempDir d("fragdel");
+    test_support::TempDir d("fragdel", kSyncTempDirPrefix);
     auto paths = makePaths(d);
 
     ClaudeService svc(tdb.handle(), kTestKeychainService);

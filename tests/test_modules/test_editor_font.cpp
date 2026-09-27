@@ -5,6 +5,7 @@
 // 跨模块传递口径：SettingsConfig 本体在 module_settings（模块隔离，markdown
 // 不可 include），运行时值下沉 core::theme，与 fontScale 通道同型。
 #include "doctest.h"
+#include "test_support.h"
 
 #include "core/database.h"
 #include "core/module_interface.h"
@@ -25,18 +26,6 @@ extern "C" ::core::Module* create_markdown_module();
 
 namespace {
 
-void setNotesDirEnv(const std::string& value) {
-#if defined(_WIN32)
-    ::_putenv_s("DEVDESK_NOTES_DIR", value.c_str());
-#else
-    if (value.empty()) {
-        ::unsetenv("DEVDESK_NOTES_DIR");
-    } else {
-        ::setenv("DEVDESK_NOTES_DIR", value.c_str(), 1);
-    }
-#endif
-}
-
 } // namespace
 
 REGISTER_TEST(markdown_editor_uses_font_channel,
@@ -50,7 +39,7 @@ REGISTER_TEST(markdown_editor_uses_font_channel,
         std::ofstream f(dir / "note.md", std::ios::trunc);
         f << "# 标题\n正文\n";
     }
-    setNotesDirEnv(dir.string());
+    test_support::setEnvVar("DEVDESK_NOTES_DIR", dir.string());
 
     const auto dbPath = test_temp::tempPath("devdesk_efont_md.db");
     std::filesystem::remove(dbPath, ec);
@@ -100,7 +89,7 @@ REGISTER_TEST(markdown_editor_uses_font_channel,
     core::theme::setEditorFontSize(15.0f);  // 恢复默认，防污染其他用例
     mod->onStop();
     core::registerAppDatabase(nullptr);
-    setNotesDirEnv("");
+    test_support::setEnvVar("DEVDESK_NOTES_DIR", "");
     std::filesystem::remove_all(dir, ec);
     std::filesystem::remove(dbPath, ec);
     return true;
