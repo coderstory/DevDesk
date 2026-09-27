@@ -847,8 +847,7 @@ REGISTER_TEST(md_service_watcher_external_new_file,
     module::markdown::MarkdownService svc(db, dir);
     if (!svc.watcherActive()) {  // POSIX/macOS stub：事件链路不存在，跳过
         fs::remove_all(dir);
-        std::printf("[SKIP] FileWatcher 非活跃平台（stub），事件链路用例跳过\n");
-        return true;
+        DOCTEST_SKIP("FileWatcher 非活跃平台（stub），事件链路用例跳过");
     }
 
     writeTextFile(dir / "ext_new.md", "# 外部新建\n\nuniquetoken73f9 body");
@@ -879,8 +878,7 @@ REGISTER_TEST(md_service_watcher_same_len_external_edit,
     module::markdown::MarkdownService svc(db, dir);
     if (!svc.watcherActive()) {
         fs::remove_all(dir);
-        std::printf("[SKIP] FileWatcher 非活跃平台（stub），等长改写用例跳过\n");
-        return true;
+        DOCTEST_SKIP("FileWatcher 非活跃平台（stub），等长改写用例跳过");
     }
 
     // 等长两条内容（仅 token 不同）→ (mtime,size) 元组理论上不变

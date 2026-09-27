@@ -74,7 +74,32 @@ inline void register_test(const std::string& name, TestFunc f) {
     registry().emplace_back(name, f);
 }
 
+// [SKIP] 标记：用例体调 DOCTEST_SKIP 时置位，运行器（test_main.cpp）逐用例
+// 取用后复位（consumeSkipped），单独计 Skipped——Skipped 不算失败。
+inline bool& skipFlag() {
+    static bool flag = false;
+    return flag;
+}
+
+inline void markSkipped() { skipFlag() = true; }
+
+// 取出当前用例的跳过标记并复位；运行器每个用例调用一次
+inline bool consumeSkipped() {
+    const bool flag = skipFlag();
+    skipFlag() = false;
+    return flag;
+}
+
 } // namespace test_registry
+
+// 跳过当前用例（环境门控未开 / 平台 stub 等）：打印 [SKIP] + 原因，标记为
+// 跳过并返回 true——不计失败。只能用在返回 bool 的用例体 / helper 里。
+#define DOCTEST_SKIP(message) \
+    do { \
+        std::cout << "[SKIP] " << (message) << std::endl; \
+        ::test_registry::markSkipped(); \
+        return true; \
+    } while (0)
 
 // ==================== 临时路径唯一化（审计 TIN-02）====================
 // 仓库按「并发多 worktree」开发：多个会话可能同时跑同一个 devdesk_tests.exe，
