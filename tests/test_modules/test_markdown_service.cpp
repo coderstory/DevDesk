@@ -56,6 +56,18 @@ bool writeTextFile(const fs::path& path, const std::string& content) {
     return ofs.good();
 }
 
+// MD-08 注入工具：造一个「悬空 junction」（mklink /J 指向不存在的目标）。
+// 目录枚举器把 junction 当成普通目录递归进入、opendir 报 ENOENT → 遍历当场
+// 失败、且同层其后条目整批不再产出——正是「遍历中途出错」缺口的确定性形态。
+// junction 不需要管理员权限（真 symlink 才需要），mklink 是 cmd 内置命令。
+bool makeDanglingJunction(const fs::path& link, const fs::path& missingTarget) {
+    const std::string cmd = "mklink /J \"" + link.string() + "\" \"" +
+                            missingTarget.string() + "\" >NUL 2>&1";
+    if (std::system(cmd.c_str()) != 0) return false;
+    std::error_code ec;
+    return fs::exists(fs::symlink_status(link, ec)) && !ec;
+}
+
 // 在 in-memory DB 上跑 migrations，返回数据库实例（失败则 abort）
 core::data::SqliteDb makeDb() {
     auto r = core::data::SqliteDb::open(":memory:");
@@ -182,6 +194,55 @@ REGISTER_TEST(md_rescan_updates_modified_files,
     DOCTEST_CHECK_EQ(after[0].title, std::string("New"));
 
     fs::remove_all(dir);
+    return true;
+})
+
+// MD-08：遍历中途出错时不得按残缺的 foundPaths 剪枝——否则磁盘上仍然存在的
+// 笔记索引行会被成批误删（FTS 行同步删、标签关联 ON DELETE CASCADE 后不可恢复）。
+// 注入手法见 makeDanglingJunction：junction 名字排在 a_keep.md 与 z_keep.md
+// 之间，出错点之后同层条目 z_keep.md 这轮遍历根本没看见。
+REGISTER_TEST(md_rescan_traversal_error_keeps_index,
+              "MarkdownService: traversal error must not prune the index", {
+    const auto dir = makeTempDir("rescan_err");
+    auto db = makeDb();
+    runMigrations(db);
+    module::markdown::MarkdownService svc(db, dir);
+
+    // 先正常索引两篇（junction 尚未入场，两行都进索引）
+    writeTextFile(dir / "a_keep.md", "# A\n\nKeep me.");
+    writeTextFile(dir / "z_keep.md", "# Z\n\nKeep me too.");
+    DOCTEST_REQUIRE(svc.rescan().isOk());
+    DOCTEST_REQUIRE_EQ(svc.listAll().value().size(), 2u);
+
+    const auto link = dir / "m_dangling";
+    if (!makeDanglingJunction(link, dir / "no_such_target")) {
+        fs::remove_all(dir);
+        DOCTEST_SKIP("无法创建 junction（非 NTFS / mklink 不可用），跳过遍历出错注入");
+    }
+
+    auto r = svc.rescan();
+    // 遍历中途失败：本轮必须报失败（旧实现会静默继续剪枝）。这条同时挡住
+    // 「注入没生效 → 用例空跑也全绿」的假阳性。
+    DOCTEST_CHECK(r.isFail());
+
+    // 核心断言：z_keep.md 排在出错点之后、这轮遍历没看见它，但它仍在磁盘上
+    auto list = svc.listAll();
+    DOCTEST_REQUIRE(list.isOk());
+    DOCTEST_CHECK_EQ(list.value().size(), 2u);
+    std::set<std::string> paths;
+    for (const auto& n : list.value()) {
+        paths.insert(n.relativePath.generic_string());
+    }
+    DOCTEST_CHECK(paths.count("a_keep.md") == 1);
+    DOCTEST_CHECK(paths.count("z_keep.md") == 1);
+
+    // 摘掉 junction 后恢复正常：剪枝照旧生效（不是永久停摆）
+    std::error_code ec;
+    fs::remove(link, ec);
+    DOCTEST_REQUIRE(svc.rescan().isOk());
+    DOCTEST_CHECK_EQ(svc.listAll().value().size(), 2u);
+
+    fs::remove_all(dir, ec);
     return true;
 })
 
