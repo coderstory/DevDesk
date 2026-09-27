@@ -530,12 +530,12 @@ REGISTER_TEST(claude_service_delete_profile_keychain_fail,
     const int64_t id = created.value().id;
 
     // Windows keychain 存储路径（见 keychain_win.cpp）：
-    // <appData>/keychain/<service>/<sanitize(account)>.key，
-    // account "claude:<id>" 安全化后为 "claude_<id>"。
+    // <appData>/keychain/<service>/<encode(account)>.key，account "claude:<id>"
+    // 经 CP-11 可逆编码（非白名单字符 %XX 转义）后为 "claude%3A<id>"。
     // 把密钥文件换成非空目录 → fs::remove 必失败，注入 Keychain 删除失败
     const auto keyPath = core::paths::appDataDir() / "keychain" /
                          kTestKeychainService /
-                         ("claude_" + std::to_string(id) + ".key");
+                         ("claude%3A" + std::to_string(id) + ".key");
     std::error_code ec;
     DOCTEST_REQUIRE(std::filesystem::exists(keyPath, ec));
     std::filesystem::remove(keyPath, ec);
