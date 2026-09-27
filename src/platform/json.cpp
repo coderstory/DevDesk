@@ -26,25 +26,25 @@ namespace {
 
     JsonImpl* getImpl(void* p) { return static_cast<JsonImpl*>(p); }
 
+    // JsonImpl::Kind → JsonValue::Type（对外类型由 kind 派生，见 CP-02 注释）
+    JsonValue::Type kindToType(JsonImpl::Kind kind) {
+        switch (kind) {
+            case JsonImpl::Kind::Null: return JsonValue::T_Null;
+            case JsonImpl::Kind::Bool: return JsonValue::T_Bool;
+            case JsonImpl::Kind::Int:
+            case JsonImpl::Kind::Double: return JsonValue::T_Number;
+            case JsonImpl::Kind::String: return JsonValue::T_String;
+            case JsonImpl::Kind::Array: return JsonValue::T_Array;
+            case JsonImpl::Kind::Object: return JsonValue::T_Object;
+        }
+        return JsonValue::T_Null;  // 枚举全覆盖，仅为消除 -Wreturn-type
+    }
+
+    // 唯一的值装配入口：把 JsonImpl 子树搬进新 JsonValue（镜像字段已删，
+    // 这里就是"值"本身，无需再同步任何副本）
     JsonValue makeFromImpl(JsonImpl impl) {
         JsonValue v;
-        v.type_ = JsonValue::T_Null;
-        auto* dst = static_cast<JsonImpl*>(v.internal());
-        *dst = std::move(impl);
-        // 同步拷贝值字段（strVal_/intVal_/dblVal_/boolVal_）到 JsonValue 自身
-        v.boolVal_ = dst->boolVal;
-        v.intVal_ = dst->intVal;
-        v.dblVal_ = dst->dblVal;
-        v.strVal_ = dst->strVal;
-        switch (dst->kind) {
-            case JsonImpl::Kind::Null: v.type_ = JsonValue::T_Null; break;
-            case JsonImpl::Kind::Bool: v.type_ = JsonValue::T_Bool; break;
-            case JsonImpl::Kind::Int:
-            case JsonImpl::Kind::Double: v.type_ = JsonValue::T_Number; break;
-            case JsonImpl::Kind::String: v.type_ = JsonValue::T_String; break;
-            case JsonImpl::Kind::Array: v.type_ = JsonValue::T_Array; break;
-            case JsonImpl::Kind::Object: v.type_ = JsonValue::T_Object; break;
-        }
+        *getImpl(v.internal()) = std::move(impl);
         return v;
     }
 
@@ -237,51 +237,55 @@ JsonValue::JsonValue() : data_(new JsonImpl()) {
     static_cast<JsonImpl*>(data_)->kind = JsonImpl::Kind::Null;
 }
 JsonValue::JsonValue(std::nullptr_t) : JsonValue() {}
-JsonValue::JsonValue(bool b) : data_(new JsonImpl()), boolVal_(b) {
+JsonValue::JsonValue(bool b) : data_(new JsonImpl()) {
     auto* i = static_cast<JsonImpl*>(data_); i->kind = JsonImpl::Kind::Bool; i->boolVal = b;
-    type_ = T_Bool;
 }
 JsonValue::JsonValue(int v) : JsonValue(static_cast<int64_t>(v)) {}
-JsonValue::JsonValue(int64_t v) : data_(new JsonImpl()), intVal_(v) {
+JsonValue::JsonValue(int64_t v) : data_(new JsonImpl()) {
     auto* i = static_cast<JsonImpl*>(data_); i->kind = JsonImpl::Kind::Int; i->intVal = v;
-    type_ = T_Number;
 }
-JsonValue::JsonValue(double d) : data_(new JsonImpl()), dblVal_(d) {
+JsonValue::JsonValue(double d) : data_(new JsonImpl()) {
     auto* i = static_cast<JsonImpl*>(data_); i->kind = JsonImpl::Kind::Double; i->dblVal = d;
-    type_ = T_Number;
 }
-JsonValue::JsonValue(const std::string& s) : data_(new JsonImpl()), strVal_(s) {
+JsonValue::JsonValue(const std::string& s) : data_(new JsonImpl()) {
     auto* i = static_cast<JsonImpl*>(data_); i->kind = JsonImpl::Kind::String; i->strVal = s;
-    type_ = T_String;
 }
 JsonValue::JsonValue(const char* s) : JsonValue(std::string(s)) {}
 JsonValue::JsonValue(JsonObject obj) : data_(new JsonImpl(*getImpl(obj.internal()))) {
+    // 强制 Object：被移动过的 JsonObject 持有的空 JsonImpl kind 是 Null，
+    // 但 JsonValue(JsonObject) 的类型契约始终是 T_Object（与旧镜像语义一致）
     static_cast<JsonImpl*>(data_)->kind = JsonImpl::Kind::Object;
-    type_ = T_Object;
 }
 
-// 成员初始化顺序必须与声明顺序一致（type_ 在前，data_ 在后），否则 -Werror=reorder
-JsonValue::JsonValue(const JsonValue& o) : type_(o.type_), data_(new JsonImpl(*getImpl(o.data_))) {}
+// CP-02（2026-09-27 全量审计，high）：4 个特殊成员只需搬 data_ —— 值与类型全部
+// 存放在 JsonImpl 里（唯一真值源），不再有需要逐个同步的镜像字段。此前漏同步
+// 镜像会让左值拷贝/移动后的 asString()/asInt() 静默返回默认值。
+JsonValue::JsonValue(const JsonValue& o) : data_(new JsonImpl(*getImpl(o.data_))) {}
 JsonValue& JsonValue::operator=(const JsonValue& o) {
     if (this != &o) {
         delete getImpl(data_);
         data_ = new JsonImpl(*getImpl(o.data_));
-        type_ = o.type_;
     }
     return *this;
 }
-JsonValue::JsonValue(JsonValue&& o) noexcept : type_(o.type_), data_(o.data_) { o.data_ = new JsonImpl(); o.type_ = T_Null; }
+// 被移动的源对象换上一份新的空 JsonImpl（保持合法 Null 值，不留悬垂/旧值）
+JsonValue::JsonValue(JsonValue&& o) noexcept : data_(o.data_) { o.data_ = new JsonImpl(); }
 JsonValue& JsonValue::operator=(JsonValue&& o) noexcept {
     if (this != &o) {
         delete getImpl(data_);
         data_ = o.data_;
-        type_ = o.type_;
         o.data_ = new JsonImpl();
-        o.type_ = T_Null;
     }
     return *this;
 }
 JsonValue::~JsonValue() { delete getImpl(data_); }
+
+// 类型与取值（读 JsonImpl；见 json.h 的 CP-02 注释）
+JsonValue::Type JsonValue::type() const { return kindToType(getImpl(data_)->kind); }
+bool JsonValue::asBool() const { return getImpl(data_)->boolVal; }
+int64_t JsonValue::asInt() const { return getImpl(data_)->intVal; }
+double JsonValue::asDouble() const { return getImpl(data_)->dblVal; }
+std::string JsonValue::asString() const { return getImpl(data_)->strVal; }
 
 JsonObject JsonValue::asObject() const {
     JsonObject obj;
@@ -327,7 +331,6 @@ JsonValue makeStringArray(const std::vector<std::string>& items) {
         item.strVal = s;
         impl->arrVal.push_back(std::move(item));
     }
-    v.type_ = JsonValue::T_Array;
     return v;
 }
 
