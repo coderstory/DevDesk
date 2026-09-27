@@ -3,16 +3,21 @@
 #include "doctest.h"
 #include "core/database.h"
 #include "core/module_interface.h"
+#include "core/overdue.h"
 #include "core/proxy_stats.h"
 #include "core/time.h"
 #include "module_home/home_service.h"
+// 跨模块逾期口径一致性用例（THS-04）需要同时问首页与 Todo 两条读取路径
+#include "module_todo/todo_service.h"
 
 #include <eui/dsl.h>
 
 #include <ctime>
 #include <filesystem>
 #include <memory>
+#include <optional>
 #include <string>
+#include <vector>
 
 namespace {
 
@@ -269,5 +274,82 @@ REGISTER_TEST(home_token_rate_card_compose,
     }
 
     core::proxy_stats::resetForTest();
+    return true;
+})
+
+// ==================== 跨模块逾期口径一致性（THS-04） ====================
+// 「逾期」的谓词单源在 core/overdue.h：首页 getStats 走 COUNT 聚合、Todo 页
+// listOverdue 走列表查询。两条 SQL 用同一份 kWhereSql，本用例拿同一批种子数据
+// 同时问两边，把它们钉在同一个数字上——口径再分叉（改列名 / 改比较符 / 只改
+// 其中一处）这里就红。
+REGISTER_TEST(home_todo_overdue_consistency,
+              "HomeService/TodoService: 逾期口径单源一致性",
+              {
+    // 谓词边界（纯函数，不依赖时钟）：无截止 / 已完成 / 未到期 / 截止当秒
+    using core::overdue::isOverdue;
+    DOCTEST_CHECK_FALSE(isOverdue(std::nullopt, std::nullopt, 100));
+    DOCTEST_CHECK_FALSE(isOverdue(50, 80, 100));             // 已完成
+    DOCTEST_CHECK_FALSE(isOverdue(200, std::nullopt, 100));  // 未到期
+    DOCTEST_CHECK_FALSE(isOverdue(100, std::nullopt, 100));  // 截止当秒不算
+    DOCTEST_CHECK(isOverdue(99, std::nullopt, 100));
+
+    TestEnv env("overdue_xmod");
+    DOCTEST_REQUIRE(env.ready);
+
+    const int64_t now = static_cast<int64_t>(std::time(nullptr));
+    const int64_t day = 86400;
+
+    // 种子：覆盖「无截止 / 逾期未完成 / 逾期已完成 / 未到期」四种组合
+    // （逐条 push_back(Seed{...})：花括号初始化列表的顶层逗号会被 REGISTER_TEST
+    //  宏当成实参分隔符拆开，套在调用括号里才安全）
+    struct Seed {
+        const char* title;
+        std::optional<int64_t> dueAt;
+        std::optional<int64_t> completedAt;
+    };
+    std::vector<Seed> seeds;
+    seeds.push_back(Seed{"s1-no-due", std::nullopt, std::nullopt});
+    seeds.push_back(Seed{"s2-past-open", now - 3600, std::nullopt});
+    seeds.push_back(Seed{"s3-past-done", now - 7200, now - 60});
+    seeds.push_back(Seed{"s4-future", now + day, std::nullopt});
+    seeds.push_back(Seed{"s5-past-open2", now - 7 * day, std::nullopt});
+
+    std::string insert =
+        "INSERT INTO todo_tasks (column_id, title, priority, position, due_at, "
+        "completed_at, created_at, updated_at) VALUES ";
+    int64_t expected = 0;
+    for (size_t i = 0; i < seeds.size(); ++i) {
+        if (i != 0) insert += ", ";
+        insert += "(1, '" + std::string(seeds[i].title) + "', 0, " +
+                  std::to_string(i) + ", ";
+        insert += seeds[i].dueAt.has_value()
+                      ? std::to_string(*seeds[i].dueAt)
+                      : std::string("NULL");
+        insert += ", ";
+        insert += seeds[i].completedAt.has_value()
+                      ? std::to_string(*seeds[i].completedAt)
+                      : std::string("NULL");
+        insert += ", " + std::to_string(now) + ", " + std::to_string(now) + ")";
+        // 期望值由 core 谓词对同一批种子值算出（与两侧 SQL 无关的第三只眼）
+        if (isOverdue(seeds[i].dueAt, seeds[i].completedAt, now)) ++expected;
+    }
+
+    auto& sq = env.db->db();
+    DOCTEST_REQUIRE(sq.exec(insert).isOk());
+
+    // 路径 A：首页聚合
+    module::home::HomeService home(sq);
+    auto stats = home.getStats(5);
+    DOCTEST_REQUIRE_MESSAGE(stats.isOk(), "getStats 失败: " + stats.errorMessage());
+
+    // 路径 B：Todo 逾期列表
+    module::todo::TodoService todo(sq);
+    auto overdue = todo.listOverdue();
+    DOCTEST_REQUIRE_MESSAGE(overdue.isOk(),
+                            "listOverdue 失败: " + overdue.errorMessage());
+
+    // 三方一致：首页计数 == Todo 条数 == core 谓词判定
+    DOCTEST_CHECK_EQ(stats.unsafeValue().overdueTodos, expected);
+    DOCTEST_CHECK_EQ(static_cast<int64_t>(overdue.value().size()), expected);
     return true;
 })
