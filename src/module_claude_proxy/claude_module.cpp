@@ -578,6 +578,10 @@ public:
                                         .text(tokenValue).fontSize(t.sizes.fontSizeSmall).lineHeight(32.0f)
                                         .color(t.colors.textSecondary).build();
                                     const bool ccManaged = svc && svc->isClaudeCodeManaged();
+                                    // 审计 CPX-02：接管失败（无 sidecar → 未接管）与上层覆盖
+                                    // 警告都要让用户看见，故不再以 ccManaged 为展示门。读的是
+                                    // 内存 getter（无 IO/DB，符合 H2），启停代理 / 切 profile
+                                    // 后下一帧即刷新
                                     const auto& ccWarnings = svc ? svc->lastSyncWarnings()
                                                                 : std::vector<std::string>();
                                     const std::string ccPath =
@@ -589,18 +593,25 @@ public:
                                                         : std::string("○ Claude Code 未接管（启动代理后自动接管，停止时还原）"))
                                         .fontSize(11.0f).lineHeight(16.0f)
                                         .color(ccManaged ? t.colors.success : t.colors.textTertiary).build();
-                                    if (ccManaged && !ccWarnings.empty()) {
+                                    if (!ccWarnings.empty()) {
+                                        // 摘要 = 首条警告（失败路径只有一条 = 失败原因）
+                                        // + 总条数；「详见设置页」只在接管态成立——设置页
+                                        // 同样按 managed 门控列警告
+                                        std::string warnText = ccWarnings.front();
+                                        if (ccWarnings.size() > 1) {
+                                            warnText += "（共 " +
+                                                std::to_string(ccWarnings.size()) + " 条";
+                                            warnText += ccManaged ? "，详见设置页）" : "）";
+                                        }
                                         ui.text("claude.field.takeover.warn.icon")
                                             .position(x0, toY + 16.0f).size(14.0f, 16.0f).icon(0xF071)
                                             .fontSize(11.0f).lineHeight(16.0f).color(t.colors.warning).build();
                                         ui.text("claude.field.takeover.warn")
                                             .position(x0 + 18.0f, toY + 16.0f).size(w0 - 18.0f, 16.0f)
-                                            .text(ccWarnings.front() + (ccWarnings.size() > 1
-                                                    ? "（共 " + std::to_string(ccWarnings.size()) + " 条，详见设置页）"
-                                                    : ""))
+                                            .text(warnText)
                                             .fontSize(11.0f).lineHeight(16.0f).color(t.colors.warning).build();
                                     }
-                                    paneBottom = toY + (ccManaged && !ccWarnings.empty() ? 32.0f : 16.0f);
+                                    paneBottom = toY + (!ccWarnings.empty() ? 32.0f : 16.0f);
                                 } else if (detailTab_ == 1) {
                                     // ---- 模型映射 pane：6 槽位逐行（parseModelsConfig 解析 JSON 原文）----
                                     ModelsConfig mc{};
