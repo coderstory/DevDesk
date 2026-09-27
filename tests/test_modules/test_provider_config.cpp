@@ -372,8 +372,9 @@ REGISTER_TEST(provider_config_migration_upgrade,
         DOCTEST_REQUIRE(r.value().migrate().isOk());
         auto& db = r.value().db();
         // v3 供应商配置迁移 + v4 todo kind 迁移（W9 批次并入后全量到 4）
-        // + v5 调用日志用量列（cc-switch 对照 §3.4）→ 全量到 5
-        DOCTEST_CHECK_EQ(db.schemaVersion(), 5);
+        // + v5 调用日志用量列（cc-switch 对照 §3.4）
+        // + v6 共享配置片段表与 profile 绑定列 → 全量到 6
+        DOCTEST_CHECK_EQ(db.schemaVersion(), 6);
 
         module::claude::ClaudeService svc(db, kTestKeychainService);
         auto profiles = svc.listProfiles();
