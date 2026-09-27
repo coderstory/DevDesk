@@ -30,10 +30,11 @@ namespace module::claude {
 
 class ProxyRouter;
 
-// 把代理凭据写到 appDataDir()/proxy_token.txt（curl 测试便利）。
-// 代理的三条启动路径（main 自启 / Claude 页手动启动 / 设置页重生成 token）
-// 共用（此前 main 与 settings 各有一份复制粘贴实现）
-void writeProxyTokenFile(const std::string& token, int port);
+// 上游会话标识。部分 Anthropic-compatible 网关（如 opencode.ai/zen/go）要求
+// 请求带 x-opencode-session，缺失直接回 400 MissingSessionID；客户端（Claude
+// Code）默认不带，由代理注入（见 upstream_dialect：只有该方言会注入）。
+// 进程内稳定一份，保证上游侧路由/缓存亲和。
+const std::string& claudeUpstreamSessionId();
 
 // 单条 Claude API 配置（spec §8.3）
 struct Profile {
@@ -180,13 +181,11 @@ public:
 
     // ---- 代理 server 生命周期 ----
 
-    // 启动本地 HTTP 代理
+    // 启动本地 HTTP 代理（固定绑定 127.0.0.1，仅本机可访问，无鉴权）
     //   - bindAddress：默认 "127.0.0.1"
     //   - port：0 = 由 OS 分配
-    //   - authToken：客户端必须 Bearer 此 token 才能调用代理
     core::Result<int> startProxy(const std::string& bindAddress = "127.0.0.1",
-                                 int port = 8888,
-                                 const std::string& authToken = "");
+                                 int port = 8888);
 
     // 停止代理
     void stopProxy();
@@ -203,7 +202,6 @@ public:
 
     bool isProxyRunning() const;
     int proxyPort() const;            // 0 if not running
-    std::string proxyAuthToken() const;
 
     // ---- 配置端口（产品审计 2026-09-23 [14]）----
     // 设置页「代理端口」的运行时镜像：main.cpp 启动时从 SettingsConfig 注入，
@@ -220,6 +218,18 @@ public:
     // settings_sync::defaultPaths()）。默认不启用：直接构造的 service
     //（测试）不写任何真实文件
     void setSettingsSyncPaths(const settings_sync::Paths& paths);
+
+    // 接管开关（2026-09-27 恢复为默认 **true**，用户拍板）。开着的三条路径：
+    //   起代理 → 接管：settings.json 的 env 写入 BASE_URL=
+    //            http://127.0.0.1:<port> + 占位 ANTHROPIC_AUTH_TOKEN
+    //            （PROXY_MANAGED）+ 模型槽位 env，其余 env 键/非 env 字段原样保留
+    //   停代理 → 还原：按 sidecar 快照按键级还原（settings.json 永不指向死代理）
+    //   启动时 → 补还原：sidecar 残留（上次没走完还原）→ 先还原
+    // 关掉 = DevDesk 完全不碰 settings.json（三条路径一起门控，见
+    // settings_sync.h 的接管/还原协议）。本机另装 cc-switch 等同类工具、
+    // 不愿两边互相覆盖时用。
+    void setSettingsTakeOverEnabled(bool on) { settingsTakeOverEnabled_ = on; }
+    bool settingsTakeOverEnabled() const { return settingsTakeOverEnabled_; }
 
     // 注入的接管路径（未注入时 settingsFile 为空）。「导入当前配置」据此
     // 定位 settings.json：生产 = main 注入的 defaultPaths，测试 = 临时目录
@@ -262,9 +272,6 @@ private:
     static std::string sha256HexPrefix(const std::string& s);
     static std::string makeApiKeyHint(const std::string& apiKey);
 
-    // 生成 auth token（32 hex chars from std::random_device）
-    static std::string generateAuthToken();
-
     // 接管/还原的内部入口（settingsFile 为空 = 通道未启用，直接返回）
     void syncTakeOver();
     void syncRestore();
@@ -292,6 +299,7 @@ private:
 
     // Claude Code 接管通道（settingsFile 为空 = 未启用）
     settings_sync::Paths syncPaths_;
+    bool settingsTakeOverEnabled_ = true;  // 接管默认开（见 setSettingsTakeOverEnabled）
     std::vector<std::string> lastSyncWarnings_;
 
     // 审计 perf [13]：调用日志版本号（见 callLogVersion()）

@@ -7,16 +7,20 @@
 #include "doctest.h"
 
 #include "claude_service.h"
+#include "upstream_dialect.h"
 #include "core/database.h"
 #include "core/paths.h"
 #include "core/sqlite_db.h"
 #include "platform/http_server.h"
 #include "platform/keychain.h"
 
+#include <cctype>
 #include <chrono>
+#include <cstdlib>
 #include <ctime>
 #include <filesystem>
 #include <fstream>
+#include <map>
 #include <stdexcept>
 #include <string>
 #include <thread>
@@ -70,6 +74,78 @@ void cleanupKey(int64_t profileId) {
     platform::keychain::deleteSecret(
         kTestKeychainService, "claude:" + std::to_string(profileId));
 }
+
+// 探测请求发出的头部（探测经上游方言层装配后头名拼写由方言决定，
+// 断言一律大小写不敏感；见 testConnection 方言用例）
+using HeaderMap = std::map<std::string, std::string>;
+
+std::string headerCI(const HeaderMap& h, const std::string& lowerKey) {
+    for (const auto& kv : h) {
+        std::string k = kv.first;
+        for (auto& c : k) {
+            c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+        }
+        if (k == lowerKey) return kv.second;
+    }
+    return std::string();
+}
+
+// 统计同名头（大小写不敏感）出现次数：>1 说明大小写变体并存（上游会收到重复头）
+int countCI(const HeaderMap& h, const std::string& lowerKey) {
+    int n = 0;
+    for (const auto& kv : h) {
+        std::string k = kv.first;
+        for (auto& c : k) {
+            c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+        }
+        if (k == lowerKey) ++n;
+    }
+    return n;
+}
+
+// 测试用：作用域内把 http_proxy 指到本地 mock、清空 no_proxy，析构还原原值。
+// 用途：让 baseUrl host 为 opencode.ai 的探测请求仍落到本地 mock——curl 走
+// 代理时请求行是绝对 URI（GET http://opencode.ai/... HTTP/1.1），不解析该
+// 域名，请求不出本机（libcurl 从环境变量取代理，send() 未显式设置 CURLOPT_PROXY）。
+void setEnvVar(const char* name, const char* value) {
+#if defined(_WIN32)
+    _putenv_s(name, value);
+#else
+    if (value && *value) {
+        setenv(name, value, 1);
+    } else {
+        unsetenv(name);
+    }
+#endif
+}
+
+struct ScopedProxyEnv {
+    std::string savedProxy;
+    std::string savedNoProxy;
+    bool hadProxy = false;
+    bool hadNoProxy = false;
+
+    explicit ScopedProxyEnv(const std::string& proxyUrl) {
+        const char* p = std::getenv("http_proxy");
+        if (p) {
+            hadProxy = true;
+            savedProxy = p;
+        }
+        const char* n = std::getenv("no_proxy");
+        if (n) {
+            hadNoProxy = true;
+            savedNoProxy = n;
+        }
+        setEnvVar("http_proxy", proxyUrl.c_str());
+        setEnvVar("no_proxy", "");
+    }
+    ~ScopedProxyEnv() {
+        setEnvVar("http_proxy", hadProxy ? savedProxy.c_str() : "");
+        setEnvVar("no_proxy", hadNoProxy ? savedNoProxy.c_str() : "");
+    }
+    ScopedProxyEnv(const ScopedProxyEnv&) = delete;
+    ScopedProxyEnv& operator=(const ScopedProxyEnv&) = delete;
+};
 
 } // namespace
 
@@ -266,18 +342,15 @@ REGISTER_TEST(claude_service_configured_proxy_port,
     svc.setConfiguredProxyPort(65535);
     DOCTEST_CHECK_EQ(svc.configuredProxyPort(), 65535);
 
-    // 设置页 applyProxyPort 的运行期原语：stop→start 换端口且保持 token
-    //（测试用 port=0 让 OS 分配，两次 start 即端口变更；token 传旧值不换）
-    auto first = svc.startProxy("127.0.0.1", 0, "keep-me-token");
+    // 设置页 applyProxyPort 的运行期原语：stop→start 换端口
+    //（测试用 port=0 让 OS 分配，两次 start 即端口变更）
+    auto first = svc.startProxy("127.0.0.1", 0);
     DOCTEST_REQUIRE(first.isOk());
     const int portA = first.value();
-    DOCTEST_CHECK_EQ(svc.proxyAuthToken(), std::string("keep-me-token"));
-    const std::string keep = svc.proxyAuthToken();
     svc.stopProxy();
-    auto second = svc.startProxy("127.0.0.1", 0, keep);
+    auto second = svc.startProxy("127.0.0.1", 0);
     DOCTEST_REQUIRE(second.isOk());
     DOCTEST_CHECK(second.value() != portA);          // 端口确实换了
-    DOCTEST_CHECK_EQ(svc.proxyAuthToken(), std::string("keep-me-token"));  // token 不变
     svc.stopProxy();
     return true;
 })
@@ -591,6 +664,82 @@ REGISTER_TEST(claude_service_test_connection,
     return true;
 })
 
+// ---- 8b. testConnection 经上游方言层装配请求头 ----
+// 回归（专家审计 V1）：此前 testConnection 自己拼 x-api-key / anthropic-version，
+// 没走 UpstreamDialect——对要求 x-opencode-session、且 Cloudflare 按 UA 拦截的
+// 网关（opencode.ai/zen）探测会误报失败，而真实转发是通的。本用例断言探测
+// 请求确实经方言层：统一 UA + 鉴权头 + opencode 会话头。
+
+REGISTER_TEST(claude_service_test_connection_uses_dialect,
+              "claude_service: testConnection 经上游方言（UA/鉴权/opencode 会话头）", {
+    platform::http::Server upstream("127.0.0.1", 0);
+    HeaderMap seen;
+    int hitCount = 0;
+    upstream.route("GET", ".*",
+                   [&](const platform::http::RequestCtx& ctx,
+                       platform::http::ResponseWriter& w) {
+                       ++hitCount;
+                       seen = ctx.headers;
+                       w.setStatus(200);
+                       w.setHeader("Content-Type", "application/json");
+                       w.write(R"({"data":[{"id":"claude-sonnet-4-5"}]})");
+                       w.end();
+                   });
+    DOCTEST_REQUIRE(upstream.start());
+    const int port = upstream.actualPort();
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+
+    TestDb tdb("conn_dialect");
+    module::claude::ClaudeService svc(tdb.handle(), kTestKeychainService);
+
+    // ---- (1) 默认方言（loopback host）：统一 UA + 鉴权头由方言层注入 ----
+    const std::string loopbackUrl = "http://127.0.0.1:" + std::to_string(port);
+    auto created = svc.createProfile("ConnDialect", loopbackUrl,
+                                     "sk-ant-conn-dialect-9999", "m");
+    DOCTEST_REQUIRE(created.isOk());
+
+    auto resp = svc.testConnection(created.value());
+    DOCTEST_REQUIRE(resp.isOk());
+    DOCTEST_CHECK_EQ(resp.value().statusCode, 200);
+    DOCTEST_CHECK_EQ(hitCount, 1);
+    // 统一 UA（opencode.ai 前置 Cloudflare 按 UA 指纹拦截，客户端签名不能泄漏）
+    DOCTEST_CHECK_EQ(headerCI(seen, "user-agent"),
+                     std::string(module::claude::kProxyUserAgent));
+    DOCTEST_CHECK_EQ(countCI(seen, "user-agent"), 1);
+    // 鉴权经方言层：x-api-key + Authorization: Bearer 双发
+    DOCTEST_CHECK_EQ(headerCI(seen, "x-api-key"),
+                     std::string("sk-ant-conn-dialect-9999"));
+    DOCTEST_CHECK_EQ(headerCI(seen, "authorization"),
+                     std::string("Bearer sk-ant-conn-dialect-9999"));
+    DOCTEST_CHECK_EQ(countCI(seen, "authorization"), 1);
+    DOCTEST_CHECK_EQ(headerCI(seen, "anthropic-version"),
+                     std::string("2023-06-01"));
+    // 非 opencode host：不注入会话头
+    DOCTEST_CHECK_EQ(countCI(seen, "x-opencode-session"), 0);
+
+    // ---- (2) opencode 方言：会话头注入（host 命中 opencode.ai → opencodeZen）----
+    // 借 http_proxy 把 curl 指到本地 mock（请求行是绝对 URI，不解析该域名）
+    ScopedProxyEnv proxyEnv("http://127.0.0.1:" + std::to_string(port));
+    module::claude::Profile p = created.value();
+    p.baseUrl = "http://opencode.ai/zen/go";
+    seen.clear();
+    auto resp2 = svc.testConnection(p);
+    DOCTEST_REQUIRE(resp2.isOk());
+    DOCTEST_CHECK_EQ(resp2.value().statusCode, 200);
+    DOCTEST_CHECK_EQ(hitCount, 2);
+    DOCTEST_CHECK_EQ(headerCI(seen, "x-opencode-session"),
+                     module::claude::claudeUpstreamSessionId());
+    DOCTEST_CHECK_EQ(countCI(seen, "x-opencode-session"), 1);
+    DOCTEST_CHECK_EQ(headerCI(seen, "user-agent"),
+                     std::string(module::claude::kProxyUserAgent));
+    DOCTEST_CHECK_EQ(headerCI(seen, "x-api-key"),
+                     std::string("sk-ant-conn-dialect-9999"));
+
+    upstream.stop();
+    cleanupKey(created.value().id);
+    return true;
+})
+
 // ---- 9. testConnection 网络不可达 ----
 
 REGISTER_TEST(claude_service_test_connection_unreachable,
@@ -880,16 +1029,15 @@ REGISTER_TEST(claude_service_proxy_lifecycle,
     DOCTEST_CHECK_EQ(svc.proxyPort(), 0);
 
     // port=0 → OS 分配
-    auto started = svc.startProxy("127.0.0.1", 0, "test-token-abc");
+    auto started = svc.startProxy("127.0.0.1", 0);
     DOCTEST_REQUIRE(started.isOk());
     const int port = started.value();
     DOCTEST_CHECK(port > 0);
     DOCTEST_CHECK(svc.isProxyRunning());
     DOCTEST_CHECK_EQ(svc.proxyPort(), port);
-    DOCTEST_CHECK_EQ(svc.proxyAuthToken(), std::string("test-token-abc"));
 
     // 重复启动应失败（AlreadyExists）
-    auto again = svc.startProxy("127.0.0.1", 0, "other");
+    auto again = svc.startProxy("127.0.0.1", 0);
     DOCTEST_CHECK(again.isFail());
     DOCTEST_CHECK(again.errorCode() == core::ErrorCode::AlreadyExists);
 
@@ -898,48 +1046,12 @@ REGISTER_TEST(claude_service_proxy_lifecycle,
     DOCTEST_CHECK_EQ(svc.proxyPort(), 0);
 
     // 停止后再启动应该成功
-    auto restarted = svc.startProxy("127.0.0.1", 0, "");
+    auto restarted = svc.startProxy("127.0.0.1", 0);
     DOCTEST_REQUIRE(restarted.isOk());
     DOCTEST_CHECK(restarted.value() > 0);
     DOCTEST_CHECK(svc.isProxyRunning());
-    // 空 token → 自动生成
-    DOCTEST_CHECK(!svc.proxyAuthToken().empty());
-    DOCTEST_CHECK_EQ(svc.proxyAuthToken().size(), 32u);
 
     svc.stopProxy();
     DOCTEST_CHECK_FALSE(svc.isProxyRunning());
-    return true;
-})
-
-// ---- 11b. 审计 2026-09-23 [10]：自动生成 Bearer token 的取值形态 ----
-// 旧实现用单次 32 位 random_device 采样给 mt19937_64 播种，128 位 token
-// 实际熵 ≤2^32。修复后 random_device 逐 32 位采样 4 次直填 16 字节。
-// 熵本身要统计大样本才可测（单元层做不了），本测试固定可观测契约：
-// 32 位小写 hex 十六进制 + 每次生成不同（种子路径已移除）。
-REGISTER_TEST(claude_service_authtoken_hex_random_format,
-              "claude_service: 自动生成 token 为 32 位小写 hex 且每次不同", {
-    TestDb tdb("token");
-    module::claude::ClaudeService svc(tdb.handle(), kTestKeychainService);
-
-    auto started = svc.startProxy("127.0.0.1", 0, "");
-    DOCTEST_REQUIRE(started.isOk());
-    const std::string t1 = svc.proxyAuthToken();
-    svc.stopProxy();
-
-    auto again = svc.startProxy("127.0.0.1", 0, "");
-    DOCTEST_REQUIRE(again.isOk());
-    const std::string t2 = svc.proxyAuthToken();
-    svc.stopProxy();
-
-    auto isLowerHex = [](char c) {
-        return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f');
-    };
-    DOCTEST_CHECK_EQ(t1.size(), 32u);
-    DOCTEST_CHECK_EQ(t2.size(), 32u);
-    bool hexOk = true;
-    for (char c : t1) { if (!isLowerHex(c)) hexOk = false; }
-    for (char c : t2) { if (!isLowerHex(c)) hexOk = false; }
-    DOCTEST_CHECK(hexOk);
-    DOCTEST_CHECK(t1 != t2);
     return true;
 })

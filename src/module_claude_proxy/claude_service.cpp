@@ -9,6 +9,7 @@
 #include "platform/keychain.h"
 #include "provider_config.h"
 #include "proxy_router.h"
+#include "upstream_dialect.h"
 
 #include <openssl/sha.h>
 
@@ -684,8 +685,11 @@ ClaudeService::testConnection(const Profile& profile) {
     platform::http::Request req;
     req.method = "GET";
     req.url = stripTrailingSlash(profile.baseUrl) + "/v1/models";
-    req.headers["x-api-key"] = key;
-    req.headers["anthropic-version"] = "2023-06-01";
+    // 与真实转发同源：探测请求也经上游方言层装配头部（鉴权头形态 / UA 覆盖 /
+    // 方言专属会话头），否则探测结果与转发结果会不一致——如 opencode.ai/zen
+    // 缺 x-opencode-session、或 Cloudflare 按 UA 拦截时，转得通而探测误报失败
+    const UpstreamDialect dialect = UpstreamDialect::forBaseUrl(profile.baseUrl);
+    dialect.applyHeaders(req.headers, key);
     req.timeoutMs = 15000;
 
     auto resp = platform::http::send(req);
@@ -916,36 +920,27 @@ std::optional<int> ClaudeService::takeProxyEvent(std::time_t nowSec) {
 
 // ---------- 代理 server 生命周期 ----------
 
-std::string ClaudeService::generateAuthToken() {
-    // 32 hex chars (16 bytes) —— 直接从 std::random_device 逐 32 位采样
-    // 4 次填满 128 位（审计 2026-09-23 [10]）。旧实现用单次 random_device()
-    // 采样给 mt19937_64 播种，之后两次的 64 位输出全由那一个 ≤2^32 取值
-    // 的种子决定——token 看着 128 位、实际熵 ≤32 位，loopback 暴力可枚举。
-    // Windows 上 std::random_device 由 BCryptGenRandom 驱动，非确定。
-    // （失败不用 Result：random_device 构造/采样失败抛 std::runtime_error，
-    // 项目约定不抛异常——MinGW/GCC 的实现同样基于系统熵源，启动失败时
-    // 与旧实现行为一致，属于环境级故障。）
-    std::random_device rd;
-    std::uint32_t words[4];
-    for (auto& w : words) w = rd();
-
-    std::ostringstream oss;
-    for (const auto w : words) {
-        oss << std::hex << std::setw(8) << std::setfill('0') << w;
-    }
-    return oss.str();
+const std::string& claudeUpstreamSessionId() {
+    // 32 hex（同 auth token 的生成方式）；magic static 保证线程安全与进程内唯一
+    static const std::string id = [] {
+        std::random_device rd;
+        std::uint32_t words[4];
+        for (auto& w : words) w = rd();
+        std::ostringstream oss;
+        for (const auto w : words) {
+            oss << std::hex << std::setw(8) << std::setfill('0') << w;
+        }
+        return oss.str();
+    }();
+    return id;
 }
 
 core::Result<int> ClaudeService::startProxy(const std::string& bindAddress,
-                                            int port,
-                                            const std::string& authToken) {
+                                            int port) {
     if (server_) {
         return core::Result<int>::fail(core::ErrorCode::AlreadyExists,
             "代理 server 已在运行（先 stopProxy）");
     }
-
-    // 决定实际 token：未提供就生成一个
-    const std::string token = authToken.empty() ? generateAuthToken() : authToken;
 
     // 上一轮 stopProxy 置位的停止标志清零（否则 startProxy 后新登记到
     // router 的流一进来就被误取消）
@@ -955,8 +950,8 @@ core::Result<int> ClaudeService::startProxy(const std::string& bindAddress,
         activeStreams_.clear();
     }
 
-    // 构造 Server
-    server_ = std::make_unique<platform::http::Server>(bindAddress, port, token);
+    // 构造 Server（绑定 127.0.0.1，仅本机可访问，无鉴权）
+    server_ = std::make_unique<platform::http::Server>(bindAddress, port);
 
     // 构造并注册路由
     router_ = std::make_unique<ProxyRouter>(*this, *server_);
@@ -972,10 +967,10 @@ core::Result<int> ClaudeService::startProxy(const std::string& bindAddress,
 
     const int actual = server_->actualPort();
     LOG_INFO("Claude 代理已启动 " + bindAddress + ":" + std::to_string(actual) +
-             " (auth=" + (token.empty() ? std::string("off") : std::string("on")) + ")");
+             "（仅本机可访问，无鉴权）");
 
     // 接管 Claude Code settings.json（§5.2 触发点 1；含手动启动、设置页
-    // 重生成 token 的重启）。失败只 WARN：代理已可用，接入失败用户可感知
+    // 改端口的重启）。失败只 WARN：代理已可用，接入失败用户可感知
     syncTakeOver();
     return core::Result<int>::ok(actual);
 }
@@ -1001,10 +996,6 @@ bool ClaudeService::isProxyRunning() const {
 
 int ClaudeService::proxyPort() const {
     return server_ ? server_->actualPort() : 0;
-}
-
-std::string ClaudeService::proxyAuthToken() const {
-    return server_ ? server_->authToken() : std::string();
 }
 
 void ClaudeService::setConfiguredProxyPort(int port) {
@@ -1075,6 +1066,11 @@ const std::vector<std::string>& ClaudeService::lastSyncWarnings() const {
 
 void ClaudeService::recoverPendingSettingsRestore() {
     if (syncPaths_.settingsFile.empty()) return;
+    // 接管开着才补还原（2026-09-27 恢复默认开）：启动序列里这一步负责把上次
+    // 异常退出残留的 sidecar 收尾，必须先于任何 startProxy（否则残留的托管键
+    // 会被误快照为用户原值）。开关关掉时连它也不做——「不碰 settings.json」
+    // 是关掉开关的整体语义，历史遗留 sidecar 留到下次开启接管时再处理。
+    if (!settingsTakeOverEnabled_) return;
     auto r = settings_sync::recoverPendingSnapshot(syncPaths_);
     if (!r.ok) {
         LOG_WARN("Claude Code 接管崩溃补还原失败: " + r.error);
@@ -1083,15 +1079,22 @@ void ClaudeService::recoverPendingSettingsRestore() {
 
 void ClaudeService::syncTakeOver() {
     if (syncPaths_.settingsFile.empty()) return;
-    // 无激活 profile：仍接管 BASE_URL/token（接入路径先就位，转发层会报
+    // 接管默认开（2026-09-27 恢复）：起代理即接管 settings.json，停代理还原。
+    // 显式关掉开关才走下面这条——此时 DevDesk 完全不碰该文件（本机另装
+    // cc-switch 等同类工具、不愿两边互相覆盖时的用法）。
+    if (!settingsTakeOverEnabled_) {
+        LOG_INFO("Claude Code settings 接管未开启：不动 " +
+                 syncPaths_.settingsFile.string());
+        return;
+    }
+    // 无激活 profile：仍接管 BASE_URL/api key 占位（接入路径先就位，转发层会报
     // 503 提示用户先启用 profile）
     Profile active;
     auto a = getActiveProfile();
     if (a.isOk()) {
         active = std::move(a).value();
     }
-    auto r = settings_sync::takeOver(active, proxyPort(), proxyAuthToken(),
-                                     syncPaths_);
+    auto r = settings_sync::takeOver(active, proxyPort(), syncPaths_);
     lastSyncWarnings_ = std::move(r.warnings);
     if (!r.ok) {
         LOG_WARN("Claude Code settings 接管失败: " + r.error);
@@ -1108,6 +1111,13 @@ void ClaudeService::syncTakeOver() {
 void ClaudeService::syncRestore() {
     if (syncPaths_.settingsFile.empty()) return;
     if (!settings_sync::hasPendingSnapshot(syncPaths_)) return;
+    if (!settingsTakeOverEnabled_) {
+        // 接管关闭：不改写 settings.json。确有遗留接管态时只告警不代改
+        //（该文件由 cc-switch 等工具负责，DevDesk 不抢写）
+        LOG_WARN("检测到遗留的 Claude Code 接管快照，但接管已关闭——不改写 " +
+                 syncPaths_.settingsFile.string());
+        return;
+    }
     auto r = settings_sync::restore(syncPaths_);
     if (!r.ok) {
         LOG_WARN("Claude Code settings 还原失败: " + r.error);
@@ -1115,29 +1125,6 @@ void ClaudeService::syncRestore() {
     }
     lastSyncWarnings_.clear();
     LOG_INFO("Claude Code settings 已还原（settings.json 不再指向本地代理）");
-}
-
-// ---------- 代理凭据文件（三条启动路径共用）----------
-
-void writeProxyTokenFile(const std::string& token, int port) {
-    const auto path = core::paths::appDataDir() / "proxy_token.txt";
-    std::ofstream f(path, std::ios::trunc);
-    if (!f) {
-        LOG_WARN("无法写入 proxy_token.txt: " + path.string());
-        return;
-    }
-    f << "# DevDesk Claude 代理凭据（自动生成，请勿提交到版本控制）\n"
-      << "port=" << port << "\n"
-      << "token=" << token << "\n"
-      << "\n"
-      << "# 用法：\n"
-      << "# curl -X POST http://127.0.0.1:" << port << "/v1/messages \\\n"
-      << "#   -H \"Authorization: Bearer " << token << "\" \\\n"
-      << "#   -H \"Content-Type: application/json\" \\\n"
-      << "#   -d '{\"model\":\"claude-sonnet-4-5\",\"max_tokens\":64,"
-         "\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}]}'\n";
-    f.close();
-    LOG_INFO("代理凭据已写入: " + path.string());
 }
 
 std::string formatCallTime(std::time_t ts, std::time_t now) {
