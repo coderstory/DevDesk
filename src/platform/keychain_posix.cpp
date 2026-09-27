@@ -24,7 +24,8 @@ namespace {
     }
 }
 
-core::Result<void> storeSecret(const std::string& service, const std::string& account, const std::string& secret) {
+// 真实实现（CPX-14 起经 keychain.h 的函数指针表转发，见那里的「注入缝」段）
+core::Result<void> realStoreSecret(const std::string& service, const std::string& account, const std::string& secret) {
     auto path = getKeyFilePath(service, account);
     std::ofstream f(path, std::ios::binary);
     if (!f) return core::Result<void>::fail(core::ErrorCode::FileWriteFailed, "cannot write key file");
@@ -50,7 +51,7 @@ core::Result<void> storeSecret(const std::string& service, const std::string& ac
     return core::Result<void>::ok();
 }
 
-core::Result<std::string> loadSecret(const std::string& service, const std::string& account) {
+core::Result<std::string> realLoadSecret(const std::string& service, const std::string& account) {
     auto path = getKeyFilePath(service, account);
     std::ifstream f(path);
     if (!f) return core::Result<std::string>::fail(core::ErrorCode::NotFound, "key file not found");
@@ -58,7 +59,7 @@ core::Result<std::string> loadSecret(const std::string& service, const std::stri
     return core::Result<std::string>::ok(std::move(s));
 }
 
-core::Result<void> deleteSecret(const std::string& service, const std::string& account) {
+core::Result<void> realDeleteSecret(const std::string& service, const std::string& account) {
     auto path = getKeyFilePath(service, account);
     // tech-debt D：原先 ec 被吞、无条件返回 ok，删除失败（权限/只读挂载/IO）
     // 调用方无从感知。对齐 keychain_win 语义：不存在 → remove 返回 false 且
@@ -73,7 +74,7 @@ core::Result<void> deleteSecret(const std::string& service, const std::string& a
     return core::Result<void>::ok();
 }
 
-core::Result<std::vector<std::string>> deleteSecretsNotIn(
+core::Result<std::vector<std::string>> realDeleteSecretsNotIn(
     const std::string& service,
     const std::vector<std::string>& keepAccounts) {
     std::vector<std::string> removed;

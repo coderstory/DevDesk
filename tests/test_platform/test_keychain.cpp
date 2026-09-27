@@ -172,3 +172,88 @@ REGISTER_TEST(keychain_legacy_naming_still_readable,
 })
 
 #endif  // _WIN32
+
+// ==================== CPX-14：注入缝（函数指针表）契约 ====================
+// 断言缝本身：默认指向真实实现 → 安装后四个入口全部路由到注入表 → 复位后回到
+// 默认。全程只用假实现 + 指针比较，不碰真实存储（不写用户钥匙串），故 macOS
+// 也能跑、无需 SKIP_ON_MACOS_KEYCHAIN——缝的使用规矩见 platform/keychain.h
+// 的「注入缝」段（claude_service 的两段写失败分支用例在 test_claude_service.cpp）
+namespace {
+
+struct CountingKeychain {
+    int storeCalls = 0;
+    int loadCalls = 0;
+    int deleteCalls = 0;
+    int sweepCalls = 0;
+};
+
+CountingKeychain* g_counting = nullptr;
+
+core::Result<void> countingStore(const std::string&, const std::string&,
+                                 const std::string&) {
+    ++g_counting->storeCalls;
+    return core::Result<void>::ok();
+}
+
+core::Result<std::string> countingLoad(const std::string&,
+                                       const std::string&) {
+    ++g_counting->loadCalls;
+    return core::Result<std::string>::ok("fake-value");
+}
+
+core::Result<void> countingDelete(const std::string&, const std::string&) {
+    ++g_counting->deleteCalls;
+    return core::Result<void>::ok();
+}
+
+core::Result<std::vector<std::string>> countingSweep(
+    const std::string&, const std::vector<std::string>&) {
+    ++g_counting->sweepCalls;
+    return core::Result<std::vector<std::string>>::ok({"swept"});
+}
+
+// 注入表由函数造（不是在 REGISTER_TEST 体内直接聚合初始化：宏实参按逗号切分，
+// 花括号里的逗号不受保护，会撞「passed N arguments」编译错）
+platform::keychain::Backend makeCountingBackend() {
+    return platform::keychain::Backend{&countingStore, &countingLoad,
+                                       &countingDelete, &countingSweep};
+}
+
+} // namespace
+
+REGISTER_TEST(keychain_backend_injection,
+              "keychain: CPX-14 注入缝默认真实实现且可替换复位", {
+    // 默认后端 = 真实实现（生产路径的落点）
+    DOCTEST_CHECK(&platform::keychain::backend() ==
+                  &platform::keychain::defaultBackend());
+
+    CountingKeychain fake;
+    CountingKeychain* prevFake = g_counting;
+    g_counting = &fake;
+    const platform::keychain::Backend table = makeCountingBackend();
+    const platform::keychain::Backend* prev =
+        platform::keychain::setBackendForTest(&table);
+    // 安装返回被替换的旧后端 = 默认（真实）后端
+    DOCTEST_CHECK(prev == &platform::keychain::defaultBackend());
+
+    // 四个入口全部路由到注入表（account 是编造的，真实存储一字未碰）
+    DOCTEST_CHECK(platform::keychain::storeSecret("S", "a", "v").isOk());
+    auto l = platform::keychain::loadSecret("S", "a");
+    DOCTEST_REQUIRE(l.isOk());
+    DOCTEST_CHECK_EQ(l.value(), std::string("fake-value"));
+    DOCTEST_CHECK(platform::keychain::deleteSecret("S", "a").isOk());
+    auto swept = platform::keychain::deleteSecretsNotIn("S", {"a"});
+    DOCTEST_REQUIRE(swept.isOk());
+    DOCTEST_CHECK_EQ(swept.value().size(), 1u);
+    DOCTEST_CHECK_EQ(fake.storeCalls, 1);
+    DOCTEST_CHECK_EQ(fake.loadCalls, 1);
+    DOCTEST_CHECK_EQ(fake.deleteCalls, 1);
+    DOCTEST_CHECK_EQ(fake.sweepCalls, 1);
+
+    // 复位：返回当时在位的后端，当前后端回到默认
+    DOCTEST_CHECK(platform::keychain::setBackendForTest(prev) == &table);
+    DOCTEST_CHECK(&platform::keychain::backend() ==
+                  &platform::keychain::defaultBackend());
+    g_counting = prevFake;
+    return true;
+})
