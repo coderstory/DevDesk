@@ -76,11 +76,31 @@ fi
 echo "── EUI-NEO: $EUI_DIR ──"
 
 # ---- 1. 杀旧进程（必须在构建前：运行中的 exe 被 Windows 文件锁住，链接必失败）----
+# TIN-02：按**可执行文件绝对路径**杀，不按进程名杀。原来 taskkill -F -IM <名字> 会
+# 杀全机同名进程——多条 worktree 并发构建时互相打断别人的测试/应用（临时路径的
+# pid 唯一化已做过，只剩这一条）。匹配不到就静默跳过；PowerShell 不可用/执行失败
+# 也不中断（沿用本脚本「失败不阻断构建」的容错风格）。Git Bash 下 taskkill -F 的
+# dash 风格约定不受影响——本函数只是不再用它按名字杀。
+kill_by_exe_path() {
+  local exe_unix="$1" exe_win exe_name
+  [ -n "$exe_unix" ] || return 0
+  # PowerShell 的 $_.Path 是 Windows 形态路径，必须先转换再比较
+  exe_win="$(cygpath -w "$exe_unix" 2>/dev/null || true)"
+  [ -n "$exe_win" ] || exe_win="$exe_unix"
+  exe_name="$(basename "$exe_unix")"
+  exe_name="${exe_name%.exe}"   # Get-Process -Name 是进程名（无扩展名）
+  command -v powershell >/dev/null 2>&1 || return 0
+  powershell -NoProfile -NonInteractive -Command \
+    "Get-Process -Name '$exe_name' -ErrorAction SilentlyContinue | Where-Object { \$_.Path -eq '$exe_win' } | Stop-Process -Force -ErrorAction SilentlyContinue" \
+    >/dev/null 2>&1 || true
+  return 0
+}
+
 if [ "$RUN_APP" = "1" ]; then
   echo "── 杀旧进程 ──"
-  taskkill -F -IM DevDesk.exe 2>/dev/null || true
-  taskkill -F -IM devdesk_tests.exe 2>/dev/null || true
-  echo "✅ 旧进程已清"
+  kill_by_exe_path "$PWD/build/DevDesk.exe"
+  kill_by_exe_path "$PWD/build/tests/devdesk_tests.exe"
+  echo "✅ 旧进程已清（仅本 build 目录下的产物）"
 elif tasklist 2>/dev/null | grep -qi devdesk; then
   echo "⚠ DevDesk 正在运行（--no-run 不杀）：构建链接 DevDesk.exe 可能因文件锁失败" >&2
 fi
