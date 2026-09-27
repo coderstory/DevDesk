@@ -3,12 +3,14 @@
 // save/load 往返、缺失/损坏回退默认、净化钳制（等价「重启恢复」的持久层验证）。
 #include "doctest.h"
 
+#include "core/atomic_write.h"
 #include "module_markdown/md_view_state.h"
 #include "module_todo/todo_view_state.h"
 
 #include <filesystem>
 #include <fstream>
 #include <map>
+#include <sstream>
 #include <string>
 #include <vector>
 
@@ -179,5 +181,112 @@ REGISTER_TEST(todo_view_state_sanitize_prune, "todo: 负值/乱 id 净化 + prun
     DOCTEST_CHECK_EQ(removed, static_cast<size_t>(1));
     DOCTEST_CHECK_EQ(scrolls.size(), static_cast<size_t>(1));
     DOCTEST_CHECK_EQ(scrolls.at(11), 50.0f);  // 存活列的偏移原样保留
+    return true;
+});
+
+// ==================== core 原子写（审计 THS-03）====================
+// 失败注入不靠 sleep/杀进程：把临时文件路径 <target>.devdesk-tmp 用目录占住
+// （打开必失败），或让目标本身是不可替换的非空目录（remove/rename 双失败）——
+// 两种都稳定可重复，且能顺带验证"失败时目标原内容一字未变 + 不留临时文件"。
+
+namespace {
+
+std::string readAllBytes(const std::filesystem::path& p) {
+    std::ifstream f(p, std::ios::binary);
+    std::ostringstream ss;
+    ss << f.rdbuf();
+    return ss.str();
+}
+
+std::filesystem::path tmpPathOf(const std::filesystem::path& p) {
+    return std::filesystem::path(p.string() + ".devdesk-tmp");
+}
+
+} // namespace
+
+REGISTER_TEST(core_atomic_write_roundtrip, "core: atomicWriteFile 往返逐字节一致 + 不留临时文件（THS-03）", {
+    const auto file = tempFile("devdesk_test_atomic_write.json");
+    const auto tmp = tmpPathOf(file);
+    std::error_code ec;
+    std::filesystem::remove_all(tmp, ec);
+    removeFile(file);
+
+    DOCTEST_REQUIRE(core::atomicWriteFile(file, "{\"a\":1}\n").isOk());
+    DOCTEST_CHECK_EQ(readAllBytes(file), std::string("{\"a\":1}\n"));
+    // 目标已存在 → 走 remove + rename 替换分支；新内容完整替换旧内容
+    DOCTEST_REQUIRE(core::atomicWriteFile(file, "second\n").isOk());
+    DOCTEST_CHECK_EQ(readAllBytes(file), std::string("second\n"));
+    // 替换是可观测的原子形式：tmp 换名进目标，成功后无残留
+    DOCTEST_CHECK_FALSE(std::filesystem::exists(tmp));
+
+    removeFile(file);
+    return true;
+});
+
+REGISTER_TEST(core_atomic_write_failure_keeps_old, "core: 原子写失败不破坏旧内容、不留临时文件（THS-03）", {
+    const auto file = tempFile("devdesk_test_atomic_write_fail.json");
+    const auto tmp = tmpPathOf(file);
+    std::error_code ec;
+    std::filesystem::remove_all(tmp, ec);
+    removeFile(file);
+    DOCTEST_REQUIRE(core::atomicWriteFile(file, "OLD\n").isOk());
+
+    // 场景 1：临时文件路径被目录占住 → 打开临时文件即失败
+    DOCTEST_REQUIRE(std::filesystem::create_directory(tmp, ec));
+    const auto r = core::atomicWriteFile(file, "NEW\n");
+    DOCTEST_CHECK(r.isFail());
+    DOCTEST_CHECK_EQ(readAllBytes(file), std::string("OLD\n"));  // 原文件一字未变
+    std::filesystem::remove(tmp, ec);  // 占位目录是测试自己造的，手动清掉
+
+    // 场景 2：目标本身是不可替换的非空目录 → remove/rename 双失败
+    const auto dirTarget = tempFile("devdesk_test_atomic_write_dir");
+    const auto dirTmp = tmpPathOf(dirTarget);
+    std::filesystem::remove_all(dirTarget, ec);
+    std::filesystem::remove_all(dirTmp, ec);
+    DOCTEST_REQUIRE(std::filesystem::create_directories(dirTarget, ec));
+    {
+        std::ofstream inner(dirTarget / "inner.txt", std::ios::trunc);
+        inner << "keep";
+    }
+    const auto r2 = core::atomicWriteFile(dirTarget, "X\n");
+    DOCTEST_CHECK(r2.isFail());
+    DOCTEST_CHECK(std::filesystem::is_directory(dirTarget));
+    DOCTEST_CHECK_EQ(readAllBytes(dirTarget / "inner.txt"), std::string("keep"));
+    DOCTEST_CHECK_FALSE(std::filesystem::exists(dirTmp));  // 失败路径也清掉了临时文件
+
+    std::filesystem::remove_all(dirTarget, ec);
+    removeFile(file);
+    return true;
+});
+
+REGISTER_TEST(todo_view_state_save_failure_keeps_old, "todo: 视图状态原子写失败不破坏旧文件（THS-03）", {
+    using namespace module::todo;
+    const auto file = tempFile("devdesk_test_todo_view_state_atomic.json");
+    const auto tmp = tmpPathOf(file);
+    std::error_code ec;
+    std::filesystem::remove_all(tmp, ec);
+    removeFile(file);
+
+    TodoViewStateStore store(file);
+    TodoViewState st;
+    st.columnScrolls = (std::map<int64_t, float>{{7, 120.0f}});
+    st.selectedTaskId = 42;
+    DOCTEST_REQUIRE(store.save(st).isOk());
+
+    // 落盘通道被占住 → 保存失败，但上一次成功落盘的状态必须原样可读
+    DOCTEST_REQUIRE(std::filesystem::create_directory(tmp, ec));
+    TodoViewState changed;
+    changed.columnScrolls = (std::map<int64_t, float>{{9, 999.0f}});
+    changed.selectedTaskId = 7;
+    DOCTEST_CHECK(store.save(changed).isFail());
+
+    TodoViewStateStore reopened(file);
+    const TodoViewState loaded = reopened.load();
+    DOCTEST_CHECK_EQ(loaded.columnScrolls.size(), static_cast<size_t>(1));
+    DOCTEST_CHECK_EQ(loaded.columnScrolls.at(7), 120.0f);
+    DOCTEST_CHECK_EQ(loaded.selectedTaskId, static_cast<int64_t>(42));
+
+    std::filesystem::remove(tmp, ec);
+    removeFile(file);
     return true;
 });
