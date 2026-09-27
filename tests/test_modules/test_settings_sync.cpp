@@ -36,6 +36,10 @@
 #include <string>
 #include <vector>
 
+#if defined(_WIN32)
+#include <windows.h>  // 仅反例用例（独占句柄造「存在但打不开」）
+#endif
+
 namespace {
 
 // REGISTER_TEST 宏实参不能有裸逗号（Phase A 报告的坑），模板类型统一用别名
@@ -541,6 +545,58 @@ REGISTER_TEST(sync_overlay_detection, "settings_sync: managed/project 层覆盖�
     return true;
 })
 
+// ---- 7b. 覆盖检测键集来源（CPX-12）：托管键全集 ∪ 本轮实际托管键 ----
+REGISTER_TEST(sync_overlay_detection_managed_derived,
+              "settings_sync: 覆盖检测含托管键全集与 profile 实键", {
+    using namespace module::claude;
+    TempDir d("overlayderived");
+    auto paths = makePaths(d);
+
+    // profile：sonnet 槽位有值 + extra_env 一个自有键
+    Profile p;
+    ModelsConfig models;
+    models.sonnet.model = "m-sonnet";
+    auto mc = serializeModelsConfig(models);
+    DOCTEST_REQUIRE(mc.isOk());
+    p.modelsConfigJson = mc.value();
+    p.extraEnvJson = R"({"MY_KEY": "1"})";
+
+    // ① 两个 overlay 层各写一个托管键 → 各一条警告：
+    //    *_MODEL_NAME 属槽位托管键，MY_KEY 属本轮 profile 实键
+    const auto overlayName = d.file("settings.local.json");
+    const auto overlayExtra = d.file("settings.project.json");
+    d.write(overlayName,
+            R"({"env": {"ANTHROPIC_DEFAULT_SONNET_MODEL_NAME": "x"}})");
+    d.write(overlayExtra, R"({"env": {"MY_KEY": "1"}})");
+    paths.overlayFiles = {overlayName};  // 裸逗号会拆 REGISTER_TEST 实参，逐条 push
+    paths.overlayFiles.push_back(overlayExtra);
+    auto r = settings_sync::takeOver(p, 8888, paths);
+    DOCTEST_REQUIRE(r.ok);
+    DOCTEST_REQUIRE_EQ(r.warnings.size(), 2u);
+    DOCTEST_CHECK(r.warnings[0].find("ANTHROPIC_DEFAULT_SONNET_MODEL_NAME") !=
+                  std::string::npos);
+    DOCTEST_CHECK(r.warnings[1].find("MY_KEY") != std::string::npos);
+
+    // ② 空槽位的 *_NAME 键仍在检测集内（旧硬编码 8 键的缺口：haiku 槽位为空 →
+    //    buildProxyEnv 不生成该键，只有托管键全集能识别上位覆盖）
+    d.write(overlayName,
+            R"({"env": {"ANTHROPIC_DEFAULT_HAIKU_MODEL_NAME": "x"}})");
+    paths.overlayFiles = {overlayName};
+    auto r2 = settings_sync::takeOver(p, 8888, paths);
+    DOCTEST_REQUIRE(r2.ok);
+    DOCTEST_REQUIRE_EQ(r2.warnings.size(), 1u);
+    DOCTEST_CHECK(r2.warnings[0].find("ANTHROPIC_DEFAULT_HAIKU_MODEL_NAME") !=
+                  std::string::npos);
+
+    // ③ 只写未托管键 → 0 条
+    d.write(overlayName, R"({"env": {"SOME_UNMANAGED_KEY": "x"}})");
+    paths.overlayFiles = {overlayName};
+    auto r3 = settings_sync::takeOver(p, 8888, paths);
+    DOCTEST_REQUIRE(r3.ok);
+    DOCTEST_CHECK(r3.warnings.empty());
+    return true;
+})
+
 // ---- 8. 崩溃补还原 + 原子性（无 tmp 残留）----
 REGISTER_TEST(sync_crash_recovery_and_atomic, "settings_sync: 崩溃补还原与原子写残留", {
     using namespace module::claude;
@@ -983,6 +1039,39 @@ REGISTER_TEST(sync_reverse_read_aborts_on_broken,
     }
     return true;
 })
+
+// G8 读失败（审计）：存在但打不开（IO/权限）≠ 0 字节空文件 → 中止（仅 Windows：
+// 独占句柄是本平台构造「存在但读不出」的唯一可靠形态）
+#if defined(_WIN32)
+REGISTER_TEST(sync_reverse_read_unreadable_aborts,
+              "settings_sync: 反向读——存在但打不开中止（reverse G8 读失败）", {
+    using module::claude::settings_sync::readSettingsEnvForSync;
+    TempDir d("revunreadable");
+    auto paths = makePaths(d);
+    d.write(paths.settingsFile, R"({"env": {"MY_KEY": "user"}})");
+
+    // 独占句柄（share mode = 0）：文件存在、GetFileAttributes 可见，ifstream 打不开
+    HANDLE h = CreateFileW(paths.settingsFile.wstring().c_str(), GENERIC_READ,
+                           0, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL,
+                           nullptr);
+    DOCTEST_REQUIRE(h != INVALID_HANDLE_VALUE);
+    {
+        auto r = readSettingsEnvForSync(paths);
+        DOCTEST_CHECK(!r.ok);  // G8：读失败中止，不静默当空文件
+        DOCTEST_CHECK(!r.present);
+        DOCTEST_CHECK(r.error.find(paths.settingsFile.string()) !=
+                      std::string::npos);  // 错误含路径
+    }
+    CloseHandle(h);
+
+    // 对照：0 字节空文件仍 no-op 成功（G9，属「不存在」侧的处置）
+    d.write(paths.settingsFile, "");
+    auto r2 = readSettingsEnvForSync(paths);
+    DOCTEST_CHECK(r2.ok);
+    DOCTEST_CHECK(!r2.present);
+    return true;
+})
+#endif  // _WIN32
 
 REGISTER_TEST(sync_reverse_read_env_and_sidecar,
               "settings_sync: 反向读——env 原文与 sidecar 托管键（reverse）", {
