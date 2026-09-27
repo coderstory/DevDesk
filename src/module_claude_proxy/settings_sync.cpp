@@ -385,4 +385,57 @@ SyncResult recoverPendingSnapshot(const Paths& paths) {
     return restore(paths);
 }
 
+// 反向同步读侧（协议见 settings_sync.h 的 SettingsEnvRead 注释）。
+// 复用本文件既有 readTextFile / parseJsonObjectFile / managedKeysFromSidecar。
+SettingsEnvRead readSettingsEnvForSync(const Paths& paths) {
+    SettingsEnvRead out;
+    if (paths.settingsFile.empty()) {
+        return out;  // 未注入路径（§3.6）：no-op
+    }
+
+    auto doc = parseJsonObjectFile(paths.settingsFile);
+    if (!doc.ok) {  // G8：读取/解析失败 → 调用方中止切换
+        out.ok = false;
+        out.error = "settings.json 读取或解析失败（" +
+                    paths.settingsFile.string() + "）: " + doc.error;
+        return out;
+    }
+    // G7/G9：不存在（doc.exists=false）/ 0 字节空文件（视同不存在）/ 无 env 键
+    // → 无真相源，no-op 成功。注：readTextFile 对「存在但读不出」（IO/权限）
+    // 也返回空串，该形态下与空文件同处置（复用既有 IO 助手，不新增读取通道）
+    if (!doc.exists || !doc.obj.has("env")) {
+        return out;
+    }
+
+    auto envVal = doc.obj.get("env");
+    if (!envVal.isObject()) {  // G8：env 非对象 → 中止切换
+        out.ok = false;
+        out.error = "settings.json 的 env 字段不是 JSON 对象（" +
+                    paths.settingsFile.string() + "）";
+        return out;
+    }
+    auto text = platform::json::stringify(envVal);
+    if (text.isFail()) {
+        out.ok = false;
+        out.error = "env 序列化失败（" + paths.settingsFile.string() +
+                    "）: " + text.errorMessage();
+        return out;
+    }
+    out.envJson = text.value();
+    out.present = true;
+
+    // sidecar 托管键（反向同步的 G1 输入）：缺失 → 空集；损坏 → 空集 + WARN
+    if (fileExists(paths.sidecarFile)) {
+        auto sidecar = parseJsonObjectFile(paths.sidecarFile);
+        if (sidecar.ok && sidecar.exists) {
+            out.managedKeys = managedKeysFromSidecar(sidecar.obj);
+        } else {
+            LOG_WARN("settings_sync: sidecar 快照损坏，反向同步按无托管键处理: " +
+                     paths.sidecarFile.string() +
+                     (sidecar.error.empty() ? "" : ": " + sidecar.error));
+        }
+    }
+    return out;
+}
+
 } // namespace module::claude::settings_sync

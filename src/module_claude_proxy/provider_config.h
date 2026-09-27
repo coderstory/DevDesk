@@ -86,6 +86,11 @@ struct ImportedConfig {
     std::vector<std::string> unrecognizedKeys;    // 警告角标（透传，行为自负）
     std::vector<std::string> warnings;            // 其他警告（API_KEY/AUTH_TOKEN 同现等）
     int recognizedSlots = 0;  // 预览用：model 非空的槽位数
+    // 反向同步（§3.3 守卫表）专用：命中守卫而跳过的键名（含别名归一后的键名
+    // 与 G2 联动跳过的 token 键）——语义是「不写也不清」。mergeReverseSyncEnv
+    // 靠它区分 G5「键缺席（清空）」与 G1–G4/G6「跳过（保持 profile 原值）」；
+    // parseImportedEnv（粘贴导入）恒为空，行为不受影响
+    std::vector<std::string> skippedKeys;
 };
 
 // 校验（§7.4）：env 值必须字符串（数字/布尔拒绝）；键名 ^[A-Z][A-Z0-9_]*$；
@@ -116,5 +121,55 @@ std::map<std::string, std::string> buildProxyEnv(
     const std::string& modelsConfigJson, const std::string& legacyModel,
     const std::string& extraEnvJson,
     int proxyPort);
+
+// ---- 反向同步（settings.json env → profile，设计 §3.2/§3.3，M1/M2）----
+// 全部为纯函数（无 IO / 无 DB / 无日志），单测直接覆盖。
+
+// loopback URL 判定（G2「本地代理形态」）：剥 scheme → 取 host[:port]（IPv6 去
+// 方括号）→ 小写后 ∈ {127.0.0.0/8 全段, localhost, ::1}。不做前缀匹配
+//（http://127.0.0.1.evil.com / http://127.0.0.1evil.com 都不算）
+bool isLoopbackUrl(const std::string& url);
+
+// 反向同步的**容错版** env 解析（§3.2 映射表 + §3.3 守卫表）：
+// 与 parseImportedEnv 的「非法即整体 fail」不同——单个怪异值只跳过该键 +
+// warning（粘贴导入的严格契约搬过来会让一个无关的怪异值阻断用户切 profile）。
+// 输入 = settings.json 的 env 对象原文（settings_sync 读侧产出）。
+// 输出 cfg 复用 ImportedConfig；cfg.skippedKeys 是「不写也不清」的键名集合
+//（G1–G4/G6；含别名归一后的键名，因 profile 的 extra_env 存的是归一后的键）。
+// 仅 env 本身非法（非 JSON 对象）才 ok=false。
+struct ReverseSyncParse {
+    bool ok = false;
+    std::string error;
+    ImportedConfig cfg;
+    // 命中守卫而跳过的键名（镜像 cfg.skippedKeys，便于调用方就近读取）
+    std::vector<std::string> skippedKeys;
+};
+
+ReverseSyncParse parseEnvForReverseSync(
+    const std::string& envJson,
+    const std::vector<std::string>& managedKeys);
+
+// 反向同步的第二段（§3.4 出现/缺席语义）：把 cfg 对齐到 profile 现值上。
+//   - 出现（cfg 非空）→ 覆盖；缺席 → 清空；命中守卫（skippedKeys）→ 保持原值
+//   - def / subagent 的 name 无官方 _NAME 变体（不属托管字段）→ 任何情况下不动
+//   - 以 effectiveModelsConfig(现值, 旧 model 列) 为基底落位
+//   - only-changed：与现值逐字段比较，没变则 *Changed=false 且输出回传入参原文
+//   输出为空表时 modelsConfigJson / extraEnvJson 用空串（本层「空串 = 未配置」约定）
+struct ReverseSyncMerge {
+    std::string modelsConfigJson;
+    std::string extraEnvJson;
+    bool modelsChanged = false;
+    bool extraEnvChanged = false;
+};
+
+ReverseSyncMerge mergeReverseSyncEnv(const ImportedConfig& cfg,
+                                     const std::string& curModelsConfigJson,
+                                     const std::string& curLegacyModel,
+                                     const std::string& curExtraEnvJson);
+
+// 副本命名（§4.2）：base + " 副本"；重名递增 base + " 副本 N"（N 从 2 起）；
+// 100 次仍冲突 → 空串（调用方按命名失败处理）
+std::string makeCopyName(const std::string& baseName,
+                         const std::vector<std::string>& existingNames);
 
 } // namespace module::claude

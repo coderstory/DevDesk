@@ -738,3 +738,139 @@ REGISTER_TEST(sync_switch_off_no_write,
         kTestKeychainService, "claude:" + std::to_string(created.value().id));
     return true;
 })
+
+// ---- 14. 反向同步读侧（设计 §3.3 G7/G8/G9）----
+// 六种文件形态分别处置：缺失 / 0 字节空文件 / 无 env 键 → no-op 成功
+//（present=false，调用方照常切换）；坏 JSON / 顶层非对象 / env 非对象 →
+// 中止（ok=false + 带路径的 error）。全部走临时目录，不碰真实 ~/.claude。
+
+namespace {
+
+bool hasKeyEntry(const std::vector<std::string>& keys, const char* key) {
+    for (const auto& k : keys) {
+        if (k == key) return true;
+    }
+    return false;
+}
+
+} // namespace
+
+REGISTER_TEST(sync_reverse_read_missing_empty_noenv,
+              "settings_sync: 反向读——缺失/空文件/无 env 均 no-op 成功（reverse G7/G9）", {
+    using module::claude::settings_sync::readSettingsEnvForSync;
+    TempDir d("revnoop");
+    auto paths = makePaths(d);
+
+    // G7：文件不存在 → no-op 成功（调用方照常完成本次切换）
+    {
+        auto r = readSettingsEnvForSync(paths);
+        DOCTEST_CHECK(r.ok);
+        DOCTEST_CHECK(!r.present);
+        DOCTEST_CHECK(r.error.empty());
+        DOCTEST_CHECK(r.envJson.empty());
+        DOCTEST_CHECK(r.managedKeys.empty());
+    }
+    // G9：0 字节空文件（视为不存在——不属于「存在但读不了」的中止侧）
+    {
+        d.write(paths.settingsFile, "");
+        auto r = readSettingsEnvForSync(paths);
+        DOCTEST_CHECK(r.ok);
+        DOCTEST_CHECK(!r.present);
+        DOCTEST_CHECK(r.error.empty());
+    }
+    // G9：解析成功但无 env 键
+    {
+        d.write(paths.settingsFile, R"({"permissions": {"allow": ["Bash"]}})");
+        auto r = readSettingsEnvForSync(paths);
+        DOCTEST_CHECK(r.ok);
+        DOCTEST_CHECK(!r.present);
+        DOCTEST_CHECK(r.error.empty());
+    }
+    return true;
+})
+
+REGISTER_TEST(sync_reverse_read_aborts_on_broken,
+              "settings_sync: 反向读——坏 JSON/顶层非对象/env 非对象中止（reverse G8）", {
+    using module::claude::settings_sync::readSettingsEnvForSync;
+    TempDir d("revbad");
+    auto paths = makePaths(d);
+
+    // 非法 JSON → 中止（S-2：调用方据此不切换，profile 一字未改）
+    {
+        d.write(paths.settingsFile, "{ not valid json !!!");
+        auto r = readSettingsEnvForSync(paths);
+        DOCTEST_CHECK(!r.ok);
+        DOCTEST_CHECK(!r.present);
+        DOCTEST_CHECK(r.error.find("settings.json") != std::string::npos);
+    }
+    // 顶层非对象
+    {
+        d.write(paths.settingsFile, "[1, 2, 3]");
+        auto r = readSettingsEnvForSync(paths);
+        DOCTEST_CHECK(!r.ok);
+        DOCTEST_CHECK(!r.present);
+        DOCTEST_CHECK(!r.error.empty());
+    }
+    // env 非对象
+    {
+        d.write(paths.settingsFile, R"({"env": "not-an-object"})");
+        auto r = readSettingsEnvForSync(paths);
+        DOCTEST_CHECK(!r.ok);
+        DOCTEST_CHECK(!r.present);
+        DOCTEST_CHECK(r.error.find("env") != std::string::npos);
+    }
+    return true;
+})
+
+REGISTER_TEST(sync_reverse_read_env_and_sidecar,
+              "settings_sync: 反向读——env 原文与 sidecar 托管键（reverse）", {
+    using module::claude::settings_sync::readSettingsEnvForSync;
+    TempDir d("revok");
+    auto paths = makePaths(d);
+    d.write(paths.settingsFile, R"json({
+        "permissions": {"allow": ["Bash"]},
+        "env": {
+            "ANTHROPIC_BASE_URL": "https://gw.example.com",
+            "MY_KEY": "user"
+        }
+    })json");
+
+    // 正常：present + env 对象原文（只有 env 子对象，不含非 env 顶层字段）
+    {
+        auto r = readSettingsEnvForSync(paths);
+        DOCTEST_REQUIRE(r.ok);
+        DOCTEST_CHECK(r.present);
+        DOCTEST_CHECK(r.managedKeys.empty());  // sidecar 缺失 → 空集
+        auto parsed = platform::json::parse(r.envJson);
+        DOCTEST_REQUIRE(parsed.isOk());
+        DOCTEST_REQUIRE(parsed.value().isObject());
+        auto env = parsed.value().asObject();
+        DOCTEST_CHECK_EQ(env.get("ANTHROPIC_BASE_URL").asString(),
+                         std::string("https://gw.example.com"));
+        DOCTEST_CHECK_EQ(env.get("MY_KEY").asString(), std::string("user"));
+        DOCTEST_CHECK(!env.has("permissions"));
+    }
+    // sidecar 存在 → 取 managedKeys 键集（对象 shape，非数组）
+    {
+        d.write(paths.sidecarFile,
+                R"({"managedKeys": {"ANTHROPIC_BASE_URL": "", "ANTHROPIC_MODEL": ""},)"
+                R"( "envSnapshot": {"MY_KEY": "user"}})");
+        auto r = readSettingsEnvForSync(paths);
+        DOCTEST_REQUIRE(r.ok);
+        DOCTEST_CHECK(r.present);
+        DOCTEST_REQUIRE_EQ(r.managedKeys.size(), 2u);
+        DOCTEST_CHECK(hasKeyEntry(r.managedKeys, "ANTHROPIC_BASE_URL"));
+        DOCTEST_CHECK(hasKeyEntry(r.managedKeys, "ANTHROPIC_MODEL"));
+    }
+    // sidecar 损坏 → 空集 + 不失败、不阻断（反向读是只读路径，坏 sidecar 不该
+    // 把用户挡在切换之外；G2/G3 仍挡代理形态值）
+    {
+        d.write(paths.sidecarFile, "{broken");
+        auto r = readSettingsEnvForSync(paths);
+        DOCTEST_REQUIRE(r.ok);
+        DOCTEST_CHECK(r.present);
+        DOCTEST_CHECK(r.managedKeys.empty());
+        DOCTEST_CHECK(!r.envJson.empty());
+    }
+    return true;
+})
