@@ -3170,3 +3170,147 @@ REGISTER_TEST(md_module_live_input_roundtrip,
     DOCTEST_CHECK(liveBlocks == editBlocks);
     return true;
 })
+
+// ==================== MD-01：实时态活动块锚必须跟随真实光标 ====================
+// （审计 2026-09-27-full-audit-markdown.json MD-01，高危）
+
+namespace {
+
+// 实时态下在活动块内造出【新块边界】（回车造成的块间空行 / 行首 `# ` / `- `
+// 这类必然打断段落的构造）后，分块器把文档拆成两块 —— 活动块锚必须跟着真实
+// 光标落到【新块】：输入框文本 = 新块文本、块内光标映射回同一文档字节、后续
+// 按键落在该字节处。锚冻结在切块前的旧值上时（MD-01），光标字节仍落在【前一
+// 块】区间内 → 下一帧 input 被整段换成前一块文本（用户刚敲的内容从输入框消
+// 失）、光标跳回前块，之后每次按键都写进前块。
+//   tag        : 临时笔记目录标记
+//   text       : 初始文档（单个块）
+//   cursorByte : 进实时态前的编辑器文档光标（= 活动块锚的初始来源）
+//   typed      : 逐次 onTextInput 的文本（走真实输入链路，每个事件一帧）
+bool liveSplitAnchorScenario(const char* tag,
+                             const std::string& text,
+                             size_t cursorByte,
+                             const std::vector<std::string>& typed) {
+    MdUiEnv env(tag);
+    DOCTEST_REQUIRE(env.db != nullptr);
+    DOCTEST_REQUIRE(writeTextFile(env.dir / "split.md", text));
+
+    std::unique_ptr<::core::Module> mod(create_markdown_module());
+    mod->onStart();
+    eui::Screen screen;
+    screen.width = 1600.0f;
+    screen.height = 1000.0f;
+    MdLiveEnv e;
+    auto frame = [&](void) {
+        e.frame([&](eui::Ui& u) { mod->compose(u, screen); });
+    };
+
+    frame();
+    DOCTEST_REQUIRE(openFirstNote(*e.ui));
+    frame();
+    DOCTEST_REQUIRE(e.ui->find("md.editor.input") != nullptr);
+    e.ui->state<MdInputState>("md.editor.input").cursor =
+        static_cast<int>(cursorByte);
+    DOCTEST_REQUIRE(cycleMode(mod.get()));   // → 实时
+    frame();
+    DOCTEST_REQUIRE(e.ui->find("md.live.input") != nullptr);
+
+    // 逐次真实 onTextInput，每个事件走一帧：onChange → 拼回整篇 → 分块器重切
+    std::string joined;
+    for (const std::string& ch : typed) {
+        const auto* hit = e.ui->find("md.live.input.hit");
+        DOCTEST_REQUIRE(hit != nullptr);
+        DOCTEST_REQUIRE(hit->onTextInput != nullptr);
+        core::TextInputEvent ev;
+        ev.text = ch;
+        hit->onTextInput(ev);
+        joined += ch;
+        frame();
+    }
+
+    // 期望口径 = 分块器（与实现同源，照 M2 用例做法）：依次在光标处插入等价
+    // 于把 joined 一次性插到初始光标处，光标随之推进到插入内容末尾
+    const size_t caret = cursorByte + joined.size();
+    const std::string doc =
+        text.substr(0, cursorByte) + joined + text.substr(cursorByte);
+    module::markdown::MdBlockModel model;
+    model.update(doc);
+    DOCTEST_REQUIRE(model.blocks().size() >= 2);   // 本场景必须真切出了新块
+    const size_t k = model.blockIndexAt(caret);
+    const module::markdown::MdBlock& blk = model.blocks()[k];
+    const std::string blockText = doc.substr(blk.start, blk.end - blk.start);
+    const size_t local = caret - blk.start;
+
+    // ① 输入框文本 = 光标所在【新块】文本（锚冻结时这里是前一块）
+    const std::string got = e.ui->state<MdInputState>("md.live.input").text;
+    DOCTEST_CHECK_MESSAGE(got == blockText,
+                          "活动块 " + std::to_string(k) + " 期望=[" + blockText +
+                              "] 实际=[" + got + "] 光标字节=" +
+                              std::to_string(caret) + " 文档=[" + doc + "]");
+    // ② 块内光标 = 该文档字节对应的块内偏移（锚跟着真实光标走，不是旧值）
+    DOCTEST_CHECK_EQ(
+        static_cast<size_t>(
+            e.ui->state<MdInputState>("md.live.input").cursor),
+        local);
+    // ③ 贴合高度未回归（M2「[live] input over=0」判据：不吃外层滚轮）
+    const auto* hit = e.ui->find("md.live.input.hit");
+    DOCTEST_REQUIRE(hit != nullptr);
+    DOCTEST_CHECK(hit->onScroll == nullptr);
+
+    // ④ 后续按键落在正确位置：再打一个字符，它必须插在块内光标处（= 文档字节
+    //    caret 处），而不是被写进前一块。注意这一击可能再次改变分块（回车造的
+    //    块间空行被该字符填成普通行 → 两块并回一块），故期望值仍按「与实现同
+    //    源」的口径现算：文档 = caret 处插 X，活动块/块内光标 = 新光标字节经
+    //    分块器推出
+    core::TextInputEvent ev;
+    ev.text = "X";
+    hit->onTextInput(ev);
+    frame();
+    const size_t caret2 = caret + 1;
+    const std::string doc2 = doc.substr(0, caret) + "X" + doc.substr(caret);
+    module::markdown::MdBlockModel model2;
+    model2.update(doc2);
+    const size_t k2 = model2.blockIndexAt(caret2);
+    const module::markdown::MdBlock& blk2 = model2.blocks()[k2];
+    const std::string blockText2 =
+        doc2.substr(blk2.start, blk2.end - blk2.start);
+    const std::string gotAfter = e.ui->state<MdInputState>("md.live.input").text;
+    DOCTEST_CHECK_MESSAGE(gotAfter == blockText2,
+                          "打字后活动块 " + std::to_string(k2) + " 期望=[" +
+                              blockText2 + "] 实际=[" + gotAfter + "]");
+    DOCTEST_CHECK_EQ(
+        blk2.start + static_cast<size_t>(
+                         e.ui->state<MdInputState>("md.live.input").cursor),
+        caret2);
+    // ⑤ 端到端逐字节：400ms 防抖 + 每帧 flush 后读回磁盘 = 文档 caret 处插 X
+    std::this_thread::sleep_for(std::chrono::milliseconds(520));
+    frame();   // 本帧 compose 内 flushEditorIfIdle → 整篇写盘
+    std::string saved;
+    DOCTEST_REQUIRE(readFileBytes(env.dir / "split.md", &saved));
+    DOCTEST_CHECK_MESSAGE(saved == doc2,
+                          "落盘期望=[" + doc2 + "] 实际=[" + saved + "]");
+    mod->onStop();
+    return true;
+}
+
+} // namespace
+
+// MD-01 入口 1：块内按回车 → 块间空行 → 分块器拆两块
+REGISTER_TEST(md_module_live_split_anchor_enter,
+              "markdown_module: 实时态回车造块边界后锚跟随光标（MD-01 回车入口）", {
+    return liveSplitAnchorScenario("livesplitnl", "para one\npara two\n", 8,
+                                   {"\n"});
+})
+
+// MD-01 入口 2：新行首打 `# ` → ATX 标题必打断段落
+REGISTER_TEST(md_module_live_split_anchor_heading,
+              "markdown_module: 实时态行首 `# ` 造块边界后锚跟随光标（MD-01）", {
+    return liveSplitAnchorScenario("livesplithd", "para one\npara two\n", 9,
+                                   {"#", " "});
+})
+
+// MD-01 入口 3：新行首打 `- ` → 列表标记可打断段落
+REGISTER_TEST(md_module_live_split_anchor_list,
+              "markdown_module: 实时态行首 `- ` 造块边界后锚跟随光标（MD-01）", {
+    return liveSplitAnchorScenario("livesplitls", "para one\npara two\n", 9,
+                                   {"-", " "});
+})

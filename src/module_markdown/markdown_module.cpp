@@ -1660,10 +1660,15 @@ private:
             // 进实时态首次：以编辑器的文档光标为初始锚（此刻编辑器列已不在帧树，
             // 但 InputState 按 id 跨帧存活，见 M0 V1）；之后换块/跳转由 M3 的
             // setLiveCursor 写入（M2 只在切块帧反向写入块局部光标）。
+            // 此后【每帧】锚都跟着活动 input 的真实光标推进（MD-01 修复）。
             LiveBlockCtx live;
             live.theme = &componentTheme;
             bool hasActive = false;
             if (!blockModel_.blocks().empty()) {
+                const std::vector<MdBlock>& bs = blockModel_.blocks();
+                const auto& lst = ui.state<
+                    components::input_detail::InputModel::InputState>(
+                    kLiveInputId);
                 if (!liveCursorValid_) {
                     const auto& ed = ui.state<
                         components::input_detail::InputModel::InputState>(
@@ -1671,9 +1676,30 @@ private:
                     liveCursorByte_ =
                         ed.cursor > 0 ? static_cast<size_t>(ed.cursor) : 0;
                     liveCursorValid_ = true;
+                    liveActiveBlock_ =
+                        mdLiveActiveBlockIndex(blockModel_, liveCursorByte_);
+                    // 本帧 input 还未与本块同步（它的块内光标属于上一次会话），
+                    // 基准只能取块起点；真实落点由换文本帧反向写入块局部光标
+                    liveInputStart_ = bs[liveActiveBlock_].start;
+                } else {
+                    // MD-01：锚必须跟着真实光标走，不能冻结在进态时的旧值上。
+                    // 活动 input 的 InputState 持有块内光标（用户每次按键由组件
+                    // 推进），【文档字节 = 输入框文本起点 + 块内光标】即用户此刻
+                    // 的真实光标；据此重定位活动块后，分块器因回车空行 / 行首
+                    // `# ` `- ` 重切出的【新块】才是活动块。否则锚停在切块前的
+                    // 旧值（仍落在前一块区间内）→ 下一帧 input 被整段换成前一块
+                    // 文本、光标跳块首，用户刚敲的内容从输入框消失，此后每次按
+                    // 键都写进前块。
+                    // 基准取上一帧定下的 liveInputStart_，不用本帧重算出的块起点：
+                    // 重切后 input 文本可从旧块起点一路盖进新块，拿新块起点解释
+                    // 同一块内光标会把光标推到错位置。
+                    const size_t local =
+                        lst.cursor > 0 ? static_cast<size_t>(lst.cursor) : 0;
+                    liveCursorByte_ = liveInputStart_ + local;
+                    liveActiveBlock_ =
+                        mdLiveActiveBlockIndex(blockModel_, liveCursorByte_);
+                    liveInputStart_ = bs[liveActiveBlock_].start;
                 }
-                liveActiveBlock_ =
-                    mdLiveActiveBlockIndex(blockModel_, liveCursorByte_);
                 live.activeBlock = liveActiveBlock_;
                 hasActive = true;
             }
@@ -3280,6 +3306,7 @@ private:
     // ---- Phase 3 M2：实时态活动块（单输入跟随 + 内容贴合高度）----
     size_t liveCursorByte_ = 0;        // 文档字节偏移 = 活动块身份锚（spec D3）
     size_t liveActiveBlock_ = 0;       // 本帧活动块下标（每帧由锚重算）
+    size_t liveInputStart_ = 0;        // 活动 input 文本在文档中的起点（= 其所属块 start，MD-01 锚推导基准）
     bool liveCursorValid_ = false;     // 锚是否已按当前文档初始化（进实时态/换笔记置 false）
     bool liveFocusPending_ = false;    // 进实时态首帧同帧补发 requestFocus（M0 C1）
     // 贴合高度备忘（键 = stableId + 内容 hash + 文本宽 + 字号）：活动块整块
