@@ -13,6 +13,7 @@
 #include "core/sqlite_db.h"
 #include "platform/http_server.h"
 #include "platform/keychain.h"
+#include "provider_config.h"
 
 #include <cctype>
 #include <chrono>
@@ -21,9 +22,11 @@
 #include <filesystem>
 #include <fstream>
 #include <map>
+#include <sstream>
 #include <stdexcept>
 #include <string>
 #include <thread>
+#include <vector>
 
 namespace {
 
@@ -146,6 +149,48 @@ struct ScopedProxyEnv {
     ScopedProxyEnv(const ScopedProxyEnv&) = delete;
     ScopedProxyEnv& operator=(const ScopedProxyEnv&) = delete;
 };
+
+// ---- 反向同步（M3）测试基建：临时 settings.json 目录（仿 test_settings_sync
+// 的 TempDir；绝不碰真实 ~/.claude）----
+
+struct TempDir {
+    std::filesystem::path path;
+
+    explicit TempDir(const std::string& tag) {
+        static int counter = 0;
+        ++counter;
+        path = std::filesystem::temp_directory_path() /
+               ("devdesk_test_claude_rev_" + tag + "_" +
+                std::to_string(counter));
+        std::error_code ec;
+        std::filesystem::remove_all(path, ec);
+        std::filesystem::create_directories(path, ec);
+        if (ec) throw std::runtime_error("temp dir create failed");
+    }
+    ~TempDir() {
+        std::error_code ec;
+        std::filesystem::remove_all(path, ec);
+    }
+
+    std::filesystem::path file(const char* name) const {
+        return path / name;
+    }
+    void write(const std::filesystem::path& f, const std::string& content) const {
+        std::ofstream o(f, std::ios::binary | std::ios::trunc);
+        o << content;
+    }
+    void remove(const std::filesystem::path& f) const {
+        std::error_code ec;
+        std::filesystem::remove(f, ec);
+    }
+};
+
+module::claude::settings_sync::Paths makeSyncPaths(const TempDir& d) {
+    module::claude::settings_sync::Paths p;
+    p.settingsFile = d.file("settings.json");
+    p.sidecarFile = d.file("snapshot.json");
+    return p;
+}
 
 } // namespace
 
@@ -1053,5 +1098,522 @@ REGISTER_TEST(claude_service_proxy_lifecycle,
 
     svc.stopProxy();
     DOCTEST_CHECK_FALSE(svc.isProxyRunning());
+    return true;
+})
+
+// ===== 反向同步（M3，设计 2026-09-27-profile-reverse-sync-and-copy §3.1/§3.4/§3.5）=====
+// 全部经临时 settings_sync::Paths 注入，绝不碰真实 ~/.claude。
+
+// ---- 12. ① 切 profile 前捕获 settings.json 的真实上游值 ----
+
+REGISTER_TEST(claude_reverse_capture_on_switch,
+              "claude_service: 反向同步① 切 profile 前捕获 settings.json", {
+    using namespace module::claude;
+    TestDb tdb("revcap");
+    TempDir d("revcap");
+    auto paths = makeSyncPaths(d);
+
+    ClaudeService svc(tdb.handle(), kTestKeychainService);
+    svc.setSettingsSyncPaths(paths);
+
+    auto a = svc.createProfile("源A", "https://old.example.com",
+                               "sk-old-key-0123456789abcdef", "");
+    DOCTEST_REQUIRE(a.isOk());
+    Profile pa = a.value();
+    pa.modelsConfigJson =
+        R"({"default": {"model": "old-default"},)"
+        R"("sonnet": {"model": "old-sonnet"},)"
+        R"("haiku": {"model": "old-haiku"}})";
+    pa.extraEnvJson = R"({"OLD_KEY": "old"})";
+    DOCTEST_REQUIRE(svc.updateProfile(pa).isOk());
+    // 首次激活：此时无激活 profile → G0 跳过（不读文件）
+    DOCTEST_REQUIRE(svc.setActiveProfile(pa.id).isOk());
+
+    auto b = svc.createProfile("目标B", "https://b.example.com",
+                               "sk-b-key-0123456789abcdef", "");
+    DOCTEST_REQUIRE(b.isOk());
+
+    // Claude Code 侧（或 cc-switch）改过的真实上游值
+    d.write(paths.settingsFile, R"({"env": {
+        "ANTHROPIC_BASE_URL": "https://new.example.com/",
+        "ANTHROPIC_AUTH_TOKEN": "sk-new-upstream-9876543210",
+        "ANTHROPIC_MODEL": "new-default",
+        "ANTHROPIC_DEFAULT_SONNET_MODEL": "new-sonnet",
+        "ANTHROPIC_DEFAULT_SONNET_MODEL_NAME": "Sonnet 显示名",
+        "MY_EXTRA": "extra-value"
+    }})");
+
+    DOCTEST_REQUIRE(svc.setActiveProfile(b.value().id).isOk());
+
+    auto gotA = svc.getProfile(pa.id);
+    DOCTEST_REQUIRE(gotA.isOk());
+    // base_url：尾斜杠清洗后覆盖
+    DOCTEST_CHECK_EQ(gotA.value().baseUrl,
+                     std::string("https://new.example.com"));
+    // key：新上游 key 进 Keychain（经 updateProfile.apiKeyPlain）
+    auto keyA = svc.loadApiKey(pa.id);
+    DOCTEST_REQUIRE(keyA.isOk());
+    DOCTEST_CHECK_EQ(keyA.value(), std::string("sk-new-upstream-9876543210"));
+    // 槽位 model + 显示名
+    auto mc = parseModelsConfig(gotA.value().modelsConfigJson);
+    DOCTEST_REQUIRE(mc.isOk());
+    DOCTEST_CHECK_EQ(mc.value().def.model, std::string("new-default"));
+    DOCTEST_CHECK_EQ(mc.value().sonnet.model, std::string("new-sonnet"));
+    DOCTEST_CHECK_EQ(mc.value().sonnet.name, std::string("Sonnet 显示名"));
+    // 缺席的非守卫槽位（haiku）被清空
+    DOCTEST_CHECK(mc.value().haiku.model.empty());
+    // 旧 model 列跟随 default 槽位
+    DOCTEST_CHECK_EQ(gotA.value().model, std::string("new-default"));
+    // extra_env：出现覆盖 + 缺席删除（OLD_KEY 消失）
+    auto ee = parseExtraEnv(gotA.value().extraEnvJson);
+    DOCTEST_REQUIRE(ee.isOk());
+    DOCTEST_CHECK_EQ(ee.value().at("MY_EXTRA"), std::string("extra-value"));
+    DOCTEST_CHECK(ee.value().find("OLD_KEY") == ee.value().end());
+    // 目标 profile 正常激活且未被误写；源 profile 不再激活
+    auto gotB = svc.getProfile(b.value().id);
+    DOCTEST_REQUIRE(gotB.isOk());
+    DOCTEST_CHECK(gotB.value().isActive);
+    DOCTEST_CHECK_EQ(gotB.value().baseUrl, std::string("https://b.example.com"));
+    DOCTEST_CHECK(!gotA.value().isActive);
+
+    cleanupKey(pa.id);
+    cleanupKey(b.value().id);
+    return true;
+})
+
+// ---- 13. ② 守卫键不写也不清（loopback BASE_URL 联动 token / 占位 / 空值）----
+// 每形态都同批带一个**非守卫**变化（MY_EXTRA），保证确实发生了一次写库——
+// 否则「没被覆盖」会因为整次 no-op 而白白通过
+// 注：a/b 交替激活是为了让「被捕获的那条」始终是 a
+
+REGISTER_TEST(claude_reverse_guard_keys_not_touched,
+              "claude_service: 反向同步② 守卫键不写也不清", {
+    using namespace module::claude;
+    TestDb tdb("revguard");
+    TempDir d("revguard");
+    auto paths = makeSyncPaths(d);
+
+    ClaudeService svc(tdb.handle(), kTestKeychainService);
+    svc.setSettingsSyncPaths(paths);
+
+    auto a = svc.createProfile("守卫A", "https://old.example.com",
+                               "sk-old-key-0123456789abcdef", "");
+    DOCTEST_REQUIRE(a.isOk());
+    DOCTEST_REQUIRE(svc.setActiveProfile(a.value().id).isOk());
+    auto b = svc.createProfile("旁观B", "https://b.example.com",
+                               "sk-b-key-0123456789abcdef", "");
+    DOCTEST_REQUIRE(b.isOk());
+
+    // G2：loopback BASE_URL + 非占位 token（本机 cc-switch 形态）→ 都不写也不清
+    d.write(paths.settingsFile, R"({"env": {
+        "ANTHROPIC_BASE_URL": "http://127.0.0.1:15721",
+        "ANTHROPIC_AUTH_TOKEN": "local-cc-switch-token",
+        "MY_EXTRA": "extra-v1"
+    }})");
+    DOCTEST_REQUIRE(svc.setActiveProfile(b.value().id).isOk());
+    {
+        auto g = svc.getProfile(a.value().id);
+        DOCTEST_REQUIRE(g.isOk());
+        DOCTEST_CHECK_EQ(g.value().baseUrl,
+                         std::string("https://old.example.com"));
+        auto k = svc.loadApiKey(a.value().id);
+        DOCTEST_REQUIRE(k.isOk());
+        DOCTEST_CHECK_EQ(k.value(),
+                         std::string("sk-old-key-0123456789abcdef"));
+        auto ee = parseExtraEnv(g.value().extraEnvJson);
+        DOCTEST_REQUIRE(ee.isOk());
+        DOCTEST_CHECK_EQ(ee.value().at("MY_EXTRA"), std::string("extra-v1"));
+    }
+
+    // G3：占位 token PROXY_MANAGED → token 不写也不清
+    d.write(paths.settingsFile, R"({"env": {
+        "ANTHROPIC_BASE_URL": "https://old.example.com",
+        "ANTHROPIC_AUTH_TOKEN": "PROXY_MANAGED",
+        "MY_EXTRA": "extra-v2"
+    }})");
+    DOCTEST_REQUIRE(svc.setActiveProfile(a.value().id).isOk());
+    DOCTEST_REQUIRE(svc.setActiveProfile(b.value().id).isOk());
+    {
+        auto g = svc.getProfile(a.value().id);
+        DOCTEST_REQUIRE(g.isOk());
+        DOCTEST_CHECK_EQ(g.value().baseUrl,
+                         std::string("https://old.example.com"));
+        auto k = svc.loadApiKey(a.value().id);
+        DOCTEST_REQUIRE(k.isOk());
+        DOCTEST_CHECK_EQ(k.value(),
+                         std::string("sk-old-key-0123456789abcdef"));
+        auto ee = parseExtraEnv(g.value().extraEnvJson);
+        DOCTEST_REQUIRE(ee.isOk());
+        DOCTEST_CHECK_EQ(ee.value().at("MY_EXTRA"), std::string("extra-v2"));
+    }
+
+    // G4：键存在但值为空串 → 不写也不清（不拿空串覆盖、也不因空值清空）
+    d.write(paths.settingsFile, R"({"env": {
+        "ANTHROPIC_BASE_URL": "https://old.example.com",
+        "ANTHROPIC_AUTH_TOKEN": "",
+        "MY_EXTRA": "extra-v3"
+    }})");
+    DOCTEST_REQUIRE(svc.setActiveProfile(a.value().id).isOk());
+    DOCTEST_REQUIRE(svc.setActiveProfile(b.value().id).isOk());
+    {
+        auto g = svc.getProfile(a.value().id);
+        DOCTEST_REQUIRE(g.isOk());
+        DOCTEST_CHECK_EQ(g.value().baseUrl,
+                         std::string("https://old.example.com"));
+        auto k = svc.loadApiKey(a.value().id);
+        DOCTEST_REQUIRE(k.isOk());
+        DOCTEST_CHECK_EQ(k.value(),
+                         std::string("sk-old-key-0123456789abcdef"));
+        auto ee = parseExtraEnv(g.value().extraEnvJson);
+        DOCTEST_REQUIRE(ee.isOk());
+        DOCTEST_CHECK_EQ(ee.value().at("MY_EXTRA"), std::string("extra-v3"));
+    }
+
+    cleanupKey(a.value().id);
+    cleanupKey(b.value().id);
+    return true;
+})
+
+// ---- 14. ③ 缺席即清空（非守卫托管字段）----
+
+REGISTER_TEST(claude_reverse_absent_clears,
+              "claude_service: 反向同步③ 缺席即清空", {
+    using namespace module::claude;
+    TestDb tdb("revclear");
+    TempDir d("revclear");
+    auto paths = makeSyncPaths(d);
+
+    ClaudeService svc(tdb.handle(), kTestKeychainService);
+    svc.setSettingsSyncPaths(paths);
+
+    auto a = svc.createProfile("清空A", "https://old.example.com",
+                               "sk-old-key-0123456789abcdef", "");
+    DOCTEST_REQUIRE(a.isOk());
+    Profile pa = a.value();
+    pa.modelsConfigJson =
+        R"({"default": {"model": "old-default"},)"
+        R"("sonnet": {"model": "old-sonnet"}})";
+    pa.extraEnvJson = R"({"OLD_KEY": "old"})";
+    DOCTEST_REQUIRE(svc.updateProfile(pa).isOk());
+    DOCTEST_REQUIRE(svc.setActiveProfile(pa.id).isOk());
+    auto b = svc.createProfile("目标B", "https://b.example.com",
+                               "sk-b-key-0123456789abcdef", "");
+    DOCTEST_REQUIRE(b.isOk());
+
+    // 合法 settings.json：只有 default 槽位 + 一个新 extra 键 → 其余全清
+    d.write(paths.settingsFile,
+            R"({"env": {"ANTHROPIC_MODEL": "only-default", "NEW_KEY": "n"}})");
+    DOCTEST_REQUIRE(svc.setActiveProfile(b.value().id).isOk());
+
+    auto g = svc.getProfile(a.value().id);
+    DOCTEST_REQUIRE(g.isOk());
+    DOCTEST_CHECK(g.value().baseUrl.empty());          // 缺席 → 清空
+    DOCTEST_CHECK(g.value().keychainAccount.empty());  // 三列元数据一并清空
+    DOCTEST_CHECK(g.value().apiKeyHint.empty());
+    DOCTEST_CHECK(g.value().apiKeyCheck.empty());
+    auto k = svc.loadApiKey(a.value().id);             // Keychain 条目已删
+    DOCTEST_CHECK(k.isFail());
+    DOCTEST_CHECK_EQ(g.value().model, std::string("only-default"));
+    auto mc = parseModelsConfig(g.value().modelsConfigJson);
+    DOCTEST_REQUIRE(mc.isOk());
+    DOCTEST_CHECK_EQ(mc.value().def.model, std::string("only-default"));
+    DOCTEST_CHECK(mc.value().sonnet.model.empty());
+    // extra_env 键集合完全由 settings.json 决定：出现的新键在、缺席的旧键没了
+    auto ee = parseExtraEnv(g.value().extraEnvJson);
+    DOCTEST_REQUIRE(ee.isOk());
+    DOCTEST_CHECK_EQ(static_cast<int>(ee.value().size()), 1);
+    DOCTEST_CHECK_EQ(ee.value().at("NEW_KEY"), std::string("n"));
+
+    cleanupKey(b.value().id);
+    return true;
+})
+
+// ---- 15. ④ 坏 JSON / env 非对象 → 中止切换（S-2）且 profile 一字未改 ----
+
+REGISTER_TEST(claude_reverse_broken_json_aborts,
+              "claude_service: 反向同步④ 坏 JSON 中止切换且 profile 一字未改", {
+    using namespace module::claude;
+    TestDb tdb("revbad");
+    TempDir d("revbad");
+    auto paths = makeSyncPaths(d);
+
+    ClaudeService svc(tdb.handle(), kTestKeychainService);
+    svc.setSettingsSyncPaths(paths);
+
+    auto a = svc.createProfile("坏JSON-A", "https://old.example.com",
+                               "sk-old-key-0123456789abcdef", "");
+    DOCTEST_REQUIRE(a.isOk());
+    Profile pa = a.value();
+    pa.modelsConfigJson = R"({"default": {"model": "old-default"}})";
+    pa.extraEnvJson = R"({"OLD_KEY": "old"})";
+    DOCTEST_REQUIRE(svc.updateProfile(pa).isOk());
+    DOCTEST_REQUIRE(svc.setActiveProfile(pa.id).isOk());
+    auto b = svc.createProfile("坏JSON-B", "https://b.example.com",
+                               "sk-b-key-0123456789abcdef", "");
+    DOCTEST_REQUIRE(b.isOk());
+
+    const auto abortsAndKeepsA = [&](const char* what) -> bool {
+        auto r = svc.setActiveProfile(b.value().id);
+        if (r.isOk()) {
+            std::cerr << "FAIL: " << what << " 未中止切换" << std::endl;
+            return false;
+        }
+        auto act = svc.getActiveProfile();
+        if (act.isFail() || act.value().id != pa.id) {
+            std::cerr << "FAIL: " << what << " 后 is_active 变了" << std::endl;
+            return false;
+        }
+        return true;
+    };
+
+    // 非法 JSON → fail（S-2）且 is_active 仍是 a、a 的字段一字未改
+    d.write(paths.settingsFile, R"({"env": {"ANTHROPIC_MODEL": )");
+    DOCTEST_CHECK(abortsAndKeepsA("坏 JSON"));
+    {
+        auto g = svc.getProfile(pa.id);
+        DOCTEST_REQUIRE(g.isOk());
+        DOCTEST_CHECK_EQ(g.value().baseUrl,
+                         std::string("https://old.example.com"));
+        DOCTEST_CHECK_EQ(g.value().modelsConfigJson, pa.modelsConfigJson);
+        DOCTEST_CHECK_EQ(g.value().extraEnvJson, pa.extraEnvJson);
+        auto k = svc.loadApiKey(pa.id);
+        DOCTEST_REQUIRE(k.isOk());
+        DOCTEST_CHECK_EQ(k.value(),
+                         std::string("sk-old-key-0123456789abcdef"));
+    }
+
+    // env 非对象 → 同款中止（空文件不在此列——见用例⑤）
+    d.write(paths.settingsFile, R"({"env": "not-an-object"})");
+    DOCTEST_CHECK(abortsAndKeepsA("env 非对象"));
+    {
+        auto g = svc.getProfile(pa.id);
+        DOCTEST_REQUIRE(g.isOk());
+        DOCTEST_CHECK_EQ(g.value().baseUrl,
+                         std::string("https://old.example.com"));
+        auto k = svc.loadApiKey(pa.id);
+        DOCTEST_REQUIRE(k.isOk());
+        DOCTEST_CHECK_EQ(k.value(),
+                         std::string("sk-old-key-0123456789abcdef"));
+    }
+
+    cleanupKey(pa.id);
+    cleanupKey(b.value().id);
+    return true;
+})
+
+// ---- 16. ⑤ 文件不存在 / 空文件 / 无 env → no-op 成功且照常切换 ----
+
+REGISTER_TEST(claude_reverse_missing_or_empty_noop,
+              "claude_service: 反向同步⑤ 缺失或空文件 no-op 且照常切换", {
+    using namespace module::claude;
+    TestDb tdb("revnoop");
+    TempDir d("revnoop");
+    auto paths = makeSyncPaths(d);
+
+    ClaudeService svc(tdb.handle(), kTestKeychainService);
+    svc.setSettingsSyncPaths(paths);
+
+    auto a = svc.createProfile("空-A", "https://old.example.com",
+                               "sk-old-key-0123456789abcdef", "");
+    DOCTEST_REQUIRE(a.isOk());
+    Profile pa = a.value();
+    pa.extraEnvJson = R"({"OLD_KEY": "old"})";
+    DOCTEST_REQUIRE(svc.updateProfile(pa).isOk());
+    DOCTEST_REQUIRE(svc.setActiveProfile(pa.id).isOk());
+    auto b = svc.createProfile("空-B", "https://b.example.com",
+                               "sk-b-key-0123456789abcdef", "");
+    DOCTEST_REQUIRE(b.isOk());
+
+    // 文件根本不存在（G7）：no-op 成功 + 照常切换 + a 一字未改
+    {
+        DOCTEST_REQUIRE(svc.setActiveProfile(b.value().id).isOk());
+        auto act = svc.getActiveProfile();
+        DOCTEST_REQUIRE(act.isOk());
+        DOCTEST_CHECK_EQ(act.value().id, b.value().id);
+        auto g = svc.getProfile(pa.id);
+        DOCTEST_REQUIRE(g.isOk());
+        DOCTEST_CHECK_EQ(g.value().baseUrl,
+                         std::string("https://old.example.com"));
+        DOCTEST_CHECK_EQ(g.value().extraEnvJson, pa.extraEnvJson);
+        auto k = svc.loadApiKey(pa.id);
+        DOCTEST_REQUIRE(k.isOk());
+        DOCTEST_CHECK_EQ(k.value(),
+                         std::string("sk-old-key-0123456789abcdef"));
+    }
+
+    // 0 字节空文件（G9，视为不存在）：a 侧同样一字未改
+    d.write(paths.settingsFile, "");
+    DOCTEST_REQUIRE(svc.setActiveProfile(a.value().id).isOk());
+    DOCTEST_REQUIRE(svc.setActiveProfile(b.value().id).isOk());
+    {
+        auto g = svc.getProfile(pa.id);
+        DOCTEST_REQUIRE(g.isOk());
+        DOCTEST_CHECK_EQ(g.value().baseUrl,
+                         std::string("https://old.example.com"));
+        auto k = svc.loadApiKey(pa.id);
+        DOCTEST_REQUIRE(k.isOk());
+        DOCTEST_CHECK_EQ(k.value(),
+                         std::string("sk-old-key-0123456789abcdef"));
+        auto ee = parseExtraEnv(g.value().extraEnvJson);
+        DOCTEST_REQUIRE(ee.isOk());
+        DOCTEST_CHECK_EQ(ee.value().at("OLD_KEY"), std::string("old"));
+    }
+
+    // 解析成功但无 env 键（G9 另一半）
+    d.write(paths.settingsFile, R"({"permissions": {"allow": ["Bash"]}})");
+    DOCTEST_REQUIRE(svc.setActiveProfile(a.value().id).isOk());
+    DOCTEST_REQUIRE(svc.setActiveProfile(b.value().id).isOk());
+    {
+        auto g = svc.getProfile(pa.id);
+        DOCTEST_REQUIRE(g.isOk());
+        DOCTEST_CHECK_EQ(g.value().baseUrl,
+                         std::string("https://old.example.com"));
+        auto k = svc.loadApiKey(pa.id);
+        DOCTEST_REQUIRE(k.isOk());
+        DOCTEST_CHECK_EQ(k.value(),
+                         std::string("sk-old-key-0123456789abcdef"));
+    }
+
+    cleanupKey(pa.id);
+    cleanupKey(b.value().id);
+    return true;
+})
+
+// ---- 17. ⑥ 无激活 profile（G0）：坏 settings.json 也不挡首建自动激活 ----
+
+REGISTER_TEST(claude_reverse_no_active_skips,
+              "claude_service: 反向同步⑥ 无激活 profile 时不读文件", {
+    using namespace module::claude;
+    TestDb tdb("revnoact");
+    TempDir d("revnoact");
+    auto paths = makeSyncPaths(d);
+
+    ClaudeService svc(tdb.handle(), kTestKeychainService);
+    svc.setSettingsSyncPaths(paths);
+
+    // 坏 settings.json：首建自动激活路径不得被它挡住（不读文件）
+    d.write(paths.settingsFile, "{ not json at all");
+    auto c = svc.createProfile("首建", "https://first.example.com",
+                               "sk-first-key-0123456789", "",
+                               /*activateIfNoneActive=*/true);
+    DOCTEST_REQUIRE(c.isOk());
+    DOCTEST_CHECK(c.value().isActive);
+    auto act = svc.getActiveProfile();
+    DOCTEST_REQUIRE(act.isOk());
+    DOCTEST_CHECK_EQ(act.value().id, c.value().id);
+
+    cleanupKey(c.value().id);
+    return true;
+})
+
+// ---- 18. ⑦ 无变化 → 零写入（不 UPDATE、不写 Keychain、不 bump updated_at）----
+
+REGISTER_TEST(claude_reverse_no_change_zero_write,
+              "claude_service: 反向同步⑦ 无变化零写入 updated_at 不变", {
+    using namespace module::claude;
+    TestDb tdb("revsame");
+    TempDir d("revsame");
+    auto paths = makeSyncPaths(d);
+
+    ClaudeService svc(tdb.handle(), kTestKeychainService);
+    svc.setSettingsSyncPaths(paths);
+
+    const std::string key = "sk-same-key-0123456789abcdef";
+    auto a = svc.createProfile("同值A", "https://same.example.com", key, "");
+    DOCTEST_REQUIRE(a.isOk());
+    Profile pa = a.value();
+    ModelsConfig mc;
+    mc.def.model = "m-default";
+    mc.sonnet.model = "m-sonnet";
+    auto mcText = serializeModelsConfig(mc);
+    DOCTEST_REQUIRE(mcText.isOk());
+    pa.modelsConfigJson = mcText.value();
+    pa.extraEnvJson = R"({"SAME_KEY": "same"})";
+    DOCTEST_REQUIRE(svc.updateProfile(pa).isOk());
+    DOCTEST_REQUIRE(svc.setActiveProfile(pa.id).isOk());
+
+    auto before = svc.getProfile(pa.id);
+    DOCTEST_REQUIRE(before.isOk());
+
+    auto b = svc.createProfile("同值B", "https://b.example.com",
+                               "sk-b-key-0123456789abcdef", "");
+    DOCTEST_REQUIRE(b.isOk());
+
+    // settings.json 与 a 的现值逐字段一致 → 不该发生任何写入
+    d.write(paths.settingsFile,
+            std::string(R"({"env": {)") +
+                R"("ANTHROPIC_BASE_URL": "https://same.example.com",)" +
+                R"("ANTHROPIC_AUTH_TOKEN": ")" + key + R"(",)" +
+                R"("ANTHROPIC_MODEL": "m-default",)" +
+                R"("ANTHROPIC_DEFAULT_SONNET_MODEL": "m-sonnet",)" +
+                R"("SAME_KEY": "same"}})");
+
+    DOCTEST_REQUIRE(svc.setActiveProfile(b.value().id).isOk());
+    auto after = svc.getProfile(pa.id);
+    DOCTEST_REQUIRE(after.isOk());
+    DOCTEST_CHECK_EQ(after.value().updatedAt, before.value().updatedAt);
+    DOCTEST_CHECK_EQ(after.value().baseUrl, before.value().baseUrl);
+    DOCTEST_CHECK_EQ(after.value().modelsConfigJson,
+                     before.value().modelsConfigJson);
+    DOCTEST_CHECK_EQ(after.value().extraEnvJson, before.value().extraEnvJson);
+    DOCTEST_CHECK_EQ(after.value().apiKeyCheck, before.value().apiKeyCheck);
+    auto k = svc.loadApiKey(pa.id);
+    DOCTEST_REQUIRE(k.isOk());
+    DOCTEST_CHECK_EQ(k.value(), key);
+
+    cleanupKey(pa.id);
+    cleanupKey(b.value().id);
+    return true;
+})
+
+// ---- 19. ⑧ sidecar 托管键（G1）：不写也不清 ----
+
+REGISTER_TEST(claude_reverse_sidecar_managed_key_skipped,
+              "claude_service: 反向同步⑧ sidecar 托管键不被覆盖", {
+    using namespace module::claude;
+    TestDb tdb("revside");
+    TempDir d("revside");
+    auto paths = makeSyncPaths(d);
+
+    ClaudeService svc(tdb.handle(), kTestKeychainService);
+    svc.setSettingsSyncPaths(paths);
+
+    auto a = svc.createProfile("托管A", "https://old.example.com",
+                               "sk-old-key-0123456789abcdef", "");
+    DOCTEST_REQUIRE(a.isOk());
+    Profile pa = a.value();
+    ModelsConfig mc;
+    mc.def.model = "keep-me";
+    auto mcText = serializeModelsConfig(mc);
+    DOCTEST_REQUIRE(mcText.isOk());
+    pa.modelsConfigJson = mcText.value();
+    DOCTEST_REQUIRE(svc.updateProfile(pa).isOk());
+    DOCTEST_REQUIRE(svc.setActiveProfile(pa.id).isOk());
+    auto b = svc.createProfile("托管B", "https://b.example.com",
+                               "sk-b-key-0123456789abcdef", "");
+    DOCTEST_REQUIRE(b.isOk());
+
+    // sidecar 声明 ANTHROPIC_MODEL 是托管键；同批还有一个非托管变化（NEW_KEY），
+    // 保证确实写了一次库（否则整次 no-op 会让「未被覆盖」白白通过）
+    d.write(paths.sidecarFile,
+            R"({"managedKeys": {"ANTHROPIC_MODEL": ""}, "envSnapshot": {}})");
+    d.write(paths.settingsFile, R"({"env": {
+        "ANTHROPIC_MODEL": "from-settings",
+        "NEW_KEY": "n"
+    }})");
+    DOCTEST_REQUIRE(svc.setActiveProfile(b.value().id).isOk());
+
+    auto g = svc.getProfile(pa.id);
+    DOCTEST_REQUIRE(g.isOk());
+    auto mc2 = parseModelsConfig(g.value().modelsConfigJson);
+    DOCTEST_REQUIRE(mc2.isOk());
+    DOCTEST_CHECK_EQ(mc2.value().def.model, std::string("keep-me"));
+    DOCTEST_CHECK_EQ(g.value().model, std::string("keep-me"));
+    auto ee = parseExtraEnv(g.value().extraEnvJson);
+    DOCTEST_REQUIRE(ee.isOk());
+    DOCTEST_CHECK_EQ(ee.value().at("NEW_KEY"), std::string("n"));
+
+    cleanupKey(pa.id);
+    cleanupKey(b.value().id);
     return true;
 })

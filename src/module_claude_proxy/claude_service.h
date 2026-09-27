@@ -276,6 +276,17 @@ private:
     void syncTakeOver();
     void syncRestore();
 
+    // 反向同步（设计 §3.1/§3.4/§3.5，M3）：读 settings.json 的 env → 对齐到
+    // **当前激活 profile**（出现覆盖 / 缺席清空 / 守卫键不写也不清）。
+    // 由 setActiveProfile 在「校验目标存在之后、清零置位事务之前」调用，
+    // 无激活 profile 时调用方已跳过（G0，不读文件）。
+    //   - 文件不存在 / 空文件 / 无 env → no-op 成功（照常切换）
+    //   - 存在但读不了 / 解析失败 → fail（S-2：中止本次切换，profile 一字未改）
+    //   - 无变化 → 零写入（不 UPDATE、不写 Keychain、不 bump updated_at）
+    // 不受 settingsTakeOverEnabled_ 门控（只读外部文件）；唯一开关是
+    // syncPaths_.settingsFile 为空 → 直接返回
+    core::Result<void> syncCaptureActiveProfile();
+
     core::data::SqliteDb& db_;
     std::string keychainService_;
 
