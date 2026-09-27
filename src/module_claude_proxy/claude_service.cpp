@@ -1490,9 +1490,11 @@ core::Result<void> ClaudeService::runProfile(int64_t id, std::string* hint) {
         return launched;
     }
 
-    // D-5：wt 缺失 → 平台层已退化传统控制台，这里补一句非致命提示（不静默、不阻断）
+    // D-5：wt 缺失 → 平台层已退化传统控制台，这里补一句非致命提示（不静默、不阻断）。
+    // 文案保持中性：「传统控制台」只说「不是 Windows Terminal 那条路径」，
+    // 不臆断机器上没装——系统默认终端本身可能就是 Windows Terminal（此时措辞仍成立）。
     if (hint != nullptr && platform::terminal::windowsTerminalMissing()) {
-        *hint = "未检测到 Windows Terminal，已用传统控制台打开会话";
+        *hint = "未检测到 Windows Terminal，已用系统默认终端打开会话";
     }
     LOG_INFO("已在终端里用 profile id=" + std::to_string(id) +
              " 打开 Claude Code 会话（" + spec.workingDir + "）");

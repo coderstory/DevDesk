@@ -753,8 +753,10 @@ public:
                                     .color(t.colors.borderDefault).build();
                                 const float actGap = 12.0f;
                                 // 6 键均分（设计 §4.1，M5 + profile-run：启用/测试连通/
-                                // 编辑/删除/复制/运行）——按钮数改一处，gap 数也要跟着改
-                                const float actW = (w0 - actGap * 6.0f) / 6.0f;
+                                // 编辑/删除/复制/运行）——按钮数改一处，gap 数也要跟着改。
+                                // 扣 **5** 个 gap：EUI 的 row spacing 只在相邻子项之间生效，
+                                // n 项只有 n−1 个间隙；旧 5 键式 (w0-actGap*4)/5 恰好齐右缘。
+                                const float actW = (w0 - actGap * 5.0f) / 6.0f;
                                 ui.row("claude.detail.actions")
                                     .position(x0, actY)
                                     .size(w0, 36.0f)
