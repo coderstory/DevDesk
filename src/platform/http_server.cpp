@@ -6,9 +6,7 @@
 //   - 我们在 std::thread 里调 listen_after_bind()，stop() 时 join
 //   - 实际请求处理由 cpp-httplib 内部线程池完成（每个请求一个任务）
 //
-// 认证模型：
-//   - 用 set_pre_routing_handler() 在分发前检查 Authorization: Bearer <token>
-//   - 认证失败 → 返回 401（HandlerResponse::Handled 拦截）
+// 绑定地址由调用方给定（DevDesk 代理固定 127.0.0.1，仅本机可访问，无鉴权）
 //
 // 路由模型：
 //   - route(method, path, handler) 转发到 svr.Get/Post/Put/Delete/Patch/Options
@@ -42,50 +40,10 @@ std::map<std::string, std::string> toHeaderMap(const httplib::Headers& src) {
     return dst;
 }
 
-// 常数时间比较 Authorization 里的 token 段。std::string::compare 走 memcmp，
-// 首个差异字节即提前返回——存在 CWE-208 时序侧信道（理论上可逐字节猜 token）。
-// 此处逐字节 XOR 累加、遍历完再判总掩码为零，比较时长只取决于长度不取决于差异位置。
-// 长度不等先返回是安全的：token 长度是固定公开格式（32 hex），长度本身非秘密。
-bool constantTimeTokenEqual(const char* got, size_t gotLen,
-                            const std::string& token) {
-    if (gotLen != token.size()) return false;
-    unsigned char diff = 0;
-    for (size_t i = 0; i < gotLen; ++i) {
-        diff |= static_cast<unsigned char>(got[i]) ^
-                static_cast<unsigned char>(token[i]);
-    }
-    return diff == 0;
-}
-
 // 把 RouteHandler 适配成 httplib::Server::Handler
-httplib::Server::Handler toLibHandler(RouteHandler userHandler,
-                                      bool authRequired,
-                                      const std::string& authToken) {
-    return [userHandler = std::move(userHandler), authRequired, authToken](
+httplib::Server::Handler toLibHandler(RouteHandler userHandler) {
+    return [userHandler = std::move(userHandler)](
                const httplib::Request& req, httplib::Response& res) {
-        bool authed = !authRequired;
-        if (authRequired) {
-            auto it = req.headers.find("Authorization");
-            if (it != req.headers.end()) {
-                const std::string& v = it->second;
-                const std::string prefix = "Bearer ";
-                if (v.size() >= prefix.size() &&
-                    v.compare(0, prefix.size(), prefix) == 0 &&
-                    constantTimeTokenEqual(v.data() + prefix.size(),
-                                           v.size() - prefix.size(),
-                                           authToken)) {
-                    authed = true;
-                }
-            }
-        }
-        // 正常情况下 pre_routing_handler 已经拦下未认证请求，这里只是防御
-        if (!authed) {
-            res.status = 401;
-            res.set_header("WWW-Authenticate", "Bearer");
-            res.set_content("Unauthorized", "text/plain");
-            return;
-        }
-
         ResponseWriter rw;
         RequestCtx rctx;
         rctx.method = req.method;
@@ -93,7 +51,6 @@ httplib::Server::Handler toLibHandler(RouteHandler userHandler,
         rctx.headers = toHeaderMap(req.headers);
         rctx.body = req.body;
         rctx.clientAddress = req.remote_addr;
-        rctx.authenticated = authed;
         rctx.isConnectionClosed = req.is_connection_closed;
 
         userHandler(rctx, rw);
@@ -194,41 +151,12 @@ struct Server::Impl {
 
 // ---------- Server 实现 ----------
 
-Server::Server(std::string bindAddress, int port, std::string authToken)
+Server::Server(std::string bindAddress, int port)
     : bindAddress_(std::move(bindAddress)),
       port_(port),
-      authToken_(std::move(authToken)),
       impl_(new Impl()) {
     // 请求体上限（spec §10.4）：所有路由单点收口，超出由 cpp-httplib 回 413
     impl_->svr.set_payload_max_length(kMaxBodyBytes);
-
-    // pre_routing_handler 在路由分发前触发，用于拦截未认证请求
-    const std::string token = authToken_;
-    const bool authRequired = !token.empty();
-    impl_->svr.set_pre_routing_handler(
-        [token, authRequired](const httplib::Request& req,
-                              httplib::Response& res)
-            -> httplib::Server::HandlerResponse {
-            if (!authRequired) {
-                return httplib::Server::HandlerResponse::Unhandled;
-            }
-            auto it = req.headers.find("Authorization");
-            if (it != req.headers.end()) {
-                const std::string& v = it->second;
-                const std::string prefix = "Bearer ";
-                if (v.size() >= prefix.size() &&
-                    v.compare(0, prefix.size(), prefix) == 0 &&
-                    constantTimeTokenEqual(v.data() + prefix.size(),
-                                           v.size() - prefix.size(),
-                                           token)) {
-                    return httplib::Server::HandlerResponse::Unhandled;
-                }
-            }
-            res.status = 401;
-            res.set_header("WWW-Authenticate", "Bearer");
-            res.set_content("Unauthorized", "text/plain");
-            return httplib::Server::HandlerResponse::Handled;
-        });
 }
 
 Server::~Server() {
@@ -240,9 +168,7 @@ void Server::route(const std::string& method, const std::string& path,
                    RouteHandler handler) {
     std::lock_guard<std::mutex> lock(impl_->routeMutex);
 
-    const bool authRequired = !authToken_.empty();
-    const std::string token = authToken_;
-    auto libHandler = toLibHandler(std::move(handler), authRequired, token);
+    auto libHandler = toLibHandler(std::move(handler));
 
     // method 大小写不敏感
     std::string m = method;
@@ -287,8 +213,7 @@ bool Server::start() {
     impl_->listenStarted.store(true);
 
     LOG_INFO("HTTP server listening on " + bindAddress_ + ":" +
-             std::to_string(port_) +
-             (authToken_.empty() ? "" : " (with auth)"));
+             std::to_string(port_));
 
     impl_->worker = std::thread([this]() {
         impl_->svr.listen_after_bind();

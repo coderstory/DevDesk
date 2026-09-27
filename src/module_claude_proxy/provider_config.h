@@ -93,12 +93,13 @@ struct ImportedConfig {
 core::Result<ImportedConfig> parseImportedEnv(const std::string& text);
 
 // ---- 接管 env 生成（§4.3，Phase C 接管通道的输入）----
-// 输入：profile 的三个数据源字段 + 代理端口/token；输出：要写入
+// 输入：profile 的三个数据源字段 + 代理端口；输出：要写入
 // ~/.claude/settings.json env 块的托管键值（纯函数，无 IO）。
 // 规则：
 //   1. ANTHROPIC_BASE_URL = http://127.0.0.1:<port>（上游真实 key 永不出现在
 //      settings.json，由代理注入）
-//   2. ANTHROPIC_AUTH_TOKEN = 代理 token（token 为空则跳过该键）
+//   2. ANTHROPIC_AUTH_TOKEN = kProxyAuthPlaceholder（占位符：代理无鉴权，
+//      此键只是让 Claude Code 有值可发）
 //   3. 模型槽位（effectiveModelsConfig 兼容旧 model 列）→ ANTHROPIC_MODEL /
 //      ANTHROPIC_DEFAULT_{SONNET|OPUS|HAIKU|FABLE}_MODEL / CLAUDE_CODE_SUBAGENT_MODEL；
 //      槽位空则跳过（Claude Code 回落内置映射）
@@ -106,9 +107,14 @@ core::Result<ImportedConfig> parseImportedEnv(const std::string& text);
 //      变体，不生成）；name 空则 deriveDisplayName 派生
 //   5. extra_env 经 parseExtraEnv（非法则整体忽略，读路径容错）+ applyEnvAliases
 //      别名归一后平铺；与 1-4 冲突时 1-4 优先（导入数据可能带旧 BASE_URL/token）
+
+// 接管时写入 settings.json 的占位凭据（代理仅监听 127.0.0.1、无鉴权；
+// 真实上游 key 由代理转发时注入）
+inline constexpr const char* kProxyAuthPlaceholder = "PROXY_MANAGED";
+
 std::map<std::string, std::string> buildProxyEnv(
     const std::string& modelsConfigJson, const std::string& legacyModel,
     const std::string& extraEnvJson,
-    int proxyPort, const std::string& proxyToken);
+    int proxyPort);
 
 } // namespace module::claude

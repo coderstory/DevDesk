@@ -345,7 +345,7 @@ core::Result<ImportedConfig> parseImportedEnv(const std::string& text) {
 std::map<std::string, std::string> buildProxyEnv(
     const std::string& modelsConfigJson, const std::string& legacyModel,
     const std::string& extraEnvJson,
-    int proxyPort, const std::string& proxyToken) {
+    int proxyPort) {
     std::map<std::string, std::string> out;
 
     // extra_env 先入表（别名归一），托管键随后写入 → 冲突时托管键优先（规则 5）
@@ -356,9 +356,9 @@ std::map<std::string, std::string> buildProxyEnv(
     }
 
     out["ANTHROPIC_BASE_URL"] = "http://127.0.0.1:" + std::to_string(proxyPort);
-    if (!proxyToken.empty()) {
-        out["ANTHROPIC_AUTH_TOKEN"] = proxyToken;
-    }
+    // 代理仅监听 127.0.0.1、无鉴权，此键只是让 Claude Code 有值可发（占位符，
+    // 不是密钥；真实上游 key 由代理在转发时注入 profile 的 key）
+    out["ANTHROPIC_AUTH_TOKEN"] = kProxyAuthPlaceholder;
 
     const ModelsConfig mc = effectiveModelsConfig(modelsConfigJson, legacyModel);
     // 槽位 → env 键（nameKey 为空表示该槽位无官方 _NAME 变体，不生成）

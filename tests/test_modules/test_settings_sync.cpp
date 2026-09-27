@@ -13,6 +13,7 @@
 //   - 崩溃补还原（recoverPendingSnapshot）
 //   - 原子性：无 .devdesk-tmp 残留
 //   - ClaudeService 接线：startProxy 接管 / stopProxy 还原 / 运行中切 profile 跟随
+//   - 接管开关关闭：启动补还原 / startProxy / stopProxy 三条路径都不写文件
 #include "doctest.h"
 
 #include "claude_service.h"
@@ -164,11 +165,13 @@ REGISTER_TEST(sync_build_proxy_env, "settings_sync: buildProxyEnv 槽位/派生/
         "subagent": {"model": "glm-5.3[1M]", "name": ""}
     })";
     const auto env = buildProxyEnv(modelsJson, "legacy-model",
-                                   /*extraEnvJson=*/"", 8888, "tok-123");
+                                   /*extraEnvJson=*/"", 8888);
 
     DOCTEST_CHECK_EQ(env.at("ANTHROPIC_BASE_URL"),
                      std::string("http://127.0.0.1:8888"));
-    DOCTEST_CHECK_EQ(env.at("ANTHROPIC_AUTH_TOKEN"), std::string("tok-123"));
+    // 代理无鉴权：写占位符（真实上游 key 由代理转发时注入）
+    DOCTEST_CHECK_EQ(env.at("ANTHROPIC_AUTH_TOKEN"),
+                     std::string("PROXY_MANAGED"));
     // default：model 写 ANTHROPIC_MODEL；name 空 → 派生剥 [1M]；
     // ANTHROPIC_MODEL 无官方 _NAME 变体，不生成
     DOCTEST_CHECK_EQ(env.at("ANTHROPIC_MODEL"), std::string("fangzhou/glm-5.3[1M]"));
@@ -189,12 +192,13 @@ REGISTER_TEST(sync_build_proxy_env, "settings_sync: buildProxyEnv 槽位/派生/
     DOCTEST_CHECK(env.find("CLAUDE_CODE_SUBAGENT_MODEL_NAME") == env.end());
 
     // models_config 空 + 旧 model 列 → fallback 填 default 槽位
-    const auto legacy = buildProxyEnv("", "claude-sonnet-4-5", "", 8888, "t");
+    const auto legacy = buildProxyEnv("", "claude-sonnet-4-5", "", 8888);
     DOCTEST_CHECK_EQ(legacy.at("ANTHROPIC_MODEL"), std::string("claude-sonnet-4-5"));
 
-    // token 空 → 跳过 AUTH_TOKEN
-    const auto noTok = buildProxyEnv("", "", "", 8888, "");
-    DOCTEST_CHECK(noTok.find("ANTHROPIC_AUTH_TOKEN") == noTok.end());
+    // 恒定写入占位凭据（无「空 token 跳过」分支了）
+    const auto noTok = buildProxyEnv("", "", "", 8888);
+    DOCTEST_CHECK_EQ(noTok.at("ANTHROPIC_AUTH_TOKEN"),
+                     std::string("PROXY_MANAGED"));
     return true;
 })
 
@@ -208,16 +212,17 @@ REGISTER_TEST(sync_build_proxy_env_extra, "settings_sync: extra_env 别名与优
         "ANTHROPIC_BASE_URL": "https://stale.example.com",
         "ANTHROPIC_AUTH_TOKEN": "stale-token"
     })";
-    const auto env = buildProxyEnv("", "", extra, 9999, "real-token");
+    const auto env = buildProxyEnv("", "", extra, 9999);
 
     // 别名归一：AUTO_COMPACT_ENABLED=1（开）→ DISABLE_AUTO_COMPACT=0（不禁用）
     DOCTEST_CHECK_EQ(env.at("DISABLE_AUTO_COMPACT"), std::string("0"));
     DOCTEST_CHECK(env.find("AUTO_COMPACT_ENABLED") == env.end());
     DOCTEST_CHECK_EQ(env.at("DISABLE_AUTOUPDATER"), std::string("1"));
-    // 冲突时托管键（代理 BASE_URL/token）优先，导入的旧值被覆盖
+    // 冲突时托管键（代理 BASE_URL/占位凭据）优先，导入的旧值被覆盖
     DOCTEST_CHECK_EQ(env.at("ANTHROPIC_BASE_URL"),
                      std::string("http://127.0.0.1:9999"));
-    DOCTEST_CHECK_EQ(env.at("ANTHROPIC_AUTH_TOKEN"), std::string("real-token"));
+    DOCTEST_CHECK_EQ(env.at("ANTHROPIC_AUTH_TOKEN"),
+                     std::string("PROXY_MANAGED"));
     return true;
 })
 
@@ -242,7 +247,7 @@ REGISTER_TEST(sync_takeover_restore_roundtrip, "settings_sync: 接管合并与�
     Profile p;
     p.model = "fangzhou/glm-5.3[1M]";
     p.extraEnvJson = R"({"DISABLE_AUTOUPDATER": "1"})";
-    auto r = settings_sync::takeOver(p, 8888, "tok-abc", paths);
+    auto r = settings_sync::takeOver(p, 8888, paths);
     DOCTEST_REQUIRE(r.ok);
     DOCTEST_CHECK(r.warnings.empty());
 
@@ -251,7 +256,8 @@ REGISTER_TEST(sync_takeover_restore_roundtrip, "settings_sync: 接管合并与�
         const auto env = readEnv(paths.settingsFile);
         DOCTEST_CHECK_EQ(env.at("ANTHROPIC_BASE_URL"),
                          std::string("http://127.0.0.1:8888"));
-        DOCTEST_CHECK_EQ(env.at("ANTHROPIC_AUTH_TOKEN"), std::string("tok-abc"));
+        DOCTEST_CHECK_EQ(env.at("ANTHROPIC_AUTH_TOKEN"),
+                         std::string("PROXY_MANAGED"));
         DOCTEST_CHECK_EQ(env.at("ANTHROPIC_MODEL"),
                          std::string("fangzhou/glm-5.3[1M]"));
         DOCTEST_CHECK_EQ(env.at("MY_CUSTOM_KEY"), std::string("keep-me"));
@@ -296,14 +302,14 @@ REGISTER_TEST(sync_retakeover_keeps_first_snapshot, "settings_sync: 热切换保
     Profile a;
     const std::string modelsA = R"({"sonnet": {"model": "m-a"}})";
     a.modelsConfigJson = modelsA;
-    DOCTEST_REQUIRE(settings_sync::takeOver(a, 8888, "t1", paths).ok);
+    DOCTEST_REQUIRE(settings_sync::takeOver(a, 8888, paths).ok);
 
     // 第二次接管（切 profile）：B 无 sonnet 槽位 → 该键不在 B 的托管集，
     // 但并集后仍归 DevDesk 管理（restore 时删除，不留陈旧值）
     Profile b;
     const std::string modelsB = R"({"opus": {"model": "m-b"}})";
     b.modelsConfigJson = modelsB;
-    DOCTEST_REQUIRE(settings_sync::takeOver(b, 8888, "t2", paths).ok);
+    DOCTEST_REQUIRE(settings_sync::takeOver(b, 8888, paths).ok);
     {
         const auto env = readEnv(paths.settingsFile);
         DOCTEST_CHECK_EQ(env.at("ANTHROPIC_DEFAULT_SONNET_MODEL"),
@@ -332,7 +338,7 @@ REGISTER_TEST(sync_takeover_missing_file, "settings_sync: 无 settings.json 时�
 
     Profile p;
     p.model = "m-1";
-    DOCTEST_REQUIRE(settings_sync::takeOver(p, 8888, "tok", paths).ok);
+    DOCTEST_REQUIRE(settings_sync::takeOver(p, 8888, paths).ok);
 
     DOCTEST_CHECK(d.exists(paths.settingsFile));
     {
@@ -368,7 +374,7 @@ REGISTER_TEST(sync_parse_failure_aborts, "settings_sync: settings.json 解析失
     d.write(paths.settingsFile, broken);
 
     Profile p;
-    auto r = settings_sync::takeOver(p, 8888, "tok", paths);
+    auto r = settings_sync::takeOver(p, 8888, paths);
     DOCTEST_CHECK(!r.ok);
     DOCTEST_CHECK(!r.error.empty());
     // 文件原样、无 sidecar
@@ -378,7 +384,7 @@ REGISTER_TEST(sync_parse_failure_aborts, "settings_sync: settings.json 解析失
     // sidecar 损坏时 takeOver 同样中止（不把上次托管键误当用户原值）
     d.write(paths.settingsFile, "{}");
     d.write(paths.sidecarFile, "{broken");
-    DOCTEST_CHECK(!settings_sync::takeOver(p, 8888, "tok", paths).ok);
+    DOCTEST_CHECK(!settings_sync::takeOver(p, 8888, paths).ok);
 
     // sidecar 损坏时 restore 报错并保留文件（供人工恢复）
     auto rr = settings_sync::restore(paths);
@@ -400,7 +406,7 @@ REGISTER_TEST(sync_overlay_detection, "settings_sync: managed/project 层覆盖�
     paths.overlayFiles = {projectLocal};
 
     Profile p;
-    auto r = settings_sync::takeOver(p, 8888, "tok", paths);
+    auto r = settings_sync::takeOver(p, 8888, paths);
     DOCTEST_REQUIRE(r.ok);
     DOCTEST_REQUIRE_EQ(r.warnings.size(), 1u);
     DOCTEST_CHECK(r.warnings[0].find("ANTHROPIC_BASE_URL") != std::string::npos);
@@ -408,7 +414,7 @@ REGISTER_TEST(sync_overlay_detection, "settings_sync: managed/project 层覆盖�
 
     // 只含无关 env 键的 overlay → 不警告
     d.write(projectLocal, R"({"env": {"MY_KEY": "x"}})");
-    auto r2 = settings_sync::takeOver(p, 8888, "tok", paths);
+    auto r2 = settings_sync::takeOver(p, 8888, paths);
     DOCTEST_REQUIRE(r2.ok);
     DOCTEST_CHECK(r2.warnings.empty());
 
@@ -416,7 +422,7 @@ REGISTER_TEST(sync_overlay_detection, "settings_sync: managed/project 层覆盖�
     paths.overlayFiles = {d.file("nope.json")};
     d.write(projectLocal, R"({"permissions": {}})");
     paths.overlayFiles.push_back(projectLocal);
-    auto r3 = settings_sync::takeOver(p, 8888, "tok", paths);
+    auto r3 = settings_sync::takeOver(p, 8888, paths);
     DOCTEST_REQUIRE(r3.ok);
     DOCTEST_CHECK(r3.warnings.empty());
     return true;
@@ -434,7 +440,7 @@ REGISTER_TEST(sync_crash_recovery_and_atomic, "settings_sync: 崩溃补还原与
     // 模拟崩溃：takeOver 后没走 restore（sidecar 残留）
     Profile p;
     p.model = "m-1";
-    DOCTEST_REQUIRE(settings_sync::takeOver(p, 8888, "tok", paths).ok);
+    DOCTEST_REQUIRE(settings_sync::takeOver(p, 8888, paths).ok);
 
     // 下次启动：recoverPendingSnapshot 自动补还原
     auto r = settings_sync::recoverPendingSnapshot(paths);
@@ -448,7 +454,7 @@ REGISTER_TEST(sync_crash_recovery_and_atomic, "settings_sync: 崩溃补还原与
     DOCTEST_CHECK(settings_sync::recoverPendingSnapshot(paths).ok);
 
     // 原子性：接管/还原后目录里没有 .devdesk-tmp 残留
-    DOCTEST_REQUIRE(settings_sync::takeOver(p, 8888, "tok", paths).ok);
+    DOCTEST_REQUIRE(settings_sync::takeOver(p, 8888, paths).ok);
     DOCTEST_REQUIRE(settings_sync::restore(paths).ok);
     for (const auto& entry : std::filesystem::directory_iterator(d.path)) {
         DOCTEST_CHECK(entry.path().string().find(".devdesk-tmp") ==
@@ -479,6 +485,7 @@ REGISTER_TEST(sync_service_wiring, "claude_service: 接管通道三触发点接�
 
     // 注入路径 + 建 profile（带模型槽位 + extra_env）
     svc.setSettingsSyncPaths(paths);
+    svc.setSettingsTakeOverEnabled(true);
     auto created = svc.createProfile("官方中转", "https://gw.example.com",
                                      "sk-ind-test-0123456789abcdef", "");
     DOCTEST_REQUIRE(created.isOk());
@@ -497,7 +504,8 @@ REGISTER_TEST(sync_service_wiring, "claude_service: 接管通道三触发点接�
         const auto env = readEnv(paths.settingsFile);
         DOCTEST_CHECK_EQ(env.at("ANTHROPIC_BASE_URL"),
                          std::string("http://127.0.0.1:") + std::to_string(port));
-        DOCTEST_CHECK(!env.at("ANTHROPIC_AUTH_TOKEN").empty());
+        DOCTEST_CHECK_EQ(env.at("ANTHROPIC_AUTH_TOKEN"),
+                         std::string("PROXY_MANAGED"));
         DOCTEST_CHECK_EQ(env.at("ANTHROPIC_MODEL"), std::string("m-default"));
         DOCTEST_CHECK_EQ(env.at("ANTHROPIC_DEFAULT_SONNET_MODEL"),
                          std::string("m-sonnet"));
@@ -549,6 +557,7 @@ REGISTER_TEST(sync_service_warnings_surface, "claude_service: 接管警告经 la
 
     ClaudeService svc(tdb.handle(), kTestKeychainService);
     svc.setSettingsSyncPaths(paths);
+    svc.setSettingsTakeOverEnabled(true);
     auto r = svc.startProxy("127.0.0.1", 0);
     DOCTEST_REQUIRE(r.isOk());
     DOCTEST_CHECK(!svc.lastSyncWarnings().empty());
@@ -579,6 +588,7 @@ REGISTER_TEST(sync_exit_sequence_stop_all,
     } guard;
 
     svc.setSettingsSyncPaths(paths);
+    svc.setSettingsTakeOverEnabled(true);
     auto r = svc.startProxy("127.0.0.1", 0);
     DOCTEST_REQUIRE(r.isOk());
     // 接管已发生：托管键写入 + sidecar 落地
@@ -619,6 +629,7 @@ REGISTER_TEST(sync_delete_active_profile_stops_proxy,
 
     ClaudeService svc(tdb.handle(), kTestKeychainService);
     svc.setSettingsSyncPaths(paths);
+    svc.setSettingsTakeOverEnabled(true);
     auto created = svc.createProfile("激活删除目标", "https://gw.example.com",
                                      "sk-ind-test-0123456789abcdef", "");
     DOCTEST_REQUIRE(created.isOk());
@@ -667,6 +678,62 @@ REGISTER_TEST(sync_delete_active_profile_stops_proxy,
     }
 
     // 清理 keychain 条目
+    platform::keychain::deleteSecret(
+        kTestKeychainService, "claude:" + std::to_string(created.value().id));
+    return true;
+})
+
+// ---- 13. 接管开关关闭（2026-09-27）：完全不写 settings.json ----
+// 接管默认开（见 claude_service.h setSettingsTakeOverEnabled）；关掉开关 =
+// DevDesk 不碰该文件，三条路径一起门控：startProxy 接管 / stopProxy 还原 /
+// 启动补还原。本用例是「开关关闭时零写入」的自动化兜底（此前只有人工指纹比对）。
+REGISTER_TEST(sync_switch_off_no_write,
+              "claude_service: 接管开关关闭时不写 settings.json", {
+    using namespace module::claude;
+    TestDb tdb("off");
+    TempDir d("off");
+    auto paths = makePaths(d);
+    const std::string original = R"({"env": {"MY_KEY": "user"}})";
+    d.write(paths.settingsFile, original);
+
+    ClaudeService svc(tdb.handle(), kTestKeychainService);
+    DOCTEST_CHECK(svc.settingsTakeOverEnabled());  // 默认开（2026-09-27 恢复）
+    svc.setSettingsSyncPaths(paths);
+    svc.setSettingsTakeOverEnabled(false);         // 显式关闭
+
+    auto created = svc.createProfile("关闭态", "https://gw.example.com",
+                                     "sk-ind-test-0123456789abcdef", "");
+    DOCTEST_REQUIRE(created.isOk());
+    Profile p = created.value();
+    p.modelsConfigJson = R"({"default": {"model": "m-default"}})";
+    DOCTEST_REQUIRE(svc.updateProfile(p).isOk());
+    DOCTEST_REQUIRE(svc.setActiveProfile(p.id).isOk());
+
+    // 路径 1：启动补还原（main.cpp 启动序列）→ 文件逐字节不变
+    svc.recoverPendingSettingsRestore();
+    DOCTEST_CHECK_EQ(d.read(paths.settingsFile), original);
+
+    // 路径 2：startProxy → 不接管（无 sidecar、无托管键）
+    auto r = svc.startProxy("127.0.0.1", 0);
+    DOCTEST_REQUIRE(r.isOk());
+    DOCTEST_CHECK_EQ(d.read(paths.settingsFile), original);
+    DOCTEST_CHECK(!svc.isClaudeCodeManaged());
+    DOCTEST_CHECK(!d.exists(paths.sidecarFile));
+
+    // 路径 3：stopProxy → 不还原（未接管过，同样不动文件）
+    svc.stopProxy();
+    DOCTEST_CHECK_EQ(d.read(paths.settingsFile), original);
+    DOCTEST_CHECK(!d.exists(paths.sidecarFile));
+
+    // 遗留 sidecar（上次没走完还原）+ 开关关闭 → 补还原同样跳过，快照留给
+    // 下次开启接管时处理（不代改用户文件）
+    d.write(paths.sidecarFile,
+            R"({"managedKeys": {"ANTHROPIC_BASE_URL": ""},)"
+            R"( "envSnapshot": {"MY_KEY": "user"}})");
+    svc.recoverPendingSettingsRestore();
+    DOCTEST_CHECK_EQ(d.read(paths.settingsFile), original);
+    DOCTEST_CHECK(d.exists(paths.sidecarFile));
+
     platform::keychain::deleteSecret(
         kTestKeychainService, "claude:" + std::to_string(created.value().id));
     return true;

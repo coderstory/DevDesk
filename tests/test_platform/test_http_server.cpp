@@ -149,11 +149,9 @@ REGISTER_TEST(http_server_basic_get, "http_server: GET handler responds", {
 REGISTER_TEST(http_server_post_body, "http_server: POST handler reads body", {
     platform::http::Server srv("127.0.0.1", 0);
     std::string receivedBody;
-    bool authFlag = false;
     srv.route("POST", "/echo", [&](const platform::http::RequestCtx& ctx,
                                    platform::http::ResponseWriter& w) {
         receivedBody = ctx.body;
-        authFlag = ctx.authenticated;
         w.setStatus(201);
         w.write("got:" + ctx.body);
         w.end();
@@ -168,8 +166,6 @@ REGISTER_TEST(http_server_post_body, "http_server: POST handler reads body", {
     DOCTEST_CHECK_EQ(status, 201L);
     DOCTEST_CHECK_EQ(body, std::string("got:ping"));
     DOCTEST_CHECK_EQ(receivedBody, std::string("ping"));
-    // 无 authToken 配置时，authenticated 应该是 true（无需鉴权即放行）
-    DOCTEST_CHECK(authFlag);
 
     srv.stop();
     return true;
@@ -197,57 +193,40 @@ REGISTER_TEST(http_server_404_unknown, "http_server: unknown path returns 404", 
     return true;
 })
 
-// ---- Auth token: missing Authorization → 401 ----
+// ---- 无鉴权：带不带 Authorization 都直接放行（2026-09-27 起代理仅本机访问） ----
 
-REGISTER_TEST(http_server_auth_required_401,
-              "http_server: missing auth token returns 401", {
-    platform::http::Server srv("127.0.0.1", 0, "secret-token");
-    DOCTEST_CHECK(srv.requiresAuth());
-    DOCTEST_CHECK_EQ(srv.authToken(), std::string("secret-token"));
+REGISTER_TEST(http_server_no_auth_required,
+              "http_server: no auth required, any request passes through", {
+    platform::http::Server srv("127.0.0.1", 0);
 
-    int authenticatedCount = 0;
-    int rejectedCount = 0;
+    int handledCount = 0;
     srv.route("GET", "/v1/chat",
-              [&](const platform::http::RequestCtx& ctx,
+              [&](const platform::http::RequestCtx&,
                   platform::http::ResponseWriter& w) {
-                  if (ctx.authenticated) {
-                      ++authenticatedCount;
-                      w.setStatus(200);
-                      w.write("ok");
-                  } else {
-                      ++rejectedCount;
-                      w.setStatus(403);
-                      w.write("forbidden");
-                  }
+                  ++handledCount;
+                  w.setStatus(200);
+                  w.write("ok");
                   w.end();
               });
     DOCTEST_CHECK(srv.start());
     int port = srv.actualPort();
     DOCTEST_CHECK(waitForReady(port));
 
-    // 不带 token：应该被 pre_routing 拦下 → 401
+    // 不带 Authorization：放行
     std::string body;
     long statusNoToken = httpGet("http://127.0.0.1:" +
                                  std::to_string(port) + "/v1/chat", body);
-    DOCTEST_CHECK_EQ(statusNoToken, 401L);
+    DOCTEST_CHECK_EQ(statusNoToken, 200L);
+    DOCTEST_CHECK_EQ(body, std::string("ok"));
 
-    // 带错误 token：401
-    std::string bodyBad;
-    long statusBadToken = httpGet(
-        "http://127.0.0.1:" + std::to_string(port) + "/v1/chat", bodyBad,
-        "wrong-token");
-    DOCTEST_CHECK_EQ(statusBadToken, 401L);
-
-    // 带正确 token：200 + handler 执行
-    std::string bodyOk;
-    long statusOk =
-        httpGet("http://127.0.0.1:" + std::to_string(port) + "/v1/chat",
-                bodyOk, "secret-token");
-    DOCTEST_CHECK_EQ(statusOk, 200L);
-    DOCTEST_CHECK_EQ(bodyOk, std::string("ok"));
-    DOCTEST_CHECK_EQ(authenticatedCount, 1);
-    // 401 在 pre_routing 拦截，handler 未执行
-    DOCTEST_CHECK_EQ(rejectedCount, 0);
+    // 带任意 Authorization：同样放行（代理不看该头）
+    std::string bodyAny;
+    long statusAnyToken = httpGet(
+        "http://127.0.0.1:" + std::to_string(port) + "/v1/chat", bodyAny,
+        "whatever-token");
+    DOCTEST_CHECK_EQ(statusAnyToken, 200L);
+    DOCTEST_CHECK_EQ(bodyAny, std::string("ok"));
+    DOCTEST_CHECK_EQ(handledCount, 2);
 
     srv.stop();
     return true;

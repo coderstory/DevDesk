@@ -191,14 +191,12 @@ Paths defaultPaths() {
     return p;
 }
 
-SyncResult takeOver(const Profile& profile, int proxyPort,
-                    const std::string& proxyToken, const Paths& paths) {
+SyncResult takeOver(const Profile& profile, int proxyPort, const Paths& paths) {
     SyncResult out;
 
     // 托管 env（纯函数，规则见 provider_config.h）
     const auto managed = buildProxyEnv(profile.modelsConfigJson, profile.model,
-                                       profile.extraEnvJson, proxyPort,
-                                       proxyToken);
+                                       profile.extraEnvJson, proxyPort);
     std::vector<std::string> managedKeys;
     managedKeys.reserve(managed.size());
     for (const auto& [k, v] : managed) managedKeys.push_back(k);
