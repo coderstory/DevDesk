@@ -22,6 +22,7 @@ using module::markdown::kEditorInputId;
 #include <components/input.h>
 #include <core/dsl_runtime.h>
 #include <eui/dsl.h>
+#include <eui/types.h>   // M3：合成指针事件（块点击的 press→release 直驱）
 
 #include <algorithm>
 #include <chrono>
@@ -3754,5 +3755,407 @@ REGISTER_TEST(md_module_blockflow_hook_source_guard,
     }
     DOCTEST_CHECK(sawPreview);
     DOCTEST_CHECK(sawLive);
+    return true;
+})
+
+// ==================== M3：焦点 / 切块状态机 + IME 冻结 ====================
+// 依据 spec §7「M3」行 + §3.3 / §3.4 + M0 spike §2 硬约束（C1 聚焦只发 .hit、
+// C2 释放与补发同帧、C3 切块清滚动残余）。验收两条：连续切块 20 次不丢字、
+// 组字中切块被拒。
+//
+// 无头边界（诚实声明）：真实窗口的「指针按下 → Runtime 重定焦 → 事件队列派发」
+// 那一跳需要真窗口（M0 spike §3），这里直驱框架 mousearea 的 press→release 与
+// input 的 onTextInput / onFocusChanged（= Runtime 内部同一调用点）。
+// 「点完直接打字不用二次点击」的焦点部分在 release 用例里是**真断言**（释放会
+// 清焦点，靠同帧补发回来）；其余用例的 isFocused 是防回归的不变量。
+
+namespace {
+
+// 合成一次块点击：mousearea 的 onTap 只在 release 且 inside 时触发
+//（components/mousearea.h:148-158）。localY = 点击在块 hit 区域内的 y。
+bool clickLiveBlock(eui::Ui& ui, int stableId, float localY) {
+    const std::string hitId = "md.live.blk." + std::to_string(stableId) + ".hit";
+    const auto* hit = ui.find(hitId);
+    if (hit == nullptr || !hit->onPress || !hit->onRelease) return false;
+    const core::Rect bounds(0.0f, 0.0f, hit->frame.width, hit->frame.height);
+    eui::PointerEvent ev;
+    ev.action = eui::PointerAction::Press;
+    ev.button = eui::PointerButton::Left;
+    ev.x = bounds.width * 0.5f;
+    ev.y = localY;
+    hit->onPress(ev, bounds);
+    ev.action = eui::PointerAction::Release;
+    hit->onRelease(ev, bounds);
+    return true;
+}
+
+// 打一个字符（走真实 input 事件路径：onTextInput → onChange → 拼文档）
+bool typeIntoLiveInput(eui::Ui& ui, const std::string& text) {
+    const auto* hit = ui.find("md.live.input.hit");
+    if (hit == nullptr || !hit->onTextInput) return false;
+    core::TextInputEvent ev;
+    ev.text = text;
+    hit->onTextInput(ev);
+    return true;
+}
+
+// 焦点离开活动 input（框架 setFocusedId 对旧元素做的事：onFocusChanged(false)）
+bool blurLiveInput(eui::Ui& ui) {
+    const auto* hit = ui.find("md.live.input.hit");
+    if (hit == nullptr || !hit->onFocusChanged) return false;
+    hit->onFocusChanged(false);
+    return true;
+}
+
+// 本帧块包裹的 stableId，按垂直位置排序（块序 = 自上而下的布局顺序）。
+// 不用用例侧现算模型去猜 stableId —— 增量重切后模块内的 stableId 与"对当前文档
+// 重建一个全新模型"得到的编号可能不同（stableId 由模型跨次更新继承）。
+std::vector<int> liveBlockSidsByY(eui::Ui& ui) {
+    std::vector<std::pair<float, int>> found;
+    for (int sid = 0; sid < 64; ++sid) {
+        const auto* w = ui.find("md.live.blk." + std::to_string(sid));
+        if (w != nullptr) found.push_back({w->frame.y, sid});
+    }
+    std::sort(found.begin(), found.end());
+    std::vector<int> ids;
+    ids.reserve(found.size());
+    for (const auto& entry : found) ids.push_back(entry.second);
+    return ids;
+}
+
+} // namespace
+
+// M3 验收 1：连续点击切块 20 次不丢字。每轮：点非活动块 → 该块变活动块（输入框
+// 文本 = 该块源码、光标落在点击行）+ 焦点在 input 上 → 直接打一个字符 → 字符必须
+// 落在点击行行首（逐字节，与分块器现算的期望值比）。
+REGISTER_TEST(md_module_live_click_switch_20x,
+              "markdown_module: 实时态连续点击切块 20 次不丢字（M3，headless）", {
+    const std::string text =
+        "# T\n\npara one\n\npara two\n\npara three\n\npara four\n\npara five\n";
+    test_support::MdHeadlessEnv env(kDirPrefix, "liveclick", kDbName);
+    DOCTEST_REQUIRE(env.db != nullptr);
+    DOCTEST_REQUIRE(writeTextFile(env.dir / "click.md", text));
+
+    std::unique_ptr<::core::Module> mod(create_markdown_module());
+    mod->onStart();
+    eui::Screen screen;
+    screen.width = 1600.0f;
+    screen.height = 1000.0f;
+    MdLiveEnv e;
+    auto frame = [&](void) { e.frame([&](eui::Ui& u) { mod->compose(u, screen); }); };
+
+    frame();
+    DOCTEST_REQUIRE(openFirstNote(*e.ui));
+    frame();
+    DOCTEST_REQUIRE(e.ui->find(kEditorInputId) != nullptr);
+    e.ui->state<MdInputState>(kEditorInputId).cursor = 0;   // 初始锚 = 文档头
+    DOCTEST_REQUIRE(cycleMode(mod.get()));                  // → 实时
+    frame();
+    DOCTEST_REQUIRE(e.ui->find("md.live.input") != nullptr);
+
+    std::string doc = text;
+    size_t activeIdx = static_cast<size_t>(-1);   // 上轮活动块下标（下轮换一个块点）
+    for (int i = 0; i < 20; ++i) {
+        module::markdown::MdBlockModel m;
+        m.update(doc);
+        const size_t n = m.blocks().size();
+        DOCTEST_REQUIRE_MESSAGE(n >= 2, "第 " + std::to_string(i) + " 轮：文档只剩 " +
+                                            std::to_string(n) + " 块 [" + doc + "]");
+        const std::vector<int> sids = liveBlockSidsByY(*e.ui);
+        DOCTEST_REQUIRE_MESSAGE(sids.size() == n,
+                                "渲染块数 " + std::to_string(sids.size()) +
+                                    " != 模型块数 " + std::to_string(n));
+        // 换一块点：避开当前活动块 —— 活动块包裹高是 input 贴合高（≠ 几何表
+        // H_k），"点第几行"的公式口径对它不通用
+        const size_t k = (activeIdx + 1) % n;
+        const module::markdown::MdBlock& b = m.blocks()[k];
+        // 点【块的第 2 行】（块首行是块间空行 —— 分块器把空行并入下一块头部；
+        // 点在空行上打字会把空行吃掉 → 并块。点第 2 行既不动分块结构，又顺带
+        // 验了「点击按行落点」）：2 行块的第 2 行落在 blockTopY + [0.5,1)H 区间
+        //（frac=0.75 → line = first + 1.5 → floor = 第 2 行）；1 行块（标题）
+        // 恒落该行。
+        size_t lineStart = b.start;
+        const size_t nl = doc.find('\n', b.start);
+        if (nl != std::string::npos && nl + 1 < b.end) lineStart = nl + 1;
+        const std::string blockText = doc.substr(b.start, b.end - b.start);
+        const auto* wrapEl =
+            e.ui->find("md.live.blk." + std::to_string(sids[k]));
+        DOCTEST_REQUIRE(wrapEl != nullptr);
+        DOCTEST_REQUIRE_MESSAGE(
+            clickLiveBlock(*e.ui, sids[k], 0.75f * wrapEl->frame.height),
+            "第 " + std::to_string(i) + " 轮：块 hit 不可点（press/release 未接线？）");
+        frame();
+        // ① 点中的块变活动块：输入框文本 = 该块源码（逐字节）
+        const std::string got = e.ui->state<MdInputState>("md.live.input").text;
+        DOCTEST_CHECK_MESSAGE(got == blockText,
+                              "第 " + std::to_string(i) + " 轮：活动块文本 [" + got +
+                                  "] 期望 [" + blockText + "]");
+        // ② 光标落在点击行行首（块内偏移）
+        DOCTEST_CHECK_EQ(
+            static_cast<size_t>(e.ui->state<MdInputState>("md.live.input").cursor),
+            lineStart - b.start);
+        // ③ 焦点在 input 上（真实窗口下指针按下会摘焦点，靠 setLiveCursor 的
+        //    同帧补发回来；本断言是防回归的不变量）
+        DOCTEST_CHECK(e.ui->isFocused("md.live.input.hit"));
+        // ④ 直接打字：字符必须落在点击行行首（不丢字、不串块）
+        DOCTEST_REQUIRE(typeIntoLiveInput(*e.ui, "X"));
+        frame();
+        doc = doc.substr(0, lineStart) + "X" + doc.substr(lineStart);
+        module::markdown::MdBlockModel m2;
+        m2.update(doc);
+        const size_t c2 = lineStart + 1;
+        const size_t k2 = m2.blockIndexAt(c2);
+        const module::markdown::MdBlock& b2 = m2.blocks()[k2];
+        const std::string want2 = doc.substr(b2.start, b2.end - b2.start);
+        const std::string got2 = e.ui->state<MdInputState>("md.live.input").text;
+        DOCTEST_CHECK_MESSAGE(got2 == want2,
+                              "第 " + std::to_string(i) + " 轮打字后：活动块 [" + got2 +
+                                  "] 期望 [" + want2 + "]");
+        DOCTEST_CHECK_EQ(
+            b2.start + static_cast<size_t>(
+                           e.ui->state<MdInputState>("md.live.input").cursor),
+            c2);
+        activeIdx = k2;
+    }
+
+    // ⑤ 端到端：20 次点击 + 20 个字符全部落盘（逐字节）
+    std::this_thread::sleep_for(std::chrono::milliseconds(520));
+    frame();   // 本帧 compose 内 flushEditorIfIdle → 整篇写盘
+    std::string saved;
+    DOCTEST_REQUIRE(readFileBytes(env.dir / "click.md", &saved));
+    DOCTEST_CHECK_MESSAGE(saved == doc, "落盘 [" + saved + "] 期望 [" + doc + "]");
+    DOCTEST_CHECK_EQ(std::count(doc.begin(), doc.end(), 'X'), 20);
+    mod->onStop();
+    return true;
+})
+
+// M3 验收 2：组字中切块被拒 + 组字中冻结块推导（R3）。
+// 冻结的可观测口径：把块内光标推到块尾 —— 不冻结时「锚 = 输入框文本起点 + 块内
+// 光标」会算出块边界字节（块边界归后一块）→ 下一帧就换块换文本。
+REGISTER_TEST(md_module_live_ime_freeze,
+              "markdown_module: 实时态组字冻结推导 + 组字中切块被拒（M3，headless）", {
+    const std::string text = "# T\n\npara one\n\npara two\n";
+    test_support::MdHeadlessEnv env(kDirPrefix, "liveime", kDbName);
+    DOCTEST_REQUIRE(env.db != nullptr);
+    DOCTEST_REQUIRE(writeTextFile(env.dir / "ime.md", text));
+
+    module::markdown::MdBlockModel model;
+    model.update(text);
+    DOCTEST_REQUIRE(model.blocks().size() >= 3);
+    const std::string block0 =
+        text.substr(model.blocks()[0].start,
+                    model.blocks()[0].end - model.blocks()[0].start);
+    const std::string block1 =
+        text.substr(model.blocks()[1].start,
+                    model.blocks()[1].end - model.blocks()[1].start);
+    const std::string block2 =
+        text.substr(model.blocks()[2].start,
+                    model.blocks()[2].end - model.blocks()[2].start);
+
+    std::unique_ptr<::core::Module> mod(create_markdown_module());
+    mod->onStart();
+    eui::Screen screen;
+    screen.width = 1600.0f;
+    screen.height = 1000.0f;
+    MdLiveEnv e;
+    auto frame = [&](void) { e.frame([&](eui::Ui& u) { mod->compose(u, screen); }); };
+
+    frame();
+    DOCTEST_REQUIRE(openFirstNote(*e.ui));
+    frame();
+    DOCTEST_REQUIRE(e.ui->find(kEditorInputId) != nullptr);
+    e.ui->state<MdInputState>(kEditorInputId).cursor =
+        static_cast<int>(model.blocks()[1].start);   // 活动块 = 块 1
+    DOCTEST_REQUIRE(cycleMode(mod.get()));           // → 实时
+    frame();
+    DOCTEST_REQUIRE(e.ui->find("md.live.input") != nullptr);
+    DOCTEST_CHECK_EQ(e.ui->state<MdInputState>("md.live.input").text, block1);
+    const std::vector<int> sids = liveBlockSidsByY(*e.ui);
+    DOCTEST_REQUIRE(sids.size() == model.blocks().size());   // 渲染块 == 模型块
+    const int sid0 = sids[0];                                 // 块 0（标题）
+
+    // ---- 组字在飞：块内光标推到块尾（= 块边界字节，不冻结就会换块）----
+    {
+        MdInputState& st = e.ui->state<MdInputState>("md.live.input");
+        st.cursor = static_cast<int>(block1.size());
+        st.compositionText = "ni";
+    }
+    frame();
+    // ① 冻结：活动块 / 输入框文本不变（未冻结时这里会变成块 2 的文本）
+    const std::string frozen = e.ui->state<MdInputState>("md.live.input").text;
+    DOCTEST_CHECK_MESSAGE(frozen == block1,
+                          "组字中块推导未冻结：活动块文本 [" + frozen + "] 期望 [" +
+                              block1 + "]");
+
+    // ② 组字中点击另一块 → 拒绝（不换块不换文本）
+    DOCTEST_REQUIRE(clickLiveBlock(*e.ui, sid0, 0.0f));
+    frame();
+    DOCTEST_CHECK_EQ(e.ui->state<MdInputState>("md.live.input").text, block1);
+    DOCTEST_CHECK(e.ui->isFocused("md.live.input.hit"));  // 组字会话留在原块
+
+    // ③ 组字结束 → 下一帧一次性重算：锚 = 块 1 起点 + 块内光标(=块长) = 块 2 起点
+    e.ui->state<MdInputState>("md.live.input").compositionText.clear();
+    frame();
+    DOCTEST_CHECK_MESSAGE(e.ui->state<MdInputState>("md.live.input").text == block2,
+                          "组字结束后未重算：[" +
+                              e.ui->state<MdInputState>("md.live.input").text +
+                              "] 期望 [" + block2 + "]");
+
+    // ④ 放行对照：组字结束后点击恢复生效（证明拒绝不是"点了也没用"）
+    DOCTEST_REQUIRE(clickLiveBlock(*e.ui, sid0, 0.0f));
+    frame();
+    DOCTEST_CHECK_MESSAGE(e.ui->state<MdInputState>("md.live.input").text == block0,
+                          "组字结束后点击未生效：[" +
+                              e.ui->state<MdInputState>("md.live.input").text +
+                              "] 期望 [" + block0 + "]");
+    mod->onStop();
+    return true;
+})
+
+// M3：失焦提交（spec §7 M3「失焦提交」）——① 清在飞组字（焦点已走 = IME 会话结束；
+// 不清则冻结谓词恒真 → 切块被永久拒绝、幽灵预编辑留在输入框里）；② 上行未提交
+// 文本。同时钉住安全判据：文档已换代而输入框还没对齐（修订号不符）时【不许】
+// 提交，否则旧块文本会被灌回新文档。
+REGISTER_TEST(md_module_live_blur_commit,
+              "markdown_module: 实时态失焦提交（清组字 + 上行未提交文本 + 修订号守门，M3）", {
+    const std::string text = "# T\n\npara one\n";
+    test_support::MdHeadlessEnv env(kDirPrefix, "liveblur", kDbName);
+    DOCTEST_REQUIRE(env.db != nullptr);
+    DOCTEST_REQUIRE(writeTextFile(env.dir / "blur.md", text));
+
+    module::markdown::MdBlockModel model;
+    model.update(text);
+    DOCTEST_REQUIRE(model.blocks().size() >= 2);
+    const module::markdown::MdBlock& last = model.blocks().back();
+    const std::string prefix = text.substr(0, last.start);
+    const std::string blockText = text.substr(last.start, last.end - last.start);
+
+    std::unique_ptr<::core::Module> mod(create_markdown_module());
+    mod->onStart();
+    eui::Screen screen;
+    screen.width = 1600.0f;
+    screen.height = 1000.0f;
+    MdLiveEnv e;
+    auto frame = [&](void) { e.frame([&](eui::Ui& u) { mod->compose(u, screen); }); };
+
+    frame();
+    DOCTEST_REQUIRE(openFirstNote(*e.ui));
+    frame();
+    DOCTEST_REQUIRE(e.ui->find(kEditorInputId) != nullptr);
+    e.ui->state<MdInputState>(kEditorInputId).cursor =
+        static_cast<int>(last.start);                  // 活动块 = 末块
+    DOCTEST_REQUIRE(cycleMode(mod.get()));             // → 实时
+    frame();
+    DOCTEST_REQUIRE(e.ui->find("md.live.input") != nullptr);
+    DOCTEST_CHECK_EQ(e.ui->state<MdInputState>("md.live.input").text, blockText);
+
+    // ---- ① 幽灵组字：失焦必须清掉（否则冻结谓词恒真 → 切块永久被拒）----
+    {
+        MdInputState& st = e.ui->state<MdInputState>("md.live.input");
+        st.compositionText = "ni";
+        const unsigned long long rev = st.compositionRevision;
+        DOCTEST_REQUIRE(blurLiveInput(*e.ui));
+        DOCTEST_CHECK_EQ(e.ui->state<MdInputState>("md.live.input").compositionText,
+                         std::string());
+        DOCTEST_CHECK(e.ui->state<MdInputState>("md.live.input").compositionRevision >
+                      rev);
+    }
+
+    // ---- ② 未提交文本：失焦上行（下一帧起文档/输入框都含它，且落盘）----
+    {
+        MdInputState& st = e.ui->state<MdInputState>("md.live.input");
+        st.text += "Z";   // 模拟「输入框已有内容但没走 onChange」的那一帧
+        st.cursor = static_cast<int>(st.text.size());
+        DOCTEST_REQUIRE(blurLiveInput(*e.ui));
+    }
+    frame();
+    DOCTEST_CHECK_MESSAGE(
+        e.ui->state<MdInputState>("md.live.input").text == blockText + "Z",
+        "失焦未上行未提交文本：[" + e.ui->state<MdInputState>("md.live.input").text +
+            "]");
+    std::this_thread::sleep_for(std::chrono::milliseconds(520));
+    frame();   // 落盘
+    std::string saved;
+    DOCTEST_REQUIRE(readFileBytes(env.dir / "blur.md", &saved));
+    DOCTEST_CHECK_MESSAGE(saved == prefix + blockText + "Z", "落盘 [" + saved + "]");
+
+    // ---- ③ 修订号守门：文档已换代（用真实输入让 rev 前进）、输入框还没对齐
+    //      → 失焦【不许】把旧文本灌回文档 ----
+    DOCTEST_REQUIRE(typeIntoLiveInput(*e.ui, "W"));   // 文档 + rev 前进、输入框已同步
+    e.ui->state<MdInputState>("md.live.input").text = "STALE";  // 造出"未对齐"的那一帧
+    DOCTEST_REQUIRE(blurLiveInput(*e.ui));
+    std::this_thread::sleep_for(std::chrono::milliseconds(520));
+    frame();
+    std::string saved2;
+    DOCTEST_REQUIRE(readFileBytes(env.dir / "blur.md", &saved2));
+    DOCTEST_CHECK_MESSAGE(saved2.find("STALE") == std::string::npos,
+                          "修订号不符时仍把旧文本灌回文档：[" + saved2 + "]");
+    DOCTEST_CHECK_MESSAGE(saved2 == prefix + blockText + "ZW",
+                          "落盘 [" + saved2 + "] 期望 [" + prefix + blockText + "ZW]");
+    mod->onStop();
+    return true;
+})
+
+// M3：切态 / 换笔记 = 输入框状态换代（M0 C2 的 releaseStateScope）——释放
+// md.live.input 前缀（组字 / 光标 / framework undo 栈不许跟着稳定 id 复活），
+// 并靠 liveFocusPending_ 同帧补发聚焦（释放会清焦点；"先释放、后补发"的顺序由
+// Runtime::compose 保证：consumeReleasedStateScopes → consumePendingFocusId）。
+REGISTER_TEST(md_module_live_state_release_note_switch,
+              "markdown_module: 实时态换笔记释放输入框状态 + 同帧补回焦点（M3，headless）", {
+    // 两篇笔记的块文本完全相同（# T / para one）——"文本没变 → 不换文本"时，
+    // 唯一能证明状态被换代的证据就是组字/undo 栈被清 + 焦点被补回
+    const std::string docA = "# T\n\npara one\n";
+    const std::string docB = "# T\n\npara one\n";
+    test_support::MdHeadlessEnv env(kDirPrefix, "liverelease", kDbName);
+    DOCTEST_REQUIRE(env.db != nullptr);
+    DOCTEST_REQUIRE(writeTextFile(env.dir / "a.md", docA));
+    DOCTEST_REQUIRE(writeTextFile(env.dir / "b.md", docB));
+
+    std::unique_ptr<::core::Module> mod(create_markdown_module());
+    mod->onStart();
+    eui::Screen screen;
+    screen.width = 1600.0f;
+    screen.height = 1000.0f;
+    MdLiveEnv e;
+    auto frame = [&](void) { e.frame([&](eui::Ui& u) { mod->compose(u, screen); }); };
+
+    frame();
+    const auto* rowA = findFileRowByName(*e.ui, "a.md");
+    DOCTEST_REQUIRE(rowA != nullptr);
+    DOCTEST_REQUIRE(rowA->onClick != nullptr);
+    rowA->onClick();
+    frame();
+    DOCTEST_REQUIRE(cycleMode(mod.get()));   // → 实时
+    frame();
+    DOCTEST_REQUIRE(e.ui->find("md.live.input") != nullptr);
+
+    // 造出"上一篇残留"：组字在飞 + 非零光标 + framework undo 栈有条目
+    {
+        MdInputState& st = e.ui->state<MdInputState>("md.live.input");
+        st.compositionText = "ni";
+        st.cursor = 3;
+        st.undoStack.push_back(
+            components::input_detail::InputModel::EditSnapshot{});
+    }
+
+    const auto* rowB = findFileRowByName(*e.ui, "b.md");
+    DOCTEST_REQUIRE(rowB != nullptr);
+    DOCTEST_REQUIRE(rowB->onClick != nullptr);
+    rowB->onClick();
+    frame();
+    DOCTEST_REQUIRE(e.ui->find("md.live.input") != nullptr);
+    // ① 状态换代：组字 / 光标 / undo 栈都不许跟着 id 复活
+    DOCTEST_CHECK_EQ(e.ui->state<MdInputState>("md.live.input").compositionText,
+                     std::string());
+    DOCTEST_CHECK_EQ(e.ui->state<MdInputState>("md.live.input").undoStack.size(),
+                     static_cast<size_t>(0));
+    DOCTEST_CHECK_EQ(e.ui->state<MdInputState>("md.live.input").cursor, 0);
+    // ② 焦点被同帧补回（释放会清焦点；不补发则换笔记后打字落空）
+    DOCTEST_CHECK(e.ui->isFocused("md.live.input.hit"));
+    // ③ 输入框文本仍是新笔记的块源码（换代后重新按锚取块）
+    const std::string got = e.ui->state<MdInputState>("md.live.input").text;
+    DOCTEST_CHECK_MESSAGE(docB.find(got) != std::string::npos,
+                          "换代后输入框文本 [" + got + "] 不是新文档的块");
+    mod->onStop();
     return true;
 })

@@ -45,6 +45,16 @@ size_t mdLiveBlockLocalOffset(const MdBlock& block, size_t cursorByte);
 using MdLiveLineCountFn =
     std::function<int(const std::string& blockText, float textWidth)>;
 
+// IME 冻结谓词（spec §3.4 / 风险 R3）：组字非空期间【冻结块推导 + 拒绝一切
+// 切块入口】——中文拼音在飞的预编辑文本只活在 input 的 display 状态里（不写
+// 文档），此刻换块换文本会把组字撕裂（丢字/串块）。语义 = 「组字文本非空」，
+// 单独抽成函数是为了让判定口径可单测（消费侧喂 InputState::compositionText）。
+// 消费侧两条纪律（缺一不可）：
+//   ① 冻结期间不重算活动块锚（不换文本、不换块）；
+//   ② 失焦时必须清 compositionText（否则焦点已走、组字永不结束 → 本谓词
+//      恒真 → 切块被永久拒绝 + 幽灵预编辑留在输入框里）。
+bool mdLiveCompositionFrozen(const std::string& compositionText);
+
 // 内容贴合高度（spec D2 / §4.2）：
 //     h = inset×2 + 行数 × fontSize × 1.2 + 1
 // 行高系数 1.2 与 input 内部 lineHeight = fontSize×1.2 同源（components/input.h）；
