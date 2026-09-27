@@ -190,6 +190,9 @@ public:
         const float pad = t.sizes.spacingXXLarge;       // 40
         const float gap = t.sizes.spacingLarge * 1.25f; // 20
         const float contentW = screen.width - pad * 2.0f;
+        // 审计 M6：header 右侧按钮组宽（标题列 = contentW - 本值）——header 行
+        // gap=0，两段必须相加等于 contentW；字面量写死两处改一处忘一处就右缘错位
+        constexpr float kHeaderActionsW = 212.0f;
         const float cardGap = 20.0f;
         // 卡高随字号缩放派生（卡内 y 布局同源缩放，大字号不裁切）
         const float statH = 120.0f * core::theme::fontScale();
@@ -222,11 +225,11 @@ public:
                         // Todo 560/560、Claude 360/360）：旧 240 让整行比下方满宽
                         // 卡内缩 28px，右缘不齐（home.header 行 gap=0，两段和=contentW）
                         ui.column("home.greeting")
-                            .size(std::max(280.0f, contentW - 212.0f), 72.0f)
+                            .size(std::max(280.0f, contentW - kHeaderActionsW), 72.0f)
                             .gap(6.0f)
                             .content([&] {
                                 ui.text("home.h1")
-                                    .size(std::max(280.0f, contentW - 212.0f), 40.0f)
+                                    .size(std::max(280.0f, contentW - kHeaderActionsW), 40.0f)
                                     .text("欢迎回到 DevDesk")
                                     .fontSize(t.sizes.fontSizePage)
                                     .lineHeight(40.0f)
@@ -234,7 +237,7 @@ public:
                                     .color(t.colors.textPrimary)
                                     .build();
                                 ui.text("home.date")
-                                    .size(std::max(280.0f, contentW - 212.0f), 18.0f)
+                                    .size(std::max(280.0f, contentW - kHeaderActionsW), 18.0f)
                                     .text("今天是 " + formatTodayCn(now))
                                     .fontSize(t.sizes.fontSizeSmall)
                                     .lineHeight(18.0f)
@@ -245,7 +248,7 @@ public:
 
                         // 右侧按钮组
                         ui.row("home.header.actions")
-                            .size(212.0f, 40.0f)
+                            .size(kHeaderActionsW, 40.0f)
                             .justifyContent(eui::Align::END)
                             .alignItems(eui::Align::CENTER)
                             .gap(t.sizes.spacingSmall)

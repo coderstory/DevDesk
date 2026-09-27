@@ -2334,3 +2334,100 @@ REGISTER_TEST(todo_ui_esc_cancel_dialogs,
     mod->onStop();
     return true;
 })
+
+// ---- 审计 M5：Esc 关最上层弹窗（模块级兜底）+ 焦点输入框优先让位 ----
+// 通道 = Module::onKeyEvent（app 级 onKeyEvent → Router 派发到当前页，与
+// todo_ui_keyboard_move 同款直调）。派发序见上游 core/runtime/runtime_input.h
+// updateKeyInput：焦点元素 onKeyEvent 返回 true 则不再回调本通道。
+REGISTER_TEST(todo_ui_esc_closes_topmost_dialog,
+              "todo_ui: Esc 关最上层弹窗（确认类无输入框）+ 输入框聚焦让位 onCancel（审计 M5）", {
+    TestEnv env;
+    DOCTEST_REQUIRE(env.ready);
+    auto col = env.svc->createColumn("Esc列");
+    DOCTEST_REQUIRE(col.isOk());
+    auto a = env.svc->createTask(col.value().id, "Esc待删任务");
+    DOCTEST_REQUIRE(a.isOk());
+
+    std::unique_ptr<::core::Module> mod(create_todo_module());
+    mod->onStart();
+
+    auto escPress = [] {
+        eui::KeyEvent e;
+        e.key = eui::InputKey::Escape;
+        e.action = eui::KeyAction::Press;
+        return e;
+    };
+
+    // 0) 无弹窗：不消费（兜底不越权吃键）
+    DOCTEST_CHECK(!mod->onKeyEvent(escPress()));
+
+    // 1) 确认类弹窗（无输入框，Esc 修复前完全无效）：右键卡片 → 删除 → 确认
+    //    弹窗 → Esc 关闭 = 取消，任务不落删
+    {
+        Frame frame(mod.get());
+        eui::PointerEvent pe;
+        eui::Rect rect;
+        const auto* card = frame.ui.find("todo.col.4.card.0.bg");
+        DOCTEST_REQUIRE(card != nullptr);
+        DOCTEST_REQUIRE(card->onContextMenu != nullptr);
+        card->onContextMenu(pe, rect);
+        frame.refresh();
+        const auto* del = frame.ui.find("todo.ctx.level.0.item.7");  // 5 列时末项=删除
+        DOCTEST_REQUIRE(del != nullptr);
+        DOCTEST_REQUIRE(del->onClick != nullptr);
+        del->onClick();
+        frame.refresh();
+        DOCTEST_REQUIRE(frame.ui.find("todo.dialog.delcol.panel") != nullptr);
+        DOCTEST_CHECK_EQ(frame.ui.find("todo.dialog.delcol.panel")->opacity, 1.0f);
+        DOCTEST_CHECK(mod->onKeyEvent(escPress()));   // 兜底消费
+        frame.refresh();
+        DOCTEST_CHECK_EQ(frame.ui.find("todo.dialog.delcol.panel")->opacity, 0.0f);
+    }
+    {
+        auto ts = env.svc->listTasks(col.value().id);
+        DOCTEST_REQUIRE(ts.isOk());
+        DOCTEST_CHECK_EQ(ts.value().size(), static_cast<size_t>(1));  // Esc=取消，未删
+    }
+
+    // 2) 输入框聚焦：Esc 走 input.onCancel（清标签草稿），模块兜底让位不重复
+    //    —— 详情弹窗保持打开（若两条路径都跑了 = 重复处理，这里会看到弹窗被关）
+    {
+        Frame frame(mod.get());
+        const auto* card = frame.ui.find("todo.col.4.card.0.bg");
+        DOCTEST_REQUIRE(card != nullptr);
+        DOCTEST_REQUIRE(card->onClick != nullptr);
+        card->onClick();   // 打开详情弹窗
+        frame.refresh();
+        DOCTEST_REQUIRE(frame.ui.find("todo.dialog.detail.panel") != nullptr);
+        DOCTEST_CHECK_EQ(frame.ui.find("todo.dialog.detail.panel")->opacity, 1.0f);
+        auto* thit = frame.ui.find("todo.dialog.detail.tag.input.hit");
+        DOCTEST_REQUIRE(thit != nullptr);
+        DOCTEST_REQUIRE(thit->onTextInput != nullptr);
+        eui::TextInputEvent t;
+        t.text = "半截草稿";
+        thit->onTextInput(t);
+        frame.refresh();
+        thit = frame.ui.find("todo.dialog.detail.tag.input.hit");
+        DOCTEST_REQUIRE(thit != nullptr);
+        // 模拟 runtime 派发序：焦点元素优先，未消费才轮到模块兜底
+        const bool consumed = thit->onKeyEvent(escPress());
+        DOCTEST_CHECK(consumed);   // input 消费（onCancel 清草稿）
+        if (!consumed) mod->onKeyEvent(escPress());
+        frame.refresh();
+        const auto& st =
+            frame.ui.state<components::input_detail::InputModel::InputState>(
+                "todo.dialog.detail.tag.input");
+        DOCTEST_CHECK_EQ(st.text, std::string(""));   // 草稿确由 onCancel 清掉
+        DOCTEST_CHECK_EQ(frame.ui.find("todo.dialog.detail.panel")->opacity, 1.0f);
+    }
+
+    // 3) 详情弹窗无未存改动：Esc = 兜底关最上层
+    DOCTEST_CHECK(mod->onKeyEvent(escPress()));
+    {
+        Frame frame(mod.get());
+        DOCTEST_CHECK_EQ(frame.ui.find("todo.dialog.detail.panel")->opacity, 0.0f);
+    }
+
+    mod->onStop();
+    return true;
+})

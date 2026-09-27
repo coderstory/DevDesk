@@ -139,6 +139,9 @@ public:
         const float gap = 16.0f;
         const float leftW = 400.0f;
         const float rightW = contentW - leftW - gap;
+        // 审计 M6：header 右侧操作区宽（标题列 = contentW - 本值）——header 行
+        // gap=0，两段必须相加等于 contentW；字面量写死两处改一处忘一处就右缘错位
+        constexpr float kHeaderActionsW = 360.0f;
 
         // ---- 读真实状态（ClaudeService 全局单例，由 main.cpp 注册）----
         ClaudeService* svc = ClaudeService::global();
@@ -211,11 +214,11 @@ public:
                     .content([&] {
                         // 左侧标题 + 状态
                         ui.column("claude.title.col")
-                            .size(contentW - 360.0f, headerH)
+                            .size(contentW - kHeaderActionsW, headerH)
                             .gap(6.0f)
                             .content([&] {
                                 ui.row("claude.title.row")
-                                    .size(contentW - 360.0f, 28.0f)
+                                    .size(contentW - kHeaderActionsW, 28.0f)
                                     .gap(12.0f)
                                     .alignItems(eui::Align::CENTER)
                                     .content([&] {
@@ -258,7 +261,7 @@ public:
                                        portStr)
                                     : std::string("管理多套 Claude API 配置 · 代理已停止，点右上角启动");
                                 ui.text("claude.subtitle")
-                                    .size(contentW - 360.0f, 16.0f)
+                                    .size(contentW - kHeaderActionsW, 16.0f)
                                     .text(subtitle)
                                     .fontSize(t.sizes.fontSizeSmall)
                                     .lineHeight(16.0f)
@@ -269,7 +272,7 @@ public:
 
                         // 右侧操作
                         ui.row("claude.actions")
-                            .size(360.0f, 40.0f)
+                            .size(kHeaderActionsW, 40.0f)
                             .justifyContent(eui::Align::END)
                             .alignItems(eui::Align::CENTER)
                             .gap(t.sizes.spacingSmall)
@@ -1040,6 +1043,11 @@ public:
         if (key.action != eui::KeyAction::Press) {
             return false;
         }
+        // 审计 M5：Esc 关最上层弹窗。键走得到本通道 = 焦点元素没消费（表单各
+        // 输入框均挂 onCancel，聚焦时 Esc 已被 input 收走 → 天然让位不重复）
+        if (key.key == eui::InputKey::Escape) {
+            return closeTopmostDialog();
+        }
         if (!key.modifiers.shortcut() || key.modifiers.alt) {
             return false;
         }
@@ -1065,6 +1073,15 @@ public:
     }
 
 private:
+    // 审计 M5：Esc 关最上层弹窗（顺序 = 绘制序/z 序倒序：调用记录 > 删除确认
+    // > 表单）。返回 true = 本键已消费；无弹窗返回 false
+    bool closeTopmostDialog() {
+        if (callsDialogOpen_) { callsDialogOpen_ = false; return true; }
+        if (deleteConfirmOpen_) { deleteConfirmOpen_ = false; return true; }
+        if (formOpen_) { formOpen_ = false; return true; }
+        return false;
+    }
+
     // ============ 审计 perf [13]：compose 数据缓存 ============
     // 脏 = 页面进入/写操作后的重查帧，profiles/active/recent 三类全查；
     // recent 另在 callLogVersion 变化（代理落新日志）时重查。list 查询成功

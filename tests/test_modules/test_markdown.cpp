@@ -2564,3 +2564,82 @@ REGISTER_TEST(md_module_split_block_click_hover,
     mod->onStop();
     return true;
 })
+
+// ---- 审计 M5：Esc 关最上层弹窗/菜单（模块级兜底）----
+// 删除确认弹窗无输入框 → Esc 修复前无效；右键菜单是盖在弹窗之上的浮层
+// （zIndex 1050），Esc 必须先关菜单本身。通道 = Module::onKeyEvent
+// （app 级 onKeyEvent → Router 派发到当前页）。
+REGISTER_TEST(md_esc_closes_topmost_dialog,
+              "markdown_module: Esc 关最上层弹窗/菜单（删除确认无输入框，审计 M5）", {
+    MdUiEnv env("escui");
+    DOCTEST_REQUIRE(env.db != nullptr);
+    DOCTEST_REQUIRE(writeTextFile(env.dir / "a.md", "# A\n正文A\n"));
+
+    std::unique_ptr<::core::Module> mod(create_markdown_module());
+    mod->onStart();
+
+    eui::Screen screen;
+    screen.width = 1600.0f;
+    screen.height = 1000.0f;
+    eui::Ui ui;
+    auto frame = [&](const char* page) {
+        ui.begin(page);
+        mod->compose(ui, screen);
+        ui.end();
+    };
+    auto escPress = [] {
+        eui::KeyEvent e;
+        e.key = eui::InputKey::Escape;
+        e.action = eui::KeyAction::Press;
+        return e;
+    };
+    auto findRow = [&](const std::string& name) -> const core::dsl::Element* {
+        for (int i = 0; i < 8; ++i) {
+            const auto* nm = ui.find("md.tree.node." + std::to_string(i) + ".name");
+            if (nm != nullptr && nm->text == name) {
+                return ui.find("md.tree.node." + std::to_string(i) + ".row");
+            }
+        }
+        return nullptr;
+    };
+
+    // 0) 无弹窗：不消费（兜底不越权吃键）
+    DOCTEST_CHECK(!mod->onKeyEvent(escPress()));
+
+    // 1) 右键菜单浮层：Esc 只关菜单（level.0 opacity 1 → 0），笔记不删
+    frame("esc1");
+    const auto* row = findRow("a.md");
+    DOCTEST_REQUIRE(row != nullptr);
+    DOCTEST_REQUIRE(row->onContextMenu != nullptr);
+    eui::PointerEvent pe;
+    pe.x = 150.0;
+    pe.y = 230.0;
+    row->onContextMenu(pe, eui::Rect{});
+    frame("esc2");
+    DOCTEST_REQUIRE(ui.find("md.ctx.level.0") != nullptr);
+    DOCTEST_CHECK_EQ(ui.find("md.ctx.level.0")->opacity, 1.0f);
+    DOCTEST_CHECK(mod->onKeyEvent(escPress()));
+    frame("esc3");
+    DOCTEST_CHECK_EQ(ui.find("md.ctx.level.0")->opacity, 0.0f);
+
+    // 2) 删除确认弹窗（无输入框）：Esc = 取消，弹窗关、文件仍在
+    const auto* row2 = findRow("a.md");
+    DOCTEST_REQUIRE(row2 != nullptr);
+    DOCTEST_REQUIRE(row2->onContextMenu != nullptr);
+    row2->onContextMenu(pe, eui::Rect{});
+    frame("esc4");
+    const auto* delItem = ui.find("md.ctx.level.0.item.1");  // 1=删除笔记
+    DOCTEST_REQUIRE(delItem != nullptr);
+    DOCTEST_REQUIRE(delItem->onClick != nullptr);
+    delItem->onClick();
+    frame("esc5");
+    DOCTEST_REQUIRE(ui.find("md.dialog.del.panel") != nullptr);
+    DOCTEST_CHECK_EQ(ui.find("md.dialog.del.panel")->opacity, 1.0f);
+    DOCTEST_CHECK(mod->onKeyEvent(escPress()));
+    frame("esc6");
+    DOCTEST_CHECK_EQ(ui.find("md.dialog.del.panel")->opacity, 0.0f);
+    DOCTEST_CHECK(fs::exists(env.dir / "a.md"));
+
+    mod->onStop();
+    return true;
+})

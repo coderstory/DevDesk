@@ -674,12 +674,11 @@ public:
             event.action != eui::KeyAction::Repeat) {
             return false;
         }
-        // 审计 [24]：新建列弹窗的 Esc=取消兜底（输入框未聚焦时键走本 app 级
-        // 通道；聚焦时由 input 的 onCancel 处理——审计 [21] 上游收口后替代
-        // 原 per-dialog passthrough hack）。
-        if (newColumnOpen_ && event.key == eui::InputKey::Escape) {
-            newColumnOpen_ = false;
-            return true;
+        // 审计 M5：Esc 关最上层弹窗。键走得到本通道 = 焦点元素没消费（弹窗
+        // 输入框聚焦时 Esc 已被 input 的 onCancel 收走 → 天然让位不重复）。
+        // 审计 [24] 的新建列专用兜底并入 closeTopmostPopup。
+        if (event.key == eui::InputKey::Escape) {
+            return closeTopmostPopup();
         }
         if (event.key != eui::InputKey::Up && event.key != eui::InputKey::Down) {
             return false;
@@ -695,6 +694,36 @@ public:
     }
 
 private:
+    // 审计 M5：Esc 关「最上层」弹窗（顺序 = z 序倒序：确认删除 1100 > 日期
+    // 选择 1100 > 右键菜单 1050 > 重命名/逾期/详情/新建列/新建任务）。
+    // 返回 true = 本键已消费；无弹窗返回 false（按键继续走既有路径）
+    bool closeTopmostPopup() {
+        if (confirmOpen_) { confirmOpen_ = false; return true; }
+        if (datePickOpen_) { datePickOpen_ = false; return true; }
+        if (ctxOpen_) { ctxOpen_ = false; return true; }
+        if (renameOpen_) { renameOpen_ = false; return true; }
+        if (overdueOpen_) { overdueOpen_ = false; return true; }
+        if (detailOpen_) { requestCloseDetailDialog(); return true; }
+        if (newColumnOpen_) { newColumnOpen_ = false; return true; }
+        if (newTaskOpen_) { newTaskOpen_ = false; return true; }
+        return false;
+    }
+
+    // 详情弹窗关闭统一入口（审计 M5：Esc 兜底与 backdrop 点击共用同一份守卫，
+    // 避免两处各写一遍「未存改动先警告」而语义漂移）
+    void requestCloseDetailDialog() {
+        // 产品审计 2026-09-23 [2]：有未存改动时第一次只警告不关，再触发一次
+        // = 明确放弃修改才关。EUI-NEO dialog 无 dismissable 开关（中期上游补），
+        // 两击语义是当前组件能力下的守卫
+        if (detailFormDirty() && !detailDiscardArmed_) {
+            detailDiscardArmed_ = true;
+            setStatus("有未保存修改：点「保存」落库，或再点一次遮罩放弃", true);
+            return;
+        }
+        detailDiscardArmed_ = false;
+        detailOpen_ = false;
+    }
+
     // ---------- 顶部 Header ----------
     // 右侧动作区 560px：搜索框(240) + 逾期入口(104) + 「+ 列」(72) + 「+ 新建任务」(120) + 间距
     void drawHeader(eui::Ui& ui, float contentW, float headerH, float bodyH,
@@ -2035,16 +2064,8 @@ private:
             .theme(themeTokens)
             .onOpenChange([this](bool v) {
                 // 产品审计 2026-09-23 [2]：backdrop 点击（dialog 唯一外部关闭
-                // 通道）在有未存改动时第一次只警告不关，再点一次 = 明确放弃
-                // 修改才关。EUI-NEO dialog 无 dismissable 开关（中期上游补），
-                // 两击语义是当前组件能力下的守卫
-                if (!v && detailFormDirty() && !detailDiscardArmed_) {
-                    detailDiscardArmed_ = true;
-                    setStatus("有未保存修改：点「保存」落库，或再点一次遮罩放弃", true);
-                    return;
-                }
-                detailDiscardArmed_ = false;
-                detailOpen_ = v;
+                // 通道）→ 与 Esc 兜底共用同一份守卫（requestCloseDetailDialog）
+                if (!v) requestCloseDetailDialog();
             })
             .content([&] {
                 ui.text("todo.dialog.detail.title")

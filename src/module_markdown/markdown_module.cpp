@@ -311,6 +311,23 @@ public:
     }
 
 private:
+    // 审计 M5：Esc 关最上层弹窗/浮层（顺序 = z 序倒序：重命名 > 删除确认 >
+    // 编辑器右键菜单 1050 > 笔记右键菜单 1050 > 新建文件夹 > 新建笔记）。
+    // 返回 true = 本键已消费；无弹窗返回 false
+    bool closeTopmostPopup() {
+        if (renameOpen_) { renameOpen_ = false; return true; }
+        if (deleteConfirmOpen_) { deleteConfirmOpen_ = false; return true; }
+        if (editorCtxOpen_) { editorCtxOpen_ = false; return true; }
+        if (ctxMenuOpen_) { ctxMenuOpen_ = false; return true; }
+        if (newFolderOpen_) {
+            newFolderOpen_ = false;
+            newFolderParentOpen_ = false;  // 关弹窗顺手收下拉（同 onOpenChange）
+            return true;
+        }
+        if (newNoteOpen_) { newNoteOpen_ = false; return true; }
+        return false;
+    }
+
     // ---------- 顶部 Header ----------
     void drawHeader(eui::Ui& ui,
                     float contentW,
@@ -1911,6 +1928,12 @@ private:
     // 焦点在编辑器/搜索框/弹窗输入时 runtime_input 把内置未消费的键回调出来，
     // Ctrl+N 不在 EUI-NEO input 内置键位表（只吃 A/C/X/V/Z/Y），能到达这里
     bool onKeyEvent(const eui::KeyEvent& key) override {
+        // 审计 M5：Esc 关最上层弹窗/浮层。键走得到本通道 = 焦点元素没消费
+        //（新建笔记/新建文件夹/重命名三个弹窗的输入框均挂 onCancel，聚焦时
+        // Esc 已被 input 收走 → 天然让位不重复）
+        if (key.isDown() && key.key == eui::InputKey::Escape) {
+            return closeTopmostPopup();
+        }
         if (key.isDown() && key.modifiers.shortcut() && key.modifiers.shift &&
             key.key == eui::InputKey::P) {
             setMode(static_cast<ViewMode>((static_cast<int>(mode_) + 1) % 3));
