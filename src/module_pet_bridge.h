@@ -1,0 +1,63 @@
+// src/module_pet_bridge.h
+// 设置页 ↔ 桌宠的进程内自由函数桥（专家审计 2026-09-27 M1 短期项）：
+// 把原先只写在 settings_module.cpp 里的 4 个 extern 声明收口到单一头。
+// 落点是 **src 根（应用层，与 app_sidebar.h 同级）**而非任一 module_* 目录：
+// 模块间零 include 铁律（CLAUDE.md「架构要点」）管的是 module_* 互相依赖，
+// 本头不属任何模块——settings include 它不构成"include 兄弟模块的头"。
+//
+// 边界（审计 [5][36] 的刻意裁决，本次不动）：module_* 之间不互相依赖
+// （防循环，CLAUDE.md「架构要点」）。设置页桌宠卡要用这 4 个操作，但 settings
+// 不 include pet 的实体头（pet_window.h / pet_skin.h——会拖进 EUI-NEO 类型与
+// PetSkin/PetConfig 布局，跨 TU 各自重定义是 ODR 风险），CMake 也不 link
+// devdesk_module_pet：只在本头取声明，符号在最终可执行文件（DevDesk /
+// devdesk_tests 均直接链接全部 module_*）链接期解析。本头因此只依赖标准库
+// （string/vector），不引任何 EUI-NEO / pet 内部类型。全部不抛异常（项目
+// Result 口径）：pet 侧失败时记日志并保持原状，调用方无需接错误。
+//
+// 签名漂移防线（本项新增）：末尾 static_assert 把 4 个声明钉死在函数指针
+// 类型上，改本头任一声明立刻编译报错；pet 侧定义 TU（pet_window.cpp /
+// pet_skin.cpp）直接 include 本头，故「pet 侧改签名漏改本头」也在编译期炸，
+// 而不是拖到链接期才 undefined symbol。
+//
+// 分组（为审计 M1 中期项「窗口生命周期归还 pet、settings 只发意图」留边界）：
+//   A 只读查询——settings 取展示用列表/初值，不改 pet 任何状态；
+//   B 改另一个模块状态——写盘并同步操作 pet 窗口（换肤 = 关旧窗开新窗）。
+#pragma once
+
+#include <string>
+#include <type_traits>
+#include <vector>
+
+namespace module::pet {
+
+// ---- A 组：只读查询（无副作用）----
+// 皮肤清单（扫皮肤根候选目录下含 pet.json 的目录；设置页下拉与右键换肤
+// 菜单同一数据源）
+std::vector<std::string> discoverSkins();
+// 当前皮肤名（读 pet_config.json；applyPetSkin 双写运行时 + 盘，盘即真值）
+std::string currentSkinName();
+
+// ---- B 组：改 pet 模块状态（写盘 + 同步窗口操作）----
+// 换肤：名字必须在 discoverSkins() 发现列表内（会拼进文件系统路径，防手改
+// 配置注入），未知名字拒绝不动；已发现则写盘并热切换（关旧窗 → 按新皮肤
+// 原位重开）；窗口未开时只持久化（下次启动生效）
+void applyPetSkin(const std::string& skinName);
+// 位置重置：持久化坐标清回未设置哨兵，窗口开着则立刻移回默认位
+void resetPetPosition();
+
+} // namespace module::pet
+
+// ---- 签名漂移哨兵：函数指针类型须与 pet 侧定义逐字一致（参数名不参与
+// mangled name，改参数名不算漂移）----
+static_assert(std::is_same_v<decltype(&module::pet::discoverSkins),
+                             std::vector<std::string> (*)()>,
+              "module_pet_bridge: discoverSkins 签名漂移");
+static_assert(std::is_same_v<decltype(&module::pet::currentSkinName),
+                             std::string (*)()>,
+              "module_pet_bridge: currentSkinName 签名漂移");
+static_assert(std::is_same_v<decltype(&module::pet::applyPetSkin),
+                             void (*)(const std::string&)>,
+              "module_pet_bridge: applyPetSkin 签名漂移");
+static_assert(std::is_same_v<decltype(&module::pet::resetPetPosition),
+                             void (*)()>,
+              "module_pet_bridge: resetPetPosition 签名漂移");

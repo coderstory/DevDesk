@@ -22,6 +22,7 @@
 #include "core/platform/context_menu.h"
 #include "core/platform/power_events.h"
 #include "core/proxy_stats.h"
+#include "module_pet_bridge.h"
 #include "module_pet/pet_bubble.h"
 #include "module_pet/pet_config.h"
 #include "module_pet/pet_frame_player.h"

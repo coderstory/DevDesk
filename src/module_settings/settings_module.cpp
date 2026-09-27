@@ -64,23 +64,13 @@
 #include "platform/file_open.h"
 #include "platform/system_theme.h"
 
-// ---- 审计 [5][36] 解耦桥：module_pet 自由函数 extern 声明 ----
-// 实现在 module_pet（pet_window.cpp / pet_skin.cpp）。settings 不 include
-// module_pet 任何头、CMake 不 link devdesk_module_pet——符号在最终可执行
-// 文件（DevDesk / devdesk_tests 均直接链接全部 module_*）链接期解析。
-// 声明与 pet 侧定义必须逐字同签名（mangled name 匹配，参数名不参与）；
-// pet 侧改动这三个函数签名时本块必须同步，否则表现为链接 undefined symbol
-// 而非编译错误。只暴露标量/平凡类型（string/bool/vector<string>），不共享
-// PetConfig 结构体布局（跨 TU 各自重定义 = ODR 风险）。
-// PetConfig 快照类的盘读取点已换成 pet 侧新增的
-// currentSkinName() 只读桥（语义等价：apply 路径
-// 双写运行时 + 盘，盘即真值）。
-namespace module::pet {
-std::vector<std::string> discoverSkins();
-void applyPetSkin(const std::string& skinName);
-void resetPetPosition();
-std::string currentSkinName();
-} // namespace module::pet
+// ---- 审计 [5][36] 解耦桥：module_pet 自由函数声明 ----
+// 声明已收口到中立桥头 module_pet_bridge.h（src 根、应用层，审计 M1 短期
+// 项）：settings 仍不 include module_pet 任何头、CMake 不 link
+// devdesk_module_pet——符号在最终可执行文件（DevDesk / devdesk_tests 均直接
+// 链接全部 module_*）链接期解析。只读查询 / 改对方状态两组边界与签名漂移
+// static_assert 见该头。
+#include "module_pet_bridge.h"
 
 #include <eui/app.h>
 #include <eui/dsl.h>
