@@ -529,16 +529,20 @@ public:
         if (!externalStateLoaded_) {
             refreshExternalState();
         }
-        const bool managed = takeoverManaged_;
+        // 审计 CPX-02 残：本处不再预读 managed（卡高只由警告行数决定；接管状态
+        // 行的文本/色在 drawProxyCard 内自读快照）
         size_t warnLines = 0;
-        if (managed && svc) {
+        if (svc) {
+            // 审计 CPX-02：警告行不再以「已接管」为展示门——takeOver 在写
+            // sidecar 之前失败（解析失败/写失败）时 sidecar 不存在 ⇒ 未接管，
+            // 但失败原因正是最该看见的一条。与详情页（claude_module.cpp 同款
+            // 收敛）同口径
             warnLines = std::min<size_t>(
                 svc->lastSyncWarnings().size(), 2);
         }
         // 代理卡高 = 内容底沿 + 16px 卡内下边距（与本 tab 其它卡一致）。内容底沿：
         // 接管状态行 98+18=116；有警告时改为警告行区底（118 + 16×行数，首行与
-        // 上一行留 2px）。旧公式 174+28+(managed?20:0) 的基数是「鼠标穿透」行等
-        // 已移除内容的残留，卡底留 50~100px 空白
+        // 上一行留 2px）
         const float proxyBottom = warnLines > 0
             ? 118.0f + static_cast<float>(warnLines) * 16.0f
             : 116.0f;
@@ -643,9 +647,8 @@ public:
                                             contentWidth, 288.0f, t);
                             cardY += 288.0f + gapY;
                             if (petOn) {
-                                // 卡高 = 内容底沿 104（皮肤下拉 64+40）+ 16px 下边距。
-                                // （「鼠标穿透」toggle 行 2026-09-24 已移除，120→168
-                                // 的加高是残留 → 回 120，卡底不再留 64px 空白）
+                                // 卡高 = 内容底沿 104（皮肤下拉 64+40，与同排的
+                                // 显示/位置重置按钮同底）+ 16px 卡内下边距 = 120
                                 drawPetCard(inner, "settings.card.pet",
                                             contentWidth, 120.0f, t);
                                 cardY += 120.0f + gapY;
@@ -1068,6 +1071,27 @@ private:
                         setStatus("桌宠位置已重置（主屏右下角）");
                     })
                     .build();
+                // 显示桌宠（PAB-13）：隐藏后的恢复入口（隐藏走右键「隐藏桌宠」
+                // 菜单项，之后本按钮即可重新开窗）。同排 y=64、居「位置重置」
+                // 左侧 8px；卡高保持 120（内容底沿 104 不变，故 contentKey 不变）
+                components::button(ui, id + ".show")
+                    .position(w - 28.0f - 160.0f - 168.0f, 64.0f)
+                    .size(160.0f, 40.0f)
+                    .text("显示桌宠")
+                    .fontSize(14.0f)
+                    .theme(compTheme, /*primary=*/false)
+                    .textColor(t.colors.textPrimary)
+                    .border(1.0f, t.colors.borderDefault)
+                    .onClick([this] {
+                        // 返回值 false 有两种：模块开关关（本会话未装配）或
+                        // 窗口已开着——都只需一句提示，不阻断
+                        if (::module::pet::showPetWindow()) {
+                            setStatus("已请求显示桌宠");
+                        } else {
+                            setStatus("桌宠本次会话未启用，重启后生效");
+                        }
+                    })
+                    .build();
             })
             .build();
     }
@@ -1300,7 +1324,9 @@ private:
                     .lineHeight(18.0f)
                     .color(managed ? t.colors.success : t.colors.textTertiary)
                     .build();
-                if (managed && svc) {
+                // 审计 CPX-02：渲染门与卡高计算同源（svc 而非 managed）——
+                // 未接管但警告非空（接管失败）时行必须画出来，否则卡高留了位
+                if (svc) {
                     const auto& warns = svc->lastSyncWarnings();
                     // ponytail: 最多展示 2 条（卡片高度约束），更多警告在
                     // 日志（LOG_WARN 全量）可查；⚠ 换 FA（图标/文字拆两个元素）
@@ -1762,7 +1788,6 @@ private:
     bool petSkinDropdownOpen_ = false;     // 桌宠皮肤下拉（M2）
     std::vector<std::string> petSkins_;    // 发现到的皮肤（M2，快照见 THS-01）
     std::string petSkinName_;              // 当前皮肤名（M2，快照见 THS-01）
-    // 桌宠挂机穿透功能已于 2026-09-24 移除（本成员删除）
     // 代理端口输入草稿（审计 [14]）：空 = 未编辑，compose 显示 cfg_.proxyPort；
     // applyProxyPort 成功后由 persist 侧刷新（下次进页恢复显示配置值）
     std::string proxyPortDraft_;

@@ -40,6 +40,7 @@
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
+#include <set>
 #include <sstream>
 #include <string>
 #include <vector>
@@ -1374,5 +1375,54 @@ REGISTER_TEST(pet_skin_frame_write_failure_keeps_old, "pet: 皮肤帧原子写�
 
     std::filesystem::remove_all(tmpPathOf(dir / "f0.png"), ec);
     removeTreeQuietly(dir);
+    return true;
+});
+
+// ---- PAB-12（波 1 L7）：气泡短语随机源 ----
+// 旧实现 std::rand 从未 srand = 每次启动同一序列（且短语顺序固定）。
+// 单进程内只能锁「随机源活着」：64 次抽样须出 ≥2 种短语，且每个结果都
+// 落在短语表内（不越界、不空串）。跨进程不再同序列无法在本用例断言
+REGISTER_TEST(pet_phrase_randomized, "pet: 气泡短语随机化（64 次抽样出多种）", {
+    using namespace module::pet;
+    auto parsed = parsePetSkinJson(kM2SkinJson);
+    DOCTEST_REQUIRE(parsed.isOk());
+    const PetSkin& skin = parsed.unsafeValue();
+    DOCTEST_REQUIRE(skin.phrases.size() >= static_cast<size_t>(2));
+
+    std::set<std::string> seen;
+    for (int i = 0; i < 64; ++i) {
+        seen.insert(pickPetPhrase(skin));
+    }
+    DOCTEST_CHECK(seen.size() >= static_cast<size_t>(2));
+    for (const std::string& phrase : seen) {
+        DOCTEST_CHECK(std::find(skin.phrases.begin(), skin.phrases.end(),
+                                phrase) != skin.phrases.end());
+    }
+    return true;
+});
+
+// ---- PAB-13（波 1 L7）：设置页「显示桌宠」桥 ----
+// 无头：handle 恒为 nullptr（onWindowCreated 只在主循环里回填），故这里锁
+// 「已装配过的会话 → showPetWindow 重新入队一条开窗请求，几何沿用 rt.config」
+REGISTER_TEST(pet_show_window_reenqueues,
+              "pet: showPetWindow 重新入队开窗请求（PAB-13）", {
+    const PetsDirEnv pets("showwin");
+    (void)app::consumeWindowRequests();  // 清残留
+
+    // 先装配一次（= main 模块门控通过；同时把 windowRequested 置位）
+    module::pet::startPetWindow(module::pet::PetWindowConfig{"", 120, 130});
+    const std::vector<app::DslWindowRequest> first = app::consumeWindowRequests();
+    DOCTEST_REQUIRE_EQ(first.size(), static_cast<size_t>(1));
+
+    // 重新显示：应再入队一条（皮肤/位置沿用 rt.config）
+    DOCTEST_CHECK(module::pet::showPetWindow());
+    const std::vector<app::DslWindowRequest> second = app::consumeWindowRequests();
+    DOCTEST_REQUIRE_EQ(second.size(), static_cast<size_t>(1));
+    DOCTEST_CHECK_EQ(second[0].pageId, "pet");
+    DOCTEST_CHECK_EQ(second[0].width, 128);
+    DOCTEST_CHECK_EQ(second[0].height, 128);
+    DOCTEST_CHECK(second[0].positionSet);
+    DOCTEST_CHECK_EQ(second[0].x, 120);
+    DOCTEST_CHECK_EQ(second[0].y, 130);
     return true;
 });

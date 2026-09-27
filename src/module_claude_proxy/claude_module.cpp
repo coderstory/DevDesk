@@ -600,13 +600,15 @@ public:
                                         .color(ccManaged ? t.colors.success : t.colors.textTertiary).build();
                                     if (!ccWarnings.empty()) {
                                         // 摘要 = 首条警告（失败路径只有一条 = 失败原因）
-                                        // + 总条数；「详见设置页」只在接管态成立——设置页
-                                        // 同样按 managed 门控列警告
+                                        // + 总条数；「详见设置页」恒成立——设置页的警告行
+                                        // 已改为只看警告（不再按 managed 门控，见
+                                        // settings_module.cpp 同审计项），未接管态下
+                                        // 接管失败原因同样列在那里
                                         std::string warnText = ccWarnings.front();
                                         if (ccWarnings.size() > 1) {
                                             warnText += "（共 " +
                                                 std::to_string(ccWarnings.size()) + " 条";
-                                            warnText += ccManaged ? "，详见设置页）" : "）";
+                                            warnText += "，详见设置页）";
                                         }
                                         ui.text("claude.field.takeover.warn.icon")
                                             .position(x0, toY + 16.0f).size(14.0f, 16.0f).icon(0xF071)

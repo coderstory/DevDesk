@@ -2,9 +2,9 @@
 // 菜单美化（2026-09-23）结构测试（headless 断言，真机圆角/主题/图标属视觉点验）：
 //   1. 托盘菜单 spec：项文本/顺序/分隔线/图标码点/动作路由（styled 与原生
 //      降级共用的唯一数据源）
-//   2. 桌宠右键菜单结构 petContextMenuItems：穿透/换肤子组（皮肤有无两态）/
-//      重置/隐藏/分隔线/退出的顺序与 path 语义基础
-//   3. 选择数学 petMenuActionForPath：path → 语义动作（含换肤子组 {1,j}、
+//   2. 桌宠右键菜单结构 petContextMenuItems：（有皮肤时）换肤子组/位置重置/
+//      隐藏/分隔线/退出的顺序与 path 语义基础（皮肤有无两态）
+//   3. 选择数学 petMenuActionForPath：path → 语义动作（含换肤子组 {0,j}、
 //      下标随子组有无偏移、组头/分隔线/越界 = None）
 //   4. 退出确认逻辑保持（审计 [25]）：确认项结构与 petExitConfirmChosen
 //   5. styledMenu 组件纯函数：flatten（行序/path 对齐原生 contextMenuCommandPaths
@@ -42,7 +42,7 @@ REGISTER_TEST(menuBeautifyTraySpecStructure,
 
 // ---- 2. 桌宠右键菜单结构 ----
 
-REGISTER_TEST(menuBeautifyPetMenuItemsWithSkins, "menu: 桌宠菜单含换肤子组（6 顶层项）", {
+REGISTER_TEST(menuBeautifyPetMenuItemsWithSkins, "menu: 桌宠菜单含换肤子组（5 顶层项）", {
     std::vector<std::string> skins;
     skins.push_back("duck");
     skins.push_back("slime");
@@ -59,7 +59,7 @@ REGISTER_TEST(menuBeautifyPetMenuItemsWithSkins, "menu: 桌宠菜单含换肤子
     return true;
 });
 
-REGISTER_TEST(menuBeautifyPetMenuItemsWithoutSkins, "menu: 桌宠菜单无皮肤时 5 顶层项（穿透文案随态）", {
+REGISTER_TEST(menuBeautifyPetMenuItemsWithoutSkins, "menu: 桌宠菜单无皮肤时 4 顶层项", {
     const auto items = module::pet::petContextMenuItems(std::vector<std::string>());
     DOCTEST_REQUIRE_EQ(items.size(), static_cast<size_t>(4));
     DOCTEST_CHECK(items[0].text.find("位置重置") != std::string::npos);
