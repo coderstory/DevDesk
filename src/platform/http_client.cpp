@@ -61,7 +61,7 @@ void applyCaOptions(CURL* curl) {
 
 } // anonymous namespace
 
-// ============ 同步 send / sendWithRetry ============
+// ============ 同步 send ============
 
 core::Result<Response> send(const Request& req) {
     globalInit();
@@ -121,20 +121,6 @@ core::Result<Response> send(const Request& req) {
     if (headers) curl_slist_free_all(headers);
     curl_easy_cleanup(curl);
     return core::Result<Response>::ok(std::move(resp));
-}
-
-core::Result<Response> sendWithRetry(const Request& req, int maxRetries) {
-    core::Result<Response> last;
-    for (int i = 0; i <= maxRetries; ++i) {
-        auto result = send(req);
-        if (result.isOk()) return result;
-        last = std::move(result);
-        if (i < maxRetries) {
-            int delay = 1000 << i;
-            std::this_thread::sleep_for(std::chrono::milliseconds(delay));
-        }
-    }
-    return last;
 }
 
 // ============ 流式响应（三线程 + 队列 + backpressure，spec §10.4）============

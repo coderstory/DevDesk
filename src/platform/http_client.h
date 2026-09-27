@@ -42,9 +42,6 @@ struct Response {
 // 同步发送
 core::Result<Response> send(const Request& req);
 
-// 带重试
-core::Result<Response> sendWithRetry(const Request& req, int maxRetries = 3);
-
 // 流式 chunk 状态
 enum class ChunkResult {
     More,
