@@ -736,7 +736,8 @@ public:
                                     .size(w0, 1.0f)
                                     .color(t.colors.borderDefault).build();
                                 const float actGap = 12.0f;
-                                const float actW = (w0 - actGap * 3.0f) / 4.0f;
+                                // 5 键均分（设计 §4.1，M5）：启用/测试连通/编辑/删除/复制
+                                const float actW = (w0 - actGap * 4.0f) / 5.0f;
                                 ui.row("claude.detail.actions")
                                     .position(x0, actY)
                                     .size(w0, 36.0f)
@@ -826,6 +827,26 @@ public:
                                                 deleteTargetId_ = shownCopy.id;
                                                 deleteTargetName_ = shownCopy.name;
                                                 deleteConfirmOpen_ = true;
+                                            })
+                                            .build();
+                                        // 复制（第 5 键，设计 §4.1/§4.2）：副本不激活
+                                        components::button(ui, "claude.act.dup")
+                                            .size(actW, 36.0f)
+                                            .text("复制")
+                                            .fontSize(t.sizes.fontSizeSmall)
+                                            .colors(t.colors.surfaceElevated,
+                                                    t.colors.hover, t.colors.active)
+                                            .textColor(t.colors.textPrimary)
+                                            .radius(t.sizes.radius)
+                                            .border(1.0f, t.colors.borderDefault)
+                                            .onClick([this, shownId] {
+                                                if (shownId == 0) {
+                                                    showToast("复制失败",
+                                                              "请先选择 Profile",
+                                                              true);
+                                                    return;
+                                                }
+                                                doDuplicate(shownId);
                                             })
                                             .build();
                                     })
@@ -2421,6 +2442,20 @@ private:
         }
         selectedId_ = id;
         showToast("已启用", "该 Profile 已设为激活（ACTIVE）", false);
+    }
+
+    // 复制（设计 §4.1/§4.2，M5）：建副本但不激活 → 选中态/激活态都不动
+    void doDuplicate(int64_t id) {
+        ClaudeService* svc = ClaudeService::global();
+        if (!svc) return;
+        dataDirty_ = true;   // 审计 perf [13]：写操作标脏
+        auto r = svc->duplicateProfile(id);
+        if (r.isFail()) {
+            showToast("复制失败", r.errorMessage(), true);
+            return;
+        }
+        showToast("已复制",
+                  "已创建副本「" + r.value().name + "」（未激活）", false);
     }
 
     void doDelete(int64_t id) {
