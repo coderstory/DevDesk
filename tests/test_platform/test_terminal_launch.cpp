@@ -124,6 +124,41 @@ REGISTER_TEST(terminal_launch_windows_fallback_argv,
     DOCTEST_CHECK_EQ(argv[4],
                      platform::terminal::encodePowerShellCommand(
                          platform::terminal::buildPowerShellBody(spec)));
+
+    // 回归闸：派发给 CreateProcessW 的 exe 必须是**绝对路径**。
+    // 裸名 "powershell.exe" 走 lpApplicationName 时不查 PATH（只按当前驱动器 +
+    // 当前目录补全）→ 实测 GetLastError=2，退化分支窗口根本起不来。
+    const std::string exe = platform::terminal::fallbackPowerShellExe("");
+    DOCTEST_CHECK(exe.find(':') != std::string::npos);             // 含盘符
+    DOCTEST_CHECK(exe.find("System32") != std::string::npos);      // 在系统目录下
+    DOCTEST_CHECK_EQ(exe,
+                     std::string("C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe"));
+    // <systemRoot> 原样铺开（含尾分隔符也归一，不产生 `\\` 双斜杠）
+    DOCTEST_CHECK_EQ(platform::terminal::fallbackPowerShellExe("D:\\Win"),
+                     std::string("D:\\Win\\System32\\WindowsPowerShell\\v1.0\\powershell.exe"));
+    DOCTEST_CHECK_EQ(platform::terminal::fallbackPowerShellExe("D:\\Win\\"),
+                     std::string("D:\\Win\\System32\\WindowsPowerShell\\v1.0\\powershell.exe"));
+    return true;
+})
+
+// ---- ① wt 标题里的 `;` 必须转义（否则被当命令分隔符，标题后半被吞）----
+// 本机实测：`wt -w new --title 'A;B' …` 窗口标题只剩 "B"；`--title 'A\;B'` 才是 "A;B"。
+
+REGISTER_TEST(terminal_launch_wt_title_semicolon_escape,
+              "terminal_launch: wt --title 里的 `;` 转义为 `\\;`（其余字符原样）", {
+    using platform::terminal::escapeWtTitle;
+    DOCTEST_CHECK_EQ(escapeWtTitle("官方 · Claude Code"), std::string("官方 · Claude Code"));
+    DOCTEST_CHECK_EQ(escapeWtTitle("A;B"), std::string("A\\;B"));
+    DOCTEST_CHECK_EQ(escapeWtTitle("A;B;C"), std::string("A\\;B\\;C"));
+    DOCTEST_CHECK_EQ(escapeWtTitle(";"), std::string("\\;"));
+    DOCTEST_CHECK_EQ(escapeWtTitle(""), std::string(""));
+    // 反斜杠本身不二次转义（只处理 `;`，不引入未实测的规则）
+    DOCTEST_CHECK_EQ(escapeWtTitle("C:\\dir"), std::string("C:\\dir"));
+
+    // 拼进 wt 参数向量：--title 位（第 7 项）必须是已转义的值
+    const std::vector<std::string> argv = platform::terminal::buildWindowsLaunchArgs(
+        makeSpec("甲;乙 · Claude Code", "C:/Users/demo"));
+    DOCTEST_CHECK_EQ(argv[6], std::string("甲\\;乙 · Claude Code"));
     return true;
 })
 

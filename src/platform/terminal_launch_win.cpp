@@ -2,9 +2,12 @@
 // Windows 实现（2026-09-28 profile-run 设计 §4/§4.1、D-4/D-5）：
 //   wt.exe 在（探测 %LOCALAPPDATA%\Microsoft\WindowsApps\wt.exe）→
 //     CreateProcessW(wt.exe 全路径, "wt.exe -w new -d <dir> --title <t> powershell…")
-//   否则 → CreateProcessW(powershell.exe, "powershell.exe -NoExit -NoProfile
-//                        -EncodedCommand <b64>", CREATE_NEW_CONSOLE,
-//                        lpCurrentDirectory = <起始目录>)
+//   否则 → CreateProcessW(<SystemRoot>\System32\WindowsPowerShell\v1.0\powershell.exe,
+//                        "powershell.exe -NoExit -NoProfile -EncodedCommand <b64>",
+//                        CREATE_NEW_CONSOLE, lpCurrentDirectory = <起始目录>)
+// 两条分支的 exe 都必须是**全路径**：CreateProcessW 的 lpApplicationName 传部分名
+// （如裸名 "powershell.exe"）时只按「当前驱动器 + 当前目录」补全、**不查 PATH**
+// → 实测 GetLastError=2，窗口起不来（见 terminal_launch_common.h 的说明）。
 // 命令文本全部来自 terminal_launch_common.cpp 的纯函数（单测覆盖）；本文件只做
 // 「探测 + UTF-8→UTF-16 转换 + CreateProcessW + 句柄清理」。
 #include "terminal_launch.h"
@@ -29,6 +32,27 @@ std::wstring utf8ToWide(const std::string& s) {
     MultiByteToWideChar(CP_UTF8, 0, s.c_str(), static_cast<int>(s.size()),
                         out.data(), need);
     return out;
+}
+
+std::string wideToUtf8(const std::wstring& w) {
+    if (w.empty()) return std::string();
+    const int need = WideCharToMultiByte(CP_UTF8, 0, w.c_str(),
+                                         static_cast<int>(w.size()), nullptr, 0,
+                                         nullptr, nullptr);
+    if (need <= 0) return std::string();
+    std::string out(static_cast<size_t>(need), '\0');
+    WideCharToMultiByte(CP_UTF8, 0, w.c_str(), static_cast<int>(w.size()),
+                        out.data(), need, nullptr, nullptr);
+    return out;
+}
+
+// %SystemRoot%（通常是 C:\Windows）：退化分支的 powershell 全路径由它铺开。
+// 读不到返回空串 → 纯函数回落 C:\Windows 默认安装位置（不在此处硬编码兜底）。
+std::string systemRootUtf8() {
+    wchar_t buf[MAX_PATH];
+    const DWORD n = GetEnvironmentVariableW(L"SystemRoot", buf, MAX_PATH);
+    if (n == 0 || n >= MAX_PATH) return std::string();
+    return wideToUtf8(std::wstring(buf, n));
 }
 
 // wt.exe 全路径：WindowsApps 下是 app execution alias，且 PATH 顺序不保证 →
@@ -95,8 +119,9 @@ core::Result<void> launch(const LaunchSpec& spec) {
     }
     // 退化分支（D-5）：没有 wt -d，**必须**显式设 lpCurrentDirectory；
     // 正文里的 Set-Location 是双保险（spec §4.1）
-    return spawn(L"powershell.exe", buildWindowsFallbackArgs(spec),
-                 utf8ToWide(spec.workingDir));
+    // exe 走全路径（裸名 "powershell.exe" 不查 PATH → 实测 err=2 起不来）
+    return spawn(utf8ToWide(fallbackPowerShellExe(systemRootUtf8())),
+                 buildWindowsFallbackArgs(spec), utf8ToWide(spec.workingDir));
 }
 
 } // namespace platform::terminal

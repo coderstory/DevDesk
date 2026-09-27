@@ -33,7 +33,8 @@ std::string homeDir();
 // Windows Terminal 是否缺失（D-5 提示用，调用方可无条件查询）：
 //   Windows：%LOCALAPPDATA%\Microsoft\WindowsApps\wt.exe 不存在 → true
 //   macOS / 其他：恒 false（不用 wt，无退化路径）
-// 调用方在 launch 成功后若得 true，附一句「已用传统控制台打开」——不静默、不阻断。
+// 调用方在 launch 成功后若得 true，附一句「未检测到 Windows Terminal，已用系统默认
+// 终端打开会话」——不静默、不阻断。
 bool windowsTerminalMissing();
 
 } // namespace platform::terminal

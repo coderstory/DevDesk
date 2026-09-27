@@ -174,6 +174,28 @@ std::string buildPowerShellBody(const LaunchSpec& spec) {
            "\n" + spec.program;
 }
 
+std::string escapeWtTitle(const std::string& title) {
+    // wt 的命令行用 `;` 分隔多条命令 → 标题里的 `;` 必须写成 `\;`（本机实测：
+    // `--title 'A;B'` 窗口标题只剩 "B"，`--title 'A\;B'` 才得到 "A;B"）。
+    // 只处理 `;`：其余字符（含 `\`）按原样交给 wt——不引入未经实测的转义规则。
+    std::string out;
+    out.reserve(title.size() + 4);
+    for (const char c : title) {
+        if (c == ';') out += "\\;";
+        else out += c;
+    }
+    return out;
+}
+
+std::string fallbackPowerShellExe(const std::string& systemRoot) {
+    std::string root = systemRoot;
+    while (!root.empty() && (root.back() == '\\' || root.back() == '/')) {
+        root.pop_back();   // 去尾分隔符，避免拼出 `C:\Windows\\System32\…`
+    }
+    if (root.empty()) root = "C:\\Windows";   // Windows 默认安装位置（环境变量缺失兜底）
+    return root + "\\System32\\WindowsPowerShell\\v1.0\\powershell.exe";
+}
+
 std::vector<std::string> buildWindowsLaunchArgs(const LaunchSpec& spec) {
     std::vector<std::string> argv;
     argv.push_back("wt.exe");
@@ -182,7 +204,7 @@ std::vector<std::string> buildWindowsLaunchArgs(const LaunchSpec& spec) {
     argv.push_back("-d");
     argv.push_back(spec.workingDir);
     argv.push_back("--title");
-    argv.push_back(spec.title);
+    argv.push_back(escapeWtTitle(spec.title));   // `;` 是 wt 的命令分隔符，不转义会截断标题
     argv.push_back("powershell.exe");
     argv.push_back("-NoExit");       // D-6：claude 退出后保留窗口，回滚内容可见
     argv.push_back("-NoProfile");

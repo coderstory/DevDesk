@@ -61,6 +61,21 @@ std::vector<std::string> buildWindowsLaunchArgs(const LaunchSpec& spec);
 //   powershell.exe -NoExit -NoProfile -EncodedCommand <BASE64_UTF16LE>
 std::vector<std::string> buildWindowsFallbackArgs(const LaunchSpec& spec);
 
+// 退化分支（wt 缺失）派发给 CreateProcessW 的 PowerShell **可执行文件绝对路径**：
+//   <systemRoot>\System32\WindowsPowerShell\v1.0\powershell.exe
+// 为什么必须是绝对路径：CreateProcessW 的 lpApplicationName 传**部分名**（不含目录）
+// 时只按「当前驱动器 + 当前目录」补全，**不走 PATH**（MSDN 原文 "The function will
+// not use the search path"）——实测裸名 "powershell.exe" 落空 GetLastError=2
+// (ERROR_FILE_NOT_FOUND)，窗口起不来。与 wt 分支同口径：探测与派发共用同一绝对路径。
+// systemRoot 为空（环境变量读不到）→ 回落 Windows 默认安装位置 C:\Windows。
+std::string fallbackPowerShellExe(const std::string& systemRoot);
+
+// Windows Terminal 的 `;` 是**命令分隔符**：标题原样交给 wt 会被截断（实测
+// `--title 'A;B'` → 窗口标题只剩 "B"），故拼参数前须对 `;` 做 wt 的 `\;` 转义
+//（同机实测 `--title 'A\;B'` → 标题为 "A;B"，含空格的双引号包裹形态亦通过
+// 探针验证）。只在 wt 参数向量里调用——传统控制台分支无此语义，不要过度转义。
+std::string escapeWtTitle(const std::string& title);
+
 // macOS .command 正文：cd '<工作目录>' && exec <程序名> + 换行（单引号包裹）
 std::string buildMacCommandBody(const LaunchSpec& spec);
 
