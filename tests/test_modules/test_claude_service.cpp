@@ -614,8 +614,9 @@ REGISTER_TEST(claude_service_update_db_fail_rolls_back_keychain,
     const int64_t bid = b.value().id;
 
     // 失败注入：把 B 的 name 改成 A 的 name → UPDATE 撞 claude_profiles.name 的
-    // UNIQUE 约束 = 段二（DB 写）确定性失败。Keychain 没有注入缝（CPX-14 未做），
-    // 故用这条必然失败的 DB 路径，断言「段一已写成新密钥、段二失败后被回写」。
+    // UNIQUE 约束 = 段二（DB 写）确定性失败，断言「段一已写成新密钥、段二失败后
+    // 被回写」。刻意不经注入缝（CPX-14 起可用）：本用例的价值就在补偿逻辑走
+    // **真实** Keychain 落盘再回写；Keychain 自身失败的分支见下方 CPX-14 三条用例。
     module::claude::Profile pb = b.value();
     pb.name = "NameA";
     pb.apiKeyPlain = "sk-ant-bbb-9999";
@@ -666,6 +667,242 @@ REGISTER_TEST(claude_service_update_db_fail_rolls_back_keychain,
     cleanupKey(bid);
     cleanupKey(twin.value().id);
     cleanupKey(other.value().id);
+    return true;
+})
+
+// ---- 5c. CPX-14：Keychain 注入缝 + 两段写三条失败分支 ----
+// 背景：TwoPhaseKeyWrite（CPX-07）的补偿路径此前只能靠「DB 写必然失败」（UNIQUE
+// 撞名）间接触发；「Keychain 自身失败」那一支（段一失败 → 回写旧值）根本走不到，
+// 因为 Keychain 是自由函数、没有注入口（见上一条用例里的注记）。CPX-14 在
+// platform/keychain.h 加了最小注入缝（函数指针表 + 单槽位，默认指真实实现），
+// 下面三条用例分别覆盖：段一写失败 / 段二删行失败 / 段二回填失败。
+
+namespace {
+
+// 假 Keychain：密钥存内存 map（service + 0x1F + account → secret）。
+// store 的失败注入语义是「**先落值、再报失败**」：各平台存储不承诺失败时旧值
+// 完好（见 TwoPhaseKeyWrite::writeKey 的注释——失败也可能已破坏旧值），补偿
+// 回写正是为这种情形准备的。若假实现「失败且不落值」，用例就丧失鉴别力
+//（不补偿也照样读回旧值，反证跑不出 FAIL）。
+struct FakeKeychain {
+    static constexpr const char* kStoreFailSentinel = "INJECT-STORE-FAIL";
+
+    std::map<std::string, std::string> data;
+    std::string lastStoredAccount;  // 最近一次 store 的 account（认领新 profile）
+
+    static std::string keyOf(const std::string& service,
+                             const std::string& account) {
+        return service + '\x1f' + account;
+    }
+    bool has(const std::string& service, const std::string& account) const {
+        return data.find(keyOf(service, account)) != data.end();
+    }
+    std::string get(const std::string& service,
+                    const std::string& account) const {
+        const auto it = data.find(keyOf(service, account));
+        return it == data.end() ? std::string() : it->second;
+    }
+};
+
+// 函数指针表不能带捕获 → 假实现经文件级指针取当前实例（用例内单实例，生命周期
+// 由 ScopedFakeKeychain 管）
+FakeKeychain* g_fakeKeychain = nullptr;
+
+core::Result<void> fakeStore(const std::string& service,
+                             const std::string& account,
+                             const std::string& secret) {
+    FakeKeychain& f = *g_fakeKeychain;
+    f.lastStoredAccount = account;
+    f.data[FakeKeychain::keyOf(service, account)] = secret;   // 先落值
+    if (secret.find(FakeKeychain::kStoreFailSentinel) != std::string::npos) {
+        return core::Result<void>::fail(
+            core::ErrorCode::Internal,
+            "注入：storeSecret 失败（值已落盘，模拟失败时旧值已被破坏）");
+    }
+    return core::Result<void>::ok();
+}
+
+core::Result<std::string> fakeLoad(const std::string& service,
+                                   const std::string& account) {
+    FakeKeychain& f = *g_fakeKeychain;
+    const auto it = f.data.find(FakeKeychain::keyOf(service, account));
+    if (it == f.data.end()) {
+        // 与真实实现同语义：不存在 → NotFound
+        return core::Result<std::string>::fail(core::ErrorCode::NotFound,
+                                               "Keychain item not found");
+    }
+    return core::Result<std::string>::ok(it->second);
+}
+
+core::Result<void> fakeDelete(const std::string& service,
+                              const std::string& account) {
+    FakeKeychain& f = *g_fakeKeychain;
+    f.data.erase(FakeKeychain::keyOf(service, account));
+    return core::Result<void>::ok();   // 不存在也 Ok（幂等，与真实实现同语义）
+}
+
+core::Result<std::vector<std::string>> fakeDeleteNotIn(
+    const std::string& service, const std::vector<std::string>& keepAccounts) {
+    FakeKeychain& f = *g_fakeKeychain;
+    std::vector<std::string> removed;
+    const std::string prefix = service + '\x1f';
+    for (auto it = f.data.begin(); it != f.data.end();) {
+        if (it->first.compare(0, prefix.size(), prefix) == 0) {
+            const std::string account = it->first.substr(prefix.size());
+            bool keep = false;
+            for (const auto& k : keepAccounts) {
+                if (k == account) { keep = true; break; }
+            }
+            if (!keep) {
+                removed.push_back(account);
+                it = f.data.erase(it);
+                continue;
+            }
+        }
+        ++it;
+    }
+    return core::Result<std::vector<std::string>>::ok(std::move(removed));
+}
+
+// RAII：安装假后端，析构恢复真实后端——用例体内 fail-fast（return false）或
+// 抛异常都不会把假后端泄漏给后续用例
+struct ScopedFakeKeychain {
+    FakeKeychain fake;
+    platform::keychain::Backend table;
+    const platform::keychain::Backend* prev;
+
+    ScopedFakeKeychain() {
+        g_fakeKeychain = &fake;
+        table = platform::keychain::Backend{&fakeStore, &fakeLoad, &fakeDelete,
+                                            &fakeDeleteNotIn};
+        prev = platform::keychain::setBackendForTest(&table);
+    }
+    ~ScopedFakeKeychain() {
+        platform::keychain::setBackendForTest(prev);
+        g_fakeKeychain = nullptr;
+    }
+    ScopedFakeKeychain(const ScopedFakeKeychain&) = delete;
+    ScopedFakeKeychain& operator=(const ScopedFakeKeychain&) = delete;
+};
+
+} // namespace
+
+// 段一（Keychain 写）失败 → 按捕获到的旧值回写
+REGISTER_TEST(claude_cpx14_stage1_key_write_fail_restores_old,
+              "claude_service: CPX-14 段一 Keychain 写失败回写旧值", {
+    TestDb tdb("cpx14stage1");
+    ScopedFakeKeychain kc;
+    module::claude::ClaudeService svc(tdb.handle(), kTestKeychainService);
+
+    auto created = svc.createProfile("Outer", "https://a.example.com",
+                                     "sk-ant-old-0001", "m");
+    DOCTEST_REQUIRE(created.isOk());
+    const int64_t id = created.value().id;
+    const std::string account = created.value().keychainAccount;
+    DOCTEST_CHECK_EQ(kc.fake.get(kTestKeychainService, account),
+                     std::string("sk-ant-old-0001"));
+
+    // 注入：新密钥含哨兵 → 假后端落值后报失败 → writeKey 内部按旧值回写
+    module::claude::Profile p = created.value();
+    p.apiKeyPlain = std::string("sk-ant-new-0002-") +
+                    FakeKeychain::kStoreFailSentinel;
+    auto upd = svc.updateProfile(p);
+    DOCTEST_CHECK(upd.isFail());
+
+    // 补偿生效：Keychain 里是旧值，而不是刚写坏的新值
+    DOCTEST_CHECK_EQ(kc.fake.get(kTestKeychainService, account),
+                     std::string("sk-ant-old-0001"));
+    // 段一失败即返回，段二没跑过：DB 元数据与旧密钥仍一致
+    auto got = svc.getProfile(id);
+    DOCTEST_REQUIRE(got.isOk());
+    DOCTEST_CHECK_EQ(got.value().apiKeyCheck, created.value().apiKeyCheck);
+    DOCTEST_CHECK_EQ(got.value().apiKeyHint, created.value().apiKeyHint);
+
+    // 正常路径未被注入层带坏（同一用例内换回合法密钥 → 写入成功）
+    p.apiKeyPlain = "sk-ant-new-0002";
+    DOCTEST_CHECK(svc.updateProfile(p).isOk());
+    DOCTEST_CHECK_EQ(kc.fake.get(kTestKeychainService, account),
+                     std::string("sk-ant-new-0002"));
+    return true;
+})
+
+// 段二（DB 删行）失败 → 密钥已删时补偿回写 + 行保留可重试
+REGISTER_TEST(claude_cpx14_delete_stage2_fail_restores_key,
+              "claude_service: CPX-14 段二删行失败回写已删密钥", {
+    TestDb tdb("cpx14delstage2");
+    ScopedFakeKeychain kc;
+    module::claude::ClaudeService svc(tdb.handle(), kTestKeychainService);
+
+    auto created = svc.createProfile("Victim", "https://v.example.com",
+                                     "sk-ant-victim-0003", "m");
+    DOCTEST_REQUIRE(created.isOk());
+    const int64_t id = created.value().id;
+    const std::string account = created.value().keychainAccount;
+    DOCTEST_REQUIRE(kc.fake.has(kTestKeychainService, account));
+
+    // 段二注入失败：BEFORE DELETE 触发器 RAISE(ABORT) → DELETE 语句确定性失败
+    DOCTEST_REQUIRE(tdb.handle().exec(
+        "CREATE TRIGGER cpx14_block_delete BEFORE DELETE ON claude_profiles "
+        "BEGIN SELECT RAISE(ABORT, 'cpx14: delete blocked'); END").isOk());
+
+    auto del = svc.deleteProfile(id);
+    DOCTEST_CHECK(del.isFail());
+
+    // 段一确实删过密钥（不是「段一失败即中止」）：段二失败后补偿把它写回来
+    DOCTEST_CHECK_EQ(kc.fake.get(kTestKeychainService, account),
+                     std::string("sk-ant-victim-0003"));
+    // 行保留（用户可重试，密钥没丢）
+    DOCTEST_CHECK(svc.getProfile(id).isOk());
+
+    // 撤掉注入源后重试 → 成功，两边都清干净（补偿没把正常路径带坏）
+    DOCTEST_REQUIRE(tdb.handle().exec("DROP TRIGGER cpx14_block_delete").isOk());
+    DOCTEST_CHECK(svc.deleteProfile(id).isOk());
+    DOCTEST_CHECK(svc.getProfile(id).isFail());
+    DOCTEST_CHECK(!kc.fake.has(kTestKeychainService, account));
+    return true;
+})
+
+// 段二（回填 keychain_account）失败 → 删行回滚 + 段一写入的密钥被清掉
+REGISTER_TEST(claude_cpx14_create_stage2_fail_rolls_back,
+              "claude_service: CPX-14 回填 account 失败删行回滚", {
+    TestDb tdb("cpx14createstage2");
+    ScopedFakeKeychain kc;
+    module::claude::ClaudeService svc(tdb.handle(), kTestKeychainService);
+
+    // 基线一条无关 profile（创建走完整两段写正常路径）
+    auto base = svc.createProfile("Base", "https://base.example.com",
+                                  "sk-ant-base-0004", "m");
+    DOCTEST_REQUIRE(base.isOk());
+    auto before = svc.listProfiles();
+    DOCTEST_REQUIRE(before.isOk());
+    const size_t countBefore = before.value().size();
+
+    // 段二注入失败：BEFORE UPDATE 触发器 RAISE(ABORT) → 回填 keychain_account
+    // 的 UPDATE 必失败（此刻段一已把密钥写进 Keychain）
+    DOCTEST_REQUIRE(tdb.handle().exec(
+        "CREATE TRIGGER cpx14_block_update BEFORE UPDATE ON claude_profiles "
+        "BEGIN SELECT RAISE(ABORT, 'cpx14: update blocked'); END").isOk());
+
+    auto created = svc.createProfile("Doomed", "https://d.example.com",
+                                     "sk-ant-doomed-0005", "m");
+    DOCTEST_CHECK(created.isFail());
+
+    // 零残留一：段一写入的密钥被补偿清掉（不留孤儿密钥）
+    const std::string doomedAccount = kc.fake.lastStoredAccount;
+    DOCTEST_CHECK_EQ(doomedAccount.substr(0, 7), std::string("claude:"));
+    DOCTEST_CHECK(!kc.fake.has(kTestKeychainService, doomedAccount));
+    // 零残留二：INSERT 的行也回滚了
+    auto after = svc.listProfiles();
+    DOCTEST_REQUIRE(after.isOk());
+    DOCTEST_CHECK_EQ(after.value().size(), countBefore);
+
+    // 撤掉注入源后重试 → 成功（正常路径未被注入层带坏）
+    DOCTEST_REQUIRE(tdb.handle().exec("DROP TRIGGER cpx14_block_update").isOk());
+    auto ok = svc.createProfile("Doomed", "https://d.example.com",
+                                "sk-ant-doomed-0005", "m");
+    DOCTEST_REQUIRE(ok.isOk());
+    DOCTEST_CHECK_EQ(kc.fake.get(kTestKeychainService, ok.value().keychainAccount),
+                     std::string("sk-ant-doomed-0005"));
     return true;
 })
 

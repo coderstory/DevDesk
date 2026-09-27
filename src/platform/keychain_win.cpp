@@ -96,9 +96,10 @@ std::string dpapiError(const char* what) {
 
 } // namespace
 
-core::Result<void> storeSecret(const std::string& service,
-                               const std::string& account,
-                               const std::string& secret) {
+// 真实实现（CPX-14 起经 keychain.h 的函数指针表转发，见那里的「注入缝」段）
+core::Result<void> realStoreSecret(const std::string& service,
+                                   const std::string& account,
+                                   const std::string& secret) {
     // DPAPI 加密（用户级，禁止弹 UI）
     DATA_BLOB input{};
     input.pbData = reinterpret_cast<BYTE*>(const_cast<char*>(secret.data()));
@@ -142,8 +143,8 @@ core::Result<void> storeSecret(const std::string& service,
     return core::Result<void>::ok();
 }
 
-core::Result<std::string> loadSecret(const std::string& service,
-                                     const std::string& account) {
+core::Result<std::string> realLoadSecret(const std::string& service,
+                                         const std::string& account) {
     // 双读兼容（CP-11）：先找新编码路径，缺失时回退旧命名路径——升级前写入的
     // 密钥继续可读（不做文件迁移，读路径代价最小）
     fs::path path = keyFilePath(service, account);
@@ -189,8 +190,8 @@ core::Result<std::string> loadSecret(const std::string& service,
     return core::Result<std::string>::ok(std::move(secret));
 }
 
-core::Result<void> deleteSecret(const std::string& service,
-                                const std::string& account) {
+core::Result<void> realDeleteSecret(const std::string& service,
+                                    const std::string& account) {
     const fs::path path = keyFilePath(service, account);
 
     // 不存在返回 false 不报错（幂等删除，与 macOS 实现语义一致）
@@ -222,7 +223,7 @@ core::Result<void> deleteSecret(const std::string& service,
     return core::Result<void>::ok();
 }
 
-core::Result<std::vector<std::string>> deleteSecretsNotIn(
+core::Result<std::vector<std::string>> realDeleteSecretsNotIn(
     const std::string& service,
     const std::vector<std::string>& keepAccounts) {
     std::vector<std::string> removed;

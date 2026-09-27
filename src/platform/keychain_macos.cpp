@@ -10,9 +10,10 @@
 
 namespace platform::keychain {
 
-core::Result<void> storeSecret(const std::string& service,
-                                 const std::string& account,
-                                 const std::string& secret) {
+// 真实实现（CPX-14 起经 keychain.h 的函数指针表转发，见那里的「注入缝」段）
+core::Result<void> realStoreSecret(const std::string& service,
+                                   const std::string& account,
+                                   const std::string& secret) {
     // 删除已存在条目（避免冲突）
     SecKeychainItemRef itemRef = nullptr;
     OSStatus status = SecKeychainFindGenericPassword(
@@ -39,8 +40,8 @@ core::Result<void> storeSecret(const std::string& service,
     return core::Result<void>::ok();
 }
 
-core::Result<std::string> loadSecret(const std::string& service,
-                                      const std::string& account) {
+core::Result<std::string> realLoadSecret(const std::string& service,
+                                         const std::string& account) {
     SecKeychainItemRef itemRef = nullptr;
     UInt32 length = 0;
     void* data = nullptr;
@@ -63,7 +64,7 @@ core::Result<std::string> loadSecret(const std::string& service,
     return core::Result<std::string>::ok(std::move(result));
 }
 
-core::Result<void> deleteSecret(const std::string& service, const std::string& account) {
+core::Result<void> realDeleteSecret(const std::string& service, const std::string& account) {
     SecKeychainItemRef itemRef = nullptr;
     OSStatus status = SecKeychainFindGenericPassword(
         nullptr,
@@ -81,7 +82,7 @@ core::Result<void> deleteSecret(const std::string& service, const std::string& a
     return core::Result<void>::ok();
 }
 
-core::Result<std::vector<std::string>> deleteSecretsNotIn(
+core::Result<std::vector<std::string>> realDeleteSecretsNotIn(
     const std::string& service,
     const std::vector<std::string>& keepAccounts) {
     std::vector<std::string> removed;
@@ -148,7 +149,9 @@ core::Result<std::vector<std::string>> deleteSecretsNotIn(
         const std::string account = acctBuf;
         if (keep.count(account)) continue;
 
-        auto del = deleteSecret(service, account);
+        // 直调真实实现（不经 dispatcher）：真实实现保持自洽——注入层只服务
+        // 调用方，不反向渗进 real* 内部（CPX-14）
+        auto del = realDeleteSecret(service, account);
         if (del.isFail()) {
             CFRelease(entries);
             return core::Result<std::vector<std::string>>::fail(
