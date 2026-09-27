@@ -10,6 +10,7 @@ add_library(devdesk_module_markdown STATIC
     md_view_state.cpp
     md_block_model.cpp
     md_block_interact.cpp
+    md_live_edit.cpp
     md_preview_highlight.cpp
     md_sync_map.cpp
 )
