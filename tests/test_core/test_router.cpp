@@ -385,6 +385,20 @@ REGISTER_TEST(core_window_to_compose_three_scales_both_origins,
                      136.0f);
     // y 轴：页面区纵跨整窗，原点恒 0
     DOCTEST_CHECK_EQ(core::windowToCompose(300.0f, 0.0f, 1.25f), 240.0f);
+
+    // ---- U1 尺度契约：dpiScale 入参**取自框架值**，不再由几何反推 ----
+    // 主窗口取 app::contentScale()、子窗取自己 compose 收到的 Screen::scale；
+    // 二者与指针事件的 PointerEvent/DragEvent::scale 同源同值，恒等于
+    // "物理 / 逻辑" 比。这里直接喂真实 Screen 的 scale 字段，锁住"框架值 ⇒
+    // 同一 compose 落点"的等价性（手工构造 Screen 未填 scale 时退化为 1.0，
+    // 见 core/dsl.h 的 Screen 声明）。
+    eui::Screen frame;  // 当帧 compose 的 Screen（真实运行时 scale 由框架填）
+    DOCTEST_CHECK_EQ(frame.scale, 1.0f);  // 未填 → 1.0（100% 档退化值）
+    DOCTEST_CHECK_EQ(core::windowToCompose(400.0f, 208.0f, frame.scale), 192.0f);
+    frame.scale = 1.25f;  // Screen::scale 即"物理 = 逻辑 * scale"的 scale
+    DOCTEST_CHECK_EQ(core::windowToCompose(500.0f, 208.0f, frame.scale), 192.0f);
+    frame.scale = 1.5f;
+    DOCTEST_CHECK_EQ(core::windowToCompose(600.0f, 208.0f, frame.scale), 192.0f);
     return true;
 })
 

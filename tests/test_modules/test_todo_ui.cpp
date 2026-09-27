@@ -777,6 +777,71 @@ REGISTER_TEST(todo_ui_drag_hit_pure,
     return true;
 })
 
+REGISTER_TEST(todo_ui_drag_scale_from_framework,
+              "todo_ui: 拖拽尺度取自框架（与探针路径等价 + 不一致可观测）", {
+    using module::todo::ui::DragHitInput;
+    using module::todo::ui::dragAnchorScale;
+    using module::todo::ui::dragDropTarget;
+    using module::todo::ui::dragScaleMismatch;
+    // U1 尺度契约：调用点（todo_module.cpp hitDropColumn）已改为喂框架值
+    // app::contentScale()，探针降级为断言。本用例锁两件事：
+    //  ① 显式框架值路径与旧"探针反推"路径命中列**逐位一致**（含 100/125/150）
+    //  ② dragScaleMismatch 只在"探针自称非 1 却对不上框架"时命中（WARN 可观测）
+    // 板面几何同 todo_ui_drag_hit_pure：compose 空间列 [80,280][300,500][520,720]、
+    // boardTop=144、boardBottom=644（scale 只作用在指针空间，compose 侧不变）
+    const auto makeInput = [](float scale) {
+        DragHitInput in;
+        in.fromColIndex = 1;
+        in.colCount = 3;
+        // 指针空间 = compose 空间 * scale（契约：物理 = 逻辑 * scale）
+        in.pressX = 300.0f * scale;      // compose 300 = 源列左缘（锚点）
+        in.pressY = 200.0f * scale;      // compose 200 = 列头 + 第 0 张 - 无滚动
+        in.pressWidth = 200.0f * scale;  // 探针分子：按下 bounds（指针空间）
+        in.cardWidth = 200.0f;           // 探针分母：compose 卡宽
+        in.colWidth = 200.0f;
+        in.colGap = 20.0f;
+        in.boardHeight = 500.0f;
+        in.dpiScale = scale;             // 调用点喂的框架值（原为探针反推）
+        in.cardIndex = 0;
+        return in;
+    };
+
+    // ① 三档缩放：探针 == 框架值（旧路径取的就是它）→ 命中列一致
+    for (float scale : {1.0f, 1.25f, 1.5f}) {
+        const DragHitInput fw = makeInput(scale);
+        const float probe = dragAnchorScale(fw);
+        DOCTEST_CHECK_EQ(probe, scale);  // 探针独立复现框架值
+        DOCTEST_CHECK_EQ(dragScaleMismatch(fw.dpiScale, probe), false);  // 一致 → 不告警
+        // 旧路径复刻：dpiScale 取探针值，命中列与框架值路径逐位相同
+        DragHitInput legacy = fw;
+        legacy.dpiScale = probe;
+        DOCTEST_CHECK_EQ(dragDropTarget(fw, 400.0 * scale, 300.0 * scale),
+                         dragDropTarget(legacy, 400.0 * scale, 300.0 * scale));
+        // 且落在预期列（列 [80,280][300,500][520,720]，板 [144,644]）
+        DOCTEST_CHECK_EQ(dragDropTarget(fw, 400.0 * scale, 300.0 * scale), 1);   // 源列
+        DOCTEST_CHECK_EQ(dragDropTarget(fw, 550.0 * scale, 300.0 * scale), 2);   // 右列
+        DOCTEST_CHECK_EQ(dragDropTarget(fw, 100.0 * scale, 300.0 * scale), 0);   // 左列
+        DOCTEST_CHECK_EQ(dragDropTarget(fw, 290.0 * scale, 300.0 * scale), -1);  // 列间隙
+    }
+
+    // ② 探针自称非 1 尺度（2.0）却对不上框架值（1.25）→ 断言命中 = 打 WARN
+    DragHitInput stale = makeInput(1.25f);
+    stale.pressWidth = 400.0f;  // 探针实测 400/200 = 2.0
+    DOCTEST_CHECK_EQ(dragAnchorScale(stale), 2.0f);
+    DOCTEST_CHECK_EQ(dragScaleMismatch(stale.dpiScale, dragAnchorScale(stale)), true);
+
+    // ③ 无信号两态不告警：探针 == 1（100% 档）、探针 == 0（无卡宽退化）
+    DragHitInput one = makeInput(1.0f);
+    DOCTEST_CHECK_EQ(dragScaleMismatch(one.dpiScale, dragAnchorScale(one)), false);
+    DragHitInput noProbe = makeInput(1.5f);
+    noProbe.cardWidth = 0.0f;
+    DOCTEST_CHECK_EQ(dragAnchorScale(noProbe), 0.0f);
+    DOCTEST_CHECK_EQ(dragScaleMismatch(noProbe.dpiScale, dragAnchorScale(noProbe)), false);
+    // （无卡宽时 dragDropTarget 自身即退化返回 -1，故此处不锁命中——
+    //   换算吃的是框架值，探针退化只让断言失去信号）
+    return true;
+})
+
 REGISTER_TEST(todo_ui_drag_hit_scroll_same_frame,
               "todo_ui: 拖拽 pressY/scrollOffset 同帧快照（tech-debt B 边缘场景锁）", {
     using module::todo::ui::DragHitInput;

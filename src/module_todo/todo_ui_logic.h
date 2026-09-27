@@ -8,6 +8,7 @@
 #include <eui/types.h>
 
 #include <algorithm>
+#include <cmath>
 #include <ctime>
 #include <optional>
 #include <unordered_set>
@@ -90,7 +91,14 @@ inline int computeAppendPosition(const std::vector<Task>& tasks, int64_t columnI
 // 显式声明（dpiScale）；板面原点由卡片左缘回推（卡片 bg 左缘 = 所在列左缘），
 // 换算后全部几何在 compose 空间比较，不再把 colWidth / 板高逐个乘 dpi。
 // onPress / onDrag 通道的指针值是**原始**值（runtime_input 对 onContextMenu /
-// onMove 才做 /dpiScale），故 hitDropColumn 侧传拖拽锚点实测尺度。
+// onMove 才做 /dpiScale），故 hitDropColumn 侧要喂"指针空间相对 compose 空间"
+// 的尺度。
+//
+// U1 尺度契约（2026-09-27）：该尺度**取自框架，不再由锚点反推**。todo 是
+// Router 页面模块、渲染在主窗口，调用点取 `app::contentScale()`（声明见
+// include/eui/app.h：物理 = 逻辑 * scale，与 compose 收到的 Screen::scale 同源
+// 同值）；若日后 todo 搬进独立子窗，改取该窗 compose 拿到的 Screen::scale。
+// dragAnchorScale 探针保留，但只作断言（dragScaleMismatch）。
 //
 // ⚠ 同帧契约（tech-debt B）：pressY 与 scrollOffset 必须是"按下那一帧"的
 // 成对值——bounds.y 里含的是按下时刻的列滚动，还原板面顶边只能减同一个值。
@@ -107,16 +115,29 @@ struct DragHitInput {
     float boardHeight = 0.0f;   // compose 空间板高
     float scrollOffset = 0.0f;  // 源列滚动偏移（compose 空间，按下时刻快照）
     float pageOriginX = 0.0f;   // 页面区原点 x（compose 空间；无头/未接入 = 0）
-    float dpiScale = 1.0f;      // 指针空间 → compose 空间缩放（显式；1.0 = 同尺度）
+    float dpiScale = 1.0f;      // 指针空间 → compose 空间缩放（框架值；1.0 = 同尺度）
     int cardIndex = 0;
 };
 
 // dpi 探针（审计 M4：由"唯一手段"降级为断言）：按下时卡片 bounds 宽 /
-// compose 空间卡宽 = 指针空间相对 compose 空间的**实测**尺度。hitDropColumn
-// 拿它当 dpiScale 的取值来源并与 1.0 对照告警；换算本体不吃本值，退化
-// （无卡宽）返回 0。纯函数，无副作用。
+// compose 空间卡宽 = 指针空间相对 compose 空间的**实测**尺度。换算本体不吃
+// 本值（dpiScale 由调用点喂框架值），退化（无卡宽）返回 0。纯函数，无副作用。
 inline float dragAnchorScale(const DragHitInput& in) {
     return in.cardWidth > 0.0f ? in.pressWidth / in.cardWidth : 0.0f;
+}
+
+// 探针断言（U1 尺度契约）：探针**实测**尺度与框架显式尺度不一致 → true，
+// 调用点据此打一次性 WARN（可观测）。
+// 判据 = 探针 > 0 **且** 探针 ≠ 1 **且** 探针 ≠ 显式值：
+//   · 探针 == 0（无卡宽，退化）或 == 1 → 无信号（跳过断言，不告警；100% 档
+//     探针本就 1）
+//   · 探针 ≠ 1 但与框架值一致 → 正常（框架值被几何实测独立证实，不告警）
+// 只在"探针自称一个非 1 的尺度、却对不上框架"时才是真异常（框架值口径与几何
+// 实测漂移），此时告警留痕供点验比对。纯函数，无副作用。
+inline bool dragScaleMismatch(float explicitScale, float probeScale) {
+    return probeScale > 0.0f &&
+           std::fabs(probeScale - 1.0f) > 0.001f &&
+           std::fabs(probeScale - explicitScale) > 0.001f;
 }
 
 // 指针位置 → 目标列索引。列间隙 / 板面外 / 输入退化 → -1（拖放取消）。
