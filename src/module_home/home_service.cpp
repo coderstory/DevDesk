@@ -3,6 +3,7 @@
 #include "home_service.h"
 
 #include "core/logging.h"
+#include "core/overdue.h"
 #include "core/time.h"
 
 #include <cstdio>
@@ -166,8 +167,8 @@ core::Result<DashboardStats> HomeService::getStats(int recentNoteLimit) {
     const int64_t todayStart = startOfDayEpoch(now);
     const int64_t nowSecs = static_cast<int64_t>(now);
 
-    // 逾期口径与 TodoService::listOverdue 完全一致：
-    // due_at IS NOT NULL AND due_at < now AND completed_at IS NULL
+    // 逾期口径单源：core/overdue.h 的 kWhereSql（与 TodoService::listOverdue
+    // 共用同一份片段，THS-04——不再各写一遍）
     auto todayNotes = countBySql(
         "SELECT COUNT(*) AS n FROM markdown_index WHERE modified_at >= ?",
         todayStart);
@@ -181,10 +182,11 @@ core::Result<DashboardStats> HomeService::getStats(int recentNoteLimit) {
         return core::Result<DashboardStats>::fail(pendingTodos.errorCode(),
                                                   pendingTodos.errorMessage());
     }
-    auto overdueTodos = countBySql(
-        "SELECT COUNT(*) AS n FROM todo_tasks "
-        "WHERE due_at IS NOT NULL AND due_at < ? AND completed_at IS NULL",
-        nowSecs);
+    // countBySql 收 const char*，故在此拼出完整 SQL（拼串成本相对 4 次查询可忽略）
+    const std::string overdueCountSql =
+        std::string("SELECT COUNT(*) AS n FROM todo_tasks WHERE ") +
+        core::overdue::kWhereSql;
+    auto overdueTodos = countBySql(overdueCountSql.c_str(), nowSecs);
     if (overdueTodos.isFail()) {
         return core::Result<DashboardStats>::fail(overdueTodos.errorCode(),
                                                   overdueTodos.errorMessage());

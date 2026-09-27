@@ -3,6 +3,7 @@
 #include "todo_service.h"
 
 #include "core/logging.h"
+#include "core/overdue.h"
 #include "core/result.h"
 #include "core/sqlite_db.h"
 #include "platform/json.h"
@@ -747,11 +748,14 @@ core::Result<std::vector<Task>> TodoService::search(const std::string& query) {
 core::Result<std::vector<Task>> TodoService::listOverdue() {
     const int64_t now = nowEpochSeconds();
 
-    auto prep = db_.prepare(
-        "SELECT id, column_id, title, description, priority, due_at, tags, position, completed_at "
-        "FROM todo_tasks "
-        "WHERE due_at IS NOT NULL AND due_at < ? AND completed_at IS NULL "
-        "ORDER BY due_at ASC");
+    // 逾期谓词单源：core/overdue.h 的 kWhereSql（与首页 HomeService::getStats
+    // 共用同一份片段，THS-04——列名/口径改一处两边同步生效）
+    const std::string sql =
+        std::string(
+            "SELECT id, column_id, title, description, priority, due_at, tags, position, completed_at "
+            "FROM todo_tasks WHERE ") +
+        core::overdue::kWhereSql + " ORDER BY due_at ASC";
+    auto prep = db_.prepare(sql);
     if (prep.isFail()) {
         return core::Result<std::vector<Task>>::fail(prep.errorCode(), prep.errorMessage());
     }
