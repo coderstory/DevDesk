@@ -700,19 +700,20 @@ std::vector<std::string> ensureBuiltinSkins(const std::filesystem::path& root) {
 }
 
 std::vector<std::filesystem::path> skinRootCandidates() {
-    // 生成/默认皮肤落在 petsDir()（appData，恒可写）；cwd/assets/pets 是
-    // 开发期放皮肤包的只读候选（构建目录旁边）
+    // 生成/默认皮肤落在 petsDir()（appData，恒可写）；exe 旁 assets/pets 是
+    // 随包分发的只读皮肤候选（安装包/DMG 里与可执行文件同级；开发期 = 构建目录）
     std::vector<std::filesystem::path> roots;
     roots.push_back(core::paths::petsDir());
     // DEVDESK_PETS_DIR 覆盖时独占候选列表（测试隔离语义，与 DEVDESK_NOTES_DIR 一致）——
-    // 否则 cwd/assets 里的内置美术皮肤会泄漏进隔离环境，破坏计数断言
+    // 否则 exe 旁 assets 里的内置美术皮肤会泄漏进隔离环境，破坏计数断言
     if (std::getenv("DEVDESK_PETS_DIR") != nullptr) {
         return roots;
     }
-    std::error_code ec;
-    const std::filesystem::path devRoot = std::filesystem::current_path(ec) / "assets" / "pets";
-    if (!ec) {
-        roots.push_back(devRoot);
+    // exe 目录解析失败时 executableDir() 返回空 path，此时必须跳过该候选：
+    // 空路径与 "assets/pets" 拼接会退化成相对 cwd 的路径
+    const std::filesystem::path exeDir = core::paths::executableDir();
+    if (!exeDir.empty()) {
+        roots.push_back(exeDir / "assets" / "pets");
     }
     return roots;
 }

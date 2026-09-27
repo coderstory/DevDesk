@@ -11,6 +11,13 @@ namespace core::paths {
 //   Windows: %APPDATA%/DevDesk/
 std::filesystem::path appDataDir();
 
+// 当前可执行文件所在目录（随包资源解析用：exe 旁 assets/ 等）
+// 只返回目录本身、不含可执行文件名；不做存在性保证。
+// 失败（平台 API 不可用 / 路径解析失败）返回 **空 path** —— 绝不拿 cwd 或
+// 其它目录冒充；调用方必须自行判空并跳过该候选（空路径参与拼接会退化成
+// 相对 cwd 的路径，等于把 cwd 依赖偷偷加回来）
+std::filesystem::path executableDir();
+
 // 配置文件（config.json）
 std::filesystem::path configFile();
 
