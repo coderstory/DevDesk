@@ -17,16 +17,42 @@ function(devdesk_apply_warnings target_name)
     if(CMAKE_CXX_COMPILER_ID STREQUAL "Clang"
        OR CMAKE_CXX_COMPILER_ID STREQUAL "AppleClang"
        OR CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
-        if(CMAKE_BUILD_TYPE STREQUAL "Debug")
-            target_compile_options(${target_name} PRIVATE -Wall -Wextra -Wpedantic -Werror)
-        else()
-            target_compile_options(${target_name} PRIVATE -Wall -Wextra)
-        endif()
+        # -Werror 不按构建档分支，全档统一开启（2026-09-28，PAB-10）：
+        # 旧写法只在 Debug 档加 -Werror，Release 档（含顶层
+        # `if(NOT CMAKE_BUILD_TYPE) set(CMAKE_BUILD_TYPE Release)` 兜底出来的默认档，
+        # 以及 RelWithDebInfo / MinSizeRel）只有 -Wall -Wextra → 只有 -O2/-O3 才冒的告警
+        # （-Wmaybe-uninitialized / -Wstringop-* / strict-aliasing 等）永远不会失败。
+        # 不按档判定还避开了两条静默失效：多配置生成器（Xcode/VS）在 configure 期
+        # CMAKE_BUILD_TYPE 为空，按档分支会让整个 -Werror 从未命中。
+        # 误报一律走文末 -Wno-error= 白名单单独压，不要恢复按档分支。
+        target_compile_options(${target_name} PRIVATE -Wall -Wextra -Wpedantic -Werror)
         # 顺序在后才能覆盖 -Wall/-Wextra 触发的该类警告
         target_compile_options(${target_name} PRIVATE -Wno-unused-parameter)
         # EUI-NEO 头文件（theme.h/markdown.h 的聚合初始化）会触发该警告，
         # 属第三方代码：降级为非致命，DevDesk 自己的新增告警仍可见
         target_compile_options(${target_name} PRIVATE -Wno-error=missing-field-initializers)
+        # 以下四条是 Release 档（-O3）才出现的 GCC 误报，源头都不在 DevDesk 代码里，
+        # 只降级为非致命（仍打印、不静默），理由逐条写死；且只对 GNU 生效——
+        # 这些告警名是 GCC 专属（Clang 不认 `-Wstringop-overflow` 等，会以
+        # -Wunknown-warning-option 反噬到无条件开启的 -Werror 上，把 macOS 构建打死）。
+        # ① -Warray-bounds：3rd/cpp-httplib/httplib.h 的 SSLClient 析构 + 内联进来的
+        #    libstdc++ 析构，GCC 把 `new httplib::ClientImpl`（976 字节）当成同尺寸数组后
+        #    再按 SSLClient 基类偏移（984/1000）判越界——devirtualization 误报，
+        #    实测只出现在 tests/test_streaming_proxy.cpp:1138 一个构造/析构点上。
+        # ② -Wrestrict / -Wstringop-overflow：libstdc++ stl_uninitialized.h:294 的
+        #    memcpy 被内联进 EUI-NEO components/styledmenu.h 的 flattenRecursive
+        #    （std::vector<int> 拷贝构造），GCC 报出 9223372036854775804 / 9223372036854775808
+        #    字节（SIZE_MAX 量级）的尺寸——优化器丢真尺寸后的模板化数值，非真实越界。
+        # ③ -Walloc-size-larger-than：同一条 flattenRecursive 内联链的另一面（GCC 把
+        #    vector 尺寸当成了 SIZE_MAX），在 main.cpp 上冒出来；该选项带参数，故按
+        #    GCC 要求的 `-Wno-error=选项=参数` 形式给出（参数取默认上限 PTRDIFF_MAX）。
+        if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
+            target_compile_options(${target_name} PRIVATE
+                -Wno-error=array-bounds
+                -Wno-error=restrict
+                -Wno-error=stringop-overflow
+                -Wno-error=alloc-size-larger-than=9223372036854775807)
+        endif()
     elseif(CMAKE_CXX_COMPILER_ID STREQUAL "MSVC")
         target_compile_options(${target_name} PRIVATE /W4)
     endif()
