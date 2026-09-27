@@ -6,6 +6,15 @@
 
 > **当前基线（2026-09-24，master @ 817af80）**：用例 **407**（`grep REGISTER_TEST` 口径，本会话 324 → 407；全绿与否以主会话终验为准）。各波次条目内的测试数为该波时点事实，不代表当前总数；波次按合并时间倒序排列。
 
+## [Batch-0927-C] 2026-09-27 —— 反向同步 M5 收口：Profile 复制的 UI（`f47766b` → `82577ed`）
+
+### [Reverse-Sync-M5] `82577ed` —— 详情页第 5 键「复制」+ `doDuplicate` + 无头 UI 用例
+- 详情页操作按钮组 4 键 → 5 键：`actW` 由 `(w0 - actGap * 3) / 4` 改 `(w0 - actGap * 4) / 5`（最小窗 1200 → 120px、默认窗 1600 → 200px，容纳 4 字按钮无虞）；新增「复制」`claude.act.dup`（点击节点 `.bg`，与同区其他键同款），复制源 = 详情面板当前显示的 profile（`shown`，取法与测试连通/编辑一致）；无选中 → toast「请先选择 Profile」。
+- 新增 `doDuplicate(int64_t)`：标脏 `dataDirty_` → `ClaudeService::duplicateProfile(id)`（M4 已落地，**服务层零改动**）→ 失败按既有 toast 口径报错，成功 toast「已创建副本「X 副本」（未激活）」；副本不激活 ⇒ 选中态/激活态不变。
+- 无头 UI 用例 +2（`test_claude_ui.cpp`）：① 复制键建副本——DB 对账（key 同源 / `is_active` 未变 / 源行未动）+ toast 文案 + 选中态不变 + 新卡片出现（有界轮询）② 选中卡点启用 → settings.json 的值收编进原激活 profile（M3 反向同步链路的 UI 侧证据）。「compose 无服务」用例补 `claude.act.dup` 存在 + 点击不崩。
+- 定向实测 `devdesk_tests.exe claude` **60/60 全绿**（含本批新增 2 条）；全量套件由主会话终验。
+- **未截屏**：Windows 开发机无可用无头截屏手段（仓库内唯一截屏脚本 `scripts/screenshot.sh` 走 macOS `screencapture`），本批施工口径禁启动 app。替代物 = spec「附：记录（实施期回填）」里的 5 步用户点验清单。
+
 ## [Batch-0927-B] 2026-09-27 晚 —— 第二批 12 个 merge（`e99ee21` → `c48546e`，master 实测 530/530 全绿）
 
 master `e99ee21`（第一批收口 docs）→ `c48546e`：12 个 `--no-ff` 合并批次 / 16 个子提交 / 46 文件（+4269 −314）。内容 = 专家审计修复批（M1/M2/M3 残项/M5/M6/M7 + L1/L2/L4/L5/L6/L7）+ 反向同步 M1–M4 + Markdown Phase3 M0 门禁 spike + 装配层与 extern 桥两笔重构。按合并时间倒序：

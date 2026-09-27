@@ -226,3 +226,25 @@
 2. **同步范围**：只读用户级 `~/.claude/settings.json`（本 spec 采用），还是也读 project 级 `.claude/settings.json`？
    - (A) **只读 user 层：拍板确认（2026-09-27）**——维持本 spec 结论，project 层不读（确需时另开需求）。
 3. **R2 复制入口**：详情页操作按钮组第 5 键「复制」——**拍板确认（2026-09-27）**，维持 §4.1（右键菜单方案已否决）。
+
+---
+
+## 附：记录（实施期回填）
+
+| 里程碑 | 状态 | commit / 证据 |
+|--------|------|---------------|
+| M1 读侧 | 已合入（Batch-0927-B） | 见 CHANGELOG `[Reverse-Sync-M3M4]` `4a34eb0` 批次 |
+| M2 纯函数 | 已合入（Batch-0927-B） | 同上（`makeCopyName` 等纯函数单测在 `test_provider_config.cpp`） |
+| M3 反向同步接线 | 已合入（Batch-0927-B） | `d1d880f`（service 用例 ①-⑧ 在 `test_claude_service.cpp`） |
+| M4 复制 | 已合入（Batch-0927-B） | `db0f15f`（复制用例 3 条：全等同源 / 源 key 缺失 / 二段回滚） |
+| M5 UI + 收尾 | 已合入 | `82577ed` —— 第 5 键 + `doDuplicate` + 无头 UI 用例 2 条 + 无服务不崩；定向 `devdesk_tests.exe claude` 60/60 全绿 |
+
+**M5 未截屏说明与替代物（用户点验步骤）**
+
+未截屏，原因：本机（Windows 11）无可用无头截屏手段——仓库内唯一截屏脚本 `scripts/screenshot.sh` 走 macOS `screencapture`；且本批施工口径为「只跑定向无头用例、禁启动 app」，不存在可截的窗口。替代物 = 下列 5 步人工点验（对应 §5「人工点验」行的复制部分）：
+
+1. 启动 DevDesk → Claude 页，确认至少两个 Profile（如「官方」+「中转」）。
+2. 点列表里「中转」卡选中（详情面板姓名变「中转」），点按钮组**第 5 个**「复制」。
+3. 断言：toast 出现「已创建副本「中转 副本」（未激活）」；列表新增「中转 副本」卡；「官方」卡仍是 ACTIVE，「中转」仍是当前选中（详情面板未跳走）。
+4. 点「中转 副本」→ 编辑 → 改 API Key 保存 → 切回「中转」：两个 Profile 的 key 互不影响（副本独立）。
+5. 选另一个 Profile 点「启用」：详情面板可见切走的那个 Profile 的 Base URL / key 已被 settings.json 的值收编（反向同步链路）。
