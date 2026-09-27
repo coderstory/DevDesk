@@ -8,6 +8,8 @@
 #   --no-run      只杀+构建+测试，不启动 app（app 在跑时链接可能因文件锁失败，会提示）
 #   --filter X    只跑描述含 X 的测试用例（透传给 devdesk_tests；注意中文
 #                 关键词经 Git Bash 传参可能有编码问题，建议用 ASCII 词）
+# 环境变量：DEVDESK_JOBS 并发编译单元数（默认 3，多 worktree 并发时的封顶）；
+#           ccache 配置已落 ccache.conf（无需环境变量），临时覆盖才 source scripts/ccache-env.sh
 # 默认：杀旧进程（释放 exe 锁）→ 增量构建 → 全量测试（挂则不启动）→ 启动 app
 #
 # worktree 感知：git worktree 里没有同级 ../EUI-NEO，脚本按
@@ -21,6 +23,23 @@ cd "$(dirname "$0")/.."
 
 # 工具链 PATH（CLAUDE.md 指定的 Windows 工具链，不在系统 PATH）
 export PATH="/d/software/cmake/cmake-4.3.3-windows-x86_64/bin:/d/software/ninja:/c/msys64/mingw64/bin:$PATH"
+
+# 并行度封顶：12 核机器上多个 worktree 同时构建时，各自默认 -j(=核数) 会互相拖死
+# （CPU/内存全占，单条 build 反而更慢）。默认 3 并发编译单元，可用 DEVDESK_JOBS 覆盖。
+export CMAKE_BUILD_PARALLEL_LEVEL="${DEVDESK_JOBS:-3}"
+
+# ---- 编译缓存 ccache（可选，缺则自动降级）----
+# 三件套（CCACHE_DIR / CCACHE_BASEDIR / CCACHE_NOHASHDIR）已落进 ccache 持久配置，无需环境变量：
+#   %LOCALAPPDATA%\ccache\ccache.conf（默认缓存目录下的配置，含 cache_dir/base_dir/hash_dir/max_size）
+#   + D:/software/ccache-devdesk/ccache.conf（CCACHE_DIR 被显式指定时读的是这一份）
+# 为什么必须设 base_dir/hash_dir：每个 worktree 绝对路径都不同，不把路径改写成「相对当前目录」
+# 再哈希，同一份源码在 A/B 两棵树算出的哈希就不同 → 缓存永远 miss（ccache 白装）。
+# 需要临时改缓存盘/基准目录：source scripts/ccache-env.sh 后再跑本脚本（环境变量优先级最高）。
+# 未安装 ccache → 不传 launcher，行为与从前完全一致（不硬失败）。
+CCACHE_ARGS=()
+if command -v ccache >/dev/null 2>&1; then
+  CCACHE_ARGS=(-DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache)
+fi
 
 CLEAN=0; RUN_TEST=1; RUN_APP=1; FILTER=""
 for arg in "$@"; do
@@ -77,6 +96,7 @@ fi
 if [ "$CLEAN" = "1" ] || [ ! -f build/build.ninja ]; then
   CONF_OUT=$(cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Debug \
     -DEUI_NEO_DIR="$EUI_DIR" \
+    "${CCACHE_ARGS[@]}" \
     -DOPENSSL_ROOT_DIR=C:/msys64/mingw64 \
     -DZLIB_LIBRARY=C:/msys64/mingw64/lib/libz.dll.a \
     -DZLIB_INCLUDE_DIR="$EUI_DIR/3rd/zlib-1.3.1" 2>&1) || {
