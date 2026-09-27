@@ -14,6 +14,7 @@
 //     我们在 cpp-httplib 的 Handler 里手动桥接 ctx → writer
 
 #include "http_server.h"
+#include "http_headers.h"
 
 #include <core/logging.h>
 
@@ -29,15 +30,11 @@ namespace platform::http {
 
 namespace {
 
-// 把 cpp-httplib 的 Headers (multimap) 转成 std::map（保留首个同名 value）
+// 把 cpp-httplib 的 Headers（大小写不敏感 multimap）转成 std::map：
+// **键统一小写**，同名（大小写不敏感）多条保留首个 value，值原样。
+// 键归一后消费方按小写拼写查找即可稳定命中（CP-06）。
 std::map<std::string, std::string> toHeaderMap(const httplib::Headers& src) {
-    std::map<std::string, std::string> dst;
-    for (const auto& kv : src) {
-        if (dst.find(kv.first) == dst.end()) {
-            dst.emplace(kv.first, kv.second);
-        }
-    }
-    return dst;
+    return toLowerKeyHeaderMap(src);
 }
 
 // 把 RouteHandler 适配成 httplib::Server::Handler
@@ -103,10 +100,10 @@ httplib::Server::Handler toLibHandler(RouteHandler userHandler) {
             res.set_header(kv.first, kv.second);
         }
         if (!rw.body().empty()) {
-            const auto& hmap = rw.headers();
-            auto it = hmap.find("Content-Type");
-            if (it != hmap.end()) {
-                res.set_content(rw.body(), it->second);
+            // 响应头名大小写不敏感（CP-06）：消费方可能写 "content-type"
+            // 也可能写 "Content-Type"，都要命中；否则 body 会被标成 text/plain
+            if (const char* ctype = findHeaderCI(rw.headers(), "content-type")) {
+                res.set_content(rw.body(), ctype);
             } else {
                 res.set_content(rw.body(), "text/plain; charset=utf-8");
             }
@@ -125,9 +122,10 @@ void ResponseWriter::setHeader(const std::string& key,
 }
 void ResponseWriter::write(const std::string& data) {
     body_ += data;
-    ended_ = false;
 }
-void ResponseWriter::end() { ended_ = true; }
+// 空操作：响应在 handler 返回时由适配层统一提交（见 http_server.h 注释）。
+// 原 ended_ 标志从未被任何消费方读取（CP-10），已删。
+void ResponseWriter::end() {}
 
 void ResponseWriter::setChunkProvider(const std::string& contentType,
                                       ChunkProvider provider,
@@ -136,7 +134,6 @@ void ResponseWriter::setChunkProvider(const std::string& contentType,
     streamingContentType_ = contentType;
     chunkProvider_ = std::move(provider);
     chunkReleaser_ = std::move(releaser);
-    ended_ = false;
 }
 
 // ---------- Server::Impl ----------
