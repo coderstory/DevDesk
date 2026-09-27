@@ -1,0 +1,159 @@
+{
+  "area": "markdown",
+  "baseline_sha": "ad82fbc",
+  "scope": "src/module_markdown/**（27 文件 / 8220 行；markdown_module.cpp 3327、markdown_service.cpp 1372、md_* 纯函数层 9 单元）。只读审计：未改代码、未跑构建/测试/app。已读 2026-09-27-expert-audit.md、HANDOFF §9.4、2026-09-27-md-phase3-m0-spike.md 避免重复；M0 spike 的 C1（requestFocus 只发 .hit）与 C4（贴合高度）已落地（kEditorInputHitId/kLiveInputHitId + 4 处调用点全改），C2 天然满足（本模块不调用 releaseStateScope），C3 已接线（swapped 帧置 verticalScroll=0）。",
+  "findings": [
+    {
+      "id": "MD-01",
+      "severity": "high",
+      "lens": "cpp",
+      "kind": "correctness",
+      "title": "实时态活动块锚 liveCursorByte_ 冻结不随输入推进：用户一旦在块内造出新的块边界，单输入被换文本 + 光标归零，下一次按键落到错误位置",
+      "evidence": [
+        {"file": "src/module_markdown/markdown_module.cpp", "symbol": "MarkdownModule::drawLiveColumn（锚初始化：仅 !liveCursorValid_ 时从 md.editor.input 读一次，之后永不推进）", "line": 1666},
+        {"file": "src/module_markdown/markdown_module.cpp", "symbol": "MarkdownModule::syncDocumentFromLiveInput（用 liveActiveBlock_ 作拼回区间）", "line": 1803},
+        {"file": "src/module_markdown/markdown_module.cpp", "symbol": "MarkdownModule::drawLiveInputBlock（swapped = st.text != blockText → 下一帧 input 走外部改值路径，并把 cursor 写成 mdLiveBlockLocalOffset(b, liveCursorByte_)）", "line": 1838},
+        {"file": "src/module_markdown/markdown_module.cpp", "symbol": "MarkdownModule::drawBlockFlow（isActive 由 live->activeBlock 决定，liveBlockText 取当前块区间）", "line": 1503},
+        {"file": "../EUI-NEO/components/input.h", "symbol": "InputBuilder::build（state.text != text_ → 整段替换文本、聚焦时光标搬到新文本末尾）", "line": 135}
+      ],
+      "impact": "实时态已随 M2 合入 master 且可从顶栏「实时」进入 → 现网可触发。可复现路径两种：(1) 在活动块内按回车造出块间空行（或在新行首打 `- ` / `1. ` / `# ` / `> ` 造出必打断段落的构造）→ 分块器把该块拆成两块，冻结锚仍落在【前一块】→ 下一帧输入框被整段换成前一块文本（用户刚敲的内容从输入框消失）、光标跳块首；此后每次按键都写进块首位置（doc 其余部分是保留的，但字符落在用户没点的地方 = 用户视角的丢字/跑位）。(2) 实时态下外部改文件触发 reloadCurrentNote 后同理（reload 不重置锚）。副作用同一根因：实时态打字期间 md.editor.input 不参与帧树 → 它的 InputState 光标停在进实时态之前的位置，切回编辑态光标不在打字处。",
+      "check": "照 tests/test_modules/test_markdown.cpp 的 MdUiEnv/MdLiveEnv 模式加一条无头用例：打开两段文档 → 光标置于块内第 1 行末 → cycleMode 进实时 → 对 md.live.input.hit 调 onTextInput({text:\"\\n\"}) → 走一帧 → 断言 state<InputState>(\"md.live.input\").text 仍等于「用户输入后的块文本」且 cursor >= 原偏移。当前实现下该断言失败（text 变成拆块后的前一块、cursor==0）。纯函数层无涉（md_live_edit 只做偏移/高度换算），故只能在这条 UI 链路上验。",
+      "suggested_fix": "把「光标 → 锚」这一唯一写点提前落地（spec §4.3 的 setLiveCursor 最小版）：在 drawLiveColumn 选活动块【之前】用当前活动块的起点回填 liveCursorByte_ = blocks[liveActiveBlock_].start + min(st.cursor, 块长)（st = md.live.input 的 InputState），再据此重算 liveActiveBlock_；退一步的止血版：swapped 判定改为「块文本变化 ≠ 本轮 onChange 回声」（把上一帧写入 input 的文本单独记账），只有真外部改值才让 input 覆盖 st.text。改动 3~5 行 + 上面那条用例。",
+      "already_registered": false,
+      "registered_ref": ""
+    },
+    {
+      "id": "MD-02",
+      "severity": "medium",
+      "lens": "arch",
+      "kind": "maintainability",
+      "title": "drawLiveColumn 与 drawEditorColumn 的列壳逐行复制（提示文案 / 标签 chip 行 / 状态栏 / 720px 写作列钳制 / 顶距公式）",
+      "evidence": [
+        {"file": "src/module_markdown/markdown_module.cpp", "symbol": "MarkdownModule::drawEditorColumn（空态提示 1005-1013 / edX=16、edW=midW-32、clamp 720 1018-1024 / drawTagBar 1026 / edY=48、edH=bodyH-edY-22-8 1027-1028 / drawStatusBar 1080）", "line": 1003},
+        {"file": "src/module_markdown/markdown_module.cpp", "symbol": "MarkdownModule::drawLiveColumn（同款提示串 1636-1644 / lvW=midW-32、clamp 720、lvX 居中 1650-1652 / drawTagBar 1654 / lvY=48、lvH=bodyH-lvY-22-8 1655-1656 / drawStatusBar 1712）", "line": 1636}
+      ],
+      "impact": "列壳任何一处调整都要改两遍：M3/M6/M7（切块状态机、滚动锚定、活动块边框/背景）还要继续往实时列加东西，两列只会越漂越远；且两处公式目前靠注释「（与编辑态同款）」口头同步，无编译期约束。",
+      "check": "grep -n \"从左栏选一篇笔记开始编辑\\|drawStatusBar(ui, 0.0f, bodyH - 22.0f\" src/module_markdown/markdown_module.cpp → 各 2 处命中（1009/1640、1014/1645/1080/1712）。",
+      "suggested_fix": "抽一个私有方法 drawTextColumnChrome(ui, midW, bodyH, t, componentTheme) 返回 {x, w, y, h}：内含空态提示、clamp 720 居中、drawTagBar、drawStatusBar 与 48/22/8 三个字面量；两态各自只保留「内容区」（编辑器 input / scrollView+drawBlockFlow）。可单独立一步做，零行为变化。",
+      "already_registered": false,
+      "registered_ref": "R3（refactor spec）只覆盖字面量→token，R7 只搬文件，均不消重"
+    },
+    {
+      "id": "MD-03",
+      "severity": "medium",
+      "lens": "arch",
+      "kind": "architecture",
+      "title": "drawBlockFlow 已成「几何表重建 + 逐块渲染 + 解析缓存 + hover + 活动块特判」四合一路径（8 参 / ~145 行 / 4 层嵌套 / build 后回改元素）",
+      "evidence": [
+        {"file": "src/module_markdown/markdown_module.cpp", "symbol": "MarkdownModule::drawBlockFlow（参数表 1470-1476：ui/contentWidth/t/style/prefix/onBlockTap/live；活动块两处特判 1503-1509 覆盖 wrapH 与 1603-1607 关掉覆盖层命中；1604-1606 post-build 用 ui.find 回改 hitTestMode）", "line": 1470}
+      ],
+      "impact": "预览与实时共用同一通路是 spec §3.2 的硬要求（值得保留），代价是每加一个视图态/交互都要在这个函数里加参数 + 加 isActive 分支：M3 点击定位（live 传 onBlockTap）、M4 跨块移动、M7 活动块边框都会继续加；post-build 元素回改还引入「必须 build 之后」的隐式顺序（MouseAreaBuilder 未暴露 hitTestMode，见 components/mousearea.h:46-85，只能后置改）。",
+      "check": "数 drawBlockFlow 函数体行数与 if (isActive) 分支数；再按 spec M3 的接线（drawBlockFlow(..., onBlockTap) 传实时点击回调）改一遍，看要动几处。",
+      "suggested_fix": "把活动块的两处特判收成一个注入点：drawBlockFlow 增加一个可选 `bool liveOverride(size_t k, const MdBlock& b, float* wrapH)`（返回 true = 本块由调用方绘制、wrapH 视为已给定），预览态传空即现状；活动块覆盖层命中改由该钩子内部处理（或上游 MouseAreaBuilder 补 hitTestMode/passThrough 后链式设置，代价是 `disabled(true)` 会一并停掉该块 hover）。",
+      "already_registered": false,
+      "registered_ref": ""
+    },
+    {
+      "id": "MD-04",
+      "severity": "medium",
+      "lens": "arch",
+      "kind": "maintainability",
+      "title": "markdown_module.cpp 单文件 3327 行（M1/M2 又增 ~480 行），装配 + 四态渲染 + 12 个浮层 + 服务编排全在一个 class 内",
+      "evidence": [
+        {"file": "src/module_markdown/markdown_module.cpp", "symbol": "MarkdownModule（单 class，39 个成员函数 + 100+ 成员变量；compose 290-364 顺序调用 12 个 draw* 浮层）", "line": 245},
+        {"file": "docs/superpowers/specs/2026-09-27-refactor-incremental-design.md", "symbol": "§4.2 R7 行（登记时记 2847 行 → 目标 7~8 文件）", "line": 228}
+      ],
+      "impact": "已登记为 R7，此处只记前提漂移：M1/M2 之后文件从 2847 → 3327 行（+17%），且新增内容（活动块输入、贴合高度备忘、焦点挂起位、实时列）全部并入同一个 class 的成员区，R7 的「按 draw* 切文件」拆分成本随之升高；在 R7 落地前，每次改实时态都要在一个 3300 行文件里定位。",
+      "check": "wc -l src/module_markdown/markdown_module.cpp → 3327；对照 R7 行记的 2847。",
+      "suggested_fix": "按 R7 原范围先切两块新文件（md_ui_live.cpp：drawLiveColumn/drawLiveInputBlock/drawBlockFlow + live 状态位；md_ui_dialogs.cpp：4 个弹窗），纯搬运零逻辑变化，把文件压回 R7 的估算区间。",
+      "already_registered": true,
+      "registered_ref": "R7（docs/superpowers/specs/2026-09-27-refactor-incremental-design.md §4.2）+ god-class spec §5「到此为止」清单（明确 markdown_module.cpp 按 R7 原范围走、不加码）"
+    },
+    {
+      "id": "MD-05",
+      "severity": "low",
+      "lens": "oop",
+      "kind": "pattern",
+      "title": "实时态状态位群语义隐式、复位点分散：liveCursorValid_ 是伪布尔三态、liveFocusPending_ 一次性位被「消费即弃」、liveOffset_ 漏复位",
+      "evidence": [
+        {"file": "src/module_markdown/markdown_module.cpp", "symbol": "成员区（liveCursorByte_/liveActiveBlock_/liveCursorValid_/liveFocusPending_ + LiveHeightMemo）", "line": 3281},
+        {"file": "src/module_markdown/markdown_module.cpp", "symbol": "MarkdownModule::setMode（进实时态置 liveCursorValid_=false + liveFocusPending_=true）", "line": 2236},
+        {"file": "src/module_markdown/markdown_module.cpp", "symbol": "MarkdownModule::openNote（换笔记只置 liveCursorValid_=false，liveOffset_ 未复位）", "line": 2520},
+        {"file": "src/module_markdown/markdown_module.cpp", "symbol": "MarkdownModule::drawLiveColumn（liveFocusPending_ 无条件清零：空文档 hasActive=false 时请求被静默丢弃）", "line": 1707}
+      ],
+      "impact": "「锚 / 滚动 / 焦点」三件事各有一个只写在注释里的生命周期，新增一条进入实时态的路径（M8 大纲跳转、跨模块跳转、reload 自动重载）都要记得手补复位——liveOffset_ 已经漏了：换笔记或退出再进实时态会保留上一份文档的滚动位置（contentKey 换了、偏移没换，靠框架钳制兜底，观感上「打开新笔记停在半截」）。liveFocusPending_ 的「消费即弃」目前无可达后果（空文档时没有能收键的元素），但语义是「请求可静默丢失」，加交互后容易变成真洞。",
+      "check": "grep -n \"liveCursorValid_\\|liveFocusPending_\\|liveOffset_\" src/module_markdown/markdown_module.cpp 看写点分布（三处复位/消费点分散在 setMode/openNote/compose 内）；对照预览态有 syncPreviewOnEnter_ 一次性标志而实时态无对应物。",
+      "suggested_fix": "收一个 enterLiveState(reason)（或 LiveState 小 struct + reset()），setMode/openNote/reloadCurrentNote 三条路径统一调；liveFocusPending_ 改为「投递成功才清」（hasActive 为 true 时才清零）；liveOffset_ 与预览态对齐，进入时按需重算或归零。",
+      "already_registered": false,
+      "registered_ref": ""
+    },
+    {
+      "id": "MD-06",
+      "severity": "low",
+      "lens": "cpp",
+      "kind": "maintainability",
+      "title": "编辑器 input 的 id 是 13 处散落字面量，而 M2 新加的实时 id 反而有常量——同一文件两套口径",
+      "evidence": [
+        {"file": "src/module_markdown/markdown_module.cpp", "symbol": "\"md.editor.input\" / \"md.editor.input.hit\" 字面量（319/1030/1059/1070/1092/1130/1318/1670/1896/1938/2297/2323/2959/2960）", "line": 1030},
+        {"file": "src/module_markdown/markdown_module.cpp", "symbol": "kEditorInputHitId（只有 .hit 这一个形态抽了常量）、kLiveInputId / kLiveInputHitId（M2 新增，两形态都有常量）", "line": 191}
+      ],
+      "impact": "id 写错一个字符不会编译报错、只会静默失效（state 换命名空间 / 组件判定未聚焦），正是 M0 spike C1 的事故形态；M3 要新增 setLiveCursor 读写编辑器状态、M7 要高亮注入，写点只会更多。测试侧同一字面量还有 46 处（test_markdown.cpp），改 id 需全量同步。",
+      "check": "grep -n '\"md\\.editor\\.input' src/module_markdown/markdown_module.cpp → 13 处命中，其中只有 2 处用了常量（1070/2959 的 .hit、以及 191 的定义）。",
+      "suggested_fix": "补 constexpr const char* kEditorInputId = \"md.editor.input\";（hit 常量已有）并把 13 处字面量改常量；纯替换，可一次 grep 验零残留。",
+      "already_registered": false,
+      "registered_ref": ""
+    },
+    {
+      "id": "MD-07",
+      "severity": "low",
+      "lens": "cpp",
+      "kind": "maintainability",
+      "title": "同一上游耦合系数 1.2（input 内部行高）在本模块有两份定义，两份注释都写「必须与上游同步」",
+      "evidence": [
+        {"file": "src/module_markdown/markdown_module.cpp", "symbol": "kEditorLineHeightFactor = 1.2f（消费点 computeSyncOffset 1899：编辑器行 = verticalScroll / (fontSize × 系数)）", "line": 183},
+        {"file": "src/module_markdown/md_live_edit.cpp", "symbol": "kMdLiveLineHeightFactor = 1.2f（消费点 mdLiveInputHeight 末尾）", "line": 14},
+        {"file": "../EUI-NEO/components/input.h", "symbol": "textLineHeight = fontSize * 1.2f（唯一上游来源）", "line": 128}
+      ],
+      "impact": "上游若调行高系数，改一处忘另一处 = 双栏同步滚动换算与实时态贴合高度各自偏掉；后者偏矮直接违反 M0 约束 C4（input 注册 onScroll → 吃掉外层滚轮 + 出内部滚动条），且只在实机滚动时才暴露。",
+      "check": "grep -rn \"1.2f\" src/module_markdown/ → 两处常量定义 + 两处使用；两份注释都自陈与 components/input.h 同源。",
+      "suggested_fix": "把系数提到 md_live_edit.h（constexpr float kMdInputLineHeightFactor = 1.2f），markdown_module.cpp 的 kEditorLineHeightFactor 改为 include 复用（或删常量直接引用），纯替换、公式不动。",
+      "already_registered": false,
+      "registered_ref": ""
+    },
+    {
+      "id": "MD-08",
+      "severity": "low",
+      "lens": "cpp",
+      "kind": "correctness",
+      "title": "索引写的两条路径锁不对称：UI 线程 write()/create()/remove() 不持 rescanMu_，watcher 线程 onWatchEvent 持锁做同一批索引写",
+      "evidence": [
+        {"file": "src/module_markdown/markdown_service.cpp", "symbol": "MarkdownService::write（全文 683-709 无锁 → syncOneToIndex）", "line": 683},
+        {"file": "src/module_markdown/markdown_service.cpp", "symbol": "MarkdownService::onWatchEvent（watcher 线程：rescanMu_ 内 syncOneToIndex/deleteFromIndex，155-198）", "line": 163},
+        {"file": "src/module_markdown/markdown_service.cpp", "symbol": "MarkdownService::rescan（唯一持锁的 UI 侧入口，200-206）", "line": 200},
+        {"file": "src/module_markdown/markdown_service.cpp", "symbol": "MarkdownService::syncOneToIndex（SELECT → UPSERT + FTS 删除/插入，单条语句级持锁）", "line": 257}
+      ],
+      "impact": "自动保存（每 400ms 防抖，compose 内触发）与 watcher 事件（保存自身也会触发文件事件）天然同时活跃：两条路径可对同一 path 并发跑「SELECT→UPSERT + FTS 删+插」，core::data::SqliteDb 只提供语句级 recursive_mutex，事务边界不被保护 → 瞬态索引/FTS 不一致（同一 path 重复行或漏行，搜索结果里可见），下一轮 rescan 收敛；文件内容不丢。未实证复现节拍（本任务不跑构建/测试），静态可证的是「写点无锁」这一事实。",
+      "check": "grep -n \"rescanMu_\" src/module_markdown/markdown_service.cpp → 只有 rescan() 与 onWatchEvent() 两处取锁；对照 write()/create()/remove()/rename() 全文无 lock_guard 而都调 syncOneToIndex。",
+      "suggested_fix": "把 syncOneToIndex/deleteFromIndex 的调用收进持锁段（write/create/remove/rename 各自加 std::lock_guard<std::mutex> lock(rescanMu_)），或让两个私有方法内部自己取锁——二者取其一，避免 rescanLocked 内重复取锁（std::mutex 非递归，需改 recursive_mutex 或只在非 rescan 调用点加）。",
+      "already_registered": false,
+      "registered_ref": "相关但不同：HANDOFF §9.2 的 H2 在飞项说的是「compose 内读盘/DB + 全局态无同步」；expert-audit 的 C 类把 markdown watcher 判为「线程纪律最好的一处」，其依据是「只碰 rescanMu_ + 原子 credit、不触 theme/UI 状态」——本条针对的是它触碰 DB 而 UI 侧不取同一把锁。"
+    }
+  ],
+  "notes": {
+    "已核对无需上报": [
+      "M0 spike C1：已修（kEditorInputHitId 常量 + 4 处 requestFocus 全发 .hit；md.live 侧 kLiveInputHitId）",
+      "M0 spike C2：本模块零 releaseStateScope 调用，实时态单输入 id 不在任何被释放前缀下",
+      "M0 spike C3/C4：swapped 帧显式 verticalScroll=0 + 高度公式注入同源 measureLines（无头用例 md_module_live_active_input 断言 onScroll==nullptr）",
+      "M0 spike 未决 2（无活动块时焦点/状态处置：清空活动块后输入框消失、焦点陈旧）——spike §5 已登记，owner 为 M3",
+      "spec §2.2 V5（活动块贴合高 ≠ 几何表 H_k → 其后各块 hover/命中矩形落点偏移）——phase3 spec + markdown_module.cpp:1498-1502 注释双重登记，owner M6",
+      "refactor spec D1/D2/D3/D4（toast 状态机、对话框表单脚手架、表头几何字面量、chip 宽度估算）——markdown 侧调用点已在 R1/R2/R3/R7 登记",
+      "审计 M4（坐标/DPI 三套换算）、存疑 V8（estimateTextWidth 偏差）——在飞/存疑表已登记，未重复",
+      "markdown_service 的 mtime 秒级粒度（看不见同秒等长改动）——refactor spec 边界 E 已记「重构不做」，watcher force 路径已是根治点"
+    ],
+    "存疑未取证": [
+      "实时态整块删除至空文档后：无块 → 不建 input → 焦点悬空（focusedId_ 指向不存在元素），只能靠 Ctrl+Shift+P 切回编辑态打字。可达路径已确认（输入框全选删除），未跑无头复现，且 owner 已属 M3（spike 未决 2）",
+      "IME 组字期间 input 内部 display 文本（含 preedit）与高度公式用的块文本行数可能不等 → 组字时活动 input 可能长出内部滚动并注册 onScroll（吃掉外层滚轮）。spike §3.2 已声明真实 IME 未覆盖，未列为缺陷",
+      "无头测试无法覆盖真实指针/键事件队列与 IME（spike §3.1），M2 的 onTextInput 直调属同一局限"
+    ]
+  }
+}
