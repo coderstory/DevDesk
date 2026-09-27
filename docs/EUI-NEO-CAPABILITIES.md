@@ -4,6 +4,7 @@
 > **调研目的**：DevDesk 项目技术选型验证
 > **调研方法**：实际打开 `/Users/coderstory/Dev/gui/EUI-NEO/` 源码，grep + 阅读组件实现 + 跑示例
 > **结论**：DevDesk 的全部设计**基本可实现**，但有 5 个硬限制 + 5 个隐藏陷阱需要避开
+> **2026-09-27 补充实测**：Markdown Phase 3 · M0 spike（V1–V4，9 用例全绿，被测 rev `8a1227c`）——焦点 / `input` 编辑态口径见 §7「焦点与 input 编辑态实测口径」，其中含一条对 §7「焦点系统」的更正
 
 ---
 
@@ -43,6 +44,9 @@
 | **Toast 单实例无队列** | 同时显示多条要自管队列 |
 | **Tab 焦点循环未实现** | `InputKey::Tab` 枚举存在但不调度，键盘 Tab 导航需自实现 |
 | **窗口无 `onResize` / `onMove` 回调** | 自适应布局靠 `DslWindowRequest::compose(ui, screen)` 的 `screen` 参数变化触发 |
+| **`requestFocus` 必须打 `<input id>.hit`** | 发基 id 时"焦点看起来设上了"但组件判定未聚焦（`input.h:113-114` `isFocused(id + ".hit")`）→ 不画 caret、按键落回 `keyEventHandler_`；`components::input` 自己不聚焦（2026-09-27 实测）|
+| **元素消失不清焦点（陈旧焦点）** | 焦点元素从帧树消失时 `focusedId_` **保留**：键盘落空但 `InputState` 不丢，同 id 重挂载静默恢复；真正清焦点的是 `releaseStateScope` 前缀命中（连带销毁 `InputState`）（2026-09-27 实测）|
+| **`input` 高度不贴合就吃滚轮** | `maxVerticalScroll > 0` 才注册 `onScroll`——声明高度偏矮 / 封顶块都会截住滚轮，外层滚不动（2026-09-27 实测）|
 
 ---
 
@@ -411,11 +415,35 @@ ui.rect("input").focusable()
     .preserveFocusOnPress(true)
     .onFocusChanged([](bool focused) {});
 
-components::input(ui, "txt").value("...").build();  // 自动获得焦点 + IME
+components::input(ui, "txt").value("...").build();  // 可聚焦元素是 "txt.hit"（不是 "txt"）
 ```
 
 - 框架内部跟踪 `focusedId_`，KeyEvent 派发给焦点元素
+- 键 / 文本派发每帧用 `ui.find(focusedId_)` 现查（`runtime_input.h` 的 `updateKeyInput` / `updateTextInput`）；查不到就静默落空（按键落到窗口级 `keyEventHandler_`）
+- 清焦点只有三处：指针按下重定焦（`setFocusedId` 的命中分支）、禁用子树、`releaseStateScope` 前缀命中（`runtime_lifecycle.h:28-34`）——**元素从帧树消失不在其列**
 - ⚠️ **Tab 焦点循环未实现**——自实现
+- **2026-09-27 实测更正**：`components::input(...).build()` **不会**自动获得焦点——`input.h` 内不调用 `requestFocus`，组件只把 `<id>.hit` 矩形标 `focusable`；程序式聚焦必须发 `<input id>.hit` 的目标 id，发基 id 时组件判定未聚焦（不画 caret、按键落空）
+
+### 焦点与 input 编辑态实测口径（2026-09-27 M0 spike，rev `8a1227c`）
+
+来源用例：`tests/test_modules/test_md_live_spike.cpp`（9 例，复跑 `./devdesk_tests.exe mdspike`）；结论表与手工点验清单：`docs/superpowers/plans/2026-09-27-md-phase3-m0-spike.md`
+
+| 现象 | 实测结论 | 证据（用例 / 上游符号）|
+|------|---------|---------------------|
+| 稳定 id 的 input 跨帧换位 / 换父级 | **支持**：元素身份、`ui.isFocused`、`InputState`（文本/光标/选区/`build` 不触碰的字段）、几何、键派发目标全存活；反复搬家幂等 | `mdspike_v1_relocate_keeps_identity`；焦点是 id 字符串、每帧 compose 重新灌回 `Ui`（`runtime_lifecycle.h:22`），元素 id 与树位置 / 父级无关（`dsl.h` 的 id 组装，只有 `LoaderBuilder::content` 会 push scope）|
+| 上述的**条件** | 程序式聚焦必须发 `<input id>.hit` 的目标 id；发基 id 时组件判定未聚焦 → 无 caret、`onKeyEvent` 为空、按键落空 | `mdspike_v1b_focus_target_must_be_hit_id`；`input.h:113-114` |
+| 焦点元素被删 / 元素短暂消失 | **不清 `focusedId_`**（只比字符串）→ 变"陈旧焦点"：键盘落空但状态不丢，同 id 重挂载静默恢复（含旧光标/选区/`dragAnchor`）| `mdspike_v2a_unmount_leaves_stale_focus` |
+| 目标不在本帧树中时 `requestFocus` | 请求**丢弃、不排队**——不能提前或事后补发，必须与元素同帧 | `mdspike_v2b_requestfocus_when_absent_is_dropped` |
+| 真正销毁焦点的是 `releaseStateScope` | 前缀命中即清焦点，并**连同 `InputState` 一起销毁**（光标/undo 归零）；同帧「先释放、后补发 `requestFocus`」可恢复焦点（顺序天然成立：`Runtime::compose` 先消费 released scopes 再消费 pending focus，`runtime_lifecycle.h:28-42`）| `mdspike_v2c_release_scope_clears_then_same_frame_request_restores` |
+| input 作为 `scrollView` content 内的流式元素 | **支持**：声明高度参与流式布局与内容测量（滚动范围随它变）；滚动偏移下 pointer→caret 落在点击行（`onPress` 收到折算过滚动位移的 bounds）；`imeRect` 在**元素局部坐标系** | `mdspike_v3a_input_as_flow_content` / `mdspike_v3b_pointer_to_caret_under_scroll`；`input.h:197-198`、`input_model.h` 的 `cursorFromPointer`、`runtime_input.h` 命中测试继承父级 render transform |
+| 换文本瞬间的滚动残余 | 贴合高度（`h = inset×2 + 行数×lineHeight`）**无**跳位；仅「封顶块（`maxVerticalScroll > 0`）+ `followCaret=false`」同时成立时首帧跳位，切块帧把 `verticalScroll` 置 0 即消除（`followCaret=true` 时框架同帧按光标重算滚动）| `mdspike_v4a_swap_text_scroll_residual_capped_block` / `mdspike_v4b_fit_height_has_no_residual`；`input.h` 滚轮分支与聚焦换文本分支、`input_model.h` 的 `syncScroll` |
+
+**使用注意（接线硬约束）**：
+
+1. 编程式聚焦统一打 `<input id>.hit`（建议定义常量）——现有 4 处 `requestFocus("md.editor.input")`（`src/module_markdown/markdown_module.cpp:1628/2448/2476/2639`）即"发基 id"口径。
+2. 单输入元素的 id **不要**落在会被 `releaseStateScope` 释放的前缀下，否则每次切块都清焦点 + 清 `InputState`；无法避免时必须**同一帧**补发 `requestFocus`。
+3. `input` 的声明高度必须贴合内容；任何"偏矮"都会让 `maxVerticalScroll > 0` → 注册 `onScroll` → 吃掉外层滚轮（封顶块同理，属已知取舍）。
+4. 上述结论来自无头 spike：真实 IME / 事件队列段 / 渲染脏区未覆盖，实机点验见计划文件 §4 清单。
 
 ### 键盘快捷键
 
@@ -466,6 +494,7 @@ ui.rect("input").focusable()
 - Windows：IMM + Microsoft Pinyin 优化 + 强制 "Microsoft YaHei UI" ClearType
 - Linux：no-op
 - `components::input` **完整支持** IME 预编辑
+- `imeRect` 是**元素局部坐标**（`input.h:197-198`），平台桥再叠加元素 `frame` + 命中矩阵 → 候选框随元素变换 / 滚动走（2026-09-27 实测，见 §7「焦点与 input 编辑态实测口径」）
 
 ### 文本选区（input 内置）
 
@@ -486,6 +515,8 @@ core::window::setClipboardText(window, "copy text");
 ```cpp
 ui.rect("list").interactive().onScroll([](const core::ScrollEvent& e) {});
 ```
+
+元素**有内部滚动**（`maxVerticalScroll > 0`）才会注册 `onScroll`；否则滚轮穿透给外层容器（`components::input` 的滚轮分支同理——高度贴合就无滚轮处理器，见 §7「焦点与 input 编辑态实测口径」）。
 
 ---
 
@@ -618,6 +649,8 @@ components::progress(ui, "p").value(0.6f).build();
 | `components/theme.h` | 276 | 主题系统 |
 | `core/platform/ime_bridge.c` | 16944 | IME 三平台实现 |
 | `core/platform/tray_bridge.c` | 35500 | 托盘 4 后端 |
+| `core/runtime/runtime_lifecycle.h` | 318 | 每帧 compose：焦点灌回 / `releaseStateScope` 释放 / pending focus 帧末消费 |
+| `core/runtime/runtime_input.h` | 593 | 键 / 文本 / 指针派发：`ui.find(focusedId_)` 现查、`setFocusedId`、`updateScroll` |
 | `include/eui/signal.h` | 42 | Signal（**仅 mutable wrapper，无 computed/effect**）|
 
 ---
