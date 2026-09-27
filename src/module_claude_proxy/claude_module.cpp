@@ -37,6 +37,7 @@
 #include <ctime>
 #include <filesystem>
 #include <fstream>
+#include <functional>
 #include <future>
 #include <map>
 #include <sstream>
@@ -76,6 +77,9 @@ const char* const kCallsStatusLabels[] = {
 constexpr int kCallsStatusCount = 6;
 // 日志弹窗每页条数（审计 [11]；总设计只承诺「过滤、搜索」，条数由 UI 自定）
 constexpr int kCallsPageSize = 20;
+// 搜索框防抖窗口（审计 CPX-06）：每次按键顺延窗口，停手满一个窗口才派发一次
+// 后台查询（窗口内多次按键合并成一次）；250ms = 常见搜索防抖档
+constexpr int kCallsSearchDebounceMs = 250;
 
 // 认证字段下拉选项（**顺序必须与 AuthField 枚举声明一致**：Both/Bearer/ApiKey）
 constexpr const char* kAuthFieldLabels[] = {
@@ -122,6 +126,15 @@ std::string suggestImportName(const std::string& baseUrl) {
 
 } // namespace
 
+// 审计 CPX-06 测试缝计数器（生产零读取点，只在文件末尾经 extern "C" 导出给
+// 无头用例；照 core/proxy_stats.h resetForTest / platform/file_open_win.h
+// wideToUtf8ForTest 先例）：调用记录后台查询的累计**派发**次数（在派发点由
+// 渲染线程自增 → 同一帧即可读，断言不靠时序）+ 最近一次**实际执行**查询的
+// 线程 id 哈希（worker 线程写入，0 = 还没跑过）。用例靠它断言「弹窗打开那一帧
+// 只发意图（不发生同步查询）」「搜索防抖把逐键的多次意图合并成一次派发」
+std::atomic<int> g_callsQueryDispatches{0};
+std::atomic<unsigned long long> g_callsQueryDispatchThread{0};
+
 class ClaudeModule : public ::core::Module {
 public:
     ::core::PageId pageId() const override { return ::core::PageId::ClaudeProxy; }
@@ -132,7 +145,7 @@ public:
         // 后台测试线程必须先收（最坏阻塞到 HTTP 超时 15s，避免悬垂 this）
         if (testThread_.joinable()) testThread_.join();
         // 审计 H2：后台刷新经 future 回传（工作线程不触碰 this），成员析构
-        // 自动等本轮查询结束，无需显式 join
+        // 自动等本轮查询结束，无需显式 join（CPX-06 的调用记录查询同款）
     }
 
     // ============ UI ============
@@ -2192,48 +2205,134 @@ private:
     // 此前是 recentCalls(20) 写死的 20 行静态列表。现走 CallLogQuery：
     // 搜索框（path/method 模糊）+ 状态码下拉（2xx/3xx/4xx/5xx/错误）+
     // 分页（每页 kCallsPageSize 条，页内 scrollView 兜住小窗口）。
-    std::string reloadCallsPage() {
-        // 拉取当前过滤条件下的一页 + 总匹配数；返回错误信息（空串 = 成功）。
-        // 失败时清空当页（弹窗不留旧过滤条件的残留行）
-        allCalls_.clear();
-        callsTotalMatches_ = 0;
-        ClaudeService* svc = ClaudeService::global();
-        if (!svc) return "服务未就绪（ClaudeService 未注册）";
+    // 审计 CPX-06：取数改「future 刷新」模式（H2 同一套：置脏 → compose 发一次
+    // 读意图 → 下一帧收割；settings 日志 tail 同款）。原实现在回调里同步查库
+    // ——开弹窗 / 搜索框逐键各跑 queryCalls + countCalls 两条 SQL，代理 worker
+    // 持同一把 SQLite 锁时开弹窗/打字会卡帧。现在渲染路径零 DB：快照 allCalls_
+    // / callsTotalMatches_ 只读，重查全在后台线程；搜索框按键另加防抖，
+    // 窗口内多次按键合并成一次派发。
+    //
+    // 后台查询结果包（值语义：经 future 回渲染线程，工作线程不触碰 this）
+    struct CallsPage {
+        std::vector<ClaudeService::CallLogEntry> rows;  // 当页行
+        int total = 0;                                  // 满足过滤的总条数
+        std::string error;                              // 空串 = 成功
+    };
+
+    // 唯一跑在后台线程的调用记录 DB 入口（static：不碰成员，可安全脱离渲染
+    // 线程）。当页行 + 总匹配数在**同一次派发**内取（原先渲染路径每键两次同步
+    // 查询）。queryCalls 失败 → error 回传（调用方清空当页 + toast）；countCalls
+    // 失败按本页行数兜底（同一 WHERE 走同一连接，几乎只会连带 queryCalls 一起
+    // 失败，不让已取到的行配一个「0 条匹配」）
+    static CallsPage runCallsQuery(ClaudeService* svc,
+                                   ClaudeService::CallLogQuery q) {
+        // 测试缝：本函数跑在哪个线程（派发计数在派发点记，见 refreshCallsCache）
+        g_callsQueryDispatchThread.store(
+            static_cast<unsigned long long>(
+                std::hash<std::thread::id>{}(std::this_thread::get_id())),
+            std::memory_order_relaxed);
+        CallsPage p;
+        auto r = svc->queryCalls(q);
+        if (r.isFail()) {
+            p.error = r.errorMessage();
+            return p;
+        }
+        p.rows = std::move(r).value();
+        auto c = svc->countCalls(q);
+        p.total = c.isOk() ? c.value() : static_cast<int>(p.rows.size());
+        return p;
+    }
+
+    // 当前过滤条件 → 查询（渲染线程构造、值语义进后台；搜索/下拉/翻页共用）
+    ClaudeService::CallLogQuery callsQueryNow() const {
         ClaudeService::CallLogQuery q;
         q.search = callsSearch_;
         q.statusClass =
             kCallsStatusClasses[std::clamp(callsStatusIdx_, 0, kCallsStatusCount - 1)];
         q.limit = kCallsPageSize;
         q.offset = callsPage_ * kCallsPageSize;
-        auto r = svc->queryCalls(q);
-        if (r.isFail()) return r.errorMessage();
-        allCalls_ = std::move(r).value();
-        auto c = svc->countCalls(q);
-        if (c.isOk()) callsTotalMatches_ = c.value();
-        return {};
+        return q;
     }
 
-    // 过滤条件变化：回第一页重查（搜索框逐字符触发，本地 SQLite 直查可承受）
-    void applyCallsFilter() {
+    // 置脏：下一次 compose（弹窗打开时）发一次读意图。debounce=true（搜索框按键）
+    // 时把最早派发时刻顺延一个窗口——窗口内继续按键只顺延，停手后派发一次；
+    // 翻页 / 状态下拉 / 开弹窗走 false（下一帧即派发）
+    void markCallsStale(bool debounce) {
+        callsPageDirty_ = true;
+        callsEarliestQueryAt_ = std::chrono::steady_clock::now() +
+            std::chrono::milliseconds(debounce ? kCallsSearchDebounceMs : 0);
+    }
+
+    // 过滤条件变化：回第一页重查（搜索框按键 → 防抖；状态码下拉 → 立即）
+    void applyCallsFilter(bool debounce) {
         callsPage_ = 0;
         callsScrollOffset_ = 0;
-        reloadCallsPage();
+        markCallsStale(debounce);
     }
 
+    // 落快照（只在渲染线程调：compose 收割）。成功替换行 + 总数；失败清空当页
+    // 并提示（不留上次过滤条件的残留行，同原 reloadCallsPage 失败分支语义）
+    void applyCallsPage(CallsPage p) {
+        callsPageLoaded_ = true;   // 本轮已判定（失败也不再显示「加载中…」）
+        if (!p.error.empty()) {
+            allCalls_.clear();
+            callsTotalMatches_ = 0;
+            LOG_ERROR("调用记录加载失败: " + p.error);
+            showToast("加载失败", p.error, true);
+            return;
+        }
+        allCalls_ = std::move(p.rows);
+        callsTotalMatches_ = p.total;
+    }
+
+    // 审计 CPX-06：弹窗打开时 compose 每帧调，只做两件零 IO 的事——
+    // ①在途读已就绪 → 搬进快照（wait_for(0) 不阻塞；未就绪直接跳过，快照沿用
+    //   上次值，不丢不改不闪空）；②脏 + 无在途 + 过了防抖窗口 → 发一次读意图
+    //   （std::async 后台线程跑 runCallsQuery，结果经 future 值回渲染线程）。
+    // 失败不自动重试（同原实现：开弹窗失败即止、翻页失败静默），再次操作即重新置脏
+    void refreshCallsCache() {
+        if (callsFuture_.valid() &&
+            callsFuture_.wait_for(std::chrono::seconds(0)) ==
+                std::future_status::ready) {
+            applyCallsPage(callsFuture_.get());
+        }
+        if (!callsPageDirty_ || callsFuture_.valid()) {
+            return;   // 空闲帧零开销 / 上一轮在途不叠加（脏标记留到下帧再判）
+        }
+        if (std::chrono::steady_clock::now() < callsEarliestQueryAt_) {
+            return;   // 搜索防抖窗口内：下帧再判（停手后一帧内派发）
+        }
+        ClaudeService* svc = ClaudeService::global();
+        if (!svc) {
+            callsPageDirty_ = false;
+            CallsPage p;
+            p.error = "服务未就绪（ClaudeService 未注册）";
+            applyCallsPage(std::move(p));
+            return;
+        }
+        callsPageDirty_ = false;
+        // 测试缝：派发点计数（在渲染线程上做 → 同帧可读，断言不靠时序）
+        g_callsQueryDispatches.fetch_add(1, std::memory_order_relaxed);
+        callsFuture_ = std::async(std::launch::async, runCallsQuery, svc,
+                                  callsQueryNow());
+    }
+
+    // 「查看全部 →」：开弹窗 + 置脏（下一帧后台查第一页；渲染路径不再同步查库）。
+    // 首帧显示「加载中…」占位，查询失败由收割出的 toast 提示（不再拒开弹窗）
     void openCallsDialog() {
         callsPage_ = 0;
         callsScrollOffset_ = 0;
-        std::string err = reloadCallsPage();
-        if (!err.empty()) {
-            showToast("加载失败", err, true);
-            return;
-        }
         callsDialogOpen_ = true;
+        markCallsStale(false);
     }
 
     void drawCallsDialog(eui::Ui& ui, const eui::Screen& screen,
                          const core::theme::Tokens& t,
                          const components::theme::ThemeColorTokens& themeTokens) {
+        // 审计 CPX-06：只在弹窗打开时维持快照（关着不查库）。本帧只做零 IO 的
+        // 两件事——搬已就绪结果 + 发一次读意图（见 refreshCallsCache）
+        if (callsDialogOpen_) refreshCallsCache();
+
         const float w = 720.0f;
         const float h = 560.0f;
         const int rowH = 22;
@@ -2264,15 +2363,18 @@ private:
                     .fontSize(12.0f)
                     .theme(themeTokens)
                     .onChange([this](const std::string& v) {
+                        if (v == callsSearch_) return;   // 无变化不重查（IME 组字等）
                         callsSearch_ = v;
-                        applyCallsFilter();
+                        // 审计 CPX-06：逐键只置脏 + 顺延防抖窗口，停手后派发
+                        // 一次后台查询（原先每键同步两条 SQL）
+                        applyCallsFilter(true);
                     })
                     .onEnter([this] {
                         // Enter/Esc 清空（EUI-NEO input 把 Escape 映射到 onEnter，
-                        // 与 todo.search 交互一致）
+                        // 与 todo.search 交互一致）；显式动作 → 不防抖，立即重查
                         if (!callsSearch_.empty()) {
                             callsSearch_.clear();
-                            applyCallsFilter();
+                            applyCallsFilter(false);
                         }
                     })
                     .build();
@@ -2294,7 +2396,7 @@ private:
                             .onChange([this](int idx) {
                                 callsStatusIdx_ =
                                     std::clamp(idx, 0, kCallsStatusCount - 1);
-                                applyCallsFilter();
+                                applyCallsFilter(false);   // 下拉是明确动作：立即重查
                             })
                             .build();
                     })
@@ -2303,7 +2405,10 @@ private:
                 ui.text("claude.dialog.calls.count")
                     .position(460.0f, 58.0f)
                     .size(w - 460.0f - 28.0f, 32.0f)
-                    .text(std::to_string(callsTotalMatches_) + " 条匹配")
+                    // 快照未装载（弹窗首帧，后台取数在路上）时不显示「0 条匹配」
+                    .text(callsPageLoaded_
+                              ? (std::to_string(callsTotalMatches_) + " 条匹配")
+                              : std::string())
                     .fontSize(12.0f)
                     .lineHeight(32.0f)
                     .horizontalAlign(eui::HorizontalAlign::Right)
@@ -2311,7 +2416,17 @@ private:
                     .build();
 
                 // ---- 列表区：当页行 + scrollView（440 > 视口时出滚动条） ----
-                if (allCalls_.empty()) {
+                if (!callsPageLoaded_) {
+                    // 弹窗首帧：读意图已发出、查询在途 → 显示加载态（不闪假空态）
+                    ui.text("claude.dialog.calls.loading")
+                        .position(28.0f, 112.0f)
+                        .size(w - 56.0f, 20.0f)
+                        .text("加载中…")
+                        .fontSize(t.sizes.fontSizeSmall)
+                        .lineHeight(20.0f)
+                        .color(t.colors.textTertiary)
+                        .build();
+                } else if (allCalls_.empty()) {
                     ui.text("claude.dialog.calls.empty")
                         .position(28.0f, 112.0f)
                         .size(w - 56.0f, 20.0f)
@@ -2401,7 +2516,7 @@ private:
                         if (callsPage_ == 0) return;
                         --callsPage_;
                         callsScrollOffset_ = 0;
-                        reloadCallsPage();
+                        markCallsStale(false);   // 翻页：下一帧后台重查（不防抖）
                     })
                     .build();
                 components::button(ui, "claude.dialog.calls.next")
@@ -2418,7 +2533,7 @@ private:
                         if ((callsPage_ + 1) * kCallsPageSize >= callsTotalMatches_) return;
                         ++callsPage_;
                         callsScrollOffset_ = 0;
-                        reloadCallsPage();
+                        markCallsStale(false);   // 翻页：下一帧后台重查（不防抖）
                     })
                     .build();
                 ui.text("claude.dialog.calls.page")
@@ -2643,13 +2758,21 @@ private:
 
     // 完整调用记录弹窗（审计 [11]：搜索/状态码过滤/翻页共用以下查询态）
     bool callsDialogOpen_ = false;
-    std::vector<ClaudeService::CallLogEntry> allCalls_;
+    std::vector<ClaudeService::CallLogEntry> allCalls_;  // 快照：当页行（渲染只读）
     std::string callsSearch_;        // 搜索框文本（path/method 模糊）
     int callsStatusIdx_ = 0;         // 状态下拉索引（→ kCallsStatusClasses）
     bool callsStatusDdOpen_ = false; // 状态下拉展开态
     int callsPage_ = 0;              // 当前页（0-based）
-    int callsTotalMatches_ = 0;      // 满足过滤的总条数（countCalls）
+    int callsTotalMatches_ = 0;      // 快照：满足过滤的总条数（countCalls）
     float callsScrollOffset_ = 0.0f; // 列表区滚动位置（翻页时归零）
+    // 审计 CPX-06：调用记录取数的 future 刷新态（同上面 refreshFuture_ 一组，
+    // 语义见 refreshCallsCache）。初值脏 = 首次打开弹窗下一帧必查
+    bool callsPageDirty_ = true;     // 置脏 → 下一帧（弹窗打开时）发一次读意图
+    bool callsPageLoaded_ = false;   // 快照是否装载过（未装载显示「加载中…」）
+    std::chrono::steady_clock::time_point callsEarliestQueryAt_{};  // 最早派发时刻
+    // 后台查询在途 future（工作线程不触碰 this，结果经值回渲染线程；成员析构
+    // = future 析构，自动等本轮查询结束 → 无悬垂）
+    std::future<CallsPage> callsFuture_;
 
     // Profile 列表滚动位置（审计 [26]：卡片超界可滚，不再压底部按钮）
     float profilesScrollOffset_ = 0.0f;
@@ -2670,6 +2793,20 @@ private:
 };
 
 } // namespace module::claude
+
+// ============ 审计 CPX-06 测试缝（生产零调用点） ============
+// 照 core/proxy_stats.h resetForTest / platform/file_open_win.h
+// wideToUtf8ForTest 先例：把「调用记录后台查询」的派发次数与执行线程暴露给
+// 无头用例，好让「弹窗打开那一帧只发意图（不发生同步查询）」「搜索防抖把逐键
+// 的多次意图合并成一次派发」成为计数断言而不靠墙钟。extern "C" 免名字修饰，
+// 测试侧写同名声明即可链接（计数器定义见文件头 g_callsQueryDispatches）
+extern "C" int claude_calls_query_dispatches_for_test() {
+    return module::claude::g_callsQueryDispatches.load();
+}
+
+extern "C" unsigned long long claude_calls_query_last_thread_for_test() {
+    return module::claude::g_callsQueryDispatchThread.load();
+}
 
 extern "C" ::core::Module* create_claude_module() {
     return new module::claude::ClaudeModule();
