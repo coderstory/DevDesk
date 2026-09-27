@@ -156,12 +156,14 @@ public:
         auto finished = finished_;
         auto lastKey = lastApiKey_;
         auto lastBody = lastRequestBody_;
+        auto lastSession = lastSessionHeader_;
 
         svr_.Post("/v1/messages",
-                  [scriptPtr, emitted, finished, lastKey, lastBody](
+                  [scriptPtr, emitted, finished, lastKey, lastBody, lastSession](
                       const httplib::Request& req, httplib::Response& res) {
                       *lastBody = req.body;
                       *lastKey = req.get_header_value("x-api-key");
+                      *lastSession = req.get_header_value("x-opencode-session");
 
                       res.status = scriptPtr->status;
                       if (scriptPtr->status != 200) {
@@ -238,6 +240,9 @@ public:
 
     std::string lastRequestBody() const { return lastRequestBody_->get(); }
     std::string lastApiKey() const { return lastApiKey_->get(); }
+    // 上游收到的 x-opencode-session（方言专属会话头；未注入 = 空串）——
+    // 用于断言 profile.dialectOverride 真的走到了流式转发路径（CPX-13 接线）
+    std::string lastOpenCodeSession() const { return lastSessionHeader_->get(); }
     size_t emitted() const { return emitted_->load(); }
     bool upstreamFinished() const { return finished_->load(); }
 
@@ -272,6 +277,7 @@ private:
     };
     std::shared_ptr<StringSlot> lastApiKey_ = std::make_shared<StringSlot>();
     std::shared_ptr<StringSlot> lastRequestBody_ = std::make_shared<StringSlot>();
+    std::shared_ptr<StringSlot> lastSessionHeader_ = std::make_shared<StringSlot>();
     // 静默 handler 的放行闸（onMessagesSilent / releaseSilent）
     std::shared_ptr<std::atomic<bool>> silentGate_ =
         std::make_shared<std::atomic<bool>>(false);
@@ -474,6 +480,67 @@ REGISTER_TEST(streaming_send_streaming_claude_passthrough,
     DOCTEST_CHECK_EQ(sr->contentType(), std::string("text/event-stream"));
     // 上游看到的 x-api-key 来自 profile
     DOCTEST_CHECK_EQ(upstream.lastApiKey(), std::string("sk-ant-test-key"));
+
+    upstream.stop();
+    return true;
+})
+
+// ==================== 3b. profile.dialectOverride 接通流式转发（CPX-13 接线） ====================
+// 断言的是上游实际收到的头 / body（转发路径的真实效果），不是 forBaseUrl 的
+// 返回值：host 是 loopback（host 推断 = 默认方言），profile 钉住 opencode_zen →
+// 上游必须收到 x-opencode-session、模型名 [1M] 必须被剥。
+// 空串 = 未覆盖 → 与改动前逐项一致：无会话头 + body 逐字节不变。
+
+REGISTER_TEST(streaming_proxy_dialect_override_wired,
+              "streaming: profile.dialectOverride 装方言头（空串等价未覆盖）", {
+    MockSseServer upstream;
+    DOCTEST_REQUIRE(upstream.start());
+
+    MockScript script;
+    script.chunks = makeSseScript(2, true);
+    upstream.onMessages(script);
+
+    platform::http::Request req;
+    req.method = "POST";
+    req.url = "/v1/messages";
+    req.body = R"({"model":"claude-sonnet-4-5[1M]","stream":true})";
+    req.timeoutMs = 10000;
+
+    // ---- (1) 覆盖 opencode_zen（loopback host 推断不出该方言）----
+    Profile p = makeProfile(upstream.baseUrl());
+    p.dialectOverride = "opencode_zen";
+
+    auto r = module::claude::sendStreamingClaude(req, p);
+    DOCTEST_REQUIRE(r.isOk());
+    auto sr = takeStream(r);
+    DOCTEST_REQUIRE(sr != nullptr);
+    std::string all;
+    std::string err;
+    DOCTEST_REQUIRE_MESSAGE(drainStream(*sr, all, err),
+                            "stream ended with error: " + err);
+
+    DOCTEST_CHECK_EQ(upstream.lastOpenCodeSession(),
+                     module::claude::claudeUpstreamSessionId());
+    // 方言全量生效（不只头）：模型名 [1M] 被剥，其余字节不动
+    DOCTEST_CHECK(upstream.lastRequestBody().find("[1M]") == std::string::npos);
+    DOCTEST_CHECK(upstream.lastRequestBody().find("claude-sonnet-4-5") !=
+                  std::string::npos);
+    DOCTEST_CHECK_EQ(upstream.lastApiKey(), std::string("sk-ant-test-key"));
+
+    // ---- (2) 空串 = 未覆盖：无会话头 + body 逐字节不变 ----
+    Profile p2 = makeProfile(upstream.baseUrl());
+    auto r2 = module::claude::sendStreamingClaude(req, p2);
+    DOCTEST_REQUIRE(r2.isOk());
+    auto sr2 = takeStream(r2);
+    DOCTEST_REQUIRE(sr2 != nullptr);
+    std::string all2;
+    std::string err2;
+    DOCTEST_REQUIRE_MESSAGE(drainStream(*sr2, all2, err2),
+                            "stream ended with error: " + err2);
+
+    DOCTEST_CHECK(upstream.lastOpenCodeSession().empty());
+    DOCTEST_CHECK_EQ(upstream.lastRequestBody(), req.body);
+    DOCTEST_CHECK_EQ(all2, joinChunks(script.chunks));
 
     upstream.stop();
     return true;
