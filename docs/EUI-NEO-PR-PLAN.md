@@ -249,9 +249,9 @@ app::registerGlobalHotkey(app::Hotkey::Cmd | app::Hotkey::Shift | app::Hotkey::P
 
 - [x] 选定 2 个改进点（fontWeight + global hotkey）
 - [x] 为每个写详细 PR 方案
-- [x] 实际写 fontWeight 的 patch（在 EUI-NEO 仓库）
+- [x] 实际写 fontWeight 的 patch（在 EUI-NEO 仓库，已合入本地 main，commit `bb5c965`）
 - [x] 写 PR 描述（[`docs/PR-DESCRIPTION.md`](PR-DESCRIPTION.md)）
-- [x] 准备 PR 分支脚本（[`scripts/prep-eui-neo-pr.sh`](../../scripts/prep-eui-neo-pr.sh)）
+- [x] 一次性 PR 准备脚本 `scripts/prep-eui-neo-pr.sh` 已删除（2026-09-28 平台审计 N5：锁定已完成的旧 PR + 跨仓库 `git add` 风险），推送 / 开 PR 改手动，见 §4.2
 
 ### 4.2 需要用户操作（不自动做）
 
@@ -260,16 +260,19 @@ app::registerGlobalHotkey(app::Hotkey::Cmd | app::Hotkey::Shift | app::Hotkey::P
    - 点 "Fork"
    - 记录 fork URL（如 `https://github.com/coderstory/EUI-NEO.git`）
 
-2. **添加 fork 为 remote**（`scripts/prep-eui-neo-pr.sh` 会提示）：
+2. **添加 fork 为 remote**：
    ```bash
-   cd /Users/coderstory/Dev/gui/EUI-NEO
+   cd ../EUI-NEO
    git remote add myfork https://github.com/coderstory/EUI-NEO.git
    ```
 
-3. **创建分支 + 推送 + 开 PR**：
+3. **创建分支 + 推送 + 开 PR**（patch 已在本地 main，commit `bb5c965`，直接切分支推送）：
    ```bash
-   ./scripts/prep-eui-neo-pr.sh feat/font-weight-runtime
+   cd ../EUI-NEO
+   git checkout -b feat/font-weight-runtime
+   git push -u myfork feat/font-weight-runtime
    ```
+   浏览器开 PR：https://github.com/sudoevolve/EUI-NEO/compare/main...feat/font-weight-runtime
 
 4. **PR 评审通过后**：
    - DevDesk 移除自己的 hack（如果之前写过）
