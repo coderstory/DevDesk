@@ -21,7 +21,7 @@
 | **D-5** | `wt.exe` 缺失 → **退化到 `CreateProcessW(powershell.exe …, CREATE_NEW_CONSOLE)`**（同命令、同环境），**并一次性提示**（不静默、不阻断） | 用户要的是"能跑"，不是"必须有 wt"；静默降级不可接受，硬失败也不友好 |
 | **D-6** | `-NoExit` **默认开**（claude 退出后保留标签页/控制台，能看到回滚内容） | 交互式 TUI 退出后立刻关窗会丢信息；实测 wt 不带 `-NoExit` 时标签页自动消失 |
 | **D-7** | macOS：写 `.command` 脚本（`cd <dir> && claude`）到 `appDataDir()/run-scripts/`，`chmod 0755`，再 `open <脚本>` → **跟随用户默认终端 app**（LaunchServices 决定） | `open -a Terminal` 强绑 Terminal.app、`osascript` 强绑 Terminal + 首次 TCC 弹窗风险；`.command` + `open` 才是"默认终端"。脚本**不含任何密钥**（见 D-8），落盘风险归零 |
-| **D-8** | **密钥零落盘、零进命令行/进程环境**：不写任何含密钥的临时 settings 文件，不传 `--settings`，不用 `CLAUDE_CONFIG_DIR`（实测它是"整个配置家目录搬家"，会丢用户的 plugins/技能） | 与既有安全口径一致（`claude_service.h` 头注释：密钥只在 Keychain、明文不入库）；会话读 settings.json 的 `BASE_URL=127.0.0.1:<port>` + `AUTH_TOKEN=PROXY_MANAGED`，真实密钥由代理转发时注入 |
+| **D-8** | 「运行」**用 `--settings` 传临时 settings 文件**（D-1），密钥含于其中——**临时明文落盘**为接受代价（§3 代价 1）；**仍不用 `CLAUDE_CONFIG_DIR`**（实测它是"整个配置家目录搬家"，会丢用户的 plugins/技能）；密钥值不直接进启动命令行/派生进程环境块（命令行只传 `--settings <文件路径>`） | 与既有安全口径兼容的部分仍成立（`claude_service.h` 头注释：密钥明文不入库——密钥仍在 Keychain，仅本功能为直连会话读出一次）；读 Keychain 失败 → toast 中止、不落盘（§5）；`CLAUDE_CONFIG_DIR` 搬家丢 plugins/技能是实测结论；会话不再经代理注入密钥（密钥自备，§3 代价 3） |
 | **D-9** | 停代理 / 退出应用时若存在运行中会话：**只提示、不阻止**（文案说明"正在运行的 Claude Code 会话可能因托管键被撤而失败"） | `wt`/`open` 是分离式启动，DevDesk 拿不到会话句柄，无法精确判定；阻止会伤可用性 |
 
 > **用户原话（决定性，D-1 依此拍板，V3 起生效）**：「我不是说了 claude 的启动命令支持设置 settings 吗？你生成一个临时的 setting 然后作为启动参数啊 不修改当前的任何东西」
@@ -58,7 +58,7 @@
 2. **该会话不走代理**：→ **无用量统计**（`claude_call_logs`）、**无方言处理**（`upstream_dialect`）、**无模型名归一**（`[1M]` 剥除等），直连上游原样行为。
 3. **密钥自备**：不再由代理在转发时注入——本功能把 profile 的 Keychain 密钥读入临时文件（见 §4.2 读取依赖）。
 
-（D-8 原"密钥零落盘、不传 `--settings`"的口径由此被 D-1 **覆盖**；`CLAUDE_CONFIG_DIR` 仍不可用——实测它是整个配置家目录搬家，会丢用户的 plugins/技能。）
+（D-8 口径已随 V3 同步：密钥经 `--settings` 临时文件带入、临时明文落盘（代价已在 §3 登记）；`CLAUDE_CONFIG_DIR` 仍不可用——实测它是整个配置家目录搬家，会丢用户的 plugins/技能。）
 
 ## 4. 平台层接口（新增）
 
@@ -149,7 +149,7 @@ CMake：追加进 `src/platform/CMakeLists.txt` 既有的 `if(WIN32)/elseif(APPL
 
 ## 7. 不做（YAGNI）
 
-1. 不传密钥、不用 `--settings`、不用 `CLAUDE_CONFIG_DIR`（D-8）。
+1. 不用 `CLAUDE_CONFIG_DIR`——它是「整个配置家目录搬家」，会丢用户的 plugins/技能（D-8）；`--settings` 是本设计的核心手段（D-1），不在 YAGNI 排除之列。
 2. 不做"直连上游"形态（要另立项 + 需用户接受密钥短暂落盘）。
 3. 不做 per-profile 记忆起始目录、不做目录选择器（D-3）。
 4. 不改代理的 profile 路由（"用任意 profile 不切激活地跑"需改造代理，登记为后续项）。
@@ -197,6 +197,6 @@ CMake：追加进 `src/platform/CMakeLists.txt` 既有的 `if(WIN32)/elseif(APPL
 | D-6 | `-NoExit` 默认开 | 默认关（退出即关窗） |
 | D-7 | macOS = `.command` + `open`（跟随默认终端） | `osascript`（不落盘但强绑 Terminal + TCC 风险） |
 | D-9 | 停代理时只提示 | 阻止 / 不处理 |
-| 新增 | 运行期间切激活的行为（老会话按新 profile 走） | 接受 / 需要提示 / 需要阻止 |
+| 新增 | **V3 下不再触发**：运行不改激活态（D-1「不切激活 profile」），会话 env 启动时已固化，运行期间切激活对其无影响（§5、§10 边界 5）；若将来做「代理按会话选 profile」则另议（见下行「后续可选」） | —（原「接受 / 提示 / 阻止」备选已不适用） |
 | 新增 | 选中 ≠ 激活 时是否要**二次确认**再切（因为会重写全局 settings.json） | 二次确认 / 直接切（现状） |
 | 后续可选 | 是否**另开一条线**做「代理按会话选 profile」（保留代理路径的形态：密钥零落盘 / 用量统计 / 方言处理；代价是代理需改造，且仍不动激活态） | **本次不做**（D-1 已由用户拍板直连）；若直连的三条代价（§3）在真机使用中不可接受，再立项 |
