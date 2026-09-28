@@ -136,6 +136,7 @@ public:
         dv.callsError = callsError;
         dv.now = now;
         dv.bodyH = bodyH;
+        dv.sharedConfigs = &state_.list.cachedSharedConfigs_;   // 批 2：详情绑定行
 
         ui.column("claude.root")
             .size(screen.width, screen.height)
@@ -155,6 +156,8 @@ public:
                     .content([&] {
                         drawProfileListPanel(ui, leftW, bodyH, t, themeTokens,
                                              state_.list, profiles, profilesError,
+                                             state_.list.cachedSharedConfigs_,
+                                             state_.list.cachedSharedConfigsError_,
                                              listActions());
                         drawDetailPanel(ui, rightW, bodyH, leftW + gap, t,
                                         themeTokens, state_.detail, dv,
@@ -166,10 +169,20 @@ public:
 
         // 弹窗（画在最上层）
         drawProfileFormDialog(ui, screen, t, themeTokens, state_.form,
-                              state_.import, formHooks());
+                              state_.import, state_.list.cachedSharedConfigs_,
+                              formHooks());
         drawDeleteConfirmDialog(ui, screen, t, themeTokens, state_.form,
                                 [this](int64_t id) { doDelete(id); });
         drawCallsDialog(ui, screen, t, themeTokens, state_.logs, toastHook());
+        // 批 2：共享配置片段编辑弹窗 + 删除确认（画在表单弹窗之后 =
+        // Esc 序链最顶层，见 closeTopmostDialog）
+        drawSharedConfigDialog(ui, screen, t, themeTokens, state_.shared,
+                               sharedHooks());
+        drawSharedConfigDeleteConfirmDialog(
+            ui, screen, t, themeTokens, state_.shared,
+            [this](int64_t id, const std::string& name) {
+                doDeleteShared(id, name);
+            });
         harvestTestResult();  // 后台「测试连通」结果回 UI（每帧轮询）
         drawToast(ui, screen, themeTokens);
 
@@ -247,7 +260,8 @@ public:
         }
         const bool anyDialogOpen =
             state_.form.formOpen_ || state_.form.deleteConfirmOpen_ ||
-            state_.logs.callsDialogOpen_;
+            state_.logs.callsDialogOpen_ ||
+            state_.shared.open_ || state_.shared.deleteConfirmOpen_;
         if (key.key == eui::InputKey::N) {
             if (anyDialogOpen) return false;
             openCreateForm(state_.form, state_.import);
@@ -256,7 +270,8 @@ public:
         }
         if (key.key == eui::InputKey::S) {
             if (!state_.form.formOpen_) return false;
-            submitForm(state_.form, formHooks());
+            submitForm(state_.form, formHooks(),
+                       state_.list.cachedSharedConfigs_);
             return true;
         }
         if (key.key == eui::InputKey::Enter) {
@@ -268,9 +283,12 @@ public:
     }
 
 private:
-    // 审计 M5：Esc 关最上层弹窗（顺序 = 绘制序/z 序倒序：调用记录 > 删除确认
-    // > 表单）。返回 true = 本键已消费；无弹窗返回 false
+    // 审计 M5：Esc 关最上层弹窗（顺序 = 绘制序/z 序倒序：共享片段删除确认 >
+    // 共享片段编辑 > 调用记录 > 删除确认 > 表单——批 2 起共享片段两弹窗画在
+    // 最上层 → Esc 最先关它们）。返回 true = 本键已消费；无弹窗返回 false
     bool closeTopmostDialog() {
+        if (state_.shared.deleteConfirmOpen_) { state_.shared.deleteConfirmOpen_ = false; return true; }
+        if (state_.shared.open_) { state_.shared.open_ = false; return true; }
         if (state_.logs.callsDialogOpen_) { state_.logs.callsDialogOpen_ = false; return true; }
         if (state_.form.deleteConfirmOpen_) { state_.form.deleteConfirmOpen_ = false; return true; }
         if (state_.form.formOpen_) { state_.form.formOpen_ = false; return true; }
@@ -290,7 +308,8 @@ private:
         // 同源的最小委托（编辑=openEditForm / 复制=doDuplicate /
         // 删除=确认弹窗 / 设为当前=doSetActive），不新写业务逻辑
         a.requestEdit = [this](const Profile& p) {
-            openEditForm(state_.form, state_.import, p);
+            openEditForm(state_.form, state_.import, p,
+                         state_.list.cachedSharedConfigs_);
         };
         a.requestDuplicate = [this](int64_t id) { doDuplicate(id); };
         a.requestDelete = [this](int64_t id, const std::string& name) {
@@ -299,6 +318,11 @@ private:
             state_.form.deleteConfirmOpen_ = true;
         };
         a.requestSetActive = [this](int64_t id) { doSetActive(id); };
+        // 批 2：共享配置片段动作（区块新建 / 卡片编辑）
+        a.onNewShared = [this] { openSharedCreate(state_.shared); };
+        a.requestEditShared = [this](const SharedConfig& c) {
+            openSharedEdit(state_.shared, c);
+        };
         return a;
     }
 
@@ -315,6 +339,14 @@ private:
         return h;
     }
 
+    // 批 2：共享配置片段提交钩子（toast / 标脏与表单同源）
+    SharedConfigSubmitHooks sharedHooks() {
+        SharedConfigSubmitHooks h;
+        h.toast = toastHook();
+        h.markDataDirty = [this] { state_.list.dataDirty_ = true; };
+        return h;
+    }
+
     DetailActions detailActions() {
         DetailActions a;
         a.warn = [this](const std::string& title, const std::string& msg) {
@@ -323,7 +355,8 @@ private:
         a.enable = [this](int64_t id) { doSetActive(id); };
         a.test = [this](const Profile& p) { doTestConnection(p); };
         a.edit = [this](const Profile& p) {
-            openEditForm(state_.form, state_.import, p);
+            openEditForm(state_.form, state_.import, p,
+                         state_.list.cachedSharedConfigs_);
         };
         a.requestDelete = [this](int64_t id, const std::string& name) {
             state_.form.deleteTargetId_ = id;
@@ -449,6 +482,37 @@ private:
                       false);
         } else {
             showToast("已删除", "Profile 已删除（含 Keychain 条目）", false);
+        }
+    }
+
+    // 批 2：删除共享配置片段（确认弹窗回调）。删除 = 同事务解绑绑定它的
+    // profile（服务层已落地 + 激活绑定下的 re-takeover）；这里只负责计数
+    // toast 文案 + 关闭编辑弹窗（目标已不存在）
+    void doDeleteShared(int64_t id, const std::string& name) {
+        ClaudeService* svc = ClaudeService::global();
+        if (!svc) return;
+        state_.list.dataDirty_ = true;   // 审计 perf [13]：写操作标脏
+        // 计数绑定该片段的 profile（事件驱动直查，给 toast「N 个已解绑」）
+        size_t bound = 0;
+        auto list = svc->listProfiles();
+        if (list.isOk()) {
+            for (const auto& p : list.value()) {
+                if (p.sharedConfigId == id) ++bound;
+            }
+        }
+        auto r = svc->deleteSharedConfig(id);
+        if (r.isFail()) {
+            showToast("删除失败", r.errorMessage(), true);
+            return;
+        }
+        state_.shared.open_ = false;   // 编辑目标已删除，编辑弹窗一并关闭
+        if (bound > 0) {
+            showToast("已删除",
+                      "片段「" + name + "」已删除，" +
+                          std::to_string(bound) + " 个 Profile 已解绑",
+                      false);
+        } else {
+            showToast("已删除", "片段「" + name + "」已删除", false);
         }
     }
 

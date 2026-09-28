@@ -3,6 +3,7 @@
 // 的 compose 搬出（含注释），只把 this 成员换成显式入参与引用状态。
 #include "claude_ui_list.h"
 
+#include "claude_ui_logic.h"
 #include "provider_config.h"
 #include "settings_sync.h"
 
@@ -18,6 +19,26 @@
 namespace module::claude {
 
 namespace {
+
+// ============ 共享配置区块的几何（批 2，设计 §2.10；单一来源，区块高度与
+// 绘制共用同一组常量，供 drawProfileListPanel 撑滚动容器高 / 绘制用）============
+constexpr float kSharedHeaderBottom = 30.0f;   // 标题行 + 下边距
+constexpr float kSharedCardH = 56.0f;
+constexpr float kSharedCardGap = 8.0f;
+constexpr float kSharedBtnTopGap = 12.0f;
+constexpr float kSharedBtnH = 34.0f;
+constexpr float kSharedInfoH = 18.0f;          // 错误 / 空态行高
+
+// 区块总高（与 drawSharedConfigBlock 的几何一致；滚动容器按此撑高）
+float sharedBlockHeight(size_t snippetCount, bool hasError) {
+    float h = kSharedHeaderBottom + kSharedBtnTopGap + kSharedBtnH;
+    if (hasError || snippetCount == 0) {
+        h += kSharedInfoH;
+    } else {
+        h += static_cast<float>(snippetCount) * (kSharedCardH + kSharedCardGap);
+    }
+    return h;
+}
 
 // Profile 卡片（点击选中，选中/激活高亮）。
 // st 为引用：点击回调写回选中态（须指向存活到下一帧的对象 = 模块状态成员）
@@ -112,6 +133,28 @@ void drawProfileCard(eui::Ui& ui,
         .lineHeight(14.0f)
         .color(t.colors.textTertiary)
         .build();
+
+    // 批 2（设计 §2.10「详情/列表」）：绑定了共享配置片段的卡片角标「共享」
+    //（服务层保证无悬空 id：删片段同事务解绑 → sharedConfigId != 0 即可判定；
+    // 画在 URL 行右侧、ACTIVE 徽标正下方，长 URL 溢出时徽标盖住尾部）
+    if (p.sharedConfigId != 0) {
+        ui.rect(id + ".shared.badge")
+            .position(width - 60.0f, y + 42.0f)
+            .size(48.0f, 16.0f)
+            .color(t.colors.surfaceElevated)
+            .radius(t.sizes.radiusPill)
+            .border(1.0f, t.colors.borderDefault)
+            .build();
+        ui.text(id + ".shared.badge.text")
+            .position(width - 60.0f, y + 42.0f)
+            .size(48.0f, 16.0f)
+            .text("共享")
+            .fontSize(9.0f)
+            .lineHeight(16.0f)
+            .horizontalAlign(eui::HorizontalAlign::Center)
+            .color(t.colors.textTertiary)
+            .build();
+    }
 
     // model（default 槽位，未配则旧 model 列 fallback——§6.2 列表卡片）
     ui.text(id + ".model")
@@ -260,6 +303,8 @@ void drawProfileListPanel(eui::Ui& ui, float leftW, float bodyH,
                           ProfileListState& st,
                           const std::vector<Profile>& profiles,
                           const std::string& profilesError,
+                          const std::vector<SharedConfig>& sharedConfigs,
+                          const std::string& sharedConfigsError,
                           const ProfileListActions& actions) {
     // ---- 左栏：Profile 列表 ----
     ui.column("claude.profiles")
@@ -303,6 +348,19 @@ void drawProfileListPanel(eui::Ui& ui, float leftW, float bodyH,
                     .lineHeight(20.0f)
                     .color(t.colors.error)
                     .build();
+                // 批 2：无 scroll 时共享区块垫在错误态下方（绝对坐标；
+                // stack 定位对齐 overlay 的 20px 内缩，与 Profile 标题同行列）
+                ui.stack("claude.shared.block")
+                    .position(20.0f, cardY0 + 96.0f)
+                    .size(leftW - 40.0f,
+                          sharedBlockHeight(sharedConfigs.size(),
+                                            !sharedConfigsError.empty()))
+                    .content([&] {
+                        drawSharedConfigBlock(ui, 0.0f, leftW - 40.0f, t,
+                                              sharedConfigs,
+                                              sharedConfigsError, actions);
+                    })
+                    .build();
             } else if (profiles.empty()) {
                 ui.text("claude.profiles.empty")
                     .position(20.0f, cardY0 + 20.0f)
@@ -311,6 +369,18 @@ void drawProfileListPanel(eui::Ui& ui, float leftW, float bodyH,
                     .fontSize(12.0f)
                     .lineHeight(20.0f)
                     .color(t.colors.textTertiary)
+                    .build();
+                // 批 2：无 scroll 时共享区块垫在空态下方（绝对坐标）
+                ui.stack("claude.shared.block")
+                    .position(20.0f, cardY0 + 96.0f)
+                    .size(leftW - 40.0f,
+                          sharedBlockHeight(sharedConfigs.size(),
+                                            !sharedConfigsError.empty()))
+                    .content([&] {
+                        drawSharedConfigBlock(ui, 0.0f, leftW - 40.0f, t,
+                                              sharedConfigs,
+                                              sharedConfigsError, actions);
+                    })
                     .build();
             } else {
                 // 卡片列表套 scrollView（产品审计 2026-09-23
@@ -381,6 +451,21 @@ void drawProfileListPanel(eui::Ui& ui, float leftW, float bodyH,
                                 })
                                 .build();
                         }
+                        // 批 2：共享配置区块（与 profile 列表**同滚动容器**，
+                        // 设计 §2.10「片段列表入口」；整块包一个 stack，
+                        // 高度按内容算，块内元素相对块顶定位）
+                        inner.stack("claude.shared.block")
+                            .size(contentWidth,
+                                  sharedBlockHeight(
+                                      sharedConfigs.size(),
+                                      !sharedConfigsError.empty()))
+                            .content([&] {
+                                drawSharedConfigBlock(
+                                    inner, 0.0f, contentWidth, t,
+                                    sharedConfigs, sharedConfigsError,
+                                    actions);
+                            })
+                            .build();
                     })
                     .build();
             }
@@ -416,6 +501,90 @@ void drawProfileListPanel(eui::Ui& ui, float leftW, float bodyH,
                 .build();
         })
         .build();
+}
+
+// ============ 共享配置区块（批 2，设计 §2.10「片段列表入口」）============
+// 标题行 + 片段卡片（name + N 个键）+「+ 新建片段」按钮；与 profile 列表同
+// 滚动容器（scrollView content 尾部整块）。drawProfileListPanel 双路径调用：
+//   - profiles 正常：包进 scrollView content 尾部（y = 相对 0）
+//   - profiles 空/错（无 scroll）：垫在空态/错误态下方（y = 绝对坐标）
+// 几何常量与 sharedBlockHeight 见文件顶部匿名命名空间（单一来源）。
+float drawSharedConfigBlock(eui::Ui& ui, float y, float width,
+                            const core::theme::Tokens& t,
+                            const std::vector<SharedConfig>& sharedConfigs,
+                            const std::string& sharedConfigsError,
+                            const ProfileListActions& actions) {
+    // 标题行（与 Profile 列表标题同款字重，字号略小一档以示从属）
+    ui.text("claude.shared.title")
+        .position(0.0f, y)
+        .size(width, 20.0f)
+        .text("共享配置片段")
+        .fontSize(13.0f)
+        .lineHeight(20.0f)
+        .fontWeight(600)
+        .color(t.colors.textPrimary)
+        .build();
+
+    float cy = y + kSharedHeaderBottom;
+    if (!sharedConfigsError.empty()) {
+        ui.text("claude.shared.error")
+            .position(0.0f, cy).size(width, kSharedInfoH)
+            .text("共享配置片段加载失败：" + sharedConfigsError)
+            .fontSize(11.0f).lineHeight(kSharedInfoH)
+            .color(t.colors.error)
+            .build();
+        cy += kSharedInfoH;
+    } else if (sharedConfigs.empty()) {
+        ui.text("claude.shared.empty")
+            .position(0.0f, cy).size(width, kSharedInfoH)
+            .text("暂无片段，点击下方新建")
+            .fontSize(11.0f).lineHeight(kSharedInfoH)
+            .color(t.colors.textTertiary)
+            .build();
+        cy += kSharedInfoH;
+    } else {
+        // 片段卡片：name + 键数（K 键集大小即「N 个键」）；点击开编辑弹窗
+        for (size_t i = 0; i < sharedConfigs.size(); ++i) {
+            const SharedConfig& sc = sharedConfigs[i];
+            const std::string cid = "claude.shared.card." + std::to_string(i);
+            ui.rect(cid + ".bg")
+                .position(0.0f, cy).size(width, kSharedCardH)
+                .states(t.colors.surface, t.colors.hover, t.colors.active)
+                .radius(t.sizes.radiusLarge)
+                .border(1.0f, t.colors.borderDefault)
+                .onClick([onEdit = actions.requestEditShared, sc] {
+                    onEdit(sc);   // 按值拷贝（sc 引用 compose 局部副本，跨帧悬垂）
+                })
+                .build();
+            ui.text(cid + ".name")
+                .position(16.0f, cy + 8.0f).size(width - 32.0f, 20.0f)
+                .text(sc.name)
+                .fontSize(13.0f).lineHeight(20.0f)
+                .fontWeight(600)
+                .color(t.colors.textPrimary)
+                .build();
+            ui.text(cid + ".keys")
+                .position(16.0f, cy + 32.0f).size(width - 32.0f, 14.0f)
+                .text(std::to_string(sharedFrozenKeys(sc).size()) +
+                      " 个键 · 绑定它的 Profile 冻结这些键")
+                .fontSize(11.0f).lineHeight(14.0f)
+                .color(t.colors.textSecondary)
+                .build();
+            cy += kSharedCardH + kSharedCardGap;
+        }
+    }
+    components::button(ui, "claude.shared.new")
+        .position(0.0f, cy + kSharedBtnTopGap)
+        .size(width, kSharedBtnH)
+        .text("+ 新建片段")
+        .fontSize(t.sizes.fontSizeSmall)
+        .colors(t.colors.surfaceElevated, t.colors.hover, t.colors.active)
+        .textColor(t.colors.textPrimary)
+        .radius(t.sizes.radius)
+        .border(1.0f, t.colors.borderDefault)
+        .onClick([onNew = actions.onNewShared] { onNew(); })
+        .build();
+    return cy + kSharedBtnTopGap + kSharedBtnH;
 }
 
 // profile 列表右键菜单（UI 现代化 §3.4 / M1-5）：

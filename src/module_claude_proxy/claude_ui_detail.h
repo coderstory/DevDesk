@@ -37,6 +37,8 @@ struct DetailView {
     std::string callsError;            // 最近调用查询错误（空 = 成功）
     std::time_t now = 0;               // 调用时间列「今天/昨天」判定
     float bodyH = 0.0f;                // 环境变量 pane 的行数上限判据
+    // 批 2：共享配置片段快照（基础 pane 的「共享配置：片段 A（N 个键）」行）
+    const std::vector<SharedConfig>* sharedConfigs = nullptr;
 };
 
 // 右栏操作按钮组的回调（compose 每帧装配）
