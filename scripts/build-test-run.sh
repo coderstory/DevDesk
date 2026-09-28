@@ -2,22 +2,34 @@
 # DevDesk 一体化脚本：杀旧进程 + 增量构建 + 测试 + 启动 app
 # 输出设计：固定结构（阶段标题 + ✅/❌ 结果行），构建正常只显示尾部、
 # 失败才显示错误摘要；测试只显示 [FAIL] 行 + Total/Passed/Failed 统计。
-# 用法：./scripts/build-test-run.sh [--clean] [--no-test] [--no-run] [--filter 关键词]
-#   --clean       全量重建（rm -rf build 重新 configure；默认增量）
+# 用法：./scripts/build-test-run.sh [--clean] [--release] [--no-test] [--no-run] [--filter 关键词]
+#   --clean       全量重建（rm -rf <构建目录> 重新 configure；默认增量）
+#   --release     Release 构建（默认 Debug）。构建目录随之切到 build-release/，
+#                 与 Debug 的 build/ 互不覆盖
 #   --no-test     跳过测试（测试挂时不阻断启动 app）
 #   --no-run      只杀+构建+测试，不启动 app（app 在跑时链接可能因文件锁失败，会提示）
 #   --filter X    只跑描述含 X 的测试用例（透传给 devdesk_tests；注意中文
 #                 关键词经 Git Bash 传参可能有编码问题，建议用 ASCII 词）
 # 环境变量：DEVDESK_JOBS 并发编译单元数（默认 3，多 worktree 并发时的封顶）；
+#           DEVDESK_BUILD_TYPE 构建类型（默认 Debug；--release 等价于 Release）；
+#           DEVDESK_BUILD_DIR 构建目录（默认按构建类型选：Debug=build/、Release=build-release/；
+#                             显式指定时一律以它为准——差分验证 / 一次性探针走独立目录时用它）；
 #           ccache 配置已落 ccache.conf（无需环境变量），临时覆盖才 source scripts/ccache-env.sh
 # 默认：杀旧进程（释放 exe 锁）→ 增量构建 → 全量测试（挂则不启动）→ 启动 app
 # 平台：Windows（Git Bash/MSYS2，发布路径）与 macOS / Linux 通用。平台差异只在四处分支：
 #       PATH 前置、EXE_SUFFIX、configure 的 OPENSSL_ROOT_DIR、发布形态守卫；Windows 行为不变。
 #
+# 构建目录策略：**一类构建一个目录**，Debug/Release 不共用——共用一个目录时后一次
+# configure 会静默覆盖前一次的 CMakeCache/build.ninja，产物类型与预期不符。这个坑手敲
+# cmake 时代踩过：同时留着 build/ / build-release/ / build-debug/ 三份互不一致的配置。
+# 目录里已有 build.ninja 时跳过 configure 走增量（worktree 首建、换平台、上次 configure
+# 中途失败这三种情况才需要 configure）；但若缓存里的 CMAKE_BUILD_TYPE 与本次请求不一致
+# 则**硬失败**（防 Debug/Release 在同一目录互相污染），改用对应目录或 --clean。
+#
 # worktree 感知：git worktree 里没有同级 ../EUI-NEO，脚本按
 #   EUI_NEO_DIR 环境变量 > 同级 ../EUI-NEO > git 主工作树同级
 # 自动定位 EUI-NEO 并传给 configure（-DEUI_NEO_DIR），worktree 首建无需手敲；
-# build/ 未初始化（首次/换平台）时脚本自动 configure，无需 --clean。
+# <构建目录> 未初始化（首次/换平台）时脚本自动 configure，无需 --clean。
 set -e
 
 # 切到 DevDesk/（脚本在 DevDesk/scripts/ 下）
@@ -69,16 +81,46 @@ if command -v ccache >/dev/null 2>&1; then
   CCACHE_ARGS=(-DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache)
 fi
 
+# 构建类型：默认 Debug（既有行为）；--release 或 DEVDESK_BUILD_TYPE 切别的类型。
+# 只认 Debug / Release 两种，写错在 configure 前就报错（免得 CMake 静默按空类型构建）。
+BUILD_TYPE="${DEVDESK_BUILD_TYPE:-Debug}"
 CLEAN=0; RUN_TEST=1; RUN_APP=1; FILTER=""
 for arg in "$@"; do
   case "$arg" in
     --clean)    CLEAN=1 ;;
+    --release)  BUILD_TYPE="Release" ;;
     --no-test)  RUN_TEST=0 ;;
     --no-run)   RUN_APP=0 ;;
     --filter)   shift; FILTER="$1" ;;
     *)          FILTER="$arg" ;;   # 裸词当 filter
   esac
 done
+case "$BUILD_TYPE" in
+  Debug|Release) ;;
+  *) echo "❌ 未知构建类型 '$BUILD_TYPE'（只支持 Debug / Release；注意大小写）" >&2; exit 1 ;;
+esac
+
+# ---- 构建目录：一类构建一个目录（Debug/Release 不共用），DEVDESK_BUILD_DIR 可整体覆盖 ----
+# 为什么要按类型分开：configure 会往目录里写 CMakeCache.txt / build.ninja，两类构建共用一个
+# 目录 = 后一次 configure 静默覆盖前一次的缓存，产物类型与预期不符（手敲 cmake 时代正是这么
+# 踩的：build/ / build-release/ / build-debug/ 三份漂移配置并存）。分开后 --clean 也只删本类目录。
+# DEVDESK_BUILD_DIR 显式指定时以它为准——差分验证 / 一次性探针要在独立目录里跑，走这个开关，
+# 不用绕回手敲 cmake（与 platform/macos/build-app.sh 的同名变量语义一致）。
+if [ -n "${DEVDESK_BUILD_DIR:-}" ]; then
+  BUILD_DIR="$DEVDESK_BUILD_DIR"
+elif [ "$BUILD_TYPE" = "Release" ]; then
+  BUILD_DIR="build-release"
+else
+  BUILD_DIR="build"
+fi
+# 归一成绝对路径：kill_by_exe_path / APP_BIN 都要绝对路径，而 DEVDESK_BUILD_DIR 可能是相对的；
+# 目录已存在时以 cd 后的真实路径为准（消除 `..` / 尾斜杠 / 相对形态的差异）。
+case "$BUILD_DIR" in
+  /*) BUILD_DIR_ABS="$BUILD_DIR" ;;
+  *)  BUILD_DIR_ABS="$PWD/$BUILD_DIR" ;;
+esac
+if [ -d "$BUILD_DIR" ]; then BUILD_DIR_ABS="$(cd "$BUILD_DIR" && pwd)"; fi
+echo "── 构建: $BUILD_TYPE → $BUILD_DIR/ ──"
 
 # ---- 0. 解析 EUI-NEO 路径（worktree 里没有同级 ../EUI-NEO，需反推主工作树）----
 # 优先级：EUI_NEO_DIR 环境变量 > 同级 ../EUI-NEO（主工作树）> git 主工作树同级
@@ -135,14 +177,14 @@ kill_by_exe_path() {
   return 0
 }
 
-# app / 测试二进制的调用路径。Windows 保持原来的相对路径调用（行为不变）；macOS/Linux 用
+# app / 测试二进制的调用路径。Windows 保持相对路径调用（行为不变）；macOS/Linux 用
 # 本 build 目录下的**绝对路径**——kill_by_exe_path 的 pkill -f 是按命令行匹配的，只有绝对路径
-# 才能把本 build 目录的产物和别的 worktree 的同名产物区分开。
-APP_BIN="./build/DevDesk$EXE_SUFFIX"
-TEST_BIN="./build/tests/devdesk_tests$EXE_SUFFIX"
+# 才能把本 build 目录的产物和别的 worktree 的同名产物区分开（多个 build 目录并存时同理）。
+APP_BIN="$BUILD_DIR/DevDesk$EXE_SUFFIX"
+TEST_BIN="$BUILD_DIR/tests/devdesk_tests$EXE_SUFFIX"
 if [ "$DEVDESK_OS" != "windows" ]; then
-  APP_BIN="$PWD/build/DevDesk$EXE_SUFFIX"
-  TEST_BIN="$PWD/build/tests/devdesk_tests$EXE_SUFFIX"
+  APP_BIN="$BUILD_DIR_ABS/DevDesk$EXE_SUFFIX"
+  TEST_BIN="$BUILD_DIR_ABS/tests/devdesk_tests$EXE_SUFFIX"
 fi
 
 # DevDesk 是否在跑（--no-run 时给个提示；只警告不阻断，故任何失败都当「没在跑」）
@@ -150,7 +192,7 @@ desk_running() {
   case "$DEVDESK_OS" in
     windows) tasklist 2>/dev/null | grep -qi devdesk ;;
     # pgrep -f 按完整命令行匹配，与 tasklist 的「宽匹配、只取存在性」语义对齐
-    *)       pgrep -f "build/DevDesk$EXE_SUFFIX" >/dev/null 2>&1 ;;
+    *)       pgrep -f "$BUILD_DIR_ABS/DevDesk$EXE_SUFFIX" >/dev/null 2>&1 ;;
   esac
 }
 
@@ -158,9 +200,9 @@ if [ "$RUN_APP" = "1" ]; then
   echo "── 杀旧进程 ──"
   # 传**绝对路径**（两平台都必须）：Windows 侧 PowerShell 比的是进程映像路径 $_.Path，
   # 非 Windows 侧 pkill -f 比的是命令行——两者都只有绝对路径才命中（这也是 APP_BIN 在
-  # macOS/Linux 上取绝对路径的原因；Windows 侧启动路径保持原来的相对形式不变）。
-  kill_by_exe_path "$PWD/build/DevDesk$EXE_SUFFIX"
-  kill_by_exe_path "$PWD/build/tests/devdesk_tests$EXE_SUFFIX"
+  # macOS/Linux 上取绝对路径的原因；Windows 侧启动路径保持相对形式不变）。
+  kill_by_exe_path "$BUILD_DIR_ABS/DevDesk$EXE_SUFFIX"
+  kill_by_exe_path "$BUILD_DIR_ABS/tests/devdesk_tests$EXE_SUFFIX"
   echo "✅ 旧进程已清（仅本 build 目录下的产物）"
 elif desk_running; then
   echo "⚠ DevDesk 正在运行（--no-run 不杀）：构建链接 DevDesk$EXE_SUFFIX 可能因文件锁失败" >&2
@@ -177,15 +219,26 @@ case "$DEVDESK_OS" in
   darwin)  OPENSSL_ARGS=(-DOPENSSL_ROOT_DIR=/opt/homebrew/opt/openssl@3) ;;
 esac
 
-# configure 条件：--clean（全量重建）或 build/ 未初始化（worktree 首建、换平台、上次 configure 中途失败）
+# configure 条件：--clean（全量重建）或 <构建目录> 未初始化（worktree 首建、换平台、上次 configure 中途失败）
 if [ "$CLEAN" = "1" ]; then
-  echo "── 全量重建（rm -rf build）──"
-  rm -rf build
-elif [ ! -f build/build.ninja ]; then
-  echo "── 首次 configure（build/ 未初始化）──"
+  echo "── 全量重建（rm -rf $BUILD_DIR）──"
+  rm -rf "$BUILD_DIR"
+elif [ ! -f "$BUILD_DIR/build.ninja" ]; then
+  echo "── 首次 configure（$BUILD_DIR 未初始化）──"
 fi
-if [ "$CLEAN" = "1" ] || [ ! -f build/build.ninja ]; then
-  CONF_OUT=$(cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Debug \
+# 构建类型一致性守卫（对跳过 configure 的增量路径尤其重要）：目录已 configure 过、但缓存里的
+# CMAKE_BUILD_TYPE 与本次请求不同 → 硬失败，不静默复用。静默复用的后果是 `--release` 产出
+# Debug 二进制（或反之）——产物类型与预期不符且无从察觉，比当场报错危险得多。
+if [ -f "$BUILD_DIR/CMakeCache.txt" ] && grep -q "^CMAKE_BUILD_TYPE:" "$BUILD_DIR/CMakeCache.txt"; then
+  CACHED_TYPE="$(grep -m1 "^CMAKE_BUILD_TYPE:" "$BUILD_DIR/CMakeCache.txt" | cut -d= -f2- | tr -d '\r')"
+  if [ "$CACHED_TYPE" != "$BUILD_TYPE" ]; then
+    echo "❌ $BUILD_DIR 已按 $CACHED_TYPE 配置（CMAKE_BUILD_TYPE=$CACHED_TYPE），本次请求 $BUILD_TYPE" >&2
+    echo "   一类构建一个目录：换目录（DEVDESK_BUILD_DIR=<dir>）或 --clean 重建本目录" >&2
+    exit 1
+  fi
+fi
+if [ "$CLEAN" = "1" ] || [ ! -f "$BUILD_DIR/build.ninja" ]; then
+  CONF_OUT=$(cmake -B "$BUILD_DIR" -G Ninja -DCMAKE_BUILD_TYPE="$BUILD_TYPE" \
     -DEUI_NEO_DIR="$EUI_DIR" \
     "${CCACHE_ARGS[@]}" \
     "${OPENSSL_ARGS[@]}" 2>&1) || {
@@ -194,7 +247,7 @@ if [ "$CLEAN" = "1" ] || [ ! -f build/build.ninja ]; then
   echo "✅ configure 完成"
 fi
 echo "── 构建（增量）──"
-BUILD_OUT=$(cmake --build build 2>&1) || {
+BUILD_OUT=$(cmake --build "$BUILD_DIR" 2>&1) || {
   echo "$BUILD_OUT" | grep -iE "error|FAILED" | head -30
   echo "❌ 构建失败（上方为错误摘要）"; exit 1; }
 echo "$BUILD_OUT" | tail -2
@@ -210,7 +263,7 @@ echo "✅ 构建成功"
 # 非 Windows 平台（macOS/Linux）降级为**警告**，理由（不是偷懒，是这套判据本身不适用）：
 #   ① 「单 exe / 零外部 DLL」是 Windows 发布契约；DEVDESK_STATIC 是 MinGW 专有开关
 #      （cmake/Dependencies.cmake 的静态链接特化整段包在 if(MINGW ...) 里，macOS/Linux 走
-#      普通 find_package 路径），非 Windows 的 build/CMakeCache.txt 里根本没有这个条目 ——
+#      普通 find_package 路径），非 Windows 的 <构建目录>/CMakeCache.txt 里根本没有这个条目 ——
 #      照搬 Windows 断言必然误报，硬失败会挡住 macOS 上的正常构建。
 #   ② 平台各自的动态依赖由工具列出（Darwin: otool -L / Linux: ldd），非系统路径下的库只打印
 #      警告，供人工判断（macOS 上 Homebrew 的 libssl/libcrypto 出现在这里属预期）。
@@ -228,9 +281,9 @@ list_dynamic_deps() {
   esac
 }
 if [ "$DEVDESK_OS" = "windows" ]; then
-# ↓↓ Windows 分支：原断言逐字保留（含缩进，故意不重新缩进），只把写死的 .exe 换成 $EXE_SUFFIX ↓↓
-if [ ! -f build/DevDesk$EXE_SUFFIX ]; then
-  echo "⚠ 发布形态守卫跳过：build/DevDesk$EXE_SUFFIX 不存在"
+# ↓↓ Windows 分支：原断言逐字保留（含缩进，故意不重新缩进），只把写死的 .exe 换成 $EXE_SUFFIX、写死的 build/ 换成 $BUILD_DIR ↓↓
+if [ ! -f $BUILD_DIR/DevDesk$EXE_SUFFIX ]; then
+  echo "⚠ 发布形态守卫跳过：$BUILD_DIR/DevDesk$EXE_SUFFIX 不存在"
 elif ! command -v objdump >/dev/null 2>&1; then
   echo "⚠ 发布形态守卫跳过：objdump 不可用"
 else
@@ -239,22 +292,22 @@ else
   while read -r dll; do
     [ -n "$dll" ] || continue
     if [ ! -f "$SYS32/$dll" ]; then BAD_DLLS="$BAD_DLLS $dll"; fi
-  done < <(objdump -p build/DevDesk$EXE_SUFFIX 2>/dev/null | awk '/DLL Name:/{print $3}')
+  done < <(objdump -p $BUILD_DIR/DevDesk$EXE_SUFFIX 2>/dev/null | awk '/DLL Name:/{print $3}')
   if [ -n "$BAD_DLLS" ]; then
     echo "❌ 发布形态：DevDesk$EXE_SUFFIX 依赖非系统 DLL:$BAD_DLLS（期望单 exe 零外部 DLL）"
     exit 1
   fi
-  if grep -q "DEVDESK_STATIC:BOOL=ON" build/CMakeCache.txt; then
+  if grep -q "DEVDESK_STATIC:BOOL=ON" $BUILD_DIR/CMakeCache.txt; then
     echo "✅ 发布形态（单 exe / 零外部 DLL；DEVDESK_STATIC=ON）"
   else
-    echo "❌ 发布形态：build/CMakeCache.txt 缺 DEVDESK_STATIC:BOOL=ON（静态链接被关掉）"
+    echo "❌ 发布形态：$BUILD_DIR/CMakeCache.txt 缺 DEVDESK_STATIC:BOOL=ON（静态链接被关掉）"
     exit 1
   fi
 fi
 # ↑↑ Windows 分支结束 ↑↑
 else
-  if [ ! -f "build/DevDesk$EXE_SUFFIX" ]; then
-    echo "⚠ 发布形态守卫跳过：build/DevDesk$EXE_SUFFIX 不存在"
+  if [ ! -f "$BUILD_DIR/DevDesk$EXE_SUFFIX" ]; then
+    echo "⚠ 发布形态守卫跳过：$BUILD_DIR/DevDesk$EXE_SUFFIX 不存在"
   elif ! command -v "$DEP_TOOL" >/dev/null 2>&1; then
     echo "⚠ 发布形态守卫跳过：$DEP_TOOL 不可用"
   else
@@ -266,7 +319,7 @@ else
         /usr/lib/*|/System/*|/lib/*|/lib64/*|/usr/lib64/*) ;;
         *) NON_SYS_LIBS="$NON_SYS_LIBS $lib" ;;
       esac
-    done < <(list_dynamic_deps "build/DevDesk$EXE_SUFFIX")
+    done < <(list_dynamic_deps "$BUILD_DIR/DevDesk$EXE_SUFFIX")
     if [ -n "$NON_SYS_LIBS" ]; then
       echo "⚠ 发布形态（$DEVDESK_OS 上降级为警告）：DevDesk$EXE_SUFFIX 依赖非系统库：$NON_SYS_LIBS"
       echo "   理由：单 exe / 零外部 DLL 是 Windows 发布契约，DEVDESK_STATIC 是 MinGW 专有开关"
@@ -274,7 +327,7 @@ else
     else
       echo "✅ 发布形态（$DEVDESK_OS 检查：$DEP_TOOL 未列出非系统库依赖）"
     fi
-    echo "⏭ 发布形态守卫跳过 DEVDESK_STATIC 断言：该开关是 MinGW 专有（cmake/Dependencies.cmake 整段包在 if(MINGW) 里），非 Windows 的 build/CMakeCache.txt 里没有这个条目"
+    echo "⏭ 发布形态守卫跳过 DEVDESK_STATIC 断言：该开关是 MinGW 专有（cmake/Dependencies.cmake 整段包在 if(MINGW) 里），非 Windows 的 $BUILD_DIR/CMakeCache.txt 里没有这个条目"
   fi
 fi
 
@@ -299,9 +352,9 @@ fi
 # 相对化后 cwd=仓库根 必误报「找不到仓库根」；改由独立脚本承担（脚本自身不读
 # $PWD、全程绝对路径）。失败 → 退出码 1，不静默绿。
 echo "── 模块隔离守卫 ──"
-# 路径用「相对仓库根」而非 $(dirname "$0")：本脚本第 22 行已 cd 到仓库根，
+# 路径用「相对仓库根」而非 $(dirname "$0")：本脚本开头已 cd 到仓库根，
 # 且 $0 可能是裸文件名（bash build-test-run.sh 从 scripts/ 内调用），
-# 那种形态下 dirname "$0" 会解析错目录。相对根的写法与下方 ./build/... 同风格。
+# 那种形态下 dirname "$0" 会解析错目录。相对根的写法与上方 $BUILD_DIR/... 同风格。
 if ! bash scripts/check-module-isolation.sh; then
   echo "❌ 模块隔离守卫失败（上方为 文件:行:命中行；修 settings 侧，勿越模块 link）"
   exit 1

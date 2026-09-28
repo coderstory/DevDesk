@@ -26,6 +26,20 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## 🛠️ 常用命令
 
+> **🔴 构建与测试一律走 `bash scripts/build-test-run.sh`，禁止手敲 `cmake -B …` / `cmake --build …`。**
+>
+> 这条规则 2026-09-28 立，依据是当天实测出的事故，不是风格偏好：
+>
+> 1. **手敲会造出多份互相漂移的构建目录。** 当天机器上同时存在 `build/`、`build-release/`、`build-debug/` 三份手工构建目录，各自的 configure 参数互不相同；`build-debug/` 事后被删，`build-release/` 的产物与脚本构建出的不一致。结果是没人说得清"当前这个二进制到底是哪份配置编出来的"——这正是本项目要求"工艺参数可审计、可复现"的反面。
+> 2. **手敲必然漏掉脚本里已经封装好的约定。** 脚本封装的每一项少掉都不会立刻报错，只会在之后某个时刻以"莫名其妙的结果"出现：`EUI_NEO_DIR` 的 worktree 自动定位（worktree 里没有同级 `../EUI-NEO`，漏了直接 configure 失败或链到错的框架源码）、ccache 的两个 launcher 参数（漏了编译缓存全 miss，白装）、`OPENSSL_ROOT_DIR` 的平台差异（macOS 用 Homebrew `openssl@3`、Windows 用 `C:/msys64/mingw64`）、发布形态守卫（Windows 单 exe / 零外部 DLL，漏了会在发布时才发现）、模块隔离守卫、以及并行度封顶 `DEVDESK_JOBS`（默认 3，多条 worktree 并发构建时防止互相拖死）。
+> 3. **手敲的命令不会被任何人复现。** 脚本是唯一被记录、被反复执行的构建路径；只有它跑出来的结果才能当成基线——手敲的命令出问题时，无法区分是环境问题还是代码问题，事后也无法一次复跑定位。
+>
+> 脚本已覆盖两种构建类型：默认 Debug（构建目录 `build/`），加 `--release` 即 Release（自动切到 `build-release/`，两类构建互不覆盖）。需要非常规目录时用 `DEVDESK_BUILD_DIR=<dir>`，不要绕回手敲 cmake。
+>
+> **例外（有意保留，不是开口子）**：`scripts/` 内部的实现；以及**明确的诊断 / 验证场景**——例如临时用独立 build 目录做差分验证、或需要非标准 flag 做一次性探针——允许直接用 cmake，但**必须在报告 / commit message 里写明"为什么脚本不够用"**。这条例外的目的是不让规则变成"遇到脚本覆盖不到的情况就只能违规"，而不是给人留后门。
+>
+> 紧随其后的 macOS / Windows 手敲命令块只作**工具链参考**（记录编译器、参数形态、平台差异），日常构建与测试不要照着敲。
+
 **macOS / arm64（当前开发平台，AppleClang + Ninja）**：
 
 ```bash
