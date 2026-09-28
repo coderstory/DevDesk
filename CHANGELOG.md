@@ -6,6 +6,12 @@
 
 > **当前基线（2026-09-24，master @ 817af80）**：用例 **407**（`grep REGISTER_TEST` 口径，本会话 324 → 407；全绿与否以主会话终验为准）。各波次条目内的测试数为该波时点事实，不代表当前总数；波次按合并时间倒序排列。
 
+## [Installer-M2.1] 2026-09-28 —— 安装向导中文语言：简体中文默认 + 英文可切（`5da21a0`）
+
+- feat(installer)：`installer/windows/devdesk.iss` 新增 `[Languages]` —— `chinesesimp` 排首 = 默认向导语言（契合中文用户环境，与 `[Run]` 段既有"启动 DevDesk"中文文案一致）；`english` 次之，向导首屏语言下拉可切英文。
+- 中文 ISL 自托管：本机 Inno 6.7.3 安装的 `Languages` 目录缺失全部中文文件（`compiler:` 前缀引用会编译失败），故把官方 issrc `Files/Languages/ChineseSimplified.isl`（Inno 6.5.0+ 简体中文消息，与 6.7.3 兼容）随仓库放 `installer/windows/Languages/`，经 `{#SourcePath}` 引用；english 复用编译器自带 `Default.isl`（官方英文基准，本机同样缺 `English.isl`）。
+- 官方默认中文文案已覆盖全部向导按钮与提示（"下一步"/"安装"/"完成"/"浏览" 等均现代友好），不做 `[CustomMessages]` 覆盖。ISCC 实编译通过、零 language warning；安装包体积 +3,463 字节（12,403,967 vs 12,400,504，语言消息表）。
+
 ## [Batch-0927-D] 2026-09-27 深夜 —— 第三批：审计分片 A–F 与汇总 + U8/U1 上游采纳 + 写路径收口 + ccache 闭环（`c48546e` → `9dd9ee2`）
 
 master `c48546e`（`[Batch-0927-B]` 收口）→ `9dd9ee2`：**36 个 `--no-ff` 合并批次 + 3 个直接提交** / 96 文件（+8840 −805）。内容 = 六片全量审计（A–F）+ 汇总（79 条 → 去重 77 行 / Top10 / 三波计划 / 8 条待拍板）+ 审计修复批（CP-01 / CP-02 / CPX-02 / CPX-03 / MD-01 / PAB-01 等）+ EUI-NEO 上游 U8 消费侧与 U1 采纳 + 写路径与值语义收口（原子写两批 / JsonValue 去镜像 / SqliteDb 非法态不可表达）+ 共享配置片段批 1（migration v6）+ Markdown Phase3 M1·M2 + ccache 编译缓存闭环。按合并时间倒序（`fe0b990` 反向同步 M5 收口的内容已见 `[Batch-0927-C]`，本节只列时间线）：
