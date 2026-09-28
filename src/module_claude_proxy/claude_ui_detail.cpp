@@ -1,7 +1,8 @@
 // src/module_claude_proxy/claude_ui_detail.cpp
-// R4（P-B3）：右栏三 pane + 操作按钮组 + 「最近调用」预览 —— 逐字自
-// claude_module.cpp 的 compose 搬出（含注释），只把 this 成员换成显式入参
-// （DetailView 只读输入 / DetailActions 回调）。
+// R4（P-B3）：右栏三 pane + 操作按钮组 + 「最近调用」页签（2026-09-28 由
+// 底部固定预览块抽成独立 tab）—— 逐字自 claude_module.cpp 的 compose
+// 搬出（含注释），只把 this 成员换成显式入参（DetailView 只读输入 /
+// DetailActions 回调）。
 #include "claude_ui_detail.h"
 
 #include "claude_ui_logic.h"
@@ -193,15 +194,16 @@ float drawDetailEnv(eui::Ui& ui, float x0, float y0, float w,
     const int keyMaxChars = std::max(6, static_cast<int>(keyColW / 7.0f));
     // 行数上限（2026-09-27 修）：此前无上限，行一多 paneBottom
     // 一路下探，把下方按钮组/最近调用表/「查看全部」顶出面板
-    // 下沿，被 app.page clip 裁掉点不到。下方固定占用 236px
-    //（actY = paneBottom+20，查看全部命中区底 = actY+236）+
-    // 20px「另有 N 项」提示；超出部分不画只提示（不引 scrollView：
+    // 下沿，被 app.page clip 裁掉点不到。2026-09-28 最近调用抽成
+    // 独立页签后，下方固定占用缩为 81px（actY = paneBottom+20，
+    // 动作区底 = actY+61，见 drawDetailActions）+ 20px「另有 N 项」
+    // 提示 → 预留常数 276 → 110；超出部分不画只提示（不引 scrollView：
     // 行绘制用 overlay 绝对坐标，进 content lambda 需整段改相对
     // 坐标 + 新增滚动 offset 成员，改动面大；表单 env 编辑器
     // 已有 kMaxVisibleRows + 溢出提示同款先例）
     const size_t envMaxRows = std::max<size_t>(
         1, static_cast<size_t>(
-               std::max(0.0f, v.bodyH - y0 - 276.0f) / 54.0f));
+               std::max(0.0f, v.bodyH - y0 - 110.0f) / 54.0f));
     float ey = y0;
     int ei2 = 0;
     for (const auto& kv : envMap) {
@@ -277,11 +279,170 @@ const std::vector<ClaudeService::CallLogEntry>& emptyCalls() {
     return kEmpty;
 }
 
-// 操作按钮组（全量接线）+ 「运行」副提示 + 分隔线 + 最近调用预览 + 「查看全部」。
-// actY 跟随 pane 真实底沿（= 入参 paneBottom + 20），避免与上方内容重叠
-void drawDetailActionsAndCalls(eui::Ui& ui, float x0, float w, float paneBottom,
-                               const core::theme::Tokens& t,
-                               const DetailView& v, const DetailActions& a) {
+// 最近调用 pane（tab 3，2026-09-28 由详情面板底部固定预览块抽成**独立页签**，
+// 与「基础信息/模型映射/环境变量」同级）：表头 + 行（行数随 bodyH 自适应，
+// 非最大化窗口不再溢出卡底）+ 错误/空态 + 「查看全部 →」（开完整调用记录
+// 弹窗）。行/表头 id 沿用旧底部预览（claude.calls.*，无头用例按这些 id
+// 断言），列布局逐字不变；返回本 pane 内容底沿（操作按钮组按此定位）。
+float drawDetailCallsPane(eui::Ui& ui, float x0, float y0, float w,
+                          const core::theme::Tokens& t,
+                          const DetailView& v,
+                          const std::function<void()>& openCalls) {
+    // 调用表头（列布局同旧底部预览）
+    const float colTimeX = x0;
+    const float colPathX = x0 + 80.0f;
+    const float colStatusX = x0 + w - 200.0f;
+    const float colDurX = x0 + w - 100.0f;
+    ui.text("claude.calls.h.time")
+        .position(colTimeX, y0)
+        .size(72.0f, 14.0f)
+        .text("时间")
+        .fontSize(10.0f)
+        .lineHeight(14.0f)
+        .color(t.colors.textTertiary)
+        .build();
+    ui.text("claude.calls.h.path")
+        .position(colPathX, y0)
+        .size(w - 280.0f, 14.0f)
+        .text("方法 / 路径")
+        .fontSize(10.0f)
+        .lineHeight(14.0f)
+        .color(t.colors.textTertiary)
+        .build();
+    ui.text("claude.calls.h.status")
+        .position(colStatusX, y0)
+        .size(60.0f, 14.0f)
+        .text("状态")
+        .fontSize(10.0f)
+        .lineHeight(14.0f)
+        .color(t.colors.textTertiary)
+        .build();
+    ui.text("claude.calls.h.dur")
+        .position(colDurX, y0)
+        .size(60.0f, 14.0f)
+        .text("耗时")
+        .fontSize(10.0f)
+        .lineHeight(14.0f)
+        .color(t.colors.textTertiary)
+        .build();
+
+    // 行数自适应（2026-09-28）：可用高 = bodyH − pane 起点 − 表头 −
+    // 「查看全部」带（8+24）− 底部动作区固定占用（actY = paneBottom+20，
+    // 动作区底 = actY+61，见 drawDetailActions）；留 23px 余量
+    const float cellsY = y0 + 24.0f;
+    const int rowsCap = std::clamp(
+        static_cast<int>((v.bodyH - y0 - 160.0f) / 24.0f), 3, 10);
+
+    // 最近调用（真实数据，从 claude_call_logs 读）
+    const std::vector<ClaudeService::CallLogEntry>& recent =
+        v.recent ? *v.recent : emptyCalls();
+    const std::string& callsError = v.callsError;
+    const std::time_t now = v.now;
+    size_t shownRows = 0;
+    if (!callsError.empty()) {
+        ui.text("claude.calls.error")
+            .position(colTimeX, cellsY)
+            .size(w - 80.0f, 16.0f)
+            .text("调用记录加载失败：" + callsError)
+            .fontSize(11.0f)
+            .lineHeight(16.0f)
+            .color(t.colors.error)
+            .build();
+    } else if (recent.empty()) {
+        ui.text("claude.calls.empty")
+            .position(colTimeX, cellsY)
+            .size(w - 80.0f, 16.0f)
+            .text("(暂无调用记录)")
+            .fontSize(11.0f)
+            .lineHeight(16.0f)
+            .color(t.colors.textTertiary)
+            .build();
+    } else {
+        const size_t n = std::min<size_t>(
+            recent.size(), static_cast<size_t>(rowsCap));
+        for (size_t i = 0; i < n; ++i) {
+            const ClaudeService::CallLogEntry& c = recent[i];
+            const float rowY = cellsY + static_cast<float>(i) * 24.0f;
+
+            ui.text("claude.calls.t." + std::to_string(i))
+                .position(colTimeX, rowY)
+                .size(72.0f, 16.0f)
+                .text(formatCallTime(c.startedAt, now))
+                .fontSize(11.0f)
+                .lineHeight(16.0f)
+                .color(t.colors.textPrimary)
+                .build();
+
+            const std::string mp = c.method + " " + c.path;
+            ui.text("claude.calls.p." + std::to_string(i))
+                .position(colPathX, rowY)
+                .size(w - 280.0f, 16.0f)
+                .text(mp)
+                .fontSize(11.0f)
+                .lineHeight(16.0f)
+                .color(t.colors.textPrimary)
+                .build();
+
+            const eui::Color statusColor =
+                (c.statusCode >= 200 && c.statusCode < 300)
+                    ? t.colors.success :
+                c.statusCode == 429
+                    ? t.colors.warning
+                    : t.colors.error;
+            const std::string statusStr = c.statusCode > 0
+                ? std::to_string(c.statusCode)
+                : std::string("-");
+            ui.text("claude.calls.s." + std::to_string(i))
+                .position(colStatusX, rowY)
+                .size(60.0f, 16.0f)
+                .text(statusStr)
+                .fontSize(11.0f)
+                .lineHeight(16.0f)
+                .color(statusColor)
+                .build();
+
+            ui.text("claude.calls.d." + std::to_string(i))
+                .position(colDurX, rowY)
+                .size(60.0f, 16.0f)
+                .text(formatLatency(c.latencyMs))
+                .fontSize(11.0f)
+                .lineHeight(16.0f)
+                .color(t.colors.textSecondary)
+                .build();
+        }
+        shownRows = n;
+    }
+
+    // 查看全部 →（可点击：弹完整调用记录）
+    const float viewY =
+        cellsY + static_cast<float>(shownRows) * 24.0f + 8.0f;
+    ui.rect("claude.calls.viewall.hit")
+        .position(x0, viewY)
+        .size(w, 24.0f)
+        .color(t.colors.background)
+        .hoverColor(t.colors.hover)
+        .radius(t.sizes.radiusSmall)
+        .onClick([oc = openCalls] { oc(); })
+        .build();
+    ui.text("claude.calls.viewall")
+        .position(x0, viewY + 4.0f)
+        .size(w, 18.0f)
+        .text("查看全部 →")
+        .fontSize(12.0f)
+        .lineHeight(18.0f)
+        .color(t.colors.primary)
+        .build();
+    return viewY + 24.0f;
+}
+
+// 操作按钮组（全量接线）+ 「运行」副提示 + 分隔线。actY 跟随 pane 真实
+// 底沿（= 入参 paneBottom + 20），避免与上方内容重叠。2026-09-28：最近
+// 调用预览抽成独立页签（drawDetailCallsPane）后，底部固定区从
+// actY+236 缩到 actY+61 —— 详情面板在非最大化窗口不再溢出卡底
+//（env 行数上限的预留常数同步改小，见 drawDetailEnv）
+void drawDetailActions(eui::Ui& ui, float x0, float w, float paneBottom,
+                       const core::theme::Tokens& t,
+                       const DetailView& v, const DetailActions& a) {
     const Profile* shown = v.shown;
     const float actY = paneBottom + 20.0f;
     ui.rect("claude.act.divider")
@@ -434,152 +595,6 @@ void drawDetailActionsAndCalls(eui::Ui& ui, float x0, float w, float paneBottom,
         .size(w, 1.0f)
         .color(t.colors.borderMuted)
         .build();
-
-    // 最近调用
-    ui.text("claude.calls.title")
-        .position(x0, actY + 76.0f)
-        .size(w, 20.0f)
-        .text("最近调用")
-        .fontSize(t.sizes.fontSizeBody)
-        .lineHeight(20.0f)
-        .fontWeight(600)
-        .color(t.colors.textPrimary)
-        .build();
-
-    // 调用表头
-    const float tableY = actY + 108.0f;
-    const float colTimeX = x0;
-    const float colPathX = x0 + 80.0f;
-    const float colStatusX = x0 + w - 200.0f;
-    const float colDurX = x0 + w - 100.0f;
-    ui.text("claude.calls.h.time")
-        .position(colTimeX, tableY)
-        .size(72.0f, 14.0f)
-        .text("时间")
-        .fontSize(10.0f)
-        .lineHeight(14.0f)
-        .color(t.colors.textTertiary)
-        .build();
-    ui.text("claude.calls.h.path")
-        .position(colPathX, tableY)
-        .size(w - 280.0f, 14.0f)
-        .text("方法 / 路径")
-        .fontSize(10.0f)
-        .lineHeight(14.0f)
-        .color(t.colors.textTertiary)
-        .build();
-    ui.text("claude.calls.h.status")
-        .position(colStatusX, tableY)
-        .size(60.0f, 14.0f)
-        .text("状态")
-        .fontSize(10.0f)
-        .lineHeight(14.0f)
-        .color(t.colors.textTertiary)
-        .build();
-    ui.text("claude.calls.h.dur")
-        .position(colDurX, tableY)
-        .size(60.0f, 14.0f)
-        .text("耗时")
-        .fontSize(10.0f)
-        .lineHeight(14.0f)
-        .color(t.colors.textTertiary)
-        .build();
-
-    // 最近调用（真实数据，从 claude_call_logs 读）
-    const std::vector<ClaudeService::CallLogEntry>& recent =
-        v.recent ? *v.recent : emptyCalls();
-    const std::string& callsError = v.callsError;
-    const std::time_t now = v.now;
-    if (!callsError.empty()) {
-        ui.text("claude.calls.error")
-            .position(colTimeX, tableY + 24.0f)
-            .size(w - 80.0f, 16.0f)
-            .text("调用记录加载失败：" + callsError)
-            .fontSize(11.0f)
-            .lineHeight(16.0f)
-            .color(t.colors.error)
-            .build();
-    } else if (recent.empty()) {
-        ui.text("claude.calls.empty")
-            .position(colTimeX, tableY + 24.0f)
-            .size(w - 80.0f, 16.0f)
-            .text("(暂无调用记录)")
-            .fontSize(11.0f)
-            .lineHeight(16.0f)
-            .color(t.colors.textTertiary)
-            .build();
-    } else {
-        for (size_t i = 0; i < recent.size() && i < 3; ++i) {
-            const ClaudeService::CallLogEntry& c = recent[i];
-            const float rowY = tableY + 24.0f +
-                static_cast<float>(i) * 24.0f;
-
-            ui.text("claude.calls.t." + std::to_string(i))
-                .position(colTimeX, rowY)
-                .size(72.0f, 16.0f)
-                .text(formatCallTime(c.startedAt, now))
-                .fontSize(11.0f)
-                .lineHeight(16.0f)
-                .color(t.colors.textPrimary)
-                .build();
-
-            const std::string mp = c.method + " " + c.path;
-            ui.text("claude.calls.p." + std::to_string(i))
-                .position(colPathX, rowY)
-                .size(w - 280.0f, 16.0f)
-                .text(mp)
-                .fontSize(11.0f)
-                .lineHeight(16.0f)
-                .color(t.colors.textPrimary)
-                .build();
-
-            const eui::Color statusColor =
-                (c.statusCode >= 200 && c.statusCode < 300)
-                    ? t.colors.success :
-                c.statusCode == 429
-                    ? t.colors.warning
-                    : t.colors.error;
-            const std::string statusStr = c.statusCode > 0
-                ? std::to_string(c.statusCode)
-                : std::string("-");
-            ui.text("claude.calls.s." + std::to_string(i))
-                .position(colStatusX, rowY)
-                .size(60.0f, 16.0f)
-                .text(statusStr)
-                .fontSize(11.0f)
-                .lineHeight(16.0f)
-                .color(statusColor)
-                .build();
-
-            ui.text("claude.calls.d." + std::to_string(i))
-                .position(colDurX, rowY)
-                .size(60.0f, 16.0f)
-                .text(formatLatency(c.latencyMs))
-                .fontSize(11.0f)
-                .lineHeight(16.0f)
-                .color(t.colors.textSecondary)
-                .build();
-        }
-    }
-
-    // 查看全部 →（可点击：弹完整调用记录）
-    ui.rect("claude.calls.viewall.hit")
-        .position(x0, tableY + 104.0f)
-        .size(w, 24.0f)
-        // 命中区底 = 所在详情面板底（background）
-        .color(t.colors.background)
-        .hoverColor(t.colors.hover)
-        .radius(t.sizes.radiusSmall)
-        .onClick([oc = a.openCalls] { oc(); })
-        .build();
-    ui.text("claude.calls.viewall")
-        .position(x0, tableY + 108.0f)
-        .size(w, 18.0f)
-        .text("查看全部 →")
-        .fontSize(12.0f)
-        .lineHeight(18.0f)
-        .color(t.colors.primary)
-        .build();
 }
 
 } // namespace
@@ -589,7 +604,7 @@ void drawDetailPanel(eui::Ui& ui, float rightW, float bodyH, float xOffset,
                      const components::theme::ThemeColorTokens& themeTokens,
                      DetailState& st, const DetailView& v,
                      const DetailActions& a) {
-    // ---- 右栏：详情面板 + 最近调用 ----
+    // ---- 右栏：详情面板（三 pane + 最近调用页签）----
     ui.column("claude.detail")
         .size(rightW, bodyH)
         .gap(0.0f)
@@ -627,7 +642,9 @@ void drawDetailPanel(eui::Ui& ui, float rightW, float bodyH, float xOffset,
             // 页签栏（2026-09-25：改用 EUI-NEO tabs 组件，自带动画指示器+
             // 底部分隔线+居中文字；色源走 componentTokens 桥接。tabs 无
             // .position 故包一层定位 stack 对齐右栏内边距，沿用 settings
-            // 模块 .wrap stack 同款写法）
+            // 模块 .wrap stack 同款写法）。
+            // 2026-09-28：最近调用从底部固定预览块抽成第 4 个页签
+            //（与基础信息/模型映射/环境变量同级）
             const float tabY = y0 + 40.0f;
             const float tabH = 36.0f;
             ui.stack("claude.detail.tabs.wrap")
@@ -637,7 +654,7 @@ void drawDetailPanel(eui::Ui& ui, float rightW, float bodyH, float xOffset,
                     components::tabs(ui, "claude.detail.tabs")
                         .size(w0, tabH)
                         .items(std::vector<std::string>{
-                            "基础信息", "模型映射", "环境变量"})
+                            "基础信息", "模型映射", "环境变量", "最近调用"})
                         .selected(st.detailTab_)
                         .fontSize(t.sizes.fontSizeSmall)
                         .theme(themeTokens)
@@ -651,10 +668,13 @@ void drawDetailPanel(eui::Ui& ui, float rightW, float bodyH, float xOffset,
                 paneBottom = drawDetailBasic(ui, x0, paneY, w0, t, v);
             } else if (st.detailTab_ == 1) {
                 paneBottom = drawDetailModels(ui, x0, paneY, w0, t, v);
-            } else {
+            } else if (st.detailTab_ == 2) {
                 paneBottom = drawDetailEnv(ui, x0, paneY, w0, t, v);
+            } else {
+                paneBottom = drawDetailCallsPane(
+                    ui, x0, paneY, w0, t, v, a.openCalls);
             }
-            drawDetailActionsAndCalls(ui, x0, w0, paneBottom, t, v, a);
+            drawDetailActions(ui, x0, w0, paneBottom, t, v, a);
         })
         .build();
 }

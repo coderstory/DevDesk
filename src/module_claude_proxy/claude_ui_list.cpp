@@ -8,7 +8,6 @@
 #include "settings_sync.h"
 
 #include <components/button.h>
-#include <components/card.h>
 #include <components/contextmenu.h>
 #include <components/virtuallist.h>
 
@@ -95,10 +94,12 @@ void drawProfileCard(eui::Ui& ui,
         .fontWeight(600)
         .build();
 
-    // 名称
+    // 名称（右缘 = ACTIVE 徽标左缘 width-60 前 4px；旧 width-130 把徽标
+    // 探测区留得过宽，名称行被无谓截短 —— 2026-09-28 自适应父宽后改窄）
+    // 徽标仅在激活时占位，超长文本仍会从盒尾溢出被徽标盖住（与 URL 同款）
     ui.text(id + ".name")
         .position(64.0f, y + 18.0f)
-        .size(width - 130.0f, 20.0f)
+        .size(width - 64.0f, 20.0f)
         .text(p.name)
         .fontSize(t.sizes.fontSizeBody)
         .lineHeight(20.0f)
@@ -125,10 +126,12 @@ void drawProfileCard(eui::Ui& ui,
             .build();
     }
 
-    // base-url (mono, 12px, tertiary)
+    // base-url (mono, 12px, tertiary)。宽 = width-64：右缘贴共享
+    // 徽标左缘（width-60）前 4px；旧 width-80 偏保守、非绑定行白留
+    //（2026-09-28 自适应父宽）
     ui.text(id + ".url")
         .position(64.0f, y + 44.0f)
-        .size(width - 80.0f, 14.0f)
+        .size(width - 64.0f, 14.0f)
         .text(p.baseUrl)
         .fontSize(11.0f)
         .lineHeight(14.0f)
@@ -157,10 +160,11 @@ void drawProfileCard(eui::Ui& ui,
             .build();
     }
 
-    // model（default 槽位，未配则旧 model 列 fallback——§6.2 列表卡片）
+    // model（default 槽位，未配则旧 model 列 fallback——§6.2 列表卡片）。
+    // 宽 = width-64（同 name/url；model 行下方无徽标，右缘留 16px 边距）
     ui.text(id + ".model")
         .position(64.0f, y + 62.0f)
-        .size(width - 80.0f, 14.0f)
+        .size(width - 64.0f, 14.0f)
         .text(std::string("model: ") +
               effectiveModelsConfig(p.modelsConfigJson, p.model).def.model)
         .fontSize(11.0f)
@@ -390,13 +394,16 @@ void drawProfileListPanel(eui::Ui& ui, float leftW, float bodyH,
                 // cardGap 间距 = 108 pitch。滚动语义 profilesScrollOffset_
                 // 沿用（翻页式列表行数小，overscan 一个视口高让整段渲染，
                 // 消除 slot 数量感）。滚动区底 = 底部按钮（bodyH-64）
-                // 上方 12px（同旧 scrollView 口径）
+                // 上方 12px（同旧 scrollView 口径）。
+                // 2026-09-28：视口对齐父面板 20px 内缩网格（position 20 /
+                // 宽 leftW-40 = 父内容宽），item 自适应父宽；旧 x=0/leftW-24
+                // 与标题/按钮的 20px 网格错位且右缘差 4px
                 const float scrollH = std::max(
                     0.0f, bodyH - 64.0f - 12.0f - cardY0);
                 const float rowPitch = 96.0f + cardGap;
                 components::virtualList(ui, "claude.profiles.scroll")
-                    .position(0.0f, cardY0)
-                    .size(leftW - 24.0f, scrollH)
+                    .position(20.0f, cardY0)
+                    .size(leftW - 40.0f, scrollH)
                     .itemCount(static_cast<int64_t>(profiles.size()))
                     .rowHeight(rowPitch)
                     .step(rowPitch)
@@ -412,17 +419,19 @@ void drawProfileListPanel(eui::Ui& ui, float leftW, float bodyH,
                         (void)rowHeight;
                         const auto idx = static_cast<size_t>(index);
                         if (idx >= profiles.size()) return;
-                        // 行容器换 card（UI 现代化 §5.2）：骨架由 card 画
-                        // （CardStyle：surface 底 + panelShadow 阴影），
+                        // 行容器 = 裸 stack（2026-09-28 去掉 card 组件
+                        // 骨架）：card（CardStyle）自带 surface 底 +
+                        // panelShadow 阴影，与卡内交互层 .bg（drawProfileCard
+                        // 的 theme 底 + hover/选中 states）叠成「白底 + 右下
+                        // 偏移阴影」双底色（用户反馈）。只保留 .bg 作唯一底
+                        //（走 theme：surface / primarySoftBg + states）。
                         // 事件挂点（右键 wrap / 点击 .bg）原样保留在卡内
                         // 交互层；卡装饰（头像/名称/ACTIVE 徽标）随
                         // drawProfileCard 进 content。
                         const std::string cardId =
                             "claude.profile." + std::to_string(idx);
-                        components::card(inner, rowId + ".card")
+                        inner.stack(rowId + ".card")
                             .size(contentWidth, 96.0f)
-                            .padding(0.0f)
-                            .theme(themeTokens)
                             .content([&] {
                                 // 右键菜单入口（UI 现代化 M1-5）：记录目标
                                 // profile + 锚点 = PointerEvent 原始坐标经
