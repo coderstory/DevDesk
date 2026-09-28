@@ -267,6 +267,26 @@ inline const Migration kClaudeProfileDialectOverride = {
     )"
 };
 
+// Profile failover 备用列（version 10，2026-09-27 shared-config-and-failover
+// 设计 §3.7/§3.8）
+//   - claude_profiles.fallback_profile_id：0 = 无备用（0..1 单跳，不换第三家）。
+//     读路径 = ClaudeService::resolveFallbackProfile（getProfile + loadApiKey，
+//     任一失败 / id==0 → nullopt → 原样回错）；写路径校验拒自引用（== 自身）；
+//     删除 profile 时同事务解绑「备用指向它」的行（不留悬空 id）；
+//     复制 profile 时一并携带（duplicateProfile 入参）。
+// 为什么只有一列：设计 §3.7 的另一列 claude_call_logs.failover_from 服务于
+//「调用记录落库可审计」（B9，批 3-UI 的表单/日志/状态栏面），本批（批 3 failover
+// 服务层 + 表单绑定）不读写它，先不加（加了 = 永远 DEFAULT 0 的死列）。
+// 注意：ALTER TABLE ADD COLUMN 无 IF NOT EXISTS，靠 schema_version 版本号保证
+// 只执行一次（runMigrations 事务内，失败整体回滚）。
+inline const Migration kClaudeFailoverColumns = {
+    .version = 10,
+    .description = "claude profiles add fallback profile id (failover)",
+    .sql = R"(
+        ALTER TABLE claude_profiles ADD COLUMN fallback_profile_id INTEGER NOT NULL DEFAULT 0;
+    )"
+};
+
 // 所有 migrations 的权威列表（顺序敏感，必须按 version 升序）
 inline const std::vector<core::data::Migration>& all() {
     static const std::vector<core::data::Migration> kMigrations = {
@@ -279,6 +299,7 @@ inline const std::vector<core::data::Migration>& all() {
         kClaudeProfileAuthField,
         kTodoArchiveColumnKind,
         kClaudeProfileDialectOverride,
+        kClaudeFailoverColumns,
     };
     return kMigrations;
 }

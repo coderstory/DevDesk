@@ -27,6 +27,7 @@
 #include "upstream_dialect.h"
 
 #include <cctype>
+#include <atomic>
 #include <chrono>
 #include <ctime>
 #include <filesystem>
@@ -847,5 +848,400 @@ REGISTER_TEST(proxy_router_pseudo_headers_filtered_end_to_end,
     upstream.stop();
     platform::keychain::deleteSecret(
         kTestKeychainService, "claude:" + std::to_string(created.value().id));
+    return true;
+})
+
+// ---- 12. failover：上游 5xx → 换备用重试一次，成功回备用的结果（设计 §3.8）----
+// 取数 = seed profile 行（决议：既有注入用例断言不换家；「注入 + 换家」场景
+// seed 行——不走 profileProvider_ 注入，测试走真实 DB 路径，双 profile 落库：
+// 激活 A + A.fallbackProfileId = B）
+
+REGISTER_TEST(proxy_router_failover_switch_on_5xx,
+              "proxy_router: 上游 500 → 换备用重试成功（fallback_profile_id）", {
+    platform::http::Server upA("127.0.0.1", 0);
+    platform::http::Server upB("127.0.0.1", 0);
+    upA.route("POST", "/v1/messages",
+              [](const platform::http::RequestCtx&,
+                 platform::http::ResponseWriter& w) {
+                  w.setStatus(500);
+                  w.setHeader("Content-Type", "application/json");
+                  w.write(R"({"type":"error","error":{"type":"overloaded_error","message":"A down"}})");
+                  w.end();
+              });
+    upB.route("POST", "/v1/messages",
+              [](const platform::http::RequestCtx&,
+                 platform::http::ResponseWriter& w) {
+                  w.setStatus(200);
+                  w.setHeader("Content-Type", "application/json");
+                  w.write(R"({"id":"msg_fb_b","type":"message","content":[]})");
+                  w.end();
+              });
+    DOCTEST_REQUIRE(upA.start());
+    DOCTEST_REQUIRE(upB.start());
+    std::this_thread::sleep_for(std::chrono::milliseconds(30));
+
+    test_support::TestDb tdb(kDbPrefix, "fb_5xx");
+    module::claude::ClaudeService svc(tdb.handle(), kTestKeychainService);
+    auto a = svc.createProfile("主家", "http://127.0.0.1:" +
+                               std::to_string(upA.actualPort()),
+                               "sk-ant-fb-a-key-0001", "claude-sonnet-4-5");
+    DOCTEST_REQUIRE(a.isOk());
+    auto b = svc.createProfile("备家", "http://127.0.0.1:" +
+                               std::to_string(upB.actualPort()),
+                               "sk-ant-fb-b-key-0001", "claude-sonnet-4-5");
+    DOCTEST_REQUIRE(b.isOk());
+    DOCTEST_REQUIRE(svc.setActiveProfile(a.value().id).isOk());
+    {
+        module::claude::Profile p = a.value();
+        p.fallbackProfileId = b.value().id;
+        DOCTEST_REQUIRE(svc.updateProfile(p).isOk());
+    }
+
+    platform::http::Server proxyServer("127.0.0.1", 0);
+    module::claude::ProxyRouter router(svc, proxyServer);
+    router.registerRoutes();
+
+    auto r = directCall(router, "POST", "/v1/messages",
+                        R"({"model":"m","messages":[]})");
+    // 主家 500 → 换备家 → 200 + 备家 body
+    DOCTEST_CHECK_EQ(r.status, 200);
+    DOCTEST_CHECK(r.body.find("msg_fb_b") != std::string::npos);
+
+    // 日志只有 1 条，profile = 实际服务的那家（备家）
+    auto logs = svc.recentCalls(10);
+    DOCTEST_REQUIRE(logs.isOk());
+    DOCTEST_REQUIRE_EQ(logs.value().size(), 1u);
+    DOCTEST_CHECK_EQ(logs.value()[0].profileId, b.value().id);
+    DOCTEST_CHECK_EQ(logs.value()[0].statusCode, 200);
+
+    upA.stop();
+    upB.stop();
+    platform::keychain::deleteSecret(
+        kTestKeychainService, "claude:" + std::to_string(a.value().id));
+    platform::keychain::deleteSecret(
+        kTestKeychainService, "claude:" + std::to_string(b.value().id));
+    return true;
+})
+
+// ---- 13. failover 负列表：400 不换家（即使配了可用备用） ----
+
+REGISTER_TEST(proxy_router_failover_negative_list_no_switch,
+              "proxy_router: failover 上游 400（负列表）不换家，原样透传", {
+    platform::http::Server upA("127.0.0.1", 0);
+    platform::http::Server upB("127.0.0.1", 0);
+    std::atomic<int> hitsB{0};
+    upA.route("POST", "/v1/messages",
+              [](const platform::http::RequestCtx&,
+                 platform::http::ResponseWriter& w) {
+                  w.setStatus(400);
+                  w.setHeader("Content-Type", "application/json");
+                  w.write(R"({"type":"error","error":{"type":"invalid_request_error","message":"bad model"}})");
+                  w.end();
+              });
+    upB.route("POST", "/v1/messages",
+              [&hitsB](const platform::http::RequestCtx&,
+                       platform::http::ResponseWriter& w) {
+                  hitsB.fetch_add(1);
+                  w.setStatus(200);
+                  w.setHeader("Content-Type", "application/json");
+                  w.write(R"({"id":"msg_fb_never","type":"message"})");
+                  w.end();
+              });
+    DOCTEST_REQUIRE(upA.start());
+    DOCTEST_REQUIRE(upB.start());
+    std::this_thread::sleep_for(std::chrono::milliseconds(30));
+
+    test_support::TestDb tdb(kDbPrefix, "fb_neg");
+    module::claude::ClaudeService svc(tdb.handle(), kTestKeychainService);
+    auto a = svc.createProfile("主家", "http://127.0.0.1:" +
+                               std::to_string(upA.actualPort()),
+                               "sk-ant-fb-neg-a-0001", "m");
+    DOCTEST_REQUIRE(a.isOk());
+    auto b = svc.createProfile("备家", "http://127.0.0.1:" +
+                               std::to_string(upB.actualPort()),
+                               "sk-ant-fb-neg-b-0001", "m");
+    DOCTEST_REQUIRE(b.isOk());
+    DOCTEST_REQUIRE(svc.setActiveProfile(a.value().id).isOk());
+    {
+        module::claude::Profile p = a.value();
+        p.fallbackProfileId = b.value().id;   // 备用可用，但负列表不该用
+        DOCTEST_REQUIRE(svc.updateProfile(p).isOk());
+    }
+
+    platform::http::Server proxyServer("127.0.0.1", 0);
+    module::claude::ProxyRouter router(svc, proxyServer);
+    router.registerRoutes();
+
+    auto r = directCall(router, "POST", "/v1/messages",
+                        R"({"model":"m","messages":[]})");
+    DOCTEST_CHECK_EQ(r.status, 400);
+    DOCTEST_CHECK(r.body.find("invalid_request_error") != std::string::npos);
+    DOCTEST_CHECK_EQ(hitsB.load(), 0);   // 备家一次都没被叫
+
+    auto logs = svc.recentCalls(10);
+    DOCTEST_REQUIRE(logs.isOk());
+    DOCTEST_REQUIRE_EQ(logs.value().size(), 1u);
+    DOCTEST_CHECK_EQ(logs.value()[0].profileId, a.value().id);
+
+    upA.stop();
+    upB.stop();
+    platform::keychain::deleteSecret(
+        kTestKeychainService, "claude:" + std::to_string(a.value().id));
+    platform::keychain::deleteSecret(
+        kTestKeychainService, "claude:" + std::to_string(b.value().id));
+    return true;
+})
+
+// ---- 14. failover 传输失败（statusCode==0）：主家不可达 → 换备家 ----
+
+REGISTER_TEST(proxy_router_failover_transport_failure_switch,
+              "proxy_router: failover 主家不可达（传输失败）→ 换备用成功", {
+    platform::http::Server upB("127.0.0.1", 0);
+    upB.route("POST", "/v1/messages",
+              [](const platform::http::RequestCtx&,
+                 platform::http::ResponseWriter& w) {
+                  w.setStatus(200);
+                  w.setHeader("Content-Type", "application/json");
+                  w.write(R"({"id":"msg_fb_trans","type":"message"})");
+                  w.end();
+              });
+    DOCTEST_REQUIRE(upB.start());
+    std::this_thread::sleep_for(std::chrono::milliseconds(30));
+
+    test_support::TestDb tdb(kDbPrefix, "fb_trans");
+    module::claude::ClaudeService svc(tdb.handle(), kTestKeychainService);
+    auto a = svc.createProfile("主家", "http://127.0.0.1:1",   // 无监听的端口
+                               "sk-ant-fb-trans-a-0001", "m");
+    DOCTEST_REQUIRE(a.isOk());
+    auto b = svc.createProfile("备家", "http://127.0.0.1:" +
+                               std::to_string(upB.actualPort()),
+                               "sk-ant-fb-trans-b-0001", "m");
+    DOCTEST_REQUIRE(b.isOk());
+    DOCTEST_REQUIRE(svc.setActiveProfile(a.value().id).isOk());
+    {
+        module::claude::Profile p = a.value();
+        p.fallbackProfileId = b.value().id;
+        DOCTEST_REQUIRE(svc.updateProfile(p).isOk());
+    }
+
+    platform::http::Server proxyServer("127.0.0.1", 0);
+    module::claude::ProxyRouter router(svc, proxyServer);
+    router.registerRoutes();
+
+    auto r = directCall(router, "POST", "/v1/messages",
+                        R"({"model":"m","messages":[]})");
+    DOCTEST_CHECK_EQ(r.status, 200);
+    DOCTEST_CHECK(r.body.find("msg_fb_trans") != std::string::npos);
+
+    auto logs = svc.recentCalls(10);
+    DOCTEST_REQUIRE(logs.isOk());
+    DOCTEST_REQUIRE_EQ(logs.value().size(), 1u);
+    DOCTEST_CHECK_EQ(logs.value()[0].profileId, b.value().id);
+
+    upB.stop();
+    platform::keychain::deleteSecret(
+        kTestKeychainService, "claude:" + std::to_string(a.value().id));
+    platform::keychain::deleteSecret(
+        kTestKeychainService, "claude:" + std::to_string(b.value().id));
+    return true;
+})
+
+// ---- 15. 两次都失败 → 回第二次的结果（错误更相关），日志 = 备家 ----
+
+REGISTER_TEST(proxy_router_failover_both_fail_second_result,
+              "proxy_router: failover 主备都失败回第二次结果（错误更相关）", {
+    platform::http::Server upA("127.0.0.1", 0);
+    platform::http::Server upB("127.0.0.1", 0);
+    upA.route("POST", "/v1/messages",
+              [](const platform::http::RequestCtx&,
+                 platform::http::ResponseWriter& w) {
+                  w.setStatus(500);
+                  w.write("A-overloaded");
+                  w.end();
+              });
+    upB.route("POST", "/v1/messages",
+              [](const platform::http::RequestCtx&,
+                 platform::http::ResponseWriter& w) {
+                  w.setStatus(529);   // 上游过载档，同样可换但这是第二次
+                  w.write("B-overloaded");
+                  w.end();
+              });
+    DOCTEST_REQUIRE(upA.start());
+    DOCTEST_REQUIRE(upB.start());
+    std::this_thread::sleep_for(std::chrono::milliseconds(30));
+
+    test_support::TestDb tdb(kDbPrefix, "fb_both");
+    module::claude::ClaudeService svc(tdb.handle(), kTestKeychainService);
+    auto a = svc.createProfile("主家", "http://127.0.0.1:" +
+                               std::to_string(upA.actualPort()),
+                               "sk-ant-fb-both-a-0001", "m");
+    DOCTEST_REQUIRE(a.isOk());
+    auto b = svc.createProfile("备家", "http://127.0.0.1:" +
+                               std::to_string(upB.actualPort()),
+                               "sk-ant-fb-both-b-0001", "m");
+    DOCTEST_REQUIRE(b.isOk());
+    DOCTEST_REQUIRE(svc.setActiveProfile(a.value().id).isOk());
+    {
+        module::claude::Profile p = a.value();
+        p.fallbackProfileId = b.value().id;
+        DOCTEST_REQUIRE(svc.updateProfile(p).isOk());
+    }
+
+    platform::http::Server proxyServer("127.0.0.1", 0);
+    module::claude::ProxyRouter router(svc, proxyServer);
+    router.registerRoutes();
+
+    auto r = directCall(router, "POST", "/v1/messages",
+                        R"({"model":"m","messages":[]})");
+    // 第二次的结果（备家 529），不换第三家
+    DOCTEST_CHECK_EQ(r.status, 529);
+    DOCTEST_CHECK(r.body.find("B-overloaded") != std::string::npos);
+
+    auto logs = svc.recentCalls(10);
+    DOCTEST_REQUIRE(logs.isOk());
+    DOCTEST_REQUIRE_EQ(logs.value().size(), 1u);
+    DOCTEST_CHECK_EQ(logs.value()[0].profileId, b.value().id);
+    DOCTEST_CHECK_EQ(logs.value()[0].statusCode, 529);
+
+    upA.stop();
+    upB.stop();
+    platform::keychain::deleteSecret(
+        kTestKeychainService, "claude:" + std::to_string(a.value().id));
+    platform::keychain::deleteSecret(
+        kTestKeychainService, "claude:" + std::to_string(b.value().id));
+    return true;
+})
+
+// ---- 16. 注入模式守卫：profileProvider_ 已设 → 不换家（设计 §3.8 显式
+//      声明，不依赖「内存库无 profile → 恒 nullopt」的巧合）----
+// 取数：seed 一条**可用**的备家行（若守卫缺失，resolveFallbackProfile 能读到
+// 它并换家成功——用例断言「没换」才是守卫在起作用）
+
+REGISTER_TEST(proxy_router_failover_injected_mode_no_switch,
+              "proxy_router: failover 注入模式（profileProvider_）下不换家（守卫）", {
+    platform::http::Server upB("127.0.0.1", 0);
+    std::atomic<int> hitsB{0};
+    upB.route("POST", "/v1/messages",
+              [&hitsB](const platform::http::RequestCtx&,
+                       platform::http::ResponseWriter& w) {
+                  hitsB.fetch_add(1);
+                  w.setStatus(200);
+                  w.setHeader("Content-Type", "application/json");
+                  w.write(R"({"id":"msg_inj_b","type":"message"})");
+                  w.end();
+              });
+    DOCTEST_REQUIRE(upB.start());
+    std::this_thread::sleep_for(std::chrono::milliseconds(30));
+
+    test_support::TestDb tdb(kDbPrefix, "fb_inj");
+    module::claude::ClaudeService svc(tdb.handle(), kTestKeychainService);
+    // seed 可用备家行（id 供注入 profile 的 fallbackProfileId 引用）
+    auto b = svc.createProfile("备家", "http://127.0.0.1:" +
+                               std::to_string(upB.actualPort()),
+                               "sk-ant-fb-inj-b-0001", "m");
+    DOCTEST_REQUIRE(b.isOk());
+
+    platform::http::Server proxyServer("127.0.0.1", 0);
+    module::claude::ProxyRouter router(svc, proxyServer);
+    router.registerRoutes();
+
+    // 注入完整 profile（绕过 DB/Keychain）：主家 = 死端口；fallbackProfileId
+    // 指向 seed 的可用备家（守卫缺失时会换过去 → 200）
+    router.setProfileProvider([fbId = b.value().id]() {
+        module::claude::Profile p;
+        p.id = 999;
+        p.name = "注入主家";
+        p.baseUrl = "http://127.0.0.1:1";   // 传输失败（可换档）
+        p.apiKeyPlain = "sk-injected";
+        p.fallbackProfileId = fbId;
+        return core::Result<module::claude::Profile>::ok(std::move(p));
+    });
+
+    auto r = directCall(router, "POST", "/v1/messages",
+                        R"({"model":"m","messages":[]})");
+    // 注入模式：不 resolveFallbackProfile、不换家 → 主家的 502 原样回
+    DOCTEST_CHECK_EQ(r.status, 502);
+    DOCTEST_CHECK(r.body.find("upstream_unreachable") != std::string::npos);
+    DOCTEST_CHECK_EQ(hitsB.load(), 0);   // 备家一次都没被叫 = 守卫生效
+
+    upB.stop();
+    platform::keychain::deleteSecret(
+        kTestKeychainService, "claude:" + std::to_string(b.value().id));
+    return true;
+})
+
+// ---- 17. 流式路径 failover：waitForStatus 后写响应头前换家（设计 §3.8）----
+// 走真代理 server（cpp-httplib 驱动 chunked provider），主家 500 → 废弃本次
+// 流 → 备用起新流 → 客户端拿到备家的 200 与 body
+
+REGISTER_TEST(proxy_router_failover_streaming_switch,
+              "proxy_router: 流式主家 500 → cancelWithReason(failover) 换备用", {
+    platform::http::Server upA("127.0.0.1", 0);
+    platform::http::Server upB("127.0.0.1", 0);
+    upA.route("POST", "/v1/messages",
+              [](const platform::http::RequestCtx&,
+                 platform::http::ResponseWriter& w) {
+                  w.setStatus(500);
+                  w.setHeader("Content-Type", "application/json");
+                  w.write(R"({"type":"error","error":{"type":"overloaded_error","message":"A down"}})");
+                  w.end();
+              });
+    upB.route("POST", "/v1/messages",
+              [](const platform::http::RequestCtx&,
+                 platform::http::ResponseWriter& w) {
+                  w.setStatus(200);
+                  w.setHeader("Content-Type", "text/event-stream");
+                  w.write("data: {\"type\":\"message_start\"}\n\ndata: [DONE]\n\n");
+                  w.end();
+              });
+    DOCTEST_REQUIRE(upA.start());
+    DOCTEST_REQUIRE(upB.start());
+    std::this_thread::sleep_for(std::chrono::milliseconds(30));
+
+    test_support::TestDb tdb(kDbPrefix, "fb_stream");
+    module::claude::ClaudeService svc(tdb.handle(), kTestKeychainService);
+    auto a = svc.createProfile("主家", "http://127.0.0.1:" +
+                               std::to_string(upA.actualPort()),
+                               "sk-ant-fb-s-a-0001", "claude-sonnet-4-5");
+    DOCTEST_REQUIRE(a.isOk());
+    auto b = svc.createProfile("备家", "http://127.0.0.1:" +
+                               std::to_string(upB.actualPort()),
+                               "sk-ant-fb-s-b-0001", "claude-sonnet-4-5");
+    DOCTEST_REQUIRE(b.isOk());
+    DOCTEST_REQUIRE(svc.setActiveProfile(a.value().id).isOk());
+    {
+        module::claude::Profile p = a.value();
+        p.fallbackProfileId = b.value().id;
+        DOCTEST_REQUIRE(svc.updateProfile(p).isOk());
+    }
+
+    // 起真代理（驱动 chunked provider）
+    auto started = svc.startProxy("127.0.0.1", 0);
+    DOCTEST_REQUIRE(started.isOk());
+    const std::string proxyUrl = "http://127.0.0.1:" +
+                                 std::to_string(started.value());
+
+    auto resp = syncSend("POST", proxyUrl + "/v1/messages",
+                         R"({"model":"m","stream":true,"messages":[]})");
+    DOCTEST_CHECK_EQ(resp.statusCode, 200);
+    DOCTEST_CHECK(resp.body.find("message_start") != std::string::npos);
+    DOCTEST_CHECK(resp.body.find("[DONE]") != std::string::npos);
+    // 备家的 500 body（A down）不该出现在客户端（已随废弃流销毁）
+    DOCTEST_CHECK(resp.body.find("A down") == std::string::npos);
+
+    auto logs = svc.recentCalls(10);
+    DOCTEST_REQUIRE(logs.isOk());
+    DOCTEST_REQUIRE_EQ(logs.value().size(), 1u);
+    DOCTEST_CHECK_EQ(logs.value()[0].profileId, b.value().id);
+    DOCTEST_CHECK_EQ(logs.value()[0].statusCode, 200);
+
+    svc.stopProxy();
+    DOCTEST_CHECK_FALSE(svc.isProxyRunning());
+    upA.stop();
+    upB.stop();
+    platform::keychain::deleteSecret(
+        kTestKeychainService, "claude:" + std::to_string(a.value().id));
+    platform::keychain::deleteSecret(
+        kTestKeychainService, "claude:" + std::to_string(b.value().id));
     return true;
 })

@@ -43,6 +43,12 @@ struct Profile {
     // 自建网关 / 内网镜像的 host 后缀推断不出正确方言时用它钉住；
     // UI 未暴露（经 DB / 配置文件设置），取值域见 upstream_dialect.h
     std::string dialectOverride;
+    // 备用 Profile id（0 = 无；failover 单跳，2026-09-27 shared-config-and-
+    // failover 设计 §3.7）：主 profile 返回可重试错误（401/403/429/5xx/网络
+    // 失败）时，代理用备用重试一次（resolveFallbackProfile，不改 is_active、
+    // 不重写 settings.json）。写侧校验拒自引用（== 自身）；删除时同事务解绑
+    //「备用指向它」的行；复制时一并携带
+    int64_t fallbackProfileId = 0;
     bool isActive = false;
     std::time_t createdAt = 0;
     std::time_t updatedAt = 0;
@@ -129,6 +135,8 @@ public:
     // 门面 setActiveProfile 走，代理运行中会同步接管 settings.json）。
     // 返回的 Profile.isActive 恒 false（激活与否由门面按策略回填）；
     // created_at / updated_at 为写侧统一取值的 now
+    // fallbackProfileId：建时即带（0 = 无；同 sharedConfigId「建时即设」口径——
+    // 先建后 update 会留下一次「未配备用」的中间态，经尾参一次写入）
     core::Result<Profile> createProfile(const std::string& name,
                                         const std::string& baseUrl,
                                         const std::string& apiKey,
@@ -136,7 +144,8 @@ public:
                                         int64_t sharedConfigId = 0,
                                         const std::string& authField = "both",
                                         const std::string& dialectOverride =
-                                            std::string());
+                                            std::string(),
+                                        int64_t fallbackProfileId = 0);
 
     // 更新 profile（profile.id 必须已存在；apiKeyPlain 非空则覆盖 Keychain，
     // 空则只更新 name / url / model / 片段绑定等元数据）。写侧规范化与 JSON
@@ -158,7 +167,8 @@ public:
     // 二段补写（models_config / extra_env）失败 → best-effort 删除刚建的副本
     // 回滚：回滚成功 = fail 且零残留；回滚失败 = fail 且文案注明不完整副本 id
     // shared_config_id 一并复制（属于配置，设计 §2.6）；
-    // dialect_override 一并复制（同上，审计 CPX-13）
+    // dialect_override 一并复制（同上，审计 CPX-13）；
+    // fallback_profile_id 一并复制（同上，设计 §3.7）
     // 纯行 + Keychain 层面操作，无代理 / 接管交互，R10-A2 整方法搬入
     core::Result<Profile> duplicateProfile(int64_t srcId);
 

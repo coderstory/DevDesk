@@ -171,6 +171,7 @@ public:
         // 弹窗（画在最上层）
         drawProfileFormDialog(ui, screen, t, themeTokens, state_.form,
                               state_.import, state_.list.cachedSharedConfigs_,
+                              state_.list.cachedProfiles_,   // 批 3：备用下拉数据源
                               formHooks());
         drawDeleteConfirmDialog(ui, screen, t, themeTokens, state_.form,
                                 [this](int64_t id) { doDelete(id); });

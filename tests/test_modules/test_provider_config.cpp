@@ -371,8 +371,8 @@ REGISTER_TEST(provider_config_migration_upgrade,
         // + v5 调用日志用量列（cc-switch 对照 §3.4）
         // + v6 共享配置片段表与 profile 绑定列
         // + v7 profile 认证字段 + v8 todo 归档列 kind 回填
-        // + v9 profile 方言覆盖列（CPX-13）→ 全量到 9
-        DOCTEST_CHECK_EQ(db.schemaVersion(), 9);
+        // + v9 profile 方言覆盖列（CPX-13）+ v10 failover 备用列 → 全量到 10
+        DOCTEST_CHECK_EQ(db.schemaVersion(), 10);
 
         module::claude::ClaudeService svc(db, kTestKeychainService);
         auto profiles = svc.listProfiles();
@@ -1165,6 +1165,57 @@ REGISTER_TEST(provider_config_slot_table_json_and_labels,
     DOCTEST_CHECK_EQ(std::string(table.front().formLabel), std::string("默认 (MODEL)"));
     DOCTEST_CHECK_EQ(std::string(table.back().label), std::string("子代理"));
     DOCTEST_CHECK_EQ(std::string(table.back().formLabel), std::string("Subagent"));
+    return true;
+})
+
+// ---- failover 换家判据（设计 §3.8；纯函数，判据表逐行锚定）----
+// 换 → true / 不换 → false，与设计表的 category 一一对应：
+//   传输失败（statusCode==0）                换
+//   401 / 403（换 key 才可能变好）            换
+//   429（限流）                             换
+//   5xx 含 500/502/503/504/529（上游故障）    换
+//   400/405/406/413/414/415/422/501（负列表） 不换
+//   其余 4xx（404/408 等，负列表之外都试）     换
+//   errorKind=="no_active_profile"          不换（DevDesk 自身 503 兜底防御）
+REGISTER_TEST(provider_config_failover_switch_categories,
+              "shouldFailoverTo: 换家类别逐行（传输/401/403/429/5xx/其余4xx）", {
+    // 传输失败：无响应头 / DNS / TLS / 连接 / 超时 = statusCode==0
+    //（我们这侧 = 502 upstream_unreachable；errorKind 只是日志口径）
+    DOCTEST_CHECK(module::claude::shouldFailoverTo(0, "upstream_unreachable"));
+    // 401 / 403：只有换 key 才可能变好
+    DOCTEST_CHECK(module::claude::shouldFailoverTo(401, ""));
+    DOCTEST_CHECK(module::claude::shouldFailoverTo(403, ""));
+    // 429：上游限流
+    DOCTEST_CHECK(module::claude::shouldFailoverTo(429, ""));
+    // 5xx：上游侧故障（含 500/502/503/504/529 过载）——503 空 errorKind 时
+    // 属上游 5xx 档（换）；带 no_active_profile 才归「不换」（见下一条用例）
+    for (const int sc : {500, 502, 503, 504, 529}) {
+        DOCTEST_CHECK(module::claude::shouldFailoverTo(sc, ""));
+    }
+    // 其余 4xx（负列表之外都试）：404 可能是「该网关没有这个模型」，换家能救
+    DOCTEST_CHECK(module::claude::shouldFailoverTo(404, ""));
+    DOCTEST_CHECK(module::claude::shouldFailoverTo(408, ""));
+    return true;
+})
+
+REGISTER_TEST(provider_config_failover_no_switch_categories,
+              "shouldFailoverTo: 不换家类别逐行（负列表 / no_active_profile 兜底）", {
+    // 负列表（请求自身非法——换家同结果，白烧一次请求）
+    for (const int sc : {400, 405, 406, 413, 414, 415, 422, 501}) {
+        DOCTEST_CHECK_FALSE(module::claude::shouldFailoverTo(sc, ""));
+    }
+    // DevDesk 自身 503 no_active_profile → 不换（writeNoProfileError 在转发
+    // **前**直接回，判定点理论收不到；本行是防御——本地配置错误不换家）
+    DOCTEST_CHECK_FALSE(
+        module::claude::shouldFailoverTo(503, "no_active_profile"));
+    // errorKind 兜底优先于状态码：即使换家档状态码带上 no_active_profile 也不换
+    DOCTEST_CHECK_FALSE(
+        module::claude::shouldFailoverTo(500, "no_active_profile"));
+    DOCTEST_CHECK_FALSE(
+        module::claude::shouldFailoverTo(0, "no_active_profile"));
+    // 2xx/3xx 到不了判定点（调用方只在失败时判），保守不换
+    DOCTEST_CHECK_FALSE(module::claude::shouldFailoverTo(200, ""));
+    DOCTEST_CHECK_FALSE(module::claude::shouldFailoverTo(302, ""));
     return true;
 })
 

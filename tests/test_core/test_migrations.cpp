@@ -206,9 +206,9 @@ REGISTER_TEST(migrate_call_logs_usage_columns,
         DOCTEST_REQUIRE(r.isOk());
         DOCTEST_REQUIRE(r.value().migrate().isOk());
         auto& db = r.value().db();
-        // v7（认证字段）+ v8（归档列 kind 回填）+ v9（方言覆盖列）已执行：
-        // 全量迁移后 schema_version = 9
-        DOCTEST_CHECK_EQ(db.schemaVersion(), 9);
+        // v7（认证字段）+ v8（归档列 kind 回填）+ v9（方言覆盖列）+ v10
+        //（failover 备用列）已执行：全量迁移后 schema_version = 10
+        DOCTEST_CHECK_EQ(db.schemaVersion(), 10);
 
         auto prep = db.prepare(
             "SELECT status_code, latency_ms, request_bytes, response_bytes, "
@@ -289,9 +289,9 @@ REGISTER_TEST(migrate_shared_configs_v6,
         DOCTEST_REQUIRE(r.isOk());
         DOCTEST_REQUIRE(r.value().migrate().isOk());
         auto& db = r.value().db();
-        // v7（认证字段）/ v8（归档列 kind 回填）/ v9（方言覆盖列）随后执行：
-        // 全量迁移后 schema_version = 9
-        DOCTEST_CHECK_EQ(db.schemaVersion(), 9);
+        // v7（认证字段）/ v8（归档列 kind 回填）/ v9（方言覆盖列）/ v10
+        //（failover 备用列）随后执行：全量迁移后 schema_version = 10
+        DOCTEST_CHECK_EQ(db.schemaVersion(), 10);
 
         // 新表存在且可插入片段行
         DOCTEST_REQUIRE(db.exec(
@@ -366,7 +366,8 @@ REGISTER_TEST(migrate_archive_kind_v8,
         DOCTEST_REQUIRE(r.isOk());
         DOCTEST_REQUIRE(r.value().migrate().isOk());
         auto& db = r.value().db();
-        DOCTEST_CHECK_EQ(db.schemaVersion(), 9);
+        // v9（方言覆盖列）/ v10（failover 备用列）随后执行
+        DOCTEST_CHECK_EQ(db.schemaVersion(), 10);
 
         struct Expect { const char* title; const char* kind; };
         Expect expects[4] = {
@@ -427,7 +428,7 @@ REGISTER_TEST(migrate_dialect_override_v9,
         DOCTEST_REQUIRE(r.isOk());
         DOCTEST_REQUIRE(r.value().migrate().isOk());
         auto& db = r.value().db();
-        DOCTEST_CHECK_EQ(db.schemaVersion(), 9);
+        DOCTEST_CHECK_EQ(db.schemaVersion(), 10);
 
         // 存量行零迁移：新列为空串（未覆盖 = 回落 host 推断）
         auto q = db.prepare(
@@ -450,6 +451,67 @@ REGISTER_TEST(migrate_dialect_override_v9,
         DOCTEST_REQUIRE_EQ(rows2.value().size(), 1u);
         DOCTEST_CHECK_EQ(rows2.value()[0].getString("dialect_override").valueOr("?"),
                          std::string("opencode_zen"));
+    } // Database 在此析构（关闭 sqlite 句柄）
+
+    std::filesystem::remove(path, ec);
+    return true;
+})
+
+// migration v10（failover 备用列，2026-09-27 shared-config-and-failover 设计
+// §3.7/§3.8）：旧库升级后 claude_profiles 多出 fallback_profile_id 列，存量行
+// 零迁移（默认 0 = 无备用），列可写可读回（updateProfile / duplicateProfile 的
+// UPDATE 依赖该列存在）
+REGISTER_TEST(migrate_failover_columns_v10,
+              "migration v10: 旧库升级加 profile 备用列", {
+    auto path = test_support::tempDbPath(kDbPrefix, "failover_cols");
+    std::error_code ec;
+    std::filesystem::remove(path, ec);
+
+    // 手工构造 v9 旧库（只跑前 9 条 migration）+ 存量 profile 行
+    {
+        auto openR = core::data::SqliteDb::open(path);
+        DOCTEST_REQUIRE(openR.isOk());
+        auto& db = openR.value();
+        auto oldMigrations = core::migrations::all();
+        oldMigrations.resize(9);  // v1..v9
+        DOCTEST_REQUIRE(db.runMigrations(oldMigrations).isOk());
+
+        DOCTEST_REQUIRE(db.exec(
+            "INSERT INTO claude_profiles (id, name, base_url, api_key_hint, "
+            "api_key_check, keychain_account, model, is_active, created_at, "
+            "updated_at) VALUES (1, '旧供应商', 'https://old.example.com', "
+            "'sk-***abcd', 'deadbeef', 'claude:1', 'claude-3-5-haiku', 1, 0, 0)")
+                            .isOk());
+    } // 句柄关闭（Windows 文件锁）
+
+    // 重新打开 + 全量 migrate → v10 加列
+    {
+        auto r = core::Database::open(path);
+        DOCTEST_REQUIRE(r.isOk());
+        DOCTEST_REQUIRE(r.value().migrate().isOk());
+        auto& db = r.value().db();
+        DOCTEST_CHECK_EQ(db.schemaVersion(), 10);
+
+        // 存量行零迁移：新列默认 0（无备用）
+        auto q = db.prepare(
+            "SELECT fallback_profile_id FROM claude_profiles WHERE id = 1");
+        DOCTEST_REQUIRE(q.isOk());
+        auto rows = q.value().fetchAll();
+        DOCTEST_REQUIRE_EQ(rows.value().size(), 1u);
+        DOCTEST_CHECK_EQ(rows.value()[0].getInt64("fallback_profile_id").valueOr(-1),
+                         static_cast<int64_t>(0));
+
+        // 新列可写可读回（service 层 UPDATE 依赖该列存在）
+        DOCTEST_REQUIRE(db.exec(
+            "UPDATE claude_profiles SET fallback_profile_id = 1 WHERE id = 1")
+                            .isOk());
+        auto q2 = db.prepare(
+            "SELECT fallback_profile_id FROM claude_profiles WHERE id = 1");
+        DOCTEST_REQUIRE(q2.isOk());
+        auto rows2 = q2.value().fetchAll();
+        DOCTEST_REQUIRE_EQ(rows2.value().size(), 1u);
+        DOCTEST_CHECK_EQ(rows2.value()[0].getInt64("fallback_profile_id").valueOr(-1),
+                         static_cast<int64_t>(1));
     } // Database 在此析构（关闭 sqlite 句柄）
 
     std::filesystem::remove(path, ec);

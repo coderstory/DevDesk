@@ -67,12 +67,14 @@ void submitSharedForm(SharedConfigDialogState& s,
 
 // ---- 绘制 ----
 // 新建/编辑表单弹窗（tabs 三页，§6.1）。sharedConfigs：片段快照（绑定下拉 +
-// 片段赢预览的数据源）
+// 片段赢预览的数据源）；profiles：profile 快照（批 3 备用 Profile 下拉的数据源，
+// 编辑态排除自身）
 void drawProfileFormDialog(eui::Ui& ui, const eui::Screen& screen,
                            const core::theme::Tokens& t,
                            const components::theme::ThemeColorTokens& themeTokens,
                            FormState& f, ImportState& imp,
                            const std::vector<SharedConfig>& sharedConfigs,
+                           const std::vector<Profile>& profiles,
                            const FormSubmitHooks& hooks);
 
 // 删除确认弹窗（确认后回调模块执行真删除）

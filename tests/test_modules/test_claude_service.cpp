@@ -2291,6 +2291,192 @@ REGISTER_TEST(claude_shared_config_unbound_regression,
     return true;
 })
 
+// ===== failover 备用（2026-09-27 shared-config-and-failover 设计 §3.7/§3.8）=====
+
+// ---- 27a. 默认 0 + 三条 SELECT 往返（getActiveProfile 是「漏改 SELECT 列静默
+//      失效」的回归闸，同 auth_field 口径）----
+
+REGISTER_TEST(claude_service_fallback_default_and_roundtrip,
+              "claude_service: failover 备用默认 0 + createProfile 尾参 / getProfile / "
+              "getActiveProfile / listProfiles 往返", {
+    using namespace module::claude;
+    test_support::TestDb tdb(kDbPrefix, "fb_rt");
+    ClaudeService svc(tdb.handle(), kTestKeychainService);
+
+    auto a = svc.createProfile("主家", "https://a.example.com",
+                               "sk-a-test-0123456789abcdef", "m");
+    DOCTEST_REQUIRE(a.isOk());
+    auto b = svc.createProfile("备家", "https://b.example.com",
+                               "sk-b-test-0123456789abcdef", "m",
+                               /*activateIfNoneActive=*/false,
+                               /*sharedConfigId=*/0, "both", "",
+                               /*fallbackProfileId=*/a.value().id);
+    DOCTEST_REQUIRE(b.isOk());
+    DOCTEST_CHECK_EQ(b.value().fallbackProfileId, a.value().id);
+
+    // 三条 SELECT 都要读到（rowToProfile 的 if (isOk()) 守卫会把缺列吞成 0）
+    auto gb = svc.getProfile(b.value().id);
+    DOCTEST_REQUIRE(gb.isOk());
+    DOCTEST_CHECK_EQ(gb.value().fallbackProfileId, a.value().id);
+    DOCTEST_REQUIRE(svc.setActiveProfile(b.value().id).isOk());
+    auto gact = svc.getActiveProfile();
+    DOCTEST_REQUIRE(gact.isOk());
+    DOCTEST_CHECK_EQ(gact.value().fallbackProfileId, a.value().id);
+    auto all = svc.listProfiles();
+    DOCTEST_REQUIRE(all.isOk());
+    bool listed = false;
+    for (const auto& p : all.value()) {
+        if (p.id == b.value().id && p.fallbackProfileId == a.value().id) {
+            listed = true;
+        }
+    }
+    DOCTEST_CHECK(listed);
+
+    // 清回 0 = 不启用（updateProfile 空密钥分支也要写该列）
+    Profile p = gb.value();
+    p.fallbackProfileId = 0;
+    DOCTEST_REQUIRE(svc.updateProfile(p).isOk());
+    auto cleared = svc.getProfile(b.value().id);
+    DOCTEST_REQUIRE(cleared.isOk());
+    DOCTEST_CHECK_EQ(cleared.value().fallbackProfileId, 0);
+
+    test_support::cleanupProfileKey(kTestKeychainService, a.value().id);
+    test_support::cleanupProfileKey(kTestKeychainService, b.value().id);
+    return true;
+})
+
+// ---- 27b. 自引用校验（设计 §3.7：拒 fallback_profile_id == id）----
+
+REGISTER_TEST(claude_service_fallback_self_reference_rejected,
+              "claude_service: failover 备用 = 自身被拒（updateProfile 校验）", {
+    using namespace module::claude;
+    test_support::TestDb tdb(kDbPrefix, "fb_self");
+    ClaudeService svc(tdb.handle(), kTestKeychainService);
+
+    auto a = svc.createProfile("自身", "https://self.example.com",
+                               "sk-self-test-0123456789abcdef", "m");
+    DOCTEST_REQUIRE(a.isOk());
+    Profile p = a.value();
+    p.fallbackProfileId = p.id;
+    auto r = svc.updateProfile(p);
+    DOCTEST_REQUIRE(r.isFail());
+    DOCTEST_CHECK(r.errorMessage().find("自身") != std::string::npos);
+    // 行未被污染（仍是 0）
+    auto ga = svc.getProfile(a.value().id);
+    DOCTEST_REQUIRE(ga.isOk());
+    DOCTEST_CHECK_EQ(ga.value().fallbackProfileId, 0);
+
+    test_support::cleanupProfileKey(kTestKeychainService, a.value().id);
+    return true;
+})
+
+// ---- 27c. 删除 profile 时同事务解绑「备用指向它」的行（设计 §3.7）----
+
+REGISTER_TEST(claude_service_delete_profile_unbinds_fallback,
+              "claude_service: failover 删 profile 解绑指向它的备用引用", {
+    using namespace module::claude;
+    test_support::TestDb tdb(kDbPrefix, "fb_unbind");
+    ClaudeService svc(tdb.handle(), kTestKeychainService);
+
+    auto a = svc.createProfile("主家", "https://a.example.com",
+                               "sk-a-test-0123456789abcdef", "m");
+    DOCTEST_REQUIRE(a.isOk());
+    auto b = svc.createProfile("备家", "https://b.example.com",
+                               "sk-b-test-0123456789abcdef", "m");
+    DOCTEST_REQUIRE(b.isOk());
+    Profile p = a.value();
+    p.fallbackProfileId = b.value().id;
+    DOCTEST_REQUIRE(svc.updateProfile(p).isOk());
+
+    // 删掉备用 → 主家解绑回 0
+    DOCTEST_REQUIRE(svc.deleteProfile(b.value().id).isOk());
+    auto ga = svc.getProfile(a.value().id);
+    DOCTEST_REQUIRE(ga.isOk());
+    DOCTEST_CHECK_EQ(ga.value().fallbackProfileId, 0);
+
+    // 删带备用的行本身（清理）不炸
+    DOCTEST_REQUIRE(svc.deleteProfile(a.value().id).isOk());
+
+    test_support::cleanupProfileKey(kTestKeychainService, a.value().id);
+    test_support::cleanupProfileKey(kTestKeychainService, b.value().id);
+    return true;
+})
+
+// ---- 27d. 复制携带备用（设计 §3.7：备用属于配置，复制 = 拿到同一套）----
+
+REGISTER_TEST(claude_service_duplicate_copies_fallback,
+              "claude_service: failover duplicateProfile 携带备用 id", {
+    using namespace module::claude;
+    test_support::TestDb tdb(kDbPrefix, "fb_dup");
+    ClaudeService svc(tdb.handle(), kTestKeychainService);
+
+    auto a = svc.createProfile("主家", "https://a.example.com",
+                               "sk-a-test-0123456789abcdef", "m");
+    DOCTEST_REQUIRE(a.isOk());
+    auto b = svc.createProfile("备家", "https://b.example.com",
+                               "sk-b-test-0123456789abcdef", "m");
+    DOCTEST_REQUIRE(b.isOk());
+    Profile p = a.value();
+    p.fallbackProfileId = b.value().id;
+    DOCTEST_REQUIRE(svc.updateProfile(p).isOk());
+
+    auto dup = svc.duplicateProfile(a.value().id);
+    DOCTEST_REQUIRE(dup.isOk());
+    DOCTEST_CHECK_EQ(dup.value().fallbackProfileId, b.value().id);
+
+    test_support::cleanupProfileKey(kTestKeychainService, a.value().id);
+    test_support::cleanupProfileKey(kTestKeychainService, b.value().id);
+    test_support::cleanupProfileKey(kTestKeychainService, dup.value().id);
+    return true;
+})
+
+// ---- 27e. resolveFallbackProfile 读路径（设计 §3.8）：id==0 / 不存在 / 无 key
+//      → nullopt；可用 → 带明文 key 的备用 ----
+
+REGISTER_TEST(claude_service_resolve_fallback_profile,
+              "claude_service: resolveFallbackProfile（无备用/失效/可用三态）", {
+    using namespace module::claude;
+    test_support::TestDb tdb(kDbPrefix, "fb_resolve");
+    ClaudeService svc(tdb.handle(), kTestKeychainService);
+
+    auto a = svc.createProfile("主家", "https://a.example.com",
+                               "sk-a-test-0123456789abcdef", "m");
+    DOCTEST_REQUIRE(a.isOk());
+    auto b = svc.createProfile("备家", "https://b.example.com",
+                               "sk-b-test-0123456789abcdef", "m");
+    DOCTEST_REQUIRE(b.isOk());
+
+    // 未配备用（最常见路径，零 I/O）→ nullopt
+    DOCTEST_CHECK_FALSE(svc.resolveFallbackProfile(a.value()).has_value());
+
+    // 指向不存在的 profile → nullopt（读路径容错，原样回错不换家）
+    Profile dangling = a.value();
+    dangling.fallbackProfileId = 987654;
+    DOCTEST_CHECK_FALSE(svc.resolveFallbackProfile(dangling).has_value());
+
+    // 备用存在但 Keychain 缺 key → nullopt（「备用失效」档）
+    Profile noKey = a.value();
+    noKey.fallbackProfileId = b.value().id;
+    platform::keychain::deleteSecret(
+        kTestKeychainService, "claude:" + std::to_string(b.value().id));
+    DOCTEST_CHECK_FALSE(svc.resolveFallbackProfile(noKey).has_value());
+
+    // 备用可用 → 返回完整备用（含明文 key，供代理转发注入）
+    // loadApiKey 读不到 = 上面已删 → 先重建 key（直接写 Keychain）
+    DOCTEST_REQUIRE(platform::keychain::storeSecret(
+        kTestKeychainService, "claude:" + std::to_string(b.value().id),
+        "sk-b-test-0123456789abcdef").isOk());
+    auto fb = svc.resolveFallbackProfile(noKey);
+    DOCTEST_REQUIRE(fb.has_value());
+    DOCTEST_CHECK_EQ(fb->id, b.value().id);
+    DOCTEST_CHECK_EQ(fb->baseUrl, std::string("https://b.example.com"));
+    DOCTEST_CHECK_EQ(fb->apiKeyPlain, std::string("sk-b-test-0123456789abcdef"));
+
+    test_support::cleanupProfileKey(kTestKeychainService, a.value().id);
+    test_support::cleanupProfileKey(kTestKeychainService, b.value().id);
+    return true;
+})
+
 // ===== 认证字段三态（鉴权头；2026-09-27 profile-auth-field 设计 §3/§4）=====
 
 // ---- 27. 默认 both + 三处 SELECT 往返（getActiveProfile 是「漏改 SELECT 列

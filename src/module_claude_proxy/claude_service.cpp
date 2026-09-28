@@ -111,7 +111,8 @@ core::Result<Profile> ClaudeService::createProfile(const std::string& name,
                                                    bool activateIfNoneActive,
                                                    int64_t sharedConfigId,
                                                    const std::string& authField,
-                                                   const std::string& dialectOverride) {
+                                                   const std::string& dialectOverride,
+                                                   int64_t fallbackProfileId) {
     // R10-A2 段级拆分：校验 + INSERT ... RETURNING + Keychain 两段写 + 失败回滚
     //（DB 段）已迁 ProfileRepository::createProfile；本方法保留「首建自动激活」
     // 策略尾——创建成功后若当前无任何激活 Profile 则自动激活刚建的这条（经门面
@@ -120,7 +121,8 @@ core::Result<Profile> ClaudeService::createProfile(const std::string& name,
     // WARN 留痕，返回值按实际 is_active 状态回填（失败时维持 false，UI 走
     // 「点击启用」文案）
     auto created = profileRepository_.createProfile(
-        name, baseUrl, apiKey, model, sharedConfigId, authField, dialectOverride);
+        name, baseUrl, apiKey, model, sharedConfigId, authField,
+        dialectOverride, fallbackProfileId);
     if (created.isFail()) {
         return created;
     }
@@ -313,6 +315,32 @@ core::Result<void> ClaudeService::deleteSharedConfig(int64_t id) {
 core::Result<std::vector<std::string>> ClaudeService::sharedEnvKeysFor(
     int64_t profileId) {
     return profileRepository_.sharedEnvKeysFor(profileId);
+}
+
+// ---------- failover 备用解析（设计 §3.7/§3.8）----------
+
+std::optional<Profile> ClaudeService::resolveFallbackProfile(
+    const Profile& profile) {
+    if (profile.fallbackProfileId == 0) {
+        return std::nullopt;   // 未配备用 → 不换家（最常见路径，零 I/O）
+    }
+    auto fbR = profileRepository_.getProfile(profile.fallbackProfileId);
+    if (fbR.isFail()) {
+        LOG_WARN("failover: 备用 profile 不存在（fallback_profile_id=" +
+                 std::to_string(profile.fallbackProfileId) +
+                 "），本次不换家: " + fbR.errorMessage());
+        return std::nullopt;
+    }
+    Profile fb = std::move(fbR).value();
+    auto keyR = profileRepository_.loadApiKey(fb.id);
+    if (keyR.isFail() || keyR.value().empty()) {
+        LOG_WARN("failover: 备用 profile 密钥不可用（id=" +
+                 std::to_string(fb.id) + "），本次不换家" +
+                 (keyR.isFail() ? ": " + keyR.errorMessage() : std::string()));
+        return std::nullopt;
+    }
+    fb.apiKeyPlain = std::move(keyR).value();
+    return fb;
 }
 
 // ---------- 连通性测试 ----------

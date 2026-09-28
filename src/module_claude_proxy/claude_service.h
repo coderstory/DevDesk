@@ -74,6 +74,8 @@ public:
     // 'both'，见 2026-09-27 profile-auth-field 设计 §3 D-8）
     // dialectOverride：上游方言覆盖文本（空串 = 未覆盖 = 按 baseUrl 的 host 推断；
     // 非法值写侧归一为空串，审计 CPX-13。副本复制经本参数带上，见 duplicateProfile）
+    // fallbackProfileId：建时即带备用（0 = 无；同 sharedConfigId「建时即设」口径，
+    // 设计 §3.7。副本复制经本参数带上）
     core::Result<Profile> createProfile(const std::string& name,
                                        const std::string& baseUrl,
                                        const std::string& apiKey,
@@ -82,7 +84,8 @@ public:
                                        int64_t sharedConfigId = 0,
                                        const std::string& authField = "both",
                                        const std::string& dialectOverride =
-                                           std::string());
+                                           std::string(),
+                                       int64_t fallbackProfileId = 0);
 
     // 更新 profile（profile.id 必须已存在）
     //   - 若 profile.apiKeyPlain 非空，则覆盖 Keychain
@@ -145,6 +148,14 @@ public:
     // 立即用当前激活 profile（含所绑片段）重写 settings.json（设计 §2.5：片段
     // 保存后必须当场生效）。通道未注入 / 接管开关关 → no-op 成功
     core::Result<void> reapplyTakeOver() { return syncTakeOver(); }
+
+    // ---- failover 备用解析（2026-09-27 shared-config-and-failover 设计
+    // §3.7/§3.8）----
+    // 读 profile 的 fallback_profile_id → getProfile + loadApiKey → 成功返回
+    // 可用备用（含明文 key）。任一环节失败 / id==0 → std::nullopt（proxy_router
+    // 原样回错，不换第三家）。只换一跳：换过去之后不再读该备用的备用。
+    // 纯读（不改 is_active、不重写 settings.json——failover 是请求级，B10）
+    std::optional<Profile> resolveFallbackProfile(const Profile& profile);
 
     // ---- 连通性测试 ----
 
