@@ -310,9 +310,12 @@ void compose(eui::Ui& ui, const eui::Screen& screen) {
                     // 尺度真值随框架传入的那份 Screen 一起带上（2026-09-28 组 A）：
                     // 手搓 Screen 不填 scale 会退化成 1.0（EUI-NEO Screen 默认值），
                     // 页面内做指针/坐标换算的模块拿它就与框架三处（Screen /
-                    // PointerEvent / DragEvent）不同源。今天全仓无消费点
-                    //（grep `screen.scale` 零命中），零行为变化——只是把"今后误用
-                    // 会立刻现形"的前提装上，而不是继续靠"macOS 碰巧没差"。
+                    // PointerEvent / DragEvent）不同源。**改动前**零消费点——
+                    // 复现口径是改动前的提交，不是当前工作区：
+                    //   git grep -n "\.scale" 2839c99 -- src   # 输出为空
+                    //（当前工作区 grep 会命中本文件 3 处 = 注释 + 读 + 写，属预期，
+                    //  不是"有消费点"的反证）→ 本次零行为变化，只是把"今后误用会
+                    // 立刻现形"的前提装上，而不是继续靠"macOS 碰巧没差"。
                     pageScreen.scale = screen.scale;
                     router->compose(ui, pageScreen);
                 })

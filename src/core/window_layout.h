@@ -17,7 +17,10 @@
 // 后）与显示器工作区比较——放得下就用请求尺寸；放不下就**启动即最大化**
 //（用户可再拖回来，比"内容被切且用户不知道"温和）。最小尺寸走**同一条**换算
 //（minWindowSizeForWorkArea）后再与工作区取 min，两个平台才各自自洽：
-// Windows 落实 845 逻辑的设计下限、macOS 保证最小窗仍收得进工作区。
+// **工作区放得下 845 逻辑时才落实该设计下限**（845 × scale ≤ 工作区 − 外框）；
+// 放不下时钳到「工作区 − 外框」——本机 Windows 125%/1920×1020 就是后者
+//（845 × 1.25 = 1056 > 1020 − 47 → 973 物理 = 778 逻辑），macOS 上同样是后者
+//（845 点 > 833 − 28 → 805 点）。别把「落实 845」当成无条件事实。
 //
 // 分层：本文件属 DevDesk core，不可调用 EUI-NEO 运行时 API（core 只做纯计算）；
 // 工作区 / 缩放系数的取值（core::window::getPrimaryMonitorWorkArea /
@@ -44,7 +47,10 @@ struct FrameInsets {
     int height = 0;
 };
 
-// 窗口尺寸（窗口单位）。0 = 该方向不约束（透传给后端的 "no limit" 语义）
+// 窗口尺寸（窗口单位）。0 = 该方向不约束——**注意下游是 all-or-nothing**：
+// 传给后端后 cocoa（`cocoa_window.m` 的 setContentMinSize，"或"判定）与 win32
+// （`win32_window.c` 的 ptMinTrackSize，"与"判定）都是**任一轴 0 → 两轴最小尺寸
+// 一起失效**（详见 minWindowSizeForWorkArea 规则 5），不是"只放开这一轴"
 struct WindowSize {
     int width = 0;
     int height = 0;
@@ -157,8 +163,15 @@ FrameInsets frameInsetsForScale(float scale, const FrameInsetsBaseline& baseline
  *  4. 工作区无效（宽或高 <= 0）→ 不钳制，返回换算值（与 decideInitialWindow
  *     第 3 条同口径）；
  *  5. 钳制：与「工作区 − 外框」取 min——保证窗口缩到最小时外框仍落在工作区内。
- *     工作区比外框还小（可用 <= 0）时该方向返回 0 = 不约束：此时任何下限都
- *     装不进屏，交给后端的"无约束"语义，而不是给一个负值或伪下限。
+ *     工作区比外框还小（可用 <= 0）时该方向返回 0：此时任何下限都装不进屏，
+ *     交给后端的"无约束"语义，而不是给一个负值或伪下限。
+ *     ⚠️ **该 0 是 all-or-nothing，不是"只放开这一轴"**：GLFW 在 cocoa
+ *     （`3rd/glfw/src/cocoa_window.m` setContentMinSize，`minwidth ==
+ *     GLFW_DONT_CARE || minheight == GLFW_DONT_CARE` → 两轴一起清零）与 win32
+ *     （`3rd/glfw/src/win32_window.c`，`minwidth != DONT_CARE && minheight !=
+ *     DONT_CARE` 才设 ptMinTrackSize）都是任一轴 0 → **两轴最小尺寸一起失效**。
+ *     即另一个方向算好的约束会一并丢失（现实显示器不可达：需工作区 ≤ 28 点
+ *     (macOS) / ≤ 47 物理px (Windows)，故不改行为、只写明口径，防误读）。
  *
  * @param request     请求尺寸（只消费 minLogicalWidth / minLogicalHeight）
  * @param workArea    目标显示器工作区（窗口单位）

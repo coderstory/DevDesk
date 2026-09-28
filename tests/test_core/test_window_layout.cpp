@@ -260,10 +260,14 @@ REGISTER_TEST(window_layout_min_window_below_work_area_paths,
     DOCTEST_CHECK_EQ(unknown.width, 1330);
     DOCTEST_CHECK_EQ(unknown.height, 845);
 
-    // ③ 工作区比外框还小 → 该方向 0 = 不约束（负值不传给后端）
+    // ③ 工作区比外框还小 → 该方向 0 = 不约束（负值不传给后端）。
+    //   注意 0 在 GLFW 两后端都是 all-or-nothing（任一轴 0 → 两轴最小尺寸一起
+    //   失效，见 window_layout.h 规则 5），所以另一轴算好的值也一并放开——
+    //   下面这条 width==800 把这个事实钉住，防止后来者按"0 = 单轴不约束"改回去
     const auto tiny = minWindowSizeForWorkArea(req, WorkArea{0, 0, 800, 20}, 1.0f,
                                               FrameInsets{0, 28});
     DOCTEST_CHECK_EQ(tiny.height, 0);
+    DOCTEST_CHECK_EQ(tiny.width, 800);  // 该轴本身仍算得出来（真实约束由后端放开）
 
     // ④ min 传 0 = 该方向不约束：保持 0 透传，不因钳制变成伪下限
     const auto unconstrained = minWindowSizeForWorkArea(
