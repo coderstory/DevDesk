@@ -7,8 +7,8 @@
 //   - 元素 id、文案、几何、控制流逐字沿用拆分前 todo_module.cpp 的对应函数——
 //     无头 UI 用例按 id 定位，不得改；
 //   - 拖拽状态机（DragState 的 pressX/pressY/pressScrollOffset 同帧快照，tech-debt B）
-//     不属于本单元：它留在 TodoModule，本单元只画「拖动中」的视觉（半透明卡片 +
-//     目标列高亮），并把 onPress/onDrag/onRelease 原样转交出去。
+//     不属于本单元：它留在 TodoModule，本单元只画「拖动中」的视觉（源列调暗 +
+//     目标列高亮 + 占位条 + 跟手副本），并把 onPress/onDrag/onRelease 原样转交出去。
 #pragma once
 
 #include "todo_ui_logic.h"
@@ -52,7 +52,11 @@ struct BoardActions {
     std::function<void(const Task&)> cardClicked;
     std::function<void(const Task&, int, int)> cardMenu;
     std::function<void(const Task&, int, int, const eui::Rect&)> cardPressed;
-    std::function<void(double, double)> cardDragged;
+    // 四个参数：指针坐标 x/y（命中换算用，物理像素）+ 按下点起的累计位移
+    // totalX/totalY（跟手副本锚点用，同空间同尺度——模块把它喂给
+    // ui::dragGhostAnchor）。累计值由框架算（DragEvent::totalX/totalY），
+    // 模块侧不再自存按下指针。
+    std::function<void(double, double, double, double)> cardDragged;
     std::function<void(double, double, bool)> cardReleased;
 };
 
@@ -71,6 +75,14 @@ struct BoardView {
     // UI 整改 13：拖拽插入行预览（-1 = 不预览；模块只在跨列时置位，
     // 0 = 首卡前，>= 列卡数 = 列尾）。看板单元据此画目标位占位条。
     int dragHoverRow = -1;
+    // 拖拽跟手副本（2026-09-28）：被拖卡片跟手副本的页面 compose 空间左上角
+    // （模块每帧由按下锚点 + 指针累计位移换算，见 ui::dragGhostAnchor）。
+    // ⚠ 给的是**绝对锚点**，不是"卡内偏移"：副本画在页面顶层 root（列内
+    // translate 会被 scrollView 的 clip 剪掉，见 drawDragGhost 注释），故
+    // 不存在 BoardPlate.dragOffset 那种卡内翻译量。
+    bool dragGhostOn = false;
+    float dragGhostX = 0.0f;
+    float dragGhostY = 0.0f;
     size_t overdueCount = 0;
     bool hasService = false;
     const std::string& loadError;
@@ -88,5 +100,11 @@ void drawHeader(eui::Ui& ui, float contentW, float headerH, float bodyH,
 // 看板主体（错误态 / 空态 / 列行）。plate 为出参：每帧刷新几何快照。
 void drawBoard(eui::Ui& ui, float contentW, float bodyH,
                const core::theme::Tokens& t, const BoardView& v, BoardPlate& plate);
+
+// 拖拽跟手副本（页面级顶层 root：画在 todo.root 之后、弹窗之前）。
+// 为什么在页面级而不是列内：见 todo_ui_board.cpp 的 drawDragGhost 注释。
+// plate 只读（卡宽来源）；v.dragGhostOn = false 时零元素产出。
+void drawDragGhost(eui::Ui& ui, const core::theme::Tokens& t,
+                   const BoardView& v, const BoardPlate& plate);
 
 } // namespace module::todo::ui
