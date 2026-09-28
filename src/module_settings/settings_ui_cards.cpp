@@ -7,15 +7,16 @@
 // 元素 event 回调一律按值捕获用到的 std::function（见头文件说明）——元素树比
 // 一帧活得久，捕引用会悬垂。
 //
-// 零行为变化：节点 id、文案、字号、颜色、几何、控制流逐字保留。
+// 2026-09-28 变更：用户反馈「设置页面最外层的卡片没删除……底色是白色？不需要
+// 啊」→ 删全部 9 张卡的 ui_kit::cardFrame 调用（含其 <id>.bg 矩形/1px 边框/
+// panelShadow/圆角），卡内容直接铺 M3-4 主体渐变底（settings.body.bg）；其余
+// 节点 id、文案、字号、颜色、几何、控制流逐字保留。
 #include "settings_ui_cards.h"
 
 #include <core/component_theme.h>
 #include <core/paths.h>
 
 #include <platform/file_open.h>
-
-#include <ui_kit/card.h>
 
 #include <eui/app.h>
 #include <eui/dsl.h>
@@ -81,7 +82,6 @@ void drawAppearanceCard(const CardDrawArgs& args) {
         .size(w, h)
         .zIndex(40)
         .content([&] {
-            ui_kit::cardFrame(ui, id, w, h, t);
             ui.text(id + ".title")
                 .position(28.0f, 18.0f)
                 .size(w - 56.0f, 24.0f)
@@ -243,7 +243,6 @@ void drawEditorFontCard(const CardDrawArgs& args) {
         .size(w, h)
         .zIndex(30)
         .content([&] {
-            ui_kit::cardFrame(ui, id, w, h, t);
             ui.text(id + ".title")
                 .position(28.0f, 16.0f)
                 .size(w - 56.0f, 22.0f)
@@ -324,7 +323,6 @@ void drawModulesCard(const CardDrawArgs& args) {
     ui.stack(id)
         .size(w, h)
         .content([&] {
-            ui_kit::cardFrame(ui, id, w, h, t);
             ui.text(id + ".title")
                 .position(28.0f, 16.0f)
                 .size(w - 56.0f, 22.0f)
@@ -406,7 +404,6 @@ void drawPetCard(const CardDrawArgs& args) {
     ui.stack(id)
         .size(w, h)
         .content([&] {
-            ui_kit::cardFrame(ui, id, w, h, t);
             ui.text(id + ".title")
                 .position(28.0f, 16.0f)
                 .size(w - 56.0f, 22.0f)
@@ -496,7 +493,6 @@ void drawDirectoryCard(const CardDrawArgs& args) {
     ui.stack(id)
         .size(w, h)
         .content([&] {
-            ui_kit::cardFrame(ui, id, w, h, t);
             ui.text(id + ".title")
                 .position(28.0f, 16.0f)
                 .size(w - 56.0f, 22.0f)
@@ -569,7 +565,6 @@ void drawProxyCard(const CardDrawArgs& args) {
     ui.stack(id)
         .size(w, h)
         .content([&] {
-            ui_kit::cardFrame(ui, id, w, h, t);
             auto* svc = in.proxy;
             const bool running = svc && svc->isProxyRunning();
             const int port = running ? svc->proxyPort() : 0;
@@ -743,7 +738,6 @@ void drawLogCard(const CardDrawArgs& args) {
         .size(w, h)
         .zIndex(30)
         .content([&] {
-            ui_kit::cardFrame(ui, id, w, h, t);
             ui.text(id + ".title")
                 .position(28.0f, 16.0f)
                 .size(w - 56.0f, 22.0f)
@@ -860,7 +854,6 @@ void drawAboutCard(const CardDrawArgs& args) {
     ui.stack(id)
         .size(w, h)
         .content([&] {
-            ui_kit::cardFrame(ui, id, w, h, t);
             ui.text(id + ".title")
                 .position(28.0f, 16.0f)
                 .size(w - 56.0f, 22.0f)
@@ -924,7 +917,6 @@ void drawLogViewCard(const CardDrawArgs& args) {
     ui.stack(id)
         .size(w, h)
         .content([&] {
-            ui_kit::cardFrame(ui, id, w, h, t);
             const float btnW = 96.0f;
             ui.text(id + ".title")
                 .position(28.0f, 16.0f)

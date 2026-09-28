@@ -560,28 +560,28 @@ REGISTER_TEST(settings_module_compose_renders, "settings: module compose builds 
     DOCTEST_CHECK(ui.find("settings.tabs.hit.3") != nullptr);
     DOCTEST_CHECK(ui.find("settings.cards.scroll") != nullptr);
     // 通用 tab：外观卡 + 编辑器字号卡（Task B 自日志卡迁出）
-    DOCTEST_CHECK(ui.find("settings.card.appearance.bg") != nullptr);
+    DOCTEST_CHECK(ui.find("settings.card.appearance") != nullptr);
     DOCTEST_CHECK(ui.find("settings.card.appearance.effect.ddwrap") != nullptr);
     DOCTEST_CHECK(ui.find("settings.card.editor.dd") != nullptr);
     // tab 划分 = 互斥：其余 tab 的卡不渲染
-    DOCTEST_CHECK(ui.find("settings.card.modules.bg") == nullptr);
-    DOCTEST_CHECK(ui.find("settings.card.log.bg") == nullptr);
-    DOCTEST_CHECK(ui.find("settings.card.about.bg") == nullptr);
+    DOCTEST_CHECK(ui.find("settings.card.modules") == nullptr);
+    DOCTEST_CHECK(ui.find("settings.card.log") == nullptr);
+    DOCTEST_CHECK(ui.find("settings.card.about") == nullptr);
 
     // 模块 tab：插拔开关 + 目录 + 代理（ClaudeService::global() 为 null 时
     // 代理卡仍渲染）。W10 复审项在此 tab 依旧有效（多卡超小窗可滚）
     DOCTEST_REQUIRE(clickSettingsTab(*mod, screen, 1));
     frame("modtab");
-    DOCTEST_CHECK(ui.find("settings.card.modules.bg") != nullptr);
+    DOCTEST_CHECK(ui.find("settings.card.modules") != nullptr);
     DOCTEST_CHECK(ui.find("settings.card.modules.sw.0") != nullptr);
-    DOCTEST_CHECK(ui.find("settings.card.directory.bg") != nullptr);
-    DOCTEST_CHECK(ui.find("settings.card.proxy.bg") != nullptr);
-    DOCTEST_CHECK(ui.find("settings.card.appearance.bg") == nullptr);
+    DOCTEST_CHECK(ui.find("settings.card.directory") != nullptr);
+    DOCTEST_CHECK(ui.find("settings.card.proxy") != nullptr);
+    DOCTEST_CHECK(ui.find("settings.card.appearance") == nullptr);
 
     // 日志 tab：设置卡（保留天数 + 级别）+ 日志查看卡（tail + 刷新按钮）
     DOCTEST_REQUIRE(clickSettingsTab(*mod, screen, 2));
     frame("logtab");
-    DOCTEST_CHECK(ui.find("settings.card.log.bg") != nullptr);
+    DOCTEST_CHECK(ui.find("settings.card.log") != nullptr);
     DOCTEST_CHECK(ui.find("settings.card.log.level.dd") != nullptr);
     DOCTEST_CHECK(ui.find("settings.tab.log.scroll") != nullptr);
     DOCTEST_CHECK(ui.find("settings.tab.log.refresh.bg") != nullptr);
@@ -590,7 +590,7 @@ REGISTER_TEST(settings_module_compose_renders, "settings: module compose builds 
     // 关于 tab：版本 + 路径
     DOCTEST_REQUIRE(clickSettingsTab(*mod, screen, 3));
     frame("abouttab");
-    DOCTEST_CHECK(ui.find("settings.card.about.bg") != nullptr);
+    DOCTEST_CHECK(ui.find("settings.card.about") != nullptr);
     DOCTEST_CHECK(ui.find("settings.card.about.version") != nullptr);
 
     mod->onStop();
@@ -713,7 +713,7 @@ REGISTER_TEST(settings_theme_switch_reflects, "settings: theme switch reflects o
     mod->compose(ui, screen);
     ui.end();
     DOCTEST_CHECK(ui.find("settings.pagebg") == nullptr);
-    DOCTEST_CHECK(ui.find("settings.card.appearance.bg") != nullptr);
+    DOCTEST_CHECK(ui.find("settings.card.appearance") != nullptr);
 
     ::core::theme::setDark();  // 恢复
     return true;
@@ -1165,7 +1165,7 @@ REGISTER_TEST(settings_modules_card_renders, "settings: 模块管理卡渲染（
     mod->compose(ui, screen);
     ui.end();
 
-    DOCTEST_CHECK(ui.find("settings.card.modules.bg") != nullptr);
+    DOCTEST_CHECK(ui.find("settings.card.modules") != nullptr);
     DOCTEST_CHECK(ui.find("settings.card.modules.sw.0") != nullptr);
     DOCTEST_CHECK(ui.find("settings.card.modules.sw.1") != nullptr);
     DOCTEST_CHECK(ui.find("settings.card.modules.sw.2") != nullptr);
@@ -1201,15 +1201,15 @@ REGISTER_TEST(settings_gated_proxy_card_hidden, "settings: claude 模块关闭 �
     mod->compose(ui, screen);
     ui.end();
 
-    DOCTEST_CHECK(ui.find("settings.card.proxy.bg") == nullptr);  // 整卡隐藏
-    DOCTEST_CHECK(ui.find("settings.card.directory.bg") != nullptr);  // markdown 开
-    DOCTEST_CHECK(ui.find("settings.card.modules.bg") != nullptr);
+    DOCTEST_CHECK(ui.find("settings.card.proxy") == nullptr);  // 整卡隐藏
+    DOCTEST_CHECK(ui.find("settings.card.directory") != nullptr);  // markdown 开
+    DOCTEST_CHECK(ui.find("settings.card.modules") != nullptr);
 
     DOCTEST_REQUIRE(clickSettingsTab(*mod, screen, 2));
     ui.begin("gateclaude_log");
     mod->compose(ui, screen);
     ui.end();
-    DOCTEST_CHECK(ui.find("settings.card.log.bg") != nullptr);
+    DOCTEST_CHECK(ui.find("settings.card.log") != nullptr);
     mod->onStop();
     ::core::theme::setDark();
     return true;
@@ -1238,8 +1238,8 @@ REGISTER_TEST(settings_gated_directory_card_hidden, "settings: markdown 模块�
     mod->compose(ui, screen);
     ui.end();
 
-    DOCTEST_CHECK(ui.find("settings.card.directory.bg") == nullptr);  // 整卡隐藏
-    DOCTEST_CHECK(ui.find("settings.card.proxy.bg") != nullptr);  // claude 开
+    DOCTEST_CHECK(ui.find("settings.card.directory") == nullptr);  // 整卡隐藏
+    DOCTEST_CHECK(ui.find("settings.card.proxy") != nullptr);  // claude 开
     mod->onStop();
     ::core::theme::setDark();
     return true;
@@ -1262,7 +1262,7 @@ REGISTER_TEST(settings_effect_dropdown_fits_min_window,
     ui.end();
     ui.layout(screen.width, screen.height);
 
-    const auto* card = ui.find("settings.card.appearance.bg");
+    const auto* card = ui.find("settings.card.appearance");
     const auto* themeDd = ui.find("settings.card.appearance.theme.ddwrap");
     const auto* font = ui.find("settings.card.appearance.font.ddwrap");
     const auto* effect = ui.find("settings.card.appearance.effect.ddwrap");
@@ -1288,7 +1288,7 @@ REGISTER_TEST(settings_effect_dropdown_fits_min_window,
     ui.layout(wide.width, wide.height);
     const auto* wideFont = ui.find("settings.card.appearance.font.ddwrap");
     const auto* wideEffect = ui.find("settings.card.appearance.effect.ddwrap");
-    const auto* wideCard = ui.find("settings.card.appearance.bg");
+    const auto* wideCard = ui.find("settings.card.appearance");
     DOCTEST_REQUIRE(wideFont != nullptr);
     DOCTEST_REQUIRE(wideEffect != nullptr);
     DOCTEST_REQUIRE(wideCard != nullptr);
@@ -1861,7 +1861,7 @@ REGISTER_TEST(settings_about_card_renders,
     mod->compose(ui, screen);
     ui.end();
 
-    DOCTEST_CHECK(ui.find("settings.card.about.bg") != nullptr);
+    DOCTEST_CHECK(ui.find("settings.card.about") != nullptr);
     const auto* version = ui.find("settings.card.about.version");
     const auto* euiLine = ui.find("settings.card.about.eui");
     const auto* cfgLine = ui.find("settings.card.about.config");
@@ -2490,19 +2490,20 @@ REGISTER_TEST(settings_card_registry_order,
     return true;
 })
 
-// ---- 综合审查（2026-09-28）：9 卡底板统一阴影提升 + 填充走 theme surface ----
-// 根因：settings 卡填充（ui_kit::cardFrame = surface）与 M3-4 主体渐变底
-//（settings.body.bg）顶色同为 theme surface，且 cardFrame 无阴影 → 卡与底
-// 不分层（浅色档页面顶部卡整卡隐形，「设置 UI 没修」感知；深色档同样）。
-// 修复 = card.cpp cardFrame 补 panelShadow（与 home 卡 CardStyle 同款数值：
-// blur 24 / dy 8 / 深色 α0.28 · 浅色 α0.12，随主题 token 解析）。
-// 回归断言（两档主题 × 9 张可见卡底板）：shadow 启用（与底分层）、边框 1px、
-// 填充 == theme surface（浅色 #F5F2EC / 深色 #232120，无硬编码白残留）。
-REGISTER_TEST(settings_cards_elevation_theme_surface,
-              "settings: 9 卡底板统一阴影提升 + 填充走 theme surface（两档主题）", {
-    test_support::TestEnv env(kCfgPrefix, "elev", true);
+// ---- 综合审查（2026-09-28）→ 2026-09-28 删 9 卡外层 cardFrame ----
+// 用户原话：「设置页面最外层的卡片没删除」+「目前所有的菜单详情页面都在外层
+// 加了卡片？底色是白色？不需要啊」。根因：settings 9 张卡每张调 ui_kit::cardFrame
+//（surface 填充 + 1px 边框 + panelShadow 阴影 + radiusLarge 圆角），白色卡框叠在
+// M3-4 主体渐变底（settings.body.bg）之上 = 用户看到的「最外层卡片」。
+// 修复 = 删全部 9 处 cardFrame 调用（settings_ui_cards.cpp），卡内容直接铺页面渐变
+// 底，不再有 <id>.bg 矩形 / 边框 / 阴影 / 圆角。旧「阴影分层」回归断言随卡框废弃，
+// 改反断言：bg 矩形必须不存在（cardFrame 若被加回会重新出现）、卡 stack 必须仍在。
+// 回归断言（两档主题 × 9 张可见卡）：<stack>.bg 不存在、卡 stack 存在（内容未丢）。
+REGISTER_TEST(settings_cards_no_outer_cardframe,
+              "settings: 9 卡无外层 cardFrame——内容直接铺页面底（两档主题）", {
+    test_support::TestEnv env(kCfgPrefix, "noframe", true);
     test_support::ScopedConfigPath cfgEnv(
-        test_support::tempConfigFile(kCfgPrefix, "elev_cfg"));
+        test_support::tempConfigFile(kCfgPrefix, "noframe_cfg"));
     {
         std::ofstream out(cfgEnv.cfgPath);
         out << "{\"theme\":\"dark\",\"enabledModules\":["
@@ -2514,8 +2515,20 @@ REGISTER_TEST(settings_cards_elevation_theme_surface,
     screen.width = 1600.0f;
     screen.height = 1000.0f;
 
-    // 每张可见卡底板（pet 开 → 模块 tab 四卡全可见）；顺序 = 注册表序
+    // 卡 root stack id（内容锚：证卡内容仍在渲染）+ cardFrame 若加回会出现的 bg id
+    //（bg 是 cardFrame 在 (0,0) 铺的矩形，id = <stack>.bg）。顺序 = 注册表序
     const int kTabOf[] = {0, 0, 1, 1, 1, 1, 2, 2, 3};
+    const char* const kStackIds[] = {
+        "settings.card.appearance",
+        "settings.card.editor",
+        "settings.card.modules",
+        "settings.card.pet",
+        "settings.card.directory",
+        "settings.card.proxy",
+        "settings.card.log",
+        "settings.tab.log",
+        "settings.card.about",
+    };
     const char* const kBgIds[] = {
         "settings.card.appearance.bg",
         "settings.card.editor.bg",
@@ -2541,26 +2554,20 @@ REGISTER_TEST(settings_cards_elevation_theme_surface,
                 DOCTEST_REQUIRE(clickSettingsTab(*mod, screen, lastTab));
             }
             eui::Ui ui;
-            ui.begin("elev_" + tag);
+            ui.begin("noframe_" + tag);
             mod->compose(ui, screen);
             ui.end();
             ui.layout(screen.width, screen.height);
-            const auto* bg = ui.find(kBgIds[i]);
-            DOCTEST_REQUIRE(bg != nullptr);
-            DOCTEST_CHECK_MESSAGE(bg->shadow.enabled,
+            DOCTEST_CHECK_MESSAGE(ui.find(kBgIds[i]) == nullptr,
                                   tag + " 卡 " + kBgIds[i] +
-                                      " 应有阴影（与主体底分层）");
-            DOCTEST_CHECK_EQ(bg->border.width, 1.0f);
-            const eui::Color& surface =
-                core::theme::current().colors.surface;
-            DOCTEST_CHECK_MESSAGE(
-                bg->color.r == surface.r && bg->color.g == surface.g &&
-                    bg->color.b == surface.b && bg->color.a == surface.a,
-                tag + " 卡 " + kBgIds[i] +
-                    " 填充应走 theme surface（无硬编码色残留）");
+                                      " 不应再有外层卡框（cardFrame 已删）");
+            DOCTEST_REQUIRE_MESSAGE(ui.find(kStackIds[i]) != nullptr,
+                                    tag + " 卡 stack " + kStackIds[i] +
+                                        " 应存在（内容未丢）");
         }
     }
     mod->onStop();
     ::core::theme::setDark();
     return true;
 })
+
