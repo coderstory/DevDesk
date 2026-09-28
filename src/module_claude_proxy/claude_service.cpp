@@ -2,11 +2,14 @@
 // ClaudeService 实现：Profile CRUD + Keychain + 上游连通性测试
 #include "claude_service.h"
 
+#include "core/atomic_write.h"
 #include "core/logging.h"
 #include "core/paths.h"
 #include "core/time.h"
 #include "platform/http_server.h"
+#include "platform/json.h"
 #include "platform/keychain.h"
+#include "platform/terminal_launch_common.h"
 #include "provider_config.h"
 #include "proxy_router.h"
 #include "upstream_dialect.h"
@@ -19,8 +22,10 @@
 #include <cstdint>
 #include <cstdio>
 #include <ctime>
+#include <filesystem>
 #include <fstream>
 #include <iomanip>
+#include <map>
 #include <random>
 #include <sstream>
 #include <string>
@@ -1590,43 +1595,72 @@ core::Result<void> ClaudeService::runProfile(int64_t id, std::string* hint) {
             "profile.id 不能为 0");
     }
 
-    // 目标 profile 必须存在（标题、激活态判定都取自它）
+    // 顺序 1：目标 profile 必须存在（标题 / baseUrl / 认证字段 / 模型配置都取自它）
     auto prof = getProfile(id);
     if (prof.isFail()) {
         return core::Result<void>::fail(prof.errorCode(), prof.errorMessage());
     }
+    const Profile& p = prof.value();
 
-    // 顺序 1：代理必须先跑起来（会话只指向本地代理，密钥由代理转发时注入，D-8）。
-    // 已在跑时**不重复 startProxy**（server 已存在会硬失败）；端口必须显式传
-    // configuredProxyPort()——设置页改过端口后，无参默认 8888 会起错端口。
-    if (!isProxyRunning()) {
-        auto started = startProxy("127.0.0.1", configuredProxyPort());
-        if (started.isFail()) {
-            return core::Result<void>::fail(started.errorCode(),
-                "启动本地代理失败，未打开会话: " + started.errorMessage());
-        }
+    // 顺序 2：读 Keychain 密钥（D-1 直连形态：密钥由本功能带进临时 settings 文件，
+    // 不再由代理转发注入）。失败 / 条目不存在 → 中止，不落盘、不开窗（§5）。
+    auto key = loadApiKey(id);
+    if (key.isFail()) {
+        return core::Result<void>::fail(key.errorCode(),
+            "读取 Keychain 密钥失败，未打开会话: " + key.errorMessage());
     }
 
-    // 顺序 2：目标非激活 → 先切激活（全局 settings.json 托管键随之改写，
-    // UI 侧已用副提示明示）。失败（含反向同步读不到/解析不了 settings.json）
-    // → 中止本次运行，不打开会话。
-    if (!prof.value().isActive) {
-        auto switched = setActiveProfile(id);
-        if (switched.isFail()) {
-            return core::Result<void>::fail(switched.errorCode(),
-                "切换激活 Profile 失败，未打开会话: " + switched.errorMessage());
-        }
+    // 顺序 3：直连 env（纯函数 buildDirectEnv：BASE_URL 去尾斜杠 / 密钥键三态 /
+    // 槽位 + 共享片段 + extra_env，托管键压过 extra_env）→ 序列化成 settings
+    // JSON（{"env": {...}}）→ 落盘 appDataDir()/run-settings/run-<id>-<ts>.json。
+    // 关键：**零全局改动**——不启代理、不切激活、不读也不写 ~/.claude/settings.json
+    const auto env = buildDirectEnv(p.baseUrl, key.value(), p.authField,
+                                    p.modelsConfigJson, p.model, p.extraEnvJson,
+                                    sharedExtraEnvJsonFor(p.sharedConfigId));
+    platform::json::JsonObject envObj;
+    for (const auto& [k, v] : env) {
+        envObj.set(k, platform::json::makeString(v));
+    }
+    platform::json::JsonObject root;
+    root.set("env", platform::json::JsonValue(std::move(envObj)));
+    auto text = platform::json::stringify(platform::json::JsonValue(std::move(root)));
+    if (text.isFail()) {
+        return core::Result<void>::fail(text.errorCode(),
+            "序列化临时 settings 失败: " + text.errorMessage());
     }
 
-    // 顺序 3：派发终端（分离式；命令文本由平台层内部拼装，业务层只传语义参数）。
-    // D-3：起始目录默认用户主目录；D-8：不带任何密钥/临时配置。
+    const std::filesystem::path dir = core::paths::appDataDir() / "run-settings";
+    std::error_code ec;
+    std::filesystem::create_directories(dir, ec);
+    if (ec) {
+        return core::Result<void>::fail(core::ErrorCode::Internal,
+            "创建 run-settings 目录失败: " + dir.string() + "（" + ec.message() + "）");
+    }
+    // per-launch 24h 清扫（§5）：上次崩溃 / 强制结束的会话留下的孤儿文件在此兜底
+    platform::terminal::sweepStaleRunSettingsFiles(dir);
+
+    const std::filesystem::path file =
+        dir / ("run-" + std::to_string(id) + "-" +
+               std::to_string(static_cast<long long>(nowUnix())) + ".json");
+    auto wrote = core::atomicWriteFile(file, text.value(), "临时 settings");
+    if (wrote.isFail()) {
+        return core::Result<void>::fail(wrote.errorCode(),
+            "写临时 settings 失败，未打开会话: " + wrote.errorMessage());
+    }
+
+    // 顺序 4：派发终端（D-1：claude --settings <临时文件>；会话正文退出后自删
+    // 该文件。分离式启动，DevDesk 不持有会话句柄——D-9 只提示、不阻止）
     platform::terminal::LaunchSpec spec;
-    spec.title = prof.value().name + " · Claude Code";
+    spec.title = p.name + " · Claude Code";
     spec.workingDir = platform::terminal::homeDir();
     spec.program = "claude";
+    spec.args = {"--settings", file.string()};
 
     auto launched = terminalLauncher_(spec);
     if (launched.isFail()) {
+        // 会话没起来 → 替它做掉「退出后自删」（best-effort），不留孤儿等 24h 清扫
+        std::error_code rmEc;
+        std::filesystem::remove(file, rmEc);
         return launched;
     }
 
@@ -1636,8 +1670,8 @@ core::Result<void> ClaudeService::runProfile(int64_t id, std::string* hint) {
     if (hint != nullptr && platform::terminal::windowsTerminalMissing()) {
         *hint = "未检测到 Windows Terminal，已用系统默认终端打开会话";
     }
-    LOG_INFO("已在终端里用 profile id=" + std::to_string(id) +
-             " 打开 Claude Code 会话（" + spec.workingDir + "）");
+    LOG_INFO("已直连打开 Claude Code 会话（profile id=" + std::to_string(id) +
+             "，临时 settings=" + file.string() + "）");
     return core::Result<void>::ok();
 }
 

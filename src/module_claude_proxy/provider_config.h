@@ -215,6 +215,32 @@ std::map<std::string, std::string> buildProxyEnv(
     const std::string& extraEnvJson,
     int proxyPort, const std::string& sharedExtraEnvJson = "");
 
+// ---- 直连 env 生成（2026-09-28 profile-run 设计 §4.2，D-1：临时 settings + --settings）----
+// 输入 = profile 数据字段 + Keychain 已读出的密钥值（**本函数不读 Keychain**，
+// 读失败由调用方在调本函数前中止）；输出 = 临时 settings.json 的 env 子对象
+// （纯函数，无 IO）。与 buildProxyEnv 同款的槽位 loop / extra_env 别名归一 /
+// 共享片段叠加（片段赢），仅托管键不同（直连形态）：
+//   1. ANTHROPIC_BASE_URL = baseUrl 去尾斜杠（照 updateProfile 写侧口径）；空
+//      串 → 不写该键（Claude Code 回落内置默认上游）
+//   2. 密钥键按 profile 的「认证字段」三态**只写一个**（直连路径携带的
+//      **唯一凭据**；「双发」是代理路径的特性，且代理会剥客户端鉴权头、直连
+//      没有这层保护——extra_env / 共享片段带进的另一密钥键会被清掉，防止两个
+//      凭据并存时网关取到过期的那一个）：
+//        bearer    → ANTHROPIC_AUTH_TOKEN
+//        api_key   → ANTHROPIC_API_KEY
+//        both      → ANTHROPIC_AUTH_TOKEN（默认；若上游网关要求 x-api-key，
+//                    把该 profile 的认证字段设为 api_key 即可）
+//      密钥值空串 → 不写该键（上层已用读 Keychain 失败挡住绝大部分空值）
+//   3. 模型槽位（effectiveModelsConfig）：空槽位跳过；*_NAME 派生显示名，
+//      subagent 槽位对应 CLAUDE_CODE_SUBAGENT_MODEL（照表派生）
+//   4. extra_env / 共享片段先入表；托管键（BASE_URL 与密钥键）最后写入压过它们
+std::map<std::string, std::string> buildDirectEnv(
+    const std::string& baseUrl, const std::string& apiKeyPlain,
+    const std::string& authField,
+    const std::string& modelsConfigJson, const std::string& legacyModel,
+    const std::string& extraEnvJson,
+    const std::string& sharedExtraEnvJson = "");
+
 // 托管键全集（审计 CPX-12）：BASE_URL + 占位 token + 槽位表派生的 env 键与
 // *_NAME 键（CPX-08 收敛后由 modelSlotTable() 遍历生成，当前 6 槽位 = 12 键）；
 // 与槽位是否有值无关（槽位为空时 buildProxyEnv 不生成该键，但上层同名键仍会

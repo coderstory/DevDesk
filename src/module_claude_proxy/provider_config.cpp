@@ -383,6 +383,71 @@ std::map<std::string, std::string> buildProxyEnv(
     return out;
 }
 
+std::map<std::string, std::string> buildDirectEnv(
+    const std::string& baseUrl, const std::string& apiKeyPlain,
+    const std::string& authField,
+    const std::string& modelsConfigJson, const std::string& legacyModel,
+    const std::string& extraEnvJson,
+    const std::string& sharedExtraEnvJson) {
+    std::map<std::string, std::string> out;
+
+    // 与 buildProxyEnv 同款（profile-run 设计 §4.2 规则 5）：extra_env 先入表
+    // （别名归一），共享片段叠在其上（片段赢），托管键随后写入压过两者——
+    // 导入数据可能带旧 BASE_URL / token，托管键必须最后落子
+    auto extra = parseExtraEnv(extraEnvJson);
+    if (extra.isOk()) {
+        out = applyEnvAliases(extra.value()).env;
+        // 非法 JSON：读路径容错，整体忽略（与 effectiveModelsConfig 语义一致）
+    }
+    auto shared = parseExtraEnv(sharedExtraEnvJson);
+    if (shared.isOk()) {
+        for (const auto& [k, v] : applyEnvAliases(shared.value()).env) {
+            out[k] = v;
+        }
+    }
+
+    // 托管键 1：BASE_URL 去尾斜杠（照 claude_service.cpp 的 stripTrailingSlash
+    // 同款语义：只剥一个尾斜杠）。空串 → 不写（Claude Code 回落内置默认）。
+    if (!baseUrl.empty()) {
+        std::string url = baseUrl;
+        if (url.back() == '/') url.pop_back();
+        if (!url.empty()) out["ANTHROPIC_BASE_URL"] = url;
+    }
+
+    // 托管键 2：密钥键按认证字段三态只写一个（直连形态；见 provider_config.h
+    // buildDirectEnv 注释的三态表）。密钥值为空串 → 不写（读 Keychain 成功但
+    // 条目为空属于异常数据，宁可不写也不发空值）。
+    // 写选中键的同时**清掉另一密钥键**：extra_env / 共享片段可能带进反向的
+    // token 键（如默认 both 形态下片段里有 ANTHROPIC_API_KEY）——留着会让直连
+    // 请求携带两个凭据，网关可能取到过期/错误的那一个（代理路径免疫：客户端
+    // 鉴权头被代理剥掉，直连路径没有这层保护，必须单键）
+    const AuthField field = authFieldFromText(authField);
+    const char* tokenKey = (field == AuthField::ApiKey)
+        ? "ANTHROPIC_API_KEY"
+        : "ANTHROPIC_AUTH_TOKEN";
+    const char* otherTokenKey = (field == AuthField::ApiKey)
+        ? "ANTHROPIC_AUTH_TOKEN"
+        : "ANTHROPIC_API_KEY";
+    if (!apiKeyPlain.empty()) {
+        out[tokenKey] = apiKeyPlain;
+        out.erase(otherTokenKey);
+    }
+
+    // 模型槽位（与 buildProxyEnv 规则 3/4 同款）：空槽位跳过；name 空则派生显示名
+    const ModelsConfig mc = effectiveModelsConfig(modelsConfigJson, legacyModel);
+    for (const auto& m : modelSlotTable()) {
+        const ModelSlot& slot = mc.*m.slot;
+        if (slot.model.empty()) continue;  // 空槽位跳过
+        out[m.envKey] = slot.model;
+        if (m.nameKey != nullptr) {
+            out[m.nameKey] = slot.name.empty()
+                ? deriveDisplayName(slot.model)
+                : slot.name;
+        }
+    }
+    return out;
+}
+
 // 托管键全集（审计 CPX-12 + CPX-08）：BASE_URL + 占位 token + 槽位表派生的
 // 每行 envKey / *_NAME 键，与槽位是否有值无关（buildProxyEnv 只在槽位非空时
 // 写槽位键，检测侧需要全集）

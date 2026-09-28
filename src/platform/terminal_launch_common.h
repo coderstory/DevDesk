@@ -11,6 +11,7 @@
 //      两套正文拼装（纯字符串运算，与宿主机无关）。
 #pragma once
 
+#include <filesystem>
 #include <string>
 #include <vector>
 
@@ -52,7 +53,11 @@ std::string encodePowerShellCommand(const std::string& body);
 
 // ---------- 命令文本（写死，供实现与单测逐字对照，spec §4.1）----------
 
-// PowerShell 正文：Set-Location 到起始目录 + 换行 + 一行程序名（**不含任何密钥**）
+// PowerShell 正文：Set-Location 到起始目录 + 换行 + 一行「程序 + 各参数」
+//（参数逐个 powershellSingleQuote 包裹）+ 〔args 含 --settings 时追加一行
+// Remove-Item -LiteralPath '<settings 路径>' -Force -ErrorAction SilentlyContinue
+// ——claude 退出后自删临时 settings 文件（profile-run §5）〕。
+// 正文里**不含任何密钥**（D-1：密钥在 --settings 指向的临时文件里）
 std::string buildPowerShellBody(const LaunchSpec& spec);
 
 // Windows Terminal 分支的参数向量（不带引号；引号由 joinWindowsCommandLine 加）：
@@ -79,8 +84,18 @@ std::string fallbackPowerShellExe(const std::string& systemRoot);
 // 探针验证）。只在 wt 参数向量里调用——传统控制台分支无此语义，不要过度转义。
 std::string escapeWtTitle(const std::string& title);
 
-// macOS .command 正文：cd '<工作目录>' && exec <程序名> + 换行（单引号包裹）
+// macOS .command 正文：cd '<工作目录>' && 「claude + 各参数」+ 换行；args 含
+// --settings 时再追加一行 `trap 'rm -f "<settings 路径>"' EXIT`（claude 退出后
+// 自删临时 settings 文件，profile-run §5）。**不能 exec**：exec 会替换 shell
+// 进程，EXIT 陷阱随 shell 消失——自删语义就没了
 std::string buildMacCommandBody(const LaunchSpec& spec);
+
+// 启动清扫（profile-run 设计 §5）：删 run-settings/ 目录里 24h 前的陈旧
+// run-*.json 临时 settings 文件——会话正常退出由终端正文自删，这里兜底上次
+// 崩溃 / 强制结束留下的孤儿。镜像 macOS 侧 run-scripts/ 的 24h sweep 模式
+//（terminal_launch_macos.cpp sweepStaleScripts）。best-effort：目录不存在 /
+// 单条失败都忽略，不阻断本次启动
+void sweepStaleRunSettingsFiles(const std::filesystem::path& dir);
 
 // 稳定短标识（8 位 hex，FNV-1a 32）：macOS 脚本文件名里的 <id> 槽位。
 // LaunchSpec（spec §4 逐字：title/workingDir/program/args）不含 profile id，
