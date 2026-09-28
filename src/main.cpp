@@ -421,8 +421,8 @@ bool showTrayStyledMenu(int x, int y) {
 constexpr int kInitialWindowLogicalWidth = 1600;
 constexpr int kInitialWindowLogicalHeight = 1000;
 // 最小尺寸语义（与下方 minWindowSize 同源；决策函数用它兜底，保证不小于它）
-constexpr int kMinWindowLogicalWidth = 1200;
-constexpr int kMinWindowLogicalHeight = 720;
+constexpr int kMinWindowLogicalWidth = 1330;
+constexpr int kMinWindowLogicalHeight = 845;
 
 core::window_layout::InitialWindowDecision resolveInitialWindowDecision() {
     // 目标显示器 = 主显示器（窗口走 centerWindow，无显式位置，落在主屏）
