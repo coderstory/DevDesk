@@ -200,20 +200,6 @@ constexpr float kLiveInputInset = 10.0f;   // 与编辑态 input 同款内边距
 // 同文本宽（声明宽 − inset×2，本模块不给活动 input 开滚动条 → 无槽位扣减）。
 constexpr const char* kLiveInputFontFamily = "Microsoft YaHei";
 
-// ---- Phase 3 M6：实时态滚动容器 id（两档轮转）----
-// 框架缺口（spec 未展开、实现期实证）：scrollView 的 .offset() 只在 Runtime 的
-// ScrollStateInstance **首次 init** 时被采纳——element.scrollOffset 全仓唯一读取点
-// 是 core/runtime/runtime_state_bindings.h:87-103，且被 !instance.initialized 守着；
-// 之后实例内部值是唯一权威（滚轮/惯性写它），DSL 每帧声明同名值不生效。因此
-// 「光标越界 → 程序化拉一次」必须让该 id 的实例重建：换 id ⇒ 换 scrollStateId
-// ⇒ 新实例 ⇒ 采纳本帧 offset。两档（而不是每拉一档）把 stateStore 里的 measure
-// 缓存钉在上限 2 份；旧实例随「元素结构变化 → prune」释放
-//（core/runtime/runtime_lifecycle.h:104/142）。轮转点唯一（liveScrollFollowMaybe）。
-// 升级路径：上游补 Ui::setScrollOffset(stateId, offset) 后，本常量对 + liveScrollGen_
-// + liveScrollId() 一起删掉，改直调 API（其余跟随逻辑与判定完全不变）。
-constexpr const char* kLiveScrollIdGen0 = "md.live.scroll";
-constexpr const char* kLiveScrollIdGen1 = "md.live.scroll.g1";
-
 // "已保存 HH:MM"
 std::string formatSaveTime(std::time_t t) {
     if (t <= 0) return {};
@@ -1685,11 +1671,6 @@ private:
     //   ③ 跟随只在「caret 越出视口安全带」时拉一次（纯判定在 mdLiveFollowOffset），
     //      目标与记账值相等时什么都不做（no-op 抑制）。
 
-    // 滚动容器 id（两档轮转）——语义与框架缺口的完整说明见 kLiveScrollIdGen0 注释
-    const char* liveScrollId() const {
-        return liveScrollGen_ == 0 ? kLiveScrollIdGen0 : kLiveScrollIdGen1;
-    }
-
     // 块内光标的【显示行号】（软折行参与计数），与 input 组件内部的
     // layout.cursorLine 完全同源：measureLines + lineIndexFor（components/
     // input_model.h:728/777 就是组件算 caret y 用的那两个函数）。逻辑行口径
@@ -1715,13 +1696,16 @@ private:
     // caretDocY = 活动块顶（几何表；其前各块用的都是几何表高，故对本块成立）+
     // input 内边距 + 光标显示行 × 行高（行高与 input 内部的 textLineHeight 同源，
     // 故与框内 caret 的像素位置一致）。
-    // 【为什么落地要换容器 id】见 kLiveScrollIdGen0：声明值只在实例首帧生效，
-    // 换 id 是唯一能让框架采纳本帧 offset 的手段（= 每帧全量重绘的代价，故只在
-    // 真的需要移动时才做一次）。no-op 抑制（目标 == 记账值）同时也挡住"文档尾
-    // 连续打字"每帧都判越界的情形——那时 maxOffset 已把目标钳成当前值。
-    void liveScrollFollowMaybe(const MdBlock& b, const std::string& blockText,
-                               int localCursor, float contentWidth,
-                               float viewportH) {
+    // 【落地】用上游 Ui::setScrollOffset（spec 2026-09-28：直写实例 offset +
+    // 触发 onChange，绕开 .offset() 的 init-only 守卫）；调用点必须在 scrollView
+    // build + 回读钳位【之后】——判定用的 liveMaxOffset_ 与送达时 Runtime 内部
+    // 钳位的 instance.maxOffset 同帧，内容变矮帧也只会「no-op（不置标志）」或
+    // 「必 apply（onChange 同帧消费标志）」，程序化标志不跨帧残留。no-op 抑制
+    //（目标 == 记账值）同时也挡住"文档尾连续打字"每帧都判越界的情形——那时
+    // maxOffset 已把目标钳成当前值。
+    void liveScrollFollowMaybe(eui::Ui& ui, const MdBlock& b,
+                               const std::string& blockText, int localCursor,
+                               float contentWidth, float viewportH) {
         if (!liveFollow_) return;                       // 用户滚动后：不干预
         if (viewportH <= 0.0f || contentWidth <= 0.0f) return;
         const float fontSize = core::theme::editorFontSize();
@@ -1741,14 +1725,19 @@ private:
             caretDocY, viewportH, liveScrollY_, liveMaxOffset_);
         if (!d.pull || d.offset == liveScrollY_) return;   // no-op 抑制
         liveScrollY_ = d.offset;
-        liveScrollGen_ ^= 1;   // 换容器 id → 新实例采纳本帧 offset（唯一手段）
+        // 程序化来源标记：onChange 凭它区分「本次位移 = 跟随落地」与用户滚轮
+        // （程序化回写不关 liveFollow_）；同一帧的 onChange echo 即消费，任何漏
+        // 清路径由 drawLiveColumn 开头清零兜底（纵深防御，spec §2.3）。
+        liveProgrammaticScroll_ = true;
+        ui.setScrollOffset("md.live.scroll", d.offset);
+        LOG_DEBUG("[live] follow: prog=1 applied offset=" +
+                  std::to_string(d.offset));
         LOG_DEBUG("[live] follow pull: caret=" + std::to_string(caretDocY) +
                   " block=" + std::to_string(liveActiveBlock_) +
                   " line=" + std::to_string(caretLine) +
                   " offset=" + std::to_string(d.offset) + " viewport=" +
                   std::to_string(viewportH) + " max=" +
-                  std::to_string(liveMaxOffset_) +
-                  " gen=" + std::to_string(liveScrollGen_));
+                  std::to_string(liveMaxOffset_));
     }
 
     // ---- 第四态：实时（块级实时渲染；M1 只读骨架 + M2 活动块输入）----
@@ -1762,6 +1751,10 @@ private:
                         float midW,
                         const core::theme::Tokens& t,
                         const components::theme::ThemeColorTokens& componentTheme) {
+        // M6 纵深防御：程序化标记任何漏清路径（onChange 同帧没消费上）都在下帧
+        // 开头清零 —— 同帧 echo 走 compose 帧末（此刻还没发生），不受影响；
+        // 残留标志会让下一次用户滚轮被误判成程序化来源（不关跟随）。
+        liveProgrammaticScroll_ = false;
         // 列壳（面板底 / 标签 chip 行 / 720px 写作列 / 状态栏）与编辑态共用同一
         // 实现（W2 MD-02）；本态恒钳 720 居中的写作列（spec §3.2）
         drawTextColumnChrome(
@@ -1844,18 +1837,9 @@ private:
                         liveCursorSeen_ = lst.cursor;
                         liveFollow_ = true;
                     }
-                    // 组字在飞不评估（R3：预编辑期间不换块/不换文本，滚动同理不
-                    // 动 —— 免得预编辑 caret 把视口拽走）；liveCaretPending_ 帧也不
-                    // 评估（活动 input 的光标还是上一块局部坐标，见 setLiveCursor）；
-                    // 几何表滞后一帧（本帧的 drawBlockFlow 才重建）：活动块【顶】
-                    // 不受本块自身编辑影响，跨块编辑的错位下一帧自纠。
-                    if (liveFollow_ && !liveCaretPending_ &&
-                        liveActiveBlock_ < bs.size() &&
-                        !mdLiveCompositionFrozen(lst.compositionText)) {
-                        const MdBlock& ab = bs[liveActiveBlock_];
-                        liveScrollFollowMaybe(ab, liveBlockText(ab), lst.cursor,
-                                              liveContentWidth_, g.h);
-                    }
+                    // 跟随判定 + 落地在 scrollView build 之后（见 liveScrollFollowMaybe
+                    // 的调用点说明）；组字在飞 / liveCaretPending_ / 几何表滞后帧的
+                    // 评估守卫随之移到了那里。
                     live.activeBlock = liveActiveBlock_;
                     hasActive = true;
                 }
@@ -1895,9 +1879,9 @@ private:
                 };
                 // 单一滚动权威 = 本 scrollView（spec §3.3）：活动块 input 内容贴合
                 // → 不吃滚轮，用户滚轮唯一落在它身上（M1 手动滚动；M6 光标跟随）。
-                // id 由 liveScrollGen_ 两档轮转（程序化改滚动位置的唯一手段，见
-                // kLiveScrollIdGen0 的框架缺口说明）。
-                components::scrollView(ui, liveScrollId())
+                // id 固定为 "md.live.scroll" 不再轮转：落地改走上游
+                // Ui::setScrollOffset 直写实例 offset（spec 2026-09-28 §2.2）。
+                components::scrollView(ui, "md.live.scroll")
                     .position(g.x, g.y)
                     .size(g.w, g.h)
                     .gap(t.sizes.spacing)
@@ -1914,12 +1898,21 @@ private:
                                 std::to_string(previewTextHash_) + "." +
                                 std::to_string(liveActiveBlockStableId()))
                     .onChange([this](float v) {
+                        // 程序化来源（liveScrollFollowMaybe 落地的 echo）：
+                        // 只记账、不关跟随 —— 否则拉一次就把刚恢复的跟随关掉；
+                        // 标志同帧消费（distinguish 于用户滚轮，spec §2.3）。
+                        if (liveProgrammaticScroll_) {
+                            liveProgrammaticScroll_ = false;
+                            liveScrollY_ = v;
+                            return;
+                        }
                         // 用户滚动（滚轮 / 惯性 / 拖滚动条）：框架 setScrollOffset
                         // → 本回调（runtime_update.h:485 是唯一调用点，故首帧
                         // 赋值与钳位都不会走到这里）。记账 + 关跟随（spec §3.3）：
                         // 此后不把视口拉回来，直到下一次光标事件。
                         liveScrollY_ = v;
                         liveFollow_ = false;
+                        LOG_DEBUG("[live] follow: wheel disarmed");
                     })
                     .content([&](eui::Ui& inner, float contentWidth, float viewportHeight) {
                         (void)viewportHeight;
@@ -1937,10 +1930,33 @@ private:
                 // M6：按框架声明值回读钳位 —— scrollView 组件把 offset 钳进
                 // [0, maxOffset] 后才声明，故回读即"框架接受的那一版"：内容变矮 /
                 // 目标超出底部时记账值随之收敛（失配会让越界判据长期偏大）。
-                // maxOffset 也在同一处刷新（每次构建后即有本帧真值）。
-                if (const auto* svEl = ui.find(liveScrollId())) {
+                // maxOffset 也在同一处刷新（每次构建后即有本帧真值，实时态滚动
+                // 定位 id 固定 "md.live.scroll"）。
+                if (const auto* svEl = ui.find("md.live.scroll")) {
                     liveMaxOffset_ = svEl->scrollMaxOffset;
                     liveScrollY_ = svEl->scrollOffset;
+                }
+                // M6：滚动跟随判定 + 落地 —— 调用点在 scrollView build + 回读
+                // 钳位【之后】（spec 2026-09-28 §2.2/§2.3）：判定用的 liveMaxOffset_
+                // 与送达 Runtime::setScrollOffset 内部钳位的 instance.maxOffset
+                // 同帧 → 只能 no-op（不置标志）或必 apply（onChange 同帧消费标志），
+                // liveProgrammaticScroll_ 不会跨帧残留。评估守卫：组字在飞不评
+                //（R3：预编辑期间不换块/不换文本，滚动同理不动）；liveCaretPending_
+                // 帧也不评估（活动 input 的光标还是上一块局部坐标，见 setLiveCursor）；
+                // 几何表滞后一帧（本帧的 drawBlockFlow 才重建）：活动块【顶】
+                // 不受本块自身编辑影响，跨块编辑的错位下一帧自纠。
+                if (liveFollow_ && !liveCaretPending_ &&
+                    liveActiveBlock_ < blockModel_.blocks().size()) {
+                    const auto& lstFollow = ui.state<
+                        components::input_detail::InputModel::InputState>(
+                        kLiveInputId);
+                    if (!mdLiveCompositionFrozen(lstFollow.compositionText)) {
+                        const MdBlock& ab =
+                            blockModel_.blocks()[liveActiveBlock_];
+                        liveScrollFollowMaybe(ui, ab, liveBlockText(ab),
+                                              lstFollow.cursor,
+                                              liveContentWidth_, g.h);
+                    }
                 }
                 // 本帧的「写光标」一次性请求已由 drawLiveInputBlock 消费（切块帧
                 // 走换文本路径，同块点击走 liveCaretPending_）—— 帧末统一清位，
@@ -2778,10 +2794,12 @@ private:
         liveScrollY_ = 0.0f;
         // M6：滚动跟随状态位群一律回初始值 —— 容器在本帧重建（上一态没有这个
         // scrollView，实例必是全新的、offset 取本帧声明值 0），故记账值归零与
-        // 框架同拍；代 id 回到主档（保证"进实时态用稳定 id"这条对测试与后续
-        // 里程碑可见的约定）；跟随开关关（本帧光标事件会立刻打开它）。
+        // 框架同拍；id 固定 "md.live.scroll"（进实时态用稳定 id 这条对测试与
+        // 后续里程碑可见的约定）；跟随开关关（本帧光标事件会立刻打开它）；
+        // 程序化标志复位（spec 2026-09-28 §2.3：enterLiveState 是状态位群单一
+        // 复位点，与 liveFollow_ 同批归零）。
         liveFollow_ = false;
-        liveScrollGen_ = 0;
+        liveProgrammaticScroll_ = false;
         liveMaxOffset_ = 0.0f;   // 上一会话的 maxOffset 不属于新文档
         liveCursorSeen_ = -1;    // -1 ≠ 任何真实光标 → 首帧判为一次光标事件
         liveContentWidth_ = 0.0f;
@@ -3903,8 +3921,9 @@ private:
     // ---- Phase 3 M6：滚动锚定与光标跟随（spec §3.3 / D-B「越界才拉」）----
     bool liveFollow_ = false;          // 光标跟随开关：滚轮 → false（不干预用户），
                                        // 光标事件（打字/方向键/点击定位）→ true
-    int liveScrollGen_ = 0;            // 滚动容器代（0/1 轮转 → kLiveScrollIdGen*）：
-                                       // 唯一的「程序化改滚动位置」手段，见该常量注释
+    bool liveProgrammaticScroll_ = false;  // 程序化滚动来源标记（跟随落地前置位；
+                                       // onChange 凭它区分来源，不关跟随；同帧
+                                       // echo 消费，drawLiveColumn 开头清零兜底）
     float liveMaxOffset_ = 0.0f;       // 上帧 scrollView 声明的 maxOffset（内容高 − 视口高）
     int liveCursorSeen_ = -1;          // 上帧活动 input 的光标（变化 = 一次光标事件）
     float liveContentWidth_ = 0.0f;    // 上帧内容宽（跟随判据的排版宽，滞后一帧；

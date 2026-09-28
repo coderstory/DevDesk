@@ -4821,16 +4821,16 @@ REGISTER_TEST(md_module_live_boundary_undo,
 //   · 用户滚轮关跟随（spec §3.3）：滚轮后即便 caret 深深越界也不把视口拽回，
 //     直到下一次光标事件（打字 / 方向键 / 点击）才恢复跟随 —— 这是「越界才拉」
 //     与「用户优先」的交界，对应手工点验 ④。
-// 观测口径（诚实声明）：无头没有真实 Runtime 渲染 → 看不到内容位移。可观测的是
-//   scrollView 的【声明值】（scrollOffset / scrollMaxOffset = 模块记账经框架钳位
-//   后的那一版）与滚动容器代 id（框架缺口下"程序化拉一次"的唯一手段，见模块
-//   kLiveScrollIdGen0 注释）。真实滚动位移 / 观感 / 帧率由手工点验 ③④ 补（spec §8.3）。
+// 观测口径（诚实声明）：无头跑的是真实 Runtime（MdLiveEnv::frame 走
+//   core::dsl::Runtime::compose）→ 程序化落地（模块调 Ui::setScrollOffset、帧末
+//   消费直写实例 offset）真实生效，但看不到内容位移。可观测的是 scrollView 的
+//   【声明值】（scrollOffset / scrollMaxOffset = 模块记账经框架钳位后的那一版）：
+//   落地当帧的声明值还是拉前的旧值、下一帧才反映新 offset → 断言偏移前多走一帧。
+//   真实滚动位移 / 观感 / 帧率由手工点验 ③④ 补（spec §8.3）。
 namespace {
 
-// 实时态 scrollView id（代 0 = 主档）
+// 实时态 scrollView id（固定，不再轮转 —— M6 重构去 id 轮转 hack 后全流程唯一 id）
 constexpr const char* kLiveScrollId0 = "md.live.scroll";
-// 代 1（程序化拉一次时轮转；模块注释里有框架缺口说明）
-constexpr const char* kLiveScrollId1 = "md.live.scroll.g1";
 
 // 活动 input 的光标 y（与模块同一口径：块顶 + input inset 10 + 显示行 × 行高）。
 // 坐标系与 blockTopY 入参一致 —— 调用侧传【绝对页面坐标】的块顶（元素的 frame.y
@@ -4852,8 +4852,8 @@ float liveCaretDocY(eui::Ui& ui, const std::string& blockText, float blockTopY) 
 } // namespace
 
 // M6 验收（spec §8.3 手工 ③ 的无头对应）：把 caret 落到视口下方的块 —— 越出下边界
-// → 下一帧拉一次到 caret − 0.4H（容器换代 id 才让框架采纳，见模块注释）；随后在
-// 安全带内打字不再动滚动（「一次性，不逐帧强制」）。
+// → 下一帧拉一次到 caret − 0.4H（落地走 Ui::setScrollOffset 直写实例 offset，id
+// 固定不轮转，见模块注释）；随后在安全带内打字不再动滚动（「一次性，不逐帧强制」）。
 REGISTER_TEST(md_module_live_scroll_follow_pull,
               "markdown_module: 实时态光标跟随 越界才拉一次（M6，headless）", {
     const std::string doc = tallNoteDoc("F", 40);
@@ -4880,6 +4880,8 @@ REGISTER_TEST(md_module_live_scroll_follow_pull,
     DOCTEST_REQUIRE(sv0 != nullptr);
     DOCTEST_REQUIRE(sv0->scrollMaxOffset > 200.0f);   // 高文档前提：可滚
     DOCTEST_CHECK_EQ(sv0->scrollOffset, 0.0f);        // 进态归零
+    // id 恒定判据：跨帧断言 scrollStateId 不变 = 同一滚动实例（不再轮转）
+    const std::string svStateId = sv0->scrollStateId;
     const float viewH = sv0->frame.height;
 
     // 点一个在视口下界之外的块（内容坐标 y > 0.75H）：caret 越出下边界
@@ -4899,9 +4901,8 @@ REGISTER_TEST(md_module_live_scroll_follow_pull,
     // 点块的第 2 行（块首行是块间空行）：落点在视口外 → 下一帧拉一次
     DOCTEST_REQUIRE(clickLiveBlock(*e.ui, deepSid, 0.75f * deepWrap->frame.height));
     frame();   // 定位帧：锚 + 换文本（本帧不评估，见 setLiveCursor 注释）
-    // 定位帧不动滚动、不换代（评估帧才动作）
+    // 定位帧不动滚动（评估帧才动作）；id 固定
     DOCTEST_CHECK(e.ui->find(kLiveScrollId0) != nullptr);
-    DOCTEST_CHECK(e.ui->find(kLiveScrollId1) == nullptr);
     DOCTEST_CHECK_EQ(e.ui->find(kLiveScrollId0)->scrollOffset, 0.0f);
     // 活动块顶（几何表 blockTopY 的口径）：定位帧后重读 —— 定位前活动块是首块，
     // 它的包裹高是 input 贴合高（≠ 几何表 H_k），其下各块的列内累计会随之位移
@@ -4912,11 +4913,15 @@ REGISTER_TEST(md_module_live_scroll_follow_pull,
                                       actWrap->frame.y) -
                          contentOrigin;   // → 内容坐标
 
-    frame();   // 跟随评估帧：越界 → 拉一次
-    // ① 容器换代 id（框架缺口下"程序化改滚动位置"的唯一手段，见模块注释）
-    DOCTEST_CHECK(e.ui->find(kLiveScrollId0) == nullptr);
-    const auto* sv1 = e.ui->find(kLiveScrollId1);
+    frame();   // 跟随评估帧：越界 → 落地（Ui::setScrollOffset，帧末生效）
+    // ① id 恒定（不再换代轮转）：落地当帧声明值仍是拉前旧值
+    const auto* svEval = e.ui->find(kLiveScrollId0);
+    DOCTEST_REQUIRE(svEval != nullptr);
+    DOCTEST_CHECK_EQ(svEval->scrollStateId, svStateId);
+    frame();   // +1 帧：声明值才反映落地结果
+    const auto* sv1 = e.ui->find(kLiveScrollId0);
     DOCTEST_REQUIRE(sv1 != nullptr);
+    DOCTEST_CHECK_EQ(sv1->scrollStateId, svStateId);
     // ② 落点 = caret − 0.4H（目标未被 maxOffset 钳时的精确值）
     const float expected = caretY - module::markdown::kMdLiveFollowAnchorRatio * viewH;
     DOCTEST_CHECK_MESSAGE(std::fabs(sv1->scrollOffset - expected) <= 2.0f,
@@ -4929,16 +4934,16 @@ REGISTER_TEST(md_module_live_scroll_follow_pull,
             rel <= module::markdown::kMdLiveFollowBottomRatio * viewH,
         "拉后 caret 视口相对位置 " + std::to_string(rel) + " 不在安全带内");
 
-    // ④ 安全带内不干预：再走一帧（caret 没动）→ 既不换代也不改偏移
+    // ④ 安全带内不干预：再走一帧（caret 没动）→ 不改偏移
     const float pulledOffset = sv1->scrollOffset;   // 元素每帧重建：存值不存指针
     frame();
-    DOCTEST_CHECK(e.ui->find(kLiveScrollId1) != nullptr);
-    DOCTEST_CHECK_EQ(e.ui->find(kLiveScrollId1)->scrollOffset, pulledOffset);
+    DOCTEST_CHECK(e.ui->find(kLiveScrollId0) != nullptr);
+    DOCTEST_CHECK_EQ(e.ui->find(kLiveScrollId0)->scrollOffset, pulledOffset);
     // ⑤ 打字也在安全带内 → 不拉（「一次性，不逐帧强制」）
     DOCTEST_REQUIRE(typeIntoLiveInput(*e.ui, "X"));
     frame();
-    DOCTEST_CHECK(e.ui->find(kLiveScrollId1) != nullptr);
-    DOCTEST_CHECK_EQ(e.ui->find(kLiveScrollId1)->scrollOffset, pulledOffset);
+    DOCTEST_CHECK(e.ui->find(kLiveScrollId0) != nullptr);
+    DOCTEST_CHECK_EQ(e.ui->find(kLiveScrollId0)->scrollOffset, pulledOffset);
     DOCTEST_CHECK(e.ui->state<MdInputState>("md.live.input").text.find('X') !=
                   std::string::npos);
 
@@ -5002,18 +5007,21 @@ REGISTER_TEST(md_module_live_scroll_follow_wheel_disarms,
     DOCTEST_REQUIRE(deepWrap != nullptr);
     DOCTEST_REQUIRE(clickLiveBlock(*e.ui, sids0[deepOrdinal],
                                    0.75f * deepWrap->frame.height));
-    frame();
-    frame();
-    const auto* svG1 = e.ui->find(kLiveScrollId1);
-    DOCTEST_REQUIRE(svG1 != nullptr);
-    DOCTEST_REQUIRE(svG1->scrollOffset > 0.0f);   // 跟随拉过一次
+    frame();   // 定位帧（不评估）
+    frame();   // 跟随评估帧：越界 → 落地（帧末生效，声明值仍是旧值）
+    frame();   // +1 帧：声明值反映落地
+    const auto* svPull = e.ui->find(kLiveScrollId0);
+    DOCTEST_REQUIRE(svPull != nullptr);
+    DOCTEST_REQUIRE(svPull->scrollOffset > 0.0f);   // 跟随拉过一次
 
     // ① 用户滚轮回到顶部：关跟随（spec §3.3「用户滚轮 → onChange 写回并置 false」）
-    DOCTEST_REQUIRE(svG1->onScrollOffsetChanged != nullptr);
-    svG1->onScrollOffsetChanged(0.0f);
+    // 程序化标志已被落地当帧的 echo 消费（见模块 liveProgrammaticScroll_ 注释），
+    // 此刻的 onChange 与用户滚轮无差别 —— 走关跟随分支
+    DOCTEST_REQUIRE(svPull->onScrollOffsetChanged != nullptr);
+    svPull->onScrollOffsetChanged(0.0f);
     frame();
-    DOCTEST_REQUIRE(e.ui->find(kLiveScrollId1) != nullptr);
-    DOCTEST_CHECK_EQ(e.ui->find(kLiveScrollId1)->scrollOffset, 0.0f);
+    DOCTEST_REQUIRE(e.ui->find(kLiveScrollId0) != nullptr);
+    DOCTEST_CHECK_EQ(e.ui->find(kLiveScrollId0)->scrollOffset, 0.0f);
 
     // ② caret 此刻远在视口下方（越界），但跟随已关 → 连续多帧都不拽回
     const float caretY = caretContentY(deepOrdinal);
@@ -5021,14 +5029,15 @@ REGISTER_TEST(md_module_live_scroll_follow_wheel_disarms,
                                                 std::to_string(caretY) + "）");
     for (int i = 0; i < 3; ++i) {
         frame();
-        DOCTEST_REQUIRE(e.ui->find(kLiveScrollId1) != nullptr);
-        DOCTEST_CHECK_EQ(e.ui->find(kLiveScrollId1)->scrollOffset, 0.0f);
+        DOCTEST_REQUIRE(e.ui->find(kLiveScrollId0) != nullptr);
+        DOCTEST_CHECK_EQ(e.ui->find(kLiveScrollId0)->scrollOffset, 0.0f);
     }
 
     // ③ 打字 = 光标事件 → 恢复跟随 → 越界才拉：一次回到 caret − 0.4H
     DOCTEST_REQUIRE(typeIntoLiveInput(*e.ui, "X"));
-    frame();
-    const auto* svBack = e.ui->find(kLiveScrollId0);   // 又换代（拉 = 换容器 id）
+    frame();   // 光标事件帧：恢复跟随 + 评估落地（id 固定，声明值仍是 0）
+    frame();   // +1 帧：声明值反映落地
+    const auto* svBack = e.ui->find(kLiveScrollId0);
     DOCTEST_REQUIRE(svBack != nullptr);
     const float caretY2 = caretContentY(deepOrdinal);
     DOCTEST_REQUIRE(caretY2 > 0.0f);
@@ -5125,8 +5134,8 @@ REGISTER_TEST(md_module_live_scroll_follow_wrapped_caret,
     const float caretY = blockTop + 10.0f + static_cast<float>(caretLine) *
                                              fontSize * module::markdown::kInputLineHeightFactor;
 
-    frame();   // 跟随评估帧
-    const auto* sv1 = e.ui->find(kLiveScrollId1);
+    frame();   // 跟随评估帧（id 固定：落地帧末生效，本帧声明值已反映）
+    const auto* sv1 = e.ui->find(kLiveScrollId0);
     DOCTEST_REQUIRE(sv1 != nullptr);
     const float expected =
         caretY - module::markdown::kMdLiveFollowAnchorRatio * viewH;
@@ -5149,6 +5158,81 @@ REGISTER_TEST(md_module_live_scroll_follow_wrapped_caret,
     const float rel = caretY - sv1->scrollOffset;
     DOCTEST_CHECK(rel >= module::markdown::kMdLiveFollowTopRatio * viewH &&
                   rel <= module::markdown::kMdLiveFollowBottomRatio * viewH);
+
+    mod->onStop();
+    return true;
+})
+
+// M6 重构（spec 2026-09-28 §4.2 可达自动化）：去 id 轮转 hack 后滚动容器 id
+// 跨帧恒定。连续 compose 帧 find("md.live.scroll") 都命中，且 scrollStateId 不变
+//（元素每帧重建 → scrollStateId 稳定 = 同一滚动 state 实例的判据）；一次跟随拉
+// 之后 id 依然不变（不再有 .g1 换代实例）；离开实时态后元素不复存在（存在性
+// 回归，照 :469-485 模式）。
+REGISTER_TEST(md_module_live_scroll_id_stable,
+              "markdown_module: 实时态滚动容器 id 跨帧恒定（M6，headless）", {
+    const std::string doc = tallNoteDoc("H", 40);
+    test_support::MdHeadlessEnv env(kDirPrefix, "liveidstable", kDbName);
+    DOCTEST_REQUIRE(env.db != nullptr);
+    DOCTEST_REQUIRE(writeTextFile(env.dir / "stable.md", doc));
+
+    std::unique_ptr<::core::Module> mod(create_markdown_module());
+    mod->onStart();
+    eui::Screen screen;
+    screen.width = 1600.0f;
+    screen.height = 1000.0f;
+    MdLiveEnv e;
+    auto frame = [&](void) { e.frame([&](eui::Ui& u) { mod->compose(u, screen); }); };
+
+    frame();
+    DOCTEST_REQUIRE(openFirstNote(*e.ui));
+    frame();
+    DOCTEST_REQUIRE(e.ui->find(kEditorInputId) != nullptr);
+    DOCTEST_REQUIRE(cycleMode(mod.get()));   // → 实时
+    frame();
+
+    // 进态首帧：id 即固定（不再是"代 0"，不存在 .g1 换代）
+    const auto* sv0 = e.ui->find(kLiveScrollId0);
+    DOCTEST_REQUIRE(sv0 != nullptr);
+    DOCTEST_REQUIRE(sv0->scrollMaxOffset > 200.0f);
+    const std::string svStateId = sv0->scrollStateId;
+    DOCTEST_CHECK(e.ui->find("md.live.scroll.g1") == nullptr);
+
+    // 连续 compose 帧：id 恒定（同一 scrollStateId、元素存在）
+    for (int i = 0; i < 3; ++i) {
+        frame();
+        const auto* sv = e.ui->find(kLiveScrollId0);
+        DOCTEST_REQUIRE(sv != nullptr);
+        DOCTEST_CHECK_EQ(sv->scrollStateId, svStateId);
+    }
+
+    // 一次跟随拉之后 id 依然不变（程序化改滚动位置不再换代）：
+    // 点视口下方块 → 定位 / 评估 / 落点帧 → id 恒为固定值
+    const std::vector<int> sids = liveBlockSidsByY(*e.ui);
+    DOCTEST_REQUIRE(sids.size() >= 20);
+    const int deepSid = sids[sids.size() * 2 / 3];
+    const auto* deepWrap = e.ui->find("md.live.blk." + std::to_string(deepSid));
+    DOCTEST_REQUIRE(deepWrap != nullptr);
+    DOCTEST_REQUIRE_MESSAGE(
+        deepWrap->frame.y - sv0->frame.y > sv0->frame.height * 0.75f,
+        "被测块须在视口安全带下方（实测 " +
+            std::to_string(deepWrap->frame.y - sv0->frame.y) + "）");
+    DOCTEST_REQUIRE(clickLiveBlock(*e.ui, deepSid, 0.75f * deepWrap->frame.height));
+    frame();   // 定位帧
+    frame();   // 跟随评估帧：越界 → 落地（帧末生效）
+    frame();   // +1 帧：声明值反映落地
+    const auto* svPulled = e.ui->find(kLiveScrollId0);
+    DOCTEST_REQUIRE(svPulled != nullptr);
+    DOCTEST_CHECK_EQ(svPulled->scrollStateId, svStateId);
+    DOCTEST_REQUIRE(svPulled->scrollOffset > 0.0f);
+    DOCTEST_CHECK(e.ui->find("md.live.scroll.g1") == nullptr);
+    // 实时态元素存在性回归（id 固定后既有的这一批元素照常渲染）
+    DOCTEST_REQUIRE(e.ui->find("md.live.input") != nullptr);
+    DOCTEST_REQUIRE(e.ui->find("md.live.blocks") != nullptr);
+
+    // 离开实时态：滚动容器不复存在（存在性回归，照 :469-485 模式）
+    DOCTEST_REQUIRE(cycleMode(mod.get()));   // → Split
+    frame();
+    DOCTEST_CHECK(e.ui->find(kLiveScrollId0) == nullptr);
 
     mod->onStop();
     return true;
