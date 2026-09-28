@@ -20,6 +20,7 @@
 #include <string>
 #include <vector>
 
+#include "call_log_store.h"
 #include "core/proxy_port.h"
 #include "core/sqlite_db.h"
 #include "core/result.h"
@@ -227,42 +228,14 @@ public:
 
     // ---- 调用日志 ----
 
-    struct CallLogEntry {
-        int64_t id = 0;
-        int64_t profileId = 0;
-        std::string method;
-        std::string path;
-        int statusCode = 0;
-        int64_t latencyMs = 0;
-        int64_t requestBytes = 0;
-        int64_t responseBytes = 0;
-        std::string error;
-        std::time_t startedAt = 0;
-    };
+    // R10-A1：数据模型与读写已抽至 CallLogStore（call_log_store.h，职责边界
+    // 见 R10 spec §2.2）；此处以别名保持既有公开类型名不变，下列方法体转发到
+    // callLogStore_（门面 43 签名零变化，纯内部重构）
+    using CallLogEntry = CallLogStore::CallLogEntry;
+    using CallLogQuery = CallLogStore::CallLogQuery;
 
     core::Result<void> logCall(const CallLogEntry& entry);
     core::Result<std::vector<CallLogEntry>> recentCalls(int limit = 20);
-
-    // 日志面板查询条件（产品审计 2026-09-23 [11]）：总设计 §8.3 第 6 条承诺
-    // 「完整日志面板（支持过滤、搜索）」，此前只有 recentCalls(20) 静态列表。
-    // search 按 path/method 模糊匹配（LIKE，% 与 _ 转义为字面量，ASCII 大小写
-    // 不敏感）；statusClass 按状态码分桶（status_code 列可空，NULL 按 0 归
-    // 「错误」桶）；limit/offset 翻页。排序与 recentCalls 一致
-    // （started_at DESC, id DESC）。
-    struct CallLogQuery {
-        // statusClass 取值：
-        static constexpr int kStatusAll = 0;  // 全部
-        static constexpr int kStatus2xx = 2;  // 200..299
-        static constexpr int kStatus3xx = 3;  // 300..399
-        static constexpr int kStatus4xx = 4;  // 400..499
-        static constexpr int kStatus5xx = 5;  // >=500
-        static constexpr int kStatusErr = 9;  // <200（0/NULL = 超时、网络错误等无状态码）
-
-        std::string search;    // 空串 = 不做文本过滤
-        int statusClass = kStatusAll;
-        int limit = 20;        // <=0 按 20
-        int offset = 0;        // <0 按 0
-    };
 
     // 过滤 + 分页查询（日志弹窗搜索框 / 状态码下拉 / 翻页共用）
     core::Result<std::vector<CallLogEntry>> queryCalls(const CallLogQuery& q);
@@ -378,7 +351,7 @@ public:
     // Claude 页 compose 用它感知代理侧异步落库，只在版本变化时重查 recentCalls，
     // 不再每次重组合同步查库。
     uint64_t callLogVersion() const {
-        return callLogVersion_.load(std::memory_order_acquire);
+        return callLogStore_.callLogVersion();
     }
 
 public:
@@ -426,6 +399,7 @@ private:
     core::Result<void> syncCaptureActiveProfile();
 
     core::data::SqliteDb& db_;
+    CallLogStore callLogStore_;
     std::string keychainService_;
 
     // 代理 server 资源（延迟构造）
@@ -455,9 +429,6 @@ private:
     settings_sync::Paths syncPaths_;
     bool settingsTakeOverEnabled_ = true;  // 接管默认开（见 setSettingsTakeOverEnabled）
     std::vector<std::string> lastSyncWarnings_;
-
-    // 审计 perf [13]：调用日志版本号（见 callLogVersion()）
-    std::atomic<uint64_t> callLogVersion_{0};
 };
 
 // ===== 纯函数（可单测，无 IO）=====

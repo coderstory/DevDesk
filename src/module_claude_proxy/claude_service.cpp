@@ -172,6 +172,7 @@ void TwoPhaseKeyWrite::compensate() {
 ClaudeService::ClaudeService(core::data::SqliteDb& db,
                              const std::string& keychainService)
     : db_(db),
+      callLogStore_(db),
       keychainService_(keychainService.empty() ? kDefaultKeychainService
                                                : keychainService) {}
 
@@ -691,7 +692,7 @@ core::Result<void> ClaudeService::deleteProfile(int64_t id, bool* proxyStopped) 
             "清理 Keychain 失败，profile 未删除: " + kcDel.errorMessage());
     }
 
-    // 段二：删 SQLite 行（FK CASCADE 会清空 claude_call_logs）
+    // 段二：删 SQLite 行（FK CASCADE 会级联清空该 profile 的调用日志）
     auto delRow = keyTx.writeDb([&]() -> core::Result<void> {
         auto prep = db_.prepare("DELETE FROM claude_profiles WHERE id = ?");
         if (prep.isFail()) {
@@ -1277,191 +1278,24 @@ ClaudeService::testConnection(const Profile& profile) {
     return core::Result<platform::http::Response>::ok(std::move(resp).value());
 }
 
-// ---------- 调用日志 ----------
+// ---------- 调用日志（R10-A1：读写已抽至 CallLogStore，门面转发）----------
 
 core::Result<void> ClaudeService::logCall(const CallLogEntry& entry) {
-    auto prep = db_.prepare(
-        "INSERT INTO claude_call_logs "
-        "(profile_id, method, path, status_code, latency_ms, "
-        " request_bytes, response_bytes, error, started_at) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)");
-    if (prep.isFail()) {
-        return core::Result<void>::fail(prep.errorCode(), prep.errorMessage());
-    }
-    auto& stmt = prep.value();
-    stmt.bind(1, entry.profileId);
-    stmt.bind(2, entry.method);
-    stmt.bind(3, entry.path);
-    stmt.bind(4, static_cast<int64_t>(entry.statusCode));
-    stmt.bind(5, entry.latencyMs);
-    stmt.bind(6, entry.requestBytes);
-    stmt.bind(7, entry.responseBytes);
-    if (entry.error.empty()) {
-        stmt.bind(8, nullptr);
-    } else {
-        stmt.bind(8, entry.error);
-    }
-    stmt.bind(9, static_cast<int64_t>(entry.startedAt == 0 ? nowUnix() : entry.startedAt));
-
-    auto stepR = stmt.step();
-    if (stepR.isFail()) {
-        return core::Result<void>::fail(stepR.errorCode(), stepR.errorMessage());
-    }
-    // 审计 perf [13]：落库成功即推进日志版本号，Claude 页 compose 据此
-    // 只在有新调用时重查 recentCalls（proxy worker 线程写，UI 线程读）
-    callLogVersion_.fetch_add(1, std::memory_order_release);
-    return core::Result<void>::ok();
+    return callLogStore_.logCall(entry);
 }
 
 core::Result<std::vector<ClaudeService::CallLogEntry>>
 ClaudeService::recentCalls(int limit) {
-    CallLogQuery q;
-    q.limit = limit;
-    return queryCalls(q);
+    return callLogStore_.recentCalls(limit);
 }
-
-namespace {
-
-// LIKE 模式转义（审计 [11]）：用户输入的 % / _ / \ 按字面量匹配
-// （SQL 侧统一 ESCAPE '\'，SQLite 的 LIKE 对 ASCII 默认大小写不敏感）
-std::string escapeLikePattern(const std::string& term) {
-    std::string out;
-    out.reserve(term.size() + 8);
-    for (const char c : term) {
-        if (c == '\\' || c == '%' || c == '_') out.push_back('\\');
-        out.push_back(c);
-    }
-    return out;
-}
-
-// queryCalls / countCalls 共用 WHERE 片段（无命中返回空串 → 调用方省略 WHERE）。
-// status_code 列可 NULL（早期直插行），COALESCE 归 0 → 落「错误」桶
-std::string buildCallLogWhere(const ClaudeService::CallLogQuery& q) {
-    std::string where;
-    if (!q.search.empty()) {
-        where = "(path LIKE ? ESCAPE '\\' OR method LIKE ? ESCAPE '\\')";
-    }
-    std::string status;
-    switch (q.statusClass) {
-        case ClaudeService::CallLogQuery::kStatus2xx:
-            status = "COALESCE(status_code, 0) BETWEEN 200 AND 299";
-            break;
-        case ClaudeService::CallLogQuery::kStatus3xx:
-            status = "COALESCE(status_code, 0) BETWEEN 300 AND 399";
-            break;
-        case ClaudeService::CallLogQuery::kStatus4xx:
-            status = "COALESCE(status_code, 0) BETWEEN 400 AND 499";
-            break;
-        case ClaudeService::CallLogQuery::kStatus5xx:
-            status = "COALESCE(status_code, 0) >= 500";
-            break;
-        case ClaudeService::CallLogQuery::kStatusErr:
-            status = "COALESCE(status_code, 0) < 200";
-            break;
-        default:
-            break;  // kStatusAll：不加状态条件
-    }
-    if (!status.empty()) {
-        where = where.empty() ? status : (where + " AND " + status);
-    }
-    return where;
-}
-
-ClaudeService::CallLogEntry callLogFromRow(const core::data::SqlRow& row) {
-    ClaudeService::CallLogEntry e;
-    auto idV = row.getInt64("id");
-    auto pidV = row.getInt64("profile_id");
-    auto mV = row.getString("method");
-    auto pV = row.getString("path");
-    auto sV = row.getInt64("status_code");
-    auto lV = row.getInt64("latency_ms");
-    auto rbV = row.getInt64("request_bytes");
-    auto rxbV = row.getInt64("response_bytes");
-    auto errV = row.getString("error");
-    auto saV = row.getInt64("started_at");
-    if (idV.isOk()) e.id = idV.value();
-    if (pidV.isOk()) e.profileId = pidV.value();
-    if (mV.isOk()) e.method = mV.value();
-    if (pV.isOk()) e.path = pV.value();
-    if (sV.isOk()) e.statusCode = static_cast<int>(sV.value());
-    if (lV.isOk()) e.latencyMs = lV.value();
-    if (rbV.isOk()) e.requestBytes = rbV.value();
-    if (rxbV.isOk()) e.responseBytes = rxbV.value();
-    if (errV.isOk()) e.error = errV.value();
-    if (saV.isOk()) e.startedAt = static_cast<std::time_t>(saV.value());
-    return e;
-}
-
-} // namespace
 
 core::Result<std::vector<ClaudeService::CallLogEntry>>
 ClaudeService::queryCalls(const CallLogQuery& q) {
-    const int limit = q.limit > 0 ? q.limit : 20;
-    const int offset = q.offset > 0 ? q.offset : 0;
-
-    std::string sql =
-        "SELECT id, profile_id, method, path, status_code, latency_ms, "
-        "request_bytes, response_bytes, error, started_at "
-        "FROM claude_call_logs";
-    const std::string where = buildCallLogWhere(q);
-    if (!where.empty()) sql += " WHERE " + where;
-    sql += " ORDER BY started_at DESC, id DESC LIMIT ? OFFSET ?";
-
-    auto prep = db_.prepare(sql);
-    if (prep.isFail()) {
-        return core::Result<std::vector<CallLogEntry>>::fail(
-            prep.errorCode(), prep.errorMessage());
-    }
-    auto& stmt = prep.value();
-    int bindIdx = 1;
-    if (!q.search.empty()) {
-        const std::string like = "%" + escapeLikePattern(q.search) + "%";
-        stmt.bind(bindIdx++, like);
-        stmt.bind(bindIdx++, like);
-    }
-    stmt.bind(bindIdx++, static_cast<int64_t>(limit));
-    stmt.bind(bindIdx++, static_cast<int64_t>(offset));
-
-    auto rows = stmt.fetchAll();
-    if (rows.isFail()) {
-        return core::Result<std::vector<CallLogEntry>>::fail(
-            rows.errorCode(), rows.errorMessage());
-    }
-
-    std::vector<CallLogEntry> out;
-    out.reserve(rows.value().size());
-    for (const auto& row : rows.value()) {
-        out.push_back(callLogFromRow(row));
-    }
-    return core::Result<std::vector<CallLogEntry>>::ok(std::move(out));
+    return callLogStore_.queryCalls(q);
 }
 
 core::Result<int> ClaudeService::countCalls(const CallLogQuery& q) {
-    std::string sql = "SELECT COUNT(*) AS n FROM claude_call_logs";
-    const std::string where = buildCallLogWhere(q);
-    if (!where.empty()) sql += " WHERE " + where;
-
-    auto prep = db_.prepare(sql);
-    if (prep.isFail()) {
-        return core::Result<int>::fail(prep.errorCode(), prep.errorMessage());
-    }
-    auto& stmt = prep.value();
-    if (!q.search.empty()) {
-        const std::string like = "%" + escapeLikePattern(q.search) + "%";
-        stmt.bind(1, like);
-        stmt.bind(2, like);
-    }
-
-    auto rows = stmt.fetchAll();
-    if (rows.isFail()) {
-        return core::Result<int>::fail(rows.errorCode(), rows.errorMessage());
-    }
-    if (rows.value().empty()) return core::Result<int>::ok(0);
-    auto nV = rows.value()[0].getInt64("n");
-    if (nV.isFail()) {
-        return core::Result<int>::fail(nV.errorCode(), nV.errorMessage());
-    }
-    return core::Result<int>::ok(static_cast<int>(nV.value()));
+    return callLogStore_.countCalls(q);
 }
 
 // ---------- 最近代理请求事件（气泡③，审计 [18]）----------

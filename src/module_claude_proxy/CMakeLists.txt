@@ -1,4 +1,5 @@
 add_library(devdesk_module_claude_proxy STATIC
+    call_log_store.cpp
     claude_module.cpp
     claude_ui_list.cpp
     claude_ui_detail.cpp
