@@ -495,7 +495,9 @@ void drawCard(eui::Ui& ui, const std::string& id, float y, float width,
             cb(task, colIndex, cardIndex, bounds);
         })
         .onDrag([cb = v.act.cardDragged](const core::dsl::DragEvent& ev) {
-            cb(ev.x, ev.y);
+            // totalX/totalY（按下点起累计位移）随行转交：跟手副本锚点要吃它，
+            // 换算在模块侧（ui::dragGhostAnchor），本单元不做像素→compose
+            cb(ev.x, ev.y, ev.totalX, ev.totalY);
         })
         .onRelease([cb = v.act.cardReleased](
                        const eui::PointerEvent& ev, const eui::Rect&) {
@@ -582,6 +584,78 @@ void drawCard(eui::Ui& ui, const std::string& id, float y, float width,
             .build();
     }
 
+        })
+        .build();
+}
+
+// ---------- 拖拽跟手副本 ----------
+
+// 副本整体透明度：**不是为了好看，是为了坑二**——插入位占位条（目标列内的
+// .dropbar，0.55 alpha 主色条）与跟手副本在几何上必然重叠（条的位置由指针
+// 行号决定，副本跟着指针）。副本是页面顶层 root（见下），列内元素越不过它，
+// 全不透明会把条整块吃掉。0.85 让条从卡片底下透出可辨的暖色带，同时保住
+// 卡片"实体被拎起来"的观感。不另画第二根条（会与列内条重复指示）。
+constexpr float kDragGhostAlpha = 0.85f;
+// 副本 z：必须 > 看板子树内最大 z（列滚动条的 zIndex+1，见 components/
+// scrollview.h:121），< 弹窗栈底（PopupStack::kBaseZ = 1000）——否则要么被
+// 列盖住（跨列拖的主用例直接失效），要么压住弹窗。取中间值 100。
+constexpr int kDragGhostZIndex = 100;
+
+// 为什么是"页面级副本"而不是给列内卡片加 translate（两种方案都验证过）：
+//   · 列内容在 components::scrollView 的根 stack 里，该 stack 无条件 .clip()
+//     （components/scrollview.h:88）；clip 在渲染侧对整个子树做 scissor 求交
+//     （core/runtime/runtime_render.h:223-230）→ 列内任何 translate 都被裁到
+//     列内容框，跨列拖时卡片在列边界被切掉，而跨列正是主用例；
+//   · 副本画在页面顶层 root（Doc 序在 todo.root 之后 + 显式 zIndex），一步
+//     解决"被目标列卡片盖住"（坑一）与"被源列 0.6 调暗吃掉"（坑四）——副本
+//     不在源列 .cards 容器内，天然全亮。
+// 只画底 + 标题（不复制 drawCard 的 chips）：副本要的是"一眼认出是哪张卡"，
+// 复制 chips 会把 drawCard 的窄列自适应布局逻辑养成双份；且副本不可交互
+// （不挂任何事件），避免拖拽中多一个命中目标。
+void drawDragGhost(eui::Ui& ui, const core::theme::Tokens& t,
+                   const BoardView& v, const BoardPlate& plate) {
+    if (!v.dragGhostOn) return;
+    const float w = plate.cardW;  // 本帧 drawCard 写入的 compose 卡宽
+    if (w <= 0.0f) return;        // 无卡片几何（错误态/空板）→ 无可拖对象
+    const Task* task = findTask(v.tasks, v.dragTaskId);
+    if (task == nullptr) return;
+
+    ui.stack("todo.dragghost")
+        .position(v.dragGhostX, v.dragGhostY)
+        .size(w, kCardHeight)
+        .zIndex(kDragGhostZIndex)
+        .opacity(kDragGhostAlpha)
+        .content([&] {
+            // 骨架复用 card 组件（与真卡同一份 radius/panelShadow/token），
+            // 视觉上是"同一张卡被拎起来"而不是另一种控件
+            components::card(ui, "todo.dragghost.card")
+                .position(0.0f, 0.0f)
+                .size(w, kCardHeight)
+                .radius(t.sizes.radius)
+                .theme(core::theme::componentTokens(t))
+                .padding(0.0f)
+                .border(0.0f, t.colors.borderDefault)
+                .content([&] {
+                    // 底 + 主色描边：与真卡的"选中态"同款视觉（2px primary），
+                    // 一眼区分"这是被拎着的那张"
+                    ui.rect("todo.dragghost.bg")
+                        .position(0.0f, 0.0f)
+                        .size(w, kCardHeight)
+                        .color(t.colors.surface)
+                        .border(2.0f, t.colors.primary)
+                        .radius(t.sizes.radius)
+                        .build();
+                    ui.text("todo.dragghost.title")
+                        .position(16.0f, 14.0f)
+                        .size(w - 44.0f, 18.0f)
+                        .text(task->title)
+                        .fontSize(t.sizes.fontSizeBody - 1.0f)
+                        .lineHeight(18.0f)
+                        .fontWeight(500)
+                        .color(t.colors.textPrimary)
+                        .build();
+                })
+                .build();
         })
         .build();
 }

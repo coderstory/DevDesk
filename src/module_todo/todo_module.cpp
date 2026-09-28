@@ -666,11 +666,21 @@ public:
         // 页面底色 = 主窗口 clearColor（随主题/窗口效果档运行时跟随，
         // 磨砂 Phase B/D）——不自铺不透明底，半透/磨砂档主体才生效
 
+        // 拖拽跟手副本锚点（页面 compose 空间）：按下时卡片位置 + 指针累计
+        // 位移。换算因子复用 makeDragHitInput 的同一份（pressX/pressY 的指针
+        // 空间 + pageOriginX + app::contentScale()）——与 hitDropColumn 同源，
+        // 不另造一套尺度（U1 尺度契约）
+        const ui::DragHitInput dragHit = makeDragHitInput();
+        const ui::GhostAnchor ghostAnchor = ui::dragGhostAnchor(
+            dragHit.pressX, dragHit.pressY, drag_.totalX, drag_.totalY,
+            dragHit.pageOriginX, dragHit.dpiScale);
+
         // 看板绘制入参（R5：状态显式入参；容器是成员引用，不每帧拷贝）
         const ui::BoardView boardView{
             columns_, tasks_, searchMatchIds_, searchQuery_, columnScrolls_,
             selectedTaskId_, drag_.active, drag_.taskId, drag_.hoverColIndex,
-            drag_.hoverRow, overdueCount_, service_ != nullptr, loadError_,
+            drag_.hoverRow, drag_.active && drag_.taskId != 0, ghostAnchor.x,
+            ghostAnchor.y, overdueCount_, service_ != nullptr, loadError_,
             boardActions_};
 
         page.column("todo.root")
@@ -682,6 +692,10 @@ public:
                 ui::drawBoard(page, contentW, bodyH, t, boardView, boardPlate_);
             })
             .build();
+
+        // 拖拽跟手副本：页面级顶层 root（在 todo.root 之后 = 压在所有列之上，
+        // zIndex 压住看板子树、低于弹窗），plate 取本帧 drawBoard 刚写入的卡宽
+        ui::drawDragGhost(page, t, boardView, boardPlate_);
 
         // 弹窗（画在最上层）
         ui::drawNewTaskDialog(page, screen, t, dialogs_, dialogHost_);
@@ -746,6 +760,13 @@ private:
         // UI 整改 13：拖动中指针所在目标列行（-1 = 不预览；仅跨列 + 非搜索
         // 态置位）。只驱动占位条视觉 + 落库插入位（finishDrag 快照后复位）
         int hoverRow = -1;
+        // 跟手副本（2026-09-28）：按下点起的指针**累计**位移（指针像素空间，
+        // DragEvent::totalX/totalY——框架按下时记锚点、每次移动给累计值）。
+        // 只喂跟手副本锚点（ui::dragGhostAnchor），不参与命中换算（命中仍吃
+        // onDrag 的"当下"指针坐标）。drag_ = DragState{} 复位即随之为 0 →
+        // 松手/取消后副本偏移天然归零。
+        double totalX = 0.0;
+        double totalY = 0.0;
     };
 
     // ============ 通道绑定（构造期绑定一次） ============
@@ -811,10 +832,14 @@ private:
                 ui::columnScrollOffset(columns_, columnScrolls_,
                                        static_cast<size_t>(colIndex));
         },
-        .cardDragged = [this](double x, double y) {
+        .cardDragged = [this](double x, double y, double totalX, double totalY) {
             // 运行时只在超过 dragThreshold 后派发 → 到这里即视为拖拽激活
             if (drag_.taskId == 0) return;
             drag_.active = true;
+            // 跟手副本锚点 = 按下时卡片位置 + 这份累计位移（换算与命中同源，
+            // 见 ui::dragGhostAnchor；此处只快照原始位移，换算在 compose）
+            drag_.totalX = totalX;
+            drag_.totalY = totalY;
             const int target = hitDropColumn(x, y);
             drag_.hoverColIndex = target;
             // UI 整改 13：插入行预览——仅跨列 + 非搜索态（搜索态保持旧

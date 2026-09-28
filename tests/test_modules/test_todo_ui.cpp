@@ -1121,6 +1121,152 @@ REGISTER_TEST(todo_ui_drag_hit_scroll_same_frame,
     return true;
 })
 
+// 拖拽跟手（2026-09-28）：锚点换算纯函数。锚点 = 按下时卡片位置（指针空间）
+// + 按下点起累计位移（DragEvent::totalX/totalY，物理像素），换算因子与
+// dragDropTarget 同一份 dpiScale。
+REGISTER_TEST(todo_ui_drag_ghost_anchor_pure,
+              "todo_ui: dragGhostAnchor 跟手锚点换算（纯函数）", {
+    using module::todo::ui::dragGhostAnchor;
+    // 100% 缩放、页面原点 0：锚点 = 按下位置 + 逐像素位移
+    auto a = dragGhostAnchor(300.0f, 200.0f, 40.0, -25.0, 0.0f, 1.0f);
+    DOCTEST_CHECK_EQ(a.x, 340.0f);
+    DOCTEST_CHECK_EQ(a.y, 175.0f);
+    // 位移为 0（刚按下）→ 锚点 = 卡片原位置（副本与原卡重合）
+    auto still = dragGhostAnchor(300.0f, 200.0f, 0.0, 0.0, 0.0f, 1.0f);
+    DOCTEST_CHECK_EQ(still.x, 300.0f);
+    DOCTEST_CHECK_EQ(still.y, 200.0f);
+    // HiDPI（dpi=2）：同一物理位移翻倍、锚点翻倍 → compose 结果与 100% 逐位一致
+    // （尺度因子若漏除或只除一边，这里会立刻红）
+    auto hi = dragGhostAnchor(600.0f, 400.0f, 80.0, -50.0, 0.0f, 2.0f);
+    DOCTEST_CHECK_EQ(hi.x, 340.0f);
+    DOCTEST_CHECK_EQ(hi.y, 175.0f);
+    // 页面区原点（侧边栏展开）只在锚点上减一次，位移里不减（对消口径同
+    // dragDropTarget：指针与锚点同空间）
+    auto orig = dragGhostAnchor(608.0f, 200.0f, 40.0, 0.0, 208.0f, 1.0f);
+    DOCTEST_CHECK_EQ(orig.x, 440.0f);  // 608 - 208 + 40
+    DOCTEST_CHECK_EQ(orig.y, 200.0f);
+    // 退化 dpiScale（0）按同尺度处理（windowToCompose 同口径），不产生 inf
+    auto degen = dragGhostAnchor(300.0f, 200.0f, 40.0, 0.0, 0.0f, 0.0f);
+    DOCTEST_CHECK_EQ(degen.x, 340.0f);
+    DOCTEST_CHECK_EQ(degen.y, 200.0f);
+    return true;
+})
+
+// 拖拽跟手（2026-09-28）无头回归：跟手副本的锚点、层序（坑一/坑四）、
+// 半透（坑二）、松手归零。
+REGISTER_TEST(todo_ui_drag_follow_ghost,
+              "todo_ui: 拖拽跟手副本（页面顶层 + 半透 + 松手消失）", {
+    TestEnv env;
+    DOCTEST_REQUIRE(env.ready);
+    // 种子列 0..3 → 源列 = 4、目标列 = 5（同 todo_ui_drag_insert_position）
+    auto src = env.svc->createColumn("跟手源列");
+    auto dst = env.svc->createColumn("跟手目标列");
+    DOCTEST_REQUIRE(src.isOk() && dst.isOk());
+    auto mover = env.svc->createTask(src.value().id, "被拖的任务");
+    DOCTEST_REQUIRE(mover.isOk());
+
+    std::unique_ptr<::core::Module> mod(create_todo_module());
+    mod->onStart();
+
+    eui::Ui ui;
+    eui::Screen screen;
+    screen.width = 1600.0f;
+    screen.height = 1000.0f;
+    auto composeLayout = [&]() {
+        ui.begin("todo_drag_ghost_frame");
+        mod->compose(ui, screen);
+        ui.end();
+        ui.layout(screen);
+    };
+    auto boundsOf = [](const core::dsl::Element* e) {
+        return eui::Rect{e->frame.x, e->frame.y, e->frame.width, e->frame.height};
+    };
+
+    composeLayout();
+    DOCTEST_CHECK(ui.find("todo.dragghost") == nullptr);  // 未拖动 → 不画副本
+    const auto* card = ui.find("todo.col.4.card.0.bg");
+    DOCTEST_REQUIRE(card != nullptr);
+    const eui::Rect cardBounds = boundsOf(card);
+    eui::PointerEvent pe;
+    card->onPress(pe, cardBounds);
+
+    // 拖到目标列：累计位移 (50, -30)（框架给的是按下点起的累计值）
+    const auto* dstBg = ui.find("todo.col.5.bg");
+    DOCTEST_REQUIRE(dstBg != nullptr);
+    core::dsl::DragEvent ev;
+    ev.x = dstBg->frame.x + dstBg->frame.width / 2.0f;
+    ev.y = dstBg->frame.y + 56.0f + 4.0f;
+    ev.totalX = 50.0;
+    ev.totalY = -30.0;
+    card->onDrag(ev);
+    composeLayout();
+
+    const auto* ghost = ui.find("todo.dragghost");
+    DOCTEST_REQUIRE(ghost != nullptr);
+    // 锚点 = 按下时卡片位置 + 累计位移（无头环境 contentScale=1、页面原点=0）
+    DOCTEST_CHECK_EQ(ghost->frame.x, cardBounds.x + 50.0f);
+    DOCTEST_CHECK_EQ(ghost->frame.y, cardBounds.y - 30.0f);
+    // 尺寸 = 本帧卡宽（与真卡同宽同高，跟手时不会忽大忽小）
+    DOCTEST_CHECK_EQ(ghost->frame.width, cardBounds.width);
+    DOCTEST_CHECK_EQ(ghost->frame.height, cardBounds.height);
+    // 坑一/坑四：副本是页面**顶层 root**（不在源列 .cards 调暗容器内），
+    // 且绘制序排在 todo.root 之后 = 压在所有列之上（跨列拖不被目标列卡片盖住）
+    const auto& roots = ui.orderedRoots();
+    auto rootIndexOf = [&roots](const core::dsl::Element* target) {
+        for (size_t i = 0; i < roots.size(); ++i) {
+            if (roots[i] == target) return static_cast<int>(i);
+        }
+        return -1;
+    };
+    const auto* boardRoot = ui.find("todo.root");
+    DOCTEST_REQUIRE(boardRoot != nullptr);
+    const int ghostIdx = rootIndexOf(ghost);
+    const int boardIdx = rootIndexOf(boardRoot);
+    DOCTEST_CHECK(ghostIdx >= 0);           // 副本自身就是 root（不在列内）
+    DOCTEST_CHECK(ghostIdx > boardIdx);     // 排在 todo.root 之后 = 画在其上
+    DOCTEST_CHECK(ghost->zIndex > 0);       // z 压过看板子树（列滚动条 z+1）
+    // 坑二：半透（< 1）——目标列插入位占位条能从副本底下透出，不整块吃掉
+    DOCTEST_CHECK(ghost->opacity < 1.0f);
+    // 跟手期间源列原卡照旧半透明 + 源列调暗（门控关系未反：被调暗的是原卡
+    // 与源列，副本全亮跟手）
+    const auto* srcCards = ui.find("todo.col.4.cards");
+    DOCTEST_REQUIRE(srcCards != nullptr);
+    DOCTEST_CHECK_EQ(srcCards->opacity, 0.6f);
+    const auto* srcCard = ui.find("todo.col.4.card.0.bg");
+    DOCTEST_REQUIRE(srcCard != nullptr);
+    DOCTEST_CHECK_EQ(srcCard->opacity, 0.45f);
+    // 目标列占位条仍在（跟手副本不改既有插入位预览）
+    DOCTEST_CHECK(ui.find("todo.col.5.dropbar") != nullptr);
+
+    // 松手（落回源列 = 取消）：副本消失、偏移归零、源列恢复全亮
+    {
+        eui::PointerEvent up;
+        up.x = ui.find("todo.col.4.bg")->frame.x + 40.0f;
+        up.y = cardBounds.y + 20.0f;
+        up.action = eui::PointerAction::Release;
+        // mid-drag composeLayout 重建元素树——release 前重新 find
+        const auto* rel = ui.find("todo.col.4.card.0.bg");
+        DOCTEST_REQUIRE(rel != nullptr);
+        rel->onRelease(up, eui::Rect{});
+    }
+    composeLayout();
+    DOCTEST_CHECK(ui.find("todo.dragghost") == nullptr);  // 偏移/副本归零
+    const auto* srcCardsAfter = ui.find("todo.col.4.cards");
+    DOCTEST_REQUIRE(srcCardsAfter != nullptr);
+    DOCTEST_CHECK_EQ(srcCardsAfter->opacity, 1.0f);  // 落位淡回起点（既有逻辑未破）
+    const auto* srcCardAfter = ui.find("todo.col.4.card.0.bg");
+    DOCTEST_REQUIRE(srcCardAfter != nullptr);
+    DOCTEST_CHECK_EQ(srcCardAfter->opacity, 1.0f);
+    // 取消（未跨列）→ 任务留在源列
+    auto ts = env.svc->listTasks(src.value().id);
+    DOCTEST_REQUIRE(ts.isOk());
+    DOCTEST_REQUIRE_EQ(ts.value().size(), static_cast<size_t>(1));
+    DOCTEST_CHECK_EQ(ts.value()[0].title, std::string("被拖的任务"));
+
+    mod->onStop();
+    return true;
+})
+
 REGISTER_TEST(todo_ui_column_scroll_geometry,
               "todo_ui: 列内滚动——第 12 张起不裁切 + 列几何正确（headless layout）", {
     TestEnv env;

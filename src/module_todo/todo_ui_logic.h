@@ -219,6 +219,36 @@ inline int dragDropRowIndex(const DragHitInput& in, int targetCol, double pointe
     return row;
 }
 
+// 拖拽跟手副本的锚点（页面 compose 空间左上角）。
+//
+// 输入 = 按下时被拖卡片的 bounds（指针空间，DragState.pressX/pressY）+
+// 按下点起的指针**累计**位移（DragEvent::totalX/totalY，物理像素——与
+// onPress/onDrag 的指针坐标同空间，框架在按下时记 dragStart、每次移动给
+// 累计值，见 core/input/input_types.h:266）。用累计位移而不是"当下指针 -
+// 按下指针"：模块侧不必多存一份按下指针，且不受 onDrag 派发时机影响。
+//
+// 尺度因子与 dragDropTarget 同源（调用点喂框架值 app::contentScale()，见
+// U1 尺度契约）：锚点走 core::windowToCompose、位移是**同一个** dpiScale 的
+// 除法。两者不可各用一套因子——否则非 100% 缩放下跟手距离按缩放比走偏。
+// 页面原点 x 在位移里同样对消（锚点已含，位移不含），故只在此处减一次。
+//
+// 纯函数，无副作用。位移为 0（刚按下 / 已被松手清零）→ 锚点 = 卡片原位置，
+// 副本与原卡重合。退化 dpiScale（0/负/NaN）按同尺度处理（同 windowToCompose）。
+struct GhostAnchor {
+    float x = 0.0f;
+    float y = 0.0f;
+};
+
+inline GhostAnchor dragGhostAnchor(float pressX, float pressY, double totalX,
+                                   double totalY, float pageOriginX,
+                                   float dpiScale) {
+    if (!(dpiScale > 0.0f)) dpiScale = 1.0f;
+    return {::core::windowToCompose(pressX, pageOriginX, dpiScale) +
+                static_cast<float>(totalX) / dpiScale,
+            ::core::windowToCompose(pressY, 0.0f, dpiScale) +
+                static_cast<float>(totalY) / dpiScale};
+}
+
 // 年月日（本地时区零点）→ Unix 秒
 inline int64_t ymdToEpoch(int year, int month, int day) {
     std::tm tmv{};

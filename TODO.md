@@ -17,9 +17,10 @@
 - **待定**：是否需要换行支持（当前单行）
 
 ### 3. Todo 卡片拖拽跟手动画
-- **需求**：拖动卡片时，卡片跟随光标移动（目前只变半透明 0.45，不跟手）
-- **关键点**：`todo_ui_board.cpp` 的 `drawCard` 加 `.translate(offsetX, offsetY)`，偏移从 `BoardPlate.dragOffset` 取
-- **状态**：未开始
+- **需求**：拖动卡片时，卡片本体跟随光标移动（此前只变半透明 0.45，不跟手）
+- ✅ **已完成**（598a970）：跟手副本 `todo.dragghost` 画在**页面级顶层 root**（`todo_ui_board.cpp` 的 `drawDragGhost`）——anchor = 按下时卡片 bounds + 按下点起累计位移（框架 `DragEvent::totalX/totalY`），经新纯函数 `ui::dragGhostAnchor` 换算到页面 compose 空间；zIndex 100（压过看板子树、低于弹窗栈底 1000）；opacity 0.85（让目标列插入位占位条从副本底下透出）。源列原卡照旧 0.45 半透明留原位（占位骨架），源列 0.6 调暗门控未动
+- **原「关键点」两处失实，已纠正**：① `BoardPlate.dragOffset` 字段不存在（全仓零命中）；② 方案不是 `drawCard` 加 `.translate()` —— 列内容在 `components::scrollView` 根 stack 的 `.clip()` 内（`components/scrollview.h:88`，clip 在渲染侧对整棵子树做 scissor 求交：`core/runtime/runtime_render.h:223-230`），列内 translate 会被裁到列边界，跨列拖（主用例）不成立，故改页面级副本 + 绝对锚点定位
+- **未验证**：真人手拖的体感与屏幕像素（本机 `screencapture` 被 TCC 挡，无截屏，也无人肉眼看过）。替代证据（均实测绿）：无头用例 `todo_ui_drag_follow_ghost` + `todo_probes` 类 12（`queuePointerButton/Motion` 真实注入指针走真实命中测试与拖拽派发，断言副本帧位 = 卡位 + 累计位移；fc1b4f8）——两处都做过变异验证（去掉跟手副本 / 去掉位移项即红）
 
 ### 4. Probes 扩展
 - **已交付**：7 probe exe 全编译 + 全 PASS + harness 补键盘/右键/滚轮/拖拽/文本
@@ -114,7 +115,7 @@
 
 | 问题 | 位置 |
 |---|---|
-| todo 卡片拖拽无跟手动画 | `todo_ui_board.cpp:drawCard` |
+| todo 卡片拖拽无跟手动画已修（598a970） | `todo_ui_board.cpp:drawDragGhost`（不再是 `drawCard`） |
 | md tabs 切换过渡已删（1cdd36f） | 原为整页 fade 闪烁 |
 | pet 右键菜单缺 dismiss rect 已修（5b0cd34） | EUI-NEO styledmenu |
 | 主窗最小尺寸已调 1330×845（65c1543） | main.cpp |
