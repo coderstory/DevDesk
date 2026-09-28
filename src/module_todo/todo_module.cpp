@@ -41,6 +41,7 @@ class TodoModule : public ::core::Module {
 public:
     ::core::PageId pageId() const override { return ::core::PageId::Todo; }
     std::string displayName() const override { return "Todo 看板"; }
+    std::string shortName() const override { return "待办"; }
     std::string iconGlyph() const override { return eui::utf8(0xF058); }  // fa-circle-check
 
     // ============ 生命周期 ============

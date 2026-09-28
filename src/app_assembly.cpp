@@ -39,8 +39,8 @@ void capturePendingOpenFile(const std::string& path) {
 
 std::vector<::core::PageId> assembleAndStart(
     ::core::Router& router, const module::settings::SettingsConfig& cfg,
-    const ModuleSet& modules, const PreStartHook& preStart) {
-    using module::settings::moduleEnabled;
+    const std::vector<GatedEntry>& modules, const PreStartHook& preStart) {
+    (void)cfg;  // 门控已由 buildGatedEntries 前置（R8-C2），cfg 不再被读取
 
     // 1) 前置：ClaudeService 创建 + setGlobal（模块 onStart 依赖它非 null）
     if (preStart) {
@@ -68,26 +68,13 @@ std::vector<::core::PageId> assembleAndStart(
         registered.push_back(module->pageId());
     };
 
-    // 3) 注册门控（方案 A）：home/settings 恒注册；三个工具模块按 enabledModules
-    // 决定——不注册 = onStart/compose/菜单项全部不可达，"零执行零菜单项"是
-    // 结构性保证，不靠模块自觉检查开关
-    registerOne(modules.home);
-    if (moduleEnabled(cfg, module::settings::kModuleIdMarkdown)) {
-        registerOne(modules.markdown);
-    } else {
-        LOG_INFO("模块已关闭（enabledModules 不含 markdown），不注册");
+    // 3) 注册门控（方案 A）：清单已由 buildGatedEntries 按表门控（home/settings
+    // 恒注册 + 三个工具模块按 enabledModules），这里**纯注册**——注册顺序 =
+    // 列表顺序 = 表序；不注册 = onStart/compose/菜单项全部不可达，"零执行
+    // 零菜单项"是结构性保证，不靠模块自觉检查开关
+    for (const auto& entry : modules) {
+        registerOne(entry.module);
     }
-    if (moduleEnabled(cfg, module::settings::kModuleIdTodo)) {
-        registerOne(modules.todo);
-    } else {
-        LOG_INFO("模块已关闭（enabledModules 不含 todo），不注册");
-    }
-    if (moduleEnabled(cfg, module::settings::kModuleIdClaudeProxy)) {
-        registerOne(modules.claude);
-    } else {
-        LOG_INFO("模块已关闭（enabledModules 不含 claude_proxy），不注册");
-    }
-    registerOne(modules.settings);
 
     // 4) 各模块 onStart（此刻 preStart 已跑完，ClaudeService::global() 非空）
     router.startAll();
@@ -95,6 +82,40 @@ std::vector<::core::PageId> assembleAndStart(
     // 5) 退出接线（LIFO 约定见头文件）
     armExitHook();
     return registered;
+}
+
+std::vector<GatedEntry> buildGatedEntries(
+    const module::settings::SettingsConfig& cfg,
+    const ::app::registry::ModuleEntry* table, std::size_t tableSize) {
+    // 一行遍历：恒注册行（gatingKey==nullptr）必含；门控行
+    // moduleEnabled(cfg, key) 才含；序 = 表序。注册门控的唯一调用点
+    //（assembleAndStart 内为 0；开窗门控另见 maybeStartPet——PAB-04，
+    // 不同用途）。实例列恒为 nullptr，由调用方按 page 从自有 static
+    // 持有填入（生命周期仍归调用方，LIFO 约定不变）
+    std::vector<GatedEntry> gated;
+    for (std::size_t i = 0; i < tableSize; ++i) {
+        const auto& e = table[i];
+        if (e.gatingKey == nullptr ||
+            module::settings::moduleEnabled(cfg, e.gatingKey)) {
+            gated.push_back(GatedEntry{e.page, e.gatingKey, nullptr});
+        }
+    }
+    return gated;
+}
+
+void maybeStartPet(
+    const module::settings::SettingsConfig& cfg,
+    const std::function<module::pet::PetConfig()>& loadPetConfig,
+    const std::function<void(const module::pet::PetConfig&)>& startFn) {
+    if (!module::settings::moduleEnabled(
+            cfg, module::settings::kModuleIdPet)) {
+        LOG_INFO("桌宠已关闭（enabledModules 不含 pet），不开宠物窗口");
+        return;
+    }
+    if (!loadPetConfig || !startFn) {
+        return;  // 回调未注入（测试/异常调用方）：容错不崩
+    }
+    startFn(loadPetConfig());
 }
 
 bool armExitHook() {
@@ -188,14 +209,26 @@ std::optional<::core::PageId> pageForTrayAction(::core::tray::TrayMenuAction act
 }
 
 const char* trayPageDisplayName(::core::PageId page) {
-    switch (page) {
-        case ::core::PageId::Home: return "首页";
-        case ::core::PageId::Markdown: return "笔记";
-        case ::core::PageId::Todo: return "待办";
-        case ::core::PageId::ClaudeProxy: return "Claude";
-        case ::core::PageId::Settings: return "设置";
+    // R8-C2：短名单源 = app_registry 表（与 Module::shortName() 同值，
+    // 一致性由 test_app_assembly 的 registry 用例锁死）。表是静态元数据，
+    // 不需要活实例——关闭模块的提示文案（navigateFromTray）仍可查。
+    // 返回值与迁移前逐字相同（首页/笔记/待办/Claude/设置）
+    for (const auto& e : ::app::registry::kModuleRegistry) {
+        if (e.page == page) {
+            return e.shortName;
+        }
     }
     return "?";
+}
+
+bool dispatchTrayNavigation(::core::tray::TrayMenuAction action,
+                            ::core::Router& router) {
+    const auto page = pageForTrayAction(action);
+    if (!page.has_value()) {
+        return false;  // 非导航动作（ShowMainWindow/Exit/None）由调用方处理
+    }
+    navigateFromTray(&router, *page);
+    return true;
 }
 
 void navigateFromTray(::core::Router* router, ::core::PageId page) {

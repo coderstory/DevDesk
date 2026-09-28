@@ -156,12 +156,78 @@ bool moduleRegistered(::core::PageId page) {
     return router == nullptr || router->isRegistered(page);
 }
 
+// ===== THS-08：统计卡 / 快捷按钮元数据表 =====
+// 两张 static 纯元数据表（审计 #9：表不落 lambda/可调用列——static 表带可调用
+// 列在首次初始化只求值一次，捕获引用会冻结甚至悬垂（UB））。数值/副标题
+// 文案在 compose 逐行查表外取（随 stats_ 实时，不落表）；行序 = 渲染序；
+// statCount/actCount 由表行数按归属模块注册态过滤派生——新增/关闭模块改
+// 表即改计数，宽度（statW/actW）不再靠手算（宽度公式本身不变）。
+
+// 统计卡（现 5 卡，claude 2 卡 = 2 行）：kind = 行身份（compose 侧按它取
+// 数值/副标题/配色/图表），module = 归属模块（注册态过滤 = 旧
+// claudeOn/mdOn/todoOn 判定的一次化），target = 点击跳转页
+enum class StatCardKind { Tokens, Notes, TodoPending, TodoOverdue, ApiCalls };
+struct HomeStatCard {
+    StatCardKind kind;
+    ::core::PageId module;
+    const char* title;
+    ::core::PageId target;
+};
+constexpr HomeStatCard kStatCards[] = {
+    {StatCardKind::Tokens,      ::core::PageId::ClaudeProxy, "Token 速率 (tok/s)", ::core::PageId::ClaudeProxy},
+    {StatCardKind::Notes,       ::core::PageId::Markdown,    "今日笔记",           ::core::PageId::Markdown},
+    {StatCardKind::TodoPending, ::core::PageId::Todo,        "待办任务",           ::core::PageId::Todo},
+    {StatCardKind::TodoOverdue, ::core::PageId::Todo,        "逾期任务",           ::core::PageId::Todo},
+    {StatCardKind::ApiCalls,    ::core::PageId::ClaudeProxy, "API 调用",           ::core::PageId::ClaudeProxy},
+};
+
+// 快捷按钮（现 3 钮）：kind = 行身份，module = 归属模块，label = 文案，
+// iconCodepoint = FA7 码点（0 = 无图标），target + navPayload = 点击负载
+//（Router navigateTo(page, payload)；payload 空串 = 无负载）
+enum class ActionKind { NewNote, NewTodo, SwitchClaude };
+struct HomeActionButton {
+    ActionKind kind;
+    ::core::PageId module;
+    const char* label;
+    unsigned int iconCodepoint;
+    ::core::PageId target;
+    const char* navPayload;
+};
+constexpr HomeActionButton kActionButtons[] = {
+    {ActionKind::NewNote,    ::core::PageId::Markdown,    "+ 新建笔记",         0,     ::core::PageId::Markdown,    "action:new_note"},
+    {ActionKind::NewTodo,    ::core::PageId::Todo,        "+ 新建任务",         0,     ::core::PageId::Todo,        "action:new_task"},
+    {ActionKind::SwitchClaude, ::core::PageId::ClaudeProxy, "切换 Claude Profile", 0xF46D, ::core::PageId::ClaudeProxy, ""},
+};
+
+// 元素 id 由 kind 唯一决定（test_home / test_module_gating / test_module_icons
+// 锁定这些 id，行序重排不飘）
+const char* statCardElementId(StatCardKind kind) {
+    switch (kind) {
+        case StatCardKind::Tokens: return "home.stat.tokens";
+        case StatCardKind::Notes: return "home.stat.notes";
+        case StatCardKind::TodoPending: return "home.stat.todo";
+        case StatCardKind::TodoOverdue: return "home.stat.overdue";
+        case StatCardKind::ApiCalls: return "home.stat.api";
+    }
+    return "home.stat.unknown";
+}
+
+const char* actionButtonElementId(ActionKind kind) {
+    switch (kind) {
+        case ActionKind::NewNote: return "home.act.newnote";
+        case ActionKind::NewTodo: return "home.act.newtodo";
+        case ActionKind::SwitchClaude: return "home.act.claude";
+    }
+    return "home.act.unknown";
+}
+
 } // namespace
 
 class HomeModule : public ::core::Module {
 public:
     ::core::PageId pageId() const override { return ::core::PageId::Home; }
     std::string displayName() const override { return "首页"; }
+    std::string shortName() const override { return "首页"; }
     std::string iconGlyph() const override { return eui::utf8(0xF015); }  // fa-house
 
     // ==================== 生命周期 ====================
@@ -224,14 +290,17 @@ public:
         const float statH = 120.0f * core::theme::fontScale();
         const std::time_t now = std::time(nullptr);
 
-        // 模块注册感知（插拔方案 A §5.5）：卡片/按钮按目标模块注册状态显隐
-        const bool claudeOn = moduleRegistered(::core::PageId::ClaudeProxy);
+        // 模块注册感知（插拔方案 A §5.5）：卡片/按钮按目标模块注册状态显隐。
+        // THS-08：统计卡/快捷按钮的归属模块判定已表驱动（逐行
+        // moduleRegistered(card.module)），本文件只剩最近编辑卡这一个
+        // 布尔判定点（mdOn）
         const bool mdOn = moduleRegistered(::core::PageId::Markdown);
-        const bool todoOn = moduleRegistered(::core::PageId::Todo);
-        // 统计卡可见数：Token/API 调用随 claude，笔记随 markdown，待办/逾期随
-        // todo；宽度按剩余数量现算（n=1..5），全关整行隐藏
-        const int statCount =
-            (claudeOn ? 2 : 0) + (mdOn ? 1 : 0) + (todoOn ? 2 : 0);
+        // THS-08：统计卡可见数从元数据表派生（按归属模块注册态过滤）——新增/
+        // 关闭模块改表即改计数，宽度（statW）均分不再靠手算；全关整行隐藏
+        int statCount = 0;
+        for (const auto& card : kStatCards) {
+            if (moduleRegistered(card.module)) ++statCount;
+        }
 
         // 页面底色 = 主窗口 clearColor（applyWindowVisuals 随主题/窗口效果档
         // 运行时跟随，磨砂 Phase B/D）——不再自铺不透明底，否则半透/磨砂档
@@ -368,60 +437,90 @@ public:
                     .size(contentW, statH)
                     .gap(cardGap)
                     .content([&] {
-                        if (claudeOn) {
-                        drawStatCard(ui, "home.stat.tokens", statW, statH, t,
-                                     "Token 速率 (tok/s)",
-                                     formatRateTps(snap.rateTps), tokenBadge,
-                                     false,
-                                     [this] { navigateTo(::core::PageId::ClaudeProxy); },
-                                     streaming ? &t.colors.primaryText
-                                               : &t.colors.textTertiary,
-                                     streaming ? &t.colors.success : nullptr,
-                                     0.5f,
-                                     [&](eui::Ui& inner, float chartW,
-                                         float chartH) {
-                                         // sparkline：rateSeries 兜底
-                                         // {0.0f}（防 lineChart demo 数据
-                                         // 泄漏，D-6 护栏）
-                                         const std::vector<float> series =
-                                             core::proxy_stats::rateSeries(24);
-                                         components::lineChart(
-                                             inner,
-                                             "home.stat.tokens.spark")
-                                             .size(chartW, chartH)
-                                             .values(series)
-                                             .style(components::LineStyle::
-                                                        Curve)
-                                             .theme(core::theme::
-                                                        componentTokens(t))
-                                             .build();
-                                     });
-                        }
-                        if (mdOn) {
-                        drawStatCard(ui, "home.stat.notes", statW, statH, t,
-                                     "今日笔记", num(stats_.todayNotes),
-                                     ok ? "今日修改过的笔记" : "加载失败",
-                                     false,
-                                     [this] { navigateTo(::core::PageId::Markdown); });
-                        }
-                        if (todoOn) {
-                        drawStatCard(ui, "home.stat.todo", statW, statH, t,
-                                     "待办任务", num(stats_.pendingTodos),
-                                     ok ? "未完成总数" : "加载失败",
-                                     false,
-                                     [this] { navigateTo(::core::PageId::Todo); });
-                        drawStatCard(ui, "home.stat.overdue", statW, statH, t,
-                                     "逾期任务", num(stats_.overdueTodos),
-                                     ok ? "已过截止时间" : "加载失败",
-                                     stats_.overdueTodos > 0,
-                                     [this] { navigateTo(::core::PageId::Todo); });
-                        }
-                        if (claudeOn) {
-                        drawStatCard(ui, "home.stat.api", statW, statH, t,
-                                     "API 调用", num(stats_.todayApiCalls),
-                                     ok ? "今日代理调用" : "加载失败",
-                                     false,
-                                     [this] { navigateTo(::core::PageId::ClaudeProxy); });
+                        // THS-08：逐表行渲染（行序 = 渲染序；元素 id 由 kind
+                        // 决定，test_home/gating/icons 锁定）；数值/副标题/配色/
+                        // 图表按行身份在表外取，不落表
+                        for (const auto& card : kStatCards) {
+                            if (!moduleRegistered(card.module)) continue;
+                            switch (card.kind) {
+                                case StatCardKind::Tokens:
+                                    drawStatCard(ui, statCardElementId(card.kind),
+                                                 statW, statH, t, card.title,
+                                                 formatRateTps(snap.rateTps),
+                                                 tokenBadge, false,
+                                                 [this, target = card.target] {
+                                                     navigateTo(target);
+                                                 },
+                                                 streaming ? &t.colors.primaryText
+                                                           : &t.colors.textTertiary,
+                                                 streaming ? &t.colors.success
+                                                           : nullptr,
+                                                 0.5f,
+                                                 [&](eui::Ui& inner, float chartW,
+                                                     float chartH) {
+                                                     // sparkline：rateSeries
+                                                     // 兜底 {0.0f}（防
+                                                     // lineChart demo 数据
+                                                     // 泄漏，D-6 护栏）
+                                                     const std::vector<float>
+                                                         series = core::proxy_stats::
+                                                             rateSeries(24);
+                                                     components::lineChart(
+                                                         inner,
+                                                         "home.stat.tokens.spark")
+                                                         .size(chartW, chartH)
+                                                         .values(series)
+                                                         .style(components::
+                                                                    LineStyle::
+                                                                        Curve)
+                                                         .theme(core::theme::
+                                                                    componentTokens(
+                                                                        t))
+                                                         .build();
+                                                 });
+                                    break;
+                                case StatCardKind::Notes:
+                                    drawStatCard(ui, statCardElementId(card.kind),
+                                                 statW, statH, t, card.title,
+                                                 num(stats_.todayNotes),
+                                                 ok ? "今日修改过的笔记"
+                                                    : "加载失败",
+                                                 false,
+                                                 [this, target = card.target] {
+                                                     navigateTo(target);
+                                                 });
+                                    break;
+                                case StatCardKind::TodoPending:
+                                    drawStatCard(ui, statCardElementId(card.kind),
+                                                 statW, statH, t, card.title,
+                                                 num(stats_.pendingTodos),
+                                                 ok ? "未完成总数" : "加载失败",
+                                                 false,
+                                                 [this, target = card.target] {
+                                                     navigateTo(target);
+                                                 });
+                                    break;
+                                case StatCardKind::TodoOverdue:
+                                    drawStatCard(ui, statCardElementId(card.kind),
+                                                 statW, statH, t, card.title,
+                                                 num(stats_.overdueTodos),
+                                                 ok ? "已过截止时间" : "加载失败",
+                                                 stats_.overdueTodos > 0,
+                                                 [this, target = card.target] {
+                                                     navigateTo(target);
+                                                 });
+                                    break;
+                                case StatCardKind::ApiCalls:
+                                    drawStatCard(ui, statCardElementId(card.kind),
+                                                 statW, statH, t, card.title,
+                                                 num(stats_.todayApiCalls),
+                                                 ok ? "今日代理调用" : "加载失败",
+                                                 false,
+                                                 [this, target = card.target] {
+                                                     navigateTo(target);
+                                                 });
+                                    break;
+                            }
                         }
                     })
                     .build();
@@ -613,8 +712,11 @@ public:
 
                 // ========== 快捷操作按钮组（Router payload 跨模块指令）==========
                 // 目标模块关闭 → 按钮隐藏，宽度按剩余数量均分；全关整行隐藏
-                const int actCount =
-                    (mdOn ? 1 : 0) + (todoOn ? 1 : 0) + (claudeOn ? 1 : 0);
+                //（THS-08：actCount 从按钮表行数按注册态过滤派生）
+                int actCount = 0;
+                for (const auto& btn : kActionButtons) {
+                    if (moduleRegistered(btn.module)) ++actCount;
+                }
                 if (actCount > 0) {
                 const float actGap = t.sizes.spacingLarge; // 16
                 const float actW =
@@ -624,57 +726,42 @@ public:
                     .size(contentW, 44.0f)
                     .gap(actGap)
                     .content([&] {
-                        // + 新建笔记 → 跳 Markdown 并触发新建笔记弹窗
-                        // （payload 由 Markdown 模块 compose 消费）
-                        if (mdOn) {
-                        components::button(ui, "home.act.newnote")
-                            .size(actW, 44.0f)
-                            .text("+ 新建笔记")
-                            .fontSize(t.sizes.fontSizeBody)
-                            .colors(t.colors.primary, t.colors.primaryHover,
-                                    t.colors.primaryPressed)
-                            .textColor(t.colors.onPrimary)
-                            .radius(t.sizes.radius)
-                            .onClick([this] {
-                                navigateTo(::core::PageId::Markdown,
-                                           "action:new_note");
-                            })
-                            .build();
-                        }
-
-                        // + 新建任务 → 跳 Todo 并触发新建任务弹窗
-                        if (todoOn) {
-                        components::button(ui, "home.act.newtodo")
-                            .size(actW, 44.0f)
-                            .text("+ 新建任务")
-                            .fontSize(t.sizes.fontSizeBody)
-                            .colors(t.colors.surfaceElevated, t.colors.hover,
-                                    t.colors.active)
-                            .textColor(t.colors.textPrimary)
-                            .radius(t.sizes.radius)
-                            .border(1.0f, t.colors.borderDefault)
-                            .onClick([this] {
-                                navigateTo(::core::PageId::Todo,
-                                           "action:new_task");
-                            })
-                            .build();
-                        }
-
-                        // 切换 Claude Profile → Claude 模块（Profile 列表在该页）
-                        if (claudeOn) {
-                        components::button(ui, "home.act.claude")
-                            .size(actW, 44.0f)
-                            .text("切换 Claude Profile")
-                            .icon(0xF46D)  // fa-clipboard-list
-                            .fontSize(t.sizes.fontSizeBody)
-                            .colors(t.colors.surfaceElevated, t.colors.hover,
-                                    t.colors.active)
-                            .textColor(t.colors.textPrimary)
-                            .iconColor(t.colors.textPrimary)
-                            .radius(t.sizes.radius)
-                            .border(1.0f, t.colors.borderDefault)
-                            .onClick([this] { navigateTo(::core::PageId::ClaudeProxy); })
-                            .build();
+                        // THS-08：逐表行渲染（文案/图标/点击负载全在表内；
+                        // 样式按行身份取——「+ 新建笔记」主色按钮，其余
+                        // 浅底描边）。目标模块关闭 → 本行不渲染
+                        for (const auto& btn : kActionButtons) {
+                            if (!moduleRegistered(btn.module)) continue;
+                            auto builder = components::button(
+                                ui, actionButtonElementId(btn.kind));
+                            builder.size(actW, 44.0f)
+                                .text(btn.label)
+                                .fontSize(t.sizes.fontSizeBody)
+                                .radius(t.sizes.radius);
+                            if (btn.kind == ActionKind::NewNote) {
+                                builder.colors(t.colors.primary,
+                                               t.colors.primaryHover,
+                                               t.colors.primaryPressed)
+                                    .textColor(t.colors.onPrimary);
+                            } else {
+                                builder.colors(t.colors.surfaceElevated,
+                                               t.colors.hover,
+                                               t.colors.active)
+                                    .textColor(t.colors.textPrimary)
+                                    .border(1.0f, t.colors.borderDefault);
+                            }
+                            if (btn.iconCodepoint != 0) {
+                                builder.icon(btn.iconCodepoint)  // 0xF46D fa-clipboard-list
+                                    .iconColor(t.colors.textPrimary);
+                            }
+                            // 点击负载（btn.navPayload 空串 = 无负载）按值捕获，
+                            // 闭包只活在 compose 调用期（表本身无 lambda 列）
+                            const std::string payload = btn.navPayload;
+                            builder
+                                .onClick([this, payload,
+                                          target = btn.target] {
+                                    navigateTo(target, payload);
+                                })
+                                .build();
                         }
                     })
                     .build();
