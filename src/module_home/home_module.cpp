@@ -41,8 +41,11 @@ namespace {
 // states 字段）→ hover 反馈由卡内交互层 .press 补（states 三态 + 0.1s
 // OutQuad 过渡）；.press 位 content 首层——card 的 bg 不可交互，非交互
 // 文本点击会穿透命中 .press（与旧 .bg onClick 同命中语义）。
-// 卡内坐标基于 .inner（对齐 card content 原点、无 inset），与旧实现
-// 对齐（±inset 级位移进人工点验清单）。
+// 内边距口径（2026-09-28 系统性修复）：卡内容四周统一 16px（16px 网格）
+// ——显式 .padding(inset) 替代组件默认 inset 20。旧写法吃默认 20 又与
+// 手绘残留坐标（label 20/42/98）叠加成「顶 40 留空、badge 底 134 > 卡高
+// 120 溢出贴边」；当前 y 节奏 = 16 顶内边距 + label 16 + 8 间距 + number
+// 56 + badge 16 + 16 底内边距（badge 底对齐 height-48 恒保 16 底边距）。
 void drawStatCard(eui::Ui& ui,
                   const std::string& id,
                   float width,
@@ -60,13 +63,14 @@ void drawStatCard(eui::Ui& ui,
                       nullptr) {
     const auto ct = core::theme::componentTokens(t);
     const float s = core::theme::fontScale();
-    const float inset = ct.metrics.spacing.large; // card 默认 content inset
+    const float inset = t.sizes.spacingLarge; // 16：卡内容统一内边距（16px 网格）
     const float cw = width - inset * 2.0f;
     const float ch = height - inset * 2.0f;
     components::card(ui, id)
         .size(width, height) // panelShadow 由 CardStyle 默认注入（§M3-4 复查）
         .theme(ct)           // 先注入主题再覆盖 radius（theme 会重置 CardStyle）
         .radius(t.sizes.radiusLarge)
+        .padding(inset)      // 显式 16：不用组件默认 20（与旧坐标叠加致顶留空/底溢出）
         .content([&] {
             ui.stack(id + ".inner")
                 .size(cw, ch)
@@ -82,19 +86,19 @@ void drawStatCard(eui::Ui& ui,
                         .animate(core::AnimProperty::Color)
                         .onClick(std::move(onClick))
                         .build();
-                    // 卡内文字（坐标与旧实现一致：旧根 stack 无 inset，
-                    // .inner 已对齐原点）
+                    // 卡内文字：坐标相对 card content 原点（已含 16 inset），
+                    // 四周统一 16px 留白（label 16 / number 40 / badge 底对齐）
                     ui.text(id + ".label")
-                        .position(28.0f * s, 20.0f * s)
-                        .size(cw - 56.0f * s, 16.0f * s)
+                        .position(16.0f, 16.0f * s)
+                        .size(cw - 32.0f, 16.0f * s)
                         .text(label)
                         .fontSize(t.sizes.fontSizeSmall - 1.0f)
                         .lineHeight(16.0f * s)
                         .color(t.colors.textSecondary)
                         .build();
                     ui.text(id + ".number")
-                        .position(28.0f * s, 42.0f * s)
-                        .size(cw - 56.0f * s, 56.0f * s)
+                        .position(16.0f, 40.0f * s)
+                        .size(cw - 32.0f, 56.0f * s)
                         .text(number)
                         .fontSize(t.sizes.fontSizeDisplay)
                         .lineHeight(56.0f * s)
@@ -104,8 +108,10 @@ void drawStatCard(eui::Ui& ui,
                                                      : t.colors.textPrimary))
                         .build();
                     ui.text(id + ".badge")
-                        .position(28.0f * s, 98.0f * s)
-                        .size(cw - 56.0f * s, 16.0f)
+                        // 底对齐 height-48（= 16 inset + 16 badge + 16 底边距），
+                        // 任何字号档底部都不贴卡边
+                        .position(16.0f, height - 48.0f)
+                        .size(cw - 32.0f, 16.0f)
                         .text(badge)
                         .fontSize(t.sizes.fontSizeSmall - 2.0f)
                         .lineHeight(16.0f)
@@ -286,8 +292,10 @@ public:
         // gap=0，两段必须相加等于 contentW；字面量写死两处改一处忘一处就右缘错位
         constexpr float kHeaderActionsW = 212.0f;
         const float cardGap = 20.0f;
-        // 卡高随字号缩放派生（卡内 y 布局同源缩放，大字号不裁切）
-        const float statH = 120.0f * core::theme::fontScale();
+        // 卡高随字号缩放派生（卡内 y 布局同源缩放，大字号不裁切）。
+        // 144 = 16 顶内边距 + 16 标签 + 8 间距 + 56 数字 + 16 badge + 16 底内边距
+        //（badge 底对齐 height-48，见 drawStatCard；旧 120 无底边距致 badge 贴边/溢出）
+        const float statH = 144.0f * core::theme::fontScale();
         const std::time_t now = std::time(nullptr);
 
         // 模块注册感知（插拔方案 A §5.5）：卡片/按钮按目标模块注册状态显隐。
@@ -564,10 +572,11 @@ public:
                     components::card(ui, "home.api.chart")
                         .size(contentW, chartCardH)
                         .theme(core::theme::componentTokens(t))
+                        .padding(t.sizes.spacingLarge)  // 16 统一内边距（替代默认 20）
                         .content([&] {
                             ui.text("home.api.chart.title")
-                                .position(28.0f, 18.0f)
-                                .size(contentW - 56.0f, 22.0f)
+                                .position(16.0f, 16.0f)
+                                .size(contentW - 32.0f, 22.0f)
                                 .text("今日 API 调用分布（按当日峰值归一）")
                                 .fontSize(t.sizes.fontSizeLarge - 1.0f)
                                 .lineHeight(22.0f)
@@ -576,14 +585,16 @@ public:
                                 .build();
                             // barChart 无 position 接口 → 包定位 stack
                             // （title 置空：本卡自带标题，避免组件内默认
-                            // 「BarChart」字样）
+                            // 「BarChart」字样）。
+                            // 底边距 16：wrap 底 = 16 inset + 48 + 128 = 192 ≤
+                            // 208 - 16（旧 52+136 曾与卡底齐平，图贴底边）
                             ui.stack("home.api.chart.wrap")
-                                .position(16.0f, 52.0f)
-                                .size(contentW - 32.0f, 136.0f)
+                                .position(16.0f, 48.0f)
+                                .size(contentW - 32.0f, 128.0f)
                                 .content([&] {
                                     components::barChart(
                                         ui, "home.api.chart.bars")
-                                        .size(contentW - 32.0f, 136.0f)
+                                        .size(contentW - 32.0f, 128.0f)
                                         .title("")
                                         .values(norm)
                                         .labels(labels)

@@ -9,8 +9,10 @@
 //      取保守 1.10）对布局常量做算术复核
 //
 // 布局常量镜像自各模块源码（改动源码时同步这里）：
-//   - home_module.cpp drawStatCard：label y=20、number y=42 lineHeight 56、
-//     badge y=98、卡高 120、padX 28、最小窗口 1200 时 statW=208
+//   - home_module.cpp drawStatCard：label y=16、number y=40 lineHeight 56、
+//     badge 底对齐（height-48）、卡高 144、padX 16、最小窗口 1200 时 statW=208
+//     （2026-09-28 内边距系统性修复：16 四周统一，替代旧 20 inset + 20/42/98
+//     坐标叠加的「顶留空/底溢出」）
 //   - todo_module.cpp drawChip：chip 高 18、字号 fontSizeSmall-3；
 //     drawCard：title y=14 lineHeight 18、chip y=44、卡高 84（todo_ui_logic.h）
 //   - app_sidebar.cpp 侧边栏：itemH 40、label 宽 200、brand 32px
@@ -30,8 +32,10 @@ constexpr float kGlyphExtentRatio = 1.35f;
 // 数字/大写字母（无下延）ascent 与 em 的比，保守值；Segoe UI 实际 1.079
 constexpr float kAscentRatio = 1.10f;
 
-// 最小窗口 1200（spec §6.5.2）下 Home 统计卡的文字可用宽
-constexpr float kHomeStatTextW = 152.0f;  // statW 208 - padX 28×2
+// 最小窗口 1200（spec §6.5.2）下 Home 统计卡的文字可用宽。
+// 保守上界：实际可用 = statW 208 - 内边距 16×2 - 文本内缩 16×2 = 144；
+// 152（旧 padX 28×2 口径）恒 ≥ 实际，防文本变宽回归先放宽。
+constexpr float kHomeStatTextW = 152.0f;
 
 float textW(const std::string& s, float size, int weight = 400) {
     return core::TextPrimitive::measureTextWidth(s, "", size, weight);
@@ -67,10 +71,11 @@ REGISTER_TEST(home_stat_card_text_fits, "font-em: home stat card text fits fixed
                   kHomeStatTextW);
     DOCTEST_CHECK(textW("今日修改过的笔记", badgeSize) <= kHomeStatTextW);
 
-    // 纵向（drawStatCard 绝对定位：label 20 / number 42 / badge 98 / 卡高 120）
-    DOCTEST_CHECK(20.0f + kGlyphExtentRatio * labelSize <= 42.0f);   // 标签不压数字
-    DOCTEST_CHECK(42.0f + kAscentRatio * numberSize <= 98.0f);       // 数字（无下延）不压 badge
-    DOCTEST_CHECK(98.0f + kGlyphExtentRatio * badgeSize <= 120.0f);  // badge 不出卡
+    // 纵向（drawStatCard 绝对定位：label 16 / number 40 / badge 底对齐
+    // height-48；最小档 s=1 时 badge 顶 96 / 卡高 144）
+    DOCTEST_CHECK(16.0f + kGlyphExtentRatio * labelSize <= 40.0f);   // 标签不压数字
+    DOCTEST_CHECK(40.0f + kAscentRatio * numberSize <= 96.0f);       // 数字（无下延）不压 badge
+    DOCTEST_CHECK(96.0f + kGlyphExtentRatio * badgeSize <= 144.0f);  // badge 不出卡
     return true;
 })
 

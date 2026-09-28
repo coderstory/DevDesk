@@ -22,6 +22,10 @@ namespace ui_kit {
 // 节点 id 与拆分前逐字一致：`<id>.bg`（settings 侧 id 形如
 // settings.card.appearance → settings.card.appearance.bg），单测按该 id 定位，
 // 不得改。位置恒为 (0,0)、尺寸恒为 (w,h)——几何由调用方（卡根 stack）决定。
+//
+// 卡内容内边距口径（2026-09-28 系统性修复，全站统一）：卡片内边距四周 ≥16px
+// （16px 网格；settings 卡惯用左右 28 = kDialogInsetX 语系、上下 16）。调用方
+// 负责内容留白（本底只铺色）：底部内容底沿 + 16 ≤ 卡高，顶部首元素 y ≥ 16。
 void cardFrame(eui::Ui& ui, const std::string& id, float w, float h,
                const core::theme::Tokens& t);
 

@@ -75,12 +75,14 @@ inline constexpr long kLogTailReadWindow = 256 * 1024;  // tail 只读末尾 256
 
 // ============ 卡片高度（唯一来源：注册表卡高与卡内几何同源）============
 // 注册表（settings_module.cpp kCardSpecs）按这些常量摆卡；改动必须同时满足卡内
-// 内容底沿 + 16px 下边距的既有公式，否则卡片内容会被裁。
-inline constexpr float kAppearanceCardHeight = 160.0f;  // 外观卡（通用）
+// 内容底沿 + 16px 下边距的既有公式，否则卡片内容会被裁或贴底边。卡内容内边距
+// 口径（2026-09-28 系统性修复）：四周 ≥16px——顶（标题 y≥16）、左右 28（对齐
+// kDialogInsetX 语系）、底 = 卡高 - 内容底沿 ≥ 16。
+inline constexpr float kAppearanceCardHeight = 172.0f;  // 外观卡（通用；降级提示行底 156 + 16）
 inline constexpr float kEditorFontCardHeight = 108.0f;  // 编辑器字号卡（通用）
 inline constexpr float kModulesCardHeight = 288.0f;     // 模块插拔卡（模块）
 inline constexpr float kPetCardHeight = 120.0f;         // 桌宠卡（模块）
-inline constexpr float kDirectoryCardHeight = 108.0f;   // 目录卡（模块）
+inline constexpr float kDirectoryCardHeight = 116.0f;   // 目录卡（模块；hint 底 100 + 16）
 inline constexpr float kLogSettingsCardHeight = 148.0f; // 日志卡（日志；编辑器字号迁出后收窄）
 inline constexpr float kAboutCardHeight = 150.0f;       // 关于卡（关于）
 
