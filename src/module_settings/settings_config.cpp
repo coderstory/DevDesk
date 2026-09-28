@@ -212,7 +212,14 @@ std::string windowEffectDegradedHint(const std::string& mode,
             return {};
         }
         if (active == WindowEffect::Transparent) {
+            // 降级文案平台化（macos-three-features 设计 §5.3）：磨砂在 Windows
+            // 要求 Win11 22H2+、在 macOS 要求 macOS 11+ 系统磨砂——按编译平台
+            // 各写各的，避免在另一平台显示误导性系统要求
+#if defined(__APPLE__)
+            return "当前系统不支持磨砂（macOS 11+ 系统磨砂），已回退为半透";
+#else
             return "当前系统不支持磨砂（需 Windows 11 22H2+），已回退为半透";
+#endif
         }
         return "当前系统不支持窗口效果，已回退为不透明";
     }
