@@ -89,20 +89,22 @@ void drawStatCard(eui::Ui& ui,
                     // 卡内文字：坐标相对 card content 原点（已含 16 inset），
                     // 四周统一 16px 留白（label 16 / number 40 / badge 底对齐）
                     ui.text(id + ".label")
-                        .position(16.0f, 16.0f * s)
-                        .size(cw - 32.0f, 16.0f * s)
+                        .position(0.0f, 16.0f * s)
+                        .size(cw, 16.0f * s)
                         .text(label)
                         .fontSize(t.sizes.fontSizeSmall - 1.0f)
                         .lineHeight(16.0f * s)
+                        .horizontalAlign(eui::HorizontalAlign::Center)
                         .color(t.colors.textSecondary)
                         .build();
                     ui.text(id + ".number")
-                        .position(16.0f, 40.0f * s)
-                        .size(cw - 32.0f, 56.0f * s)
+                        .position(0.0f, 32.0f * s)
+                        .size(cw, 56.0f * s)
                         .text(number)
                         .fontSize(t.sizes.fontSizeDisplay)
                         .lineHeight(56.0f * s)
                         .fontWeight(700)
+                        .horizontalAlign(eui::HorizontalAlign::Center)
                         .color(numberColor ? *numberColor
                                            : (accent ? t.colors.error
                                                      : t.colors.textPrimary))
@@ -110,11 +112,12 @@ void drawStatCard(eui::Ui& ui,
                     ui.text(id + ".badge")
                         // 底对齐 height-48（= 16 inset + 16 badge + 16 底边距），
                         // 任何字号档底部都不贴卡边
-                        .position(16.0f, height - 48.0f)
-                        .size(cw - 32.0f, 16.0f)
+                        .position(0.0f, height - 48.0f)
+                        .size(cw, 16.0f)
                         .text(badge)
                         .fontSize(t.sizes.fontSizeSmall - 2.0f)
                         .lineHeight(16.0f)
+                        .horizontalAlign(eui::HorizontalAlign::Center)
                         .color(badgeColor ? *badgeColor
                                           : (accent ? t.colors.error
                                                     : t.colors.textTertiary))
