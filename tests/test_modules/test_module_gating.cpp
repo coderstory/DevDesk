@@ -208,8 +208,7 @@ REGISTER_TEST(gating_home_all_modules_off, "gating: Home 三模块全关 → 卡
     DOCTEST_CHECK(ui.find("home.stat.todo") == nullptr);
     DOCTEST_CHECK(ui.find("home.stat.overdue") == nullptr);
     DOCTEST_CHECK(ui.find("home.stat.api") == nullptr);
-    // 最近编辑 + 3 个快捷按钮全隐
-    DOCTEST_CHECK(ui.find("home.recent") == nullptr);
+    // 3 个快捷按钮全隐
     DOCTEST_CHECK(ui.find("home.act.newnote") == nullptr);
     DOCTEST_CHECK(ui.find("home.act.newtodo") == nullptr);
     DOCTEST_CHECK(ui.find("home.act.claude") == nullptr);
@@ -242,7 +241,6 @@ REGISTER_TEST(gating_home_partial_modules, "gating: Home 部分模块关闭 → 
 
     // markdown 的卡保留
     DOCTEST_CHECK(ui.find("home.stat.notes") != nullptr);
-    DOCTEST_CHECK(ui.find("home.recent") != nullptr);
     DOCTEST_CHECK(ui.find("home.act.newnote") != nullptr);
     // claude 的卡隐藏
     DOCTEST_CHECK(ui.find("home.stat.tokens") == nullptr);
@@ -257,7 +255,7 @@ REGISTER_TEST(gating_home_partial_modules, "gating: Home 部分模块关闭 → 
     return true;
 })
 
-REGISTER_TEST(gating_home_all_on_unchanged, "gating: 全注册时 Home 与现状等价（5 卡 + 3 按钮 + 最近编辑）", {
+REGISTER_TEST(gating_home_all_on_unchanged, "gating: 全注册时 Home 与现状等价（5 卡 + 3 按钮）", {
     ::core::Router router;
     StubModule home(::core::PageId::Home, "home");
     StubModule markdown(::core::PageId::Markdown, "markdown");
@@ -281,7 +279,7 @@ REGISTER_TEST(gating_home_all_on_unchanged, "gating: 全注册时 Home 与现状
     ui.end();
 
     for (const char* id : {"home.stat.tokens", "home.stat.notes", "home.stat.todo",
-                           "home.stat.overdue", "home.stat.api", "home.recent",
+                           "home.stat.overdue", "home.stat.api",
                            "home.act.newnote", "home.act.newtodo", "home.act.claude"}) {
         DOCTEST_CHECK(ui.find(id) != nullptr);
     }

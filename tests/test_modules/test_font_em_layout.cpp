@@ -111,16 +111,3 @@ REGISTER_TEST(sidebar_text_fits, "font-em: sidebar labels fit item height/width"
     DOCTEST_CHECK(kGlyphExtentRatio * t.sizes.fontSizeBody <= 40.0f);
     return true;
 })
-
-// ---- 5. Home 最近编辑行（name y-1 h18 / sub y+18，行高 44） ----
-REGISTER_TEST(home_recent_row_text_fits, "font-em: home recent rows fit 44px item", {
-    const auto& t = core::theme::current();
-    core::theme::setFontScale(1.0f);
-    const float nameSize = t.sizes.fontSizeBody - 1.0f;      // 14
-    const float subSize = t.sizes.fontSizeSmall - 2.0f;      // 11
-    // 标题墨底（CJK 落在 baseline，≈ ascent）不压 y+18 的副标题
-    DOCTEST_CHECK(-1.0f + kAscentRatio * nameSize <= 18.0f);
-    // 副标题墨底不出 44 行高
-    DOCTEST_CHECK(18.0f + kGlyphExtentRatio * subSize <= 44.0f);
-    return true;
-})

@@ -838,39 +838,9 @@ REGISTER_TEST(uiModernHomeApiBarChart,
     return true;
 })
 
-REGISTER_TEST(uiModernHomeRecentCard,
-              "uiModern: Home 最近编辑手绘 rect 换 card 组件", {
-    std::unique_ptr<::core::Module> mod(create_home_module());
-    eui::Screen screen{1600.0f, 1000.0f};
-    eui::Ui ui;
-    ui.begin("home_recent_card");
-    mod->compose(ui, screen);
-    ui.end();
-    // card 根 + 内部骨架 .bg（panelShadow 载体）+ .content（旧手绘 rect
-    // 无 content 子结构——结构断言锁「容器已换 card」）
-    DOCTEST_CHECK(ui.find("home.recent") != nullptr);
-    DOCTEST_CHECK(ui.find("home.recent.bg") != nullptr);
-    DOCTEST_CHECK(ui.find("home.recent.content") != nullptr);
-    mod->onStop();
-    return true;
-})
-
 REGISTER_TEST(uiModernGradientSpots,
-              "uiModern: 三处关键背景渐变（home 欢迎区 / settings 主体 / md 预览）", {
-    // 1. Home 欢迎区标题列垫底
-    {
-        std::unique_ptr<::core::Module> mod(create_home_module());
-        eui::Screen screen{1600.0f, 1000.0f};
-        eui::Ui ui;
-        ui.begin("grad_home");
-        mod->compose(ui, screen);
-        ui.end();
-        const auto* bg = ui.find("home.header.bg");
-        DOCTEST_REQUIRE(bg != nullptr);
-        DOCTEST_CHECK(bg->gradient.enabled);
-        mod->onStop();
-    }
-    // 2. 设置页主体区垫底
+              "uiModern: 两处关键背景渐变（settings 主体 / md 预览）", {
+    // 1. 设置页主体区垫底
     {
         const std::filesystem::path cfgPath = test_temp::tempPath(
             "devdesk_test_uimodern_settings_grad_cfg.json");
@@ -903,7 +873,7 @@ REGISTER_TEST(uiModernGradientSpots,
         std::filesystem::remove(cfgPath, ec);
         std::filesystem::remove(dbPath, ec);
     }
-    // 3. md 预览区垫底（Ctrl+Shift+P ×2 → 双栏，同 theme_hierarchy）
+    // 2. md 预览区垫底（Ctrl+Shift+P ×2 → 双栏，同 theme_hierarchy）
     {
         test_support::MdHeadlessEnv env("devdesk_test_ui_m3_", "mdgrad", "m3.db");
         {
