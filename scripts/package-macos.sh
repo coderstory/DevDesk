@@ -76,13 +76,20 @@ if [ ! -f "$MACOS_DIR/assets/pets/README.md" ]; then
   echo "❌ 断言失败：$MACOS_DIR/assets/pets/README.md 缺失" >&2
   exit 1
 fi
-EXTRA_PETS="$(ls -A "$MACOS_DIR/assets/pets" | grep -v '^README\.md$' || true)"
-if [ -n "$EXTRA_PETS" ]; then
-  echo "❌ 断言失败：assets/pets 下有多余项（应仅 README.md）：" >&2
-  echo "$EXTRA_PETS" >&2
-  exit 1
-fi
-echo "✅ assets 就位（Contents/MacOS/assets）"
+# 断言 ②：每个皮肤子目录含 pet.json —— 与 Windows 侧 scripts/package-windows.sh:120-131
+# 同款口径（2026-09-28 那边已从「仅 README.md」改过来）：皮肤包随仓库分发、数量会增减，
+# 写死「pets 下只能有 README.md」在真实构建树上必失败（DevDesk POST_BUILD 会把 6+ 个
+# 皮肤拷进 build/assets/pets），故改为逐目录校验 pet.json。
+PET_COUNT=0
+for petdir in "$MACOS_DIR/assets/pets"/*/; do
+  [ -d "$petdir" ] || continue
+  if [ ! -f "$petdir/pet.json" ]; then
+    echo "❌ 断言失败：皮肤目录缺 pet.json: $petdir" >&2
+    exit 1
+  fi
+  PET_COUNT=$((PET_COUNT + 1))
+done
+echo "✅ assets 就位（Contents/MacOS/assets；pets 含 $PET_COUNT 皮肤包）"
 
 # ---- 5. 版本号取值（单一源 = CMakeLists.txt 的 project(DevDesk VERSION ...)）----
 APP_VERSION="$(sed -n 's/^CMAKE_PROJECT_VERSION:[A-Za-z]*=\(.*\)$/\1/p' "$BUILD_DIR/CMakeCache.txt" | head -1 | tr -d '\r')"
