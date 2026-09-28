@@ -490,8 +490,8 @@ void petCompose(eui::Ui& ui, const eui::Screen& screen) {
 
 }
 
-// 解析皮肤目录：按候选根找 <skinName>；找不到（或名字是默认皮肤）落到
-// petsDir() 下生成占位皮肤
+// 解析皮肤目录：按候选根找 <skinName>；找不到落回到 petsDir()（旧版生成物/
+// 用户替换目录；仍没有则由调用方 ensureDefaultSkin 兜底随包 robot）
 std::filesystem::path resolveSkinDir(const std::string& skinName) {
     for (const std::filesystem::path& root : skinRootCandidates()) {
         const std::filesystem::path dir = root / skinName;
@@ -605,11 +605,7 @@ void startPetWindow(const PetWindowConfig& config) {
     // （从未装配 → 拒绝凭空开窗）」与「隐藏后再显示」
     rt.windowRequested = true;
 
-    // 内置皮肤全集落盘（幂等；用户替换过的原样保留）——换肤菜单/设置页
-    // 下拉靠 discoverSkins 发现，皮肤须先存在于 petsDir
-    (void)ensureBuiltinSkins(core::paths::petsDir());
-
-    // 皮肤：候选根找 → 找不到回退默认皮肤 → 生成/加载占位皮肤
+    // 皮肤：候选根找 → 找不到回退默认皮肤 → 加载随包 robot
     std::string skinName =
         config.skinName.empty() ? kDefaultSkinName : config.skinName;
     auto skin = loadSkin(resolveSkinDir(skinName));
@@ -620,7 +616,7 @@ void startPetWindow(const PetWindowConfig& config) {
         skin = loadSkin(resolveSkinDir(skinName));
     }
     if (skin.isFail()) {
-        skin = ensureDefaultSkin(core::paths::petsDir() / kDefaultSkinName);
+        skin = ensureDefaultSkin();
     }
     if (skin.isFail()) {
         LOG_ERROR("桌宠皮肤不可用（" + skin.errorMessage() + "），不开窗口");

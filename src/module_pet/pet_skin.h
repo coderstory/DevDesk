@@ -5,9 +5,9 @@
 //               "states":{"idle":["f0.png",...],"poked":[...]}}
 //
 // 设计决策：
-//   - 内置皮肤（robot + ghost）全部**程序生成**：pet.json
-//     + 帧由本文件在运行时首次生成（简单形状 + 1px 抗锯齿边缘），格式真实、
-//     素材可整体替换为真皮肤包（把 assets/pets/<name> 换成美术资源即可）
+//   - 内置皮肤（robot + ghost）为**随包静态资产**（assets/pets/<name>，git
+//     追踪，CMake POST_BUILD 随分发拷贝到可执行文件旁）；运行期只解析/发现，
+//     不程序生成（生成器与自研 PNG 编码器已于 2026-09-28 删除）
 //   - 解析是纯函数（parsePetSkinJson），不碰文件系统，供单测
 //   - 状态帧：idle/poked/sleep/typing 四态（M2，设计 §4.4/§4.5）；sleep/
 //     typing/phrases 缺失时静默忽略（老皮肤包前向兼容）
@@ -58,18 +58,10 @@ core::Result<PetSkin> parsePetSkinJson(const std::string& jsonText);
 // 读目录下 pet.json 并解析（dir 写进结果）
 core::Result<PetSkin> loadSkin(const std::filesystem::path& dir);
 
-// 生成内置占位皮肤：pet.json + idle/poked/sleep/typing 帧 + 短语表（程序
-// 绘制 PNG，未压缩 deflate，零第三方依赖）。目录已存在且 pet.json 可解析时
-// 直接加载；但内置占位皮肤缺 M2 帧时重新生成升级（用户替换过的皮肤不动）
-core::Result<PetSkin> ensureDefaultSkin(const std::filesystem::path& dir);
-
-// 全部内置皮肤名（程序生成的 robot/ghost）
-const std::vector<std::string>& builtinSkinNames();
-
-// 在 root 下生成/升级全部内置皮肤（ensureDefaultSkin 同款语义对每款适用：
-// 已存在且含 M2 帧的直接加载，用户替换过的原样保留）。返回成功清单；
-// 供 startPetWindow 落盘后，discoverSkins/设置页下拉/右键换肤菜单零改动发现
-std::vector<std::string> ensureBuiltinSkins(const std::filesystem::path& root);
+// 默认皮肤 = 随包 robot（kDefaultSkinName）：按皮肤根候选（petsDir → 可执行
+// 文件旁 assets/pets）顺序加载 assets/pets/robot/pet.json + 帧；任一候选命中
+// 即返回，全部未命中返回 fail（2026-09-28 起生成器已删，不写盘生成）
+core::Result<PetSkin> ensureDefaultSkin();
 
 // 皮肤根目录候选（纯派生，不读任何环境变量：依次 petsDir() → 可执行文件旁
 // assets/pets；exe 目录解析失败时跳过后者——空路径拼接会退化成相对 cwd）
