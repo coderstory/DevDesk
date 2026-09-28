@@ -2489,3 +2489,78 @@ REGISTER_TEST(settings_card_registry_order,
     ::core::theme::setDark();
     return true;
 })
+
+// ---- 综合审查（2026-09-28）：9 卡底板统一阴影提升 + 填充走 theme surface ----
+// 根因：settings 卡填充（ui_kit::cardFrame = surface）与 M3-4 主体渐变底
+//（settings.body.bg）顶色同为 theme surface，且 cardFrame 无阴影 → 卡与底
+// 不分层（浅色档页面顶部卡整卡隐形，「设置 UI 没修」感知；深色档同样）。
+// 修复 = card.cpp cardFrame 补 panelShadow（与 home 卡 CardStyle 同款数值：
+// blur 24 / dy 8 / 深色 α0.28 · 浅色 α0.12，随主题 token 解析）。
+// 回归断言（两档主题 × 9 张可见卡底板）：shadow 启用（与底分层）、边框 1px、
+// 填充 == theme surface（浅色 #F5F2EC / 深色 #232120，无硬编码白残留）。
+REGISTER_TEST(settings_cards_elevation_theme_surface,
+              "settings: 9 卡底板统一阴影提升 + 填充走 theme surface（两档主题）", {
+    test_support::TestEnv env(kCfgPrefix, "elev", true);
+    test_support::ScopedConfigPath cfgEnv(
+        test_support::tempConfigFile(kCfgPrefix, "elev_cfg"));
+    {
+        std::ofstream out(cfgEnv.cfgPath);
+        out << "{\"theme\":\"dark\",\"enabledModules\":["
+               "\"home\",\"markdown\",\"todo\",\"claude_proxy\",\"settings\",\"pet\"]}";
+    }
+    std::unique_ptr<::core::Module> mod(create_settings_module());
+    mod->onStart();
+    eui::Screen screen;
+    screen.width = 1600.0f;
+    screen.height = 1000.0f;
+
+    // 每张可见卡底板（pet 开 → 模块 tab 四卡全可见）；顺序 = 注册表序
+    const int kTabOf[] = {0, 0, 1, 1, 1, 1, 2, 2, 3};
+    const char* const kBgIds[] = {
+        "settings.card.appearance.bg",
+        "settings.card.editor.bg",
+        "settings.card.modules.bg",
+        "settings.card.pet.bg",
+        "settings.card.directory.bg",
+        "settings.card.proxy.bg",
+        "settings.card.log.bg",
+        "settings.tab.log.bg",
+        "settings.card.about.bg",
+    };
+    for (int pass = 0; pass < 2; ++pass) {
+        const std::string tag = pass == 0 ? "dark" : "light";
+        if (pass == 0) {
+            ::core::theme::setDark();
+        } else {
+            ::core::theme::setLight();
+        }
+        int lastTab = -1;
+        for (size_t i = 0; i < 9; ++i) {
+            if (kTabOf[i] != lastTab) {
+                lastTab = kTabOf[i];
+                DOCTEST_REQUIRE(clickSettingsTab(*mod, screen, lastTab));
+            }
+            eui::Ui ui;
+            ui.begin("elev_" + tag);
+            mod->compose(ui, screen);
+            ui.end();
+            ui.layout(screen.width, screen.height);
+            const auto* bg = ui.find(kBgIds[i]);
+            DOCTEST_REQUIRE(bg != nullptr);
+            DOCTEST_CHECK_MESSAGE(bg->shadow.enabled,
+                                  tag + " 卡 " + kBgIds[i] +
+                                      " 应有阴影（与主体底分层）");
+            DOCTEST_CHECK_EQ(bg->border.width, 1.0f);
+            const eui::Color& surface =
+                core::theme::current().colors.surface;
+            DOCTEST_CHECK_MESSAGE(
+                bg->color.r == surface.r && bg->color.g == surface.g &&
+                    bg->color.b == surface.b && bg->color.a == surface.a,
+                tag + " 卡 " + kBgIds[i] +
+                    " 填充应走 theme surface（无硬编码色残留）");
+        }
+    }
+    mod->onStop();
+    ::core::theme::setDark();
+    return true;
+})
