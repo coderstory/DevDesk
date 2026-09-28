@@ -125,6 +125,7 @@ void drawSidebar(eui::Ui& ui, const eui::Screen& screen) {
                 .position(kWidth - 1.0f, 0.0f)
                 .size(1.0f, screen.height)
                 .color(t.colors.borderMuted)
+                .radius(t.sizes.radius)
                 .build();
 
             // brand 行（2026-09-24）：展开 = logo 图标 + "DevDesk" 横排

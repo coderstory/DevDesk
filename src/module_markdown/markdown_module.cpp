@@ -829,6 +829,7 @@ private:
                                     // 同文件行：行底 = 面板底（background）
                                     .color(t.colors.background)
                                     .hoverColor(t.colors.hover)
+                                    .radius(t.sizes.radiusSmall)
                                     .onClick([this, dir = r.relPath] {
                                         if (collapsedDirs_.count(dir) != 0) {
                                             collapsedDirs_.erase(dir);
@@ -983,6 +984,7 @@ private:
                                         .color(current ? t.colors.primarySoftBg
                                                        : t.colors.surfaceElevated)
                                         .hoverColor(t.colors.hover)
+                                        .radius(t.sizes.radiusSmall)
                                         .onClick([this, i, &ui, componentTheme] {
                                             jumpToHeading(ui, i, componentTheme);
                                         })
@@ -1342,6 +1344,7 @@ private:
             .size(w, 22.0f)
             // 工具条底 = 编辑面板底（background），随面板融为一块
             .color(t.colors.background)
+            .radius(t.sizes.radiusSmall)
             .build();
 
         std::string left = "未选择笔记";

@@ -448,7 +448,9 @@ void drawDetailActions(eui::Ui& ui, float x0, float w, float paneBottom,
     ui.rect("claude.act.divider")
         .position(x0, actY - 10.0f)
         .size(w, 1.0f)
-        .color(t.colors.borderDefault).build();
+        .color(t.colors.borderDefault)
+        .radius(t.sizes.radius)
+        .build();
     const float actGap = 12.0f;
     // 6 键均分（设计 §4.1，M5 + profile-run：启用/测试连通/
     // 编辑/删除/复制/运行）——按钮数改一处，gap 数也要跟着改。
@@ -594,6 +596,7 @@ void drawDetailActions(eui::Ui& ui, float x0, float w, float paneBottom,
         .position(x0, actY + 60.0f)
         .size(w, 1.0f)
         .color(t.colors.borderMuted)
+        .radius(t.sizes.radius)
         .build();
 }
 

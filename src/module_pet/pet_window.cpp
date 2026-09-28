@@ -480,6 +480,7 @@ void petCompose(eui::Ui& ui, const eui::Screen& screen) {
                     .position(screen.width * 0.5f - 3.0f, 25.0f)
                     .size(6.0f, 6.0f)
                     .color(kBubbleBg)
+                    .radius(t.sizes.radiusSmall)  // 统一圆角：6px 会被钳到 3px
                     .rotate(0.785f)  // 45° 小方块当三角尾巴
                     .build();
                 ui.text("pet.bubble.text")

@@ -99,6 +99,7 @@ void drawStatCard(eui::Ui& ui,
                         .states(components::theme::color(0.0f, 0.0f, 0.0f,
                                                          0.0f),
                                 t.colors.hover, t.colors.active)
+                        .radius(t.sizes.radiusLarge)
                         .transition(core::Transition::make(0.1f,
                                                            core::Ease::OutQuad))
                         .animate(core::AnimProperty::Color)

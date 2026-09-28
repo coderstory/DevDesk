@@ -304,6 +304,7 @@ void drawColumnContent(eui::Ui& ui, const std::string& id, const Column& col,
         .position(0.0f, 0.0f)
         .size(width, kColumnHeaderHeight)
         .color(eui::Color{0.0f, 0.0f, 0.0f, 0.0f})
+        .radius(t.sizes.radiusLarge)
         .onContextMenu([cb = v.act.columnMenu, col, colIndex](
                            const eui::PointerEvent&, const eui::Rect&) {
             cb(col, static_cast<int>(colIndex));
