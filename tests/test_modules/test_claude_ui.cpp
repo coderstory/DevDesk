@@ -67,6 +67,28 @@ struct TestEnv : test_support::TestDb {
 // 清某个 profile 的测试密钥（共享实现，TIN-06b）
 using test_support::cleanupProfileKey;
 
+// 「运行」直连形态（D-1）把临时 settings 写到 appDataDir()/run-settings/——
+// 必须把数据根指到临时目录（core/paths.cpp 的 DEVDESK_DATA_ROOT 统一覆盖），
+// 绝不碰真实 %APPDATA%/DevDesk。析构删目录 + 还原环境变量。
+struct ScopedDataRoot {
+    std::string dir;
+
+    explicit ScopedDataRoot(const std::string& tag) {
+        dir = test_support::tempDbPath(kDbPrefix, tag).string() + ".data";
+        std::error_code ec;
+        std::filesystem::remove_all(dir, ec);
+        test_support::setEnvVar("DEVDESK_DATA_ROOT", dir);
+        std::filesystem::create_directories(dir, ec);
+    }
+    ~ScopedDataRoot() {
+        std::error_code ec;
+        std::filesystem::remove_all(dir, ec);
+        test_support::setEnvVar("DEVDESK_DATA_ROOT", "");
+    }
+    ScopedDataRoot(const ScopedDataRoot&) = delete;
+    ScopedDataRoot& operator=(const ScopedDataRoot&) = delete;
+};
+
 // 动态空闲端口（审计 L2 / HANDOFF 排队 #9 测试脆弱点）：借 platform::http::Server
 // 的 bind 0 支持（http_server.cpp：port==0 → bind_to_any_port）向系统要一个空闲
 // 端口随即释放，交还调用方独占——多 worktree / 残留进程并发跑测试时不再撞写死的
@@ -2378,12 +2400,13 @@ REGISTER_TEST(claude_ui_auth_field_edit_shows_current,
     return true;
 })
 
-// ---- 运行第 6 键（2026-09-28 profile-run 设计 §6/§8）----
+// ---- 运行第 6 键（2026-09-28 profile-run 设计 §6/§8；D-1 直连形态）----
 // ⚠️ 本文件用真实 ClaudeService（setGlobal）：点「运行」前**必须**注入假 launch，
 //    否则测试会真的启动 wt/powershell + claude（spec §6 第 4 项）
 REGISTER_TEST(claude_module_run_button_headless,
-              "claude_module: 「运行」按钮存在 + 无选中 toast + 假 launch 被调用一次", {
+              "claude_module: 「运行」按钮存在 + 无选中 toast + 假 launch 收到 --settings 参数", {
     TestEnv env;
+    ScopedDataRoot root("run");
     std::unique_ptr<::core::Module> mod(create_claude_module());
     eui::Screen screen;
     screen.width = 1600.0f;
@@ -2421,10 +2444,7 @@ REGISTER_TEST(claude_module_run_button_headless,
         got = s;
         return core::Result<void>::ok();
     });
-    // runProfile 会真起代理：端口用动态空闲口（写死端口在多 worktree 下会撞）
-    const int port = pickFreePort();
-    DOCTEST_REQUIRE(port != 0);
-    env.svc->setConfiguredProxyPort(port);
+    // runProfile 直连形态不启代理：isProxyRunning 全程恒 false（零全局改动）
 
     // 第 6 键存在且可点（无 profile 时：无选中 → toast「请先选择 Profile」，不启动）
     {
@@ -2445,7 +2465,7 @@ REGISTER_TEST(claude_module_run_button_headless,
         DOCTEST_CHECK(!env.svc->isProxyRunning()); // 也没起代理
     }
 
-    // 有 profile 且选中 → 点击后假 launch 被调用一次、参数正确、代理已起
+    // 有 profile 且选中 → 点击后假 launch 被调用一次、参数含 --settings <路径>
     auto a = env.svc->createProfile("运行目标", "https://run.example.com",
                                     "sk-ant-run-ui-0001", "");
     DOCTEST_REQUIRE(a.isOk());
@@ -2470,14 +2490,22 @@ REGISTER_TEST(claude_module_run_button_headless,
         DOCTEST_CHECK_EQ(launchCalls, 1);
         DOCTEST_CHECK_EQ(got.title, std::string("运行目标 · Claude Code"));
         DOCTEST_CHECK_EQ(got.program, std::string("claude"));
-        DOCTEST_CHECK(env.svc->isProxyRunning());          // 顺带把代理拉起来了
+        // D-1：argv 含 --settings + run-settings/ 下的路径（断言参数，不真起进程）
+        DOCTEST_REQUIRE_EQ(got.args.size(), static_cast<size_t>(2));
+        DOCTEST_CHECK_EQ(got.args[0], std::string("--settings"));
+        const std::filesystem::path settingsFile(got.args[1]);
+        DOCTEST_CHECK_EQ(settingsFile.parent_path().string(),
+                         (std::filesystem::path(root.dir) / "run-settings").string());
+        DOCTEST_CHECK(std::filesystem::exists(settingsFile));   // 落盘成功
+        DOCTEST_CHECK(!env.svc->isProxyRunning());              // 直连不启代理
         const auto* msg = ui.find("claude.toast.message");
         DOCTEST_REQUIRE(msg != nullptr);
-        // D-9 的提示文案（会话不受 DevDesk 管理）
-        DOCTEST_CHECK(msg->text.find("不受 DevDesk 管理") != std::string::npos);
+        // 直连语义提示（D-1：临时配置生命周期、零全局改动）
+        DOCTEST_CHECK(msg->text.find("全局配置") != std::string::npos);
+        std::error_code rmEc;
+        std::filesystem::remove(settingsFile, rmEc);
     }
     cleanupProfileKey(kTestKeychainService, a.value().id);
-    env.svc->stopProxy();
     return true;
 })
 

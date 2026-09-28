@@ -5,9 +5,38 @@
 // 本文件**无条件编译**（CMake 三支之外），故这些符号在所有平台都存在。
 #include "terminal_launch_common.h"
 
+#include <chrono>
 #include <cstdint>
+#include <filesystem>
+#include <system_error>
 
 namespace platform::terminal {
+
+namespace {
+
+// 从启动参数里找 --settings 的下一项（临时 settings 文件路径，profile-run §4.2）。
+// 自删段（PowerShell Remove-Item / macOS trap）只跟这个文件走；找不到 → 空串
+//（正文退化为「程序 + 参数」、无自删段）
+std::string settingsPathArg(const std::vector<std::string>& args) {
+    for (size_t i = 0; i + 1 < args.size(); ++i) {
+        if (args[i] == "--settings") return args[i + 1];
+    }
+    return {};
+}
+
+// 「程序 + 各参数」拼成一行命令文本；arg 逐个经 quoteOne 包裹（调用方传
+// PowerShell / POSIX shell 各自的单引号转义）
+std::string commandLine(const LaunchSpec& spec,
+                        std::string (*quoteOne)(const std::string&)) {
+    std::string out = spec.program;
+    for (const auto& arg : spec.args) {
+        out += ' ';
+        out += quoteOne(arg);
+    }
+    return out;
+}
+
+} // namespace
 
 // ---------- 引号 / 转义 ----------
 
@@ -169,9 +198,20 @@ std::string encodePowerShellCommand(const std::string& body) {
 // ---------- 命令文本 ----------
 
 std::string buildPowerShellBody(const LaunchSpec& spec) {
-    // ⚠️ 正文里**不含任何密钥**（D-8）：会话的密钥由本地代理转发时注入
-    return "Set-Location -LiteralPath " + powershellSingleQuote(spec.workingDir) +
-           "\n" + spec.program;
+    // 正文本身**不含任何密钥**（密钥在 --settings 指向的临时 settings 文件里，
+    // 会话正文只引用它的路径；profile-run 设计 D-1/§4.2）
+    std::string body = "Set-Location -LiteralPath " +
+                       powershellSingleQuote(spec.workingDir) + "\n";
+    body += commandLine(spec, powershellSingleQuote);
+    // 退出后自删（§5）：claude 退出 → 这一行删掉临时 settings 文件；会话期间
+    // 被强杀 / 崩溃留下的孤儿由 run-settings/ 的 24h 启动清扫兜底
+    const std::string settingsPath = settingsPathArg(spec.args);
+    if (!settingsPath.empty()) {
+        body += "\nRemove-Item -LiteralPath " +
+                powershellSingleQuote(settingsPath) +
+                " -Force -ErrorAction SilentlyContinue";
+    }
+    return body;
 }
 
 std::string escapeWtTitle(const std::string& title) {
@@ -224,8 +264,39 @@ std::vector<std::string> buildWindowsFallbackArgs(const LaunchSpec& spec) {
 }
 
 std::string buildMacCommandBody(const LaunchSpec& spec) {
-    // D-7：cd + exec；脚本不含密钥
-    return "cd " + shellSingleQuote(spec.workingDir) + " && exec " + spec.program + "\n";
+    // D-7 + D-1（V3）：cd + （无 exec 的）claude --settings '<临时文件>'；脚本
+    // 本身不含密钥。为什么去掉 exec：自删靠 EXIT 陷阱——exec 会替换 shell 进程、
+    // trap 随 shell 一起消失，自删语义就没了
+    std::string body = "cd " + shellSingleQuote(spec.workingDir) + " && " +
+                       commandLine(spec, shellSingleQuote) + "\n";
+    const std::string settingsPath = settingsPathArg(spec.args);
+    if (!settingsPath.empty()) {
+        // 退出后自删（§5）：trap 行在 claude 退出后执行，删临时 settings 文件；
+        // 会话期间被强杀 / 崩溃留下的孤儿由 run-settings/ 的 24h 启动清扫兜底
+        body += "trap 'rm -f \"" + settingsPath + "\"' EXIT\n";
+    }
+    return body;
+}
+
+void sweepStaleRunSettingsFiles(const std::filesystem::path& dir) {
+    // 镜像 terminal_launch_macos.cpp 的 sweepStaleScripts（run-scripts/ 24h 模式）：
+    // 删 24h 前修改的 run-*.json（含原子写失败残留的 .devdesk-tmp，名字也是
+    // run- 前缀）。单条失败忽略（best-effort，不阻断本次启动）；目录不存在 →
+    // directory_iterator 构造失败 → 直接无操作
+    const auto now = std::filesystem::file_time_type::clock::now();
+    std::error_code ec;
+    for (const auto& entry : std::filesystem::directory_iterator(dir, ec)) {
+        if (ec) return;
+        // 只碰本功能创建的文件（run- 前缀；目录里不该有别的文件，但防御起见）
+        const std::string name = entry.path().filename().string();
+        if (name.rfind("run-", 0) != 0) continue;
+        std::error_code inner;
+        const auto mt = std::filesystem::last_write_time(entry.path(), inner);
+        if (inner) continue;
+        if (now - mt > std::chrono::hours(24)) {
+            std::filesystem::remove(entry.path(), inner);
+        }
+    }
 }
 
 std::string stableToken(const std::string& text) {

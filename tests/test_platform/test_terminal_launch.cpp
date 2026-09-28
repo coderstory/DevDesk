@@ -12,6 +12,10 @@
 #include "platform/terminal_launch.h"
 #include "platform/terminal_launch_common.h"
 
+#include <chrono>
+#include <ctime>
+#include <filesystem>
+#include <fstream>
 #include <string>
 #include <vector>
 
@@ -176,12 +180,92 @@ REGISTER_TEST(terminal_launch_bodies_with_tricky_paths,
                      std::string("Set-Location -LiteralPath 'D:/笔记 目录'\nclaude"));
 
     // macOS .command 正文：cd 单引号包裹；路径含单引号 → '\''
+    // （2026-09-28 V3：去 exec——自删靠 EXIT 陷阱，exec 会替换 shell 让 trap 失效）
     DOCTEST_CHECK_EQ(platform::terminal::buildMacCommandBody(makeSpec("t", "/Users/demo")),
-                     std::string("cd '/Users/demo' && exec claude\n"));
+                     std::string("cd '/Users/demo' && claude\n"));
     DOCTEST_CHECK_EQ(platform::terminal::buildMacCommandBody(makeSpec("t", "/Users/my dir")),
-                     std::string("cd '/Users/my dir' && exec claude\n"));
+                     std::string("cd '/Users/my dir' && claude\n"));
     DOCTEST_CHECK_EQ(platform::terminal::buildMacCommandBody(makeSpec("t", "/Users/o'brien")),
-                     std::string("cd '/Users/o'\\''brien' && exec claude\n"));
+                     std::string("cd '/Users/o'\\''brien' && claude\n"));
+    return true;
+})
+
+// ---- ① 正文带启动参数（D-1 直连：claude --settings <路径> + 退出后自删）----
+
+REGISTER_TEST(terminal_launch_bodies_with_settings_args,
+              "terminal_launch: 正文带 --settings 参数 + 退出后自删段（PS Remove-Item / macOS trap）", {
+    // Windows：claude --settings '<路径>' + Remove-Item 自删行
+    const LaunchSpec ps = makeSpec("t", "C:/Users/demo");
+    platform::terminal::LaunchSpec psArgs = ps;
+    psArgs.args = {"--settings", "C:/Users/demo/AppData/Roaming/DevDesk/run-settings/run-3-1730000000.json"};
+    DOCTEST_CHECK_EQ(
+        platform::terminal::buildPowerShellBody(psArgs),
+        std::string("Set-Location -LiteralPath 'C:/Users/demo'\n"
+                    "claude '--settings' 'C:/Users/demo/AppData/Roaming/DevDesk/run-settings/run-3-1730000000.json'\n"
+                    "Remove-Item -LiteralPath 'C:/Users/demo/AppData/Roaming/DevDesk/run-settings/run-3-1730000000.json' -Force -ErrorAction SilentlyContinue"));
+    // 载荷 = 正文的 UTF-16LE + base64（解码后逐字相等，与 wt 分支同一编码链）
+    const std::string body = platform::terminal::buildPowerShellBody(psArgs);
+    DOCTEST_CHECK_EQ(utf16LEToUtf8ForTest(base64DecodeForTest(
+                         platform::terminal::encodePowerShellCommand(body))),
+                     body);
+
+    // macOS：cd + claude --settings + trap 自删（trap 行在 claude 退出后执行）
+    const LaunchSpec mac = makeSpec("t", "/Users/demo");
+    platform::terminal::LaunchSpec macArgs = mac;
+    macArgs.args = {"--settings", "/tmp/run-settings/run-3-1730000000.json"};
+    DOCTEST_CHECK_EQ(
+        platform::terminal::buildMacCommandBody(macArgs),
+        std::string("cd '/Users/demo' && claude '--settings' '/tmp/run-settings/run-3-1730000000.json'\n"
+                    "trap 'rm -f \"/tmp/run-settings/run-3-1730000000.json\"' EXIT\n"));
+
+    // 无 --settings → 无自删段（既不误删普通参数文件，也不画蛇添足）；
+    // noSettings 继承 ps 的 Windows 风格工作目录（C:/Users/demo）
+    platform::terminal::LaunchSpec noSettings = ps;
+    noSettings.args = {"--foo", "bar"};
+    DOCTEST_CHECK_EQ(platform::terminal::buildPowerShellBody(noSettings),
+                     std::string("Set-Location -LiteralPath 'C:/Users/demo'\nclaude '--foo' 'bar'"));
+    DOCTEST_CHECK_EQ(platform::terminal::buildMacCommandBody(noSettings),
+                     std::string("cd 'C:/Users/demo' && claude '--foo' 'bar'\n"));
+    return true;
+})
+
+// ---- ④ run-settings/ 的 24h 启动清扫（profile-run §5，镜像 macOS run-scripts 模式）----
+
+REGISTER_TEST(terminal_launch_sweep_run_settings_24h,
+              "terminal_launch: sweepStaleRunSettingsFiles 只删 24h 前的 run-* 文件", {
+    const std::filesystem::path dir =
+        std::filesystem::temp_directory_path() /
+        ("devdesk_test_run_settings_sweep_" +
+         std::to_string(static_cast<long long>(std::time(nullptr))));
+    std::error_code ec;
+    std::filesystem::remove_all(dir, ec);
+    std::filesystem::create_directories(dir, ec);
+    DOCTEST_REQUIRE(std::filesystem::is_directory(dir));
+
+    const auto touch = [&](const std::string& name, std::chrono::hours age) {
+        const std::filesystem::path f = dir / name;
+        {
+            std::ofstream out(f, std::ios::binary | std::ios::trunc);
+            out << "{}";
+        }
+        // MinGW 支持用 file_time_type 写过去时间（SetFileTime）
+        std::filesystem::last_write_time(
+            f, std::filesystem::file_time_type::clock::now() - age, ec);
+        return f;
+    };
+    const auto oldFile = touch("run-3-1730000000.json", std::chrono::hours(25));
+    const auto oldTmp = touch("run-3-1730000000.json.devdesk-tmp", std::chrono::hours(25));
+    const auto freshFile = touch("run-9-1730000001.json", std::chrono::hours(1));
+    const auto foreign = touch("user-file.json", std::chrono::hours(25));
+
+    platform::terminal::sweepStaleRunSettingsFiles(dir);
+
+    DOCTEST_CHECK(!std::filesystem::exists(oldFile, ec));          // 24h 前的 run-* 删
+    DOCTEST_CHECK(!std::filesystem::exists(oldTmp, ec));           // 原子写残留（run- 前缀）也删
+    DOCTEST_CHECK(std::filesystem::exists(freshFile, ec));         // 24h 内保留
+    DOCTEST_CHECK(std::filesystem::exists(foreign, ec));           // 非 run- 前缀不碰
+
+    std::filesystem::remove_all(dir, ec);
     return true;
 })
 
