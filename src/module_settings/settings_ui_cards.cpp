@@ -217,6 +217,9 @@ void drawAppearanceCard(const CardDrawArgs& args) {
                     .fontSize(fs(11.0f))
                     .lineHeight(16.0f)
                     .color(t.colors.warning)
+                    // 类 6(d)（probes 证伪门禁落点）：窄窗可用宽不足时截断
+                    // 而非溢出（完整文案在宽窗可见）
+                    .clip()
                     .build();
             }
         })

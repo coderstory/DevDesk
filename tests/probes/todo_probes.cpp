@@ -14,6 +14,10 @@
 //      （修复前整列被流式下推 → 红）
 //   4. release → 占位条消失 + moveTask 按行落库（插到 乙 之前）
 //
+// 列下标注意：空库迁移自建 4 默认列（同无头 test_todo_ui.cpp
+// todo_ui_drag_insert_position 用 col.4/col.5）——探针建的「源列/目标列」
+// 落在下标 4/5，不是 0/1（写 0/1 会 find 到空默认列 → 首帧必红）。
+//
 // 容差：条与缝的换算 ±0.5px（harness floatEq；spec 类 11 允许 ±4px，几何完全
 // 确定时取严）。证伪门禁：drawDropBar 去掉 .ignoreLayout()（回退修复形态）→
 // 条贴内容顶 + 整列下推 → 本 probe 红。
@@ -23,6 +27,7 @@
 #include "test_support.h"
 #include "app_registry.h"
 #include "core/module_interface.h"
+#include "core/theme.h"
 
 #include "module_todo/todo_service.h"
 
@@ -59,6 +64,12 @@ constexpr float kColumnHeaderHeight = 56.0f;
 constexpr const char* kDbPrefix = "devdesk_probe_todo_";
 
 bool floatEq(float a, float b) { return std::fabs(a - b) < 0.5f; }
+
+// RGB 三通道近似（border 色比较；忽略 alpha）
+bool channelsClose(const eui::Color& a, const eui::Color& b, float eps) {
+    return std::fabs(a.r - b.r) < eps && std::fabs(a.g - b.g) < eps &&
+           std::fabs(a.b - b.b) < eps;
+}
 
 // RAII：临时库（test_support::TestEnv，registerAppDb = true —— todo 模块
 // onStart 经 ::core::appDatabase() 拿库）+ TodoService glue（test_todo_ui.cpp
@@ -154,16 +165,16 @@ int main(int argc, char* argv[]) {
     // ---- 首帧：找源卡（拖拽锚点）+ 拖前几何基准 ----
     composeFrame();
     const core::dsl::Element* srcCard =
-        ui != nullptr ? ui->find("todo.col.0.card.0.bg") : nullptr;
+        ui != nullptr ? ui->find("todo.col.4.card.0.bg") : nullptr;
     const core::dsl::Element* card0Wrap =
-        ui != nullptr ? ui->find("todo.col.1.card.0.wrap") : nullptr;
+        ui != nullptr ? ui->find("todo.col.5.card.0.wrap") : nullptr;
     const core::dsl::Element* card1Wrap =
-        ui != nullptr ? ui->find("todo.col.1.card.1.wrap") : nullptr;
+        ui != nullptr ? ui->find("todo.col.5.card.1.wrap") : nullptr;
     if (srcCard == nullptr || card0Wrap == nullptr || card1Wrap == nullptr ||
         !floatEq(card0Wrap->frame.y,
                  card1Wrap->frame.y - kCardHeight - kCardGap)) {
         std::cerr << "todo_probes: board elements not found / misordered "
-                     "(col.0.card.0.bg, col.1.card.{0,1}.wrap)\n";
+                     "(col.4.card.0.bg, col.5.card.{0,1}.wrap)\n";
         passed = false;
     } else {
         // 拖前快照：目标列首卡绝对位置（断言悬停期间不被流式下推）
@@ -173,9 +184,9 @@ int main(int argc, char* argv[]) {
         eui::PointerEvent pe;
         srcCard->onPress(pe, boundsOf(srcCard));
         const core::dsl::Element* dstBg =
-            ui != nullptr ? ui->find("todo.col.1.bg") : nullptr;
+            ui != nullptr ? ui->find("todo.col.5.bg") : nullptr;
         if (dstBg == nullptr) {
-            std::cerr << "todo_probes: 'todo.col.1.bg' not found\n";
+            std::cerr << "todo_probes: 'todo.col.5.bg' not found\n";
             passed = false;
         } else {
             core::dsl::DragEvent ev;
@@ -191,13 +202,13 @@ int main(int argc, char* argv[]) {
 
             // 重 find（drag compose 重建了元素树）
             const core::dsl::Element* dropBar =
-                ui != nullptr ? ui->find("todo.col.1.dropbar") : nullptr;
+                ui != nullptr ? ui->find("todo.col.5.dropbar") : nullptr;
             const core::dsl::Element* card0After =
-                ui != nullptr ? ui->find("todo.col.1.card.0.wrap") : nullptr;
+                ui != nullptr ? ui->find("todo.col.5.card.0.wrap") : nullptr;
             const core::dsl::Element* card1After =
-                ui != nullptr ? ui->find("todo.col.1.card.1.wrap") : nullptr;
+                ui != nullptr ? ui->find("todo.col.5.card.1.wrap") : nullptr;
             const core::dsl::Element* dstBgAfter =
-                ui != nullptr ? ui->find("todo.col.1.bg") : nullptr;
+                ui != nullptr ? ui->find("todo.col.5.bg") : nullptr;
             if (dropBar == nullptr || card0After == nullptr ||
                 card1After == nullptr || dstBgAfter == nullptr) {
                 std::cerr << "todo_probes: elements missing after drag "
@@ -264,7 +275,7 @@ int main(int argc, char* argv[]) {
             // mid-drag compose 重建元素树——release 前重新 find（同无头注释：
             // 旧指针的回调被 move 走、直调会 bad_function_call）
             const core::dsl::Element* rel =
-                ui != nullptr ? ui->find("todo.col.0.card.0.bg") : nullptr;
+                ui != nullptr ? ui->find("todo.col.4.card.0.bg") : nullptr;
             if (rel == nullptr) {
                 std::cerr << "todo_probes: source card gone before release\n";
                 passed = false;
@@ -272,7 +283,7 @@ int main(int argc, char* argv[]) {
                 rel->onRelease(up, eui::Rect{});
                 composeFrame();
                 if (ui != nullptr &&
-                    ui->find("todo.col.1.dropbar") != nullptr) {
+                    ui->find("todo.col.5.dropbar") != nullptr) {
                     std::cerr << "todo_probes: dropbar still present after "
                                  "release\n";
                     passed = false;
@@ -299,6 +310,62 @@ int main(int argc, char* argv[]) {
                           << ", " << t2
                           << "] expected [甲, 被移动任务, 乙]\n";
                 passed = false;
+            }
+        }
+    }
+
+    // ---- 类 14（spec §3-probe-full，用户硬指定 HIGH）：选中态边框——
+    // 拖后目标列 = [甲, 被移动任务, 乙]；点卡 0（甲）→ openDetailDialog →
+    // selectedTaskId_ = 甲 → 卡 .bg 选中 2px primary 加粗；未选中 1px
+    // borderDefault。优先级竖条 .bar 随 UI 整改 16 已删——断言不存在防回归
+    if (ui != nullptr) {
+        if (ui->find("todo.col.5.card.0.bar") != nullptr) {
+            std::cerr << "todo_probes: 优先级竖条 'todo.col.5.card.0.bar' "
+                         "仍在树（UI 整改 16 已删，防回归）\n";
+            passed = false;
+        }
+        const core::dsl::Element* card0Bg =
+            ui->find("todo.col.5.card.0.bg");
+        if (card0Bg == nullptr) {
+            std::cerr << "todo_probes: 'todo.col.5.card.0.bg' not found "
+                         "before selection\n";
+            passed = false;
+        } else {
+            card0Bg->onClick();  // cardClicked → openDetailDialog（选中态）
+            composeFrame();
+            const core::dsl::Element* sel =
+                ui != nullptr ? ui->find("todo.col.5.card.0.bg") : nullptr;
+            const core::dsl::Element* unsel =
+                ui != nullptr ? ui->find("todo.col.5.card.1.bg") : nullptr;
+            if (sel == nullptr || unsel == nullptr) {
+                std::cerr << "todo_probes: card bg lost after selection\n";
+                passed = false;
+            } else {
+                const core::theme::Tokens& t = core::theme::current();
+                if (sel->border.width != 2.0f ||
+                    !channelsClose(sel->border.color, t.colors.primary,
+                                   0.02f)) {
+                    std::cerr << "todo_probes: 选中卡 border width="
+                              << sel->border.width << " color ("
+                              << sel->border.color.r << ","
+                              << sel->border.color.g << ","
+                              << sel->border.color.b << ") 期望 2px primary ("
+                              << t.colors.primary.r << ","
+                              << t.colors.primary.g << ","
+                              << t.colors.primary.b << ")\n";
+                    passed = false;
+                }
+                if (unsel->border.width != 1.0f ||
+                    !channelsClose(unsel->border.color,
+                                   t.colors.borderDefault, 0.02f)) {
+                    std::cerr << "todo_probes: 未选中卡 border width="
+                              << unsel->border.width << " color ("
+                              << unsel->border.color.r << ","
+                              << unsel->border.color.g << ","
+                              << unsel->border.color.b
+                              << ") 期望 1px borderDefault\n";
+                    passed = false;
+                }
             }
         }
     }
