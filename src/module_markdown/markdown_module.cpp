@@ -1363,19 +1363,31 @@ private:
         std::string right;
         if (!currentPath_.empty()) {
             // 审计 perf [39]：(行, 列, 字数) 按 (文本修订, 光标) 缓存，文本与
-            // 光标都没变的帧直接复用；变化帧才付一次扫描（旧行为每帧都付）
+            // 光标都没变的帧直接复用；变化帧才付一次扫描（旧行为每帧都付）。
+            // M8（spec §4.2「状态栏键仍是 (editorTextRev_, cursorByte)」）：
+            // 实时态光标权威 = 文档级 liveCursorByte_、文本 = 整篇 editorText_
+            //（活动 input 只持块局部文本，行/列必须按整篇口径算）；缓存键追加
+            // mode —— 编辑↔实时切换时两者的光标口径不同，防止命中另一态残留。
             const auto& st = ui.state<components::input_detail::InputModel::InputState>(kEditorInputId);
-            const size_t cursor = static_cast<size_t>(st.cursor);
-            if (statusCacheRev_ != editorTextRev_ || statusCacheCursor_ != cursor) {
-                const int line = byteOffsetToLine(st.text, cursor);
-                const size_t lineStart = lineStartOffset(st.text, line);
+            const std::string* text = &st.text;
+            size_t cursor = static_cast<size_t>(st.cursor);
+            if (mode_ == ViewMode::Live) {
+                text = &editorText_;
+                cursor = std::min(liveCursorByte_, editorText_.size());
+            }
+            if (statusCacheRev_ != editorTextRev_ ||
+                statusCacheCursor_ != cursor ||
+                statusCacheMode_ != static_cast<int>(mode_)) {
+                const int line = byteOffsetToLine(*text, cursor);
+                const size_t lineStart = lineStartOffset(*text, line);
                 const int col = static_cast<int>(utf8Length(
-                    st.text.substr(lineStart, cursor - lineStart))) + 1;
+                    text->substr(lineStart, cursor - lineStart))) + 1;
                 statusCacheLine_ = line;
                 statusCacheCol_ = col;
-                statusCacheChars_ = utf8Length(st.text);
+                statusCacheChars_ = utf8Length(*text);
                 statusCacheRev_ = editorTextRev_;
                 statusCacheCursor_ = cursor;
+                statusCacheMode_ = static_cast<int>(mode_);
             }
             right = std::to_string(statusCacheLine_ + 1) + ":" +
                     std::to_string(statusCacheCol_) + " · " +
@@ -2911,6 +2923,16 @@ private:
             setMode(nextMode(mode_));
             return true;
         }
+        // M8（spec §7 M8「Ctrl+S —— 实时态保存」）：显式落盘。四态共用同一条
+        // saveEditor 幂等链（无未落盘改动零操作），通道与 Ctrl+N 相同（焦点在
+        // 编辑器/搜索/标签框时内置键表不吃 S → Router 派到本页）。状态栏
+        // ●/✓ 与磁盘内容即时刷新。
+        if (key.isDown() && key.modifiers.shortcut() && !key.modifiers.shift &&
+            !key.modifiers.alt && key.key == eui::InputKey::S) {
+            saveEditor();
+            LOG_INFO("Ctrl+S：手动保存 " + currentPath_);
+            return true;
+        }
         // ux-design §4 #6 P1：Ctrl+N 打开新建笔记弹窗（与「+ 新建笔记」按钮/
         // 跨模块负载同一入口 openNewNoteDialog，秒建走弹窗内空名回车=默认名，
         // 行为与既有链路完全一致）。弹窗已开时不重复触发——否则会清掉用户
@@ -2938,12 +2960,21 @@ private:
     }
 
     // 大纲当前节：光标行（InputState）所在的上一个标题；仅预览态无编辑器
-    // 渲染时沿用上次跳转/光标位置（activeOutlineIdx_）
+    // 渲染时沿用上次跳转/光标位置（activeOutlineIdx_）；实时态用文档级光标锚
+    // liveCursorByte_（M8：编辑器输入不在实时态帧树，读它的旧状态拿到的行号
+    // 与当前大纲对不上）
     int activeOutlineIndex(eui::Ui& ui) {
         if (outline_.empty()) return -1;
-        if (mode_ == ViewMode::Preview) return activeOutlineIdx_;
-        const auto& st = ui.state<components::input_detail::InputModel::InputState>(kEditorInputId);
-        const int line = byteOffsetToLine(st.text, static_cast<size_t>(st.cursor));
+        int line;
+        if (mode_ == ViewMode::Preview) {
+            return activeOutlineIdx_;
+        }
+        if (mode_ == ViewMode::Live) {
+            line = byteOffsetToLine(editorText_, liveCursorByte_);
+        } else {
+            const auto& st = ui.state<components::input_detail::InputModel::InputState>(kEditorInputId);
+            line = byteOffsetToLine(st.text, static_cast<size_t>(st.cursor));
+        }
         int idx = -1;
         for (size_t i = 0; i < outline_.size(); ++i) {
             if (outline_[i].lineNo <= line) idx = static_cast<int>(i);
@@ -2966,6 +2997,14 @@ private:
                 editorText_.substr(0, h.byteOffset), width,
                 components::MarkdownStyle(componentTheme));
             syncPreviewOnEnter_ = false;
+            return;
+        }
+        // M8（spec §4.6「大纲跳转在实时态改调 setLiveCursor」）：实时态的唯一
+        // 文档级光标写点 = setLiveCursor —— 写 kEditorInputId 是死写（该输入不在
+        // 帧树），且会绕过「换活动块文本 + 反向写块局部光标 + 同帧补发聚焦 +
+        // 定位即跟随」的整条链路。
+        if (mode_ == ViewMode::Live) {
+            setLiveCursor(h.byteOffset, "大纲跳转");
             return;
         }
         auto& st = ui.state<components::input_detail::InputModel::InputState>(kEditorInputId);
@@ -3924,9 +3963,11 @@ private:
     // P3-⑤：预览逐块 hover 状态（当前 hovered 的 stableId，乱序 leave 保护
     // 在 MdPreviewHoverState 内）；点击定位的纯数学在 mdResolvePreviewJump。
     MdPreviewHoverState previewHover_;
-    // [39] 状态栏 (行, 列, 码点数) 缓存（键 = 修订 + 光标字节偏移）
+    // [39] 状态栏 (行, 列, 码点数) 缓存（键 = 修订 + 光标字节偏移 + 模式；
+    // M8 起实时态光标口径 = liveCursorByte_，mode 防跨态命中残留）
     uint64_t statusCacheRev_ = ~0ull;
     size_t statusCacheCursor_ = ~0ull;
+    int statusCacheMode_ = -1;
     int statusCacheLine_ = 0;
     int statusCacheCol_ = 1;
     size_t statusCacheChars_ = 0;

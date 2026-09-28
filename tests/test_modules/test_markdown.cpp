@@ -6131,3 +6131,432 @@ REGISTER_TEST(md_module_md01_reload_non_live_modes,
     mod->onStop();
     return true;
 })
+// ==================== M8：联动收口（spec §7 M8 / §3.3 / §4.2） ====================
+
+// M8-1：大纲跳转走 setLiveCursor（spec §4.6「大纲跳转在实时态改调 setLiveCursor」）。
+// 修复前 jumpToHeading 在实时态写 kEditorInputId（该输入不在帧树 = 死写），
+// 活动块不换、光标不动；修复后应换活动块文本 + 光标落标题行行首 + 补发聚焦。
+REGISTER_TEST(md_module_live_outline_jump,
+              "markdown_module: M8 大纲跳转走 setLiveCursor（实时态换活动块+聚焦，headless）", {
+    const std::string text = "# 标题A\n\n## 标题B\n\n正文段落\n";
+    test_support::MdHeadlessEnv env(kDirPrefix, "liveoutline", kDbName);
+    DOCTEST_REQUIRE(env.db != nullptr);
+    DOCTEST_REQUIRE(writeTextFile(env.dir / "out.md", text));
+
+    module::markdown::MdBlockModel model;
+    model.update(text);
+    DOCTEST_REQUIRE(model.blocks().size() >= 3);
+    const size_t headingByte = text.find("## 标题B");
+    DOCTEST_REQUIRE(headingByte != std::string::npos);
+    const std::string headingSrc =
+        text.substr(model.blocks()[1].start,
+                    model.blocks()[1].end - model.blocks()[1].start);
+
+    std::unique_ptr<::core::Module> mod(create_markdown_module());
+    mod->onStart();
+    eui::Screen screen;
+    screen.width = 1600.0f;
+    screen.height = 1000.0f;
+    test_support::HeadlessFrame e("mdlive");
+    auto frame = [&] { e.frame([&](eui::Ui& u) { mod->compose(u, screen); }); };
+
+    frame();
+    DOCTEST_REQUIRE(openFirstNote(*e.ui));
+    frame();
+    DOCTEST_REQUIRE(cycleMode(mod.get()));   // → 实时
+    frame();
+    DOCTEST_REQUIRE(e.ui->find("md.live.scroll") != nullptr);
+
+    // 打开大纲面板；实时态点击「## 标题B」
+    const auto* toggle = e.ui->find("md.outline.toggle.hit");
+    DOCTEST_REQUIRE(toggle != nullptr);
+    DOCTEST_REQUIRE(toggle->onClick != nullptr);
+    toggle->onClick();
+    frame();
+    const auto* h2 = e.ui->find("md.outline.item.1.row");
+    DOCTEST_REQUIRE(h2 != nullptr);
+    DOCTEST_REQUIRE(h2->onClick != nullptr);
+    h2->onClick();
+    frame();
+
+    // ① 活动块换到标题块：input 内容 = 该块源码（修复前活动块不动 → 本行红）
+    DOCTEST_CHECK_EQ(e.ui->state<MdInputState>("md.live.input").text,
+                     headingSrc);
+    // ② 光标落在标题文字行首：块局部 = 大纲字节偏移 - 块起点（块模型把前导
+    //    空行 \n 归标题块，故 = 1 而非 0）
+    DOCTEST_CHECK_EQ(
+        static_cast<size_t>(
+            e.ui->state<MdInputState>("md.live.input").cursor),
+        headingByte - model.blocks()[1].start);
+    // ③ 聚焦补发（setLiveCursor → liveFocusPending_ 同帧消费）
+    DOCTEST_CHECK(e.ui->isFocused("md.live.input.hit"));
+    // ④ 编辑器输入未被写：实时态光标权威 = liveCursorByte_（修复前点击会写
+    //    kEditorInputId → 本行变 11）
+    DOCTEST_CHECK_EQ(e.ui->state<MdInputState>(kEditorInputId).cursor, 0);
+    // ⑤ 大纲高亮随跳转换节：item.0 失焦、item.1 加粗
+    DOCTEST_CHECK_EQ(e.ui->find("md.outline.item.0.label")->fontWeight, 400);
+    DOCTEST_CHECK_EQ(e.ui->find("md.outline.item.1.label")->fontWeight, 700);
+
+    mod->onStop();
+    return true;
+})
+
+// M8-2：实时态状态栏 (行:列:字)（spec §4.2「状态栏键仍是 (editorTextRev_,
+// cursorByte)」）。修复前读 kEditorInputId 旧状态（不在实时态帧树），行/列/字数
+// 停在编辑态残留；修复后按文档级 liveCursorByte_ + 整篇 editorText_ 口径算。
+REGISTER_TEST(md_module_live_status_bar,
+              "markdown_module: M8 状态栏行:列:字（实时态光标口径 liveCursorByte_，headless）", {
+    const std::string text = "alpha\nbeta\ngamma\n";   // 17 字节，单段块
+    test_support::MdHeadlessEnv env(kDirPrefix, "livestatus", kDbName);
+    DOCTEST_REQUIRE(env.db != nullptr);
+    DOCTEST_REQUIRE(writeTextFile(env.dir / "s.md", text));
+
+    std::unique_ptr<::core::Module> mod(create_markdown_module());
+    mod->onStart();
+    eui::Screen screen;
+    screen.width = 1600.0f;
+    screen.height = 1000.0f;
+    test_support::HeadlessFrame e("mdlive");
+    auto frame = [&] { e.frame([&](eui::Ui& u) { mod->compose(u, screen); }); };
+    auto statusPos = [&](void) -> std::string {
+        const auto* n = e.ui->find("md.status.pos");
+        return n == nullptr ? std::string("<missing>") : n->text;
+    };
+    auto statusSave = [&](void) -> std::string {
+        const auto* n = e.ui->find("md.status.save");
+        return n == nullptr ? std::string("<missing>") : n->text;
+    };
+
+    frame();
+    DOCTEST_REQUIRE(openFirstNote(*e.ui));
+    frame();
+    DOCTEST_REQUIRE(cycleMode(mod.get()));   // → 实时
+    frame();
+    DOCTEST_REQUIRE(e.ui->find("md.live.scroll") != nullptr);
+
+    // ① 实时态光标（块内 == 文档内，单块文档）：移到 "gamma" 行首（字节 11）
+    e.ui->state<MdInputState>("md.live.input").cursor = 11;
+    frame();
+    DOCTEST_CHECK_EQ(statusPos(), std::string("3:1 · 17 字 · 1 篇笔记"));
+
+    // ② 实时态打字（onTextInput → 上行拼文档）：行列字数随整篇口径更新
+    const auto* hit = e.ui->find("md.live.input.hit");
+    DOCTEST_REQUIRE(hit != nullptr);
+    DOCTEST_REQUIRE(hit->onTextInput != nullptr);
+    core::TextInputEvent ev;
+    ev.text = "X";
+    hit->onTextInput(ev);
+    frame();
+    DOCTEST_CHECK_EQ(statusPos(), std::string("3:2 · 18 字 · 1 篇笔记"));
+    // ③ 未落盘：保存状态 ●（实时态与编辑态同一脏标记链）
+    DOCTEST_CHECK(statusSave().find("未保存") != std::string::npos);
+
+    mod->onStop();
+    return true;
+})
+
+// M8-3：实时态标签栏接续（spec §3.1「标签栏四态共享，零改动」）。验证共享列壳的
+// chip 行在实时态可添加标签、左栏筛选可用、实时列本身不受扰动。
+REGISTER_TEST(md_module_live_tag_bar,
+              "markdown_module: M8 标签栏实时态接续（chip 行/添加/筛选，headless）", {
+    test_support::MdHeadlessEnv env(kDirPrefix, "livetag", kDbName);
+    DOCTEST_REQUIRE(env.db != nullptr);
+    DOCTEST_REQUIRE(writeTextFile(env.dir / "note.md", "# 标题\n"));
+    DOCTEST_REQUIRE(writeTextFile(env.dir / "other.md", "# 别篇\n"));
+
+    std::unique_ptr<::core::Module> mod(create_markdown_module());
+    mod->onStart();
+    eui::Screen screen;
+    screen.width = 1600.0f;
+    screen.height = 1000.0f;
+    test_support::HeadlessFrame e("mdlive");
+    auto frame = [&] { e.frame([&](eui::Ui& u) { mod->compose(u, screen); }); };
+    auto findFileRow = [&](const std::string& name) {
+        for (int i = 0; i < 6; ++i) {
+            const auto* nm = e.ui->find("md.tree.node." + std::to_string(i) + ".name");
+            if (nm != nullptr && nm->text == name) {
+                return static_cast<const core::dsl::Element*>(
+                    e.ui->find("md.tree.node." + std::to_string(i) + ".row"));
+            }
+        }
+        return static_cast<const core::dsl::Element*>(nullptr);
+    };
+    auto treeHasNote = [&](const std::string& name) {
+        for (int i = 0; i < 6; ++i) {
+            const auto* nm = e.ui->find("md.tree.node." + std::to_string(i) + ".name");
+            if (nm != nullptr && nm->text == name) return true;
+        }
+        return false;
+    };
+
+    frame();
+    const auto* fileRow = findFileRow("note.md");
+    DOCTEST_REQUIRE(fileRow != nullptr);
+    DOCTEST_REQUIRE(fileRow->onClick != nullptr);
+    fileRow->onClick();
+    frame();
+    DOCTEST_REQUIRE(cycleMode(mod.get()));   // → 实时
+    frame();
+    DOCTEST_REQUIRE(e.ui->find("md.live.scroll") != nullptr);
+
+    // ① 实时态正文列顶的标签 chip 行仍在（共享列壳）：添加输入 + ＋按钮
+    const auto* addInput = e.ui->find("md.tags.add.hit");
+    DOCTEST_REQUIRE(addInput != nullptr);
+    DOCTEST_REQUIRE(addInput->onTextInput != nullptr);
+    core::TextInputEvent tie;
+    tie.text = "工作";
+    addInput->onTextInput(tie);
+    frame();
+    const auto* addBtn = e.ui->find("md.tags.addbtn.bg");
+    DOCTEST_REQUIRE(addBtn != nullptr);
+    DOCTEST_REQUIRE(addBtn->onClick != nullptr);
+    addBtn->onClick();
+    frame();
+
+    // ② chip 上屏 + 左栏筛选区同名 chip（与编辑态同一套逻辑）
+    const auto* chipName = e.ui->find("md.tags.chip.0.name");
+    DOCTEST_REQUIRE(chipName != nullptr);
+    DOCTEST_CHECK_EQ(chipName->text, std::string("工作"));
+    const auto* filterName = e.ui->find("md.tags.filter.0.name");
+    DOCTEST_REQUIRE(filterName != nullptr);
+    DOCTEST_CHECK(filterName->text.find("工作") != std::string::npos);
+
+    // ③ 筛选：other.md 隐藏、note.md 保留；实时列不受扰动（仍是活动块源码）
+    const auto* filterBg = e.ui->find("md.tags.filter.0.bg");
+    DOCTEST_REQUIRE(filterBg != nullptr);
+    DOCTEST_REQUIRE(filterBg->onClick != nullptr);
+    filterBg->onClick();
+    frame();
+    DOCTEST_CHECK(!treeHasNote("other.md"));
+    DOCTEST_CHECK(treeHasNote("note.md"));
+    DOCTEST_CHECK(e.ui->find("md.live.scroll") != nullptr);
+    DOCTEST_CHECK_EQ(e.ui->state<MdInputState>("md.live.input").text,
+                     std::string("# 标题\n"));
+
+    // ④ 再点一次取消筛选 → other.md 回来
+    e.ui->find("md.tags.filter.0.bg")->onClick();
+    frame();
+    DOCTEST_CHECK(treeHasNote("other.md"));
+
+    mod->onStop();
+    return true;
+})
+
+// M8-4：Ctrl+S 实时态保存（spec §7 M8）。四态共用模块 onKeyEvent → saveEditor
+// 幂等链；Ctrl+S 在实时态应立即落盘（不等 400ms 防抖）+ 状态栏 ✓。
+REGISTER_TEST(md_module_live_ctrl_s_save,
+              "markdown_module: M8 Ctrl+S 实时态保存（立即落盘+状态栏✓，headless）", {
+    const std::string v1 = "hello\n";
+    test_support::MdHeadlessEnv env(kDirPrefix, "livesave", kDbName);
+    DOCTEST_REQUIRE(env.db != nullptr);
+    DOCTEST_REQUIRE(writeTextFile(env.dir / "s.md", v1));
+
+    std::unique_ptr<::core::Module> mod(create_markdown_module());
+    mod->onStart();
+    eui::Screen screen;
+    screen.width = 1600.0f;
+    screen.height = 1000.0f;
+    test_support::HeadlessFrame e("mdlive");
+    auto frame = [&] { e.frame([&](eui::Ui& u) { mod->compose(u, screen); }); };
+    auto statusSave = [&](void) -> std::string {
+        const auto* n = e.ui->find("md.status.save");
+        return n == nullptr ? std::string("<missing>") : n->text;
+    };
+
+    frame();
+    DOCTEST_REQUIRE(openFirstNote(*e.ui));
+    frame();
+    DOCTEST_REQUIRE(cycleMode(mod.get()));   // → 实时
+    frame();
+
+    // 实时态打字（光标置文末）→ 内存已新、磁盘仍是旧版（400ms 防抖未到）
+    e.ui->state<MdInputState>("md.live.input").cursor = 6;
+    const auto* hit = e.ui->find("md.live.input.hit");
+    DOCTEST_REQUIRE(hit != nullptr);
+    DOCTEST_REQUIRE(hit->onTextInput != nullptr);
+    core::TextInputEvent ev;
+    ev.text = "world";
+    hit->onTextInput(ev);
+    frame();
+    DOCTEST_CHECK_EQ(e.ui->state<MdInputState>("md.live.input").text,
+                     std::string("hello\nworld"));
+    std::string disk;
+    DOCTEST_REQUIRE(readFileBytes(env.dir / "s.md", &disk));
+    DOCTEST_CHECK_EQ(disk, v1);   // 未落盘
+    DOCTEST_CHECK(statusSave().find("未保存") != std::string::npos);
+
+    // Ctrl+S → 立即落盘 + 状态栏 ✓ 已保存
+    eui::KeyEvent cs;
+    cs.key = eui::InputKey::S;
+    cs.modifiers.control = true;
+    DOCTEST_CHECK(mod->onKeyEvent(cs));
+    DOCTEST_REQUIRE(readFileBytes(env.dir / "s.md", &disk));
+    DOCTEST_CHECK_EQ(disk, std::string("hello\nworld"));
+    frame();
+    DOCTEST_CHECK(statusSave().find("已保存") != std::string::npos);
+
+    // Ctrl+Shift+S 不消费（不是 Ctrl+S）
+    eui::KeyEvent css;
+    css.key = eui::InputKey::S;
+    css.modifiers.control = true;
+    css.modifiers.shift = true;
+    DOCTEST_CHECK_FALSE(mod->onKeyEvent(css));
+
+    // 已落盘后再 Ctrl+S：幂等（仍消费，磁盘不变）
+    DOCTEST_CHECK(mod->onKeyEvent(cs));
+    DOCTEST_REQUIRE(readFileBytes(env.dir / "s.md", &disk));
+    DOCTEST_CHECK_EQ(disk, std::string("hello\nworld"));
+
+    mod->onStop();
+    return true;
+})
+
+// M8-5：实时态搜索筛选（spec §7 M8）。左栏搜索框四态共享：FTS 过滤树照常、
+// 当前实时列不受扰动；点开命中笔记后仍驻留实时态。
+REGISTER_TEST(md_module_live_search_filter,
+              "markdown_module: M8 搜索筛选实时态（FTS 过滤树+打开命中仍驻留实时，headless）", {
+    test_support::MdHeadlessEnv env(kDirPrefix, "livesearch", kDbName);
+    DOCTEST_REQUIRE(env.db != nullptr);
+    DOCTEST_REQUIRE(writeTextFile(env.dir / "a.md", "apple title\n"));
+    DOCTEST_REQUIRE(writeTextFile(env.dir / "b.md", "banana note\n"));
+
+    std::unique_ptr<::core::Module> mod(create_markdown_module());
+    mod->onStart();
+    eui::Screen screen;
+    screen.width = 1600.0f;
+    screen.height = 1000.0f;
+    test_support::HeadlessFrame e("mdlive");
+    auto frame = [&] { e.frame([&](eui::Ui& u) { mod->compose(u, screen); }); };
+    auto findFileRow = [&](const std::string& name) {
+        // 行 id 两族都要扫：树模式 = md.tree.node.N；搜索命中列表 = md.tree.item.N
+        for (int i = 0; i < 8; ++i) {
+            const auto* nm = e.ui->find("md.tree.node." + std::to_string(i) + ".name");
+            if (nm == nullptr) {
+                nm = e.ui->find("md.tree.item." + std::to_string(i) + ".name");
+            }
+            if (nm != nullptr && nm->text == name) {
+                const auto* row =
+                    e.ui->find("md.tree.node." + std::to_string(i) + ".row");
+                if (row == nullptr) {
+                    row = e.ui->find("md.tree.item." + std::to_string(i) + ".row");
+                }
+                return static_cast<const core::dsl::Element*>(row);
+            }
+        }
+        return static_cast<const core::dsl::Element*>(nullptr);
+    };
+    auto treeHasNote = [&](const std::string& name) {
+        for (int i = 0; i < 8; ++i) {
+            const auto* nm = e.ui->find("md.tree.node." + std::to_string(i) + ".name");
+            if (nm == nullptr) {
+                nm = e.ui->find("md.tree.item." + std::to_string(i) + ".name");
+            }
+            if (nm != nullptr && nm->text == name) return true;
+        }
+        return false;
+    };
+
+    frame();
+    const auto* aRow = findFileRow("a.md");
+    DOCTEST_REQUIRE(aRow != nullptr);
+    DOCTEST_REQUIRE(aRow->onClick != nullptr);
+    aRow->onClick();
+    frame();
+    DOCTEST_REQUIRE(cycleMode(mod.get()));   // → 实时
+    frame();
+    DOCTEST_CHECK_EQ(e.ui->state<MdInputState>("md.live.input").text,
+                     std::string("apple title\n"));
+
+    // 搜索 "banana"：树只留命中，当前实时列不动
+    const auto* searchHit = e.ui->find("md.search.hit");
+    DOCTEST_REQUIRE(searchHit != nullptr);
+    DOCTEST_REQUIRE(searchHit->onTextInput != nullptr);
+    core::TextInputEvent sev;
+    sev.text = "banana";
+    searchHit->onTextInput(sev);
+    frame();
+    DOCTEST_CHECK(treeHasNote("b.md"));
+    DOCTEST_CHECK(!treeHasNote("a.md"));
+    DOCTEST_CHECK(e.ui->find("md.live.scroll") != nullptr);
+    DOCTEST_CHECK_EQ(e.ui->state<MdInputState>("md.live.input").text,
+                     std::string("apple title\n"));
+
+    // 点开命中笔记：仍在实时态，活动块 = 新笔记首块
+    const auto* hitRow = findFileRow("b.md");
+    DOCTEST_REQUIRE(hitRow != nullptr);
+    DOCTEST_REQUIRE(hitRow->onClick != nullptr);
+    hitRow->onClick();
+    frame();
+    DOCTEST_CHECK(e.ui->find("md.live.scroll") != nullptr);
+    DOCTEST_CHECK_EQ(e.ui->state<MdInputState>("md.live.input").text,
+                     std::string("banana note\n"));
+    DOCTEST_CHECK(e.ui->find("md.status.save")->text.find("b.md") !=
+                  std::string::npos);
+
+    mod->onStop();
+    return true;
+})
+
+// M8-6：跨模块跳转驻留实时态（spec §7 M8「其它模块跳到 markdown 实时态定位」）。
+// Router 负载 open:<path> → openNote → 实时态状态群换代，活动块落目标笔记首块。
+REGISTER_TEST(md_module_live_cross_module_nav,
+              "markdown_module: M8 跨模块跳转驻留实时态（open: 负载→活动块换目标笔记，headless）", {
+    test_support::MdHeadlessEnv env(kDirPrefix, "livenav", kDbName);
+    DOCTEST_REQUIRE(env.db != nullptr);
+    DOCTEST_REQUIRE(writeTextFile(env.dir / "a.md", "A one\n\nA two\n"));
+    DOCTEST_REQUIRE(writeTextFile(env.dir / "b.md", "B one\n\nB two\n"));
+
+    ::core::Router router;
+    test_support::ScopedAppRouter routerGuard(&router);
+
+    std::unique_ptr<::core::Module> mod(create_markdown_module());
+    mod->onStart();
+    router.registerModule(mod.get());   // 跳转目标页必须先注册（否则回退 Home）
+    eui::Screen screen;
+    screen.width = 1600.0f;
+    screen.height = 1000.0f;
+    test_support::HeadlessFrame e("mdlive");
+    auto frame = [&] { e.frame([&](eui::Ui& u) { mod->compose(u, screen); }); };
+    auto findFileRow = [&](const std::string& name) {
+        for (int i = 0; i < 8; ++i) {
+            const auto* nm = e.ui->find("md.tree.node." + std::to_string(i) + ".name");
+            if (nm != nullptr && nm->text == name) {
+                return static_cast<const core::dsl::Element*>(
+                    e.ui->find("md.tree.node." + std::to_string(i) + ".row"));
+            }
+        }
+        return static_cast<const core::dsl::Element*>(nullptr);
+    };
+
+    // 打开 a.md → 实时态（首块活动）
+    frame();
+    const auto* aRow = findFileRow("a.md");
+    DOCTEST_REQUIRE(aRow != nullptr);
+    DOCTEST_REQUIRE(aRow->onClick != nullptr);
+    aRow->onClick();
+    frame();
+    DOCTEST_REQUIRE(cycleMode(mod.get()));   // → 实时
+    frame();
+    DOCTEST_CHECK_EQ(e.ui->state<MdInputState>("md.live.input").text,
+                     std::string("A one\n"));
+    DOCTEST_CHECK(e.ui->find("md.status.save")->text.find("a.md") !=
+                  std::string::npos);
+
+    // 跨模块负载 open:b.md：仍是实时态，活动块换到 b.md 首块并聚焦
+    router.navigateTo(::core::PageId::Markdown, "open:b.md");
+    frame();
+    DOCTEST_CHECK(e.ui->find("md.live.scroll") != nullptr);
+    DOCTEST_CHECK_EQ(e.ui->state<MdInputState>("md.live.input").text,
+                     std::string("B one\n"));
+    DOCTEST_CHECK(e.ui->find("md.status.save")->text.find("b.md") !=
+                  std::string::npos);
+    DOCTEST_CHECK(e.ui->isFocused("md.live.input.hit"));
+
+    // 负载一次性：再走一帧不重复触发（内容不变）
+    frame();
+    DOCTEST_CHECK_EQ(e.ui->state<MdInputState>("md.live.input").text,
+                     std::string("B one\n"));
+
+    mod->onStop();
+    return true;
+})
