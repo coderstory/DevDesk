@@ -11,12 +11,14 @@
 #include "core/router.h"
 #include "core/service_locator.h"
 #include "core/theme.h"
+#include <algorithm>
 #include <chrono>
 #include <cstdlib>
 #include <exception>
 #include <filesystem>
 #include <iostream>
 #include <string>
+#include <vector>
 
 namespace {
 
@@ -138,6 +140,16 @@ void resetCaseGlobals() {
     ::app::assembly::resetAssemblyGlobals();
 }
 
+// 单例运行结果：先收集、循环结束后统一批量输出——全量 800+ 例时逐条
+// std::endl 强 flush 是 ~3min 耗时的主因（每次 flush 一次控制台/管道写 + 上下文
+// 切换）；推迟打印顺便拿到 Top-10 慢测试（见 main 末尾）
+struct CaseResult {
+    std::string name;
+    std::string status;  // "PASS" / "SKIP" / "FAIL"
+    long long ms = 0;
+    std::string errMsg;
+};
+
 } // namespace
 
 // 用法：devdesk_tests.exe [子串] [--log]
@@ -159,6 +171,8 @@ int main(int argc, char** argv) {
             filter = arg;
         }
     }
+    std::vector<CaseResult> results;
+    results.reserve(1024);
     for (const auto& t : test_registry::registry()) {
         if (!filter.empty() && t.first.find(filter) == std::string::npos) {
             continue;
@@ -185,29 +199,51 @@ int main(int argc, char** argv) {
         // 审计 TIN-03：用例体内 DOCTEST_SKIP(...) 会置跳过标记——单独计
         // Skipped（不再混进 Passed），Skipped 不算失败、不影响退出码
         const bool skippedCase = test_registry::consumeSkipped();
-        // std::endl 强制 flush，重定向到文件时结果实时可见
+        // 结果先收集不打印：std::endl 的强 flush 是 800+ 例全量 ~3min 的
+        // 主瓶颈，推到循环结束后一次性批量输出（见下）
         if (ok && skippedCase) {
-            std::cout << "[SKIP] " << t.first << " [" << ms << "ms]"
-                      << std::endl;
+            results.push_back({t.first, "SKIP", ms, ""});
             ++skipped;
         } else if (ok) {
-            std::cout << "[PASS] " << t.first << " [" << ms << "ms]"
-                      << std::endl;
+            results.push_back({t.first, "PASS", ms, ""});
             ++passed;
         } else {
-            std::cout << "[FAIL] " << t.first << " [" << ms << "ms]"
-                      << std::endl;
-            if (!errMsg.empty()) {
-                std::cout << "       exception: " << errMsg << std::endl;
-            }
+            results.push_back({t.first, "FAIL", ms, errMsg});
             ++failed;
         }
+        // 进度点：每 50 例打一个点到 stderr（不 flush，仅通知还在跑）
+        if (total % 50 == 0) {
+            std::cerr << ".";
+        }
     }
+    // 批量输出：\n 不触发 flush，打印完统一 flush 一次
+    for (const auto& r : results) {
+        std::cout << '[' << r.status << "] " << r.name << " [" << r.ms
+                  << "ms]\n";
+        if (r.status == "FAIL" && !r.errMsg.empty()) {
+            std::cout << "       exception: " << r.errMsg << "\n";
+        }
+    }
+    std::cout << std::flush;
     std::cout << "\n=== Summary ===" << std::endl;
     std::cout << "Total:  " << total << std::endl;
     std::cout << "Passed: " << passed << std::endl;
     std::cout << "Failed: " << failed << std::endl;
     std::cout << "Skipped: " << skipped << std::endl;
+    // Top-10 慢测试：方便后续单点优化 I/O 大户
+    auto slowest = results;
+    std::stable_sort(slowest.begin(), slowest.end(),
+                     [](const CaseResult& a, const CaseResult& b) {
+                         return a.ms > b.ms;
+                     });
+    const auto topN = std::min<std::size_t>(slowest.size(), 10);
+    if (topN > 0) {
+        std::cout << "\nTop-" << topN << " slowest:\n";
+        for (std::size_t i = 0; i < topN; ++i) {
+            std::cout << "  " << slowest[i].ms << "ms  " << slowest[i].name
+                      << '\n';
+        }
+    }
     // 审计 TIN-03：过滤命中 0 个用例 ≠ 全绿。旧口径在此返回 0，上层脚本
     // grep "Failed: 0" 会把「一个用例都没跑」（如 --no_run 误拼降级成过滤器、
     // 过滤词打错）判成 ✅ 全绿——静默绕过「未运行测试 = 未完成」纪律。
