@@ -159,7 +159,7 @@
 #### 20. 三个脚本的 macOS 分支端到端未验证（`577e0d0` 移植，2026-09-28 登记）
 
 - **现象**：`scripts/build-test-run.sh` / `scripts/ccache-env.sh` / `scripts/check-consistency.sh` 的 macOS/Linux 分支（Darwin：`pkill -f` 杀进程、`otool -L` 列依赖、`screencapture -x` 截屏、`stat -f%z`、`-DOPENSSL_ROOT_DIR=/opt/homebrew/opt/openssl@3`、ccache 配置读 `~/Library/Preferences/ccache/ccache.conf`）**从未在 macOS 上完整跑过一遍**——`577e0d0` 只做了语法检查与定点验证，「构建 + 测试 + 启动」全链在 macOS 上是否可用**未证实**。
-- **触发条件**：在 macOS 上执行 `bash scripts/build-test-run.sh`。`check-consistency.sh` 的截屏分支另有一层前置：终端需被授予「屏幕录制」TCC 权限，否则 `screencapture -x` 拿不到窗口内容（脚本保留 Pillow 合成回退，但**无权限时的实际行为未在实机验证**）。
+- **触发条件**：在 macOS 上执行 `bash scripts/build-test-run.sh`。`check-consistency.sh` 的截屏分支原有一层前置：终端需被授予「屏幕录制」TCC 权限，否则 `screencapture -x` 拿不到窗口内容（脚本保留 Pillow 合成回退）。（**2026-09-28 晚更新**：该权限用户已授予，`screencapture -x` **实测可用**（2940×1912 PNG）——「被 TCC 挡住、不能截屏」已不成立，无权限时的行为不再是现存限制；截屏通道**现存的实际限制**改为：**对 OpenGL 窗口可能抓到导航前的旧帧**——需移动鼠标触发重绘后拍第二张、取后一张。）
 - **为什么暂不处理**：移植的验收口径只到「Windows 分支行为不变 + 语法/定点检查」；端到端要等 macOS 侧构建先跑通（见 `TODO.md`「macOS 构建环境」段），在此之前手敲 configure + ctest 是可靠路径。
 - **来源**：`577e0d0`（2026-09-28）；脚本内注释 `scripts/build-test-run.sh:28-47`、`scripts/check-consistency.sh:21-24`。
 

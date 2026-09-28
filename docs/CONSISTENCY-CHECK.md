@@ -85,6 +85,8 @@ swift ... SCScreenshotManager.captureImage(...)
 
 macOS TCC（透明度、Consent）拒绝了屏幕录制权限 — 当前 terminal 进程（ghostty）**未授权 Screen Recording**，且无法通过命令行授予此权限。**用户需要在系统设置 → 隐私与安全性 → 屏幕录制 中手动添加 ghostty 后才能截屏。**
 
+> **【2026-09-28 晚更新，以此行为现状】**：用户已授予终端「屏幕录制」权限，`screencapture -x` **实测可用**（2940×1912 PNG，整屏抓取）——上面这段 TCC 拦截描述是本报告登记时（2026-09-21）的状态，现已不成立。截屏通道现存的实际限制仅为：**对 OpenGL 窗口可能抓到导航前的旧帧**（移动鼠标触发重绘后再拍第二张、取后一张）。下方「七、截图限制」表同此现状。
+
 即便绕过权限，`screencapture` 也无法工作，因为：
 - `bundleID=[ NULL ]`（DevDesk 不是 .app bundle）
 - 窗口被 lsappinfo 列为 "Foreground / flavor=3" 但 AppleScript System Events 报 -25211（不允许辅助访问）
@@ -252,7 +254,7 @@ void compose(eui::Ui& ui, const eui::Screen& screen) {
 
 | 工具 | 状态 | 原因 |
 |------|------|------|
-| `screencapture` | ❌ 失败 | terminal TCC 拒绝屏幕录制 |
+| `screencapture` | （登记时）❌ 失败 → ✅ **已可用** | 登记时 terminal TCC 拒绝屏幕录制；**2026-09-28 晚已授权，实测可用（2940×1912 PNG）**；截屏通道现存限制仅为 OpenGL 窗口可能抓旧帧（见上节更新行） |
 | `osascript` System Events | ❌ 失败 | terminal 拒绝辅助功能访问 |
 | `ScreenCaptureKit` (Swift) | ❌ 失败 | TCC -3801 |
 | `CGWindowListCreateImage` | ❌ 废弃 | macOS 15+ 标记 unavailable |
@@ -267,3 +269,5 @@ void compose(eui::Ui& ui, const eui::Screen& screen) {
 1. 系统设置 → 隐私与安全性 → 屏幕录制 → 勾选 ghostty（或任意 terminal）
 2. 注销重新登录或重启
 3. 重跑 `scripts/check-consistency.sh`
+
+（**2026-09-28 晚更新**：①② 已完成——权限已授予；③ 直接重跑即可截屏。截屏通道现存限制仅为 OpenGL 窗口可能抓到导航前的旧帧，见上节「截图限制」更新行。）

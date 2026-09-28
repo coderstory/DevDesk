@@ -183,7 +183,7 @@
 
 ## 5. verify 口径（不依赖截图）
 
-**先说限制**：本机 `screencapture` 被 TCC「屏幕录制」挡死（多片已确认），**全程无像素级证据**；probe harness 把 `pointerScale=dpiScale=1.0` 写死（`tests/probes/probe_harness.h:96`），**Retina 路径零自动化覆盖**。好在本次所有缺陷都在**逻辑空间**（已证 DPI 折算正确），所以下面的判据都能成立。
+**先说限制**：本机 `screencapture` 被 TCC「屏幕录制」挡死（多片已确认），**全程无像素级证据**；probe harness 把 `pointerScale=dpiScale=1.0` 写死（`tests/probes/probe_harness.h:96`），**Retina 路径零自动化覆盖**。好在本次所有缺陷都在**逻辑空间**（已证 DPI 折算正确），所以下面的判据都能成立。**【2026-09-28 晚更新】上面「被 TCC 挡死 → 无像素级证据」是登记时状态，现已不成立**：屏幕录制权限用户已授予，`screencapture -x` **实测可用**（2940×1912 PNG）；现存限制仅为「**对 OpenGL 窗口可能抓到导航前的旧帧**」（移动鼠标触发重绘后拍第二张、取后一张）。实施本方案时按 `CLAUDE.md`「功能开发生命周期」阶段 4 启动 app + 截图自验（独立 `DEVDESK_DATA_ROOT`）；probe harness 的 `pointerScale=dpiScale=1.0` 限制不变。
 
 **每组的客观证据**
 
