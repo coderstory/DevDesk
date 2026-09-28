@@ -427,12 +427,17 @@ private:
             .alignItems(eui::Align::CENTER)
             .content([&] {
                 const float segW = 264.0f;
+                // segmented 右移 16：标题列让 16、右侧动作区同步收窄 16（总量
+                // 不变；动作区内容右对齐，右缘不动）。根因：segmented 的 x 由
+                // 行内前序元素的宽度决定（标题列宽 = contentW-320-segW），
+                // 原布局把它贴在动作区左缘，视觉偏左（2026-09-28 用户反馈）
+                const float actionsW = 304.0f;
                 ui.column("md.title")
-                    .size(contentW - 320.0f - segW, ui_kit::kHeaderH)
+                    .size(contentW - actionsW - segW, ui_kit::kHeaderH)
                     .gap(2.0f)
                     .content([&] {
                         ui.text("md.h1")
-                            .size(contentW - 320.0f - segW, 32.0f)
+                            .size(contentW - actionsW - segW, 32.0f)
                             .text("Markdown 笔记本")
                             .fontSize(t.sizes.fontSizeTitle)
                             .lineHeight(32.0f)
@@ -440,7 +445,7 @@ private:
                             .color(t.colors.textPrimary)
                             .build();
                         // subtitle 包 clip 栈：长快捷键提示超宽时裁掉，不溢出压到右侧 segmented
-                        const float subW = contentW - 320.0f - segW;
+                        const float subW = contentW - actionsW - segW;
                         ui.stack("md.subtitle.clip")
                             .size(subW, 18.0f)
                             .clip()
@@ -473,7 +478,7 @@ private:
                     .build();
 
                 ui.row("md.actions")
-                    .size(320.0f, 40.0f)
+                    .size(actionsW, 40.0f)
                     .justifyContent(eui::Align::END)
                     .alignItems(eui::Align::CENTER)
                     .gap(t.sizes.spacingSmall)

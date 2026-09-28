@@ -163,41 +163,29 @@ constexpr int kIconExit = 0xF011;
 constexpr int kIconConfirm = 0xF071;   // 退出确认：triangle-exclamation
 constexpr int kIconCancel = 0xF00D;    // 取消：xmark
 
-// 菜单位置：x 取光标屏位；y 锚到宠物窗顶上方「菜单窗实际高」处——菜单向下
-// 展开不叠宠物（2026-09-24 用户要求；styledMenuClampPosition 兜底越顶贴顶）
-// menuHeight 入参是逻辑单位（inset/行高/margin 之和），菜单窗实际高是它的
-// 「显示器缩放 × 用户缩放」倍（styledmenu.h openWindow 的 windowSize 按物理
-// 像素创建）——不按同一口径抬升，125% 显示器上菜单会向下多压宠物
-// (系数−1)×高 ≈ 26px。显示器按锚点所在位置选（菜单 x 屏位 × 宠物窗顶）。
-std::pair<float, float> petMenuAnchorPos(float menuHeight) {
+// 菜单位置 = 鼠标点击点屏幕坐标：窗口原点 + 窗口内光标（与拖拽 petDragMove
+// 同一坐标系换算，均为 GLFW 屏幕坐标实时值）。菜单以点击点为左上角向下
+// 展开；越出工作区由 styledMenuClampPosition 兜底（贴右 / 向上翻转贴光标
+// 上沿 / 贴顶）。
+// 根因：原实现 y 只取窗口顶（winY）并整体抬升「菜单窗实际高」，菜单永远
+// 钉在宠物窗顶上方、与点击点无关——点位偏离越大菜单离鼠标越远（"太高距
+// 离大"），且实现里 windowScaleForPoint 是给 showStyledMenu 内部折算用的，
+// 位置本身必须是物理像素，叠加菜单高再抛回钳制是双重处理。
+// 2026-09-28 用户要求「菜单紧贴鼠标点击点」，替代 2026-09-24 的锚窗顶方案。
+std::pair<float, float> petMenuAnchorPos() {
     double cursorX = 0.0;
     double cursorY = 0.0;
     core::window::getCursorPosition(runtime().handle, cursorX, cursorY);
     int winX = 0;
     int winY = 0;
     core::window::getWindowPos(runtime().handle, winX, winY);
-    const float anchorX = static_cast<float>(winX) + static_cast<float>(cursorX);
-    const float anchorY = static_cast<float>(winY);
-    const float menuWindowHeight =
-        menuHeight * core::window::windowScaleForPoint(anchorX, anchorY) * app::uiScale();
-    return {anchorX, anchorY - menuWindowHeight};
+    return {static_cast<float>(winX) + static_cast<float>(cursorX),
+            static_cast<float>(winY) + static_cast<float>(cursorY)};
 }
 
 components::StyledMenuStyle petMenuStyle() {
     return components::StyledMenuStyle(
         core::theme::componentTokens(core::theme::current()));
-}
-
-// 主菜单高度预估（全展开行数 × 行高；换肤组收起时实际更矮，宁高勿叠）
-float petMenuFullHeight() {
-    const std::vector<PetMenuItemData> items = petContextMenuItems(runtime().skins);
-    int rowCount = 0;
-    for (const PetMenuItemData& it : items) {
-        rowCount += 1 + static_cast<int>(it.children.size());
-    }
-    const components::StyledMenuStyle st = petMenuStyle();
-    return st.inset * 2.0f + static_cast<float>(rowCount) * st.rowHeight +
-           st.margin * 2.0f;
 }
 
 // 选中处理（styled 回调与原生降级共用同一选择数学，path 语义一致）
@@ -208,11 +196,8 @@ void executePetMenuSelection(const std::vector<int>& path);
 // 先例注释依然成立——独立菜单窗不受裁剪，styled 可用时确认走独立窗）
 void showPetExitConfirm() {
     const std::vector<PetExitConfirmItem> confirmData = petExitConfirmItems();
-    // 退出确认菜单高：说明/确认/取消 3 行 + 1 分隔线（结构见 petExitConfirmItems）
-    const components::StyledMenuStyle st = petMenuStyle();
-    const float confirmH = st.inset * 2.0f + 3.0f * st.rowHeight +
-                           st.separatorHeight + st.margin * 2.0f;
-    const std::pair<float, float> pos = petMenuAnchorPos(confirmH);
+    // 确认菜单与主菜单同锚点（鼠标点击点）
+    const std::pair<float, float> pos = petMenuAnchorPos();
 
     std::vector<components::StyledMenuItem> styled;
     for (const PetExitConfirmItem& ci : confirmData) {
@@ -430,8 +415,7 @@ void petCompose(eui::Ui& ui, const eui::Screen& screen) {
 
                     const std::vector<PetMenuItemData> menu =
                         petContextMenuItems(runtime().skins);
-                    const std::pair<float, float> pos =
-                        petMenuAnchorPos(petMenuFullHeight());
+                    const std::pair<float, float> pos = petMenuAnchorPos();
                     if (showPetStyledMenu(menu, pos.first, pos.second)) {
                         return;  // 已入队开窗，选择经 executePetMenuSelection 回调
                     }
@@ -464,8 +448,14 @@ void petCompose(eui::Ui& ui, const eui::Screen& screen) {
             // 气泡对话（M2 设计 §4.5）：宠物窗内自绘圆角矩形 + 小三角 + text，
             // 挂在头顶，超时自动消失（不用 toast——位置不可控）
             if (state.bubble.visible) {
+                const core::theme::Tokens& t = core::theme::current();
+                // 气泡衬深色底（kBubbleBg 深浅主题都保持深帽），白字/白描边
+                // 取自 theme onPrimary（两档主题 onPrimary 都是「彩色面文字」
+                // 反面色），不再硬编码 1,1,1 白色（2026-09-28 无硬编码白）
                 const core::Color kBubbleBg{0.16f, 0.15f, 0.13f, 0.92f};
-                const core::Color kBubbleBorder{1.0f, 1.0f, 1.0f, 0.22f};
+                const core::Color kBubbleBorder(t.colors.onPrimary.r,
+                                                t.colors.onPrimary.g,
+                                                t.colors.onPrimary.b, 0.22f);
                 ui.rect("pet.bubble.bg")
                     .position(2.0f, 2.0f)
                     .size(screen.width - 4.0f, 32.0f)
@@ -485,7 +475,8 @@ void petCompose(eui::Ui& ui, const eui::Screen& screen) {
                     .text(state.bubble.text)
                     .fontSize(11.0f)
                     .lineHeight(32.0f)
-                    .color(core::Color{1.0f, 1.0f, 1.0f, 0.95f})
+                    .color(core::Color(t.colors.onPrimary.r, t.colors.onPrimary.g,
+                                       t.colors.onPrimary.b, 0.95f))
                     .horizontalAlign(core::HorizontalAlign::Center)
                     .verticalAlign(core::VerticalAlign::Center)
                     .build();
