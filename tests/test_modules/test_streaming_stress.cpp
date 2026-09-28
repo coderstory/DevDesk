@@ -601,7 +601,11 @@ private:
 // 卡/慢且偶发解析失败 → 返回 0 且把用例拖到 300s+，故弃用。
 // MinGW 下 psapi.h 在 NTDDI_VERSION >= WIN7 时把 GetProcessMemoryInfo
 // 宏转发到 kernel32 的 K32GetProcessMemoryInfo，默认链接集即可用，无需 -lpsapi。
-long long selfMemoryKb() {
+// [[maybe_unused]]：本函数唯一的调用点在 `#ifdef _WIN32` 块内（stressMemoryBody），
+// 非 Windows 编译时函数体走 `#else return -1`，无人调用 → clang
+// -Wunused-function 报错（GCC -Wall 不报此告警，故 Windows 侧从不复现）。
+// 保留函数而非按平台围 #ifdef：Windows 行为零变化，macOS 侧结构也零变化。
+[[maybe_unused]] long long selfMemoryKb() {
 #ifdef _WIN32
     PROCESS_MEMORY_COUNTERS pmc{};
     pmc.cb = sizeof(pmc);
