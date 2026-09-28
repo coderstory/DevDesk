@@ -16,6 +16,8 @@
 
 #include "platform/file_open.h"
 
+#include "about_anim.h"
+
 #include <ui_kit/card.h>
 
 #include <eui/dsl.h>
@@ -74,7 +76,9 @@ std::string aboutBuildLine() {
 }
 
 // Git commit 短 hash（configure 期 git rev-parse --short=7；非 git 环境 = "unknown"）
-// 组合行见 compose 的 about.hero.commit（"commit <rev> · <编译器>"）。
+// 消费点：卡片行「Git commit」（DEVDESK_GIT_REV，主色）与「编译器」
+//（DEVDESK_COMPILER）——原 hero 副标题的 commit 行 2026-09-28 删除
+//（与卡片逐项重复，用户真机反馈）。
 
 // EUI-NEO rev 行："rev 7164d55 (min 7164d55)"
 std::string aboutEuiNeoLine() {
@@ -189,114 +193,9 @@ void aboutCard(eui::Ui& ui, const std::string& id, const core::theme::Tokens& t,
 // examples/magic_wand.cpp，onFrame/onMove 运行时契约同款）----
 // awake 模式：鼠标移动唤醒漂移，弹簧全 settled + 超时后 compose 不再给
 // 背景层挂 onFrame → 运行时零开销休眠（magic_wand 同款省电设计）。
-
-// 半隐式欧拉弹簧（framer-motion useSpring 同款）：软跟随漂移锚点，
-// 静止后 settled() 为 true → awake() 注销帧回调 -> 休眠。
-struct Spring {
-    float position = 0, velocity = 0, target = 0, stiffness = 80, damping = 14, mass = 1;
-    void setTarget(float t) { target = t; }
-    void update(float dt) {
-        // 半隐式欧拉
-        float force = stiffness * (target - position);
-        velocity = (velocity + force / mass * dt) / (1.0f + damping / mass * dt);
-        position += velocity * dt;
-    }
-    bool settled() const { return std::abs(target - position) < 0.5f && std::abs(velocity) < 1.0f; }
-};
-
-// 单个浮环：静态参数 + 漂移锚点（x/y）；绘制位置 = 弹簧跟随位
-//（锚点直线漂移 + 边界弹回，弹簧软跟 → trailing 有机感）。
-struct FloatingRing {
-    float x, y;            // 漂移锚点（逻辑圆点；边界弹回作用于此）
-    float radius = 0.0f;   // 12-34px
-    float opacity = 0.0f;  // 0.06-0.15（元素级透明度）
-    float speedX = 0.0f, speedY = 0.0f;  // px/s，正负 15-30
-    float phase = 0.0f;    // 0-1：primary ↔ primarySoftBg 色 mix 系数
-    eui::Color color;      // 每个 compose 按当前 theme 现算（可切主题）
-};
-
-struct AboutAnimState {
-    static constexpr int kRingCount = 7;            // 需求区间 6-8
-    static constexpr float kWakeHoldSeconds = 2.0f; // 鼠标静止多久后休眠
-    std::array<FloatingRing, kRingCount> rings;
-    std::array<Spring, kRingCount> springX;         // x 轴弹簧（追锚点）
-    std::array<Spring, kRingCount> springY;
-    float wakeHold = 0.0f;   // 距上次鼠标移动的秒数
-    bool initialized = false;
-
-    // 全弹簧 settled + 超时 → 休眠（compose 不再挂 onFrame）
-    bool awake() const {
-        if (wakeHold < kWakeHoldSeconds) return true;
-        for (int i = 0; i < kRingCount; ++i) {
-            if (!springX[i].settled() || !springY[i].settled()) return true;
-        }
-        return false;
-    }
-
-    // 每帧：唤醒期内锚点直线漂移 + 碰撞边界弹回；弹簧软跟随。
-    // 休眠前最后一帧仍推进弹簧，让位置收敛到锚点再撤回调。
-    void step(float dt, float w, float h) {
-        wakeHold += dt;
-        const bool drift = wakeHold < kWakeHoldSeconds;
-        for (int i = 0; i < kRingCount; ++i) {
-            FloatingRing& ring = rings[i];
-            Spring& sx = springX[i];
-            Spring& sy = springY[i];
-            if (drift) {
-                ring.x += ring.speedX * dt;
-                ring.y += ring.speedY * dt;
-                const float m = ring.radius + 6.0f;  // 边界 margin（含弹簧 lag 余量）
-                const float loX = m;
-                const float hiX = std::max(m, w - m);
-                if (ring.x <= loX) { ring.x = loX; ring.speedX = std::abs(ring.speedX); }
-                else if (ring.x >= hiX) { ring.x = hiX; ring.speedX = -std::abs(ring.speedX); }
-                const float loY = m;
-                const float hiY = std::max(m, h - m);
-                if (ring.y <= loY) { ring.y = loY; ring.speedY = std::abs(ring.speedY); }
-                else if (ring.y >= hiY) { ring.y = hiY; ring.speedY = -std::abs(ring.speedY); }
-                sx.setTarget(ring.x);
-                sy.setTarget(ring.y);
-            }
-            sx.update(dt);
-            sy.update(dt);
-        }
-    }
-};
-
-// 极小确定性 RNG（golden-ratio LCG）：初始散布每次启动可复现，
-// 免 <random> 依赖（零头文件成本）。
-struct RingRng {
-    std::uint64_t s;
-    explicit RingRng(std::uint64_t seed) : s(seed) {}
-    float next() {  // [0,1)
-        s = s * 6364136223846793005ULL + 1442695040888963407ULL;
-        return static_cast<float>((s >> 33) & 0xFFFFFFu) / 16777216.0f;
-    }
-};
-
-// 首次进入页面：随机散布浮环（位置/半径/速度/透明度/色 mix 系数）。
-// 弹簧初始 position = target → 直接 settled，首帧即可静默。
-void initRingLayer(AboutAnimState& state, float w, float h) {
-    RingRng rng(0x9E3779B97F4A7C15ULL);
-    for (int i = 0; i < AboutAnimState::kRingCount; ++i) {
-        FloatingRing& ring = state.rings[i];
-        ring.radius = 12.0f + rng.next() * 22.0f;   // 12-34px
-        const float m = ring.radius + 6.0f;
-        ring.x = m + rng.next() * std::max(1.0f, w - 2.0f * m);
-        ring.y = m + rng.next() * std::max(1.0f, h - 2.0f * m);
-        const float sp = 15.0f + rng.next() * 15.0f;  // 15-30 px/s
-        ring.speedX = rng.next() < 0.5f ? -sp : sp;
-        ring.speedY = rng.next() < 0.5f ? -sp : sp;
-        ring.opacity = 0.06f + rng.next() * 0.09f;    // 0.06-0.15
-        ring.phase = rng.next();
-        state.springX[i].setTarget(ring.x);
-        state.springX[i].position = ring.x;
-        state.springY[i].setTarget(ring.y);
-        state.springY[i].position = ring.y;
-    }
-    state.wakeHold = 0.0f;
-    state.initialized = true;
-}
+// 状态机本体（Spring / FloatingRing / AboutAnimState / initRingLayer）在
+// about_anim.h —— 独立成头是为了单测能直接驱动（可见度区间 / 漂移 /
+// 休眠均可断言，2026-09-28「看不出动态效果」回归不再无人守）。
 
 // 主题两色线性插值（theme 运行期可切换，混色在 compose 时现算）
 eui::Color mixThemeColor(const eui::Color& a, const eui::Color& b, float t) {
@@ -342,33 +241,42 @@ public:
         bg.build();
         // 浮环绘制（弹簧跟随位）+ 主题色现算（primary ↔ primarySoftBg mix）
         for (int i = 0; i < AboutAnimState::kRingCount; ++i) {
-            FloatingRing& ring = anim.rings[i];
-            ring.color = mixThemeColor(t.colors.primary,
-                                       t.colors.primarySoftBg, ring.phase);
+            const FloatingRing& ring = anim.rings[i];
+            // 混色系数 = phase × 0.5（半程限幅）：浅色档 primarySoftBg
+            // #F5E6DE 与 surface #F5F2EC 几乎同色，全幅混色会让 phase→1 的
+            // 环即使透明度上调仍不可见（2026-09-28「看不出动态效果」根因
+            // 之一）——限幅后每个环都落在 primary → 半程色之间，任何主题
+            // 下都有可辨暖色
+            const eui::Color ringColor = mixThemeColor(
+                t.colors.primary, t.colors.primarySoftBg, ring.phase * 0.5f);
             const float px = anim.springX[i].position;
             const float py = anim.springY[i].position;
             ui.rect("about.ring." + std::to_string(i))
                 .position(px - ring.radius, py - ring.radius)
                 .size(ring.radius * 2.0f, ring.radius * 2.0f)
                 .radius(ring.radius)
-                .border(1.0f, ring.color)
+                .border(1.0f, ringColor)
                 .opacity(ring.opacity)
                 .build();
         }
 
         // 居中 1040px 主内容区（spec §布局概览；窄窗不滚动，D-04 目标 =
-        // 默认窗口内完整可见）。2026-09-28 用户真机反馈「内容太窄」→ 720→1040：
-        // 卡片宽随之 356→516。页面宽 = 窗口宽 − 侧边栏（展开 208，见
-        // app_sidebar.cpp pageContentWidth），最小窗 1330×845 → 页面宽 1122，
-        // 居中后左右各余 41px，不溢出
+        // 默认窗口内完整可见）。2026-09-28 用户真机反馈「内容太窄」→ 720→1040，
+        // 两张卡随之改上下堆叠、各占满 1040（并排时代的 516 宽已废）。页面宽 =
+        // 窗口宽 − 侧边栏（展开 208，见 app_sidebar.cpp pageContentWidth）；
+        // 最小窗宽 1330 → 页面宽 1122，居中后左右各余 41px，不溢出（页面宽只
+        // 依赖最小窗**宽**；最小窗高由 core 层按工作区推导，
+        // core::window_layout，本机 805）
         constexpr float kAboutContentW = 1040.0f;
         const float x = std::max(0.0f, (screen.width - kAboutContentW) / 2.0f);
         const float cardGap = 8.0f;
 
-        // ========== hero 段（居中，spacingLarge 间距）==========
+        // ========== hero 段（居中；图标 + 标题两件）==========
         // 顶部留白 = 两档间距 token 叠加（XXLarge 40 + XLarge 24 = 64）：草图
         // 观感区间 60-70px，单档 XXLarge(40) 偏小、双档 XXLarge(80) 越界，
-        // 故用叠加推导值，不引裸魔法数
+        // 故用叠加推导值，不引裸魔法数。2026-09-28 删 hero 副标题三行后复核：
+        // 该留白约束的是「页面顶边 → hero 起点」（hero 起笔仍是 56px 大图标），
+        // 与 hero 内部有几行正文无关——维持 64 不变
         const float topPad = t.sizes.spacingXXLarge + t.sizes.spacingXLarge;
         float y = topPad;
         // hero 图标 48→56（= XXLarge 40 + Large 16，同属 token 叠加）：用户要
@@ -396,42 +304,23 @@ public:
             .color(t.colors.textPrimary)
             .horizontalAlign(eui::HorizontalAlign::Center)
             .build();
-        y += 40.0f + 6.0f;
-        ui.text("about.hero.sub")
-            .position(x, y)
-            .size(kAboutContentW, 20.0f)
-            .text(aboutVersionLine())
-            .fontSize(t.sizes.fontSizeBody)
-            .lineHeight(20.0f)
-            .color(t.colors.textSecondary)
-            .horizontalAlign(eui::HorizontalAlign::Center)
-            .build();
-        y += 20.0f + 2.0f;
-        ui.text("about.hero.build")
-            .position(x, y)
-            .size(kAboutContentW, 18.0f)
-            .text(aboutBuildLine())
-            .fontSize(t.sizes.fontSizeSmall)
-            .lineHeight(18.0f)
-            .color(t.colors.textTertiary)
-            .horizontalAlign(eui::HorizontalAlign::Center)
-            .build();
-        y += 18.0f + 2.0f;
-        ui.text("about.hero.commit")
-            .position(x, y)
-            .size(kAboutContentW, 18.0f)
-            .text("commit " DEVDESK_GIT_REV " · " DEVDESK_COMPILER)
-            .fontSize(t.sizes.fontSizeSmall)
-            .lineHeight(18.0f)
-            .color(t.colors.textTertiary)
-            .horizontalAlign(eui::HorizontalAlign::Center)
-            .build();
-        y += 18.0f + 12.0f;
+        // 原 hero 副标题三行（about.hero.sub / .build / .commit：版本行 /
+        // 构建时刻 / commit+编译器）与下方「应用信息」卡逐项重复（用户真机
+        // 反馈「卡片里已经有版本号之类的东西」）→ 2026-09-28 删除；标题到
+        // 卡片用一档 XLarge(24) 间距（原三行文本流共 78px 的替代，标题与
+        // 卡片的分组关系由间距本身表达）
+        y += 40.0f + t.sizes.spacingXLarge;
 
-        // ========== 卡 1 + 卡 2：左右并排（宽 (720-8)/2 = 356，等高取 max）==========
-        const float cardW = (kAboutContentW - cardGap) / 2.0f;
+        // ========== 卡 1 + 卡 2：上下堆叠（2026-09-28 用户真机反馈；原左右并排）==========
+        // 每张卡占满内容区宽 1040（原并排宽 (1040−8)/2 = 516）；两卡各 6 行、
+        // 等高 204（16 + 28 + 6×24 + 16），堆叠总高 204×2 + 卡距 8 = 416。高度
+        // 预算（本页无滚动）：内容底 = 64+56+8+40+24+416 = 608；与页脚不重叠
+        // 要求页面高 H ≥ 608 + 8 + 20 + 40 = 676 —— 最小窗页面高 805（core 层
+        // 按工作区推导，core::window_layout）满足：页脚顶 805−40−20 = 745，
+        // 卡片距页脚余 137px；工作区更大只会更宽松
+        const float cardW = kAboutContentW;
 
-        // 卡 1：应用信息（左）
+        // 卡 1：应用信息（上）
         const AboutRow infoRows[] = {
             {"版本", aboutVersionLine(), false},
             {"Git commit", DEVDESK_GIT_REV, true},
@@ -444,7 +333,7 @@ public:
         aboutCard(ui, "about.card.app", t, x, y, cardW, infoH,
                   0xF05A /* fa-circle-info */, "应用信息", infoRows, 6);
 
-        // 卡 2：依赖与框架（右，x = x + cardW + cardGap）
+        // 卡 2：依赖与框架（下，y = y + infoH + cardGap）
         const AboutRow depsRows[] = {
             {"GUI 框架", "EUI-NEO (OpenGL)", false},
             {"EUI-NEO", aboutEuiNeoLine(), true},
@@ -454,7 +343,7 @@ public:
             {"字体", "FreeType + FontAwesome 7", false},
         };
         constexpr float depsH = 16.0f + 28.0f + 6.0f * 24.0f + 16.0f;
-        aboutCard(ui, "about.card.deps", t, x + cardW + cardGap, y, cardW, depsH,
+        aboutCard(ui, "about.card.deps", t, x, y + infoH + cardGap, cardW, depsH,
                   0xF5FD /* fa-layer-group */, "依赖与框架", depsRows, 6);
 
         // ========== 页脚（贴页面底部）==========
@@ -464,7 +353,7 @@ public:
         // 设置页 pad 同口径）。max() 护栏：本页无滚动，极矮窗下 footer 不回退
         // 到与卡片重叠
         constexpr float footerH = 20.0f;
-        const float cardsBottom = y + std::max(infoH, depsH);
+        const float cardsBottom = y + infoH + cardGap + depsH;
         const float footerY = std::max(
             cardsBottom + cardGap,
             screen.height - t.sizes.spacingXXLarge - footerH);

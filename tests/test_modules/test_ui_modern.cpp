@@ -35,6 +35,7 @@
 #include "core/database.h"
 #include "core/sqlite_db.h"
 #include "core/ui_geometry.h"
+#include "module_about/about_anim.h"  // uiAboutRingAnim：浮环状态机直接驱动
 #include "module_claude_proxy/claude_service.h"
 #include "module_home/home_service.h"
 #include "module_markdown/md_ids.h"
@@ -926,12 +927,14 @@ REGISTER_TEST(uiModernMdPreviewGradient,
     return true;
 })
 
-// ---- about 页布局（2026-09-28 用户真机反馈：内容区加宽 / 顶部留白 /
-//      footer 贴页面底部）----
-// 只钉**可客观断言**的部分（内容区宽、卡片宽、hero 起点、footer 底边、最小窗
-// 不溢出）；观感（呼吸感 / hero 存在感 / 三档窗口效果下的底色）留人工确认。
-// 页面宽 = 窗口宽 − 侧边栏（app_sidebar.cpp pageContentWidth，展开 208）：最小
-// 窗 1330×845 → 页面宽 1122，内容区 1040 只余 41px/侧（仍居中、不溢出，见下）。
+// ---- about 页布局（2026-09-28 用户真机反馈：内容区加宽 / 顶部留白 / 删 hero
+//      重复三行 / 卡片上下堆叠 / footer 贴页面底部）----
+// 只钉**可客观断言**的部分（内容区宽、hero 起点、卡片宽高与堆叠链、footer 底边、
+// 最小窗与大窗都不溢出/不重叠）；观感（呼吸感 / hero 存在感 / 三档窗口效果下的
+// 底色）留人工确认。页面宽 = 窗口宽 − 侧边栏（app_sidebar.cpp pageContentWidth，
+// 展开 208）：最小窗宽 1330 → 页面宽 1122，内容区 1040 只余 41px/侧（仍居中、
+// 不溢出，见下）。最小窗高由 core 层按工作区推导（core::window_layout，本机
+// 805）——页面宽只依赖最小窗宽，本文件不硬编码高。
 namespace {
 // 布局帧比较容差：逻辑像素差 ≤0.5 视为相等（布局引擎可能带亚像素误差，与
 // probes 的 0.5f 容差同口径）
@@ -939,15 +942,20 @@ bool nearPx(float a, float b) { return std::abs(a - b) <= 0.5f; }
 }  // namespace
 
 REGISTER_TEST(uiAboutLayout,
-              "about: 内容区 1040 / 顶部留白 64 / footer 贴页面底部（真机反馈）", {
+              "about: 内容区 1040 / 顶部留白 64 / 卡片上下堆叠 / footer 贴页面底部（真机反馈）", {
     std::unique_ptr<::core::Module> mod(create_about_module());
     DOCTEST_REQUIRE(mod != nullptr);
     mod->onStart();
     const auto& t = ::core::theme::current();
     constexpr float kContentW = 1040.0f;
     constexpr float kCardGap = 8.0f;
+    constexpr float kTitleH = 40.0f;
+    constexpr float kCardH = 16.0f + 28.0f + 6.0f * 24.0f + 16.0f;  // 204（6 行卡）
     const float topPad = t.sizes.spacingXXLarge + t.sizes.spacingXLarge;   // 64
     const float iconSize = t.sizes.spacingXXLarge + t.sizes.spacingLarge;  // 56
+    const float heroToCards = t.sizes.spacingXLarge;                       // 24
+    const float cardsTop = topPad + iconSize + 8.0f + kTitleH + heroToCards;  // 192
+    const float depsTop = cardsTop + kCardH + kCardGap;                       // 404
     eui::Ui ui;
     eui::Screen screen{1600.0f, 1000.0f};
     ui.begin("about_layout");
@@ -975,27 +983,42 @@ REGISTER_TEST(uiAboutLayout,
             nearPx(hero->frame.x, x + (kContentW - iconSize) / 2.0f),
             px("hero.frame.x", hero));
     }
+    // hero 副标题三行已删（版本行 / 构建时刻 / commit+编译器 与「应用信息」卡
+    // 逐项重复，用户真机反馈"卡片里已经有版本号之类的东西"）：id 不得再存在
+    DOCTEST_CHECK(ui.find("about.hero.sub") == nullptr);
+    DOCTEST_CHECK(ui.find("about.hero.build") == nullptr);
+    DOCTEST_CHECK(ui.find("about.hero.commit") == nullptr);
+    {
+        const auto* title = ui.find("about.hero.title");
+        DOCTEST_REQUIRE(title != nullptr);
+        DOCTEST_CHECK_MESSAGE(nearPx(title->frame.y, topPad + iconSize + 8.0f),
+                              px("hero.title", title));
+    }
     const auto* c1 = ui.find("about.card.app");
     const auto* c2 = ui.find("about.card.deps");
     DOCTEST_REQUIRE(c1 != nullptr);
     DOCTEST_REQUIRE(c2 != nullptr);
-    DOCTEST_CHECK_MESSAGE(nearPx(c1->frame.width, (kContentW - kCardGap) / 2.0f),
-                          px("about.card.app", c1));    // 516
-    DOCTEST_CHECK_MESSAGE(nearPx(c2->frame.width, (kContentW - kCardGap) / 2.0f),
+    // 卡片上下堆叠（原左右并排 516 宽）：同宽（占满内容区 1040）、同 x、各 204 高；
+    // 卡 1 顶 = hero 标题底 + 一档 XLarge（192），卡 2 隔一档 cardGap 在卡 1 正下方
+    DOCTEST_CHECK_MESSAGE(nearPx(c1->frame.width, kContentW),
+                          px("about.card.app", c1));  // 1040
+    DOCTEST_CHECK_MESSAGE(nearPx(c2->frame.width, kContentW),
                           px("about.card.deps", c2));
+    DOCTEST_CHECK_MESSAGE(nearPx(c1->frame.height, kCardH), px("about.card.app", c1));
     DOCTEST_CHECK_MESSAGE(nearPx(c1->frame.x, x), px("about.card.app.x", c1));
-    DOCTEST_CHECK_MESSAGE(nearPx(c2->frame.x, x + c1->frame.width + kCardGap),
-                          px("about.card.deps.x", c2));
+    DOCTEST_CHECK_MESSAGE(nearPx(c2->frame.x, x), px("about.card.deps.x", c2));
+    DOCTEST_CHECK_MESSAGE(nearPx(c1->frame.y, cardsTop), px("about.card.app", c1));
+    DOCTEST_CHECK_MESSAGE(nearPx(c2->frame.y, depsTop), px("about.card.deps", c2));
     {
         const auto* footer = ui.find("about.footer");
         DOCTEST_REQUIRE(footer != nullptr);
         DOCTEST_CHECK_MESSAGE(nearPx(footer->frame.x, x),
                               px("about.footer.x", footer));
-        // footer 在卡片下方（中间是留白区，不再是流式紧跟卡底）
+        // footer 在最下卡（卡 2）下方（中间是留白区，不再是流式紧跟卡底）
         DOCTEST_CHECK_MESSAGE(
-            footer->frame.y > c1->frame.y + c1->frame.height,
+            footer->frame.y > c2->frame.y + c2->frame.height,
             px("about.footer", footer) + " 卡底 " +
-                std::to_string(c1->frame.y + c1->frame.height));
+                std::to_string(c2->frame.y + c2->frame.height));
         // 贴页面底部：底边 = screen.height − 页面底 padding（spacingXXLarge）
         DOCTEST_CHECK_MESSAGE(
             nearPx(footer->frame.y + footer->frame.height,
@@ -1003,10 +1026,12 @@ REGISTER_TEST(uiAboutLayout,
             px("about.footer", footer) + " 期望底边 " +
                 std::to_string(screen.height - t.sizes.spacingXXLarge));
     }
-    // 最小窗复核：页面宽 1330 − 208 = 1122 → 内容区 1040 不溢出、仍居中
+    // 最小窗复核：页面宽 1330 − 208 = 1122 → 内容区 1040 不溢出、仍居中；
+    // 页面高 805（core 层最小窗高，工作区推导）下堆叠卡（底 608）+ 卡距
+    // 不越页脚顶（745）——本页无滚动也放得下
     {
         eui::Ui mini;
-        eui::Screen minScreen{1122.0f, 845.0f};
+        eui::Screen minScreen{1122.0f, 805.0f};
         mini.begin("about_layout_min");
         mod->compose(mini, minScreen);
         mini.end();
@@ -1022,7 +1047,126 @@ REGISTER_TEST(uiAboutLayout,
         DOCTEST_REQUIRE(footer != nullptr);
         DOCTEST_CHECK(nearPx(footer->frame.y + footer->frame.height,
                              minScreen.height - t.sizes.spacingXXLarge));
+        // 卡底 + 卡距 ≤ 页脚顶：最小窗高下卡片与页脚不重叠（页脚已贴底）
+        DOCTEST_CHECK_MESSAGE(
+            nearPx(footer->frame.y, minScreen.height - t.sizes.spacingXXLarge - 20.0f),
+            px("about.footer.min", footer));
+        DOCTEST_CHECK_MESSAGE(
+            c->frame.y + c->frame.height + kCardGap <= footer->frame.y,
+            px("about.card.deps.min", c) + " 页脚顶 " +
+                std::to_string(footer->frame.y));
     }
+    // 大窗复核（默认窗以上的高页面）：卡片链不随高度拉伸（布局常量链）、
+    // 页脚仍贴底、仍不重叠
+    {
+        eui::Ui big;
+        eui::Screen bigScreen{2560.0f, 1520.0f};
+        big.begin("about_layout_big");
+        mod->compose(big, bigScreen);
+        big.end();
+        big.layout(bigScreen.width, bigScreen.height);
+        const auto* c = big.find("about.card.deps");
+        const auto* footer = big.find("about.footer");
+        DOCTEST_REQUIRE(c != nullptr);
+        DOCTEST_REQUIRE(footer != nullptr);
+        DOCTEST_CHECK_MESSAGE(nearPx(c->frame.y, depsTop), px("about.card.deps.big", c));
+        DOCTEST_CHECK_MESSAGE(nearPx(c->frame.x, (bigScreen.width - kContentW) / 2.0f),
+                              px("about.card.deps.big", c));
+        DOCTEST_CHECK_MESSAGE(
+            nearPx(footer->frame.y + footer->frame.height,
+                   bigScreen.height - t.sizes.spacingXXLarge),
+            px("about.footer.big", footer));
+        DOCTEST_CHECK(c->frame.y + c->frame.height + kCardGap <= footer->frame.y);
+    }
+    mod->onStop();
+    return true;
+})
+
+// ---- about 页浮环动态背景（2026-09-28 用户真机追问「关于页面的动态效果，
+//      你给我做了吗」——做了但太淡、看不出）----
+// 钉三件事：① 可见度区间（opacity 0.18-0.28 / 半径 12-34，常量即真相，
+// 断言防再被悄悄调淡）；② 真的在动（awake 时 bg 元素挂 onFrame，帧推进 →
+// 锚点漂移 + 弹簧跟随 → 环元素几何变化）；③ 静止后休眠（全 settled + 2s
+// 超时 → awake()==false → compose 不再挂 onFrame，省电设计）；顺带锁唤醒路径。
+REGISTER_TEST(uiAboutRingAnim,
+              "about: 浮环可见度 0.18-0.28 / 漂移真在动 / 静止后休眠（真机反馈）", {
+    using Anim = module::about::AboutAnimState;
+    std::unique_ptr<::core::Module> mod(create_about_module());
+    DOCTEST_REQUIRE(mod != nullptr);
+    mod->onStart();
+    eui::Ui ui;
+    eui::Screen screen{1392.0f, 1000.0f};  // 默认窗 1600 − 侧边栏 208
+    ui.begin("about_ring");
+    mod->compose(ui, screen);
+    ui.end();
+    ui.layout(screen.width, screen.height);
+    auto& anim = ui.state<Anim>("about.anim");
+    DOCTEST_REQUIRE(anim.initialized);
+    DOCTEST_CHECK_EQ(Anim::kRingCount, 7);
+    // ① 可见度区间（2026-09-28 从 0.06-0.15 上调；浅底 surface #F5F2EC 上
+    //    0.06-0.15 合成后 ΔRGB ≈ 2-4、等同不可见）。**用字面量而非被测量
+    //    头文件常量**：拿 kOpacityMin/Max 断言等于自己，把常量调回去时断言
+    //    仍真（实测变异验证过）——回归就无人守了
+    constexpr float kExpectOpacityMin = 0.18f;
+    constexpr float kExpectOpacityMax = 0.28f;
+    constexpr float kExpectRadiusMin = 12.0f;
+    constexpr float kExpectRadiusMax = 34.0f;
+    bool opacityOk = true;
+    bool radiusOk = true;
+    for (int i = 0; i < Anim::kRingCount; ++i) {
+        const auto& ring = anim.rings[i];
+        opacityOk = opacityOk && ring.opacity >= kExpectOpacityMin - 1e-6f &&
+                    ring.opacity <= kExpectOpacityMax + 1e-6f;
+        radiusOk = radiusOk && ring.radius >= kExpectRadiusMin - 1e-6f &&
+                   ring.radius <= kExpectRadiusMax + 1e-6f;
+    }
+    DOCTEST_CHECK(opacityOk);
+    DOCTEST_CHECK(radiusOk);
+    // ② 驱动机制与真在动：awake 时 bg 挂 onFrame（可手动驱动），帧推进后
+    // 重 compose → 环元素几何变化（锚点漂移 + 弹簧跟随的端到端证据）
+    const auto* bg = ui.find("about.bg");
+    DOCTEST_REQUIRE(bg != nullptr);
+    DOCTEST_REQUIRE(bg->onFrame != nullptr);
+    const auto* ring0 = ui.find("about.ring.0");
+    DOCTEST_REQUIRE(ring0 != nullptr);
+    const float beforeX = ring0->frame.x;
+    const float beforeY = ring0->frame.y;
+    for (int f = 0; f < 30; ++f) {  // 0.5s 唤醒期帧（< kWakeHoldSeconds）
+        bg->onFrame(1.0f / 60.0f);
+    }
+    ui.begin("about_ring");
+    mod->compose(ui, screen);
+    ui.end();
+    ui.layout(screen.width, screen.height);
+    const auto* ring0b = ui.find("about.ring.0");
+    DOCTEST_REQUIRE(ring0b != nullptr);
+    const float moved = std::abs(ring0b->frame.x - beforeX) +
+                        std::abs(ring0b->frame.y - beforeY);
+    DOCTEST_CHECK_MESSAGE(moved > 1.0f, "ring.0 位移 " + std::to_string(moved));
+    // ③ 静止 → 全 settled + 超时 → 休眠；compose 不再挂 onFrame
+    const auto* bg2 = ui.find("about.bg");
+    DOCTEST_REQUIRE(bg2 != nullptr);
+    DOCTEST_REQUIRE(bg2->onFrame != nullptr);  // 0.5s < 2s，仍在唤醒期
+    for (int f = 0; f < 240; ++f) {  // 再推 4s（总 4.5s > 2s 唤醒窗）
+        bg2->onFrame(1.0f / 60.0f);
+    }
+    DOCTEST_CHECK(!anim.awake());
+    ui.begin("about_ring");
+    mod->compose(ui, screen);
+    ui.end();
+    const auto* bg3 = ui.find("about.bg");
+    DOCTEST_REQUIRE(bg3 != nullptr);
+    DOCTEST_CHECK(bg3->onFrame == nullptr);  // 休眠：不挂帧回调，零开销
+    // 唤醒路径：onMove（compose 时挂在 bg 上）复位 wakeHold → 再挂 onFrame
+    DOCTEST_REQUIRE(bg3->onMove != nullptr);
+    (void)bg3->onMove(eui::PointerEvent{}, eui::Rect{});
+    DOCTEST_CHECK(anim.awake());
+    ui.begin("about_ring");
+    mod->compose(ui, screen);
+    ui.end();
+    const auto* bg4 = ui.find("about.bg");
+    DOCTEST_REQUIRE(bg4 != nullptr);
+    DOCTEST_CHECK(bg4->onFrame != nullptr);
     mod->onStop();
     return true;
 })
