@@ -180,9 +180,6 @@ REGISTER_TEST(sidebar_collapsed_compose,
     DOCTEST_CHECK(icon != nullptr);
     DOCTEST_CHECK(floatEq(icon->x, 22.0f));
 
-    // tooltip 挂载（hover 才可见，元素常驻）
-    DOCTEST_CHECK(ui.find("app.sidebar.item.Home.tip") != nullptr);
-
     // 折叠开关：居中 (72 - 36) / 2 = 18
     const auto* toggle = ui.find("app.sidebar.toggle");
     DOCTEST_CHECK(toggle != nullptr);

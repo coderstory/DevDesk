@@ -35,7 +35,7 @@ void resetSidebarGlobals();
 float sidebarWidth();
 float pageContentWidth(float windowWidth);
 
-// 侧边栏自绘（模块导航 + 折叠态图标栏 + hover tooltip + 折叠开关按钮）
+// 侧边栏自绘（模块导航 + 折叠态图标栏 + 折叠开关按钮）
 void drawSidebar(eui::Ui& ui, const eui::Screen& screen);
 
 // 应用根布局 row(侧边栏, 页面内容)：EUI-NEO app main 每帧回调。

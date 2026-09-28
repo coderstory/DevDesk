@@ -22,7 +22,6 @@
 #include <ui_kit/metrics.h>
 #include <ui_kit/toast.h>
 
-#include <components/tooltip.h>
 #include <eui/types.h>
 
 namespace app {
@@ -37,17 +36,6 @@ bool g_sidebarCollapsed = false;
 // 调用方（main.cpp）写状态，compose 顶层每帧读状态绘制；单实例。
 // 状态位与绘制接线统一走 ui_kit（任务 D / R1），对外 API 不变。
 ui_kit::ToastState g_appNotice;
-
-// 折叠态 tooltip 样式：EUI-NEO TooltipStyle 默认用上游 dark tokens，
-// 这里换成 DevDesk 自己的主题 token（与侧边栏文字/卡片同源）
-components::TooltipStyle tooltipStyleFrom(const ::core::theme::Tokens& t) {
-    components::TooltipStyle style;
-    style.background = t.colors.surface;
-    style.text = t.colors.textPrimary;
-    style.border = t.colors.borderMuted;
-    style.radius = t.sizes.radius;
-    return style;
-}
 
 } // namespace
 
@@ -197,7 +185,7 @@ void drawSidebar(eui::Ui& ui, const eui::Screen& screen) {
                 if (collapsed) {
                     // 折叠：图标水平居中（框位置居中 + 框内 horizontalAlign
                     // Center——2026-09-24 修复：glyph 默认贴框左缘导致视觉
-                    // 偏左、右侧空白多），label 不渲染（tooltip 补模块名）
+                    // 偏左、右侧空白多），label 不渲染
                     ui.text(id + ".icon")
                         .position((kWidth - kIconW) * 0.5f, y)
                         .size(kIconW, itemH)
@@ -207,16 +195,6 @@ void drawSidebar(eui::Ui& ui, const eui::Screen& screen) {
                         .verticalAlign(eui::VerticalAlign::Center)
                         .color(active ? t.colors.primary
                                       : t.colors.textSecondary)
-                        .build();
-                    // hover 显示模块名（bounds 用全窗口，tooltip 从图标栏
-                    // 右缘伸出覆盖内容区；zIndex 10 让侧边栏子树排到页面
-                    // 内容之后绘制——EUI-NEO 兄弟排序按 subtreeMaxZIndex）
-                    components::tooltip(ui, id + ".tip")
-                        .source(id + ".hit")
-                        .value(m->displayName())
-                        .anchor(kWidth * 0.5f, y)
-                        .bounds(screen.width, screen.height)
-                        .style(tooltipStyleFrom(t))
                         .build();
                 } else {
                     ui.text(id + ".icon")
