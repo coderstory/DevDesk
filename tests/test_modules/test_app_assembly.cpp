@@ -27,6 +27,7 @@
 #include <algorithm>
 #include <filesystem>
 #include <fstream>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -57,11 +58,32 @@ private:
     std::vector<std::string>* log_;
 };
 
-// 五个桩模块 + 共享账本（按装配的注册顺序构造，名字与门控键对齐）
+// 五个桩模块 + 共享账本（按装配的注册顺序构造，名字与门控键对齐）。
+// R8-C2：装配入参从 ModuleSet 改为 GatedEntry 列表（门控已前置
+// buildGatedEntries——本类只提供**已门控**的清单形态；真实表门控由下方
+// kModuleRegistry 用例锁）
 class StubModules {
 public:
-    app::assembly::ModuleSet set() {
-        return {&home_, &markdown_, &todo_, &claude_, &settings_};
+    // 全启用清单（5 项，= allOnConfig 下 buildGatedEntries 的真实输出形态）
+    std::vector<app::assembly::GatedEntry> set() {
+        return {
+            {::core::PageId::Home, nullptr, &home_},
+            {::core::PageId::Markdown, nullptr, &markdown_},
+            {::core::PageId::Todo, nullptr, &todo_},
+            {::core::PageId::ClaudeProxy, nullptr, &claude_},
+            {::core::PageId::Settings, nullptr, &settings_},
+        };
+    }
+    // 只 home + settings（= allToolsOffConfig 下的门控形态）
+    std::vector<app::assembly::GatedEntry> homeSettingsOnly() {
+        return {{::core::PageId::Home, nullptr, &home_},
+                {::core::PageId::Settings, nullptr, &settings_}};
+    }
+    // home + markdown + settings（= markdownOnlyConfig 下的门控形态）
+    std::vector<app::assembly::GatedEntry> markdownOnly() {
+        return {{::core::PageId::Home, nullptr, &home_},
+                {::core::PageId::Markdown, nullptr, &markdown_},
+                {::core::PageId::Settings, nullptr, &settings_}};
     }
     std::vector<std::string>& log() { return log_; }
     bool logHas(const std::string& entry) const {
@@ -99,6 +121,14 @@ module::settings::SettingsConfig markdownOnlyConfig() {
     cfg.enabledModules.push_back(module::settings::kModuleIdHome);
     cfg.enabledModules.push_back(module::settings::kModuleIdMarkdown);
     cfg.enabledModules.push_back(module::settings::kModuleIdSettings);
+    return cfg;
+}
+
+// 全启用 + pet（SettingsConfig 默认 = 除 pet 外全启用；桌宠默认不在清单，
+// maybeStartPet 的「开」态配置要显式补上）
+module::settings::SettingsConfig petOnConfig() {
+    module::settings::SettingsConfig cfg;
+    cfg.enabledModules.push_back(module::settings::kModuleIdPet);
     return cfg;
 }
 
@@ -169,7 +199,8 @@ REGISTER_TEST(assembly_modules_all_off,
     StubModules mods;
 
     const auto order = app::assembly::assembleAndStart(
-        router, allToolsOffConfig(), mods.set(), app::assembly::PreStartHook{});
+        router, allToolsOffConfig(), mods.homeSettingsOnly(),
+        app::assembly::PreStartHook{});
 
     DOCTEST_REQUIRE_EQ(order.size(), static_cast<size_t>(2));
     DOCTEST_CHECK(order[0] == ::core::PageId::Home);
@@ -232,7 +263,8 @@ REGISTER_TEST(assembly_exit_hook_armed_idempotent,
     ::core::Router router;
     StubModules mods;
 
-    app::assembly::assembleAndStart(router, allToolsOffConfig(), mods.set(),
+    app::assembly::assembleAndStart(router, allToolsOffConfig(),
+                                    mods.homeSettingsOnly(),
                                     app::assembly::PreStartHook{});
 
     // 装配即完成退出接线（armExitHook 在 startAll 之后、与原 getRouter 同位置）
@@ -297,7 +329,8 @@ REGISTER_TEST(assembly_dispatch_and_tray_mapping,
 
     ::core::Router router;
     StubModules mods;
-    app::assembly::assembleAndStart(router, markdownOnlyConfig(), mods.set(),
+    app::assembly::assembleAndStart(router, markdownOnlyConfig(),
+                                    mods.markdownOnly(),
                                     app::assembly::PreStartHook{});
     DOCTEST_REQUIRE(router.isRegistered(::core::PageId::Markdown));
 
@@ -310,7 +343,8 @@ REGISTER_TEST(assembly_dispatch_and_tray_mapping,
     ::core::Router gatedRouter;
     StubModules gatedMods;
     app::assembly::assembleAndStart(gatedRouter, allToolsOffConfig(),
-                                    gatedMods.set(), app::assembly::PreStartHook{});
+                                    gatedMods.homeSettingsOnly(),
+                                    app::assembly::PreStartHook{});
     app::assembly::dispatchFileOpen(&gatedRouter, (notesDir / "note.md").string(), notesDir);
     DOCTEST_CHECK_EQ(gatedRouter.currentPage(), ::core::PageId::Home);  // 自带回退
     DOCTEST_CHECK_EQ(gatedRouter.consumePendingPayload(::core::PageId::Markdown),
@@ -378,12 +412,12 @@ REGISTER_TEST(assembly_injects_empty_page_fallback,
               "assembly: 装配时注入空态兜底（无模块可显示 → 「无页面」由 app 层画）", {
     test_support::ScopedAppRouter scoped;
     ::core::Router router;
-    // 全 nullptr 的 ModuleSet：装配后一个模块都没注册（registerModule 的既有
+    // 空 GatedEntry 列表：装配后一个模块都没注册（registerModule 的既有
     // 容错分支）→ compose 落到「当前页无模块」。这是经装配后的 Router 唯一能
     // 走到兜底的形态（生产恒注册 home/settings，Home 未注册时 navigateTo 也
     // 只停在当前页）
     app::assembly::assembleAndStart(router, allOnConfig(),
-                                    app::assembly::ModuleSet{},
+                                    std::vector<app::assembly::GatedEntry>{},
                                     app::assembly::PreStartHook{});
 
     eui::Screen screen;
@@ -416,8 +450,8 @@ REGISTER_TEST(assembly_service_locator_registration_precedes_onstart,
 
         app::assembly::assembleAndStart(
             router, markdownOnlyConfig(),
-            app::assembly::ModuleSet{nullptr, nullptr, nullptr, nullptr,
-                                     &probeModule},
+            std::vector<app::assembly::GatedEntry>{
+                {::core::PageId::Settings, nullptr, &probeModule}},
             [&probe] { ::core::ServiceLocator::set<IProbeService>(&probe); });
 
         DOCTEST_REQUIRE_EQ(log.size(), static_cast<size_t>(1));
@@ -432,12 +466,172 @@ REGISTER_TEST(assembly_service_locator_registration_precedes_onstart,
 
         app::assembly::assembleAndStart(
             router, markdownOnlyConfig(),
-            app::assembly::ModuleSet{nullptr, nullptr, nullptr, nullptr,
-                                     &probeModule},
+            std::vector<app::assembly::GatedEntry>{
+                {::core::PageId::Settings, nullptr, &probeModule}},
             app::assembly::PreStartHook{});
 
         DOCTEST_REQUIRE_EQ(log.size(), static_cast<size_t>(1));
         DOCTEST_CHECK_EQ(log[0], std::string("start:probe:missing"));
     }
+    return true;
+})
+
+// ---- R8-C2：真实 kModuleRegistry 表（门控键列填错 / 表序漂移此处必挂）----
+
+REGISTER_TEST(assembly_registry_table_shape,
+              "assembly: 真实 kModuleRegistry —— 5 行 / 行序==PageId 枚举序 / home+settings gatingKey==nullptr / 另三行==kModuleId*", {
+    using ::app::registry::kModuleRegistry;
+    constexpr size_t kRegistrySize =
+        sizeof(kModuleRegistry) / sizeof(kModuleRegistry[0]);
+    const ::core::PageId kEnumOrder[] = {
+        ::core::PageId::Home,       ::core::PageId::Markdown,
+        ::core::PageId::Todo,       ::core::PageId::ClaudeProxy,
+        ::core::PageId::Settings,
+    };
+    DOCTEST_CHECK_EQ(kRegistrySize, static_cast<size_t>(5));
+    for (size_t i = 0; i < kRegistrySize; ++i) {
+        // 表序 == PageId 枚举序（重排 = 侧边栏序静默变化，core_pageid_order
+        // 契约的装配侧镜像）
+        DOCTEST_CHECK(kModuleRegistry[i].page == kEnumOrder[i]);
+    }
+    // T3 口径：home/settings 恒注册（gatingKey==nullptr）；三个工具模块
+    // 各自带对应门控键
+    DOCTEST_CHECK(kModuleRegistry[0].gatingKey == nullptr);
+    DOCTEST_CHECK_EQ(std::string(kModuleRegistry[1].gatingKey),
+                     std::string(module::settings::kModuleIdMarkdown));
+    DOCTEST_CHECK_EQ(std::string(kModuleRegistry[2].gatingKey),
+                     std::string(module::settings::kModuleIdTodo));
+    DOCTEST_CHECK_EQ(std::string(kModuleRegistry[3].gatingKey),
+                     std::string(module::settings::kModuleIdClaudeProxy));
+    DOCTEST_CHECK(kModuleRegistry[4].gatingKey == nullptr);
+    return true;
+})
+
+REGISTER_TEST(assembly_build_gated_entries_real_table,
+              "assembly: buildGatedEntries 真实表 —— all-off 恰 2 条（home/settings 恒注册）/ all-on 5 条按表序", {
+    constexpr size_t kRegistrySize =
+        sizeof(::app::registry::kModuleRegistry) /
+        sizeof(::app::registry::kModuleRegistry[0]);
+    // 全关（三个工具模块）→ 恒注册行必含，输出恰 2 条（语义同
+    // assembly_modules_all_off 的 :165 恒注册断言，但锁的是**真实表**——
+    // gatingKey 列填错此处必挂）
+    const auto gated = app::assembly::buildGatedEntries(
+        allToolsOffConfig(), ::app::registry::kModuleRegistry,
+        kRegistrySize);
+    DOCTEST_REQUIRE_EQ(gated.size(), static_cast<size_t>(2));
+    DOCTEST_CHECK(gated[0].page == ::core::PageId::Home);
+    DOCTEST_CHECK(gated[1].page == ::core::PageId::Settings);
+    // 实例列恒为 nullptr——由调用方按 page 从自有 static 持有填入
+    DOCTEST_CHECK(gated[0].module == nullptr);
+    DOCTEST_CHECK(gated[1].module == nullptr);
+    // 全开 → 5 条且序 == 表序
+    const auto allGated = app::assembly::buildGatedEntries(
+        allOnConfig(), ::app::registry::kModuleRegistry, kRegistrySize);
+    DOCTEST_REQUIRE_EQ(allGated.size(), static_cast<size_t>(5));
+    const ::core::PageId kEnumOrder[] = {
+        ::core::PageId::Home,       ::core::PageId::Markdown,
+        ::core::PageId::Todo,       ::core::PageId::ClaudeProxy,
+        ::core::PageId::Settings,
+    };
+    for (size_t i = 0; i < allGated.size(); ++i) {
+        DOCTEST_CHECK(allGated[i].page == kEnumOrder[i]);
+    }
+    return true;
+})
+
+// 表短名/图标列 ↔ 模块虚函数双副本一致性（R8 T4/T5：静态列不可省——tray
+// 关闭态必须无活实例可查；一致性用例是双副本唯一缝合点，仿
+// test_module_icons 先例构造真实模块取纯 getter，无 DB）
+REGISTER_TEST(assembly_registry_matches_module_getters,
+              "assembly: 表 shortName/iconGlyph/page 与真实模块 getter 一致（防双副本 drift）", {
+    for (const auto& e : ::app::registry::kModuleRegistry) {
+        std::unique_ptr<::core::Module> mod(e.factory());
+        DOCTEST_REQUIRE(mod != nullptr);
+        DOCTEST_CHECK(e.page == mod->pageId());
+        DOCTEST_CHECK_EQ(std::string(e.shortName), mod->shortName());
+        DOCTEST_CHECK_EQ(std::string(e.iconGlyph), mod->iconGlyph());
+    }
+    return true;
+})
+
+// ---- R8-C2 PAB-03：托盘委托判定（Navigate* 委托成功切页 / 其余不导航）----
+
+REGISTER_TEST(assembly_dispatch_tray_navigation,
+              "assembly: dispatchTrayNavigation —— Navigate* 委托成功切页返回 true / ShowMainWindow·Exit·None 返回 false 不导航", {
+    test_support::ScopedAppRouter scoped;
+    ::core::Router router;
+    StubModules mods;
+    app::assembly::assembleAndStart(router, allOnConfig(), mods.set(),
+                                    app::assembly::PreStartHook{});
+    DOCTEST_REQUIRE_EQ(router.modules().size(), static_cast<size_t>(5));
+
+    // Navigate*：委托 navigateFromTray——目标页已注册 → 直接切页 + true
+    DOCTEST_CHECK(app::assembly::dispatchTrayNavigation(
+        Action::NavigateMarkdown, router));
+    DOCTEST_CHECK_EQ(router.currentPage(), ::core::PageId::Markdown);
+    DOCTEST_CHECK(app::assembly::dispatchTrayNavigation(
+        Action::NavigateTodo, router));
+    DOCTEST_CHECK_EQ(router.currentPage(), ::core::PageId::Todo);
+    DOCTEST_CHECK(app::assembly::dispatchTrayNavigation(
+        Action::NavigateClaude, router));
+    DOCTEST_CHECK_EQ(router.currentPage(), ::core::PageId::ClaudeProxy);
+    DOCTEST_CHECK(app::assembly::dispatchTrayNavigation(
+        Action::NavigateHome, router));
+    DOCTEST_CHECK_EQ(router.currentPage(), ::core::PageId::Home);
+
+    // 非导航动作：返回 false 且不动当前页（由调用方处理显示/退出）
+    const ::core::PageId before = router.currentPage();
+    DOCTEST_CHECK_FALSE(app::assembly::dispatchTrayNavigation(
+        Action::ShowMainWindow, router));
+    DOCTEST_CHECK_FALSE(
+        app::assembly::dispatchTrayNavigation(Action::Exit, router));
+    DOCTEST_CHECK_FALSE(
+        app::assembly::dispatchTrayNavigation(Action::None, router));
+    DOCTEST_CHECK_EQ(router.currentPage(), before);
+    return true;
+})
+
+// ---- R8-C2 PAB-04：maybeStartPet 门控两态 ----
+
+REGISTER_TEST(assembly_maybe_start_pet_gated,
+              "assembly: maybeStartPet —— 开则 loadPetConfig+startFn 收透传 config / 关则双不调", {
+    module::pet::PetConfig expected;
+    expected.skinName = "neo_plus";
+    expected.x = 42;
+    expected.y = -7;
+    int loadCalls = 0;
+    int startCalls = 0;
+    module::pet::PetConfig received;
+
+    // 开（enabledModules 含 "pet"）：loadPetConfig 返回值原样透传 startFn
+    app::assembly::maybeStartPet(
+        petOnConfig(),
+        [&] {
+            ++loadCalls;
+            return expected;
+        },
+        [&](const module::pet::PetConfig& cfg) {
+            ++startCalls;
+            received = cfg;
+        });
+    DOCTEST_CHECK_EQ(loadCalls, 1);
+    DOCTEST_CHECK_EQ(startCalls, 1);
+    DOCTEST_CHECK_EQ(received.skinName, expected.skinName);
+    DOCTEST_CHECK_EQ(received.x, expected.x);
+    DOCTEST_CHECK_EQ(received.y, expected.y);
+
+    // 关（默认配置不含 pet）：startFn **与** loadPetConfig 都不被调——短
+    // 路径证门控谓词同源（同一 moduleEnabled(kModuleIdPet)、同一 cfg 参数）
+    loadCalls = 0;
+    startCalls = 0;
+    app::assembly::maybeStartPet(
+        allOnConfig(),
+        [&] {
+            ++loadCalls;
+            return expected;
+        },
+        [&](const module::pet::PetConfig&) { ++startCalls; });
+    DOCTEST_CHECK_EQ(loadCalls, 0);
+    DOCTEST_CHECK_EQ(startCalls, 0);
     return true;
 })

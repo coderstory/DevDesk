@@ -3,6 +3,7 @@
 // app::dslAppConfig() 和 app::compose()
 
 #include "app_assembly.h"
+#include "app_registry.h"  // kModuleRegistry：页面模块登记表（含 5 个工厂声明）
 #include "app_sidebar.h"
 #include "claude_service.h"
 #include "core/claude_proxy_service.h"
@@ -38,12 +39,6 @@
 #include <cstdlib>
 #include <string>
 #include <vector>
-
-extern "C" ::core::Module* create_home_module();
-extern "C" ::core::Module* create_markdown_module();
-extern "C" ::core::Module* create_todo_module();
-extern "C" ::core::Module* create_claude_module();
-extern "C" ::core::Module* create_settings_module();
 
 namespace {
 
@@ -136,9 +131,9 @@ void prepareClaudeServiceBeforeModules();
 
 ::core::Router* getRouter() {
     static ::core::Router router;
-    // 模块工厂 + 生命周期持有仍在本文件：静态对象必须构造在 armExitHook()
-    //（由 assembleAndStart 在注册后调用）之前 —— atexit 的 LIFO 才能保证
-    // handler 先于 modules/router 静态析构运行，stopAll 时模块仍活着。
+    // 工厂 + 生命周期持有仍在本文件：静态对象必须构造在 armExitHook()（由
+    // assembleAndStart 注册后调用）之前——atexit 的 LIFO 才能保证 handler
+    // 先于 modules/router 析构运行，stopAll 时模块仍活着
     static std::unique_ptr<::core::Module> home(create_home_module());
     static std::unique_ptr<::core::Module> markdown(create_markdown_module());
     static std::unique_ptr<::core::Module> todo(create_todo_module());
@@ -147,14 +142,28 @@ void prepareClaudeServiceBeforeModules();
 
     static bool initialized = false;
     if (!initialized) {
-        // 装配（注册顺序 / 门控 / startAll / 退出接线）收在 app_assembly：
-        // preStart（ClaudeService 就绪）→ 门控注册 → startAll → atexit。
-        // 接线语义与搬运前逐字一致（专家审计 2026-09-27 M2），差异仅在
-        // 「这些顺序现在有 headless 用例守着」
+        // 表 → 门控清单 → 按页填实例 → 装配（preStart → 注册 → startAll →
+        // atexit；顺序有 headless 用例守着）。元数据见 app_registry.h、
+        // 装配语义见 app_assembly.h；表新增页不在持有集 → nullptr 容错跳过
+        auto moduleForPage = [&](::core::PageId page) -> ::core::Module* {
+            switch (page) {
+                case ::core::PageId::Home: return home.get();
+                case ::core::PageId::Markdown: return markdown.get();
+                case ::core::PageId::Todo: return todo.get();
+                case ::core::PageId::ClaudeProxy: return claude.get();
+                case ::core::PageId::Settings: return settings.get();
+            }
+            return nullptr;
+        };
+        auto gated = app::assembly::buildGatedEntries(
+            gatingConfigSnapshot(), ::app::registry::kModuleRegistry,
+            sizeof(::app::registry::kModuleRegistry) /
+                sizeof(::app::registry::kModuleRegistry[0]));
+        for (auto& entry : gated) {
+            entry.module = moduleForPage(entry.page);
+        }
         app::assembly::assembleAndStart(
-            router, gatingConfigSnapshot(),
-            app::assembly::ModuleSet{home.get(), markdown.get(), todo.get(),
-                                     claude.get(), settings.get()},
+            router, gatingConfigSnapshot(), gated,
             prepareClaudeServiceBeforeModules);
 
         // 启动时若有待打开文件（argv 捕获），解析成笔记负载分发（审计 [5]）
@@ -334,29 +343,20 @@ void prepareClaudeServiceBeforeModules() {
     }
 }
 
-// ---- 托盘菜单（菜单美化 2026-09-23）----
-// 唯一数据源 core::tray::trayMenuSpec：styled 独立菜单窗（主路径）与原生托盘
-// 菜单（降级路径）都从同一份 spec 生成，动作路由共用 executeTrayAction。
-// 动作→页面映射（pageForTrayAction）、页名（trayPageDisplayName）与导航
-//（navigateFromTray）已移至 app_assembly（可无头单测，专家审计 2026-09-27 M2）。
+// ---- 托盘菜单 ----
+// 唯一数据源 core::tray::trayMenuSpec（styled 主路径 + 原生降级同源）；
+// 动作→页面映射（pageForTrayAction）、页名、导航与 Navigate* 委托
+//（dispatchTrayNavigation，PAB-03）全在 app_assembly（可无头单测）
 
 void executeTrayAction(::core::tray::TrayMenuAction action) {
     using Action = ::core::tray::TrayMenuAction;
+    // Navigate* 全委托 app_assembly（PAB-03：映射单点 pageForTrayAction 有测）
+    if (app::assembly::dispatchTrayNavigation(action, *getRouter())) {
+        return;
+    }
     switch (action) {
         case Action::ShowMainWindow:
             app::requestShow();
-            break;
-        case Action::NavigateHome:
-            app::assembly::navigateFromTray(getRouter(), ::core::PageId::Home);
-            break;
-        case Action::NavigateMarkdown:
-            app::assembly::navigateFromTray(getRouter(), ::core::PageId::Markdown);
-            break;
-        case Action::NavigateTodo:
-            app::assembly::navigateFromTray(getRouter(), ::core::PageId::Todo);
-            break;
-        case Action::NavigateClaude:
-            app::assembly::navigateFromTray(getRouter(), ::core::PageId::ClaudeProxy);
             break;
         case Action::Exit:
             app::requestExit();
@@ -616,24 +616,23 @@ const DslAppConfig& dslAppConfig() {
         //（prepareClaudeServiceBeforeModules）——结构上仍早于模块 onStart，
         // W3 修过的启动顺序（service 先于 getRouter）不回退，见 app_assembly.h
         getRouter();
-        // 桌宠（2026-09-22-desktop-pet-design.md §4.1）：不是 Router 页面模块，
-        // 经同一 enabledModules 门控（含 "pet" 才开窗，默认关 = 零执行）。
-        // openWindow 在主循环起来前入队、首帧消费；皮肤缺失时自动生成占位皮肤
-        if (isModuleEnabled(module::settings::kModuleIdPet)) {
-            // 桌宠自身配置在 petsDir()/pet_config.json（模块隔离，不走
-            // config.json；pet 字段 2026-09-23 从 SettingsConfig 迁出）
-            const module::pet::PetConfig petCfg =
-                module::pet::PetConfigStore(module::pet::petConfigFile()).load();
-            // 气泡内容源②（§4.5，审计 [18]）：注入 app 级只读桥，pet 经它查
-            // Home 逾期数（pet 不 include module_home，隔离不破）
-            // 气泡内容源③（M2 §4.5，审计 [18]）：同款桥查 claude_proxy 最近
-            // 请求事件（take 语义一次一泡），无事件 pet 自动回退②→①
-            module::pet::startPetWindow(module::pet::PetWindowConfig{
-                petCfg.skinName, petCfg.x, petCfg.y,
-                &getOverdueTaskCount, &getProxyEventStatus});
-        } else {
-            LOG_INFO("桌宠已关闭（enabledModules 不含 pet），不开宠物窗口");
-        }
+        // 桌宠（2026-09-22-desktop-pet-design.md §4.1）：非 Router 页面模块，
+        // 门控/装载/开窗收进 app_assembly::maybeStartPet（PAB-04，无头可测）；
+        // 开窗回调仍在本文件（气泡内容源②③ 跨模块只读桥在此注入）
+        app::assembly::maybeStartPet(
+            gatingConfigSnapshot(),
+            [] {
+                // 桌宠自身配置在 petsDir()/pet_config.json（模块隔离，不走
+                // config.json；pet 字段 2026-09-23 从 SettingsConfig 迁出）
+                return module::pet::PetConfigStore(
+                           module::pet::petConfigFile())
+                    .load();
+            },
+            [](const module::pet::PetConfig& petCfg) {
+                module::pet::startPetWindow(module::pet::PetWindowConfig{
+                    petCfg.skinName, petCfg.x, petCfg.y,
+                    &getOverdueTaskCount, &getProxyEventStatus});
+            });
         return true;
     }();
     (void)initialized;

@@ -15,9 +15,12 @@
 //  （模块 onStart 经 ClaudeService::global() 取共享单例，即 W3 事故点）。
 #pragma once
 
+#include "app_registry.h"
 #include "core/module_interface.h"
 #include "core/router.h"
 #include "core/tray_menu_spec.h"
+#include "module_pet/pet_config.h"
+#include "module_pet/pet_window.h"  // 纯数据头（PetWindowConfig 等声明，零 EUI-NEO 依赖）
 #include "settings_config.h"
 
 #include <filesystem>
@@ -30,19 +33,26 @@ namespace app::assembly {
 
 // ---- 模块装配（原 main.cpp getRouter 的内联装配段）----
 
-// 五个页面模块指针。注册顺序 = 字段顺序 = home → markdown → todo → claude →
-// settings（与 main.cpp 原顺序逐字一致）：home/settings 恒注册（落地页 +
-// 开关 UI 宿主），其余三个按 SettingsConfig::enabledModules 门控。
-// 生命周期由调用方持有——main.cpp 里是 getRouter() 的函数级 static
-// unique_ptr（必须长于 Router，且先于 armExitHook 构造，见下 LIFO 约定）；
-// nullptr 按 Router::registerModule 语义 = 不注册
-struct ModuleSet {
-    ::core::Module* home = nullptr;
-    ::core::Module* markdown = nullptr;
-    ::core::Module* todo = nullptr;
-    ::core::Module* claude = nullptr;
-    ::core::Module* settings = nullptr;
+// 待注册清单（表 → 门控的产物，buildGatedEntries 产出；调用方按 page 填入
+// 实例后再传 assembleAndStart）。注册顺序 = 列表顺序（消除旧定长结构的
+// 「字段顺序即注册顺序」隐式不变量）；生命周期由调用方持有——main.cpp 里
+// 是 getRouter() 的函数级 static unique_ptr（必须长于 Router，且先于
+// armExitHook 构造，见下 LIFO 约定）；module == nullptr 按
+// Router::registerModule 语义 = 不注册（容错跳过）
+struct GatedEntry {
+    ::core::PageId page;      // 表行页（供调用方按页装实例 / 断言表序）
+    const char* gatingKey;    // nullptr = 恒注册（表行原样透传）
+    ::core::Module* module;   // nullptr = 容错跳过（registerModule 同款）
 };
+
+// 表 → 待注册清单（纯转换 + 门控；不触 onStart、不调工厂）：恒注册行
+//（gatingKey==nullptr）必含；门控行 moduleEnabled(cfg, key) 才含；序 = 表序。
+// module 实例由调用方按 page 从自有 static 持有填入（生命周期仍归 main.cpp
+// 函数级 static，LIFO 约定不变）。真实表遍历因此可无头单测——测试 TU
+// include app_registry.h 拿到同一份 kModuleRegistry
+std::vector<GatedEntry> buildGatedEntries(
+    const module::settings::SettingsConfig& cfg,
+    const ::app::registry::ModuleEntry* table, std::size_t tableSize);
 
 // 前置装配回调：早于一切模块注册/onStart 执行（W3 启动顺序的结构保证）。
 // 生产传 main.cpp 的 Claude 前置段（ClaudeService 创建 + setGlobal + 端口
@@ -50,11 +60,26 @@ struct ModuleSet {
 using PreStartHook = std::function<void()>;
 
 // 装配并启动（不抛异常）。返回**实际注册**的 PageId 顺序（供顺序断言）。
-// 关闭的模块不注册 = onStart/compose/菜单项全部不可达，"零执行零菜单项"
-// 是结构性保证，不靠模块自觉检查开关（设计 2026-09-22 §5.2）
+// 收 GatedEntry 列表后**纯注册**（门控已由 buildGatedEntries 前置——本函数
+// 内 moduleEnabled 恰 0 处、全项目恰 1 处）。关闭的模块不注册 =
+// onStart/compose/菜单项全部不可达，"零执行零菜单项"是结构性保证，
+// 不靠模块自觉检查开关（设计 2026-09-22 §5.2）
 std::vector<::core::PageId> assembleAndStart(
     ::core::Router& router, const module::settings::SettingsConfig& cfg,
-    const ModuleSet& modules, const PreStartHook& preStart);
+    const std::vector<GatedEntry>& modules, const PreStartHook& preStart);
+
+// ---- 桌宠开窗（原 main.cpp 的 pet 门控段；PAB-04 收窄版）----
+
+// 桌宠门控开窗：enabledModules 含 kModuleIdPet 才 loadPetConfig() 并调
+// startFn(config) —— 装载与启动都注入，生产路径（开窗 + 配置读取）整体进
+// 测试面。门控谓词与装配同源（同一个 moduleEnabled / 同一份 cfg 参数——
+// 生产传 isModuleEnabled 同源的 gatingConfigSnapshot()）。只承诺「门控
+// 两态」；开窗之后与 getRouter 之间的装配顺序无护栏（main.cpp :618 vs
+// :622），顺序锁待 app_boot 抽出时另案
+void maybeStartPet(
+    const module::settings::SettingsConfig& cfg,
+    const std::function<module::pet::PetConfig()>& loadPetConfig,
+    const std::function<void(const module::pet::PetConfig&)>& startFn);
 
 // ---- 退出接线（原 main.cpp getRouter 尾部的 atexit）----
 // EUI-NEO 无 onExit 回调：关窗（glfwWindowShouldClose）与托盘 Exit
@@ -118,5 +143,11 @@ const char* trayPageDisplayName(::core::PageId page);
 // 不再静默回退 Home（审计 [7]）：唤起主窗 + 应用级 toast 解释「怎么启用」，
 // 仍落到首页（有落点，但用户知道为什么）
 void navigateFromTray(::core::Router* router, ::core::PageId page);
+
+// 托盘动作委托（PAB-03）：Navigate* → pageForTrayAction + navigateFromTray，
+// 返回 true；其余（ShowMainWindow/Exit/None）返回 false 由调用方处理——
+// 动作→页面映射保持单点在 pageForTrayAction（有测），main.cpp 不再写平行 switch
+bool dispatchTrayNavigation(::core::tray::TrayMenuAction action,
+                            ::core::Router& router);
 
 } // namespace app::assembly
