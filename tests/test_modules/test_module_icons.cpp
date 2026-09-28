@@ -22,6 +22,7 @@ extern "C" ::core::Module* create_markdown_module();
 extern "C" ::core::Module* create_todo_module();
 extern "C" ::core::Module* create_claude_module();
 extern "C" ::core::Module* create_settings_module();
+extern "C" ::core::Module* create_about_module();
 
 namespace {
 
@@ -58,12 +59,13 @@ bool checkOneIcon(::core::Module* (*factory)(), unsigned int codepoint) {
 REGISTER_TEST(module_icons_fa_codepoints,
               "module_icons: iconGlyph 返回 FA 码点且 icon() 路由 Icon 字体", {
     // Home = fa-house / Markdown = fa-pen-to-square / Todo = fa-circle-check
-    // Claude = fa-arrows-rotate / Settings = fa-gear
+    // Claude = fa-arrows-rotate / Settings = fa-gear / About = fa-circle-info
     if (!checkOneIcon(create_home_module, 0xF015)) return false;
     if (!checkOneIcon(create_markdown_module, 0xF044)) return false;
     if (!checkOneIcon(create_todo_module, 0xF058)) return false;
     if (!checkOneIcon(create_claude_module, 0xF021)) return false;
     if (!checkOneIcon(create_settings_module, 0xF013)) return false;
+    if (!checkOneIcon(create_about_module, 0xF05A)) return false;
     return true;
 })
 

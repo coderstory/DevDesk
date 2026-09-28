@@ -1,5 +1,21 @@
 cmake_minimum_required(VERSION 3.14)
-project(DevDesk VERSION 0.1.0 LANGUAGES C CXX)
+
+# ---- 构建版本号（2026-09-28 about 页设计）：VERSION 文件 x.y.z ----
+# VERSION 不入 git（.gitignore），每机器各自递增；首次 configure 缺则自动
+# 创建 "0.1.0"。每次构建由 add_custom_target(bump_version ALL) 自增（见文件尾），
+# 新值经 CMAKE_CONFIGURE_DEPENDS 在下一个 configure 拾取（本次构建显示当前版本、
+# 下个构建得到 +1 后的版本）。
+if(EXISTS "${CMAKE_SOURCE_DIR}/VERSION")
+    file(READ "${CMAKE_SOURCE_DIR}/VERSION" DEVDESK_VERSION)
+    string(STRIP "${DEVDESK_VERSION}" DEVDESK_VERSION)
+else()
+    set(DEVDESK_VERSION "0.1.0")
+    file(WRITE "${CMAKE_SOURCE_DIR}/VERSION" "${DEVDESK_VERSION}")
+endif()
+project(DevDesk VERSION ${DEVDESK_VERSION} LANGUAGES C CXX)
+
+# VERSION 文件变更（bump_version 写入）→ 自动重新 configure
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${CMAKE_SOURCE_DIR}/VERSION")
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED TRUE)
@@ -77,6 +93,25 @@ else()
         "的较新提交（当前最低依赖 rev ${DEVDESK_EUI_NEO_MIN_REV}，见 CLAUDE.md）；若后续编译报缺成员/缺头文件，请先检查 EUI-NEO 版本。")
 endif()
 
+# ---- 构建期信息注入（2026-09-28 about 页设计；消费方 = src/module_about）----
+# DevDesk 自身 git rev：非 git 环境（源码 zip 下载等）回退 "unknown"，不 fail
+# configure（D-03）。用 -C 显式指定仓库，不依赖 execute_process 的工作目录。
+set(DEVDESK_EUI_NEO_REV "unknown")
+if(NOT EUI_NEO_GIT_REV STREQUAL "")
+    set(DEVDESK_EUI_NEO_REV "${EUI_NEO_GIT_REV}")
+endif()
+execute_process(
+    COMMAND git -C "${CMAKE_SOURCE_DIR}" rev-parse --short=7 HEAD
+    OUTPUT_VARIABLE DEVDESK_GIT_REV
+    OUTPUT_STRIP_TRAILING_WHITESPACE
+    ERROR_QUIET
+    RESULT_VARIABLE _devdesk_git_rev_rc
+)
+if(NOT _devdesk_git_rev_rc EQUAL 0 OR DEVDESK_GIT_REV STREQUAL "")
+    set(DEVDESK_GIT_REV "unknown")
+endif()
+message(STATUS "DevDesk git rev: ${DEVDESK_GIT_REV} (build version ${PROJECT_VERSION})")
+
 # T3：MinGW 全静态链接（默认 ON，仅 MinGW 工具链生效，macOS/MSVC 不受影响）
 # SQLite3/CURL/OpenSSL/zlib 全部用静态库 + libcurl.a 传递依赖闭包，
 # 配合 EUI-NEO 给 app target 的 -static（运行时静态），产出单 exe 零外部 DLL。
@@ -112,12 +147,13 @@ function(devdesk_add_eui_includes target)
     )
 endfunction()
 
-# 功能模块（home / markdown / todo / claude_proxy / settings）
+# 功能模块（home / markdown / todo / claude_proxy / settings / about）
 add_subdirectory(src/module_home)
 add_subdirectory(src/module_markdown)
 add_subdirectory(src/module_todo)
 add_subdirectory(src/module_claude_proxy)
 add_subdirectory(src/module_settings)
+add_subdirectory(src/module_about)
 add_subdirectory(src/module_pet)
 
 # 测试
@@ -146,6 +182,7 @@ target_link_libraries(DevDesk PRIVATE
     devdesk_module_todo
     devdesk_module_claude_proxy
     devdesk_module_settings
+    devdesk_module_about
     devdesk_module_pet
     eui_neo
 )
@@ -158,6 +195,7 @@ target_include_directories(DevDesk PRIVATE
     src/module_todo
     src/module_claude_proxy
     src/module_settings
+    src/module_about
     src/module_pet
     ${EUI_NEO_INCLUDE_DIR}
     ${EUI_NEO_DIR}
@@ -185,6 +223,18 @@ add_custom_command(TARGET DevDesk POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E copy_directory
         "${CMAKE_SOURCE_DIR}/assets/pets" "$<TARGET_FILE_DIR:DevDesk>/assets/pets"
     COMMENT "Copying pet skins to build directory"
+)
+
+# 构建版本自增（2026-09-28 about 页设计）：每次 cmake --build 都跑 bump-version
+# 脚本把 VERSION 文件 +1（不用 PRE_BUILD——Ninja 下 PRE_BUILD = PRE_LINK，仅目标
+# 重链时跑；ALL 保证每次构建都执行）。VERSION 经 CMAKE_CONFIGURE_DEPENDS 注册，
+# 写入的新版本在下一个 configure 拾取：本次构建显示当前版本、下个构建 +1。
+# 放 DevDesk target 之后定义（不依赖它的产物，仅保证与构建同拍）。
+add_custom_target(bump_version ALL
+    COMMAND ${CMAKE_COMMAND}
+        -D VERSION_FILE="${CMAKE_SOURCE_DIR}/VERSION"
+        -P "${CMAKE_SOURCE_DIR}/cmake/bump-version.cmake"
+    COMMENT "Bumping build version"
 )
 
 # 构建 .app bundle（仅 macOS 平台生效）

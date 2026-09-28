@@ -858,66 +858,6 @@ void drawLogCard(const CardDrawArgs& args) {
         .build();
 }
 
-// ---------- 卡片 7：关于（spec §8.5「关于」卡，spec 缩水 C） ----------
-// 版本/构建信息（CMake 注入宏，见 settings_config.cpp aboutVersionLine/
-// aboutEuiNeoLine）+ 配置/日志文件路径（排障入口：路径都在 APPDATA 深处，
-// 审计 [15] 同款痛点）。纯展示无交互控件 → 无弹层，维持 z0 不影响任何
-// 兄弟卡的 z 逃逸。GitHub 链接暂未展示（DevDesk 无公开仓库，登记决策项）
-void drawAboutCard(const CardDrawArgs& args) {
-    eui::Ui& ui = args.ui;
-    const std::string& id = args.id;
-    const float w = args.w;
-    const float h = args.h;
-    const core::theme::Tokens& t = args.t;
-
-    ui.stack(id)
-        .size(w, h)
-        .content([&] {
-            ui.text(id + ".title")
-                .position(28.0f, 16.0f)
-                .size(w - 56.0f, 22.0f)
-                .text("关于")
-                .fontSize(t.sizes.fontSizeLarge)
-                .lineHeight(22.0f)
-                .fontWeight(600)
-                .color(t.colors.textPrimary)
-                .build();
-            ui.text(id + ".version")
-                .position(28.0f, 50.0f)
-                .size(w - 56.0f, 18.0f)
-                .text(aboutVersionLine())
-                .fontSize(fs(13.0f))
-                .lineHeight(18.0f)
-                .color(t.colors.textSecondary)
-                .build();
-            ui.text(id + ".eui")
-                .position(28.0f, 72.0f)
-                .size(w - 56.0f, 18.0f)
-                .text(aboutEuiNeoLine())
-                .fontSize(fs(13.0f))
-                .lineHeight(18.0f)
-                .color(t.colors.textSecondary)
-                .build();
-            ui.text(id + ".config")
-                .position(28.0f, 98.0f)
-                .size(w - 56.0f, 16.0f)
-                .text("配置文件: " + ::core::paths::configFile().string())
-                .fontSize(fs(12.0f))
-                .lineHeight(16.0f)
-                .color(t.colors.textTertiary)
-                .build();
-            ui.text(id + ".logfile")
-                .position(28.0f, 118.0f)
-                .size(w - 56.0f, 16.0f)
-                .text("日志文件: " + ::core::paths::logFile().string())
-                .fontSize(fs(12.0f))
-                .lineHeight(16.0f)
-                .color(t.colors.textTertiary)
-                .build();
-        })
-        .build();
-}
-
 // ---------- 卡片 8：日志查看（Task B，日志 tab）：日志文件 tail + 刷新 ----------
 // logTail 是内存快照（读盘见 readLogTailLines，跑在后台线程，见审计 H2），
 // 本方法只渲染字符串。逐行一个 text（固定行高，超宽行由 scrollView clip
