@@ -39,6 +39,22 @@ WizardBackColorDynamicDark=#1A1816
 Compression=lzma2
 SolidCompression=yes
 
+[Languages]
+; 默认语言 = 简体中文：chinesesimp 排在最前，Inno 以首个语言条目为默认语言（缺省不经
+; 首屏语言下拉提问，直接以该语言显示向导），契合中文用户环境，也与 [Run] 段既有中文
+; 文案（"启动 DevDesk"）一致；english 排在后面，供需要英文界面的用户在首屏下拉切换。
+; 中文 ISL 自托管理由：官方编译器自带的 Languages 目录在本机 Inno 6.7.3 安装里缺失
+; 全部中文文件（仅 29 个语言文件、无 ChineseSimplified.isl），若用 compiler: 前缀引用
+; 会直接编不过。故把官方 issrc 仓库 Files/Languages/ChineseSimplified.isl（Inno 6.5.0+
+; 简体中文消息，与 6.7.3 兼容）随仓库放在 Languages/ 下，经 {#SourcePath}（ISPP 内置，
+; = 本 .iss 所在目录）引用——任何机器的 ISCC 都能编译，不依赖 Inno 安装目录的完整语言包。
+; english 用 compiler:Default.isl：本机 Inno 安装同样缺 English.isl，而 Default.isl 即
+; 官方英文基准（含 [LangOptions] LanguageName=English / LanguageID=$0409，与 English.isl
+; 等价），无需再自托管一份。官方默认中文文案已覆盖全部向导按钮与提示（"下一步"/"安装"/
+; "完成"/"浏览" 等均现代友好），故不做 [CustomMessages] 覆盖。
+Name: "chinesesimp"; MessagesFile: "{#SourcePath}Languages\ChineseSimplified.isl"
+Name: "english";     MessagesFile: "compiler:Default.isl"
+
 [Files]
 Source: "{#ExeDir}\DevDesk.exe";  DestDir: "{app}"; Flags: ignoreversion
 ; Excludes：排除 17MB 死重量 NotoSansSC-VF.ttf —— 该字体是变量字体，FreeType 加载不稳、
