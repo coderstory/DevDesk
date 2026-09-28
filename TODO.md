@@ -72,6 +72,29 @@
 - spec 漂移：`docs/superpowers/specs/2026-09-28-about-page-design.md:118`「主内容区 720px 宽」与 `:163`「`kAboutContentW = 720.0f`」仍写旧值（实现已 1040）；本次按范围纪律未改 spec
 - 陈旧注释：`src/ui_kit/card.cpp:21` 仍引用已删的 `settings.body.bg`（ui_kit 不在本次改动范围）
 
+### 13. profile「高级配置」tab（settings.json 非 env 顶层键接管）
+- **需求**（用户 2026-09-28 提出，原话要点）：
+  - profile 新增「高级配置」tab：一个文本框，内容是 JSON，语义 = **完整 settings.json 除去 `env` 属性**（permissions / hooks / statusLine / model 这类顶层键）
+  - 应用时把**最终计算出的 env** 与这个 JSON **合并写入** `~/.claude/settings.json`
+  - 共享配置片段（shared config）**只保留两个 tab**：`高级配置` 与 `环境`
+  - 该 JSON 文本框**支持自动格式化**
+  - 每个 profile 支持**导出为 JSON 写入剪贴板**
+  - 新建 profile 与新建片段**都支持从完整配置 JSON 导入**（粘贴 → 自动拆进 环境 tab 与 高级配置 tab）
+- **已定决策**（用户逐条拍板，勿改）：
+  1. **高级配置为权威（整块接管）**：写入时文件里的非 env 部分以它为准 —— 它写什么就是什么
+  2. **写入路径拆三档**：起代理**只动** `env.ANTHROPIC_BASE_URL`（+ 占位 token）；**切/应用 profile** 才写 env 全量受管键 + 非 env 键；停代理只还原 baseUrl（+ 撤占位 token），**非 env 键不动**
+     - ⚠️ 这是**对现有行为的有意变更**：今天起代理会写整个受管 env（`settings_sync.cpp:294` 的 `buildProxyEnv`：BASE_URL + 占位 token + 模型槽位 + profile extra_env + 片段 env）
+  3. **非 env 键的卸载**：写入前快照旧的非 env 全量顶层键；切到另一 profile 时全量替换；切到无 profile / 删 profile 时**还原快照**
+  4. **合并深度**：profile 的 advanced 与所绑片段的 advanced = **顶层浅合并，片段赢**（与现有 env「片段赢」口径一致，`provider_config.h:205`）
+  5. **env 键**：高级配置文本里若出现 `env` 属性 → **拒绝并报错**，提示到环境 tab 改
+  6. **导出形状**：完整 settings.json（env + 高级配置合并）+ 一个 `devdesk` 扩展块（name / modelNames / fallbackProfileId / sharedConfigIds）；导出**写真实 token**（不带占位符）
+  7. **片段导入**：剥掉托管键（BASE_URL / AUTH_TOKEN / 模型槽位键，它们由 profile 层托管），并在导入预览里**列明剥掉了哪些**
+  8. `devdesk` 块**非法时不整体 fail**（env 是主体、devdesk 是增强）
+- **路径**：用户已确认这是**架构级**改动 → **先写 spec（`docs/superpowers/specs/`）再实施**；本条目只记需求与决策，**待写 spec**
+- **🔴 已知高风险点（写 spec / 实施前必看）**：`settings_sync.cpp:294 takeOver` 的 sidecar 快照当前**只快照 `env`**（结构 `{"managedKeys":{...},"envSnapshot":{...}}`，见 `settings_sync.cpp:131-132`）。决策 1 + 3 要求把**非 env 键也纳入快照**，否则「切 profile / 卸 profile」时撤不干净，会持续污染用户真实配置
+- **现状锚点**（供 spec 对齐，非决策）：profile 表单当前 3 个 tab（`claude_ui_form.cpp:960` `.items({"基础", "模型映射", "高级 env"})`）；片段编辑弹窗 `drawSharedConfigDialog` 当前**无 tab**（只有名称输入 + 环境变量编辑器）→「片段只保留两个 tab」按新增这两个 tab 理解
+- **状态**：未开始（需求 + 决策已记录；**待写 spec**）
+
 ---
 
 ## macOS 构建环境（2026-09-28 本机实测）
