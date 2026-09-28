@@ -206,6 +206,26 @@ L1/L2 是安静的（不依赖像素时序）；L3 走 RenderBackend 真渲染�
 | 搭法 | pet 窗 + showStyledMenu 触发 + 第二窗注入——**前置：harness 多窗支持（§5 备注），未就绪先降级为结构断言 (a)（单窗即可）** |
 | 优先级 / 适合 | P3（结构 (a) P2 可先行）/ ✅ 必须但实现垫底 |
 
+### 类 13 确认弹窗功能性（5 组：profile 删除 / pet 退出 / todo 删任务 / markdown 删笔记 / 共享片段删除）
+
+| 项 | 内容 |
+|---|---|
+| bug + 根因 | 全仓 `ui_kit::drawDialogTitle` / `drawDialogButtons` 消费点同一模式：触发 → 弹窗在树 → 点取消 → 弹窗消失。用户 2026-09-28 指令："确保所有的场景都写了测试，比如profile 删除的确认弹窗 桌宠 退出应用的二次确认弹窗"。全仓至少 5 处：(a) **profile 删除**（claude_ui_form.cpp:1020 "确认删除？" + 正文含 profile 名 + "取消"/"确认删除" DangerOutline）；(b) **pet 退出**（pet_window.cpp 右键菜单 → "将退出 DevDesk：断开代理，停止流式响应" + "退出"按钮）；(c) **todo 删任务**（todo_ui_dialogs.cpp）；(d) **markdown 删笔记**（markdown_module.cpp）；(e) **共享片段删除**（claude_ui_form.cpp:1313 "确认删除片段？"）。**用户已发现 pet 退出弹窗布局不合理** |
+| 断言 | **模板化四步**（5 弹窗同骨架不同参数）：①开弹窗 → `find(title_id) != nullptr && title->text.contains(expectedTitle)` + `find(cancel_id) != nullptr && find(confirm_id) != nullptr`；②点 cancel → `find(title_id) == nullptr`（弹窗已关）；③正文存在且不空（`find(body_id)->text.length() > 0`）。**pet 退出加 L2 布局**：面板宽自适应（`panel.width >= min(正文内在宽, 400)`）+ 按钮行顶 ≥ 正文底 + 8px 间距（文本不被按钮盖）+ 正文 frame 全在面板内（不截断） |
+| 文件 | 各模块 probes（claude_probes / pet_probes / todo_probes / markdown_probes） |
+| 搭法 | probe harness 内构造触发动作（如 queuePointerButton 点 profile 卡右键菜单 → 点"删除"项；P1 每模块各一探针文件，骨架函数 `confirmDialogProbe(id, trigger, titleText, cancelText, confirmText)` 进 probe_harness.h 共享） |
+| 优先级 / 适合 | **P1**（用户硬指定 HIGH，2026-09-28）/ ✅ 必须，pet 退出布局尤为紧急 |
+
+### 类 14 todo 卡片边距 + 装饰线定位（用户已发现不对）
+
+| 项 | 内容 |
+|---|---|
+| bug + 根因 | 用户 2026-09-28："todo 卡片边距，装饰线条的定位 都要测 我已经发现不对了"。(a) 卡片间距：`drawBoard` → `row.gap(colGap)`（todo_ui_board.cpp:228 `t.sizes.spacingLarge` 16px），列内 flow 子卡片纵向 gap 待实证；(b) 选中态边框：`.bg` 元素 `border.width == 2.0f && border.color == t.colors.primary`（:478-479，未选中 1px borderDefault）；(c) 卡内 title 左距 16px（:507），chips 左距对齐（prio.x == 16.0f :527）；(d) chip 间间距 6px（:530/:542/:555）；(e) **优先级竖条 `.bar` 已删**——断言不存在（:519 "原先的左侧优先级竖条随 16 一并删除"，防回归） |
+| 断言 | (a) 相邻两卡 `card[N].bottom + expectedGap == card[N+1].top`；(b) 选中任务 `.bg` border 2px primary；(c) title + prio x == 16.0f；(d) 相邻 chip `chip[N+1].x - (chip[N].x + chip[N].width) == 6.0f`；(e) `find(…bar) == nullptr` |
+| 文件 | `todo_probes.cpp` §B |
+| 搭法 | 2 列各 2-3 任务（选中第 1 列第 1 卡），在有 chips 的任务上验间距。单窗即可 |
+| 优先级 / 适合 | **P1**（用户硬指定 HIGH，已在实机发现 bug）/ ✅ 必须 |
+
 ### 附：不适合 probe（明确划出，走 check-consistency / 人工 / 无头 / 上游）
 
 | 项 | 归类 | 去向 |
