@@ -309,13 +309,13 @@ public:
     bool isProxyRunning() const;
     int proxyPort() const;            // 0 if not running
 
-    // ---- 运行：用该 Profile 打开一个新的 Claude Code 会话（2026-09-28
-    //      profile-run 设计 §5/§6；D-1：代理托管式，密钥零落盘）----
-    // 顺序**固定**：确保代理运行 → 必要时 setActiveProfile → 启动会话。
-    // 理由：startProxy 内部会 syncTakeOver()；随后 setActiveProfile 的
-    // syncCaptureActiveProfile 读回的正是它自己刚写的受保护托管值（G2/G3 守卫
-    // 跳过）——顺序反了会把 live 值误收编进 profile。
-    //   - id：目标 profile；0 / 不存在 / 代理起不来 / 切换失败 → fail（不开会话）
+    // ---- 运行：用该 Profile 生成临时 settings 直连，打开一个新的 Claude Code
+    //      会话（2026-09-28 profile-run 设计 §4.2/§5；D-1：临时 settings +
+    //      --settings 直连，密钥临时明文落盘，代价见 §3）----
+    // 顺序**固定**：读 profile → 读 Keychain 密钥 → 生成临时 settings 文件落盘
+    // → 拼 LaunchSpec（args 含 --settings <路径>）→ 启动会话。不启代理、不切
+    // 激活 profile、不读也不改 ~/.claude/settings.json——零全局副作用（V3）。
+    //   - id：目标 profile；0 / 不存在 / 读密钥失败 / 落盘失败 → fail（不开会话）
     //   - hint：可选**非致命提示**出参（如 Windows 无 wt 已退化传统控制台，D-5）；
     //     成功时写入，无提示时清空。失败原因仍走 Result（与既有接口一致）
     core::Result<void> runProfile(int64_t id, std::string* hint = nullptr);

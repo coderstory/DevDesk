@@ -19,7 +19,7 @@ struct LaunchSpec {
     std::string title;                        // 窗口/标签标题（如 "官方 · Claude Code"）
     std::string workingDir;                   // 起始目录（D-3）
     std::string program;                      // 可执行名（本需求固定 "claude"）
-    std::vector<std::string> args;            // 追加参数（本需求为空）
+    std::vector<std::string> args;            // 追加参数（本需求固定：--settings + 临时文件路径，§4.2）
 };
 
 // 在终端里以 LaunchSpec 打开一个程序；成功 = 已成功派发（分离式，不等待退出）
