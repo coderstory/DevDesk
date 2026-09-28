@@ -10,6 +10,7 @@
 #include <core/theme.h>
 
 #include <components/button.h>
+#include <components/card.h>
 #include <components/input.h>
 #include <components/scrollview.h>
 
@@ -410,11 +411,28 @@ void drawCard(eui::Ui& ui, const std::string& id, float y, float width,
     const float cardOpacity = dragging ? 0.45f : 1.0f;
     plate.cardW = width;  // compose 空间卡宽（拖拽命中 dpi 探针）
 
+    // M3-3（2026-09-28，UI 现代化）：卡片容器换 card 组件——骨架由 card
+    // 画（surface 底 + radius + panelShadow 阴影随 CardStyle），选中/逾期
+    // 边框条件换算到 card 的 .border(...)；原 .bg 作为卡内交互层原样保留
+    // （states 三态 + 0.1s OutQuad 过渡 + onPress/onDrag/onRelease/onClick/
+    // onContextMenu 全部事件挂点随行——命中语义与旧卡根相同，拖拽/右键/
+    // 选中业务逻辑一字未动）。卡内容坐标以 .padding(0) 的 content 原点为
+    // 基准（与旧 wrap content 原点一致，装饰层位置不变）
+    components::card(ui, id + ".card")
+        .position(0.0f, y)
+        .size(width, kCardHeight)
+        .radius(t.sizes.radius)
+        .theme(core::theme::componentTokens(t))
+        .padding(0.0f)  // 卡内坐标以 content 原点为基准（同旧 wrap content）
+        .border(selected ? 2.0f : 0.0f,
+                selected ? t.colors.primary : t.colors.borderDefault)
+        .content([&] {
+
     ui.rect(id + ".bg")
         .position(0.0f, y)
         .size(width, kCardHeight)
-        // 卡片 = surface 层（浅色白 / 深色 #232120，spec §6.5.1 卡片色），
-        // 浮在列容器（background）之上；曾用 surfaceElevated 抬高了一级
+        // 交互层（卡内首层）：基色 = surface（与 card 骨架同 token，视觉
+        // 无差），hover/active 由 states 过渡合成；边框条件已在 card 上
         .states(t.colors.surface, t.colors.hover, t.colors.active)
         // M2（2026-09-28，UI 现代化）：hover/按下颜色过渡（列表项基调
         // 0.1s OutQuad；拖拽半透明 opacity 不含在掩码里，跟手不打架）
@@ -422,8 +440,6 @@ void drawCard(eui::Ui& ui, const std::string& id, float y, float width,
         .animate(core::AnimProperty::Color)
         .radius(t.sizes.radius)
         .opacity(cardOpacity)
-        .border(selected ? 2.0f : 0.0f,
-                selected ? t.colors.primary : t.colors.borderDefault)
         .onClick([cb = v.act.cardClicked, task] { cb(task); })
         .onContextMenu([cb = v.act.cardMenu, task, colIndex, cardIndex](
                            const eui::PointerEvent&, const eui::Rect&) {
@@ -515,6 +531,9 @@ void drawCard(eui::Ui& ui, const std::string& id, float y, float width,
             .opacity(cardOpacity)
             .build();
     }
+
+        })
+        .build();
 }
 
 } // namespace module::todo::ui

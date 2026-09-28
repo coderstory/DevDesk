@@ -7,8 +7,9 @@
 #include "settings_sync.h"
 
 #include <components/button.h>
+#include <components/card.h>
 #include <components/contextmenu.h>
-#include <components/scrollview.h>
+#include <components/virtuallist.h>
 
 #include <core/router.h>
 #include <core/ui_geometry.h>
@@ -313,42 +314,46 @@ void drawProfileListPanel(eui::Ui& ui, float leftW, float bodyH,
                     .color(t.colors.textTertiary)
                     .build();
             } else {
-                // 卡片列表套 scrollView（产品审计 2026-09-23
-                // [26]）：此前固定 y=56+i*108 平铺，profile 数
-                // 一多就画出左栏边界、叠在底部按钮上且无法滚
-                // 动。仿 Todo 列内滚动 / settings 卡片区。
-                // 滚动区底 = 底部按钮（bodyH-64）上方 12px
+                // 卡片列表套 virtualList（UI 现代化 M3-2）：手绘平铺换
+                // EUI virtualList——行容器换 card 组件（彩色卡片区）且仅
+                // 可见行进 slot 窗口重建。行距保留旧观感：行内容 96 +
+                // cardGap 间距 = 108 pitch。滚动语义 profilesScrollOffset_
+                // 沿用（翻页式列表行数小，overscan 一个视口高让整段渲染，
+                // 消除 slot 数量感）。滚动区底 = 底部按钮（bodyH-64）
+                // 上方 12px（同旧 scrollView 口径）
                 const float scrollH = std::max(
                     0.0f, bodyH - 64.0f - 12.0f - cardY0);
-                // contentKey = profile id 序列 hash（仿 md.tree，
-                // W7 教训：数量相同但内容替换也要失效重测）
-                size_t listKey = 0;
-                for (const auto& p : profiles) {
-                    listKey = listKey * 1315423911u +
-                              static_cast<size_t>(p.id);
-                }
-                components::scrollView(ui, "claude.profiles.scroll")
+                const float rowPitch = 96.0f + cardGap;
+                components::virtualList(ui, "claude.profiles.scroll")
                     .position(0.0f, cardY0)
                     .size(leftW - 24.0f, scrollH)
-                    .gap(cardGap)
-                    .step(96.0f + cardGap)
+                    .itemCount(static_cast<int64_t>(profiles.size()))
+                    .rowHeight(rowPitch)
+                    .step(rowPitch)
+                    .overscanViewports(1.0f)
                     .theme(themeTokens)
-                    .contentKey("claude.profiles.scroll." +
-                                std::to_string(listKey))
                     .offset(st.profilesScrollOffset_)
                     .onChange([sp = &st](float v) {
                         sp->profilesScrollOffset_ = v;
                     })
-                    .content([&](eui::Ui& inner, float contentWidth,
-                                 float viewportHeight) {
-                        (void)viewportHeight;
-                        for (size_t i = 0; i < profiles.size(); ++i) {
-                            const std::string cardId =
-                                "claude.profile." + std::to_string(i);
-                            // 行包 stack（position 只在 stack 内
-                            // 生效，仿 todo 列卡片）
-                            inner.stack(cardId + ".wrap")
-                                .size(contentWidth, 96.0f)
+                    .row([&](eui::Ui& inner, const std::string& rowId,
+                             int64_t index, float contentWidth,
+                             float rowHeight) {
+                        (void)rowHeight;
+                        const auto idx = static_cast<size_t>(index);
+                        if (idx >= profiles.size()) return;
+                        // 行容器换 card（UI 现代化 §5.2）：骨架由 card 画
+                        // （CardStyle：surface 底 + panelShadow 阴影），
+                        // 事件挂点（右键 wrap / 点击 .bg）原样保留在卡内
+                        // 交互层；卡装饰（头像/名称/ACTIVE 徽标）随
+                        // drawProfileCard 进 content。
+                        const std::string cardId =
+                            "claude.profile." + std::to_string(idx);
+                        components::card(inner, rowId + ".card")
+                            .size(contentWidth, 96.0f)
+                            .padding(0.0f)
+                            .theme(themeTokens)
+                            .content([&] {
                                 // 右键菜单入口（UI 现代化 M1-5）：记录目标
                                 // profile + 锚点 = PointerEvent 原始坐标经
                                 // core::menuAnchorForPointer 统一换算（页面
@@ -356,31 +361,37 @@ void drawProfileListPanel(eui::Ui& ui, float leftW, float bodyH,
                                 // dpiScale=1.0）。滚动偏移传 0——指针即视觉
                                 // 位置，滚动下锚点天然正确。
                                 // st 为引用：写回存活到下一帧的模块状态
-                                .onContextMenu(
-                                    [sp = &st, pid = profiles[i].id](
-                                        const eui::PointerEvent& ev,
-                                        const eui::Rect&) {
-                                        const ::core::Router* router =
-                                            ::core::appRouter();
-                                        const core::MenuAnchor a =
-                                            core::menuAnchorForPointer(
-                                                static_cast<float>(ev.x),
-                                                static_cast<float>(ev.y),
-                                                router ? router->pageOriginX()
-                                                       : 0.0f,
-                                                0.0f, 1.0f);
-                                        sp->ctxProfileId_ = pid;
-                                        sp->ctxMenuX_ = a.x;
-                                        sp->ctxMenuY_ = a.y;
-                                        sp->ctxMenuOpen_ = true;
+                                inner.stack(cardId + ".wrap")
+                                    .size(contentWidth, 96.0f)
+                                    .onContextMenu(
+                                        [sp = &st,
+                                         pid = profiles[idx].id](
+                                            const eui::PointerEvent& ev,
+                                            const eui::Rect&) {
+                                            const ::core::Router* router =
+                                                ::core::appRouter();
+                                            const core::MenuAnchor a =
+                                                core::menuAnchorForPointer(
+                                                    static_cast<float>(ev.x),
+                                                    static_cast<float>(ev.y),
+                                                    router
+                                                        ? router->pageOriginX()
+                                                        : 0.0f,
+                                                    0.0f, 1.0f);
+                                            sp->ctxProfileId_ = pid;
+                                            sp->ctxMenuX_ = a.x;
+                                            sp->ctxMenuY_ = a.y;
+                                            sp->ctxMenuOpen_ = true;
+                                        })
+                                    .content([&] {
+                                        drawProfileCard(
+                                            inner, cardId, 0.0f,
+                                            contentWidth, t, profiles[idx],
+                                            st);
                                     })
-                                .content([&] {
-                                    drawProfileCard(
-                                        inner, cardId, 0.0f,
-                                        contentWidth, t, profiles[i], st);
-                                })
-                                .build();
-                        }
+                                    .build();
+                            })
+                            .build();
                     })
                     .build();
             }

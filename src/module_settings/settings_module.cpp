@@ -572,6 +572,25 @@ public:
             .padding(pad)
             .gap(t.sizes.spacingLarge)
             .content([&] {
+                // M3-4（2026-09-28，UI 现代化）：设置页主体区垫低对比渐变底
+                // （同 Home 欢迎区口径：surface → surfaceElevated 垂直，随
+                // 主题 token 运行期解析）。overlay 不参与 column 流式排布、
+                // 无事件 handlers 不拦截点击（同 claude.profiles.overlay
+                // 模式）；绘制序在最前 → 位于最底层
+                ui.stack("settings.body.gradient")
+                    .size(contentW, screen.height - pad * 2.0f)
+                    .ignoreLayout()
+                    .content([&] {
+                        ui.rect("settings.body.bg")
+                            .size(contentW, screen.height - pad * 2.0f)
+                            .gradient(t.colors.surface,
+                                      t.colors.surfaceElevated,
+                                      core::GradientDirection::Vertical)
+                            .radius(t.sizes.radiusLarge)
+                            .build();
+                    })
+                    .build();
+
                 drawHeader(ui, contentW, headerH, t);
 
                 // tab 栏（Task B：长页拆 4 tab）。components::tabs 无

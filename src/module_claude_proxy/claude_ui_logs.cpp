@@ -10,7 +10,7 @@
 #include <components/button.h>
 #include <components/dropdown.h>
 #include <components/input.h>
-#include <components/scrollview.h>
+#include <components/virtuallist.h>
 #include <ui_kit/dialog_form.h>
 
 #include <algorithm>
@@ -255,63 +255,66 @@ void drawCallsDialog(eui::Ui& ui, const eui::Screen& screen,
                     .color(t.colors.textTertiary)
                     .build();
             } else {
-                // contentKey = 当页 id 序列 hash（行替换也失效重测，W7 教训）
-                size_t rowsKey = 0;
-                for (const auto& c : st.allCalls_) {
-                    rowsKey = rowsKey * 1315423911u + static_cast<size_t>(c.id);
-                }
+                // 当页行 + virtualList（UI 现代化 M3-2）：scrollView 平铺换
+                // virtualList——行高 22 恒定，仅可见行进 slot 窗口重建。
+                // 行 id 沿用绝对行号（claude.dialog.calls.row.N：测试缝
+                // / 既有断言按绝对行号找行）。页容量固定 kCallsPageSize
+                // (20) 行 → overscan 一个视口高让当页整段渲染（slot 窗口
+                // 语义退化为 1 视口，观感与旧平铺一致）
                 const std::time_t now = std::time(nullptr);
                 const float scrollY = 100.0f;
                 const float scrollBottom = h - 60.0f - 12.0f;  // 底部按钮上方
-                components::scrollView(ui, "claude.dialog.calls.scroll")
+                components::virtualList(ui, "claude.dialog.calls.scroll")
                     .position(28.0f, scrollY)
                     .size(w - 56.0f, scrollBottom - scrollY)
-                    .gap(0.0f)
+                    .itemCount(static_cast<int64_t>(st.allCalls_.size()))
+                    .rowHeight(static_cast<float>(rowH))
                     .step(static_cast<float>(rowH))
+                    .overscanViewports(1.0f)
                     .theme(themeTokens)
-                    .contentKey("claude.dialog.calls.scroll." +
-                                std::to_string(rowsKey) + "." +
-                                std::to_string(st.allCalls_.size()))
                     .offset(st.callsScrollOffset_)
                     .onChange([sp = &st](float v) { sp->callsScrollOffset_ = v; })
-                    .content([&](eui::Ui& inner, float contentWidth,
-                                 float viewportHeight) {
-                        (void)viewportHeight;
-                        for (size_t i = 0; i < st.allCalls_.size(); ++i) {
-                            const ClaudeService::CallLogEntry& c = st.allCalls_[i];
-                            const std::string rowId =
-                                "claude.dialog.calls.row." + std::to_string(i);
-                            // 行包 stack（position 只在 stack 内生效，仿 todo）
-                            inner.stack(rowId + ".wrap")
-                                .size(contentWidth, static_cast<float>(rowH))
-                                .content([&] {
-                                    std::string line =
-                                        formatCallTime(c.startedAt, now) + "  " +
-                                        c.method + " " + c.path + "  " +
-                                        (c.statusCode > 0
-                                             ? std::to_string(c.statusCode)
-                                             : std::string("-")) +
-                                        "  " + formatLatency(c.latencyMs);
-                                    // 无状态码行（超时/网络错误）行尾附错误摘要，
-                                    // 截 48 字节防挤爆行宽
-                                    if (c.statusCode <= 0 && !c.error.empty()) {
-                                        line += "  " + truncateUtf8(c.error, 48);
-                                    }
-                                    const eui::Color rowColor =
-                                        (c.statusCode >= 200 && c.statusCode < 300)
-                                            ? t.colors.textSecondary
-                                            : t.colors.error;
-                                    inner.text(rowId)
-                                        .position(0.0f, 2.0f)
-                                        .size(contentWidth, 18.0f)
-                                        .text(line)
-                                        .fontSize(12.0f)
-                                        .lineHeight(18.0f)
-                                        .color(rowColor)
-                                        .build();
-                                })
-                                .build();
-                        }
+                    .row([&](eui::Ui& inner, const std::string& rowId,
+                             int64_t index, float contentWidth,
+                             float rowHeight) {
+                        (void)rowId;
+                        (void)rowHeight;
+                        const auto idx = static_cast<size_t>(index);
+                        if (idx >= st.allCalls_.size()) return;
+                        const ClaudeService::CallLogEntry& c =
+                            st.allCalls_[idx];
+                        const std::string absId =
+                            "claude.dialog.calls.row." + std::to_string(idx);
+                        // 行包 stack（position 只在 stack 内生效，仿旧平铺）
+                        inner.stack(absId + ".wrap")
+                            .size(contentWidth, static_cast<float>(rowH))
+                            .content([&] {
+                                std::string line =
+                                    formatCallTime(c.startedAt, now) + "  " +
+                                    c.method + " " + c.path + "  " +
+                                    (c.statusCode > 0
+                                         ? std::to_string(c.statusCode)
+                                         : std::string("-")) +
+                                    "  " + formatLatency(c.latencyMs);
+                                // 无状态码行（超时/网络错误）行尾附错误摘要，
+                                // 截 48 字节防挤爆行宽
+                                if (c.statusCode <= 0 && !c.error.empty()) {
+                                    line += "  " + truncateUtf8(c.error, 48);
+                                }
+                                const eui::Color rowColor =
+                                    (c.statusCode >= 200 && c.statusCode < 300)
+                                        ? t.colors.textSecondary
+                                        : t.colors.error;
+                                inner.text(absId)
+                                    .position(0.0f, 2.0f)
+                                    .size(contentWidth, 18.0f)
+                                    .text(line)
+                                    .fontSize(12.0f)
+                                    .lineHeight(18.0f)
+                                    .color(rowColor)
+                                    .build();
+                            })
+                            .build();
                     })
                     .build();
             }

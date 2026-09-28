@@ -59,6 +59,12 @@ public:
     // recentNoteLimit <= 0 时按 5 处理
     core::Result<DashboardStats> getStats(int recentNoteLimit = 5);
 
+    // UI 现代化 M3-1（2026-09-28）：当日 API 调用逐时分布（barChart 数据源）。
+    // 纯新增查询不动既有字段：当日（本地零点起）按小时聚合 claude_call_logs，
+    // 返回恰 hours 个点（默认 24），无调用的小时补 0——序列恒非空（防
+    // barChart 对空 values 填演示数据，barchart.h build() 的 D-1..D-4 兜底）
+    core::Result<std::vector<int64_t>> getTodayApiCallSeries(int hours = 24);
+
 private:
     core::data::SqliteDb& db_;
 

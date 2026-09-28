@@ -17,6 +17,7 @@
 #include <eui/dsl.h>
 
 #include <components/button.h>
+#include <components/barchart.h>
 #include <components/card.h>
 #include <components/linechart.h>
 
@@ -249,6 +250,19 @@ public:
                         // 标题列宽 = contentW - 右侧按钮组宽 212（对偶写法，同
                         // Todo 560/560、Claude 360/360）：旧 240 让整行比下方满宽
                         // 卡内缩 28px，右缘不齐（home.header 行 gap=0，两段和=contentW）
+                        // M3-4（2026-09-28，UI 现代化）：欢迎区标题列垫低对比渐变底
+                        // （方案 B 同色系 surface → surfaceElevated 垂直；
+                        // 渐变随主题 token 运行期解析）
+                        ui.stack("home.header.greet.wrap")
+                            .size(std::max(280.0f, contentW - kHeaderActionsW), 72.0f)
+                            .content([&] {
+                            ui.rect("home.header.bg")
+                                .size(std::max(280.0f, contentW - kHeaderActionsW), 72.0f)
+                                .gradient(t.colors.surface,
+                                          t.colors.surfaceElevated,
+                                          core::GradientDirection::Vertical)
+                                .radius(t.sizes.radiusLarge)
+                                .build();
                         ui.column("home.greeting")
                             .size(std::max(280.0f, contentW - kHeaderActionsW), 72.0f)
                             .gap(6.0f)
@@ -268,6 +282,8 @@ public:
                                     .lineHeight(18.0f)
                                     .color(t.colors.textSecondary)
                                     .build();
+                            })
+                            .build();
                             })
                             .build();
 
@@ -411,6 +427,73 @@ public:
                     .build();
                 }
 
+                // ========== 今日 API 调用分布（UI 现代化 M3-1 剩余：API barChart） ==========
+                // barChart 组件按整图硬几何设计（plot 区 ≥ ~112px、barchart.h
+                // build 内 plotY=70/title 区），统计卡内 32px 迷你槽放不下 →
+                // 独立整卡呈现（plan M3-1 Step 3 的适配口径：「以 barchart.h
+                // 为准适配，不新建组件」）。数据 = HomeService::getTodayApiCallSeries
+                // （24 点当日逐时分布；恒 24 点 → 绝不空，barChart 空 values
+                // 会填演示数据）；barChart 值域 [0,1]（percent 语义）→ 按当日
+                // 峰值归一化。加载失败（!ok）→ 全 0（统计卡 badge 已示失败）。
+                if (claudeOn) {
+                    const auto apiSeries =
+                        service_ ? service_->getTodayApiCallSeries(24)
+                                 : core::Result<std::vector<int64_t>>::fail(
+                                       core::ErrorCode::Internal,
+                                       "服务未就绪");
+                    std::vector<float> bars;
+                    if (ok && apiSeries.isOk()) {
+                        bars.reserve(apiSeries.value().size());
+                        for (const int64_t v : apiSeries.value()) {
+                            bars.push_back(static_cast<float>(v));
+                        }
+                    }
+                    if (bars.empty()) bars.assign(24, 0.0f);
+                    float maxV = 1.0f;
+                    for (const float bv : bars) maxV = std::max(maxV, bv);
+                    std::vector<float> norm;
+                    norm.reserve(bars.size());
+                    for (const float bv : bars) norm.push_back(bv / maxV);
+                    std::vector<std::string> labels;
+                    labels.reserve(bars.size());
+                    for (size_t h = 0; h < bars.size(); ++h) {
+                        labels.push_back(std::to_string(h) + "时");
+                    }
+                    const float chartCardH = 208.0f;
+                    components::card(ui, "home.api.chart")
+                        .size(contentW, chartCardH)
+                        .theme(core::theme::componentTokens(t))
+                        .content([&] {
+                            ui.text("home.api.chart.title")
+                                .position(28.0f, 18.0f)
+                                .size(contentW - 56.0f, 22.0f)
+                                .text("今日 API 调用分布（按当日峰值归一）")
+                                .fontSize(t.sizes.fontSizeLarge - 1.0f)
+                                .lineHeight(22.0f)
+                                .fontWeight(600)
+                                .color(t.colors.textPrimary)
+                                .build();
+                            // barChart 无 position 接口 → 包定位 stack
+                            // （title 置空：本卡自带标题，避免组件内默认
+                            // 「BarChart」字样）
+                            ui.stack("home.api.chart.wrap")
+                                .position(16.0f, 52.0f)
+                                .size(contentW - 32.0f, 136.0f)
+                                .content([&] {
+                                    components::barChart(
+                                        ui, "home.api.chart.bars")
+                                        .size(contentW - 32.0f, 136.0f)
+                                        .title("")
+                                        .values(norm)
+                                        .labels(labels)
+                                        .theme(core::theme::componentTokens(t))
+                                        .build();
+                                })
+                                .build();
+                        })
+                        .build();
+                }
+
                 // ========== 最近编辑卡片（真实数据，stack 内绝对定位） ==========
                 // markdown 模块关闭 → 整卡隐藏（表还在但数据是死的，展示即欺骗）
                 if (mdOn) {
@@ -422,16 +505,15 @@ public:
                                           ? listTop + noteCount * itemH + 12.0f
                                           : 108.0f;
 
-                ui.stack("home.recent")
+                // M3-1（2026-09-28，UI 现代化）：手绘 rect 换 card 组件
+                // （骨架 + panelShadow 阴影随 CardStyle；padding 0 保持卡内
+                // 绝对坐标与旧实现一致；border 由 CardStyle 默认提供）
+                components::card(ui, "home.recent")
                     .size(contentW, recentH)
+                    .radius(t.sizes.radiusLarge)
+                    .theme(core::theme::componentTokens(t))
+                    .padding(0.0f)
                     .content([&] {
-                        ui.rect("home.recent.bg")
-                            .size(contentW, recentH)
-                            .color(t.colors.surface)
-                            .radius(t.sizes.radiusLarge)
-                            .border(1.0f, t.colors.borderDefault)
-                            .build();
-
                         ui.text("home.recent.title")
                             .position(28.0f, 20.0f)
                             .size(contentW - 56.0f, 24.0f)

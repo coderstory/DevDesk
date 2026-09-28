@@ -13,6 +13,11 @@
 // 三个用例随各自任务（M1-1/M1-2/M1-5）分批加入本文件。
 // 后续批次（M2/M3）的用例（virtualList / card 布局不变式、charts 数据接线）
 // 随各自任务追加到本文件。
+// M1-3/M1-4（2026-09-28，ui/rest）：md 树/编辑器右键统一换算 + 编辑器
+// input 直挂 onContextMenu（删逐帧 hack）；4523e09 隐形菜单回归锁。
+// M3 剩余（2026-09-28，ui/rest）：profile 列表虚拟化 slot 窗口 + 滚动回退、
+// 调用记录 virtualList、todo 卡容器换 card、Home API barChart + recent 换
+// card、三处背景渐变。
 // 证据链 = 代码路径 + 本无头 compose 测试；真实鼠标点验留给用户人工确认
 #include "doctest.h"
 #include <eui/types.h>
@@ -31,20 +36,26 @@
 #include "core/sqlite_db.h"
 #include "core/ui_geometry.h"
 #include "module_claude_proxy/claude_service.h"
+#include "module_home/home_service.h"
+#include "module_markdown/md_ids.h"
 #include "module_todo/todo_service.h"
 #include "module_todo/todo_ui_logic.h"
 #include "ui_kit/metrics.h"  // kHeaderH（板几何断言）
 #include <cstdlib>
+#include <chrono>
+#include <ctime>
 #include <filesystem>
+#include <fstream>
 #include <map>
-
-extern "C" ::core::Module* create_home_module();
-extern "C" ::core::Module* create_todo_module();
-extern "C" ::core::Module* create_claude_module();
+#include <thread>
 
 extern "C" ::core::Module* create_home_module();
 extern "C" ::core::Module* create_markdown_module();
 extern "C" ::core::Module* create_todo_module();
+extern "C" ::core::Module* create_claude_module();
+extern "C" ::core::Module* create_settings_module();
+
+using module::markdown::kEditorInputHitId;
 
 namespace {
 
@@ -548,6 +559,376 @@ REGISTER_TEST(uiModernTodoDropFadeGuard,
     }
 
     mod->onStop();
+    return true;
+})
+
+// ---- A. M1 md 子项：树/编辑器右键统一换算 + 编辑器直挂（M1-3/M1-4）----
+// M1-3：openFileContextMenu 换 menuAnchorForPointerInPage；x 扣页面区原点
+// 的既有回归在 test_markdown.cpp（md_ctx_menu_page_origin），本文件锁
+// 「无 Router → 原点 0」形态 + 4523e09 隐形菜单回归。M1-4：input 链直挂
+// onContextMenu（删逐帧 find hack）由 .hit 回调非空 + 锚点断言锁。
+
+REGISTER_TEST(uiModernMdTreeNoGhost,
+              "uiModern md: 空路径右键早退不留隐形菜单态（4523e09 回归锁）", {
+    // 空笔记目录：树无文件行 → ctxMenuPath_ 恒空；drawNoteContextMenu
+    // 每帧强制置关（4523e09 语义：open 标志与「存在右键目标」同生共灭，
+    // 直接赋值、不回 onOpenChange 回调）。连续两帧断言菜单节点绝不构建
+    // （无幽灵菜单、标志不被拨起）
+    test_support::MdHeadlessEnv env("devdesk_test_ui_m1_", "mdghost", "m1.db");
+    std::unique_ptr<::core::Module> mod(create_markdown_module());
+    mod->onStart();
+    for (int f = 0; f < 2; ++f) {
+        eui::Ui ui;
+        eui::Screen screen{1600.0f, 1000.0f};
+        ui.begin("md_m1_ghost_" + std::to_string(f));
+        mod->compose(ui, screen);
+        ui.end();
+        DOCTEST_CHECK(ui.find("md.ctx") == nullptr);
+    }
+    mod->onStop();
+    return true;
+})
+
+REGISTER_TEST(uiModernMdCtxAnchor,
+              "uiModern md: 树行/编辑器右键锚点 = 指针坐标统一换算（M1-3/M1-4）", {
+    test_support::MdHeadlessEnv env("devdesk_test_ui_m1_", "mdanchor", "m1.db");
+    {
+        std::ofstream ofs(env.dir / "锚.md", std::ios::binary);
+        ofs << "# 标题\n正文\n";
+    }
+    std::unique_ptr<::core::Module> mod(create_markdown_module());
+    mod->onStart();
+    eui::Screen screen{1600.0f, 1000.0f};
+    eui::Ui ui;
+    auto compose = [&]() {
+        ui.begin("md_m1_anchor");
+        mod->compose(ui, screen);
+        ui.end();
+    };
+
+    // 树行右键 → 菜单锚点 = 指针原值（无 Router → 页面原点 0、dpi=1；
+    // x/y 同一条换算通道——y 不再裸用）
+    {
+        compose();
+        const auto* fileRow = ui.find("md.tree.node.1.row");
+        DOCTEST_REQUIRE(fileRow != nullptr);
+        DOCTEST_REQUIRE(fileRow->onContextMenu != nullptr);
+        eui::PointerEvent pe;
+        pe.x = 300;
+        pe.y = 200;
+        fileRow->onContextMenu(pe, eui::Rect{});
+        compose();
+        const auto* menu = ui.find("md.ctx.level.0");
+        DOCTEST_REQUIRE(menu != nullptr);
+        DOCTEST_CHECK(std::fabs(menu->x - 300.0f) < 0.01f);
+        DOCTEST_CHECK(std::fabs(menu->y - 200.0f) < 0.01f);
+    }
+    // 编辑器右键：打开笔记进入编辑态 → .hit 节点直挂 onContextMenu（M1-4
+    // 删逐帧 hack 后回调仍在），锚点同口径
+    {
+        compose();
+        const auto* fileRow = ui.find("md.tree.node.1.row");
+        DOCTEST_REQUIRE(fileRow != nullptr);
+        DOCTEST_REQUIRE(fileRow->onClick != nullptr);
+        fileRow->onClick();
+        compose();
+        const auto* hit = ui.find(kEditorInputHitId);
+        DOCTEST_REQUIRE(hit != nullptr);
+        DOCTEST_REQUIRE(hit->onContextMenu != nullptr);
+        eui::PointerEvent pe;
+        pe.x = 400;
+        pe.y = 300;
+        hit->onContextMenu(pe, eui::Rect{});
+        compose();
+        const auto* edMenu = ui.find("md.editor.ctx.level.0");
+        DOCTEST_REQUIRE(edMenu != nullptr);
+        DOCTEST_CHECK(std::fabs(edMenu->x - 400.0f) < 0.01f);
+        DOCTEST_CHECK(std::fabs(edMenu->y - 300.0f) < 0.01f);
+    }
+
+    mod->onStop();
+    return true;
+})
+
+// ---- B. M3 剩余：virtualList / todo card / barChart / 渐变 / recent card ----
+
+REGISTER_TEST(uiModernVirtualProfileRows,
+              "uiModern claude: profile 虚拟列表 slot 窗口 + 滚动回退语义", {
+    ClaudeEnv env;
+    for (int i = 0; i < 25; ++i) {
+        auto p = env.svc->createProfile(
+            "V" + std::to_string(i),
+            "https://v" + std::to_string(i) + ".example.com",
+            "sk-ant-v" + std::to_string(i), "m");
+        DOCTEST_REQUIRE(p.isOk());
+    }
+    std::unique_ptr<::core::Module> mod(create_claude_module());
+    eui::Screen screen{1600.0f, 1000.0f};
+    eui::Ui ui;
+    auto compose = [&]() {
+        ui.begin("claude_vlist_frame");
+        mod->compose(ui, screen);
+        ui.end();
+    };
+
+    // 列表根 = virtualList 节点（.slot. 行重建语义）；行内容 id 沿用绝对
+    // 下标（旧断言形态）：profile.0 可见
+    compose();
+    DOCTEST_CHECK(ui.find("claude.profiles.scroll.slot.0") != nullptr);
+    DOCTEST_CHECK(ui.find("claude.profile.0.name") != nullptr);
+    // slot 窗口生效：25 行不整段渲染，视口外行不存在（virtualList 裁剪）
+    DOCTEST_CHECK(ui.find("claude.profile.15.name") == nullptr);
+
+    // 滚动回退语义：onScrollOffsetChanged 写 profilesScrollOffset_ →
+    // 重 compose 视口随偏移前移（原视口外的行进入渲染范围）
+    const auto* root = ui.find("claude.profiles.scroll");
+    DOCTEST_REQUIRE(root != nullptr);
+    DOCTEST_REQUIRE(root->onScrollOffsetChanged != nullptr);
+    root->onScrollOffsetChanged(600.0f);
+    compose();
+    DOCTEST_CHECK(ui.find("claude.profiles.scroll.slot.0") != nullptr);
+    DOCTEST_CHECK(ui.find("claude.profile.17.name") != nullptr);
+    // 行命中节点 .bg 保留（选中/右键挂点行内，点击语义未动）
+    DOCTEST_CHECK(ui.find("claude.profile.0.bg") != nullptr);
+
+    mod->onStop();
+    return true;
+})
+
+REGISTER_TEST(uiModernVirtualLogRows,
+              "uiModern claude: 调用记录 virtualList 行重建（slot 结构保留）", {
+    ClaudeEnv env;
+    // 种子：1 个 profile + 25 条调用（FK profile_id 必须真实存在；当页 20 行）
+    auto prof = env.svc->createProfile("日志源", "https://api.anthropic.com",
+                                       "sk-ant-log-1", "claude-sonnet-4-5");
+    DOCTEST_REQUIRE(prof.isOk());
+    for (int i = 0; i < 25; ++i) {
+        module::claude::ClaudeService::CallLogEntry e;
+        e.profileId = prof.value().id;
+        e.method = "POST";
+        e.path = "/v1/messages";
+        e.statusCode = 200;
+        e.latencyMs = 12;
+        e.startedAt = std::time(nullptr) - i * 60;
+        DOCTEST_REQUIRE(env.svc->logCall(e).isOk());
+    }
+    std::unique_ptr<::core::Module> mod(create_claude_module());
+    eui::Screen screen{1600.0f, 1000.0f};
+    eui::Ui ui;
+    auto compose = [&]() {
+        ui.begin("claude_vlogs_frame");
+        mod->compose(ui, screen);
+        ui.end();
+    };
+    // 打开弹窗（CPX-06：后台取数；有界等待当页 20 行到位）
+    {
+        compose();
+        const auto* hit = ui.find("claude.calls.viewall.hit");
+        DOCTEST_REQUIRE(hit != nullptr);
+        DOCTEST_REQUIRE(hit->onClick != nullptr);
+        hit->onClick();
+    }
+    bool rowsReady = false;
+    for (int i = 0; i < 400 && !rowsReady; ++i) {
+        compose();
+        rowsReady = ui.find("claude.dialog.calls.row.19.wrap") != nullptr;
+        if (!rowsReady) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        }
+    }
+    DOCTEST_CHECK(rowsReady);
+    // 列表根 = virtualList 节点（slot 重建语义）；绝对行号 id 沿用
+    DOCTEST_CHECK(ui.find("claude.dialog.calls.scroll.slot.0") != nullptr);
+    DOCTEST_CHECK(ui.find("claude.dialog.calls.row.0.wrap") != nullptr);
+    DOCTEST_CHECK(ui.find("claude.dialog.calls.row.19.wrap") != nullptr);
+    DOCTEST_CHECK(ui.find("claude.dialog.calls.row.20.wrap") == nullptr);
+    // 文本节点 id 沿用（textOf 形态）；当页 20 行整段渲染（overscan）
+
+    mod->onStop();
+    return true;
+})
+
+REGISTER_TEST(uiModernTodoCardContainer,
+              "uiModern todo: 卡片容器换 card（骨架节点 + 事件挂点保留）", {
+    TodoEnv env;
+    DOCTEST_REQUIRE(env.ready);
+    auto col = env.svc->createColumn("容器列");
+    DOCTEST_REQUIRE(col.isOk());
+    auto t = env.svc->createTask(col.value().id, "容器卡");
+    DOCTEST_REQUIRE(t.isOk());
+
+    std::unique_ptr<::core::Module> mod(create_todo_module());
+    mod->onStart();
+    TodoFrame frame(mod.get());
+
+    // card 骨架节点（panelShadow 阴影载体 = card 内部 .bg）
+    DOCTEST_CHECK(frame.ui.find("todo.col.4.card.0.card") != nullptr);
+    DOCTEST_CHECK(frame.ui.find("todo.col.4.card.0.card.bg") != nullptr);
+    // 交互层保留（原 .bg：命中语义与旧卡根相同）
+    const auto* bg = frame.ui.find("todo.col.4.card.0.bg");
+    DOCTEST_REQUIRE(bg != nullptr);
+    // 事件挂点全部随行（拖拽/右键/点击业务通道未动）
+    DOCTEST_CHECK(bg->onClick != nullptr);
+    DOCTEST_CHECK(bg->onContextMenu != nullptr);
+    DOCTEST_CHECK(bg->onPress != nullptr);
+    DOCTEST_CHECK(bg->onDrag != nullptr);
+    DOCTEST_CHECK(bg->onRelease != nullptr);
+
+    mod->onStop();
+    return true;
+})
+
+REGISTER_TEST(uiModernHomeApiBarChart,
+              "uiModern: Home API 调用量 barChart（24 点非空 + 接线 + 服务层分布）", {
+    test_support::TestEnv env("devdesk_test_uimodern_home_", "apichart");
+    DOCTEST_REQUIRE(env.ready);
+    // 种子：1 个 profile（FK 依赖）+ 当天 3 条（9/10/11 时，避开子夜边界）
+    // + 昨天 2 条（排除）
+    const int64_t dayStart = module::home::startOfDayEpoch(std::time(nullptr));
+    DOCTEST_CHECK(env.db->db().exec(
+        "INSERT INTO claude_profiles (name, base_url, api_key_hint, "
+        " api_key_check, keychain_account, model, is_active, created_at, "
+        " updated_at) VALUES ('测试', 'https://api.anthropic.com', "
+        " 'sk-', 'CHECK', 'devdesk-test-uimodern', 'claude-sonnet-4-5', 1, "
+        " 1000, 1000)").isOk());
+    const std::string sql =
+        "INSERT INTO claude_call_logs (profile_id, method, path, status_code, "
+        " latency_ms, request_bytes, response_bytes, error, started_at) VALUES "
+        "(1, 'POST', '/v1/messages', 200, 12, 100, 200, '', " +
+        std::to_string(dayStart + 3600 * 9) + "), "
+        "(1, 'POST', '/v1/messages', 200, 12, 100, 200, '', " +
+        std::to_string(dayStart + 3600 * 10) + "), "
+        "(1, 'POST', '/v1/messages', 200, 12, 100, 200, '', " +
+        std::to_string(dayStart + 3600 * 11) + "), "
+        "(1, 'GET', '/v1/models', 200, 5, 20, 40, '', " +
+        std::to_string(dayStart - 3600) + "), "
+        "(1, 'GET', '/v1/models', 200, 5, 20, 40, '', " +
+        std::to_string(dayStart - 7200) + ")";
+    DOCTEST_CHECK(env.db->db().exec(sql).isOk());
+
+    // 服务层：24 点恒非空、当日恰 3 条、逐时落点正确
+    {
+        module::home::HomeService svc(env.db->db());
+        auto series = svc.getTodayApiCallSeries(24);
+        DOCTEST_REQUIRE(series.isOk());
+        DOCTEST_CHECK_EQ(series.value().size(), 24u);
+        int64_t total = 0;
+        for (const int64_t v : series.value()) total += v;
+        DOCTEST_CHECK_EQ(total, 3);
+        DOCTEST_CHECK_EQ(series.value()[9], 1);
+        DOCTEST_CHECK_EQ(series.value()[11], 1);
+    }
+
+    // UI 接线：API 卡 + barChart 根 + 24 根柱子（demo 数据只有 4 根：
+    // bar.4 存在即证明喂的是真实 24 点序列，无演示泄漏）
+    {
+        std::unique_ptr<::core::Module> mod(create_home_module());
+        eui::Screen screen{1200.0f, 720.0f};
+        eui::Ui ui;
+        ui.begin("home_api_chart");
+        mod->compose(ui, screen);
+        ui.end();
+        DOCTEST_CHECK(ui.find("home.stat.api") != nullptr);
+        DOCTEST_CHECK(ui.find("home.api.chart") != nullptr);
+        DOCTEST_CHECK(ui.find("home.api.chart.bars") != nullptr);
+        DOCTEST_CHECK(ui.find("home.api.chart.bars.bar.4") != nullptr);
+        DOCTEST_CHECK(ui.find("home.api.chart.bars.bar.23") != nullptr);
+        mod->onStop();
+    }
+    return true;
+})
+
+REGISTER_TEST(uiModernHomeRecentCard,
+              "uiModern: Home 最近编辑手绘 rect 换 card 组件", {
+    std::unique_ptr<::core::Module> mod(create_home_module());
+    eui::Screen screen{1600.0f, 1000.0f};
+    eui::Ui ui;
+    ui.begin("home_recent_card");
+    mod->compose(ui, screen);
+    ui.end();
+    // card 根 + 内部骨架 .bg（panelShadow 载体）+ .content（旧手绘 rect
+    // 无 content 子结构——结构断言锁「容器已换 card」）
+    DOCTEST_CHECK(ui.find("home.recent") != nullptr);
+    DOCTEST_CHECK(ui.find("home.recent.bg") != nullptr);
+    DOCTEST_CHECK(ui.find("home.recent.content") != nullptr);
+    mod->onStop();
+    return true;
+})
+
+REGISTER_TEST(uiModernGradientSpots,
+              "uiModern: 三处关键背景渐变（home 欢迎区 / settings 主体 / md 预览）", {
+    // 1. Home 欢迎区标题列垫底
+    {
+        std::unique_ptr<::core::Module> mod(create_home_module());
+        eui::Screen screen{1600.0f, 1000.0f};
+        eui::Ui ui;
+        ui.begin("grad_home");
+        mod->compose(ui, screen);
+        ui.end();
+        const auto* bg = ui.find("home.header.bg");
+        DOCTEST_REQUIRE(bg != nullptr);
+        DOCTEST_CHECK(bg->gradient.enabled);
+        mod->onStop();
+    }
+    // 2. 设置页主体区垫底
+    {
+        const std::filesystem::path cfgPath = test_temp::tempPath(
+            "devdesk_test_uimodern_settings_grad_cfg.json");
+        const std::filesystem::path dbPath = test_temp::tempPath(
+            "devdesk_test_uimodern_settings_grad.db");
+        std::error_code ec;
+        std::filesystem::remove(cfgPath, ec);
+        std::filesystem::remove(dbPath, ec);
+        auto r = ::core::Database::open(dbPath);
+        DOCTEST_REQUIRE(r.isOk());
+        auto db = std::make_unique<::core::Database>(std::move(r.value()));
+        DOCTEST_REQUIRE(db->migrate().isOk());
+        ::core::registerAppDatabase(&db->db());
+        test_support::setEnvVar("DEVDESK_CONFIG_PATH", cfgPath.string());
+        {
+            std::unique_ptr<::core::Module> mod(create_settings_module());
+            mod->onStart();
+            eui::Ui ui;
+            eui::Screen screen{1600.0f, 1000.0f};
+            ui.begin("grad_settings");
+            mod->compose(ui, screen);
+            ui.end();
+            const auto* bg = ui.find("settings.body.bg");
+            DOCTEST_CHECK(bg != nullptr);
+            if (bg != nullptr) DOCTEST_CHECK(bg->gradient.enabled);
+            mod->onStop();
+        }
+        test_support::setEnvVar("DEVDESK_CONFIG_PATH", "");
+        ::core::registerAppDatabase(nullptr);
+        std::filesystem::remove(cfgPath, ec);
+        std::filesystem::remove(dbPath, ec);
+    }
+    // 3. md 预览区垫底（Ctrl+Shift+P ×2 → 双栏，同 theme_hierarchy）
+    {
+        test_support::MdHeadlessEnv env("devdesk_test_ui_m3_", "mdgrad", "m3.db");
+        {
+            std::ofstream ofs(env.dir / "g.md", std::ios::binary);
+            ofs << "# 渐变\n";
+        }
+        std::unique_ptr<::core::Module> mod(create_markdown_module());
+        mod->onStart();
+        eui::KeyEvent p;
+        p.key = eui::InputKey::P;
+        p.action = eui::KeyAction::Press;
+        p.modifiers.control = true;
+        p.modifiers.shift = true;
+        DOCTEST_CHECK(mod->onKeyEvent(p));  // → 实时
+        DOCTEST_CHECK(mod->onKeyEvent(p));  // → 双栏
+        eui::Ui ui;
+        eui::Screen screen{1600.0f, 1000.0f};
+        ui.begin("grad_md");
+        mod->compose(ui, screen);
+        ui.end();
+        const auto* bg = ui.find("md.preview.bg");
+        DOCTEST_REQUIRE(bg != nullptr);
+        DOCTEST_CHECK(bg->gradient.enabled);
+        mod->onStop();
+    }
     return true;
 })
 

@@ -213,4 +213,57 @@ core::Result<DashboardStats> HomeService::getStats(int recentNoteLimit) {
     return core::Result<DashboardStats>::ok(std::move(stats));
 }
 
+core::Result<std::vector<int64_t>> HomeService::getTodayApiCallSeries(int hours) {
+    if (hours <= 0) hours = 24;
+    const std::time_t now = std::time(nullptr);
+    const int64_t dayStart = startOfDayEpoch(now);
+    const int64_t dayEnd = dayStart + 86400;
+    // 小时下标 = (started_at - 本地零点) / 3600：当日区间内得 0..23（本地
+    // 时区语义，与 todayApiCalls 同口径）；DST 日边缘可能越界（23/25h），
+    // 落点按 [0, hours) 过滤不进图
+    auto prep = db_.prepare(
+        "SELECT (started_at - ?) / 3600 AS h, COUNT(*) AS n "
+        "FROM claude_call_logs "
+        "WHERE started_at >= ? AND started_at < ? GROUP BY h");
+    if (prep.isFail()) {
+        return core::Result<std::vector<int64_t>>::fail(prep.errorCode(),
+                                                        prep.errorMessage());
+    }
+    auto& stmt = prep.value();
+    if (auto b = stmt.bind(1, dayStart); b.isFail()) {
+        return core::Result<std::vector<int64_t>>::fail(b.errorCode(),
+                                                        b.errorMessage());
+    }
+    if (auto b = stmt.bind(2, dayStart); b.isFail()) {
+        return core::Result<std::vector<int64_t>>::fail(b.errorCode(),
+                                                        b.errorMessage());
+    }
+    if (auto b = stmt.bind(3, dayEnd); b.isFail()) {
+        return core::Result<std::vector<int64_t>>::fail(b.errorCode(),
+                                                        b.errorMessage());
+    }
+    auto rows = stmt.fetchAll();
+    if (rows.isFail()) {
+        return core::Result<std::vector<int64_t>>::fail(rows.errorCode(),
+                                                        rows.errorMessage());
+    }
+    // 恒返回恰 hours 个点（无调用补 0）——序列绝不空（barChart 空 values
+    // 会填演示数据，M3-1 D-6 同款护栏）
+    std::vector<int64_t> series(static_cast<size_t>(hours), 0);
+    for (const auto& row : rows.value()) {
+        auto hRaw = row.getInt64("h");
+        auto nRaw = row.getInt64("n");
+        if (hRaw.isFail() || nRaw.isFail()) {
+            return core::Result<std::vector<int64_t>>::fail(
+                hRaw.isFail() ? hRaw.errorCode() : nRaw.errorCode(),
+                hRaw.isFail() ? hRaw.errorMessage() : nRaw.errorMessage());
+        }
+        const int64_t idx = hRaw.value();
+        if (idx >= 0 && idx < hours) {
+            series[static_cast<size_t>(idx)] = nRaw.value();
+        }
+    }
+    return core::Result<std::vector<int64_t>>::ok(std::move(series));
+}
+
 } // namespace module::home

@@ -222,19 +222,19 @@ float estimateTextWidth(const std::string& s, float fontSize) {
 
 // 指针事件坐标是窗口坐标（runtime_input 派发时只做 /dpiScale，原点 = 窗口
 // 客户区左上），而本模块的浮层（右键菜单）构建在页面子树内——app 布局
-// row(侧边栏, app.page) 把页面区放在侧边栏右侧，其坐标原点是页面区左上，
-// 故窗口坐标换算成页面坐标需减去 Router 上的页面区原点 x（app_sidebar
-// compose 每帧写入，折叠/展开随侧边栏宽变化）。y 方向页面区纵跨整窗
-// （原点恒 0）不换算。无 Router（无头测试等）按原点 0 处理 = 旧行为。
-//
-// 换成本体统一在 core::windowToCompose（审计 M4）；本模块走的是
-// onContextMenu / onMove 通道，runtime 派发前**已**做 /dpiScale（见 EUI-NEO
-// runtime_input updateInteraction 的 logicalEvent），故指针空间与 compose
-// 空间同尺度 → dpiScale 传 1.0。
-float windowToPageX(float windowX) {
+// UI 现代化 §3.1 / M1-3（2026-09-28）：右键锚点统一换算。
+// 换成本体统一在 core::menuAnchorForPointer（审计 M4 唯一换算入口）；本模块
+// 走的是 onContextMenu / onMove 通道，runtime 派发前**已**做 /dpiScale（见
+// EUI-NEO runtime_input updateInteraction 的 logicalEvent），故指针空间与
+// compose 空间同尺度 → dpiScale 传 1.0。y 方向页面区纵跨整窗（原点恒 0）
+// 不另减；scrollOffsetY 供「基于非滚动几何」的调用（4523e09 口径），
+// 基于指针原坐标的调用一律传 0（滚动下指针即视觉位置）。
+core::MenuAnchor menuAnchorForPointerInPage(const eui::PointerEvent& ev,
+                                            float scrollOffsetY = 0.0f) {
     const ::core::Router* router = ::core::appRouter();
-    return ::core::windowToCompose(windowX, router ? router->pageOriginX() : 0.0f,
-                                   1.0f);
+    return ::core::menuAnchorForPointer(
+        static_cast<float>(ev.x), static_cast<float>(ev.y),
+        router ? router->pageOriginX() : 0.0f, scrollOffsetY, 1.0f);
 }
 
 } // namespace
@@ -1103,21 +1103,20 @@ private:
                             st.preedit ? st.preedit->text : st.text, lineText,
                             lineStartByte);
                     })
-                    .build();
-
-                // 审计 [12]：编辑器右键 → 插入表格菜单。EUI-NEO input 组件不透出
-                // 右键入口，runtime 的 contextMenu 只派发给最上层交互元素（即 .hit，
-                // 见 runtime_input updateInteraction），故 build 后直接把回调挂到该
-                // 元素上（ui.begin() 每帧重建元素树 → 每帧 compose 内重新挂）。
-                if (auto* hit = ui.find(kEditorInputHitId)) {
-                    hit->onContextMenu = [this](const eui::PointerEvent& ev,
-                                                const eui::Rect&) {
-                        // 同树行菜单：窗口坐标 → 页面坐标（减去页面区原点 x）
-                        editorCtxX_ = windowToPageX(static_cast<float>(ev.x));
-                        editorCtxY_ = static_cast<float>(ev.y);
+                    // UI 现代化 §3.3 / M1-4：输入框右键菜单直挂 input
+                    // （上游 M4-U1 透出 onContextMenu，input 挂到 .hit 命中
+                    // 节点并显式恢复 Arrow 指针），删掉原先每帧 ui.find
+                    // (kEditorInputHitId) 手工挂靠的 hack；坐标走统一换算
+                    // （与文件树同基准：窗口坐标 → 页面坐标）
+                    .onContextMenu([this](const eui::PointerEvent& ev,
+                                          const eui::Rect&) {
+                        const core::MenuAnchor a =
+                            menuAnchorForPointerInPage(ev);
+                        editorCtxX_ = a.x;
+                        editorCtxY_ = a.y;
                         editorCtxOpen_ = true;
-                    };
-                }
+                    })
+                    .build();
             });
     }
 
@@ -1405,6 +1404,11 @@ private:
                 .size(midW, bodyH)
                 // 预览列同编辑列：结构性面板 → background（阅读底与页面同层）
                 .color(t.colors.background)
+                // M3-4（2026-09-28，UI 现代化）：预览区垫底色带低对比渐变
+                // （方案 B 同色系：surface → surfaceElevated 垂直），背景随
+                // 主题 token 运行期解析
+                .gradient(t.colors.surface, t.colors.surfaceElevated,
+                          core::GradientDirection::Vertical)
                 .radius(t.sizes.radiusLarge)
                 .border(1.0f, t.colors.borderDefault)
                 .build();
@@ -3569,12 +3573,14 @@ private:
 
     // 右键文件行 → 菜单弹出位置用指针事件的逻辑坐标（runtime 派发时已做
     // /dpiScale，见 runtime_input updateInteraction），标准右键菜单语义。
-    // 指针坐标是窗口坐标、菜单浮层在页面子树内 → x 经 windowToPageX 减去
-    // 页面区原点（y 方向原点恒 0 不换算）
+    // 指针坐标是窗口坐标、菜单浮层在页面子树内 → x/y 统一经
+    // menuAnchorForPointerInPage 换算（core::menuAnchorForPointer，UI 现代化
+    // M1-3：y 不再裸用，与 x 同一换算口径；scrollOffsetY=0 = 指针即视觉位）
     void openFileContextMenu(const std::string& relPath, const eui::PointerEvent& ev) {
         ctxMenuPath_ = relPath;
-        ctxMenuX_ = windowToPageX(static_cast<float>(ev.x));
-        ctxMenuY_ = static_cast<float>(ev.y);
+        const core::MenuAnchor anchor = menuAnchorForPointerInPage(ev);
+        ctxMenuX_ = anchor.x;
+        ctxMenuY_ = anchor.y;
         ctxMenuOpen_ = true;
     }
 
@@ -3595,7 +3601,7 @@ private:
             .open(ctxMenuOpen_)
             .screen(screen.width, screen.height)
             .position(ctxMenuX_, ctxMenuY_)
-            .size(160.0f, 36.0f)
+            .autoWidth()  // M4-2 已合入（上游 7164d55）：宽度按最宽项自适应
             .items({"重命名", "删除笔记"})
             .theme(componentTheme)
             .onSelect([this](int index) {
@@ -3642,7 +3648,7 @@ private:
             .open(editorCtxOpen_)
             .screen(screen.width, screen.height)
             .position(editorCtxX_, editorCtxY_)
-            .size(170.0f, 36.0f)
+            .autoWidth()  // M4-2 已合入（上游 7164d55）：宽度按最宽项自适应
             .items(buildTableMenuItems())
             .theme(componentTheme)
             .onSelectPath([this, &ui](const std::vector<int>& path) {
