@@ -2,17 +2,17 @@
 // 桌宠 MVP + M2（2026-09-22-desktop-pet-design.md §6 M1/M2）单测：
 //   1. 皮肤 pet.json 解析（纯函数）：合法/缺字段/坏帧数组/数值钳制/poked 可选
 //   2. 帧序列状态机（纯函数）：idle 循环 / poke 反应播一遍回 idle / 无 poked 帧皮肤
-//   3. 占位皮肤生成：PNG 魔数 + IHDR 尺寸 + pet.json 可解析 + 幂等
+//   3. 默认皮肤（随包 robot）加载：候选根解析 + 缺失返回 fail
 //   4. 设置门控：pet 是已知模块 ID（可持久化）但默认关闭；pet 字段往返
 //   5. startPetWindow 无头冒烟：openWindow 入队的 DslWindowRequest 逐字段断言
 //     （透明/无边框/置顶/不抢焦点/不进任务栏/位置钳制/未知皮肤回退）
 //   6. M2 四态状态机（纯函数）：sleep 入睡/唤醒 / typing 流式联动（经
 //      core::proxy_stats 测试时钟）/ typing 帧回落 / 状态优先级
 //   7. M2 气泡：超时消失纯函数 + 短语表（皮肤语料/内置回退）
-//   8. M2 多皮肤：sleep/typing/phrases 解析、占位皮肤 M2 帧升级重生成、
+//   8. M2 多皮肤：sleep/typing/phrases 解析、随包 robot 四态帧加载、
 //      discoverSkins 发现消费、applyPetSkin/resetPetPosition 持久化行为
-//   9. 内置皮肤全集（robot/ghost 两款）：四态帧齐全、两款互异、
-//      discoverSkins 发现、短语表区分、用户替换保留
+//   9. 内置皮肤全集（robot/ghost 两款，随包资产模拟夹具）：四态帧齐全、
+//      两款互异、discoverSkins 发现、短语表区分、用户替换保留
 //  10. （已移除 2026-09-25）内置美术皮肤 anime-girl CC0 四态测试——皮肤
 //      随用户要求只留 robot/ghost 而删，测试同步移除（见 §10 占位注释）
 //  11. 审计修复（2026-09-23 pet 簇）：帧名路径穿越拒绝 [28] + 已知坐标
@@ -138,6 +138,78 @@ const char* kM2SkinJson =
     "  }"
     "}";
 
+// 随包皮肤夹具：robot/ghost 自 2026-09-28 起为 assets/pets/ 静态资产；
+// 测试环境 exeDir（build/tests）没有随包资产拷贝（POST_BUILD 只拷给
+// DevDesk 目标），故以「重定向后的 petsDir 候选根出现 shipped 形态皮肤」
+// 模拟随包加载路径，断言契约与真随包一致（pet.json + 四态 13 帧，
+// frames 名与真实 assets/pets 逐字一致）
+const char* kRobotFixtureJson =
+    "{"
+    "  \"name\": \"robot\","
+    "  \"frameSize\": [128, 128],"
+    "  \"frameRate\": 4,"
+    "  \"phrases\": [\"滴——系统正常\", \"电量 87%\", \"扫描中…\"],"
+    "  \"states\": {"
+    "    \"idle\": [\"f0.png\", \"f1.png\", \"f2.png\", \"f3.png\", \"f4.png\", \"f5.png\"],"
+    "    \"poked\": [\"p0.png\", \"p1.png\"],"
+    "    \"sleep\": [\"s0.png\", \"s1.png\", \"s2.png\"],"
+    "    \"typing\": [\"t0.png\", \"t1.png\"]"
+    "  }"
+    "}";
+
+const char* kGhostFixtureJson =
+    "{"
+    "  \"name\": \"ghost\","
+    "  \"frameSize\": [128, 128],"
+    "  \"frameRate\": 4,"
+    "  \"phrases\": [\"呼~…\", \"别怕，我很友好\", \"漂浮中…\"],"
+    "  \"states\": {"
+    "    \"idle\": [\"f0.png\", \"f1.png\", \"f2.png\", \"f3.png\", \"f4.png\", \"f5.png\"],"
+    "    \"poked\": [\"p0.png\", \"p1.png\"],"
+    "    \"sleep\": [\"s0.png\", \"s1.png\", \"s2.png\"],"
+    "    \"typing\": [\"t0.png\", \"t1.png\"]"
+    "  }"
+    "}";
+
+// 最小 PNG 头文件（魔数 + IHDR 尺寸 + 8bit RGBA 类型 + 填充字节）——
+// pngLooksValid 只核头部 33 字节，夹具帧只需头部合法，无需完整 IDAT/IEND
+void writeMinimalPng(const std::filesystem::path& path, int width, int height) {
+    std::ofstream out(path, std::ios::binary);
+    static const unsigned char kSig[8] = {0x89, 'P', 'N', 'G', 0x0D, 0x0A, 0x1A, 0x0A};
+    out.write(reinterpret_cast<const char*>(kSig), 8);
+    const auto be32 = [](unsigned char* p, std::uint32_t v) {
+        p[0] = static_cast<unsigned char>((v >> 24) & 0xFF);
+        p[1] = static_cast<unsigned char>((v >> 16) & 0xFF);
+        p[2] = static_cast<unsigned char>((v >> 8) & 0xFF);
+        p[3] = static_cast<unsigned char>(v & 0xFF);
+    };
+    unsigned char ihdr[26] = {};
+    be32(ihdr + 0, 13);  // IHDR 数据长度
+    ihdr[4] = 'I'; ihdr[5] = 'H'; ihdr[6] = 'D'; ihdr[7] = 'R';
+    be32(ihdr + 8, static_cast<std::uint32_t>(width));
+    be32(ihdr + 12, static_cast<std::uint32_t>(height));
+    ihdr[16] = 8;  // bit depth
+    ihdr[17] = 6;  // color type RGBA
+    out.write(reinterpret_cast<const char*>(ihdr), 18);
+    const char pad[8] = {};  // 凑满 pngLooksValid 读取的 33 字节
+    out.write(pad, sizeof(pad));
+}
+
+// 向候选根写一份 shipped 形态皮肤：pet.json + 四态 13 帧（f0..f5/p0..p1/
+// s0..s2/t0..t1，128×128 头部合法帧文件）
+void writeShippedSkinFixture(const std::filesystem::path& root, const char* name,
+                             const char* jsonText) {
+    static const char* kFrameNames[] = {
+        "f0.png", "f1.png", "f2.png", "f3.png", "f4.png", "f5.png",
+        "p0.png", "p1.png", "s0.png", "s1.png", "s2.png", "t0.png", "t1.png"};
+    std::error_code ec;
+    std::filesystem::create_directories(root / name, ec);
+    test_support::writeTextFile(root / name / "pet.json", jsonText);
+    for (const char* frame : kFrameNames) {
+        writeMinimalPng(root / name / frame, 128, 128);
+    }
+}
+
 } // namespace
 
 // ============ 1. 皮肤 JSON 解析（纯函数）============
@@ -240,12 +312,18 @@ REGISTER_TEST(pet_anim_no_poked_frames, "pet: 无 poked 帧皮肤 poke 无反应
     return true;
 });
 
-// ============ 3. 占位皮肤生成 ============
+// ============ 3. 默认皮肤（随包 robot）加载 ============
 
-REGISTER_TEST(pet_default_skin_generate, "pet: 占位皮肤生成（PNG 结构 + 幂等）", {
-    const std::filesystem::path dir = test_support::makeTempDir(kPetDirPrefix, "skin");
-    removeTreeQuietly(dir);
-    auto r = module::pet::ensureDefaultSkin(dir);
+REGISTER_TEST(pet_default_skin_shipped, "pet: 默认皮肤加载随包 robot（缺失返回 fail）", {
+    using namespace module::pet;
+    const PetsDirEnv pets("defaultskin");
+    const std::filesystem::path& root = pets.root;
+    // 无任何候选根有 robot：fail（生成器已删，不写盘生成）
+    const auto missing = ensureDefaultSkin();
+    DOCTEST_CHECK(missing.isFail());
+    // 候选根出现 shipped 形态 robot 夹具 → 加载成功
+    writeShippedSkinFixture(root, "robot", kRobotFixtureJson);
+    const auto r = ensureDefaultSkin();
     DOCTEST_CHECK_MESSAGE(r.isOk(), r.isFail() ? r.errorMessage() : "");
     const module::pet::PetSkin& skin = r.value();
     DOCTEST_CHECK_EQ(skin.frameWidth, 128);
@@ -253,18 +331,17 @@ REGISTER_TEST(pet_default_skin_generate, "pet: 占位皮肤生成（PNG 结构 +
     DOCTEST_CHECK_EQ(skin.frameRate, 4.0);
     DOCTEST_CHECK(skin.idleFrames.size() >= 3);
     DOCTEST_CHECK(skin.pokedFrames.size() >= 2);
-    // idle + poked 全部帧都是结构合法的 RGBA PNG
+    // idle + poked 帧文件全部存在且 PNG 头结构合法
     for (size_t i = 0; i < skin.idleFrames.size(); ++i) {
         DOCTEST_CHECK(pngLooksValid(skin.framePath(false, i), 128, 128));
     }
     for (size_t i = 0; i < skin.pokedFrames.size(); ++i) {
         DOCTEST_CHECK(pngLooksValid(skin.framePath(true, i), 128, 128));
     }
-    // 幂等：已存在直接加载（帧数不变，不重画）
-    auto again = module::pet::ensureDefaultSkin(dir);
+    // 重复调用结果一致（加载语义稳定、无副作用）
+    const auto again = ensureDefaultSkin();
     DOCTEST_CHECK(again.isOk());
     DOCTEST_CHECK_EQ(again.value().idleFrames.size(), skin.idleFrames.size());
-    removeTreeQuietly(dir);
     return true;
 });
 
@@ -318,8 +395,10 @@ REGISTER_TEST(pet_settings_roundtrip, "pet: pet_config.json 读写往返 + 钳�
 REGISTER_TEST(pet_start_window_request, "pet: 开窗请求逐字段断言（无头）", {
     const PetsDirEnv pets("petsroot");
     const std::filesystem::path& petsRoot = pets.root;
-    // 清空可能残留的窗口请求队列
+    // 清空可能残留的窗口请求队列；默认皮肤 = 随包 robot 夹具（startPetWindow
+    // 不再写盘生成，皮肤须先存在于候选根）
     (void)app::consumeWindowRequests();
+    writeShippedSkinFixture(petsRoot, "robot", kRobotFixtureJson);
 
     module::pet::startPetWindow(module::pet::PetWindowConfig{
         "", 50, 60});  // 皮肤空 = 默认；位置已知
@@ -347,7 +426,7 @@ REGISTER_TEST(pet_start_window_request, "pet: 开窗请求逐字段断言（无�
     // Alt+F4/菜单隐藏/应用退出所有路径覆盖）
     DOCTEST_CHECK(static_cast<bool>(req.onWindowCreated));
     DOCTEST_CHECK(static_cast<bool>(req.onWindowDestroyed));
-    // 默认皮肤已生成在测试隔离目录
+    // 默认皮肤 = 夹具就位的随包 robot（无头环境启动前后不生成皮肤）
     DOCTEST_CHECK(std::filesystem::exists(petsRoot / "robot" / "pet.json"));
 
     // 未知皮肤名 → 回退默认皮肤，窗口照常入队
@@ -771,15 +850,16 @@ REGISTER_TEST(pet_skin_parse_m2_states, "pet: pet.json sleep/typing 帧解析", 
     return true;
 });
 
-REGISTER_TEST(pet_default_skin_m2_frames, "pet: 占位皮肤含 M2 帧 + 旧版升级重生成", {
+REGISTER_TEST(pet_default_skin_m2_frames, "pet: 随包 robot 四态帧齐备可加载", {
     using namespace module::pet;
-    const std::filesystem::path dir = test_support::makeTempDir(kPetDirPrefix, "skin_m2");
-    removeTreeQuietly(dir);
-    auto r = ensureDefaultSkin(dir);
+    const PetsDirEnv pets("defaultskin_m2");
+    const std::filesystem::path& root = pets.root;
+    writeShippedSkinFixture(root, "robot", kRobotFixtureJson);
+    const auto r = ensureDefaultSkin();
     DOCTEST_CHECK_MESSAGE(r.isOk(), r.isFail() ? r.errorMessage() : "");
     const PetSkin& skin = r.value();
-    DOCTEST_CHECK(skin.sleepFrames.size() >= 3);
-    DOCTEST_CHECK(skin.typingFrames.size() >= 2);
+    DOCTEST_CHECK_EQ(skin.sleepFrames.size(), static_cast<size_t>(3));
+    DOCTEST_CHECK_EQ(skin.typingFrames.size(), static_cast<size_t>(2));
     DOCTEST_CHECK(!skin.phrases.empty());
     for (size_t i = 0; i < skin.sleepFrames.size(); ++i) {
         DOCTEST_CHECK(pngLooksValid(skin.dir / skin.sleepFrames[i], 128, 128));
@@ -787,52 +867,33 @@ REGISTER_TEST(pet_default_skin_m2_frames, "pet: 占位皮肤含 M2 帧 + 旧版�
     for (size_t i = 0; i < skin.typingFrames.size(); ++i) {
         DOCTEST_CHECK(pngLooksValid(skin.dir / skin.typingFrames[i], 128, 128));
     }
-    // 幂等：新版直接加载（帧数不变）
-    auto again = ensureDefaultSkin(dir);
-    DOCTEST_CHECK(again.isOk());
-    DOCTEST_CHECK_EQ(again.value().sleepFrames.size(),
-                     skin.sleepFrames.size());
-    // 旧版内置皮肤（缺 M2 帧，source 是内置标记）→ 重新生成升级
-    removeTreeQuietly(dir);
-    std::filesystem::create_directories(dir);
+    // 用户替换语义：petsDir 的 robot 是替换皮肤（source 非随包标记）→ 候选
+    // 优先命中 petsDir，原样加载不动；帧数不足也如实返回
     {
-        std::ofstream out(dir / "pet.json", std::ios::trunc);
-        out << "{\"name\":\"clay-cat\",\"source\":\"DevDesk 内置生成\","
-               "\"states\":{\"idle\":[\"f0.png\"]}}";
-    }
-    auto upgraded = ensureDefaultSkin(dir);
-    DOCTEST_CHECK(upgraded.isOk());
-    DOCTEST_CHECK(!upgraded.value().sleepFrames.empty());
-    // 用户替换过的皮肤（source 非内置标记）缺 M2 帧也原样保留
-    removeTreeQuietly(dir);
-    std::filesystem::create_directories(dir);
-    {
-        std::ofstream out(dir / "pet.json", std::ios::trunc);
-        out << "{\"name\":\"my-art\",\"source\":\"artist\","
+        std::ofstream out(root / "robot" / "pet.json", std::ios::trunc);
+        out << "{\"name\":\"robot\",\"source\":\"artist\","
                "\"states\":{\"idle\":[\"a0.png\"]}}";
     }
-    auto kept = ensureDefaultSkin(dir);
+    const auto kept = ensureDefaultSkin();
     DOCTEST_CHECK(kept.isOk());
     DOCTEST_CHECK(kept.value().sleepFrames.empty());
     DOCTEST_CHECK_EQ(kept.value().idleFrames.size(), static_cast<size_t>(1));
-    removeTreeQuietly(dir);
     return true;
 });
 
-REGISTER_TEST(pet_builtin_skins, "pet: 两款内置皮肤（四态帧/互异/发现/短语表/替换保留）", {
+REGISTER_TEST(pet_builtin_skins, "pet: 随包 robot/ghost 两款皮肤（四态帧/发现/短语表/替换保留）", {
     using namespace module::pet;
     const PetsDirEnv pets("builtin_skins");
     const std::filesystem::path& root = pets.root;
-    // ensureBuiltinSkins 生成全部 2 款（robot + ghost）
-    const std::vector<std::string> generated = ensureBuiltinSkins(root);
-    DOCTEST_CHECK_EQ(generated.size(), static_cast<size_t>(2));
+    writeShippedSkinFixture(root, "robot", kRobotFixtureJson);
+    writeShippedSkinFixture(root, "ghost", kGhostFixtureJson);
     // discoverSkins 发现全部 2 款（设置页下拉/右键换肤菜单数据源，零改动）
     const std::vector<std::string> found = discoverSkins();
     DOCTEST_CHECK_EQ(found.size(), static_cast<size_t>(2));
-    for (const std::string& name : builtinSkinNames()) {
+    for (const char* name : {"robot", "ghost"}) {
         DOCTEST_CHECK(std::find(found.begin(), found.end(), name) != found.end());
     }
-    // 两款内置皮肤全部载入
+    // 两款皮肤全部载入
     std::vector<PetSkin> skins;
     for (const char* name : {"robot", "ghost"}) {
         auto r = loadSkin(root / name);
@@ -842,7 +903,7 @@ REGISTER_TEST(pet_builtin_skins, "pet: 两款内置皮肤（四态帧/互异/发
         }
     }
     DOCTEST_CHECK_EQ(skins.size(), static_cast<size_t>(2));
-    // 每款：四态帧数齐全 + 128×128 + 全帧 PNG 结构有效 + 短语表非空
+    // 每款：四态帧数齐全 + 128×128 + 全帧 PNG 头结构合法 + 短语表非空
     for (const PetSkin& skin : skins) {
         DOCTEST_CHECK_EQ(skin.idleFrames.size(), static_cast<size_t>(6));
         DOCTEST_CHECK_EQ(skin.pokedFrames.size(), static_cast<size_t>(2));
@@ -851,49 +912,23 @@ REGISTER_TEST(pet_builtin_skins, "pet: 两款内置皮肤（四态帧/互异/发
         DOCTEST_CHECK_EQ(skin.frameWidth, 128);
         DOCTEST_CHECK_EQ(skin.frameHeight, 128);
         DOCTEST_CHECK(!skin.phrases.empty());
-        for (size_t i = 0; i < skin.idleFrames.size(); ++i) {
-            DOCTEST_CHECK(pngLooksValid(skin.dir / skin.idleFrames[i], 128, 128));
-        }
-        for (size_t i = 0; i < skin.pokedFrames.size(); ++i) {
-            DOCTEST_CHECK(pngLooksValid(skin.dir / skin.pokedFrames[i], 128, 128));
-        }
-        for (size_t i = 0; i < skin.sleepFrames.size(); ++i) {
-            DOCTEST_CHECK(pngLooksValid(skin.dir / skin.sleepFrames[i], 128, 128));
-        }
-        for (size_t i = 0; i < skin.typingFrames.size(); ++i) {
-            DOCTEST_CHECK(pngLooksValid(skin.dir / skin.typingFrames[i], 128, 128));
-        }
-    }
-    // 两款互异：idle 首帧 PNG 原始字节两两不同（stored-deflate 不压缩，
-    // 像素不同 → 字节必不同）
-    std::vector<std::string> blobs;
-    for (const PetSkin& skin : skins) {
-        std::ifstream f(skin.dir / skin.idleFrames[0], std::ios::binary);
-        std::ostringstream ss;
-        ss << f.rdbuf();
-        blobs.push_back(ss.str());
-        DOCTEST_CHECK(!blobs.back().empty());
-    }
-    for (size_t i = 0; i < blobs.size(); ++i) {
-        for (size_t j = i + 1; j < blobs.size(); ++j) {
-            DOCTEST_CHECK(blobs[i] != blobs[j]);
+        for (const std::vector<std::string>* frames :
+             {&skin.idleFrames, &skin.pokedFrames, &skin.sleepFrames, &skin.typingFrames}) {
+            for (const std::string& frame : *frames) {
+                DOCTEST_CHECK(pngLooksValid(skin.dir / frame, 128, 128));
+            }
         }
     }
     // 两款短语表互异（性格区分）
-    for (size_t i = 0; i < skins.size(); ++i) {
-        for (size_t j = i + 1; j < skins.size(); ++j) {
-            DOCTEST_CHECK(skins[i].phrases != skins[j].phrases);
-        }
-    }
-    // 用户替换语义：robot 换成美术包（source 非内置标记）→ 原样保留
+    DOCTEST_CHECK(skins[0].phrases != skins[1].phrases);
+    // 用户替换语义：robot 换成美术包（source 非随包标记）→ ensureDefaultSkin
+    // 候选 petsDir 优先命中，原样加载不动
     {
         std::ofstream out(root / "robot" / "pet.json", std::ios::trunc);
         out << "{\"name\":\"robot\",\"source\":\"artist\","
                "\"states\":{\"idle\":[\"a0.png\"]}}";
     }
-    const std::vector<std::string> again = ensureBuiltinSkins(root);
-    DOCTEST_CHECK_EQ(again.size(), static_cast<size_t>(2));
-    auto replaced = loadSkin(root / "robot");
+    const auto replaced = ensureDefaultSkin();
     DOCTEST_CHECK(replaced.isOk());
     DOCTEST_CHECK_EQ(replaced.value().idleFrames.size(), static_cast<size_t>(1));
     return true;
@@ -910,8 +945,8 @@ REGISTER_TEST(pet_discover_skins, "pet: 皮肤发现（下拉/换肤菜单的数
     // 空目录：无皮肤
     std::filesystem::create_directories(root);
     DOCTEST_CHECK(discoverSkins().empty());
-    // 生成默认皮肤 + 手工放第二个皮肤包 → 都被发现
-    DOCTEST_CHECK(ensureDefaultSkin(root / "robot").isOk());
+    // 随包形态 robot 夹具 + 手工放第二个皮肤包 → 都被发现
+    writeShippedSkinFixture(root, "robot", kRobotFixtureJson);
     std::filesystem::create_directories(root / "pixel-dog");
     {
         std::ofstream out(root / "pixel-dog" / "pet.json", std::ios::trunc);
@@ -976,7 +1011,7 @@ REGISTER_TEST(pet_apply_skin_and_reset, "pet: applyPetSkin 校验/持久化 + �
     using namespace module::pet;
     const PetsDirEnv pets("applyskin");
     const std::filesystem::path& root = pets.root;
-    DOCTEST_CHECK(ensureDefaultSkin(root / "robot").isOk());
+    writeShippedSkinFixture(root, "robot", kRobotFixtureJson);
     std::filesystem::create_directories(root / "pixel-dog");
     {
         std::ofstream out(root / "pixel-dog" / "pet.json", std::ios::trunc);
@@ -1340,7 +1375,9 @@ REGISTER_TEST(pet_bridge_readonly_accessors,
     return true;
 });
 
-// ---- 审计 THS-03 第二批：pet 侧两个写点的原子写收口 ----
+// ---- 审计 THS-03 第二批：pet 侧写点的原子写收口 ----
+// （2026-09-28 起皮肤生成器已删，pet 侧写点只剩配置 store 一个；皮肤帧/
+// pet.json 的原子写注入用例随生成器一起移除）
 // 失败注入照上一批（test_view_state.cpp）约定：把临时文件路径 <目标>.devdesk-tmp
 // 用目录占住（打开必失败），不 sleep、不杀进程，且可顺带断言「失败时旧内容一字未变」。
 
@@ -1398,51 +1435,6 @@ REGISTER_TEST(pet_config_save_failure_keeps_old, "pet: 配置原子写失败不�
     return true;
 });
 
-REGISTER_TEST(pet_skin_json_write_failure_keeps_old, "pet: 皮肤清单原子写失败不破坏旧 pet.json（THS-03）", {
-    using namespace module::pet;
-    const std::filesystem::path dir = test_support::makeTempDir(kPetDirPrefix, "skin_json_fail");
-    removeTreeQuietly(dir);
-    std::error_code ec;
-    DOCTEST_REQUIRE(std::filesystem::create_directories(dir, ec));
-    // 旧版内置皮肤（source 是内置标记、缺 M2 帧）→ ensureDefaultSkin 走重生成升级，
-    // 盘上现存的 pet.json 即「旧内容」
-    const std::string oldJson =
-        "{\"name\":\"robot\",\"source\":\"DevDesk 内置生成\","
-        "\"states\":{\"idle\":[\"f0.png\"]}}";
-    test_support::writeTextFile(dir / "pet.json", oldJson);
-    // 清单落盘通道被目录占住（帧文件通道是空的，PNG 照常写出）→ 最后一步 pet.json 失败
-    DOCTEST_REQUIRE(std::filesystem::create_directory(tmpPathOf(dir / "pet.json"), ec));
-    const auto r = ensureDefaultSkin(dir);
-    DOCTEST_CHECK(r.isFail());
-    DOCTEST_CHECK_EQ(readAllBytes(dir / "pet.json"), oldJson);  // 旧清单一字未变
-
-    std::filesystem::remove_all(tmpPathOf(dir / "pet.json"), ec);
-    removeTreeQuietly(dir);
-    return true;
-});
-
-REGISTER_TEST(pet_skin_frame_write_failure_keeps_old, "pet: 皮肤帧原子写失败不破坏旧帧（THS-03）", {
-    using namespace module::pet;
-    const std::filesystem::path dir = test_support::makeTempDir(kPetDirPrefix, "skin_frame_fail");
-    removeTreeQuietly(dir);
-    std::error_code ec;
-    DOCTEST_REQUIRE(std::filesystem::create_directories(dir, ec));
-    test_support::writeTextFile(dir / "pet.json",
-                  "{\"name\":\"robot\",\"source\":\"DevDesk 内置生成\","
-                  "\"states\":{\"idle\":[\"f0.png\"]}}");
-    const std::string oldFrame = "OLD-FRAME-BYTES";
-    test_support::writeTextFile(dir / "f0.png", oldFrame);
-    // 首帧通道被占住 → 重生成在第一帧就失败（旧实现 trunc 原地写会先毁掉旧帧）
-    DOCTEST_REQUIRE(std::filesystem::create_directory(tmpPathOf(dir / "f0.png"), ec));
-    const auto r = ensureDefaultSkin(dir);
-    DOCTEST_CHECK(r.isFail());
-    DOCTEST_CHECK_EQ(readAllBytes(dir / "f0.png"), oldFrame);  // 旧帧一字未变
-
-    std::filesystem::remove_all(tmpPathOf(dir / "f0.png"), ec);
-    removeTreeQuietly(dir);
-    return true;
-});
-
 // ---- PAB-12（波 1 L7）：气泡短语随机源 ----
 // 旧实现 std::rand 从未 srand = 每次启动同一序列（且短语顺序固定）。
 // 单进程内只能锁「随机源活着」：64 次抽样须出 ≥2 种短语，且每个结果都
@@ -1473,6 +1465,7 @@ REGISTER_TEST(pet_show_window_reenqueues,
               "pet: showPetWindow 重新入队开窗请求（PAB-13）", {
     const PetsDirEnv pets("showwin");
     (void)app::consumeWindowRequests();  // 清残留
+    writeShippedSkinFixture(pets.root, "robot", kRobotFixtureJson);  // 默认皮肤 = 随包 robot
 
     // 先装配一次（= main 模块门控通过；同时把 windowRequested 置位）
     module::pet::startPetWindow(module::pet::PetWindowConfig{"", 120, 130});
