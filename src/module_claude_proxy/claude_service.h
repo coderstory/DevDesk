@@ -27,13 +27,10 @@
 #include "profile_repository.h"
 #include "platform/http_client.h"
 #include "platform/terminal_launch.h"
+#include "proxy_runtime.h"
 #include "settings_sync.h"
 
-namespace platform::http { class Server; }
-
 namespace module::claude {
-
-class ProxyRouter;
 
 // 上游会话标识。部分 Anthropic-compatible 网关（如 opencode.ai/zen/go）要求
 // 请求带 x-opencode-session，缺失直接回 400 MissingSessionID；客户端（Claude
@@ -176,10 +173,11 @@ public:
     // 一次、应用挂机不重复弹最后事件。滞留超过 kProxyEventFreshSec 的事件作
     // 过期丢弃（nullopt）：桌宠关了几小时后再开不该弹旧闻；窗口取 10min，
     // 覆盖气泡 roll（onTimer ③② 平均 ~5min 一次）的典型间隔。
-    // 写方 = proxy worker 线程、读方 = UI 线程，mutex 保护（与 activeStreams
-    // 同款模式）。main 经本接口装配 pet 的 ProxyEventGetter app 级桥
-    //（pet 不 include 本模块，模块隔离见 pet_window.h 契约注释）。
-    static constexpr std::time_t kProxyEventFreshSec = 600;
+    // R10-A3：单槽邮箱随 ProxyRuntime 搬离（proxy_runtime.{h,cpp} 同段，与
+    // 在途流登记同写者-读者对），本门面转发；常量别名保持既有消费方
+    //（tests/test_claude_service.cpp）的 ClaudeService:: 限定量零改动
+    static constexpr std::time_t kProxyEventFreshSec =
+        ProxyRuntime::kProxyEventFreshSec;
     void recordProxyEvent(int statusCode);
     // nowSec 默认取当前墙钟（测试可显式传值验证过期分支）
     std::optional<int> takeProxyEvent(std::time_t nowSec = std::time(nullptr));
@@ -189,10 +187,14 @@ public:
     // 启动本地 HTTP 代理（固定绑定 127.0.0.1，仅本机可访问，无鉴权）
     //   - bindAddress：默认 "127.0.0.1"
     //   - port：0 = 由 OS 分配；默认值同样取 core/proxy_port.h 的唯一来源
+    // R10-A3：server/路由/在途流/端口镜像已迁 ProxyRuntime；门面保留启动后的
+    // 接管尾（server 启动成功 → syncTakeOver，顺序逐字保持）
     core::Result<int> startProxy(const std::string& bindAddress = "127.0.0.1",
                                  int port = kDefaultProxyPort);
 
-    // 停止代理
+    // 停止代理。R10-A3 段级拆分：停机序列（cancelActiveStreams → server
+    // ->stop → reset）在 ProxyRuntime::stop()，本方法编排其后接 syncRestore()
+    // 还原 settings.json（A4 后改经 takeover 子对象编排）
     void stopProxy();
 
     // ---- 在途流式请求登记（审计 2026-09-23 [9]）----
@@ -200,7 +202,8 @@ public:
     // 析构先调 cancelActiveStreams() 再停 server——否则 httplib worker 阻塞
     // 在 provider 的 readChunk 里，Server::stop() 的 join 要等流自然结束
     // （Claude 活动生成期无空闲超时，停止/退出会挂起成幽灵进程）。
-    // public：测试用与 stopProxy 相同的顺序驱动验证。
+    // R10-A3：登记表状态与实现已迁 ProxyRuntime，门面转发（public：测试用与
+    // stopProxy 相同的顺序驱动验证）。
     void registerActiveStream(
         const std::shared_ptr<platform::http::StreamingResponse>& stream);
     void cancelActiveStreams();
@@ -232,7 +235,8 @@ public:
     // 常量默认端口——module_claude_proxy 不能依赖 module_settings，端口经由
     // service 单例桥接（与 ClaudeService::global() 同款模式），无环。
     // setter 钳制到 [kMinProxyPort, kMaxProxyPort]（取值见 core/proxy_port.h）。
-    int configuredProxyPort() const { return configuredProxyPort_; }
+    // R10-A3：镜像状态已迁 ProxyRuntime（端口镜像属其职责），门面转发
+    int configuredProxyPort() const { return proxyRuntime_.configuredProxyPort(); }
     void setConfiguredProxyPort(int port);
 
     // ---- Claude Code settings 接管（provider-config Phase C，§5.2/§5.3）----
@@ -318,28 +322,17 @@ private:
     ProfileRepository profileRepository_;
     std::string keychainService_;
 
-    // 代理 server 资源（延迟构造）
-    std::unique_ptr<platform::http::Server> server_;
-    std::unique_ptr<ProxyRouter> router_;
-
-    // 在途流式上游登记（[9]）。streamsStopping_：stopProxy/析构已发起，
-    // 期间新登记的流立即被取消（消掉「cancel 跑完才有流登记进来」的窗口）
-    std::mutex streamsMutex_;
-    std::vector<std::weak_ptr<platform::http::StreamingResponse>> activeStreams_;
-    bool streamsStopping_ = false;
-
-    // 设置页配置的代理端口（审计 [14]；默认 = core/proxy_port.h 的默认端口）
-    int configuredProxyPort_ = kDefaultProxyPort;
+    // R10-A3：代理 server/路由生命周期 + 在途流登记 + 端口镜像 + 终态事件
+    // 邮箱已迁 ProxyRuntime（proxy_runtime.{h,cpp}，职责边界见 R10 spec §2.2）。
+    // 声明序末位 → 成员析构最先执行，其 ~ProxyRuntime 内 stop() 即旧析构的
+    // 停机序列（cancelActiveStreams → server 销毁 join），顺序不变。
+    // 构造经 *this 注入（ProxyRuntime 仅把它转交给 ProxyRouter，自身不调门面）
+    ProxyRuntime proxyRuntime_;
 
     // 终端启动实现（profile-run 设计 §6）：默认 = platform::terminal::launch；
     // 测试经 setTerminalLauncher 注入假实现（断言参数、不真起进程）
     std::function<core::Result<void>(const platform::terminal::LaunchSpec&)>
         terminalLauncher_ = &platform::terminal::launch;
-
-    // 最近代理请求事件单槽（气泡③，审计 [18]）：proxy worker 写 / UI take 读
-    std::mutex proxyEventMutex_;
-    std::optional<int> proxyEventStatus_;
-    std::time_t proxyEventAt_ = 0;
 
     // Claude Code 接管通道（settingsFile 为空 = 未启用）
     settings_sync::Paths syncPaths_;
