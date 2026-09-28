@@ -27,6 +27,10 @@ bool sidebarCollapsed();
 void setSidebarCollapsed(bool collapsed,
                          const std::filesystem::path& configFile = {});
 
+// 测试缝（TIN-07）：复位进程级折叠状态回厂（展开）。与 setSidebarCollapsed
+// 的区别：纯内存复位、零持久化副作用——resetCaseGlobals 用例间回厂用
+void resetSidebarGlobals();
+
 // 当前侧边栏宽度 / 模块内容区宽度（compose 布局与单测共用同一真值）
 float sidebarWidth();
 float pageContentWidth(float windowWidth);
