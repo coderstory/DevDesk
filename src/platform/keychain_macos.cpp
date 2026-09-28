@@ -8,12 +8,27 @@
 #include <set>
 #include <vector>
 
+// ── 弃用 API 窄抑制（macOS 27 SDK，2026-09-28）──────────────────────────
+// 本文件是 macOS 平台实现文件。`SecKeychain*` 系列（FindGenericPassword /
+// AddGenericPassword / ItemDelete / ItemFreeContent）在 macOS 27 SDK 被标记
+// 弃用，平台栈自身带 -Werror（CMakeLists.txt:122 / src/platform/CMakeLists.txt:79）
+// → 构建阻塞。下面的每个调用点用 `#pragma clang diagnostic push/ignored/pop`
+// **逐语句**窄抑制，不覆盖整文件、不给 target 加 -Wno-deprecated-declarations
+//（那会连带屏蔽其它真正危险的弃用告警）。
+// 迁移到 `SecItem*`（SecItemAdd / SecItemCopyMatching / SecItemDelete）是**独立
+// 重构**：涉及访问控制与权限语义变化（kSecAttrAccessible、app 沙箱／钥匙串
+// 访问组的语义不同），在本轮无法真机验证的前提下不做。本次仅为消除构建阻塞。
+// ──────────────────────────────────────────────────────────────────────
+
 namespace platform::keychain {
 
 // 真实实现（CPX-14 起经 keychain.h 的函数指针表转发，见那里的「注入缝」段）
 core::Result<void> realStoreSecret(const std::string& service,
                                    const std::string& account,
                                    const std::string& secret) {
+    // SecKeychain* 为 macOS 27 SDK 弃用 API：仅抑制本语句告警（见文件头说明）
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wdeprecated-declarations"
     // 删除已存在条目（避免冲突）
     SecKeychainItemRef itemRef = nullptr;
     OSStatus status = SecKeychainFindGenericPassword(
@@ -21,17 +36,26 @@ core::Result<void> realStoreSecret(const std::string& service,
         static_cast<UInt32>(service.size()), service.c_str(),
         static_cast<UInt32>(account.size()), account.c_str(),
         nullptr, nullptr, &itemRef);
+#pragma clang diagnostic pop
     if (status == errSecSuccess && itemRef) {
+        // SecKeychain* 为 macOS 27 SDK 弃用 API：仅抑制本语句告警（见文件头说明）
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wdeprecated-declarations"
         SecKeychainItemDelete(itemRef);
+#pragma clang diagnostic pop
         CFRelease(itemRef);
     }
 
+    // SecKeychain* 为 macOS 27 SDK 弃用 API：仅抑制本语句告警（见文件头说明）
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wdeprecated-declarations"
     status = SecKeychainAddGenericPassword(
         nullptr,
         static_cast<UInt32>(service.size()), service.c_str(),
         static_cast<UInt32>(account.size()), account.c_str(),
         static_cast<UInt32>(secret.size()), secret.c_str(),
         nullptr);
+#pragma clang diagnostic pop
 
     if (status != errSecSuccess) {
         return core::Result<void>::fail(core::ErrorCode::Internal,
@@ -46,11 +70,15 @@ core::Result<std::string> realLoadSecret(const std::string& service,
     UInt32 length = 0;
     void* data = nullptr;
 
+    // SecKeychain* 为 macOS 27 SDK 弃用 API：仅抑制本语句告警（见文件头说明）
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wdeprecated-declarations"
     OSStatus status = SecKeychainFindGenericPassword(
         nullptr,
         static_cast<UInt32>(service.size()), service.c_str(),
         static_cast<UInt32>(account.size()), account.c_str(),
         &length, &data, &itemRef);
+#pragma clang diagnostic pop
 
     if (status != errSecSuccess) {
         if (itemRef) CFRelease(itemRef);
@@ -59,20 +87,32 @@ core::Result<std::string> realLoadSecret(const std::string& service,
     }
 
     std::string result(static_cast<char*>(data), length);
+    // SecKeychain* 为 macOS 27 SDK 弃用 API：仅抑制本语句告警（见文件头说明）
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wdeprecated-declarations"
     SecKeychainItemFreeContent(nullptr, data);
+#pragma clang diagnostic pop
     if (itemRef) CFRelease(itemRef);
     return core::Result<std::string>::ok(std::move(result));
 }
 
 core::Result<void> realDeleteSecret(const std::string& service, const std::string& account) {
     SecKeychainItemRef itemRef = nullptr;
+    // SecKeychain* 为 macOS 27 SDK 弃用 API：仅抑制本语句告警（见文件头说明）
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wdeprecated-declarations"
     OSStatus status = SecKeychainFindGenericPassword(
         nullptr,
         static_cast<UInt32>(service.size()), service.c_str(),
         static_cast<UInt32>(account.size()), account.c_str(),
         nullptr, nullptr, &itemRef);
+#pragma clang diagnostic pop
     if (status == errSecSuccess && itemRef) {
+        // SecKeychain* 为 macOS 27 SDK 弃用 API：仅抑制本语句告警（见文件头说明）
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wdeprecated-declarations"
         status = SecKeychainItemDelete(itemRef);
+#pragma clang diagnostic pop
         CFRelease(itemRef);
         if (status != errSecSuccess) {
             return core::Result<void>::fail(core::ErrorCode::Internal,
