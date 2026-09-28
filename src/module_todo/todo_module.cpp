@@ -642,7 +642,8 @@ public:
         const ui::BoardView boardView{
             columns_, tasks_, searchMatchIds_, searchQuery_, columnScrolls_,
             selectedTaskId_, drag_.active, drag_.taskId, drag_.hoverColIndex,
-            overdueCount_, service_ != nullptr, loadError_, boardActions_};
+            overdueCount_, service_ != nullptr, loadError_, boardActions_,
+            columnFadeIn_};
 
         page.column("todo.root")
             .size(screen.width, screen.height)
@@ -651,6 +652,16 @@ public:
             .content([&] {
                 ui::drawHeader(page, contentW, headerH, bodyH, t, boardView);
                 ui::drawBoard(page, contentW, bodyH, t, boardView, boardPlate_);
+                // M2-3（2026-09-28，UI 现代化）：落位淡入复位计时器——
+                // 拖拽结束置 false 的下一帧列内容容器 0.6 → 1.0 淡回，
+                // 0.12s 后把标志拨回（compose 每帧目标一致时不动画）。
+                // 复位放模块侧（看板单元不持有状态），全列共用一个标志
+                if (!columnFadeIn_) {
+                    page.stack("todo.fade.timer")
+                        .size(0.0f, 0.0f)
+                        .onTimer(0.12f, [this] { columnFadeIn_ = true; })
+                        .build();
+                }
             })
             .build();
 
@@ -790,6 +801,10 @@ private:
                 drag_ = DragState{};  // 普通点击：只清锚点（onClick 已处理）
                 return;
             }
+            // M2-3（2026-09-28，UI 现代化）：落位淡入——跟手结束（落库或
+            // 取消）的下一帧列内容容器淡回；期间不触碰拖拽判定逻辑，
+            // 复位由 todo.fade.timer（0.12s）拨回，onDrag 通道不写本标志
+            columnFadeIn_ = false;
             // Cancel 或落点无效 → 取消，卡片回原位
             const int target = released ? hitDropColumn(x, y) : -1;
             finishDrag(target);
@@ -834,6 +849,11 @@ private:
     bool viewDirty_ = false;
 
     DragState drag_;
+
+    // M2-3（2026-09-28，UI 现代化）：卡片落位淡入标志——cardReleased（跟手
+    // 结束）置 false → 列内容容器 0.6 → 1.0 淡回（0.12s OutQuad），复位由
+    // compose 里 todo.fade.timer（0 尺寸 onTimer）拨回；onDrag 通道不触碰
+    bool columnFadeIn_ = true;
 
     // 板面几何快照（看板绘制单元每帧刷新，拖拽命中换算用）
     ui::BoardPlate boardPlate_;

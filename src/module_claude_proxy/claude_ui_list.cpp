@@ -40,6 +40,11 @@ void drawProfileCard(eui::Ui& ui,
         .position(0.0f, y)
         .size(width, h)
         .states(bg, t.colors.hover, t.colors.active)
+        // M2（2026-09-28，UI 现代化）：行 hover/选中颜色过渡——列表项基调
+        // 0.1s OutQuad；选中/激活的 bg 与 border 同帧目标跳变也走动画
+        // （Color 管 states 合成色，Border 管选中边框 1↔2px/色）
+        .transition(core::Transition::make(0.1f, core::Ease::OutQuad))
+        .animate(core::AnimProperty::Color | core::AnimProperty::Border)
         .radius(t.sizes.radiusLarge)
         .border(borderW, borderColor)
         .onClick([sp = &st, pid = p.id] { sp->selectedId_ = pid; })
