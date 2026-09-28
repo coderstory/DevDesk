@@ -9,7 +9,7 @@
 - `tests/CMakeLists.txt` 单二进制 `devdesk_tests`（tests/CMakeLists.txt:1-60），自制 87 行迷你 doctest（`REGISTER_TEST` + fail-fast，用例总数以运行输出 Total 为准，现 646）；TIN-10 用例登记自检（tests/CMakeLists.txt:62-116）要求磁盘实况 == 登记表，否则 configure 期 FATAL。
 - 无头模式：`ui.begin(pageId); mod->compose(ui, screen); ui.end(); ui.layout(w,h);` 然后 `ui.find(id)->frame` / 直接调 `onContextMenu(pe, rect)` 触发再重 compose（test_ui_modern.cpp:93-106、test_settings.cpp:724-777）。
 - 无头能断言的：元素存在/几何/frame 边界（如 `settings_log_dropdown_popup_stays_in_window` 断言 popup frame ⊂ 窗、openUp 行为，test_settings.cpp:752-772）。
-- 无头测不到的：真实窗口、Runtime 事件分发（当前是直接调回调，绕开命中/捕获/焦点链）、真实渲染、**跨子树 z 序碰撞**（无头只查单一元素 frame，不扫「任意两个兄弟子树 frame 相交 + 等值 z」）。
+- 无头测不到的：真实窗口、Runtime 事件分发（当前是直接调回调，绕开命中/捕获/焦点链）、真实渲染、**交叉 z 序碰撞**（无头只查单一元素 frame，不扫「弹层 vs 非祖先其余元素」的相交判定——§2.2 弹层锚定变体）。
 
 ### 1.2 EUI-NEO probes 模式（可移植范式）
 
@@ -26,7 +26,7 @@
 
 - 兄弟排序用 `subtreeMaxZIndex` 上界 + **稳定排序**（`std::stable_sort(orderedChildren..., subtreeMaxZIndex)`，core/dsl.h:1752-1778）——**等值 z 时保持 DOM 序，后绘制者盖先绘制者**；弹层逃逸靠子树取上界（:1775 注释「弹层逃逸」）。
 - 即：等值 z + frame 相交 = 谁后 compose 谁盖谁，是确定性可断言行为，不是渲染玄学。
-- dropdown 弹层 `zIndex_` 由调用点传入（components/dropdown.h:82、:107），DevDesk settings 侧被抬到 40/30 两档（见 §3）。
+- dropdown 的 `.zIndex(zIndex_)` 落在**卡根 stack** 上（components/dropdown.h:82 setter、:105-107 `ui_.stack(id_).zIndex(zIndex_)`），弹层（`.popup` stack，dropdown.h:145）是卡子树内的子层——**抬的是整卡**：高 z 卡连同其弹层按子树取上界整体后置（core/dsl.h:1774 注释「弹层逃逸」+ :1775-1778 稳定排序），不是弹层元素自身抬 z（弹层自身 z0）。DevDesk settings 侧被抬到 40/30 两档（见 §3）；「弹层 z」的精确判据 = §2.2 定义的弹层链上界。
 
 ## §2 方案：DevDesk probes 架构
 
@@ -40,7 +40,7 @@ init backend → createWindow(真实尺寸) → Runtime r → r.initialize(windo
       screen.width/height 取真实窗逻辑尺寸;
       mod->compose(ui, screen);          // 模块 compose 是 (状态, screen) 纯函数
       capturedUi = &ui; })               // 断言句柄（EUI-NEO 惯例 input_runtime_probe.cpp:179）
-→ queue 输入 → r.update(...) 真分发一帧 → 断言 → 清理 → 退出码
+→ 每帧循环：queue 输入 → r.update(...) 真分发一帧 → 立即重调 r.compose(...)（update 只派发事件不重建树，弹层靠 recompose 进/出 DOM，见 §4.2）→ 断言 → 清理 → 退出码
 ```
 
 可行性依据：DevDesk 模块工厂 `create_<mod>_module()` 已导出（src/app_registry.h:22-25），无头测试已证明 `mod->compose(ui, screen)` 无需窗口可跑（module_interface.h:51）；probe 只是给它接上真窗 + Runtime 输入分发 + 交叉 z 序扫描。
@@ -50,14 +50,18 @@ init backend → createWindow(真实尺寸) → Runtime r → r.initialize(windo
 | 层 | 断言什么 | 实现 | 对应 bug 类 |
 |----|----------|------|-------------|
 | L1 frame/几何 | 元素 frame、包含关系、⊂ 窗/⊂ 父容器、多窗口尺寸矩阵 | `capturedUi->find(id)->frame`（无头同款 API） | 溢出、内边距、弹窗越界 |
-| L2 z 碰撞扫描 | 任意两元素 frame 相交时的高盖低不变量 | 遍历元素：`a->subtreeMaxZIndex > b->subtreeMaxZIndex` 才允许相交；等值相交 → FAIL 并打印 id 对 | dropdown z 序、弹窗互盖 |
+| L2 z 碰撞扫描（弹层锚定） | 弹层 vs 非祖先其余元素相交时的高盖低不变量 | 与弹层 frame 相交的每个非祖先元素，其 `subtreeMaxZIndex` 必须 < **弹层链上界**（定义见下）；≥ → FAIL 打印 id 对与双方 z（判定式详见 §4.4b） | dropdown z 序、弹窗互盖 |
 | L3 像素 | 真窗像素采样（颜色/曲线可见） | `glReadPixels` / Win32 `PrintWindow+GetPixel`（gpu_image_probe.cpp:250-279 惯例） | 双底色取证、sparkline 可见性（可选档） |
 
 L1/L2 是安静的（不依赖像素时序）；L3 走 RenderBackend 真渲染，仅按需启用（`--pixels` flag），不进默认 `--frames 3` 快档。
 
+**「弹层链上界」定义**（§4.4b L2 判定式的唯一基准）：弹层链上界 = max(弹层子树的 `subtreeMaxZIndex`, 弹层元素→根祖先链上每元素 `zIndex` 的最大值)。场景中即：外观卡 40 / 编辑器字号卡 30（revert 后均 30）——「弹层 z」不是弹层元素自身 zIndex（弹层自身 z0，被卡根 stack 抬层）。Element 无 parent 指针（core/dsl.h:106 起 Element 结构体只持 children），probe 须在 compose 后**自建父指针表**（单遍遍历 Ui 树 children 生成 id→父 映射），才能沿祖先链求值上界。
+
+> **作用域注（为什么不是通用规则）**：L2 只在弹层锚定下成立，**不是「任意两元素 frame 相交 + 等值 z → FAIL」的通用不变式**。引擎对等值 z 只保证稳定排序下后绘盖先绘（core/dsl.h:1774-1778），卡 bg（z0）与卡内容（z0）等值相交是**有意设计**（内容必须画在衬底上）——逐对通用扫描必然误报，且「谁对谁错」无从判定。故 harness 的 `assertNoEqualZOverlap` 契约只比较「弹层 vs 非祖先其余元素」，互为底层/背景的配对（两个都不是弹层的元素）永不进入比较。
+
 ### 2.3 probe harness（自含，不依赖 EUI-NEO tests 源码）
 
-- 新建 `DevDesk/tests/probes/probe_harness.h`（header-only，~100 行）：backend init/terminate、`--frames/--manual` 参数解析、pollOnce、`makeWindow(size)`、`composeModuleFrame(mod, w, h)` 助手、L2 扫描 `assertNoEqualZOverlap(ui, ...)`。
+- 新建 `DevDesk/tests/probes/probe_harness.h`（header-only，~100 行）：backend init/terminate、`--frames/--manual` 参数解析、pollOnce、`makeWindow(size)`、`composeModuleFrame(mod, w, h)` 单帧助手（update → recompose 成对，见 §4.2）、L2 扫描 `assertNoEqualZOverlap(ui, popupElement)`——契约只做「弹层 vs 非祖先其余元素」比较（弹层锚定，§2.2 作用域注），内部自建父指针表按 §2.2 定义求弹层链上界、跳过不可见元素（opacity 0）。
 - **不** include EUI-NEO/tests/probes/*（该目录在 `EUI_BUILD_TEST_FIXTURES` 门内，且 DevDesk 以 `EXCLUDE_FROM_ALL` 挂入子目录（CMakeLists.txt:91），不构成可依赖目标）。仅依赖 EUI-NEO 公共头（window_backend/dsl_runtime/input_state），DevDesk 已 link `eui::neo`、`devdesk_add_eui_includes` 已就位（CMakeLists.txt:106-113）。
 - 上提共享 harness 到 EUI-NEO（跨仓库改动）记 follow-up，不进本轮。
 
@@ -65,7 +69,7 @@ L1/L2 是安静的（不依赖像素时序）；L3 走 RenderBackend 真渲染�
 
 | # | bug 类 | 定位证据 | 该不该 probe | 断言（层） | 优先级 |
 |---|--------|----------|--------------|------------|--------|
-| 1 | **dropdown z 序碰撞**（settings 外观卡 vs 编辑器字号卡等值 z） | settings_ui_cards.cpp:63-69（zIndex(40) 抬层注释 + 回归 1379cc1：等值 z30 时后绘的编辑器字号卡盖住外观卡弹层）；引擎判据 dsl.h:1752-1778 | ✅ 必须 | L2：每开一个下拉，与 popup frame 相交的兄弟子树其 `subtreeMaxZIndex` 必须 > popup 链；L1：popup ⊂ 窗（无头同款：test_settings.cpp:752-754） | **P0 = MVP** |
+| 1 | **dropdown z 序碰撞**（settings 外观卡 vs 编辑器字号卡等值 z） | settings_ui_cards.cpp:63-69（zIndex(40) 抬层注释 + 回归 1379cc1：等值 z30 时后绘的编辑器字号卡盖住外观卡弹层）；引擎判据 dsl.h:1752-1778 | ✅ 必须 | L2：每开一个下拉，与 popup frame 相交的每个非祖先元素，其 `subtreeMaxZIndex` 必须 < **弹层链上界**（§2.2 定义）——≥ 即 FAIL（注释档 40 处上界 40 > 字号卡 30 绿；revert 回 30 后等值必须红）；L1：popup ⊂ 窗（无头同款：test_modules/test_settings.cpp:752-754） | **P0 = MVP** |
 | 2 | **卡片几何溢出**（profile 详情非最大化溢出卡底） | profile-run 计划人工项：最小窗 1200×720 下文案/表完整无重叠（2026-09-28-profile-run-plan.md:1661）；profile 卡列表 claude_ui_list.cpp:400-475 | ✅ 必须 | L1：dialog/卡内子树 frame ⊆ 卡 frame ⊆ 窗；尺寸矩阵 {1200×720 最小, 1600×1000 默认} 两组各跑一遍 | P1 |
 | 3 | **sparkline 渲染错位**（lineChart 32px chromeless 几何） | home_module.cpp:472-491（`home.stat.tokens.spark` lineChart chromeless）；组件几何 linechart.h:92-95（chromeless plot = 全盒）；空 values 会填 demo 数据（linechart.h:85-86，D-6 护栏 :472-478 已防空） | ✅（结构档）+ ⚠️ 组件级归上游 | L1：sparkline 根元素 frame == 调用点指定 rect；曲线点 x∈[0,chartW]、y∈[0,chartH]（扫描 chart 内部几何点）；传空 series 无 demo 数据泄漏（防 D-6 回归）。**组件级 demo-fill 断言放 EUI-NEO 侧 probe 更合适**，本方案只锁 DevDesk 侧接线 | P1 |
 | 4 | **双底色**（profile 列表 card 套 bg） | claude_ui_list.cpp:422-430（2026-09-28 已修：去 card 组件骨架，仅留 `.bg` 唯一底，注释直引"用户反馈"） | ✅（回归防护） | L1 结构断言：卡片 rect 内恰好一层不透明 surface 底（遍历 frame 相等的 rect 底元素计数 == 1）；L3 像素可选取证「底层是 surface 非白底+阴影」 | P2 |
@@ -78,15 +82,17 @@ L1/L2 是安静的（不依赖像素时序）；L3 走 RenderBackend 真渲染�
 
 - 文件：`DevDesk/tests/probes/settings_dropdown_z_probe.cpp`
 - 搭法：
-  1. harness 开窗 1200×1000（默认窗）；`create_settings_module()` + `mod->onStart()`（test_settings.cpp:729 同款）；切到含外观卡/字号卡的 tab（复用 headless 的 tab 点击逻辑，最小版内联进 probe）。
-  2. `runtime.compose` 里调 `mod->compose(ui, screen)`，捕获 `Ui*`。
-  3. `runtime.update` 一帧 → `queuePointerButton` 点外观卡字号下拉 field 中心 → `update`（真命中/焦点分发，非直调回调）。
+  1. **配置隔离**：`test_support::ScopedConfigPath` + `test_support::tempConfigFile`（tests/test_support.h:299-314、:451-455）把 `DEVDESK_CONFIG_PATH` 指到临时 config.json，再 `create_settings_module()` + `mod->onStart()`（test_modules/test_settings.cpp:726-731 同款）——onStart 吃真机配置会让卡片增减/几何漂移，**探针必须与机器本地配置无关**；harness 开窗 1200×1000（默认窗）；切到含外观卡/字号卡的 tab（复用 headless 的 tab 点击逻辑，最小版内联进 probe）。
+  2. **每帧循环（注入与重绘成对）**：queue 输入 → `runtime.update(window, dt, ...)` → **立即重调 `runtime.compose(mod->compose)`**。update 只派发事件、不重建元素树——弹层在 compose 时才按 open 状态进/出 DOM，漏掉 recompose 则弹层永远不进树、断言全部落空。harness `composeModuleFrame` 即此单帧助手（仿 input_runtime_probe.cpp:186-189 `updateEditor` = update + 立即重 compose；点击 = press+release 排队 + 一帧，:190-195 `click` 同款）。
+  3. 点**外观卡**字号下拉 field 中心 → 一帧（真命中/焦点分发，非直调回调）。
   4. 断言：
-     - a. 弹层元素存在、frame ⊂ 窗（对齐无头同款 tests 判定 :752-754）；
-     - b. **L2 扫描**：与弹层 frame 相交的每个非祖先元素，其 `subtreeMaxZIndex` 必须 < 弹层链上界；等值 → FAIL 打印双方 id + z 值（直接锁 1379cc1 回归）；
-     - c. 关闭下拉 → update → 弹层不残留。
+     - a. 弹层元素存在、frame ⊂ 窗（对齐无头同款判定 test_settings.cpp:752-754）；
+     - b. **L2 扫描**：与弹层 frame 相交的每个非祖先元素（弹层自身及其子孙不计），其 `subtreeMaxZIndex` 必须 < **弹层链上界**（定义见 §2.2）；≥ → FAIL 打印双方 id + z 值（直接锁 1379cc1 回归）；扫描**显式跳过不可见元素**（`opacity == 0`，如关闭态下拉的自身 popup），只扫可见元素；
+     - c. 再点 field 关闭下拉 → 一帧 → 弹层进入**不可见态**（判据见下「不残留定义」）。
   5. 失败 `std::cerr` 明细 + 非 0 退出码（input_runtime_probe 惯例）。
-- 有效性验证（证伪，MVP 验收门禁）：临时把外观卡 zIndex(40) 改回 30（git stash 手法）→ probe 必须红；改回 → 必须绿。只绿不红 = 断言没抓住等值 z 本质，不算完成。
+
+**「不残留」判据**：dropdown 关闭态 popup **仍 compose 在树里**（`visible = open_ ? 1.0f : 0.0f` 只控 opacity 隐没，components/dropdown.h:98、:145-148），因此**不得用「元素存在」断言**开关。闭合断言读开合状态三选一：模块 `openDropdown_` 复位（settings_module.cpp:242-247 Esc 置 -1；:668-673 `setDropdownOpen` → `applyDropdownOpen`）；popup hit `.disabled(!open_)`（dropdown.h:168）；popup 根 `opacity == 0`（dropdown.h:148）。frame 类断言（a）对开/关两态等价——关态 frame 仍在树中、只是不可见，这正是存在性断言会误判的原因。
+- 有效性验证（证伪，MVP 验收门禁）：临时把外观卡 zIndex(40) 改回 30（git stash 手法）→ 弹层链上界 40 掉到 30，与下邻编辑器字号卡 subtreeMaxZIndex 30 **等值** → probe 必须红；改回 → 必须绿。只绿不红 = 断言没抓住等值 z 本质，不算完成。
 - 与无头分工：`settings_log_dropdown_popup_stays_in_window` 已盖「弹层在窗内 + openUp」；probe 补「跨卡 z 碰撞」这个无头盲区，两者并存不重叠。
 
 ## §5 改动清单
@@ -95,7 +101,7 @@ L1/L2 是安静的（不依赖像素时序）；L3 走 RenderBackend 真渲染�
 |-----------|------|
 | `DevDesk/tests/probes/probe_harness.h` | 新建：自含 scaffold（backend init / 参数 / pollOnce / composeModuleFrame / L2 扫描） |
 | `DevDesk/tests/probes/settings_dropdown_z_probe.cpp` | 新建：MVP（§4） |
-| `DevDesk/tests/CMakeLists.txt` | ① TIN-10 豁免 probes 目录：现 GLOB `*/*.cpp`（tests/CMakeLists.txt:67-68）会命中 `tests/probes/*.cpp` → 必须改 GLOB 排除或在该自检循环对 probes 路径 continue（否则 configure FATAL）；② 新增 probe 注册块（仿 EUI-NEO/CMakeLists.txt:698-717）：GLOB probes → 每个 `add_executable` + link `devdesk_module_*`（同 devdesk_tests 集合 tests/CMakeLists.txt:129-136）+ `devdesk_add_eui_includes` + include `src/`、`tests/` + `-mconsole`（MinGW 控制台子系统，退出码才有意义）+ `add_test(NAME ... COMMAND ... --frames 3)` + `LABELS probe`；不并进 devdesk_tests 二进制（probe 各带 main） |
+| `DevDesk/tests/CMakeLists.txt` | ① TIN-10 豁免 probes 目录：现 GLOB `*/*.cpp`（tests/CMakeLists.txt:67-68）会命中 `tests/probes/*.cpp` → 必须改 GLOB 排除或在该自检循环对 probes 路径 continue（否则 configure FATAL）；② 新增 probe 注册块（仿 EUI-NEO/CMakeLists.txt:698-717）：GLOB probes → 每个 `add_executable` + link `devdesk_module_*`（同 devdesk_tests 集合 tests/CMakeLists.txt:129-136）+ `devdesk_add_eui_includes` + include 集与 devdesk_tests 一致（tests/CMakeLists.txt:120-124）：`src/`、`tests/`、`src/module_claude_proxy`、`src/module_settings`——probe include `app_registry.h` 时其 `#include "settings_config.h"`（src/app_registry.h:19）落在 `src/module_settings/` 下，缺该目录直接编译失败 + `-mconsole`（MinGW 控制台子系统，退出码才有意义）+ `add_test(NAME ... COMMAND ... --frames 3)` + `LABELS probe`；不并进 devdesk_tests 二进制（probe 各带 main） |
 | DevDesk 顶层 `CMakeLists.txt` | 不动（`enable_testing()` 已开 :124；`eui_neo_configure_app` 同 scope 可复用 :131 先例） |
 | 依赖 EUI-NEO probe helper | **不依赖**——harness 自含；只消费 EUI-NEO 公共头（已随 `eui::neo`/include 路径就位）。上提共享 harness 记 follow-up |
 | `scripts/build-test-run.sh` | 本轮不动；probe 跑批（`ctest -L probe`）接线放后续轮 |
@@ -131,6 +137,6 @@ check-consistency.sh（截图）── 像素观感·配色审美·肉眼验收
 
 1. **审计**（本 spec）→ 用户过目拍板（MVP 选型、probes 目录放 `tests/probes/` 与 TIN-10 豁免方式、是否要 `--pixels` 档）。
 2. **dev**：派单规则——worktree 隔离、只跑定向编译（probe exe）+ MVP 手动跑 `ctest -L probe`；完成后原子 commit 合 master、清 worktree。
-3. **MVP 验收门禁**：probe 绿 + 反向证伪（§4.5 改回 z30 必须红）+ 真窗运行截图。
+3. **MVP 验收门禁**：probe 绿 + 反向证伪（§4 有效性验证：zIndex 改回 30 必须红）+ 真窗运行截图。
 4. **增量**：按 §3 优先级 P1 → P2 → P3 逐批加 probe_*.cpp（每批同走审计→dev→验收）；sparkline 组件级断言同步在 EUI-NEO 侧评估（跨仓库，单独派单）。
 5. 后续候选：`scripts/build-test-run.sh` 集成 `ctest -L probe`；harness 上提 EUI-NEO。
