@@ -8,11 +8,21 @@
     <string>DevDesk</string>
     <key>CFBundleIdentifier</key>
     <string>com.devdesk.app</string>
+    <!-- 版本号：下面两处 0.1.0 是**占位值**，打包时由 platform/macos/build-app.sh
+         从构建目录 CMakeCache.txt 的 CMAKE_PROJECT_VERSION 读出，用 plutil -replace
+         写进打包产物（.app 内）的 Info.plist —— 本模板文件保持占位值不变。
+         真实版本单一源 = CMakeLists.txt 的 project(DevDesk VERSION ...)（VERSION 文件
+         由 bump_version 目标逐次自增）。读不到版本时 build-app.sh 会打印 ⚠️ 并以占位值
+         出包，不失败。 -->
     <key>CFBundleVersion</key>
     <string>0.1.0</string>
     <key>CFBundleShortVersionString</key>
     <string>0.1.0</string>
     <key>CFBundleExecutable</key>
+    <string>DevDesk</string>
+    <!-- App 图标：文件 = Contents/Resources/DevDesk.icns（此处只写文件名，不含扩展名）。
+         icns 由 build-app.sh 在打包时放入，来源见该脚本「图标」段。 -->
+    <key>CFBundleIconFile</key>
     <string>DevDesk</string>
     <key>CFBundlePackageType</key>
     <string>APPL</string>

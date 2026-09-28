@@ -8,9 +8,14 @@
 #   "图标只能在 Mac 上 iconutil 生成"）；本脚本在 Windows 侧先行入库，
 #   仅作为"把源图拷到 Mac 后一键生成"的载体，实际生成动作必须在 Mac 上做。
 #
-# 前置条件：
-#   - installer/macos/icon-1024.png 存在（1024×1024 源 PNG，需在 Mac 上准备；
-#     本脚本不负责生成源图，源图缺失时报错退出、不假装成功）
+# 前置条件（源图三选一，按下列顺序取第一个存在的）：
+#   1) 环境变量 DEVDESK_ICON_SRC=<某个 PNG 路径>（显式指定）
+#   2) installer/macos/icon-1024.png（标准源图：1024×1024，被 installer/macos/.gitignore
+#      忽略，需手工准备 —— 画质最好的一条路）
+#   3) <构建目录>/assets/icon.png（构建时 POST_BUILD 从 EUI-NEO assets 拷来的图标，
+#      零手工步骤、构过就能跑；当前是 360×351，大档靠 sips 放大、清晰度略降，故只作兜底）
+#   构建目录 = DEVDESK_BUILD_DIR 或 <仓库根>/build（与 platform/macos/build-app.sh 同款开关）。
+#   —— 只跑打包、不关心 icns 入库时不必用本脚本：build-app.sh 已内联等价的 sips+iconutil 步骤。
 #   - 已安装 Xcode Command Line Tools（自带 iconutil / sips）
 #
 # 产物（均入库交付，spec §4.4 第 1 项）：
@@ -32,7 +37,14 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 OUT_DIR="${REPO_ROOT}/installer/macos"
-SRC_PNG="${OUT_DIR}/icon-1024.png"
+BUILD_DIR="${DEVDESK_BUILD_DIR:-${REPO_ROOT}/build}"
+
+# 源图解析：DEVDESK_ICON_SRC > installer/macos/icon-1024.png > <构建目录>/assets/icon.png
+# （三级兜底的理由见文件头「前置条件」；缺全部才报错退出，不假装成功）
+SRC_PNG="${DEVDESK_ICON_SRC:-${OUT_DIR}/icon-1024.png}"
+if [ ! -f "${SRC_PNG}" ]; then
+  SRC_PNG="${BUILD_DIR}/assets/icon.png"
+fi
 
 # ---------- 平台 / 工具前置检查（不满足就给清晰报错，不假装成功） ----------
 case "$(uname -s)" in
@@ -48,10 +60,13 @@ for tool in iconutil sips; do
 done
 
 if [ ! -f "${SRC_PNG}" ]; then
-  echo "[ERROR] 源图不存在: ${SRC_PNG}" >&2
-  echo "        请先在 Mac 上准备 1024×1024 的 PNG 放到上述路径后再跑本脚本。" >&2
+  echo "[ERROR] 找不到源图（三处都不存在）：" >&2
+  echo "        1) DEVDESK_ICON_SRC=<png 路径>" >&2
+  echo "        2) ${OUT_DIR}/icon-1024.png" >&2
+  echo "        3) ${BUILD_DIR}/assets/icon.png（需先构建过一次 DevDesk）" >&2
   exit 1
 fi
+echo "[INFO] 源图: ${SRC_PNG}"
 
 # 源图解析不到尺寸（sips 失败）或任一边小于 1024 时给出警告（不阻断）：
 # 小于 1024 意味着 512@2x（1024 像素）条目需要放大，清晰度会下降。
