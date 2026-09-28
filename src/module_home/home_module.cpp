@@ -534,7 +534,7 @@ public:
                 // （24 点当日逐时分布；恒 24 点 → 绝不空，barChart 空 values
                 // 会填演示数据）；barChart 值域 [0,1]（percent 语义）→ 按当日
                 // 峰值归一化。加载失败（!ok）→ 全 0（统计卡 badge 已示失败）。
-                if (claudeOn) {
+                if (moduleRegistered(::core::PageId::ClaudeProxy)) {
                     const auto apiSeries =
                         service_ ? service_->getTodayApiCallSeries(24)
                                  : core::Result<std::vector<int64_t>>::fail(
