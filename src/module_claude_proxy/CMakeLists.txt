@@ -11,6 +11,7 @@ add_library(devdesk_module_claude_proxy STATIC
     profile_repository.cpp
     provider_config.cpp
     proxy_router.cpp
+    proxy_runtime.cpp
     settings_sync.cpp
     streaming_proxy.cpp
     upstream_dialect.cpp
