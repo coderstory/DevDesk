@@ -217,7 +217,9 @@ struct DetailDialog {
 
 // ---- 右键菜单 ----
 // 菜单定位走模块自身布局空间（ui::boardGeom），不用指针事件的窗口坐标
-//（页面在侧边栏右侧，两者相差一个侧边栏宽）。
+//（页面在侧边栏右侧，两者相差一个侧边栏宽）。锚点经
+// core::menuAnchorForPointer 统一换算（UI 现代化 M1-2，spec §3.1），
+// 滚动偏移由换算函数的 scrollOffsetY 参数叠加。
 // 不变式：taskId 与 columnId 二选一（见 openTask / openColumn）。
 struct ContextMenuState {
     int64_t taskId = 0;

@@ -40,6 +40,13 @@ void drawClaudeGuideBar(eui::Ui& ui, float contentW,
 struct ProfileListActions {
     std::function<void()> onNewProfile;      // 「+ 新建 Profile」
     std::function<void()> onImportCurrent;   // 「导入当前配置」
+    // 右键菜单动作（UI 现代化 M1-5）：与既有按钮回调同源的最小委托
+    //（claude_module listActions 装配：编辑=openEditForm / 复制=doDuplicate /
+    // 删除=确认弹窗 / 设为当前=doSetActive——不新写业务逻辑）
+    std::function<void(const Profile&)> requestEdit;              // 编辑
+    std::function<void(int64_t)> requestDuplicate;                // 复制
+    std::function<void(int64_t, const std::string&)> requestDelete;  // 删除
+    std::function<void(int64_t)> requestSetActive;                // 设为当前
 };
 
 // 左栏：Profile 列表（含底板 + overlay 两块，调用点在 claude.body row 内）。
@@ -52,5 +59,16 @@ void drawProfileListPanel(eui::Ui& ui, float leftW, float bodyH,
                           const std::vector<Profile>& profiles,
                           const std::string& profilesError,
                           const ProfileListActions& actions);
+
+// 左栏 profile 列表右键菜单（UI 现代化 M1-5）：编辑 / 复制 / 删除 / 设为当前。
+// 常驻构建（关闭态由组件内 opacity 收起）；无右键目标时强制置关
+//（4523e09 的「隐形菜单卡开」同款守卫——目标与开合标志同生共灭）。
+// 锚点来自卡片 onContextMenu 时经 core::menuAnchorForPointer 换算的
+// ctxMenuX_/ctxMenuY_（页面坐标），滚动位置天然正确（指针即视觉位置）。
+void drawProfileContextMenu(eui::Ui& ui, const eui::Screen& screen,
+                            const components::theme::ThemeColorTokens& themeTokens,
+                            ProfileListState& st,
+                            const std::vector<Profile>& profiles,
+                            const ProfileListActions& actions);
 
 } // namespace module::claude

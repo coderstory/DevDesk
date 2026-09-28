@@ -35,4 +35,25 @@ inline float windowToCompose(float windowPos, float pageOriginPos, float dpiScal
     return windowPos / dpiScale - pageOriginPos;
 }
 
+// UI 现代化 §3.1（2026-09-28）：右键菜单统一锚点换算。
+// 各调用点（todo 看板 / md 树 / md 编辑器 / claude 列表）不再各自推算板
+// 几何 / 裸 y，锚点统一经本函数；位置、宽度、Y/X 钳制交给 contextMenu /
+// styledMenu 组件自身（组件内已有 clampMenuY / X 钳兜底）。
+// 口径（runtime_input.h:416-447 实测）：onContextMenu 派发前已 /dpiScale、
+// 坐标为 Logical 窗口坐标；页面区原点 x = Router::pageOriginX、y = 0
+// （本文件头注释）→ x 减页面原点、y 按同规则即可。
+// scrollOffsetY：仅当锚点基于「非滚动几何」的调用需要（如 4523e09 的
+// cardTop - scrollY 口径）；基于指针原坐标的调用一律传 0。
+struct MenuAnchor {
+    float x = 0.0f;
+    float y = 0.0f;
+};
+
+inline MenuAnchor menuAnchorForPointer(float windowX, float windowY,
+                                       float pageOriginX, float scrollOffsetY,
+                                       float dpiScale = 1.0f) {
+    return {windowToCompose(windowX, pageOriginX, dpiScale),
+            windowToCompose(windowY, 0.0f, dpiScale) - scrollOffsetY};
+}
+
 } // namespace core

@@ -82,6 +82,12 @@ struct ProfileListState {
     float profilesScrollOffset_ = 0.0f;
     // 引导条一次性标记（§6.4：会话内代理从未启动过才显示；内存态不持久化）
     bool proxyEverSeen_ = false;
+    // 列表右键菜单（UI 现代化 M1-5）：目标 profile id（0 = 无）+ 锚点
+    //（页面坐标，经 core::menuAnchorForPointer 统一换算）+ 开合标志
+    int64_t ctxProfileId_ = 0;
+    float ctxMenuX_ = 0.0f;
+    float ctxMenuY_ = 0.0f;
+    bool ctxMenuOpen_ = false;
 };
 
 // ============ 右栏：详情面板页签（三 pane）============
