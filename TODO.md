@@ -53,6 +53,25 @@
 - ✅ `5b0cd34` styledmenu dismiss rect + requestDismiss 按值参数防 UAF
 - **永不 push 到 origin（2026-09-28 用户决策）**：EUI-NEO 本地 main 领先 origin 82 个提交（2026-09-28 实测），已决策永不推送——origin/main 停在 v0.6.0，本地领先是长期状态、提交数只会继续增长，不再按「待 push」跟踪。
 
+### 10. About 页布局调整（2026-09-28 真机反馈）
+- ✅ **已完成**（`a97355b`）
+  - 内容区 720 → **1040**（`about_module.cpp` `kAboutContentW`），卡片宽 356 → **516**；最小窗 1330×845（页面宽 = 1330 − 侧边栏 208 = 1122）下左右各余 41px，居中不溢出
+  - 顶部留白 24 → **64**（= `spacingXXLarge` 40 + `spacingXLarge` 24，两档 token 叠加推导——单档 40 偏小、双档 80 越界草图 60-70 区间；非裸魔法数）
+  - hero 图标 48 → **56**（= `spacingXXLarge` + `spacingLarge`）；**页面标题字号仍是规范值 32px 未动**（CLAUDE.md「视觉规范」：页面标题 32 / 正文 15），「放大」观感由加宽 + 留白承担
+  - footer 不再跟卡底流式排，改**贴页面底部**（底边 = `screen.height` − 40），卡片与 footer 之间即呼吸区
+- **回归断言**：`tests/test_modules/test_ui_modern.cpp` `uiAboutLayout`（改前实测红：`hero.frame.y` = 24；改后绿）
+
+### 11. 设置页删除最外层卡片（`settings.body.bg`）
+- ✅ **已完成**（`a97355b`）：删 `settings_module.cpp` 里 M3-4 加的 `settings.body.gradient` stack 与其内 `settings.body.bg` 渐变底板（surface → surfaceElevated 垂直 + radiusLarge）——当日第一轮已删 9 卡 `cardFrame`，这块页面级底板就是用户眼中剩下的「最外层卡片」
+- ⚠️ **背景（此需求反复出现的根因，务必记住）**：用户**此前多次**提出该需求，但**从未进入本文件**（历史查证：仓库任何待办文档都查不到此条）→ 没落文档 = 没人执行 = 每次都丢失，用户只能反复提（原话「让你删除好多次了」）。**规矩：用户口述的需求当次就写进本文件**，否则同一需求会被反复提出
+- 删除后底色由主窗 `clearColor` 承担（off alpha=1 实色 / 半透 0.85 / 磨砂 0.55 + Acrylic，`settings_config.cpp:187-199`），符合 frost spec `docs/superpowers/specs/2026-09-22-eui-window-frost-design.md:53`「各模块页面要么靠 clearColor 当底、要么自铺不透明 surface 色」
+- **回归断言**：`uiModernSettingsBodyGradientRemoved`（反断言：`settings.body.bg` / `settings.body.gradient` 只要存在即红，并反证设置页仍在渲染，防「整页 compose 早退 → find 恒 nullptr」的假绿）
+
+### 12. 待定：同一套 M3-4 渐变底 pattern 的残留（本次未动）
+- `md.preview.bg`（`src/module_markdown/markdown_module.cpp:1438`）是同 pattern **最后一处**；用户本次只要求设置页 → 是否一并删待用户拍板
+- spec 漂移：`docs/superpowers/specs/2026-09-28-about-page-design.md:118`「主内容区 720px 宽」与 `:163`「`kAboutContentW = 720.0f`」仍写旧值（实现已 1040）；本次按范围纪律未改 spec
+- 陈旧注释：`src/ui_kit/card.cpp:21` 仍引用已删的 `settings.body.bg`（ui_kit 不在本次改动范围）
+
 ---
 
 ## macOS 构建环境（2026-09-28 本机实测）
