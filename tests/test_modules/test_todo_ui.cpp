@@ -832,7 +832,10 @@ REGISTER_TEST(todo_ui_drag_insert_position,
         DOCTEST_CHECK_EQ(ts.value()[3].title, std::string("再移动任务"));  // 追加列尾
     }
 
-    // 场景 3：同列拖拽不预览（hoverRow=-1）→ 无占位条、松手取消
+    // 场景 3（2026-09-28 缺陷 3 起语义）：同列拖拽现在**受支持**——悬停行
+    // 照常预览（占位条进源列），落点仍在自身缝位（row 2 = 甲 与 乙 之间的
+    // 缝，含被拖卡自身的行序）→ 换算后插回原位 = no-op：顺序不变、不落库。
+    // 旧约定「同列拖拽 = 取消、不预览」与旧断言（无占位条）已废。
     {
         composeLayout();
         const auto* card = ui.find("todo.col.5.card.1.bg");  // 甲（同列拖）
@@ -843,10 +846,14 @@ REGISTER_TEST(todo_ui_drag_insert_position,
         DOCTEST_REQUIRE(srcBg != nullptr);
         core::dsl::DragEvent ev;
         ev.x = srcBg->frame.x + 40.0f;
-        ev.y = srcBg->frame.y + 56.0f + 200.0f;
+        ev.y = srcBg->frame.y + 56.0f + 190.0f;  // relY=190 ∈ 卡 2 区间 → row 2
         card->onDrag(ev);
         composeLayout();
-        DOCTEST_CHECK(ui.find("todo.col.5.dropbar") == nullptr);  // 同列 = 取消，不预览
+        const auto* dropBar = ui.find("todo.col.5.dropbar");
+        DOCTEST_REQUIRE(dropBar != nullptr);  // 同列 = 重排：源列也预览
+        const auto* card2Wrap = ui.find("todo.col.5.card.2.wrap");
+        DOCTEST_REQUIRE(card2Wrap != nullptr);
+        DOCTEST_CHECK_EQ(dropBar->frame.y, card2Wrap->frame.y - 8.0f);  // 落在缝里
         eui::PointerEvent up;
         up.x = ev.x;
         up.y = ev.y;
@@ -861,7 +868,79 @@ REGISTER_TEST(todo_ui_drag_insert_position,
         auto ts = env.svc->listTasks(dst.value().id);
         DOCTEST_REQUIRE(ts.isOk());
         DOCTEST_REQUIRE_EQ(ts.value().size(), static_cast<size_t>(4));  // 未动
-        DOCTEST_CHECK_EQ(ts.value()[1].title, std::string("甲"));
+        DOCTEST_CHECK_EQ(ts.value()[1].title, std::string("甲"));  // 插回原位 = no-op
+    }
+
+    // 场景 4（2026-09-28 缺陷 3 主用例）：同列拖到列尾 → 甲 移到最末
+    // 列序此刻 = [被移动任务, 甲, 乙, 再移动任务]；甲 ownIdx=1，悬停行 4
+    //（relY ≥ 3*92+84 = 360 → 钳到 taskCount=4）→ 换算行 3（摘出自身后
+    // 的列尾）→ 落库后 = [被移动任务, 乙, 再移动任务, 甲]
+    {
+        composeLayout();
+        const auto* card = ui.find("todo.col.5.card.1.bg");  // 甲
+        DOCTEST_REQUIRE(card != nullptr);
+        eui::PointerEvent pe;
+        card->onPress(pe, boundsOf(card));
+        const auto* srcBg = ui.find("todo.col.5.bg");
+        DOCTEST_REQUIRE(srcBg != nullptr);
+        core::dsl::DragEvent ev;
+        ev.x = srcBg->frame.x + 40.0f;
+        ev.y = srcBg->frame.y + 56.0f + 400.0f;  // 列尾空白区 → row 4（追加位）
+        card->onDrag(ev);
+        composeLayout();
+        const auto* dropBar = ui.find("todo.col.5.dropbar");
+        const auto* card3Wrap = ui.find("todo.col.5.card.3.wrap");
+        DOCTEST_REQUIRE(dropBar != nullptr);
+        DOCTEST_REQUIRE(card3Wrap != nullptr);
+        DOCTEST_CHECK_EQ(dropBar->frame.y, card3Wrap->frame.y + 84.0f);  // 末卡底缝
+        eui::PointerEvent up;
+        up.x = ev.x;
+        up.y = ev.y;
+        up.action = eui::PointerAction::Release;
+        const auto* rel = ui.find("todo.col.5.card.1.bg");
+        DOCTEST_REQUIRE(rel != nullptr);
+        rel->onRelease(up, eui::Rect{});
+    }
+    {
+        auto ts = env.svc->listTasks(dst.value().id);
+        DOCTEST_REQUIRE(ts.isOk());
+        DOCTEST_REQUIRE_EQ(ts.value().size(), static_cast<size_t>(4));
+        DOCTEST_CHECK_EQ(ts.value()[0].title, std::string("被移动任务"));
+        DOCTEST_CHECK_EQ(ts.value()[1].title, std::string("乙"));
+        DOCTEST_CHECK_EQ(ts.value()[2].title, std::string("再移动任务"));
+        DOCTEST_CHECK_EQ(ts.value()[3].title, std::string("甲"));  // 同列重排真落库
+    }
+
+    // 场景 5：同列拖拽但指针在**列外**（列间隙）松手 → target = -1 → 取消
+    //（「拖出列外松手 = 取消」语义保持；列外也不预览占位条）
+    // 列序此刻 = [被移动任务, 乙, 再移动任务, 甲]；乙 ownIdx=1
+    {
+        composeLayout();
+        const auto* card = ui.find("todo.col.5.card.1.bg");  // 乙
+        DOCTEST_REQUIRE(card != nullptr);
+        eui::PointerEvent pe;
+        card->onPress(pe, boundsOf(card));
+        const auto* srcBg = ui.find("todo.col.5.bg");
+        DOCTEST_REQUIRE(srcBg != nullptr);
+        core::dsl::DragEvent ev;
+        ev.x = srcBg->frame.x - 8.0f;  // 列 4 与列 5 之间的列间隙
+        ev.y = srcBg->frame.y + 56.0f + 400.0f;
+        card->onDrag(ev);
+        composeLayout();
+        DOCTEST_CHECK(ui.find("todo.col.5.dropbar") == nullptr);  // 列外不预览
+        eui::PointerEvent up;
+        up.x = ev.x;
+        up.y = ev.y;
+        up.action = eui::PointerAction::Release;
+        const auto* rel = ui.find("todo.col.5.card.1.bg");
+        DOCTEST_REQUIRE(rel != nullptr);
+        rel->onRelease(up, eui::Rect{});
+    }
+    {
+        auto ts = env.svc->listTasks(dst.value().id);
+        DOCTEST_REQUIRE(ts.isOk());
+        DOCTEST_REQUIRE_EQ(ts.value().size(), static_cast<size_t>(4));  // 未动
+        DOCTEST_CHECK_EQ(ts.value()[1].title, std::string("乙"));
     }
 
     mod->onStop();
@@ -987,6 +1066,62 @@ REGISTER_TEST(todo_ui_card_inset_and_dropbar_width,
     }
 
     mod->onStop();
+    return true;
+})
+
+// ---- 2026-09-28 真机缺陷 3 纯函数：同列重排行号换算 + 落库插入位 ----
+REGISTER_TEST(todo_ui_reorder_pure_helpers,
+              "todo_ui: 同列重排——行号换算与插入位（纯函数）", {
+    using module::todo::ui::computeReorderInsertPosition;
+    using module::todo::ui::computeReorderRow;
+    // 列 = [A(pos 0), B(pos 1), C(pos 2)]，被拖卡 ownIndex = 0（A）
+    // 行号语义（含自身）：0=首卡前 1=A|B 缝 2=B|C 缝 3=列尾
+    DOCTEST_CHECK(!computeReorderRow(0, 0).has_value());  // 首卡前 = 原位
+    DOCTEST_CHECK(!computeReorderRow(0, 1).has_value());  // 自己下面缝 = 原位
+    DOCTEST_REQUIRE(computeReorderRow(0, 2).has_value());
+    DOCTEST_CHECK_EQ(*computeReorderRow(0, 2), 1);        // 插到 C 前
+    DOCTEST_REQUIRE(computeReorderRow(0, 3).has_value());
+    DOCTEST_CHECK_EQ(*computeReorderRow(0, 3), 2);        // 列尾追加
+    // ownIndex = 1（B）：上行插到 A 前；下行（row 3）= 列尾
+    DOCTEST_REQUIRE(computeReorderRow(1, 0).has_value());
+    DOCTEST_CHECK_EQ(*computeReorderRow(1, 0), 0);
+    DOCTEST_CHECK(!computeReorderRow(1, 1).has_value());
+    DOCTEST_CHECK(!computeReorderRow(1, 2).has_value());  // B|C 缝 = 原位（B 就在缝上）
+    DOCTEST_REQUIRE(computeReorderRow(1, 3).has_value());
+    DOCTEST_CHECK_EQ(*computeReorderRow(1, 3), 2);
+    // 退化输入 → nullopt
+    DOCTEST_CHECK(!computeReorderRow(-1, 2).has_value());
+    DOCTEST_CHECK(!computeReorderRow(0, -1).has_value());
+
+    // 落库插入位：行序**排除被拖卡自身**（moveTask 先摘出再插入）
+    std::vector<module::todo::Task> tasks = {
+        makeTask(1, 10, 0),   // A
+        makeTask(2, 10, 1),   // B
+        makeTask(3, 10, 2),   // C
+        makeTask(4, 20, 0),   // 另一列，不干扰
+    };
+    // 拖 A（id=1）：行 1（摘出自身后）= 插到 C 前 → C 的 position = 2
+    DOCTEST_CHECK_EQ(computeReorderInsertPosition(tasks, 10, 1, 1), 2);
+    // 行 2（列尾）→ 排除自身后 max position（C=2）+ 1 = 3
+    DOCTEST_CHECK_EQ(computeReorderInsertPosition(tasks, 10, 1, 2), 3);
+    // 行 0 → A 的插入位 = 摘出自身后首个任务 B 的 position = 1
+    DOCTEST_CHECK_EQ(computeReorderInsertPosition(tasks, 10, 1, 0), 1);
+    // 带空洞 position（moveTask 真实形态）：拖 C（id=3）
+    std::vector<module::todo::Task> gappy = {
+        makeTask(11, 30, 0),   // D
+        makeTask(12, 30, 2),   // E
+        makeTask(13, 30, 5),   // F（被拖）
+    };
+    DOCTEST_CHECK_EQ(computeReorderInsertPosition(gappy, 30, 13, 0), 0);  // 插到 D 前
+    DOCTEST_CHECK_EQ(computeReorderInsertPosition(gappy, 30, 13, 1), 2);  // 插到 E 前
+    DOCTEST_CHECK_EQ(computeReorderInsertPosition(gappy, 30, 13, 2), 3);  // 列尾 = max(0,2)+1
+    // 越界行号钳到列尾；空列（排除自身后无人）→ 0
+    DOCTEST_CHECK_EQ(computeReorderInsertPosition(tasks, 10, 1, 99), 3);
+    DOCTEST_CHECK_EQ(computeReorderInsertPosition(tasks, 10, 1, -1), 3);
+    // 单卡列（排除自身后无人）→ 0（该形态经 computeReorderRow 恒为 no-op，
+    // 走不到落库；此处只锁函数自身的退化行为不越界）
+    std::vector<module::todo::Task> solo = {makeTask(9, 40, 0)};
+    DOCTEST_CHECK_EQ(computeReorderInsertPosition(solo, 40, 9, 0), 0);
     return true;
 })
 

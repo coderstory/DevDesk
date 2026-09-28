@@ -453,17 +453,44 @@ public:
             static_cast<int>(colTasks.size()));
     }
 
-    // 松手收尾：目标无效或等于源列 → 取消（卡片回原位）；
-    // 否则按稳定 taskId 落库——UI 整改 13：有悬停行按行插入
-    //（computeInsertPosition），无（搜索态等）追加列尾。
+    // 松手收尾（2026-09-28 真机缺陷 3 后语义）：
+    //   · 目标列外（target < 0，含指针拖出板面/落列间隙）→ 取消，卡片回原位；
+    //   · 跨列（target != from）→ 按稳定 taskId 落库：有悬停行按行插入
+    //     （computeInsertPosition），无（搜索态等）追加列尾（UI 整改 13 原语义）；
+    //   · 同列（target == from）→ 列内上下重排：悬停行经 computeReorderRow
+    //     换算成「摘出自身后」的行序，computeReorderInsertPosition 取落库位；
+    //     插回原位（顺序不变）→ no-op 不落库；无悬停行（搜索态）→ 取消
+    //     （保持"搜索态不重排"的旧行为）。真·原地松手/微小位移在框架侧已被
+    //     dragThreshold 门控（不派发 onDrag → drag_.active 未置位），到不了这里。
     void finishDrag(int target) {
         const int64_t taskId = drag_.taskId;
         const int from = drag_.fromColIndex;
         const int hoverRow = drag_.hoverRow;
         drag_ = DragState{};  // 先复位（拖拽中间态结束，无论成败）
-        if (target < 0 || target == from) return;
-        if (target >= static_cast<int>(columns_.size())) return;
+        if (target < 0 || target >= static_cast<int>(columns_.size())) return;
         const auto& dst = columns_[static_cast<size_t>(target)];
+        if (target == from) {
+            if (hoverRow < 0) return;  // 搜索态同列拖 = 取消（旧语义）
+            // ownIdx 现算（不吃按下时的 cardIndex：拖拽途中列数据可能被
+            // 外部操作改动，悬停行的坐标系须与当下 tasks_ 一致）
+            const auto colTasks = ui::tasksInColumn(tasks_, dst.id);
+            int ownIdx = -1;
+            for (size_t i = 0; i < colTasks.size(); ++i) {
+                if (colTasks[i]->id == taskId) {
+                    ownIdx = static_cast<int>(i);
+                    break;
+                }
+            }
+            if (ownIdx < 0) return;  // 拖拽卡已不在该列（数据变更边缘态）→ 取消
+            const auto row = ui::computeReorderRow(ownIdx, hoverRow);
+            if (!row.has_value()) return;  // 插回原位：顺序不变，不写库不提示
+            const int newPos =
+                ui::computeReorderInsertPosition(tasks_, dst.id, taskId, *row);
+            if (doMoveTask(taskId, dst.id, newPos)) {
+                setStatus("已调整顺序");
+            }
+            return;
+        }
         const std::string title = dst.title;
         const int newPos = (hoverRow >= 0)
             ? ui::computeInsertPosition(tasks_, dst.id, hoverRow)
@@ -757,8 +784,10 @@ private:
         // 取"当下"值会跨帧混用（tech-debt B，见 cardPressed 处注释）
         float pressScrollOffset = 0.0f;
         int hoverColIndex = -1;    // 拖动中指针所在列（-1 = 列外，松手取消）
-        // UI 整改 13：拖动中指针所在目标列行（-1 = 不预览；仅跨列 + 非搜索
-        // 态置位）。只驱动占位条视觉 + 落库插入位（finishDrag 快照后复位）
+        // 拖动中指针所在目标列行（-1 = 不预览；跨列与同列都置位，仅搜索态
+        // 不置位——渲染行号与全量行号不同源）。驱动占位条视觉 + 落库插入位
+        //（finishDrag 快照后复位；同列经 computeReorderRow 换算成摘出自身
+        // 后的行序）
         int hoverRow = -1;
         // 跟手副本（2026-09-28）：按下点起的指针**累计**位移（指针像素空间，
         // DragEvent::totalX/totalY——框架按下时记锚点、每次移动给累计值）。
@@ -842,10 +871,11 @@ private:
             drag_.totalY = totalY;
             const int target = hitDropColumn(x, y);
             drag_.hoverColIndex = target;
-            // UI 整改 13：插入行预览——仅跨列 + 非搜索态（搜索态保持旧
-            // 「追加列尾」语义，行号不参与落库）；同列拖拽 = 取消，不预览
-            drag_.hoverRow = (target >= 0 && target != drag_.fromColIndex &&
-                              searchQuery_.empty())
+            // 插入行预览：跨列与同列都置位（2026-09-28 真机缺陷 3——同列 =
+            // 上下重排，旧「同列拖拽 = 取消」约定已废，条画在悬停缝上）；
+            // 搜索态不置位（渲染行 ≠ 全量列行，行号不可用 → 跨列回落
+            // 「追加列尾」、同列回落「取消」，与旧语义一致）
+            drag_.hoverRow = (target >= 0 && searchQuery_.empty())
                 ? hitDropRow(target, x, y)
                 : -1;
         },
@@ -857,8 +887,8 @@ private:
             // 跨模块剩余审计修（2026-09-28）：落位淡入不再设标志——列内容容器
             // opacity 直接门控 drag_.active（看板单元内），跟手结束（落库或
             // 取消）active 归 false 的那一帧起 0.6→1.0 平滑淡回
-            // 取消分支：drag_ = DragState{} 天然清 active；同列拖拽（取消）
-            // 也走 finishDrag 统一收口
+            // 取消分支：drag_ = DragState{} 天然清 active；同列重排（2026-09-28
+            // 真机缺陷 3 起为受支持操作）也走 finishDrag 统一收口
             const int target = released ? hitDropColumn(x, y) : -1;
             finishDrag(target);
         },

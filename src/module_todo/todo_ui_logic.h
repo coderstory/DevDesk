@@ -446,6 +446,46 @@ inline int computeInsertPosition(const std::vector<Task>& tasks,
     return colTasks[static_cast<size_t>(rowIndex)]->position;
 }
 
+// ---- 同列上下重排（2026-09-28 真机缺陷 3）----
+// 旧约定「同列拖拽 = 取消」改为「同列 = 上下重排」后，落库位置要过两道换算：
+//
+// ① 行号换算（本函数）：dragDropRowIndex 给的行号是**含被拖卡自身**的行序
+//    （预览条就画在那个缝里，用户看到什么就是什么）；落库要的是「摘出自身
+//    后」的行序——row > ownIndex 时减 1（自身之后所有卡的行号前移一位）。
+//    换算后 == ownIndex = 插回原位（顺序不变）→ nullopt，调用方跳过落库
+//    （不写无谓 position，也不出"已移动"提示）。真·原地松手 / 微小位移在
+//    框架侧已被 dragThreshold 门控（不派发 onDrag → 不进本换算）。
+inline std::optional<int> computeReorderRow(int ownIndex, int rowIndex) {
+    if (ownIndex < 0 || rowIndex < 0) return std::nullopt;
+    const int adjusted = rowIndex > ownIndex ? rowIndex - 1 : rowIndex;
+    if (adjusted == ownIndex) return std::nullopt;
+    return adjusted;
+}
+
+// ② 落库位置（本函数）：语义同 computeInsertPosition（「插到第 row 个任务
+//    之前」），但行序**排除被拖卡自身**——moveTask 先把它摘出（position=-1）
+//    再插入，自身出现在行序里会让插入位整体错一格。
+//    rowIndex 越界（含列尾追加位）→ 排除自身后的 max position + 1。
+inline int computeReorderInsertPosition(const std::vector<Task>& tasks,
+                                        int64_t columnId, int64_t draggedTaskId,
+                                        int rowIndex) {
+    std::vector<const Task*> others;
+    for (const auto& t : tasks) {
+        if (t.columnId == columnId && t.id != draggedTaskId) others.push_back(&t);
+    }
+    std::sort(others.begin(), others.end(), [](const Task* a, const Task* b) {
+        return a->position < b->position;
+    });
+    if (rowIndex < 0 || static_cast<size_t>(rowIndex) >= others.size()) {
+        int maxPos = -1;
+        for (const Task* t : others) {
+            if (t->position > maxPos) maxPos = t->position;
+        }
+        return maxPos + 1;
+    }
+    return others[static_cast<size_t>(rowIndex)]->position;
+}
+
 // 按语义标记找列 id（'done'=已完成列 / 'todo'=待办列；找不到返回 0）
 // 不按标题找：用户重命名列后标题不可靠（migration v4 起 kind 是权威）
 inline int64_t findColumnByKind(const std::vector<Column>& columns,
