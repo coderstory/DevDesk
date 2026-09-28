@@ -201,7 +201,8 @@ void drawNewColumnDialog(eui::Ui& ui, const eui::Screen& screen,
 // 写操作（详情/重命名/删除确认/移动/改色），不是菜单自身的状态。
 void drawContextMenu(eui::Ui& ui, const eui::Screen& screen,
                      const core::theme::Tokens& t, DialogSet& d,
-                     const DialogHost& host) {
+                     const DialogHost& host,
+                     const std::map<int64_t, float>& columnScrolls) {
     const auto themeTokens = core::theme::componentTokens(t);
     std::vector<components::ContextMenuItem> items;
     if (d.ctx.taskId != 0) {
@@ -235,8 +236,15 @@ void drawContextMenu(eui::Ui& ui, const eui::Screen& screen,
     const BoardGeom g = boardGeom(screen.width, host.columns->size(), t);
     const float menuW = 190.0f;
     const float x = cardLeft(g, d.ctx.columnIndex) + g.colW * 0.5f - menuW * 0.5f;
+    // 卡片在列内 scrollView 中按 columnScrollOffset 上移（见 todo_ui_board.cpp
+    // drawColumn：offset 之外滚动区起点在 kColumnHeaderHeight）——菜单 y 必须减去
+    // 同一偏移才落在卡片实际可见位置；列头菜单（cardIndex < 0）在滚动区外不受影响。
+    const float scrollY = d.ctx.cardIndex >= 0
+        ? columnScrollOffset(*host.columns, columnScrolls,
+                             static_cast<size_t>(d.ctx.columnIndex))
+        : 0.0f;
     const float y = d.ctx.cardIndex >= 0
-        ? cardTop(g, d.ctx.cardIndex) + kCardHeight + 4.0f
+        ? cardTop(g, d.ctx.cardIndex) + kCardHeight + 4.0f - scrollY
         : g.boardTop + 4.0f;
 
     components::contextMenu(ui, "todo.ctx")

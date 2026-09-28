@@ -3474,8 +3474,14 @@ private:
                              const core::theme::Tokens& t,
                              const components::theme::ThemeColorTokens& componentTheme) {
         (void)t;
-        // 未右键过时无目标；常驻构建（关闭态由组件内部 opacity/disabled 收起）
-        if (ctxMenuPath_.empty()) return;
+        // 未右键过时无目标；常驻构建（关闭态由组件内部 opacity/disabled 收起）。
+        // 无目标时跳过 build → 组件不渲染全屏 dismiss 层，点击外部无处触发
+        // onOpenChange(false)，ctxMenuOpen_ 会残留 true 造成「隐形菜单卡开」——
+        // 先强制置关再返回，保证 open 标志与「存在右键目标」同生共灭。
+        if (ctxMenuPath_.empty()) {
+            ctxMenuOpen_ = false;
+            return;
+        }
         components::contextMenu(ui, "md.ctx")
             .open(ctxMenuOpen_)
             .screen(screen.width, screen.height)
