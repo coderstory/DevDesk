@@ -1,5 +1,6 @@
 // src/core/paths_macos.cpp
-// macOS 平台实现：platformDefaultAppDataDir = ~/Library/Application Support/DevDesk；
+// macOS 平台实现：platformDefaultAppDataDir = ~/DevDesk（不再是系统惯例的
+// ~/Library/Application Support/DevDesk，理由见 paths.h）；
 // executableDir = _NSGetExecutablePath 所在目录（.app 内为 Contents/MacOS）
 #include "paths.h"
 
@@ -33,9 +34,11 @@ fs::path executableDir() {
 // 平台**默认**数据根（DEVDESK_DATA_ROOT 覆盖与优先级见 paths.h / paths.cpp；
 // 业务代码不要直接调用本函数）
 fs::path platformDefaultAppDataDir() {
+    // <用户主目录>/DevDesk —— 主目录取平台惯例的 HOME（与同文件
+    // claudeSettingsFile 同源）；不硬编码 /Users/<名>，也不拿 cwd 兜底
     const char* home = std::getenv("HOME");
     fs::path base(home ? home : "");
-    return base / "Library" / "Application Support" / "DevDesk";
+    return base / "DevDesk";
 }
 
 fs::path claudeSettingsFile() {

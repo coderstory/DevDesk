@@ -1,5 +1,6 @@
 // src/core/paths_win.cpp
-// Windows 平台实现：platformDefaultAppDataDir = %APPDATA%/DevDesk；
+// Windows 平台实现：platformDefaultAppDataDir = %USERPROFILE%/DevDesk（不再是
+// %APPDATA%/DevDesk，理由见 paths.h）；
 // executableDir = GetModuleFileNameW（宽字符）取 exe 所在目录
 #include "paths.h"
 
@@ -54,8 +55,11 @@ fs::path executableDir() {
 // 平台**默认**数据根（DEVDESK_DATA_ROOT 覆盖与优先级见 paths.h / paths.cpp；
 // 业务代码不要直接调用本函数）
 fs::path platformDefaultAppDataDir() {
-    const char* appdata = std::getenv("APPDATA");
-    fs::path base(appdata ? appdata : "");
+    // <用户主目录>/DevDesk —— Windows 的用户主目录取 USERPROFILE（与同文件
+    // claudeSettingsFile 同源）。刻意不用 %APPDATA%：那正是本次要搬离的系统
+    // 惯例位置（隐藏目录）；也不用 HOME——Windows 上它未必存在（MSYS 之外不保证）
+    const char* profile = std::getenv("USERPROFILE");
+    fs::path base(profile ? profile : "");
     return base / "DevDesk";
 }
 

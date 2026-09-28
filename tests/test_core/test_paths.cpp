@@ -30,6 +30,32 @@ bool isUnderOrEqual(const std::filesystem::path& p,
            s[r.size()] == '/';
 }
 
+// 平台「用户主目录」环境变量名（与实现同源：Windows=USERPROFILE，其余=HOME；
+// 见 paths_win.cpp / paths_macos.cpp）。写成函数是因为 REGISTER_TEST 的用例体
+// 是宏实参——#if 直接写进宏实参是 UB（-Wembedded-directive，本仓库 -Werror 拦停）
+const char* homeEnvNameForTest() {
+#if defined(_WIN32)
+    return "USERPROFILE";
+#else
+    return "HOME";
+#endif
+}
+
+// 旧（系统惯例）数据根：macOS/Linux = <home>/Library/Application Support/DevDesk
+// 与 <home>/.local/share/DevDesk，Windows = <roving>/DevDesk（%APPDATA%）。
+// 注意 macOS 的旧根挂在 home 下、Windows 的旧根挂在 APPDATA 下——两个入参都传，
+// 各平台只用自己的那个
+std::filesystem::path legacyDefaultAppDataDirForTest(
+    const std::filesystem::path& home, const std::filesystem::path& roving) {
+#if defined(_WIN32)
+    (void)home;
+    return roving / "DevDesk";
+#else
+    (void)roving;
+    return home / "Library" / "Application Support" / "DevDesk";
+#endif
+}
+
 // 「全部应用数据路径」派生清单逐条断言：新增一条数据路径时在这里登记——
 // 漏登记等于新路径不受数据根管辖，正是本审计项要堵的缝
 bool allDataPathsUnder(const std::filesystem::path& root) {
@@ -244,5 +270,73 @@ REGISTER_TEST(paths_claude_config_outside_data_root,
     DOCTEST_CHECK(claude.string().find(".claude") != std::string::npos);
     // 数据根在同一进程内确实生效（排除「只是没读环境变量」的假象）
     DOCTEST_CHECK_EQ(normPath(core::paths::appDataDir()), normPath(tempRoot));
+    return true;
+})
+
+// ⑤ 平台默认根 = <用户主目录>/DevDesk（2026-09-28 决策：不再用系统惯例位置）。
+// 断言重点在「恰好主目录下一级」——防的就是回落路径里还留着
+// Library/Application Support 或 AppData/Roaming 中间层这类半吊子改动。
+// 主目录变量与实现同源（macOS/POSIX 是 HOME、Windows 是 USERPROFILE），
+// 故三平台共用同一套断言（与 test_support::AppDataEnv 的隔离口径一致）。
+REGISTER_TEST(paths_default_root_home_devdesk,
+              "paths: 平台默认根 = <用户主目录>/DevDesk（不再用系统惯例位置）", {
+    const char* homeEnv = std::getenv(homeEnvNameForTest());
+    DOCTEST_REQUIRE(homeEnv != nullptr);
+    const std::filesystem::path home(homeEnv);
+    const std::filesystem::path def = core::paths::platformDefaultAppDataDir();
+    DOCTEST_CHECK_EQ(normPath(def), normPath(home / "DevDesk"));
+    DOCTEST_CHECK_EQ(def.filename().string(), std::string("DevDesk"));
+    // 恰好一级：parent == 用户主目录（不是 <home>/Library/Application Support 等）
+    DOCTEST_CHECK_EQ(normPath(def.parent_path()), normPath(home));
+    return true;
+})
+
+// ⑥ 新旧根互不影响（本版不做迁移，2026-09-28 用户决策）：新根不存在时
+// appDataDir() 直接返回新路径（纯路径解析、不创建目录）；旧（系统惯例）位置
+// 即便有数据也不被读取、不被删除。全程用临时「用户主目录」隔离——绝不碰
+// 真实 ~/DevDesk，也绝不碰真实旧位置（Windows 旧根来源 APPDATA 同样指到临时目录）。
+REGISTER_TEST(paths_default_root_no_legacy_touch,
+              "paths: 默认根=<home>/DevDesk：不创建旧位置、不读不删旧数据", {
+    const test_support::TempDir fakeHome("paths_fake_home");
+    const test_support::TempDir fakeRoving("paths_fake_roving"); // Windows 旧根所在
+    // 数据根与细粒度单项覆盖一律清空：只留平台默认根这一档
+    const test_support::ScopedEnv rootEnv("DEVDESK_DATA_ROOT", "");
+    const test_support::ScopedEnv cfgEnv("DEVDESK_CONFIG_PATH", "");
+    const test_support::ScopedEnv notesEnv("DEVDESK_NOTES_DIR", "");
+    const test_support::ScopedEnv petsEnv("DEVDESK_PETS_DIR", "");
+    // 用户主目录与（Windows 旧根来源）APPDATA 都指到临时目录；非 Windows 上
+    // APPDATA 无消费者，设了也无害
+    const test_support::ScopedEnv homeEnv(homeEnvNameForTest(),
+                                          fakeHome.path.string());
+    const test_support::ScopedEnv rovingEnv("APPDATA", fakeRoving.path.string());
+    const std::filesystem::path legacy =
+        legacyDefaultAppDataDirForTest(fakeHome.path, fakeRoving.path);
+    const std::filesystem::path newRoot = fakeHome.path / "DevDesk";
+
+    // 新根不存在 → appDataDir()/configFile() 仍返回新路径（纯解析，不要求存在，
+    // 也不产生副作用：新旧位置都还没被创建）
+    std::error_code ec;
+    DOCTEST_CHECK_FALSE(std::filesystem::exists(newRoot, ec));
+    DOCTEST_CHECK_EQ(normPath(core::paths::appDataDir()), normPath(newRoot));
+    DOCTEST_CHECK_EQ(normPath(core::paths::configFile()),
+                     normPath(newRoot / "config.json"));
+    DOCTEST_CHECK_FALSE(std::filesystem::exists(newRoot, ec));
+    DOCTEST_CHECK_FALSE(std::filesystem::exists(legacy, ec));
+
+    // 旧位置种一份「像用户数据」的文件（config + 笔记）：新根路径的解析与建目录
+    // 都不读它、不删它（迁移不做，旧数据原样留在原处）
+    DOCTEST_CHECK(test_support::writeTextFile(legacy / "config.json",
+                                              "{\"legacy\":true}"));
+    DOCTEST_CHECK(test_support::writeTextFile(legacy / "notes" / "old.md",
+                                              "# old note"));
+    DOCTEST_CHECK_EQ(normPath(core::paths::configFile()),
+                     normPath(newRoot / "config.json"));
+    core::paths::ensureDirectoriesExist(); // 建的是新根，不是旧位置
+    DOCTEST_CHECK(std::filesystem::exists(newRoot, ec));
+    DOCTEST_CHECK(std::filesystem::exists(legacy, ec));
+    DOCTEST_CHECK_EQ(fakeHome.read(legacy / "config.json"),
+                     std::string("{\"legacy\":true}"));
+    DOCTEST_CHECK_EQ(fakeHome.read(legacy / "notes" / "old.md"),
+                     std::string("# old note"));
     return true;
 })

@@ -1,5 +1,6 @@
 // src/core/paths_posix.cpp
-// 其他平台（Linux 等）实现：platformDefaultAppDataDir = ~/.local/share/DevDesk；
+// 其他平台（Linux 等）实现：platformDefaultAppDataDir = ~/DevDesk（不再是 XDG 的
+// ~/.local/share/DevDesk，理由见 paths.h）；
 // executableDir = /proc/self/exe 所在目录（无 /proc 的平台返回空 path）
 #include "paths.h"
 
@@ -34,9 +35,11 @@ fs::path executableDir() {
 // 平台**默认**数据根（DEVDESK_DATA_ROOT 覆盖与优先级见 paths.h / paths.cpp；
 // 业务代码不要直接调用本函数）
 fs::path platformDefaultAppDataDir() {
+    // <用户主目录>/DevDesk —— 主目录取 POSIX 惯例的 HOME（与同文件
+    // claudeSettingsFile 同源）
     const char* home = std::getenv("HOME");
     fs::path base(home ? home : "");
-    return base / ".local" / "share" / "DevDesk";
+    return base / "DevDesk";
 }
 
 fs::path claudeSettingsFile() {

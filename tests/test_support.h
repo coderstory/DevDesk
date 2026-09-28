@@ -178,40 +178,47 @@ struct TempDir {
 
 // ==================== 3) 数据根隔离 ====================
 // RAII：把「应用数据根目录」重定向到临时目录（原 test_settings.cpp
-// AppDataEnv 同款）——日志路径 core::paths::logFile() 的平台来源不同：
-//   Windows: %APPDATA%/DevDesk/logs/devdesk.log   （paths_win.cpp）
-//   macOS:   $HOME/Library/Application Support/DevDesk/logs/devdesk.log
-//   Linux:   $HOME/.local/share/DevDesk/logs/devdesk.log
-// 只重定向 APPDATA 的话，macOS/Linux 上用例会把自造日志写进**真实**用户
-// 目录；故两套变量都在此隔离（Windows 侧只动 APPDATA，行为与从前一字不差）。
+// AppDataEnv 同款）——数据根挂在**平台用户主目录**下（2026-09-28 起，
+// 不再是系统惯例位置），日志路径 core::paths::logFile() 的平台来源是：
+//   Windows: %USERPROFILE%/DevDesk/logs/devdesk.log   （paths_win.cpp）
+//   macOS:   $HOME/DevDesk/logs/devdesk.log           （paths_macos.cpp）
+//   Linux:   $HOME/DevDesk/logs/devdesk.log           （paths_posix.cpp）
+// 所以要重定向的是「用户主目录」变量：Windows 为 USERPROFILE、macOS/Linux 为
+// HOME（Windows 侧另把 APPDATA 一并指到临时目录，沿用旧行为——历史实现经它
+// 派生数据根，重定向它无可害）。不重定向主目录的话，用例会把自造数据写进
+// **真实**用户目录；故两套变量都在此隔离。
 // 析构恢复原值，fail-fast 早退也不影响后续用例。
 struct AppDataEnv {
     std::string saved;
-#if !defined(_WIN32)
-    std::string savedHome; // macOS/Linux 的日志路径来源是 $HOME
-#endif
+    std::string savedHome; // 平台用户主目录：Windows=USERPROFILE、其余=HOME
     std::filesystem::path dir;
 
     explicit AppDataEnv(const std::string& tag) {
         const char* cur = std::getenv("APPDATA");
         saved = cur ? cur : "";
-#if !defined(_WIN32)
+#if defined(_WIN32)
+        const char* curHome = std::getenv("USERPROFILE");
+#else
         const char* curHome = std::getenv("HOME");
-        savedHome = curHome ? curHome : "";
 #endif
+        savedHome = curHome ? curHome : "";
         dir = test_temp::tempPath("devdesk_test_settings_appdata_" + tag);
         std::error_code ec;
         std::filesystem::remove_all(dir, ec);
         std::filesystem::create_directories(dir, ec);
         setEnvVar("APPDATA", dir.string());
-#if !defined(_WIN32)
+#if defined(_WIN32)
+        setEnvVar("USERPROFILE", dir.string());
+#else
         setEnvVar("HOME", dir.string());
 #endif
     }
 
     ~AppDataEnv() {
         setEnvVar("APPDATA", saved);
-#if !defined(_WIN32)
+#if defined(_WIN32)
+        setEnvVar("USERPROFILE", savedHome);
+#else
         setEnvVar("HOME", savedHome);
 #endif
         std::error_code ec;
