@@ -173,6 +173,11 @@ public:
         harvestTestResult();  // 后台「测试连通」结果回 UI（每帧轮询）
         drawToast(ui, screen, themeTokens);
 
+        // 列表右键菜单（UI 现代化 M1-5）：画在弹窗之上（同 todo 的
+        // drawContextMenu 位置——组件自身管理 zIndex）
+        drawProfileContextMenu(ui, screen, themeTokens, state_.list, profiles,
+                               listActions());
+
         LOG_DEBUG("Claude 模块 compose 完成");
     }
 
@@ -281,6 +286,19 @@ private:
         a.onImportCurrent = [this] {
             startImportCurrentConfig(state_.form, state_.import, formHooks());
         };
+        // 右键菜单动作（UI 现代化 M1-5）：与 detailActions 既有按钮回调
+        // 同源的最小委托（编辑=openEditForm / 复制=doDuplicate /
+        // 删除=确认弹窗 / 设为当前=doSetActive），不新写业务逻辑
+        a.requestEdit = [this](const Profile& p) {
+            openEditForm(state_.form, state_.import, p);
+        };
+        a.requestDuplicate = [this](int64_t id) { doDuplicate(id); };
+        a.requestDelete = [this](int64_t id, const std::string& name) {
+            state_.form.deleteTargetId_ = id;
+            state_.form.deleteTargetName_ = name;
+            state_.form.deleteConfirmOpen_ = true;
+        };
+        a.requestSetActive = [this](int64_t id) { doSetActive(id); };
         return a;
     }
 

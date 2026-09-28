@@ -7,7 +7,11 @@
 #include "settings_sync.h"
 
 #include <components/button.h>
+#include <components/contextmenu.h>
 #include <components/scrollview.h>
+
+#include <core/router.h>
+#include <core/ui_geometry.h>
 
 #include <algorithm>
 
@@ -340,6 +344,31 @@ void drawProfileListPanel(eui::Ui& ui, float leftW, float bodyH,
                             // 生效，仿 todo 列卡片）
                             inner.stack(cardId + ".wrap")
                                 .size(contentWidth, 96.0f)
+                                // 右键菜单入口（UI 现代化 M1-5）：记录目标
+                                // profile + 锚点 = PointerEvent 原始坐标经
+                                // core::menuAnchorForPointer 统一换算（页面
+                                // 坐标；onContextMenu 通道已 /dpiScale →
+                                // dpiScale=1.0）。滚动偏移传 0——指针即视觉
+                                // 位置，滚动下锚点天然正确。
+                                // st 为引用：写回存活到下一帧的模块状态
+                                .onContextMenu(
+                                    [sp = &st, pid = profiles[i].id](
+                                        const eui::PointerEvent& ev,
+                                        const eui::Rect&) {
+                                        const ::core::Router* router =
+                                            ::core::appRouter();
+                                        const core::MenuAnchor a =
+                                            core::menuAnchorForPointer(
+                                                static_cast<float>(ev.x),
+                                                static_cast<float>(ev.y),
+                                                router ? router->pageOriginX()
+                                                       : 0.0f,
+                                                0.0f, 1.0f);
+                                        sp->ctxProfileId_ = pid;
+                                        sp->ctxMenuX_ = a.x;
+                                        sp->ctxMenuY_ = a.y;
+                                        sp->ctxMenuOpen_ = true;
+                                    })
                                 .content([&] {
                                     drawProfileCard(
                                         inner, cardId, 0.0f,
@@ -381,6 +410,63 @@ void drawProfileListPanel(eui::Ui& ui, float leftW, float bodyH,
                 .onClick([onImport = actions.onImportCurrent] { onImport(); })
                 .build();
         })
+        .build();
+}
+
+// profile 列表右键菜单（UI 现代化 §3.4 / M1-5）：
+// 编辑 / 复制 / 删除 / 设为当前 —— 动作经 ProfileListActions 委托到
+// claude_module 既有按钮同源逻辑（openEditForm / doDuplicate / 删除确认 /
+// doSetActive），本函数不写业务逻辑。
+// 常驻构建（关闭态由组件内 opacity 收起，同 todo/md 右键模式）：
+// 无右键目标时强制置关开合标志再返回（4523e09 的「隐形菜单卡开」同款守卫
+// —— 目标与开合标志同生共灭），目标存在但菜单关闭时 normal 渲染。
+void drawProfileContextMenu(eui::Ui& ui, const eui::Screen& screen,
+                            const components::theme::ThemeColorTokens& themeTokens,
+                            ProfileListState& st,
+                            const std::vector<Profile>& profiles,
+                            const ProfileListActions& actions) {
+    if (st.ctxProfileId_ == 0) {
+        st.ctxMenuOpen_ = false;
+        return;
+    }
+    const Profile* self = nullptr;
+    for (const Profile& p : profiles) {
+        if (p.id == st.ctxProfileId_) { self = &p; break; }
+    }
+    if (self == nullptr) {
+        st.ctxMenuOpen_ = false;
+        return;
+    }
+    const std::vector<components::ContextMenuItem> items = {
+        {"编辑"}, {"复制"}, {"删除"}, {"设为当前"}};
+    // 选中回调不捕获 self 指针（profiles 是 compose 局部副本，点击发生在
+    // 下帧 → 悬垂）；按值拷一份 Profile 再派发（照 claude_ui_detail 的
+    // shownCopy 手法）。actions 是 compose 传参（listActions() 临时值）→
+    // 四个动作闭包一并按值拷入（std::function 拷贝安全，同既有按钮 onClick
+    // 的 [onNew = actions.onNewProfile] 捕获形态）。
+    components::contextMenu(ui, "claude.list.ctx")
+        .open(st.ctxMenuOpen_)
+        .screen(screen.width, screen.height)
+        .position(st.ctxMenuX_, st.ctxMenuY_)
+        .autoWidth()   // M4-2 已合入（上游 7164d55）
+        .items(items)
+        .theme(themeTokens)
+        .onSelect([&st,
+                   onEdit = actions.requestEdit,
+                   onDup = actions.requestDuplicate,
+                   onDel = actions.requestDelete,
+                   onSet = actions.requestSetActive,
+                   p = *self](int index) {
+            st.ctxMenuOpen_ = false;
+            switch (index) {
+                case 0: onEdit(p); break;
+                case 1: onDup(p.id); break;
+                case 2: onDel(p.id, p.name); break;
+                case 3: onSet(p.id); break;
+                default: break;
+            }
+        })
+        .onOpenChange([&st](bool v) { st.ctxMenuOpen_ = v; })
         .build();
 }
 

@@ -172,3 +172,116 @@ REGISTER_TEST(uiModernTodoMenuAnchor,
     mod->onStop();
     return true;
 })
+
+// ---- 3. claude profile 列表右键菜单（M1-5）----
+
+REGISTER_TEST(uiModernClaudeProfileCtxMenu,
+              "uiModern claude_module: 列表右键菜单四项（编辑/复制/删除/设为当前）", {
+    ClaudeEnv env;
+    auto a = env.svc->createProfile("官方", "https://api.anthropic.com",
+                                    "sk-ant-aaaa-1111", "claude-sonnet-4-5");
+    DOCTEST_REQUIRE(a.isOk());
+    auto b = env.svc->createProfile("中转", "https://relay.example.com",
+                                    "sk-ant-bbbb-2222", "claude-opus-4-5");
+    DOCTEST_REQUIRE(b.isOk());
+    DOCTEST_REQUIRE(env.svc->setActiveProfile(a.value().id).isOk());
+
+    std::unique_ptr<::core::Module> mod(create_claude_module());
+    eui::Screen screen;
+    screen.width = 1600.0f;
+    screen.height = 1000.0f;
+    eui::Ui ui;
+    auto compose = [&]() {
+        ui.begin("claude_ctx_frame");
+        mod->compose(ui, screen);
+        ui.end();
+    };
+
+    // 卡片行容器挂了右键回调
+    {
+        compose();
+        const auto* wrap = ui.find("claude.profile.1.wrap");
+        DOCTEST_REQUIRE(wrap != nullptr);
+        DOCTEST_REQUIRE(wrap->onContextMenu != nullptr);
+    }
+
+    // 右键 profile.1（中转）→ 菜单打开，四项 + 锚点 = 指针坐标
+    //（无 Router → 页面原点 0，dpi=1 → (400, 300) 原样）
+    {
+        compose();
+        eui::PointerEvent pe;
+        eui::Rect rect;
+        pe.x = 400;
+        pe.y = 300;
+        ui.find("claude.profile.1.wrap")->onContextMenu(pe, rect);
+        compose();
+        const auto* menu = ui.find("claude.list.ctx.level.0");
+        DOCTEST_REQUIRE(menu != nullptr);
+        DOCTEST_CHECK_EQ(menu->x, 400.0f);
+        DOCTEST_CHECK_EQ(menu->y, 300.0f);
+        for (int i = 0; i < 4; ++i) {
+            DOCTEST_CHECK(ui.find("claude.list.ctx.level.0.item." +
+                                  std::to_string(i)) != nullptr);
+        }
+        const auto* l0 = ui.find("claude.list.ctx.level.0.label.0");
+        const auto* l1 = ui.find("claude.list.ctx.level.0.label.1");
+        const auto* l2 = ui.find("claude.list.ctx.level.0.label.2");
+        const auto* l3 = ui.find("claude.list.ctx.level.0.label.3");
+        DOCTEST_REQUIRE(l0 != nullptr);
+        DOCTEST_REQUIRE(l1 != nullptr);
+        DOCTEST_REQUIRE(l2 != nullptr);
+        DOCTEST_REQUIRE(l3 != nullptr);
+        DOCTEST_CHECK_EQ(l0->text, std::string("编辑"));
+        DOCTEST_CHECK_EQ(l1->text, std::string("复制"));
+        DOCTEST_CHECK_EQ(l2->text, std::string("删除"));
+        DOCTEST_CHECK_EQ(l3->text, std::string("设为当前"));
+    }
+
+    // 点「设为当前」→ 激活位变化（与既有按钮同源：requestSetActive → doSetActive）
+    {
+        auto* item = ui.find("claude.list.ctx.level.0.item.3");
+        DOCTEST_REQUIRE(item != nullptr);
+        item->onClick();
+        // 菜单已关（onSelect 置关；常驻构建但 opacity 收起）
+        compose();
+        const auto* menu = ui.find("claude.list.ctx.level.0");
+        DOCTEST_REQUIRE(menu != nullptr);
+        DOCTEST_CHECK_EQ(menu->opacity, 0.0f);
+        // 激活位：官方 → 中转（service 层真变更 = 动作与按钮同源）
+        auto list = env.svc->listProfiles();
+        DOCTEST_REQUIRE(list.isOk());
+        DOCTEST_REQUIRE_EQ(list.value().size(), static_cast<size_t>(2));
+        bool aActive = false;
+        bool bActive = false;
+        for (const auto& p : list.value()) {
+            if (p.id == a.value().id) aActive = p.isActive;
+            if (p.id == b.value().id) bActive = p.isActive;
+        }
+        DOCTEST_CHECK_EQ(aActive, false);
+        DOCTEST_CHECK_EQ(bActive, true);  // 「中转」已设为当前
+    }
+
+    // 再右键 → 点「删除」→ 弹出删除确认（与既有按钮同源：
+    // requestDelete 委托 → deleteConfirmOpen_）
+    {
+        eui::PointerEvent pe;
+        eui::Rect rect;
+        pe.x = 400;
+        pe.y = 300;
+        compose();  // 上一步 compose 对齐后重取元素再触发
+        const auto* wrap = ui.find("claude.profile.1.wrap");
+        DOCTEST_REQUIRE(wrap != nullptr);
+        wrap->onContextMenu(pe, rect);
+        compose();
+        auto* item = ui.find("claude.list.ctx.level.0.item.2");
+        DOCTEST_REQUIRE(item != nullptr);
+        item->onClick();
+        compose();
+        DOCTEST_CHECK(ui.find("claude.dialog.delete") != nullptr);
+    }
+
+    mod->onStop();
+    test_support::cleanupProfileKey(kClaudeKeychainService, a.value().id);
+    test_support::cleanupProfileKey(kClaudeKeychainService, b.value().id);
+    return true;
+})
