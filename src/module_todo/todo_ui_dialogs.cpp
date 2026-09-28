@@ -7,7 +7,9 @@
 #include "todo_ui_common.h"
 
 #include <core/component_theme.h>
+#include <core/router.h>
 #include <core/theme.h>
+#include <core/ui_geometry.h>
 #include <ui_kit/dialog_form.h>
 #include <ui_kit/metrics.h>
 
@@ -234,24 +236,31 @@ void drawContextMenu(eui::Ui& ui, const eui::Screen& screen,
     }
 
     const BoardGeom g = boardGeom(screen.width, host.columns->size(), t);
-    const float menuW = 190.0f;
-    const float x = cardLeft(g, d.ctx.columnIndex) + g.colW * 0.5f - menuW * 0.5f;
-    // 卡片在列内 scrollView 中按 columnScrollOffset 上移（见 todo_ui_board.cpp
-    // drawColumn：offset 之外滚动区起点在 kColumnHeaderHeight）——菜单 y 必须减去
-    // 同一偏移才落在卡片实际可见位置；列头菜单（cardIndex < 0）在滚动区外不受影响。
+    // 锚点统一经 core::menuAnchorForPointer（UI 现代化 M1-2，spec §3.1）：
+    // 板几何 = 页面空间，先还原成窗口坐标（加页面原点）再进统一换算
+    // （两边对消，但换算本体唯一、Y 与滚动口径收进函数）；x 取列中芯、
+    // y 取卡片视觉底（未滚几何），滚动偏移经 scrollOffsetY 叠加——
+    // 4523e09 的「y 减 columnScrollOffset」语义由此保留（列头菜单
+    // cardIndex < 0 在滚动区外，scrollY = 0）。宽度交 autoWidth
+    // （上游 M4-2 已合入，7164d55），不再写死 190。
+    const float x = cardLeft(g, d.ctx.columnIndex) + g.colW * 0.5f;
     const float scrollY = d.ctx.cardIndex >= 0
         ? columnScrollOffset(*host.columns, columnScrolls,
                              static_cast<size_t>(d.ctx.columnIndex))
         : 0.0f;
     const float y = d.ctx.cardIndex >= 0
-        ? cardTop(g, d.ctx.cardIndex) + kCardHeight + 4.0f - scrollY
+        ? cardTop(g, d.ctx.cardIndex) + kCardHeight + 4.0f
         : g.boardTop + 4.0f;
+    const ::core::Router* router = ::core::appRouter();
+    const core::MenuAnchor anchor = core::menuAnchorForPointer(
+        x + (router ? router->pageOriginX() : 0.0f), y,
+        router ? router->pageOriginX() : 0.0f, scrollY, 1.0f);
 
     components::contextMenu(ui, "todo.ctx")
         .open(d.popups.isOpen(Popup::Ctx))
         .screen(screen.width, screen.height)
-        .position(x, y)
-        .size(menuW, 36.0f)
+        .position(anchor.x, anchor.y)
+        .autoWidth()
         .items(std::move(items))
         .theme(themeTokens)
         .zIndex(d.popups.zOf(Popup::Ctx))
