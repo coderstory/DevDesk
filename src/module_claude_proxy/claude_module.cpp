@@ -368,7 +368,8 @@ private:
         showToast("已启用", "该 Profile 已设为激活（ACTIVE）", false);
     }
 
-    // 运行：确保代理 + 必要时切激活 + 在终端里开一个新的 claude 会话（D-1）
+    // 运行：直连——生成临时 settings + claude --settings 打开新会话（D-1：
+    // 零全局改动：不启代理、不切激活、不改 ~/.claude/settings.json）
     void doRun(int64_t id) {
         ClaudeService* svc = ClaudeService::global();
         if (svc == nullptr) {
@@ -385,14 +386,14 @@ private:
             showToast("运行失败", r.errorMessage(), true);
             return;
         }
-        // 成功：D-5 的退化提示（hint 非空时）+ D-9 的「会话不受 DevDesk 管理」
+        // 成功：D-5 的退化提示（hint 非空时）+ 直连语义说明（D-1：临时配置
+        // 生命周期——会话结束即删；不经代理、不改任何全局配置）
         const std::string head = hint.empty()
-            ? std::string("已在新终端里打开 Claude Code 会话（起始目录 = 用户主目录）。")
+            ? std::string("已用该 Profile 直连打开 Claude Code 会话"
+                          "（临时配置会话结束后自动删除，未改动任何全局配置）。")
             : (hint + std::string("。"));
-        showToast("已启动",
-                  head + "运行中的会话不受 DevDesk 管理，停代理/退出后可能失败。",
-                  false);
-        state_.list.dataDirty_ = true;   // 可能刚起代理 / 刚切激活 → 下帧重查（状态点、ACTIVE 徽标）
+        showToast("已启动", head, false);
+        state_.list.dataDirty_ = true;   // 下帧重查列表（动作本身零全局改动，成本一帧）
     }
 
     // 复制（设计 §4.1/§4.2，M5）：建副本但不激活 → 选中态/激活态都不动

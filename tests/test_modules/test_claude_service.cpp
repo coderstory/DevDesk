@@ -13,6 +13,7 @@
 #include "core/paths.h"
 #include "core/sqlite_db.h"
 #include "platform/http_server.h"
+#include "platform/json.h"
 #include "platform/keychain.h"
 #include "provider_config.h"
 #include "settings_sync.h"
@@ -24,6 +25,7 @@
 #include <ctime>
 #include <filesystem>
 #include <fstream>
+#include <iterator>
 #include <map>
 #include <memory>
 #include <sstream>
@@ -31,15 +33,6 @@
 #include <string>
 #include <thread>
 #include <vector>
-
-#if defined(_WIN32)
-#include <winsock2.h>   // ExclusivePortGuard：SO_EXCLUSIVEADDRUSE（见该 struct 注释）
-#else
-#include <arpa/inet.h>
-#include <netinet/in.h>
-#include <sys/socket.h>
-#include <unistd.h>
-#endif
 
 namespace {
 
@@ -86,19 +79,8 @@ struct ScopedProxyEnv {
     ScopedProxyEnv& operator=(const ScopedProxyEnv&) = delete;
 };
 
-// 动态空闲端口（借 Server bind 0 向系统要一个随即释放）：多 worktree / 残留进程
-// 并发跑测试时不再撞写死端口；失败返回 0（调用方 REQUIRE 拦）
-int pickFreePort() {
-    platform::http::Server probe("127.0.0.1", 0);
-    if (!probe.start()) return 0;
-    const int port = probe.actualPort();
-    probe.stop();
-    return port;
-}
-
 // 接管通道路径用的临时文件（settings.json + sidecar；绝不碰真实 ~/.claude）。
-// runProfile 的「非激活 → 先切激活」分支要靠「坏 settings.json 让反向同步失败」
-// 来观察，故必须注入通道路径。
+// runProfile 零全局回归闸（D-1）用它断言「settings.json 未被写、sidecar 未建」。
 struct TempSyncPaths {
     std::filesystem::path settings;
     std::filesystem::path sidecar;
@@ -128,64 +110,41 @@ struct TempSyncPaths {
     }
 };
 
-// 「把端口占住」的**独占**绑定守卫（profile-run 的 startProxy 失败用例专用）。
-// ⚠️ 不能用第二个 platform::http::Server 占位：cpp-httplib 给监听 socket 设了
-// SO_REUSEADDR（Windows）/ SO_REUSEPORT（POSIX），两个 Server 能**同时**绑上同一
-// 端口（占位方与被占方的 start() 都返回 true）→ 占位语义不成立（本机实测）。
-// 这里改用独占语义的裸 socket，后到的 bind 必定失败：
-//   Windows：SO_EXCLUSIVEADDRUSE → 带 SO_REUSEADDR 的二次 bind 也报 WSAEADDRINUSE
-//   POSIX：  不设 REUSEADDR/REUSEPORT 的裸 bind → 对端单方设 REUSEPORT 也绑不上
-struct ExclusivePortGuard {
-#if defined(_WIN32)
-    using NativeSocket = SOCKET;
-    static constexpr NativeSocket kInvalidSocket = INVALID_SOCKET;
-#else
-    using NativeSocket = int;
-    static constexpr NativeSocket kInvalidSocket = -1;
-#endif
+// runProfile 直连形态（D-1）把临时 settings 写到 appDataDir()/run-settings/——
+// 测试必须把数据根指到临时目录（core/paths.cpp 的 DEVDESK_DATA_ROOT 统一覆盖
+// 入口），**绝不碰真实 %APPDATA%/DevDesk**。构造设环境变量 + 建目录，析构删
+// 整棵目录 + 还原环境变量。
+struct ScopedDataRoot {
+    std::string dir;
+    std::string prev;
+    bool hadPrev = false;
 
-    NativeSocket sock = kInvalidSocket;
-
-    explicit ExclusivePortGuard(int port) {
-#if defined(_WIN32)
-        WSADATA wsa{};
-        if (WSAStartup(MAKEWORD(2, 2), &wsa) != 0) return;
-#endif
-        sock = ::socket(AF_INET, SOCK_STREAM, 0);
-        if (sock == kInvalidSocket) return;
-#if defined(_WIN32)
-        const BOOL exclusive = TRUE;
-        ::setsockopt(sock, SOL_SOCKET, SO_EXCLUSIVEADDRUSE,
-                     reinterpret_cast<const char*>(&exclusive),
-                     static_cast<int>(sizeof(exclusive)));
-#endif
-        sockaddr_in addr{};
-        addr.sin_family = AF_INET;
-        addr.sin_port = htons(static_cast<unsigned short>(port));
-        addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
-        if (::bind(sock, reinterpret_cast<sockaddr*>(&addr),
-                   static_cast<int>(sizeof(addr))) != 0) {
-            closeSocket();
+    explicit ScopedDataRoot(const std::string& tag) {
+        dir = test_support::tempDbPath(kDbPrefix, tag).string() + ".data";
+        std::error_code ec;
+        std::filesystem::remove_all(dir, ec);
+        if (const char* p = std::getenv("DEVDESK_DATA_ROOT")) {
+            hadPrev = true;
+            prev = p;
         }
+        test_support::setEnvVar("DEVDESK_DATA_ROOT", dir);
+        std::filesystem::create_directories(dir, ec);
     }
-    ~ExclusivePortGuard() { closeSocket(); }
-    ExclusivePortGuard(const ExclusivePortGuard&) = delete;
-    ExclusivePortGuard& operator=(const ExclusivePortGuard&) = delete;
-
-    bool ok() const { return sock != kInvalidSocket; }
-
-private:
-    void closeSocket() {
-        if (sock == kInvalidSocket) return;
-#if defined(_WIN32)
-        ::closesocket(sock);
-        WSACleanup();
-#else
-        ::close(sock);
-#endif
-        sock = kInvalidSocket;
+    ~ScopedDataRoot() {
+        std::error_code ec;
+        std::filesystem::remove_all(dir, ec);
+        test_support::setEnvVar("DEVDESK_DATA_ROOT", hadPrev ? prev : "");
     }
+    ScopedDataRoot(const ScopedDataRoot&) = delete;
+    ScopedDataRoot& operator=(const ScopedDataRoot&) = delete;
 };
+
+// 整文件读成字符串（settings.json 未变断言与临时 settings 内容断言共用）
+std::string readFileToString(const std::filesystem::path& p) {
+    std::ifstream in(p, std::ios::binary);
+    return std::string((std::istreambuf_iterator<char>(in)),
+                       std::istreambuf_iterator<char>());
+}
 
 // 反向同步（M3）测试基建：临时 settings.json 目录（共享头 test_support::TempDir，
 // 前缀沿用原样；绝不碰真实 ~/.claude）
@@ -2763,18 +2722,26 @@ REGISTER_TEST(claude_service_dialect_override_survives_reverse_sync,
     return true;
 })
 
-// ---- 运行（profile-run 设计 §5/§8；D-1 顺序：代理 → 激活 → 启动会话）----
+// ---- 运行（profile-run 设计 §5/§8；D-1（V3）：直连——临时 settings + --settings，
+//      零全局改动：不启代理、不切激活、不读写 ~/.claude/settings.json）----
 
-REGISTER_TEST(claude_service_run_profile_starts_proxy_and_passes_spec,
-              "claude_service: runProfile 拉起代理（configuredProxyPort）+ 假 launch 收到正确参数", {
+REGISTER_TEST(claude_service_run_profile_direct_env_writes_temp_settings,
+              "claude_service: runProfile 直连——不启代理、写 run-settings 临时文件、假 launch 收到 --settings 参数", {
+    ScopedDataRoot root("runprofile1");
     test_support::TestDb tdb(kDbPrefix, "runprofile1");
     module::claude::ClaudeService svc(tdb.handle(), kTestKeychainService);
-    const int port = pickFreePort();
-    DOCTEST_REQUIRE(port != 0);
-    svc.setConfiguredProxyPort(port);
-    DOCTEST_CHECK_EQ(svc.configuredProxyPort(), port);
 
-    auto a = svc.createProfile("官方", "https://api.anthropic.com",
+    // 接管通道注入（指向临时文件）——零全局回归闸的一部分：settings.json 与
+    // sidecar 都不该被本次运行触碰
+    TempSyncPaths paths("runprofile1");
+    svc.setSettingsSyncPaths(paths.paths());
+    const std::string settingsBefore = R"({
+      "env": { "MY_EXISTING": "keep-me" },
+      "other": 1
+    })";
+    paths.writeSettings(settingsBefore);
+
+    auto a = svc.createProfile("官方", "https://api.anthropic.com/",
                                "sk-ant-run-0001", "");
     DOCTEST_REQUIRE(a.isOk());
     DOCTEST_REQUIRE(svc.setActiveProfile(a.value().id).isOk());
@@ -2787,42 +2754,82 @@ REGISTER_TEST(claude_service_run_profile_starts_proxy_and_passes_spec,
         return core::Result<void>::ok();
     });
 
-    // ① 代理未运行 → 用 configuredProxyPort 拉起（不是默认 8888）
+    // ① 不启代理：调用前后 isProxyRunning 恒 false
     DOCTEST_CHECK(!svc.isProxyRunning());
     std::string hint;
     auto r = svc.runProfile(a.value().id, &hint);
     DOCTEST_REQUIRE(r.isOk());
-    DOCTEST_CHECK(svc.isProxyRunning());
-    DOCTEST_CHECK_EQ(svc.proxyPort(), port);
+    DOCTEST_CHECK(!svc.isProxyRunning());
 
-    // ④ 调用参数（title / cwd / program / args）
+    // ② 假 launch 收到正确参数：--settings + run-settings/ 下的路径
     DOCTEST_CHECK_EQ(calls, 1);
     DOCTEST_CHECK_EQ(got.title, std::string("官方 · Claude Code"));
     DOCTEST_CHECK_EQ(got.workingDir, platform::terminal::homeDir());
     DOCTEST_CHECK(!got.workingDir.empty());
     DOCTEST_CHECK_EQ(got.program, std::string("claude"));
-    DOCTEST_CHECK(got.args.empty());
+    DOCTEST_REQUIRE_EQ(got.args.size(), static_cast<size_t>(2));
+    DOCTEST_CHECK_EQ(got.args[0], std::string("--settings"));
+    const std::filesystem::path settingsFile(got.args[1]);
+    DOCTEST_CHECK(settingsFile.is_absolute());
+    DOCTEST_CHECK_EQ(settingsFile.parent_path().string(),
+                     (std::filesystem::path(root.dir) / "run-settings").string());
+    DOCTEST_CHECK(settingsFile.filename().string().rfind("run-", 0) == 0);
+    DOCTEST_CHECK_EQ(settingsFile.extension().string(), std::string(".json"));
 
-    svc.stopProxy();
+    // ③ 落盘文件 = --settings 指向的同一路径；内容 = 合法 settings JSON（env 子对象）
+    DOCTEST_REQUIRE(std::filesystem::exists(settingsFile));
+    auto parsed = platform::json::parse(readFileToString(settingsFile));
+    DOCTEST_REQUIRE(parsed.isOk());
+    DOCTEST_REQUIRE(parsed.value().isObject());
+    auto envVal = parsed.value().asObject().get("env");
+    DOCTEST_REQUIRE(envVal.isObject());
+    auto envObj = envVal.asObject();
+    // BASE_URL 去尾斜杠（profile 里存的是带 '/' 的 url）
+    DOCTEST_CHECK_EQ(envObj.get("ANTHROPIC_BASE_URL").asString(),
+                     std::string("https://api.anthropic.com"));
+    // 密钥键三态默认 both → 只写 ANTHROPIC_AUTH_TOKEN
+    DOCTEST_CHECK_EQ(envObj.get("ANTHROPIC_AUTH_TOKEN").asString(),
+                     std::string("sk-ant-run-0001"));
+    DOCTEST_CHECK(!envObj.has("ANTHROPIC_API_KEY"));
+
+    // ④ 零全局回归闸：settings.json 内容未变、sidecar 未建、激活态未变、代理未动
+    DOCTEST_CHECK_EQ(readFileToString(paths.settings), settingsBefore);
+    DOCTEST_CHECK(!std::filesystem::exists(paths.sidecar));
+    auto activeAfter = svc.getActiveProfile();
+    DOCTEST_REQUIRE(activeAfter.isOk());
+    DOCTEST_CHECK_EQ(activeAfter.value().id, a.value().id);
+    DOCTEST_CHECK(!svc.isProxyRunning());
+
+    // 会话没真跑，正文自删不会发生 → 测试自清临时文件
+    std::error_code rmEc;
+    std::filesystem::remove(settingsFile, rmEc);
     test_support::cleanupProfileKey(kTestKeychainService, a.value().id);
     return true;
 })
 
-REGISTER_TEST(claude_service_run_profile_proxy_start_failure_aborts,
-              "claude_service: runProfile 代理起不来 → 返回 fail 且不开会话", {
+REGISTER_TEST(claude_service_run_profile_key_read_failure_aborts,
+              "claude_service: runProfile 读 Keychain 失败 → fail 且不落盘、不开窗", {
+    ScopedDataRoot root("runprofile2");
     test_support::TestDb tdb(kDbPrefix, "runprofile2");
     module::claude::ClaudeService svc(tdb.handle(), kTestKeychainService);
-    const int port = pickFreePort();
-    DOCTEST_REQUIRE(port != 0);
-    // 占住该端口 → startProxy 必失败（**独占**绑定：见 ExclusivePortGuard 注释）
-    ExclusivePortGuard blocker(port);
-    DOCTEST_REQUIRE(blocker.ok());
-    svc.setConfiguredProxyPort(port);
 
     auto a = svc.createProfile("官方", "https://api.anthropic.com",
                                "sk-ant-run-0002", "");
     DOCTEST_REQUIRE(a.isOk());
     DOCTEST_REQUIRE(svc.setActiveProfile(a.value().id).isOk());
+
+    // 注入 load 失败的后端（CPX-14 缝）：createProfile 在注入前已完成，
+    // store/delete 仍走真实实现——只让「读」失败
+    const auto failLoad = [](const std::string&, const std::string&)
+        -> core::Result<std::string> {
+        return core::Result<std::string>::fail(core::ErrorCode::Internal,
+            "注入：Keychain 读失败");
+    };
+    platform::keychain::Backend table{&platform::keychain::realStoreSecret,
+                                      failLoad,
+                                      &platform::keychain::realDeleteSecret,
+                                      &platform::keychain::realDeleteSecretsNotIn};
+    const auto* prev = platform::keychain::setBackendForTest(&table);
 
     int calls = 0;
     svc.setTerminalLauncher([&](const platform::terminal::LaunchSpec&) {
@@ -2831,19 +2838,23 @@ REGISTER_TEST(claude_service_run_profile_proxy_start_failure_aborts,
     });
     auto r = svc.runProfile(a.value().id, nullptr);
     DOCTEST_CHECK(r.isFail());     // 中止
-    DOCTEST_CHECK_EQ(calls, 0);    // 不打开会话
+    DOCTEST_CHECK_EQ(calls, 0);    // 不开会话
+    // 未落盘：run-settings 目录都不该建（中止在写文件之前）
+    DOCTEST_CHECK(!std::filesystem::exists(
+        std::filesystem::path(root.dir) / "run-settings"));
 
-    // 占位随 blocker 作用域结束自动释放（RAII），无需显式 stop
+    platform::keychain::setBackendForTest(prev);   // 先还原再清密钥（清密钥走真实后端）
     test_support::cleanupProfileKey(kTestKeychainService, a.value().id);
     return true;
 })
 
-REGISTER_TEST(claude_service_run_profile_switches_only_when_inactive,
-              "claude_service: runProfile 非激活 → 先切激活（失败即中止）；已激活 → 不切", {
+REGISTER_TEST(claude_service_run_profile_zero_global_change_gate,
+              "claude_service: runProfile 零全局回归闸——settings.json 未写、is_active 未变、代理未动（激活/非激活都跑）", {
+    ScopedDataRoot root("runprofile3");
     test_support::TestDb tdb(kDbPrefix, "runprofile3");
     module::claude::ClaudeService svc(tdb.handle(), kTestKeychainService);
 
-    // 注入接管通道路径（不注入 → 反向同步整段跳过，②③ 就无从区分）
+    // 接管通道路径注入（指向临时 settings.json）——回归闸断言的就是它**不被碰**
     TempSyncPaths paths("runprofile3");
     svc.setSettingsSyncPaths(paths.paths());
 
@@ -2853,43 +2864,90 @@ REGISTER_TEST(claude_service_run_profile_switches_only_when_inactive,
     DOCTEST_REQUIRE(b.isOk());
     DOCTEST_REQUIRE(svc.setActiveProfile(a.value().id).isOk());
 
-    const int port = pickFreePort();
-    DOCTEST_REQUIRE(port != 0);
-    svc.setConfiguredProxyPort(port);
-    // 先起代理：避免 runProfile 内的 takeOver 覆盖掉下面写入的坏 settings.json
-    DOCTEST_REQUIRE(svc.startProxy("127.0.0.1", port).isOk());
+    int calls = 0;
+    std::vector<std::filesystem::path> written;
+    svc.setTerminalLauncher([&](const platform::terminal::LaunchSpec& s) {
+        ++calls;
+        if (s.args.size() == 2) {
+            written.push_back(std::filesystem::path(s.args[1]));
+        }
+        return core::Result<void>::ok();
+    });
+
+    // ① 目标 = 激活 profile（a）：成功 + settings.json 一字未变 + 激活态未变
+    const std::string settingsBefore = R"({
+      "env": { "ANTHROPIC_BASE_URL": "http://127.0.0.1:8888",
+               "ANTHROPIC_AUTH_TOKEN": "PROXY_MANAGED",
+               "KEEP": "v" },
+      "model": "claude-sonnet-4"
+    })";
+    paths.writeSettings(settingsBefore);
+    std::string hint;
+    auto ra = svc.runProfile(a.value().id, &hint);
+    DOCTEST_REQUIRE(ra.isOk());
+    DOCTEST_CHECK_EQ(readFileToString(paths.settings), settingsBefore);
+
+    // ② 目标 ≠ 激活 profile（b）：**不再切激活**（D-1）——坏 settings.json 也不挡
+    //    路（直连形态根本不解析全局文件）；写坏文件本身作为反证
+    paths.writeSettings("{ 这不是合法 JSON");
+    auto rb = svc.runProfile(b.value().id, nullptr);
+    DOCTEST_REQUIRE(rb.isOk());
+    DOCTEST_CHECK_EQ(readFileToString(paths.settings),
+                     std::string("{ 这不是合法 JSON"));
+
+    // ③ 回归闸汇总：sidecar 未建、激活态未变、代理未动、每次都开窗
+    DOCTEST_CHECK(!std::filesystem::exists(paths.sidecar));
+    auto active = svc.getActiveProfile();
+    DOCTEST_REQUIRE(active.isOk());
+    DOCTEST_CHECK_EQ(active.value().id, a.value().id);
+    DOCTEST_CHECK(!svc.isProxyRunning());
+    DOCTEST_CHECK_EQ(calls, 2);
+    for (const auto& w : written) {
+        std::error_code rmEc;
+        std::filesystem::remove(w, rmEc);
+    }
+
+    test_support::cleanupProfileKey(kTestKeychainService, a.value().id);
+    test_support::cleanupProfileKey(kTestKeychainService, b.value().id);
+    return true;
+})
+
+REGISTER_TEST(claude_service_run_profile_write_failure_aborts,
+              "claude_service: runProfile 写临时 settings 失败（run-settings 被文件占位）→ fail 且不开窗", {
+    ScopedDataRoot root("runprofile4");
+    test_support::TestDb tdb(kDbPrefix, "runprofile4");
+    module::claude::ClaudeService svc(tdb.handle(), kTestKeychainService);
+
+    auto a = svc.createProfile("官方", "https://api.anthropic.com",
+                               "sk-ant-run-0004", "");
+    DOCTEST_REQUIRE(a.isOk());
+    DOCTEST_REQUIRE(svc.setActiveProfile(a.value().id).isOk());
+
+    // 用同名**普通文件**占住 run-settings 路径 → create_directories 必失败
+    //（路径已存在且不是目录）；Windows 上「只读目录」拦不住建文件，这是跨平台
+    // 可复现的目录不可建形态
+    const std::filesystem::path dir = std::filesystem::path(root.dir) / "run-settings";
+    {
+        std::ofstream out(dir, std::ios::binary | std::ios::trunc);
+        out << "占位";
+    }
 
     int calls = 0;
     svc.setTerminalLauncher([&](const platform::terminal::LaunchSpec&) {
         ++calls;
         return core::Result<void>::ok();
     });
+    auto r = svc.runProfile(a.value().id, nullptr);
+    DOCTEST_CHECK(r.isFail());     // 中止
+    DOCTEST_CHECK_EQ(calls, 0);    // 不开会话
 
-    // ③ 目标 = 激活 profile：跳过 setActiveProfile → 坏 settings.json 不参与 → 成功
-    paths.writeSettings("{ 这不是合法 JSON");
-    std::string hint;
-    auto r3 = svc.runProfile(a.value().id, &hint);
-    DOCTEST_CHECK(r3.isOk());
-    DOCTEST_CHECK_EQ(calls, 1);
-
-    // ② 目标 ≠ 激活 profile：会调 setActiveProfile → 反向同步读坏文件失败 → 中止且不开会话
-    paths.writeSettings("{ 这不是合法 JSON");
-    auto r2 = svc.runProfile(b.value().id, nullptr);
-    DOCTEST_CHECK(r2.isFail());
-    DOCTEST_CHECK_EQ(calls, 1);                       // 未新增调用
-    auto active = svc.getActiveProfile();
-    DOCTEST_REQUIRE(active.isOk());
-    DOCTEST_CHECK_EQ(active.value().id, a.value().id);  // 激活态未被改（中止在事务前）
-
-    svc.stopProxy();
     test_support::cleanupProfileKey(kTestKeychainService, a.value().id);
-    test_support::cleanupProfileKey(kTestKeychainService, b.value().id);
     return true;
 })
 
 REGISTER_TEST(claude_service_run_profile_invalid_id,
               "claude_service: runProfile id=0 / 不存在 → fail（不开会话）", {
-    test_support::TestDb tdb(kDbPrefix, "runprofile4");
+    test_support::TestDb tdb(kDbPrefix, "runprofile5");
     module::claude::ClaudeService svc(tdb.handle(), kTestKeychainService);
 
     int calls = 0;
@@ -2903,5 +2961,90 @@ REGISTER_TEST(claude_service_run_profile_invalid_id,
     auto missing = svc.runProfile(9999, nullptr);
     DOCTEST_CHECK(missing.isFail());
     DOCTEST_CHECK_EQ(calls, 0);
+    return true;
+})
+
+// ---- 直连 env 生成（buildDirectEnv 纯函数，profile-run 设计 §4.2）----
+
+REGISTER_TEST(claude_build_direct_env_three_state_auth_and_base_url,
+              "buildDirectEnv: 认证字段三态密钥键名 + BASE_URL 去尾斜杠 + 空值不写键", {
+    // bearer → 只写 ANTHROPIC_AUTH_TOKEN
+    {
+        auto env = module::claude::buildDirectEnv(
+            "https://api.anthropic.com/", "sk-bearer-1", "bearer", "", "", "");
+        DOCTEST_CHECK_EQ(env["ANTHROPIC_BASE_URL"],
+                         std::string("https://api.anthropic.com"));  // 去尾斜杠
+        DOCTEST_CHECK_EQ(env["ANTHROPIC_AUTH_TOKEN"], std::string("sk-bearer-1"));
+        DOCTEST_CHECK(env.find("ANTHROPIC_API_KEY") == env.end());
+    }
+    // api_key → 只写 ANTHROPIC_API_KEY
+    {
+        auto env = module::claude::buildDirectEnv(
+            "https://gw.example.com", "sk-api-1", "api_key", "", "", "");
+        DOCTEST_CHECK_EQ(env["ANTHROPIC_API_KEY"], std::string("sk-api-1"));
+        DOCTEST_CHECK(env.find("ANTHROPIC_AUTH_TOKEN") == env.end());
+    }
+    // both（默认）/ 未知值 → 只写 ANTHROPIC_AUTH_TOKEN
+    {
+        auto env = module::claude::buildDirectEnv(
+            "https://api.anthropic.com", "sk-both-1", "both", "", "", "");
+        DOCTEST_CHECK_EQ(env["ANTHROPIC_AUTH_TOKEN"], std::string("sk-both-1"));
+        DOCTEST_CHECK(env.find("ANTHROPIC_API_KEY") == env.end());
+        // 未知 / 空串认证字段按 both 读（authFieldFromText 兜底，D-8 读侧口径）
+        auto env2 = module::claude::buildDirectEnv(
+            "https://x.example.com", "sk-both-2", "什么奇怪的值", "", "", "");
+        DOCTEST_CHECK_EQ(env2["ANTHROPIC_AUTH_TOKEN"], std::string("sk-both-2"));
+        DOCTEST_CHECK(env2.find("ANTHROPIC_API_KEY") == env2.end());
+    }
+    // 空 baseUrl / 空密钥 → 对应托管键不写（不产生空值键；BASE_URL 空 = Claude
+    // Code 回落内置默认上游）
+    {
+        auto env = module::claude::buildDirectEnv("", "", "both", "", "", "");
+        DOCTEST_CHECK(env.find("ANTHROPIC_BASE_URL") == env.end());
+        DOCTEST_CHECK(env.find("ANTHROPIC_AUTH_TOKEN") == env.end());
+        DOCTEST_CHECK(env.find("ANTHROPIC_API_KEY") == env.end());
+    }
+    return true;
+})
+
+REGISTER_TEST(claude_build_direct_env_slots_extra_env_and_managed_override,
+              "buildDirectEnv: 槽位/extra_env/共享片段并入 + 托管键压过 extra_env + 别名归一", {
+    const std::string models =
+        R"({"default": {"model": "claude-sonnet-4", "name": ""},
+            "sonnet": {"model": "claude-sonnet-4-5", "name": "S4.5"},
+            "opus": {"model": "", "name": ""}})";
+    const std::string extra = R"({
+        "ANTHROPIC_BASE_URL": "http://127.0.0.1:8888",
+        "ANTHROPIC_AUTH_TOKEN": "PROXY_MANAGED",
+        "ANTHROPIC_MODEL": "extra-model",
+        "AUTO_COMPACT_ENABLED": "1",
+        "MY_VAR": "v"
+    })";
+    // 共享片段叠在 profile 自身 extra_env 之上（片段赢，照 buildProxyEnv 规则 5）
+    const std::string shared =
+        R"({"MY_VAR": "shared-wins", "ANTHROPIC_API_KEY": "shared-key"})";
+    auto env = module::claude::buildDirectEnv(
+        "https://api.anthropic.com/", "sk-real-key", "both",
+        models, "", extra, shared);
+
+    // 托管键压过 extra_env / 片段的同名旧值（BASE_URL 去尾斜杠后为 profile 值）
+    DOCTEST_CHECK_EQ(env["ANTHROPIC_BASE_URL"],
+                     std::string("https://api.anthropic.com"));
+    DOCTEST_CHECK_EQ(env["ANTHROPIC_AUTH_TOKEN"], std::string("sk-real-key"));
+    // 「第二密钥键」不存活：直连只写托管键一个（片段/extra 带进的另一键被跳过）
+    DOCTEST_CHECK(env.find("ANTHROPIC_API_KEY") == env.end());
+    // 共享片段键覆盖 profile extra_env 同名键
+    DOCTEST_CHECK_EQ(env["MY_VAR"], std::string("shared-wins"));
+    // 槽位：非空槽位写 envKey；name 空 → 派生显示名（剥 [1M] 类标记）
+    DOCTEST_CHECK_EQ(env["ANTHROPIC_MODEL"], std::string("claude-sonnet-4"));
+    DOCTEST_CHECK_EQ(env["ANTHROPIC_DEFAULT_SONNET_MODEL"],
+                     std::string("claude-sonnet-4-5"));
+    DOCTEST_CHECK_EQ(env["ANTHROPIC_DEFAULT_SONNET_MODEL_NAME"],
+                     std::string("S4.5"));
+    // 空槽位（opus）跳过
+    DOCTEST_CHECK(env.find("ANTHROPIC_DEFAULT_OPUS_MODEL") == env.end());
+    // extra_env 别名归一：AUTO_COMPACT_ENABLED=1 → DISABLE_AUTO_COMPACT=0
+    DOCTEST_CHECK_EQ(env["DISABLE_AUTO_COMPACT"], std::string("0"));
+    DOCTEST_CHECK(env.find("AUTO_COMPACT_ENABLED") == env.end());
     return true;
 })
