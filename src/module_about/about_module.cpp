@@ -155,7 +155,10 @@ void aboutCard(eui::Ui& ui, const std::string& id, const core::theme::Tokens& t,
 
 // ---- 数据卡「打开」按钮（outlined+small）：系统文件管理器打开该路径 ----
 // 失败用 LOG_ERROR 记录（openDirectory 返回 Result<void>，不抛异常）。
-void openDirectoryButton(eui::Ui& ui, const std::string& id,
+// 数据卡已移除（2026-09-28 布局调整），helper 保留备用（GDP 数据卡如恢复直接
+// 复用）；[[maybe_unused]] 防 -Werror=unused-function（GCC 对匿名命名空间未用
+// 函数同样告警）。
+[[maybe_unused]] void openDirectoryButton(eui::Ui& ui, const std::string& id,
                          const core::theme::Tokens& t, float x, float y,
                          const std::string& path) {
     const auto compTheme = core::theme::componentTokens(t);
@@ -194,7 +197,6 @@ public:
         // 居中 720px 主内容区（spec §布局概览；窄窗不滚动，D-04 目标 =
         // 默认窗口 1600×1000 完整可见，总高约 840px）
         constexpr float kAboutContentW = 720.0f;
-        constexpr float padX = 28.0f;  // 卡内左右边距（kDialogInsetX 语系）
         const float x = std::max(0.0f, (screen.width - kAboutContentW) / 2.0f);
         const float cardGap = 8.0f;
 
@@ -251,7 +253,10 @@ public:
             .build();
         y += 18.0f + 12.0f;
 
-        // ========== 卡 1：应用信息 ==========
+        // ========== 卡 1 + 卡 2：左右并排（宽 (720-8)/2 = 356，等高取 max）==========
+        const float cardW = (kAboutContentW - cardGap) / 2.0f;
+
+        // 卡 1：应用信息（左）
         const AboutRow infoRows[] = {
             {"版本", aboutVersionLine(), false},
             {"Git commit", DEVDESK_GIT_REV, true},
@@ -261,11 +266,10 @@ public:
             {"C++ 标准", aboutCppLine(), false},
         };
         constexpr float infoH = 16.0f + 28.0f + 6.0f * 24.0f + 16.0f;
-        aboutCard(ui, "about.card.app", t, x, y, kAboutContentW, infoH,
+        aboutCard(ui, "about.card.app", t, x, y, cardW, infoH,
                   0xF05A /* fa-circle-info */, "应用信息", infoRows, 6);
-        y += infoH + cardGap;
 
-        // ========== 卡 2：依赖与框架 ==========
+        // 卡 2：依赖与框架（右，x = x + cardW + cardGap）
         const AboutRow depsRows[] = {
             {"GUI 框架", "EUI-NEO (OpenGL)", false},
             {"EUI-NEO", aboutEuiNeoLine(), true},
@@ -275,69 +279,11 @@ public:
             {"字体", "FreeType + FontAwesome 7", false},
         };
         constexpr float depsH = 16.0f + 28.0f + 6.0f * 24.0f + 16.0f;
-        aboutCard(ui, "about.card.deps", t, x, y, kAboutContentW, depsH,
+        aboutCard(ui, "about.card.deps", t, x + cardW + cardGap, y, cardW, depsH,
                   0xF5FD /* fa-layer-group */, "依赖与框架", depsRows, 6);
-        y += depsH + cardGap;
 
-        // ========== 卡 3：数据（每行值 + 「打开」按钮）==========
-        const float dataCardH = 16.0f + 28.0f + 3.0f * 40.0f + 16.0f;
-        const std::string dataRows[][2] = {
-            {"配置文件", ::core::paths::configFile().string()},
-            {"日志文件", ::core::paths::logFile().string()},
-            {"数据目录", ::core::paths::petsDir().string()},
-        };
-        {
-            const std::string& dataId = "about.card.data";
-            ui.stack(dataId)
-                .position(x, y)
-                .size(kAboutContentW, dataCardH)
-                .content([&] {
-                    ui_kit::cardFrame(ui, dataId, kAboutContentW, dataCardH, t);
-                    ui.text(dataId + ".icon")
-                        .position(padX, 18.0f)
-                        .size(20.0f, 20.0f)
-                        .icon(0xF07C)  // fa-folder-open
-                        .fontSize(18.0f)
-                        .color(t.colors.textSecondary)
-                        .build();
-                    ui.text(dataId + ".title")
-                        .position(padX + 24.0f, 16.0f)
-                        .size(kAboutContentW - padX * 2.0f - 24.0f, 22.0f)
-                        .text("数据")
-                        .fontSize(t.sizes.fontSizeLarge)
-                        .lineHeight(22.0f)
-                        .fontWeight(600)
-                        .color(t.colors.textPrimary)
-                        .build();
-                    const float rowTop = 16.0f + 28.0f;
-                    const float valueX = padX + 94.0f;
-                    const float btnX = kAboutContentW - padX - 72.0f;
-                    const float valueW = btnX - 8.0f - valueX;  // 值与按钮不重叠
-                    for (int i = 0; i < 3; ++i) {
-                        const float rowY = rowTop + static_cast<float>(i) * 40.0f;
-                        ui.text(dataId + ".label." + std::to_string(i))
-                            .position(padX, rowY + 8.0f)
-                            .size(90.0f, 24.0f)
-                            .text(dataRows[i][0])
-                            .fontSize(t.sizes.fontSizeSmall)
-                            .lineHeight(24.0f)
-                            .color(t.colors.textTertiary)
-                            .build();
-                        ui.text(dataId + ".value." + std::to_string(i))
-                            .position(valueX, rowY + 8.0f)
-                            .size(valueW, 24.0f)
-                            .text(dataRows[i][1])
-                            .fontSize(t.sizes.fontSizeSmall)
-                            .lineHeight(24.0f)
-                            .color(t.colors.textSecondary)
-                            .build();
-                        openDirectoryButton(ui, dataId + ".open." + std::to_string(i),
-                                            t, btnX, rowY + 5.0f, dataRows[i][1]);
-                    }
-                })
-                .build();
-        }
-        y += dataCardH + cardGap;
+        // 页脚跟随卡底（两卡同高取 max，取一副 y 即可）
+        y += std::max(infoH, depsH) + cardGap;
 
         // ========== 页脚 ==========
         ui.text("about.footer")
