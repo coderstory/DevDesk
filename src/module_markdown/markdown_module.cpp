@@ -111,6 +111,7 @@ void drawFileTreeItem(eui::Ui& ui,
         .content([&] {
             ui.rect(id + ".row")
                 .size(width, 32.0f)
+                .radius(t.sizes.radiusSmall)
                 // 行底 = 所在结构性面板底（background），非卡片白——hover/
                 // active 才显色（主题层级：页面结构 vs 浮动卡片）
                 .color(active ? t.colors.primarySoftBg : t.colors.background)
@@ -127,7 +128,9 @@ void drawFileTreeItem(eui::Ui& ui,
                 .color(t.colors.textSecondary)
                 .build();
             ui.text(id + ".name")
-                .position(36.0f + indent, 0.0f)
+                // 32px 行高内垂直居中：y = (行高 - 字号) / 2（fontSizeSmall≈13 → ≈9.5），
+                // 不依赖 verticalAlign API
+                .position(36.0f + indent, (32.0f - t.sizes.fontSizeSmall) / 2.0f)
                 .size(std::max(0.0f, width - 48.0f - indent), 32.0f)
                 .text(name)
                 .fontSize(t.sizes.fontSizeSmall)

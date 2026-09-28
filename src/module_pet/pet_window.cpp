@@ -150,6 +150,7 @@ struct PetUiState {
     bool wasDragged = false;   // 拖拽结束抑制误触 poke（设计 §4.4 Dragged 语义）
     double lastInteractionMs = 0.0;  // 最近交互时刻（入睡判定用）
     double lastTickMs = 0.0;         // 上次 onTimer 时刻（气泡倒计时 dt 用）
+    double lastClickMs = 0.0;        // 上次单击时刻（双击开主窗判定用）
     PetDragAnchor dragAnchor;        // 拖拽锚点（见 pet_window.h，抖动修复）
 };
 
@@ -373,7 +374,15 @@ void petCompose(eui::Ui& ui, const eui::Screen& screen) {
                              }
                          })
                 .onClick([&state]() {
-                    state.lastInteractionMs = steadyMs();
+                    const double now = steadyMs();
+                    // 双击（间隔 <350ms）→ 打开/还原主窗口；首击仍走单击语义
+                    if (now - state.lastClickMs < 350.0) {
+                        state.lastClickMs = 0.0;  // 复位计时，防三连击再触发
+                        app::requestShow();
+                        return;
+                    }
+                    state.lastClickMs = now;
+                    state.lastInteractionMs = now;
                     if (!state.wasDragged) {
                         state.anim.poke(runtime().skin);
                     }
