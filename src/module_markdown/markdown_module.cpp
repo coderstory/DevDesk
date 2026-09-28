@@ -1517,6 +1517,25 @@ private:
                                   {});
                 })
                 .build();
+            // W10（2026-09-28）修复：EUI-NEO syncOwnedScrollState 对滚动实例
+            // 初始化后每帧声明值（.offset()）不再生效（只钳位持久 instance.offset，
+            // 见 runtime_state_bindings.h）——双栏（Split）态预览就此停在进栏瞬间
+            // 锚点：编辑器滚动 / 大纲跳转 / 预览块点击全部不再驱动预览。改走上游
+            // Ui::setScrollOffset 直写实例 offset（与实时态 liveScrollFollowMaybe
+            // 同构落地，spec 2026-09-28 §2.2 / commit 58ffab0；帧末由 Runtime
+            // consumePendingScrollOffsets 送达）：
+            //   Split   = 每帧推送 computeSyncOffset（编辑器单向驱动，覆盖用户滚动
+            //             = 上方「滚动位置来源」注释语义；Runtime 内部 closeEnough
+            //             对未变值 no-op，无脏标 / 回调风暴）
+            //   Preview = 每帧推送 previewOffset_ 记账值（用户滚轮经 onChange 已
+            //             同值回写 → 恒 no-op；真正送达的是 syncPreviewOnEnter_ 进态
+            //             对齐与大纲跳转直改 previewOffset_ 的路径 —— 同源修复）
+            // 不需要 liveProgrammaticScroll_ 同构标志：Split 态不挂 onChange（无
+            // 「用户滚动暂停跟随」语义要区分来源），Preview 态两来源的 onChange
+            // 回写同语义（只记账，无需分流）。
+            if (mode_ == ViewMode::Split || mode_ == ViewMode::Preview) {
+                ui.setScrollOffset("md.preview.scroll", scrollOffset);
+            }
         }).build();
     }
 
