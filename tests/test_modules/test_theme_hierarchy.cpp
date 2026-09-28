@@ -221,9 +221,8 @@ REGISTER_TEST(theme_hierarchy_home,
     const auto checkFrame = [&](Frame& frame,
                                 const core::theme::Tokens& t) -> bool {
         DOCTEST_CHECK(frame.absent("home.pagebg"));  // 页面底由 clearColor 承担
-        // 统计卡/最近编辑卡是浮动卡片 → surface（浅色白），不得跟风变米色
+        // 统计卡是浮动卡片 → surface（浅色白），不得跟风变米色
         DOCTEST_CHECK(frame.colorIs("home.stat.tokens.bg", t.colors.surface));
-        DOCTEST_CHECK(frame.colorIs("home.recent.bg", t.colors.surface));
         return true;
     };
 

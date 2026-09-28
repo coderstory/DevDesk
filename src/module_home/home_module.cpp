@@ -139,24 +139,6 @@ void drawStatCard(eui::Ui& ui,
         .build();
 }
 
-// 笔记显示名：标题为空时回退文件名
-std::string recentNoteName(const RecentNote& note) {
-    if (!note.title.empty()) return note.title;
-    const auto slash = note.relativePath.find_last_of('/');
-    if (slash == std::string::npos) return note.relativePath;
-    return note.relativePath.substr(slash + 1);
-}
-
-// 副标题：相对时间 + 所在目录（根目录省略）
-std::string recentNoteSubtitle(const RecentNote& note, std::time_t now) {
-    std::string sub = formatRelativeTime(note.modifiedAt, now);
-    const auto slash = note.relativePath.find_last_of('/');
-    if (slash != std::string::npos && slash > 0) {
-        sub += " · " + note.relativePath.substr(0, slash);
-    }
-    return sub;
-}
-
 // 模块注册感知（插拔方案 A §5.5）：按 Router 注册状态隐藏对应卡片/按钮，
 // 不显示陈旧数据、不显示故障态。appRouter() 为 null（无头测试）视为全启用
 // ——与模块既有 null-guard 行为一致
@@ -275,8 +257,7 @@ public:
                      std::to_string(stats_.todayNotes) + " / 待办 " +
                      std::to_string(stats_.pendingTodos) + " / 逾期 " +
                      std::to_string(stats_.overdueTodos) + " / 今日 API 调用 " +
-                     std::to_string(stats_.todayApiCalls) + " / 最近编辑 " +
-                     std::to_string(stats_.recentNotes.size()) + " 条");
+                     std::to_string(stats_.todayApiCalls));
         } else {
             statsLoaded_ = false;
             statsError_ = r.errorMessage();
@@ -303,10 +284,9 @@ public:
 
         // 模块注册感知（插拔方案 A §5.5）：卡片/按钮按目标模块注册状态显隐。
         // THS-08：统计卡/快捷按钮的归属模块判定已表驱动（逐行
-        // moduleRegistered(card.module)），本文件只剩最近编辑卡这一个
-        // 布尔判定点（mdOn）
-        const bool mdOn = moduleRegistered(::core::PageId::Markdown);
-        // THS-08：统计卡可见数从元数据表派生（按归属模块注册态过滤）——新增/
+        // moduleRegistered(card.module)）；最近编辑卡已删除（UI 整改）——
+        // 本文件不再有模块布尔判定点
+        // 统计卡可见数从元数据表派生（按归属模块注册态过滤）——新增/
         // 关闭模块改表即改计数，宽度（statW）均分不再靠手算；全关整行隐藏
         int statCount = 0;
         for (const auto& card : kStatCards) {
@@ -330,19 +310,9 @@ public:
                         // 标题列宽 = contentW - 右侧按钮组宽 212（对偶写法，同
                         // Todo 560/560、Claude 360/360）：旧 240 让整行比下方满宽
                         // 卡内缩 28px，右缘不齐（home.header 行 gap=0，两段和=contentW）
-                        // M3-4（2026-09-28，UI 现代化）：欢迎区标题列垫低对比渐变底
-                        // （方案 B 同色系 surface → surfaceElevated 垂直；
-                        // 渐变随主题 token 运行期解析）
-                        ui.stack("home.header.greet.wrap")
-                            .size(std::max(280.0f, contentW - kHeaderActionsW), 72.0f)
-                            .content([&] {
-                            ui.rect("home.header.bg")
-                                .size(std::max(280.0f, contentW - kHeaderActionsW), 72.0f)
-                                .gradient(t.colors.surface,
-                                          t.colors.surfaceElevated,
-                                          core::GradientDirection::Vertical)
-                                .radius(t.sizes.radiusLarge)
-                                .build();
+                        // UI 整改（2026-09-28）：欢迎区不再垫渐变底——浅色主题
+                        // surface==surfaceElevated==#FFFFFF，白→白渐变 = 纯白通栏卡，
+                        // 即「首页外层白底卡」；文案直接铺页面背景
                         ui.column("home.greeting")
                             .size(std::max(280.0f, contentW - kHeaderActionsW), 72.0f)
                             .gap(6.0f)
@@ -362,8 +332,6 @@ public:
                                     .lineHeight(18.0f)
                                     .color(t.colors.textSecondary)
                                     .build();
-                            })
-                            .build();
                             })
                             .build();
 
@@ -607,123 +575,6 @@ public:
                         })
                         .build();
                 }
-
-                // ========== 最近编辑卡片（真实数据，stack 内绝对定位） ==========
-                // markdown 模块关闭 → 整卡隐藏（表还在但数据是死的，展示即欺骗）
-                if (mdOn) {
-                const int noteCount =
-                    static_cast<int>(stats_.recentNotes.size());
-                const float itemH = 44.0f;
-                const float listTop = 60.0f;
-                const float recentH = noteCount > 0
-                                          ? listTop + noteCount * itemH + 12.0f
-                                          : 108.0f;
-
-                // M3-1（2026-09-28，UI 现代化）：手绘 rect 换 card 组件
-                // （骨架 + panelShadow 阴影随 CardStyle；padding 0 保持卡内
-                // 绝对坐标与旧实现一致；border 由 CardStyle 默认提供）
-                components::card(ui, "home.recent")
-                    .size(contentW, recentH)
-                    .radius(t.sizes.radiusLarge)
-                    .theme(core::theme::componentTokens(t))
-                    .padding(0.0f)
-                    .content([&] {
-                        ui.text("home.recent.title")
-                            .position(28.0f, 20.0f)
-                            .size(contentW - 56.0f, 24.0f)
-                            .text("最近编辑")
-                            .fontSize(t.sizes.fontSizeLarge)
-                            .lineHeight(24.0f)
-                            .fontWeight(600)
-                            .color(t.colors.textPrimary)
-                            .build();
-
-                        if (!ok) {
-                            ui.text("home.recent.error")
-                                .position(28.0f, listTop)
-                                .size(contentW - 56.0f, 32.0f)
-                                .text("数据加载失败：" +
-                                      (statsError_.empty() ? std::string("未知错误")
-                                                           : statsError_) +
-                                      "（点右上角刷新重试）")
-                                .fontSize(t.sizes.fontSizeSmall)
-                                .lineHeight(20.0f)
-                                .wrap()
-                                .color(t.colors.error)
-                                .build();
-                        } else if (noteCount == 0) {
-                            ui.text("home.recent.empty")
-                                .position(28.0f, listTop)
-                                .size(contentW - 56.0f, 32.0f)
-                                .text("还没有笔记。点下方「+ 新建笔记」去 Markdown 模块创建第一篇")
-                                .fontSize(t.sizes.fontSizeSmall)
-                                .lineHeight(20.0f)
-                                .wrap()
-                                .color(t.colors.textTertiary)
-                                .build();
-                        } else {
-                            for (int i = 0; i < noteCount; ++i) {
-                                const RecentNote& note = stats_.recentNotes[i];
-                                const float iy = listTop + static_cast<float>(i) * itemH;
-                                const auto id = std::to_string(i);
-                                // 拷贝进闭包：note 是 stats_ 里的引用，
-                                // refreshStats 后可能失效
-                                const std::string notePath = note.relativePath;
-
-                                // 整行可点击 → 跳转 Markdown 页并打开该笔记
-                                // （Router payload："open:<相对路径>"，由
-                                // Markdown 模块 compose 消费）
-                                ui.rect("home.recent.row." + id)
-                                    .position(12.0f, iy - 4.0f)
-                                    .size(contentW - 24.0f, 40.0f)
-                                    .color(t.colors.surface)
-                                    .hoverColor(t.colors.hover)
-                                    .radius(t.sizes.radiusSmall)
-                                    .onClick([this, notePath] {
-                                        navigateTo(::core::PageId::Markdown,
-                                                   "open:" + notePath);
-                                    })
-                                    .build();
-                                // 图标
-                                ui.rect("home.recent.icon." + id)
-                                    .position(28.0f, iy)
-                                    .size(32.0f, 32.0f)
-                                    .color(t.colors.surfaceElevated)
-                                    .radius(t.sizes.radiusSmall)
-                                    .build();
-                                ui.text("home.recent.icon.text." + id)
-                                    .position(28.0f, iy)
-                                    .size(32.0f, 32.0f)
-                                    .icon(0xF15C)  // fa-file-lines（📝 换 FA）
-                                    .fontSize(14.0f)
-                                    .lineHeight(32.0f)
-                                    .horizontalAlign(eui::HorizontalAlign::Center)
-                                    .color(t.colors.textTertiary)
-                                    .build();
-                                // 文件名（标题）
-                                ui.text("home.recent.name." + id)
-                                    .position(72.0f, iy - 1.0f)
-                                    .size(contentW - 120.0f, 18.0f)
-                                    .text(recentNoteName(note))
-                                    .fontSize(t.sizes.fontSizeBody - 1.0f)
-                                    .lineHeight(18.0f)
-                                    .fontWeight(500)
-                                    .color(t.colors.textPrimary)
-                                    .build();
-                                // 时间 + 目录
-                                ui.text("home.recent.time." + id)
-                                    .position(72.0f, iy + 18.0f)
-                                    .size(contentW - 120.0f, 14.0f)
-                                    .text(recentNoteSubtitle(note, now))
-                                    .fontSize(t.sizes.fontSizeSmall - 2.0f)
-                                    .lineHeight(t.sizes.fontSizeSmall + 1.0f)
-                                    .color(t.colors.textTertiary)
-                                    .build();
-                            }
-                        }
-                    })
-                    .build();
-                }  // if (mdOn) 最近编辑
 
                 // ========== 快捷操作按钮组（Router payload 跨模块指令）==========
                 // 目标模块关闭 → 按钮隐藏，宽度按剩余数量均分；全关整行隐藏
