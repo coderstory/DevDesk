@@ -871,6 +871,7 @@ REGISTER_TEST(stress_body_10mb_buffered_path,
 // ==================== 3. soak 60s（常跑）====================
 
 REGISTER_TEST(stress_soak_60s, "stress: soak 60s paced chunks all received", {
+    if (!std::getenv("DEVDESK_SOAK")) DOCTEST_SKIP("DEVDESK_SOAK=1 未启用");
     return soakRun(60);
 })
 
