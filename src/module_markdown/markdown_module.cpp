@@ -1223,11 +1223,20 @@ private:
         previewTextHash_ = std::hash<std::string>{}(editorText_);
         // Phase 3 块模型：唯一文本写点顺带 update（同文零重算）。编辑只脏
         // 受影响块——预览逐块渲染时未变块按内容命中上游 md4c 解析缓存。
+        // M9（spec §5 #1）：分块重算耗时记录式日志（200KB/5000 行 ≤5ms 目标，
+        // 无硬断言，人工/脚本扫日志复核）。零重算路径不打（无脏区间、无耗时
+        // 意义）；几何表在同帧 rebuild（dirty 区间日志与几何同源）。
+        const auto tSeg0 = std::chrono::steady_clock::now();
         const MdBlockUpdate upd = blockModel_.update(editorText_);
+        const auto tSeg1 = std::chrono::steady_clock::now();
         if (upd.changed) {
-            LOG_DEBUG("Markdown 块模型: 共 " +
-                      std::to_string(blockModel_.blocks().size()) + " 块, 脏区间 [" +
-                      std::to_string(upd.dirtyFirst) + "," +
+            char msBuf[32];
+            std::snprintf(msBuf, sizeof(msBuf), "%.2f",
+                          std::chrono::duration<double, std::milli>(tSeg1 - tSeg0)
+                              .count());
+            LOG_DEBUG("[live] segment n=" +
+                      std::to_string(blockModel_.blocks().size()) + " ms=" + msBuf +
+                      " dirty=[" + std::to_string(upd.dirtyFirst) + "," +
                       std::to_string(upd.dirtyLast) + "], 复用 " +
                       std::to_string(upd.reused) + " 块");
         }
@@ -1791,6 +1800,9 @@ private:
                         float midW,
                         const core::theme::Tokens& t,
                         const components::theme::ThemeColorTokens& componentTheme) {
+        // M9（spec §5 #2/#3 记录式验收）：整列 compose 耗时日志（DEBUG 级；
+        // 帧率 = 60s / Σcompose 的近似上限，与 debug 标题 FPS 互证；无硬断言）
+        const auto tCompose0 = std::chrono::steady_clock::now();
         // M6 纵深防御：程序化标记任何漏清路径（onChange 同帧没消费上）都在下帧
         // 开头清零 —— 同帧 echo 走 compose 帧末（此刻还没发生），不受影响；
         // 残留标志会让下一次用户滚轮被误判成程序化来源（不关跟随）。
@@ -1893,11 +1905,29 @@ private:
                 //                     会抢走点击与焦点）
                 // 非活动块一律 false / 默认值 = 与预览态逐块渲染完全同一条默认路。
                 BlockFlowHooks hooks;
-                hooks.wrapHeight = [this, &live](size_t k, const MdBlock& b,
-                                                 float geometryHeight,
-                                                 float contentWidth) {
+                // M9（spec §5 #5 / R4）：单块高度上限 —— 活动块内容贴合高超过
+                // 视口 0.7 倍时封顶（mdLiveCappedInputHeight，纯函数可单测）。
+                // 封顶后活动 input 内部滚动（maxVerticalScroll > 0 → over 探针
+                // =1 属预期，见 drawLiveInputBlock 的探针注记），外层滚轮在该块
+                // 上成为死区 —— R4 接受为标准行为并登记 KNOWN_LIMITATIONS。
+                // liveInputCapped_ 每帧由本钩子按活动块重写，供 over 探针区分
+                // 「封顶块内滚动（预期）」与「贴合失败（回归）」。
+                hooks.wrapHeight = [this, &live, viewportH = g.h](
+                                       size_t k, const MdBlock& b,
+                                       float geometryHeight,
+                                       float contentWidth) {
                     if (k != live.activeBlock) return geometryHeight;
-                    return liveFitHeight(b, liveBlockText(b), contentWidth);
+                    const float fit =
+                        liveFitHeight(b, liveBlockText(b), contentWidth);
+                    const float h = mdLiveCappedInputHeight(fit, viewportH);
+                    liveInputCapped_ = h < fit;
+                    if (liveInputCapped_) {
+                        LOG_DEBUG("[live] input cap fit=" +
+                                  std::to_string(fit) + " h=" + std::to_string(h) +
+                                  " viewport=" + std::to_string(viewportH) +
+                                  " stableId=" + std::to_string(b.stableId));
+                    }
+                    return h;
                 };
                 hooks.drawContent = [this, &live, &style](
                                         eui::Ui& inner, size_t k,
@@ -2011,6 +2041,17 @@ private:
                     liveFocusPending_ = false;
                     if (hasActive) ui.requestFocus(kLiveInputHitId);
                 }
+                // M9（spec §5 #2：#2 键入/ #3 滚动的帧 compose 记录式日志）：
+                // 包住整个实时列 compose（含 scrollView 测量 pass）。同级对照：
+                // debug 标题 FPS 计数（EUI-NEO 自带）；人工连打/滚动 30 秒各记
+                // 最低帧率，脚本扫 [live] frame compose 复核（无硬断言）。
+                const auto tCompose1 = std::chrono::steady_clock::now();
+                char msBuf[32];
+                std::snprintf(msBuf, sizeof(msBuf), "%.2f",
+                              std::chrono::duration<double, std::milli>(
+                                  tCompose1 - tCompose0)
+                                  .count());
+                LOG_DEBUG(std::string("[live] frame compose ms=") + msBuf);
             });
     }
 
@@ -2229,12 +2270,21 @@ private:
         // "是否注册滚轮处理器"做探针（components/input.h：仅 maxVerticalScroll > 0
         // 才挂 onScroll；M0 V3a ③ 同款判据）——故 N 是 0/1 探针而非像素值
         //（像素超出量由高度公式保证恒 0，打它只是同义反复）。
+        // M9（spec §5 #5 / R4）：封顶块（0.7×视口高上限）的内部滚动 = 预期行为
+        //（块内滚动，接受滚轮死区），over=1 是设计状态不是贴合失败——只 DEBUG
+        // 记录，不升 WARN；非封顶块 over=1 才是高度公式回归，维持 WARN。
         const auto* hit = ui.find(kLiveInputHitId);
         const int over = (hit != nullptr && hit->onScroll) ? 1 : 0;
         if (over > 0) {
-            LOG_WARN("[live] input over=1 活动块高度未贴合（应 0）: stableId=" +
-                     std::to_string(b.stableId) +
-                     " 声明高=" + std::to_string(fitHeight));
+            if (liveInputCapped_) {
+                LOG_DEBUG("[live] input over=1（封顶块内滚动，预期）stableId=" +
+                          std::to_string(b.stableId) +
+                          " h=" + std::to_string(fitHeight));
+            } else {
+                LOG_WARN("[live] input over=1 活动块高度未贴合（应 0）: stableId=" +
+                         std::to_string(b.stableId) +
+                         " 声明高=" + std::to_string(fitHeight));
+            }
         } else {
             LOG_DEBUG("[live] input over=0");
         }
@@ -4075,6 +4125,10 @@ private:
         float height = 0.0f;
     };
     LiveHeightMemo liveHeight_;
+    // M9：本帧活动块是否命中高度封顶（0.7×视口高，spec §5 #5）。wrapHeight
+    // 钩子每帧按活动块重写；over 探针凭它区分「封顶块内滚动（预期，仅 DEBUG）」
+    // 与「贴合失败（回归，WARN）」——封顶块 maxVerticalScroll > 0 是设计状态。
+    bool liveInputCapped_ = false;
     bool syncPreviewOnEnter_ = false;  // 刚切入预览态 → 对齐编辑器位置
     float lastPvContentWidth_ = 0.0f;  // 预览内容宽（estimateHeight 用，滞后一帧）
     std::time_t lastSavedAt_ = 0;      // 上次落盘时刻（状态栏 "✓ 已保存 HH:MM"）

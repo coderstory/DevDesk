@@ -87,6 +87,13 @@
 - P3-③ 补充（2026-09-24）：代码块**着色**高亮在上游通路上不存在（code block 单色、无预解析注入）——CodeFence 块的预览改由 DevDesk 侧自绘（`md_preview_highlight` 产出 md_highlight 色表 runs + `drawPreviewCodeBlock` 几何公式逐项对齐上游 `renderCodeBlock`；runs 消费的是 EUI-NEO 既有 styled-runs DSL `.runs()`，零上游改动、零新词法器）。其余块型仍走逐块 `components::markdown`，本条 ①②③ 升级路径对其继续有效；上游 ② 落地后 CodeFence 自绘可并回。
 - P3-⑤ 补充（2026-09-24）：上游 `components::markdown` **无逐块命中/指针事件 API**（组件纯展示：无 interactive/onTap/onHover，link 渲染后也不可点、无 hover 反馈）——块级交互（点击定位编辑器 + hover 高亮）由 DevDesk 侧「逐块 wrapper stack（固定高 = MdSyncMap 块几何 H_k）+ 透明 MouseArea 覆盖层」达成，CodeFence 自绘块与上游块同等覆盖（并非只接自绘块）。代价与边界：① hit/hover 几何建立在 ④ 的「estimateHeight == 实际布局」同源恒等上——上游布局公式若改动，点击/hover 区域会偏移（编辑器光标落点不受影响，反查与正向共用同一张表，自动跟变）；② 每块多一层 stack + 一个全尺寸透明 rect 节点（列内累计高度不变 → 渲染几何零回归）；③ 点击只映射到**行首**列位（预览折行宽度与编辑器布局不同源，行内列无歧义映射不存在）。升级路径：本条 ②（块级 API）落地后，wrapper/覆盖层可整体退役换原生逐块事件；EUI-NEO 上游 PR 候选同时包含「markdown 块级 hit 回调」一项。来源：Phase 3 ⑤ 上游勘察（grep `components/markdown.h` 无任何 press/hover/interactive 挂载点，2026-09-24）。
 
+#### 19. 实时态超长单块高度封顶：块内滚动 + 滚轮死区为标准行为（Phase 3 M9，2026-09-28 登记）
+
+- **现象**：实时态活动块内容贴合高超过视口 0.7 倍时（数千行围栏 / 松散长列表），输入框高度封顶为 `0.7 × 视口高`（spec §5 #5；纯函数 `mdLiveCappedInputHeight`）——块内滚动由输入框内部接管，**滚轮在该块上成为死区（不再滚外层）**。spec 风险 R4 将此接受为标准行为：超大单块不把滚动容器撑到几万像素，换取「该块全行绘制 + 块内自滚」的局部退化；非活动超长块仍全行绘制（与预览同通路、成本相同，缓存键 `(stableId, hash)` 已复用 M7 MdPreviewCodeCache）。
+- **验证口径（记录式，不设墙钟红线）**：§5 #1~#5 全部走 DEBUG 日志——`[live] segment n=… ms=… dirty=…`（分块重算耗时）、`[live] frame compose ms=…`（成帧耗时）、`[live] input over=N`（高度贴合探针）、`[live] input cap …`（封顶生效）；无头用例 `md_module_live_block_cap_5000_fence` 锁封顶几何（input 高 = 0.7×视口 + hit 挂 onScroll）。
+- **位置**：`markdown_module.cpp` drawLiveColumn 的 `hooks.wrapHeight`（封顶接线）+ `drawLiveInputBlock`（over 探针区分封顶预期/贴合失败）；`md_live_edit.{h,cpp}`（纯函数 + 0.7 常量）。
+- **来源**：Phase 3 M9（spec `2026-09-27-markdown-phase3-block-render-design.md` §5 #4/#5、§7 M9、风险 R4）。
+
 ### 测试
 
 #### 5. soak 300s 压测默认 SKIP
