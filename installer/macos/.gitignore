@@ -1,0 +1,3 @@
+# 源图素材（1024×1024 PNG，需在 Mac 上准备，见 doc/scripts/gen_app_icns.sh）；
+# 不忽略 .icns 交付物（DevDesk.icns / .VolumeIcon.icns 由脚本在 Mac 上生成后显式入库）
+icon-1024.png
