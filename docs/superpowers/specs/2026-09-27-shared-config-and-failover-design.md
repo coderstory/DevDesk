@@ -1,6 +1,8 @@
 # 共享配置片段 + Failover — 交互、数据模型与守卫设计
 
 日期：2026-09-27 ｜ 性质：**只读调研 + 设计，未改任何代码、未跑构建/测试** ｜ 基线：worktree HEAD `7e86964`（任务书给 master tip `2c663a2`，本工作区已领先 2 个合并提交）
+
+> **2026-09-28 设计稿刷新（版本 2，只改设计稿、未改代码）**：按批 1 已合 master（`2d2ebfa`，2026-09-28 实测源码逐项核验）把 §1-§4 的落地事实收敛——migration 现状、G10/守卫、CRUD、P0、复制绑定；§3.1 错误口径按 `writeNoProfileError` 唯一出口（恒 503 `no_active_profile`）重定「不换」类别；新增 §2.10（批 2 编辑器 UI 设计 + UI 现状取证）、§3.8（批 3 failover 落地锚点）、§7（批 2/3 排期）；§5 待拍板追加 3 条。
 输入：`../plans/2026-09-27-cc-switch-ref-provider-sync.md` §3-4/§5、`../plans/2026-09-27-cc-switch-ref-proxy.md` §3-6/§5-1、`2026-09-27-profile-reverse-sync-and-copy-design.md` §3.3 守卫表、`2026-09-22-claude-provider-config-design.md`
 
 > 行号会漂移：一律给 `file:符号名`。cc-switch 的行为只作对照，**不当我们的现状**。本节所有「现状」均已读源码取证。
@@ -14,8 +16,8 @@
 | A3 | 冻结语义 | 片段键集 K = 片段 `extra_env` 的键；**片段值 > profile 自身值**（冻结 = 片段单点决定）；托管键在两者之上 |
 | A4 | 防污染 | 新增守卫 **G10 = 捕获目标所绑定片段的键集 K** → 不写也不清；**片段自身永不作为捕获目标** |
 | A5 | 代理侧 | 代理写的是**合并后**的 env（片段→profile→托管键），settings.json 里不留片段痕迹 |
-| A6 | 生命周期 | 删片段 / 解绑 / 改片段 → 绑定 profile 自动解绑或跟随；**前提：前置修复 P0（takeover 清理「上一轮托管、本轮不再生成」的键）** |
-| B7 | 触发 | 分类表：传输失败 / 401 / 403 / 429 / 5xx / 其余 4xx → 换；400-422 负列表 + DevDesk 自身 503·500 → 不换；**只换一跳** |
+| A6 | 生命周期 | 删片段 / 解绑 / 改片段 → 绑定 profile 自动解绑或跟随；P0（takeover 清理「上一轮托管、本轮不再生成」的键）**批 1 已落地** |
+| B7 | 触发 | 分类表：传输失败 / 401 / 403 / 429 / 5xx / 其余 4xx → 换；400-422 负列表 + DevDesk 自身 503 `no_active_profile`（`writeNoProfileError` 唯一出口）→ 不换；**只换一跳** |
 | B8 | 多 key | **不做**；用「再来一个 profile + 备用指向它」表达 |
 | B9 | 可见性 | `claude_call_logs` 加 `failover_from` 列（**落库可审计**）+ 状态栏常驻一行；不每请求 toast |
 | B10 | 与接管 | failover 是**请求级**：不改 `is_active`、不重写 settings.json；唯一硬交互是**模型名跨供应商解析**（§3.5） |
@@ -35,14 +37,15 @@
 | 首包前判定点 | 同上：缓冲路径在 `out.setStatus(...)` 之前；流式路径在 `waitForStatus(30000)` 之后、写响应头之前 | 两处都处「客户端还没收到任何字节」的位置 |
 | 警告出口 | `claude_service.cpp::lastSyncWarnings()` | **已有 3 个消费者**（Claude 页头 `claude_module.cpp`、设置页 `settings_module.cpp`）→ G10 的警告**零新 UI** |
 
-**两条必须先落地的事实**（已 grep 取证）：① 现状**没有**任何 failover / 共享片段代码（`failover|fallback|shared_config` 全仓只命中模型旧列 fallback 与 `shared_ptr`）；② `takeOver` 只 set 不删 —— 这是共享片段能否成立的前置缺口（§2.7）。
+**落地现状（2026-09-28 实测复核）**：批 1（服务层/守卫，commit `2d2ebfa`，11 文件）已合 master——§2.1 表与 G10/§2.5 buildProxyEnv 合并/§2.6 解绑与复制/§2.7 P0 均已落地；剩余未开工 = 批 2 编辑器 UI（§2.10）、批 3 failover（§3.8）。**failover 仍零实现**：`fallback_profile_id|failover|shouldFailoverTo` 在 `src/`、`tests/` 只命中无关项（router 空态 `FallbackCompose`、terminal 的 `buildWindowsFallbackArgs`、片段注释里的 "failover" 字样），§3.7 两列 ALTER 未落 migration。
 
 ## 2. A. 共享配置片段
 
 ### 2.1 数据模型（A1）
 
 ```sql
--- migration v5（当前 all() 末尾 = kTodoColumnKind v4，故新迁移从 5 起）
+-- migration：已合 master = kClaudeSharedConfigs v6（migrations.h:205-218，批 1 commit 2d2ebfa；
+-- 当前 all() 末尾 = kClaudeProfileDialectOverride v9（定义 migrations.h:262，all() 条目 :281）；本段 SQL 与落地逐字一致）
 CREATE TABLE IF NOT EXISTS claude_shared_configs (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   name TEXT UNIQUE NOT NULL,
@@ -101,7 +104,7 @@ ALTER TABLE claude_profiles ADD COLUMN shared_config_id INTEGER NOT NULL DEFAULT
 
 **片段键被 live 手工改动怎么办**：下次 takeover 用片段值覆盖回去（片段赢）。为了不重演「静默被改」的观感，takeover 时对「live 里片段键的值 ≠ 片段值」的键 push 一条警告进 `lastSyncWarnings_`（例：「`X` 的值被共享配置「片段 A」覆盖」）——这是**可见性要求**，不是可选美化。
 
-**守卫点（全部最小改动）**：
+**守卫点（全部最小改动；批 1 已全部落地，本表即落地后的形态）**：
 
 | 位置 | 改动 |
 |---|---|
@@ -113,7 +116,7 @@ ALTER TABLE claude_profiles ADD COLUMN shared_config_id INTEGER NOT NULL DEFAULT
 ### 2.5 与接管 / 代理的关系（A5）
 
 - 代理写进 settings.json 的是**合并后的 env**（片段 → profile → 托管键），**不写片段原值、不留标记**。理由：settings.json 的 env 是扁平 map，无处放「出处」；且 `settings_sync.h` 的协议明写「不往 settings.json 塞标记字段」（不污染用户文件、不被别的工具当用户配置读走）。
-- 实现：`buildProxyEnv` 补第 5 个入参 `sharedExtraEnvJson`（空串 = 未绑定），合并只需**两步赋值**：先 profile extra_env（现状），再片段 extra_env 覆盖。两条既有性质自动保住：托管键仍最高、空槽位仍 skip。
+- 实现（**批 1 已落地**）：`buildProxyEnv` 第 5 个入参 `sharedExtraEnvJson`（provider_config.h:216/242，调用点 claude_service.cpp:1619/1938），合并两步赋值：先 profile extra_env（现状），再片段 extra_env 覆盖。两条既有性质自动保住：托管键仍最高、空槽位仍 skip。
 - **代理转发只用 profile 的 base_url/key**（片段不带这些）→ 片段对**路由、凭据、failover 候选**零影响。这是「片段排除 base_url」的最大回报。
 - 片段保存后：若代理在跑且**激活 profile 绑定了它** → 立即 re-takeover（否则 live 留旧片段值到下次切换）。落点：片段保存 handler → 新增公开方法 `ClaudeService::reapplyTakeOver()`（内部即既有 `syncTakeOver()`，它现在私有）。
 - 接管开关 `setSettingsTakeOverEnabled(false)`：片段完全不参与（不写 live、不捕获），与现状一致。
@@ -127,9 +130,11 @@ ALTER TABLE claude_profiles ADD COLUMN shared_config_id INTEGER NOT NULL DEFAULT
 | 片段**清空** | 同编辑；但**必须连带删除 live 上那些键** → 依赖 §2.7 的 P0 修复 | 现状只 set 不删，清空会变成「清了个寂寞」 |
 | 片段**解绑** | 该 profile 的 K 变空：这些键回落为「profile 自身的同名值（若有，此时恢复生效）」或「从 live 移除」；确认弹窗写清这句话 | 非破坏性：解绑是交回控制权，不是丢配置 |
 | 片段**删除** | 同事务 `UPDATE claude_profiles SET shared_config_id=0 WHERE shared_config_id=?`，提示「N 个 Profile 已解绑」；随后若代理在跑且激活 profile 在其中 → re-takeover | 不留悬空 id；不做级联删 profile |
-| profile **复制** | `shared_config_id` 与 `fallback_profile_id` 一并复制（它们属于配置）；`duplicateProfile` 的二段补写条件要放宽（现只在 models/extra_env 非空时才跑） | 复制 = 拿到同一份配置的直觉 |
+| profile **复制** | `shared_config_id` 已随 `createProfile` 入参一并复制（**批 1 已落地**，claude_service.cpp:905）；`fallback_profile_id` 的复制留批 3（§3.7） | 复制 = 拿到同一份配置的直觉 |
 
 ### 2.7 前置修复 P0（不修则片段不可用）
+
+> **批 1 已落地（2026-09-28 实测）**：takeOver 对本轮不再生成、但存在 sidecar `managedKeys` 的托管键走按键级裁决——快照有值→恢复、无→删除（settings_sync.cpp:476-492 同款重建循环）；本节保留为设计背景。
 
 `settings_sync.cpp::takeOver` 现在**只 set、从不删**「上一轮托管、本轮不再生成」的键（`cc-switch-ref-proxy.md` §3.1 已登记同一缺口，症状是「清空模型槽位后旧模型名留在 settings.json」）。片段会让它变成日常：加键/删键/清空片段都触发。
 
@@ -167,6 +172,33 @@ ALTER TABLE claude_profiles ADD COLUMN shared_config_id INTEGER NOT NULL DEFAULT
   └─ 5. live = 片段 S(B) + B 自身 env + 托管键；A 已收编（不含片段键）
 ```
 
+### 2.10 批 2：编辑器 UI 设计（2026-09-28 新增；未开工）
+
+**UI 现状取证（2026-09-28 实测）**：`claude_ui_list/form/detail/logs/state/logic` 十二文件（6 .cpp + 6 .h）与 `claude_module.cpp` 对 `SharedConfig|shared_config` **零命中**（片段服务层 API 已合、UI 未接）；测试 `tests/test_modules/test_claude_ui.cpp` 存在。
+
+| 现状符号 | 职责（批 2 的复用点） |
+|---|---|
+| `claude_module.cpp::compose`（:145 调 `drawClaudeHeader`） | 页面装配骨架；`lastSyncWarnings` 页头消费者（G10 警告**零新 UI**，沿用） |
+| `claude_ui_list.h::drawProfileListPanel` :48（+ `ProfileListActions` :40） | 左栏 profile 列表——「共享配置」区块入口落点 |
+| `claude_ui_form.h::drawProfileFormDialog` :54 / `openCreateForm` :39 / `openEditForm` :40 / `submitForm` :50 | 表单弹窗骨架（`FormSubmitHooks` :31）；片段的编辑弹窗复用同款形态 |
+| `claude_ui_form.cpp::drawFormEnvTab` :495（tabs 装配 :724-732「基础/模型映射/高级 env」） | 键值编辑器（可见行上限 `kMaxVisibleRows=5`）；「高级 env」页顶部一行 = profile 绑定片段的下拉落点 |
+| `claude_ui_state.h::FormState` :94（`formEditId_` :96 / `formTab_` :97 / **`formEnvRows_` :114 键值行**）+ `ClaudeUiState` 容器 :144 | **`formEnvRows_` 可直接复用作片段编辑器键值行**；新增 `SharedConfigDialogState` 挂容器 |
+| `claude_ui_detail.h::drawDetailPanel` :67 | 右栏详情——「共享配置：片段 A（N 个键）」一行落点 |
+| `claude_module.cpp::anyDialogOpen` :243-247（布尔聚合）/ `closeTopmostDialog` :268（Esc 序链：调用记录>删除确认>表单） | 弹窗管理链锚点——「各开窗点只置自身 flag」只是惯例、**非结构性互斥**；新增 `SharedConfigDialogState` **必须接入两处**（anyDialogOpen 参与 Ctrl+N/Ctrl+Enter 门控，closeTopmostDialog 收进 Esc 序链），否则片段编辑弹窗开着时按 Esc 穿透关不掉、快捷键不被门控 |
+
+**设计（§2.3/§2.8 落点细化，全部改动在 `claude_ui_*` + `claude_module.cpp`，**零服务层改动**——CRUD 已合 claude_service.h:209-213 / cpp:964/990/1081/1136）**：
+
+| 面 | 落点 | 内容 |
+|---|---|---|
+| 片段列表入口 | `drawProfileListPanel` 下方新增「共享配置」区块（同页，无新导航） | 片段卡片（name + 键数）+ 新建按钮；与 profile 列表同滚动容器 |
+| 片段编辑弹窗 | 新 `SharedConfigDialogState`（挂 `ClaudeUiState` :144）；弹窗 = name 行 + 键值编辑器（复用 `formEnvRows_` 同款 + `drawFormEnvTab` 的 `kMaxVisibleRows=5` 约束） | 新建/编辑/删除 → 已合 CRUD；片段删除沿用已合同的**同事务解绑**；保存后激活 profile 绑定了它 → 调已合 `reapplyTakeOver()`（claude_service.h:222） |
+| profile 绑定 | `drawFormEnvTab` 顶部一行「共享配置：[无/片段A/…]」下拉（dropdown 组件既有） | 写 `sharedConfigId`（走既有 `updateProfile`）；表单态新增 `formSharedConfigId_` |
+| 片段赢预览 | 绑定后 K 键行**置灰只读 + chip「来自片段 X」**，新增同键**直接拦下**（§2.3 UI 表现） | K = `sharedEnvKeysFor(profileId)`（已合，claude_service.h:218）；只读/拦截判定在 `drawFormEnvTab` 内 |
+| 详情/列表 | `drawDetailPanel` 一行「共享配置：片段 A（N 个键）」；列表卡片角标「共享」 | 数据 = `listSharedConfigs` 快照（走既有后台线程取数模式，claude_ui_state.h:153 注释） |
+
+【待拍板】① 片段区块位置/入口形态（推荐：左栏列表下方独立区块 + 区块内「新建」按钮，与「+ 新建 Profile」同款按钮）；② 片段编辑弹窗是否可复用 `FormState` 结构加 `kind` 字段（推荐：**新增独立状态** `SharedConfigDialogState`，复用 `formEnvRows_` 写入模式，不污染 profile 表单状态；「`formOpen_` 单弹窗天然互斥」仅是惯例、非约束——新状态必须接入 `anyDialogOpen` 门控与 `closeTopmostDialog` Esc 序链两处（锚点见上表），其 Esc 关闭语义 = 与表单弹窗同级、入序链最顶层（Esc 最先关它））。
+**已取证（2026-09-28 审计核验，前提证伪）**：EUI-NEO `components/input.h` 的 `InputBuilder` 全链**无 enabled/disabled/readonly 禁改态**（`components/` 下 'disabled' 零命中）——「片段赢预览」K 键置灰只读行**无现成控件**。两条可行路径：(a) EUI-NEO 上游加 disabled 输入态——跨仓库改动 + `DEVDESK_EUI_NEO_MIN_REV` 提升；(b) **推荐**——DevDesk 侧把 K 键行渲染成灰字 text + chip「来自片段 X」（非 input），零跨仓库改动，只读语义由「不可编辑控件」直接表达。落地默认 (b)；若拍板走上游 (a)，按 §7 批 2 文件面附注扩 scope。
+
 ## 3. B. Failover
 
 ### 3.1 触发与范围（B7）
@@ -183,11 +215,11 @@ ALTER TABLE claude_profiles ADD COLUMN shared_config_id INTEGER NOT NULL DEFAULT
 | 5xx（含 500/502/503/504/529 过载） | ✅ | 上游侧故障 |
 | 400 / 405 / 406 / 413 / 414 / 415 / 422 / 501 | ❌ | 请求自身非法，换家同结果——白烧一次请求（对照 cc-switch `categorize_proxy_error` 的负列表） |
 | 其余 4xx（404 / 408 等） | ✅ | 采「负列表之外都试」：404 可能是「该网关没有这个模型」，failover 恰好能救 |
-| DevDesk 自身 503 `no_active_profile` / 500 `keychain_read_failed` | ❌ | 本地配置错误，非上游故障；503 时连候选都没 key |
+| DevDesk 自身 503 `no_active_profile`（`writeNoProfileError` 唯一出口） | ❌ | 本地配置错误，非上游故障；且发生在转发**前**（取 profile 失败直接回），failover 判定点根本到不了这一档 |
 
-> **注记（波 2 收口，2026-09-28）**：本行的「DevDesk 自身错误」清单是设计时口径，实现侧已变——CPX-10 把「取 profile 失败」收成唯一出口 `proxy_router::writeNoProfileError`（缓冲 / 流式两条路径共用），响应恒为 `503 no_active_profile`，**`500 keychain_read_failed` 这个 error slug 在代码里已不存在**（`src/` 内仅剩 `proxy_router.cpp:103` 的一句历史注释）。类别结论（本地配置错误 → 不换）不受影响；failover 落地时 `shouldFailoverTo` 需按新口径重定「不换」的错误类别，别照抄本行。
+> **注记（2026-09-28 刷新，已源码证实）**：本行的「DevDesk 自身错误」按**新口径**重定——`proxy_router.cpp::writeNoProfileError`（:108-113）是「取 profile 失败」的**唯一出口**，恒 `writeErrorJson(out, 503, "no_active_profile", ...)`（:113），缓冲路径调用点 :202、流式路径调用点 :352；`500 keychain_read_failed` 这个 error slug 在代码里已不存在（仅剩 :103-106 一段历史注释）。类别结论（本地配置错误 → 不换）不受影响；failover 落地时 `shouldFailoverTo` 的「不换」类别按此新口径重定（§3.8），不照抄本行。
 
-纯函数 `shouldFailoverTo(int statusCode, const std::string& errorKind)`（放 `provider_config.*` 或新 `failover_policy.*`，单测逐条覆盖）——两条转发路径共用，避免 if 表漂移。
+纯函数 `shouldFailoverTo(int statusCode, const std::string& errorKind)`（放 `provider_config.*` 或新 `failover_policy.*`，单测逐条覆盖）——两条转发路径共用，避免 if 表漂移。**判据表与 errorKind 取值已按新 503 口径在 §3.8 重定（批 3 落地锚点）。**
 **不做**：同一 profile 内重试（key 级 429 重试要退避，收益低）；客户端可见的重试提示（`/v1/messages` 一跳重试对客户端完全透明）。
 
 ### 3.2 判定点与代码影响
@@ -198,6 +230,7 @@ ALTER TABLE claude_profiles ADD COLUMN shared_config_id INTEGER NOT NULL DEFAULT
 | 流式 | `proxy_router.cpp::handleStreamingRequest`：`waitForStatus(30000)` → 判 `upstreamStatus` → 写响应头 | 判定点就在 `waitForStatus` 之后、写响应头之前：`upstreamStatus==0` 或状态码可换 → `cancelWithReason("failover")` 丢弃本次 stream（队列里的半截 error body 随对象销毁），再用备用起一条新流。`StreamingResponse::cancelWithReason` 既有（`stopProxy` 在用） |
 
 新增 service 方法 `resolveFallbackProfile(const Profile&)`（返回 `std::optional<Profile>`，内部 `getProfile` + `loadApiKey` + 失效/无 key 检查）——保持 `proxy_router` 不直接碰 DB/Keychain（它现在也全走 service）。
+（**批 3 落点已对照当前源码**：取 profile 失败 = `writeNoProfileError` 调用点 :202（缓冲）/ :352（流式）；`shouldFailoverTo` 判定插在「`send` 返回后」/「`waitForStatus(30000)` 之后、写响应头之前」，`StreamingResponse::cancelWithReason` 既有——详见 §3.8。）
 **首包预算**：每次尝试各自 30s（`waitForStatus`），最坏 60s 才把结果交给客户端。第一版**不做**预算分配（如「有备用时首试只等 15s」），登记为待测项：真机连接失败通常几百 ms 返回，30s 只在「上游吊住」时吃满；若实测痛，改一个常量（按「有无备用」分档）即可。
 
 ### 3.3 多 key（B8）
@@ -259,13 +292,39 @@ ALTER TABLE claude_profiles ADD COLUMN shared_config_id INTEGER NOT NULL DEFAULT
 ### 3.7 数据模型增量（B 组）
 
 ```sql
--- migration v6
+-- migration v10（命名建议 kClaudeFailoverColumns；约定：v6 已被批 1 共享片段占用，
+-- 当前 all() 末尾 = kClaudeProfileDialectOverride v9（定义 migrations.h:262，all() 条目 :281））
 ALTER TABLE claude_profiles ADD COLUMN fallback_profile_id INTEGER NOT NULL DEFAULT 0;
 ALTER TABLE claude_call_logs ADD COLUMN failover_from INTEGER NOT NULL DEFAULT 0;
 ```
 - 校验（`updateProfile`）：拒 `fallback_profile_id == id`（自引用纯浪费一跳）；A→B 与 B→A 的一跳环无害，不拦。
 - 删除 profile 时：同事务 `UPDATE claude_profiles SET fallback_profile_id=0 WHERE fallback_profile_id=?`。
 - 复制 profile 时：`fallback_profile_id` 一并复制。
+- （以上三条**批 3 一并实现**，未落地；删除清理 / 复制携带按已合批 1 同款式样：shared_config_id 同事务解绑 / `duplicateProfile` 入参携带，claude_service.cpp:905。）
+
+### 3.8 批 3：failover 落地锚点（2026-09-28 新增；未开工）
+
+**未开工确认（2026-09-28 复核）**：`fallback_profile_id` / `shouldFailoverTo` / `failover` 在 `src/`、`tests/` **零实现**（仅命中无关符号：router 空态 `FallbackCompose`、terminal `buildWindowsFallbackArgs`、片段注释里的 "failover" 字样），§3.7 两列 ALTER 未落 migration。
+
+**shouldFailoverTo 判据（按 §3.1 新 503 口径重定「不换」类别）**：
+
+| 类别 | errorKind / 判定 | 换？ |
+|---|---|---|
+| 传输失败（无响应头/DNS/TLS/连接/超时） | `statusCode==0`；缓冲路径 = `502 upstream_unreachable` | ✅ |
+| 401 / 403 | 只有换 key 才可能变好 | ✅ |
+| 429 | 上游限流 | ✅ |
+| 5xx（500/502/503/504/529…） | 上游侧故障；**排除「DevDesk 自身 503 `no_active_profile`」**——它由 `writeNoProfileError` 在转发**前**直接回（:202/:352），到不了判定点，也不需要判 | ✅ |
+| 400 / 405 / 406 / 413 / 414 / 415 / 422 / 501 | 请求自身非法，换家同结果 | ❌ |
+| 其余 4xx（404 / 408 等） | 负列表之外都试 | ✅ |
+| errorKind 兜底 | `errorKind=="no_active_profile"` → 不换（防御：判定点理论收不到，单测注释锚定此语义） | ❌ |
+
+**触发链路（对照当前 `proxy_router.cpp`）**：
+- 缓冲 `handleRequest`：取 profile（失败 = `writeNoProfileError` :202）→ 构造上游 → `send` → 判 `statusCode` → `shouldFailoverTo` 为真且 `resolveFallbackProfile` 可解析 → **重算** `forBaseUrl` 与 `upstream.url` 再试一次；两次都失败 → 回**第二次**的结果（错误更相关）。
+- 流式 `handleStreamingRequest`：`waitForStatus(30000)` 后、写响应头前（取 profile 失败点 = :352）→ `cancelWithReason("failover")` 丢本次流 → 用备用起新流。
+- **fallback_profile_id 读路径** = 新 service 方法 `resolveFallbackProfile(const Profile&)`：`getProfile(fallback_profile_id)` → `loadApiKey` → 任一失败 / id==0 → `std::nullopt`（原样回错，不换第三家）。
+- **注入模式交互（已定义）**：`resolveProfile` 的 `profileProvider_` 注入分支（proxy_router.cpp:311-318，测试/UI 直给完整 profile、绕过 DB/Keychain）下，`resolveFallbackProfile` 内部 `getProfile`+`loadApiKey` 必命中无 profile 内存库 → 恒 `nullopt` → 注入场景 fallback 静默永不触发。因此把「**注入模式跳过 `resolveFallbackProfile`、不换家**」显式写进 `shouldFailoverTo` 调用处守卫（明确声明，不依赖恒 nullopt 的巧合）；批 3 router 级 failover 测试取数随之定义：既有注入模式用例默认断言不换家；「注入 + 换家」场景给内存库 **seed profile 行**（与既有缓冲路径测试的纯注入取数不同；扩展注入为双 profile 是备选，推荐 seed 行，改动更小）。
+
+**扩展点（不做，登记）**：§5 待拍板 3 的「记忆性降级」（T 秒内直接走备用）若拍板纳入 v1，落点 = claude_service 内存 `map<profileId, failAt>`、不落库、重启即忘；批 3 v1 推荐纯请求级先行。
 
 ## 4. 数据模型与优先级总表
 
@@ -275,7 +334,7 @@ ALTER TABLE claude_call_logs ADD COLUMN failover_from INTEGER NOT NULL DEFAULT 0
 | `claude_profiles.shared_config_id` | INTEGER NOT NULL | 0 | 0 = 未绑定（0..1） |
 | `claude_profiles.fallback_profile_id` | INTEGER NOT NULL | 0 | 0 = 无备用（0..1，单跳） |
 | `claude_call_logs.failover_from` | INTEGER NOT NULL | 0 | 原计划 profile；实际服务的是 `profile_id` |
-| migration | `core/migrations.h::all()` | — | v5（片段）/ v6（failover）；当前末尾 = v4 |
+| migration | `core/migrations.h::all()` | — | 片段已落 **v6**（批 1）；failover = **v10**（新增）；**当前末尾 = v9** |
 
 写 env 的优先级（低→高）：live 其它键（先被收编） → profile `extra_env` → 共享片段 `extra_env` → 代理托管键。
 捕获 live 的处置：G1 托管键跳过 / **G10 绑定片段键跳过（新增）** / G2·G3·G4·G6 各自守卫 / 其余按「出现覆盖、缺席清空」。
@@ -287,11 +346,24 @@ ALTER TABLE claude_call_logs ADD COLUMN failover_from INTEGER NOT NULL DEFAULT 0
 3. **failover 是否要「记忆性降级」**？推荐**请求级 + 内存短期记忆**：某 profile 出现可重试失败后，T（取 60）秒内直接走备用；**不落库、重启即忘**、状态栏可见。否决「改 `is_active` 的粘滞切换」（计费惊喜 + 要用户手工切回）。拒绝纯请求级（无记忆）会让主家一直挂时每个请求都先吃一次失败。
 4. **模型名跨供应商怎么解**（与 `cc-switch-ref-proxy.md` §5-2 合并拍）：推荐「failover 时按槽位反查改写 `body.model`」（保留用户看得见真名）；否决「稳定别名」（改的是全时段显示）。
 5. **片段 UI 落点**：推荐「Claude 页内区块 + 弹窗编辑」；否决「新模块页 / 设置页新 tab」（模块隔离下只多一层导航，操作仍与 profile 强相关）。
+6. **批 2 / 批 3 可否并行**（分析见 §7）：推荐**服务层与 UI 拆开并行**——批 2（片段编辑器 UI）与批 3-服务层（migration v10 + shouldFailoverTo + resolveFallbackProfile + 校验/删除/复制）文件面不相交，可并行；**批 3-UI**（表单备用下拉 / 详情显示 / 状态栏行 / 日志 failover_from）与批 2 **同写 claude_ui_form / claude_ui_state / claude_module.cpp → 必须排批 2 合入之后串行**（同一文件同一时刻一个写者）。
+7. **failover「记忆性降级」是否纳入批 3 v1**：推荐 **v1 不做**（纯请求级先行，见 §3.8 扩展点登记）；若拍板纳入，落点 = claude_service 内存 map、不落库、重启即忘。
 
 ## 6. 存疑 / 待验证
 
-- §2.7 的 P0 判定基于源码（`settings_sync.cpp::takeOver` 只有 `env.set`），**未跑测试**验证现状症状（本任务禁跑构建/测试）。
+- §2.7 的 P0 **批 1 已落地**（settings_sync.cpp:476-492 按键级裁决），但未跑真实场景测试验证「清空模型槽位后旧模型名不留残留」的症状消失（落地波未跑构建/测试）。
 - 「上游 401/429 前是否已消耗配额/计费」未验证 → 只影响 B9 文案措辞，不影响分类表。
 - Claude Code 对不认得的 `model` 名返回 400 还是 404 未验证（影响「404 是否值得换家」）；两条都落在「换」侧，不影响结论。
 - cc-switch 的 `_cleared` / 整体重提取是**有意不抄**；若将来改主意要做「从 settings.json 反推片段」，必须连带补密钥剥离（`is_sensitive_config_key` 的模式匹配），仅当那条路被拍板时才启动。
 - `recordProxyEvent` 的消费者（桌宠）只看状态码；把 failover 并进去需先结构体化，本设计不做，未评估改动量。
+
+## 7. 批 2 / 批 3 交付拆分与并行分析（2026-09-28 新增）
+
+| 工作块 | 内容 | 文件面 | 与另一块交叠 |
+|---|---|---|---|
+| 批 2（编辑器 UI） | §2.10：片段区块 / 编辑器弹窗 / 绑定下拉 / 片段赢预览 / 详情行 | claude_ui_list / form / detail / state / logic + claude_module.cpp + tests/test_claude_ui.cpp（若走上游路径 (a) 的 disabled 输入，追加 EUI-NEO 仓库改动与 `DEVDESK_EUI_NEO_MIN_REV` 提升） | 零服务层改动（CRUD 已合） |
+| 批 3-服务层 | §3.7/§3.8：migration v10 + shouldFailoverTo + resolveFallbackProfile + 校验/删除/复制清理 | migrations.h + provider_config.* + claude_service.* + proxy_router.cpp + tests/test_provider_config 等 | 与批 2 **零交叠** ✅ |
+| 批 3-UI | §3.4 已有：备用下拉 / 详情显示 / 状态栏行 / 日志 failover_from | claude_ui_form / claude_ui_detail / claude_ui_logs / claude_ui_state / claude_module.cpp | 与批 2 **同文件** ❌ |
+
+**推荐排期**：① 批 2 ‖ 批 3-服务层 **并行**（文件面不相交）；② 批 3-UI 在批 2 合入后**接续串行**（批 3-UI 还依赖批 3-服务层落地——v10 读完数据 UI 才有意义，天然排在批 3-服务层后）。两批都不依赖对方批次的产出；若要求「一次性合入」，整体退化为串行（批 2 → 批 3-服务层 → 批 3-UI）。
+【待拍板】上述串并行拆分与顺序。

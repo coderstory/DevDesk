@@ -156,7 +156,7 @@
 | 12 | **codegraph 索引瘦身**（9 份 worktree 副本） | `codegraph.json` 已排除 `**/.claude/worktrees/**` / `wt-*/**` / `**/build/**`（出处 `2026-09-27-session-handoff.md:39`：当时索引 2.4GB、含 9 份副本）；本轮实测库已 ~583MB 且 `files` 表 worktree 路径命中 **0** —— 仍待闲时跑一次 `codegraph index D:/project/gui` 重建确认，并纳入本夜新增文件 |
 | 13 | **EUI-NEO push** | 本地 main 领先 origin 70 个提交（依赖 rev `269a8c4`）；**本机无推送通道** → 阻塞在用户侧（CLAUDE.md「常用命令」段）；push 后启用硬版本检查 |
 | 14 | 已关闭项：CPX-08 的 UI 用例 pin 剩余项 | 已清（`4d37216`/`632e673`：槽位分母改由槽位表派生 + 变异检验两向）—— **无需再排** |
-| 15 | 低优先 / 未取证（§7 存疑表残留） | CP-12 macOS `system_theme_macos.cpp` 未编译（`KNOWN_LIMITATIONS.md` §18）、THS-16 DST 本机不可复现、TIN-13 截屏限制（PIL/playwright 解释器错配 + 锁屏/RDP 黑图）、FileWatcher 回调线程内析构未做运行期复现 |
+| 15 | 低优先 / 未取证（§7 存疑表残留） | **THS-16 DST 已修（`32162ce`）+ TIN-13 截图 Windows 化已修（`6456c61`），用户 2026-09-28 拍板忽略验证缺口，记入 KNOWN_LIMITATIONS，不再追**；CP-12 macOS `system_theme_macos.cpp` 未编译（`KNOWN_LIMITATIONS.md` §18）；FileWatcher 回调线程内析构未做运行期复现 |
 
 > R 线顺序与并行分组（spec §5.3 / §5.4）：**R0 → R1 → R2 → R3 → {R4 ‖ R5} → {R6 ‖ R7} → {R8 ‖ R9}**；**R9 `module_pet` 已按用户决策放弃**（HANDOFF §4），pet 项改走 1g / 2j 两条独立线（均已交付）。
 > 波 2 暴露的两条纪律（沿用）：① **每次合并后必须真编译一次**（`merge-tree` 无冲突 ≠ 能编译，本夜两次踩中）；② **能力线要跟一条接线线**（CPX-13 加字段/迁移后三个调用点全走缺省 = 功能等于没上，补接线后还需变异检验）。

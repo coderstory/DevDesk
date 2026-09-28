@@ -1,8 +1,8 @@
 # DevDesk 上帝类治理设计（CPX-01 / CPX-05 / THS-02）
 
-- 日期：2026-09-27 ｜ 状态：**设计（未实施）** ｜ 基线：master `3515e28`
+- 日期：2026-09-27 ｜ **2026-09-28 刷新**（R10 段基线重测 + 8 项缺口补全 + 前置状态更新 + 独立审计 10 项 required_change 已合入【v1.1】；待主会话 review + 再一轮审计后再派开发）｜ 状态：**设计（未实施）** ｜ 基线：master `753fc92`
 - 关联：`2026-09-27-refactor-incremental-design.md`（R0–R9 总路线，本文**不重排其顺序**）、`2026-09-20-devdesk-design.md` §4.2/§4.2.1（依赖边界）、`2026-09-27-full-audit-claude-proxy.json`、`2026-09-27-full-audit-todo-home-settings.json`、`2026-09-27-full-audit-pet-app-build.json`
-- 证据口径：全部行数/成员数/调用点为 **2026-09-27 本工作树实读实测**（`wc`/`grep -c`/brace-matched awk）；行号只作定位线索、**会漂移**（R spec §9 V7），动手前按符号名重新定位
+- 证据口径：行数/成员数/调用点为**实读实测**（§2 CPX-01 段 = **2026-09-28 重测**，§3–§4 = 2026-09-27 基线；`wc`/`grep -c`/brace-matched awk）；行号只作定位线索、**会漂移**（R spec §9 V7），动手前按符号名重新定位
 - **只出设计，零代码改动**。红线沿用 R spec §1（C1 增量 / C2 不行为变 / C3 测试是护栏）与 §2（R1–R7），不重复
 
 ---
@@ -26,15 +26,15 @@
 
 | 指标 | 实测值 | 证据（file:符号名） |
 |------|--------|---------------------|
-| 头文件 / 实现 | 336 行 / 1420 行 | `src/module_claude_proxy/claude_service.h`、`.cpp` |
-| 公开方法 | **33 个非静态**（+ `setGlobal`/`global` 2 个静态） | `claude_service.h: class ClaudeService` 起于 `:56` |
+| 头文件 / 实现 | **469 行 / 2005 行**（2026-09-28 重测；刷新前基线 336/1420） | `src/module_claude_proxy/claude_service.h`、`.cpp` |
+| 公开方法 | **43 公开成员 = 41 非静态 + 2 公开静态 `setGlobal`/`global`（h:374/375）**（含 1 个 inline 转发 `reapplyTakeOver`；**私有**静态 `sha256HexPrefix`/`makeApiKeyHint`（h:407/408）与 constexpr 不计入；TwoPhaseKeyWrite 类自身 4 方法不计）｜ 增量（自 33）= shared-config 5 公开 + `runProfile`/`setTerminalLauncher`/`testConnection`/`cleanupOrphanKeychainEntries`/`reapplyTakeOver` | `claude_service.h` 类体逐条实测（TwoPhaseKeyWrite 独立类 `:93-118` 不计；计数口径见 §8 V2） |
 | 职责 | **7 类**：Profile CRUD / Keychain / 调用日志 / 代理生命周期+在途流 / settings.json 接管 / 反向同步 / 桌宠事件邮箱 | 同上，各分区以 `// ---- 标题 ----` 分节 |
-| 状态组 | **6 组，各带不同线程约定** | `.h` 私有成员区 `db_`+`keychainService_`、`server_`+`router_`、`streamsMutex_`+`activeStreams_`+`streamsStopping_`、`configuredProxyPort_`、`proxyEventMutex_`+`proxyEventStatus_`+`proxyEventAt_`、`syncPaths_`+`settingsTakeOverEnabled_`+`lastSyncWarnings_`、`callLogVersion_` |
-| 最长单函数 | `syncCaptureActiveProfile` **158 行**（反向同步协议整段塞在 CRUD 类里） | `claude_service.cpp: ClaudeService::syncCaptureActiveProfile`（:1178 → :1335） |
-| 已抽出的邻居（说明"协议"部分其实已经出去了） | `provider_config` / `settings_sync` / `streaming_proxy` / `proxy_router` / `upstream_dialect` 5 个单元 | `src/module_claude_proxy/CMakeLists.txt` 源文件清单 |
-| 调用点 | `claude_module.cpp` **11**、`main.cpp` **1**（装配层，合法）、`settings_module.cpp` **3**（跨模块，R0 范围） | `grep -rn "ClaudeService::global()" src/` |
+| 状态组 | **6 组，各带不同线程约定**（+ `terminalLauncher_` 终端注入槽） | `.h` 私有成员区 `db_`+`keychainService_`、`server_`+`router_`、`streamsMutex_`+`activeStreams_`+`streamsStopping_`、`configuredProxyPort_`、`proxyEventMutex_`+`proxyEventStatus_`+`proxyEventAt_`、`syncPaths_`+`settingsTakeOverEnabled_`+`lastSyncWarnings_`、`callLogVersion_`+`terminalLauncher_` |
+| 最长单函数 | `syncCaptureActiveProfile` **168 行**（2026-09-28 实测 `:1748` → `:1915`；反向同步协议整段塞在 CRUD 类里） | `claude_service.cpp: ClaudeService::syncCaptureActiveProfile` |
+| 已抽出的邻居（说明"协议"部分其实已经出去了） | `provider_config` / `settings_sync` / `streaming_proxy` / `proxy_router` / `upstream_dialect` 5 个单元 + **`TwoPhaseKeyWrite`（CPX-07 已独立成类）** | `src/module_claude_proxy/CMakeLists.txt` 源文件清单（:2-14）；`TwoPhaseKeyWrite` 类声明 `claude_service.h:93-118` + 实现段 `claude_service.cpp:116-190`（**仍在服务文件内，随 P-A2 整类迁出，见 §2.3**）、4 处复用 `claude_service.cpp:415/571/683/1846` |
+| 调用点 | `claude_module.cpp` **11**、`main.cpp` **1**（装配层，合法）、`settings_module.cpp` **3**（跨模块，R0 范围） | `grep -rn "ClaudeService::global()" src/`（2026-09-27 基线；R0 落地后 settings_module 侧可能已走定位器，开工前重测） |
 
-**没有被"顺带塞进来"的两处**（本文不动，只登记）：`deleteProfile` 内联「删激活 profile 则停代理」策略、`setActiveProfile` 内的接管时机判断——它们是**策略**，正确归宿是门面而非子对象。
+**没有被"顺带塞进来"的两处**（本文不动，只登记）：`deleteProfile` 内联「删激活 profile 则停代理」策略、`setActiveProfile` 内的接管时机判断——它们是**策略**，正确归宿是门面而非子对象。2026-09-28 新增同族候选：`runProfile`/`setTerminalLauncher`/`testConnection` 归属见 §2.3 尾注与 §7 Q4/Q5（均【待拍板】）。
 
 ### 2.2 目标职责边界
 
@@ -42,26 +42,45 @@
 
 | 类（新文件） | 单一职责（一句话） | 持有的不变式 | 线程约定 |
 |--------------|-------------------|--------------|----------|
-| `ProfileRepository`（`profile_repository.h/.cpp`） | `claude_profiles` 行 + Keychain 条目的**唯一**持久化入口 | API key 明文永不入 SQLite；Keychain 条目与行一一对应；`is_active` 全局唯一 | 无自有锁，随调用方（现状同款：`SqliteDb` recursive_mutex + Keychain 自身） |
+| `ProfileRepository`（`profile_repository.h/.cpp`） | `claude_profiles` 行 + **SharedConfig 片段** + Keychain 条目的**唯一**持久化入口 | API key 明文永不入 SQLite；Keychain 条目与行一一对应；`is_active` 全局唯一；SharedConfig 悬空 id 读路径容错（退化为未绑定） | 无自有锁，随调用方（现状同款：`SqliteDb` recursive_mutex + Keychain 自身） |
 | `CallLogStore`（`call_log_store.h/.cpp`） | `claude_call_logs` 读写 + 落库版本号 | 每次成功写入 bump 版本（UI 据此感知后台落库） | 写 = proxy worker 线程；读 = UI 线程；版本号 `atomic`（现状同款） |
 | `ProxyRuntime`（`proxy_runtime.h/.cpp`） | 代理 server 生命周期 + 在途流登记 + 端口镜像 | **停机顺序不可变**：cancelActiveStreams → server->stop（否则退出留幽灵进程）；`stopProxy` 幂等 | worker 写登记表 / UI 线程发起 cancel；`streamsMutex_` 保护 |
 | `ProxyEventMailbox`（并入 `proxy_runtime`，同文件一段） | 代理终态事件单槽投递（take 语义 + 过期丢弃） | 一个事件最多被读走一次；超 `kProxyEventFreshSec` 视为过期 | worker 写 / UI take；mutex。**与登记表同写者-读者对，故随 `ProxyRuntime` 走**，不单独成类 |
 | `SettingsTakeOver`（`settings_takeover.h/.cpp`） | settings.json 接管/还原的**协议侧**（读文件 → 算期望 → 写文件/sidecar） | 键级还原；接管失败不阻断上层操作（错误并入 `lastSyncWarnings_`） | 仅 UI 线程（现状同款） |
-| `ClaudeService`（**保留**，退化为门面） | **保留 33 个公开签名不变**；唯一编排点与策略所有者（停代理策略 / 接管时机 / 失败呈现） | 各子对象线程约定不变 | 各子对象内部约定不变；门面自身不新增状态 |
+| `ClaudeService`（**保留**，退化为门面） | **保留 43 个公开成员签名（41 非静态 + 2 公开静态）不变**（§2.1 口径；Q1=A）；唯一编排点与策略所有者（停代理策略 / 接管时机 / 失败呈现 / 终端启动编排） | 各子对象线程约定不变 | 各子对象内部约定不变；门面自身不新增状态 |
 
-**为什么门面必须留**：33 个方法里约 1/3 是「先落库再动代理/接管」的**编排**（如 `deleteProfile` 的两段策略、`setActiveProfile` 的接管时机）——它不是"转发嘴"，而是策略层。判据见 §5.3 J2。
+**为什么门面必须留**：43 个方法里约 1/3 是「先落库再动代理/接管」的**编排**（如 `deleteProfile` 的两段策略、`setActiveProfile` 的接管时机）——它不是"转发嘴"，而是策略层。判据见 §5.3 J2。
 
 ### 2.3 迁移路径（每阶段 = 1 原子 commit、行为零变化、可单独 revert）
 
 | 阶段 | 动作（file:符号名 — 动作） | 为什么这个顺序 | 硬依赖 |
 |------|---------------------------|----------------|--------|
-| **P-A1** | 抽出 `CallLogStore`：`logCall`/`recentCalls`/`queryCalls`/`countCalls`/`callLogVersion` + `buildCallLogWhere`；门面转发 | 最独立（4 方法 + 1 atomic、零 Keychain/代理/接管交互），消费者只有 UI | — |
-| **P-A2** | 抽出 `ProfileRepository`：CRUD 6 方法 + `loadApiKey`/`getActiveProfile`/`setActiveProfile`①/`duplicateProfile`/`rowToProfile`/`sha256HexPrefix`/`makeApiKeyHint`；**4 种「Keychain+DB 两段写」策略原样搬迁**（CPX-07 是独立 finding，本次只登记不修） | 先落库、后运行时；A3/A4 都要用它 | — |
-| **P-A3** | 抽出 `ProxyRuntime`（含 mailbox）：`startProxy`/`stopProxy`/`isProxyRunning`/`proxyPort`/`configuredProxyPort`/`setConfiguredProxyPort`/`registerActiveStream`/`cancelActiveStreams`/`recordProxyEvent`/`takeProxyEvent` | 风险最高（线程 + 停机顺序），放中间验证窗口；A2 已就位便于隔离故障 | — |
-| **P-A4** | 抽出 `SettingsTakeOver`：`syncTakeOver`/`syncRestore`/`recoverPendingSettingsRestore`/`setSettingsSyncPaths` 的路径判定 + `takeOver`/`restore`/`hasPendingSnapshot`/`readSettingsEnvForSync` 4 个 `settings_sync::` 调用点；门面把**激活 Profile 作为入参**传入（不反向依赖仓库） | 依赖 A2（取激活 Profile）；与 A3 的调用点（起/停代理）相邻，顺序由门面保住 | **A2** |
+| **P-A1** | 抽出 `CallLogStore`：`logCall`/`recentCalls`/`queryCalls`/`countCalls`/`callLogVersion` + `buildCallLogWhere`；门面转发 | 最独立（4 方法 + 1 atomic、零 Keychain/代理/接管交互），**无跨对象状态交互**（写侧 `proxy_router` 5 处 :250/:291/:387/:423/:462、读侧 `claude_ui_logs`） | — |
+| **P-A2** | 抽出 `ProfileRepository`：CRUD 6 方法 + `loadApiKey`/`getActiveProfile`/`setActiveProfile`①/`duplicateProfile`/`rowToProfile`/`sha256HexPrefix`/`makeApiKeyHint` + **shared-config 全家**：`listSharedConfigs`/`createSharedConfig`/`updateSharedConfig`/`deleteSharedConfig`/`sharedEnvKeysFor`（h:209-218）+ 私有 `rowToSharedConfig`/`sharedExtraEnvJsonFor`/`requireSharedConfigExists`（h:398-405）+ **`cleanupOrphanKeychainEntries`**（def :728、内部 keychain:: 命中 :742——「Keychain 条目与行一一对应」= ProfileRepository 不变式）；**`TwoPhaseKeyWrite` 类整迁**（声明 h:93-118 + 实现 cpp:116-190，类内 keychain:: 命中 :124/:131/:132/:159/:160；4 处复用 :415/:571/:683/:1846——前 3 处随落库段进本类、:1846 在留门面的 `syncCaptureActiveProfile` 内改引迁出后类型；并入 profile_repository 或独立文件）；**4 种「Keychain+DB 两段写」策略原样搬迁不重写**；含编排尾巴的 5 方法按**段级拆分**执行（见下） | 先落库、后运行时；A3/A4 都要用它 | — |
+| **P-A3** | 抽出 `ProxyRuntime`（含 mailbox）：`startProxy`/`stopProxy`/`isProxyRunning`/`proxyPort`/`configuredProxyPort`/`setConfiguredProxyPort`/`registerActiveStream`/`cancelActiveStreams`/`recordProxyEvent`/`takeProxyEvent`；`testConnection` 归属待拍板（§7 Q5，若归本阶段则并入）；**`stopProxy` 段级拆分**：`ProxyRuntime::stop()` = cancelActiveStreams → `server_->stop` → 状态 reset（:1551-1564 停机顺序不变式、幂等），门面留 `stopProxy(){ runtime->stop(); syncRestore(); }`（:1563 的 `syncRestore` 尾，A4 后改经 takeover 子对象） | 风险最高（线程 + 停机顺序），放中间验证窗口；A2 已就位便于隔离故障 | — |
+| **P-A4** | 抽出 `SettingsTakeOver`：`syncTakeOver`/`syncRestore`/`recoverPendingSettingsRestore`/`setSettingsSyncPaths` 的路径判定 + `takeOver`/`restore`/`hasPendingSnapshot`（×2，cpp:1726/1961）/`readSettingsEnvForSync` **6 个** `settings_sync::` 调用点（`setSettingsSyncPaths` 签名另 1 处 `Paths` 类型引用一并归零）——**`syncCaptureActiveProfile` 内的读侧 1 处（:1763）除外**，归属裁定见 §2.5 否决 4（口径 b，断言 ≤1）；**`syncTakeOver` 双入参（激活 Profile + 当前代理端口）**：现状 cpp:1937 `settings_sync::takeOver(active, proxyPort(), ...)` 的 `active`（A2）与 `proxyPort()`（A3）两依赖即此，入参由门面从 `ProfileRepository` 取激活 Profile、从 `ProxyRuntime::proxyPort()` 取端口后一并传入，子对象不反向依赖彼此；**收尾 CPX-02 残项**：`syncRestore` 改 `Result<void>`（唯一调用 `stopProxy` cpp:1563，失败并入 `lastSyncWarnings_`）**【待拍板，Q6】** | 依赖 A2（取激活 Profile）+ A3（proxyPort）；与 A3 的调用点（起/停代理）相邻，顺序由门面保住 | **A2、A3** |
 | （可选）**P-A5** | 调用方改持子对象（`claude_module` 直接拿 `CallLogStore&`）、删转发方法、消解 `ClaudeService::global()` 单例债 | 非必需；见 §2.5 否决 2 与 §7 Q1 | A1–A4 |
 
-**A1/A2/A3 相互独立但同触 `claude_service.{h,cpp}` → 必须串行**（不可并行 worktree）。**`syncCaptureActiveProfile`（158 行反向同步）留在门面不搬**，理由见否决 4。
+**段级拆分定义（P-A2，含编排尾巴的 5 方法）**——落库/Keychain 段随 A2 搬入 `ProfileRepository`；「策略尾」（停代理/接管/激活时机判断）**留门面**，P-A2 commit 内逐字不动，其后由 A3/A4 改为经对应子对象编排（调用顺序逐字保持）：
+
+| 方法 | 随 A2 搬出的段 | 留门面的策略尾 |
+|------|----------------|----------------|
+| `createProfile`（自动激活路径 :481） | insert 行 + TwoPhaseKeyWrite 两段写（API key 入 Keychain，:415） | 自动激活仅调门面 `setActiveProfile`（不内联激活落库） |
+| `updateProfile`（策略尾 :660-663） | DB 更新段 + 两段写（含 sharedConfigId 变更落行，:571） | `sharedConfigId` 变更 && 激活 && 代理运行 → `syncTakeOver`（:662；A4 后改经 takeover 子对象编排） |
+| `deleteProfile`（策略尾 :720-724） | 两段写删除段 + 删 SQLite 行（:683、:694） | `wasActive && isProxyRunning` → `stopProxy`（:722；A3 后改 `runtime->stop() + syncRestore`） |
+| `setActiveProfile`①（同步 :818 / 接管 :856） | 激活行更新段（is_active 全局唯一） | 接管时机判断 + `syncCaptureActiveProfile`（:818）+ `syncTakeOver`（:856）——留门面（Q2 否决 4、§2.1 策略归属） |
+| `updateSharedConfig`（re-takeover 尾 :1131） | shared-config 行更新段 | 改后生效 → `syncTakeOver`（:1131；A4 后改经 takeover 子对象编排） |
+| `deleteSharedConfig`（re-takeover 尾 :1189） | shared-config 行删除段（同事务解绑 shared_config_id） | 删后生效 → `syncTakeOver`（:1189；A4 后改经 takeover 子对象编排） |
+
+① 补注（原悬空脚注）：P-A2 清单中 `setActiveProfile` 仅搬迁「激活行更新」段，「同步 + 接管」编排不随搬。
+
+**A1/A2/A3 数据面相互独立（调用点零重叠），但同触 `claude_service.{h,cpp}` → 必须串行**（不可并行 worktree）；**跨对象顺序（startProxy 尾 `syncTakeOver` :1547、deleteProfile 尾 `stopProxy` :722、shared-config 两个 re-takeover 尾等）全部经门面**按既有顺序逐字编排。**`syncCaptureActiveProfile`（168 行反向同步，:1748→:1915）留在门面不搬**，理由与断言口径见否决 4。
+
+**CMakeLists 补位（每阶段 commit 的固定成员）**：`src/module_claude_proxy/CMakeLists.txt` 为显式源文件清单、无 glob（现 :2-14 逐行列出）；4 对新文件随阶段补位——A1→`call_log_store.{h,cpp}`、A2→`profile_repository.{h,cpp}`、A3→`proxy_runtime.{h,cpp}`、A4→`settings_takeover.{h,cpp}`；验收含「新清单行存在、无悬空/缺失项」。
+
+**新方法归属（2026-09-28 新增面，均【待拍板】，去向见 §7 Q4/Q5）**：
+- ① `runProfile`/`setTerminalLauncher`（h:321/326、cpp:1585/1591，profile-run 设计 §6）——建议**留门面**：runProfile 编排「取 profile → 终端终态」，非 A1-A4 任一子对象，`terminalLauncher_` 注入槽随留；
+- ② `testConnection`（h:226、cpp:1242）——建议**留门面**：编排「`loadApiKey`（A2）→ 上游 HTTP 直连」，与 ProxyRuntime 的本地 server 生命周期无关。
 
 ### 2.4 每阶段验收
 
@@ -69,11 +88,11 @@
 
 | 阶段 | 定向测试 | 结构断言（可机械检查） | 肉眼 |
 |------|----------|------------------------|------|
-| P-A1 | `claude_service`(30) + `claude_ui`(19) | `claude_service.cpp` 中 `claude_call_logs` 命中 → **0**；`call_log_store.cpp` > 0 | 否 |
-| P-A2 | 同上 + `settings_sync`(21) | `claude_service.cpp` 中 `claude_profiles` → **0**、`keychain::` → **0**（现状 8） | 否 |
+| P-A1 | `claude_service`(30) + `claude_ui`(19) | `claude_service.cpp` 中 `claude_call_logs` 命中 → **0**（断言须排除注释：:694「FK CASCADE 会清空 claude_call_logs」属 `deleteProfile` 段二、P-A2 才迁出——随 P-A1 改写该注释去掉表名字面量，或断言仅统计非注释命中）；`call_log_store.cpp` > 0 | 否 |
+| P-A2 | 同上 + `settings_sync`(21) | `claude_service.cpp` 中 `claude_profiles` → **≤1 且仅限 `syncCaptureActiveProfile` 内**（:1879 `UPDATE claude_profiles`，Q2 否决 4 保留）；`keychain::` → **≤2 且仅限 `syncCaptureActiveProfile` 及其唯一助手 `keyAtOldValue`**（:1811 `loadSecret` / :80；现状 9 处 = TwoPhaseKeyWrite 类内 5（:124/:131/:132/:159/:160）+ `cleanupOrphanKeychainEntries` :742 + `loadApiKey` :761 + 上记 2，前 7 处随 A2 迁出后余 2）；`TwoPhaseKeyWrite` 类体 → **0**（声明段 + 实现段全迁出） | 否 |
 | P-A3 | `claude_service` + `proxy_router` + `streaming_proxy` + `streaming_stress` + `claude_ui` | `claude_service.cpp` 中 `streamsMutex_`/`activeStreams_`/`http::Server` → **0** | **是**：起代理 → 真实请求一次 → 停代理 → 退出不留幽灵进程 |
-| P-A4 | `settings_sync`(21) + `claude_service` + `claude_ui` | `claude_service.cpp` 中 `settings_sync::` → **0**（现状 5 处：`hasPendingSnapshot`/`recoverPendingSnapshot`/`readSettingsEnvForSync`/`takeOver`/`restore`） | **是**：起代理看 `~/.claude/settings.json` 被接管、停代理还原 |
-| 收口 | 全量全绿 | `wc -l claude_service.cpp` ≤ **400**、`claude_service.h` ≤ **120** | — |
+| P-A4 | `settings_sync`(21) + `claude_service` + `claude_ui` | `claude_service.cpp` 中 `settings_sync::` 命中 **≤1 且仅限 `syncCaptureActiveProfile` 内**（:1763 `readSettingsEnvForSync`——Q2 否决 4 裁定该读侧留门面，口径 (b)，见 §2.5 否决 4；如开发中选口径 (a)（经 `SettingsTakeOver` 暴露等价读接口、门面不再直呼）则归零）；其余 **5 处调用归零**：`hasPendingSnapshot` ×2 @:1726/:1961、`recoverPendingSnapshot` :1740、`takeOver` :1937、`restore` :1970；另 `setSettingsSyncPaths` 签名 `Paths` 类型引用 1 处同归零 | **是**：起代理看 `~/.claude/settings.json` 被接管、停代理还原 |
+| 收口 | 全量全绿 | `wc -l claude_service.cpp` ≤ **400**、`claude_service.h` ≤ **120**（2026-09-28 重测基线 2005/469，收口断言不变）；四对新文件全部在 CMakeLists 显式清单 | — |
 
 每阶段另跑一条**跨模块回归**：`module_gating`(11)（`settings_module` 经单例读 Claude 状态，R0 后走定位器，不能断）。
 
@@ -82,17 +101,17 @@
 | # | 备选 | 否决理由 |
 |---|------|----------|
 | 1 | 接口化 + DI 容器重写（`IProfileRepository` + 注入） | 无第二实现者（无 mock/无平台分歧）；R spec §4.3 已明确否决 DI 容器；用户不熟 C++，虚接口会掩盖真实数据流 |
-| 2 | **首步就删 33 个转发方法、14 处调用点改为直持子对象** | 一步同时改契约 + 14 个调用点，无法单独回退、也无法用"测试即护栏"证明；降级为可选 P-A5 独立里程碑 |
+| 2 | **首步就删 43 个转发方法、14 处调用点改为直持子对象** | 一步同时改契约 + 14 个调用点，无法单独回退、也无法用"测试即护栏"证明；降级为可选 P-A5 独立里程碑 |
 | 3 | 同模块内拆成自由函数 + 显式传 `db_`/`mutex` | 自由函数**无法持有**互斥量与生命周期（`server_`/`activeStreams_`），违反 §5.3 J2；且 `core::Result` 链会退化成参数搬运 |
-| 4 | 把 `syncCaptureActiveProfile`（反向同步 158 行）也搬进 `SettingsTakeOver` | 它跨 DB + Keychain + 文件三写，且带 S-2 语义（解析失败 → **中止本次切换、profile 一字未改**）与 4 种补偿策略之一；行为等价性难自证，而 158 行**已具名、已注释完备**，搬迁收益低于风险（§5.3 J5） |
+| 4 | 把 `syncCaptureActiveProfile`（反向同步 168 行）也搬进 `SettingsTakeOver` | 它跨 DB + Keychain + 文件三写，且带 S-2 语义（解析失败 → **中止本次切换、profile 一字未改**）与 4 种补偿策略之一；行为等价性难自证，而 168 行**已具名、已注释完备**，搬迁收益低于风险（§5.3 J5；2026-09-28 重测行号 :1748→:1915，判定不变）。**留门面的读侧归属裁定（2026-09-28 审计修订）**：体内容 `settings_sync::` 读侧 1 处（`readSettingsEnvForSync` :1763）、`keychain::` 2 处（`loadSecret` :1811 + 唯一助手 `keyAtOldValue` :80）、`claude_profiles` 写 1 处（:1879 UPDATE）**不随 A2/A4 迁出**，故 P-A2/P-A4 结构断言口径放宽：(a) 经 `SettingsTakeOver` 暴露等价读接口、门面不再直呼（断言可归零）；(b) **断言改「`settings_sync::`/`claude_profiles` ≤1、`keychain::` ≤2，且仅限本函数（含助手 `keyAtOldValue`）」**（推荐，最小改动）——A2/A4 验收按 (b) 执行 |
 
 ### 2.6 风险与明确不改项
 
 | 项 | 说明 |
 |----|------|
 | 主要风险 | P-A3 的停机顺序与生命周期（`router_` 持 `server_` 引用、worker 线程 join）——回退即整段 revert，不允许半套 |
-| 前置 | R spec §5.1 P1–P4；**外加** `2026-09-27-profile-reverse-sync-and-copy-design.md` 落地并合 master（它大改 `module_claude_proxy/*` 6 文件） |
-| 明确不改 | CPX-02（接管返回 void）、CPX-03（快照来源判定）、CPX-04（热切换残留键）、CPX-06（弹窗同步查库）、CPX-07（Keychain+DB 补偿策略）——**全部只登记不修**；本次只做"移动 + 改名 + 参数化" |
+| 前置 | R spec §5.1 P1–P4；`2026-09-27-profile-reverse-sync-and-copy-design.md`（reverse-sync/copy）**已合 master**；profile-run 设计（§6）**已合**——`runProfile`/`setTerminalLauncher` 已入（h:321/326、cpp:1585/1591）；R4/R5 已合（`claude_ui_*` 6 文件已在 CMakeLists :3-8）。2026-09-28 复核全部满足 |
+| 明确不改 | CPX-03（快照来源判定）、CPX-04（热切换残留键）、CPX-06（弹窗同步查库）——**只登记不修**；本次只做"移动 + 改名 + 参数化"。**前置状态变更（2026-09-28 复核）**：CPX-07（Keychain+DB 两段写）**已完成**——`TwoPhaseKeyWrite` 独立成类（声明 `claude_service.h:93-118`，实现段 `claude_service.cpp:116-190` 仍在服务文件），4 处复用（cpp:415/571/683/1846）；**2026-09-28 审计修订：实现段含 `keychain::` 命中 :124/:131/:132/:159/:160（另匿名 ns 助手 `keyAtOldValue` :80 同区，`syncCaptureActiveProfile` 唯一使用）——随 P-A2 整类迁出 `claude_service.{h,cpp}`**（并入 profile_repository 或独立文件，见 §2.3），调用点跟随，此前「P-A2 直接复用」表述作废；CPX-14（keychain 函数指针表）**已完成**——`keychain.h:34-101` Backend 表 + `setBackendForTest`，R10 无需动作；CPX-02（接管返回 void）**半修**——`syncTakeOver` 已返 `Result`（cpp:1917），残 `syncRestore` 仍 void（h:415 区、cpp:1956，唯一调用 `stopProxy` cpp:1563）——**推荐并入 P-A4 收尾【待拍板，Q6】**，与 `2026-09-27-full-audit-consolidated.md` 行 152「R10 承接收尾」口径对齐、消除两处文档冲突 |
 | 明确不改 | `ClaudeService::global()` 单例本身（R0 只管跨模块那 3 处；同模块 11 处见 §7 Q1） |
 
 ---
@@ -265,7 +284,7 @@ B2 必须在 B3–B5 之前：抽出的自由函数若还要捕获 `this`，等�
 | **J2** | **状态所有权**：一组状态若有**独立的线程约定 / 生命周期 / 不变式** → 成类；纯 UI 瞬时字段 → 同文件顶部收成一个 **struct**，不成类 | `ProxyEventMailbox` 有独立线程约定 → 成类（但可与同写者-读者对的 `ProxyRuntime` 同文件）；`datePickOpen_` 一个 bool → 并入所属 dialog struct |
 | **J3** | **停手线**：不建只有 1 个实现者的虚接口、不做 Pimpl/ABI 隔离、不建"将来可能用"的抽象 | 沿用 R spec §4.3 不选用表 |
 | **J4** | **可机械验证**：每阶段必须写得出 grep/行数断言 | 写不出断言 = 这一步还没定义清楚，先别动手 |
-| **J5** | **行数只作体检，不作目标**：`compose ≤120` / 模块 `.cpp ≤600` / 服务 `.cpp ≤400` 是**结果**不是 KPI | 为凑行数而拆 = 过度设计；`syncCaptureActiveProfile` 158 行不搬即此判据的应用 |
+| **J5** | **行数只作体检，不作目标**：`compose ≤120` / 模块 `.cpp ≤600` / 服务 `.cpp ≤400` 是**结果**不是 KPI | 为凑行数而拆 = 过度设计；`syncCaptureActiveProfile` 168 行不搬即此判据的应用 |
 
 **明确的"到此为止"清单**：`core::Module` 接口不再加虚函数（R8 已拍板的 `shortName()` 除外）；`*_service.cpp` 数据层不拆（SQL 已收口、单测最厚）；hover/滚动/选中这类瞬时 UI 字段不建类；`markdown_module.cpp`（2847 行，最大单文件）按 R7 原范围走，**不因本文而加码**。
 
@@ -281,21 +300,27 @@ R0 → R1 → R2/R3 → { R4(+本文 B1–B5)  ‖  R5(+本文 C1–C4) } → R8
 | 组 | 说明 |
 |----|------|
 | R4 ‖ R5 | 分属 `module_claude_proxy` / `module_todo`；本文的增补**不改变各自可并行性** |
-| R10 ‖ R4/R5 | 文件零重叠（`claude_service.*` vs `claude_module.cpp`），但**同触 `src/module_claude_proxy/CMakeLists.txt`**（显式源文件清单，各自加行，冲突面小）；按 R spec §5.1 P4「同一时刻只一个 agent 持 build」建议**串行**落地以省一次冲突解算 |
+| R10 ‖ R4/R5 | 文件零重叠（`claude_service.*` vs `claude_module.cpp`）；**R4/R5 已合（2026-09-28 复核）**——CMakeLists 显式清单（:2-14）已含 `claude_ui_*`，R10 仅追加四对新文件，原"并发冲突面"消失 |
 | R10 内部 | A1/A2/A3 同文件 → 串行；A4 依赖 A2 |
 | R5 内部 | C2 四批可单独回退；d 批依赖 R1 的 `ui_kit::ToastState` |
 
 ---
 
-## 7. 需用户拍板（3 条）
+## 7. 需用户拍板（原 3 条：Q1/Q2 仍开、Q3 已答；2026-09-28 新挂 Q4–Q6）
 
 | # | 问题 | 选项 | 影响 |
 |---|------|------|------|
-| Q1 | **CPX-01 拆分后，门面是否保留 33 个转发签名？** | **A（推荐）**：保留 → 14 处调用点零改动，测试即护栏，每阶段可单独 revert | A 的代价：门面短期看是"转发嘴"（但含策略，见 §2.2）；B 一步到位，diff 放大到 14 个调用点，回退粒度变粗 |
+| Q1 | **CPX-01 拆分后，门面是否保留 43 个转发签名**（§2.1 重测口径；原 33）？ | **A（推荐）**：保留 → 14 处调用点零改动，测试即护栏，每阶段可单独 revert | A 的代价：门面短期看是"转发嘴"（但含策略，见 §2.2）；B 一步到位，diff 放大到 14 个调用点，回退粒度变粗 |
 | | | B：同步删除转发、调用方直持子对象（并入 R10） | |
-| Q2 | **反向同步 `syncCaptureActiveProfile`（158 行）是否搬出？** | **A（推荐）**：不搬，只登记（§2.5 否决 4） | B 能进一步瘦门面，但跨 DB+Keychain+文件三写 + S-2「失败即中止切换」语义，行为等价性难自证 |
+| Q2 | **反向同步 `syncCaptureActiveProfile`（168 行，:1748→:1915）是否搬出？** | **A（推荐）**：不搬，只登记（§2.5 否决 4） | B 能进一步瘦门面，但跨 DB+Keychain+文件三写 + S-2「失败即中止切换」语义，行为等价性难自证 |
 | | | B：搬进 `SettingsTakeOver` | |
-| Q3 | **服务层（R10）与 UI 层（R4/R5）的先后** | **A（推荐）**：先用 R4/R5 验证"拆文件 + 状态 struct"手法，再动服务层 | A 让手法先在护栏最厚的两个 UI 模块上跑通；B 会让服务层同时承担"验证新手法 + 最高线程风险" |
+| Q3 | **服务层（R10）与 UI 层（R4/R5）的先后** | **✅ 已答（2026-09-28 复核）**：R4/R5 已合 master（`claude_ui_list/detail/form/logs/state/logic` 6 文件已在 CMakeLists :3-8），"先用 UI 层验证手法再动服务层"按原 A 执行完毕，本问关闭 | 不再占拍板名额 |
+| Q4 | **`runProfile`/`setTerminalLauncher`（h:321/326、cpp:1585/1591，2026-09-28 新增）归谁？** | **A（推荐）**：留门面——runProfile 编排「取 profile → 终端终态」，非 A1-A4 任一子对象，`terminalLauncher_` 注入槽随留 | B 把「profile-run 编排」拆进 ProxyRuntime（终端 ≠ 代理生命周期）或 ProfileRepository（取行 + 执行混在一起），边界反而糊 |
+| | | B：归入某子对象（如 ProxyRuntime） | |
+| Q5 | **`testConnection`（h:226、cpp:1242）归谁？** | **A（推荐）**：留门面——编排「`loadApiKey`（A2）→ 上游 HTTP 直连」，与 ProxyRuntime 的本地 server 生命周期无关 | B 让 ProxyRuntime 依赖 A2 的 `loadApiKey`，跨子对象耦合；归门面则保持「门面 = 编排 + 策略」判据（§5.3 J2） |
+| | | B：归 ProxyRuntime（并入 P-A3） | |
+| Q6 | **CPX-02 残项 `syncRestore` 改 `Result<void>`**（现 void h:415 区/cpp:1956，唯一调用 `stopProxy` cpp:1563；§2.6 原写"只登记不修"与 `2026-09-27-full-audit-consolidated.md` 行 152「R10 承接收尾」口径冲突） | **A（推荐）**：并入 P-A4 收尾——A4 整体搬迁接管/还原协议侧时顺带改签名，失败并入 `lastSyncWarnings_`，与 `2026-09-27-full-audit-consolidated.md` 行 152 口径一致 | B 维持 void = 两处文档继续冲突；C 另开里程碑 = 徒增一次触碰 `claude_service.cpp` |
+| | | B：维持 void，仍只登记不修 | |
 
 ---
 
@@ -304,7 +329,7 @@ R0 → R1 → R2/R3 → { R4(+本文 B1–B5)  ‖  R5(+本文 C1–C4) } → R8
 | # | 待验证 | 验证方法 |
 |---|--------|----------|
 | V1 | `claude_module` 41 成员的**完整**区域分组（本文按区域抽样确认，未逐项归类） | 重扫成员区，按 `// ----` 注释与命名前缀逐项归入 5 个 struct；有异议项留在模块层 |
-| V2 | `ClaudeService` 公开方法计数口径（本文实测 33 非静态 + 2 静态，与审计同值） | `grep -nE '^    (core::Result\|void \|bool \|int \|...)' claude_service.h` 逐条按"职责归属"打标，确认无一组可独立成类 |
+| V2 | `ClaudeService` 公开方法计数口径（**2026-09-28 审计复核 = 43 公开成员 = 41 非静态 + 2 公开静态 `setGlobal`/`global`（h:374/375）**：含 1 个 inline 转发 `reapplyTakeOver`；**私有**静态 `sha256HexPrefix`/`makeApiKeyHint`（h:407/408）与 constexpr 不计入；TwoPhaseKeyWrite 类自身 4 方法不计。研究 agent 另计 ≈46，差异仅「是否计入新类/静态方法」，以本表 43 为开发口径） | `grep -nE '^    (core::Result\|void \|bool \|int \|...)' claude_service.h` 逐条按"职责归属"打标，确认无一组可独立成类 |
 | V3 | 所有行号会漂移（审计期 `claude_module.cpp` 2577 → 今日 2612；`todo_module.cpp` 2432 → 2474） | 每个阶段开工前按**符号名**重定位，禁止沿用本文行号盲改（R spec §9 V7 同款要求） |
 | V4 | `module_pet` 侧读 `takeProxyEvent` 的 app 级桥（`main.cpp` 装配）在 `ProxyEventMailbox` 迁移后是否需要同步改签名 | 读 `main.cpp` 的 pet 桥接线 + `pet_window.h` 契约注释；预期零改动（门面签名保留），需确认 |
 | V5 | 结构断言里的字符串是否全部唯一（如 `boardGeom` 是否在别处也有同名） | 每条断言执行前先 `grep -c` 取基线值，写进该阶段 commit message 作前后对比 |
@@ -312,5 +337,5 @@ R0 → R1 → R2/R3 → { R4(+本文 B1–B5)  ‖  R5(+本文 C1–C4) } → R8
 
 ---
 
-**Spec 版本**：1.0（2026-09-27，仅设计）
+**Spec 版本**：1.1（2026-09-27 初版 1.0；**2026-09-28 刷新**：R10 段基线重测（cpp 2005 / h 469 / 公开 43 / master `753fc92`）、前置完成度更新（CPX-02 半修 / CPX-07 / CPX-14 / R4-R5 已合，Q3 已答）、补 8 项缺口（shared-config 归 A2、runProfile/setTerminalLauncher 与 testConnection 归属、settings_sync:: 6 处、CPX-02 口径、CMakeLists 补位）、新增 Q4–Q6 待拍板；**另：独立审计 10 项 required_change 已全合**——split-boundary 5（P-A2 段级拆分定义（编排尾巴 5 方法逐条划段）+ TwoPhaseKeyWrite 整类迁出 + cleanupOrphanKeychainEntries 入 A2、P-A3 stopProxy 段级拆分、P-A4 断言口径与 syncTakeOver 双入参、否决 4 读侧归属裁定 (b)）、baseline-accuracy 2（公开 43 = 41 非静态 + 2 公开静态口径、头文件行号 h:321/326/226 更正 4 处）、testability 1（同 split-boundary 根因）、minor 2（P-A1 :694 注释与消费方口径、`2026-09-27-full-audit-consolidated.md` 行 152 全文件名引用）；决策未翻转——Q1 门面保留 43 签名 / Q2 syncCaptureActiveProfile 留门面 / Q4 runProfile 留门面 / Q5 testConnection 留门面 / Q6 CPX-02 并入 A4 均保留【Q4/Q5/Q6 仍待用户拍板】；待主会话 review + 下一轮审计）
 **上游依据**：`2026-09-27-refactor-incremental-design.md`（R0–R9 + 红线 R1–R7）、`2026-09-20-devdesk-design.md` §4.2/§4.2.1
