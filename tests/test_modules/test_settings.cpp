@@ -1383,6 +1383,55 @@ REGISTER_TEST(settings_pet_dropdown_z_escape, "settings: pet skin dropdown popup
     return true;
 })
 
+// ---- 外观卡下拉弹层 vs 后续兄弟卡（回归 1379cc1）：外观卡(z30) 与紧随其下的
+// 编辑器字号卡(z30) 同为 z30 → 稳定排序保持 DOM 序 → 后绘的编辑器字号卡盖住
+// 外观卡向下铺开的弹层（「展开被下方内容截断」）。EUI-NEO 子树 zIndex 上界
+// 逃逸（0485b47）只解决「高 z 盖低 z」，等值 z 兄弟按 DOM 后绘是框架语义——
+// 修复 = 外观卡抬到 40（表内最前带下拉卡拿最高 z，见 drawAppearanceCard）。----
+REGISTER_TEST(settings_appearance_dropdown_popup_above_following_cards,
+              "settings: appearance 卡下拉弹层盖过后续兄弟卡（不被编辑器字号卡截断）", {
+    std::unique_ptr<::core::Module> mod(create_settings_module());
+    mod->onStart();
+    eui::Screen screen;
+    screen.width = 1600.0f;
+    screen.height = 1000.0f;
+    eui::Ui ui;
+    ui.begin("apddesc");
+    mod->compose(ui, screen);
+    ui.end();
+    ui.layout(screen.width, screen.height);
+
+    const auto* popup =
+        ui.find("settings.card.appearance.theme.dd.popup");
+    const auto* appearanceCard = ui.find("settings.card.appearance");
+    const auto* editorCard = ui.find("settings.card.editor");
+    DOCTEST_REQUIRE(popup != nullptr);
+    DOCTEST_REQUIRE(appearanceCard != nullptr);
+    DOCTEST_REQUIRE(editorCard != nullptr);
+
+    // 弹层底边越出外观卡下沿 → 视觉上落入紧随其后的编辑器字号卡区域
+    DOCTEST_CHECK(popup->frame.y + popup->frame.height >
+                  appearanceCard->frame.y + appearanceCard->frame.height);
+
+    // 绘制序 = orderedChildren 顺序（后者 = 上层）。弹层深嵌外观卡子树、
+    // 与编辑器字号卡没有共同直接父——按「整卡抬层」语义（subtreeMaxZIndex
+    // 让含弹层卡片整卡作为一个绘制单元与兄弟卡竞争），断言两卡在滚动内容列
+    // 里的兄弟序：外观卡必须排在编辑器字号卡之后绘制，否则弹层下半被该卡
+    // 盖住（等值 z 时稳定排序保持 DOM 序 → 1379cc1 起后者盖前者）
+    const core::dsl::Element* parent = nullptr;
+    for (const auto& root : ui.roots()) {
+        parent = commonParentOf(root.get(), appearanceCard, editorCard);
+        if (parent != nullptr) break;
+    }
+    DOCTEST_REQUIRE(parent != nullptr);
+    DOCTEST_CHECK(orderedIndexOf(parent, appearanceCard) >
+                  orderedIndexOf(parent, editorCard));
+
+    mod->onStop();
+    ::core::theme::setDark();
+    return true;
+})
+
 // ---- PAB-13（波 1 L7）：桌宠卡「显示桌宠」按钮 ----
 // 无头渲染断言：按钮在「位置重置」左侧同排（间距 8）、文案/点击回调齐备。
 // 卡高保持 120（内容底沿 104 不变 → contentKey 不变，不触发滚动高度重测）

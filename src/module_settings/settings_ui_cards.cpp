@@ -59,9 +59,14 @@ int logLevelIndex(const std::string& level) {
 
 } // namespace
 
-// ---------- 卡片 1：外观（主题 + 字号） ----------
-// zIndex(30)：字号下拉的弹出层要盖过下方卡片（zIndex 只在兄弟间排序，
-// 弹层在卡片子树内，需整卡抬层）
+// ---------- 卡片 1：外观（主题 + 字号 + 窗口效果） ----------
+// zIndex(40)：字号下拉的弹出层要盖过下方卡片（zIndex 只在兄弟间排序，
+// 弹层在卡片子树内，需整卡抬层）。**抬层规则**：同一 tab 内带下拉的卡，
+// 靠前者必须 z 高于其后**所有**卡 —— 外观卡之后紧邻的编辑器字号卡同为
+// 带下拉卡（z30），等值 z 时稳定排序保持 DOM 序 → 后绘的编辑器字号卡会
+// 盖住外观卡向下铺开的弹层（回归 1379cc1；EUI-NEO subtreeMaxZIndex 逃逸
+// 只解决「高 z 盖低 z」，救不了等值碰撞）。40 = 最前卡档位，后续带下拉卡
+// 一律 ≤30。
 void drawAppearanceCard(const CardDrawArgs& args) {
     eui::Ui& ui = args.ui;
     const std::string& id = args.id;
@@ -74,7 +79,7 @@ void drawAppearanceCard(const CardDrawArgs& args) {
     const auto compTheme = core::theme::componentTokens(t);
     ui.stack(id)
         .size(w, h)
-        .zIndex(30)
+        .zIndex(40)
         .content([&] {
             ui_kit::cardFrame(ui, id, w, h, t);
             ui.text(id + ".title")
