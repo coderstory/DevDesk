@@ -5,6 +5,7 @@
 // 经 core::appDatabase() 拿共享连接（与 Markdown/Todo 模块同一装配模式）。
 // 导航：core::appRouter()（main.cpp 注册），module_* 之间互不依赖；
 // 跨模块动作经 Router payload 下发（"action:*" / "open:*"），由目标页消费。
+#include "core/component_theme.h"
 #include "core/database.h"
 #include "core/logging.h"
 #include "core/module_interface.h"
@@ -16,6 +17,8 @@
 #include <eui/dsl.h>
 
 #include <components/button.h>
+#include <components/card.h>
+#include <components/linechart.h>
 
 #include <ctime>
 #include <functional>
@@ -27,9 +30,18 @@ namespace module::home {
 
 namespace {
 
-// 渲染单个统计卡片（stack 内子元素绝对定位，点击整卡跳转）
+// 渲染单个统计卡片（card 组件，点击整卡跳转）
 // numberColor/badgeColor 非空时覆盖默认配色（accent ? error : 常规）
 // timerSeconds > 0 时挂一个 0 尺寸 onTimer 元素驱动本卡定期重绘
+// chart 非空时在卡内叠加迷你图表（sparkline 等），由调用点提供渲染 lambda
+//
+// M3（2026-09-28）：手绘卡换 card 组件。保留：accent/numberColor/badgeColor
+// 语义色与 timerSeconds 重绘驱动。card 组件无 hover states（CardStyle 无
+// states 字段）→ hover 反馈由卡内交互层 .press 补（states 三态 + 0.1s
+// OutQuad 过渡）；.press 位 content 首层——card 的 bg 不可交互，非交互
+// 文本点击会穿透命中 .press（与旧 .bg onClick 同命中语义）。
+// 卡内坐标基于 .inner（对齐 card content 原点、无 inset），与旧实现
+// 对齐（±inset 级位移进人工点验清单）。
 void drawStatCard(eui::Ui& ui,
                   const std::string& id,
                   float width,
@@ -42,64 +54,77 @@ void drawStatCard(eui::Ui& ui,
                   std::function<void()> onClick,
                   const eui::Color* numberColor = nullptr,
                   const eui::Color* badgeColor = nullptr,
-                  float timerSeconds = 0.0f) {
-    // 卡内布局常量随全局字号缩放派生：行高/内边距固定 px 在大字号下会
-    // 裁切数字（W7 稳定化），fontSize* token 已在 theme 层缩放
+                  float timerSeconds = 0.0f,
+                  std::function<void(eui::Ui&, float, float)> chart =
+                      nullptr) {
+    const auto ct = core::theme::componentTokens(t);
     const float s = core::theme::fontScale();
-    const float badgeFont = t.sizes.fontSizeSmall - 2.0f; // 11px @ scale 1
-    const float padX = 28.0f * s;
-    ui.stack(id)
-        .size(width, height)
+    const float inset = ct.metrics.spacing.large; // card 默认 content inset
+    const float cw = width - inset * 2.0f;
+    const float ch = height - inset * 2.0f;
+    components::card(ui, id)
+        .size(width, height) // panelShadow 由 CardStyle 默认注入（§M3-4 复查）
+        .theme(ct)           // 先注入主题再覆盖 radius（theme 会重置 CardStyle）
+        .radius(t.sizes.radiusLarge)
         .content([&] {
-            ui.rect(id + ".bg")
-                .size(width, height)
-                .color(t.colors.surface)
-                .hoverColor(t.colors.hover)
-                .radius(t.sizes.radiusLarge)
-                .border(1.0f, t.colors.borderDefault)
-                .onClick(std::move(onClick))
+            ui.stack(id + ".inner")
+                .size(cw, ch)
+                .content([&] {
+                    // 交互层（点击 + hover 过渡；非交互文本穿透命中）
+                    ui.rect(id + ".press")
+                        .size(cw, ch)
+                        .states(components::theme::color(0.0f, 0.0f, 0.0f,
+                                                         0.0f),
+                                t.colors.hover, t.colors.active)
+                        .transition(core::Transition::make(0.1f,
+                                                           core::Ease::OutQuad))
+                        .animate(core::AnimProperty::Color)
+                        .onClick(std::move(onClick))
+                        .build();
+                    // 卡内文字（坐标与旧实现一致：旧根 stack 无 inset，
+                    // .inner 已对齐原点）
+                    ui.text(id + ".label")
+                        .position(28.0f * s, 20.0f * s)
+                        .size(cw - 56.0f * s, 16.0f * s)
+                        .text(label)
+                        .fontSize(t.sizes.fontSizeSmall - 1.0f)
+                        .lineHeight(16.0f * s)
+                        .color(t.colors.textSecondary)
+                        .build();
+                    ui.text(id + ".number")
+                        .position(28.0f * s, 42.0f * s)
+                        .size(cw - 56.0f * s, 56.0f * s)
+                        .text(number)
+                        .fontSize(t.sizes.fontSizeDisplay)
+                        .lineHeight(56.0f * s)
+                        .fontWeight(700)
+                        .color(numberColor ? *numberColor
+                                           : (accent ? t.colors.error
+                                                     : t.colors.textPrimary))
+                        .build();
+                    ui.text(id + ".badge")
+                        .position(28.0f * s, 98.0f * s)
+                        .size(cw - 56.0f * s, 16.0f)
+                        .text(badge)
+                        .fontSize(t.sizes.fontSizeSmall - 2.0f)
+                        .lineHeight(16.0f)
+                        .color(badgeColor ? *badgeColor
+                                          : (accent ? t.colors.error
+                                                    : t.colors.textTertiary))
+                        .build();
+                    if (timerSeconds > 0.0f) {
+                        // 保留：0.5s 周期整卡重绘（流式速率实时刷新，设计
+                        // §2.6——compose 不是每帧重跑，靠 onTimer 触发）
+                        ui.stack(id + ".timer")
+                            .size(0.0f, 0.0f)
+                            .onTimer(timerSeconds, [] {})
+                            .build();
+                    }
+                    if (chart) {
+                        chart(ui, cw - 56.0f * s, 32.0f);
+                    }
+                })
                 .build();
-
-            ui.text(id + ".label")
-                .position(padX, 20.0f * s)
-                .size(width - padX * 2.0f, 16.0f * s)
-                .text(label)
-                .fontSize(t.sizes.fontSizeSmall - 1.0f)
-                .lineHeight(16.0f * s)
-                .color(t.colors.textSecondary)
-                .build();
-
-            ui.text(id + ".number")
-                .position(padX, 42.0f * s)
-                .size(width - padX * 2.0f, 56.0f * s)
-                .text(number)
-                .fontSize(t.sizes.fontSizeDisplay)
-                .lineHeight(56.0f * s)
-                .fontWeight(700)
-                .color(numberColor ? *numberColor
-                                   : (accent ? t.colors.error
-                                             : t.colors.textPrimary))
-                .build();
-
-            ui.text(id + ".badge")
-                .position(padX, 98.0f * s)
-                .size(width - padX * 2.0f, badgeFont + 3.0f)
-                .text(badge)
-                .fontSize(badgeFont)
-                .lineHeight(badgeFont + 3.0f)
-                .color(badgeColor ? *badgeColor
-                                  : (accent ? t.colors.error
-                                            : t.colors.textTertiary))
-                .build();
-
-            if (timerSeconds > 0.0f) {
-                // compose 不是每帧重跑（DSL.md），实时刷新靠 onTimer 周期触发
-                // 整页 compose（设计 §2.6，linechart 同款机制）
-                ui.stack(id + ".timer")
-                    .size(0.0f, 0.0f)
-                    .onTimer(timerSeconds, [] {})
-                    .build();
-            }
         })
         .build();
 }
@@ -336,7 +361,25 @@ public:
                                      streaming ? &t.colors.primaryText
                                                : &t.colors.textTertiary,
                                      streaming ? &t.colors.success : nullptr,
-                                     0.5f);
+                                     0.5f,
+                                     [&](eui::Ui& inner, float chartW,
+                                         float chartH) {
+                                         // sparkline：rateSeries 兜底
+                                         // {0.0f}（防 lineChart demo 数据
+                                         // 泄漏，D-6 护栏）
+                                         const std::vector<float> series =
+                                             core::proxy_stats::rateSeries(24);
+                                         components::lineChart(
+                                             inner,
+                                             "home.stat.tokens.spark")
+                                             .size(chartW, chartH)
+                                             .values(series)
+                                             .style(components::LineStyle::
+                                                        Curve)
+                                             .theme(core::theme::
+                                                        componentTokens(t))
+                                             .build();
+                                     });
                         }
                         if (mdOn) {
                         drawStatCard(ui, "home.stat.notes", statW, statH, t,

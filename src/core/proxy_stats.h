@@ -8,6 +8,7 @@
 
 #include <cstdint>
 #include <functional>
+#include <vector>
 
 namespace core::proxy_stats {
 
@@ -26,6 +27,12 @@ void endStream(uint64_t id);                           // 幂等：任意结束�
 
 // reader API（Home compose）
 Snapshot snapshot();
+
+// UI 现代化 D-6（2026-09-28 plan）：最近速率采样序列（sparkline 数据源）。
+// 纯数据扩展——既有字段/口径不动；writer 侧（updateStream 事件点）采样当前
+// rateTps 入环，最多保留最近 64 点。
+// 空序列返回 {0.0f}（防 lineChart 对空 values 填演示数据，linechart.h build()）。
+std::vector<float> rateSeries(int maxPoints = 32);
 
 // ---- 测试专用 ----
 // 注入假时钟（返回 steady 毫秒）；传 nullptr 恢复真实时钟

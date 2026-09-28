@@ -2,9 +2,11 @@
 // 共享流式统计实现：mutex + 每流累计 + 16 槽采样环（设计 §2.5 / §2.7）
 #include "proxy_stats.h"
 
+#include <algorithm>
 #include <chrono>
 #include <map>
 #include <mutex>
+#include <vector>
 
 namespace core::proxy_stats {
 namespace {
@@ -30,6 +32,20 @@ struct State {
     Sample ring[kRingSize];
     int ringCount = 0;
     int ringNext = 0;
+
+    // UI 现代化 D-6：速率采样序列环（sparkline 数据源）。writer 侧每个
+    // usage 事件采样一次当前 rateTps（流式事件约 1-2s 一个，64 点窗口
+    // 覆盖 ~1-2 分钟），reader 侧 rateSeries 按时间序取最近 N 点。
+    static constexpr int kRateRingSize = 64;
+    double rateRing[kRateRingSize];
+    int rateCount = 0;
+    int rateNext = 0;
+
+    void pushRateSample(double rate) {
+        rateRing[rateNext] = rate;
+        rateNext = (rateNext + 1) % kRateRingSize;
+        if (rateCount < kRateRingSize) ++rateCount;
+    }
 
     void pushSample(int64_t nowMs) {
         ring[ringNext] = Sample{nowMs, sessionTotal};
@@ -117,6 +133,7 @@ void updateStream(uint64_t id, int64_t cumulativeTokens) {
     const int64_t now = nowMs();
     s.lastEventMs = now;
     s.pushSample(now);
+    s.pushRateSample(s.rateTps(now)); // UI 现代化 D-6：sparkline 数据源
 }
 
 void endStream(uint64_t id) {
@@ -138,6 +155,22 @@ Snapshot snapshot() {
     return snap;
 }
 
+std::vector<float> rateSeries(int maxPoints) {
+    auto& s = state();
+    std::lock_guard<std::mutex> lock(s.mutex);
+    // 空序列兜底 {0.0f}：防 lineChart 对空 values 填演示数据（D-6 护栏）。
+    if (s.rateCount == 0 || maxPoints <= 0) return {0.0f};
+    const int take = std::min(maxPoints, s.rateCount);
+    std::vector<float> out;
+    out.reserve(static_cast<size_t>(take));
+    // 环满时 rateNext 是最老下标；取时间序最后 take 个点（末点 = 最近采样）
+    const int first = (s.rateCount < State::kRateRingSize) ? 0 : s.rateNext;
+    for (int k = s.rateCount - take; k < s.rateCount; ++k) {
+        out.push_back(static_cast<float>(s.rateRing[(first + k) % State::kRateRingSize]));
+    }
+    return out;
+}
+
 void setTestClock(std::function<int64_t()> fn) {
     testClock() = std::move(fn);
 }
@@ -150,6 +183,8 @@ void resetForTest() {
     s.lastEventMs = -1;
     s.ringCount = 0;
     s.ringNext = 0;
+    s.rateCount = 0;
+    s.rateNext = 0;
     testClock() = nullptr;
 }
 

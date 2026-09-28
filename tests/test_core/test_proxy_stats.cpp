@@ -171,3 +171,52 @@ REGISTER_TEST(proxy_stats_concurrent,
     core::proxy_stats::resetForTest();
     return true;
 })
+
+REGISTER_TEST(proxy_stats_rate_series_empty,
+              "proxy_stats: rateSeries 空序列兜底 {0.0f}（防 lineChart demo 数据）", {
+    core::proxy_stats::resetForTest();
+    FakeClock clock;
+
+    const auto series = core::proxy_stats::rateSeries(24);
+    DOCTEST_CHECK_EQ(series.size(), static_cast<size_t>(1));
+    DOCTEST_CHECK_EQ(series[0], 0.0f);
+
+    core::proxy_stats::resetForTest();
+    return true;
+})
+
+REGISTER_TEST(proxy_stats_rate_series_trim,
+              "proxy_stats: rateSeries 裁剪到 maxPoints、末点 == 最近采样", {
+    core::proxy_stats::resetForTest();
+    FakeClock clock;
+    const uint64_t id = core::proxy_stats::beginStream();
+
+    // 8 个 usage 事件（每 400ms 一个，累计值口径），每个事件采样一次速率。
+    // 第 k 次事件（t=(k-1)*400，累计 V_k）的速率按 2s 窗口口径：
+    //   k=1: 0（窗口 <100ms）；k=2: 150；k=3: 175；k=4: 183.3；k=5: 200；
+    //   k=6: 210（基线 t=0）；k=7: 230；k=8: 250（基线 t=800, V=180）
+    const int64_t totals[8] = {40,  100, 180, 260,
+                               360, 460, 560, 680};
+    for (int i = 0; i < 8; ++i) {
+        core::proxy_stats::updateStream(id, totals[i]);
+        clock.now += 400;
+    }
+
+    // 裁剪到 maxPoints=5：取最近 5 点 [183.3, 200, 210, 230, 250]
+    const auto last5 = core::proxy_stats::rateSeries(5);
+    DOCTEST_CHECK_EQ(last5.size(), static_cast<size_t>(5));
+    DOCTEST_CHECK(last5.front() > 183.0f && last5.front() < 184.0f);
+    // 末点 == 最近一次采样（t=2800 处速率 (680-180)/2s = 250）
+    DOCTEST_CHECK(last5.back() > 249.9f && last5.back() < 250.1f);
+
+    // maxPoints 足够大时不裁剪：8 事件 → 8 点，时间序 = 写入序，首点 = 0
+    const auto all = core::proxy_stats::rateSeries(64);
+    DOCTEST_CHECK_EQ(all.size(), static_cast<size_t>(8));
+    DOCTEST_CHECK_EQ(all[0], 0.0f);
+    DOCTEST_CHECK_EQ(all[1], 150.0f);
+    DOCTEST_CHECK(all[7] > 249.9f && all[7] < 250.1f);
+
+    core::proxy_stats::endStream(id);
+    core::proxy_stats::resetForTest();
+    return true;
+})
