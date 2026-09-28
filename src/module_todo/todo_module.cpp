@@ -394,7 +394,9 @@ public:
     // ---- W8 拖拽（真 drop 语义）----
 
     // 指针落点 → 目标列索引（列外/板外 → -1）。换算细节见 ui::dragDropTarget。
-    int hitDropColumn(double x, double y) const {
+    // UI 整改 13：命中输入统一走 makeDragHitInput（hitDropColumn / hitDropRow
+    // 同源同帧），行命中只喂占位条预览。
+    ui::DragHitInput makeDragHitInput() const {
         ui::DragHitInput in;
         in.fromColIndex = drag_.fromColIndex;
         in.colCount = static_cast<int>(columns_.size());
@@ -418,6 +420,11 @@ public:
         const ::core::Router* router = ::core::appRouter();
         in.pageOriginX = router ? router->pageOriginX() : 0.0f;
         in.dpiScale = ::app::contentScale();
+        return in;
+    }
+
+    int hitDropColumn(double x, double y) const {
+        const ui::DragHitInput in = makeDragHitInput();
         // 探针降级为**断言**：几何实测尺度（按下卡片 bounds 宽 / compose 卡宽）
         // 只在"自称 ≠1 却对不上框架值"时告警一次（拖动中不刷屏），留痕供
         // 100%/125%/150% 三档点验比对（审计 V2）。换算本体不吃探针值。
@@ -431,17 +438,37 @@ public:
         return ui::dragDropTarget(in, x, y);
     }
 
+    // 指针在目标列的悬停行（0 = 首卡前 / >= 列卡数 = 列尾追加；越界 -1）。
+    // 列内任务数取**全量**（搜索态由调用方置 -1 走追加兜底，行号语义不变）。
+    int hitDropRow(int targetCol, double x, double y) const {
+        if (targetCol < 0 || targetCol >= static_cast<int>(columns_.size())) {
+            return -1;
+        }
+        const ui::DragHitInput in = makeDragHitInput();
+        const auto colTasks = ui::tasksInColumn(tasks_, columns_[targetCol].id);
+        return ui::dragDropRowIndex(
+            in, targetCol, x, y,
+            ui::columnScrollOffset(columns_, columnScrolls_,
+                                   static_cast<size_t>(targetCol)),
+            static_cast<int>(colTasks.size()));
+    }
+
     // 松手收尾：目标无效或等于源列 → 取消（卡片回原位）；
-    // 否则按稳定 taskId 落到目标列尾（computeAppendPosition），消灭过期索引
+    // 否则按稳定 taskId 落库——UI 整改 13：有悬停行按行插入
+    //（computeInsertPosition），无（搜索态等）追加列尾。
     void finishDrag(int target) {
         const int64_t taskId = drag_.taskId;
         const int from = drag_.fromColIndex;
+        const int hoverRow = drag_.hoverRow;
         drag_ = DragState{};  // 先复位（拖拽中间态结束，无论成败）
         if (target < 0 || target == from) return;
         if (target >= static_cast<int>(columns_.size())) return;
         const auto& dst = columns_[static_cast<size_t>(target)];
         const std::string title = dst.title;
-        if (doMoveTask(taskId, dst.id, ui::computeAppendPosition(tasks_, dst.id))) {
+        const int newPos = (hoverRow >= 0)
+            ? ui::computeInsertPosition(tasks_, dst.id, hoverRow)
+            : ui::computeAppendPosition(tasks_, dst.id);
+        if (doMoveTask(taskId, dst.id, newPos)) {
             setStatus("已移动到「" + title + "」");  // 失败时保留 doMoveTask 的错误提示
         }
     }
@@ -643,8 +670,8 @@ public:
         const ui::BoardView boardView{
             columns_, tasks_, searchMatchIds_, searchQuery_, columnScrolls_,
             selectedTaskId_, drag_.active, drag_.taskId, drag_.hoverColIndex,
-            overdueCount_, service_ != nullptr, loadError_, boardActions_,
-            columnFadeIn_};
+            drag_.hoverRow, overdueCount_, service_ != nullptr, loadError_,
+            boardActions_, columnFadeIn_};
 
         page.column("todo.root")
             .size(screen.width, screen.height)
@@ -726,6 +753,9 @@ private:
         // 取"当下"值会跨帧混用（tech-debt B，见 cardPressed 处注释）
         float pressScrollOffset = 0.0f;
         int hoverColIndex = -1;    // 拖动中指针所在列（-1 = 列外，松手取消）
+        // UI 整改 13：拖动中指针所在目标列行（-1 = 不预览；仅跨列 + 非搜索
+        // 态置位）。只驱动占位条视觉 + 落库插入位（finishDrag 快照后复位）
+        int hoverRow = -1;
     };
 
     // ============ 通道绑定（构造期绑定一次） ============
@@ -795,7 +825,14 @@ private:
             // 运行时只在超过 dragThreshold 后派发 → 到这里即视为拖拽激活
             if (drag_.taskId == 0) return;
             drag_.active = true;
-            drag_.hoverColIndex = hitDropColumn(x, y);
+            const int target = hitDropColumn(x, y);
+            drag_.hoverColIndex = target;
+            // UI 整改 13：插入行预览——仅跨列 + 非搜索态（搜索态保持旧
+            // 「追加列尾」语义，行号不参与落库）；同列拖拽 = 取消，不预览
+            drag_.hoverRow = (target >= 0 && target != drag_.fromColIndex &&
+                              searchQuery_.empty())
+                ? hitDropRow(target, x, y)
+                : -1;
         },
         .cardReleased = [this](double x, double y, bool released) {
             if (!drag_.active) {

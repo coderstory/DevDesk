@@ -552,8 +552,7 @@ void drawOverdueDialog(eui::Ui& ui, const eui::Screen& screen,
 
 void DetailDialog::reset(const Task& task) {
     taskId = task.id;
-    columnId = task.columnId;
-    title = task.title;
+    title = task.title;  // UI 整改 15：不再装载列（详情内无「移动到」）
     description = task.description.value_or("");
     priority = task.priority;
     dueAt = task.dueAt;
@@ -582,20 +581,24 @@ void DetailDialog::addTag() {
 bool DetailDialog::dirty(const std::vector<Task>& tasks) const {
     const Task* orig = findTask(tasks, taskId);
     if (orig == nullptr) return false;
+    // UI 整改 15：比列已移除——详情内不再能改列（「移动到」删除），
+    // 列身份一律以库中为准，不存在「未保存的列改动」
     return orig->title != title ||
            orig->description.value_or("") != description ||
            orig->priority != priority ||
            orig->dueAt != dueAt ||
-           orig->columnId != columnId ||
            orig->completedAt.has_value() != completed ||
            orig->tags != tags;
 }
 
-// 表单字段 → Task（含 position 保留；completedAt 取当前完成态）
+// 表单字段 → Task（含列/position 保留——编辑不改序不切列，UI 整改 15；
+// completedAt 取当前完成态）
 Task DetailDialog::collect(const std::vector<Task>& tasks) const {
+    const Task* orig = findTask(tasks, taskId);
     Task updated;
     updated.id = taskId;
-    updated.columnId = columnId;
+    // 列身份以库中为准（详情内无「移动到」）
+    updated.columnId = orig != nullptr ? orig->columnId : 0;
     updated.title = title;
     if (!description.empty()) {
         updated.description = description;
@@ -607,11 +610,7 @@ Task DetailDialog::collect(const std::vector<Task>& tasks) const {
         : std::nullopt;
     updated.tags = tags;
     // 保留原 position（编辑不改序；此前硬编码 0 会把任务顶到列首）
-    if (const Task* orig = findTask(tasks, taskId)) {
-        updated.position = orig->position;
-    } else {
-        updated.position = 0;
-    }
+    updated.position = orig != nullptr ? orig->position : 0;
     return updated;
 }
 
@@ -643,16 +642,10 @@ void drawDetailDialog(eui::Ui& ui, const eui::Screen& screen,
                       const DialogHost& host) {
     const auto themeTokens = core::theme::componentTokens(t);
     const float w = ui_kit::dialogWidthPx(ui_kit::DialogWidth::Wide);
-    // 「移动到」全列遍历 + 可换行：每行 4 个按钮，列多时增高弹窗
-    // （此前硬编码 i < 4，第 5 列起在详情弹窗里移不过去）
-    const float moveBtnW = 118.0f;
-    const float moveGap = 8.0f;
-    const int perRow = std::max(
-        1, static_cast<int>((w - 56.0f + moveGap) / (moveBtnW + moveGap)));
-    const int moveRows = static_cast<int>(
-        (host.columns->size() + static_cast<size_t>(perRow) - 1) / perRow);
-    // 640 = 原布局 + 标签编辑区（chips 行 + 输入框，见下方「标签」段）
-    const float h = 640.0f + 40.0f * static_cast<float>(std::max(0, moveRows - 1));
+    // UI 整改 15：详情弹窗「移动到」区（标题 + 按钮行 + 列多时每列一行
+    // +40px）已删除——切列改走拖拽/右键菜单，高度收掉该段（640 基准 -
+    // 标签 16 + 按钮行 32 - 过渡 4 = 588）；底部操作区 y 随 h-58 上移
+    const float h = 588.0f;
 
     ui_kit::DialogFrame frame;
     frame.id = "todo.dialog.detail";
@@ -810,45 +803,7 @@ void drawDetailDialog(eui::Ui& ui, const eui::Screen& screen,
                 .onCancel([&d] { d.detail.tagInput.clear(); })
                 .build();
 
-            // 移动到其他列
-            ui_kit::drawDialogText(ui, "todo.dialog.detail.mlabel", w, "移动到",
-                                   t.sizes.fontSizeSmall - 2.0f, t.colors.textTertiary,
-                                   {.y = 470.0f, .width = 120.0f, .height = 16.0f,
-                                    .lineHeight = 16.0f});
-            for (size_t i = 0; i < host.columns->size(); ++i) {
-                const bool active = ((*host.columns)[i].id == d.detail.columnId);
-                const int slot = static_cast<int>(i);
-                const float bx = 28.0f +
-                    static_cast<float>(slot % perRow) * (moveBtnW + moveGap);
-                const float by = 490.0f +
-                    static_cast<float>(slot / perRow) * 40.0f;
-                components::button(ui, "todo.dialog.detail.move." + std::to_string(i))
-                    .position(bx, by)
-                    .size(moveBtnW, 32.0f)
-                    .text((*host.columns)[i].title)
-                    .fontSize(t.sizes.fontSizeSmall - 1.0f)
-                    .colors(active ? t.colors.primarySoftBg : t.colors.surfaceElevated,
-                            t.colors.hover, t.colors.active)
-                    .textColor(active ? t.colors.primaryText : t.colors.textSecondary)
-                    .radius(t.sizes.radius)
-                    .border(1.0f, active ? t.colors.primary : t.colors.borderDefault)
-                    .onClick([&d, &host, i] {
-                        const int64_t taskId = d.detail.taskId;
-                        const int64_t toCol = (*host.columns)[i].id;
-                        if (toCol == d.detail.columnId) return;  // 已在该列
-                        // 产品审计 2026-09-23 [2]：先落表单再移动，
-                        // 编辑中的改动不再被静默丢弃；保存失败保持弹窗
-                        if (!d.detail.save(host)) return;
-                        d.detail.columnId = toCol;
-                        d.popups.close(Popup::Detail);
-                        d.detail.discardArmed = false;
-                        host.moveTask(taskId, toCol,
-                                      computeAppendPosition(*host.tasks, toCol));
-                    })
-                    .build();
-            }
-
-            // 底部操作区
+            // 底部操作区（UI 整改 15：原「移动到」区已删，直接接标签区）
             const float btnY = h - 58.0f;
             components::button(ui, "todo.dialog.detail.delete")
                 .position(28.0f, btnY)

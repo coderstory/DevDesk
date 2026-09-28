@@ -436,6 +436,31 @@ REGISTER_TEST(todo_ui_append_position,
     return true;
 })
 
+// UI 整改 13：computeInsertPosition 拖拽按行插入（rowIndex 越界 = 追加）
+REGISTER_TEST(todo_ui_insert_position,
+              "todo_ui: computeInsertPosition 行插入/越界追加", {
+    using module::todo::ui::computeInsertPosition;
+    using module::todo::ui::computeAppendPosition;
+    std::vector<module::todo::Task> tasks;
+    tasks.push_back(makeTask(1, 10, 0));
+    tasks.push_back(makeTask(2, 10, 2));   // 空洞：position 1 不存在
+    tasks.push_back(makeTask(3, 10, 5));
+    tasks.push_back(makeTask(4, 20, 9));   // 另一列，不应干扰
+    // 行 0 = 插到首任务前（用其真实 position，即使有空洞）
+    DOCTEST_CHECK_EQ(computeInsertPosition(tasks, 10, 0), 0);
+    // 行 1 = 插到第 2 张卡（id=2, position=2）之前
+    DOCTEST_CHECK_EQ(computeInsertPosition(tasks, 10, 1), 2);
+    // 行 2 = 插到第 3 张卡（id=3, position=5）之前
+    DOCTEST_CHECK_EQ(computeInsertPosition(tasks, 10, 2), 5);
+    // 行 == 列卡数 或越界 → 追加（同 computeAppendPosition）
+    DOCTEST_CHECK_EQ(computeInsertPosition(tasks, 10, 3),
+                     computeAppendPosition(tasks, 10));
+    DOCTEST_CHECK_EQ(computeInsertPosition(tasks, 10, 9), 6);
+    // 空列 → 0
+    DOCTEST_CHECK_EQ(computeInsertPosition(tasks, 30, 0), 0);
+    return true;
+})
+
 REGISTER_TEST(todo_ui_edit_keeps_order,
               "todo_ui: 编辑保存不改序（position 保留，headless）", {
     TestEnv env;
@@ -535,6 +560,8 @@ REGISTER_TEST(todo_ui_move_appends_to_end,
         DOCTEST_CHECK_EQ(ui.find("todo.col.4.card.0.bg")->opacity, 0.45f);
         DOCTEST_CHECK_EQ(ui.find("todo.col.5.bg")->border.width, 2.0f);
         DOCTEST_CHECK_EQ(ui.find("todo.col.4.bg")->border.width, 1.0f);
+        // UI 整改 13：目标列出现插入位占位条（按悬停行）
+        DOCTEST_CHECK(ui.find("todo.col.5.dropbar") != nullptr);
 
         // release（PointerAction::Release）→ moveTask 落库
         eui::PointerEvent up;
@@ -545,6 +572,7 @@ REGISTER_TEST(todo_ui_move_appends_to_end,
         composeLayout();
         // 拖拽结束后视觉复位
         DOCTEST_CHECK_EQ(ui.find("todo.col.5.bg")->border.width, 1.0f);
+        DOCTEST_CHECK(ui.find("todo.col.5.dropbar") == nullptr);  // 占位条随拖拽结束消失
     }
     {
         auto ts = env.svc->listTasks(dst.value().id);
@@ -570,7 +598,7 @@ REGISTER_TEST(todo_ui_move_appends_to_end,
         up.x = -100.0;
         up.y = 500.0;
         up.action = eui::PointerAction::Release;
-        card->onRelease(up, eui::Rect{});
+        card->onRelease(up, eui::Rect{});  // 同一帧内 press→drag→release，元素指针有效
     }
     {
         auto ts = env.svc->listTasks(dst.value().id);
@@ -677,6 +705,144 @@ REGISTER_TEST(todo_ui_move_appends_to_end,
     return true;
 })
 
+// UI 整改 13：拖拽按悬停行插入（占位条预览 + 落库位置一致，headless）
+// 列布局：[0..3] 种子列，4=插入源列，5=插入目标列
+REGISTER_TEST(todo_ui_drag_insert_position,
+              "todo_ui: 拖拽插入目标行（占位条 + 按行落库）", {
+    TestEnv env;
+    DOCTEST_REQUIRE(env.ready);
+    auto src = env.svc->createColumn("插入源列");
+    auto dst = env.svc->createColumn("插入目标列");
+    DOCTEST_REQUIRE(src.isOk());
+    DOCTEST_REQUIRE(dst.isOk());
+    auto x1 = env.svc->createTask(dst.value().id, "甲");
+    auto x2 = env.svc->createTask(dst.value().id, "乙");
+    auto mover = env.svc->createTask(src.value().id, "被移动任务");
+    auto mover2 = env.svc->createTask(src.value().id, "再移动任务");
+    DOCTEST_REQUIRE(x1.isOk() && x2.isOk() && mover.isOk() && mover2.isOk());
+
+    std::unique_ptr<::core::Module> mod(create_todo_module());
+    mod->onStart();
+
+    eui::Ui ui;
+    eui::Screen screen;
+    screen.width = 1600.0f;
+    screen.height = 1000.0f;
+    auto composeLayout = [&]() {
+        ui.begin("todo_drag_insert_frame");
+        mod->compose(ui, screen);
+        ui.end();
+        ui.layout(screen);
+    };
+    auto boundsOf = [](const core::dsl::Element* e) {
+        return eui::Rect{e->frame.x, e->frame.y, e->frame.width, e->frame.height};
+    };
+
+    // 场景 1：拖到目标列内容区**顶部**（列头下方 = 首卡前）松手 → 插到 甲 之前
+    {
+        composeLayout();
+        const auto* card = ui.find("todo.col.4.card.0.bg");  // 被移动任务
+        DOCTEST_REQUIRE(card != nullptr);
+        eui::PointerEvent pe;
+        card->onPress(pe, boundsOf(card));
+        const auto* dstBg = ui.find("todo.col.5.bg");
+        DOCTEST_REQUIRE(dstBg != nullptr);
+        core::dsl::DragEvent ev;
+        ev.x = dstBg->frame.x + dstBg->frame.width / 2.0f;
+        ev.y = dstBg->frame.y + 56.0f + 4.0f;  // 列头下方 → 行 0（首卡前）
+        card->onDrag(ev);
+        composeLayout();
+        DOCTEST_CHECK(ui.find("todo.col.5.dropbar") != nullptr);  // 占位条在目标列
+        eui::PointerEvent up;
+        up.x = ev.x;
+        up.y = ev.y;
+        up.action = eui::PointerAction::Release;
+        // 中间插了 mid-drag composeLayout（重建元素树）——release 必须重新
+        // find，旧指针的回调被 move 走、直调会 bad_function_call
+        const auto* rel = ui.find("todo.col.4.card.0.bg");
+        DOCTEST_REQUIRE(rel != nullptr);
+        rel->onRelease(up, eui::Rect{});
+    }
+    {
+        auto ts = env.svc->listTasks(dst.value().id);
+        DOCTEST_REQUIRE(ts.isOk());
+        DOCTEST_REQUIRE_EQ(ts.value().size(), static_cast<size_t>(3));
+        DOCTEST_CHECK_EQ(ts.value()[0].title, std::string("被移动任务"));  // 插到行 0
+        DOCTEST_CHECK_EQ(ts.value()[1].title, std::string("甲"));
+        DOCTEST_CHECK_EQ(ts.value()[2].title, std::string("乙"));
+    }
+
+    // 场景 2：源列剩「再移动任务」→ 拖到目标列**底部**（卡 2 下缝附近）→ 追加
+    {
+        composeLayout();
+        const auto* card = ui.find("todo.col.4.card.0.bg");  // 再移动任务
+        DOCTEST_REQUIRE(card != nullptr);
+        eui::PointerEvent pe;
+        card->onPress(pe, boundsOf(card));
+        const auto* dstBg = ui.find("todo.col.5.bg");
+        DOCTEST_REQUIRE(dstBg != nullptr);
+        core::dsl::DragEvent ev;
+        ev.x = dstBg->frame.x + dstBg->frame.width / 2.0f;
+        // 卡 2 底 = 缝中心（内容坐标 2*92+88 = 272）
+        ev.y = dstBg->frame.y + 56.0f + 272.0f;
+        card->onDrag(ev);
+        composeLayout();
+        DOCTEST_CHECK(ui.find("todo.col.5.dropbar") != nullptr);  // 尾部占位条
+        eui::PointerEvent up;
+        up.x = ev.x;
+        up.y = ev.y;
+        up.action = eui::PointerAction::Release;
+        // mid-drag composeLayout 重建元素树——release 前重新 find
+        const auto* rel = ui.find("todo.col.4.card.0.bg");
+        DOCTEST_REQUIRE(rel != nullptr);
+        rel->onRelease(up, eui::Rect{});
+    }
+    {
+        auto ts = env.svc->listTasks(dst.value().id);
+        DOCTEST_REQUIRE(ts.isOk());
+        DOCTEST_REQUIRE_EQ(ts.value().size(), static_cast<size_t>(4));
+        DOCTEST_CHECK_EQ(ts.value()[0].title, std::string("被移动任务"));
+        DOCTEST_CHECK_EQ(ts.value()[1].title, std::string("甲"));
+        DOCTEST_CHECK_EQ(ts.value()[2].title, std::string("乙"));
+        DOCTEST_CHECK_EQ(ts.value()[3].title, std::string("再移动任务"));  // 追加列尾
+    }
+
+    // 场景 3：同列拖拽不预览（hoverRow=-1）→ 无占位条、松手取消
+    {
+        composeLayout();
+        const auto* card = ui.find("todo.col.5.card.1.bg");  // 甲（同列拖）
+        DOCTEST_REQUIRE(card != nullptr);
+        eui::PointerEvent pe;
+        card->onPress(pe, boundsOf(card));
+        const auto* srcBg = ui.find("todo.col.5.bg");
+        DOCTEST_REQUIRE(srcBg != nullptr);
+        core::dsl::DragEvent ev;
+        ev.x = srcBg->frame.x + 40.0f;
+        ev.y = srcBg->frame.y + 56.0f + 200.0f;
+        card->onDrag(ev);
+        composeLayout();
+        DOCTEST_CHECK(ui.find("todo.col.5.dropbar") == nullptr);  // 同列 = 取消，不预览
+        eui::PointerEvent up;
+        up.x = ev.x;
+        up.y = ev.y;
+        up.action = eui::PointerAction::Release;
+        // mid-drag composeLayout 重建元素树——release 前重新 find（源列已空，
+        // 不能按 col.4 找；任何卡的 release 回调都是模块级处理，落点坐标定成败）
+        const auto* rel = ui.find("todo.col.5.card.1.bg");
+        DOCTEST_REQUIRE(rel != nullptr);
+        rel->onRelease(up, eui::Rect{});
+    }
+    {
+        auto ts = env.svc->listTasks(dst.value().id);
+        DOCTEST_REQUIRE(ts.isOk());
+        DOCTEST_REQUIRE_EQ(ts.value().size(), static_cast<size_t>(4));  // 未动
+        DOCTEST_CHECK_EQ(ts.value()[1].title, std::string("甲"));
+    }
+
+    mod->onStop();
+    return true;
+})
+
 REGISTER_TEST(todo_ui_drag_hit_pure,
               "todo_ui: dragDropTarget 命中/列隙/板外/滚动/dpi（纯函数）", {
     using module::todo::ui::DragHitInput;
@@ -742,6 +908,32 @@ REGISTER_TEST(todo_ui_drag_hit_pure,
     DragHitInput bad = in;
     bad.cardWidth = 0.0f;
     DOCTEST_CHECK_EQ(dragDropTarget(bad, 400.0, 300.0), -1);
+
+    // UI 整改 13：dragDropRowIndex 悬停行（同几何：boardTop=144，列内容
+    // 顶 = 200，卡 i 占 [i*92, i*92+84]，缝中心 = 插入位）
+    using module::todo::ui::dragDropRowIndex;
+    // 指针不在目标列（x 落列外）→ -1
+    DOCTEST_CHECK_EQ(dragDropRowIndex(in, 2, 200.0, 300.0, 0.0f, 2), -1);
+    // 板上方 / 板下方 → -1
+    DOCTEST_CHECK_EQ(dragDropRowIndex(in, 2, 600.0, 100.0, 0.0f, 2), -1);
+    DOCTEST_CHECK_EQ(dragDropRowIndex(in, 2, 600.0, 700.0, 0.0f, 2), -1);
+    // 退化输入 → -1
+    DOCTEST_CHECK_EQ(dragDropRowIndex(DragHitInput{}, 2, 600.0, 300.0, 0.0f, 2), -1);
+    // 列头区/首卡内（relY<84）→ 行 0（首卡前）；relY=84（卡 0 底 = 缝隙）→ 行 1
+    DOCTEST_CHECK_EQ(dragDropRowIndex(in, 2, 600.0, 250.0, 0.0f, 2), 0);  // relY=50
+    DOCTEST_CHECK_EQ(dragDropRowIndex(in, 2, 600.0, 283.0, 0.0f, 2), 0);  // relY=83
+    DOCTEST_CHECK_EQ(dragDropRowIndex(in, 2, 600.0, 284.0, 0.0f, 2), 1);  // relY=84（卡0底/缝）
+    // 卡 0 与卡 1 之间缝隙 → 行 1
+    DOCTEST_CHECK_EQ(dragDropRowIndex(in, 2, 600.0, 290.0, 0.0f, 2), 1);  // relY=90
+    // 卡 1 内（relY=100）→ 行 1（插其前）；卡 1 底（relY=176）→ 行 2
+    DOCTEST_CHECK_EQ(dragDropRowIndex(in, 2, 600.0, 300.0, 0.0f, 2), 1);  // relY=100
+    DOCTEST_CHECK_EQ(dragDropRowIndex(in, 2, 600.0, 376.0, 0.0f, 2), 2);  // relY=176
+    // 列尾空白区 → 钳制到列卡数（追加）
+    DOCTEST_CHECK_EQ(dragDropRowIndex(in, 2, 600.0, 500.0, 0.0f, 2), 2);  // relY=300
+    // 目标列滚动 100：内容坐标 = 视口 + 滚动
+    DOCTEST_CHECK_EQ(dragDropRowIndex(in, 2, 600.0, 250.0, 100.0f, 2), 1);  // relY=150
+    // 空列（taskCount=0）→ 追加位 0
+    DOCTEST_CHECK_EQ(dragDropRowIndex(in, 2, 600.0, 300.0, 0.0f, 0), 0);
     return true;
 })
 
@@ -1140,15 +1332,17 @@ REGISTER_TEST(todo_ui_complete_by_kind,
     return true;
 })
 
-// 详情弹窗「移动到」全列遍历（此前硬编码 i < 4，第 5 列起不可移）
-REGISTER_TEST(todo_ui_detail_move_all_columns,
-              "todo_ui: 详情弹窗移动到覆盖全部列（headless）", {
+// UI 整改 15：详情弹窗「移动到」已删除（改拖拽/右键菜单）——6 列场景下
+// 不再渲染任何移动到按钮/标签；切列路径由右键菜单（本用例）与拖拽
+//（todo_ui_drag_insert_position）分别覆盖
+REGISTER_TEST(todo_ui_detail_move_removed,
+              "todo_ui: 详情弹窗移除「移动到」（改拖拽/右键菜单，headless）", {
     TestEnv env;
     DOCTEST_REQUIRE(env.ready);
     auto list = env.svc->listColumns();
     DOCTEST_REQUIRE(list.isOk());
     const int64_t todoCol = list.value()[0].id;
-    // 补 2 列 → 共 6 列（超过旧的 4 列上限）
+    // 补 2 列 → 共 6 列（覆盖旧「全列遍历」用例的列数场景）
     DOCTEST_REQUIRE(env.svc->createColumn("第五列").isOk());
     DOCTEST_REQUIRE(env.svc->createColumn("第六列").isOk());
     auto a = env.svc->createTask(todoCol, "跨列移动任务");
@@ -1157,7 +1351,7 @@ REGISTER_TEST(todo_ui_detail_move_all_columns,
     std::unique_ptr<::core::Module> mod(create_todo_module());
     mod->onStart();
 
-    // 打开详情 → 第 5、6 列按钮都存在，点第 6 列按钮任务真的移过去
+    // 打开详情 → 6 列下不再渲染任何 move.* 按钮与「移动到」标签
     {
         Frame frame(mod.get());
         eui::PointerEvent pe;
@@ -1170,11 +1364,35 @@ REGISTER_TEST(todo_ui_detail_move_all_columns,
         DOCTEST_REQUIRE(edit != nullptr);
         edit->onClick();
         frame.refresh();
-        DOCTEST_REQUIRE(frame.ui.find("todo.dialog.detail.move.3") != nullptr);
-        const auto* move5 = frame.ui.find("todo.dialog.detail.move.5.bg");
-        DOCTEST_REQUIRE(move5 != nullptr);
-        DOCTEST_REQUIRE(move5->onClick != nullptr);
-        move5->onClick();
+        DOCTEST_CHECK(frame.ui.find("todo.dialog.detail.panel") != nullptr);
+        for (int i = 0; i < 6; ++i) {
+            DOCTEST_CHECK(frame.ui.find("todo.dialog.detail.move." +
+                                        std::to_string(i)) == nullptr);
+        }
+        DOCTEST_CHECK(frame.ui.find("todo.dialog.detail.mlabel") == nullptr);
+        // 编辑能力不受影响（标题输入仍在）
+        DOCTEST_CHECK(frame.ui.find("todo.dialog.detail.input.title") != nullptr);
+    }
+    // 右键菜单「移动到」路径仍然在 → 任务可移到第六列
+    {
+        Frame frame(mod.get());
+        eui::PointerEvent pe;
+        eui::Rect rect;
+        const auto* card = frame.ui.find("todo.col.0.card.0.bg");
+        DOCTEST_REQUIRE(card != nullptr);
+        card->onContextMenu(pe, rect);
+        frame.refresh();
+        const core::dsl::Element* moveTo = nullptr;
+        for (int i = 2; i < 14 && moveTo == nullptr; ++i) {
+            const auto* item = frame.ui.find("todo.ctx.level.0.item." + std::to_string(i));
+            if (item == nullptr || item->onClick == nullptr) break;
+            const auto* label = frame.ui.find("todo.ctx.level.0.label." + std::to_string(i));
+            if (label != nullptr && label->text == "移动到「第六列」") {
+                moveTo = label;
+                item->onClick();
+            }
+        }
+        DOCTEST_REQUIRE(moveTo != nullptr);
     }
     {
         auto list2 = env.svc->listColumns();
@@ -1936,6 +2154,65 @@ REGISTER_TEST(todo_ui_feature_pure_helpers,
     return true;
 })
 
+// UI 整改 12：优先级底色 pill（去「高/中/低」文本）+ 卡片无左侧竖条
+REGISTER_TEST(todo_ui_priority_pill,
+              "todo_ui: 优先级底色区分（pill 无文本/竖条删除，headless）", {
+    using module::todo::ui::priorityPillBg;
+    using module::todo::ui::priorityLabel;
+    const auto& t = core::theme::current();
+    // None → 无 pill（无标记）
+    DOCTEST_CHECK(!priorityPillBg(module::todo::Priority::None, t).has_value());
+    // 低/中/高 → 都有底色，且与 surface 不同（可见）、三者互不相同
+    const auto low = priorityPillBg(module::todo::Priority::Low, t);
+    const auto mid = priorityPillBg(module::todo::Priority::Medium, t);
+    const auto high = priorityPillBg(module::todo::Priority::High, t);
+    DOCTEST_REQUIRE(low.has_value() && mid.has_value() && high.has_value());
+    DOCTEST_CHECK(low->r != t.colors.surface.r || low->g != t.colors.surface.g ||
+                  low->b != t.colors.surface.b);
+    DOCTEST_CHECK(mid->r != low->r || mid->g != low->g || mid->b != low->b ||
+                  mid->a != low->a);
+    DOCTEST_CHECK(high->r != mid->r || high->g != mid->g || high->b != mid->b ||
+                  high->a != mid->a);
+    // 文案锚点仍保留（详情弹窗优先级选择器用），卡片 chip 不得再显示文本
+    DOCTEST_CHECK(std::string(priorityLabel(module::todo::Priority::High)) == "●高");
+
+    // 看板卡片：pill 存在但无文本；左侧优先级竖条（.bar）不再渲染
+    TestEnv env;
+    DOCTEST_REQUIRE(env.ready);
+    auto col = env.svc->createColumn("优先级列");
+    DOCTEST_REQUIRE(col.isOk());
+    auto a = env.svc->createTask(col.value().id, "高优先级任务");
+    DOCTEST_REQUIRE(a.isOk());
+    {
+        // 直接对 service 任务设优先级（updateTask 带优先级字段）
+        module::todo::Task t2 = a.value();
+        t2.priority = module::todo::Priority::High;
+        auto up = env.svc->updateTask(t2);
+        DOCTEST_REQUIRE(up.isOk());
+    }
+    std::unique_ptr<::core::Module> mod(create_todo_module());
+    mod->onStart();
+    Frame frame(mod.get());
+    // pill 在（id 不变）+ 文本为空；原先的 chip 文本 id 仍可定位
+    const auto* prio = frame.ui.find("todo.col.4.card.0.prio.bg");
+    DOCTEST_REQUIRE(prio != nullptr);
+    const auto* prioText = frame.ui.find("todo.col.4.card.0.prio.text");
+    DOCTEST_REQUIRE(prioText != nullptr);
+    DOCTEST_CHECK(prioText->text.empty());  // 去「高/中/低」字样
+    // 左侧竖条删除（UI 整改 16）：不再存在 .bar 元素；选中态边框也不
+    // 靠竖条表达——卡片交互层 border 未选 1px / 选中 2px（见渲染断言）
+    DOCTEST_CHECK(frame.ui.find("todo.col.4.card.0.bar") == nullptr);
+    const auto* cardBg = frame.ui.find("todo.col.4.card.0.bg");
+    DOCTEST_REQUIRE(cardBg != nullptr);
+    DOCTEST_CHECK_EQ(cardBg->border.width, 1.0f);       // 未选中：默认边框
+    // 未选中边框色 = borderDefault（Color 无 operator==，逐分量比）
+    DOCTEST_CHECK(cardBg->border.color.r != t.colors.primary.r ||
+                  cardBg->border.color.g != t.colors.primary.g ||
+                  cardBg->border.color.b != t.colors.primary.b);
+    mod->onStop();
+    return true;
+})
+
 // ---- 6. 产品审计 2026-09-23 [2]：详情弹窗动作先存表单 / 删除确认保留弹窗 / backdrop 守卫 ----
 
 REGISTER_TEST(todo_ui_detail_actions_save_form,
@@ -1954,7 +2231,7 @@ REGISTER_TEST(todo_ui_detail_actions_save_form,
     std::unique_ptr<::core::Module> mod(create_todo_module());
     mod->onStart();
 
-    // 列序：4 个种子列 [0..3] + 编辑列(4) + 目标列(5)；「移动到」按钮按列序编号
+    // 列序：4 个种子列 [0..3] + 编辑列(4) + 目标列(5)（UI 整改 15：详情无「移动到」按钮）
 
     // A. 「标记完成」先落表单：改标题不点保存 → 点标记完成 → 标题已落库 + 已完成
     {
@@ -1993,10 +2270,12 @@ REGISTER_TEST(todo_ui_detail_actions_save_form,
         DOCTEST_CHECK(found);
     }
 
-    // B. 「移动到」先落表单：改标题 → 点移动到目标列 → 标题落库 + 列变更
+    // B. UI 整改 15：详情「移动到」已删（改拖拽/右键菜单）——改标题 →
+    //    保存 → 标题落库且**列不变**（弹窗不再提供切列，列身份以库中为准）；
+    //    详情内不得再渲染 move.* 按钮
     {
         Frame f1(mod.get());
-        const auto* card = f1.ui.find("todo.col.4.card.0.bg");  // 旧标题已完成移走
+        const auto* card = f1.ui.find("todo.col.4.card.0.bg");
         DOCTEST_REQUIRE(card != nullptr);
         DOCTEST_REQUIRE(card->onClick != nullptr);
         card->onClick();
@@ -2012,17 +2291,19 @@ REGISTER_TEST(todo_ui_detail_actions_save_form,
         core::TextInputEvent tie;
         tie.text = "M";
         input->onTextInput(tie);
-        const auto* moveBtn = f2.ui.find("todo.dialog.detail.move.5.bg");  // 目标列
-        DOCTEST_REQUIRE(moveBtn != nullptr);
-        DOCTEST_REQUIRE(moveBtn->onClick != nullptr);
-        moveBtn->onClick();
+        // 整改后：不再有「移动到」按钮（拖拽/右键菜单承担切列）
+        DOCTEST_CHECK(f2.ui.find("todo.dialog.detail.move.5.bg") == nullptr);
+        const auto* saveBtn = f2.ui.find("todo.dialog.detail.save.bg");
+        DOCTEST_REQUIRE(saveBtn != nullptr);
+        DOCTEST_REQUIRE(saveBtn->onClick != nullptr);
+        saveBtn->onClick();
 
         auto got = env.svc->listAllTasks();
         DOCTEST_REQUIRE(got.isOk());
         for (const auto& tk : got.value()) {
             if (tk.id == b.value().id) {
-                DOCTEST_CHECK_EQ(tk.title, std::string("移动前编辑M"));
-                DOCTEST_CHECK_EQ(tk.columnId, col2.value().id);
+                DOCTEST_CHECK_EQ(tk.title, std::string("移动前编辑M"));  // 表单已落库
+                DOCTEST_CHECK_EQ(tk.columnId, col.value().id);   // 列不变（编辑不切列）
             }
         }
     }
@@ -2030,7 +2311,7 @@ REGISTER_TEST(todo_ui_detail_actions_save_form,
     // C. 详情内删除：确认取消后回到详情弹窗（编辑现场保留）；确认删除才落库关窗
     {
         Frame f1(mod.get());
-        const auto* card = f1.ui.find("todo.col.4.card.0.bg");  // 删除目标
+        const auto* card = f1.ui.find("todo.col.4.card.1.bg");  // 删除目标（B 段保存后 b 仍占 0，c 是 1）
         DOCTEST_REQUIRE(card != nullptr);
         DOCTEST_REQUIRE(card->onClick != nullptr);
         card->onClick();
@@ -2080,7 +2361,7 @@ REGISTER_TEST(todo_ui_detail_actions_save_form,
     // D. backdrop 守卫：有未存改动第一次点遮罩只警告不关不落库，再点一次放弃关闭
     {
         Frame f1(mod.get());
-        const auto* card = f1.ui.find("todo.col.4.card.0.bg");  // 遮罩守卫
+        const auto* card = f1.ui.find("todo.col.4.card.1.bg");  // 遮罩守卫（C 删 c 后 [b@0, e@1]）
         DOCTEST_REQUIRE(card != nullptr);
         DOCTEST_REQUIRE(card->onClick != nullptr);
         card->onClick();

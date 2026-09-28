@@ -256,6 +256,23 @@ void drawColumnContent(eui::Ui& ui, const std::string& id, const Column& col,
     const bool dropHover = v.dragActive &&
         v.dragHoverColumn == static_cast<int>(colIndex);
 
+    // UI 整改 13：拖拽插入位占位条（虚框高亮用半透主色条代替——EUI-NEO
+    // 无虚线边框原语）。barY 在滚动内容坐标系（与卡片同帧，滚动跟手）；
+    // 行号只有跨列拖拽才有（模块侧置位），条落在「row-1 与 row 张卡之间」
+    // 的缝里，row=0 顶格贴内容顶、row=列卡数 = 列尾追加。
+    const bool showDropBar = v.dragActive &&
+        v.dragHoverColumn == static_cast<int>(colIndex) && v.dragHoverRow >= 0;
+    auto drawDropBar = [&](eui::Ui& inner, float barY, float barW) {
+        eui::Color barColor = t.colors.primary;
+        barColor.a = 0.55f;  // 高亮占位（半透主色，非硬编码白）
+        inner.rect(id + ".dropbar")
+            .position(0.0f, barY)
+            .size(barW, kCardGap)
+            .color(barColor)
+            .radius(t.sizes.radiusSmall)
+            .build();
+    };
+
     ui.rect(id + ".bg")
         .position(0.0f, 0.0f)
         .size(width, height)
@@ -335,6 +352,12 @@ void drawColumnContent(eui::Ui& ui, const std::string& id, const Column& col,
         .build();
 
     if (colTasks.empty()) {
+        // 空列：无滚动容器，占位条直接画在列内容层首卡位（空列滚动必为 0
+        // ——内容高 0，scrollView maxOffset 被钳制为 0）
+        if (v.dragActive && v.dragHoverColumn == static_cast<int>(colIndex) &&
+            v.dragHoverRow >= 0) {
+            drawDropBar(ui, 0.0f, width - 16.0f);
+        }
         ui.text(id + ".empty")
             .position(0.0f, height / 2.0f - 12.0f)
             .size(width, 24.0f)
@@ -378,6 +401,13 @@ void drawColumnContent(eui::Ui& ui, const std::string& id, const Column& col,
                 .content([&](eui::Ui& inner, float contentWidth,
                              float viewportHeight) {
                     (void)viewportHeight;
+                    // 占位条与卡片同帧布局（滚动内容坐标系，随列滚动跟手）
+                    if (showDropBar) {
+                        const float barY = std::max(
+                            0.0f, static_cast<float>(v.dragHoverRow) *
+                                      (kCardHeight + kCardGap) - kCardGap);
+                        drawDropBar(inner, barY, contentWidth - 16.0f);
+                    }
                     for (size_t i = 0; i < colTasks.size(); ++i) {
                         const std::string cardId =
                             id + ".card." + std::to_string(i);
@@ -412,11 +442,13 @@ void drawCard(eui::Ui& ui, const std::string& id, float y, float width,
     plate.cardW = width;  // compose 空间卡宽（拖拽命中 dpi 探针）
 
     // M3-3（2026-09-28，UI 现代化）：卡片容器换 card 组件——骨架由 card
-    // 画（surface 底 + radius + panelShadow 阴影随 CardStyle），选中/逾期
-    // 边框条件换算到 card 的 .border(...)；原 .bg 作为卡内交互层原样保留
-    // （states 三态 + 0.1s OutQuad 过渡 + onPress/onDrag/onRelease/onClick/
-    // onContextMenu 全部事件挂点随行——命中语义与旧卡根相同，拖拽/右键/
-    // 选中业务逻辑一字未动）。卡内容坐标以 .padding(0) 的 content 原点为
+    // 画（surface 底 + radius + panelShadow 阴影随 CardStyle）；UI 整改 16：
+    // 选中/未选中边框从 card 的 .border 移到卡内交互层（原挂在 card 上会被
+    // 卡内不透明 .bg 整块盖住、选中态边框不可见——用户把左侧优先级竖条
+    // 误认成选中指示）。原 .bg 作为卡内交互层原样保留（states 三态 + 0.1s
+    // OutQuad 过渡 + onPress/onDrag/onRelease/onClick/onContextMenu 全部
+    // 事件挂点随行；边框条件换算到 .bg 的 .border：未选中 1px 默认边框 /
+    // 选中 2px 主色加粗）。卡内容坐标以 .padding(0) 的 content 原点为
     // 基准（与旧 wrap content 原点一致，装饰层位置不变）
     components::card(ui, id + ".card")
         .position(0.0f, y)
@@ -424,16 +456,18 @@ void drawCard(eui::Ui& ui, const std::string& id, float y, float width,
         .radius(t.sizes.radius)
         .theme(core::theme::componentTokens(t))
         .padding(0.0f)  // 卡内坐标以 content 原点为基准（同旧 wrap content）
-        .border(selected ? 2.0f : 0.0f,
-                selected ? t.colors.primary : t.colors.borderDefault)
+        .border(0.0f, t.colors.borderDefault)  // 边框职责已移到内部交互层
         .content([&] {
 
     ui.rect(id + ".bg")
         .position(0.0f, y)
         .size(width, kCardHeight)
         // 交互层（卡内首层）：基色 = surface（与 card 骨架同 token，视觉
-        // 无差），hover/active 由 states 过渡合成；边框条件已在 card 上
+        // 无差），hover/active 由 states 过渡合成；边框条件在 .bg 上：
+        // 未选中 1px borderDefault / 选中 2px primary 加粗（UI 整改 16）
         .states(t.colors.surface, t.colors.hover, t.colors.active)
+        .border(selected ? 2.0f : 1.0f,
+                selected ? t.colors.primary : t.colors.borderDefault)
         // M2（2026-09-28，UI 现代化）：hover/按下颜色过渡（列表项基调
         // 0.1s OutQuad；拖拽半透明 opacity 不含在掩码里，跟手不打架）
         .transition(core::Transition::make(0.1f, core::Ease::OutQuad))
@@ -459,15 +493,6 @@ void drawCard(eui::Ui& ui, const std::string& id, float y, float width,
         })
         .build();
 
-    // 优先级左边框
-    ui.rect(id + ".bar")
-        .position(0.0f, y)
-        .size(4.0f, kCardHeight)
-        .color(priorityColor(task.priority, t))
-        .radius(2.0f)
-        .opacity(cardOpacity)
-        .build();
-
     // 标题
     ui.text(id + ".title")
         .position(16.0f, y + 14.0f)
@@ -480,38 +505,45 @@ void drawCard(eui::Ui& ui, const std::string& id, float y, float width,
         .opacity(done ? 0.6f : cardOpacity)
         .build();
 
-    // 优先级 chip
-    drawChip(ui, id + ".prio", 16.0f, y + 44.0f, 48.0f, t,
-             priorityLabel(task.priority), priorityColor(task.priority, t),
-             t.colors.surface, cardOpacity);
+    // UI 整改 12：优先级从「●高」文字 chip 换成底色 pill（高=警示色底/
+    // 中=中性底/低=弱底，走 theme token tint），去「高/中/低」字样；
+    // 原先的左侧优先级竖条（.bar）随 16 一并删除。chip 从左往右顺序排
+    // 放（prio → due → tags），None 不画 pill、后续 chip 顺移，不留空位。
+    const auto pillBg = priorityPillBg(task.priority, t);
+    float chipX = 16.0f;
+    if (pillBg.has_value()) {
+        drawChip(ui, id + ".prio", chipX, y + 44.0f, 36.0f, t, "",
+                 *pillBg, *pillBg, cardOpacity);
+        chipX += 42.0f;  // 36 + 6 间距
+    }
 
     // 截止 chip（⏰ emoji 已去掉：逾期时 chip 前景直接用 error 色示意）
     if (task.dueAt.has_value()) {
         const std::string dueText = formatDue(task.dueAt.value());
-        drawChip(ui, id + ".due", 70.0f, y + 44.0f, 66.0f, t, dueText,
+        drawChip(ui, id + ".due", chipX, y + 44.0f, 66.0f, t, dueText,
                  isOverdue(task) ? t.colors.error : t.colors.textTertiary,
                  t.colors.surface, cardOpacity);
+        chipX += 72.0f;  // 66 + 6 间距
     }
 
     // tags chip（前 2 个 + 超出 +N；完整编辑在详情弹窗）
     if (!task.tags.empty()) {
-        float tagX = task.dueAt.has_value() ? 146.0f : 70.0f;
         size_t shown = 0;
         for (size_t ti = 0; ti < task.tags.size() && shown < 2; ++ti) {
             const float tw = chipWidth(task.tags[ti]);
-            if (tagX + tw > width - 12.0f) break;
-            drawChip(ui, id + ".tag." + std::to_string(ti), tagX, y + 44.0f,
+            if (chipX + tw > width - 12.0f) break;
+            drawChip(ui, id + ".tag." + std::to_string(ti), chipX, y + 44.0f,
                      tw, t, task.tags[ti], t.colors.info, t.colors.surface,
                      cardOpacity);
-            tagX += tw + 6.0f;
+            chipX += tw + 6.0f;
             ++shown;
         }
         if (task.tags.size() > shown) {
             const std::string more = "+" + std::to_string(task.tags.size() - shown);
             const float moreW = chipWidth(more);
             // 放不下就不画（旧代码无条件画，chip 右缘可越出卡片 ~19px）
-            if (tagX + moreW <= width - 12.0f) {
-                drawChip(ui, id + ".tag.more", tagX, y + 44.0f, moreW, t,
+            if (chipX + moreW <= width - 12.0f) {
+                drawChip(ui, id + ".tag.more", chipX, y + 44.0f, moreW, t,
                          more, t.colors.textTertiary, t.colors.surface, cardOpacity);
             }
         }

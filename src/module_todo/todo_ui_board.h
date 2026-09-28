@@ -68,6 +68,9 @@ struct BoardView {
     bool dragActive = false;
     int64_t dragTaskId = 0;
     int dragHoverColumn = -1;
+    // UI 整改 13：拖拽插入行预览（-1 = 不预览；模块只在跨列时置位，
+    // 0 = 首卡前，>= 列卡数 = 列尾）。看板单元据此画目标位占位条。
+    int dragHoverRow = -1;
     size_t overdueCount = 0;
     bool hasService = false;
     const std::string& loadError;

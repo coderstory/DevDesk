@@ -179,6 +179,46 @@ inline int dragDropTarget(const DragHitInput& in, double pointerX, double pointe
     return -1;
 }
 
+// 拖拽插入行（UI 整改 13：目标位占位条 + 按行落库）：指针在目标列内容区
+// 的悬停行号（0 = 首卡前；>= taskCount = 列尾追加，与旧「追加列尾」语义
+// 对齐）。几何口径与 dragDropTarget 同源（板面顶边由按下锚点回推）；
+// targetScroll = 目标列**当下**滚动偏移——本值只喂**视觉预览**（占位条），
+// 落库换算不吃它（tech-debt B 同帧契约只约束 pressY/scrollOffset 对），
+// 拖拽途中目标列被滚轮滚动，预览条小幅错位可接受。
+// 指针不在目标列 / 板外 / 输入退化 → -1（不预览）。
+inline int dragDropRowIndex(const DragHitInput& in, int targetCol, double pointerX,
+                            double pointerY, float targetScroll, int taskCount) {
+    if (in.colCount <= 0 || in.cardWidth <= 0.0f || in.pressWidth <= 0.0f ||
+        in.colWidth <= 0.0f || in.fromColIndex < 0 ||
+        in.fromColIndex >= in.colCount || in.cardIndex < 0 ||
+        targetCol < 0 || targetCol >= in.colCount || taskCount < 0) {
+        return -1;
+    }
+    const float dpi = in.dpiScale;
+    const float stride = in.colWidth + in.colGap;
+    // 与 dragDropTarget 同源：由按下锚点回推板面原点
+    const float originX = ::core::windowToCompose(in.pressX, in.pageOriginX, dpi) -
+                          static_cast<float>(in.fromColIndex) * stride;
+    const float x = ::core::windowToCompose(static_cast<float>(pointerX),
+                                            in.pageOriginX, dpi);
+    const float left = originX + static_cast<float>(targetCol) * stride;
+    if (x < left || x > left + in.colWidth) return -1;  // 不在目标列
+    const float cardTopInCol =
+        kColumnHeaderHeight +
+        static_cast<float>(in.cardIndex) * (kCardHeight + kCardGap) - in.scrollOffset;
+    const float boardTop = ::core::windowToCompose(in.pressY, 0.0f, dpi) - cardTopInCol;
+    const float y = ::core::windowToCompose(static_cast<float>(pointerY), 0.0f, dpi);
+    if (y < boardTop || y > boardTop + in.boardHeight) return -1;  // 板外
+    // 列内容坐标系（含目标列滚动）：卡 i 占据 [i*92, i*92+84]，卡间缝隙
+    // 中心 = 插入位 → 行 = floor((relY-84)/92)+1（指针压着某张卡 = 插其前）
+    const float relY = y - boardTop - kColumnHeaderHeight + targetScroll;
+    int row = static_cast<int>(std::floor(
+        (relY - kCardHeight) / (kCardHeight + kCardGap))) + 1;
+    if (row < 0) row = 0;
+    if (row > taskCount) row = taskCount;  // 尾部空白区 → 追加
+    return row;
+}
+
 // 年月日（本地时区零点）→ Unix 秒
 inline int64_t ymdToEpoch(int year, int month, int day) {
     std::tm tmv{};
@@ -280,6 +320,24 @@ inline eui::Color priorityColor(Priority p, const core::theme::Tokens& t) {
     return t.colors.*kColorFields[idx <= static_cast<size_t>(Priority::High) ? idx : 0];
 }
 
+// 优先级底色（UI 整改 12：底色区分，去「高/中/低」文本）。
+// 高=警示色底 / 中=中性底 / 低=弱底（各向 surface 掺 token 的 tint，
+// 深浅主题下都保持「底」的弱对比语义）；None=无标记（不画 pill）。
+// eui::mixColor 是 header-only 值函数（与 eui::Color 同层），模块层可直用。
+inline std::optional<eui::Color> priorityPillBg(Priority p,
+                                                const core::theme::Tokens& t) {
+    switch (p) {
+        case Priority::Low:
+            return eui::mixColor(t.colors.surface, t.colors.info, 0.18f);     // 弱底
+        case Priority::Medium:
+            return eui::mixColor(t.colors.surface, t.colors.textTertiary, 0.40f);  // 中性底
+        case Priority::High:
+            return eui::mixColor(t.colors.surface, t.colors.error, 0.45f);    // 警示色底
+        default:
+            return std::nullopt;
+    }
+}
+
 // epoch 秒 → "MM-DD"；-1 表示无截止日期
 inline std::string formatDue(int64_t epoch) {
     if (epoch <= 0) return {};
@@ -321,6 +379,18 @@ inline std::vector<const Task*> tasksInColumn(const std::vector<Task>& tasks,
         return a->position < b->position;
     });
     return out;
+}
+
+// 拖拽按行落库的目标位置（UI 整改 13）：插入语义同 computeKeyboardMove——
+// 插到「行 == rowIndex 的任务」之前（用 DB 真实 position，moveTask 留洞
+// 后 rank 不可靠）；rowIndex 越界 / 空列 → 列尾追加（同旧语义）。
+inline int computeInsertPosition(const std::vector<Task>& tasks,
+                                 int64_t columnId, int rowIndex) {
+    const auto colTasks = tasksInColumn(tasks, columnId);
+    if (rowIndex < 0 || static_cast<size_t>(rowIndex) >= colTasks.size()) {
+        return computeAppendPosition(tasks, columnId);
+    }
+    return colTasks[static_cast<size_t>(rowIndex)]->position;
 }
 
 // 按语义标记找列 id（'done'=已完成列 / 'todo'=待办列；找不到返回 0）
