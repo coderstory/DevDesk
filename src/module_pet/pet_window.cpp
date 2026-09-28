@@ -34,6 +34,9 @@
 #include <eui/app.h>
 #include <eui/dsl.h>
 #include <eui/dsl_app.h>
+// 气泡宽自适应：TextPrimitive::measureTextSize 测文本内在宽（与 main.cpp
+// 同款显式依赖，dsl.h 虽已传递包含仍直标引用源）
+#include <core/render/text.h>
 
 namespace module::pet {
 
@@ -464,28 +467,40 @@ void petCompose(eui::Ui& ui, const eui::Screen& screen) {
                 const core::theme::Tokens& t = core::theme::current();
                 // 气泡衬深色底（kBubbleBg 深浅主题都保持深帽），白字/白描边
                 // 取自 theme onPrimary（两档主题 onPrimary 都是「彩色面文字」
-                // 反面色），不再硬编码 1,1,1 白色（2026-09-28 无硬编码白）
-                const core::Color kBubbleBg{0.16f, 0.15f, 0.13f, 0.92f};
+                // 反面色），不再硬编码 1,1,1 白色（2026-09-28 无硬编码白）。
+                // alpha 0.92→0.55 半透（2026-09-28）：能看到背后的桌面/窗口
+                const core::Color kBubbleBg{0.16f, 0.15f, 0.13f, 0.55f};
                 const core::Color kBubbleBorder(t.colors.onPrimary.r,
                                                 t.colors.onPrimary.g,
                                                 t.colors.onPrimary.b, 0.22f);
+                // 气泡宽自适应文本：内在文本宽 + 左右各 6px padding（上
+                // 限 280px 容中文短句、下限 80px）；气泡整体水平居中在宠
+                // 物窗上缘。测量用 TextPrimitive::measureTextSize，与下方
+                // ui.text 同字号 11px/缺省字族字重（EUI-NEO 缓存整形结果）
+                core::TextStyle bubbleStyle;
+                bubbleStyle.text = state.bubble.text;
+                bubbleStyle.fontSize = 11.0f;
+                const float bubbleW = std::clamp(
+                    core::TextPrimitive::measureTextSize(bubbleStyle).x + 12.0f,
+                    80.0f, 280.0f);
+                const float bubbleX = (screen.width - bubbleW) * 0.5f;
                 ui.rect("pet.bubble.bg")
-                    .position(2.0f, 0.0f)
-                    .size(screen.width - 4.0f, 28.0f)
+                    .position(bubbleX, 0.0f)
+                    .size(bubbleW, 28.0f)
                     .color(kBubbleBg)
                     .radius(8.0f)
                     .border(1.0f, kBubbleBorder)
                     .build();
                 ui.rect("pet.bubble.tail")
-                    .position(screen.width * 0.5f - 3.0f, 25.0f)
+                    .position(bubbleX + bubbleW * 0.5f - 3.0f, 25.0f)
                     .size(6.0f, 6.0f)
                     .color(kBubbleBg)
                     .radius(t.sizes.radiusSmall)  // 统一圆角：6px 会被钳到 3px
                     .rotate(0.785f)  // 45° 小方块当三角尾巴
                     .build();
                 ui.text("pet.bubble.text")
-                    .position(6.0f, 0.0f)
-                    .size(screen.width - 12.0f, 28.0f)
+                    .position(bubbleX + 6.0f, 0.0f)
+                    .size(bubbleW - 12.0f, 28.0f)
                     .text(state.bubble.text)
                     .fontSize(11.0f)
                     .lineHeight(28.0f)
