@@ -56,8 +56,8 @@ namespace {
         t.isDark = false;
         auto& c = t.colors;
         c.background = eui::Color("#FAF9F5");
-        c.surface = eui::Color("#FFFFFF");
-        c.surfaceElevated = eui::Color("#FFFFFF");
+        c.surface = eui::Color("#F5F2EC");
+        c.surfaceElevated = eui::Color("#F8F5EF");
         c.hover = eui::Color("#F5F2EC");
         c.active = eui::Color("#EBE7DF");
         c.primary = eui::Color("#D97757");
