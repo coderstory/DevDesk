@@ -169,7 +169,7 @@ std::string aboutEuiNeoLine();
 
 // ---- 窗口效果档位 → 参数映射（纯函数，供单测）----
 
-// 档位 → clearColor alpha：off=1.0（实色）/ translucent≈0.85 / frosted≈0.55
+// 档位 → clearColor alpha：off=1.0（实色）/ translucent≈0.90 / frosted≈0.55
 //（Acrylic 材质自身还有一层遮蔽，alpha 偏小才透得出磨砂；观感调参定）
 float windowEffectAlpha(const std::string& mode);
 

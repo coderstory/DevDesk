@@ -185,7 +185,14 @@ SettingsConfig SettingsStore::sanitized(const SettingsConfig& cfg) {
 }
 
 float windowEffectAlpha(const std::string& mode) {
-    if (mode == kWindowEffectTranslucent) return 0.85f;
+    // 半透档只有**单层** clearColor 参与合成：半透档不请求 backdrop
+    //（windowEffectRequest 返回 None），macOS 侧据此把材质视图整条摘除，
+    // 观感只由这一层 alpha 决定。0.85 在高对比背景（深色壁纸 / 亮桌面图标
+    // 透过来）下读起来"很透"（2026-09-28 用户真机反馈"还要降低一点点"）
+    // → 0.90。**若将来半透档改成也请求 WindowEffect::Transparent（让材质
+    // 视图以 alpha 0.4 参与合成），本值须重新标定**：两层叠加约
+    // 0.90 + 0.10 × 0.4 = 0.94，偏实。
+    if (mode == kWindowEffectTranslucent) return 0.90f;
     if (mode == kWindowEffectFrosted) return 0.55f;
     return 1.0f;  // off / 未知值：实色
 }

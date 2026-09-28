@@ -1083,9 +1083,9 @@ REGISTER_TEST(settings_window_effect_param_mapping, "settings: 档位→alpha/ba
     namespace ms = module::settings;
     using WE = core::platform::WindowEffect;
 
-    // clearColor alpha：off=1.0 / translucent=0.85 / frosted=0.55 / 未知→1.0
+    // clearColor alpha：off=1.0 / translucent=0.90 / frosted=0.55 / 未知→1.0
     DOCTEST_CHECK(ms::windowEffectAlpha(ms::kWindowEffectOff) == 1.0f);
-    DOCTEST_CHECK(ms::windowEffectAlpha(ms::kWindowEffectTranslucent) == 0.85f);
+    DOCTEST_CHECK(ms::windowEffectAlpha(ms::kWindowEffectTranslucent) == 0.90f);
     DOCTEST_CHECK(ms::windowEffectAlpha(ms::kWindowEffectFrosted) == 0.55f);
     DOCTEST_CHECK(ms::windowEffectAlpha("bogus") == 1.0f);
 
@@ -1124,9 +1124,9 @@ REGISTER_TEST(settings_window_effect_apply_visuals, "settings: applyWindowVisual
     namespace ms = module::settings;
     using WE = core::platform::WindowEffect;
 
-    // 半透档：clearColor alpha=0.85 + backdrop 请求 None（显式关）
+    // 半透档：clearColor alpha=0.90 + backdrop 请求 None（显式关）
     ms::applyWindowVisuals(ms::kWindowEffectTranslucent);
-    DOCTEST_CHECK(app::currentClearColor().a == 0.85f);
+    DOCTEST_CHECK(app::currentClearColor().a == 0.90f);
     DOCTEST_CHECK(app::currentWindowEffect() == WE::None);
 
     // 磨砂档：alpha=0.55 + Acrylic 请求
