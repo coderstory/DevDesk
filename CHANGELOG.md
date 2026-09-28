@@ -6,6 +6,14 @@
 
 > **当前基线（2026-09-24，master @ 817af80）**：用例 **407**（`grep REGISTER_TEST` 口径，本会话 324 → 407；全绿与否以主会话终验为准）。各波次条目内的测试数为该波时点事实，不代表当前总数；波次按合并时间倒序排列。
 
+## [DataRoot] 2026-09-29 —— 应用数据根搬到用户主目录 `<home>/DevDesk`（`03c896c`）
+
+- fix(paths)：三个平台的 `platformDefaultAppDataDir()` 从系统惯例位置改为用户主目录下一级——macOS `~/DevDesk`（原 `~/Library/Application Support/DevDesk`）、Windows `%USERPROFILE%\DevDesk`（原 `%APPDATA%\DevDesk`）、POSIX `~/DevDesk`（原 `~/.local/share/DevDesk`）。主目录来源按平台取（macOS/POSIX `HOME`、Windows `USERPROFILE`，与同文件 `claudeSettingsFile` 同源；不硬编码、不用 cwd）。**为什么**：数据根要默认可见（`~/Library/Application Support` 在 Finder 里是隐藏的），且笔记目录后续要做 git 仓库、用户会自己去 commit / 推远端。单一数据根设计（`appDataDir()` 唯一入口 / `DEVDESK_DATA_ROOT` 优先 / `executableDir` + `claudeSettingsFile` 两个刻意例外）不变。
+- **不做迁移**（用户决策）：新根从零开始，旧位置数据原样留存——不读、不删、不搬；要保留旧配置 / 笔记 / 看板只能手动拷贝（`docs/USER_GUIDE.md` §5 末「从旧位置升级」一段有命令级说明）。
+- test(paths)：新增 `paths_default_root_home_devdesk`（默认根恰好 = `<home>/DevDesk`，parent == 主目录，防回落路径残留 `Library/Application Support` 中间层）与 `paths_default_root_no_legacy_touch`（临时主目录隔离：新根不存在时 `appDataDir()` 即返回新路径且不创建任何目录；旧位置种 config + 笔记后，路径解析与 `ensureDirectoriesExist()` 都不读不删它）。`test_support::AppDataEnv` 在 Windows 补重定向 `USERPROFILE`（数据根不再经 `APPDATA` 派生后，只重定向 `APPDATA` 隔离不住真实用户目录）。变异验证：默认根改回旧位置 → 两条新用例 FAIL（`test_paths.cpp:287` / `:320`），改回即绿。
+- docs：`README` / `USER_GUIDE`（§5「数据都在哪」表 + 3 处路径）/ `KNOWN_LIMITATIONS` / `UI-UX-DESIGN` / 权威 spec（§6.2 `paths.h` 样例、§9.1 平台差异表、§10.1 启动流、笔记默认根）/ `installer/macos/安装说明.txt` 同步新根。
+- 实测（macOS/arm64 Debug，一次性独立目录 `build-paths-verify`）：定向 `devdesk_tests paths` **Total 12 / Passed 12 / Failed 0**；全量 **Total 819 / Passed 741–742 / Failed 69–70**（三次运行区间）——失败集合与 HEAD 既有基线同类（`f5be21f` 记录 HEAD 65 条、markdown 子集 51/73 本机逐条一致），集中在 `mod->onKeyEvent` 键盘事件与其它 agent 在飞改动（todo / about / UI modern），与数据根无关。**Windows / POSIX 路径未实机与未编译验证**。
+
 ## [Installer-M2.1] 2026-09-28 —— 安装向导中文语言：简体中文默认 + 英文可切（`5da21a0`）
 
 - feat(installer)：`installer/windows/devdesk.iss` 新增 `[Languages]` —— `chinesesimp` 排首 = 默认向导语言（契合中文用户环境，与 `[Run]` 段既有"启动 DevDesk"中文文案一致）；`english` 次之，向导首屏语言下拉可切英文。

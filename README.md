@@ -44,7 +44,7 @@ cmake --build build-release
 ```
 
 > 换平台后（如从 macOS 迁来）必须删掉旧 `build/` 重建——缓存里锁着旧平台的产物。
-> 用户数据在 `%APPDATA%\DevDesk`，与仓库无关；使用说明见 [docs/USER_GUIDE.md](docs/USER_GUIDE.md)。
+> 用户数据在用户主目录下的 `DevDesk/`（Windows `%USERPROFILE%\DevDesk`、macOS `~/DevDesk`），与仓库无关；使用说明见 [docs/USER_GUIDE.md](docs/USER_GUIDE.md)。
 
 ## 跑测试
 
