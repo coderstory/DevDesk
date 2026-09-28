@@ -211,8 +211,12 @@ void showPetExitConfirm() {
         }
         styled.push_back(std::move(item));
     }
-    if (components::showStyledMenu("pet-exit-confirm", std::move(styled),
-                                   petMenuStyle(), pos.first, pos.second,
+    // 退出确认收窄（2026-09-28 用户反馈：两行短项撑 220 默认宽太宽）：
+    // 面板宽下限归零 → 宽度 = 最长行（文本+图标+边距）自适应，不超内容
+    components::StyledMenuStyle style = petMenuStyle();
+    style.panelWidth = 0.0f;
+    if (components::showStyledMenu("pet-exit-confirm", std::move(styled), style,
+                                   pos.first, pos.second,
                                    [](const std::vector<int>& path) {
                                        if (petExitConfirmChosen(path)) {
                                            app::requestExit();  // 与托盘 Exit 同一退出路径
@@ -457,24 +461,24 @@ void petCompose(eui::Ui& ui, const eui::Screen& screen) {
                                                 t.colors.onPrimary.g,
                                                 t.colors.onPrimary.b, 0.22f);
                 ui.rect("pet.bubble.bg")
-                    .position(2.0f, 2.0f)
-                    .size(screen.width - 4.0f, 32.0f)
+                    .position(2.0f, 0.0f)
+                    .size(screen.width - 4.0f, 28.0f)
                     .color(kBubbleBg)
                     .radius(8.0f)
                     .border(1.0f, kBubbleBorder)
                     .build();
                 ui.rect("pet.bubble.tail")
-                    .position(screen.width * 0.5f - 3.0f, 31.0f)
+                    .position(screen.width * 0.5f - 3.0f, 25.0f)
                     .size(6.0f, 6.0f)
                     .color(kBubbleBg)
                     .rotate(0.785f)  // 45° 小方块当三角尾巴
                     .build();
                 ui.text("pet.bubble.text")
-                    .position(6.0f, 2.0f)
-                    .size(screen.width - 12.0f, 32.0f)
+                    .position(6.0f, 0.0f)
+                    .size(screen.width - 12.0f, 28.0f)
                     .text(state.bubble.text)
                     .fontSize(11.0f)
-                    .lineHeight(32.0f)
+                    .lineHeight(28.0f)
                     .color(core::Color(t.colors.onPrimary.r, t.colors.onPrimary.g,
                                        t.colors.onPrimary.b, 0.95f))
                     .horizontalAlign(core::HorizontalAlign::Center)
