@@ -6,6 +6,7 @@
 // 接线证据 = 代码路径 + 本无头 compose/layout 测试 + 启动冒烟；真实鼠标点验留给用户人工
 #include "doctest.h"
 #include "test_support.h"
+#include "../frame_env.h"   // TIN-06 收尾波：headless 帧驱动三合一 HeadlessFrame
 #include "core/database.h"
 #include "core/module_interface.h"
 #include "core/router.h"
@@ -2597,22 +2598,6 @@ REGISTER_TEST(md_esc_closes_topmost_dialog,
 // keyEventHandler_，编辑器收不到字）。本用例走真实入口「预览块点击 → 编辑器
 // 定位」验证；用 Runtime 逐帧 compose 才能驱动帧末的 requestFocus 消费端
 //（core/runtime/runtime_lifecycle.h:38-42），plain Ui 不会消费挂起请求。
-namespace {
-// 无头帧驱动（pageId 固定，焦点/状态前缀随之固定；Ui 常驻故指针跨帧有效）
-struct FocusEnv {
-    core::dsl::Runtime rt;
-    eui::Ui* ui = nullptr;
-    template <typename Fn>
-    void frame(Fn&& body) {
-        rt.compose("mdfocus", 1600.0f, 1000.0f,
-                   [&](eui::Ui& u, const eui::Screen&) {
-                       ui = &u;
-                       body(u);
-                   });
-    }
-};
-} // namespace
-
 REGISTER_TEST(md_editor_focus_target_is_hit,
               "markdown_module: 预览块点击后聚焦 md.editor.input.hit（M0 C1，headless）", {
     const std::string text = "# T\n\npara one\npara two\n";
@@ -2626,7 +2611,7 @@ REGISTER_TEST(md_editor_focus_target_is_hit,
     eui::Screen screen;
     screen.width = 1600.0f;
     screen.height = 1000.0f;
-    FocusEnv env2;
+    test_support::HeadlessFrame env2("mdfocus");
     auto frame = [&] { env2.frame([&](eui::Ui& u) { mod->compose(u, screen); }); };
 
     frame();
@@ -2830,23 +2815,6 @@ namespace {
 
 using MdInputState = components::input_detail::InputModel::InputState;
 
-// 无头驱动：Runtime 逐帧 compose（requestFocus 的帧末消费端在
-// Runtime::compose，plain Ui 不消费挂起请求）。pageId 恒定 —— state / 焦点 /
-// 元素 id 都以 pageId 起头做命名空间，换名等于换命名空间。
-struct MdLiveEnv {
-    core::dsl::Runtime rt;
-    eui::Ui* ui = nullptr;
-
-    template <typename Fn>
-    void frame(Fn&& body) {
-        rt.compose("mdlive", 1600.0f, 1000.0f,
-                   [&](eui::Ui& u, const eui::Screen&) {
-                       ui = &u;
-                       body(u);
-                   });
-    }
-};
-
 // 本帧渲染出的块包裹 id 列表（prefix = "md.live" / "md.preview"）——
 // 用于比较两种模式下「块序列」是否一致
 std::vector<int> renderedBlockIds(eui::Ui& ui, const std::string& prefix) {
@@ -2917,7 +2885,7 @@ REGISTER_TEST(md_module_live_active_input,
     eui::Screen screen;
     screen.width = 1600.0f;
     screen.height = 1000.0f;
-    MdLiveEnv e;
+    test_support::HeadlessFrame e("mdlive");
     auto frame = [&] { e.frame([&](eui::Ui& u) { mod->compose(u, screen); }); };
 
     frame();
@@ -3011,7 +2979,7 @@ REGISTER_TEST(md_module_live_input_roundtrip,
         eui::Screen screen;
         screen.width = 1600.0f;
         screen.height = 1000.0f;
-        MdLiveEnv e;
+        test_support::HeadlessFrame e("mdlive");
         auto frame = [&](void) {
             e.frame([&](eui::Ui& u) { mod->compose(u, screen); });
         };
@@ -3062,7 +3030,7 @@ REGISTER_TEST(md_module_live_input_roundtrip,
         eui::Screen screen;
         screen.width = 1600.0f;
         screen.height = 1000.0f;
-        MdLiveEnv e;
+        test_support::HeadlessFrame e("mdlive");
         auto frame = [&](void) {
             e.frame([&](eui::Ui& u) { mod->compose(u, screen); });
         };
@@ -3131,7 +3099,7 @@ bool liveSplitAnchorScenario(const char* tag,
     eui::Screen screen;
     screen.width = 1600.0f;
     screen.height = 1000.0f;
-    MdLiveEnv e;
+    test_support::HeadlessFrame e("mdlive");
     auto frame = [&](void) {
         e.frame([&](eui::Ui& u) { mod->compose(u, screen); });
     };
@@ -3291,7 +3259,7 @@ REGISTER_TEST(md_module_live_state_reset_note_switch,
     eui::Screen screen;
     screen.width = 1600.0f;
     screen.height = 1000.0f;
-    MdLiveEnv e;
+    test_support::HeadlessFrame e("mdlive");
     auto frame = [&](void) {
         e.frame([&](eui::Ui& u) { mod->compose(u, screen); });
     };
@@ -3343,7 +3311,7 @@ REGISTER_TEST(md_module_live_state_reset_on_enter,
     eui::Screen screen;
     screen.width = 1600.0f;
     screen.height = 1000.0f;
-    MdLiveEnv e;
+    test_support::HeadlessFrame e("mdlive");
     auto frame = [&](void) {
         e.frame([&](eui::Ui& u) { mod->compose(u, screen); });
     };
@@ -3399,7 +3367,7 @@ REGISTER_TEST(md_module_live_state_reset_on_restore,
     eui::Screen screen;
     screen.width = 1600.0f;
     screen.height = 1000.0f;
-    MdLiveEnv e;
+    test_support::HeadlessFrame e("mdlive");
     auto frame = [&](void) {
         e.frame([&](eui::Ui& u) { mod->compose(u, screen); });
     };
@@ -3540,7 +3508,7 @@ REGISTER_TEST(md_module_blockflow_hook_contrast,
     eui::Screen screen;
     screen.width = 1600.0f;
     screen.height = 1000.0f;
-    MdLiveEnv e;
+    test_support::HeadlessFrame e("mdlive");
     auto frame = [&](void) {
         e.frame([&](eui::Ui& u) { mod->compose(u, screen); });
     };
@@ -3845,7 +3813,7 @@ REGISTER_TEST(md_module_live_click_switch_20x,
     eui::Screen screen;
     screen.width = 1600.0f;
     screen.height = 1000.0f;
-    MdLiveEnv e;
+    test_support::HeadlessFrame e("mdlive");
     auto frame = [&](void) { e.frame([&](eui::Ui& u) { mod->compose(u, screen); }); };
 
     frame();
@@ -3961,7 +3929,7 @@ REGISTER_TEST(md_module_live_ime_freeze,
     eui::Screen screen;
     screen.width = 1600.0f;
     screen.height = 1000.0f;
-    MdLiveEnv e;
+    test_support::HeadlessFrame e("mdlive");
     auto frame = [&](void) { e.frame([&](eui::Ui& u) { mod->compose(u, screen); }); };
 
     frame();
@@ -4039,7 +4007,7 @@ REGISTER_TEST(md_module_live_blur_commit,
     eui::Screen screen;
     screen.width = 1600.0f;
     screen.height = 1000.0f;
-    MdLiveEnv e;
+    test_support::HeadlessFrame e("mdlive");
     auto frame = [&](void) { e.frame([&](eui::Ui& u) { mod->compose(u, screen); }); };
 
     frame();
@@ -4120,7 +4088,7 @@ REGISTER_TEST(md_module_live_state_release_note_switch,
     eui::Screen screen;
     screen.width = 1600.0f;
     screen.height = 1000.0f;
-    MdLiveEnv e;
+    test_support::HeadlessFrame e("mdlive");
     auto frame = [&](void) { e.frame([&](eui::Ui& u) { mod->compose(u, screen); }); };
 
     frame();
@@ -4202,8 +4170,8 @@ bool pressLiveKey(eui::Ui& ui, eui::InputKey key, bool shift = false,
 }
 
 // 进实时态并把活动块锚定到 docByte（编辑器光标 → 切态 → 锚 = 编辑器光标）
-bool enterLiveAt(MdLiveEnv& e, ::core::Module* mod, const eui::Screen& screen,
-                 size_t docByte) {
+bool enterLiveAt(test_support::HeadlessFrame& e, ::core::Module* mod,
+                 const eui::Screen& screen, size_t docByte) {
     e.frame([&](eui::Ui& u) { mod->compose(u, screen); });
     if (!openFirstNote(*e.ui)) return false;
     e.frame([&](eui::Ui& u) { mod->compose(u, screen); });
@@ -4239,7 +4207,7 @@ REGISTER_TEST(md_module_live_boundary_backspace,
     eui::Screen screen;
     screen.width = 1600.0f;
     screen.height = 1000.0f;
-    MdLiveEnv e;
+    test_support::HeadlessFrame e("mdlive");
     auto frame = [&](void) { e.frame([&](eui::Ui& u) { mod->compose(u, screen); }); };
 
     DOCTEST_REQUIRE(enterLiveAt(e, mod.get(), screen, bs[1].start));
@@ -4320,7 +4288,7 @@ REGISTER_TEST(md_module_live_boundary_delete,
     eui::Screen screen;
     screen.width = 1600.0f;
     screen.height = 1000.0f;
-    MdLiveEnv e;
+    test_support::HeadlessFrame e("mdlive");
     auto frame = [&](void) { e.frame([&](eui::Ui& u) { mod->compose(u, screen); }); };
 
     DOCTEST_REQUIRE(enterLiveAt(e, mod.get(), screen, bs[1].start));
@@ -4408,7 +4376,7 @@ REGISTER_TEST(md_module_live_vertical_block_move,
     eui::Screen screen;
     screen.width = 1600.0f;
     screen.height = 1000.0f;
-    MdLiveEnv e;
+    test_support::HeadlessFrame e("mdlive");
     auto frame = [&](void) { e.frame([&](eui::Ui& u) { mod->compose(u, screen); }); };
 
     DOCTEST_REQUIRE(enterLiveAt(e, mod.get(), screen, bs[1].start));   // 活动块 = 1
@@ -4499,7 +4467,7 @@ REGISTER_TEST(md_module_live_inblock_keys,
     eui::Screen screen;
     screen.width = 1600.0f;
     screen.height = 1000.0f;
-    MdLiveEnv e;
+    test_support::HeadlessFrame e("mdlive");
     auto frame = [&](void) { e.frame([&](eui::Ui& u) { mod->compose(u, screen); }); };
 
     DOCTEST_REQUIRE(enterLiveAt(e, mod.get(), screen, 3));   // 光标 "- a" 之后
@@ -4561,7 +4529,7 @@ REGISTER_TEST(md_module_live_undo_redo,
     eui::Screen screen;
     screen.width = 1600.0f;
     screen.height = 1000.0f;
-    MdLiveEnv e;
+    test_support::HeadlessFrame e("mdlive");
     auto frame = [&](void) { e.frame([&](eui::Ui& u) { mod->compose(u, screen); }); };
 
     DOCTEST_REQUIRE(enterLiveAt(e, mod.get(), screen, bs[1].start));   // 活动块 = 1
@@ -4677,7 +4645,7 @@ REGISTER_TEST(md_module_live_undo_mode_roundtrip,
     eui::Screen screen;
     screen.width = 1600.0f;
     screen.height = 1000.0f;
-    MdLiveEnv e;
+    test_support::HeadlessFrame e("mdlive");
     auto frame = [&](void) { e.frame([&](eui::Ui& u) { mod->compose(u, screen); }); };
 
     DOCTEST_REQUIRE(enterLiveAt(e, mod.get(), screen, 4));   // 光标在 "para" 末尾
@@ -4759,7 +4727,7 @@ REGISTER_TEST(md_module_live_boundary_undo,
     eui::Screen screen;
     screen.width = 1600.0f;
     screen.height = 1000.0f;
-    MdLiveEnv e;
+    test_support::HeadlessFrame e("mdlive");
     auto frame = [&](void) { e.frame([&](eui::Ui& u) { mod->compose(u, screen); }); };
 
     DOCTEST_REQUIRE(enterLiveAt(e, mod.get(), screen, bs[1].start));
@@ -4824,7 +4792,7 @@ REGISTER_TEST(md_module_live_boundary_undo,
 //   · 用户滚轮关跟随（spec §3.3）：滚轮后即便 caret 深深越界也不把视口拽回，
 //     直到下一次光标事件（打字 / 方向键 / 点击）才恢复跟随 —— 这是「越界才拉」
 //     与「用户优先」的交界，对应手工点验 ④。
-// 观测口径（诚实声明）：无头跑的是真实 Runtime（MdLiveEnv::frame 走
+// 观测口径（诚实声明）：无头跑的是真实 Runtime（HeadlessFrame::frame 走
 //   core::dsl::Runtime::compose）→ 程序化落地（模块调 Ui::setScrollOffset、帧末
 //   消费直写实例 offset）真实生效，但看不到内容位移。可观测的是 scrollView 的
 //   【声明值】（scrollOffset / scrollMaxOffset = 模块记账经框架钳位后的那一版）：
@@ -4869,7 +4837,7 @@ REGISTER_TEST(md_module_live_scroll_follow_pull,
     eui::Screen screen;
     screen.width = 1600.0f;
     screen.height = 1000.0f;
-    MdLiveEnv e;
+    test_support::HeadlessFrame e("mdlive");
     auto frame = [&](void) { e.frame([&](eui::Ui& u) { mod->compose(u, screen); }); };
 
     frame();
@@ -4970,7 +4938,7 @@ REGISTER_TEST(md_module_live_scroll_follow_wheel_disarms,
     eui::Screen screen;
     screen.width = 1600.0f;
     screen.height = 1000.0f;
-    MdLiveEnv e;
+    test_support::HeadlessFrame e("mdlive");
     auto frame = [&](void) { e.frame([&](eui::Ui& u) { mod->compose(u, screen); }); };
 
     frame();
@@ -5076,7 +5044,7 @@ REGISTER_TEST(md_module_live_scroll_follow_wrapped_caret,
     eui::Screen screen;
     screen.width = 1600.0f;
     screen.height = 1000.0f;
-    MdLiveEnv e;
+    test_support::HeadlessFrame e("mdlive");
     auto frame = [&](void) { e.frame([&](eui::Ui& u) { mod->compose(u, screen); }); };
 
     frame();
@@ -5183,7 +5151,7 @@ REGISTER_TEST(md_module_live_scroll_id_stable,
     eui::Screen screen;
     screen.width = 1600.0f;
     screen.height = 1000.0f;
-    MdLiveEnv e;
+    test_support::HeadlessFrame e("mdlive");
     auto frame = [&](void) { e.frame([&](eui::Ui& u) { mod->compose(u, screen); }); };
 
     frame();
@@ -5275,7 +5243,7 @@ REGISTER_TEST(md_module_live_highlight,
     eui::Screen screen;
     screen.width = 1600.0f;
     screen.height = 1000.0f;
-    MdLiveEnv e;
+    test_support::HeadlessFrame e("mdlive");
     auto frame = [&] { e.frame([&](eui::Ui& u) { mod->compose(u, screen); }); };
 
     frame();
@@ -5392,7 +5360,7 @@ REGISTER_TEST(md_module_live_active_frame,
     eui::Screen screen;
     screen.width = 1600.0f;
     screen.height = 1000.0f;
-    MdLiveEnv e;
+    test_support::HeadlessFrame e("mdlive");
     auto frame = [&] { e.frame([&](eui::Ui& u) { mod->compose(u, screen); }); };
 
     frame();
@@ -5458,7 +5426,7 @@ REGISTER_TEST(md_module_live_preview_parity,
     eui::Screen screen;
     screen.width = 1600.0f;
     screen.height = 1000.0f;
-    MdLiveEnv e;
+    test_support::HeadlessFrame e("mdlive");
     auto frame = [&] { e.frame([&](eui::Ui& u) { mod->compose(u, screen); }); };
 
     frame();
@@ -5589,7 +5557,8 @@ bool md01WriteExternal(const fs::path& path, const std::string& content) {
 // 有界自旋：逐帧 compose 直至 done(*ui) 为真（60 × 120ms 预算）。watcher 事件
 // 送达前帧内 poll 静默跳过（credit 未置位），事件送达的帧即重载帧。仅用于
 // editorDirty_ == false 的静默路径（自旋帧不触发自动保存）。
-void md01WaitReload(MdLiveEnv& e, ::core::Module* mod, const eui::Screen& screen,
+void md01WaitReload(test_support::HeadlessFrame& e, ::core::Module* mod,
+                    const eui::Screen& screen,
                     const std::function<bool(eui::Ui&)>& done) {
     for (int i = 0; i < 60; ++i) {
         e.frame([&](eui::Ui& u) { mod->compose(u, screen); });
@@ -5658,7 +5627,7 @@ REGISTER_TEST(md_module_md01_reload_prepend,
     eui::Screen screen;
     screen.width = 1600.0f;
     screen.height = 1000.0f;
-    MdLiveEnv e;
+    test_support::HeadlessFrame e("mdlive");
     auto frame = [&](void) { e.frame([&](eui::Ui& u) { mod->compose(u, screen); }); };
 
     DOCTEST_REQUIRE(enterLiveAt(e, mod.get(), screen, cursorByte));
@@ -5719,7 +5688,7 @@ REGISTER_TEST(md_module_md01_reload_double_edit,
     eui::Screen screen;
     screen.width = 1600.0f;
     screen.height = 1000.0f;
-    MdLiveEnv e;
+    test_support::HeadlessFrame e("mdlive");
     auto frame = [&](void) { e.frame([&](eui::Ui& u) { mod->compose(u, screen); }); };
 
     DOCTEST_REQUIRE(enterLiveAt(e, mod.get(), screen, cursorByte));
@@ -5783,7 +5752,7 @@ REGISTER_TEST(md_module_md01_reload_block_deleted,
     eui::Screen screen;
     screen.width = 1600.0f;
     screen.height = 1000.0f;
-    MdLiveEnv e;
+    test_support::HeadlessFrame e("mdlive");
     auto frame = [&](void) { e.frame([&](eui::Ui& u) { mod->compose(u, screen); }); };
 
     DOCTEST_REQUIRE(enterLiveAt(e, mod.get(), screen, cursorByte));
@@ -5840,7 +5809,7 @@ REGISTER_TEST(md_module_md01_reload_to_empty,
     eui::Screen screen;
     screen.width = 1600.0f;
     screen.height = 1000.0f;
-    MdLiveEnv e;
+    test_support::HeadlessFrame e("mdlive");
     auto frame = [&](void) { e.frame([&](eui::Ui& u) { mod->compose(u, screen); }); };
 
     DOCTEST_REQUIRE(enterLiveAt(e, mod.get(), screen, cursorByte));
@@ -5887,7 +5856,7 @@ REGISTER_TEST(md_module_md01_reload_duplicate_fences,
     eui::Screen screen;
     screen.width = 1600.0f;
     screen.height = 1000.0f;
-    MdLiveEnv e;
+    test_support::HeadlessFrame e("mdlive");
     auto frame = [&](void) { e.frame([&](eui::Ui& u) { mod->compose(u, screen); }); };
 
     DOCTEST_REQUIRE(enterLiveAt(e, mod.get(), screen, cursorByte));
@@ -5956,7 +5925,7 @@ REGISTER_TEST(md_module_md01_reload_conflict_toast,
     eui::Screen screen;
     screen.width = 1600.0f;
     screen.height = 1000.0f;
-    MdLiveEnv e;
+    test_support::HeadlessFrame e("mdlive");
     auto frame = [&](void) { e.frame([&](eui::Ui& u) { mod->compose(u, screen); }); };
 
     // 编辑态打开
@@ -6037,7 +6006,7 @@ REGISTER_TEST(md_module_md01_reload_capture_race,
     eui::Screen screen;
     screen.width = 1600.0f;
     screen.height = 1000.0f;
-    MdLiveEnv e;
+    test_support::HeadlessFrame e("mdlive");
     auto frame = [&](void) { e.frame([&](eui::Ui& u) { mod->compose(u, screen); }); };
 
     DOCTEST_REQUIRE(enterLiveAt(e, mod.get(), screen, cursorByte));
@@ -6122,7 +6091,7 @@ REGISTER_TEST(md_module_md01_reload_non_live_modes,
     eui::Screen screen;
     screen.width = 1600.0f;
     screen.height = 1000.0f;
-    MdLiveEnv e;
+    test_support::HeadlessFrame e("mdlive");
     auto frame = [&](void) { e.frame([&](eui::Ui& u) { mod->compose(u, screen); }); };
 
     // 编辑态：外写盘 → 重载 → 编辑器文本被磁盘版本替换，映射不介入（mode != Live）

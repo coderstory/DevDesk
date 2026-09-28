@@ -70,39 +70,6 @@ std::string readFileRaw(const std::filesystem::path& p) {
     return ss.str();
 }
 
-// RAII：临时 config.json（DEVDESK_CONFIG_PATH）+ 临时 DB（appDatabase），
-// 析构注销/清除，fail-fast 断言提前返回也不污染其他用例
-struct PruneEnv {
-    std::filesystem::path cfgPath;
-    std::filesystem::path dbPath;
-    std::unique_ptr<::core::Database> db;
-
-    explicit PruneEnv(const char* tag) {
-        cfgPath = test_temp::tempPath(
-            "devdesk_test_settings_" + std::string(tag) + "_cfg.json");
-        dbPath = test_temp::tempPath(
-            "devdesk_test_settings_" + std::string(tag) + ".db");
-        removeQuietly(cfgPath);
-        removeQuietly(dbPath);
-        auto r = ::core::Database::open(dbPath);
-        if (r.isFail()) return;
-        db = std::make_unique<::core::Database>(std::move(r.value()));
-        if (db->migrate().isFail()) {
-            db.reset();
-            return;
-        }
-        ::core::registerAppDatabase(&db->db());
-        test_support::setEnvVar("DEVDESK_CONFIG_PATH", cfgPath.string());
-    }
-
-    ~PruneEnv() {
-        test_support::setEnvVar("DEVDESK_CONFIG_PATH", "");
-        ::core::registerAppDatabase(nullptr);
-        removeQuietly(cfgPath);
-        removeQuietly(dbPath);
-    }
-};
-
 // 数据根（APPDATA / HOME）隔离已收进共享头 test_support::AppDataEnv；
 // 以下两个是「模块 tail 读的就是这个文件」的写/追加助手，只读 ::core::paths::logFile()
 void writeLogFile(const std::string& content) {
@@ -573,7 +540,8 @@ REGISTER_TEST(settings_save_clamps_before_write, "settings: save clamps, load re
 REGISTER_TEST(settings_module_compose_renders, "settings: module compose builds page (headless, tab 化)", {
     // 隔离真机 config（本机可能开了 pet 等）：临时 config 无文件 → 默认档
     // （claude/markdown 开、pet 关），逐 tab 断言卡互斥渲染
-    PruneEnv env("composetab");
+    test_support::TestEnv env(kCfgPrefix, "composetab", true);
+    test_support::ScopedConfigPath cfgEnv(test_support::tempConfigFile(kCfgPrefix, "composetab_cfg"));
     std::unique_ptr<::core::Module> mod(create_settings_module());
     mod->onStart();
     eui::Screen screen{1600.0f, 1000.0f};
@@ -635,7 +603,8 @@ REGISTER_TEST(settings_module_compose_renders, "settings: module compose builds 
 
 REGISTER_TEST(settings_log_viewer_refresh_button,
               "settings: 日志查看 tail 渲染 + 刷新按钮重读（Task B headless）", {
-    PruneEnv env("logviewer");
+    test_support::TestEnv env(kCfgPrefix, "logviewer", true);
+    test_support::ScopedConfigPath cfgEnv(test_support::tempConfigFile(kCfgPrefix, "logviewer_cfg"));
     std::unique_ptr<::core::Module> mod(create_settings_module());
     mod->onStart();
     eui::Screen screen;
@@ -668,7 +637,8 @@ REGISTER_TEST(settings_log_viewer_refresh_button,
 
 REGISTER_TEST(settings_port_error_clear_on_input,
               "settings: 端口校验失败 → 红字状态行 + 下一次输入清除（headless，审计 [19]）", {
-    PruneEnv env("portformerr");   // 临时 config，不碰真机配置
+    test_support::TestEnv env(kCfgPrefix, "portformerr", true);
+    test_support::ScopedConfigPath cfgEnv(test_support::tempConfigFile(kCfgPrefix, "portformerr_cfg"));   // 临时 config，不碰真机配置
     std::unique_ptr<::core::Module> mod(create_settings_module());
     mod->onStart();
     eui::Screen screen;
@@ -701,7 +671,7 @@ REGISTER_TEST(settings_port_error_clear_on_input,
     DOCTEST_REQUIRE(sub != nullptr);
     DOCTEST_CHECK(sub->text.find("端口无效") != std::string::npos);  // 红字校验错误行
     // 非法端口未落盘：临时 config 文件里的 proxyPort 仍是默认 8888
-    module::settings::SettingsStore store(env.cfgPath);
+    module::settings::SettingsStore store(cfgEnv.cfgPath);
     DOCTEST_CHECK_EQ(store.load().proxyPort, 8888);
 
     // 下一次输入 → 校验错误清除，subtitle 回静态说明（formError「输入即清」语义）
@@ -754,7 +724,8 @@ REGISTER_TEST(settings_theme_switch_reflects, "settings: theme switch reflects o
 REGISTER_TEST(settings_log_dropdown_popup_stays_in_window, "settings: log dropdown popup stays in window (openUp)", {
     // 隔离：不隔离会读到真机 config.json（如本机启用了 pet 卡），卡片变多
     // 把日志卡推到更低位，openUp 也装不下——测试必须与机器本地配置无关
-    PruneEnv env("openup");
+    test_support::TestEnv env(kCfgPrefix, "openup", true);
+    test_support::ScopedConfigPath cfgEnv(test_support::tempConfigFile(kCfgPrefix, "openup_cfg"));
     std::unique_ptr<::core::Module> mod(create_settings_module());
     mod->onStart();
 
@@ -835,7 +806,8 @@ REGISTER_TEST(settings_path_text_vertically_centered, "settings: path text verti
 
 REGISTER_TEST(settings_retention_change_prunes_immediately, "settings: retention change prunes immediately", {
     // 隔离：临时 config.json（DEVDESK_CONFIG_PATH）+ 临时 DB（appDatabase）
-    PruneEnv env("prune");
+    test_support::TestEnv env(kCfgPrefix, "prune", true);
+    test_support::ScopedConfigPath cfgEnv(test_support::tempConfigFile(kCfgPrefix, "prune_cfg"));
     DOCTEST_REQUIRE(env.db != nullptr);
 
     const int64_t now = static_cast<int64_t>(std::time(nullptr));
@@ -1179,9 +1151,10 @@ REGISTER_TEST(settings_window_effect_apply_visuals, "settings: applyWindowVisual
 // ============ 模块插拔（方案 A）：模块管理卡 + 卡片门控 ============
 
 REGISTER_TEST(settings_modules_card_renders, "settings: 模块管理卡渲染（3 个工具模块开关）", {
-    PruneEnv env("modcard");
+    test_support::TestEnv env(kCfgPrefix, "modcard", true);
+    test_support::ScopedConfigPath cfgEnv(test_support::tempConfigFile(kCfgPrefix, "modcard_cfg"));
     std::unique_ptr<::core::Module> mod(create_settings_module());
-    mod->onStart();  // 读 PruneEnv 指向的临时 config（无文件 → 默认全启用）
+    mod->onStart();  // 读 TestEnv + ScopedConfigPath 指向的临时 config（无文件 → 默认全启用）
     eui::Screen screen;
     screen.width = 1600.0f;
     screen.height = 1000.0f;
@@ -1206,14 +1179,15 @@ REGISTER_TEST(settings_modules_card_renders, "settings: 模块管理卡渲染（
 })
 
 REGISTER_TEST(settings_gated_proxy_card_hidden, "settings: claude 模块关闭 → 代理卡整卡隐藏", {
-    PruneEnv env("gateclaude");
+    test_support::TestEnv env(kCfgPrefix, "gateclaude", true);
+    test_support::ScopedConfigPath cfgEnv(test_support::tempConfigFile(kCfgPrefix, "gateclaude_cfg"));
     // claude_proxy 关闭（markdown/todo 开）
     module::settings::SettingsConfig cfg;
     cfg.enabledModules = {module::settings::kModuleIdHome,
                           module::settings::kModuleIdMarkdown,
                           module::settings::kModuleIdTodo,
                           module::settings::kModuleIdSettings};
-    DOCTEST_REQUIRE(module::settings::SettingsStore(env.cfgPath).save(cfg).isOk());
+    DOCTEST_REQUIRE(module::settings::SettingsStore(cfgEnv.cfgPath).save(cfg).isOk());
 
     std::unique_ptr<::core::Module> mod(create_settings_module());
     mod->onStart();  // 读临时 config：claude 关
@@ -1242,14 +1216,15 @@ REGISTER_TEST(settings_gated_proxy_card_hidden, "settings: claude 模块关闭 �
 })
 
 REGISTER_TEST(settings_gated_directory_card_hidden, "settings: markdown 模块关闭 → 目录卡整卡隐藏", {
-    PruneEnv env("gatemd");
+    test_support::TestEnv env(kCfgPrefix, "gatemd", true);
+    test_support::ScopedConfigPath cfgEnv(test_support::tempConfigFile(kCfgPrefix, "gatemd_cfg"));
     // markdown 关闭（claude 开）
     module::settings::SettingsConfig cfg;
     cfg.enabledModules = {module::settings::kModuleIdHome,
                           module::settings::kModuleIdTodo,
                           module::settings::kModuleIdClaudeProxy,
                           module::settings::kModuleIdSettings};
-    DOCTEST_REQUIRE(module::settings::SettingsStore(env.cfgPath).save(cfg).isOk());
+    DOCTEST_REQUIRE(module::settings::SettingsStore(cfgEnv.cfgPath).save(cfg).isOk());
 
     std::unique_ptr<::core::Module> mod(create_settings_module());
     mod->onStart();
@@ -1359,9 +1334,10 @@ int orderedIndexOf(const core::dsl::Element* parent, const core::dsl::Element* c
 
 REGISTER_TEST(settings_pet_dropdown_z_escape, "settings: pet skin dropdown popup escapes following cards", {
     // pet 卡开启（真机默认关），弹层展开时必须盖住下方目录卡
-    PruneEnv env("petz");
+    test_support::TestEnv env(kCfgPrefix, "petz", true);
+    test_support::ScopedConfigPath cfgEnv(test_support::tempConfigFile(kCfgPrefix, "petz_cfg"));
     {
-        std::ofstream out(env.cfgPath);
+        std::ofstream out(cfgEnv.cfgPath);
         out << "{\"theme\":\"dark\",\"enabledModules\":["
                "\"home\",\"markdown\",\"todo\",\"claude_proxy\",\"settings\",\"pet\"]}";
     }
@@ -1412,9 +1388,10 @@ REGISTER_TEST(settings_pet_dropdown_z_escape, "settings: pet skin dropdown popup
 // 卡高保持 120（内容底沿 104 不变 → contentKey 不变，不触发滚动高度重测）
 REGISTER_TEST(settings_pet_show_button_renders,
               "settings: 桌宠卡「显示桌宠」按钮渲染（PAB-13）", {
-    PruneEnv env("petshow");
+    test_support::TestEnv env(kCfgPrefix, "petshow", true);
+    test_support::ScopedConfigPath cfgEnv(test_support::tempConfigFile(kCfgPrefix, "petshow_cfg"));
     {
-        std::ofstream out(env.cfgPath);
+        std::ofstream out(cfgEnv.cfgPath);
         out << "{\"theme\":\"dark\",\"enabledModules\":["
                "\"home\",\"markdown\",\"todo\",\"claude_proxy\",\"settings\",\"pet\"]}";
     }
@@ -1456,7 +1433,8 @@ REGISTER_TEST(settings_pet_show_button_renders,
 
 REGISTER_TEST(settings_port_esc_discards_draft,
               "settings: 端口草稿 Esc=丢弃回落已应用端口，不触发应用（headless，审计 [21]）", {
-    PruneEnv env("portesc");
+    test_support::TestEnv env(kCfgPrefix, "portesc", true);
+    test_support::ScopedConfigPath cfgEnv(test_support::tempConfigFile(kCfgPrefix, "portesc_cfg"));
     std::unique_ptr<::core::Module> mod(create_settings_module());
     mod->onStart();
     eui::Screen screen;
@@ -1509,7 +1487,7 @@ REGISTER_TEST(settings_port_esc_discards_draft,
     DOCTEST_CHECK_EQ(shown3->text, std::string("8888"));   // 草稿清空回落
 
     // 未落盘：配置仍是默认 8888（旧行为 Esc=applyProxyPort 会写 9999 并重启代理）
-    module::settings::SettingsStore store(env.cfgPath);
+    module::settings::SettingsStore store(cfgEnv.cfgPath);
     DOCTEST_CHECK_EQ(store.load().proxyPort, 8888);
 
     mod->onStop();
@@ -1523,7 +1501,8 @@ REGISTER_TEST(settings_port_esc_discards_draft,
 // 服务注册 + 代理启动用于验证代理运行中的 Ctrl+S 分支。
 REGISTER_TEST(settings_ctrl_s_save_shortcut,
               "settings: Ctrl+S 提交端口草稿 / 显式落盘（审计 [22]）", {
-    PruneEnv env("ctrls");
+    test_support::TestEnv env(kCfgPrefix, "ctrls", true);
+    test_support::ScopedConfigPath cfgEnv(test_support::tempConfigFile(kCfgPrefix, "ctrls_cfg"));
     module::claude::ClaudeService svc(env.db->db(), "DevDeskTestCtrlS");
     module::claude::ClaudeService::setGlobal(&svc);
     ScopedClaudeProxy proxyForSettings;  // R0/D6：设置页经定位器取代理运行面
@@ -1550,9 +1529,9 @@ REGISTER_TEST(settings_ctrl_s_save_shortcut,
 
     // 1) 无草稿：Ctrl+S → 配置落盘（onStart 只读不写，此处才出现文件）
     //    + 状态行回显「设置已保存」
-    DOCTEST_CHECK(!std::filesystem::exists(env.cfgPath));
+    DOCTEST_CHECK(!std::filesystem::exists(cfgEnv.cfgPath));
     DOCTEST_CHECK(mod->onKeyEvent(ctrlS(eui::KeyAction::Press)));
-    DOCTEST_CHECK(std::filesystem::exists(env.cfgPath));
+    DOCTEST_CHECK(std::filesystem::exists(cfgEnv.cfgPath));
     frame("css1");
     {
         const auto* sub = ui.find("settings.subtitle");
@@ -1560,7 +1539,7 @@ REGISTER_TEST(settings_ctrl_s_save_shortcut,
         DOCTEST_CHECK(sub->text.find("设置已保存") != std::string::npos);
     }
     {
-        module::settings::SettingsStore store(env.cfgPath);
+        module::settings::SettingsStore store(cfgEnv.cfgPath);
         DOCTEST_CHECK_EQ(store.load().proxyPort, 8888);
     }
     // 2) 门控：裸 S（无 Ctrl）/ Release / 其他 Ctrl 组合 → 不消费
@@ -1597,7 +1576,7 @@ REGISTER_TEST(settings_ctrl_s_save_shortcut,
     frame("css3");
     DOCTEST_CHECK(mod->onKeyEvent(ctrlS(eui::KeyAction::Press)));
     {
-        module::settings::SettingsStore store(env.cfgPath);
+        module::settings::SettingsStore store(cfgEnv.cfgPath);
         DOCTEST_CHECK_EQ(store.load().proxyPort, 9001);
     }
     DOCTEST_CHECK_EQ(svc.configuredProxyPort(), 9001);
@@ -1702,9 +1681,10 @@ REGISTER_TEST(settings_resolve_theme_dark_matrix,
 
 REGISTER_TEST(settings_theme_auto_follows_platform,
               "settings: auto 模式 onStart 解析跟系统深浅（platform 检测，spec缩水 A）", {
-    PruneEnv env("thauto");
+    test_support::TestEnv env(kCfgPrefix, "thauto", true);
+    test_support::ScopedConfigPath cfgEnv(test_support::tempConfigFile(kCfgPrefix, "thauto_cfg"));
     {
-        std::ofstream out(env.cfgPath);
+        std::ofstream out(cfgEnv.cfgPath);
         out << R"({"themeMode": "auto", "theme": "dark"})";
     }
     std::unique_ptr<::core::Module> mod(create_settings_module());
@@ -1720,7 +1700,8 @@ REGISTER_TEST(settings_theme_auto_follows_platform,
 
 REGISTER_TEST(settings_theme_mode_dropdown_click_persists,
               "settings: 主题模式下拉存在且点「深色」落盘（替代旧双按钮，spec缩水 A headless）", {
-    PruneEnv env("thdmm");
+    test_support::TestEnv env(kCfgPrefix, "thdmm", true);
+    test_support::ScopedConfigPath cfgEnv(test_support::tempConfigFile(kCfgPrefix, "thdmm_cfg"));
     std::unique_ptr<::core::Module> mod(create_settings_module());
     mod->onStart();
     eui::Screen screen;
@@ -1786,7 +1767,8 @@ REGISTER_TEST(settings_editor_font_size_roundtrip_clamp,
 
 REGISTER_TEST(settings_editor_font_dropdown_applies_channel,
               "settings: 编辑器字号下拉点档 → core::theme 通道 + 落盘（spec缩水 B headless）", {
-    PruneEnv env("edfontui");
+    test_support::TestEnv env(kCfgPrefix, "edfontui", true);
+    test_support::ScopedConfigPath cfgEnv(test_support::tempConfigFile(kCfgPrefix, "edfontui_cfg"));
     std::unique_ptr<::core::Module> mod(create_settings_module());
     mod->onStart();
     eui::Screen screen;
@@ -1805,7 +1787,7 @@ REGISTER_TEST(settings_editor_font_dropdown_applies_channel,
     DOCTEST_REQUIRE(item->onClick != nullptr);
     item->onClick();
     DOCTEST_CHECK_EQ(::core::theme::editorFontSize(), 17.0f);
-    module::settings::SettingsStore store(env.cfgPath);
+    module::settings::SettingsStore store(cfgEnv.cfgPath);
     DOCTEST_CHECK_EQ(store.load().editorFontSize, 17);
 
     mod->onStop();
@@ -1909,9 +1891,10 @@ REGISTER_TEST(settings_log_level_roundtrip_matrix,
 
 REGISTER_TEST(settings_log_level_applied_on_start_and_click,
               "settings: 日志级别 onStart 恢复 + 下拉切档即时应用（spec缩水 D headless）", {
-    PruneEnv env("loglvl");
+    test_support::TestEnv env(kCfgPrefix, "loglvl", true);
+    test_support::ScopedConfigPath cfgEnv(test_support::tempConfigFile(kCfgPrefix, "loglvl_cfg"));
     {
-        std::ofstream out(env.cfgPath);
+        std::ofstream out(cfgEnv.cfgPath);
         out << R"({"logLevel": "WARN"})";
     }
     const core::log::Level prev = core::log::level();
@@ -1937,7 +1920,7 @@ REGISTER_TEST(settings_log_level_applied_on_start_and_click,
     DOCTEST_REQUIRE(item->onClick != nullptr);
     item->onClick();
     DOCTEST_CHECK(core::log::level() == core::log::Level::Debug);
-    module::settings::SettingsStore store(env.cfgPath);
+    module::settings::SettingsStore store(cfgEnv.cfgPath);
     DOCTEST_CHECK_EQ(store.load().logLevel,
                      std::string(module::settings::kLogLevelDebug));
 
@@ -1953,7 +1936,8 @@ REGISTER_TEST(settings_log_level_applied_on_start_and_click,
 // （std::async 后台线程），结果下一帧收割；快照恒非空沿用上次值（不闪空、不丢行）。
 REGISTER_TEST(settings_h2_log_tail_snapshot,
               "settings: 日志 tail 后台重读快照（H2 tick 前旧值/后新值）", {
-    PruneEnv env("h2tail");
+    test_support::TestEnv env(kCfgPrefix, "h2tail", true);
+    test_support::ScopedConfigPath cfgEnv(test_support::tempConfigFile(kCfgPrefix, "h2tail_cfg"));
     test_support::AppDataEnv appdata("h2tail");   // 日志文件隔离到临时 APPDATA
     writeLogFile("H2-TAIL-ONE\n");
 
@@ -2022,14 +2006,15 @@ REGISTER_TEST(settings_h2_log_tail_snapshot,
 // ③ 目录消失 / 出现的边界下不崩、不闪空。
 REGISTER_TEST(settings_ths01_fs_snapshot,
               "settings: 外部状态快照——刷新前旧值 / 刷新后新值（THS-01）", {
-    PruneEnv env("ths01");
+    test_support::TestEnv env(kCfgPrefix, "ths01", true);
+    test_support::ScopedConfigPath cfgEnv(test_support::tempConfigFile(kCfgPrefix, "ths01_cfg"));
     // 模块插拔门控：目录卡 + 桌宠卡都要渲染（pet 不在默认启用集合里）
     module::settings::SettingsConfig cfg;
     cfg.enabledModules = {module::settings::kModuleIdHome,
                           module::settings::kModuleIdMarkdown,
                           module::settings::kModuleIdSettings,
                           module::settings::kModuleIdPet};
-    DOCTEST_REQUIRE(module::settings::SettingsStore(env.cfgPath).save(cfg).isOk());
+    DOCTEST_REQUIRE(module::settings::SettingsStore(cfgEnv.cfgPath).save(cfg).isOk());
 
     const auto notesDir = test_temp::tempPath("devdesk_ths01_notes");
     const auto petsDir = test_temp::tempPath("devdesk_ths01_pets");
@@ -2119,7 +2104,8 @@ REGISTER_TEST(settings_ths01_fs_snapshot,
 
 REGISTER_TEST(settings_dropdown_single_holder,
               "settings: 下拉唯一持有者——开第二个自动关第一个 + Esc 关当前项（审计 THS-05）", {
-    PruneEnv env("ddholder");
+    test_support::TestEnv env(kCfgPrefix, "ddholder", true);
+    test_support::ScopedConfigPath cfgEnv(test_support::tempConfigFile(kCfgPrefix, "ddholder_cfg"));
     std::unique_ptr<::core::Module> mod(create_settings_module());
     mod->onStart();
     eui::Screen screen;
@@ -2392,9 +2378,10 @@ REGISTER_TEST(settings_card_registry_order,
 
     // ① 全模块开启：四 tab 各自的卡序列（含受门控的卡）
     {
-        PruneEnv env("registryall");
+        test_support::TestEnv env(kCfgPrefix, "registryall", true);
+        test_support::ScopedConfigPath cfgEnv(test_support::tempConfigFile(kCfgPrefix, "registryall_cfg"));
         {
-            std::ofstream out(env.cfgPath);
+            std::ofstream out(cfgEnv.cfgPath);
             out << "{\"theme\":\"dark\",\"enabledModules\":[\"home\","
                    "\"markdown\",\"todo\",\"claude_proxy\",\"settings\",\"pet\"]}";
         }
@@ -2428,9 +2415,10 @@ REGISTER_TEST(settings_card_registry_order,
     }
     // ② pet / markdown / claude 关：模块 tab 只剩插拔卡（其余整卡隐藏）
     {
-        PruneEnv env("registrygated");
+        test_support::TestEnv env(kCfgPrefix, "registrygated", true);
+        test_support::ScopedConfigPath cfgEnv(test_support::tempConfigFile(kCfgPrefix, "registrygated_cfg"));
         {
-            std::ofstream out(env.cfgPath);
+            std::ofstream out(cfgEnv.cfgPath);
             out << "{\"theme\":\"dark\",\"enabledModules\":[\"home\","
                    "\"settings\"]}";
         }

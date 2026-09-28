@@ -26,6 +26,7 @@
 //   - mock 上游 provider 结束时必须 sink.done() + return true（返回 false 会被
 //     cpp-httplib 当作 Canceled，不写终止 chunk，客户端看到的是截断）。
 #include "doctest.h"
+#include "test_support.h"  // TIN-06 收尾波：InMemoryDb
 
 #include "claude_service.h"
 #include "core/sqlite_db.h"
@@ -338,18 +339,17 @@ private:
         std::make_shared<std::atomic<size_t>>(0);
 };
 
-// ---------- 代理环境（ProxyRouter + 内存库，不触碰 Keychain）----------
+// ---------- 代理环境（ProxyRouter + InMemoryDb 内存库，不触碰 Keychain）----------
 
+// 模块 glue，keep-local（TIN-06）：InMemoryDb 基座 + ClaudeService 构造。
 struct StressEnv {
-    core::Result<core::data::SqliteDb> dbResult =
-        core::data::SqliteDb::open(":memory:");
+    test_support::InMemoryDb db;
     std::unique_ptr<module::claude::ClaudeService> service;
     std::unique_ptr<platform::http::Server> proxy;
 
     bool start(const std::string& upstreamBase) {
-        if (dbResult.isFail()) return false;
         service = std::make_unique<module::claude::ClaudeService>(
-            dbResult.value());
+            db.handle());
         proxy = std::make_unique<platform::http::Server>("127.0.0.1", 0);
         router_ = std::make_unique<module::claude::ProxyRouter>(*service, *proxy);
         router_->setProfileProvider([upstreamBase]() {

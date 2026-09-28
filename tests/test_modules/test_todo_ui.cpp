@@ -37,6 +37,7 @@ constexpr const char* kDbPrefix = "devdesk_test_todoui_";
 
 // RAII：临时库（共享 test_support::TestEnv；注册全局 appDatabase，todo 模块
 // onStart 依赖，析构时一定解除注册防悬垂污染后续用例）+ TodoService
+// 模块 glue，keep-local（TIN-06）：共享 TestEnv 基座 + TodoService/statePath glue。
 struct TestEnv : test_support::TestEnv {
     std::filesystem::path statePath;  // 审计 [23]：视图状态文件按用例隔离
     std::unique_ptr<module::todo::TodoService> svc;
