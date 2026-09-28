@@ -17,6 +17,7 @@ enum class PageId {
     Todo,
     ClaudeProxy,
     Settings,
+    About,
 };
 
 inline const char* pageIdToString(PageId id) {
@@ -26,6 +27,7 @@ inline const char* pageIdToString(PageId id) {
         case PageId::Todo: return "Todo";
         case PageId::ClaudeProxy: return "ClaudeProxy";
         case PageId::Settings: return "Settings";
+        case PageId::About: return "About";
     }
     return "?";
 }

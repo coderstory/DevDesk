@@ -137,6 +137,7 @@ target_link_libraries(devdesk_tests PRIVATE
     devdesk_module_todo
     devdesk_module_claude_proxy
     devdesk_module_settings
+    devdesk_module_about
     devdesk_module_pet
 )
 
@@ -166,6 +167,7 @@ foreach(_probe_source ${_devdesk_probe_sources})
         devdesk_module_todo
         devdesk_module_claude_proxy
         devdesk_module_settings
+        devdesk_module_about
         devdesk_module_pet
     )
     devdesk_apply_warnings(${_probe_name})

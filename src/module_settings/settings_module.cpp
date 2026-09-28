@@ -34,13 +34,13 @@
 //      （markdown/todo/claude_proxy）各一行开关；home/settings 恒启用不
 //      展示开关。开关只写 config.json，**重启生效**（注册是启动期行为）；
 //      对应模块关闭时其专属卡片整卡隐藏（代理卡/目录卡，不显示故障态）
-//   7. 关于卡（spec §8.5「关于」，spec 缩水 C）：DevDesk 版本/构建类型/
-//      构建时间戳 + EUI-NEO rev（CMake 注入宏）+ 配置/日志文件路径，恒显
-//   8. 页面结构（Task B tab 化）：通用 / 模块 / 日志 / 关于 四 tab
+//   7. 页面结构（Task B tab 化）：通用 / 模块 / 日志 三 tab
 //      （components::tabs）；「日志」tab 含日志查看卡（core::paths::logFile()
 //      末尾 500 行 tail + 刷新按钮；审计 H2 后读盘在后台线程，compose 只读
 //      快照——首次装载在 onStart，此后切 tab / 点刷新都经 refreshLogTailCache
 //      发意图，结果下一帧收割）
+//      关于信息已拆到独立模块 module_about（2026-09-28 about 页设计 D-02：
+//      本模块不再承担关于 tab）
 //   8b. 渲染路径不做文件系统查询（审计 THS-01，与 H2 同款「读一次 → 存成员
 //      → compose 只读」）：接管状态（sidecar stat）/ 笔记目录存在性 /
 //      桌宠皮肤清单（目录遍历）统一收在 refreshExternalState，触发点 =
@@ -51,7 +51,7 @@
 //   settings_module.cpp    本文件 —— Module 接口实现（pageId/displayName/
 //                          compose 骨架）、生命周期、设置变更动作、日志 tail
 //                          与外部状态快照、**卡片注册表**（kCardSpecs）
-//   settings_ui_cards.*    9 张卡的绘制（自由函数 + 只读入参/回调显式入参）
+//   settings_ui_cards.*    8 张卡的绘制（自由函数 + 只读入参/回调显式入参）
 //   settings_ui_logic.*    不碰 Ui / 不碰 DB 的纯件：档位表 / 卡片高度 /
 //                          openUp 几何常量 / nearestIndex / fs / 下拉持有者语义
 // 卡片绘制按 kCardSpecs 表遍历（原 compose 内 switch(settingsTab_) 的 9 个
@@ -128,7 +128,7 @@ enum class CardHeightKind {
 };
 
 struct CardSpec {
-    int tab;                // 所属 tab（kTabGeneral / kTabModules / kTabLog / kTabAbout）
+    int tab;                // 所属 tab（kTabGeneral / kTabModules / kTabLog）
     const char* id;         // 卡根元素 id
     const char* gate;       // nullptr = 恒显；否则 = 模块开关门控键（插拔方案 A §5.4）
     CardHeightKind heightKind;
@@ -158,9 +158,6 @@ const CardSpec kCardSpecs[] = {
      kLogSettingsCardHeight, true, &drawLogCard},
     {kTabLog, "settings.tab.log", nullptr, CardHeightKind::FillRemainder,
      0.0f, false, &drawLogViewCard},
-    // 关于 tab：恒显（不受模块开关门控，自身就是排障信息源）
-    {kTabAbout, "settings.card.about", nullptr, CardHeightKind::Fixed,
-     kAboutCardHeight, false, &drawAboutCard},
 };
 
 } // namespace
@@ -932,7 +929,7 @@ private:
     std::string proxyPortDraft_;
     float cardsScrollOffset_ = 0.0f;      // 卡片区 scrollView 滚动位置
     // ---- Task B：tab 化 + 日志查看 ----
-    int settingsTab_ = 0;                 // 当前 tab（通用/模块/日志/关于）
+    int settingsTab_ = 0;                 // 当前 tab（通用/模块/日志）
     std::vector<std::string> logTail_;    // 日志文件末尾行内存快照（compose 只渲染）
     unsigned logTailVersion_ = 0;         // tail 读取版本号（进日志查看卡 contentKey）
     bool logTailDirty_ = true;            // 待重读标记（切日志 tab / 点刷新置位）

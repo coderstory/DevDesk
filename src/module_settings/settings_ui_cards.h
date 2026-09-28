@@ -1,7 +1,8 @@
 // src/module_settings/settings_ui_cards.h
-// R6（spec 2026-09-27-refactor-incremental-design §5.2）：settings 模块 9 张卡的
+// R6（spec 2026-09-27-refactor-incremental-design §5.2）：settings 模块 8 张卡的
 // 绘制单元 —— 逐字自 settings_module.cpp 搬出（原 compose 内的 9 个私有
-// draw*Card）。全部是自由函数：吃只读入参（SettingsCardsIn）与回调
+// draw*Card；2026-09-28 about 页设计删去 drawAboutCard，关于信息迁往独立
+// module_about）。全部是自由函数：吃只读入参（SettingsCardsIn）与回调
 //（SettingsCardActions），不捕获 this、不写模块成员。
 //
 // 回调约定（R4 同款，spec §4.2.3）：卡片在元素回调里**按值捕获**用到的
@@ -74,7 +75,7 @@ struct CardDrawArgs {
     const SettingsCardActions& a;
 };
 
-// ---- 9 张卡（签名统一，注册表按 tab 分派；绘制顺序 = 注册表顺序）----
+// ---- 8 张卡（签名统一，注册表按 tab 分派；绘制顺序 = 注册表顺序）----
 void drawAppearanceCard(const CardDrawArgs& args);   // 通用：外观（主题/字号/窗口效果）
 void drawEditorFontCard(const CardDrawArgs& args);   // 通用：编辑器字号
 void drawModulesCard(const CardDrawArgs& args);      // 模块：插拔开关
@@ -83,6 +84,5 @@ void drawDirectoryCard(const CardDrawArgs& args);    // 模块：笔记目录（
 void drawProxyCard(const CardDrawArgs& args);        // 模块：Claude 代理（开关门控）
 void drawLogCard(const CardDrawArgs& args);          // 日志：保留天数 + 级别
 void drawLogViewCard(const CardDrawArgs& args);      // 日志：tail 查看
-void drawAboutCard(const CardDrawArgs& args);        // 关于：版本 + 路径
 
 } // namespace module::settings

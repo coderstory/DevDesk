@@ -18,12 +18,13 @@
 #include "core/module_interface.h"
 #include "settings_config.h"  // kModuleId*（门控键）
 
-// 5 个模块工厂声明（extern "C"，自 main.cpp 迁入；全局作用域与迁移前同）
+// 6 个模块工厂声明（extern "C"，自 main.cpp 迁入；全局作用域与迁移前同）
 extern "C" ::core::Module* create_home_module();
 extern "C" ::core::Module* create_markdown_module();
 extern "C" ::core::Module* create_todo_module();
 extern "C" ::core::Module* create_claude_module();
 extern "C" ::core::Module* create_settings_module();
+extern "C" ::core::Module* create_about_module();
 
 namespace app::registry {
 
@@ -45,6 +46,7 @@ inline constexpr ModuleEntry kModuleRegistry[] = {
     {::core::PageId::Todo,        module::settings::kModuleIdTodo,         "待办",   "\xEF\x81\x98", &create_todo_module},      // U+F058 fa-circle-check
     {::core::PageId::ClaudeProxy, module::settings::kModuleIdClaudeProxy,  "Claude", "\xEF\x80\xA1", &create_claude_module},     // U+F021 fa-arrows-rotate
     {::core::PageId::Settings,    nullptr,                          "设置",   "\xEF\x80\x93", &create_settings_module},    // U+F013 fa-gear
+    {::core::PageId::About,       nullptr,                          "关于",   "\xEF\x81\x9A", &create_about_module},       // U+F05A fa-circle-info
 };
 
 } // namespace app::registry

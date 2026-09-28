@@ -33,6 +33,9 @@ devdesk.db-wal
 devdesk.db-shm
 config.json
 
+# Build version (per-machine auto-bump, 2026-09-28 about page)
+VERSION
+
 # Fonts (download on first build)
 fonts/Inter-*.ttf
 fonts/JetBrainsMono-*.ttf

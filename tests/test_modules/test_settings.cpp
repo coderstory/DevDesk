@@ -552,12 +552,11 @@ REGISTER_TEST(settings_module_compose_renders, "settings: module compose builds 
         ui.end();
     };
 
-    // tab 栏（4 个命中矩形）+ 卡区 scrollView 存在；默认 tab=通用
+    // tab 栏（3 个命中矩形）+ 卡区 scrollView 存在；默认 tab=通用
     frame("smoke");
     DOCTEST_CHECK(ui.find("settings.tabs.hit.0") != nullptr);
     DOCTEST_CHECK(ui.find("settings.tabs.hit.1") != nullptr);
     DOCTEST_CHECK(ui.find("settings.tabs.hit.2") != nullptr);
-    DOCTEST_CHECK(ui.find("settings.tabs.hit.3") != nullptr);
     DOCTEST_CHECK(ui.find("settings.cards.scroll") != nullptr);
     // 通用 tab：外观卡 + 编辑器字号卡（Task B 自日志卡迁出）
     DOCTEST_CHECK(ui.find("settings.card.appearance") != nullptr);
@@ -586,12 +585,6 @@ REGISTER_TEST(settings_module_compose_renders, "settings: module compose builds 
     DOCTEST_CHECK(ui.find("settings.tab.log.scroll") != nullptr);
     DOCTEST_CHECK(ui.find("settings.tab.log.refresh.bg") != nullptr);
     DOCTEST_CHECK(ui.find("settings.card.appearance.theme.dd") == nullptr);
-
-    // 关于 tab：版本 + 路径
-    DOCTEST_REQUIRE(clickSettingsTab(*mod, screen, 3));
-    frame("abouttab");
-    DOCTEST_CHECK(ui.find("settings.card.about") != nullptr);
-    DOCTEST_CHECK(ui.find("settings.card.about.version") != nullptr);
 
     mod->onStop();
     ::core::theme::setDark();  // 恢复全局默认主题，不影响其他用例
@@ -1915,40 +1908,10 @@ REGISTER_TEST(settings_editor_font_dropdown_applies_channel,
     return true;
 })
 
-// ---- spec 缩水 C：关于卡（版本 / EUI-NEO rev / 构建信息，CMake 注入宏）----
-
-REGISTER_TEST(settings_about_card_renders,
-              "settings: 关于卡渲染版本与 EUI-NEO 行（spec缩水 C headless）", {
-    std::unique_ptr<::core::Module> mod(create_settings_module());
-    mod->onStart();
-    eui::Screen screen;
-    screen.width = 1600.0f;
-    screen.height = 1000.0f;
-    // Task B tab 化：关于卡在「关于」tab
-    DOCTEST_REQUIRE(clickSettingsTab(*mod, screen, 3));
-    eui::Ui ui;
-    ui.begin("aboutc");
-    mod->compose(ui, screen);
-    ui.end();
-
-    DOCTEST_CHECK(ui.find("settings.card.about") != nullptr);
-    const auto* version = ui.find("settings.card.about.version");
-    const auto* euiLine = ui.find("settings.card.about.eui");
-    const auto* cfgLine = ui.find("settings.card.about.config");
-    DOCTEST_REQUIRE(version != nullptr);
-    DOCTEST_REQUIRE(euiLine != nullptr);
-    DOCTEST_REQUIRE(cfgLine != nullptr);
-    DOCTEST_CHECK(version->text.find("DevDesk") != std::string::npos);
-    // CMake 注入的 project VERSION（0.1.0）出现在版本行
-    DOCTEST_CHECK(version->text.find("0.1.") != std::string::npos);
-    DOCTEST_CHECK(version->text.find("构建") != std::string::npos);
-    DOCTEST_CHECK(euiLine->text.find("EUI-NEO") != std::string::npos);
-    DOCTEST_CHECK(cfgLine->text.find("config.json") != std::string::npos);
-
-    mod->onStop();
-    ::core::theme::setDark();
-    return true;
-})
+// ---- spec 缩水 C：关于文案纯函数（版本 / EUI-NEO rev / 构建信息，CMake 注入
+// 宏）。设置页关于卡已于 2026-09-28 拆成独立模块 module_about（关于 tab 删
+// 除，卡渲染测试随之删除）；settings_config.cpp 的 about* 函数暂留死代码
+//（D-02 明确不属该需求范围），以下纯函数测试保留防宏注入回归 ----
 
 REGISTER_TEST(settings_about_text_helpers,
               "settings: aboutVersionLine/aboutEuiNeoLine 纯函数（spec缩水 C）", {
@@ -2406,7 +2369,6 @@ REGISTER_TEST(settings_ui_logic_equivalence,
     DOCTEST_CHECK_EQ(ms::kPetCardHeight, 120.0f);
     DOCTEST_CHECK_EQ(ms::kDirectoryCardHeight, 116.0f);
     DOCTEST_CHECK_EQ(ms::kLogSettingsCardHeight, 148.0f);
-    DOCTEST_CHECK_EQ(ms::kAboutCardHeight, 150.0f);
 
     // 3) 档位表（值 + 标签，逐项钉死）
     DOCTEST_CHECK_EQ(ms::kFontPresetCount, 4);
@@ -2495,7 +2457,7 @@ REGISTER_TEST(settings_card_registry_order,
 
     eui::Screen screen{1600.0f, 1000.0f};
 
-    // ① 全模块开启：四 tab 各自的卡序列（含受门控的卡）
+    // ① 全模块开启：三 tab 各自的卡序列（含受门控的卡）
     {
         test_support::TestEnv env(kCfgPrefix, "registryall", true);
         test_support::ScopedConfigPath cfgEnv(test_support::tempConfigFile(kCfgPrefix, "registryall_cfg"));
@@ -2525,11 +2487,6 @@ REGISTER_TEST(settings_card_registry_order,
             "settings.tab.log"};
         const auto t2 = cardIdsOf(*mod, screen);
         DOCTEST_CHECK_MESSAGE(t2 == wantLog, "日志 tab 实测：" + join(t2));
-        DOCTEST_REQUIRE(clickSettingsTab(*mod, screen, 3));
-        const std::vector<std::string> wantAbout = {
-            "settings.card.about"};
-        const auto t3 = cardIdsOf(*mod, screen);
-        DOCTEST_CHECK_MESSAGE(t3 == wantAbout, "关于 tab 实测：" + join(t3));
         mod->onStop();
     }
     // ② pet / markdown / claude 关：模块 tab 只剩插拔卡（其余整卡隐藏）
@@ -2570,7 +2527,7 @@ REGISTER_TEST(settings_card_registry_order,
 // 改反断言：bg 矩形必须不存在（cardFrame 若被加回会重新出现）、卡 stack 必须仍在。
 // 回归断言（两档主题 × 9 张可见卡）：<stack>.bg 不存在、卡 stack 存在（内容未丢）。
 REGISTER_TEST(settings_cards_no_outer_cardframe,
-              "settings: 9 卡无外层 cardFrame——内容直接铺页面底（两档主题）", {
+              "settings: 8 卡无外层 cardFrame——内容直接铺页面底（两档主题）", {
     test_support::TestEnv env(kCfgPrefix, "noframe", true);
     test_support::ScopedConfigPath cfgEnv(
         test_support::tempConfigFile(kCfgPrefix, "noframe_cfg"));
@@ -2587,7 +2544,7 @@ REGISTER_TEST(settings_cards_no_outer_cardframe,
 
     // 卡 root stack id（内容锚：证卡内容仍在渲染）+ cardFrame 若加回会出现的 bg id
     //（bg 是 cardFrame 在 (0,0) 铺的矩形，id = <stack>.bg）。顺序 = 注册表序
-    const int kTabOf[] = {0, 0, 1, 1, 1, 1, 2, 2, 3};
+    const int kTabOf[] = {0, 0, 1, 1, 1, 1, 2, 2};
     const char* const kStackIds[] = {
         "settings.card.appearance",
         "settings.card.editor",
@@ -2597,7 +2554,6 @@ REGISTER_TEST(settings_cards_no_outer_cardframe,
         "settings.card.proxy",
         "settings.card.log",
         "settings.tab.log",
-        "settings.card.about",
     };
     const char* const kBgIds[] = {
         "settings.card.appearance.bg",
@@ -2608,7 +2564,6 @@ REGISTER_TEST(settings_cards_no_outer_cardframe,
         "settings.card.proxy.bg",
         "settings.card.log.bg",
         "settings.tab.log.bg",
-        "settings.card.about.bg",
     };
     for (int pass = 0; pass < 2; ++pass) {
         const std::string tag = pass == 0 ? "dark" : "light";
@@ -2618,7 +2573,7 @@ REGISTER_TEST(settings_cards_no_outer_cardframe,
             ::core::theme::setLight();
         }
         int lastTab = -1;
-        for (size_t i = 0; i < 9; ++i) {
+        for (size_t i = 0; i < 8; ++i) {
             if (kTabOf[i] != lastTab) {
                 lastTab = kTabOf[i];
                 DOCTEST_REQUIRE(clickSettingsTab(*mod, screen, lastTab));

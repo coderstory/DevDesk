@@ -59,16 +59,15 @@ inline constexpr int kLogLevelPresetCount = 4;
 inline constexpr const char* kLogLevelPresetLabels[] = {
     "DEBUG（详尽）", "INFO（默认）", "WARN", "ERROR"};
 
-// ============ 设置页 4 tab（Task B：页面太长拆 tab + 日志查看）============
+// ============ 设置页 3 tab（Task B：页面太长拆 tab + 日志查看）============
 // 通用 = 外观 + 编辑器字号；模块 = 插拔开关 + 桌宠 + 代理 + 目录；
-// 日志 = 保留天数 + 级别 + tail 查看；关于 = 版本/路径
-inline constexpr const char* kSettingTabLabels[] = {"通用", "模块", "日志",
-                                                    "关于"};
-inline constexpr int kSettingTabCount = 4;
+// 日志 = 保留天数 + 级别 + tail 查看。关于 tab 已拆成独立模块
+//（module_about，2026-09-28 about 页设计——不保留僵尸 tab）
+inline constexpr const char* kSettingTabLabels[] = {"通用", "模块", "日志"};
+inline constexpr int kSettingTabCount = 3;
 inline constexpr int kTabGeneral = 0;
 inline constexpr int kTabModules = 1;
 inline constexpr int kTabLog = 2;
-inline constexpr int kTabAbout = 3;
 inline constexpr float kSettingsTabHeight = 40.0f;  // tab 栏高
 inline constexpr int kLogTailMaxLines = 500;        // 日志查看 tail 行数上限
 inline constexpr long kLogTailReadWindow = 256 * 1024;  // tail 只读末尾 256KB
@@ -84,7 +83,6 @@ inline constexpr float kModulesCardHeight = 288.0f;     // 模块插拔卡（模
 inline constexpr float kPetCardHeight = 120.0f;         // 桌宠卡（模块）
 inline constexpr float kDirectoryCardHeight = 116.0f;   // 目录卡（模块；hint 底 100 + 16）
 inline constexpr float kLogSettingsCardHeight = 148.0f; // 日志卡（日志；编辑器字号迁出后收窄）
-inline constexpr float kAboutCardHeight = 150.0f;       // 关于卡（关于）
 
 // ============ 下拉 openUp 越界判定几何 ============
 // 日志卡 / 编辑器字号卡的下拉贴近窗体底边，向下展开可能被裁剪；用同一套几何

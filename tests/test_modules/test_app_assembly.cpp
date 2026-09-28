@@ -479,22 +479,22 @@ REGISTER_TEST(assembly_service_locator_registration_precedes_onstart,
 // ---- R8-C2：真实 kModuleRegistry 表（门控键列填错 / 表序漂移此处必挂）----
 
 REGISTER_TEST(assembly_registry_table_shape,
-              "assembly: 真实 kModuleRegistry —— 5 行 / 行序==PageId 枚举序 / home+settings gatingKey==nullptr / 另三行==kModuleId*", {
+              "assembly: 真实 kModuleRegistry —— 6 行 / 行序==PageId 枚举序 / home+settings+about gatingKey==nullptr / 另三行==kModuleId*", {
     using ::app::registry::kModuleRegistry;
     constexpr size_t kRegistrySize =
         sizeof(kModuleRegistry) / sizeof(kModuleRegistry[0]);
     const ::core::PageId kEnumOrder[] = {
         ::core::PageId::Home,       ::core::PageId::Markdown,
         ::core::PageId::Todo,       ::core::PageId::ClaudeProxy,
-        ::core::PageId::Settings,
+        ::core::PageId::Settings,   ::core::PageId::About,
     };
-    DOCTEST_CHECK_EQ(kRegistrySize, static_cast<size_t>(5));
+    DOCTEST_CHECK_EQ(kRegistrySize, static_cast<size_t>(6));
     for (size_t i = 0; i < kRegistrySize; ++i) {
         // 表序 == PageId 枚举序（重排 = 侧边栏序静默变化，core_pageid_order
         // 契约的装配侧镜像）
         DOCTEST_CHECK(kModuleRegistry[i].page == kEnumOrder[i]);
     }
-    // T3 口径：home/settings 恒注册（gatingKey==nullptr）；三个工具模块
+    // T3 口径：home/settings/about 恒注册（gatingKey==nullptr）；三个工具模块
     // 各自带对应门控键
     DOCTEST_CHECK(kModuleRegistry[0].gatingKey == nullptr);
     DOCTEST_CHECK_EQ(std::string(kModuleRegistry[1].gatingKey),
@@ -504,34 +504,37 @@ REGISTER_TEST(assembly_registry_table_shape,
     DOCTEST_CHECK_EQ(std::string(kModuleRegistry[3].gatingKey),
                      std::string(module::settings::kModuleIdClaudeProxy));
     DOCTEST_CHECK(kModuleRegistry[4].gatingKey == nullptr);
+    DOCTEST_CHECK(kModuleRegistry[5].gatingKey == nullptr);
     return true;
 })
 
 REGISTER_TEST(assembly_build_gated_entries_real_table,
-              "assembly: buildGatedEntries 真实表 —— all-off 恰 2 条（home/settings 恒注册）/ all-on 5 条按表序", {
+              "assembly: buildGatedEntries 真实表 —— all-off 恰 3 条（home/settings/about 恒注册）/ all-on 6 条按表序", {
     constexpr size_t kRegistrySize =
         sizeof(::app::registry::kModuleRegistry) /
         sizeof(::app::registry::kModuleRegistry[0]);
-    // 全关（三个工具模块）→ 恒注册行必含，输出恰 2 条（语义同
+    // 全关（三个工具模块）→ 恒注册行必含，输出恰 3 条（语义同
     // assembly_modules_all_off 的 :165 恒注册断言，但锁的是**真实表**——
     // gatingKey 列填错此处必挂）
     const auto gated = app::assembly::buildGatedEntries(
         allToolsOffConfig(), ::app::registry::kModuleRegistry,
         kRegistrySize);
-    DOCTEST_REQUIRE_EQ(gated.size(), static_cast<size_t>(2));
+    DOCTEST_REQUIRE_EQ(gated.size(), static_cast<size_t>(3));
     DOCTEST_CHECK(gated[0].page == ::core::PageId::Home);
     DOCTEST_CHECK(gated[1].page == ::core::PageId::Settings);
+    DOCTEST_CHECK(gated[2].page == ::core::PageId::About);
     // 实例列恒为 nullptr——由调用方按 page 从自有 static 持有填入
     DOCTEST_CHECK(gated[0].module == nullptr);
     DOCTEST_CHECK(gated[1].module == nullptr);
-    // 全开 → 5 条且序 == 表序
+    DOCTEST_CHECK(gated[2].module == nullptr);
+    // 全开 → 6 条且序 == 表序
     const auto allGated = app::assembly::buildGatedEntries(
         allOnConfig(), ::app::registry::kModuleRegistry, kRegistrySize);
-    DOCTEST_REQUIRE_EQ(allGated.size(), static_cast<size_t>(5));
+    DOCTEST_REQUIRE_EQ(allGated.size(), static_cast<size_t>(6));
     const ::core::PageId kEnumOrder[] = {
         ::core::PageId::Home,       ::core::PageId::Markdown,
         ::core::PageId::Todo,       ::core::PageId::ClaudeProxy,
-        ::core::PageId::Settings,
+        ::core::PageId::Settings,   ::core::PageId::About,
     };
     for (size_t i = 0; i < allGated.size(); ++i) {
         DOCTEST_CHECK(allGated[i].page == kEnumOrder[i]);
