@@ -491,4 +491,38 @@ size_t MdBlockModel::blockIndexAt(size_t offset) const {
     return lo;
 }
 
+size_t mdFindBlockByContent(const std::vector<MdBlock>& blocks, MdBlockKind kind,
+                            uint64_t hash, int stableId, size_t nearByte) {
+    // ① 三元组 (kind, hash, stableId) 全等 → 唯一命中（stableId 由 update 单调
+    //    递增分配不重复，重复块也能据此区分实例）。先在全部块里找三元命中：
+    size_t tripleHit = std::string::npos;
+    for (size_t i = 0; i < blocks.size(); ++i) {
+        if (blocks[i].kind == kind && blocks[i].hash == hash &&
+            blocks[i].stableId == stableId) {
+            tripleHit = i;
+            break;
+        }
+    }
+    if (tripleHit != std::string::npos) return tripleHit;
+    // ② 三元组无命中 → 回退 (kind, hash) 内容等价类：取 |start - nearByte| 最小
+    //    者；等距取下标小者（i 递增遍历，只在严格更近时换，天然保下标小者优先）。
+    size_t best = std::string::npos;
+    for (size_t i = 0; i < blocks.size(); ++i) {
+        if (blocks[i].kind != kind || blocks[i].hash != hash) continue;
+        if (best == std::string::npos) {
+            best = i;
+            continue;
+        }
+        const size_t dCur = blocks[i].start >= nearByte
+                                ? blocks[i].start - nearByte
+                                : nearByte - blocks[i].start;
+        const size_t dBest = blocks[best].start >= nearByte
+                                 ? blocks[best].start - nearByte
+                                 : nearByte - blocks[best].start;
+        if (dCur < dBest) best = i;
+    }
+    // ③ 全无 → npos（调用侧按「零命中 → 钳位」处置）
+    return best;
+}
+
 } // namespace module::markdown

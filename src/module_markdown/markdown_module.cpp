@@ -3256,13 +3256,20 @@ private:
 
     // 从磁盘重读当前笔记（不经过 openNote 的「先保存旧笔记」路径）
     //
-    // ⚠ 已知缺口（MD-01 残留入口，M3 未覆盖，见 open-questions-review-B 第 1 条）：
-    // 静默重载 / 冲突重载把文档整篇换成磁盘版本后，实时态的活动块锚仍是【旧文档
-    // 的字节偏移】，被新文档重新解释 → 活动块落到"覆盖该字节的新块"上（实测：
-    // 前插一段后活动块从旧文档的块 3 跳到新文档里含该字节的块）。当帧即收敛、
-    // 不丢字（输入框文本恒等于新文档某块原文，外部改值不触发 onChange），但
-    // 「跟内容走」不成立——需要块身份映射（旧块起点 / stableId → 新文档），属
-    // spec D3「块身份锚 = 文档字节偏移」的拍板项：本批不自行发明映射方案。
+    // 已修复（MD-01）：重载后按 (kind,hash,stableId) 三元组把旧活动块映射到新
+    // 文档（spec 2026-09-28-md01-reload-block-mapping-design.md §3，§3.1 三步 +
+    // §3.2 副作用边界 + §3.3 顺序约束）。静默重载 / 冲突重载把文档整篇换成磁盘
+    // 版本后，实时态活动块锚不再停留在【旧文档的字节偏移】（会被新块模型重新
+    // 解释而跟错块）：本函数 setEditorText 之前捕获旧活动块的内容身份五元组
+    // (kind,hash,stableId,start,local)，替换后在新块序列里定位——三元组命中 =
+    // 精确实例（stableId 在平移/前插下保留，重复块也能区分实例）；三元组无命中
+    // 回退 (kind,hash) 取 |start-旧start| 最小者（覆盖不相邻双改后 stableId 失配
+    // 但内容未变的场景）；内容被外部删改消失（零命中）则钳位到旧光标对应的新
+    // 块——行为等于旧实现，但消除了「陈旧字节偏移做下帧重推基数」的 footgun
+    //（§3.1-zerohit），文档变空则归零（F4 guard）。重定位更新 4 个锚成员 +
+    // liveInputStateFresh_/liveFocusPending_（二者成对，F2：scope 释放清焦点必须
+    // 同帧补发，保住焦点而非抢焦点），不触发 liveFollow_/liveCaretPending_
+    //（reload 不强拉滚动，与 D-B「越界才拉」一致）；编辑态 / 帧循环零触碰。
     void reloadCurrentNote(bool silent) {
         auto r = service_->read(currentPath_);
         if (r.isFail()) {
@@ -3271,7 +3278,74 @@ private:
             }
             return;
         }
+        // MD-01 步骤 1（捕获，setEditorText 之前）：实时态且有活动块时记下旧活动
+        // 块内容身份五元组 (kind,hash,stableId,start,local)。先对当前模型重 derive
+        // 活动块下标（审计 F6：blockIndexAt 对非空模型恒返回 [0,size) 内下标，故
+        // 无显式边界分支——重 derive 本身就是 onChange 收缩 blocks 后的越界纠正）。
+        struct CapturedBlock {
+            bool valid = false;
+            MdBlockKind kind = MdBlockKind::Paragraph;
+            uint64_t hash = 0;
+            int stableId = -1;
+            size_t start = 0;
+            size_t local = 0;   // 块内字节偏移（审计 F1：步骤 3 重定位要写回锚）
+        } captured;
+        if (mode_ == ViewMode::Live && liveCursorValid_ &&
+            !blockModel_.blocks().empty()) {
+            const size_t idx = mdLiveActiveBlockIndex(blockModel_, liveCursorByte_);
+            const MdBlock& b = blockModel_.blocks()[idx];
+            captured = {true, b.kind, b.hash, b.stableId, b.start,
+                        mdLiveBlockLocalOffset(b, liveCursorByte_)};
+        }
         setEditorText(r.value());
+        // MD-01 步骤 3（定位，setEditorText 之后、resetLiveUndoBaseline 之前——顺
+        // 序约束见 spec §3.3：命中和零命中分支都显式写 liveCursorByte_，步骤 4 的
+        // 撤销基线才读到重定位后的字节，否则重载后首次 Ctrl+Z 的基线锚定旧偏移、
+        // liveUndoBlock_ 也错——F1：v1 只调顺序不写字节是空操作）。文档变空时
+        // 零命中分支有独立 guard（F4：blocks()[0] 越界 UB）。
+        if (captured.valid) {
+            const std::vector<MdBlock>& bs = blockModel_.blocks();
+            const size_t newIdx =
+                mdFindBlockByContent(bs, captured.kind, captured.hash,
+                                     captured.stableId, captured.start);
+            if (newIdx != std::string::npos) {
+                // 命中：重定位。liveCursorByte_ = 新块起点 + 块内光标（钳进块长），
+                // 使本帧的撤销基线已经锚定重定位后的字节；local 在步骤 1 捕获，
+                // 无 ui 依赖。liveInputStateFresh_ 与 liveFocusPending_ 必须成对
+                // （审计 F2：scope 释放清焦点须同帧补发，单独置 fresh 掉焦点 +
+                // 块内光标位置丢失；enterLiveState 即此配对）。不触发 liveFollow_
+                // / liveCaretPending_（reload 静默换内容，不拉滚动、不抢显式
+                // caret 跳转）。
+                const MdBlock& nb = bs[newIdx];
+                const size_t len = nb.end > nb.start ? nb.end - nb.start : 0;
+                liveActiveBlock_ = newIdx;
+                liveInputStart_ = nb.start;
+                liveCursorByte_ = nb.start + std::min(captured.local, len);
+                liveCursorValid_ = true;
+                liveInputStateFresh_ = true;
+                liveFocusPending_ = true;
+            } else {
+                // 零命中：内容被外部删改消失 / 文档变空。旧 liveInputStart_ 值可能
+                // ≥ 新文档长度（它是下帧重推的基数，不能留陈旧）：钳位到旧光标
+                // 对应的新块——行为 = 「落到覆盖旧字节的新块」（与 pre-fix 现状
+                // 一致），但消除陈旧基数 footgun；内容已删无正确答案，钳位是保守
+                // 选择。文档变空时 blocks()[0] 越界 UB，单列分支归零。
+                if (bs.empty()) {
+                    liveActiveBlock_ = 0;
+                    liveInputStart_ = 0;
+                    liveCursorByte_ = 0;
+                } else {
+                    const size_t clamped =
+                        std::min(liveCursorByte_, blockModel_.text().size());
+                    liveActiveBlock_ = blockModel_.blockIndexAt(clamped);
+                    liveInputStart_ = bs[liveActiveBlock_].start;
+                    liveCursorByte_ = clamped;
+                }
+                liveCursorValid_ = true;
+                liveInputStateFresh_ = true;
+                liveFocusPending_ = true;
+            }
+        }
         // M5：外部重载 = 撤销基线换代（旧快照属于被换掉的那一版；不换代时
         // Ctrl+Z 会把外部改动整篇盖回本地旧版本，并被落盘防抖写进磁盘）。
         // 不在实时态则留待进态时重建（enterLiveState 已把 seeded 位清零）
