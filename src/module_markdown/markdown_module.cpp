@@ -186,7 +186,10 @@ ViewMode nextMode(ViewMode m) {
 // core::theme::editorFontSize() 全局通道读（SettingsConfig 在 module_settings，
 // 模块隔离不经本模块 include；通道写入方 = settings onStart/切档，默认与本
 // 常量一致 15 = fontSizeBody token 基准）。行高 = 字号 × 1.2 运行时算
-constexpr float kDefaultEditorFontSize = 15.0f;
+// 常量保留为「文档基准」（上面注释按它描述默认值），加 [[maybe_unused]] 而非删除：
+// 运行时已改走全局通道，本 TU 内无引用 → clang -Wunused-const-variable 报错
+//（GCC -Wall 对 C++ 不报此告警，故 Windows 侧从不复现）。
+[[maybe_unused]] constexpr float kDefaultEditorFontSize = 15.0f;
 constexpr float kEditTextColumnWidth = 720.0f;  // 仅编辑/实时态的居中文本列宽（Typora 写作宽度）
 constexpr float kPreviewColumnWidth = 760.0f;   // 仅预览态的居中阅读列宽
 
@@ -1953,7 +1956,9 @@ private:
                                        contentWidth, wrapHeight, style, live);
                     return true;  // 已画：跳过下方渲染通路
                 };
-                hooks.afterHitOverlay = [this, &live](eui::Ui& inner, size_t k,
+                // 捕获表去掉 `this`：clang -Wunused-lambda-capture（GCC 无此告警，
+                // 故 Windows 侧从不报）。本 lambda 体只用 live / 入参，不碰成员。
+                hooks.afterHitOverlay = [&live](eui::Ui& inner, size_t k,
                                                       const std::string& hitId) {
                     if (k != live.activeBlock) return;
                     if (auto* hitEl = inner.find(hitId)) {
