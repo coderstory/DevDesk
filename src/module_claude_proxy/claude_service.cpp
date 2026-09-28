@@ -10,6 +10,7 @@
 #include "platform/keychain.h"
 #include "platform/terminal_launch_common.h"
 #include "provider_config.h"
+#include "settings_takeover.h"
 #include "upstream_dialect.h"
 
 #include <algorithm>
@@ -239,7 +240,7 @@ core::Result<void> ClaudeService::setActiveProfile(int64_t id) {
     // 代理运行中切 profile → settings.json env 跟随（§5.2 触发点 2）；
     // 代理未运行 → 只更新 DB，不动 settings.json（写了反而制造死指向）。
     // 条目 3：接管失败**不阻断**本次切换（DB 已切成功），失败原因已并入
-    // lastSyncWarnings_ 供 UI 透传
+    // 接管子对象的警告表（经 lastSyncWarnings 透传）供 UI
     if (result.isOk() && isProxyRunning()) {
         (void)syncTakeOver();
     }
@@ -392,15 +393,15 @@ std::optional<int> ClaudeService::takeProxyEvent(std::time_t nowSec) {
 // 迁至 proxy_runtime.cpp（上游会话标识定义同迁）。门面保留两条
 // settings.json 策略尾并逐字编排顺序：startProxy 尾 syncTakeOver（启动成功 →
 // 接管，失败不阻断），stopProxy 尾 syncRestore（停机后还原，settings.json 永
-// 不指向死代理；A4 后改经 takeover 子对象编排）
+// 不指向死代理）；R10-A4 起两条尾的协议侧都经 SettingsTakeOver 子对象
 
 core::Result<int> ClaudeService::startProxy(const std::string& bindAddress,
                                             int port) {
     auto started = proxyRuntime_.startProxy(bindAddress, port);
     if (started.isOk()) {
         // 接管 Claude Code settings.json（§5.2 触发点 1；含手动启动、设置页
-        // 改端口的重启）。失败不阻断：代理已可用，接入失败经 lastSyncWarnings_
-        // 上报（条目 3），用户可感知
+        // 改端口的重启）。失败不阻断：代理已可用，接入失败经接管子对象的
+        // 警告表上报（条目 3，经 lastSyncWarnings 透传），用户可感知
         (void)syncTakeOver();
     }
     return started;
@@ -531,39 +532,29 @@ void ClaudeService::cancelActiveStreams() {
     proxyRuntime_.cancelActiveStreams();
 }
 
-// ---------- Claude Code settings 接管（Phase C）----------
-
-void ClaudeService::setSettingsSyncPaths(const settings_sync::Paths& paths) {
-    syncPaths_ = paths;
-    lastSyncWarnings_.clear();
-}
+// ---------- Claude Code settings 接管（Phase C；R10-A4：协议侧已迁
+// SettingsTakeOver，本段为门面转发 + 编排：setSettingsSyncPaths 注入（inline，
+// 在 claude_service.h）/ recoverPendingSettingsRestore 补还原 / 状态 getter）
+// ----------
 
 bool ClaudeService::isClaudeCodeManaged() const {
-    return !syncPaths_.settingsFile.empty() &&
-           settings_sync::hasPendingSnapshot(syncPaths_);
+    return settingsTakeover_.isClaudeCodeManaged();
 }
 
 const std::vector<std::string>& ClaudeService::lastSyncWarnings() const {
-    return lastSyncWarnings_;
+    return settingsTakeover_.warnings();
 }
 
 void ClaudeService::recoverPendingSettingsRestore() {
-    if (syncPaths_.settingsFile.empty()) return;
-    // 接管开着才补还原（2026-09-27 恢复默认开）：启动序列里这一步负责把上次
-    // 异常退出残留的 sidecar 收尾，必须先于任何 startProxy（否则残留的托管键
-    // 会被误快照为用户原值）。开关关掉时连它也不做——「不碰 settings.json」
-    // 是关掉开关的整体语义，历史遗留 sidecar 留到下次开启接管时再处理。
-    if (!settingsTakeOverEnabled_) return;
-    auto r = settings_sync::recoverPendingSnapshot(syncPaths_);
-    if (!r.ok) {
-        LOG_WARN("Claude Code 接管崩溃补还原失败: " + r.error);
-    }
+    // R10-A4：路径/开关门控 + 补还原协议（recoverPendingSnapshot 的调用在
+    // settings_takeover.cpp）已迁 SettingsTakeOver
+    settingsTakeover_.recoverPendingSettingsRestore();
 }
 
 // ---------- 反向同步（settings.json → 激活 profile，设计 §3.1/§3.4/§3.5）----------
 
 core::Result<void> ClaudeService::syncCaptureActiveProfile() {
-    if (syncPaths_.settingsFile.empty()) {
+    if (settingsTakeover_.paths().settingsFile.empty()) {
         return core::Result<void>::ok();  // 通道未注入（§3.6 唯一开关）
     }
 
@@ -577,7 +568,9 @@ core::Result<void> ClaudeService::syncCaptureActiveProfile() {
 
     // 读侧（M1）：不存在 / 0 字节空文件 / 无 env → present=false（no-op 成功，
     // 照常切换）；存在但读不了 / 解析失败 / env 非对象 → ok=false（G8 → S-2）
-    auto read = settings_sync::readSettingsEnvForSync(syncPaths_);
+    // R10-A4：这是本文件唯一保留的接管协议调用（Q2 否决 4 口径 b，R10 spec
+    // §2.4 P-A4 断言 ≤1）——读侧留门面、不搬 SettingsTakeOver
+    auto read = settings_sync::readSettingsEnvForSync(settingsTakeover_.paths());
     if (!read.ok) {
         return core::Result<void>::fail(core::ErrorCode::FileReadFailed,
                                         read.error);
@@ -600,7 +593,7 @@ core::Result<void> ClaudeService::syncCaptureActiveProfile() {
     if (!parsed.ok) {
         return core::Result<void>::fail(core::ErrorCode::JsonParseError,
             "settings.json env 解析失败（" +
-            syncPaths_.settingsFile.string() + "）: " + parsed.error);
+            settingsTakeover_.paths().settingsFile.string() + "）: " + parsed.error);
     }
     for (const auto& w : parsed.cfg.warnings) {
         LOG_WARN("反向同步（settings.json → profile）: " + w);
@@ -726,72 +719,36 @@ core::Result<void> ClaudeService::syncCaptureActiveProfile() {
         }
     }
 
-    LOG_INFO("反向同步：已把 " + syncPaths_.settingsFile.string() +
+    LOG_INFO("反向同步：已把 " + settingsTakeover_.paths().settingsFile.string() +
              " 的 env 收编进激活 profile id=" + std::to_string(prof.id));
     return core::Result<void>::ok();
 }
 
 core::Result<void> ClaudeService::syncTakeOver() {
-    if (syncPaths_.settingsFile.empty()) return core::Result<void>::ok();
-    // 接管默认开（2026-09-27 恢复）：起代理即接管 settings.json，停代理还原。
-    // 显式关掉开关才走下面这条——此时 DevDesk 完全不碰该文件（本机另装
-    // cc-switch 等同类工具、不愿两边互相覆盖时的用法）。
-    if (!settingsTakeOverEnabled_) {
-        LOG_INFO("Claude Code settings 接管未开启：不动 " +
-                 syncPaths_.settingsFile.string());
-        return core::Result<void>::ok();
-    }
-    // 无激活 profile：仍接管 BASE_URL/api key 占位（接入路径先就位，转发层会报
-    // 503 提示用户先启用 profile）
+    // R10-A4：编排留门面——从 ProfileRepository 取激活 Profile、从
+    // ProxyRuntime 取端口、取所绑片段 env，一并传入 SettingsTakeOver
+    //（P-A4 双入参，子对象不反向依赖 ProfileRepository / ProxyRuntime）。
+    // 路径/开关门控与接管/还原协议在子对象内部，调用顺序逐字保持。
+    // 无激活 profile：仍接管 BASE_URL/api key 占位（接入路径先就位，转发层会
+    // 报 503 提示用户先启用 profile）
     Profile active;
     auto a = getActiveProfile();
     if (a.isOk()) {
         active = std::move(a).value();
     }
-    // 写进 settings.json 的是**合并后**的 env（片段 → profile 自身 → 托管键，
-    // 设计 §2.5）：片段值不留痕迹（env 是扁平 map，无处放出处），片段键一并进
-    // sidecar 托管键集 → 停代理还原时随快照撤走
-    auto r = settings_sync::takeOver(active, proxyPort(), syncPaths_,
-                                     profileRepository_.sharedExtraEnvJsonFor(
-                                         active.sharedConfigId));
-    lastSyncWarnings_ = std::move(r.warnings);
-    if (!r.ok) {
-        // 条目 3：失败不再只进日志——并入 lastSyncWarnings_（与 getter 一起
-        // 供 UI 透传）。调用方语义不变：接管失败不阻断起代理/切 profile
-        lastSyncWarnings_.push_back("Claude Code settings 接管失败: " + r.error);
-        LOG_WARN("Claude Code settings 接管失败: " + r.error);
-        return core::Result<void>::fail(core::ErrorCode::Internal, r.error);
-    }
-    LOG_INFO("Claude Code settings 已接管: " +
-             syncPaths_.settingsFile.string() +
-             (lastSyncWarnings_.empty()
-                  ? std::string("")
-                  : "（含 " + std::to_string(lastSyncWarnings_.size()) +
-                        " 条上层覆盖警告）"));
-    return core::Result<void>::ok();
+    return settingsTakeover_.syncTakeOver(
+        active, proxyPort(),
+        profileRepository_.sharedExtraEnvJsonFor(active.sharedConfigId));
 }
 
 void ClaudeService::syncRestore() {
-    if (syncPaths_.settingsFile.empty()) return;
-    if (!settingsTakeOverEnabled_) {
-        // 接管关闭：不改写 settings.json。确有遗留接管态时只告警不代改
-        //（该文件由 cc-switch 等工具负责，DevDesk 不抢写）
-        if (settings_sync::hasPendingSnapshot(syncPaths_)) {
-            LOG_WARN("检测到遗留的 Claude Code 接管快照，但接管已关闭——不改写 " +
-                     syncPaths_.settingsFile.string());
-        }
-        return;
+    // CPX-02（R10-A4 收尾）：协议侧已迁 SettingsTakeOver::syncRestore() 并改返
+    // Result<void>（失败并入其 warnings_，UI 经 lastSyncWarnings 透传）；
+    // 门面保持 void 签名不变，失败 LOG_WARN 留痕
+    auto r = settingsTakeover_.syncRestore();
+    if (r.isFail()) {
+        LOG_WARN("Claude Code settings 还原失败: " + r.errorMessage());
     }
-    // 无 sidecar 也走 restore（条目 2②）：其中的「残留代理形态键」兜底负责把
-    // settings.json 里仍指向死代理的键清掉；无该形态时 restore 内部是真 no-op
-    //（不写文件）。启动补还原仍以 sidecar 为前提——不在每次启动就动别人的配置
-    auto r = settings_sync::restore(syncPaths_);
-    if (!r.ok) {
-        LOG_WARN("Claude Code settings 还原失败: " + r.error);
-        return;
-    }
-    lastSyncWarnings_.clear();
-    LOG_INFO("Claude Code settings 已还原（settings.json 不再指向本地代理）");
 }
 
 std::string formatCallTime(std::time_t ts, std::time_t now) {

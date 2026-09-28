@@ -29,6 +29,7 @@
 #include "platform/terminal_launch.h"
 #include "proxy_runtime.h"
 #include "settings_sync.h"
+#include "settings_takeover.h"
 
 namespace module::claude {
 
@@ -188,13 +189,15 @@ public:
     //   - bindAddress：默认 "127.0.0.1"
     //   - port：0 = 由 OS 分配；默认值同样取 core/proxy_port.h 的唯一来源
     // R10-A3：server/路由/在途流/端口镜像已迁 ProxyRuntime；门面保留启动后的
-    // 接管尾（server 启动成功 → syncTakeOver，顺序逐字保持）
+    // 接管尾（server 启动成功 → syncTakeOver，顺序逐字保持；R10-A4 起接管协
+    // 议经 SettingsTakeOver 子对象）
     core::Result<int> startProxy(const std::string& bindAddress = "127.0.0.1",
                                  int port = kDefaultProxyPort);
 
     // 停止代理。R10-A3 段级拆分：停机序列（cancelActiveStreams → server
-    // ->stop → reset）在 ProxyRuntime::stop()，本方法编排其后接 syncRestore()
-    // 还原 settings.json（A4 后改经 takeover 子对象编排）
+    // ->stop → reset）在 ProxyRuntime::stop()；R10-A4 段级拆分：其后接的
+    // settings.json 还原经 SettingsTakeOver::syncRestore()（门面 syncRestore()
+    // 包装其 Result<void> 版，失败 LOG_WARN）
     void stopProxy();
 
     // ---- 在途流式请求登记（审计 2026-09-23 [9]）----
@@ -240,11 +243,18 @@ public:
     void setConfiguredProxyPort(int port);
 
     // ---- Claude Code settings 接管（provider-config Phase C，§5.2/§5.3）----
+    // R10-A4：协议侧（路径/开关状态 + settings_sync:: 读写 + 上层覆盖警告）
+    // 已迁 SettingsTakeOver（settings_takeover.{h,cpp}，职责边界见 R10 spec
+    // §2.2）；本段方法保持 43 签名，转发 / 编排
 
     // 注入接管通道路径并启用（生产由 main.cpp 一次性注入
     // settings_sync::defaultPaths()）。默认不启用：直接构造的 service
-    //（测试）不写任何真实文件
-    void setSettingsSyncPaths(const settings_sync::Paths& paths);
+    //（测试）不写任何真实文件。inline 转发（同 setSettingsTakeOverEnabled）：
+    // R10-A4 起签名类型只在此处出现，claude_service.cpp 的 settings_sync::
+    // 命中断言（R10 spec §2.4 P-A4 ≤1）才成立
+    void setSettingsSyncPaths(const settings_sync::Paths& paths) {
+        settingsTakeover_.setPaths(paths);
+    }
 
     // 接管开关（2026-09-27 恢复为默认 **true**，用户拍板）。开着的三条路径：
     //   起代理 → 接管：settings.json 的 env 写入 BASE_URL=
@@ -254,13 +264,15 @@ public:
     //   启动时 → 补还原：sidecar 残留（上次没走完还原）→ 先还原
     // 关掉 = DevDesk 完全不碰 settings.json（三条路径一起门控，见
     // settings_sync.h 的接管/还原协议）。本机另装 cc-switch 等同类工具、
-    // 不愿两边互相覆盖时用。
-    void setSettingsTakeOverEnabled(bool on) { settingsTakeOverEnabled_ = on; }
-    bool settingsTakeOverEnabled() const { return settingsTakeOverEnabled_; }
+    // 不愿两边互相覆盖时用。门控状态在 SettingsTakeOver（setEnabled）
+    void setSettingsTakeOverEnabled(bool on) { settingsTakeover_.setEnabled(on); }
+    bool settingsTakeOverEnabled() const { return settingsTakeover_.enabled(); }
 
     // 注入的接管路径（未注入时 settingsFile 为空）。「导入当前配置」据此
     // 定位 settings.json：生产 = main 注入的 defaultPaths，测试 = 临时目录
-    const settings_sync::Paths& settingsSyncPaths() const { return syncPaths_; }
+    const settings_sync::Paths& settingsSyncPaths() const {
+        return settingsTakeover_.paths();
+    }
 
     // 已接管（sidecar 快照存在；设置页「接管状态」行数据源，Phase D UI 用）
     bool isClaudeCodeManaged() const;
@@ -297,10 +309,16 @@ private:
     // R10-A2：行解析 / 哈希 / 片段存在性校验等私有工具与 TwoPhaseKeyWrite 已随
     // ProfileRepository 迁至 profile_repository.h（见其 private 区）
 
-    // 接管/还原的内部入口（settingsFile 为空 = 通道未启用，直接返回）。
-    // syncTakeOver 返回失败原因（settings.json / sidecar 读写或解析失败），供
-    // 调用方决定呈现方式；**接管失败不阻断上层操作**（启代理/切 profile 照常），
-    // 失败原因一并并入 lastSyncWarnings_（UI 经 getter 可读）
+    // R10-A4：接管/还原的协议侧已迁 SettingsTakeOver（settings_takeover.
+    // {h,cpp}，职责边界见 R10 spec §2.2）；本门面保留两条编排入口：
+    //   - syncTakeOver()：从 ProfileRepository 取激活 Profile、从
+    //     ProxyRuntime 取端口、取所绑片段 env 后一并传入
+    //     settingsTakeover_.syncTakeOver(active, port, sharedExtraEnvJson)
+    //     （P-A4 双入参，子对象不反向依赖彼此）。失败原因经子对象并入
+    //     warnings_（UI 经 lastSyncWarnings 透传）；**失败不阻断上层操作**
+    //   - syncRestore()：settingsTakeover_.syncRestore()（CPX-02 已改返
+    //     Result<void>，失败并入 warnings_）的 void 包装——失败 LOG_WARN
+    //     （保持门面签名不变）
     core::Result<void> syncTakeOver();
     void syncRestore();
 
@@ -311,8 +329,8 @@ private:
     //   - 文件不存在 / 空文件 / 无 env → no-op 成功（照常切换）
     //   - 存在但读不了 / 解析失败 → fail（S-2：中止本次切换，profile 一字未改）
     //   - 无变化 → 零写入（不 UPDATE、不写 Keychain、不 bump updated_at）
-    // 不受 settingsTakeOverEnabled_ 门控（只读外部文件）；唯一开关是
-    // syncPaths_.settingsFile 为空 → 直接返回
+    // 不受接管开关门控（只读外部文件）；唯一开关是
+    // settingsTakeover_.paths().settingsFile 为空 → 直接返回
     core::Result<void> syncCaptureActiveProfile();
 
     core::data::SqliteDb& db_;
@@ -321,6 +339,11 @@ private:
     // 持久化入口（职责边界见 R10 spec §2.2；门面只留策略编排与转发）
     ProfileRepository profileRepository_;
     std::string keychainService_;
+
+    // R10-A4：settings.json 接管/还原的协议侧（路径注入 / 接管开关 / 托管
+    // 快照检测 / 上层覆盖警告状态都在这；见 settings_takeover.{h,cpp}）。
+    // 门面只留编排（取激活 Profile / 代理端口 / re-takeover 时机）与转发
+    SettingsTakeOver settingsTakeover_;
 
     // R10-A3：代理 server/路由生命周期 + 在途流登记 + 端口镜像 + 终态事件
     // 邮箱已迁 ProxyRuntime（proxy_runtime.{h,cpp}，职责边界见 R10 spec §2.2）。
@@ -333,11 +356,6 @@ private:
     // 测试经 setTerminalLauncher 注入假实现（断言参数、不真起进程）
     std::function<core::Result<void>(const platform::terminal::LaunchSpec&)>
         terminalLauncher_ = &platform::terminal::launch;
-
-    // Claude Code 接管通道（settingsFile 为空 = 未启用）
-    settings_sync::Paths syncPaths_;
-    bool settingsTakeOverEnabled_ = true;  // 接管默认开（见 setSettingsTakeOverEnabled）
-    std::vector<std::string> lastSyncWarnings_;
 };
 
 // ===== 纯函数（可单测，无 IO）=====
