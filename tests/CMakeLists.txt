@@ -89,6 +89,11 @@ endforeach()
 set(_devdesk_cases_on_disk_canon "")
 foreach(_f ${_devdesk_cases_on_disk})
     file(REAL_PATH "${_f}" _canon)
+    # skip probes/ dir (independent probe exes, not devdesk_tests cases)
+    string(FIND "${_canon}" "${_devdesk_tests_dir}/probes/" _probe_pos)
+    if(_probe_pos EQUAL 0)
+        continue()
+    endif()
     list(APPEND _devdesk_cases_on_disk_canon "${_canon}")
 endforeach()
 
@@ -138,3 +143,37 @@ target_link_libraries(devdesk_tests PRIVATE
 # 确保 doctest.h 可被 #include "doctest.h" 找到
 
 add_test(NAME devdesk_unit_tests COMMAND devdesk_tests)
+
+# ==================== 独立 probe 可执行（probes/ 目录） ====================
+# probes/ 下每个 .cpp 是独立小程序（如 dropdown z 可视化验证），不属于
+# devdesk_tests 用例（已在上方 TIN-10 自检中排除）：单独编译成可执行，
+# 以 LABELS "probe" 注册 ctest，便于定向跑单个 probe。
+file(GLOB _devdesk_probe_sources CONFIGURE_DEPENDS
+    ${CMAKE_CURRENT_SOURCE_DIR}/probes/*.cpp)
+
+foreach(_probe_source ${_devdesk_probe_sources})
+    get_filename_component(_probe_name "${_probe_source}" NAME_WE)
+    add_executable(${_probe_name} "${_probe_source}")
+    target_include_directories(${_probe_name} PRIVATE
+        ${CMAKE_SOURCE_DIR}/src
+        ${CMAKE_SOURCE_DIR}/tests
+        ${CMAKE_SOURCE_DIR}/src/module_claude_proxy
+        ${CMAKE_SOURCE_DIR}/src/module_settings
+    )
+    target_link_libraries(${_probe_name} PRIVATE
+        devdesk_module_home
+        devdesk_module_markdown
+        devdesk_module_todo
+        devdesk_module_claude_proxy
+        devdesk_module_settings
+        devdesk_module_pet
+    )
+    devdesk_apply_warnings(${_probe_name})
+    if(MSVC)
+        target_link_options(${_probe_name} PRIVATE /SUBSYSTEM:CONSOLE)
+    elseif(MINGW)
+        target_link_options(${_probe_name} PRIVATE -mconsole)
+    endif()
+    add_test(NAME ${_probe_name} COMMAND ${_probe_name})
+    set_tests_properties(${_probe_name} PROPERTIES LABELS "probe")
+endforeach()
