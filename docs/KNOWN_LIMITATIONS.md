@@ -1,6 +1,6 @@
 # DevDesk 已知限制
 
-> 如实记录，不做粉饰。基线：2026-09-23，Windows 11，单 exe 零外部 DLL。**测试用例数以运行输出 `Total:` 为准，不在文档写死**（当前快照 2026-09-28：`Total: 646 / Passed: 645 / Failed: 0`；330/330 是 09-23 的历史快照）。
+> 如实记录，不做粉饰。基线：2026-09-23，Windows 11，单 exe 零外部 DLL（**本文出现的 Windows 实测数字与用例数均为 Windows 侧**；2026-09-28 项目已搬回 macOS 本机开发，macOS 构建是否通过、测试基线多少，见 `TODO.md`「macOS 构建环境」段）。**测试用例数以运行输出 `Total:` 为准，不在文档写死**（当前快照 2026-09-28：`Total: 646 / Passed: 645 / Failed: 0`；330/330 是 09-23 的历史快照）。
 > 分「Windows 已知限制」与「跨平台已知限制」两节；每条附来源 / 升级路径（如有）。
 > 这些条目大多是各任务 notes 中登记的**范围外项**，不是未发现的缺陷。
 > 已修复的历史条目移入文末「已解决」小节存档（含修复 commit），不静默删除。
@@ -146,14 +146,54 @@
 
 - P0–P8 曾在 macOS 上 66 测试通过（含 .app bundle 与文件关联）。
 - T2–T11 的全部改动只在 Windows 上编译、测试过；macOS 分支代码（`*_macos.cpp`、`.app` target、Security.framework 链接）保留且按接口隔离模式组织，但**未验证**。回到 macOS 开发时需先全量构建 + 跑测试。
+- **2026-09-28 补记**：项目当日已搬回本机 macOS（arm64）开发，「未重新验证」的口径随之进入验证流程——macOS 侧是否构建通过、测试基线如何，以 `TODO.md`「macOS 构建环境」段为准，本条不自行断言结果。
 
 #### 18. macOS 侧 `system_theme_macos.cpp` 编译未验证（波 1 CP-12，2026-09-28 登记）
 
-- **现象**：`src/platform/system_theme_macos.cpp`（用纯 C 的 `CFPreferencesCopyAppValue(CFSTR("AppleInterfaceStyle"), CFSTR("NSGlobalDomain"))` 与 `CFSTR("Dark")` 比较，实现「跟随系统主题」）已写好并接进 `src/platform/CMakeLists.txt` 的 `elseif(APPLE)` 分支（同处加 `-framework CoreFoundation`），但**从未在 macOS 上编译过**——本机为 Windows、无 macOS 工具链，该 TU 不可达；它也不在 Windows 基线源列表里，故不影响 Windows 构建。
+- **现象**：`src/platform/system_theme_macos.cpp`（用纯 C 的 `CFPreferencesCopyAppValue(CFSTR("AppleInterfaceStyle"), CFSTR("NSGlobalDomain"))` 与 `CFSTR("Dark")` 比较，实现「跟随系统主题」）已写好并接进 `src/platform/CMakeLists.txt` 的 `elseif(APPLE)` 分支（同处加 `-framework CoreFoundation`），但**从未在 macOS 上编译过**——登记时本机为 Windows、无 macOS 工具链，该 TU 不可达；它也不在 Windows 基线源列表里，故不影响 Windows 构建。（2026-09-28 补记：项目已搬回 macOS 本机，本条应在本轮 macOS 构建中关闭或坐实——当前进展见 `TODO.md`「macOS 构建环境」段；关闭条件仍是下面两条。）
 - **背景**：此前 macOS 分支编的是 `system_theme_posix.cpp`，`prefersDarkTheme()` 恒 false → 设置页「跟随系统主题」在 macOS 上一律解析成浅色。
 - **验证条件（两项都过才算关闭此条）**：① macOS 侧 `cmake --build` 通过（含 `-framework CoreFoundation` 链接成功）；② 浅色 / 深色两种系统外观下，`prefersDarkTheme()` 返回值与系统一致（即 `settings_theme_auto_follows_platform` 用例在 macOS 上跑绿）。
 - **未取证**：无 GUI 会话 / SSH 登录下 `CFPreferencesCopyAppValue` 的返回值；`kCFPreferencesCurrentUser` vs `AnyUser` 的选择。
 - **来源**：波 1 L2，merge `e50d82b`；spec §4 风险表同项（文档登记归 L11）。
+
+#### 20. 三个脚本的 macOS 分支端到端未验证（`577e0d0` 移植，2026-09-28 登记）
+
+- **现象**：`scripts/build-test-run.sh` / `scripts/ccache-env.sh` / `scripts/check-consistency.sh` 的 macOS/Linux 分支（Darwin：`pkill -f` 杀进程、`otool -L` 列依赖、`screencapture -x` 截屏、`stat -f%z`、`-DOPENSSL_ROOT_DIR=/opt/homebrew/opt/openssl@3`、ccache 配置读 `~/Library/Preferences/ccache/ccache.conf`）**从未在 macOS 上完整跑过一遍**——`577e0d0` 只做了语法检查与定点验证，「构建 + 测试 + 启动」全链在 macOS 上是否可用**未证实**。
+- **触发条件**：在 macOS 上执行 `bash scripts/build-test-run.sh`。`check-consistency.sh` 的截屏分支另有一层前置：终端需被授予「屏幕录制」TCC 权限，否则 `screencapture -x` 拿不到窗口内容（脚本保留 Pillow 合成回退，但**无权限时的实际行为未在实机验证**）。
+- **为什么暂不处理**：移植的验收口径只到「Windows 分支行为不变 + 语法/定点检查」；端到端要等 macOS 侧构建先跑通（见 `TODO.md`「macOS 构建环境」段），在此之前手敲 configure + ctest 是可靠路径。
+- **来源**：`577e0d0`（2026-09-28）；脚本内注释 `scripts/build-test-run.sh:28-47`、`scripts/check-consistency.sh:21-24`。
+
+#### 21. probe 类可执行文件在 `/private/tmp` 下被执行时被 macOS 杀掉（根因未定，2026-09-28 登记）
+
+- **现象**：两个 probe 类可执行文件曾在 `/private/tmp` 下被执行时被系统杀掉，报错形态为 `SIGKILL (Code Signature Invalid)` / `Launch Constraint Violation`。
+- **触发条件**：把 probe 类可执行文件放到 `/private/tmp` 下直接执行。**根因未定**（代码签名缺失、还是路径/隔离属性触发，未查明）；同一批产物在仓库内 `build/tests/` 下是否同样被杀**尚未证实**（未做对照实验）。
+- **为什么暂不处理**：只影响「临时目录里跑 probe」这一条工作方式，不阻塞 headless 测试套件与正式产物的既有验证路径；等 macOS 侧构建跑通后，先确认 `build/tests/` 下的产物可否执行，再决定是否要签名或换执行目录。
+- **来源**：macOS 侧 probe 执行尝试（2026-09-28）；同批上下文见 `TODO.md` §4「Probes 扩展」。
+
+#### 22. macOS 测试套件是 Windows 的真子集——平台实现本身无用例覆盖（2026-09-28 登记）
+
+- **现象**：平台相关用例多数带平台守卫，macOS 上实际跑的是 Windows 契约的子集：
+  - `tests/test_platform/test_file_watcher.cpp` 的事件链路用例整段 `#if defined(_WIN32)`（`:192-404`：create/modify/delete、子目录 + 非 ASCII、突发事件去抖、回调线程内 stop 等），全平台只剩参数校验（`:140`）与 start/stop 幂等（`:170`）两条；
+  - `tests/test_platform/test_file_open.cpp` 的 `file_open_win_wide_to_utf8` 整条 `#if defined(_WIN32)`（`:107-145`）；
+  - `tests/test_platform/test_keychain.cpp` 会碰真实凭据库的用例在 macOS 上被 `SKIP_ON_MACOS_KEYCHAIN()` 跳过（`:14-19` 定义，`:23` / `:57` 调用），命名/实现相关的一段另用 `#if defined(_WIN32)` 门控（`:91-174`）。
+- **后果**：**没有任何用例断言 macOS 的平台实现本身**——`keychain_macos.cpp`、`file_open_macos.cpp`、`FileWatcher`（macOS 侧仍是 stub）与 `system_theme_macos.cpp` 全无覆盖。`settings_theme_auto_follows_platform`（`tests/test_modules/test_settings.cpp:1794-1815`）虽然调用了 `platform::prefersDarkTheme()`，但断言是机器无关的自洽式（`theme::current().isDark == prefersDarkTheme()`），不校验 macOS 实现返回的是不是系统真实外观——这一项正是上文 §18 的关闭条件。
+- **为什么暂不补**：keychain 的 macOS 实现走真实 login keychain、没有测试专用钥匙串的注入口（`:5-13` 注释），补覆盖要先加注入/隔离缝；FileWatcher 在 POSIX/macOS 仍是 stub，无实现可断言。
+- **来源**：macOS 构建环境勘察（2026-09-28），行号为当时实测。
+
+#### 23. macOS 独有缺陷类：仓库根的 `VERSION` 文件遮蔽 libc++ 的 `<version>`（2026-09-28 登记）
+
+- **现象**：macOS 侧首次构建时出现 `expected unqualified-id` 扫射式报错（一次触发 115/117 条编译失败），根因不在代码而在头文件搜索顺序。
+- **触发条件**：7 个模块的 CMakeLists 曾把仓库根挂进 include 路径（`${CMAKE_CURRENT_SOURCE_DIR}/../..`）；仓库根的 `VERSION` 文件（构建版本号，每次构建自增）在 **APFS 大小写不敏感**下遮蔽了 libc++ 内部的 `#include <version>`。libstdc++ 不主动拉 `<version>`，所以**Windows 上永不复现**，只在 macOS/AppleClang 上炸。
+- **修法**：不给那个目录加 `-I`。这与仓库内既有的一类病同款——`src/core/time.h` 劫持系统 `<time.h>`（见 `src/core/CMakeLists.txt:39-41` 的注释）。
+- **为什么登记**：这是**一类**而非一次事故（仓库根新增任何与系统头同名的文件都会重演）；macOS 构建线上处理，进展见 `TODO.md`「macOS 构建环境」段。
+- **来源**：macOS 首次构建（2026-09-28）。
+
+#### 24. macOS 独有缺陷类：clang 的 `-Wdefaulted-function-deleted`（Windows 永不复现，2026-09-28 登记）
+
+- **现象**：`src/core/database.h` 的默认构造函数问题在 AppleClang 下报 `-Wdefaulted-function-deleted`；本项目对自有 target 开 `-Werror`（`cmake/CompilerWarnings.cmake`），告警即构建失败。
+- **触发条件**：用 macOS / AppleClang 编译 `src/core/database.h`。**GCC 无此诊断**（两个编译器的诊断集不同），故 Windows/MinGW 侧永不复现，既有 Windows 全绿基线也覆盖不到它。
+- **处置**：按 clang 诊断修 `database.h` 的默认构造函数（macOS 构建线）。本条登记的实际价值是口径提醒——**换编译器 = 换诊断集**，Windows 的全绿不能当 macOS 的等价证据。
+- **来源**：macOS 首次构建（2026-09-28）。
 
 ### EUI-NEO 上游 PR 候选（修上游，不在 DevDesk hack）
 

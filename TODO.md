@@ -63,7 +63,7 @@
   export PATH="/opt/homebrew/bin:$PATH"
   cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Debug -DOPENSSL_ROOT_DIR=/opt/homebrew/opt/openssl@3
   ```
-- `scripts/build-test-run.sh` **在 macOS 上不可用**：脚本第 25 行写死 Windows 工具链 PATH（`/d/software/cmake/cmake-4.3.3-windows-x86_64/bin:/d/software/ninja:/c/msys64/mingw64/bin`）、第 120 行写死 `-DOPENSSL_ROOT_DIR=C:/msys64/mingw64`。macOS 上要跑构建 + 测试 + 启动，只能手敲上面两条命令再补等价步骤。
+- `scripts/build-test-run.sh` **已移植为跨平台**（提交 `577e0d0` 给三个脚本加 macOS/Linux 分支：Darwin 的 `/opt/homebrew/bin` PATH 前置、`-DOPENSSL_ROOT_DIR=/opt/homebrew/opt/openssl@3`、`pkill -f` 杀进程、`otool -L` 依赖清单、macOS 的 ccache 配置路径；原先写死的 Windows 工具链 PATH 与 `C:/msys64/mingw64` openssl 路径改为按 `DEVDESK_OS` 分支取，Windows 分支行为不变）。**但端到端未验证**——移植后只做过语法检查与定点验证，从未在 macOS 上完整跑过一次「构建 + 测试 + 启动」，`check-consistency.sh` 的 `screencapture` 分支还依赖「屏幕录制」TCC 权限（无权限时的行为未知，见 `docs/KNOWN_LIMITATIONS.md`）。在端到端跑通之前，手敲上面两条命令仍是当前最可靠的路径。
 - macOS 首次构建失败：EUI-NEO `core/platform/window_style_macos.mm` 与 `core/platform/context_menu_macos.mm` 编译不过（详见 backlog `docs/superpowers/plans/2026-09-22-backlog.md` §三）。归因：EUI-NEO 2026-09-28 提交 `6f771c3` 从未在 macOS 上编译过。
 
 ---

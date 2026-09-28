@@ -14,7 +14,7 @@ Claude 代理/Profile 反向同步全链（M1–M5）已交付并合 master；�
 | 工作区 | 干净（仅未跟踪 `?? .claude/`） |
 | 测试 | 见 `build/tests/devdesk_tests.exe` 最新一轮输出（ccache 热构建下全量 ~35s） |
 | 残留 worktree | `agent-a19de92747187fb7b`（**R0 线**，无提交；当时我 TaskStop 了它，transcript 还在 → `SendMessage` 唤醒即可续跑） |
-| EUI-NEO | `269a8c4`（U1 已合），**领先 origin 70 个提交未 push**（本机无推送通道，属已知阻塞） |
+| EUI-NEO | `269a8c4`（U1 已合），**领先 origin 的提交永不 push**（2026-09-28 用户决策：origin/main 停在 v0.6.0，本地领先是长期状态，不再算阻塞项）。本文件成稿时（2026-09-27）的口径是「领先 origin 70 个提交未 push、本机无推送通道」——该「待 push」状态已随决策作废 |
 
 ## 2. 今晚交付了什么（细节在 artifact 里，勿重抄）
 - **反向同步 + 复制 M1–M5**：spec `docs/superpowers/specs/2026-09-27-profile-reverse-sync-and-copy-design.md`；含 G1–G10 守卫、takeOver 陈旧键清理、快照污染守卫、无 sidecar 兜底、失败可上报、第 5 键「复制」UI。

@@ -9,15 +9,19 @@
 - **设置** —— 六张卡：外观（主题 / 字号 / 窗口效果三档）/ 模块开关（重启生效）/ 桌宠 / 笔记目录（打开目录）/ Claude 代理（自启 · 端口 · Token 脱敏 · 接管状态）/ 日志保留（切换即时清理）
 - **桌宠** —— 无边框置顶透明小窗宠物（module_pet，非页面模块）：拖拽 / 四态动画（待机·被戳·打字·睡觉）/ 气泡对话（含逾期任务数提醒）/ 右键菜单（穿透·换肤·位置重置·隐藏·退出 DevDesk 二段确认）/ 程序化与美术皮肤体系；默认关闭，经设置页「模块」卡启用（重启生效）
 
-当前状态（2026-09-23，Windows 11）：**全量测试绿（用例总数以运行输出 `Total:` 为准，不在文档写死；2026-09-28 波 1 合并后快照 `Total: 646 / Passed: 645 / Failed: 0`）；单 exe 零外部 DLL（Release 15.6 MiB）；10MB 流式端到端吞吐实测约 240–320 MB/s；60s soak 0% 丢失**。macOS 分支代码保留（接口隔离模式），自 2026-09-21 迁移后未重新验证。
+当前状态（2026-09-23，**Windows 11 平台快照**）：**全量测试绿（用例总数以运行输出 `Total:` 为准，不在文档写死；2026-09-28 波 1 合并后快照 `Total: 646 / Passed: 645 / Failed: 0`——以上均为 Windows 侧数字）；单 exe 零外部 DLL（Release 15.6 MiB）；10MB 流式端到端吞吐实测约 240–320 MB/s；60s soak 0% 丢失**。
+
+**当前开发平台是本机 macOS（arm64）**——2026-09-28 项目已从 Windows 搬回 macOS 继续开发，macOS 也是本项目最初的开发平台；上面那组数字与本文的 Windows 章节保留作移植目标的参考，不是 macOS 的实测值。**当前 macOS 构建状态（是否已通过、测试基线）见 [TODO.md](TODO.md)「macOS 构建环境」段**。
 
 GUI 框架为 [EUI-NEO](https://sudoevolve.github.io/EUI-NEO/)（源码同级目录集成，非 submodule）。
 
-## 三分钟上手（Windows 11 + MSYS2 MinGW64）
+## 三分钟上手（Windows 11 + MSYS2 MinGW64；Windows 为**移植目标**）
+
+> 当前开发平台是 macOS（本机 arm64）：configure 命令与工具链见 [CLAUDE.md](CLAUDE.md)「常用命令」段的 macOS 块，构建/测试现状见 [TODO.md](TODO.md)「macOS 构建环境」段。下面这一节是 Windows 侧的构建说明。
 
 **前置**：
 
-1. [EUI-NEO](../EUI-NEO) 源码在 DevDesk **同级目录**（`../EUI-NEO`；也可 `-DEUI_NEO_DIR=<路径>` 覆盖）。**EUI-NEO 需保持本地 main 最新**——当前依赖 rev `269a8c4`（含 onWindowDestroyed/requestFocus/trayMenu/windowEffect/lineStyles/getMonitorWorkAreas/setSystemPowerHandler/styledMenu/onTrayMenu/windowIsFocused/input onCancel 等新 API；这批提交尚未 push 到 origin，从 GitHub 新克隆拿到的是旧 v0.6.0、会编译失败）。顶层 CMake configure 时打印 EUI-NEO git rev 并在版本不符时软警告（不 fail）；EUI-NEO push 后将启用硬版本检查。
+1. [EUI-NEO](../EUI-NEO) 源码在 DevDesk **同级目录**（`../EUI-NEO`；也可 `-DEUI_NEO_DIR=<路径>` 覆盖）。**EUI-NEO 需保持本地 main 最新**——当前依赖 rev `269a8c4`（含 onWindowDestroyed/requestFocus/trayMenu/windowEffect/lineStyles/getMonitorWorkAreas/setSystemPowerHandler/styledMenu/onTrayMenu/windowIsFocused/input onCancel 等新 API；这批提交未 push 到 origin，且 2026-09-28 用户决策 **EUI-NEO 永不 push**——origin/main 停在 v0.6.0、本地领先是长期状态，从 GitHub 新克隆拿到的是旧 v0.6.0、会编译失败）。顶层 CMake configure 时打印 EUI-NEO git rev 并在版本不符时软警告（不 fail）；原计划「EUI-NEO push 后启用硬版本检查」的前置条件因永不 push 决策不再到来，硬版本检查保持未启用。
 2. MSYS2 MinGW64 环境：`mingw-w64-x86_64-gcc`、`mingw-w64-x86_64-sqlite3`、`mingw-w64-x86_64-curl`、`mingw-w64-x86_64-openssl`（pacman 安装），以及 CMake ≥ 3.14 与 Ninja。
    本机工具链路径（CMake 4.3.3 / Ninja / MinGW64 GCC 16.2）见 [CLAUDE.md](CLAUDE.md)。
 

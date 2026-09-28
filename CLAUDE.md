@@ -12,7 +12,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 另有首页仪表盘、设置页（模块插拔开关）与**桌宠**（module_pet，非 Router 页面模块，无边框置顶透明子窗，默认关闭、经设置页模块开关启用）。
 
-目标平台：**Windows 11**（当前开发环境，2026-09 从 macOS 迁移而来）和 **macOS 27+**（已完成主线，平台分支代码保留可用）。
+目标平台：**macOS 27+**（当前开发平台，本机 arm64——macOS 也是本项目最初的开发平台，P0-P8 主线在此完成）和 **Windows 11**（移植目标，2026-09-21~28 曾在 Windows 上开发，P14 与 W/R 各批在 Windows 侧交付）。
 
 > **平台补记（2026-09-28）**：项目已搬回本机 macOS（arm64）继续开发——macOS 是本项目最初的开发平台。本文件的 Windows 相关工具链章节（「常用命令」的 MSYS2 MinGW64 段、ccache 三件套、并行度封顶等）保留，作为移植目标的参考，不再是当前开发环境。
 
@@ -26,13 +26,28 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## 🛠️ 常用命令
 
-**Windows 11（当前开发平台，MSYS2 MinGW64 + Ninja）**：
+**macOS / arm64（当前开发平台，AppleClang + Ninja）**：
+
+```bash
+export PATH="/opt/homebrew/bin:$PATH"
+
+cd DevDesk
+rm -rf build   # 换平台后必须（缓存里锁着旧平台的产物）
+cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Debug \
+  -DOPENSSL_ROOT_DIR=/opt/homebrew/opt/openssl@3
+cmake --build build
+cd build && ctest --output-on-failure
+```
+
+本机工具链：cmake 4.4.3、ninja 1.13.2、AppleClang（`/usr/bin/clang++`）、ccache 4.14.1（均在 `/opt/homebrew/bin`，已在 PATH）。ccache 在 macOS 的持久配置读 **`~/Library/Preferences/ccache/ccache.conf`**——**不是** XDG 的 `~/.config/ccache/ccache.conf`（实测写 XDG 路径 ccache 完全无视）。**当前 macOS 构建状态（是否已通过、测试基线）见 `TODO.md`「macOS 构建环境」段**，本文不写死。
+
+**Windows 11（移植目标，MSYS2 MinGW64 + Ninja；以下命令保留作移植参考）**：
 
 ```bash
 export PATH="/d/software/cmake/cmake-4.3.3-windows-x86_64/bin:/d/software/ninja:/c/msys64/mingw64/bin:$PATH"
 
 cd DevDesk
-rm -rf build   # 换平台后必须（旧 build/ 是 macOS Darwin arm64 产物）
+rm -rf build   # 换平台后必须（缓存里锁着旧平台的产物）
 cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Debug \
   -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
 cmake --build build
@@ -57,7 +72,7 @@ launcher 是 **configure 期属性**：已存在的 `build/` 目录不会自动�
 **"裸 `cmake -B build`（完全不带 -D）也能吃缓存"这条路走不通，别再试**：① 本仓库 configure 本身就需要 `-DOPENSSL_ROOT_DIR=C:/msys64/mingw64`（否则 `Could NOT find OpenSSL` 直接失败，CLAUDE.md 上面那段是最简可用形态）；② 试过 ccache 官方 masquerade（MSYS2 自带 `/mingw64/lib/ccache/bin` 是 bash 脚本、写死 `/mingw64/bin/g++`，在 Git Bash 里指向 Git 自带目录 → 报错）与自建 shim 目录（ccache.exe 复制成 `g++.exe`，实测能让 `g++ --version` 走 ccache），但 shim 会顶替编译器路径 → 本仓库 `DEVDESK_MINGW_ROOT` 从编译器路径反推 MinGW 根（`cmake/Dependencies.cmake`），根变成 `D:/software` 后静态 curl 依赖链解析失败（`set_property can not be used on an ALIAS target`）→ 不采用。
 **实测（2026-09-27，12 核 / `DEVDESK_JOBS=3` / 两个全新 worktree 首建）**：冷缓存 **647 s**（configure 52 s + ninja 284 边 595 s）→ 热缓存 **35 s**（239 次查找 237 命中 = **99.2%**，且 237 全为 direct 命中、零预处理），即 worktree 首建从 ~11 分钟降到 **~35 秒**；缓存产物 `devdesk_tests.exe` 全量全绿（当时快照 589/589；**用例总数以运行输出 `Total:` 为准，不在文档写死**）、`DevDesk.exe` 依赖 DLL 集合与冷编译逐项一致（17 个系统 DLL、零外部 DLL）。
 
-**macOS（历史平台，仅打包脚本保留）**：macOS 主线（P0-P8）在 2026-09 迁 Windows 前完成，迁后仓库内只剩 `platform/macos/build-app.sh` 与 `scripts/package-macos.sh` 两个打包辅助脚本。本文档旧版提到的 `./scripts/dev.sh`（构建+运行）、`./scripts/test.sh`、`./scripts/screenshot.sh <page>`、`./scripts/reset-db.sh` **在本仓库中不存在**（`git ls-files scripts/` 可核），不要再照抄执行。`check-consistency.sh` 已 Windows 化（波 1 TIN-13）：Playwright 截 HTML demo + PowerShell `CopyFromScreen` 截主窗口 + Pillow 合成回退，二进制名按 `uname` 分平台取 `build/DevDesk.exe`，不再是 macOS 专用脚本。
+**macOS 侧的脚本（2026-09-28 起为跨平台）**：`scripts/build-test-run.sh` / `scripts/ccache-env.sh` / `scripts/check-consistency.sh` 由提交 `577e0d0` 加上 macOS/Linux 分支——Darwin 走 `pkill -f` 杀进程、`otool -L` 依赖清单、`screencapture -x` 截屏、`stat -f%z`、`-DOPENSSL_ROOT_DIR=/opt/homebrew/opt/openssl@3`，ccache 配置读 `~/Library/Preferences/ccache/ccache.conf`；原先写死的 Windows 工具链 PATH 与 `C:/msys64/mingw64` openssl 路径改为按 `DEVDESK_OS` 分支取（Windows 分支行为不变，波 1 TIN-13 的 Playwright + `CopyFromScreen` + Pillow 回退仍在）。**该移植只做过语法检查与定点验证，端到端从未跑过**——macOS 上「构建 + 测试 + 启动」未完整跑过一遍，`check-consistency.sh` 的 `screencapture` 分支还需要终端具备「屏幕录制」TCC 权限，无权限时的实际行为未知（已登记 `docs/KNOWN_LIMITATIONS.md`）。本文档旧版提到的 `./scripts/dev.sh`（构建+运行）、`./scripts/test.sh`、`./scripts/screenshot.sh <page>`、`./scripts/reset-db.sh` **在本仓库中不存在**（`git ls-files scripts/` 可核），不要再照抄执行。
 
 构建入口：`CMakeLists.txt` 顶层 → `src/main.cpp`。
 EUI-NEO 依赖：`../EUI-NEO/`（同级目录，通过 `EUI_NEO_DIR` cache 变量 `add_subdirectory` 集成，**不是 git submodule**）。**当前依赖 rev**：`7164d55`（2026-09-28，与 `DEVDESK_EUI_NEO_MIN_REV` 一致；EUI-NEO 本地 main 领先 origin 82 个提交（2026-09-28 实测），**已决策永不 push 到 origin**（2026-09-28 用户决策）——origin/main 停在 v0.6.0，本地领先是长期状态、提交数只会继续增长）。**EUI-NEO 需保持本地 main 最新**（含 onWindowDestroyed/requestFocus/trayMenu/windowEffect/lineStyles/getMonitorWorkAreas/setSystemPowerHandler/styledMenu/onTrayMenu/windowIsFocused/input onCancel 等新 API），顶层 CMake configure 时打印 `EUI-NEO git rev` 并在缺失最低依赖 rev（`DEVDESK_EUI_NEO_MIN_REV`，与本行保持一致、消费 EUI 新 API 后两处同步更新）时软警告不 fail；原计划「EUI-NEO push 后启用硬版本检查」的前置条件因「永不 push」决策不再到来，硬版本检查保持未启用（审计 [11]）。
@@ -172,13 +187,13 @@ main → 6 个 module_* (home / markdown / todo / claude_proxy / settings / pet)
 
 完整 token 见 spec §6.5.1 和 §6.5.2。
 
-## 🚦 当前阶段（2026-09-28 更新，macOS → Windows 11 迁移后）
+## 🚦 当前阶段（2026-09-28 更新，项目已从 Windows 搬回 macOS 本机开发）
 
 按 spec §16 实施，进度：
 
 - ✅ **P0-P8 完成**（macOS 上 66 测试通过 + .app bundle，截图见 `docs/screenshots/`）
 - ✅ **P9（代理非流式）+ P10a（SSE 流式）+ P10b（流式压测）完成** —— W1 收编 macOS 中断现场并修全部基线问题（T1-T5），Windows 全量测试 109 例全绿（W2 验收 2026-09-22：10MB e2e/soak/断连恢复/内存采样全过）
-- ✅ **P14（Windows）必选达成** —— spec §16 已更新：P14 升必选（Windows 11 为当前开发环境）+ 发布形态约束"单 exe 零外部 DLL"（T3 达成，W2 复查通过）；平台适配接口隔离完成（T6，业务代码零平台宏）
+- ✅ **P14（Windows）必选达成** —— spec §16 已更新：P14 升必选（当时以 Windows 11 为开发环境；2026-09-28 起当前开发平台是本机 macOS）+ 发布形态约束"单 exe 零外部 DLL"（T3 达成，W2 复查通过，均为 Windows 侧验收）；平台适配接口隔离完成（T6，业务代码零平台宏）
 - ✅ **W3 剩余需求收官（T9–T12 + P16）** —— 启动顺序理顺零 WARN、P12 Home 真实数据、P13 设置页、platform::json 实装、P15 文档（124/124 全绿），恢复计划关闭
 - ✅ **W5 遗留项清零（2026-09-22）** —— Claude 按钮全量接线、侧边栏导航（删浮动齿轮）、全局字号缩放、UTF-8 argv、clearColor 随主题、跨模块跳转负载（Home 快捷按钮弹窗 + 最近编辑打开指定笔记）。最终基线 **137/137 全绿**；详见 CHANGELOG [W5] 与 KNOWN_LIMITATIONS「已解决」小节
 - ✅ **W6-W9 + 磨砂全链（2026-09-22/23）** —— 窗口效果三档、供应商配置（settings.json 自动接管）、插件化门控、桌宠 MVP、Markdown 键盘流/标签/目录树、Todo 搜索/逾期/tags/拖拽反馈、模块插拔（09-23 基线 330 全绿）
@@ -208,7 +223,7 @@ main → 6 个 module_* (home / markdown / todo / claude_proxy / settings / pet)
 
 已正确处理的跨平台点（T6 接口隔离后）：**keychain / paths / time / file_open 四族平台 API 全部按平台拆文件**（`*_win.cpp` / `*_macos.cpp` / `*_posix.cpp`，CMake `target_sources` 按平台选择编译，与 EUI-NEO 后端选择同一模式），业务代码零 `#ifdef _WIN32` / `__APPLE__`（2026-09-22 W2 验收 grep `src/` *.cpp/*.h 零命中）；HTTP 层（libcurl/cpp-httplib）本身跨平台；`.app` target（`if(APPLE)` 守卫）、Security.framework 链接（有守卫）。time 统一走 `core::time::localTime`（`src/core/time.h` + `time_win/posix.cpp`）。
 
-**测试框架注意**：`tests/doctest.h` 是自制 87 行迷你框架（`REGISTER_TEST` 宏静态自注册 + `DOCTEST_CHECK/REQUIRE` 断言，fail-fast），**不是真 doctest**——grep `TEST_CASE` 找不到用例、`--list-test-cases` 之类参数会被当作过滤子串属正常。**用例总数以运行输出 `Total:` 为准，不在文档写死**——2026-09-28 波 1 合并后实测 `Total: 646 / Passed: 645 / Failed: 0`（Total 比 Passed 多的那 1 条是 `DEVDESK_SOAK=1` 门控的 soak，常规套件打印 `[SKIP]` 直接跳过）；波 1 之前的基线是 `Total: 621 / Passed: 619 / Failed: 1`，那条 Failed 是模块隔离守卫的 cwd 缺陷（ccache 把 `__FILE__` 相对化后、从仓库根跑必误报「找不到仓库根」），已由波 1 迁到 `scripts/check-module-isolation.sh` 修复。以下数字均为**历史**快照，只作沿革记录、不再作为当前值引用：530（2026-09-27）→ 514（同日更早）→ 481（2026-09-24；= 09-23 基线 330 + W6-W9/磨砂全链/供应商配置/桌宠 MVP/Markdown 键盘流等 backlog 波 + 词法器加 JS/Go/Rust/Shell +4 + 挂机穿透功能移除 -1）。test_main 支持子串过滤：`./devdesk_tests.exe stress` 只跑名字含 "stress" 的用例，`--log` 打开 Debug 级控制台日志。
+**测试框架注意**：`tests/doctest.h` 是自制 87 行迷你框架（`REGISTER_TEST` 宏静态自注册 + `DOCTEST_CHECK/REQUIRE` 断言，fail-fast），**不是真 doctest**——grep `TEST_CASE` 找不到用例、`--list-test-cases` 之类参数会被当作过滤子串属正常。**用例总数以运行输出 `Total:` 为准，不在文档写死**——2026-09-28 波 1 合并后**（Windows 侧）**实测 `Total: 646 / Passed: 645 / Failed: 0`（Total 比 Passed 多的那 1 条是 `DEVDESK_SOAK=1` 门控的 soak，常规套件打印 `[SKIP]` 直接跳过）；波 1 之前的基线是 `Total: 621 / Passed: 619 / Failed: 1`，那条 Failed 是模块隔离守卫的 cwd 缺陷（ccache 把 `__FILE__` 相对化后、从仓库根跑必误报「找不到仓库根」），已由波 1 迁到 `scripts/check-module-isolation.sh` 修复。以下数字均为**历史**快照，只作沿革记录、不再作为当前值引用：530（2026-09-27）→ 514（同日更早）→ 481（2026-09-24；= 09-23 基线 330 + W6-W9/磨砂全链/供应商配置/桌宠 MVP/Markdown 键盘流等 backlog 波 + 词法器加 JS/Go/Rust/Shell +4 + 挂机穿透功能移除 -1）。test_main 支持子串过滤：`./devdesk_tests.exe stress` 只跑名字含 "stress" 的用例，`--log` 打开 Debug 级控制台日志。
 
 ## 🐾 桌宠（module_pet）皮肤资源
 

@@ -66,8 +66,8 @@
 | 13 | Markdown Phase 3 块级实时渲染 | 2-3 周 | 需 brainstorming → spec |
 | 14 | D 全量重构（OOP/设计模式，逐模块增量） | 架构级 | 排最后，单独 spec，禁大爆炸 |
 | 15 | EUI-NEO 字体改动回上游 + 提交 | 小 | 本次改的 `resolveDefaultUiFontPath` 在 EUI-NEO 仓库，需在其仓库 commit |
-| 16 | EUI-NEO push origin | — | **阻塞（非项目内可解）**：本机无 gh/SSH/credential helper（且 DevDesk 仓库无 remote）；只能用户 Web UI 或提供 PAT |
-| 17 | macOS 全量回归 | — | **阻塞（非项目内可解）**：本机无 Mac 环境 |
+| 16 | EUI-NEO push origin | — | **已关闭（2026-09-28 用户决策）**：EUI-NEO **永不 push 到 origin**（origin/main 停在 v0.6.0），本地领先是长期状态、不再按「待 push / 阻塞」跟踪；原阻塞理由（本机无 gh/SSH/credential helper，且 DevDesk 仓库无 remote）随之不必解除 |
+| 17 | macOS 全量回归 | — | **已不阻塞（2026-09-28）**：项目已搬回本机 macOS（arm64），回归可在本机跑；本条原写「阻塞（非项目内可解）：本机无 Mac 环境」，该前提已失效。当前 macOS 构建/测试状态见 `DevDesk/TODO.md`「macOS 构建环境」段 |
 | 18 | 终验人工点验清单 | — | **阻塞（非项目内可解）**：用户侧执行 |
 
 ## 已定决策（本轮）
@@ -101,6 +101,6 @@
 
 - **全部在飞子任务已收口**（设置接管 / H1+M3 / testConnection 方言 / 窗口钳制 / 二级目录 / 伪头过滤 / EUI-NEO 提交），最终树由主会话统一验证：**514/514 绿**
 - **11 个提交已合 master**（`f788369`）：HTTP 四修 / 去鉴权+接管默认开 / 窗口钳制 / 菜单位置 / config 原子写 / 布局 9 条 / 桌宠锚点 / md 两级目录 / 上游方言 / 伪头过滤 / docs
-- **worktree 全清**（两仓库均只剩主树，无 `wt-*` 残留）；EUI-NEO 两提交在 main（`6595438` 字体 / `8a1227c` styled 菜单 DPI），领先 origin 67 未 push
+- **worktree 全清**（两仓库均只剩主树，无 `wt-*` 残留）；EUI-NEO 两提交在 main（`6595438` 字体 / `8a1227c` styled 菜单 DPI），领先 origin 67（当夜实测值；**2026-09-28 用户决策：EUI-NEO 永不 push，origin/main 停在 v0.6.0——「未 push」不再是待办项**）
 - **一个未验证关口**：master 合并后未跑构建+测试（测试跑在合并前的 feat 树上）
 - 最新状态、决策全集、排队项与恢复第一步 → 见 `2026-09-27-HANDOFF.md`
