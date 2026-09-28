@@ -15,15 +15,18 @@
 #include <vector>
 
 #include "terminal_launch.h"
+#include "file_open_common.h"
 
 namespace platform::terminal {
 
 // ---------- 引号 / 转义 ----------
 
 // POSIX shell 单引号转义（' 拆成 '\''）：路径含空格/引号不破坏命令边界。
-// 与 file_open_macos.cpp / file_open_posix.cpp 内的 file-static 实现同规则
-//（那两份是 file-static，不能跨文件复用）。
-std::string shellSingleQuote(const std::string& s);
+// 实现不再自持：审计 CP-09 已把 file_open_macos.cpp / file_open_posix.cpp 内
+// 两份逐字相同的 file-static 实现下沉为 platform::file_open::shellSingleQuote
+//（定义在 file_open_common.cpp，全平台常编 TU），此处经 using 声明复用——
+// terminal_launch_common.cpp 与 terminal_launch_macos.cpp 的无名调用原样可用。
+using platform::file_open::shellSingleQuote;
 
 // PowerShell 单引号转义（' → ''）：PS 单引号串内唯一的转义形式。
 std::string powershellSingleQuote(const std::string& s);

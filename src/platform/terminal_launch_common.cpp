@@ -11,15 +11,8 @@ namespace platform::terminal {
 
 // ---------- 引号 / 转义 ----------
 
-std::string shellSingleQuote(const std::string& s) {
-    std::string out = "'";
-    for (const char c : s) {
-        if (c == '\'') out += "'\\''";
-        else out += c;
-    }
-    out += "'";
-    return out;
-}
+// shellSingleQuote 已下沉为 platform::file_open::shellSingleQuote（审计
+// CP-09），本文件经 terminal_launch_common.h 的 using 声明复用，不再自持。
 
 std::string powershellSingleQuote(const std::string& s) {
     std::string out = "'";
