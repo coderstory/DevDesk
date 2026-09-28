@@ -117,18 +117,19 @@ if [ -z "$(ls -A "$ASSETS_DIR_POSIX/shaders/shadertoy" 2>/dev/null)" ]; then
   echo "❌ 断言失败：$ASSETS_DIR_POSIX/shaders/shadertoy 为空（assets 未正确拷贝？）" >&2
   exit 1
 fi
-# 断言 ②：assets/pets 下只有 README.md（防已删美术皮肤作为残留被打进安装包）
+# 断言 ②：assets/pets 下 README.md 存在 + 所有子目录含 pet.json（2026-09-28：9 皮肤
+# 包随仓库分发，断言从「仅 README.md」改为「每个子目录含 pet.json」，兼容新增/删皮肤）
 if [ ! -f "$ASSETS_DIR_POSIX/pets/README.md" ]; then
   echo "❌ 断言失败：$ASSETS_DIR_POSIX/pets/README.md 缺失" >&2
   exit 1
 fi
-EXTRA_PETS="$(ls -A "$ASSETS_DIR_POSIX/pets" | grep -v '^README\.md$' || true)"
-if [ -n "$EXTRA_PETS" ]; then
-  echo "❌ 断言失败：assets/pets 下有多余项（应仅 README.md）：" >&2
-  echo "$EXTRA_PETS" >&2
-  exit 1
-fi
-echo "✅ assets 就位（shaders/shadertoy 非空；pets 仅 README.md）"
+for petdir in "$ASSETS_DIR_POSIX/pets"/*/; do
+  if [ ! -f "$petdir/pet.json" ]; then
+    echo "❌ 断言失败：皮肤目录缺 pet.json: $petdir" >&2
+    exit 1
+  fi
+done
+echo "✅ assets 就位（shaders/shadertoy 非空；pets 含 $(ls -d "$ASSETS_DIR_POSIX/pets"/*/ 2>/dev/null | wc -l) 皮肤包）"
 
 # ISCC 是原生 Windows 程序：路径要 Windows 形态（Git Bash 的 /d/... 形态可能被拒）
 if command -v cygpath >/dev/null 2>&1; then
