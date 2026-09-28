@@ -383,15 +383,16 @@ void drawColumnContent(eui::Ui& ui, const std::string& id, const Column& col,
     // 列内滚动（scrollView）：此前直接裁掉超出列高的卡片（第 12 张起消失）。
     // 滚动位置按列索引记忆（reloadAll 时 vector resize 保留旧值）。
     const auto componentTheme = core::theme::componentTokens(t);
-    // M2-3（2026-09-28，UI 现代化）：列内容容器 = 卡片落位淡入载体——
-    // 拖拽结束（onDragEnd / cardReleased 置位）的下一帧 0.6 → 1.0 淡回
-    // （0.12s OutQuad；跟手期间标志不被触碰，动画不与拖拽打架）。
-    // 原 scrollView 的绝对定位整体下移进本容器（位置/尺寸逐值等价，
-    // 列头按钮等其余元素不受影响）
+    // M2-3（2026-09-28，UI 现代化）：列内容容器 = 卡片落位淡入载体。
+    // 跨模块剩余审计修：opacity 直接门控 dragActive——跟手中整列 0.6 调暗
+    //（反馈 + 为淡回建立 0.6 起点），松手目标回 1.0 → 平滑 0.6→1.0 淡回
+    //（0.12s OutQuad）。修复前靠模块侧标志 + 复位计时器：松手瞬间先暗到
+    // 0.6 再淡回（1.0→0.6→1.0 闪暗）且有 0.12s 延迟。原 scrollView 的绝对
+    // 定位整体下移进本容器（位置/尺寸逐值等价，列头按钮等其余元素不受影响）
     ui.stack(id + ".cards")
         .position(0.0f, kColumnHeaderHeight)
         .size(width, height - kColumnHeaderHeight)
-        .opacity(v.columnFadeIn ? 1.0f : 0.6f)
+        .opacity(v.dragActive ? 0.6f : 1.0f)
         .transition(core::Transition::make(0.12f, core::Ease::OutQuad))
         .animate(core::AnimProperty::Opacity)
         .content([&] {
@@ -479,7 +480,7 @@ void drawCard(eui::Ui& ui, const std::string& id, float y, float width,
         // M2（2026-09-28，UI 现代化）：hover/按下颜色过渡（列表项基调
         // 0.1s OutQuad；拖拽半透明 opacity 不含在掩码里，跟手不打架）
         .transition(core::Transition::make(0.1f, core::Ease::OutQuad))
-        .animate(core::AnimProperty::Color)
+        .animate(core::AnimProperty::Color | core::AnimProperty::Opacity)
         .radius(t.sizes.radius)
         .opacity(cardOpacity)
         .onClick([cb = v.act.cardClicked, task] { cb(task); })
@@ -519,7 +520,11 @@ void drawCard(eui::Ui& ui, const std::string& id, float y, float width,
     // 放（prio → due → tags），None 不画 pill、后续 chip 顺移，不留空位。
     const auto pillBg = priorityPillBg(task.priority, t);
     float chipX = 16.0f;
-    if (pillBg.has_value()) {
+    // 跨模块剩余审计修（2026-09-28）：列宽无下限（≥6-7 列时 colW 跌破
+    // 130），固定 36/66px 的优先级/截止 chip 会越出卡右缘——chip 宽自适应
+    // 剩余空间，放不下最小宽度就跳过（完整信息在详情弹窗）；标签 chip 的
+    // 原有自适应保留（chipX + tw > width-12 即 break）
+    if (pillBg.has_value() && chipX + 36.0f <= width - 12.0f) {
         drawChip(ui, id + ".prio", chipX, y + 44.0f, 36.0f, t, "",
                  *pillBg, *pillBg, cardOpacity);
         chipX += 42.0f;  // 36 + 6 间距
@@ -528,10 +533,14 @@ void drawCard(eui::Ui& ui, const std::string& id, float y, float width,
     // 截止 chip（⏰ emoji 已去掉：逾期时 chip 前景直接用 error 色示意）
     if (task.dueAt.has_value()) {
         const std::string dueText = formatDue(task.dueAt.value());
-        drawChip(ui, id + ".due", chipX, y + 44.0f, 66.0f, t, dueText,
-                 isOverdue(task) ? t.colors.error : t.colors.textTertiary,
-                 t.colors.surface, cardOpacity);
-        chipX += 72.0f;  // 66 + 6 间距
+        const float dueMaxW = std::max(0.0f, width - 12.0f - chipX);
+        const float dueW = std::min(66.0f, dueMaxW);
+        if (dueW >= 24.0f) {
+            drawChip(ui, id + ".due", chipX, y + 44.0f, dueW, t, dueText,
+                     isOverdue(task) ? t.colors.error : t.colors.textTertiary,
+                     t.colors.surface, cardOpacity);
+            chipX += dueW + 6.0f;  // 自适应宽 + 6 间距
+        }
     }
 
     // tags chip（前 2 个 + 超出 +N；完整编辑在详情弹窗）

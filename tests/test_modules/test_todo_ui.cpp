@@ -2293,6 +2293,60 @@ REGISTER_TEST(todo_ui_priority_pill,
     return true;
 })
 
+// ---- 跨模块剩余审计修：窄列固定 66px 截止 chip 越出卡右缘 → 自适应缩窄 ----
+// 列宽无下限（colW = (contentW - gap*(n-1)) / n）：1200 窗 8 列 → 内容宽 110
+// < 16+42+66=124，修复前固定宽 chip 越出 ~14px。修复 = 宽 min(66, 剩余空间)、
+// 放不下最小宽度（24）跳过；宽窗不缩（保持 66px 原观感）
+REGISTER_TEST(todo_card_due_chip_adapts_narrow_column,
+              "todo_ui: 窄列截止 chip 自适应缩窄不越出卡右缘（审计修复）", {
+    TestEnv env;
+    DOCTEST_REQUIRE(env.ready);
+    std::vector<int64_t> colIds;
+    for (int i = 0; i < 4; ++i) {  // 迁移默认 4 列之上再造 4 列 = 8 列
+        auto col = env.svc->createColumn("窄列" + std::to_string(i));
+        DOCTEST_REQUIRE(col.isOk());
+        colIds.push_back(col.value().id);
+    }
+    auto a = env.svc->createTask(colIds.back(), "窄列卡");
+    DOCTEST_REQUIRE(a.isOk());
+    {
+        module::todo::Task t2 = a.value();
+        t2.priority = module::todo::Priority::High;
+        t2.dueAt = 2000000000;  // 未来时间，未逾期
+        auto up = env.svc->updateTask(t2);
+        DOCTEST_REQUIRE(up.isOk());
+    }
+
+    std::unique_ptr<::core::Module> mod(create_todo_module());
+    mod->onStart();
+    // 最小窗 1200×720：8 列 → colW = (1120-7*16)/8 = 126，卡内容宽 110
+    Frame frame(mod.get(), 1200.0f, 720.0f);
+    frame.ui.layout(1200.0f, 720.0f);  // 元素 frame 需显式 layout（Frame 不跑）
+    const auto* cardBg = frame.ui.find("todo.col.7.card.0.bg");
+    const auto* dueBg = frame.ui.find("todo.col.7.card.0.due.bg");
+    const auto* prioBg = frame.ui.find("todo.col.7.card.0.prio.bg");
+    DOCTEST_REQUIRE(cardBg != nullptr);
+    DOCTEST_REQUIRE(dueBg != nullptr);
+    DOCTEST_REQUIRE(prioBg != nullptr);
+    // 截止 chip 右缘不越出卡右缘（修复前固定 66px → 58+66=124 > 110）
+    DOCTEST_CHECK(dueBg->frame.x + dueBg->frame.width <=
+                  cardBg->frame.x + cardBg->frame.width);
+    // chip 缩窄（= 110-58=52）且仍在（≥ 最小宽 24）；优先级 pill 不越出
+    DOCTEST_CHECK(dueBg->frame.width >= 24.0f);
+    DOCTEST_CHECK(dueBg->frame.width < 66.0f);
+    DOCTEST_CHECK(prioBg->frame.x + prioBg->frame.width <=
+                  cardBg->frame.x + cardBg->frame.width);
+    // 宽窗 1600×1000 8 列：colW = (1520-112)/8 = 176，内容宽 160 → 不缩
+    Frame wide(mod.get(), 1600.0f, 1000.0f);
+    wide.ui.layout(1600.0f, 1000.0f);
+    const auto* wideDue = wide.ui.find("todo.col.7.card.0.due.bg");
+    DOCTEST_REQUIRE(wideDue != nullptr);
+    DOCTEST_CHECK_EQ(wideDue->frame.width, 66.0f);
+
+    mod->onStop();
+    return true;
+})
+
 // ---- 6. 产品审计 2026-09-23 [2]：详情弹窗动作先存表单 / 删除确认保留弹窗 / backdrop 守卫 ----
 
 REGISTER_TEST(todo_ui_detail_actions_save_form,

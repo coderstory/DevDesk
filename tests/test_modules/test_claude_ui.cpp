@@ -1379,11 +1379,19 @@ REGISTER_TEST(claude_profiles_scrollview,
         DOCTEST_CHECK(ui.find("claude.profiles.new") != nullptr);
         DOCTEST_CHECK(ui.find("claude.profiles.import") != nullptr);
     }
-    // 最小高度 720：末卡仍在树里且可点选（详情面板跟随第 8 个 profile）
+    // 最小高度 720：末卡滚到底可达且可点选（详情面板跟随第 8 个 profile）。
+    // 审计修复后视口让出共享区块高（~76px）→ 720 高下 7×108=756 的末卡起点
+    // 在视口外：virtualList 只渲染可见行 + overscan，先滚到底（钳到 maxOffset）
+    // 再断言树内 + 可点选
     {
         eui::Ui ui;
         composeAt(ui, 720.0f);
         DOCTEST_CHECK(ui.find("claude.profiles.scroll") != nullptr);
+        const auto* root = ui.find("claude.profiles.scroll");
+        DOCTEST_REQUIRE(root != nullptr);
+        DOCTEST_REQUIRE(root->onScrollOffsetChanged != nullptr);
+        root->onScrollOffsetChanged(2000.0f);  // 超界值 → 内部钳到 maxOffset
+        composeAt(ui, 720.0f);
         const auto* node = ui.find("claude.profile.7.bg");
         DOCTEST_REQUIRE(node != nullptr);
         DOCTEST_REQUIRE(node->onClick != nullptr);
@@ -1402,7 +1410,61 @@ REGISTER_TEST(claude_profiles_scrollview,
     return true;
 })
 
-// ---- 审计 [21]：Profile 表单 Esc=取消（旧行为：输入框没绑 onEnter，Esc 完全无效）----
+// ---- 跨模块剩余审计修：共享配置区块必须整体位于 virtualList 视口 clip 之外 ----
+// 修复前视口按 scrollH 全高、区块只压自己的绝对 Y，后建区块叠在带 clip 的
+// 视口底带上 → ≥5 profile 时末 1-2 张卡被盖、滚到底显示不全、点击误开片段
+// 编辑。现在视口高度 = listH（让出区块高 + 12px），区块钉在 clip 之外。
+REGISTER_TEST(claude_shared_block_outside_viewport,
+              "claude_module: 共享配置区块钉在 virtualList 视口之外（审计修复）", {
+    TestEnv env;
+    auto f1 = env.svc->createSharedConfig("片段A", R"({"MY_A":"1"})");
+    DOCTEST_REQUIRE(f1.isOk());
+    std::vector<int64_t> ids;
+    for (int i = 0; i < 8; ++i) {
+        auto p = env.svc->createProfile(
+            "站" + std::to_string(i),
+            "https://p" + std::to_string(i) + ".example.com",
+            "sk-ant-vp-000" + std::to_string(i), "m");
+        DOCTEST_REQUIRE(p.isOk());
+        ids.push_back(p.value().id);
+    }
+
+    std::unique_ptr<::core::Module> mod(create_claude_module());
+    auto composeAt = [&](eui::Ui& ui, float h) {
+        eui::Screen screen;
+        screen.width = 1600.0f;
+        screen.height = h;
+        ui.begin("claude_vp");
+        mod->compose(ui, screen);
+        ui.end();
+        ui.layout(screen.width, screen.height);  // 元素 frame 需显式布局
+    };
+
+    // 三种高度（默认 / 最小窗 / 超短窗）：区块顶 ≥ 视口底 12px（间距），
+    // 区块落在带 clip 的视口之外——不盖末卡、不误点片段；
+    // 720 以上窗口区块不越出底部按钮区（新建/导入同排同 y）；500 属
+    // 极端矮窗（低于最小窗 720），区块按既有口径可向下溢出按钮区
+    for (float h : {1000.0f, 720.0f, 500.0f}) {
+        eui::Ui ui;
+        composeAt(ui, h);
+        const auto* scroll = ui.find("claude.profiles.scroll");
+        const auto* block = ui.find("claude.shared.block");
+        DOCTEST_REQUIRE(scroll != nullptr);
+        DOCTEST_REQUIRE(block != nullptr);
+        const float viewportBottom = scroll->frame.y + scroll->frame.height;
+        DOCTEST_CHECK(block->frame.y - viewportBottom >= 11.5f);
+        if (h >= 720.0f) {
+            const auto* btn = ui.find("claude.profiles.new");
+            DOCTEST_REQUIRE(btn != nullptr);
+            DOCTEST_CHECK(block->frame.y + block->frame.height <=
+                          btn->frame.y + 0.5f);
+        }
+    }
+
+    mod->onStop();
+    for (size_t i = 0; i < ids.size(); ++i) cleanupProfileKey(kTestKeychainService, ids[i]);
+    return true;
+})
 
 REGISTER_TEST(claude_module_form_esc_cancels,
               "claude_module: 表单基础页/模型页输入框 Esc=取消不落库（headless，审计 [21]）", {

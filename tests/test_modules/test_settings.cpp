@@ -1383,6 +1383,76 @@ REGISTER_TEST(settings_pet_dropdown_z_escape, "settings: pet skin dropdown popup
     return true;
 })
 
+// ---- 跨模块剩余审计修：桌宠皮肤下拉 openUp（≥3 皮肤小窗弹层被 scrollView
+// clip 裁掉）。修复 = 仿外观卡 z40 抬层（见 settings_pet_dropdown_z_escape）
+// + 编辑器字号/日志卡同款 openUp 几何判定（卡顶 + 字段偏移 + 弹层高 vs 屏高）
+REGISTER_TEST(settings_pet_skin_dropdown_openup,
+              "settings: 桌宠皮肤下拉 openUp——小窗 3 皮肤弹层留在窗内", {
+    test_support::TestEnv env(kCfgPrefix, "petopenup", true);
+    test_support::ScopedConfigPath cfgEnv(
+        test_support::tempConfigFile(kCfgPrefix, "petopenup_cfg"));
+    {
+        std::ofstream out(cfgEnv.cfgPath);
+        out << "{\"theme\":\"dark\",\"enabledModules\":["
+               "\"home\",\"markdown\",\"todo\",\"claude_proxy\",\"settings\",\"pet\"]}";
+    }
+    // 隔离皮肤清单：DEVDESK_PETS_DIR 指向临时目录，造 3 个皮肤（discoverSkins
+    // 只验 pet.json 存在；TestEnv 已隔离 APPDATA，默认 0 皮肤 → 占位单项）
+    test_support::TempDir petsDir("pet_skins");
+    const char* skins[] = {"robot", "cat", "tatsu"};
+    for (const char* s : skins) {
+        std::filesystem::create_directories(petsDir.path / s);
+        std::ofstream out(petsDir.path / s / "pet.json");
+        out << "{}";
+    }
+    test_support::ScopedEnv petsEnv("DEVDESK_PETS_DIR", petsDir.path.string());
+
+    std::unique_ptr<::core::Module> mod(create_settings_module());
+    mod->onStart();
+
+    // 小窗 1200×720（最小窗）：pet 卡为模块 tab 第 2 卡（卡顶 ≈ 480），
+    // 字段底 584 + 8 gap + 弹层 114 = 706 > 704（屏高-16）→ openUp 向上，
+    // 弹层整体留在窗体内且位于字段上方（修复前被 scrollView clip 裁掉）
+    eui::Screen screen;
+    screen.width = 1200.0f;
+    screen.height = 720.0f;
+    DOCTEST_REQUIRE(clickSettingsTab(*mod, screen, 1));
+    eui::Ui ui;
+    ui.begin("petopenup_small");
+    mod->compose(ui, screen);
+    ui.end();
+    ui.layout(screen.width, screen.height);
+
+    const auto* field = ui.find("settings.card.pet.skin.dd.field");
+    const auto* popup = ui.find("settings.card.pet.skin.dd.popup");
+    DOCTEST_REQUIRE(field != nullptr);
+    DOCTEST_REQUIRE(popup != nullptr);
+    DOCTEST_CHECK(popup->frame.y >= 0.0f);
+    DOCTEST_CHECK(popup->frame.y + popup->frame.height <= screen.height);
+    DOCTEST_CHECK(popup->frame.y + popup->frame.height <= field->frame.y);
+
+    // 高窗 1600×1000：字段底 584 + 8 + 114 = 706 ≤ 984 → 保持默认向下展开
+    eui::Screen tall;
+    tall.width = 1600.0f;
+    tall.height = 1000.0f;
+    DOCTEST_REQUIRE(clickSettingsTab(*mod, tall, 1));
+    ui.begin("petopenup_tall");
+    mod->compose(ui, tall);
+    ui.end();
+    ui.layout(tall.width, tall.height);
+    const auto* tallField = ui.find("settings.card.pet.skin.dd.field");
+    const auto* tallPopup = ui.find("settings.card.pet.skin.dd.popup");
+    DOCTEST_REQUIRE(tallField != nullptr);
+    DOCTEST_REQUIRE(tallPopup != nullptr);
+    DOCTEST_CHECK(tallPopup->frame.y >=
+                  tallField->frame.y + tallField->frame.height);
+    DOCTEST_CHECK(tallPopup->frame.y + tallPopup->frame.height <= tall.height);
+
+    mod->onStop();
+    ::core::theme::setDark();
+    return true;
+})
+
 // ---- 外观卡下拉弹层 vs 后续兄弟卡（回归 1379cc1）：外观卡(z30) 与紧随其下的
 // 编辑器字号卡(z30) 同为 z30 → 稳定排序保持 DOM 序 → 后绘的编辑器字号卡盖住
 // 外观卡向下铺开的弹层（「展开被下方内容截断」）。EUI-NEO 子树 zIndex 上界

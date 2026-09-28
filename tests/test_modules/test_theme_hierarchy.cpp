@@ -161,7 +161,9 @@ REGISTER_TEST(theme_hierarchy_markdown,
                                 const core::theme::Tokens& t) -> bool {
         DOCTEST_CHECK(frame.absent("md.pagebg"));  // 页面底由 clearColor 承担
         DOCTEST_CHECK(frame.colorIs("md.tree.bg", t.colors.background));
-        DOCTEST_CHECK(frame.colorIs("md.editor.bg", t.colors.background));
+        // 跨模块剩余审计修：编辑列列壳 .bg 已去（input 单层）——锁「不存在」
+        // 防回归双层近白卡（双边框 + 焦点阴影压边）
+        DOCTEST_CHECK(frame.absent("md.editor.bg"));
         DOCTEST_CHECK(frame.colorIs("md.preview.bg", t.colors.background));
         DOCTEST_CHECK(frame.colorIs("md.status.bg", t.colors.background));
         return true;

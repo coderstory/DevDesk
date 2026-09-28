@@ -986,7 +986,9 @@ REGISTER_TEST(md_module_split_layout, "markdown_module: W9 双栏三列铺满 co
 
     ui.layout(screen.width, screen.height);
     const auto* tree = ui.find("md.tree.bg");
-    const auto* editor = ui.find("md.editor.bg");
+    // 跨模块剩余审计修：列壳 .bg 已去（编辑列为 input 单层）——几何断言
+    // 改挂列壳 stack（md.editor），宽度语义不变
+    const auto* editor = ui.find("md.editor");
     const auto* preview = ui.find("md.preview.bg");
     DOCTEST_REQUIRE(tree != nullptr);
     DOCTEST_REQUIRE(editor != nullptr);
@@ -2721,7 +2723,8 @@ REGISTER_TEST(md_module_live_mode_skeleton,
     DOCTEST_CHECK(mod->onKeyEvent(p));
     frame();
     DOCTEST_REQUIRE(ui.find("md.live.scroll") != nullptr);
-    DOCTEST_CHECK(ui.find("md.live.bg") != nullptr);
+    // 跨模块剩余审计修：列壳 .bg 已去（实时列为 input 单层）——改挂列壳 stack
+    DOCTEST_CHECK(ui.find("md.live") != nullptr);
     DOCTEST_CHECK(ui.find("md.live.blocks") != nullptr);
     DOCTEST_CHECK(ui.find("md.live.blk.0.hit") != nullptr);  // 首块渲染 + hit 覆盖层
     DOCTEST_CHECK(ui.find(kEditorInputId) == nullptr);

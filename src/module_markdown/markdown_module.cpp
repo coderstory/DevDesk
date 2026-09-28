@@ -1031,15 +1031,11 @@ private:
                               const components::theme::ThemeColorTokens& componentTheme,
                               Body&& body) {
         ui.stack(columnId).size(midW, bodyH).content([&] {
-            ui.rect(columnId + ".bg")
-                .size(midW, bodyH)
-                // 编辑区面板是页面结构 → background（spec §6.5 层级：结构性
-                // 面板不浮起，卡片白只给浮动元素）
-                .color(t.colors.background)
-                .radius(t.sizes.radiusLarge)
-                .border(1.0f, t.colors.borderDefault)
-                .build();
-
+            // 跨模块剩余审计修（2026-09-28）：去列壳 .bg——输入组件自带
+            // surface 底 + 1px 边框 + 焦点阴影，壳底叠在下面形成「双层近白
+            // 卡 + 双边框 + 焦点阴影压边」：编辑/实时态正文输入框就是本列
+            // 唯一一层（tag 行/状态栏直接落在页面底色上，与左/预览列分层
+            // 一致的 background token 语义不再重复铺）
             if (currentPath_.empty()) {
                 ui.text(columnId + ".hint")
                     .position(24.0f, 50.0f)

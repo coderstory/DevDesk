@@ -395,14 +395,19 @@ void drawPetCard(const CardDrawArgs& args) {
     const core::theme::Tokens& t = args.t;
     const SettingsCardsIn& in = args.in;
     const SettingsCardActions& a = args.a;
+    const float pageY = args.pageY;    // 卡顶页面绝对 y（皮肤下拉 openUp 几何）
+    const float screenH = args.screenH;
 
     // 审计 THS-01：皮肤清单（discoverSkins = 目录遍历 + 每皮肤 pet.json
     // stat）与当前皮肤名（读 pet_config.json）已移出渲染路径——快照由
     // refreshExternalState 装载（原为「首帧惰性加载」，仍在渲染路径上），
     // 这里只读入参；审计 [5][36] 的 pet 侧只读桥调用点随之收在模块文件
     const auto compTheme = core::theme::componentTokens(t);
+    // 跨模块剩余审计修（2026-09-28）：本卡抬到 z40（仿外观卡）——皮肤下拉
+    // 弹层向下铺开时越出卡底沿盖住后续目录卡，z 逃逸语义与外观/日志卡一致
     ui.stack(id)
         .size(w, h)
+        .zIndex(40)
         .content([&] {
             ui.text(id + ".title")
                 .position(28.0f, 16.0f)
@@ -437,11 +442,19 @@ void drawPetCard(const CardDrawArgs& args) {
                 .position(28.0f, 64.0f)
                 .size(240.0f, 40.0f)
                 .content([&] {
+                    // 跨模块剩余审计修：皮肤下拉是六处下拉里唯一无 openUp
+                    // 防护的——≥3 皮肤时弹层（3×34+12=114）向下铺开越出
+                    // scrollView 视口底被 clip 裁掉；与编辑器字号/日志卡同款
+                    // 几何判定（卡顶 + 字段偏移 + 弹层高 vs 屏高）
+                    const bool skinOpenUp = dropdownPopupOverflows(
+                        pageY, 64.0f, 40.0f,
+                        static_cast<int>(items.size()), screenH);
                     components::dropdown(ui, id + ".skin.dd")
                         .size(240.0f, 40.0f)
                         .theme(compTheme)
                         .items(items)
                         .selected(selected)
+                        .openUp(skinOpenUp)
                         .open(isDropdownOpen(in.openDropdown, Dropdown::PetSkin))
                         .onOpenChange([f = a.setDropdownOpen](bool v) {
                             f(Dropdown::PetSkin, v);
@@ -490,6 +503,10 @@ void drawDirectoryCard(const CardDrawArgs& args) {
     const SettingsCardsIn& in = args.in;
     const SettingsCardActions& a = args.a;
 
+    // 跨模块剩余审计修（2026-09-28）：.colors() 单独用 = ButtonStyle 落到
+    // 默认深色主题（浅色模式蓝描边 + 重阴影）——补 .theme(compTheme) 后
+    // 边框/阴影/文字/半径随主题，.colors() 仍覆盖三态底色
+    const auto compTheme = core::theme::componentTokens(t);
     ui.stack(id)
         .size(w, h)
         .content([&] {
@@ -532,6 +549,7 @@ void drawDirectoryCard(const CardDrawArgs& args) {
                 .text("打开目录")
                 .icon(0xF07C)  // fa-folder-open
                 .fontSize(fs(13.0f))
+                .theme(compTheme, /*primary=*/false)
                 .colors(t.colors.surfaceElevated, t.colors.hover,
                         t.colors.active)
                 .textColor(t.colors.textPrimary)
@@ -644,6 +662,7 @@ void drawProxyCard(const CardDrawArgs& args) {
                 .size(64.0f, 28.0f)
                 .text("应用")
                 .fontSize(fs(13.0f))
+                .theme(compTheme)
                 .colors(t.colors.primary, t.colors.primaryHover,
                         t.colors.primaryPressed)
                 .textColor(t.colors.onPrimary)
@@ -933,6 +952,7 @@ void drawLogViewCard(const CardDrawArgs& args) {
                 .text("刷新")
                 .icon(0xF021)  // fa-arrows-rotate
                 .fontSize(fs(12.0f))
+                .theme(compTheme, /*primary=*/false)
                 .colors(t.colors.surfaceElevated, t.colors.hover,
                         t.colors.active)
                 .textColor(t.colors.textPrimary)

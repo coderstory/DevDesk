@@ -523,8 +523,8 @@ REGISTER_TEST(uiModernTodoDropFadeGuard,
     DOCTEST_REQUIRE(cards != nullptr);
     DOCTEST_CHECK_EQ(cards->opacity, 1.0f);
 
-    // 跟手期间（press → drag）：columnFadeIn_ 不被触碰 → 容器 opacity 恒 1，
-    // transition 目标一致不动画
+    // 跟手期间（press → drag）：容器 opacity 由 dragActive 门控 → 0.6 调暗
+    //（审计修复前靠 columnFadeIn_ 标志恒 1，松手时 1.0→0.6→1.0 闪暗）
     {
         auto* card = frame.ui.find("todo.col.4.card.0.bg");
         DOCTEST_REQUIRE(card != nullptr);
@@ -542,10 +542,11 @@ REGISTER_TEST(uiModernTodoDropFadeGuard,
         frame.refresh();
         cards = frame.ui.find("todo.col.4.cards");
         DOCTEST_REQUIRE(cards != nullptr);
-        DOCTEST_CHECK_EQ(cards->opacity, 1.0f);
+        DOCTEST_CHECK(cards->opacity < 1.0f);  // 跟手中整列 0.6 调暗
     }
 
-    // 拖拽结束（cancel 路径同样走 cardReleased 跟手收口）→ 下一帧容器 0.6 淡回
+    // 拖拽结束（cancel 路径同样走 cardReleased 跟手收口）→ dragActive 归 false，
+    // 容器目标回 1.0：0.6→1.0 平滑淡回（不再先暗到 0.6 再淡回）
     {
         auto* card = frame.ui.find("todo.col.4.card.0.bg");
         DOCTEST_REQUIRE(card != nullptr);
@@ -556,7 +557,7 @@ REGISTER_TEST(uiModernTodoDropFadeGuard,
         frame.refresh();
         cards = frame.ui.find("todo.col.4.cards");
         DOCTEST_REQUIRE(cards != nullptr);
-        DOCTEST_CHECK(cards->opacity < 1.0f);
+        DOCTEST_CHECK_EQ(cards->opacity, 1.0f);
     }
 
     mod->onStop();

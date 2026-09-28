@@ -398,12 +398,23 @@ void drawProfileListPanel(eui::Ui& ui, float leftW, float bodyH,
                 // 2026-09-28：视口对齐父面板 20px 内缩网格（position 20 /
                 // 宽 leftW-40 = 父内容宽），item 自适应父宽；旧 x=0/leftW-24
                 // 与标题/按钮的 20px 网格错位且右缘差 4px
+                // 跨模块剩余审计修（2026-09-28）：视口高度 = listH（让出
+                // 共享区块高 + 12px 间距，至少保 96px）——区块由此整体钉在
+                // 视口 clip 之外；修复前视口按 scrollH 全高、区块只压自己的
+                // 绝对 Y，后建区块叠在带 clip 的视口底带上，≥5 profile 时
+                // 末 1-2 张卡被盖、滚到底显示不全、点击误开片段编辑
                 const float scrollH = std::max(
                     0.0f, bodyH - 64.0f - 12.0f - cardY0);
                 const float rowPitch = 96.0f + cardGap;
+                const float sharedH =
+                    sharedBlockHeight(sharedConfigs.size(),
+                                      !sharedConfigsError.empty());
+                const float listH =
+                    std::clamp(scrollH - sharedH - 12.0f,
+                               std::min(96.0f, scrollH), scrollH);
                 components::virtualList(ui, "claude.profiles.scroll")
                     .position(20.0f, cardY0)
-                    .size(leftW - 40.0f, scrollH)
+                    .size(leftW - 40.0f, listH)
                     .itemCount(static_cast<int64_t>(profiles.size()))
                     .rowHeight(rowPitch)
                     .step(rowPitch)
@@ -476,15 +487,10 @@ void drawProfileListPanel(eui::Ui& ui, float leftW, float bodyH,
                 // 批 2：共享配置区块（master 合并保留，设计 §2.10「片段列表
                 // 入口」）。virtualList 行窗为等高槽位、无非等高末行支持 →
                 // 区块不并入行窗，垫在列表下方作粘性脚注（几何同上方空/错态
-                // 分支：absolute 定位，块内元素相对块顶）。列表高度让出区块高
-                // + 12px 间距（至少保 96px）；片段过多时区块向下溢出盖过底部
-                // 按钮区——与空/错态分支同款行为
-                const float sharedH =
-                    sharedBlockHeight(sharedConfigs.size(),
-                                      !sharedConfigsError.empty());
-                const float listH =
-                    std::clamp(scrollH - sharedH - 12.0f,
-                               std::min(96.0f, scrollH), scrollH);
+                // 分支：absolute 定位，块内元素相对块顶）。列表视口高已在
+                // 上方按区块高让出（listH）：区块整体位于视口 clip 之外
+                //（间距 12px），末卡滚到底也不会被区块盖住/误点；片段过多
+                // 时区块向下溢出盖过底部按钮区——与空/错态分支同款行为
                 ui.stack("claude.shared.block")
                     .position(20.0f, cardY0 + listH + 12.0f)
                     .size(leftW - 40.0f, sharedH)
