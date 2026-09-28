@@ -21,6 +21,12 @@
 // 容差：条与缝的换算 ±0.5px（harness floatEq；spec 类 11 允许 ±4px，几何完全
 // 确定时取严）。证伪门禁：drawDropBar 去掉 .ignoreLayout()（回退修复形态）→
 // 条贴内容顶 + 整列下推 → 本 probe 红。
+//
+// 类 12（2026-09-28 追加）：拖拽跟手副本。用**真实注入指针**（queuePointerButton
+// / queuePointerMotion + 逐帧 pollOnce）拖卡片，中途断言 todo.dragghost 的帧位
+// = 按下卡位 + 累计位移、绘制序在 todo.root 之后（跨列不被盖）、zIndex > 0、
+// opacity < 1；松手回源列（同列取消）后副本消失且数据未动。证伪门禁：副本改回
+// 列内 .translate()（被 scrollView clip 剪掉）或 dragGhostOn 恒 false → 本段红。
 
 #include "probes/probe_harness.h"
 #include <eui/detail/dsl_app_impl.h>  // app:: 层内联实现自给（链接需要）
@@ -309,6 +315,134 @@ int main(int argc, char* argv[]) {
                 std::cerr << "todo_probes: drop order = [" << t0 << ", " << t1
                           << ", " << t2
                           << "] expected [甲, 被移动任务, 乙]\n";
+                passed = false;
+            }
+        }
+    }
+
+    // ---- 类 12（2026-09-28）：拖拽跟手副本——**真实注入指针**驱动（不是直调
+    // 回调）：press 卡中心 → 逐帧 move 到邻列 → 中途断言副本锚点/层序/半透 →
+    // 再 move 回源列松手（同列 = 取消，不动数据，类 14 的前置状态不被破坏）。
+    // 与无头用例 todo_ui_drag_follow_ghost 的分工：无头只证"拿到锚点后画在哪"
+    // （直调回调），本探针证**框架真把 DragEvent::totalX/totalY 喂进来**、
+    // 真实命中测试能按下卡片、副本帧位 = 卡位 + 累计位移。
+    if (ui != nullptr) {
+        const core::dsl::Element* ghostSrc = ui->find("todo.col.5.card.0.bg");
+        const core::dsl::Element* ghostDstCol = ui->find("todo.col.4.bg");
+        if (ghostSrc == nullptr || ghostDstCol == nullptr) {
+            std::cerr << "todo_probes: 跟手副本场景缺元素（源卡/邻列）\n";
+            passed = false;
+        } else {
+            // 按下锚点 = 卡片真实 bounds（指针空间 = 窗口坐标，探针 dpi=1）。
+            // 几何一次性拷成值：元素指针跨帧失效（下面每次 compose 都重建元素树）
+            const eui::Rect srcBounds = boundsOf(ghostSrc);
+            const double px = srcBounds.x + srcBounds.width * 0.5;
+            const double py = srcBounds.y + srcBounds.height * 0.5;
+            const double tx =
+                ghostDstCol->frame.x + ghostDstCol->frame.width * 0.5;
+            const double ty = ghostDstCol->frame.y + kColumnHeaderHeight + 40.0;
+            const core::KeyModifiers noMods;
+            const core::PointerButtons held(core::PointerButton::Left);
+            core::queuePointerButton(window, px, py, core::PointerButton::Left,
+                                     core::PointerAction::Press, noMods);
+            composeFrame();
+            // 分 4 帧插值移动（每帧一 pollOnce：命中/悬停/拖拽沿路径推进）
+            constexpr int kSteps = 4;
+            for (int step = 1; step <= kSteps; ++step) {
+                const double t = static_cast<double>(step) / kSteps;
+                core::queuePointerMotion(window, px + (tx - px) * t,
+                                         py + (ty - py) * t, held, noMods);
+                composeFrame();
+            }
+            const core::dsl::Element* ghost =
+                ui != nullptr ? ui->find("todo.dragghost") : nullptr;
+            if (ghost == nullptr) {
+                std::cerr << "todo_probes: 拖拽中 'todo.dragghost' 不在树"
+                             "（跟手副本未画，或真实指针没走到 onDrag）\n";
+                passed = false;
+            } else {
+                // 锚点 = 按下时卡片位置 + 按下点起累计位移（真实指针位移）
+                const float expectedX =
+                    srcBounds.x + static_cast<float>(tx - px);
+                const float expectedY =
+                    srcBounds.y + static_cast<float>(ty - py);
+                if (!floatEq(ghost->frame.x, expectedX) ||
+                    !floatEq(ghost->frame.y, expectedY)) {
+                    std::cerr << "todo_probes: 副本锚点 (" << ghost->frame.x
+                              << "," << ghost->frame.y << ") 期望 ("
+                              << expectedX << "," << expectedY
+                              << ") = 卡位 + 累计位移\n";
+                    passed = false;
+                }
+                // 层序：副本是页面顶层 root（排在 todo.root 之后）+ z 压看板子树
+                const core::dsl::Element* boardRoot = ui->find("todo.root");
+                const auto& roots = ui->orderedRoots();
+                auto idxOf = [&roots](const core::dsl::Element* target) {
+                    for (size_t i = 0; i < roots.size(); ++i) {
+                        if (roots[i] == target) return static_cast<int>(i);
+                    }
+                    return -1;
+                };
+                if (boardRoot == nullptr || idxOf(ghost) <= idxOf(boardRoot)) {
+                    std::cerr << "todo_probes: 副本绘制序不在 todo.root 之后"
+                                 "（跨列拖会被目标列卡片盖住）\n";
+                    passed = false;
+                }
+                if (ghost->zIndex <= 0) {
+                    std::cerr << "todo_probes: 副本 zIndex=" << ghost->zIndex
+                              << "（应 > 看板子树最大 z）\n";
+                    passed = false;
+                }
+                if (!(ghost->opacity < 1.0f)) {
+                    std::cerr << "todo_probes: 副本 opacity=" << ghost->opacity
+                              << "（应 < 1：占位条要从副本底下透出）\n";
+                    passed = false;
+                }
+            }
+            // 松手（移回源列内 = 同列取消）：副本消失 + 数据未动。
+            // ⚠ 释放点必须在**当帧**重新 find 出的列几何上算：元素指针跨帧失效
+            //（每帧重建元素树），持按下前的 Element* 读 frame 会读到已释放内存
+            //（实测算到隔壁列 → "取消"变成真移动、数据被搬走）
+            const core::dsl::Element* srcColNow =
+                ui != nullptr ? ui->find("todo.col.5.bg") : nullptr;
+            if (srcColNow == nullptr) {
+                std::cerr << "todo_probes: 松手前 'todo.col.5.bg' 不在树\n";
+                passed = false;
+            } else {
+                const double bx =
+                    srcColNow->frame.x + srcColNow->frame.width * 0.5;
+                const double by = srcBounds.y + 20.0;
+                for (int step = 1; step <= kSteps; ++step) {
+                    const double t = static_cast<double>(step) / kSteps;
+                    core::queuePointerMotion(window, tx + (bx - tx) * t,
+                                             ty + (by - ty) * t, held, noMods);
+                    composeFrame();
+                }
+                core::queuePointerButton(window, bx, by,
+                                         core::PointerButton::Left,
+                                         core::PointerAction::Release, noMods);
+                composeFrame();
+            }
+            if (ui != nullptr && ui->find("todo.dragghost") != nullptr) {
+                std::cerr << "todo_probes: 松手后 'todo.dragghost' 仍在树"
+                             "（偏移未归零）\n";
+                passed = false;
+            }
+            // 同列松手 = 取消：目标列卡数不变（释放点算成别的列会立即暴露，
+            // 失败时逐卡打印归属列便于定位）
+            auto after = env.svc->listTasks(dstColId);
+            if (after.isFail() || after.value().size() != 3u) {
+                std::cerr << "todo_probes: 同列拖拽取消却改了数据（列卡数="
+                          << (after.isOk()
+                                  ? std::to_string(after.value().size())
+                                  : std::string("listTasks 失败"))
+                          << "，期望 3）\n";
+                auto all = env.svc->listAllTasks();
+                for (const auto& tk : all.value()) {
+                    std::cerr << "  task '" << tk.title << "' → columnId "
+                              << tk.columnId << " (源列 " << srcColId
+                              << " / 目标列 " << dstColId << ")\n";
+                }
                 passed = false;
             }
         }
