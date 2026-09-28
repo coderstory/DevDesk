@@ -138,6 +138,12 @@ struct FormState {
     // **打开后新加的**行（存量键非破坏保留、冻结显示，解绑后恢复生效，
     // 设计 §2.3）
     std::vector<std::string> formOriginalOwnKeys_;
+
+    // 批 3（设计 §3.4/§3.8）：备用 Profile（failover）绑定（基础页下拉，
+    // 复用批 2 绑定下拉模式——索引 0 = 无，其余 = 候选 profile 表序 +1，
+    // 编辑态排除自身；保存时写入 profile.fallbackProfileId）
+    int64_t formFallbackProfileId_ = 0;   // 表单态备用（0 = 不启用 failover）
+    bool formFallbackDdOpen_ = false;     // 备用下拉展开态
 };
 
 // ============ 共享配置片段编辑弹窗（批 2，设计 §2.10 待拍板②：独立状态）============

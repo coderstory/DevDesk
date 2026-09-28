@@ -203,43 +203,68 @@ void ProxyRouter::handleRequest(
         return;
     }
     Profile profile = std::move(profileR).value();
-    const std::string apiKey = profile.apiKeyPlain;
+    Profile servingProfile = profile;   // 实际服务的那家（failover 换家后 = 备用）
 
-    // ---- 2. 构造上游请求 ----
-    platform::http::Request upstream;
-    upstream.method = method;
-    upstream.url = stripTrailingSlash(profile.baseUrl) + ensureLeadingSlash(path);
-    upstream.body = body;
-    upstream.timeoutMs = 120000;     // 2 分钟
-    upstream.verifyTls = true;
+    // ---- 2/3. 构造上游 + 转发（failover 单跳，设计 §3.8）----
+    // 换家判据 = shouldFailoverTo(statusCode, errorKind)：send 失败（无响应头 /
+    // DNS / TLS / 连接 / 超时 = statusCode==0 / 502 upstream_unreachable）或
+    // 状态码命中换家表（401/403/429 / 5xx 排除 no_active_profile / 其余 4xx）→
+    // 主 profile 有可用备用（resolveFallbackProfile：fallback_profile_id →
+    // getProfile + loadApiKey，任一失败 / id==0 → nullopt）则换家重试一次；
+    // 两次都失败 → 返回**第二次**的结果（错误更相关）。
+    // 注入模式守卫（profileProvider_ 已设，测试/UI 直给完整 profile、绕过
+    // DB / Keychain）：跳过 resolveFallbackProfile、不换家（设计 §3.8 显式
+    // 声明，不依赖「内存库无 profile → 恒 nullopt」的巧合）。
+    // 单次上游请求（头复制 + 方言归一），换家后按备用重算 forBaseUrl 与
+    // upstream.url（§3.2）
+    const auto buildUpstream = [&](const Profile& p) {
+        platform::http::Request up;
+        up.method = method;
+        up.url = stripTrailingSlash(p.baseUrl) + ensureLeadingSlash(path);
+        up.body = body;
+        up.timeoutMs = 120000;     // 2 分钟
+        up.verifyTls = true;
 
-    // 复制客户端 headers（去掉 hop-by-hop / authorization），
-    // 再按上游方言归一（鉴权头 / UA / 会话头 / 模型名标记）——
-    // 各网关的差异全部收敛在 UpstreamDialect 里，此处不再有 provider if。
-    // 方言由 profile.dialectOverride 钉住（空串 = 未覆盖 → host 推断，
-    // 与不传该参逐项一致；CPX-13 接线）
-    auto fwd = copyHeaders(headers);
-    const UpstreamDialect dialect =
-        UpstreamDialect::forBaseUrl(profile.baseUrl, profile.dialectOverride);
-    dialect.applyHeaders(fwd, apiKey, authFieldFromText(profile.authField));
-    upstream.headers = std::move(fwd);
-    if (dialect.normalizeBody(upstream.body)) {
-        LOG_INFO("代理：按上游方言剥掉模型名 [1M] 标记（" + profile.baseUrl + "）");
+        auto fwd = copyHeaders(headers);
+        const UpstreamDialect dialect =
+            UpstreamDialect::forBaseUrl(p.baseUrl, p.dialectOverride);
+        dialect.applyHeaders(fwd, p.apiKeyPlain, authFieldFromText(p.authField));
+        up.headers = std::move(fwd);
+        if (dialect.normalizeBody(up.body)) {
+            LOG_INFO("代理：按上游方言剥掉模型名 [1M] 标记（" + p.baseUrl + "）");
+        }
+        return up;
+    };
+
+    core::Result<platform::http::Response> respR;
+    for (int attempt = 0; attempt < 2; ++attempt) {
+        if (attempt > 0) {
+            if (profileProvider_) break;    // 注入模式守卫：不换家（见上）
+            auto fb = service_.resolveFallbackProfile(servingProfile);
+            if (!fb) break;    // 无备用 / 备用失效 / 备用无 key → 原样回第一次结果
+            servingProfile = std::move(*fb);
+        }
+        respR = platform::http::send(buildUpstream(servingProfile));
+        if (attempt == 0) {
+            const int sc = respR.isOk() ? respR.value().statusCode : 0;
+            const std::string kind =
+                respR.isOk() ? std::string() : std::string("upstream_unreachable");
+            if (!shouldFailoverTo(sc, kind)) break;
+            continue;    // 换家：下一圈用备用重试（只换一跳）
+        }
+        break;    // 第二次尝试：无论结果，这就是最终结果
     }
-
-    // ---- 3. 转发 ----
-    auto respR = platform::http::send(upstream);
     auto endTime = std::chrono::steady_clock::now();
     const int64_t latencyMs =
         std::chrono::duration_cast<std::chrono::milliseconds>(endTime - startTime).count();
 
     if (respR.isFail()) {
-        // 网络失败（DNS / TLS / 连接 / 超时）
+        // 网络失败（DNS / TLS / 连接 / 超时；第二次尝试失败 = 回第二次的结果）
         LOG_WARN("代理：上游请求失败: " + respR.errorMessage());
         writeErrorJson(out, 502, "upstream_unreachable", respR.errorMessage());
 
         ClaudeService::CallLogEntry entry;
-        entry.profileId = profile.id;
+        entry.profileId = servingProfile.id;
         entry.method = method;
         entry.path = path;
         entry.statusCode = 0;
@@ -280,7 +305,7 @@ void ProxyRouter::handleRequest(
 
     // ---- 5. 写日志 ----
     ClaudeService::CallLogEntry entry;
-    entry.profileId = profile.id;
+    entry.profileId = servingProfile.id;
     entry.method = method;
     entry.path = path;
     entry.statusCode = resp.statusCode;
@@ -298,7 +323,8 @@ void ProxyRouter::handleRequest(
     LOG_INFO("代理 " + method + " " + path + " -> " +
              std::to_string(resp.statusCode) + " (" +
              std::to_string(latencyMs) + "ms, profile=" +
-             std::to_string(profile.id) + ")");
+             std::to_string(servingProfile.id) +
+             (servingProfile.id != profile.id ? " [failover]" : "") + ")");
 }
 
 // ==================== 流式转发（spec §10.4 / P10a）====================
@@ -353,31 +379,88 @@ void ProxyRouter::handleStreamingRequest(
         return;
     }
     Profile profile = std::move(profileR).value();
+    Profile servingProfile = profile;   // 实际服务的那家（failover 换家后 = 备用）
 
-    // ---- 2. 构造上游请求 ----
-    platform::http::Request upstream;
-    upstream.method = method;
-    upstream.url = path;              // 相对路径，sendStreamingClaude 会拼 baseUrl
-    upstream.body = body;
-    // W7 P0-3：SSE 长连接不用总墙钟超时（原 300s 会把长生成整个砍断），
-    // 改空闲超时——速率 <1 B/s 持续 60s（即无新 chunk 60s）才判死。
-    // 注：libcurl 低速检测按 ~5s 滑动窗口采样，实际中止在 60-70s 间
-    upstream.timeoutMs = 0;             // 0 = 无总上限（sendStreaming 语义）
-    upstream.lowSpeedBytesPerSec = 1;   // 1 B/s
-    upstream.lowSpeedTimeSec = 60;      // 持续 60s → CURLE_OPERATION_TIMEDOUT
-    upstream.verifyTls = true;
-    upstream.headers = copyHeaders(headers);
-    // 头与 body 的上游方言化（鉴权 / UA / 会话头 / 模型名标记）由
-    // sendStreamingClaude 内的 UpstreamDialect 统一处理
+    // ---- 2/3/4. 启动流式转发 + 等响应头（failover 单跳，设计 §3.8）----
+    // 判定点 = waitForStatus(30000) 之后、写响应头之前：
+    //   upstreamStatus==0（无响应头/传输失败）或状态码命中换家表
+    //   （shouldFailoverTo，同缓冲路径）→ 试图换家一次：先 resolveFallbackProfile
+    //   确认备用可用（nullopt / 注入模式 → 原样回第一次结果，流未取消完整收尾），
+    //   再 cancelWithReason("failover") 丢弃本次流（队列里的半截 error body 随
+    //   对象销毁），用备用起一条新流（sendStreamingClaude 按备用重算 baseUrl 与
+    //   方言）。第二次尝试无论结果就是最终结果（只换一跳）。
+    // 注入模式守卫同缓冲路径：profileProvider_ 已设 → 不换家（设计 §3.8）
+    core::Result<std::unique_ptr<platform::http::StreamingResponse>> streamR;
+    std::shared_ptr<platform::http::StreamingResponse> upstreamStream;
+    int upstreamStatus = 0;
+    for (int attempt = 0; attempt < 2; ++attempt) {
+        if (attempt > 0) {
+            if (profileProvider_) break;    // 注入模式守卫：不换家（见上）
+            auto fb = service_.resolveFallbackProfile(servingProfile);
+            if (!fb) break;    // 无备用 → 原样回第一次结果（流未取消，body 完整）
+            // 换家：丢弃本次流（半截 error body 随对象销毁）
+            upstreamStream->cancelWithReason("failover");
+            servingProfile = std::move(*fb);
+            upstreamStream.reset();   // 旧流对象析构（cancel + join libcurl 线程）
+            upstreamStatus = 0;
+        }
 
-    // ---- 3. 启动三线程流式转发（libcurl 线程 + 队列 + backpressure）----
-    auto streamR = sendStreamingClaude(upstream, profile);
+        // 构造上游请求
+        platform::http::Request upstream;
+        upstream.method = method;
+        upstream.url = path;              // 相对路径，sendStreamingClaude 会拼 baseUrl
+        upstream.body = body;
+        // W7 P0-3：SSE 长连接不用总墙钟超时（原 300s 会把长生成整个砍断），
+        // 改空闲超时——速率 <1 B/s 持续 60s（即无新 chunk 60s）才判死。
+        // 注：libcurl 低速检测按 ~5s 滑动窗口采样，实际中止在 60-70s 间
+        upstream.timeoutMs = 0;             // 0 = 无总上限（sendStreaming 语义）
+        upstream.lowSpeedBytesPerSec = 1;   // 1 B/s
+        upstream.lowSpeedTimeSec = 60;      // 持续 60s → CURLE_OPERATION_TIMEDOUT
+        upstream.verifyTls = true;
+        upstream.headers = copyHeaders(headers);
+        // 头与 body 的上游方言化（鉴权 / UA / 会话头 / 模型名标记）由
+        // sendStreamingClaude 内的 UpstreamDialect 统一处理
+
+        // 启动三线程流式转发（libcurl 线程 + 队列 + backpressure）
+        streamR = sendStreamingClaude(upstream, servingProfile);
+        if (streamR.isFail()) {
+            if (attempt == 0 &&
+                shouldFailoverTo(0, "upstream_unreachable")) {
+                continue;    // 换家（传输失败恒可换；注入模式守卫在下一圈入口）
+            }
+            break;
+        }
+        upstreamStream = std::shared_ptr<platform::http::StreamingResponse>(
+            std::move(streamR.value()));
+
+        // 审计 2026-09-23 [9]：登记到 ClaudeService 在途流表。stopProxy()/应用
+        // 退出会 cancelActiveStreams()，立即解锁之后阻塞在 readChunk 的
+        // provider（否则 Server::stop() 的 join 挂到流自然结束）。若停止已
+        // 发起，这里会被立即 cancel，后续 waitForStatus 快速返回、走 502 或
+        // provider Error 路径退出。
+        service_.registerActiveStream(upstreamStream);
+
+        // 等上游响应头（拿到状态码，最多 30s）
+        upstreamStream->waitForStatus(30000);
+        upstreamStatus = upstreamStream->statusCode();
+
+        if (attempt == 0) {
+            const std::string kind = (upstreamStatus == 0)
+                ? std::string("upstream_unreachable") : std::string();
+            if (shouldFailoverTo(upstreamStatus, kind)) {
+                continue;    // 换家：旧流在下一圈入口 cancel
+            }
+        }
+        break;    // 第二次尝试（或无可换状态）：这就是最终流
+    }
+
     if (streamR.isFail()) {
+        // 启动上游失败（libcurl 起线程前失败；连接层失败走 waitForStatus==0）
         LOG_WARN("流式代理：启动上游失败: " + streamR.errorMessage());
         writeErrorJson(out, 502, "upstream_unreachable", streamR.errorMessage());
 
         ClaudeService::CallLogEntry entry;
-        entry.profileId = profile.id;
+        entry.profileId = servingProfile.id;
         entry.method = method;
         entry.path = path;
         entry.statusCode = 0;
@@ -389,23 +472,8 @@ void ProxyRouter::handleStreamingRequest(
         return;
     }
 
-    auto& upstreamRef = streamR.value();
-    auto upstreamStream =
-        std::shared_ptr<platform::http::StreamingResponse>(std::move(upstreamRef));
-
-    // 审计 2026-09-23 [9]：登记到 ClaudeService 在途流表。stopProxy()/应用
-    // 退出会 cancelActiveStreams()，立即解锁之后阻塞在 readChunk 的
-    // provider（否则 Server::stop() 的 join 挂到流自然结束）。若停止已
-    // 发起，这里会被立即 cancel，后续 waitForStatus 快速返回、走 502 或
-    // provider Error 路径退出。
-    service_.registerActiveStream(upstreamStream);
-
-    // ---- 4. 等上游响应头（拿到状态码，最多 30s）----
-    upstreamStream->waitForStatus(30000);
-    const int upstreamStatus = upstreamStream->statusCode();
-
     if (upstreamStatus == 0) {
-        // 连接失败 / 超时：回 502
+        // 连接失败 / 超时（两次尝试都无响应头 → 回第二次的 502）：回 502
         LOG_WARN("流式代理：上游无响应头");
         out.setStatus(502);
         out.setHeader("Content-Type", "application/json");
@@ -413,7 +481,7 @@ void ProxyRouter::handleStreamingRequest(
         out.end();
 
         ClaudeService::CallLogEntry entry;
-        entry.profileId = profile.id;
+        entry.profileId = servingProfile.id;
         entry.method = method;
         entry.path = path;
         entry.statusCode = 502;
@@ -440,7 +508,7 @@ void ProxyRouter::handleStreamingRequest(
         std::chrono::steady_clock::now() - startTime).count();
 
     ClaudeService::CallLogEntry entry;
-    entry.profileId = profile.id;
+    entry.profileId = servingProfile.id;
     entry.method = method;
     entry.path = path;
     entry.statusCode = upstreamStatus;
@@ -480,7 +548,9 @@ void ProxyRouter::handleStreamingRequest(
 
     LOG_INFO("流式代理 " + method + " " + path + " -> " +
              std::to_string(upstreamStatus) + " (profile=" +
-             std::to_string(profile.id) + ", content-type=" + contentType + ")");
+             std::to_string(servingProfile.id) +
+             (servingProfile.id != profile.id ? " [failover]" : "") +
+             ", content-type=" + contentType + ")");
 }
 
 } // namespace module::claude

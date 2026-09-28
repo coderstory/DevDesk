@@ -323,4 +323,23 @@ ReverseSyncMerge mergeReverseSyncEnv(const ImportedConfig& cfg,
 std::string makeCopyName(const std::string& baseName,
                          const std::vector<std::string>& existingNames);
 
+// ---- failover 换家判据（2026-09-27 shared-config-and-failover 设计 §3.8）----
+// 纯函数：两条转发路径（缓冲 / 流式）共用，避免 if 表漂移；单测逐条覆盖。
+// 输入：上游返回的 statusCode（send 失败无响应 = 0）与 errorKind
+//（"upstream_unreachable" = 传输失败；DevDesk 自产 503 = "no_active_profile"）。
+// 判据表（§3.8，按 §3.1 新 503 口径重定；只换一跳，调用方负责次数）：
+//   statusCode==0（传输失败：无响应头/DNS/TLS/连接/超时，我们这侧 =
+//     502 upstream_unreachable）                 → true（换）
+//   401 / 403（只有换 key 才可能变好）             → true
+//   429（上游限流）                               → true
+//   5xx 含 500/502/503/504/529（上游侧故障）       → true
+//   400 / 405 / 406 / 413 / 414 / 415 / 422 / 501（请求自身非法，换家同结果
+//      ——白烧一次请求）                          → false（不换）
+//   其余 4xx（404 / 408 等，负列表之外都试；404 可能是「该网关没有这个
+//     模型」，failover 恰好能救）                  → true
+//   errorKind == "no_active_profile" → false（兜底防御：DevDesk 自身 503 由
+//     writeNoProfileError 在转发**前**直接回（proxy_router 缓冲 :202 / 流式
+//     :352），判定点理论收不到；本地配置错误不换家，单测注释锚定此语义）
+bool shouldFailoverTo(int statusCode, const std::string& errorKind);
+
 } // namespace module::claude

@@ -2379,6 +2379,120 @@ REGISTER_TEST(claude_ui_auth_field_edit_shows_current,
     return true;
 })
 
+// ---- 27f. failover 备用下拉（批 3，设计 §3.4/§3.7）：编辑回显 + 选择保存落库
+//      + 自引用排除（编辑态列表里没有自己）----
+
+REGISTER_TEST(claude_ui_fallback_dropdown_edit_persists,
+              "claude_module: failover 备用 Profile 下拉（回显/保存落库/自引用排除，headless）", {
+    TestEnv env;
+    // 备家先建（名字「备家」<「主家」也随 is_active DESC 排后；编辑主家时
+    // 候选 = 全部排除自身 → 只剩备家 = item.1）
+    auto b = env.svc->createProfile("备家", "https://fb-b.example.com",
+                                    "sk-ant-fbb-00001", "m");
+    DOCTEST_REQUIRE(b.isOk());
+    auto a = env.svc->createProfile("主家", "https://fb-a.example.com",
+                                    "sk-ant-fba-00001", "m");
+    DOCTEST_REQUIRE(a.isOk());
+    DOCTEST_REQUIRE(env.svc->setActiveProfile(a.value().id).isOk());
+
+    std::unique_ptr<::core::Module> mod(create_claude_module());
+    eui::Screen screen;
+    screen.width = 1600.0f;
+    screen.height = 1000.0f;
+    auto compose = [&](eui::Ui& ui, const char* tag) {
+        ui.begin(tag);
+        mod->compose(ui, screen);
+        ui.end();
+    };
+    auto click = [](eui::Ui& ui, const std::string& id) -> bool {
+        const auto* node = ui.find(id);
+        if (node == nullptr || node->onClick == nullptr) {
+            std::cerr << "missing clickable: " << id << std::endl;
+            return false;
+        }
+        node->onClick();
+        return true;
+    };
+
+    // 选中主家 → 编辑（基础页默认）：初始「无（不启用 failover）」
+    {
+        eui::Ui ui;
+        compose(ui, "fb_e1");
+        DOCTEST_CHECK(click(ui, "claude.profile.0.bg"));
+    }
+    {
+        eui::Ui ui;
+        compose(ui, "fb_e2");
+        DOCTEST_CHECK(click(ui, "claude.act.edit.bg"));
+    }
+    {
+        eui::Ui ui;
+        compose(ui, "fb_e3");
+        const auto* label = ui.find("claude.form.basic.fallback.dd.label");
+        DOCTEST_REQUIRE(label != nullptr);
+        DOCTEST_CHECK_EQ(label->text, std::string("无（不启用 failover）"));
+    }
+    // 拉开 → 自引用排除：候选只有「备家」（item.0=无 / item.1=备家；
+    // 「主家」不出现 = item.2 不存在）
+    {
+        eui::Ui ui;
+        compose(ui, "fb_e4");
+        DOCTEST_CHECK(click(ui, "claude.form.basic.fallback.dd.field"));
+    }
+    {
+        eui::Ui ui;
+        compose(ui, "fb_e5");
+        DOCTEST_CHECK(ui.find("claude.form.basic.fallback.dd.item.1") != nullptr);
+        DOCTEST_CHECK(ui.find("claude.form.basic.fallback.dd.item.2") == nullptr);
+        DOCTEST_CHECK(click(ui, "claude.form.basic.fallback.dd.item.1"));
+    }
+    // 选中回显 → 保存 → 落库（编辑路径写 p.fallbackProfileId）
+    {
+        eui::Ui ui;
+        compose(ui, "fb_e6");
+        const auto* label = ui.find("claude.form.basic.fallback.dd.label");
+        DOCTEST_REQUIRE(label != nullptr);
+        DOCTEST_CHECK_EQ(label->text, std::string("备家"));
+        DOCTEST_CHECK(click(ui, "claude.dialog.form.confirm.bg"));
+    }
+    {
+        auto g = env.svc->getProfile(a.value().id);
+        DOCTEST_REQUIRE(g.isOk());
+        DOCTEST_CHECK_EQ(g.value().fallbackProfileId, b.value().id);
+    }
+    // 重开编辑：下拉回显「备家」（等后台刷新把新值带进缓存——打开表单的
+    // profile 取自缓存快照，与真实应用一致）
+    bool sawBackup = false;
+    for (int i = 0; i < 300 && !sawBackup; ++i) {
+        {
+            eui::Ui ui;
+            compose(ui, "fb_e7a");
+            DOCTEST_CHECK(click(ui, "claude.profile.0.bg"));
+        }
+        {
+            eui::Ui ui;
+            compose(ui, "fb_e7b");
+            DOCTEST_CHECK(click(ui, "claude.act.edit.bg"));
+        }
+        {
+            eui::Ui ui;
+            compose(ui, "fb_e7c");
+            const auto* label = ui.find("claude.form.basic.fallback.dd.label");
+            if (label != nullptr && label->text == "备家") {
+                sawBackup = true;
+            } else {
+                std::this_thread::sleep_for(std::chrono::milliseconds(5));
+            }
+        }
+    }
+    DOCTEST_CHECK(sawBackup);
+
+    mod->onStop();
+    cleanupProfileKey(kTestKeychainService, a.value().id);
+    cleanupProfileKey(kTestKeychainService, b.value().id);
+    return true;
+})
+
 // ---- 运行第 6 键（2026-09-28 profile-run 设计 §6/§8；D-1 直连形态）----
 // ⚠️ 本文件用真实 ClaudeService（setGlobal）：点「运行」前**必须**注入假 launch，
 //    否则测试会真的启动 wt/powershell + claude（spec §6 第 4 项）

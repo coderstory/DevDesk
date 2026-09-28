@@ -169,6 +169,7 @@ core::Result<Profile> ProfileRepository::rowToProfile(
     auto sharedCfg = row.getInt64("shared_config_id");
     auto authField = row.getString("auth_field");
     auto dialectOverride = row.getString("dialect_override");
+    auto fallbackProfileId = row.getInt64("fallback_profile_id");
     auto active = row.getInt64("is_active");
     auto created = row.getInt64("created_at");
     auto updated = row.getInt64("updated_at");
@@ -190,6 +191,7 @@ core::Result<Profile> ProfileRepository::rowToProfile(
     if (dialectOverride.isOk()) {
         p.dialectOverride = normalizeDialectOverride(dialectOverride.value());
     }
+    if (fallbackProfileId.isOk()) p.fallbackProfileId = fallbackProfileId.value();
     if (active.isOk()) p.isActive = (active.value() != 0);
     if (created.isOk()) p.createdAt = static_cast<std::time_t>(created.value());
     if (updated.isOk()) p.updatedAt = static_cast<std::time_t>(updated.value());
@@ -204,7 +206,7 @@ core::Result<std::vector<Profile>> ProfileRepository::listProfiles() {
     auto prep = db_.prepare(
         "SELECT id, name, base_url, api_key_hint, api_key_check, "
         "keychain_account, model, models_config, extra_env, "
-        "shared_config_id, auth_field, dialect_override, is_active, "
+        "shared_config_id, auth_field, dialect_override, fallback_profile_id, is_active, "
         "created_at, updated_at "
         "FROM claude_profiles ORDER BY is_active DESC, name ASC");
     if (prep.isFail()) {
@@ -235,7 +237,7 @@ core::Result<Profile> ProfileRepository::getProfile(int64_t id) {
     auto prep = db_.prepare(
         "SELECT id, name, base_url, api_key_hint, api_key_check, "
         "keychain_account, model, models_config, extra_env, "
-        "shared_config_id, auth_field, dialect_override, is_active, "
+        "shared_config_id, auth_field, dialect_override, fallback_profile_id, is_active, "
         "created_at, updated_at "
         "FROM claude_profiles WHERE id = ?");
     if (prep.isFail()) {
@@ -267,7 +269,8 @@ core::Result<Profile> ProfileRepository::createProfile(const std::string& name,
                                                        const std::string& model,
                                                        int64_t sharedConfigId,
                                                        const std::string& authField,
-                                                       const std::string& dialectOverride) {
+                                                       const std::string& dialectOverride,
+                                                       int64_t fallbackProfileId) {
     // 校验
     if (trim(name).empty()) {
         return core::Result<Profile>::fail(core::ErrorCode::ValidationError,
@@ -305,9 +308,9 @@ core::Result<Profile> ProfileRepository::createProfile(const std::string& name,
     auto prep = db_.prepare(
         "INSERT INTO claude_profiles "
         "(name, base_url, api_key_hint, api_key_check, keychain_account, "
-        " model, shared_config_id, auth_field, dialect_override, is_active, "
-        " created_at, updated_at) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?) RETURNING id");
+        " model, shared_config_id, auth_field, dialect_override, "
+        " fallback_profile_id, is_active, created_at, updated_at) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?) RETURNING id");
     if (prep.isFail()) {
         return core::Result<Profile>::fail(prep.errorCode(), prep.errorMessage());
     }
@@ -321,8 +324,9 @@ core::Result<Profile> ProfileRepository::createProfile(const std::string& name,
     stmt.bind(7, sharedConfigId);    // 建时即绑定（0 = 不绑定）
     stmt.bind(8, cleanedAuthField);  // 认证字段（写侧已规范化）
     stmt.bind(9, cleanedDialectOverride);  // 方言覆盖（写侧已规范化，空串 = 未覆盖）
-    stmt.bind(10, static_cast<int64_t>(now));
+    stmt.bind(10, fallbackProfileId);      // 备用（0 = 无；duplicateProfile 携带）
     stmt.bind(11, static_cast<int64_t>(now));
+    stmt.bind(12, static_cast<int64_t>(now));
 
     auto stepR = stmt.step();
     if (stepR.isFail()) {
@@ -437,6 +441,7 @@ core::Result<Profile> ProfileRepository::createProfile(const std::string& name,
     out.sharedConfigId = sharedConfigId;
     out.authField = cleanedAuthField;   // 必须带上：二段补写以本返回值为基
     out.dialectOverride = cleanedDialectOverride;   // 同上（CPX-13）
+    out.fallbackProfileId = fallbackProfileId;
     out.isActive = false;
     out.createdAt = now;
     out.updatedAt = now;
@@ -453,6 +458,12 @@ core::Result<void> ProfileRepository::updateProfile(const Profile& profile,
     if (trim(profile.name).empty()) {
         return core::Result<void>::fail(core::ErrorCode::ValidationError,
             "name 不能为空");
+    }
+    // 设计 §3.7 校验：拒自引用（fallback_profile_id == 自身 = 纯浪费一跳）。
+    // 与「A→B / B→A 的一跳环」是两回事——环无害（备用各指对方），不拦
+    if (profile.fallbackProfileId == profile.id) {
+        return core::Result<void>::fail(core::ErrorCode::ValidationError,
+            "备用 Profile 不能是自身");
     }
 
     // 查旧 profile（用于回滚 Keychain；oldProfile 出参供门面的 re-takeover
@@ -518,7 +529,7 @@ core::Result<void> ProfileRepository::updateProfile(const Profile& profile,
                 "UPDATE claude_profiles SET "
                 "name = ?, base_url = ?, api_key_hint = ?, api_key_check = ?, "
                 "model = ?, models_config = ?, extra_env = ?, shared_config_id = ?, "
-                "auth_field = ?, dialect_override = ?, "
+                "auth_field = ?, dialect_override = ?, fallback_profile_id = ?, "
                 "updated_at = ? "
                 "WHERE id = ?");
             if (prep.isFail()) {
@@ -536,8 +547,9 @@ core::Result<void> ProfileRepository::updateProfile(const Profile& profile,
             stmt.bind(8, profile.sharedConfigId);
             stmt.bind(9, cleanedAuthField);
             stmt.bind(10, cleanedDialectOverride);
-            stmt.bind(11, static_cast<int64_t>(now));
-            stmt.bind(12, profile.id);
+            stmt.bind(11, profile.fallbackProfileId);
+            stmt.bind(12, static_cast<int64_t>(now));
+            stmt.bind(13, profile.id);
             auto step = stmt.step();
             if (step.isFail()) {
                 std::string msg = step.errorMessage();
@@ -555,12 +567,12 @@ core::Result<void> ProfileRepository::updateProfile(const Profile& profile,
                                             stepR.errorMessage());
         }
     } else {
-        // 只更新 name / url / model / 片段绑定
+        // 只更新 name / url / model / 片段绑定 / 备用
         auto prep = db_.prepare(
             "UPDATE claude_profiles SET "
             "name = ?, base_url = ?, model = ?, models_config = ?, "
             "extra_env = ?, shared_config_id = ?, auth_field = ?, "
-            "dialect_override = ?, "
+            "dialect_override = ?, fallback_profile_id = ?, "
             "updated_at = ? WHERE id = ?");
         if (prep.isFail()) {
             return core::Result<void>::fail(prep.errorCode(), prep.errorMessage());
@@ -574,8 +586,9 @@ core::Result<void> ProfileRepository::updateProfile(const Profile& profile,
         stmt.bind(6, profile.sharedConfigId);
         stmt.bind(7, cleanedAuthField);
         stmt.bind(8, cleanedDialectOverride);
-        stmt.bind(9, static_cast<int64_t>(now));
-        stmt.bind(10, profile.id);
+        stmt.bind(9, profile.fallbackProfileId);
+        stmt.bind(10, static_cast<int64_t>(now));
+        stmt.bind(11, profile.id);
         auto stepR = stmt.step();
         if (stepR.isFail()) {
             std::string msg = stepR.errorMessage();
@@ -624,8 +637,26 @@ core::Result<void> ProfileRepository::deleteProfile(int64_t id,
             "清理 Keychain 失败，profile 未删除: " + kcDel.errorMessage());
     }
 
-    // 段二：删 SQLite 行（FK CASCADE 会级联清空该 profile 的调用日志）
+    // 段二：删 SQLite 行（FK CASCADE 会级联清空该 profile 的调用日志）。
+    // 同事务先解绑「备用指向它」的 profile（设计 §3.7：不留悬空 fallback id，
+    // 否则其它 profile 的 failover 静默落到已删 profile → resolveFallbackProfile
+    // 容错 nullopt 也是「不换家」，但库里留着悬空 id 难看且删除可重试时重复）
     auto delRow = keyTx.writeDb([&]() -> core::Result<void> {
+        auto ub = db_.prepare(
+            "UPDATE claude_profiles SET fallback_profile_id = 0, "
+            "updated_at = ? WHERE fallback_profile_id = ?");
+        if (ub.isFail()) {
+            return core::Result<void>::fail(ub.errorCode(), ub.errorMessage());
+        }
+        auto& ubStmt = ub.value();
+        ubStmt.bind(1, static_cast<int64_t>(nowUnix()));
+        ubStmt.bind(2, id);
+        auto ubStep = ubStmt.step();
+        if (ubStep.isFail()) {
+            return core::Result<void>::fail(ubStep.errorCode(),
+                                            ubStep.errorMessage());
+        }
+
         auto prep = db_.prepare("DELETE FROM claude_profiles WHERE id = ?");
         if (prep.isFail()) {
             return core::Result<void>::fail(prep.errorCode(), prep.errorMessage());
@@ -695,7 +726,7 @@ core::Result<Profile> ProfileRepository::getActiveProfile() {
     auto prep = db_.prepare(
         "SELECT id, name, base_url, api_key_hint, api_key_check, "
         "keychain_account, model, models_config, extra_env, "
-        "shared_config_id, auth_field, dialect_override, is_active, "
+        "shared_config_id, auth_field, dialect_override, fallback_profile_id, is_active, "
         "created_at, updated_at "
         "FROM claude_profiles WHERE is_active = 1 LIMIT 1");
     if (prep.isFail()) {
@@ -791,12 +822,13 @@ core::Result<Profile> ProfileRepository::duplicateProfile(int64_t srcId) {
     // 一行 SQLite + 一条 Keychain（account 自动为 claude:<新 id>，与源不同）；
     // 副本不激活（S-4）→ 不触发 setActiveProfile、也不触发反向同步。
     // 片段绑定在 createProfile 处一并带上（设计 §2.6：它属于配置）——若留到
-    // 二段补写才设，二段条件（models/extra_env 非空）不成立时就会丢掉绑定
+    // 二段补写才设，二段条件（models/extra_env 非空）不成立时就会丢掉绑定；
+    // fallback_profile_id 同样（设计 §3.7：备用属于配置，复制 = 拿到同一套）
     const std::string defModel =
         effectiveModelsConfig(src.modelsConfigJson, src.model).def.model;
     auto createdR = createProfile(copyName, src.baseUrl, keyR.value(), defModel,
                                   src.sharedConfigId, src.authField,
-                                  src.dialectOverride);
+                                  src.dialectOverride, src.fallbackProfileId);
     if (createdR.isFail()) {
         return core::Result<Profile>::fail(createdR.errorCode(),
                                            createdR.errorMessage());

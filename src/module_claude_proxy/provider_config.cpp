@@ -776,4 +776,31 @@ std::string makeCopyName(const std::string& baseName,
     return {};  // 100 次仍冲突：调用方按命名失败处理
 }
 
+bool shouldFailoverTo(int statusCode, const std::string& errorKind) {
+    // 兜底防御（§3.8 末行）：DevDesk 自产 503 no_active_profile → 不换家
+    //（本地配置错误，非上游故障；writeNoProfileError 在转发前直接回，
+    // 判定点理论收不到这档）
+    if (errorKind == "no_active_profile") return false;
+    // 传输失败：无响应头 / DNS / TLS / 连接 / 超时（statusCode==0 /
+    // 502 upstream_unreachable）
+    if (statusCode == 0) return true;
+    // 负列表（请求自身非法——换家同结果，白烧一次请求）
+    switch (statusCode) {
+        case 400:
+        case 405:
+        case 406:
+        case 413:
+        case 414:
+        case 415:
+        case 422:
+        case 501:
+            return false;
+        default:
+            // 401/403（换 key 才可能变好）/ 429（限流）/ 5xx（上游侧故障，
+            // 含 500/502/503/504/529 过载）/ 其余 4xx（负列表之外都试）→ 换；
+            // 2xx/3xx 到不了判定点（调用方只在失败时判），保守不换
+            return statusCode >= 400 && statusCode < 600;
+    }
+}
+
 } // namespace module::claude

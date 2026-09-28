@@ -55,6 +55,9 @@ void openCreateForm(FormState& f, ImportState& imp) {
     f.formSharedDdOpen_ = false;
     f.formFrozenKeys_.clear();
     f.formOriginalOwnKeys_.clear();
+    // 批 3：备用 Profile 复位（新建默认不启用 failover）
+    f.formFallbackProfileId_ = 0;
+    f.formFallbackDdOpen_ = false;
     resetImportState(imp);
     f.formOpen_ = true;
 }
@@ -84,6 +87,9 @@ void openEditForm(FormState& f, ImportState& imp, const Profile& p,
         const SharedConfig* sc = findSharedById(sharedConfigs, p.sharedConfigId);
         if (sc != nullptr) f.formFrozenKeys_ = sharedFrozenKeys(*sc);
     }
+    // 批 3：备用 Profile 回显（悬空/自引用 → 下拉逐帧归一为「无」，见绘制处）
+    f.formFallbackProfileId_ = p.fallbackProfileId;
+    f.formFallbackDdOpen_ = false;
     // env 行：非法 JSON 读路径容错为空表（不炸）；自有键（归一后）记入
     // formOriginalOwnKeys_——「新增同键」拦截只拦打开后新加的行，存量键
     // 非破坏保留、冻结显示（解绑后恢复生效，设计 §2.3）
@@ -298,7 +304,9 @@ void submitForm(FormState& f, const FormSubmitHooks& hooks,
         auto r = svc->createProfile(f.formName_, f.formUrl_, f.formKey_,
                                     f.formModels_.def.model, /*activateIfNoneActive=*/true,
                                     /*sharedConfigId=*/f.formSharedConfigId_,
-                                    authFieldToText(f.formAuthField_));
+                                    authFieldToText(f.formAuthField_),
+                                    /*dialectOverride=*/std::string(),
+                                    /*fallbackProfileId=*/f.formFallbackProfileId_);
         if (r.isFail()) {
             f.formError_ = r.errorMessage();
             return;
@@ -346,6 +354,7 @@ void submitForm(FormState& f, const FormSubmitHooks& hooks,
         p.apiKeyPlain = f.formKey_;   // 空 = 不换 key
         p.authField = authFieldToText(f.formAuthField_);
         p.sharedConfigId = f.formSharedConfigId_;   // 批 2：绑定/解绑随保存落库
+        p.fallbackProfileId = f.formFallbackProfileId_;   // 批 3：备用随保存落库（自引用由服务层校验兜底）
         auto r = svc->updateProfile(p);
         if (r.isFail()) {
             f.formError_ = r.errorMessage();
@@ -359,10 +368,13 @@ void submitForm(FormState& f, const FormSubmitHooks& hooks,
 namespace {
 
 // ---- 基础页（§6.1 线框）----
+// profiles：批 3 备用 Profile 下拉的数据源（编辑态排除自身；悬空/自引用逐帧
+// 归一为「无」，不把幽灵 id 留在表单态里传播——同批 2 片段绑定的归一口径）
 void drawFormBasicTab(eui::Ui& ui, float w,
                       const core::theme::Tokens& t,
                       const components::theme::ThemeColorTokens& themeTokens,
-                      bool isEdit, FormState& f) {
+                      bool isEdit, FormState& f,
+                      const std::vector<Profile>& profiles) {
     ui.text("claude.form.basic.name.label")
         .position(28.0f, 104.0f).size(w - 56.0f, 16.0f)
         .text("名称").fontSize(11.0f).lineHeight(16.0f)
@@ -436,19 +448,79 @@ void drawFormBasicTab(eui::Ui& ui, float w,
         })
         .build();
 
+    // 备用 Profile（failover，设计 §3.4/§3.7）：0 = 不启用。启用后主 Profile
+    // 返回可重试错误时请求换发备用（§3.4 表单提示——可能按另一家计费在
+    // 副提示里点明）。选项 idx 0 = 无；其余 = 候选 profile 表序 +1；编辑态
+    // 排除自身（自引用由服务层 updateProfile 校验兜底，这里列表直接不给）
+    ui.text("claude.form.basic.fallback.label")
+        .position(28.0f, 380.0f).size(72.0f, 16.0f)
+        .text("备用 Profile").fontSize(11.0f).lineHeight(16.0f)
+        .color(t.colors.textTertiary).build();
+    ui.text("claude.form.basic.fallback.hint")
+        .position(104.0f, 380.0f).size(w - 132.0f, 16.0f)
+        .text("401/403/429/5xx/网络失败时换发备用（可能按另一家计费）")
+        .fontSize(11.0f).lineHeight(16.0f)
+        .color(t.colors.textTertiary).build();
+    {
+        // 候选 = 全部 profile 排除自身（新建 formEditId_==0 = 全部可选）
+        std::vector<int64_t> candidateIds;
+        std::vector<std::string> items;
+        items.reserve(profiles.size() + 1);
+        items.emplace_back("无（不启用 failover）");
+        for (const auto& p : profiles) {
+            if (p.id == f.formEditId_) continue;   // 自引用不提供
+            candidateIds.push_back(p.id);
+            items.push_back(p.name);
+        }
+        // 选中态逐帧归算；悬空（备用已删 / 快照未到位）归一为无（幂等）
+        int selIdx = 0;
+        if (f.formFallbackProfileId_ != 0) {
+            for (size_t k = 0; k < candidateIds.size(); ++k) {
+                if (candidateIds[k] == f.formFallbackProfileId_) {
+                    selIdx = static_cast<int>(k) + 1;
+                    break;
+                }
+            }
+            if (selIdx == 0) f.formFallbackProfileId_ = 0;
+        }
+        ui.stack("claude.form.basic.fallback.ddwrap")
+            .position(28.0f, 398.0f)
+            .size(w - 56.0f, 40.0f)
+            .content([&] {
+                // candidateIds 按值捕获：onChange 只取 id，不悬垂引用快照
+                components::dropdown(ui, "claude.form.basic.fallback.dd")
+                    .size(w - 56.0f, 40.0f)
+                    .theme(themeTokens)
+                    .items(std::move(items))
+                    .selected(selIdx)
+                    .open(f.formFallbackDdOpen_)
+                    .onOpenChange([fp = &f](bool v) { fp->formFallbackDdOpen_ = v; })
+                    .onChange([fp = &f, ids = std::move(candidateIds)](int idx) {
+                        if (idx <= 0) {
+                            fp->formFallbackProfileId_ = 0;
+                            return;
+                        }
+                        const size_t k = static_cast<size_t>(idx - 1);
+                        if (k < ids.size()) fp->formFallbackProfileId_ = ids[k];
+                    })
+                    .build();
+            })
+            .build();
+    }
+
     ui.text("claude.form.basic.hint.icon")
-        .position(28.0f, 380.0f).size(14.0f, 18.0f)
+        .position(28.0f, 446.0f).size(14.0f, 18.0f)
         .icon(0xF05A).fontSize(12.0f).lineHeight(18.0f)
         .color(t.colors.textTertiary).build();
     ui.text("claude.form.basic.hint")
-        .position(46.0f, 380.0f).size(w - 74.0f, 18.0f)
+        .position(46.0f, 446.0f).size(w - 74.0f, 18.0f)
         .text("模型映射和高级 env 在另外两个标签页配置")
         .fontSize(12.0f).lineHeight(18.0f)
         .color(t.colors.textTertiary).build();
 
     if (!f.formError_.empty()) {
         ui.text("claude.dialog.form.error")
-            .position(28.0f, 404.0f).size(w - 56.0f, 18.0f)
+            .position(28.0f, 470.0f).size(w - 56.0f, 18.0f)
             .text(f.formError_).fontSize(12.0f).lineHeight(18.0f)
             .color(t.colors.error).build();
     }
@@ -456,11 +528,11 @@ void drawFormBasicTab(eui::Ui& ui, float w,
     // 「导入当前配置」接管态警告（不阻断，仅提示；⚠ 图标 + 文字两元素）
     if (!f.formImportWarn_.empty()) {
         ui.text("claude.dialog.form.importwarn.icon")
-            .position(28.0f, 426.0f).size(14.0f, 18.0f)
+            .position(28.0f, 492.0f).size(14.0f, 18.0f)
             .icon(0xF071).fontSize(12.0f).lineHeight(18.0f)
             .color(t.colors.warning).build();
         ui.text("claude.dialog.form.importwarn")
-            .position(46.0f, 426.0f).size(w - 74.0f, 36.0f)
+            .position(46.0f, 492.0f).size(w - 74.0f, 36.0f)
             .text(f.formImportWarn_).fontSize(12.0f).lineHeight(18.0f)
             .color(t.colors.warning).build();
     }
@@ -858,6 +930,7 @@ void drawProfileFormDialog(eui::Ui& ui, const eui::Screen& screen,
                            const components::theme::ThemeColorTokens& themeTokens,
                            FormState& f, ImportState& imp,
                            const std::vector<SharedConfig>& sharedConfigs,
+                           const std::vector<Profile>& profiles,
                            const FormSubmitHooks& hooks) {
     const float w = ui_kit::dialogWidthPx(ui_kit::DialogWidth::Form);
     const float h = 600.0f;
@@ -894,7 +967,7 @@ void drawProfileFormDialog(eui::Ui& ui, const eui::Screen& screen,
                 .build();
 
             if (f.formTab_ == 0) {
-                drawFormBasicTab(ui, w, t, themeTokens, isEdit, f);
+                drawFormBasicTab(ui, w, t, themeTokens, isEdit, f, profiles);
             } else if (f.formTab_ == 1) {
                 drawFormModelsTab(ui, w, t, themeTokens, f);
             } else {
