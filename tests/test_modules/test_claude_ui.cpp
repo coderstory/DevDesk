@@ -50,6 +50,7 @@ constexpr const char* kDbPrefix = "devdesk_test_claude_ui_";
 
 // RAII：临时库（共享 test_support::TestDb）+ 注册全局 ClaudeService
 //（析构时一定解除注册，防悬垂污染后续用例）
+// 模块 glue，keep-local（TIN-06）：TestDb 基座已是共享头，剩 ClaudeService glue。
 struct TestEnv : test_support::TestDb {
     std::unique_ptr<module::claude::ClaudeService> svc;
 
@@ -66,28 +67,6 @@ struct TestEnv : test_support::TestDb {
 
 // 清某个 profile 的测试密钥（共享实现，TIN-06b）
 using test_support::cleanupProfileKey;
-
-// 「运行」直连形态（D-1）把临时 settings 写到 appDataDir()/run-settings/——
-// 必须把数据根指到临时目录（core/paths.cpp 的 DEVDESK_DATA_ROOT 统一覆盖），
-// 绝不碰真实 %APPDATA%/DevDesk。析构删目录 + 还原环境变量。
-struct ScopedDataRoot {
-    std::string dir;
-
-    explicit ScopedDataRoot(const std::string& tag) {
-        dir = test_support::tempDbPath(kDbPrefix, tag).string() + ".data";
-        std::error_code ec;
-        std::filesystem::remove_all(dir, ec);
-        test_support::setEnvVar("DEVDESK_DATA_ROOT", dir);
-        std::filesystem::create_directories(dir, ec);
-    }
-    ~ScopedDataRoot() {
-        std::error_code ec;
-        std::filesystem::remove_all(dir, ec);
-        test_support::setEnvVar("DEVDESK_DATA_ROOT", "");
-    }
-    ScopedDataRoot(const ScopedDataRoot&) = delete;
-    ScopedDataRoot& operator=(const ScopedDataRoot&) = delete;
-};
 
 // 动态空闲端口（审计 L2 / HANDOFF 排队 #9 测试脆弱点）：借 platform::http::Server
 // 的 bind 0 支持（http_server.cpp：port==0 → bind_to_any_port）向系统要一个空闲
@@ -2406,7 +2385,7 @@ REGISTER_TEST(claude_ui_auth_field_edit_shows_current,
 REGISTER_TEST(claude_module_run_button_headless,
               "claude_module: 「运行」按钮存在 + 无选中 toast + 假 launch 收到 --settings 参数", {
     TestEnv env;
-    ScopedDataRoot root("run");
+    test_support::DataRootEnv root(kDbPrefix, "run");
     std::unique_ptr<::core::Module> mod(create_claude_module());
     eui::Screen screen;
     screen.width = 1600.0f;

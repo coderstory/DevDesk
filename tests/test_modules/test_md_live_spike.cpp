@@ -37,6 +37,7 @@
 //     同时成立时换文本首帧跳位，按 R5 同帧归零消除。
 
 #include "doctest.h"
+#include "../frame_env.h"   // TIN-06 收尾波：headless 帧驱动三合一 HeadlessFrame
 #include "module_markdown/md_ids.h"
 
 using module::markdown::kEditorInputId;
@@ -93,20 +94,7 @@ int lineOfByte(int byte) {
     return byte / kLineStride;
 }
 
-// 无头帧驱动：唯一入口是 Runtime::compose（requestFocus 的帧末消费端）
-struct SpikeEnv {
-    core::dsl::Runtime rt;
-    Ui* ui = nullptr;
-
-    template <typename Fn>
-    void frame(Fn&& body) {
-        rt.compose(kPage, 1600.0f, 1000.0f, [&](Ui& u, const eui::Screen&) {
-            ui = &u;
-            body(u);
-        });
-    }
-};
-
+// 无头帧驱动（test_support::HeadlessFrame，TIN-06 收尾波三合一）
 // 单输入（multiline）构建：与 Live 的接线同形——稳定 id、显式 content-fit 高度
 void spikeBuildInput(Ui& ui, const std::string& text, float height) {
     components::input(ui, kInput)
@@ -138,7 +126,7 @@ void spikePress(const Element* hit, const eui::Rect& bounds, double x, double y)
 // ---- V1 主用例：换位 + 换父级后，元素身份/焦点/状态/几何/键派发全部存活 ----
 REGISTER_TEST(mdspike_v1_relocate_keeps_identity,
               "mdspike V1: 同 id input 换位换父级 → 焦点+状态+几何+键派发存活", {
-    SpikeEnv env;
+    test_support::HeadlessFrame env(kPage);
     const std::string text = spikeLines(kLines, "A");
 
     // 帧 1：根 column = [a, input, b]，帧末 requestFocus（照"点击渲染块→聚焦活动块"接线）
@@ -237,7 +225,7 @@ REGISTER_TEST(mdspike_v1_relocate_keeps_identity,
 // 可观测差异钉死，供 M3 接线前拍板。
 REGISTER_TEST(mdspike_v1b_focus_target_must_be_hit_id,
               "mdspike V1b: requestFocus 必须指向 <input>.hit（基 id 静默失效）", {
-    SpikeEnv env;
+    test_support::HeadlessFrame env(kPage);
     const std::string text = spikeLines(kLines, "A");
     auto buildOne = [&](Ui& ui) {
         ui.column("spike.root").content([&] {
@@ -280,7 +268,7 @@ REGISTER_TEST(mdspike_v1b_focus_target_must_be_hit_id,
 // 三处变化（runtime_input.h:227-249 / runtime_lifecycle.h:28-45），元素消失不在其列。
 REGISTER_TEST(mdspike_v2a_unmount_leaves_stale_focus,
               "mdspike V2a: 元素消失时焦点不被清除（陈旧焦点）+ 重挂载静默恢复", {
-    SpikeEnv env;
+    test_support::HeadlessFrame env(kPage);
     const std::string text = spikeLines(kLines, "A");
     auto withInput = [&](Ui& ui) {
         ui.column("spike.root").content([&] {
@@ -314,7 +302,7 @@ REGISTER_TEST(mdspike_v2a_unmount_leaves_stale_focus,
 // 这条是兜底方案的前提：不能"提前"或"事后"补发，必须与元素同帧。
 REGISTER_TEST(mdspike_v2b_requestfocus_when_absent_is_dropped,
               "mdspike V2b: 目标不在本帧树中 → requestFocus 丢弃不排队", {
-    SpikeEnv env;
+    test_support::HeadlessFrame env(kPage);
     const std::string text = spikeLines(kLines, "A");
 
     env.frame([&](Ui& ui) {
@@ -340,7 +328,7 @@ REGISTER_TEST(mdspike_v2b_requestfocus_when_absent_is_dropped,
 // （runtime_lifecycle.h:28-42），故同帧补发 requestFocus 会在释放之后生效。
 REGISTER_TEST(mdspike_v2c_release_scope_clears_then_same_frame_request_restores,
               "mdspike V2c: releaseStateScope 清焦点；同帧补发 requestFocus 可恢复", {
-    SpikeEnv env;
+    test_support::HeadlessFrame env(kPage);
     const std::string text = spikeLines(kLines, "A");
     auto buildInput = [&](Ui& ui) {
         ui.column("spike.root").content([&] {
@@ -389,6 +377,7 @@ REGISTER_TEST(mdspike_v2c_release_scope_clears_then_same_frame_request_restores,
 namespace {
 
 // scrollView 内容： [top(60)] + input(显式高) + [bottom(60)]，gap 20，视口 600×300
+// 单文件专属帧驱动，keep-local（TIN-06）
 struct SpikeScrollPage {
     Ui ui;
 
@@ -536,7 +525,7 @@ REGISTER_TEST(mdspike_v3b_pointer_to_caret_under_scroll,
 // 故 caret.y 直接读出残余 verticalScroll。
 REGISTER_TEST(mdspike_v4a_swap_text_scroll_residual_capped_block,
               "mdspike V4a: 封顶块换文本首帧跳位 + R5 同帧归零消除", {
-    SpikeEnv env;
+    test_support::HeadlessFrame env(kPage);
     const std::string t1 = spikeLines(kLines, "A");
     const std::string t2 = spikeLines(kLines, "B");
     const float capH = 300.0f;                     // 封顶块：内容 720 > 视口 284
@@ -619,7 +608,7 @@ REGISTER_TEST(mdspike_v4a_swap_text_scroll_residual_capped_block,
 // ---- V4b：贴合高度（D2 默认路径）→ 不注册滚轮、残余恒为 0、换文本无跳位 ----
 REGISTER_TEST(mdspike_v4b_fit_height_has_no_residual,
               "mdspike V4b: 贴合高度换文本无残余跳位（D2 默认）", {
-    SpikeEnv env;
+    test_support::HeadlessFrame env(kPage);
     const std::string t1 = spikeLines(kLines, "A");
     const std::string t2 = spikeLines(kLines, "B");
     const float lastLineY = kInset + static_cast<float>(kLines - 1) * kLineH;
