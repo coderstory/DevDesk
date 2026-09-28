@@ -13,6 +13,7 @@ add_library(devdesk_module_claude_proxy STATIC
     proxy_router.cpp
     proxy_runtime.cpp
     settings_sync.cpp
+    settings_takeover.cpp
     streaming_proxy.cpp
     upstream_dialect.cpp
 )
