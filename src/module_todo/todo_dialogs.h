@@ -273,7 +273,8 @@ void drawOverdueDialog(eui::Ui& ui, const eui::Screen& screen,
                        const DialogHost& host);
 void drawContextMenu(eui::Ui& ui, const eui::Screen& screen,
                      const core::theme::Tokens& t, DialogSet& d,
-                     const DialogHost& host);
+                     const DialogHost& host,
+                     const std::map<int64_t, float>& columnScrolls);
 void drawDatePicker(eui::Ui& ui, const eui::Screen& screen,
                     const core::theme::Tokens& t, DialogSet& d,
                     const DialogHost& host);

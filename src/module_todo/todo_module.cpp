@@ -659,7 +659,7 @@ public:
         ui::drawNewColumnDialog(page, screen, t, dialogs_, dialogHost_);
         ui::drawDetailDialog(page, screen, t, dialogs_, dialogHost_);
         ui::drawOverdueDialog(page, screen, t, dialogs_, dialogHost_);
-        ui::drawContextMenu(page, screen, t, dialogs_, dialogHost_);
+        ui::drawContextMenu(page, screen, t, dialogs_, dialogHost_, columnScrolls_);
         ui::drawDatePicker(page, screen, t, dialogs_, dialogHost_);
         ui::drawRenameDialog(page, screen, t, dialogs_, dialogHost_);
         ui::drawConfirmDeleteDialog(page, screen, t, dialogs_, dialogHost_);
