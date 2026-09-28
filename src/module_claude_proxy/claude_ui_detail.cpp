@@ -392,13 +392,13 @@ void drawDetailActionsAndCalls(eui::Ui& ui, float x0, float w, float paneBottom,
         })
         .build();
 
-    // 「运行」副提示（设计 §6：D-1 副作用必须明示；§3 措辞
-    // 按「选中 ≠ 激活才切」表述，避免用户以为每次都改全局）
+    // 「运行」副提示（设计 §6 / V3 D-1）：副作用必须明示——生成临时
+    // settings 直连，不启代理、不切激活、零全局改动
     ui.text("claude.act.run.hint")
         .position(x0, actY + 40.0f)
         .size(w, 16.0f)
-        .text("以该 Profile 打开新的 Claude Code 会话"
-              "（起始目录 = 用户主目录）；未激活会先切为激活")
+        .text("以该 Profile 生成临时配置直接打开 Claude Code 会话"
+              "（起始目录 = 用户主目录），不修改当前设置")
         .fontSize(11.0f)
         .lineHeight(16.0f)
         .color(t.colors.textTertiary)
