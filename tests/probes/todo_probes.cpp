@@ -27,6 +27,9 @@
 // = 按下卡位 + 累计位移、绘制序在 todo.root 之后（跨列不被盖）、zIndex > 0、
 // opacity < 1；松手回源列（同列取消）后副本消失且数据未动。证伪门禁：副本改回
 // 列内 .translate()（被 scrollView clip 剪掉）或 dragGhostOn 恒 false → 本段红。
+//
+// 类 15（2026-09-28 追加，真机缺陷 1）：卡左/右内边距 == 列内容 inset（16）——
+// 旧形态卡左缘贴列左缘（x=0）而右侧留 16，两侧不对称。
 
 #include "probes/probe_harness.h"
 #include <eui/detail/dsl_app_impl.h>  // app:: 层内联实现自给（链接需要）
@@ -66,6 +69,9 @@ namespace {
 constexpr float kCardHeight = 84.0f;
 constexpr float kCardGap = 8.0f;
 constexpr float kColumnHeaderHeight = 56.0f;
+// 列内容水平内边距（todo_ui_logic.h kColumnContentInset 同值；缺陷 1/2 的
+// 卡左缘 / 占位条 x 都以它为基准）
+constexpr float kColumnContentInset = 16.0f;
 
 constexpr const char* kDbPrefix = "devdesk_probe_todo_";
 
@@ -448,10 +454,48 @@ int main(int argc, char* argv[]) {
         }
     }
 
+    // ---- 类 15（2026-09-28 真机缺陷 1）：列内卡片左右边距数值。
+    // 断言：
+    //   (a) 卡左缘 - 列左缘 == kColumnContentInset（旧形态 = 0，卡贴列左缘）
+    //   (b) 列右缘 - 卡右缘 == kColumnContentInset（两侧对称；旧形态右侧 16
+    //       但左侧 0 —— 卡宽写「内容宽 - 16」而 x 恒 0）
+    // 占位条与卡槽同源宽度（缺陷 2）的拖动期断言在无头用例
+    // todo_ui_card_inset_and_dropbar_width 内锁定（此处无拖动）。
+    if (ui != nullptr) {
+        const core::dsl::Element* col5Bg = ui->find("todo.col.5.bg");
+        const core::dsl::Element* dragSrc = ui->find("todo.col.5.card.0.bg");
+        if (col5Bg == nullptr || dragSrc == nullptr) {
+            std::cerr << "todo_probes: 类 15 场景缺元素（col.5.bg / "
+                         "col.5.card.0.bg）\n";
+            passed = false;
+        } else {
+            const eui::Rect colRect = boundsOf(col5Bg);
+            const eui::Rect srcRect = boundsOf(dragSrc);
+            const float leftGap = srcRect.x - colRect.x;
+            if (!floatEq(leftGap, kColumnContentInset)) {
+                std::cerr << "todo_probes: 卡左边距 = " << leftGap
+                          << "，期望 " << kColumnContentInset
+                          << "（缺陷 1 形态 = 0：卡贴列左缘）\n";
+                passed = false;
+            }
+            const float rightGap = (colRect.x + colRect.width) -
+                                   (srcRect.x + srcRect.width);
+            if (!floatEq(rightGap, kColumnContentInset)) {
+                std::cerr << "todo_probes: 卡右边距 = " << rightGap
+                          << "，期望 " << kColumnContentInset
+                          << "（两侧须同源对称）\n";
+                passed = false;
+            }
+        }
+    }
+
     // ---- 类 14（spec §3-probe-full，用户硬指定 HIGH）：选中态边框——
+    // 点卡 0 → openDetailDialog → selectedTaskId_ = 该卡 → 卡 .bg 选中 2px
+    // primary 加粗；未选中 1px borderDefault。优先级竖条 .bar 随 UI 整改 16
+    // 已删——断言不存在防回归。
     // 拖后目标列 = [甲, 被移动任务, 乙]；点卡 0（甲）→ openDetailDialog →
     // selectedTaskId_ = 甲 → 卡 .bg 选中 2px primary 加粗；未选中 1px
-    // borderDefault。优先级竖条 .bar 随 UI 整改 16 已删——断言不存在防回归
+    // borderDefault。
     if (ui != nullptr) {
         if (ui->find("todo.col.5.card.0.bar") != nullptr) {
             std::cerr << "todo_probes: 优先级竖条 'todo.col.5.card.0.bar' "

@@ -25,7 +25,7 @@ void drawColumn(eui::Ui& ui, const std::string& id, const Column& col,
 void drawColumnContent(eui::Ui& ui, const std::string& id, const Column& col,
                        float width, float height, const core::theme::Tokens& t,
                        size_t colIndex, const BoardView& v, BoardPlate& plate);
-void drawCard(eui::Ui& ui, const std::string& id, float y, float width,
+void drawCard(eui::Ui& ui, const std::string& id, float x, float y, float width,
               const core::theme::Tokens& t, const Task& task,
               int colIndex, int colCount, int cardIndex,
               const BoardView& v, BoardPlate& plate);
@@ -258,8 +258,11 @@ void drawColumnContent(eui::Ui& ui, const std::string& id, const Column& col,
 
     // UI 整改 13：拖拽插入位占位条（虚框高亮用半透主色条代替——EUI-NEO
     // 无虚线边框原语）。barY 在滚动内容坐标系（与卡片同帧，滚动跟手）；
-    // 行号只有跨列拖拽才有（模块侧置位），条落在「row-1 与 row 张卡之间」
+    // 行号跨列/同列都有（模块侧按命中置位），条落在「row-1 与 row 张卡之间」
     // 的缝里，row=0 顶格贴内容顶、row=列卡数 = 列尾追加。
+    // 条的 x / 宽与卡片同源（kColumnContentInset + contentCardWidth，传参
+    // barW 由调用点用同一算式得出）——2026-09-28 真机缺陷 2：条宽原写
+    // 「内容宽 - 16」且 x=0，比它覆盖的卡槽短一截、右边留空。
     const bool showDropBar = v.dragActive &&
         v.dragHoverColumn == static_cast<int>(colIndex) && v.dragHoverRow >= 0;
     auto drawDropBar = [&](eui::Ui& inner, float barY, float barW) {
@@ -271,7 +274,7 @@ void drawColumnContent(eui::Ui& ui, const std::string& id, const Column& col,
         // 后走 overlay 绝对定位（x/y 生效，layout.h layoutOverlayChildren），
         // 空列路径的 Stack 同样走 overlay，两路径行为一致
         inner.rect(id + ".dropbar")
-            .position(0.0f, barY)
+            .position(kColumnContentInset, barY)
             .ignoreLayout()
             .size(barW, kCardGap)
             .color(barColor)
@@ -364,8 +367,9 @@ void drawColumnContent(eui::Ui& ui, const std::string& id, const Column& col,
         if (v.dragActive && v.dragHoverColumn == static_cast<int>(colIndex) &&
             v.dragHoverRow >= 0) {
             // 空列 hoverRow 恒 0（dragDropRowIndex 按 taskCount=0 钳制）：
-            // 条落卡区首卡位 = 非空列 row 0 同槽位（列头下方），不贴列顶
-            drawDropBar(ui, kColumnHeaderHeight, width - 16.0f);
+            // 条落卡区首卡位 = 非空列 row 0 同槽位（列头下方），不贴列顶；
+            // 宽度与非空列卡槽同源（contentCardWidth，见 kColumnContentInset）
+            drawDropBar(ui, kColumnHeaderHeight, contentCardWidth(width));
         }
         ui.text(id + ".empty")
             .position(0.0f, height / 2.0f - 12.0f)
@@ -411,21 +415,28 @@ void drawColumnContent(eui::Ui& ui, const std::string& id, const Column& col,
                 .content([&](eui::Ui& inner, float contentWidth,
                              float viewportHeight) {
                     (void)viewportHeight;
+                    // 卡槽几何（卡与占位条的唯一来源）：宽 = 内容宽 - 双侧
+                    // inset，x = inset（见 kColumnContentInset）——2026-09-28
+                    // 真机缺陷 1/2：旧算式只减一次 16 且 x=0，卡贴列左缘、
+                    // 条右边空余；现在卡/条同宽同位
+                    const float cardW = contentCardWidth(contentWidth);
                     // 占位条与卡片同帧布局（滚动内容坐标系，随列滚动跟手）
                     if (showDropBar) {
                         const float barY = std::max(
                             0.0f, static_cast<float>(v.dragHoverRow) *
                                       (kCardHeight + kCardGap) - kCardGap);
-                        drawDropBar(inner, barY, contentWidth - 16.0f);
+                        drawDropBar(inner, barY, cardW);
                     }
                     for (size_t i = 0; i < colTasks.size(); ++i) {
                         const std::string cardId =
                             id + ".card." + std::to_string(i);
+                        // wrap 仍占满内容宽（流式子元素，position 无效），
+                        // 卡在 wrap 内按 inset 落位；子元素几何不变
                         inner.stack(cardId + ".wrap")
                             .size(contentWidth, kCardHeight)
                             .content([&] {
-                                drawCard(inner, cardId, 0.0f,
-                                         contentWidth - 16.0f, t,
+                                drawCard(inner, cardId, kColumnContentInset,
+                                         0.0f, cardW, t,
                                          *colTasks[i],
                                          static_cast<int>(colIndex),
                                          static_cast<int>(v.columns.size()),
@@ -439,7 +450,15 @@ void drawColumnContent(eui::Ui& ui, const std::string& id, const Column& col,
         .build();
 }
 
-void drawCard(eui::Ui& ui, const std::string& id, float y, float width,
+// x = 卡左缘在「列内容坐标系」里的位置（调用点传 kColumnContentInset：列内容
+// 左内边距，见 todo_ui_logic.h）。**x 只作用于卡片容器**（card 组件的
+// .position）——卡内元素（.bg / .title / chips / .done）坐标一律相对**卡内容
+// 原点**（= 卡原点，padding(0)），不得再加 x：卡内容 origin 本来就在卡内，
+// 重复平移 = 双倍偏移（第一版修法踩过：卡内元素全多加了一次 x，断言
+// card.bg.x - col.x 得到 32 而非 16，被 todo_ui_card_inset_and_dropbar_width
+// 抓住）。y 现恒 0（纵向由 scrollView 流式排布），保留形参让卡内装饰层与旧
+// 实现同构。
+void drawCard(eui::Ui& ui, const std::string& id, float x, float y, float width,
               const core::theme::Tokens& t, const Task& task,
               int colIndex, int colCount, int cardIndex,
               const BoardView& v, BoardPlate& plate) {
@@ -461,7 +480,7 @@ void drawCard(eui::Ui& ui, const std::string& id, float y, float width,
     // 选中 2px 主色加粗）。卡内容坐标以 .padding(0) 的 content 原点为
     // 基准（与旧 wrap content 原点一致，装饰层位置不变）
     components::card(ui, id + ".card")
-        .position(0.0f, y)
+        .position(x, y)
         .size(width, kCardHeight)
         .radius(t.sizes.radius)
         .theme(core::theme::componentTokens(t))
@@ -505,7 +524,7 @@ void drawCard(eui::Ui& ui, const std::string& id, float y, float width,
         })
         .build();
 
-    // 标题
+    // 标题（16 = 卡内左内边距，相对卡内容原点）
     ui.text(id + ".title")
         .position(16.0f, y + 14.0f)
         .size(width - 44.0f, 18.0f)
@@ -522,6 +541,8 @@ void drawCard(eui::Ui& ui, const std::string& id, float y, float width,
     // 原先的左侧优先级竖条（.bar）随 16 一并删除。chip 从左往右顺序排
     // 放（prio → due → tags），None 不画 pill、后续 chip 顺移，不留空位。
     const auto pillBg = priorityPillBg(task.priority, t);
+    // chipX 保持**卡内相对**坐标（16 = 卡内左内边距）；下面的宽度自适应算式
+    // 比较的是「相对卡右缘的剩余空间」，同坐标系
     float chipX = 16.0f;
     // 跨模块剩余审计修（2026-09-28）：列宽无下限（≥6-7 列时 colW 跌破
     // 130），固定 36/66px 的优先级/截止 chip 会越出卡右缘——chip 宽自适应

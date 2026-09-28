@@ -30,6 +30,20 @@ constexpr float kCardHeight = 84.0f;
 constexpr float kCardGap = 8.0f;
 constexpr float kColumnHeaderHeight = 56.0f;
 
+// 列内容区水平内边距（= t.sizes.spacingLarge，16px 网格；与列头文字 x=16
+// 同一基线，见 drawColumnContent 的 .title/.dot 定位）。
+// 卡左缘 = 列内容左缘 + kColumnContentInset，卡宽/拖拽占位条宽一律由
+// contentCardWidth 派生——**只有一个来源**。2026-09-28 真机缺陷 1/2 根因：
+// 卡宽写「内容宽 - 16」而 x 恒为 0 → 左零边距、右侧 16，占位条同病
+//（宽短一截、右边空余）；现在两侧 inset 由同一常量派生，卡与条同宽同位。
+constexpr float kColumnContentInset = 16.0f;
+
+// 列内容区里卡片 / 占位条共用的可用宽（内容宽 - 双侧 inset）。
+// 窄列（多列并排时 colW 可跌破 100）钳到 0，永不越出内容区。
+inline float contentCardWidth(float contentWidth) {
+    return std::max(0.0f, contentWidth - kColumnContentInset * 2.0f);
+}
+
 // 键盘移动的目标（columnId + moveTask 的 newPosition 语义）
 struct MoveTarget {
     int64_t columnId;
@@ -112,7 +126,10 @@ inline int computeAppendPosition(const std::vector<Task>& tasks, int64_t columnI
 struct DragHitInput {
     int fromColIndex = 0;
     int colCount = 0;
-    float pressX = 0.0f;        // 按下时卡片 bounds（指针空间）
+    // 按下时卡片 bounds（指针空间）。注意卡片左缘 = 所在列左缘 +
+    // kColumnContentInset（列内容左内边距），板面原点回推要先减掉它
+    //（dragDropTarget / dragDropRowIndex 内已同源扣除）。
+    float pressX = 0.0f;
     float pressY = 0.0f;
     float pressWidth = 0.0f;    // 按下时卡片 bounds 宽（dpi 探针的分子）
     float cardWidth = 0.0f;     // compose 空间卡宽（dpi 探针的分母）
@@ -157,8 +174,12 @@ inline int dragDropTarget(const DragHitInput& in, double pointerX, double pointe
     }
     const float dpi = in.dpiScale;
     const float stride = in.colWidth + in.colGap;
-    // 板面原点：按下锚点（→ compose）左移若干列步长 = 源列左缘
+    // 板面原点：按下锚点（→ compose）左移若干列步长 = 源列左缘。按下锚点
+    // 是**卡片**左缘，而卡片在列内容里有 kColumnContentInset 左内边距
+    //（见 contentCardWidth / 看板绘制）→ 先减掉它才是列左缘（2026-09-28
+    // 真机缺陷 1 的连锁修正：卡不再贴列左缘，原点回推必须同源）。
     const float originX = ::core::windowToCompose(in.pressX, in.pageOriginX, dpi) -
+                          kColumnContentInset -
                           static_cast<float>(in.fromColIndex) * stride;
     // 板面顶边：卡片在列内的未滚动 y = 列头高 + 序号 * (卡高+间距) - 滚动偏移
     const float cardTopInCol =
@@ -196,8 +217,10 @@ inline int dragDropRowIndex(const DragHitInput& in, int targetCol, double pointe
     }
     const float dpi = in.dpiScale;
     const float stride = in.colWidth + in.colGap;
-    // 与 dragDropTarget 同源：由按下锚点回推板面原点
+    // 与 dragDropTarget 同源：由按下锚点回推板面原点（锚点 = 卡片左缘，
+    // 先减列内容内边距 kColumnContentInset 还原列左缘，见其注释）
     const float originX = ::core::windowToCompose(in.pressX, in.pageOriginX, dpi) -
+                          kColumnContentInset -
                           static_cast<float>(in.fromColIndex) * stride;
     const float x = ::core::windowToCompose(static_cast<float>(pointerX),
                                             in.pageOriginX, dpi);

@@ -868,6 +868,128 @@ REGISTER_TEST(todo_ui_drag_insert_position,
     return true;
 })
 
+// ---- 2026-09-28 真机缺陷 1/2：列内卡片边距（卡左缘 = 列左缘 + 16，两侧同源）
+// + 拖拽占位条与卡槽同宽同位（条不再右边留空）----
+// 窄列口径：16px inset 两侧各一份 ⇒ 卡宽 = 内容宽 - 32（contentCardWidth），
+// 8 列最小窗（colW 126）时 = 94，仍 > 0 且 chip 自适应不越出卡右缘。
+REGISTER_TEST(todo_ui_card_inset_and_dropbar_width,
+              "todo_ui: 卡片左边距/占位条同源宽度（缺陷 1/2 几何回归）", {
+    using module::todo::ui::contentCardWidth;
+    using module::todo::ui::kColumnContentInset;
+    TestEnv env;
+    DOCTEST_REQUIRE(env.ready);
+    auto src = env.svc->createColumn("边距源列");
+    auto dst = env.svc->createColumn("边距目标列");
+    DOCTEST_REQUIRE(src.isOk() && dst.isOk());
+    // 再造 2 列凑满 8 列（最小窗 1200 下 colW = (1120-7*16)/8 = 126 的窄列口径）
+    DOCTEST_REQUIRE(env.svc->createColumn("窄列甲").isOk());
+    DOCTEST_REQUIRE(env.svc->createColumn("窄列乙").isOk());
+    auto mover = env.svc->createTask(src.value().id, "被拖卡");
+    auto t1 = env.svc->createTask(dst.value().id, "甲");
+    auto t2 = env.svc->createTask(dst.value().id, "乙");
+    DOCTEST_REQUIRE(mover.isOk() && t1.isOk() && t2.isOk());
+
+    std::unique_ptr<::core::Module> mod(create_todo_module());
+    mod->onStart();
+
+    eui::Ui ui;
+    eui::Screen screen;
+    screen.width = 1600.0f;
+    screen.height = 1000.0f;
+    auto composeLayout = [&]() {
+        ui.begin("todo_card_inset_frame");
+        mod->compose(ui, screen);
+        ui.end();
+        ui.layout(screen);
+    };
+    auto boundsOf = [](const core::dsl::Element* e) {
+        return eui::Rect{e->frame.x, e->frame.y, e->frame.width, e->frame.height};
+    };
+
+    composeLayout();
+    const auto* col5 = ui.find("todo.col.5.bg");
+    const auto* card0 = ui.find("todo.col.5.card.0.bg");
+    const auto* wrap0 = ui.find("todo.col.5.card.0.wrap");
+    DOCTEST_REQUIRE(col5 != nullptr);
+    DOCTEST_REQUIRE(card0 != nullptr);
+    DOCTEST_REQUIRE(wrap0 != nullptr);
+    // (1) 左内边距：卡左缘 - 列左缘 == kColumnContentInset（缺陷形态 = 0）
+    DOCTEST_CHECK_EQ(card0->frame.x - col5->frame.x, kColumnContentInset);
+    // (2) 右内边距 == 左内边距（非滚动列：内容宽 == 列宽，两侧同源派生）。
+    // 旧形态 = 左 0 / 右 16（宽度写死「内容宽 - 16」而 x 恒 0）
+    const float rightGap =
+        (col5->frame.x + col5->frame.width) - (card0->frame.x + card0->frame.width);
+    DOCTEST_CHECK_EQ(rightGap, kColumnContentInset);
+    DOCTEST_CHECK_EQ(rightGap, card0->frame.x - col5->frame.x);
+    // (3) 卡宽 == contentCardWidth(列宽)（唯一来源；不是「列宽 - 16」）
+    DOCTEST_CHECK_EQ(card0->frame.width, contentCardWidth(col5->frame.width));
+    // (4) wrap 仍占满内容宽（流式子元素，卡在 wrap 内落位）：右缘对齐列右缘
+    DOCTEST_CHECK_EQ(wrap0->frame.x, col5->frame.x);
+    DOCTEST_CHECK_EQ(wrap0->frame.width, col5->frame.width);
+
+    // (5) 占位条：拖到目标列 → 条与卡槽同宽同位（缺陷 2：条右边留空 = 条宽
+    // 写「内容宽 - 16」且 x=0，与它覆盖的卡槽不同源）
+    {
+        const auto* card = ui.find("todo.col.4.card.0.bg");
+        DOCTEST_REQUIRE(card != nullptr);
+        eui::PointerEvent pe;
+        card->onPress(pe, boundsOf(card));
+        core::dsl::DragEvent ev;
+        ev.x = col5->frame.x + col5->frame.width / 2.0f;
+        ev.y = col5->frame.y + 56.0f + 4.0f;  // 行 0
+        card->onDrag(ev);
+        composeLayout();
+        const auto* bar = ui.find("todo.col.5.dropbar");
+        const auto* col5After = ui.find("todo.col.5.bg");
+        const auto* card0After = ui.find("todo.col.5.card.0.bg");
+        DOCTEST_REQUIRE(bar != nullptr);
+        DOCTEST_REQUIRE(col5After != nullptr);
+        DOCTEST_REQUIRE(card0After != nullptr);
+        DOCTEST_CHECK_EQ(bar->frame.x, col5After->frame.x + kColumnContentInset);
+        DOCTEST_CHECK_EQ(bar->frame.width, contentCardWidth(col5After->frame.width));
+        // 与卡槽逐值同宽同位（同源判据：条覆盖的就是卡要落的位置）
+        DOCTEST_CHECK_EQ(bar->frame.x, card0After->frame.x);
+        DOCTEST_CHECK_EQ(bar->frame.width, card0After->frame.width);
+        // 右边距对称：条右缘到列右缘 == kColumnContentInset（旧形态 = 16 但
+        // 左缘贴列边 → 视觉"右边有空余"）
+        DOCTEST_CHECK_EQ(
+            (col5After->frame.x + col5After->frame.width) -
+                (bar->frame.x + bar->frame.width),
+            kColumnContentInset);
+        eui::PointerEvent up;
+        up.x = ev.x;
+        up.y = ev.y;
+        up.action = eui::PointerAction::Release;
+        const auto* rel = ui.find("todo.col.4.card.0.bg");
+        DOCTEST_REQUIRE(rel != nullptr);
+        rel->onRelease(up, eui::Rect{});
+    }
+
+    // (6) 窄列（8 列 @1200 最小窗，colW=126）不溢出：卡宽 = 126-32 = 94 > 0，
+    // 卡右缘 ≤ 列右缘 - 16；占位条同宽同位
+    {
+        eui::Screen narrow;
+        narrow.width = 1200.0f;
+        narrow.height = 720.0f;
+        ui.begin("todo_card_inset_narrow");
+        mod->compose(ui, narrow);
+        ui.end();
+        ui.layout(narrow);
+        const auto* colN = ui.find("todo.col.5.bg");
+        const auto* cardN = ui.find("todo.col.5.card.0.bg");
+        DOCTEST_REQUIRE(colN != nullptr);
+        DOCTEST_REQUIRE(cardN != nullptr);
+        DOCTEST_CHECK_EQ(cardN->frame.x - colN->frame.x, kColumnContentInset);
+        DOCTEST_CHECK(cardN->frame.width >= 0.0f);
+        DOCTEST_CHECK(cardN->frame.x + cardN->frame.width <=
+                      colN->frame.x + colN->frame.width);
+        DOCTEST_CHECK_EQ(cardN->frame.width, contentCardWidth(colN->frame.width));
+    }
+
+    mod->onStop();
+    return true;
+})
+
 // UI 整改 13 补：拖入空列 → 占位条在卡区首卡位（列头下方），不贴列顶
 REGISTER_TEST(todo_ui_drag_empty_column_dropbar,
               "todo_ui: 拖入空列占位条位于卡区首卡位（不贴列顶）", {
@@ -928,12 +1050,17 @@ REGISTER_TEST(todo_ui_drag_hit_pure,
     using module::todo::ui::DragHitInput;
     using module::todo::ui::dragAnchorScale;
     using module::todo::ui::dragDropTarget;
+    using module::todo::ui::kColumnContentInset;
     // 锚定卡在列 1 第 0 张：板面（dpi=1）originX=80，列 [80,280][300,500][520,720]，
-    // boardTop=144，boardBottom=644
+    // boardTop=144，boardBottom=644。
+    // 2026-09-28 缺陷 1 起：按下锚点 = **卡片**左缘 = 列左缘 + 列内容左内边距
+    //（kColumnContentInset，卡不再贴列左缘）→ pressX = 300 + 16 = 316；
+    // dragDropTarget 内部同源减掉该内边距还原列/板面原点（漏减 → 命中整体
+    // 右移 16px，列左缘 16px 带内落点会误判成左侧列/板外，见下方边界断言）
     DragHitInput in;
     in.fromColIndex = 1;
     in.colCount = 3;
-    in.pressX = 300.0f;
+    in.pressX = 300.0f + kColumnContentInset;
     in.pressY = 200.0f;
     in.pressWidth = 200.0f;
     in.cardWidth = 200.0f;
@@ -951,11 +1078,17 @@ REGISTER_TEST(todo_ui_drag_hit_pure,
     DOCTEST_CHECK_EQ(dragDropTarget(in, 50.0, 300.0), -1);   // 板左外
     DOCTEST_CHECK_EQ(dragDropTarget(in, 400.0, 100.0), -1);  // 板上方
     DOCTEST_CHECK_EQ(dragDropTarget(in, 400.0, 700.0), -1);  // 板下方
+    // 卡左内边距补偿的判别断言（漏减 inset 时命中框整体右移 16px → 这两条
+    // 会红）：列 1 左缘内 16px 带（300..316，卡占不到但仍是本列落区）必须
+    // 命中列 1；列 0 左缘内 8px（80..88）必须命中列 0
+    DOCTEST_CHECK_EQ(dragDropTarget(in, 305.0, 300.0), 1);   // 列 1 左缘 + 5
+    DOCTEST_CHECK_EQ(dragDropTarget(in, 84.0, 300.0), 0);    // 列 0 左缘 + 4
+    DOCTEST_CHECK_EQ(dragDropTarget(in, 299.0, 300.0), -1);  // 列 1 左缘前 1px = 间隙
 
     // HiDPI（dpi=2）：指针空间坐标全翻倍，命中结果不变
     // （审计 M4 后尺度由调用点显式声明 → dpiScale 字段；探针值同源）
     DragHitInput hi = in;
-    hi.pressX = 600.0f;
+    hi.pressX = (300.0f + kColumnContentInset) * 2.0f;
     hi.pressY = 400.0f;
     hi.pressWidth = 400.0f;
     hi.dpiScale = 2.0f;
@@ -1033,8 +1166,10 @@ REGISTER_TEST(todo_ui_drag_scale_from_framework,
         DragHitInput in;
         in.fromColIndex = 1;
         in.colCount = 3;
-        // 指针空间 = compose 空间 * scale（契约：物理 = 逻辑 * scale）
-        in.pressX = 300.0f * scale;      // compose 300 = 源列左缘（锚点）
+        // 指针空间 = compose 空间 * scale（契约：物理 = 逻辑 * scale）。
+        // 锚点 = 卡片左缘 = 源列左缘 + kColumnContentInset（缺陷 1 起卡不再
+        // 贴列左缘；缺内边距补偿时下面的列隙/边界断言会红）
+        in.pressX = (300.0f + module::todo::ui::kColumnContentInset) * scale;
         in.pressY = 200.0f * scale;      // compose 200 = 列头 + 第 0 张 - 无滚动
         in.pressWidth = 200.0f * scale;  // 探针分子：按下 bounds（指针空间）
         in.cardWidth = 200.0f;           // 探针分母：compose 卡宽
@@ -1101,7 +1236,9 @@ REGISTER_TEST(todo_ui_drag_hit_scroll_same_frame,
     in.boardHeight = 500.0f;
     in.cardIndex = 3;
     in.scrollOffset = 100.0f;  // 按下时刻快照（DragState.pressScrollOffset 语义）
-    in.pressX = 80.0f;
+    // 锚点 x = 列 0 左缘 + 卡左内边距（缺陷 1 起卡在列内有 16px 内边距，
+    // dragDropTarget 内同源扣减还原列左缘）
+    in.pressX = 80.0f + u::kColumnContentInset;
     in.pressY = boardTopPx + (u::kColumnHeaderHeight + 3.0f * stride - 100.0f);
 
     // 同帧（快照值）：还原出的板顶 = 真实板顶 150 → 边界精确
@@ -1318,8 +1455,13 @@ REGISTER_TEST(todo_ui_column_scroll_geometry,
     DOCTEST_REQUIRE(card0 != nullptr);
     DOCTEST_REQUIRE(card1 != nullptr);
     DOCTEST_REQUIRE(card14 != nullptr);
-    DOCTEST_CHECK_EQ(card0->frame.x, colBg->frame.x);        // 卡片在列内（不是横向流式排开）
-    DOCTEST_CHECK_EQ(card1->frame.x, colBg->frame.x);
+    // 卡片在列内（不是横向流式排开）。2026-09-28 真机缺陷 1：卡左缘 = 列左缘
+    // + 列内容左内边距 kColumnContentInset（16px）——旧断言锁的是缺陷形态
+    //（卡贴列左缘、左零边距），现在两侧 inset 同源派生（见 contentCardWidth）
+    DOCTEST_CHECK_EQ(card0->frame.x,
+                     colBg->frame.x + module::todo::ui::kColumnContentInset);
+    DOCTEST_CHECK_EQ(card1->frame.x,
+                     colBg->frame.x + module::todo::ui::kColumnContentInset);
     DOCTEST_CHECK_EQ(card1->frame.y - card0->frame.y, 84.0f + 8.0f);  // 卡高 + 间距
     DOCTEST_CHECK(card14->frame.y > card1->frame.y);          // 超出视口的卡继续向下排
 
