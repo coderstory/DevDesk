@@ -41,7 +41,12 @@ SolidCompression=yes
 
 [Files]
 Source: "{#ExeDir}\DevDesk.exe";  DestDir: "{app}"; Flags: ignoreversion
-Source: "{#AssetsDir}\*";         DestDir: "{app}\assets"; Flags: ignoreversion recursesubdirs createallsubdirs
+; Excludes：排除 17MB 死重量 NotoSansSC-VF.ttf —— 该字体是变量字体，FreeType 加载不稳、
+; 当前未启用（见 DevDesk/src/main.cpp:487 注释），运行时字体走 EUI-NEO
+; core/render/text.cpp:607-625 的 fallback 链（系统 CJK 字体微软雅黑 msyh 优先，
+; 打包 JingNanJunJunTi 作兜底），排除不影响任何界面渲染。Excludes 是 [Files]
+; 的合法参数（Inno 6.7），支持通配符，多个模式用分号分隔。
+Source: "{#AssetsDir}\*";         DestDir: "{app}\assets"; Flags: ignoreversion recursesubdirs createallsubdirs; Excludes: "NotoSansSC-VF.ttf"
 
 [Icons]
 ; WorkingDir 必设：EUI-NEO 的 image_source.cpp 查找顺序是 cwd/assets 优先于 exeDir/assets，
