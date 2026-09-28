@@ -30,6 +30,7 @@ using module::markdown::kEditorInputId;
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
+#include <functional>
 #include <iterator>
 #include <map>
 #include <memory>
@@ -5149,6 +5150,622 @@ REGISTER_TEST(md_module_live_scroll_follow_wrapped_caret,
     DOCTEST_CHECK(rel >= module::markdown::kMdLiveFollowTopRatio * viewH &&
                   rel <= module::markdown::kMdLiveFollowBottomRatio * viewH);
 
+    mod->onStop();
+    return true;
+})
+
+// ==================== MD-01：重载后活动块内容映射（spec 2026-09-28-md01）====================
+// 验收 §5.2：静默重载/冲突重载把整篇换成磁盘版本后，活动块按内容身份
+// (kind,hash,stableId) 映射到新文档，而不是落到「覆盖旧字节的新块」。
+//
+// 执行前置（v2 修订 F5）：轮询节流 = 真实 5s 时钟（无注入缝）；无头下静默路径靠
+// Windows 真实 FileWatcher 的 credit（hasWatchCredit）绕过节流（与
+// test_markdown_service.cpp 的 watcher 用例同一机制）。mtime 秒级严格 > 比较 →
+// 外写后按「max(写前文件时间, 写后真实时间) + 2s」推进（多次外写严格递增，秒级
+// floor 后仍 ≥2 整秒间隔，末次不会因落在同一墙钟秒而检测不到；等价满足「晚于
+// lastKnownMtime_ 所在秒」，免 ≥1s 真睡）。watcher 送达是异步的（去抖 200ms +
+// 调度），不用固定睡等：每条用例写盘后按「重载正信号」有界自旋（帧 + 120ms ×
+// 60 预算），信号帧即重载帧；冲突路径的自旋每轮先补一次编辑重置 400ms 自动保存
+// 防抖（复刻按观察到的全文/块文本镜像，重试次数不影响确定性）。5s 真时钟节流
+// 路径本身登记 deferred（spec §5.2 执行前置）。用例 6/7 按 F5 走冲突 toast 路径。
+
+namespace {
+
+using module::markdown::MdBlock;
+using module::markdown::MdBlockKind;
+using module::markdown::MdBlockModel;
+using module::markdown::mdFindBlockByContent;
+
+// 把笔记文件换成磁盘新版本，并把 mtime 推进到「max(写前文件时间, 写后真实时间)
+// + 2s」——写盘本身会把 mtime 重置回 now（低于上一版外写的未来值），base 取
+// 两者较大者保证逐次外写严格递增（秒级 floor 后仍 ≥2 整秒间隔），同秒写盘检测
+// 不到的问题免真睡规避。不等待 watcher 送达：由每条用例的 md01WaitReload /
+// 冲突自旋按正信号收敛。
+bool md01WriteExternal(const fs::path& path, const std::string& content) {
+    std::error_code ec;
+    const auto prev = fs::last_write_time(path, ec);   // 上一版外写的 mtime（可能在未来）
+    if (ec) return false;
+    if (!writeTextFile(path, content)) return false;
+    const auto now = fs::last_write_time(path, ec);    // 写盘后的真实 mtime
+    if (ec) return false;
+    const auto base = now > prev ? now : prev;
+    fs::last_write_time(path, base + std::chrono::seconds(2), ec);
+    return !ec;
+}
+
+// 有界自旋：逐帧 compose 直至 done(*ui) 为真（60 × 120ms 预算）。watcher 事件
+// 送达前帧内 poll 静默跳过（credit 未置位），事件送达的帧即重载帧。仅用于
+// editorDirty_ == false 的静默路径（自旋帧不触发自动保存）。
+void md01WaitReload(MdLiveEnv& e, ::core::Module* mod, const eui::Screen& screen,
+                    const std::function<bool(eui::Ui&)>& done) {
+    for (int i = 0; i < 60; ++i) {
+        e.frame([&](eui::Ui& u) { mod->compose(u, screen); });
+        if (done(*e.ui)) return;
+        std::this_thread::sleep_for(std::chrono::milliseconds(120));
+    }
+}
+
+// 渲染出的块包裹 id 列表（prefix = "md.live" / "md.preview"；重载正信号：块数 /
+// stableId 集合变化）
+std::vector<int> md01RenderedSids(eui::Ui& ui, const std::string& prefix) {
+    std::vector<int> ids;
+    for (int sid = 0; sid < 96; ++sid) {
+        if (ui.find(prefix + ".blk." + std::to_string(sid)) != nullptr) {
+            ids.push_back(sid);
+        }
+    }
+    std::sort(ids.begin(), ids.end());
+    return ids;
+}
+
+// 复刻模块的块模型演化：m 已按模块前 startIdx 步演化（update 序列与模块同序、
+// stableId 计数器同为 0 起 → 逐位一致），把 texts[startIdx..] 按同序补完，返回
+// 演化后各块 stableId 的排序集合（重载发生的正信号）。映射判别用同一个复刻。
+std::vector<int> md01SidSeq(MdBlockModel& m, size_t startIdx,
+                            const std::vector<std::string>& texts) {
+    for (size_t i = startIdx; i < texts.size(); ++i) {
+        m.update(texts[i]);
+    }
+    std::vector<int> ids;
+    for (const auto& b : m.blocks()) ids.push_back(b.stableId);
+    std::sort(ids.begin(), ids.end());
+    return ids;
+}
+
+// 编辑器输入框真实打字（走 onTextInput → onChange → onEditorTextChanged 链路）。
+// 必须在编辑态帧内调用（hit 取当前帧元素；实时态帧树里没有编辑器列）。
+bool typeIntoEditor(eui::Ui& ui, const std::string& text) {
+    const auto* hit = ui.find(module::markdown::kEditorInputHitId);
+    if (hit == nullptr || !hit->onTextInput) return false;
+    core::TextInputEvent ev;
+    ev.text = text;
+    hit->onTextInput(ev);
+    return true;
+}
+
+} // namespace
+
+// ============ 用例 1：前插平移，三元组主键命中（spec §5.2 #1）============
+REGISTER_TEST(md_module_md01_reload_prepend,
+              "markdown_module: MD-01 reload map prepend triple hit (headless)", {
+    const std::string oldDoc = "alpha\n\nbravo\n\ncharlie\n";
+    const std::string newDoc = "seed line one\n\nalpha\n\nbravo\n\ncharlie\n";
+    test_support::MdHeadlessEnv env(kDirPrefix, "md01pre", kDbName);
+    DOCTEST_REQUIRE(env.db != nullptr);
+    DOCTEST_REQUIRE(writeTextFile(env.dir / "note.md", oldDoc));
+
+    MdBlockModel replica;   // 复刻模块演化（同 update 序列）：open(oldDoc) → reload(newDoc)
+    replica.update(oldDoc);
+    DOCTEST_REQUIRE(replica.blocks().size() == 3);
+    const size_t cursorByte = replica.blocks()[1].start + 3;   // 活动块 = bravo
+    const MdBlock oldActive = replica.blocks()[1];
+
+    std::unique_ptr<::core::Module> mod(create_markdown_module());
+    mod->onStart();
+    eui::Screen screen;
+    screen.width = 1600.0f;
+    screen.height = 1000.0f;
+    MdLiveEnv e;
+    auto frame = [&](void) { e.frame([&](eui::Ui& u) { mod->compose(u, screen); }); };
+
+    DOCTEST_REQUIRE(enterLiveAt(e, mod.get(), screen, cursorByte));
+    DOCTEST_CHECK_EQ(e.ui->state<MdInputState>("md.live.input").text,
+                     oldDoc.substr(oldActive.start,
+                                   oldActive.end - oldActive.start));
+    DOCTEST_REQUIRE(md01RenderedSids(*e.ui, "md.live").size() == 3);   // 重载前置信号
+    DOCTEST_REQUIRE(e.ui->find("md.live.input") != nullptr);
+
+    // 外部前插一整段 → 静默重载 → 三元组主键命中（平移下 stableId 保留）
+    const std::vector<int> wantSids =
+        md01SidSeq(replica, 1, {oldDoc, newDoc});
+    DOCTEST_REQUIRE(md01WriteExternal(env.dir / "note.md", newDoc));
+    md01WaitReload(e, mod.get(), screen, [&](eui::Ui& u) {
+        return md01RenderedSids(u, "md.live") == wantSids;   // 重载正信号
+    });
+    frame();   // 重载后稳定帧
+    const auto& bs = replica.blocks();
+    DOCTEST_REQUIRE(bs.size() == 4);
+    const size_t mapped =
+        mdFindBlockByContent(bs, oldActive.kind, oldActive.hash,
+                             oldActive.stableId, oldActive.start);
+    DOCTEST_REQUIRE(mapped != std::string::npos);
+    DOCTEST_CHECK_EQ(mapped, static_cast<size_t>(2));   // 落在 bravo 块（非插入的 seed 块）
+    const std::string want =
+        newDoc.substr(bs[mapped].start, bs[mapped].end - bs[mapped].start);
+    DOCTEST_CHECK_EQ(want, std::string("\nbravo\n"));
+    DOCTEST_CHECK_EQ(md01RenderedSids(*e.ui, "md.live"), wantSids);
+    // 公共断言：锚点与可见 input 一致（spec §5.2 公共断言）
+    DOCTEST_CHECK_EQ(e.ui->state<MdInputState>("md.live.input").text, want);
+    // F2 配对：scope 释放帧后文本仍绑定且焦点同帧补发
+    frame();
+    DOCTEST_CHECK_EQ(e.ui->state<MdInputState>("md.live.input").text, want);
+    DOCTEST_CHECK(e.ui->isFocused("md.live.input.hit"));
+    mod->onStop();
+    return true;
+})
+
+// ============ 用例 2：不相邻双改（A B C → A' B C'），三元失配 → (kind,hash) 回退 ============
+// v2 修订 F8：单点改 A 不够——后缀对齐保 id，三元组仍命中；必须 A、C 都改，
+// p=0 s=0 → B（字节未变）落变化窗口丢 stableId。
+REGISTER_TEST(md_module_md01_reload_double_edit,
+              "markdown_module: MD-01 reload map double edit kind-hash fallback (headless)", {
+    const std::string oldDoc = "alpha\n\nbravo\n\ncharlie\n";
+    const std::string newDoc = "alpha changed\n\nbravo\n\ncharlie!\n";
+    test_support::MdHeadlessEnv env(kDirPrefix, "md01dbl", kDbName);
+    DOCTEST_REQUIRE(env.db != nullptr);
+    DOCTEST_REQUIRE(writeTextFile(env.dir / "note.md", oldDoc));
+
+    MdBlockModel replica;   // 复刻模块演化：open(oldDoc) → reload(newDoc)
+    replica.update(oldDoc);
+    DOCTEST_REQUIRE(replica.blocks().size() == 3);
+    const MdBlock oldActive = replica.blocks()[1];
+    const size_t cursorByte = oldActive.start + 3;
+
+    std::unique_ptr<::core::Module> mod(create_markdown_module());
+    mod->onStart();
+    eui::Screen screen;
+    screen.width = 1600.0f;
+    screen.height = 1000.0f;
+    MdLiveEnv e;
+    auto frame = [&](void) { e.frame([&](eui::Ui& u) { mod->compose(u, screen); }); };
+
+    DOCTEST_REQUIRE(enterLiveAt(e, mod.get(), screen, cursorByte));
+    DOCTEST_CHECK_EQ(e.ui->state<MdInputState>("md.live.input").text,
+                     oldDoc.substr(oldActive.start,
+                                   oldActive.end - oldActive.start));
+
+    const std::vector<int> wantSids =
+        md01SidSeq(replica, 1, {oldDoc, newDoc});
+    DOCTEST_REQUIRE(md01WriteExternal(env.dir / "note.md", newDoc));
+    md01WaitReload(e, mod.get(), screen, [&](eui::Ui& u) {
+        return md01RenderedSids(u, "md.live") == wantSids;
+    });
+    frame();   // 重载后稳定帧
+    const auto& nbs = replica.blocks();
+    DOCTEST_REQUIRE(nbs.size() == 3);
+    // 三元组无命中（B 字节未变但落变化窗口拿新 id —— 复刻侧直接扫证）
+    bool anyTriple = false;
+    for (const auto& b : nbs) {
+        if (b.kind == oldActive.kind && b.hash == oldActive.hash &&
+            b.stableId == oldActive.stableId) {
+            anyTriple = true;
+        }
+    }
+    DOCTEST_CHECK_FALSE(anyTriple);
+    // (kind,hash) 回退命中 B（唯一等价块）
+    const size_t mapped =
+        mdFindBlockByContent(nbs, oldActive.kind, oldActive.hash,
+                             oldActive.stableId, oldActive.start);
+    DOCTEST_REQUIRE(mapped != std::string::npos);
+    DOCTEST_CHECK_EQ(mapped, static_cast<size_t>(1));
+    const std::string want =
+        newDoc.substr(nbs[mapped].start, nbs[mapped].end - nbs[mapped].start);
+    DOCTEST_CHECK_EQ(want, std::string("\nbravo\n"));
+    DOCTEST_CHECK_EQ(md01RenderedSids(*e.ui, "md.live"), wantSids);
+    DOCTEST_CHECK_EQ(e.ui->state<MdInputState>("md.live.input").text, want);
+    frame();
+    DOCTEST_CHECK_EQ(e.ui->state<MdInputState>("md.live.input").text, want);
+    DOCTEST_CHECK(e.ui->isFocused("md.live.input.hit"));
+    mod->onStop();
+    return true;
+})
+
+// ============ 用例 3：删块零命中 → 钳位（多帧断言，spec §5.2 #3）============
+REGISTER_TEST(md_module_md01_reload_block_deleted,
+              "markdown_module: MD-01 reload map block deleted clamp zero-hit (headless)", {
+    const std::string oldDoc = "alpha\n\nbravo\n\ncharlie\n";
+    const std::string newDoc = "alpha\n\ncharlie\n";   // bravo 整段被外部删除
+    test_support::MdHeadlessEnv env(kDirPrefix, "md01del", kDbName);
+    DOCTEST_REQUIRE(env.db != nullptr);
+    DOCTEST_REQUIRE(writeTextFile(env.dir / "note.md", oldDoc));
+
+    MdBlockModel replica;   // 复刻模块演化：open(oldDoc) → reload(newDoc)
+    replica.update(oldDoc);
+    DOCTEST_REQUIRE(replica.blocks().size() == 3);
+    const size_t cursorByte = replica.blocks()[1].start + 2;   // 活动块 = bravo
+    const MdBlock oldActive = replica.blocks()[1];
+
+    std::unique_ptr<::core::Module> mod(create_markdown_module());
+    mod->onStart();
+    eui::Screen screen;
+    screen.width = 1600.0f;
+    screen.height = 1000.0f;
+    MdLiveEnv e;
+    auto frame = [&](void) { e.frame([&](eui::Ui& u) { mod->compose(u, screen); }); };
+
+    DOCTEST_REQUIRE(enterLiveAt(e, mod.get(), screen, cursorByte));
+    DOCTEST_CHECK_EQ(e.ui->state<MdInputState>("md.live.input").text,
+                     oldDoc.substr(oldActive.start,
+                                   oldActive.end - oldActive.start));
+
+    const std::vector<int> wantSids =
+        md01SidSeq(replica, 1, {oldDoc, newDoc});
+    DOCTEST_REQUIRE(md01WriteExternal(env.dir / "note.md", newDoc));
+    md01WaitReload(e, mod.get(), screen, [&](eui::Ui& u) {
+        return md01RenderedSids(u, "md.live") == wantSids;
+    });
+    frame();   // 重载后稳定帧
+    const auto& nbs = replica.blocks();
+    DOCTEST_REQUIRE(nbs.size() == 2);
+    // 零命中证：内容身份在新文档不存在
+    DOCTEST_CHECK_EQ(
+        mdFindBlockByContent(nbs, oldActive.kind, oldActive.hash,
+                             oldActive.stableId, oldActive.start),
+        std::string::npos);
+    // 钳位期望（与实现同口径）：min(旧 liveCursorByte_, 新 size) → 覆盖块原文
+    const size_t clamped = std::min(cursorByte, newDoc.size());
+    const size_t kExp = replica.blockIndexAt(clamped);
+    const std::string want =
+        newDoc.substr(nbs[kExp].start, nbs[kExp].end - nbs[kExp].start);
+    // 多帧断言（审计 major）：重载帧后 3 帧收敛不飘（下帧重推覆盖不掉）
+    DOCTEST_CHECK_EQ(e.ui->state<MdInputState>("md.live.input").text, want);
+    DOCTEST_CHECK_EQ(md01RenderedSids(*e.ui, "md.live"), wantSids);
+    frame();
+    DOCTEST_CHECK_EQ(e.ui->state<MdInputState>("md.live.input").text, want);
+    DOCTEST_CHECK(e.ui->isFocused("md.live.input.hit"));
+    frame();
+    DOCTEST_CHECK_EQ(e.ui->state<MdInputState>("md.live.input").text, want);
+    mod->onStop();
+    return true;
+})
+
+// ============ 用例 3b：非空→空文档重载（零命中最坏形态，F4 空文档 guard）============
+REGISTER_TEST(md_module_md01_reload_to_empty,
+              "markdown_module: MD-01 reload map non-empty to empty doc guard (headless)", {
+    const std::string oldDoc = "alpha\n\nbravo\n\ncharlie\n";
+    test_support::MdHeadlessEnv env(kDirPrefix, "md01empty", kDbName);
+    DOCTEST_REQUIRE(env.db != nullptr);
+    DOCTEST_REQUIRE(writeTextFile(env.dir / "note.md", oldDoc));
+
+    MdBlockModel model;
+    model.update(oldDoc);
+    DOCTEST_REQUIRE(model.blocks().size() == 3);
+    const size_t cursorByte = model.blocks()[1].start + 2;
+
+    std::unique_ptr<::core::Module> mod(create_markdown_module());
+    mod->onStart();
+    eui::Screen screen;
+    screen.width = 1600.0f;
+    screen.height = 1000.0f;
+    MdLiveEnv e;
+    auto frame = [&](void) { e.frame([&](eui::Ui& u) { mod->compose(u, screen); }); };
+
+    DOCTEST_REQUIRE(enterLiveAt(e, mod.get(), screen, cursorByte));
+    DOCTEST_REQUIRE(e.ui->find("md.live.input") != nullptr);
+
+    // 外部清空文件 → 重载 → 空文档 guard（liveActiveBlock_/inputStart/byte 归零，
+    // 不越界、不崩）；空块序列下 live 列不建 input
+    DOCTEST_REQUIRE(md01WriteExternal(env.dir / "note.md", ""));
+    md01WaitReload(e, mod.get(), screen, [&](eui::Ui& u) {
+        return u.find("md.live.input") == nullptr;
+    });
+    frame();
+    DOCTEST_CHECK(e.ui->find("md.live.input") == nullptr);
+    frame();
+    DOCTEST_CHECK(e.ui->find("md.live.input") == nullptr);
+    mod->onStop();
+    return true;
+})
+
+// ============ 用例 4：重复块三元组决胜（spec §5.2 #4，v2 修订 F7）============
+// §5.2 #4 的段落 fixture（abc 重复段落）切分器产不出全同块（空行并入下一块头 →
+// p1="abc\n" ≠ p2="\nabc\n" 字节不等）；按 §5.1 的权威 fixture 用字节全同的
+// 代码围栏 ×3（围栏内容吞掉块间空行，三块逐字节全同、stableId 各异）。
+REGISTER_TEST(md_module_md01_reload_duplicate_fences,
+              "markdown_module: MD-01 reload map duplicate fences triple wins (headless)", {
+    const std::string unit = "\n```\n\n```\n";
+    const std::string oldDoc = unit + unit;        // 2 个全同 CodeFence 块
+    const std::string newDoc = unit + unit + unit; // 前插一个完整副本 → 3 全同块
+    test_support::MdHeadlessEnv env(kDirPrefix, "md01dup", kDbName);
+    DOCTEST_REQUIRE(env.db != nullptr);
+    DOCTEST_REQUIRE(writeTextFile(env.dir / "note.md", oldDoc));
+
+    MdBlockModel model;   // 复刻
+    model.update(oldDoc);
+    DOCTEST_REQUIRE(model.blocks().size() == 2);
+    DOCTEST_REQUIRE(model.blocks()[0].kind == MdBlockKind::CodeFence);
+    DOCTEST_REQUIRE(model.blocks()[0].hash == model.blocks()[1].hash);
+    DOCTEST_REQUIRE(model.blocks()[0].stableId != model.blocks()[1].stableId);
+    const MdBlock oldActive = model.blocks()[1];   // 活动块 = 第二个实例
+    const size_t cursorByte = oldActive.start + 2;
+
+    std::unique_ptr<::core::Module> mod(create_markdown_module());
+    mod->onStart();
+    eui::Screen screen;
+    screen.width = 1600.0f;
+    screen.height = 1000.0f;
+    MdLiveEnv e;
+    auto frame = [&](void) { e.frame([&](eui::Ui& u) { mod->compose(u, screen); }); };
+
+    DOCTEST_REQUIRE(enterLiveAt(e, mod.get(), screen, cursorByte));
+    DOCTEST_CHECK_EQ(e.ui->state<MdInputState>("md.live.input").text,
+                     oldDoc.substr(oldActive.start,
+                                   oldActive.end - oldActive.start));
+    DOCTEST_REQUIRE(md01RenderedSids(*e.ui, "md.live").size() == 2);
+
+    // 复刻演化：open(oldDoc) → reload(newDoc)。全同块的前缀对齐是前端贪心的：
+    // p=2 → 两个原实例继承 id 到 [0][1]，前插的副本落 [2] 拿新 id。
+    const std::vector<int> wantSids =
+        md01SidSeq(model, 1, {oldDoc, newDoc});
+    DOCTEST_REQUIRE(md01WriteExternal(env.dir / "note.md", newDoc));
+    md01WaitReload(e, mod.get(), screen, [&](eui::Ui& u) {
+        return md01RenderedSids(u, "md.live") == wantSids;
+    });
+    frame();   // 重载后稳定帧
+    const auto& nbs = model.blocks();
+    DOCTEST_REQUIRE(nbs.size() == 3);
+    DOCTEST_REQUIRE(nbs[1].hash == nbs[0].hash);
+    DOCTEST_REQUIRE(nbs[2].hash == nbs[0].hash);
+    const size_t mapped =
+        mdFindBlockByContent(nbs, oldActive.kind, oldActive.hash,
+                             oldActive.stableId, oldActive.start);
+    DOCTEST_REQUIRE(mapped != std::string::npos);
+    // 命中【原实例】（stableId == 旧活动块），不是前插副本（新 id）——三元组在
+    // 三个全同块里精确区分实例
+    DOCTEST_CHECK_EQ(nbs[mapped].stableId, oldActive.stableId);
+    DOCTEST_CHECK_EQ(mapped, static_cast<size_t>(1));
+    const std::string want =
+        newDoc.substr(nbs[mapped].start, nbs[mapped].end - nbs[mapped].start);
+    DOCTEST_CHECK_EQ(want, unit);
+    DOCTEST_CHECK_EQ(md01RenderedSids(*e.ui, "md.live"), wantSids);
+    DOCTEST_CHECK_EQ(e.ui->state<MdInputState>("md.live.input").text, want);
+    frame();
+    DOCTEST_CHECK_EQ(e.ui->state<MdInputState>("md.live.input").text, want);
+    DOCTEST_CHECK(e.ui->isFocused("md.live.input.hit"));
+    mod->onStop();
+    return true;
+})
+
+// ============ 用例 6：冲突 toast 路径（v2 修订 F5：确定性高于静默轮询）============
+// 验证两条入口共用同一 reloadCurrentNote 映射。命中语义的关键：未保存编辑必须落
+// 在【非活动块】上（编辑态打字改 alpha，进实时态后活动块 = 干净的 bravo；活动块
+// 被编辑则 (kind,hash) 恒与磁盘不同 → 结构性不可命中）。冲突检测在编辑态完成
+//（编辑器元素在帧树里，400ms 自动保存防抖靠每轮补打一字符重置——idle < 400ms
+// 不落盘，外部版本保留），弹 toast 后再切实时态点击 action：重载在 mode == Live
+// 下执行，映射路径与用例 1 完全同一条。复刻按观察到的编辑器全文镜像，重试次数
+// 不影响确定性。用例 5(CRLF)/5s 时钟脉冲路径登记 deferred（§5.2 执行前置）。
+REGISTER_TEST(md_module_md01_reload_conflict_toast,
+              "markdown_module: MD-01 conflict toast reload path triple hit (headless)", {
+    const std::string oldDoc = "alpha\n\nbravo\n\ncharlie\n";
+    const std::string newDoc = "seed line one\n\nalpha\n\nbravo\n\ncharlie\n";
+    test_support::MdHeadlessEnv env(kDirPrefix, "md01conf", kDbName);
+    DOCTEST_REQUIRE(env.db != nullptr);
+    DOCTEST_REQUIRE(writeTextFile(env.dir / "note.md", oldDoc));
+
+    MdBlockModel replica;   // 复刻模块演化：open(oldDoc) → 编辑态打字 → 冲突重载(newDoc)
+    replica.update(oldDoc);
+    DOCTEST_REQUIRE(replica.blocks().size() == 3);
+    const size_t bravoStart = replica.blocks()[1].start;   // 6
+    const size_t cursorByte = bravoStart + 3;
+
+    std::unique_ptr<::core::Module> mod(create_markdown_module());
+    mod->onStart();
+    eui::Screen screen;
+    screen.width = 1600.0f;
+    screen.height = 1000.0f;
+    MdLiveEnv e;
+    auto frame = [&](void) { e.frame([&](eui::Ui& u) { mod->compose(u, screen); }); };
+
+    // 编辑态打开
+    frame();
+    DOCTEST_REQUIRE(openFirstNote(*e.ui));
+    frame();
+    DOCTEST_REQUIRE(e.ui->find(kEditorInputId) != nullptr);
+
+    // 外写盘（前插版本）+ 未来 mtime
+    DOCTEST_REQUIRE(md01WriteExternal(env.dir / "note.md", newDoc));
+    // 冲突自旋（编辑态）：每轮块首打一字符（dirty + 重置 400ms 防抖）→ 帧（不落
+    // 盘）→ poll（watcher credit + mtime + dirty）→ 冲突 toast；复刻按观察到的
+    // 全文镜像
+    bool toastSeen = false;
+    for (int attempt = 0; attempt < 10 && !toastSeen; ++attempt) {
+        e.ui->state<MdInputState>(kEditorInputId).cursor = 0;
+        DOCTEST_REQUIRE(typeIntoEditor(*e.ui, "Z"));
+        replica.update(e.ui->state<MdInputState>(kEditorInputId).text);
+        frame();
+        toastSeen = e.ui->find("md.toast.action.hit") != nullptr;
+        if (!toastSeen) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(150));
+        }
+    }
+    DOCTEST_REQUIRE_MESSAGE(toastSeen, "冲突 toast 未弹出：外部写盘未被检测到");
+    // 捕获侧干净 bravo 块（编辑只改 alpha，bravo 字节与 stableId 都未受波及）
+    DOCTEST_REQUIRE(replica.blocks().size() == 3);
+    const MdBlock cleanBravo = replica.blocks()[1];
+    // 切实时态（初始锚 = 干净的 bravo 块）→ 点击「重载磁盘版本」→ resolveConflict
+    // (true) → reloadCurrentNote(false) —— 重载在 Live 态执行，走与用例 1 同一条
+    // 映射路径
+    e.ui->state<MdInputState>(kEditorInputId).cursor = static_cast<int>(cursorByte);
+    DOCTEST_REQUIRE(cycleMode(mod.get()));   // → 实时
+    frame();   // 锚初始化帧（活动块 = bravo；冲突 toast 同帧可见）
+    DOCTEST_REQUIRE(e.ui->find("md.live.input") != nullptr);
+    const auto* action = e.ui->find("md.toast.action.hit");
+    DOCTEST_REQUIRE(action != nullptr && action->onClick != nullptr);
+    action->onClick();
+    frame();
+    replica.update(newDoc);   // 重载这一步
+    const auto& nbs = replica.blocks();
+    const size_t mapped =
+        mdFindBlockByContent(nbs, cleanBravo.kind, cleanBravo.hash,
+                             cleanBravo.stableId, cleanBravo.start);
+    DOCTEST_REQUIRE(mapped != std::string::npos);
+    DOCTEST_CHECK_EQ(mapped, static_cast<size_t>(2));
+    const std::string want =
+        newDoc.substr(nbs[mapped].start, nbs[mapped].end - nbs[mapped].start);
+    DOCTEST_CHECK_EQ(want, std::string("\nbravo\n"));
+    DOCTEST_CHECK_EQ(e.ui->state<MdInputState>("md.live.input").text, want);
+    DOCTEST_CHECK(e.ui->isFocused("md.live.input.hit"));
+    frame();   // 多帧稳定
+    DOCTEST_CHECK_EQ(e.ui->state<MdInputState>("md.live.input").text, want);
+    mod->onStop();
+    return true;
+})
+
+// ============ 用例 7：捕获越界竞态（v2 修订 F5：冲突路径）============
+// 构造「输入 onChange 当帧收缩 blocks + 冲突重载」：活动块 = 块 2，选中其文本首
+// 字节（块间空行）删除 → 3 块合并成 2 块，liveActiveBlock_ 保持陈旧值 2（越界态）
+// → 冲突 toast 重载 → 步骤 1 在已收缩模型上重 derive（blockIndexAt 对非空恒
+// in-range，F6）→ 不越界读、不崩、零命中钳位。冲突自旋每轮在活动块尾（= 文档
+// 末块）追加一字符重置防抖 → 文档恒为当前文本 + Z，复刻可精确镜像。
+REGISTER_TEST(md_module_md01_reload_capture_race,
+              "markdown_module: MD-01 capture race after blocks shrink (headless)", {
+    const std::string oldDoc = "alpha\n\nbravo\n\ncharlie\n";
+    test_support::MdHeadlessEnv env(kDirPrefix, "md01race", kDbName);
+    DOCTEST_REQUIRE(env.db != nullptr);
+    DOCTEST_REQUIRE(writeTextFile(env.dir / "note.md", oldDoc));
+
+    MdBlockModel model;
+    model.update(oldDoc);
+    DOCTEST_REQUIRE(model.blocks().size() == 3);
+    const size_t cursorByte = model.blocks()[2].start + 2;   // 活动块 = 块 2
+
+    std::unique_ptr<::core::Module> mod(create_markdown_module());
+    mod->onStart();
+    eui::Screen screen;
+    screen.width = 1600.0f;
+    screen.height = 1000.0f;
+    MdLiveEnv e;
+    auto frame = [&](void) { e.frame([&](eui::Ui& u) { mod->compose(u, screen); }); };
+
+    DOCTEST_REQUIRE(enterLiveAt(e, mod.get(), screen, cursorByte));
+    DOCTEST_REQUIRE(e.ui->find("md.live.input") != nullptr);
+
+    // 块 2 文本首字节（"\ncharlie\n" 的前导空行）选区删除：3 块 → 2 块
+    //（bravo 与 charlie 合并），liveActiveBlock_ 仍为陈旧值 2（== 新 size → 越界）
+    MdInputState& st = e.ui->state<MdInputState>("md.live.input");
+    st.cursor = 0;
+    st.selectionStart = 0;
+    st.selectionEnd = 1;
+    DOCTEST_REQUIRE(pressLiveKey(*e.ui, eui::InputKey::Backspace));   // 内置选区删除 → onChange
+    frame();   // 锚按新模型重派（合并后块 1）；输入框文本同步为 "\nbravo\ncharlie\n"
+    const std::string mergedText = "\nbravo\ncharlie\n";
+    DOCTEST_CHECK_EQ(e.ui->state<MdInputState>("md.live.input").text, mergedText);
+
+    // 复刻演化（模块同序）：open(oldDoc) → 选区删块首（3→2 合并）→ 活动块尾逐次
+    // 追加 Z（冲突自旋）→ 冲突重载(oldDoc)（捕获发生在已收缩模型上 = 竞态点）
+    MdBlockModel replica;
+    replica.update(oldDoc);
+    replica.update("alpha\n\nbravo\ncharlie\n");
+    // 外写回原 3 块版本 + 未来 mtime
+    DOCTEST_REQUIRE(md01WriteExternal(env.dir / "note.md", oldDoc));
+    // 冲突自旋：活动块尾追打 Z（重置防抖；活动块 = 文档末块 → 文档恒为当前文本
+    // + Z，复刻精确镜像）
+    int typedZ = 0;
+    bool toastSeen = false;
+    for (int attempt = 0; attempt < 10 && !toastSeen; ++attempt) {
+        MdInputState& st2 = e.ui->state<MdInputState>("md.live.input");
+        st2.cursor = static_cast<int>(st2.text.size());
+        DOCTEST_REQUIRE(typeIntoLiveInput(*e.ui, "Z"));
+        ++typedZ;
+        replica.update(replica.text() + "Z");
+        frame();
+        toastSeen = e.ui->find("md.toast.action.hit") != nullptr;
+        if (!toastSeen) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(150));
+        }
+    }
+    DOCTEST_REQUIRE_MESSAGE(toastSeen, "冲突 toast 未弹出：外部写盘未被检测到");
+    // 点击「重载磁盘版本」→ 步骤 1 在已收缩模型上重 derive（恒 in-range，F6）
+    const auto* action = e.ui->find("md.toast.action.hit");
+    DOCTEST_REQUIRE(action != nullptr && action->onClick != nullptr);
+    // 点击时锚字节 = liveInputStart_(6) + 输入框光标(mergedText 长 + typedZ)
+    const size_t anchorByte = 6 + mergedText.size() + static_cast<size_t>(typedZ);
+    const size_t capIdx = replica.blockIndexAt(anchorByte);
+    DOCTEST_REQUIRE(capIdx < replica.blocks().size());
+    const MdBlock captured = replica.blocks()[capIdx];
+    action->onClick();
+    frame();
+    replica.update(oldDoc);   // 重载这一步
+    DOCTEST_REQUIRE(replica.blocks().size() == 3);
+    // 捕获块（含追加字符，内容新文档不存在）→ 零命中 → 钳位到旧光标字节对应新块
+    DOCTEST_CHECK_EQ(
+        mdFindBlockByContent(replica.blocks(), captured.kind, captured.hash,
+                             captured.stableId, captured.start),
+        std::string::npos);
+    const size_t clamped = std::min(anchorByte, oldDoc.size());
+    const size_t kExp = replica.blockIndexAt(clamped);
+    const std::string want =
+        oldDoc.substr(replica.blocks()[kExp].start,
+                      replica.blocks()[kExp].end - replica.blocks()[kExp].start);
+    DOCTEST_CHECK_EQ(e.ui->state<MdInputState>("md.live.input").text, want);
+    frame();
+    DOCTEST_CHECK_EQ(e.ui->state<MdInputState>("md.live.input").text, want);
+    mod->onStop();
+    return true;
+})
+
+// ============ 用例 8：非实时态回归（spec §5.2 #8）============
+REGISTER_TEST(md_module_md01_reload_non_live_modes,
+              "markdown_module: MD-01 reload untouched outside live mode (headless)", {
+    const std::string oldDoc = "alpha\n\nbravo\n\ncharlie\n";
+    const std::string newDoc = "seed line one\n\nalpha\n\nbravo\n\ncharlie\n";
+    const std::string thirdDoc = "first\n\nsecond\n";
+    test_support::MdHeadlessEnv env(kDirPrefix, "md01nlm", kDbName);
+    DOCTEST_REQUIRE(env.db != nullptr);
+    DOCTEST_REQUIRE(writeTextFile(env.dir / "note.md", oldDoc));
+
+    std::unique_ptr<::core::Module> mod(create_markdown_module());
+    mod->onStart();
+    eui::Screen screen;
+    screen.width = 1600.0f;
+    screen.height = 1000.0f;
+    MdLiveEnv e;
+    auto frame = [&](void) { e.frame([&](eui::Ui& u) { mod->compose(u, screen); }); };
+
+    // 编辑态：外写盘 → 重载 → 编辑器文本被磁盘版本替换，映射不介入（mode != Live）
+    frame();
+    DOCTEST_REQUIRE(openFirstNote(*e.ui));
+    frame();
+    DOCTEST_REQUIRE(e.ui->find(kEditorInputId) != nullptr);
+    DOCTEST_REQUIRE(md01WriteExternal(env.dir / "note.md", newDoc));
+    md01WaitReload(e, mod.get(), screen, [&](eui::Ui& u) {
+        return u.state<MdInputState>(kEditorInputId).text == newDoc;
+    });
+    frame();   // 重载后稳定帧
+    DOCTEST_CHECK_EQ(e.ui->state<MdInputState>(kEditorInputId).text, newDoc);
+    DOCTEST_CHECK(e.ui->find("md.live.input") == nullptr);
+
+    // 切三档到预览：模式回归（映射不介入；预览列在）
+    DOCTEST_REQUIRE(cycleMode(mod.get()));   // → Live
+    DOCTEST_REQUIRE(cycleMode(mod.get()));   // → Split
+    DOCTEST_REQUIRE(cycleMode(mod.get()));   // → Preview
+    frame();
+    DOCTEST_REQUIRE(e.ui->find("md.preview.scroll") != nullptr);
+    // 预览态外写盘 → 重载 → 预览块集合变化（重载正信号），不崩
+    const std::vector<int> preSids = md01RenderedSids(*e.ui, "md.preview");
+    DOCTEST_REQUIRE(preSids.size() == 4);
+    DOCTEST_REQUIRE(md01WriteExternal(env.dir / "note.md", thirdDoc));
+    md01WaitReload(e, mod.get(), screen, [&](eui::Ui& u) {
+        const auto sids = md01RenderedSids(u, "md.preview");
+        return !sids.empty() && sids != preSids;
+    });
+    frame();
+    DOCTEST_CHECK(e.ui->find("md.preview.scroll") != nullptr);
+    DOCTEST_CHECK(e.ui->find("md.live.input") == nullptr);
+    // 切回编辑态：编辑器文本 = 最新磁盘版本（重载在非实时态同样正常换内容）
+    DOCTEST_REQUIRE(cycleMode(mod.get()));   // → Edit
+    frame();
+    DOCTEST_CHECK_EQ(e.ui->state<MdInputState>(kEditorInputId).text, thirdDoc);
     mod->onStop();
     return true;
 })

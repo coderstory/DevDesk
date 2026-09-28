@@ -32,6 +32,7 @@
 using module::markdown::MdBlock;
 using module::markdown::MdBlockKind;
 using module::markdown::MdBlockModel;
+using module::markdown::mdFindBlockByContent;
 using module::markdown::segmentMarkdownBlocks;
 using module::markdown::scanFences;
 
@@ -370,6 +371,147 @@ REGISTER_TEST(md_block_model_crlf, "md_block_model: CRLF 文档连续覆盖 + �
     DOCTEST_CHECK(b[1].kind == MdBlockKind::CodeFence);
     DOCTEST_CHECK(b[2].kind == MdBlockKind::Table);
     DOCTEST_CHECK(b[3].kind == MdBlockKind::Paragraph);
+    return true;
+})
+
+REGISTER_TEST(md_block_model_find_by_content,
+              "md_block_model: mdFindBlockByContent 重载活动块内容映射（MD-01）", {
+    // 空文档（无块）→ npos
+    {
+        const auto blocks = segmentMarkdownBlocks("");
+        DOCTEST_REQUIRE(blocks.empty());
+        DOCTEST_CHECK_EQ(mdFindBlockByContent(blocks, MdBlockKind::Paragraph, 1,
+                                              7, 0),
+                         std::string::npos);
+    }
+
+    // 三元组 (kind,hash,stableId) 唯一命中 → 返回该下标（平移场景：内容未变、
+    // stableId 保留，精确实例）
+    {
+        const std::string doc = "alpha\n\nbravo\n\ncharlie\n";
+        MdBlockModel m;
+        m.update(doc);
+        const auto& bs = m.blocks();
+        DOCTEST_REQUIRE(bs.size() == 3);
+        DOCTEST_CHECK_EQ(
+            mdFindBlockByContent(bs, bs[1].kind, bs[1].hash, bs[1].stableId,
+                                 bs[1].start),
+            static_cast<size_t>(1));
+        // kind 或 stableId 错配 → 三元不命中；kind 也参与回退匹配：
+        //   stableId 错配 → (kind,hash) 仍唯一命中；kind 错配 → 回退也无命中
+        DOCTEST_CHECK_EQ(
+            mdFindBlockByContent(bs, bs[1].kind, bs[1].hash, 9999, bs[1].start),
+            static_cast<size_t>(1));
+        DOCTEST_CHECK_EQ(
+            mdFindBlockByContent(bs, MdBlockKind::Heading, bs[1].hash,
+                                 bs[1].stableId, bs[1].start),
+            std::string::npos);
+        // hash 错配 → 等价类也无命中 → npos
+        DOCTEST_CHECK_EQ(
+            mdFindBlockByContent(bs, bs[1].kind, 1, bs[1].stableId, bs[1].start),
+            std::string::npos);
+    }
+
+    // 三元组无命中、(kind,hash) 唯一命中：模拟「不相邻双改」——头尾都变、中间块
+    // 字节未变但落入变化窗口拿新 stableId（spec §2：尾改/双改使 stableId 失效）
+    {
+        MdBlockModel m;
+        m.update("alpha\n\nbravo\n\ncharlie\n");
+        const auto& old = m.blocks();
+        const MdBlock b = old[1];   // bravo（原身份）
+        DOCTEST_REQUIRE(old.size() == 3);
+        m.update("alpha changed\n\nbravo\n\ncharlie!\n");
+        const auto& nw = m.blocks();
+        DOCTEST_REQUIRE(nw.size() == 3);
+        // 头尾都改 → 前后缀对齐全断 → bravo 在新序列里拿新 id（字节未变）
+        DOCTEST_CHECK(nw[1].kind == b.kind);
+        DOCTEST_CHECK(nw[1].hash == b.hash);
+        DOCTEST_CHECK(nw[1].stableId != b.stableId);
+        // 三元失配（stableId 换了）→ (kind,hash) 唯一命中 bravo
+        DOCTEST_CHECK_EQ(mdFindBlockByContent(nw, b.kind, b.hash, b.stableId,
+                                              b.start),
+                         static_cast<size_t>(1));
+    }
+
+    // 重复块 fixture（spec §5.1：必须用字节全同的非空块，空行并块造不出同 hash
+    // 独立块——切分器把空行并入邻块头部）：「\n```\n\n```\n」围栏连接 3 遍 →
+    // 3 个全同 CodeFence 块（同 kind 同 hash、stableId 各异；围栏内容吞掉块间
+    // 空行，整段字节全同）
+    {
+        const std::string unit = "\n```\n\n```\n";
+        const std::string doc = unit + unit + unit;
+        MdBlockModel m;
+        m.update(doc);
+        const auto& bs = m.blocks();
+        DOCTEST_REQUIRE(bs.size() == 3);
+        DOCTEST_REQUIRE(bs[0].kind == MdBlockKind::CodeFence);
+        DOCTEST_REQUIRE(bs[1].kind == MdBlockKind::CodeFence);
+        DOCTEST_REQUIRE(bs[2].kind == MdBlockKind::CodeFence);
+        DOCTEST_REQUIRE(bs[0].hash == bs[1].hash);
+        DOCTEST_REQUIRE(bs[1].hash == bs[2].hash);
+        DOCTEST_REQUIRE(bs[0].stableId != bs[1].stableId);
+        DOCTEST_REQUIRE(bs[1].stableId != bs[2].stableId);
+        // 三元组命中精确实例：各实例各自返回自己的下标（重复块也区分实例）
+        DOCTEST_CHECK_EQ(
+            mdFindBlockByContent(bs, bs[0].kind, bs[0].hash, bs[0].stableId,
+                                 bs[0].start),
+            static_cast<size_t>(0));
+        DOCTEST_CHECK_EQ(
+            mdFindBlockByContent(bs, bs[1].kind, bs[1].hash, bs[1].stableId,
+                                 bs[1].start),
+            static_cast<size_t>(1));
+        DOCTEST_CHECK_EQ(
+            mdFindBlockByContent(bs, bs[2].kind, bs[2].hash, bs[2].stableId,
+                                 bs[2].start),
+            static_cast<size_t>(2));
+        // 三元无命中（stableId 不存在）→ (kind,hash) 多命中取 |start-nearByte|
+        // 最小：nearByte 贴近中间块 start → 命中下标 1（fixture 避开等距）
+        DOCTEST_CHECK_EQ(
+            mdFindBlockByContent(bs, bs[2].kind, bs[2].hash, 9999, bs[1].start),
+            static_cast<size_t>(1));
+        // nearByte 贴近首块 → 下标 0；贴近末块 → 下标 2
+        DOCTEST_CHECK_EQ(
+            mdFindBlockByContent(bs, bs[2].kind, bs[2].hash, 9999, bs[0].start),
+            static_cast<size_t>(0));
+        DOCTEST_CHECK_EQ(
+            mdFindBlockByContent(bs, bs[2].kind, bs[2].hash, 9999, bs[2].start),
+            static_cast<size_t>(2));
+    }
+
+    // 等距 tie-break 取下标小者：手工构造全等价类块向量（纯函数只读
+    // kind/hash/start/stableId，不要求与任何文档的切分一致），nearByte 落在两
+    // 块 start 正中 → 两块等距 → 取下标小者
+    {
+        std::vector<MdBlock> blocks;
+        const uint64_t h = 42;
+        blocks.push_back({MdBlockKind::Paragraph, 0, 1, h, 10});
+        blocks.push_back({MdBlockKind::Paragraph, 4, 5, h, 11});
+        blocks.push_back({MdBlockKind::Paragraph, 8, 9, h, 12});
+        DOCTEST_CHECK_EQ(
+            mdFindBlockByContent(blocks, MdBlockKind::Paragraph, h, 9999, 2),
+            static_cast<size_t>(0));   // |0-2| == |4-2| → 取 0
+        DOCTEST_CHECK_EQ(
+            mdFindBlockByContent(blocks, MdBlockKind::Paragraph, h, 9999, 6),
+            static_cast<size_t>(1));   // |4-6| == |8-6| → 取 1
+        DOCTEST_CHECK_EQ(
+            mdFindBlockByContent(blocks, MdBlockKind::Paragraph, h, 9999, 5),
+            static_cast<size_t>(1));   // 距 4 为 1 < 距 8 为 3 → 最近者胜
+    }
+
+    // 零命中（kind 或 hash 无匹配）→ npos
+    {
+        MdBlockModel m;
+        m.update("alpha\n\nbravo\n");
+        const auto& bs = m.blocks();
+        DOCTEST_REQUIRE(bs.size() == 2);
+        DOCTEST_CHECK_EQ(
+            mdFindBlockByContent(bs, MdBlockKind::Heading, bs[0].hash,
+                                 bs[0].stableId, bs[0].start),
+            std::string::npos);
+        DOCTEST_CHECK_EQ(
+            mdFindBlockByContent(bs, bs[0].kind, 7, bs[0].stableId, bs[0].start),
+            std::string::npos);
+    }
     return true;
 })
 

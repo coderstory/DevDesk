@@ -66,6 +66,18 @@ uint64_t mdBlockHash(std::string_view text);
 // 全文切块（纯函数，MdBlockModel 内部与测试共用；stableId 恒为 -1）
 std::vector<MdBlock> segmentMarkdownBlocks(const std::string& text);
 
+// 重载后活动块内容映射（MD-01，spec 2026-09-28-md01-reload-block-mapping-design
+// §3/§4）：reloadCurrentNote 把文档整篇换成磁盘版本后，在【新块序列】里定位旧
+// 活动块。匹配规则：
+//   ① 三元组 (kind, hash, stableId) 全等命中即返回该下标（唯一——stableId 单调
+//      递增不重复，重复块也能区分精确实例；平移/前插场景 old stableId 保留）
+//   ② 三元组无命中 → 退回 (kind, hash) 内容等价类：多命中取 |start - nearByte|
+//      最小者，等距取下标小者（覆盖尾改 / 不相邻双改后 stableId 失配但内容未变）
+//   ③ 全无 → 返回 npos（内容被外部删改消失，调用侧按钳位处置）
+// 纯函数、O(n)（n = 块数）、无副作用，可单测。
+size_t mdFindBlockByContent(const std::vector<MdBlock>& blocks, MdBlockKind kind,
+                            uint64_t hash, int stableId, size_t nearByte);
+
 // kind 中文名（日志用）
 const char* mdBlockKindName(MdBlockKind kind);
 
