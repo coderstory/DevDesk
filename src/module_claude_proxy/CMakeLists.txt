@@ -8,6 +8,7 @@ add_library(devdesk_module_claude_proxy STATIC
     claude_ui_logic.cpp
     claude_ui_state.cpp
     claude_service.cpp
+    profile_repository.cpp
     provider_config.cpp
     proxy_router.cpp
     settings_sync.cpp
