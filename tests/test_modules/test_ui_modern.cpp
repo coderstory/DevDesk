@@ -420,8 +420,8 @@ REGISTER_TEST(uiModernClaudeProfileCtxMenu,
     test_support::cleanupProfileKey(kClaudeKeychainService, a.value().id);
     test_support::cleanupProfileKey(kClaudeKeychainService, b.value().id);
     return true;
-})REGISTER_TEST(uiModernMdViewTransition,
-              "uiModern: md 四态切换过渡（md.root 0.15s OutCubic + 切换帧淡出）", {
+})REGISTER_TEST(uiModernMdModeSwitchNoFade,
+              "uiModern: md 四态切换硬切（1cdd36f 已删整页 fade，root 常驻 opacity 1）", {
     test_support::MdHeadlessEnv env("devdesk_test_ui_m2_", "mdtrans", "m2.db");
     std::unique_ptr<::core::Module> mod(create_markdown_module());
     mod->onStart();
@@ -435,19 +435,16 @@ REGISTER_TEST(uiModernClaudeProfileCtxMenu,
         mod->compose(ui, screen);
         ui.end();
 
-        // 稳态：root 目标 opacity = 1（每帧目标一致不动画）；过渡声明在
-        // md.root 上（0.15s OutCubic）
+        // 稳态：root opacity = 1（默认值）。1cdd36f 已删 md.root 整页 fade
+        // 过渡（bug e42ac9e：整页溶解 0.15s 诡异闪烁），transition 必须保持关闭
         const auto* root = ui.find("md.root");
         DOCTEST_REQUIRE(root != nullptr);
         DOCTEST_CHECK_EQ(root->opacity, 1.0f);
-        DOCTEST_CHECK(root->transition.enabled);
-        DOCTEST_CHECK(root->transition.durationSeconds > 0.149f &&
-                      root->transition.durationSeconds < 0.151f);
-        DOCTEST_CHECK(root->transition.ease == core::Ease::OutCubic);
+        DOCTEST_CHECK(!root->transition.enabled);
     }
 
-    // Ctrl+Shift+P 切态 → setMode 触发 beginViewTransition（与顶栏 segmented
-    // onChange 同一收口，两路动画行为一致）
+    // Ctrl+Shift+P 切态 → setMode（与顶栏 segmented onChange 同一收口）；
+    // 过渡已删，切换即硬切
     eui::KeyEvent key;
     key.key = eui::InputKey::P;
     key.action = eui::KeyAction::Press;
@@ -464,11 +461,10 @@ REGISTER_TEST(uiModernClaudeProfileCtxMenu,
         mod->compose(ui, screen);
         ui.end();
 
-        // 切换后首帧：root 目标 opacity = 0（淡出起点；真机下 0.15s 后计时器
-        // 拨回 1 触发淡入，无头环境无时钟推进，目标保持淡出值）
+        // 切换后首帧：root opacity 保持 1.0（过渡已删，无淡出）
         const auto* root = ui.find("md.root");
         DOCTEST_REQUIRE(root != nullptr);
-        DOCTEST_CHECK(root->opacity < 0.1f);
+        DOCTEST_CHECK_EQ(root->opacity, 1.0f);
     }
 
     mod->onStop();
