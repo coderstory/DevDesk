@@ -3,6 +3,8 @@
 //   2. todo 看板右键锚点 = 板几何经统一换算（含滚动偏移口径保留）—— M1-2
 //   3. claude profile 列表右键菜单四项 + 动作同源 + 隐形卡守卫 —— M1-5
 // 三个用例随各自任务（M1-1/M1-2/M1-5）分批加入本文件。
+// 后续批次（M2/M3）的用例（virtualList / card 布局不变式、charts 数据接线）
+// 随各自任务追加到本文件。
 // 证据链 = 代码路径 + 本无头 compose 测试；真实鼠标点验留给用户人工确认
 #include "doctest.h"
 #include "test_support.h"
@@ -113,5 +115,60 @@ REGISTER_TEST(uiModernAnchorPure,
     DOCTEST_CHECK_EQ(
         ::core::menuAnchorForPointer(100.0f, 200.0f, 20.0f, 0.0f, 0.0f).x,
         80.0f);
+    return true;
+})
+
+// ---- 2. todo 看板右键锚点 = 板几何经统一换算（M1-2）----
+
+REGISTER_TEST(uiModernTodoMenuAnchor,
+              "uiModern todo: 右键菜单锚点 = 板几何经统一换算（卡片 + 列头）", {
+    TodoEnv env;
+    DOCTEST_REQUIRE(env.ready);
+    auto c1 = env.svc->createColumn("右键源列");
+    DOCTEST_REQUIRE(c1.isOk());
+    auto t1 = env.svc->createTask(c1.value().id, "任务A");
+    DOCTEST_REQUIRE(t1.isOk());
+
+    std::unique_ptr<::core::Module> mod(create_todo_module());
+    mod->onStart();
+
+    // 迁移默认 4 列 + 新建 1 列（「右键源列」= col.4，同既有用例口径）：
+    // 板几何按 5 列推算（与 drawContextMenu 内 host.columns->size() 一致）
+    const auto& tok = ::core::theme::current();
+    const ::module::todo::ui::BoardGeom g =
+        ::module::todo::ui::boardGeom(1600.0f, 5, tok);
+    // 锚点 = 列中芯 / 卡片视觉底；无 Router（headless）→ 页面原点 0，
+    // 滚动 0 → 与统一换算结果逐值一致
+    const float expectColumnX = ::module::todo::ui::cardLeft(g, 4) + g.colW * 0.5f;
+    const float expectCardY = ::module::todo::ui::cardTop(g, 0) +
+                              ::module::todo::ui::kCardHeight + 4.0f;
+
+    {
+        TodoFrame frame(mod.get());
+        DOCTEST_CHECK(frame.ui.find("todo.col.4.card.0.bg") != nullptr);
+        // 右键任务A → 菜单打开；锚点经统一换算（坐标 = 列中芯 / 卡片底）
+        eui::PointerEvent pe;
+        eui::Rect rect;
+        frame.ui.find("todo.col.4.card.0.bg")->onContextMenu(pe, rect);
+        frame.refresh();
+        const auto* menu = frame.ui.find("todo.ctx.level.0");
+        DOCTEST_REQUIRE(menu != nullptr);
+        DOCTEST_CHECK_EQ(menu->x, expectColumnX);
+        DOCTEST_CHECK_EQ(menu->y, expectCardY);
+    }
+    {
+        TodoFrame frame(mod.get());
+        // 右键列头 → 菜单锚点 y = 板顶下方（滚动区外，scrollY = 0）
+        eui::PointerEvent pe;
+        eui::Rect rect;
+        frame.ui.find("todo.col.4.head")->onContextMenu(pe, rect);
+        frame.refresh();
+        const auto* menu = frame.ui.find("todo.ctx.level.0");
+        DOCTEST_REQUIRE(menu != nullptr);
+        DOCTEST_CHECK_EQ(menu->x, expectColumnX);
+        DOCTEST_CHECK_EQ(menu->y, g.boardTop + 4.0f);
+    }
+
+    mod->onStop();
     return true;
 })
