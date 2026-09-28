@@ -44,6 +44,10 @@ struct DataRefresh {
     bool recentOk = false;
     std::string callsError;
     uint64_t verBefore = 0;
+    // 批 2（共享配置片段）：与 profiles 同组（wantProfiles 顺带查），
+    // 脏标记同刷——左栏区块 / 详情行 / 表单绑定下拉共用这一份快照
+    std::vector<SharedConfig> sharedConfigs;
+    std::string sharedConfigsError;   // 空 = 成功（失败不置脏，保旧快照 + 记日志）
 };
 
 // ============ 完整调用记录弹窗的后台查询结果包 ============
@@ -88,6 +92,12 @@ struct ProfileListState {
     float ctxMenuX_ = 0.0f;
     float ctxMenuY_ = 0.0f;
     bool ctxMenuOpen_ = false;
+
+    // 批 2（设计 §2.10）：共享配置片段快照（与 profiles 同组脏标记同刷，
+    // 见 DataRefresh.sharedConfigs）——左栏「共享配置」区块 / 详情行 /
+    // 表单绑定下拉共用这一份，渲染路径零查询
+    std::vector<SharedConfig> cachedSharedConfigs_;
+    std::string cachedSharedConfigsError_;   // 空 = 成功（失败保旧快照 + 记日志）
 };
 
 // ============ 右栏：详情面板页签（三 pane）============
@@ -116,6 +126,36 @@ struct FormState {
     bool deleteConfirmOpen_ = false;
     int64_t deleteTargetId_ = 0;
     std::string deleteTargetName_;
+
+    // 批 2（设计 §2.10）：共享配置片段绑定（高级 env 页顶部下拉 +
+    // 片段赢预览/新增同键拦截判定）
+    int64_t formSharedConfigId_ = 0;   // 表单态绑定（0 = 未绑定；保存时写入 profile）
+    bool formSharedDdOpen_ = false;    // 绑定下拉展开态
+    // 当前绑定片段 K 键集（sharedFrozenKeys，别名归一后，与写进 live 的键形
+    // 一致；悬空绑定 → 归一为空）——K 键行置灰只读 + 新增同键拦截的判定源
+    std::vector<std::string> formFrozenKeys_;
+    // 打开表单时该 profile 自有 env 的键（归一后）：「新增同键」拦截只拦
+    // **打开后新加的**行（存量键非破坏保留、冻结显示，解绑后恢复生效，
+    // 设计 §2.3）
+    std::vector<std::string> formOriginalOwnKeys_;
+};
+
+// ============ 共享配置片段编辑弹窗（批 2，设计 §2.10 待拍板②：独立状态）============
+// 复用处：键值行写入模式照 formEnvRows_（kMaxVisibleRows 同款）；弹窗形态照表单
+// 弹窗（DialogFrame）。**必须接入 claude_module 的 anyDialogOpen 门控与
+// closeTopmostDialog Esc 序链（入序链最顶层）**——「formOpen_ 单弹窗天然互斥」
+// 只是惯例、非结构性约束。
+struct SharedConfigDialogState {
+    bool open_ = false;
+    int64_t editId_ = 0;             // 0 = 新建，非 0 = 编辑该 id
+    std::string name_;               // 片段名（name UNIQUE，服务层校验）
+    std::vector<std::pair<std::string, std::string>> envRows_;  // 键值行
+    std::string error_;              // 校验/保存错误（红字）
+
+    // 删除确认弹窗（删除 = 同事务解绑绑定它的 profile，设计 §2.6）
+    bool deleteConfirmOpen_ = false;
+    int64_t deleteConfirmId_ = 0;
+    std::string deleteConfirmName_;
 };
 
 // ============ cc-switch / settings.json 粘贴导入（高级 env 页）============
@@ -151,6 +191,7 @@ struct ClaudeUiState {
     ProfileListState list;
     DetailState detail;
     FormState form;
+    SharedConfigDialogState shared;   // 批 2：共享配置片段编辑弹窗（独立状态）
     ImportState import;
     LogsState logs;
 };

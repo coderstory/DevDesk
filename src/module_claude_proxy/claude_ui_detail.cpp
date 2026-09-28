@@ -91,6 +91,30 @@ float drawDetailBasic(eui::Ui& ui, float x0, float y0, float w,
                         : std::string("○ Claude Code 未接管（启动代理后自动接管，停止时还原）"))
         .fontSize(11.0f).lineHeight(16.0f)
         .color(ccManaged ? t.colors.success : t.colors.textTertiary).build();
+    // 批 2（设计 §2.10「详情/列表」）：共享配置绑定行——「共享配置：片段 A
+    //（N 个键）」；未绑定 → 「共享配置：未绑定」。N = 片段 extra_env 键数
+    //（K 集大小，sharedFrozenKeys 与写侧同口径）
+    const bool bound = shown != nullptr && shown->sharedConfigId != 0 &&
+                       v.sharedConfigs != nullptr;
+    std::string sharedText = "共享配置：未绑定";
+    if (bound) {
+        const SharedConfig* sc =
+            findSharedById(*v.sharedConfigs, shown->sharedConfigId);
+        if (sc != nullptr) {
+            sharedText = "共享配置：" + sc->name + "（" +
+                         std::to_string(sharedFrozenKeys(*sc).size()) +
+                         " 个键）";
+        } else {
+            sharedText = "共享配置：片段已删除（悬空绑定）";
+        }
+    }
+    const float shY = toY + 16.0f;
+    ui.text("claude.field.shared.value")
+        .position(x0, shY).size(w, 16.0f)
+        .text(sharedText)
+        .fontSize(11.0f).lineHeight(16.0f)
+        .color(bound ? t.colors.textSecondary : t.colors.textTertiary)
+        .build();
     if (!ccWarnings.empty()) {
         // 摘要 = 首条警告（失败路径只有一条 = 失败原因）
         // + 总条数；「详见设置页」恒成立——设置页的警告行
@@ -104,14 +128,14 @@ float drawDetailBasic(eui::Ui& ui, float x0, float y0, float w,
             warnText += "，详见设置页）";
         }
         ui.text("claude.field.takeover.warn.icon")
-            .position(x0, toY + 16.0f).size(14.0f, 16.0f).icon(0xF071)
+            .position(x0, shY + 16.0f).size(14.0f, 16.0f).icon(0xF071)
             .fontSize(11.0f).lineHeight(16.0f).color(t.colors.warning).build();
         ui.text("claude.field.takeover.warn")
-            .position(x0 + 18.0f, toY + 16.0f).size(w - 18.0f, 16.0f)
+            .position(x0 + 18.0f, shY + 16.0f).size(w - 18.0f, 16.0f)
             .text(warnText)
             .fontSize(11.0f).lineHeight(16.0f).color(t.colors.warning).build();
     }
-    return toY + (!ccWarnings.empty() ? 32.0f : 16.0f);
+    return shY + (!ccWarnings.empty() ? 32.0f : 16.0f);
 }
 
 float drawDetailModels(eui::Ui& ui, float x0, float y0, float w,

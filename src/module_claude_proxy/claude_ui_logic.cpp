@@ -60,4 +60,41 @@ std::string suggestImportName(const std::string& baseUrl) {
     return "导入 " + std::string(buf);
 }
 
+std::vector<std::string> sharedFrozenKeys(const SharedConfig& sc) {
+    std::vector<std::string> keys;
+    if (sc.extraEnvJson.empty()) return keys;
+    auto parsed = parseExtraEnv(sc.extraEnvJson);
+    if (parsed.isOk()) {
+        const auto mapped = applyEnvAliases(parsed.value()).env;
+        keys.reserve(mapped.size());
+        for (const auto& [k, v] : mapped) keys.push_back(k);
+    }
+    // JSON 非法 → 空集（读路径容错：宁可少挡几个键，不让整次切换失败，
+    // 与服务层 sharedEnvKeysFor 同语义）
+    return keys;
+}
+
+std::string normalizedEnvKey(const std::string& k) {
+    if (k.empty()) return k;
+    const auto mapped =
+        applyEnvAliases(std::map<std::string, std::string>{{k, ""}}).env;
+    for (const auto& [nk, v] : mapped) return nk;   // 单键映射：首键即归一结果
+    return k;   // 理论上到不了（applyEnvAliases 不透传删除键），兜底原名
+}
+
+const SharedConfig* findSharedById(const std::vector<SharedConfig>& configs,
+                                   int64_t id) {
+    for (const auto& sc : configs) {
+        if (sc.id == id) return &sc;
+    }
+    return nullptr;
+}
+
+bool keyIn(const std::vector<std::string>& keys, const std::string& k) {
+    for (const auto& x : keys) {
+        if (x == k) return true;
+    }
+    return false;
+}
+
 } // namespace module::claude
