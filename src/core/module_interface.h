@@ -37,6 +37,11 @@ public:
     virtual PageId pageId() const = 0;
     virtual std::string displayName() const = 0;
 
+    // 显示短名（托盘/关闭模块提示等「空间受限」场景）。默认回落 displayName()，
+    // 现有模块各自显式 override（= trayPageDisplayName 现值，短名从此单源）。
+    // D-R3（2026-09-27 拍板）。
+    virtual std::string shortName() const { return displayName(); }
+
     // 模块图标：返回 FontAwesome 7 Free-Solid 图标码点的 UTF-8 编码
     //（用 eui::utf8(0xF015) 生成），渲染侧经 TextBuilder::icon(const std::string&)
     // 自动切到 Icon 字体。码点必须存在于 EUI-NEO 内置的

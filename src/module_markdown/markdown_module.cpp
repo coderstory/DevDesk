@@ -245,6 +245,7 @@ class MarkdownModule : public ::core::Module {
 public:
     ::core::PageId pageId() const override { return ::core::PageId::Markdown; }
     std::string displayName() const override { return "Markdown 笔记本"; }
+    std::string shortName() const override { return "笔记"; }
     std::string iconGlyph() const override { return eui::utf8(0xF044); }  // fa-pen-to-square
 
     // ==================== 生命周期 ====================
