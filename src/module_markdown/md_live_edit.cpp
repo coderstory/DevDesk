@@ -209,4 +209,12 @@ MdLiveFollowDecision mdLiveFollowOffset(float caretDocY, float viewportH,
     return d;
 }
 
+// ---- M9：单块高度上限（spec §5 #5（封顶 0.7 × 视口高）/ R4（块内滚动））----
+
+float mdLiveCappedInputHeight(float fitHeight, float viewportH) {
+    if (viewportH <= 0.0f) return fitHeight;  // 无视口信息：防御性不封顶
+    const float cap = kMdLiveBlockCapRatio * viewportH;
+    return fitHeight <= cap ? fitHeight : cap;
+}
+
 } // namespace module::markdown

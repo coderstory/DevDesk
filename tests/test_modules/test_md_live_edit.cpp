@@ -695,3 +695,26 @@ REGISTER_TEST(md_live_undo_baseline_clamp_and_noop_steps,
     DOCTEST_CHECK_EQ(t3, std::string("ABC"));
     return true;
 })
+
+// ---- M9（spec §5 #5）：单块高度上限（封顶 0.7 × 视口高，超出则该块内部滚动）----
+
+REGISTER_TEST(md_live_block_height_cap,
+              "md_live_edit: 单块高度封顶 0.7×视口高（spec §5 #5，M9）", {
+    using module::markdown::mdLiveCappedInputHeight;
+    using module::markdown::kMdLiveBlockCapRatio;
+
+    // ① 低矮块：未超 0.7×视口 → 原样返回（内容贴合语义不退化）
+    DOCTEST_CHECK_EQ(mdLiveCappedInputHeight(100.0f, 1000.0f), 100.0f);
+    // ② 恰好等于封顶线：原样（<= 语义）
+    const float capLine = kMdLiveBlockCapRatio * 1000.0f;
+    DOCTEST_CHECK(near(mdLiveCappedInputHeight(capLine, 1000.0f), capLine));
+    // ③ 超长块（5000 行围栏 ≈ 9 万 px）：封到 0.7×视口（块内滚动接管）
+    const float capped = mdLiveCappedInputHeight(90000.0f, 1000.0f);
+    DOCTEST_CHECK(near(capped, capLine));
+    // ④ 无视口信息（防御）：不封顶
+    DOCTEST_CHECK_EQ(mdLiveCappedInputHeight(90000.0f, 0.0f), 90000.0f);
+    DOCTEST_CHECK_EQ(mdLiveCappedInputHeight(90000.0f, -1.0f), 90000.0f);
+    // ⑤ 比例常量 = spec 原文 0.7
+    DOCTEST_CHECK(near(kMdLiveBlockCapRatio, 0.7f));
+    return true;
+})

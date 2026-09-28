@@ -36,6 +36,7 @@ using module::markdown::kEditorInputId;
 #include <fstream>
 #include <functional>
 #include <iterator>
+#include <iostream>
 #include <map>
 #include <memory>
 #include <string>
@@ -5533,6 +5534,7 @@ REGISTER_TEST(md_module_live_preview_parity,
 namespace {
 
 using module::markdown::MdBlock;
+using module::markdown::MdBlockUpdate;
 using module::markdown::MdBlockKind;
 using module::markdown::MdBlockModel;
 using module::markdown::mdFindBlockByContent;
@@ -6556,6 +6558,179 @@ REGISTER_TEST(md_module_live_cross_module_nav,
     frame();
     DOCTEST_CHECK_EQ(e.ui->state<MdInputState>("md.live.input").text,
                      std::string("B one\n"));
+
+    mod->onStop();
+    return true;
+})
+
+// ==================== M9：性能实测与调优（spec §7 M9 / §5 记录式验收） ====================
+
+// §5 #5 封顶行为（headless）：合成 5000 行围栏 → 活动块 input 高度 = 0.7 × 视口
+//（块内滚动接管 = hit 挂 onScroll，over 探针 1 为预期）；切到小块 → 封顶解除。
+REGISTER_TEST(md_module_live_block_cap_5000_fence,
+              "markdown_module: 实时态 5000 行围栏活动块高度封顶 0.7×视口 + 块内滚动（M9 §5 #5，headless）", {
+    std::string fence = "```cpp\n";
+    for (int i = 0; i < 5000; ++i) fence += "line " + std::to_string(i) + "\n";
+    fence += "```\n";
+    const std::string text = "# T\n\n" + fence;   // 块 0 = 标题，块 1 = 围栏
+    test_support::MdHeadlessEnv env(kDirPrefix, "livecap", kDbName);
+    DOCTEST_REQUIRE(env.db != nullptr);
+    DOCTEST_REQUIRE(writeTextFile(env.dir / "cap.md", text));
+
+    module::markdown::MdBlockModel model;
+    model.update(text);
+    DOCTEST_REQUIRE(model.blocks().size() >= 2);
+    const size_t fenceByte = model.blocks()[1].start;   // 围栏块首
+
+    std::unique_ptr<::core::Module> mod(create_markdown_module());
+    mod->onStart();
+    eui::Screen screen;
+    screen.width = 1600.0f;
+    screen.height = 1000.0f;
+    test_support::HeadlessFrame e("mdlive");
+    auto frame = [&] { e.frame([&](eui::Ui& u) { mod->compose(u, screen); }); };
+
+    frame();
+    DOCTEST_REQUIRE(openFirstNote(*e.ui));
+    frame();
+    DOCTEST_REQUIRE(e.ui->find(kEditorInputId) != nullptr);
+    e.ui->state<MdInputState>(kEditorInputId).cursor =
+        static_cast<int>(fenceByte);
+    DOCTEST_REQUIRE(cycleMode(mod.get()));   // → 实时
+    frame();
+    DOCTEST_REQUIRE(e.ui->find("md.live.input") != nullptr);
+
+    // ① 封顶生效：input 高 = 0.7 × 视口高（滚动容器高 g.h），而非 5000 行贴合高
+    const auto* scroll = e.ui->find("md.live.scroll");
+    DOCTEST_REQUIRE(scroll != nullptr);
+    const float viewportH = scroll->frame.height;
+    const float capExpect = module::markdown::kMdLiveBlockCapRatio * viewportH;
+    const auto* input = e.ui->find("md.live.input");
+    DOCTEST_REQUIRE(input != nullptr);
+    DOCTEST_CHECK(std::fabs(input->frame.height - capExpect) <= 1.0f);
+    DOCTEST_CHECK(input->frame.height < 1000.0f);   // 没被撑到 9 万 px
+
+    // ② 块内滚动接管：hit 挂 onScroll（§5 #5「该块内滚轮行为符合预期」的
+    // headless 形态；模块侧 over 探针 =1 且因封顶不升 WARN）
+    const auto* hit = e.ui->find("md.live.input.hit");
+    DOCTEST_REQUIRE(hit != nullptr);
+    DOCTEST_CHECK(hit->onScroll != nullptr);
+
+    // ③ 封顶不阻断编辑：打字上行仍一致（活动块仍可输入）。块身份随光标走
+    //（MD-01）：X 落在 fence 块首（块首含合并进块头的空行）→ 分块器重切，
+    // 活动块跟光标落到新段落块——与既有 roundtrip 口径一致：按「期望文档 +
+    // 光标字节」重切分块，input 文本 == 新活动块源码逐字节（等价性锚）
+    const size_t typeByte = fenceByte;   // 光标 = 围栏块首（块内 offset 0）
+    DOCTEST_REQUIRE(typeIntoLiveInput(*e.ui, "X"));
+    frame();
+    const std::string got =
+        e.ui->state<MdInputState>("md.live.input").text;
+    std::string expectDoc = text;
+    expectDoc.insert(typeByte, "X");
+    module::markdown::MdBlockModel m2;
+    m2.update(expectDoc);
+    const size_t k2 = m2.blockIndexAt(typeByte + 1);
+    DOCTEST_REQUIRE(k2 < m2.blocks().size());
+    const std::string want = expectDoc.substr(
+        m2.blocks()[k2].start, m2.blocks()[k2].end - m2.blocks()[k2].start);
+    DOCTEST_CHECK_MESSAGE(got == want,
+                          "封顶块打字后 input 文本 [" + got + "] 期望活动块源 [" +
+                              want + "]");
+
+    // ④ 切到小块（标题）→ 封顶解除：input 高 = 内容贴合高（远小于 0.7×视口）
+    const auto* wrap0 = e.ui->find("md.live.blk.0");
+    DOCTEST_REQUIRE(wrap0 != nullptr);
+    DOCTEST_REQUIRE(clickLiveBlock(*e.ui, 0, 0.5f * wrap0->frame.height));
+    frame();
+    const auto* input2 = e.ui->find("md.live.input");
+    DOCTEST_REQUIRE(input2 != nullptr);
+    DOCTEST_CHECK_EQ(e.ui->state<MdInputState>("md.live.input").text,
+                     std::string("# T\n"));
+    DOCTEST_CHECK(input2->frame.height < capExpect - 1.0f);
+    const auto* hit2 = e.ui->find("md.live.input.hit");
+    DOCTEST_REQUIRE(hit2 != nullptr);
+    DOCTEST_CHECK(hit2->onScroll == nullptr);   // 贴合块无内部滚动（over=0）
+
+    mod->onStop();
+    return true;
+})
+
+// §5 #1/#2 记录式验收（无墙钟红线，spec 明文「人工/脚本扫日志复核」）：200KB /
+// 5000 行文档的（a）MdBlockModel::update 分块耗时（纯函数直测，快）、（b）实时
+// 列整帧 compose 耗时（headless 合成，取中等规模文档作缩放基——全量 200KB/5000
+// 块在 Debug 无优化 headless 下单帧 ~10s，规模记录留给真机 GUI 的 `[live] frame
+// compose ms` 日志，两处口径同源）。结果打到 stdout 供脚本扫 `[live] … ms=`
+// 复核；不设硬断言（避开已知脆弱点）。
+REGISTER_TEST(md_module_live_perf_records_200kb,
+              "markdown_module: M9 记录式性能日志（200KB 分段 + 成帧缩放基 ms，无硬断言）", {
+    std::string big;
+    big.reserve(2u * 1024u * 1024u);
+    for (int i = 0; i < 5000; ++i) {
+        big += "段落 " + std::to_string(i) +
+               " 的正文内容填充填充填充填充填充填充文本\n\n";
+    }
+    //（约 200KB / 5000 行：每段 ~40 字节 + 空行）
+
+    // (a) 分块重算耗时（spec §5 #1 ≤5ms 目标；每轮换一处文本制造真实脏区间，
+    // 取 5 轮最优；零重算轮（同文）不算数——它测的是短路不是分块）
+    module::markdown::MdBlockModel model;
+    double bestSegMs = 1e9;
+    uint64_t blockCount = 0;
+    std::string doc = big;
+    for (int i = 0; i < 5; ++i) {
+        if (i > 0) doc += "追加段落 " + std::to_string(i * 131) + "\n\n";
+        const auto t0 = std::chrono::steady_clock::now();
+        const MdBlockUpdate upd = model.update(doc);
+        const auto t1 = std::chrono::steady_clock::now();
+        blockCount = model.blocks().size();
+        const double ms =
+            std::chrono::duration<double, std::milli>(t1 - t0).count();
+        bestSegMs = std::min(bestSegMs, ms);
+        DOCTEST_REQUIRE(upd.changed);   // 每轮都真实变更（非零重算短路）
+        if (i == 4) {
+            std::cout << "[live] segment n=" << blockCount
+                      << " ms=" << ms
+                      << " dirty=[" << upd.dirtyFirst << ","
+                      << upd.dirtyLast << "]（M9 §5 #1 记录）" << std::endl;
+        }
+    }
+    std::cout << "[live] segment best5 ms=" << bestSegMs
+              << "（200KB/" << blockCount << " 块，M9 §5 #1 记录）" << std::endl;
+
+    // (b) 实时列整帧 compose 耗时（spec §5 #2/#3；headless 合成同树，取 200 块
+    // 文档作缩放基记录——2000 块滚动场景的真机帧率由 debug 标题 FPS + 模块的
+    // `[live] frame compose ms` 日志人工复核，本记录只给同源码同路径的基数值）
+    std::string mid;
+    mid.reserve(20000);
+    for (int i = 0; i < 200; ++i) {
+        mid += "段落 " + std::to_string(i) + " 的正文内容填充填充文本\n\n";
+    }
+    test_support::MdHeadlessEnv env(kDirPrefix, "liveperf", kDbName);
+    DOCTEST_REQUIRE(env.db != nullptr);
+    DOCTEST_REQUIRE(writeTextFile(env.dir / "mid.md", mid));
+
+    std::unique_ptr<::core::Module> mod(create_markdown_module());
+    mod->onStart();
+    eui::Screen screen;
+    screen.width = 1600.0f;
+    screen.height = 1000.0f;
+    test_support::HeadlessFrame e("mdlive");
+    auto frame = [&] { e.frame([&](eui::Ui& u) { mod->compose(u, screen); }); };
+
+    frame();
+    DOCTEST_REQUIRE(openFirstNote(*e.ui));
+    frame();
+    DOCTEST_REQUIRE(cycleMode(mod.get()));   // → 实时
+    frame();                                 // 首帧（几何表/缓存建立）
+    const auto c0 = std::chrono::steady_clock::now();
+    frame();
+    const auto c1 = std::chrono::steady_clock::now();
+    const double compMs =
+        std::chrono::duration<double, std::milli>(c1 - c0).count();
+    std::cout << "[live] frame compose ms=" << compMs
+              << "（200 块缩放基，M9 §5 #2 记录）" << std::endl;
+    DOCTEST_CHECK(e.ui->find("md.live.scroll") != nullptr);
+    DOCTEST_CHECK(e.ui->find("md.live.input") != nullptr);
 
     mod->onStop();
     return true;

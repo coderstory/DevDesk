@@ -14,6 +14,8 @@
 // M4 已补：跨块 ↑↓ 目标 + 块边界删除（文档尾部），二者仍是纯字节算术。
 // M5 已补：块级 undo / redo 快照栈（文档最尾部，独立类，不改上面任何签名）。
 // M6 已补：光标跟随的「越界才拉」判定 + 目标偏移（同在最尾部，仍无状态）。
+// M9 已补：单块高度上限（spec §5 #5：封顶 0.7 × 视口高，超出则该块内部滚动，
+// 接受滚轮死区 —— R4 标准行为）。
 #pragma once
 
 #include <cstddef>
@@ -215,5 +217,15 @@ struct MdLiveFollowDecision {
 // 是否值得落地取决于调用侧的落地代价。
 MdLiveFollowDecision mdLiveFollowOffset(float caretDocY, float viewportH,
                                         float currentOffset, float maxOffset);
+
+// ---- M9：单块高度上限（spec §5 #5 / R4：封顶 + 块内滚动）----
+// 活动块内容贴合高（mdLiveInputHeight 的结果）超过视口高的这块比例时，把
+// 输入框高度封顶到 0.7 × 视口高（spec §5 #5「封顶 0.7 × 视口高（超出则该块
+// 内部滚动，接受滚轮死区）」）：超大单块（数千行围栏 / 松散长列表）不再把
+// 块内滚动能力让渡给外层 scrollView —— 输入框内部滚动接管，外层滚轮在该块
+// 上成为死区（spec R4 接受为标准行为并在 KNOWN_LIMITATIONS 登记）。
+// viewportH <= 0 = 无视口信息（防御：不封顶）；常量与函数纯、可单测。
+inline constexpr float kMdLiveBlockCapRatio = 0.7f;
+float mdLiveCappedInputHeight(float fitHeight, float viewportH);
 
 } // namespace module::markdown
