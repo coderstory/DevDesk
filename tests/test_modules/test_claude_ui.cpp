@@ -997,7 +997,14 @@ REGISTER_TEST(claude_module_calls_dialog,
         });
     };
 
-    // 1. 点「查看全部 →」开弹窗（CPX-06：渲染路径不再同步查库，数据由后台取）
+    // 1. 点「查看全部 →」开弹窗（CPX-06：渲染路径不再同步查库，数据由后台取。
+    //    2026-09-28 调用记录已抽成详情面板第 4 页签：先切 tab 该帧，再点
+    //    「查看全部」开弹窗）
+    {
+        eui::Ui ui;
+        compose(ui);
+        DOCTEST_CHECK(click(ui, "claude.detail.tabs.hit.3"));
+    }
     {
         eui::Ui ui;
         compose(ui);
@@ -1149,6 +1156,11 @@ REGISTER_TEST(claude_module_calls_dialog,
     {
         eui::Ui ui;
         compose(ui);
+        DOCTEST_CHECK(click(ui, "claude.detail.tabs.hit.3"));  // tab 保持 3（幂等）
+    }
+    {
+        eui::Ui ui;
+        compose(ui);
         DOCTEST_CHECK(click(ui, "claude.calls.viewall.hit"));
     }
     DOCTEST_REQUIRE(waitFrame([&](eui::Ui& ui) {
@@ -1252,6 +1264,11 @@ REGISTER_TEST(claude_cpx06_calls_query_async_debounce,
     }
     DOCTEST_CHECK_EQ(claude_calls_query_dispatches_for_test(), q0);
 
+    {   // 开弹窗帧：调用记录在详情面板第 4 页签里，先切 tab（同帧不派发查询）
+        eui::Ui ui;
+        compose(ui);
+        DOCTEST_REQUIRE(click(ui, "claude.detail.tabs.hit.3"));
+    }
     // ② 开弹窗那一帧：只发意图（查询在后台）——数据未到 + 恰好派发一次
     //   （同步查库会让本帧就把行画出来，且派发计数按每次点击 +1 而非 +1/帧）
     {
@@ -1670,7 +1687,6 @@ REGISTER_TEST(claude_module_compose_cache_equivalence,
         DOCTEST_CHECK_EQ(name1, std::string("A缓存"));
         DOCTEST_CHECK_EQ(detail, std::string("B缓存"));
         DOCTEST_CHECK(ui.find("claude.profile.0.active.text") != nullptr);
-        DOCTEST_CHECK(ui.find("claude.calls.empty") != nullptr);
     }
     {
         eui::Ui ui;
@@ -1678,6 +1694,17 @@ REGISTER_TEST(claude_module_compose_cache_equivalence,
         DOCTEST_CHECK_EQ(textOf(ui, "claude.profile.0.name"), name0);
         DOCTEST_CHECK_EQ(textOf(ui, "claude.profile.1.name"), name1);
         DOCTEST_CHECK_EQ(textOf(ui, "claude.field.name.value"), detail);
+    }
+    // 调用记录已抽成详情面板第 4 页签（2026-09-28）：切过去断空态
+    {
+        eui::Ui ui;
+        compose(ui);
+        DOCTEST_CHECK(click(ui, "claude.detail.tabs.hit.3"));
+    }
+    {
+        eui::Ui ui;
+        compose(ui);
+        DOCTEST_CHECK(ui.find("claude.calls.empty") != nullptr);
     }
 
     // 2) 代理 worker 落库（logCall 直写，不经过模块）→ callLogVersion 驱动重查

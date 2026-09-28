@@ -1019,12 +1019,16 @@ void drawDeleteConfirmDialog(eui::Ui& ui, const eui::Screen& screen,
     ui_kit::drawDialogFrame(ui, screen, frame, themeTokens, [&] {
             ui_kit::drawDialogTitle(ui, "claude.dialog.delete.title", w, "确认删除？",
                                     20.0f, t.colors.textPrimary);
+            // 2026-09-28：文本加 wrap + 高 60（同共享片段删除确认弹窗口径）
+            // —— 原单行写死 40px 不换行，长 Profile 名把正文挤出弹窗右缘
+            //（EUI 文本不裁剪，超宽直接画出弹窗）
             ui_kit::drawDialogText(
                 ui, "claude.dialog.delete.msg", w,
                 "将删除 Profile「" + f.deleteTargetName_ +
                     "」及其 Keychain 中的 API Key，不可恢复。",
                 t.sizes.fontSizeSmall, t.colors.textSecondary,
-                {.y = 58.0f, .height = 40.0f, .lineHeight = 20.0f});
+                {.y = 58.0f, .height = 60.0f, .lineHeight = 20.0f,
+                 .wrap = true});
 
             ui_kit::DialogButtonSpec cancel;
             cancel.label = "取消";
