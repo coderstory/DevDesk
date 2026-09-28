@@ -112,6 +112,12 @@ bool armExitHook() {
 
 bool exitHookArmed() { return g_exitHookArmed; }
 
+// 测试缝（TIN-07）：退出接线记账门回厂（未挂）。atexit 注册不可撤销，只翻幂等
+// 记账位——用例间复位后 armExitHook 可再次触发（handlers 按 LIFO 叠加，每次
+// 执行都以 core::appRouter() 当前值判空幂等、重复无害）；防 test_app_assembly
+// 的「装配即挂上」断言吃到上一用例残留的已挂态
+void resetAssemblyGlobals() { g_exitHookArmed = false; }
+
 void runExitHook() {
     if (auto* r = ::core::appRouter()) {
         r->stopAll();

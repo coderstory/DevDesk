@@ -58,6 +58,8 @@ void setEnvVar(const char* key, const std::string& value) {
 //   8. ServiceLocator 槽位   全部接口类型（清空=未注册）      ← core/service_locator.h
 //   9. argv 捕获（装配层）    待打开文件路径 + 已捕获门        ← app_assembly.h
 //  10. 应用级通知（侧边栏）    ui_kit::ToastState 单例        ← app_sidebar.h
+//  11. 侧边栏折叠态            app 进程内单值（展开回厂）      ← app_sidebar.h
+//  12. 退出接线已挂门          armExitHook 幂等记账位回厂      ← app_assembly.h
 // ==========================================================================
 // 日志级别的「出厂态」= 命令行选定的基线：--log → Debug，否则 Info。重置必须回到
 // 这个基线而不是硬编码 Info——硬编码会把 --log 的 Debug 在第一个用例前冲掉，
@@ -124,6 +126,16 @@ void resetCaseGlobals() {
     // 失效入口的反馈通道，tray 用例在入口就断言「不可见」——上一用例 fail-fast
     // 跳过 clearAppNotice 会让断言连锁翻车。出厂态 = 无通知（open=false、内容空）
     ::app::clearAppNotice();
+    // 11) 侧边栏折叠态（app_sidebar.h）：进程内单值。sidebar 用例
+    // setSidebarCollapsed(true) 翻折叠态后 fail-fast 提前返回时，残留折叠态让
+    // 后续拿 sidebarWidth()/drawSidebar 布局断言（展开宽 208）的用例翻车。
+    // 出厂态 = 展开（false）；走独立复位接口，不经生产写路径
+    // setSidebarCollapsed（configFile 非空会带出落盘副作用）
+    ::app::resetSidebarGlobals();
+    // 12) 退出接线已挂门（app_assembly.h）：armExitHook 的幂等记账位是进程级
+    // 的——上一用例挂过后，本用例 exitHookArmed() 断言「装配即挂上」或首次
+    // armExitHook() 幂等返回吃到残留已挂态。出厂态 = 未挂（false）
+    ::app::assembly::resetAssemblyGlobals();
 }
 
 } // namespace

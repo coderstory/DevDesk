@@ -67,6 +67,12 @@ bool armExitHook();    // 幂等：已挂过返回 false（不重复挂 atexit�
 bool exitHookArmed();  // 供断言/排查
 void runExitHook();    // handler 主体：core::appRouter() 非空 → Router::stopAll
 
+// 测试缝（TIN-07）：进程级「退出接线已挂」记账门回厂（未挂）。atexit 一旦
+// 注册不可撤销，这里只翻幂等记账位——后续 armExitHook 视为未挂可再挂
+//（handlers 各自经 core::appRouter() 判空幂等，重复触发无害）；
+// resetCaseGlobals 用例间隔离用
+void resetAssemblyGlobals();
+
 // ---- 待打开文件（原 main.cpp pendingOpenFilePath / captureOpenFileFromArgv）----
 // Finder「打开方式」/ argv 两条来源都写这里；dispatchFileOpen 读它做启动分发。
 // 审计 2026-09-23 [5] 后不再只留档：解析进笔记目录后以 "open:" 负载真加载
