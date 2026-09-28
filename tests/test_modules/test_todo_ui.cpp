@@ -752,7 +752,18 @@ REGISTER_TEST(todo_ui_drag_insert_position,
         ev.y = dstBg->frame.y + 56.0f + 4.0f;  // 列头下方 → 行 0（首卡前）
         card->onDrag(ev);
         composeLayout();
-        DOCTEST_CHECK(ui.find("todo.col.5.dropbar") != nullptr);  // 占位条在目标列
+        // 假修回归（占位条 ignoreLayout 跳流式；frame 为绝对坐标，板面顶边
+        // 是页面值不写死）：row 0 → 条贴在卡 0 顶（旧缺陷：条贴内容顶、
+        // 整列卡片被流式下推 16px、松手弹回——position 在 column 流式里
+        // 不生效，ignoreLayout 后按 overlay x/y 绝对定位）
+        const auto* dropBar = ui.find("todo.col.5.dropbar");
+        DOCTEST_REQUIRE(dropBar != nullptr);  // 占位条在目标列
+        const auto* card0Wrap = ui.find("todo.col.5.card.0.wrap");
+        DOCTEST_REQUIRE(card0Wrap != nullptr);
+        DOCTEST_CHECK_EQ(dropBar->frame.y, card0Wrap->frame.y);  // row 0 首卡位
+        // 不推流式：卡 0 顶 == 列顶 + 列头高（旧缺陷 = 再 +16）
+        DOCTEST_CHECK_EQ(card0Wrap->frame.y,
+                         ui.find("todo.col.5.bg")->frame.y + 56.0f);
         eui::PointerEvent up;
         up.x = ev.x;
         up.y = ev.y;
@@ -787,7 +798,21 @@ REGISTER_TEST(todo_ui_drag_insert_position,
         ev.y = dstBg->frame.y + 56.0f + 272.0f;
         card->onDrag(ev);
         composeLayout();
-        DOCTEST_CHECK(ui.find("todo.col.5.dropbar") != nullptr);  // 尾部占位条
+        // 假修回归：悬停行 3（列尾追加）→ 条在卡 2 底缝（旧缺陷：流式下被
+        // 压到内容顶=卡 0 顶，与悬停行完全对不上）；卡片未被流式下推
+        const auto* dropBar = ui.find("todo.col.5.dropbar");
+        DOCTEST_REQUIRE(dropBar != nullptr);  // 尾部占位条
+        const auto* card1Wrap = ui.find("todo.col.5.card.1.wrap");
+        DOCTEST_REQUIRE(card1Wrap != nullptr);
+        const auto* card2Wrap = ui.find("todo.col.5.card.2.wrap");
+        DOCTEST_REQUIRE(card2Wrap != nullptr);
+        // 条在卡 2 顶前 8px 缝内（3*92-8 内容位，绝对坐标 = 列顶+56+268）
+        DOCTEST_CHECK_EQ(dropBar->frame.y, card2Wrap->frame.y + 84.0f);
+        DOCTEST_CHECK_EQ(dropBar->frame.y,
+                         ui.find("todo.col.5.bg")->frame.y + 56.0f + 268.0f);
+        // 不推流式：卡 1 顶 = 列内容区顶 + 92
+        DOCTEST_CHECK_EQ(card1Wrap->frame.y,
+                         ui.find("todo.col.5.bg")->frame.y + 56.0f + 92.0f);
         eui::PointerEvent up;
         up.x = ev.x;
         up.y = ev.y;
@@ -838,6 +863,61 @@ REGISTER_TEST(todo_ui_drag_insert_position,
         DOCTEST_REQUIRE_EQ(ts.value().size(), static_cast<size_t>(4));  // 未动
         DOCTEST_CHECK_EQ(ts.value()[1].title, std::string("甲"));
     }
+
+    mod->onStop();
+    return true;
+})
+
+// UI 整改 13 补：拖入空列 → 占位条在卡区首卡位（列头下方），不贴列顶
+REGISTER_TEST(todo_ui_drag_empty_column_dropbar,
+              "todo_ui: 拖入空列占位条位于卡区首卡位（不贴列顶）", {
+    TestEnv env;
+    DOCTEST_REQUIRE(env.ready);
+    auto src = env.svc->createColumn("空列源");
+    auto empty = env.svc->createColumn("空目标列");
+    DOCTEST_REQUIRE(src.isOk() && empty.isOk());
+    auto mover = env.svc->createTask(src.value().id, "被移动任务");
+    DOCTEST_REQUIRE(mover.isOk());
+
+    std::unique_ptr<::core::Module> mod(create_todo_module());
+    mod->onStart();
+
+    eui::Ui ui;
+    eui::Screen screen;
+    screen.width = 1600.0f;
+    screen.height = 1000.0f;
+    auto composeLayout = [&]() {
+        ui.begin("todo_drag_empty_frame");
+        mod->compose(ui, screen);
+        ui.end();
+        ui.layout(screen);
+    };
+    auto boundsOf = [](const core::dsl::Element* e) {
+        return eui::Rect{e->frame.x, e->frame.y, e->frame.width, e->frame.height};
+    };
+
+    // col.4 = 源列（1 卡）、col.5 = 空目标列；拖到空列内容区中央
+    composeLayout();
+    const auto* card = ui.find("todo.col.4.card.0.bg");
+    DOCTEST_REQUIRE(card != nullptr);
+    eui::PointerEvent pe;
+    card->onPress(pe, boundsOf(card));
+    const auto* dstBg = ui.find("todo.col.5.bg");
+    DOCTEST_REQUIRE(dstBg != nullptr);
+    core::dsl::DragEvent ev;
+    ev.x = dstBg->frame.x + dstBg->frame.width / 2.0f;
+    ev.y = dstBg->frame.y + dstBg->frame.height / 2.0f;
+    card->onDrag(ev);
+    composeLayout();
+    const auto* dropBar = ui.find("todo.col.5.dropbar");
+    DOCTEST_REQUIRE(dropBar != nullptr);  // 空列也预览插入位
+    const auto* colBg = ui.find("todo.col.5.bg");
+    DOCTEST_REQUIRE(colBg != nullptr);
+    // 假修回归：空列 hoverRow 恒 0 → 条在卡区首卡位 = 列顶 + 列头高
+    // （旧缺陷：y=0 画在列顶、叠列头区域；并保证与非空列 row 0 槽位
+    // 绝对坐标一致——两路径同语义）
+    DOCTEST_CHECK_EQ(dropBar->frame.y, colBg->frame.y + 56.0f);
+    DOCTEST_CHECK(ui.find("todo.col.5.empty") != nullptr);  // 空态提示不受影响
 
     mod->onStop();
     return true;

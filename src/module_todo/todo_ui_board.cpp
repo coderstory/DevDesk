@@ -265,8 +265,14 @@ void drawColumnContent(eui::Ui& ui, const std::string& id, const Column& col,
     auto drawDropBar = [&](eui::Ui& inner, float barY, float barW) {
         eui::Color barColor = t.colors.primary;
         barColor.a = 0.55f;  // 高亮占位（半透主色，非硬编码白）
+        // ignoreLayout 跳流式（假修根因修）：scrollView 内容列是 Column，
+        // 非 ignoreLayout 子元素按流式排布、position 完全无效——条永远贴
+        // 内容顶 + 整列卡片被下推（bar 高 + gap 共 16px）、松手弹回。置位
+        // 后走 overlay 绝对定位（x/y 生效，layout.h layoutOverlayChildren），
+        // 空列路径的 Stack 同样走 overlay，两路径行为一致
         inner.rect(id + ".dropbar")
             .position(0.0f, barY)
+            .ignoreLayout()
             .size(barW, kCardGap)
             .color(barColor)
             .radius(t.sizes.radiusSmall)
@@ -356,7 +362,9 @@ void drawColumnContent(eui::Ui& ui, const std::string& id, const Column& col,
         // ——内容高 0，scrollView maxOffset 被钳制为 0）
         if (v.dragActive && v.dragHoverColumn == static_cast<int>(colIndex) &&
             v.dragHoverRow >= 0) {
-            drawDropBar(ui, 0.0f, width - 16.0f);
+            // 空列 hoverRow 恒 0（dragDropRowIndex 按 taskCount=0 钳制）：
+            // 条落卡区首卡位 = 非空列 row 0 同槽位（列头下方），不贴列顶
+            drawDropBar(ui, kColumnHeaderHeight, width - 16.0f);
         }
         ui.text(id + ".empty")
             .position(0.0f, height / 2.0f - 12.0f)
