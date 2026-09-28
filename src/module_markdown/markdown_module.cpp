@@ -195,6 +195,8 @@ constexpr float kPreviewColumnWidth = 760.0f;   // 仅预览态的居中阅读�
 constexpr const char* kLiveInputId = "md.live.input";
 constexpr const char* kLiveInputHitId = "md.live.input.hit";  // 聚焦只发 .hit（M0 C1）
 constexpr float kLiveInputInset = 10.0f;   // 与编辑态 input 同款内边距
+// M7：活动块边框色透明度（主色半透明，标识"正在编辑"；透明填充不挡文本）
+constexpr float kLiveActiveFrameAlpha = 0.6f;
 // 高度公式的测量输入必须与 input 内部同源：同字体族（InputBuilder 默认
 // "Microsoft YaHei"，见 components/input.h）、同字号（全局编辑器字号）、
 // 同文本宽（声明宽 − inset×2，本模块不给活动 input 开滚动条 → 无槽位扣减）。
@@ -314,6 +316,14 @@ public:
             highlighter_.setColors(mdHighlightColors(t));
             ++ui.state<components::input_detail::InputModel::InputState>(
                       kEditorInputId)
+                 .styleRevision;
+            // M7：实时态高亮独立实例（spec §4.6 —— 喂块文本、runs 块局部
+            // 坐标，与编辑态整篇坐标分实例）同步换色 + bump live input 行
+            // 缓存代号（实时态未挂 input 时 state 按 id 惰性创建，零成本；
+            // 进实时态走 liveInputStateFresh_ 整代重建，不残留旧字号缓存）
+            liveHighlighter_.setColors(mdHighlightColors(t));
+            ++ui.state<components::input_detail::InputModel::InputState>(
+                      kLiveInputId)
                  .styleRevision;
         }
 
@@ -1859,15 +1869,15 @@ private:
                     if (k != live.activeBlock) return geometryHeight;
                     return liveFitHeight(b, liveBlockText(b), contentWidth);
                 };
-                hooks.drawContent = [this, &live](eui::Ui& inner, size_t k,
-                                                  const MdBlock& b,
-                                                  const std::string& wrapId,
-                                                  float contentWidth,
-                                                  float wrapHeight) {
-                    (void)wrapId;
+                hooks.drawContent = [this, &live, &style](
+                                        eui::Ui& inner, size_t k,
+                                        const MdBlock& b,
+                                        const std::string& wrapId,
+                                        float contentWidth,
+                                        float wrapHeight) {
                     if (k != live.activeBlock) return false;
-                    drawLiveInputBlock(inner, b, liveBlockText(b), contentWidth,
-                                       wrapHeight, live);
+                    drawLiveInputBlock(inner, b, liveBlockText(b), wrapId,
+                                       contentWidth, wrapHeight, style, live);
                     return true;  // 已画：跳过下方渲染通路
                 };
                 hooks.afterHitOverlay = [this, &live](eui::Ui& inner, size_t k,
@@ -2099,8 +2109,10 @@ private:
     void drawLiveInputBlock(eui::Ui& ui,
                             const MdBlock& b,
                             const std::string& blockText,
+                            const std::string& wrapId,
                             float contentWidth,
                             float fitHeight,
+                            const components::MarkdownStyle& style,
                             const LiveBlockCtx& live) {
         using InputState = components::input_detail::InputModel::InputState;
         InputState& st = ui.state<InputState>(kLiveInputId);
@@ -2132,6 +2144,22 @@ private:
             .onFocus([this, &ui](bool focused) {
                 if (!focused) commitLiveInputOnBlur(ui);
             })
+            // M7：实时态行级高亮（spec §4.6）——独立实例 liveHighlighter_
+            // 喂【块文本】：输入框的文本即活动块源码，框架给的行首偏移天然是
+            // 块局部坐标 → 返回 runs 的 byteStart 以块首为原点（与 input 内
+            // 排版同原点）。不与编辑态混用同一实例：编辑态喂整篇文本（runs
+            // 全文档坐标），两套坐标系交替喂同一实例会让围栏缓存抖动。块内
+            // 围栏状态自洽（分块器保证围栏不跨块），高亮语义不退化。
+            .lineStyles([this, &ui](const std::string& lineText,
+                                    int lineStartByte, int lineNo) {
+                (void)lineNo;
+                using InputState =
+                    components::input_detail::InputModel::InputState;
+                auto& st = ui.state<InputState>(kLiveInputId);
+                return liveHighlighter_.runsForLine(
+                    st.preedit ? st.preedit->text : st.text, lineText,
+                    lineStartByte);
+            })
             .build();
         // 写光标的两条来路（都必须在 build 之后：聚焦时框架走"外部改值"把光标
         // 搬到新文本末尾，早写会被 build 内的重载覆盖）：
@@ -2153,6 +2181,19 @@ private:
         // 即「输入框已与文档对齐到本修订号」——外部重载/撤销把文档换掉、输入框
         // 还持旧块文本的那一帧不满足该条，故失焦不会把旧文本灌回新文档。
         if (st.text == blockText) liveSyncedRev_ = editorTextRev_;
+
+        // M7：活动块边框（spec §7 M7 / §4.4「仅额外保留块边框以标识正在编辑」）。
+        // input 自绘的是通用字段边（InputStyle.border/focusBorder），这里在其上
+        // 叠一块与预览块同圆角的块级边框（MarkdownStyle.radius = metrics 同源）：
+        // 主色半透明 1px + 透明填充（不挡文本、无命中处理器 → 不参与命中测试，
+        // 与 .hl 底衬同级）。活动块互斥：每帧只建一个，非活动块无此元素。
+        ui.rect(wrapId + ".frame")
+            .size(contentWidth, fitHeight)
+            .radius(style.radius)
+            .color(eui::Color{0.0f, 0.0f, 0.0f, 0.0f})
+            .border(1.0f, components::theme::withAlpha(
+                             live.theme->primary, kLiveActiveFrameAlpha))
+            .build();
         // spec §5 #4 记录式校验：活动 input 必须内容贴合（maxVerticalScroll == 0
         // ⇒ 不吃外层滚轮、无内部滚动条）。框架不暴露 maxVerticalScroll，用组件
         // "是否注册滚轮处理器"做探针（components/input.h：仅 maxVerticalScroll > 0
@@ -3984,6 +4025,10 @@ private:
 
     // ---- Phase C 语法高亮状态 ----
     MdHighlighter highlighter_;        // 行级高亮器（围栏状态随 display 文本重建）
+    // M7：实时态活动块高亮独立实例（spec §4.6）——runsForLine 返回所喂文本
+    // 坐标系内的偏移：编辑态喂整篇（全文档坐标）、实时态喂块文本（块局部
+    // 坐标 == input 坐标），两套坐标系交替喂同一实例会抖动围栏缓存，分实例
+    MdHighlighter liveHighlighter_;
     std::string highlightThemeName_;   // 上次注入色表的主题名（变化 = 重高亮）
 
     // ---- Phase 3 块级元素模型（预览逐块增量渲染的键控源）----
