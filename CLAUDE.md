@@ -58,7 +58,7 @@ launcher 是 **configure 期属性**：已存在的 `build/` 目录不会自动�
 **macOS（历史平台，仅打包脚本保留）**：macOS 主线（P0-P8）在 2026-09 迁 Windows 前完成，迁后仓库内只剩 `platform/macos/build-app.sh` 与 `scripts/package-macos.sh` 两个打包辅助脚本。本文档旧版提到的 `./scripts/dev.sh`（构建+运行）、`./scripts/test.sh`、`./scripts/screenshot.sh <page>`、`./scripts/reset-db.sh` **在本仓库中不存在**（`git ls-files scripts/` 可核），不要再照抄执行。`check-consistency.sh` 已 Windows 化（波 1 TIN-13）：Playwright 截 HTML demo + PowerShell `CopyFromScreen` 截主窗口 + Pillow 合成回退，二进制名按 `uname` 分平台取 `build/DevDesk.exe`，不再是 macOS 专用脚本。
 
 构建入口：`CMakeLists.txt` 顶层 → `src/main.cpp`。
-EUI-NEO 依赖：`../EUI-NEO/`（同级目录，通过 `EUI_NEO_DIR` cache 变量 `add_subdirectory` 集成，**不是 git submodule**）。**当前依赖 rev**：`269a8c4`（2026-09-27，U1 尺度契约合入点；EUI-NEO 本地 main 领先 origin 70 个提交；这批提交尚未 push 到 origin——origin/main 停在 v0.6.0，push 与否是用户决策门控）。**EUI-NEO 需保持本地 main 最新**（含 onWindowDestroyed/requestFocus/trayMenu/windowEffect/lineStyles/getMonitorWorkAreas/setSystemPowerHandler/styledMenu/onTrayMenu/windowIsFocused/input onCancel 等新 API），顶层 CMake configure 时打印 `EUI-NEO git rev` 并在缺失最低依赖 rev（`DEVDESK_EUI_NEO_MIN_REV`，与本行保持一致、消费 EUI 新 API 后两处同步更新）时软警告不 fail；EUI-NEO push 后将启用硬版本检查（审计 [11]）。
+EUI-NEO 依赖：`../EUI-NEO/`（同级目录，通过 `EUI_NEO_DIR` cache 变量 `add_subdirectory` 集成，**不是 git submodule**）。**当前依赖 rev**：`7164d55`（2026-09-28，与 `DEVDESK_EUI_NEO_MIN_REV` 一致；EUI-NEO 本地 main 领先 origin 81 个提交；这批提交尚未 push 到 origin——origin/main 停在 v0.6.0，push 与否是用户决策门控）。**EUI-NEO 需保持本地 main 最新**（含 onWindowDestroyed/requestFocus/trayMenu/windowEffect/lineStyles/getMonitorWorkAreas/setSystemPowerHandler/styledMenu/onTrayMenu/windowIsFocused/input onCancel 等新 API），顶层 CMake configure 时打印 `EUI-NEO git rev` 并在缺失最低依赖 rev（`DEVDESK_EUI_NEO_MIN_REV`，与本行保持一致、消费 EUI 新 API 后两处同步更新）时软警告不 fail；EUI-NEO push 后将启用硬版本检查（审计 [11]）。
 
 ## 🏗️ 架构要点（4 层模块化）
 
@@ -170,7 +170,7 @@ main → 6 个 module_* (home / markdown / todo / claude_proxy / settings / pet)
 
 完整 token 见 spec §6.5.1 和 §6.5.2。
 
-## 🚦 当前阶段（2026-09-22 更新，macOS → Windows 11 迁移后）
+## 🚦 当前阶段（2026-09-28 更新，macOS → Windows 11 迁移后）
 
 按 spec §16 实施，进度：
 
@@ -179,6 +179,15 @@ main → 6 个 module_* (home / markdown / todo / claude_proxy / settings / pet)
 - ✅ **P14（Windows）必选达成** —— spec §16 已更新：P14 升必选（Windows 11 为当前开发环境）+ 发布形态约束"单 exe 零外部 DLL"（T3 达成，W2 复查通过）；平台适配接口隔离完成（T6，业务代码零平台宏）
 - ✅ **W3 剩余需求收官（T9–T12 + P16）** —— 启动顺序理顺零 WARN、P12 Home 真实数据、P13 设置页、platform::json 实装、P15 文档（124/124 全绿），恢复计划关闭
 - ✅ **W5 遗留项清零（2026-09-22）** —— Claude 按钮全量接线、侧边栏导航（删浮动齿轮）、全局字号缩放、UTF-8 argv、clearColor 随主题、跨模块跳转负载（Home 快捷按钮弹窗 + 最近编辑打开指定笔记）。最终基线 **137/137 全绿**；详见 CHANGELOG [W5] 与 KNOWN_LIMITATIONS「已解决」小节
+- ✅ **W6-W9 + 磨砂全链（2026-09-22/23）** —— 窗口效果三档、供应商配置（settings.json 自动接管）、插件化门控、桌宠 MVP、Markdown 键盘流/标签/目录树、Todo 搜索/逾期/tags/拖拽反馈、模块插拔（09-23 基线 330 全绿）
+- ✅ **R8 装配层收口 + R10 ClaudeService 拆分（2026-09-24~28）** —— Module::shortName 虚函数 + app_registry 合表 + buildGatedEntries/dispatchTrayNavigation 下沉可测 + THS-08 表驱动移除 claudeOn；R10 A1-A4 把 CallLogStore / ProfileRepository / ProxyRuntime / SettingsTakeOver 抽离，门面 `claude_service.cpp` 2005→780 行、**43 签名零变化**
+- ✅ **共享配置 + failover 批 1-3（2026-09-24~28）** —— 服务层 + 片段编辑器 UI + `shouldFailoverTo` / `resolveFallbackProfile` / `fallback_profile_id` migration v10 + 注入守卫，共享全链闭环
+- ✅ **MD-01 重载块映射修复（2026-09-24~28）** —— `(kind,hash,stableId)` 三元组优先 + `(kind,hash)` 回退 + 空文档 guard
+- ✅ **setScrollOffset 上游补齐（2026-09-24~28）** —— EUI-NEO `Ui::setScrollOffset` pending 挂起模式 + DevDesk M6 删 id 轮转 hack
+- ✅ **TIN-06 测试 scaffold 迁移（2026-09-24~28）** —— HeadlessFrame 三合一 + InMemoryDb + ScopedAppDatabase + DataRootEnv
+- ✅ **UI 综合 audit + 修（2026-09-24~28）** —— home/markdown/todo/settings/pet 41 findings（home hover 闪烁 = onTimer 整页重绘、markdown 双栏滚动失效 = init-only scrollState、todo 拖动插入、settings 下拉 z 碰撞回归）；lineChart chromeless 化、datepicker 中文化、窗口失焦全局重绘（EUI-NEO `ca40ff2`）、theme 去纯白米色基调（surface `#F5F2EC`）、卡片 panelShadow、侧边栏删 tooltip
+- ✅ **macOS 三特性 + UI 现代化 M1-M3（2026-09-28）** —— specs：`2026-09-28-macos-three-features-design.md` / `2026-09-28-ui-modernization-design.md`
+- ⏳ **DevDesk probes spec（2026-09-28，dev 未开始）** —— EUI-NEO probe 模式 + dropdown z MVP，spec `docs/superpowers/specs/2026-09-28-devdesk-probes-design.md`（e149132）
 
 ### Windows 迁移缺口（P14 提前激活；2026-09-22 W2 验收后更新为状态表）
 
@@ -199,6 +208,28 @@ main → 6 个 module_* (home / markdown / todo / claude_proxy / settings / pet)
 
 **测试框架注意**：`tests/doctest.h` 是自制 87 行迷你框架（`REGISTER_TEST` 宏静态自注册 + `DOCTEST_CHECK/REQUIRE` 断言，fail-fast），**不是真 doctest**——grep `TEST_CASE` 找不到用例、`--list-test-cases` 之类参数会被当作过滤子串属正常。**用例总数以运行输出 `Total:` 为准，不在文档写死**——2026-09-28 波 1 合并后实测 `Total: 646 / Passed: 645 / Failed: 0`（Total 比 Passed 多的那 1 条是 `DEVDESK_SOAK=1` 门控的 soak，常规套件打印 `[SKIP]` 直接跳过）；波 1 之前的基线是 `Total: 621 / Passed: 619 / Failed: 1`，那条 Failed 是模块隔离守卫的 cwd 缺陷（ccache 把 `__FILE__` 相对化后、从仓库根跑必误报「找不到仓库根」），已由波 1 迁到 `scripts/check-module-isolation.sh` 修复。以下数字均为**历史**快照，只作沿革记录、不再作为当前值引用：530（2026-09-27）→ 514（同日更早）→ 481（2026-09-24；= 09-23 基线 330 + W6-W9/磨砂全链/供应商配置/桌宠 MVP/Markdown 键盘流等 backlog 波 + 词法器加 JS/Go/Rust/Shell +4 + 挂机穿透功能移除 -1）。test_main 支持子串过滤：`./devdesk_tests.exe stress` 只跑名字含 "stress" 的用例，`--log` 打开 Debug 级控制台日志。
 
+## 🐾 桌宠（module_pet）皮肤资源
+
+内置皮肤包：`assets/pets/`（git 追踪），现内置 **6 个 GitHub 皮肤包**（目录名 = 皮肤名，括号为 `pet.json` frameSize）：
+
+| 皮肤 | frameSize | 皮肤 | frameSize |
+|------|-----------|------|-----------|
+| copilot | 136×168 | kirari | 360×480 |
+| ileina | 192×208 | whale-girl | 328×212 |
+| sakura-chan | 512×512 | whale-maid | 512×512 |
+
+- CMake POST_BUILD `copy_directory`（`CMakeLists.txt:184-188`）把 `assets/pets` 拷到 `build/assets/pets`，从 build 目录启动 DevDesk 即可发现
+- **动态发现，零硬编码注册**：`discoverSkins()`（`src/module_pet/pet_skin.cpp:723`）扫 `skinRootCandidates()`（:702）两根——`petsDir()`（appData）+ `exeDir/assets/pets`，每个含 `pet.json` 的子目录自动入皮肤清单
+- renderer 帧尺寸校验 clamp [16,512]（pet_skin.cpp:559）；程序生成的内置皮肤走 `petsDir()`，不放在 `assets/pets`（CMakeLists 注释）
+
+**皮肤格式**：目录 = `pet.json` + PNG 序列帧；`pet.json` = `{name, frameSize:[w,h], frameRate, license, source, phrases, states:{idle,poked,sleep,typing}}`。
+
+## 📦 安装程序（2026-09-28）
+
+- **Windows**：Inno Setup `installer/windows/devdesk.iss` —— 用户级安装（`%LOCALAPPDATA%\Programs\DevDesk`，`PrivilegesRequired=lowest`，免管理员）。`:65` `Source: "{#AssetsDir}\*"; DestDir: "{app}\assets"; Flags: recursesubdirs createallsubdirs` 递归拷 assets（含 `assets/pets/`）到安装目录；`.exe` 单独一条（:59，loose 文件非 embed）；`:60-64` 注释：Excludes 排除 17MB `NotoSansSC-VF.ttf`（变量字体 FreeType 加载不稳、当前未启用，运行时字体走 EUI-NEO fallback 链）
+- **打包脚本**：`scripts/package-windows.sh`（Release 构建 + ISCC 三段式探测 + 出 `DevDesk-<ver>-setup.exe`）；macOS：`installer/macos/`（DMG 背景 + 首次运行去隔离 `.command`）+ `scripts/package-macos.sh`
+- spec：`docs/superpowers/specs/2026-09-28-installer-and-dmg-design.md`
+
 ## 📂 关键文件
 
 | 文件 | 作用 |
@@ -206,7 +237,9 @@ main → 6 个 module_* (home / markdown / todo / claude_proxy / settings / pet)
 | `docs/superpowers/specs/2026-09-20-devdesk-design.md` | **唯一权威 spec**，所有架构 / API / token 决策都在这 |
 | `docs/mockups/palette-comparison.html` | 配色对比 demo（已确定方案 B）|
 | `docs/mockups/devdesk-prototype.html` | HTML 交互原型（待生成）|
-| `../EUI-NEO/` | 上游 GUI 框架（同级目录源码，非 submodule），通过 `EUI_NEO_DIR` 以 `add_subdirectory` 集成；**当前依赖 rev `269a8c4`（本地 main 未 push，需保持最新，见「常用命令」段与审计 [11]）** |
+| `../EUI-NEO/` | 上游 GUI 框架（同级目录源码，非 submodule），通过 `EUI_NEO_DIR` 以 `add_subdirectory` 集成；**当前依赖 rev `7164d55`（本地 main 未 push，需保持最新，见「常用命令」段与审计 [11]）** |
+| `docs/superpowers/specs/2026-09-27-*.md` | 09-27 批次 specs：wave1-fix / god-class-refactor / shared-config-and-failover |
+| `docs/superpowers/specs/2026-09-28-*.md` | 09-28 批次 specs：installer-and-dmg / devdesk-probes / r8-assembly-layer / tin06-test-scaffold-migration / setscrolloffset-upstream-m6-refactor / md01-reload-block-mapping / macos-three-features / ui-modernization / profile-run |
 
 ## 🧪 验证原则
 
@@ -228,6 +261,7 @@ main → 6 个 module_* (home / markdown / todo / claude_proxy / settings / pet)
 - **粒度看复杂度，不看文件数**：引用点已查清、无需独立判断的机械改动（3-6 文件也算）**合并成 1 个子任务**做完，不拆成 N 个；需独立探索 / 设计判断 / 影响面广 / 要第二视角才拆多个并行。*为什么*：拆细后子任务启动 + 产物验证 + 等通知的成本高于收益（6 文件机械删除被派了独立子代理，用户纠"不复杂时成本反而更高"）。与上一条合起来 = **"少派、但必须派"**（"主会话自己 inline 做"的旧做法已作废）。
 - **并发上限不限，按机器饱和度自调**（2026-09-28 用户指令取消 3 的封顶）。**仍保留的约束**：① 同一文件同一时刻只有一个写者（见下条）；② 多 worktree 并发构建互拖时主会话主动收束（I/O / 内存带宽饱和、ccache 热命中率被挤压 → 串行排队或降 `DEVDESK_JOBS`），不必等用户干预。**沿革**：2026-09-27 先定 7、当晚上调 10、09-28 下调 3，同日再取消封顶；不再沿用「并发 ≤ 2」的保守默认。构建并行度是另一件事，见「常用命令」段的 `DEVDESK_JOBS=3`。
 - **同一文件同一时刻只有一个写者**：派单前先列在飞白名单做交叠检查。*反例*：漏检让 R0 与 H2 同写 `settings_module.cpp`，只能 `TaskStop` 一条。
+- **禁止长时间 sleep（上限 60s）**：脚本/命令里不许 `sleep > 60`（如 `sleep 120` 禁用）；派单 prompt 明确禁子任务用长 sleep 等待（构建超时用 `timeout` 包，测试异步用有界轮询/事件信号而非固定长睡）。*为什么*：2026-09-28 用户指令，长 sleep 拖垮节奏且无信号价值。
 - **子代理不吃会话风格**：caveman / 极简是**每会话**设置、子代理不继承，不写规则就吐长报告——长报告是主会话 token 的主要开销。派单 prompt 末尾固定加：「报告用极简风格——删铺垫 / 客套 / 复述 / 过程叙述，只留结论、证据（file:符号名 + 最短决定性输出）、sha、数字、待办；每条结论一行；总长 ≤ 原上限一半；技术精度不变，不许为省字含糊」。适合的场景改用 `cavecrew-*` agent（`cavecrew-investigator` 定位代码 / `cavecrew-builder` 一到两文件小改 / `cavecrew-reviewer` diff 审查），其输出本身即压缩形态。**边界**：写进仓库的文档 / commit message / memory 仍是正常文字（极简只针对给主会话的报告）。
 - **意外终止先唤醒原 agent，不重派**：子任务崩溃 / 卡死被清理 / 静默失联（无 sha、无报告）时，用 `SendMessage` 唤醒**同一个** agent 从 transcript 续跑，写明"你上次停在哪、接着做别从头再来"；**不是**主会话接手，**不是**派新子任务重做（换新 agent 丢上下文 = 从零烧 token + 重跑全量编译）。有回单但结论存疑 = 走审计流程，不属本条。唤醒失败（agent 已被彻底回收）→ **升级给用户**定夺，不自行改派。派单时即记录 agent id（无人值守靠 watchdog 先探活、再唤醒）。
 
@@ -256,7 +290,7 @@ main → 6 个 module_* (home / markdown / todo / claude_proxy / settings / pet)
 - **codegraph 索引排除 worktree / build**：`D:/project/gui/codegraph.json` 的 `exclude` = `.claude/worktrees/**`、`DevDesk/.claude/worktrees/**`、`wt-*/**`、`**/build/**`（新增临时目录时同步维护，别把产物灌进索引）。
 - **`DevDesk.exe` 会锁 build 目录**：运行中链接报 `cannot open output file DevDesk.exe: Permission denied` → `taskkill -F -IM DevDesk.exe` 解锁（**别杀 `claude.exe` / `cc-switch.exe`**）。
 - **代理直测脚本**：`doc/scripts/proxy_smoke_test.py`（`proxy` / `upstream` / `all`；环境变量 `DEVDESK_PROXY` / `DEVDESK_MODEL` / `DEVDESK_TOKEN`）。
-- **EUI-NEO 最低依赖 rev `269a8c4`**：`CMakeLists.txt` 的 `DEVDESK_EUI_NEO_MIN_REV`，需与本文件「常用命令」段的记录保持一致，消费 EUI 新 API 后两处同步更新；EUI-NEO 要跑在本地 main 最新（本地领先 origin、尚未 push）。
+- **EUI-NEO 最低依赖 rev `7164d55`**：`CMakeLists.txt` 的 `DEVDESK_EUI_NEO_MIN_REV`，需与本文件「常用命令」段的记录保持一致，消费 EUI 新 API 后两处同步更新；EUI-NEO 要跑在本地 main 最新（本地领先 origin、尚未 push）。
 - **已踩过的坑（写码前先想一遍）**：
   - **单位错配（系统性）**：`windowSize` / `glfwCreateWindow` 是**客户区物理像素**，compose 侧按 `framebuffer/(dpiScale×uiScale)` 折算逻辑像素——菜单窗、启动窗、桌宠锚点都栽过。本机 125%：工作区 1920×1020 物理、任务栏 60 px，窗口客户区底部 52 物理 px 会被任务栏吃掉（贴底 UI 不可见）。
   - **三套坐标系**：窗口坐标（`onContextMenu` 给的是它）/ 页面坐标（`app.page` 子树，原点 x = 侧边栏宽 **208/72**）/ 控件局部坐标，跨层必须换算（`Router::pageOriginX` 为此而加）。
