@@ -6,10 +6,12 @@
 // 接线证据 = 代码路径 + 本无头 compose/layout 测试 + 启动冒烟；真实鼠标点验留给用户人工
 #include "doctest.h"
 #include "test_support.h"
+#include "../frame_env.h"   // TIN-06 收尾波：headless 帧驱动三合一 HeadlessFrame
 #include "core/database.h"
 #include "core/module_interface.h"
 #include "core/router.h"
 #include "core/theme.h"
+#include "core/component_theme.h"   // M7：componentTokens（圆角/边框色比对口径）
 #include "module_markdown/md_block_model.h"
 #include "module_markdown/md_line_scanner.h"
 #include "module_markdown/md_live_edit.h"
@@ -20,6 +22,8 @@
 using module::markdown::kEditorInputId;
 
 #include <components/input.h>
+#include <components/markdown.h>   // M7：MarkdownStyle（块间隙/圆角/色表比对口径）
+#include <components/theme.h>      // M7：withAlpha（活动块边框色口径）
 #include <core/dsl_runtime.h>
 #include <eui/dsl.h>
 #include <eui/types.h>   // M3：合成指针事件（块点击的 press→release 直驱）
@@ -2594,22 +2598,6 @@ REGISTER_TEST(md_esc_closes_topmost_dialog,
 // keyEventHandler_，编辑器收不到字）。本用例走真实入口「预览块点击 → 编辑器
 // 定位」验证；用 Runtime 逐帧 compose 才能驱动帧末的 requestFocus 消费端
 //（core/runtime/runtime_lifecycle.h:38-42），plain Ui 不会消费挂起请求。
-namespace {
-// 无头帧驱动（pageId 固定，焦点/状态前缀随之固定；Ui 常驻故指针跨帧有效）
-struct FocusEnv {
-    core::dsl::Runtime rt;
-    eui::Ui* ui = nullptr;
-    template <typename Fn>
-    void frame(Fn&& body) {
-        rt.compose("mdfocus", 1600.0f, 1000.0f,
-                   [&](eui::Ui& u, const eui::Screen&) {
-                       ui = &u;
-                       body(u);
-                   });
-    }
-};
-} // namespace
-
 REGISTER_TEST(md_editor_focus_target_is_hit,
               "markdown_module: 预览块点击后聚焦 md.editor.input.hit（M0 C1，headless）", {
     const std::string text = "# T\n\npara one\npara two\n";
@@ -2623,7 +2611,7 @@ REGISTER_TEST(md_editor_focus_target_is_hit,
     eui::Screen screen;
     screen.width = 1600.0f;
     screen.height = 1000.0f;
-    FocusEnv env2;
+    test_support::HeadlessFrame env2("mdfocus");
     auto frame = [&] { env2.frame([&](eui::Ui& u) { mod->compose(u, screen); }); };
 
     frame();
@@ -2827,23 +2815,6 @@ namespace {
 
 using MdInputState = components::input_detail::InputModel::InputState;
 
-// 无头驱动：Runtime 逐帧 compose（requestFocus 的帧末消费端在
-// Runtime::compose，plain Ui 不消费挂起请求）。pageId 恒定 —— state / 焦点 /
-// 元素 id 都以 pageId 起头做命名空间，换名等于换命名空间。
-struct MdLiveEnv {
-    core::dsl::Runtime rt;
-    eui::Ui* ui = nullptr;
-
-    template <typename Fn>
-    void frame(Fn&& body) {
-        rt.compose("mdlive", 1600.0f, 1000.0f,
-                   [&](eui::Ui& u, const eui::Screen&) {
-                       ui = &u;
-                       body(u);
-                   });
-    }
-};
-
 // 本帧渲染出的块包裹 id 列表（prefix = "md.live" / "md.preview"）——
 // 用于比较两种模式下「块序列」是否一致
 std::vector<int> renderedBlockIds(eui::Ui& ui, const std::string& prefix) {
@@ -2914,7 +2885,7 @@ REGISTER_TEST(md_module_live_active_input,
     eui::Screen screen;
     screen.width = 1600.0f;
     screen.height = 1000.0f;
-    MdLiveEnv e;
+    test_support::HeadlessFrame e("mdlive");
     auto frame = [&] { e.frame([&](eui::Ui& u) { mod->compose(u, screen); }); };
 
     frame();
@@ -3008,7 +2979,7 @@ REGISTER_TEST(md_module_live_input_roundtrip,
         eui::Screen screen;
         screen.width = 1600.0f;
         screen.height = 1000.0f;
-        MdLiveEnv e;
+        test_support::HeadlessFrame e("mdlive");
         auto frame = [&](void) {
             e.frame([&](eui::Ui& u) { mod->compose(u, screen); });
         };
@@ -3059,7 +3030,7 @@ REGISTER_TEST(md_module_live_input_roundtrip,
         eui::Screen screen;
         screen.width = 1600.0f;
         screen.height = 1000.0f;
-        MdLiveEnv e;
+        test_support::HeadlessFrame e("mdlive");
         auto frame = [&](void) {
             e.frame([&](eui::Ui& u) { mod->compose(u, screen); });
         };
@@ -3128,7 +3099,7 @@ bool liveSplitAnchorScenario(const char* tag,
     eui::Screen screen;
     screen.width = 1600.0f;
     screen.height = 1000.0f;
-    MdLiveEnv e;
+    test_support::HeadlessFrame e("mdlive");
     auto frame = [&](void) {
         e.frame([&](eui::Ui& u) { mod->compose(u, screen); });
     };
@@ -3288,7 +3259,7 @@ REGISTER_TEST(md_module_live_state_reset_note_switch,
     eui::Screen screen;
     screen.width = 1600.0f;
     screen.height = 1000.0f;
-    MdLiveEnv e;
+    test_support::HeadlessFrame e("mdlive");
     auto frame = [&](void) {
         e.frame([&](eui::Ui& u) { mod->compose(u, screen); });
     };
@@ -3340,7 +3311,7 @@ REGISTER_TEST(md_module_live_state_reset_on_enter,
     eui::Screen screen;
     screen.width = 1600.0f;
     screen.height = 1000.0f;
-    MdLiveEnv e;
+    test_support::HeadlessFrame e("mdlive");
     auto frame = [&](void) {
         e.frame([&](eui::Ui& u) { mod->compose(u, screen); });
     };
@@ -3396,7 +3367,7 @@ REGISTER_TEST(md_module_live_state_reset_on_restore,
     eui::Screen screen;
     screen.width = 1600.0f;
     screen.height = 1000.0f;
-    MdLiveEnv e;
+    test_support::HeadlessFrame e("mdlive");
     auto frame = [&](void) {
         e.frame([&](eui::Ui& u) { mod->compose(u, screen); });
     };
@@ -3537,7 +3508,7 @@ REGISTER_TEST(md_module_blockflow_hook_contrast,
     eui::Screen screen;
     screen.width = 1600.0f;
     screen.height = 1000.0f;
-    MdLiveEnv e;
+    test_support::HeadlessFrame e("mdlive");
     auto frame = [&](void) {
         e.frame([&](eui::Ui& u) { mod->compose(u, screen); });
     };
@@ -3842,7 +3813,7 @@ REGISTER_TEST(md_module_live_click_switch_20x,
     eui::Screen screen;
     screen.width = 1600.0f;
     screen.height = 1000.0f;
-    MdLiveEnv e;
+    test_support::HeadlessFrame e("mdlive");
     auto frame = [&](void) { e.frame([&](eui::Ui& u) { mod->compose(u, screen); }); };
 
     frame();
@@ -3958,7 +3929,7 @@ REGISTER_TEST(md_module_live_ime_freeze,
     eui::Screen screen;
     screen.width = 1600.0f;
     screen.height = 1000.0f;
-    MdLiveEnv e;
+    test_support::HeadlessFrame e("mdlive");
     auto frame = [&](void) { e.frame([&](eui::Ui& u) { mod->compose(u, screen); }); };
 
     frame();
@@ -4036,7 +4007,7 @@ REGISTER_TEST(md_module_live_blur_commit,
     eui::Screen screen;
     screen.width = 1600.0f;
     screen.height = 1000.0f;
-    MdLiveEnv e;
+    test_support::HeadlessFrame e("mdlive");
     auto frame = [&](void) { e.frame([&](eui::Ui& u) { mod->compose(u, screen); }); };
 
     frame();
@@ -4117,7 +4088,7 @@ REGISTER_TEST(md_module_live_state_release_note_switch,
     eui::Screen screen;
     screen.width = 1600.0f;
     screen.height = 1000.0f;
-    MdLiveEnv e;
+    test_support::HeadlessFrame e("mdlive");
     auto frame = [&](void) { e.frame([&](eui::Ui& u) { mod->compose(u, screen); }); };
 
     frame();
@@ -4199,8 +4170,8 @@ bool pressLiveKey(eui::Ui& ui, eui::InputKey key, bool shift = false,
 }
 
 // 进实时态并把活动块锚定到 docByte（编辑器光标 → 切态 → 锚 = 编辑器光标）
-bool enterLiveAt(MdLiveEnv& e, ::core::Module* mod, const eui::Screen& screen,
-                 size_t docByte) {
+bool enterLiveAt(test_support::HeadlessFrame& e, ::core::Module* mod,
+                 const eui::Screen& screen, size_t docByte) {
     e.frame([&](eui::Ui& u) { mod->compose(u, screen); });
     if (!openFirstNote(*e.ui)) return false;
     e.frame([&](eui::Ui& u) { mod->compose(u, screen); });
@@ -4236,7 +4207,7 @@ REGISTER_TEST(md_module_live_boundary_backspace,
     eui::Screen screen;
     screen.width = 1600.0f;
     screen.height = 1000.0f;
-    MdLiveEnv e;
+    test_support::HeadlessFrame e("mdlive");
     auto frame = [&](void) { e.frame([&](eui::Ui& u) { mod->compose(u, screen); }); };
 
     DOCTEST_REQUIRE(enterLiveAt(e, mod.get(), screen, bs[1].start));
@@ -4317,7 +4288,7 @@ REGISTER_TEST(md_module_live_boundary_delete,
     eui::Screen screen;
     screen.width = 1600.0f;
     screen.height = 1000.0f;
-    MdLiveEnv e;
+    test_support::HeadlessFrame e("mdlive");
     auto frame = [&](void) { e.frame([&](eui::Ui& u) { mod->compose(u, screen); }); };
 
     DOCTEST_REQUIRE(enterLiveAt(e, mod.get(), screen, bs[1].start));
@@ -4405,7 +4376,7 @@ REGISTER_TEST(md_module_live_vertical_block_move,
     eui::Screen screen;
     screen.width = 1600.0f;
     screen.height = 1000.0f;
-    MdLiveEnv e;
+    test_support::HeadlessFrame e("mdlive");
     auto frame = [&](void) { e.frame([&](eui::Ui& u) { mod->compose(u, screen); }); };
 
     DOCTEST_REQUIRE(enterLiveAt(e, mod.get(), screen, bs[1].start));   // 活动块 = 1
@@ -4496,7 +4467,7 @@ REGISTER_TEST(md_module_live_inblock_keys,
     eui::Screen screen;
     screen.width = 1600.0f;
     screen.height = 1000.0f;
-    MdLiveEnv e;
+    test_support::HeadlessFrame e("mdlive");
     auto frame = [&](void) { e.frame([&](eui::Ui& u) { mod->compose(u, screen); }); };
 
     DOCTEST_REQUIRE(enterLiveAt(e, mod.get(), screen, 3));   // 光标 "- a" 之后
@@ -4558,7 +4529,7 @@ REGISTER_TEST(md_module_live_undo_redo,
     eui::Screen screen;
     screen.width = 1600.0f;
     screen.height = 1000.0f;
-    MdLiveEnv e;
+    test_support::HeadlessFrame e("mdlive");
     auto frame = [&](void) { e.frame([&](eui::Ui& u) { mod->compose(u, screen); }); };
 
     DOCTEST_REQUIRE(enterLiveAt(e, mod.get(), screen, bs[1].start));   // 活动块 = 1
@@ -4674,7 +4645,7 @@ REGISTER_TEST(md_module_live_undo_mode_roundtrip,
     eui::Screen screen;
     screen.width = 1600.0f;
     screen.height = 1000.0f;
-    MdLiveEnv e;
+    test_support::HeadlessFrame e("mdlive");
     auto frame = [&](void) { e.frame([&](eui::Ui& u) { mod->compose(u, screen); }); };
 
     DOCTEST_REQUIRE(enterLiveAt(e, mod.get(), screen, 4));   // 光标在 "para" 末尾
@@ -4756,7 +4727,7 @@ REGISTER_TEST(md_module_live_boundary_undo,
     eui::Screen screen;
     screen.width = 1600.0f;
     screen.height = 1000.0f;
-    MdLiveEnv e;
+    test_support::HeadlessFrame e("mdlive");
     auto frame = [&](void) { e.frame([&](eui::Ui& u) { mod->compose(u, screen); }); };
 
     DOCTEST_REQUIRE(enterLiveAt(e, mod.get(), screen, bs[1].start));
@@ -4821,7 +4792,7 @@ REGISTER_TEST(md_module_live_boundary_undo,
 //   · 用户滚轮关跟随（spec §3.3）：滚轮后即便 caret 深深越界也不把视口拽回，
 //     直到下一次光标事件（打字 / 方向键 / 点击）才恢复跟随 —— 这是「越界才拉」
 //     与「用户优先」的交界，对应手工点验 ④。
-// 观测口径（诚实声明）：无头跑的是真实 Runtime（MdLiveEnv::frame 走
+// 观测口径（诚实声明）：无头跑的是真实 Runtime（HeadlessFrame::frame 走
 //   core::dsl::Runtime::compose）→ 程序化落地（模块调 Ui::setScrollOffset、帧末
 //   消费直写实例 offset）真实生效，但看不到内容位移。可观测的是 scrollView 的
 //   【声明值】（scrollOffset / scrollMaxOffset = 模块记账经框架钳位后的那一版）：
@@ -4866,7 +4837,7 @@ REGISTER_TEST(md_module_live_scroll_follow_pull,
     eui::Screen screen;
     screen.width = 1600.0f;
     screen.height = 1000.0f;
-    MdLiveEnv e;
+    test_support::HeadlessFrame e("mdlive");
     auto frame = [&](void) { e.frame([&](eui::Ui& u) { mod->compose(u, screen); }); };
 
     frame();
@@ -4967,7 +4938,7 @@ REGISTER_TEST(md_module_live_scroll_follow_wheel_disarms,
     eui::Screen screen;
     screen.width = 1600.0f;
     screen.height = 1000.0f;
-    MdLiveEnv e;
+    test_support::HeadlessFrame e("mdlive");
     auto frame = [&](void) { e.frame([&](eui::Ui& u) { mod->compose(u, screen); }); };
 
     frame();
@@ -5073,7 +5044,7 @@ REGISTER_TEST(md_module_live_scroll_follow_wrapped_caret,
     eui::Screen screen;
     screen.width = 1600.0f;
     screen.height = 1000.0f;
-    MdLiveEnv e;
+    test_support::HeadlessFrame e("mdlive");
     auto frame = [&](void) { e.frame([&](eui::Ui& u) { mod->compose(u, screen); }); };
 
     frame();
@@ -5180,7 +5151,7 @@ REGISTER_TEST(md_module_live_scroll_id_stable,
     eui::Screen screen;
     screen.width = 1600.0f;
     screen.height = 1000.0f;
-    MdLiveEnv e;
+    test_support::HeadlessFrame e("mdlive");
     auto frame = [&](void) { e.frame([&](eui::Ui& u) { mod->compose(u, screen); }); };
 
     frame();
@@ -5238,6 +5209,312 @@ REGISTER_TEST(md_module_live_scroll_id_stable,
     return true;
 })
 
+// ==================== Phase 3 M7：高亮与视觉一致（spec §7 M7 / §4.6）====================
+// 三件事（同 spec §4.6 关联方表）：
+//   ① liveHighlighter_ 独立实例喂【块文本】——runs 用块局部坐标（byteStart 以
+//      块首为原点，与 input 内排版同原点）；与编辑态实例（整篇文档坐标）分
+//      实例是硬约束（混用会因坐标系交替抖动围栏缓存）；块内围栏状态自洽；
+//      主题切换同步换色 + bump live input 行缓存代号（与编辑态同口径）
+//   ② 渲染块 CodeFence 自绘复用：同一 drawBlockFlow 通路（md_preview_highlight
+//      + MdPreviewCodeCache，stableId+hash 键控）——锁 live 与预览两态下同一
+//      围栏块的自绘元素（几何/圆角/背景色/着色 runs 逐项一致）
+//   ③ 活动块边框（.frame：透明填充 + 主色半透明 1px + 预览块同圆角），活动块
+//      互斥只建一份；验收口径 = 块间隙/圆角/色表一致（宽度无关项；live 720px
+//      与预览 760px 阅读列宽差异导致的块高差属预期，不在此比对）
+namespace {
+
+bool colorEq(const eui::Color& a, const eui::Color& b) {
+    return a.r == b.r && a.g == b.g && a.b == b.b && a.a == b.a;
+}
+
+} // namespace
+
+REGISTER_TEST(md_module_live_highlight,
+              "markdown_module: 实时态活动块高亮块文本坐标（M7，headless）", {
+    const std::string text =
+        "# 标题\n\n`代码` 段\n\n```cpp\nint v = 7;\n```\n";
+    test_support::MdHeadlessEnv env(kDirPrefix, "livehl", kDbName);
+    DOCTEST_REQUIRE(env.db != nullptr);
+    DOCTEST_REQUIRE(writeTextFile(env.dir / "hl.md", text));
+
+    std::unique_ptr<::core::Module> mod(create_markdown_module());
+    mod->onStart();
+
+    eui::Screen screen;
+    screen.width = 1600.0f;
+    screen.height = 1000.0f;
+    test_support::HeadlessFrame e("mdlive");
+    auto frame = [&] { e.frame([&](eui::Ui& u) { mod->compose(u, screen); }); };
+
+    frame();
+    DOCTEST_REQUIRE(openFirstNote(*e.ui));
+    frame();
+    DOCTEST_REQUIRE(e.ui->find(kEditorInputId) != nullptr);
+    // 光标落在第二块（`代码` 段）块首 → 进实时态活动块 = 第二块
+    module::markdown::MdBlockModel model;
+    model.update(text);
+    DOCTEST_REQUIRE(model.blocks().size() >= 3);
+    DOCTEST_CHECK(model.blockIndexAt(model.blocks()[1].start) == 1u);
+    e.ui->state<MdInputState>(kEditorInputId).cursor =
+        static_cast<int>(model.blocks()[1].start);
+
+    DOCTEST_REQUIRE(cycleMode(mod.get()));   // → 实时
+    frame();
+    DOCTEST_REQUIRE(e.ui->find("md.live.input") != nullptr);
+
+    // ① 活动块 = 第二块：输入框文本 = 块源码（逐字节）；`代码` 段所在行 =
+    //    1 个 code run、整段 success 色（md_highlight 行内代码语义在块文本上
+    //    照常成立 —— spec §4.6「高亮语义不退化」）。注意块模型分块约定：
+    //    段落块【包含】接续空行的 '\n'（块 1 = "\n`代码` 段\n"），故源码空行
+    //    是行 0、正文在行 1 —— 断言按元素文本匹配定位行，不写死行号之外假设
+    const std::string blockText =
+        text.substr(model.blocks()[1].start,
+                    model.blocks()[1].end - model.blocks()[1].start);
+    DOCTEST_CHECK_EQ(e.ui->state<MdInputState>("md.live.input").text,
+                     blockText);
+    const auto* line1 = e.ui->find("md.live.input.text.1");
+    DOCTEST_REQUIRE(line1 != nullptr);
+    DOCTEST_CHECK_EQ(line1->text, std::string("`代码` 段"));
+    DOCTEST_REQUIRE_EQ(line1->textRuns.size(), static_cast<size_t>(1));
+    DOCTEST_CHECK_EQ(line1->textRuns[0].byteStart, 0);
+    DOCTEST_CHECK_EQ(line1->textRuns[0].byteEnd, 8);  // ` + 代码(6B) + `
+    DOCTEST_CHECK(colorEq(line1->textRuns[0].color,
+                          core::theme::current().colors.success));
+
+    // ② 点击块 0（标题）→ 活动块切换：行 0 = 1 个 marker run [0,1)，仍块局部
+    DOCTEST_REQUIRE(clickLiveBlock(*e.ui, 0, 6.0f));
+    frame();
+    DOCTEST_REQUIRE(e.ui->state<MdInputState>("md.live.input").text.find(
+                        "# 标题") == 0u);
+    const auto* hdr = e.ui->find("md.live.input.text.0");
+    DOCTEST_REQUIRE(hdr != nullptr);
+    DOCTEST_REQUIRE_EQ(hdr->textRuns.size(), static_cast<size_t>(1));
+    DOCTEST_CHECK_EQ(hdr->textRuns[0].byteStart, 0);
+    DOCTEST_CHECK_EQ(hdr->textRuns[0].byteEnd, 1);
+    DOCTEST_CHECK(colorEq(hdr->textRuns[0].color,
+                          core::theme::current().colors.textTertiary));
+
+    // ③ 点击块 2（围栏）→ 活动块 = 围栏块：开栏/内容/闭栏按行着色（块内围栏
+    //    状态自洽 —— 分块器保证围栏不跨块，块文本喂 liveHighlighter_ 语义
+    //    不退化）。围栏块同样带前导 '\n' → 围栏首行在行 1
+    DOCTEST_REQUIRE(clickLiveBlock(*e.ui, 2, 30.0f));
+    frame();
+    const auto* fence0 = e.ui->find("md.live.input.text.1");
+    const auto* fence1 = e.ui->find("md.live.input.text.2");
+    const auto* fence2 = e.ui->find("md.live.input.text.3");
+    DOCTEST_REQUIRE(fence0 != nullptr);
+    DOCTEST_REQUIRE(fence1 != nullptr);
+    DOCTEST_REQUIRE(fence2 != nullptr);
+    DOCTEST_CHECK_EQ(fence0->text, std::string("```cpp"));
+    DOCTEST_REQUIRE_EQ(fence0->textRuns.size(), static_cast<size_t>(1));
+    DOCTEST_CHECK_EQ(fence0->textRuns[0].byteStart, 0);
+    DOCTEST_CHECK(colorEq(fence0->textRuns[0].color,
+                          core::theme::current().colors.textTertiary));
+    DOCTEST_CHECK_EQ(fence1->text, std::string("int v = 7;"));
+    DOCTEST_REQUIRE_EQ(fence1->textRuns.size(), static_cast<size_t>(1));
+    DOCTEST_CHECK_EQ(fence1->textRuns[0].byteStart, 0);
+    DOCTEST_CHECK_EQ(fence1->textRuns[0].byteEnd,
+                     static_cast<int>(fence1->text.size()));
+    DOCTEST_CHECK(colorEq(fence1->textRuns[0].color,
+                          core::theme::current().colors.success));
+    DOCTEST_CHECK_EQ(fence2->text, std::string("```"));
+    DOCTEST_REQUIRE_EQ(fence2->textRuns.size(), static_cast<size_t>(1));
+    DOCTEST_CHECK(colorEq(fence2->textRuns[0].color,
+                          core::theme::current().colors.textTertiary));
+
+    // ④ 主题切换：live input styleRevision++ + 可视行 runs 换色（Phase B 语义，
+    //    与编辑态同口径）；换回深色不污染后续用例
+    const unsigned long long revBefore =
+        e.ui->state<MdInputState>("md.live.input").styleRevision;
+    const std::string themeBefore = core::theme::currentThemeName();
+    core::theme::setLight();
+    frame();
+    DOCTEST_CHECK_EQ(
+        e.ui->state<MdInputState>("md.live.input").styleRevision,
+        revBefore + 1);
+    const auto* fence1Light = e.ui->find("md.live.input.text.2");
+    DOCTEST_REQUIRE(fence1Light != nullptr);
+    DOCTEST_REQUIRE_EQ(fence1Light->textRuns.size(), static_cast<size_t>(1));
+    DOCTEST_CHECK(colorEq(fence1Light->textRuns[0].color,
+                          core::theme::current().colors.success));
+    if (themeBefore == "Light") {
+        core::theme::setLight();
+    } else {
+        core::theme::setDark();
+    }
+
+    mod->onStop();
+    return true;
+})
+
+REGISTER_TEST(md_module_live_active_frame,
+              "markdown_module: 实时态活动块边框/背景（M7，headless）", {
+    const std::string text = "# A\n\n## B\n\n## C\n";
+    test_support::MdHeadlessEnv env(kDirPrefix, "liveframe", kDbName);
+    DOCTEST_REQUIRE(env.db != nullptr);
+    DOCTEST_REQUIRE(writeTextFile(env.dir / "frame.md", text));
+
+    std::unique_ptr<::core::Module> mod(create_markdown_module());
+    mod->onStart();
+
+    eui::Screen screen;
+    screen.width = 1600.0f;
+    screen.height = 1000.0f;
+    test_support::HeadlessFrame e("mdlive");
+    auto frame = [&] { e.frame([&](eui::Ui& u) { mod->compose(u, screen); }); };
+
+    frame();
+    DOCTEST_REQUIRE(openFirstNote(*e.ui));
+    frame();
+    DOCTEST_REQUIRE(e.ui->find(kEditorInputId) != nullptr);
+    module::markdown::MdBlockModel model;
+    model.update(text);
+    DOCTEST_REQUIRE(model.blocks().size() >= 3);
+    e.ui->state<MdInputState>(kEditorInputId).cursor =
+        static_cast<int>(model.blocks()[1].start);
+
+    DOCTEST_REQUIRE(cycleMode(mod.get()));   // → 实时
+    frame();
+
+    // ① 活动块包裹内出现 .frame：位置/尺寸 == 包裹（透明覆盖层）、圆角 == 预览
+    //    块圆角（MarkdownStyle.radius 同源）、1px 主色半透明边框、透明填充
+    const auto* wrap = e.ui->find("md.live.blk.1");
+    DOCTEST_REQUIRE(wrap != nullptr);
+    const auto* frameEl = e.ui->find("md.live.blk.1.frame");
+    DOCTEST_REQUIRE(frameEl != nullptr);
+    DOCTEST_CHECK(std::fabs(frameEl->frame.width - wrap->frame.width) <= 0.01f);
+    DOCTEST_CHECK(std::fabs(frameEl->frame.height - wrap->frame.height) <=
+                  0.01f);
+    DOCTEST_CHECK(std::fabs(frameEl->frame.x - wrap->frame.x) <= 0.01f);
+    DOCTEST_CHECK(std::fabs(frameEl->frame.y - wrap->frame.y) <= 0.01f);
+    const components::MarkdownStyle style(
+        core::theme::componentTokens(core::theme::current()));
+    DOCTEST_CHECK(std::fabs(frameEl->radius - style.radius) <= 0.01f);
+    DOCTEST_CHECK(std::fabs(frameEl->border.width - 1.0f) <= 0.01f);
+    // 镜像模块常量 kLiveActiveFrameAlpha = 0.6f（cpp 文件私有，测试同值锁定
+    // 语义：主色半透明）
+    const eui::Color expectBorder = components::theme::withAlpha(
+        core::theme::componentTokens(core::theme::current()).primary, 0.6f);
+    DOCTEST_CHECK(colorEq(frameEl->border.color, expectBorder));
+    DOCTEST_CHECK(frameEl->color.a == 0.0f);   // 透明填充：不挡 input 文本
+
+    // ② 非活动块无 .frame（活动块互斥 —— 每帧只建活动块一份，spec §4.4）
+    DOCTEST_CHECK(e.ui->find("md.live.blk.0.frame") == nullptr);
+    DOCTEST_CHECK(e.ui->find("md.live.blk.2.frame") == nullptr);
+
+    // ③ 换块后边框跟到新活动块（点块 2 → .frame 在 blk.2、blk.1 消失）
+    DOCTEST_REQUIRE(clickLiveBlock(*e.ui, 2, 5.0f));
+    frame();
+    DOCTEST_CHECK(e.ui->find("md.live.blk.2.frame") != nullptr);
+    DOCTEST_CHECK(e.ui->find("md.live.blk.1.frame") == nullptr);
+
+    mod->onStop();
+    return true;
+})
+
+REGISTER_TEST(md_module_live_preview_parity,
+              "markdown_module: 实时态与预览态逐块观感一致（M7，headless）", {
+    const std::string text =
+        "# 头\n\n首段文字\n\n```cpp\nint v = 7;\n```\n\n尾段\n";
+    test_support::MdHeadlessEnv env(kDirPrefix, "liveparity", kDbName);
+    DOCTEST_REQUIRE(env.db != nullptr);
+    DOCTEST_REQUIRE(writeTextFile(env.dir / "parity.md", text));
+
+    std::unique_ptr<::core::Module> mod(create_markdown_module());
+    mod->onStart();
+
+    eui::Screen screen;
+    screen.width = 1600.0f;
+    screen.height = 1000.0f;
+    test_support::HeadlessFrame e("mdlive");
+    auto frame = [&] { e.frame([&](eui::Ui& u) { mod->compose(u, screen); }); };
+
+    frame();
+    DOCTEST_REQUIRE(openFirstNote(*e.ui));
+    frame();
+    DOCTEST_REQUIRE(e.ui->find(kEditorInputId) != nullptr);
+    // 活动块定在末块（尾段）：其前的块 0..2 与预览态逐块同源（活动块自身
+    // wrap 高 = input 贴合高 ≠ 渲染块高，不在比对范围）
+    module::markdown::MdBlockModel model;
+    model.update(text);
+    DOCTEST_REQUIRE(model.blocks().size() >= 4);
+    e.ui->state<MdInputState>(kEditorInputId).cursor =
+        static_cast<int>(model.blocks()[3].start);
+
+    DOCTEST_REQUIRE(cycleMode(mod.get()));   // → 实时
+    frame();
+    const std::string kLivePrefix = "md.live";
+    // ① 实时态：非活动块包裹存在；代码围栏走 DevDesk 侧自绘（.code.bg），
+    //    且着色 runs 非空（cpp 词法器生效 = 复用了 md_preview_highlight）。
+    //    元素指针只在当帧有效（帧末元素树换代）→ 与预览态比对的值一律
+    //    【按值】捕获（半径/背景色/尺寸/runs 拷贝），指针本身不跨帧使用
+    const auto gapOf = [](eui::Ui& ui, const std::string& prefix) {
+        const auto* b0 = ui.find(prefix + ".blk.0");
+        const auto* b1 = ui.find(prefix + ".blk.1");
+        const auto* b2 = ui.find(prefix + ".blk.2");
+        if (b0 == nullptr || b1 == nullptr || b2 == nullptr) return -1.0f;
+        const float g01 = b1->frame.y - (b0->frame.y + b0->frame.height);
+        const float g12 = b2->frame.y - (b1->frame.y + b1->frame.height);
+        if (std::fabs(g01 - g12) > 0.01f) return -1.0f;
+        return g01;
+    };
+    const float gapLive = gapOf(*e.ui, kLivePrefix);
+    for (int sid : {0, 1, 2}) {
+        DOCTEST_CHECK(e.ui->find("md.live.blk." + std::to_string(sid)) !=
+                      nullptr);
+    }
+    const auto* liveBg = e.ui->find("md.live.blk.2.code.bg");
+    DOCTEST_REQUIRE(liveBg != nullptr);
+    const auto* liveTxt = e.ui->find("md.live.blk.2.code.text");
+    DOCTEST_REQUIRE(liveTxt != nullptr);
+    DOCTEST_REQUIRE(liveTxt->textRuns.size() >= static_cast<size_t>(1));
+    const float liveBgRadius = liveBg->radius;
+    const eui::Color liveBgColor = liveBg->color;
+    const float liveBgH = liveBg->frame.height;
+    const auto liveRuns = liveTxt->textRuns;   // 值拷贝：跨帧比对不许持旧指针
+
+    // 切到预览态（同文档同块序，几何表同源；阅读列宽 760 ≠ 实时 720，块高
+    // 随文本折行变化属预期 —— 验收比对宽度无关项：块间隙 / 圆角 / 色表）
+    DOCTEST_REQUIRE(cycleMode(mod.get()));   // → Split
+    frame();
+    DOCTEST_REQUIRE(cycleMode(mod.get()));   // → 预览
+    frame();
+    for (int sid : {0, 1, 2}) {
+        DOCTEST_CHECK(e.ui->find("md.preview.blk." + std::to_string(sid)) !=
+                      nullptr);
+    }
+    const auto* pvBg = e.ui->find("md.preview.blk.2.code.bg");
+    DOCTEST_REQUIRE(pvBg != nullptr);
+    const auto* pvTxt = e.ui->find("md.preview.blk.2.code.text");
+    DOCTEST_REQUIRE(pvTxt != nullptr);
+    const float gapPv = gapOf(*e.ui, "md.preview");
+
+    // ② 圆角/尺寸一致：围栏自绘背景两态同为 MarkdownStyle.radius、同高度
+    //    （宽是阅读列宽差：实时 720 vs 预览 760 —— 预期差异，不比对；围栏短行
+    //    不折行 → 高度与宽无关，两态恒等）
+    const components::MarkdownStyle style(
+        core::theme::componentTokens(core::theme::current()));
+    DOCTEST_CHECK(std::fabs(liveBgRadius - pvBg->radius) <= 0.01f);
+    DOCTEST_CHECK(std::fabs(liveBgRadius - style.radius) <= 0.01f);
+    DOCTEST_CHECK(std::fabs(liveBgH - pvBg->frame.height) <= 0.01f);
+    // ③ 色表一致：围栏背景色 + 着色 runs（byteStart/byteEnd/color 逐项）
+    DOCTEST_CHECK(colorEq(liveBgColor, pvBg->color));
+    DOCTEST_REQUIRE_EQ(liveRuns.size(), pvTxt->textRuns.size());
+    for (size_t i = 0; i < liveRuns.size(); ++i) {
+        DOCTEST_CHECK_EQ(liveRuns[i].byteStart, pvTxt->textRuns[i].byteStart);
+        DOCTEST_CHECK_EQ(liveRuns[i].byteEnd, pvTxt->textRuns[i].byteEnd);
+        DOCTEST_CHECK(colorEq(liveRuns[i].color, pvTxt->textRuns[i].color));
+    }
+    // ④ 块间隙一致：相邻包裹净间距两态同值 == MarkdownStyle.blockGap
+    //    （column gap 与块高无关 —— 块高随阅读列宽变化是预期，间隙不是）
+    DOCTEST_CHECK(gapLive > 0.0f);
+    DOCTEST_CHECK(std::fabs(gapLive - gapPv) <= 0.01f);
+    DOCTEST_CHECK(std::fabs(gapLive - style.blockGap) <= 0.01f);
+
+    mod->onStop();
+    return true;
+})
+
 // ==================== MD-01：重载后活动块内容映射（spec 2026-09-28-md01）====================
 // 验收 §5.2：静默重载/冲突重载把整篇换成磁盘版本后，活动块按内容身份
 // (kind,hash,stableId) 映射到新文档，而不是落到「覆盖旧字节的新块」。
@@ -5280,7 +5557,8 @@ bool md01WriteExternal(const fs::path& path, const std::string& content) {
 // 有界自旋：逐帧 compose 直至 done(*ui) 为真（60 × 120ms 预算）。watcher 事件
 // 送达前帧内 poll 静默跳过（credit 未置位），事件送达的帧即重载帧。仅用于
 // editorDirty_ == false 的静默路径（自旋帧不触发自动保存）。
-void md01WaitReload(MdLiveEnv& e, ::core::Module* mod, const eui::Screen& screen,
+void md01WaitReload(test_support::HeadlessFrame& e, ::core::Module* mod,
+                    const eui::Screen& screen,
                     const std::function<bool(eui::Ui&)>& done) {
     for (int i = 0; i < 60; ++i) {
         e.frame([&](eui::Ui& u) { mod->compose(u, screen); });
@@ -5349,7 +5627,7 @@ REGISTER_TEST(md_module_md01_reload_prepend,
     eui::Screen screen;
     screen.width = 1600.0f;
     screen.height = 1000.0f;
-    MdLiveEnv e;
+    test_support::HeadlessFrame e("mdlive");
     auto frame = [&](void) { e.frame([&](eui::Ui& u) { mod->compose(u, screen); }); };
 
     DOCTEST_REQUIRE(enterLiveAt(e, mod.get(), screen, cursorByte));
@@ -5410,7 +5688,7 @@ REGISTER_TEST(md_module_md01_reload_double_edit,
     eui::Screen screen;
     screen.width = 1600.0f;
     screen.height = 1000.0f;
-    MdLiveEnv e;
+    test_support::HeadlessFrame e("mdlive");
     auto frame = [&](void) { e.frame([&](eui::Ui& u) { mod->compose(u, screen); }); };
 
     DOCTEST_REQUIRE(enterLiveAt(e, mod.get(), screen, cursorByte));
@@ -5474,7 +5752,7 @@ REGISTER_TEST(md_module_md01_reload_block_deleted,
     eui::Screen screen;
     screen.width = 1600.0f;
     screen.height = 1000.0f;
-    MdLiveEnv e;
+    test_support::HeadlessFrame e("mdlive");
     auto frame = [&](void) { e.frame([&](eui::Ui& u) { mod->compose(u, screen); }); };
 
     DOCTEST_REQUIRE(enterLiveAt(e, mod.get(), screen, cursorByte));
@@ -5531,7 +5809,7 @@ REGISTER_TEST(md_module_md01_reload_to_empty,
     eui::Screen screen;
     screen.width = 1600.0f;
     screen.height = 1000.0f;
-    MdLiveEnv e;
+    test_support::HeadlessFrame e("mdlive");
     auto frame = [&](void) { e.frame([&](eui::Ui& u) { mod->compose(u, screen); }); };
 
     DOCTEST_REQUIRE(enterLiveAt(e, mod.get(), screen, cursorByte));
@@ -5578,7 +5856,7 @@ REGISTER_TEST(md_module_md01_reload_duplicate_fences,
     eui::Screen screen;
     screen.width = 1600.0f;
     screen.height = 1000.0f;
-    MdLiveEnv e;
+    test_support::HeadlessFrame e("mdlive");
     auto frame = [&](void) { e.frame([&](eui::Ui& u) { mod->compose(u, screen); }); };
 
     DOCTEST_REQUIRE(enterLiveAt(e, mod.get(), screen, cursorByte));
@@ -5647,7 +5925,7 @@ REGISTER_TEST(md_module_md01_reload_conflict_toast,
     eui::Screen screen;
     screen.width = 1600.0f;
     screen.height = 1000.0f;
-    MdLiveEnv e;
+    test_support::HeadlessFrame e("mdlive");
     auto frame = [&](void) { e.frame([&](eui::Ui& u) { mod->compose(u, screen); }); };
 
     // 编辑态打开
@@ -5728,7 +6006,7 @@ REGISTER_TEST(md_module_md01_reload_capture_race,
     eui::Screen screen;
     screen.width = 1600.0f;
     screen.height = 1000.0f;
-    MdLiveEnv e;
+    test_support::HeadlessFrame e("mdlive");
     auto frame = [&](void) { e.frame([&](eui::Ui& u) { mod->compose(u, screen); }); };
 
     DOCTEST_REQUIRE(enterLiveAt(e, mod.get(), screen, cursorByte));
@@ -5813,7 +6091,7 @@ REGISTER_TEST(md_module_md01_reload_non_live_modes,
     eui::Screen screen;
     screen.width = 1600.0f;
     screen.height = 1000.0f;
-    MdLiveEnv e;
+    test_support::HeadlessFrame e("mdlive");
     auto frame = [&](void) { e.frame([&](eui::Ui& u) { mod->compose(u, screen); }); };
 
     // 编辑态：外写盘 → 重载 → 编辑器文本被磁盘版本替换，映射不介入（mode != Live）

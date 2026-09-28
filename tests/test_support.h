@@ -14,6 +14,8 @@
 //   6) 笔记无头环境   —— MdHeadlessEnv（笔记目录 + 库 + appDatabase + 环境隔离）
 //   7) 小工具         —— writeTextFile / tempConfigFile / cleanupProfileKey /
 //                        HeaderMap + headerCI + countCI（TIN-06b）
+//  TIN-06 收尾波新增：ScopedAppDatabase / DataRootEnv / ScopedConfigPath /
+//  InMemoryDb（见各定义处「原 XXX 同款」出处注释）。
 //
 // 迁移约定：只删本地重复脚手架 + 改 include/调用，**不动用例语义**；
 // 收编时每个分支逐字保留原样（见各函数上的「原 XXX 同款」出处注释）。
@@ -53,6 +55,7 @@
 #include <stdexcept>
 #include <string>
 #include <system_error>
+#include <utility>
 
 namespace test_support {
 
@@ -236,6 +239,18 @@ public:
     ScopedAppRouter& operator=(const ScopedAppRouter&) = delete;
 };
 
+// RAII：作用域内登记/release 进程级 appDatabase（与 ScopedAppRouter 同构）。
+// 原 test_streaming_proxy.cpp 的 AppDbScope 收编。
+class ScopedAppDatabase {
+public:
+    explicit ScopedAppDatabase(core::data::SqliteDb& db) {
+        ::core::registerAppDatabase(&db);
+    }
+    ~ScopedAppDatabase() { ::core::registerAppDatabase(nullptr); }
+    ScopedAppDatabase(const ScopedAppDatabase&) = delete;
+    ScopedAppDatabase& operator=(const ScopedAppDatabase&) = delete;
+};
+
 // ==================== 5) 已 migrate 的临时数据库（TIN-06b）====================
 // 临时 db 路径工厂（只造路径、不落盘，调用方自己 open）。原 test_migrations /
 // test_claude_service / test_claude_ui / test_home / test_provider_config /
@@ -250,6 +265,53 @@ inline std::filesystem::path tempDbPath(const std::string& prefix,
     return test_temp::tempPath(prefix + tag + "_" + std::to_string(counter) +
                                ".db");
 }
+
+// RAII：DEVDESK_DATA_ROOT 重定向到临时 .data 目录（core/paths.cpp 的统一覆盖
+// 入口，绝不碰真实 %APPDATA%/DevDesk）。析构删目录 + 还原进入前值。
+// 原 test_claude_ui.cpp / test_claude_service.cpp 两份 ScopedDataRoot 合流，
+// 析构语义统一为快照还原（claude_ui 版原为清空，见 TIN-06 spec §1）。
+// 等价前置：外部环境未预设非空 DEVDESK_DATA_ROOT（预设时「清空」与「还原」
+// 不等价；正常开发机未预设）。
+struct DataRootEnv {
+    std::string dir;
+    std::string prev;
+    bool hadPrev = false;
+    explicit DataRootEnv(const std::string& prefix, const std::string& tag) {
+        dir = tempDbPath(prefix, tag).string() + ".data";
+        std::error_code ec;
+        std::filesystem::remove_all(dir, ec);
+        if (const char* p = std::getenv("DEVDESK_DATA_ROOT")) {
+            hadPrev = true;
+            prev = p;
+        }
+        setEnvVar("DEVDESK_DATA_ROOT", dir);
+        std::filesystem::create_directories(dir, ec);
+    }
+    ~DataRootEnv() {
+        std::error_code ec;
+        std::filesystem::remove_all(dir, ec);
+        setEnvVar("DEVDESK_DATA_ROOT", hadPrev ? prev : "");
+    }
+    DataRootEnv(const DataRootEnv&) = delete;
+    DataRootEnv& operator=(const DataRootEnv&) = delete;
+};
+
+// RAII：DEVDESK_CONFIG_PATH 指向临时 config.json 路径，析构清空环境变量 +
+// 删文件（cfg 文件由用例自行写内容，同原 PruneEnv 语义）。原 test_settings.cpp
+// PruneEnv 的 cfg 段收编。
+struct ScopedConfigPath {
+    std::filesystem::path cfgPath;
+    explicit ScopedConfigPath(std::filesystem::path p) : cfgPath(std::move(p)) {
+        setEnvVar("DEVDESK_CONFIG_PATH", cfgPath.string());
+    }
+    ~ScopedConfigPath() {
+        setEnvVar("DEVDESK_CONFIG_PATH", "");
+        std::error_code ec;
+        std::filesystem::remove(cfgPath, ec);
+    }
+    ScopedConfigPath(const ScopedConfigPath&) = delete;
+    ScopedConfigPath& operator=(const ScopedConfigPath&) = delete;
+};
 
 // RAII：已 migrate 的临时数据库（原 test_claude_service / test_provider_config /
 // test_proxy_router / test_settings_sync 四份 TestDb 合流）。构造失败即抛
@@ -285,6 +347,22 @@ struct TestDb {
     TestDb& operator=(const TestDb&) = delete;
 
     core::data::SqliteDb& handle() { return db->db(); }
+};
+
+// RAII：SqliteDb::open(":memory:") 的内存库（供不需要 migrate 的纯内存
+// 形态——如 ClaudeService 测试）。构造失败即抛。原 test_streaming_proxy.cpp
+// TestEnv 的 dbResult 段收编；handle() 命名对齐 TestDb::handle()。
+struct InMemoryDb {
+    std::unique_ptr<core::data::SqliteDb> db;
+    InMemoryDb() {
+        auto r = core::data::SqliteDb::open(":memory:");
+        if (r.isFail()) {
+            throw std::runtime_error("SqliteDb::open(:memory:) failed: " +
+                                     r.errorMessage());
+        }
+        db = std::make_unique<core::data::SqliteDb>(std::move(r.value()));
+    }
+    core::data::SqliteDb& handle() { return *db; }
 };
 
 // RAII：已 migrate 的临时库 +（可选）注册为进程级 appDatabase——模块 onStart

@@ -28,6 +28,7 @@
 //
 // 注意：tests/doctest.h 是极简框架（DOCTEST_CHECK 失败即 `return false`）。
 #include "doctest.h"
+#include "test_support.h"  // TIN-06 收尾波：InMemoryDb / ScopedAppDatabase
 
 #include "claude_service.h"
 #include "core/database.h"
@@ -281,33 +282,19 @@ private:
         std::make_shared<std::atomic<bool>>(false);
 };
 
-// ---------- 测试用 ClaudeService（内存库，不触碰 Keychain）----------
+// ---------- 测试用 ClaudeService（InMemoryDb 内存库，不触碰 Keychain）----------
 
-struct TestEnv {
-    core::Result<core::data::SqliteDb> dbResult =
-        core::data::SqliteDb::open(":memory:");
+// 模块 glue，keep-local（TIN-06）：InMemoryDb 基座 + ClaudeService 构造；
+// 构造失败即抛（InMemoryDb），service 恒非空。
+struct StreamEnv {
+    test_support::InMemoryDb db;
     std::unique_ptr<module::claude::ClaudeService> service;
 
-    TestEnv() {
-        if (dbResult.isOk()) {
-            service = std::make_unique<module::claude::ClaudeService>(
-                dbResult.value());
-        }
+    StreamEnv() {
+        service = std::make_unique<module::claude::ClaudeService>(db.handle());
     }
 
     module::claude::ClaudeService& svc() const { return *service; }
-};
-
-// 把测试用的内存库注册成「app 连接」（core::appDatabase）——生产里 main 注册的
-// 就是 ClaudeService 用的同一个连接，流末用量回填要经它拿库写。必须成对使用：
-// 析构注销，否则库销毁后把悬垂指针留给后面的用例。
-struct AppDbScope {
-    explicit AppDbScope(core::data::SqliteDb& db) {
-        core::registerAppDatabase(&db);
-    }
-    ~AppDbScope() { core::registerAppDatabase(nullptr); }
-    AppDbScope(const AppDbScope&) = delete;
-    AppDbScope& operator=(const AppDbScope&) = delete;
 };
 
 Profile makeProfile(const std::string& baseUrl) {
@@ -724,8 +711,7 @@ REGISTER_TEST(streaming_proxy_end_to_end_sse,
     script.chunks = makeSseScript(4, true);
     upstream.onMessages(script);
 
-    TestEnv env;
-    DOCTEST_REQUIRE(env.service != nullptr);
+    StreamEnv env;
 
     platform::http::Server proxy("127.0.0.1", 0);
     module::claude::ProxyRouter router(env.svc(), proxy);
@@ -767,8 +753,7 @@ REGISTER_TEST(streaming_proxy_forwards_error_status,
     script.status = 401;
     upstream.onMessages(script);
 
-    TestEnv env;
-    DOCTEST_REQUIRE(env.service != nullptr);
+    StreamEnv env;
 
     platform::http::Server proxy("127.0.0.1", 0);
     module::claude::ProxyRouter router(env.svc(), proxy);
@@ -808,8 +793,7 @@ REGISTER_TEST(streaming_proxy_client_disconnect_cancels_upstream,
     script.delayMsPerChunk = 3;
     upstream.onMessages(script);
 
-    TestEnv env;
-    DOCTEST_REQUIRE(env.service != nullptr);
+    StreamEnv env;
 
     platform::http::Server proxy("127.0.0.1", 0);
     module::claude::ProxyRouter router(env.svc(), proxy);
@@ -850,8 +834,7 @@ REGISTER_TEST(streaming_proxy_buffered_path_unaffected,
     upstream.onMessages(MockScript());
     upstream.onModels(R"({"data":[{"id":"claude-sonnet-4-5"}]})");
 
-    TestEnv env;
-    DOCTEST_REQUIRE(env.service != nullptr);
+    StreamEnv env;
 
     platform::http::Server proxy("127.0.0.1", 0);
     module::claude::ProxyRouter router(env.svc(), proxy);
@@ -1063,8 +1046,7 @@ REGISTER_TEST(streaming_stats_end_to_end,
     };
     upstream.onMessages(script);
 
-    TestEnv env;
-    DOCTEST_REQUIRE(env.service != nullptr);
+    StreamEnv env;
 
     platform::http::Server proxy("127.0.0.1", 0);
     module::claude::ProxyRouter router(env.svc(), proxy);
@@ -1210,8 +1192,7 @@ REGISTER_TEST(streaming_proxy_stop_unblocks_inflight_stream,
     script.delayMsPerChunk = 10;
     upstream.onMessages(script);
 
-    TestEnv env;
-    DOCTEST_REQUIRE(env.service != nullptr);
+    StreamEnv env;
 
     platform::http::Server proxy("127.0.0.1", 0);
     module::claude::ProxyRouter router(env.svc(), proxy);
@@ -1377,15 +1358,14 @@ REGISTER_TEST(streaming_call_log_usage_columns,
     };
     upstream.onMessages(script);
 
-    TestEnv env;
-    DOCTEST_REQUIRE(env.service != nullptr);
-    AppDbScope appDb(env.dbResult.value());
+    StreamEnv env;
+    test_support::ScopedAppDatabase appDb(env.db.handle());
     // TestEnv 只 open(":memory:")、没建表 → 本用例要真落库，先跑全量迁移；
     // claude_call_logs.profile_id 有外键（open 即 PRAGMA foreign_keys=ON），
     // 而 makeProfile 的 id=1 只是内存里的号 → 再补一行 profile 供外键落地
     DOCTEST_REQUIRE(
-        env.dbResult.value().runMigrations(core::migrations::all()).isOk());
-    DOCTEST_REQUIRE(env.dbResult.value().exec(
+        env.db.handle().runMigrations(core::migrations::all()).isOk());
+    DOCTEST_REQUIRE(env.db.handle().exec(
         "INSERT INTO claude_profiles (id, name, base_url, api_key_hint, "
         "api_key_check, keychain_account, model, is_active, created_at, updated_at) "
         "VALUES (1, 'streaming-usage', 'http://127.0.0.1', 'sk-***', 'x', "
@@ -1411,7 +1391,7 @@ REGISTER_TEST(streaming_call_log_usage_columns,
 
     // 落库是两步：响应头就绪时插行（status/latency），流末 UPDATE 回填用量。
     // 客户端读完整流时回填可能还差几毫秒 → 轮询等
-    core::data::SqliteDb& db = env.dbResult.value();
+    core::data::SqliteDb& db = env.db.handle();
     auto usageWritten = [&db]() {
         auto prep = db.prepare("SELECT COUNT(*) AS n FROM claude_call_logs "
                                "WHERE output_tokens IS NOT NULL");
@@ -1454,13 +1434,12 @@ REGISTER_TEST(streaming_call_log_usage_absent,
     script.chunks = {sseChunk(0), "data: [DONE]\n\n"};
     upstream.onMessages(script);
 
-    TestEnv env;
-    DOCTEST_REQUIRE(env.service != nullptr);
-    AppDbScope appDb(env.dbResult.value());
+    StreamEnv env;
+    test_support::ScopedAppDatabase appDb(env.db.handle());
     // 同 streaming_call_log_usage_columns：先迁移建表，再补 profile 行满足外键
     DOCTEST_REQUIRE(
-        env.dbResult.value().runMigrations(core::migrations::all()).isOk());
-    DOCTEST_REQUIRE(env.dbResult.value().exec(
+        env.db.handle().runMigrations(core::migrations::all()).isOk());
+    DOCTEST_REQUIRE(env.db.handle().exec(
         "INSERT INTO claude_profiles (id, name, base_url, api_key_hint, "
         "api_key_check, keychain_account, model, is_active, created_at, updated_at) "
         "VALUES (1, 'streaming-no-usage', 'http://127.0.0.1', 'sk-***', 'x', "
@@ -1486,7 +1465,7 @@ REGISTER_TEST(streaming_call_log_usage_absent,
 
     // 回填本身仍要发生（首事件毫秒有值）——否则下面的 NULL 断言分不清
     // 「写成了 NULL」与「还没回填」
-    core::data::SqliteDb& db = env.dbResult.value();
+    core::data::SqliteDb& db = env.db.handle();
     auto backfilled = [&db]() {
         auto prep = db.prepare("SELECT COUNT(*) AS n FROM claude_call_logs "
                                "WHERE first_event_ms IS NOT NULL");

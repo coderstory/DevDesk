@@ -66,8 +66,8 @@ void removeTreeQuietly(const std::filesystem::path& p) {
     std::filesystem::remove_all(p, ec);
 }
 
-// 审计 [16]：DEVDESK_PETS_DIR 隔离的 RAII 守卫（test_settings.cpp PruneEnv
-// 同款约定）。构造 = 清残留 + 建临时目录 + 指环境变量；析构 = 环境变量拉回
+// 审计 [16]：DEVDESK_PETS_DIR 隔离的 RAII 守卫（test_settings.cpp TestEnv +
+// ScopedConfigPath 同款约定，原类名已随 TIN-06 移除法）。构造 = 清残留 + 建临时目录 + 指环境变量；析构 = 环境变量拉回
 // 未设置 + 删临时目录。断言 fail-fast 提前 return false 也会走析构，不留
 // 环境/磁盘泄漏给同进程后续用例（旧版手工 set/clear 配对失败即跳尾）。
 struct PetsDirEnv {
@@ -1353,11 +1353,6 @@ std::string readAllBytes(const std::filesystem::path& p) {
     return ss.str();
 }
 
-void writeTextFile(const std::filesystem::path& p, const std::string& text) {
-    std::ofstream f(p, std::ios::binary | std::ios::trunc);
-    f << text;
-}
-
 std::filesystem::path tmpPathOf(const std::filesystem::path& p) {
     return std::filesystem::path(p.string() + ".devdesk-tmp");
 }
@@ -1414,7 +1409,7 @@ REGISTER_TEST(pet_skin_json_write_failure_keeps_old, "pet: 皮肤清单原子写
     const std::string oldJson =
         "{\"name\":\"robot\",\"source\":\"DevDesk 内置生成\","
         "\"states\":{\"idle\":[\"f0.png\"]}}";
-    writeTextFile(dir / "pet.json", oldJson);
+    test_support::writeTextFile(dir / "pet.json", oldJson);
     // 清单落盘通道被目录占住（帧文件通道是空的，PNG 照常写出）→ 最后一步 pet.json 失败
     DOCTEST_REQUIRE(std::filesystem::create_directory(tmpPathOf(dir / "pet.json"), ec));
     const auto r = ensureDefaultSkin(dir);
@@ -1432,11 +1427,11 @@ REGISTER_TEST(pet_skin_frame_write_failure_keeps_old, "pet: 皮肤帧原子写�
     removeTreeQuietly(dir);
     std::error_code ec;
     DOCTEST_REQUIRE(std::filesystem::create_directories(dir, ec));
-    writeTextFile(dir / "pet.json",
+    test_support::writeTextFile(dir / "pet.json",
                   "{\"name\":\"robot\",\"source\":\"DevDesk 内置生成\","
                   "\"states\":{\"idle\":[\"f0.png\"]}}");
     const std::string oldFrame = "OLD-FRAME-BYTES";
-    writeTextFile(dir / "f0.png", oldFrame);
+    test_support::writeTextFile(dir / "f0.png", oldFrame);
     // 首帧通道被占住 → 重生成在第一帧就失败（旧实现 trunc 原地写会先毁掉旧帧）
     DOCTEST_REQUIRE(std::filesystem::create_directory(tmpPathOf(dir / "f0.png"), ec));
     const auto r = ensureDefaultSkin(dir);

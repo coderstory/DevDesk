@@ -33,6 +33,13 @@ DataRefresh runDataRefresh(ClaudeService* svc, bool wantProfiles,
             r.active = std::move(aR).value();
             r.hasActive = true;
         }
+        // 批 2：共享配置片段与 profiles 同组取（脏标记同刷，省一次轮询）
+        auto sR = svc->listSharedConfigs();
+        if (sR.isOk()) {
+            r.sharedConfigs = std::move(sR).value();
+        } else {
+            r.sharedConfigsError = sR.errorMessage();
+        }
     }
     if (wantRecent) {
         // 版本号取**查询前**快照（同旧实现）：查询期间落库的调用会让下一帧
@@ -63,6 +70,15 @@ void applyDataRefresh(ProfileListState& st, DataRefresh r) {
         }
         st.cachedActive_ = std::move(r.active);
         st.cachedHasActive_ = r.hasActive;
+        // 批 2：片段快照随 profiles 一起落（失败保旧快照不清空 + 记日志，
+        // 错误行下次写操作重试后自愈；区块按错误态显示）
+        if (r.sharedConfigsError.empty()) {
+            st.cachedSharedConfigs_ = std::move(r.sharedConfigs);
+            st.cachedSharedConfigsError_.clear();
+        } else {
+            st.cachedSharedConfigsError_ = r.sharedConfigsError;
+            LOG_ERROR("共享配置片段加载失败: " + st.cachedSharedConfigsError_);
+        }
     }
     if (r.wantRecent) {
         if (r.recentOk) {

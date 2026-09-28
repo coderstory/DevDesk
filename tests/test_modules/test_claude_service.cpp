@@ -110,35 +110,6 @@ struct TempSyncPaths {
     }
 };
 
-// runProfile 直连形态（D-1）把临时 settings 写到 appDataDir()/run-settings/——
-// 测试必须把数据根指到临时目录（core/paths.cpp 的 DEVDESK_DATA_ROOT 统一覆盖
-// 入口），**绝不碰真实 %APPDATA%/DevDesk**。构造设环境变量 + 建目录，析构删
-// 整棵目录 + 还原环境变量。
-struct ScopedDataRoot {
-    std::string dir;
-    std::string prev;
-    bool hadPrev = false;
-
-    explicit ScopedDataRoot(const std::string& tag) {
-        dir = test_support::tempDbPath(kDbPrefix, tag).string() + ".data";
-        std::error_code ec;
-        std::filesystem::remove_all(dir, ec);
-        if (const char* p = std::getenv("DEVDESK_DATA_ROOT")) {
-            hadPrev = true;
-            prev = p;
-        }
-        test_support::setEnvVar("DEVDESK_DATA_ROOT", dir);
-        std::filesystem::create_directories(dir, ec);
-    }
-    ~ScopedDataRoot() {
-        std::error_code ec;
-        std::filesystem::remove_all(dir, ec);
-        test_support::setEnvVar("DEVDESK_DATA_ROOT", hadPrev ? prev : "");
-    }
-    ScopedDataRoot(const ScopedDataRoot&) = delete;
-    ScopedDataRoot& operator=(const ScopedDataRoot&) = delete;
-};
-
 // 整文件读成字符串（settings.json 未变断言与临时 settings 内容断言共用）
 std::string readFileToString(const std::filesystem::path& p) {
     std::ifstream in(p, std::ios::binary);
@@ -2727,7 +2698,7 @@ REGISTER_TEST(claude_service_dialect_override_survives_reverse_sync,
 
 REGISTER_TEST(claude_service_run_profile_direct_env_writes_temp_settings,
               "claude_service: runProfile 直连——不启代理、写 run-settings 临时文件、假 launch 收到 --settings 参数", {
-    ScopedDataRoot root("runprofile1");
+    test_support::DataRootEnv root(kDbPrefix, "runprofile1");
     test_support::TestDb tdb(kDbPrefix, "runprofile1");
     module::claude::ClaudeService svc(tdb.handle(), kTestKeychainService);
 
@@ -2809,7 +2780,7 @@ REGISTER_TEST(claude_service_run_profile_direct_env_writes_temp_settings,
 
 REGISTER_TEST(claude_service_run_profile_key_read_failure_aborts,
               "claude_service: runProfile 读 Keychain 失败 → fail 且不落盘、不开窗", {
-    ScopedDataRoot root("runprofile2");
+    test_support::DataRootEnv root(kDbPrefix, "runprofile2");
     test_support::TestDb tdb(kDbPrefix, "runprofile2");
     module::claude::ClaudeService svc(tdb.handle(), kTestKeychainService);
 
@@ -2850,7 +2821,7 @@ REGISTER_TEST(claude_service_run_profile_key_read_failure_aborts,
 
 REGISTER_TEST(claude_service_run_profile_zero_global_change_gate,
               "claude_service: runProfile 零全局回归闸——settings.json 未写、is_active 未变、代理未动（激活/非激活都跑）", {
-    ScopedDataRoot root("runprofile3");
+    test_support::DataRootEnv root(kDbPrefix, "runprofile3");
     test_support::TestDb tdb(kDbPrefix, "runprofile3");
     module::claude::ClaudeService svc(tdb.handle(), kTestKeychainService);
 
@@ -2914,7 +2885,7 @@ REGISTER_TEST(claude_service_run_profile_zero_global_change_gate,
 
 REGISTER_TEST(claude_service_run_profile_write_failure_aborts,
               "claude_service: runProfile 写临时 settings 失败（run-settings 被文件占位）→ fail 且不开窗", {
-    ScopedDataRoot root("runprofile4");
+    test_support::DataRootEnv root(kDbPrefix, "runprofile4");
     test_support::TestDb tdb(kDbPrefix, "runprofile4");
     module::claude::ClaudeService svc(tdb.handle(), kTestKeychainService);
 

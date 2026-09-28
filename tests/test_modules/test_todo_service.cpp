@@ -18,6 +18,7 @@ constexpr const char* kDbPrefix = "devdesk_test_todosvc_";
 
 // 一次性环境：开临时 db → migrate（共享 test_support::TestEnv，RAII 自动清理）
 // → 创建 TodoService
+// 模块 glue，keep-local（TIN-06）：共享 TestEnv 基座 + TodoService 构造。
 struct TestEnv : test_support::TestEnv {
     std::unique_ptr<module::todo::TodoService> svc;
 

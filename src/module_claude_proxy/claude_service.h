@@ -20,9 +20,11 @@
 #include <string>
 #include <vector>
 
+#include "call_log_store.h"
 #include "core/proxy_port.h"
 #include "core/sqlite_db.h"
 #include "core/result.h"
+#include "profile_repository.h"
 #include "platform/http_client.h"
 #include "platform/terminal_launch.h"
 #include "settings_sync.h"
@@ -39,83 +41,8 @@ class ProxyRouter;
 // 进程内稳定一份，保证上游侧路由/缓存亲和。
 const std::string& claudeUpstreamSessionId();
 
-// 单条 Claude API 配置（spec §8.3）
-struct Profile {
-    int64_t id = 0;
-    std::string name;
-    std::string baseUrl;        // 例如 https://api.anthropic.com
-    std::string apiKeyPlain;    // **仅内存** 用，不入 SQLite；loadApiKey() 后才有值
-    std::string apiKeyHint;     // 例如 sk-ant-***xyz（UI 显示用）
-    std::string apiKeyCheck;    // 前 8 字符的 SHA256 hex（防误操作校验）
-    std::string keychainAccount;// Keychain account（约定：claude:<id>）
-    std::string model;          // 默认模型（旧列；语义降级为 default 槽位未配置时的 fallback）
-    std::string modelsConfigJson; // 6 槽位模型配置 JSON 原文（空串 = 未配置；provider-config §4.1）
-    std::string extraEnvJson;   // 额外 env 键值 JSON 原文（空串 = 未配置）
-    int64_t sharedConfigId = 0; // 绑定共享配置片段 id（0 = 未绑定；0..1、不嵌套）
-    std::string authField = "both";  // 认证字段三态（'both'/'bearer'/'api_key'；未知/空串按 both 读）
-    // 上游方言覆盖（审计 CPX-13）：空串 = 未覆盖 = 按 baseUrl 的 host 推断
-    //（UpstreamDialect::forBaseUrl 的第二参数）；值域 'anthropic_default' /
-    // 'opencode_zen'，未知 / 空串读侧回落 host 推断、写侧归一为空串。
-    // 自建网关 / 内网镜像的 host 后缀推断不出正确方言时用它钉住；
-    // UI 未暴露（经 DB / 配置文件设置），取值域见 upstream_dialect.h
-    std::string dialectOverride;
-    bool isActive = false;
-    std::time_t createdAt = 0;
-    std::time_t updatedAt = 0;
-};
-
-// 共享配置片段（2026-09-27 shared-config-and-failover 设计 §2.1/§2.2）：
-// 纯 env 装饰层——只有名字 + extra_env，**不含 base_url / 密钥**，故不进路由、
-// 不进凭据链（Keychain 零交互、is_active 唯一性零影响）；一个 profile 绑定
-// 0..1 个片段，不嵌套（片段不引用片段）
-struct SharedConfig {
-    int64_t id = 0;
-    std::string name;
-    std::string extraEnvJson;   // 与 Profile::extraEnvJson 同构同语义（空串 = 未配置）
-    std::time_t createdAt = 0;
-    std::time_t updatedAt = 0;
-};
-
-// 审计 CPX-07：两段写助手。
-// 「先写 Keychain、再写 DB 元数据」原本在 ClaudeService 里手写多份、补偿策略
-// 各不相同（删行 / 回写旧值 / 干脆没有补偿）。收敛到本类后语义统一为：
-//   段一 writeKey()：把 Keychain 写成新值（空串 = 删除该条目）
-//   段二 writeDb() ：落 DB 元数据
-// 任一段失败 → 按构造时捕获的旧值回写 Keychain（旧值为空 = 删除条目），
-// 保证密钥与 DB 里的 api_key_hint / api_key_check 始终对得上（失败时回到
-// 「改之前」的状态，而不是「密钥已换、元数据没换」的中间态）。
-//
-// 用法：
-//   TwoPhaseKeyWrite tx = TwoPhaseKeyWrite::capture(keychainService_, account);
-//   auto kc = tx.writeKey(newKey);
-//   if (kc.isFail()) return fail(kc...);          // 段一失败：已回写旧值
-//   return tx.writeDb([&] { ...UPDATE...; });     // 段二失败：已回写旧值
-class TwoPhaseKeyWrite {
-public:
-    TwoPhaseKeyWrite(std::string keychainService, std::string account,
-                     std::string oldKey);
-
-    // 捕获 Keychain 当前值作为旧值（读不到 = 该条目不存在，按空串处理）
-    static TwoPhaseKeyWrite capture(const std::string& keychainService,
-                                    const std::string& account);
-
-    // 段一：把 Keychain 写成 newKey（空串 = 删除条目）。
-    // 失败 → 尽力回写旧值后返回该错误；调用方不应继续段二。
-    core::Result<void> writeKey(const std::string& newKey);
-
-    // 段二：执行 DB 写；失败 → 尽力回写旧值后返回 DB 的错误。
-    core::Result<void> writeDb(const std::function<core::Result<void>()>& dbWrite);
-
-private:
-    // Keychain 已改且尚未回到旧值 → 回写旧值（失败只记 ERROR：结果由调用方
-    // 从 Keychain 实际状态判断）
-    void compensate();
-
-    std::string service_;
-    std::string account_;
-    std::string oldKey_;
-    bool keyTouched_ = false;   // 段一改动过 Keychain 且尚未回到旧值
-};
+// 单条 Claude API 配置 / 共享配置片段 / 两段写助手（CPX-07）的类型定义已随
+// R10-A2 迁至 profile_repository.h（本头文件 include 透出，消费方零改动）
 
 class ClaudeService {
 public:
@@ -227,42 +154,14 @@ public:
 
     // ---- 调用日志 ----
 
-    struct CallLogEntry {
-        int64_t id = 0;
-        int64_t profileId = 0;
-        std::string method;
-        std::string path;
-        int statusCode = 0;
-        int64_t latencyMs = 0;
-        int64_t requestBytes = 0;
-        int64_t responseBytes = 0;
-        std::string error;
-        std::time_t startedAt = 0;
-    };
+    // R10-A1：数据模型与读写已抽至 CallLogStore（call_log_store.h，职责边界
+    // 见 R10 spec §2.2）；此处以别名保持既有公开类型名不变，下列方法体转发到
+    // callLogStore_（门面 43 签名零变化，纯内部重构）
+    using CallLogEntry = CallLogStore::CallLogEntry;
+    using CallLogQuery = CallLogStore::CallLogQuery;
 
     core::Result<void> logCall(const CallLogEntry& entry);
     core::Result<std::vector<CallLogEntry>> recentCalls(int limit = 20);
-
-    // 日志面板查询条件（产品审计 2026-09-23 [11]）：总设计 §8.3 第 6 条承诺
-    // 「完整日志面板（支持过滤、搜索）」，此前只有 recentCalls(20) 静态列表。
-    // search 按 path/method 模糊匹配（LIKE，% 与 _ 转义为字面量，ASCII 大小写
-    // 不敏感）；statusClass 按状态码分桶（status_code 列可空，NULL 按 0 归
-    // 「错误」桶）；limit/offset 翻页。排序与 recentCalls 一致
-    // （started_at DESC, id DESC）。
-    struct CallLogQuery {
-        // statusClass 取值：
-        static constexpr int kStatusAll = 0;  // 全部
-        static constexpr int kStatus2xx = 2;  // 200..299
-        static constexpr int kStatus3xx = 3;  // 300..399
-        static constexpr int kStatus4xx = 4;  // 400..499
-        static constexpr int kStatus5xx = 5;  // >=500
-        static constexpr int kStatusErr = 9;  // <200（0/NULL = 超时、网络错误等无状态码）
-
-        std::string search;    // 空串 = 不做文本过滤
-        int statusClass = kStatusAll;
-        int limit = 20;        // <=0 按 20
-        int offset = 0;        // <0 按 0
-    };
 
     // 过滤 + 分页查询（日志弹窗搜索框 / 状态码下拉 / 翻页共用）
     core::Result<std::vector<CallLogEntry>> queryCalls(const CallLogQuery& q);
@@ -378,7 +277,7 @@ public:
     // Claude 页 compose 用它感知代理侧异步落库，只在版本变化时重查 recentCalls，
     // 不再每次重组合同步查库。
     uint64_t callLogVersion() const {
-        return callLogVersion_.load(std::memory_order_acquire);
+        return callLogStore_.callLogVersion();
     }
 
 public:
@@ -391,21 +290,8 @@ public:
     static constexpr int kMaxProxyPort = ::core::kMaxProxyPort;
 
 private:
-    // 从一行 SqlRow 构造 Profile（不含 apiKeyPlain）
-    core::Result<Profile> rowToProfile(const core::data::SqlRow& row) const;
-
-    // 从一行 SqlRow 构造 SharedConfig
-    core::Result<SharedConfig> rowToSharedConfig(const core::data::SqlRow& row) const;
-
-    // 片段 extra_env 原文（0 / 片段不存在 / 读失败 → 空串 = 未绑定；读路径容错，
-    // 悬空 id 退化成「未绑定」而不是让接管/G10 失败）
-    std::string sharedExtraEnvJsonFor(int64_t sharedConfigId) const;
-
-    // 片段存在性校验（update / delete 前置，缺失 → NotFound）
-    core::Result<void> requireSharedConfigExists(int64_t id) const;
-
-    static std::string sha256HexPrefix(const std::string& s);
-    static std::string makeApiKeyHint(const std::string& apiKey);
+    // R10-A2：行解析 / 哈希 / 片段存在性校验等私有工具与 TwoPhaseKeyWrite 已随
+    // ProfileRepository 迁至 profile_repository.h（见其 private 区）
 
     // 接管/还原的内部入口（settingsFile 为空 = 通道未启用，直接返回）。
     // syncTakeOver 返回失败原因（settings.json / sidecar 读写或解析失败），供
@@ -426,6 +312,10 @@ private:
     core::Result<void> syncCaptureActiveProfile();
 
     core::data::SqliteDb& db_;
+    CallLogStore callLogStore_;
+    // R10-A2：claude_profiles 行 + SharedConfig 片段 + Keychain 条目的唯一
+    // 持久化入口（职责边界见 R10 spec §2.2；门面只留策略编排与转发）
+    ProfileRepository profileRepository_;
     std::string keychainService_;
 
     // 代理 server 资源（延迟构造）
@@ -455,9 +345,6 @@ private:
     settings_sync::Paths syncPaths_;
     bool settingsTakeOverEnabled_ = true;  // 接管默认开（见 setSettingsTakeOverEnabled）
     std::vector<std::string> lastSyncWarnings_;
-
-    // 审计 perf [13]：调用日志版本号（见 callLogVersion()）
-    std::atomic<uint64_t> callLogVersion_{0};
 };
 
 // ===== 纯函数（可单测，无 IO）=====
