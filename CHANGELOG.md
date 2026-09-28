@@ -24,6 +24,9 @@ master `c48546e`（`[Batch-0927-B]` 收口）→ `9dd9ee2`：**36 个 `--no-ff` 
 ### [Installer-M1] `de8183c` —— 安装器 M1：DMG 背景图生成脚本 + 素材入库（`5cf517e`、`cdb3d02`）
 - feat(installer)：新增 `doc/scripts/gen_dmg_background.py`（Windows 侧 Pillow 预生成 700×440 / 1400×880 两张背景图入库，附尺寸断言）。
 
+### [Installer-M1.2] `7748006` —— 安装器 M1 补：DMG `.icns` 生成脚本（macOS 专用 `iconutil`/`sips`，Windows 侧入库为载体）
+- feat(installer)：新增 `doc/scripts/gen_app_icns.sh`（macOS 侧用 `iconutil`/`sips` 合成 `.icns`；Windows 侧脚本入库、以 git 为载体）+ `doc/scripts/index.md` 登记 + `installer/macos/.gitignore` 补 `.icns` 产物。
+
 ### [Audit-P2] `db0093c` —— 审计 P2：probe_winfx.ps1 输出路径去 worktree 硬编码（`198517b`）
 - fix(scripts)：probe 截图输出改为脚本所属仓库 `build/probe`（原路径指向已删 worktree）。
 
