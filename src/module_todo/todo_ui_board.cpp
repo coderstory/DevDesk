@@ -351,31 +351,49 @@ void drawColumnContent(eui::Ui& ui, const std::string& id, const Column& col,
     // 列内滚动（scrollView）：此前直接裁掉超出列高的卡片（第 12 张起消失）。
     // 滚动位置按列索引记忆（reloadAll 时 vector resize 保留旧值）。
     const auto componentTheme = core::theme::componentTokens(t);
-    components::scrollView(ui, id + ".scroll")
+    // M2-3（2026-09-28，UI 现代化）：列内容容器 = 卡片落位淡入载体——
+    // 拖拽结束（onDragEnd / cardReleased 置位）的下一帧 0.6 → 1.0 淡回
+    // （0.12s OutQuad；跟手期间标志不被触碰，动画不与拖拽打架）。
+    // 原 scrollView 的绝对定位整体下移进本容器（位置/尺寸逐值等价，
+    // 列头按钮等其余元素不受影响）
+    ui.stack(id + ".cards")
         .position(0.0f, kColumnHeaderHeight)
         .size(width, height - kColumnHeaderHeight)
-        .gap(kCardGap)
-        .step(60.0f)
-        .theme(componentTheme)
-        .contentKey(id + ".scroll." + std::to_string(colTasks.size()))
-        .offset(columnScrollOffset(v.columns, v.columnScrolls, colIndex))
-        .onChange([cb = v.act.columnScrollChanged, colIndex](float value) {
-            cb(colIndex, value);
-        })
-        .content([&](eui::Ui& inner, float contentWidth, float viewportHeight) {
-            (void)viewportHeight;
-            for (size_t i = 0; i < colTasks.size(); ++i) {
-                const std::string cardId = id + ".card." + std::to_string(i);
-                inner.stack(cardId + ".wrap")
-                    .size(contentWidth, kCardHeight)
-                    .content([&] {
-                        drawCard(inner, cardId, 0.0f, contentWidth - 16.0f, t,
-                                 *colTasks[i], static_cast<int>(colIndex),
-                                 static_cast<int>(v.columns.size()),
-                                 static_cast<int>(i), v, plate);
-                    })
-                    .build();
-            }
+        .opacity(v.columnFadeIn ? 1.0f : 0.6f)
+        .transition(core::Transition::make(0.12f, core::Ease::OutQuad))
+        .animate(core::AnimProperty::Opacity)
+        .content([&] {
+            components::scrollView(ui, id + ".scroll")
+                .position(0.0f, 0.0f)
+                .size(width, height - kColumnHeaderHeight)
+                .gap(kCardGap)
+                .step(60.0f)
+                .theme(componentTheme)
+                .contentKey(id + ".scroll." + std::to_string(colTasks.size()))
+                .offset(columnScrollOffset(v.columns, v.columnScrolls, colIndex))
+                .onChange([cb = v.act.columnScrollChanged, colIndex](float value) {
+                    cb(colIndex, value);
+                })
+                .content([&](eui::Ui& inner, float contentWidth,
+                             float viewportHeight) {
+                    (void)viewportHeight;
+                    for (size_t i = 0; i < colTasks.size(); ++i) {
+                        const std::string cardId =
+                            id + ".card." + std::to_string(i);
+                        inner.stack(cardId + ".wrap")
+                            .size(contentWidth, kCardHeight)
+                            .content([&] {
+                                drawCard(inner, cardId, 0.0f,
+                                         contentWidth - 16.0f, t,
+                                         *colTasks[i],
+                                         static_cast<int>(colIndex),
+                                         static_cast<int>(v.columns.size()),
+                                         static_cast<int>(i), v, plate);
+                            })
+                            .build();
+                    }
+                })
+                .build();
         })
         .build();
 }
@@ -398,6 +416,10 @@ void drawCard(eui::Ui& ui, const std::string& id, float y, float width,
         // 卡片 = surface 层（浅色白 / 深色 #232120，spec §6.5.1 卡片色），
         // 浮在列容器（background）之上；曾用 surfaceElevated 抬高了一级
         .states(t.colors.surface, t.colors.hover, t.colors.active)
+        // M2（2026-09-28，UI 现代化）：hover/按下颜色过渡（列表项基调
+        // 0.1s OutQuad；拖拽半透明 opacity 不含在掩码里，跟手不打架）
+        .transition(core::Transition::make(0.1f, core::Ease::OutQuad))
+        .animate(core::AnimProperty::Color)
         .radius(t.sizes.radius)
         .opacity(cardOpacity)
         .border(selected ? 2.0f : 0.0f,

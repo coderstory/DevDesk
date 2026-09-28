@@ -72,6 +72,10 @@ struct BoardView {
     bool hasService = false;
     const std::string& loadError;
     const BoardActions& act;
+    // M2-3（2026-09-28，UI 现代化）：卡片落位淡入标志（模块状态当帧快照）。
+    // 拖拽结束后模块置 false → 列内容容器 0.6 → 1.0 淡回（0.12s OutQuad）；
+    // 跟手期间恒 true（onDrag 通道不触碰，动画不与拖拽打架）
+    bool columnFadeIn = true;
 };
 
 // 表头（标题 + 搜索框 + 逾期入口 + 建列/建任务）

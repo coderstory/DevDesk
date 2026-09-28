@@ -349,9 +349,23 @@ public:
             .size(screen.width, screen.height)
             .padding(pad)
             .gap(t.sizes.spacingLarge)
+            // M2（2026-09-28，UI 现代化）：四态切换过渡——切换瞬间目标 1→0
+            // 播放淡出，0.15s 后由 .fadein 计时器拨回 1 触发淡入；compose 每帧
+            // 目标一致时不动画，仅 setMode（segmented / Ctrl+Shift+P）驱动
+            .opacity(viewFadeIn_ ? 1.0f : 0.0f)
+            .translateY(viewFadeIn_ ? 0.0f : 6.0f)
+            .transition(core::Transition::make(0.15f, core::Ease::OutCubic))
+            .animate(core::AnimProperty::Opacity | core::AnimProperty::Transform)
             .content([&] {
                 drawHeader(ui, contentW, contentH, bodyH, t);
                 drawBody(ui, contentW, bodyH, sideW, midW, gap, t, componentTheme);
+                // M2：淡入复位计时器（0.15s 后把目标值拨回 1 触发淡入动画）
+                if (!viewFadeIn_) {
+                    ui.stack("md.root.fadein")
+                        .size(0.0f, 0.0f)
+                        .onTimer(0.15f, [this] { viewFadeIn_ = true; })
+                        .build();
+                }
             })
             .build();
 
@@ -2806,6 +2820,9 @@ private:
         // Phase 3 M2：进实时态 → 状态位群复位（锚 / 聚焦 / 滚动，见 enterLiveState）
         if (m == ViewMode::Live) enterLiveState("切换视图");
         mode_ = m;
+        // M2（2026-09-28）：四态切换过渡触发（唯一的切换收口——顶栏
+        // segmented 与 Ctrl+Shift+P 都经本函数，两路动画行为一致）
+        beginViewTransition();
         // 进预览态时把滚动位置对齐编辑器当前位置（compose 里延迟计算，
         // 因为需要预览列宽和主题样式）
         if (m == ViewMode::Preview) syncPreviewOnEnter_ = true;
@@ -3893,6 +3910,11 @@ private:
     // 四态视图（W9：默认编辑态 = 左树 + 右编辑两栏；实时/双栏/预览经顶栏
     // segmented 或 Ctrl+Shift+P 切换——用户确认期望「左侧目录树、右侧编辑区」）
     ViewMode mode_ = ViewMode::Edit;
+    // M2（2026-09-28，UI 现代化）：四态切换过渡标志——setMode 置 false 触发
+    // md.root 整视图淡出，0.15s 后由 root 内 0 尺寸 onTimer 拨回 true 触发
+    // 淡入（0.15s OutCubic，见 compose 的 md.root 链）
+    bool viewFadeIn_ = true;
+    void beginViewTransition() { viewFadeIn_ = false; }
     std::vector<MdHeading> outline_;   // 大纲（标题扫描结果）
     bool outlineDirty_ = true;
     int activeOutlineIdx_ = -1;        // 仅预览态用（无编辑器光标可读）
