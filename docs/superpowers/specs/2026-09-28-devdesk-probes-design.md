@@ -69,9 +69,9 @@ L1/L2 是安静的（不依赖像素时序）；L3 走 RenderBackend 真渲染�
 
 | # | bug 类 | 定位证据 | 该不该 probe | 断言（层） | 优先级 |
 |---|--------|----------|--------------|------------|--------|
-| 1 | **dropdown z 序碰撞**（settings 外观卡 vs 编辑器字号卡等值 z） | settings_ui_cards.cpp:63-69（zIndex(40) 抬层注释 + 回归 1379cc1：等值 z30 时后绘的编辑器字号卡盖住外观卡弹层）；引擎判据 dsl.h:1752-1778 | ✅ 必须 | L2：每开一个下拉，与 popup frame 相交的每个非祖先元素，其 `subtreeMaxZIndex` 必须 < **弹层链上界**（§2.2 定义）——≥ 即 FAIL（注释档 40 处上界 40 > 字号卡 30 绿；revert 回 30 后等值必须红）；L1：popup ⊂ 窗（无头同款：test_modules/test_settings.cpp:752-754） | **P0 = MVP** |
+| 1 | **dropdown z 序碰撞**（settings 外观卡 vs 编辑器字号卡等值 z） | settings_ui_cards.cpp:63-70（zIndex(40) 抬层注释）/ :83（zIndex setter） + 回归 1379cc1：等值 z30 时后绘的编辑器字号卡盖住外观卡弹层；引擎判据 dsl.h:1752-1778 | ✅ 必须 | L2：每开一个下拉，与 popup frame 相交的每个非祖先元素，其 `subtreeMaxZIndex` 必须 < **弹层链上界**（§2.2 定义）——≥ 即 FAIL（注释档 40 处上界 40 > 字号卡 30 绿；revert 回 30 后等值必须红）；L1：popup ⊂ 窗（无头同款：test_modules/test_settings.cpp:752-754） | **P0 = MVP** |
 | 2 | **卡片几何溢出**（profile 详情非最大化溢出卡底） | profile-run 计划人工项：最小窗 1200×720 下文案/表完整无重叠（2026-09-28-profile-run-plan.md:1661）；profile 卡列表 claude_ui_list.cpp:400-475 | ✅ 必须 | L1：dialog/卡内子树 frame ⊆ 卡 frame ⊆ 窗；尺寸矩阵 {1200×720 最小, 1600×1000 默认} 两组各跑一遍 | P1 |
-| 3 | **sparkline 渲染错位**（lineChart 32px chromeless 几何） | home_module.cpp:472-491（`home.stat.tokens.spark` lineChart chromeless）；组件几何 linechart.h:92-95（chromeless plot = 全盒）；空 values 会填 demo 数据（linechart.h:85-86，D-6 护栏 :472-478 已防空） | ✅（结构档）+ ⚠️ 组件级归上游 | L1：sparkline 根元素 frame == 调用点指定 rect；曲线点 x∈[0,chartW]、y∈[0,chartH]（扫描 chart 内部几何点）；传空 series 无 demo 数据泄漏（防 D-6 回归）。**组件级 demo-fill 断言放 EUI-NEO 侧 probe 更合适**，本方案只锁 DevDesk 侧接线 | P1 |
+| 3 | **sparkline 渲染错位**（lineChart 32px chromeless 几何） | home_module.cpp:425-460（Tokens 卡 drawStatCard 的 chart lambda，`home.stat.tokens.spark` lineChart chromeless；spark 序列 = core::proxy_stats::rateSeries(24)，home_module.cpp:449-450）；组件几何 linechart.h:92-95（chromeless plot = 全盒）；空 values 兜底是 6 个 demo 值（linechart.h:85-86，{0.22,0.30,0.20,0.55,0.42,0.86}，非 {0.0f}）——D-6 护栏在模块侧（rateSeries 空序列兜底 + seriesLive 判定，home_module.cpp:447-477），compose 路径 series 恒非空 | ✅（结构档）+ ⚠️ 组件级归上游 | L1：sparkline 根元素 frame == 调用点指定 rect；曲线点 x∈[0,chartW]、y∈[0,chartH]（扫描 chart 内部几何点）。**组件级 demo-fill 断言归 EUI-NEO 侧单测（values() 注入空向量）**——DevDesk 不建 demo-fill 断言（compose 路径无法注入空 series） | P1 |
 | 4 | **双底色**（profile 列表 card 套 bg） | claude_ui_list.cpp:422-430（2026-09-28 已修：去 card 组件骨架，仅留 `.bg` 唯一底，注释直引"用户反馈"） | ✅（回归防护） | L1 结构断言：卡片 rect 内恰好一层不透明 surface 底（遍历 frame 相等的 rect 底元素计数 == 1）；L3 像素可选取证「底层是 surface 非白底+阴影」 | P2 |
 | 5 | **文本溢出弹窗**（长文案致弹出层越界/截断） | 托盘菜单 panel 尺寸预算审计（2026-09-25-devdesk-ui-fix-batch-design.md:60 待真机取证）；弹层越界已有无头同款可仿（test_settings.cpp:724-777 openUp） | 部分 | 越界半可 probe：L1 styledmenu/弹层 frame ⊆ screen；「截断观感」（省略号/滚动提示）属视觉判断 → 不 probe，留 check-consistency + 人工 | P2 |
 | 6 | **卡片内边距/居中** | 与视觉 token 强耦合（示意间距 8px 网格、卡 padding，设计 spec §6.5） | 弱 | 只对**已修尺寸的回归位**做数值断言（同款：settings_path_text_vertically_centered，test_settings.cpp:781）；不新建纯审美断言 | P3 |
@@ -80,7 +80,7 @@ L1/L2 是安静的（不依赖像素时序）；L3 走 RenderBackend 真渲染�
 
 ## §3-probe-full 全 bug 类 probe 设计（综合 UI 审计 41 findings → 12 类 + 附 1）
 
-数据源：2026-09-28 综合 UI 审计 6 页并行，41 findings（home 7 / markdown 4 / todo 9 / claude 6 / settings 9 / pet+sidebar 6）。每条根因与定位证据直接采信审计（file:行号）；本节只补「probe 怎么自动断言」。
+数据源：本清单源自 2026-09-28 综合 UI 审计（6 页并行：home/markdown/todo/claude/settings/pet+sidebar，共 41 findings，会话内产生；审计源文档当前未入库，此注即来源闭环）。每条根因与定位证据直接采信审计（file:行号）；本节只补「probe 怎么自动断言」。
 
 **总规则（每类搭法共性，下文只写差异）**：骨架一律 = 真窗（§2.1 harness：backend init → createWindow → Runtime → 每帧 update+recompose 成对）+ CONFIG 隔离（`test_support::ScopedConfigPath`，与真机配置无关）+ 锚点 id 走 compose 后 `capturedUi->find(id)` 读 Element 字段（frame / opacity / hoverColor / border / shadow，均为 dsl.h 既有字段）。**全部断言走 L1/L2（frame/字段/状态），不进 `--pixels` 快档**；`elementStructure_` 比较与 `paintRequested_` 由 runtime 内部完成（runtime_lifecycle.h:59-63、:154-156），probe 直接读 `runtime.paintRequested()` / `composeRequested()`（:163-169）。
 
@@ -88,8 +88,8 @@ L1/L2 是安静的（不依赖像素时序）；L3 走 RenderBackend 真渲染�
 
 | 项 | 内容 |
 |---|---|
-| bug + 根因 | (a) settings 跨卡 z 碰撞（外观卡 40 vs 编辑器字号卡 30；settings_ui_cards.cpp:63-69，引擎判据 dsl.h:1752-1778）——**已有 MVP（§4），本节不重述**；(b) home Token 卡 sparkline 以 (0,0) 构建叠 label 文字带——chart lambda 未给 x/y，chromeless 下 plot 区 = 整盒（home_module.cpp:133；linechart.h:92-95） |
-| 断言 | (b) L1：`home.stat.tokens.spark` 根 frame 与 `home.stat.tokens.*.label` text frame **不相交**（gap ≥ 2px；修复后 chart 进独立条带）；曲线多边形元素（id `home.stat.tokens.spark.segment.curve.N`，linechart.h:159-172）frame 亦不相交。demo-fill 防回归：注入空 series 时元素树曲线段数为 0（D-6 护栏 linechart.h:85-86 兜底 {0.0f}，span=0 不产 segment——断言 `find("...segment.curve.0") == nullptr`） |
+| bug + 根因 | (a) settings 跨卡 z 碰撞（外观卡 40 vs 编辑器字号卡 30；settings_ui_cards.cpp:63-70 抬层注释 / :83 zIndex setter，引擎判据 dsl.h:1752-1778）——**已有 MVP（§4），本节不重述**；(b) home Token 卡 sparkline 以 (0,0) 构建叠 label 文字带——chart lambda 未给 x/y，chromeless 下 plot 区 = 整盒（home_module.cpp:133；linechart.h:92-95） |
+| 断言 | (b) L1：`home.stat.tokens.spark` 根 frame 与 `home.stat.tokens.*.label` text frame **不相交**（gap ≥ 2px；修复后 chart 进独立条带）；曲线多边形元素（id `home.stat.tokens.spark.segment.curve.N`，linechart.h:159-172）frame 亦不相交。~~demo-fill 防回归断言（注入空 series → 元素树曲线段数为 0 / `find("...segment.curve.0") == nullptr`）删除~~——REFUTED：linechart.h:85-86 空 values 兜底是 6 个 demo 值 {0.22,0.30,0.20,0.55,0.42,0.86} 而非 {0.0f}；且 compose 路径 series 恒由 core::proxy_stats::rateSeries(24) 提供、恒非空，无法注入空 series，旧断言必 FAIL。**组件级 demo-fill 断言归 EUI-NEO 侧单测（values() 注入空向量）** |
 | 文件 | (b) `home_probes.cpp` §A（新）；（a）`settings_dropdown_z_probe.cpp`（MVP） |
 | 搭法 | home 页：CONFIG 隔离（`ScopedConfigPath`）→ `create_home_module()` + onStart → 开窗 1200×1000 → 空转 1 帧 → 读 spark 根与 label |
 | 优先级 / 适合 | P1 / ✅ 必须 |
@@ -118,8 +118,8 @@ L1/L2 是安静的（不依赖像素时序）；L3 走 RenderBackend 真渲染�
 
 | 项 | 内容 |
 |---|---|
-| bug + 根因 | (a) home barChart 128px wrap → plotHeight=16px、8px 地板假条、条形区与轴标签间 35px 空带（home_module.cpp:541；barchart.h:84-89、:128 `max(8, v*plotHeight)`）；(b) settings 三个按钮只 .colors() 不 .theme() → EUI-NEO 默认深色主题泄漏：#3871E0 蓝描边 + 黑 0.22 重阴影（settings_ui_cards.cpp:647「应用」、:533「打开目录」、:938「刷新」） |
-| 断言 | (a) L1：所有 `home.api.chart.bar.N` 元素的 y∈[plotY, bottomY] 且 bar 区总高 plotY..bottomY ≥ 36px（修复后 chartCardH 提升）；注入全零 values 时 bar 元素数 == 0（修掉 8px 地板条）或全零高度；(b) L1 字段：按钮元素 `border` 颜色 == `t.colors.primary`（#D97757 暖）非 EUI 默认蓝 #3871E0，`shadow` alpha ≤ 0.10（浅色档 token）非 0.22（元素字段 border/shadow，dsl.h:882-915） |
+| bug + 根因 | (a) home barChart 128px wrap → plotHeight=16px、8px 地板假条、条形区与轴标签间 35px 空带（home_module.cpp:541；barchart.h:84-89 布局、:136-147 每 index 无条件建 bar、:128 `max(8, v*plotHeight)` 8px 地板条）；(b) settings 三个按钮只 .colors() 不 .theme() → EUI-NEO 默认深色主题泄漏：#3871E0 蓝描边 + 黑 0.22 重阴影（settings_ui_cards.cpp:647「应用」、:533「打开目录」、:938「刷新」） |
+| 断言 | (a) L1：bar 区总高 plotY..bottomY ≥ 36px（修复后 chartCardH 提升）；注入全零 values 时所有 `home.api.chart.bar.N` 高度 == 0（<1px）——**旧「bar 元素数 == 0」删**（barchart.h:136-147 每 index 无条件建 bar，全零时 max(8,0)=8px 地板条仍在）；**y∈[plotY, bottomY] 删**（bar y = bottomY - barHeight 代数恒落区间，构造恒真无判别力）；(b) L1 字段：按钮元素 `border` 颜色 == `t.colors.primary`（#D97757 暖）非 EUI 默认蓝 #3871E0，`shadow` alpha ≤ 0.10（浅色档 token）非 0.22（元素字段 border/shadow，dsl.h:882-915） |
 | 文件 | `home_probes.cpp` §D（a）；`settings_cards_probes.cpp` §C（b） |
 | 搭法 | (b) settings 页 9 卡 + 深浅两主题各跑一遍（切主题 = 模块 onStart 配置或 api 注入） |
 | 优先级 / 适合 | P1（a）/ P2（b）/ ✅ 必须 |
@@ -139,7 +139,7 @@ L1/L2 是安静的（不依赖像素时序）；L3 走 RenderBackend 真渲染�
 | 项 | 内容 |
 |---|---|
 | bug + 根因 | (a) home 统计数字 48px（~27px/位仅容 5 位）+ badge（154.85px > 134 可用）无 clip 无 wrap 溢出压邻卡（home_module.cpp:100；dsl.h:124 clip 默认 false、:149 wrap 默认 false）；(b) claude 删除确认弹窗正文固定高 60，>~50 CJK 字名换行到第 4 行与按钮行重叠（claude_ui_form.cpp:1030）；(c) 共享配置绑定行文本溢出 pane 右缘（claude_ui_detail.cpp:113）；(d) 窗口效果降级提示行窄窗可用宽 224px < 文案 275px（settings_ui_cards.cpp:215） |
-| 断言 | (a) **最小窗矩阵** 1200×720：填 6 位+数字与长 badge 文案 → `home.stat.*.number` / `.badge` text frame ⊆ 所在卡 frame；dirty 数据枚举（若模块探针可注入 stats 快照；否则用最大字面量档）。(b) 构造长名 profile（≥60 CJK 字）开删除弹窗 → 正文 text frame.bottom ≤ 按钮行 frame.top；(c) 长片段名 → 文本 frame.right ≤ pane frame.right；(d) 窄卡宽（最小窗）→ 降级提示 text frame ⊆ 卡 frame |
+| 断言 | (a) **最小窗矩阵** 1200×720：填 6 位+数字与长 badge 文案 → 断言 `home.stat.*.number` / `.badge` 文本元素 **clip == true 或 wrap == true**（判别字段 = 修复实际落点：加 clip → clip==true（dsl.h:124 默认 false）、加 wrap → wrap==true（dsl.h:149 默认 false）；落点未定则用 `TextPrimitive::measureTextSize`（dsl.h:1729 同款 API）断言内在宽 ≤ 可用宽）——**不用「text frame ⊆ 所在卡 frame」**（数字/badge frame 是布局字面 rect 恒在卡内，溢出是字形画到 frame 外（clip=false/wrap=false），frame 断言修复前后恒绿，抓不到回归）。(b) 构造长名 profile（≥60 CJK 字）开删除弹窗 → 正文 text frame.bottom ≤ 按钮行 frame.top；(c) 长片段名 → 文本 frame.right ≤ pane frame.right；(d) 窄卡宽（最小窗）→ 断言降级提示文本元素 **clip == true 或 wrap == true**（判别字段同 (a) 注，注释明示；修复前默认 false → 红） |
 | 文件 | `home_probes.cpp` §F（a）；`claude_probes.cpp` §C（b/c）；`settings_cards_probes.cpp` §E（d） |
 | 搭法 | (a)/(b) 需构造数据：home 用模块 stats 注入（探针直连 `core::proxy_stats` 写入）；claude 经 `ClaudeService` 测试造数路径（与无头同款）；(d) 空转即可 |
 | 优先级 / 适合 | P1（a）/ P2（b、c、d）/ ✅ 必须 |
@@ -154,12 +154,14 @@ L1/L2 是安静的（不依赖像素时序）；L3 走 RenderBackend 真渲染�
 | 搭法 | 造数：(a) todo 8 列经模块 DB 测试造数路径；(b) claude 5 profile + 片段（复用无头造数，test_claude_ui 同款） |
 | 优先级 / 适合 | P2（a）/ **P1**（b，major 且点击语义也错）/ ✅ 必须 |
 
-### 类 8 truncation（5 组）
+### 类 8 truncation（6 组）
+
+> 组数口径：表内 (a)-(f) 共 6 组（标题原「5 组」系计数笔误，已改）；8(f) 与 9(c) 共享根因（同一 settings 皮肤下拉，settings_ui_cards.cpp:443），断言**分计两组**——分别锁 clip 裁切与 openUp 防护两个修复落点，不按根因去重；§5「32 处断言组」即按此口径（2+3+3+2+2+4+2+6+5+1+1+1=32）。
 
 | 项 | 内容 |
 |---|---|
 | bug + 根因 | (a) markdown 状态栏左区窄窗仅 44px，文件名+保存态被 .clip() 裁不可读（markdown_module.cpp:1365）；(b) todo 逾期弹窗「逾期N天」固定 48px 宽截断（todo_ui_dialogs.cpp:541）；(c) 详情弹窗标签放不下静默断行无 +N（todo_ui_dialogs.cpp:769）；(d) claude Profile 卡 name/URL/model 不裁剪被徽标/角标盖、调用记录 mp 文本溢出列区（claude_ui_list.cpp:100、claude_ui_detail.cpp:377）；(e) pet 气泡固定 32px 高小皮肤被裁（pet_window.cpp:472）；(f) settings 皮肤下拉弹层被卡片 scrollView 视口 clip 裁掉末项（settings_ui_cards.cpp:443，最小窗 popup 底 706 > 视口底 680） |
-| 断言 | 统一骨架：**文本 frame 与裁剪方（clip 容器/后绘徽标/弹窗边）互不咬合或显式截断指示**——(a) 状态栏文本 frame ⊆ 其 .clip() 容器；且保存态元素可见（width > 0）；(b) 「逾期N天」日数 2 位时 text frame ⊆ 行 frame；(c) 构造 6 标签放不下 → 出现 `+N` chip 元素；(d) name 文本 frame 与 ACTIVE 徽标 frame 不相交或 name 元素 clip=true；mp 文本 frame ⊆ 行；（e）小皮肤（frameSize 高 < 38）时气泡元素不存在或气泡文本 ⊆ 气泡；(f) 最小窗 + ≥3 皮肤：皮肤下拉 popup frame ⊆ tab 视口 frame（修复后 openUp 或 up 朝上，见类 9 组 (c)） |
+| 断言 | 统一骨架：**文本 frame 与裁剪方（clip 容器/后绘徽标/弹窗边）互不咬合或显式截断指示**——(a) 状态栏元素（文件名/保存态）**内在宽 ≤ 可用宽**（`TextPrimitive::measureTextSize`，dsl.h:1729；窄窗 44px 左区修复后全可见，修复前内在宽超出被裁）——**判别字段视修复落点**：改法为 wrap 则断言 wrap == true（clip 修复前已存在，clip==true 无判别力）；且保存态元素可见（width > 0）；(b) 「逾期N天」日数 2 位时 text frame ⊆ 行 frame；(c) 构造 6 标签放不下 → 出现 `+N` chip 元素；(d) name 文本 frame 与 ACTIVE 徽标 frame 不相交或 name 元素 clip=true；mp 文本 frame ⊆ 行；（e）小皮肤（frameSize 高 < 38）时气泡元素不存在或气泡文本 ⊆ 气泡；(f) 最小窗 + ≥3 皮肤：皮肤下拉 popup frame ⊆ tab 视口 frame（修复后 openUp 或 up 朝上，见类 9 组 (c)） |
 | 文件 | `markdown_probes.cpp` §B（a）；`todo_probes.cpp` §C（b、c）；`claude_probes.cpp` §B（d）；`pet_probes.cpp` §D（e）；`settings_cards_probes.cpp` §A（f） |
 | 搭法 | (a) 最小窗双栏态；(e) pet 窗建小 frameSize 皮肤（fixtures 构造）；(f) `test_support` 造 ≥3 skin（同 MVP 配置隔离） |
 | 优先级 / 适合 | P1（f，major）/ P2（d、e、b）/ P3（a、c）/ ✅；「省略号样式观感」本体不 probe（走 check-consistency + 人工） |
@@ -178,8 +180,8 @@ L1/L2 是安静的（不依赖像素时序）；L3 走 RenderBackend 真渲染�
 
 | 项 | 内容 |
 |---|---|
-| bug + 根因 | markdown 双栏态每帧把 computeSyncOffset 喂 scrollView .offset()，但上游 syncOwnedScrollState 是 init-only 语义（runtime_state_bindings.h:87-97：仅 !initialized 时用声明值），渲染侧读 instance.offset（scrollTransformForElement :157-168）→ 预览滚动冻结（markdown_module.cpp:1495；模块只对 'md.live.scroll' 调 setScrollOffset :1787） |
-| 断言 | **程序化同步生效**：双栏态 compose → 注入编辑器滚轮（到 'md.live.scroll' 视口）→ 过 2 帧 → 断言 `md.preview.scroll` 元素 `onScrollOffsetChanged` 被调用（计数器包装：compose 后 swap 该元素 std::function 为带计数包装，跑完还原——probe 拥有 Element* 属测试期注入，不改模块代码）且记录值 == 编辑器滚动预期同步偏移（修复后模块调 ui.setScrollOffset("md.preview.scroll", computed)，消费链 dsl.h:1547-1555 → runtime_update.h:503-511 → :470-492 触发 onScrollOffsetChanged）。当前 bug：0 次调用 → 红 |
+| bug + 根因 | **回归守卫**（原「init-only 滚动冻结、0 次调用→红」根因描述过时——W10 修复已落地，master 5b4b6cf）：修复形态 = markdown_module.cpp:1536-1538 每帧调 `ui.setScrollOffset("md.preview.scroll", scrollOffset)`（L1520-1535 注释直述「W10（2026-09-28）修复」，消费链 dsl.h:1547-1555 → runtime_update.h:503-511 → :470-492）；setScrollOffset 覆盖两路径：**md.preview.scroll 每帧（L1536-1538）+ md.live.scroll 跟随路径（liveScrollFollowMaybe，L1806）**。**证伪门禁 = 撤 L1537-1538（setScrollOffset 调用）必须红** |
+| 断言 | **程序化同步生效**：双栏态 compose → 注入编辑器滚轮（到 'md.live.scroll' 视口）→ 过 2 帧 → 断言 `md.preview.scroll` 元素 `onScrollOffsetChanged` 被调用（计数器包装：compose 后 swap 该元素 std::function 为带计数包装，跑完还原——probe 拥有 Element* 属测试期注入，不改模块代码）**且 count ≥ 1 且记录值 ≠ 前值**（「记录值 == 预期偏移」降级：computeSyncOffset 重实现脆弱，不锁精确值）。注意 setScrollOffset 对 closeEnough（≈未变）值早退、不发回调（runtime_update.h:478-480）→ **swapOnScrollCallback 包装必须每帧在 compose lambda 内重挂**（元素树每帧重建，跨帧持有的 Element* 失效；清理段还原）。修复在库（现状）→ 绿；**撤 L1537-1538 → 0 次调用 → 红（证伪门禁）** |
 | 文件 | `markdown_probes.cpp` §D |
 | 搭法 | 双栏态 + 大纲跳转/滚轮两条路径各跑；计数器还原于清理段 |
 | 优先级 / 适合 | **P1**（major）/ ✅ 必须（这是唯一 probe 才能抓的类：无头断言元素声明值全绿而视觉失效） |
