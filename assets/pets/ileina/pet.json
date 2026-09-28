@@ -1,0 +1,54 @@
+{
+  "name": "伊蕾娜",
+  "frameSize": [
+    192,
+    208
+  ],
+  "frameRate": 12,
+  "license": "MIT (c) 2026 bxck1234 — github.com/bxck1234/codexdream-ileina-pet-skin",
+  "source": "https://github.com/bxck1234/codexdream-ileina-pet-skin",
+  "phrases": [
+    "别闹了…",
+    "在工作呢,先别打扰",
+    "嗯?找我有什么事",
+    "休息一下吧",
+    "今天也辛苦了呢",
+    "该睡觉了…"
+  ],
+  "states": {
+    "idle": [
+      "idle_00.png",
+      "idle_01.png",
+      "idle_02.png",
+      "idle_03.png",
+      "idle_04.png",
+      "idle_05.png"
+    ],
+    "poked": [
+      "poked_00.png",
+      "poked_01.png",
+      "poked_02.png",
+      "poked_03.png",
+      "poked_04.png",
+      "poked_05.png",
+      "poked_06.png",
+      "poked_07.png"
+    ],
+    "sleep": [
+      "sleep_00.png",
+      "sleep_01.png",
+      "sleep_02.png",
+      "sleep_03.png",
+      "sleep_04.png",
+      "sleep_05.png"
+    ],
+    "typing": [
+      "typing_00.png",
+      "typing_01.png",
+      "typing_02.png",
+      "typing_03.png",
+      "typing_04.png",
+      "typing_05.png"
+    ]
+  }
+}

@@ -1,0 +1,14 @@
+{
+  "name": "robot",
+  "frameSize": [128, 128],
+  "frameRate": 4,
+  "license": "CC0（程序生成皮肤，可整体替换为美术资源）",
+  "source": "DevDesk 内置生成",
+  "phrases": ["滴——系统正常", "电量 87%", "扫描中…", "待机模式已就绪", "执行摸鱼协议"],
+  "states": {
+    "idle": ["f0.png", "f1.png", "f2.png", "f3.png", "f4.png", "f5.png"],
+    "poked": ["p0.png", "p1.png"],
+    "sleep": ["s0.png", "s1.png", "s2.png"],
+    "typing": ["t0.png", "t1.png"]
+  }
+}

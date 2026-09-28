@@ -1,0 +1,24 @@
+{
+  "name": "樱读看板娘",
+  "frameSize": [512, 512],
+  "frameRate": 12,
+  "license": "MIT License (c) 2026 Sakura Read (樱读) contributors",
+  "source": "https://github.com/akira399/sakura-read (assets/images/pet_*.png)",
+  "phrases": [
+    "诶嘿……被摸头啦",
+    "呜……好舒服",
+    "呀！别、别突然摸头啦",
+    "再摸一下也不是不可以……",
+    "好吃！谢谢投喂～",
+    "书本里有惊喜！",
+    "今天也要加油",
+    "休息一下吧",
+    "Zzz…"
+  ],
+  "states": {
+    "idle": ["chibi.png", "wave.png", "chibi.png", "cheer.png"],
+    "poked": ["shy.png", "angry.png"],
+    "sleep": ["sleep.png"],
+    "typing": ["read.png"]
+  }
+}
