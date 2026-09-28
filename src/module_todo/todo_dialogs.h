@@ -188,7 +188,9 @@ struct DetailDialog {
     // 只警告（置位），再点一次才真正关闭放弃修改。仅在弹窗打开时有效。
     bool discardArmed = false;
     int64_t taskId = 0;
-    int64_t columnId = 0;
+    // UI 整改 15：不再持有 columnId——详情弹窗「移动到」已删除（改走拖拽/
+    // 右键菜单），弹窗打开期间任务列不变化，列身份一律以库中为准
+    //（collect 从 findTask 读回，dirty 不比列）。
     std::string title;
     std::string description;
     Priority priority = Priority::None;
