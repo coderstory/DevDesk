@@ -45,6 +45,7 @@ add_executable(devdesk_tests
     test_modules/test_streaming_stress.cpp
     test_modules/test_upstream_dialect.cpp
     test_modules/test_home.cpp
+    test_modules/test_ui_modern.cpp
     test_modules/test_settings.cpp
     test_modules/test_module_icons.cpp
     test_modules/test_font_em_layout.cpp
