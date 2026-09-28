@@ -66,8 +66,9 @@ REGISTER_TEST(home_stat_card_text_fits, "font-em: home stat card text fits fixed
     DOCTEST_CHECK(textW("Token 速率 (tok/s)", labelSize) <= kHomeStatTextW);
     // 数字（formatRateTps 上限 5 位；700 字重）
     DOCTEST_CHECK(textW("99999", numberSize, 700) <= kHomeStatTextW);
-    // badge 最坏情况（formatTokenCount 上限 "999.9M"；W9 文案去「会话」后实测 132.9）
-    DOCTEST_CHECK(textW("● 999 路并发 · 累计 999.9M", badgeSize) <=
+    // badge 最坏情况（formatTokenCount 上限 "999.9M"；2026-09-28 审计 #2
+    // 「路并发」→「路」：11px 全角最长档实测 ~111px ≤ 144 实际可用宽）
+    DOCTEST_CHECK(textW("● 999 路 · 累计 999.9M", badgeSize) <=
                   kHomeStatTextW);
     DOCTEST_CHECK(textW("今日修改过的笔记", badgeSize) <= kHomeStatTextW);
 

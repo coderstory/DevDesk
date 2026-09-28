@@ -31,6 +31,24 @@ namespace module::home {
 
 namespace {
 
+// 数字字号按位数收缩（2026-09-28 审计 #4 text-overflow）：700 字重数字
+// ≈0.60em/位；可用宽不足时降号（下限 24 fontScale 档），上限 base（已含
+// fontScale）。只缩字号，行高/垂直节奏不动。
+float statNumberFont(float base, int digits, float availWidth, float scale) {
+    if (digits <= 0) return base;
+    const float want =
+        std::floor(availWidth / (0.60f * static_cast<float>(digits)) / scale);
+    return std::clamp(want * scale, 24.0f * scale, base);
+}
+
+int digitCount(const std::string& text) {
+    int n = 0;
+    for (char c : text) {
+        if (c >= '0' && c <= '9') ++n;
+    }
+    return n;
+}
+
 // 渲染单个统计卡片（card 组件，点击整卡跳转）
 // numberColor/badgeColor 非空时覆盖默认配色（accent ? error : 常规）
 // timerSeconds > 0 时挂一个 0 尺寸 onTimer 元素驱动本卡定期重绘
@@ -97,11 +115,15 @@ void drawStatCard(eui::Ui& ui,
                         .horizontalAlign(eui::HorizontalAlign::Center)
                         .color(t.colors.textSecondary)
                         .build();
+                    // 数字字号随位数收缩（6 位以上按可用宽降号，最小窗
+                    // statW 208 → cw 176 时 6 位亦不溢卡）
+                    const float numberSize = statNumberFont(
+                        t.sizes.fontSizeDisplay, digitCount(number), cw, s);
                     ui.text(id + ".number")
                         .position(0.0f, 32.0f * s)
                         .size(cw, 56.0f * s)
                         .text(number)
-                        .fontSize(t.sizes.fontSizeDisplay)
+                        .fontSize(numberSize)
                         .lineHeight(56.0f * s)
                         .fontWeight(700)
                         .horizontalAlign(eui::HorizontalAlign::Center)
@@ -131,7 +153,15 @@ void drawStatCard(eui::Ui& ui,
                             .build();
                     }
                     if (chart) {
-                        chart(ui, cw - 56.0f * s, 32.0f);
+                        // 2026-09-28 审计 #1 z-collision 修：sparkline 固定进
+                        // 顶带（内 y0..16 = label 16 之上），整盒高 16——旧 32
+                        // 盒叠 (0,0) 压住 label 文字带，图线画在文字上层
+                        const float sparkW = cw - 56.0f * s;
+                        ui.stack(id + ".sparkwrap")
+                            .position(0.0f, 0.0f)
+                            .size(sparkW, 16.0f)
+                            .content([&] { chart(ui, sparkW, 16.0f); })
+                            .build();
                     }
                 })
                 .build();
@@ -393,10 +423,12 @@ public:
                     formatTokenCount(snap.sessionTokens);
                 // W9：badge 文案不带「会话」二字——em 修复后 11px 全角文案
                 // 在最小窗口（statW 208）下会溢出卡片（实测 154.85 > 152 可用宽）
+                // 2026-09-28 审计 #2：并发措辞「路并发」→「路」（省 2 个全角，
+                // 最长档「● 999 路 · 累计 999.9M」实测 ~111px ≤ 144 可用宽）
                 const std::string tokenBadge =
                     streaming
                         ? "● " + std::to_string(snap.activeStreams) +
-                              " 路并发 · 累计 " + sessionCn
+                              " 路 · 累计 " + sessionCn
                         : "空闲 · 累计 " + sessionCn;
 
                 if (statCount == 0) {
@@ -412,6 +444,10 @@ public:
                 const float statW =
                     (contentW - cardGap * static_cast<float>(statCount - 1)) /
                     static_cast<float>(statCount);
+                // sparkline 序列只取一次（live 判定与图表绘制共用；
+                // rateSeries 空序列兜底 {0.0f}，D-6 护栏）
+                const std::vector<float> sparkSeries =
+                    core::proxy_stats::rateSeries(24);
                 ui.row("home.stats")
                     .size(contentW, statH)
                     .gap(cardGap)
@@ -422,7 +458,23 @@ public:
                         for (const auto& card : kStatCards) {
                             if (!moduleRegistered(card.module)) continue;
                             switch (card.kind) {
-                                case StatCardKind::Tokens:
+                                case StatCardKind::Tokens: {
+                                    // 周期重绘仅「有速率活动」时挂载
+                                    // （2026-09-28 根因修：旧 0.5s 常挂
+                                    // onTimer → 整页 2Hz 重排重绘 + 常驻
+                                    // animating_ → 5 卡 hover 0.1s 过渡被
+                                    // 反复打断闪烁；空闲静默后过渡完整跑完、
+                                    // hover 命中缓存恢复有效）
+                                    bool seriesLive = false;
+                                    for (float v : sparkSeries) {
+                                        if (v > 0.05f) {
+                                            seriesLive = true;
+                                            break;
+                                        }
+                                    }
+                                    const bool tokenLive =
+                                        snap.activeStreams > 0 ||
+                                        snap.rateTps > 0.05 || seriesLive;
                                     drawStatCard(ui, statCardElementId(card.kind),
                                                  statW, statH, t, card.title,
                                                  formatRateTps(snap.rateTps),
@@ -434,21 +486,18 @@ public:
                                                            : &t.colors.textTertiary,
                                                  streaming ? &t.colors.success
                                                            : nullptr,
-                                                 0.5f,
+                                                 tokenLive ? 1.0f : 0.0f,
                                                  [&](eui::Ui& inner, float chartW,
                                                      float chartH) {
-                                                     // sparkline：rateSeries
-                                                     // 兜底 {0.0f}（防
-                                                     // lineChart demo 数据
-                                                     // 泄漏，D-6 护栏）
-                                                     const std::vector<float>
-                                                         series = core::proxy_stats::
-                                                             rateSeries(24);
+                                                     // sparkline：sparkSeries
+                                                     // 已兜底 {0.0f}（rateSeries
+                                                     // 空序列语义，D-6 护栏防
+                                                     // lineChart demo 泄漏）
                                                      components::lineChart(
                                                          inner,
                                                          "home.stat.tokens.spark")
                                                          .size(chartW, chartH)
-                                                         .values(series)
+                                                         .values(sparkSeries)
                                                          .chromeless()
                                                          .style(components::
                                                                     LineStyle::
@@ -459,6 +508,7 @@ public:
                                                          .build();
                                                  });
                                     break;
+                                }
                                 case StatCardKind::Notes:
                                     drawStatCard(ui, statCardElementId(card.kind),
                                                  statW, statH, t, card.title,
@@ -514,6 +564,10 @@ public:
                 // （24 点当日逐时分布；恒 24 点 → 绝不空，barChart 空 values
                 // 会填演示数据）；barChart 值域 [0,1]（percent 语义）→ 按当日
                 // 峰值归一化。加载失败（!ok）→ 全 0（统计卡 badge 已示失败）。
+                // 2026-09-28 审计 #3/#4/#5：barChart 内嵌化（透明底/边框/阴影
+                // 样式消第二底，不动 barchart.h）；卡高 208→260（wrap 128→196，
+                // plot 16px→84px，不再出 8px 地板假条）；全零画空态不画假条；
+                // title/wrap 去二次 16（content 坐标已含 inset，左 32 右 0 不对称）
                 if (moduleRegistered(::core::PageId::ClaudeProxy)) {
                     const auto apiSeries =
                         service_ ? service_->getTodayApiCallSeries(24)
@@ -529,7 +583,11 @@ public:
                     }
                     if (bars.empty()) bars.assign(24, 0.0f);
                     float maxV = 1.0f;
-                    for (const float bv : bars) maxV = std::max(maxV, bv);
+                    bool allZero = true;
+                    for (const float bv : bars) {
+                        maxV = std::max(maxV, bv);
+                        if (bv > 0.0f) allZero = false;
+                    }
                     std::vector<float> norm;
                     norm.reserve(bars.size());
                     for (const float bv : bars) norm.push_back(bv / maxV);
@@ -538,14 +596,15 @@ public:
                     for (size_t h = 0; h < bars.size(); ++h) {
                         labels.push_back(std::to_string(h) + "时");
                     }
-                    const float chartCardH = 208.0f;
+                    const float chartCardH = 260.0f;
+                    const float chartWrapH = chartCardH - 48.0f - 16.0f;  // 196
                     components::card(ui, "home.api.chart")
                         .size(contentW, chartCardH)
                         .theme(core::theme::componentTokens(t))
                         .padding(t.sizes.spacingLarge)  // 16 统一内边距（替代默认 20）
                         .content([&] {
                             ui.text("home.api.chart.title")
-                                .position(16.0f, 16.0f)
+                                .position(0.0f, 16.0f)
                                 .size(contentW - 32.0f, 22.0f)
                                 .text("今日 API 调用分布（按当日峰值归一）")
                                 .fontSize(t.sizes.fontSizeLarge - 1.0f)
@@ -555,21 +614,52 @@ public:
                                 .build();
                             // barChart 无 position 接口 → 包定位 stack
                             // （title 置空：本卡自带标题，避免组件内默认
-                            // 「BarChart」字样）。
-                            // 底边距 16：wrap 底 = 16 inset + 48 + 128 = 192 ≤
-                            // 208 - 16（旧 52+136 曾与卡底齐平，图贴底边）
+                            // 「BarChart」字样）
                             ui.stack("home.api.chart.wrap")
-                                .position(16.0f, 48.0f)
-                                .size(contentW - 32.0f, 128.0f)
+                                .position(0.0f, 48.0f)
+                                .size(contentW - 32.0f, chartWrapH)
                                 .content([&] {
-                                    components::barChart(
-                                        ui, "home.api.chart.bars")
-                                        .size(contentW - 32.0f, 128.0f)
-                                        .title("")
-                                        .values(norm)
-                                        .labels(labels)
-                                        .theme(core::theme::componentTokens(t))
-                                        .build();
+                                    if (allZero) {
+                                        // 空态（审计 #4）：全零不画 8px 地板
+                                        // 假条，居中一句引导
+                                        ui.text("home.api.chart.empty")
+                                            .position(
+                                                0.0f,
+                                                (chartWrapH - 40.0f) * 0.5f)
+                                            .size(contentW - 32.0f, 40.0f)
+                                            .text("今日暂无 API 调用")
+                                            .fontSize(t.sizes.fontSizeBody)
+                                            .lineHeight(40.0f)
+                                            .horizontalAlign(
+                                                eui::HorizontalAlign::Center)
+                                            .color(t.colors.textTertiary)
+                                            .build();
+                                    } else {
+                                        // 审计 #3：内嵌 chromeless 样式——
+                                        // 透明底/透明边框/禁阴影，消除与外层
+                                        // 卡同色但带边框阴影的「第二底」
+                                        components::theme::ThemeColorTokens
+                                            chartTokens =
+                                                core::theme::componentTokens(t);
+                                        components::BarChartStyle chartStyle(
+                                            chartTokens);
+                                        chartStyle.background =
+                                            components::theme::color(0.0f, 0.0f,
+                                                                     0.0f, 0.0f);
+                                        chartStyle.border =
+                                            components::theme::color(0.0f, 0.0f,
+                                                                     0.0f, 0.0f);
+                                        chartStyle.shadow = core::Shadow{};
+                                        components::barChart(
+                                            ui, "home.api.chart.bars")
+                                            .size(contentW - 32.0f, chartWrapH)
+                                            .title("")
+                                            .values(norm)
+                                            .labels(labels)
+                                            .theme(chartTokens)
+                                            .style(chartStyle)
+                                            .build();
+                                    }
                                 })
                                 .build();
                         })

@@ -185,8 +185,9 @@ REGISTER_TEST(uiModernHomeCardSpark,
 
         DOCTEST_CHECK(ui.find("home.stat.tokens") != nullptr);
         DOCTEST_CHECK(ui.find("home.stat.tokens.spark") != nullptr);
-        // 保留面：0.5s onTimer 重绘驱动
-        DOCTEST_CHECK(ui.find("home.stat.tokens.timer") != nullptr);
+        // 2026-09-28 根因修：空闲态不再挂 onTimer（消整页 2Hz 重绘 +
+        // 常驻 animating_ 反复打断 hover 过渡；仅流式活动期挂 1s）
+        DOCTEST_CHECK(ui.find("home.stat.tokens.timer") == nullptr);
 
         mod->onStop();
         core::proxy_stats::resetForTest();
@@ -789,7 +790,9 @@ REGISTER_TEST(uiModernTodoCardContainer,
 
 REGISTER_TEST(uiModernHomeApiBarChart,
               "uiModern: Home API 调用量 barChart（24 点非空 + 接线 + 服务层分布）", {
-    test_support::TestEnv env("devdesk_test_uimodern_home_", "apichart");
+    test_support::TestEnv env("devdesk_test_uimodern_home_", "apichart",
+                              true);  // 注册 appDatabase（2026-09-28 起全零走
+                                      // 空态不画假条，需真实数据才能断言柱子）
     DOCTEST_REQUIRE(env.ready);
     // 种子：1 个 profile（FK 依赖）+ 当天 3 条（9/10/11 时，避开子夜边界）
     // + 昨天 2 条（排除）
@@ -832,6 +835,7 @@ REGISTER_TEST(uiModernHomeApiBarChart,
     // bar.4 存在即证明喂的是真实 24 点序列，无演示泄漏）
     {
         std::unique_ptr<::core::Module> mod(create_home_module());
+        mod->onStart();  // 挂真实服务（否则 stats 未加载 → 24 点全零 → 空态）
         eui::Screen screen{1200.0f, 720.0f};
         eui::Ui ui;
         ui.begin("home_api_chart");

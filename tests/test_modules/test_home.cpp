@@ -205,8 +205,11 @@ REGISTER_TEST(home_token_rate_card_compose,
         DOCTEST_CHECK(ui.find("home.stat.todo") != nullptr);
         DOCTEST_CHECK(ui.find("home.stat.overdue") != nullptr);
         DOCTEST_CHECK(ui.find("home.stat.api") != nullptr);
-        // 卡内 onTimer 驱动元素（0.5s 重绘，设计 §2.6）
-        DOCTEST_CHECK(ui.find("home.stat.tokens.timer") != nullptr);
+        // 2026-09-28 根因修：空闲态（无采样/无流）不挂周期 timer——旧 0.5s
+        // 常挂 onTimer 会驱动整页 2Hz 重排重绘 + 常驻 animating_，反复打断
+        // 5 卡 hover 0.1s 过渡致闪烁；空闲静默后过渡完整跑完、hover 命中
+        // 缓存恢复有效
+        DOCTEST_CHECK(ui.find("home.stat.tokens.timer") == nullptr);
         // 未加载数据（onStart 未跑）→ 错误态 badge 是「加载失败」而非
         // 「尚未加载」（W7：错误态与加载中区分）
         const auto* notesBadge = ui.find("home.stat.notes.badge");
@@ -238,8 +241,10 @@ REGISTER_TEST(home_token_rate_card_compose,
 
         const auto* badge = ui.find("home.stat.tokens.badge");
         DOCTEST_REQUIRE(badge != nullptr);
-        DOCTEST_CHECK(badge->text.find("1 路并发") != std::string::npos);
+        DOCTEST_CHECK(badge->text.find("1 路") != std::string::npos);
         DOCTEST_CHECK(badge->text.find("累计 42") != std::string::npos);
+        // 流式中：周期重绘挂载（2026-09-28 起 1s、仅活动期）
+        DOCTEST_CHECK(ui.find("home.stat.tokens.timer") != nullptr);
         mod->onStop();
 
         core::proxy_stats::endStream(id);

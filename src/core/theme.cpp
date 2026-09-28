@@ -58,7 +58,10 @@ namespace {
         c.background = eui::Color("#FAF9F5");
         c.surface = eui::Color("#F5F2EC");
         c.surfaceElevated = eui::Color("#F8F5EF");
-        c.hover = eui::Color("#F5F2EC");
+        // 2026-09-28 根因修：旧 #F5F2EC 与 surface 同色——Home 卡 hover 反馈
+        // 完全不可见（.press 层 hover 态颜色 == 卡底色）。降一步色（与 active
+        // #EBE7DF 成三级梯度），任意底色上都产生可辨色移
+        c.hover = eui::Color("#EDE8DF");
         c.active = eui::Color("#EBE7DF");
         c.primary = eui::Color("#D97757");
         c.primaryHover = eui::Color("#E0896B");
