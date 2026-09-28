@@ -570,25 +570,16 @@ public:
             .padding(pad)
             .gap(t.sizes.spacingLarge)
             .content([&] {
-                // M3-4（2026-09-28，UI 现代化）：设置页主体区垫低对比渐变底
-                // （同 Home 欢迎区口径：surface → surfaceElevated 垂直，随
-                // 主题 token 运行期解析）。overlay 不参与 column 流式排布、
-                // 无事件 handlers 不拦截点击（同 claude.profiles.overlay
-                // 模式）；绘制序在最前 → 位于最底层
-                ui.stack("settings.body.gradient")
-                    .size(contentW, screen.height - pad * 2.0f)
-                    .ignoreLayout()
-                    .content([&] {
-                        ui.rect("settings.body.bg")
-                            .size(contentW, screen.height - pad * 2.0f)
-                            .gradient(t.colors.surface,
-                                      t.colors.surfaceElevated,
-                                      core::GradientDirection::Vertical)
-                            .radius(t.sizes.radiusLarge)
-                            .build();
-                    })
-                    .build();
-
+                // 2026-09-28 用户真机反馈（原话「设置页面最外层的卡片还没删除
+                // 啊，让你删除好多次了」）：删 M3-4 加的主体渐变底板
+                // （settings.body.gradient > settings.body.bg，surface →
+                // surfaceElevated 垂直）。9 卡卡框早先已删，此底板就是用户眼中
+                // 剩下的「最外层卡片」。删除后回到 frost spec 口径
+                // （docs/superpowers/specs/2026-09-22-eui-window-frost-design.md:53
+                // 「各模块页面要么靠 clearColor 当底、要么自铺不透明 surface
+                // 色」）：关档靠主窗 clearColor 当底，半透/磨砂档本就该露出窗口
+                // 背景——回归断言见 tests/test_ui_modern.cpp
+                // uiModernSettingsBodyGradientRemoved（反断言：加回即红）
                 drawHeader(ui, contentW, headerH, t);
 
                 // tab 栏（Task B：长页拆 4 tab）。components::tabs 无

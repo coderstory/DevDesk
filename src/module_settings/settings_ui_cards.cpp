@@ -9,8 +9,11 @@
 //
 // 2026-09-28 变更：用户反馈「设置页面最外层的卡片没删除……底色是白色？不需要
 // 啊」→ 删全部 9 张卡的 ui_kit::cardFrame 调用（含其 <id>.bg 矩形/1px 边框/
-// panelShadow/圆角），卡内容直接铺 M3-4 主体渐变底（settings.body.bg）；其余
-// 节点 id、文案、字号、颜色、几何、控制流逐字保留。
+// panelShadow/圆角）；其余节点 id、文案、字号、颜色、几何、控制流逐字保留。
+// 同日第二轮（用户真机反馈「设置页面最外层的卡片还没删除啊」）：连页面主体
+// 的 M3-4 渐变底板（settings_module.cpp 的 settings.body.gradient/bg）一起删，
+// 故卡内容现在直接铺**页面底**——关档由主窗 clearColor 当底、半透/磨砂档露出
+// 窗口背景（frost spec 2026-09-22 §53 口径）。
 #include "settings_ui_cards.h"
 
 #include <core/component_theme.h>

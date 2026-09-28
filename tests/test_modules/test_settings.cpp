@@ -2522,10 +2522,15 @@ REGISTER_TEST(settings_card_registry_order,
 // 加了卡片？底色是白色？不需要啊」。根因：settings 9 张卡每张调 ui_kit::cardFrame
 //（surface 填充 + 1px 边框 + panelShadow 阴影 + radiusLarge 圆角），白色卡框叠在
 // M3-4 主体渐变底（settings.body.bg）之上 = 用户看到的「最外层卡片」。
-// 修复 = 删全部 9 处 cardFrame 调用（settings_ui_cards.cpp），卡内容直接铺页面渐变
-// 底，不再有 <id>.bg 矩形 / 边框 / 阴影 / 圆角。旧「阴影分层」回归断言随卡框废弃，
-// 改反断言：bg 矩形必须不存在（cardFrame 若被加回会重新出现）、卡 stack 必须仍在。
+// 修复 = 删全部 9 处 cardFrame 调用（settings_ui_cards.cpp），不再有 <id>.bg 矩形 /
+// 边框 / 阴影 / 圆角。旧「阴影分层」回归断言随卡框废弃，改反断言：bg 矩形必须不存在
+//（cardFrame 若被加回会重新出现）、卡 stack 必须仍在。
 // 回归断言（两档主题 × 9 张可见卡）：<stack>.bg 不存在、卡 stack 存在（内容未丢）。
+//
+// 同日第二轮（用户真机反馈「设置页面最外层的卡片还没删除啊，让你删除好多次了」）：
+// 上面说的「页面渐变底」本身也是用户眼中的「最外层卡片」→ 已删。本用例只看卡级
+// <id>.bg，不受影响；页面级底板的反断言在 test_ui_modern.cpp
+// uiModernSettingsBodyGradientRemoved（settings.body.gradient / .bg 必须都不存在）。
 REGISTER_TEST(settings_cards_no_outer_cardframe,
               "settings: 8 卡无外层 cardFrame——内容直接铺页面底（两档主题）", {
     test_support::TestEnv env(kCfgPrefix, "noframe", true);

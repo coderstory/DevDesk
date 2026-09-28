@@ -356,15 +356,28 @@ public:
                 .build();
         }
 
-        // 居中 720px 主内容区（spec §布局概览；窄窗不滚动，D-04 目标 =
-        // 默认窗口 1600×1000 完整可见，总高约 840px）
-        constexpr float kAboutContentW = 720.0f;
+        // 居中 1040px 主内容区（spec §布局概览；窄窗不滚动，D-04 目标 =
+        // 默认窗口内完整可见）。2026-09-28 用户真机反馈「内容太窄」→ 720→1040：
+        // 卡片宽随之 356→516。页面宽 = 窗口宽 − 侧边栏（展开 208，见
+        // app_sidebar.cpp pageContentWidth），最小窗 1330×845 → 页面宽 1122，
+        // 居中后左右各余 41px，不溢出
+        constexpr float kAboutContentW = 1040.0f;
         const float x = std::max(0.0f, (screen.width - kAboutContentW) / 2.0f);
         const float cardGap = 8.0f;
 
         // ========== hero 段（居中，spacingLarge 间距）==========
-        float y = 24.0f;
-        const float heroIcon = 48.0f;
+        // 顶部留白 = 两档间距 token 叠加（XXLarge 40 + XLarge 24 = 64）：草图
+        // 观感区间 60-70px，单档 XXLarge(40) 偏小、双档 XXLarge(80) 越界，
+        // 故用叠加推导值，不引裸魔法数
+        const float topPad = t.sizes.spacingXXLarge + t.sizes.spacingXLarge;
+        float y = topPad;
+        // hero 图标 48→56（= XXLarge 40 + Large 16，同属 token 叠加）：用户要
+        // 「hero 更有存在感」，但字号受规范约束（页面标题 32 / 正文 15，见
+        // CLAUDE.md「视觉规范」）不可动——空间感由加宽 + 顶部留白承担；图标是
+        // 装饰尺寸、不在字号规范内，故适度上调一档（56 = 1.75× 页面标题）。
+        // 不再往上（64 = 2×）的理由：图标盒高 = 字号，em 盒内上下余量更小，
+        // 而本机 screencapture 被 TCC 拦、无截图手段验证字形不裁切
+        const float heroIcon = t.sizes.spacingXXLarge + t.sizes.spacingLarge;
         ui.text("about.hero.icon")
             .position(x + (kAboutContentW - heroIcon) / 2.0f, y)
             .size(heroIcon, heroIcon)
@@ -444,16 +457,23 @@ public:
         aboutCard(ui, "about.card.deps", t, x + cardW + cardGap, y, cardW, depsH,
                   0xF5FD /* fa-layer-group */, "依赖与框架", depsRows, 6);
 
-        // 页脚跟随卡底（两卡同高取 max，取一副 y 即可）
-        y += std::max(infoH, depsH) + cardGap;
-
-        // ========== 页脚 ==========
+        // ========== 页脚（贴页面底部）==========
+        // 2026-09-28 用户真机反馈：footer 不再跟卡底流式排（原来紧跟卡底，页面
+        // 下方一大片空），改贴页面底部——卡片与页脚之间的空白即呼吸区，随窗口
+        // 高度自然伸缩。底边留白 = 页面 padding token（spacingXXLarge 40，与
+        // 设置页 pad 同口径）。max() 护栏：本页无滚动，极矮窗下 footer 不回退
+        // 到与卡片重叠
+        constexpr float footerH = 20.0f;
+        const float cardsBottom = y + std::max(infoH, depsH);
+        const float footerY = std::max(
+            cardsBottom + cardGap,
+            screen.height - t.sizes.spacingXXLarge - footerH);
         ui.text("about.footer")
-            .position(x, y)
-            .size(kAboutContentW, 20.0f)
+            .position(x, footerY)
+            .size(kAboutContentW, footerH)
             .text("© 2026 DevDesk")
             .fontSize(t.sizes.fontSizeSmall)
-            .lineHeight(20.0f)
+            .lineHeight(footerH)
             .color(t.colors.textTertiary)
             .horizontalAlign(eui::HorizontalAlign::Center)
             .build();

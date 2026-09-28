@@ -43,6 +43,7 @@
 #include "ui_kit/metrics.h"  // kHeaderH（板几何断言）
 #include <cstdlib>
 #include <chrono>
+#include <cmath>
 #include <ctime>
 #include <filesystem>
 #include <fstream>
@@ -54,6 +55,7 @@ extern "C" ::core::Module* create_markdown_module();
 extern "C" ::core::Module* create_todo_module();
 extern "C" ::core::Module* create_claude_module();
 extern "C" ::core::Module* create_settings_module();
+extern "C" ::core::Module* create_about_module();
 
 using module::markdown::kEditorInputHitId;
 
@@ -848,42 +850,54 @@ REGISTER_TEST(uiModernHomeApiBarChart,
     return true;
 })
 
-REGISTER_TEST(uiModernGradientSpots,
-              "uiModern: 两处关键背景渐变（settings 主体 / md 预览）", {
-    // 1. 设置页主体区垫底
+// ---- 设置页主体底板：已删（2026-09-28 用户真机反馈「设置页面最外层的卡片
+// 还没删除啊，让你删除好多次了」）。M3-4（2026-09-28）曾在设置页主体最下层
+// 垫 surface → surfaceElevated 垂直渐变底（settings.body.gradient >
+// settings.body.bg），即用户眼中的「最外层卡片」；本次删除后设置页回到 frost
+// spec 口径（docs/superpowers/specs/2026-09-22-eui-window-frost-design.md:53
+// 「各模块页面要么靠 clearColor 当底、要么自铺不透明 surface 色」）——三档
+// 窗口效果下底色分别由 clearColor（关）/ 磨砂背景（半透、磨砂）承担。
+// 断言方向**取反**（存在即红）：底板被加回时本用例立刻红；「设置页仍在渲染」
+// 由第三条断言反证，避免整页 compose 早退时 find 恒 nullptr 造成的**假绿**。
+REGISTER_TEST(uiModernSettingsBodyGradientRemoved,
+              "uiModern: 设置页无主体底板（settings.body.bg 必须不存在）", {
+    const std::filesystem::path cfgPath = test_temp::tempPath(
+        "devdesk_test_uimodern_settings_grad_cfg.json");
+    const std::filesystem::path dbPath = test_temp::tempPath(
+        "devdesk_test_uimodern_settings_grad.db");
+    std::error_code ec;
+    std::filesystem::remove(cfgPath, ec);
+    std::filesystem::remove(dbPath, ec);
+    auto r = ::core::Database::open(dbPath);
+    DOCTEST_REQUIRE(r.isOk());
+    auto db = std::make_unique<::core::Database>(std::move(r.value()));
+    DOCTEST_REQUIRE(db->migrate().isOk());
+    ::core::registerAppDatabase(&db->db());
+    test_support::setEnvVar("DEVDESK_CONFIG_PATH", cfgPath.string());
     {
-        const std::filesystem::path cfgPath = test_temp::tempPath(
-            "devdesk_test_uimodern_settings_grad_cfg.json");
-        const std::filesystem::path dbPath = test_temp::tempPath(
-            "devdesk_test_uimodern_settings_grad.db");
-        std::error_code ec;
-        std::filesystem::remove(cfgPath, ec);
-        std::filesystem::remove(dbPath, ec);
-        auto r = ::core::Database::open(dbPath);
-        DOCTEST_REQUIRE(r.isOk());
-        auto db = std::make_unique<::core::Database>(std::move(r.value()));
-        DOCTEST_REQUIRE(db->migrate().isOk());
-        ::core::registerAppDatabase(&db->db());
-        test_support::setEnvVar("DEVDESK_CONFIG_PATH", cfgPath.string());
-        {
-            std::unique_ptr<::core::Module> mod(create_settings_module());
-            mod->onStart();
-            eui::Ui ui;
-            eui::Screen screen{1600.0f, 1000.0f};
-            ui.begin("grad_settings");
-            mod->compose(ui, screen);
-            ui.end();
-            const auto* bg = ui.find("settings.body.bg");
-            DOCTEST_CHECK(bg != nullptr);
-            if (bg != nullptr) DOCTEST_CHECK(bg->gradient.enabled);
-            mod->onStop();
-        }
-        test_support::setEnvVar("DEVDESK_CONFIG_PATH", "");
-        ::core::registerAppDatabase(nullptr);
-        std::filesystem::remove(cfgPath, ec);
-        std::filesystem::remove(dbPath, ec);
+        std::unique_ptr<::core::Module> mod(create_settings_module());
+        mod->onStart();
+        eui::Ui ui;
+        eui::Screen screen{1600.0f, 1000.0f};
+        ui.begin("grad_settings");
+        mod->compose(ui, screen);
+        ui.end();
+        DOCTEST_CHECK(ui.find("settings.body.bg") == nullptr);
+        DOCTEST_CHECK(ui.find("settings.body.gradient") == nullptr);
+        // 反证（防假绿）：默认 tab 的卡仍在 → 页面确实 compose 过
+        DOCTEST_CHECK(ui.find("settings.card.appearance") != nullptr);
+        mod->onStop();
     }
-    // 2. md 预览区垫底（Ctrl+Shift+P ×2 → 双栏，同 theme_hierarchy）
+    test_support::setEnvVar("DEVDESK_CONFIG_PATH", "");
+    ::core::registerAppDatabase(nullptr);
+    std::filesystem::remove(cfgPath, ec);
+    std::filesystem::remove(dbPath, ec);
+    return true;
+})
+
+REGISTER_TEST(uiModernMdPreviewGradient,
+              "uiModern: md 预览区垫底渐变（Ctrl+Shift+P 双栏）", {
+    // md 预览区垫底（Ctrl+Shift+P ×2 → 双栏，同 theme_hierarchy）
     {
         test_support::MdHeadlessEnv env("devdesk_test_ui_m3_", "mdgrad", "m3.db");
         {
@@ -909,6 +923,107 @@ REGISTER_TEST(uiModernGradientSpots,
         DOCTEST_CHECK(bg->gradient.enabled);
         mod->onStop();
     }
+    return true;
+})
+
+// ---- about 页布局（2026-09-28 用户真机反馈：内容区加宽 / 顶部留白 /
+//      footer 贴页面底部）----
+// 只钉**可客观断言**的部分（内容区宽、卡片宽、hero 起点、footer 底边、最小窗
+// 不溢出）；观感（呼吸感 / hero 存在感 / 三档窗口效果下的底色）留人工确认。
+// 页面宽 = 窗口宽 − 侧边栏（app_sidebar.cpp pageContentWidth，展开 208）：最小
+// 窗 1330×845 → 页面宽 1122，内容区 1040 只余 41px/侧（仍居中、不溢出，见下）。
+namespace {
+// 布局帧比较容差：逻辑像素差 ≤0.5 视为相等（布局引擎可能带亚像素误差，与
+// probes 的 0.5f 容差同口径）
+bool nearPx(float a, float b) { return std::abs(a - b) <= 0.5f; }
+}  // namespace
+
+REGISTER_TEST(uiAboutLayout,
+              "about: 内容区 1040 / 顶部留白 64 / footer 贴页面底部（真机反馈）", {
+    std::unique_ptr<::core::Module> mod(create_about_module());
+    DOCTEST_REQUIRE(mod != nullptr);
+    mod->onStart();
+    const auto& t = ::core::theme::current();
+    constexpr float kContentW = 1040.0f;
+    constexpr float kCardGap = 8.0f;
+    const float topPad = t.sizes.spacingXXLarge + t.sizes.spacingXLarge;   // 64
+    const float iconSize = t.sizes.spacingXXLarge + t.sizes.spacingLarge;  // 56
+    eui::Ui ui;
+    eui::Screen screen{1600.0f, 1000.0f};
+    ui.begin("about_layout");
+    mod->compose(ui, screen);
+    ui.end();
+    ui.layout(screen.width, screen.height);  // 元素 frame 需显式布局（同 test_settings）
+    const float x = (screen.width - kContentW) / 2.0f;  // 280
+    // 帧诊断串：几何断言失败时直接看到实测值（fail-fast 只报一条，无第二条线索）
+    auto px = [](const char* what, const core::dsl::Element* e) {
+        return std::string(what) + " 实测 (" +
+               std::to_string(e->frame.x) + ", " +
+               std::to_string(e->frame.y) + ", " +
+               std::to_string(e->frame.width) + "x" +
+               std::to_string(e->frame.height) + ")";
+    };
+    {
+        const auto* hero = ui.find("about.hero.icon");
+        DOCTEST_REQUIRE(hero != nullptr);
+        DOCTEST_CHECK_MESSAGE(nearPx(hero->frame.y, topPad),
+                              px("hero.frame.y", hero));  // 顶部留白
+        DOCTEST_CHECK_MESSAGE(nearPx(hero->frame.width, iconSize),
+                              px("hero.frame.width", hero));  // hero 图标尺寸
+        // 居中于内容区
+        DOCTEST_CHECK_MESSAGE(
+            nearPx(hero->frame.x, x + (kContentW - iconSize) / 2.0f),
+            px("hero.frame.x", hero));
+    }
+    const auto* c1 = ui.find("about.card.app");
+    const auto* c2 = ui.find("about.card.deps");
+    DOCTEST_REQUIRE(c1 != nullptr);
+    DOCTEST_REQUIRE(c2 != nullptr);
+    DOCTEST_CHECK_MESSAGE(nearPx(c1->frame.width, (kContentW - kCardGap) / 2.0f),
+                          px("about.card.app", c1));    // 516
+    DOCTEST_CHECK_MESSAGE(nearPx(c2->frame.width, (kContentW - kCardGap) / 2.0f),
+                          px("about.card.deps", c2));
+    DOCTEST_CHECK_MESSAGE(nearPx(c1->frame.x, x), px("about.card.app.x", c1));
+    DOCTEST_CHECK_MESSAGE(nearPx(c2->frame.x, x + c1->frame.width + kCardGap),
+                          px("about.card.deps.x", c2));
+    {
+        const auto* footer = ui.find("about.footer");
+        DOCTEST_REQUIRE(footer != nullptr);
+        DOCTEST_CHECK_MESSAGE(nearPx(footer->frame.x, x),
+                              px("about.footer.x", footer));
+        // footer 在卡片下方（中间是留白区，不再是流式紧跟卡底）
+        DOCTEST_CHECK_MESSAGE(
+            footer->frame.y > c1->frame.y + c1->frame.height,
+            px("about.footer", footer) + " 卡底 " +
+                std::to_string(c1->frame.y + c1->frame.height));
+        // 贴页面底部：底边 = screen.height − 页面底 padding（spacingXXLarge）
+        DOCTEST_CHECK_MESSAGE(
+            nearPx(footer->frame.y + footer->frame.height,
+                   screen.height - t.sizes.spacingXXLarge),
+            px("about.footer", footer) + " 期望底边 " +
+                std::to_string(screen.height - t.sizes.spacingXXLarge));
+    }
+    // 最小窗复核：页面宽 1330 − 208 = 1122 → 内容区 1040 不溢出、仍居中
+    {
+        eui::Ui mini;
+        eui::Screen minScreen{1122.0f, 845.0f};
+        mini.begin("about_layout_min");
+        mod->compose(mini, minScreen);
+        mini.end();
+        mini.layout(minScreen.width, minScreen.height);
+        const auto* c = mini.find("about.card.deps");
+        DOCTEST_REQUIRE(c != nullptr);
+        DOCTEST_CHECK(c->frame.x >= 0.0f);
+        DOCTEST_CHECK(c->frame.x + c->frame.width <= minScreen.width);
+        // 居中：右卡右缘 = 内容区右缘
+        DOCTEST_CHECK(nearPx(c->frame.x + c->frame.width,
+                             (minScreen.width - kContentW) / 2.0f + kContentW));
+        const auto* footer = mini.find("about.footer");
+        DOCTEST_REQUIRE(footer != nullptr);
+        DOCTEST_CHECK(nearPx(footer->frame.y + footer->frame.height,
+                             minScreen.height - t.sizes.spacingXXLarge));
+    }
+    mod->onStop();
     return true;
 })
 
