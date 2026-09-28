@@ -23,6 +23,7 @@
 
 ### 4. Probes 扩展
 - **已交付**：7 probe exe 全编译 + 全 PASS + harness 补键盘/右键/滚轮/拖拽/文本
+- **版本控制缺口（2026-09-28 实测）**：`tests/probes/` 下 3 个 probe 源文件从未被 git 跟踪——`claude_probes.cpp`（172 行）、`home_probes.cpp`（386 行）、`markdown_probes.cpp`（384 行），共 942 行。它们是真交付物：文件头分别引用 spec `docs/superpowers/specs/2026-09-28-devdesk-probes-design.md`（§3-probe-full）与具体 commit（`046beaa` home sparkline 顶带修复 / `770beb3` markdown 双层卡修复）。这 3 个正是上面「7 probe exe」里缺失的 3 个（7 = claude / home / markdown / pet / settings_cards / settings_dropdown_z / todo），同目录另 4 个 probe 源文件与 `probe_harness.h` 已被 git 跟踪。**待办：把这 3 个文件 `git add` 进版本控制**（本清单只记录文档事实，未代为提交）。
 - **待补**：
   - 多窗 stub（pet 行为档 P3）
   - `confirmDialogProbe` 共享骨架（spec 规划未实现）
@@ -50,7 +51,20 @@
 
 ### 9. EUI-NEO 上游
 - ✅ `5b0cd34` styledmenu dismiss rect + requestDismiss 按值参数防 UAF
-- 待 push（81 commits ahead of origin）
+- **永不 push 到 origin（2026-09-28 用户决策）**：EUI-NEO 本地 main 领先 origin 82 个提交（2026-09-28 实测），已决策永不推送——origin/main 停在 v0.6.0，本地领先是长期状态、提交数只会继续增长，不再按「待 push」跟踪。
+
+---
+
+## macOS 构建环境（2026-09-28 本机实测）
+
+- 本机 macOS / arm64 已装 Homebrew 工具链（`/opt/homebrew/bin`）：ninja 1.13.2、openssl@3 3.6.4（同路径另有 cmake 4.4.3）
+- configure 命令（**macOS 上须手敲**；`build/` 首建或换平台时先删重建）：
+  ```
+  export PATH="/opt/homebrew/bin:$PATH"
+  cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Debug -DOPENSSL_ROOT_DIR=/opt/homebrew/opt/openssl@3
+  ```
+- `scripts/build-test-run.sh` **在 macOS 上不可用**：脚本第 25 行写死 Windows 工具链 PATH（`/d/software/cmake/cmake-4.3.3-windows-x86_64/bin:/d/software/ninja:/c/msys64/mingw64/bin`）、第 120 行写死 `-DOPENSSL_ROOT_DIR=C:/msys64/mingw64`。macOS 上要跑构建 + 测试 + 启动，只能手敲上面两条命令再补等价步骤。
+- macOS 首次构建失败：EUI-NEO `core/platform/window_style_macos.mm` 与 `core/platform/context_menu_macos.mm` 编译不过（详见 backlog `docs/superpowers/plans/2026-09-22-backlog.md` §三）。归因：EUI-NEO 2026-09-28 提交 `6f771c3` 从未在 macOS 上编译过。
 
 ---
 
@@ -69,5 +83,5 @@
 
 - 全在 `master`（ddf3425 起 22+ commit）
 - 无残留 worktree
-- 0 未提交改动
-- EUI-NEO 1 个 commit 待 push
+- 未提交改动：`tests/probes/` 下 3 个 probe 源文件未跟踪（`claude_probes.cpp` / `home_probes.cpp` / `markdown_probes.cpp`，共 942 行，见 §4）——此前记的「0 未提交改动」不成立；除此之外工作区干净
+- EUI-NEO：**永不 push 到 origin（2026-09-28 用户决策）**，origin/main 停在 v0.6.0；本地 main 领先 origin 82 个提交（2026-09-28 实测）为长期状态，不再有「待 push」事项（见 §9）

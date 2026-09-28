@@ -14,6 +14,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 目标平台：**Windows 11**（当前开发环境，2026-09 从 macOS 迁移而来）和 **macOS 27+**（已完成主线，平台分支代码保留可用）。
 
+> **平台补记（2026-09-28）**：项目已搬回本机 macOS（arm64）继续开发——macOS 是本项目最初的开发平台。本文件的 Windows 相关工具链章节（「常用命令」的 MSYS2 MinGW64 段、ccache 三件套、并行度封顶等）保留，作为移植目标的参考，不再是当前开发环境。
+
 ## 🚨 项目核心约束（最重要的几条）
 
 1. **用户不熟悉 C++，纯 AI 开发** — 代码对用户不可见，所有反馈通过：文档 / 中文日志 / 截屏 / 测试结果 / mockup
@@ -58,7 +60,7 @@ launcher 是 **configure 期属性**：已存在的 `build/` 目录不会自动�
 **macOS（历史平台，仅打包脚本保留）**：macOS 主线（P0-P8）在 2026-09 迁 Windows 前完成，迁后仓库内只剩 `platform/macos/build-app.sh` 与 `scripts/package-macos.sh` 两个打包辅助脚本。本文档旧版提到的 `./scripts/dev.sh`（构建+运行）、`./scripts/test.sh`、`./scripts/screenshot.sh <page>`、`./scripts/reset-db.sh` **在本仓库中不存在**（`git ls-files scripts/` 可核），不要再照抄执行。`check-consistency.sh` 已 Windows 化（波 1 TIN-13）：Playwright 截 HTML demo + PowerShell `CopyFromScreen` 截主窗口 + Pillow 合成回退，二进制名按 `uname` 分平台取 `build/DevDesk.exe`，不再是 macOS 专用脚本。
 
 构建入口：`CMakeLists.txt` 顶层 → `src/main.cpp`。
-EUI-NEO 依赖：`../EUI-NEO/`（同级目录，通过 `EUI_NEO_DIR` cache 变量 `add_subdirectory` 集成，**不是 git submodule**）。**当前依赖 rev**：`7164d55`（2026-09-28，与 `DEVDESK_EUI_NEO_MIN_REV` 一致；EUI-NEO 本地 main 领先 origin 81 个提交；这批提交尚未 push 到 origin——origin/main 停在 v0.6.0，push 与否是用户决策门控）。**EUI-NEO 需保持本地 main 最新**（含 onWindowDestroyed/requestFocus/trayMenu/windowEffect/lineStyles/getMonitorWorkAreas/setSystemPowerHandler/styledMenu/onTrayMenu/windowIsFocused/input onCancel 等新 API），顶层 CMake configure 时打印 `EUI-NEO git rev` 并在缺失最低依赖 rev（`DEVDESK_EUI_NEO_MIN_REV`，与本行保持一致、消费 EUI 新 API 后两处同步更新）时软警告不 fail；EUI-NEO push 后将启用硬版本检查（审计 [11]）。
+EUI-NEO 依赖：`../EUI-NEO/`（同级目录，通过 `EUI_NEO_DIR` cache 变量 `add_subdirectory` 集成，**不是 git submodule**）。**当前依赖 rev**：`7164d55`（2026-09-28，与 `DEVDESK_EUI_NEO_MIN_REV` 一致；EUI-NEO 本地 main 领先 origin 82 个提交（2026-09-28 实测），**已决策永不 push 到 origin**（2026-09-28 用户决策）——origin/main 停在 v0.6.0，本地领先是长期状态、提交数只会继续增长）。**EUI-NEO 需保持本地 main 最新**（含 onWindowDestroyed/requestFocus/trayMenu/windowEffect/lineStyles/getMonitorWorkAreas/setSystemPowerHandler/styledMenu/onTrayMenu/windowIsFocused/input onCancel 等新 API），顶层 CMake configure 时打印 `EUI-NEO git rev` 并在缺失最低依赖 rev（`DEVDESK_EUI_NEO_MIN_REV`，与本行保持一致、消费 EUI 新 API 后两处同步更新）时软警告不 fail；原计划「EUI-NEO push 后启用硬版本检查」的前置条件因「永不 push」决策不再到来，硬版本检查保持未启用（审计 [11]）。
 
 ## 🏗️ 架构要点（4 层模块化）
 
@@ -237,7 +239,7 @@ main → 6 个 module_* (home / markdown / todo / claude_proxy / settings / pet)
 | `docs/superpowers/specs/2026-09-20-devdesk-design.md` | **唯一权威 spec**，所有架构 / API / token 决策都在这 |
 | `docs/mockups/palette-comparison.html` | 配色对比 demo（已确定方案 B）|
 | `docs/mockups/devdesk-prototype.html` | HTML 交互原型（待生成）|
-| `../EUI-NEO/` | 上游 GUI 框架（同级目录源码，非 submodule），通过 `EUI_NEO_DIR` 以 `add_subdirectory` 集成；**当前依赖 rev `7164d55`（本地 main 未 push，需保持最新，见「常用命令」段与审计 [11]）** |
+| `../EUI-NEO/` | 上游 GUI 框架（同级目录源码，非 submodule），通过 `EUI_NEO_DIR` 以 `add_subdirectory` 集成；**当前依赖 rev `7164d55`（本地 main 领先 origin 82 个提交且已决策永不 push，需保持最新，见「常用命令」段与审计 [11]）** |
 | `docs/superpowers/specs/2026-09-27-*.md` | 09-27 批次 specs：wave1-fix / god-class-refactor / shared-config-and-failover |
 | `docs/superpowers/specs/2026-09-28-*.md` | 09-28 批次 specs：installer-and-dmg / devdesk-probes / r8-assembly-layer / tin06-test-scaffold-migration / setscrolloffset-upstream-m6-refactor / md01-reload-block-mapping / macos-three-features / ui-modernization / profile-run |
 
@@ -290,7 +292,7 @@ main → 6 个 module_* (home / markdown / todo / claude_proxy / settings / pet)
 - **codegraph 索引排除 worktree / build**：`D:/project/gui/codegraph.json` 的 `exclude` = `.claude/worktrees/**`、`DevDesk/.claude/worktrees/**`、`wt-*/**`、`**/build/**`（新增临时目录时同步维护，别把产物灌进索引）。
 - **`DevDesk.exe` 会锁 build 目录**：运行中链接报 `cannot open output file DevDesk.exe: Permission denied` → `taskkill -F -IM DevDesk.exe` 解锁（**别杀 `claude.exe` / `cc-switch.exe`**）。
 - **代理直测脚本**：`doc/scripts/proxy_smoke_test.py`（`proxy` / `upstream` / `all`；环境变量 `DEVDESK_PROXY` / `DEVDESK_MODEL` / `DEVDESK_TOKEN`）。
-- **EUI-NEO 最低依赖 rev `7164d55`**：`CMakeLists.txt` 的 `DEVDESK_EUI_NEO_MIN_REV`，需与本文件「常用命令」段的记录保持一致，消费 EUI 新 API 后两处同步更新；EUI-NEO 要跑在本地 main 最新（本地领先 origin、尚未 push）。
+- **EUI-NEO 最低依赖 rev `7164d55`**：`CMakeLists.txt` 的 `DEVDESK_EUI_NEO_MIN_REV`，需与本文件「常用命令」段的记录保持一致，消费 EUI 新 API 后两处同步更新；EUI-NEO 要跑在本地 main 最新（本地领先 origin 82 个提交；2026-09-28 用户决策永不 push，见「常用命令」段）。
 - **已踩过的坑（写码前先想一遍）**：
   - **单位错配（系统性）**：`windowSize` / `glfwCreateWindow` 是**客户区物理像素**，compose 侧按 `framebuffer/(dpiScale×uiScale)` 折算逻辑像素——菜单窗、启动窗、桌宠锚点都栽过。本机 125%：工作区 1920×1020 物理、任务栏 60 px，窗口客户区底部 52 物理 px 会被任务栏吃掉（贴底 UI 不可见）。
   - **三套坐标系**：窗口坐标（`onContextMenu` 给的是它）/ 页面坐标（`app.page` 子树，原点 x = 侧边栏宽 **208/72**）/ 控件局部坐标，跨层必须换算（`Router::pageOriginX` 为此而加）。
