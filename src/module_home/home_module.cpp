@@ -470,8 +470,7 @@ public:
                                                          "home.stat.tokens.spark")
                                                          .size(chartW, chartH)
                                                          .values(series)
-                                                         .title("")
-                                                         .labels({})
+                                                         .chromeless()
                                                          .style(components::
                                                                     LineStyle::
                                                                         Curve)
