@@ -86,6 +86,8 @@ echo "── EUI-NEO: $EUI_DIR ──"
 if [ ! -f build-release/build.ninja ]; then
   echo "── 首次 configure（build-release/ 未初始化）──"
   CONF_OUT=$(cmake -B build-release -G Ninja -DCMAKE_BUILD_TYPE=Release \
+    -DCMAKE_C_COMPILER_LAUNCHER=ccache \
+    -DCMAKE_CXX_COMPILER_LAUNCHER=ccache \
     -DEUI_NEO_DIR="$EUI_DIR" \
     -DOPENSSL_ROOT_DIR=C:/msys64/mingw64 \
     -DZLIB_LIBRARY=C:/msys64/mingw64/lib/libz.dll.a \
