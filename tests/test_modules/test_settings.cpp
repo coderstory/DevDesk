@@ -2281,11 +2281,11 @@ REGISTER_TEST(settings_ui_logic_equivalence,
     DOCTEST_CHECK_EQ(ms::kDropdownPopupGap, 8.0f);
     DOCTEST_CHECK_EQ(ms::kWindowBottomMargin, 16.0f);
     DOCTEST_CHECK_EQ(ms::kSettingsTabHeight, 40.0f);
-    DOCTEST_CHECK_EQ(ms::kAppearanceCardHeight, 160.0f);
+    DOCTEST_CHECK_EQ(ms::kAppearanceCardHeight, 172.0f);
     DOCTEST_CHECK_EQ(ms::kEditorFontCardHeight, 108.0f);
     DOCTEST_CHECK_EQ(ms::kModulesCardHeight, 288.0f);
     DOCTEST_CHECK_EQ(ms::kPetCardHeight, 120.0f);
-    DOCTEST_CHECK_EQ(ms::kDirectoryCardHeight, 108.0f);
+    DOCTEST_CHECK_EQ(ms::kDirectoryCardHeight, 116.0f);
     DOCTEST_CHECK_EQ(ms::kLogSettingsCardHeight, 148.0f);
     DOCTEST_CHECK_EQ(ms::kAboutCardHeight, 150.0f);
 
