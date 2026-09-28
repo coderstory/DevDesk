@@ -15,6 +15,24 @@ master `c48546e`（`[Batch-0927-B]` 收口）→ `9dd9ee2`：**36 个 `--no-ff` 
 - 新增平台层 `platform::terminal`（`src/platform/terminal_launch*.{h,cpp}`）：Windows = Windows Terminal 优先（`%LOCALAPPDATA%\Microsoft\WindowsApps\wt.exe` 探测），缺失退化传统控制台并提示；macOS = 写 `appDataDir()/run-scripts/run-<id>-<ts>.command` → `open`（跟随默认终端）；其他平台 `NotImplemented`。命令文本拼装为跨平台纯函数，单测逐字比对（含 `-EncodedCommand` 的 UTF-16LE+base64 载荷解码回读）。
 - 已知边界（spec §10）：起始目录默认用户主目录（首次进入新目录会弹 workspace trust）；运行中的会话不受 DevDesk 管理（停代理/退出只提示）；macOS 侧本机无 Mac，未实机验证。
 
+### [Installer-M4] `bb71195` —— 安装器 M4（macOS 侧）：executableDir 三平台 + 皮肤根改 exe 目录 + bundle assets（`e2a848c`，集成 `597c0eb`）
+- fix(paths,pet,macos)：新增 `executableDir`（三平台）→ 皮肤根与打包脚本改「exe 旁资源」；macOS 打包补 assets；与 master 集成时 test_paths 双方用例保留。
+
+### [Installer-M2] `69bbfdf` —— 安装器 M2：Inno .iss + 两平台打包脚本 + DMG 去隔离脚本/说明 + .gitignore（`51f12c4`）
+- feat(installer)：`scripts/package-windows.sh` + `scripts/package-macos.sh` + `installer/**` 全部文本文件（.iss / .command / 说明）+ `bash -n` 校验；缺 ISCC 时清晰报错 + 给安装命令；`.gitignore` 补录入。
+
+### [Installer-M1] `de8183c` —— 安装器 M1：DMG 背景图生成脚本 + 素材入库（`5cf517e`、`cdb3d02`）
+- feat(installer)：新增 `doc/scripts/gen_dmg_background.py`（Windows 侧 Pillow 预生成 700×440 / 1400×880 两张背景图入库，附尺寸断言）。
+
+### [Audit-P2] `db0093c` —— 审计 P2：probe_winfx.ps1 输出路径去 worktree 硬编码（`198517b`）
+- fix(scripts)：probe 截图输出改为脚本所属仓库 `build/probe`（原路径指向已删 worktree）。
+
+### [Platform-P1] `326ee39` —— 平台适配修复批 P1（5 commits）：AppleClang 判据 / POSIX 原子写 / 测试隔离 / file_open 契约（`a4d55b9`、`34e4087`、`3819a11`、`8a20054`、`e1c702d`）
+- fix(cmake)：`devdesk_apply_warnings` 补 AppleClang 分支（macOS 上警告开关整段静默失效）。
+- refactor(core)：原子写覆盖式替换按平台拆文件（POSIX 走单次 rename 原子替换）。
+- fix(tests)：AppDataEnv 一并隔离 HOME、keychain 用例 macOS 整例跳过（测试隔离）。
+- refactor(platform)：`wideToUtf8ForTest` 声明移出平台无关头（新增 `file_open_win.h`，file_open 契约补齐）。
+
 ### [AuthField] `77c7f6e` —— Profile 认证字段（鉴权头三态、migration v7）
 - 新增 profile 级「认证字段」：`both`（默认，双发 x-api-key + Authorization: Bearer，= 原行为）/ `bearer` / `api_key`；由代理转发按 profile 决定注入哪个鉴权头（流式 / 非流式 / 连通测试三处同源）。
 - 接管 settings.json 的占位符仍固定 `ANTHROPIC_AUTH_TOKEN=PROXY_MANAGED`（不随该字段变）；粘贴导入按键名证据自动选（只带 ANTHROPIC_API_KEY → 只发 x-api-key）。
