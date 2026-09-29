@@ -12,10 +12,14 @@
 
 #include <string>
 
+#include "todo_ui_logic.h"  // kChipHeight / kChipFontInset（与 chipWidth 同源）
+
 namespace module::todo::ui {
 
 // 小标签（pill）——看板卡片（优先级/截止/标签）与详情弹窗标签区共用。
-// 几何与字体档位逐字沿用拆分前 todo_module.cpp 的 drawChip。
+// 几何与字体档位逐字沿用拆分前 todo_module.cpp 的 drawChip；UI 整改 18 起
+// 字号/高走 todo_ui_logic.h 的 kChipFontInset / kChipHeight（与 chipWidth
+// 估宽同一份常量，改一处即两处同步）。
 inline void drawChip(eui::Ui& ui,
                      const std::string& id,
                      float x,
@@ -28,17 +32,17 @@ inline void drawChip(eui::Ui& ui,
                      float opacity = 1.0f) {
     ui.rect(id + ".bg")
         .position(x, y)
-        .size(w, 18.0f)
+        .size(w, kChipHeight)
         .color(bg)
         .radius(t.sizes.radiusPill)
         .opacity(opacity)
         .build();
     ui.text(id + ".text")
         .position(x, y)
-        .size(w, 18.0f)
+        .size(w, kChipHeight)
         .text(text)
-        .fontSize(t.sizes.fontSizeSmall - 3.0f)
-        .lineHeight(18.0f)
+        .fontSize(t.sizes.fontSizeSmall - kChipFontInset)
+        .lineHeight(kChipHeight)
         .horizontalAlign(eui::HorizontalAlign::Center)
         .color(fg)
         .fontWeight(600)

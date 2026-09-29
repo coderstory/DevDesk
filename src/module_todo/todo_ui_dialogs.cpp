@@ -708,16 +708,29 @@ void drawDetailDialog(eui::Ui& ui, const eui::Screen& screen,
             for (int i = 0; i < 4; ++i) {
                 const bool active = (d.detail.priority == prios[i]);
                 const float bw = 100.0f;
+                // UI 整改 17 ②：按钮**自己的底色 = 它代表的优先级色**
+                // （priorityButtonBg：未选中 = 强度表浅 tint，选中 = 0.55 深
+                // tint；与卡片底同源同一张强度表 + 同一张 priorityColor 表）。
+                // 文字色改 textPrimary（原未选中用 textSecondary）：浅色档
+                // 0.34 tint 的「高」按钮上 textSecondary 实测 4.17:1 < WCAG AA
+                // 4.5:1，textPrimary 在同底上 ≥ 8:1；选中档亦 ≥ 6:1（深浅主题
+                // 皆然）。选中/未选中靠**底色深浅 + 边框**双通道区分
+                // （1px borderDefault → 2px 该优先级色），不再靠 primarySoftBg
+                // ——否则「高」是红的、「无」是主色橘，色底语义自相矛盾
                 components::button(ui, "todo.dialog.detail.prio." + std::to_string(i))
                     .position(28.0f + static_cast<float>(i) * (bw + 8.0f), 264.0f)
                     .size(bw, 32.0f)
                     .text(priorityLabel(prios[i]))
                     .fontSize(t.sizes.fontSizeSmall - 1.0f)
-                    .colors(active ? t.colors.primarySoftBg : t.colors.surfaceElevated,
-                            t.colors.hover, t.colors.active)
-                    .textColor(active ? t.colors.primaryText : t.colors.textSecondary)
+                    .colors(priorityButtonBg(prios[i], t, active,
+                                             t.colors.surfaceElevated),
+                            priorityButtonBg(prios[i], t, active, t.colors.hover),
+                            priorityButtonBg(prios[i], t, active, t.colors.active))
+                    .textColor(t.colors.textPrimary)
                     .radius(t.sizes.radius)
-                    .border(1.0f, active ? t.colors.primary : t.colors.borderDefault)
+                    .border(active ? 2.0f : 1.0f,
+                            active ? priorityColor(prios[i], t)
+                                   : t.colors.borderDefault)
                     .onClick([&d, i, prios] { d.detail.priority = prios[i]; })
                     .build();
             }
@@ -772,7 +785,10 @@ void drawDetailDialog(eui::Ui& ui, const eui::Screen& screen,
                     drawChip(ui, chipId, chipX, 392.0f, tw, t, d.detail.tags[ti],
                              t.colors.info, t.colors.surface);
                     components::button(ui, chipId + ".x")
-                        .position(chipX + tw + 1.0f, 390.0f)
+                        // UI 整改 18：chip 高 18→22（kChipHeight），删除按钮
+                        // 高 22 与 chip 同高 → y 跟到 392 与 chip 顶对齐
+                        // （旧 390 是配 18 高 chip 的居中位，不改会上下错 2px）
+                        .position(chipX + tw + 1.0f, 392.0f)
                         .size(20.0f, 22.0f)
                         .text("×")
                         .fontSize(t.sizes.fontSizeSmall)

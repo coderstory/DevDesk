@@ -373,22 +373,61 @@ inline eui::Color priorityColor(Priority p, const core::theme::Tokens& t) {
     return t.colors.*kColorFields[idx <= static_cast<size_t>(Priority::High) ? idx : 0];
 }
 
-// 优先级底色（UI 整改 12：底色区分，去「高/中/低」文本）。
-// 高=警示色底 / 中=中性底 / 低=弱底（各向 surface 掺 token 的 tint，
-// 深浅主题下都保持「底」的弱对比语义）；None=无标记（不画 pill）。
-// eui::mixColor 是 header-only 值函数（与 eui::Color 同层），模块层可直用。
-inline std::optional<eui::Color> priorityPillBg(Priority p,
-                                                const core::theme::Tokens& t) {
-    switch (p) {
-        case Priority::Low:
-            return eui::mixColor(t.colors.surface, t.colors.info, 0.18f);     // 弱底
-        case Priority::Medium:
-            return eui::mixColor(t.colors.surface, t.colors.textTertiary, 0.40f);  // 中性底
-        case Priority::High:
-            return eui::mixColor(t.colors.surface, t.colors.error, 0.45f);    // 警示色底
-        default:
-            return std::nullopt;
-    }
+// 优先级色底（UI 整改 17）：**卡底 ① 与详情弹窗优先级按钮底 ② 的唯一色源**。
+// 两处都吃本段这四件：priorityColor 色表 + kPriorityTintStrength 强度表 +
+// priorityTintBg 算式，改配色只动这里一处。
+//
+// 强度下标 = Priority 值域（None=0 … High=3）：新增枚举成员时 static_assert
+// 编译期失败。低档刻意压在 0.16 以下（「极低饱和浅色」＝不刺眼），高档才明显
+// ——底色深浅本身就是优先级信息，但整卡着色不能喧宾夺主。
+inline constexpr float kPriorityTintStrength[] = {0.12f, 0.16f, 0.22f, 0.30f};
+static_assert(std::size(kPriorityTintStrength) ==
+              static_cast<size_t>(Priority::High) + 1);
+
+// 越界（脏数据）走 [0] 档，与 priorityLabel / priorityColor 同款兜底
+inline float priorityTintStrength(Priority p) {
+    const size_t idx = static_cast<size_t>(p);
+    return kPriorityTintStrength[idx <= static_cast<size_t>(Priority::High) ? idx
+                                                                           : 0];
+}
+
+// 底色算式（唯一实现）：把任意基色向该优先级的色混 strength 比例。
+// strength = 0 → 原样返回基色（一像素不动），故 None 档走这里等于「无 tint」。
+inline eui::Color priorityTintBg(Priority p, const core::theme::Tokens& t,
+                                 const eui::Color& base, float strength) {
+    if (strength <= 0.0f) return base;
+    return eui::mixColor(base, priorityColor(p, t), strength);
+}
+
+// ① 看板卡底：None 不加 tint（用户约束「无优先级不出现底色」＝保持默认卡底），
+// 低/中/高按强度表混。入参是**基色**而不是固定 surface：卡的三态
+// （surface / hover / active）各走一次同一算式，优先级色相与 hover/active
+// 反馈**叠加**而非互相覆盖（旧实现 hover/active 直接换成中性 token，一 hover
+// 优先级指示就整块消失）。
+inline eui::Color priorityCardBg(Priority p, const core::theme::Tokens& t,
+                                 const eui::Color& base) {
+    return priorityTintBg(p, t, base,
+                          p == Priority::None ? 0.0f : priorityTintStrength(p));
+}
+
+// ② 详情弹窗优先级按钮底的选中档强度：深一档、接近实色（未选中 = 强度表浅色）。
+// 不取 1.0 实色：四个优先级色在原色下亮度跨度过大（浅色档 error #B82850
+// 2.8:1 vs warning #9A6B30 4.4:1），实色底配任何单一前景 token 都会有一档
+// 掉到 4.5:1 以下；0.55 的深 tint 在四档上对 textPrimary 实测均 ≥ 6.0:1
+// （浅/深主题皆是，见 todo_ui_priority_button_tint 用例）。
+inline constexpr float kPriorityButtonPickedStrength = 0.55f;
+
+// ② 详情弹窗优先级按钮底。**按钮不吃卡片那条「None 不着色」的例外**：
+// 「无」也是一个可点选的选项，没有自己的底色就无法与其它档区分（选中/未选中
+// 也认不出来），故按钮的 None 档取强度表里的 0.12（近中性灰，仍是「无」色
+// textTertiary 的既定变体）。
+// base 由调用方给三态基色（surfaceElevated / hover / active）——与卡片同款：
+// 优先级色相与 hover/按下反馈叠加，不再被中性态色整块顶掉。
+inline eui::Color priorityButtonBg(Priority p, const core::theme::Tokens& t,
+                                   bool picked, const eui::Color& base) {
+    return priorityTintBg(p, t, base,
+                          picked ? kPriorityButtonPickedStrength
+                                 : priorityTintStrength(p));
 }
 
 // epoch 秒 → "MM-DD"；-1 表示无截止日期
@@ -555,12 +594,21 @@ inline float cardTop(const BoardGeom& g, int cardIndex) {
            static_cast<float>(cardIndex) * (kCardHeight + kCardGap);
 }
 
-// chip 宽度估算（fontSizeSmall-3 ≈ 11px：CJK ≈ 11px/字（3 字节），ASCII ≈ 5.5px/字节）
+// chip 几何与字号（标签 / 截止 pill）——drawChip（todo_ui_common.h）与下面的
+// chipWidth 估宽**共用这同一份常量**：调字号必须同步调估宽，否则估宽偏小会把
+// 右侧 chip 排到卡外、或 chip 内文字被裁。UI 整改 18：字号 10 → 12（用户反馈
+// 「标签文本太小」），chip 高 18 → 22（字号 + 上下各 5px 内边距，lineHeight 同
+// 高，文字不裁）。
+constexpr float kChipHeight = 22.0f;
+constexpr float kChipFontInset = 1.0f;  // 字号 = fontSizeSmall - inset（13-1=12）
+
+// chip 宽度估算（字号 12px：ASCII ≈ 0.55em ≈ 6.6px/字节；CJK 3 字节 ≈ 14.4px/字，
+// 真实字形 ≈ 12px/字——估宽**略偏大**，只多留白、不会裁字）
 // ponytail: 估宽不发 FontRegistry 实测；偏差只影响 chip 间留白，可接受
 inline float chipWidth(const std::string& text) {
     float w = 20.0f;
     for (unsigned char c : text) {
-        w += (c >= 0x80) ? 4.0f : 5.5f;
+        w += (c >= 0x80) ? 4.8f : 6.6f;
     }
     return w;
 }

@@ -491,10 +491,17 @@ void drawCard(eui::Ui& ui, const std::string& id, float x, float y, float width,
     ui.rect(id + ".bg")
         .position(0.0f, y)
         .size(width, kCardHeight)
-        // 交互层（卡内首层）：基色 = surface（与 card 骨架同 token，视觉
-        // 无差），hover/active 由 states 过渡合成；边框条件在 .bg 上：
-        // 未选中 1px borderDefault / 选中 2px primary 加粗（UI 整改 16）
-        .states(t.colors.surface, t.colors.hover, t.colors.active)
+        // 交互层（卡内首层）：基色 = priorityCardBg(surface)——UI 整改 17
+        // 起**优先级直接改卡底色**（原卡右上角/标题旁的优先级色块 pill 已删，
+        // 见下面 chip 段注释）；None 档 color 恰为 surface（与 card 骨架同
+        // token、视觉零变化），低/中/高各按强度表混。hover/active 同走这条
+        // 算式（priorityCardBg 吃「基色」入参），优先级色相与状态反馈叠加，
+        // hover 不再把优先级指示整块吃掉。边框条件在 .bg 上：
+        // 未选中 1px borderDefault / 选中 2px primary 加粗（UI 整改 16）——
+        // 边框与底色两个通道独立，选中态不被优先级底色盖掉
+        .states(priorityCardBg(task.priority, t, t.colors.surface),
+                priorityCardBg(task.priority, t, t.colors.hover),
+                priorityCardBg(task.priority, t, t.colors.active))
         .border(selected ? 2.0f : 1.0f,
                 selected ? t.colors.primary : t.colors.borderDefault)
         // M2（2026-09-28，UI 现代化）：hover/按下颜色过渡（列表项基调
@@ -536,23 +543,18 @@ void drawCard(eui::Ui& ui, const std::string& id, float x, float y, float width,
         .opacity(done ? 0.6f : cardOpacity)
         .build();
 
-    // UI 整改 12：优先级从「●高」文字 chip 换成底色 pill（高=警示色底/
-    // 中=中性底/低=弱底，走 theme token tint），去「高/中/低」字样；
-    // 原先的左侧优先级竖条（.bar）随 16 一并删除。chip 从左往右顺序排
-    // 放（prio → due → tags），None 不画 pill、后续 chip 顺移，不留空位。
-    const auto pillBg = priorityPillBg(task.priority, t);
+    // UI 整改 17：优先级色块 pill（旧 .prio，UI 整改 12 的底色 chip）**已删**——
+    // 优先级改由整张卡底表达（见上面 .bg 的 priorityCardBg），此处不再画第二个
+    // 颜色标记（用户原话「直接修改卡片的底色 而不是加一个色块」）。原先的左侧
+    // 优先级竖条（.bar）随 16 一并删除。chipX 从卡内左内边距起算，chip 从左往
+    // 右顺序排（due → tags），起点不再被优先级 chip 顶掉 42px。
     // chipX 保持**卡内相对**坐标（16 = 卡内左内边距）；下面的宽度自适应算式
     // 比较的是「相对卡右缘的剩余空间」，同坐标系
     float chipX = 16.0f;
     // 跨模块剩余审计修（2026-09-28）：列宽无下限（≥6-7 列时 colW 跌破
-    // 130），固定 36/66px 的优先级/截止 chip 会越出卡右缘——chip 宽自适应
+    // 130），固定 66px 的截止 chip 会越出卡右缘——chip 宽自适应
     // 剩余空间，放不下最小宽度就跳过（完整信息在详情弹窗）；标签 chip 的
     // 原有自适应保留（chipX + tw > width-12 即 break）
-    if (pillBg.has_value() && chipX + 36.0f <= width - 12.0f) {
-        drawChip(ui, id + ".prio", chipX, y + 44.0f, 36.0f, t, "",
-                 *pillBg, *pillBg, cardOpacity);
-        chipX += 42.0f;  // 36 + 6 间距
-    }
 
     // 截止 chip（⏰ emoji 已去掉：逾期时 chip 前景直接用 error 色示意）
     if (task.dueAt.has_value()) {
@@ -658,11 +660,13 @@ void drawDragGhost(eui::Ui& ui, const core::theme::Tokens& t,
                 .border(0.0f, t.colors.borderDefault)
                 .content([&] {
                     // 底 + 主色描边：与真卡的"选中态"同款视觉（2px primary），
-                    // 一眼区分"这是被拎着的那张"
+                    // 一眼区分"这是被拎着的那张"；底色同走 priorityCardBg
+                    // （UI 整改 17）：副本是"同一张卡被拎起来"，卡底的优先级色
+                    // 必须跟手，否则拖到一半优先级指示消失
                     ui.rect("todo.dragghost.bg")
                         .position(0.0f, 0.0f)
                         .size(w, kCardHeight)
-                        .color(t.colors.surface)
+                        .color(priorityCardBg(task->priority, t, t.colors.surface))
                         .border(2.0f, t.colors.primary)
                         .radius(t.sizes.radius)
                         .build();
