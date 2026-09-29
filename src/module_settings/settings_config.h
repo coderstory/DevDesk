@@ -180,7 +180,7 @@ float windowEffectAlpha(const std::string& mode);
 float windowEffectTitleBarAlpha(const std::string& mode);
 
 // 无材质档（off / translucent）下主题色的**有效不透明度** = 1−(1−标题栏α)(1−内容区α)，
-// 乘主题色底 250 即黑壁纸下的实测像素。纯算式、无平台依赖，供单测锁「230–240 目标带」
+// 乘主题色底 250 即黑壁纸下的实测像素。纯算式、无平台依赖，供单测锁「≥244 且 <250 目标带」
 //（只锁常量值锁不住目标，回退到双层同 α 的老取值时本式立刻出带）
 float windowEffectThemeOpacity(const std::string& mode);
 
