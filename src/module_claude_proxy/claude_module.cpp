@@ -83,8 +83,16 @@ public:
         // 引导条（§6.4）：代理未运行且本会话从未启动过时显示（内存态一次性）
         if (proxyRunning) state_.list.proxyEverSeen_ = true;
         const bool showGuide = !proxyRunning && !state_.list.proxyEverSeen_;
+        // 引导条的预留高 = 它的渲染高（kGuideBarH，绘制侧同一常量）+ 根 column
+        // 给它的那一个 spacingLarge 间距。此前这里写死 30（绘制侧实际 18 + 间距
+        // 16 = 34），预留与绘制各写一份 → 根 column 子项总高超出可用高 4px，
+        // 底部 padding 被压缩（macOS 布局审计 finding: claude_module.cpp:86）。
+        // 为什么不改成让 body 行 flexGrow 吃剩余高：body 行的高度（bodyH）在
+        // **compose 期间**就要传给左右两个子面板（claude_ui_list / claude_ui_detail
+        // 都按它排内部几何），而 flexGrow 的结果要 layout 之后才知道 → 需要两遍
+        // 布局，改动面远大于收益。故取「同一常量」这条修法。
         const float bodyH = contentH - headerH - t.sizes.spacingLarge -
-                            (showGuide ? 30.0f : 0.0f);
+                            (showGuide ? kGuideBarH + t.sizes.spacingLarge : 0.0f);
 
         // 页面底色 = 主窗口 clearColor（随主题/窗口效果档运行时跟随，
         // 磨砂 Phase B/D）——不自铺不透明底，半透/磨砂档主体才生效

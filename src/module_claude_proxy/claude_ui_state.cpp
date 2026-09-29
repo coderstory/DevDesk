@@ -45,7 +45,9 @@ DataRefresh runDataRefresh(ClaudeService* svc, bool wantProfiles,
         // 版本号取**查询前**快照（同旧实现）：查询期间落库的调用会让下一帧
         // 版本再对不上，宁可多查一次不漏显
         r.verBefore = svc->callLogVersion();
-        auto rR = svc->recentCalls(3);
+        // 数据侧上限见 ProfileListState::kRecentCallsSnapshot 的注释：
+        // 它不是显示上限（显示按内容框可用高推），只是「取多少条进快照」
+        auto rR = svc->recentCalls(ProfileListState::kRecentCallsSnapshot);
         if (rR.isOk()) {
             r.recent = std::move(rR).value();
             r.recentOk = true;
