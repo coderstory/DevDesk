@@ -45,16 +45,29 @@ int currentPetScaleIndex();
 std::vector<std::string> petScalePresetLabels();
 
 // ---- B 组：改 pet 模块状态（写盘 + 同步窗口操作）----
+// showPetWindow 的四态结果（Bug B 2026-09-30）：原先 bool 把「未装配 /
+// 已开着 / 启动失败」全折成一个 false，settings 侧无从区分反馈口径（把
+// 「已开着」误报成「未启用，重启后生效」）。收成枚举后调用方按原因给
+// 不同的可见反馈（未装配 = 中性「重启生效」，启动失败 = 错误样式）。
+// 只在本头（标准库边界内），不引 pet / EUI-NEO 类型
+enum class PetShowOutcome {
+    Shown,        // 已按 rt.config 重新入队开窗请求
+    AlreadyOpen,  // 窗口本就开着，无需动作
+    NotAssembled, // 本会话从未装配桌宠（模块开关关）——注册门控重启后生效
+    StartFailed,  // 已装配但重开失败（皮肤资产不可用，未入队开窗）
+};
+
 // 换肤：名字必须在 discoverSkins() 发现列表内（会拼进文件系统路径，防手改
 // 配置注入），未知名字拒绝不动；已发现则写盘并热切换（关旧窗 → 按新皮肤
 // 原位重开）；窗口未开时只持久化（下次启动生效）
 void applyPetSkin(const std::string& skinName);
 // 位置重置：持久化坐标清回未设置哨兵，窗口开着则立刻移回默认位
 void resetPetPosition();
-// 重新显示桌宠窗口（PAB-13，波 1 L7）：返回 true = 已重新入队开窗请求；
-// false 有两种（调用方只需一句提示）：① 本会话从未装配过桌宠（模块开关关，
-// 重启后生效）② 窗口已开着。隐藏走右键「隐藏桌宠」，隐藏后本函数可重开
-bool showPetWindow();
+// 重新显示桌宠窗口（PAB-13，波 1 L7）：返回 Shown = 已重新入队开窗请求；
+// AlreadyOpen = 窗口已开着（隐藏走右键「隐藏桌宠」，隐藏后本函数可重开）；
+// NotAssembled = 本会话从未装配过桌宠（模块开关关，重启后生效）；
+// StartFailed = 已装配但重开失败（皮肤不可用，未入队开窗）
+PetShowOutcome showPetWindow();
 // 关闭桌宠窗口（PET-CLOSE，2026-09-29 真机反馈「设置-模块-桌宠取消勾选，
 // 桌宠没消失」）：模块开关取消勾选 → 立即关窗（与右键「隐藏桌宠」同一条关闭
 // 路径）。返回 true = 曾开着/有可见意图并已请求关闭；false = 本来就关着。
@@ -87,7 +100,7 @@ static_assert(std::is_same_v<decltype(&module::pet::resetPetPosition),
                              void (*)()>,
               "module_pet_bridge: resetPetPosition 签名漂移");
 static_assert(std::is_same_v<decltype(&module::pet::showPetWindow),
-                             bool (*)()>,
+                             module::pet::PetShowOutcome (*)()>,
               "module_pet_bridge: showPetWindow 签名漂移");
 static_assert(std::is_same_v<decltype(&module::pet::closePetWindow),
                              bool (*)()>,
