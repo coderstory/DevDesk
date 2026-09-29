@@ -925,7 +925,7 @@ REGISTER_TEST(uiModernMdPreviewGradient,
 // 只钉**可客观断言**的部分（内容区宽、hero 起点、卡片宽高与堆叠链、footer 底边、
 // 最小窗与大窗都不溢出/不重叠）；观感（呼吸感 / hero 存在感 / 三档窗口效果下的
 // 底色）留人工确认。页面宽 = 窗口宽 − 侧边栏（app_sidebar.cpp pageContentWidth，
-// 展开 208）：最小窗宽 1330 → 页面宽 1122，内容区 1040 只余 41px/侧（仍居中、
+// 展开 208）：最小窗宽 1330 → 页面宽 1122，内容区 900 只余 111px/侧（仍居中、
 // 不溢出，见下）。**最小窗尺寸不再手写**（2026-09-28 组 A：手写的 845 已失义——
 // macOS 工作区 833 点会把最小窗高钳到 805），改由
 // core::window_layout::minWindowSizeForWorkArea 推导；页面宽只依赖最小窗宽，
@@ -947,35 +947,35 @@ bool nearPx(float a, float b) { return std::abs(a - b) <= 0.5f; }
 }  // namespace
 
 REGISTER_TEST(uiAboutLayout,
-              "about: 内容区 1040 / 内容块贴底（底边=页脚顶−间距）/ 极矮窗 clamp 回顶部 / footer 贴页面底部（真机反馈）", {
+              "about: 内容区 900 / 内容块贴底（底边=页脚顶−间距）/ 极矮窗 clamp 回 topPad / footer 贴页面底部（真机反馈）", {
     std::unique_ptr<::core::Module> mod(create_about_module());
     DOCTEST_REQUIRE(mod != nullptr);
     mod->onStart();
     const auto& t = ::core::theme::current();
-    constexpr float kContentW = 1040.0f;
+    constexpr float kContentW = 900.0f;   // 2026-09-29 1040→900（两卡缩一档）
     constexpr float kCardGap = 8.0f;
     constexpr float kTitleH = 40.0f;
-    constexpr float kCardH = 16.0f + 28.0f + 6.0f * 24.0f + 16.0f;  // 204（6 行卡）
-    const float topPad = t.sizes.spacingXXLarge + t.sizes.spacingXLarge;   // 64
+    constexpr float kCardH = 24.0f + 28.0f + 6.0f * 28.0f + 24.0f;  // 244（6 行卡）
+    const float topPad = t.sizes.spacingXXLarge;                   // 40（仅极矮窗兜底）
     const float iconSize = t.sizes.spacingXXLarge + t.sizes.spacingLarge;  // 56
     const float heroToCards = t.sizes.spacingXLarge;                       // 24
     const float footerH = 20.0f;
     // 内容块总高（hero 图标 + 图标/标题 8 + 标题 40 + 标题到卡一档 XLarge
-    // + 卡1 + 卡距 + 卡2 = 544）与「内容块底边 = 页脚顶 − 一档间距」的贴底口径
+    // + 卡1 + 卡距 + 卡2 = 624）与「内容块底边 = 页脚顶 − 一档间距」的贴底口径
     // （2026-09-29）：起点 = max(topPad, 页脚顶 − heroToCards − contentH)
     const float contentH = iconSize + 8.0f + kTitleH + heroToCards +
-                           kCardH + kCardGap + kCardH;                    // 544
+                           kCardH + kCardGap + kCardH;                    // 624
     eui::Ui ui;
     eui::Screen screen{1600.0f, 1000.0f};
     const float footerTop = screen.height - t.sizes.spacingXXLarge - footerH;  // 940
-    const float contentTop = std::max(topPad, footerTop - heroToCards - contentH);  // 372
-    const float cardsTop = contentTop + iconSize + 8.0f + kTitleH + heroToCards;    // 500
-    const float depsTop = cardsTop + kCardH + kCardGap;                             // 712
+    const float contentTop = std::max(topPad, footerTop - heroToCards - contentH);  // 292
+    const float cardsTop = contentTop + iconSize + 8.0f + kTitleH + heroToCards;    // 420
+    const float depsTop = cardsTop + kCardH + kCardGap;                             // 672
     ui.begin("about_layout");
     mod->compose(ui, screen);
     ui.end();
     ui.layout(screen.width, screen.height);  // 元素 frame 需显式布局（同 test_settings）
-    const float x = (screen.width - kContentW) / 2.0f;  // 280
+    const float x = (screen.width - kContentW) / 2.0f;  // 350
     // 帧诊断串：几何断言失败时直接看到实测值（fail-fast 只报一条，无第二条线索）
     auto px = [](const char* what, const core::dsl::Element* e) {
         return std::string(what) + " 实测 (" +
@@ -1011,11 +1011,11 @@ REGISTER_TEST(uiAboutLayout,
     const auto* c2 = ui.find("about.card.deps");
     DOCTEST_REQUIRE(c1 != nullptr);
     DOCTEST_REQUIRE(c2 != nullptr);
-    // 卡片上下堆叠（原左右并排 516 宽）：同宽（占满内容区 1040）、同 x、各 204 高；
-    // 卡 1 顶 = 内容块起点 + hero 图标 + 8 + 标题 40 + 一档 XLarge（500），
+    // 卡片上下堆叠（原左右并排 516 宽）：同宽（占满内容区 900）、同 x、各 244 高；
+    // 卡 1 顶 = 内容块起点 + hero 图标 + 8 + 标题 40 + 一档 XLarge（420），
     // 卡 2 隔一档 cardGap 在卡 1 正下方
     DOCTEST_CHECK_MESSAGE(nearPx(c1->frame.width, kContentW),
-                          px("about.card.app", c1));  // 1040
+                          px("about.card.app", c1));  // 900
     DOCTEST_CHECK_MESSAGE(nearPx(c2->frame.width, kContentW),
                           px("about.card.deps", c2));
     DOCTEST_CHECK_MESSAGE(nearPx(c1->frame.height, kCardH), px("about.card.app", c1));
@@ -1048,8 +1048,9 @@ REGISTER_TEST(uiAboutLayout,
     }
     // 最小窗复核（2026-09-28 组 A：字面量 845 已失义，改经同一函数推导）：
     // minWindowSizeForWorkArea → {1330, 805} → 页面宽 1330 − 208 = 1122 →
-    // 内容区 1040 不溢出、仍居中；页面高 805 下贴底口径仍成立（页脚顶 745 →
-    // 内容块底 721、起点 177 ≥ topPad 64，不触发 clamp）——本页无滚动也放得下
+    // 内容区 900 不溢出、仍居中（左右各余 111）；页面高 805 下贴底口径仍成立
+    //（页脚顶 745 → 内容块底 721、起点 97 ≥ topPad 40，不触发 clamp）——本页
+    // 无滚动也放得下
     {
         const core::window_layout::WindowSize minWin = minWindowForMacWorkArea();
         DOCTEST_CHECK_EQ(minWin.width, 1330);
@@ -1093,7 +1094,7 @@ REGISTER_TEST(uiAboutLayout,
     //（本页无滚动 → 页脚侧的 max 护栏把页脚压到卡下方）
     {
         eui::Ui tiny;
-        eui::Screen tinyScreen{1200.0f, 640.0f};  // 页脚顶 580；580−24−544 < 0
+        eui::Screen tinyScreen{1200.0f, 640.0f};  // 页脚顶 580；580−24−624 < 0
         tiny.begin("about_layout_tiny");
         mod->compose(tiny, tinyScreen);
         tiny.end();
@@ -1120,7 +1121,7 @@ REGISTER_TEST(uiAboutLayout,
         const float bigFooterTop =
             bigScreen.height - t.sizes.spacingXXLarge - footerH;      // 1460
         const float bigContentTop =
-            std::max(topPad, bigFooterTop - heroToCards - contentH);  // 892
+            std::max(topPad, bigFooterTop - heroToCards - contentH);  // 812
         const float bigDepsTop =
             bigContentTop + iconSize + 8.0f + kTitleH + heroToCards + kCardH + kCardGap;
         big.begin("about_layout_big");
