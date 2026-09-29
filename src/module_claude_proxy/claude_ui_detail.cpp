@@ -7,7 +7,14 @@
 // 2026-09-28（macOS 布局统一方案 §1 组 B）——本文件是本组的主战场，三条改动：
 //   P1 动作区钉面板底 + 内容框显式边界（drawDetailPanel / drawDetailActions）
 //   P2 「最近调用」去掉 10 行硬上限与 3 行硬下限，行数纯按可用高推
-//   P3 「环境变量」改列全部生效 env + 每键来源（来源由 buildProxyEnv 透出）
+//   P3 「环境变量」改列全部生效 env + 每键来源（来源由 buildProxyEnv 透出；
+//      E1 起模型映射键收窄至「模型映射」页签，见下方 2026-09-30 块）
+// 2026-09-30（详情页「环境变量」pane 两缺陷修复）：
+//   E1 模型映射键不在本 pane 重复展示 —— 键集自槽位表派生（isModelMappingEnvKey），
+//      独立「模型映射」页签已列同一批键；空态区分「未选 Profile」与「全被滤掉」
+//   E2 行几何全部从生效字号缩放（core::theme::fontScale）派生 + 行内两带网格，
+//      修真机「缩放 130 文本重叠 / item 布局不合理」——旧代码字号与行盒全按
+//      100% 缩放写死，130% 档下墨迹越出行盒互相叠印
 // 统一原则（后续维护照此判，方案 §1 组 B 的「一条原则」）：
 //   **容器可用高只有一个来源**；贴底元素锚容器底；内容视口 = 容器底 − 已知
 //   chrome；所有「向下展开 / 是否越界」的判定用**真实裁剪下沿**，不用推导值。
@@ -27,6 +34,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cmath>
 #include <map>
 
 namespace module::claude {
@@ -53,6 +61,22 @@ const char* envSourceLabel(EnvSource s) {
         case EnvSource::Managed: return "托管键";
     }
     return "?";
+}
+
+// 模型映射域的 env 键（E1，2026-09-30）：详情页已有独立的「模型映射」页签，
+// 槽位派生的键（各槽位 envKey + 官方 *_NAME 变体）在那里逐行展示，本 pane
+// 再列一遍纯属重复。键集**从槽位表派生**（provider_config 的
+// DEVDESK_MODEL_SLOT_LIST 单一声明处），不手写键名清单：加槽位自动跟随，
+// 与写入点同源 —— buildProxyEnv 的槽位循环写的就是 m.envKey / m.nameKey
+//（provider_config.cpp），过滤集合与实际写入的键不可能漂移。
+// 按键名过滤而非按来源（Managed）过滤：用户手写在 extra_env / 共享片段里的
+// 模型键（如 ANTHROPIC_MODEL）同属模型域，一样不在本页重复展示。
+bool isModelMappingEnvKey(const std::string& key) {
+    for (const auto& meta : modelSlotTable()) {
+        if (key == meta.envKey) return true;
+        if (meta.nameKey != nullptr && key == meta.nameKey) return true;
+    }
+    return false;
 }
 
 }  // namespace
@@ -244,18 +268,17 @@ float drawDetailEnv(eui::Ui& ui, float x0, float y0, float w,
                     const core::theme::Tokens& t, const DetailView& v,
                     float contentBottom, PaneRows* rows) {
     const Profile* shown = v.shown;
-    // ---- 环境变量 pane：**全部生效 env** + 每键来源（P3，2026-09-28）----
-    // 此前这里只列 profile 自身的 extra_env。用户那条 profile 的 extra_env 正好
-    // 只有一个键（DB 只读核对：{"CLAUDE_CODE_EFFORT_LEVEL":"max"}），11 个键里
-    // 另 10 个被分发到 base_url / 模型槽位，于是这一页看着像「丢键」——实际没丢，
-    // 是页面只展示了合并结果的一层。现在改为列 **buildProxyEnv 的合并结果**。
-    // 口径（审计 F-05 收敛，别夸大）：这是**将写入的托管 env**，不是
+    // ---- 环境变量 pane：生效 env（**模型映射键除外**，E1）+ 每键来源 ----
+    // P3（2026-09-28）改为列 buildProxyEnv 的合并结果 + 每键来源；2026-09-30
+    // （E1）起把模型映射域的键从本页滤掉（isModelMappingEnvKey，集合自槽位表
+    // 派生）—— 独立「模型映射」页签已逐行展示同一批键，两处重复。
+    // 其余口径不变（审计 F-05 收敛，别夸大）：这是**将写入的托管 env**，不是
     // settings.json 的 ground truth —— ① 接管写入的是「既有 env ∪ 托管键」，
     // settings.json 里的非托管键在这里看不到；② 被更高优先级文件压过的托管键
     // 在接管时会被跳过；③ 代理未运行时 settings.json 里根本没有这份表。故它
-    // 只回答「这个 Profile 会往上游发什么」，排查 live 文件请直接看文件本身。
-    // 每行标出来源（托管键 / 本 Profile / 片段），来源由 buildProxyEnv 的可选
-    // 出参给出。
+    // 只回答「这个 Profile 会往上游发什么（模型键除外）」，排查 live 文件请
+    // 直接看文件本身。每行标出来源（托管键 / 本 Profile / 片段），来源由
+    // buildProxyEnv 的可选出参给出。
     // 为什么用可选出参而不是在 UI 侧重算：合并规则（profile 自身 → 片段 →
     // 托管键，托管键最高）只能有一处，复刻一遍必然漂移。
     std::map<std::string, std::string> envMap;
@@ -272,38 +295,85 @@ float drawDetailEnv(eui::Ui& ui, float x0, float y0, float w,
         envMap = buildProxyEnv(shown->modelsConfigJson, shown->model,
                                shown->extraEnvJson, port, sharedJson,
                                &envSources);
+        // 模型映射键出列（E1，按键名不按来源）。必须在行数预算之前滤：
+        // 行数、「另有 N 项」、PaneRows 的口径都按过滤后的可见键计。
+        for (auto it = envMap.begin(); it != envMap.end();) {
+            if (isModelMappingEnvKey(it->first)) {
+                envSources.erase(it->first);
+                it = envMap.erase(it);
+            } else {
+                ++it;
+            }
+        }
     }
+    // ---- 行几何（E2，2026-09-30）：全部从生效字号缩放派生，禁写死 100% 像素 ----
+    // 根因（真机反馈「缩放 130 文本重叠」）：旧代码字号 12/11 与行盒 20/18/48
+    // 全按 100% 缩放写死；全局字号缩放（core::theme::fontScale，设置页档位，
+    // 用户机 130%）放大字号但不动布局 → 墨迹越出行盒互相叠印。现在字号随缩放、
+    // 行盒从字号推导（行盒系数 > 1.25×字号 = 最坏 CJK 墨迹 ascent+descent，
+    // 恒包住墨迹；100% 档下各值与旧常量逐一相等，不是重排）：
+    //   行带 1（键名 | 值）高 = round(键字号×1.7)   100% = round(20.4) = 20（旧值）
+    //   行带 2（来源 | 官方说明）高 = round(说明字号×1.6)
+    //                                     100% = round(17.6) = 18（旧值）
+    //   行卡高 = 上留白 4 + 行带 1 + 带间 2 + 行带 2 + 下留白 4
+    //                                     100% = 4+20+2+18+4 = 48（旧值）
+    //   行距 = 行卡高 + 6；溢出提示行高 = 行带 2 + 2
+    //                                     100% = 54 / 20（旧值）
+    // 旧布局叠印的第二个根因也在此修：旧值文本框高 48（跨整卡垂直居中），墨迹
+    // 带（约 ey+18..30）压进行带 2（ey+24 起），来源/说明文本又无 clip，凡超过
+    // ~112px 的官方说明横向伸进值列 → 值的下半与说明的上半叠印。现改**行内两带
+    // 网格**：键/值同行带（「键 值」成一行，且与基础信息/模型映射页签的 Center
+    // 对齐口径一致），来源/说明同行带，两带 y 区间结构不相交。
+    const float fs = core::theme::fontScale();
+    const float keyFs = 12.0f * fs;    // 键名 / 值字号（设计基准 12px）
+    const float smallFs = 11.0f * fs;  // 来源 / 说明 / 空态小字（设计基准 11px）
+    const float line1H = std::round(keyFs * 1.7f);
+    const float line2H = std::round(smallFs * 1.6f);
+    const float rowH = 4.0f + line1H + 2.0f + line2H + 4.0f;
+    const float pitch = rowH + 6.0f;
+    const float overflowH = line2H + 2.0f;
+    const float line1Y = 4.0f;                  // 行带 1 顶（相对行卡顶）
+    const float line2Y = 4.0f + line1H + 2.0f;  // 行带 2 顶
     if (envMap.empty()) {
-        // 空态（P1 要求「空态画明确文案」）：未选 Profile 时没有可展示的 env
+        // 空态两种成因分开说（P1 要求「空态画明确文案」）：未选 Profile vs
+        // 键全被模型过滤拿走。后者当前不可达 —— 有 Profile 必有 BASE_URL /
+        // AUTH_TOKEN 两个非模型托管键在，仍保留分支：后续口径若变（如托管键
+        // 也收归各页签），本页画说明文字而不是一片空白
+        const float emptyH = line1H;
         ui.text("claude.env.empty")
-            .position(x0, y0).size(w, 20.0f)
-            .text("无可展示的 env（未选择 Profile）")
-            .fontSize(12.0f).lineHeight(20.0f)
+            .position(x0, y0).size(w, emptyH)
+            .text(shown == nullptr
+                      ? "无可展示的 env（未选择 Profile）"
+                      : "模型类键已在「模型映射」页签单独展示，本页暂无其它生效 env")
+            .fontSize(keyFs).lineHeight(emptyH)
+            .verticalAlign(eui::VerticalAlign::Center)
             .color(t.colors.textTertiary).build();
         if (rows != nullptr) *rows = PaneRows{0, 0};
-        return y0 + 20.0f;
+        return y0 + emptyH;
     }
     const float keyColW = std::min(220.0f, w * 0.45f);
-    const int keyMaxChars = std::max(6, static_cast<int>(keyColW / 7.0f));
+    // 键名截断估宽（长文本策略 ①）：大写 Latin@12px 每字符实宽 ~7.5-8.5px，
+    // 取 8（旧 7 偏小 —— 35 字符键截到 31 字符后仍漏出键列 ~12px）；随缩放
+    // 同步放大，再加 .clip() 硬界兜底（估宽是估的，clip 是保证）
+    constexpr float kKeyPxPerChar = 8.0f;
+    const int keyMaxChars =
+        std::max(6, static_cast<int>(keyColW / (kKeyPxPerChar * fs)));
     // 来源标注列（第二行左侧固定列）：宽 120 够放「本 Profile」/「片段・<名>」，
     // 超出部分由 .clip() 硬裁（不压到右侧官方说明列）
     constexpr float kSrcColW = 120.0f;
     constexpr float kSrcGap = 12.0f;
     // 行数预算（P2 口径，2026-09-28）：**纯按内容框可用高推**，不再有与内容
-    // 无关的硬上限/硬下限。旧式 `max(1, (bodyH−y0−110)/54)` 的两个常数都是
-    // 在「动作区跟着内容跑」的旧结构下标定的（预留 276→110 的历史见
-    // git blame），现在内容框底由容器底给出（contentBottom），预算直接除行高。
-    // 每行 54 = 行高 48 + 行距 6；溢出提示行 20 只在真溢出时占位。
-    constexpr float kEnvRowPitch = 54.0f;
-    constexpr float kEnvOverflowH = 20.0f;
+    // 无关的硬上限/硬下限。现在内容框底由容器底给出（contentBottom），预算
+    // 直接除行距；行距随缩放派生（130% 档行距 66，能放的行数相应变少 ——
+    // 放不下的行走「另有 N 项」提示，不越界）。溢出提示行只在真溢出时占位。
     const float availH = std::max(0.0f, contentBottom - y0);
     size_t shownRows = std::min(
         envMap.size(),
-        static_cast<size_t>(static_cast<int>(availH / kEnvRowPitch)));
+        static_cast<size_t>(static_cast<int>(availH / pitch)));
     // 溢出提示行也要放得下：放不下就让出一行（让到 0 行为止 —— 0 行时只画
     // 提示，不画任何越界行）
     while (shownRows > 0 &&
-           static_cast<float>(shownRows) * kEnvRowPitch + kEnvOverflowH > availH) {
+           static_cast<float>(shownRows) * pitch + overflowH > availH) {
         --shownRows;
     }
     const bool envOverflow = envMap.size() > shownRows;
@@ -334,20 +404,26 @@ float drawDetailEnv(eui::Ui& ui, float x0, float y0, float w,
         const float valX = x0 + 12.0f + keyColW + 24.0f;  // 键列↔值列间距 24（2026-09-25：12→24，反馈太挤）
         const float valW = std::max(40.0f, w - keyColW - 48.0f);
         ui.rect(std::string("claude.env.row.bg.") + rid)
-            .position(x0, ey).size(w, 48.0f)
+            .position(x0, ey).size(w, rowH)
             .color(t.colors.surfaceElevated).radius(t.sizes.radiusSmall)
             .border(1.0f, hint ? t.colors.borderMuted : t.colors.error)
             .build();
+        // 行带 1：键名 | 值（同一行框同带，Center 对齐 → 「键 值」成一行）。
+        // .clip() 兜底：截断估宽 / 单行策略都是估的，clip 是硬界 —— 长文本
+        // 策略（E2）= 键按 kKeyPxPerChar 截断、值/来源/说明单行硬裁，**不换行
+        // 不撑高**（换行会把第二行挤出固定行带，与下行叠印）
         ui.text(std::string("claude.env.key.") + rid)
-            .position(x0 + 12.0f, ey).size(keyColW, 20.0f)
-            .text(kDisp).fontSize(12.0f).lineHeight(20.0f)
-            .color(t.colors.primary).build();
-        // 值列单行：超宽（最小窗 valW≈194px）裁掉，
-        // 不溢出面板/压到右栏外（clip = 自身 frame 取景）
-        ui.text(std::string("claude.env.val.") + rid)
-            .position(valX, ey).size(valW, 48.0f)
+            .position(x0 + 12.0f, ey + line1Y).size(keyColW, line1H)
             .clip()
-            .text(shownVal).fontSize(12.0f).lineHeight(20.0f)
+            .text(kDisp).fontSize(keyFs).lineHeight(line1H)
+            .verticalAlign(eui::VerticalAlign::Center)
+            .color(t.colors.primary).build();
+        // 值列：框高 = 行带 1（旧实现 48 跨整卡居中，墨迹压进行带 2 —— 见
+        // 上方几何注释；现在与键名同带，不再与说明行相交）
+        ui.text(std::string("claude.env.val.") + rid)
+            .position(valX, ey + line1Y).size(valW, line1H)
+            .clip()
+            .text(shownVal).fontSize(keyFs).lineHeight(line1H)
             .verticalAlign(eui::VerticalAlign::Center)
             .color(t.colors.textSecondary).build();
         // 来源标注（P3）：三类来源，片段额外带名（截断到固定列宽，见上）
@@ -367,32 +443,39 @@ float drawDetailEnv(eui::Ui& ui, float x0, float y0, float w,
                 srcText += "・" + truncateUtf8(scName, 12);
             }
         }
+        // 行带 2：来源 | 官方说明。说明列加 .clip()（旧无 —— 长说明横穿值列，
+        // 是「文本都重叠」的元凶之一）
         ui.text(std::string("claude.env.src.") + rid)
-            .position(x0 + 12.0f, ey + 24.0f).size(kSrcColW, 18.0f)
+            .position(x0 + 12.0f, ey + line2Y).size(kSrcColW, line2H)
             .clip()
-            .text(srcText).fontSize(11.0f).lineHeight(18.0f)
+            .text(srcText).fontSize(smallFs).lineHeight(line2H)
+            .verticalAlign(eui::VerticalAlign::Center)
             .color(src == EnvSource::Managed ? t.colors.textTertiary
                                              : t.colors.textSecondary)
             .build();
         ui.text(std::string("claude.env.hint.") + rid)
-            .position(x0 + 12.0f + kSrcColW + kSrcGap, ey + 24.0f)
-            .size(std::max(40.0f, w - 24.0f - kSrcColW - kSrcGap), 18.0f)
+            .position(x0 + 12.0f + kSrcColW + kSrcGap, ey + line2Y)
+            .size(std::max(40.0f, w - 24.0f - kSrcColW - kSrcGap), line2H)
+            .clip()
             .text(hint ? hint : "（未收录官方清单）")
-            .fontSize(11.0f).lineHeight(18.0f)
+            .fontSize(smallFs).lineHeight(line2H)
+            .verticalAlign(eui::VerticalAlign::Center)
             .color(t.colors.textTertiary).build();
-        ey += kEnvRowPitch;
+        ey += pitch;
         ++ei2;
     }
     if (envOverflow) {
         // 溢出提示（与表单 env 页「另有 N 项」同款口径）：未画出的行全量保存在
-        // Profile 里，编辑时可见
+        // Profile 里，编辑时可见；模型键的去向一并说明（E1，本页已滤掉模型键）
         ui.text("claude.env.overflow")
-            .position(x0, ey).size(w, 18.0f)
+            .position(x0, ey).size(w, overflowH)
             .text("另有 " + std::to_string(envMap.size() - ei2) +
-                  " 项未显示（编辑该 Profile 可查看全部）")
-            .fontSize(11.0f).lineHeight(18.0f)
+                  " 项未显示（编辑该 Profile 可查看全部；模型类键见「模型映射」"
+                  "页签，extra_env 手写的除外）")
+            .fontSize(smallFs).lineHeight(overflowH)
+            .verticalAlign(eui::VerticalAlign::Center)
             .color(t.colors.textTertiary).build();
-        ey += kEnvOverflowH;
+        ey += overflowH;
     }
     if (rows != nullptr) {
         *rows = PaneRows{static_cast<int>(shownRows),
