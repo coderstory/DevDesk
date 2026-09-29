@@ -18,6 +18,8 @@ env:
   CCACHE_BASEDIR: ${{ github.workspace }}
   CCACHE_COMPILERCHECK: content
   CCACHE_MAXSIZE: 1G
+  # 让构建输出实时刷到 CI 日志（默认被脚本吞掉，看起来像卡死）
+  DEVDESK_BUILD_VERBOSE: "1"
 
 jobs:
   macos:

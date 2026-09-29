@@ -290,11 +290,26 @@ if [ "$CLEAN" = "1" ] || [ ! -f "$BUILD_DIR/build.ninja" ]; then
   echo "✅ configure 完成"
 fi
 echo "── 构建（增量）──"
-BUILD_OUT=$(cmake --build "$BUILD_DIR" 2>&1) || {
-  echo "$BUILD_OUT" | grep -iE "error|FAILED" | head -30
-  echo "❌ 构建失败（上方为错误摘要）"; exit 1; }
-echo "$BUILD_OUT" | tail -2
-echo "✅ 构建成功"
+# DEVDESK_BUILD_VERBOSE=1 → 构建输出**实时流式**打印（默认关，行为与从前逐字一致）。
+# 为什么需要：默认把 ninja 输出整个吞进变量、只在结束时打尾两行，本地看着清爽，
+# 但在 CI 里整个构建阶段一行不刷 —— 十几分钟的编译看起来像卡死（用户实测反馈
+# "win 的编译卡住了 没输出"）。CI 里设这个变量即可看到实时进度。
+if [ "${DEVDESK_BUILD_VERBOSE:-0}" = "1" ]; then
+  _build_log="$(mktemp -t devdesk-build.XXXXXX)"
+  if ! cmake --build "$BUILD_DIR" 2>&1 | tee "$_build_log"; then
+    echo "──── 错误摘要 ────"
+    grep -iE "error|FAILED" "$_build_log" | head -30
+    echo "❌ 构建失败（上方为错误摘要）"; rm -f "$_build_log"; exit 1
+  fi
+  rm -f "$_build_log"
+  echo "✅ 构建成功"
+else
+  BUILD_OUT=$(cmake --build "$BUILD_DIR" 2>&1) || {
+    echo "$BUILD_OUT" | grep -iE "error|FAILED" | head -30
+    echo "❌ 构建失败（上方为错误摘要）"; exit 1; }
+  echo "$BUILD_OUT" | tail -2
+  echo "✅ 构建成功"
+fi
 
 # ---- 2b. 发布形态守卫（PAB-06）----
 # 发布契约 = 单 exe / 零外部 DLL（CLAUDE.md「发布目标」）。DEVDESK_STATIC=OFF
