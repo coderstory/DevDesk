@@ -3998,6 +3998,170 @@ REGISTER_TEST(claude_detail_vertical_center_and_viewall_button,
     return true;
 })
 
+// ---- 真机反馈 ⑦（2026-09-29）：调用记录弹窗分页控件垂直对齐 ----
+// 页码文本与左右翻页按钮的行框本来就是同一档（同 y = h−60、同 40 高），差的
+// 是文本没做垂直居中（ink 从行框顶沿起排）。判据 = 三者 frame 中心 y 相等
+// （±0.5）+ 行框高相等（不靠给文本加 padding 蒙）。回退掉
+// claude.dialog.calls.page 的 verticalAlign → 本用例红。
+REGISTER_TEST(claude_dialog_pagination_vertical_align,
+              "claude_module: 调用记录弹窗页码文本与翻页按钮同一水平中线", {
+    TestEnv env;
+    auto p = env.svc->createProfile("分页", "https://page.example.com",
+                                    "sk-ant-page-0001", "m-page");
+    DOCTEST_REQUIRE(p.isOk());
+    const int64_t pid = p.value().id;
+    DOCTEST_REQUIRE(env.svc->setActiveProfile(pid).isOk());
+    DOCTEST_REQUIRE(seedCalls(env.svc.get(), pid, 30));  // >1 页
+
+    std::unique_ptr<::core::Module> mod(create_claude_module());
+    mod->onStart();
+
+    constexpr float kW = 1262.0f;
+    constexpr float kH = 801.0f;
+    {
+        eui::Ui ui;
+        composeAtSize(mod.get(), ui, "claude_page_align", kW, kH);
+        DOCTEST_REQUIRE(clickById(ui, "claude.detail.tabs.hit.3"));
+    }
+    {
+        eui::Ui ui;
+        composeAtSize(mod.get(), ui, "claude_page_align", kW, kH);
+        DOCTEST_REQUIRE(clickById(ui, "claude.calls.viewall.hit"));
+    }
+    // 等后台查询落地（总匹配数到位 → 页数 = ceil(30/20) = 2；CPX-06 起数据是
+    // 异步的，每轮新起一帧收割，不靠固定睡眠）
+    bool loaded = false;
+    for (int i = 0; i < 400 && !loaded; ++i) {
+        eui::Ui frame;
+        composeAtSize(mod.get(), frame, "claude_page_align", kW, kH);
+        const auto* t = frame.find("claude.dialog.calls.page");
+        loaded = t != nullptr && t->text.find("2 页") != std::string::npos;
+        if (!loaded) std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    }
+    DOCTEST_REQUIRE(loaded);
+    eui::Ui ui;
+    composeAtSize(mod.get(), ui, "claude_page_align", kW, kH);
+    const auto* page = ui.find("claude.dialog.calls.page");
+    const auto* prev = ui.find("claude.dialog.calls.prev");
+    const auto* next = ui.find("claude.dialog.calls.next");
+    DOCTEST_REQUIRE(page != nullptr);
+    DOCTEST_REQUIRE(prev != nullptr);
+    DOCTEST_REQUIRE(next != nullptr);
+    const auto centerY = [](const core::dsl::Element& el) {
+        return el.frame.y + el.frame.height * 0.5f;
+    };
+    const auto fmt = [&](const char* name, const core::dsl::Element& el) {
+        return std::string(name) + "{y=" + std::to_string(el.frame.y) + ",h=" +
+               std::to_string(el.frame.height) + ",cy=" +
+               std::to_string(centerY(el)) + "}";
+    };
+    // 同一水平中线（±0.5）
+    DOCTEST_CHECK_MESSAGE(std::fabs(centerY(*page) - centerY(*prev)) <= 0.5f,
+                          fmt("page", *page) + fmt("prev", *prev));
+    DOCTEST_CHECK_MESSAGE(std::fabs(centerY(*page) - centerY(*next)) <= 0.5f,
+                          fmt("page", *page) + fmt("next", *next));
+    DOCTEST_CHECK(std::fabs(centerY(*prev) - centerY(*next)) <= 0.5f);
+    // 行框/容器高一致（40 = 40 = 40，不是给文本加 padding 蒙出来的）
+    DOCTEST_CHECK_EQ(page->frame.height, prev->frame.height);
+    DOCTEST_CHECK_EQ(page->frame.height, next->frame.height);
+    DOCTEST_CHECK_EQ(page->frame.height, 40.0f);
+    DOCTEST_CHECK_EQ(page->lineHeight, page->frame.height);  // 行高口径一致
+    // 文本自身垂直居中（唯一改动点；回退即红）
+    DOCTEST_CHECK(page->verticalAlign == eui::VerticalAlign::Center);
+    // 既有布局与状态不变：左→右顺序、页码在按钮右侧、禁用态（第 1 页 → 上一页禁）
+    DOCTEST_CHECK(prev->frame.x < next->frame.x);
+    DOCTEST_CHECK(next->frame.x < page->frame.x);
+    const auto* prevBg = ui.find("claude.dialog.calls.prev.bg");
+    const auto* nextBg = ui.find("claude.dialog.calls.next.bg");
+    DOCTEST_REQUIRE(prevBg != nullptr);
+    DOCTEST_REQUIRE(nextBg != nullptr);
+    DOCTEST_CHECK(prevBg->disabled);
+    DOCTEST_CHECK(!nextBg->disabled);
+
+    mod->onStop();
+    cleanupProfileKey(kTestKeychainService, pid);
+    return true;
+})
+
+// ---- 真机反馈 ⑧（2026-09-29）：Profile 卡 ACTIVE 胶囊徽标文字居中 ----
+// 文字框与胶囊同 y 同高，缺的只是垂直居中（ink 默认从行框顶沿起排）。判据 =
+// 文字 frame 中心 == 胶囊 frame 中心（x/y 各 ±0.5）+ 行高口径一致（文本
+// lineHeight == 胶囊高，不靠 padding 蒙）。回退 active.text 的 verticalAlign
+// → 本用例红；「共享」胶囊是同类项，一并钉住。
+REGISTER_TEST(claude_profile_active_badge_centered,
+              "claude_module: Profile 卡 ACTIVE / 共享 胶囊徽标文字居中", {
+    TestEnv env;
+    auto sc = env.svc->createSharedConfig("片段A", R"({"MY_K":"v"})");
+    DOCTEST_REQUIRE(sc.isOk());
+    auto p = env.svc->createProfile("徽标", "https://badge.example.com",
+                                    "sk-ant-badge-001", "m-badge");
+    DOCTEST_REQUIRE(p.isOk());
+    const int64_t pid = p.value().id;
+    DOCTEST_REQUIRE(env.svc->setActiveProfile(pid).isOk());
+    auto g = env.svc->getProfile(pid);
+    DOCTEST_REQUIRE(g.isOk());
+    g.value().sharedConfigId = sc.value().id;   // 「共享」角标要绑定片段才画
+    DOCTEST_REQUIRE(env.svc->updateProfile(g.value()).isOk());
+
+    std::unique_ptr<::core::Module> mod(create_claude_module());
+    mod->onStart();
+    eui::Ui ui;
+    composeAtSize(mod.get(), ui, "claude_badge", 1262.0f, 801.0f);
+
+    // 判据 helper：返回空串 = 通过（本框架的断言宏展开含 return false，只能写在
+    // 用例体里，helper 回传结论、由用例断）
+    const auto pillProblem = [&](const std::string& textId,
+                                 const std::string& bgId) -> std::string {
+        const auto* txt = ui.find(textId);
+        const auto* bg = ui.find(bgId);
+        if (txt == nullptr) return "缺文本 " + textId;
+        if (bg == nullptr) return "缺胶囊 " + bgId;
+        const std::string box =
+            textId + " text{cx=" +
+            std::to_string(txt->frame.x + txt->frame.width * 0.5f) + ",cy=" +
+            std::to_string(txt->frame.y + txt->frame.height * 0.5f) +
+            ",h=" + std::to_string(txt->frame.height) + ",lh=" +
+            std::to_string(txt->lineHeight) + "} bg{cx=" +
+            std::to_string(bg->frame.x + bg->frame.width * 0.5f) + ",cy=" +
+            std::to_string(bg->frame.y + bg->frame.height * 0.5f) +
+            ",h=" + std::to_string(bg->frame.height) + "}";
+        if (txt->verticalAlign != eui::VerticalAlign::Center) {
+            return textId + " 未垂直居中（缺 Center 对齐）";
+        }
+        if (txt->horizontalAlign != eui::HorizontalAlign::Center) {
+            return textId + " 未水平居中";
+        }
+        if (std::fabs((txt->frame.x + txt->frame.width * 0.5f) -
+                      (bg->frame.x + bg->frame.width * 0.5f)) > 0.5f) {
+            return textId + " 水平中心 != 胶囊中心 " + box;
+        }
+        if (std::fabs((txt->frame.y + txt->frame.height * 0.5f) -
+                      (bg->frame.y + bg->frame.height * 0.5f)) > 0.5f) {
+            return textId + " 垂直中心 != 胶囊中心 " + box;
+        }
+        // 行高口径一致（文本行高 == 胶囊高：不是靠 padding 顶下来的）
+        if (std::fabs(txt->lineHeight - bg->frame.height) > 0.5f) {
+            return textId + " 行高与胶囊高不一致 " + box;
+        }
+        return {};
+    };
+    const std::string activeBadge =
+        pillProblem("claude.profile.0.active.text", "claude.profile.0.active.bg");
+    DOCTEST_CHECK_MESSAGE(activeBadge.empty(), activeBadge);
+    const std::string sharedBadge = pillProblem(
+        "claude.profile.0.shared.badge.text", "claude.profile.0.shared.badge");
+    DOCTEST_CHECK_MESSAGE(sharedBadge.empty(), sharedBadge);
+    // 胶囊几何/位置不变（ACTIVE 48×20 在卡片右上角）
+    const auto* abg = ui.find("claude.profile.0.active.bg");
+    DOCTEST_REQUIRE(abg != nullptr);
+    DOCTEST_CHECK_EQ(abg->frame.width, 48.0f);
+    DOCTEST_CHECK_EQ(abg->frame.height, 20.0f);
+
+    mod->onStop();
+    cleanupProfileKey(kTestKeychainService, pid);
+    return true;
+})
+
 // ---- 组 B P3：环境变量页签列全部生效 env + 每键来源 ----
 // 用户读到「只显示 1 条」的真相：该页此前只列 profile 自身的 extra_env。
 REGISTER_TEST(claude_env_tab_lists_effective_env_with_source,

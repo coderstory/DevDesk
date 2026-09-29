@@ -164,6 +164,11 @@ void drawProfileCard(eui::Ui& ui,
             .color(t.colors.primary)
             .radius(t.sizes.radiusPill)
             .build();
+        // 真机反馈 ⑧（2026-09-29）：胶囊里的「ACTIVE」没垂直居中 —— 文字框与
+        // 胶囊同为 20 高、同 y，差的是**文本没做垂直居中**：runtime 只在
+        // verticalAlign=Center 时把 ink 中心对齐到 frame 中心（EUI-NEO
+        // runtime_render.h renderText），否则 ink 从行框顶沿起排，胶囊里看着
+        // 就偏上。只加对齐，胶囊尺寸/位置/配色与字号行高一律不动。
         ui.text(id + ".active.text")
             .position(width - 60.0f, y + 16.0f)
             .size(48.0f, 20.0f)
@@ -171,6 +176,7 @@ void drawProfileCard(eui::Ui& ui,
             .fontSize(9.0f)
             .lineHeight(20.0f)
             .horizontalAlign(eui::HorizontalAlign::Center)
+            .verticalAlign(eui::VerticalAlign::Center)
             .color(t.colors.onPrimary)
             .fontWeight(700)
             .build();
@@ -206,6 +212,9 @@ void drawProfileCard(eui::Ui& ui,
             .fontSize(9.0f)
             .lineHeight(16.0f)
             .horizontalAlign(eui::HorizontalAlign::Center)
+            // 同一胶囊缺陷一并修（⑧ 的同类项：文字框与胶囊同 y 同高，缺的是
+            // 垂直居中）——两个胶囊徽标的文字口径保持一致
+            .verticalAlign(eui::VerticalAlign::Center)
             .color(t.colors.textTertiary)
             .build();
     }
