@@ -21,7 +21,7 @@ env:
 jobs:
   macos:
     name: macOS · 制品
-    runs-on: xcode-27-arm64
+    runs-on: xcode-27
     steps:
       - uses: actions/checkout@v7
         with:
@@ -33,7 +33,10 @@ jobs:
       - name: 切到镜像上最新的 Xcode
         run: |
           ls -d /Applications/Xcode*.app 2>/dev/null || true
-          latest=$(ls -d /Applications/Xcode*.app 2>/dev/null | sort -V | tail -1)
+          # 过滤掉 beta/RC：官方策略里 beta 只装在最新镜像上且与 GA 并存，
+          # 直接 sort -V 取最大可能选中 beta，导致制品由非 GA 工具链产出
+          latest=$(ls -d /Applications/Xcode*.app 2>/dev/null \
+                   | grep -viE 'beta|release candidate|_rc' | sort -V | tail -1)
           if [ -n "$latest" ]; then sudo xcode-select -switch "$latest"; fi
           xcodebuild -version
           clang --version | head -1

@@ -322,6 +322,7 @@ struct FileWatcher::Impl {
         if (!stream) {
             signalStart(false, core::ErrorCode::Internal,
                         "FileWatcher: 无法创建 FSEvents 流: " + watchRoot);
+            LOG_WARN("FileWatcher: 无法创建 FSEvents 流: " + watchRoot);
             running.store(false);
             return;
         }
@@ -339,6 +340,7 @@ struct FileWatcher::Impl {
         if (!FSEventStreamStart(stream)) {
             signalStart(false, core::ErrorCode::Internal,
                         "FileWatcher: FSEvents 启动失败: " + watchRoot);
+            LOG_WARN("FileWatcher: FSEvents 启动失败: " + watchRoot);
             running.store(false);
             releaseStream();
             return;
@@ -427,6 +429,14 @@ core::Result<void> FileWatcher::start(const std::filesystem::path& dir,
         const std::string canonStr = trimTrailingSlash(canon.native());
         if (canonStr != impl_->watchRoot) impl_->roots.push_back(canonStr);
     }
+    // 清批内状态（审计 F-01）：pending/pendingKeys/overflowed/lastEventAt 挂在 Impl 上
+    // 而非 worker 局部（win 版是局部变量）。stop() 时未交付的旧批会被 worker 丢弃，
+    // 但**留在 Impl 里** —— 若不清，下次 start() 换根后首个循环迭代因 lastEventAt
+    // 陈旧而立刻 deliver()，把**旧根的事件**当成新根的交给新回调。
+    impl_->pending.clear();
+    impl_->pendingKeys.clear();
+    impl_->overflowed = false;
+    impl_->lastEventAt = {};
     impl_->callback = std::move(onChange);
     impl_->debounceMs = debounceMs.count() > 0
                             ? static_cast<long long>(debounceMs.count())
