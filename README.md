@@ -2,7 +2,7 @@
 
 <br>
 
-<img src="docs/screenshots/app-home.png" alt="DevDesk" width="820">
+<img src="docs/screenshots/app-home.png" alt="DevDesk" width="580">
 
 <br>
 <br>
@@ -100,44 +100,59 @@ your-workspace/
 └── EUI-NEO/     ← GUI 框架
 ```
 
-放在别处也可以，configure 时用 `-DEUI_NEO_DIR=<路径>` 指定。
+### 装依赖
 
-<details open>
-<summary><b>🍎 macOS</b></summary>
+<table align="center">
+<tr><th align="left" width="150">平台</th><th align="left">命令</th></tr>
+<tr><td><b>macOS</b></td><td><code>brew install cmake ninja openssl@3</code></td></tr>
+<tr><td><b>Windows 11</b><br><sub>MSYS2 MinGW64</sub></td><td><code>pacman -S mingw-w64-x86_64-gcc mingw-w64-x86_64-sqlite3 mingw-w64-x86_64-curl mingw-w64-x86_64-openssl</code></td></tr>
+</table>
+
+### 构建 + 测试 + 运行
+
+一条命令，别手敲 cmake：
+
+```bash
+bash scripts/build-test-run.sh --release
+```
+
+它会按顺序做完：**杀旧进程 → 增量构建 → 跑测试 → 启动 app**。工具链 PATH、OpenSSL 路径、
+ccache、EUI-NEO 定位、模块隔离守卫全部封装在里面 —— 手敲 `cmake -B …` 会漏掉这些约定，
+造出互相漂移的构建目录（详见 [`CLAUDE.md`](CLAUDE.md)「常用命令」段）。
+
+<details>
+<summary><b>脚本开关</b></summary>
 
 <br>
 
-```bash
-brew install cmake ninja openssl@3
-
-cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release \
-  -DOPENSSL_ROOT_DIR=/opt/homebrew/opt/openssl@3
-cmake --build build
-./build/DevDesk
-```
+| 开关 | 作用 |
+|---|---|
+| `--clean` | 全量重建（默认增量） |
+| `--release` | Release 构建（构建目录切到 `build-release/`，与 Debug 互不覆盖） |
+| `--no-test` | 跳过测试（测试挂时不阻断启动） |
+| `--no-run` | 只构建 + 测试，不启动 app |
+| `--install` | **仅 macOS**：构建后重组 `.app` 并覆盖安装到 `/Applications`，装完校验 sha256（防装成旧二进制） |
+| `--filter X` | 只跑描述含 X 的用例 |
 
 </details>
 
 <details>
-<summary><b>🪟 Windows 11（MSYS2 MinGW64）</b></summary>
+<summary><b>不用脚本时（手敲 cmake）</b></summary>
 
 <br>
 
-```bash
-pacman -S mingw-w64-x86_64-gcc mingw-w64-x86_64-sqlite3 \
-          mingw-w64-x86_64-curl mingw-w64-x86_64-openssl
+仅在你确实需要非标准构建时才用；日常开发请走上面的脚本。
 
-cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
-cmake --build build
-./build/DevDesk.exe
+```bash
+# macOS
+cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release \
+  -DOPENSSL_ROOT_DIR=/opt/homebrew/opt/openssl@3
+cmake --build build && ./build/DevDesk
 ```
 
 Windows 构建默认静态链接（sqlite3 / curl / ssl / crypto / C++ 运行时），产物是**单个 exe、零外部 DLL**。
 
 </details>
-
-> [!TIP]
-> 仓库里的 `scripts/build-test-run.sh` 把「构建 → 测试 → 启动」串成一条命令，并封装了 ccache、平台 PATH、模块隔离守卫等约定。**日常开发建议直接用它，别手敲 cmake** —— 手敲容易漏掉约定，造出互相漂移的构建目录。
 
 ---
 
