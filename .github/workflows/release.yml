@@ -1,0 +1,149 @@
+name: Release
+
+# master 每次提交：双平台出 Release 制品 → 打 tag → 发 Release，说明由提交信息汇总
+on:
+  push:
+    branches: [master]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  EUI_NEO_REPO: https://github.com/coderstory/EUI-NEO.git
+
+jobs:
+  macos:
+    name: macOS · 制品
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: DevDesk
+          fetch-depth: 0          # 汇总提交信息要用完整历史
+
+      - run: git clone --depth 1 "$EUI_NEO_REPO" EUI-NEO
+
+      - run: brew install ninja openssl@3
+
+      - name: 构建（Release）
+        working-directory: DevDesk
+        run: bash scripts/build-test-run.sh --release --no-run --no-test
+
+      - name: 组装 .app 并打包
+        working-directory: DevDesk
+        run: |
+          DEVDESK_BUILD_DIR=build-release DEVDESK_SKIP_LSREGISTER=1 \
+            bash platform/macos/build-app.sh
+          rm -rf build-release/DevDesk.app/Contents/MacOS/assets
+          cmake -E copy_directory build-release/assets \
+            build-release/DevDesk.app/Contents/MacOS/assets
+          mkdir -p ../dist
+          ditto -c -k --sequesterRsrc --keepParent \
+            build-release/DevDesk.app ../dist/DevDesk-macos-arm64.zip
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: macos
+          path: dist/*.zip
+          if-no-files-found: error
+
+  windows:
+    name: Windows · 制品
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: DevDesk
+          fetch-depth: 0
+
+      - run: git clone --depth 1 "$env:EUI_NEO_REPO" EUI-NEO
+
+      - uses: msys2/setup-msys2@v2
+        with:
+          msystem: MINGW64
+          update: false
+          install: >-
+            mingw-w64-x86_64-gcc
+            mingw-w64-x86_64-cmake
+            mingw-w64-x86_64-ninja
+            mingw-w64-x86_64-sqlite3
+            mingw-w64-x86_64-curl
+            mingw-w64-x86_64-openssl
+
+      - name: 构建（Release）
+        shell: msys2 {0}
+        run: |
+          cd DevDesk
+          bash scripts/build-test-run.sh --release --no-run --no-test
+
+      - name: 打包（exe + assets）
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path dist | Out-Null
+          New-Item -ItemType Directory -Force -Path stage | Out-Null
+          Copy-Item DevDesk\build-release\DevDesk.exe stage\
+          Copy-Item DevDesk\build-release\assets stage\assets -Recurse
+          Compress-Archive -Path stage\* -DestinationPath dist\DevDesk-windows-x64.zip
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows
+          path: dist/*.zip
+          if-no-files-found: error
+
+  release:
+    name: 发 Release
+    needs: [macos, windows]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: DevDesk
+          fetch-depth: 0
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - name: 汇总提交信息作为发布说明
+        working-directory: DevDesk
+        run: |
+          set -e
+          if prev=$(git describe --tags --abbrev=0 2>/dev/null); then
+            echo "上次发布：$prev"
+            range="$prev..HEAD"
+            tail_n=""
+          else
+            echo "首次发布，取最近 40 条提交"
+            range="HEAD"
+            tail_n="-n 40"
+          fi
+
+          {
+            echo "## 本次更新"
+            echo
+            git log --pretty=format:'- %s' $tail_n "$range"
+            echo
+            echo
+            echo "---"
+            echo
+            echo "提交范围：\`${range}\`　·　完整改动见 [提交历史](../../commits/master)"
+          } > /tmp/notes.md
+
+          echo "--- 说明预览（前 15 行）---"
+          head -15 /tmp/notes.md
+
+      - name: 打 tag 并发 Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -e
+          TAG="v$(date -u +%Y.%m.%d)-${GITHUB_RUN_NUMBER}"
+          echo "TAG=$TAG" >> "$GITHUB_ENV"
+          ls -la artifacts/
+          gh release create "$TAG" artifacts/* \
+            --title "$TAG" \
+            --notes-file /tmp/notes.md \
+            --target "$GITHUB_SHA"
