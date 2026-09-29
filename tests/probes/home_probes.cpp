@@ -55,6 +55,7 @@
 #include "app_registry.h"
 #include "core/module_interface.h"
 #include "core/proxy_stats.h"
+#include "module_home/home_service.h"  // startOfDayEpoch（逐时 token 种子的本地零点锚）
 #include "core/theme.h"
 
 #include <cmath>
@@ -127,11 +128,16 @@ int main(int argc, char* argv[]) {
 
     // 数据底座（组 D/E/F 前提）：已 migrate 的临时库注册为进程级
     // appDatabase（home onStart 拿它建 HomeService；null 则 statsError、
-    // API 分布全零 → barChart 走空态分支不建图，组 D 结构前提失效）。
-    // 种子 = 1 条 profile（claude_call_logs FK）+ 1 条今日调用 → 非空态。
+    // API 分布全零 → 分布图走空态分支不建图，组 D 结构前提失效）。
+    // 种子 = 1 条 profile（claude_call_logs FK）+ 今日 2 条**带用量**的调用。
+    // 2026-09-29 ③ 改口径后纵轴 = 每小时 output_tokens 合计：没有 output_tokens
+    // 的行合计为 0（= 没数据）→ 依然走空态，组 D 的结构前提就没了，故这里必须
+    // 给用量；两条落在 9 时与 17 时 → 去头去尾后恰 9 根柱（9..17 闭区间）。
     test_support::TestEnv env("hprobe_", "home", true);  // 注册为 appDatabase
     {
         const int64_t now = static_cast<int64_t>(std::time(nullptr));
+        const int64_t dayStart = module::home::startOfDayEpoch(
+            static_cast<std::time_t>(now));
         auto& sq = env.db->db();
         sq.exec(
             "INSERT INTO claude_profiles (name, base_url, api_key_hint, "
@@ -140,8 +146,11 @@ int main(int argc, char* argv[]) {
             std::to_string(now) + ", " + std::to_string(now) + ")");
         sq.exec(
             "INSERT INTO claude_call_logs (profile_id, method, path, "
-            "started_at) VALUES (1, 'POST', '/v1/messages', " +
-            std::to_string(now - 60) + ")");
+            "status_code, latency_ms, output_tokens, started_at) VALUES "
+            "(1, 'POST', '/v1/messages', 200, 2000, 400, " +
+            std::to_string(dayStart + 3600 * 9) + "), "
+            "(1, 'POST', '/v1/messages', 200, 2400, 600, " +
+            std::to_string(dayStart + 3600 * 17) + ")");
     }
 
     core::proxy_stats::resetForTest();  // 进程内确定性：空闲无采样/无流
@@ -259,7 +268,8 @@ int main(int argc, char* argv[]) {
 
     // ==================== 组 D：类 4(a) barChart 几何（P1） ====================
     // plot 区总高 = grid.3.y - grid.0.y（barchart.h:114-122；band 不依赖 bar
-    // 的 0.16s 帧过渡）。种子的非零调用 → 非空态 → 24 条 bar 正常建图；
+    // 的 0.16s 帧过渡）。种子的非零用量 → 非空态 → 去头去尾后 9 根柱（9..17）
+    // 正常建图（2026-09-29 ③ 改口径：纵轴 = 每小时 output_tokens 合计）；
     // home_module.cpp:567-570 审计修：卡高 260 → wrap 196 → plot 84 ≥ 36。
     // 回归卡高 208 → wrap 128 → plot 16 < 36 → 红。
     {
