@@ -29,6 +29,10 @@ public:
         std::string path;
         int statusCode = 0;
         int64_t latencyMs = 0;
+        // 输出 token（migration v5 的用量列，流末回填）：NULL（未采集：非流式
+        // 行 / 老行 / 上游没给 usage）经查询侧 COALESCE 归 0——速率列据此
+        // 显示「—」，与真实的 0 个 token 同处理（两者都算「没有速率」）。
+        int64_t outputTokens = 0;
         int64_t requestBytes = 0;
         int64_t responseBytes = 0;
         std::string error;

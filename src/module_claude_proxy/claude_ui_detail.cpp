@@ -22,6 +22,7 @@
 
 #include <components/button.h>
 #include <components/tabs.h>
+#include <core/call_rate.h>
 #include <core/logging.h>
 
 #include <algorithm>
@@ -63,9 +64,14 @@ float drawDetailBasic(eui::Ui& ui, float x0, float y0, float w,
                          // 见 drawDetailPanel 的 max() 兜底）
     const Profile* shown = v.shown;
     // ---- 基础信息 pane：名称 + 未激活徽章 + Base URL + API Key + 接管 ----
+    // 真机反馈 ⑤（2026-09-29）：本页文本没垂直居中 —— 文本默认从行框顶沿起排，
+    // 只有 verticalAlign=Center 时 runtime 才把 ink 中心对齐到 frame 中心
+    //（EUI-NEO runtime_render.h renderText）。故本 pane 每个文本都带 Center；
+    // **只加对齐，行高/行框几何与水平对齐（标签在左、值在右）一律不变**。
     ui.text("claude.field.name.label")
         .position(x0, y0).size(w * 0.5f - 8.0f, 14.0f)
         .text("名称").fontSize(11.0f).lineHeight(14.0f)
+        .verticalAlign(eui::VerticalAlign::Center)
         .color(t.colors.textTertiary).build();
     ui.rect("claude.field.name.bg")
         .position(x0, y0 + 18.0f).size(w * 0.5f - 8.0f, 24.0f)
@@ -75,6 +81,7 @@ float drawDetailBasic(eui::Ui& ui, float x0, float y0, float w,
         .position(x0 + 12.0f, y0 + 18.0f)
         .size(w * 0.5f - 20.0f, 24.0f)
         .text(v.nameValue).fontSize(14.0f).lineHeight(24.0f)
+        .verticalAlign(eui::VerticalAlign::Center)
         .color(t.colors.textPrimary).build();
     if (shown && !shown->isActive) {
         ui.rect("claude.field.name.inactive.bg")
@@ -87,12 +94,14 @@ float drawDetailBasic(eui::Ui& ui, float x0, float y0, float w,
             .size(56.0f, 16.0f).text("未激活")
             .fontSize(10.0f).lineHeight(16.0f)
             .horizontalAlign(eui::HorizontalAlign::Center)
+            .verticalAlign(eui::VerticalAlign::Center)
             .color(t.colors.warning).build();
     }
     const float urlY = y0 + 56.0f;
     ui.text("claude.field.url.label")
         .position(x0, urlY).size(w, 14.0f)
         .text("Base URL").fontSize(11.0f).lineHeight(14.0f)
+        .verticalAlign(eui::VerticalAlign::Center)
         .color(t.colors.textTertiary).build();
     ui.rect("claude.field.url.bg")
         .position(x0, urlY + 18.0f).size(w, 28.0f)
@@ -101,11 +110,13 @@ float drawDetailBasic(eui::Ui& ui, float x0, float y0, float w,
     ui.text("claude.field.url.value")
         .position(x0 + 12.0f, urlY + 18.0f).size(w - 24.0f, 28.0f)
         .text(v.urlValue).fontSize(t.sizes.fontSizeSmall).lineHeight(28.0f)
+        .verticalAlign(eui::VerticalAlign::Center)
         .color(t.colors.textPrimary).build();
     const float keyY = urlY + 56.0f;
     ui.text("claude.field.token.label")
         .position(x0, keyY).size(w, 14.0f)
         .text("API Key").fontSize(11.0f).lineHeight(14.0f)
+        .verticalAlign(eui::VerticalAlign::Center)
         .color(t.colors.textTertiary).build();
     ui.rect("claude.field.token.bg")
         .position(x0, keyY + 18.0f).size(w, 32.0f)
@@ -114,6 +125,7 @@ float drawDetailBasic(eui::Ui& ui, float x0, float y0, float w,
     ui.text("claude.field.token.value")
         .position(x0 + 12.0f, keyY + 18.0f).size(w - 24.0f, 32.0f)
         .text(v.tokenValue).fontSize(t.sizes.fontSizeSmall).lineHeight(32.0f)
+        .verticalAlign(eui::VerticalAlign::Center)
         .color(t.colors.textSecondary).build();
     ClaudeService* svc = v.svc;
     const bool ccManaged = svc && svc->isClaudeCodeManaged();
@@ -131,6 +143,7 @@ float drawDetailBasic(eui::Ui& ui, float x0, float y0, float w,
         .text(ccManaged ? ("● Claude Code 已接管 " + ccPath)
                         : std::string("○ Claude Code 未接管（启动代理后自动接管，停止时还原）"))
         .fontSize(11.0f).lineHeight(16.0f)
+        .verticalAlign(eui::VerticalAlign::Center)
         .color(ccManaged ? t.colors.success : t.colors.textTertiary).build();
     // 批 2（设计 §2.10「详情/列表」）：共享配置绑定行——「共享配置：片段 A
     //（N 个键）」；未绑定 → 「共享配置：未绑定」。N = 片段 extra_env 键数
@@ -154,6 +167,7 @@ float drawDetailBasic(eui::Ui& ui, float x0, float y0, float w,
         .position(x0, shY).size(w, 16.0f)
         .text(sharedText)
         .fontSize(11.0f).lineHeight(16.0f)
+        .verticalAlign(eui::VerticalAlign::Center)
         .color(bound ? t.colors.textSecondary : t.colors.textTertiary)
         .build();
     if (!ccWarnings.empty()) {
@@ -170,11 +184,15 @@ float drawDetailBasic(eui::Ui& ui, float x0, float y0, float w,
         }
         ui.text("claude.field.takeover.warn.icon")
             .position(x0, shY + 16.0f).size(14.0f, 16.0f).icon(0xF071)
-            .fontSize(11.0f).lineHeight(16.0f).color(t.colors.warning).build();
+            .fontSize(11.0f).lineHeight(16.0f)
+            .verticalAlign(eui::VerticalAlign::Center)
+            .color(t.colors.warning).build();
         ui.text("claude.field.takeover.warn")
             .position(x0 + 18.0f, shY + 16.0f).size(w - 18.0f, 16.0f)
             .text(warnText)
-            .fontSize(11.0f).lineHeight(16.0f).color(t.colors.warning).build();
+            .fontSize(11.0f).lineHeight(16.0f)
+            .verticalAlign(eui::VerticalAlign::Center)
+            .color(t.colors.warning).build();
     }
     return shY + (!ccWarnings.empty() ? 32.0f : 16.0f);
 }
@@ -205,11 +223,17 @@ float drawDetailModels(eui::Ui& ui, float x0, float y0, float w,
         ui.text("claude.slot.name." + idx)
             .position(x0 + 12.0f, sy).size(80.0f, 32.0f)
             .text(meta.label).fontSize(12.0f).lineHeight(32.0f)
+            // 真机反馈 ④（2026-09-29）：槽位行文本没垂直居中 —— 文本从 32 高
+            // 行框的顶沿起排（runtime 只在 verticalAlign=Center 时把 ink 中心
+            // 对齐到 frame 中心，见 EUI-NEO runtime_render.h renderText）。
+            // 只加对齐，**行高/行框几何一律不动**（32/38 是别的修复标定过的）
+            .verticalAlign(eui::VerticalAlign::Center)
             .color(t.colors.textTertiary).build();
         ui.text("claude.slot.val." + idx)
             .position(x0 + 100.0f, sy).size(w - 112.0f, 32.0f)
             .text(filled ? slot.model : std::string("未配置"))
             .fontSize(13.0f).lineHeight(32.0f)
+            .verticalAlign(eui::VerticalAlign::Center)
             .color(filled ? t.colors.textPrimary : t.colors.textTertiary).build();
         sy += 38.0f;
     }
@@ -395,11 +419,14 @@ float drawDetailCallsPane(eui::Ui& ui, float x0, float y0, float w,
                           const DetailView& v,
                           const std::function<void()>& openCalls,
                           float contentBottom, PaneRows* rows) {
-    // 调用表头（列布局同旧底部预览）
+    // 调用表头（列布局同旧底部预览；真机反馈 ② 2026-09-29：新增「速率」列
+    // ——列宽从「方法/路径」让出 110px，右侧三列整体左移，路径列仍有
+    // w−390（本机 1262 页宽下 ≈528px）不挤既有信息）
     const float colTimeX = x0;
     const float colPathX = x0 + 80.0f;
-    const float colStatusX = x0 + w - 200.0f;
-    const float colDurX = x0 + w - 100.0f;
+    const float colStatusX = x0 + w - 310.0f;
+    const float colDurX = x0 + w - 220.0f;
+    const float colRateX = x0 + w - 130.0f;
     ui.text("claude.calls.h.time")
         .position(colTimeX, y0)
         .size(72.0f, 14.0f)
@@ -410,7 +437,7 @@ float drawDetailCallsPane(eui::Ui& ui, float x0, float y0, float w,
         .build();
     ui.text("claude.calls.h.path")
         .position(colPathX, y0)
-        .size(w - 280.0f, 14.0f)
+        .size(w - 390.0f, 14.0f)
         .text("方法 / 路径")
         .fontSize(10.0f)
         .lineHeight(14.0f)
@@ -428,6 +455,14 @@ float drawDetailCallsPane(eui::Ui& ui, float x0, float y0, float w,
         .position(colDurX, y0)
         .size(60.0f, 14.0f)
         .text("耗时")
+        .fontSize(10.0f)
+        .lineHeight(14.0f)
+        .color(t.colors.textTertiary)
+        .build();
+    ui.text("claude.calls.h.rate")
+        .position(colRateX, y0)
+        .size(110.0f, 14.0f)
+        .text("速率 (tok/s)")
         .fontSize(10.0f)
         .lineHeight(14.0f)
         .color(t.colors.textTertiary)
@@ -518,7 +553,7 @@ float drawDetailCallsPane(eui::Ui& ui, float x0, float y0, float w,
             const std::string mp = c.method + " " + c.path;
             ui.text("claude.calls.p." + std::to_string(i))
                 .position(colPathX, rowY)
-                .size(w - 280.0f, 16.0f)
+                .size(w - 390.0f, 16.0f)
                 .text(mp)
                 .fontSize(11.0f)
                 .lineHeight(16.0f)
@@ -551,6 +586,24 @@ float drawDetailCallsPane(eui::Ui& ui, float x0, float y0, float w,
                 .lineHeight(16.0f)
                 .color(t.colors.textSecondary)
                 .build();
+
+            // 本地调用速率（真机反馈 ②）：口径与首页「Token 速率」卡同一处
+            //（core/call_rate.h）——仅 2xx 且 output_tokens > 0 的调用有速率；
+            // 其余（错误响应 / 未采集用量）显示「—」：0 是合法速率值，不能拿
+            // 0 或负数冒充「没有」
+            double rateTps = 0.0;
+            const bool hasRate = core::call_rate::tps(
+                c.statusCode, c.outputTokens, c.latencyMs, rateTps);
+            ui.text("claude.calls.rate." + std::to_string(i))
+                .position(colRateX, rowY)
+                .size(110.0f, 16.0f)
+                .text(hasRate ? core::call_rate::formatTps(rateTps)
+                              : std::string(core::call_rate::kNoRate))
+                .fontSize(11.0f)
+                .lineHeight(16.0f)
+                .color(hasRate ? t.colors.textSecondary
+                               : t.colors.textTertiary)
+                .build();
         }
         shownRows = shown;
         // 截断必须有可见表达（方案 §1 组 C 第 3 条）：与 env 页签同款提示。
@@ -582,20 +635,32 @@ float drawDetailCallsPane(eui::Ui& ui, float x0, float y0, float w,
         (callsOverflow ? kOverflowH : 0.0f) +
         (singleLineDrawn ? kEmptyH + kViewallGap : kViewallGap);
     if (viewY + kViewallH <= contentBottom + 0.5f) {
+        // 真机反馈 ⑥（2026-09-29）：「查看全部」原本是纯文本链接（透明底 +
+        // 只有 hover 变色），用户要求做成按钮。样式取详情页既有次级按钮的口径
+        //（surfaceElevated 底 + borderDefault 描边 + radiusSmall 圆角 +
+        // surfaceElevated/hover/active 三态），文案居中于行。
+        // 为什么自绘而不是 components::button：该组件的点击层 id 是 `<id>.bg`
+        // 且尺寸由组件内部派生 —— 换组件要改掉既有单测/probe 定位的
+        // claude.calls.viewall.hit，并重算本 pane 的行数预算让位逻辑；自绘同样
+        // 满足「有 hover/点击态 + 圆角 + 与既有按钮同风格」，破坏面小得多。
+        // **行高 kViewallH 不变**（它参与上方 rowsCap 的行数预算）。
         ui.rect("claude.calls.viewall.hit")
             .position(x0, viewY)
             .size(w, kViewallH)
-            .color(t.colors.background)
-            .hoverColor(t.colors.hover)
+            .states(t.colors.surfaceElevated, t.colors.hover, t.colors.active)
             .radius(t.sizes.radiusSmall)
+            .border(1.0f, t.colors.borderDefault)
+            .transition(core::Transition::make(0.1f, core::Ease::OutQuad))
             .onClick([oc = openCalls] { oc(); })
             .build();
         ui.text("claude.calls.viewall")
-            .position(x0, viewY + 4.0f)
-            .size(w, 18.0f)
+            .position(x0, viewY)
+            .size(w, kViewallH)
             .text("查看全部 →")
             .fontSize(12.0f)
-            .lineHeight(18.0f)
+            .lineHeight(kViewallH)
+            .horizontalAlign(eui::HorizontalAlign::Center)
+            .verticalAlign(eui::VerticalAlign::Center)
             .color(t.colors.primary)
             .build();
         return viewY + kViewallH;

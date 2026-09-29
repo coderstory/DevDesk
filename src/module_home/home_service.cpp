@@ -2,6 +2,7 @@
 // Home 仪表盘数据服务实现（spec §8.4）
 #include "home_service.h"
 
+#include "core/call_rate.h"
 #include "core/logging.h"
 #include "core/overdue.h"
 #include "core/time.h"
@@ -213,7 +214,8 @@ core::Result<DashboardStats> HomeService::getStats(int recentNoteLimit) {
     return core::Result<DashboardStats>::ok(std::move(stats));
 }
 
-core::Result<std::vector<int64_t>> HomeService::getTodayApiCallSeries(int hours) {
+core::Result<std::vector<int64_t>> HomeService::getTodayHourlyTokenTotals(
+    int hours) {
     if (hours <= 0) hours = 24;
     const std::time_t now = std::time(nullptr);
     const int64_t dayStart = startOfDayEpoch(now);
@@ -221,8 +223,11 @@ core::Result<std::vector<int64_t>> HomeService::getTodayApiCallSeries(int hours)
     // 小时下标 = (started_at - 本地零点) / 3600：当日区间内得 0..23（本地
     // 时区语义，与 todayApiCalls 同口径）；DST 日边缘可能越界（23/25h），
     // 落点按 [0, hours) 过滤不进图
+    // SUM 的 COALESCE：一小时内全是未采集行（output_tokens IS NULL）时
+    // SUM 返回 NULL —— NULL 与「0 个 token」在本图同义（都不画），按 0 收
     auto prep = db_.prepare(
-        "SELECT (started_at - ?) / 3600 AS h, COUNT(*) AS n "
+        "SELECT (started_at - ?) / 3600 AS h, "
+        "COALESCE(SUM(output_tokens), 0) AS n "
         "FROM claude_call_logs "
         "WHERE started_at >= ? AND started_at < ? GROUP BY h");
     if (prep.isFail()) {
@@ -247,8 +252,8 @@ core::Result<std::vector<int64_t>> HomeService::getTodayApiCallSeries(int hours)
         return core::Result<std::vector<int64_t>>::fail(rows.errorCode(),
                                                         rows.errorMessage());
     }
-    // 恒返回恰 hours 个点（无调用补 0）——序列绝不空（barChart 空 values
-    // 会填演示数据，M3-1 D-6 同款护栏）
+    // 恒返回恰 hours 个点（无调用的小时补 0）——序列恒非空，调用方不必再判
+    // 「查询有没有返回行」
     std::vector<int64_t> series(static_cast<size_t>(hours), 0);
     for (const auto& row : rows.value()) {
         auto hRaw = row.getInt64("h");
@@ -264,6 +269,69 @@ core::Result<std::vector<int64_t>> HomeService::getTodayApiCallSeries(int hours)
         }
     }
     return core::Result<std::vector<int64_t>>::ok(std::move(series));
+}
+
+core::Result<LastCallRate> HomeService::getLastCallRate() {
+    // 「成功」谓词与 core/call_rate.h 的 isSuccessful 同口径（2xx 且
+    // output_tokens > 0）——SQL 侧写出同一条件，两处必须一起改。
+    // 排序与 recentCalls 一致（started_at DESC, id DESC）：同一秒内的多行按
+    // 落库顺序取最后一条，不会因 id 抖动挑错行
+    auto prep = db_.prepare(
+        "SELECT status_code, output_tokens, latency_ms, started_at "
+        "FROM claude_call_logs "
+        "WHERE COALESCE(status_code, 0) BETWEEN 200 AND 299 "
+        "AND COALESCE(output_tokens, 0) > 0 "
+        "ORDER BY started_at DESC, id DESC LIMIT 1");
+    if (prep.isFail()) {
+        return core::Result<LastCallRate>::fail(prep.errorCode(),
+                                                prep.errorMessage());
+    }
+    auto step = prep.value().step();
+    if (step.isFail()) {
+        return core::Result<LastCallRate>::fail(step.errorCode(),
+                                                step.errorMessage());
+    }
+    LastCallRate out;
+    if (!step.value()) {
+        return core::Result<LastCallRate>::ok(out);  // 没有成功调用：空态
+    }
+    auto& stmt = prep.value();
+    auto row = stmt.currentRow();
+    if (row.isFail()) {
+        return core::Result<LastCallRate>::fail(row.errorCode(),
+                                                row.errorMessage());
+    }
+    auto sc = row.value().getInt64("status_code");
+    auto ot = row.value().getInt64("output_tokens");
+    auto lm = row.value().getInt64("latency_ms");
+    auto sa = row.value().getInt64("started_at");
+    if (sc.isFail() || ot.isFail() || lm.isFail()) {
+        const auto& e = sc.isFail() ? sc : (ot.isFail() ? ot : lm);
+        return core::Result<LastCallRate>::fail(e.errorCode(),
+                                                e.errorMessage());
+    }
+    out.outputTokens = ot.value();
+    out.latencyMs = lm.value();
+    if (sa.isOk()) out.startedAt = static_cast<std::time_t>(sa.value());
+    // 速率算法（含 latency_ms <= 0 的兜底）单源在 core/call_rate.h
+    out.hasValue = core::call_rate::tps(static_cast<int>(sc.value()),
+                                        out.outputTokens, out.latencyMs,
+                                        out.tps);
+    return core::Result<LastCallRate>::ok(out);
+}
+
+HourRange hourlyDataRange(const std::vector<int64_t>& hourly) {
+    HourRange r;
+    for (size_t i = 0; i < hourly.size(); ++i) {
+        if (hourly[i] > 0) {
+            if (!r.hasData) {
+                r.hasData = true;
+                r.first = i;
+            }
+            r.last = i;
+        }
+    }
+    return r;
 }
 
 } // namespace module::home

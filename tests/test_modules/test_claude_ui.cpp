@@ -34,6 +34,7 @@
 #include <stdexcept>
 #include <string>
 #include <thread>
+#include <utility>
 
 extern "C" ::core::Module* create_claude_module();
 // 审计 CPX-06 测试缝（claude_module.cpp 文件末尾同名导出）：调用记录后台查询的
@@ -3764,6 +3765,233 @@ REGISTER_TEST(claude_calls_no_rows_when_too_short,
     DOCTEST_REQUIRE(panel != nullptr);
     DOCTEST_CHECK(act->frame.y + act->frame.height <=
                   panel->frame.y + panel->frame.height + 0.5f);
+
+    mod->onStop();
+    cleanupProfileKey(kTestKeychainService, pid);
+    return true;
+})
+
+// ---- 真机反馈 ②（2026-09-29）：最近调用明细列「本地调用速率」 ----
+// 手算值对照：速率 = output_tokens / (latency_ms/1000)，只有 2xx 且
+// output_tokens > 0 的调用有值；非 2xx / 0 token 行显示「—」（不是 0 —— 0 是
+// 合法速率值，两者必须可区分）。口径单源 core/call_rate.h（与首页卡同一处）。
+REGISTER_TEST(claude_calls_rate_column,
+              "claude_module: 最近调用速率列（手算值 + 非 2xx/0 token 显示 —）", {
+    TestEnv env;
+    auto p = env.svc->createProfile("速率", "https://rate.example.com",
+                                    "sk-ant-rate-0001", "m-rate");
+    DOCTEST_REQUIRE(p.isOk());
+    const int64_t pid = p.value().id;
+    DOCTEST_REQUIRE(env.svc->setActiveProfile(pid).isOk());
+    // 用量列由流末回填（logCall 不写 output_tokens），故种子直接落库；
+    // started_at 递减 → 列表行序（started_at DESC）确定：
+    //   行 0  200 / 2000ms / out 100 → 50.0
+    //   行 1  200 / 1000ms / out   0 → 「—」
+    //   行 2  500 /  500ms / out 900 → 「—」（非 2xx）
+    //   行 3  200 / 4000ms / out 600 → 150.0（NULL 用量的老行见行 4）
+    //   行 4  200 / 1000ms / NULL    → 「—」（未采集）
+    const int64_t now = static_cast<int64_t>(std::time(nullptr));
+    auto& sq = env.db->db();
+    const std::string pidStr = std::to_string(pid);
+    DOCTEST_REQUIRE(sq.exec(
+        "INSERT INTO claude_call_logs (profile_id, method, path, status_code, "
+        "latency_ms, output_tokens, request_bytes, response_bytes, error, "
+        "started_at) VALUES "
+        "(" + pidStr + ", 'POST', '/v1/messages', 200, 2000, 100, 10, 20, '', " +
+        std::to_string(now - 100) + "), "
+        "(" + pidStr + ", 'POST', '/v1/messages', 200, 1000, 0, 10, 20, '', " +
+        std::to_string(now - 200) + "), "
+        "(" + pidStr + ", 'POST', '/v1/messages', 500, 500, 900, 10, 20, "
+        "'boom', " + std::to_string(now - 300) + "), "
+        "(" + pidStr + ", 'POST', '/v1/messages', 200, 4000, 600, 10, 20, '', " +
+        std::to_string(now - 400) + "), "
+        "(" + pidStr + ", 'POST', '/v1/messages', 200, 1000, NULL, 10, 20, '', " +
+        std::to_string(now - 500) + ")").isOk());
+
+    std::unique_ptr<::core::Module> mod(create_claude_module());
+    mod->onStart();
+
+    constexpr float kW = 1262.0f;
+    constexpr float kH = 801.0f;
+    eui::Ui ui;
+    composeAtSize(mod.get(), ui, "claude_rate", kW, kH);
+    DOCTEST_REQUIRE(clickById(ui, "claude.detail.tabs.hit.3"));
+    eui::Ui ui2;
+    composeAtSize(mod.get(), ui2, "claude_rate", kW, kH);
+
+    const auto textOf = [](eui::Ui& u, const std::string& id) -> std::string {
+        const auto* el = u.find(id);
+        return el != nullptr ? el->text : std::string();
+    };
+    // 表头：新列在场，且四列 x 区间互不重叠（既有列没被挤掉/叠印）
+    const auto* hPath = ui2.find("claude.calls.h.path");
+    const auto* hStatus = ui2.find("claude.calls.h.status");
+    const auto* hDur = ui2.find("claude.calls.h.dur");
+    const auto* hRate = ui2.find("claude.calls.h.rate");
+    DOCTEST_REQUIRE(hPath != nullptr);
+    DOCTEST_REQUIRE(hStatus != nullptr);
+    DOCTEST_REQUIRE(hDur != nullptr);
+    DOCTEST_REQUIRE(hRate != nullptr);
+    DOCTEST_CHECK_EQ(hRate->text, std::string("速率 (tok/s)"));
+    DOCTEST_CHECK(hPath->frame.x + hPath->frame.width <= hStatus->frame.x + 0.5f);
+    DOCTEST_CHECK(hStatus->frame.x + hStatus->frame.width <=
+                  hDur->frame.x + 0.5f);
+    DOCTEST_CHECK(hDur->frame.x + hDur->frame.width <= hRate->frame.x + 0.5f);
+    DOCTEST_CHECK(hRate->frame.x + hRate->frame.width <=
+                  hPath->frame.x + 1262.0f);   // 不越出面板右缘
+
+    // 手算值对照（回退成「累计/实时速率口径」或把无速率写成 0，本组即红）
+    DOCTEST_CHECK_EQ(textOf(ui2, "claude.calls.rate.0"), std::string("50.0"));
+    DOCTEST_CHECK_EQ(textOf(ui2, "claude.calls.rate.1"), std::string("—"));
+    DOCTEST_CHECK_EQ(textOf(ui2, "claude.calls.rate.2"), std::string("—"));
+    DOCTEST_CHECK_EQ(textOf(ui2, "claude.calls.rate.3"), std::string("150.0"));
+    DOCTEST_CHECK_EQ(textOf(ui2, "claude.calls.rate.4"), std::string("—"));
+    // 既有列信息仍在（时间 / 方法·路径 / 状态 / 耗时）
+    DOCTEST_CHECK_EQ(textOf(ui2, "claude.calls.p.0"),
+                     std::string("POST /v1/messages"));
+    DOCTEST_CHECK_EQ(textOf(ui2, "claude.calls.s.0"), std::string("200"));
+    DOCTEST_CHECK(textOf(ui2, "claude.calls.d.0").empty() == false);
+    DOCTEST_CHECK(textOf(ui2, "claude.calls.t.0").empty() == false);
+    // 速率列与耗时列不同源（60ms 的耗时不会算成速率）
+    DOCTEST_CHECK(textOf(ui2, "claude.calls.rate.0") !=
+                  textOf(ui2, "claude.calls.d.0"));
+
+    mod->onStop();
+    cleanupProfileKey(kTestKeychainService, pid);
+    return true;
+})
+
+// ---- 真机反馈 ④⑤⑥（2026-09-29）：两处文本垂直居中 + 「查看全部」改按钮 ----
+// 居中判据：runtime 只在 verticalAlign == Center 时把 ink 中心对齐到 frame
+// 中心（EUI-NEO runtime_render.h renderText：y = frame.y + frame.height/2），
+// 故「flag == Center」+「frame 中心 == 行框中心（±0.5）」两条合起来才是
+// 「文本在行内垂直居中」的数值证据 —— 只写 position/size 的那一版（无 flag）
+// 文本从行框顶沿起排，本用例即红。
+REGISTER_TEST(claude_detail_vertical_center_and_viewall_button,
+              "claude_module: 基础信息/模型映射文本垂直居中 + 查看全部是按钮", {
+    TestEnv env;
+    auto p = env.svc->createProfile("居中", "https://center.example.com",
+                                    "sk-ant-center-01", "m-center");
+    DOCTEST_REQUIRE(p.isOk());
+    const int64_t pid = p.value().id;
+    DOCTEST_REQUIRE(env.svc->setActiveProfile(pid).isOk());
+    DOCTEST_REQUIRE(seedCalls(env.svc.get(), pid, 3));
+
+    std::unique_ptr<::core::Module> mod(create_claude_module());
+    mod->onStart();
+
+    constexpr float kW = 1262.0f;
+    constexpr float kH = 801.0f;
+    const auto centerY = [](const core::dsl::Element& el) {
+        return el.frame.y + el.frame.height * 0.5f;
+    };
+    const auto isCentered = [](const core::dsl::Element& el) {
+        return el.verticalAlign == eui::VerticalAlign::Center;
+    };
+
+    // ---- ⑤ 基础信息（tab 0 默认）：标签列与值列都相对各自行高居中 ----
+    {
+        eui::Ui ui;
+        composeAtSize(mod.get(), ui, "claude_center_basic", kW, kH);
+        // {文本 id, 行框 id（nullptr = 文本自身框即该行）}
+        const std::pair<const char*, const char*> kFields[] = {
+            {"claude.field.name.label", nullptr},
+            {"claude.field.name.value", "claude.field.name.bg"},
+            {"claude.field.url.label", nullptr},
+            {"claude.field.url.value", "claude.field.url.bg"},
+            {"claude.field.token.label", nullptr},
+            {"claude.field.token.value", "claude.field.token.bg"},
+            {"claude.field.takeover.value", nullptr},
+            {"claude.field.shared.value", nullptr},
+        };
+        for (const auto& f : kFields) {
+            const auto* txt = ui.find(f.first);
+            DOCTEST_REQUIRE_MESSAGE(txt != nullptr,
+                                    std::string("缺文本元素 ") + f.first);
+            DOCTEST_CHECK_MESSAGE(isCentered(*txt),
+                                  std::string(f.first) + " 未垂直居中（无 Center 对齐）");
+            if (f.second != nullptr) {
+                const auto* row = ui.find(f.second);
+                DOCTEST_REQUIRE(row != nullptr);
+                DOCTEST_CHECK_MESSAGE(
+                    std::fabs(centerY(*txt) - centerY(*row)) <= 0.5f,
+                    std::string(f.first) + " 文本中心 != 行框中心");
+            } else {
+                // 无独立行框的元素：行 = 自身框，行高必须等于行高设定
+                //（14/16）—— 行框与行高不一致时 ink 中心必然偏
+                DOCTEST_CHECK_EQ(txt->lineHeight, txt->frame.height);
+            }
+        }
+        // 水平关系未被动过：标签在左（x = x0）、值列有左内缩 12
+        const auto* nameLabel = ui.find("claude.field.name.label");
+        const auto* nameValue = ui.find("claude.field.name.value");
+        DOCTEST_REQUIRE(nameLabel != nullptr);
+        DOCTEST_REQUIRE(nameValue != nullptr);
+        DOCTEST_CHECK(nameValue->frame.x > nameLabel->frame.x);
+    }
+
+    // ---- ④ 模型映射（tab 1）：每个槽位行的名称列/值列都相对 32 高行框居中 ----
+    {
+        eui::Ui ui;
+        composeAtSize(mod.get(), ui, "claude_center_models", kW, kH);
+        DOCTEST_REQUIRE(clickById(ui, "claude.detail.tabs.hit.1"));
+        eui::Ui ui2;
+        composeAtSize(mod.get(), ui2, "claude_center_models", kW, kH);
+        int rows = 0;
+        for (int i = 0; i < 8; ++i) {   // 槽位固定 6 行，上界留余量
+            const std::string idx = std::to_string(i);
+            const auto* bg = ui2.find("claude.slot.bg." + idx);
+            if (bg == nullptr) break;
+            const auto* name = ui2.find("claude.slot.name." + idx);
+            const auto* val = ui2.find("claude.slot.val." + idx);
+            DOCTEST_REQUIRE(name != nullptr);
+            DOCTEST_REQUIRE(val != nullptr);
+            DOCTEST_CHECK_MESSAGE(isCentered(*name),
+                                  "槽位名称列未垂直居中");
+            DOCTEST_CHECK_MESSAGE(isCentered(*val), "槽位值列未垂直居中");
+            DOCTEST_CHECK(std::fabs(centerY(*name) - centerY(*bg)) <= 0.5f);
+            DOCTEST_CHECK(std::fabs(centerY(*val) - centerY(*bg)) <= 0.5f);
+            ++rows;
+        }
+        DOCTEST_CHECK_EQ(rows, 6);
+    }
+
+    // ---- ⑥ 最近调用（tab 3）：「查看全部 →」是按钮，点击开弹窗 ----
+    {
+        eui::Ui ui;
+        composeAtSize(mod.get(), ui, "claude_center_calls", kW, kH);
+        DOCTEST_REQUIRE(clickById(ui, "claude.detail.tabs.hit.3"));
+        eui::Ui ui2;
+        composeAtSize(mod.get(), ui2, "claude_center_calls", kW, kH);
+        const auto* hit = ui2.find("claude.calls.viewall.hit");
+        DOCTEST_REQUIRE(hit != nullptr);
+        // 按钮三要素：可点击接线 / hover·按下三态 / 圆角 + 描边
+        //（退化成纯文本链接 = 无 onClick、无三态、无描边 → 本组红）
+        DOCTEST_CHECK(hit->onClick != nullptr);
+        DOCTEST_CHECK(hit->hasStateColors);
+        DOCTEST_CHECK(hit->interactive);
+        DOCTEST_CHECK(hit->radius > 0.0f);
+        DOCTEST_CHECK(hit->border.width > 0.0f);
+        const auto* label = ui2.find("claude.calls.viewall");
+        DOCTEST_REQUIRE(label != nullptr);
+        DOCTEST_CHECK_EQ(label->text, std::string("查看全部 →"));
+        DOCTEST_CHECK(isCentered(*label));
+        DOCTEST_CHECK(std::fabs(centerY(*label) - centerY(*hit)) <= 0.5f);
+
+        // 点击行为不变：开完整调用记录弹窗（有界等待，数据行是异步的）
+        DOCTEST_REQUIRE(hit->onClick != nullptr);
+        hit->onClick();
+        bool opened = false;
+        for (int i = 0; i < 40 && !opened; ++i) {
+            eui::Ui ui3;
+            composeAtSize(mod.get(), ui3, "claude_center_calls", kW, kH);
+            opened = ui3.find("claude.dialog.calls") != nullptr;
+            if (!opened) {
+                std::this_thread::sleep_for(std::chrono::milliseconds(5));
+            }
+        }
+        DOCTEST_CHECK(opened);
+    }
 
     mod->onStop();
     cleanupProfileKey(kTestKeychainService, pid);
