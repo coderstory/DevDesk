@@ -452,15 +452,16 @@ public:
         }
     }
 
-    // 桌宠换肤（原桌宠卡 onChange 内联体）：下标越界守卫（含空清单）→ 桥调用
-    // → 状态行。守卫读的就是卡片渲染用的同一份皮肤清单快照
+    // 桌宠换肤（原桌宠卡 onChange 内联体）：下标越界守卫（含空清单）→ 桥
+    // 调用。守卫读的就是卡片渲染用的同一份皮肤清单快照。不补状态行 toast
+    //（2026-09-30 用户点名删除：换肤热切换即时生效、界面肉眼立即可见，
+    // toast 冗余）
     void changePetSkinAt(int idx) {
         if (idx < 0 || idx >= static_cast<int>(petSkins_.size())) {
             return;
         }
         petSkinName_ = petSkins_[static_cast<size_t>(idx)];
         ::module::pet::applyPetSkin(petSkinName_);
-        setStatus("桌宠皮肤已切换：" + petSkinName_);
     }
 
     // 显示大小切档（2026-09-30 用户需求「桌宠显示大小」）：下标守卫读的
