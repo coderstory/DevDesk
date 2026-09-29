@@ -2426,7 +2426,10 @@ private:
         //    可用快照一律消费（返回 true）——交回内置会走 framework 的
         //    per-instance 栈（存的是【块局部文本】，单输入方案下跨块混叠：
         //    换块后恢复会把旧块文本灌进新块），语义不可解释。
-        if (shortcut && !alt && !event.modifiers.super) {
+        //    谓词只认「平台快捷键 + 非 alt」：shortcut() 本身就是平台修饰位
+        //    （macOS super / 其它 control），再叠一个 !super 会让 macOS 恒假、
+        //    整条分支永不进入。
+        if (shortcut && !alt) {
             const bool redoKey = event.key == eui::InputKey::Y ||
                                  (event.key == eui::InputKey::Z &&
                                   event.modifiers.shift);

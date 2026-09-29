@@ -182,7 +182,7 @@ core::Result<std::vector<std::string>> realDeleteSecretsNotIn(
         if (svcStr != service) continue;
 
         char acctBuf[256];
-        if (!CFStringGetCString(acct, acctBuf, sizeof(acct),
+        if (!CFStringGetCString(acct, acctBuf, sizeof(acctBuf),
                                 kCFStringEncodingUTF8)) {
             continue;
         }
