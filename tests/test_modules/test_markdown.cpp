@@ -3,6 +3,7 @@
 // - md_tree 纯函数单测（W8 二级目录树分组）
 // - MarkdownModule Phase 1 + W8 UI 无头 compose / layout 冒烟
 //   （三态切换 / 大纲浮动面板 / 目录树展开收起 / 缩进布局）
+// - 目录树行内几何数值锁（2026-09-29：文本 frame 中心 == 行中心 / 箭头字号一档）
 // 接线证据 = 代码路径 + 本无头 compose/layout 测试 + 启动冒烟；真实鼠标点验留给用户人工
 #include "doctest.h"
 #include "test_support.h"
@@ -559,6 +560,131 @@ REGISTER_TEST(md_module_compose_tree, "markdown_module: W8 目录树展开收起
     fileRow->onClick();
     frame("t4");
     DOCTEST_CHECK(ui.find(kEditorInputId) != nullptr);
+
+    mod->onStop();
+    return true;
+})
+
+// ---- 2b2''. 树行几何数值锁（2026-09-29 真机反馈：item 文本没垂直居中 + 三角箭头太小）----
+//
+// 判据全是数值，不靠观感：
+//   a. 行内每个文本元素（文件行 .icon/.name，文件夹行 .arrow/.ficon/.name）的
+//      frame 中心 y == 所在 item 行（.row）中心 y（±0.5）；
+//   b. frame.y 无半像素（旧实现 name y = (32-13)/2 = 9.5 就是 .5 偏移）；
+//   c. x 方向同层级统一：同 kind + 同 depth 的所有行 x 完全相同；
+//   d. 箭头字号 ∈ [fontSizeSmall×1.25, fontSizeSmall×1.4] 且 < 行高（不溢出）；
+//   e. 每个行内文本都挂 VerticalAlign::Center——渲染锚点用 frame 中线
+//      （runtime_render.h:1069），没有它「frame 中心 == 行中心」也换不来视觉居中。
+//
+// 回退哪条会红（三条独立证伪路径，非恒真）：
+//   ① name 的 y 改回 (行高 - 字号)/2（旧 ≈9.5）→ frame 中心 25.5 ≠ 行中心 16 → a 红；
+//   ② 删任一 .verticalAlign(Center) → frame 数值不变、仅墨迹锚点回 frame 顶 → e 红；
+//   ③ 箭头 fontSize 改回 fontSizeSmall(13) → d 红（16.25 下界）。
+REGISTER_TEST(md_tree_row_geometry,
+              "markdown: 树行文本 frame 中心==行中心 / x 同层级统一 / 箭头字号（数值锁）", {
+    test_support::MdHeadlessEnv env(kDirPrefix, "rowgeom", kDbName);
+    DOCTEST_REQUIRE(env.db != nullptr);
+    // 三层结构：根组文件 + 顶层夹（含文件 + 子夹，子夹内再一文件）
+    DOCTEST_REQUIRE(writeTextFile(env.dir / "solo.md", "# solo\n"));
+    DOCTEST_REQUIRE(writeTextFile(env.dir / "工作" / "周报.md", "# 周报\n"));
+    DOCTEST_REQUIRE(writeTextFile(env.dir / "工作" / "周会" / "纪要.md", "# 纪要\n"));
+
+    std::unique_ptr<::core::Module> mod(create_markdown_module());
+    mod->onStart();
+
+    eui::Screen screen;
+    screen.width = 1600.0f;
+    screen.height = 1000.0f;
+    eui::Ui ui;
+    ui.begin("treegeom");
+    mod->compose(ui, screen);
+    ui.end();
+    ui.layout(screen.width, screen.height);
+
+    // 行序（W9 根组置顶 + 组内文件在前/子夹在后）：
+    //   [0] 根目录(夹,d0) [1] solo.md(文件,d1) [2] 工作(夹,d0)
+    //   [3] 周报.md(文件,d1) [4] 周会(夹,d1) [5] 纪要.md(文件,d2)
+    struct RowSpec { const char* id; bool folder; };
+    const RowSpec rows[] = {{"md.tree.node.0", true},  {"md.tree.node.1", false},
+                            {"md.tree.node.2", true},  {"md.tree.node.3", false},
+                            {"md.tree.node.4", true},  {"md.tree.node.5", false}};
+    const char* kFolderParts[] = {".arrow", ".ficon", ".name"};
+    const char* kFileParts[] = {".icon", ".name"};
+    const float kRowH = 32.0f;  // kTreeRowHeight（markdown_module.cpp 同名常量）
+
+    for (const RowSpec& spec : rows) {
+        const std::string base = spec.id;
+        const auto* row = ui.find(base + ".row");
+        DOCTEST_REQUIRE_MESSAGE(row != nullptr, base + ".row 不存在");
+        DOCTEST_CHECK_MESSAGE(row->frame.height == kRowH, base + ".row 高度 != 32");
+        const float rowCenterY = row->frame.y + row->frame.height * 0.5f;
+        const char* const* parts = spec.folder ? kFolderParts : kFileParts;
+        const size_t partCount = spec.folder ? 3u : 2u;
+        for (size_t p = 0; p < partCount; ++p) {
+            const std::string partId = base + parts[p];
+            const auto* el = ui.find(partId);
+            DOCTEST_REQUIRE_MESSAGE(el != nullptr, partId + " 不存在");
+            const float centerY = el->frame.y + el->frame.height * 0.5f;
+            // a. 文本元素 frame 中心 == 行中心（±0.5）
+            DOCTEST_CHECK_MESSAGE(std::fabs(centerY - rowCenterY) <= 0.5f,
+                                  partId + " frame 中心 y=" + std::to_string(centerY) +
+                                      " ≠ 行中心 y=" + std::to_string(rowCenterY));
+            // b. 无半像素（旧 name y=9.5 在此红）
+            DOCTEST_CHECK_MESSAGE(std::fabs(el->frame.y - std::round(el->frame.y)) < 0.001f,
+                                  partId + " frame.y=" + std::to_string(el->frame.y) +
+                                      " 半像素错位");
+            // e. 渲染锚点 = frame 中线（垂直居中的真正落点）
+            DOCTEST_CHECK_MESSAGE(el->verticalAlign == eui::VerticalAlign::Center,
+                                  partId + " 未挂 VerticalAlign::Center");
+        }
+    }
+
+    // c. x 方向同层级统一（同 kind + 同 depth → 同 x，整数不差半像素）
+    const auto xOf = [&](const char* id) { return ui.find(id)->frame.x; };
+    // 顶层夹（d0）：node.0 与 node.2 各列 x 一致
+    DOCTEST_CHECK_EQ(xOf("md.tree.node.0.arrow"), xOf("md.tree.node.2.arrow"));
+    DOCTEST_CHECK_EQ(xOf("md.tree.node.0.ficon"), xOf("md.tree.node.2.ficon"));
+    DOCTEST_CHECK_EQ(xOf("md.tree.node.0.name"), xOf("md.tree.node.2.name"));
+    // 子夹（d1）= 顶层夹 + 一级缩进 16
+    DOCTEST_CHECK_EQ(xOf("md.tree.node.4.name"), xOf("md.tree.node.2.name") + 16.0f);
+    // 文件行 d1（solo.md 与 工作/周报.md）x 一致；d2 = d1 + 16
+    DOCTEST_CHECK_EQ(xOf("md.tree.node.3.name"), xOf("md.tree.node.1.name"));
+    DOCTEST_CHECK_EQ(xOf("md.tree.node.5.name"), xOf("md.tree.node.1.name") + 16.0f);
+    // 文件行内 icon → name 间距恒定 24（12 → 36）；且箭头列不与文件夹图标列重叠
+    DOCTEST_CHECK_EQ(xOf("md.tree.node.1.name") - xOf("md.tree.node.1.icon"), 24.0f);
+    const auto* arrow0 = ui.find("md.tree.node.2.arrow");
+    const auto* ficon0 = ui.find("md.tree.node.2.ficon");
+    DOCTEST_REQUIRE(arrow0 != nullptr);
+    DOCTEST_REQUIRE(ficon0 != nullptr);
+    DOCTEST_CHECK(arrow0->frame.x + arrow0->frame.width <= ficon0->frame.x);
+
+    // d. 箭头字号：一档放大（fontSizeSmall 13 × 1.385 ≈ 18，落在 1.25~1.4 倍区间），
+    //    且 < 行高不溢出。旧值 = fontSizeSmall(13) → 三条同时红
+    const auto* arrow = ui.find("md.tree.node.2.arrow");
+    const auto* label = ui.find("md.tree.node.2.name");
+    DOCTEST_REQUIRE(arrow != nullptr);
+    DOCTEST_REQUIRE(label != nullptr);
+    const float arrowFontSize = arrow->fontSize;  // 跨帧读值：重开帧后旧 Element* 失效
+    DOCTEST_CHECK_EQ(arrowFontSize, 18.0f);       // 锁定的常量值
+    DOCTEST_CHECK_MESSAGE(arrowFontSize >= 13.0f * 1.25f && arrowFontSize <= 13.0f * 1.4f,
+                          "箭头 fontSize=" + std::to_string(arrowFontSize) +
+                              " 不在 [16.25, 18.2]");
+    DOCTEST_CHECK(arrowFontSize > label->fontSize);  // 确实比行内正文大（真机反馈「太小」）
+    DOCTEST_CHECK(arrowFontSize < kRowH);            // 不溢出 item 行高
+    DOCTEST_CHECK_EQ(arrowFontSize, ui.find("md.tree.node.4.arrow")->fontSize);
+    // 折叠态（▸）与展开态（▾）同一字号口径：点根组行收起 → 箭头文本变 ▸、字号不变
+    const auto* rootRow = ui.find("md.tree.node.0.row");
+    DOCTEST_REQUIRE(rootRow != nullptr);
+    DOCTEST_REQUIRE(rootRow->onClick != nullptr);
+    rootRow->onClick();
+    ui.begin("treegeom2");
+    mod->compose(ui, screen);
+    ui.end();
+    ui.layout(screen.width, screen.height);
+    const auto* collapsedArrow = ui.find("md.tree.node.0.arrow");
+    DOCTEST_REQUIRE(collapsedArrow != nullptr);
+    DOCTEST_CHECK_EQ(collapsedArrow->text, std::string("▸"));
+    DOCTEST_CHECK_EQ(collapsedArrow->fontSize, arrowFontSize);
 
     mod->onStop();
     return true;
