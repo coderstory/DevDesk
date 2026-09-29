@@ -18,6 +18,7 @@ namespace {
 constexpr const char* kKeyLastPath = "lastPath";
 constexpr const char* kKeyMode = "mode";
 constexpr const char* kKeyCollapsedDirs = "collapsedDirs";
+constexpr const char* kKeySelectedDir = "selectedDir";
 constexpr int kMaxMode = 3;  // ViewMode::Live（0=Edit 1=Split 2=Preview 3=Live）
 
 // 路径穿越守卫：笔记路径一律 POSIX 相对路径，含 ".." 段即拒
@@ -45,6 +46,10 @@ MarkdownViewState MarkdownViewStateStore::sanitized(const MarkdownViewState& st)
     out.mode = (st.mode >= 0 && st.mode <= kMaxMode) ? st.mode : 0;
     for (const auto& d : st.collapsedDirs) {
         if (!d.empty() && !hasTraversal(d)) out.collapsedDirs.push_back(d);
+    }
+    // "" = 根目录行（合法值）；非空则与其它路径同规则（拒 ".." 穿越）
+    if (st.selectedDir.empty() || !hasTraversal(st.selectedDir)) {
+        out.selectedDir = st.selectedDir;
     }
     return out;
 }
@@ -86,6 +91,9 @@ MarkdownViewState MarkdownViewStateStore::load() const {
             if (item.isString()) st.collapsedDirs.push_back(item.asString());
         }
     }
+    if (obj.has(kKeySelectedDir) && obj.get(kKeySelectedDir).isString()) {
+        st.selectedDir = obj.get(kKeySelectedDir).asString();
+    }
     return sanitized(st);
 }
 
@@ -96,6 +104,7 @@ core::Result<void> MarkdownViewStateStore::save(const MarkdownViewState& stRaw) 
     obj.set(kKeyLastPath, platform::json::makeString(st.lastPath));
     obj.set(kKeyMode, platform::json::makeInt(st.mode));
     obj.set(kKeyCollapsedDirs, platform::json::makeStringArray(st.collapsedDirs));
+    obj.set(kKeySelectedDir, platform::json::makeString(st.selectedDir));
 
     auto text = platform::json::stringify(
         platform::json::JsonValue(obj), /*pretty=*/true);
