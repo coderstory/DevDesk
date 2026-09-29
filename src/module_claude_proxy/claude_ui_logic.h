@@ -50,6 +50,18 @@ const SharedConfig* findSharedById(const std::vector<SharedConfig>& configs,
 // 键集成员判定（小向量线性扫，片段键集 ≤64）
 bool keyIn(const std::vector<std::string>& keys, const std::string& k);
 
+// 「复制配置」序列化（2026-09-30 batch-fix C，设计 §4.2②；纯函数，无 IO）：
+// profile → settings.json 形态 JSON（{"env": {...}}）。内部复用 buildDirectEnv
+// 纯函数（BASE_URL 去尾斜杠 / 密钥键三态 / 槽位 / extra_env 别名归一 / 共享
+// 片段叠加——与「运行」临时 settings 同一条管线）。
+// keyPlaceholder = 凭据键的占位值："sk-ant-***<尾4>"（与详情页 apiKeyHint 同一
+// 脱敏口径，已裁决 §5②）；**不导明文 key**（剪贴板是跨应用共享面，§5① 裁决）；
+// 传空串 → buildDirectEnv 空值不写凭据键，导出即无 token 键（Keychain 读不到
+// 的兜底形态）。序列化失败（理论不可达）→ 返回空串，调用方按失败处理。
+std::string buildProfileExportJson(const Profile& p,
+                                   const std::string& sharedExtraEnvJson,
+                                   const std::string& keyPlaceholder);
+
 // ---- 调用记录弹窗常量（审计 [11]）----
 //
 // 调用记录弹窗状态码过滤（审计 [11]，spec §8.3 第 6 条「支持过滤、搜索」）：

@@ -49,10 +49,14 @@ struct ProfileListActions {
     std::function<void()> onNewProfile;      // 「+ 新建 Profile」
     std::function<void()> onImportCurrent;   // 「导入当前配置」
     // 右键菜单动作（UI 现代化 M1-5）：与既有按钮回调同源的最小委托
-    //（claude_module listActions 装配：编辑=openEditForm / 复制=doDuplicate /
+    //（claude_module listActions 装配：编辑=openEditForm / 建副本=doDuplicate /
     // 删除=确认弹窗 / 设为当前=doSetActive——不新写业务逻辑）
     std::function<void(const Profile&)> requestEdit;              // 编辑
-    std::function<void(int64_t)> requestDuplicate;                // 复制
+    std::function<void(int64_t)> requestDuplicate;                // 建副本
+    // 复制配置（2026-09-30 batch-fix C，§5⑤）：入参带 Profile（序列化需要
+    // baseUrl/authField/槽位/extra_env，不是 id 能表达的）；与详情第 7 键
+    // 同源 doCopyConfig
+    std::function<void(const Profile&)> requestCopyConfig;
     std::function<void(int64_t, const std::string&)> requestDelete;  // 删除
     std::function<void(int64_t)> requestSetActive;                // 设为当前
     // 批 2（设计 §2.10）：共享配置片段动作——区块「新建」/ 卡片点击编辑

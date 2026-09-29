@@ -318,7 +318,7 @@ REGISTER_TEST(uiModernTodoMenuAnchor,
 // ---- 3. claude profile 列表右键菜单（M1-5）----
 
 REGISTER_TEST(uiModernClaudeProfileCtxMenu,
-              "uiModern claude_module: 列表右键菜单四项（编辑/复制/删除/设为当前）", {
+              "uiModern claude_module: 列表右键菜单五项（编辑/建副本/复制配置/删除/设为当前）", {
     ClaudeEnv env;
     auto a = env.svc->createProfile("官方", "https://api.anthropic.com",
                                     "sk-ant-aaaa-1111", "claude-sonnet-4-5");
@@ -347,8 +347,9 @@ REGISTER_TEST(uiModernClaudeProfileCtxMenu,
         DOCTEST_REQUIRE(wrap->onContextMenu != nullptr);
     }
 
-    // 右键 profile.1（中转）→ 菜单打开，四项 + 锚点 = 指针坐标
-    //（无 Router → 页面原点 0，dpi=1 → (400, 300) 原样）
+    // 右键 profile.1（中转）→ 菜单打开，五项 + 锚点 = 指针坐标
+    //（无 Router → 页面原点 0，dpi=1 → (400, 300) 原样；2026-09-30 batch-fix C
+    // 起五项：「复制」改名「建副本」+ 新增「复制配置」，D-C1/D-C2）
     {
         compose();
         eui::PointerEvent pe;
@@ -361,7 +362,7 @@ REGISTER_TEST(uiModernClaudeProfileCtxMenu,
         DOCTEST_REQUIRE(menu != nullptr);
         DOCTEST_CHECK_EQ(menu->x, 400.0f);
         DOCTEST_CHECK_EQ(menu->y, 300.0f);
-        for (int i = 0; i < 4; ++i) {
+        for (int i = 0; i < 5; ++i) {
             DOCTEST_CHECK(ui.find("claude.list.ctx.level.0.item." +
                                   std::to_string(i)) != nullptr);
         }
@@ -369,19 +370,48 @@ REGISTER_TEST(uiModernClaudeProfileCtxMenu,
         const auto* l1 = ui.find("claude.list.ctx.level.0.label.1");
         const auto* l2 = ui.find("claude.list.ctx.level.0.label.2");
         const auto* l3 = ui.find("claude.list.ctx.level.0.label.3");
+        const auto* l4 = ui.find("claude.list.ctx.level.0.label.4");
         DOCTEST_REQUIRE(l0 != nullptr);
         DOCTEST_REQUIRE(l1 != nullptr);
         DOCTEST_REQUIRE(l2 != nullptr);
         DOCTEST_REQUIRE(l3 != nullptr);
+        DOCTEST_REQUIRE(l4 != nullptr);
         DOCTEST_CHECK_EQ(l0->text, std::string("编辑"));
-        DOCTEST_CHECK_EQ(l1->text, std::string("复制"));
-        DOCTEST_CHECK_EQ(l2->text, std::string("删除"));
-        DOCTEST_CHECK_EQ(l3->text, std::string("设为当前"));
+        DOCTEST_CHECK_EQ(l1->text, std::string("建副本"));
+        DOCTEST_CHECK_EQ(l2->text, std::string("复制配置"));
+        DOCTEST_CHECK_EQ(l3->text, std::string("删除"));
+        DOCTEST_CHECK_EQ(l4->text, std::string("设为当前"));
     }
 
-    // 点「设为当前」→ 激活位变化（与既有按钮同源：requestSetActive → doSetActive）
+    // 点「复制配置」→ case 2 派发 requestCopyConfig → doCopyConfig
+    //（headless：GLFW 未 init，setClipboardText 经 _GLFW_REQUIRE_INIT 早退 =
+    // 安全 no-op，见 GLFW input.c glfwSetClipboardString；断言只钉派发可见面
+    // = toast，剪贴板真写以真机验收为准，不写假绿断言——spec §4.5 风险 3）
     {
-        auto* item = ui.find("claude.list.ctx.level.0.item.3");
+        auto* item = ui.find("claude.list.ctx.level.0.item.2");
+        DOCTEST_REQUIRE(item != nullptr);
+        item->onClick();
+        compose();
+        const auto* msg = ui.find("claude.toast.message");
+        DOCTEST_REQUIRE(msg != nullptr);
+        DOCTEST_CHECK(msg->text.find("剪贴板") != std::string::npos);
+        // 菜单已关（onSelect 置关；常驻构建但 opacity 收起）
+        const auto* menu = ui.find("claude.list.ctx.level.0");
+        DOCTEST_REQUIRE(menu != nullptr);
+        DOCTEST_CHECK_EQ(menu->opacity, 0.0f);
+    }
+
+    // 右键重开 → 点「设为当前」→ 激活位变化（与既有按钮同源：
+    // requestSetActive → doSetActive；2026-09-30 起位于 case 4）
+    {
+        eui::PointerEvent pe;
+        eui::Rect rect;
+        pe.x = 400;
+        pe.y = 300;
+        compose();
+        ui.find("claude.profile.1.wrap")->onContextMenu(pe, rect);
+        compose();
+        auto* item = ui.find("claude.list.ctx.level.0.item.4");
         DOCTEST_REQUIRE(item != nullptr);
         item->onClick();
         // 菜单已关（onSelect 置关；常驻构建但 opacity 收起）
@@ -404,7 +434,7 @@ REGISTER_TEST(uiModernClaudeProfileCtxMenu,
     }
 
     // 再右键 → 点「删除」→ 弹出删除确认（与既有按钮同源：
-    // requestDelete 委托 → deleteConfirmOpen_）
+    // requestDelete 委托 → deleteConfirmOpen_；2026-09-30 起位于 case 3）
     {
         eui::PointerEvent pe;
         eui::Rect rect;
@@ -415,7 +445,7 @@ REGISTER_TEST(uiModernClaudeProfileCtxMenu,
         DOCTEST_REQUIRE(wrap != nullptr);
         wrap->onContextMenu(pe, rect);
         compose();
-        auto* item = ui.find("claude.list.ctx.level.0.item.2");
+        auto* item = ui.find("claude.list.ctx.level.0.item.3");
         DOCTEST_REQUIRE(item != nullptr);
         item->onClick();
         compose();

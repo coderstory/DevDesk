@@ -15,6 +15,8 @@
 //        高度不对 / 分隔线位置不一致；2026-09-30 batch-fix B 起五页签），
 //        且动作区不越出详情面板底
 //   ③ P2：最近调用行数纯按可用高推（无 10 行硬上限），actions 不越界
+//   ④ batch-fix C（2026-09-30）：7 键操作组最小窗键宽实测（裁决 ⑥——
+//      单行等分键宽 ≥ 四字文案宽 + 呼吸，不达标即切两行的红灯）
 //
 // 断言机制（几何换算同无头测试 test_claude_ui.cpp
 // claude_shared_block_outside_viewport / claude_detail_actions_anchor_four_tabs）：
@@ -27,10 +29,15 @@
 // 1262×801 = 本机 macOS 真实页面尺寸（窗口 1470×801 − 侧边栏 208）——「真实
 // 窗口尺寸下的区域比例」类问题在无头侧唯一能覆盖的方式（方案 §5 全局项要求）。
 
+#include <GLFW/glfw3.h>  // 必须先于 harness：让 GLFW 默认拉平台 GL 头（--dump 用 glReadPixels）
 #include "probes/probe_harness.h"
 #include "test_support.h"
 #include "app_registry.h"
 #include "core/module_interface.h"
+#include "core/render/render_backend.h"  // --dump：真渲染 + 读回后备缓冲
+#include "core/theme.h"
+
+#include <fstream>
 
 #include "module_claude_proxy/claude_service.h"
 
@@ -295,6 +302,165 @@ int main(int argc, char* argv[]) {
                 hit0->onClick();
                 composeFrame();
             }
+        }
+
+        // ④ batch-fix C 裁决 ⑥：7 键操作组在**最小窗右栏**的键宽 probe 实测。
+        // 单行等分每键宽 = (w0 − 6×12) / 7；达标判据 = 键宽 ≥ 最长文案宽
+        //（四字键「测试连通/复制配置」× fontSizeSmall）+ 两侧 ≥4px 呼吸。
+        // 不达标 → 按裁决切**两行按钮组**（kActionBlockH 单常量传播）；本探针
+        // 红 = 布局回归，或键宽退化为需要两行的程度（提示重审该裁决）
+        {
+            const core::dsl::Element* actRow =
+                ui != nullptr ? ui->find("claude.detail.actions") : nullptr;
+            const core::dsl::Element* cc =
+                ui != nullptr ? ui->find("claude.act.copyconfig.bg") : nullptr;
+            const core::dsl::Element* run =
+                ui != nullptr ? ui->find("claude.act.run.bg") : nullptr;
+            if (actRow == nullptr || cc == nullptr || run == nullptr) {
+                std::cerr << "claude_probes[" << tag
+                          << "]: 'claude.detail.actions' / 'claude.act."
+                             "copyconfig.bg' / 'claude.act.run.bg' not found\n";
+                passed = false;
+            } else {
+                const float keyW = cc->frame.width;
+                const float longestText =
+                    4.0f * core::theme::current().sizes.fontSizeSmall;
+                const float need = longestText + 8.0f;
+                if (keyW < need) {
+                    std::cerr << "claude_probes[" << tag << "]: 7 键 actW "
+                              << keyW << " < 文案宽+呼吸 " << need
+                              << "（四字键 @fontSizeSmall）—— 按裁决 ⑥ 需切"
+                                 "两行按钮组\n";
+                    passed = false;
+                } else {
+                    std::cout << "claude_probes[" << tag << "]: 7 键 actW="
+                              << keyW << " ≥ 文案宽+呼吸 " << need
+                              << "（单行达标，裁决 ⑥ 维持）\n";
+                }
+                // 等分 + 右缘对齐（与无头几何断言同口径，最小窗档也核）
+                const float rowRight = actRow->frame.x + actRow->frame.width;
+                const float runRight = run->frame.x + run->frame.width;
+                if (std::fabs(rowRight - runRight) > 0.5f) {
+                    std::cerr << "claude_probes[" << tag << "]: 末键右缘 "
+                              << runRight << " != 动作行右缘 " << rowRight
+                              << "（等分溢出）\n";
+                    passed = false;
+                }
+            }
+        }
+    }
+
+    // ---- 可视化落图（--dump <prefix>，about_probe --manual 同款）：真渲染 +
+    // glReadPixels → PPM（P6），不依赖系统截屏（OpenGL 窗口 screencapture 有
+    // 旧帧坑，锁屏/满屏应用下也不可用）。⚠️ 本模式只点**非剪贴板**动作——
+    // 绝不点 claude.act.copyconfig.bg：真窗口后端下 setClipboardText 会真写
+    // 运行者系统剪贴板（spec §4.5 风险 3 / 头部②同款旁路口径）
+    std::string dumpPrefix;
+    for (int i = 1; i < argc; ++i) {
+        if (std::string(argv[i]) == "--dump" && i + 1 < argc) {
+            dumpPrefix = argv[++i];
+        }
+    }
+    if (!dumpPrefix.empty()) {
+        // 断言循环用的逻辑尺寸与探针窗口解耦；落图按窗口真实客户区来
+        frameW = static_cast<float>(args.windowW);
+        frameH = static_cast<float>(args.windowH);
+        auto* glfwWin = static_cast<GLFWwindow*>(window);
+        int fbW = 0, fbH = 0;
+        glfwGetFramebufferSize(glfwWin, &fbW, &fbH);
+        float scaleX = 1.0f, scaleY = 1.0f;
+        glfwGetWindowContentScale(glfwWin, &scaleX, &scaleY);
+        const float renderScale = scaleX > 0.0f ? scaleX : 1.0f;
+        glfwShowWindow(glfwWin);
+        glfwFocusWindow(glfwWin);
+        auto renderBackend = core::render::createRenderBackend(window);
+        if (renderBackend == nullptr || !renderBackend->initialize()) {
+            std::cerr << "claude_probes: 渲染后端不可用，--dump 跳过\n";
+            renderBackend.reset();
+        }
+        const eui::Color clearColor = core::theme::current().colors.background;
+        auto renderAndDump = [&](const std::string& path) {
+            if (renderBackend == nullptr) return;
+            core::render::ScopedRenderBackend scoped(*renderBackend);
+            renderBackend->beginFrame(core::render::RenderSurface{
+                window, core::window::nativeWindowInfo(window), fbW, fbH,
+                renderScale});
+            runtime.render(fbW, fbH, renderScale, clearColor);
+            // dump 必须在 present() 之前（swap 后备缓冲内容未定义，about_probe
+            // 实测教训）；glReadPixels 同款逐语句窄抑制（macOS GL deprecation）
+            std::vector<unsigned char> px(
+                static_cast<std::size_t>(fbW) * static_cast<std::size_t>(fbH) * 3u);
+#if defined(__clang__)
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wdeprecated-declarations"
+#endif
+            glPixelStorei(GL_PACK_ALIGNMENT, 1);
+            glReadPixels(0, 0, fbW, fbH, GL_RGB, GL_UNSIGNED_BYTE, px.data());
+#if defined(__clang__)
+#pragma clang diagnostic pop
+#endif
+            std::ofstream ofs(path, std::ios::binary);
+            ofs << "P6\n" << fbW << " " << fbH << "\n255\n";
+            for (int row = fbH - 1; row >= 0; --row) {  // GL 原点左下 → 翻转
+                ofs.write(reinterpret_cast<const char*>(
+                              px.data() + static_cast<std::size_t>(row) *
+                                              static_cast<std::size_t>(fbW) * 3u),
+                          static_cast<std::streamsize>(fbW) * 3);
+            }
+            std::cout << "claude_probes: dump " << path << "\n";
+            renderBackend->present();
+        };
+        // 状态切换后 EUI 过渡动画（弹窗 opacity fade / tabs 指示器位移）需要
+        // 若干帧收敛 —— 单帧即拍会抓到半透明中间态（实测 form_adv 半透明）。
+        // 40 帧 ≈ 0.67s（pollOnce dt = 1/60），覆盖最长的弹窗 fade
+        auto dumpState = [&](const std::string& name) {
+            for (int i = 0; i < 40; ++i) {
+                composeFrame();
+            }
+            renderAndDump(dumpPrefix + "_" + name + ".ppm");
+        };
+        composeFrame();
+        // ① 详情 tab 0：7 键操作组（batch-fix C）
+        dumpState("actions7");
+        // ② 详情 tab 3：高级配置 pane（batch-fix B）
+        if (auto* hit = ui->find("claude.detail.tabs.hit.3");
+            hit != nullptr && hit->onClick != nullptr) {
+            hit->onClick();
+            dumpState("detail_adv");
+            if (auto* hit0 = ui->find("claude.detail.tabs.hit.0");
+                hit0 != nullptr && hit0->onClick != nullptr) {
+                hit0->onClick();
+            }
+        }
+        // ③ 表单 tab 3：高级配置页（batch-fix B；编辑 profile 0）
+        if (auto* card = ui->find("claude.profile.0.bg");
+            card != nullptr && card->onClick != nullptr) {
+            card->onClick();
+            composeFrame();
+            if (auto* edit = ui->find("claude.act.edit.bg");
+                edit != nullptr && edit->onClick != nullptr) {
+                edit->onClick();
+                composeFrame();
+                if (auto* tab3 = ui->find("claude.form.tabs.hit.3");
+                    tab3 != nullptr && tab3->onClick != nullptr) {
+                    tab3->onClick();
+                    dumpState("form_adv");
+                    if (auto* cancel = ui->find("claude.dialog.form.cancel.bg");
+                        cancel != nullptr && cancel->onClick != nullptr) {
+                        cancel->onClick();   // 取消，不落任何改动
+                    }
+                }
+            }
+        }
+        // ④ 列表右键菜单（五项，batch-fix C）
+        if (auto* wrap = ui->find("claude.profile.0.wrap");
+            wrap != nullptr && wrap->onContextMenu != nullptr) {
+            eui::PointerEvent pe;
+            eui::Rect rect;
+            pe.x = 600.0;
+            pe.y = 300.0;
+            wrap->onContextMenu(pe, rect);
+            dumpState("ctx_menu");
         }
     }
 

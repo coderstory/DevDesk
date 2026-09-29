@@ -812,11 +812,11 @@ void drawDetailActions(eui::Ui& ui, float x0, float w, float actY,
         .radius(t.sizes.radius)
         .build();
     const float actGap = 12.0f;
-    // 6 键均分（设计 §4.1，M5 + profile-run：启用/测试连通/
-    // 编辑/删除/复制/运行）——按钮数改一处，gap 数也要跟着改。
-    // 扣 **5** 个 gap：EUI 的 row spacing 只在相邻子项之间生效，
-    // n 项只有 n−1 个间隙；旧 5 键式 (w0-actGap*4)/5 恰好齐右缘。
-    const float actW = (w - actGap * 5.0f) / 6.0f;
+    // 7 键均分（设计 §4.1，M5 + profile-run + batch-fix C：启用/测试连通/
+    // 编辑/删除/建副本/复制配置/运行）——按钮数改一处，gap 数也要跟着改。
+    // 扣 **6** 个 gap：EUI 的 row spacing 只在相邻子项之间生效，
+    // n 项只有 n−1 个间隙；旧 6 键式 (w-actGap*5)/6 恰好齐右缘。
+    const float actW = (w - actGap * 6.0f) / 7.0f;
     ui.row("claude.detail.actions")
         .position(x0, actY)
         .size(w, 36.0f)
@@ -898,10 +898,12 @@ void drawDetailActions(eui::Ui& ui, float x0, float w, float actY,
                     f(shownCopy.id, shownCopy.name);
                 })
                 .build();
-            // 复制（第 5 键，设计 §4.1/§4.2）：副本不激活
+            // 建副本（第 5 键，设计 §4.1/§4.2；2026-09-30 batch-fix C 改名
+            // D-C1——原「复制」与「复制到剪贴板」的预期冲突，纯文案歧义，
+            // duplicateProfile 行为零改动）：副本不激活
             components::button(ui, "claude.act.dup")
                 .size(actW, 36.0f)
-                .text("复制")
+                .text("建副本")
                 .fontSize(t.sizes.fontSizeSmall)
                 .colors(t.colors.surfaceElevated,
                         t.colors.hover, t.colors.active)
@@ -910,13 +912,33 @@ void drawDetailActions(eui::Ui& ui, float x0, float w, float actY,
                 .border(1.0f, t.colors.borderDefault)
                 .onClick([f = a.duplicate, warn = a.warn, shownId] {
                     if (shownId == 0) {
-                        warn("复制失败", "请先选择 Profile");
+                        warn("建副本失败", "请先选择 Profile");
                         return;
                     }
                     f(shownId);
                 })
                 .build();
-            // 运行（第 6 键，2026-09-28 profile-run 设计
+            // 复制配置（第 6 键，2026-09-30 batch-fix C，D-C2/§5③⑤）：profile
+            // → settings.json 形态 JSON → 系统剪贴板，占位不导明文 key；
+            // 样式与中性键一致（surfaceElevated + 描边）
+            components::button(ui, "claude.act.copyconfig")
+                .size(actW, 36.0f)
+                .text("复制配置")
+                .fontSize(t.sizes.fontSizeSmall)
+                .colors(t.colors.surfaceElevated,
+                        t.colors.hover, t.colors.active)
+                .textColor(t.colors.textPrimary)
+                .radius(t.sizes.radius)
+                .border(1.0f, t.colors.borderDefault)
+                .onClick([f = a.copyConfig, warn = a.warn, shownCopy] {
+                    if (shownCopy.id == 0) {
+                        warn("复制配置失败", "请先选择 Profile");
+                        return;
+                    }
+                    f(shownCopy);
+                })
+                .build();
+            // 运行（第 7 键，2026-09-28 profile-run 设计
             // D-1/D-2/D-4）：在新终端里用该 Profile 打开
             // 一个 claude 会话
             components::button(ui, "claude.act.run")

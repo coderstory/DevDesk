@@ -10,6 +10,7 @@
 #include "claude_service.h"
 #include "claude_ui_logic.h"
 #include "core/database.h"
+#include "platform/json.h"
 #include "core/input/input_types.h"
 #include "core/module_interface.h"
 #include "core/sqlite_db.h"
@@ -3840,6 +3841,196 @@ REGISTER_TEST(claude_ui_logic_pure_functions,
     return true;
 })
 
+// ---- 28. 复制配置（2026-09-30 batch-fix C，设计 §4.2/§4.4）----
+// 纯函数形状：{"env":{...}} 顶层 / 尾斜杠剥离 / 三态凭据键 / 槽位 / extra_env /
+// 片段冻结键赢 / 占位非明文 / 空占位无凭据键
+REGISTER_TEST(claude_export_json_shape,
+              "claude_module: buildProfileExportJson 形状（顶层 env/尾斜杠/三态键/片段赢/占位）", {
+    module::claude::Profile p;
+    p.id = 7;
+    p.name = "导出";
+    p.baseUrl = "https://exp.example.com/";   // 尾斜杠 → 导出时剥（写侧同口径）
+    p.authField = "bearer";
+    p.model = "m-expo";
+    p.apiKeyHint = "sk-ant-***1234";
+    p.modelsConfigJson = R"({"default":{"model":"m-expo","name":"我的模型"}})";
+    p.extraEnvJson = R"({"MY_EXPORT_KEY":"v1"})";
+
+    // 返回空 JsonObject = 解析失败（失败面由调用点的具体键断言接住变红；
+    // 本框架 CHECK 宏含 return false，不能进非 bool 返回的 lambda）
+    auto envOf = [](const std::string& json) -> platform::json::JsonObject {
+        auto doc = platform::json::parse(json);
+        if (!doc.isOk() || !doc.value().isObject()) return {};
+        const auto envVal = doc.value().asObject().get("env");
+        if (!envVal.isObject()) return {};
+        return envVal.asObject();
+    };
+
+    // bearer：AUTH_TOKEN（占位，非明文）+ BASE_URL（尾斜杠已去）+ 槽位 + extra
+    const std::string j1 = buildProfileExportJson(p, "", p.apiKeyHint);
+    {
+        auto doc = platform::json::parse(j1);
+        DOCTEST_REQUIRE(doc.isOk());
+        DOCTEST_CHECK(doc.value().isObject());
+        // 顶层形状 = {"env": {...}}：恰好一键且名为 env（settings.json 形态）
+        auto root = doc.value().asObject();
+        DOCTEST_CHECK(root.get("env").isObject());
+        const auto env = envOf(j1);
+        DOCTEST_CHECK_EQ(env.get("ANTHROPIC_BASE_URL").asString(),
+                         std::string("https://exp.example.com"));
+        DOCTEST_CHECK_EQ(env.get("ANTHROPIC_AUTH_TOKEN").asString(),
+                         std::string("sk-ant-***1234"));   // 占位，非明文
+        DOCTEST_CHECK(!env.get("ANTHROPIC_API_KEY").isString());
+        DOCTEST_CHECK_EQ(env.get("ANTHROPIC_MODEL").asString(),
+                         std::string("m-expo"));
+        DOCTEST_CHECK_EQ(env.get("MY_EXPORT_KEY").asString(), std::string("v1"));
+    }
+    // api_key / both 三态键名各断言
+    {
+        module::claude::Profile pk = p;
+        pk.authField = "api_key";
+        const auto env = envOf(buildProfileExportJson(pk, "", pk.apiKeyHint));
+        DOCTEST_CHECK_EQ(env.get("ANTHROPIC_API_KEY").asString(),
+                         std::string("sk-ant-***1234"));
+        DOCTEST_CHECK(!env.get("ANTHROPIC_AUTH_TOKEN").isString());
+    }
+    {
+        module::claude::Profile pb = p;
+        pb.authField = "both";
+        const auto env = envOf(buildProfileExportJson(pb, "", pb.apiKeyHint));
+        DOCTEST_CHECK_EQ(env.get("ANTHROPIC_AUTH_TOKEN").asString(),
+                         std::string("sk-ant-***1234"));
+        DOCTEST_CHECK(!env.get("ANTHROPIC_API_KEY").isString());
+    }
+    // 空占位（Keychain 读不到）→ 无凭据键
+    {
+        const auto env = envOf(buildProfileExportJson(p, "", std::string()));
+        DOCTEST_CHECK(!env.get("ANTHROPIC_AUTH_TOKEN").isString());
+        DOCTEST_CHECK(!env.get("ANTHROPIC_API_KEY").isString());
+        DOCTEST_CHECK_EQ(env.get("ANTHROPIC_BASE_URL").asString(),
+                         std::string("https://exp.example.com"));
+    }
+    // 绑定片段：冻结键以片段值出现（片段赢，优先级 2 > 3）+ 片段独有键
+    {
+        const auto env = envOf(buildProfileExportJson(
+            p, R"({"MY_EXPORT_KEY":"frozen","SHARED_ONLY":"sv"})",
+            p.apiKeyHint));
+        DOCTEST_CHECK_EQ(env.get("MY_EXPORT_KEY").asString(),
+                         std::string("frozen"));
+        DOCTEST_CHECK_EQ(env.get("SHARED_ONLY").asString(), std::string("sv"));
+    }
+    // 坏 extraEnvJson：读路径整体忽略（与运行功能同口径），导出仍成功
+    {
+        module::claude::Profile pj = p;
+        pj.extraEnvJson = "{not-json";
+        const std::string j = buildProfileExportJson(pj, "", pj.apiKeyHint);
+        DOCTEST_CHECK(!j.empty());
+        const auto env = envOf(j);
+        DOCTEST_CHECK(!env.get("MY_EXPORT_KEY").isString());
+        DOCTEST_CHECK_EQ(env.get("ANTHROPIC_BASE_URL").asString(),
+                         std::string("https://exp.example.com"));
+    }
+    return true;
+})
+
+// UI 侧：改名「建副本」（D-C1）+ 第 7 键「复制配置」+ actW 等分几何 + 点击派发
+REGISTER_TEST(claude_copyconfig_ui_seven_keys,
+              "claude_module: 建副本改名 + 复制配置第7键（文案/等分宽/右缘对齐/点击派发）", {
+    TestEnv env;
+    std::unique_ptr<::core::Module> mod(create_claude_module());
+    mod->onStart();
+    eui::Screen screen;
+    screen.width = 1600.0f;
+    screen.height = 1000.0f;
+    auto compose = [&](eui::Ui& ui) {
+        ui.begin("claude_copycfg");
+        mod->compose(ui, screen);
+        ui.end();
+    };
+    auto click = [](eui::Ui& ui, const std::string& id) -> bool {
+        const auto* node = ui.find(id);
+        if (node == nullptr || node->onClick == nullptr) {
+            std::cerr << "missing clickable: " << id << std::endl;
+            return false;
+        }
+        node->onClick();
+        return true;
+    };
+
+    // 无选中（库空 → shown 为 null）点击 → warn（沿用 warn 通道，spec §4.2②；
+    // 须在造数前做——有激活 profile 时 shown 回落激活项，warn 不可达）
+    {
+        eui::Ui ui;
+        compose(ui);
+        DOCTEST_CHECK(click(ui, "claude.act.copyconfig.bg"));
+    }
+    {
+        eui::Ui ui;
+        compose(ui);
+        const auto* title = ui.find("claude.toast.title");
+        DOCTEST_REQUIRE(title != nullptr);
+        DOCTEST_CHECK_EQ(title->text, std::string("复制配置失败"));
+    }
+
+    auto a = env.svc->createProfile("导出源", "https://cfg.example.com",
+                                    "sk-ant-cfgu-5678", "m");
+    DOCTEST_REQUIRE(a.isOk());
+    const int64_t pid = a.value().id;
+    DOCTEST_REQUIRE(env.svc->setActiveProfile(pid).isOk());
+    mod->onPageEnter();
+    // 等卡片进缓存快照（服务侧造数 → onPageEnter 重查，同 27g 用例口径）
+    bool cardReady = false;
+    for (int i = 0; i < 300 && !cardReady; ++i) {
+        mod->onPageEnter();
+        eui::Ui ui;
+        compose(ui);
+        cardReady = ui.find("claude.profile.0.bg") != nullptr;
+        if (!cardReady) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        }
+    }
+    DOCTEST_CHECK(cardReady);
+
+    // 改名断言（D-C1）：按钮文本「建副本」，warn 标题「建副本失败」
+    {
+        eui::Ui ui;
+        compose(ui);
+        const auto* dup = ui.find("claude.act.dup.text");
+        DOCTEST_REQUIRE(dup != nullptr);
+        DOCTEST_CHECK_EQ(dup->text, std::string("建副本"));
+        const auto* cc = ui.find("claude.act.copyconfig.text");
+        DOCTEST_REQUIRE(cc != nullptr);
+        DOCTEST_CHECK_EQ(cc->text, std::string("复制配置"));
+        // 7 键齐（§4.2③ 顺序：启用/测试连通/编辑/删除/建副本/复制配置/运行）
+        for (const char* k : {"claude.act.enable", "claude.act.test",
+                              "claude.act.edit", "claude.act.del",
+                              "claude.act.dup", "claude.act.copyconfig",
+                              "claude.act.run"}) {
+            DOCTEST_CHECK(ui.find(std::string(k) + ".bg") != nullptr);
+        }
+    }
+    // 选中后点击 → 真派发：toast「已复制配置」（headless 下 setClipboardText
+    // 经 GLFW 未 init 早退 = 安全 no-op，不写真剪贴板；剪贴板真写以真机验收）
+    {
+        eui::Ui ui;
+        compose(ui);
+        DOCTEST_CHECK(click(ui, "claude.act.copyconfig.bg"));
+    }
+    {
+        eui::Ui ui;
+        compose(ui);
+        const auto* title = ui.find("claude.toast.title");
+        DOCTEST_REQUIRE(title != nullptr);
+        DOCTEST_CHECK_EQ(title->text, std::string("已复制配置"));
+    }
+
+    mod->onStop();
+    cleanupProfileKey(kTestKeychainService, pid);
+    return true;
+})
+
+
+
 // ============================================================================
 // 组 B（macOS 布局统一方案 §1 组 B / §5 组 B verify 口径，2026-09-28）
 //   P1 动作区钉面板底（四页签分隔线 y 恒定）+ 内容框显式边界
@@ -4103,6 +4294,41 @@ REGISTER_TEST(claude_detail_advanced_pane_readonly,
     cleanupProfileKey(kTestKeychainService, mainP.value().id);
     cleanupProfileKey(kTestKeychainService, mid.value().id);
     cleanupProfileKey(kTestKeychainService, bak.value().id);
+    return true;
+})
+
+// 7 键几何（macOS 真实页面 1262×801）：actW == (w0 − 6×12) / 7 且行右缘与容器
+// 右缘对齐（等分无溢出）；放在 composeAtSize 声明之后（组 B helpers 区）
+REGISTER_TEST(claude_copyconfig_seven_keys_geometry,
+              "claude_module: 复制配置第7键 actW 等分几何（macOS 真实尺寸）", {
+    TestEnv env;
+    auto a = env.svc->createProfile("几何源", "https://geo.example.com",
+                                    "sk-ant-geo-0001", "m");
+    DOCTEST_REQUIRE(a.isOk());
+    const int64_t pid = a.value().id;
+    DOCTEST_REQUIRE(env.svc->setActiveProfile(pid).isOk());
+    std::unique_ptr<::core::Module> mod(create_claude_module());
+    mod->onStart();
+    constexpr float kW = 1262.0f;
+    constexpr float kH = 801.0f;
+    eui::Ui ui;
+    composeAtSize(mod.get(), ui, "claude_copycfg_geom", kW, kH);
+    const auto* row = ui.find("claude.detail.actions");
+    const auto* cc = ui.find("claude.act.copyconfig.bg");
+    const auto* run = ui.find("claude.act.run.bg");
+    DOCTEST_REQUIRE(row != nullptr);
+    DOCTEST_REQUIRE(cc != nullptr);
+    DOCTEST_REQUIRE(run != nullptr);
+    const float w0 = row->frame.width;
+    const float expect = (w0 - 12.0f * 6.0f) / 7.0f;
+    DOCTEST_CHECK(std::fabs(cc->frame.width - expect) < 0.01f);
+    DOCTEST_CHECK(std::fabs(run->frame.width - expect) < 0.01f);
+    // 行右缘对齐：末键右缘 == row 右缘（浮点 0.5px 容差）
+    const float rowRight = row->frame.x + row->frame.width;
+    const float runRight = run->frame.x + run->frame.width;
+    DOCTEST_CHECK(std::fabs(rowRight - runRight) < 0.5f);
+    mod->onStop();
+    cleanupProfileKey(kTestKeychainService, pid);
     return true;
 })
 

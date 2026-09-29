@@ -31,7 +31,10 @@
 #include "core/module_interface.h"
 #include "core/theme.h"
 #include "core/component_theme.h"
+#include "platform/json.h"
+#include "provider_config.h"
 #include "upstream_dialect.h"
+#include <core/window/window_backend.h>
 #include <ui_kit/metrics.h>
 #include <ui_kit/toast.h>
 
@@ -356,6 +359,8 @@ private:
                          state_.list.cachedSharedConfigs_);
         };
         a.requestDuplicate = [this](int64_t id) { doDuplicate(id); };
+        // 复制配置（2026-09-30 batch-fix C）：与详情第 7 键同源 doCopyConfig
+        a.requestCopyConfig = [this](const Profile& p) { doCopyConfig(p); };
         a.requestDelete = [this](int64_t id, const std::string& name) {
             state_.form.deleteTargetId_ = id;
             state_.form.deleteTargetName_ = name;
@@ -408,6 +413,8 @@ private:
             state_.form.deleteConfirmOpen_ = true;
         };
         a.duplicate = [this](int64_t id) { doDuplicate(id); };
+        // 复制配置（2026-09-30 batch-fix C，设计 §4.2② 第 7 键接线）
+        a.copyConfig = [this](const Profile& p) { doCopyConfig(p); };
         a.run = [this](int64_t id) { doRun(id); };
         a.openCalls = [this] { openCallsDialog(state_.logs); };
         return a;
@@ -491,18 +498,74 @@ private:
         state_.list.dataDirty_ = true;   // 下帧重查列表（动作本身零全局改动，成本一帧）
     }
 
-    // 复制（设计 §4.1/§4.2，M5）：建副本但不激活 → 选中态/激活态都不动
+    // 建副本（设计 §4.1/§4.2，M5；2026-09-30 batch-fix C 改名 D-C1）：
+    // 建副本但不激活 → 选中态/激活态都不动
     void doDuplicate(int64_t id) {
         ClaudeService* svc = ClaudeService::global();
         if (!svc) return;
         state_.list.dataDirty_ = true;   // 审计 perf [13]：写操作标脏
         auto r = svc->duplicateProfile(id);
         if (r.isFail()) {
-            showToast("复制失败", r.errorMessage(), true);
+            showToast("建副本失败", r.errorMessage(), true);
             return;
         }
-        showToast("已复制",
+        showToast("已建副本",
                   "已创建副本「" + r.value().name + "」（未激活）", false);
+    }
+
+    // 复制配置（2026-09-30 batch-fix C，设计 §4.2②）：当前 profile →
+    // settings.json 形态 JSON → 系统剪贴板。占位 sk-ant-***<尾4>（与详情页
+    // apiKeyHint 同一脱敏口径），**不导明文 key**（§5① 裁决——剪贴板是跨
+    // 应用共享面，明文一经粘贴即离开 Keychain 托管）。setClipboardText 返回
+    // void、模块层无窗口句柄无法回读校验 → 接线处固定 LOG_WARN 一行留痕
+    //（低概率写失败时 toast 已提示成功，属已知限制，audit F5）
+    void doCopyConfig(const Profile& p) {
+        ClaudeService* svc = ClaudeService::global();
+        if (svc == nullptr || p.id == 0) {
+            showToast("复制配置失败", "请先选择 Profile", true);
+            return;
+        }
+        // 坏 extraEnvJson 防静默丢键（§4.2②）：buildDirectEnv 读路径对非法
+        // JSON 整体忽略（provider_config 读路径容错，与运行功能同口径）——
+        // 试解析失败先 LOG_WARN 一行再继续导出，不静默
+        if (!p.extraEnvJson.empty()) {
+            auto ee = parseExtraEnv(p.extraEnvJson);
+            if (ee.isFail()) {
+                LOG_WARN("复制配置: extra_env 解析失败（profile id=" +
+                         std::to_string(p.id) + "），导出将缺失该部分 env 键 - " +
+                         ee.errorMessage());
+            }
+        }
+        // 片段 env：与列表/详情同源的快照解析（不落服务调用）
+        std::string sharedJson;
+        if (p.sharedConfigId != 0) {
+            const SharedConfig* sc = findSharedById(
+                state_.list.cachedSharedConfigs_, p.sharedConfigId);
+            if (sc != nullptr) sharedJson = sc->extraEnvJson;
+        }
+        // 占位值：apiKeyHint 即「前6 + *** + 尾4」形态（profile_repository
+        // 脱敏生成，同源同口径）；hint 为空（Keychain 读不到）→ 传空串，
+        // buildDirectEnv 空值不写凭据键 → 导出无 token 键
+        const std::string json = buildProfileExportJson(
+            p, sharedJson, /*keyPlaceholder=*/p.apiKeyHint);
+        if (json.empty()) {
+            showToast("复制配置失败", "配置序列化失败", true);
+            return;
+        }
+        core::window::setClipboardText(json);
+        // void API 无回读下的最低留痕（§4.2②）：profile id + 导出 env 键数
+        size_t exportedKeys = 0;
+        if (auto doc = platform::json::parse(json);
+            doc.isOk() && doc.value().isObject()) {
+            const auto envVal = doc.value().asObject().get("env");
+            if (envVal.isObject()) exportedKeys = envVal.asObject().keys().size();
+        }
+        LOG_WARN("复制配置: 已调用系统剪贴板写入（void API 无回读校验）" +
+                 std::string("profile id=") + std::to_string(p.id) +
+                 " env 键数=" + std::to_string(exportedKeys));
+        showToast("已复制配置",
+                  "已把该 Profile 的配置导出到剪贴板（API Key 为占位符，"
+                  "不含明文）", false);
     }
 
     void doDelete(int64_t id) {
