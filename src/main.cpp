@@ -658,7 +658,7 @@ const DslAppConfig& dslAppConfig() {
             },
             [](const module::pet::PetConfig& petCfg) {
                 module::pet::startPetWindow(module::pet::PetWindowConfig{
-                    petCfg.skinName, petCfg.x, petCfg.y,
+                    petCfg.skinName, petCfg.x, petCfg.y, petCfg.scale,
                     &getOverdueTaskCount, &getProxyEventStatus});
             });
         return true;

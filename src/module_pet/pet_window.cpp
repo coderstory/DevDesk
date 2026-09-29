@@ -121,13 +121,15 @@ std::vector<PetWorkArea> currentMonitorWorkAreas() {
 // M1 只按主屏钳，副屏位置（负坐标或超出主屏边界）落盘被吞回主屏，重启跳回
 // 主屏；M2 按位置选对应显示器后副屏负坐标可持久化（pet_config 哨兵同步放宽
 // 为仅 -1）。与启动路径共用同一纯函数，两处语义单源。
-// 高度传**整窗高**（petWindowHeight = 帧高 + 气泡让位条，见 pet_bubble.h）：
-// 钳制把整窗关进工作区，气泡条上沿才不会越过屏幕工作区上缘（越界回贴边）
+// 尺寸传**整窗**：宽/高 = 显示大小缩放后的帧尺寸（scaledFrameSize，仍钳
+// [16,512]）+ 气泡让位条（petWindowHeight，见 pet_bubble.h）——钳制把整窗
+// 关进工作区，气泡条上沿才不会越过屏幕工作区上缘（越界回贴边）
 void clampPetPosIntoWorkAreaInPlace(int& x, int& y) {
     const PetSkin& skin = runtime().skin;
+    const auto [fw, fh] = scaledFrameSize(skin.frameWidth, skin.frameHeight,
+                                          runtime().config.scale);
     const auto [cx, cy] = clampPetPosToMonitors(
-        x, y, currentMonitorWorkAreas(), skin.frameWidth,
-        petWindowHeight(skin.frameHeight));
+        x, y, currentMonitorWorkAreas(), fw, petWindowHeight(fh));
     // 哨兵冲突避让：钳后恰好 -1（如副屏右缘紧贴主屏原点 x=0 的左邻位）会被
     // 存取两侧误读为「未设置」→ 外挪 1px（肉眼无感），-1 从此唯一表示未设置
     x = (cx == -1) ? -2 : cx;
@@ -643,6 +645,9 @@ bool isPetRenderPaused() { return runtime().renderPaused; }
 void startPetWindow(const PetWindowConfig& config) {
     PetRuntime& rt = runtime();
     rt.config = config;
+    // 显示大小档防御收敛（main 传的是已 sanitize 的盘值；测试/异常调用方
+    // 兜底回中档，窗口尺寸换算永远吃合法档）
+    rt.config.scale = sanitizePetScale(config.scale);
     // PAB-13：本会话已装配桌宠——设置页「显示桌宠」据此区分「模块开关关
     // （从未装配 → 拒绝凭空开窗）」与「隐藏后再显示」。PET-CLOSE：装配
     // 标志与可见意图分开记——本函数同时置两者（装配 = 想显示）
@@ -680,12 +685,16 @@ void startPetWindow(const PetWindowConfig& config) {
     // 位置：未设置 → 主显示器工作区右下角；已知位置钳制进所在/最近显示器的
     // 工作区（设计 §4.6；M2 多显示器——M1 只按主屏钳，副屏位置落盘被吞）。
     // 工作区查询失败（无头/早于 glfwInit）时不动已知位置，未设置则给屏内兜底值。
-    // 钳制/默认位都按**整窗**算（宽 = 帧宽、高 = petWindowHeight，见
-    // pet_bubble.h）：气泡让位条一并关进工作区，气泡不越过屏幕上缘
+    // 钳制/默认位都按**整窗**算：窗口尺寸 = scaledFrameSize(帧尺寸, scale)
+    // （显示大小三档，仍钳 [16,512]）+ 气泡让位条（petWindowHeight，见
+    // pet_bubble.h）——单位 = 点，不乘 Retina contentScale
+    const auto [winW, winHFrame] =
+        scaledFrameSize(rt.skin.frameWidth, rt.skin.frameHeight,
+                        rt.config.scale);
+    const int winH = petWindowHeight(winHFrame);
     int x = config.x;
     int y = config.y;
-    const auto [defX, defY] =
-        defaultPetPos(rt.skin.frameWidth, petWindowHeight(rt.skin.frameHeight));
+    const auto [defX, defY] = defaultPetPos(winW, winH);
     // 单边独立处理 -1 哨兵：只重置未设置的那一边（只存了 x 时 y 不丢）。
     // M2 起哨兵是「== -1」而非「< 0」：其他负值是左/上副屏的合法坐标
     if (x == -1) {
@@ -696,9 +705,8 @@ void startPetWindow(const PetWindowConfig& config) {
     }
     // 审计 [12]：与落盘路径共用同一钳制纯函数（默认位本就在工作区内，
     // 再钳幂等；无头工作区查不到时原样）
-    const auto [cx, cy] = clampPetPosToMonitors(
-        x, y, currentMonitorWorkAreas(), rt.skin.frameWidth,
-        petWindowHeight(rt.skin.frameHeight));
+    const auto [cx, cy] =
+        clampPetPosToMonitors(x, y, currentMonitorWorkAreas(), winW, winH);
     x = cx;
     y = cy;
     rt.config.x = x;
@@ -707,10 +715,10 @@ void startPetWindow(const PetWindowConfig& config) {
     app::openWindow(app::DslWindowConfig{}
                         .title("DevDesk Pet")
                         .pageId("pet")
-                        // 窗口 = 帧宽 × (帧高 + 气泡让位条)（点；见 pet_bubble.h
-                        // ——让位条给气泡容身，精灵帧整体在条下方，不与气泡重叠）
-                        .windowSize(rt.skin.frameWidth,
-                                    petWindowHeight(rt.skin.frameHeight))
+                        // 窗口 = 缩放后帧宽 × (缩放后帧高 + 气泡让位条)（点；
+                        // 见 pet_bubble.h——让位条给气泡容身，精灵帧整体在
+                        // 条下方，不与气泡重叠）
+                        .windowSize(winW, winH)
                         .windowPosition(x, y)
                         .decorated(false)              // 无边框
                         .alwaysOnTop(true)             // 置顶
@@ -742,8 +750,10 @@ void startPetWindow(const PetWindowConfig& config) {
                         }),
                     petCompose);
 
-    LOG_INFO("桌宠窗口已请求开启（皮肤=" + skinName + "，帧率=" +
-             std::to_string(static_cast<int>(rt.skin.frameRate)) +
+    LOG_INFO("桌宠窗口已请求开启（皮肤=" + skinName + "，帧=" +
+             std::to_string(winW) + "x" + std::to_string(winH) + "（含气泡条，"
+             "缩放档 " + kPetScalePresetLabels[petScaleIndexOf(rt.config.scale)] +
+             "），帧率=" + std::to_string(static_cast<int>(rt.skin.frameRate)) +
              "fps，位置=" + std::to_string(x) + "," + std::to_string(y) + "）");
 }
 
@@ -806,11 +816,12 @@ void applyPetSkin(const std::string& skinName) {
     rt.skins = skins;
     const bool hotSwap = rt.handle != nullptr;
     if (hotSwap) {
-        // 热切换：关旧窗 → 按新皮肤原位重开（compose 状态随旧窗销毁重建）
+        // 热切换：关旧窗 → 按新皮肤原位重开（compose 状态随旧窗销毁重建）。
+        // 显示大小档从 rt.config 原样携带（换肤不改档）
         core::window::requestWindowClose(rt.handle);
         rt.handle = nullptr;  // 等新窗 onWindowCreated 回填
         startPetWindow(
-            PetWindowConfig{skinName, cfg.x, cfg.y,
+            PetWindowConfig{skinName, cfg.x, cfg.y, rt.config.scale,
                             rt.config.getOverdueCount,
                             rt.config.getProxyEvent});
     }
@@ -828,9 +839,10 @@ void resetPetPosition() {
         LOG_WARN("桌宠位置重置持久化失败（不影响本次会话）");
     }
     if (rt.handle == nullptr) return;
-    // 整窗口径同 startPetWindow（高 = petWindowHeight，气泡让位条一并算）
-    const auto [x, y] =
-        defaultPetPos(rt.skin.frameWidth, petWindowHeight(rt.skin.frameHeight));
+    // 整窗口径同 startPetWindow：宽/高 = 缩放后帧尺寸 + 气泡让位条
+    const auto [fw, fh] = scaledFrameSize(rt.skin.frameWidth, rt.skin.frameHeight,
+                                          rt.config.scale);
+    const auto [x, y] = defaultPetPos(fw, petWindowHeight(fh));
     core::window::setWindowPos(rt.handle, x, y);
     rt.config.x = x;
     rt.config.y = y;
@@ -842,6 +854,52 @@ void resetPetPosition() {
 // 隐藏），且 apply 双写保证盘与运行时一致
 std::string currentSkinName() {
     return PetConfigStore(petConfigFile()).load().skinName;
+}
+
+// ---- 显示大小三档（声明见 pet_window.h；设置页经 module_pet_bridge.h 消费）----
+
+int currentPetScaleIndex() {
+    return petScaleIndexOf(PetConfigStore(petConfigFile()).load().scale);
+}
+
+std::vector<std::string> petScalePresetLabels() {
+    return {kPetScalePresetLabels[0], kPetScalePresetLabels[1],
+            kPetScalePresetLabels[2]};
+}
+
+void applyPetScaleIndex(int presetIndex) {
+    if (presetIndex < 0 || presetIndex >= kPetScalePresetCount) {
+        return;  // 越界下标（含空清单误回传）静默拒绝，配置不动
+    }
+    PetRuntime& rt = runtime();
+    const double scale = kPetScalePresets[presetIndex];
+    PetConfigStore store(petConfigFile());
+    PetConfig cfg = store.load();
+    cfg.scale = scale;
+    if (rt.handle != nullptr) {
+        // 记住当前窗口位置（切档后窗口尺寸变化，重开时 startPetWindow 会
+        // 按整窗重新钳制——与换肤同一条位置沿用路径）
+        int x = 0;
+        int y = 0;
+        core::window::getWindowPos(rt.handle, x, y);
+        clampPetPosIntoWorkAreaInPlace(x, y);
+        cfg.x = x;
+        cfg.y = y;
+    }
+    if (store.save(cfg).isFail()) {
+        LOG_WARN("桌宠显示大小持久化失败（不影响本次会话）");
+    }
+    const bool hotSwap = rt.handle != nullptr;
+    rt.config.scale = scale;
+    if (hotSwap) {
+        // 运行中改档即时生效：关旧窗 → 按新档位重开（startPetWindow 按
+        // scaledFrameSize 重算窗口尺寸并重新钳制位置）
+        core::window::requestWindowClose(rt.handle);
+        rt.handle = nullptr;
+        startPetWindow(rt.config);
+    }
+    LOG_INFO(std::string("桌宠显示大小 → ") + kPetScalePresetLabels[presetIndex] +
+             (hotSwap ? "（已热切换）" : "（下次启动生效）"));
 }
 
 

@@ -17,6 +17,7 @@ namespace {
 constexpr const char* kKeySkin = "skinName";
 constexpr const char* kKeyX = "x";
 constexpr const char* kKeyY = "y";
+constexpr const char* kKeyScale = "scale";  // 显示大小档（0.75/1.0/1.5）
 // 【历史】clickThrough 键随「挂机穿透」功能于 2026-09-24 一并移除：save 只写
 // skinName/x/y 三个键，旧 pet_config.json 残留的 clickThrough 键被 load 静默
 // 忽略（向后兼容：不报错、也不做迁移），下次 save 重写整文件后自然消失
@@ -45,6 +46,8 @@ PetConfig PetConfigStore::sanitized(const PetConfig& cfg) {
     if (out.y < -32767) out.y = -32767;
     if (out.x > 32767) out.x = 32767;
     if (out.y > 32767) out.y = 32767;
+    // 显示大小档：白名单外（手改 0.9 / 2.0 等）收敛默认中档
+    out.scale = sanitizePetScale(out.scale);
     return out;
 }
 
@@ -81,6 +84,9 @@ PetConfig PetConfigStore::load() const {
     if (obj.has(kKeyY) && obj.get(kKeyY).isNumber()) {
         cfg.y = static_cast<int>(obj.get(kKeyY).asInt());
     }
+    if (obj.has(kKeyScale) && obj.get(kKeyScale).isNumber()) {
+        cfg.scale = obj.get(kKeyScale).asDouble();
+    }
     return sanitized(cfg);
 }
 
@@ -91,6 +97,7 @@ core::Result<void> PetConfigStore::save(const PetConfig& cfgRaw) const {
     obj.set(kKeySkin, platform::json::makeString(cfg.skinName));
     obj.set(kKeyX, platform::json::makeInt(cfg.x));
     obj.set(kKeyY, platform::json::makeInt(cfg.y));
+    obj.set(kKeyScale, platform::json::makeDouble(cfg.scale));
 
     auto text = platform::json::stringify(
         platform::json::JsonValue(obj), /*pretty=*/true);

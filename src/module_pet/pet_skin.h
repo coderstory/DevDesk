@@ -15,8 +15,11 @@
 //     数组；缺失回退内置语料（换肤可换性格）
 #pragma once
 
+#include <algorithm>
+#include <cmath>
 #include <filesystem>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "core/result.h"
@@ -25,6 +28,26 @@ namespace module::pet {
 
 // 内置占位皮肤名（pet_config 的 skinName 默认值与此一致）
 inline constexpr const char* kDefaultSkinName = "robot";
+
+// 帧尺寸合法域（PAB-05 数字对齐口径：parsePetSkinJson 的帧尺寸校验与显示
+// 大小缩放共用同一条界——原两处裸字面量 16/512 收成命名常量单源）
+inline constexpr int kMinFrameSize = 16;
+inline constexpr int kMaxFrameSize = 512;
+
+// 显示大小缩放后的帧尺寸（纯函数，「档位 → 窗口尺寸换算」单测断言用）：
+// 逐维 ×scale 后**仍要过帧尺寸校验同一条 [16,512] 界**（pet_skin.cpp 解析
+// clamp 的同一区间）：512×1.5=768 钳回 512、16×0.75=12 钳回 16；四舍五入
+// 取整。窗口单位 = 点（GLFW windowSize 同口径），不乘 Retina contentScale
+inline std::pair<int, int> scaledFrameSize(int frameWidth, int frameHeight,
+                                           double scale) {
+    const auto scaled = [scale](int v) {
+        const double s = static_cast<double>(v) * scale;
+        return static_cast<int>(
+            std::round(std::clamp(s, static_cast<double>(kMinFrameSize),
+                                  static_cast<double>(kMaxFrameSize))));
+    };
+    return {scaled(frameWidth), scaled(frameHeight)};
+}
 
 struct PetSkin {
     std::string name;                 // 皮肤名（= 目录名）

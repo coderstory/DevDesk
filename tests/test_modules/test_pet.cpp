@@ -1510,3 +1510,124 @@ REGISTER_TEST(pet_bubble_layout_disjoint,
     // 复绿——证明断言非恒真
     return true;
 });
+
+// ---- 显示大小三档（2026-09-30 用户需求「桌宠显示大小」）----
+
+// 档位 → 窗口尺寸换算（纯函数 scaledFrameSize）：三档换算 + 缩放后帧尺寸
+// 仍要过 pet_skin 解析同一条 [16,512] 校验（512×1.5=768 钳回 512、
+// 16×0.75=12 钳回 16）。变异自检见 pet_scale_window_request
+REGISTER_TEST(pet_scale_frame_size,
+              "pet: 显示大小档位→帧尺寸换算（钳 [16,512]）", {
+    using namespace module::pet;
+    // 档位表口径：三档、默认中档
+    DOCTEST_CHECK_EQ(kPetScalePresetCount, 3);
+    DOCTEST_CHECK_EQ(kPetScaleDefaultIndex, 1);
+    DOCTEST_CHECK_EQ(kPetScalePresets[0], 0.75);
+    DOCTEST_CHECK_EQ(kPetScalePresets[1], 1.0);
+    DOCTEST_CHECK_EQ(kPetScalePresets[2], 1.5);
+    DOCTEST_CHECK_EQ(kMinFrameSize, 16);
+    DOCTEST_CHECK_EQ(kMaxFrameSize, 512);
+
+    // 换算：中档 1:1；大档 ×1.5；小档 ×0.75（128×128 夹具基准）
+    const auto mid = scaledFrameSize(128, 128, 1.0);
+    DOCTEST_CHECK_EQ(mid.first, 128);
+    DOCTEST_CHECK_EQ(mid.second, 128);
+    const auto big = scaledFrameSize(128, 128, 1.5);
+    DOCTEST_CHECK_EQ(big.first, 192);
+    DOCTEST_CHECK_EQ(big.second, 192);
+    const auto small = scaledFrameSize(128, 128, 0.75);
+    DOCTEST_CHECK_EQ(small.first, 96);
+    DOCTEST_CHECK_EQ(small.second, 96);
+    // 非方形皮肤（whale-girl 328×212）×1.5
+    const auto whale = scaledFrameSize(328, 212, 1.5);
+    DOCTEST_CHECK_EQ(whale.first, 492);
+    DOCTEST_CHECK_EQ(whale.second, 318);
+    // 上界钳制：512×1.5=768 → 钳回 512（缩放后仍要过帧尺寸校验同一条界）
+    const auto atMax = scaledFrameSize(512, 512, 1.5);
+    DOCTEST_CHECK_EQ(atMax.first, 512);
+    DOCTEST_CHECK_EQ(atMax.second, 512);
+    // 下界钳制：16×0.75=12 → 钳回 16
+    const auto atMin = scaledFrameSize(16, 16, 0.75);
+    DOCTEST_CHECK_EQ(atMin.first, 16);
+    DOCTEST_CHECK_EQ(atMin.second, 16);
+    // 非法档位值防御：sanitize 白名单外收敛默认中档（防手改 pet_config.json）
+    DOCTEST_CHECK_EQ(sanitizePetScale(0.9), 1.0);
+    DOCTEST_CHECK_EQ(sanitizePetScale(2.0), 1.0);
+    DOCTEST_CHECK_EQ(sanitizePetScale(0.75), 0.75);
+    DOCTEST_CHECK_EQ(petScaleIndexOf(1.5), 2);
+    DOCTEST_CHECK_EQ(petScaleIndexOf(0.123), kPetScaleDefaultIndex);
+    return true;
+});
+
+// pet_config.json scale 键读写往返 + 桥只读/切档（窗口未开 = 只持久化路径）
+REGISTER_TEST(pet_scale_config_roundtrip,
+              "pet: scale 持久化往返 + 档位桥读写", {
+    using namespace module::pet;
+    const PetsDirEnv pets("scalecfg");
+    const std::filesystem::path cfgFile = pets.root / "pet_config.json";
+    {
+        PetConfigStore store(cfgFile);
+        PetConfig cfg;
+        cfg.scale = 1.5;
+        DOCTEST_CHECK(store.save(cfg).isOk());
+        const PetConfig loaded = store.load();
+        DOCTEST_CHECK_EQ(loaded.scale, 1.5);
+        // 白名单外值经 sanitized 收敛默认中档
+        PetConfig bad;
+        bad.scale = 0.9;
+        DOCTEST_CHECK_EQ(PetConfigStore::sanitized(bad).scale, 1.0);
+    }
+    // 桥：无窗口路径——切档只写盘，读回一致；越界下标拒绝不动
+    DOCTEST_CHECK_EQ(currentPetScaleIndex(), 2);  // 上面存的 1.5
+    applyPetScaleIndex(0);                        // 1.5 → 0.75
+    DOCTEST_CHECK_EQ(PetConfigStore(cfgFile).load().scale, 0.75);
+    applyPetScaleIndex(7);                        // 越界：配置不动
+    DOCTEST_CHECK_EQ(PetConfigStore(cfgFile).load().scale, 0.75);
+    applyPetScaleIndex(1);                        // 回默认中档
+    DOCTEST_CHECK_EQ(PetConfigStore(cfgFile).load().scale, 1.0);
+    DOCTEST_CHECK_EQ(currentPetScaleIndex(), 1);
+    // 桥文案：三档与下标一一对应（单源 = pet_config.h，设置页只消费）
+    const std::vector<std::string> labels = petScalePresetLabels();
+    DOCTEST_REQUIRE_EQ(labels.size(), static_cast<size_t>(3));
+    DOCTEST_CHECK(labels[0] == kPetScalePresetLabels[0]);
+    DOCTEST_CHECK(labels[2] == kPetScalePresetLabels[2]);
+    return true;
+});
+
+// 开窗请求逐档断言（无头）：窗口尺寸 = scaledFrameSize(帧尺寸, 档位) +
+// 气泡让位条。变异自检（已实测）：把 scaledFrameSize 改回「不缩放直返帧
+// 尺寸」（旧无缩放行为）→ 本用例 192/226 断言变红；恢复后复绿
+REGISTER_TEST(pet_scale_window_request,
+              "pet: 显示大小档位→开窗尺寸换算（无头）", {
+    const PetsDirEnv pets("scalewin");
+    (void)app::consumeWindowRequests();  // 清残留
+    test_support::writeShippedSkinFixture(pets.root, "robot", kRobotFixtureJson);
+
+    // 大档 1.5×：128×128 → 192×(192+34)
+    module::pet::startPetWindow(
+        module::pet::PetWindowConfig{"", 50, 60, 1.5});
+    std::vector<app::DslWindowRequest> big = app::consumeWindowRequests();
+    DOCTEST_REQUIRE_EQ(big.size(), static_cast<size_t>(1));
+    DOCTEST_CHECK_EQ(big[0].width, 192);
+    DOCTEST_CHECK_EQ(big[0].height,
+                     192 + static_cast<int>(module::pet::kBubbleStripH));
+
+    // 小档 0.75×：→ 96×(96+34)
+    module::pet::startPetWindow(
+        module::pet::PetWindowConfig{"", 50, 60, 0.75});
+    std::vector<app::DslWindowRequest> small = app::consumeWindowRequests();
+    DOCTEST_REQUIRE_EQ(small.size(), static_cast<size_t>(1));
+    DOCTEST_CHECK_EQ(small[0].width, 96);
+    DOCTEST_CHECK_EQ(small[0].height,
+                     96 + static_cast<int>(module::pet::kBubbleStripH));
+
+    // 非法档位防御：0.9 → sanitize 中档 1.0× → 128×(128+34)
+    module::pet::startPetWindow(
+        module::pet::PetWindowConfig{"", 50, 60, 0.9});
+    std::vector<app::DslWindowRequest> mid = app::consumeWindowRequests();
+    DOCTEST_REQUIRE_EQ(mid.size(), static_cast<size_t>(1));
+    DOCTEST_CHECK_EQ(mid[0].width, 128);
+    DOCTEST_CHECK_EQ(mid[0].height,
+                     128 + static_cast<int>(module::pet::kBubbleStripH));
+    return true;
+});
