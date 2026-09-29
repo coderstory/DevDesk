@@ -225,6 +225,21 @@ add_custom_command(TARGET DevDesk POST_BUILD
     COMMENT "Copying pet skins to build directory"
 )
 
+# 托盘 template 图标（assets/tray-icon-template.png，2026-09-30 Bug A 修）：
+# main.cpp .trayIcon() 传入，运行时经 EUI-NEO resolveIconPath 的 exeDir/assets
+# 候选在 .app bundle 内命中（build-app.sh 把 <build>/assets 整树拷进
+# Contents/MacOS/assets，本命令负责先把图标送进 <build>/assets）。文件入 git，
+# 无需守卫（同上 pets）。单文件用 copy_if_different；目录由上面 pets 的
+# copy_directory 先建，make_directory 兜底防顺序依赖。
+add_custom_command(TARGET DevDesk POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E make_directory
+        "$<TARGET_FILE_DIR:DevDesk>/assets"
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        "${CMAKE_SOURCE_DIR}/assets/tray-icon-template.png"
+        "$<TARGET_FILE_DIR:DevDesk>/assets/tray-icon-template.png"
+    COMMENT "Copying tray template icon to build directory"
+)
+
 # 构建版本自增（2026-09-28 about 页设计）：每次 cmake --build 都跑 bump-version
 # 脚本把 VERSION 文件 +1（不用 PRE_BUILD——Ninja 下 PRE_BUILD = PRE_LINK，仅目标
 # 重链时跑；ALL 保证每次构建都执行）。VERSION 经 CMAKE_CONFIGURE_DEPENDS 注册，
