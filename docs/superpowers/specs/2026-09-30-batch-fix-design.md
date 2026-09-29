@@ -1,6 +1,6 @@
 # CI 构建版（v0.1.1）问题批修复——A 缩放派生审查 / B 高级配置 UI / C 复制语义与配置导出（设计）
 
-日期：2026-09-30 ｜ 状态：**设计（未实施）** ｜ 来源：CI 构建版（v0.1.1，master `a4430da`）用户上报问题批中的三项 ｜ 关联：`2026-09-27-shared-config-and-failover-design.md`（备用 Profile）、`2026-09-27-profile-auth-field-design.md`（认证字段）、`2026-09-27-profile-reverse-sync-and-copy-design.md`（「复制=建副本」既有拍板）、`2026-09-28-profile-run-design.md`（buildDirectEnv / settings JSON 形态先例）、在飞分支 `fix/detail-env-pane`
+日期：2026-09-30 ｜ 状态：**已实施**（项 A `e175b47`；项 B/C 已于 2026-09-30 实施，master `4daf385`） ｜ 来源：CI 构建版（v0.1.1，master `a4430da`）用户上报问题批中的三项 ｜ 关联：`2026-09-27-shared-config-and-failover-design.md`（备用 Profile）、`2026-09-27-profile-auth-field-design.md`（认证字段）、`2026-09-27-profile-reverse-sync-and-copy-design.md`（「复制=建副本」既有拍板）、`2026-09-28-profile-run-design.md`（buildDirectEnv / settings JSON 形态先例）、在飞分支 `fix/detail-env-pane`
 
 > 本文 项 A 的前提已经过一次修正（2026-09-30，调查 agent 像素级实证回填）：**「130% 默认在 macOS 生效」不成立**，macOS 用户日志所有会话均 100%，默认值本就是平台一致的 100（见 §2.1 证据）。项 A 由「字号缩放默认值平台化」改写为「缩放派生审查」，**零默认值改动**。
 
@@ -34,7 +34,7 @@
 | **D-B2** | 备用 Profile（failover）下拉从**基础页**整体挪进新 tab；认证字段（authField）下拉**不动** | 见 §3.2：authField 已有完整渲染控件（`formAuthField_` + 下拉），任务书要求「若有，不动」 |
 | **D-B3** | 详情页 tabs 由四变五：`基础信息 / 模型映射 / 环境变量 / 高级配置 / 最近调用`（插在环境变量后、最近调用前，`detailTab_: 3=高级配置, 4=最近调用`） | 高级配置属属性展示，最近调用是时序记录，二者语义不同层；既有用例/探针经 `claude.detail.tabs.hit.3` 导航锚按索引点击处 +1（`detailTab_` 在测试代码零引用，见 §3.5 风险 3） |
 | **D-C1** | 「复制」改名「**建副本**」（详情 `claude.act.dup` 按钮 + 列表右键菜单项 + 相关 toast 文案），功能（`duplicateProfile`）零改动 | 09-27 spec 拍板过「复制=建副本」且功能正常；用户预期冲突纯粹是文案歧义 |
-| **D-C2** | 新增「**复制配置**」：把当前选中 profile 序列化成 settings.json 形态 JSON（`{"env": {...}}`）写系统剪贴板；**默认占位** `sk-ant-***<尾4位>`，不导出明文 key | 安全决策，理由见 §4.2；「含明文 key」的导出形态**不做**（已裁决 §5①） |
+| **D-C2** | 新增「**复制配置**」：把当前选中 profile 序列化成 settings.json 形态 JSON（`{"env": {...}}`）写系统剪贴板；**默认占位** apiKeyHint（前6+`***`+尾4，如 `sk-ant***1234`），不导出明文 key | 安全决策，理由见 §4.2；「含明文 key」的导出形态**不做**（已裁决 §5①） |
 | **D-C3** | 「复制配置」入口：详情操作按钮组第 7 键 + 列表右键菜单新增一项；服务层零改动 | 见 §4.3 布局与 §5⑥ |
 
 ---
@@ -118,7 +118,7 @@
 
 ---
 
-## 3. 项 B：高级配置 UI 恢复（#8）
+## 3. 项 B：高级配置 UI 恢复（#8）——已于 2026-09-30 实施（master 4daf385）
 
 ### 3.1 背景与根因（含证据）
 
@@ -196,7 +196,7 @@
 
 ---
 
-## 4. 项 C：复制语义消歧 + 配置导出剪贴板（#9）
+## 4. 项 C：复制语义消歧 + 配置导出剪贴板（#9）——已于 2026-09-30 实施（master 4daf385）
 
 ### 4.1 背景与根因（含证据）
 
@@ -211,7 +211,7 @@
 **② 新增「复制配置」**（D-C2）：
 
 - **序列化（纯函数，UI 层）**：`module::claude` 新增自由函数（落 `claude_ui_logic.h/.cpp`，无头可测）：
-  `std::string buildProfileExportJson(const Profile& p, const std::string& sharedExtraEnvJson, const std::string& keyPlaceholder)` —— 内部调 `buildDirectEnv(p.baseUrl, keyPlaceholder, p.authField, p.modelsConfigJson, p.model, p.extraEnvJson, sharedExtraEnvJson)` → `{"env": {...}}`（platform::json，手法同 `claude_service.cpp:490-497`）。**占位值**：`"sk-ant-***" + 尾 4 位`（尾 4 位与详情页 API Key 脱敏提示同源，已裁决 §5②；Keychain 读不到/为空 → 传空串，`buildDirectEnv` 空值不写凭据键，导出即无 token 键）。**坏 extraEnvJson 防静默丢键**：`buildDirectEnv` 对非法 extraEnvJson 读路径整体忽略（`provider_config.cpp:414-421`，与运行功能同口径）——compose 接线序列化前对 `p.extraEnvJson` 试解析，失败 → `LOG_WARN` 一行（写明导出将缺失该部分 env 键）并**继续导出**，不静默。
+  `std::string buildProfileExportJson(const Profile& p, const std::string& sharedExtraEnvJson, const std::string& keyPlaceholder)` —— 内部调 `buildDirectEnv(p.baseUrl, keyPlaceholder, p.authField, p.modelsConfigJson, p.model, p.extraEnvJson, sharedExtraEnvJson)` → `{"env": {...}}`（platform::json，手法同 `claude_service.cpp:490-497`）。**占位值**：apiKeyHint（前6+`***`+尾4，如 `sk-ant***1234`；实现传 `p.apiKeyHint`，与详情页 API Key 脱敏提示同源同值，已裁决 §5②；Keychain 读不到/为空 → 传空串，`buildDirectEnv` 空值不写凭据键，导出即无 token 键）。**坏 extraEnvJson 防静默丢键**：`buildDirectEnv` 对非法 extraEnvJson 读路径整体忽略（`provider_config.cpp:414-421`，与运行功能同口径）——compose 接线序列化前对 `p.extraEnvJson` 试解析，失败 → `LOG_WARN` 一行（写明导出将缺失该部分 env 键）并**继续导出**，不静默。
   - **不导明文 key 的理由**：剪贴板是跨应用共享面（粘贴进聊天 / issue / 截图即泄露，且离开 Keychain 后流向不可审计）；对比「运行」功能的临时 settings 明文落盘（profile-run D-8 接受的**功能性**代价，文件留在本机 `run-settings/` 且 24h 清扫），复制配置无此必要性——结构 + BASE_URL + 模型槽位 + extra env 已满足「把配置发给别人看/存档」的主诉求，token 由使用者自填。含明文变体**不做**（已裁决 §5①）。
 - **动作接线**：`DetailActions` 新增 `std::function<void(const Profile& p)> copyConfig;`；compose（`claude_module.cpp`）实现：`buildProfileExportJson(...)` → `core::window::setClipboardText(json)` → toast「已复制配置」（成功）/「复制配置失败」（无选中，沿用 `warn` 通道）。`setClipboardText` 返回 void、模块层无窗口句柄无法回读校验（写失败为低概率已知限制，toast 仍发「已复制配置」）——接线处固定 `LOG_WARN` 一行（profile id + 导出 env 键数）作为 void API 无回读下的最低留痕。片段 env 取 `sharedExtraEnvJsonFor(p.sharedConfigId)`（claude_service 既有只读 getter，同 `drawDetailEnv` 用法 `claude_ui_detail.cpp:271-274`）。
 - **入口与布局**（D-C3，§4.3）。
@@ -234,7 +234,7 @@
 ### 4.4 验收判据
 
 - **定向测试**（`--filter claude`）：
-  1. `buildProfileExportJson`：authField=bearer → env 含 `ANTHROPIC_BASE_URL`（尾斜杠已去）+ `ANTHROPIC_AUTH_TOKEN == "sk-ant-***1234"` 形态（占位，非明文）+ 槽位键 + extra env；api_key/both 三态键名各断言；绑定片段时冻结键以片段值出现；`{"env":{...}}` 顶层形状断言。
+  1. `buildProfileExportJson`：authField=bearer → env 含 `ANTHROPIC_BASE_URL`（尾斜杠已去）+ `ANTHROPIC_AUTH_TOKEN == "sk-ant***1234"` 形态（apiKeyHint 占位，非明文）+ 槽位键 + extra env；api_key/both 三态键名各断言；绑定片段时冻结键以片段值出现；`{"env":{...}}` 顶层形状断言。
   2. 改名：`ui.find("claude.act.dup")` 按钮文本 == "建副本"；右键菜单 items[1] == "建副本"、items[2] == "复制配置"，`case 2` 派发 `requestCopyConfig(p)`、`case 3` 删除、`case 4` 设为当前。
   3. 7 键：点击 `claude.act.copyconfig.bg` 触发回调且参数 == shownCopy（headless `click` 手法同 `:2044`；headless 下 `setClipboardText` 行为实施首日实测确认安全 no-op，probe 真窗口后端会**真写系统剪贴板**——见 §4.5 风险 3）。
 - **几何断言**：7 键 `size().width == (w - 72)/7` 且行右缘与容器右缘对齐（等分无溢出）；窄右栏（最小窗）下无键宽 < 文案宽（probe 实测，已裁决 §5⑥）。
@@ -244,7 +244,7 @@
 ### 4.5 风险与回滚
 
 - 风险 1：7 键在最小窗右栏过窄（四字按钮「测试连通」「复制配置」）→ **已裁决 §5⑥**：probe 实测，不达标改**两行按钮组**（`kActionBlockH` 单常量传播）；「复制配置仅入右键菜单」不采用（主诉求不降级为隐藏功能）。
-- 风险 2：占位值含尾 4 位——泄露面极低（与详情页既有脱敏同口径），**已裁决 §5② 保留尾 4 位**；固定 `"sk-ant-***"`（一处常量）留作退路。
+- 风险 2：占位值含尾 4 位——泄露面极低（与详情页既有脱敏同口径），**已裁决 §5② 保留尾 4 位**；固定占位常量（一处常量，不带尾 4）留作退路。
 - 风险 3：headless 测试环境无窗口后端时 `setClipboardText` 行为未知（backend stub vs 真写）→ 实施第一步实测 headless 路径（GLFW 未 init 按宏语义应早退为安全 no-op，未实测）；单测**经既有注入缝旁路**——headless 触发 `copyConfig` 回调断言接线，不真写剪贴板；probe（真窗口后端）点击 `claude.act.copyconfig.bg` 会**真写运行者系统剪贴板**（覆盖当前剪贴板内容，多人并行跑 probe 互相覆盖）——probe 说明注明该副作用。断言只钉 `buildProfileExportJson` 返回值与回调接线，剪贴板真写以真机验收为准（不写假绿断言）。
 - 回滚：纯 UI 层，单提交 revert 即回；零数据/服务层波及。
 
@@ -255,11 +255,19 @@
 | # | 问题 | 裁决 |
 |---|------|------|
 | ① | **「含明文 key」的复制配置要不要做** | **不做**（维持 D-C2）。剪贴板是跨应用共享面，明文 key 一经粘贴（聊天/issue/截图）即离开 Keychain 托管、流向不可审计；若未来确有需求另立小 spec（二次确认 + 粘贴后自动清剪贴板），不在本批搭便车 |
-| ② | 占位值含尾 4 位还是固定 `sk-ant-***` | **含尾 4 位**：`sk-ant-***<尾4>`，与详情页 apiKeyHint 同一脱敏口径（同面展示、不扩大泄露面）；固定常量形态保留为一处退路（§4.5 风险 2） |
+| ② | 占位值含尾 4 位还是固定 `sk-ant-***` | **含尾 4 位**：apiKeyHint（前6+`***`+尾4，如 `sk-ant***1234`），与详情页 API Key 脱敏提示同源同值（同面展示、不扩大泄露面）；固定常量形态保留为一处退路（§4.5 风险 2） |
 | ③ | settings 卡片派生化随本批还是整批 tech-debt | **随本批**：单文件数值来源替换、与 B/C 零文件交叠、变异自检现成（`fs(16)` 断言回退即红），本批唯一无风险增量 |
 | ④ | 表单第 4 tab 名称与顺序 | **尾插 + 与详情 pane 同名「高级配置」**：尾插保住前三页序（§6.1 既有拍板），既有 `form.tabs.hit.0/1/2` 测试导航零破坏；插「高级 env」前需 ~10 处测试返工，不值 |
 | ⑤ | 复制配置是否进列表右键菜单 | **进**：与既有四动作全在菜单对称；菜单当前零测试耦合，重映射成本即 case 表；兼作 ⑥ 不达标时的兜底入口 |
 | ⑥ | 详情操作组 7 键在最小窗右栏的键宽 | **probe 实测裁决；不达标改两行按钮组**（备选方案：`kActionBlockH` 单常量传播 61→约 104，锚定链 `kActReserve` 自动跟随，代价内容框底上移 ~43px）。不采用「仅入右键菜单」——复制到剪贴板是用户主诉求入口，不降级为隐藏功能 |
+
+**实施审计 nano findings 处置（2026-09-30，`plans/2026-09-30-wave-b-impl-audit.json` 5 条）**：
+
+- F-1 导出占位形态（`claude_module.cpp:550`）：**已收口**——全文示例改 apiKeyHint 真实形态「前6+`***`+尾4（如 `sk-ant***1234`）」（§1 D-C2 / §4.2② / §4.4 / §4.5 / §5②）
+- F-2 无 key profile 的成功副文案（`claude_module.cpp:567`）：**登记不修**——低频边界，导出行为正确（无凭据键即 §4.2② 预期兜底形态），反馈粒度瑕疵接受现状
+- F-3 片段 env 取数与 §4.2② 字面偏差（`claude_module.cpp:542`）：**登记不修**——实现走 `cachedSharedConfigs_` 快照、与 `drawDetailEnv` 同口径（展示/导出同源），以本条登记为准，不按 §4.2② 字面改回服务层实时读
+- F-4 spec 状态未回写（本文状态行 / §3/§4）：**已收口**——状态行改「已实施」+ §3/§4 标题补「已于 2026-09-30 实施（master 4daf385）」
+- F-5 测试报数留证未复跑（`plans/2026-09-30-wave-b-impl-verify.md:28`）：**登记不修**——红绿结论以 impl-verify 留痕 + 审计静态钉子验证为准，全量复跑归合并方常规闸门
 
 ---
 
