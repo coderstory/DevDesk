@@ -1083,13 +1083,46 @@ REGISTER_TEST(settings_window_effect_param_mapping, "settings: 档位→alpha/ba
     namespace ms = module::settings;
     using WE = core::platform::WindowEffect;
 
-    // clearColor alpha：off=1.0 / translucent=0.94 / frosted=0.30 / 未知→1.0
-    //（2026-09-29 真机反馈第二次收紧：半透 0.90→0.94「透明度还是有点高」；
-    //  磨砂 0.55→0.30「完全不透明了」——回退任一常量本用例即红）
+    // 两处 alpha 各自独立（2026-09-29 黑壁纸标定）：
+    //   clearColor（内容区纱）：off=1.0 / translucent=0.45 / frosted=0.15 / 未知→1.0
+    //   窗口背景色（标题栏底）：off=1.0 / translucent=0.90 / frosted=0.65 / 未知→1.0
+    // 回退任一常量本用例即红（旧值：两处同为 0.94 / 同为 0.30，即 EUI-NEO 按 clearColor
+    // 推导标题栏底的年代——那正是 P1「半透等同关闭」与 P2「标题栏与内容区差 105」的成因）
     DOCTEST_CHECK(ms::windowEffectAlpha(ms::kWindowEffectOff) == 1.0f);
-    DOCTEST_CHECK(ms::windowEffectAlpha(ms::kWindowEffectTranslucent) == 0.94f);
-    DOCTEST_CHECK(ms::windowEffectAlpha(ms::kWindowEffectFrosted) == 0.30f);
+    DOCTEST_CHECK(ms::windowEffectAlpha(ms::kWindowEffectTranslucent) == 0.45f);
+    DOCTEST_CHECK(ms::windowEffectAlpha(ms::kWindowEffectFrosted) == 0.15f);
     DOCTEST_CHECK(ms::windowEffectAlpha("bogus") == 1.0f);
+    DOCTEST_CHECK(ms::windowEffectTitleBarAlpha(ms::kWindowEffectOff) == 1.0f);
+    DOCTEST_CHECK(ms::windowEffectTitleBarAlpha(ms::kWindowEffectTranslucent) == 0.90f);
+    DOCTEST_CHECK(ms::windowEffectTitleBarAlpha(ms::kWindowEffectFrosted) == 0.65f);
+    DOCTEST_CHECK(ms::windowEffectTitleBarAlpha("bogus") == 1.0f);
+
+    // 半透档目标（用户给的判据，黑壁纸下）：主题色实际透出量落在 230–240 之间，
+    // 且明显低于关闭档的 250。**这条锁的是目标不是常量**：把半透档的任一 alpha 改回
+    // 「两层同 0.94」→ 有效不透明度 0.9964 → 249.1，直接出带变红。
+    const float translucentOverBlack =
+        250.0f * ms::windowEffectThemeOpacity(ms::kWindowEffectTranslucent);
+    DOCTEST_CHECK(translucentOverBlack >= 230.0f);
+    DOCTEST_CHECK(translucentOverBlack <= 240.0f);
+    // 关闭档：实色，黑壁纸下恒 250
+    DOCTEST_CHECK(250.0f * ms::windowEffectThemeOpacity(ms::kWindowEffectOff) == 250.0f);
+    // 半透档标题栏 vs 内容区差 ≤ 20（黑壁纸：标题栏 = 250×titleAlpha）
+    const float translucentBar = 250.0f * ms::windowEffectTitleBarAlpha(ms::kWindowEffectTranslucent);
+    DOCTEST_CHECK(std::abs(translucentOverBlack - translucentBar) <= 20.0f);
+
+    // 磨砂档判据（同一判据链，材质输出 M 用实机标定值 192@titleAlpha=0.65）：
+    //   内容区 = M + contentAlpha×(250−M)，标题栏 = M → 差值 = contentAlpha×(250−M) ≤ 20
+    // 旧值 0.30 与「标题栏没有材质」两件事都会被这两条拆开判：差值式在 M 恒定时只惩罚
+    // 内容区纱，故另加「标题栏 alpha 必须落在能把材质抬到浅灰的区间」一条。
+    constexpr float kFrostedMaterialOut = 192.0f;  // 实机实测（黑壁纸，titleAlpha=0.65）
+    const float frostedVeil = ms::windowEffectAlpha(ms::kWindowEffectFrosted);
+    DOCTEST_CHECK(frostedVeil * (250.0f - kFrostedMaterialOut) <= 20.0f);
+    DOCTEST_CHECK(ms::windowEffectTitleBarAlpha(ms::kWindowEffectFrosted) >= 0.6f);
+    // 磨砂必须比半透更透（用户原话「半透……明显比磨砂档实」）：两处 alpha 都要更小
+    DOCTEST_CHECK(ms::windowEffectAlpha(ms::kWindowEffectFrosted) <
+                  ms::windowEffectAlpha(ms::kWindowEffectTranslucent));
+    DOCTEST_CHECK(ms::windowEffectTitleBarAlpha(ms::kWindowEffectFrosted) <
+                  ms::windowEffectTitleBarAlpha(ms::kWindowEffectTranslucent));
 
     // backdrop 请求：off/translucent 显式关（None），frosted→Acrylic，未知→None
     DOCTEST_CHECK(ms::windowEffectRequest(ms::kWindowEffectOff) == WE::None);
@@ -1126,20 +1159,36 @@ REGISTER_TEST(settings_window_effect_apply_visuals, "settings: applyWindowVisual
     namespace ms = module::settings;
     using WE = core::platform::WindowEffect;
 
-    // 半透档：clearColor alpha=0.94 + backdrop 请求 None（显式关）
+    // 半透档：clearColor alpha=0.45 + backdrop 请求 None（显式关）
     ms::applyWindowVisuals(ms::kWindowEffectTranslucent);
-    DOCTEST_CHECK(app::currentClearColor().a == 0.94f);
+    DOCTEST_CHECK(app::currentClearColor().a == 0.45f);
     DOCTEST_CHECK(app::currentWindowEffect() == WE::None);
+    // 标题栏底**独立** alpha（显式 customColor 覆盖 EUI-NEO 的按 clearColor 推导）
+    {
+        const auto tb = app::currentTitleBarAppearance();
+        DOCTEST_CHECK(tb.customColor);
+        DOCTEST_CHECK(tb.colorAlpha == 0.90f);
+    }
 
-    // 磨砂档：alpha=0.30 + Acrylic 请求
+    // 磨砂档：alpha=0.15 + Acrylic 请求 + 标题栏 0.65
     ms::applyWindowVisuals(ms::kWindowEffectFrosted);
-    DOCTEST_CHECK(app::currentClearColor().a == 0.30f);
+    DOCTEST_CHECK(app::currentClearColor().a == 0.15f);
     DOCTEST_CHECK(app::currentWindowEffect() == WE::Acrylic);
+    {
+        const auto tb = app::currentTitleBarAppearance();
+        DOCTEST_CHECK(tb.customColor);
+        DOCTEST_CHECK(tb.colorAlpha == 0.65f);
+    }
 
     // 关档：alpha=1（视觉等价实色，透明 hint 仍开）——收尾恢复，不污染后续用例
     ms::applyWindowVisuals(ms::kWindowEffectOff);
     DOCTEST_CHECK(app::currentClearColor().a == 1.0f);
     DOCTEST_CHECK(app::currentWindowEffect() == WE::None);
+    {
+        const auto tb = app::currentTitleBarAppearance();
+        DOCTEST_CHECK(tb.customColor);
+        DOCTEST_CHECK(tb.colorAlpha == 1.0f);
+    }
     return true;
 })
 

@@ -169,9 +169,20 @@ std::string aboutEuiNeoLine();
 
 // ---- 窗口效果档位 → 参数映射（纯函数，供单测）----
 
-// 档位 → clearColor alpha：off=1.0（实色）/ translucent≈0.90 / frosted≈0.55
-//（Acrylic 材质自身还有一层遮蔽，alpha 偏小才透得出磨砂；观感调参定）
+// 档位 → clearColor alpha（内容区那层「主题色纱」）：off=1.0（实色）/
+// translucent / frosted（取值与标定证据见 .cpp，每次调参必须同步改数）
 float windowEffectAlpha(const std::string& mode);
+
+// 档位 → 标题栏底 alpha（窗口背景色那层）。**必须与 windowEffectAlpha 分开**：
+// 标题栏是「窗口背景色一层」，内容区是「clearColor 纱 +（磨砂档）材质 + 窗口背景色」
+// 多层，同一个 alpha 喂两层 → 两处观感必然劈叉（黑壁纸实测差 105/255）。
+// 返回值直接进 TitleBarAppearance.colorAlpha（Windows 侧忽略该字段，无影响）
+float windowEffectTitleBarAlpha(const std::string& mode);
+
+// 无材质档（off / translucent）下主题色的**有效不透明度** = 1−(1−标题栏α)(1−内容区α)，
+// 乘主题色底 250 即黑壁纸下的实测像素。纯算式、无平台依赖，供单测锁「230–240 目标带」
+//（只锁常量值锁不住目标，回退到双层同 α 的老取值时本式立刻出带）
+float windowEffectThemeOpacity(const std::string& mode);
 
 // 档位 → EUI-NEO backdrop 请求：off/translucent 显式关 backdrop（视觉由
 // clearColor alpha 决定），frosted 请求 Acrylic

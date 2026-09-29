@@ -184,49 +184,49 @@ SettingsConfig SettingsStore::sanitized(const SettingsConfig& cfg) {
     return out;
 }
 
+// 临时标定探针已删（标定方式见 windowEffectAlpha 注释）
+
+// 2026-09-29 本轮标定（黑壁纸 + 设置页 + 整屏 screencapture 三区均值，探针脚本口径
+// 见 commit message；表内数字全部实测，算式为事后归纳）。
+// 两层结构（**两层 alpha 必须分开**，这是本轮 P1/P2 的共同前提）：
+//   窗口背景色（theme × titleAlpha）一层  ← 标题栏整条就是它
+//   clearColor（theme × contentAlpha）一层 ← 内容区盖在材质/窗口背景之上
+//   · 半透档：windowEffectRequest 返回 None → macOS 侧把材质视图整条摘除
+//     （EUI_FX_DEBUG=1 实测 material=0x0）→ 内容区 = clearColor 纱叠窗口背景色
+//     = 250 × [1 − (1−titleAlpha)(1−contentAlpha)]，与实测逐位对得上。
+//   · 磨砂档：内容区还要过一层 NSVisualEffectView 材质（GL 视图的父视图），
+//     内容区 = M + contentAlpha × (250 − M)，M = 材质输出（实测曲线 ≈ 107 + 132×titleAlpha）。
+// 旧值为什么错：两处 alpha 由 EUI-NEO 从同一个 clearColor **推导**成同一个值
+//（glfw_app_main.cpp applyTitleBarAppearanceToWindow 的兜底），于是
+//   · 半透档 0.94 双层同 α → 有效不透明 0.9964 → 内容区 249.1，与关闭档肉眼无差（P1）；
+//   · 磨砂档 0.30 时标题栏只有 75（单层）而内容区 180（三层）→ 差 105/255（P2）。
+// 本轮 DevDesk 显式给 TitleBarAppearance.customColor（两处 alpha 解耦），并且
+// EUI-NEO 补了标题栏条材质（见 window_effect_macos.mm attachMaterialView）→
+//   · 半透 0.45/0.90：内容区 236.5、侧边栏 236.0、标题栏 225（差 11.5）✓ 目标带 230–240
+//   · 磨砂 0.15/0.65：内容区 200.7、侧边栏 200.0、标题栏 192（差 8.7）✓ 目标 ≤ 20
+//   · 关闭档不变：三区恒 250,249,245（alpha=1 实色）
 float windowEffectAlpha(const std::string& mode) {
-    // 先说清两层结构（2026-09-29 真机取证，本节所有数字都是实测不是推算）：
-    // 窗口观感 = 宿主 clearColor 这一层 +（仅磨砂档）EUI-NEO 挂在 GL 视图**之下**的
-    // NSVisualEffectView 材质层。调观感时只能动一层，动错层完全不生效。
-    //   · 半透档：windowEffectRequest 返回 None → macOS 侧把材质视图整条摘除
-    //     （EUI_FX_DEBUG=1 实测 material=0x0），只有**单层** clearColor 参与合成。
-    //     黑壁纸（屏幕最左 48px 条带、壁纸像素实测纯黑 0/0）同位置采样逐位对上算式：
-    //     α=0.90 → 0.90×248.4 = 223.5（实测 223.3）；α=0.94 → 233.5（实测 233.4）。
-    //   · 磨砂档：窗 = α×主题色 + (1−α)×材质输出（材质是 GL 视图的父视图，见下）。
-    // 半透沿革：0.85 → 0.90（2026-09-28「还要降低一点点」）→ 0.94（2026-09-29 用户
-    // 原话「半透的透明度还是有点高」）。**同一诉求的第二次收紧，步长同为 +0.04**：
-    // 再让 37% 的桌面透出量消失（对壁纸 40×40 物理像素块均值回归的透出斜率
-    // 0.107 → 0.067，恰等于 1−α，两条都逐位对得上）。**若将来半透档改成也请求
-    // WindowEffect::Transparent（材质以 alpha 0.4 参与合成），本值须重新标定**：
-    // 两层叠加约 0.94 + 0.06 × 0.4 = 0.98，偏实。
-    if (mode == kWindowEffectTranslucent) return 0.94f;
-    // 磨砂 0.55 → 0.30（2026-09-29 用户原话「磨砂现在完全不透明了」）。取证在先，
-    // 先排除掉一条**不成立**的候选再动值：
-    // ① 不是「自绘的页面/侧边栏 surface 盖住了 clearColor」：off 档设置页空白区与
-    //    侧边栏空白区实测就是 clearColor 原值 (250,249,245)、sd=0（页面与侧边栏都
-    //    不自铺不透明底，见 app_sidebar.cpp 的同类注释）→「改自绘层 alpha」这条路
-    //    在本仓库不存在，用户观测到的「只比关闭档暗 15/255」也不是它造成的。
-    // ② 真因是材质层：磨砂档 EUI-NEO 挂 NSVisualEffectView（EUI_FX_DEBUG=1 实测
-    //    materialValue=13=HUDWindow / blending=1=WithinWindow / state=1=Active /
-    //    alphaValue=1.00），而它是 GL 视图的**父**视图 → GL 的 clearColor 是盖在
-    //    材质上的「主题色纱」，桌面的明暗要穿过「材质」再穿过这层纱才露得出来。
-    //    实测：材质自身只把约 28% 的壁纸对比度透过来（α=0.55 时回归斜率 0.126
-    //    = 0.45 × 0.28），黑壁纸同位置采样 198.1/248.4 —— 壁纸 ±60 的明暗差进到
-    //    窗口只剩 ±8，肉眼即「完全不透明」。
-    // ③ 因此只能动 α：0.30 → 同位置采样 170.4（比 0.55 再暗 27.7/255），斜率 0.225
-    //    ≈ 原来的 1.8 倍，被材质糊过的桌面结构肉眼可见（改前/改后截图见交付说明）。
-    // 上限在 **EUI-NEO 侧**：材质 alphaValue=1.0 + WithinWindow 决定了磨砂最多只能
-    // 透出 ~28% 对比度，真正的毛玻璃观感要改 kMaterialAlpha 或换 BehindWindow 混合
-    //（window_effect_macos.mm）；本轮禁改 EUI-NEO，DevDesk 侧只把纱掀到看得见材质。
-    // ⚠ 取证修订：本节的斜率 / 采样均值取自 2026-09-29 14:00-14:16 的 EUI-NEO 修订
-    //（材质视图 = GL 父视图、窗口背景 = clearColor 透明黑那一版）。同日 14:24 起
-    // EUI-NEO 在改标题栏链路（改用 setBackgroundColor(主题色, clearColor α) +
-    // titlebarAppearsTransparent），实测会把内容区压成「不透桌面」——换修订后**本节
-    // 所有数字都要重新标定**，判据仍是同一位置采样均值 + 对壁纸块均值的透出斜率。
-    // 平台注记：本常量同时供 Windows 的 DWM Acrylic backdrop 用，方向一致（纱薄 →
-    // backdrop 更可见），但 Windows 侧本轮无机器复测，只做了算式推演。
-    if (mode == kWindowEffectFrosted) return 0.30f;
+    if (mode == kWindowEffectTranslucent) return 0.45f;
+    if (mode == kWindowEffectFrosted) return 0.15f;
     return 1.0f;  // off / 未知值：实色
+}
+
+float windowEffectTitleBarAlpha(const std::string& mode) {
+    // 标题栏那层的 alpha（= 窗口背景色）。磨砂档取 0.65 而不是更低：材质输出
+    // M(0.65) ≈ 193 使标题栏与内容区都落在「浅灰、深色文字仍清晰」的区间（黑壁纸
+    // 实机截图复核，文字可读）；再低（如 0.30 → M=149）标题栏会发暗、观感偏「玻璃」。
+    if (mode == kWindowEffectTranslucent) return 0.90f;
+    if (mode == kWindowEffectFrosted) return 0.65f;
+    return 1.0f;
+}
+
+float windowEffectThemeOpacity(const std::string& mode) {
+    // 两层同色叠加后主题色的**有效不透明度**：1 − (1−标题栏α)(1−内容区α)。
+    // 对无材质的档（off / translucent）精确成立（黑壁纸实测逐位对上），供单测锁住
+    // 「230–240 目标带」而不是只锁常量值；磨砂档多一层材质，本式不适用（见上注释）。
+    const float content = windowEffectAlpha(mode);
+    const float bar = windowEffectTitleBarAlpha(mode);
+    return 1.0f - (1.0f - bar) * (1.0f - content);
 }
 
 core::platform::WindowEffect windowEffectRequest(const std::string& mode) {
@@ -269,8 +269,22 @@ std::string windowEffectDegradedHint(const std::string& mode,
 void applyWindowVisuals(const std::string& mode) {
     // 底色跟随当前主题 token，alpha 按档位；setClearColor 覆盖主窗口 + 全部
     // 存活子窗口并触发全量重绘（EUI-NEO Phase B），主题切换底色即时跟随
-    const eui::Color& bg = core::theme::current().colors.background;
+    const core::theme::Tokens& theme = core::theme::current();
+    const eui::Color& bg = theme.colors.background;
     app::setClearColor(eui::Color{bg.r, bg.g, bg.b, windowEffectAlpha(mode)});
+    // 标题栏底：同主题色、**独立 alpha**（见 windowEffectTitleBarAlpha 注释）。
+    // 显式给 customColor → 不再走 EUI-NEO 的「按 clearColor 推导」兜底
+    //（那条推导把两处 alpha 绑成同一个值，正是标题栏/内容区劈叉的成因）
+    const auto channel = [](float v) -> unsigned {
+        const float c = v < 0.0f ? 0.0f : (v > 1.0f ? 1.0f : v);
+        return static_cast<unsigned>(c * 255.0f + 0.5f);
+    };
+    core::platform::TitleBarAppearance appearance{theme.isDark};
+    appearance.customColor = true;
+    appearance.colorAbgr = (channel(bg.b) << 16) | (channel(bg.g) << 8) |
+                           channel(bg.r);   // COLORREF 0x00BBGGRR
+    appearance.colorAlpha = windowEffectTitleBarAlpha(mode);
+    app::setTitleBarAppearance(appearance);
     // backdrop 请求（EUI-NEO Phase C）：下一帧应用，实际生效值经
     // app::activeWindowEffect() 回查，降级由设置页提示
     app::setWindowEffect(windowEffectRequest(mode));
