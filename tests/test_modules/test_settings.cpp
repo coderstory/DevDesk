@@ -1087,29 +1087,30 @@ REGISTER_TEST(settings_window_effect_param_mapping, "settings: 档位→alpha/ba
     using WE = core::platform::WindowEffect;
 
     // 两处 alpha 各自独立（2026-09-29 二轮黑壁纸标定）：
-    //   clearColor（内容区纱）：off=1.0 / translucent=0.70 / frosted=0.15 / 未知→1.0
-    //   窗口背景色（标题栏底）：off=1.0 / translucent=0.95 / frosted=0.65 / 未知→1.0
+    //   clearColor（内容区纱）：off=1.0 / translucent=0.60 / frosted=0.15 / 未知→1.0
+    //   窗口背景色（标题栏底）：off=1.0 / translucent=0.90 / frosted=0.65 / 未知→1.0
     // 回退任一常量本用例即红（旧值：两处同为 0.94 / 同为 0.30，即 EUI-NEO 按 clearColor
     // 推导标题栏底的年代——那正是 P1「半透等同关闭」与 P2「标题栏与内容区差 105」的成因）
     DOCTEST_CHECK(ms::windowEffectAlpha(ms::kWindowEffectOff) == 1.0f);
-    DOCTEST_CHECK(ms::windowEffectAlpha(ms::kWindowEffectTranslucent) == 0.70f);
+    DOCTEST_CHECK(ms::windowEffectAlpha(ms::kWindowEffectTranslucent) == 0.60f);
     DOCTEST_CHECK(ms::windowEffectAlpha(ms::kWindowEffectFrosted) == 0.15f);
     DOCTEST_CHECK(ms::windowEffectAlpha("bogus") == 1.0f);
     DOCTEST_CHECK(ms::windowEffectTitleBarAlpha(ms::kWindowEffectOff) == 1.0f);
-    DOCTEST_CHECK(ms::windowEffectTitleBarAlpha(ms::kWindowEffectTranslucent) == 0.95f);
+    DOCTEST_CHECK(ms::windowEffectTitleBarAlpha(ms::kWindowEffectTranslucent) == 0.90f);
     DOCTEST_CHECK(ms::windowEffectTitleBarAlpha(ms::kWindowEffectFrosted) == 0.65f);
     DOCTEST_CHECK(ms::windowEffectTitleBarAlpha("bogus") == 1.0f);
 
-    // 半透档目标（用户给的判据，黑壁纸口径）：内容区 ≥ 244（向关闭档 250 靠）**且仍
-    // 严格小于 250**（保住「半透」还是个可辨档位）。244 这个下限的来历：用户第 4 次
-    // 反馈「看不清内容」时实测只有 236.3、且落在纱上的正文对比度掉到关闭档的 88%
-    //（15.96:1 → 14.10:1）；反解「对比度 ≥ 关闭档 95%」与「≥244」两条线几乎同一条
-    //（244/250 = 0.976，k ≥ 0.9776），故取像素判据当前者。
-    // **这条锁的是目标不是常量**：回退半透档任一 alpha（例如 0.70/0.95 → 0.45/0.90）
-    // → 有效不透明度 0.945 → 236.3，直接出带变红；再回退到「两层同 0.94」→ 249.1 变红。
+    // 半透档目标带（用户第三轮反馈「半透的透明度几乎没了」后重标）：**240 上下一档**。
+    // 带的两端都有来历，不是随手取的：
+    //   下界 236 —— 用户第 4 次反馈「看不清内容」时实测 236.3，低于此即重蹈覆辙；
+    //   上界 244 —— 第 5 次反馈「几乎没了」时实测 246.25，高于此即与关闭档无差。
+    // 故 0.60/0.90 → 250×(1−0.10×0.40) = 240.0，落在带中央。
+    // **这条同时锁常量与目标**：回退任一 alpha（如 0.60/0.90 → 0.70/0.95）→ 246.25 出上界变红；
+    // 回退到首轮 0.45/0.90 → 236.25 出下界变红；回退到「两层同 0.94」→ 249.1 变红。
     const float translucentOverBlack =
         250.0f * ms::windowEffectThemeOpacity(ms::kWindowEffectTranslucent);
-    DOCTEST_CHECK(translucentOverBlack >= 244.0f);
+    DOCTEST_CHECK(translucentOverBlack >= 236.0f);
+    DOCTEST_CHECK(translucentOverBlack <= 244.0f);
     DOCTEST_CHECK(translucentOverBlack < 250.0f);
     // 关闭档：实色，黑壁纸下恒 250
     DOCTEST_CHECK(250.0f * ms::windowEffectThemeOpacity(ms::kWindowEffectOff) == 250.0f);
@@ -1166,15 +1167,15 @@ REGISTER_TEST(settings_window_effect_apply_visuals, "settings: applyWindowVisual
     namespace ms = module::settings;
     using WE = core::platform::WindowEffect;
 
-    // 半透档：clearColor alpha=0.70 + backdrop 请求 None（显式关）
+    // 半透档：clearColor alpha=0.60 + backdrop 请求 None（显式关）
     ms::applyWindowVisuals(ms::kWindowEffectTranslucent);
-    DOCTEST_CHECK(app::currentClearColor().a == 0.70f);
+    DOCTEST_CHECK(app::currentClearColor().a == 0.60f);
     DOCTEST_CHECK(app::currentWindowEffect() == WE::None);
     // 标题栏底**独立** alpha（显式 customColor 覆盖 EUI-NEO 的按 clearColor 推导）
     {
         const auto tb = app::currentTitleBarAppearance();
         DOCTEST_CHECK(tb.customColor);
-        DOCTEST_CHECK(tb.colorAlpha == 0.95f);
+        DOCTEST_CHECK(tb.colorAlpha == 0.90f);
     }
 
     // 磨砂档：alpha=0.15 + Acrylic 请求 + 标题栏 0.65

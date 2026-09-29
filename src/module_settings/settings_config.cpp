@@ -230,7 +230,7 @@ SettingsConfig SettingsStore::sanitized(const SettingsConfig& cfg) {
 //     窗口捕获不含它）
 //   · 关闭档不变：三区恒 250,249,245（alpha=1 实色）
 float windowEffectAlpha(const std::string& mode) {
-    if (mode == kWindowEffectTranslucent) return 0.70f;
+    if (mode == kWindowEffectTranslucent) return 0.60f;
     if (mode == kWindowEffectFrosted) return 0.15f;
     return 1.0f;  // off / 未知值：实色
 }
@@ -243,7 +243,7 @@ float windowEffectTitleBarAlpha(const std::string& mode) {
     // 磨砂档取 0.65 而不是更低：材质输出 M(0.65) ≈ 193 使标题栏与内容区都落在
     //「浅灰、深色文字仍清晰」的区间（黑壁纸实机截图复核，文字可读）；再低
     //（如 0.30 → M=149）标题栏会发暗、观感偏「玻璃」。
-    if (mode == kWindowEffectTranslucent) return 0.95f;
+    if (mode == kWindowEffectTranslucent) return 0.90f;
     if (mode == kWindowEffectFrosted) return 0.65f;
     return 1.0f;
 }
