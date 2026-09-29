@@ -52,6 +52,39 @@ REGISTER_TEST(keychain_delete_nonexistent, "keychain: delete nonexistent ok", {
     return true;
 })
 
+// 空 service / 空 account 在 macOS Keychain API 里是**通配**（serviceLength /
+// accountLength 传 0 = 匹配任意值），于是「空 account」会被静默当成「随便给我
+// 一条」——load 返回**别人**的密钥、delete 删掉**别人**的条目。本仓库空 account
+// 有确切含义 =「该 profile 没有密钥」（反向同步「缺席即清空」会清空
+// keychain_account），此时必须回答「没有这条」。见 keychain_macos.cpp 的
+// 「空 service / 空 account 守卫」段。
+// 断言顺序是**故意的**：store 放最前。守卫被摘掉时它先红（fail-fast），后面的
+// load / delete 断言就不再执行 —— 否则 load 会真的从用户真实钥匙串里读出一条
+// 任意密钥、delete 更会通配删掉真实条目（实测：摘掉守卫后 loadSecret("","")
+// 返回 Ok，即整库任取一条）。摘守卫的代价只有一条：往
+// DevDeskTestBlankIdentity 这个测试专用 service 写一条空 account 条目（缺陷本身
+// 的行为），可在「钥匙串访问」里手工删除。
+#if defined(__APPLE__)
+REGISTER_TEST(keychain_blank_identity_no_wildcard,
+              "keychain: 空 service/account 不通配（macOS）", {
+    // store：无身份可写 → 显式拒绝（不通配删旧，也不写查不回来的孤儿条目）
+    auto stored = platform::keychain::storeSecret("DevDeskTestBlankIdentity", "",
+                                                  "sk-blank-identity");
+    DOCTEST_CHECK(stored.isFail());
+
+    // load：空 account / 空 service / 两者皆空 → 一律没这条，不能命中任意条目
+    DOCTEST_CHECK(platform::keychain::loadSecret("DevDeskTestBlankIdentity", "")
+                      .isFail());
+    DOCTEST_CHECK(platform::keychain::loadSecret("", "claude:blank").isFail());
+    DOCTEST_CHECK(platform::keychain::loadSecret("", "").isFail());
+
+    // delete：无身份 = 没有这条 → 幂等 ok（不允许落成通配删除）
+    DOCTEST_CHECK(
+        platform::keychain::deleteSecret("DevDeskTestBlankIdentity", "").isOk());
+    return true;
+})
+#endif
+
 REGISTER_TEST(keychain_delete_secrets_not_in,
               "keychain: deleteSecretsNotIn 只留 keep 集合", {
     SKIP_ON_MACOS_KEYCHAIN();   // 写 3 条 + 枚举整库 → macOS 跳过
