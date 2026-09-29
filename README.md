@@ -159,18 +159,36 @@ Windows 构建默认静态链接（sqlite3 / curl / ssl / crypto / C++ 运行时
 <h2 align="center"><a name="架构"></a>🏗 架构</h2>
 
 ```mermaid
-graph TD
-    M["main"] --> MOD["modules"]
-    MOD --> M1["home"] & M2["markdown"] & M3["todo"] & M4["claude_proxy"] & M5["settings"] & M6["pet"]
-    MOD --> CORE["core<br/><sub>Result · SqliteDb · Router · Theme · Logging</sub>"]
-    CORE --> PLAT["platform<br/><sub>HttpClient · HttpServer · Keychain · Json</sub>"]
-    PLAT --> EUI["EUI-NEO<br/><sub>OpenGL / Vulkan × GLFW / SDL2</sub>"]
+flowchart TD
+    main(["main"])
 
-    style M fill:#D97757,color:#fff,stroke:none
-    style MOD fill:#f5f2ec,stroke:#d0c9bd
-    style CORE fill:#f5f2ec,stroke:#d0c9bd
-    style PLAT fill:#f5f2ec,stroke:#d0c9bd
-    style EUI fill:#f5f2ec,stroke:#d0c9bd
+    subgraph modules["modules · 六个独立静态库，互不依赖"]
+        direction LR
+        home["home"]
+        markdown["markdown"]
+        todo["todo"]
+        claude["claude_proxy"]
+        settings["settings"]
+        pet["pet"]
+    end
+
+    core["core · Result / SqliteDb / Router / Theme / Logging"]
+    platform["platform · HttpClient / HttpServer / Keychain / Json"]
+    eui["EUI-NEO · OpenGL / Vulkan × GLFW / SDL2"]
+
+    main --> modules
+    modules --> core
+    core --> platform
+    platform --> eui
+
+    classDef accent fill:#D97757,stroke:#D97757,color:#FFFFFF
+    classDef layer fill:#FAF8F4,stroke:#D9D2C7,color:#2B2B2B
+    classDef mod fill:#F5F2EC,stroke:#D9D2C7,color:#4A4A4A
+
+    class main accent
+    class core,platform,eui layer
+    class home,markdown,todo,claude,settings,pet mod
+    style modules fill:#FFFFFF,stroke:#D9D2C7,stroke-dasharray: 4 4
 ```
 
 <h4 align="center">贯穿全局的几条约定</h4>
@@ -198,8 +216,8 @@ graph TD
 
 <table align="center">
 <tr><th align="left">平台</th><th align="left">状态</th><th align="left">说明</th></tr>
-<tr><td><b>macOS 27+</b> (arm64)</td><td>✅ 主开发平台</td><td>窗口效果三档（关闭 / 半透 / 磨砂）走原生材质</td></tr>
-<tr><td><b>Windows 11</b></td><td>✅ 移植目标</td><td>单 exe 零外部 DLL；窗口效果走 DWM</td></tr>
+<tr><td><b>macOS 27+</b> (arm64)</td><td>✅ 原生支持</td><td>窗口效果三档（关闭 / 半透 / 磨砂）走原生材质</td></tr>
+<tr><td><b>Windows 11</b></td><td>✅ 原生支持</td><td>单 exe 零外部 DLL；窗口效果走 DWM 原生 API</td></tr>
 </table>
 
 ---
@@ -211,7 +229,6 @@ graph TD
 <tr><td><a href="CLAUDE.md"><code>CLAUDE.md</code></a></td><td>开发指南：工具链、构建约定、架构约束、协作纪律</td></tr>
 <tr><td><a href="docs/superpowers/specs/"><code>docs/superpowers/specs/</code></a></td><td>设计与需求 spec（权威文档）</td></tr>
 <tr><td><a href="docs/USER_GUIDE.md"><code>docs/USER_GUIDE.md</code></a></td><td>使用说明</td></tr>
-<tr><td><a href="docs/KNOWN_LIMITATIONS.md"><code>docs/KNOWN_LIMITATIONS.md</code></a></td><td>已知限制</td></tr>
 </table>
 
 ---
