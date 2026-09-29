@@ -1,0 +1,153 @@
+{
+  "meta": {
+    "subject": "分支 feat/pet-bubble-and-size 三提交审计（bec7547 气泡上移 / cdb9bb3 显示大小三档 / 519bb64 删切肤 toast）",
+    "date": "2026-09-30",
+    "auditor": "独立只读审计 agent（非实现者，未参与本批实施；唯一写动作 = 本审计文件）",
+    "method": "git diff 73af50b...feat/pet-bubble-and-size 全量逐行核（16 文件 +523/-41）；全仓 grep 调用点/耦合面（clamp 调用方、PetWindowConfig 聚合初始化 9 处、kPetCardHeight 消费点、桥 include 面、setStatus 残留、测试几何断言）；EUI-NEO ImagePrimitive fit 语义实读（image.cpp:740-830）；commit message 断言逐条对 diff 实证",
+    "code_base": "DevDesk feat/pet-bubble-and-size 519bb64（基线 73af50b）",
+    "note": "行号为分支快照；本审计只读，测试未复跑（含变异自检），红绿证据的可信度经断言逻辑分析核实，计数 44/44+90/90 无独立复跑"
+  },
+  "dimensions": {
+    "1_correctness": {
+      "status": "已核（发现 1 条）",
+      "conclusion": "三档换算数学与声称一致：128 基准 × 0.75/1.0/1.5 = 96/128/192，+34 让位条 = 130/162/226（pet_bubble.h kBubbleStripH=28+6，断言钉死）；whale-girl 328×212×1.5=492×318 无钳制无变形。超界皮肤逐档行为：sakura-chan/whale-maid 512×512 在 1.5× 钳回 512×512 无失真；kirari 360×480 在 1.5× 逐维钳 540×720→512×512，长宽比 0.75→1.0——sprite ui.image（pet_window.cpp:350）未设 imageFit，EUI-NEO 默认 ImageFit::Cover（render_types.h:12-16、image.cpp:259）按中心裁 UV（image.cpp:785-791 实读）：imageAspect 0.75 < rectAspect 1.0 → v0/v1 各收 12.5%，kirari 大档头顶与脚部各被裁掉 12.5%（F1）——非变形但为可见缺陷。16/512 双界钳制（16×0.75=12→16、512×1.5=768→512）有断言。气泡条不相交性与帧形状无关：sprite.y=34 恒 > 气泡底 28，垂直分离对超窄（16 宽）/超长帧均成立，bubbleW 80 下限超窗宽的两侧裁切为改前既有限制且代码注释已声明。单位口径：全 diff 零 contentScale 引用，mac 点 / Win 客户区物理像素各自同一条口径，×scale 不引入 DPI 乘数，与改前一致。"
+    },
+    "2_regression": {
+      "status": "已核（发现 2 条）",
+      "conclusion": "scale 四路贯穿实证：startPetWindow（pet_window.cpp:692 开窗尺寸+709 钳制）、applyPetSkin 热换肤携带 rt.config.scale（:824）、resetPetPosition（:843 整窗口径）、clampPetPosIntoWorkAreaInPlace（:129，savePetPosition:149 拖拽落盘同享）；showPetWindow（:770）经 rt.config 携带。PetWindowConfig 聚合初始化全仓 9 处逐一核对：4 参（main.cpp:660 / applyPetSkin:824 / 测试 3 处）与 3 参/0 参（scale 走默认 1.0）无一位错——函数指针不能转 double，第 4 位错位编译期即红。main.cpp 入改动清单的原因 = petCfg.scale 补第 4 参：PetWindowConfig.scale 有默认值 1.0，漏改不报错、只会让启动静默丢盘上的档位——恰是必须核的静默点，已改对。设置卡 120→168：kPetCardHeight 单源（仅 settings_module.cpp:151 消费），卡布局按表累加、新增 48px 自然下推兄弟卡，卡内既有几何断言全为相对关系（基线对齐 :1739-1755、卡内包含 :1757-1760）非绝对 y，无绝对位耦合；目录卡仅有存在性/z 序断言（:577,1410-1412），无像素位耦合。隔离守卫：settings_module.cpp 仅 include module_pet_bridge.h（:97，A1 四条负向断言零命中）；但守卫脚本 A3「桥函数真被调用」清单未纳入 3 条新桥（F6）。F2：applyPetScaleIndex 热切换重开用陈旧 rt.config.x/y。"
+    },
+    "3_platform_symmetry": {
+      "status": "已核",
+      "conclusion": "scaledFrameSize / petWindowHeight / petBubbleRect / petSpriteRect / sanitizePetScale 全部纯函数，diff 零平台宏（grep _WIN32/__APPLE__ 零命中），符合接口隔离红线。窗口单位口径两平台自洽：mac 窗口尺寸 = 点（windowScaleForPoint 恒 1.0）、Windows = 客户区物理像素（125% DPI）——×scale 乘的是各自窗口单位，未引入任何 contentScale/DPI 乘数，与改前帧紧包围盒同一条口径，无多除少除。[16,512] 钳制作用在窗口单位上：Windows 125% 下 512 物理 px ≈ 410 逻辑点的既有口径不变（该口径差为改前已有，非本批引入）。clampPetPosToMonitors 两路径（启动 :709 / 落盘 :131）同传整窗高，getMonitorWorkAreas 返回单位与窗口单位同源（EUI-NEO 既有 API），气泡条越界回贴两平台同语义。"
+    },
+    "4_silent_failure": {
+      "status": "已核（1 条备忘）",
+      "conclusion": "盘点新增失败路径：①scale 键缺失/非数字 → 静默回落默认 1.0（pet_config.cpp:87-88）；②白名单外值（手改 0.9/2.0）→ sanitized 静默收敛 1.0（pet_config.h sanitizePetScale）——两处零日志，与既有 x/y ±32767 静默钳制同口径（F7 备忘，不单独要求修）；③applyPetScaleIndex 越界下标静默拒绝：pet 侧头注释明示「越界静默拒绝不动」+ settings 侧 changePetScaleAt 先行同款守卫（双保险，行为有文档声明非暗吞）；④落盘失败 LOG_WARN（pet_window.cpp:890「桌宠显示大小持久化失败」）；⑤桥函数在 pet 模块未启用（handle==nullptr）时只持久化、不碰窗口句柄，startPetWindow 另有防御性 sanitize（:333），无崩溃路径；⑥成功路径 LOG_INFO 带档位文案与新窗尺寸。无「不崩也不报」的新增暴露。"
+    },
+    "5_test_effectiveness": {
+      "status": "已核（2 条备注）",
+      "conclusion": "两组命名变异经断言逻辑分析均非恒真：①petSpriteRect y 改回 0 → overlap 判定中 bubble 底 28 > sprite 顶 0 且水平方向 bubble 恒与全宽 sprite 相交（含 x 为负的 600 宽气泡）→ !overlap 必红；②scaledFrameSize 改回不缩放 → pet_scale_window_request 的 192/226 与 pet_scale_frame_size 的 mid.first=128 等断言必红。红绿证据可信度成立，但属实现者代码注释自述「已实测」——本审计只读未复跑（唯一写动作约束），44/44 + 90/90 计数在 commit message 中无记载、未独立复跑（备注 1）。「切档不补 toast」口径一致性：与 519bb64 删 toast 同一判据（热切换即时生效、肉眼立即可见），两个下拉行（皮肤/大小）均无 status；位置重置/显示/隐藏仍保留 setStatus 属不同动作类（非即时热切换语义），不构成不一致。519bb64「无测试断言该文案」grep 分支实证零命中为真。备注 2：本批为可见 UI 改动（三档缩放渲染/Cover 裁切效果、气泡条观感），commit 链无实现者截图证据（CLAUDE.md 阶段 4 要求启动 app 截图自验）——F1 的裁切缺陷正是纯数值断言覆盖不到、截图即可肉眼发现的类型。probe 尺寸断言与单测同源（消费 kBubbleStripH 常量，:764-769）。"
+    },
+    "6_doc_consistency": {
+      "status": "已核（发现 2 条）",
+      "conclusion": "三条 commit message 与 diff 逐项相符：bec7547（条高 34 = 28+6、四路钳制改整窗、测试/probe 同步 128→162）实核相符；cdb9bb3（scaledFrameSize 钳界、档位表单源、四路贯穿、卡高 168、三桥含签名哨兵、隔离守卫不变、三用例+变异）实核相符——其中「隔离守卫不变」准确但只指『守卫仍通过』，守卫脚本未随之扩纳新桥（F6）；519bb64（删 setStatus、无测试覆盖该文案、切档沿用同口径）实核相符。拍板链缺失成立（F3）：docs/superpowers/specs/ 无 2026-09-30 桌宠批次条目，气泡条设计/三档口径/删 toast 拍板仅存在于 commit message 与代码注释；TODO.md:8-13 仍登记旧需求「桌宠最大高度设置（默认 288、范围 [48,512]、皮肤超过**等比缩放**）」且标『已取消』——与本批三档形态不同、未更新交叉引用，且其「等比缩放」措辞反衬本批逐维钳制（F1）偏离了原始需求口径。F4：test_settings.cpp:1758 注释「卡高 120 / 底沿 104」与 kPetCardHeight=168 矛盾。"
+    }
+  },
+  "findings": [
+    {
+      "file": "src/module_pet/pet_skin.h + src/module_pet/pet_window.cpp",
+      "line": 41,
+      "lens": "正确性",
+      "severity": "medium",
+      "confidence": "high",
+      "issue": "kirari（内置皮肤 360×480）在「大 1.5×」档被中心裁切：scaledFrameSize 逐维 ×1.5 后独立钳 [16,512]（540×720→512×512），窗口/精灵矩形长宽比从 0.75 变 1.0；而 pet.sprite 的 ui.image（pet_window.cpp:350）未设 imageFit，吃 EUI-NEO 默认 ImageFit::Cover——image.cpp:785-791（实读）在 imageAspect(0.75)<rectAspect(1.0) 时按 visible=0.75 中心收 UV，精灵头顶与脚部各裁掉 12.5%。六内置皮肤中唯一受影响（sakura/whale-maid 方形无失真，其余四款 1.5× 不越界）。纯数值断言（宽高数值）覆盖不到该缺陷。",
+      "impact": "用户选「大」的直接结果是一只内置皮肤的头脚被裁——与功能意图（显示更大）相反；三档宣称『窗口尺寸与精灵渲染同步缩放』对该皮肤在 1.5× 档不成立。且 TODO.md 原始需求措辞是「等比缩放」，逐维钳制偏离了登记过的口径。",
+      "suggestion": "scaledFrameSize 改等比钳制：单因子 s = min(scale, 512/w, 512/h)，返回 {round(w*s), round(h*s)}——kirari 1.5× 得 384×512，窗口贴合精灵、零裁切，也正好回归「等比缩放」口径；其余档位/皮肤行为不变（不越界时 s=scale）。备选：pet.sprite 显式 .imageFit(Contain)（透明窗下 letterbox 不可见），但窗口会留空边，不如等比钳制。修正后补 kirari 大档截图证据。"
+    },
+    {
+      "file": "src/module_pet/pet_window.cpp",
+      "line": 899,
+      "lens": "回归面",
+      "severity": "low",
+      "confidence": "high",
+      "issue": "applyPetScaleIndex 热切换重开用陈旧位置：:885 把当前窗口位置钳制后写入 cfg（并落盘），但 :899 startPetWindow(rt.config) 用的是 rt.config.x/y——该值只在 startPetWindow/resetPetPosition 时更新，拖拽仅经 savePetPosition 落盘不回写 rt.config。拖拽后切档 → 窗口关旧开新回到拖拽前位置（本会话内），重启后又回到拖拽位（盘是对的）。与 applyPetSkin 不对称：换肤重开显式传 cfg.x/cfg.y（:824，新鲜值），代码注释「与换肤同一条位置沿用路径」与实现不符。",
+      "impact": "拖拽摆位 → 调大小，桌宠肉眼可见跳回旧位；同一会话内显示位置与落盘位置分叉。低频但用户可感，且注释声明与实现矛盾会误导下一个维护者。",
+      "suggestion": "仿 applyPetSkin：startPetWindow(PetWindowConfig{rt.config.skinName, cfg.x, cfg.y, scale, rt.config.getOverdueCount, rt.config.getProxyEvent})——新鲜坐标已在手，只差传下去。"
+    },
+    {
+      "file": "TODO.md + docs/superpowers/specs/",
+      "line": 8,
+      "lens": "文档口径",
+      "severity": "low",
+      "confidence": "high",
+      "issue": "拍板链缺失：本批三项（气泡让位条 34px、显示大小三档 0.75/1.0/1.5、删切肤 toast 及「切档不补 toast」口径）在 docs/superpowers/specs/ 与 plans/ 零登记（grep 实证），设计依据只在 commit message 与代码注释；TODO.md:8-13 的「桌宠最大高度设置」标『已取消』但仍保留旧形态（单值上限 + 等比缩放），与本批实现（三档预设 + 逐维钳制）的关系（取代/演化）未写明。",
+      "impact": "违反本仓「文档驱动：实现前先读 spec」与六阶段流程对拍板留痕的预期；下一轮改动（如调档位数值、改钳制策略）没有可对照的权威口径；F1 的逐维 vs 等比分歧正说明缺登记的口径会在实现期漂移。",
+      "suggestion": "补一页薄 spec（或 plans/ 决策记录）：三档数值与默认档来源（用户 2026-09-30 拍板）、气泡条几何、删 toast 口径、逐维钳制的取舍与 kirari 结论；TODO.md #1 加一行「已由 2026-09-30 三档方案取代 → 指向新 spec」。"
+    },
+    {
+      "file": "scripts/check-module-isolation.sh",
+      "line": 100,
+      "lens": "回归面",
+      "severity": "nano",
+      "confidence": "high",
+      "issue": "隔离守卫 A3「桥函数都真被调用」清单未随本批扩展：仍为 discoverSkins/applyPetSkin/resetPetPosition/currentSkinName/closePetWindow 五条（:100-102），新增 currentPetScaleIndex/petScalePresetLabels/applyPetScaleIndex 三条桥不在列（showPetWindow 为既有遗漏）。守卫仍通过（新桥用 ::module::pet:: 调用形，A1 负向断言零命中），但「解耦不是删功能」的正向保护未覆盖新桥。",
+      "impact": "未来若 settings 侧丢掉三条新桥的调用，守卫不红——隔离退化为静默。",
+      "suggestion": "A3 for 列表追加三个新函数名（一行改动），顺带补 showPetWindow。"
+    },
+    {
+      "file": "tests/test_modules/test_settings.cpp",
+      "line": 1758,
+      "lens": "文档口径",
+      "severity": "nano",
+      "confidence": "high",
+      "issue": "注释「内容底沿不变：加标签不动卡高 120 / 底沿 104」——kPetCardHeight 本批已 120→168（底沿 152），注释失实（断言本身 field 底 ≤ card 底仍有效）。",
+      "impact": "本仓审计口径反复抓的「注释数字与代码漂移」同类新例。",
+      "suggestion": "改注释为「行仍在卡内（卡高 168、内容底沿 152）」。"
+    },
+    {
+      "file": "src/module_pet/pet_config.cpp",
+      "line": 87,
+      "lens": "静默失败面",
+      "severity": "nano",
+      "confidence": "high",
+      "issue": "scale 键非数字/白名单外值回落默认 1.0 全程零日志（load :87-88、sanitized）。与既有 x/y 静默钳制同口径，且有 startPetWindow 防御性 sanitize + 头注释声明，非暗吞新类。",
+      "impact": "手改 pet_config.json 的用户无从得知值被收敛；排查「档位不对」时无日志可查。",
+      "suggestion": "登记为已知口径即可（与 x/y 一致）；若要收敛日志面，可在 sanitized 收敛发生时加一条 LOG_DEBUG。不强制。"
+    },
+    {
+      "file": "src/module_settings/settings_module.cpp + src/module_pet/pet_window.cpp",
+      "line": 477,
+      "lens": "回归面",
+      "severity": "nano",
+      "confidence": "high",
+      "issue": "同一次切档产生两条 INFO 日志：settings 侧「Settings: 桌宠显示大小 → …」（settings_module.cpp:477-478）+ pet 侧「桌宠显示大小 → …（已热切换）」（pet_window.cpp:901-902）。",
+      "impact": "日志双计；排查时两条互相印证不算坏，但属冗余噪音。",
+      "suggestion": "留 pet 侧一条（它带热切换/下启生效状态），删 settings 侧；或 settings 侧降 DEBUG。"
+    }
+  ],
+  "verified_positive": [
+    "三档换算数学与断言逐一相符：128→96/128/192（+34 = 130/162/226）、whale-girl 328×212×1.5=492×318、双界 12→16 / 768→512 均有数值断言钉死",
+    "scale 四路贯穿 + showPetWindow 携带全实证（pet_window.cpp:129/692/709/824/843/770）；savePetPosition 拖拽落盘共享整窗钳制",
+    "main.cpp 改动 = petCfg.scale 补第 4 参，堵住『scale 有默认值、漏改不报错只静默丢档』的坑——已改对",
+    "PetWindowConfig 聚合初始化全仓 9 处逐一核对无位错（函数指针→double 不可转换 = 编译期保险）",
+    "气泡/精灵垂直分离与帧形状无关恒成立：超窄 16 宽、超窗 600 宽气泡、方形/非方形帧全组合在测（pet_bubble_layout_disjoint 双层循环）",
+    "单位口径干净：全 diff 零 contentScale/DPI 乘数、零平台宏，mac 点与 Win 物理像素各自自洽（与改前同口径）",
+    "settings 隔离零破坏：仅 include module_pet_bridge.h（:97），签名哨兵 3 条新增，卡内新行几何断言全相对（基线/包含）非绝对 y，卡高 168 经 kPetCardHeight 单源生效",
+    "toast 删除「无测试覆盖该文案」grep 实证为真；两个下拉行的『不补 toast』口径自洽",
+    "PetsDirEnv 正确设 DEVDESK_PETS_DIR，桥读写测试（pet_scale_config_roundtrip）不污染真实用户配置",
+    "probe 与单测尺寸断言同源消费 kBubbleStripH 常量（pet_probes.cpp:764-769），不会与常量调整漂移",
+    "两组命名变异经断言逻辑分析均非恒真（sprite y→0 → overlap 必红；不缩放 → 192/226 必红）"
+  ],
+  "conclusion": {
+    "verdict": "需修后合并",
+    "blocker": "F1（medium：kirari 大档 Cover 中心裁切，等比钳制一处纯函数修正即可）",
+    "recommended": "F2（热切换陈旧位置回退）与 F3（spec/TODO 拍板链补登记）随修；F4-F7 nano 顺手清理或登记不修",
+    "merge_path": "F1/F2 修于同一分支 → 独立复查 → 定向测试（pet/settings + probe）→ 合并"
+  },
+  "recheck": {
+    "date": "2026-09-30",
+    "subject": "复查实现者修正提交 15cc384（diff 范围 = 519bb64..feat/pet-bubble-and-size，9 文件 +125/-24，含 impl-verify.md 处置记录）",
+    "method": "修正 diff 全量逐行核 + 原发现逐条对账 + EUI-NEO Cover 语义复引 + 变异红路径断言逻辑分析 + /tmp/pet_kirari_big.png 落图实读（190KB，真 GLFW 渲染帧）",
+    "checkpoint_1_F1_等比单因子": {
+      "status": "通过",
+      "conclusion": "实现正确：f = min({scale, 512/w, 512/h})（pet_skin.h），round(w·f)/round(h·f)——kirari 1.5× → f=512/480 → 384×512（宽高比 0.75 保持，Cover 恰好贴合零裁切）；方形 512×512×1.5 → f=1.0 → 512×512；不越界时 f=scale 行为与修前一致。下界不钳**无新风险**：生产域 w,h ∈ [16,512] 由 parsePetSkinJson 界定（越界不入 frameWidth/Height、默认 128×128）、scale ∈ {0.75,1.0,1.5} 由 sanitize 双点保证——唯一行为差 = 16 帧皮肤小档 12×46 窗（修前 16×50），合法无边框定窗、无害。新增防御分支（w/h/scale ≤ 0 原样返回）在生产域不可达，仅备忘。",
+      "mutation_credibility": "新增断言非恒真、改回逐维钳必红（逻辑实证）：kirari 384×512 精确断言（逐维钳给 512×512）必红；9 组合等比不变式（比值偏差 < 0.02，含 kirari 组合偏差 0.25）必红；atMin 16→12 双向钉死（旧代码给 16 红、新代码 12）。实现者自述变异 43/44 红 → 恢复 44/44 绿与该分析一致（迷你框架按 REGISTER_TEST 计例，单用例红 = 43/44）。审计未复跑（只读约束），计数系实现者自述。",
+      "visual_evidence": "/tmp/pet_kirari_big.png 实读确认：kirari 大档发顶到鞋全身可见、比例自然无拉伸、气泡在让位条内不遮精灵——F1 修复的视觉闭环成立（临时文件，建议合并时归档或重截）。"
+    },
+    "checkpoint_2_F2_新鲜位置": {
+      "status": "通过",
+      "conclusion": "startPetWindow(PetWindowConfig{rt.config.skinName, cfg.x, cfg.y, scale, getOverdueCount, getProxyEvent})（pet_window.cpp:899-903）与 applyPetSkin:824 逐字段同形态；cfg.x/y 在 if(handle!=nullptr) 块内从当前窗口读回钳制，hotSwap 判同一条件且句柄中途不变（requestWindowClose 异步、手动置 null），hotSwap 为真时 cfg.x/y 必为新鲜值。startPetWindow 侧 re-sanitize + 按新窗尺寸再钳制，行为与修前唯一差异即坐标来源。无新回归面。",
+      "verification_boundary": "无独立断言（无头环境 handle 恒 null、hotSwap 不可达）——实现者已在 2026-09-30-pet-batch-impl-verify.md 登记为已知验证边界，按 applyPetSkin 同形态信任其既有路径。可接受。"
+    },
+    "checkpoint_3_F3-F6_处置对账": {
+      "status": "通过",
+      "conclusion": "F3 = spec §6 三行登记（气泡条几何/三档与等比钳制含 F1 修正理由/删 toast 口径）+ TODO.md #1 交叉引用『已由三档方案取代并交付』——与建议一致且把 F1 修正后的口径写进了登记；F4 = 注释改 168/152 并留演变说明；F5（原审 F6 编号）= 守卫 A3 清单扩至 9 条含 showPetWindow + 三新桥，与建议逐字一致；F6（原审 F7 编号）= load 两处 LOG_WARN（非数字键带路径、白名单外带值），逻辑核无误报（合法 0.75/1.0/1.5 与缺键默认均与 sanitize 返回值恒等、不触发），include/成员既有。F7 双 INFO 日志登记不修——原审计即标『不强制』，处置一致。"
+    },
+    "residual_notes": [
+      "nano：scaledFrameSize 防御分支对非法入参返回原始 dims（可能 0 宽窗）——生产域不可达（parse 界定 [16,512] + sanitize 双点），不要求修",
+      "nano：手改 0.7500000001 这类 1e-6 容差内的近档位值会触发白名单 WARN 但仍按 0.75 收敛——纯日志噪音，JSON 往返实际不可达",
+      "测试计数 44/44（pet 子集）与变异 43/44 红均系实现者自述，审计未复跑；断言逻辑分析支持其可信"
+    ],
+    "verdict": "可合并"
+  }
+}
