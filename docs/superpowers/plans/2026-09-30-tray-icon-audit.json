@@ -1,0 +1,75 @@
+{
+ "meta": {
+  "subject": "fix/tray-template-icon 5e92aaf（diff d201cb5...tip，3 文件 +23 行 / 新增 assets/tray-icon-template.png 488B）实施审计——托盘纯白方块（Bug A）修：.trayIcon template 蒙版 + POST_BUILD 拷贝",
+  "date": "2026-09-30",
+  "auditor": "独立只读审计 agent（非实现者，未参与本批实施）",
+  "method": "PNG 不信描述自解码：git blob 提取后 zlib inflate + 按 IHDR/滤波类型逐行 unfilter，全 484 像素逐点核 RGB 与 alpha（含半透明 AA 像素），ASCII 渲染比对声称形状；EUI-NEO 侧全链实读——resolveIconPath 候选链（core/platform/platform.cpp:521-592）、initializeTray 失败路径（:765-782）、tray_bridge.c 三后端（AppKit eui_tray_image :198-212 / SNI :1014 / Win32 3rd/tray/tray.h :315-371）、DSL 流转（dsl_app.h:46/155、dsl_app_impl.h:315-317、app_runner.h:85）；构建/打包侧实读——CMakeLists.txt 新拷贝块与既有 pets/fonts 块、platform/macos/build-app.sh:112-125、scripts/package-macos.sh:65-92、installer/windows/devdesk.iss:60-69、EUI-NEO eui_neo_copy_assets（CMakeLists.txt:494）；实现者 worktree（.claude/worktrees/fix-tray-template-icon，HEAD=5e92aaf）构建产物 cmp 独立复核",
+  "code_base": "DevDesk fix/tray-template-icon 5e92aaf（自 master d201cb5 单提交切出，merge-base 核实；主仓 checkout 停在 d201cb5，本审计全部 diff/PNG 证据取自 git 对象与 worktree 产物）",
+  "note": "行号为分支 tip 快照。只读约束（唯一写动作 = 本文件）：未重跑构建/测试。「构建绿」与 cmp 证据的独立复核方式：实现者 worktree 内 build/assets 与 build/DevDesk.app/Contents/MacOS/assets 两份 tray-icon-template.png 均为 488B、mtime 06:41/06:42 早于提交时刻 06:43，且双双与本审计自 git blob 提取的基准逐字节一致（cmp 通过）——提交信息声称的两场景 cmp 由等价传递关系证实"
+ },
+ "dimensions": {
+  "1_correctness": {
+   "status": "已核",
+   "conclusion": "①PNG 实核全过：22×22、8-bit RGBA（colortype 6）、non-interlaced，zlib 流完整、IEND 外无多余 chunk；全 484 像素 RGB 逐点为零（不透明 38 + 半透明 282 + 透明 164，无一非黑——commit『全部像素 RGB=0』字面为真，含 AA 像素）；alpha≥200 像素 bbox x[3,18] y[3,18] 居中，ASCII 形状与声称吻合：圆角方轮廓（侧边 2px 主笔画）+ 内部面板恰为 8 列×4 行（第 11-14 行 × 第 7-14 列），282 个半透明像素与 8x 超采样抗锯齿一致。macOS template 渲染只取 alpha 通道，纯黑 RGB 是正确冗余——符合 template 规范。②根因链独立复现成立：dsl_app.h:46 iconPathValue 默认 'assets/icon.png' → 改前 trayIconPathValue 空，dsl_app_impl.h:315-317 回退返回 iconPathValue → app_runner.h:85 → platform.cpp:771 → eui_tray_image（tray_bridge.c:198-212）initWithContentsOfFile 命中圆角方应用图标 → :210 无条件 setTemplate:YES → 模板渲染只剩 alpha 蒙版 = 纯色方块。修复后 trayIconPathValue 非空、不再走应用图标回退。③resolveIconPath 两场景均命中（platform.cpp:521-592 候选链实读）：候选 = 原样路径 / CWD 拼接 ×2（:531-534）/ exeDir 拼接 ×2（:563-565）；build 目录启动（CWD=build）命中 CWD/assets 候选（POST_BUILD 拷贝在）；bundle 启动（CWD=/）CWD 候选全落空，_NSGetExecutablePath → parent_path 的 exeDir 候选命中 Contents/MacOS/assets（build-app.sh:118 cp -R 已证）——与 main.cpp 注释口径一致。路径拼接无双斜杠（parent_path 无尾斜杠、fs::path operator/ 拼相对路径）、文件名三处（git/CMake 拷贝/bundle）逐字节同名同大小写。"
+  },
+  "2_regression": {
+   "status": "已核",
+   "conclusion": "①CMakeLists 新块与既有拷贝链零冲突：新块只 copy_if_different 单文件进 $<TARGET_FILE_DIR>/assets，与 pets 块（copy_directory 进 assets/pets 子树）操作对象不相交；make_directory 幂等兜底（pets 块注册在前、目录先建，兜底不触发也无害）；fonts 块有 EXISTS 守卫不受影响；EUI-NEO eui_neo_copy_assets 拷自身 assets（icon.png/icon.ico 等）与本文件不同源不互覆。②bundle 链精确：platform/macos/build-app.sh:117-118 `cp -R \"$BUILD_DIR/assets\" Contents/MacOS/assets` 整树拷（devdesk_app CMake target 调它，CMakeLists.txt:245-249）；package-macos.sh:69 `cmake -E copy_directory` 同链路——worktree 内 bundle 产物 cmp 逐字节一致为实证。③installer 无需同步：devdesk.iss:65 `Source: \"{#AssetsDir}\\*\"` 的 Excludes 只排 NotoSansSC-VF.ttf（:60-64 注释锁定单一排除动机），新图标（488B）会随 {app}\\assets 进 Windows 安装包——无害且方向正确（Win 侧 resolveIconPath 也找它），不需要改 .iss。"
+  },
+  "3_platform_symmetry": {
+   "status": "已核",
+   "conclusion": "Windows 侧判定：无害降级，非报错/崩溃闸门。链路实读：resolveIconPath 的 _WIN32 分支（platform.cpp:551-568）先探同名 .ico 候选（tray-icon-template.ico 不存在——只拷了 .png），落回 .png 候选命中 → UTF-8 路径经 eui_tray_utf8_to_utf16（tray_bridge.c:14-31）转宽字符 → tray.h Win32 tray_update:363-371 ExtractIconExW 对 .png 容器必然失败（返回 0/UINT_MAX，不写 lpiIcon）。关键事实：改动前传的也是 .png（iconPathValue 默认 assets/icon.png，EUI-NEO assets 同样只带 .png 形态），ExtractIconExW 同样失败——本 diff 未引入任何新失败类，失败形态与改前逐位相同。实现者『Windows 侧行为维持现状待移植批次核查』的标注与代码事实相符（诚实标注）。"
+  },
+  "4_silent_failure": {
+   "status": "已核",
+   "conclusion": "图标缺失时有底、无崩溃：resolveIconPath 全候选落空返回空 → initializeTray（platform.cpp:771-773）state.iconPath 保留原始相对串 → eui_tray_init 照常走（AppKit 后端不因文件缺失失败）→ eui_tray_image :206-208 initWithContentsOfFile 得 nil → 回退 NSImageNameApplicationIcon → setTemplate:YES = 回到白方块（status quo ante）。托盘功能本身（菜单/点击分流）不受影响；降级面 = 恰为修复前的已知症状，可接受。构建链三重保障（POST_BUILD 拷贝 + build-app.sh 断言链 + 入 git）使『缺失』只剩极端场景（手工删文件后不重构建）。"
+  },
+  "5_tests": {
+   "status": "已核",
+   "conclusion": "无新测试，对本变更形态（二进制资产 + 一行 DSL 配置 + 一段构建脚本）属合理裁剪——单测只能断言文件存在/字节，价值有限。有可断言点被放过（1 处，见 findings F1）：package-macos.sh 已有 bundle 内容断言链（shaders 非空 :71、pets/README.md :75、逐目录 pet.json :84）却无 tray-icon-template.png 存在性断言，bundle 路径契约未被锁。证据核实：『构建绿 + cmp 字节一致』以实现者 worktree 产物独立复核通过（两处 488B、mtime 早于提交、对 git blob cmp 双双一致）；本审计按只读约束未重跑构建。"
+  },
+  "6_documentation": {
+   "status": "已核",
+   "conclusion": "①commit message 与 diff 逐项对得上：3 文件 +23 行、PNG 488B、22×22/纯黑/2px/8×4 面板全部实核为真；『既有拷贝链只覆盖 assets/pets 与 EUI-NEO assets，仓库根 assets/ 散文件不在链内』核 CMakeLists 改前状态为真（assets/ 内除 pets 外无任何拷贝来源）；resolveIconPath 两场景口径与候选链实读一致；Windows 未验证边界诚实标注。脚本引用无误：build-app.sh 实存于 platform/macos/（CMakeLists.txt:245 引用），build-test-run.sh 的 --no-test/--no-run 旗标实存。②PNG 二进制健康：签名/IHDR 合法、zlib 流完整解压、无异常 chunk、无 trailing garbage——程序生成特征（AA 渐变）与描述相符；『8x 超采样 LANCZOS』属生成过程描述，从成品二进制不可证伪也不必证伪（成品已按像素级标准核过）。"
+  }
+ },
+ "findings": [
+  {
+   "file": "scripts/package-macos.sh",
+   "line": "71-92",
+   "lens": "测试有效性",
+   "severity": "low",
+   "confidence": "high",
+   "issue": "bundle 内容断言链（shaders 非空、pets/README.md、逐目录 pet.json）没有覆盖新增的 tray-icon-template.png——托盘图标的 bundle 路径契约（Contents/MacOS/assets/tray-icon-template.png）目前只靠 CMake POST_BUILD + cp -R 两条链的隐式正确性，无显式断言。若未来任一链改动（如 assets 拷贝改白名单），托盘会静默退化回白方块且打包脚本不报错。",
+   "impact": "无当前缺陷（本次产物已验证在位）；是回归防线缺口而非 bug。",
+   "suggestion": "package-macos.sh 断言链加一条 2 行断言：`[ ! -f \"$MACOS_DIR/assets/tray-icon-template.png\" ] && echo ❌ 缺失 && exit 1`，与 pets/README.md 断言同型。"
+  },
+  {
+   "file": "../EUI-NEO/3rd/tray/tray.h",
+   "line": "363-371",
+   "lens": "平台对称性",
+   "severity": "low",
+   "confidence": "medium",
+   "issue": "Windows 后端 tray_update 中 `HICON icon;` 未初始化即取址传 ExtractIconExW：对 .png 路径（本 diff 前后皆是）提取失败时不写入，nid.hIcon 随后被赋 garbage 值并送 Shell_NotifyIcon(NIM_MODIFY)——未初始化 HICON 属 UB。此为 EUI-NEO 侧既有问题、非本 diff 引入（改前传 assets/icon.png 同样触发），本审计仅登记转发。",
+   "impact": "DevDesk 当前开发平台是 macOS 不受影响；Windows 移植批次若不处理，托盘图标行为不可预期（NIM_MODIFY 带无效句柄，通常失败但不保证）。归 EUI-NEO/移植批次，不构成本分支合并障碍。",
+   "suggestion": "移植批次在 tray.h Win32 分支给 `HICON icon = NULL;` 初始化 + 提取失败时置 NULL 并跳过 NIF_ICON 修改；或 Windows 侧 assets 提供 .ico 并让 resolveIconPath 的 .ico 候选真正命中。"
+  }
+ ],
+ "verified_positive": [
+  "PNG 逐像素实核：22×22 RGBA、全像素 RGB=0（含 AA 像素）、形状与声称一致（圆角方轮廓 2px + 内部 8×4 面板）、无二进制异常",
+  "根因链全链路独立复现：iconPathValue 默认值 → trayIconPath() 回退 → eui_tray_image NSImageNameApplicationIcon 兜底 → 无条件 setTemplate:YES → alpha 蒙版方块",
+  "resolveIconPath 双场景命中实读证实（CWD 候选 ×2 + exeDir 候选 ×2，拼接无双斜杠/大小写漂移）",
+  "CMake 新拷贝块与 pets/fonts/EUI-NEO assets 三条既有拷贝链零冲突，copy_if_different 幂等",
+  "bundle 链精确：build-app.sh:118 cp -R 整树拷，worktree 产物 cmp 与 git blob 逐字节一致（独立复核）",
+  "installer 无需同步：devdesk.iss Excludes 仅排 NotoSansSC-VF.ttf，488B 图标随包无害",
+  "Windows 侧无害降级判定成立：ExtractIconExW 对 .png 失败为改前既有形态，本 diff 未引入新失败类",
+  "静默失败有底：文件缺失 → 应用图标兜底 → 白方块（status quo ante），托盘功能不损、无崩溃",
+  "commit message 与 diff/二进制逐项一致，脚本引用（platform/macos/build-app.sh、build-test-run.sh 旗标）实存"
+ ],
+ "method_limits": [
+  "只读约束：未重跑构建/测试——『构建绿』以实现者 worktree 产物时间戳（06:41/06:42，早于提交 06:43）+ 本审计 cmp 复核为证，未独立复现构建过程",
+  "菜单栏视觉真机验收（模板色随菜单栏深浅翻转的最终观感）不在本审计能力内，commit 已如实标注留待用户",
+  "『Pillow 程序生成、8x 超采样 LANCZOS』为生成过程描述，成品二进制只能证其果（AA 像素分布相符）不能证其程",
+  "Windows 侧未实际运行（无 Windows 环境），ExtractIconExW 失败行为依据 MSDN 语义与代码结构判定"
+ ]
+}
