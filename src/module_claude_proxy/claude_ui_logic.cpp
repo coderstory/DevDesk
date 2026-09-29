@@ -4,6 +4,7 @@
 #include "claude_ui_logic.h"
 
 #include "core/time.h"
+#include "platform/json.h"
 #include "provider_config.h"
 
 #include <cstdio>
@@ -95,6 +96,30 @@ bool keyIn(const std::vector<std::string>& keys, const std::string& k) {
         if (x == k) return true;
     }
     return false;
+}
+
+std::string buildProfileExportJson(const Profile& p,
+                                   const std::string& sharedExtraEnvJson,
+                                   const std::string& keyPlaceholder) {
+    // 与 runProfile 的临时 settings 同一条 env 管线（claude_service.cpp
+    // buildDirectEnv 消费点同款手法），仅凭据换成占位值、不落盘只进剪贴板
+    const auto env = buildDirectEnv(p.baseUrl, keyPlaceholder, p.authField,
+                                    p.modelsConfigJson, p.model,
+                                    p.extraEnvJson, sharedExtraEnvJson);
+    platform::json::JsonObject envObj;
+    for (const auto& [k, v] : env) {
+        envObj.set(k, platform::json::makeString(v));
+    }
+    platform::json::JsonObject root;
+    root.set("env", platform::json::JsonValue(std::move(envObj)));
+    auto text =
+        platform::json::stringify(platform::json::JsonValue(std::move(root)));
+    if (text.isFail()) {
+        // 全字符串值的两段序列化，失败理论不可达；空串 = 失败信号，
+        // 调用方按失败走 toast，不静默成功
+        return std::string();
+    }
+    return text.value();
 }
 
 } // namespace module::claude

@@ -758,10 +758,10 @@ void drawSharedConfigBlock(eui::Ui& ui, float width, float blockH,
         .build();
 }
 
-// profile 列表右键菜单（UI 现代化 §3.4 / M1-5）：
-// 编辑 / 复制 / 删除 / 设为当前 —— 动作经 ProfileListActions 委托到
-// claude_module 既有按钮同源逻辑（openEditForm / doDuplicate / 删除确认 /
-// doSetActive），本函数不写业务逻辑。
+// profile 列表右键菜单（UI 现代化 §3.4 / M1-5；2026-09-30 batch-fix C 起
+// 五项：编辑 / 建副本 / 复制配置 / 删除 / 设为当前）——动作经
+// ProfileListActions 委托到 claude_module 既有按钮同源逻辑（openEditForm /
+// doDuplicate / doCopyConfig / 删除确认 / doSetActive），本函数不写业务逻辑。
 // 常驻构建（关闭态由组件内 opacity 收起，同 todo/md 右键模式）：
 // 无右键目标时强制置关开合标志再返回（4523e09 的「隐形菜单卡开」同款守卫
 // —— 目标与开合标志同生共灭），目标存在但菜单关闭时 normal 渲染。
@@ -783,11 +783,11 @@ void drawProfileContextMenu(eui::Ui& ui, const eui::Screen& screen,
         return;
     }
     const std::vector<components::ContextMenuItem> items = {
-        {"编辑"}, {"复制"}, {"删除"}, {"设为当前"}};
+        {"编辑"}, {"建副本"}, {"复制配置"}, {"删除"}, {"设为当前"}};
     // 选中回调不捕获 self 指针（profiles 是 compose 局部副本，点击发生在
     // 下帧 → 悬垂）；按值拷一份 Profile 再派发（照 claude_ui_detail 的
     // shownCopy 手法）。actions 是 compose 传参（listActions() 临时值）→
-    // 四个动作闭包一并按值拷入（std::function 拷贝安全，同既有按钮 onClick
+    // 五个动作闭包一并按值拷入（std::function 拷贝安全，同既有按钮 onClick
     // 的 [onNew = actions.onNewProfile] 捕获形态）。
     components::contextMenu(ui, "claude.list.ctx")
         .open(st.ctxMenuOpen_)
@@ -799,6 +799,7 @@ void drawProfileContextMenu(eui::Ui& ui, const eui::Screen& screen,
         .onSelect([&st,
                    onEdit = actions.requestEdit,
                    onDup = actions.requestDuplicate,
+                   onCopyCfg = actions.requestCopyConfig,
                    onDel = actions.requestDelete,
                    onSet = actions.requestSetActive,
                    p = *self](int index) {
@@ -806,8 +807,9 @@ void drawProfileContextMenu(eui::Ui& ui, const eui::Screen& screen,
             switch (index) {
                 case 0: onEdit(p); break;
                 case 1: onDup(p.id); break;
-                case 2: onDel(p.id, p.name); break;
-                case 3: onSet(p.id); break;
+                case 2: onCopyCfg(p); break;   // batch-fix C：复制配置
+                case 3: onDel(p.id, p.name); break;
+                case 4: onSet(p.id); break;
                 default: break;
             }
         })

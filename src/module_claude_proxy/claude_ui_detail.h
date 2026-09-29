@@ -1,7 +1,8 @@
 // src/module_claude_proxy/claude_ui_detail.h
-// R4（P-B3）右栏单元：详情面板三 pane（基础 / 模型映射 / 环境变量）+ 操作
-// 按钮组 + 「最近调用」页签（tab 4，2026-09-28 由底部固定预览抽成独立
-// 页签，行数随 bodyH 自适应）—— 逐字自 claude_module.cpp 的 compose 搬出。
+// R4（P-B3）右栏单元：详情面板四 pane（基础 / 模型映射 / 环境变量 / 高级配置）
+// + 操作按钮组 + 「最近调用」页签（tab 4，2026-09-28 由底部固定预览抽成独立
+// 页签，行数随 bodyH 自适应；高级配置 pane = 2026-09-30 batch-fix B 新增
+// tab 3，最近调用由 3 顺移至 4）—— 逐字自 claude_module.cpp 的 compose 搬出。
 //
 // 「返回内容底沿」契约（spec §3.2）：每个 pane 函数各自返回**本 pane 内容的
 // 底沿 y**（绝对屏幕坐标，与入参 y0 同一坐标系）；操作按钮组由
@@ -55,6 +56,16 @@ struct DetailView {
     // 批 2：共享配置片段快照（基础 pane 的「共享配置：片段 A（N 个键）」行 +
     // P3 生效 env 的来源标注）
     const std::vector<SharedConfig>* sharedConfigs = nullptr;
+    // 高级配置 pane（2026-09-30 batch-fix B，设计 §3.2④）：
+    //   dialectText = 生效方言展示串。compose 装配：显式覆盖 → 「名（显式）」；
+    //   空 → 「自动（按站点推断）→ 生效名」（推断结果可审计，正是本 pane 的
+    //   价值）。显示名统一走 dialectKindDisplayName（与表单下拉单一来源，
+    //   不直接用 dialectKindToText 内部值）
+    //   fallbackName = 备用 Profile 名。compose 从既有 profiles 快照按
+    //   fallbackProfileId 解析（悬空/0 → 「无」/「（已删除）」），与列表快照
+    //   同源、pane 内不做服务调用（避免每帧 DB 查询）
+    std::string dialectText;
+    std::string fallbackName;
     // 注：这里**没有** bodyH 字段（2026-09-29 审计 F-01 删除）。容器可用高只由
     // drawDetailPanel 的 bodyH 形参持有，pane 侧的行数预算一律用传下去的
     // contentBottom —— 曾经的 `DetailView::bodyH` 全仓零读、注释却宣称它是
@@ -78,12 +89,15 @@ struct DetailActions {
     std::function<void(const Profile& p)> test;                      // 测试连通
     std::function<void(const Profile& p)> edit;                      // 编辑
     std::function<void(int64_t id, const std::string& name)> requestDelete;  // 删除（确认弹窗）
-    std::function<void(int64_t id)> duplicate;                       // 复制
+    std::function<void(int64_t id)> duplicate;                       // 建副本
+    // 复制配置（2026-09-30 batch-fix C，设计 §4.2②）：profile → settings.json
+    // 形态 JSON → 系统剪贴板（占位不导明文 key）。第 7 键 + 右键菜单双入口
+    std::function<void(const Profile& p)> copyConfig;
     std::function<void(int64_t id)> run;                             // 运行
     std::function<void()> openCalls;                                 // 「查看全部 →」
 };
 
-// ---- 四个 pane：各自返回内容底沿（见文件头契约）----
+// ---- 五个 pane：各自返回内容底沿（见文件头契约）----
 // contentBottom = 内容框可用底（drawDetailPanel 由 bodyH 推出）：pane 画出的
 // 内容不得越过它（行数预算按它推）。rows 非空时回填行数统计（诊断日志用）。
 // id: claude.field.* / claude.slot.* / claude.env.* / claude.calls.*
@@ -96,12 +110,13 @@ float drawDetailModels(eui::Ui& ui, float x0, float y0, float w,
 float drawDetailEnv(eui::Ui& ui, float x0, float y0, float w,
                     const core::theme::Tokens& t, const DetailView& v,
                     float contentBottom, PaneRows* rows = nullptr);
-// 「最近调用」pane 在 .cpp 的匿名命名空间内（drawDetailCallsPane）；
+// 「最近调用」pane 与「高级配置」pane（2026-09-30 batch-fix B）在 .cpp 的
+// 匿名命名空间内（drawDetailCallsPane / drawDetailAdvanced）；
 // 其行数统计经 PaneRows 回填同上。
 
-// 整个右栏（底板 column + overlay stack）：标题 + tabs 四页（基础信息 /
-// 模型映射 / 环境变量 / 最近调用）+ pane 分派 + 操作按钮组。xOffset =
-// 右栏在 claude.body row 内的 x 起点（= 左栏宽 + gap）。
+// 整个右栏（底板 column + overlay stack）：标题 + tabs 五页（基础信息 /
+// 模型映射 / 环境变量 / 高级配置 / 最近调用）+ pane 分派 + 操作按钮组。
+// xOffset = 右栏在 claude.body row 内的 x 起点（= 左栏宽 + gap）。
 void drawDetailPanel(eui::Ui& ui, float rightW, float bodyH, float xOffset,
                      const core::theme::Tokens& t,
                      const components::theme::ThemeColorTokens& themeTokens,

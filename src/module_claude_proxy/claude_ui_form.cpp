@@ -1,5 +1,6 @@
 // src/module_claude_proxy/claude_ui_form.cpp
-// R4（P-B5）：表单弹窗（tabs 三页）+ 删除确认弹窗 + 表单状态机 —— 逐字自
+// R4（P-B5）：表单弹窗（tabs 四页，2026-09-30 batch-fix B 尾插「高级配置」）
+// + 删除确认弹窗 + 表单状态机 —— 逐字自
 // claude_module.cpp 搬出（含注释），只把 this 成员换成显式入参
 // （FormState / ImportState 引用 + FormSubmitHooks 回调）。
 #include "claude_ui_form.h"
@@ -9,6 +10,7 @@
 #include "platform/json.h"
 #include "provider_config.h"
 #include "settings_sync.h"
+#include "upstream_dialect.h"
 
 #include <components/button.h>
 #include <components/dropdown.h>
@@ -58,6 +60,9 @@ void openCreateForm(FormState& f, ImportState& imp) {
     // 批 3：备用 Profile 复位（新建默认不启用 failover）
     f.formFallbackProfileId_ = 0;
     f.formFallbackDdOpen_ = false;
+    // 高级配置页复位（2026-09-30 batch-fix B：新建默认不覆盖方言）
+    f.formDialectOverride_.clear();
+    f.formDialectDdOpen_ = false;
     resetImportState(imp);
     f.formOpen_ = true;
 }
@@ -90,6 +95,10 @@ void openEditForm(FormState& f, ImportState& imp, const Profile& p,
     // 批 3：备用 Profile 回显（悬空/自引用 → 下拉逐帧归一为「无」，见绘制处）
     f.formFallbackProfileId_ = p.fallbackProfileId;
     f.formFallbackDdOpen_ = false;
+    // 高级配置页回显（2026-09-30 batch-fix B：方言覆盖；空/未知值 → 下拉逐帧
+    // 归一为「自动」，见绘制处）
+    f.formDialectOverride_ = p.dialectOverride;
+    f.formDialectDdOpen_ = false;
     // env 行：非法 JSON 读路径容错为空表（不炸）；自有键（归一后）记入
     // formOriginalOwnKeys_——「新增同键」拦截只拦打开后新加的行，存量键
     // 非破坏保留、冻结显示（解绑后恢复生效，设计 §2.3）
@@ -305,7 +314,7 @@ void submitForm(FormState& f, const FormSubmitHooks& hooks,
                                     f.formModels_.def.model, /*activateIfNoneActive=*/true,
                                     /*sharedConfigId=*/f.formSharedConfigId_,
                                     authFieldToText(f.formAuthField_),
-                                    /*dialectOverride=*/std::string(),
+                                    /*dialectOverride=*/f.formDialectOverride_,
                                     /*fallbackProfileId=*/f.formFallbackProfileId_);
         if (r.isFail()) {
             f.formError_ = r.errorMessage();
@@ -355,6 +364,11 @@ void submitForm(FormState& f, const FormSubmitHooks& hooks,
         p.authField = authFieldToText(f.formAuthField_);
         p.sharedConfigId = f.formSharedConfigId_;   // 批 2：绑定/解绑随保存落库
         p.fallbackProfileId = f.formFallbackProfileId_;   // 批 3：备用随保存落库（自引用由服务层校验兜底）
+        // 高级配置页接线（2026-09-30 batch-fix B）：把新下拉的值真正写进编辑路径
+        //（不接线则下拉改动落不了盘）。对「不动该下拉」场景行为与接线前等价——
+        // 现路径 p 来自 getProfile，已隐式保留既有覆盖（profile_repository.cpp
+        // 读侧归一 + updateProfile 直写该字段），用例按「接线回归钉」定位
+        p.dialectOverride = f.formDialectOverride_;
         auto r = svc->updateProfile(p);
         if (r.isFail()) {
             f.formError_ = r.errorMessage();
@@ -368,13 +382,10 @@ void submitForm(FormState& f, const FormSubmitHooks& hooks,
 namespace {
 
 // ---- 基础页（§6.1 线框）----
-// profiles：批 3 备用 Profile 下拉的数据源（编辑态排除自身；悬空/自引用逐帧
-// 归一为「无」，不把幽灵 id 留在表单态里传播——同批 2 片段绑定的归一口径）
 void drawFormBasicTab(eui::Ui& ui, float w,
                       const core::theme::Tokens& t,
                       const components::theme::ThemeColorTokens& themeTokens,
-                      bool isEdit, FormState& f,
-                      const std::vector<Profile>& profiles) {
+                      bool isEdit, FormState& f) {
     ui.text("claude.form.basic.name.label")
         .position(28.0f, 104.0f).size(w - 56.0f, 16.0f)
         .text("名称").fontSize(11.0f).lineHeight(16.0f)
@@ -448,16 +459,121 @@ void drawFormBasicTab(eui::Ui& ui, float w,
         })
         .build();
 
+    // 「备用 Profile（failover）」下拉已整段迁入高级配置页（2026-09-30
+    // batch-fix B，设计 §3.2①/②）——其后元素整体上移 66px（原 failover 块占
+    // y 380..438：label 380 / 下拉 398+40）。认证字段下拉底（332+40=372）与
+    // 下方提示行 380 间距 8px，与既有行距一致
+
+    ui.text("claude.form.basic.hint.icon")
+        .position(28.0f, 380.0f).size(14.0f, 18.0f)
+        .icon(0xF05A).fontSize(12.0f).lineHeight(18.0f)
+        .color(t.colors.textTertiary).build();
+    ui.text("claude.form.basic.hint")
+        .position(46.0f, 380.0f).size(w - 74.0f, 18.0f)
+        .text("模型映射、高级 env 和高级配置在另外几个标签页配置")
+        .fontSize(12.0f).lineHeight(18.0f)
+        .color(t.colors.textTertiary).build();
+
+    if (!f.formError_.empty()) {
+        ui.text("claude.dialog.form.error")
+            .position(28.0f, 404.0f).size(w - 56.0f, 18.0f)
+            .text(f.formError_).fontSize(12.0f).lineHeight(18.0f)
+            .color(t.colors.error).build();
+    }
+
+    // 「导入当前配置」接管态警告（不阻断，仅提示；⚠ 图标 + 文字两元素）
+    if (!f.formImportWarn_.empty()) {
+        ui.text("claude.dialog.form.importwarn.icon")
+            .position(28.0f, 426.0f).size(14.0f, 18.0f)
+            .icon(0xF071).fontSize(12.0f).lineHeight(18.0f)
+            .color(t.colors.warning).build();
+        ui.text("claude.dialog.form.importwarn")
+            .position(46.0f, 426.0f).size(w - 74.0f, 36.0f)
+            .text(f.formImportWarn_).fontSize(12.0f).lineHeight(18.0f)
+            .color(t.colors.warning).build();
+    }
+}
+
+// ---- 高级配置页（2026-09-30 batch-fix B，设计 §3.2①）：方言覆盖下拉 +
+// 备用 Profile 下拉（自基础页整段迁入：label/hint/候选归算/dropdown 逐字
+// 保留，含 profiles 快照入参与悬空归一逻辑；节点 id 同步保留——无头用例
+// 经 claude.form.basic.fallback.dd.* 导航锚定位，改名即测试返工）----
+// profiles：备用 Profile 下拉的数据源（编辑态排除自身；悬空/自引用逐帧
+// 归一为「无」，不把幽灵 id 留在表单态里传播——同批 2 片段绑定的归一口径）
+void drawFormAdvancedTab(eui::Ui& ui, float w,
+                         const core::theme::Tokens& t,
+                         const components::theme::ThemeColorTokens& themeTokens,
+                         FormState& f,
+                         const std::vector<Profile>& profiles) {
+    // 方言覆盖（审计 CPX-13 的 UI 侧出口）：idx↔值映射 0↔""（未覆盖）/
+    // 1↔anthropic_default / 2↔opencode_zen。items 显示名与详情 pane 文案共用
+    // dialectKindDisplayName（单一来源，不手抄字符串）；onChange 直接写规范
+    // 文本（dialectKindToText 产物，映射表以其为源），DB 层
+    // normalizeDialectOverride 再兜底（双层保险，符合 CPX-13「写侧归一」）
+    ui.text("claude.form.advanced.dialect.label")
+        .position(28.0f, 104.0f).size(72.0f, 16.0f)
+        .text("上游方言").fontSize(11.0f).lineHeight(16.0f)
+        .color(t.colors.textTertiary).build();
+    ui.text("claude.form.advanced.dialect.hint")
+        .position(104.0f, 104.0f).size(w - 132.0f, 16.0f)
+        .text("网关行为差异（鉴权头/会话头/模型名标记）不一致时切换；默认按站点推断")
+        .fontSize(11.0f).lineHeight(16.0f)
+        .color(t.colors.textTertiary).build();
+    {
+        std::vector<std::string> items;
+        items.reserve(3);
+        items.emplace_back("自动（按站点推断）");
+        items.emplace_back(
+            dialectKindDisplayName(UpstreamDialect::Kind::AnthropicDefault));
+        items.emplace_back(
+            dialectKindDisplayName(UpstreamDialect::Kind::OpencodeZen));
+        // 选中态逐帧归算：经 dialectKindFromText 反查 idx（空串/未知 → 0，
+        // 读侧兜底同口径）
+        int selIdx = 0;
+        if (const auto kind = dialectKindFromText(f.formDialectOverride_)) {
+            selIdx = *kind == UpstreamDialect::Kind::OpencodeZen ? 2 : 1;
+        }
+        ui.stack("claude.form.advanced.dialect.ddwrap")
+            .position(28.0f, 122.0f)
+            .size(w - 56.0f, 40.0f)
+            .content([&] {
+                components::dropdown(ui, "claude.form.advanced.dialect.dd")
+                    .size(w - 56.0f, 40.0f)
+                    .theme(themeTokens)
+                    .items(std::move(items))
+                    .selected(selIdx)
+                    .open(f.formDialectDdOpen_)
+                    .onOpenChange([fp = &f](bool v) { fp->formDialectDdOpen_ = v; })
+                    .onChange([fp = &f](int idx) {
+                        switch (idx) {
+                            case 1:
+                                fp->formDialectOverride_ = dialectKindToText(
+                                    UpstreamDialect::Kind::AnthropicDefault);
+                                return;
+                            case 2:
+                                fp->formDialectOverride_ = dialectKindToText(
+                                    UpstreamDialect::Kind::OpencodeZen);
+                                return;
+                            default:
+                                fp->formDialectOverride_.clear();
+                                return;
+                        }
+                    })
+                    .build();
+            })
+            .build();
+    }
+
     // 备用 Profile（failover，设计 §3.4/§3.7）：0 = 不启用。启用后主 Profile
     // 返回可重试错误时请求换发备用（§3.4 表单提示——可能按另一家计费在
     // 副提示里点明）。选项 idx 0 = 无；其余 = 候选 profile 表序 +1；编辑态
     // 排除自身（自引用由服务层 updateProfile 校验兜底，这里列表直接不给）
     ui.text("claude.form.basic.fallback.label")
-        .position(28.0f, 380.0f).size(72.0f, 16.0f)
+        .position(28.0f, 174.0f).size(72.0f, 16.0f)
         .text("备用 Profile").fontSize(11.0f).lineHeight(16.0f)
         .color(t.colors.textTertiary).build();
     ui.text("claude.form.basic.fallback.hint")
-        .position(104.0f, 380.0f).size(w - 132.0f, 16.0f)
+        .position(104.0f, 174.0f).size(w - 132.0f, 16.0f)
         .text("401/403/429/5xx/网络失败时换发备用（可能按另一家计费）")
         .fontSize(11.0f).lineHeight(16.0f)
         .color(t.colors.textTertiary).build();
@@ -484,7 +600,7 @@ void drawFormBasicTab(eui::Ui& ui, float w,
             if (selIdx == 0) f.formFallbackProfileId_ = 0;
         }
         ui.stack("claude.form.basic.fallback.ddwrap")
-            .position(28.0f, 398.0f)
+            .position(28.0f, 192.0f)
             .size(w - 56.0f, 40.0f)
             .content([&] {
                 // candidateIds 按值捕获：onChange 只取 id，不悬垂引用快照
@@ -506,35 +622,6 @@ void drawFormBasicTab(eui::Ui& ui, float w,
                     .build();
             })
             .build();
-    }
-
-    ui.text("claude.form.basic.hint.icon")
-        .position(28.0f, 446.0f).size(14.0f, 18.0f)
-        .icon(0xF05A).fontSize(12.0f).lineHeight(18.0f)
-        .color(t.colors.textTertiary).build();
-    ui.text("claude.form.basic.hint")
-        .position(46.0f, 446.0f).size(w - 74.0f, 18.0f)
-        .text("模型映射和高级 env 在另外两个标签页配置")
-        .fontSize(12.0f).lineHeight(18.0f)
-        .color(t.colors.textTertiary).build();
-
-    if (!f.formError_.empty()) {
-        ui.text("claude.dialog.form.error")
-            .position(28.0f, 470.0f).size(w - 56.0f, 18.0f)
-            .text(f.formError_).fontSize(12.0f).lineHeight(18.0f)
-            .color(t.colors.error).build();
-    }
-
-    // 「导入当前配置」接管态警告（不阻断，仅提示；⚠ 图标 + 文字两元素）
-    if (!f.formImportWarn_.empty()) {
-        ui.text("claude.dialog.form.importwarn.icon")
-            .position(28.0f, 492.0f).size(14.0f, 18.0f)
-            .icon(0xF071).fontSize(12.0f).lineHeight(18.0f)
-            .color(t.colors.warning).build();
-        ui.text("claude.dialog.form.importwarn")
-            .position(46.0f, 492.0f).size(w - 74.0f, 36.0f)
-            .text(f.formImportWarn_).fontSize(12.0f).lineHeight(18.0f)
-            .color(t.colors.warning).build();
     }
 }
 
@@ -949,7 +1036,9 @@ void drawProfileFormDialog(eui::Ui& ui, const eui::Screen& screen,
                 isEdit ? "编辑 Profile" : "新建 Profile", 20.0f, t.colors.textPrimary,
                 {.y = 20.0f, .height = 26.0f, .lineHeight = 26.0f});
 
-            // tabs（§6.1：基础 / 模型映射 / 高级 env）。
+            // tabs（§6.1：基础 / 模型映射 / 高级 env；2026-09-30 batch-fix B
+            // 尾插第 4 页「高级配置」——前三页序是既有拍板，尾插保住
+            // form.tabs.hit.0/1/2 既有测试导航零破坏，D-B1）。
             // TabsBuilder 无 position，套 stack 定位（字号下拉同款包装）
             ui.stack("claude.form.tabs.wrap")
                 .position(28.0f, 52.0f)
@@ -957,7 +1046,7 @@ void drawProfileFormDialog(eui::Ui& ui, const eui::Screen& screen,
                 .content([&] {
                     components::tabs(ui, "claude.form.tabs")
                         .size(w - 56.0f, 34.0f)
-                        .items({"基础", "模型映射", "高级 env"})
+                        .items({"基础", "模型映射", "高级 env", "高级配置"})
                         .selected(f.formTab_)
                         .fontSize(13.0f)
                         .theme(themeTokens)
@@ -967,9 +1056,13 @@ void drawProfileFormDialog(eui::Ui& ui, const eui::Screen& screen,
                 .build();
 
             if (f.formTab_ == 0) {
-                drawFormBasicTab(ui, w, t, themeTokens, isEdit, f, profiles);
+                drawFormBasicTab(ui, w, t, themeTokens, isEdit, f);
             } else if (f.formTab_ == 1) {
                 drawFormModelsTab(ui, w, t, themeTokens, f);
+            } else if (f.formTab_ == 3) {
+                // 高级配置（2026-09-30 batch-fix B）：catch-all else 前插 ==3
+                // 分支，0/1/2 分支语义不动
+                drawFormAdvancedTab(ui, w, t, themeTokens, f, profiles);
             } else {
                 drawFormEnvTab(ui, w, t, themeTokens, f, imp, sharedConfigs);
             }
