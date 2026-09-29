@@ -121,6 +121,8 @@ fi
 mkdir -p installer/macos/out
 DMG="installer/macos/out/DevDesk-$APP_VERSION.dmg"
 # --overwrite 必加：否则第二次运行会失败
+# 每个进 DMG 的条目都必须给 --icon 坐标——没坐标的项会被 Finder 甩出可视区
+# （2026-09-30 真机实证：去隔离脚本在窗口里不可见，用户以为缺失）
 create-dmg \
   --overwrite \
   --volname "DevDesk" \
@@ -128,6 +130,8 @@ create-dmg \
   --window-size 700 440 \
   --icon-size 120 \
   --icon "DevDesk.app" 190 210 \
+  --icon "首次运行（去隔离）.command" 110 68 \
+  --icon "安装说明.txt" 590 68 \
   --app-drop-link 510 210 \
   --hide-extension "DevDesk.app" \
   --background "installer/macos/background.png" \
