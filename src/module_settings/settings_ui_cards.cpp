@@ -512,6 +512,42 @@ void drawPetCard(const CardDrawArgs& args) {
                         .build();
                 })
                 .build();
+            // 显示大小行（2026-09-30 用户需求「桌宠显示大小」）：三档下拉
+            //（小 0.75× / 中 1.0× / 大 1.5×，默认中）。排法照皮肤行同款
+            // 「标签列 28/72 + 控件列 104」同基线口径，行距 48（皮肤行控件
+            // 底 104 + 8 = 本行顶 112，卡高 168 见 settings_ui_logic.h）。
+            // 文案/档位单源在 pet 侧（petScalePresetLabels 桥快照），选择
+            // 经桥切档：写盘 + 热切换（窗口关旧开新，尺寸同步缩放，点单位）
+            ui.text(id + ".scale.label")
+                .position(28.0f, 122.0f)
+                .size(72.0f, 20.0f)
+                .text("大小")
+                .fontSize(fs(12.0f))
+                .lineHeight(20.0f)
+                .color(t.colors.textSecondary)
+                .build();
+            ui.stack(id + ".scale.ddwrap")
+                .position(104.0f, 112.0f)
+                .size(240.0f, 40.0f)
+                .content([&] {
+                    // openUp 防护与皮肤下拉同款几何判定（卡顶 + 字段偏移 +
+                    // 弹层高 vs 屏高；三项 = 3×34+12）
+                    const bool scaleOpenUp = dropdownPopupOverflows(
+                        pageY, 112.0f, 40.0f, 3, screenH);
+                    components::dropdown(ui, id + ".scale.dd")
+                        .size(240.0f, 40.0f)
+                        .theme(compTheme)
+                        .items(in.petScaleLabels)
+                        .selected(in.petScaleIndex)
+                        .openUp(scaleOpenUp)
+                        .open(isDropdownOpen(in.openDropdown, Dropdown::PetSize))
+                        .onOpenChange([f = a.setDropdownOpen](bool v) {
+                            f(Dropdown::PetSize, v);
+                        })
+                        .onChange([f = a.changePetScaleAt](int idx) { f(idx); })
+                        .build();
+                })
+                .build();
             // 位置重置按钮（回主屏右下角，持久化坐标清回未设置）
             components::button(ui, id + ".reset")
                 .position(w - 28.0f - 160.0f, 64.0f)

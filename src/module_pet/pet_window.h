@@ -86,6 +86,9 @@ struct PetWindowConfig {
     std::string skinName;   // 空 = kDefaultSkinName
     int x = -1;             // -1 = 未设置（取主显示器工作区右下角）；其他负值是
     int y = -1;             // 左/上副屏的合法坐标（M2 多显示器，钳制按位置选屏后保留）
+    // 显示大小档（kPetScalePresets 之一，默认中档 1.0×）。窗口尺寸 =
+    // scaledFrameSize(帧尺寸, scale)（仍钳 [16,512]）+ 气泡让位条，单位 = 点
+    double scale = 1.0;
     // 内容源②回调（main 注入；applyPetSkin 热换肤重开时从 rt.config 原样
     // 携带不丢桥）。空 = 无数据源，气泡只出静态语料①
     OverdueCountGetter getOverdueCount;
@@ -118,6 +121,8 @@ void petDragEnd(PetDragAnchor& anchor);
 
 // 已知坐标钳制进主显示器工作区（纯函数，单测断言用；设计 §4.6，M1 仅主显
 // 示器）。workW/workH <= 0（工作区查询失败：无头/早于 glfwInit）原样返回。
+// frameW/frameH = 被钳矩形尺寸——生产调用方传**整窗**尺寸（高 =
+// petWindowHeight(帧高)，气泡让位条一并关进工作区，见 pet_bubble.h）。
 // 审计 [12]：落盘路径（savePetPosition/applyPetSkin）与启动路径共用本钳制
 // ——负坐标若直接落盘，会被 pet_config 的 -1「未设置」哨兵吞掉，重启后桌宠
 // 跳回默认位。已知坐标（>=0）才许进本函数，哨兵判断归调用方
@@ -200,5 +205,21 @@ void resetPetPosition();
 // 即可调用（不 include 本头、不 link 本模块），避免共享 PetConfig 结构体
 // 布局（跨 TU 重定义是 ODR 风险）。
 std::string currentSkinName();
+
+// ---- 显示大小三档（2026-09-30 用户需求；设置页经 module_pet_bridge.h
+// 消费，声明/签名哨兵同 currentSkinName 先例）----
+
+// 当前显示大小档位下标（0=小 0.75× / 1=中 1.0× / 2=大 1.5×），读
+// pet_config.json（非法值已由 sanitize 收敛默认档）
+int currentPetScaleIndex();
+
+// 三档文案（与档位下标一一对应；单源 = pet_config.h kPetScalePresetLabels，
+// 设置页下拉 items 直接消费，不自带一份防漂移）
+std::vector<std::string> petScalePresetLabels();
+
+// 显示大小切档（设置页回传下标；越界静默拒绝不动）：写盘并热切换——窗口
+// 开着即关旧开新（尺寸 = 帧尺寸 × 档位缩放 + 气泡让位条，位置沿用并重新
+// 钳制），窗口未开时只持久化（下次启动生效）
+void applyPetScaleIndex(int presetIndex);
 
 } // namespace module::pet

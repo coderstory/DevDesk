@@ -37,6 +37,12 @@ namespace module::pet {
 std::vector<std::string> discoverSkins();
 // 当前皮肤名（读 pet_config.json；applyPetSkin 双写运行时 + 盘，盘即真值）
 std::string currentSkinName();
+// 当前显示大小档位下标（0=小 0.75× / 1=中 1.0× / 2=大 1.5×；读
+// pet_config.json，非法值已由 pet 侧 sanitize 收敛默认档）
+int currentPetScaleIndex();
+// 显示大小三档文案（与档位下标一一对应；单源在 pet_config.h，设置页
+// 下拉 items 直接消费，不自带一份防漂移）
+std::vector<std::string> petScalePresetLabels();
 
 // ---- B 组：改 pet 模块状态（写盘 + 同步窗口操作）----
 // 换肤：名字必须在 discoverSkins() 发现列表内（会拼进文件系统路径，防手改
@@ -54,6 +60,9 @@ bool showPetWindow();
 // 路径）。返回 true = 曾开着/有可见意图并已请求关闭；false = 本来就关着。
 // 只清「可见意图」，**不清装配标志**——同一会话重新勾选后 showPetWindow 可原位重开
 bool closePetWindow();
+// 显示大小切档（下标越界静默拒绝不动）：写盘并热切换（窗口开着即关旧开新，
+// 尺寸 = 帧尺寸 × 档位缩放 + 气泡让位条，单位 = 点）；窗口未开时只持久化
+void applyPetScaleIndex(int presetIndex);
 
 } // namespace module::pet
 
@@ -65,6 +74,12 @@ static_assert(std::is_same_v<decltype(&module::pet::discoverSkins),
 static_assert(std::is_same_v<decltype(&module::pet::currentSkinName),
                              std::string (*)()>,
               "module_pet_bridge: currentSkinName 签名漂移");
+static_assert(std::is_same_v<decltype(&module::pet::currentPetScaleIndex),
+                             int (*)()>,
+              "module_pet_bridge: currentPetScaleIndex 签名漂移");
+static_assert(std::is_same_v<decltype(&module::pet::petScalePresetLabels),
+                             std::vector<std::string> (*)()>,
+              "module_pet_bridge: petScalePresetLabels 签名漂移");
 static_assert(std::is_same_v<decltype(&module::pet::applyPetSkin),
                              void (*)(const std::string&)>,
               "module_pet_bridge: applyPetSkin 签名漂移");
@@ -77,3 +92,6 @@ static_assert(std::is_same_v<decltype(&module::pet::showPetWindow),
 static_assert(std::is_same_v<decltype(&module::pet::closePetWindow),
                              bool (*)()>,
               "module_pet_bridge: closePetWindow 签名漂移");
+static_assert(std::is_same_v<decltype(&module::pet::applyPetScaleIndex),
+                             void (*)(int)>,
+              "module_pet_bridge: applyPetScaleIndex 签名漂移");

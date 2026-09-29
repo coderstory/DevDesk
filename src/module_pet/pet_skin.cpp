@@ -87,7 +87,9 @@ Result<PetSkin> parsePetSkinJson(const std::string& jsonText) {
         obj.get("frameSize")[0].isNumber() && obj.get("frameSize")[1].isNumber()) {
         const int w = static_cast<int>(obj.get("frameSize")[0].asInt());
         const int h = static_cast<int>(obj.get("frameSize")[1].asInt());
-        if (w >= 16 && w <= 512 && h >= 16 && h <= 512) {
+        // 界常量 = kMinFrameSize/kMaxFrameSize（pet_skin.h，显示大小缩放共用）
+        if (w >= kMinFrameSize && w <= kMaxFrameSize && h >= kMinFrameSize &&
+            h <= kMaxFrameSize) {
             skin.frameWidth = w;
             skin.frameHeight = h;
         }

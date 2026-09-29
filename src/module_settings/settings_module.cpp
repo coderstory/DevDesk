@@ -452,15 +452,30 @@ public:
         }
     }
 
-    // 桌宠换肤（原桌宠卡 onChange 内联体）：下标越界守卫（含空清单）→ 桥调用
-    // → 状态行。守卫读的就是卡片渲染用的同一份皮肤清单快照
+    // 桌宠换肤（原桌宠卡 onChange 内联体）：下标越界守卫（含空清单）→ 桥
+    // 调用。守卫读的就是卡片渲染用的同一份皮肤清单快照。不补状态行 toast
+    //（2026-09-30 用户点名删除：换肤热切换即时生效、界面肉眼立即可见，
+    // toast 冗余）
     void changePetSkinAt(int idx) {
         if (idx < 0 || idx >= static_cast<int>(petSkins_.size())) {
             return;
         }
         petSkinName_ = petSkins_[static_cast<size_t>(idx)];
         ::module::pet::applyPetSkin(petSkinName_);
-        setStatus("桌宠皮肤已切换：" + petSkinName_);
+    }
+
+    // 显示大小切档（2026-09-30 用户需求「桌宠显示大小」）：下标守卫读的
+    // 就是下拉渲染用的同一份文案快照（桥取自 pet 侧，越界静默拒绝在 pet 侧
+    // 再兜一道）。选择即生效——桌宠窗关旧开新、尺寸同步缩放，肉眼立即可见，
+    // 不补状态行 toast（与切皮肤同一冗余口径）
+    void changePetScaleAt(int idx) {
+        if (idx < 0 || idx >= static_cast<int>(petScaleLabels_.size())) {
+            return;
+        }
+        ::module::pet::applyPetScaleIndex(idx);
+        petScaleIdx_ = idx;
+        LOG_INFO("Settings: 桌宠显示大小 → " +
+                 petScaleLabels_[static_cast<size_t>(idx)]);
     }
 
     // 位置重置（原桌宠卡 onClick 内联体）：回主屏右下角，持久化坐标清回未设置
@@ -706,6 +721,7 @@ private:
         };
         a.setDropdownOpen = [this](Dropdown d, bool v) { setDropdownOpen(d, v); };
         a.changePetSkinAt = [this](int idx) { changePetSkinAt(idx); };
+        a.changePetScaleAt = [this](int idx) { changePetScaleAt(idx); };
         a.resetPetPosition = [this] { resetPetPosition(); };
         a.showPetWindow = [this] { showPetWindow(); };
         a.openNotesDirectory = [this] { openNotesDirectory(); };
@@ -750,12 +766,13 @@ private:
                         const core::theme::Tokens& t, float proxyH,
                         ::core::IClaudeProxyService* svc) {
         SettingsCardsIn in{cfg_, petSkins_, petSkinName_, proxyPortDraft_,
-                           logTail_};
+                           logTail_, petScaleLabels_};
         in.logTailVersion = logTailVersion_;
         in.logViewScrollOffset = logViewScrollOffset_;
         in.takeoverManaged = takeoverManaged_;
         in.notesDirExists = notesDirExists_;
         in.openDropdown = openDropdown_;
+        in.petScaleIndex = petScaleIdx_;
         in.proxy = svc;
         const SettingsCardActions a = cardActions();
         const float gapY = t.sizes.spacingLarge;
@@ -936,6 +953,9 @@ private:
             std::filesystem::exists(::core::paths::markdownDir(), ec) && !ec;
         petSkins_ = ::module::pet::discoverSkins();
         petSkinName_ = ::module::pet::currentSkinName();
+        // 显示大小三档：文案 + 当前档下标快照（下拉 items/selected 渲染源）
+        petScaleLabels_ = ::module::pet::petScalePresetLabels();
+        petScaleIdx_ = ::module::pet::currentPetScaleIndex();
         externalStateLoaded_ = true;
     }
 
@@ -948,6 +968,8 @@ private:
     int openDropdown_ = -1;
     std::vector<std::string> petSkins_;    // 发现到的皮肤（M2，快照见 THS-01）
     std::string petSkinName_;              // 当前皮肤名（M2，快照见 THS-01）
+    std::vector<std::string> petScaleLabels_;  // 显示大小三档文案（桥快照）
+    int petScaleIdx_ = 1;                  // 当前显示大小档下标（快照见 THS-01）
     // 代理端口输入草稿（审计 [14]）：空 = 未编辑，compose 显示 cfg_.proxyPort；
     // applyProxyPort 成功后由 persist 侧刷新（下次进页恢复显示配置值）
     std::string proxyPortDraft_;

@@ -112,8 +112,10 @@ check_exactly_once_fixed "$SRC" '#include "module_pet_bridge.h"'
 
 # ---- A3. 正向：桥函数都真在调用点被用到（`::module::pet::X` 调用形）----
 # closePetWindow（PET-CLOSE，模块开关取消勾选 → 立即关窗）同样要求真被调用：
-# 解耦不是删功能
-for fn in discoverSkins applyPetSkin resetPetPosition currentSkinName closePetWindow; do
+# 解耦不是删功能。showPetWindow 为既有遗漏顺带补（审计 F5）；2026-09-30 起
+# 新增 currentPetScaleIndex / petScalePresetLabels / applyPetScaleIndex 三桥
+for fn in discoverSkins applyPetSkin resetPetPosition currentSkinName closePetWindow \
+          showPetWindow currentPetScaleIndex petScalePresetLabels applyPetScaleIndex; do
     check_at_least_once_fixed "$SRC" "::module::pet::${fn}"
 done
 
