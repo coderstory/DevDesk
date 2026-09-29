@@ -11,6 +11,10 @@ permissions:
 
 env:
   EUI_NEO_REPO: https://github.com/coderstory/EUI-NEO.git
+  CCACHE_DIR: ${{ github.workspace }}/.ccache
+  CCACHE_BASEDIR: ${{ github.workspace }}
+  CCACHE_COMPILERCHECK: content
+  CCACHE_MAXSIZE: 1G
 
 jobs:
   macos:
@@ -24,7 +28,22 @@ jobs:
 
       - run: git clone --depth 1 "$EUI_NEO_REPO" EUI-NEO
 
-      - run: brew install ninja openssl@3
+      - name: 切到镜像上最新的 Xcode
+        run: |
+          ls -d /Applications/Xcode*.app 2>/dev/null || true
+          latest=$(ls -d /Applications/Xcode*.app 2>/dev/null | sort -V | tail -1)
+          if [ -n "$latest" ]; then sudo xcode-select -switch "$latest"; fi
+          xcodebuild -version
+          clang --version | head -1
+
+      - run: brew install ninja ccache openssl@3
+
+      - name: ccache 缓存
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.CCACHE_DIR }}
+          key: ccache-macos-${{ github.sha }}
+          restore-keys: ccache-macos-
 
       - name: 构建（Release）
         working-directory: DevDesk
@@ -67,9 +86,17 @@ jobs:
             mingw-w64-x86_64-gcc
             mingw-w64-x86_64-cmake
             mingw-w64-x86_64-ninja
+            mingw-w64-x86_64-ccache
             mingw-w64-x86_64-sqlite3
             mingw-w64-x86_64-curl
             mingw-w64-x86_64-openssl
+
+      - name: ccache 缓存
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.CCACHE_DIR }}
+          key: ccache-windows-${{ github.sha }}
+          restore-keys: ccache-windows-
 
       - name: 构建（Release）
         shell: msys2 {0}

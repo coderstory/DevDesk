@@ -12,6 +12,12 @@ env:
   # EUI-NEO 用的是修改版 fork（比上游多 90+ 提交）；上游缺 setScrollOffset /
   # TextRun / chromeless 等 API，直接编译不过
   EUI_NEO_REPO: https://github.com/coderstory/EUI-NEO.git
+  # ccache 放在工作区下，方便 actions/cache 直接命中；BASEDIR 让不同 worktree
+  # 路径哈希一致 —— 不设 BASEDIR 等于白装缓存
+  CCACHE_DIR: ${{ github.workspace }}/.ccache
+  CCACHE_BASEDIR: ${{ github.workspace }}
+  CCACHE_COMPILERCHECK: content
+  CCACHE_MAXSIZE: 1G
 
 jobs:
   macos:
@@ -25,8 +31,24 @@ jobs:
       - name: 取 EUI-NEO（须与 DevDesk 同级目录）
         run: git clone --depth 1 "$EUI_NEO_REPO" EUI-NEO
 
+      - name: 切到镜像上最新的 Xcode
+        run: |
+          ls -d /Applications/Xcode*.app 2>/dev/null || true
+          latest=$(ls -d /Applications/Xcode*.app 2>/dev/null | sort -V | tail -1)
+          if [ -n "$latest" ]; then sudo xcode-select -switch "$latest"; fi
+          echo "--- 工具链 ---"
+          xcodebuild -version
+          clang --version | head -1
+
       - name: 安装依赖
-        run: brew install ninja openssl@3
+        run: brew install ninja ccache openssl@3
+
+      - name: ccache 缓存
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.CCACHE_DIR }}
+          key: ccache-macos-${{ github.sha }}
+          restore-keys: ccache-macos-
 
       - name: 构建 + 测试
         working-directory: DevDesk
@@ -34,6 +56,9 @@ jobs:
           set +e
           bash scripts/build-test-run.sh --release --no-run 2>&1 | tee /tmp/ci.log
           rc=${PIPESTATUS[0]}
+
+          # ccache 命中率（诊断用；0% 说明缓存没接上）
+          ccache -s 2>/dev/null | grep -E "Hits|Misses|hit rate|Cache size" || true
 
           if [ "$rc" -eq 0 ]; then
             echo "::notice::构建与测试全绿"
@@ -74,12 +99,22 @@ jobs:
             mingw-w64-x86_64-gcc
             mingw-w64-x86_64-cmake
             mingw-w64-x86_64-ninja
+            mingw-w64-x86_64-ccache
             mingw-w64-x86_64-sqlite3
             mingw-w64-x86_64-curl
             mingw-w64-x86_64-openssl
+
+      - name: ccache 缓存
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.CCACHE_DIR }}
+          key: ccache-windows-${{ github.sha }}
+          restore-keys: ccache-windows-
 
       - name: 构建 + 测试
         shell: msys2 {0}
         run: |
           cd DevDesk
           bash scripts/build-test-run.sh --release --no-run
+          echo "--- ccache ---"
+          ccache -s 2>/dev/null | grep -E "Hits|Misses|hit rate|Cache size" || true
