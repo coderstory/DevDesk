@@ -59,37 +59,17 @@ jobs:
           set +e
           bash scripts/build-test-run.sh --release --no-run 2>&1 | tee /tmp/ci.log
           rc=${PIPESTATUS[0]}
-
           # ccache 命中率（诊断用；0% 说明缓存没接上）
           ccache -s 2>/dev/null | grep -E "Hits|Misses|hit rate|Cache size" || true
+          exit "${rc}"
 
-          if [ "$rc" -eq 0 ]; then
-            echo "::notice::构建与测试全绿"
-            exit 0
-          fi
-
-          # macOS 上有 3 条已知的平台不对称红：FileWatcher 在 macOS 走轮询兜底（测试
-          # 依赖原生 watcher 的即时回调）、keychain 空账号语义与 Windows DPAPI 不同。
-          # 这里只容忍这三条 —— 多出任何一条都算回归，CI 该红就红。
-          known=$(grep -c '^\[FAIL\]' /tmp/ci.log)
-          unexpected=$(grep '^\[FAIL\]' /tmp/ci.log \
-            | grep -vcE 'MD-01 (conflict toast reload path triple hit|capture race after blocks shrink)|反向同步③ 缺席即清空' || true)
-
-          # 注意：变量一律写 ${VAR} 花括号 —— runner 上是 bash 3.2，$VAR 紧跟全角
-          # 标点（：，、）会把后续字节并进变量名，展开成空串（实测踩过：
-          # 「失败用例数：」后面一片空白，就是 $known 被吞了）
-          echo "失败用例数：${known}　其中非预期：${unexpected}"
-          if [ "${unexpected}" -eq 0 ] && [ "${known}" -gt 0 ]; then
-            echo "✅ 视为通过 —— 仅命中 ${known} 条已知的 macOS 平台不对称红："
-            grep '^\[FAIL\]' /tmp/ci.log | sed 's/^/     /'
-            echo "   （FileWatcher 在 macOS 走轮询兜底 / keychain 空账号语义与 DPAPI 不同，"
-            echo "    三条都在基线里长期存在，见仓库 CLAUDE.md）"
-            echo "::warning::${known} 条已知平台不对称红被容忍，其余全部通过"
-            exit 0
-          fi
-          echo "❌ 出现非预期的测试失败"
-          echo "::error::出现非预期的测试失败"
-          exit 1
+      - name: 测试日志（失败时留档，便于定位）
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: macos-test-log
+          path: /tmp/ci.log
+          if-no-files-found: ignore
 
   windows:
     name: Windows · 构建 + 测试
