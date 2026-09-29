@@ -39,6 +39,8 @@
 #include "probes/probe_harness.h"
 #include "test_support.h"
 
+#include "settings_ui_logic.h"  // ②③ 判据：文案宽度估算 / 下拉 chrome 常量
+
 #include "app_registry.h"
 #include "core/module_interface.h"
 #include "core/theme.h"
@@ -241,6 +243,19 @@ int main(int argc, char* argv[]) {
     }
     test_support::setEnvVar("DEVDESK_PETS_DIR", petsDir.string());
 
+    // ③ 长名皮肤夹具（2026-09-29 真机反馈「桌宠设置的下拉框不应该换行」）：
+    // 25 字符名在 240 宽下拉里文本会画出控件右边缘（真机复现），故额外造一个
+    // 长名皮肤并把当前皮肤指向它（pet_config.json = currentSkinName 真值来源）
+    const std::string kLongSkin = "super-long-skin-name-here";
+    {
+        std::error_code skinEc;
+        std::filesystem::create_directories(petsDir / kLongSkin, skinEc);
+        std::ofstream(petsDir / kLongSkin / "pet.json", std::ios::binary)
+            << "{}";
+        std::ofstream(petsDir / "pet_config.json", std::ios::binary)
+            << "{\"skinName\":\"" << kLongSkin << "\",\"x\":-1,\"y\":-1}";
+    }
+
     std::unique_ptr<::core::Module> mod(create_settings_module());
     mod->onStart();
 
@@ -329,6 +344,64 @@ int main(int argc, char* argv[]) {
                           << ".field' not found\n";
                 passed = false;
             } else {
+                // ③ 单行不溢出（2026-09-29 真机反馈「桌宠设置的下拉框不应该
+                //    换行」）：EUI-NEO text 默认 wrap=false，超宽名不折行而是画
+                //    出控件右边缘。判据 = ①控件宽度按最长皮肤名放宽（≥ 估算宽 +
+                //    字段 chrome，改回固定 240 即红）；②字段文案估算宽 ≤ 可用宽；
+                //    ③文案无换行符。估算口径与生产同一纯件（settings_ui_logic）。
+                const core::dsl::Element* skinLabel =
+                    ui != nullptr ? ui->find(ddId + ".label") : nullptr;
+                if (skinLabel == nullptr) {
+                    std::cerr << "settings_cards_probes: '" << ddId
+                              << ".label' not found\n";
+                    passed = false;
+                } else {
+                    namespace ms = module::settings;
+                    const float fieldW = field->frame.width;
+                    const float needW =
+                        ms::estimatedTextWidth(kLongSkin, skinLabel->fontSize) +
+                        ms::kDropdownFieldChrome;
+                    if (fieldW < needW - 0.5f) {
+                        std::cerr << "settings_cards_probes: 皮肤下拉宽 "
+                                  << fieldW << " < 最长皮肤名所需 " << needW
+                                  << "（长名会画出控件外）\n";
+                        passed = false;
+                    }
+                    if (fieldW > ms::kPetSkinFieldMaxWidth + 0.5f) {
+                        std::cerr << "settings_cards_probes: 皮肤下拉宽 "
+                                  << fieldW << " 超上限 "
+                                  << ms::kPetSkinFieldMaxWidth << "\n";
+                        passed = false;
+                    }
+                    const float labelW = ms::estimatedTextWidth(
+                        skinLabel->text, skinLabel->fontSize);
+                    if (skinLabel->text.find('\n') != std::string::npos ||
+                        labelW > fieldW - ms::kDropdownFieldChrome + 0.5f) {
+                        std::cerr << "settings_cards_probes: 皮肤下拉字段文案 '"
+                                  << skinLabel->text << "' 估算宽 " << labelW
+                                  << " > 可用宽 "
+                                  << (fieldW - ms::kDropdownFieldChrome)
+                                  << "（溢出 = 压 chevron / 读出「换行」）\n";
+                        passed = false;
+                    }
+                    for (std::size_t i = 0;; ++i) {
+                        const core::dsl::Element* item = ui->find(
+                            ddId + ".item.label." + std::to_string(i));
+                        if (item == nullptr) {
+                            break;
+                        }
+                        const float itemW = ms::estimatedTextWidth(
+                            item->text, item->fontSize);
+                        if (itemW > fieldW - ms::kDropdownItemChrome + 0.5f) {
+                            std::cerr << "settings_cards_probes: 皮肤选项 '"
+                                      << item->text << "' 估算宽 " << itemW
+                                      << " 超出弹层项可用宽 "
+                                      << (fieldW - ms::kDropdownItemChrome)
+                                      << "\n";
+                            passed = false;
+                        }
+                    }
+                }
                 // 开下拉（点 field 中心 → onOpenChange(true)）
                 clickElement(*field);
                 composeFrame();
@@ -467,6 +540,71 @@ int main(int argc, char* argv[]) {
         } else {
             clickElement(*tabLog);
             composeFrame();
+
+            // ② 日志卡两行同列 + 标签单行（2026-09-29 真机反馈「设置-日志：
+            //    日志和日志级别这 2 个条件 错位了啊 日志显示 2 行」）。
+            //    判据：两下拉 frame.x 相等（改前 28 vs 124）、标签同列、
+            //    标签→下拉间距一致、标签框高 ≤ 单行行高且文本放得进框。
+            if (ui != nullptr) {
+                namespace ms = module::settings;
+                const core::dsl::Element* logF1 =
+                    ui->find("settings.card.log.dd.field");
+                const core::dsl::Element* logF2 =
+                    ui->find("settings.card.log.level.dd.field");
+                const core::dsl::Element* logL1 =
+                    ui->find("settings.card.log.label");
+                const core::dsl::Element* logL2 =
+                    ui->find("settings.card.log.level.label");
+                if (logF1 == nullptr || logF2 == nullptr ||
+                    logL1 == nullptr || logL2 == nullptr) {
+                    std::cerr << "settings_cards_probes: 日志卡两行缺元素"
+                                 "（label/dd.field；行 1 标签是本次补上的）\n";
+                    passed = false;
+                } else {
+                    if (!floatEq(logF1->frame.x, logF2->frame.x)) {
+                        std::cerr << "settings_cards_probes: 日志两下拉错位 "
+                                  << logF1->frame.x << " vs " << logF2->frame.x
+                                  << "\n";
+                        passed = false;
+                    }
+                    if (!floatEq(logL1->frame.x, logL2->frame.x)) {
+                        std::cerr << "settings_cards_probes: 日志两标签错位 "
+                                  << logL1->frame.x << " vs " << logL2->frame.x
+                                  << "\n";
+                        passed = false;
+                    }
+                    const float gap1 =
+                        logF1->frame.x - (logL1->frame.x + logL1->frame.width);
+                    const float gap2 =
+                        logF2->frame.x - (logL2->frame.x + logL2->frame.width);
+                    if (!floatEq(gap1, gap2) || gap1 <= 0.0f) {
+                        std::cerr << "settings_cards_probes: 标签→下拉间距不一致 "
+                                  << gap1 << " vs " << gap2 << "\n";
+                        passed = false;
+                    }
+                    for (const core::dsl::Element* label : {logL1, logL2}) {
+                        const float labelW = ms::estimatedTextWidth(
+                            label->text, label->fontSize);
+                        if (label->frame.height > 20.5f ||
+                            label->text.find('\n') != std::string::npos ||
+                            labelW > label->frame.width + 0.5f) {
+                            std::cerr << "settings_cards_probes: 日志标签 '"
+                                      << label->text << "' 高 "
+                                      << label->frame.height << " 文本宽 "
+                                      << labelW << " 框宽 " << label->frame.width
+                                      << "（折成两行 / 溢出）\n";
+                            passed = false;
+                        }
+                    }
+                    if (std::string(logL1->text) != "日志保留" ||
+                        std::string(logL2->text) != "日志级别") {
+                        std::cerr << "settings_cards_probes: 日志卡标签文案异常 '"
+                                  << logL1->text << "' / '" << logL2->text
+                                  << "'\n";
+                        passed = false;
+                    }
+                }
+            }
             if (ui != nullptr) {
                 const core::theme::Tokens& t = core::theme::current();
                 std::vector<const core::dsl::Element*> buttons;

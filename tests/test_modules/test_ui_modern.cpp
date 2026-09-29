@@ -1255,15 +1255,16 @@ REGISTER_TEST(uiAboutLayout,
 })
 
 // ---- about 页动态光晕（2026-09-29 用户真机反馈「又简陋又不明显 几乎看不到」，
-//      方案 A：3 光斑同心圆叠层 + 利萨如漂移 + 呼吸 + 聚光扫过带）----
-// 钉六件事：① 元素闸门（光斑 3×6 层 + 扫带 2 = 20 ≤ 20）；② 直径 380-620；
-// ③ 层 alpha 剖面 0.10 → 0.01；④ 呼吸 ±35%（在时间轴上扫出真实极值）；
+//      方案 A：光斑同心圆叠层 + 利萨如漂移 + 呼吸 + 聚光扫过带；同日二次反馈
+//      「光团缩小一点，然后多生成几个」→ 6 光斑 / 直径 240-400 / 每球 3 层）----
+// 钉六件事：① 元素闸门（光斑 6×3 层 + 扫带 2 = 20 ≤ 20）；② 直径 240-400；
+// ③ 层 alpha 剖面 0.15 → 0.05；④ 呼吸 ±35%（在时间轴上扫出真实极值）；
 // ⑤ 扫带周期 14s 且真的从左到右；⑥ 漂移真在动 + 空闲 120s 后休眠（不挂
 // onTimer）且指针移动可唤醒。
 // **一律用字面量**（旧版 uiAboutRingAnim 的教训：拿头文件常量断言等于自己，
 // 把常量调淡/调回去断言仍真——实测变异验证过，回归无人守）。
 REGISTER_TEST(uiAboutGlow,
-              "about: 光晕 3 光斑/直径 380-620/呼吸 ±35%/扫带 14s/元素 ≤20/漂移与休眠", {
+              "about: 光晕 6 光斑/直径 240-400/呼吸 ±35%/扫带 14s/元素 ≤20/漂移与休眠", {
     using Anim = module::about::AboutAnimState;
     std::unique_ptr<::core::Module> mod(create_about_module());
     DOCTEST_REQUIRE(mod != nullptr);
@@ -1277,9 +1278,9 @@ REGISTER_TEST(uiAboutGlow,
     auto& anim = ui.state<Anim>("about.anim");
     DOCTEST_REQUIRE(anim.initialized);
 
-    // ① 元素闸门：每帧新增绘制元素 ≤ 20（光斑 3×6 + 扫带 2 = 20）
-    constexpr int kExpectBlobCount = 3;
-    constexpr int kExpectLayers = 6;  // 需求区间 6-8；8 层 → 24+2 直接破闸
+    // ① 元素闸门：每帧新增绘制元素 ≤ 20（光斑 6×3 + 扫带 2 = 20）
+    constexpr int kExpectBlobCount = 6;   // 2026-09-29「多生成几个」3→6
+    constexpr int kExpectLayers = 3;      // 数量翻倍靠层数减半守住闸门
     constexpr int kExpectElementCount = 20;
     constexpr int kElementGate = 20;
     DOCTEST_CHECK_EQ(Anim::kBlobCount, kExpectBlobCount);
@@ -1305,9 +1306,9 @@ REGISTER_TEST(uiAboutGlow,
     // 旧版 7 个 1px 浮环已下线（避免与新光晕叠成双层背景噪声）
     DOCTEST_CHECK(ui.find("about.ring.0") == nullptr);
 
-    // ② 直径区间 380-620（字面量）
-    constexpr float kExpectDiameterMin = 380.0f;
-    constexpr float kExpectDiameterMax = 620.0f;
+    // ② 直径区间 240-400（字面量；2026-09-29「光团缩小一点」380-620 → 240-400）
+    constexpr float kExpectDiameterMin = 240.0f;
+    constexpr float kExpectDiameterMax = 400.0f;
     bool diameterOk = true;
     std::string diameterDetail;
     for (int i = 0; i < kExpectBlobCount; ++i) {
@@ -1320,9 +1321,9 @@ REGISTER_TEST(uiAboutGlow,
     }
     DOCTEST_CHECK_MESSAGE(diameterOk, diameterDetail);
 
-    // ③ 层 alpha 剖面：0.10（最内）→ 0.01（最外），单调递减
-    constexpr float kExpectLayerAlphaMax = 0.10f;
-    constexpr float kExpectLayerAlphaMin = 0.01f;
+    // ③ 层 alpha 剖面：0.15（最内）→ 0.05（最外），单调递减（3 层线性插值）
+    constexpr float kExpectLayerAlphaMax = 0.15f;
+    constexpr float kExpectLayerAlphaMin = 0.05f;
     DOCTEST_CHECK(std::abs(module::about::blobLayerAlpha(0) -
                            kExpectLayerAlphaMax) < 1e-4f);
     DOCTEST_CHECK(std::abs(module::about::blobLayerAlpha(kExpectLayers - 1) -
@@ -1359,7 +1360,7 @@ REGISTER_TEST(uiAboutGlow,
     // 合成 alpha 落在 [0.65, 1.35] × 层基准，且严格 > 0（可见）
     const float composedAlpha =
         module::about::blobLayerAlpha(0) * module::about::blobBreath(anim, 0);
-    DOCTEST_CHECK(composedAlpha > 0.0f && composedAlpha <= 0.14f + 1e-4f);
+    DOCTEST_CHECK(composedAlpha > 0.0f && composedAlpha <= 0.21f + 1e-4f);
 
     // ⑤ 漂移：利萨如周期 18-26s；1.2s 内真的挪动（真机 1.2s 抓两帧的口径）
     constexpr float kExpectPeriodMin = 18.0f;
@@ -1435,17 +1436,18 @@ REGISTER_TEST(uiAboutGlow,
         std::abs(layerInner->color.a - composedAlpha) < 1e-3f,
         "内层 alpha " + std::to_string(layerInner->color.a) + " 期望 " +
             std::to_string(composedAlpha));
-    const auto* layerOuter = ui.find("about.glow.0.5");
+    const auto* layerOuter = ui.find("about.glow.0.2");
     DOCTEST_REQUIRE(layerOuter != nullptr);
     // 最外圈挂霓虹 shadow（blur 48 / primary@0.35）
     DOCTEST_CHECK(layerOuter->shadow.enabled);
     DOCTEST_CHECK(std::abs(layerOuter->shadow.blur - 48.0f) < 1e-3f);
     DOCTEST_CHECK(std::abs(layerOuter->shadow.color.a - 0.35f) < 1e-3f);
-    // 内层挂同色柔边 shadow（blur 40）：抹平同心圆台阶的机制，别被静默删掉
-    const auto* layerMid = ui.find("about.glow.0.3");
+    // 内层挂同色柔边 shadow（blur 56）：抹平同心圆台阶的机制，别被静默删掉
+    //（层数 6→3 后台阶更高，blur 40→56 是为守住「单位像素梯度不升」的判据）
+    const auto* layerMid = ui.find("about.glow.0.1");
     DOCTEST_REQUIRE(layerMid != nullptr);
     DOCTEST_CHECK(layerMid->shadow.enabled);
-    DOCTEST_CHECK(std::abs(layerMid->shadow.blur - 40.0f) < 1e-3f);
+    DOCTEST_CHECK(std::abs(layerMid->shadow.blur - 56.0f) < 1e-3f);
     // 节拍回调真的推进状态（onTimer → step(kFrameSeconds)）
     const float timeBefore = anim.time;
     bg->onTimer();

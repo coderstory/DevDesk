@@ -723,14 +723,16 @@ REGISTER_TEST(settings_log_dropdown_popup_stays_in_window, "settings: log dropdo
     mod->onStart();
 
     // Task B tab 化后日志卡位于「日志」tab 顶部（cardsTopY = 40 pad + 64
-    // header + 16 gap + 40 tab + 16 gap = 176）。1200×1000 向下展开空间充足
-    // （保留字段底 264 + 8 gap + 弹层 216 = 488 ≤ 984）→ 默认 openDown；
-    // 短窗 1200×500 下同一弹层越出窗底（488 > 484）→ 应改 openUp 向上展开
-    //（弹层整体留在窗体内且位于字段上方）。卡顶游标只累计本 tab 的卡，
+    // header + 16 gap + 40 tab + 16 gap = 176）。1600×1300 向下展开空间充足
+    // （保留字段底 = 176 + 48 + 36 = 260，+ 8 gap + 弹层 216 = 484 ≤ 1284）
+    // → 默认 openDown；短窗下同一弹层越出窗底（484 > 高 − 16）→ 应改 openUp
+    // 向上展开（弹层整体留在窗体内且位于字段上方）。卡顶游标只累计本 tab 的卡，
     // 全量累加会把这里算错——即审计裁决「日志卡 openUp 游标」的回归位）
+    // 2026-09-29：日志卡两行改同列口径后字段高 40→36（底边 88→84），越界阈值
+    // 随之右移——短窗高度 500 → 470 才复现同一场景（484 > 454）
     eui::Screen screen;
     screen.width = 1200.0f;
-    screen.height = 500.0f;
+    screen.height = 470.0f;
     DOCTEST_REQUIRE(clickSettingsTab(*mod, screen, 2));
     eui::Ui ui;
     ui.begin("small");
@@ -1421,6 +1423,269 @@ REGISTER_TEST(settings_pet_dropdown_z_escape, "settings: pet skin dropdown popup
     }
     DOCTEST_REQUIRE(parent != nullptr);
     DOCTEST_CHECK(orderedIndexOf(parent, petCard) > orderedIndexOf(parent, dirCard));
+
+    mod->onStop();
+    ::core::theme::setDark();
+    return true;
+})
+
+// ---- 2026-09-29 用户真机反馈「设置-日志：日志和日志级别这 2 个条件 错位了啊
+//      日志显示 2 行」----
+// 判据全部数值化（改前逐条必红）：
+//   ① 两个下拉同列：field.frame.x 相等（改前 28 vs 124，差 96px）、同宽同高；
+//   ② 标签同列 + 标签→下拉间距一致（改前行 1 根本没有标签列，本用例
+//      REQUIRE("settings.card.log.label") 即回归位）；
+//   ③ 标签单行：标签框高 ≤ 单行行高、文本无换行符、估算文本宽 ≤ 标签框宽
+//      （「日志保留」4 字 × 12px = 48 ≤ 84，折行根本装不下 → 恒单行）。
+REGISTER_TEST(settings_log_rows_same_column,
+              "settings: 日志 tab 两下拉同列 + 标签单行（错位修复）", {
+    test_support::TestEnv env(kCfgPrefix, "logcols", true);
+    test_support::ScopedConfigPath cfgEnv(
+        test_support::tempConfigFile(kCfgPrefix, "logcols_cfg"));
+    std::unique_ptr<::core::Module> mod(create_settings_module());
+    mod->onStart();
+
+    eui::Screen screen;
+    screen.width = 1600.0f;
+    screen.height = 1000.0f;
+    DOCTEST_REQUIRE(clickSettingsTab(*mod, screen, 2));  // 日志 tab
+    eui::Ui ui;
+    ui.begin("logcols");
+    mod->compose(ui, screen);
+    ui.end();
+    ui.layout(screen.width, screen.height);
+
+    const auto* field1 = ui.find("settings.card.log.dd.field");        // 日志保留
+    const auto* field2 = ui.find("settings.card.log.level.dd.field");  // 日志级别
+    const auto* label1 = ui.find("settings.card.log.label");
+    const auto* label2 = ui.find("settings.card.log.level.label");
+    const auto* card = ui.find("settings.card.log");
+    DOCTEST_REQUIRE(field1 != nullptr);
+    DOCTEST_REQUIRE(field2 != nullptr);
+    DOCTEST_REQUIRE(label1 != nullptr);  // 改前缺失 → 本行即回归位
+    DOCTEST_REQUIRE(label2 != nullptr);
+    DOCTEST_REQUIRE(card != nullptr);
+
+    // ① 两下拉同列（左边缘 / 宽 / 高）
+    DOCTEST_CHECK_MESSAGE(std::abs(field1->frame.x - field2->frame.x) < 0.5f,
+                          "两下拉 frame.x " + std::to_string(field1->frame.x) +
+                              " vs " + std::to_string(field2->frame.x));
+    DOCTEST_CHECK(std::abs(field1->frame.width - field2->frame.width) < 0.5f);
+    DOCTEST_CHECK(std::abs(field1->frame.height - field2->frame.height) < 0.5f);
+
+    // ② 标签同列 + 标签→下拉间距一致 + 标签与控件垂直居中对齐（基线口径）
+    DOCTEST_CHECK(std::abs(label1->frame.x - label2->frame.x) < 0.5f);
+    DOCTEST_CHECK(std::abs(label1->frame.width - label2->frame.width) < 0.5f);
+    const float gap1 = field1->frame.x - (label1->frame.x + label1->frame.width);
+    const float gap2 = field2->frame.x - (label2->frame.x + label2->frame.width);
+    DOCTEST_CHECK_MESSAGE(std::abs(gap1 - gap2) < 0.5f,
+                          "标签→下拉间距 " + std::to_string(gap1) + " vs " +
+                              std::to_string(gap2));
+    DOCTEST_CHECK(gap1 > 0.0f);
+    DOCTEST_CHECK(std::abs((label1->frame.y + label1->frame.height * 0.5f) -
+                           (field1->frame.y + field1->frame.height * 0.5f)) <
+                  0.5f);
+    DOCTEST_CHECK(std::abs((label2->frame.y + label2->frame.height * 0.5f) -
+                           (field2->frame.y + field2->frame.height * 0.5f)) <
+                  0.5f);
+
+    // ③ 标签单行（框高 / 无换行 / 文本放得进框）
+    for (const core::dsl::Element* label : {label1, label2}) {
+        DOCTEST_CHECK_MESSAGE(label->frame.height <= 20.5f,
+                              "标签框高 " + std::to_string(label->frame.height));
+        DOCTEST_CHECK_MESSAGE(label->text.find('\n') == std::string::npos,
+                              "标签文案含换行：" + label->text);
+        const float textW =
+            module::settings::estimatedTextWidth(label->text, label->fontSize);
+        DOCTEST_CHECK_MESSAGE(textW <= label->frame.width + 0.5f,
+                              "标签文本宽 " + std::to_string(textW) + " > 框宽 " +
+                                  std::to_string(label->frame.width));
+    }
+    DOCTEST_CHECK(std::string(label1->text) == "日志保留");
+    DOCTEST_CHECK(std::string(label2->text) == "日志级别");
+
+    // 卡内不与标题重叠、两行自上而下不叠，说明列在控件列右侧，
+    // 且内容底沿仍留 ≥16 下边距（卡高 148 不变的前提）
+    DOCTEST_CHECK(field1->frame.y > card->frame.y + 38.0f);
+    DOCTEST_CHECK(field2->frame.y >= field1->frame.y + field1->frame.height);
+    const auto* hint = ui.find("settings.card.log.hint");
+    DOCTEST_REQUIRE(hint != nullptr);
+    DOCTEST_CHECK(hint->frame.x >= field1->frame.x + field1->frame.width + 8.0f);
+    DOCTEST_CHECK(field2->frame.y + field2->frame.height + 16.0f <=
+                  card->frame.y + card->frame.height + 0.5f);
+
+    mod->onStop();
+    ::core::theme::setDark();
+    return true;
+})
+
+// ---- 文案宽度纯件（③ 判据的来源）：估算 / 单行适配 / 皮肤下拉宽度 ----
+REGISTER_TEST(settings_label_fit_pure,
+              "settings: 文案宽度估算/单行适配/皮肤下拉宽度（不溢出判据）", {
+    namespace ms = module::settings;
+    // 估算口径钉死：ASCII 0.62em / 全角 1.0em（UTF-8 多字节按字符计一次）
+    DOCTEST_CHECK(std::abs(ms::estimatedTextWidth("abc", 10.0f) - 18.6f) < 1e-3f);
+    DOCTEST_CHECK(std::abs(ms::estimatedTextWidth("永久保留", 12.0f) - 48.0f) <
+                  1e-3f);
+    DOCTEST_CHECK(std::abs(ms::estimatedTextWidth("ab中文", 10.0f) -
+                           (2.0f * 0.62f + 2.0f) * 10.0f) < 1e-3f);
+    DOCTEST_CHECK(std::abs(ms::estimatedTextWidth("", 16.0f)) < 1e-3f);
+
+    // 放得下 → 原文；放不下 → 截断 + U+2026，且含省略号后仍不超宽
+    const std::string kLong = "super-long-skin-name-here";
+    DOCTEST_CHECK(ms::fitControlLabel("robot", 178.0f, 16.0f) == "robot");
+    const std::string fit = ms::fitControlLabel(kLong, 178.0f, 16.0f);
+    DOCTEST_CHECK(fit != kLong);
+    DOCTEST_CHECK(fit.size() >= 4u);  // ≥1 字符 + '…'(3 字节)
+    DOCTEST_CHECK(fit.compare(fit.size() - 3u, 3u, "\xE2\x80\xA6") == 0);
+    DOCTEST_CHECK_MESSAGE(ms::estimatedTextWidth(fit, 16.0f) <= 178.0f + 1e-3f,
+                          "截断后宽 " +
+                              std::to_string(ms::estimatedTextWidth(fit, 16.0f)));
+    DOCTEST_CHECK(kLong.compare(0, fit.size() - 3u,
+                                fit.substr(0, fit.size() - 3u)) == 0);
+
+    // 皮肤下拉宽度：下限 240（同其余控件）/ 按最长名放宽 / 上限 420
+    DOCTEST_CHECK(std::abs(ms::petSkinFieldWidth({}, 16.0f) - 240.0f) < 1e-3f);
+    DOCTEST_CHECK(std::abs(ms::petSkinFieldWidth({"robot"}, 16.0f) - 240.0f) <
+                  1e-3f);
+    DOCTEST_CHECK(std::abs(ms::petSkinFieldWidth({kLong}, 16.0f) -
+                           (25.0f * 0.62f * 16.0f + 62.0f)) < 1e-3f);
+    DOCTEST_CHECK(std::abs(ms::petSkinFieldWidth({std::string(80, 'x')}, 16.0f) -
+                           420.0f) < 1e-3f);
+    return true;
+})
+
+// ---- 2026-09-29 用户真机反馈「桌宠设置的下拉框不应该换行」----
+// EUI-NEO 的 text 默认 wrap=false（core/dsl.h:149）：超宽皮肤名**不折行**，
+// 而是画出控件右边缘（真机复现：25 字符名在 240 宽下拉里文本压过 chevron）。
+// 判据（改回固定 240 宽 / 去掉截断都会红）：
+//   ① 字段宽度 ≥ 最长皮肤名估算宽 + 字段 chrome（且 ≤ 420 上限）；
+//   ② 字段文案与每个选项的估算宽 ≤ 各自可用宽（放不下 = 溢出）；
+//   ③ 文案无换行符；短名原样显示、清单项数不减（截断只碰显示串，不改取值）。
+REGISTER_TEST(settings_pet_skin_dropdown_label_fits,
+              "settings: 桌宠皮肤下拉单行不溢出（按最长名放宽 + 超长截断）", {
+    test_support::TestEnv env(kCfgPrefix, "petskinfit", true);
+    test_support::ScopedConfigPath cfgEnv(
+        test_support::tempConfigFile(kCfgPrefix, "petskinfit_cfg"));
+    {
+        std::ofstream out(cfgEnv.cfgPath);
+        out << "{\"theme\":\"dark\",\"enabledModules\":["
+               "\"home\",\"markdown\",\"todo\",\"claude_proxy\",\"settings\","
+               "\"pet\"]}";
+    }
+    test_support::TempDir petsDir("pet_skins_fit");
+    const std::string kLong = "super-long-skin-name-here";  // 25 字符
+    for (const std::string& s : {std::string("robot"), kLong}) {
+        std::filesystem::create_directories(petsDir.path / s);
+        std::ofstream(petsDir.path / s / "pet.json") << "{}";
+    }
+    test_support::ScopedEnv petsEnv("DEVDESK_PETS_DIR", petsDir.path.string());
+
+    std::unique_ptr<::core::Module> mod(create_settings_module());
+    mod->onStart();
+
+    eui::Screen screen;
+    screen.width = 1600.0f;
+    screen.height = 1000.0f;
+    DOCTEST_REQUIRE(clickSettingsTab(*mod, screen, 1));  // 模块 tab
+
+    // 探针：compose 一帧后把下拉几何 / 文案拷出来（Ui 是局部的，指针不外带）
+    struct Snapshot {
+        bool ok = false;
+        float width = 0.0f;
+        std::string label;
+        float labelFont = 0.0f;
+        std::vector<std::string> items;
+        float itemFont = 0.0f;
+    };
+    auto snapshot = [&]() {
+        Snapshot snap;
+        eui::Ui ui;
+        ui.begin("petskinfit");
+        mod->compose(ui, screen);
+        ui.end();
+        ui.layout(screen.width, screen.height);
+        const auto* field = ui.find("settings.card.pet.skin.dd.field");
+        const auto* label = ui.find("settings.card.pet.skin.dd.label");
+        if (field == nullptr || label == nullptr) return snap;
+        snap.ok = true;
+        snap.width = field->frame.width;
+        snap.label = label->text;
+        snap.labelFont = label->fontSize;
+        for (size_t i = 0;; ++i) {
+            const auto* item = ui.find(
+                "settings.card.pet.skin.dd.item.label." + std::to_string(i));
+            if (item == nullptr) break;
+            snap.items.push_back(item->text);
+            snap.itemFont = item->fontSize;
+        }
+        return snap;
+    };
+    namespace ms = module::settings;
+    const float kFieldFont = 16.0f;   // components/theme.h typography.body
+    const float kChrome = 62.0f;      // content(12) + micro(2) + overlay(48)
+    const float kItemChrome = 36.0f;  // small(6)×2 + panel(24)
+
+    // ① 按最长皮肤名放宽（固定 240 = 改前状态 → 本行红）
+    const float longEst = ms::estimatedTextWidth(kLong, kFieldFont);
+    DOCTEST_CHECK(std::abs(longEst - 248.0f) < 0.5f);  // 25 × 0.62 × 16
+    const Snapshot wide = snapshot();
+    DOCTEST_REQUIRE(wide.ok);
+    DOCTEST_CHECK_MESSAGE(wide.width >= longEst + kChrome - 0.5f,
+                          "皮肤下拉宽 " + std::to_string(wide.width) + "（应 ≥ " +
+                              std::to_string(longEst + kChrome) + "）");
+    DOCTEST_CHECK(wide.width <= 420.5f);
+
+    // ② 字段文案 + 每个选项都放得进各自可用宽（溢出 = 压 chevron 的根因）
+    DOCTEST_CHECK(wide.label.find('\n') == std::string::npos);
+    DOCTEST_CHECK_MESSAGE(
+        ms::estimatedTextWidth(wide.label, wide.labelFont) <=
+            wide.width - kChrome + 0.5f,
+        "字段文案 " + wide.label + " 估算宽 " +
+            std::to_string(ms::estimatedTextWidth(wide.label, wide.labelFont)));
+    for (const std::string& t : wide.items) {
+        DOCTEST_CHECK(t.find('\n') == std::string::npos);
+        DOCTEST_CHECK_MESSAGE(
+            ms::estimatedTextWidth(t, wide.itemFont) <=
+                wide.width - kItemChrome + 0.5f,
+            "选项 " + t + " 溢出（控件宽 " + std::to_string(wide.width) + "）");
+    }
+    // ③ 短名原样显示（截断只碰显示串）+ 清单项数不减
+    DOCTEST_CHECK_MESSAGE(
+        std::find(wide.items.begin(), wide.items.end(), std::string("robot")) !=
+            wide.items.end(),
+        "短皮肤名应原样显示");
+    DOCTEST_CHECK_EQ(wide.items.size(), 2u);
+    DOCTEST_CHECK(wide.label == "robot");  // 选中项 = 默认皮肤
+
+    // ④ 超长名（估算宽破上限）→ 控件封顶 420、文案截断（'…'）且仍放得下
+    const std::string kHuge =
+        "skin-with-a-very-long-name-that-exceeds-the-cap-limit-for-sure";
+    std::filesystem::create_directories(petsDir.path / kHuge);
+    std::ofstream(petsDir.path / kHuge / "pet.json") << "{}";
+    {
+        // 当前皮肤 = 超长名（pet_config.json 是 currentSkinName 的真值来源）
+        std::ofstream out(petsDir.path / "pet_config.json");
+        out << "{\"skinName\":\"" << kHuge << "\",\"x\":-1,\"y\":-1}";
+    }
+    mod->onPageEnter();  // 皮肤清单 / 当前皮肤的刷新点（THS-01）
+    const Snapshot huge = snapshot();
+    DOCTEST_REQUIRE(huge.ok);
+    DOCTEST_CHECK(std::abs(huge.width - 420.0f) < 0.5f);  // 上限封顶
+    DOCTEST_CHECK_EQ(huge.items.size(), 3u);              // 清单没丢项
+    DOCTEST_CHECK(huge.label.size() >= 4u);
+    DOCTEST_CHECK_MESSAGE(
+        huge.label.compare(huge.label.size() - 3u, 3u, "\xE2\x80\xA6") == 0,
+        "超长皮肤名应截断显示：" + huge.label);
+    DOCTEST_CHECK_MESSAGE(
+        ms::estimatedTextWidth(huge.label, huge.labelFont) <=
+            huge.width - kChrome + 0.5f,
+        "截断后仍溢出：" +
+            std::to_string(ms::estimatedTextWidth(huge.label, huge.labelFont)));
+    // 截断串 = 原名前缀（只改显示，取值仍是原下标 → onChange 语义不变）
+    DOCTEST_CHECK(kHuge.compare(0, huge.label.size() - 3u,
+                                huge.label.substr(0, huge.label.size() - 3u)) ==
+                  0);
 
     mod->onStop();
     ::core::theme::setDark();
