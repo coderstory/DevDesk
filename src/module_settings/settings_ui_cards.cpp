@@ -81,35 +81,49 @@ void drawAppearanceCard(const CardDrawArgs& args) {
     const SettingsCardActions& a = args.a;
 
     const auto compTheme = core::theme::componentTokens(t);
+    // 行几何随生效字号派生（2026-09-30 spec 2026-09-30-batch-fix-design §2.3
+    // 本期修；roundFs 口径见 settings_ui_logic.h）：标题盒/描述行/标签行/降级
+    // 提示行的盒高与 lineHeight 从 100% 字面改为派生，后续行的 y 沿派生盒底
+    // 累加（spec §2.7「优先把链改派生而非钳制」）。100% 档 roundFs(x)==x，全部
+    // 值回到旧字面（零回归锚）。字面锚：18 = 标题顶（卡顶 padding，不缩放）；
+    // 40 = 下拉控件高（组件字面 chrome，字段文案不走 token，不随缩放）
+    const float titleH = roundFs(24.0f);
+    const float descY = 18.0f + titleH + roundFs(2.0f);
+    const float descH = roundFs(18.0f);
+    const float labelY = descY + descH + roundFs(10.0f);
+    const float labelH = roundFs(16.0f);
+    const float ddY = labelY + labelH + roundFs(6.0f);
+    const float hintY = ddY + 40.0f + roundFs(6.0f);
+    const float hintH = roundFs(16.0f);
     ui.stack(id)
         .size(w, h)
         .zIndex(40)
         .content([&] {
             ui.text(id + ".title")
                 .position(28.0f, 18.0f)
-                .size(w - 56.0f, 24.0f)
+                .size(w - 56.0f, titleH)
                 .text("外观")
                 .fontSize(t.sizes.fontSizeLarge)
-                .lineHeight(24.0f)
+                .lineHeight(titleH)
                 .fontWeight(600)
                 .color(t.colors.textPrimary)
                 .build();
             ui.text(id + ".desc")
-                .position(28.0f, 44.0f)
-                .size(w - 56.0f, 18.0f)
+                .position(28.0f, descY)
+                .size(w - 56.0f, descH)
                 .text("主题与窗口底色即时生效；字号缩放全局生效")
                 .fontSize(fs(12.0f))
-                .lineHeight(18.0f)
+                .lineHeight(descH)
                 .color(t.colors.textTertiary)
                 .build();
 
             // 左：主题切换
             ui.text(id + ".theme.label")
-                .position(28.0f, 72.0f)
-                .size(200.0f, 16.0f)
+                .position(28.0f, labelY)
+                .size(200.0f, labelH)
                 .text("主题")
                 .fontSize(fs(12.0f))
-                .lineHeight(16.0f)
+                .lineHeight(labelH)
                 .color(t.colors.textSecondary)
                 .build();
             // 主题模式下拉（spec 缩水 A）：跟随系统/浅色/深色三档，替代
@@ -117,7 +131,7 @@ void drawAppearanceCard(const CardDrawArgs& args) {
             // 右缘 28+240=268，窄窗自适应后 fontX≥324，不碰撞（见
             // settings_effect_dropdown_fits_min_window）
             ui.stack(id + ".theme.ddwrap")
-                .position(28.0f, 94.0f)
+                .position(28.0f, ddY)
                 .size(240.0f, 40.0f)
                 .content([&] {
                     components::dropdown(ui, id + ".theme.dd")
@@ -143,15 +157,15 @@ void drawAppearanceCard(const CardDrawArgs& args) {
             const float effectX = std::min(680.0f, w - 28.0f - 240.0f);
             const float fontX = std::min(380.0f, effectX - 240.0f - 28.0f);
             ui.text(id + ".font.label")
-                .position(fontX, 72.0f)
-                .size(240.0f, 16.0f)
+                .position(fontX, labelY)
+                .size(240.0f, labelH)
                 .text("字号缩放（正文基准 15px）")
                 .fontSize(fs(12.0f))
-                .lineHeight(16.0f)
+                .lineHeight(labelH)
                 .color(t.colors.textSecondary)
                 .build();
             ui.stack(id + ".font.ddwrap")
-                .position(fontX, 94.0f)
+                .position(fontX, ddY)
                 .size(240.0f, 40.0f)
                 .content([&] {
                     components::dropdown(ui, id + ".font.dd")
@@ -173,15 +187,15 @@ void drawAppearanceCard(const CardDrawArgs& args) {
 
             // 右二：窗口效果三档（磨砂 Phase D），即时生效（effectX 见上）
             ui.text(id + ".effect.label")
-                .position(effectX, 72.0f)
-                .size(240.0f, 16.0f)
+                .position(effectX, labelY)
+                .size(240.0f, labelH)
                 .text("窗口效果")
                 .fontSize(fs(12.0f))
-                .lineHeight(16.0f)
+                .lineHeight(labelH)
                 .color(t.colors.textSecondary)
                 .build();
             ui.stack(id + ".effect.ddwrap")
-                .position(effectX, 94.0f)
+                .position(effectX, ddY)
                 .size(240.0f, 40.0f)
                 .content([&] {
                     components::dropdown(ui, id + ".effect.dd")
@@ -206,19 +220,19 @@ void drawAppearanceCard(const CardDrawArgs& args) {
             if (!degraded.empty()) {
                 // ⚠ 字符换 FA：图标/文字拆两个元素（icon 字体通道）
                 ui.text(id + ".effect.hint.icon")
-                    .position(effectX, 140.0f)
-                    .size(14.0f, 16.0f)
+                    .position(effectX, hintY)
+                    .size(14.0f, hintH)
                     .icon(0xF071)  // fa-triangle-exclamation
                     .fontSize(fs(11.0f))
-                    .lineHeight(16.0f)
+                    .lineHeight(hintH)
                     .color(t.colors.warning)
                     .build();
                 ui.text(id + ".effect.hint")
-                    .position(effectX + 16.0f, 140.0f)
-                    .size(w - effectX - 16.0f - 28.0f, 16.0f)
+                    .position(effectX + 16.0f, hintY)
+                    .size(w - effectX - 16.0f - 28.0f, hintH)
                     .text(degraded)
                     .fontSize(fs(11.0f))
-                    .lineHeight(16.0f)
+                    .lineHeight(hintH)
                     .color(t.colors.warning)
                     // 类 6(d)（probes 证伪门禁落点）：窄窗可用宽不足时截断
                     // 而非溢出（完整文案在宽窗可见）
@@ -286,12 +300,14 @@ void drawEditorFontCard(const CardDrawArgs& args) {
                         .build();
                 })
                 .build();
+            // 描述行盒随生效字号派生（2026-09-30 spec §2.3 本期修）；y=48 与
+            // 左侧下拉（字面控件）并排、下方无行，链上无后续行需挪
             ui.text(id + ".hint")
                 .position(190.0f, 48.0f)
-                .size(w - 218.0f, 18.0f)
+                .size(w - 218.0f, roundFs(18.0f))
                 .text("Markdown 编辑器正文字号；默认 15px（标准）。切换即时生效。")
                 .fontSize(fs(12.0f))
-                .lineHeight(18.0f)
+                .lineHeight(roundFs(18.0f))
                 .color(t.colors.textTertiary)
                 .build();
         })
@@ -340,33 +356,42 @@ void drawModulesCard(const CardDrawArgs& args) {
                 .build();
             ui.text(id + ".desc")
                 .position(28.0f, 40.0f)
-                .size(w - 56.0f, 16.0f)
+                .size(w - 56.0f, roundFs(16.0f))
                 .text("关闭模块后需重启应用生效（关闭 = 该模块代码不再执行、"
                       "侧边栏不显示入口）")
                 .fontSize(fs(12.0f))
-                .lineHeight(16.0f)
+                .lineHeight(roundFs(16.0f))
                 .color(t.colors.textTertiary)
                 .build();
 
+            // 开关行行几何随生效字号派生（2026-09-30 spec §2.3 本期修）：
+            // 名称/描述行盒、行内 y 偏移与行距（100% 档 = 56，零回归锚）；
+            // 行 1 顶 y=68 锚在字面说明行下方（说明行 y40 字面、盒派生后
+            // 130% 档底 61 仍 < 68，链上无碰撞）。开关控件（32 高字面组件）
+            // 随行顶走，相对偏移 -2 保持字面
+            const float nameH = roundFs(18.0f);
+            const float rowDescDy = nameH + roundFs(2.0f);
+            const float rowDescH = roundFs(16.0f);
+            const float rowPitch = roundFs(56.0f);
             for (int i = 0; i < kToggleCount; ++i) {
                 const ModuleMeta& meta = kToggleable[i];
-                const float rowY = 68.0f + static_cast<float>(i) * 56.0f;
+                const float rowY = 68.0f + static_cast<float>(i) * rowPitch;
                 const std::string suffix = std::to_string(i);
                 ui.text(id + ".name." + suffix)
                     .position(28.0f, rowY)
-                    .size(w - 160.0f, 18.0f)
+                    .size(w - 160.0f, nameH)
                     .text(meta.name)
                     .fontSize(t.sizes.fontSizeBody - 1.0f)
-                    .lineHeight(18.0f)
+                    .lineHeight(nameH)
                     .fontWeight(500)
                     .color(t.colors.textPrimary)
                     .build();
                 ui.text(id + ".rowdesc." + suffix)
-                    .position(28.0f, rowY + 20.0f)
-                    .size(w - 160.0f, 16.0f)
+                    .position(28.0f, rowY + rowDescDy)
+                    .size(w - 160.0f, rowDescH)
                     .text(meta.desc)
                     .fontSize(fs(12.0f))
-                    .lineHeight(16.0f)
+                    .lineHeight(rowDescH)
                     .color(t.colors.textTertiary)
                     .build();
                 // SwitchBuilder 无 position，套 stack 定位（与代理卡同款）
@@ -426,10 +451,10 @@ void drawPetCard(const CardDrawArgs& args) {
                 .build();
             ui.text(id + ".desc")
                 .position(28.0f, 40.0f)
-                .size(w - 56.0f, 16.0f)
+                .size(w - 56.0f, roundFs(16.0f))
                 .text("换肤与位置重置即时生效；关闭桌宠立即隐藏、重新开启立即恢复")
                 .fontSize(fs(12.0f))
-                .lineHeight(16.0f)
+                .lineHeight(roundFs(16.0f))
                 .color(t.colors.textTertiary)
                 .build();
             // 皮肤下拉（列表为空时占位一项，选择被忽略）
@@ -604,13 +629,16 @@ void drawDirectoryCard(const CardDrawArgs& args) {
                 .border(1.0f, t.colors.borderDefault)
                 .onClick([f = a.openNotesDirectory] { f(); })
                 .build();
+            // 提示行盒随生效字号派生（2026-09-30 spec §2.3 本期修）——本行
+            // 14px 盒 + fs(11) 文本是 130% 档实测越盒点（14.3px 墨迹 > 14 盒）；
+            // y=86 字面（上方路径行是字面控件行），下方无行
             ui.text(id + ".hint")
                 .position(28.0f, 86.0f)
-                .size(w - 56.0f, 14.0f)
+                .size(w - 56.0f, roundFs(14.0f))
                 .text("修改笔记目录属于后续功能，当前仅展示（可用「打开目录」"
                       "定位后迁移笔记）")
                 .fontSize(fs(11.0f))
-                .lineHeight(14.0f)
+                .lineHeight(roundFs(14.0f))
                 .color(t.colors.textTertiary)
                 .build();
         })
@@ -626,6 +654,18 @@ void drawProxyCard(const CardDrawArgs& args) {
     const core::theme::Tokens& t = args.t;
     const SettingsCardsIn& in = args.in;
     const SettingsCardActions& a = args.a;
+
+    // 行几何随生效字号派生（2026-09-30 spec §2.3 本期修；roundFs 与接管/警告
+    // 行的单一来源 helper 见 settings_ui_logic.h，compose 的卡高公式
+    // proxyCardHeightFor 与这里同源）。字面锚：y40/62/98 —— 上方标题与端口
+    // 控件行（input 28 字面组件）不缩放，锚在其下；警告行 y 从接管行派生盒底
+    // 起算（100% 档 = 118 与旧字面一致）。端口标签 lineHeight 保持 28 字面：
+    // 它是与 28 高输入控件的垂直居中对齐口径，不是行盒
+    const float descH = roundFs(16.0f);
+    const float portRowH = roundFs(18.0f);
+    const float takeoverH = proxyTakeoverRowHeight();
+    const float warnY0 = proxyWarnRowTop();
+    const float warnH = proxyWarnRowHeight();
 
     ui.stack(id)
         .size(w, h)
@@ -665,13 +705,13 @@ void drawProxyCard(const CardDrawArgs& args) {
 
             ui.text(id + ".desc")
                 .position(28.0f, 40.0f)
-                .size(w - 56.0f, 16.0f)
+                .size(w - 56.0f, descH)
                 .text(running
                       ? "本地代理 http://127.0.0.1:" + std::to_string(port) +
                             "（仅本机可访问，无需凭据）"
                       : "本地代理未运行（默认不随应用启动，可在 Claude 页手动启动）")
                 .fontSize(fs(12.0f))
-                .lineHeight(16.0f)
+                .lineHeight(descH)
                 .color(t.colors.textTertiary)
                 .build();
 
@@ -683,7 +723,7 @@ void drawProxyCard(const CardDrawArgs& args) {
                 : in.proxyPortDraft;
             ui.text(id + ".port.label")
                 .position(28.0f, 62.0f)
-                .size(72.0f, 18.0f)
+                .size(72.0f, portRowH)
                 .text("代理端口")
                 .fontSize(fs(12.0f))
                 .lineHeight(28.0f)
@@ -718,10 +758,10 @@ void drawProxyCard(const CardDrawArgs& args) {
                 .build();
             ui.text(id + ".port.hint")
                 .position(282.0f, 62.0f)
-                .size(w - 282.0f - 28.0f, 18.0f)
+                .size(w - 282.0f - 28.0f, portRowH)
                 .text("改后回车或点「应用」；代理运行中自动重启")
                 .fontSize(fs(12.0f))
-                .lineHeight(18.0f)
+                .lineHeight(portRowH)
                 .color(t.colors.textTertiary)
                 .build();
 
@@ -730,10 +770,10 @@ void drawProxyCard(const CardDrawArgs& args) {
             const bool managed = in.takeoverManaged;  // 审计 THS-01：读快照
             ui.text(id + ".takeover.label")
                 .position(28.0f, 98.0f)
-                .size(150.0f, 18.0f)
+                .size(150.0f, takeoverH)
                 .text("Claude Code 接管")
                 .fontSize(fs(12.0f))
-                .lineHeight(18.0f)
+                .lineHeight(takeoverH)
                 .color(t.colors.textSecondary)
                 .build();
             // 审计 THS-01：路径读 Claude 运行面内存态（main 启动期注入的
@@ -743,12 +783,12 @@ void drawProxyCard(const CardDrawArgs& args) {
                 svc ? svc->settingsFilePath() : std::string();
             ui.text(id + ".takeover.value")
                 .position(190.0f, 98.0f)
-                .size(w - 190.0f - 28.0f, 18.0f)
+                .size(w - 190.0f - 28.0f, takeoverH)
                 .text(managed
                       ? ("● 已接管 " + ccPath)
                       : std::string("○ 未接管（启动代理后自动接管，停止时还原）"))
                 .fontSize(fs(12.0f))
-                .lineHeight(18.0f)
+                .lineHeight(takeoverH)
                 .color(managed ? t.colors.success : t.colors.textTertiary)
                 .build();
             // 审计 CPX-02：渲染门与卡高计算同源（svc 而非 managed）——
@@ -760,20 +800,22 @@ void drawProxyCard(const CardDrawArgs& args) {
                 const size_t shown =
                     std::min<size_t>(warns.size(), 2);
                 for (size_t i = 0; i < shown; ++i) {
+                    const float warnY =
+                        warnY0 + static_cast<float>(i) * warnH;
                     ui.text(id + ".takeover.warn.icon." + std::to_string(i))
-                        .position(28.0f, 118.0f + static_cast<float>(i) * 16.0f)
-                        .size(12.0f, 16.0f)
+                        .position(28.0f, warnY)
+                        .size(12.0f, warnH)
                         .icon(0xF071)  // fa-triangle-exclamation
                         .fontSize(fs(11.0f))
-                        .lineHeight(16.0f)
+                        .lineHeight(warnH)
                         .color(t.colors.warning)
                         .build();
                     ui.text(id + ".takeover.warn." + std::to_string(i))
-                        .position(42.0f, 118.0f + static_cast<float>(i) * 16.0f)
-                        .size(w - 42.0f - 28.0f, 16.0f)
+                        .position(42.0f, warnY)
+                        .size(w - 42.0f - 28.0f, warnH)
                         .text(warns[i])
                         .fontSize(fs(11.0f))
-                        .lineHeight(16.0f)
+                        .lineHeight(warnH)
                         .color(t.colors.warning)
                         .build();
                 }

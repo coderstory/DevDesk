@@ -582,13 +582,10 @@ public:
             warnLines = std::min<size_t>(
                 svc->lastSyncWarnings().size(), 2);
         }
-        // 代理卡高 = 内容底沿 + 16px 卡内下边距（与本 tab 其它卡一致）。内容底沿：
-        // 接管状态行 98+18=116；有警告时改为警告行区底（118 + 16×行数，首行与
-        // 上一行留 2px）
-        const float proxyBottom = warnLines > 0
-            ? 118.0f + static_cast<float>(warnLines) * 16.0f
-            : 116.0f;
-        const float proxyH = proxyBottom + 16.0f;
+        // 代理卡高（2026-09-30 起随生效字号派生）：proxyCardHeightFor 是
+        // 接管/警告行几何的单一来源（drawProxyCard 同源），100% 档公式与旧字面
+        // 逐一相等（无警告 116+16=132 / n 条警告 118+16n+16）
+        const float proxyH = proxyCardHeightFor(warnLines);
         // 模块插拔门控（§5.4）：claude 关 → 代理卡整卡隐藏；markdown
         // 关 → 目录卡整卡隐藏（不显示故障态）。读 cfg_（= 启动时注册
         // 状态的来源），拨动开关即时预览下次启动的卡片布局
@@ -731,7 +728,11 @@ private:
     static float cardHeight(const CardSpec& spec, float proxyH, float remain) {
         switch (spec.heightKind) {
         case CardHeightKind::Fixed:
-            return spec.height;
+            // 2026-09-30 缩放派生审查（spec §2.3 本期修）：spec.height 是
+            // 100% 档基准，运行期随生效字号放大（roundFs）——卡内行盒/行距
+            // 派生后内容底沿增长，卡高不同步放大就会把尾行挤出卡外（与下一
+            // 张卡的内容叠印）。100% 档 roundFs(x)==x，与旧字面逐值相等
+            return roundFs(spec.height);
         case CardHeightKind::ProxyWarnings:
             return proxyH;
         case CardHeightKind::FillRemainder:

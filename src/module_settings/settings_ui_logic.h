@@ -13,6 +13,10 @@
 
 #include "settings_config.h"
 
+#include <core/theme.h>
+
+#include <cmath>
+#include <cstddef>
 #include <string>
 #include <vector>
 
@@ -78,6 +82,11 @@ inline constexpr long kLogTailReadWindow = 256 * 1024;  // tail 只读末尾 256
 // 内容底沿 + 16px 下边距的既有公式，否则卡片内容会被裁或贴底边。卡内容内边距
 // 口径（2026-09-28 系统性修复）：四周 ≥16px——顶（标题 y≥16）、左右 28（对齐
 // kDialogInsetX 语系）、底 = 卡高 - 内容底沿 ≥ 16。
+//
+// 2026-09-30 缩放派生审查（spec 2026-09-30-batch-fix-design.md §2.3 本期修）：
+// 这些常量是 **100% 档基准值**；注册表运行期取 roundFs(常量)（cardHeight 的
+// Fixed 分支）——行盒/行距随生效字号派生后内容底沿同步增长，卡高按同一缩放
+// 放大才不会把尾行挤出卡外。100% 档 roundFs(x) == x，与旧字面逐一相等。
 inline constexpr float kAppearanceCardHeight = 172.0f;  // 外观卡（通用；降级提示行底 156 + 16）
 inline constexpr float kEditorFontCardHeight = 108.0f;  // 编辑器字号卡（通用）
 inline constexpr float kModulesCardHeight = 288.0f;     // 模块插拔卡（模块）
@@ -180,6 +189,37 @@ int nearestIndex(int value, const int* presets, int count);
 // 非 token 的硬编码字号跟随全局缩放（单一来源 core::theme::fontScale；
 // token 字号已在 theme 层缩放，不要再经本函数包一层，避免双重缩放）。
 float fs(float base);
+
+// ---- 行盒/间距随生效字号派生（2026-09-30 spec §2.3 本期修）----
+// 根因（与详情页 env pane 同一台病，真机 130% 档墨迹越盒）：全局字号缩放只放大
+// 字号，行盒/行距按 100% 写死 → 文本 advance 超出盒贴边/叠印。派生口径与 env
+// pane 修复（1ca87b0）一致：**行盒 = round(基准 × fontScale)**，系数（基准/行
+// 字号）> 最坏 CJK 墨迹 1.25×，恒包住墨迹；**100% 档 round() 后与旧字面常量
+// 逐一相等**（零回归锚——既有布局断言、常量钉值用例全部不动）。字号本体仍走
+// fs()（不取整，与 env pane 同款），取整只发生在盒/间距上（像素对齐稳定）。
+inline float roundFs(float base) {
+    return std::round(base * ::core::theme::fontScale());
+}
+
+// 代理卡接管/警告行几何（drawProxyCard 与 proxyCardHeightFor 单一来源——
+// compose 的卡高公式与卡内绘制各写一份必然漂移，同本头「卡高与卡内几何同源」
+// 口径）。上方端口行是字面高控件（input 28），故接管行 y=98 锚在字面链上；
+// 警告行 y 从接管行**派生盒底**起算（100% 档 = 118，与旧字面一致）。
+inline float proxyTakeoverRowHeight() { return roundFs(18.0f); }  // 100% = 18
+inline float proxyWarnRowHeight() { return roundFs(16.0f); }      // 100% = 16
+inline float proxyWarnRowTop() {
+    return 98.0f + proxyTakeoverRowHeight() + roundFs(2.0f);      // 100% = 118
+}
+// 代理卡高 = 内容底沿 + roundFs(16) 下边距（compose 顶部算 proxyH 唯一入口）。
+// 100% 档：无警告 132 / n 条警告 118 + 16n + 16 —— 与旧字面公式逐一相等。
+inline float proxyCardHeightFor(std::size_t warnLines) {
+    const float bottom =
+        warnLines > 0
+            ? proxyWarnRowTop() +
+                  static_cast<float>(warnLines) * proxyWarnRowHeight()
+            : 98.0f + proxyTakeoverRowHeight();
+    return bottom + roundFs(16.0f);
+}
 
 // 下拉弹层向下展开是否越出窗体底边（越界 → 调用方置 openUp 向上展开）。
 // 原三处（日志保留 / 日志级别 / 编辑器字号）各写一遍的同一几何，R6 收成一个

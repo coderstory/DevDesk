@@ -75,6 +75,14 @@
 
 **登记 tech-debt（不在本批做，记入 backlog）**：
 
+> **已登记（2026-09-30，Wave B 项 A 实施时）**：原登记目标 `docs/KNOWN_LIMITATIONS.md`
+> 已整档删除（`5bc5a0a`），下表四条核实后改记
+> `docs/superpowers/plans/2026-09-30-scale-derive-tech-debt.md`（T1~T4）——其中
+> env pane 一条（下表末行）因 `fix/detail-env-pane` 已并入 master（merge
+> `0edd3cf`）**改记「已结案」**；另加实施中新观测两条：settings 页头（T5，
+> 130% 档截图实证标题压副标题行）与 settings 22px 卡片标题盒（T6，贴边未实证
+> 重叠）。验证留痕见同目录 `2026-09-30-scale-derive-verify.md`。
+
 | 点位 | 现状 | 为什么不修 |
 |------|------|-----------|
 | todo 卡片全量（文本 + 几何全字面） | 130% 下无重叠，仅「缩放失效」 | 需要整套派生化设计（含卡片高度自适应），不是小改；无用户实证受害 |

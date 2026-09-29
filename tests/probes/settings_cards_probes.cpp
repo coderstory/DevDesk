@@ -35,6 +35,14 @@
 //
 // 运行：settings_cards_probes.exe [--size 1200x720]（最小窗 1200×720 是
 // §A/§C 的判别尺寸；默认 1200×1000 下弹层向下展开也在视口内，同样绿）。
+//   --dump <prefix>：设置页缩放两档落图（§D）——通用 tab 在 fontScale 100% /
+//   130% 各真渲染一帧，GL 后备缓冲 glReadPixels 读回写 <prefix>_100/_130.ppm
+//   （P6，PIL 可读；about_probe 同款手法，观感复核不依赖 screencapture——
+//   OpenGL 窗口 screencapture 有旧帧坑且锁屏下不可用）。
+
+// GLFW 头必须先于 probe_harness（后者 define GLFW_INCLUDE_NONE 会屏蔽平台 GL
+// 头，--dump 的 glReadPixels 需要它；about_probe.cpp:23 同款顺序）
+#include <GLFW/glfw3.h>
 
 #include "probes/probe_harness.h"
 #include "test_support.h"
@@ -43,6 +51,7 @@
 
 #include "app_registry.h"
 #include "core/module_interface.h"
+#include "core/render/render_backend.h"  // §D --dump：manual 渲染
 #include "core/theme.h"
 
 #include <eui/app.h>
@@ -623,6 +632,97 @@ int main(int argc, char* argv[]) {
                 }
             }
         }
+    }
+
+    // ============ §D --dump <prefix>：设置页缩放两档落图（2026-09-30 缩放派生审查）====
+    // 通用 tab 在 fontScale 100% / 130% 各真渲染一帧，GL 后备缓冲 glReadPixels
+    // 读回写 <prefix>_100/_130.ppm。about_probe.cpp 同款手法（P6 PPM；锁屏 /
+    // screencapture 旧帧坑都不依赖）。dump 帧取在 present() **之前**：swap 后
+    // 后备缓冲内容未定义（about_probe.cpp:425 同一条教训）
+    std::string dumpPrefix;
+    for (int i = 1; i + 1 < argc; ++i) {
+        if (std::string(argv[i]) == "--dump") {
+            dumpPrefix = argv[i + 1];
+        }
+    }
+    if (!dumpPrefix.empty()) {
+        // 回通用 tab（§A-§C 把 tab 切到了日志）：dump 对象是外观卡所在的
+        // 通用页——本期修（行盒随生效字号派生）的主断言面
+        const core::dsl::Element* tabGeneral =
+            ui != nullptr ? ui->find("settings.tabs.hit.0") : nullptr;
+        if (tabGeneral != nullptr) {
+            clickElement(*tabGeneral);
+        }
+        auto* glfwWin = static_cast<GLFWwindow*>(window);
+        int fbW = 0, fbH = 0;
+        glfwGetFramebufferSize(glfwWin, &fbW, &fbH);
+        float scaleX = 1.0f, scaleY = 1.0f;
+        glfwGetWindowContentScale(glfwWin, &scaleX, &scaleY);
+        const float renderScale = scaleX > 0.0f ? scaleX : 1.0f;
+        glfwShowWindow(glfwWin);
+        glfwFocusWindow(glfwWin);
+        std::cout << "settings_cards_probes: dump framebuffer " << fbW << "x"
+                  << fbH << " / scale " << renderScale << "\n";
+        const eui::Color clearColor = core::theme::current().colors.background;
+        // runtime.render 走 activeRenderBackend()——不建后端/不激活时渲染是
+        // 空操作（窗口全黑）。镜像 app：createRenderBackend + 每帧 Scoped 激活
+        auto renderBackend = core::render::createRenderBackend(window);
+        if (renderBackend != nullptr && !renderBackend->initialize()) {
+            std::cerr << "settings_cards_probes: renderBackend init 失败\n";
+            renderBackend.reset();
+        }
+        if (renderBackend == nullptr) {
+            std::cerr << "settings_cards_probes: 无渲染后端，--dump 不可用\n";
+            passed = false;
+        }
+        const auto dumpFrame = [fbW, fbH](const std::string& path) {
+            std::vector<unsigned char> px(
+                static_cast<std::size_t>(fbW) *
+                static_cast<std::size_t>(fbH) * 3u);
+            // macOS 把 OpenGL API 标 deprecated（-Werror 下变错）：逐语句窄
+            // 抑制（about_probe.cpp:378 同款，不用文件级屏蔽）
+#if defined(__clang__)
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wdeprecated-declarations"
+#endif
+            glPixelStorei(GL_PACK_ALIGNMENT, 1);
+            glReadPixels(0, 0, fbW, fbH, GL_RGB, GL_UNSIGNED_BYTE, px.data());
+#if defined(__clang__)
+#pragma clang diagnostic pop
+#endif
+            std::ofstream ofs(path, std::ios::binary);
+            ofs << "P6\n" << fbW << " " << fbH << "\n255\n";
+            for (int row = fbH - 1; row >= 0; --row) {  // GL 左下原点 → 翻转
+                ofs.write(reinterpret_cast<const char*>(
+                              px.data() + static_cast<std::size_t>(row) *
+                                              static_cast<std::size_t>(fbW) *
+                                              3u),
+                          static_cast<std::streamsize>(fbW) * 3);
+            }
+            std::cout << "settings_cards_probes: dump " << path << "\n";
+        };
+        // 每档：置缩放 → warmup 120 帧（跨档重 compose 的 transition 落定）→
+        // 末帧 render 后 present 前 dump。有界（2×120 帧）必退出
+        const float prevScale = core::theme::fontScale();
+        const auto dumpAtScale = [&](float scale, const char* suffix) {
+            core::theme::setFontScale(scale);
+            for (int i = 0; i < 120 && renderBackend != nullptr; ++i) {
+                glfwPollEvents();
+                composeFrame();
+                core::render::ScopedRenderBackend scoped(*renderBackend);
+                renderBackend->beginFrame(core::render::RenderSurface{
+                    window, core::window::nativeWindowInfo(window), fbW, fbH,
+                    renderScale});
+                runtime.render(fbW, fbH, renderScale, clearColor);
+                if (i == 119) {
+                    dumpFrame(dumpPrefix + suffix);
+                }
+                renderBackend->present();
+            }
+        };
+        dumpAtScale(1.0f, "_100.ppm");
+        dumpAtScale(1.3f, "_130.ppm");
+        core::theme::setFontScale(prevScale);
     }
 
     mod->onStop();
