@@ -427,7 +427,7 @@ void drawPetCard(const CardDrawArgs& args) {
             ui.text(id + ".desc")
                 .position(28.0f, 40.0f)
                 .size(w - 56.0f, 16.0f)
-                .text("换肤与位置重置即时生效；开关桌宠需重启应用")
+                .text("换肤与位置重置即时生效；关闭桌宠立即隐藏、重新开启立即恢复")
                 .fontSize(fs(12.0f))
                 .lineHeight(16.0f)
                 .color(t.colors.textTertiary)
@@ -469,8 +469,23 @@ void drawPetCard(const CardDrawArgs& args) {
                     fitControlLabel(name, ddW - kDropdownFieldChrome,
                                     kDdFieldFont));
             }
+            // 皮肤行（PET-ROW，2026-09-29 真机反馈「设置-模块-桌宠 下拉框
+            // 不应该另起一行」）：标签左、控件右、**同一基线**——标签列
+            // 28/72，控件列 104/40（与代理卡「代理端口 [输入]」同款列口径，
+            // 卡内左边缘 28 对齐）。改前只有控件、无标签，控件独占一行，读起来
+            // 就是「下拉另起一行」。行 y 恒 64（控件高度 40）——标签 20 高需
+            // 在 64..104 内垂直居中 → y=74（中心 84 == 控件中心），皮肤下拉的
+            // openUp 几何（dropdownPopupOverflows 的字段偏移 64）也据此不变
+            ui.text(id + ".skin.label")
+                .position(28.0f, 74.0f)
+                .size(72.0f, 20.0f)
+                .text("皮肤")
+                .fontSize(fs(12.0f))
+                .lineHeight(20.0f)
+                .color(t.colors.textSecondary)
+                .build();
             ui.stack(id + ".skin.ddwrap")
-                .position(28.0f, 64.0f)
+                .position(104.0f, 64.0f)
                 .size(ddW, 40.0f)
                 .content([&] {
                     // 跨模块剩余审计修：皮肤下拉是六处下拉里唯一无 openUp

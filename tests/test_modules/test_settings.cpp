@@ -19,6 +19,7 @@
 #include "core/paths.h"
 #include "core/service_locator.h"
 #include "core/theme.h"
+#include "module_pet/pet_window.h"  // PET-CLOSE：桌宠开关即时性断言读窗口可见意图
 #include "platform/keychain.h"
 #include "platform/system_theme.h"
 
@@ -1696,9 +1697,188 @@ REGISTER_TEST(settings_pet_skin_dropdown_label_fits,
     return true;
 })
 
-// ---- 跨模块剩余审计修：桌宠皮肤下拉 openUp（≥3 皮肤小窗弹层被 scrollView
-// clip 裁掉）。修复 = 仿外观卡 z40 抬层（见 settings_pet_dropdown_z_escape）
-// + 编辑器字号/日志卡同款 openUp 几何判定（卡顶 + 字段偏移 + 弹层高 vs 屏高）
+// ---- 2026-09-29 用户真机反馈（第二次，上一轮只改了宽度）
+//      「设置-模块-桌宠 下拉框不应该另起一行 这个没修」----
+// 模块 tab 的桌宠卡（drawPetCard）此前**没有标签列**：皮肤下拉在卡内 (28,64)
+// 独占一行，读起来就是「下拉另起一行」。修复 = 补「皮肤」标签列（28/72）+
+// 控件列（104/40），标签左、控件右、同一基线。判据全数值化，改前逐条必红：
+//   ① 标签 settings.card.pet.skin.label 存在（改前无此元素 → REQUIRE 即红）；
+//   ② 标签框中心 y == 下拉字段框中心 y（±0.5，同一基线）；
+//   ③ 下拉字段框顶 y ≤ 标签框底（证明控件没被折到标签下面 = 没另起一行）；
+//   ④ 标签在控件左侧、水平不重叠（标签右缘 ≤ 控件左缘）。
+REGISTER_TEST(settings_pet_skin_row_inline,
+              "settings: 桌宠卡皮肤下拉与标签同行（不另起一行）", {
+    test_support::TestEnv env(kCfgPrefix, "petrow", true);
+    test_support::ScopedConfigPath cfgEnv(
+        test_support::tempConfigFile(kCfgPrefix, "petrow_cfg"));
+    {
+        std::ofstream out(cfgEnv.cfgPath);
+        out << "{\"theme\":\"dark\",\"enabledModules\":[\"home\",\"markdown\","
+               "\"todo\",\"claude_proxy\",\"settings\",\"pet\"]}";
+    }
+    std::unique_ptr<::core::Module> mod(create_settings_module());
+    mod->onStart();
+
+    eui::Screen screen;
+    screen.width = 1600.0f;
+    screen.height = 1000.0f;
+    DOCTEST_REQUIRE(clickSettingsTab(*mod, screen, 1));  // 模块 tab
+    eui::Ui ui;
+    ui.begin("petrow");
+    mod->compose(ui, screen);
+    ui.end();
+    ui.layout(screen.width, screen.height);
+
+    const auto* card = ui.find("settings.card.pet");
+    const auto* label = ui.find("settings.card.pet.skin.label");
+    const auto* field = ui.find("settings.card.pet.skin.dd.field");
+    DOCTEST_REQUIRE(card != nullptr);
+    DOCTEST_REQUIRE(label != nullptr);  // 改前无标签列 → 本行即回归位
+    DOCTEST_REQUIRE(field != nullptr);
+    DOCTEST_CHECK(std::string(label->text) == "皮肤");
+
+    // ② 同一基线：两框中心 y 相等（标签框高 20、控件高 40，靠 y 偏置对齐）
+    const float labelCy = label->frame.y + label->frame.height * 0.5f;
+    const float fieldCy = field->frame.y + field->frame.height * 0.5f;
+    DOCTEST_CHECK_MESSAGE(std::abs(labelCy - fieldCy) < 0.5f,
+                          "标签中心 y " + std::to_string(labelCy) +
+                              " vs 下拉中心 y " + std::to_string(fieldCy));
+
+    // ③ 没另起一行：控件顶不超过标签底（改回「标签在上、控件在下一行」→ 红）
+    DOCTEST_CHECK_MESSAGE(field->frame.y <= label->frame.y + label->frame.height,
+                          "下拉 frame.y " + std::to_string(field->frame.y) +
+                              " > 标签底 " +
+                              std::to_string(label->frame.y + label->frame.height) +
+                              "（折到下一行了）");
+
+    // ④ 标签左、控件右，水平不重叠
+    DOCTEST_CHECK(label->frame.x < field->frame.x);
+    DOCTEST_CHECK(label->frame.x + label->frame.width <= field->frame.x);
+    // 同排且行仍在卡内（内容底沿不变：加标签不动卡高 120 / 底沿 104）
+    DOCTEST_CHECK(field->frame.y + field->frame.height <=
+                  card->frame.y + card->frame.height + 0.5f);
+    DOCTEST_CHECK(label->frame.y > card->frame.y + 38.0f);  // 不与标题/说明重叠
+
+    mod->onStop();
+    ::core::theme::setDark();
+    return true;
+})
+
+// ---- 2026-09-29 用户真机反馈「设置-模块-桌宠取消勾选，桌宠没消失」----
+// 口径（PET-CLOSE）：模块开关的**注册门控**仍要重启（main 装配期），但桌宠
+// 是唯一有独立可见载体的模块 → 取消勾选立即关窗、重新勾选立即重开（本会话
+// 装配过时）。判据（去掉 settings 侧的桥调用逐条必红）：
+//   ① 点开关命中矩形（settings.card.modules.sw.3.hit，勾选态）→ pet 侧
+//      「窗口可见意图」由 true 翻 false（= 取消勾选即关窗，不是等重启）；
+//   ② enabledModules 持久化不受影响：盘上 config.json 去掉 pet（插拔语义不变）；
+//   ③ 卡片门控即时预览不变：pet 卡随开关消失；
+//   ④ 重新勾选 → 意图回 true **且真的重新入队一条 pet 开窗请求**（窗口能再出现）。
+REGISTER_TEST(settings_pet_module_toggle_closes_window,
+              "settings: 取消勾选桌宠立即关窗 / 重新勾选立即重现（PET-CLOSE）", {
+    test_support::TestEnv env(kCfgPrefix, "petclose", true);
+    test_support::ScopedConfigPath cfgEnv(
+        test_support::tempConfigFile(kCfgPrefix, "petclose_cfg"));
+    {
+        std::ofstream out(cfgEnv.cfgPath);
+        out << "{\"theme\":\"dark\",\"enabledModules\":[\"home\",\"markdown\","
+               "\"todo\",\"claude_proxy\",\"settings\",\"pet\"]}";
+    }
+    // 皮肤夹具：DEVDESK_PETS_DIR 指临时目录并写入 shipped 形态皮肤（帧只需
+    // PNG 头合法，无头不解码）。不造夹具时测试环境 exeDir/build/tests 没有
+    // 随包资产 → ensureDefaultSkin 失败 → startPetWindow 根本不开窗
+    test_support::TempDir petsDir("pet_close_pets");
+    test_support::ScopedEnv petsEnv("DEVDESK_PETS_DIR", petsDir.path.string());
+    static const char* kSkinJson =
+        "{\"name\":\"robot\",\"frameSize\":[128,128],\"frameRate\":4,"
+        "\"states\":{\"idle\":[\"f0.png\",\"f1.png\"],\"poked\":[\"p0.png\"]}}";
+    test_support::writeShippedSkinFixture(petsDir.path, "robot", kSkinJson);
+
+    std::unique_ptr<::core::Module> mod(create_settings_module());
+    mod->onStart();
+
+    eui::Screen screen;
+    screen.width = 1600.0f;
+    screen.height = 1000.0f;
+    DOCTEST_REQUIRE(clickSettingsTab(*mod, screen, 1));  // 模块 tab
+
+    // 前置：本会话已装配桌宠（= 启动时 enabledModules 含 pet 的会话状态）
+    (void)app::consumeWindowRequests();
+    module::pet::startPetWindow(module::pet::PetWindowConfig{});
+    {
+        // 装配必须真的入队开窗请求（皮肤夹具失效时在此先红，不把「关了窗」
+        // 的假绿带到下面）
+        const std::vector<app::DslWindowRequest> initial =
+            app::consumeWindowRequests();
+        DOCTEST_REQUIRE_MESSAGE(initial.size() == 1u,
+                                "装配未入队开窗请求（皮肤夹具不可用？实测 " +
+                                    std::to_string(initial.size()) + " 条）");
+        DOCTEST_REQUIRE_EQ(initial[0].pageId, "pet");
+    }
+    DOCTEST_REQUIRE(module::pet::petWindowRequested());  // 装配 = 想显示
+
+    eui::Ui ui;
+    auto composeModules = [&](const char* page) {
+        ui.begin(page);
+        mod->compose(ui, screen);
+        ui.end();
+        ui.layout(screen.width, screen.height);
+    };
+    composeModules("petclose1");
+    // 模块卡第 4 行 = 桌宠（kToggleable 序：markdown/todo/claude/pet）；
+    // 命中矩形 onClick 按 compose 期勾选态取反 → 本次点击 = 取消勾选
+    const auto* offHit = ui.find("settings.card.modules.sw.3.hit");
+    DOCTEST_REQUIRE(offHit != nullptr);
+    DOCTEST_REQUIRE(offHit->onClick != nullptr);
+    DOCTEST_REQUIRE(ui.find("settings.card.pet") != nullptr);  // 取消前卡在
+    offHit->onClick();
+
+    // ① 取消勾选 → 立即关窗（改前这里恒 true：真机现象「桌宠没消失」）
+    DOCTEST_CHECK_MESSAGE(
+        !module::pet::petWindowRequested(),
+        "取消勾选后桌宠仍处于「应显示」状态（窗口没被关）");
+    // ② 持久化：盘上 enabledModules 去掉 pet
+    {
+        std::ifstream in(cfgEnv.cfgPath);
+        std::ostringstream buf;
+        buf << in.rdbuf();
+        DOCTEST_CHECK_MESSAGE(buf.str().find("\"pet\"") == std::string::npos,
+                              "config.json 仍含 pet：" + buf.str());
+    }
+    // ③ 卡片门控即时预览不变（关掉的模块整卡隐藏）
+    composeModules("petclose2");
+    DOCTEST_CHECK(ui.find("settings.card.pet") == nullptr);
+    const auto* onHit = ui.find("settings.card.modules.sw.3.hit");
+    DOCTEST_REQUIRE(onHit != nullptr);  // 开关行恒在（不受门控影响）
+    onHit->onClick();                   // 本次点击 = 重新勾选
+
+    // ④ 重新勾选 → 立即重现：意图回 true + 真的重新入队一条 pet 开窗请求
+    DOCTEST_CHECK_MESSAGE(module::pet::petWindowRequested(),
+                          "重新勾选后桌宠没有回到「应显示」状态");
+    {
+        const std::vector<app::DslWindowRequest> reqs =
+            app::consumeWindowRequests();
+        DOCTEST_CHECK_MESSAGE(reqs.size() == 1u,
+                              "重新勾选应重新入队 1 条开窗请求，实测 " +
+                                  std::to_string(reqs.size()));
+        if (reqs.size() == 1u) {
+            DOCTEST_CHECK_EQ(reqs[0].pageId, "pet");
+        }
+    }
+    {
+        std::ifstream in(cfgEnv.cfgPath);
+        std::ostringstream buf;
+        buf << in.rdbuf();
+        DOCTEST_CHECK(buf.str().find("\"pet\"") != std::string::npos);
+    }
+
+    // 收尾：不留残留可见意图 / 待消费开窗请求（进程级 pet 运行时是共享状态）
+    module::pet::closePetWindow();
+    (void)app::consumeWindowRequests();
+    mod->onStop();
+    ::core::theme::setDark();
+    return true;
+})
+
 REGISTER_TEST(settings_pet_skin_dropdown_openup,
               "settings: 桌宠皮肤下拉 openUp——小窗 3 皮肤弹层留在窗内", {
     test_support::TestEnv env(kCfgPrefix, "petopenup", true);

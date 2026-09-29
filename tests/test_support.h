@@ -458,6 +458,52 @@ inline bool writeTextFile(const std::filesystem::path& path,
     return ofs.good();
 }
 
+// 最小 PNG 头（魔数 + IHDR 尺寸 + 8bit RGBA 类型 + 填充字节）——只核头部
+// 33 字节；无头用例不做解码，夹具帧只需头部合法，无需完整 IDAT/IEND。
+// 原 test_pet.cpp 的 writeMinimalPng 收编（PET-CLOSE 起 test_settings 的
+// 模块开关用例也要造皮肤夹具）
+inline void writeMinimalPng(const std::filesystem::path& path, int width,
+                            int height) {
+    std::ofstream out(path, std::ios::binary);
+    static const unsigned char kSig[8] = {0x89, 'P', 'N', 'G',
+                                          0x0D, 0x0A, 0x1A, 0x0A};
+    out.write(reinterpret_cast<const char*>(kSig), 8);
+    const auto be32 = [](unsigned char* p, std::uint32_t v) {
+        p[0] = static_cast<unsigned char>((v >> 24) & 0xFF);
+        p[1] = static_cast<unsigned char>((v >> 16) & 0xFF);
+        p[2] = static_cast<unsigned char>((v >> 8) & 0xFF);
+        p[3] = static_cast<unsigned char>(v & 0xFF);
+    };
+    unsigned char ihdr[26] = {};
+    be32(ihdr + 0, 13);  // IHDR 数据长度
+    ihdr[4] = 'I'; ihdr[5] = 'H'; ihdr[6] = 'D'; ihdr[7] = 'R';
+    be32(ihdr + 8, static_cast<std::uint32_t>(width));
+    be32(ihdr + 12, static_cast<std::uint32_t>(height));
+    ihdr[16] = 8;  // bit depth
+    ihdr[17] = 6;  // color type RGBA
+    out.write(reinterpret_cast<const char*>(ihdr), 18);
+    const char pad[8] = {};  // 凑满 33 字节
+    out.write(pad, sizeof(pad));
+}
+
+// 向候选根写一份 shipped 形态皮肤：pet.json + 四态 13 帧（f0..f5 / p0..p1 /
+// s0..s2 / t0..t1，128×128 头部合法帧）。原 test_pet.cpp 的
+// writeShippedSkinFixture 收编——无头用例的 exeDir（build/tests）没有随包
+// 资产拷贝（POST_BUILD 只拷给 DevDesk 目标），不造夹具时 ensureDefaultSkin
+// 失败 → startPetWindow 不开窗
+inline void writeShippedSkinFixture(const std::filesystem::path& root,
+                                    const char* name, const char* jsonText) {
+    static const char* kFrameNames[] = {
+        "f0.png", "f1.png", "f2.png", "f3.png", "f4.png", "f5.png",
+        "p0.png", "p1.png", "s0.png", "s1.png", "s2.png", "t0.png", "t1.png"};
+    std::error_code ec;
+    std::filesystem::create_directories(root / name, ec);
+    writeTextFile(root / name / "pet.json", jsonText);
+    for (const char* frame : kFrameNames) {
+        writeMinimalPng(root / name / frame, 128, 128);
+    }
+}
+
 // 配置文件临时路径（只造路径、不落盘、不自动清理）。原 test_app_sidebar.cpp /
 // test_module_gating.cpp / test_settings.cpp 三份 tempConfigFile 合流，只有
 // 前缀不同（前缀保留）。

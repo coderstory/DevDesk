@@ -163,14 +163,27 @@ bool isPetRenderPaused();
 // 皮肤缺失时自动生成内置占位皮肤；位置钳制进主显示器工作区。
 void startPetWindow(const PetWindowConfig& config);
 
-// 重新显示桌宠窗口（PAB-13，波 1 L7）：设置页「显示桌宠」按钮用（经
-// module_pet_bridge.h 的声明桥，settings 不 include 本头）。门控语义：
+// 重新显示桌宠窗口（PAB-13，波 1 L7 + PET-CLOSE）：设置页「显示桌宠」按钮
+// 与模块开关重新勾选用（经 module_pet_bridge.h 的声明桥，settings 不
+// include 本头）。门控语义：
 // ① 本会话 main 从未装配过桌宠（模块开关关 = startPetWindow 从未被调用）
 //    → 返回 false，不凭空开窗（该开关本就「重启生效」）；
-// ② 窗口已开着（handle 非空）→ 返回 false（隐藏走右键「隐藏桌宠」，隐藏后
-//    handle 被 onWindowDestroyed 清空，本函数即可重开）。
+// ② 窗口已开着（handle 非空）→ 返回 false（隐藏走右键「隐藏桌宠」或
+//    closePetWindow，隐藏后 handle 被 onWindowDestroyed 清空，本函数即可重开）。
 // 返回 true = 已按 rt.config（皮肤/位置/气泡数据源桥原样）重新入队开窗请求
 bool showPetWindow();
+
+// 关闭桌宠窗口（PET-CLOSE，设置页模块开关「桌宠」取消勾选 → 立即隐藏；
+// 经 module_pet_bridge.h 的声明桥调用）。关闭路径与右键「隐藏桌宠」同一条
+//（requestWindowClose → 主循环销毁 → onWindowDestroyed 清句柄）。
+// 返回 true = 曾有窗口/可见意图并已置为关闭；false = 本来就关着（幂等）。
+// 只改「可见意图」，**不动装配标志**——重新勾选后 showPetWindow 仍能原位重开
+bool closePetWindow();
+
+// 桌宠窗口可见意图（PET-CLOSE）：startPetWindow / showPetWindow 置 true，
+// closePetWindow 置 false。无头（handle 恒 nullptr）与窗口已关时本标志是
+// 「桌宠该不该显示」的唯一可读真值——设置页模块开关的即时性断言与单测读它
+bool petWindowRequested();
 
 // 换肤（M2）：校验 skinName 是 discoverSkins() 发现到的皮肤后写盘并热切换
 //（关旧窗 → 按新皮肤重开，位置沿用当前窗口）；未知名字拒绝不动。
