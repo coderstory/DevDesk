@@ -56,7 +56,7 @@
 
 ### 10. About 页布局调整（2026-09-28 真机反馈）
 - ✅ **已完成**（`a97355b`）
-  - 内容区 720 → **1040**（`about_module.cpp` `kAboutContentW`），卡片宽 356 → **516**；最小窗 1330×845（页面宽 = 1330 − 侧边栏 208 = 1122）下左右各余 41px，居中不溢出
+  - 内容区 720 → **1040**（`about_module.cpp` `kAboutContentW`），卡片宽 356 → **516**；最小窗（页面宽 = 1330 − 侧边栏 208 = 1122）下左右各余 41px，居中不溢出。**最小窗高度口径已变（2026-09-29 组 A）**：原写死的 845 是设计下限，现经 `core::window_layout::minWindowSizeForWorkArea` 换算后还要与工作区取 min —— macOS 落地 1330×805 点、Windows 落地 1663×973 物理（= 778 逻辑），845 只在工作区放得下时才成立
   - 顶部留白 24 → **64**（= `spacingXXLarge` 40 + `spacingXLarge` 24，两档 token 叠加推导——单档 40 偏小、双档 80 越界草图 60-70 区间；非裸魔法数）
   - hero 图标 48 → **56**（= `spacingXXLarge` + `spacingLarge`）；**页面标题字号仍是规范值 32px 未动**（CLAUDE.md「视觉规范」：页面标题 32 / 正文 15），「放大」观感由加宽 + 留白承担
   - footer 不再跟卡底流式排，改**贴页面底部**（底边 = `screen.height` − 40），卡片与 footer 之间即呼吸区
@@ -118,7 +118,7 @@
 | todo 卡片拖拽无跟手动画已修（598a970） | `todo_ui_board.cpp:drawDragGhost`（不再是 `drawCard`） |
 | md tabs 切换过渡已删（1cdd36f） | 原为整页 fade 闪烁 |
 | pet 右键菜单缺 dismiss rect 已修（5b0cd34） | EUI-NEO styledmenu |
-| 主窗最小尺寸已调 1330×845（65c1543） | main.cpp |
+| 主窗最小尺寸已调 1330×845（65c1543）；2026-09-29 组 A 起改为经 `core::window_layout::minWindowSizeForWorkArea` 换算 + 与工作区取 min 后落地（macOS 1330×805 点 / Windows 1663×973 物理），845 退为"工作区放得下时"的设计下限 | main.cpp |
 
 ---
 

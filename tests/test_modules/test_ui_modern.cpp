@@ -35,6 +35,7 @@
 #include "core/database.h"
 #include "core/sqlite_db.h"
 #include "core/ui_geometry.h"
+#include "core/window_layout.h"  // 最小窗尺寸经同一函数推导（about 页最小窗复核）
 #include "module_about/about_anim.h"  // uiAboutRingAnim：浮环状态机直接驱动
 #include "module_claude_proxy/claude_service.h"
 #include "module_home/home_service.h"
@@ -933,9 +934,21 @@ REGISTER_TEST(uiModernMdPreviewGradient,
 // 最小窗与大窗都不溢出/不重叠）；观感（呼吸感 / hero 存在感 / 三档窗口效果下的
 // 底色）留人工确认。页面宽 = 窗口宽 − 侧边栏（app_sidebar.cpp pageContentWidth，
 // 展开 208）：最小窗宽 1330 → 页面宽 1122，内容区 1040 只余 41px/侧（仍居中、
-// 不溢出，见下）。最小窗高由 core 层按工作区推导（core::window_layout，本机
-// 805）——页面宽只依赖最小窗宽，本文件不硬编码高。
+// 不溢出，见下）。**最小窗尺寸不再手写**（2026-09-28 组 A：手写的 845 已失义——
+// macOS 工作区 833 点会把最小窗高钳到 805），改由
+// core::window_layout::minWindowSizeForWorkArea 推导；页面宽只依赖最小窗宽，
+// 本文件不硬编码高。
 namespace {
+// 与 main.cpp 同一条决策链的最小窗尺寸（macOS 实测档：工作区 1470×833 点、
+// windowScaleForPoint 恒 1.0、外框 {0,28}）→ {1330, 805}。显式传参而非取本机
+// 实时工作区：测试要确定性，且这一档正是「用户机器上最小窗能缩到多大」的真实值。
+core::window_layout::WindowSize minWindowForMacWorkArea() {
+    return core::window_layout::minWindowSizeForWorkArea(
+        core::window_layout::InitialWindowRequest{1600, 1000, 1330, 845},
+        core::window_layout::WorkArea{0, 0, 1470, 833}, 1.0f,
+        core::window_layout::FrameInsets{0, 28});
+}
+
 // 布局帧比较容差：逻辑像素差 ≤0.5 视为相等（布局引擎可能带亚像素误差，与
 // probes 的 0.5f 容差同口径）
 bool nearPx(float a, float b) { return std::abs(a - b) <= 0.5f; }
@@ -1026,12 +1039,17 @@ REGISTER_TEST(uiAboutLayout,
             px("about.footer", footer) + " 期望底边 " +
                 std::to_string(screen.height - t.sizes.spacingXXLarge));
     }
-    // 最小窗复核：页面宽 1330 − 208 = 1122 → 内容区 1040 不溢出、仍居中；
-    // 页面高 805（core 层最小窗高，工作区推导）下堆叠卡（底 608）+ 卡距
-    // 不越页脚顶（745）——本页无滚动也放得下
+    // 最小窗复核（2026-09-28 组 A：字面量 845 已失义，改经同一函数推导）：
+    // minWindowSizeForWorkArea → {1330, 805} → 页面宽 1330 − 208 = 1122 →
+    // 内容区 1040 不溢出、仍居中；页面高 805 下堆叠卡（底 608）+ 卡距不越
+    // 页脚顶（745）——本页无滚动也放得下
     {
+        const core::window_layout::WindowSize minWin = minWindowForMacWorkArea();
+        DOCTEST_CHECK_EQ(minWin.width, 1330);
+        DOCTEST_CHECK_EQ(minWin.height, 805);  // 工作区 833 − 标题栏 28
         eui::Ui mini;
-        eui::Screen minScreen{1122.0f, 805.0f};
+        eui::Screen minScreen{minWin.width - 208.0f,
+                              static_cast<float>(minWin.height)};
         mini.begin("about_layout_min");
         mod->compose(mini, minScreen);
         mini.end();

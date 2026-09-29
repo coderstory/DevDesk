@@ -113,6 +113,21 @@ void drawSidebar(eui::Ui& ui, const eui::Screen& screen) {
     constexpr float kIconW = 28.0f;
     constexpr float kItemInset = 12.0f;  // 内容距高亮条左缘内边距（用户反馈文字贴边）
 
+    // ---- 顶部留白（2026-09-28 用户真机反馈「侧边栏加一点上边距」）----
+    // 取页面主区 padding 同档 token（spacingXXLarge = 40）：品牌块上缘与页面内容
+    // 上缘齐平，不再比页面内容更贴顶。原值 24 是 Windows 期定的（那时窗口顶到内容
+    // 顶的观感更小）；macOS 上窗口客户区顶就是屏幕可见区顶（标题栏在客户区之外、
+    // 不占内容高），24 显得贴顶——所以这个值按 macOS 观感定，Windows 同步跟随
+    //（共享算式，不做平台分支：同一份 token 在两端都是「页面 padding」的语义）。
+    const float topPad = t.sizes.spacingXXLarge;
+    // 品牌块高 32（既有字面值，这里提成常量只为让下方导航起点与它同源：
+    // 字号 = fontSizePage 32 的图标/文字单行框；**不**改成本 token 的运行时值，
+    // 因为 fontScale 会缩放 fontSize* 而该框历来不随之变，改了会顺带改观感）
+    constexpr float kBrandH = 32.0f;
+    // 品牌块 → 导航列表的既有间距 28：本次只下移顶部留白，不动这两块的相对间距
+    //（避免一次改两处观感）。无对应 token 档位——token 只有 4/8/16/24/40。
+    constexpr float kBrandNavGap = 28.0f;
+
     ui.stack("app.sidebar")
         .size(kWidth, screen.height)
         .content([&] {
@@ -129,11 +144,13 @@ void drawSidebar(eui::Ui& ui, const eui::Screen& screen) {
                 .build();
 
             // brand 行（2026-09-24）：展开 = logo 图标 + "DevDesk" 横排
-            //（logo 品牌色，在文字左侧）；折叠 = 只显示居中 logo 图标
+            //（logo 品牌色，在文字左侧）；折叠 = 只显示居中 logo 图标。
+            // 两态共用 topPad（同一纵向位置，只差横向分支）——折叠态是同一块
+            // 品牌区，若只改展开态的 y，切折叠会看到 logo 跳一下
             if (collapsed) {
                 ui.text("app.sidebar.brand")
-                    .position(0.0f, 24.0f)
-                    .size(kWidth, 32.0f)
+                    .position(0.0f, topPad)
+                    .size(kWidth, kBrandH)
                     .icon(eui::utf8(0xF5FC))  // fa-laptop-code logo
                     .fontSize(t.sizes.fontSizePage)
                     .horizontalAlign(eui::HorizontalAlign::Center)
@@ -142,8 +159,8 @@ void drawSidebar(eui::Ui& ui, const eui::Screen& screen) {
                     .build();
             } else {
                 ui.text("app.sidebar.brand.logo")
-                    .position(padX, 24.0f)
-                    .size(kIconW, 32.0f)
+                    .position(padX, topPad)
+                    .size(kIconW, kBrandH)
                     .icon(eui::utf8(0xF5FC))  // fa-laptop-code logo
                     .fontSize(t.sizes.fontSizePage)
                     .horizontalAlign(eui::HorizontalAlign::Center)
@@ -151,8 +168,8 @@ void drawSidebar(eui::Ui& ui, const eui::Screen& screen) {
                     .color(t.colors.primary)
                     .build();
                 ui.text("app.sidebar.brand")
-                    .position(padX + kIconW + 8.0f, 24.0f)
-                    .size(kWidth - padX * 2.0f - kIconW - 8.0f, 32.0f)
+                    .position(padX + kIconW + 8.0f, topPad)
+                    .size(kWidth - padX * 2.0f - kIconW - 8.0f, kBrandH)
                     .text("DevDesk")
                     .fontSize(t.sizes.fontSizePage)
                     .fontWeight(700)
@@ -161,7 +178,7 @@ void drawSidebar(eui::Ui& ui, const eui::Screen& screen) {
                     .build();
             }
 
-            float y = 84.0f;
+            float y = topPad + kBrandH + kBrandNavGap;  // 40 + 32 + 28 = 100
             for (auto* m : router->modules()) {
                 if (!m) continue;
                 const ::core::PageId page = m->pageId();
@@ -255,6 +272,22 @@ void drawSidebar(eui::Ui& ui, const eui::Screen& screen) {
 void compose(eui::Ui& ui, const eui::Screen& screen) {
     ::core::Router* router = ::core::appRouter();
     if (!router) return;
+    // 首帧一次性落真实 contentScale（2026-09-28 组 A 的日志口径）：启动尺寸决策
+    // 发生在窗口创建之前，那时 contentScale 还查不到（EUI-NEO 首次 update 之前
+    // app::contentScale() 恒 1.0），于是旧日志里的「缩放 1.000000」被读成"Retina
+    // 上没做折算"的错误前提。compose 收到的 Screen::scale 与 app::contentScale()
+    // 同源同值（EUI-NEO app.h 的 U1 尺度契约：物理 = 逻辑 × scale），这里是最早
+    // 能看到真值的地方。每帧重绘只记一次（static 自初始化）。
+    static const bool scaleLogged = [&screen]() {
+        LOG_INFO("首帧屏幕尺度：contentScale(Screen.scale)=" +
+                 std::to_string(screen.scale) + "（逻辑画布 " +
+                 std::to_string(static_cast<int>(screen.width + 0.5f)) + "x" +
+                 std::to_string(static_cast<int>(screen.height + 0.5f)) +
+                 "）——macOS 上 contentScale 是 Retina backing(2.0)，与窗口尺寸"
+                 "单位（点）无关，别读成窗口缩放");
+        return true;
+    }();
+    (void)scaleLogged;
     // 布局：row(常驻侧边栏, 页面内容)——spec §2"左侧侧边栏切换工具，右侧主区"；
     // 侧边栏宽随折叠态 208/72，页面区拿剩余宽度（折叠后 +136px）
     ui.row("app.root")
@@ -269,10 +302,21 @@ void compose(eui::Ui& ui, const eui::Screen& screen) {
                 .size(pageW, screen.height)
                 .clip()
                 .content([&] {
-                    // 页面模块按"去掉侧边栏后的宽度"布局（Screen 只含宽高）
+                    // 页面模块按"去掉侧边栏后的宽度"布局（本帧的 Screen 带真值，
+                    // scale 一并透传——见下）
                     eui::Screen pageScreen;
                     pageScreen.width = pageW;
                     pageScreen.height = screen.height;
+                    // 尺度真值随框架传入的那份 Screen 一起带上（2026-09-28 组 A）：
+                    // 手搓 Screen 不填 scale 会退化成 1.0（EUI-NEO Screen 默认值），
+                    // 页面内做指针/坐标换算的模块拿它就与框架三处（Screen /
+                    // PointerEvent / DragEvent）不同源。**改动前**零消费点——
+                    // 复现口径是改动前的提交，不是当前工作区：
+                    //   git grep -n "\.scale" 2839c99 -- src   # 输出为空
+                    //（当前工作区 grep 会命中本文件 3 处 = 注释 + 读 + 写，属预期，
+                    //  不是"有消费点"的反证）→ 本次零行为变化，只是把"今后误用会
+                    // 立刻现形"的前提装上，而不是继续靠"macOS 碰巧没差"。
+                    pageScreen.scale = screen.scale;
                     router->compose(ui, pageScreen);
                 })
                 .build();

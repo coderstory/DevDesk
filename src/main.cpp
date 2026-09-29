@@ -410,21 +410,34 @@ bool showTrayStyledMenu(int x, int y) {
 }
 
 // ---- 启动期主窗口尺寸决策（2026-09-27 修复：贴底内容被任务栏吃掉）----
-// 缺陷：.windowSize(1600, 1000) 直达后端 glfwCreateWindow，语义是**客户区物理
-// 像素**；本机 1920×1080 @125%（工作区 1920×1020 物理、任务栏 60）下窗口外框
+// 缺陷：.windowSize(1600, 1000) 直达后端 glfwCreateWindow，语义是**客户区窗口
+// 单位**（Windows = 物理像素、macOS = 点，见 core/window_layout.h 文件头）；
+// Windows 本机 1920×1080 @125%（工作区 1920×1020 物理、任务栏 60）下窗口外框
 // 1618×1047 超出工作区高度 → 客户区底部约 52 物理 px 压在任务栏后面，md 笔记树
 // 底部的「+ 笔记 / + 文件夹」按钮、编辑区状态栏、侧边栏折叠钮全部被切。
-// 修法：请求尺寸按目标显示器缩放系数换算成物理像素、加上非客户区外框经验值后
+// 修法：请求尺寸按目标显示器缩放系数换算成窗口单位、加上非客户区外框经验值后
 // 与工作区比较——放得下用请求尺寸，放不下则**启动即最大化**（用户可再拖）。
+// 2026-09-28 组 A 补：**最小尺寸走同一条换算**再与工作区取 min——之前 min 原值
+// 直传（漏了这一步），macOS 上 845 点 > 工作区 833 点 → 窗口结构性收不进屏；
+// Windows 上同一数值被当物理像素 → 实际下限 676 逻辑，低于 845 的设计意图。
+// 换算与工作区钳制是一对、必须同时存在：只换算不钳制会把 macOS 的病复制到
+// Windows（845 逻辑 = 1056 物理 > 本机 1020 工作区）。
 // 决策本身是不含 EUI-NEO/平台依赖的纯函数（core::window_layout，单测
 // tests/test_core/test_window_layout.cpp），这里只负责取值与落地。
 constexpr int kInitialWindowLogicalWidth = 1600;
 constexpr int kInitialWindowLogicalHeight = 1000;
-// 最小尺寸语义（与下方 minWindowSize 同源；决策函数用它兜底，保证不小于它）
+// 最小尺寸语义（**逻辑单位**，经 window_layout 换算成窗口单位后落地）
 constexpr int kMinWindowLogicalWidth = 1330;
 constexpr int kMinWindowLogicalHeight = 845;
 
-core::window_layout::InitialWindowDecision resolveInitialWindowDecision() {
+// 决策落地形态：初始尺寸/形态 + 最小尺寸（同一套取值、同一条换算，避免两处
+// 各算一次导致「最小窗和初始窗不同口径」）
+struct ResolvedWindowSizing {
+    core::window_layout::InitialWindowDecision initial;
+    core::window_layout::WindowSize minSize;
+};
+
+ResolvedWindowSizing resolveWindowSizing() {
     // 目标显示器 = 主显示器（窗口走 centerWindow，无显式位置，落在主屏）
     int workX = 0;
     int workY = 0;
@@ -434,7 +447,9 @@ core::window_layout::InitialWindowDecision resolveInitialWindowDecision() {
 
     // 缩放系数按工作区中心点取自该显示器 DPI（窗口实际所在显示器）。
     // 工作区未知时不查（中心点无意义），按 1.0 降级——决策函数见工作区无效
-    // 会原样保留请求尺寸，与修复前行为一致
+    // 会原样保留请求尺寸，与修复前行为一致。
+    // 注意：macOS 上本值恒 1.0（窗口单位是点），Retina 的 2.0 在 contentScale 上
+    // （首帧由 app_sidebar 打印，EUI-NEO 侧见 [layoutdiag]）——别把两者读混。
     const float scale =
         (workW > 0 && workH > 0)
             ? core::window::windowScaleForPoint(
@@ -443,22 +458,30 @@ core::window_layout::InitialWindowDecision resolveInitialWindowDecision() {
             : 1.0f;
     const core::window_layout::FrameInsets frame =
         core::window_layout::frameInsetsForScale(scale);
-    const core::window_layout::InitialWindowDecision decision =
-        core::window_layout::decideInitialWindow(
-            core::window_layout::InitialWindowRequest{
-                kInitialWindowLogicalWidth, kInitialWindowLogicalHeight,
-                kMinWindowLogicalWidth, kMinWindowLogicalHeight},
-            core::window_layout::WorkArea{workX, workY, workW, workH}, scale,
-            frame);
+    const core::window_layout::InitialWindowRequest request{
+        kInitialWindowLogicalWidth, kInitialWindowLogicalHeight,
+        kMinWindowLogicalWidth, kMinWindowLogicalHeight};
+    const core::window_layout::WorkArea workArea{workX, workY, workW, workH};
+
+    ResolvedWindowSizing sizing;
+    sizing.initial = core::window_layout::decideInitialWindow(request, workArea,
+                                                              scale, frame);
+    sizing.minSize =
+        core::window_layout::minWindowSizeForWorkArea(request, workArea, scale, frame);
+    // 单位名走平台注入（macOS = pt / Windows = 物理px）：这行日志曾把 macOS 的
+    // 「点」标成「物理px」，把排查者引向"Retina 没折算"的错误前提（2026-09-28 审计）
     LOG_INFO("初始窗口尺寸决策：工作区 " + std::to_string(workW) + "x" +
              std::to_string(workH) + "@(" + std::to_string(workX) + "," +
-             std::to_string(workY) + ") 物理px，缩放 " + std::to_string(scale) +
-             "，外框 +" + std::to_string(frame.width) + "x+" +
-             std::to_string(frame.height) + "，客户区 " +
-             std::to_string(decision.width) + "x" + std::to_string(decision.height) +
-             (decision.maximize ? " → 启动即最大化（外框放不进工作区）"
-                                : " → 用请求尺寸"));
-    return decision;
+             std::to_string(workY) + ") " + core::window_layout::windowUnitName() +
+             "，缩放 " + std::to_string(scale) + "，外框 +" +
+             std::to_string(frame.width) + "x+" + std::to_string(frame.height) +
+             "，客户区 " + std::to_string(sizing.initial.width) + "x" +
+             std::to_string(sizing.initial.height) + "，最小窗 " +
+             std::to_string(sizing.minSize.width) + "x" +
+             std::to_string(sizing.minSize.height) +
+             (sizing.initial.maximize ? " → 启动即最大化（外框放不进工作区）"
+                                      : " → 用请求尺寸"));
+    return sizing;
 }
 
 } // namespace
@@ -526,8 +549,7 @@ const DslAppConfig& dslAppConfig() {
     // 取值时机：dslAppConfig() 首次调用发生在 EUI-NEO eui_app_run 的 glfwInit()
     // 之后（glfw_app_main.cpp:503 → :509 读 initialWindowWidth），此时显示器
     // 枚举/DPI 查询可用；万一不可用（无头、无显示器）决策函数原样保留请求尺寸。
-    static const core::window_layout::InitialWindowDecision initialWindow =
-        resolveInitialWindowDecision();
+    static const ResolvedWindowSizing initialWindow = resolveWindowSizing();
 
     static const DslAppConfig config = DslAppConfig{}
         .title("DevDesk")
@@ -536,17 +558,21 @@ const DslAppConfig& dslAppConfig() {
         .showDebugStatsInTitle(false)
         .pageId("devdesk")
         .clearColor(::core::theme::current().colors.background)  // 跟随主题
-        // 初始尺寸（物理像素，见 initialWindow 计算）：能覆盖显示器工作区就用
+        // 初始尺寸（窗口单位，见 initialWindow 计算）：能覆盖显示器工作区就用
         // 请求的 1600×1000（逻辑单位 × 缩放），否则启动即最大化——修 2026-09-27
         // 「窗口比工作区高、贴底内容被任务栏吃掉」缺陷（决策细节见上方
-        // resolveInitialWindowDecision 与 core/window_layout.h）
-        .windowSize(initialWindow.width, initialWindow.height)
-        .minWindowSize(kMinWindowLogicalWidth, kMinWindowLogicalHeight)
+        // resolveWindowSizing 与 core/window_layout.h）
+        .windowSize(initialWindow.initial.width, initialWindow.initial.height)
+        // 最小尺寸：**同一函数算出的窗口单位值**（换算 + 与工作区取 min，2026-09-28
+        // 组 A）。不再把逻辑常量原值直传——直传 = 绕开换算，正是 macOS「845 点 >
+        // 工作区 833 点，窗口收不进屏」与 Windows「845 被当物理像素 = 676 逻辑」的
+        // 共同病因（细节见 core::window_layout::minWindowSizeForWorkArea）
+        .minWindowSize(initialWindow.minSize.width, initialWindow.minSize.height)
         // 最大化通道：DslAppConfig::maximized → app::windowMaximized()
         //（dsl_app_impl.h:288）→ WindowCreateRequest::maximized
         //（glfw_app_main.cpp:522）→ glfwWindowHint(GLFW_MAXIMIZED)
         //（window_backend.cpp:776），创建期生效、用户可再拖回
-        .maximized(initialWindow.maximize)
+        .maximized(initialWindow.initial.maximize)
         .highDpi(true)
         .resizable(true)
         // 窗口效果（磨砂 Phase D）：透明帧缓冲 hint 常开（创建期属性不可逆，
