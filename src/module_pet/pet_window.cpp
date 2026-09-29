@@ -120,11 +120,14 @@ std::vector<PetWorkArea> currentMonitorWorkAreas() {
 // 审计 [12] + M2 多显示器：已知坐标钳进「所在/最近显示器」的工作区再落盘。
 // M1 只按主屏钳，副屏位置（负坐标或超出主屏边界）落盘被吞回主屏，重启跳回
 // 主屏；M2 按位置选对应显示器后副屏负坐标可持久化（pet_config 哨兵同步放宽
-// 为仅 -1）。与启动路径共用同一纯函数，两处语义单源
+// 为仅 -1）。与启动路径共用同一纯函数，两处语义单源。
+// 高度传**整窗高**（petWindowHeight = 帧高 + 气泡让位条，见 pet_bubble.h）：
+// 钳制把整窗关进工作区，气泡条上沿才不会越过屏幕工作区上缘（越界回贴边）
 void clampPetPosIntoWorkAreaInPlace(int& x, int& y) {
     const PetSkin& skin = runtime().skin;
-    const auto [cx, cy] = clampPetPosToMonitors(x, y, currentMonitorWorkAreas(),
-                                                skin.frameWidth, skin.frameHeight);
+    const auto [cx, cy] = clampPetPosToMonitors(
+        x, y, currentMonitorWorkAreas(), skin.frameWidth,
+        petWindowHeight(skin.frameHeight));
     // 哨兵冲突避让：钳后恰好 -1（如副屏右缘紧贴主屏原点 x=0 的左邻位）会被
     // 存取两侧误读为「未设置」→ 外挪 1px（肉眼无感），-1 从此唯一表示未设置
     x = (cx == -1) ? -2 : cx;
@@ -337,10 +340,15 @@ void petCompose(eui::Ui& ui, const eui::Screen& screen) {
     ui.stack("pet.root")
         .size(screen.width, screen.height)
         .content([&] {
-            // 窗口尺寸 = 帧紧包围盒（设计 §4.2）；MVP 命中 = 整窗（O1 逐像素 alpha 是 M3）
+            // 精灵帧让位到气泡条下方（气泡布局见 pet_bubble.h：整窗加高
+            // kBubbleStripH，帧下移后与气泡留 6px 间距——气泡不再盖在宠物上）。
+            // 窗口高 = petWindowHeight(帧高)，故帧高 = 窗口高 - 让位条
+            const PetRect spriteRect =
+                petSpriteRect(screen.width, screen.height);
             ui.image("pet.sprite")
                 .source(state.anim.currentPath(skin).string())
-                .size(screen.width, screen.height)
+                .position(spriteRect.x, spriteRect.y)
+                .size(spriteRect.w, spriteRect.h)
                 // 帧推进：onTimer 周期 = 1/frameRate（等待期主循环低功耗睡眠）。
                 // 顺序即优先级：代理流式 > 入睡 > 帧推进
                 .onTimer(1.0f / static_cast<float>(skin.frameRate),
@@ -469,7 +477,8 @@ void petCompose(eui::Ui& ui, const eui::Screen& screen) {
                 .build();
 
             // 气泡对话（M2 设计 §4.5）：宠物窗内自绘圆角矩形 + 小三角 + text，
-            // 挂在头顶，超时自动消失（不用 toast——位置不可控）
+            // 画在顶部气泡条内（pet_bubble.h 布局：精灵帧下方留 6px 间距，
+            // 不再盖在宠物上），超时自动消失（不用 toast——位置不可控）
             if (state.bubble.visible) {
                 const core::theme::Tokens& t = core::theme::current();
                 // 气泡衬深色底（kBubbleBg 深浅主题都保持深帽），白字/白描边
@@ -481,33 +490,34 @@ void petCompose(eui::Ui& ui, const eui::Screen& screen) {
                                                 t.colors.onPrimary.g,
                                                 t.colors.onPrimary.b, 0.22f);
                 // 气泡宽自适应文本：内在文本宽 + 左右各 6px padding（上
-                // 限 280px 容中文短句、下限 80px）；气泡整体水平居中在宠
-                // 物窗上缘。测量用 TextPrimitive::measureTextSize，与下方
-                // ui.text 同字号 11px/缺省字族字重（EUI-NEO 缓存整形结果）
+                // 限 280px 容中文短句、下限 80px）；矩形由 petBubbleRect
+                // 给出（条内水平居中）。测量用 TextPrimitive::measureTextSize，
+                // 与下方 ui.text 同字号 11px/缺省字族字重（EUI-NEO 缓存整形结果）
                 core::TextStyle bubbleStyle;
                 bubbleStyle.text = state.bubble.text;
                 bubbleStyle.fontSize = 11.0f;
                 const float bubbleW = std::clamp(
                     core::TextPrimitive::measureTextSize(bubbleStyle).x + 12.0f,
                     80.0f, 280.0f);
-                const float bubbleX = (screen.width - bubbleW) * 0.5f;
+                const PetRect bubble = petBubbleRect(screen.width, bubbleW);
                 ui.rect("pet.bubble.bg")
-                    .position(bubbleX, 0.0f)
-                    .size(bubbleW, 28.0f)
+                    .position(bubble.x, bubble.y)
+                    .size(bubble.w, bubble.h)
                     .color(kBubbleBg)
                     .radius(8.0f)
                     .border(1.0f, kBubbleBorder)
                     .build();
                 ui.rect("pet.bubble.tail")
-                    .position(bubbleX + bubbleW * 0.5f - 3.0f, 25.0f)
+                    .position(bubble.x + bubble.w * 0.5f - 3.0f,
+                              kBubbleHeight - 3.0f)
                     .size(6.0f, 6.0f)
                     .color(kBubbleBg)
                     .radius(t.sizes.radiusSmall)  // 统一圆角：6px 会被钳到 3px
                     .rotate(0.785f)  // 45° 小方块当三角尾巴
                     .build();
                 ui.text("pet.bubble.text")
-                    .position(bubbleX + 6.0f, 0.0f)
-                    .size(bubbleW - 12.0f, 28.0f)
+                    .position(bubble.x + 6.0f, bubble.y)
+                    .size(bubble.w - 12.0f, bubble.h)
                     .text(state.bubble.text)
                     .fontSize(11.0f)
                     .lineHeight(28.0f)
@@ -669,10 +679,13 @@ void startPetWindow(const PetWindowConfig& config) {
 
     // 位置：未设置 → 主显示器工作区右下角；已知位置钳制进所在/最近显示器的
     // 工作区（设计 §4.6；M2 多显示器——M1 只按主屏钳，副屏位置落盘被吞）。
-    // 工作区查询失败（无头/早于 glfwInit）时不动已知位置，未设置则给屏内兜底值
+    // 工作区查询失败（无头/早于 glfwInit）时不动已知位置，未设置则给屏内兜底值。
+    // 钳制/默认位都按**整窗**算（宽 = 帧宽、高 = petWindowHeight，见
+    // pet_bubble.h）：气泡让位条一并关进工作区，气泡不越过屏幕上缘
     int x = config.x;
     int y = config.y;
-    const auto [defX, defY] = defaultPetPos(rt.skin.frameWidth, rt.skin.frameHeight);
+    const auto [defX, defY] =
+        defaultPetPos(rt.skin.frameWidth, petWindowHeight(rt.skin.frameHeight));
     // 单边独立处理 -1 哨兵：只重置未设置的那一边（只存了 x 时 y 不丢）。
     // M2 起哨兵是「== -1」而非「< 0」：其他负值是左/上副屏的合法坐标
     if (x == -1) {
@@ -683,9 +696,9 @@ void startPetWindow(const PetWindowConfig& config) {
     }
     // 审计 [12]：与落盘路径共用同一钳制纯函数（默认位本就在工作区内，
     // 再钳幂等；无头工作区查不到时原样）
-    const auto [cx, cy] = clampPetPosToMonitors(x, y, currentMonitorWorkAreas(),
-                                                rt.skin.frameWidth,
-                                                rt.skin.frameHeight);
+    const auto [cx, cy] = clampPetPosToMonitors(
+        x, y, currentMonitorWorkAreas(), rt.skin.frameWidth,
+        petWindowHeight(rt.skin.frameHeight));
     x = cx;
     y = cy;
     rt.config.x = x;
@@ -694,7 +707,10 @@ void startPetWindow(const PetWindowConfig& config) {
     app::openWindow(app::DslWindowConfig{}
                         .title("DevDesk Pet")
                         .pageId("pet")
-                        .windowSize(rt.skin.frameWidth, rt.skin.frameHeight)
+                        // 窗口 = 帧宽 × (帧高 + 气泡让位条)（点；见 pet_bubble.h
+                        // ——让位条给气泡容身，精灵帧整体在条下方，不与气泡重叠）
+                        .windowSize(rt.skin.frameWidth,
+                                    petWindowHeight(rt.skin.frameHeight))
                         .windowPosition(x, y)
                         .decorated(false)              // 无边框
                         .alwaysOnTop(true)             // 置顶
@@ -812,7 +828,9 @@ void resetPetPosition() {
         LOG_WARN("桌宠位置重置持久化失败（不影响本次会话）");
     }
     if (rt.handle == nullptr) return;
-    const auto [x, y] = defaultPetPos(rt.skin.frameWidth, rt.skin.frameHeight);
+    // 整窗口径同 startPetWindow（高 = petWindowHeight，气泡让位条一并算）
+    const auto [x, y] =
+        defaultPetPos(rt.skin.frameWidth, petWindowHeight(rt.skin.frameHeight));
     core::window::setWindowPos(rt.handle, x, y);
     rt.config.x = x;
     rt.config.y = y;

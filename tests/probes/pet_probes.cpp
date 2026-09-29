@@ -42,6 +42,7 @@
 
 #include "app_registry.h"
 #include "core/module_interface.h"
+#include "module_pet/pet_bubble.h"
 #include "module_pet/pet_window.h"
 
 #include <components/styledmenu.h>
@@ -187,11 +188,15 @@ int main(int argc, char* argv[]) {
                   << "'（期望 'pet'）\n";
         passed = false;
     }
-    // 冒烟：与 test_pet pet_start_window_request 同款夹具断言（128×128
-    // robot；也保证桌宠不是 0 尺寸窗——命中坐标才有意义）
-    if (petReq.width != 128 || petReq.height != 128) {
+    // 冒烟：与 test_pet pet_start_window_request 同款夹具断言（宽 128；高 =
+    // 帧高 128 + 气泡让位条，pet_bubble.h；也保证桌宠不是 0 尺寸窗——命中
+    // 坐标才有意义）
+    if (petReq.width != 128 ||
+        petReq.height != 128 + static_cast<int>(module::pet::kBubbleStripH)) {
         std::cerr << "pet_probes: 桌宠窗尺寸 " << petReq.width << "x"
-                  << petReq.height << "（夹具期望 128x128）\n";
+                  << petReq.height << "（夹具期望 128x"
+                  << 128 + static_cast<int>(module::pet::kBubbleStripH)
+                  << "）\n";
         passed = false;
     }
     if (!static_cast<bool>(petReq.compose) ||

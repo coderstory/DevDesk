@@ -372,7 +372,8 @@ REGISTER_TEST(pet_start_window_request, "pet: 开窗请求逐字段断言（无�
     const app::DslWindowRequest& req = requests[0];
     DOCTEST_CHECK_EQ(req.pageId, "pet");
     DOCTEST_CHECK_EQ(req.width, 128);   // G2：128×128 不再被放大
-    DOCTEST_CHECK_EQ(req.height, 128);
+    // 气泡让位条（pet_bubble.h）：窗口高 = 帧高 128 + 条 34（气泡不再盖精灵）
+    DOCTEST_CHECK_EQ(req.height, 128 + static_cast<int>(module::pet::kBubbleStripH));
     DOCTEST_CHECK(req.positionSet);
     DOCTEST_CHECK_EQ(req.x, 50);
     DOCTEST_CHECK_EQ(req.y, 60);
@@ -1443,9 +1444,69 @@ REGISTER_TEST(pet_show_window_reenqueues,
     DOCTEST_REQUIRE_EQ(second.size(), static_cast<size_t>(1));
     DOCTEST_CHECK_EQ(second[0].pageId, "pet");
     DOCTEST_CHECK_EQ(second[0].width, 128);
-    DOCTEST_CHECK_EQ(second[0].height, 128);
+    // 窗口高 = 帧高 + 气泡让位条（pet_bubble.h）
+    DOCTEST_CHECK_EQ(second[0].height,
+                     128 + static_cast<int>(module::pet::kBubbleStripH));
     DOCTEST_CHECK(second[0].positionSet);
     DOCTEST_CHECK_EQ(second[0].x, 120);
     DOCTEST_CHECK_EQ(second[0].y, 130);
+    return true;
+});
+
+// ---- 气泡布局（2026-09-30 用户反馈「展示文本的框框需要上移，不要盖在
+// 桌宠上面」）----
+// 几何断言：气泡矩形与精灵帧矩形**不相交**。petBubbleRect/petSpriteRect 是
+// compose 侧同一数据源（pet_window.cpp 直接消费这两个纯函数），纯函数层
+// 断言成立 = 渲染几何成立。变异自检见本用例尾部注释
+REGISTER_TEST(pet_bubble_layout_disjoint,
+              "pet: 气泡矩形与精灵帧矩形不相交（上移不遮挡）", {
+    using namespace module::pet;
+    // 常量口径（PAB-05 数字对齐）：间距落在需求带 4-8px、条高 = 气泡高 + 间距
+    DOCTEST_CHECK_EQ(kBubbleHeight, 28.0f);
+    DOCTEST_CHECK(kBubbleGap >= 4.0f && kBubbleGap <= 8.0f);
+    DOCTEST_CHECK_EQ(kBubbleStripH, kBubbleHeight + kBubbleGap);
+    DOCTEST_CHECK_EQ(petWindowHeight(128), 162);
+    DOCTEST_CHECK_EQ(petWindowHeight(512), 546);
+
+    // 覆盖典型窗口宽（内置皮肤 136/360/512、最小帧 16）× 气泡宽（含 80 下限、
+    // 280 上限、超窗宽 600——负 x 被窗口裁剪的场景）全组合：垂直分离
+    //（气泡底 + 间距 = 帧顶）⇒ 两矩形恒不相交，与水平位置无关
+    const float windowWidths[] = {16.0f, 128.0f, 136.0f, 360.0f, 512.0f};
+    const float bubbleWidths[] = {80.0f, 136.0f, 280.0f, 600.0f};
+    const float windowHeights[] = {static_cast<float>(petWindowHeight(128)),
+                                   static_cast<float>(petWindowHeight(512))};
+    for (const float winW : windowWidths) {
+        for (const float winH : windowHeights) {
+            const PetRect sprite = petSpriteRect(winW, winH);
+            // 帧占满让位条以下全部空间（compose 侧同款：帧高 = 窗高 - 条高）
+            DOCTEST_CHECK_EQ(sprite.y, kBubbleStripH);
+            DOCTEST_CHECK_EQ(sprite.h, winH - kBubbleStripH);
+            for (const float bw : bubbleWidths) {
+                const PetRect bubble = petBubbleRect(winW, bw);
+                DOCTEST_CHECK_EQ(bubble.y, 0.0f);
+                DOCTEST_CHECK_EQ(bubble.h, kBubbleHeight);
+                // 间距钉死：气泡底沿到帧顶 = kBubbleGap（4-8px 需求带）
+                DOCTEST_CHECK_EQ(sprite.y - (bubble.y + bubble.h), kBubbleGap);
+                const bool overlap =
+                    bubble.x < sprite.x + sprite.w &&
+                    bubble.x + bubble.w > sprite.x &&
+                    bubble.y < sprite.y + sprite.h &&
+                    bubble.y + bubble.h > sprite.y;
+                DOCTEST_CHECK(!overlap);
+            }
+        }
+    }
+
+    // 气泡不越过屏幕工作区：整窗高参与钳制（调用方传 petWindowHeight）后，
+    // 窗口顶 = 气泡条上沿不会低于工作区上缘——钳到贴上缘时气泡完整可见
+    {
+        const std::vector<PetWorkArea> areas = {PetWorkArea{0, 0, 1920, 1020}};
+        const auto [cx, cy] = clampPetPosToMonitors(
+            500, -999, areas, 128, petWindowHeight(128));
+        DOCTEST_CHECK_EQ(cy, 0);  // 越界上移被回贴到工作区上缘（气泡不被裁）
+    }
+    // 变异自检（已实测）：把 petSpriteRect 的 y 改回旧布局 0（精灵帧顶回窗口
+    // 顶、气泡盖回精灵）→ 本用例 overlap 断言变红；恢复 y=kBubbleStripH 后
+    // 复绿——证明断言非恒真
     return true;
 });

@@ -154,4 +154,52 @@ inline PetBubblePlan petBubbleSchedule(double dtSec, bool bubbleVisible, bool id
     return {};
 }
 
+// ---- 气泡布局（2026-09-30 用户反馈「展示文本的框框需要上移，不要盖在
+// 桌宠上面」；纯函数 + 命名常量供单测，PAB-05 口径：注释数字与代码同源）----
+// 改前窗口 = 精灵帧紧包围盒、气泡画在窗口 y=0..28——气泡矩形与精灵帧矩形
+// 重叠，盖住宠物头顶。改法：整窗加高一条「气泡让位条」，精灵帧整体下移，
+// 气泡画在条内、与帧留 6px 间距（4-8px 口径中值）：
+//
+//   ┌──────────────────────┐ ← 窗口顶 y=0
+//   │     ┌────────┐       │ 气泡条 0..28（bg + tail + text，可见时才画）
+//   │     └────────┘        │
+//   │            ▾ 6px 间距 │
+//   ├──────────────────────┤ ← y=34（kBubbleStripH）
+//   │        精灵帧         │
+//   └──────────────────────┘ ← 窗口底 = frameH + 34
+//
+// 单位口径：全部是**窗口单位 = 点**（GLFW windowSize 同一口径），不乘
+// Retina contentScale。「气泡不超出屏幕工作区（越界回贴边）」由启动/落盘
+// 共用的 clampPetPosToMonitors 保证——调用方传**整窗高**（petWindowHeight），
+// 钳制后窗口顶（气泡条上沿）不会越过工作区上缘（getMonitorWorkAreas 既有
+// API，M2 按位置选屏语义不变）。
+struct PetRect {
+    float x = 0.0f;
+    float y = 0.0f;
+    float w = 0.0f;
+    float h = 0.0f;
+};
+
+inline constexpr float kBubbleHeight = 28.0f;  // 气泡条高（bg 矩形；text 同高）
+inline constexpr float kBubbleGap = 6.0f;      // 气泡底沿 ↔ 精灵帧顶间距（4-8px 口径）
+inline constexpr float kBubbleStripH = kBubbleHeight + kBubbleGap;  // 34 = 让位条总高
+
+// 气泡矩形（窗口坐标）：气泡条内水平居中（bubbleW 可超窗宽 → x 为负被窗口
+// 裁剪，与改前同口径；窄皮肤气泡两侧被裁属既有限制，不在本次范围）
+inline PetRect petBubbleRect(float windowW, float bubbleW) {
+    return {(windowW - bubbleW) * 0.5f, 0.0f, bubbleW, kBubbleHeight};
+}
+
+// 精灵帧矩形（窗口坐标）：整帧让位到气泡条下方（垂直分离 ⇒ 与气泡矩形恒
+// 不相交——单测断言「气泡矩形与精灵帧矩形不相交」的几何基础）
+inline PetRect petSpriteRect(float windowW, float windowH) {
+    return {0.0f, kBubbleStripH, windowW, windowH - kBubbleStripH};
+}
+
+// 桌宠窗口高 = 精灵帧高 + 气泡让位条（点；frameH 传皮肤帧高或缩放后的帧高）。
+// 宽不变 = 帧宽：气泡条只占竖向一条
+inline int petWindowHeight(int frameH) {
+    return frameH + static_cast<int>(kBubbleStripH);
+}
+
 } // namespace module::pet
