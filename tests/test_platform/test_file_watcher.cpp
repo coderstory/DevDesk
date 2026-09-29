@@ -4,9 +4,11 @@
 //      ValidationError；目录不存在 → FileNotFound。
 //   ② start/stop 生命周期幂等（全平台）：真实临时目录 start ok，stop
 //      可重复调用不崩。
-//   ③ Windows 真实现事件链路（临时目录真实写/删/子目录 → 回调触发）：
-//      验证 ReadDirectoryChangesW 线程 + 去抖 + 路径转换（UTF-8、'/' 分隔、
-//      子目录递归、中文文件名）。stub 平台（POSIX/macOS）跳过并打印 [SKIP]。
+//   ③ 原生真实现事件链路（临时目录真实写/删/子目录 → 回调触发）：
+//      Windows 走 ReadDirectoryChangesW、macOS 走 FSEvents，验证同一份契约
+//      （去抖整批交付 + 路径转换 UTF-8 / '/' 分隔、子目录递归、中文文件名）。
+//      两侧都注册：真实现是平台适配层，改一端必须两端都跑。仅 POSIX stub
+//      平台（CMake else() 分支）无事件可言 → 不注册。
 #include "doctest.h"
 #include "test_support.h"
 
@@ -73,7 +75,9 @@ struct EventSink {
 };
 
 // ── 武装等待（flake 归因 2026-09-28，见 file_watcher.h「启动武装窗口」）──
-#if defined(_WIN32)
+// 仅 Windows 有该窗口（macOS 的 start() 阻塞到 FSEventStreamStart 成功才返回，
+// 返回即已武装）；探针等待在 macOS 上同样成立，故一并编入，不做平台分叉。
+#if defined(_WIN32) || defined(__APPLE__)
 // start() 在调用线程开目录句柄，而首个 ReadDirectoryChangesW 由 worker 线程
 // 异步发出；Windows 只上报「首读发出之后」的改动，之前的改动**永久丢失**
 // （等再久也不会补发）。用例在 start() 后立刻写文件就会踩进这个窗口——
@@ -108,13 +112,14 @@ bool waitWatcherArmed(const fs::path& dir,
               << " dir=" << dir.string() << std::endl;
     return false;
 }
-#endif  // _WIN32（stub 平台不产生事件，武装等待无用武之地 → 不编入避免
-        // -Wunused-function -Werror）
+#endif  // _WIN32 || __APPLE__（POSIX stub 平台不产生事件，武装等待无用武之地
+        // → 不编入避免 -Wunused-function -Werror）
 
 // 清场（best-effort，非抛出版本）：整棵删掉临时目录；删不干净只打印残留
 // 诊断、不把用例判红（残留路径带 pid + 序号，不复用、不干扰后续用例）。
 // 调用方须先 stop()/析构 watcher——监听存活时回调线程可能在读被监听文件，
-// MinGW 的 ifstream 句柄不带 FILE_SHARE_DELETE，期间的删除会失败。
+// MinGW 的 ifstream 句柄不带 FILE_SHARE_DELETE，期间的删除会失败（macOS 无
+// 该语义，删除不被读句柄挡住，但 FSEvents 的迟到事件会干扰后续断言，仍先停）。
 void cleanupTempDir(const fs::path& dir, const char* label) {
     std::error_code ec;
     fs::remove_all(dir, ec);           // 非抛出版本：删不掉也不抛、不算用例失败
@@ -128,11 +133,13 @@ void cleanupTempDir(const fs::path& dir, const char* label) {
 }
 
 // 平台谓词（文件作用域指令合法；REGISTER_TEST 宏体内嵌指令会被
-// -Wpedantic -Werror 拒绝）。true = 本平台 FileWatcher 为原生真实现。
-#if defined(_WIN32)
-inline constexpr bool kWinNativeWatcher = true;
+// -Wpedantic -Werror 拒绝）。true = 本平台 FileWatcher 为原生真实现
+// （Windows ReadDirectoryChangesW / macOS FSEvents）；POSIX stub 恒 false
+// ——它 start() 返回 ok 但 active() 恒 false，消费方据此退回轮询。
+#if defined(_WIN32) || defined(__APPLE__)
+inline constexpr bool kNativeWatcher = true;
 #else
-inline constexpr bool kWinNativeWatcher = false;
+inline constexpr bool kNativeWatcher = false;
 #endif
 
 } // namespace
@@ -175,7 +182,7 @@ REGISTER_TEST(fwatch_start_stop_idempotent,
 
     auto r = w.start(dir, sink);
     DOCTEST_REQUIRE(r.isOk());
-    DOCTEST_CHECK(w.active() == kWinNativeWatcher);  // Win 真监听 / stub 恒 false
+    DOCTEST_CHECK(w.active() == kNativeWatcher);  // 原生真监听 / stub 恒 false
     w.stop();
     w.stop();  // 幂等
     DOCTEST_CHECK(!w.active());
@@ -189,13 +196,14 @@ REGISTER_TEST(fwatch_start_stop_idempotent,
     return true;
 })
 
-#if defined(_WIN32)
-// 注意：以下用例只在 Windows 注册——它们验证 ReadDirectoryChangesW 的
-// 事件链路（去抖交付 / '/' 相对路径 / 子目录递归 / UTF-8 中文名）。
-// POSIX/macOS stub 平台事件永不到达，注册了也只能 [SKIP]，索性不注册。
+#if defined(_WIN32) || defined(__APPLE__)
+// 以下用例在**两个有原生实现的平台**都注册（Windows ReadDirectoryChangesW /
+// macOS FSEvents）——它们验证的是平台无关契约：去抖整批交付、'/' 分隔的相对
+// 路径、子目录递归、UTF-8 中文名、回调线程内 stop 的语义。POSIX stub 平台
+// 事件永不到达，注册了也只能空等 → 不注册。
 
 REGISTER_TEST(fwatch_event_create_modify_delete,
-              "FileWatcher[Win]: 新建/改写/删除 → 回调带正确相对路径与动作", {
+              "FileWatcher[Native]: 新建/改写/删除 → 回调带正确相对路径与动作", {
     const auto dir = test_support::makeTempDir("devdesk_fwatch_test_", "events");
     EventSink sink;
     platform::FileWatcher w;
@@ -247,7 +255,7 @@ REGISTER_TEST(fwatch_event_create_modify_delete,
 })
 
 REGISTER_TEST(fwatch_event_subdir_and_nonascii,
-              "FileWatcher[Win]: 子目录递归（box/deep.md）+ 中文文件名 UTF-8 送达", {
+              "FileWatcher[Native]: 子目录递归（box/deep.md）+ 中文文件名 UTF-8 送达", {
     const auto dir = test_support::makeTempDir("devdesk_fwatch_test_", "subdir");
     EventSink sink;
     platform::FileWatcher w;
@@ -281,7 +289,7 @@ REGISTER_TEST(fwatch_event_subdir_and_nonascii,
 })
 
 REGISTER_TEST(fwatch_event_burst_debounce_merges,
-              "FileWatcher[Win]: 突发 5 文件在去抖窗口内合并为 ≤2 次批量交付", {
+              "FileWatcher[Native]: 突发 5 文件在去抖窗口内合并为 ≤2 次批量交付", {
     const auto dir = test_support::makeTempDir("devdesk_fwatch_test_", "debounce");
     struct {
         std::mutex mtx;
@@ -340,7 +348,7 @@ REGISTER_TEST(fwatch_event_burst_debounce_merges,
     return true;
 })
 REGISTER_TEST(fwatch_stop_from_callback_thread,
-              "FileWatcher[Win]: 回调线程内 stop() 只请求停止（不崩、join 后可再启）", {
+              "FileWatcher[Native]: 回调线程内 stop() 只请求停止（不崩、join 后可再启）", {
     const auto dir = test_support::makeTempDir("devdesk_fwatch_test_", "cbstop");
     platform::FileWatcher w;
     EventSink sink;
@@ -401,4 +409,4 @@ REGISTER_TEST(fwatch_stop_from_callback_thread,
     cleanupTempDir(dir, "stop_from_callback_thread");
     return true;
 })
-#endif  // _WIN32
+#endif  // _WIN32 || __APPLE__
