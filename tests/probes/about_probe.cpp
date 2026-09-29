@@ -2,7 +2,7 @@
 //
 // 覆盖三件用户真机反馈改动：
 //   1) hero 三行（版本 / 构建 / commit）删除 → hero = 图标 + 标题；
-//   2) 两张卡从左右并排改上下堆叠（各占满 1040 宽、卡距 8，本页无滚动）；
+//   2) 两张卡从左右并排改上下堆叠（各占满内容区宽 900、卡距 8，本页无滚动）；
 //   3) 浮环动态背景可见度上调（元素 opacity 0.18-0.28）且「真的在动」。
 //
 // 断言口径（真窗口后端 GLFW+OpenGL + 真 Runtime 循环，非无头）：
@@ -97,17 +97,17 @@ int main(int argc, char* argv[]) {
     };
 
     const auto& t = core::theme::current();
-    constexpr float kContentW = 1040.0f;
+    constexpr float kContentW = 900.0f;   // 2026-09-29 1040→900（两卡缩一档）
     constexpr float kCardGap = 8.0f;
-    constexpr float kCardH = 16.0f + 28.0f + 6.0f * 24.0f + 16.0f;  // 204
+    constexpr float kCardH = 24.0f + 28.0f + 6.0f * 28.0f + 24.0f;  // 244
     constexpr float kFooterH = 20.0f;
-    const float topPad = t.sizes.spacingXXLarge + t.sizes.spacingXLarge;   // 64
+    const float topPad = t.sizes.spacingXXLarge;                           // 40（仅极矮窗兜底）
     const float iconSize = t.sizes.spacingXXLarge + t.sizes.spacingLarge;  // 56
     const float heroToCards = t.sizes.spacingXLarge;                       // 24
-    // 贴底对齐（2026-09-29）：内容块总高固定 544，起点 = 页脚顶 − 一档间距 − 544
+    // 贴底对齐（2026-09-29）：内容块总高固定 624，起点 = 页脚顶 − 一档间距 − 624
     //（护栏 topPad：极矮窗退回顶部对齐）
     const float contentH = iconSize + 8.0f + 40.0f + heroToCards +
-                           kCardH + kCardGap + kCardH;                    // 544
+                           kCardH + kCardGap + kCardH;                    // 624
     const float footerTop = h - t.sizes.spacingXXLarge - kFooterH;
     const float contentTop = std::max(topPad, footerTop - heroToCards - contentH);
     const float cardsTop = contentTop + iconSize + 8.0f + 40.0f + heroToCards;

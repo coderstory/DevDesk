@@ -1083,10 +1083,12 @@ REGISTER_TEST(settings_window_effect_param_mapping, "settings: 档位→alpha/ba
     namespace ms = module::settings;
     using WE = core::platform::WindowEffect;
 
-    // clearColor alpha：off=1.0 / translucent=0.90 / frosted=0.55 / 未知→1.0
+    // clearColor alpha：off=1.0 / translucent=0.94 / frosted=0.30 / 未知→1.0
+    //（2026-09-29 真机反馈第二次收紧：半透 0.90→0.94「透明度还是有点高」；
+    //  磨砂 0.55→0.30「完全不透明了」——回退任一常量本用例即红）
     DOCTEST_CHECK(ms::windowEffectAlpha(ms::kWindowEffectOff) == 1.0f);
-    DOCTEST_CHECK(ms::windowEffectAlpha(ms::kWindowEffectTranslucent) == 0.90f);
-    DOCTEST_CHECK(ms::windowEffectAlpha(ms::kWindowEffectFrosted) == 0.55f);
+    DOCTEST_CHECK(ms::windowEffectAlpha(ms::kWindowEffectTranslucent) == 0.94f);
+    DOCTEST_CHECK(ms::windowEffectAlpha(ms::kWindowEffectFrosted) == 0.30f);
     DOCTEST_CHECK(ms::windowEffectAlpha("bogus") == 1.0f);
 
     // backdrop 请求：off/translucent 显式关（None），frosted→Acrylic，未知→None
@@ -1124,14 +1126,14 @@ REGISTER_TEST(settings_window_effect_apply_visuals, "settings: applyWindowVisual
     namespace ms = module::settings;
     using WE = core::platform::WindowEffect;
 
-    // 半透档：clearColor alpha=0.90 + backdrop 请求 None（显式关）
+    // 半透档：clearColor alpha=0.94 + backdrop 请求 None（显式关）
     ms::applyWindowVisuals(ms::kWindowEffectTranslucent);
-    DOCTEST_CHECK(app::currentClearColor().a == 0.90f);
+    DOCTEST_CHECK(app::currentClearColor().a == 0.94f);
     DOCTEST_CHECK(app::currentWindowEffect() == WE::None);
 
-    // 磨砂档：alpha=0.55 + Acrylic 请求
+    // 磨砂档：alpha=0.30 + Acrylic 请求
     ms::applyWindowVisuals(ms::kWindowEffectFrosted);
-    DOCTEST_CHECK(app::currentClearColor().a == 0.55f);
+    DOCTEST_CHECK(app::currentClearColor().a == 0.30f);
     DOCTEST_CHECK(app::currentWindowEffect() == WE::Acrylic);
 
     // 关档：alpha=1（视觉等价实色，透明 hint 仍开）——收尾恢复，不污染后续用例

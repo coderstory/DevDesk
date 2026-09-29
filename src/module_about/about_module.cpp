@@ -107,26 +107,31 @@ struct AboutRow {
 };
 
 // 卡片底板走 ui_kit::cardFrame（surface 底色 + panelShadow + 圆角 + 1px 描边，
-// 与设置页同一套视觉语言，非自绘 rect）。行高 24px、行内左 label 110px 区 +
-// 右侧值右对齐，标题行 28px（icon 18px + 标题 18px/600）。
+// 与设置页同一套视觉语言，非自绘 rect）。行高 28px（2026-09-29 由 24 上调：
+// 卡高 204→244 是「顶部留白太多」的解，见 compose 内 topPad 注释）、行内左
+// label 110px 区 + 右侧值右对齐，标题行 28px（icon 18px + 标题 18px/600），
+// 上下留白各 24px（= spacingXLarge，与页面其余 padding 同档）。
 void aboutCard(eui::Ui& ui, const std::string& id, const core::theme::Tokens& t,
                float x, float y, float w, float h, unsigned int iconCode,
                const char* title, const AboutRow* rows, int rowCount) {
     constexpr float padX = 28.0f;
+    constexpr float kPadY = 24.0f;   // 上下留白（卡高算式的一项，勿单改）
+    constexpr float kTitleRowH = 28.0f;
+    constexpr float kRowH = 28.0f;   // 信息行行高（卡高算式的一项，勿单改）
     ui.stack(id)
         .position(x, y)
         .size(w, h)
         .content([&] {
             ui_kit::cardFrame(ui, id, w, h, t);
             ui.text(id + ".icon")
-                .position(padX, 18.0f)
+                .position(padX, kPadY + 2.0f)   // 图标与标题行同基线（+2 居中）
                 .size(20.0f, 20.0f)
                 .icon(iconCode)
                 .fontSize(18.0f)
                 .color(t.colors.textSecondary)
                 .build();
             ui.text(id + ".title")
-                .position(padX + 24.0f, 16.0f)
+                .position(padX + 24.0f, kPadY)
                 .size(w - padX * 2.0f - 24.0f, 22.0f)
                 .text(title)
                 .fontSize(t.sizes.fontSizeLarge)
@@ -134,23 +139,23 @@ void aboutCard(eui::Ui& ui, const std::string& id, const core::theme::Tokens& t,
                 .fontWeight(600)
                 .color(t.colors.textPrimary)
                 .build();
-            const float rowTop = 16.0f + 28.0f;
+            const float rowTop = kPadY + kTitleRowH;
             for (int i = 0; i < rowCount; ++i) {
-                const float rowY = rowTop + static_cast<float>(i) * 24.0f;
+                const float rowY = rowTop + static_cast<float>(i) * kRowH;
                 ui.text(id + ".label." + std::to_string(i))
                     .position(padX, rowY)
-                    .size(110.0f, 24.0f)
+                    .size(110.0f, kRowH)
                     .text(rows[i].label)
                     .fontSize(t.sizes.fontSizeSmall)
-                    .lineHeight(24.0f)
+                    .lineHeight(kRowH)
                     .color(t.colors.textTertiary)
                     .build();
                 ui.text(id + ".value." + std::to_string(i))
                     .position(padX, rowY)
-                    .size(w - padX * 2.0f, 24.0f)
+                    .size(w - padX * 2.0f, kRowH)
                     .text(rows[i].value)
                     .fontSize(t.sizes.fontSizeSmall)
-                    .lineHeight(24.0f)
+                    .lineHeight(kRowH)
                     .horizontalAlign(eui::HorizontalAlign::Right)
                     .color(rows[i].hash ? t.colors.primary
                                         : t.colors.textPrimary)
@@ -260,19 +265,21 @@ public:
                 .build();
         }
 
-        // 居中 1040px 主内容区（spec §布局概览；窄窗不滚动，D-04 目标 =
-        // 默认窗口内完整可见）。2026-09-28 用户真机反馈「内容太窄」→ 720→1040，
-        // 两张卡随之改上下堆叠、各占满 1040（并排时代的 516 宽已废）。页面宽 =
-        // 窗口宽 − 侧边栏（展开 208，见 app_sidebar.cpp pageContentWidth）；
-        // 最小窗宽 1330 → 页面宽 1122，居中后左右各余 41px，不溢出（页面宽只
-        // 依赖最小窗**宽**；最小窗高由 core 层按工作区推导，
-        // core::window_layout，本机 805）
-        constexpr float kAboutContentW = 1040.0f;
+        // 居中 900px 主内容区（spec §布局概览；窄窗不滚动，D-04 目标 =
+        // 默认窗口内完整可见）。沿革：720（初版）→ 1040（2026-09-28「内容太窄」）
+        // → 900（2026-09-29「两卡宽度缩一点」）。页面宽 = 窗口宽 − 侧边栏
+        //（展开 208，见 app_sidebar.cpp pageContentWidth）；最小窗宽 1330 →
+        // 页面宽 1122，居中后左右各余 111px，不溢出（页面宽只依赖最小窗**宽**；
+        // 最小窗高由 core 层按工作区推导，core::window_layout，本机 805）
+        constexpr float kAboutContentW = 900.0f;
         const float x = std::max(0.0f, (screen.width - kAboutContentW) / 2.0f);
         constexpr float cardGap = 8.0f;
-        // 单张卡高（两卡同构：上留白 16 + 标题行 28 + 6 行 × 24 + 下留白 16 = 204）。
+        // 单张卡高（两卡同构：上留白 24 + 标题行 28 + 6 行 × 28 + 下留白 24 = 244）。
+        // 2026-09-29「顶部留白太多」的落地口径见下方 topPad 注释：**靠把卡加高**
+        //（行高 24→28、上下留白 16→24）让内容块变高、贴底后顶部自然少空一片——
+        // 而不是把内容块往上抬（那样就不再是「贴底」了）。
         // 提到内容块起点之前算：贴底起点要按内容块总高反推（见下）
-        constexpr float cardH = 16.0f + 28.0f + 6.0f * 24.0f + 16.0f;
+        constexpr float cardH = 24.0f + 28.0f + 6.0f * 28.0f + 24.0f;
         // hero 图标 → 标题的 8 与标题行高 40：沿用既有字面量（非间距语义，
         // 不取自 spacing token），提为常量只为把内容块总高写成一项可复核的算式
         constexpr float heroGap = 8.0f;
@@ -280,12 +287,18 @@ public:
         constexpr float footerH = 20.0f;
 
         // ========== hero 段（居中；图标 + 标题两件）==========
-        // 顶部留白 = 两档间距 token 叠加（XXLarge 40 + XLarge 24 = 64）：草图
-        // 观感区间 60-70px，单档 XXLarge(40) 偏小、双档 XXLarge(80) 越界，
-        // 故用叠加推导值，不引裸魔法数。2026-09-28 删 hero 副标题三行后复核：
-        // 该留白约束的是「页面顶边 → hero 起点」（hero 起笔仍是 56px 大图标），
-        // 与 hero 内部有几行正文无关——维持 64 不变
-        const float topPad = t.sizes.spacingXXLarge + t.sizes.spacingXLarge;
+        // topPad 现在的**唯一**作用是「极矮窗兜底起点」（下方 y 的 max 护栏）：
+        // 2026-09-29 起内容块贴底（底边 = 页脚顶 − 一档间距），正常窗口下起笔点是
+        // 反推值、恒大于 topPad——本机页面高 801 时反推 93、最小窗（页面高 805）时
+        // 反推 97，都远在 topPad 之上，故**减小 topPad 对正常窗口观感零影响**
+        //（如实说明：用户原话「适当减小 topPad」这条对本机窗口不产生像素变化）。
+        // 顶部那片空白真正的解法是「把内容块变高」：卡高 204→244（见上），内容块
+        // 544→624 → 贴底起点 173→93，顶部空白从 21.6% 降到 11.6%，底部 24px 的贴底
+        // 关系不变（真机截图与像素对账见交付说明）。
+        // 取值仍用一档 XXLarge(40)（原为 XXLarge + XLarge 叠加 64，那是「hero 顶部
+        // 留白」时代的语义，现已不承担观感）：兜底场景本就是内容放不进页面的退化
+        // 形态，取与页面底 padding 同档的值，不再叠加。
+        const float topPad = t.sizes.spacingXXLarge;
         // hero 图标 48→56（= XXLarge 40 + Large 16，同属 token 叠加）：用户要
         // 「hero 更有存在感」，但字号受规范约束（页面标题 32 / 正文 15，见
         // CLAUDE.md「视觉规范」）不可动——空间感由加宽 + 顶部留白承担；图标是
@@ -302,8 +315,8 @@ public:
         // 起点反推：内容块底边 = 页脚顶 − 一档间距（XLarge），故
         //   y = 页脚顶 − 间距 − 内容块总高
         // 内容块总高 = hero 图标 56 + 图标/标题间距 8 + 标题 40 + 标题到卡一档
-        // XLarge 24 + 卡1 204 + 卡距 8 + 卡2 204 = 544（本机 1600×1000 窗口的
-        // 页面高 805 下：页脚顶 745 → 起点 177、卡底 721，距页脚 24px）。
+        // XLarge 24 + 卡1 244 + 卡距 8 + 卡2 244 = 624（卡高 204→244 见上；
+        // 本机页面高 801：页脚顶 741 → 起点 93、卡底 717，距页脚 24px）。
         // 护栏 max(topPad, …)：本页无滚动，极矮窗下内容块放不进「页脚上方」这块
         // 高度时退回原来的顶部对齐（此时页脚侧另有 max 护栏，见下，保证不重叠）
         const float contentH = heroIcon + heroGap + heroTitleH +
@@ -336,10 +349,10 @@ public:
         y += heroTitleH + t.sizes.spacingXLarge;
 
         // ========== 卡 1 + 卡 2：上下堆叠（2026-09-28 用户真机反馈；原左右并排）==========
-        // 每张卡占满内容区宽 1040（原并排宽 (1040−8)/2 = 516）；两卡各 6 行、
-        // 等高 cardH=204（16 + 28 + 6×24 + 16），堆叠总高 204×2 + 卡距 8 = 416。
+        // 每张卡占满内容区宽 900（原并排宽 (1040−8)/2 = 516）；两卡各 6 行、
+        // 等高 cardH=244（24 + 28 + 6×28 + 24），堆叠总高 244×2 + 卡距 8 = 496。
         // 起始 y 由 contentH 反推（贴底对齐，见上）——不再是固定的顶部起点；
-        // 页脚顶 805−40−20 = 745、卡底 721（最小窗页面高 805 档，core 层按
+        // 页面高 801 → 页脚顶 741、卡底 717（最小窗页面高 805 档，core 层按
         // 工作区推导，core::window_layout），页面更高只会更宽松
         const float cardW = kAboutContentW;
 

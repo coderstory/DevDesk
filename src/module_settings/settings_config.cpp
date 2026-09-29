@@ -185,15 +185,47 @@ SettingsConfig SettingsStore::sanitized(const SettingsConfig& cfg) {
 }
 
 float windowEffectAlpha(const std::string& mode) {
-    // 半透档只有**单层** clearColor 参与合成：半透档不请求 backdrop
-    //（windowEffectRequest 返回 None），macOS 侧据此把材质视图整条摘除，
-    // 观感只由这一层 alpha 决定。0.85 在高对比背景（深色壁纸 / 亮桌面图标
-    // 透过来）下读起来"很透"（2026-09-28 用户真机反馈"还要降低一点点"）
-    // → 0.90。**若将来半透档改成也请求 WindowEffect::Transparent（让材质
-    // 视图以 alpha 0.4 参与合成），本值须重新标定**：两层叠加约
-    // 0.90 + 0.10 × 0.4 = 0.94，偏实。
-    if (mode == kWindowEffectTranslucent) return 0.90f;
-    if (mode == kWindowEffectFrosted) return 0.55f;
+    // 先说清两层结构（2026-09-29 真机取证，本节所有数字都是实测不是推算）：
+    // 窗口观感 = 宿主 clearColor 这一层 +（仅磨砂档）EUI-NEO 挂在 GL 视图**之下**的
+    // NSVisualEffectView 材质层。调观感时只能动一层，动错层完全不生效。
+    //   · 半透档：windowEffectRequest 返回 None → macOS 侧把材质视图整条摘除
+    //     （EUI_FX_DEBUG=1 实测 material=0x0），只有**单层** clearColor 参与合成。
+    //     黑壁纸（屏幕最左 48px 条带、壁纸像素实测纯黑 0/0）同位置采样逐位对上算式：
+    //     α=0.90 → 0.90×248.4 = 223.5（实测 223.3）；α=0.94 → 233.5（实测 233.4）。
+    //   · 磨砂档：窗 = α×主题色 + (1−α)×材质输出（材质是 GL 视图的父视图，见下）。
+    // 半透沿革：0.85 → 0.90（2026-09-28「还要降低一点点」）→ 0.94（2026-09-29 用户
+    // 原话「半透的透明度还是有点高」）。**同一诉求的第二次收紧，步长同为 +0.04**：
+    // 再让 37% 的桌面透出量消失（对壁纸 40×40 物理像素块均值回归的透出斜率
+    // 0.107 → 0.067，恰等于 1−α，两条都逐位对得上）。**若将来半透档改成也请求
+    // WindowEffect::Transparent（材质以 alpha 0.4 参与合成），本值须重新标定**：
+    // 两层叠加约 0.94 + 0.06 × 0.4 = 0.98，偏实。
+    if (mode == kWindowEffectTranslucent) return 0.94f;
+    // 磨砂 0.55 → 0.30（2026-09-29 用户原话「磨砂现在完全不透明了」）。取证在先，
+    // 先排除掉一条**不成立**的候选再动值：
+    // ① 不是「自绘的页面/侧边栏 surface 盖住了 clearColor」：off 档设置页空白区与
+    //    侧边栏空白区实测就是 clearColor 原值 (250,249,245)、sd=0（页面与侧边栏都
+    //    不自铺不透明底，见 app_sidebar.cpp 的同类注释）→「改自绘层 alpha」这条路
+    //    在本仓库不存在，用户观测到的「只比关闭档暗 15/255」也不是它造成的。
+    // ② 真因是材质层：磨砂档 EUI-NEO 挂 NSVisualEffectView（EUI_FX_DEBUG=1 实测
+    //    materialValue=13=HUDWindow / blending=1=WithinWindow / state=1=Active /
+    //    alphaValue=1.00），而它是 GL 视图的**父**视图 → GL 的 clearColor 是盖在
+    //    材质上的「主题色纱」，桌面的明暗要穿过「材质」再穿过这层纱才露得出来。
+    //    实测：材质自身只把约 28% 的壁纸对比度透过来（α=0.55 时回归斜率 0.126
+    //    = 0.45 × 0.28），黑壁纸同位置采样 198.1/248.4 —— 壁纸 ±60 的明暗差进到
+    //    窗口只剩 ±8，肉眼即「完全不透明」。
+    // ③ 因此只能动 α：0.30 → 同位置采样 170.4（比 0.55 再暗 27.7/255），斜率 0.225
+    //    ≈ 原来的 1.8 倍，被材质糊过的桌面结构肉眼可见（改前/改后截图见交付说明）。
+    // 上限在 **EUI-NEO 侧**：材质 alphaValue=1.0 + WithinWindow 决定了磨砂最多只能
+    // 透出 ~28% 对比度，真正的毛玻璃观感要改 kMaterialAlpha 或换 BehindWindow 混合
+    //（window_effect_macos.mm）；本轮禁改 EUI-NEO，DevDesk 侧只把纱掀到看得见材质。
+    // ⚠ 取证修订：本节的斜率 / 采样均值取自 2026-09-29 14:00-14:16 的 EUI-NEO 修订
+    //（材质视图 = GL 父视图、窗口背景 = clearColor 透明黑那一版）。同日 14:24 起
+    // EUI-NEO 在改标题栏链路（改用 setBackgroundColor(主题色, clearColor α) +
+    // titlebarAppearsTransparent），实测会把内容区压成「不透桌面」——换修订后**本节
+    // 所有数字都要重新标定**，判据仍是同一位置采样均值 + 对壁纸块均值的透出斜率。
+    // 平台注记：本常量同时供 Windows 的 DWM Acrylic backdrop 用，方向一致（纱薄 →
+    // backdrop 更可见），但 Windows 侧本轮无机器复测，只做了算式推演。
+    if (mode == kWindowEffectFrosted) return 0.30f;
     return 1.0f;  // off / 未知值：实色
 }
 

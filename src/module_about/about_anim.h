@@ -61,7 +61,7 @@ struct AboutAnimState {
     // 装饰圆环，又不与卡片/正文抢注意力。单测断言此区间（uiAboutRingAnim）。
     static constexpr float kOpacityMin = 0.18f;
     static constexpr float kOpacityMax = 0.28f;
-    // 半径 12-34px：相对 1040 内容区是「点状」小装饰体量（卡片上下堆叠后
+    // 半径 12-34px：相对 900 内容区是「点状」小装饰体量（卡片上下堆叠后
     // 页面留白变多，仍不构成干扰）
     static constexpr float kRadiusMin = 12.0f;
     static constexpr float kRadiusMax = 34.0f;
