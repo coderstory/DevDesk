@@ -721,11 +721,11 @@ REGISTER_TEST(uiModernVirtualLogRows,
         ui.end();
     };
     // 打开弹窗（CPX-06：后台取数；有界等待当页 20 行到位）。
-    // 2026-09-28：调用记录已抽成详情面板第 4 页签——先切 tab（该帧生效），
-    // 再点「查看全部 →」开弹窗
+    // 2026-09-28：调用记录抽成详情页签（2026-09-30 batch-fix B 起第 5 页签
+    // idx 4）——先切 tab（该帧生效），再点「查看全部 →」开弹窗
     {
         compose();
-        const auto* tab = ui.find("claude.detail.tabs.hit.3");
+        const auto* tab = ui.find("claude.detail.tabs.hit.4");
         DOCTEST_REQUIRE(tab != nullptr);
         DOCTEST_REQUIRE(tab->onClick != nullptr);
         tab->onClick();

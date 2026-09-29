@@ -11,8 +11,8 @@
 // 成员的分配依据「谁画谁持有」：
 //   - ProfileListState：左栏列表 + header/引导条 + 数据缓存/后台刷新（compose
 //     每帧读的快照 + 刷新意图都在这里；claude_ui_list 与 compose 骨架共用）
-//   - DetailState：右栏三 pane 的页签
-//   - FormState：表单三页 + 编辑弹窗 + 删除确认弹窗（同文件 —— claude_ui_form）
+//   - DetailState：右栏四 pane 的页签（基础/模型映射/环境变量/高级配置）
+//   - FormState：表单四页 + 编辑弹窗 + 删除确认弹窗（同文件 —— claude_ui_form）
 //   - LogsState：完整调用记录弹窗（过滤/分页/后台取数）—— claude_ui_logs
 //   - ImportState：cc-switch / settings.json 粘贴导入（高级 env 页）—— claude_ui_form
 #pragma once
@@ -118,10 +118,11 @@ struct ProfileListState {
     std::string cachedSharedConfigsError_;   // 空 = 成功（失败保旧快照 + 记日志）
 };
 
-// ============ 右栏：详情面板页签（三 pane + 最近调用）============
+// ============ 右栏：详情面板页签（四 pane + 最近调用）============
 struct DetailState {
-    // 详情页签：0 基础 / 1 模型映射 / 2 环境变量 / 3 最近调用
-    //（2026-09-24 起 0-2；3 = 2026-09-28 由底部固定预览块抽出的独立页签）
+    // 详情页签：0 基础 / 1 模型映射 / 2 环境变量 / 3 高级配置 / 4 最近调用
+    //（0-2 = 2026-09-24 起；3 = 2026-09-30 batch-fix B 新增「高级配置」；
+    // 4 = 2026-09-28 由底部固定预览块抽出的独立页签，原 3 顺移至此）
     int detailTab_ = 0;
 };
 
@@ -129,7 +130,7 @@ struct DetailState {
 struct FormState {
     bool formOpen_ = false;
     int64_t formEditId_ = 0;   // 0 = 新建，非 0 = 编辑该 id
-    int formTab_ = 0;          // 0 基础 / 1 模型映射 / 2 高级 env
+    int formTab_ = 0;          // 0 基础 / 1 模型映射 / 2 高级 env / 3 高级配置
     std::string formName_;
     std::string formUrl_;
     std::string formKey_;
@@ -158,11 +159,18 @@ struct FormState {
     // 设计 §2.3）
     std::vector<std::string> formOriginalOwnKeys_;
 
-    // 批 3（设计 §3.4/§3.8）：备用 Profile（failover）绑定（基础页下拉，
-    // 复用批 2 绑定下拉模式——索引 0 = 无，其余 = 候选 profile 表序 +1，
-    // 编辑态排除自身；保存时写入 profile.fallbackProfileId）
+    // 批 3（设计 §3.4/§3.8）：备用 Profile（failover）绑定（2026-09-30
+    // batch-fix B 起渲染在**高级配置页**，原基础页整段迁入；复用批 2 绑定
+    // 下拉模式——索引 0 = 无，其余 = 候选 profile 表序 +1，编辑态排除自身；
+    // 保存时写入 profile.fallbackProfileId）
     int64_t formFallbackProfileId_ = 0;   // 表单态备用（0 = 不启用 failover）
     bool formFallbackDdOpen_ = false;     // 备用下拉展开态
+
+    // 高级配置页（2026-09-30 batch-fix B，设计 §3.2①）：方言覆盖。只存规范
+    // 文本（dialectKindToText 产物，空串 = 未覆盖）；选中态逐帧经
+    // dialectKindFromText 反查 idx（空/未知 → 0「自动」，读侧兜底同口径）
+    std::string formDialectOverride_;
+    bool formDialectDdOpen_ = false;      // 方言下拉展开态
 };
 
 // ============ 共享配置片段编辑弹窗（批 2，设计 §2.10 待拍板②：独立状态）============

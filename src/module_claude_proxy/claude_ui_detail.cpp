@@ -492,8 +492,10 @@ const std::vector<ClaudeService::CallLogEntry>& emptyCalls() {
     return kEmpty;
 }
 
-// 最近调用 pane（tab 3，2026-09-28 由详情面板底部固定预览块抽成**独立页签**，
-// 与「基础信息/模型映射/环境变量」同级）：表头 + 行（行数纯按内容框可用高推）
+// 最近调用 pane（tab 4，2026-09-28 由详情面板底部固定预览块抽成**独立页签**，
+// 2026-09-30 batch-fix B 起 idx 3 由「高级配置」接手、本 pane 由 3 顺移至 4，
+// 与「基础信息/模型映射/环境变量/高级配置」同级）：表头 + 行（行数纯按内容框
+// 可用高推）
 // + 错误/空态 + 「查看全部 →」（开完整调用记录弹窗）。行/表头 id 沿用旧底部
 // 预览（claude.calls.*，无头用例按这些 id 断言），列布局逐字不变；返回本 pane
 // 内容底沿（操作按钮组按此定位）。
@@ -751,6 +753,47 @@ float drawDetailCallsPane(eui::Ui& ui, float x0, float y0, float w,
     return viewY;
 }
 
+// 高级配置 pane（2026-09-30 batch-fix B，设计 §3.2④，详情 tab 3）：方言 +
+// 备用 Profile 两行只读。行样式复用基础 pane 的 label+值盒写法（同款
+// Center 对齐 + surfaceElevated 盒）；固定两行内容，高度与容器无关
+//（同基础/模型 pane 的 (void)contentBottom 口径）。数据由 compose 装配进
+// DetailView.dialectText / fallbackName（注释见 .h），本函数零服务调用。
+float drawDetailAdvanced(eui::Ui& ui, float x0, float y0, float w,
+                         const core::theme::Tokens& t, const DetailView& v,
+                         float contentBottom) {
+    (void)contentBottom;  // 固定 2 行字段，高度与容器无关
+    ui.text("claude.field.dialect.label")
+        .position(x0, y0).size(w, 14.0f)
+        .text("生效方言").fontSize(11.0f).lineHeight(14.0f)
+        .verticalAlign(eui::VerticalAlign::Center)
+        .color(t.colors.textTertiary).build();
+    ui.rect("claude.field.dialect.bg")
+        .position(x0, y0 + 18.0f).size(w, 28.0f)
+        .color(t.colors.surfaceElevated).radius(t.sizes.radiusSmall)
+        .border(1.0f, t.colors.borderMuted).build();
+    ui.text("claude.field.dialect.value")
+        .position(x0 + 12.0f, y0 + 18.0f).size(w - 24.0f, 28.0f)
+        .text(v.dialectText).fontSize(t.sizes.fontSizeSmall).lineHeight(28.0f)
+        .verticalAlign(eui::VerticalAlign::Center)
+        .color(t.colors.textPrimary).build();
+    const float fbY = y0 + 56.0f;
+    ui.text("claude.field.fallback.label")
+        .position(x0, fbY).size(w, 14.0f)
+        .text("备用 Profile").fontSize(11.0f).lineHeight(14.0f)
+        .verticalAlign(eui::VerticalAlign::Center)
+        .color(t.colors.textTertiary).build();
+    ui.rect("claude.field.fallback.bg")
+        .position(x0, fbY + 18.0f).size(w, 28.0f)
+        .color(t.colors.surfaceElevated).radius(t.sizes.radiusSmall)
+        .border(1.0f, t.colors.borderMuted).build();
+    ui.text("claude.field.fallback.value")
+        .position(x0 + 12.0f, fbY + 18.0f).size(w - 24.0f, 28.0f)
+        .text(v.fallbackName).fontSize(t.sizes.fontSizeSmall).lineHeight(28.0f)
+        .verticalAlign(eui::VerticalAlign::Center)
+        .color(t.colors.textPrimary).build();
+    return fbY + 18.0f + 28.0f;   // 固定底沿 = y0 + 102
+}
+
 // 操作按钮组（全量接线）+ 「运行」副提示 + 分隔线。actY 由 drawDetailPanel
 // **锚定容器底**给出（P1，2026-09-28）：旧式 `actY = paneBottom + 20` 跟着内容
 // 底跑，数据少时动作区浮在上部、下方 60% 空白，四个页签的分隔线互差 171px。
@@ -963,8 +1006,11 @@ void drawDetailPanel(eui::Ui& ui, float rightW, float bodyH, float xOffset,
             // 底部分隔线+居中文字；色源走 componentTokens 桥接。tabs 无
             // .position 故包一层定位 stack 对齐右栏内边距，沿用 settings
             // 模块 .wrap stack 同款写法）。
-            // 2026-09-28：最近调用从底部固定预览块抽成第 4 个页签
-            //（与基础信息/模型映射/环境变量同级）
+            // 2026-09-28：最近调用从底部固定预览块抽成页签
+            //（与基础信息/模型映射/环境变量同级）。
+            // 2026-09-30（batch-fix B）：插「高级配置」为第 4 页签（idx 3，
+            // 属性展示层），最近调用是时序记录顺移 idx 4——既有用例/探针经
+            // claude.detail.tabs.hit.3 导航锚按索引点击处 +1（spec §3.5 风险 3）
             const float tabY = y0 + 40.0f;
             const float tabH = 36.0f;
             ui.stack("claude.detail.tabs.wrap")
@@ -974,7 +1020,8 @@ void drawDetailPanel(eui::Ui& ui, float rightW, float bodyH, float xOffset,
                     components::tabs(ui, "claude.detail.tabs")
                         .size(w0, tabH)
                         .items(std::vector<std::string>{
-                            "基础信息", "模型映射", "环境变量", "最近调用"})
+                            "基础信息", "模型映射", "环境变量", "高级配置",
+                            "最近调用"})
                         .selected(st.detailTab_)
                         .fontSize(t.sizes.fontSizeSmall)
                         .theme(themeTokens)
@@ -1020,6 +1067,11 @@ void drawDetailPanel(eui::Ui& ui, float rightW, float bodyH, float xOffset,
             } else if (st.detailTab_ == 2) {
                 paneBottom = drawDetailEnv(ui, x0, paneY, w0, t, v,
                                            contentBottom, &paneRows);
+            } else if (st.detailTab_ == 3) {
+                // 高级配置（2026-09-30 batch-fix B）：固定两行只读，走 ② 档
+                // 既有锚定/兜底链（同基础 pane 路径），零改动
+                paneBottom = drawDetailAdvanced(ui, x0, paneY, w0, t, v,
+                                                contentBottom);
             } else {
                 paneBottom = drawDetailCallsPane(
                     ui, x0, paneY, w0, t, v, a.openCalls,
@@ -1027,12 +1079,13 @@ void drawDetailPanel(eui::Ui& ui, float rightW, float bodyH, float xOffset,
             }
             // 锚定 + 两处兜底（审计 F-03 把口径写准）：
             //   ① 正常档（bodyH ≥ 445 ⟺ 客户区高 ≥ 639）：内容被内容框约束住，
-            //      四个页签都取 actYFloor → **分隔线 y 全等**（这是不变量成立的条件，
+            //      五个页签都取 actYFloor → **分隔线 y 全等**（这是不变量成立的条件，
             //      不是无条件等式 —— 曾经这么写是错的）；
-            //   ② 更矮时：基础信息 / 模型映射两个 pane 是**固定行数内容**
-            //      （6 字段 / 6 槽位表行，paneBottom 恒 312 / 340，两者都无视
-            //      contentBottom），`paneBottom + kActTopGap > actYFloor` → 左支接管，
-            //      动作区随内容下移，四页签**不再同高**（模型支还要早 ~28px 触发）；
+            //   ② 更矮时：基础信息 / 模型映射 / 高级配置三个 pane 是**固定行数
+            //      内容**（6 字段 / 6 槽位表行 / 2 字段，paneBottom 恒 312 / 340 /
+            //      214，都无视 contentBottom），`paneBottom + kActTopGap >
+            //      actYFloor` → 左支接管，动作区随内容下移，五页签**不再同高**
+            //     （模型支早 ~28px 触发，高级配置支最晚 —— 2026-09-30 batch-fix B）；
             //   ③ 再矮（内容底已越过 bodyH − kActionBlockH）：用 actYHi 夹住 ——
             //      宁可让动作区压在内容上（可见的重叠），也不让它越出容器底
             //      （贴底锚定的下限语义；旧式纯 max() 会把它推出面板）。
@@ -1041,7 +1094,7 @@ void drawDetailPanel(eui::Ui& ui, float rightW, float bodyH, float xOffset,
             const float actY = std::min(
                 std::max(actYFloor, paneBottom + kActTopGap), actYHi);
             drawDetailActions(ui, x0, w0, actY, t, v, a);
-            // 诊断日志（方案 §5 组 B 判据 ②）：一行可 grep —— 四个页签的
+            // 诊断日志（方案 §5 组 B 判据 ②）：一行可 grep —— 五个页签的
             // actY 必须相等。级别 Debug（设置页可切；默认 Info 不打，避免
             // 每帧刷屏）
             LOG_DEBUG("[layout] pane=" + std::to_string(st.detailTab_) +

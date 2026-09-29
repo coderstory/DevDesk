@@ -31,6 +31,7 @@
 #include "core/module_interface.h"
 #include "core/theme.h"
 #include "core/component_theme.h"
+#include "upstream_dialect.h"
 #include <ui_kit/metrics.h>
 #include <ui_kit/toast.h>
 
@@ -147,6 +148,38 @@ public:
         // 注：DetailView 不再带 bodyH（审计 F-01）；容器可用高只由下面
         // drawDetailPanel 的 bodyH 形参进详情面板
         dv.sharedConfigs = &state_.list.cachedSharedConfigs_;   // 批 2：详情绑定行
+        // 高级配置 pane（2026-09-30 batch-fix B，设计 §3.2④）：生效方言 +
+        // 备用 Profile 名。方言：显式覆盖 → 「名（显式）」；空 →
+        // 「自动（按站点推断）→ 生效名」（推断结果可审计，正是本 pane 的价值）；
+        // 显示名统一走 dialectKindDisplayName（§3.2① 单一来源，不直接用
+        // dialectKindToText 内部值）。备用名：从既有 profiles 快照按
+        // fallbackProfileId 解析（悬空/0 → 「无」/「（已删除）」），与列表
+        // 快照同源、pane 内不做服务调用（避免每帧 DB 查询）
+        if (shown != nullptr) {
+            const UpstreamDialect effective = UpstreamDialect::forBaseUrl(
+                shown->baseUrl, shown->dialectOverride);
+            const char* displayName = dialectKindDisplayName(effective.kind);
+            if (dialectKindFromText(shown->dialectOverride)) {
+                dv.dialectText = std::string(displayName) + "（显式）";
+            } else {
+                dv.dialectText =
+                    std::string("自动（按站点推断）→ ") + displayName;
+            }
+            if (shown->fallbackProfileId == 0) {
+                dv.fallbackName = "无";
+            } else {
+                dv.fallbackName = "（已删除）";
+                for (const auto& p : profiles) {
+                    if (p.id == shown->fallbackProfileId) {
+                        dv.fallbackName = p.name;
+                        break;
+                    }
+                }
+            }
+        } else {
+            dv.dialectText = "-";
+            dv.fallbackName = "-";
+        }
 
         ui.column("claude.root")
             .size(screen.width, screen.height)

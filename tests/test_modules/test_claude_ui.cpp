@@ -1002,12 +1002,12 @@ REGISTER_TEST(claude_module_calls_dialog,
     };
 
     // 1. 点「查看全部 →」开弹窗（CPX-06：渲染路径不再同步查库，数据由后台取。
-    //    2026-09-28 调用记录已抽成详情面板第 4 页签：先切 tab 该帧，再点
-    //    「查看全部」开弹窗）
+    //    2026-09-28 调用记录抽成详情页签、2026-09-30 batch-fix B 起为第 5 页签
+    //    （idx 4）：先切 tab 该帧，再点「查看全部」开弹窗）
     {
         eui::Ui ui;
         compose(ui);
-        DOCTEST_CHECK(click(ui, "claude.detail.tabs.hit.3"));
+        DOCTEST_CHECK(click(ui, "claude.detail.tabs.hit.4"));
     }
     {
         eui::Ui ui;
@@ -1160,7 +1160,7 @@ REGISTER_TEST(claude_module_calls_dialog,
     {
         eui::Ui ui;
         compose(ui);
-        DOCTEST_CHECK(click(ui, "claude.detail.tabs.hit.3"));  // tab 保持 3（幂等）
+        DOCTEST_CHECK(click(ui, "claude.detail.tabs.hit.4"));  // tab 保持 4（幂等）
     }
     {
         eui::Ui ui;
@@ -1268,10 +1268,11 @@ REGISTER_TEST(claude_cpx06_calls_query_async_debounce,
     }
     DOCTEST_CHECK_EQ(claude_calls_query_dispatches_for_test(), q0);
 
-    {   // 开弹窗帧：调用记录在详情面板第 4 页签里，先切 tab（同帧不派发查询）
+    {   // 开弹窗帧：调用记录在详情面板第 5 页签里（idx 4，2026-09-30 batch-fix B
+        // 起），先切 tab（同帧不派发查询）
         eui::Ui ui;
         compose(ui);
-        DOCTEST_REQUIRE(click(ui, "claude.detail.tabs.hit.3"));
+        DOCTEST_REQUIRE(click(ui, "claude.detail.tabs.hit.4"));
     }
     // ② 开弹窗那一帧：只发意图（查询在后台）——数据未到 + 恰好派发一次
     //   （同步查库会让本帧就把行画出来，且派发计数按每次点击 +1 而非 +1/帧）
@@ -1764,11 +1765,11 @@ REGISTER_TEST(claude_module_compose_cache_equivalence,
         DOCTEST_CHECK_EQ(textOf(ui, "claude.profile.1.name"), name1);
         DOCTEST_CHECK_EQ(textOf(ui, "claude.field.name.value"), detail);
     }
-    // 调用记录已抽成详情面板第 4 页签（2026-09-28）：切过去断空态
+    // 调用记录已抽成详情面板页签（2026-09-28；2026-09-30 起 idx 4）：切过去断空态
     {
         eui::Ui ui;
         compose(ui);
-        DOCTEST_CHECK(click(ui, "claude.detail.tabs.hit.3"));
+        DOCTEST_CHECK(click(ui, "claude.detail.tabs.hit.4"));
     }
     {
         eui::Ui ui;
@@ -2510,7 +2511,7 @@ REGISTER_TEST(claude_ui_fallback_dropdown_edit_persists,
         return true;
     };
 
-    // 选中主家 → 编辑（基础页默认）：初始「无（不启用 failover）」
+    // 选中主家 → 编辑：初始「无（不启用 failover）」
     {
         eui::Ui ui;
         compose(ui, "fb_e1");
@@ -2520,6 +2521,13 @@ REGISTER_TEST(claude_ui_fallback_dropdown_edit_persists,
         eui::Ui ui;
         compose(ui, "fb_e2");
         DOCTEST_CHECK(click(ui, "claude.act.edit.bg"));
+    }
+    // 2026-09-30 batch-fix B：failover 下拉自基础页整段迁入表单第 4 tab
+    //（高级配置，idx 3）——先切 tab 再操作下拉（formTab_ 持久，后续帧免重切）
+    {
+        eui::Ui ui;
+        compose(ui, "fb_tab3");
+        DOCTEST_CHECK(click(ui, "claude.form.tabs.hit.3"));
     }
     {
         eui::Ui ui;
@@ -2570,6 +2578,11 @@ REGISTER_TEST(claude_ui_fallback_dropdown_edit_persists,
             compose(ui, "fb_e7b");
             DOCTEST_CHECK(click(ui, "claude.act.edit.bg"));
         }
+        {   // 2026-09-30 batch-fix B：重开的表单回到 tab 0，failover 下拉在 tab 3
+            eui::Ui ui;
+            compose(ui, "fb_e7b2");
+            DOCTEST_CHECK(click(ui, "claude.form.tabs.hit.3"));
+        }
         {
             eui::Ui ui;
             compose(ui, "fb_e7c");
@@ -2586,6 +2599,277 @@ REGISTER_TEST(claude_ui_fallback_dropdown_edit_persists,
     mod->onStop();
     cleanupProfileKey(kTestKeychainService, a.value().id);
     cleanupProfileKey(kTestKeychainService, b.value().id);
+    return true;
+})
+
+// ---- 27g. 高级配置 tab（2026-09-30 batch-fix B，设计 §3.2①/③）：
+//      表单第 4 页方言下拉（新建/编辑接线 + 自动档 + 接线回归钉）----
+REGISTER_TEST(claude_ui_advanced_tab_dialect_persists,
+              "claude_module: 高级配置页方言下拉（新建与编辑落库/自动档/不触碰保留，headless）", {
+    TestEnv env;
+    std::unique_ptr<::core::Module> mod(create_claude_module());
+    eui::Screen screen;
+    screen.width = 1600.0f;
+    screen.height = 1000.0f;
+    auto compose = [&](eui::Ui& ui, const char* tag) {
+        ui.begin(tag);
+        mod->compose(ui, screen);
+        ui.end();
+    };
+    auto click = [](eui::Ui& ui, const std::string& id) -> bool {
+        const auto* node = ui.find(id);
+        if (node == nullptr || node->onClick == nullptr) {
+            std::cerr << "missing clickable: " << id << std::endl;
+            return false;
+        }
+        node->onClick();
+        return true;
+    };
+    auto type = [](eui::Ui& ui, const std::string& id,
+                   const std::string& text) -> bool {
+        const auto* node = ui.find(id);
+        if (node == nullptr || node->onTextInput == nullptr) {
+            std::cerr << "missing input: " << id << std::endl;
+            return false;
+        }
+        core::TextInputEvent ev;
+        ev.text = text;
+        node->onTextInput(ev);
+        return true;
+    };
+    // 按名字点卡片（不依赖中文名排序的列表序——is_active DESC + name 的
+    // collation 语义不进本用例的判别面）
+    auto clickCardNamed = [&](eui::Ui& ui, const char* nm) -> bool {
+        for (int i = 0; i < 8; ++i) {
+            const auto* name = ui.find("claude.profile." + std::to_string(i) +
+                                       ".name");
+            if (name != nullptr && name->text == nm) {
+                return click(ui, "claude.profile." + std::to_string(i) + ".bg");
+            }
+        }
+        return false;
+    };
+    // 等后台刷新把写库结果带进缓存快照（与 failover 用例同款有界轮询）
+    auto waitFor = [&](auto&& pred) -> bool {
+        for (int i = 0; i < 300; ++i) {
+            // 每轮重发 onPageEnter：服务侧直写后的重查通道（若上一轮 post 的
+            // 查询先于本批写库落库，其结果会把 dataDirty_ 清掉 —— 200ms 节流
+            // 窗口内的写库会被这次「旧结果收割」吞掉，重发脏标记保证下一窗口
+            // 必有新 post；生产用户等价场景 = 切页重入）
+            mod->onPageEnter();
+            eui::Ui ui;
+            compose(ui, "adv_poll");
+            if (pred(ui)) return true;
+            std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        }
+        return false;
+    };
+
+    // ① 新建路径：新建表单 → tab 3 → 选「opencode zen」→ 基础页补名称/URL/Key
+    //    → 创建 → dialectOverride == "opencode_zen"
+    {
+        eui::Ui ui;
+        compose(ui, "adv_c1");
+        DOCTEST_CHECK(click(ui, "claude.profiles.new.bg"));
+    }
+    {
+        eui::Ui ui;
+        compose(ui, "adv_c2");
+        DOCTEST_CHECK(click(ui, "claude.form.tabs.hit.3"));
+    }
+    {
+        eui::Ui ui;
+        compose(ui, "adv_c3");
+        // 选中态逐帧归算：未覆盖 → 「自动（按站点推断）」（全角括号，审计 F9）
+        const auto* label = ui.find("claude.form.advanced.dialect.dd.label");
+        DOCTEST_REQUIRE(label != nullptr);
+        DOCTEST_CHECK_EQ(label->text, std::string("自动（按站点推断）"));
+        DOCTEST_CHECK(click(ui, "claude.form.advanced.dialect.dd.field"));
+    }
+    {
+        eui::Ui ui;
+        compose(ui, "adv_c4");
+        const auto* i1 = ui.find("claude.form.advanced.dialect.dd.item.label.1");
+        const auto* i2 = ui.find("claude.form.advanced.dialect.dd.item.label.2");
+        DOCTEST_REQUIRE(i1 != nullptr);
+        DOCTEST_REQUIRE(i2 != nullptr);
+        DOCTEST_CHECK_EQ(i1->text, std::string("anthropic"));
+        DOCTEST_CHECK_EQ(i2->text, std::string("opencode zen"));
+        DOCTEST_CHECK(click(ui, "claude.form.advanced.dialect.dd.item.2"));
+    }
+    {
+        eui::Ui ui;
+        compose(ui, "adv_c5");
+        const auto* label = ui.find("claude.form.advanced.dialect.dd.label");
+        DOCTEST_REQUIRE(label != nullptr);
+        DOCTEST_CHECK_EQ(label->text, std::string("opencode zen"));
+        // 几何断言：本页两下拉底沿 ≤ 弹窗底部按钮区上沿（dialog h=600）
+        const auto* fbDd = ui.find("claude.form.basic.fallback.dd.field");
+        const auto* confirm = ui.find("claude.dialog.form.confirm.bg");
+        DOCTEST_REQUIRE(fbDd != nullptr);
+        DOCTEST_REQUIRE(confirm != nullptr);
+        DOCTEST_CHECK(fbDd->frame.y + fbDd->frame.height <= confirm->frame.y);
+    }
+    {
+        eui::Ui ui;
+        compose(ui, "adv_c6");
+        DOCTEST_CHECK(click(ui, "claude.form.tabs.hit.0"));   // 基础页补必填项
+    }
+    {
+        eui::Ui ui;
+        compose(ui, "adv_c7");
+        DOCTEST_CHECK(type(ui, "claude.dialog.form.name.hit", "方言新建"));
+        DOCTEST_CHECK(type(ui, "claude.dialog.form.url.hit", "https://dialect.example.com/"));
+        DOCTEST_CHECK(type(ui, "claude.dialog.form.key.hit", "sk-ant-dialect-0001"));
+        DOCTEST_CHECK(click(ui, "claude.dialog.form.confirm.bg"));
+    }
+    DOCTEST_CHECK(waitFor([&](eui::Ui&) {
+        auto list = env.svc->listProfiles();
+        if (list.isFail()) return false;
+        for (const auto& p : list.value()) {
+            if (p.name == "方言新建") return p.dialectOverride == "opencode_zen";
+        }
+        return false;
+    }));
+    {
+        auto list = env.svc->listProfiles();
+        DOCTEST_REQUIRE(list.isOk());
+        int64_t createdId = 0;
+        for (const auto& p : list.value()) {
+            if (p.name == "方言新建") createdId = p.id;
+        }
+        DOCTEST_REQUIRE(createdId != 0);
+        cleanupProfileKey(kTestKeychainService, createdId);
+    }
+
+    // ② 编辑路径：先服务层造一个 opencode_zen 覆盖的 profile → 编辑 → 下拉回显
+    //    → 选「anthropic」保存 → anthropic_default；再改回「自动」保存 → 空串
+    auto e = env.svc->createProfile("方言编辑", "https://edit.example.com",
+                                    "sk-ant-edit-0001", "",
+                                    /*activateIfNoneActive=*/false,
+                                    /*sharedConfigId=*/0, /*authField=*/"both",
+                                    /*dialectOverride=*/"opencode_zen");
+    DOCTEST_REQUIRE(e.isOk());
+    const int64_t editId = e.value().id;
+    mod->onPageEnter();
+    DOCTEST_CHECK(waitFor([&](eui::Ui& ui) {
+        return clickCardNamed(ui, "方言编辑");
+    }));
+    {
+        eui::Ui ui;
+        compose(ui, "adv_e1");
+        DOCTEST_CHECK(click(ui, "claude.act.edit.bg"));
+    }
+    {
+        eui::Ui ui;
+        compose(ui, "adv_e2");
+        DOCTEST_CHECK(click(ui, "claude.form.tabs.hit.3"));
+    }
+    {
+        eui::Ui ui;
+        compose(ui, "adv_e3");
+        const auto* label = ui.find("claude.form.advanced.dialect.dd.label");
+        DOCTEST_REQUIRE(label != nullptr);
+        DOCTEST_CHECK_EQ(label->text, std::string("opencode zen"));   // 回显
+        DOCTEST_CHECK(click(ui, "claude.form.advanced.dialect.dd.field"));
+    }
+    {
+        eui::Ui ui;
+        compose(ui, "adv_e4");
+        DOCTEST_CHECK(click(ui, "claude.form.advanced.dialect.dd.item.1"));
+    }
+    {
+        eui::Ui ui;
+        compose(ui, "adv_e5");
+        DOCTEST_CHECK(click(ui, "claude.dialog.form.confirm.bg"));
+    }
+    {
+        auto g = env.svc->getProfile(editId);
+        DOCTEST_REQUIRE(g.isOk());
+        DOCTEST_CHECK_EQ(g.value().dialectOverride, std::string("anthropic_default"));
+    }
+    // 自动档（idx 0）保存 → 覆盖清空
+    {
+        eui::Ui ui;
+        compose(ui, "adv_e6");
+        DOCTEST_CHECK(click(ui, "claude.act.edit.bg"));
+    }
+    {
+        eui::Ui ui;
+        compose(ui, "adv_e7");
+        DOCTEST_CHECK(click(ui, "claude.form.tabs.hit.3"));
+    }
+    {
+        eui::Ui ui;
+        compose(ui, "adv_e8");
+        DOCTEST_CHECK(click(ui, "claude.form.advanced.dialect.dd.field"));
+    }
+    {
+        eui::Ui ui;
+        compose(ui, "adv_e9");
+        DOCTEST_CHECK(click(ui, "claude.form.advanced.dialect.dd.item.0"));
+    }
+    {
+        eui::Ui ui;
+        compose(ui, "adv_e10");
+        DOCTEST_CHECK(click(ui, "claude.dialog.form.confirm.bg"));
+    }
+    {
+        auto g = env.svc->getProfile(editId);
+        DOCTEST_REQUIRE(g.isOk());
+        DOCTEST_CHECK_EQ(g.value().dialectOverride, std::string(""));
+    }
+
+    // ③ 接线回归钉（spec §3.4 判据 2 第三分支）：先服务层设覆盖，编辑弹窗里
+    //    **不触碰**方言下拉直接保存 → 覆盖值保留（钉住透传保留语义，防未来
+    //    表单重构丢字段；现路径经 getProfile 本就保留，非「先红后绿」修复）。
+    //    前置：等缓存快照带上新覆盖 —— 详情 pane 文案与编辑预填同源自快照，
+    //    pane 显示「opencode zen（显式）」即快照已新（否则表单会拿旧值保存）
+    {
+        auto g = env.svc->getProfile(editId);
+        DOCTEST_REQUIRE(g.isOk());
+        g.value().dialectOverride = "opencode_zen";
+        DOCTEST_REQUIRE(env.svc->updateProfile(g.value()).isOk());
+    }
+    bool sawOverride = false;
+    for (int i = 0; i < 300 && !sawOverride; ++i) {
+        mod->onPageEnter();
+        eui::Ui ui;
+        compose(ui, "adv_k0");
+        if (clickCardNamed(ui, "方言编辑")) {
+            eui::Ui ui2;
+            compose(ui2, "adv_k0b");
+            if (click(ui2, "claude.detail.tabs.hit.3")) {
+                eui::Ui ui3;
+                compose(ui3, "adv_k0c");
+                const auto* dv = ui3.find("claude.field.dialect.value");
+                sawOverride = dv != nullptr &&
+                              dv->text == "opencode zen（显式）";
+            }
+        }
+        if (!sawOverride) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        }
+    }
+    DOCTEST_CHECK(sawOverride);
+    {
+        eui::Ui ui;
+        compose(ui, "adv_k1");
+        DOCTEST_CHECK(click(ui, "claude.act.edit.bg"));
+    }
+    {
+        eui::Ui ui;
+        compose(ui, "adv_k2");
+        DOCTEST_CHECK(click(ui, "claude.dialog.form.confirm.bg"));
+    }
+    {
+        auto g = env.svc->getProfile(editId);
+        DOCTEST_REQUIRE(g.isOk());
+        DOCTEST_CHECK_EQ(g.value().dialectOverride, std::string("opencode_zen"));
+    }
+
+    mod->onStop();
+    cleanupProfileKey(kTestKeychainService, editId);
     return true;
 })
 
@@ -3610,20 +3894,21 @@ bool seedCalls(module::claude::ClaudeService* svc, int64_t pid, int n) {
 
 }  // namespace
 
-// ---- 组 B P1：四个页签的动作区必须落在同一条水平线上 ----
+// ---- 组 B P1：全部页签的动作区必须落在同一条水平线上 ----
 // 用户主诉（原话）：「环境变量 最近调用 2 个 tab 下方的区域高度不对」。
 // 根因：actY = paneBottom + 20 跟着内容底跑，面板底恒为 bodyH → 数据少时动作区
-// 浮在上部，四个页签的分隔线互差最大 171px。修后 actY = max(paneBottom + 20,
-// bodyH − 动作块预留)，内容框底由容器底推出 → 四值恒等。
+// 浮在上部，页签间的分隔线互差最大 171px。修后 actY = max(paneBottom + 20,
+// bodyH − 动作块预留)，内容框底由容器底推出 → 五值恒等（2026-09-30 batch-fix B
+// 起五页签；用例名保留 four_tabs 沿用历史锚）。
 REGISTER_TEST(claude_detail_actions_anchor_four_tabs,
-              "claude_module: 详情动作区四页签同一条水平线（macOS 真实尺寸 1262x801）", {
+              "claude_module: 详情动作区五页签同一条水平线（macOS 真实尺寸 1262x801）", {
     TestEnv env;
     auto p = env.svc->createProfile("锚点", "https://anchor.example.com",
                                     "sk-ant-anchor-0001", "m-anchor");
     DOCTEST_REQUIRE(p.isOk());
     const int64_t pid = p.value().id;
     DOCTEST_REQUIRE(env.svc->setActiveProfile(pid).isOk());
-    // 环境变量页签给 2 个额外键（四页签内容底各不相同才有判别力）
+    // 环境变量页签给 2 个额外键（各页签内容底不相同才有判别力）
     auto g = env.svc->getProfile(pid);
     DOCTEST_REQUIRE(g.isOk());
     g.value().extraEnvJson = R"({"MY_ANCHOR_A":"1","MY_ANCHOR_B":"2"})";
@@ -3636,10 +3921,10 @@ REGISTER_TEST(claude_detail_actions_anchor_four_tabs,
     constexpr float kW = 1262.0f;   // 真实 macOS 页面宽（窗口 1470 − 侧边栏 208）
     constexpr float kH = 801.0f;    // 真实 macOS 页面高（窗口内容高 801）
 
-    float actY[4] = {0, 0, 0, 0};
-    float dividerY[4] = {0, 0, 0, 0};
+    float actY[5] = {0, 0, 0, 0, 0};
+    float dividerY[5] = {0, 0, 0, 0, 0};
     float panelBottom = 0.0f;
-    for (int tab = 0; tab < 4; ++tab) {
+    for (int tab = 0; tab < 5; ++tab) {
         if (tab > 0) {
             eui::Ui ui;
             composeAtSize(mod.get(), ui, "claude_anchor", kW, kH);
@@ -3660,14 +3945,164 @@ REGISTER_TEST(claude_detail_actions_anchor_four_tabs,
         // 贴底元素不得越出容器底（方案 §4 不变量）
         DOCTEST_CHECK(act->frame.y + act->frame.height <= panelBottom + 0.5f);
     }
-    // 四页签完全相等（旧实现下这四值互不相等 → 本用例即用户主诉的红灯）
-    for (int tab = 1; tab < 4; ++tab) {
+    // 五页签完全相等（旧实现下这五值互不相等 → 本用例即用户主诉的红灯）
+    for (int tab = 1; tab < 5; ++tab) {
         DOCTEST_CHECK_EQ(actY[tab], actY[0]);
         DOCTEST_CHECK_EQ(dividerY[tab], dividerY[0]);
     }
 
     mod->onStop();
     cleanupProfileKey(kTestKeychainService, pid);
+    return true;
+})
+
+// ---- 27h. 详情页「高级配置」pane（2026-09-30 batch-fix B，设计 §3.2④）：
+//      tab 3 显示生效方言/备用名只读两行；tab 4 仍是最近调用；几何不越内容框
+//      （macOS 真实尺寸数值断言，composeAtSize 同组 B P1 口径）----
+REGISTER_TEST(claude_detail_advanced_pane_readonly,
+              "claude_module: 详情高级配置 pane（自动推断/显式覆盖/备用名/悬空/tab4 仍最近调用）", {
+    TestEnv env;
+    // 主家（显式覆盖 opencode_zen）+ 中家（未覆盖 → 自动按站点推断）+ 备家
+    auto bak = env.svc->createProfile("备家", "https://fb.example.com",
+                                      "sk-ant-advb-0001", "m");
+    DOCTEST_REQUIRE(bak.isOk());
+    auto mainP = env.svc->createProfile("主家", "https://zen.opencode.ai/v1",
+                                        "sk-ant-advm-0001", "m",
+                                        /*activateIfNoneActive=*/false,
+                                        /*sharedConfigId=*/0, "both",
+                                        /*dialectOverride=*/"opencode_zen",
+                                        /*fallbackProfileId=*/bak.value().id);
+    DOCTEST_REQUIRE(mainP.isOk());
+    auto mid = env.svc->createProfile("中家", "https://api.example.com",
+                                      "sk-ant-advd-0001", "m");
+    DOCTEST_REQUIRE(mid.isOk());
+
+    std::unique_ptr<::core::Module> mod(create_claude_module());
+    mod->onStart();
+
+    constexpr float kW = 1262.0f;
+    constexpr float kH = 801.0f;
+
+    // 按名字点卡片（同上，不依赖中文名排序的列表序）
+    auto clickCardNamed = [&](eui::Ui& ui, const char* nm) -> bool {
+        for (int i = 0; i < 8; ++i) {
+            const auto* name = ui.find("claude.profile." + std::to_string(i) +
+                                       ".name");
+            if (name != nullptr && name->text == nm) {
+                return clickById(ui, "claude.profile." + std::to_string(i) +
+                                         ".bg");
+            }
+        }
+        return false;
+    };
+
+    // 显式覆盖：zen host + 覆盖 opencode_zen → 「opencode zen（显式）」；
+    // 备用名 = 快照解析的「备家」
+    {
+        eui::Ui ui;
+        composeAtSize(mod.get(), ui, "adv_d1", kW, kH);
+        DOCTEST_REQUIRE(clickCardNamed(ui, "主家"));
+    }
+    {
+        eui::Ui ui;
+        composeAtSize(mod.get(), ui, "adv_d2", kW, kH);
+        DOCTEST_REQUIRE(clickById(ui, "claude.detail.tabs.hit.3"));
+    }
+    {
+        eui::Ui ui;
+        composeAtSize(mod.get(), ui, "adv_d3", kW, kH);
+        const auto* dialect = ui.find("claude.field.dialect.value");
+        const auto* fallback = ui.find("claude.field.fallback.value");
+        DOCTEST_REQUIRE(dialect != nullptr);
+        DOCTEST_REQUIRE(fallback != nullptr);
+        DOCTEST_CHECK_EQ(dialect->text, std::string("opencode zen（显式）"));
+        DOCTEST_CHECK_EQ(fallback->text, std::string("备家"));
+        // 几何：pane 内容底沿不越内容框（contentBottom 口径）
+        const auto* box = ui.find("claude.detail.contentbox");
+        DOCTEST_REQUIRE(box != nullptr);
+        const float boxBottom = box->frame.y + box->frame.height;
+        DOCTEST_CHECK(fallback->frame.y + fallback->frame.height <=
+                      boxBottom + 0.5f);
+    }
+    // 未覆盖 → 「自动（按站点推断）→ <生效名>」；host 非 opencode → anthropic
+    {
+        eui::Ui ui;
+        composeAtSize(mod.get(), ui, "adv_d4", kW, kH);
+        DOCTEST_REQUIRE(clickCardNamed(ui, "中家"));
+    }
+    {
+        eui::Ui ui;
+        composeAtSize(mod.get(), ui, "adv_d5", kW, kH);
+        DOCTEST_REQUIRE(clickById(ui, "claude.detail.tabs.hit.3"));
+    }
+    {
+        eui::Ui ui;
+        composeAtSize(mod.get(), ui, "adv_d6", kW, kH);
+        const auto* dialect = ui.find("claude.field.dialect.value");
+        DOCTEST_REQUIRE(dialect != nullptr);
+        DOCTEST_CHECK_EQ(dialect->text,
+                         std::string("自动（按站点推断）→ anthropic"));
+        const auto* fallback = ui.find("claude.field.fallback.value");
+        DOCTEST_REQUIRE(fallback != nullptr);
+        DOCTEST_CHECK_EQ(fallback->text, std::string("无"));
+    }
+    // 悬空备用（片段已删同款口径）：解析为「（已删除）」；等后台刷新带新值
+    {
+        auto g = env.svc->getProfile(mid.value().id);
+        DOCTEST_REQUIRE(g.isOk());
+        g.value().fallbackProfileId = 999999;   // 悬空 id
+        DOCTEST_REQUIRE(env.svc->updateProfile(g.value()).isOk());
+    }
+    mod->onPageEnter();
+    bool sawDangling = false;
+    for (int i = 0; i < 300 && !sawDangling; ++i) {
+        eui::Ui ui;
+        composeAtSize(mod.get(), ui, "adv_d7", kW, kH);
+        if (clickCardNamed(ui, "中家")) {
+            eui::Ui ui2;
+            composeAtSize(mod.get(), ui2, "adv_d8", kW, kH);
+            if (clickById(ui2, "claude.detail.tabs.hit.3")) {
+                eui::Ui ui3;
+                composeAtSize(mod.get(), ui3, "adv_d9", kW, kH);
+                const auto* fallback = ui3.find("claude.field.fallback.value");
+                if (fallback != nullptr && fallback->text == "（已删除）") {
+                    sawDangling = true;
+                }
+            }
+        }
+        if (!sawDangling) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        }
+    }
+    DOCTEST_CHECK(sawDangling);
+
+    // tab 4 仍是最近调用（高级配置插入后顺移，既有导航锚 +1 的正确性钉子）：
+    // hit.4 帧有 calls 元素、无高级配置元素
+    {
+        eui::Ui ui;
+        composeAtSize(mod.get(), ui, "adv_d10", kW, kH);
+        DOCTEST_REQUIRE(clickById(ui, "claude.detail.tabs.hit.4"));
+    }
+    {
+        eui::Ui ui;
+        composeAtSize(mod.get(), ui, "adv_d11", kW, kH);
+        DOCTEST_CHECK(ui.find("claude.calls.empty") != nullptr);
+        DOCTEST_CHECK(ui.find("claude.field.dialect.bg") == nullptr);
+        DOCTEST_CHECK(ui.find("claude.field.fallback.bg") == nullptr);
+        // 页签文字↔索引映射钉（变异自检 B2：把「高级配置」改插中间 → 红；
+        // 只断 pane 元素不断页签文字时该变异不红 = 假绿缝）
+        const auto* lab3 = ui.find("claude.detail.tabs.label.3");
+        const auto* lab4 = ui.find("claude.detail.tabs.label.4");
+        DOCTEST_REQUIRE(lab3 != nullptr);
+        DOCTEST_REQUIRE(lab4 != nullptr);
+        DOCTEST_CHECK_EQ(lab3->text, std::string("高级配置"));
+        DOCTEST_CHECK_EQ(lab4->text, std::string("最近调用"));
+    }
+
+    mod->onStop();
+    cleanupProfileKey(kTestKeychainService, mainP.value().id);
+    cleanupProfileKey(kTestKeychainService, mid.value().id);
+    cleanupProfileKey(kTestKeychainService, bak.value().id);
     return true;
 })
 
@@ -3689,7 +4124,7 @@ REGISTER_TEST(claude_calls_rows_by_available_height,
     constexpr float kH = 801.0f;
     eui::Ui ui;
     composeAtSize(mod.get(), ui, "claude_rows", kW, kH);
-    DOCTEST_REQUIRE(clickById(ui, "claude.detail.tabs.hit.3"));
+    DOCTEST_REQUIRE(clickById(ui, "claude.detail.tabs.hit.4"));
     eui::Ui ui2;
     composeAtSize(mod.get(), ui2, "claude_rows", kW, kH);
 
@@ -3740,7 +4175,7 @@ REGISTER_TEST(claude_calls_no_rows_when_too_short,
     // 内容框底 = 286 − 85 − 20 = 181；行区 = 181 − 136 − 32 = 13 < 24 → 0 行
     eui::Ui ui;
     composeAtSize(mod.get(), ui, "claude_short", 1000.0f, 480.0f);
-    DOCTEST_REQUIRE(clickById(ui, "claude.detail.tabs.hit.3"));
+    DOCTEST_REQUIRE(clickById(ui, "claude.detail.tabs.hit.4"));
     eui::Ui ui2;
     composeAtSize(mod.get(), ui2, "claude_short", 1000.0f, 480.0f);
 
@@ -3816,7 +4251,7 @@ REGISTER_TEST(claude_calls_rate_column,
     constexpr float kH = 801.0f;
     eui::Ui ui;
     composeAtSize(mod.get(), ui, "claude_rate", kW, kH);
-    DOCTEST_REQUIRE(clickById(ui, "claude.detail.tabs.hit.3"));
+    DOCTEST_REQUIRE(clickById(ui, "claude.detail.tabs.hit.4"));
     eui::Ui ui2;
     composeAtSize(mod.get(), ui2, "claude_rate", kW, kH);
 
@@ -3961,7 +4396,7 @@ REGISTER_TEST(claude_detail_vertical_center_and_viewall_button,
     {
         eui::Ui ui;
         composeAtSize(mod.get(), ui, "claude_center_calls", kW, kH);
-        DOCTEST_REQUIRE(clickById(ui, "claude.detail.tabs.hit.3"));
+        DOCTEST_REQUIRE(clickById(ui, "claude.detail.tabs.hit.4"));
         eui::Ui ui2;
         composeAtSize(mod.get(), ui2, "claude_center_calls", kW, kH);
         const auto* hit = ui2.find("claude.calls.viewall.hit");
@@ -4022,7 +4457,7 @@ REGISTER_TEST(claude_dialog_pagination_vertical_align,
     {
         eui::Ui ui;
         composeAtSize(mod.get(), ui, "claude_page_align", kW, kH);
-        DOCTEST_REQUIRE(clickById(ui, "claude.detail.tabs.hit.3"));
+        DOCTEST_REQUIRE(clickById(ui, "claude.detail.tabs.hit.4"));
     }
     {
         eui::Ui ui;

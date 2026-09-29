@@ -75,6 +75,12 @@ std::optional<UpstreamDialect::Kind> dialectKindFromText(const std::string& text
 // Kind → 规范文本（写侧规范化：库里只存两个规范值之一或空串）
 const char* dialectKindToText(UpstreamDialect::Kind kind);
 
+// Kind → 展示名（2026-09-30 batch-fix B）：表单「高级配置」页下拉 items 与
+// 详情 pane 生效方言文案共用的**单一来源**（不手抄字符串——同一概念两个名字
+// 必然漂移）。产出 "anthropic" / "opencode zen"；dialectKindToText 产内部值
+//（'anthropic_default' 等）不上 UI。
+const char* dialectKindDisplayName(UpstreamDialect::Kind kind);
+
 // 模型名剥尾部 [1M]：大小写不敏感（[1m] 同样命中），容忍标记前后空白
 // （形如 "deepseek-v4-pro [1M] "，上游侧配置里带空格很常见）。
 // 命中 → 返回剥掉标记再 trim 尾部空白后的名字；未命中 → 原样返回入参。
