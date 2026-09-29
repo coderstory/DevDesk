@@ -41,7 +41,7 @@ jobs:
           xcodebuild -version
           clang --version | head -1
 
-      - run: brew install ninja ccache openssl@3
+      - run: brew install ninja ccache openssl@3 create-dmg
 
       - name: ccache 缓存
         uses: actions/cache@v6
@@ -54,22 +54,16 @@ jobs:
         working-directory: DevDesk
         run: bash scripts/build-test-run.sh --release --no-run --no-test
 
-      - name: 组装 .app 并打包
+      - name: 打 DMG（package-macos.sh：组 .app + 补 assets + create-dmg）
         working-directory: DevDesk
         run: |
           DEVDESK_BUILD_DIR=build-release DEVDESK_SKIP_LSREGISTER=1 \
-            bash platform/macos/build-app.sh
-          rm -rf build-release/DevDesk.app/Contents/MacOS/assets
-          cmake -E copy_directory build-release/assets \
-            build-release/DevDesk.app/Contents/MacOS/assets
-          mkdir -p ../dist
-          ditto -c -k --sequesterRsrc --keepParent \
-            build-release/DevDesk.app ../dist/DevDesk-macos-arm64.zip
+            bash scripts/package-macos.sh
 
       - uses: actions/upload-artifact@v7
         with:
           name: macos
-          path: dist/*.zip
+          path: DevDesk/installer/macos/out/*.dmg
           if-no-files-found: error
 
   windows:
@@ -109,19 +103,20 @@ jobs:
           cd DevDesk
           bash scripts/build-test-run.sh --release --no-run --no-test
 
-      - name: 打包（exe + assets）
+      - name: 装 Inno Setup（choco 默认装到 C:\Program Files (x86)\Inno Setup 6，package-windows.sh 三段探测可直接命中）
         shell: pwsh
+        run: choco install innosetup -y --no-progress
+
+      - name: 打安装包（package-windows.sh：增量构建 + ISCC 出 setup.exe）
+        shell: msys2 {0}
         run: |
-          New-Item -ItemType Directory -Force -Path dist | Out-Null
-          New-Item -ItemType Directory -Force -Path stage | Out-Null
-          Copy-Item DevDesk\build-release\DevDesk.exe stage\
-          Copy-Item DevDesk\build-release\assets stage\assets -Recurse
-          Compress-Archive -Path stage\* -DestinationPath dist\DevDesk-windows-x64.zip
+          cd DevDesk
+          bash scripts/package-windows.sh
 
       - uses: actions/upload-artifact@v7
         with:
           name: windows
-          path: dist/*.zip
+          path: DevDesk/installer/windows/out/*.exe
           if-no-files-found: error
 
   release:
@@ -170,12 +165,14 @@ jobs:
       - name: 打 tag 并发 Release
         env:
           GH_TOKEN: ${{ github.token }}
+        # 发布步 cwd 是 workspace 根（checkout 在 DevDesk/ 子目录），gh 无法从 cwd 推断仓库，必须显式 --repo
         run: |
           set -e
           TAG="v$(date -u +%Y.%m.%d)-${GITHUB_RUN_NUMBER}"
           echo "TAG=$TAG" >> "$GITHUB_ENV"
           ls -la artifacts/
           gh release create "$TAG" artifacts/* \
+            --repo "$GITHUB_REPOSITORY" \
             --title "$TAG" \
             --notes-file /tmp/notes.md \
             --target "$GITHUB_SHA"
