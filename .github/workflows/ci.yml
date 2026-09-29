@@ -24,7 +24,7 @@ env:
 jobs:
   macos:
     name: macOS · 构建 + 测试
-    runs-on: macos-15
+    runs-on: macos-26
     steps:
       - uses: actions/checkout@v7
         with:
@@ -41,6 +41,7 @@ jobs:
           echo "--- 工具链 ---"
           xcodebuild -version
           clang --version | head -1
+          echo "架构: $(uname -m)　系统: $(sw_vers -productVersion)"
 
       - name: 安装依赖
         run: brew install ninja ccache openssl@3
@@ -92,7 +93,7 @@ jobs:
 
   windows:
     name: Windows · 构建 + 测试
-    runs-on: windows-latest
+    runs-on: windows-2025
     steps:
       - uses: actions/checkout@v7
         with:
