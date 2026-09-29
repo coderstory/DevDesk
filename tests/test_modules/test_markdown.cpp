@@ -4293,7 +4293,7 @@ bool clickLiveBlock(eui::Ui& ui, int stableId, float localY) {
     const std::string hitId = "md.live.blk." + std::to_string(stableId) + ".hit";
     const auto* hit = ui.find(hitId);
     if (hit == nullptr || !hit->onPress || !hit->onRelease) return false;
-    const core::Rect bounds(0.0f, 0.0f, hit->frame.width, hit->frame.height);
+    const core::Rect bounds{0.0f, 0.0f, hit->frame.width, hit->frame.height};
     eui::PointerEvent ev;
     ev.action = eui::PointerAction::Press;
     ev.button = eui::PointerButton::Left;

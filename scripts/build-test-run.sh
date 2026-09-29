@@ -251,7 +251,14 @@ fi
 #   Linux:   发行版装在标准路径，find_package 正常找到 → 不带这个 flag
 OPENSSL_ARGS=()
 case "$DEVDESK_OS" in
-  windows) OPENSSL_ARGS=(-DOPENSSL_ROOT_DIR=C:/msys64/mingw64) ;;
+  windows)
+    # 不写死 C:/msys64 —— MSYS2 可以装在别处（CI 的 setup-msys2 就装在
+    # D:/a/_temp/msys64），写死会导致「本机过、CI 挂 Could NOT find OpenSSL」。
+    # MSYS2 的 shell 一定导出 MINGW_PREFIX（形如 C:/msys64/mingw64），
+    # 取它；没有才退回默认安装位置。
+    _mingw_root="${MINGW_PREFIX:-C:/msys64/mingw64}"
+    OPENSSL_ARGS=(-DOPENSSL_ROOT_DIR="$_mingw_root")
+    ;;
   darwin)  OPENSSL_ARGS=(-DOPENSSL_ROOT_DIR=/opt/homebrew/opt/openssl@3) ;;
 esac
 
