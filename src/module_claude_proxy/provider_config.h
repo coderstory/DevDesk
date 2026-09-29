@@ -210,10 +210,28 @@ inline constexpr size_t kMaxImportTextBytes = 1u * 1024u * 1024u;
 // 真实上游 key 由代理转发时注入）
 inline constexpr const char* kProxyAuthPlaceholder = "PROXY_MANAGED";
 
+// 生效 env 的来源分层（2026-09-28 详情面板 P3）——**只为标注出处**，不参与
+// 合并决策（合并顺序写在 buildProxyEnv 里，一处）。优先级（高→低）：
+//   **托管键 > 片段 > profile 自身** —— 即写入顺序 profile → 片段 → 托管键，
+//   后写者赢（与 buildProxyEnv 的规则 5「托管键随后写入 → 冲突时托管键优先」
+//   和 settings_sync.cpp「托管键在最上层」同口径）。
+//（2026-09-29 审计 F-04：本条此前把顺序写反成「片段 > profile 自身 > 托管键」，
+//  与规则 5 矛盾；代码一直是对的，错的只是这行注释。）
+// 为什么需要它：env 是扁平 map，合并结果里没有出处（规则 6 的注释），
+// 详情面板要标「这条键是谁给的」就只能让合并方顺手记一层。
+enum class EnvSource {
+    Profile = 0,  // profile 自身 extra_env（含别名归一）
+    Shared,       // 该 profile 所绑共享配置片段
+    Managed,      // DevDesk 托管键（BASE_URL / 占位 token / 模型槽位表派生键）
+};
+
 std::map<std::string, std::string> buildProxyEnv(
     const std::string& modelsConfigJson, const std::string& legacyModel,
     const std::string& extraEnvJson,
-    int proxyPort, const std::string& sharedExtraEnvJson = "");
+    int proxyPort, const std::string& sharedExtraEnvJson = "",
+    // 可选出参：每个键的来源（见 EnvSource）。非空则先清空再填；传 nullptr
+    // （默认）= 不记录，既有调用方零改动
+    std::map<std::string, EnvSource>* sourcesOut = nullptr);
 
 // ---- 直连 env 生成（2026-09-28 profile-run 设计 §4.2，D-1：临时 settings + --settings）----
 // 输入 = profile 数据字段 + Keychain 已读出的密钥值（**本函数不读 Keychain**，

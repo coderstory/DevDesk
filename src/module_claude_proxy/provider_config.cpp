@@ -344,14 +344,29 @@ core::Result<ImportedConfig> parseImportedEnv(const std::string& text) {
 std::map<std::string, std::string> buildProxyEnv(
     const std::string& modelsConfigJson, const std::string& legacyModel,
     const std::string& extraEnvJson,
-    int proxyPort, const std::string& sharedExtraEnvJson) {
+    int proxyPort, const std::string& sharedExtraEnvJson,
+    std::map<std::string, EnvSource>* sourcesOut) {
     std::map<std::string, std::string> out;
+
+    // 来源标注（2026-09-28 详情面板 P3）：sourcesOut 非空时，每写一层顺手记
+    // 「这个键最后被哪一层写入」——合并规则本身一个字不动，只是把「谁赢」这件
+    // 事现出来。env 是扁平 map，结果里没有出处（见本文件头与 .h 的规则 6），
+    // 所以这里用可选出参而不是另建一套 provenance 框架。
+    if (sourcesOut != nullptr) sourcesOut->clear();
+    auto markOne = [&](const std::string& k, EnvSource s) {
+        if (sourcesOut != nullptr) (*sourcesOut)[k] = s;
+    };
+    auto markAll = [&](const std::map<std::string, std::string>& m, EnvSource s) {
+        if (sourcesOut == nullptr) return;
+        for (const auto& [k, v] : m) (*sourcesOut)[k] = s;
+    };
 
     // extra_env 先入表（别名归一），托管键随后写入 → 冲突时托管键优先（规则 5）
     auto extra = parseExtraEnv(extraEnvJson);
     if (extra.isOk()) {
         out = applyEnvAliases(extra.value()).env;
         // 非法 JSON：读路径容错，整体忽略（与 effectiveModelsConfig 语义一致）
+        markAll(out, EnvSource::Profile);
     }
 
     // 共享配置片段叠在 profile 自身 env 之上（片段赢，设计 §2.3 优先级 2 > 3）：
@@ -361,23 +376,28 @@ std::map<std::string, std::string> buildProxyEnv(
     if (shared.isOk()) {
         for (const auto& [k, v] : applyEnvAliases(shared.value()).env) {
             out[k] = v;
+            markOne(k, EnvSource::Shared);
         }
     }
 
     out["ANTHROPIC_BASE_URL"] = "http://127.0.0.1:" + std::to_string(proxyPort);
+    markOne("ANTHROPIC_BASE_URL", EnvSource::Managed);
     // 代理仅监听 127.0.0.1、无鉴权，此键只是让 Claude Code 有值可发（占位符，
     // 不是密钥；真实上游 key 由代理在转发时注入 profile 的 key）
     out["ANTHROPIC_AUTH_TOKEN"] = kProxyAuthPlaceholder;
+    markOne("ANTHROPIC_AUTH_TOKEN", EnvSource::Managed);
 
     const ModelsConfig mc = effectiveModelsConfig(modelsConfigJson, legacyModel);
     for (const auto& m : modelSlotTable()) {
         const ModelSlot& slot = mc.*m.slot;
         if (slot.model.empty()) continue;  // 空槽位跳过（规则 3）
         out[m.envKey] = slot.model;
+        markOne(m.envKey, EnvSource::Managed);
         if (m.nameKey != nullptr) {
             out[m.nameKey] = slot.name.empty()
                 ? deriveDisplayName(slot.model)  // 显示名派生（规则 4）
                 : slot.name;
+            markOne(m.nameKey, EnvSource::Managed);
         }
     }
     return out;

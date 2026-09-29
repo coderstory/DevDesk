@@ -23,11 +23,13 @@
 #include <eui/dsl.h>
 
 #include <chrono>
+#include <cmath>
 #include <cstdlib>
 #include <ctime>
 #include <filesystem>
 #include <fstream>
 #include <functional>
+#include <map>
 #include <memory>
 #include <stdexcept>
 #include <string>
@@ -1442,8 +1444,10 @@ REGISTER_TEST(claude_shared_block_outside_viewport,
 
     // 三种高度（默认 / 最小窗 / 超短窗）：区块顶 ≥ 视口底 12px（间距），
     // 区块落在带 clip 的视口之外——不盖末卡、不误点片段；
-    // 720 以上窗口区块不越出底部按钮区（新建/导入同排同 y）；500 属
-    // 极端矮窗（低于最小窗 720），区块按既有口径可向下溢出按钮区
+    // 720 以上窗口区块底 == 底部按钮行上沿 − 12（**钉底**，新建/导入同排同 y）。
+    // 500 属极端矮窗（低于最小窗），P4 起区块仍钉底、不再向下溢出按钮区
+    //（审计 F-10a：本注释此前写「可向下溢出按钮区」，是 clamp 让位时代的旧口径）；
+    // 该档下区块会被压扁到自然高以下（LOG_ERROR 记录），本用例只锁锚点关系
     for (float h : {1000.0f, 720.0f, 500.0f}) {
         eui::Ui ui;
         composeAt(ui, h);
@@ -3549,3 +3553,394 @@ REGISTER_TEST(claude_ui_logic_pure_functions,
     DOCTEST_CHECK_EQ(fallback.size(), static_cast<size_t>(17));   // 7 + YYYY-MM-DD
     return true;
 })
+
+// ============================================================================
+// 组 B（macOS 布局统一方案 §1 组 B / §5 组 B verify 口径，2026-09-28）
+//   P1 动作区钉面板底（四页签分隔线 y 恒定）+ 内容框显式边界
+//   P2 「最近调用」去掉 10 行硬上限 / 3 行硬下限，行数纯按可用高推
+//   P3 「环境变量」列全部生效 env + 每键来源
+//   P4 共享配置区块钉面板底 + 「+ 新建片段」恒可见可点
+// 尺寸取**真实 macOS 页面尺寸** 1262×801（窗口 1470×801 − 侧边栏 208），
+// 这是「真实窗口尺寸下的区域比例」类问题在无头侧唯一能覆盖的方式。
+// 统一原则：容器可用高只有一个来源（bodyH）；贴底元素锚容器底。
+// ============================================================================
+namespace {
+
+// 合成一帧 + 显式布局（元素 frame 需 layout 后才有值；见
+// claude_shared_block_outside_viewport 同款写法）
+void composeAtSize(::core::Module* mod, eui::Ui& ui, const char* page,
+                   float w, float h) {
+    eui::Screen screen;
+    screen.width = w;
+    screen.height = h;
+    ui.begin(page);
+    mod->compose(ui, screen);
+    ui.end();
+    ui.layout(w, h);
+}
+
+// 直调元素 onClick（无头无命中测试；点击路径本身由 probe / 组件用例覆盖）
+bool clickById(eui::Ui& ui, const std::string& id) {
+    const auto* node = ui.find(id);
+    if (node == nullptr || node->onClick == nullptr) {
+        std::cerr << "missing clickable: " << id << std::endl;
+        return false;
+    }
+    node->onClick();
+    return true;
+}
+
+// 造 n 条调用记录（含 429 / 超时两态，让「另有 N 条」行与状态列都有内容）
+bool seedCalls(module::claude::ClaudeService* svc, int64_t pid, int n) {
+    const std::time_t base = std::time(nullptr);
+    for (int i = 0; i < n; ++i) {
+        module::claude::ClaudeService::CallLogEntry e;
+        e.profileId = pid;
+        e.method = (i % 5 == 0) ? "GET" : "POST";
+        e.path = (i % 5 == 0) ? "/v1/models" : "/v1/messages";
+        e.statusCode = (i % 7 == 0) ? 429 : 200;
+        e.latencyMs = 100 + i;
+        e.startedAt = base + i;
+        DOCTEST_REQUIRE(svc->logCall(e).isOk());
+    }
+    return true;
+}
+
+}  // namespace
+
+// ---- 组 B P1：四个页签的动作区必须落在同一条水平线上 ----
+// 用户主诉（原话）：「环境变量 最近调用 2 个 tab 下方的区域高度不对」。
+// 根因：actY = paneBottom + 20 跟着内容底跑，面板底恒为 bodyH → 数据少时动作区
+// 浮在上部，四个页签的分隔线互差最大 171px。修后 actY = max(paneBottom + 20,
+// bodyH − 动作块预留)，内容框底由容器底推出 → 四值恒等。
+REGISTER_TEST(claude_detail_actions_anchor_four_tabs,
+              "claude_module: 详情动作区四页签同一条水平线（macOS 真实尺寸 1262x801）", {
+    TestEnv env;
+    auto p = env.svc->createProfile("锚点", "https://anchor.example.com",
+                                    "sk-ant-anchor-0001", "m-anchor");
+    DOCTEST_REQUIRE(p.isOk());
+    const int64_t pid = p.value().id;
+    DOCTEST_REQUIRE(env.svc->setActiveProfile(pid).isOk());
+    // 环境变量页签给 2 个额外键（四页签内容底各不相同才有判别力）
+    auto g = env.svc->getProfile(pid);
+    DOCTEST_REQUIRE(g.isOk());
+    g.value().extraEnvJson = R"({"MY_ANCHOR_A":"1","MY_ANCHOR_B":"2"})";
+    DOCTEST_REQUIRE(env.svc->updateProfile(g.value()).isOk());
+    DOCTEST_REQUIRE(seedCalls(env.svc.get(), pid, 3));
+
+    std::unique_ptr<::core::Module> mod(create_claude_module());
+    mod->onStart();   // 首载同步装载快照（H2），下面第一帧就有 recent
+
+    constexpr float kW = 1262.0f;   // 真实 macOS 页面宽（窗口 1470 − 侧边栏 208）
+    constexpr float kH = 801.0f;    // 真实 macOS 页面高（窗口内容高 801）
+
+    float actY[4] = {0, 0, 0, 0};
+    float dividerY[4] = {0, 0, 0, 0};
+    float panelBottom = 0.0f;
+    for (int tab = 0; tab < 4; ++tab) {
+        if (tab > 0) {
+            eui::Ui ui;
+            composeAtSize(mod.get(), ui, "claude_anchor", kW, kH);
+            DOCTEST_REQUIRE(clickById(
+                ui, "claude.detail.tabs.hit." + std::to_string(tab)));
+        }
+        eui::Ui ui;
+        composeAtSize(mod.get(), ui, "claude_anchor", kW, kH);
+        const auto* act = ui.find("claude.detail.actions");
+        const auto* divider = ui.find("claude.act.divider");
+        const auto* panel = ui.find("claude.detail");
+        DOCTEST_REQUIRE(act != nullptr);
+        DOCTEST_REQUIRE(divider != nullptr);
+        DOCTEST_REQUIRE(panel != nullptr);
+        actY[tab] = act->frame.y;
+        dividerY[tab] = divider->frame.y;
+        panelBottom = panel->frame.y + panel->frame.height;
+        // 贴底元素不得越出容器底（方案 §4 不变量）
+        DOCTEST_CHECK(act->frame.y + act->frame.height <= panelBottom + 0.5f);
+    }
+    // 四页签完全相等（旧实现下这四值互不相等 → 本用例即用户主诉的红灯）
+    for (int tab = 1; tab < 4; ++tab) {
+        DOCTEST_CHECK_EQ(actY[tab], actY[0]);
+        DOCTEST_CHECK_EQ(dividerY[tab], dividerY[0]);
+    }
+
+    mod->onStop();
+    cleanupProfileKey(kTestKeychainService, pid);
+    return true;
+})
+
+// ---- 组 B P2：行数纯按可用高推（旧实现锁死 10 行且截断无提示）----
+REGISTER_TEST(claude_calls_rows_by_available_height,
+              "claude_module: 最近调用行数按可用高推 + 截断有「另有 N 条」", {
+    TestEnv env;
+    auto p = env.svc->createProfile("行数", "https://rows.example.com",
+                                    "sk-ant-rows-0001", "m");
+    DOCTEST_REQUIRE(p.isOk());
+    const int64_t pid = p.value().id;
+    DOCTEST_REQUIRE(env.svc->setActiveProfile(pid).isOk());
+    DOCTEST_REQUIRE(seedCalls(env.svc.get(), pid, 30));
+
+    std::unique_ptr<::core::Module> mod(create_claude_module());
+    mod->onStart();
+
+    constexpr float kW = 1262.0f;
+    constexpr float kH = 801.0f;
+    eui::Ui ui;
+    composeAtSize(mod.get(), ui, "claude_rows", kW, kH);
+    DOCTEST_REQUIRE(clickById(ui, "claude.detail.tabs.hit.3"));
+    eui::Ui ui2;
+    composeAtSize(mod.get(), ui2, "claude_rows", kW, kH);
+
+    // 预算：内容框底 = bodyH − 85 − 20；行区 = 内容框底 − 表头底(24) −
+    // 「查看全部」带(8+24)。本尺寸（bodyH=607 → 内容框底 502、表头底 136、
+    // 带 32）→ floor(334/24) = 13 行（旧实现恒为 clamp(...,3,10) = 10 行）
+    int drawn = 0;
+    while (ui2.find("claude.calls.t." + std::to_string(drawn)) != nullptr) {
+        ++drawn;
+    }
+    DOCTEST_CHECK_EQ(drawn, 13);
+    DOCTEST_CHECK(ui2.find("claude.calls.t.13") == nullptr);   // 不画越界行
+
+    // 截断必须有可见表达（与 env 页签同款口径）
+    const auto* overflow = ui2.find("claude.calls.overflow");
+    DOCTEST_REQUIRE(overflow != nullptr);
+    DOCTEST_CHECK(overflow->text.find("另有 17 条") != std::string::npos);
+
+    // 行区不越过内容框底：末行底 ≤ 内容框底（真实裁剪下沿）
+    const auto* last = ui2.find("claude.calls.d.12");
+    DOCTEST_REQUIRE(last != nullptr);
+    const auto* viewall = ui2.find("claude.calls.viewall.hit");
+    DOCTEST_REQUIRE(viewall != nullptr);
+    DOCTEST_CHECK(last->frame.y + last->frame.height <=
+                  viewall->frame.y + 0.5f);
+
+    mod->onStop();
+    cleanupProfileKey(kTestKeychainService, pid);
+    return true;
+})
+
+// ---- 组 B P2 极端档：可用高不足一行 → 只画空态，不画越界行 ----
+// 旧实现的硬下限 3 会把 3 行画进动作区（越界）；现在画 0 行 + 明确文案。
+REGISTER_TEST(claude_calls_no_rows_when_too_short,
+              "claude_module: 内容区不足一行时画 0 行 + 空态（含 F-02 叠印/越框锁）", {
+    TestEnv env;
+    auto p = env.svc->createProfile("矮窗", "https://short.example.com",
+                                    "sk-ant-short-001", "m");
+    DOCTEST_REQUIRE(p.isOk());
+    const int64_t pid = p.value().id;
+    DOCTEST_REQUIRE(env.svc->setActiveProfile(pid).isOk());
+    DOCTEST_REQUIRE(seedCalls(env.svc.get(), pid, 30));
+
+    std::unique_ptr<::core::Module> mod(create_claude_module());
+    mod->onStart();
+
+    // 480 高 → bodyH = 480 − 80 − 64 − 16 − 34(引导条) = 286；
+    // 内容框底 = 286 − 85 − 20 = 181；行区 = 181 − 136 − 32 = 13 < 24 → 0 行
+    eui::Ui ui;
+    composeAtSize(mod.get(), ui, "claude_short", 1000.0f, 480.0f);
+    DOCTEST_REQUIRE(clickById(ui, "claude.detail.tabs.hit.3"));
+    eui::Ui ui2;
+    composeAtSize(mod.get(), ui2, "claude_short", 1000.0f, 480.0f);
+
+    DOCTEST_CHECK(ui2.find("claude.calls.t.0") == nullptr);   // 不画越界行
+    const auto* empty = ui2.find("claude.calls.empty");
+    DOCTEST_REQUIRE(empty != nullptr);
+    DOCTEST_CHECK(empty->text.find("不足") != std::string::npos);
+    // ---- 审计 F-02：0 行档的两条硬约束（此前这条用例断不到）----
+    // ① 不再画「另有 N 条」—— 它与空态行同坐标会叠印（旧实现就是这么错的）
+    DOCTEST_CHECK(ui2.find("claude.calls.overflow") == nullptr);
+    // ② 空态行与「查看全部」带都不得越出内容框（真实裁剪下沿 = 内容框底）
+    const auto* box = ui2.find("claude.detail.contentbox");
+    DOCTEST_REQUIRE(box != nullptr);
+    const float boxBottom = box->frame.y + box->frame.height;
+    DOCTEST_CHECK(empty->frame.y + empty->frame.height <= boxBottom + 0.5f);
+    if (const auto* va = ui2.find("claude.calls.viewall.hit")) {
+        DOCTEST_CHECK(va->frame.y + va->frame.height <= boxBottom + 0.5f);
+    }
+    // 动作区仍在面板内（贴底锚定 + F-03 的 actYHi 夹取语义）
+    const auto* act = ui2.find("claude.detail.actions");
+    const auto* panel = ui2.find("claude.detail");
+    DOCTEST_REQUIRE(act != nullptr);
+    DOCTEST_REQUIRE(panel != nullptr);
+    DOCTEST_CHECK(act->frame.y + act->frame.height <=
+                  panel->frame.y + panel->frame.height + 0.5f);
+
+    mod->onStop();
+    cleanupProfileKey(kTestKeychainService, pid);
+    return true;
+})
+
+// ---- 组 B P3：环境变量页签列全部生效 env + 每键来源 ----
+// 用户读到「只显示 1 条」的真相：该页此前只列 profile 自身的 extra_env。
+REGISTER_TEST(claude_env_tab_lists_effective_env_with_source,
+              "claude_module: 环境变量页签列全部生效 env + 来源标注", {
+    TestEnv env;
+    auto sc = env.svc->createSharedConfig("片段Z", R"({"MY_SHARED":"s"})");
+    DOCTEST_REQUIRE(sc.isOk());
+    auto p = env.svc->createProfile("全量env", "https://env.example.com",
+                                    "sk-ant-env-000001", "m-env-model");
+    DOCTEST_REQUIRE(p.isOk());
+    const int64_t pid = p.value().id;
+    DOCTEST_REQUIRE(env.svc->setActiveProfile(pid).isOk());
+    auto g = env.svc->getProfile(pid);
+    DOCTEST_REQUIRE(g.isOk());
+    g.value().extraEnvJson = R"({"MY_PROFILE":"p"})";
+    g.value().sharedConfigId = sc.value().id;   // 片段带 1 个键
+    DOCTEST_REQUIRE(env.svc->updateProfile(g.value()).isOk());
+
+    std::unique_ptr<::core::Module> mod(create_claude_module());
+    mod->onStart();
+
+    eui::Ui ui;
+    composeAtSize(mod.get(), ui, "claude_env", 1262.0f, 801.0f);
+    DOCTEST_REQUIRE(clickById(ui, "claude.detail.tabs.hit.2"));
+    eui::Ui ui2;
+    composeAtSize(mod.get(), ui2, "claude_env", 1262.0f, 801.0f);
+
+    // 逐行读「键 → 来源」，按键名断言（不依赖 map 序）
+    std::map<std::string, std::string> srcOf;
+    for (int i = 0; i < 40; ++i) {
+        const auto* k = ui2.find("claude.env.key." + std::to_string(i));
+        if (k == nullptr) break;
+        const auto* s = ui2.find("claude.env.src." + std::to_string(i));
+        DOCTEST_REQUIRE(s != nullptr);   // 每行都必须有来源标注
+        srcOf[k->text] = s->text;
+    }
+    // 三类来源都出现：托管键（BASE_URL / 占位 token / 模型槽位）、
+    // profile 自身 extra_env、所绑片段
+    DOCTEST_REQUIRE(srcOf.count("ANTHROPIC_BASE_URL") == 1);
+    DOCTEST_CHECK_EQ(srcOf["ANTHROPIC_BASE_URL"], std::string("托管键"));
+    DOCTEST_CHECK_EQ(srcOf["ANTHROPIC_MODEL"], std::string("托管键"));
+    DOCTEST_REQUIRE(srcOf.count("MY_PROFILE") == 1);
+    DOCTEST_CHECK_EQ(srcOf["MY_PROFILE"], std::string("本 Profile"));
+    DOCTEST_REQUIRE(srcOf.count("MY_SHARED") == 1);
+    DOCTEST_CHECK(srcOf["MY_SHARED"].find("片段") == 0);
+
+    mod->onStop();
+    cleanupProfileKey(kTestKeychainService, pid);
+    return true;
+})
+
+// ---- 组 B P4：共享配置区块钉面板底 + 「+ 新建片段」恒可点 ----
+// 用户原话：「新建片段的按钮原本底部对齐的，现在没了」。
+// 旧实现 listH = clamp(scrollH − sharedH − 12, min(96, scrollH), scrollH)：
+// 96px 保底一生效（≈5 个片段起）区块就被推下去 → ≥6 个按钮被底部按钮压住点不到、
+// ≥8 个被整页 clip。现在区块底锚定 = 底部按钮行上沿 − 12，高度取
+// min(自然高, 不侵占列表保底视口)，卡片在区块内部滚。
+REGISTER_TEST(claude_shared_block_bottom_anchored,
+              "claude_module: 共享配置区块钉面板底 + 新建片段恒可点（8 片段）", {
+    TestEnv env;
+    std::vector<int64_t> scIds;
+    for (int i = 0; i < 8; ++i) {
+        auto f = env.svc->createSharedConfig("片段" + std::to_string(i), "");
+        DOCTEST_REQUIRE(f.isOk());
+        scIds.push_back(f.value().id);
+    }
+    std::vector<int64_t> ids;
+    for (int i = 0; i < 3; ++i) {
+        auto p = env.svc->createProfile(
+            "站" + std::to_string(i),
+            "https://s" + std::to_string(i) + ".example.com",
+            "sk-ant-anc-000" + std::to_string(i), "m");
+        DOCTEST_REQUIRE(p.isOk());
+        ids.push_back(p.value().id);
+    }
+
+    std::unique_ptr<::core::Module> mod(create_claude_module());
+    mod->onStart();
+
+    // 尺寸矩阵：真实 macOS 尺寸 + 默认 + 最小窗 + 高窗，逐档断言同一条不变量
+    for (float h : {801.0f, 1000.0f, 720.0f, 1200.0f}) {
+        eui::Ui ui;
+        composeAtSize(mod.get(), ui, "claude_shared_anchor", 1262.0f, h);
+        const auto* block = ui.find("claude.shared.block");
+        const auto* newBtn = ui.find("claude.shared.new");
+        const auto* bottomBtn = ui.find("claude.profiles.new");
+        const auto* panel = ui.find("claude.profiles");
+        DOCTEST_REQUIRE(block != nullptr);
+        DOCTEST_REQUIRE(newBtn != nullptr);
+        DOCTEST_REQUIRE(bottomBtn != nullptr);
+        DOCTEST_REQUIRE(panel != nullptr);
+        const float blockBottom = block->frame.y + block->frame.height;
+        const float btnBottom = newBtn->frame.y + newBtn->frame.height;
+        // 「+ 新建片段」是区块的固定尾部 → 区块底 == 按钮底
+        DOCTEST_CHECK(std::fabs(btnBottom - blockBottom) <= 0.5f);
+        // 贴底锚点：区块底 = 底部按钮行上沿 − 12（不随片段数变）
+        DOCTEST_CHECK(std::fabs(blockBottom - (bottomBtn->frame.y - 12.0f)) <= 0.5f);
+        // 面板内（不越出容器底）
+        DOCTEST_CHECK(blockBottom <= panel->frame.y + panel->frame.height + 0.5f);
+        // 可点：按钮的命中层（.bg，button 组件契约）在，且按钮有实际高度
+        const auto* newHit = ui.find("claude.shared.new.bg");
+        DOCTEST_REQUIRE(newHit != nullptr);
+        DOCTEST_REQUIRE(newHit->onClick != nullptr);
+        DOCTEST_CHECK(btnBottom > newBtn->frame.y);
+    }
+
+    // 装不下时卡片仍可点开编辑（块内滚，不牺牲可达性）
+    {
+        eui::Ui ui;
+        composeAtSize(mod.get(), ui, "claude_shared_anchor", 1262.0f, 801.0f);
+        DOCTEST_CHECK(ui.find("claude.shared.card.0.bg") != nullptr);
+        DOCTEST_REQUIRE(clickById(ui, "claude.shared.card.0.bg"));
+    }
+    {
+        eui::Ui ui;
+        composeAtSize(mod.get(), ui, "claude_shared_anchor", 1262.0f, 801.0f);
+        DOCTEST_CHECK(ui.find("claude.dialog.shared") != nullptr);  // 编辑弹窗已开
+        //（弹窗保持开着不影响下面的块内滚动断言：断言直读元素，不走命中测试）
+    }
+
+    // ---- 审计 F-09：片段集变化 → 块内滚动偏移归零 ----
+    // 判别力设计（避免恒真断言）：旧集与新集都是 8 张卡 → 内容高/maxOffset 不变，
+    // 单靠渲染侧的 clamp 藏不住旧偏移；只有真的复位才会回到 0
+    {
+        eui::Ui ui;
+        composeAtSize(mod.get(), ui, "claude_shared_anchor", 1262.0f, 801.0f);
+        const auto* sc = ui.find("claude.shared.scroll");
+        DOCTEST_REQUIRE(sc != nullptr);
+        DOCTEST_REQUIRE(sc->onScrollOffsetChanged != nullptr);
+        DOCTEST_CHECK_EQ(sc->scrollOffset, 0.0f);        // 静止
+        sc->onScrollOffsetChanged(120.0f);               // 模拟用户滚到底
+    }
+    {
+        eui::Ui ui;
+        composeAtSize(mod.get(), ui, "claude_shared_anchor", 1262.0f, 801.0f);
+        const auto* sc = ui.find("claude.shared.scroll");
+        DOCTEST_REQUIRE(sc != nullptr);
+        DOCTEST_CHECK(sc->scrollOffset > 60.0f);         // 偏移真的生效了
+        DOCTEST_CHECK(sc->scrollMaxOffset > 60.0f);      // 且确有可滚余量
+    }
+    // 换一整套片段（8 个新名字）：签名变 → 偏移必须归零。
+    // 注意：这里绕过 UI 直改 service，模块的快照是**后台刷新 + 200ms 节流**的
+    //（直改 DB 不标脏）→ 必须 onPageEnter() 标脏 + 有界轮询等快照换过来，
+    // 否则断言的还是旧快照（旧签名 → 不复位），会得到假红
+    for (int64_t id : scIds) {
+        DOCTEST_REQUIRE(env.svc->deleteSharedConfig(id).isOk());
+    }
+    for (int i = 0; i < 8; ++i) {
+        auto f = env.svc->createSharedConfig("新片段" + std::to_string(i), "");
+        DOCTEST_REQUIRE(f.isOk());
+    }
+    mod->onPageEnter();
+    bool swapped = false;
+    for (int i = 0; i < 40 && !swapped; ++i) {
+        eui::Ui ui;
+        composeAtSize(mod.get(), ui, "claude_shared_anchor", 1262.0f, 801.0f);
+        const auto* name0 = ui.find("claude.shared.card.0.name");
+        swapped = name0 != nullptr && name0->text == std::string("新片段0");
+        if (!swapped) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(25));
+        } else {
+            const auto* sc = ui.find("claude.shared.scroll");
+            DOCTEST_REQUIRE(sc != nullptr);
+            DOCTEST_CHECK(sc->scrollMaxOffset > 60.0f);  // 仍有可滚余量（非恒真）
+            DOCTEST_CHECK_EQ(sc->scrollOffset, 0.0f);    // F-09：已归零
+        }
+    }
+    DOCTEST_CHECK(swapped);   // 快照确实换过来了（否则上面那条断言没意义）
+
+    mod->onStop();
+    for (int64_t id : ids) cleanupProfileKey(kTestKeychainService, id);
+    return true;
+})
+

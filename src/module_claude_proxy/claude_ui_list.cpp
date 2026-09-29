@@ -9,12 +9,15 @@
 
 #include <components/button.h>
 #include <components/contextmenu.h>
+#include <components/scrollview.h>
 #include <components/virtuallist.h>
 
+#include <core/logging.h>
 #include <core/router.h>
 #include <core/ui_geometry.h>
 
 #include <algorithm>
+#include <functional>
 
 namespace module::claude {
 
@@ -22,22 +25,69 @@ namespace {
 
 // ============ 共享配置区块的几何（批 2，设计 §2.10；单一来源，区块高度与
 // 绘制共用同一组常量，供 drawProfileListPanel 撑滚动容器高 / 绘制用）============
+// 2026-09-28（macOS 布局统一方案 §1 组 B，P4）——区块**钉面板底**。
+// 用户原话：「新建片段的按钮原本底部对齐的，现在没了」。
+// **口径（2026-09-29 审计校正，别写成「恢复原样」）**：用户记忆里的「原本贴底」
+// 在代码史上**不成立** —— 改前形态（a0f9c32 起）是「Profile 列表滚动内容尾部」，
+// 只有列表填满视口并滚到底时才在底部，空/错态分支更是写死 `cardY0+96` 的绝对
+// 坐标；9811225（merge「master 合入 ui/rest」的冲突消解）又把它改成「绝对定位
+// 在列表下方」的脚注，高度让位式 `listH = clamp(scrollH − sharedH − 12,
+// min(96, scrollH), scrollH)` 只在 `sharedH ≤ scrollH − 108` 时（≤4 个片段）
+// 碰巧把它顶到底；96px 保底一生效区块就被推下去：≥6 个时「+ 新建片段」被底部
+// 按钮压住点不到，≥7 个落到面板外，≥8 个被 app.page clip。
+// 所以**钉底是本次的新设计**（修复 ≥5 片段起的可达性回归），不是回退到某个旧形态。
+// 现在改为**锚定**（统一原则：容器可用高只有一个来源 = bodyH；贴底元素锚容器底）：
+//   区块底 = bodyH − 底部按钮行高 − kSharedBottomGap（锚点，不随片段数变）
+//   区块高 = min(自然高, 不侵占列表保底视口的上界)
+//   列表视口 = 区块顶 − 间距 − 列表起点（吃剩余高）
+// 片段多到装不下时在**区块内部滚**（卡片仍然全部可达可编辑），「+ 新建片段」是
+// 区块的固定尾部 → 恒可见可点（用户报过的两个症状一起消掉）。
 constexpr float kSharedHeaderBottom = 30.0f;   // 标题行 + 下边距
 constexpr float kSharedCardH = 56.0f;
 constexpr float kSharedCardGap = 8.0f;
 constexpr float kSharedBtnTopGap = 12.0f;
 constexpr float kSharedBtnH = 34.0f;
 constexpr float kSharedInfoH = 18.0f;          // 错误 / 空态行高
+constexpr float kSharedBottomGap = 12.0f;      // 区块底 → 底部按钮行顶
+constexpr float kSharedListMinH = 96.0f;       // 列表视口保底高（旧口径不变）
+constexpr float kListTopY = 56.0f;             // 列表 / 区块所在列的起点 y
+constexpr float kBottomBtnRowH = 64.0f;        // 底部按钮行（新建/导入）预留高
 
-// 区块总高（与 drawSharedConfigBlock 的几何一致；滚动容器按此撑高）
-float sharedBlockHeight(size_t snippetCount, bool hasError) {
-    float h = kSharedHeaderBottom + kSharedBtnTopGap + kSharedBtnH;
+// 区块固定部分（与 drawSharedConfigBlock 的绘制几何一致）：标题行 + 按钮上间距
+// + 按钮高 —— 卡片区 / 提示行占用剩下的高
+constexpr float kSharedFixedH =
+    kSharedHeaderBottom + kSharedBtnTopGap + kSharedBtnH;
+
+// 底部按钮行上沿（面板内绝对 y）
+float bottomButtonRowY(float bodyH) { return bodyH - kBottomBtnRowH; }
+
+// 区块**锚点**：贴底时区块底沿的绝对 y（= 底部按钮行上沿 − 间距）
+float sharedBlockBottomY(float bodyH) {
+    return bottomButtonRowY(bodyH) - kSharedBottomGap;
+}
+
+// 区块可见高上界：区块顶不得高于「列表保底视口之下」——列表视口吃剩余高，
+// 故上界 = 区块底 − 列表起点 − 列表保底 − 间距
+float sharedBlockMaxH(float bodyH) {
+    return std::max(0.0f, sharedBlockBottomY(bodyH) - kListTopY -
+                              kSharedListMinH - kSharedBottomGap);
+}
+
+// 区块自然高（内容全展开时）：固定部分 + 卡片区（或错误/空态行）
+float sharedBlockNaturalH(size_t snippetCount, bool hasError) {
+    float h = kSharedFixedH;
     if (hasError || snippetCount == 0) {
         h += kSharedInfoH;
     } else {
         h += static_cast<float>(snippetCount) * (kSharedCardH + kSharedCardGap);
     }
     return h;
+}
+
+// 区块实际高：自然高与上界取小（取到上界 = 卡片区要滚）
+float sharedBlockH(float bodyH, size_t snippetCount, bool hasError) {
+    return std::min(sharedBlockNaturalH(snippetCount, hasError),
+                    sharedBlockMaxH(bodyH));
 }
 
 // Profile 卡片（点击选中，选中/激活高亮）。
@@ -278,7 +328,7 @@ void drawClaudeGuideBar(eui::Ui& ui, float contentW,
     // 引导条（§6.4）：代理未运行且本会话从未启动过时一次性提示接管语义
     //（ⓘ 换 FA：Icon 字体不能与正文混排，图标/文字拆两个元素）
     ui.row("claude.guide.wrap")
-        .size(contentW, 18.0f)
+        .size(contentW, kGuideBarH)
         .gap(6.0f)
         .alignItems(eui::Align::CENTER)
         .content([&] {
@@ -342,8 +392,33 @@ void drawProfileListPanel(eui::Ui& ui, float leftW, float bodyH,
                 .build();
 
             // 卡片列表（真实数据；空时显示占位）
-            const float cardY0 = 56.0f;
+            const float cardY0 = kListTopY;
             const float cardGap = 12.0f;
+
+            // 共享配置区块（P4）：**钉面板底** —— 底沿 = 底部按钮行上沿 − 间距
+            // （锚点，不随片段数变），高 = min(自然高, 不侵占列表保底视口)，
+            // 顶 = 底 − 高。列表视口吃剩余高（见下方 listH）。
+            // 退化守门（审计 F-06 改写）：旧写法 `assert(sharedBlockTop + sharedH
+            // <= bodyH)` 是**身份式恒真** —— blockTop 按定义 = 底 − sharedH，左边
+            // 恒等于 bodyH − 76，永不可能触发，零保护力。真正的退化有两种，都不
+            // 能从定义推出，故留这两条 + 下面的 listH 保底检查：
+            //   ① 区块被压扁到 < 固定部分 + 提示行（kSharedMinH=94）→ 标题行 /
+            //      空态行与「+ 新建片段」重叠；触发域 bodyH < 334（客户区 < 528）
+            //   ② 列表保底视口被挤没（listH < kSharedListMinH）；触发域 bodyH < 240
+            // 两者都是「高度预算不足」，按统一原则必须**可见**：记 ERROR（不做
+            // assert/abort —— 退化域低于支持的最小窗，GUI 不该为此崩，且 Release
+            // 会把 assert 编掉、问题在两种构建下同样该现形）。
+            const bool sharedHasError = !sharedConfigsError.empty();
+            const float sharedH = sharedBlockH(bodyH, sharedConfigs.size(),
+                                               sharedHasError);
+            const float sharedBlockTop = sharedBlockBottomY(bodyH) - sharedH;
+            if (sharedH < kSharedFixedH + kSharedInfoH) {
+                LOG_ERROR("[layout] 共享配置区块被压扁（标题/空态行与按钮重叠）: "
+                          "sharedH=" + std::to_string(sharedH) + " < " +
+                          std::to_string(kSharedFixedH + kSharedInfoH) +
+                          " bodyH=" + std::to_string(bodyH));
+            }
+
             if (!profilesError.empty()) {
                 ui.text("claude.profiles.error")
                     .position(20.0f, cardY0 + 20.0f)
@@ -353,16 +428,15 @@ void drawProfileListPanel(eui::Ui& ui, float leftW, float bodyH,
                     .lineHeight(20.0f)
                     .color(t.colors.error)
                     .build();
-                // 批 2：无 scroll 时共享区块垫在错误态下方（绝对坐标；
-                // stack 定位对齐 overlay 的 20px 内缩，与 Profile 标题同行列）
+                // 批 2：无 scroll 时共享区块同样钉面板底（P4 前这里写死
+                // cardY0+96 —— 空/错态下区块根本不贴底，是用户「按钮飘在
+                // 中间」的另一条路径）
                 ui.stack("claude.shared.block")
-                    .position(20.0f, cardY0 + 96.0f)
-                    .size(leftW - 40.0f,
-                          sharedBlockHeight(sharedConfigs.size(),
-                                            !sharedConfigsError.empty()))
+                    .position(20.0f, sharedBlockTop)
+                    .size(leftW - 40.0f, sharedH)
                     .content([&] {
-                        drawSharedConfigBlock(ui, 0.0f, leftW - 40.0f, t,
-                                              sharedConfigs,
+                        drawSharedConfigBlock(ui, leftW - 40.0f, sharedH,
+                                              t, themeTokens, st, sharedConfigs,
                                               sharedConfigsError, actions);
                     })
                     .build();
@@ -375,15 +449,13 @@ void drawProfileListPanel(eui::Ui& ui, float leftW, float bodyH,
                     .lineHeight(20.0f)
                     .color(t.colors.textTertiary)
                     .build();
-                // 批 2：无 scroll 时共享区块垫在空态下方（绝对坐标）
+                // 批 2：无 scroll 时共享区块同样钉面板底（P4，见上一分支注释）
                 ui.stack("claude.shared.block")
-                    .position(20.0f, cardY0 + 96.0f)
-                    .size(leftW - 40.0f,
-                          sharedBlockHeight(sharedConfigs.size(),
-                                            !sharedConfigsError.empty()))
+                    .position(20.0f, sharedBlockTop)
+                    .size(leftW - 40.0f, sharedH)
                     .content([&] {
-                        drawSharedConfigBlock(ui, 0.0f, leftW - 40.0f, t,
-                                              sharedConfigs,
+                        drawSharedConfigBlock(ui, leftW - 40.0f, sharedH,
+                                              t, themeTokens, st, sharedConfigs,
                                               sharedConfigsError, actions);
                     })
                     .build();
@@ -393,25 +465,32 @@ void drawProfileListPanel(eui::Ui& ui, float leftW, float bodyH,
                 // 可见行进 slot 窗口重建。行距保留旧观感：行内容 96 +
                 // cardGap 间距 = 108 pitch。滚动语义 profilesScrollOffset_
                 // 沿用（翻页式列表行数小，overscan 一个视口高让整段渲染，
-                // 消除 slot 数量感）。滚动区底 = 底部按钮（bodyH-64）
-                // 上方 12px（同旧 scrollView 口径）。
+                // 消除 slot 数量感）。
                 // 2026-09-28：视口对齐父面板 20px 内缩网格（position 20 /
                 // 宽 leftW-40 = 父内容宽），item 自适应父宽；旧 x=0/leftW-24
                 // 与标题/按钮的 20px 网格错位且右缘差 4px
-                // 跨模块剩余审计修（2026-09-28）：视口高度 = listH（让出
-                // 共享区块高 + 12px 间距，至少保 96px）——区块由此整体钉在
-                // 视口 clip 之外；修复前视口按 scrollH 全高、区块只压自己的
-                // 绝对 Y，后建区块叠在带 clip 的视口底带上，≥5 profile 时
-                // 末 1-2 张卡被盖、滚到底显示不全、点击误开片段编辑
-                const float scrollH = std::max(
-                    0.0f, bodyH - 64.0f - 12.0f - cardY0);
+                // 跨模块剩余审计修（2026-09-28）：视口高度让出共享区块高 +
+                // 12px 间距——区块由此整体钉在视口 clip 之外；修复前视口按全高、
+                // 区块只压自己的绝对 Y，后建区块叠在带 clip 的视口底带上，
+                // ≥5 profile 时末 1-2 张卡被盖、滚到底显示不全、点击误开片段编辑
+                // P4（2026-09-28）：**从「让位式 clamp」改成「锚定式推导」**——
+                // 视口 = 区块顶 − 间距 − 列表起点（区块顶本身由面板底锚定推出），
+                // 于是列表恒吃到「面板底 − 区块高」的全部剩余高，区块高又已被
+                // sharedBlockMaxH 限死在不侵占列表保底视口之内 → 旧式那个
+                // `clamp(x, min(96, scrollH), scrollH)` 的 96px 保底不再需要
+                //（它的作用正是「列表至少要 96」，现在由区块高的上界保证）
                 const float rowPitch = 96.0f + cardGap;
-                const float sharedH =
-                    sharedBlockHeight(sharedConfigs.size(),
-                                      !sharedConfigsError.empty());
-                const float listH =
-                    std::clamp(scrollH - sharedH - 12.0f,
-                               std::min(96.0f, scrollH), scrollH);
+                const float listH = std::max(
+                    0.0f, sharedBlockTop - kSharedBottomGap - cardY0);
+                // 退化守门 ②（审计 F-06）：列表保底视口被挤没 —— 区块高的上界
+                // 本应保证 listH ≥ kSharedListMinH，只有 bodyH 极小（< 240，
+                // sharedBlockMaxH 被 max(0,·) 夹到 0）时才破，届时必须可见
+                if (listH < kSharedListMinH) {
+                    LOG_ERROR("[layout] Profile 列表保底视口被挤没: listH=" +
+                              std::to_string(listH) + " < " +
+                              std::to_string(kSharedListMinH) + " bodyH=" +
+                              std::to_string(bodyH));
+                }
                 components::virtualList(ui, "claude.profiles.scroll")
                     .position(20.0f, cardY0)
                     .size(leftW - 40.0f, listH)
@@ -486,17 +565,16 @@ void drawProfileListPanel(eui::Ui& ui, float leftW, float bodyH,
                     .build();
                 // 批 2：共享配置区块（master 合并保留，设计 §2.10「片段列表
                 // 入口」）。virtualList 行窗为等高槽位、无非等高末行支持 →
-                // 区块不并入行窗，垫在列表下方作粘性脚注（几何同上方空/错态
-                // 分支：absolute 定位，块内元素相对块顶）。列表视口高已在
-                // 上方按区块高让出（listH）：区块整体位于视口 clip 之外
-                //（间距 12px），末卡滚到底也不会被区块盖住/误点；片段过多
-                // 时区块向下溢出盖过底部按钮区——与空/错态分支同款行为
+                // 区块不并入行窗，垫在列表下方。P4 起**钉面板底**（位置/高度
+                // 见本函数开头的量）：列表视口高已让出区块高（listH），区块整体
+                // 位于视口 clip 之外（间距 12px），末卡滚到底也不会被区块盖住/
+                // 误点；片段装不下时在区块内部滚，「+ 新建片段」恒可见可点
                 ui.stack("claude.shared.block")
-                    .position(20.0f, cardY0 + listH + 12.0f)
+                    .position(20.0f, sharedBlockTop)
                     .size(leftW - 40.0f, sharedH)
                     .content([&] {
-                        drawSharedConfigBlock(ui, 0.0f, leftW - 40.0f, t,
-                                              sharedConfigs,
+                        drawSharedConfigBlock(ui, leftW - 40.0f, sharedH,
+                                              t, themeTokens, st, sharedConfigs,
                                               sharedConfigsError, actions);
                     })
                     .build();
@@ -506,7 +584,7 @@ void drawProfileListPanel(eui::Ui& ui, float leftW, float bodyH,
             // ~/.claude/settings.json 预填新建表单）
             const float btnW = (leftW - 40.0f - 12.0f) * 0.5f;
             components::button(ui, "claude.profiles.new")
-                .position(20.0f, bodyH - 64.0f)
+                .position(20.0f, bottomButtonRowY(bodyH))
                 .size(btnW, 40.0f)
                 .text("+ 新建 Profile")
                 .fontSize(t.sizes.fontSizeSmall)
@@ -518,7 +596,7 @@ void drawProfileListPanel(eui::Ui& ui, float leftW, float bodyH,
                 .onClick([onNew = actions.onNewProfile] { onNew(); })
                 .build();
             components::button(ui, "claude.profiles.import")
-                .position(20.0f + btnW + 12.0f, bodyH - 64.0f)
+                .position(20.0f + btnW + 12.0f, bottomButtonRowY(bodyH))
                 .size(btnW, 40.0f)
                 .text("导入当前配置")
                 .icon(0xF019)  // fa-download
@@ -538,18 +616,25 @@ void drawProfileListPanel(eui::Ui& ui, float leftW, float bodyH,
 // ============ 共享配置区块（批 2，设计 §2.10「片段列表入口」）============
 // 标题行 + 片段卡片（name + N 个键）+「+ 新建片段」按钮。drawProfileListPanel
 // 三路径调用（合并后）：
-//   - profiles 正常：垫在 virtualList 下方作粘性脚注（y = 绝对坐标；列表高度
-//     让出区块高，见 else 分支）
-//   - profiles 空/错（无 scroll）：垫在空态/错误态下方（y = 绝对坐标）
-// 几何常量与 sharedBlockHeight 见文件顶部匿名命名空间（单一来源）。
-float drawSharedConfigBlock(eui::Ui& ui, float y, float width,
-                            const core::theme::Tokens& t,
-                            const std::vector<SharedConfig>& sharedConfigs,
-                            const std::string& sharedConfigsError,
-                            const ProfileListActions& actions) {
+//   - profiles 正常：垫在 virtualList 下方，区块底**钉在面板内容底**，列表
+//     视口吃剩余高（见 drawProfileListPanel 的 listH）
+//   - profiles 空/错（无 scroll）：同样钉底（占位不再写死 y）
+// 高度由调用方按 sharedBlockH 算出并传入（**单一来源**：调用方要知道它才能排
+// 列表视口）；块内元素一律**相对块顶**从 0 起算（审计 F-08：此前有个恒传 0 的
+// `y` 形参、文档还写成「面板内绝对坐标」，与实现相反 —— 块的绝对位置由外层
+// `claude.shared.block` stack 的 .position 决定，块函数不该再持一个偏移）。
+// 卡片装不下时在块内滚（「+ 新建片段」是固定尾部，恒可见可点）。
+// 几何常量与高度算式见文件顶部匿名命名空间。
+void drawSharedConfigBlock(eui::Ui& ui, float width, float blockH,
+                           const core::theme::Tokens& t,
+                           const components::theme::ThemeColorTokens& themeTokens,
+                           ProfileListState& st,
+                           const std::vector<SharedConfig>& sharedConfigs,
+                           const std::string& sharedConfigsError,
+                           const ProfileListActions& actions) {
     // 标题行（与 Profile 列表标题同款字重，字号略小一档以示从属）
     ui.text("claude.shared.title")
-        .position(0.0f, y)
+        .position(0.0f, 0.0f)
         .size(width, 20.0f)
         .text("共享配置片段")
         .fontSize(13.0f)
@@ -558,56 +643,101 @@ float drawSharedConfigBlock(eui::Ui& ui, float y, float width,
         .color(t.colors.textPrimary)
         .build();
 
-    float cy = y + kSharedHeaderBottom;
+    // 内容区：上顶 = 标题行底，下底 = 按钮行上沿（= blockH − 按钮高 − 间距）
+    const float contentTop = kSharedHeaderBottom;
+    const float contentH = std::max(0.0f, blockH - kSharedFixedH);
+    // 片段集签名（**含空态与错误态**）：片段集 / 空态 / 错误态任一变化 → 块内
+    // 滚动偏移**归零**（审计 F-09）。contentKey 只触发重新测高、不动偏移，不归零
+    // 时「滚到底 → 删到 1 个 → 再加回 8 个」会跳回旧偏移（渲染侧每帧 clamp 兜住了
+    // 「不会画错」，但状态跨数据集残留）。签名放在分支之前：否则「错误 → 恢复」
+    // 这条路径根本走不到归零代码
+    size_t scrollKey = sharedConfigsError.empty() ? 0u : 1u;
+    for (const auto& sc : sharedConfigs) {
+        scrollKey = scrollKey * 1315423911u +
+                    std::hash<std::string>{}(sc.name) +
+                    static_cast<size_t>(sc.id);
+    }
+    if (st.sharedScrollKey_ != scrollKey) {
+        st.sharedScrollKey_ = scrollKey;
+        st.sharedScrollOffset_ = 0.0f;
+    }
     if (!sharedConfigsError.empty()) {
         ui.text("claude.shared.error")
-            .position(0.0f, cy).size(width, kSharedInfoH)
+            .position(0.0f, contentTop).size(width, kSharedInfoH)
             .text("共享配置片段加载失败：" + sharedConfigsError)
             .fontSize(11.0f).lineHeight(kSharedInfoH)
             .color(t.colors.error)
             .build();
-        cy += kSharedInfoH;
     } else if (sharedConfigs.empty()) {
         ui.text("claude.shared.empty")
-            .position(0.0f, cy).size(width, kSharedInfoH)
+            .position(0.0f, contentTop).size(width, kSharedInfoH)
             .text("暂无片段，点击下方新建")
             .fontSize(11.0f).lineHeight(kSharedInfoH)
             .color(t.colors.textTertiary)
             .build();
-        cy += kSharedInfoH;
     } else {
-        // 片段卡片：name + 键数（K 键集大小即「N 个键」）；点击开编辑弹窗
-        for (size_t i = 0; i < sharedConfigs.size(); ++i) {
-            const SharedConfig& sc = sharedConfigs[i];
-            const std::string cid = "claude.shared.card." + std::to_string(i);
-            ui.rect(cid + ".bg")
-                .position(0.0f, cy).size(width, kSharedCardH)
-                .states(t.colors.surface, t.colors.hover, t.colors.active)
-                .radius(t.sizes.radiusLarge)
-                .border(1.0f, t.colors.borderDefault)
-                .onClick([onEdit = actions.requestEditShared, sc] {
-                    onEdit(sc);   // 按值拷贝（sc 引用 compose 局部副本，跨帧悬垂）
-                })
-                .build();
-            ui.text(cid + ".name")
-                .position(16.0f, cy + 8.0f).size(width - 32.0f, 20.0f)
-                .text(sc.name)
-                .fontSize(13.0f).lineHeight(20.0f)
-                .fontWeight(600)
-                .color(t.colors.textPrimary)
-                .build();
-            ui.text(cid + ".keys")
-                .position(16.0f, cy + 32.0f).size(width - 32.0f, 14.0f)
-                .text(std::to_string(sharedFrozenKeys(sc).size()) +
-                      " 个键 · 绑定它的 Profile 冻结这些键")
-                .fontSize(11.0f).lineHeight(14.0f)
-                .color(t.colors.textSecondary)
-                .build();
-            cy += kSharedCardH + kSharedCardGap;
-        }
+        // 片段卡片：name + 键数（K 键集大小即「N 个键」）；点击开编辑弹窗。
+        // 装不下时滚动区生效（块内滚，区块整体仍钉面板底）
+        components::scrollView(ui, "claude.shared.scroll")
+            .position(0.0f, contentTop)
+            .size(width, contentH)
+            .gap(0.0f)
+            .step(kSharedCardH + kSharedCardGap)
+            .theme(themeTokens)
+            // contentKey：片段集变了就重测内容高（沿用 md/settings 口径）
+            .contentKey("claude.shared.scroll." + std::to_string(scrollKey))
+            .offset(st.sharedScrollOffset_)
+            .onChange([sp = &st](float v) { sp->sharedScrollOffset_ = v; })
+            .content([&](eui::Ui& inner, float contentWidth, float viewportHeight) {
+                (void)viewportHeight;
+                for (size_t i = 0; i < sharedConfigs.size(); ++i) {
+                    const SharedConfig& sc = sharedConfigs[i];
+                    const std::string cid =
+                        "claude.shared.card." + std::to_string(i);
+                    // 行容器 = 定高 stack：滚动内容是流式 column（条目按自身
+                    // 高度顺序排，不能靠绝对 y），行距由容器高度多出的
+                    // kSharedCardGap 提供
+                    inner.stack(cid + ".item")
+                        .size(contentWidth, kSharedCardH + kSharedCardGap)
+                        .content([&] {
+                            inner.rect(cid + ".bg")
+                                .position(0.0f, 0.0f)
+                                .size(contentWidth, kSharedCardH)
+                                .states(t.colors.surface, t.colors.hover,
+                                        t.colors.active)
+                                .radius(t.sizes.radiusLarge)
+                                .border(1.0f, t.colors.borderDefault)
+                                .onClick([onEdit = actions.requestEditShared, sc] {
+                                    onEdit(sc);   // 按值拷贝（sc 引用 compose 局部副本，跨帧悬垂）
+                                })
+                                .build();
+                            inner.text(cid + ".name")
+                                .position(16.0f, 8.0f)
+                                .size(contentWidth - 32.0f, 20.0f)
+                                .text(sc.name)
+                                .fontSize(13.0f).lineHeight(20.0f)
+                                .fontWeight(600)
+                                .color(t.colors.textPrimary)
+                                .build();
+                            inner.text(cid + ".keys")
+                                .position(16.0f, 32.0f)
+                                .size(contentWidth - 32.0f, 14.0f)
+                                .text(std::to_string(sharedFrozenKeys(sc).size()) +
+                                      " 个键 · 绑定它的 Profile 冻结这些键")
+                                .fontSize(11.0f).lineHeight(14.0f)
+                                .color(t.colors.textSecondary)
+                                .build();
+                        })
+                        .build();
+                }
+            })
+            .build();
     }
+
+    // 「+ 新建片段」= 区块的**固定尾部**（贴区块底 = 贴面板内容底）：片段再多
+    // 也压不住它（块内滚吃掉了多出来的高度）
     components::button(ui, "claude.shared.new")
-        .position(0.0f, cy + kSharedBtnTopGap)
+        .position(0.0f, blockH - kSharedBtnH)
         .size(width, kSharedBtnH)
         .text("+ 新建片段")
         .fontSize(t.sizes.fontSizeSmall)
@@ -617,7 +747,6 @@ float drawSharedConfigBlock(eui::Ui& ui, float y, float width,
         .border(1.0f, t.colors.borderDefault)
         .onClick([onNew = actions.onNewShared] { onNew(); })
         .build();
-    return cy + kSharedBtnTopGap + kSharedBtnH;
 }
 
 // profile 列表右键菜单（UI 现代化 §3.4 / M1-5）：
