@@ -13,6 +13,7 @@
 #include "core/input/input_types.h"
 #include "core/module_interface.h"
 #include "core/sqlite_db.h"
+#include "core/theme.h"
 #include "core/time.h"
 #include "platform/http_server.h"
 #include "platform/keychain.h"
@@ -4162,10 +4163,13 @@ REGISTER_TEST(claude_profile_active_badge_centered,
     return true;
 })
 
-// ---- 组 B P3：环境变量页签列全部生效 env + 每键来源 ----
+// ---- 组 B P3：环境变量页签列生效 env + 每键来源（2026-09-30 E1 起模型键除外）----
 // 用户读到「只显示 1 条」的真相：该页此前只列 profile 自身的 extra_env。
+// E1（2026-09-30）：模型映射域的键不再在本页展示（「模型映射」页签已列）——
+// 托管写入的 ANTHROPIC_MODEL 与用户手写在 extra_env 的
+// ANTHROPIC_DEFAULT_OPUS_MODEL 都按键名过滤（不按来源）。
 REGISTER_TEST(claude_env_tab_lists_effective_env_with_source,
-              "claude_module: 环境变量页签列全部生效 env + 来源标注", {
+              "claude_module: 环境变量页签列生效 env（模型键除外）+ 来源标注", {
     TestEnv env;
     auto sc = env.svc->createSharedConfig("片段Z", R"({"MY_SHARED":"s"})");
     DOCTEST_REQUIRE(sc.isOk());
@@ -4176,7 +4180,9 @@ REGISTER_TEST(claude_env_tab_lists_effective_env_with_source,
     DOCTEST_REQUIRE(env.svc->setActiveProfile(pid).isOk());
     auto g = env.svc->getProfile(pid);
     DOCTEST_REQUIRE(g.isOk());
-    g.value().extraEnvJson = R"({"MY_PROFILE":"p"})";
+    // 手写的模型键（extra_env 途径）也必须被滤 —— 证明过滤按键名而非按来源
+    g.value().extraEnvJson =
+        R"({"MY_PROFILE":"p","ANTHROPIC_DEFAULT_OPUS_MODEL":"m-user-opus"})";
     g.value().sharedConfigId = sc.value().id;   // 片段带 1 个键
     DOCTEST_REQUIRE(env.svc->updateProfile(g.value()).isOk());
 
@@ -4198,15 +4204,128 @@ REGISTER_TEST(claude_env_tab_lists_effective_env_with_source,
         DOCTEST_REQUIRE(s != nullptr);   // 每行都必须有来源标注
         srcOf[k->text] = s->text;
     }
-    // 三类来源都出现：托管键（BASE_URL / 占位 token / 模型槽位）、
-    // profile 自身 extra_env、所绑片段
+    // 模型映射键（槽位派生的 envKey / *_NAME）不出现在本页：托管写入的
+    // ANTHROPIC_MODEL（legacy model → def 槽位）与手写的 OPUS 键都被滤
+    DOCTEST_CHECK_EQ(srcOf.count("ANTHROPIC_MODEL"), 0u);
+    DOCTEST_CHECK_EQ(srcOf.count("ANTHROPIC_DEFAULT_OPUS_MODEL"), 0u);
+    // 非模型键照常列：托管连接键、profile 自身 extra_env、所绑片段
     DOCTEST_REQUIRE(srcOf.count("ANTHROPIC_BASE_URL") == 1);
     DOCTEST_CHECK_EQ(srcOf["ANTHROPIC_BASE_URL"], std::string("托管键"));
-    DOCTEST_CHECK_EQ(srcOf["ANTHROPIC_MODEL"], std::string("托管键"));
+    DOCTEST_CHECK_EQ(srcOf["ANTHROPIC_AUTH_TOKEN"], std::string("托管键"));
     DOCTEST_REQUIRE(srcOf.count("MY_PROFILE") == 1);
     DOCTEST_CHECK_EQ(srcOf["MY_PROFILE"], std::string("本 Profile"));
     DOCTEST_REQUIRE(srcOf.count("MY_SHARED") == 1);
     DOCTEST_CHECK(srcOf["MY_SHARED"].find("片段") == 0);
+
+    mod->onStop();
+    cleanupProfileKey(kTestKeychainService, pid);
+    return true;
+})
+
+// ---- 2026-09-30 E1/E2 几何断言：模型键不渲染 + 行几何不重叠（130% 缩放档）----
+// 用户真机根因：全局字号缩放（用户机 130%）放大字号而行盒按 100% 写死 → 墨迹
+// 越盒叠印；旧实现值框还跨整卡垂直居中，与行带 2 的来源/说明文本叠印。断言：
+//   ① 行卡 y 区间两两不重叠（行距 ≥ 行卡高）
+//   ② 行内「键/值」带与「来源/说明」带 y 区间不重叠
+//   ③ 渲染项里没有任何模型映射键（含 legacy model 派生的 ANTHROPIC_MODEL 与
+//      用户手写的槽位键；键集与实现同源自 provider_config 槽位表）
+// 缩放守卫：fontScale 是进程级全局状态，RAII 还原（fail-fast 框架 REQUIRE
+// 会直接 return，尾部手动还原会漏）。
+REGISTER_TEST(claude_env_tab_no_overlap_and_model_keys_hidden,
+              "claude_module: env 页签行几何不重叠 + 模型键不渲染（含 130% 档）", {
+    TestEnv env;
+    auto p = env.svc->createProfile("几何env", "https://geo.example.com",
+                                    "sk-ant-geo-00001", "m-geo-model");
+    DOCTEST_REQUIRE(p.isOk());
+    const int64_t pid = p.value().id;
+    DOCTEST_REQUIRE(env.svc->setActiveProfile(pid).isOk());
+    auto g = env.svc->getProfile(pid);
+    DOCTEST_REQUIRE(g.isOk());
+    g.value().extraEnvJson =
+        R"({"MY_GEO":"v","ANTHROPIC_DEFAULT_HAIKU_MODEL":"m-user-h"})";
+    DOCTEST_REQUIRE(env.svc->updateProfile(g.value()).isOk());
+
+    std::unique_ptr<::core::Module> mod(create_claude_module());
+    mod->onStart();
+
+    const auto isModelKey = [](const std::string& key) {
+        for (const auto& meta : module::claude::modelSlotTable()) {
+            if (key == meta.envKey) return true;
+            if (meta.nameKey != nullptr && key == meta.nameKey) return true;
+        }
+        return false;
+    };
+    // 判据 helper：对一帧已 layout 的 Ui 逐行断言（返回空串 = 通过；本框架
+    // 断言宏展开含 return false，只能写在用例体里）
+    const auto paneProblem = [&](eui::Ui& ui) -> std::string {
+        const core::dsl::Element* prevBg = nullptr;
+        int rows = 0;
+        for (int i = 0; i < 64; ++i) {
+            const std::string n = std::to_string(i);
+            const auto* k = ui.find("claude.env.key." + n);
+            if (k == nullptr) break;
+            const auto* val = ui.find("claude.env.val." + n);
+            const auto* src = ui.find("claude.env.src." + n);
+            const auto* hint = ui.find("claude.env.hint." + n);
+            const auto* bg = ui.find("claude.env.row.bg." + n);
+            if (val == nullptr || src == nullptr || hint == nullptr ||
+                bg == nullptr) {
+                return "行 " + n + " 缺 val/src/hint/bg 之一";
+            }
+            // ① 行卡 y 区间不重叠（与上一行比；行距 ≥ 行卡高 ⇒ 全列成立）
+            if (prevBg != nullptr) {
+                const float prevBottom =
+                    prevBg->frame.y + prevBg->frame.height;
+                if (prevBottom > bg->frame.y + 0.01f) {
+                    return "行 " + n + " 行卡叠印（上一行底 " +
+                           std::to_string(prevBottom) + " > 本行顶 " +
+                           std::to_string(bg->frame.y) + "）";
+                }
+            }
+            // ② 行带 1（键/值）与行带 2（来源/说明）y 区间不重叠
+            const float band1Bottom =
+                std::max(k->frame.y + k->frame.height,
+                         val->frame.y + val->frame.height);
+            const float band2Top = std::min(src->frame.y, hint->frame.y);
+            if (band1Bottom > band2Top + 0.01f) {
+                return "行 " + n + " 带叠印（带1底 " +
+                       std::to_string(band1Bottom) + " > 带2顶 " +
+                       std::to_string(band2Top) + "）";
+            }
+            // ③ 模型映射键不得渲染
+            if (isModelKey(k->text)) {
+                return "模型键泄漏到 env 页签: " + k->text;
+            }
+            prevBg = bg;
+            ++rows;
+        }
+        if (rows == 0) return "env 页签一行都没画";
+        return {};
+    };
+
+    // 100% 档（进程默认）：先点开「环境变量」页签再断言
+    eui::Ui ui1;
+    composeAtSize(mod.get(), ui1, "claude_env", 1262.0f, 801.0f);
+    DOCTEST_REQUIRE(clickById(ui1, "claude.detail.tabs.hit.2"));
+    eui::Ui ui2;
+    composeAtSize(mod.get(), ui2, "claude_env", 1262.0f, 801.0f);
+    const std::string p100 = paneProblem(ui2);
+    DOCTEST_CHECK_MESSAGE(p100.empty(), p100);
+
+    // 130% 档（用户机档位，真机根因复现）：fontScale 重建 token 后重新 compose，
+    // 几何断言必须原样成立（行盒随字号派生，不写死 100% 像素）
+    struct FontScaleGuard {
+        float prev;
+        explicit FontScaleGuard(float s)
+            : prev(::core::theme::fontScale()) {
+            ::core::theme::setFontScale(s);
+        }
+        ~FontScaleGuard() { ::core::theme::setFontScale(prev); }
+    } guard{1.3f};
+    eui::Ui ui3;
+    composeAtSize(mod.get(), ui3, "claude_env", 1262.0f, 801.0f);
+    const std::string p130 = paneProblem(ui3);
+    DOCTEST_CHECK_MESSAGE(p130.empty(), p130);
 
     mod->onStop();
     cleanupProfileKey(kTestKeychainService, pid);
