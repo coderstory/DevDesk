@@ -593,6 +593,14 @@ const DslAppConfig& dslAppConfig() {
         // 右键 = styled 菜单；回调主线程触发、运行期 Router 已就绪
         .tray(true)
         .trayTitle("DevDesk")
+        // Bug A（2026-09-30）修：不传 trayIcon 时 EUI-NEO 兜底用应用图标
+        //（tray_bridge.c eui_tray_image → NSImageNameApplicationIcon）并无条件
+        // setTemplate:YES —— 模板渲染只取 alpha 蒙版，圆角方形应用图标退化成
+        // 纯色实心方块。这里传专用 template 蒙版小图（纯黑 + alpha，22×22）。
+        // 相对路径经 EUI-NEO resolveIconPath 的候选链解析：build 目录启动命中
+        // CWD/assets/，.app bundle 启动命中 exeDir/assets/（build-app.sh 把
+        // <build>/assets 整树拷到 Contents/MacOS/assets），两种场景都覆盖。
+        .trayIcon("assets/tray-icon-template.png")
         .trayMenu(nativeTrayMenuItems(), false)
         .onTrayMenu([](int x, int y, bool leftButton) {
             if (leftButton) {
