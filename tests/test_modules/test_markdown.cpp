@@ -466,10 +466,7 @@ REGISTER_TEST(md_module_compose_phase1, "markdown_module: Phase 1 三态/大纲/
     DOCTEST_CHECK(ui.find("md.outline.panel") == nullptr);
 
     // Ctrl+Shift+P 四态循环：Edit（默认）→ Live → Split → Preview → Edit
-    eui::KeyEvent p;
-    p.key = eui::InputKey::P;
-    p.modifiers.control = true;
-    p.modifiers.shift = true;
+    eui::KeyEvent p = test_support::pressShortcut(eui::InputKey::P, /*shift=*/true);
     DOCTEST_CHECK(mod->onKeyEvent(p));   // → Live（M1 新增第四态）
     frame("f3c");
     DOCTEST_CHECK(ui.find("md.live.scroll") != nullptr);
@@ -971,10 +968,7 @@ REGISTER_TEST(md_module_split_layout, "markdown_module: W9 双栏三列铺满 co
     fileRow->onClick();
 
     // 进双栏态（默认态会随版本演进，最多循环 3 次一定经过 Split）
-    eui::KeyEvent p;
-    p.key = eui::InputKey::P;
-    p.modifiers.control = true;
-    p.modifiers.shift = true;
+    eui::KeyEvent p = test_support::pressShortcut(eui::InputKey::P, /*shift=*/true);
     bool split = false;
     for (int i = 0; i < 3 && !split; ++i) {
         frame("sp");
@@ -1770,11 +1764,11 @@ REGISTER_TEST(md_module_ctrl_n_new_note,
         ui.end();
     };
 
-    // 1) Ctrl+N（isDown + control，无 shift/alt）→ 模块消费、弹窗打开
+    // 1) Ctrl+N（isDown + 快捷键修饰位，无 shift/alt）→ 模块消费、弹窗打开
     frame("cn1");
     eui::KeyEvent cn;
     cn.key = eui::InputKey::N;
-    cn.modifiers.control = true;
+    test_support::setShortcutModifier(cn.modifiers);
     DOCTEST_CHECK(mod->onKeyEvent(cn));
     frame("cn2");
     const auto* panel = ui.find("md.dialog.new.panel");
@@ -1805,7 +1799,7 @@ REGISTER_TEST(md_module_ctrl_n_new_note,
     // 4) Ctrl+Shift+N 不触发（显式排除 shift 组合，留给「无痕新窗口」类语义）
     eui::KeyEvent csn;
     csn.key = eui::InputKey::N;
-    csn.modifiers.control = true;
+    test_support::setShortcutModifier(csn.modifiers);
     csn.modifiers.shift = true;
     DOCTEST_CHECK_FALSE(mod->onKeyEvent(csn));
     frame("cn6");
@@ -2093,10 +2087,7 @@ REGISTER_TEST(md_module_split_scroll_cache_equivalence,
     DOCTEST_REQUIRE(fileRow != nullptr);
     DOCTEST_REQUIRE(fileRow->onClick != nullptr);
     fileRow->onClick();
-    eui::KeyEvent p;
-    p.key = eui::InputKey::P;
-    p.modifiers.control = true;
-    p.modifiers.shift = true;
+    eui::KeyEvent p = test_support::pressShortcut(eui::InputKey::P, /*shift=*/true);
     DOCTEST_CHECK(mod->onKeyEvent(p));   // → 实时（M1 第四态）
     DOCTEST_CHECK(mod->onKeyEvent(p));   // → 双栏
     frame();
@@ -2219,10 +2210,7 @@ REGISTER_TEST(md_module_split_block_anchor_precision,
     DOCTEST_REQUIRE(fileRow != nullptr);
     DOCTEST_REQUIRE(fileRow->onClick != nullptr);
     fileRow->onClick();
-    eui::KeyEvent p;
-    p.key = eui::InputKey::P;
-    p.modifiers.control = true;
-    p.modifiers.shift = true;
+    eui::KeyEvent p = test_support::pressShortcut(eui::InputKey::P, /*shift=*/true);
     DOCTEST_CHECK(mod->onKeyEvent(p));   // → 实时（M1 第四态）
     DOCTEST_CHECK(mod->onKeyEvent(p));   // → 双栏
     frame();
@@ -2405,10 +2393,7 @@ REGISTER_TEST(md_module_split_block_click_hover,
     DOCTEST_REQUIRE(fileRow != nullptr);
     DOCTEST_REQUIRE(fileRow->onClick != nullptr);
     fileRow->onClick();
-    eui::KeyEvent p;
-    p.key = eui::InputKey::P;
-    p.modifiers.control = true;
-    p.modifiers.shift = true;
+    eui::KeyEvent p = test_support::pressShortcut(eui::InputKey::P, /*shift=*/true);
     mod->onKeyEvent(p);  // Editor → 实时（M1 第四态）
     mod->onKeyEvent(p);  // → Split（④ 同款通道）
     frame();
@@ -2625,10 +2610,7 @@ REGISTER_TEST(md_editor_focus_target_is_hit,
 
     // 进双栏态（预览块点击是双栏/预览通路）：循环推进，不依赖「按几次」
     //（默认态与态序随版本演进，见 md_module_split_layout 同款写法）
-    eui::KeyEvent p;
-    p.key = eui::InputKey::P;
-    p.modifiers.control = true;
-    p.modifiers.shift = true;
+    eui::KeyEvent p = test_support::pressShortcut(eui::InputKey::P, /*shift=*/true);
     auto inSplit = [&] {
         return env2.ui->find(kEditorInputId) != nullptr &&
                env2.ui->find("md.preview.blk.0.hit") != nullptr;
@@ -2714,10 +2696,7 @@ REGISTER_TEST(md_module_live_mode_skeleton,
     DOCTEST_CHECK_EQ(ui.find("md.mode.label.2")->text, std::string("双栏"));
     DOCTEST_CHECK_EQ(ui.find("md.mode.label.3")->text, std::string("预览"));
 
-    eui::KeyEvent p;
-    p.key = eui::InputKey::P;
-    p.modifiers.control = true;
-    p.modifiers.shift = true;
+    eui::KeyEvent p = test_support::pressShortcut(eui::InputKey::P, /*shift=*/true);
 
     // → 实时（第四态）：单栏块级渲染；无 input，也不出现预览列
     DOCTEST_CHECK(mod->onKeyEvent(p));
@@ -2854,10 +2833,7 @@ bool openFirstNote(eui::Ui& ui) {
 
 // Ctrl+Shift+P（四态循环推进一次）
 bool cycleMode(::core::Module* mod) {
-    eui::KeyEvent p;
-    p.key = eui::InputKey::P;
-    p.modifiers.control = true;
-    p.modifiers.shift = true;
+    eui::KeyEvent p = test_support::pressShortcut(eui::InputKey::P, /*shift=*/true);
     return mod->onKeyEvent(p);
 }
 
@@ -4160,16 +4136,17 @@ std::string escapeCr(const std::string& s) {
     return out;
 }
 
-// 给活动 input 派发一次按键（走 input 组件注册的复合处理器：passthrough → 内置）
+// 给活动 input 派发一次按键（走 input 组件注册的复合处理器：passthrough → 内置）；
+// 第 4 参是**快捷键修饰位**而非"Ctrl 位"（macOS 上是 Cmd，见 setShortcutModifier）
 bool pressLiveKey(eui::Ui& ui, eui::InputKey key, bool shift = false,
-                  bool control = false) {
+                  bool shortcut = false) {
     const auto* hit = ui.find("md.live.input.hit");
     if (hit == nullptr || !hit->onKeyEvent) return false;
     eui::KeyEvent ev;
     ev.key = key;
     ev.action = eui::KeyAction::Press;
     ev.modifiers.shift = shift;
-    ev.modifiers.control = control;
+    test_support::setShortcutModifier(ev.modifiers, shortcut);
     return hit->onKeyEvent(ev);
 }
 
@@ -6393,7 +6370,7 @@ REGISTER_TEST(md_module_live_ctrl_s_save,
     // Ctrl+S → 立即落盘 + 状态栏 ✓ 已保存
     eui::KeyEvent cs;
     cs.key = eui::InputKey::S;
-    cs.modifiers.control = true;
+    test_support::setShortcutModifier(cs.modifiers);
     DOCTEST_CHECK(mod->onKeyEvent(cs));
     DOCTEST_REQUIRE(readFileBytes(env.dir / "s.md", &disk));
     DOCTEST_CHECK_EQ(disk, std::string("hello\nworld"));
@@ -6403,7 +6380,7 @@ REGISTER_TEST(md_module_live_ctrl_s_save,
     // Ctrl+Shift+S 不消费（不是 Ctrl+S）
     eui::KeyEvent css;
     css.key = eui::InputKey::S;
-    css.modifiers.control = true;
+    test_support::setShortcutModifier(css.modifiers);
     css.modifiers.shift = true;
     DOCTEST_CHECK_FALSE(mod->onKeyEvent(css));
 

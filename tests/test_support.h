@@ -43,6 +43,10 @@
 #include "core/database.h" // TestDb / TestEnv / MdHeadlessEnv
 #include "core/router.h"   // ScopedAppRouter
 #include "platform/keychain.h" // cleanupProfileKey
+// 键盘事件类型（KeyEvent / KeyModifiers / InputKey）——注意此 "core/" 是 **EUI-NEO**
+// 的 core 目录（EUI-NEO 的命名空间也叫 core，与本仓库 src/core 合并同名），
+// 路径写法与 test_claude_ui.cpp 同款。仅供第 8 节快捷键修饰键 helper 使用。
+#include "core/input/input_types.h"
 
 #include <cctype>
 #include <cstdint>
@@ -497,6 +501,55 @@ inline int countCI(const HeaderMap& h, const std::string& lowerKey) {
         if (k == lowerKey) ++n;
     }
     return n;
+}
+
+// ==================== 8) 快捷键修饰键（与实现同源，2026-09-29）====================
+// 背景：快捷键的「修饰位」是**平台相关**的 —— EUI-NEO core/input/input_types.h 的
+// KeyModifiers::shortcut() 在 __APPLE__ 下读 super（Cmd）、其余平台读 control。
+// 用例构造「快捷键按下」事件时若写死 modifiers.control = true，macOS 上模块/组件
+// 读到的 shortcut() 恒为 false → 所有 Ctrl 类快捷键用例在 macOS 上永远不触发
+// （2026-09-29 实测：全量 64 条失败里 61 条出自这一条）。
+//
+// 做法：**不在这里重写平台分支** —— 测试与实现各写一份 #if defined(__APPLE__)
+// 就是"同一个平台判断存在两份"，上游平台语义一改立刻又漂。改为把 EUI-NEO 的
+// shortcut() 本身当唯一判据：它认哪个位，测试就把哪个位置位。两个单位置探针各问
+// 一次，测试侧零平台宏（全仓平台判断仍只有 EUI-NEO 那一处）。
+//
+// 非 macOS 语义不变（Windows/Linux 路径）：只置 control 时 shortcut() 返 true
+// （其实现就是 `return control`）→ 探针选中 control → 写入的位与改写前的硬编码
+// control = true 完全一致。等价性不靠"我记得 Windows 是 Ctrl"，靠的是读同一函数。
+//
+// 用法：新写用例一律走这两个入口，别再直接碰 modifiers.control / modifiers.super
+// ——散落的 control = true 就是本次全红的病灶。
+inline bool shortcutUsesControl() {
+    core::KeyModifiers probe;
+    probe.control = true;
+    return probe.shortcut();
+}
+
+inline bool shortcutUsesSuper() {
+    core::KeyModifiers probe;
+    probe.super = true;
+    return probe.shortcut();
+}
+
+// 把「该平台的快捷键修饰位」置为 on（其余位不动）。on=false 用于构造负例
+// （裸键 / Release / 非快捷键组合）。
+inline void setShortcutModifier(core::KeyModifiers& mods, bool on = true) {
+    if (shortcutUsesControl()) mods.control = on;
+    if (shortcutUsesSuper()) mods.super = on;
+}
+
+// 快捷键按下事件（key + 平台快捷键修饰位 [+ Shift]）——Ctrl/Cmd+P、
+// Ctrl/Cmd+Shift+P 一族的构造口。原样对应各用例里手写的
+// `p.key = P; p.modifiers.control = true; p.modifiers.shift = true;`
+inline core::KeyEvent pressShortcut(core::InputKey key, bool shift = false) {
+    core::KeyEvent e;
+    e.key = key;
+    e.action = core::KeyAction::Press;
+    setShortcutModifier(e.modifiers, true);
+    e.modifiers.shift = shift;
+    return e;
 }
 
 } // namespace test_support

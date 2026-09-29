@@ -1572,11 +1572,12 @@ REGISTER_TEST(claude_module_keyboard_shortcuts,
         mod->compose(ui, screen);
         ui.end();
     };
+    // 快捷键修饰位按平台取（macOS = Cmd，其余 = Ctrl；见 setShortcutModifier）
     auto ctrlPress = [](eui::InputKey k) {
         eui::KeyEvent e;
         e.key = k;
         e.action = eui::KeyAction::Press;
-        e.modifiers.control = true;
+        test_support::setShortcutModifier(e.modifiers);
         return e;
     };
     auto type = [](eui::Ui& ui, const std::string& nodeId,
@@ -3318,11 +3319,12 @@ REGISTER_TEST(claude_module_shared_esc_chain_and_gating,
         e.action = eui::KeyAction::Press;
         return e;
     };
+    // 快捷键修饰位按平台取（macOS = Cmd，其余 = Ctrl；见 setShortcutModifier）
     auto ctrlN = [] {
         eui::KeyEvent e;
         e.key = eui::InputKey::N;
         e.action = eui::KeyAction::Press;
-        e.modifiers.control = true;
+        test_support::setShortcutModifier(e.modifiers);
         return e;
     };
 

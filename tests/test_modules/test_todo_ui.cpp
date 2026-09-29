@@ -85,12 +85,12 @@ struct Frame {
     }
 };
 
-// 构造 Ctrl+方向 键事件
+// 构造 Ctrl+方向 键事件（修饰位按平台取：macOS = Cmd，其余 = Ctrl）
 eui::KeyEvent ctrlArrow(eui::InputKey key) {
     eui::KeyEvent e;
     e.key = key;
     e.action = eui::KeyAction::Press;
-    e.modifiers.control = true;
+    test_support::setShortcutModifier(e.modifiers);
     return e;
 }
 
@@ -3088,7 +3088,7 @@ REGISTER_TEST(todo_ui_new_column_dialog,
     eui::KeyEvent selectAll;
     selectAll.key = eui::InputKey::A;
     selectAll.action = eui::KeyAction::Press;
-    selectAll.modifiers.control = true;
+    test_support::setShortcutModifier(selectAll.modifiers);
     rhit->onKeyEvent(selectAll);          // 内置 Ctrl+A 全选
     eui::TextInputEvent rtie;
     rtie.text = "列头改名";
@@ -3138,7 +3138,7 @@ REGISTER_TEST(todo_ui_dialog_form_error,
     eui::KeyEvent selectAll;
     selectAll.key = eui::InputKey::A;
     selectAll.action = eui::KeyAction::Press;
-    selectAll.modifiers.control = true;
+    test_support::setShortcutModifier(selectAll.modifiers);
     eui::KeyEvent del;
     del.key = eui::InputKey::Delete;
     del.action = eui::KeyAction::Press;

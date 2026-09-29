@@ -1575,7 +1575,7 @@ REGISTER_TEST(settings_port_esc_discards_draft,
     eui::KeyEvent selectAll;
     selectAll.key = eui::InputKey::A;
     selectAll.action = eui::KeyAction::Press;
-    selectAll.modifiers.control = true;
+    test_support::setShortcutModifier(selectAll.modifiers);
     input->onKeyEvent(selectAll);
     eui::TextInputEvent t;
     t.text = "9999";
@@ -1631,11 +1631,12 @@ REGISTER_TEST(settings_ctrl_s_save_shortcut,
         mod->compose(ui, screen);
         ui.end();
     };
+    // Ctrl+S（修饰位按平台取：macOS = Cmd，其余 = Ctrl；见 setShortcutModifier）
     auto ctrlS = [](eui::KeyAction action) {
         eui::KeyEvent e;
         e.key = eui::InputKey::S;
         e.action = action;
-        e.modifiers.control = true;
+        test_support::setShortcutModifier(e.modifiers);
         return e;
     };
 
@@ -1679,7 +1680,7 @@ REGISTER_TEST(settings_ctrl_s_save_shortcut,
         eui::KeyEvent selectAll;
         selectAll.key = eui::InputKey::A;
         selectAll.action = eui::KeyAction::Press;
-        selectAll.modifiers.control = true;
+        test_support::setShortcutModifier(selectAll.modifiers);
         input->onKeyEvent(selectAll);           // Ctrl+A 全选
         eui::TextInputEvent t;
         t.text = "9001";

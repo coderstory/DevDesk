@@ -449,11 +449,7 @@ REGISTER_TEST(uiModernClaudeProfileCtxMenu,
 
     // Ctrl+Shift+P 切态 → setMode（与顶栏 segmented onChange 同一收口）；
     // 过渡已删，切换即硬切
-    eui::KeyEvent key;
-    key.key = eui::InputKey::P;
-    key.action = eui::KeyAction::Press;
-    key.modifiers.control = true;
-    key.modifiers.shift = true;
+    eui::KeyEvent key = test_support::pressShortcut(eui::InputKey::P, /*shift=*/true);
     DOCTEST_CHECK(mod->onKeyEvent(key));
 
     {
@@ -908,11 +904,7 @@ REGISTER_TEST(uiModernMdPreviewGradient,
         }
         std::unique_ptr<::core::Module> mod(create_markdown_module());
         mod->onStart();
-        eui::KeyEvent p;
-        p.key = eui::InputKey::P;
-        p.action = eui::KeyAction::Press;
-        p.modifiers.control = true;
-        p.modifiers.shift = true;
+        eui::KeyEvent p = test_support::pressShortcut(eui::InputKey::P, /*shift=*/true);
         DOCTEST_CHECK(mod->onKeyEvent(p));  // → 实时
         DOCTEST_CHECK(mod->onKeyEvent(p));  // → 双栏
         eui::Ui ui;
