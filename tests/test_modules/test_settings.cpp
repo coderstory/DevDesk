@@ -1913,12 +1913,32 @@ REGISTER_TEST(settings_editor_font_dropdown_applies_channel,
 // 除，卡渲染测试随之删除）；settings_config.cpp 的 about* 函数暂留死代码
 //（D-02 明确不属该需求范围），以下纯函数测试保留防宏注入回归 ----
 
+// 版本断言与真值同源的前提：本 TU 必须拿到与 devdesk_module_settings **同一**
+// PROJECT_VERSION 注入的 DEVDESK_VERSION 宏（tests/CMakeLists.txt 的
+// target_compile_definitions）。缺了就是编译期硬失败，不让下方断言悄悄退化成
+// 「只查应用名」的假绿。
+#ifndef DEVDESK_VERSION
+#error "devdesk_tests 缺 DEVDESK_VERSION 宏注入（见 tests/CMakeLists.txt）"
+#endif
+
 REGISTER_TEST(settings_about_text_helpers,
               "settings: aboutVersionLine/aboutEuiNeoLine 纯函数（spec缩水 C）", {
+    // 2026-09-29 修硬编码版本断言：原写法 DOCTEST_CHECK(v.find("DevDesk 0.1.")
+    // != npos) 把版本号写死成写用例当时的 VERSION，真值涨到 0.7.x 后恒红
+    // （且无法再反映真值）。现在期望版本段取自 DEVDESK_VERSION 宏——与
+    // settings_config.cpp 构造 aboutVersionLine() 用的是同一个宏、同一个
+    // PROJECT_VERSION 来源，VERSION 文件变则两边同步变。
+    const std::string expectPrefix = std::string("DevDesk ") + DEVDESK_VERSION;
     const std::string v = module::settings::aboutVersionLine();
-    DOCTEST_CHECK(v.find("DevDesk 0.1.") != std::string::npos);
-    // 宏缺失回退分支不可能在本 target 命中；有值即可（构建戳/类型非空）
-    DOCTEST_CHECK(v.find("dev") == std::string::npos);  // VERSION 注入生效
+    DOCTEST_CHECK_MESSAGE(v.rfind(expectPrefix, 0) == 0,
+                          "actual=[" + v + "] expected_prefix=[" + expectPrefix + "]");
+    // 格式不变式（不依赖具体版本值）：
+    // "DevDesk <版本> · <构建类型> · 构建 <日期> <时刻>"
+    DOCTEST_CHECK(v.rfind(expectPrefix + " · ", 0) == 0);
+    DOCTEST_CHECK(v.find(" · 构建 ") != std::string::npos);
+    // 原 v.find("dev") == npos 只是「宏注入生效」的启发式，且会被 "0.8.0-dev"
+    // 这类合法版本误伤；前缀比对已直接证明注入生效（回退分支产出
+    // "DevDesk dev · …" 即红），故删。
     const std::string e = module::settings::aboutEuiNeoLine();
     DOCTEST_CHECK(e.find("EUI-NEO rev") != std::string::npos);
     // 最低依赖 rev 恒打印（顶层 CMake 变量）
