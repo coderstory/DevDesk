@@ -269,7 +269,15 @@ public:
         // core::window_layout，本机 805）
         constexpr float kAboutContentW = 1040.0f;
         const float x = std::max(0.0f, (screen.width - kAboutContentW) / 2.0f);
-        const float cardGap = 8.0f;
+        constexpr float cardGap = 8.0f;
+        // 单张卡高（两卡同构：上留白 16 + 标题行 28 + 6 行 × 24 + 下留白 16 = 204）。
+        // 提到内容块起点之前算：贴底起点要按内容块总高反推（见下）
+        constexpr float cardH = 16.0f + 28.0f + 6.0f * 24.0f + 16.0f;
+        // hero 图标 → 标题的 8 与标题行高 40：沿用既有字面量（非间距语义，
+        // 不取自 spacing token），提为常量只为把内容块总高写成一项可复核的算式
+        constexpr float heroGap = 8.0f;
+        constexpr float heroTitleH = 40.0f;
+        constexpr float footerH = 20.0f;
 
         // ========== hero 段（居中；图标 + 标题两件）==========
         // 顶部留白 = 两档间距 token 叠加（XXLarge 40 + XLarge 24 = 64）：草图
@@ -278,7 +286,6 @@ public:
         // 该留白约束的是「页面顶边 → hero 起点」（hero 起笔仍是 56px 大图标），
         // 与 hero 内部有几行正文无关——维持 64 不变
         const float topPad = t.sizes.spacingXXLarge + t.sizes.spacingXLarge;
-        float y = topPad;
         // hero 图标 48→56（= XXLarge 40 + Large 16，同属 token 叠加）：用户要
         // 「hero 更有存在感」，但字号受规范约束（页面标题 32 / 正文 15，见
         // CLAUDE.md「视觉规范」）不可动——空间感由加宽 + 顶部留白承担；图标是
@@ -286,6 +293,23 @@ public:
         // 不再往上（64 = 2×）的理由：图标盒高 = 字号，em 盒内上下余量更小，
         // 而本机 screencapture 被 TCC 拦、无截图手段验证字形不裁切
         const float heroIcon = t.sizes.spacingXXLarge + t.sizes.spacingLarge;
+        // ========== 内容块贴底对齐（2026-09-29）==========
+        // 用户原话（2026-09-28）：「关于页面的 2 个卡片缩在水平中间和顶部对齐，
+        // 不大气，2026 devdesk 要放底部」——上下堆叠已落地，贴底这一条此前漏做
+        //（真机截图：内容起于 topPad=64、卡底 608，页脚 745，下方一片空白）。
+        // 口径：hero + 两卡的**内容块整体**贴向页脚上方（现代 about 页常见形态），
+        // 页脚仍贴页面底（见文末 footerY 的 max 护栏）。
+        // 起点反推：内容块底边 = 页脚顶 − 一档间距（XLarge），故
+        //   y = 页脚顶 − 间距 − 内容块总高
+        // 内容块总高 = hero 图标 56 + 图标/标题间距 8 + 标题 40 + 标题到卡一档
+        // XLarge 24 + 卡1 204 + 卡距 8 + 卡2 204 = 544（本机 1600×1000 窗口的
+        // 页面高 805 下：页脚顶 745 → 起点 177、卡底 721，距页脚 24px）。
+        // 护栏 max(topPad, …)：本页无滚动，极矮窗下内容块放不进「页脚上方」这块
+        // 高度时退回原来的顶部对齐（此时页脚侧另有 max 护栏，见下，保证不重叠）
+        const float contentH = heroIcon + heroGap + heroTitleH +
+                               t.sizes.spacingXLarge + cardH + cardGap + cardH;
+        const float footerTop = screen.height - t.sizes.spacingXXLarge - footerH;
+        float y = std::max(topPad, footerTop - t.sizes.spacingXLarge - contentH);
         ui.text("about.hero.icon")
             .position(x + (kAboutContentW - heroIcon) / 2.0f, y)
             .size(heroIcon, heroIcon)
@@ -293,13 +317,13 @@ public:
             .fontSize(heroIcon)
             .color(t.colors.primary)
             .build();
-        y += heroIcon + 8.0f;
+        y += heroIcon + heroGap;
         ui.text("about.hero.title")
             .position(x, y)
-            .size(kAboutContentW, 40.0f)
+            .size(kAboutContentW, heroTitleH)
             .text("DevDesk")
             .fontSize(t.sizes.fontSizePage)
-            .lineHeight(40.0f)
+            .lineHeight(heroTitleH)
             .fontWeight(700)
             .color(t.colors.textPrimary)
             .horizontalAlign(eui::HorizontalAlign::Center)
@@ -309,15 +333,14 @@ public:
         // 反馈「卡片里已经有版本号之类的东西」）→ 2026-09-28 删除；标题到
         // 卡片用一档 XLarge(24) 间距（原三行文本流共 78px 的替代，标题与
         // 卡片的分组关系由间距本身表达）
-        y += 40.0f + t.sizes.spacingXLarge;
+        y += heroTitleH + t.sizes.spacingXLarge;
 
         // ========== 卡 1 + 卡 2：上下堆叠（2026-09-28 用户真机反馈；原左右并排）==========
         // 每张卡占满内容区宽 1040（原并排宽 (1040−8)/2 = 516）；两卡各 6 行、
-        // 等高 204（16 + 28 + 6×24 + 16），堆叠总高 204×2 + 卡距 8 = 416。高度
-        // 预算（本页无滚动）：内容底 = 64+56+8+40+24+416 = 608；与页脚不重叠
-        // 要求页面高 H ≥ 608 + 8 + 20 + 40 = 676 —— 最小窗页面高 805（core 层
-        // 按工作区推导，core::window_layout）满足：页脚顶 805−40−20 = 745，
-        // 卡片距页脚余 137px；工作区更大只会更宽松
+        // 等高 cardH=204（16 + 28 + 6×24 + 16），堆叠总高 204×2 + 卡距 8 = 416。
+        // 起始 y 由 contentH 反推（贴底对齐，见上）——不再是固定的顶部起点；
+        // 页脚顶 805−40−20 = 745、卡底 721（最小窗页面高 805 档，core 层按
+        // 工作区推导，core::window_layout），页面更高只会更宽松
         const float cardW = kAboutContentW;
 
         // 卡 1：应用信息（上）
@@ -329,11 +352,10 @@ public:
             {"平台", aboutPlatformLine(), false},
             {"C++ 标准", aboutCppLine(), false},
         };
-        constexpr float infoH = 16.0f + 28.0f + 6.0f * 24.0f + 16.0f;
-        aboutCard(ui, "about.card.app", t, x, y, cardW, infoH,
+        aboutCard(ui, "about.card.app", t, x, y, cardW, cardH,
                   0xF05A /* fa-circle-info */, "应用信息", infoRows, 6);
 
-        // 卡 2：依赖与框架（下，y = y + infoH + cardGap）
+        // 卡 2：依赖与框架（下，y = y + cardH + cardGap）
         const AboutRow depsRows[] = {
             {"GUI 框架", "EUI-NEO (OpenGL)", false},
             {"EUI-NEO", aboutEuiNeoLine(), true},
@@ -342,21 +364,18 @@ public:
             {"TLS", "OpenSSL 3.x (静态链接)", false},
             {"字体", "FreeType + FontAwesome 7", false},
         };
-        constexpr float depsH = 16.0f + 28.0f + 6.0f * 24.0f + 16.0f;
-        aboutCard(ui, "about.card.deps", t, x, y + infoH + cardGap, cardW, depsH,
+        aboutCard(ui, "about.card.deps", t, x, y + cardH + cardGap, cardW, cardH,
                   0xF5FD /* fa-layer-group */, "依赖与框架", depsRows, 6);
 
         // ========== 页脚（贴页面底部）==========
         // 2026-09-28 用户真机反馈：footer 不再跟卡底流式排（原来紧跟卡底，页面
-        // 下方一大片空），改贴页面底部——卡片与页脚之间的空白即呼吸区，随窗口
-        // 高度自然伸缩。底边留白 = 页面 padding token（spacingXXLarge 40，与
-        // 设置页 pad 同口径）。max() 护栏：本页无滚动，极矮窗下 footer 不回退
-        // 到与卡片重叠
-        constexpr float footerH = 20.0f;
-        const float cardsBottom = y + infoH + cardGap + depsH;
-        const float footerY = std::max(
-            cardsBottom + cardGap,
-            screen.height - t.sizes.spacingXXLarge - footerH);
+        // 下方一大片空），改贴页面底部——卡片与页脚之间的空白即呼吸区（2026-09-29
+        // 起被内容块贴底对齐占掉固定一档 XLarge，剩余空白仍随窗口高度伸缩）。
+        // 底边留白 = 页面 padding token（spacingXXLarge 40，与设置页 pad 同口径）。
+        // max() 护栏：本页无滚动，极矮窗下（内容块被 clamp 回 topPad、卡底越过
+        // 页脚顶）footer 不回退到与卡片重叠
+        const float cardsBottom = y + cardH + cardGap + cardH;
+        const float footerY = std::max(cardsBottom + cardGap, footerTop);
         ui.text("about.footer")
             .position(x, footerY)
             .size(kAboutContentW, footerH)

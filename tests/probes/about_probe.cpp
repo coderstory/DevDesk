@@ -6,8 +6,10 @@
 //   3) 浮环动态背景可见度上调（元素 opacity 0.18-0.28）且「真的在动」。
 //
 // 断言口径（真窗口后端 GLFW+OpenGL + 真 Runtime 循环，非无头）：
-//   - 几何：hero 起点 = 顶部留白（64）、三行 id 不存在、卡宽/卡位/footer 底边
-//     数值断言（与 test_ui_modern.cpp:uiAboutLayout 同口径，双保险）；
+//   - 几何：内容块贴底（底边 = 页脚顶 − 一档间距，2026-09-29）、三行 id 不存在、
+//     卡宽/卡位/footer 底边数值断言（与 test_ui_modern.cpp:uiAboutLayout 同口径，
+//     双保险）；卡片几何期望值随窗口高现算 → `--size 1200x640` 顺带覆盖极矮窗
+//     clamp 回 topPad 的分支；
 //   - 浮环：7 个环元素存在、元素 opacity ∈ [0.18, 0.28]（字面量，防调淡回归）；
 //     真帧推进（runtime.updateFrameCallback → compose 挂的 onFrame，每次
 //     callback 置 composeRequested_/paintRequested_，EUI-NEO
@@ -98,10 +100,17 @@ int main(int argc, char* argv[]) {
     constexpr float kContentW = 1040.0f;
     constexpr float kCardGap = 8.0f;
     constexpr float kCardH = 16.0f + 28.0f + 6.0f * 24.0f + 16.0f;  // 204
+    constexpr float kFooterH = 20.0f;
     const float topPad = t.sizes.spacingXXLarge + t.sizes.spacingXLarge;   // 64
     const float iconSize = t.sizes.spacingXXLarge + t.sizes.spacingLarge;  // 56
-    const float cardsTop =
-        topPad + iconSize + 8.0f + 40.0f + t.sizes.spacingXLarge;  // 192
+    const float heroToCards = t.sizes.spacingXLarge;                       // 24
+    // 贴底对齐（2026-09-29）：内容块总高固定 544，起点 = 页脚顶 − 一档间距 − 544
+    //（护栏 topPad：极矮窗退回顶部对齐）
+    const float contentH = iconSize + 8.0f + 40.0f + heroToCards +
+                           kCardH + kCardGap + kCardH;                    // 544
+    const float footerTop = h - t.sizes.spacingXXLarge - kFooterH;
+    const float contentTop = std::max(topPad, footerTop - heroToCards - contentH);
+    const float cardsTop = contentTop + iconSize + 8.0f + 40.0f + heroToCards;
     const float x = std::max(0.0f, (w - kContentW) / 2.0f);
 
     composeFrame();
@@ -112,7 +121,7 @@ int main(int argc, char* argv[]) {
         std::cerr << "about_probe: about.hero.icon 不存在\n";
         passed = false;
     } else {
-        check(near(hero->frame.y, topPad), "hero.frame.y " + frameStr(hero));
+        check(near(hero->frame.y, contentTop), "hero.frame.y " + frameStr(hero));
         check(near(hero->frame.width, iconSize), "hero 图标宽 " + frameStr(hero));
     }
     check(ui != nullptr && ui->find("about.hero.sub") == nullptr,
@@ -122,7 +131,11 @@ int main(int argc, char* argv[]) {
     check(ui != nullptr && ui->find("about.hero.commit") == nullptr,
           "about.hero.commit 应已删除");
 
-    // ---- 2) 卡片上下堆叠 + footer 贴底 ----
+    // ---- 2) 卡片上下堆叠 + 内容块贴底 + footer 贴底 ----
+    // 极矮窗（页脚顶 − 一档间距 − 内容块高 < topPad）走 clamp 分支：起点退回
+    // topPad，此时「内容块底 = 页脚顶 − 间距」与「footer 贴页底」两条都不成立
+    //（footer 被自身 max 护栏压到卡下），断言按分支取
+    const bool clamped = (footerTop - heroToCards - contentH) < topPad;
     const auto* c1 = ui != nullptr ? ui->find("about.card.app") : nullptr;
     const auto* c2 = ui != nullptr ? ui->find("about.card.deps") : nullptr;
     const auto* footer = ui != nullptr ? ui->find("about.footer") : nullptr;
@@ -137,11 +150,24 @@ int main(int argc, char* argv[]) {
         check(near(c1->frame.y, cardsTop), "card.app.y " + frameStr(c1));
         check(near(c2->frame.y, c1->frame.y + c1->frame.height + kCardGap),
               "card.deps.y " + frameStr(c2));
-        check(near(footer->frame.y + footer->frame.height,
-                   h - t.sizes.spacingXXLarge),
-              "footer 底边 " + frameStr(footer));
-        check(footer->frame.y > c2->frame.y + c2->frame.height,
-              "footer 应在卡下 " + frameStr(footer));
+        if (clamped) {
+            // 护栏分支：起点 = topPad（无 max() 时会是负值），卡与页脚不重叠
+            check(near(hero == nullptr ? -1.0f : hero->frame.y, topPad),
+                  "clamp 分支 hero.frame.y " +
+                      (hero != nullptr ? frameStr(hero) : std::string("null")));
+            check(c2->frame.y + c2->frame.height + kCardGap <= footer->frame.y,
+                  "clamp 分支卡/页脚重叠 " + frameStr(footer));
+        } else {
+            // 贴底对齐核心：内容块底边 = 页脚顶 − 一档间距（回退成顶部对齐即红）
+            check(near(c2->frame.y + c2->frame.height, footerTop - heroToCards),
+                  "内容块底边 " + std::to_string(c2->frame.y + c2->frame.height) +
+                      " 期望 " + std::to_string(footerTop - heroToCards));
+            check(near(footer->frame.y + footer->frame.height,
+                       h - t.sizes.spacingXXLarge),
+                  "footer 底边 " + frameStr(footer));
+            check(footer->frame.y > c2->frame.y + c2->frame.height,
+                  "footer 应在卡下 " + frameStr(footer));
+        }
     }
 
     // ---- 3) 浮环：存在 / 可见度区间（字面量，防调淡回归）/ 在动 / 休眠 ----

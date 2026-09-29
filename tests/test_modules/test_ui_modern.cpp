@@ -947,7 +947,7 @@ bool nearPx(float a, float b) { return std::abs(a - b) <= 0.5f; }
 }  // namespace
 
 REGISTER_TEST(uiAboutLayout,
-              "about: 内容区 1040 / 顶部留白 64 / 卡片上下堆叠 / footer 贴页面底部（真机反馈）", {
+              "about: 内容区 1040 / 内容块贴底（底边=页脚顶−间距）/ 极矮窗 clamp 回顶部 / footer 贴页面底部（真机反馈）", {
     std::unique_ptr<::core::Module> mod(create_about_module());
     DOCTEST_REQUIRE(mod != nullptr);
     mod->onStart();
@@ -959,10 +959,18 @@ REGISTER_TEST(uiAboutLayout,
     const float topPad = t.sizes.spacingXXLarge + t.sizes.spacingXLarge;   // 64
     const float iconSize = t.sizes.spacingXXLarge + t.sizes.spacingLarge;  // 56
     const float heroToCards = t.sizes.spacingXLarge;                       // 24
-    const float cardsTop = topPad + iconSize + 8.0f + kTitleH + heroToCards;  // 192
-    const float depsTop = cardsTop + kCardH + kCardGap;                       // 404
+    const float footerH = 20.0f;
+    // 内容块总高（hero 图标 + 图标/标题 8 + 标题 40 + 标题到卡一档 XLarge
+    // + 卡1 + 卡距 + 卡2 = 544）与「内容块底边 = 页脚顶 − 一档间距」的贴底口径
+    // （2026-09-29）：起点 = max(topPad, 页脚顶 − heroToCards − contentH)
+    const float contentH = iconSize + 8.0f + kTitleH + heroToCards +
+                           kCardH + kCardGap + kCardH;                    // 544
     eui::Ui ui;
     eui::Screen screen{1600.0f, 1000.0f};
+    const float footerTop = screen.height - t.sizes.spacingXXLarge - footerH;  // 940
+    const float contentTop = std::max(topPad, footerTop - heroToCards - contentH);  // 372
+    const float cardsTop = contentTop + iconSize + 8.0f + kTitleH + heroToCards;    // 500
+    const float depsTop = cardsTop + kCardH + kCardGap;                             // 712
     ui.begin("about_layout");
     mod->compose(ui, screen);
     ui.end();
@@ -979,8 +987,8 @@ REGISTER_TEST(uiAboutLayout,
     {
         const auto* hero = ui.find("about.hero.icon");
         DOCTEST_REQUIRE(hero != nullptr);
-        DOCTEST_CHECK_MESSAGE(nearPx(hero->frame.y, topPad),
-                              px("hero.frame.y", hero));  // 顶部留白
+        DOCTEST_CHECK_MESSAGE(nearPx(hero->frame.y, contentTop),
+                              px("hero.frame.y", hero));  // 内容块起点（贴底对齐）
         DOCTEST_CHECK_MESSAGE(nearPx(hero->frame.width, iconSize),
                               px("hero.frame.width", hero));  // hero 图标尺寸
         // 居中于内容区
@@ -996,7 +1004,7 @@ REGISTER_TEST(uiAboutLayout,
     {
         const auto* title = ui.find("about.hero.title");
         DOCTEST_REQUIRE(title != nullptr);
-        DOCTEST_CHECK_MESSAGE(nearPx(title->frame.y, topPad + iconSize + 8.0f),
+        DOCTEST_CHECK_MESSAGE(nearPx(title->frame.y, contentTop + iconSize + 8.0f),
                               px("hero.title", title));
     }
     const auto* c1 = ui.find("about.card.app");
@@ -1004,7 +1012,8 @@ REGISTER_TEST(uiAboutLayout,
     DOCTEST_REQUIRE(c1 != nullptr);
     DOCTEST_REQUIRE(c2 != nullptr);
     // 卡片上下堆叠（原左右并排 516 宽）：同宽（占满内容区 1040）、同 x、各 204 高；
-    // 卡 1 顶 = hero 标题底 + 一档 XLarge（192），卡 2 隔一档 cardGap 在卡 1 正下方
+    // 卡 1 顶 = 内容块起点 + hero 图标 + 8 + 标题 40 + 一档 XLarge（500），
+    // 卡 2 隔一档 cardGap 在卡 1 正下方
     DOCTEST_CHECK_MESSAGE(nearPx(c1->frame.width, kContentW),
                           px("about.card.app", c1));  // 1040
     DOCTEST_CHECK_MESSAGE(nearPx(c2->frame.width, kContentW),
@@ -1014,6 +1023,12 @@ REGISTER_TEST(uiAboutLayout,
     DOCTEST_CHECK_MESSAGE(nearPx(c2->frame.x, x), px("about.card.deps.x", c2));
     DOCTEST_CHECK_MESSAGE(nearPx(c1->frame.y, cardsTop), px("about.card.app", c1));
     DOCTEST_CHECK_MESSAGE(nearPx(c2->frame.y, depsTop), px("about.card.deps", c2));
+    // 贴底对齐核心断言（2026-09-29）：内容块底边 = 页脚顶 − 一档间距
+    //（hero + 两卡整体贴向页脚上方，而非顶部对齐；回退成 topPad 起点即红）
+    DOCTEST_CHECK_MESSAGE(
+        nearPx(c2->frame.y + c2->frame.height, footerTop - heroToCards),
+        px("about.card.deps 内容块底", c2) + " 期望 " +
+            std::to_string(footerTop - heroToCards));
     {
         const auto* footer = ui.find("about.footer");
         DOCTEST_REQUIRE(footer != nullptr);
@@ -1033,8 +1048,8 @@ REGISTER_TEST(uiAboutLayout,
     }
     // 最小窗复核（2026-09-28 组 A：字面量 845 已失义，改经同一函数推导）：
     // minWindowSizeForWorkArea → {1330, 805} → 页面宽 1330 − 208 = 1122 →
-    // 内容区 1040 不溢出、仍居中；页面高 805 下堆叠卡（底 608）+ 卡距不越
-    // 页脚顶（745）——本页无滚动也放得下
+    // 内容区 1040 不溢出、仍居中；页面高 805 下贴底口径仍成立（页脚顶 745 →
+    // 内容块底 721、起点 177 ≥ topPad 64，不触发 clamp）——本页无滚动也放得下
     {
         const core::window_layout::WindowSize minWin = minWindowForMacWorkArea();
         DOCTEST_CHECK_EQ(minWin.width, 1330);
@@ -1057,6 +1072,13 @@ REGISTER_TEST(uiAboutLayout,
         DOCTEST_REQUIRE(footer != nullptr);
         DOCTEST_CHECK(nearPx(footer->frame.y + footer->frame.height,
                              minScreen.height - t.sizes.spacingXXLarge));
+        // 最小窗（页面高 805）下贴底口径同样成立：内容块底边 = 页脚顶 − 一档间距
+        DOCTEST_CHECK_MESSAGE(
+            nearPx(c->frame.y + c->frame.height,
+                   (minScreen.height - t.sizes.spacingXXLarge - footerH) - heroToCards),
+            px("about.card.deps.min", c) + " 期望底 " +
+                std::to_string(minScreen.height - t.sizes.spacingXXLarge - footerH -
+                               heroToCards));
         // 卡底 + 卡距 ≤ 页脚顶：最小窗高下卡片与页脚不重叠（页脚已贴底）
         DOCTEST_CHECK_MESSAGE(
             nearPx(footer->frame.y, minScreen.height - t.sizes.spacingXXLarge - 20.0f),
@@ -1066,11 +1088,41 @@ REGISTER_TEST(uiAboutLayout,
             px("about.card.deps.min", c) + " 页脚顶 " +
                 std::to_string(footer->frame.y));
     }
-    // 大窗复核（默认窗以上的高页面）：卡片链不随高度拉伸（布局常量链）、
-    // 页脚仍贴底、仍不重叠
+    // 极矮窗复核（2026-09-29 贴底护栏）：内容块 + 一档间距放不进「页脚上方」
+    // 这块高度时，起点 clamp 回 topPad（退回顶部对齐），且卡与页脚不得重叠
+    //（本页无滚动 → 页脚侧的 max 护栏把页脚压到卡下方）
+    {
+        eui::Ui tiny;
+        eui::Screen tinyScreen{1200.0f, 640.0f};  // 页脚顶 580；580−24−544 < 0
+        tiny.begin("about_layout_tiny");
+        mod->compose(tiny, tinyScreen);
+        tiny.end();
+        tiny.layout(tinyScreen.width, tinyScreen.height);
+        const auto* hero = tiny.find("about.hero.icon");
+        const auto* c = tiny.find("about.card.deps");
+        const auto* footer = tiny.find("about.footer");
+        DOCTEST_REQUIRE(hero != nullptr);
+        DOCTEST_REQUIRE(c != nullptr);
+        DOCTEST_REQUIRE(footer != nullptr);
+        // 无护栏时起点会是负数（贴底反推值恒 < topPad）→ 断言 = topPad 即证 clamp
+        DOCTEST_CHECK_MESSAGE(nearPx(hero->frame.y, topPad),
+                              px("hero.frame.y.tiny", hero));
+        DOCTEST_CHECK_MESSAGE(
+            c->frame.y + c->frame.height + kCardGap <= footer->frame.y,
+            px("about.card.deps.tiny", c) + " 页脚顶 " +
+                std::to_string(footer->frame.y));
+    }
+    // 大窗复核（默认窗以上的高页面）：内容块整体贴底（不是顶部对齐、也不随
+    // 高度拉伸），页脚仍贴底、仍不重叠
     {
         eui::Ui big;
         eui::Screen bigScreen{2560.0f, 1520.0f};
+        const float bigFooterTop =
+            bigScreen.height - t.sizes.spacingXXLarge - footerH;      // 1460
+        const float bigContentTop =
+            std::max(topPad, bigFooterTop - heroToCards - contentH);  // 892
+        const float bigDepsTop =
+            bigContentTop + iconSize + 8.0f + kTitleH + heroToCards + kCardH + kCardGap;
         big.begin("about_layout_big");
         mod->compose(big, bigScreen);
         big.end();
@@ -1079,9 +1131,13 @@ REGISTER_TEST(uiAboutLayout,
         const auto* footer = big.find("about.footer");
         DOCTEST_REQUIRE(c != nullptr);
         DOCTEST_REQUIRE(footer != nullptr);
-        DOCTEST_CHECK_MESSAGE(nearPx(c->frame.y, depsTop), px("about.card.deps.big", c));
+        DOCTEST_CHECK_MESSAGE(nearPx(c->frame.y, bigDepsTop), px("about.card.deps.big", c));
         DOCTEST_CHECK_MESSAGE(nearPx(c->frame.x, (bigScreen.width - kContentW) / 2.0f),
                               px("about.card.deps.big", c));
+        DOCTEST_CHECK_MESSAGE(
+            nearPx(c->frame.y + c->frame.height, bigFooterTop - heroToCards),
+            px("about.card.deps.big", c) + " 期望底 " +
+                std::to_string(bigFooterTop - heroToCards));
         DOCTEST_CHECK_MESSAGE(
             nearPx(footer->frame.y + footer->frame.height,
                    bigScreen.height - t.sizes.spacingXXLarge),

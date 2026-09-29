@@ -1928,6 +1928,14 @@ REGISTER_TEST(todo_ui_status_toast_timeout,
     const auto* title = frame.ui.find("todo.toast.title");
     DOCTEST_REQUIRE(title != nullptr);
     DOCTEST_CHECK(title->text.find("先点击卡片选中任务") != std::string::npos);
+    // 正文留空（todo 的 setStatus 只有标题）：空串必须原样落到 .message 节点，
+    // 不得回落 EUI-NEO 组件自带的英文占位正文——2026-09-29 真机截图实锤
+    // 「已调整顺序」toast 正文显示 "Short status message for non-blocking
+    // feedback."（回退 toast.cpp 的空判断即红）
+    const auto* body = frame.ui.find("todo.toast.message");
+    DOCTEST_REQUIRE(body != nullptr);
+    DOCTEST_CHECK(body->text.empty());
+    DOCTEST_CHECK(body->text.find("Short status message") == std::string::npos);
     // subtitle 始终是静态操作说明
     const auto* sub = frame.ui.find("todo.subtitle");
     DOCTEST_REQUIRE(sub != nullptr);
