@@ -92,7 +92,7 @@ FTS5 全文搜索（中文可用）、目录树、标签、大纲面板；编辑
 <h2 align="center"><a name="快速开始"></a>🚀 快速开始</h2>
 
 > [!IMPORTANT]
-> DevDesk 依赖 **[EUI-NEO](https://github.com/sudoevolve/EUI-NEO)**，源码需要放在 DevDesk 的**同级目录**（不是 submodule）：
+> DevDesk 依赖 **[coderstory/EUI-NEO](https://github.com/coderstory/EUI-NEO)**（**修改版 fork**，非上游）—— 源码需要放在 DevDesk 的**同级目录**（不是 submodule）：
 
 ```text
 your-workspace/
@@ -158,20 +158,14 @@ Windows 构建默认静态链接（sqlite3 / curl / ssl / crypto / C++ 运行时
 
 <h2 align="center"><a name="架构"></a>🏗 架构</h2>
 
-```mermaid
-flowchart TD
-    A["main"] --> B["modules<br/>home · markdown · todo · claude_proxy · settings · pet"]
-    B --> C["core<br/>Result · SqliteDb · Router · Theme · Logging"]
-    C --> D["platform<br/>HttpClient · HttpServer · Keychain · Json"]
-    D --> E["EUI-NEO<br/>OpenGL / Vulkan × GLFW / SDL2"]
+<p align="center">
+<img src="docs/architecture.svg" alt="DevDesk 架构：main → modules → core → platform → EUI-NEO" width="760">
+</p>
 
-    style A fill:#D97757,stroke:#D97757,color:#FFFFFF
-    style B fill:#F5F2EC,stroke:#D9D2C7,color:#2B2B2B
-    style C fill:#F5F2EC,stroke:#D9D2C7,color:#2B2B2B
-    style D fill:#F5F2EC,stroke:#D9D2C7,color:#2B2B2B
-    style E fill:#F5F2EC,stroke:#D9D2C7,color:#2B2B2B
-    linkStyle default stroke:#C9C1B5,stroke-width:1.5px
-```
+> [!NOTE]
+> 架构图最底层的 **EUI-NEO 是修改版**：本项目用的是 [`coderstory/EUI-NEO`](https://github.com/coderstory/EUI-NEO) fork（比上游多 90+ 个提交），
+> 修复并在上游基础上补了 DevDesk 依赖的能力 —— 原生标题栏主题联动、窗口材质贯通、`setScrollOffset`、嵌套弹层 z 序逃逸、dropdown `openUp` 等。
+> **直接用上游 `sudoevolve/EUI-NEO` 会编译失败**（缺这些 API）。
 
 <h4 align="center">贯穿全局的几条约定</h4>
 
@@ -216,5 +210,7 @@ flowchart TD
 ---
 
 <div align="center">
-<sub>私有项目，保留所有权利。</sub>
+
+<sub>以 <b>GNU General Public License v2.0</b> 发布 —— 见 <a href="LICENSE">LICENSE</a></sub>
+
 </div>
