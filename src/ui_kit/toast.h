@@ -63,8 +63,12 @@ struct ToastOptions {
 //
 // state 取非 const 引用：绘制的同时注册「自动消失 / 右上 ✕ 关闭」回写状态位的
 // 回调（各模块现状即如此）。
-// 正文为空时不覆盖组件自带默认文案（todo 的 toast 现状即未设正文，迁移后
-// 渲染必须逐字一致）。
+// 正文无条件以 state.body 覆盖组件自带默认值（**含空串**）：EUI-NEO toast 的
+// 默认正文是英文占位串 "Short status message for non-blocking feedback."
+//（components/toast.h 的 message_ 成员初值），只在调用方不调 .message() 时
+// 落回；空正文站点（todo 的 setStatus 只有标题）必须传空串把占位串顶掉，
+// 否则会把它当正文画出来（2026-09-29 真机截图实锤）。空串 → 空文本节点 →
+// 视觉无正文。
 // screen = 所在页面的逻辑尺寸（toast 据此贴右下角）；Ui 不暴露 screen，故由
 // 调用方透传。
 void drawToast(eui::Ui& ui, const eui::Screen& screen, const std::string& id,
