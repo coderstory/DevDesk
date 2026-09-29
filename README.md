@@ -160,35 +160,17 @@ Windows 构建默认静态链接（sqlite3 / curl / ssl / crypto / C++ 运行时
 
 ```mermaid
 flowchart TD
-    main(["main"])
+    A["main"] --> B["modules<br/>home · markdown · todo · claude_proxy · settings · pet"]
+    B --> C["core<br/>Result · SqliteDb · Router · Theme · Logging"]
+    C --> D["platform<br/>HttpClient · HttpServer · Keychain · Json"]
+    D --> E["EUI-NEO<br/>OpenGL / Vulkan × GLFW / SDL2"]
 
-    subgraph modules["modules · 六个独立静态库，互不依赖"]
-        direction LR
-        home["home"]
-        markdown["markdown"]
-        todo["todo"]
-        claude["claude_proxy"]
-        settings["settings"]
-        pet["pet"]
-    end
-
-    core["core · Result / SqliteDb / Router / Theme / Logging"]
-    platform["platform · HttpClient / HttpServer / Keychain / Json"]
-    eui["EUI-NEO · OpenGL / Vulkan × GLFW / SDL2"]
-
-    main --> modules
-    modules --> core
-    core --> platform
-    platform --> eui
-
-    classDef accent fill:#D97757,stroke:#D97757,color:#FFFFFF
-    classDef layer fill:#FAF8F4,stroke:#D9D2C7,color:#2B2B2B
-    classDef mod fill:#F5F2EC,stroke:#D9D2C7,color:#4A4A4A
-
-    class main accent
-    class core,platform,eui layer
-    class home,markdown,todo,claude,settings,pet mod
-    style modules fill:#FFFFFF,stroke:#D9D2C7,stroke-dasharray: 4 4
+    style A fill:#D97757,stroke:#D97757,color:#FFFFFF
+    style B fill:#F5F2EC,stroke:#D9D2C7,color:#2B2B2B
+    style C fill:#F5F2EC,stroke:#D9D2C7,color:#2B2B2B
+    style D fill:#F5F2EC,stroke:#D9D2C7,color:#2B2B2B
+    style E fill:#F5F2EC,stroke:#D9D2C7,color:#2B2B2B
+    linkStyle default stroke:#C9C1B5,stroke-width:1.5px
 ```
 
 <h4 align="center">贯穿全局的几条约定</h4>
