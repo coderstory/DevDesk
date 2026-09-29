@@ -27,6 +27,13 @@
 //   实现：compose lambda 内每帧重挂回调计数器（元素树每帧重建、跨帧
 //   Element* 失效——计数状态放持久 recorder，包装随旧树作废无需还原）。
 //
+// 组 T（树行几何，2026-09-29 真机反馈，本文件已实现）：
+//   目录树 item 文本没垂直居中 + 三角箭头太小。断言（真窗口 layout）：
+//   行内文本元素 frame 中心 y == item 行中心 y（±0.5）、frame.y 无半像素、
+//   挂 VerticalAlign::Center、箭头 fontSize == 18（旧 fontSizeSmall 13）。
+//   证伪门禁：把 name 的 y 改回 (32 - fontSizeSmall)/2 ≈ 9.5 → 中心 25.5 ≠ 16 红；
+//   箭头字号改回 13 → 红。
+//
 // 组 P2/P3（本文件仅框 TODO，未实现）：见文件尾
 //   §TODO-8a（类 8(a) 状态栏窄窗截断，P3）与 §TODO-2c（类 2(c) chip
 //   hover 两截色，P3）。
@@ -349,6 +356,70 @@ int main(int argc, char* argv[]) {
                           << "）\n";
                 passed = false;
             }
+        }
+    }
+
+    // ==================== 组 T：树行几何（真窗口） ====================
+    // 2026-09-29 真机反馈「目录树 item 文本没垂直居中 + 三角箭头太小」：
+    // 在真实窗口后端（GLFW + OpenGL，真实 layout）里复核一遍行内几何。
+    // 本环境笔记目录只有 note.md → 树 = [0] 根目录(夹) [1] note.md(文件)。
+    // 判据（与单测 md_tree_row_geometry 同口径）：
+    //   a. 行内每个文本元素 frame 中心 y == item 行中心 y（±0.5）；
+    //   b. 无半像素（旧 name y=(32-13)/2=9.5 在此红）；
+    //   c. 箭头 fontSize == 18（旧值 fontSizeSmall 13 → 红）+ 挂 VerticalAlign::Center。
+    settleFrames(1);
+    {
+        struct RowProbe { const char* base; bool folder; };
+        const RowProbe rows[] = {{"md.tree.node.0", true}, {"md.tree.node.1", false}};
+        const char* kFolderParts[] = {".arrow", ".ficon", ".name"};
+        const char* kFileParts[] = {".icon", ".name"};
+        for (const RowProbe& rp : rows) {
+            const core::dsl::Element* row =
+                ui != nullptr ? ui->find(std::string(rp.base) + ".row") : nullptr;
+            if (row == nullptr) {
+                std::cerr << "markdown_probes: 树行 " << rp.base
+                          << ".row 缺失——组 T 断言落空\n";
+                passed = false;
+                continue;
+            }
+            const float rowCenterY = row->frame.y + row->frame.height * 0.5f;
+            const char* const* parts = rp.folder ? kFolderParts : kFileParts;
+            const size_t partCount = rp.folder ? 3u : 2u;
+            for (size_t p = 0; p < partCount; ++p) {
+                const std::string partId = std::string(rp.base) + parts[p];
+                const core::dsl::Element* el =
+                    ui != nullptr ? ui->find(partId) : nullptr;
+                if (el == nullptr) {
+                    std::cerr << "markdown_probes: " << partId << " 缺失\n";
+                    passed = false;
+                    continue;
+                }
+                const float centerY = el->frame.y + el->frame.height * 0.5f;
+                if (std::fabs(centerY - rowCenterY) > 0.5f) {
+                    std::cerr << "markdown_probes: 组T FAIL——" << partId
+                              << " frame 中心 y=" << centerY
+                              << " 偏离行中心 y=" << rowCenterY << "\n";
+                    passed = false;
+                }
+                if (std::fabs(el->frame.y - std::round(el->frame.y)) >= 0.001f) {
+                    std::cerr << "markdown_probes: 组T FAIL——" << partId
+                              << " frame.y=" << el->frame.y << " 半像素错位\n";
+                    passed = false;
+                }
+                if (el->verticalAlign != core::VerticalAlign::Center) {
+                    std::cerr << "markdown_probes: 组T FAIL——" << partId
+                              << " 未挂 VerticalAlign::Center（墨迹锚点非 frame 中线）\n";
+                    passed = false;
+                }
+            }
+        }
+        const core::dsl::Element* arrow =
+            ui != nullptr ? ui->find("md.tree.node.0.arrow") : nullptr;
+        if (arrow == nullptr || std::fabs(arrow->fontSize - 18.0f) > 0.01f) {
+            std::cerr << "markdown_probes: 组T FAIL——箭头 fontSize="
+                      << (arrow != nullptr ? arrow->fontSize : -1.0f)
+                      << "（期望 18 = 旧 fontSizeSmall 13 的一档放大）\n";
+            passed = false;
         }
     }
 

@@ -350,7 +350,7 @@ public:
                             .content([&] {
                                 ui.text("home.h1")
                                     .size(std::max(280.0f, contentW - kHeaderActionsW), 40.0f)
-                                    .text("欢迎回到 DevDesk")
+                                    .text("欢迎回来～")
                                     .fontSize(t.sizes.fontSizePage)
                                     .lineHeight(40.0f)
                                     .fontWeight(700)

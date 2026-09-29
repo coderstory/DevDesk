@@ -89,6 +89,16 @@ namespace {
 
 namespace fs = std::filesystem;
 
+// ---- 树行几何常量（2026-09-29 真机反馈：item 文本没垂直居中 + 三角箭头太小）----
+// kTreeRowHeight：目录树每行高度（文件行/文件夹行同高，行内元素 frame 也取它，
+//   使 VerticalAlign::Center 的锚点 = 行中心——见下）
+// kTreeArrowFontSize：▸/▾ 展开箭头字号。旧值 = fontSizeSmall(13)，真机反馈太小；
+//   调大一档 = 13 × 1.385 ≈ 18（落在 1.25~1.4 倍区间内），仍 < 行高 32 不溢出。
+//   改这两个值必须同步 tests/test_modules/test_markdown.cpp 的
+//   md_tree_row_geometry 数值断言（改一处不改断言 → 用例红，是刻意的守卫）。
+constexpr float kTreeRowHeight = 32.0f;
+constexpr float kTreeArrowFontSize = 18.0f;
+
 // 单行树条目。整行包一层 stack（W7 已知坑：position() 只在 stack 内生效，
 // 行元素直接做 scrollView column 的流式子元素时其 position 会被静默忽略，
 // 图标/名字会被流式排到下一行）——行是 column 的流式子元素，行内的
@@ -107,10 +117,10 @@ void drawFileTreeItem(eui::Ui& ui,
                       std::function<void(const eui::PointerEvent&, const eui::Rect&)>
                           onContextMenu = {}) {
     ui.stack(id)
-        .size(width, 32.0f)
+        .size(width, kTreeRowHeight)
         .content([&] {
             ui.rect(id + ".row")
-                .size(width, 32.0f)
+                .size(width, kTreeRowHeight)
                 .radius(t.sizes.radiusSmall)
                 // 行底 = 所在结构性面板底（background），非卡片白——hover/
                 // active 才显色（主题层级：页面结构 vs 浮动卡片）
@@ -121,20 +131,25 @@ void drawFileTreeItem(eui::Ui& ui,
                 .build();
             ui.text(id + ".icon")
                 .position(12.0f + indent, 0.0f)
-                .size(20.0f, 32.0f)
+                .size(20.0f, kTreeRowHeight)
                 .icon(icon)
                 .fontSize(t.sizes.fontSizeSmall)
-                .lineHeight(32.0f)
+                .lineHeight(kTreeRowHeight)
+                .verticalAlign(eui::VerticalAlign::Center)
                 .color(t.colors.textSecondary)
                 .build();
             ui.text(id + ".name")
-                // 32px 行高内垂直居中：y = (行高 - 字号) / 2（fontSizeSmall≈13 → ≈9.5），
-                // 不依赖 verticalAlign API
-                .position(36.0f + indent, (32.0f - t.sizes.fontSizeSmall) / 2.0f)
-                .size(std::max(0.0f, width - 48.0f - indent), 32.0f)
+                // 行内垂直居中：frame 恒等于整行（y=0、高=行高），由渲染层的
+                // VerticalAlign::Center 把墨迹中心对齐到 frame 中心
+                //（runtime_render.h:1069 用 frame 中线作渲染锚点）。旧写法
+                // y=(行高-字号)/2 ≈ 9.5 既不满足「frame 中心 == 行中心」，
+                // 又是个 .5 的半像素偏移（真机反馈「文本没垂直居中」的根因）
+                .position(36.0f + indent, 0.0f)
+                .size(std::max(0.0f, width - 48.0f - indent), kTreeRowHeight)
                 .text(name)
                 .fontSize(t.sizes.fontSizeSmall)
-                .lineHeight(32.0f)
+                .lineHeight(kTreeRowHeight)
+                .verticalAlign(eui::VerticalAlign::Center)
                 .color(active ? t.colors.primaryText : t.colors.textPrimary)
                 .fontWeight(active ? 700 : 400)
                 .build();
@@ -811,10 +826,10 @@ private:
                         const float indent = static_cast<float>(r.depth) * 16.0f;
                         const bool expanded = collapsedDirs_.count(r.relPath) == 0;
                         inner.stack(id)
-                            .size(w, 32.0f)
+                            .size(w, kTreeRowHeight)
                             .content([&] {
                                 inner.rect(id + ".row")
-                                    .size(w, 32.0f)
+                                    .size(w, kTreeRowHeight)
                                     // 同文件行：行底 = 面板底（background）
                                     .color(t.colors.background)
                                     .hoverColor(t.colors.hover)
@@ -830,26 +845,33 @@ private:
                                     .build();
                                 inner.text(id + ".arrow")
                                     .position(6.0f + indent, 0.0f)
-                                    .size(16.0f, 32.0f)
+                                    .size(16.0f, kTreeRowHeight)
                                     .text(expanded ? "▾" : "▸")
-                                    .fontSize(t.sizes.fontSizeSmall)
-                                    .lineHeight(32.0f)
+                                    // 展开箭头：字号 kTreeArrowFontSize（> 正文
+                                    // fontSizeSmall，真机反馈旧值太小）；
+                                    // 与行内其它文本同一居中口径
+                                    .fontSize(kTreeArrowFontSize)
+                                    .lineHeight(kTreeRowHeight)
+                                    .verticalAlign(eui::VerticalAlign::Center)
                                     .color(t.colors.textTertiary)
                                     .build();
                                 inner.text(id + ".ficon")
                                     .position(26.0f + indent, 0.0f)
-                                    .size(16.0f, 32.0f)
+                                    .size(16.0f, kTreeRowHeight)
                                     .icon(0xF07B)  // fa-folder
                                     .fontSize(t.sizes.fontSizeSmall)
-                                    .lineHeight(32.0f)
+                                    .lineHeight(kTreeRowHeight)
+                                    .verticalAlign(eui::VerticalAlign::Center)
                                     .color(t.colors.textTertiary)
                                     .build();
                                 inner.text(id + ".name")
                                     .position(46.0f + indent, 0.0f)
-                                    .size(std::max(0.0f, w - 58.0f - indent), 32.0f)
+                                    .size(std::max(0.0f, w - 58.0f - indent),
+                                          kTreeRowHeight)
                                     .text(r.name)
                                     .fontSize(t.sizes.fontSizeSmall)
-                                    .lineHeight(32.0f)
+                                    .lineHeight(kTreeRowHeight)
+                                    .verticalAlign(eui::VerticalAlign::Center)
                                     .color(t.colors.textPrimary)
                                     .fontWeight(700)
                                     .build();
