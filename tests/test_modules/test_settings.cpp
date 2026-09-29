@@ -1525,6 +1525,284 @@ REGISTER_TEST(settings_log_rows_same_column,
     return true;
 })
 
+// ---- 2026-09-30 缩放派生审查（spec 2026-09-30-batch-fix-design.md §2.3 本期修）----
+// settings 卡片行盒/行距/卡高随生效字号派生（roundFs 口径见 settings_ui_logic.h，
+// 与 env pane 修复 1ca87b0 同款）。两例分工：
+//   纯件例 = proxyCardHeightFor 两分支 100% 档与旧字面公式逐值相等（零回归锚）+
+//   130% 档等于派生式字面期望；无头 compose 例 = 三 tab 每卡行盒矩形两两不重叠
+//   （跨卡叠印同池判定；x 相离的同行「标签|控件|说明」列不算重叠）+ 行盒 ⊆ 卡
+//   frame（卡高没跟派生即红）+ 派生钉值（把派生改回字面 16 即红，非恒真）。
+// 缩放守卫：fontScale 是进程级全局状态，RAII 还原（fail-fast REQUIRE 提前
+// return 时靠析构还原，尾部手动还原会漏）。
+REGISTER_TEST(settings_fs_derive_pure,
+              "settings: 行盒派生纯件 proxyCardHeightFor（100% 锚 + 130% 档）", {
+    namespace ms = module::settings;
+    struct FontScaleGuard {
+        float prev;
+        explicit FontScaleGuard(float s)
+            : prev(::core::theme::fontScale()) {
+            ::core::theme::setFontScale(s);
+        }
+        ~FontScaleGuard() { ::core::theme::setFontScale(prev); }
+    };
+    {
+        FontScaleGuard g{1.0f};
+        // 零回归锚：与 compose 旧字面公式（118+16n / 116，+16 下边距）逐值相等
+        DOCTEST_CHECK_EQ(ms::proxyCardHeightFor(0), 132.0f);
+        DOCTEST_CHECK_EQ(ms::proxyCardHeightFor(2), 166.0f);
+        DOCTEST_CHECK_EQ(ms::roundFs(16.0f), 16.0f);
+        DOCTEST_CHECK_EQ(ms::roundFs(18.0f), 18.0f);
+    }
+    {
+        FontScaleGuard g{1.3f};
+        // round(基准×1.3)：16→21 / 18→23 / 2→3 / 16（下边距）→21
+        DOCTEST_CHECK_EQ(ms::roundFs(16.0f), 21.0f);
+        DOCTEST_CHECK_EQ(ms::roundFs(18.0f), 23.0f);
+        // 无警告 98+23+21=142；2 条警告 (98+23+3)+2×21+21=187
+        DOCTEST_CHECK_EQ(ms::proxyCardHeightFor(0), 142.0f);
+        DOCTEST_CHECK_EQ(ms::proxyCardHeightFor(2), 187.0f);
+    }
+    return true;
+})
+
+REGISTER_TEST(settings_card_rows_scale_derived,
+              "settings: 卡片行盒派生（130% 不重叠 + 派生钉值，RAII 守卫）", {
+    test_support::TestEnv env(kCfgPrefix, "fsderive", true);
+    test_support::ScopedConfigPath cfgEnv(
+        test_support::tempConfigFile(kCfgPrefix, "fsderive_cfg"));
+    // 桌宠默认关闭 → pet 卡整卡隐藏；写显式全启用配置，全部卡参与几何判定
+    module::settings::SettingsConfig cfg;
+    cfg.enabledModules = {module::settings::kModuleIdHome,
+                          module::settings::kModuleIdMarkdown,
+                          module::settings::kModuleIdTodo,
+                          module::settings::kModuleIdSettings,
+                          module::settings::kModuleIdPet,
+                          module::settings::kModuleIdClaudeProxy};
+    DOCTEST_REQUIRE(
+        module::settings::SettingsStore(cfgEnv.cfgPath).save(cfg).isOk());
+    std::unique_ptr<::core::Module> mod(create_settings_module());
+    mod->onStart();  // 读临时 config：全模块启用、fontScale=100
+
+    eui::Screen screen;
+    screen.width = 1600.0f;
+    screen.height = 1000.0f;
+
+    // 每卡参与判定的行元素（条件行——降级提示 / 警告行——headless 默认档不
+    // 渲染，不列入；日志卡两行 20px 盒不在本期修清单，留作「未派生」对照钉）
+    struct CardRows {
+        int tab;
+        const char* card;
+        std::vector<const char*> rows;
+    };
+    const std::vector<CardRows> kCards = {
+        {0, "settings.card.appearance",
+         {"settings.card.appearance.title", "settings.card.appearance.desc",
+          "settings.card.appearance.theme.label",
+          "settings.card.appearance.font.label",
+          "settings.card.appearance.effect.label"}},
+        {0, "settings.card.editor",
+         {"settings.card.editor.title", "settings.card.editor.hint"}},
+        {1, "settings.card.modules",
+         {"settings.card.modules.title", "settings.card.modules.desc",
+          "settings.card.modules.name.0", "settings.card.modules.rowdesc.0",
+          "settings.card.modules.name.1", "settings.card.modules.rowdesc.1",
+          "settings.card.modules.name.2", "settings.card.modules.rowdesc.2",
+          "settings.card.modules.name.3", "settings.card.modules.rowdesc.3"}},
+        {1, "settings.card.pet",
+         {"settings.card.pet.title", "settings.card.pet.desc"}},
+        {1, "settings.card.directory",
+         {"settings.card.directory.title", "settings.card.directory.hint"}},
+        {1, "settings.card.proxy",
+         {"settings.card.proxy.title", "settings.card.proxy.desc",
+          "settings.card.proxy.port.label", "settings.card.proxy.port.hint",
+          "settings.card.proxy.takeover.label",
+          "settings.card.proxy.takeover.value"}},
+        {2, "settings.card.log",
+         {"settings.card.log.title", "settings.card.log.label",
+          "settings.card.log.hint", "settings.card.log.level.label",
+          "settings.card.log.level.hint"}},
+        {2, "settings.tab.log", {"settings.tab.log.title"}},
+    };
+
+    struct FontScaleGuard {
+        float prev;
+        explicit FontScaleGuard(float s)
+            : prev(::core::theme::fontScale()) {
+            ::core::theme::setFontScale(s);
+        }
+        ~FontScaleGuard() { ::core::theme::setFontScale(prev); }
+    };
+
+    // 判定 helper（返回空串 = 通过；框架断言宏展开含 return false，只能
+    // 写在用例体里，与 claude_env_tab_no_overlap 同款手法）：
+    //   ① 行盒矩形两两不重叠（同 tab 全行池化，跨卡叠印也在此被抓）
+    //   ② 卡 frame 两两不重叠 + 行盒 ⊆ 所属卡 frame（卡高没跟派生即红）
+    //   ③ 派生钉值：行盒高/y 偏移 == 字面期望（at130 选档）
+    const auto tabProblem = [&](eui::Ui& ui, int tab, bool at130) {
+        struct Rect {
+            const char* id;
+            float x0, y0, x1, y1;
+        };
+        std::vector<Rect> rowRects;
+        std::vector<Rect> cardRects;
+        const auto nearEq = [](float a, float b) {
+            return std::fabs(a - b) < 0.01f;
+        };
+        for (const CardRows& cr : kCards) {
+            if (cr.tab != tab) continue;
+            const auto* card = ui.find(cr.card);
+            if (card == nullptr) {
+                return std::string("缺卡 ") + cr.card;
+            }
+            const float cardBottom = card->frame.y + card->frame.height;
+            cardRects.push_back({cr.card, card->frame.x, card->frame.y,
+                                 card->frame.x + card->frame.width,
+                                 cardBottom});
+            for (const char* rid : cr.rows) {
+                const auto* row = ui.find(rid);
+                if (row == nullptr) {
+                    return std::string("缺行 ") + rid;
+                }
+                if (row->frame.y < card->frame.y - 0.5f ||
+                    row->frame.y + row->frame.height > cardBottom + 0.5f) {
+                    return std::string("行越卡: ") + rid + " 行底 " +
+                           std::to_string(row->frame.y + row->frame.height) +
+                           " 卡底 " + std::to_string(cardBottom);
+                }
+                rowRects.push_back({rid, row->frame.x, row->frame.y,
+                                    row->frame.x + row->frame.width,
+                                    row->frame.y + row->frame.height});
+            }
+        }
+        for (size_t i = 0; i < rowRects.size(); ++i) {
+            for (size_t j = i + 1; j < rowRects.size(); ++j) {
+                const Rect& p = rowRects[i];
+                const Rect& q = rowRects[j];
+                if (p.x0 < q.x1 - 0.01f && q.x0 < p.x1 - 0.01f &&
+                    p.y0 < q.y1 - 0.01f && q.y0 < p.y1 - 0.01f) {
+                    return std::string("行盒叠印: ") + p.id + " × " + q.id;
+                }
+            }
+        }
+        for (size_t i = 0; i < cardRects.size(); ++i) {
+            for (size_t j = i + 1; j < cardRects.size(); ++j) {
+                const Rect& p = cardRects[i];
+                const Rect& q = cardRects[j];
+                if (p.x0 < q.x1 - 0.01f && q.x0 < p.x1 - 0.01f &&
+                    p.y0 < q.y1 - 0.01f && q.y0 < p.y1 - 0.01f) {
+                    return std::string("卡叠印: ") + p.id + " × " + q.id;
+                }
+            }
+        }
+        // 派生钉值（字面期望；改回写死/改系数必红）。f(id) = frame 高，
+        // yOff = 两行 frame.y 差
+        const auto heightOf = [&](const char* id) -> float {
+            const auto* e = ui.find(id);
+            return e != nullptr ? e->frame.height : -1.0f;
+        };
+        const auto yOf = [&](const char* id) -> float {
+            const auto* e = ui.find(id);
+            return e != nullptr ? e->frame.y : -1.0f;
+        };
+        const auto pin = [&](const char* what, float got, float want) {
+            if (!nearEq(got, want)) {
+                return std::string(what) + " = " + std::to_string(got) +
+                       "（期望 " + std::to_string(want) + "）";
+            }
+            return std::string();
+        };
+        std::string err;
+        if (tab == 0) {
+            err = pin("appearance.title 高", heightOf("settings.card.appearance.title"),
+                      at130 ? 31.0f : 24.0f);
+            if (err.empty())
+                err = pin("appearance.desc 高",
+                          heightOf("settings.card.appearance.desc"),
+                          at130 ? 23.0f : 18.0f);
+            if (err.empty())
+                err = pin("appearance.theme.label 高",
+                          heightOf("settings.card.appearance.theme.label"),
+                          at130 ? 21.0f : 16.0f);
+            if (err.empty())
+                err = pin("editor.hint 高", heightOf("settings.card.editor.hint"),
+                          at130 ? 23.0f : 18.0f);
+            if (err.empty())
+                err = pin("appearance 卡高", heightOf("settings.card.appearance"),
+                          at130 ? 224.0f : 172.0f);
+        } else if (tab == 1) {
+            err = pin("modules.name.0 高",
+                      heightOf("settings.card.modules.name.0"),
+                      at130 ? 23.0f : 18.0f);
+            if (err.empty())
+                err = pin("modules 行距",
+                          yOf("settings.card.modules.name.1") -
+                              yOf("settings.card.modules.name.0"),
+                          at130 ? 73.0f : 56.0f);
+            if (err.empty())
+                err = pin("modules 行内偏移",
+                          yOf("settings.card.modules.rowdesc.0") -
+                              yOf("settings.card.modules.name.0"),
+                          at130 ? 26.0f : 20.0f);
+            if (err.empty())
+                err = pin("modules 卡高", heightOf("settings.card.modules"),
+                          at130 ? 374.0f : 288.0f);
+            if (err.empty())
+                err = pin("proxy.takeover.label 高",
+                          heightOf("settings.card.proxy.takeover.label"),
+                          at130 ? 23.0f : 18.0f);
+            if (err.empty())
+                err = pin("proxy 卡高（无警告）",
+                          heightOf("settings.card.proxy"),
+                          at130 ? 142.0f : 132.0f);
+        } else {
+            // 日志卡未在本期修清单（20px 盒 130% 档余量 4.4px）：两档都恒 20，
+            // 兼作「未派生行不随缩放变化」的对照钉
+            err = pin("log.label 高", heightOf("settings.card.log.label"), 20.0f);
+            if (err.empty())
+                err = pin("log 卡高", heightOf("settings.card.log"),
+                          at130 ? 192.0f : 148.0f);
+        }
+        return err;
+    };
+
+    // 断言宏展开含 return，只能留在用例体——helper 只收集问题串（空串 = 该
+    // tab 通过），逐 tab 一条
+    const auto runAllTabs = [&](bool at130) -> std::vector<std::string> {
+        std::vector<std::string> problems;
+        for (int tab : {0, 1, 2}) {
+            if (!clickSettingsTab(*mod, screen, tab)) {
+                problems.push_back("tab 切换失败: " + std::to_string(tab));
+                continue;
+            }
+            eui::Ui ui;
+            ui.begin(at130 ? "fsderive130" : "fsderive100");
+            mod->compose(ui, screen);
+            ui.end();
+            ui.layout(screen.width, screen.height);
+            problems.push_back(tabProblem(ui, tab, at130));
+        }
+        return problems;
+    };
+
+    // 100% 档（零回归锚：几何与改前逐值相等）
+    {
+        FontScaleGuard g{1.0f};
+        for (const std::string& problem : runAllTabs(false)) {
+            DOCTEST_CHECK_MESSAGE(problem.empty(), problem);
+        }
+    }
+    // 130% 档（用户机档位，真机根因复现）：行盒随字号派生 → 两两不重叠
+    {
+        FontScaleGuard g{1.3f};
+        for (const std::string& problem : runAllTabs(true)) {
+            DOCTEST_CHECK_MESSAGE(problem.empty(), problem);
+        }
+    }
+
+    mod->onStop();
+    return true;
+})
+
 // ---- 文案宽度纯件（③ 判据的来源）：估算 / 单行适配 / 皮肤下拉宽度 ----
 REGISTER_TEST(settings_label_fit_pure,
               "settings: 文案宽度估算/单行适配/皮肤下拉宽度（不溢出判据）", {
