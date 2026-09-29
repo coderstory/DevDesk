@@ -1,0 +1,109 @@
+{
+  "meta": {
+    "subject": "feat/advanced-config-and-copy（70ea836 + 2e6d9ed + 8eb794a，diff 73af50b...tip，19 文件 +1405/−135）实施审计——项 B 表单第 4 tab「高级配置」+ 详情第 5 页签只读 pane、项 C 复制语义消歧 + 配置导出剪贴板",
+    "date": "2026-09-30",
+    "auditor": "独立只读审计 agent（非实现者，未参与本批实施）",
+    "method": "对照 spec（2026-09-30-batch-fix-design.md §3/§4/§5）与前置审计（2026-09-30-batch-fix-audit.json F1-F9）逐条核实 diff；git 三提交逐个开包核对 commit message 与 diff 一致性；upstream_dialect/profile_repository/provider_config/claude_service/claude_ui_{form,detail,list,logic,state} 全量实读；EUI-NEO 侧 setClipboardText 两后端、components/tabs(.hit/.label id 机制)、GLFW input.c _GLFW_REQUIRE_INIT 实读；tests/ 与 probes/ 耦合点 grep 全量对账（hit.3/hit.4、form.tabs.hit.3、ctx item.N、REGISTER_TEST 47→52）；4 张 PNG 自 git blob 头读尺寸",
+    "code_base": "DevDesk feat/advanced-config-and-copy 8eb794a（自 master 73af50b 切出，含 0edd3cf env-pane 合并）",
+    "note": "行号为分支 tip 快照。只读约束（唯一写动作 = 本文件）：未重跑构建/测试/变异（定向单测会写真实 Keychain 测试条目、构建产物落盘）——测试报数与变异红绿以 impl-verify.md 留痕为准，本审计对每组变异改为静态核实『钉子存在且非恒真、变异必红』，见 dimension 5"
+  },
+  "dimensions": {
+    "1_correctness": {
+      "status": "已核",
+      "conclusion": "①方言映射闭环成立：items[1]/[2] 由 dialectKindDisplayName 单一来源产出（upstream_dialect.cpp:195-201，'anthropic'/'opencode zen'），onChange 三分支只写 dialectKindToText 规范值（1→anthropic_default / 2→opencode_zen / 0→clear），选中态逐帧 dialectKindFromText 反查（空/未知→0，claude_ui_form.cpp drawFormAdvancedTab）——idx↔文本双向一致、无手抄字符串。非法文本写入路径：UI 闭集不可产非法值；openEditForm 预填 DB 非法值时下拉逐帧归一显示「自动」、底层字符串保留，保存时 DB 层 normalizeDialectOverride 非法→空串兜底（profile_repository.cpp:55-59，createProfile/updateProfile 写路径双点在）——无静默破坏。②submitForm 两处接线与 createProfile 签名逐位相符：第 8 参 dialectOverride=f.formDialectOverride_（form.cpp:317，原硬编码空串处）、第 9 参 fallbackProfileId；编辑分支 p.dialectOverride = f.formDialectOverride_（form.cpp:367-372，含「接线回归钉」定位注释）。③导出 JSON 与 runProfile 逐手法同源同形：同一 buildDirectEnv 管线（provider_config.cpp:406，BASE_URL 剥一尾斜杠/凭据键三态+反向键 erase/槽位+nameKey/片段赢/托管键最后落子）、同 JsonObject-of-string、{\"env\"} 单键顶层（claude_ui_logic.cpp:101-122 ≅ claude_service.cpp:488-497）——用户粘贴即 settings.json 可用形态；stringify 默认 compact、UTF-8 原样透传、无尾换行（platform/json.cpp:88-93 注释锁定），跨平台粘贴均合法 JSON。"
+    },
+    "2_regression": {
+      "status": "已核",
+      "conclusion": "①基础页 66px 重排数学吻合：authField 下拉（:459-477 一带，未动）底 332+40=372 → 新 hint 380 间距 8px 与既有行距一致；hint/error/importwarn 446/470/492 → 380/404/426 整体上移，error(18 高)与 warn 间 4px 节奏同旧；failover 块自基础页整段消失、旧位置无残留元素；dialog h=600 底部按钮区锚 dialog 底不受影响。②详情 tabs 4→5：最近调用 pane（drawDetailCallsPane）仅注释变化、行逻辑零改动；DetailState 仅 detailTab_（纯内存无持久化）、无按 tab 分桶的滚动状态——同步滚动锚无波及；drawDetailAdvanced 固定两行返回 y0+102（=214，与分发区注释『paneBottom 恒 312/340/214』一致），走既有 actY 三档锚定链零改动，锚定用例扩 5 页签且 actY/dividerY 五值相等断言在（test_claude_ui.cpp:4118-4144）。③菜单五项 case 重映射逐 case 核对正确：items 编辑/建副本/复制配置/删除/设为当前 ↔ case 0 onEdit / 1 onDup / 2 onCopyCfg / 3 onDel / 4 onSet（claude_ui_list.cpp:806-812），uiModern 用例对 label.0-4 文字与 item.2/3/4 派发逐一断言；markdown/todo 的 ctx item.N 命名空间独立零波及。④7 键：actW=(w−actGap*6)/7 与『n 项 n−1 gap』注释同步（detail.cpp:815-823）；kActionBlockH=61 与键数无关未动；既有 6 键几何断言全部同步为 7 键口径（test :4322-4329 actW 等分+末键右缘 0.5px 容差）；M5 建副本用例的 toast 断言只钉 message（「中转 副本/未激活」），标题改名零破坏；grep 无残留旧 5-gap/旧『复制』文案断言。⑤hit 锚点全量对账：test_claude_ui.cpp hit.3 字面 9 处全改 hit.4（:1011/:1164/:1276/:1773/:4353/:4404/:4480/:4625/:4686）+ 锚定循环上界 4→5（:4118）=10 处；test_ui_modern.cpp :758 第 11 处（前置 audit 漏列）实改；probes 循环上界 4→5（claude_probes.cpp:250）；test_claude_ui 新增 4 处 hit.3（:2843/:4200/:4227/:4255）全部是高级配置 pane 自身的合法导航；failover 用例两处补 click form.tabs.hit.3（:2526/:2582）。"
+    },
+    "3_platform_symmetry": {
+      "status": "已核",
+      "conclusion": "setClipboardText 两后端实存且形态对称（无窗口句柄参）：SDL2 SDL_SetClipboardText（window_backend.cpp:554）/ GLFW glfwSetClipboardString(glfwGetCurrentContext(), …)（:928）。GLFW 形态与 GLFW 3.3 语义自洽——clipboard 非窗口绑定，input.c glfwSetClipboardString 对 handle 形参不解引用（仅 _GLFW_REQUIRE_INIT 守卫），glfwGetCurrentContext() 在未 init 进程返回 NULL 无害。导出 JSON 跨平台粘贴：compact 单行 UTF-8、yyjson 写侧『UTF-8 原样透传、无尾换行、/ 不转义』（platform/json.cpp:88-93，期望值锁 test_json 快照用例），Windows 侧 GLFW 后端 UTF-8→宽字符转换后粘贴还原——两平台粘贴均得合法 settings.json 形态。项 B 基础页重排是弹窗内固定局部坐标、详情新 pane 走 bodyH 相对锚定链，两平台同构；零新增平台宏。"
+    },
+    "4_silent_failure": {
+      "status": "已核（2 条 nano 见 findings）",
+      "conclusion": "①方言非法值：下拉闭集 + 逐帧 fromText 归一显示 + DB 写侧 normalize（非法→空串）三层，无静默失败暴露（详见 dimension 1①）。②导出无 key：Keychain 缺失/无 key → apiKeyHint 为空（makeApiKeyHint 空 key→全 '*' 即空串，profile_repository.cpp:80-88 有 ≤10 短键守卫）→ buildDirectEnv 空值不写凭据键 → 导出无 token 键——形态正确；反馈粒度瑕疵见 F-2。③坏 extraEnvJson：doCopyConfig 导出前 parseExtraEnv 试解析、失败 LOG_WARN 一行（含 profile id + 错误信息）后继续导出（claude_module.cpp:528-536）——F6 防静默丢键落地，形状用例覆盖坏 env 导出仍成功。④probe 零真剪贴板副作用实证：断言段只读 frame（actRow/cc/run 的 frame 比较）不触发 onClick；--dump 段导航仅 card/edit/form tabs/cancel 且注释明示『绝不点 claude.act.copyconfig.bg』（claude_probes.cpp:374-376）；headless 单测路径：devdesk_tests 进程仅 probe_harness.h:33 调 glfwInit（tests/ 全树 grep 唯一），GLFW 未 init 时 glfwSetClipboardString 经 _GLFW_REQUIRE_INIT（3rd/glfw/src/input.c:1459 实读）早退为安全 no-op——F8 处置与代码事实相符。"
+    },
+    "5_test_effectiveness": {
+      "status": "已核（留证未复跑，钉子静态全验真）",
+      "conclusion": "五组变异留证逐一静态核实（红→绿复跑受只读约束未执行，见 meta.note）：B1 变异点=submitForm 新建分支回硬编码空串 → claude_ui_advanced_tab_dialect_persists 新建支 waitFor 断言 listProfiles 中 dialectOverride=='opencode_zen'（test :2729-2735，与留证 :2733 行吻合）必红；B2『假绿缝』缝补钉真有效——页签文字↔索引钉断言 claude.detail.tabs.label.3=='高级配置' / label.4=='最近调用'（test :4285-4290），label.N 由 tabs 组件按 items 序生成（EUI-NEO components/tabs.h:96），任何插在 idx 3 之前的变异都使 label.3 文字错位必红，且同块 hit.4 面板内容断言（calls.empty 在、dialect.bg 不在）钉住分发索引——双钉闭合；C1 占位改明文 → claude_export_json_shape 对 ANTHROPIC_AUTH_TOKEN=='sk-ant-***1234'（test :3882 一带）必红；C2 /7 改 /6 → actW 等分 + 末键宽断言（test :4324 一带 fabs<0.01）必红；C3 case 2 改派发删除 → uiModern item.2 点击后 toast.message 含『剪贴板』断言（test_ui_modern :388-395，与留证 :397 吻合）必红（本用例此帧前无 toast，删除路径只开确认弹窗不产 toast，REQUIRE 非空即红）。hit.3→hit.4 十一处全改实证（9 字面+1 循环上界+1 test_ui_modern，见 dimension 2⑤）；『detailTab_ 在测试零引用』grep 复核属实。C3 过滤器坑（按用例名过滤 0 条、须按描述串『右键菜单五项』）与 REGISTER_TEST(name, \"描述串\") 注册形态相符，记录诚实。Total:131/probe 8:8 报数未复跑（静态：test_claude_ui REGISTER_TEST 47→52 +5 新用例与 verify 清单一致）。"
+    },
+    "6_doc_consistency": {
+      "status": "已核（3 条 nano 见 findings）",
+      "conclusion": "①commit message 与 diff 逐条相符：70ea836 的映射表/整段迁入（id 逐字保留）/66px 重排/接线回归钉口径/hit 锚点 10 处均实证；2e6d9ed 的改名三处（按钮/菜单/toast，duplicateProfile 零改动）/buildProfileExportJson 复用 buildDirectEnv/占位来源 apiKeyHint 已披露/F5 LOG_WARN 留痕/菜单 case 表/『复制配置插建副本与运行之间』（按钮序 enable/test/edit/del/dup/copyconfig/run 实核）/probe『绝不点 copyconfig 键』均与 diff 一致；8eb794a 留痕文件+4 PNG 与内容相符。②spec §3/§4 与实现偏差三处均为 nano（F-1 占位形态/F-3 片段取数来源/F-4 spec 状态行），无 medium 以上偏差；F1/F2 的 spec 修订确在 base（§2.4 已改『修复已提交 1ca87b0 待合并』、§3.2③ 已改『不存在隐性 bug/接线回归钉』）；audit F3-F9 处置落点逐条核实为真（F4 注释同步实核 state.h/detail.h/detail.cpp/form.cpp 四处、F7 单一来源、F8/F9 如上）。③4 张 PNG 均在分支，尺寸 2400×2000（= probe 1200×1000 档 @2x framebuffer，与 --dump glReadPixels 口径及 verify §5 三档记录一致）；内容像素级一致性未复渲染核验（只读约束），provenance 链（probe 真渲染 + 40 帧预热注释）完整可信。"
+    }
+  },
+  "findings": [
+    {
+      "file": "src/module_claude_proxy/claude_module.cpp + docs/superpowers/specs/2026-09-30-batch-fix-design.md",
+      "line": 550,
+      "lens": "文档口径",
+      "severity": "nano",
+      "confidence": "high",
+      "issue": "导出占位值的真实形态与 spec/commit/verify 的示例不同形。spec §4.2②/:258 写『sk-ant-***<尾4>』（固定前缀 sk-ant-***），实现传 keyPlaceholder=p.apiKeyHint（:550），makeApiKeyHint 产『前 6 位+***+尾 4』（profile_repository.cpp:83-87）——对真实 sk-ant 开头的 key，前 6 位是 'sk-ant'，运行时占位为 'sk-ant***1234'（无连字符），且非 sk-ant 前缀的网关 key 会得到 'mykey1***xyz' 类形态。测试造值 apiKeyHint=\"sk-ant-***1234\"（带连字符）是 makeApiKeyHint 对真实 anthropic key 永远产不出的形态。",
+      "impact": "行为无碍且实现更优（与详情页 hint 严格同源同口径、对任意 provider key 都成立，泄露面 = 详情页既有展示面）；纯示例文案漂移——spec/commit/verify 三处的字面示例与运行时输出差一个连字符，后续按文档写断言或比对真实导出的人会困惑。",
+      "suggestion": "spec §4.2②/§5② 与 impl-verify.md 的示例改为『apiKeyHint（前6+***+尾4，如 sk-ant***1234）』；或保留现示例但注明为测试造值非真实输出。"
+    },
+    {
+      "file": "src/module_claude_proxy/claude_module.cpp",
+      "line": 567,
+      "lens": "静默失败面",
+      "severity": "nano",
+      "confidence": "high",
+      "issue": "无 key profile（Keychain 缺失 → apiKeyHint 空 → 导出无凭据键）时，成功 toast 副文案仍是固定的『API Key 为占位符，不含明文』——对『本就无 key、导出里根本没有 token 键』的 profile，反馈与内容不符（粘贴者会以为 key 待填占位，实际是整个键缺席）。",
+      "impact": "低频边界（无 key 的 profile 本就不可运行），且 spec 本身把『无凭据键』定义为预期兜底形态（§4.2②）——属反馈粒度小疵，非静默失败：导出行为正确且键缺席在粘贴结果里直接可见。",
+      "suggestion": "doCopyConfig 在 keyPlaceholder 为空时副文案改为『该 Profile 未配置 API Key，导出不含凭据键』（一行 if）；或登记 KNOWN_LIMITATIONS 接受现状。"
+    },
+    {
+      "file": "src/module_claude_proxy/claude_module.cpp",
+      "line": 542,
+      "lens": "正确性",
+      "severity": "nano",
+      "confidence": "high",
+      "issue": "绑定片段的导出走 cachedSharedConfigs_ 快照（findSharedById），spec §4.2② 字面是『取 sharedExtraEnvJsonFor(p.sharedConfigId)』（服务层实时读 DB）。实现与详情 env pane 既有取数口径一致（drawDetailEnv 同用 v.sharedConfigs 快照，claude_ui_detail.cpp:288-293）——展示与导出同源，不会出现『pane 显示 A、导出 B』的分裂。",
+      "impact": "偏差合理且自洽：避免每帧/每次点击的 DB 读，残留窗口仅为『快照尚未刷新到最新片段』的一帧级间隙，与用户在 pane 里看到的内容始终一致。spec 字面与实现的差异建议回写，防止后续按 spec 字面改出双源。",
+      "suggestion": "spec §4.2② 该句改为『片段 env 取列表/详情同源的 cachedSharedConfigs_ 快照解析（与 drawDetailEnv 同口径，不做服务调用）』。"
+    },
+    {
+      "file": "docs/superpowers/specs/2026-09-30-batch-fix-design.md",
+      "line": 3,
+      "lens": "文档口径",
+      "severity": "nano",
+      "confidence": "high",
+      "issue": "spec 头部状态仍为『设计（未实施）』、§0 总表未记实施分支——B/C 两项已在 feat/advanced-config-and-copy 实现完成。注意区分：F1/F2 的实质修订（§2.4 在飞状态、§3.2③ 隐性 bug 证伪）确已落在分支 base 前的提交里，本次缺的只是实施状态回写。",
+      "impact": "合并时 spec 状态与代码状态矛盾；下一读者按『设计（未实施）』理解 §3.3/§4.3 的预估行号会得到过时坐标（实现后行号已漂移，如 submitForm :308→:317）。",
+      "suggestion": "合并时随手回写：状态行改『B/C 已实施（feat/advanced-config-and-copy）』，A 项标注已于 e175b47 独立合并；§3.3/§4.3 行号列加『行号为设计时点快照』注（本仓审计惯例口径）。"
+    },
+    {
+      "file": "docs/superpowers/plans/2026-09-30-wave-b-impl-verify.md",
+      "line": 28,
+      "lens": "测试有效性",
+      "severity": "nano",
+      "confidence": "medium",
+      "issue": "留证的报数与红绿结论（Total: 131/131、probe 8/8、三档 actW、五组变异红→绿）本次审计未复跑复现（只读约束：定向单测写真实 Keychain 条目、构建落盘产物）。变异有效性改为静态核实：五个变异点均存在非恒真断言钉（见 dimension 5），留证 FAIL 行号与当前断言位置吻合，钉子机制（尤其 B2 的 label.3/4 文字钉）经组件 id 生成机制（tabs.h:82,96）验证在『插中间』变异下必红。",
+      "impact": "审计置信依赖『留痕诚实 + 静态钉子验证』而非独立复现——与本仓既有 impl-audit 惯例一致；五组钉子结构上全部成立，无发现的假绿残留。B2 留证中『首测假绿→缝补钉→再红』的过程记录本身提升了可信度（暴露并修补了 pane 内容断言与页签文字解耦的缝）。",
+      "suggestion": "合并前由合并方跑一次全量（单 exe 零外部 DLL、用例总数以运行输出为准）作为常规闸门即可，无需本审计补跑。"
+    }
+  ],
+  "verified_positive": [
+    "方言 idx↔规范文本双向闭环成立：onChange 只产 dialectKindToText 规范值 / 逐帧 dialectKindFromText 反查（空/未知→0）/ DB 写侧 normalizeDialectOverride 非法→空串（profile_repository.cpp:55-59）——UI 闭集不可产非法值，非法 DB 值保存时被归一，无静默破坏路径",
+    "submitForm 两处接线参数序与 claude_service.h:75-89 createProfile 签名（第 8/9 参 dialectOverride/fallbackProfileId）逐位相符；『不动下拉保存仍保留 opencode_zen』的接线回归钉用例在（test :2843-2870 区）",
+    "导出 JSON 与 runProfile 逐手法同源同形：同 buildDirectEnv 管线 + JsonObject-of-string + {\"env\"} 单键顶层；三态凭据键名/尾斜杠剥离/片段冻结键赢/空占位无凭据键/坏 env 容错各有断言（claude_export_json_shape 7 分支）",
+    "基础页 66px 重排数学吻合：authField 下拉（:459-477）零改动，底 372→hint 380 间距 8px；error/warn 404/426 同旧 4px 节奏；旧位置无残留元素；表单弹窗宽 760（ui_kit metrics DialogWidth::Form）下新 hint 宽度余量充足",
+    "详情 tabs 4→5 对最近调用 pane 仅注释级波及；DetailState 纯内存、无按 tab 分桶滚动状态；锚定用例扩 5 页签且 actY/dividerY 五值相等断言在；drawDetailAdvanced 返回值 214 与分发区注释口径一致",
+    "菜单五项 case 0-4 与 items 一一对应、逐 case 断言（label 文字 + item.2/3/4 派发面）；markdown/todo ctx 命名空间独立零波及",
+    "7 键 actW=(w−72)/7 与 n−1 gap 注释同步；kActionBlockH=61 未动；probe 键宽判据 need=4×fontSizeSmall+8=60 与 theme fontSizeSmall=13 相符，留证 82.2857 与公式几何自洽（w0=648）、末键右缘 0.5px 容差断言三档同口径",
+    "平台对称：setClipboardText 两后端实存（SDL :554 / GLFW :928）形态对称无句柄参；GLFW 形态与 3.3『clipboard 非窗口绑定』语义自洽；导出 JSON compact UTF-8 无尾换行跨平台粘贴合法（platform/json.cpp:88-93 锁定）",
+    "headless 安全 no-op 结构性成立：tests/ 全树仅 probe_harness.h:33 调 glfwInit，devdesk_tests 未 init → glfwSetClipboardString 经 input.c:1459 _GLFW_REQUIRE_INIT 早退；probe 断言段只读 frame、dump 段导航不含 copyconfig 且注释明示——零真剪贴板副作用实证成立",
+    "B2『假绿缝』缝补钉真实有效：label.N 由 tabs 组件按 items 序生成（EUI-NEO components/tabs.h:96），页签文字↔索引钉（test :4285-4290）在任何 idx<3 插入变异下必红，与 hit.4 面板内容断言双钉闭合",
+    "hit.3→hit.4 十一处全改实证：test_claude_ui 9 字面（:1011/:1164/:1276/:1773/:4353/:4404/:4480/:4625/:4686）+ 锚定循环上界 4→5（:4118）+ test_ui_modern :758（前置 audit 漏列的第 11 处）；probes 循环上界另改；新增 hit.3 四处均为高级配置 pane 自身合法导航",
+    "F1-F9 前置审计处置逐条落实为真：F1/F2 spec 修订在 base、F3 十一处、F4 注释四处同步（state.h/detail.h/detail.cpp/form.cpp）、F5 LOG_WARN 留痕（id+键数）、F6 试解析 WARN 继续、F7 dialectKindDisplayName 单一来源、F8 实测口径、F9 全角括号（『自动（按站点推断）』逐字断言）",
+    "commit message 与 diff 逐条相符（含按钮序『复制配置插建副本与运行之间』『probe 绝不点 copyconfig 键』等可核断言）；4 张 PNG 在分支、2400×2000 与 probe --dump 1200×1000 @2x 口径一致",
+    "项 A（settings 卡片派生化）已在 base 前独立合并（fix/settings-card-fs-derive e175b47），本分支 B+C 范围划界正确、无范围蔓延"
+  ],
+  "method_limits": [
+    "只读约束（唯一写动作 = 本文件）下未执行：构建、定向单测、ctest -L probe、变异红绿复现、PNG 内容像素级比对（渲染复现）——上述以 impl-verify.md 留痕 + 静态钉子结构验证替代，全部变异钉经断言位置与触发机制核实为非恒真",
+    "测试报数（Total: 131 / probe 8:8 / uiModern 17:17）未独立复核总数，仅核实 REGISTER_TEST 增量（47→52）与 verify 清单一致",
+    "probe 三档 actW 数值的几何自洽性已验（82.2857=(648−72)/7 等），三档实测输出本身依赖留痕"
+  ]
+}
