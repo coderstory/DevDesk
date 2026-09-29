@@ -21,11 +21,45 @@
 // ──────────────────────────────────────────────────────────────────────
 
 namespace platform::keychain {
+namespace {
+
+// ── 空 service / 空 account 守卫（2026-09-29）──────────────────────────
+// 为什么不靠 Keychain 自身返回 notFound：`SecKeychainFindGenericPassword` 的
+// serviceLength / accountLength 传 0 是**通配**语义——该维度匹配「任意值」
+//（两个都传 0 则匹配整库任意 generic password），只要命中一条就返回
+// errSecSuccess，而不是 errSecItemNotFound。于是「account 为空」会被静默当成
+// 「随便给我一条」：
+//   · load   → 返回同 service 下**别的**条目的密钥（不是「没有」）
+//   · delete → SecKeychainItemDelete 删掉的是随机一条**别人的**条目
+//   · store  → 先做的那步「删已存在条目」同样通配 → 通配覆盖 + 写一条
+//              空 account 的条目（此后 load 再也认不出它，成孤儿）
+// 而空 account 在本项目里是**有确切含义**的：ProfileRepository 用空
+// keychain_account 表示「该 profile 没有密钥」（反向同步「缺席即清空」把三列
+// 元数据一并清空）。此时唯一正确的回答是「没有这条」，绝不能是「随手拿一条」。
+// 空 service 同理（serviceLength 0 也是通配，会跨 service 命中）。
+// 故在进入 Keychain API **之前**显式处置；三种操作的语义各自定死：
+//   load   → fail(NotFound)：条目身份不成立 = 查不到（沿用本函数既有的失败码）
+//   store  → fail(ValidationError)：无身份可写；既不做那步通配删旧，也不写一条
+//                                  「查出不来」的孤儿条目
+//   delete → ok()（幂等空操作）：无身份 = 没有这条，与既有「delete 不存在 →
+//                                 ok（幂等）」一致，且不进入通配删除
+// ─────────────────────────────────────────────────────────────────────
+bool blankKeyIdentity(const std::string& service, const std::string& account) {
+    return service.empty() || account.empty();
+}
+
+} // namespace
 
 // 真实实现（CPX-14 起经 keychain.h 的函数指针表转发，见那里的「注入缝」段）
 core::Result<void> realStoreSecret(const std::string& service,
                                    const std::string& account,
                                    const std::string& secret) {
+    if (blankKeyIdentity(service, account)) {
+        return core::Result<void>::fail(core::ErrorCode::ValidationError,
+            "SecKeychainAddGenericPassword rejected: empty service/account "
+            "identifies no item (0 长度在 Keychain API 里是通配，见文件内守卫说明)");
+    }
+
     // SecKeychain* 为 macOS 27 SDK 弃用 API：仅抑制本语句告警（见文件头说明）
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wdeprecated-declarations"
@@ -66,6 +100,12 @@ core::Result<void> realStoreSecret(const std::string& service,
 
 core::Result<std::string> realLoadSecret(const std::string& service,
                                          const std::string& account) {
+    if (blankKeyIdentity(service, account)) {
+        return core::Result<std::string>::fail(core::ErrorCode::NotFound,
+            "Keychain item not found: empty service/account identifies no item "
+            "(0 长度在 Keychain API 里是通配，见文件内守卫说明)");
+    }
+
     SecKeychainItemRef itemRef = nullptr;
     UInt32 length = 0;
     void* data = nullptr;
@@ -97,6 +137,11 @@ core::Result<std::string> realLoadSecret(const std::string& service,
 }
 
 core::Result<void> realDeleteSecret(const std::string& service, const std::string& account) {
+    if (blankKeyIdentity(service, account)) {
+        // 无身份 = 没有这条 → 幂等空操作（见文件内守卫说明）
+        return core::Result<void>::ok();
+    }
+
     SecKeychainItemRef itemRef = nullptr;
     // SecKeychain* 为 macOS 27 SDK 弃用 API：仅抑制本语句告警（见文件头说明）
 #pragma clang diagnostic push
