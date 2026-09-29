@@ -1103,6 +1103,87 @@ REGISTER_TEST(todo_ui_card_inset_and_dropbar_width,
     return true;
 })
 
+// ---- 卡内文本居中（2026-09-30 用户需求「卡内文本水平垂直居中展示」）----
+// 三种卡形态全覆盖：纯标题（组 = 标题独占整卡居中）/ 有截止 chip / 有 tags
+// chip（组 = 标题行 + chip 行整块居中）。断言口径：
+//   水平 = 标题框中心与卡中心偏差 ≤1px + horizontalAlign Center 机制位在位
+//   （框对称只保证框居中，字形居中靠该位，二者缺一即红）；
+//   垂直 = 内容组 [顶, 底] 中点与卡内容区中心偏差 ≤1px，组顶与 todo_ui_logic.h
+//   的 cardContentGroupTop 同源（居中算式没被旁路）；
+//   chip 行 x 不拽歪（仍 = 卡左缘 + 16）、组内排版保持（标题行底 → chip 顶 =
+//   kCardTitleToChipGap）。
+// 变异自检：把 drawCard 的 groupTop / 标题 x 改回左上角固定原点（14 / 16，
+// 无 horizontalAlign）→ 本用例水平与垂直断言同时变红（记录见提交说明）。
+REGISTER_TEST(todo_ui_card_text_centered,
+              "todo_ui: 卡内文本居中——内容组中心=卡内容区中心 ≤1px（headless）", {
+    using module::todo::ui::cardContentGroupTop;
+    using module::todo::ui::kCardTitleToChipGap;
+    TestEnv env;
+    DOCTEST_REQUIRE(env.ready);
+    auto col = env.svc->createColumn("居中列");
+    DOCTEST_REQUIRE(col.isOk());
+    auto a = env.svc->createTask(col.value().id, "纯标题卡");
+    auto b = env.svc->createTask(col.value().id, "带截止卡");
+    auto c = env.svc->createTask(col.value().id, "带标签卡");
+    DOCTEST_REQUIRE(a.isOk() && b.isOk() && c.isOk());
+    {
+        module::todo::Task t2 = b.value();
+        t2.dueAt = 2000000000;  // 未来时间，未逾期
+        DOCTEST_REQUIRE(env.svc->updateTask(t2).isOk());
+    }
+    {
+        module::todo::Task t3 = c.value();
+        t3.tags = {"重要", "前端"};
+        DOCTEST_REQUIRE(env.svc->updateTask(t3).isOk());
+    }
+
+    std::unique_ptr<::core::Module> mod(create_todo_module());
+    mod->onStart();
+    Frame frame(mod.get());
+    frame.ui.layout(1600.0f, 1000.0f);
+
+    const char* cardIds[3] = {"todo.col.4.card.0", "todo.col.4.card.1",
+                              "todo.col.4.card.2"};
+    const bool expectChipRow[3] = {false, true, true};
+    const char* chipIds[3] = {"", ".due.bg", ".tag.0.bg"};
+    for (int i = 0; i < 3; ++i) {
+        const std::string base = cardIds[i];
+        const auto* cardBg = frame.ui.find(base + ".bg");
+        const auto* title = frame.ui.find(base + ".title");
+        DOCTEST_REQUIRE(cardBg != nullptr);
+        DOCTEST_REQUIRE(title != nullptr);
+        const float cardCX = cardBg->frame.x + cardBg->frame.width / 2.0f;
+        const float cardCY = cardBg->frame.y + cardBg->frame.height / 2.0f;
+
+        // 水平：主文本（标题）框中心 = 卡中心（≤1px），字形居中机制位在位
+        DOCTEST_CHECK_EQ(title->horizontalAlign, eui::HorizontalAlign::Center);
+        DOCTEST_CHECK(std::abs((title->frame.x + title->frame.width / 2.0f) -
+                               cardCX) <= 1.0f);
+
+        // 垂直：内容组 [顶, 底] 中点 = 卡内容区中心（≤1px）。
+        // 组顶 = 标题顶；组底 = chip 底（有 chip 行）或标题底（纯标题卡）
+        const float groupTop = title->frame.y;
+        float groupBottom = title->frame.y + title->frame.height;
+        if (expectChipRow[i]) {
+            const auto* chipBg = frame.ui.find(base + chipIds[i]);
+            DOCTEST_REQUIRE(chipBg != nullptr);
+            // 组内排版保持：标题行底 → chip 行顶 = 原间距 12
+            DOCTEST_CHECK_EQ(chipBg->frame.y - (title->frame.y + title->frame.height),
+                             kCardTitleToChipGap);
+            // chip 行水平不拽歪：x 仍 = 卡左缘 + 16（卡内左内边距）
+            DOCTEST_CHECK_EQ(chipBg->frame.x - cardBg->frame.x, 16.0f);
+            groupBottom = chipBg->frame.y + chipBg->frame.height;
+        }
+        DOCTEST_CHECK(std::abs(((groupTop + groupBottom) / 2.0f) - cardCY) <= 1.0f);
+        // 组顶与同源常量一致（居中算式本身没被旁路 / 写死）
+        DOCTEST_CHECK_EQ(groupTop - cardBg->frame.y,
+                         cardContentGroupTop(expectChipRow[i]));
+    }
+
+    mod->onStop();
+    return true;
+})
+
 // ---- 2026-09-28 真机缺陷 3 纯函数：同列重排行号换算 + 落库插入位 ----
 REGISTER_TEST(todo_ui_reorder_pure_helpers,
               "todo_ui: 同列重排——行号换算与插入位（纯函数）", {

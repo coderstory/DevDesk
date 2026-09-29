@@ -613,6 +613,28 @@ inline float chipWidth(const std::string& text) {
     return w;
 }
 
+// ---- 卡片内容组垂直居中 + 主文本水平居中（2026-09-30 用户需求「卡内文本
+// 水平垂直居中展示」）----
+// 卡内是多行结构（标题行 + 可选 chip 行）：整块内容组在 kCardHeight 内垂直
+// 居中、块内保持原排版（行高/间距/chip 高全不变）；水平只居中主文本——标题
+// 框对称化 + horizontalAlign Center（home 统计卡同款先例），chip 行与完成
+// 角标的 x 不动（不把 chip/角标拽歪）。常量供 drawCard / drawDragGhost 与
+// 无头几何断言（test_todo_ui）三方同源消费。
+constexpr float kCardTitleLineH = 18.0f;      // 标题行高（= lineHeight，原值）
+constexpr float kCardTitleToChipGap = 12.0f;  // 标题行底 → chip 行顶（原 44-14-18）
+constexpr float kCardTitleBoxInset = 22.0f;   // 标题框左右对称内缩（= 44/2，总留白不变）
+
+// 内容组高度：有 chip 行 = 标题 18 + 间距 12 + chip 22 = 52；无 = 仅标题 18
+inline float cardContentGroupH(bool hasChipRow) {
+    return kCardTitleLineH +
+           (hasChipRow ? kCardTitleToChipGap + kChipHeight : 0.0f);
+}
+
+// 内容组顶（相对卡内容原点）：组在 kCardHeight 内容区内垂直居中
+inline float cardContentGroupTop(bool hasChipRow) {
+    return (kCardHeight - cardContentGroupH(hasChipRow)) / 2.0f;
+}
+
 // 改色预设（token 与 columnDotColor 的映射表一一对应；spec §8.2 承诺）
 // 右键菜单「改色」子项与菜单分发共用：标签给 UI，token 给 service。
 struct ColorPreset {
