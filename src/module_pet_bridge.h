@@ -14,14 +14,15 @@
 // （string/vector），不引任何 EUI-NEO / pet 内部类型。全部不抛异常（项目
 // Result 口径）：pet 侧失败时记日志并保持原状，调用方无需接错误。
 //
-// 签名漂移防线（本项新增）：末尾 static_assert 把 5 个声明钉死在函数指针
+// 签名漂移防线（本项新增）：末尾 static_assert 把 6 个声明钉死在函数指针
 // 类型上，改本头任一声明立刻编译报错；pet 侧定义 TU（pet_window.cpp /
 // pet_skin.cpp）直接 include 本头，故「pet 侧改签名漏改本头」也在编译期炸，
 // 而不是拖到链接期才 undefined symbol。
 //
 // 分组（为审计 M1 中期项「窗口生命周期归还 pet、settings 只发意图」留边界）：
 //   A 只读查询——settings 取展示用列表/初值，不改 pet 任何状态；
-//   B 改另一个模块状态——写盘并同步操作 pet 窗口（换肤 = 关旧窗开新窗）。
+//   B 改另一个模块状态——写盘并同步操作 pet 窗口（换肤 = 关旧窗开新窗，
+//     PET-CLOSE 起「关窗」也在此组：取消勾选模块开关 = 立即关窗）。
 #pragma once
 
 #include <string>
@@ -48,6 +49,11 @@ void resetPetPosition();
 // false 有两种（调用方只需一句提示）：① 本会话从未装配过桌宠（模块开关关，
 // 重启后生效）② 窗口已开着。隐藏走右键「隐藏桌宠」，隐藏后本函数可重开
 bool showPetWindow();
+// 关闭桌宠窗口（PET-CLOSE，2026-09-29 真机反馈「设置-模块-桌宠取消勾选，
+// 桌宠没消失」）：模块开关取消勾选 → 立即关窗（与右键「隐藏桌宠」同一条关闭
+// 路径）。返回 true = 曾开着/有可见意图并已请求关闭；false = 本来就关着。
+// 只清「可见意图」，**不清装配标志**——同一会话重新勾选后 showPetWindow 可原位重开
+bool closePetWindow();
 
 } // namespace module::pet
 
@@ -68,3 +74,6 @@ static_assert(std::is_same_v<decltype(&module::pet::resetPetPosition),
 static_assert(std::is_same_v<decltype(&module::pet::showPetWindow),
                              bool (*)()>,
               "module_pet_bridge: showPetWindow 签名漂移");
+static_assert(std::is_same_v<decltype(&module::pet::closePetWindow),
+                             bool (*)()>,
+              "module_pet_bridge: closePetWindow 签名漂移");

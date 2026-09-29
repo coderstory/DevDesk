@@ -479,8 +479,37 @@ public:
         }
     }
 
+    // 桌宠开关的即时可见性（PET-CLOSE，2026-09-29 真机反馈「设置-模块-桌宠
+    // 取消勾选，桌宠没消失」）：桌宠是六个模块里**唯一**有独立可见载体
+    //（非 Router 页面的无边框子窗）的模块——注册门控确实要等重启，但窗口
+    // 本身不必：关 → 桥调用立即关窗（与右键「隐藏桌宠」同一条路径）；
+    // 开 → 桥调用立即原位重开（皮肤/位置/气泡桥沿用上次装配）。
+    // 反向口径：本会话 main 装配过桌宠（启动时开关是开的）才能即时重现；
+    // 启动时桌宠就是关的会话里模块从未装配，桥返回 false → 如实提示重启生效
+    void applyPetModuleVisibility(bool on) {
+        if (!on) {
+            const bool closed = ::module::pet::closePetWindow();
+            setStatus(closed
+                          ? "桌宠已关闭并立即隐藏（重启 DevDesk 后不再装配）"
+                          : "桌宠已关闭（本次会话未开窗；重启 DevDesk 后不再装配）");
+            LOG_INFO(std::string("Settings: 桌宠模块关闭 → ") +
+                     (closed ? "窗口已请求关闭" : "无窗口可关") + "（重启后不再装配）");
+            return;
+        }
+        if (::module::pet::showPetWindow()) {
+            setStatus("桌宠已开启并立即显示");
+            LOG_INFO("Settings: 桌宠模块开启 → 窗口已重新入队开窗");
+        } else {
+            setStatus("桌宠已开启；本次会话未装配桌宠，重启 DevDesk 后生效");
+            LOG_INFO("Settings: 桌宠模块开启 → 本会话未装配，重启后生效");
+        }
+    }
+
     // 模块开关（插拔方案 A §5.4）：只写 config.json，注册门控在下次启动的
-    // main.cpp 装配处生效。home/settings 恒启用，UI 不提供开关
+    // main.cpp 装配处生效。home/settings 恒启用，UI 不提供开关。
+    // 桌宠例外（PET-CLOSE）：写盘 + 注册门控的口径不变，但额外做一次**即时
+    // 窗口同步**（见 applyPetModuleVisibility）——其余模块无可即时撤销的可见
+    // 载体（侧边栏入口/页面注册都在启动装配期），保持「重启生效」
     void applyModuleEnabled(const std::string& moduleId, bool on) {
         auto& v = cfg_.enabledModules;
         auto it = std::find(v.begin(), v.end(), moduleId);
@@ -492,6 +521,10 @@ public:
             return;  // 状态没变（重复点击），不写盘
         }
         persist();
+        if (moduleId == kModuleIdPet) {
+            applyPetModuleVisibility(on);
+            return;
+        }
         setStatus((on ? "模块已开启" : "模块已关闭") +
                   std::string("，重启 DevDesk 后生效"));
         LOG_INFO("Settings: 模块开关 " + moduleId + " → " +

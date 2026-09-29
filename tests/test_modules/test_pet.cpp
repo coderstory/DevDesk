@@ -171,44 +171,9 @@ const char* kGhostFixtureJson =
     "  }"
     "}";
 
-// 最小 PNG 头文件（魔数 + IHDR 尺寸 + 8bit RGBA 类型 + 填充字节）——
-// pngLooksValid 只核头部 33 字节，夹具帧只需头部合法，无需完整 IDAT/IEND
-void writeMinimalPng(const std::filesystem::path& path, int width, int height) {
-    std::ofstream out(path, std::ios::binary);
-    static const unsigned char kSig[8] = {0x89, 'P', 'N', 'G', 0x0D, 0x0A, 0x1A, 0x0A};
-    out.write(reinterpret_cast<const char*>(kSig), 8);
-    const auto be32 = [](unsigned char* p, std::uint32_t v) {
-        p[0] = static_cast<unsigned char>((v >> 24) & 0xFF);
-        p[1] = static_cast<unsigned char>((v >> 16) & 0xFF);
-        p[2] = static_cast<unsigned char>((v >> 8) & 0xFF);
-        p[3] = static_cast<unsigned char>(v & 0xFF);
-    };
-    unsigned char ihdr[26] = {};
-    be32(ihdr + 0, 13);  // IHDR 数据长度
-    ihdr[4] = 'I'; ihdr[5] = 'H'; ihdr[6] = 'D'; ihdr[7] = 'R';
-    be32(ihdr + 8, static_cast<std::uint32_t>(width));
-    be32(ihdr + 12, static_cast<std::uint32_t>(height));
-    ihdr[16] = 8;  // bit depth
-    ihdr[17] = 6;  // color type RGBA
-    out.write(reinterpret_cast<const char*>(ihdr), 18);
-    const char pad[8] = {};  // 凑满 pngLooksValid 读取的 33 字节
-    out.write(pad, sizeof(pad));
-}
-
-// 向候选根写一份 shipped 形态皮肤：pet.json + 四态 13 帧（f0..f5/p0..p1/
-// s0..s2/t0..t1，128×128 头部合法帧文件）
-void writeShippedSkinFixture(const std::filesystem::path& root, const char* name,
-                             const char* jsonText) {
-    static const char* kFrameNames[] = {
-        "f0.png", "f1.png", "f2.png", "f3.png", "f4.png", "f5.png",
-        "p0.png", "p1.png", "s0.png", "s1.png", "s2.png", "t0.png", "t1.png"};
-    std::error_code ec;
-    std::filesystem::create_directories(root / name, ec);
-    test_support::writeTextFile(root / name / "pet.json", jsonText);
-    for (const char* frame : kFrameNames) {
-        writeMinimalPng(root / name / frame, 128, 128);
-    }
-}
+// 皮肤夹具（pet.json + 四态 13 帧）与最小 PNG 头写法已收编到
+// test_support::writeShippedSkinFixture / writeMinimalPng（PET-CLOSE 起
+// test_settings 的模块开关用例共用同一份夹具，见 test_support.h 第 7 节）
 
 } // namespace
 
@@ -322,7 +287,7 @@ REGISTER_TEST(pet_default_skin_shipped, "pet: 默认皮肤加载随包 robot（�
     const auto missing = ensureDefaultSkin();
     DOCTEST_CHECK(missing.isFail());
     // 候选根出现 shipped 形态 robot 夹具 → 加载成功
-    writeShippedSkinFixture(root, "robot", kRobotFixtureJson);
+    test_support::writeShippedSkinFixture(root, "robot", kRobotFixtureJson);
     const auto r = ensureDefaultSkin();
     DOCTEST_CHECK_MESSAGE(r.isOk(), r.isFail() ? r.errorMessage() : "");
     const module::pet::PetSkin& skin = r.value();
@@ -398,7 +363,7 @@ REGISTER_TEST(pet_start_window_request, "pet: 开窗请求逐字段断言（无�
     // 清空可能残留的窗口请求队列；默认皮肤 = 随包 robot 夹具（startPetWindow
     // 不再写盘生成，皮肤须先存在于候选根）
     (void)app::consumeWindowRequests();
-    writeShippedSkinFixture(petsRoot, "robot", kRobotFixtureJson);
+    test_support::writeShippedSkinFixture(petsRoot, "robot", kRobotFixtureJson);
 
     module::pet::startPetWindow(module::pet::PetWindowConfig{
         "", 50, 60});  // 皮肤空 = 默认；位置已知
@@ -854,7 +819,7 @@ REGISTER_TEST(pet_default_skin_m2_frames, "pet: 随包 robot 四态帧齐备可�
     using namespace module::pet;
     const PetsDirEnv pets("defaultskin_m2");
     const std::filesystem::path& root = pets.root;
-    writeShippedSkinFixture(root, "robot", kRobotFixtureJson);
+    test_support::writeShippedSkinFixture(root, "robot", kRobotFixtureJson);
     const auto r = ensureDefaultSkin();
     DOCTEST_CHECK_MESSAGE(r.isOk(), r.isFail() ? r.errorMessage() : "");
     const PetSkin& skin = r.value();
@@ -885,8 +850,8 @@ REGISTER_TEST(pet_builtin_skins, "pet: 随包 robot/ghost 两款皮肤（四态�
     using namespace module::pet;
     const PetsDirEnv pets("builtin_skins");
     const std::filesystem::path& root = pets.root;
-    writeShippedSkinFixture(root, "robot", kRobotFixtureJson);
-    writeShippedSkinFixture(root, "ghost", kGhostFixtureJson);
+    test_support::writeShippedSkinFixture(root, "robot", kRobotFixtureJson);
+    test_support::writeShippedSkinFixture(root, "ghost", kGhostFixtureJson);
     // discoverSkins 发现全部 2 款（设置页下拉/右键换肤菜单数据源，零改动）
     const std::vector<std::string> found = discoverSkins();
     DOCTEST_CHECK_EQ(found.size(), static_cast<size_t>(2));
@@ -946,7 +911,7 @@ REGISTER_TEST(pet_discover_skins, "pet: 皮肤发现（下拉/换肤菜单的数
     std::filesystem::create_directories(root);
     DOCTEST_CHECK(discoverSkins().empty());
     // 随包形态 robot 夹具 + 手工放第二个皮肤包 → 都被发现
-    writeShippedSkinFixture(root, "robot", kRobotFixtureJson);
+    test_support::writeShippedSkinFixture(root, "robot", kRobotFixtureJson);
     std::filesystem::create_directories(root / "pixel-dog");
     {
         std::ofstream out(root / "pixel-dog" / "pet.json", std::ios::trunc);
@@ -1011,7 +976,7 @@ REGISTER_TEST(pet_apply_skin_and_reset, "pet: applyPetSkin 校验/持久化 + �
     using namespace module::pet;
     const PetsDirEnv pets("applyskin");
     const std::filesystem::path& root = pets.root;
-    writeShippedSkinFixture(root, "robot", kRobotFixtureJson);
+    test_support::writeShippedSkinFixture(root, "robot", kRobotFixtureJson);
     std::filesystem::create_directories(root / "pixel-dog");
     {
         std::ofstream out(root / "pixel-dog" / "pet.json", std::ios::trunc);
@@ -1465,7 +1430,7 @@ REGISTER_TEST(pet_show_window_reenqueues,
               "pet: showPetWindow 重新入队开窗请求（PAB-13）", {
     const PetsDirEnv pets("showwin");
     (void)app::consumeWindowRequests();  // 清残留
-    writeShippedSkinFixture(pets.root, "robot", kRobotFixtureJson);  // 默认皮肤 = 随包 robot
+    test_support::writeShippedSkinFixture(pets.root, "robot", kRobotFixtureJson);  // 默认皮肤 = 随包 robot
 
     // 先装配一次（= main 模块门控通过；同时把 windowRequested 置位）
     module::pet::startPetWindow(module::pet::PetWindowConfig{"", 120, 130});

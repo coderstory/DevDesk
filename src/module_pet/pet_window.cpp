@@ -50,7 +50,14 @@ struct PetRuntime {
     std::vector<std::string> skins;  // 发现到的皮肤（换肤菜单/设置页消费）
     // PAB-13：本会话 main 是否装配过桌宠（startPetWindow 入口置 true）——
     // 设置页「显示桌宠」按钮据此区分「模块开关关 → 拒绝凭空开窗」与
-    // 「隐藏后再显示」
+    // 「隐藏后再显示」。**只置不清**：PET-CLOSE 起「关窗」不再等于
+    // 「本会话没装配过」，重新开启时仍要能凭本标志原位重开
+    bool assembled = false;
+    // PET-CLOSE（设置-模块-桌宠 取消勾选即时生效）：窗口可见意图——
+    // startPetWindow / showPetWindow 置 true，closePetWindow 置 false。
+    // 无头/关窗后 handle 恒为 nullptr，本标志是「桌宠该不该显示」的唯一
+    // 真值（设置页模块开关与单测都读它），与装配标志分开才有
+    // 「装配过 → 关 → 再开」这一圈可表达
     bool windowRequested = false;
     // M2 Sleep 零渲染：系统挂起置位 / 唤醒清零（回调在主线程，compose 同线程
     // 读，无并发，普通 bool 即可）
@@ -272,9 +279,9 @@ void executePetMenuSelection(const std::vector<int>& path) {
             break;
         case PetMenuAction::Hide:
             savePetPosition();
-            if (runtime().handle != nullptr) {
-                core::window::requestWindowClose(runtime().handle);
-            }
+            // PET-CLOSE：与设置页模块开关关共用一条关闭路径（含可见意图
+            // 记账），两条隐藏入口不再各写一份关窗逻辑
+            closePetWindow();
             break;
         case PetMenuAction::Exit:
             showPetExitConfirm();
@@ -627,7 +634,9 @@ void startPetWindow(const PetWindowConfig& config) {
     PetRuntime& rt = runtime();
     rt.config = config;
     // PAB-13：本会话已装配桌宠——设置页「显示桌宠」据此区分「模块开关关
-    // （从未装配 → 拒绝凭空开窗）」与「隐藏后再显示」
+    // （从未装配 → 拒绝凭空开窗）」与「隐藏后再显示」。PET-CLOSE：装配
+    // 标志与可见意图分开记——本函数同时置两者（装配 = 想显示）
+    rt.assembled = true;
     rt.windowRequested = true;
 
     // 皮肤：候选根找 → 找不到回退默认皮肤 → 加载随包 robot
@@ -722,10 +731,11 @@ void startPetWindow(const PetWindowConfig& config) {
              "fps，位置=" + std::to_string(x) + "," + std::to_string(y) + "）");
 }
 
-// PAB-13：重新显示桌宠窗口（设置页「显示桌宠」按钮，声明见 pet_window.h）
+// PAB-13：重新显示桌宠窗口（设置页「显示桌宠」按钮 + PET-CLOSE 模块开关
+// 重新勾选，声明见 pet_window.h）
 bool showPetWindow() {
     PetRuntime& rt = runtime();
-    if (!rt.windowRequested) {
+    if (!rt.assembled) {
         return false;  // 本会话从未装配（模块开关关）——不凭空开窗
     }
     if (rt.handle != nullptr) {
@@ -734,6 +744,24 @@ bool showPetWindow() {
     startPetWindow(rt.config);  // 皮肤/位置/气泡数据源桥沿用上次装配
     return true;
 }
+
+// PET-CLOSE：关闭桌宠窗口（设置页模块开关「桌宠」取消勾选 → 立即隐藏，
+// 声明见 pet_window.h）。窗口开着走与右键「隐藏桌宠」同一条关闭路径
+//（requestWindowClose → 主循环销毁 → onWindowDestroyed 清句柄）；
+// 无头/已关时只清可见意图，不动装配标志（重新勾选仍可原位重开）
+bool closePetWindow() {
+    PetRuntime& rt = runtime();
+    const bool hadIntent = rt.windowRequested;
+    rt.windowRequested = false;
+    if (rt.handle == nullptr) {
+        return hadIntent;  // 无窗口可关（无头 / 已隐藏）：只记状态
+    }
+    core::window::requestWindowClose(rt.handle);
+    LOG_INFO("桌宠窗口已请求关闭（模块开关关闭）");
+    return true;
+}
+
+bool petWindowRequested() { return runtime().windowRequested; }
 
 void applyPetSkin(const std::string& skinName) {
     PetRuntime& rt = runtime();
