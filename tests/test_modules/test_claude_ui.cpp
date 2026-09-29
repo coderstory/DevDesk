@@ -4163,6 +4163,36 @@ REGISTER_TEST(claude_profile_active_badge_centered,
     return true;
 })
 
+// E-AUD-1（2026-09-30 审计）：长模型键在键列会截断显示 —— 键列宽 220px、
+// 估宽 8px/字符 → 100% 档 keyMaxChars=27，"ANTHROPIC_DEFAULT_HAIKU_MODEL"(31)
+// / "ANTHROPIC_DEFAULT_OPUS_MODEL"(29) 渲染成「前 26 字符 + …」，渲染文本
+// ≠ 全键名，按全键名 count/find 断言会被截断掩蔽（泄漏了也恒真）。判据：
+// 渲染文本等于某模型键全名，或剥掉截断省略号后是某模型键的**真前缀** → 泄漏。
+// ANTHROPIC_BASE_URL / ANTHROPIC_AUTH_TOKEN / MY_* 等合法可见键既不是模型键、
+// 也不是其前缀，不误报。返回空串 = 未泄漏，非空 = 泄漏的渲染文本。
+static std::string leakedModelEnvKey(const std::string& rendered) {
+    std::vector<std::string> modelKeys;
+    for (const auto& meta : module::claude::modelSlotTable()) {
+        modelKeys.push_back(meta.envKey);
+        if (meta.nameKey != nullptr) modelKeys.push_back(meta.nameKey);
+    }
+    for (const std::string& k : modelKeys) {
+        if (rendered == k) return rendered;   // 未截断全名
+    }
+    const std::string ell = "…";  // 生产截断符（U+2026，UTF-8 3 字节）
+    if (rendered.size() < ell.size() ||
+        rendered.compare(rendered.size() - ell.size(), ell.size(), ell) != 0) {
+        return {};
+    }
+    const std::string base = rendered.substr(0, rendered.size() - ell.size());
+    for (const std::string& k : modelKeys) {
+        if (k.size() > base.size() && k.compare(0, base.size(), base) == 0) {
+            return rendered;   // 截断形态
+        }
+    }
+    return {};
+}
+
 // ---- 组 B P3：环境变量页签列生效 env + 每键来源（2026-09-30 E1 起模型键除外）----
 // 用户读到「只显示 1 条」的真相：该页此前只列 profile 自身的 extra_env。
 // E1（2026-09-30）：模型映射域的键不再在本页展示（「模型映射」页签已列）——
@@ -4204,10 +4234,16 @@ REGISTER_TEST(claude_env_tab_lists_effective_env_with_source,
         DOCTEST_REQUIRE(s != nullptr);   // 每行都必须有来源标注
         srcOf[k->text] = s->text;
     }
-    // 模型映射键（槽位派生的 envKey / *_NAME）不出现在本页：托管写入的
+    // 模型映射键（槽位派生的 envKey / *_NAME）不出现在本页 —— 判据按
+    // E-AUD-1 截断感知口径（全名 + 截断形态都算泄漏），不按全键名 count
+    //（长键渲染成「前缀 + …」，全名 count 会被截断掩蔽成恒真）：托管写入的
     // ANTHROPIC_MODEL（legacy model → def 槽位）与手写的 OPUS 键都被滤
-    DOCTEST_CHECK_EQ(srcOf.count("ANTHROPIC_MODEL"), 0u);
-    DOCTEST_CHECK_EQ(srcOf.count("ANTHROPIC_DEFAULT_OPUS_MODEL"), 0u);
+    for (const auto& [renderedKey, srcText] : srcOf) {
+        (void)srcText;
+        const std::string leak = leakedModelEnvKey(renderedKey);
+        DOCTEST_CHECK_MESSAGE(leak.empty(),
+                              "模型键泄漏到 env 页签: " + renderedKey);
+    }
     // 非模型键照常列：托管连接键、profile 自身 extra_env、所绑片段
     DOCTEST_REQUIRE(srcOf.count("ANTHROPIC_BASE_URL") == 1);
     DOCTEST_CHECK_EQ(srcOf["ANTHROPIC_BASE_URL"], std::string("托管键"));
@@ -4248,13 +4284,6 @@ REGISTER_TEST(claude_env_tab_no_overlap_and_model_keys_hidden,
     std::unique_ptr<::core::Module> mod(create_claude_module());
     mod->onStart();
 
-    const auto isModelKey = [](const std::string& key) {
-        for (const auto& meta : module::claude::modelSlotTable()) {
-            if (key == meta.envKey) return true;
-            if (meta.nameKey != nullptr && key == meta.nameKey) return true;
-        }
-        return false;
-    };
     // 判据 helper：对一帧已 layout 的 Ui 逐行断言（返回空串 = 通过；本框架
     // 断言宏展开含 return false，只能写在用例体里）
     const auto paneProblem = [&](eui::Ui& ui) -> std::string {
@@ -4292,8 +4321,10 @@ REGISTER_TEST(claude_env_tab_no_overlap_and_model_keys_hidden,
                        std::to_string(band1Bottom) + " > 带2顶 " +
                        std::to_string(band2Top) + "）";
             }
-            // ③ 模型映射键不得渲染
-            if (isModelKey(k->text)) {
+            // ③ 模型映射键不得渲染（E-AUD-1 截断感知口径：长键截断形态
+            // 「前缀 + …」也算泄漏，不被显示截断掩蔽）
+            const std::string leak = leakedModelEnvKey(k->text);
+            if (!leak.empty()) {
                 return "模型键泄漏到 env 页签: " + k->text;
             }
             prevBg = bg;

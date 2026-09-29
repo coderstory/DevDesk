@@ -7,7 +7,8 @@
 // 2026-09-28（macOS 布局统一方案 §1 组 B）——本文件是本组的主战场，三条改动：
 //   P1 动作区钉面板底 + 内容框显式边界（drawDetailPanel / drawDetailActions）
 //   P2 「最近调用」去掉 10 行硬上限与 3 行硬下限，行数纯按可用高推
-//   P3 「环境变量」改列全部生效 env + 每键来源（来源由 buildProxyEnv 透出）
+//   P3 「环境变量」改列全部生效 env + 每键来源（来源由 buildProxyEnv 透出；
+//      E1 起模型映射键收窄至「模型映射」页签，见下方 2026-09-30 块）
 // 2026-09-30（详情页「环境变量」pane 两缺陷修复）：
 //   E1 模型映射键不在本 pane 重复展示 —— 键集自槽位表派生（isModelMappingEnvKey），
 //      独立「模型映射」页签已列同一批键；空态区分「未选 Profile」与「全被滤掉」
@@ -469,7 +470,8 @@ float drawDetailEnv(eui::Ui& ui, float x0, float y0, float w,
         ui.text("claude.env.overflow")
             .position(x0, ey).size(w, overflowH)
             .text("另有 " + std::to_string(envMap.size() - ei2) +
-                  " 项未显示（编辑该 Profile 可查看全部；模型类键见「模型映射」页签）")
+                  " 项未显示（编辑该 Profile 可查看全部；模型类键见「模型映射」"
+                  "页签，extra_env 手写的除外）")
             .fontSize(smallFs).lineHeight(overflowH)
             .verticalAlign(eui::VerticalAlign::Center)
             .color(t.colors.textTertiary).build();
