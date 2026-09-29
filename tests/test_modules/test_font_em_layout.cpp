@@ -64,12 +64,15 @@ REGISTER_TEST(home_stat_card_text_fits, "font-em: home stat card text fits fixed
 
     // 标签（最长："Token 速率 (tok/s)"）
     DOCTEST_CHECK(textW("Token 速率 (tok/s)", labelSize) <= kHomeStatTextW);
-    // 数字（formatRateTps 上限 5 位；700 字重）
-    DOCTEST_CHECK(textW("99999", numberSize, 700) <= kHomeStatTextW);
-    // badge 最坏情况（formatTokenCount 上限 "999.9M"；2026-09-28 审计 #2
-    // 「路并发」→「路」：11px 全角最长档实测 ~111px ≤ 144 实际可用宽）
-    DOCTEST_CHECK(textW("● 999 路 · 累计 999.9M", badgeSize) <=
+    // 数字（① 2026-09-29 改口径：最近一次调用速率，恒 1 位小数；
+    // 三位整数 + 小数位 = 5 字符是常见上限档；700 字重）
+    DOCTEST_CHECK(textW("999.9", numberSize, 700) <= kHomeStatTextW);
+    // badge 最坏情况（① 后不再有「累计」字样）：
+    // 流式档「● 999 路生成中 · 最近一次」/ 空闲档「最近一次成功调用」
+    DOCTEST_CHECK(textW("● 999 路生成中 · 最近一次", badgeSize) <=
                   kHomeStatTextW);
+    DOCTEST_CHECK(textW("最近一次成功调用", badgeSize) <= kHomeStatTextW);
+    DOCTEST_CHECK(textW("暂无成功调用", badgeSize) <= kHomeStatTextW);
     DOCTEST_CHECK(textW("今日修改过的笔记", badgeSize) <= kHomeStatTextW);
 
     // 纵向（drawStatCard 绝对定位：label 16 / number 40 / badge 底对齐

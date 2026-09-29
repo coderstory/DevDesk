@@ -2,6 +2,7 @@
 // Home 模块测试：P12 仪表盘真实数据（HomeService）+ 调用日志清理
 #include "doctest.h"
 #include "test_support.h"
+#include "core/call_rate.h"
 #include "core/database.h"
 #include "core/module_interface.h"
 #include "core/overdue.h"
@@ -13,6 +14,7 @@
 
 #include <eui/dsl.h>
 
+#include <cmath>
 #include <ctime>
 #include <filesystem>
 #include <memory>
@@ -217,15 +219,20 @@ REGISTER_TEST(home_token_rate_card_compose,
         DOCTEST_CHECK(notesBadge->text.find("加载失败") != std::string::npos);
         const auto* number = ui.find("home.stat.tokens.number");
         DOCTEST_REQUIRE(number != nullptr);
-        DOCTEST_CHECK_EQ(number->text, std::string("0"));
+        // ①（2026-09-29 改口径）：数字来自最近一次成功调用 → 未加载到数据时
+        // 是空态「--」，不再是实时速率「0」
+        DOCTEST_CHECK_EQ(number->text, std::string("--"));
         const auto* badge = ui.find("home.stat.tokens.badge");
         DOCTEST_REQUIRE(badge != nullptr);
-        DOCTEST_CHECK(badge->text.find("空闲") != std::string::npos);
-        DOCTEST_CHECK(badge->text.find("累计 0") != std::string::npos);
+        // 未 onStart（整页没加载成功）→ 与 notes 卡同口径「加载失败」，
+        // 不冒充「暂无成功调用」
+        DOCTEST_CHECK(badge->text.find("加载失败") != std::string::npos);
+        // 旧口径作废：副标题不再出现「累计」（用户原话要求）
+        DOCTEST_CHECK(badge->text.find("累计") == std::string::npos);
         mod->onStop();
     }
 
-    // 流式中态：注入 usage → activeStreams=1 → badge 带并发 + 累计
+    // 流式中态：注入 usage → activeStreams=1 → badge 带并发数 + 「最近一次」
     {
         const uint64_t id = core::proxy_stats::beginStream();
         core::proxy_stats::updateStream(id, 42);
@@ -242,7 +249,13 @@ REGISTER_TEST(home_token_rate_card_compose,
         const auto* badge = ui.find("home.stat.tokens.badge");
         DOCTEST_REQUIRE(badge != nullptr);
         DOCTEST_CHECK(badge->text.find("1 路") != std::string::npos);
-        DOCTEST_CHECK(badge->text.find("累计 42") != std::string::npos);
+        DOCTEST_CHECK(badge->text.find("生成中") != std::string::npos);
+        // 旧口径作废：流式档也不再出现「累计」
+        DOCTEST_CHECK(badge->text.find("累计") == std::string::npos);
+        // 本节未 onStart（整页没加载）→ 数字是空态，副标题不承诺「最近一次」
+        //（「最近一次」字样由已加载的档位断言：见 test_ui_modern 的
+        // 「最近一次成功调用」与下方 home_last_rate_and_hourly_tokens）
+        DOCTEST_CHECK(badge->text.find("最近一次") == std::string::npos);
         // 流式中：周期重绘挂载（2026-09-28 起 1s、仅活动期）
         DOCTEST_CHECK(ui.find("home.stat.tokens.timer") != nullptr);
         mod->onStop();
@@ -254,6 +267,168 @@ REGISTER_TEST(home_token_rate_card_compose,
     return true;
 })
 
+// ==================== ①「最近一次调用速率」/ ③「每小时 token 合计」 ============
+// 2026-09-29 真机反馈：这两条口径都是「手算值与查询值必须相等」的数值断言——
+// 把速率算成累计/实时值、把分布图退回百分比或按绝对小时号取下标，本用例就红。
+REGISTER_TEST(home_last_rate_and_hourly_tokens,
+              "HomeService: 最近一次成功调用速率 + 逐时 token 合计（手算对照）",
+              {
+    test_support::TestEnv env(kDbPrefix, "rate_tokens", true);  // 注册 appDatabase
+    DOCTEST_REQUIRE(env.ready);
+    auto& sq = env.db->db();
+    const int64_t dayStart = module::home::startOfDayEpoch(std::time(nullptr));
+    DOCTEST_REQUIRE(sq.exec(
+        "INSERT INTO claude_profiles (name, base_url, api_key_hint, "
+        "api_key_check, keychain_account, model, created_at, updated_at) "
+        "VALUES ('p1', 'http://x', 'sk-***', 'chk', 'acct', 'm', 1000, 1000)")
+                        .isOk());
+
+    // 阶段 A：只有老行（status_code / output_tokens 全 NULL）→ 没有成功调用
+    DOCTEST_REQUIRE(sq.exec(
+        "INSERT INTO claude_call_logs (profile_id, method, path, started_at) "
+        "VALUES (1, 'POST', '/v1/messages', " +
+        std::to_string(dayStart + 3600) + ")").isOk());
+    {
+        module::home::HomeService svc(sq);
+        auto lr = svc.getLastCallRate();
+        DOCTEST_REQUIRE(lr.isOk());
+        // NULL（未采集）≠ 0 个 token，也不算「成功调用」（status NULL）
+        DOCTEST_CHECK_FALSE(lr.value().hasValue);
+
+        auto series = svc.getTodayHourlyTokenTotals(24);
+        DOCTEST_REQUIRE(series.isOk());
+        int64_t total = 0;
+        for (const int64_t v : series.value()) total += v;
+        DOCTEST_CHECK_EQ(total, static_cast<int64_t>(0));
+        DOCTEST_CHECK_FALSE(module::home::hourlyDataRange(series.value()).hasData);
+
+        // UI 空态：数字「--」+ 副标题「暂无成功调用」+ 分布图空态（不画空轴）
+        std::unique_ptr<::core::Module> mod(create_home_module());
+        mod->onStart();
+        eui::Screen screen{1200.0f, 720.0f};
+        eui::Ui ui;
+        ui.begin("home_rate_empty");
+        mod->compose(ui, screen);
+        ui.end();
+        const auto* number = ui.find("home.stat.tokens.number");
+        const auto* badge = ui.find("home.stat.tokens.badge");
+        DOCTEST_REQUIRE(number != nullptr);
+        DOCTEST_REQUIRE(badge != nullptr);
+        DOCTEST_CHECK_EQ(number->text, std::string("--"));
+        DOCTEST_CHECK_EQ(badge->text, std::string("暂无成功调用"));
+        DOCTEST_CHECK(ui.find("home.api.chart.empty") != nullptr);
+        DOCTEST_CHECK(ui.find("home.api.chart.bars.bar.0") == nullptr);
+        mod->onStop();
+    }
+
+    // 阶段 B：只有一条「2xx + output>0 但 latency_ms=0」的行 → 仍无速率
+    // （除零兜底：耗时未采集时不能伪造速率）
+    DOCTEST_REQUIRE(sq.exec(
+        "INSERT INTO claude_call_logs (profile_id, method, path, status_code, "
+        "latency_ms, output_tokens, started_at) VALUES "
+        "(1, 'POST', '/v1/messages', 200, 0, 120, " +
+        std::to_string(dayStart + 3600 * 4) + ")").isOk());
+    {
+        module::home::HomeService svc(sq);
+        auto lr = svc.getLastCallRate();
+        DOCTEST_REQUIRE(lr.isOk());
+        DOCTEST_CHECK_FALSE(lr.value().hasValue);
+        DOCTEST_CHECK_EQ(lr.value().outputTokens, static_cast<int64_t>(120));
+        DOCTEST_CHECK_EQ(lr.value().latencyMs, static_cast<int64_t>(0));
+    }
+
+    // 阶段 C：补齐三维（成功 / 非 2xx / 昨天）→ 手算值对照
+    //   2 时  200 / 1200ms / out  60  → 速率 50.0
+    //   3 时  500 /  100ms / out NULL → 非 2xx + 无用量：速率与合计都不参与
+    //   5 时  200 / 2400ms / out 240  → 速率 100.0（**最近一次成功调用**）
+    //   昨天  200 / 1000ms / out 777  → 日界外：不进逐时合计、也不是「最近」
+    DOCTEST_REQUIRE(sq.exec(
+        "INSERT INTO claude_call_logs (profile_id, method, path, status_code, "
+        "latency_ms, output_tokens, started_at) VALUES "
+        "(1, 'POST', '/v1/messages', 200, 1200, 60, " +
+        std::to_string(dayStart + 3600 * 2) + "), "
+        "(1, 'POST', '/v1/messages', 500, 100, NULL, " +
+        std::to_string(dayStart + 3600 * 3) + "), "
+        "(1, 'POST', '/v1/messages', 200, 2400, 240, " +
+        std::to_string(dayStart + 3600 * 5) + "), "
+        "(1, 'POST', '/v1/messages', 200, 1000, 777, " +
+        std::to_string(dayStart - 3600 * 2) + ")").isOk());
+    {
+        module::home::HomeService svc(sq);
+        // ① 手算：240 / (2400/1000) = 100.0（5 时那条：2xx 且 output>0 中
+        // started_at 最大；3 时的 500 更晚但非成功、昨天的更早）
+        auto lr = svc.getLastCallRate();
+        DOCTEST_REQUIRE(lr.isOk());
+        DOCTEST_CHECK(lr.value().hasValue);
+        DOCTEST_CHECK_EQ(lr.value().outputTokens, static_cast<int64_t>(240));
+        DOCTEST_CHECK_EQ(lr.value().latencyMs, static_cast<int64_t>(2400));
+        DOCTEST_CHECK(std::fabs(lr.value().tps - 100.0) < 1e-9);
+        DOCTEST_CHECK_EQ(core::call_rate::formatTps(lr.value().tps),
+                         std::string("100.0"));
+
+        // ③ 手算：2 时 60 / 4 时 120（阶段 B 那条，latency=0 不影响合计）
+        //        / 5 时 240；昨天 777 不进；区间 [2, 5] → 4 根柱
+        auto series = svc.getTodayHourlyTokenTotals(24);
+        DOCTEST_REQUIRE(series.isOk());
+        DOCTEST_CHECK_EQ(series.value().size(), 24u);
+        int64_t total = 0;
+        for (const int64_t v : series.value()) total += v;
+        DOCTEST_CHECK_EQ(total, static_cast<int64_t>(420));  // 60+120+240
+        DOCTEST_CHECK_EQ(series.value()[2], 60);
+        DOCTEST_CHECK_EQ(series.value()[3], 0);   // 非 2xx + NULL 用量
+        DOCTEST_CHECK_EQ(series.value()[4], 120);
+        DOCTEST_CHECK_EQ(series.value()[5], 240);
+        const auto range = module::home::hourlyDataRange(series.value());
+        DOCTEST_CHECK(range.hasData);
+        DOCTEST_CHECK_EQ(range.first, static_cast<size_t>(2));
+        DOCTEST_CHECK_EQ(range.last, static_cast<size_t>(5));  // 昨天 777 不扩尾
+
+        // 单源口径（core/call_rate.h）边界：非 2xx / 0 token / 0 耗时都无速率
+        double tps = 0.0;
+        DOCTEST_CHECK_FALSE(core::call_rate::tps(500, 240, 2400, tps));
+        DOCTEST_CHECK_FALSE(core::call_rate::tps(200, 0, 2400, tps));
+        DOCTEST_CHECK_FALSE(core::call_rate::tps(200, 240, 0, tps));
+        DOCTEST_CHECK_FALSE(core::call_rate::tps(199, 240, 2400, tps));
+        DOCTEST_CHECK_FALSE(core::call_rate::tps(300, 240, 2400, tps));
+        DOCTEST_CHECK(core::call_rate::tps(299, 1, 2000, tps));
+        DOCTEST_CHECK(std::fabs(tps - 0.5) < 1e-9);
+        // 恒 1 位小数（不随量级切换成整数）
+        DOCTEST_CHECK_EQ(core::call_rate::formatTps(0.5), std::string("0.5"));
+        DOCTEST_CHECK_EQ(core::call_rate::formatTps(123.44),
+                         std::string("123.4"));
+    }
+
+    // 流式档 + 已加载：数字仍是「最近一次」的速率 → 副标题必须说出来
+    //（流式只影响副标题的实时状态前缀，不改数字口径）
+    {
+        core::proxy_stats::resetForTest();
+        const uint64_t sid = core::proxy_stats::beginStream();
+        core::proxy_stats::updateStream(sid, 42);
+        std::unique_ptr<::core::Module> mod(create_home_module());
+        mod->onStart();
+        eui::Screen screen{1200.0f, 720.0f};
+        eui::Ui ui;
+        ui.begin("home_rate_streaming");
+        mod->compose(ui, screen);
+        ui.end();
+        const auto* number = ui.find("home.stat.tokens.number");
+        const auto* badge = ui.find("home.stat.tokens.badge");
+        DOCTEST_REQUIRE(number != nullptr);
+        DOCTEST_REQUIRE(badge != nullptr);
+        DOCTEST_CHECK_EQ(number->text, std::string("100.0"));
+        DOCTEST_CHECK(badge->text.find("1 路生成中") != std::string::npos);
+        DOCTEST_CHECK(badge->text.find("最近一次") != std::string::npos);
+        DOCTEST_CHECK(badge->text.find("累计") == std::string::npos);
+        mod->onStop();
+        core::proxy_stats::endStream(sid);
+        core::proxy_stats::resetForTest();
+    }
+    return true;
+})
+// 「逾期」的谓词单源在 core/overdue.h：首页 getStats 走 COUNT 聚合、Todo 页
+// listOverdue 走列表查询。两条 SQL 用同一份 kWhereSql，本用例拿同一批种子数据
+// 同时问两边，把它们钉在同一个数字上——口径再分叉（改列名 / 改比较符 / 只改
+// 其中一处）这里就红。
 // ==================== 跨模块逾期口径一致性（THS-04） ====================
 // 「逾期」的谓词单源在 core/overdue.h：首页 getStats 走 COUNT 聚合、Todo 页
 // listOverdue 走列表查询。两条 SQL 用同一份 kWhereSql，本用例拿同一批种子数据

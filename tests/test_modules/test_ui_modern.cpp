@@ -32,6 +32,7 @@
 #include <string>
 #include <vector>
 #include "test_support.h"
+#include "core/call_rate.h"
 #include "core/database.h"
 #include "core/sqlite_db.h"
 #include "core/ui_geometry.h"
@@ -787,13 +788,21 @@ REGISTER_TEST(uiModernTodoCardContainer,
 })
 
 REGISTER_TEST(uiModernHomeApiBarChart,
-              "uiModern: Home API 调用量 barChart（24 点非空 + 接线 + 服务层分布）", {
+              "uiModern: Home Token 分布（每小时 token 合计 + 去头去尾 + 最近速率卡）", {
     test_support::TestEnv env("devdesk_test_uimodern_home_", "apichart",
                               true);  // 注册 appDatabase（2026-09-28 起全零走
                                       // 空态不画假条，需真实数据才能断言柱子）
     DOCTEST_REQUIRE(env.ready);
-    // 种子：1 个 profile（FK 依赖）+ 当天 3 条（9/10/11 时，避开子夜边界）
-    // + 昨天 2 条（排除）
+    // 种子（真机反馈 ③ 口径：纵轴 = 每小时 output_tokens 合计）：
+    //   1 个 profile（FK 依赖）
+    //   · 9 时  output 100 / 2000ms  → 速率 50.0
+    //   · 12 时 output 300 / 1000ms  → 速率 300.0
+    //   · 17 时 output 600 / 4000ms  → 速率 150.0（最近一次「成功」调用）
+    //   · 6 时  output_tokens=0      → 不贡献总量、不扩 x 轴区间（去头）
+    //   · 20 时 status=500（output NULL）→ 非 2xx，不参与速率、不扩区间（去尾）
+    //   · 昨天 2 条（整天过滤掉）
+    // 手算：逐时合计 = {9:100, 12:300, 17:600}，其余 0；
+    //       去头去尾区间 = [9, 17]（闭区间，9 根柱），峰值 = 600
     const int64_t dayStart = module::home::startOfDayEpoch(std::time(nullptr));
     DOCTEST_CHECK(env.db->db().exec(
         "INSERT INTO claude_profiles (name, base_url, api_key_hint, "
@@ -803,47 +812,142 @@ REGISTER_TEST(uiModernHomeApiBarChart,
         " 1000, 1000)").isOk());
     const std::string sql =
         "INSERT INTO claude_call_logs (profile_id, method, path, status_code, "
-        " latency_ms, request_bytes, response_bytes, error, started_at) VALUES "
-        "(1, 'POST', '/v1/messages', 200, 12, 100, 200, '', " +
+        " latency_ms, output_tokens, request_bytes, response_bytes, error, "
+        " started_at) VALUES "
+        "(1, 'POST', '/v1/messages', 200, 2000, 100, 100, 200, '', " +
         std::to_string(dayStart + 3600 * 9) + "), "
-        "(1, 'POST', '/v1/messages', 200, 12, 100, 200, '', " +
-        std::to_string(dayStart + 3600 * 10) + "), "
-        "(1, 'POST', '/v1/messages', 200, 12, 100, 200, '', " +
-        std::to_string(dayStart + 3600 * 11) + "), "
-        "(1, 'GET', '/v1/models', 200, 5, 20, 40, '', " +
+        "(1, 'POST', '/v1/messages', 200, 1000, 300, 100, 200, '', " +
+        std::to_string(dayStart + 3600 * 12) + "), "
+        "(1, 'POST', '/v1/messages', 200, 4000, 600, 100, 200, '', " +
+        std::to_string(dayStart + 3600 * 17) + "), "
+        "(1, 'POST', '/v1/messages', 200, 500, 0, 100, 200, '', " +
+        std::to_string(dayStart + 3600 * 6) + "), "
+        "(1, 'POST', '/v1/messages', 500, 500, NULL, 100, 200, 'boom', " +
+        std::to_string(dayStart + 3600 * 20) + "), "
+        "(1, 'GET', '/v1/models', 200, 5, NULL, 20, 40, '', " +
         std::to_string(dayStart - 3600) + "), "
-        "(1, 'GET', '/v1/models', 200, 5, 20, 40, '', " +
+        "(1, 'GET', '/v1/models', 200, 5, NULL, 20, 40, '', " +
         std::to_string(dayStart - 7200) + ")";
     DOCTEST_CHECK(env.db->db().exec(sql).isOk());
 
-    // 服务层：24 点恒非空、当日恰 3 条、逐时落点正确
+    // 服务层 ③：24 点恒非空、逐时 token 合计 == 手算值、日界过滤（昨天不进）
     {
         module::home::HomeService svc(env.db->db());
-        auto series = svc.getTodayApiCallSeries(24);
+        auto series = svc.getTodayHourlyTokenTotals(24);
         DOCTEST_REQUIRE(series.isOk());
         DOCTEST_CHECK_EQ(series.value().size(), 24u);
         int64_t total = 0;
         for (const int64_t v : series.value()) total += v;
-        DOCTEST_CHECK_EQ(total, 3);
-        DOCTEST_CHECK_EQ(series.value()[9], 1);
-        DOCTEST_CHECK_EQ(series.value()[11], 1);
+        DOCTEST_CHECK_EQ(total, 1000);            // 100 + 300 + 600
+        DOCTEST_CHECK_EQ(series.value()[9], 100);
+        DOCTEST_CHECK_EQ(series.value()[12], 300);
+        DOCTEST_CHECK_EQ(series.value()[17], 600);
+        DOCTEST_CHECK_EQ(series.value()[6], 0);   // 0 token 行不贡献
+        DOCTEST_CHECK_EQ(series.value()[20], 0);  // 非 2xx 行不贡献
+        DOCTEST_CHECK_EQ(series.value()[13], 0);  // 区间内的空小时
     }
 
-    // UI 接线：API 卡 + barChart 根 + 24 根柱子（demo 数据只有 4 根：
-    // bar.4 存在即证明喂的是真实 24 点序列，无演示泄漏）
+    // 纯函数 ③ 去头去尾：数据落 9 时与 17 时 → 只画 [9, 17]
+    {
+        std::vector<int64_t> hourly(24, 0);
+        hourly[9] = 100;
+        hourly[17] = 600;
+        const auto r = module::home::hourlyDataRange(hourly);
+        DOCTEST_CHECK(r.hasData);
+        DOCTEST_CHECK_EQ(r.first, static_cast<size_t>(9));
+        DOCTEST_CHECK_EQ(r.last, static_cast<size_t>(17));
+        // 整天无数据 → 空态（不画空轴）
+        const std::vector<int64_t> empty(24, 0);
+        DOCTEST_CHECK(!module::home::hourlyDataRange(empty).hasData);
+        // 头尾相接（只有 1 个小时有数据）→ first == last
+        std::vector<int64_t> one(24, 0);
+        one[3] = 7;
+        const auto r1 = module::home::hourlyDataRange(one);
+        DOCTEST_CHECK(r1.hasData);
+        DOCTEST_CHECK_EQ(r1.first, static_cast<size_t>(3));
+        DOCTEST_CHECK_EQ(r1.last, static_cast<size_t>(3));
+    }
+
+    // 服务层 ①：最近一次成功调用 = 17 时那条 → 600 / 4s = 150.0 tok/s
+    // （20 时的 500 行更晚但不是成功调用 → 不参与；6 时 output 0 → 不参与）
+    {
+        module::home::HomeService svc(env.db->db());
+        auto lr = svc.getLastCallRate();
+        DOCTEST_REQUIRE(lr.isOk());
+        DOCTEST_CHECK(lr.value().hasValue);
+        DOCTEST_CHECK_EQ(lr.value().outputTokens, static_cast<int64_t>(600));
+        DOCTEST_CHECK_EQ(lr.value().latencyMs, static_cast<int64_t>(4000));
+        DOCTEST_CHECK(std::fabs(lr.value().tps - 150.0) < 0.001);
+        DOCTEST_CHECK_EQ(core::call_rate::formatTps(lr.value().tps),
+                         std::string("150.0"));
+    }
+
+    // UI 接线 + 数值断言：去头去尾后的柱数/标签/相对柱高 + ① 的卡片数字
     {
         std::unique_ptr<::core::Module> mod(create_home_module());
-        mod->onStart();  // 挂真实服务（否则 stats 未加载 → 24 点全零 → 空态）
+        mod->onStart();  // 挂真实服务（否则 stats 未加载 → 空态）
         eui::Screen screen{1200.0f, 720.0f};
         eui::Ui ui;
         ui.begin("home_api_chart");
         mod->compose(ui, screen);
         ui.end();
+        ui.layout(screen.width, screen.height);  // 元素 frame 需 layout 后才有值
         DOCTEST_CHECK(ui.find("home.stat.api") != nullptr);
         DOCTEST_CHECK(ui.find("home.api.chart") != nullptr);
         DOCTEST_CHECK(ui.find("home.api.chart.bars") != nullptr);
-        DOCTEST_CHECK(ui.find("home.api.chart.bars.bar.4") != nullptr);
-        DOCTEST_CHECK(ui.find("home.api.chart.bars.bar.23") != nullptr);
+        // 去头去尾：9 根柱（9..17 闭区间），第 10 根起不存在（回退成 24 根
+        // 或「按小时号绝对下标」都会让下面这条红）
+        DOCTEST_CHECK(ui.find("home.api.chart.bars.bar.0") != nullptr);
+        DOCTEST_CHECK(ui.find("home.api.chart.bars.bar.8") != nullptr);
+        DOCTEST_CHECK(ui.find("home.api.chart.bars.bar.9") == nullptr);
+        // x 轴首尾小时标签 = 9 时 / 17 时
+        const auto textOf = [](eui::Ui& u, const std::string& id) {
+            const auto* el = u.find(id);
+            return el != nullptr ? el->text : std::string();
+        };
+        DOCTEST_CHECK_EQ(textOf(ui, "home.api.chart.bars.label.0"),
+                         std::string("9时"));
+        DOCTEST_CHECK_EQ(textOf(ui, "home.api.chart.bars.label.8"),
+                         std::string("17时"));
+        // 柱顶数值 = 该小时 token 合计（不再是百分比）
+        DOCTEST_CHECK_EQ(textOf(ui, "home.api.chart.bars.val.0"),
+                         std::string("100"));
+        DOCTEST_CHECK_EQ(textOf(ui, "home.api.chart.bars.val.3"),
+                         std::string("300"));
+        DOCTEST_CHECK_EQ(textOf(ui, "home.api.chart.bars.val.8"),
+                         std::string("600"));
+        // 相对柱高 == 相对 token 数（峰值柱满高 84，100/600 的柱子 ≈ 14）
+        const auto* bar0 = ui.find("home.api.chart.bars.bar.0");
+        const auto* bar3 = ui.find("home.api.chart.bars.bar.3");
+        const auto* bar8 = ui.find("home.api.chart.bars.bar.8");
+        DOCTEST_REQUIRE(bar0 != nullptr);
+        DOCTEST_REQUIRE(bar3 != nullptr);
+        DOCTEST_REQUIRE(bar8 != nullptr);
+        DOCTEST_CHECK_MESSAGE(
+            std::fabs(bar8->frame.height - 84.0f) < 0.5f,
+            "bar8 h=" + std::to_string(bar8->frame.height));
+        DOCTEST_CHECK_MESSAGE(
+            std::fabs(bar0->frame.height - 14.0f) < 0.5f,
+            "bar0 h=" + std::to_string(bar0->frame.height));
+        DOCTEST_CHECK_MESSAGE(
+            std::fabs(bar3->frame.height - 42.0f) < 0.5f,
+            "bar3 h=" + std::to_string(bar3->frame.height));
+        DOCTEST_CHECK_MESSAGE(
+            std::fabs(bar0->frame.height - 14.0f) < 0.5f,
+            "bar0 h=" + std::to_string(bar0->frame.height) + " y=" +
+                std::to_string(bar0->frame.y));
+        DOCTEST_CHECK_MESSAGE(
+            std::fabs(bar3->frame.height - 42.0f) < 0.5f,
+            "bar3 h=" + std::to_string(bar3->frame.height) + " y=" +
+                std::to_string(bar3->frame.y));
+        // 柱高对齐基线：三根柱底沿相等（y + height 同值）
+        DOCTEST_CHECK(std::fabs((bar0->frame.y + bar0->frame.height) -
+                                (bar8->frame.y + bar8->frame.height)) < 0.5f);
+        // ① 卡片数字 = 最近一次成功调用的速率（150.0），副标题不再写「累计」
+        DOCTEST_CHECK_EQ(textOf(ui, "home.stat.tokens.number"),
+                         std::string("150.0"));
+        DOCTEST_CHECK_EQ(textOf(ui, "home.stat.tokens.badge"),
+                         std::string("最近一次成功调用"));
         mod->onStop();
     }
     return true;

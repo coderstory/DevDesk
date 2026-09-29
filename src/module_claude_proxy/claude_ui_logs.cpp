@@ -364,7 +364,14 @@ void drawCallsDialog(eui::Ui& ui, const eui::Screen& screen,
                 .text("第 " + std::to_string(st.callsPage_ + 1) + " / " +
                       std::to_string(pages) + " 页")
                 .fontSize(12.0f)
+                // 真机反馈 ⑦（2026-09-29）：页码文本与左右翻页按钮没垂直对齐。
+                // 三者的行框本来就是同一档（40 高、同 y = h−60），差的是**文本
+                // 没做垂直居中** —— runtime 只在 verticalAlign=Center 时把 ink
+                // 中心对齐到 frame 中心（EUI-NEO runtime_render.h renderText），
+                // 否则 ink 从行框顶沿起排（40 行高 + 12 字号的偏差很显眼）。
+                // 只加对齐，三者的位置/高度/顺序/禁用态一律不动。
                 .lineHeight(40.0f)
+                .verticalAlign(eui::VerticalAlign::Center)
                 .color(t.colors.textSecondary)
                 .build();
             components::button(ui, "claude.dialog.calls.close")
