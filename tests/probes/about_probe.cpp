@@ -57,7 +57,7 @@ void compose(eui::Ui&, const eui::Screen&) {}
 
 namespace {
 
-bool near(float a, float b) { return std::fabs(a - b) <= 0.5f; }
+bool nearEq(float a, float b) { return std::fabs(a - b) <= 0.5f; }
 
 }  // namespace
 
@@ -129,8 +129,8 @@ int main(int argc, char* argv[]) {
         std::cerr << "about_probe: about.hero.icon 不存在\n";
         passed = false;
     } else {
-        check(near(hero->frame.y, contentTop), "hero.frame.y " + frameStr(hero));
-        check(near(hero->frame.width, iconSize), "hero 图标宽 " + frameStr(hero));
+        check(nearEq(hero->frame.y, contentTop), "hero.frame.y " + frameStr(hero));
+        check(nearEq(hero->frame.width, iconSize), "hero 图标宽 " + frameStr(hero));
     }
     check(ui != nullptr && ui->find("about.hero.sub") == nullptr,
           "about.hero.sub 应已删除");
@@ -151,26 +151,26 @@ int main(int argc, char* argv[]) {
         std::cerr << "about_probe: 卡片/页脚元素缺失\n";
         passed = false;
     } else {
-        check(near(c1->frame.width, kContentW), "card.app 宽 " + frameStr(c1));
-        check(near(c2->frame.width, kContentW), "card.deps 宽 " + frameStr(c2));
-        check(near(c1->frame.height, kCardH), "card.app 高 " + frameStr(c1));
-        check(near(c1->frame.x, x), "card.app.x " + frameStr(c1));
-        check(near(c1->frame.y, cardsTop), "card.app.y " + frameStr(c1));
-        check(near(c2->frame.y, c1->frame.y + c1->frame.height + kCardGap),
+        check(nearEq(c1->frame.width, kContentW), "card.app 宽 " + frameStr(c1));
+        check(nearEq(c2->frame.width, kContentW), "card.deps 宽 " + frameStr(c2));
+        check(nearEq(c1->frame.height, kCardH), "card.app 高 " + frameStr(c1));
+        check(nearEq(c1->frame.x, x), "card.app.x " + frameStr(c1));
+        check(nearEq(c1->frame.y, cardsTop), "card.app.y " + frameStr(c1));
+        check(nearEq(c2->frame.y, c1->frame.y + c1->frame.height + kCardGap),
               "card.deps.y " + frameStr(c2));
         if (clamped) {
             // 护栏分支：起点 = topPad（无 max() 时会是负值），卡与页脚不重叠
-            check(near(hero == nullptr ? -1.0f : hero->frame.y, topPad),
+            check(nearEq(hero == nullptr ? -1.0f : hero->frame.y, topPad),
                   "clamp 分支 hero.frame.y " +
                       (hero != nullptr ? frameStr(hero) : std::string("null")));
             check(c2->frame.y + c2->frame.height + kCardGap <= footer->frame.y,
                   "clamp 分支卡/页脚重叠 " + frameStr(footer));
         } else {
             // 贴底对齐核心：内容块底边 = 页脚顶 − 一档间距（回退成顶部对齐即红）
-            check(near(c2->frame.y + c2->frame.height, footerTop - heroToCards),
+            check(nearEq(c2->frame.y + c2->frame.height, footerTop - heroToCards),
                   "内容块底边 " + std::to_string(c2->frame.y + c2->frame.height) +
                       " 期望 " + std::to_string(footerTop - heroToCards));
-            check(near(footer->frame.y + footer->frame.height,
+            check(nearEq(footer->frame.y + footer->frame.height,
                        h - t.sizes.spacingXXLarge),
                   "footer 底边 " + frameStr(footer));
             check(footer->frame.y > c2->frame.y + c2->frame.height,
@@ -233,9 +233,9 @@ int main(int argc, char* argv[]) {
                           "光斑外层 alpha " + std::to_string(alpha));
                     // 最外圈霓虹边：shadow(blur 48, offset 0, primary@0.35)
                     check(layer->shadow.enabled, "最外圈应挂 shadow");
-                    check(near(layer->shadow.blur, 48.0f),
+                    check(nearEq(layer->shadow.blur, 48.0f),
                           "霓虹 shadow blur " + std::to_string(layer->shadow.blur));
-                    check(near(layer->shadow.color.a, 0.35f),
+                    check(nearEq(layer->shadow.color.a, 0.35f),
                           "霓虹 shadow alpha " +
                               std::to_string(layer->shadow.color.a));
                     check(std::fabs(layer->shadow.offset.x) < 0.01f &&
@@ -245,7 +245,7 @@ int main(int argc, char* argv[]) {
                     // 内层柔边 shadow（blur 56）：层数 6→3 后台阶更高，
                     // 靠这条把「单位像素 alpha 梯度不升」钉住（改回 40 即红）
                     check(layer->shadow.enabled, "内层应挂柔边 shadow");
-                    check(near(layer->shadow.blur, 56.0f),
+                    check(nearEq(layer->shadow.blur, 56.0f),
                           "柔边 shadow blur " +
                               std::to_string(layer->shadow.blur) + "（应 56）");
                 }
@@ -263,9 +263,9 @@ int main(int argc, char* argv[]) {
             check(band->gradient.enabled, "扫带应启用渐变");
             const float peak =
                 std::max(band->gradient.start.a, band->gradient.end.a);
-            check(near(peak, 0.05f),
+            check(nearEq(peak, 0.05f),
                   "扫带峰值 alpha " + std::to_string(peak) + "（应 0.05）");
-            check(near(band->transform.rotate, 0.31415926f),
+            check(nearEq(band->transform.rotate, 0.31415926f),
                   "扫带倾角 " + std::to_string(band->transform.rotate) +
                       "（应 18°）");
         }
@@ -282,7 +282,7 @@ int main(int argc, char* argv[]) {
             std::cerr << "about_probe: bg/glow0 缺失或未挂 onTimer（唤醒期应有）\n";
             passed = false;
         } else {
-            check(near(bg->timerSeconds, 1.0f / 30.0f),
+            check(nearEq(bg->timerSeconds, 1.0f / 30.0f),
                   "驱动节拍 " + std::to_string(bg->timerSeconds) + "（应 1/30 s）");
             const float x0 = layer0->frame.x;
             const float y0 = layer0->frame.y;

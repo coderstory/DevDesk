@@ -29,7 +29,7 @@ using module::markdown::mdLiveInputHeight;
 constexpr float kLineH = 1.2f;
 
 // 浮点近似比较（1.2f 不是二进制精确值：差值断言不能按位相等）
-bool near(float a, float b, float eps = 0.01f) {
+bool nearEq(float a, float b, float eps = 0.01f) {
     return std::fabs(a - b) <= eps;
 }
 
@@ -201,11 +201,11 @@ REGISTER_TEST(md_live_input_height_formula,
     // 字号变化：行高部分随字号线性放大（inset 部分不变）
     const float h3Big = mdLiveInputHeight(two, 400.0f, 30.0f, 10.0f, lineCount);
     DOCTEST_CHECK_EQ(h3Big, 3.0f * 30.0f * kLineH + 20.0f + 1.0f);
-    DOCTEST_CHECK(near(h3Big - h3, 3.0f * 15.0f * kLineH));
+    DOCTEST_CHECK(nearEq(h3Big - h3, 3.0f * 15.0f * kLineH));
 
     // inset 变化：只动 inset 部分
     const float h3Wide = mdLiveInputHeight(two, 400.0f, 15.0f, 20.0f, lineCount);
-    DOCTEST_CHECK(near(h3Wide - h3, 20.0f));
+    DOCTEST_CHECK(nearEq(h3Wide - h3, 20.0f));
 
     // 空测量函数（未注入）→ 按 1 行兜底，不崩
     DOCTEST_CHECK_EQ(mdLiveInputHeight(two, 400.0f, 15.0f, 10.0f, {}), h1);
@@ -585,37 +585,37 @@ REGISTER_TEST(md_live_follow_band_and_target,
         const auto d = mdLiveFollowOffset(caret, H, 0.0f, maxOff);
         DOCTEST_CHECK_MESSAGE(!d.pull, "caret=" + std::to_string(caret) +
                                            " 落在安全带内不应拉");
-        DOCTEST_CHECK(near(d.offset, 0.0f));
+        DOCTEST_CHECK(nearEq(d.offset, 0.0f));
     }
 
     // ② 越出上边界：拉（目标可能被钳到 0 —— 文首无路可退，落地由消费侧比较挡）
     {
         const auto d = mdLiveFollowOffset(10.0f, H, 0.0f, maxOff);
         DOCTEST_CHECK(d.pull);
-        DOCTEST_CHECK(near(d.offset, 0.0f));   // 10 − 40 < 0 → 钳 0
+        DOCTEST_CHECK(nearEq(d.offset, 0.0f));   // 10 − 40 < 0 → 钳 0
     }
     // ③ 越出下边界：目标 = caret − 0.4H
     {
         const auto d = mdLiveFollowOffset(90.0f, H, 0.0f, maxOff);
         DOCTEST_CHECK(d.pull);
-        DOCTEST_CHECK(near(d.offset, 50.0f));  // 90 − 40
+        DOCTEST_CHECK(nearEq(d.offset, 50.0f));  // 90 − 40
     }
     // ④ 已滚动过的视口：判据用 caret 的【视口相对】位置（caret − currentOffset）
     {
         // caret 在内容坐标 500、视口已滚到 450 → 相对位置 50 ∈ 安全带 → 不动
         const auto hold = mdLiveFollowOffset(500.0f, H, 450.0f, maxOff);
         DOCTEST_CHECK_FALSE(hold.pull);
-        DOCTEST_CHECK(near(hold.offset, 450.0f));
+        DOCTEST_CHECK(nearEq(hold.offset, 450.0f));
         // 视口只滚到 400 → 相对位置 100 > 75 → 拉回 460 − … = 500 − 40 = 460
         const auto pull = mdLiveFollowOffset(500.0f, H, 400.0f, maxOff);
         DOCTEST_CHECK(pull.pull);
-        DOCTEST_CHECK(near(pull.offset, 460.0f));
+        DOCTEST_CHECK(nearEq(pull.offset, 460.0f));
     }
     // ⑤ 视口高 ≤ 0（列被挤没）：不判不动
     {
         const auto d = mdLiveFollowOffset(500.0f, 0.0f, 120.0f, maxOff);
         DOCTEST_CHECK_FALSE(d.pull);
-        DOCTEST_CHECK(near(d.offset, 120.0f));
+        DOCTEST_CHECK(nearEq(d.offset, 120.0f));
     }
     return true;
 })
@@ -628,22 +628,22 @@ REGISTER_TEST(md_live_follow_clamp_and_noop_shape,
     {
         const auto d = mdLiveFollowOffset(5000.0f, 100.0f, 0.0f, 300.0f);
         DOCTEST_CHECK(d.pull);
-        DOCTEST_CHECK(near(d.offset, 300.0f));
+        DOCTEST_CHECK(nearEq(d.offset, 300.0f));
     }
     // ② 记账值越界一律先钳进合法区间（负数 / 超出 maxOffset）
     {
         const auto neg = mdLiveFollowOffset(40.0f, 100.0f, -5.0f, 300.0f);
         DOCTEST_CHECK_FALSE(neg.pull);
-        DOCTEST_CHECK(near(neg.offset, 0.0f));
+        DOCTEST_CHECK(nearEq(neg.offset, 0.0f));
         const auto over = mdLiveFollowOffset(1000.0f, 100.0f, 5000.0f, 300.0f);
         DOCTEST_CHECK(over.pull);
-        DOCTEST_CHECK(near(over.offset, 300.0f));
+        DOCTEST_CHECK(nearEq(over.offset, 300.0f));
     }
     // ③ maxOffset 为负（内容比视口矮）→ 按 0 处理：判据恒为「相对位置」与 0 比
     {
         const auto d = mdLiveFollowOffset(10.0f, 100.0f, 0.0f, -50.0f);
         DOCTEST_CHECK(d.pull);                  // 10 < 15 → 判越界
-        DOCTEST_CHECK(near(d.offset, 0.0f));    // 但无处可拉 → 与记账值同值
+        DOCTEST_CHECK(nearEq(d.offset, 0.0f));    // 但无处可拉 → 与记账值同值
     }
     // ④ no-op 形态：文档尾连续打字（内容已到底、caret 恒在视口底部）
     //    判据恒为「越界」，目标被 maxOffset 钳成与记账值相同的数 —— 消费侧
@@ -651,7 +651,7 @@ REGISTER_TEST(md_live_follow_clamp_and_noop_shape,
     {
         const auto d = mdLiveFollowOffset(900.0f, 100.0f, 300.0f, 300.0f);
         DOCTEST_CHECK(d.pull);
-        DOCTEST_CHECK(near(d.offset, 300.0f));  // == 记账值 → 消费侧不落地
+        DOCTEST_CHECK(nearEq(d.offset, 300.0f));  // == 记账值 → 消费侧不落地
     }
     return true;
 })
@@ -707,14 +707,14 @@ REGISTER_TEST(md_live_block_height_cap,
     DOCTEST_CHECK_EQ(mdLiveCappedInputHeight(100.0f, 1000.0f), 100.0f);
     // ② 恰好等于封顶线：原样（<= 语义）
     const float capLine = kMdLiveBlockCapRatio * 1000.0f;
-    DOCTEST_CHECK(near(mdLiveCappedInputHeight(capLine, 1000.0f), capLine));
+    DOCTEST_CHECK(nearEq(mdLiveCappedInputHeight(capLine, 1000.0f), capLine));
     // ③ 超长块（5000 行围栏 ≈ 9 万 px）：封到 0.7×视口（块内滚动接管）
     const float capped = mdLiveCappedInputHeight(90000.0f, 1000.0f);
-    DOCTEST_CHECK(near(capped, capLine));
+    DOCTEST_CHECK(nearEq(capped, capLine));
     // ④ 无视口信息（防御）：不封顶
     DOCTEST_CHECK_EQ(mdLiveCappedInputHeight(90000.0f, 0.0f), 90000.0f);
     DOCTEST_CHECK_EQ(mdLiveCappedInputHeight(90000.0f, -1.0f), 90000.0f);
     // ⑤ 比例常量 = spec 原文 0.7
-    DOCTEST_CHECK(near(kMdLiveBlockCapRatio, 0.7f));
+    DOCTEST_CHECK(nearEq(kMdLiveBlockCapRatio, 0.7f));
     return true;
 })
