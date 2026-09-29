@@ -32,30 +32,30 @@
 <table align="center">
 <tr><th align="left" width="200">模块</th><th align="left">做什么</th></tr>
 <tr>
-<td><b>📝 Markdown 笔记本</b></td>
+<td><b>Markdown 笔记本</b></td>
 <td>笔记就是普通 <code>.md</code> 文件，不锁定格式 —— 随时可以拿别的编辑器打开，或者直接丢进 Git。<br>
 FTS5 全文搜索（中文可用）、目录树、标签、大纲面板；编辑 / 双栏 / 预览三态，400ms 自动保存。</td>
 </tr>
 <tr>
-<td><b>✅ Todo 看板</b></td>
+<td><b>Todo 看板</b></td>
 <td>多列看板，拖拽跨列 + 同列重排（可插到两张卡之间）。<br>
 优先级直接体现在卡片底色上；截止日期、标签、搜索、逾期视图。</td>
 </tr>
 <tr>
-<td><b>🔀 Claude 配置切换器</b></td>
+<td><b>Claude 配置切换器</b></td>
 <td>多套 API Profile 管理 + 本地流式代理（SSE 逐块透传）。<br>
 启动代理即自动接管 Claude Code <code>settings.json</code>，停止时按键还原；多 Profile 失败自动 failover。</td>
 </tr>
 <tr>
-<td><b>📊 首页仪表盘</b></td>
+<td><b>首页仪表盘</b></td>
 <td>今日笔记 / 待办 / 逾期 / API 调用统计；Token 速率取自最近一次成功调用，用量按小时分布。</td>
 </tr>
 <tr>
-<td><b>⚙️ 设置</b></td>
+<td><b>设置</b></td>
 <td>外观（主题 / 全局字号 / 窗口效果三档）、模块插拔、桌宠、笔记目录、代理端口与接管状态、日志保留。</td>
 </tr>
 <tr>
-<td><b>🐾 桌宠</b></td>
+<td><b>桌宠</b></td>
 <td>无边框置顶透明小窗，可拖拽、四态动画、气泡对话、右键菜单；默认关闭，需要时再开。</td>
 </tr>
 </table>
