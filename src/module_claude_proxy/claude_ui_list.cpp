@@ -17,7 +17,6 @@
 #include <core/ui_geometry.h>
 
 #include <algorithm>
-#include <cassert>
 #include <functional>
 
 namespace module::claude {
@@ -27,14 +26,18 @@ namespace {
 // ============ 共享配置区块的几何（批 2，设计 §2.10；单一来源，区块高度与
 // 绘制共用同一组常量，供 drawProfileListPanel 撑滚动容器高 / 绘制用）============
 // 2026-09-28（macOS 布局统一方案 §1 组 B，P4）——区块**钉面板底**。
-// 用户原话：「新建片段的按钮原本底部对齐的，现在没了」。归因：区块在 9811225
-// （merge「master 合入 ui/rest」，2026-09-28 13:12 的冲突消解）从「Profile 列表
-// 滚动内容尾部」改成「绝对定位在列表下方」，高度让位式 `listH = clamp(scrollH −
-// sharedH − 12, min(96, scrollH), scrollH)` 只在 `sharedH ≤ scrollH − 108` 时
-// 才能把它顶到底（≤4 个片段），一旦 96px 保底生效，区块就被推下去：≥6 个时
-// 「+ 新建片段」被底部按钮压住点不到，≥7 个落到面板外，≥8 个被 app.page clip。
+// 用户原话：「新建片段的按钮原本底部对齐的，现在没了」。
+// **口径（2026-09-29 审计校正，别写成「恢复原样」）**：用户记忆里的「原本贴底」
+// 在代码史上**不成立** —— 改前形态（a0f9c32 起）是「Profile 列表滚动内容尾部」，
+// 只有列表填满视口并滚到底时才在底部，空/错态分支更是写死 `cardY0+96` 的绝对
+// 坐标；9811225（merge「master 合入 ui/rest」的冲突消解）又把它改成「绝对定位
+// 在列表下方」的脚注，高度让位式 `listH = clamp(scrollH − sharedH − 12,
+// min(96, scrollH), scrollH)` 只在 `sharedH ≤ scrollH − 108` 时（≤4 个片段）
+// 碰巧把它顶到底；96px 保底一生效区块就被推下去：≥6 个时「+ 新建片段」被底部
+// 按钮压住点不到，≥7 个落到面板外，≥8 个被 app.page clip。
+// 所以**钉底是本次的新设计**（修复 ≥5 片段起的可达性回归），不是回退到某个旧形态。
 // 现在改为**锚定**（统一原则：容器可用高只有一个来源 = bodyH；贴底元素锚容器底）：
-//   区块底 = bodyH − 底部按钮行高 − kSharedBottomGap（恒等式，不随片段数变）
+//   区块底 = bodyH − 底部按钮行高 − kSharedBottomGap（锚点，不随片段数变）
 //   区块高 = min(自然高, 不侵占列表保底视口的上界)
 //   列表视口 = 区块顶 − 间距 − 列表起点（吃剩余高）
 // 片段多到装不下时在**区块内部滚**（卡片仍然全部可达可编辑），「+ 新建片段」是
@@ -393,27 +396,27 @@ void drawProfileListPanel(eui::Ui& ui, float leftW, float bodyH,
             const float cardGap = 12.0f;
 
             // 共享配置区块（P4）：**钉面板底** —— 底沿 = 底部按钮行上沿 − 间距
-            // （恒等式，不随片段数变），高 = min(自然高, 不侵占列表保底视口)，
+            // （锚点，不随片段数变），高 = min(自然高, 不侵占列表保底视口)，
             // 顶 = 底 − 高。列表视口吃剩余高（见下方 listH）。
-            // 不变量（方案 §4）：区块整体落在面板内 —— 锚定式下这是构造性成立的
-            //（blockTop + sharedH == bodyH − kBottomBtnRowH − kSharedBottomGap），
-            // 但「+ 新建片段 恒可见可点」是本次修复的核心承诺（用户报过点不到 /
-            // 整页不可见），故留一道守门：Debug 期断言 + 任何构建都记 ERROR
-            //（不用纯 assert：Release 下会被 NDEBUG 编掉，而这里的问题在两种
-            // 构建下同样该现形；src/ 也从未用过 assert/abort——GUI 不该为一次
-            // 布局越界崩掉）。
+            // 退化守门（审计 F-06 改写）：旧写法 `assert(sharedBlockTop + sharedH
+            // <= bodyH)` 是**身份式恒真** —— blockTop 按定义 = 底 − sharedH，左边
+            // 恒等于 bodyH − 76，永不可能触发，零保护力。真正的退化有两种，都不
+            // 能从定义推出，故留这两条 + 下面的 listH 保底检查：
+            //   ① 区块被压扁到 < 固定部分 + 提示行（kSharedMinH=94）→ 标题行 /
+            //      空态行与「+ 新建片段」重叠；触发域 bodyH < 334（客户区 < 528）
+            //   ② 列表保底视口被挤没（listH < kSharedListMinH）；触发域 bodyH < 240
+            // 两者都是「高度预算不足」，按统一原则必须**可见**：记 ERROR（不做
+            // assert/abort —— 退化域低于支持的最小窗，GUI 不该为此崩，且 Release
+            // 会把 assert 编掉、问题在两种构建下同样该现形）。
             const bool sharedHasError = !sharedConfigsError.empty();
             const float sharedH = sharedBlockH(bodyH, sharedConfigs.size(),
                                                sharedHasError);
             const float sharedBlockTop = sharedBlockBottomY(bodyH) - sharedH;
-#ifndef NDEBUG
-            assert(sharedBlockTop + sharedH <= bodyH);
-#endif
-            if (sharedBlockTop + sharedH > bodyH) {
-                LOG_ERROR("[layout] 共享配置区块越出面板: blockTop=" +
-                          std::to_string(sharedBlockTop) + " sharedH=" +
-                          std::to_string(sharedH) + " bodyH=" +
-                          std::to_string(bodyH));
+            if (sharedH < kSharedFixedH + kSharedInfoH) {
+                LOG_ERROR("[layout] 共享配置区块被压扁（标题/空态行与按钮重叠）: "
+                          "sharedH=" + std::to_string(sharedH) + " < " +
+                          std::to_string(kSharedFixedH + kSharedInfoH) +
+                          " bodyH=" + std::to_string(bodyH));
             }
 
             if (!profilesError.empty()) {
@@ -432,7 +435,7 @@ void drawProfileListPanel(eui::Ui& ui, float leftW, float bodyH,
                     .position(20.0f, sharedBlockTop)
                     .size(leftW - 40.0f, sharedH)
                     .content([&] {
-                        drawSharedConfigBlock(ui, 0.0f, leftW - 40.0f, sharedH,
+                        drawSharedConfigBlock(ui, leftW - 40.0f, sharedH,
                                               t, themeTokens, st, sharedConfigs,
                                               sharedConfigsError, actions);
                     })
@@ -451,7 +454,7 @@ void drawProfileListPanel(eui::Ui& ui, float leftW, float bodyH,
                     .position(20.0f, sharedBlockTop)
                     .size(leftW - 40.0f, sharedH)
                     .content([&] {
-                        drawSharedConfigBlock(ui, 0.0f, leftW - 40.0f, sharedH,
+                        drawSharedConfigBlock(ui, leftW - 40.0f, sharedH,
                                               t, themeTokens, st, sharedConfigs,
                                               sharedConfigsError, actions);
                     })
@@ -479,6 +482,15 @@ void drawProfileListPanel(eui::Ui& ui, float leftW, float bodyH,
                 const float rowPitch = 96.0f + cardGap;
                 const float listH = std::max(
                     0.0f, sharedBlockTop - kSharedBottomGap - cardY0);
+                // 退化守门 ②（审计 F-06）：列表保底视口被挤没 —— 区块高的上界
+                // 本应保证 listH ≥ kSharedListMinH，只有 bodyH 极小（< 240，
+                // sharedBlockMaxH 被 max(0,·) 夹到 0）时才破，届时必须可见
+                if (listH < kSharedListMinH) {
+                    LOG_ERROR("[layout] Profile 列表保底视口被挤没: listH=" +
+                              std::to_string(listH) + " < " +
+                              std::to_string(kSharedListMinH) + " bodyH=" +
+                              std::to_string(bodyH));
+                }
                 components::virtualList(ui, "claude.profiles.scroll")
                     .position(20.0f, cardY0)
                     .size(leftW - 40.0f, listH)
@@ -561,7 +573,7 @@ void drawProfileListPanel(eui::Ui& ui, float leftW, float bodyH,
                     .position(20.0f, sharedBlockTop)
                     .size(leftW - 40.0f, sharedH)
                     .content([&] {
-                        drawSharedConfigBlock(ui, 0.0f, leftW - 40.0f, sharedH,
+                        drawSharedConfigBlock(ui, leftW - 40.0f, sharedH,
                                               t, themeTokens, st, sharedConfigs,
                                               sharedConfigsError, actions);
                     })
@@ -572,7 +584,7 @@ void drawProfileListPanel(eui::Ui& ui, float leftW, float bodyH,
             // ~/.claude/settings.json 预填新建表单）
             const float btnW = (leftW - 40.0f - 12.0f) * 0.5f;
             components::button(ui, "claude.profiles.new")
-                .position(20.0f, bodyH - 64.0f)
+                .position(20.0f, bottomButtonRowY(bodyH))
                 .size(btnW, 40.0f)
                 .text("+ 新建 Profile")
                 .fontSize(t.sizes.fontSizeSmall)
@@ -584,7 +596,7 @@ void drawProfileListPanel(eui::Ui& ui, float leftW, float bodyH,
                 .onClick([onNew = actions.onNewProfile] { onNew(); })
                 .build();
             components::button(ui, "claude.profiles.import")
-                .position(20.0f + btnW + 12.0f, bodyH - 64.0f)
+                .position(20.0f + btnW + 12.0f, bottomButtonRowY(bodyH))
                 .size(btnW, 40.0f)
                 .text("导入当前配置")
                 .icon(0xF019)  // fa-download
@@ -608,9 +620,12 @@ void drawProfileListPanel(eui::Ui& ui, float leftW, float bodyH,
 //     视口吃剩余高（见 drawProfileListPanel 的 listH）
 //   - profiles 空/错（无 scroll）：同样钉底（占位不再写死 y）
 // 高度由调用方按 sharedBlockH 算出并传入（**单一来源**：调用方要知道它才能排
-// 列表视口）；块内元素相对块顶定位。卡片装不下时在块内滚（「+ 新建片段」是
-// 固定尾部，恒可见可点）。几何常量与高度算式见文件顶部匿名命名空间。
-void drawSharedConfigBlock(eui::Ui& ui, float y, float width, float blockH,
+// 列表视口）；块内元素一律**相对块顶**从 0 起算（审计 F-08：此前有个恒传 0 的
+// `y` 形参、文档还写成「面板内绝对坐标」，与实现相反 —— 块的绝对位置由外层
+// `claude.shared.block` stack 的 .position 决定，块函数不该再持一个偏移）。
+// 卡片装不下时在块内滚（「+ 新建片段」是固定尾部，恒可见可点）。
+// 几何常量与高度算式见文件顶部匿名命名空间。
+void drawSharedConfigBlock(eui::Ui& ui, float width, float blockH,
                            const core::theme::Tokens& t,
                            const components::theme::ThemeColorTokens& themeTokens,
                            ProfileListState& st,
@@ -619,7 +634,7 @@ void drawSharedConfigBlock(eui::Ui& ui, float y, float width, float blockH,
                            const ProfileListActions& actions) {
     // 标题行（与 Profile 列表标题同款字重，字号略小一档以示从属）
     ui.text("claude.shared.title")
-        .position(0.0f, y)
+        .position(0.0f, 0.0f)
         .size(width, 20.0f)
         .text("共享配置片段")
         .fontSize(13.0f)
@@ -628,9 +643,24 @@ void drawSharedConfigBlock(eui::Ui& ui, float y, float width, float blockH,
         .color(t.colors.textPrimary)
         .build();
 
-    // 内容区：上顶 = 标题行底，下底 = 按钮行上沿（= y + blockH − 按钮高 − 间距）
-    const float contentTop = y + kSharedHeaderBottom;
+    // 内容区：上顶 = 标题行底，下底 = 按钮行上沿（= blockH − 按钮高 − 间距）
+    const float contentTop = kSharedHeaderBottom;
     const float contentH = std::max(0.0f, blockH - kSharedFixedH);
+    // 片段集签名（**含空态与错误态**）：片段集 / 空态 / 错误态任一变化 → 块内
+    // 滚动偏移**归零**（审计 F-09）。contentKey 只触发重新测高、不动偏移，不归零
+    // 时「滚到底 → 删到 1 个 → 再加回 8 个」会跳回旧偏移（渲染侧每帧 clamp 兜住了
+    // 「不会画错」，但状态跨数据集残留）。签名放在分支之前：否则「错误 → 恢复」
+    // 这条路径根本走不到归零代码
+    size_t scrollKey = sharedConfigsError.empty() ? 0u : 1u;
+    for (const auto& sc : sharedConfigs) {
+        scrollKey = scrollKey * 1315423911u +
+                    std::hash<std::string>{}(sc.name) +
+                    static_cast<size_t>(sc.id);
+    }
+    if (st.sharedScrollKey_ != scrollKey) {
+        st.sharedScrollKey_ = scrollKey;
+        st.sharedScrollOffset_ = 0.0f;
+    }
     if (!sharedConfigsError.empty()) {
         ui.text("claude.shared.error")
             .position(0.0f, contentTop).size(width, kSharedInfoH)
@@ -648,12 +678,6 @@ void drawSharedConfigBlock(eui::Ui& ui, float y, float width, float blockH,
     } else {
         // 片段卡片：name + 键数（K 键集大小即「N 个键」）；点击开编辑弹窗。
         // 装不下时滚动区生效（块内滚，区块整体仍钉面板底）
-        size_t scrollKey = 0;
-        for (const auto& sc : sharedConfigs) {
-            scrollKey = scrollKey * 1315423911u +
-                        std::hash<std::string>{}(sc.name) +
-                        static_cast<size_t>(sc.id);
-        }
         components::scrollView(ui, "claude.shared.scroll")
             .position(0.0f, contentTop)
             .size(width, contentH)
@@ -713,7 +737,7 @@ void drawSharedConfigBlock(eui::Ui& ui, float y, float width, float blockH,
     // 「+ 新建片段」= 区块的**固定尾部**（贴区块底 = 贴面板内容底）：片段再多
     // 也压不住它（块内滚吃掉了多出来的高度）
     components::button(ui, "claude.shared.new")
-        .position(0.0f, y + blockH - kSharedBtnH)
+        .position(0.0f, blockH - kSharedBtnH)
         .size(width, kSharedBtnH)
         .text("+ 新建片段")
         .fontSize(t.sizes.fontSizeSmall)

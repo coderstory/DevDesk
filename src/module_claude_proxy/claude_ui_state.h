@@ -98,6 +98,10 @@ struct ProfileListState {
     // 底**，卡片装不下时在区块内部滚（而不是把「+ 新建片段」推出去/盖掉）——
     // 卡片全部可达可编辑，按钮恒可见可点
     float sharedScrollOffset_ = 0.0f;
+    // 上一帧的片段集签名（审计 F-09 补的复位路径）：签名（片段集 / 空态 / 错误态）
+    // 一变就把 sharedScrollOffset_ 归零。初值故意取一个不可能撞上的值 → 首帧即
+    // 归零一次（首帧偏移本来就是 0，无行为变化）。
+    size_t sharedScrollKey_ = static_cast<size_t>(-1);
     // 引导条一次性标记（§6.4：会话内代理从未启动过才显示；内存态不持久化）
     bool proxyEverSeen_ = false;
     // 列表右键菜单（UI 现代化 M1-5）：目标 profile id（0 = 无）+ 锚点

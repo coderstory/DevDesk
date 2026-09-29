@@ -224,10 +224,15 @@ float drawDetailEnv(eui::Ui& ui, float x0, float y0, float w,
     // 此前这里只列 profile 自身的 extra_env。用户那条 profile 的 extra_env 正好
     // 只有一个键（DB 只读核对：{"CLAUDE_CODE_EFFORT_LEVEL":"max"}），11 个键里
     // 另 10 个被分发到 base_url / 模型槽位，于是这一页看着像「丢键」——实际没丢，
-    // 是页面只展示了合并结果的一层。现在改为列 **buildProxyEnv 的合并结果**
-    //（= 启动代理接管时写进 settings.json 的那份 env），每行标出来源
-    //（托管键 / 本 Profile / 片段），来源由 buildProxyEnv 的可选出参给出。
-    // 为什么用可选出参而不是在 UI 侧重算：合并规则（片段 → profile 自身 →
+    // 是页面只展示了合并结果的一层。现在改为列 **buildProxyEnv 的合并结果**。
+    // 口径（审计 F-05 收敛，别夸大）：这是**将写入的托管 env**，不是
+    // settings.json 的 ground truth —— ① 接管写入的是「既有 env ∪ 托管键」，
+    // settings.json 里的非托管键在这里看不到；② 被更高优先级文件压过的托管键
+    // 在接管时会被跳过；③ 代理未运行时 settings.json 里根本没有这份表。故它
+    // 只回答「这个 Profile 会往上游发什么」，排查 live 文件请直接看文件本身。
+    // 每行标出来源（托管键 / 本 Profile / 片段），来源由 buildProxyEnv 的可选
+    // 出参给出。
+    // 为什么用可选出参而不是在 UI 侧重算：合并规则（profile 自身 → 片段 →
     // 托管键，托管键最高）只能有一处，复刻一遍必然漂移。
     std::map<std::string, std::string> envMap;
     std::map<std::string, EnvSource> envSources;
@@ -245,10 +250,10 @@ float drawDetailEnv(eui::Ui& ui, float x0, float y0, float w,
                                &envSources);
     }
     if (envMap.empty()) {
-        // 空态（P1 要求「空态画明确文案」）：未选 Profile 时没有生效 env 可言
+        // 空态（P1 要求「空态画明确文案」）：未选 Profile 时没有可展示的 env
         ui.text("claude.env.empty")
             .position(x0, y0).size(w, 20.0f)
-            .text("无生效环境变量（未选择 Profile）")
+            .text("无可展示的 env（未选择 Profile）")
             .fontSize(12.0f).lineHeight(20.0f)
             .color(t.colors.textTertiary).build();
         if (rows != nullptr) *rows = PaneRows{0, 0};
@@ -436,7 +441,10 @@ float drawDetailCallsPane(eui::Ui& ui, float x0, float y0, float w,
     // 只画空态（不画越界行），超出的行用「另有 N 条」表达。
     constexpr float kRowPitch = 24.0f;
     constexpr float kOverflowH = 18.0f;   // 「另有 N 条」提示行
-    constexpr float kViewallBand = 8.0f + 24.0f;  // 「查看全部 →」间距 + 行高
+    constexpr float kEmptyH = 16.0f;      // 空态 / 错误行（与行高同源，单行文本）
+    constexpr float kViewallGap = 8.0f;
+    constexpr float kViewallH = 24.0f;
+    constexpr float kViewallBand = kViewallGap + kViewallH;  // 「查看全部 →」带
     const float cellsY = y0 + 24.0f;
     const float rowsAvail =
         std::max(0.0f, contentBottom - cellsY - kViewallBand);
@@ -450,24 +458,27 @@ float drawDetailCallsPane(eui::Ui& ui, float x0, float y0, float w,
     const std::time_t now = v.now;
     size_t shownRows = 0;
     bool callsOverflow = false;   // 「另有 N 条」是否在场（「查看全部」要让位）
+    bool singleLineDrawn = false;  // 空态 / 错误行在场（它占一行，见下）
     if (!callsError.empty()) {
         ui.text("claude.calls.error")
             .position(colTimeX, cellsY)
-            .size(w - 80.0f, 16.0f)
+            .size(w - 80.0f, kEmptyH)
             .text("调用记录加载失败：" + callsError)
             .fontSize(11.0f)
-            .lineHeight(16.0f)
+            .lineHeight(kEmptyH)
             .color(t.colors.error)
             .build();
+        singleLineDrawn = true;
     } else if (recent.empty()) {
         ui.text("claude.calls.empty")
             .position(colTimeX, cellsY)
-            .size(w - 80.0f, 16.0f)
+            .size(w - 80.0f, kEmptyH)
             .text("(暂无调用记录 —— 经本机代理转发过请求后这里会出现)")
             .fontSize(11.0f)
-            .lineHeight(16.0f)
+            .lineHeight(kEmptyH)
             .color(t.colors.textTertiary)
             .build();
+        singleLineDrawn = true;
     } else {
         // 溢出提示行也要放得下：放不下就让出一行（让到 0 行为止 —— 0 行时
         // 只画空态文案，不画任何越界行）
@@ -478,14 +489,18 @@ float drawDetailCallsPane(eui::Ui& ui, float x0, float y0, float w,
         }
         if (shown == 0) {
             // 内容框连一行都放不下：如实说「空间不足」，不硬塞越界行
+            //（审计 F-02：这一档下**不再**画「另有 N 条」—— 它与本行同坐标
+            // 会叠印，且会把「查看全部」带推出内容框；N 条的去向由下面那行
+            // 「查看全部」入口表达，入口自己也放不下时文案不再承诺链接）
             ui.text("claude.calls.empty")
                 .position(colTimeX, cellsY)
-                .size(w - 80.0f, 16.0f)
-                .text("(内容区高度不足，未显示调用记录 —— 点「查看全部 →」查看)")
+                .size(w - 80.0f, kEmptyH)
+                .text("(内容区高度不足，未显示调用记录)")
                 .fontSize(11.0f)
-                .lineHeight(16.0f)
+                .lineHeight(kEmptyH)
                 .color(t.colors.textTertiary)
                 .build();
+            singleLineDrawn = true;
         }
         for (size_t i = 0; i < shown; ++i) {
             const ClaudeService::CallLogEntry& c = recent[i];
@@ -538,8 +553,10 @@ float drawDetailCallsPane(eui::Ui& ui, float x0, float y0, float w,
                 .build();
         }
         shownRows = shown;
-        // 截断必须有可见表达（方案 §1 组 C 第 3 条）：与 env 页签同款提示
-        if (recent.size() > shown) {
+        // 截断必须有可见表达（方案 §1 组 C 第 3 条）：与 env 页签同款提示。
+        // 0 行档不画（审计 F-02）：它与上面的空态行同坐标会叠印，且没有行可
+        // 「另有」—— N 条的去向由下方「查看全部」入口表达
+        if (shown > 0 && recent.size() > shown) {
             callsOverflow = true;
             ui.text("claude.calls.overflow")
                 .position(colTimeX, cellsY + static_cast<float>(shown) * kRowPitch)
@@ -557,28 +574,33 @@ float drawDetailCallsPane(eui::Ui& ui, float x0, float y0, float w,
                          static_cast<int>(recent.size())};
     }
 
-    // 查看全部 →（可点击：弹完整调用记录）——位置在所有行之后（溢出提示行
-    // 在场时一并让位），仍落在内容框内（见上方预算：rowsAvail 已扣掉本带）
+    // 查看全部 →（可点击：弹完整调用记录）——位置在所有行之后（空态行 / 溢出
+    // 提示行在场时一并让位）。**越界一律不画**（审计 F-02）：内容框放不下时
+    // 宁可不画入口，也不把它推出 contentBottom（空态行因此不再承诺该链接）
     const float viewY =
         cellsY + static_cast<float>(shownRows) * kRowPitch +
-        (callsOverflow ? kOverflowH : 0.0f) + 8.0f;
-    ui.rect("claude.calls.viewall.hit")
-        .position(x0, viewY)
-        .size(w, 24.0f)
-        .color(t.colors.background)
-        .hoverColor(t.colors.hover)
-        .radius(t.sizes.radiusSmall)
-        .onClick([oc = openCalls] { oc(); })
-        .build();
-    ui.text("claude.calls.viewall")
-        .position(x0, viewY + 4.0f)
-        .size(w, 18.0f)
-        .text("查看全部 →")
-        .fontSize(12.0f)
-        .lineHeight(18.0f)
-        .color(t.colors.primary)
-        .build();
-    return viewY + 24.0f;
+        (callsOverflow ? kOverflowH : 0.0f) +
+        (singleLineDrawn ? kEmptyH + kViewallGap : kViewallGap);
+    if (viewY + kViewallH <= contentBottom + 0.5f) {
+        ui.rect("claude.calls.viewall.hit")
+            .position(x0, viewY)
+            .size(w, kViewallH)
+            .color(t.colors.background)
+            .hoverColor(t.colors.hover)
+            .radius(t.sizes.radiusSmall)
+            .onClick([oc = openCalls] { oc(); })
+            .build();
+        ui.text("claude.calls.viewall")
+            .position(x0, viewY + 4.0f)
+            .size(w, 18.0f)
+            .text("查看全部 →")
+            .fontSize(12.0f)
+            .lineHeight(18.0f)
+            .color(t.colors.primary)
+            .build();
+        return viewY + kViewallH;
+    }
+    return viewY;
 }
 
 // 操作按钮组（全量接线）+ 「运行」副提示 + 分隔线。actY 由 drawDetailPanel
@@ -855,11 +877,21 @@ void drawDetailPanel(eui::Ui& ui, float rightW, float bodyH, float xOffset,
                     ui, x0, paneY, w0, t, v, a.openCalls,
                     contentBottom, &paneRows);
             }
-            // 锚定 + 兜底：正常路径四个页签都取 actYFloor（内容已被内容框
-            // 约束住），max() 只在某个 pane 意外超框时下移动作区（宁可下移
-            // 也不重叠）。四个页签的 actY 相等 = 用户主诉「分隔线位置不一致」
-            // 的客观判据（单测/probe/日志三处都断言它）。
-            const float actY = std::max(paneBottom + kActTopGap, actYFloor);
+            // 锚定 + 两处兜底（审计 F-03 把口径写准）：
+            //   ① 正常档（bodyH ≥ 445 ⟺ 客户区高 ≥ 639）：内容被内容框约束住，
+            //      四个页签都取 actYFloor → **分隔线 y 全等**（这是不变量成立的条件，
+            //      不是无条件等式 —— 曾经这么写是错的）；
+            //   ② 更矮时：基础信息 / 模型映射两个 pane 是**固定行数内容**
+            //      （6 字段 / 6 槽位表行，paneBottom 恒 312 / 340，两者都无视
+            //      contentBottom），`paneBottom + kActTopGap > actYFloor` → 左支接管，
+            //      动作区随内容下移，四页签**不再同高**（模型支还要早 ~28px 触发）；
+            //   ③ 再矮（内容底已越过 bodyH − kActionBlockH）：用 actYHi 夹住 ——
+            //      宁可让动作区压在内容上（可见的重叠），也不让它越出容器底
+            //      （贴底锚定的下限语义；旧式纯 max() 会把它推出面板）。
+            // 组 A 之后最小窗客户区 ≈805 点 → bodyH ≈ 611，②③ 余量 ~166px 不可达。
+            const float actYHi = std::max(bodyH - kActionBlockH, actYFloor);
+            const float actY = std::min(
+                std::max(actYFloor, paneBottom + kActTopGap), actYHi);
             drawDetailActions(ui, x0, w0, actY, t, v, a);
             // 诊断日志（方案 §5 组 B 判据 ②）：一行可 grep —— 四个页签的
             // actY 必须相等。级别 Debug（设置页可切；默认 Info 不打，避免

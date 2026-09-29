@@ -80,11 +80,13 @@ void drawProfileListPanel(eui::Ui& ui, float leftW, float bodyH,
 // 2026-09-28（组 B P4）：区块**钉面板底**（底沿 = 底部按钮行上沿 − 12），
 // 高度由调用方按 sharedBlockH(bodyH, 片段数, 是否有错) 算出并传入（调用方需要
 // 它才能排列表视口 —— 高度只有一个来源）；片段装不下时在区块内部滚，卡片全部
-// 可达、「+ 新建片段」是固定尾部恒可见可点。y = 区块在面板内的起点（绝对坐标，
-// 块内元素相对块顶定位）。
+// 可达、「+ 新建片段」是固定尾部恒可见可点。
+// 坐标系（审计 F-08 改准）：块内元素一律**相对块顶**从 0 起算 —— 块的绝对位置
+// 由外层 `claude.shared.block` stack 的 .position 决定，本函数不持偏移。
+// st：块内滚动偏移的读写目标（集签名变化时由本函数归零，见 .cpp）。
 // id: claude.shared.title / claude.shared.scroll / claude.shared.card.N.{item,bg,name,keys}
 //     / claude.shared.error / claude.shared.empty / claude.shared.new
-void drawSharedConfigBlock(eui::Ui& ui, float y, float width, float blockH,
+void drawSharedConfigBlock(eui::Ui& ui, float width, float blockH,
                            const core::theme::Tokens& t,
                            const components::theme::ThemeColorTokens& themeTokens,
                            ProfileListState& st,

@@ -211,8 +211,12 @@ inline constexpr size_t kMaxImportTextBytes = 1u * 1024u * 1024u;
 inline constexpr const char* kProxyAuthPlaceholder = "PROXY_MANAGED";
 
 // 生效 env 的来源分层（2026-09-28 详情面板 P3）——**只为标注出处**，不参与
-// 合并决策（合并顺序写在 buildProxyEnv 里，一处）。优先级 片段 > profile 自身
-// > 托管键，即后写的层赢，与 buildProxyEnv 的写入顺序一一对应。
+// 合并决策（合并顺序写在 buildProxyEnv 里，一处）。优先级（高→低）：
+//   **托管键 > 片段 > profile 自身** —— 即写入顺序 profile → 片段 → 托管键，
+//   后写者赢（与 buildProxyEnv 的规则 5「托管键随后写入 → 冲突时托管键优先」
+//   和 settings_sync.cpp「托管键在最上层」同口径）。
+//（2026-09-29 审计 F-04：本条此前把顺序写反成「片段 > profile 自身 > 托管键」，
+//  与规则 5 矛盾；代码一直是对的，错的只是这行注释。）
 // 为什么需要它：env 是扁平 map，合并结果里没有出处（规则 6 的注释），
 // 详情面板要标「这条键是谁给的」就只能让合并方顺手记一层。
 enum class EnvSource {

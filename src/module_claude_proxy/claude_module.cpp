@@ -144,7 +144,8 @@ public:
         dv.recent = &recent;
         dv.callsError = callsError;
         dv.now = now;
-        dv.bodyH = bodyH;
+        // 注：DetailView 不再带 bodyH（审计 F-01）；容器可用高只由下面
+        // drawDetailPanel 的 bodyH 形参进详情面板
         dv.sharedConfigs = &state_.list.cachedSharedConfigs_;   // 批 2：详情绑定行
 
         ui.column("claude.root")

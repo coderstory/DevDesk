@@ -1444,8 +1444,10 @@ REGISTER_TEST(claude_shared_block_outside_viewport,
 
     // 三种高度（默认 / 最小窗 / 超短窗）：区块顶 ≥ 视口底 12px（间距），
     // 区块落在带 clip 的视口之外——不盖末卡、不误点片段；
-    // 720 以上窗口区块不越出底部按钮区（新建/导入同排同 y）；500 属
-    // 极端矮窗（低于最小窗 720），区块按既有口径可向下溢出按钮区
+    // 720 以上窗口区块底 == 底部按钮行上沿 − 12（**钉底**，新建/导入同排同 y）。
+    // 500 属极端矮窗（低于最小窗），P4 起区块仍钉底、不再向下溢出按钮区
+    //（审计 F-10a：本注释此前写「可向下溢出按钮区」，是 clamp 让位时代的旧口径）；
+    // 该档下区块会被压扁到自然高以下（LOG_ERROR 记录），本用例只锁锚点关系
     for (float h : {1000.0f, 720.0f, 500.0f}) {
         eui::Ui ui;
         composeAt(ui, h);
@@ -3718,7 +3720,7 @@ REGISTER_TEST(claude_calls_rows_by_available_height,
 // ---- 组 B P2 极端档：可用高不足一行 → 只画空态，不画越界行 ----
 // 旧实现的硬下限 3 会把 3 行画进动作区（越界）；现在画 0 行 + 明确文案。
 REGISTER_TEST(claude_calls_no_rows_when_too_short,
-              "claude_module: 内容区不足一行时画 0 行 + 空态（不画越界行）", {
+              "claude_module: 内容区不足一行时画 0 行 + 空态（含 F-02 叠印/越框锁）", {
     TestEnv env;
     auto p = env.svc->createProfile("矮窗", "https://short.example.com",
                                     "sk-ant-short-001", "m");
@@ -3742,7 +3744,18 @@ REGISTER_TEST(claude_calls_no_rows_when_too_short,
     const auto* empty = ui2.find("claude.calls.empty");
     DOCTEST_REQUIRE(empty != nullptr);
     DOCTEST_CHECK(empty->text.find("不足") != std::string::npos);
-    // 动作区仍在面板内（贴底锚定的兜底语义）
+    // ---- 审计 F-02：0 行档的两条硬约束（此前这条用例断不到）----
+    // ① 不再画「另有 N 条」—— 它与空态行同坐标会叠印（旧实现就是这么错的）
+    DOCTEST_CHECK(ui2.find("claude.calls.overflow") == nullptr);
+    // ② 空态行与「查看全部」带都不得越出内容框（真实裁剪下沿 = 内容框底）
+    const auto* box = ui2.find("claude.detail.contentbox");
+    DOCTEST_REQUIRE(box != nullptr);
+    const float boxBottom = box->frame.y + box->frame.height;
+    DOCTEST_CHECK(empty->frame.y + empty->frame.height <= boxBottom + 0.5f);
+    if (const auto* va = ui2.find("claude.calls.viewall.hit")) {
+        DOCTEST_CHECK(va->frame.y + va->frame.height <= boxBottom + 0.5f);
+    }
+    // 动作区仍在面板内（贴底锚定 + F-03 的 actYHi 夹取语义）
     const auto* act = ui2.find("claude.detail.actions");
     const auto* panel = ui2.find("claude.detail");
     DOCTEST_REQUIRE(act != nullptr);
@@ -3872,7 +3885,57 @@ REGISTER_TEST(claude_shared_block_bottom_anchored,
         eui::Ui ui;
         composeAtSize(mod.get(), ui, "claude_shared_anchor", 1262.0f, 801.0f);
         DOCTEST_CHECK(ui.find("claude.dialog.shared") != nullptr);  // 编辑弹窗已开
+        //（弹窗保持开着不影响下面的块内滚动断言：断言直读元素，不走命中测试）
     }
+
+    // ---- 审计 F-09：片段集变化 → 块内滚动偏移归零 ----
+    // 判别力设计（避免恒真断言）：旧集与新集都是 8 张卡 → 内容高/maxOffset 不变，
+    // 单靠渲染侧的 clamp 藏不住旧偏移；只有真的复位才会回到 0
+    {
+        eui::Ui ui;
+        composeAtSize(mod.get(), ui, "claude_shared_anchor", 1262.0f, 801.0f);
+        const auto* sc = ui.find("claude.shared.scroll");
+        DOCTEST_REQUIRE(sc != nullptr);
+        DOCTEST_REQUIRE(sc->onScrollOffsetChanged != nullptr);
+        DOCTEST_CHECK_EQ(sc->scrollOffset, 0.0f);        // 静止
+        sc->onScrollOffsetChanged(120.0f);               // 模拟用户滚到底
+    }
+    {
+        eui::Ui ui;
+        composeAtSize(mod.get(), ui, "claude_shared_anchor", 1262.0f, 801.0f);
+        const auto* sc = ui.find("claude.shared.scroll");
+        DOCTEST_REQUIRE(sc != nullptr);
+        DOCTEST_CHECK(sc->scrollOffset > 60.0f);         // 偏移真的生效了
+        DOCTEST_CHECK(sc->scrollMaxOffset > 60.0f);      // 且确有可滚余量
+    }
+    // 换一整套片段（8 个新名字）：签名变 → 偏移必须归零。
+    // 注意：这里绕过 UI 直改 service，模块的快照是**后台刷新 + 200ms 节流**的
+    //（直改 DB 不标脏）→ 必须 onPageEnter() 标脏 + 有界轮询等快照换过来，
+    // 否则断言的还是旧快照（旧签名 → 不复位），会得到假红
+    for (int64_t id : scIds) {
+        DOCTEST_REQUIRE(env.svc->deleteSharedConfig(id).isOk());
+    }
+    for (int i = 0; i < 8; ++i) {
+        auto f = env.svc->createSharedConfig("新片段" + std::to_string(i), "");
+        DOCTEST_REQUIRE(f.isOk());
+    }
+    mod->onPageEnter();
+    bool swapped = false;
+    for (int i = 0; i < 40 && !swapped; ++i) {
+        eui::Ui ui;
+        composeAtSize(mod.get(), ui, "claude_shared_anchor", 1262.0f, 801.0f);
+        const auto* name0 = ui.find("claude.shared.card.0.name");
+        swapped = name0 != nullptr && name0->text == std::string("新片段0");
+        if (!swapped) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(25));
+        } else {
+            const auto* sc = ui.find("claude.shared.scroll");
+            DOCTEST_REQUIRE(sc != nullptr);
+            DOCTEST_CHECK(sc->scrollMaxOffset > 60.0f);  // 仍有可滚余量（非恒真）
+            DOCTEST_CHECK_EQ(sc->scrollOffset, 0.0f);    // F-09：已归零
+        }
+    }
+    DOCTEST_CHECK(swapped);   // 快照确实换过来了（否则上面那条断言没意义）
 
     mod->onStop();
     for (int64_t id : ids) cleanupProfileKey(kTestKeychainService, id);

@@ -52,10 +52,14 @@ struct DetailView {
     const std::vector<ClaudeService::CallLogEntry>* recent = nullptr;  // 最近调用快照
     std::string callsError;            // 最近调用查询错误（空 = 成功）
     std::time_t now = 0;               // 调用时间列「今天/昨天」判定
-    float bodyH = 0.0f;                // 容器可用高（内容框/行数预算的唯一来源）
     // 批 2：共享配置片段快照（基础 pane 的「共享配置：片段 A（N 个键）」行 +
     // P3 生效 env 的来源标注）
     const std::vector<SharedConfig>* sharedConfigs = nullptr;
+    // 注：这里**没有** bodyH 字段（2026-09-29 审计 F-01 删除）。容器可用高只由
+    // drawDetailPanel 的 bodyH 形参持有，pane 侧的行数预算一律用传下去的
+    // contentBottom —— 曾经的 `DetailView::bodyH` 全仓零读、注释却宣称它是
+    // 「行数预算唯一来源」，按它算会得到与真实裁剪下沿差 105px 的另一个量，
+    // 正是本次修的病根换个马甲。要算预算就往 contentBottom 走。
 };
 
 // pane 绘制副产物（诊断日志用）：实际画出的行数 / 可画的总行数。

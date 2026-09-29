@@ -148,8 +148,8 @@ L1/L2 是安静的（不依赖像素时序）；L3 走 RenderBackend 真渲染�
 
 | 项 | 内容 |
 |---|---|
-| bug + 根因 | (a) todo 列宽无下限无横向滚动，≥6 列时固定宽 pill/chip 越出卡边、列头挤压（todo_ui_board.cpp:218）；(b) claude 共享配置区块（粘性脚注）整段盖列表 virtualList 视口底带，≥5 profile 时末卡永不可见、点击误开片段编辑（claude_ui_list.cpp:486；视口用 scrollH L404-406 vs listH L485-487） |
-| 断言 | (a) **最小窗矩阵** {1200×720} + 造 8 列数据：每列卡内优先级 pill / 截止 chip frame ⊆ 卡 frame；列头标题 text frame ⊆ 列头（修复后 colW ≥ 180 或横向滚动）；(b) 造 5 profile + ≥2 共享片段：virtualList 视口 frame.bottom ≤ 共享区块 frame.top（修复后 listH 让位）；「滚到底」序列后末张卡 frame ⊆ 区块上方区域 |
+| bug + 根因 | (a) todo 列宽无下限无横向滚动，≥6 列时固定宽 pill/chip 越出卡边、列头挤压（todo_ui_board.cpp:218）；(b) claude 共享配置区块整段盖列表 virtualList 视口底带，≥5 profile 时末卡永不可见、点击误开片段编辑（claude_ui_list.cpp:486；视口用 scrollH L404-406 vs listH L485-487）。**2026-09-29 口径更正（组 B P4 落地）**：区块已改为**钉面板底 + 块内滚**（不再是「粘性脚注」——那是 9811225 冲突消解期的形态；改前实为「绝对定位脚注」，只有 ≤4 片段时碰巧贴底） |
+| 断言 | (a) **最小窗矩阵** {1200×720} + 造 8 列数据：每列卡内优先级 pill / 截止 chip frame ⊆ 卡 frame；列头标题 text frame ⊆ 列头（修复后 colW ≥ 180 或横向滚动）；(b) 造 5 profile + ≥2 共享片段：virtualList 视口 frame.bottom ≤ 共享区块 frame.top（修复后 listH 让位）—— **已实现**（2026-09-29：三档尺寸矩阵 {1200×720, 1200×1000, 1262×801} + 区块底 == 底部按钮行上沿 − 12 + 区块不越面板底 + 四页签 actY 相等）；「滚到底」序列后末张卡 frame ⊆ 区块上方区域 —— **未实现，登记待办**（本轮未做鼠标滚轮驱动的滚动序列） |
 | 文件 | `todo_probes.cpp` §B（a）；`claude_probes.cpp` §A（b） |
 | 搭法 | 造数：(a) todo 8 列经模块 DB 测试造数路径；(b) claude 5 profile + 片段（复用无头造数，test_claude_ui 同款） |
 | 优先级 / 适合 | P2（a）/ **P1**（b，major 且点击语义也错）/ ✅ 必须 |
