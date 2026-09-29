@@ -1755,7 +1755,8 @@ REGISTER_TEST(settings_pet_skin_row_inline,
     // ④ 标签左、控件右，水平不重叠
     DOCTEST_CHECK(label->frame.x < field->frame.x);
     DOCTEST_CHECK(label->frame.x + label->frame.width <= field->frame.x);
-    // 同排且行仍在卡内（内容底沿不变：加标签不动卡高 120 / 底沿 104）
+    // 同排且行仍在卡内（卡高 168、内容底沿 152——2026-09-30 加显示大小行
+    // 后由 120/104 抬高，审计 F4 注释对齐）
     DOCTEST_CHECK(field->frame.y + field->frame.height <=
                   card->frame.y + card->frame.height + 0.5f);
     DOCTEST_CHECK(label->frame.y > card->frame.y + 38.0f);  // 不与标题/说明重叠

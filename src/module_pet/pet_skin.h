@@ -35,18 +35,24 @@ inline constexpr int kMinFrameSize = 16;
 inline constexpr int kMaxFrameSize = 512;
 
 // 显示大小缩放后的帧尺寸（纯函数，「档位 → 窗口尺寸换算」单测断言用）：
-// 逐维 ×scale 后**仍要过帧尺寸校验同一条 [16,512] 界**（pet_skin.cpp 解析
-// clamp 的同一区间）：512×1.5=768 钳回 512、16×0.75=12 钳回 16；四舍五入
-// 取整。窗口单位 = 点（GLFW windowSize 同口径），不乘 Retina contentScale
+// **等比单因子** f = min(scale, kMaxFrameSize/w, kMaxFrameSize/h)（审计 F1，
+// 2026-09-30）——上界按比例收敛：缩放后长宽比恒等帧原始宽高比，sprite
+//（ui.image 未设 imageFit = 默认 Cover）恰好贴合零裁切；不越界时 f=scale，
+// 其余档位/皮肤行为不变。旧实现逐维独立钳 [16,512] 会破宽高比：kirari
+// 360×480 大档 540×720→512×512（0.75→1.0），Cover 中心裁掉头脚各 12.5%，
+// 已废弃。下界不钳：16 是皮肤解析的帧域下限（本文件 parsePetSkinJson），
+// 16×0.75=12 的小窗无害且等比优先。窗口单位 = 点（GLFW windowSize 同
+// 口径），不乘 Retina contentScale
 inline std::pair<int, int> scaledFrameSize(int frameWidth, int frameHeight,
                                            double scale) {
-    const auto scaled = [scale](int v) {
-        const double s = static_cast<double>(v) * scale;
-        return static_cast<int>(
-            std::round(std::clamp(s, static_cast<double>(kMinFrameSize),
-                                  static_cast<double>(kMaxFrameSize))));
-    };
-    return {scaled(frameWidth), scaled(frameHeight)};
+    if (frameWidth <= 0 || frameHeight <= 0 || scale <= 0.0) {
+        return {frameWidth, frameHeight};  // 非法入参防御（上游已保证合法）
+    }
+    const double f = std::min(
+        {scale, static_cast<double>(kMaxFrameSize) / frameWidth,
+         static_cast<double>(kMaxFrameSize) / frameHeight});
+    return {static_cast<int>(std::round(frameWidth * f)),
+            static_cast<int>(std::round(frameHeight * f))};
 }
 
 struct PetSkin {

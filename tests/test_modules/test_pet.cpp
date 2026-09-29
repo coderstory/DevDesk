@@ -1513,11 +1513,12 @@ REGISTER_TEST(pet_bubble_layout_disjoint,
 
 // ---- 显示大小三档（2026-09-30 用户需求「桌宠显示大小」）----
 
-// 档位 → 窗口尺寸换算（纯函数 scaledFrameSize）：三档换算 + 缩放后帧尺寸
-// 仍要过 pet_skin 解析同一条 [16,512] 校验（512×1.5=768 钳回 512、
-// 16×0.75=12 钳回 16）。变异自检见 pet_scale_window_request
+// 档位 → 窗口尺寸换算（纯函数 scaledFrameSize）：三档换算 + **等比单因子**
+// 上界钳制（审计 F1：min(scale, 512/w, 512/h)，长宽比恒等帧原始值——kirari
+// 360×480 大档 384×512 零裁切；旧逐维钳 512×512 破比例被 Cover 中心裁头脚
+// 12.5%，变异改回即红）。下界不钳（16 是皮肤解析界，16×0.75=12 小窗无害）
 REGISTER_TEST(pet_scale_frame_size,
-              "pet: 显示大小档位→帧尺寸换算（钳 [16,512]）", {
+              "pet: 显示大小档位→帧尺寸换算（等比钳上界 512）", {
     using namespace module::pet;
     // 档位表口径：三档、默认中档
     DOCTEST_CHECK_EQ(kPetScalePresetCount, 3);
@@ -1542,14 +1543,36 @@ REGISTER_TEST(pet_scale_frame_size,
     const auto whale = scaledFrameSize(328, 212, 1.5);
     DOCTEST_CHECK_EQ(whale.first, 492);
     DOCTEST_CHECK_EQ(whale.second, 318);
-    // 上界钳制：512×1.5=768 → 钳回 512（缩放后仍要过帧尺寸校验同一条界）
+    // 上界等比钳制（审计 F1 回归锁）：512×1.5=768 → 单因子 f=1.0 → 512×512
+    //（方形无失真）；kirari 360×480×1.5 → f=512/480 → **384×512**，长宽比
+    // 0.75 保持（旧逐维钳给 512×512，Cover 中心裁切头脚各 12.5%）
     const auto atMax = scaledFrameSize(512, 512, 1.5);
     DOCTEST_CHECK_EQ(atMax.first, 512);
     DOCTEST_CHECK_EQ(atMax.second, 512);
-    // 下界钳制：16×0.75=12 → 钳回 16
+    const auto kirari = scaledFrameSize(360, 480, 1.5);
+    DOCTEST_CHECK_EQ(kirari.first, 384);
+    DOCTEST_CHECK_EQ(kirari.second, 512);
+    // 下界不钳（等比优先）：16×0.75=12 原样缩（16 是皮肤解析界非窗口界）
     const auto atMin = scaledFrameSize(16, 16, 0.75);
-    DOCTEST_CHECK_EQ(atMin.first, 16);
-    DOCTEST_CHECK_EQ(atMin.second, 16);
+    DOCTEST_CHECK_EQ(atMin.first, 12);
+    DOCTEST_CHECK_EQ(atMin.second, 12);
+    // 等比不变式（审计 F1 核心断言）：缩放后宽高比恒等帧原始宽高比
+    //（round 误差 ±1px 内，比值偏差 < 0.02）——逐维钳变异在此必红
+    const struct AscCase {
+        int w;
+        int h;
+        double s;
+    } ascCases[] = {
+        {128, 128, 1.5}, {128, 128, 0.75}, {128, 128, 1.0}, {360, 480, 1.5},
+        {512, 512, 1.5}, {16, 16, 0.75},   {328, 212, 1.5}, {192, 208, 0.75},
+        {136, 168, 1.0},
+    };
+    for (const AscCase& c : ascCases) {
+        const auto [sw, sh] = scaledFrameSize(c.w, c.h, c.s);
+        const double before = static_cast<double>(c.w) / c.h;
+        const double after = static_cast<double>(sw) / sh;
+        DOCTEST_CHECK(std::abs(after - before) < 0.02);
+    }
     // 非法档位值防御：sanitize 白名单外收敛默认中档（防手改 pet_config.json）
     DOCTEST_CHECK_EQ(sanitizePetScale(0.9), 1.0);
     DOCTEST_CHECK_EQ(sanitizePetScale(2.0), 1.0);

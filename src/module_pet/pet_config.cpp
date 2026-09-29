@@ -86,6 +86,15 @@ PetConfig PetConfigStore::load() const {
     }
     if (obj.has(kKeyScale) && obj.get(kKeyScale).isNumber()) {
         cfg.scale = obj.get(kKeyScale).asDouble();
+    } else if (obj.has(kKeyScale)) {
+        LOG_WARN("Pet: 配置 scale 键非法（非数字），回落默认 1.0: " +
+                 file_.string());
+    }
+    // 白名单外值（手改 0.9/2.0）回落默认档前出声（审计 F6）：scale 直接
+    // 决定用户可见档位，与 x/y 的静默钳制不同口径，收敛必须留日志可查
+    if (sanitizePetScale(cfg.scale) != cfg.scale) {
+        LOG_WARN("Pet: 配置 scale=" + std::to_string(cfg.scale) +
+                 " 不在三档白名单（0.75/1.0/1.5），回落默认 1.0");
     }
     return sanitized(cfg);
 }

@@ -893,10 +893,16 @@ void applyPetScaleIndex(int presetIndex) {
     rt.config.scale = scale;
     if (hotSwap) {
         // 运行中改档即时生效：关旧窗 → 按新档位重开（startPetWindow 按
-        // scaledFrameSize 重算窗口尺寸并重新钳制位置）
+        // scaledFrameSize 重算窗口尺寸并重新钳制位置）。位置传**新鲜值**
+        // cfg.x/y（上面刚从当前窗口读回钳制，与 applyPetSkin 同形态）——
+        // rt.config.x/y 只在 start/reset 时更新、拖拽只落盘不回写运行时，
+        // 用它重开会让桌宠跳回拖拽前位置（审计 F2）
         core::window::requestWindowClose(rt.handle);
         rt.handle = nullptr;
-        startPetWindow(rt.config);
+        startPetWindow(
+            PetWindowConfig{rt.config.skinName, cfg.x, cfg.y, scale,
+                            rt.config.getOverdueCount,
+                            rt.config.getProxyEvent});
     }
     LOG_INFO(std::string("桌宠显示大小 → ") + kPetScalePresetLabels[presetIndex] +
              (hotSwap ? "（已热切换）" : "（下次启动生效）"));
