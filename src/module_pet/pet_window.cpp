@@ -642,7 +642,7 @@ void setPetRenderPaused(bool paused) { runtime().renderPaused = paused; }
 
 bool isPetRenderPaused() { return runtime().renderPaused; }
 
-void startPetWindow(const PetWindowConfig& config) {
+bool startPetWindow(const PetWindowConfig& config) {
     PetRuntime& rt = runtime();
     rt.config = config;
     // 显示大小档防御收敛（main 传的是已 sanitize 的盘值；测试/异常调用方
@@ -669,7 +669,9 @@ void startPetWindow(const PetWindowConfig& config) {
     }
     if (skin.isFail()) {
         LOG_ERROR("桌宠皮肤不可用（" + skin.errorMessage() + "），不开窗口");
-        return;
+        // Bug B 2026-09-30：失败不再无声——返回值让 showPetWindow 能区分
+        // StartFailed（settings 侧给错误样式 toast）；装配段 main 忽略返回值
+        return false;
     }
     rt.skin = std::move(skin.value());
     rt.config.skinName = skinName;
@@ -755,20 +757,25 @@ void startPetWindow(const PetWindowConfig& config) {
              "缩放档 " + kPetScalePresetLabels[petScaleIndexOf(rt.config.scale)] +
              "），帧率=" + std::to_string(static_cast<int>(rt.skin.frameRate)) +
              "fps，位置=" + std::to_string(x) + "," + std::to_string(y) + "）");
+    return true;
 }
 
 // PAB-13：重新显示桌宠窗口（设置页「显示桌宠」按钮 + PET-CLOSE 模块开关
-// 重新勾选，声明见 pet_window.h）
-bool showPetWindow() {
+// 重新勾选，声明见 pet_window.h）。Bug B 2026-09-30：false 三义收成四态
+// 枚举——settings 侧按原因给不同 toast（未装配 = 中性「重启生效」，
+// 启动失败 = 错误样式），「已开着」不再被误报成「未启用，重启后生效」
+PetShowOutcome showPetWindow() {
     PetRuntime& rt = runtime();
     if (!rt.assembled) {
-        return false;  // 本会话从未装配（模块开关关）——不凭空开窗
+        return PetShowOutcome::NotAssembled;  // 本会话从未装配——不凭空开窗
     }
     if (rt.handle != nullptr) {
-        return false;  // 窗口已开着（隐藏后 handle 被 onWindowDestroyed 清空）
+        return PetShowOutcome::AlreadyOpen;  // 窗口已开着（隐藏后句柄被清空）
     }
-    startPetWindow(rt.config);  // 皮肤/位置/气泡数据源桥沿用上次装配
-    return true;
+    if (!startPetWindow(rt.config)) {  // 皮肤/位置/气泡数据源桥沿用上次装配
+        return PetShowOutcome::StartFailed;  // 皮肤不可用，未入队开窗
+    }
+    return PetShowOutcome::Shown;
 }
 
 // PET-CLOSE：关闭桌宠窗口（设置页模块开关「桌宠」取消勾选 → 立即隐藏，
@@ -788,6 +795,8 @@ bool closePetWindow() {
 }
 
 bool petWindowRequested() { return runtime().windowRequested; }
+
+void resetPetRuntimeForTests() { runtime() = PetRuntime{}; }
 
 void applyPetSkin(const std::string& skinName) {
     PetRuntime& rt = runtime();

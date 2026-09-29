@@ -2159,6 +2159,153 @@ REGISTER_TEST(settings_pet_module_toggle_closes_window,
     return true;
 })
 
+// ---- Bug B 2026-09-30：运行中开桌宠模块后点「显示桌宠」必须有可见反馈 ----
+// 真机现象：本会话未装配（启动时开关关）时，点按钮/开开关只有 setStatus
+//（页头副标题小字，用户视线在卡片上根本看不到）+ 一行日志——用户日志
+// 00:32:32「本会话未装配，重启后生效」后感知「点了没效果」。断言口径：桥
+// NotAssembled 分支 → settings.toast 出现、文案 =「已启用，重启 DevDesk 后
+// 生效」（中性提示非错误），且不凭空入队开窗请求。变异自检：把 settings
+// 侧 switch 换回旧 setStatus 形态，toast 节点不存在 → 本用例必红（见
+// docs/superpowers/plans/2026-09-30-pet-enable-feedback-verify.md）
+REGISTER_TEST(settings_pet_show_button_toast_when_not_assembled,
+              "settings: 未装配态点「显示桌宠」出「重启生效」toast（Bug B）", {
+    test_support::TestEnv env(kCfgPrefix, "pettoast", true);
+    test_support::ScopedConfigPath cfgEnv(
+        test_support::tempConfigFile(kCfgPrefix, "pettoast_cfg"));
+    {
+        std::ofstream out(cfgEnv.cfgPath);
+        out << "{\"theme\":\"dark\",\"enabledModules\":[\"home\",\"markdown\","
+               "\"todo\",\"claude_proxy\",\"settings\",\"pet\"]}";
+    }
+    // 皮肤根隔离到临时夹具（不读真机 appData 皮肤清单，pet 卡下拉非空）；
+    // NotAssembled 分支本身不触皮肤发现
+    test_support::TempDir petsDir("pet_toast_na");
+    test_support::ScopedEnv petsEnv("DEVDESK_PETS_DIR", petsDir.path.string());
+    static const char* kToastSkinJson =
+        "{\"name\":\"robot\",\"frameSize\":[128,128],\"frameRate\":4,"
+        "\"states\":{\"idle\":[\"f0.png\",\"f1.png\"],\"poked\":[\"p0.png\"]}}";
+    test_support::writeShippedSkinFixture(petsDir.path, "robot",
+                                          kToastSkinJson);
+    // 回厂 = 本会话从未装配（装配标志只置不清，见 pet_window.cpp PetRuntime；
+    // 前序用例可能装配过，进程级单例必须先清）
+    module::pet::resetPetRuntimeForTests();
+    (void)app::consumeWindowRequests();
+
+    std::unique_ptr<::core::Module> mod(create_settings_module());
+    mod->onStart();
+
+    eui::Screen screen;
+    screen.width = 1600.0f;
+    screen.height = 1000.0f;
+    DOCTEST_REQUIRE(clickSettingsTab(*mod, screen, 1));  // 模块 tab
+
+    eui::Ui ui;
+    auto composeModules = [&](const char* page) {
+        ui.begin(page);
+        mod->compose(ui, screen);
+        ui.end();
+        ui.layout(screen.width, screen.height);
+    };
+    composeModules("pettoast1");
+    const auto* showBtn = ui.find("settings.card.pet.show.bg");
+    DOCTEST_REQUIRE(showBtn != nullptr);
+    DOCTEST_REQUIRE(showBtn->onClick != nullptr);
+    showBtn->onClick();
+
+    // 反馈在下一帧 compose 可见（toast 状态位 → drawToast 绘制）
+    composeModules("pettoast2");
+    const auto* toast = ui.find("settings.toast");
+    DOCTEST_CHECK_MESSAGE(toast != nullptr,
+                          "点「显示桌宠」后没有任何 toast（Bug B：点了没效果）");
+    const auto* title = ui.find("settings.toast.title");
+    DOCTEST_REQUIRE(title != nullptr);
+    DOCTEST_CHECK_EQ(title->text, std::string("已启用，重启 DevDesk 后生效"));
+    // 中性提示非错误：正文为空（错误样式的补充说明只在失败分支给）
+    const auto* msg = ui.find("settings.toast.message");
+    DOCTEST_REQUIRE(msg != nullptr);
+    DOCTEST_CHECK(msg->text.empty());
+
+    // 未装配态拒绝凭空开窗：点按钮不得入队任何开窗请求
+    DOCTEST_CHECK(app::consumeWindowRequests().empty());
+
+    mod->onStop();
+    module::pet::resetPetRuntimeForTests();
+    ::core::theme::setDark();
+    return true;
+})
+
+// ---- Bug B 2026-09-30 第二分支：已装配但启动失败 → 错误样式 toast ----
+// 改前这种情况桥谎报 true（「已请求显示桌宠」但窗口永远不会出现）。皮肤根
+// 空且测试环境无随包资产 → 回退默认皮肤也失败 → StartFailed。断言：toast
+// 出现、标题 =「桌宠启动失败」、正文带原因（错误样式走 isError，与中性分支
+// 文案互异即钉死分类）
+REGISTER_TEST(settings_pet_show_button_toast_when_start_failed,
+              "settings: 桌宠启动失败点「显示桌宠」出错误 toast（Bug B）", {
+    test_support::TestEnv env(kCfgPrefix, "pettoastfail", true);
+    test_support::ScopedConfigPath cfgEnv(
+        test_support::tempConfigFile(kCfgPrefix, "pettoastfail_cfg"));
+    {
+        std::ofstream out(cfgEnv.cfgPath);
+        out << "{\"theme\":\"dark\",\"enabledModules\":[\"home\",\"markdown\","
+               "\"todo\",\"claude_proxy\",\"settings\",\"pet\"]}";
+    }
+    // 皮肤根 = 「可发现但不可加载」的 robot：discoverSkins 只验 pet.json
+    // 存在（pet_skin.cpp:231），loadSkin 要解析 JSON——写非法 JSON 使下拉
+    // 清单非空而加载必败 → 回退默认皮肤也败 → StartFailed 确定可达
+    test_support::TempDir petsDir("pet_toast_fail");
+    test_support::ScopedEnv petsEnv("DEVDESK_PETS_DIR", petsDir.path.string());
+    {
+        std::filesystem::create_directories(petsDir.path / "robot");
+        std::ofstream(petsDir.path / "robot" / "pet.json") << "{broken json";
+    }
+    module::pet::resetPetRuntimeForTests();
+    (void)app::consumeWindowRequests();
+
+    // 先装配（= 启动时开关开、本会话装配过的会话形态）：皮肤不可用 →
+    // 装配本身就没开成窗（startPetWindow 现在返回 false），但 assembled 已置位
+    DOCTEST_CHECK_MESSAGE(
+        !module::pet::startPetWindow(module::pet::PetWindowConfig{}),
+        "前置失效：pet.json 非法的夹具下装配居然成功（loadSkin 没验 JSON？）");
+    DOCTEST_CHECK(module::pet::petWindowRequested());  // 装配=想显示，与开成无关
+    DOCTEST_CHECK(app::consumeWindowRequests().empty());
+
+    std::unique_ptr<::core::Module> mod(create_settings_module());
+    mod->onStart();
+
+    eui::Screen screen;
+    screen.width = 1600.0f;
+    screen.height = 1000.0f;
+    DOCTEST_REQUIRE(clickSettingsTab(*mod, screen, 1));  // 模块 tab
+
+    eui::Ui ui;
+    auto composeModules = [&](const char* page) {
+        ui.begin(page);
+        mod->compose(ui, screen);
+        ui.end();
+        ui.layout(screen.width, screen.height);
+    };
+    composeModules("pettoastfail1");
+    const auto* showBtn = ui.find("settings.card.pet.show.bg");
+    DOCTEST_REQUIRE(showBtn != nullptr);
+    DOCTEST_REQUIRE(showBtn->onClick != nullptr);
+    showBtn->onClick();
+
+    composeModules("pettoastfail2");
+    const auto* title = ui.find("settings.toast.title");
+    DOCTEST_REQUIRE_MESSAGE(title != nullptr,
+                            "启动失败分支没有 toast（静默失败复现）");
+    DOCTEST_CHECK_EQ(title->text, std::string("桌宠启动失败"));
+    const auto* msg = ui.find("settings.toast.message");
+    DOCTEST_REQUIRE(msg != nullptr);
+    DOCTEST_CHECK(msg->text.find("皮肤") != std::string::npos);
+
+    mod->onStop();
+    module::pet::resetPetRuntimeForTests();
+    (void)app::consumeWindowRequests();
+    ::core::theme::setDark();
+    return true;
+})
+
 REGISTER_TEST(settings_pet_skin_dropdown_openup,
               "settings: 桌宠皮肤下拉 openUp——小窗 3 皮肤弹层留在窗内", {
     test_support::TestEnv env(kCfgPrefix, "petopenup", true);

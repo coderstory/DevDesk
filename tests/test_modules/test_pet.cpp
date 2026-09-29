@@ -1439,7 +1439,8 @@ REGISTER_TEST(pet_show_window_reenqueues,
     DOCTEST_REQUIRE_EQ(first.size(), static_cast<size_t>(1));
 
     // 重新显示：应再入队一条（皮肤/位置沿用 rt.config）
-    DOCTEST_CHECK(module::pet::showPetWindow());
+    DOCTEST_CHECK(module::pet::showPetWindow() ==
+                  module::pet::PetShowOutcome::Shown);
     const std::vector<app::DslWindowRequest> second = app::consumeWindowRequests();
     DOCTEST_REQUIRE_EQ(second.size(), static_cast<size_t>(1));
     DOCTEST_CHECK_EQ(second[0].pageId, "pet");
@@ -1450,6 +1451,70 @@ REGISTER_TEST(pet_show_window_reenqueues,
     DOCTEST_CHECK(second[0].positionSet);
     DOCTEST_CHECK_EQ(second[0].x, 120);
     DOCTEST_CHECK_EQ(second[0].y, 130);
+    return true;
+});
+
+// ---- Bug B 2026-09-30：showPetWindow 的 false 三义收成四态枚举 ----
+// 改前 false 把「未装配 / 已开着 / 启动失败」折成一个值，settings 侧把
+// 「已开着」误报成「未启用，重启后生效」、启动失败谎报成功。逐态断言：
+REGISTER_TEST(pet_show_window_outcomes,
+              "pet: showPetWindow 四态各归各位（Bug B）", {
+    using Outcome = module::pet::PetShowOutcome;
+    (void)app::consumeWindowRequests();  // 清残留
+
+    // ① 未装配（装配标志只置不清，进程级单例回厂只能经测试缝——这就是
+    //    「启动时开关就是关的」会话的真实形态）：拒绝凭空开窗，零请求入队
+    module::pet::resetPetRuntimeForTests();
+    DOCTEST_CHECK(module::pet::showPetWindow() == Outcome::NotAssembled);
+    DOCTEST_CHECK(app::consumeWindowRequests().empty());
+
+    // ② 已装配但皮肤不可用（空皮肤根 + 测试环境无随包资产 → 回退默认皮肤
+    //    也失败）：StartFailed，同样零请求入队（改前这种情况返回 true——
+    //    「已请求显示」但窗口永远不会出现）
+    module::pet::resetPetRuntimeForTests();
+    {
+        const PetsDirEnv pets("showwin_empty");
+        module::pet::startPetWindow(module::pet::PetWindowConfig{});
+        DOCTEST_CHECK(app::consumeWindowRequests().empty());  // 装配就没开成窗
+        DOCTEST_CHECK(module::pet::showPetWindow() == Outcome::StartFailed);
+        DOCTEST_CHECK(app::consumeWindowRequests().empty());
+    }
+
+    // ③ 隐藏后重开 = Shown：夹具皮肤装配 → 消费首条开窗请求 → 再 show 再入队
+    module::pet::resetPetRuntimeForTests();
+    {
+        const PetsDirEnv pets("showwin_shown");
+        test_support::writeShippedSkinFixture(pets.root, "robot",
+                                              kRobotFixtureJson);
+        DOCTEST_REQUIRE(module::pet::startPetWindow(
+            module::pet::PetWindowConfig{"", 120, 130}));
+        (void)app::consumeWindowRequests();
+        DOCTEST_CHECK(module::pet::showPetWindow() == Outcome::Shown);
+        DOCTEST_CHECK_EQ(app::consumeWindowRequests().size(),
+                         static_cast<size_t>(1));
+    }
+
+    // ④ AlreadyOpen：无头环境 handle 只能经请求自带的 onWindowCreated 回填
+    //（生产里这是主循环职责）——「窗口已开着」不得再落进「未启用，重启生效」
+    module::pet::resetPetRuntimeForTests();
+    {
+        const PetsDirEnv pets("showwin_open");
+        test_support::writeShippedSkinFixture(pets.root, "robot",
+                                              kRobotFixtureJson);
+        module::pet::startPetWindow(module::pet::PetWindowConfig{});
+        const std::vector<app::DslWindowRequest> reqs =
+            app::consumeWindowRequests();
+        DOCTEST_REQUIRE_EQ(reqs.size(), static_cast<size_t>(1));
+        DOCTEST_REQUIRE(reqs[0].onWindowCreated);
+        reqs[0].onWindowCreated(
+            reinterpret_cast<core::window::Handle>(0x1));  // 假句柄即可判空
+        DOCTEST_CHECK(module::pet::showPetWindow() == Outcome::AlreadyOpen);
+        DOCTEST_CHECK(app::consumeWindowRequests().empty());  // 已开=不再入队
+    }
+
+    // 收尾回厂：不留装配态污染后续用例（进程级 pet 运行时是共享状态）
+    module::pet::resetPetRuntimeForTests();
+    (void)app::consumeWindowRequests();
     return true;
 });
 

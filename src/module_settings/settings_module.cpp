@@ -97,6 +97,7 @@
 #include "module_pet_bridge.h"
 
 #include <ui_kit/metrics.h>
+#include <ui_kit/toast.h>
 
 #include <eui/dsl.h>
 
@@ -484,13 +485,27 @@ public:
         setStatus("桌宠位置已重置（主屏右下角）");
     }
 
-    // 显示桌宠（PAB-13，原桌宠卡 onClick 内联体）。返回值 false 有两种：模块
-    // 开关关（本会话未装配）或窗口已开着——都只需一句提示，不阻断
+    // 显示桌宠（PAB-13，Bug B 2026-09-30）。桥已收成四态枚举：false 三义
+    // 折一个「未启用，重启后生效」既误报「已开着」，又只有页头副标题小字
+    // 这一可见通道（用户视线在卡片上）——真机反馈「点了没效果」。现在按
+    // 原因给 toast：未装配 = 中性提示非错误（开关已写盘，重启生效）；
+    // 启动失败 = 错误样式；已开着 / 成功各给一句如实反馈
     void showPetWindow() {
-        if (::module::pet::showPetWindow()) {
-            setStatus("已请求显示桌宠");
-        } else {
-            setStatus("桌宠本次会话未启用，重启后生效");
+        using Outcome = ::module::pet::PetShowOutcome;
+        switch (::module::pet::showPetWindow()) {
+            case Outcome::Shown:
+                setStatus("已请求显示桌宠");
+                break;
+            case Outcome::AlreadyOpen:
+                showToast("桌宠已在显示中");
+                break;
+            case Outcome::NotAssembled:
+                showToast("已启用，重启 DevDesk 后生效");
+                break;
+            case Outcome::StartFailed:
+                showToast("桌宠启动失败", "皮肤资产不可用，详情见日志",
+                          /*isError=*/true);
+                break;
         }
     }
 
@@ -511,12 +526,28 @@ public:
                      (closed ? "窗口已请求关闭" : "无窗口可关") + "（重启后不再装配）");
             return;
         }
-        if (::module::pet::showPetWindow()) {
-            setStatus("桌宠已开启并立即显示");
-            LOG_INFO("Settings: 桌宠模块开启 → 窗口已重新入队开窗");
-        } else {
-            setStatus("桌宠已开启；本次会话未装配桌宠，重启 DevDesk 后生效");
-            LOG_INFO("Settings: 桌宠模块开启 → 本会话未装配，重启后生效");
+        // 已开着（AlreadyOpen，如关→开快速往返窗口尚未销毁）与重开成功对
+        // 用户是同一结果：窗口此刻就在屏幕上，本体即反馈，状态行收底即可
+        //（与换肤/切大小「即时肉眼可见不补 toast」同一口径）
+        using Outcome = ::module::pet::PetShowOutcome;
+        switch (::module::pet::showPetWindow()) {
+            case Outcome::Shown:
+            case Outcome::AlreadyOpen:
+                setStatus("桌宠已开启并立即显示");
+                LOG_INFO("Settings: 桌宠模块开启 → 窗口已重新入队开窗");
+                break;
+            case Outcome::NotAssembled:
+                // Bug B 2026-09-30：本会话未装配 = 窗口无从谈起，toast 给可见
+                // 反馈（改前只有页头副标题小字，用户日志 00:32:32 后感知「点了
+                // 没效果」）；中性提示非错误——开关已写盘，重启后生效
+                showToast("已启用，重启 DevDesk 后生效");
+                LOG_INFO("Settings: 桌宠模块开启 → 本会话未装配，重启后生效");
+                break;
+            case Outcome::StartFailed:
+                showToast("桌宠启动失败", "皮肤资产不可用，详情见日志",
+                          /*isError=*/true);
+                LOG_ERROR("Settings: 桌宠模块开启 → 开窗失败（皮肤不可用）");
+                break;
         }
     }
 
@@ -558,6 +589,24 @@ public:
     void setStatus(const std::string& msg, bool isError = false) {
         statusMessage_ = msg;
         statusIsError_ = isError;
+    }
+
+    // ---- Toast 反馈（Bug B 2026-09-30 起接入）----
+    // settings 是四个页面模块里最后一个接 toast 的（R3 备注原话「无 toast /
+    // 无对话框」）：页头副标题小字（setStatus）对「点卡片按钮」这类动作
+    // 反馈太弱（真机反馈「点了没效果」），桥失败分支改走 toast。状态位与
+    // 绘制接线走 ui_kit（D1 去重），形态与 claude 同款：3.5s + 成功
+    // fa-circle-check / 失败 fa-triangle-exclamation，节点 id = settings.toast
+    void showToast(const std::string& title, const std::string& msg = "",
+                   bool isError = false) {
+        toast_.show(title, msg, isError);
+    }
+
+    void drawToast(eui::Ui& ui, const eui::Screen& screen,
+                   const core::theme::Tokens& t) {
+        ui_kit::drawToast(ui, screen, "settings.toast", toast_,
+                          core::theme::componentTokens(t),
+                          ui_kit::ToastOptions{.okIcon = 0xF058});
     }
 
     // ============ UI ============
@@ -682,6 +731,9 @@ public:
                     .build();
             })
             .build();
+
+        // toast 每帧无条件绘制（显隐由状态位控制，同 claude/markdown 各站点）
+        drawToast(ui, screen, t);
 
         LOG_DEBUG("Settings 模块 compose 完成");
     }
@@ -991,6 +1043,8 @@ private:
     float logViewScrollOffset_ = 0.0f;    // 日志查看卡内滚动位置
     std::string statusMessage_;
     bool statusIsError_ = false;
+    // toast 单实例状态位（EUI-NEO toast 无队列，见 ui_kit/toast.h）
+    ui_kit::ToastState toast_;
 };
 
 } // namespace module::settings
