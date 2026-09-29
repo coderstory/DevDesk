@@ -17,6 +17,13 @@
 #     CMakeCache.txt 的 CMAKE_PROJECT_VERSION 在打包时替换（模板里的 0.1.0 是占位值，
 #     仓库模板本身不改）；
 #   * Contents/Resources/DevDesk.icns 为 App 图标（见下方「图标」段）。
+#
+# ⚠️ 本脚本是 .app bundle 组装的**唯一入口**：常规构建（scripts/build-test-run.sh）只重建
+#    <构建目录>/DevDesk 裸可执行，**不碰 bundle**；不调本脚本就下载不到新的 bundle。
+#    2026-09-29 事故即由此而来——bundle 停在旧二进制，而「编译 → cp -R .app /Applications/」
+#    照旧把旧壳装了过去。安装 / 打包路径都必须调本脚本重组，不要在外面临时手搓 cp 组装。
+#    调用方：scripts/package-macos.sh §3（打 DMG）、scripts/build-test-run.sh --install（装到
+#    /Applications，装前会做 sha256 防陈旧断言）。
 
 set -e
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"

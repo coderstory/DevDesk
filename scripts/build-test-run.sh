@@ -2,18 +2,24 @@
 # DevDesk 一体化脚本：杀旧进程 + 增量构建 + 测试 + 启动 app
 # 输出设计：固定结构（阶段标题 + ✅/❌ 结果行），构建正常只显示尾部、
 # 失败才显示错误摘要；测试只显示 [FAIL] 行 + Total/Passed/Failed 统计。
-# 用法：./scripts/build-test-run.sh [--clean] [--release] [--no-test] [--no-run] [--filter 关键词]
+# 用法：./scripts/build-test-run.sh [--clean] [--release] [--no-test] [--no-run] [--install] [--filter 关键词]
 #   --clean       全量重建（rm -rf <构建目录> 重新 configure；默认增量）
 #   --release     Release 构建（默认 Debug）。构建目录随之切到 build-release/，
 #                 与 Debug 的 build/ 互不覆盖
 #   --no-test     跳过测试（测试挂时不阻断启动 app）
 #   --no-run      只杀+构建+测试，不启动 app（app 在跑时链接可能因文件锁失败，会提示）
+#   --install     仅 macOS：构建/测试之后把本次产物重组进 .app 并**覆盖安装**到
+#                 /Applications/DevDesk.app，装完硬断言 sha256 与构建产物一致（见下方
+#                 「安装（--install）」段）。非 macOS 上给这个开关 = 硬失败，不静默忽略。
+#                 默认不开 = 行为与从前逐字一致（这条开关是本脚本唯一的安装入口）
 #   --filter X    只跑描述含 X 的测试用例（透传给 devdesk_tests；注意中文
 #                 关键词经 Git Bash 传参可能有编码问题，建议用 ASCII 词）
 # 环境变量：DEVDESK_JOBS 并发编译单元数（默认 3，多 worktree 并发时的封顶）；
 #           DEVDESK_BUILD_TYPE 构建类型（默认 Debug；--release 等价于 Release）；
 #           DEVDESK_BUILD_DIR 构建目录（默认按构建类型选：Debug=build/、Release=build-release/；
 #                             显式指定时一律以它为准——差分验证 / 一次性探针走独立目录时用它）；
+#           DEVDESK_INSTALL_DIR 安装目标（仅 --install 用；默认 /Applications/DevDesk.app，
+#                             必须是绝对路径）；
 #           ccache 配置已落 ccache.conf（无需环境变量），临时覆盖才 source scripts/ccache-env.sh
 # 默认：杀旧进程（释放 exe 锁）→ 增量构建 → 全量测试（挂则不启动）→ 启动 app
 # 平台：Windows（Git Bash/MSYS2，发布路径）与 macOS / Linux 通用。平台差异只在四处分支：
@@ -25,6 +31,24 @@
 # 目录里已有 build.ninja 时跳过 configure 走增量（worktree 首建、换平台、上次 configure
 # 中途失败这三种情况才需要 configure）；但若缓存里的 CMAKE_BUILD_TYPE 与本次请求不一致
 # 则**硬失败**（防 Debug/Release 在同一目录互相污染），改用对应目录或 --clean。
+#
+# 安装（--install，仅 macOS）——为什么加它，以及为什么必须带防陈旧断言：
+#   2026-09-29 实测事故：`bash scripts/build-test-run.sh --release` 只重建**裸可执行**
+#   build-release/DevDesk（12:14:56），而 build-release/DevDesk.app/Contents/MacOS/DevDesk
+#   还是 11:13:13 的旧文件 —— 因为 bundle 的组装只发生在 platform/macos/build-app.sh 里，
+#   而它原本只被 scripts/package-macos.sh（打 DMG）调用，常规构建路径根本不碰 bundle。
+#   于是「编译 → cp -R build-release/DevDesk.app /Applications/」拷过去的是一个**装着旧
+#   二进制的壳**。铁证：同一个字符串 'claude.detail.contentbox' 在裸 exe 里
+#   `grep -c -a -F` = 1，在 bundle 内与 /Applications 里 = 0。
+#   后果正是本项目被坑过多次的那一类：「改完、测试也绿了，但用户在旧代码上验证新功能，
+#   得出『还是没效果』」；而 CLAUDE.md 阶段 5 的标准「编译 = 编译 + 复制到 /Applications」
+#   在脚本层做不到（没有一条命令能把「构建 → 重组 bundle → 补 assets → 覆盖安装」串起来）。
+#   → --install 把四步串成一条**可判定**的路径，并在装完后**硬断言**已安装二进制与本次
+#     构建产物 sha256 一致；不一致就打印两边 mtime/sha 并 exit 1，绝不静默通过。
+#     没有这条断言，同样的坑必然再踩第三次（断言是本次改动的核心交付物，不是装饰）。
+#   为什么比对 sha256 而不是 mtime：cp -R / ditto / touch -t 都能造出任意 mtime，时间戳
+#     相同不代表内容相同、不同也不代表内容不同；只有字节比对能回答「装上去的是不是这次
+#     编出来的」。
 #
 # worktree 感知：git worktree 里没有同级 ../EUI-NEO，脚本按
 #   EUI_NEO_DIR 环境变量 > 同级 ../EUI-NEO > git 主工作树同级
@@ -84,13 +108,14 @@ fi
 # 构建类型：默认 Debug（既有行为）；--release 或 DEVDESK_BUILD_TYPE 切别的类型。
 # 只认 Debug / Release 两种，写错在 configure 前就报错（免得 CMake 静默按空类型构建）。
 BUILD_TYPE="${DEVDESK_BUILD_TYPE:-Debug}"
-CLEAN=0; RUN_TEST=1; RUN_APP=1; FILTER=""
+CLEAN=0; RUN_TEST=1; RUN_APP=1; INSTALL=0; FILTER=""
 for arg in "$@"; do
   case "$arg" in
     --clean)    CLEAN=1 ;;
     --release)  BUILD_TYPE="Release" ;;
     --no-test)  RUN_TEST=0 ;;
     --no-run)   RUN_APP=0 ;;
+    --install)  INSTALL=1 ;;
     --filter)   shift; FILTER="$1" ;;
     *)          FILTER="$arg" ;;   # 裸词当 filter
   esac
@@ -99,6 +124,17 @@ case "$BUILD_TYPE" in
   Debug|Release) ;;
   *) echo "❌ 未知构建类型 '$BUILD_TYPE'（只支持 Debug / Release；注意大小写）" >&2; exit 1 ;;
 esac
+# --install 只在 macOS 有实现（.app bundle 是 macOS 形态）。非 macOS 给这个开关必须**出声**：
+# 静默忽略等于「以为装上了、其实没装」——与本次要修的「静默装旧二进制」是同一类失败。
+# 放在构建之前判，免得白跑一遍几分钟的构建再报错。
+if [ "$INSTALL" = "1" ] && [ "$DEVDESK_OS" != "darwin" ]; then
+  echo "❌ --install 只在 macOS 上可用（当前平台：${DEVDESK_OS}；本平台没有 .app bundle 形态）" >&2
+  case "$DEVDESK_OS" in
+    windows) echo "   Windows 侧打安装包请用：bash scripts/package-windows.sh（Inno Setup）" >&2 ;;
+    *)       echo "   Linux 侧本项目无安装器实现，直接跑 <构建目录>/DevDesk 即可" >&2 ;;
+  esac
+  exit 1
+fi
 
 # ---- 构建目录：一类构建一个目录（Debug/Release 不共用），DEVDESK_BUILD_DIR 可整体覆盖 ----
 # 为什么要按类型分开：configure 会往目录里写 CMakeCache.txt / build.ninja，两类构建共用一个
@@ -221,7 +257,7 @@ esac
 
 # configure 条件：--clean（全量重建）或 <构建目录> 未初始化（worktree 首建、换平台、上次 configure 中途失败）
 if [ "$CLEAN" = "1" ]; then
-  echo "── 全量重建（rm -rf $BUILD_DIR）──"
+  echo "── 全量重建（rm -rf ${BUILD_DIR}）──"
   rm -rf "$BUILD_DIR"
 elif [ ! -f "$BUILD_DIR/build.ninja" ]; then
   echo "── 首次 configure（$BUILD_DIR 未初始化）──"
@@ -232,7 +268,7 @@ fi
 if [ -f "$BUILD_DIR/CMakeCache.txt" ] && grep -q "^CMAKE_BUILD_TYPE:" "$BUILD_DIR/CMakeCache.txt"; then
   CACHED_TYPE="$(grep -m1 "^CMAKE_BUILD_TYPE:" "$BUILD_DIR/CMakeCache.txt" | cut -d= -f2- | tr -d '\r')"
   if [ "$CACHED_TYPE" != "$BUILD_TYPE" ]; then
-    echo "❌ $BUILD_DIR 已按 $CACHED_TYPE 配置（CMAKE_BUILD_TYPE=$CACHED_TYPE），本次请求 $BUILD_TYPE" >&2
+    echo "❌ $BUILD_DIR 已按 $CACHED_TYPE 配置（CMAKE_BUILD_TYPE=${CACHED_TYPE}），本次请求 $BUILD_TYPE" >&2
     echo "   一类构建一个目录：换目录（DEVDESK_BUILD_DIR=<dir>）或 --clean 重建本目录" >&2
     exit 1
   fi
@@ -294,7 +330,7 @@ else
     if [ ! -f "$SYS32/$dll" ]; then BAD_DLLS="$BAD_DLLS $dll"; fi
   done < <(objdump -p $BUILD_DIR/DevDesk$EXE_SUFFIX 2>/dev/null | awk '/DLL Name:/{print $3}')
   if [ -n "$BAD_DLLS" ]; then
-    echo "❌ 发布形态：DevDesk$EXE_SUFFIX 依赖非系统 DLL:$BAD_DLLS（期望单 exe 零外部 DLL）"
+    echo "❌ 发布形态：DevDesk$EXE_SUFFIX 依赖非系统 DLL:${BAD_DLLS}（期望单 exe 零外部 DLL）"
     exit 1
   fi
   if grep -q "DEVDESK_STATIC:BOOL=ON" $BUILD_DIR/CMakeCache.txt; then
@@ -342,7 +378,7 @@ if [ "$RUN_TEST" = "1" ]; then
   if echo "$TEST_OUT" | grep -q "Failed: 0"; then
     echo "✅ 测试全绿"
   else
-    echo "❌ 测试有失败（上方为 FAIL 摘要；要看完整输出跑: $TEST_BIN）"
+    echo "❌ 测试有失败（上方为 FAIL 摘要；要看完整输出跑: ${TEST_BIN}）"
     exit 1
   fi
 fi
@@ -358,6 +394,128 @@ echo "── 模块隔离守卫 ──"
 if ! bash scripts/check-module-isolation.sh; then
   echo "❌ 模块隔离守卫失败（上方为 文件:行:命中行；修 settings 侧，勿越模块 link）"
   exit 1
+fi
+
+# ---- 3c. 安装到 /Applications（--install，仅 macOS；默认不开则整段不执行）----
+# 顺序即「事故的反面」，每一步都在补一个曾经漏掉的环节：
+#   ① 重组 bundle：build-app.sh 会 rm -rf 重建 .app + 拷二进制 + 刷 Info.plist 版本 + 拷 assets。
+#      **必须走它**，不要手搓 cp —— 手搓正是事故成因（bundle 没人重组，壳一直停在旧版本）。
+#   ② assets 补拷 + 三条断言（与 scripts/package-macos.sh §4 同款口径：rm -rf 后
+#      cmake -E copy_directory，再断言 shadertoy 非空 / pets/README.md / 每个皮肤目录有 pet.json）。
+#      顺序关键：**必须在 ① 之后**——build-app.sh 会 rm -rf 整个 bundle，先补后建等于白补。
+#      改这里要同步改 package-macos.sh §4（不发明第二套口径）。
+#   ③ 版本号：单一源 = 构建目录 CMakeCache.txt 的 CMAKE_PROJECT_VERSION（同 package-macos.sh §5）；
+#      build-app.sh 已把它写进产物 Info.plist，这里断言产物里确实是它——Info.plist 也是「旧壳」
+#      会露馅的地方，与二进制同属交付物的一部分。
+#   ④ 防陈旧断言 A：bundle 内二进制 == 本次构建产物。
+#   ⑤ 覆盖安装（整包替换）。
+#   ⑥ 防陈旧断言 B（本任务的核心交付物）：**已安装**二进制 == 本次构建产物，不一致硬失败并打印
+#      两边 mtime/sha。断言 B 是唯一能证明「用户接下来跑的就是这次编出来的」的检查；没有它，
+#      同样的坑必然再踩第三次（断言 A 只证明 bundle 组对了，证明不了装到 /Applications 的那份对）。
+if [ "$INSTALL" = "1" ]; then
+  INSTALL_DIR="${DEVDESK_INSTALL_DIR:-/Applications/DevDesk.app}"
+  # 安装目标必是绝对路径：下面要 rm -rf 它，相对路径会随 cwd 漂移，风险不值得省一行
+  case "$INSTALL_DIR" in
+    /*) ;;
+    *)  echo "❌ DEVDESK_INSTALL_DIR 必须是绝对路径：$INSTALL_DIR" >&2; exit 1 ;;
+  esac
+  echo "── 安装（重组 .app → 补 assets → 覆盖 ${INSTALL_DIR}）──"
+
+  file_sha256() { shasum -a 256 "$1" 2>/dev/null | awk '{print $1}'; }
+  file_stamp()  { stat -f '%Sm  %z bytes' -t '%Y-%m-%d %H:%M:%S' "$1" 2>/dev/null; }
+  # 防陈旧断言：$1（本次构建产物）与 $2（待验物）必须**字节一致**；不一致即硬失败，
+  # 打印两边 mtime/sha256 后 exit 1（不静默通过、也不降级成警告）
+  assert_fresh_binary() {
+    local expect="$1" actual="$2" label="$3" sha_exp sha_act
+    sha_exp="$(file_sha256 "$expect")"
+    sha_act="$(file_sha256 "$actual")"
+    if [ -z "$sha_exp" ] || [ "$sha_exp" != "$sha_act" ]; then
+      echo "❌ 防陈旧断言失败（${label}）：二进制不是本次构建产物" >&2
+      echo "   expect: $expect" >&2
+      echo "           sha256=$sha_exp  mtime=$(file_stamp "$expect")" >&2
+      echo "   actual: $actual" >&2
+      echo "           sha256=$sha_act  mtime=$(file_stamp "$actual")" >&2
+      echo "   → 硬失败：装上去/待装的必须是这次编出来的二进制，否则用户会在旧代码上验证新功能" >&2
+      exit 1
+    fi
+    echo "✅ 防陈旧断言（${label}）：sha256 ${sha_exp:0:12}… 与本次构建产物一致"
+  }
+
+  # ① 重组 bundle
+  DEVDESK_BUILD_DIR="$BUILD_DIR_ABS" DEVDESK_SKIP_LSREGISTER=1 bash platform/macos/build-app.sh
+  APP_DIR="$BUILD_DIR_ABS/DevDesk.app"
+  MACOS_DIR="$APP_DIR/Contents/MacOS"
+  if [ ! -x "$MACOS_DIR/DevDesk" ]; then
+    echo "❌ .app 内没有可执行文件：$MACOS_DIR/DevDesk（build-app.sh 没跑成功？）" >&2
+    exit 1
+  fi
+
+  # ② assets 补拷（必须在 ① 之后）
+  if [ ! -d "$BUILD_DIR/assets" ]; then
+    echo "❌ 找不到 $BUILD_DIR/assets（构建 DevDesk 目标时 POST_BUILD 会生成，缺了说明构建不完整）" >&2
+    exit 1
+  fi
+  rm -rf "$MACOS_DIR/assets"
+  cmake -E copy_directory "$BUILD_DIR/assets" "$MACOS_DIR/assets"
+  if [ -z "$(ls -A "$MACOS_DIR/assets/shaders/shadertoy" 2>/dev/null)" ]; then
+    echo "❌ 断言失败：$MACOS_DIR/assets/shaders/shadertoy 为空" >&2
+    exit 1
+  fi
+  if [ ! -f "$MACOS_DIR/assets/pets/README.md" ]; then
+    echo "❌ 断言失败：$MACOS_DIR/assets/pets/README.md 缺失" >&2
+    exit 1
+  fi
+  PET_COUNT=0
+  for petdir in "$MACOS_DIR/assets/pets"/*/; do
+    [ -d "$petdir" ] || continue
+    if [ ! -f "$petdir/pet.json" ]; then
+      echo "❌ 断言失败：皮肤目录缺 pet.json: $petdir" >&2
+      exit 1
+    fi
+    PET_COUNT=$((PET_COUNT + 1))
+  done
+  echo "✅ assets 就位（Contents/MacOS/assets；pets 含 $PET_COUNT 皮肤包）"
+
+  # ③ 版本号（单一源同 package-macos.sh §5；断言产物 Info.plist 已刷成本次版本）
+  APP_VERSION="$(sed -n 's/^CMAKE_PROJECT_VERSION:[A-Za-z]*=\(.*\)$/\1/p' "$BUILD_DIR/CMakeCache.txt" | head -1 | tr -d '\r')"
+  if [ -z "$APP_VERSION" ]; then
+    echo "❌ 无法从 $BUILD_DIR/CMakeCache.txt 读取 CMAKE_PROJECT_VERSION" >&2
+    exit 1
+  fi
+  PLIST_VERSION="$(plutil -extract CFBundleShortVersionString raw "$APP_DIR/Contents/Info.plist" 2>/dev/null || true)"
+  if [ "$PLIST_VERSION" != "$APP_VERSION" ]; then
+    echo "❌ Info.plist 版本未刷新：bundle 里是 '$PLIST_VERSION'，本次构建是 '$APP_VERSION'" >&2
+    echo "   （build-app.sh 的 plutil 步骤没生效？旧壳的第二个露馅点，与二进制同属交付物）" >&2
+    exit 1
+  fi
+  echo "✅ 版本 ${APP_VERSION}（bundle Info.plist 与本次构建一致）"
+
+  # ④ 断言 A：bundle 内二进制 == 本次构建产物
+  assert_fresh_binary "$BUILD_DIR/DevDesk" "$MACOS_DIR/DevDesk" "bundle 内二进制"
+
+  # ⑤ 覆盖安装（整包替换）。ditto 是 macOS 原生的 bundle 拷贝（比 cp -R 更忠实于 bundle 结构）
+  # 运行中的实例**只警告不杀**：本脚本按规则严禁按进程名杀（会杀掉用户 / 别的 agent 的实例），
+  # 按路径杀也只覆盖本 build 目录的产物；这里命中说明用户自己开着 /Applications 的实例，
+  # 杀掉会丢他未保存的内容 —— 提示他自己退出重启。
+  if pgrep -f "$INSTALL_DIR/Contents/MacOS/DevDesk" >/dev/null 2>&1; then
+    echo "⚠ DevDesk 正从 $INSTALL_DIR 运行：覆盖安装不会替换那个已在运行的进程，" >&2
+    echo "  需自行退出后重新打开才会用到新二进制（脚本不杀进程）" >&2
+  fi
+  rm -rf "$INSTALL_DIR"
+  ditto "$APP_DIR" "$INSTALL_DIR"
+  if [ ! -x "$INSTALL_DIR/Contents/MacOS/DevDesk" ]; then
+    echo "❌ 安装后 $INSTALL_DIR/Contents/MacOS/DevDesk 不存在或不可执行" >&2
+    exit 1
+  fi
+
+  # ⑥ 断言 B（核心交付物）：已安装二进制 == 本次构建产物
+  assert_fresh_binary "$BUILD_DIR/DevDesk" "$INSTALL_DIR/Contents/MacOS/DevDesk" "已安装二进制"
+
+  if [ ! -d "$INSTALL_DIR/Contents/MacOS/assets" ]; then
+    echo "❌ 安装后缺 $INSTALL_DIR/Contents/MacOS/assets（EUI-NEO 按「exe 旁」找资源，缺了会退化）" >&2
+    exit 1
+  fi
+  echo "✅ 已安装：${INSTALL_DIR}（版本 ${APP_VERSION}，二进制与 $BUILD_DIR/DevDesk 逐字节一致）"
 fi
 
 # ---- 4. 启动 app ----
