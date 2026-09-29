@@ -1,0 +1,74 @@
+{
+  "meta": {
+    "audit_date": "2026-09-30",
+    "subject": "分支 fix/detail-env-pane 提交 1ca87b0（详情页环境变量 pane：滤模型映射键 E1 + 行几何随字号缩放派生 E2 + 无头几何断言）",
+    "auditor": "独立只读审计（未参与实现）",
+    "base": "master @ 5616186",
+    "diff_scope": "src/module_claude_proxy/claude_ui_detail.cpp（163 行）+ tests/test_modules/test_claude_ui.cpp（131 行）",
+    "evidence": [
+      "git diff master...fix/detail-env-pane 全量逐行读",
+      "provider_config.h/cpp：DEVDESK_MODEL_SLOT_LIST 槽位表、buildProxyEnv 写入点、managedEnvKeyNames 对照",
+      "src/core/theme.h/.cpp：fontScale 只作用于 t.sizes.fontSize* token（theme.cpp:115-120），模块字面字号不缩放",
+      "独立复跑（实现者 worktree /Users/coderstory/dev/gui/wt-detail-env-pane，工作区干净、HEAD=1ca87b0、二进制 2026-09-30 01:13 构建）：`./devdesk_tests claude_module` → Total: 44 / Passed: 44 / Failed: 0；`行几何`、`环境变量` 两用例单独复跑均 PASS",
+      "尺寸核算：claude_module.cpp:66-73 → rightW=1262-80-400-16=766 → w0=710 → keyColW=min(220,710*0.45)=220 → keyMaxChars=220/8=27@100% / 220/10.4=21@130%"
+    ],
+    "not_verified": "「禁用过滤→变红」变异未独立重放（重放需改源码，越出只读边界）；其证据仅存于 commit message（Total: 3 Passed: 1 Failed: 2），仓库无落盘记录。红路径机械可推：过滤禁用后 16 字符 ANTHROPIC_MODEL 必然渲染（不被截断掩蔽），test1 的 srcOf.count 断言与 test2 的 ③ 判据均命中。"
+  },
+  "dimensions": {
+    "1_正确性": "已核。过滤键集 = 槽位表 envKey ∪ nameKey（claude_ui_detail.cpp:72-80），与 buildProxyEnv 实际写入的模型键（provider_config.cpp:391-402 只写 m.envKey/m.nameKey，另加 BASE_URL/AUTH_TOKEN 两个非模型键）精确同源、无漏滤；槽位表单一声明处（provider_config.h:47）派生，加槽位自动跟随。多滤面：同名键非模型来源不存在（这些键名语义即模型域），唯一多滤角例见 finding-2（来源为 extra_env 的模型键真实生效却被两页同时藏掉）。BASE_URL/AUTH_TOKEN 不在过滤集，不受影响。",
+    "2_回归面": "已核。163 行改动全部落在 drawDetailEnv + 匿名空间新谓词 + 文件头注释 + <cmath>，基础信息/模型映射/最近调用/tab 构建/动作按钮区零触碰（diff 逐块核对）。PaneRows 改为过滤后口径，消费方仅 LOG_DEBUG 诊断行（:1045-1050），无 UI 依赖。空态两分支齐备（未选 Profile / 全被滤掉），且后者当前不可达（BASE_URL/AUTH_TOKEN 恒在）仍保留兜底文案——处理正确。其它测试/probe 无 claude.env 依赖（grep 证），44/44 复跑全绿。",
+    "3_平台对称性": "已核。diff 内零平台宏/零 dpi/contentScale 引用（grep 无命中）；fs=core::theme::fontScale() 是平台无关的用户设置标量，与既有口径同单位空间（逻辑 px），100% 档各布局常量与旧值逐一相等（round(20.4)=20 / round(17.6)=18 / 48 / 54；溢出行 advance 20 = 旧 kEnvOverflowH）。fs(base) 乘法模式与 module_settings/settings_ui_logic.cpp:25 先例一致，theme.cpp 只对 token 字号乘 fs，无双倍缩放。备注：『1.25× 最坏 CJK 墨迹』是字体度量假设，无头侧只能断 frame 不能断 ink——测试断的是 frame 区间，属结构性正确守卫。",
+    "4_静默失败面": "已核。键集来源是 constexpr 槽位表，查证不可能失败；envMap 空态两分支都画明确文案不静默空白（:336-351）；buildProxyEnv 的非法 JSON 容错为既有行为，本提交未触及。溢出提示行让位逻辑（让到 0 行只画提示）保留原口径。",
+    "5_测试有效性": "已核（带保留）。断言引用的实现符号全部实存：claude.env.{key,val,src,hint,row.bg}.N 元素 id、claude.detail.tabs.hit.2（EUI-NEO tabs.h:82 hit id 拼法）、module::claude::modelSlotTable、core/theme.h setFontScale；composeAtSize 显式 layout 后 frame 有值，clickById 直调 onChange 切页签后重 compose 的写法与既有用例同款。130% 档真实覆盖（FontScaleGuard RAII + 重 compose + 同一判据复跑）。缺陷：长模型键断言被显示截断掩蔽，见 finding-1；变异证据无落盘，见 finding-4。",
+    "6_文档口径": "已核（一处小口径）。commit message 与实际改动一致（过滤/几何/测试/变异四段均有着落；『100% 档各值与旧常量逐一相等』对布局相关常量成立）。文件头新增 E1/E2 条目齐备；但 P3 行原文『改列全部生效 env』未标注已被 E1 收窄，见 finding-3。"
+  },
+  "findings": [
+    {
+      "id": "E-AUD-1",
+      "file": "tests/test_modules/test_claude_ui.cpp",
+      "line": 4210,
+      "also": [4209, 4185, 4245, "claude_ui_detail.cpp:357-359"],
+      "lens": "测试有效性",
+      "severity": "low",
+      "symptom": "长模型键的『不出现』断言被显示截断掩蔽，恒真面比声称的大。env pane 按 keyMaxChars 截断显示键名（w0=710 → keyColW=220 → 220/8=27 字符@100%、220/10.4=21@130%），ANTHROPIC_DEFAULT_OPUS_MODEL（29 字符）与 ANTHROPIC_DEFAULT_HAIKU_MODEL（31 字符）渲染为前 26/20 字符+『…』。test1 的 `srcOf.count(\"ANTHROPIC_DEFAULT_OPUS_MODEL\")==0`（:4210）按全名查截断后的显示文本——即使过滤漏掉 OPUS 键，渲染的是截断文本，count 仍为 0，断言不可能红。test2 的 ③ 判据对 HAIKU 键同理（130% 档下连 26 字符的 CLAUDE_CODE_SUBAGENT_MODEL 也被截到 20+…）。两个用例里唯一不被掩蔽的判据是 16 字符的 ANTHROPIC_MODEL。",
+      "mechanism": "commit message 声称『模型键不出现断言（含手写 OPUS 键）』——OPUS/HAIKU 两条断言实际是恒真空断言，变异检测力全部集中在 ANTHROPIC_MODEL 一条键上。产品当前行为正确（过滤集合由槽位表派生，逐键漂移可能性低），但『含手写 OPUS 键』的覆盖声称被高估：若未来槽位表加行或过滤恰好只漏某个长键，用例不红。",
+      "impact": "测试强度口径失实：模型键过滤的回归守卫实际只有单键粒度；后续改 keyColW/估宽/截断策略时这批断言的有效性还会继续漂移。",
+      "fix_sketch": "判据改为对『截断后显示文本』匹配：① 对 modelKey 全集生成对应的前缀显示文本（size>keyMaxChars 时取前 keyMaxChars-1 字符）再查 srcOf/渲染项；或 ② 断言改为「任一渲染键是某模型键的截断前缀」即红；或 ③ 直接在用例里断 buildProxyEnv 过滤前后的键集差（不经渲染层，免截断干扰）。修时同步修 commit 口径或后续 changelog。"
+    },
+    {
+      "id": "E-AUD-2",
+      "file": "src/module_claude_proxy/claude_ui_detail.cpp",
+      "line": 300,
+      "also": ["provider_config.cpp:391-394", "claude_ui_detail.cpp:472", "claude_ui_form.cpp:626"],
+      "lens": "正确性（多滤面）",
+      "severity": "low",
+      "symptom": "def 槽位为空 + 用户在 extra_env/共享片段手写 ANTHROPIC_MODEL 时，该键真实生效却在详情两页同时不可见，且文案误导。buildProxyEnv 里 extra_env 先入表、空槽位跳过托管写入（provider_config.cpp:393），该键以 Profile 来源存活在合并结果里、接管时真实写入 settings.json；但本 pane 按键名滤掉（:300），模型映射页签只读 models_config/旧 model 列（drawDetailModels :229-235）→ 显示『未配置』。溢出提示文案『模型类键见「模型映射」页签』（:472）在该角例下指向一个看不到该键的页签。",
+      "mechanism": "按键名过滤（有意为之，commit 与注释均声明）对『来源为 Managed 的模型键』是精确去重；对『来源为 Profile/Shared 的模型键』在 def 槽位非空时是精确去重（值会被托管键压过），唯独 def 槽位为空时它是不被任何页展示的生效键。可达路径：表单 env 编辑器明示『额外环境变量（原样写入 settings.json env 块）』（claude_ui_form.cpp:626）或绑定片段。粘贴导入不走此角例（parseImportedEnv 把模型键路由进槽位）。",
+      "impact": "信息缺口 + 文案误导（排查时用户以为模型键没生效）；非数据损坏，角例窄（需 def 槽位空且手写模型键）。",
+      "fix_sketch": "最小修：来源非 Managed 的模型键不过滤（保留展示，来源标注照旧）——『与模型映射页签重复』的原始诉求只针对托管写入的那份；或至少把 :472 与空态文案的『见「模型映射」页签』改为『见「模型映射」页签或编辑该 Profile 的环境变量』。"
+    },
+    {
+      "id": "E-AUD-3",
+      "file": "src/module_claude_proxy/claude_ui_detail.cpp",
+      "line": 7,
+      "lens": "文档口径",
+      "severity": "info",
+      "symptom": "文件头 P3 行仍写『「环境变量」改列全部生效 env + 每键来源』，与 E1 后行为（模型键除外）字面矛盾。",
+      "mechanism": "文件头是 changelog 式追加风格，2026-09-30 的 E1 条目就在其下两行、语义已澄清；但 P3 行本身未做『已被 E1 收窄』标注，单读 P3 行会得到旧口径。",
+      "impact": "极轻：仅文档口径，无行为影响。",
+      "fix_sketch": "P3 行尾补『（2026-09-30 E1 起模型键除外，见下）』一处括注即可。"
+    },
+    {
+      "id": "E-AUD-4",
+      "file": "(commit message 1ca87b0)",
+      "line": null,
+      "lens": "测试有效性（证据留痕）",
+      "severity": "info",
+      "symptom": "变异自检证据仅存在于 commit message（『禁用过滤后两个 env 用例变红，Total: 3 Passed: 1 Failed: 2』），仓库内无落盘记录（审计文件/验证日志均无）。",
+      "mechanism": "审计方已独立复验『恢复后全绿』（干净 worktree @1ca87b0 的 2026-09-30 01:13 二进制：claude_module 44/44，两 env 用例单跑 PASS）；红路径机械可推（ANTHROPIC_MODEL 16 字符不被截断掩蔽，过滤禁用必渲染必命中判据），可采信。但按阶段 4 口径『先红后绿（或变异）证据』，落盘留痕更稳。",
+      "impact": "无行为影响；仅证据链依赖 commit message。",
+      "fix_sketch": "无需返工；后续变异自检把命中/恢复两轮的 Total/Passed/Failed 追加进审计 JSON 或验证记录即可。"
+    }
+  ],
+  "conclusion": "需修后合并（可选合并）——两项 low findings 均不阻塞功能正确性：过滤键集与写入点精确同源、E2 几何派生正确且 100% 档与旧值逐一相等、回归面零波及、44/44 复跑全绿。E-AUD-1（长键断言被截断掩蔽）建议合并前顺手修判据或修正覆盖声称；E-AUD-2/3 可随批修或挂账。"
+}
