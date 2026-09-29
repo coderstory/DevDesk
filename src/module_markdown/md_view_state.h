@@ -12,13 +12,19 @@
 
 namespace module::markdown {
 
-// 用户重启后最想恢复的三项（审计 [23] evidence：选中笔记 / 四态视图 / 收起的目录）
+// 用户重启后最想恢复的四项（审计 [23] evidence：选中笔记 / 四态视图 / 收起的目录；
+// 2026-09-29 追加：目录树选中目录）
 struct MarkdownViewState {
     std::string lastPath;                    // 打开的笔记（POSIX 相对路径，空 = 无）
     // ViewMode：0=Edit 1=Split 2=Preview 3=Live（越界 → 0）。
     // 前三值是已落盘文件的既有语义，Live 只做追加（免迁移）
     int mode = 0;
-    std::vector<std::string> collapsedDirs;  // 已收起的一级目录（POSIX 相对路径）
+    std::vector<std::string> collapsedDirs;  // 已收起的目录（POSIX 相对路径，各层同表）
+    // 目录树的**当前选中目录**（POSIX 相对路径；"" = 根目录行 —— 这是合法值，
+    // 不是「无选中」）。新建笔记 / 新建文件夹的父目录由它派生，故必须与
+    // collapsedDirs 一样跨会话记住：否则重启后新条目又散回根目录（本次修复的
+    // 用户现象之一）。旧文件无此键 → 回 ""（= 根目录），与旧行为一致，无需迁移。
+    std::string selectedDir;
 };
 
 // 默认文件位置（core::paths::appDataDir() 下；测试经构造函数注入临时文件）
