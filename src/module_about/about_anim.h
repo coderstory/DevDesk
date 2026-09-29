@@ -5,8 +5,11 @@
 // 用户真机反馈「又简陋又不明显 几乎看不到」——1px 描边 + 0.18-0.28 不透明度
 // 合成后只有个位数 ΔRGB，且 2s 无鼠标移动即休眠（看页面时几乎总是静止态）。
 // 现按与用户确认的方案 A 重做：
-//   1) 光斑 3 个，直径 380-620，同心圆叠层（6 层，alpha 0.10 → 0.01、半径递增）
-//      伪造径向渐变 → 柔光球（不是硬边圆）；
+//   1) 光斑，直径区间见 kDiameterMin/Max，同心圆叠层（层数见 kLayersPerBlob，
+//      alpha 由内向外递减、半径递增）伪造径向渐变 → 柔光球（不是硬边圆）；
+//      2026-09-29 二次真机反馈「光团缩小一点，然后多生成几个」：数量 3→6、
+//      直径 380-620 → 240-400（详见各常量处注释）。**元素闸门 ≤ 20 不破**：
+//      数量翻倍靠「每球层数 6→3」抵掉（6×3+2 = 20，与改前同为 20）；
 //   2) 利萨如慢漂移（x 轴周期 18-26s，y 轴 = 0.62×x，互相错相位）+ 透明度呼吸 ±35%；
 //   3) 聚光扫过带：宽 220（两半各 110，对称梯形 alpha 0→0.05→0，无硬边）、
 //      倾斜 18°、每 14s 从左扫到右一次；
@@ -54,23 +57,45 @@ struct GlowBlob {
 };
 
 struct AboutAnimState {
-    static constexpr int kBlobCount = 3;
-    static constexpr int kLayersPerBlob = 6;   // 需求区间 6-8
+    // 2026-09-29 二次真机反馈「多生成几个」：3 → 6。上限取 6（不给到 7/8）是
+    // 元素闸门与观感的折中：6 球在 1392×801 页面上平均每球占 900 宽内容区的
+    // 1/3 量级，肉眼读作「多点柔光」而不是一片糊；再往上加球必须继续减层
+    //（≤20 闸门卡住），而 2 层叠不出平滑径向剖面（见 kLayersPerBlob）。
+    static constexpr int kBlobCount = 6;
+    // 2026-09-29：6 → 3（数量翻倍后为守住 ≤20 闸门的唯一余量）。
+    // 3 层仍能叠出「中心亮、外缘弱」的单向剖面：半径 0.70R / 0.85R / 1.00R，
+    // alpha 0.15 / 0.10 / 0.05（中心合成 1-0.85×0.90×0.95 = 0.273，与改前
+    // 6 层版的 0.294 同档，不因减层变暗）。层数变少 → 层间半径差变大
+    //（0.275R vs 改前 0.116R）更容易看出同心环带，故 kLayerSoftBlur 由 40
+    // 提到 56 且层间距收到 0.15R（先决条件：层间距 < 模糊宽，见下方注释）。
+    static constexpr int kLayersPerBlob = 3;
     static constexpr int kSweepHalves = 2;     // 扫带两半（对称 alpha 剖面）
-    // 每帧新增绘制元素数（性能闸门 ≤ 20）：光斑 3×6 + 扫带 2 = 20。
-    // 光斑 6 层（不是 8 层）就是为了卡住这条：8 层 → 24+2 直接破闸。
+    // 每帧新增绘制元素数（性能闸门 ≤ 20）：光斑 6×3 + 扫带 2 = 20。
+    // 数量翻倍与闸门同时成立靠的是层数减半——不是放宽闸门（本条口径未动）。
     static constexpr int kGlowElementCount =
         kBlobCount * kLayersPerBlob + kSweepHalves;
 
     // ---- 光斑（方案 A 口径）----
-    static constexpr float kDiameterMin = 380.0f;
-    static constexpr float kDiameterMax = 620.0f;
-    static constexpr float kLayerAlphaMax = 0.10f;  // 最内层
-    static constexpr float kLayerAlphaMin = 0.01f;  // 最外层
-    // 层半径 = radius × (kLayerRadiusInner + kLayerRadiusStep × k)，k = 0..5
-    // → 最内层 0.42R、最外层 1.00R（层间 0.116R 递减重叠，叠出径向柔光）
-    static constexpr float kLayerRadiusInner = 0.42f;
-    static constexpr float kLayerRadiusStep = 0.116f;
+    // 2026-09-29 二次真机反馈「光团缩小一点」：380-620 → 240-400。
+    // 取值理由：① 页面内容区宽 900，400 = 44% —— 单球不超过内容区一半，
+    // 6 个球才会读作「多个光团」而不是一坨（改前 620 = 69%，3 球就糊成一片）；
+    // ② 下限 240 = 卡片信息行行高 28 的 8.6 倍、hero 图标 56 的 4.3 倍，
+    // 仍远大于任何控件尺寸，缩小而不至于退化成「点」；③ 上下限比 1.67 与改前
+    // 620/380 = 1.63 同档，大小混杂的层次感不变。
+    static constexpr float kDiameterMin = 240.0f;
+    static constexpr float kDiameterMax = 400.0f;
+    static constexpr float kLayerAlphaMax = 0.15f;  // 最内层
+    static constexpr float kLayerAlphaMin = 0.05f;  // 最外层
+    // 层半径 = radius × (kLayerRadiusInner + kLayerRadiusStep × k)，k = 0..2
+    // → 最内层 0.70R、最外层 1.00R。
+    // **反同心环带的关键不是层数，而是「相邻层边缘间距 < 柔边模糊宽」**：
+    // 每层边缘都是一级 alpha 台阶，台阶间距小于模糊宽时三级台阶在视觉上并成
+    // 一条连续渐变；大于模糊宽就露成同心环。2026-09-29 真机截图实测：内 0.45R /
+    // 步 0.275R（间距 0.275R ≈ 33-55px，与 blur 56 同量级）在浅色档能看到明显
+    // 同心环；收到 0.70R / 步 0.15R 后间距 0.15R ≈ 18-30px < blur 56 → 台阶合并，
+    // 环带消失（同一套 alpha 剖面，仅改半径分布）。
+    static constexpr float kLayerRadiusInner = 0.70f;
+    static constexpr float kLayerRadiusStep = 0.15f;
     static constexpr float kBreathDepth = 0.35f;      // 呼吸 ±35%
     static constexpr float kBreathPeriodMin = 6.0f;
     static constexpr float kBreathPeriodMax = 9.0f;
@@ -80,21 +105,39 @@ struct AboutAnimState {
     static constexpr float kNeonShadowBlur = 48.0f;   // 最外圈霓虹边
     static constexpr float kNeonShadowAlpha = 0.35f;
     // 内层柔边：每层挂一个与自身同色的 shadow（offset 0），把硬边圆盘化成
-    // 软边圆盘——6 层离散叠层原本能看见同心圆台阶（浅色档尤其明显），柔边后
+    // 软边圆盘——离散叠层原本能看见同心圆台阶（浅色档尤其明显），柔边后
     // 台阶被抹平，读起来才是「径向渐变柔光球」。代价：每层多一个 shadow pass
     //（SDF 着色，廉价），元素数不变（仍 20 ≤ 20 闸门）
-    static constexpr float kLayerSoftBlur = 40.0f;
-    static constexpr float kLayerSoftAlphaScale = 0.9f;
+    // 2026-09-29：40 → 56，且层间距同步收到 0.15R（两者必须一起看）。
+    // 台阶高度（相邻层 alpha 差）从 0.018 涨到 0.05，而「看得见环带」的直接
+    // 判据是 **层边缘间距 vs 模糊宽**：间距 < 模糊宽 → 三级台阶在视觉上并成
+    // 一条连续渐变；间距 > 模糊宽 → 各自成环（真机截图实测：0.45R/0.275R 配置
+    // 在浅色档能看到明显同心环）。现在 0.15R ≈ 18-30px < 56 → 台阶合并。
+    // 另：球半径变小（120-200 vs 190-310）后 blur/半径 由 0.13 升到 0.28，
+    // 边缘过渡占半径的比例更大，柔光感更强。
+    static constexpr float kLayerSoftBlur = 56.0f;
+    // 柔边 halo 的 alpha 倍率：**2.0 = 让每层自己的硬边消失**。
+    // 渲染层语义是「fill 硬边圆盘 + 背后 blur 同色 halo」：halo 在圆盘边界处
+    // 只有峰值的一半（高斯型 blur 的边界值 ≈ 50%），所以 halo 峰值取 fill 的
+    // 2 倍时，边界内外两侧的合成 alpha 才相等 → 台阶归零；取 0.9 时边界处
+    // 只剩 0.45×fill，残留台阶 ≈ 0.55×fill（0.15 层 ≈ 0.08 alpha ≈ 20/255，
+    // 真机截图能看到明显同心环——2026-09-29 实测）。
+    // 只改柔边（同色、无位移），不改层 alpha 剖面 → 中心合成亮度不变。
+    static constexpr float kLayerSoftAlphaScale = 2.0f;
     // 散布区（页面比例）：中心留边 + 振幅，保证光斑始终压在内容区附近，
-    // 不在页面角落空转
-    static constexpr float kCenterMinX = 0.24f;
-    static constexpr float kCenterMaxX = 0.76f;
-    static constexpr float kCenterMinY = 0.26f;
-    static constexpr float kCenterMaxY = 0.60f;
-    static constexpr float kAmpMinX = 0.16f;
-    static constexpr float kAmpMaxX = 0.26f;
-    static constexpr float kAmpMinY = 0.12f;
-    static constexpr float kAmpMaxY = 0.22f;
+    // 不在页面角落空转。2026-09-29：数量 3→6 后同步放宽（x 0.24-0.76 →
+    // 0.22-0.78，y 0.26-0.60 → 0.24-0.64，振幅略收）——不改的话 6 个球会挤
+    // 在改前 3 个球的同一小片区域里叠成一坨，数量翻倍在观感上等于没变。
+    // 护栏：centerMax + ampMax ≤ 1.00（x 0.78+0.22、y 0.64+0.20），
+    // 球心不出页面（球体自身可以压边出画，与改前一致）
+    static constexpr float kCenterMinX = 0.22f;
+    static constexpr float kCenterMaxX = 0.78f;
+    static constexpr float kCenterMinY = 0.24f;
+    static constexpr float kCenterMaxY = 0.64f;
+    static constexpr float kAmpMinX = 0.14f;
+    static constexpr float kAmpMaxX = 0.22f;
+    static constexpr float kAmpMinY = 0.10f;
+    static constexpr float kAmpMaxY = 0.20f;
 
     // ---- 聚光扫过带 ----
     static constexpr float kSweepPeriod = 14.0f;      // 秒（左→右一次）
@@ -205,7 +248,7 @@ inline void initGlowLayer(AboutAnimState& state) {
         blob.periodX = AboutAnimState::kPeriodMin +
                        periodT * (AboutAnimState::kPeriodMax - AboutAnimState::kPeriodMin);
         blob.periodY = blob.periodX * AboutAnimState::kPeriodRatioY;
-        // 相位互相错开 2π/3（三个光斑不同步，不会一起呼吸像闪灯）
+        // 相位互相错开 2π/N（光斑不同步，不会一起呼吸像闪灯）
         const float phaseOffset = 6.28318531f * static_cast<float>(i) /
                                   static_cast<float>(AboutAnimState::kBlobCount);
         blob.phaseX = phaseOffset + rng.next() * 0.6f;
@@ -215,7 +258,8 @@ inline void initGlowLayer(AboutAnimState& state) {
                             breathT * (AboutAnimState::kBreathPeriodMax -
                                        AboutAnimState::kBreathPeriodMin);
         blob.breathPhase = phaseOffset + rng.next() * 0.8f;
-        // 配色各半：primary（0）/ 半程混色（0.5）/ 暖琥珀（1.0）
+        // 配色按序号均匀铺满 primary→暖琥珀（0, 1/(N-1), …, 1）；N=6 时
+        // 为 0 / 0.2 / 0.4 / 0.6 / 0.8 / 1.0，整体各半且相邻球色差小
         blob.colorMix = static_cast<float>(i) /
                         static_cast<float>(AboutAnimState::kBlobCount - 1);
     }

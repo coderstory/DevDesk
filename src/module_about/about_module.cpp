@@ -198,7 +198,9 @@ void aboutCard(eui::Ui& ui, const std::string& id, const core::theme::Tokens& t,
 // 需求原话：「又简陋又不明显 几乎看不到」「类似于聚光灯 霓虹灯的效果」。
 // 旧版两条根因：① 1px 描边 + 0.18-0.28 不透明度合成后只有个位数 ΔRGB；
 // ② 2s 无鼠标移动即休眠 —— 人看页面时几乎总是静止态。
-// 现在：3 个 380-620 大光斑（同心圆叠层伪造径向渐变）+ 利萨如漂移 +
+// 现在：多个小光斑（数量 / 直径区间 / 层数见 about_anim.h 的 kBlobCount /
+// kDiameterMin-Max / kLayersPerBlob，2026-09-29 二次真机反馈「光团缩小一点，
+// 然后多生成几个」后为 6 球 / 240-400 / 3 层）+ 利萨如漂移 +
 // 透明度呼吸 ±35% + 14s 一轮的聚光扫过带 + 最外圈 shadow 霓虹边。
 // 休眠机制沿用（awake() 单点开关 + 空闲 120s 休眠 + 指针移动唤醒），
 // 驱动由 onFrame(60fps 每帧重绘) 换成 onTimer(30fps 节拍)：光晕要一直动，
@@ -250,7 +252,8 @@ public:
 
         // 光斑绘制：同心圆叠层（半径递增 / alpha 递减）伪造径向渐变 → 柔光球。
         // 颜色只用主题 token：primary 与暖琥珀（warning）按 blob.colorMix 混色，
-        // 三个光斑 0 / 0.5 / 1.0 → 整体各半；不引入新色。
+        // 各球按序号均匀铺满 [0,1]（kBlobCount=6 → 0/0.2/…/1.0）→ 整体各半；
+        // 不引入新色。
         const eui::Color amber = t.colors.warning;
         for (int i = 0; i < AboutAnimState::kBlobCount; ++i) {
             const GlowBlob& blob = anim.blobs[static_cast<std::size_t>(i)];

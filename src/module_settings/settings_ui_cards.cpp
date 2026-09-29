@@ -444,9 +444,34 @@ void drawPetCard(const CardDrawArgs& args) {
                     break;
                 }
             }
+            // ③ 2026-09-29 真机反馈「桌宠设置的下拉框不应该换行」。EUI-NEO 的
+            // text 默认 wrap=false（core/dsl.h:149）：皮肤名超宽时**不折行**，
+            // 而是画到控件右边缘之外（真机复现：25 字符的皮肤名在 240 宽下拉里
+            // 文本压过 chevron 跑出控件），读起来就是「换行/串行」。两条一起上：
+            //   1) 控件宽度按最长皮肤名放大（240 起、上限 420）——常见长名直接
+            //      放得下，字段与弹层同步变宽（components/dropdown.h 里弹层宽 =
+            //      字段宽），选项也一并能读全；
+            //   2) 仍放不下的名字由 fitControlLabel 截断显示（末尾 '…'），
+            //      **只改显示串，不改取值**（回传的仍是原始下标）。
+            // 字号口径 = EUI-NEO 默认 metrics（components/theme.h）：
+            // 字段文案 typography.body=16、弹层项 typography.option=15。这两个
+            // 值不受 DevDesk 全局字号缩放影响（core::theme::fontScale 只缩放
+            // 自家 token，见 core/theme.cpp:115-120）。截断按**字段**口径
+            //（16px + kDropdownFieldChrome=62）：字段文案框比弹层项框窄，
+            // 按窄的那个截，两边都放得下。
+            constexpr float kDdFieldFont = 16.0f;
+            const float ddW = petSkinFieldWidth(items, kDdFieldFont);
+            // 每项显示串（截断到字段可用宽；实际取值仍是原下标）
+            std::vector<std::string> itemLabels;
+            itemLabels.reserve(items.size());
+            for (const std::string& name : items) {
+                itemLabels.push_back(
+                    fitControlLabel(name, ddW - kDropdownFieldChrome,
+                                    kDdFieldFont));
+            }
             ui.stack(id + ".skin.ddwrap")
                 .position(28.0f, 64.0f)
-                .size(240.0f, 40.0f)
+                .size(ddW, 40.0f)
                 .content([&] {
                     // 跨模块剩余审计修：皮肤下拉是六处下拉里唯一无 openUp
                     // 防护的——≥3 皮肤时弹层（3×34+12=114）向下铺开越出
@@ -456,9 +481,9 @@ void drawPetCard(const CardDrawArgs& args) {
                         pageY, 64.0f, 40.0f,
                         static_cast<int>(items.size()), screenH);
                     components::dropdown(ui, id + ".skin.dd")
-                        .size(240.0f, 40.0f)
+                        .size(ddW, 40.0f)
                         .theme(compTheme)
-                        .items(items)
+                        .items(itemLabels)
                         .selected(selected)
                         .openUp(skinOpenUp)
                         .open(isDropdownOpen(in.openDropdown, Dropdown::PetSkin))
@@ -466,7 +491,8 @@ void drawPetCard(const CardDrawArgs& args) {
                             f(Dropdown::PetSkin, v);
                         })
                         // 换肤按下标回模块（越界守卫在模块侧，读的是同一份
-                        // 皮肤清单快照）
+                        // 皮肤清单快照）——下标与 items 一一对应，截断只影响
+                        // 显示串
                         .onChange([f = a.changePetSkinAt](int idx) { f(idx); })
                         .build();
                 })
@@ -747,6 +773,15 @@ void drawProxyCard(const CardDrawArgs& args) {
 // 迁到「通用」tab 独立卡（不同 tab 的卡不同屏，原「末卡 z 逃逸宿主」
 // 理由失效）。pageY/screenH：弹层几何用 settings_ui_logic.h 的 kDropdown* /
 // kLogDropdown* 常量估算（与 dropdown 内部 metrics 一致）
+//
+// 2026-09-29 用户真机反馈「日志和日志级别这 2 个条件 错位了啊 日志显示 2 行」：
+// 改前行 1（保留天数）只有控件、**没有标签**，控件左边缘 = 卡内 padding 28；
+// 行 2（日志级别）有 84 宽标签 + 控件，控件左边缘 = 124 —— 两行控件左边缘差
+// 96px、行 1 还缺一列，视觉上就是「错位 + 像多出来一行」。现在两行统一
+// 「标签列 28/84、控件列 124/240、说明列 388」同列口径（常量见
+// settings_ui_logic.h 的 kLogLabel* / kLogField* / kLogRow*LabelY），行 1 补上
+// 缺失的「日志保留」标签；标签行高恒 = 单行高度（20），叠加 fitControlLabel
+// 兜底（长档位文案也只画一行）。
 void drawLogCard(const CardDrawArgs& args) {
     eui::Ui& ui = args.ui;
     const std::string& id = args.id;
@@ -759,6 +794,9 @@ void drawLogCard(const CardDrawArgs& args) {
     const float screenH = args.screenH;
 
     const auto compTheme = core::theme::componentTokens(t);
+    const float labelFont = fs(12.0f);
+    const float hintFontSize = fs(12.0f);
+    const float hintW = std::max(0.0f, w - kLogHintX - 28.0f);
     ui.stack(id)
         .size(w, h)
         .zIndex(30)
@@ -776,16 +814,25 @@ void drawLogCard(const CardDrawArgs& args) {
             // 档位说明（0 = 永久）；存的是原始天数 int，T10 清理任务按值读取
             static const char* kRetentionLabels[] = {
                 "永久保留", "7 天", "30 天", "90 天", "180 天", "365 天"};
+            // ---- 行 1：日志保留（标签列 + 控件列 + 说明列）----
+            ui.text(id + ".label")
+                .position(kLogLabelX, kLogRow1LabelY)
+                .size(kLogLabelWidth, kLogLabelHeight)
+                .text(fitControlLabel("日志保留", kLogLabelWidth, labelFont))
+                .fontSize(labelFont)
+                .lineHeight(kLogLabelHeight)
+                .color(t.colors.textSecondary)
+                .build();
             ui.stack(id + ".ddwrap")
-                .position(28.0f, kLogDropdownOffsetY)
-                .size(240.0f, kLogDropdownHeight)
+                .position(kLogFieldX, kLogDropdownOffsetY)
+                .size(kLogFieldWidth, kLogFieldHeight)
                 .content([&] {
                     // 字段绝对底边 = 卡顶 + 卡内 y 偏移 + 字段高
                     const bool openUp = dropdownPopupOverflows(
-                        pageY, kLogDropdownOffsetY, kLogDropdownHeight,
+                        pageY, kLogDropdownOffsetY, kLogFieldHeight,
                         kRetentionPresetCount, screenH);
                     components::dropdown(ui, id + ".dd")
-                        .size(240.0f, kLogDropdownHeight)
+                        .size(kLogFieldWidth, kLogFieldHeight)
                         .theme(compTheme)
                         .items(std::vector<std::string>(
                             kRetentionLabels,
@@ -806,11 +853,11 @@ void drawLogCard(const CardDrawArgs& args) {
                 })
                 .build();
             ui.text(id + ".hint")
-                .position(288.0f, 60.0f)
-                .size(w - 316.0f, 18.0f)
+                .position(kLogHintX, kLogRow1LabelY)
+                .size(hintW, kLogLabelHeight)
                 .text("0 = 永久保留；30 天为默认。切换档位立即清理一次。")
-                .fontSize(fs(12.0f))
-                .lineHeight(18.0f)
+                .fontSize(hintFontSize)
+                .lineHeight(kLogLabelHeight)
                 .color(t.colors.textTertiary)
                 .build();
 
@@ -819,22 +866,22 @@ void drawLogCard(const CardDrawArgs& args) {
             // 切档即时 core::log::setLevel（DEBUG 起打 LOG_DEBUG 详录），
             // 重启由 onStart 恢复持久化档 ----
             ui.text(id + ".level.label")
-                .position(28.0f, 100.0f)
-                .size(84.0f, 20.0f)
-                .text("日志级别")
-                .fontSize(fs(12.0f))
-                .lineHeight(20.0f)
+                .position(kLogLabelX, kLogRow2LabelY)
+                .size(kLogLabelWidth, kLogLabelHeight)
+                .text(fitControlLabel("日志级别", kLogLabelWidth, labelFont))
+                .fontSize(labelFont)
+                .lineHeight(kLogLabelHeight)
                 .color(t.colors.textSecondary)
                 .build();
             ui.stack(id + ".level.ddwrap")
-                .position(124.0f, kLogLevelOffsetY)
-                .size(150.0f, kLogLevelHeight)
+                .position(kLogFieldX, kLogLevelOffsetY)
+                .size(kLogFieldWidth, kLogFieldHeight)
                 .content([&] {
                     const bool levelOpenUp = dropdownPopupOverflows(
-                        pageY, kLogLevelOffsetY, kLogLevelHeight,
+                        pageY, kLogLevelOffsetY, kLogFieldHeight,
                         kLogLevelPresetCount, screenH);
                     components::dropdown(ui, id + ".level.dd")
-                        .size(150.0f, kLogLevelHeight)
+                        .size(kLogFieldWidth, kLogFieldHeight)
                         .theme(compTheme)
                         .items(std::vector<std::string>(
                             kLogLevelPresetLabels,
@@ -853,11 +900,11 @@ void drawLogCard(const CardDrawArgs& args) {
                 })
                 .build();
             ui.text(id + ".level.hint")
-                .position(288.0f, 100.0f)
-                .size(w - 316.0f, 18.0f)
+                .position(kLogHintX, kLogRow2LabelY)
+                .size(hintW, kLogLabelHeight)
                 .text("DEBUG 最详尽（排障）；默认 INFO。切档即时生效。")
-                .fontSize(fs(12.0f))
-                .lineHeight(18.0f)
+                .fontSize(hintFontSize)
+                .lineHeight(kLogLabelHeight)
                 .color(t.colors.textTertiary)
                 .build();
         })

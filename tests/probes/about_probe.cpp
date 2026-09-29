@@ -3,16 +3,18 @@
 // 覆盖三件用户真机反馈改动：
 //   1) hero 三行（版本 / 构建 / commit）删除 → hero = 图标 + 标题；
 //   2) 两张卡从左右并排改上下堆叠（各占满内容区宽 900、卡距 8，本页无滚动）；
-//   3) 动态光晕（2026-09-29「又简陋又不明显 几乎看不到」→ 方案 A：3 光斑
-//      同心圆叠层 + 利萨如漂移 + 呼吸 + 聚光扫过带 + 霓虹 shadow）。
+//   3) 动态光晕（2026-09-29「又简陋又不明显 几乎看不到」→ 方案 A：光斑同心
+//      圆叠层 + 利萨如漂移 + 呼吸 + 聚光扫过带 + 霓虹 shadow；同日二次反馈
+//      「光团缩小一点，然后多生成几个」→ 6 光斑 / 直径 240-400 / 每球 3 层）。
 //
 // 断言口径（真窗口后端 GLFW+OpenGL + 真 Runtime 循环，非无头）：
 //   - 几何：内容块贴底（底边 = 页脚顶 − 一档间距，2026-09-29）、三行 id 不存在、
 //     卡宽/卡位/footer 底边数值断言（与 test_ui_modern.cpp:uiAboutLayout 同口径，
 //     双保险）；卡片几何期望值随窗口高现算 → `--size 1200x640` 顺带覆盖极矮窗
 //     clamp 回 topPad 的分支；
-//   - 光晕：元素闸门（3×6 层 + 2 扫带半 = 20 ≤ 20）、层 alpha 剖面（内 0.10 /
-//     外 0.01，±35% 呼吸区间）、最外圈霓虹 shadow(blur 48 / primary@0.35)、
+//   - 光晕：球数/层数/直径区间（字面量 6 / 3 / 240-400）、元素闸门
+//     （6×3 层 + 2 扫带半 = 20 ≤ 20）、层 alpha 剖面（内 0.15 / 外 0.05，
+//     ±35% 呼吸区间）、最外圈霓虹 shadow(blur 48 / primary@0.35)、
 //     扫带峰值 alpha 0.05 + 倾角 18°（字面量，防调淡/退化回归）；
 //     真帧推进（runtime.updateFrameCallback → compose 挂的 onTimer，每 tick 置
 //     composeRequested_/paintRequested_，EUI-NEO core/runtime/runtime_update.h:380-403）
@@ -184,10 +186,30 @@ int main(int argc, char* argv[]) {
         passed = false;
     } else {
         using Anim = module::about::AboutAnimState;
-        constexpr float kInnerAlphaMin = 0.10f * 0.65f;   // 0.10 × (1 ∓ 0.35)
-        constexpr float kInnerAlphaMax = 0.10f * 1.35f;
-        constexpr float kOuterAlphaMin = 0.01f * 0.65f;
-        constexpr float kOuterAlphaMax = 0.01f * 1.35f;
+        constexpr float kInnerAlphaMin = 0.15f * 0.65f;   // 0.15 × (1 ∓ 0.35)
+        constexpr float kInnerAlphaMax = 0.15f * 1.35f;
+        constexpr float kOuterAlphaMin = 0.05f * 0.65f;
+        constexpr float kOuterAlphaMax = 0.05f * 1.35f;
+        // 口径字面量（与单测同源、独立复述一遍；改回 3 球 / 6 层 / 380-620
+        // 任一项都会红）
+        constexpr int kWantBlobs = 6;
+        constexpr int kWantLayers = 3;
+        constexpr int kElementGate = 20;
+        constexpr float kWantDiameterMin = 240.0f;
+        constexpr float kWantDiameterMax = 400.0f;
+        auto& probeAnim = ui->state<module::about::AboutAnimState>("about.anim");
+        check(Anim::kBlobCount == kWantBlobs,
+              "光斑数 " + std::to_string(Anim::kBlobCount) + "（应 6）");
+        check(Anim::kLayersPerBlob == kWantLayers,
+              "每球层数 " + std::to_string(Anim::kLayersPerBlob) + "（应 3）");
+        for (int b = 0; b < Anim::kBlobCount; ++b) {
+            const float d = probeAnim.blobs[static_cast<std::size_t>(b)].radius *
+                            2.0f;
+            check(d >= kWantDiameterMin - 1e-3f &&
+                      d <= kWantDiameterMax + 1e-3f,
+                  "blob" + std::to_string(b) + " 直径 " + std::to_string(d) +
+                      "（应 240-400）");
+        }
         int drawn = 0;
         for (int b = 0; b < Anim::kBlobCount; ++b) {
             for (int k = 0; k < Anim::kLayersPerBlob; ++k) {
@@ -219,6 +241,13 @@ int main(int argc, char* argv[]) {
                     check(std::fabs(layer->shadow.offset.x) < 0.01f &&
                               std::fabs(layer->shadow.offset.y) < 0.01f,
                           "霓虹 shadow 应 offset 0");
+                } else {
+                    // 内层柔边 shadow（blur 56）：层数 6→3 后台阶更高，
+                    // 靠这条把「单位像素 alpha 梯度不升」钉住（改回 40 即红）
+                    check(layer->shadow.enabled, "内层应挂柔边 shadow");
+                    check(near(layer->shadow.blur, 56.0f),
+                          "柔边 shadow blur " +
+                              std::to_string(layer->shadow.blur) + "（应 56）");
                 }
             }
         }
@@ -240,10 +269,11 @@ int main(int argc, char* argv[]) {
                   "扫带倾角 " + std::to_string(band->transform.rotate) +
                       "（应 18°）");
         }
-        // 元素闸门 ≤ 20（光斑 3×6 + 扫带 2 = 20）
-        check(drawn == Anim::kBlobCount * Anim::kLayersPerBlob + 2,
-              "光晕元素数 " + std::to_string(drawn));
-        check(drawn <= 20, "元素闸门 ≤ 20，实为 " + std::to_string(drawn));
+        // 元素闸门 ≤ 20（光斑 6×3 + 扫带 2 = 20；球数翻倍靠层数减半守住）
+        check(drawn == kWantBlobs * kWantLayers + 2,
+              "光晕元素数 " + std::to_string(drawn) + "（应 20）");
+        check(drawn <= kElementGate,
+              "元素闸门 ≤ 20，实为 " + std::to_string(drawn));
         check(ui->find("about.ring.0") == nullptr, "旧版浮环应已下线");
 
         const auto* bg = ui->find("about.bg");
