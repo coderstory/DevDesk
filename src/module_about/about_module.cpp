@@ -194,13 +194,17 @@ void aboutCard(eui::Ui& ui, const std::string& id, const core::theme::Tokens& t,
         .build();
 }
 
-// ---- 漂浮圆环动态背景（D-01 视觉增强；Spring 物理取自 EUI-NEO
-// examples/magic_wand.cpp，onFrame/onMove 运行时契约同款）----
-// awake 模式：鼠标移动唤醒漂移，弹簧全 settled + 超时后 compose 不再给
-// 背景层挂 onFrame → 运行时零开销休眠（magic_wand 同款省电设计）。
-// 状态机本体（Spring / FloatingRing / AboutAnimState / initRingLayer）在
-// about_anim.h —— 独立成头是为了单测能直接驱动（可见度区间 / 漂移 /
-// 休眠均可断言，2026-09-28「看不出动态效果」回归不再无人守）。
+// ---- 动态光晕背景（2026-09-29 方案 A，替掉旧版 7 个 1px 浮环）----
+// 需求原话：「又简陋又不明显 几乎看不到」「类似于聚光灯 霓虹灯的效果」。
+// 旧版两条根因：① 1px 描边 + 0.18-0.28 不透明度合成后只有个位数 ΔRGB；
+// ② 2s 无鼠标移动即休眠 —— 人看页面时几乎总是静止态。
+// 现在：3 个 380-620 大光斑（同心圆叠层伪造径向渐变）+ 利萨如漂移 +
+// 透明度呼吸 ±35% + 14s 一轮的聚光扫过带 + 最外圈 shadow 霓虹边。
+// 休眠机制沿用（awake() 单点开关 + 空闲 120s 休眠 + 指针移动唤醒），
+// 驱动由 onFrame(60fps 每帧重绘) 换成 onTimer(30fps 节拍)：光晕要一直动，
+// 但不是每帧重绘。状态机本体（GlowBlob / AboutAnimState / initGlowLayer）
+// 在 about_anim.h —— 独立成头是为了单测能直接驱动（数量 / 直径区间 /
+// 呼吸 alpha 区间 / 扫带周期 / 漂移 / 休眠均可断言，回归不再无人守）。
 
 // 主题两色线性插值（theme 运行期可切换，混色在 compose 时现算）
 eui::Color mixThemeColor(const eui::Color& a, const eui::Color& b, float t) {
@@ -220,13 +224,13 @@ public:
     void compose(eui::Ui& ui, const eui::Screen& screen) override {
         const auto& t = core::theme::current();
 
-        // ========== 背景层：透明浮环动态背景（Spring + awake 模式）==========
+        // ========== 背景层：动态光晕（3 光斑 + 聚光扫过，awake 驱动）==========
         // 页面自身不铺底色（主窗 clearColor 透出，磨砂档主体 alpha 恒 1 才可见，
         // 见 home_module 同款注释）；本层仅作透明承载体，z 序最底、无 onClick，
-        // 不拦截英雄/卡片。浮环在上述透明层之上、内容之下，作为背景装饰。
+        // 不拦截英雄/卡片。光晕元素在本层之上、内容之下，作为背景装饰。
         AboutAnimState& anim = ui.state<AboutAnimState>("about.anim");
         if (!anim.initialized) {
-            initRingLayer(anim, screen.width, screen.height);
+            initGlowLayer(anim);
         }
         auto bg = ui.rect("about.bg");
         bg.position(0.0f, 0.0f)
@@ -234,35 +238,81 @@ public:
             .color(eui::Color{0.0f, 0.0f, 0.0f, 0.0f})
             .cursor(eui::CursorShape::Arrow)
             .onMove([&anim](const eui::PointerEvent&, const eui::Rect&) {
-                anim.wakeHold = 0.0f;  // 鼠标移动唤醒漂移
+                anim.wakeHold = 0.0f;  // 指针移动唤醒 / 续期
             });
         if (anim.awake()) {
-            // 全 settled + 超时 → 下一帧 compose 不再挂此回调 → 运行时休眠
-            bg.onFrame(
-                [&anim, w = screen.width, h = screen.height](float dt) {
-                    anim.step(dt, w, h);
-                });
+            // 30fps 节拍推进；空闲超时后 compose 不再挂此回调
+            // → 运行时 animating 归零 → 零合成零重绘（休眠，非每帧重绘）
+            bg.onTimer(AboutAnimState::kFrameSeconds,
+                       [&anim] { anim.step(AboutAnimState::kFrameSeconds); });
         }
         bg.build();
-        // 浮环绘制（弹簧跟随位）+ 主题色现算（primary ↔ primarySoftBg mix）
-        for (int i = 0; i < AboutAnimState::kRingCount; ++i) {
-            const FloatingRing& ring = anim.rings[i];
-            // 混色系数 = phase × 0.5（半程限幅）：浅色档 primarySoftBg
-            // #F5E6DE 与 surface #F5F2EC 几乎同色，全幅混色会让 phase→1 的
-            // 环即使透明度上调仍不可见（2026-09-28「看不出动态效果」根因
-            // 之一）——限幅后每个环都落在 primary → 半程色之间，任何主题
-            // 下都有可辨暖色
-            const eui::Color ringColor = mixThemeColor(
-                t.colors.primary, t.colors.primarySoftBg, ring.phase * 0.5f);
-            const float px = anim.springX[i].position;
-            const float py = anim.springY[i].position;
-            ui.rect("about.ring." + std::to_string(i))
-                .position(px - ring.radius, py - ring.radius)
-                .size(ring.radius * 2.0f, ring.radius * 2.0f)
-                .radius(ring.radius)
-                .border(1.0f, ringColor)
-                .opacity(ring.opacity)
-                .build();
+
+        // 光斑绘制：同心圆叠层（半径递增 / alpha 递减）伪造径向渐变 → 柔光球。
+        // 颜色只用主题 token：primary 与暖琥珀（warning）按 blob.colorMix 混色，
+        // 三个光斑 0 / 0.5 / 1.0 → 整体各半；不引入新色。
+        const eui::Color amber = t.colors.warning;
+        for (int i = 0; i < AboutAnimState::kBlobCount; ++i) {
+            const GlowBlob& blob = anim.blobs[static_cast<std::size_t>(i)];
+            float cx = 0.0f, cy = 0.0f;
+            blobCenter(anim, i, screen.width, screen.height, cx, cy);
+            const float breath = blobBreath(anim, i);  // 1 ± 0.35
+            const eui::Color base = mixThemeColor(t.colors.primary, amber,
+                                                  blob.colorMix);
+            for (int k = 0; k < AboutAnimState::kLayersPerBlob; ++k) {
+                const float radius = blobLayerRadius(blob.radius, k);
+                eui::Color layer = base;
+                layer.a = blobLayerAlpha(k) * breath;
+                auto element = ui.rect("about.glow." + std::to_string(i) + "." +
+                                       std::to_string(k));
+                element.position(cx - radius, cy - radius)
+                    .size(radius * 2.0f, radius * 2.0f)
+                    .radius(radius)
+                    .color(layer);
+                if (k == AboutAnimState::kLayersPerBlob - 1) {
+                    // 最外圈霓虹边：shadow 用 primary@0.35 提亮轮廓
+                    //（shadow pass 取 shadow 自己的颜色，不影响本层填充 alpha）
+                    eui::Color halo = base;
+                    halo.a = AboutAnimState::kNeonShadowAlpha;
+                    element.shadow(AboutAnimState::kNeonShadowBlur, 0.0f, 0.0f,
+                                   halo);
+                } else {
+                    // 内层柔边：同色 shadow（offset 0）把硬边圆盘化成软边圆盘，
+                    // 抹平 6 层离散叠层的同心圆台阶（浅色档最容易看出来）
+                    eui::Color halo = base;
+                    halo.a = layer.a * AboutAnimState::kLayerSoftAlphaScale;
+                    element.shadow(AboutAnimState::kLayerSoftBlur, 0.0f, 0.0f,
+                                   halo);
+                }
+                element.build();
+            }
+        }
+        // 聚光扫过带：两半各 110px 宽、倾斜 18°，alpha 剖面 0 → 0.05 → 0
+        //（两半拼出对称梯形，四边都不留硬边；两端圆角 = 半宽 → 半圆帽），
+        // 14s 从左扫到右一轮（sweepLeft 是时间的纯函数）
+        {
+            const float left = sweepLeft(anim, screen.width);
+            constexpr float halfW = AboutAnimState::kSweepWidth * 0.5f;
+            const float bandH = screen.height * AboutAnimState::kSweepHeightFactor;
+            const float bandY = (screen.height - bandH) * 0.5f;
+            eui::Color fade = t.colors.primary;
+            fade.a = 0.0f;
+            eui::Color peak = t.colors.primary;
+            peak.a = AboutAnimState::kSweepAlpha;
+            eui::Color halo = t.colors.primary;
+            halo.a = AboutAnimState::kSweepShadowAlpha;
+            for (int half = 0; half < AboutAnimState::kSweepHalves; ++half) {
+                const bool leading = half == 1;  // 后半：峰值 → 0（行进前缘渐隐）
+                ui.rect("about.sweep." + std::to_string(half))
+                    .position(left + halfW * static_cast<float>(half), bandY)
+                    .size(halfW, bandH)
+                    .radius(halfW)
+                    .gradient(leading ? peak : fade, leading ? fade : peak,
+                              core::GradientDirection::Horizontal)
+                    .rotate(AboutAnimState::kSweepTiltRad)
+                    .shadow(AboutAnimState::kSweepShadowBlur, 0.0f, 0.0f, halo)
+                    .build();
+            }
         }
 
         // 居中 900px 主内容区（spec §布局概览；窄窗不滚动，D-04 目标 =

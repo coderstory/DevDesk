@@ -1,27 +1,31 @@
-// tests/probes/about_probe.cpp — about 页可见 UI probe（2026-09-28 真机反馈三项）
+// tests/probes/about_probe.cpp — about 页可见 UI probe（2026-09-28/29 真机反馈）
 //
 // 覆盖三件用户真机反馈改动：
 //   1) hero 三行（版本 / 构建 / commit）删除 → hero = 图标 + 标题；
 //   2) 两张卡从左右并排改上下堆叠（各占满内容区宽 900、卡距 8，本页无滚动）；
-//   3) 浮环动态背景可见度上调（元素 opacity 0.18-0.28）且「真的在动」。
+//   3) 动态光晕（2026-09-29「又简陋又不明显 几乎看不到」→ 方案 A：3 光斑
+//      同心圆叠层 + 利萨如漂移 + 呼吸 + 聚光扫过带 + 霓虹 shadow）。
 //
 // 断言口径（真窗口后端 GLFW+OpenGL + 真 Runtime 循环，非无头）：
 //   - 几何：内容块贴底（底边 = 页脚顶 − 一档间距，2026-09-29）、三行 id 不存在、
 //     卡宽/卡位/footer 底边数值断言（与 test_ui_modern.cpp:uiAboutLayout 同口径，
 //     双保险）；卡片几何期望值随窗口高现算 → `--size 1200x640` 顺带覆盖极矮窗
 //     clamp 回 topPad 的分支；
-//   - 浮环：7 个环元素存在、元素 opacity ∈ [0.18, 0.28]（字面量，防调淡回归）；
-//     真帧推进（runtime.updateFrameCallback → compose 挂的 onFrame，每次
-//     callback 置 composeRequested_/paintRequested_，EUI-NEO
-//     core/runtime/runtime_update.h:407-413）后环元素几何变化 = 端到端「在动」；
-//     静止 2s+ 后 bg 不再挂 onFrame（休眠省电设计），指针移动注入可再唤醒。
+//   - 光晕：元素闸门（3×6 层 + 2 扫带半 = 20 ≤ 20）、层 alpha 剖面（内 0.10 /
+//     外 0.01，±35% 呼吸区间）、最外圈霓虹 shadow(blur 48 / primary@0.35)、
+//     扫带峰值 alpha 0.05 + 倾角 18°（字面量，防调淡/退化回归）；
+//     真帧推进（runtime.updateFrameCallback → compose 挂的 onTimer，每 tick 置
+//     composeRequested_/paintRequested_，EUI-NEO core/runtime/runtime_update.h:380-403）
+//     后光斑元素几何变化 = 端到端「在动」；空闲 120s 后 bg 不再挂 onTimer
+//     （休眠省电设计），指针移动注入可再唤醒。
 //
 // --manual：窗口停在屏上（位置固定 100,100 点，便于 screencapture 按 2x 物理
 // 像素裁剪）并周期注入指针移动保活漂移；此模式自己 render+present（探针常规
 // 帧循环不画），供人工/截图复核观感；有界 90s 自动退出（外部按 PID 结束，
 // 勿按名杀进程）。加 --dump <prefix> 则把 GL 后备缓冲读回写 <prefix>_a/_b.ppm
 //（P6）——不依赖系统截屏（OpenGL 窗口 screencapture 有旧帧坑、且裸 GLFW 探针
-// 窗在满屏应用下可能不被置前）。
+// 窗在满屏应用下可能不被置前）；两帧按**动画时间**间隔 1.2s 取样（真机口径
+// 「同一位置间隔 1.2s 抓两帧」），不靠迭代计数猜。
 #include <GLFW/glfw3.h>  // 必须先于 harness：让 GLFW 默认拉平台 GL 头（--dump 用 glReadPixels）
 #include "probes/probe_harness.h"
 #include <eui/detail/dsl_app_impl.h>  // app:: 层内联实现自给（链接需要）
@@ -29,7 +33,9 @@
 #include "core/module_interface.h"
 #include "core/render/render_backend.h"  // manual 渲染：activeRenderBackend/present
 #include "core/theme.h"
+#include "module_about/about_anim.h"  // 光晕参数（probe 与单测同源断言）
 
+#include <algorithm>
 #include <cmath>
 #include <fstream>
 #include <iostream>
@@ -170,55 +176,114 @@ int main(int argc, char* argv[]) {
         }
     }
 
-    // ---- 3) 浮环：存在 / 可见度区间（字面量，防调淡回归）/ 在动 / 休眠 ----
-    for (int i = 0; i < 7; ++i) {
-        const auto* ring = ui != nullptr
-                               ? ui->find("about.ring." + std::to_string(i))
-                               : nullptr;
-        if (ring == nullptr) {
-            std::cerr << "about_probe: about.ring." << i << " 不存在\n";
-            passed = false;
-            continue;
-        }
-        check(ring->opacity >= 0.18f - 1e-6f && ring->opacity <= 0.28f + 1e-6f,
-              "ring." + std::to_string(i) + " opacity " +
-                  std::to_string(ring->opacity));
-        check(ring->frame.x >= 0.0f && ring->frame.y >= 0.0f &&
-                  ring->frame.x + ring->frame.width <= w + 0.5f &&
-                  ring->frame.y + ring->frame.height <= h + 0.5f,
-              "ring." + std::to_string(i) + " 越界 " + frameStr(ring));
-    }
-    const auto* bg = ui != nullptr ? ui->find("about.bg") : nullptr;
-    const auto* ring0 = ui != nullptr ? ui->find("about.ring.0") : nullptr;
-    if (bg == nullptr || ring0 == nullptr || bg->onFrame == nullptr) {
-        std::cerr << "about_probe: bg/ring0 缺失或未挂 onFrame（唤醒期应有）\n";
+    // ---- 3) 动态光晕：元素闸门 / alpha 剖面 / 霓虹 shadow / 扫带 / 在动 / 休眠 ----
+    // 字面量口径（与 test_ui_modern.cpp:uiAboutGlow 同源但独立复述一遍：
+    // 探针跑真窗口后端 + 真 Runtime 节拍，单测跑无头 compose，两边都要红）
+    if (ui == nullptr) {
+        std::cerr << "about_probe: ui 为空，光晕断言无法执行\n";
         passed = false;
     } else {
-        const float x0 = ring0->frame.x;
-        const float y0 = ring0->frame.y;
-        for (int f = 0; f < 20; ++f) composeFrame();  // 真帧推进（唤醒窗内）
-        const auto* ring0b = ui->find("about.ring.0");
-        if (ring0b == nullptr) {
-            std::cerr << "about_probe: 重 compose 后 ring.0 丢失\n";
+        using Anim = module::about::AboutAnimState;
+        constexpr float kInnerAlphaMin = 0.10f * 0.65f;   // 0.10 × (1 ∓ 0.35)
+        constexpr float kInnerAlphaMax = 0.10f * 1.35f;
+        constexpr float kOuterAlphaMin = 0.01f * 0.65f;
+        constexpr float kOuterAlphaMax = 0.01f * 1.35f;
+        int drawn = 0;
+        for (int b = 0; b < Anim::kBlobCount; ++b) {
+            for (int k = 0; k < Anim::kLayersPerBlob; ++k) {
+                const auto* layer = ui->find("about.glow." + std::to_string(b) +
+                                             "." + std::to_string(k));
+                if (layer == nullptr) {
+                    std::cerr << "about_probe: about.glow." << b << "." << k
+                              << " 不存在\n";
+                    passed = false;
+                    continue;
+                }
+                ++drawn;
+                const float alpha = layer->color.a;
+                if (k == 0) {
+                    check(alpha >= kInnerAlphaMin - 1e-4f &&
+                              alpha <= kInnerAlphaMax + 1e-4f,
+                          "光斑内层 alpha " + std::to_string(alpha));
+                } else if (k == Anim::kLayersPerBlob - 1) {
+                    check(alpha >= kOuterAlphaMin - 1e-4f &&
+                              alpha <= kOuterAlphaMax + 1e-4f,
+                          "光斑外层 alpha " + std::to_string(alpha));
+                    // 最外圈霓虹边：shadow(blur 48, offset 0, primary@0.35)
+                    check(layer->shadow.enabled, "最外圈应挂 shadow");
+                    check(near(layer->shadow.blur, 48.0f),
+                          "霓虹 shadow blur " + std::to_string(layer->shadow.blur));
+                    check(near(layer->shadow.color.a, 0.35f),
+                          "霓虹 shadow alpha " +
+                              std::to_string(layer->shadow.color.a));
+                    check(std::fabs(layer->shadow.offset.x) < 0.01f &&
+                              std::fabs(layer->shadow.offset.y) < 0.01f,
+                          "霓虹 shadow 应 offset 0");
+                }
+            }
+        }
+        for (int half = 0; half < 2; ++half) {
+            const auto* band =
+                ui->find("about.sweep." + std::to_string(half));
+            if (band == nullptr) {
+                std::cerr << "about_probe: about.sweep." << half << " 不存在\n";
+                passed = false;
+                continue;
+            }
+            ++drawn;
+            check(band->gradient.enabled, "扫带应启用渐变");
+            const float peak =
+                std::max(band->gradient.start.a, band->gradient.end.a);
+            check(near(peak, 0.05f),
+                  "扫带峰值 alpha " + std::to_string(peak) + "（应 0.05）");
+            check(near(band->transform.rotate, 0.31415926f),
+                  "扫带倾角 " + std::to_string(band->transform.rotate) +
+                      "（应 18°）");
+        }
+        // 元素闸门 ≤ 20（光斑 3×6 + 扫带 2 = 20）
+        check(drawn == Anim::kBlobCount * Anim::kLayersPerBlob + 2,
+              "光晕元素数 " + std::to_string(drawn));
+        check(drawn <= 20, "元素闸门 ≤ 20，实为 " + std::to_string(drawn));
+        check(ui->find("about.ring.0") == nullptr, "旧版浮环应已下线");
+
+        const auto* bg = ui->find("about.bg");
+        const auto* layer0 = ui->find("about.glow.0.0");
+        if (bg == nullptr || layer0 == nullptr || bg->onTimer == nullptr) {
+            std::cerr << "about_probe: bg/glow0 缺失或未挂 onTimer（唤醒期应有）\n";
             passed = false;
         } else {
-            const float moved = std::fabs(ring0b->frame.x - x0) +
-                                std::fabs(ring0b->frame.y - y0);
-            check(moved > 1.0f,
-                  "ring.0 位移 " + std::to_string(moved) + "（应 > 1px，真在动）");
+            check(near(bg->timerSeconds, 1.0f / 30.0f),
+                  "驱动节拍 " + std::to_string(bg->timerSeconds) + "（应 1/30 s）");
+            const float x0 = layer0->frame.x;
+            const float y0 = layer0->frame.y;
+            for (int f = 0; f < 90; ++f) composeFrame();  // 3s 节拍（唤醒期内）
+            const auto* layer0b = ui->find("about.glow.0.0");
+            if (layer0b == nullptr) {
+                std::cerr << "about_probe: 重 compose 后 glow.0.0 丢失\n";
+                passed = false;
+            } else {
+                const float moved = std::fabs(layer0b->frame.x - x0) +
+                                    std::fabs(layer0b->frame.y - y0);
+                check(moved > 1.0f,
+                      "glow.0.0 位移 " + std::to_string(moved) +
+                          "（应 > 1px，真在动）");
+            }
+            // 空闲 120s+ → 休眠（bg 不再挂 onTimer）。探针 dt = 1/60、节拍
+            // 1/30 → 每 2 帧推进一 tick，故迭代数 ×2（另加 8 tick 余量）
+            const int idleTicks = static_cast<int>(Anim::kWakeHoldSeconds /
+                                                   Anim::kFrameSeconds) + 8;
+            for (int f = 0; f < idleTicks * 2; ++f) composeFrame();
+            const auto* bgIdle = ui->find("about.bg");
+            check(bgIdle != nullptr && bgIdle->onTimer == nullptr,
+                  "空闲 120s 后 bg 应休眠（不挂 onTimer）");
+            // 指针移动注入（真命中分发）→ 唤醒，重新挂 onTimer
+            core::queuePointerMotion(window, w * 0.5, h * 0.4,
+                                     core::PointerButtons{}, core::KeyModifiers{});
+            composeFrame();
+            const auto* bgWake = ui->find("about.bg");
+            check(bgWake != nullptr && bgWake->onTimer != nullptr,
+                  "指针移动后 bg 应重新挂 onTimer（唤醒路径）");
         }
-        // 静止推进 2s+ → 全 settled + 超时 → 休眠（bg 不再挂 onFrame）
-        for (int f = 0; f < 140; ++f) composeFrame();
-        const auto* bgIdle = ui->find("about.bg");
-        check(bgIdle != nullptr && bgIdle->onFrame == nullptr,
-              "静止 2s+ 后 bg 应休眠（不挂 onFrame）");
-        // 指针移动注入（真命中分发）→ 唤醒，重新挂 onFrame
-        core::queuePointerMotion(window, w * 0.5, h * 0.4, core::PointerButtons{},
-                                 core::KeyModifiers{});
-        composeFrame();
-        const auto* bgWake = ui->find("about.bg");
-        check(bgWake != nullptr && bgWake->onFrame != nullptr,
-              "指针移动后 bg 应重新挂 onFrame（唤醒路径）");
     }
 
     // --dump <prefix>：manual 模式下把渲染结果从 GL 后备缓冲读回写成 PPM
@@ -299,12 +364,25 @@ int main(int argc, char* argv[]) {
             }
             std::cout << "about_probe: dump " << path << "\n";
         };
+        // --dump 采样点：先跑满 warmup 帧再取 —— --light 是运行期切主题，
+        // 元素颜色有 transition，切完立刻取样会把「主题过渡动画」算进抖动
+        //（实测：浅色档不 warmup 时 ROI 均值虚高到 72/255，全是过渡帧）。
+        // warmup 后按**动画时间**（onTimer 节拍推进的 anim.time，1 tick = 1/30s）
+        // 取一对、间隔 1.2s——真机验收口径「同一位置、间隔 1.2s 抓两帧」，
+        // 不靠迭代计数猜（渲染节奏与动画节奏解耦）
+        constexpr int kDumpWarmupFrames = 120;  // ≈2s 墙钟（60fps 渲染循环）
+        float dumpTimeA = -1.0f;
+        const auto animClock = [&]() -> float {
+            return ui->state<module::about::AboutAnimState>("about.anim").time;
+        };
         for (int i = 0; i < 90 * 60; ++i) {
+            // 固定点注入：只为把 bg.onMove 的唤醒窗续上（光晕要一直动），
+            // **坐标恒定**——变坐标会在卡片上扫过 hover 态，把 hover 反馈算进
+            // 抖动测量里（假高）。点选在 hero 上方空白（页面内、内容区之上）
             if (i % 120 == 0) {
-                core::queuePointerMotion(
-                    window, w * 0.4 + static_cast<double>(i % 11) * 40.0,
-                    h * 0.35 + static_cast<double>(i % 7) * 50.0,
-                    core::PointerButtons{}, core::KeyModifiers{});
+                core::queuePointerMotion(window, w * 0.5, 20.0,
+                                         core::PointerButtons{},
+                                         core::KeyModifiers{});
             }
             glfwPollEvents();
             composeFrame();
@@ -314,13 +392,26 @@ int main(int argc, char* argv[]) {
                     window, core::window::nativeWindowInfo(window), fbW, fbH,
                     renderScale});
                 runtime.render(fbW, fbH, renderScale, clearColor);
-                if (!dumpPrefix.empty() && (i == 60 || i == 240)) {
-                    dumpFrame(dumpPrefix + (i == 60 ? "_a.ppm" : "_b.ppm"));
+                // dump 必须在 present() **之前**：swap 之后后备缓冲是未定义内容
+                //（旧版在 present 前 dump；2026-09-29 一次改到 present 后，抓到的
+                // _a 整帧全黑、差分虚高到 45/255 —— 假绿/假红都危险）
+                bool dumpDone = false;
+                if (!dumpPrefix.empty() && i >= kDumpWarmupFrames) {
+                    const float now = animClock();
+                    if (dumpTimeA < 0.0f) {
+                        dumpFrame(dumpPrefix + "_a.ppm");
+                        dumpTimeA = now;
+                    } else if (now >= dumpTimeA + 1.2f) {
+                        dumpFrame(dumpPrefix + "_b.ppm");
+                        std::cout << "about_probe: 帧对间隔 " << (now - dumpTimeA)
+                                  << "s 动画时间\n";
+                        dumpDone = true;
+                    }
                 }
                 renderBackend->present();
-            }
-            if (!dumpPrefix.empty() && i >= 240) {
-                break;  // 抖动对已取到，提前收工（有界）
+                if (dumpDone) {
+                    break;  // 帧对已取到，提前收工（有界）
+                }
             }
         }
     }

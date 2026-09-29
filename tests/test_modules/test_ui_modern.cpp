@@ -36,13 +36,14 @@
 #include "core/sqlite_db.h"
 #include "core/ui_geometry.h"
 #include "core/window_layout.h"  // 最小窗尺寸经同一函数推导（about 页最小窗复核）
-#include "module_about/about_anim.h"  // uiAboutRingAnim：浮环状态机直接驱动
+#include "module_about/about_anim.h"  // uiAboutGlow：光晕状态机直接驱动
 #include "module_claude_proxy/claude_service.h"
 #include "module_home/home_service.h"
 #include "module_markdown/md_ids.h"
 #include "module_todo/todo_service.h"
 #include "module_todo/todo_ui_logic.h"
 #include "ui_kit/metrics.h"  // kHeaderH（板几何断言）
+#include <algorithm>
 #include <cstdlib>
 #include <chrono>
 #include <cmath>
@@ -1149,91 +1150,243 @@ REGISTER_TEST(uiAboutLayout,
     return true;
 })
 
-// ---- about 页浮环动态背景（2026-09-28 用户真机追问「关于页面的动态效果，
-//      你给我做了吗」——做了但太淡、看不出）----
-// 钉三件事：① 可见度区间（opacity 0.18-0.28 / 半径 12-34，常量即真相，
-// 断言防再被悄悄调淡）；② 真的在动（awake 时 bg 元素挂 onFrame，帧推进 →
-// 锚点漂移 + 弹簧跟随 → 环元素几何变化）；③ 静止后休眠（全 settled + 2s
-// 超时 → awake()==false → compose 不再挂 onFrame，省电设计）；顺带锁唤醒路径。
-REGISTER_TEST(uiAboutRingAnim,
-              "about: 浮环可见度 0.18-0.28 / 漂移真在动 / 静止后休眠（真机反馈）", {
+// ---- about 页动态光晕（2026-09-29 用户真机反馈「又简陋又不明显 几乎看不到」，
+//      方案 A：3 光斑同心圆叠层 + 利萨如漂移 + 呼吸 + 聚光扫过带）----
+// 钉六件事：① 元素闸门（光斑 3×6 层 + 扫带 2 = 20 ≤ 20）；② 直径 380-620；
+// ③ 层 alpha 剖面 0.10 → 0.01；④ 呼吸 ±35%（在时间轴上扫出真实极值）；
+// ⑤ 扫带周期 14s 且真的从左到右；⑥ 漂移真在动 + 空闲 120s 后休眠（不挂
+// onTimer）且指针移动可唤醒。
+// **一律用字面量**（旧版 uiAboutRingAnim 的教训：拿头文件常量断言等于自己，
+// 把常量调淡/调回去断言仍真——实测变异验证过，回归无人守）。
+REGISTER_TEST(uiAboutGlow,
+              "about: 光晕 3 光斑/直径 380-620/呼吸 ±35%/扫带 14s/元素 ≤20/漂移与休眠", {
     using Anim = module::about::AboutAnimState;
     std::unique_ptr<::core::Module> mod(create_about_module());
     DOCTEST_REQUIRE(mod != nullptr);
     mod->onStart();
     eui::Ui ui;
     eui::Screen screen{1392.0f, 1000.0f};  // 默认窗 1600 − 侧边栏 208
-    ui.begin("about_ring");
+    ui.begin("about_glow");
     mod->compose(ui, screen);
     ui.end();
     ui.layout(screen.width, screen.height);
     auto& anim = ui.state<Anim>("about.anim");
     DOCTEST_REQUIRE(anim.initialized);
-    DOCTEST_CHECK_EQ(Anim::kRingCount, 7);
-    // ① 可见度区间（2026-09-28 从 0.06-0.15 上调；浅底 surface #F5F2EC 上
-    //    0.06-0.15 合成后 ΔRGB ≈ 2-4、等同不可见）。**用字面量而非被测量
-    //    头文件常量**：拿 kOpacityMin/Max 断言等于自己，把常量调回去时断言
-    //    仍真（实测变异验证过）——回归就无人守了
-    constexpr float kExpectOpacityMin = 0.18f;
-    constexpr float kExpectOpacityMax = 0.28f;
-    constexpr float kExpectRadiusMin = 12.0f;
-    constexpr float kExpectRadiusMax = 34.0f;
-    bool opacityOk = true;
-    bool radiusOk = true;
-    for (int i = 0; i < Anim::kRingCount; ++i) {
-        const auto& ring = anim.rings[i];
-        opacityOk = opacityOk && ring.opacity >= kExpectOpacityMin - 1e-6f &&
-                    ring.opacity <= kExpectOpacityMax + 1e-6f;
-        radiusOk = radiusOk && ring.radius >= kExpectRadiusMin - 1e-6f &&
-                   ring.radius <= kExpectRadiusMax + 1e-6f;
+
+    // ① 元素闸门：每帧新增绘制元素 ≤ 20（光斑 3×6 + 扫带 2 = 20）
+    constexpr int kExpectBlobCount = 3;
+    constexpr int kExpectLayers = 6;  // 需求区间 6-8；8 层 → 24+2 直接破闸
+    constexpr int kExpectElementCount = 20;
+    constexpr int kElementGate = 20;
+    DOCTEST_CHECK_EQ(Anim::kBlobCount, kExpectBlobCount);
+    DOCTEST_CHECK_EQ(Anim::kLayersPerBlob, kExpectLayers);
+    int drawn = 0;
+    for (int i = 0; i < kExpectBlobCount; ++i) {
+        for (int k = 0; k < kExpectLayers; ++k) {
+            if (ui.find("about.glow." + std::to_string(i) + "." + std::to_string(k)) !=
+                nullptr) {
+                ++drawn;
+            }
+        }
     }
-    DOCTEST_CHECK(opacityOk);
-    DOCTEST_CHECK(radiusOk);
-    // ② 驱动机制与真在动：awake 时 bg 挂 onFrame（可手动驱动），帧推进后
-    // 重 compose → 环元素几何变化（锚点漂移 + 弹簧跟随的端到端证据）
+    for (int half = 0; half < 2; ++half) {
+        if (ui.find("about.sweep." + std::to_string(half)) != nullptr) {
+            ++drawn;
+        }
+    }
+    DOCTEST_CHECK_MESSAGE(drawn == kExpectElementCount,
+                          "光晕元素数 " + std::to_string(drawn));
+    DOCTEST_CHECK_MESSAGE(drawn <= kElementGate,
+                          "元素闸门 ≤ 20，实为 " + std::to_string(drawn));
+    // 旧版 7 个 1px 浮环已下线（避免与新光晕叠成双层背景噪声）
+    DOCTEST_CHECK(ui.find("about.ring.0") == nullptr);
+
+    // ② 直径区间 380-620（字面量）
+    constexpr float kExpectDiameterMin = 380.0f;
+    constexpr float kExpectDiameterMax = 620.0f;
+    bool diameterOk = true;
+    std::string diameterDetail;
+    for (int i = 0; i < kExpectBlobCount; ++i) {
+        const float d = anim.blobs[static_cast<std::size_t>(i)].radius * 2.0f;
+        if (d < kExpectDiameterMin - 1e-3f || d > kExpectDiameterMax + 1e-3f) {
+            diameterOk = false;
+            diameterDetail = "blob" + std::to_string(i) + " 直径 " +
+                             std::to_string(d);
+        }
+    }
+    DOCTEST_CHECK_MESSAGE(diameterOk, diameterDetail);
+
+    // ③ 层 alpha 剖面：0.10（最内）→ 0.01（最外），单调递减
+    constexpr float kExpectLayerAlphaMax = 0.10f;
+    constexpr float kExpectLayerAlphaMin = 0.01f;
+    DOCTEST_CHECK(std::abs(module::about::blobLayerAlpha(0) -
+                           kExpectLayerAlphaMax) < 1e-4f);
+    DOCTEST_CHECK(std::abs(module::about::blobLayerAlpha(kExpectLayers - 1) -
+                           kExpectLayerAlphaMin) < 1e-4f);
+    bool alphaMonotonic = true;
+    for (int k = 1; k < kExpectLayers; ++k) {
+        alphaMonotonic = alphaMonotonic &&
+                         module::about::blobLayerAlpha(k) <
+                             module::about::blobLayerAlpha(k - 1);
+    }
+    DOCTEST_CHECK(alphaMonotonic);
+
+    // ④ 呼吸 ±35%：在时间轴上扫两个呼吸周期取真实极值（不是拿常量断言常量）
+    constexpr float kExpectBreathDepth = 0.35f;
+    Anim probe = anim;  // 副本：位置/呼吸/扫带都是时间的纯函数，改 time 即可取样
+    float breathMin = 2.0f;
+    float breathMax = 0.0f;
+    for (int i = 0; i < kExpectBlobCount; ++i) {
+        const float period = anim.blobs[static_cast<std::size_t>(i)].breathPeriod;
+        DOCTEST_CHECK(period >= 6.0f - 1e-3f && period <= 9.0f + 1e-3f);
+        for (int stepIndex = 0; stepIndex <= 400; ++stepIndex) {
+            probe.time = period * 2.0f * static_cast<float>(stepIndex) / 400.0f;
+            const float b = module::about::blobBreath(probe, i);
+            breathMin = std::min(breathMin, b);
+            breathMax = std::max(breathMax, b);
+        }
+    }
+    DOCTEST_CHECK_MESSAGE(breathMax > 1.0f + kExpectBreathDepth - 0.02f &&
+                              breathMax < 1.0f + kExpectBreathDepth + 0.02f,
+                          "呼吸峰值 " + std::to_string(breathMax));
+    DOCTEST_CHECK_MESSAGE(breathMin < 1.0f - kExpectBreathDepth + 0.02f &&
+                              breathMin > 1.0f - kExpectBreathDepth - 0.02f,
+                          "呼吸谷值 " + std::to_string(breathMin));
+    // 合成 alpha 落在 [0.65, 1.35] × 层基准，且严格 > 0（可见）
+    const float composedAlpha =
+        module::about::blobLayerAlpha(0) * module::about::blobBreath(anim, 0);
+    DOCTEST_CHECK(composedAlpha > 0.0f && composedAlpha <= 0.14f + 1e-4f);
+
+    // ⑤ 漂移：利萨如周期 18-26s；1.2s 内真的挪动（真机 1.2s 抓两帧的口径）
+    constexpr float kExpectPeriodMin = 18.0f;
+    constexpr float kExpectPeriodMax = 26.0f;
+    bool periodOk = true;
+    for (int i = 0; i < kExpectBlobCount; ++i) {
+        const auto& blob = anim.blobs[static_cast<std::size_t>(i)];
+        periodOk = periodOk && blob.periodX >= kExpectPeriodMin - 1e-3f &&
+                   blob.periodX <= kExpectPeriodMax + 1e-3f;
+        // 周期语义自洽：t 与 t+periodX 的 x 相同、t 与 t+periodY 的 y 相同
+        probe = anim;
+        probe.time = 0.0f;
+        float x0 = 0.0f, y0 = 0.0f, x1 = 0.0f, y1 = 0.0f;
+        module::about::blobCenter(probe, i, screen.width, screen.height, x0, y0);
+        probe.time = blob.periodX;
+        module::about::blobCenter(probe, i, screen.width, screen.height, x1, y1);
+        DOCTEST_CHECK(std::abs(x1 - x0) < 1e-2f);
+        probe.time = blob.periodY;
+        module::about::blobCenter(probe, i, screen.width, screen.height, x1, y1);
+        DOCTEST_CHECK(std::abs(y1 - y0) < 1e-2f);
+        // 1.2s 位移（正交两轴之和 → 一定 > 0）
+        probe.time = 0.0f;
+        module::about::blobCenter(probe, i, screen.width, screen.height, x0, y0);
+        probe.time = 1.2f;
+        module::about::blobCenter(probe, i, screen.width, screen.height, x1, y1);
+        const float moved = std::abs(x1 - x0) + std::abs(y1 - y0);
+        DOCTEST_CHECK_MESSAGE(moved > 1.0f,
+                              "blob" + std::to_string(i) + " 1.2s 位移 " +
+                                  std::to_string(moved));
+    }
+    DOCTEST_CHECK(periodOk);
+
+    // ⑥ 扫带：周期 14s / 宽 220 / 倾角 18° / 峰值 alpha 0.05；一个周期回到起点，
+    //    周期内单调右移（左→右扫过），且扫程覆盖整页宽度
+    constexpr float kExpectSweepPeriod = 14.0f;
+    constexpr float kExpectSweepWidth = 220.0f;
+    constexpr float kExpectSweepAlpha = 0.05f;
+    constexpr float kExpectSweepTiltRad = 0.31415926f;  // 18°
+    DOCTEST_CHECK(std::abs(Anim::kSweepPeriod - kExpectSweepPeriod) < 1e-4f);
+    DOCTEST_CHECK(std::abs(Anim::kSweepWidth - kExpectSweepWidth) < 1e-4f);
+    DOCTEST_CHECK(std::abs(Anim::kSweepAlpha - kExpectSweepAlpha) < 1e-4f);
+    DOCTEST_CHECK(std::abs(Anim::kSweepTiltRad - kExpectSweepTiltRad) < 1e-5f);
+    probe.time = 0.0f;
+    const float sweepStart = module::about::sweepLeft(probe, screen.width);
+    probe.time = 3.0f;
+    const float sweepMid = module::about::sweepLeft(probe, screen.width);
+    probe.time = 6.0f;
+    const float sweepLate = module::about::sweepLeft(probe, screen.width);
+    probe.time = kExpectSweepPeriod;
+    const float sweepWrap = module::about::sweepLeft(probe, screen.width);
+    DOCTEST_CHECK_MESSAGE(sweepMid > sweepStart && sweepLate > sweepMid,
+                          "扫带应左→右：" + std::to_string(sweepStart) + " → " +
+                              std::to_string(sweepMid) + " → " +
+                              std::to_string(sweepLate));
+    DOCTEST_CHECK(std::abs(sweepWrap - sweepStart) < 1e-2f);
+    DOCTEST_CHECK(sweepStart <= -kExpectSweepWidth + 1e-3f);  // 起点在左界外
+    // 扫带在 1.2s 内跨过 > 100px（真机 1.2s 抓两帧的动效来源之一）
+    probe.time = 4.0f;
+    const float sweepA = module::about::sweepLeft(probe, screen.width);
+    probe.time = 5.2f;
+    const float sweepB = module::about::sweepLeft(probe, screen.width);
+    DOCTEST_CHECK_MESSAGE(sweepB - sweepA > 100.0f,
+                          "扫带 1.2s 位移 " + std::to_string(sweepB - sweepA));
+
+    // ⑦ 端到端 compose：元素颜色 alpha = 层基准 × 呼吸；驱动是 onTimer(1/30)
     const auto* bg = ui.find("about.bg");
     DOCTEST_REQUIRE(bg != nullptr);
-    DOCTEST_REQUIRE(bg->onFrame != nullptr);
-    const auto* ring0 = ui.find("about.ring.0");
-    DOCTEST_REQUIRE(ring0 != nullptr);
-    const float beforeX = ring0->frame.x;
-    const float beforeY = ring0->frame.y;
-    for (int f = 0; f < 30; ++f) {  // 0.5s 唤醒期帧（< kWakeHoldSeconds）
-        bg->onFrame(1.0f / 60.0f);
+    DOCTEST_REQUIRE(bg->onTimer != nullptr);  // 唤醒期：挂节拍驱动
+    DOCTEST_CHECK(std::abs(bg->timerSeconds - 1.0f / 30.0f) < 1e-5f);
+    const auto* layerInner = ui.find("about.glow.0.0");
+    DOCTEST_REQUIRE(layerInner != nullptr);
+    DOCTEST_CHECK_MESSAGE(
+        std::abs(layerInner->color.a - composedAlpha) < 1e-3f,
+        "内层 alpha " + std::to_string(layerInner->color.a) + " 期望 " +
+            std::to_string(composedAlpha));
+    const auto* layerOuter = ui.find("about.glow.0.5");
+    DOCTEST_REQUIRE(layerOuter != nullptr);
+    // 最外圈挂霓虹 shadow（blur 48 / primary@0.35）
+    DOCTEST_CHECK(layerOuter->shadow.enabled);
+    DOCTEST_CHECK(std::abs(layerOuter->shadow.blur - 48.0f) < 1e-3f);
+    DOCTEST_CHECK(std::abs(layerOuter->shadow.color.a - 0.35f) < 1e-3f);
+    // 内层挂同色柔边 shadow（blur 40）：抹平同心圆台阶的机制，别被静默删掉
+    const auto* layerMid = ui.find("about.glow.0.3");
+    DOCTEST_REQUIRE(layerMid != nullptr);
+    DOCTEST_CHECK(layerMid->shadow.enabled);
+    DOCTEST_CHECK(std::abs(layerMid->shadow.blur - 40.0f) < 1e-3f);
+    // 节拍回调真的推进状态（onTimer → step(kFrameSeconds)）
+    const float timeBefore = anim.time;
+    bg->onTimer();
+    DOCTEST_CHECK(std::abs(anim.time - (timeBefore + 1.0f / 30.0f)) < 1e-5f);
+    const float x0 = layerInner->frame.x;
+    const float y0 = layerInner->frame.y;
+    for (int f = 0; f < 90; ++f) {  // 3s 节拍（= 90/30）
+        bg->onTimer();
     }
-    ui.begin("about_ring");
+    ui.begin("about_glow");
     mod->compose(ui, screen);
     ui.end();
     ui.layout(screen.width, screen.height);
-    const auto* ring0b = ui.find("about.ring.0");
-    DOCTEST_REQUIRE(ring0b != nullptr);
-    const float moved = std::abs(ring0b->frame.x - beforeX) +
-                        std::abs(ring0b->frame.y - beforeY);
-    DOCTEST_CHECK_MESSAGE(moved > 1.0f, "ring.0 位移 " + std::to_string(moved));
-    // ③ 静止 → 全 settled + 超时 → 休眠；compose 不再挂 onFrame
-    const auto* bg2 = ui.find("about.bg");
-    DOCTEST_REQUIRE(bg2 != nullptr);
-    DOCTEST_REQUIRE(bg2->onFrame != nullptr);  // 0.5s < 2s，仍在唤醒期
-    for (int f = 0; f < 240; ++f) {  // 再推 4s（总 4.5s > 2s 唤醒窗）
-        bg2->onFrame(1.0f / 60.0f);
+    const auto* layerInner2 = ui.find("about.glow.0.0");
+    DOCTEST_REQUIRE(layerInner2 != nullptr);
+    const float moved = std::abs(layerInner2->frame.x - x0) +
+                        std::abs(layerInner2->frame.y - y0);
+    DOCTEST_CHECK_MESSAGE(moved > 1.0f,
+                          "光斑 3s 位移 " + std::to_string(moved));
+
+    // ⑧ 空闲 120s → 休眠（compose 不再挂 onTimer）；指针移动唤醒
+    constexpr float kExpectWakeHold = 120.0f;
+    DOCTEST_CHECK(std::abs(Anim::kWakeHoldSeconds - kExpectWakeHold) < 1e-3f);
+    const auto* bgAwake = ui.find("about.bg");
+    DOCTEST_REQUIRE(bgAwake != nullptr);
+    for (int f = 0; f < static_cast<int>(kExpectWakeHold / (1.0f / 30.0f)) + 2;
+         ++f) {
+        bgAwake->onTimer();
     }
     DOCTEST_CHECK(!anim.awake());
-    ui.begin("about_ring");
+    ui.begin("about_glow");
     mod->compose(ui, screen);
     ui.end();
-    const auto* bg3 = ui.find("about.bg");
-    DOCTEST_REQUIRE(bg3 != nullptr);
-    DOCTEST_CHECK(bg3->onFrame == nullptr);  // 休眠：不挂帧回调，零开销
-    // 唤醒路径：onMove（compose 时挂在 bg 上）复位 wakeHold → 再挂 onFrame
-    DOCTEST_REQUIRE(bg3->onMove != nullptr);
-    (void)bg3->onMove(eui::PointerEvent{}, eui::Rect{});
+    const auto* bgAsleep = ui.find("about.bg");
+    DOCTEST_REQUIRE(bgAsleep != nullptr);
+    DOCTEST_CHECK(bgAsleep->onTimer == nullptr);  // 休眠：零合成零重绘
+    DOCTEST_REQUIRE(bgAsleep->onMove != nullptr);
+    (void)bgAsleep->onMove(eui::PointerEvent{}, eui::Rect{});
     DOCTEST_CHECK(anim.awake());
-    ui.begin("about_ring");
+    ui.begin("about_glow");
     mod->compose(ui, screen);
     ui.end();
-    const auto* bg4 = ui.find("about.bg");
-    DOCTEST_REQUIRE(bg4 != nullptr);
-    DOCTEST_CHECK(bg4->onFrame != nullptr);
+    const auto* bgWoken = ui.find("about.bg");
+    DOCTEST_REQUIRE(bgWoken != nullptr);
+    DOCTEST_CHECK(bgWoken->onTimer != nullptr);  // 唤醒：重新挂驱动
     mod->onStop();
     return true;
 })
