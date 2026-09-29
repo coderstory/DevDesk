@@ -1,0 +1,107 @@
+{
+  "area": "pet-enable-feedback（Bug B 桥四态 + settings toast）",
+  "baseline_sha": "d201cb5..01a1bb5（分支 fix/pet-enable-feedback，单提交）",
+  "scope": "diff 7 文件 +410/-34：src/module_pet_bridge.h / src/module_pet/pet_window.{h,cpp} / src/module_settings/settings_module.cpp / tests/test_modules/test_{pet,settings}.cpp / docs/superpowers/plans/2026-09-30-pet-enable-feedback-verify.md。独立只读审计（未参与实现）：唯一写动作 = 本文件。审计在 worktree .claude/worktrees/fix-pet-enable-feedback（HEAD=01a1bb5，工作树干净）进行；测试复跑用的是该 worktree 内实现者预编译的 build/tests/devdesk_tests（mtime 06:57，早于 commit 06:58，未重建）。",
+  "findings": [
+    {
+      "id": "PETFB-01",
+      "severity": "low",
+      "lens": "test",
+      "kind": "test-coverage-evidence",
+      "title": "变异红→绿证据只覆盖 3 条新用例中的 1 条：verify 文档的变异只替换两处 NotAssembled showToast，StartFailed 用例与桥四态用例在变异态下仍会绿（红跑也只有 1 个 FAIL，自证）",
+      "evidence": [
+        {"file": "docs/superpowers/plans/2026-09-30-pet-enable-feedback-verify.md", "symbol": "变异自检段：变异 = 两处 showToast(\"已启用，重启 DevDesk 后生效\") → setStatus(...)；红跑输出 Total: 94 Passed: 93 Failed: 1（仅 not_assembled 一条 FAIL）", "line": 47},
+        {"file": "tests/test_modules/test_settings.cpp", "symbol": "settings_pet_show_button_toast_when_start_failed（断言 title=桌宠启动失败 + 正文含「皮肤」）——变异不触碰 StartFailed 分支", "line": 2236},
+        {"file": "tests/test_modules/test_pet.cpp", "symbol": "pet_show_window_outcomes（四态断言）——桥层不动，变异不触碰", "line": 1457}
+      ],
+      "impact": "「新增 toast 断言非恒真」结论只对 not_assembled 用例成立。start_failed / 桥四态两条用例本身是真断言（钉具体文案与枚举值，非恒真），但没有留过红→绿的实证，若未来有人重构把 StartFailed 分支接错（如与 AlreadyOpen 互换文案）现有留证流程不会预警。",
+      "check": "读 verify 文档变异段红跑输出（1 FAIL）与变异表达式覆盖面（仅 NotAssembled 两处）即可复核；无需跑码。",
+      "suggested_fix": "合并前或下一批补两条快变异各留一次红跑：①把 StartFailed 分支 showToast 文案改掉（或删 toast）→ start_failed 用例应红；②把 pet_window.cpp showPetWindow 的 handle 判空分支删掉 → 桥四态用例 AlreadyOpen 断言应红。各留一行输出进 verify 文档即可。",
+      "already_registered": false,
+      "registered_ref": ""
+    },
+    {
+      "id": "PETFB-02",
+      "severity": "info",
+      "lens": "test",
+      "kind": "robustness",
+      "title": "resetPetRuntimeForTests 非 RAII：REQUIRE 中途炸则用例尾部回厂被跳过，假句柄/assembled 态可漏进同二进制后续用例；现行注册顺序下不可达，属脆弱性",
+      "evidence": [
+        {"file": "src/module_pet/pet_window.cpp", "symbol": "resetPetRuntimeForTests（runtime() = PetRuntime{} 整体回厂）", "line": 799},
+        {"file": "tests/test_modules/test_pet.cpp", "symbol": "pet_show_window_outcomes：四个子块各自入口 reset + 用例末尾 reset（1451 收尾注释「不留装配态污染后续用例」）；④ 留下 handle=0x1 直到末尾", "line": 1467},
+        {"file": "tests/test_main.cpp", "symbol": "main：单用例异常只判本用例失败继续跑（异常路径 = 尾部 reset 不执行）", "line": 183}
+      ],
+      "impact": "仅在断言失败路径上成立：outcomes 用例若中途 REQUIRE 炸，handle=0x1 / assembled 遗留；后续用例里唯一读 showPetWindow 的 reenqueues 注册序在 outcomes 之前（1431 < 1457），settings 侧新用例入口又都先 reset（test_settings.cpp:2191/2261），故当前套件实际打不到。风险在未来用例重排或新增 showPetWindow 消费者时显形，且症状是离因失败（别用例莫名其妙 AlreadyOpen）。",
+      "check": "grep resetPetRuntimeForTests 全仓：仅 pet_window.{h,cpp} 定义 + 两个测试文件 9 个调用点，无生产调用（头注释「生产代码不得调用」成立）；grep 注册序：reenqueues(1431) < outcomes(1457)。",
+      "suggested_fix": "包一个 RAII 守卫（仿 PetsDirEnv / ScopedConfigPath 形态，如 struct ScopedPetRuntimeReset { ~(){ resetPetRuntimeForTests(); } }）在三条新用例栈上放置，替代首尾手动成对调用；顺手可在守卫构造里一并 consumeWindowRequests。",
+      "already_registered": false,
+      "registered_ref": ""
+    },
+    {
+      "id": "PETFB-03",
+      "severity": "info",
+      "lens": "ux",
+      "kind": "tradeoff-note",
+      "title": "NotAssembled 分支丢了原 setStatus 持久通道：旧页头副标题常驻「重启后生效」，新实现只弹 3.5s toast，消失后页面无痕（代码注释已声明是刻意取舍）",
+      "evidence": [
+        {"file": "src/module_settings/settings_module.cpp", "symbol": "showPetWindow 按钮 NotAssembled 分支（旧 setStatus(\"桌宠本次会话未启用，重启后生效\") 被整支替换为 showToast）", "line": 497},
+        {"file": "src/ui_kit/toast.h", "symbol": "ToastOptions.durationSec 默认 3.5f（settings 调用点未覆盖 = 3.5s 自动消失）", "line": 44}
+      ],
+      "impact": "主诉求（可见反馈）已满足且 toast 强于原小字；代价是反馈从持久降级为 3.5s 瞬时——用户没盯屏幕的那 3.5 秒之外无从回看。任务口径里「日志+toast+setStatus 三路齐」实际是：按钮路径 NotAssembled = 仅 toast（无日志无状态行）、开关路径 = toast+LOG_INFO（无状态行）。非静默失败（比改前只多不少），记录口径防误读。",
+      "check": "对照 d201cb5 settings_module.cpp:489-496 旧实现（if/else setStatus）与本批 switch 逐分支比对通道数。",
+      "suggested_fix": "若要兼顾回看：NotAssembled/StartFailed 分支 toast 后补一条 setStatus（同文案或短版），一行改动；不改也可接受（状态行本就要被后续操作覆盖，持久价值有限）。",
+      "already_registered": false,
+      "registered_ref": ""
+    },
+    {
+      "id": "PETFB-04",
+      "severity": "info",
+      "lens": "correctness",
+      "kind": "pre-existing",
+      "title": "「已开着」判定以 handle 非空为准：入队后主循环未消费的一帧窗口期内 handle 仍空，此间重复点击会重复入队 openWindow（EUI-NEO 无 pageId 去重）、四态均判 Shown——改前 bool 版行为相同，非本批引入",
+      "evidence": [
+        {"file": "src/module_pet/pet_window.cpp", "symbol": "showPetWindow（handle 判空 → startPetWindow 入队；入队≠已建窗，handle 由请求 onWindowCreated 在主循环回填）", "line": 762},
+        {"file": "../EUI-NEO/include/eui/detail/dsl_app_impl.h", "symbol": "openWindow（直接 push request，无同 pageId 去重）", "line": 166}
+      ],
+      "impact": "一帧（~16ms）内的双击才可达，真机影响≈0；主循环同轮 create→prune 对两个 pet 窗请求的实际行为未验。属既有窗口期竞态的存档，不该阻塞本批。",
+      "check": "读 EUI-NEO openWindow 全函数确认零去重；pet_window 侧无 petWindowRequested() 前置守卫（有现成查询却未用）。",
+      "suggested_fix": "若将来要收：showPetWindow 在 handle 判空前加 if (petWindowRequested() && handle == nullptr) 一类「已入队未建窗」短路（需同时想清楚 StartFailed 后 windowRequested 残留 true 的语义），另立小批处理。",
+      "already_registered": false,
+      "registered_ref": ""
+    },
+    {
+      "id": "PETFB-05",
+      "severity": "info",
+      "lens": "docs",
+      "kind": "wording",
+      "title": "commit message「模块开关同口径」略宽于实现：开关路径 Shown/AlreadyOpen 合并只 setStatus，按钮路径 AlreadyOpen 才有 toast——两路径对 AlreadyOpen 口径不同（代码注释与 verify 文档均如实声明，属措辞精度问题）",
+      "evidence": [
+        {"file": "src/module_settings/settings_module.cpp", "symbol": "applyPetModuleVisibility：case Shown: case AlreadyOpen: 合并 fallthrough → setStatus(\"桌宠已开启并立即显示\")（注释：窗口本体即反馈，与换肤/切大小同口径）", "line": 525},
+        {"file": "src/module_settings/settings_module.cpp", "symbol": "showPetWindow 按钮：case AlreadyOpen: showToast(\"桌宠已在显示中\")", "line": 494}
+      ],
+      "impact": "无行为问题；仅 commit 行文读起来像开关也四分流。差异本身合理（开关场景窗口肉眼可见、按钮场景点按钮时窗可能在别处/被遮挡）。",
+      "check": "读两处 switch 逐分支比对即证。",
+      "suggested_fix": "无需改码；后续若 amend 或在 backlog 引用该提交，措辞改「开关路径成功态只 setStatus、两失败分支与按钮路径同 toast 口径」。",
+      "already_registered": false,
+      "registered_ref": ""
+    }
+  ],
+  "notes": {
+    "六维度核对": {
+      "1_正确性": "已核。四态与 pet_window.cpp 实际路径一一对应无漏无重：!assembled→NotAssembled（:764，装配标志只置不清 = 本会话从未装配的真形态）、handle!=nullptr→AlreadyOpen（:767）、startPetWindow 返 false→StartFailed（:770）、否则 Shown（:774）；startPetWindow 唯一 false 出口 = 皮肤三级回退全败（:673-676，其余路径 :779 return true），main.cpp:668 装配段 fire-and-forget 忽略返回值与头注释一致。签名哨兵同步：module_pet_bridge.h 9 条 static_assert 中 showPetWindow 一条改 PetShowOutcome(*)()，其余 8 条未动仍成立；枚举单点定义于桥头（标准库边界内，注释声明不引 EUI-NEO 类型，逐字核实），pet_window.h 经 include 复用无 ODR。「已开着」判定依据 = rt.handle 非空：handle 由请求 onWindowCreated 回填、所有销毁路径先经 onWindowDestroyed 清空（比较句柄防热切换误清，审计[0][1]既有防线），module_pet 全目录 grep 零 iconify/minimize——无边框窗无可折叠态，handle 非空 ⇔ 窗在屏，AlreadyOpen 语义成立",
+      "2_回归面": "已核。::module::pet::showPetWindow 全仓调用点 = settings_module.cpp 两处（按钮 :489 / 开关 :514），均改 switch，无第三处（main.cpp 不调它，tests/probes 零引用）；settings_ui_cards 的 std::function<void()> showPetWindow 包装层签名未变无需动。B 组其它三桥 applyPetSkin/resetPetPosition/closePetWindow（及 applyPetScaleIndex）零波及，哨兵原样。开关+按钮连点不叠反馈：applyModuleEnabled 状态未变直接 return（:567），pet 分支单点调 applyPetModuleVisibility；toast 单实例（ToastState 无队列），连点同文案只是重置计时；开关路径 Shown/AlreadyOpen 只 setStatus（见 PETFB-05），与按钮路径 toast 不双弹。toast 节点 id settings.toast 全仓唯一（claude.toast / md.toast / todo.toast / app.notice 各异），且各 toast 随各自页面 compose、单页可见，无同 id 异内容冲突。CMakeLists 零改动正确：settings 在先前批次已因 metrics.h 链上 devdesk_ui_kit（d201cb5 CMakeLists:26 R3 注释自证）",
+      "3_平台对称性": "已核。toast 全走 ui_kit::drawToast（presentation 层，claude/markdown/todo/app_sidebar 四站既有同款），settings 只是第五个消费点；toast.cpp 零平台宏；diff 7 文件 grep 零 #ifdef/#if __APPLE__/_WIN32。ToastOptions{.okIcon = 0xF058} 与 claude_module.cpp:428-430 逐字同款（3.5s 默认时长 + fa-circle-check/fa-triangle-exclamation），「claude 同款形态」成立",
+      "4_静默失败面": "已核（本批本身即补反馈，方向正向）。NotAssembled：按钮路径 = toast-only、开关路径 = toast+LOG_INFO，均不再静默（旧实现只有页头小字）；setStatus 缺席为刻意取舍，见 PETFB-03。StartFailed 下层错误细节未吞：toast 文案「皮肤资产不可用，详情见日志」指向的日志真实存在——pet_window.cpp:672 skin.isFail() 处 LOG_ERROR 带 skin.errorMessage() 全量原因，按钮路径 settings 层虽不补 LOG，开关路径另有 LOG_ERROR，日志详略分层成立、文案不谎",
+      "5_测试有效性": "已核（带两项 finding）。复跑独立证实（用实现者预编译二进制，未重建）：--filter settings 94/94、--filter pet 45/45、具名 showPetWindow 2/2，两条新 settings 用例与桥四态用例均 PASS，与 verify 文档数字一致（基线 92→94 = +2 新增吻合）。三条新用例断言具体（settings.toast.title 逐字文案、空正文、零开窗请求入队、桥四枚举逐个 ==、夹具「可发现不可加载」构造 StartFailed 确定可达），非恒真。变异红→绿证据仅覆盖 1/3 新用例，见 PETFB-01；测试缝泄漏分析见 PETFB-02（非 RAII、现行序不可达）。verify 文档「边界与已知限制」段自认 AlreadyOpen 无 settings 层单测（无头不可自然到达），诚实",
+      "6_文档口径": "已核。commit message 逐条对 diff：四态枚举/哨兵同步/startPetWindow 改返 bool/四分流 toast/测试缝/留证文件——全部属实；两处措辞精度问题见 PETFB-05（同口径）与 PETFB-03（「已开着」toast 只在按钮路径的隐含表述）。「settings 首次接 toast」经 git grep d201cb5 -- src/module_settings 证实：改前零 toast 调用（仅注释「不补状态行 toast」两处 + CMakeLists R3「唯一此前没链接 devdesk_ui_kit（无 toast/无对话框）」），claim 成立"
+    },
+    "已核对无需上报": [
+      "pet_show_window_reenqueues 断言更新（== PetShowOutcome::Shown）与枚举语义一致，测试序在 outcomes 之前不受其尾部 reset 影响",
+      "StartFailed 后 windowRequested 残留 true（装配即置位）→ closePetWindow 返 true 报「窗口已请求关闭」：措辞与实际（本就没窗）略有出入，但属既有装配/可见意图二分的既有语义，非本批引入",
+      "resetPetRuntimeForTests 回厂连带清 renderPaused：电源回调闭包经 setPetRenderPaused 写 runtime()，reset 后触发写新单例，安全；后续用例各自建立所需状态",
+      "settings 两条新用例首尾 setDark / consumeWindowRequests 清场与套件既有口径一致"
+    ],
+    "复跑记录": "2026-09-30 于 worktree（未重建，二进制 mtime 06:57 < commit 06:58）：devdesk_tests settings → Total 94 / Passed 94 / Failed 0；devdesk_tests pet → Total 45 / Passed 45 / Failed 0；devdesk_tests showPetWindow → 2/2"
+  },
+  "verdict": "可合并。零 high/medium；findings 全部 low/info，其中 PETFB-01（变异留证不完整）是唯一建议合并前顺手补证项，但不阻塞——三条新用例断言本身真实具体，复跑全绿。"
+}
