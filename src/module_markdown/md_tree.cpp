@@ -66,15 +66,21 @@ std::vector<MdTreeRow> buildTreeRows(const std::vector<NoteMeta>& notes,
 
     // 展开一个目录：目录行 → 直接文件行 → 各级子目录行（逐个递归）。
     // 收起（collapsed 命中）→ 该目录之下整棵子树不出行。
-    // isRootGroup 只影响显示名：根组的 relPath 是 ""（建不出同名目录，故用
-    // 常量「根目录」当标题；顶层夹显示自己的名字）
+    // isRootGroup 影响两处：显示名（根组的 relPath 是 ""，建不出同名目录，故用
+    // 常量「根目录」当标题；顶层夹显示自己的名字）+ depth 基准（见下）。
     std::function<void(const std::string&, bool)> emit = [&](const std::string& dir,
                                                             bool isRootGroup) {
         MdTreeRow folder;
         folder.isFolder = true;
         folder.name = isRootGroup ? std::string("根目录") : lastSegment(dir);
         folder.relPath = dir;
-        folder.depth = folderDepth(dir);
+        // 深度 = 「根组行是整棵树的根」口径：根组行 0，其下每一级 +1。
+        // 顶层夹（"工作"）是**根组行的子行**（1，与根组直接文件同层）——2026-09-30
+        // 前这里是 folderDepth(dir)（顶层夹 = 0 = 与根组行**同级**），后果：在根行
+        // 选中时新建的顶层夹在树里渲染成根行的「兄弟」，用户读成「落在笔记根之外/
+        // 上一级」（落盘其实正确，纯呈现错层——见 test_markdown.cpp
+        // md_module_root_row_new_folder_inside 的红→绿取证）。
+        folder.depth = isRootGroup ? 0 : folderDepth(dir) + 1;
         rows.push_back(folder);
         if (collapsed.count(dir) != 0) return;  // 收起：整棵子树隐藏
 

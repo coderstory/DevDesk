@@ -837,7 +837,9 @@ private:
                         // 展开。拆成两个命中区是为了让「点目录名选中」不会顺手
                         // 把子树收起来（真机上一个点击干两件事必然被当成 bug）。
                         // 同样包 stack，position 只在 stack 内生效；📁 emoji 已换 FA
-                        // 缩进按 depth（顶层夹 0 / 每深一级 +1），每级 16px
+                        // 缩进按 depth（根组行 0 / 顶层夹 1（= 根组的**子**行，
+                        // 2026-09-30 起，旧口径顶层夹 0 与根组行同级已废）/
+                        // 每深一级 +1），每级 16px
                         const float indent = static_cast<float>(r.depth) * 16.0f;
                         const bool expanded = collapsedDirs_.count(r.relPath) == 0;
                         const bool selected = r.relPath == selectedDir_;
@@ -907,9 +909,9 @@ private:
                             })
                             .build();
                     } else {
-                        // 文件行：缩进 = 32 + (depth-1)*16（depth 1 = 顶层夹/根目录
-                        // 下的文件，2 = 子夹下的文件；文件名 x = 36+indent，与上一级
-                        // 文件夹名 x 差 22px，层级可辨）
+                        // 文件行：缩进 = 32 + (depth-1)*16（depth 1 = 根组直接
+                        // 文件，2 = 顶层夹下的文件，3 = 子夹下的文件……；文件名
+                        // x = 36+indent，与上一级文件夹名 x 差 22px，层级可辨）
                         const float indent =
                             32.0f + static_cast<float>(std::max(0, r.depth - 1)) * 16.0f;
                         drawFileTreeItem(inner, id, w, t, 0xF15C, r.name,
