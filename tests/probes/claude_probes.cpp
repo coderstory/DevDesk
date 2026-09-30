@@ -257,6 +257,48 @@ int main(int argc, char* argv[]) {
             }
         }
 
+        // ⑤ 2026-09-30 共享列表限高 2 条：条目区（scrollView）可视区恰 2 整行
+        //    （128 = 2×(卡 56 + 行距 8)，区块未被极矮窗压扁时），第 3 条起在视口
+        //    外要滚才可见，且 8 片段确有可滚余量（「+ 新建片段」固定尾部由②锁）。
+        //    变异判别：改回随条目数涨 → 8 条时区块自然高 588、可视区 512 ≠ 128
+        //    → 红
+        const core::dsl::Element* sharedScroll =
+            ui != nullptr ? ui->find("claude.shared.scroll") : nullptr;
+        if (sharedScroll == nullptr) {
+            std::cerr << "claude_probes[" << tag
+                      << "]: 'claude.shared.scroll' not found\n";
+            passed = false;
+        } else {
+            if (block->frame.height >= 203.5f &&
+                std::fabs(sharedScroll->frame.height - 128.0f) > 0.5f) {
+                std::cerr << "claude_probes[" << tag
+                          << "]: shared scroll viewport "
+                          << sharedScroll->frame.height
+                          << " != 128 (2 行；bug shape: 区块自然高随条目数涨)\n";
+                passed = false;
+            }
+            const core::dsl::Element* card2 =
+                ui != nullptr ? ui->find("claude.shared.card.2.bg") : nullptr;
+            if (card2 == nullptr) {
+                std::cerr << "claude_probes[" << tag
+                          << "]: 'claude.shared.card.2.bg' not found\n";
+                passed = false;
+            } else if (card2->frame.y <
+                       sharedScroll->frame.y + sharedScroll->frame.height - 0.5f) {
+                std::cerr << "claude_probes[" << tag << "]: card 2 top "
+                          << card2->frame.y << " 在可视区内（底 "
+                          << (sharedScroll->frame.y + sharedScroll->frame.height)
+                          << "）—— offset 0 下可视区超过 2 条\n";
+                passed = false;
+            }
+            if (!(sharedScroll->scrollMaxOffset > 0.0f)) {
+                std::cerr << "claude_probes[" << tag
+                          << "]: 8 片段但 scrollMaxOffset == 0（超出 2 条却无"
+                             "可滚余量）\n";
+                passed = false;
+            }
+        }
+
         // ③ P1 锚定不变量：详情动作区在五个页签下 actY 完全相等，且不越出面板底
         //（用户主诉：页签下方区域高度不对 / 分隔线位置不一致；tab 3 = 2026-09-30
         // batch-fix B 新增「高级配置」，最近调用顺移 tab 4 —— 既有 hit.N 导航锚

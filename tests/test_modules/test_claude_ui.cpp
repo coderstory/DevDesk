@@ -5289,6 +5289,104 @@ REGISTER_TEST(claude_shared_block_bottom_anchored,
     return true;
 })
 
+// ---- 2026-09-30：共享配置片段列表限高 2 条 + 块内滚 ----
+// 用户原话：「共享配置片段这个列表高度需要限制，最多显示 2 条，超过使用滚动条。」
+// 改前区块自然高随条目数涨（固定部分 + N×(卡 56+行距 8)，≤4 条不触
+// sharedBlockMaxH 上界）→ 每加一个片段左列整列重排。现在条目区恒 2 整行
+//（128 = 2×64）：
+//   · 区块高恒 204（76 固定 + 128 条目框架），0/1/2/3 条全同 —— 空态 / 1 条按
+//     框架留白不收缩（左列 Profile 列表视口 listH 由区块高推出，恒高 → 整列
+//     不跳）
+//   · 恰 2 条：内容高 == 视口 → scrollMaxOffset == 0，不出滚动条（用户口径
+//     「超过才滚」）
+//   · ≥3 条：scrollView 存在、可视区恰 2 条、第 3 条在视口外，滚一行（64）
+//     后进入视口
+// 数值 204/128/64 对应 claude_ui_list.cpp 匿名命名空间的
+// kSharedFixedH/kSharedCardsH（该组常量 cpp 私有；此处写字面量 = 双向漂移
+// 哨兵：源常量变了此处红，逼两边同步改）
+REGISTER_TEST(claude_shared_list_cap_two_cards,
+              "claude_module: 共享配置片段列表限高 2 条（超出滚动，空/1 条留白）", {
+    for (int count = 0; count <= 3; ++count) {
+        TestEnv env;
+        auto p = env.svc->createProfile("占位", "https://cap.example.com",
+                                        "sk-ant-cap-0001", "");
+        DOCTEST_REQUIRE(p.isOk());
+        const int64_t pid = p.value().id;
+        for (int i = 0; i < count; ++i) {
+            auto f = env.svc->createSharedConfig("片段" + std::to_string(i), "");
+            DOCTEST_REQUIRE(f.isOk());
+        }
+        std::unique_ptr<::core::Module> mod(create_claude_module());
+        mod->onStart();
+        eui::Ui ui;
+        composeAtSize(mod.get(), ui, "claude_shared_cap", 1600.0f, 1000.0f);
+
+        const auto* block = ui.find("claude.shared.block");
+        const auto* newBtn = ui.find("claude.profiles.new");
+        DOCTEST_REQUIRE(block != nullptr);
+        DOCTEST_REQUIRE(newBtn != nullptr);
+
+        // ① 区块高恒 204，与条目数无关（变异判别：改回随条目数涨 → 0 条 94 /
+        //    1 条 140 / 3 条 268，≠ 204 → 红）
+        DOCTEST_CHECK(std::fabs(block->frame.height - 204.0f) <= 0.5f);
+        // ② 不溢出：区块底 ≤ 底部按钮行上沿（钉底锚点）
+        DOCTEST_CHECK(block->frame.y + block->frame.height <=
+                      newBtn->frame.y + 0.5f);
+
+        if (count == 0) {
+            // ③ 空态：提示行画在框架顶部，无条目 → 无 scrollView（留白不收缩）
+            DOCTEST_CHECK(ui.find("claude.shared.empty") != nullptr);
+            DOCTEST_CHECK(ui.find("claude.shared.scroll") == nullptr);
+        } else {
+            const auto* sc = ui.find("claude.shared.scroll");
+            DOCTEST_REQUIRE(sc != nullptr);            // scrollView 存在
+            // ④ 可视区恒 2 整行高
+            DOCTEST_CHECK(std::fabs(sc->frame.height - 128.0f) <= 0.5f);
+            if (count <= 2) {
+                // ⑤ 1/2 条：无可滚余量（不出滚动条 —— 用户口径「超过才滚」）
+                DOCTEST_CHECK_EQ(sc->scrollMaxOffset, 0.0f);
+            }
+            // 前 2 条完整可见（offset 0）
+            const auto* c0 = ui.find("claude.shared.card.0.bg");
+            DOCTEST_REQUIRE(c0 != nullptr);
+            DOCTEST_CHECK(c0->frame.y >= sc->frame.y - 0.5f);
+            DOCTEST_CHECK(c0->frame.y + c0->frame.height <=
+                          sc->frame.y + sc->frame.height + 0.5f);
+            if (count >= 2) {
+                const auto* c1 = ui.find("claude.shared.card.1.bg");
+                DOCTEST_REQUIRE(c1 != nullptr);
+                DOCTEST_CHECK(c1->frame.y >= sc->frame.y - 0.5f);
+                DOCTEST_CHECK(c1->frame.y + c1->frame.height <=
+                              sc->frame.y + sc->frame.height + 0.5f);
+            }
+            if (count >= 3) {
+                // ⑥ 第 3 条在视口外（要滚才可见）+ 确有可滚余量（非恒真）
+                const auto* c2 = ui.find("claude.shared.card.2.bg");
+                DOCTEST_REQUIRE(c2 != nullptr);
+                DOCTEST_CHECK(c2->frame.y >=
+                              sc->frame.y + sc->frame.height - 0.5f);
+                DOCTEST_CHECK(sc->scrollMaxOffset > 0.0f);
+                // ⑦ 滚一行（64）：偏移跨帧保持，且余量 ≥ 一整行（第 3 条能被
+                //    滚进视口）。注：无头布局 frame 是内容坐标、不随 offset 平移
+                //    （偏移在渲染期应用），故此处断状态 + 余量；「第 3 条进入
+                //    视口」的渲染侧核对由 probe --dump 落图
+                DOCTEST_REQUIRE(sc->onScrollOffsetChanged != nullptr);
+                sc->onScrollOffsetChanged(64.0f);
+                eui::Ui ui2;
+                composeAtSize(mod.get(), ui2, "claude_shared_cap2",
+                              1600.0f, 1000.0f);
+                const auto* sc2 = ui2.find("claude.shared.scroll");
+                DOCTEST_REQUIRE(sc2 != nullptr);
+                DOCTEST_CHECK(std::fabs(sc2->scrollOffset - 64.0f) <= 0.5f);
+                DOCTEST_CHECK(sc2->scrollMaxOffset >= 64.0f);
+            }
+        }
+        mod->onStop();
+        cleanupProfileKey(kTestKeychainService, pid);
+    }
+    return true;
+})
+
 
 // ---- 29. 复制配置完整形态升级（2026-09-30 advanced-json-editor 设计 §6，
 // 已拍板②）：顶层 = env + JSON 属性（如 model）；片段叠加片段赢；pretty 文本；
