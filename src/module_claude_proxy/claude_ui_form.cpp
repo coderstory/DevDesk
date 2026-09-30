@@ -1165,7 +1165,13 @@ void drawJsonFullscreenOverlay(eui::Ui& ui, const eui::Screen& screen,
                                const components::theme::ThemeColorTokens& themeTokens,
                                FormState& f, const FormSubmitHooks& hooks,
                                const std::vector<SharedConfig>& sharedConfigs) {
-    if (!f.formJsonFullscreen_ || !f.formOpen_) return;
+    // 结构性不变式（审计 F-3）：表单不在场 ⇒ 全屏旗必复位——任何关表单路径
+    //（取消 / Esc / 应用成功）之后下一帧即清，不依赖 openCreate/openEditForm
+    // 两个入口的顺手复位（旗与 formOpen_ 的从属关系在此收口）
+    if (!f.formJsonFullscreen_ || !f.formOpen_) {
+        f.formJsonFullscreen_ = false;
+        return;
+    }
     const float w = screen.width;
     const float h = screen.height;
 
@@ -1187,10 +1193,13 @@ void drawJsonFullscreenOverlay(eui::Ui& ui, const eui::Screen& screen,
                                     t.colors.textPrimary,
                                     {.y = 20.0f, .height = 26.0f,
                                      .lineHeight = 26.0f});
+            // 末句 = 审计 F-2：应用闸门里的基础项（名称/URL/Key）错误修复字段在
+            // 基础页、全屏态不可达——明示「回表单补填」这条修复路径
             ui.text("claude.jsonfs.hint")
                 .position(28.0f, 48.0f).size(w - 56.0f, 16.0f)
                 .text("与表单弹窗同一份编辑缓冲：格式化 / 应用（=保存）在此生效；"
-                      "Esc 或「完成」返回表单，未应用的文本保留")
+                      "Esc 或「完成」返回表单，未应用的文本保留；"
+                      "基础项（名称/URL/Key）缺失需回表单基础页补填")
                 .fontSize(11.0f).lineHeight(16.0f)
                 .color(t.colors.textTertiary).build();
 

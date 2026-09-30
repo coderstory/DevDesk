@@ -3203,6 +3203,19 @@ REGISTER_TEST(claude_ui_json_fullscreen_enter_cover_and_esc,
                       bg->frame.x + bg->frame.width + 0.5f);
         DOCTEST_CHECK(panel->frame.y + panel->frame.height <=
                       bg->frame.y + bg->frame.height + 0.5f);
+        // z 档位钉（审计 F-1）：覆盖层 1050 —— 高于表单弹窗根（dialog 默认
+        // 1000）、低于 toast（1100，应用成功确认可见）。变异 1050→900 必红
+        //（900 < 1000 时 dialog 的全屏 backdrop 反序先命中 = 全屏里一点就关
+        // 表单，功能真坏；这里以 z 值直接钉住该序）
+        const auto* fsRoot = ui.find("claude.jsonfs.root");
+        DOCTEST_REQUIRE(fsRoot != nullptr);
+        DOCTEST_CHECK_EQ(fsRoot->zIndex, 1050);
+        const auto* dlgRoot = ui.find("claude.dialog.form");
+        DOCTEST_REQUIRE(dlgRoot != nullptr);
+        DOCTEST_CHECK(fsRoot->zIndex > dlgRoot->zIndex);
+        const auto* toastRoot = ui.find("claude.toast");   // 每帧无条件构建
+        DOCTEST_REQUIRE(toastRoot != nullptr);
+        DOCTEST_CHECK(fsRoot->zIndex < toastRoot->zIndex);
     }
     // 全屏框输入 → Esc（输入框 onCancel 消费）→ 回表单，文本保留在缓冲
     {
@@ -3483,6 +3496,62 @@ REGISTER_TEST(claude_ui_json_fullscreen_buffer_roundtrip_and_error_gate,
             DOCTEST_CHECK(p.extraSettingsJson.find("{broken") ==
                           std::string::npos);
         }
+    }
+
+    // ④ 判别式（审计 F-6）：红字两来源可辨 + 优先级钉住——③ 的路径上
+    // formError_ 与 formAdvancedJsonError_ 同文本（submitForm 两条一起写），
+    // 读哪个都绿、非判别。这里构造两源文本不同的状态：
+    //   路径① 先「格式化」坏 JSON → 仅 formAdvancedJsonError_ 非空
+    //        （formError_ 空）→ 全屏 error 必须显示「解析失败…」（行内源可达）
+    //   路径② 再「应用」触发基础项闸门 → formError_ = 名称/URL 文案，
+    //        行内源仍是「解析失败…」→ 全屏 error 必须切到 formError_ 文案
+    //        （提交闸门优先；读错源/优先级颠倒即红）
+    {
+        eui::Ui ui;
+        compose(ui, "fs_e1");
+        DOCTEST_CHECK(click(ui, "claude.profiles.new.bg"));
+    }
+    {
+        eui::Ui ui;
+        compose(ui, "fs_e2");
+        DOCTEST_CHECK(click(ui, "claude.form.tabs.hit.3"));
+    }
+    {
+        eui::Ui ui;
+        compose(ui, "fs_e3");
+        DOCTEST_CHECK(click(ui, "claude.form.advanced.json.fs.bg"));
+    }
+    {
+        eui::Ui ui;
+        compose(ui, "fs_e4");
+        DOCTEST_CHECK(type(ui, "claude.jsonfs.editor.hit", "{broken"));
+        DOCTEST_CHECK(click(ui, "claude.jsonfs.format.bg"));
+    }
+    {
+        eui::Ui ui;
+        compose(ui, "fs_e5");
+        const auto* err = ui.find("claude.jsonfs.error");
+        DOCTEST_REQUIRE(err != nullptr);
+        // 路径①：formError_ 空 → 显示行内源（格式化失败文案）
+        DOCTEST_CHECK(err->text.find("解析失败") != std::string::npos);
+    }
+    {
+        eui::Ui ui;
+        compose(ui, "fs_e6");
+        // 基础项（名称/URL）为空 → submitForm 第一道闸门失败
+        DOCTEST_CHECK(click(ui, "claude.jsonfs.apply.bg"));
+    }
+    {
+        eui::Ui ui;
+        compose(ui, "fs_e7");
+        const auto* err = ui.find("claude.jsonfs.error");
+        DOCTEST_REQUIRE(err != nullptr);
+        // 路径②：formError_ 非空 → 优先提交闸门文案；行内源此刻仍是「解析失败…」
+        // ——两源文本不同 = 判别式成立
+        DOCTEST_CHECK(err->text.find("名称和 Base URL") != std::string::npos);
+        DOCTEST_CHECK(err->text.find("解析失败") == std::string::npos);
+        DOCTEST_CHECK(ui.find("claude.jsonfs.root") != nullptr);   // 不退全屏
+        DOCTEST_CHECK(click(ui, "claude.dialog.form.cancel.bg"));  // 收尾，不落库
     }
 
     if (idA != 0) cleanupProfileKey(kTestKeychainService, idA);
