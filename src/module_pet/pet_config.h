@@ -23,6 +23,16 @@ inline constexpr const char* kPetScalePresetLabels[] = {"小 0.75×", "中 1.0×
 inline constexpr int kPetScalePresetCount = 3;
 inline constexpr int kPetScaleDefaultIndex = 1;  // 默认「中」1.0×
 
+// 档位数与两个数组静态绑定：petScalePresetLabels()（pet_window.cpp）以裸下标
+// [0][1][2] 取文案、sanitizePetScale/petScaleIndexOf 以 count 为界循环——
+// 档位漂移（改数组不改 count）编译期即红，不再运行期越界读
+static_assert(kPetScalePresetCount ==
+                  sizeof(kPetScalePresets) / sizeof(kPetScalePresets[0]),
+              "kPetScalePresets 元素数必须等于 kPetScalePresetCount");
+static_assert(kPetScalePresetCount == sizeof(kPetScalePresetLabels) /
+                                          sizeof(kPetScalePresetLabels[0]),
+              "kPetScalePresetLabels 元素数必须等于 kPetScalePresetCount");
+
 // 越界/漂移值收敛：精确命中三档之一（1e-6 容差）原样返回，否则回默认中档
 // （防手改 pet_config.json 注入任意缩放）。load 与 applyPetScale 共用
 inline double sanitizePetScale(double scale) {
