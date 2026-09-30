@@ -3628,14 +3628,16 @@ REGISTER_TEST(claude_service_resolve_model_slot,
     pa.modelsConfigJson =
         R"({"default": {"model": "m-default"},)"
         R"("sonnet": {"model": "m-s"},)"
+        R"("haiku": {"model": "m-h"},)"
         R"("subagent": {"model": "m-sub"}})";
     DOCTEST_REQUIRE(svc.updateProfile(pa).isOk());
 
     // default / def 等价，取 models_config 的 def 槽位
     DOCTEST_CHECK(svc.resolveModelSlot("default").value_or("") == "m-default");
     DOCTEST_CHECK(svc.resolveModelSlot("def").value_or("") == "m-default");
-    // 其余槽位按键解析
+    // 其余槽位按键解析（haiku 独立断言：与 opus 成员互换须变红）
     DOCTEST_CHECK(svc.resolveModelSlot("sonnet").value_or("") == "m-s");
+    DOCTEST_CHECK(svc.resolveModelSlot("haiku").value_or("") == "m-h");
     DOCTEST_CHECK(svc.resolveModelSlot("subagent").value_or("") == "m-sub");
     // 表内但未配置的槽位 → nullopt
     DOCTEST_CHECK(!svc.resolveModelSlot("opus").has_value());

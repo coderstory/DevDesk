@@ -395,7 +395,8 @@ std::optional<std::string> ClaudeService::resolveModelSlot(
     // "def" 是 "default" 的别名；表行 jsonKey 就是 "default"，先归一再查表
     const std::string key = (slot == "def") ? "default" : slot;
 
-    // default 槽位保留旧列语义：models_config 未配置时回落 profile.model
+    // default 槽位保留旧列语义：models_config 未配置**或解析失败**时回落
+    // profile.model（非 default 槽解析失败才是 nullopt，见下方分支）
     if (key == "default") {
         if (!profile.modelsConfigJson.empty()) {
             auto cfgR = parseModelsConfig(profile.modelsConfigJson);
