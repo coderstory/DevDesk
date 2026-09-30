@@ -1,6 +1,7 @@
 // src/platform/keychain_macos.cpp
 // macOS 实现：SecKeychain（Keychain Services，Security.framework）
 #include "keychain.h"
+#include "keychain_macos_scan.h"
 
 #include <CoreFoundation/CoreFoundation.h>
 #include <Security/Security.h>
@@ -49,6 +50,24 @@ bool blankKeyIdentity(const std::string& service, const std::string& account) {
 }
 
 } // namespace
+
+// ---- macOS 扫描路径测试缝（keychain_macos_scan.h，merge-review R2）----
+// 默认 nullptr = 真实 Security.framework 调用；只把「枚举」与「删除」两个边界
+// 动作换成可注入函数指针，中间的 service 过滤 + shouldDeleteOrphan 决策 +
+// removed 累积 + 失败短路一行不动（生产路径逐字同原实现）。
+namespace macos_scan {
+namespace {
+const Hooks* g_hooks = nullptr;
+} // namespace
+
+const Hooks* setHooksForTest(const Hooks* h) {
+    const Hooks* prev = g_hooks;
+    g_hooks = h;
+    return prev;
+}
+
+const Hooks* currentHooks() { return g_hooks; }
+} // namespace macos_scan
 
 // 真实实现（CPX-14 起经 keychain.h 的函数指针表转发，见那里的「注入缝」段）
 core::Result<void> realStoreSecret(const std::string& service,
@@ -167,13 +186,14 @@ core::Result<void> realDeleteSecret(const std::string& service, const std::strin
     return core::Result<void>::ok();
 }
 
-core::Result<std::vector<std::string>> realDeleteSecretsNotIn(
-    const std::string& service,
-    const std::vector<std::string>& keepAccounts) {
-    std::vector<std::string> removed;
-    std::set<std::string> keep(keepAccounts.begin(), keepAccounts.end());
+// 真实枚举：扫全库 generic password（kSecMatchLimitAll），取出 service 属性与
+// 本次查询 service 相同的 (service, account) 对。**不做任何删除决策**——决策留在
+// realDeleteSecretsNotIn 的扫描循环里；两段职责单一，测试缝只需替换枚举/删除
+// 两个边界动作就能覆盖整条接线。
+core::Result<std::vector<macos_scan::ScannedEntry>> realEnumerateScanEntries(
+    const std::string& service) {
+    std::vector<macos_scan::ScannedEntry> found;
 
-    // 枚举该 service 下的所有 generic password（拿 account 属性）
     const void* keys[] = {kSecClass, kSecMatchLimit, kSecReturnAttributes};
     const void* values[] = {kSecClassGenericPassword, kSecMatchLimitAll,
                             kCFBooleanTrue};
@@ -181,25 +201,22 @@ core::Result<std::vector<std::string>> realDeleteSecretsNotIn(
         nullptr, keys, values, 3,
         &kCFTypeDictionaryKeyCallBacks, &kCFTypeDictionaryValueCallBacks);
     if (!query) {
-        return core::Result<std::vector<std::string>>::fail(
+        return core::Result<std::vector<macos_scan::ScannedEntry>>::fail(
             core::ErrorCode::Internal, "CFDictionaryCreate failed");
     }
-
-    auto fail = [&](const std::string& what, OSStatus st) {
-        return core::Result<std::vector<std::string>>::fail(
-            core::ErrorCode::Internal,
-            what + " failed: " + std::to_string(st));
-    };
 
     CFTypeRef result = nullptr;
     OSStatus status = SecItemCopyMatching(query, &result);
     CFRelease(query);
+    // service 命名空间为空 → 无条目（上层据此返回空 removed，与原行为一致）
     if (status == errSecItemNotFound) {
-        // service 命名空间为空 → 无孤儿
-        return core::Result<std::vector<std::string>>::ok(std::move(removed));
+        return core::Result<std::vector<macos_scan::ScannedEntry>>::ok(
+            std::move(found));
     }
     if (status != errSecSuccess) {
-        return fail("SecItemCopyMatching", status);
+        return core::Result<std::vector<macos_scan::ScannedEntry>>::fail(
+            core::ErrorCode::Internal,
+            "SecItemCopyMatching failed: " + std::to_string(status));
     }
 
     CFArrayRef entries = static_cast<CFArrayRef>(result);
@@ -231,22 +248,58 @@ core::Result<std::vector<std::string>> realDeleteSecretsNotIn(
                                 kCFStringEncodingUTF8)) {
             continue;
         }
-        const std::string account = acctBuf;
+        found.emplace_back(svcStr, std::string(acctBuf));
+    }
+    CFRelease(entries);
+    return core::Result<std::vector<macos_scan::ScannedEntry>>::ok(
+        std::move(found));
+}
+
+core::Result<std::vector<std::string>> realDeleteSecretsNotIn(
+    const std::string& service,
+    const std::vector<std::string>& keepAccounts) {
+    std::vector<std::string> removed;
+    std::set<std::string> keep(keepAccounts.begin(), keepAccounts.end());
+
+    // 边界动作取注入钩子（keychain_macos_scan.h 测试缝，merge-review R2）：
+    // 默认 nullptr = 真实 Security.framework 枚举 / 真实删除，生产路径与拆分前
+    // 逐字等价（决策、service 过滤、removed 累积、失败短路一行未动）
+    const macos_scan::Hooks* hooks = macos_scan::currentHooks();
+
+    auto foundR = (hooks != nullptr && hooks->enumerate != nullptr)
+                      ? hooks->enumerate(service)
+                      : realEnumerateScanEntries(service);
+    if (foundR.isFail()) {
+        return core::Result<std::vector<std::string>>::fail(
+            foundR.errorCode(), foundR.errorMessage());
+    }
+    const std::vector<macos_scan::ScannedEntry>& found = foundR.value();
+
+    for (const auto& entry : found) {
+        const std::string& entryService = entry.first;
+        const std::string& account = entry.second;
+        // service 命名空间过滤：只处理本次查询 service 下的条目。放在循环里
+        // （而不是只在枚举段）——这样**任何**枚举来源（含测试注入的假命名空间）
+        // 都过这道闸，「扫到就删」的回退写法必红。真实枚举段的同款过滤是
+        // 纯优化（提前跳过，省掉全库 account 的字符串转换），不是唯一防线。
+        if (entryService != service) continue;
         // P0 护栏②：白名单前缀（claude:）之外的 account 一律保留——
         // shouldDeleteOrphan 统一决策，见 keychain.h 说明
         if (!shouldDeleteOrphan(account, keep)) continue;
 
         // 直调真实实现（不经 dispatcher）：真实实现保持自洽——注入层只服务
-        // 调用方，不反向渗进 real* 内部（CPX-14）
-        auto del = realDeleteSecret(service, account);
+        // 调用方，不反向渗进 real* 内部（CPX-14）。钩子的 erase 同理只替换边界
+        // 动作，决策仍在本循环内。
+        core::Result<void> del =
+            (hooks != nullptr && hooks->erase != nullptr)
+                ? hooks->erase(entryService, account)
+                : realDeleteSecret(entryService, account);
         if (del.isFail()) {
-            CFRelease(entries);
             return core::Result<std::vector<std::string>>::fail(
                 del.errorCode(), del.errorMessage());
         }
         removed.push_back(account);
     }
-    CFRelease(entries);
     return core::Result<std::vector<std::string>>::ok(std::move(removed));
 }
 

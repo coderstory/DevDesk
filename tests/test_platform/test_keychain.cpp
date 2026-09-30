@@ -6,6 +6,14 @@
 #include <filesystem>
 #include <set>
 #include <string>
+#include <utility>
+#include <vector>
+
+// macOS 扫描路径测试缝（仅 __APPLE__ 有实现，见 keychain_macos_scan.h）：
+// 只把枚举/删除两个边界动作换成可注入函数指针，决策循环不动 → 接线可断言
+#if defined(__APPLE__)
+#include "platform/keychain_macos_scan.h"
+#endif
 
 // macOS 平台守卫：本平台实现走 Security.framework，只能操作**真实 login keychain**
 // （keychain_macos.cpp 用 SecKeychainAddGenericPassword + nullptr 默认钥匙串，没有
@@ -154,6 +162,142 @@ REGISTER_TEST(keychain_orphan_sweep_prefix_whitelist,
     DOCTEST_CHECK(!shouldDeleteOrphan("notes:theme", {}));    // 空 keep 也不动前缀外
     return true;
 })
+
+// ==================== macOS 扫描路径接线断言（merge-review R2，2026-09-30）====================
+// 上面的纯件用例只钉 shouldDeleteOrphan 这个**决策函数**的语义，钉不住「macOS 的
+// 扫描分支真的调它」——keychain_macos.cpp 的扫描循环里那行
+// `if (!shouldDeleteOrphan(account, keep)) continue;` 一旦被回退成裸
+// `keep.count(account) == 0`，纯件用例照样全绿：白名单前缀护栏（P0 护栏②）在
+// **事故发生的那个平台**上无人覆盖。而走真实存储的扫描用例在 macOS 全部
+// SKIP_ON_MACOS_KEYCHAIN（P0 教训：真 login keychain 不可隔离，照跑会写用户钥匙串、
+// 按 kSecMatchLimitAll 枚举整库）——SKIP 保持不解除。
+//
+// 解法：keychain_macos_scan.h 测试缝只把「枚举」与「删除」两个**边界动作**换成
+// 可注入函数指针（默认 nullptr = 真实 Security.framework 调用），决策循环一行
+// 未动。于是这里用**注入的假 keychain 命名空间**（与 test_claude_service.cpp 的
+// ScopedFakeKeychain 同款 RAII 手法，但作用于 macOS 扫描钩子）端到端钉住接线：
+//   1) macOS 扫描路径确实走了 shouldDeleteOrphan —— 裸 keep.count 写法必红；
+//   2) 空 keep 短路生效 —— 空 keep ≠ 通配全删，前缀外条目仍必须保留（P0 护栏②
+//      最容易被绕过的一条：keep 空时全清）。
+// 全程不碰真钥匙串（枚举与删除都是假的）。
+#if defined(__APPLE__)
+namespace {
+
+using platform::keychain::macos_scan::Hooks;
+using platform::keychain::macos_scan::ScannedEntry;
+
+struct FakeMacosScan {
+    // 假 keychain 命名空间：service → 全部 account（含跨 service 条目，用来验
+    // service 过滤没被回退）
+    std::vector<ScannedEntry> entries;
+    std::vector<std::string> erased;
+    std::string lastEnumerateService;
+};
+
+FakeMacosScan* g_fakeScan = nullptr;
+
+core::Result<std::vector<ScannedEntry>> fakeEnumerate(const std::string& service) {
+    g_fakeScan->lastEnumerateService = service;
+    return core::Result<std::vector<ScannedEntry>>::ok(g_fakeScan->entries);
+}
+
+core::Result<void> fakeErase(const std::string& service,
+                             const std::string& account) {
+    g_fakeScan->erased.push_back(service + "/" + account);
+    return core::Result<void>::ok();
+}
+
+// RAII：安装假 macOS 扫描钩子，析构恢复真实 Security.framework 调用
+struct ScopedMacosScan {
+    FakeMacosScan fake;
+    Hooks hooks{&fakeEnumerate, &fakeErase};
+    const Hooks* prev;
+
+    ScopedMacosScan() {
+        g_fakeScan = &fake;
+        prev = platform::keychain::macos_scan::setHooksForTest(&hooks);
+    }
+    ~ScopedMacosScan() {
+        platform::keychain::macos_scan::setHooksForTest(prev);
+        g_fakeScan = nullptr;
+    }
+    ScopedMacosScan(const ScopedMacosScan&) = delete;
+    ScopedMacosScan& operator=(const ScopedMacosScan&) = delete;
+};
+
+constexpr const char* kScanService = "DevDeskTestMacosScan";
+
+} // namespace
+
+REGISTER_TEST(keychain_macos_scan_wiring,
+              "keychain: macOS 扫描路径走 shouldDeleteOrphan（接线断言，不碰真钥匙串）", {
+    ScopedMacosScan scan;
+    // 假命名空间：两条白名单前缀（一条 keep 内、一条孤儿）、一条前缀外
+    // （notes:theme）、一条**别的 service** 的同名 account（验 service 过滤）
+    scan.fake.entries = {
+        {kScanService, "claude:1"},
+        {kScanService, "claude:999"},
+        {kScanService, "notes:theme"},
+        {"OtherService", "claude:999"},
+    };
+
+    // ① keep = {claude:1} → 只删 claude:999；notes:theme（前缀外）与
+    //    别的 service 的条目都不得动
+    auto r = platform::keychain::realDeleteSecretsNotIn(
+        kScanService, {"claude:1"});
+    DOCTEST_REQUIRE(r.isOk());
+    DOCTEST_REQUIRE_EQ(r.value().size(), 1u);
+    DOCTEST_CHECK_EQ(r.value()[0], std::string("claude:999"));
+    DOCTEST_REQUIRE_EQ(scan.fake.erased.size(), 1u);
+    DOCTEST_CHECK_EQ(scan.fake.erased[0], std::string("DevDeskTestMacosScan/claude:999"));
+    DOCTEST_CHECK_EQ(scan.fake.lastEnumerateService, std::string(kScanService));
+
+    // ② 空 keep 短路：空集合**不是**「全删」。白名单前缀外条目必须原地保留
+    //    （这正是 P0 护栏②要防的：keep 空时无差别全清会连带删掉同 service 下
+    //    未来别的用途的条目）
+    scan.fake.erased.clear();
+    auto r2 = platform::keychain::realDeleteSecretsNotIn(kScanService, {});
+    DOCTEST_REQUIRE(r2.isOk());
+    // claude:1 / claude:999 两条都成了孤儿；notes:theme 与别的 service 不动
+    DOCTEST_REQUIRE_EQ(r2.value().size(), 2u);
+    DOCTEST_REQUIRE_EQ(scan.fake.erased.size(), 2u);
+    bool keptNotes = false;
+    bool touchedOtherService = false;
+    for (const auto& e : scan.fake.erased) {
+        if (e == "DevDeskTestMacosScan/notes:theme") keptNotes = true;
+        if (e.rfind("OtherService/", 0) == 0) touchedOtherService = true;
+    }
+    DOCTEST_CHECK(!keptNotes);           // 前缀外条目绝不被删
+    DOCTEST_CHECK(!touchedOtherService);  // service 过滤未被回退成「扫到就删」
+    return true;
+})
+
+// 反向口径：枚举失败必须原样上报，不得静默当成「无孤儿」返回空列表
+// （静默吞掉枚举失败 = 孤儿清理看着成功、实际一条没清）
+REGISTER_TEST(keychain_macos_scan_enumerate_failure_propagates,
+              "keychain: macOS 扫描枚举失败上报而非静默空删", {
+    ScopedMacosScan scan;
+    scan.fake.entries = {{kScanService, "claude:999"}};
+
+    // 换掉枚举钩子为恒失败版（其余同 ScopedMacosScan 结构）
+    struct AlwaysFailEnumerate {
+        static core::Result<std::vector<ScannedEntry>> enumerate(
+            const std::string&) {
+            return core::Result<std::vector<ScannedEntry>>::fail(
+                core::ErrorCode::Internal, "fake enumerate failure");
+        }
+    };
+    Hooks failing{&AlwaysFailEnumerate::enumerate, &fakeErase};
+    const Hooks* prev = platform::keychain::macos_scan::setHooksForTest(&failing);
+
+    auto r = platform::keychain::realDeleteSecretsNotIn(kScanService, {});
+    platform::keychain::macos_scan::setHooksForTest(prev);   // 复位在断言前
+
+    DOCTEST_CHECK(r.isFail());
+    DOCTEST_CHECK(scan.fake.erased.empty());   // 失败时不得删任何条目
+    return true;
+})
+#endif  // __APPLE__
 
 // ==================== CP-11：account → 文件名映射 + 旧命名兼容 ====================
 // 下面两个用例断言的是 keychain_win.cpp 的磁盘命名契约（<encode(account)>.key），
