@@ -1273,6 +1273,9 @@ REGISTER_TEST(provider_config_extra_settings_apply,
         platform::json::JsonObject root;
         root.set("env", JsonValue(std::move(envObj)));
         root.set("live", platform::json::makeString("old"));
+        // D-3 夹具：live 侧预置与 JSON 同名的 statusLine（异值）——没有同名键
+        // 时「JSON 赢过 live」的断言恒真（假绿）
+        root.set("statusLine", platform::json::makeString("live-s"));
 
         auto r = applyExtraSettingsToSettingsDoc(
             root, R"({"model": "json-model", "statusLine": "on"})");
@@ -1281,7 +1284,8 @@ REGISTER_TEST(provider_config_extra_settings_apply,
         DOCTEST_CHECK_EQ(r.writtenKeys[0], std::string("model"));
         DOCTEST_CHECK_EQ(r.writtenKeys[1], std::string("statusLine"));
         DOCTEST_CHECK(r.warnings.empty());
-        // JSON 赢过 live 既有同名非 env 键（D-3）
+        // D-3：JSON 赢过 live 既有同名非 env 键——statusLine 取 JSON 值 "on"，
+        // live 原值 "live-s" 被压过；JSON 没有的 "live" 键零触碰
         DOCTEST_CHECK_EQ(root.get("live").asString(), std::string("old"));
         DOCTEST_CHECK_EQ(root.get("model").asString(), std::string("json-model"));
         DOCTEST_CHECK_EQ(root.get("statusLine").asString(), std::string("on"));

@@ -1156,10 +1156,15 @@ REGISTER_TEST(sync_takeover_with_shared_config,
         DOCTEST_CHECK(hasKeyEntry(keys, "statusLine"));
         DOCTEST_CHECK(hasKeyEntry(keys, "hooks"));
     }
-    // 还原：全部撤走（快照无原值 → 删除）
+    // 还原：全部撤走（快照无原值 → 删除）。口径 = 键必须不存在——`.empty()`
+    // 把「键不存在 / 值为空串 / 文件解析失败」混为一谈，写坏文件也照样绿
     DOCTEST_REQUIRE(settings_sync::restore(paths).ok);
-    DOCTEST_CHECK(topLevelString(paths.settingsFile, "statusLine").empty());
-    DOCTEST_CHECK(topLevelString(paths.settingsFile, "hooks").empty());
+    {
+        auto doc = platform::json::parse(d.read(paths.settingsFile));
+        DOCTEST_REQUIRE(doc.isOk());
+        DOCTEST_CHECK_FALSE(doc.value().asObject().has("statusLine"));
+        DOCTEST_CHECK_FALSE(doc.value().asObject().has("hooks"));
+    }
     // 解绑语义（同一装配，片段改空）：profile 自身值生效（回落）
     p.extraSettingsJson = effectiveExtraSettingsJson(
         R"({"statusLine": "profile-s"})", "");
@@ -1289,9 +1294,13 @@ REGISTER_TEST(sync_takeover_model_suppress,
     DOCTEST_CHECK(hasKeyEntry(rd.managedKeys, "ANTHROPIC_MODEL"));
 
     // restore：env 键按快照撤走；顶层 "model" 同样按 nonEnv 记账撤走
-    //（live 原本无 model 键 → 删除）
+    //（live 原本无 model 键 → 删除）。键必须不存在（.empty() 口径三态混淆）
     DOCTEST_REQUIRE(settings_sync::restore(paths).ok);
-    DOCTEST_CHECK(topLevelString(paths.settingsFile, "model").empty());
+    {
+        auto doc = platform::json::parse(d.read(paths.settingsFile));
+        DOCTEST_REQUIRE(doc.isOk());
+        DOCTEST_CHECK_FALSE(doc.value().asObject().has("model"));
+    }
 
     // 本轮 JSON 不含 model → 该键回到 buildProxyEnv 生成（m-1，槽位仍在）、
     // 不再被抑制（F-5 的另一半：抑制只发生在「本轮 JSON 含 model」的 apply
@@ -1336,11 +1345,12 @@ REGISTER_TEST(sync_restore_extra_settings,
     // 快照有原值 → 恢复；快照无原值（原本不存在）→ 删除；sidecar 已删
     DOCTEST_CHECK_EQ(topLevelString(paths.settingsFile, "statusLine"),
                      std::string("user-s"));
-    DOCTEST_CHECK(topLevelString(paths.settingsFile, "hooks").empty());
     DOCTEST_CHECK_FALSE(settings_sync::hasPendingSnapshot(paths));
-    // 用户自己的其他顶层键零触碰
+    // 用户自己的其他顶层键零触碰；hooks（快照无原值）必须不存在——
+    // .empty() 口径把「键不存在 / 值为空串 / 文件解析失败」混为一谈
     auto doc = platform::json::parse(d.read(paths.settingsFile));
     DOCTEST_REQUIRE(doc.isOk());
+    DOCTEST_CHECK_FALSE(doc.value().asObject().has("hooks"));
     DOCTEST_CHECK(doc.value().asObject().has("permissions"));
     return true;
 })
@@ -1454,10 +1464,12 @@ REGISTER_TEST(sync_takeover_fragment_json_end_to_end,
     // stopProxy → restore：全部撤走（live 无原值 → 删除）
     svc.stopProxy();
     {
-        DOCTEST_CHECK(topLevelString(paths.settingsFile, "statusLine").empty());
-        DOCTEST_CHECK(topLevelString(paths.settingsFile, "permissions").empty());
+        // 键必须不存在（.empty() 口径把「键不存在 / 值为空串 / 文件解析失败」
+        // 混为一谈，写坏文件也照样绿）
         auto doc = platform::json::parse(d.read(paths.settingsFile));
         DOCTEST_REQUIRE(doc.isOk());
+        DOCTEST_CHECK_FALSE(doc.value().asObject().has("statusLine"));
+        DOCTEST_CHECK_FALSE(doc.value().asObject().has("permissions"));
         DOCTEST_CHECK_FALSE(doc.value().asObject().has("hooks"));
     }
     platform::keychain::deleteSecret(kTestKeychainService,
