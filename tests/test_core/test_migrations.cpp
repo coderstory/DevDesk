@@ -546,11 +546,14 @@ REGISTER_TEST(migrate_extra_settings_v11,
             "updated_at) VALUES (1, '旧供应商', 'https://old.example.com', "
             "'sk-***abcd', 'deadbeef', 'claude:1', 'claude-3-5-haiku', 1, 0, 0)")
                             .isOk());
-        // 旧形态片段（env 域数据 —— v11 后弃用不转换，设计 §8.3）
+        // 旧形态片段（env 域数据 —— v11 后弃用不转换，设计 §8.3）。
+        // created_at/updated_at 给非零异值：v11 对本表 DROP COLUMN 走整表重建，
+        // 重建若丢列/丢数据，下面按这些已知值逐行断言保值才红得起来（0 是
+        // 常见默认值，做不出区分度）
         DOCTEST_REQUIRE(db.exec(
             "INSERT INTO claude_shared_configs (id, name, extra_env, created_at, "
             "updated_at) VALUES (1, '旧片段', '{\"ANTHROPIC_BASE_URL\": "
-            "\"https://old.example.com\"}', 0, 0)")
+            "\"https://old.example.com\"}', 1727100000, 1727100001)")
                             .isOk());
     } // 句柄关闭（Windows 文件锁）
 
@@ -562,24 +565,38 @@ REGISTER_TEST(migrate_extra_settings_v11,
         auto& db = r.value().db();
         DOCTEST_CHECK_EQ(db.schemaVersion(), 11);
 
-        // ① 存量 profile 行零迁移：extra_settings_json 默认空串（未配置）
+        // ① 存量 profile 行零迁移：extra_settings_json 默认空串（未配置）；
+        //   既有列 name/created_at 保值
         auto q = db.prepare(
-            "SELECT extra_settings_json FROM claude_profiles WHERE id = 1");
+            "SELECT name, extra_settings_json, created_at FROM claude_profiles "
+            "WHERE id = 1");
         DOCTEST_REQUIRE(q.isOk());
         auto rows = q.value().fetchAll();
         DOCTEST_REQUIRE_EQ(rows.value().size(), 1u);
         DOCTEST_CHECK_EQ(rows.value()[0].getString("extra_settings_json").valueOr("?"),
                          std::string(""));
+        DOCTEST_CHECK_EQ(rows.value()[0].getString("name").valueOr("?"),
+                         std::string("旧供应商"));
+        DOCTEST_CHECK_EQ(rows.value()[0].getInt64("created_at").valueOr(-1), 0);
 
         // ② 片段表：extra_settings_json 存在且默认空串；extra_env 列已删
-        //   （SELECT 旧列必须失败 —— DROP 不是改名）
+        //   （SELECT 旧列必须失败 —— DROP 不是改名）。本表是 v11 整表重建路径，
+        //   既有列（name/created_at/updated_at）必须逐行保值——重建丢数据时
+        //   只断新列默认值的写法照样绿（假绿）
         auto fq = db.prepare(
-            "SELECT extra_settings_json FROM claude_shared_configs WHERE id = 1");
+            "SELECT name, extra_settings_json, created_at, updated_at "
+            "FROM claude_shared_configs WHERE id = 1");
         DOCTEST_REQUIRE(fq.isOk());
         auto frows = fq.value().fetchAll();
         DOCTEST_REQUIRE_EQ(frows.value().size(), 1u);
         DOCTEST_CHECK_EQ(frows.value()[0].getString("extra_settings_json").valueOr("?"),
                          std::string(""));
+        DOCTEST_CHECK_EQ(frows.value()[0].getString("name").valueOr("?"),
+                         std::string("旧片段"));
+        DOCTEST_CHECK_EQ(frows.value()[0].getInt64("created_at").valueOr(-1),
+                         1727100000);
+        DOCTEST_CHECK_EQ(frows.value()[0].getInt64("updated_at").valueOr(-1),
+                         1727100001);
         DOCTEST_CHECK(db.prepare(
             "SELECT extra_env FROM claude_shared_configs").isFail());
 
