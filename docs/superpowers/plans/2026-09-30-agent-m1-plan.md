@@ -1079,9 +1079,88 @@ private:
 ```
 
 最小 UI（compose）：`ui.column` 内——标题行 `ui.text("agent.title").text("智能体").build()`；任务列表每行 `ui.row`：任务名 text + 「启动」 `.onClick([this, id]{ startTask(id); })` + 最近 run 状态 text；新建表单：goal 输入框**照抄 `src/module_claude_proxy/claude_module.cpp` 表单编辑器的既有输入原语**（该文件是本项目表单文本输入的既定模式；M1 只需 goal 一个文本输入 + 默认槽位 "default" + max_iterations 默认 10）；run 详情：点击任务行展开 `listMessages` 最近 run 的 role+content 前 80 字符行。元素 id 一律 `agent.*` 前缀（可测试定位）。
+
+元素 id 契约表（Task 13 的 UI 测试逐字钉这些 id，实现必须一致）：
+
+| 元素 | id | 说明 |
+|---|---|---|
+| 页面根 | `agent.page` | 最外层 column，宽 = 逻辑宽 |
+| 标题 | `agent.title` | text == "智能体" |
+| 新建表单 goal 输入 | `agent.form.goal` | 文本输入（表单编辑器既有输入原语） |
+| 新建提交按钮 | `agent.form.create` | button |
+| 任务列表容器 | `agent.tasklist` | 每任务一行 |
+| 任务行 | `agent.task.<taskId>` | row，点击展开/收起详情 |
+| 任务名 | `agent.task.<taskId>.title` | text |
+| 启动按钮 | `agent.task.<taskId>.run` | button，text == "启动" |
+| 最近 run 状态 | `agent.task.<taskId>.status` | text，run 完成后含 "成功"/"失败"/"已取消" |
+| run 详情容器 | `agent.task.<taskId>.detail` | 展开时才存在 |
+| 消息行 | `agent.task.<taskId>.msg.<i>` | text，i 从 0 起，role+content 前 80 字符 |
+
+`<taskId>` = AgentStore 主键的十进制字面量（如 `agent.task.3.run`）。按钮 id 经 `components::button(ui, "<id>")` 第二参传入（照 `claude_ui_list.cpp:616` 模式），文本元素经 `ui.text("<id>")`（照 `claude_ui_list.cpp:273` 模式）。
+
 - [ ] **Step 4: 绿 + 全量** → **Step 5: Commit** `git commit -m "feat(agent): AgentModule 实体（teardown 顺序 + 手动触发 + 最小 UI）"`
 
-### Task 13: 端到端验收 + 收尾
+### Task 13: 智能体页 UI 测试（无头几何断言 + probe）
+
+**Files:**
+- Create: `tests/test_modules/test_agent_ui.cpp`（**必须**登记进 `tests/CMakeLists.txt` 的 `add_executable(devdesk_tests ...)` 列表，漏登 configure 期 FATAL_ERROR）
+- Create: `tests/probes/agent_probes.cpp`（GLOB 自动注册，ctest label `probe`，无需手工登记）
+- Modify: `tests/CMakeLists.txt` probe 共用 `target_link_libraries` 列表加 `devdesk_agent`（一行；会使全部既有 probe 重链，属预期成本）
+
+**Interfaces:**
+- Consumes: Task 12 的元素 id 契约表（见 Task 12 末尾）、`module::agent::AgentModule(Deps{db, proxy})` 直接构造（fake 依赖注入，照 test_agent_tools.cpp 中 AgentModule 生命周期用例的构造方式；不需要 `create_agent_module()` 工厂）、既有桩 `FakeLlmEndpoint` / `FakeTool`（`test_agent_loop.cpp` / `test_agent_tools.cpp`，以实际存在者为准）
+- Produces: UI 契约钉子——元素 id 改名、结构删除、文案改动即红
+
+**背景事实（来自 probe-recipe.md 仓库调研，勿凭想象写 API）:**
+- probe 需真窗口（`glfwInit`），无窗口 probe 无先例 → probe 是本机验收关卡；无头用例才是常规门禁
+- probe 侧点击照抄 `claude_probes.cpp:169-182`：`core::queuePointerButton` press+release **成对**排队，下一帧 `composeFrame()` 才被消费；`Element` **无** `onTap` 字段
+- probe **无**几何断言 helper：手搓 `check()` + `nearEq`（照 `about_probe.cpp:60,94-99`）
+- probe 收尾顺序照抄 `about_probe.cpp:449-453`：`mod->onStop()` → `runtime.shutdown(false)` → `core::releaseInputQueue(window)` → `core::window::destroyWindow(window)` → `probe::terminateWindowBackend()`
+- 无头侧 `eui::Ui` **无** `tap()`：点击 = 直接调 `el->onPress(ev, bounds)` + `el->onRelease(ev, bounds)`（照 `test_markdown.cpp:4420-4447`）；文本输入 = `el->onTextInput(core::TextInputEvent{text})`；裸 `Ui` 路线必须 `ui.layout(w, h)` 之后 frame 才有值（照 `test_ui_modern.cpp:1108-1117`）
+- 侧边栏断言先例：`test_app_sidebar.cpp`（真 `app::compose` + 桩 `Router` + `RecordingModule`）
+
+- [ ] **Step 1: 写失败无头测试**（红），五个用例，元素 id 逐字钉 Task 12 契约表：
+
+```cpp
+// tests/test_modules/test_agent_ui.cpp
+// 公共：module::agent::AgentModule mod(Deps{&env.db.db(), &fakeProxy}) 直接构造
+//（fakeProxy 照 test_agent_tools.cpp 既有 IClaudeProxyService 桩）；裸 eui::Ui +
+// ui.begin("agent_ui") + mod->compose(ui, screen) + ui.end() + ui.layout(1600, 1000)。
+//
+// 1) agent_ui_compose_skeleton：空库 compose——
+//    find("agent.page") 非空且 frame.width == 1600；
+//    find("agent.title") 非空且 text == "智能体"；
+//    find("agent.form.goal") 与 find("agent.form.create") 非空；
+//    空库无任务行：find("agent.task.1") 为空。
+// 2) agent_ui_create_task_via_form：对 agent.form.goal 逐字符
+//    onTextInput("测试目标") → onPress/onRelease agent.form.create →
+//    AgentStore::listTasks 恰 1 条且 goal=="测试目标"；re-compose 后
+//    find("agent.task.<newId>.title") 非空。
+// 3) agent_ui_run_button_triggers_loop：种 1 条任务；fakeProxy 返回 end_turn
+//    且零工具调用 → onPress/onRelease agent.task.<id>.run → 有界轮询
+//    （≤5s、10ms 步进；禁长 sleep）AgentStore::listRuns 顶部 status=="completed"；
+//    re-compose 后 find("agent.task.<id>.status") 文本含 "成功"。
+// 4) agent_ui_run_detail_expands：接 3) —— onPress/onRelease agent.task.<id>
+//    （任务行本身）→ re-compose 后 find("agent.task.<id>.detail") 非空，
+//    find("agent.task.<id>.msg.0") 文本含 role 前缀且长度 ≤ 80。
+// 5) agent_ui_sidebar_registers_agent：照 test_app_sidebar.cpp 模式（真
+//    app::compose + 桩 Router），Router 注册 AgentModule 实体（Deps 注入 fake），
+//    断言侧边栏 compose 出现 "智能体" 项。
+```
+
+- [ ] **Step 2: 跑，确认 5 个用例红** → **Step 3: 核对钉子**——本任务只写测试不改实现；若钉子与 Task 12 实现不符，说明 Task 12 违反 id 契约，**改实现不改测试** → **Step 4: 绿**
+- [ ] **Step 5: 写 probe**（`tests/probes/agent_probes.cpp`，骨架照 `.superpowers/sdd/2026-09-30-agent-m1-plan/probe-recipe.md` §3）：
+  - `test_support::TestEnv` 建库（registerAsAppDatabase=true）→ `AgentModule` 直接构造（Deps 注入 fake）→ onStart → `probe::composeModuleFrame` 循环
+  - 断言 `agent.page` 存在且 `frame.width` == 窗口逻辑宽（`nearEq` 0.5）
+  - 断言 `agent.title` / `agent.form.goal` / `agent.form.create` 存在
+  - 种 1 条任务 → composeFrame → `agent.task.1.run` 存在且 frame 完全落在 `agent.task.1` 行内（手搓包含判断）
+  - 点击 `agent.task.1.run` 中心（queuePointerButton press+release 成对）→ composeFrame → 断言 run 落库（fakeProxy 桩返回 end_turn）
+  - 收尾照 `about_probe.cpp:449-453` 顺序
+- [ ] **Step 6: 跑 probe**：`(cd build && ctest -R agent_probes --output-on-failure)` 绿（本机 GUI session 内）
+- [ ] **Step 7: 全量绿**：`devdesk_tests` 全量 + `(cd build && ctest -L probe --output-on-failure)` 全套 + `bash scripts/check-module-isolation.sh`
+- [ ] **Step 8: Commit** `git commit -m "test(agent): 智能体页 UI 测试（无头几何断言 + probe）"`
+
+### Task 14: 端到端验收 + 收尾
 
 - [ ] **Step 1: 全量构建 + 测试**
 
@@ -1097,7 +1176,7 @@ Expected: Failed: 0。
 
 ## Self-Review 记录
 
-- **Spec 覆盖**：§2 抽象（T1/T4/T6/T7）、§3 组件与 teardown（T4/T12）、§4 协议（T7）、§5 手动触发/状态机（T5/T12）、§6 v12 三表（T2/T3）、§7 M1 工具 9 个（T8/T9/T10）、§8 最小 UI（T12）、§9 装配清单全项（T11）、§10 控制（T5 各分支 + T3 sweep）、§11 mock 策略（各测试）、§14 M1 全行、§15 纪律（Global Constraints）。M2 范围（Scheduler/cron/其余 8 工具）明确不在本计划。
+- **Spec 覆盖**：§2 抽象（T1/T4/T6/T7）、§3 组件与 teardown（T4/T12）、§4 协议（T7）、§5 手动触发/状态机（T5/T12）、§6 v12 三表（T2/T3）、§7 M1 工具 9 个（T8/T9/T10）、§8 最小 UI（T12 实现 + T13 UI 测试钉契约）、§9 装配清单全项（T11）、§10 控制（T5 各分支 + T3 sweep）、§11 mock 策略（各测试）、§14 M1 全行、§15 纪律（Global Constraints）。M2 范围（Scheduler/cron/其余 8 工具）明确不在本计划。
 - **占位符扫描**：无 TBD/TODO；两处「照抄既有文件 X 的 Y 段」是对既有仓库代码的精确引用（非占位）；agent_store 非示例方法以「SQL+列序表」全量给定。
 - **类型一致性**：`AgentTask.modelSlot`→`send(model=槽位键)`→`LlmClient::resolveModelSlot`（Task 7 定案）链路一致；`isDestructive()` 在 T4 声明、T5/T8 消费；`makeAppStatsTool` T10 定义 T12 消费。
 - **Review Focus 落钉**：5/5 已在对应任务测试步骤中。
