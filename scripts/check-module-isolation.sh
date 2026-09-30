@@ -12,10 +12,13 @@
 #   A. src/module_settings/settings_module.cpp
 #      1) 不得出现 module_pet/、PetConfigStore、petConfigFile、namespace module::pet
 #      2) 必含 #include "module_pet_bridge.h" 恰好 1 次（桥声明唯一来源）
-#      3) ::module::pet::{discoverSkins,applyPetSkin,resetPetPosition,currentSkinName,closePetWindow}
-#         各 ≥ 1 次（解耦不是删功能：桥函数都要真被调用）
+#      3) src/module_pet_bridge.h 导出的**每一个**桥函数
+#         （名单自动抽取，见下 A3）都必须在 settings_module.cpp 有 ≥ 1 次真调用
+#         （`::module::pet::X` 调用形）——解耦不是删功能：桥函数都要真被调用
+#      4) 头里两道抽取口径（声明式 / static_assert 哨兵式）集合必须一致，
+#         否则报「抽取不可靠」——防止某道口径单独漂移又互相掩盖
 #   B. src/module_settings/CMakeLists.txt 的非注释行
-#      4) 不得出现 devdesk_module_pet / devdesk_module_claude_proxy
+#      5) 不得出现 devdesk_module_pet / devdesk_module_claude_proxy
 #        （解释性注释里允许提及，故按行过滤首非空白字符为 '#' 的行）
 #
 # 退出码：0 = 通过；1 = 违规（逐条打印 文件:行:命中行）；2 = 环境错（不得静默绿）
@@ -53,11 +56,13 @@ done
 
 SRC="$ROOT/src/module_settings/settings_module.cpp"
 CMK="$ROOT/src/module_settings/CMakeLists.txt"
+BRIDGE="$ROOT/src/module_pet_bridge.h"
 
 # ---- 环境检查：缺东西一律 exit 2，绝不静默绿 ----
 [ -d "$ROOT" ] || { echo "环境错误：仓库根不存在: $ROOT" >&2; exit 2; }
 [ -f "$SRC" ] && [ -r "$SRC" ] || { echo "环境错误：不可读 $SRC" >&2; exit 2; }
 [ -f "$CMK" ] && [ -r "$CMK" ] || { echo "环境错误：不可读 $CMK" >&2; exit 2; }
+[ -f "$BRIDGE" ] && [ -r "$BRIDGE" ] || { echo "环境错误：不可读 $BRIDGE" >&2; exit 2; }
 
 VIOLATIONS=0
 
@@ -111,13 +116,72 @@ check_absent_fixed "$SRC" 'namespace module::pet'
 check_exactly_once_fixed "$SRC" '#include "module_pet_bridge.h"'
 
 # ---- A3. 正向：桥函数都真在调用点被用到（`::module::pet::X` 调用形）----
-# closePetWindow（PET-CLOSE，模块开关取消勾选 → 立即关窗）同样要求真被调用：
-# 解耦不是删功能。showPetWindow 为既有遗漏顺带补（审计 F5）；2026-09-30 起
-# 新增 currentPetScaleIndex / petScalePresetLabels / applyPetScaleIndex 三桥
-for fn in discoverSkins applyPetSkin resetPetPosition currentSkinName closePetWindow \
-          showPetWindow currentPetScaleIndex petScalePresetLabels applyPetScaleIndex; do
-    check_at_least_once_fixed "$SRC" "::module::pet::${fn}"
-done
+# 桥名单**不再手工维护**：从 src/module_pet_bridge.h 自动抽取，两道口径交叉校验：
+#   ① 声明式——namespace module::pet 块内行尾为 `);` 的函数声明，取 `(` 前标识符
+#   ② 哨兵式——static_assert 段里 &module::pet::NAME 的 NAME
+# 两口径必须给出同一集合：只在一侧出现的名字判违规（抽取口径漂移/声明被改成跨行
+# 都归此类，宁红勿静默绿）。随后每个名字都必须在 settings_module.cpp 有 ≥ 1 次
+# 真调用（解耦不是删功能：closePetWindow / showPetWindow 等同样要求真被调用）。
+# 为什么要自动抽取（merge-review R2）：旧版是一份手维护的固定清单，与头文件的
+# 导出双份并存——以后新增桥函数而忘改本脚本，守卫会**静默漏检**（不报错、不漏
+# 到人眼前），等于守卫失准。2026-09-30 起名单只有一个来源 = 头文件本身。
+
+# ① 声明式抽取：输出「行号:名字」
+BRIDGE_DECL="$(awk '
+    /^namespace module::pet[[:space:]]*\{/ { inns = 1; next }
+    inns && /^}[[:space:]]*\/\// { inns = 0; next }
+    inns {
+        line = $0
+        sub(/^[ \t]+/, "", line)
+        if (line == "" || line ~ /^\/\//) next
+        if (line !~ /\);[ \t]*$/) next          # 只认函数声明行尾
+        pre = line
+        sub(/\(.*$/, "", pre)                    # 砍掉参数表 → 剩「返回类型 + 名字」
+        cnt = split(pre, part, /[^A-Za-z0-9_]/)
+        name = part[cnt]
+        if (name != "") printf "%d:%s\n", FNR, name
+    }
+' "$BRIDGE" || true)"
+
+# ② 哨兵式抽取：static_assert 段的 &module::pet::NAME
+BRIDGE_ASSERT="$(grep -nEo '&module::pet::[A-Za-z_][A-Za-z0-9_]*' "$BRIDGE" \
+    | sed -E 's#^([0-9]+):&module::pet::#\1:#' || true)"
+
+DECL_COUNT="$(printf '%s' "$BRIDGE_DECL" | grep -c ':' || true)"
+ASSERT_COUNT="$(printf '%s' "$BRIDGE_ASSERT" | grep -c ':' || true)"
+
+# 抽取彻底失效（头被清空/改名/解析规则整体失配）→ 环境错，绝不静默绿
+if [ "${DECL_COUNT:-0}" -eq 0 ] || [ "${ASSERT_COUNT:-0}" -eq 0 ]; then
+    echo "环境错误：无法从 $BRIDGE 抽取桥函数名单（声明式 ${DECL_COUNT:-0} 项 /" \
+         "哨兵式 ${ASSERT_COUNT:-0} 项）——抽取规则已与头文件失配，不放行" >&2
+    exit 2
+fi
+
+# 交叉校验：只在一侧出现的名字 = 抽取口径漂移 → 违规（红）
+DECL_NAMES="$(printf '%s' "$BRIDGE_DECL" | cut -d: -f2 | sort -u)"
+ASSERT_NAMES="$(printf '%s' "$BRIDGE_ASSERT" | cut -d: -f2 | sort -u)"
+DRIFT="$(printf '%s\n' "$DECL_NAMES" "$ASSERT_NAMES" | sort | uniq -c \
+    | awk '$1 == 1 { print $2 }')"
+if [ -n "$DRIFT" ]; then
+    while IFS= read -r name; do
+        [ -n "$name" ] || continue
+        ln="$(printf '%s\n' "$BRIDGE_DECL" | awk -F: -v n="$name" '$2 == n { print $1; exit }')"
+        [ -n "$ln" ] || ln="$(printf '%s\n' "$BRIDGE_ASSERT" | awk -F: -v n="$name" '$2 == n { print $1; exit }')"
+        report "$(rel "$BRIDGE"):${ln:-0}:${name}（桥名单抽取口径漂移：声明式与 " \
+                 "static_assert 哨兵式集合不一致，该桥无法被可靠断言）"
+    done <<< "$DRIFT"
+fi
+
+# 逐桥真调用点断言（名单来自头文件，非手维护）。
+# 未被调用时打印 头文件:声明行:桥名 —— 让人一眼看到「哪个新桥被漏检」。
+while IFS= read -r name; do
+    [ -n "$name" ] || continue
+    if ! grep -qF -- "::module::pet::${name}" "$SRC"; then
+        ln="$(printf '%s\n' "$BRIDGE_DECL" | awk -F: -v n="$name" '$2 == n { print $1; exit }')"
+        report "$(rel "$BRIDGE"):${ln:-0}:${name}（头文件导出但 settings_module.cpp " \
+                 "无 '::module::pet::${name}' 调用点：解耦不是删功能，桥必须真被调用）"
+    fi
+done <<< "$DECL_NAMES"
 
 # ---- B. settings CMakeLists.txt：非注释行不得再 link 兄弟模块库 ----
 CMK_HITS="$(awk -v f="$(rel "$CMK")" '
@@ -138,5 +202,5 @@ if [ "$VIOLATIONS" -gt 0 ]; then
     exit 1
 fi
 
-echo "✅ 模块隔离守卫通过（settings_module.cpp 无 pet 依赖 / 桥调用齐全；CMakeLists 未 link 兄弟模块）"
+echo "✅ 模块隔离守卫通过（settings_module.cpp 无 pet 依赖 / 头文件导出的 ${DECL_COUNT} 个桥调用齐全；CMakeLists 未 link 兄弟模块）"
 exit 0

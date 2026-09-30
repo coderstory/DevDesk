@@ -33,8 +33,15 @@
 //   2) 真命中路由：点「弹层首项 ∩ 大小字段」交集中心（前提守卫 = 交集非空），
 //      必须选中皮肤项并收起皮肤弹层，「大小」下拉不得被误开（重叠区点击被
 //      下方字段截获 = 命中序同病的第二症状）。
+// 夹具口径（merge-review R2，2026-09-30）：皮肤夹具（DEVDESK_PETS_DIR → 临时
+// 4 皮肤目录）创建失败即**置红 + 提前结束**，不回落本机真实 appData 皮肤清单。
+// 用例 5 的几何前提（4 项弹层 148px、首项与「大小」行相交）只在固定夹具下
+// 成立；夹具缺失时跑真实数据 = 非 hermetic，夹具失准却可能仍绿。
+//
 // 变异口径：回退 EUI-NEO patch（popup 归 0）→ 1)(20≡20) 与 2)(点中
 // scale.dd.field，scale 弹层 .hit enabled) 双红；应用 patch → 双绿。
+// 夹具变异：把临时目录指向不可写路径 → 探针红、打印「皮肤夹具创建失败」并
+// 返回 1（不跑用例 5 的真实数据回落）。
 
 #include "probes/probe_harness.h"
 #include <eui/detail/dsl_app_impl.h>  // app:: 层内联实现自给（链接需要）
@@ -114,12 +121,29 @@ int main(int argc, char* argv[]) {
             }
         }
     }
+    // 夹具失败 = 置红并中止本探针（merge-review R2，2026-09-30）。
+    // 旧行为只 std::cerr 一行就往下跑：不设 DEVDESK_PETS_DIR → discoverSkins
+    // 读到**本机真实 appData 皮肤清单**，用例 5 的「弹层 4 项/148px」前提守卫与
+    // 几何断言跑的是用户数据（非 hermetic，且结果随本机内容漂移）；夹具自身
+    // 失准时探针仍可能「绿」——静默失准。这里 fail-fast：置红 + 提前结束，绝不
+    // 回落真实数据。清理照做（临时目录不留残骸）。
+    bool fixtureFailed = false;
     if (petsFixtureOk) {
         test_support::setEnvVar("DEVDESK_PETS_DIR", petsDir.string());
     } else {
-        std::cerr << "settings_dropdown_z_probe: 皮肤夹具创建失败\n";
+        std::cerr << "settings_dropdown_z_probe: 皮肤夹具创建失败 —— 用例 5 依赖"
+                     "固定 4 皮肤夹具，缺失时只能读到本机真实 appData 皮肤清单"
+                     "（非 hermetic）。置红并中止，不回落真实数据。\n";
         std::error_code ec;
         std::filesystem::remove_all(petsDir, ec);
+        fixtureFailed = true;
+    }
+    if (fixtureFailed) {
+        test_support::setEnvVar("DEVDESK_PETS_DIR", "");
+        core::window::destroyWindow(window);   // 与正常收尾同款（此时 runtime 未起）
+        probe::terminateWindowBackend();
+        std::cerr << "FAIL\n";
+        return 1;
     }
 
     std::unique_ptr<::core::Module> mod(create_settings_module());
