@@ -2557,6 +2557,24 @@ REGISTER_TEST(claude_profile_extra_settings_roundtrip,
         }
     }
     DOCTEST_CHECK(found);
+    // 第三条：getActiveProfile（代理接管链 claude_service.cpp:815 直供它，
+    // 漏列同样被 rowToProfile 吞成空串——本用例原先缺这条腿，注释自称
+    // 「三条 SELECT 往返」而实际只覆盖两条）。口径对齐兄弟用例 :27。
+    DOCTEST_REQUIRE(svc.setActiveProfile(a.value().id).isOk());
+    auto gact = svc.getActiveProfile();
+    DOCTEST_REQUIRE(gact.isOk());
+    DOCTEST_CHECK_EQ(gact.value().id, a.value().id);
+    DOCTEST_CHECK_EQ(gact.value().extraSettingsJson, settingsJson);
+    // 另一条（未带 JSON 的 b）激活后同样读到空串——正向断言不能被「恒非空」
+    // 蒙混：缺列时这里会是非空吗？不会，缺列 = 空；这条钉的是列确实被读到
+    // 而非碰巧相等（同 authField 用例的双向口径）。
+    DOCTEST_REQUIRE(svc.setActiveProfile(b.value().id).isOk());
+    auto gactB = svc.getActiveProfile();
+    DOCTEST_REQUIRE(gactB.isOk());
+    DOCTEST_CHECK_EQ(gactB.value().id, b.value().id);
+    DOCTEST_CHECK_EQ(gactB.value().extraSettingsJson, std::string());
+    // 交还：后续分支的 updateProfile 断言不依赖激活态，但留个确定态
+    DOCTEST_REQUIRE(svc.setActiveProfile(a.value().id).isOk());
 
     // updateProfile 分支一（apiKeyPlain 非空）也携带该列
     Profile upd = ga.value();
