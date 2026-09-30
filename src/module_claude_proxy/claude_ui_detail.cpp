@@ -992,7 +992,7 @@ void drawDetailActions(eui::Ui& ui, float x0, float w, float actY,
                 })
                 .build();
             // 复制配置（第 6 键，2026-09-30 batch-fix C，D-C2/§5③⑤）：profile
-            // → settings.json 形态 JSON → 系统剪贴板，占位不导明文 key；
+            // → settings.json 形态 JSON → 系统剪贴板，恒无凭据键、不导明文 key；
             // 样式与中性键一致（surfaceElevated + 描边）
             components::button(ui, "claude.act.copyconfig")
                 .size(actW, 36.0f)
