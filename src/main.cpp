@@ -3,7 +3,7 @@
 // app::dslAppConfig() 和 app::compose()
 
 #include "app_assembly.h"
-#include "app_registry.h"  // kModuleRegistry：页面模块登记表（含 5 个工厂声明）
+#include "app_registry.h"  // kModuleRegistry：页面模块登记表（含 7 个工厂声明）
 #include "app_sidebar.h"
 #include "claude_service.h"
 #include "core/claude_proxy_service.h"
