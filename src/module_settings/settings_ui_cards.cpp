@@ -339,6 +339,8 @@ void drawModulesCard(const CardDrawArgs& args) {
          "Profile 管理 + 本地代理（关闭后 8888 不再监听）"},
         {kModuleIdPet, "桌宠",
          "桌面小宠物：透明置顶小窗，可拖拽/点击互动（默认关闭）"},
+        {kModuleIdAgent, "智能体",
+         "任务列表 + 手动触发运行（依赖 Claude 代理提供模型通道）"},
     };
     constexpr int kToggleCount = static_cast<int>(sizeof(kToggleable) / sizeof(kToggleable[0]));
     const auto compTheme = core::theme::componentTokens(t);
