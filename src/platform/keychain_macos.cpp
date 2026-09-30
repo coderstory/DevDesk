@@ -232,7 +232,9 @@ core::Result<std::vector<std::string>> realDeleteSecretsNotIn(
             continue;
         }
         const std::string account = acctBuf;
-        if (keep.count(account)) continue;
+        // P0 护栏②：白名单前缀（claude:）之外的 account 一律保留——
+        // shouldDeleteOrphan 统一决策，见 keychain.h 说明
+        if (!shouldDeleteOrphan(account, keep)) continue;
 
         // 直调真实实现（不经 dispatcher）：真实实现保持自洽——注入层只服务
         // 调用方，不反向渗进 real* 内部（CPX-14）

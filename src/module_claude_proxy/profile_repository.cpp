@@ -707,6 +707,18 @@ core::Result<int> ProfileRepository::cleanupOrphanKeychainEntries() {
         keep.push_back(prof.keychainAccount);
     }
 
+    // P0 误删护栏①（2026-09-30 事故）：keep 为空 = 当前数据根一个 profile 都
+    // 没有。而 Keychain 的 service 命名空间是**全局**的、不随 DEVDESK_DATA_ROOT
+    // 隔离——deleteSecretsNotIn 的语义是「凡不在 keep 里的都删」，空 keep 进
+    // 扫描就会把该命名空间下**全部**条目（包括其它数据根 / 用户真实 key）清光。
+    // 空根实例启动（测试 / 误设环境变量）正是这个形态。空 keep 只可能是
+    // 「新根还没建 profile」，此时唯一安全的动作是整个跳过，一个条目都不碰。
+    if (keep.empty()) {
+        LOG_WARN("跳过清理：当前数据根无 profile，防误删（keychain service=" +
+                 keychainService_ + " 的条目一律保留）");
+        return core::Result<int>::ok(0);
+    }
+
     auto delR = platform::keychain::deleteSecretsNotIn(keychainService_, keep);
     if (delR.isFail()) {
         return core::Result<int>::fail(delR.errorCode(), delR.errorMessage());

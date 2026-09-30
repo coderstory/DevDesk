@@ -847,6 +847,43 @@ REGISTER_TEST(claude_service_orphan_keychain_cleanup,
     return true;
 })
 
+// ---- 6c-2. P0 护栏①（2026-09-30 数据丢失事故）：空数据根 → 零删除 ----
+// 事故形态：keychain service "DevDesk" 是全局命名空间，不随 DEVDESK_DATA_ROOT
+// 隔离；空根实例（测试 / 误设环境变量）启动时库中零 profile → keep 为空集合，
+// 而 deleteSecretsNotIn 是「凡不在 keep 里的都删」→ 用户真实密钥被清光。
+// 护栏①：keep 为空直接跳过清理（连扫描都不发起，一个条目都不碰）。
+// 注入缝把「用户真实密钥」做成假 keychain 里的事件，断言它一字未动。
+REGISTER_TEST(claude_cleanup_empty_keep_never_sweeps,
+              "claude_service: P0 空 profile 孤儿清理零删除（护栏①）", {
+    test_support::TestDb tdb(kDbPrefix, "orphanguard");
+    ScopedFakeKeychain kc;
+    module::claude::ClaudeService svc(tdb.handle(), kTestKeychainService);
+
+    // 假 keychain = 用户真实命名空间的替身：profile 密钥 + 未来其它用途条目
+    DOCTEST_REQUIRE(platform::keychain::storeSecret(
+        kTestKeychainService, "claude:7", "sk-ant-user-real").isOk());
+    DOCTEST_REQUIRE(platform::keychain::storeSecret(
+        kTestKeychainService, "notes:theme", "dark").isOk());
+
+    // 空数据根形态：库中零 profile
+    auto list = svc.listProfiles();
+    DOCTEST_REQUIRE(list.isOk());
+    DOCTEST_CHECK_EQ(static_cast<int>(list.value().size()), 0);
+
+    auto r = svc.cleanupOrphanKeychainEntries();
+    DOCTEST_REQUIRE(r.isOk());
+    DOCTEST_CHECK_EQ(r.value(), 0);   // 零删除
+
+    // 「用户密钥」原样还在（值逐字相同）
+    auto k = platform::keychain::loadSecret(kTestKeychainService, "claude:7");
+    DOCTEST_REQUIRE(k.isOk());
+    DOCTEST_CHECK_EQ(k.value(), std::string("sk-ant-user-real"));
+    auto o = platform::keychain::loadSecret(kTestKeychainService, "notes:theme");
+    DOCTEST_REQUIRE(o.isOk());
+    DOCTEST_CHECK_EQ(o.value(), std::string("dark"));
+    return true;
+})
+
 // ---- 7. createProfile 校验：重名 / 空字段 ----
 
 REGISTER_TEST(claude_service_create_validation,

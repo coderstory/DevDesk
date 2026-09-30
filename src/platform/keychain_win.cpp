@@ -246,6 +246,19 @@ core::Result<std::vector<std::string>> realDeleteSecretsNotIn(
         keep.insert(legacySanitize(a));
     }
 
+    // P0 护栏②（白名单前缀，2026-09-30）：account 约定 claude:<id>，落盘
+    // stem 是 encodeName(account)（新命名）或 legacySanitize(account)（旧命名
+    // 升级前写入的残留）。两种形态各自比对 claude 前缀，都不命中的一律保留
+    //（同 keychain.h shouldDeleteOrphan 的白名单语义——比对发生在编码后的
+    // 文件名形态上，故此处不能直调该函数）。
+    const std::string sweepPrefixNew = encodeName("claude:");
+    const std::string sweepPrefixLegacy = legacySanitize("claude:");
+    auto sweepableStem = [&sweepPrefixNew, &sweepPrefixLegacy](
+                             const std::string& stem) {
+        return stem.compare(0, sweepPrefixNew.size(), sweepPrefixNew) == 0 ||
+               stem.compare(0, sweepPrefixLegacy.size(), sweepPrefixLegacy) == 0;
+    };
+
     for (const auto& entry : fs::directory_iterator(dir)) {
         if (!entry.is_regular_file(ec) || ec) { ec.clear(); continue; }
         // 只认 <name>.key：跳过原子写的临时残留（<name>.key.devdesk-tmp，
@@ -253,6 +266,7 @@ core::Result<std::vector<std::string>> realDeleteSecretsNotIn(
         if (entry.path().extension() != ".key") continue;
         const std::string stem = entry.path().stem().string();
         if (keep.count(stem)) continue;
+        if (!sweepableStem(stem)) continue;
         std::error_code rmEc;
         fs::remove(entry.path(), rmEc);
         if (rmEc) {

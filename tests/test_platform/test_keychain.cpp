@@ -4,6 +4,8 @@
 #include <core/paths.h>
 
 #include <filesystem>
+#include <set>
+#include <string>
 
 // macOS 平台守卫：本平台实现走 Security.framework，只能操作**真实 login keychain**
 // （keychain_macos.cpp 用 SecKeychainAddGenericPassword + nullptr 默认钥匙串，没有
@@ -97,11 +99,15 @@ REGISTER_TEST(keychain_delete_secrets_not_in,
         service, "claude:2", "sk-keep-2").isOk());
     DOCTEST_REQUIRE(platform::keychain::storeSecret(
         service, "claude:999", "sk-orphan").isOk());
+    // P0 护栏②（2026-09-30）：白名单前缀（claude:）之外的条目——
+    // 「同 service 下未来别的用途」的形态，扫描必须不删、不计数
+    DOCTEST_REQUIRE(platform::keychain::storeSecret(
+        service, "notes:theme", "dark").isOk());
 
     auto r = platform::keychain::deleteSecretsNotIn(
         service, {"claude:1", "claude:2"});
     DOCTEST_REQUIRE(r.isOk());
-    DOCTEST_CHECK_EQ(r.value().size(), 1u);
+    DOCTEST_CHECK_EQ(r.value().size(), 1u);   // 只删 claude:999
 
     // 孤儿被删，保留的仍可读
     DOCTEST_CHECK(platform::keychain::loadSecret(service, "claude:999").isFail());
@@ -111,9 +117,41 @@ REGISTER_TEST(keychain_delete_secrets_not_in,
     auto k2 = platform::keychain::loadSecret(service, "claude:2");
     DOCTEST_REQUIRE(k2.isOk());
     DOCTEST_CHECK_EQ(k2.value(), std::string("sk-keep-2"));
+    // 前缀不匹配的条目原样保留（也没被算进 deleted）
+    auto other = platform::keychain::loadSecret(service, "notes:theme");
+    DOCTEST_REQUIRE(other.isOk());
+    DOCTEST_CHECK_EQ(other.value(), std::string("dark"));
 
     platform::keychain::deleteSecret(service, "claude:1");
     platform::keychain::deleteSecret(service, "claude:2");
+    platform::keychain::deleteSecret(service, "notes:theme");
+    return true;
+})
+
+// P0 护栏②（2026-09-30）：各平台扫描删除分支共用的白名单决策函数。
+// 平台实现里只是「扫描到 account → 交给它决策」，决策语义在此逐条钉死；
+// macOS 的真实扫描用例不可跑（真实 login keychain 不可隔离，见文件头），
+// 这里是该守卫在 macOS 上唯一可执行的断言面。
+REGISTER_TEST(keychain_orphan_sweep_prefix_whitelist,
+              "keychain: 孤儿清理白名单前缀（非 claude: 一律不删）", {
+    using platform::keychain::deletableOrphanAccount;
+    using platform::keychain::shouldDeleteOrphan;
+
+    // 白名单前缀命中
+    DOCTEST_CHECK(deletableOrphanAccount("claude:1"));
+    DOCTEST_CHECK(deletableOrphanAccount("claude:"));
+    // 非白名单形态一律不删
+    DOCTEST_CHECK(!deletableOrphanAccount("notes:theme"));
+    DOCTEST_CHECK(!deletableOrphanAccount("claude"));    // 少冒号
+    DOCTEST_CHECK(!deletableOrphanAccount("Claude:1"));  // 大小写敏感
+    DOCTEST_CHECK(!deletableOrphanAccount(""));
+
+    // 决策函数：keep 集合内 → 不删（无论前缀）；keep 外只有白名单前缀才删
+    const std::set<std::string> keep{"claude:1"};
+    DOCTEST_CHECK(!shouldDeleteOrphan("claude:1", keep));     // 在 keep 里
+    DOCTEST_CHECK(shouldDeleteOrphan("claude:999", keep));    // 白名单孤儿 → 删
+    DOCTEST_CHECK(!shouldDeleteOrphan("notes:theme", keep));  // 前缀外 → 保留
+    DOCTEST_CHECK(!shouldDeleteOrphan("notes:theme", {}));    // 空 keep 也不动前缀外
     return true;
 })
 

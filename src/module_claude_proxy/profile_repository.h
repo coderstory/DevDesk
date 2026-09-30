@@ -191,7 +191,10 @@ public:
 
     // 启动时孤儿清理：把 keychainService_ 命名空间里没有对应
     // claude_profiles 行的密钥清掉（历史 bug 遗留的 claude:* 孤儿；
-    // 「Keychain 条目与行一一对应」= 本类不变式）。返回清理数量
+    // 「Keychain 条目与行一一对应」= 本类不变式）。返回清理数量。
+    // P0 误删护栏（2026-09-30 事故）：① keep 为空（当前数据根零 profile）→
+    // 整个跳过 + LOG_WARN，一个条目不碰；② 扫描删除只允许 account 命中
+    // 白名单前缀 claude:（keychain.h shouldDeleteOrphan，前缀外保留不计数）
     core::Result<int> cleanupOrphanKeychainEntries();
 
     // 显式从 Keychain 加载明文 API key（仅在需要发请求时调用，用完即丢弃）
