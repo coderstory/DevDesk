@@ -76,6 +76,8 @@ public:
     // 非法值写侧归一为空串，审计 CPX-13。副本复制经本参数带上，见 duplicateProfile）
     // fallbackProfileId：建时即带备用（0 = 无；同 sharedConfigId「建时即设」口径，
     // 设计 §3.7。副本复制经本参数带上）
+    // extraSettingsJson：高级设置 JSON 原文（空串 = 未配置；advanced-json-editor
+    // 设计 §3.3。副本复制经本参数带上——「复制即配置」，审计 F-3）
     core::Result<Profile> createProfile(const std::string& name,
                                        const std::string& baseUrl,
                                        const std::string& apiKey,
@@ -85,7 +87,12 @@ public:
                                        const std::string& authField = "both",
                                        const std::string& dialectOverride =
                                            std::string(),
-                                       int64_t fallbackProfileId = 0);
+                                       int64_t fallbackProfileId = 0,
+                                       // 高级设置 JSON 原文（空串 = 未配置；
+                                       // advanced-json-editor 设计 §3.3 尾插默认参，
+                                       // 与 dialectOverride/fallbackProfileId 同款先例）
+                                       const std::string& extraSettingsJson =
+                                           std::string());
 
     // 更新 profile（profile.id 必须已存在）
     //   - 若 profile.apiKeyPlain 非空，则覆盖 Keychain
@@ -136,14 +143,9 @@ public:
     //     回落 profile 自身值（片段值从不写进 profile 行）
     core::Result<std::vector<SharedConfig>> listSharedConfigs();
     core::Result<SharedConfig> createSharedConfig(const std::string& name,
-                                                 const std::string& extraEnvJson);
+                                                 const std::string& extraSettingsJson);
     core::Result<void> updateSharedConfig(const SharedConfig& config);
     core::Result<void> deleteSharedConfig(int64_t id);
-
-    // 片段冻结键集（G10，设计 §2.4）：profile 所绑片段 extra_env 的全部键
-    //（别名归一后，与写进 live 的键形一致）。未绑定 / 片段已删 / JSON 非法 →
-    // 空集（读路径容错）
-    core::Result<std::vector<std::string>> sharedEnvKeysFor(int64_t profileId);
 
     // 立即用当前激活 profile（含所绑片段）重写 settings.json（设计 §2.5：片段
     // 保存后必须当场生效）。通道未注入 / 接管开关关 → no-op 成功
@@ -322,9 +324,10 @@ private:
 
     // R10-A4：接管/还原的协议侧已迁 SettingsTakeOver（settings_takeover.
     // {h,cpp}，职责边界见 R10 spec §2.2）；本门面保留两条编排入口：
-    //   - syncTakeOver()：从 ProfileRepository 取激活 Profile、从
-    //     ProxyRuntime 取端口、取所绑片段 env 后一并传入
-    //     settingsTakeover_.syncTakeOver(active, port, sharedExtraEnvJson)
+    //   - syncTakeOver()：从 ProfileRepository 取激活 Profile、从 ProxyRuntime
+    //     取端口；生效高级设置 JSON 预先装配进 Profile 副本的 extraSettingsJson
+    //    （片段叠加片段赢，§5.2①/§8.2）后一并传入
+    //     settingsTakeover_.syncTakeOver(active, port)
     //     （P-A4 双入参，子对象不反向依赖彼此）。失败原因经子对象并入
     //     warnings_（UI 经 lastSyncWarnings 透传）；**失败不阻断上层操作**
     //   - syncRestore()：settingsTakeover_.syncRestore()（CPX-02 已改返

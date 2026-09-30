@@ -147,17 +147,21 @@ struct FormState {
     int64_t deleteTargetId_ = 0;
     std::string deleteTargetName_;
 
-    // 批 2（设计 §2.10）：共享配置片段绑定（高级 env 页顶部下拉 +
-    // 片段赢预览/新增同键拦截判定）
+    // 批 2（设计 §2.10）建立、advanced-json-editor §7.1 迁移：共享配置片段
+    // 绑定下拉（2026-09-30 起渲染在**高级配置页**——片段重构为高级属性 JSON
+    // 预设，绑定下拉自 env 页整段迁入；frozenKeys/chip/置灰随文本框化拆除，
+    // 冻结视觉被 §7.3 提示行与详情 pane 来源标注取代）
     int64_t formSharedConfigId_ = 0;   // 表单态绑定（0 = 未绑定；保存时写入 profile）
     bool formSharedDdOpen_ = false;    // 绑定下拉展开态
-    // 当前绑定片段 K 键集（sharedFrozenKeys，别名归一后，与写进 live 的键形
-    // 一致；悬空绑定 → 归一为空）——K 键行置灰只读 + 新增同键拦截的判定源
-    std::vector<std::string> formFrozenKeys_;
-    // 打开表单时该 profile 自有 env 的键（归一后）：「新增同键」拦截只拦
-    // **打开后新加的**行（存量键非破坏保留、冻结显示，解绑后恢复生效，
-    // 设计 §2.3）
-    std::vector<std::string> formOriginalOwnKeys_;
+
+    // 高级设置 JSON（2026-09-30 advanced-json-editor 设计 §7.1）：多行编辑框
+    // 原文。openCreateForm 置空、openEditForm 预填 p.extraSettingsJson（DB 里
+    // 恒为 pretty 保存值；外部改库的非 pretty 原文按原样预填，格式化按钮负责
+    // 规范化）；submitForm 校验通过后统一 pretty 落库（D-6）
+    std::string formExtraSettingsJson_;
+    // 高级设置 JSON 的行内红字（§7.2 的 claude.form.advanced.json.error 节点；
+    // 格式化/校验失败共用，onChange 清空——与 formError_ 提交闸门分层）
+    std::string formAdvancedJsonError_;
 
     // 批 3（设计 §3.4/§3.8）：备用 Profile（failover）绑定（2026-09-30
     // batch-fix B 起渲染在**高级配置页**，原基础页整段迁入；复用批 2 绑定
@@ -182,7 +186,10 @@ struct SharedConfigDialogState {
     bool open_ = false;
     int64_t editId_ = 0;             // 0 = 新建，非 0 = 编辑该 id
     std::string name_;               // 片段名（name UNIQUE，服务层校验）
-    std::vector<std::pair<std::string, std::string>> envRows_;  // 键值行
+    // 片段内容 JSON 原文（advanced-json-editor §8.1：弹窗 JSON 化——envRows_
+    // 键值行拆除，片段 = settings.json 非 env 顶层属性 JSON 预设；保存走
+    // validateExtraSettingsJson 同一套规则，落库统一 pretty）
+    std::string extraSettingsJson_;
     std::string error_;              // 校验/保存错误（红字）
 
     // 删除确认弹窗（删除 = 同事务解绑绑定它的 profile，设计 §2.6）

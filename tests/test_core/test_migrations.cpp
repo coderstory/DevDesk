@@ -207,8 +207,9 @@ REGISTER_TEST(migrate_call_logs_usage_columns,
         DOCTEST_REQUIRE(r.value().migrate().isOk());
         auto& db = r.value().db();
         // v7（认证字段）+ v8（归档列 kind 回填）+ v9（方言覆盖列）+ v10
-        //（failover 备用列）已执行：全量迁移后 schema_version = 10
-        DOCTEST_CHECK_EQ(db.schemaVersion(), 10);
+        //（failover 备用列）+ v11（高级设置 JSON / 片段重构）已执行：
+        // 全量迁移后 schema_version = 11
+        DOCTEST_CHECK_EQ(db.schemaVersion(), 11);
 
         auto prep = db.prepare(
             "SELECT status_code, latency_ms, request_bytes, response_bytes, "
@@ -290,14 +291,15 @@ REGISTER_TEST(migrate_shared_configs_v6,
         DOCTEST_REQUIRE(r.value().migrate().isOk());
         auto& db = r.value().db();
         // v7（认证字段）/ v8（归档列 kind 回填）/ v9（方言覆盖列）/ v10
-        //（failover 备用列）随后执行：全量迁移后 schema_version = 10
-        DOCTEST_CHECK_EQ(db.schemaVersion(), 10);
+        //（failover 备用列）+ v11（高级设置 JSON / 片段重构）随后执行：
+        // 全量迁移后 schema_version = 11
+        DOCTEST_CHECK_EQ(db.schemaVersion(), 11);
 
-        // 新表存在且可插入片段行
+        // 新表存在且可插入片段行（v11 起 extra_env 列已删——片段行不再携带
+        // env 域数据，设计 advanced-json-editor §8.3）
         DOCTEST_REQUIRE(db.exec(
-            "INSERT INTO claude_shared_configs (name, extra_env, created_at, "
-            "updated_at) VALUES ('片段A', '{\"CLAUDE_CODE_MAX_OUTPUT_TOKENS\": "
-            "\"32000\"}', 0, 0)")
+            "INSERT INTO claude_shared_configs (name, created_at, updated_at) "
+            "VALUES ('片段A', 0, 0)")
                             .isOk());
         // 存量 profile 零迁移：shared_config_id = 0（未绑定）
         auto q = db.prepare(
@@ -366,8 +368,9 @@ REGISTER_TEST(migrate_archive_kind_v8,
         DOCTEST_REQUIRE(r.isOk());
         DOCTEST_REQUIRE(r.value().migrate().isOk());
         auto& db = r.value().db();
-        // v9（方言覆盖列）/ v10（failover 备用列）随后执行
-        DOCTEST_CHECK_EQ(db.schemaVersion(), 10);
+        // v9（方言覆盖列）/ v10（failover 备用列）/ v11（高级设置 JSON /
+        // 片段重构）随后执行
+        DOCTEST_CHECK_EQ(db.schemaVersion(), 11);
 
         struct Expect { const char* title; const char* kind; };
         Expect expects[4] = {
@@ -428,7 +431,7 @@ REGISTER_TEST(migrate_dialect_override_v9,
         DOCTEST_REQUIRE(r.isOk());
         DOCTEST_REQUIRE(r.value().migrate().isOk());
         auto& db = r.value().db();
-        DOCTEST_CHECK_EQ(db.schemaVersion(), 10);
+        DOCTEST_CHECK_EQ(db.schemaVersion(), 11);
 
         // 存量行零迁移：新列为空串（未覆盖 = 回落 host 推断）
         auto q = db.prepare(
@@ -490,7 +493,7 @@ REGISTER_TEST(migrate_failover_columns_v10,
         DOCTEST_REQUIRE(r.isOk());
         DOCTEST_REQUIRE(r.value().migrate().isOk());
         auto& db = r.value().db();
-        DOCTEST_CHECK_EQ(db.schemaVersion(), 10);
+        DOCTEST_CHECK_EQ(db.schemaVersion(), 11);
 
         // 存量行零迁移：新列默认 0（无备用）
         auto q = db.prepare(
@@ -512,6 +515,94 @@ REGISTER_TEST(migrate_failover_columns_v10,
         DOCTEST_REQUIRE_EQ(rows2.value().size(), 1u);
         DOCTEST_CHECK_EQ(rows2.value()[0].getInt64("fallback_profile_id").valueOr(-1),
                          static_cast<int64_t>(1));
+    } // Database 在此析构（关闭 sqlite 句柄）
+
+    std::filesystem::remove(path, ec);
+    return true;
+})
+
+// migration v11（高级设置 JSON + 片段重构，2026-09-30 advanced-json-editor 设计
+// §3.2/§8.3）：旧库升级后 ① claude_profiles 多出 extra_settings_json 列（存量行
+// 默认空串 = 未配置）；② claude_shared_configs 多出 extra_settings_json 列且旧
+// extra_env 列已删（旧片段 env 数据弃用不转换，设计 §8.3）；③ 新列可写可读回
+REGISTER_TEST(migrate_extra_settings_v11,
+              "migration v11: 旧库升级加 profile 高级设置 JSON 列 + 片段重构（DROP extra_env）", {
+    auto path = test_support::tempDbPath(kDbPrefix, "extra_settings");
+    std::error_code ec;
+    std::filesystem::remove(path, ec);
+
+    // 手工构造 v10 旧库（只跑前 10 条 migration）+ 存量 profile 行 + 旧形态片段行
+    {
+        auto openR = core::data::SqliteDb::open(path);
+        DOCTEST_REQUIRE(openR.isOk());
+        auto& db = openR.value();
+        auto oldMigrations = core::migrations::all();
+        oldMigrations.resize(10);  // v1..v10
+        DOCTEST_REQUIRE(db.runMigrations(oldMigrations).isOk());
+
+        DOCTEST_REQUIRE(db.exec(
+            "INSERT INTO claude_profiles (id, name, base_url, api_key_hint, "
+            "api_key_check, keychain_account, model, is_active, created_at, "
+            "updated_at) VALUES (1, '旧供应商', 'https://old.example.com', "
+            "'sk-***abcd', 'deadbeef', 'claude:1', 'claude-3-5-haiku', 1, 0, 0)")
+                            .isOk());
+        // 旧形态片段（env 域数据 —— v11 后弃用不转换，设计 §8.3）
+        DOCTEST_REQUIRE(db.exec(
+            "INSERT INTO claude_shared_configs (id, name, extra_env, created_at, "
+            "updated_at) VALUES (1, '旧片段', '{\"ANTHROPIC_BASE_URL\": "
+            "\"https://old.example.com\"}', 0, 0)")
+                            .isOk());
+    } // 句柄关闭（Windows 文件锁）
+
+    // 重新打开 + 全量 migrate → v11 加列 + DROP 旧列
+    {
+        auto r = core::Database::open(path);
+        DOCTEST_REQUIRE(r.isOk());
+        DOCTEST_REQUIRE(r.value().migrate().isOk());
+        auto& db = r.value().db();
+        DOCTEST_CHECK_EQ(db.schemaVersion(), 11);
+
+        // ① 存量 profile 行零迁移：extra_settings_json 默认空串（未配置）
+        auto q = db.prepare(
+            "SELECT extra_settings_json FROM claude_profiles WHERE id = 1");
+        DOCTEST_REQUIRE(q.isOk());
+        auto rows = q.value().fetchAll();
+        DOCTEST_REQUIRE_EQ(rows.value().size(), 1u);
+        DOCTEST_CHECK_EQ(rows.value()[0].getString("extra_settings_json").valueOr("?"),
+                         std::string(""));
+
+        // ② 片段表：extra_settings_json 存在且默认空串；extra_env 列已删
+        //   （SELECT 旧列必须失败 —— DROP 不是改名）
+        auto fq = db.prepare(
+            "SELECT extra_settings_json FROM claude_shared_configs WHERE id = 1");
+        DOCTEST_REQUIRE(fq.isOk());
+        auto frows = fq.value().fetchAll();
+        DOCTEST_REQUIRE_EQ(frows.value().size(), 1u);
+        DOCTEST_CHECK_EQ(frows.value()[0].getString("extra_settings_json").valueOr("?"),
+                         std::string(""));
+        DOCTEST_CHECK(db.prepare(
+            "SELECT extra_env FROM claude_shared_configs").isFail());
+
+        // ③ 两条新列都可写可读回（repo 层 UPDATE / INSERT 依赖列存在）
+        DOCTEST_REQUIRE(db.exec(
+            "UPDATE claude_profiles SET extra_settings_json = '{\"model\": \"x\"}' "
+            "WHERE id = 1").isOk());
+        DOCTEST_REQUIRE(db.exec(
+            "INSERT INTO claude_shared_configs (name, extra_settings_json, "
+            "created_at, updated_at) VALUES ('新片段', '{\"statusLine\": \"on\"}', "
+            "0, 0)").isOk());
+        auto q2 = db.prepare(
+            "SELECT extra_settings_json FROM claude_profiles WHERE id = 1");
+        DOCTEST_REQUIRE(q2.isOk());
+        DOCTEST_CHECK_EQ(q2.value().fetchAll().value()[0]
+                             .getString("extra_settings_json").valueOr("?"),
+                         std::string("{\"model\": \"x\"}"));
+        auto q3 = db.prepare(
+            "SELECT extra_settings_json FROM claude_shared_configs WHERE name = '新片段'");
+        DOCTEST_REQUIRE(q3.isOk());
+        DOCTEST_CHECK_EQ(q3.value().fetchAll().value()[0]
+                             .getString("extra_settings_json").valueOr("?"),
+                         std::string("{\"statusLine\": \"on\"}"));
     } // Database 在此析构（关闭 sqlite 句柄）
 
     std::filesystem::remove(path, ec);

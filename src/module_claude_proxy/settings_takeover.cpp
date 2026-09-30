@@ -35,8 +35,7 @@ void SettingsTakeOver::recoverPendingSettingsRestore() {
 }
 
 core::Result<void> SettingsTakeOver::syncTakeOver(
-    const Profile& activeProfile, int proxyPort,
-    const std::string& sharedExtraEnvJson) {
+    const Profile& activeProfile, int proxyPort) {
     if (paths_.settingsFile.empty()) return core::Result<void>::ok();
     // 接管默认开（2026-09-27 恢复）：起代理即接管 settings.json，停代理还原。
     // 显式关掉开关才走下面这条——此时 DevDesk 完全不碰该文件（本机另装
@@ -46,11 +45,10 @@ core::Result<void> SettingsTakeOver::syncTakeOver(
                  paths_.settingsFile.string());
         return core::Result<void>::ok();
     }
-    // 写进 settings.json 的是**合并后**的 env（片段 → profile 自身 → 托管键，
-    // 设计 §2.5）：片段值不留痕迹（env 是扁平 map，无处放出处），片段键一并进
-    // sidecar 托管键集 → 停代理还原时随快照撤走
-    auto r = settings_sync::takeOver(activeProfile, proxyPort, paths_,
-                                     sharedExtraEnvJson);
+    // 写进 settings.json 的是**合并后**的 env + 生效高级设置 JSON（托管键在最
+    // 上层；片段叠加已在门面装配进 extraSettingsJson——片段值不留痕迹，
+    // 片段键经 JSON 域进 sidecar nonEnv 记账 → 停代理还原时随快照撤走）
+    auto r = settings_sync::takeOver(activeProfile, proxyPort, paths_);
     warnings_ = std::move(r.warnings);
     if (!r.ok) {
         // 条目 3：失败不再只进日志——并入 warnings_（与 getter 一起

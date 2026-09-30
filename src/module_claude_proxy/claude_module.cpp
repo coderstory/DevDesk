@@ -40,6 +40,7 @@
 
 #include <eui/dsl.h>
 
+#include <algorithm>
 #include <atomic>
 #include <ctime>
 #include <string>
@@ -182,6 +183,61 @@ public:
         } else {
             dv.dialectText = "-";
             dv.fallbackName = "-";
+        }
+
+        // 高级配置 pane 的键来源清单（advanced-json-editor 设计 §8.5，0edd3cf
+        // 形态复用）：生效 JSON = profile ⊕ 片段（片段赢，§8.2 生成时叠加）。
+        // 逐顶层键给来源：键 ∈ 片段对象 → 片段（envSourceLabel(Shared)——片段
+        // 赢的键都来自片段）；其余 → 本 Profile。"model" 键 → 附加说明（覆盖
+        // 模型槽位，D-4）。与列表快照同源、compose 内装配（pane 零服务调用）。
+        // 空态/解析失败经 keys 空 + note 区分（约定见 DetailView 注释）
+        if (shown != nullptr) {
+            std::string fragmentJson;
+            if (shown->sharedConfigId != 0) {
+                const SharedConfig* sc = findSharedById(
+                    state_.list.cachedSharedConfigs_, shown->sharedConfigId);
+                if (sc != nullptr) fragmentJson = sc->extraSettingsJson;
+            }
+            // warningsOut（审计 F-03）：非法/超限一侧被合并纯函数按空处理时
+            // 在此捕获——keys 空且 warnings 非空 = 配置存在但失效，pane 显示
+            // 「解析失败」提示态而非「未配置」（§8.5 验收点；接管 WARN 日志
+            // 之外的展示层口径）
+            std::vector<std::string> effWarnings;
+            const std::string effective = effectiveExtraSettingsJson(
+                shown->extraSettingsJson, fragmentJson, &effWarnings);
+            if (effective.empty() && !effWarnings.empty()) {
+                dv.extraSettingsNote = "（JSON 解析失败，接管时将忽略）";
+            }
+            if (!effective.empty()) {
+                auto parsed = platform::json::parse(effective);
+                if (parsed.isOk() && parsed.value().isObject()) {
+                    auto effObj = parsed.value().asObject();
+                    // 片段对象键集（片段赢的键 = 片段里出现过的键）
+                    std::vector<std::string> fragmentKeys;
+                    if (!fragmentJson.empty()) {
+                        auto fp = platform::json::parse(fragmentJson);
+                        if (fp.isOk() && fp.value().isObject()) {
+                            fragmentKeys = fp.value().asObject().keys();
+                        }
+                    }
+                    for (const auto& k : effObj.keys()) {
+                        const bool fromFragment =
+                            std::find(fragmentKeys.begin(), fragmentKeys.end(),
+                                      k) != fragmentKeys.end();
+                        dv.extraSettingsKeys.emplace_back(
+                            k, fromFragment
+                                   ? envSourceLabel(EnvSource::Shared)
+                                   : envSourceLabel(EnvSource::Profile));
+                        if (k == "model") {
+                            dv.extraSettingsNote =
+                                "「model」覆盖模型槽位（ANTHROPIC_MODEL 不写入）";
+                        }
+                    }
+                } else {
+                    dv.extraSettingsNote =
+                        "（JSON 解析失败，接管时将忽略）";
+                }
+            }
         }
 
         ui.column("claude.root")
@@ -525,9 +581,10 @@ private:
             showToast("复制配置失败", "请先选择 Profile", true);
             return;
         }
-        // 坏 extraEnvJson 防静默丢键（§4.2②）：buildDirectEnv 读路径对非法
-        // JSON 整体忽略（provider_config 读路径容错，与运行功能同口径）——
-        // 试解析失败先 LOG_WARN 一行再继续导出，不静默
+        // 坏 JSON 防静默丢键（advanced-json-editor §6，两域覆盖——同坏
+        // extraEnvJson 的防静默手法 batch-fix §4.2②）：env 域与高级设置 JSON
+        // 域（profile 自身 + 片段）各自试解析，失败先 LOG_WARN 一行再继续导出
+        //（对应域读路径容错为空/按 profile 自身值），不静默
         if (!p.extraEnvJson.empty()) {
             auto ee = parseExtraEnv(p.extraEnvJson);
             if (ee.isFail()) {
@@ -536,36 +593,56 @@ private:
                          ee.errorMessage());
             }
         }
-        // 片段 env：与列表/详情同源的快照解析（不落服务调用）
-        std::string sharedJson;
+        if (!p.extraSettingsJson.empty() &&
+            validateExtraSettingsJson(p.extraSettingsJson).isFail()) {
+            LOG_WARN("复制配置: 高级设置 JSON 解析失败（profile id=" +
+                     std::to_string(p.id) + "），导出将缺失高级属性 - " +
+                     validateExtraSettingsJson(p.extraSettingsJson).errorMessage());
+        }
+        // 片段 JSON：与列表/详情同源的快照解析（不落服务调用）。v11 起片段
+        // 内容 = 高级属性 JSON 原文（§8），坏片段按 profile 自身 JSON 导出
+        std::string fragmentJson;
         if (p.sharedConfigId != 0) {
             const SharedConfig* sc = findSharedById(
                 state_.list.cachedSharedConfigs_, p.sharedConfigId);
-            if (sc != nullptr) sharedJson = sc->extraEnvJson;
+            if (sc != nullptr) {
+                fragmentJson = sc->extraSettingsJson;
+                if (!fragmentJson.empty() &&
+                    validateExtraSettingsJson(fragmentJson).isFail()) {
+                    LOG_WARN("复制配置: 片段 JSON 解析失败（profile id=" +
+                             std::to_string(p.id) + "），导出将缺失片段叠加 - " +
+                             validateExtraSettingsJson(fragmentJson).errorMessage());
+                }
+            }
         }
         // 占位值：apiKeyHint 即「前6 + *** + 尾4」形态（profile_repository
         // 脱敏生成，同源同口径）；hint 为空（Keychain 读不到）→ 传空串，
         // buildDirectEnv 空值不写凭据键 → 导出无 token 键
         const std::string json = buildProfileExportJson(
-            p, sharedJson, /*keyPlaceholder=*/p.apiKeyHint);
+            p, fragmentJson, /*keyPlaceholder=*/p.apiKeyHint);
         if (json.empty()) {
             showToast("复制配置失败", "配置序列化失败", true);
             return;
         }
         core::window::setClipboardText(json);
-        // void API 无回读下的最低留痕（§4.2②）：profile id + 导出 env 键数
+        // void API 无回读下的最低留痕（§4.2②）：profile id + 导出键数
+        //（advanced-json-editor §6：env 键数 + 非 env 顶层键数两域合计）
         size_t exportedKeys = 0;
+        size_t exportedNonEnvKeys = 0;
         if (auto doc = platform::json::parse(json);
             doc.isOk() && doc.value().isObject()) {
-            const auto envVal = doc.value().asObject().get("env");
+            const auto rootObj = doc.value().asObject();
+            const auto envVal = rootObj.get("env");
             if (envVal.isObject()) exportedKeys = envVal.asObject().keys().size();
+            for (const auto& k : rootObj.keys()) {
+                if (k != "env") ++exportedNonEnvKeys;
+            }
         }
         LOG_WARN("复制配置: 已调用系统剪贴板写入（void API 无回读校验）" +
                  std::string("profile id=") + std::to_string(p.id) +
-                 " env 键数=" + std::to_string(exportedKeys));
-        showToast("已复制配置",
-                  "已把该 Profile 的配置导出到剪贴板（API Key 为占位符，"
-                  "不含明文）", false);
+                 " env 键数=" + std::to_string(exportedKeys) +
+                 " 高级属性键数=" + std::to_string(exportedNonEnvKeys));
+        showToast("已复制配置", kCopyConfigToastSubtitle, false);
     }
 
     void doDelete(int64_t id) {

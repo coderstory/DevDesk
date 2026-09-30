@@ -1,0 +1,196 @@
+{
+  "meta": {
+    "subject": "方案独立审计（未实施，审设计非审代码）——docs/superpowers/specs/2026-09-30-advanced-json-editor-design.md 五项：A 数据层 extraSettingsJson+v11 / B 表单 JSON 框 / C 导出全量升级 / D 生成链+接管还原 sidecar v2 / E 共享片段重构弹窗 JSON 化",
+    "date": "2026-09-30",
+    "auditor": "独立只读审计 agent（未参与方案写作）",
+    "method": "对照源码逐条核实方案事实断言：settings_sync.{h,cpp} / settings_takeover.h / provider_config.{h,cpp} / profile_repository.{h,cpp} / claude_service.{h,cpp} / claude_ui_{form,detail,list,logic,state} / claude_module.cpp / core/migrations.h / core/sqlite_db.cpp(runMigrations) / platform/json.{h,cpp} / EUI-NEO components/input.h 全量或定点实读；grep 全仓对账 isModelMappingEnvKey / sharedFrozenKeys / formFrozenKeys_ / sharedEnvKeysFor / sharedExtraEnvJsonFor / buildProxyEnv / buildDirectEnv / takeOver 全部调用点与测试引用；master HEAD 实测 0f1f734 与方案依赖声明一致；关련 spec（2026-09-30-batch-fix-design.md 已实施状态与 F-3 处置、2026-09-27-shared-config-and-failover、2026-09-28-profile-run）抽读核衔接",
+    "code_base": "DevDesk master 0f1f734（方案声明的依赖基线，与当前 HEAD 逐字一致）",
+    "note": "行号=0f1f734 快照实测。只读约束：未跑构建/测试/迁移（审的是设计文档），对 §10 验收清单做静态核（钉子是否非恒真、往返场景覆盖是否闭环）。sidecar 兼容性问题按用户升级路径逐步推演（clean-exit 删 sidecar / 崩溃后 startup recoverPendingSnapshot 先于任何 takeOver，见 dimension 2）"
+  },
+  "dimensions": {
+    "1_correctness": {
+      "status": "5 findings（medium 2 / low 1 / nano 2），核心合并链语义已核",
+      "conclusion": "①合并链三消费者覆盖成立：takeOver（settings_sync.cpp:294-433，现状④『非 env 顶层字段不动』:403-407 即改造点）、runProfile（claude_service.cpp:488-498 buildDirectEnv→{\"env\"}）、export（claude_ui_logic.cpp:106-116 同管线）三条链入口全部在案，纯函数落点（effectiveExtraSettingsJson / applyExtraSettingsToSettingsDoc / validateExtraSettingsJson）与 buildProxyEnv『合并一处』口径同构，设计对所有三个现状调用点（含 claude_ui_detail.cpp:295 展示链）无遗漏。②片段赢>profile JSON>live 的方向、D-4 模型抑制、D-5 env 键双防（UI 拒+读侧跳）语义自洽；抑制与陈旧删除/managedKeys 并集的交互净结果成立（live 移除 + 并集仍含该键 → restore 语义不变），但机制描述有误（F-5）。③v11 三条语句与既有写法对齐：exec 多语句有 v1 先例（migrations.h:7 头注 + sqlite_db.cpp runMigrations 单事务 exec(m.sql) 实读），版本顺延+『无 IF NOT EXISTS 靠 schema_version』注释口径与 v3/v4/v9/v10 逐字同型；DROP COLUMN 可行（extra_env 无索引/约束/触发器，v6 建表核；项目已因 INSERT…RETURNING 要求 ≥3.35，profile_repository.cpp:304）但方案引『≥3.25』版本口径错误（F-4）。④sidecar v2 结构（nonEnvKeys/nonEnvSnapshot + .has() 空集守卫）与 restore root 层重建（settings_sync.cpp:479-490 同构外推）方向正确，但快照政策有一个真数据丢失洞（F-1，最高项）。⑤Repository 四处同步点清单与实测结构吻合（Profile 结构 :27-55、SELECT 三处 :206/:237/:726、rowToProfile :152-201 getString 容错 :167-172、createProfile INSERT :308-313、updateProfile 两分支 :528-602）——唯 duplicateProfile 二段补写有门槛条件漏洞（F-3）。⑥§4.3『isModelMappingEnvKey 复用』层次落点写反（F-10）。"
+    },
+    "2_regression": {
+      "status": "2 findings（medium 1 / nano 1），sidecar 升级兼容已核安全",
+      "conclusion": "①sidecar v2 对『停止代理还原』用户路径已核安全，升级不丢还原快照：(a) 旧二进制 clean 退出经 ~ClaudeService→ProxyRuntime::stop→stopProxy→syncRestore 删 sidecar；(b) 崩溃/kill 残留 sidecar → 新二进制启动 main.cpp recoverPendingSettingsRestore 先于任何 takeOver（settings_sync.h:37-39 调用时序契约）→ restore 对 v1 sidecar 走 .has() 空集守卫：nonEnvKeys 空 → root 层重建全透传、零触碰，env 路径逐字不变 → 还原成功后 sidecar 删除，之后 v2 接管从干净首拍开始；(c) v1 sidecar 存续期间旧接管从未写非 env 键 → 不存在『旧代写的非 env 键』需要新代码追讨。方案担心的场景不成立。②真正的问题在 v2 自身的多轮接管快照政策（F-1，归 dimension 1 但根因是回归面：热切换 re-takeover 是主路径）。③extra_env 拆除波及面不全（F-2）：grep 实测 sharedFrozenKeys 除 §8.2 已列的 form.cpp/state.h 外还有 claude_ui_list.cpp:734（片段卡片『N 个键』副文案）与 claude_ui_detail.cpp:174-183（详情接管区『共享配置：X（N 个键）』绑定行）两处展示引用 + test_claude_ui.cpp:2994-3006 单测；§9 文件清单完全缺 claude_ui_list.cpp。④cc-switch 导入边界（D-11）成立：parseImportedEnv/parseExtraEnv 纯 env 域、写 Profile 不写片段，重构零波及；isModelMappingEnvKey 仅 3 处引用（定义 + detail pane 过滤×2）不被拆除、复用方向修正即可（F-10）。⑤既有测试波及：takeOver 4 参调用（test_settings_sync.cpp:1113）、buildProxyEnv 5 参（:1064-1079）、sharedEnvKeysFor 六处（test_claude_service.cpp:2148-2286）在参数拆除后必断——§8.4 只对 buildDirectEnv 标注了『测试』，takeOver/buildProxyEnv 行未标，机械同步面建议在实施清单显式列全。"
+    },
+    "3_platform_symmetry": {
+      "status": "已核",
+      "conclusion": "①多行 input：EUI-NEO components/input.h:59 multiline(bool) / :62 scrollbar(bool) 实存，且同款组合已在 cc-switch 粘贴导入框（claude_ui_form.cpp:910-917，.multiline(true).scrollbar(true).fontSize(12)）生产运行——两平台（macOS arm64 当前开发平台 + Windows 11 移植目标）输入链路（含 IME/选区）已被既有功能验证，JSON 框纯复用无新平台面。②剪贴板：导出经 core::window::setClipboardText，SDL2/GLFW 两后端形态对称已由 wave-b 审计实读核实（window_backend.cpp:554 / :928），本设计不改剪贴板通道，仅改载荷与文案。③路径解析：本设计零新增路径处理——run-settings 落盘与终端派发是 2026-09-28 profile-run 既有能力，JSON 框不触路径；零新增平台宏。唯一跨平台注意点已由 §11 自列：v11 DROP COLUMN 需在两端各跑一次迁移用例（macOS 系统 SQLite 与 MSYS2 sqlite 均 ≥3.45，满足 3.35 下限）。"
+    },
+    "4_silent_failure": {
+      "status": "已核（1 处 medium 洞归 F-1，三边界本身已核闭环）",
+      "conclusion": "①非法 JSON：UI 侧 validateExtraSettingsJson 失败 → formError_ 红字 + 弹窗不关 + 校验先于 createProfile/updateProfile 服务调用 → 不落库原子性成立（submitForm 结构 :243-374 既有形态支持）；读侧 effectiveExtraSettingsJson/apply 非法 → WARN + 按空处理，DB 直写绕过 UI 也有兜底，D-5/D-6 双层闭环。②超限 1MB：validate 拒 + 读侧按空双落点，kMaxExtraSettingsBytes 落 provider_config.h 紧邻 kMaxImportTextBytes（:184-188 实存）先例一致；挡在解析之前符合 json.h:18-23 深拷贝代价口径。③env 键拒绝：UI 专属文案 + 读侧跳过+WARN 防静默丢弃，D-5 理由成立（fail-fast 优于静默）。④服务层/DB 不二次校验是有意豁免（§7.3 明示）——与 profile_repository.cpp:486『不把坏 JSON 落库』信任边界惯例相悖但已声明且读侧容错兜底，接受；片段弹窗走同一 validate（§8.1）无第二套规则。⑤导出坏 JSON WARN（§6）与既有 F6 防静默丢键手法（claude_module.cpp:528-538 实读）同构。⑥唯一静默失败真洞 = F-1 的快照缺失（还原时静默删用户值，无任何 WARN）。"
+    },
+    "5_test_effectiveness": {
+      "status": "2 findings（low 2），变异钉①②③⑤已核、④有假绿条件、往返缺片段叠加",
+      "conclusion": "①变异①删 submitForm 校验 → 『formError_ 非空 + getProfile 不变』双断言：校验删则 formError_ 恒空，REQUIRE 必红——非恒真成立。②变异②删 model 抑制 → 往返②断言 env 无 ANTHROPIC_MODEL 且旧键被撤走：抑制点唯一（applyExtraSettingsToSettingsDoc），删则 env 保留该键必红——成立。③变异③restore 删 root 层记账 → 往返③『快照无原值键删除/有原值恢复』：无 root 记账则非 env 键全透传，删除断言必红——成立。④变异④落库 pretty 改存原文 → 断言『含 \\n  \"』：该断言只在输入非 pretty 时对变异敏感（F-7）——§10 未钉输入形态，需补。⑤变异⑤改 profile 赢 → 片段赢断言直击 effectiveExtraSettingsJson 叠加方向，一处翻转一处红——成立。⑥往返用例⑤旧 sidecar 空集语义有覆盖（ dimension 2 推演对应）；但§10 往返清单①-⑤全部走 profile 自身 JSON，无一条经 §5.2① 门面装配（绑定片段 → 生效 JSON 叠加 → 接管写入 → 还原撤走），片段叠加端到端无钉（F-8）。⑦格式化器四断言（幂等/两空格/round-trip/字典序）与 json.cpp:23 std::map 字典序、:329 YYJSON_WRITE_PRETTY_TWO_SPACES 实况一致，把 D-2 键序重排钉进测试的口径正确。⑧迁移用例（全新 v11 + v10 旧库升级）走 ScopedAppDatabase 脚手架可行（TIN-06 先例）。"
+    },
+    "6_doc_consistency": {
+      "status": "已核（3 条 nano F-4/F-5/F-9 已入 findings，无 medium 以上矛盾）",
+      "conclusion": "①与 batch-fix-design 衔接吻合：该 spec 状态行已回写『已实施（项 B/C master 4daf385）』（wave-b 审计 F-4 的整改已落）；本方案 §6 的片段取数口径（cachedSharedConfigs_ 快照 findSharedById，claude_module.cpp:542-544 实读）与 batch-fix F-3『登记不修、以快照同源为准』的处置逐字一致，不会改出双源；§6 toast 副文案与 doCopyConfig :566-568 现文案对照成立，LOG_WARN 键数改造点 :557-565 在案。②§2 事实断言抽验全中：json.h:95/:98、json.cpp:23/:329、provider_config.h:47-62/:184-188/:228/:255、settings_sync.h:99-100、settings_takeover.h:64-65、claude_service.cpp:755-769/:490/:616/:315-317、profile_repository.cpp:1118/:1140/:304、migrations.h v9/v10、claude_ui_form.cpp:503/:910-917/:1222(h=460)/:709-770、claude_ui_state.h:172/:177 区、claude_service.h createProfile 尾插先例、EUI-NEO input.h:59——全部实测命中（±3 行）。③§12 五项与正文一致：12.1↔§4.1『待审计确认』、12.2↔§8.2、12.3↔§8.4 退路注、12.4↔§5.2⑦、12.5↔§8.5，无正文写死而 §12 留决的分叉。④行号漂移一处（F-9）：duplicateProfile 实测 :789-867、二段补写块 :841-861，方案写 :655-730/:713-727（该区间实为 deleteProfile 尾/cleanupOrphan/loadApiKey）——按本仓审计惯例补『设计时点快照』注即可。⑤master 0f1f734 依赖声明与当前 HEAD 实测一致。"
+    }
+  },
+  "findings": [
+    {
+      "id": "F-1",
+      "file": "docs/superpowers/specs/2026-09-30-advanced-json-editor-design.md（§5.2③，:167）+ src/module_claude_proxy/settings_sync.cpp（:322-343 既有 envSnapshot 保留逻辑）",
+      "line": 167,
+      "lens": "正确性/静默失败面",
+      "severity": "medium",
+      "confidence": "high",
+      "issue": "sidecar v2 的 nonEnvSnapshot 政策在多轮接管下丢失用户原值。§5.2③ 只在『sidecar 不存在时（首份快照）』对『本轮将要写入的每个非 env 键』拍快照，sidecar 已存在 → 『保留原 nonEnvSnapshot（不重拍）』。反例（纯 v2→v2、无需跨版本）：第 1 轮 profile JSON={\"model\":\"x\"}，live 无 model → nonEnvSnapshot={}、nonEnvKeys={model}；用户 live 里本有手写的 \"statusLine\"（第 1 轮 JSON 不含它 → 永不进账）；第 2 轮用户把 JSON 改成 {\"model\":\"x\",\"statusLine\":\"...\"} 热切换 re-takeover → statusLine 新进 nonEnvKeys 且本轮覆写 live，但因 sidecar 已存在不重拍 → 用户原值未入快照；停代理 restore：statusLine ∈ nonEnvKeys 且 ∉ nonEnvSnapshot → **删除**。用户手写的 statusLine 静默丢失。根因：env 域『不重拍』成立是因为 envSnapshot 首拍兜的是**整个 env 对象**（settings_sync.cpp:325 snapshotEnv=env 全量），后续任何新托管键的原值都已在快照里；nonEnv 域照抄『不重拍』但只拍**本轮写入键**，两条语义不同构。§10 往返④『二次接管不重拍快照』还会把这个行为钉死成测试。",
+      "impact": "用户 settings.json 手写非 env 属性在『先接管→后扩 JSON→停代理』这个完全正常的迭代路径上被静默删除且无任何 WARN——正是接管/还原闭环存在要防的那类数据丢失，且热切换 re-takeover（updateProfile/setActiveProfile/updateSharedConfig/deleteSharedConfig 四个策略尾）是主路径、命中概率不低。",
+      "suggestion": "快照改『只对新增托管键补拍』（merge-only）：sidecar 已存在时，对『本轮将写入、且此前不在 nonEnvKeys 并集里』的键 K，若 live root 有 K 且 nonEnvSnapshot 无 K → 补入快照；已在并集里的键维持原快照条目（其原值要么首拍已收、要么本不存在）。这保留『不重拍防把托管值当用户值』的原意图——已托管的键不补拍（live 值必是 DevDesk 写的），新进账的键其 live 值必是用户写的（旧轮没写过它，stale-删除后用户手工重建的变体同样被正确收进）。§10 往返④同步改为『二次接管对已托管键不重拍、对新增键首写拍快照』并加本反例用例。"
+    },
+    {
+      "id": "F-2",
+      "file": "docs/superpowers/specs/2026-09-30-advanced-json-editor-design.md（§8.2 :227 拆除清单、§9 :252-268 文件清单）+ src/module_claude_proxy/claude_ui_list.cpp:734 + claude_ui_detail.cpp:174-183",
+      "line": 227,
+      "lens": "回归面",
+      "severity": "medium",
+      "confidence": "high",
+      "issue": "片段 env 域拆除清单不全，grep 实测 sharedFrozenKeys/sharedEnvKeysFor 引用超出 §8.2/§9 所列：(a) claude_ui_list.cpp:734 片段管理卡片副文案『sharedFrozenKeys(sc).size() + \" 个键 · 绑定它的 Profile 冻结这些键\"』——删函数则编译断，且片段 JSON 化后该卡片语义（冻结键计数）整体失效需改写；(b) claude_ui_detail.cpp:174-183 详情接管区绑定行『共享配置：片段 X（N 个键）』同上；(c) test_claude_ui.cpp:2994-3006 的 sharedFrozenKeys 直调单测、test_claude_service.cpp:2148-2286 的 sharedEnvKeysFor 六处用例；(d) §9 文件清单完全没有 claude_ui_list.cpp（detail 虽在列但只写了『+2 字段；drawDetailAdvanced 键清单』未含绑定行改造）。另 takeOver 4 参测试（test_settings_sync.cpp:1113）与 buildProxyEnv 5 参测试在参数拆除后必断，§8.4 仅对 buildDirectEnv 行标注了『测试』。",
+      "impact": "照 §9 清单派单会直接编译失败（删了函数漏了引用点），或漏改两处用户可见的『N 个键』展示语义（片段不再携带 env 键后该计数无意义，留着力就是假信息）。属清单完整性问题，非设计方向问题。",
+      "suggestion": "§8.2 拆除清单补两行：claude_ui_list.cpp:734（片段卡片副文案改为『高级属性 JSON 预设』类新语义或键数改键清单摘要）、claude_ui_detail.cpp:174-183（绑定行同步改造，或并入 §8.5 的 pane 改造范围声明）；§9 文件清单补 claude_ui_list.cpp；§8.4 的 takeOver/buildProxyEnv 两行补『含测试同步』标注（test_settings_sync.cpp:1113、:1064-1079、test_claude_service.cpp sharedEnvKeysFor 组）。"
+    },
+    {
+      "id": "F-3",
+      "file": "docs/superpowers/specs/2026-09-30-advanced-json-editor-design.md（§3.3 :95）+ src/module_claude_proxy/profile_repository.cpp:841",
+      "line": 95,
+      "lens": "正确性",
+      "severity": "medium",
+      "confidence": "high",
+      "issue": "duplicateProfile 二段补写的**门槛条件**不在改造清单里。方案只说『二段补写块（:713-727，实测 :841-861）把 src.extraSettingsJson 并入 upd 一并携带』，但该块整体被 `if (!src.modelsConfigJson.empty() || !src.extraEnvJson.empty())` 门控——一个只配置了高级设置 JSON（models_config 与 extra_env 均为空）的 profile，复制时门槛不成立 → 二段补写整块跳过 → extraSettingsJson 静默丢失（createProfile 尾参在 duplicateProfile 的调用点 :829-831 也没传）。",
+      "impact": "『复制即配置』口径（同 dialect_override/fallback_profile_id 先例）对 JSON 域破例；丢失是静默的（无 WARN 无 fail），用户在副本上发现高级设置凭空消失。触发面窄（仅『纯 JSON』profile）但必然复现。",
+      "suggestion": "§3.3 补一句：二段补写门槛条件扩为 `!src.modelsConfigJson.empty() || !src.extraEnvJson.empty() || !src.extraSettingsJson.empty()`（或把 extraSettingsJson 直接并入 duplicateProfile 的 createProfile 尾参传递，与 dialect_override 同款、二段补写仅留给大 JSON 字段之外的补写）。"
+    },
+    {
+      "id": "F-4",
+      "file": "docs/superpowers/specs/2026-09-30-advanced-json-editor-design.md（§0 总表 :12、§3.2 :88）",
+      "line": 88,
+      "lens": "正确性（文档版本口径）",
+      "severity": "nano",
+      "confidence": "high",
+      "issue": "『DROP COLUMN 需 SQLite ≥3.25（3.35 起行为完备）』版本口径错误：ALTER TABLE DROP COLUMN 是 SQLite 3.35.0（2021-03-12）才加入的，3.25 加的是 RENAME COLUMN 与窗口函数。结论不受影响（项目已因 INSERT…RETURNING 事实要求 ≥3.35，profile_repository.cpp:304 注释在案，macOS 系统 SQLite / MSYS2 sqlite 均 ≥3.45），但按错误的下限（3.25）去选型或写迁移守卫会翻车。",
+      "impact": "无运行时风险（≥3.35 已是既成事实），纯文档失实；未来若有人按『3.25 就够』在旧 SQLite 上验证会得到 no such column 之外的诡异失败。",
+      "suggestion": "§0/§3.2 两处改为『DROP COLUMN 需 SQLite ≥3.35，与既有 RETURNING 要求同一条下限（profile_repository.cpp:304）』。"
+    },
+    {
+      "id": "F-5",
+      "file": "docs/superpowers/specs/2026-09-30-advanced-json-editor-design.md（§4.2 步骤 3，:118）",
+      "line": 118,
+      "lens": "正确性（机制描述）",
+      "severity": "nano",
+      "confidence": "high",
+      "issue": "模型抑制的机制描述与 §4.3 落点矛盾：§4.2 步骤 3 说『抑制键不在「本轮生成键」里 → 既有陈旧托管键删除逻辑（settings_sync.cpp:386-401）天然把上一轮写入的 ANTHROPIC_MODEL 撤走』。实际时序：抑制发生在 applyExtraSettingsToSettingsDoc（§4.3，合并写入**之后**从 root.env 移除），而陈旧删除步（:386-401）在合并**之前**运行且以 buildProxyEnv 产出为『本轮生成键』——ANTHROPIC_MODEL 仍在其中（generatedThisRound=true → 不会被陈旧删除），它是被 apply 步移除的。净结果一致（live 移除 + managedKeys 并集仍含该键 → restore 语义不变、§10 往返②仍成立），只是『哪一步干的』写错了。",
+      "impact": "实施者按字面理解可能在 buildProxyEnv 里加抑制入参（多一个落点，违反『抑制发生在合并纯函数一处』的自我约束），或误判陈旧删除会处理而漏掉 apply 里的移除分支。",
+      "suggestion": "§4.2 步骤 3 机制句改为：『applyExtraSettingsToSettingsDoc 在并入时同时从 root.env 移除 ANTHROPIC_MODEL；该键仍在 managedKeys 并集（buildProxyEnv 产出未变），restore 语义不变；若本轮 JSON 不含 model，则回到 buildProxyEnv 生成、由既有陈旧删除逻辑撤走』。"
+    },
+    {
+      "id": "F-6",
+      "file": "docs/superpowers/specs/2026-09-30-advanced-json-editor-design.md（§8.4 :233-243）+ src/module_claude_proxy/provider_config.h:299-307 / claude_service.cpp:616-620",
+      "line": 233,
+      "lens": "回归面",
+      "severity": "nano",
+      "confidence": "high",
+      "issue": "片段 env 管线的反向同步通道未入拆除清单：parseEnvForReverseSync 的 ownedKeys 形参与 G10 守卫（provider_config.h:299-307）、及唯一供给方 sharedEnvKeysFor→claude_service.cpp:616 的上游一段。§8.4 拆了供给方（sharedEnvKeysFor）却没处置消费方——G10 永不触发，成为方案自己在 §8.4 反对保留的那种『死但零风险』通道（且守卫注释、专测 provider_config_guard_G10_shared_config_key 都还指着一条已死的语义）。",
+      "impact": "不修则零行为风险，但留下自相矛盾的活代码+注释+专测，下一位读者会以为片段仍在 env 域；与 §8.4『参数化叠加通道整体移除』的边界声明不符。",
+      "suggestion": "§8.4 补一行：『parseEnvForReverseSync 的 ownedKeys 形参与 G10 守卫』——推荐随批拆除（形参保留、调用点恒传空集亦可，但守卫注释与 G10 专测须标注语义已死），二选一显式写明。"
+    },
+    {
+      "id": "F-7",
+      "file": "docs/superpowers/specs/2026-09-30-advanced-json-editor-design.md（§10 :280 变异自检④）",
+      "line": 280,
+      "lens": "测试有效性",
+      "severity": "low",
+      "confidence": "high",
+      "issue": "变异④『落库 pretty 改存原文 → DB pretty 断言红』存在恒绿条件：DB 断言『含 \\n  \"』只对**非 pretty 输入**敏感——若该 UI 用例的表单输入本身已是格式化文本（手打多行 JSON 的自然形态），『存原文』与『存 pretty』字节相同，变异不红（假绿）。",
+      "impact": "五个变异钉之一可能在回退时依旧全绿，§10 的变异自检承诺失真。",
+      "suggestion": "§10 该用例补一句输入形态约束：『输入用 compact/未格式化文本（如 {\"model\":\"x\",\"permissions\":{...}} 单行），使 DB pretty 断言对变异④敏感』（格式化按钮用例已用 compact 输入，照搬即可）。"
+    },
+    {
+      "id": "F-8",
+      "file": "docs/superpowers/specs/2026-09-30-advanced-json-editor-design.md（§10 :278 往返清单）",
+      "line": 278,
+      "lens": "测试有效性",
+      "severity": "low",
+      "confidence": "high",
+      "issue": "§10 接管/还原往返用例①-⑤全部只走 profile 自身 JSON，没有一条覆盖片段叠加端到端：『绑定片段 → 门面 §5.2① 装配生效 JSON（片段赢）→ takeOver 写入片段键 → restore 撤走』。片段叠加目前只有纯函数层断言（effectiveExtraSettingsJson 片段赢），门面装配这一跳（§5.2① 是新增接线：active.extraSettingsJson 生效化后传副本）无任何钉子——装配漏传/传了未生效化的原文，现有测试全绿。",
+      "impact": "最高风险的接线改动（三条链入口的公共前置）在测试上无守护；恰好这一步接错时静默表现为『片段高级属性不生效』，与 F-1 同属难排雷形态。",
+      "suggestion": "§10 往返清单补⑥：绑定片段（片段与 profile JSON 各含独有键+同键）→ takeOver → 断言 live 含片段键且同键为片段值；restore → 断言全部撤走。可复用 test_settings_sync.cpp:1101-1113 既有片段接管用例的骨架平移到 JSON 域。"
+    },
+    {
+      "id": "F-9",
+      "file": "docs/superpowers/specs/2026-09-30-advanced-json-editor-design.md（§2.4 :66、§3.3 :95）",
+      "line": 66,
+      "lens": "文档口径",
+      "severity": "nano",
+      "confidence": "high",
+      "issue": "行号漂移：duplicateProfile 实测 profile_repository.cpp:789-867（方案写 :655-730，该区间实为 deleteProfile 尾 + cleanupOrphanKeychainEntries + loadApiKey + getActiveProfile SELECT），二段补写块实测 :841-861（方案写 :713-727）。其余抽查的 30+ 处行号引用全部命中（±3 行），仅此一处整段错位（疑为 R10 搬移前的旧行号）。",
+      "impact": "按 :655-730 定位会改错函数；其余引用不受影响。",
+      "suggestion": "行号改 :789-867 / :841-861，或按本仓审计惯例在 §2.4 加『行号为设计时点快照、实施以符号名为准』注（batch-fix 审计 F-4 同款处置）。"
+    },
+    {
+      "id": "F-10",
+      "file": "docs/superpowers/specs/2026-09-30-advanced-json-editor-design.md（§4.3 :132、§2.2 :53）+ src/module_claude_proxy/claude_ui_detail.cpp:74",
+      "line": 132,
+      "lens": "正确性（架构落点）",
+      "severity": "nano",
+      "confidence": "high",
+      "issue": "『抑制判定复用 isModelMappingEnvKey，不手抄键名』方向不可行：isModelMappingEnvKey 定义在 claude_ui_detail.cpp:74（UI 层），而 applyExtraSettingsToSettingsDoc 落在 provider_config.{h,cpp}（纯函数层）——provider_config 不能反向 include UI 文件（模块内分层：provider_config 是 detail 的被依赖方）。意图（键名单一来源自槽位表）正确，落点写反。",
+      "impact": "实施者照字面做会编译失败或把键名手抄进 provider_config（恰好违反『不手抄』的自我要求）。",
+      "suggestion": "§4.3 改为：键名判定下沉 provider_config（如从 kModelSlotMetas 派生 def 行 envKey 的新纯函数，或导出现有 UI 侧判定逻辑），claude_ui_detail.cpp:74 的 isModelMappingEnvKey 改为复用/转发；两处注释互指单一来源。"
+    }
+  ],
+  "policy_rulings": {
+    "note": "§12 五项裁决建议（主会话已给倾向，逐项表态+理由）",
+    "rulings": [
+      {
+        "item": "① runProfile 纳入合并链",
+        "verdict": "同意纳入（与主会话倾向一致）",
+        "reason": "三链分叉是用户可感知的行为不一致（同一 profile 接管带 hooks/permissions、直连不带）；合并已收敛为纯函数一处，纳入成本≈一次调用+一处归一；runProfile 的临时 settings 本就是完整 settings.json 形态语义（--settings 消费整个文档），env-only 反而是历史残留。runProfile 无 sidecar 记账需求（临时文件随会话自删、24h 清扫兜底），纳入零还原闭环负担。"
+      },
+      {
+        "item": "② 片段赢（预设覆盖 profile 值）",
+        "verdict": "同意片段赢（与主会话倾向一致）",
+        "reason": "与 env 域既有拍板（provider_config.h 规则 6『片段赢』）同构，两域方向一致不新增认知负担；『profile 个人值应赢模板』的反方向在 09-27 片段设计已被同一逻辑否决，两域分叉只会制造『env 片段赢、JSON 片段输』的解释成本；被覆盖值原样留在 profile 行、解绑回落，无数据损失。翻转成本一处函数（§12.2 自述），未来改判无锁定。"
+      },
+      {
+        "item": "③ env 域片段管线拆除 vs 恒传空串",
+        "verdict": "同意拆除（附条件：先按 F-2/F-6 补全清单）",
+        "reason": "拆除方向对——死参数+死通道是本项目明确反对的形态（v10 迁移注释『加了=永远 DEFAULT 0 的死列』先例、G10 专测指着已死语义）；恒传空串退路会同时留下三条假通道与一套假语义（frozenKeys/chip 的 UI 语义也拆了，参数留着无对应 UI）。条件：§8.4/§9 清单必须先补全 F-2 的四处引用与 F-6 的 G10 通道，否则一次拆动必然编译断在清单外引用点上。"
+      },
+      {
+        "item": "④ 上层覆盖检测是否扩到非 env 键",
+        "verdict": "同意不扩，登记后续项（与主会话倾向一致）",
+        "reason": "上层覆盖检测的存在理由是『上层会静默压过 DevDesk 写入的托管真值』；非 env 域 DevDesk 写的值本就来自用户手写 JSON，managed/project 层同名键覆盖=用户文件正常分层语义，不是接管被劫持——告警噪音大于价值。且检测扩域会牵动 detectOverlayConflicts 的键集来源（managedEnvKeyNames 是 env 专用），扩域成本与误报面都不小。维持 §5.2⑦ 的 env 键域边界。"
+      },
+      {
+        "item": "⑤ 详情 pane JSON 键清单上限 8 行",
+        "verdict": "同意 8 行暂定（附一个实施闸门）",
+        "reason": "数值本身是暂定值、实施按余量核的口径已写明，无异议。但有一个方案未点破的结构事实：drawDetailAdvanced 现状是 (void)contentBottom + 『高度与容器无关』（claude_ui_detail.cpp:762-764 实读，固定返回 y0+102），键清单引入后该不变式必破——实施时必须真消费 contentBottom（或以硬上限+溢出提示保证不与动作区重叠），并同步分发区『paneBottom 恒 312/340/214』注释与既有 actY/dividerY 五值相等断言（test_claude_ui.cpp:4118-4144 区）。8 行不是护栏，contentBottom 消费才是。"
+      }
+    ]
+  },
+  "verified_positive": [
+    "合并链三消费者入口全覆盖：takeOver（settings_sync.cpp:294-433）、runProfile（claude_service.cpp:488-498）、export（claude_ui_logic.cpp:106-116）+ 展示链（claude_ui_detail.cpp:295）无一遗漏，纯函数落点与『合并一处』项目口径同构",
+    "§2 事实断言抽验 30+ 处全中：json.h:95/:98、json.cpp:23(objVal=std::map 字典序)/:329(PRETTY_TWO_SPACES)、kMaxImportTextBytes:188、settings_sync 各步行号（:131-134/:322-343/:364-366/:386-401/:403-407/:423-427/:479-490）、claude_service.cpp:755-769/:490/:616、settings_takeover.h:64-65、provider_config.h:47-62/:184-188、migrations v9/v10、form:503/:910-917/:1222/:709-770、state.h:172/:177、EUI-NEO input.h:59",
+    "sidecar 升级路径安全（用户正开着代理升级不丢还原快照）：clean 退出删 sidecar（析构→stopProxy→syncRestore）；崩溃残留经 startup recoverPendingSettingsRestore 先于任何 takeOver 还原（.has() 空集守卫下 v1 sidecar 还原行为逐字不变）；v1 接管从未写非 env 键，无旧代写键需追讨",
+    "v11 迁移形态与既有完全对齐：exec 多语句有 v1 先例（migrations.h:7 + runMigrations 单事务 exec 实读）、版本顺延注释口径与 v3/v4/v9/v10 同型、DROP COLUMN 的 extra_env 无索引/约束/触发器（v6 建表核）、≥3.35 事实下限已由 RETURNING 建立",
+    "非法 JSON/超限/env 键三边界双层闭环（UI fail-fast + 读侧 WARN 容错），校验先于服务调用 → 不落库原子性成立；DB 不二次校验的豁免已显式声明并有读侧兜底",
+    "与 batch-fix-design 衔接一致：状态行已回写已实施、§6 片段取数与该 spec F-3 处置（快照同源、不回服务层实时读）逐字吻合、toast/LOG_WARN 改造点与 doCopyConfig 现状对照成立",
+    "平台对称：JSON 框纯复用两平台已验证的 multiline+scrollbar input（cc-switch 导入框同款生产运行）、剪贴板两后端对称（wave-b 实读）、零新增路径处理、零新增平台宏",
+    "§12 五项与正文逐条对应无分叉；master 依赖 0f1f734 与当前 HEAD 一致；格式化器四断言（幂等/两空格/round-trip/字典序）与 yyjson 实况一致、把键序重排钉进测试的口径正确",
+    "变异钉①②③⑤静态核非恒真（formError_ 双断言 / 抑制唯一落点 / root 记账删除断言 / 片段赢直击叠加方向）",
+    "Repository 改造点清单与实测结构吻合（SELECT 三处、rowToProfile getString 容错、createProfile 尾插先例、updateProfile 两分支、Profile 结构四处同步点）"
+  ],
+  "method_limits": [
+    "只读审计设计文档（未实施）：未跑构建/测试/迁移/变异红绿——对 §10 做静态核（钉子非恒真分析 + 场景覆盖闭环检查），变异④的假绿条件与往返⑥缺口由结构推演得出",
+    "sidecar 升级路径为逐步推演（基于 clean-exit 析构链与 main.cpp 启动时序契约），未在真机构造升级场景复现；F-1 的数据丢失洞为纯逻辑推演、置信高（代码路径逐行核对）但未运行验证",
+    "DROP COLUMN 两端平台实测（§11 首日动作）未执行——可行性判断基于版本事实（≥3.35 已由 RETURNING 建立且两端 SQLite ≥3.45）与 v6 建表无索引核验",
+    "EUI-NEO 侧仅核 components/input.h（multiline/scrollbar API 存在性与行号）；多行框在实际 600 弹窗内的滚动/IME 行为未实测，依赖既有导入框先例背书"
+  ]
+}

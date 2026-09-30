@@ -16,6 +16,7 @@
 #include <vector>
 
 #include "core/result.h"
+#include "platform/json.h"
 
 namespace module::claude {
 
@@ -103,6 +104,17 @@ inline std::span<const ModelSlotMeta> modelSlotTable() { return kModelSlotMetas;
 // 显示名派生：剥除尾部 [1M]/[200K]/[1m] 等上下文窗口标记（§2.2）
 std::string deriveDisplayName(const std::string& model);
 
+// def 槽位的托管 env 键名（审计 F-10 单一来源）：从槽位表派生
+//（jsonKey=="default" 行的 envKey），不手抄键名。新增抑制判定 /
+// claude_ui_detail 的 isModelMappingEnvKey（UI 层，转发本处判定）都以此为准
+const char* modelSlotDefEnvKey();
+
+// 键是否属于槽位表托管的模型键（envKey 或 *_NAME 键）。原 .cpp 匿名命名空间
+// helper 提升：claude_ui_detail.cpp 的 isModelMappingEnvKey 转发本判定
+//（F-10：provider_config 不能反向 include UI 文件，判定落本层、UI 复用），
+// 两处注释互指单一来源
+bool isModelSlotEnvKey(const std::string& key);
+
 // ---- models_config 序列化 / 反序列化 ----
 // 序列化固定写全槽位表所有行（空槽位写空串，roundtrip 稳定）
 core::Result<std::string> serializeModelsConfig(const ModelsConfig& config);
@@ -187,6 +199,64 @@ core::Result<ImportedConfig> parseImportedEnv(const std::string& text);
 // 64 键 × 4KB 值 ≈ 256KB，1MB 留 ~4x 余量。超限整体 fail（文案含上限）。
 inline constexpr size_t kMaxImportTextBytes = 1u * 1024u * 1024u;
 
+// ---- 高级设置 JSON（2026-09-30 advanced-json-editor 设计 §4.3）----
+// settings.json 除 env 外全部顶层属性（model / permissions / statusLine /
+// hooks / …）的合并 / 校验纯函数（无 IO / 无 DB / 无日志——warnings 由调用方
+// 记账与呈现），三条生成链（接管 takeOver / 运行 runProfile / 复制配置导出）
+// 共用，合并规则只此一处（同 buildProxyEnv「合并一处」项目口径）。
+
+// 整体文本上限（设计 D-7）：紧邻 kMaxImportTextBytes 同一理由——platform::json
+// 按值 = 整树深拷贝（json.h:18-23），超大输入挡在解析之前。settings.json 实际
+// 合法载荷（hooks / permissions）远小于 1MB
+inline constexpr size_t kMaxExtraSettingsBytes = 1u * 1024u * 1024u;
+
+// 生效 JSON：片段叠加在 profile JSON 之上（逐键叠加，**片段赢**，设计 D-10 /
+// §4.2 步骤 1——与 env 域 buildProxyEnv 规则 6 同方向）。解绑（fragmentJson 为
+// 空串）后同名键回落 profile 自身值；任一侧顶层 "env" 键跳过 + warnings 记录
+//（D-5 读侧兜底：防 DB 直写等非 UI 路径绕过校验）；非法 / 超限 / 顶层非对象
+// 一侧按空处理（warnings 记录），另一侧照用；两侧都空 → 空串。
+// 输出 pretty 规范形（stringify(value, /*pretty=*/true)；键序为字典序——
+// JsonImpl::objVal 是 std::map，与 settings_sync 写 settings.json 同一条
+// 序列化通道，设计 D-2）。warningsOut 非空则先清空再填
+std::string effectiveExtraSettingsJson(
+    const std::string& profileJson,
+    const std::string& fragmentJson,
+    std::vector<std::string>* warningsOut = nullptr);
+
+// 生效 JSON 本轮将写入的顶层键（best-effort 枚举）：空串 / 非法 / 超限 /
+// 顶层非对象 → 空集；"env" 键不在列（它永不写入，D-5）。takeOver 的
+// 快照 / 陈旧键删除输入（§5.2③⑤）——用户可见的解析失败警告由
+// applyExtraSettingsToSettingsDoc 统一发，本函数静默防双报
+std::vector<std::string> extraSettingsTopLevelKeys(
+    const std::string& extraSettingsJson);
+
+// 并入 settings 文档的应用结果（§4.3）
+struct ExtraSettingsApply {
+    std::vector<std::string> writtenKeys;   // 本轮写入的非 env 顶层键（排序去重）
+    bool modelSuppressed = false;           // 顶层 "model" 触发 ANTHROPIC_MODEL 抑制
+    std::vector<std::string> warnings;      // "env" 键跳过 / 解析失败等（调用方记账）
+};
+
+// 并入 settings 文档（§4.2 步骤 2-3）：对生效 JSON 的每个顶层键 K：
+//   K == "env"  → 跳过 + WARN（D-5 读侧兜底）
+//   其余        → root[K] = 值（**赢过 live settings.json 既有同名键**，设计
+//                 D-3：被覆盖旧值已在 sidecar 快照中，还原无损）
+// "model" 为非空字符串时（已拍板 D-4①）：同时从 root["env"] 移除
+// "ANTHROPIC_MODEL"（modelSlotDefEnvKey 派生，不论该键来自 def 槽位 /
+// extra_env / 别名归一）——抑制唯一落点在本函数（§4.2 步骤 3，审计 F-5 时序
+// 口径：发生在合并写入之后的 apply 步，不是陈旧删除步）；其余槽位键
+//（SONNET/OPUS/…）无顶层对映键，照常写入。root["env"] 缺失 / 非对象时抑制步
+// 跳过（不炸；调用方前置保证 env 已是对象）。
+// extraSettingsJson 空串 / 非法 / 超限 / 顶层非对象 → warnings 记录且零写入
+ExtraSettingsApply applyExtraSettingsToSettingsDoc(
+    platform::json::JsonObject& root,
+    const std::string& extraSettingsJson);
+
+// 应用 / 保存校验（UI 与服务共用，设计 D-5/D-6/D-7）：空串 OK（= 未配置）；
+// 文本 ≤ kMaxExtraSettingsBytes；必须解析成功；顶层必须是对象；顶层不得含
+// "env" 键。失败带中文错误（表单 formError_ / 片段弹窗红字直出）
+core::Result<void> validateExtraSettingsJson(const std::string& text);
+
 // ---- 接管 env 生成（§4.3，Phase C 接管通道的输入）----
 // 输入：profile 的三个数据源字段 + 代理端口；输出：要写入
 // ~/.claude/settings.json env 块的托管键值（纯函数，无 IO）。
@@ -201,10 +271,9 @@ inline constexpr size_t kMaxImportTextBytes = 1u * 1024u * 1024u;
 //      _NAME 变体，不生成）；name 空则 deriveDisplayName 派生
 //   5. extra_env 经 parseExtraEnv（非法则整体忽略，读路径容错）+ applyEnvAliases
 //      别名归一后平铺；与 1-4 冲突时 1-4 优先（导入数据可能带旧 BASE_URL/token）
-//   6. sharedExtraEnvJson（profile 所绑共享配置片段的 extra_env 原文，空串 =
-//      未绑定）叠在 profile 自身 extra_env **之上**（片段赢，设计 §2.3 优先级
-//      2 > 3）：冻结 = 该键值由片段单点决定，profile 的同名值不生效（行里保留，
-//      解绑后恢复生效）；片段键仍被 1-4 的托管键覆盖（优先级 1 最高）
+//（原规则 6「共享片段 env 叠加」随 2026-09-30 advanced-json-editor §8.4 拆除：
+//  片段已重构为高级属性 JSON 预设，叠加走 effectiveExtraSettingsJson /
+//  applyExtraSettingsToSettingsDoc 的 JSON 域，env 域不再吃片段）
 
 // 接管时写入 settings.json 的占位凭据（代理仅监听 127.0.0.1、无鉴权；
 // 真实上游 key 由代理转发时注入）
@@ -228,16 +297,18 @@ enum class EnvSource {
 std::map<std::string, std::string> buildProxyEnv(
     const std::string& modelsConfigJson, const std::string& legacyModel,
     const std::string& extraEnvJson,
-    int proxyPort, const std::string& sharedExtraEnvJson = "",
+    int proxyPort,
     // 可选出参：每个键的来源（见 EnvSource）。非空则先清空再填；传 nullptr
-    // （默认）= 不记录，既有调用方零改动
+    // （默认）= 不记录，既有调用方零改动。（advanced-json-editor §8.4：原
+    // sharedExtraEnvJson 形参拆除——片段不再携带 env 键）
     std::map<std::string, EnvSource>* sourcesOut = nullptr);
 
 // ---- 直连 env 生成（2026-09-28 profile-run 设计 §4.2，D-1：临时 settings + --settings）----
 // 输入 = profile 数据字段 + Keychain 已读出的密钥值（**本函数不读 Keychain**，
 // 读失败由调用方在调本函数前中止）；输出 = 临时 settings.json 的 env 子对象
-// （纯函数，无 IO）。与 buildProxyEnv 同款的槽位 loop / extra_env 别名归一 /
-// 共享片段叠加（片段赢），仅托管键不同（直连形态）：
+// （纯函数，无 IO）。与 buildProxyEnv 同款的槽位 loop / extra_env 别名归一，
+// 仅托管键不同（直连形态）。（advanced-json-editor §8.4：原共享片段叠加形参
+// 拆除——片段叠加走 JSON 域）
 //   1. ANTHROPIC_BASE_URL = baseUrl 去尾斜杠（照 updateProfile 写侧口径）；空
 //      串 → 不写该键（Claude Code 回落内置默认上游）
 //   2. 密钥键按 profile 的「认证字段」三态**只写一个**（直连路径携带的
@@ -251,13 +322,12 @@ std::map<std::string, std::string> buildProxyEnv(
 //      密钥值空串 → 不写该键（上层已用读 Keychain 失败挡住绝大部分空值）
 //   3. 模型槽位（effectiveModelsConfig）：空槽位跳过；*_NAME 派生显示名，
 //      subagent 槽位对应 CLAUDE_CODE_SUBAGENT_MODEL（照表派生）
-//   4. extra_env / 共享片段先入表；托管键（BASE_URL 与密钥键）最后写入压过它们
+//   4. extra_env 先入表；托管键（BASE_URL 与密钥键）最后写入压过它们
 std::map<std::string, std::string> buildDirectEnv(
     const std::string& baseUrl, const std::string& apiKeyPlain,
     const std::string& authField,
     const std::string& modelsConfigJson, const std::string& legacyModel,
-    const std::string& extraEnvJson,
-    const std::string& sharedExtraEnvJson = "");
+    const std::string& extraEnvJson);
 
 // 托管键全集（审计 CPX-12）：BASE_URL + 占位 token + 槽位表派生的 env 键与
 // *_NAME 键（CPX-08 收敛后由 modelSlotTable() 遍历生成，当前 6 槽位 = 12 键）；
@@ -296,15 +366,9 @@ bool isLoopbackUrl(const std::string& url);
 //      ｜provider_config_guard_G5_absent_clears（语义落在 mergeReverseSyncEnv）
 //   G6 值形态非法（非字符串 / 长度 > 4096）        → 跳过该键 + WARN，不整体 fail
 //      ｜provider_config_guard_G6_invalid_value
-//   G10 键 ∈ ownedKeys（捕获目标所绑共享配置片段的键集）→ 跳过该键 + 警告
-//      ｜provider_config_guard_G10_shared_config_key
-//      ownedKeys 语义 = 「该 profile 绑定的片段」的键集，不是「全部片段的并集」：
-//      live 里的片段键恒由「绑定了该片段的那个 profile」的接管写入，切换时正好
-//      收编回它自己，按绑定关系挡即可；取并集会让没绑该片段的 profile 无法收编
-//      用户在 live 的改动（误伤面更大，设计 §2.4）
-//      **G10 判在 G1 之前**（设计 §2.9 流程图把 G1 列在前）：takeOver 会把片段键
-//      并入 sidecar managedKeys，故捕获时它们通常也命中 G1 —— 两者处置相同
-//      （不写也不清），但只有先判 G10 才能给出「被片段冻结」这条更准确的警告
+//（G10「键 ∈ 绑定片段 ownedKeys」守卫随 2026-09-30 advanced-json-editor §8.4
+//  拆除：片段不再携带 env 键，ownedKeys 供给方 sharedEnvKeysFor 已删——守卫
+//  永不触发的死通道按「真拆」裁决移除，专测同步删除）
 struct ReverseSyncParse {
     bool ok = false;
     std::string error;
@@ -315,8 +379,7 @@ struct ReverseSyncParse {
 
 ReverseSyncParse parseEnvForReverseSync(
     const std::string& envJson,
-    const std::vector<std::string>& managedKeys,
-    const std::vector<std::string>& ownedKeys = {});
+    const std::vector<std::string>& managedKeys);
 
 // 反向同步的第二段（§3.4 出现/缺席语义）：把 cfg 对齐到 profile 现值上。
 //   - 出现（cfg 非空）→ 覆盖；缺席 → 清空；命中守卫（skippedKeys）→ 保持原值

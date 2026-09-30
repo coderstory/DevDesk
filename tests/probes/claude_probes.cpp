@@ -92,11 +92,12 @@ int main(int argc, char* argv[]) {
     ProbeEnv env;
     std::vector<int64_t> ids;
     bool seedOk = true;
+    // advanced-json-editor §8：片段 = 高级属性 JSON 预设（v11 后不再携带 env 键）
     for (int i = 0; i < 8 && seedOk; ++i) {
         auto f = env.svc->createSharedConfig(
             "片段" + std::to_string(static_cast<char>('A' + i)),
-            std::string("{\"MY_") + static_cast<char>('A' + i) +
-                "\":\"v\"}");
+            std::string("{\"hook") + static_cast<char>('A' + i) +
+                "\":{\"on\":" + (i % 2 == 0 ? "true" : "false") + "}}");
         if (f.isFail()) seedOk = false;
     }
     for (int i = 0; i < 5 && seedOk; ++i) {
@@ -109,6 +110,15 @@ int main(int argc, char* argv[]) {
         } else {
             ids.push_back(p.value().id);
         }
+    }
+    // profile 0：高级设置 JSON + 绑定片段 A（详情「高级配置」pane 键来源标注
+    // 与表单高级配置页 JSON 框的落图数据源，advanced-json-editor §7/§8.5）
+    if (seedOk && !ids.empty()) {
+        module::claude::Profile p = env.svc->getProfile(ids[0]).value();
+        p.extraSettingsJson =
+            R"({"model": "probe-model", "statusLine": {"type": "command"}, "permissions": {"allow": ["Bash"]}})";
+        p.sharedConfigId = env.svc->listSharedConfigs().value()[0].id;
+        seedOk = env.svc->updateProfile(p).isOk();
     }
     // 30 条调用记录（P2：行数按可用高推的判别力来源——旧实现恒锁 10 行）
     if (seedOk && !ids.empty()) {
@@ -420,6 +430,13 @@ int main(int argc, char* argv[]) {
             renderAndDump(dumpPrefix + "_" + name + ".ppm");
         };
         composeFrame();
+        // 选中 profile 0（详情 shown 优先用户选中——键来源标注 / JSON 框预填
+        // 的落图前提）
+        if (auto* card = ui->find("claude.profile.0.bg");
+            card != nullptr && card->onClick != nullptr) {
+            card->onClick();
+            composeFrame();
+        }
         // ① 详情 tab 0：7 键操作组（batch-fix C）
         dumpState("actions7");
         // ② 详情 tab 3：高级配置 pane（batch-fix B）
@@ -450,6 +467,17 @@ int main(int argc, char* argv[]) {
                         cancel->onClick();   // 取消，不落任何改动
                     }
                 }
+            }
+        }
+        // ⑤ 共享片段编辑弹窗（advanced-json-editor §8.1 JSON 化：name + 高级
+        // 设置 JSON 编辑框 + 格式化）
+        if (auto* card = ui->find("claude.shared.card.0.bg");
+            card != nullptr && card->onClick != nullptr) {
+            card->onClick();
+            dumpState("shared_dialog");
+            if (auto* cancel = ui->find("claude.dialog.shared.cancel.bg");
+                cancel != nullptr && cancel->onClick != nullptr) {
+                cancel->onClick();   // 取消，不落任何改动
             }
         }
         // ④ 列表右键菜单（五项，batch-fix C）

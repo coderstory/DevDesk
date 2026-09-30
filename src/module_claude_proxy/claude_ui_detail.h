@@ -66,12 +66,24 @@ struct DetailView {
     //   同源、pane 内不做服务调用（避免每帧 DB 查询）
     std::string dialectText;
     std::string fallbackName;
+    // 高级配置 pane 的键来源清单（advanced-json-editor 设计 §8.5，0edd3cf 形态
+    // 复用）：生效 JSON（profile ⊕ 片段，片段赢）逐顶层键 → 来源标签
+    //（envSourceLabel(EnvSource::Shared) = 「片段」/「本 Profile」）。compose
+    // 装配（与列表/详情快照同源，pane 内零服务调用）；model 键附加说明进
+    // extraSettingsNote。解析失败/空 JSON → 列表空 + pane 单行说明
+    std::vector<std::pair<std::string, std::string>> extraSettingsKeys;
+    std::string extraSettingsNote;
     // 注：这里**没有** bodyH 字段（2026-09-29 审计 F-01 删除）。容器可用高只由
     // drawDetailPanel 的 bodyH 形参持有，pane 侧的行数预算一律用传下去的
     // contentBottom —— 曾经的 `DetailView::bodyH` 全仓零读、注释却宣称它是
     // 「行数预算唯一来源」，按它算会得到与真实裁剪下沿差 105px 的另一个量，
     // 正是本次修的病根换个马甲。要算预算就往 contentBottom 走。
 };
+
+// 生效来源短标签（P3 建立；advanced-json-editor §8.5 复用于高级属性键来源
+// 标注）：三类来源 → 中文标签。原 detail.cpp 匿名命名空间 helper 提升为公开
+//（compose 装配 DetailView.extraSettingsKeys 也用它，单一来源不手抄文案）
+const char* envSourceLabel(EnvSource s);
 
 // pane 绘制副产物（诊断日志用）：实际画出的行数 / 可画的总行数。
 // 只给「行数预算型」pane（环境变量 / 最近调用）填 —— 它们是本次修复的核心，
