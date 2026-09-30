@@ -121,8 +121,8 @@ std::vector<PetWorkArea> currentMonitorWorkAreas() {
 // M1 只按主屏钳，副屏位置（负坐标或超出主屏边界）落盘被吞回主屏，重启跳回
 // 主屏；M2 按位置选对应显示器后副屏负坐标可持久化（pet_config 哨兵同步放宽
 // 为仅 -1）。与启动路径共用同一纯函数，两处语义单源。
-// 尺寸传**整窗**：宽/高 = 显示大小缩放后的帧尺寸（scaledFrameSize，仍钳
-// [16,512]）+ 气泡让位条（petWindowHeight，见 pet_bubble.h）——钳制把整窗
+// 尺寸传**整窗**：宽/高 = 显示大小缩放后的帧尺寸（scaledFrameSize，缩放后仅钳
+// 上界 512，下界不钳）+ 气泡让位条（petWindowHeight，见 pet_bubble.h）——钳制把整窗
 // 关进工作区，气泡条上沿才不会越过屏幕工作区上缘（越界回贴边）
 void clampPetPosIntoWorkAreaInPlace(int& x, int& y) {
     const PetSkin& skin = runtime().skin;
@@ -688,7 +688,7 @@ bool startPetWindow(const PetWindowConfig& config) {
     // 工作区（设计 §4.6；M2 多显示器——M1 只按主屏钳，副屏位置落盘被吞）。
     // 工作区查询失败（无头/早于 glfwInit）时不动已知位置，未设置则给屏内兜底值。
     // 钳制/默认位都按**整窗**算：窗口尺寸 = scaledFrameSize(帧尺寸, scale)
-    // （显示大小三档，仍钳 [16,512]）+ 气泡让位条（petWindowHeight，见
+    // （显示大小三档，缩放后仅钳上界 512，下界不钳）+ 气泡让位条（petWindowHeight，见
     // pet_bubble.h）——单位 = 点，不乘 Retina contentScale
     const auto [winW, winHFrame] =
         scaledFrameSize(rt.skin.frameWidth, rt.skin.frameHeight,

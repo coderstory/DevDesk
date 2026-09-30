@@ -16,7 +16,7 @@ namespace module::pet {
 // 显示大小三档（2026-09-30 用户需求「桌宠显示大小」：设置页下拉，窗口尺寸
 // 与精灵渲染同步缩放）。值/文案/默认档的**单源**在此——设置页侧经
 // module_pet_bridge.h 的 petScalePresetLabels() 取文案、按下标回传，不自带
-// 一份防漂移。窗口尺寸换算见 pet_skin.h scaledFrameSize（缩放后仍钳 [16,512]）
+// 一份防漂移。窗口尺寸换算见 pet_skin.h scaledFrameSize（缩放后仅钳上界 512，下界不钳）
 inline constexpr double kPetScalePresets[] = {0.75, 1.0, 1.5};
 inline constexpr const char* kPetScalePresetLabels[] = {"小 0.75×", "中 1.0×",
                                                         "大 1.5×"};

@@ -350,7 +350,7 @@ int main(int argc, char* argv[]) {
             } else if (std::fabs(act->frame.y - actY0) > 0.5f) {
                 std::cerr << "claude_probes[" << tag << "]: tab " << tab
                           << " actY=" << act->frame.y << " != tab0 actY="
-                          << actY0 << "（四页签未锚同一条水平线）\n";
+                          << actY0 << "（五页签未锚同一条水平线）\n";
                 passed = false;
             }
             const float detailBottom =

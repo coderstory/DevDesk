@@ -19,7 +19,8 @@ constexpr const char* kKeyX = "x";
 constexpr const char* kKeyY = "y";
 constexpr const char* kKeyScale = "scale";  // 显示大小档（0.75/1.0/1.5）
 // 【历史】clickThrough 键随「挂机穿透」功能于 2026-09-24 一并移除：save 只写
-// skinName/x/y 三个键，旧 pet_config.json 残留的 clickThrough 键被 load 静默
+// skinName/x/y/scale 四个键（与 pet_config.h:57 口径一致），旧 pet_config.json
+// 残留的 clickThrough 键被 load 静默
 // 忽略（向后兼容：不报错、也不做迁移），下次 save 重写整文件后自然消失
 } // namespace
 
@@ -85,7 +86,14 @@ PetConfig PetConfigStore::load() const {
         cfg.y = static_cast<int>(obj.get(kKeyY).asInt());
     }
     if (obj.has(kKeyScale) && obj.get(kKeyScale).isNumber()) {
-        cfg.scale = obj.get(kKeyScale).asDouble();
+        // 数字双分支读取（照抄 todo_view_state.cpp:94-97 同款先例）：两种落盘
+        // 形态都要认——新版 yyjson writer 把整值写成 "2.0" 走 Double 分支；
+        // 手改整数（如 "2"）走 Int 分支（Kind::Int 只填 intVal），只读
+        // asDouble() 恒返 0，会先读成 0 再被 sanitize 收敛默认档（日志还
+        // 谎报 scale=0）。故 asDouble 为 0 时回退 asInt
+        const platform::json::JsonValue v = obj.get(kKeyScale);
+        cfg.scale = v.asDouble() != 0.0 ? v.asDouble()
+                                        : static_cast<double>(v.asInt());
     } else if (obj.has(kKeyScale)) {
         LOG_WARN("Pet: 配置 scale 键非法（非数字），回落默认 1.0: " +
                  file_.string());

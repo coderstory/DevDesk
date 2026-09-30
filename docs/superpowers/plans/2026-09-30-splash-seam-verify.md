@@ -28,7 +28,7 @@
 | 项 | 结果 |
 |----|------|
 | `--filter sidebar`（修复后） | Total: 8 / Passed: 8 / Failed: 0（修复前 4/8 红） |
-| 全量（`--no-run`） | **Total: 868 / Passed: 862 / Failed: 0**（差值 6 = `DEVDESK_SOAK=1` 等门控 SKIP，与 2026-09-30-skipped-cases.md 口径一致） |
+| 全量（`--no-run`） | **Total: 868 / Passed: 862 / Failed: 0**（差值 6 = `DEVDESK_SOAK=1` 等环境门控 SKIP） |
 | `ctest -L probe` | 100% tests passed out of 8 |
 | 模块隔离守卫（随脚本） | 通过 |
 

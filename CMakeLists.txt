@@ -65,7 +65,9 @@ endif()
 # （他人克隆只有 v0.6.0，硬 fail 会造成误阻断）；EUI-NEO push 后可将本诊断
 # 升级为硬检查。最低依赖 rev 与 CLAUDE.md「当前依赖 rev」保持一致，消费
 # EUI-NEO 新 API 后两处同步更新（当前门槛取 U1 尺度契约合入点，含
-# app::contentScale / core::dsl::Screen::scale 与 yyjson writer 放开）。
+# app::contentScale / core::dsl::Screen::scale 与 yyjson writer 放开；
+# 2026-09-30 起另含 dropdown 展开态弹层 z 修复——tests/probes 的弹层 z 序
+# 门禁依赖，见 tests/probes/settings_dropdown_z_probe.cpp）。
 set(DEVDESK_EUI_NEO_MIN_REV "72a5187")
 execute_process(
     COMMAND git -C "${EUI_NEO_DIR}" rev-parse --short HEAD

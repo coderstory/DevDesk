@@ -556,9 +556,10 @@ void drawPetCard(const CardDrawArgs& args) {
                 .size(240.0f, 40.0f)
                 .content([&] {
                     // openUp 防护与皮肤下拉同款几何判定（卡顶 + 字段偏移 +
-                    // 弹层高 vs 屏高；三项 = 3×34+12）
+                    // 弹层高 vs 屏高；项数 = petScaleLabels.size()，当前 3×34+12）
                     const bool scaleOpenUp = dropdownPopupOverflows(
-                        pageY, 112.0f, 40.0f, 3, screenH);
+                        pageY, 112.0f, 40.0f,
+                        static_cast<int>(in.petScaleLabels.size()), screenH);
                     components::dropdown(ui, id + ".scale.dd")
                         .size(240.0f, 40.0f)
                         .theme(compTheme)
@@ -586,7 +587,7 @@ void drawPetCard(const CardDrawArgs& args) {
                 .build();
             // 显示桌宠（PAB-13）：隐藏后的恢复入口（隐藏走右键「隐藏桌宠」
             // 菜单项，之后本按钮即可重新开窗）。同排 y=64、居「位置重置」
-            // 左侧 8px；卡高保持 120（内容底沿 104 不变，故 contentKey 不变）
+            // 左侧 8px；卡高保持 168（内容底沿 152 不变，故 contentKey 不变）
             components::button(ui, id + ".show")
                 .position(w - 28.0f - 160.0f - 168.0f, 64.0f)
                 .size(160.0f, 40.0f)

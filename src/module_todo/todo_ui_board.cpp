@@ -595,10 +595,11 @@ void drawCard(eui::Ui& ui, const std::string& id, float x, float y, float width,
     const float groupTop = cardContentGroupTop(chipRow);
     const float chipY = y + groupTop + kCardTitleLineH + kCardTitleToChipGap;
 
-    // 标题（主文本）：水平居中 = 框对称化（x = 22 = 44/2，总留白 44 不变、
-    // 右缘仍避开完成角标）+ horizontalAlign Center（home 统计卡同款先例，
-    // 渲染实现在 EUI core/render/text.cpp）→ 字形中心 = 卡中心；垂直 =
-    // 内容组首行
+    // 标题（主文本）：水平居中 = 框对称化（x = kCardTitleBoxInset = 40 =
+    // 80/2，总留白 80；右缘 = width-40，让开完成角标区间 [width-36,
+    // width-12] 并留 4px——改前 22 的右缘 width-22 落在角标区间内）+
+    // horizontalAlign Center（home 统计卡同款先例，渲染实现在 EUI
+    // core/render/text.cpp）→ 字形中心 = 卡中心；垂直 = 内容组首行
     ui.text(id + ".title")
         .position(kCardTitleBoxInset, y + groupTop)
         .size(width - 2.0f * kCardTitleBoxInset, kCardTitleLineH)

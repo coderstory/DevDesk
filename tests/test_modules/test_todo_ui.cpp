@@ -1159,6 +1159,11 @@ REGISTER_TEST(todo_ui_card_text_centered,
         DOCTEST_CHECK_EQ(title->horizontalAlign, eui::HorizontalAlign::Center);
         DOCTEST_CHECK(std::abs((title->frame.x + title->frame.width / 2.0f) -
                                cardCX) <= 1.0f);
+        // 水平让位（R1 审计修，kCardTitleBoxInset 22→40）：标题框右缘必须
+        // 让开完成角标区间 [w-36, w-12]（drawCard 的 .done 角标 x = width-36），
+        // 否则标题文字压角标——改前 inset=22 时本断言红
+        DOCTEST_CHECK(title->frame.x + title->frame.width <=
+                      cardBg->frame.x + cardBg->frame.width - 36.0f);
 
         // 垂直：内容组 [顶, 底] 中点 = 卡内容区中心（≤1px）。
         // 组顶 = 标题顶；组底 = chip 底（有 chip 行）或标题底（纯标题卡）

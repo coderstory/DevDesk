@@ -63,7 +63,7 @@
 | claude 详情动作按钮 | token（`fontSizeSmall`） | 36px 字面按钮盒 | ✅ 余量足（13×1.3≈16.9 < 36），低风险 | `claude_ui_detail.cpp:707,725,743,761,779,799` |
 | claude 详情基础 pane 值 | token | 28/32px 字面盒 | ✅ 余量足，低风险 | `claude_ui_detail.cpp:112,127` |
 | claude 详情标题 | token（`fontSizeLarge` 18×1.3≈23.4） | **24px 字面盒** | ⚠️ 贴边（余量 0.6px，未实证重叠） | `claude_ui_detail.cpp:869-877` |
-| **claude 详情环境变量 pane** | 字面 | 字面（`kEnvRowPitch=54` / 行盒 48） | **归在飞分支修复（已提交 1ca87b0 待合并，见 §2.4）** | `claude_ui_detail.cpp:297-298,343,350,373,381` |
+| **claude 详情环境变量 pane** | 字面 | 字面（`kEnvRowPitch=54` / 行盒 48） | **已并入 master（merge 0edd3cf，见 §2.4）** | `claude_ui_detail.cpp:297-298,343,350,373,381` |
 
 ### 2.3 方案：两张清单
 
@@ -88,11 +88,11 @@
 | todo 卡片全量（文本 + 几何全字面） | 130% 下无重叠，仅「缩放失效」 | 需要整套派生化设计（含卡片高度自适应），不是小改；无用户实证受害 |
 | claude 表单弹窗（全字面） | 同上 | 同上 |
 | claude 详情标题 24px 盒 / 按钮 36px 盒 / 值盒 | token 文本 + 大字面盒，余量 0.6px~20px | 未实证重叠；贴边点（标题）随 env pane 在飞修复收敛后一并复查 |
-| claude 详情 env pane | 字面 | **在飞 `fix/detail-env-pane` 所有（已提交 1ca87b0 待合并）**，见 §2.4 |
+| claude 详情 env pane | 字面 | **已并入 master（merge 0edd3cf）**，见 §2.3 注与 tech-debt T4 |
 
 ### 2.4 与在飞环境变量 pane 修复（#3）的边界（防两处同改）
 
-- `fix/detail-env-pane` worktree（分支 `fix/detail-env-pane`）**修复已提交**：tip = `1ca87b0`「fix(claude-ui): 详情页环境变量 pane 滤模型映射键 + 行几何随字号缩放派生」，领先 master 1 个提交、工作树干净（审计 2026-09-30 实查）——`drawDetailEnv`（`claude_ui_detail.cpp:243-402`，含 `kEnvRowPitch` / `kEnvOverflowH` 常量与行内文本）已按**行几何派生化**方案改完，状态为待合并，非「在飞出活」。
+- `fix/detail-env-pane` worktree（分支 `fix/detail-env-pane`）**修复已提交**：tip = `1ca87b0`「fix(claude-ui): 详情页环境变量 pane 滤模型映射键 + 行几何随字号缩放派生」，领先 master 1 个提交、工作树干净（审计 2026-09-30 实查）——`drawDetailEnv`（`claude_ui_detail.cpp:243-402`，含 `kEnvRowPitch` / `kEnvOverflowH` 常量与行内文本）已按**行几何派生化**方案改完，状态为待合并（**2026-09-30 更新：已并入 master，merge `0edd3cf`**），非「在飞出活」。
 - **本批项 A 不碰 `claude_ui_detail.cpp` 的 env pane 任何一行**（本文 §2.2 表中该行仅作盘点记录，不构成实施依据——重叠机理以在飞分支的实证为准）；项 B 的详情「高级配置」pane 是**新增函数**（`drawDetailAdvanced`），不触碰 `drawDetailEnv`，无文件级冲突但**同文件，串行施工**（项 B 排在 env pane 修复合并后 rebase——等待对象是合并已完成的提交 `1ca87b0`，非等在飞分支出活）。
 - settings 卡片派生化在 `module_settings`，与在飞分支零交叠。
 - 后续若统一推进「全模块派生化」（todo / 表单），以 env pane 修复提交 `1ca87b0` 确立的派生口径（`fontScale()` 读取点、`fs()` helper 形态）为准绳，不另起炉灶。
