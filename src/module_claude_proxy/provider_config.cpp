@@ -631,10 +631,11 @@ std::map<std::string, std::string> buildDirectEnv(
     // 托管键 2：密钥键按认证字段三态只写一个（直连形态；见 provider_config.h
     // buildDirectEnv 注释的三态表）。密钥值为空串 → 不写（读 Keychain 成功但
     // 条目为空属于异常数据，宁可不写也不发空值）。
-    // 写选中键的同时**清掉另一密钥键**：extra_env / 共享片段可能带进反向的
-    // token 键（如默认 both 形态下片段里有 ANTHROPIC_API_KEY）——留着会让直连
+    // 写选中键的同时**清掉另一密钥键**：extra_env 可能带进反向的 token 键
+    //（如默认 both 形态下 extra_env 里有 ANTHROPIC_API_KEY）——留着会让直连
     // 请求携带两个凭据，网关可能取到过期/错误的那一个（代理路径免疫：客户端
-    // 鉴权头被代理剥掉，直连路径没有这层保护，必须单键）
+    // 鉴权头被代理剥掉，直连路径没有这层保护，必须单键）。advanced-json-editor
+    // §8.4 起片段不再进 env 域，原文的「共享片段带进」字样随之删除
     const AuthField field = authFieldFromText(authField);
     const char* tokenKey = (field == AuthField::ApiKey)
         ? "ANTHROPIC_API_KEY"

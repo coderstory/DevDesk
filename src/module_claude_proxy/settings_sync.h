@@ -27,8 +27,8 @@
 //   4. 原子写：同目录临时文件 + rename
 //   5. 上层覆盖检测（§5.3）：managed（企业策略）/ project（cwd 的
 //      .claude/settings.json + settings.local.json）层 env 含托管键
-//      （managedEnvKeyNames() 的 12 键全集 ∪ 本轮实际写入的托管键：profile
-//      extra_env 与共享片段键）→ LOG_WARN + 警告信息随 SyncResult 返回
+//      （managedEnvKeyNames() 的 12 键全集 ∪ 本轮实际写入的托管键 = buildProxyEnv
+//      产出 ∪ sidecar managedKeys 并集）→ LOG_WARN + 警告信息随 SyncResult 返回
 //      （UI 展示留给 Phase D），**提示不代改**。检测域维持 env 键（裁决④：
 //      非 env 层同名键覆盖 = 文件分层正常语义，不扩）
 //

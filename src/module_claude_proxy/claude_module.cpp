@@ -198,8 +198,16 @@ public:
                     state_.list.cachedSharedConfigs_, shown->sharedConfigId);
                 if (sc != nullptr) fragmentJson = sc->extraSettingsJson;
             }
+            // warningsOut（审计 F-03）：非法/超限一侧被合并纯函数按空处理时
+            // 在此捕获——keys 空且 warnings 非空 = 配置存在但失效，pane 显示
+            // 「解析失败」提示态而非「未配置」（§8.5 验收点；接管 WARN 日志
+            // 之外的展示层口径）
+            std::vector<std::string> effWarnings;
             const std::string effective = effectiveExtraSettingsJson(
-                shown->extraSettingsJson, fragmentJson);
+                shown->extraSettingsJson, fragmentJson, &effWarnings);
+            if (effective.empty() && !effWarnings.empty()) {
+                dv.extraSettingsNote = "（JSON 解析失败，接管时将忽略）";
+            }
             if (!effective.empty()) {
                 auto parsed = platform::json::parse(effective);
                 if (parsed.isOk() && parsed.value().isObject()) {

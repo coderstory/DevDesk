@@ -5374,6 +5374,16 @@ REGISTER_TEST(claude_detail_advanced_key_sources,
         p.sharedConfigId = f.value().id;
         DOCTEST_REQUIRE(env.svc->updateProfile(p).isOk());
     }
+    // 坏 JSON profile（F-03：解析失败提示态必须可达——compose 经 warningsOut
+    // 感知「配置存在但被合并按空」，pane 显示失败行而非「未配置」）
+    auto bad = env.svc->createProfile("坏JSON源", "https://ksb.example.com",
+                                      "sk-ant-ksrc-0002", "");
+    DOCTEST_REQUIRE(bad.isOk());
+    {
+        module::claude::Profile p = bad.value();
+        p.extraSettingsJson = "{broken json";
+        DOCTEST_REQUIRE(env.svc->updateProfile(p).isOk());
+    }
 
     std::unique_ptr<::core::Module> mod(create_claude_module());
     eui::Screen screen;
@@ -5391,20 +5401,34 @@ REGISTER_TEST(claude_detail_advanced_key_sources,
         node->onClick();
         return true;
     };
-    // 等缓存快照带上 JSON 与绑定（卡片角标 = 缓存信号）
+    // 等缓存快照带上 JSON 与绑定（绑定卡片角标 = 缓存信号；列表含两个 profile，
+    // 按名定位「键来源」的卡片序——不依赖 collation 排序）
     bool sawBadge = false;
+    int boundIdx = -1;
     for (int i = 0; i < 250 && !sawBadge; ++i) {
         eui::Ui ui;
         compose(ui);
-        if (ui.find("claude.profile.0.shared.badge") != nullptr) sawBadge = true;
-        else std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        for (int k = 0; k < 8; ++k) {
+            const auto* name = ui.find("claude.profile." + std::to_string(k) +
+                                       ".name");
+            if (name != nullptr && name->text == "键来源" &&
+                ui.find("claude.profile." + std::to_string(k) +
+                        ".shared.badge") != nullptr) {
+                sawBadge = true;
+                boundIdx = k;
+                break;
+            }
+        }
+        if (!sawBadge) std::this_thread::sleep_for(std::chrono::milliseconds(5));
     }
     DOCTEST_CHECK(sawBadge);
+    DOCTEST_REQUIRE(boundIdx >= 0);
     // 选中卡片（详情 shown 优先用户选中——不选中时 shown 为 null，键清单不渲染）
     {
         eui::Ui ui;
         compose(ui);
-        DOCTEST_CHECK(click(ui, "claude.profile.0.bg"));
+        DOCTEST_CHECK(click(ui, "claude.profile." + std::to_string(boundIdx) +
+                                ".bg"));
     }
     {
         eui::Ui ui;
@@ -5447,8 +5471,38 @@ REGISTER_TEST(claude_detail_advanced_key_sources,
         }
     }
 
+    // 切到坏 JSON profile → 解析失败提示态（§8.5 单行；F-03 接线断言）
+    {
+        eui::Ui ui;
+        compose(ui);
+        bool clicked = false;
+        for (int i = 0; i < 8 && !clicked; ++i) {
+            const auto* name = ui.find("claude.profile." + std::to_string(i) +
+                                       ".name");
+            if (name != nullptr && name->text == "坏JSON源") {
+                clicked = click(ui, "claude.profile." + std::to_string(i) +
+                                        ".bg");
+            }
+        }
+        DOCTEST_CHECK(clicked);
+    }
+    {
+        eui::Ui ui;
+        compose(ui);
+        DOCTEST_CHECK(click(ui, "claude.detail.tabs.hit.3"));
+    }
+    {
+        eui::Ui ui;
+        compose(ui);
+        const auto* status = ui.find("claude.advjson.status");
+        DOCTEST_REQUIRE(status != nullptr);
+        DOCTEST_CHECK(status->text.find("JSON 解析失败") != std::string::npos);
+        DOCTEST_CHECK(ui.find("claude.advjson.label") == nullptr);
+    }
+
     mod->onStop();
     cleanupProfileKey(kTestKeychainService, pid);
+    cleanupProfileKey(kTestKeychainService, bad.value().id);
     return true;
 })
 
@@ -5518,13 +5572,16 @@ REGISTER_TEST(claude_detail_advanced_key_overflow_within_box,
         const auto* box = ui.find("claude.detail.contentbox");
         DOCTEST_REQUIRE(box != nullptr);
         const float boxBottom = box->frame.y + box->frame.height;
-        // 行数 < 12（预算生效）；画出的行 + 溢出提示全部 ≤ 内容框底
+        // 行数 < 12（预算生效）；画出的行 + 溢出提示全部 ≤ 内容框底。
+        //（逐行 frame 断言曾随 c32581a 清理调试输出被误删——审计 F-02 恢复；
+        // 绿态应过：行数预算 while 收缩保证 rows+tail ≤ availH）
         int drawn = 0;
         for (int i = 0; i < 12; ++i) {
             const auto* row =
                 ui.find("claude.advjson.row.bg." + std::to_string(i));
             if (row == nullptr) break;
             ++drawn;
+            DOCTEST_CHECK(row->frame.y + row->frame.height <= boxBottom + 0.5f);
         }
         DOCTEST_CHECK(drawn < 12);
         DOCTEST_CHECK(drawn > 0);

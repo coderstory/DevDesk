@@ -324,9 +324,10 @@ private:
 
     // R10-A4：接管/还原的协议侧已迁 SettingsTakeOver（settings_takeover.
     // {h,cpp}，职责边界见 R10 spec §2.2）；本门面保留两条编排入口：
-    //   - syncTakeOver()：从 ProfileRepository 取激活 Profile、从
-    //     ProxyRuntime 取端口、取所绑片段 env 后一并传入
-    //     settingsTakeover_.syncTakeOver(active, port, sharedExtraEnvJson)
+    //   - syncTakeOver()：从 ProfileRepository 取激活 Profile、从 ProxyRuntime
+    //     取端口；生效高级设置 JSON 预先装配进 Profile 副本的 extraSettingsJson
+    //    （片段叠加片段赢，§5.2①/§8.2）后一并传入
+    //     settingsTakeover_.syncTakeOver(active, port)
     //     （P-A4 双入参，子对象不反向依赖彼此）。失败原因经子对象并入
     //     warnings_（UI 经 lastSyncWarnings 透传）；**失败不阻断上层操作**
     //   - syncRestore()：settingsTakeover_.syncRestore()（CPX-02 已改返

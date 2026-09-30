@@ -1170,9 +1170,9 @@ REGISTER_TEST(sync_takeover_with_shared_config,
     return true;
 })
 
-// ---- 16. 服务级 G10：片段键在 live 被改 → 切换时不写也不清 ----
-// 场景刻意把 sidecar 拿掉（模拟与其它工具互抢 / 手工清理）：此时 G1 无托管键集
-// 可依据，只有 G10 能挡住片段键被反向收编 —— 这正是「按绑定关系取键集」的证明。
+// ---- 16. 服务级：删片段 → 同事务解绑 + 代理在跑则立即 re-takeover ----
+//（节头原为「服务级 G10：片段键在 live 被改」——G10 随 advanced-json-editor
+// §8.4 拆除，本组现钉 JSON 域删片段的当场回落，见下方重写版用例）
 
 REGISTER_TEST(sync_service_shared_config_delete_retakeover,
               "claude_service: 删片段当场解绑并重写 live（JSON 域片段键撤走、profile 自身值回落）", {

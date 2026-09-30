@@ -3040,6 +3040,69 @@ REGISTER_TEST(claude_service_run_profile_direct_env_writes_temp_settings,
     return true;
 })
 
+// runProfile 合并接线钉（审计 F-01，仿 F-8 门面钉）：生效 JSON（profile ⊕
+// 片段、片段赢）并入临时 settings 顶层——接线整段删除则本用例红（三链不分叉
+// 裁决①的第三条链守护）
+REGISTER_TEST(claude_service_run_profile_merges_extra_settings,
+              "claude_service: runProfile 临时 settings 并入生效 JSON（片段赢/model 抑制，F-01 接线钉）", {
+    test_support::DataRootEnv root(kDbPrefix, "runprofile6");
+    test_support::TestDb tdb(kDbPrefix, "runprofile6");
+    module::claude::ClaudeService svc(tdb.handle(), kTestKeychainService);
+
+    TempSyncPaths paths("runprofile6");
+    svc.setSettingsSyncPaths(paths.paths());
+
+    // 片段与 profile 各含独有键 + 同键（片段赢）；JSON 含顶层 model（触发
+    // ANTHROPIC_MODEL 抑制——legacy model 列本会生成该 env 键）
+    auto frag = svc.createSharedConfig("片段R", R"({"statusLine": "frag-s"})");
+    DOCTEST_REQUIRE(frag.isOk());
+    auto a = svc.createProfile("直连JSON", "https://api.anthropic.com",
+                               "sk-ant-run-0006", "m-legacy",
+                               /*activateIfNoneActive=*/false,
+                               /*sharedConfigId=*/frag.value().id);
+    DOCTEST_REQUIRE(a.isOk());
+    {
+        module::claude::Profile p = a.value();
+        p.extraSettingsJson =
+            R"({"model": "json-model", "statusLine": "profile-s", "permissions": {"p": 1}})";
+        DOCTEST_REQUIRE(svc.updateProfile(p).isOk());
+    }
+
+    platform::terminal::LaunchSpec got;
+    svc.setTerminalLauncher([&](const platform::terminal::LaunchSpec& spec) {
+        got = spec;
+        return core::Result<void>::ok();
+    });
+    std::string hint;
+    auto r = svc.runProfile(a.value().id, &hint);
+    DOCTEST_REQUIRE(r.isOk());
+    DOCTEST_REQUIRE_EQ(got.args.size(), static_cast<size_t>(2));
+    const std::filesystem::path settingsFile(got.args[1]);
+    DOCTEST_REQUIRE(std::filesystem::exists(settingsFile));
+
+    auto parsed = platform::json::parse(readFileToString(settingsFile));
+    DOCTEST_REQUIRE(parsed.isOk());
+    DOCTEST_REQUIRE(parsed.value().isObject());
+    auto rootObj = parsed.value().asObject();
+    // 生效 JSON 并入顶层：同键片段赢、独有键与 profile 键都在
+    DOCTEST_CHECK_EQ(rootObj.get("statusLine").asString(),
+                     std::string("frag-s"));
+    DOCTEST_CHECK_EQ(rootObj.get("model").asString(), std::string("json-model"));
+    DOCTEST_REQUIRE(rootObj.get("permissions").isObject());
+    // model 抑制随行生效：env 无 ANTHROPIC_MODEL（legacy m-legacy 不落 env）
+    auto envObj = rootObj.get("env").asObject();
+    DOCTEST_CHECK(!envObj.has("ANTHROPIC_MODEL"));
+    DOCTEST_CHECK_EQ(envObj.get("ANTHROPIC_AUTH_TOKEN").asString(),
+                     std::string("sk-ant-run-0006"));
+    // 零全局闸（同既有直连用例）：settings.json / sidecar 未被触碰
+    DOCTEST_CHECK(!std::filesystem::exists(paths.sidecar));
+
+    std::error_code rmEc;
+    std::filesystem::remove(settingsFile, rmEc);
+    test_support::cleanupProfileKey(kTestKeychainService, a.value().id);
+    return true;
+})
+
 REGISTER_TEST(claude_service_run_profile_key_read_failure_aborts,
               "claude_service: runProfile 读 Keychain 失败 → fail 且不落盘、不开窗", {
     test_support::DataRootEnv root(kDbPrefix, "runprofile2");

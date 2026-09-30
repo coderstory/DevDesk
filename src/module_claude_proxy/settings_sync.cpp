@@ -240,8 +240,9 @@ SyncResult clearResidualProxyKeys(const Paths& paths) {
 
 // 上层覆盖检测（§5.3）：只提示不代改。检测集 = 托管键全集
 //（managedEnvKeyNames()：BASE_URL / 占位 token / 6 槽位键 / 4 个 _NAME——与槽位
-// 是否有值无关）∪ extraManaged（本轮实际写入的托管键 = profile extra_env 与共享
-// 片段键）。旧实现只查硬编码 8 键，且槽位为空时 buildProxyEnv 不生成这些键 →
+// 是否有值无关）∪ extraManaged（本轮实际写入的托管键 = buildProxyEnv 产出 ∪
+// sidecar managedKeys 并集；advanced-json-editor §8.4 起片段不再进 env 域）。
+// 旧实现只查硬编码 8 键，且槽位为空时 buildProxyEnv 不生成这些键 →
 // 检测集随之缩水、上层同名键压过接管也不报警（审计 CPX-12）
 std::vector<std::string> detectOverlayConflicts(
     const Paths& paths, const std::vector<std::string>& extraManaged) {
