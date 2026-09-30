@@ -73,23 +73,13 @@ std::string buildProfileExportJson(const Profile& p,
                                    const std::string& fragmentJson,
                                    const std::string& keyPlaceholder) {
     // env 域：与 runProfile 的临时 settings 同一条 env 管线（claude_service.cpp
-    // buildDirectEnv 消费点同款手法），不落盘只进剪贴板。
+    // buildDirectEnv 消费点同款手法），仅凭据换成占位值、不落盘只进剪贴板。
     // 片段 env 叠加不再走 env 通道（advanced-json-editor §6：片段已重构为高级
     // 属性 JSON 预设；env 域片段管线随 §8.4 拆除）——恒传空串，坏片段 JSON 的
     // 防静默 WARN 由调用方 doCopyConfig 覆盖两域
-    auto env = buildDirectEnv(p.baseUrl, keyPlaceholder, p.authField,
-                              p.modelsConfigJson, p.model,
-                              p.extraEnvJson);
-    // 导出契约：**任何情况下**导出 JSON 都不含凭据键——ANTHROPIC_API_KEY /
-    // ANTHROPIC_AUTH_TOKEN 无条件剔除，无论来源（Keychain 占位还是 extra_env
-    // 用户自填明文）。buildDirectEnv 只在 !apiKeyPlain.empty() 分支写/清凭据
-    // 键；占位为空（profile 未存钥，三态之一）且 extra_env 自填 token 时，
-    // 手填的明文会原样留表——不剔就把明文凭据带进剪贴板
-    //（merge-review 2026-09-30 🔴，空占位导出泄漏口）。运行链不在本契约内：
-    // claude_service.cpp runProfile 传真钥给 buildDirectEnv，extra_env 自带
-    // token 是运行链的合法供给方式，严禁把本导出脱敏搬运到运行链。
-    env.erase("ANTHROPIC_API_KEY");
-    env.erase("ANTHROPIC_AUTH_TOKEN");
+    const auto env = buildDirectEnv(p.baseUrl, keyPlaceholder, p.authField,
+                                    p.modelsConfigJson, p.model,
+                                    p.extraEnvJson);
     platform::json::JsonObject envObj;
     for (const auto& [k, v] : env) {
         envObj.set(k, platform::json::makeString(v));

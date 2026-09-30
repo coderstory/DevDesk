@@ -602,9 +602,8 @@ private:
     }
 
     // 复制配置（2026-09-30 batch-fix C，设计 §4.2②）：当前 profile →
-    // settings.json 形态 JSON → 系统剪贴板。导出恒不含凭据键
-    //（buildProfileExportJson 契约，merge-review 2026-09-30：占位与
-    // extra_env 自填 token 一律剔除），**不导明文 key**（§5① 裁决——剪贴板是跨
+    // settings.json 形态 JSON → 系统剪贴板。占位 sk-ant-***<尾4>（与详情页
+    // apiKeyHint 同一脱敏口径），**不导明文 key**（§5① 裁决——剪贴板是跨
     // 应用共享面，明文一经粘贴即离开 Keychain 托管）。setClipboardText 返回
     // void、模块层无窗口句柄无法回读校验 → 接线处固定 LOG_WARN 一行留痕
     //（低概率写失败时 toast 已提示成功，属已知限制，audit F5）
@@ -649,9 +648,8 @@ private:
             }
         }
         // 占位值：apiKeyHint 即「前6 + *** + 尾4」形态（profile_repository
-        // 脱敏生成，同源同口径）。导出恒无凭据键——buildProfileExportJson
-        // 契约（merge-review 2026-09-30）把两个 token 键无条件剔除，hint
-        // 空或不空、extra_env 是否自填 token 均不进剪贴板
+        // 脱敏生成，同源同口径）；hint 为空（Keychain 读不到）→ 传空串，
+        // buildDirectEnv 空值不写凭据键 → 导出无 token 键
         const std::string json = buildProfileExportJson(
             p, fragmentJson, /*keyPlaceholder=*/p.apiKeyHint);
         if (json.empty()) {

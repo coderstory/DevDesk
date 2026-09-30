@@ -103,7 +103,7 @@ struct DetailActions {
     std::function<void(int64_t id, const std::string& name)> requestDelete;  // 删除（确认弹窗）
     std::function<void(int64_t id)> duplicate;                       // 建副本
     // 复制配置（2026-09-30 batch-fix C，设计 §4.2②）：profile → settings.json
-    // 形态 JSON → 系统剪贴板（恒无凭据键、不导明文 key）。第 6 键 + 右键菜单双入口
+    // 形态 JSON → 系统剪贴板（占位不导明文 key）。第 6 键 + 右键菜单双入口
     std::function<void(const Profile& p)> copyConfig;
     std::function<void(int64_t id)> run;                             // 运行
     std::function<void()> openCalls;                                 // 「查看全部 →」
