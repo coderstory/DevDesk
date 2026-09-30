@@ -23,6 +23,7 @@
 #include "settings_sync.h"
 
 #include <eui/dsl.h>
+#include <components/input.h>   // InputState：读回编辑框文本（格式化当场改写的判据）
 
 #include <chrono>
 #include <cmath>
@@ -3085,19 +3086,51 @@ REGISTER_TEST(claude_ui_advanced_json_invalid_and_env_key_rejected,
         DOCTEST_REQUIRE(err != nullptr);
         DOCTEST_CHECK(err->text.find("解析失败") != std::string::npos);
     }
-    // 成功分支：compact → 格式化 → 保存 → DB 为 pretty
+    // 成功分支：compact 输入 → 点「格式化」→ **编辑框文本当场**变成 pretty
+    // 且键序重排为字典序。
+    // 变异自证（merge-review R2）：原断言只查「落库为 pretty」，而保存链自己
+    // 就会 pretty 化（claude_ui_form.cpp:322-327）——格式化按钮整段失效（no-op /
+    // 只 trim / 解析失败提前 return）该断言照样绿。这里改断言格式化**当场**
+    // 改写编辑框文本，并用乱序键（{"zz","aa"}）让「无操作」「只去空白」
+    // 「保留原序」三类半吊子实现全部变红；键序契约见 formatAdvancedJson 注释
+    // （parse→stringify 走 std::map = 字典序）。
     {
         eui::Ui ui;
         compose(ui, "jsonf_4");
         DOCTEST_CHECK(click(ui, "claude.dialog.form.cancel.bg"));
     }
-    openFormTab3FillBasic("jsonf_5");
+    DOCTEST_CHECK(openFormTab3FillBasic("jsonf_5"));
     {
         eui::Ui ui;
         compose(ui, "jsonf_6");
         DOCTEST_CHECK(type(ui, "claude.form.advanced.json.hit",
-                           R"({"statusLine":"on"})"));
+                           R"({"zz":1,"aa":2})"));
+    }
+    // 格式化前：编辑框仍是用户敲进去的 compact 原文（判别力来源——若这一帧
+    // 就已是 pretty，说明断言测的不是格式化按钮）
+    {
+        eui::Ui ui;
+        compose(ui, "jsonf_6b");
+        using InputState = components::input_detail::InputModel::InputState;
+        DOCTEST_CHECK_EQ(
+            ui.state<InputState>("claude.form.advanced.json").text,
+            std::string(R"({"zz":1,"aa":2})"));
+    }
+    {
+        eui::Ui ui;
+        compose(ui, "jsonf_6c");
         DOCTEST_CHECK(click(ui, "claude.form.advanced.json.format.bg"));
+    }
+    const std::string kFormatted =
+        "{\n  \"aa\": 2,\n  \"zz\": 1\n}";
+    {
+        eui::Ui ui;
+        compose(ui, "jsonf_6d");
+        using InputState = components::input_detail::InputModel::InputState;
+        DOCTEST_CHECK_EQ(ui.state<InputState>("claude.form.advanced.json").text,
+                         kFormatted);
+        // 成功分支不留行内红字（与失败分支的「解析失败」红字互斥）
+        DOCTEST_CHECK(ui.find("claude.form.advanced.json.error") == nullptr);
     }
     DOCTEST_CHECK(fillBasicAndSave("jsonf_7"));
     bool fmtOk = false;
@@ -3109,7 +3142,9 @@ REGISTER_TEST(claude_ui_advanced_json_invalid_and_env_key_rejected,
         if (list.isOk()) {
             for (const auto& p : list.value()) {
                 if (p.name == "JSON坏值") {
-                    fmtOk = p.extraSettingsJson.find("\n  \"") != std::string::npos;
+                    // 落库值 == 格式化后的编辑框文本（逐字节）：保存链不再二次
+                    // 改写形状，只把编辑框那份原文带进 DB
+                    fmtOk = p.extraSettingsJson == kFormatted;
                 }
             }
         }
@@ -6249,7 +6284,8 @@ REGISTER_TEST(claude_shared_dialog_json_roundtrip,
     }
     DOCTEST_CHECK(saved);
 
-    // 重开编辑回读：JSON 框预填 DB 原文；改名保存 → 更新生效
+    // 重开编辑回读：JSON 框预填 DB 原文（= 上一步落库的 pretty 文本，
+    // 逐字节相等才算「保存 → 重开回读」这条链真的走通）
     {
         eui::Ui ui;
         compose(ui);
@@ -6257,10 +6293,74 @@ REGISTER_TEST(claude_shared_dialog_json_roundtrip,
         DOCTEST_CHECK(click(ui, "claude.shared.card.0.bg"));
     }
     {
+        using InputState = components::input_detail::InputModel::InputState;
         eui::Ui ui;
         compose(ui);
-        // env 键拒绝：清不掉旧文 → 直接追加会破坏 JSON；改走新建弹窗验证拒绝
-        DOCTEST_CHECK(click(ui, "claude.dialog.shared.cancel.bg"));
+        // 编辑弹窗真的开着（backdrop 未 disabled = open_ 为真；isEdit 分支
+        // 才画的删除键同时在，说明走的是 openSharedEdit 而非 openSharedCreate）
+        const auto* backdrop = ui.find("claude.dialog.shared.backdrop");
+        DOCTEST_REQUIRE(backdrop != nullptr);
+        DOCTEST_CHECK(!backdrop->disabled);
+        DOCTEST_CHECK(ui.find("claude.dialog.shared.delete.bg") != nullptr);
+        // 回读：编辑框文本 == DB 落库原文
+        std::string dbJson;
+        auto list = env.svc->listSharedConfigs();
+        DOCTEST_REQUIRE(list.isOk());
+        for (const auto& c : list.value()) {
+            if (c.name == "JSON片段") dbJson = c.extraSettingsJson;
+        }
+        DOCTEST_REQUIRE(!dbJson.empty());
+        DOCTEST_CHECK_EQ(ui.state<InputState>("claude.dialog.shared.json").text,
+                         dbJson);
+    }
+    // 改名保存 → 更新生效（openSharedEdit 预填 + submitSharedForm update 分支）
+    {
+        using InputState = components::input_detail::InputModel::InputState;
+        eui::Ui ui;
+        compose(ui);
+        const auto* nameHit = ui.find("claude.dialog.shared.name.hit");
+        DOCTEST_REQUIRE(nameHit != nullptr);
+        // 全选后重打（预填文本非空，onTextInput 只在光标处插入——不选区就会
+        // 把新名插到旧名中间，测不到「改名」）
+        auto& st = ui.state<InputState>("claude.dialog.shared.name");
+        st.cursor = 0;
+        st.selectionStart = 0;
+        st.selectionEnd = static_cast<int>(st.text.size());
+        core::TextInputEvent ev;
+        ev.text = "JSON片段改名";
+        nameHit->onTextInput(ev);
+        DOCTEST_CHECK(click(ui, "claude.dialog.shared.confirm.bg"));
+    }
+    {
+        bool renamed = false;
+        for (int i = 0; i < 300 && !renamed; ++i) {
+            mod->onPageEnter();
+            eui::Ui ui;
+            compose(ui);
+            auto list = env.svc->listSharedConfigs();
+            if (list.isOk()) {
+                for (const auto& c : list.value()) {
+                    if (c.name == "JSON片段改名") {
+                        renamed = true;
+                        // 改名不该动 JSON（update 分支带的是预填原文）
+                        DOCTEST_CHECK(c.extraSettingsJson.find("frag-m") !=
+                                      std::string::npos);
+                    }
+                }
+            }
+            if (!renamed) std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        }
+        DOCTEST_CHECK(renamed);
+    }
+    {
+        eui::Ui ui;
+        compose(ui);
+        // 弹窗保存后已关（backdrop disabled = open_ 已清；update 失败会留在
+        // 开着 + error_ 红字）
+        const auto* backdrop = ui.find("claude.dialog.shared.backdrop");
+        DOCTEST_REQUIRE(backdrop != nullptr);
+        DOCTEST_CHECK(backdrop->disabled);
+        DOCTEST_CHECK(ui.find("claude.dialog.shared.error") == nullptr);
     }
     {
         eui::Ui ui;
