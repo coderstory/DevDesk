@@ -17,6 +17,15 @@
 #   B. src/module_settings/CMakeLists.txt 的非注释行
 #      4) 不得出现 devdesk_module_pet / devdesk_module_claude_proxy
 #        （解释性注释里允许提及，故按行过滤首非空白字符为 '#' 的行）
+#   C. module_agent 隔离（agent M1 Task 11）：agent 消费 todo/markdown 工具
+#      走 core::ToolRegistry 按名调用（todo_tools.h 头注的设计契约），所以
+#      5) src/module_agent/*.{h,cpp} 不得 include 兄弟模块头
+#         （module_home|markdown|todo|claude_proxy|settings|pet)/ 均零命中；
+#         按「include 路径形态」匹配——注释里不带斜杠的兄弟模块名不算违规
+#      6) 反向：todo/markdown 的工具集与模块文件（todo_tools / markdown_tools /
+#         todo_module / markdown_module）不得引用 module_agent/（工具注册方
+#         不回依赖消费方；两 tools 头注释里「不依赖 module_agent」不带斜杠，
+#         不误报）
 #
 # 退出码：0 = 通过；1 = 违规（逐条打印 文件:行:命中行）；2 = 环境错（不得静默绿）
 #
@@ -132,11 +141,35 @@ if [ -n "$CMK_HITS" ]; then
     done <<< "$CMK_HITS"
 fi
 
+# ---- C. module_agent 隔离（agent M1）：兄弟模块头零 include + 工具方不回依赖 ----
+AGENT_DIR="$ROOT/src/module_agent"
+[ -d "$AGENT_DIR" ] || { echo "环境错误：目录不存在: $AGENT_DIR" >&2; exit 2; }
+# 5) agent 源文件不得 include 兄弟模块头（include 路径形态 = 带斜杠后缀）
+for agent_file in "$AGENT_DIR"/*.h "$AGENT_DIR"/*.cpp; do
+    [ -f "$agent_file" ] || { echo "环境错误：module_agent 源文件缺失: $agent_file" >&2; exit 2; }
+    for sibling in module_home module_markdown module_todo \
+                   module_claude_proxy module_settings module_pet; do
+        check_absent_fixed "$agent_file" "${sibling}/"
+    done
+done
+# 6) 反向：工具集/模块注册文件不得引用 module_agent 头（同款带斜杠形态；
+#    tools 头注释「不依赖 module_agent」不带斜杠，不误报）
+for tool_file in "$ROOT/src/module_todo/todo_tools.h" \
+                 "$ROOT/src/module_todo/todo_tools.cpp" \
+                 "$ROOT/src/module_todo/todo_module.cpp" \
+                 "$ROOT/src/module_markdown/markdown_tools.h" \
+                 "$ROOT/src/module_markdown/markdown_tools.cpp" \
+                 "$ROOT/src/module_markdown/markdown_module.cpp"; do
+    [ -f "$tool_file" ] && [ -r "$tool_file" ] || {
+        echo "环境错误：不可读 $tool_file" >&2; exit 2; }
+    check_absent_fixed "$tool_file" 'module_agent/'
+done
+
 # ---- 结论 ----
 if [ "$VIOLATIONS" -gt 0 ]; then
     echo "❌ 模块隔离守卫失败：$VIOLATIONS 处违规（上方 文件:行:命中行）" >&2
     exit 1
 fi
 
-echo "✅ 模块隔离守卫通过（settings_module.cpp 无 pet 依赖 / 桥调用齐全；CMakeLists 未 link 兄弟模块）"
+echo "✅ 模块隔离守卫通过（settings_module.cpp 无 pet 依赖 / 桥调用齐全；CMakeLists 未 link 兄弟模块；module_agent 零兄弟 include 且工具方不回依赖）"
 exit 0

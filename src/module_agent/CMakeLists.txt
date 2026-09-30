@@ -3,6 +3,7 @@ add_library(devdesk_agent STATIC
     agent_loop.cpp
     app_stats_tool.cpp
     llm_client.cpp
+    agent_module.cpp
 )
 
 devdesk_apply_warnings(devdesk_agent)

@@ -66,6 +66,9 @@ inline constexpr const char* kModuleIdMarkdown = "markdown";
 inline constexpr const char* kModuleIdTodo = "todo";
 inline constexpr const char* kModuleIdClaudeProxy = "claude_proxy";
 inline constexpr const char* kModuleIdSettings = "settings";
+// agent（智能体页，agent M1）：Router 页面模块，默认启用（defaultEnabledModules
+// 含之）；关闭 = 整页不注册进 Router（装配语义同 markdown/todo/claude_proxy）
+inline constexpr const char* kModuleIdAgent = "agent";
 inline constexpr const char* kModuleIdPet = "pet";
 
 // 默认全启用（字段缺失/解析失败回退；home/settings 恒启用见 kAlwaysOn）
@@ -132,9 +135,11 @@ struct SettingsConfig {
     // false = 常规 260px。运行时切换在 app_sidebar（按钮/Ctrl+B），经
     // setSidebarCollapsed 走 SettingsStore 持久化到这里
     bool sidebarCollapsed = false;
-    // 模块开关（模块插拔方案 A）：可关的是三个工具模块（markdown/todo/
-    // claude_proxy）；home 是默认落地页、settings 是开关 UI 宿主，恒启用
-    //（sanitized 强制补齐）。缺省 = 全启用，老 config.json 零迁移兼容。
+    // 模块开关（模块插拔方案 A）：可关的是四个工具模块（markdown/todo/
+    // claude_proxy/agent）；home 是默认落地页、settings 是开关 UI 宿主，
+    // 恒启用（sanitized 强制补齐）。缺省 = 全启用，老 config.json 零迁移
+    // 兼容（新 ID agent 不在存量文件的 enabledModules 数组里 → 存量用户
+    // 默认关闭，去设置页开启；新装/重置走 defaultEnabledModules 全启用）。
     // pet（桌宠）是已知 ID 但**不在默认清单**——默认关闭，用户在设置页开启
     std::vector<std::string> enabledModules = defaultEnabledModules();
 };

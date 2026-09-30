@@ -40,7 +40,8 @@ constexpr const char* kKeySidebarCollapsed = "sidebarCollapsed";
 // 合法模块 ID 清单（sanitized 过滤未知项；与 kModuleId* 一一对应）
 const char* const kKnownModuleIds[] = {
     kModuleIdHome, kModuleIdMarkdown,     kModuleIdTodo,
-    kModuleIdClaudeProxy, kModuleIdSettings, kModuleIdPet};
+    kModuleIdClaudeProxy, kModuleIdSettings, kModuleIdAgent,
+    kModuleIdPet};
 
 bool isKnownModuleId(const std::string& id) {
     for (const char* known : kKnownModuleIds) {
@@ -51,8 +52,12 @@ bool isKnownModuleId(const std::string& id) {
 } // namespace
 
 std::vector<std::string> defaultEnabledModules() {
+    // agent（智能体页，agent M1）：与 markdown/todo/claude_proxy 同为默认
+    // 启用的工具模块——registry 门控键 kModuleIdAgent 若不在默认清单，
+    // buildGatedEntries 会把它当「用户关闭」整页跳过（装配测试 all-on 7 条
+    // 亦依赖此默认值）
     return {kModuleIdHome, kModuleIdMarkdown, kModuleIdTodo,
-            kModuleIdClaudeProxy, kModuleIdSettings};
+            kModuleIdClaudeProxy, kModuleIdSettings, kModuleIdAgent};
 }
 
 bool moduleEnabled(const SettingsConfig& cfg, const std::string& moduleId) {
