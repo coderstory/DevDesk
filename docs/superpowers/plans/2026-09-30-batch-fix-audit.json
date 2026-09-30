@@ -10,7 +10,7 @@
   "dimensions": {
     "1_correctness": {
       "status": "已核",
-      "conclusion": "三项用户诉求映射成立。①『高级配置=env 之外的全部内容可见可改』：Profile 用户可配置面清点完毕（name/baseUrl/key/authField/模型槽位/extraEnv/sharedConfigId/dialectOverride/fallbackProfileId/isActive），除 dialectOverride 与 fallbackProfileId 外均已有 UI，B 项补齐这两个缺口后全覆盖；authField『已有控件不动』的判断正确（claude_ui_form.cpp:431-449 渲染、:307 提交已接线、state.h:139-140 状态）。②『复制能粘贴出配置』：buildProfileExportJson → setClipboardText 结构性满足（BASE_URL/三态凭据键/槽位/extra_env 全进 {"env":{...}}）；明文 key 属政策未决（见 unresolved_policy）。③『130% 重叠根治』：重叠本体的根修确在在飞分支且已成型（fix/detail-env-pane 1ca87b0 提交『行几何随字号缩放派生』），A 项定位为审查+settings 卡片小改，边界声明合理。唯一保留：生效方言的展示名映射缺现成出口（F7）。"
+      "conclusion": "三项用户诉求映射成立。①『高级配置=env 之外的全部内容可见可改』：Profile 用户可配置面清点完毕（name/baseUrl/key/authField/模型槽位/extraEnv/sharedConfigId/dialectOverride/fallbackProfileId/isActive），除 dialectOverride 与 fallbackProfileId 外均已有 UI，B 项补齐这两个缺口后全覆盖；authField『已有控件不动』的判断正确（claude_ui_form.cpp:431-449 渲染、:307 提交已接线、state.h:139-140 状态）。②『复制能粘贴出配置』：buildProfileExportJson → setClipboardText 结构性满足（BASE_URL/三态凭据键/槽位/extra_env 全进 {\"env\":{...}}）；明文 key 属政策未决（见 unresolved_policy）。③『130% 重叠根治』：重叠本体的根修确在在飞分支且已成型（fix/detail-env-pane 1ca87b0 提交『行几何随字号缩放派生』），A 项定位为审查+settings 卡片小改，边界声明合理。唯一保留：生效方言的展示名映射缺现成出口（F7）。"
     },
     "2_regression": {
       "status": "已核（发现 2 条）",

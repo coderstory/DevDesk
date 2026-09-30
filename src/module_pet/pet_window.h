@@ -89,7 +89,8 @@ struct PetWindowConfig {
     int x = -1;             // -1 = 未设置（取主显示器工作区右下角）；其他负值是
     int y = -1;             // 左/上副屏的合法坐标（M2 多显示器，钳制按位置选屏后保留）
     // 显示大小档（kPetScalePresets 之一，默认中档 1.0×）。窗口尺寸 =
-    // scaledFrameSize(帧尺寸, scale)（仍钳 [16,512]）+ 气泡让位条，单位 = 点
+    // scaledFrameSize(帧尺寸, scale)（缩放后仅钳上界 512，下界不钳）
+    // + 气泡让位条，单位 = 点
     double scale = 1.0;
     // 内容源②回调（main 注入；applyPetSkin 热换肤重开时从 rt.config 原样
     // 携带不丢桥）。空 = 无数据源，气泡只出静态语料①

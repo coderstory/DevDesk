@@ -1,6 +1,6 @@
 // src/ui_kit/splash.cpp
 // 启动 splash 绘制：全屏极光波 shadertoy（assets/shaders/splash.frag，
-// Claude Clay #D97757 暖橘配色）+ logo + 副标题 + 假进度条。
+// HTML demo 蓝配色——与 splash.frag 头注释自述一致）+ logo + 副标题 + 假进度条。
 //
 // shader 方言 = EUI-NEO shadertoy 图元（mainImage(iTime/iResolution)），
 // OpenGL 后端只用 fragment source（spirv 路径传空串）；同一份 .frag 在
@@ -77,7 +77,7 @@ bool drawSplashIfNeeded(eui::Ui& ui, const eui::Screen& screen) {
         state.graph.addPass("image", fragPath, "");
     }
 
-    // 全屏极光波（Claude Clay 暖橘系），淡出期随整体 opacity 一起透明
+    // 全屏极光波（HTML demo 蓝配色，与 splash.frag 自述一致），淡出期随整体 opacity 一起透明
     ui.shadertoy("splash.shader")
         .position(0.0f, 0.0f)
         .size(screen.width, screen.height)

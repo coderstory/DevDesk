@@ -515,7 +515,7 @@ public:
     // 本身不必：关 → 桥调用立即关窗（与右键「隐藏桌宠」同一条路径）；
     // 开 → 桥调用立即原位重开（皮肤/位置/气泡桥沿用上次装配）。
     // 反向口径：本会话 main 装配过桌宠（启动时开关是开的）才能即时重现；
-    // 启动时桌宠就是关的会话里模块从未装配，桥返回 false → 如实提示重启生效
+    // 启动时桌宠就是关的会话里模块从未装配，桥返回 NotAssembled → 如实提示重启生效
     void applyPetModuleVisibility(bool on) {
         if (!on) {
             const bool closed = ::module::pet::closePetWindow();

@@ -622,7 +622,10 @@ inline float chipWidth(const std::string& text) {
 // 无头几何断言（test_todo_ui）三方同源消费。
 constexpr float kCardTitleLineH = 18.0f;      // 标题行高（= lineHeight，原值）
 constexpr float kCardTitleToChipGap = 12.0f;  // 标题行底 → chip 行顶（原 44-14-18）
-constexpr float kCardTitleBoxInset = 22.0f;   // 标题框左右对称内缩（= 44/2，总留白不变）
+// 标题框左右对称内缩：40 = 偶数对称值（总留白 80）；右缘 W-40 让开完成角标
+// 区间 [W-36, W-12] 并留 4px（R1 审计：改前 22 → 右缘 W-22 落在角标区间内，
+// 注释称「避开」实为压住）。drawCard 与 drawDragGhost 同源消费
+constexpr float kCardTitleBoxInset = 40.0f;
 
 // 内容组高度：有 chip 行 = 标题 18 + 间距 12 + chip 22 = 52；无 = 仅标题 18
 inline float cardContentGroupH(bool hasChipRow) {

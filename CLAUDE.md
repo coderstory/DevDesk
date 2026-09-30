@@ -89,7 +89,7 @@ launcher 是 **configure 期属性**：已存在的 `build/` 目录不会自动�
 **macOS 侧的脚本（2026-09-28 起为跨平台）**：`scripts/build-test-run.sh` / `scripts/ccache-env.sh` / `scripts/check-consistency.sh` 由提交 `577e0d0` 加上 macOS/Linux 分支——Darwin 走 `pkill -f` 杀进程、`otool -L` 依赖清单、`screencapture -x` 截屏、`stat -f%z`、`-DOPENSSL_ROOT_DIR=/opt/homebrew/opt/openssl@3`，ccache 配置读 `~/Library/Preferences/ccache/ccache.conf`；原先写死的 Windows 工具链 PATH 与 `C:/msys64/mingw64` openssl 路径改为按 `DEVDESK_OS` 分支取（Windows 分支行为不变，波 1 TIN-13 的 Playwright + `CopyFromScreen` + Pillow 回退仍在）。**该移植只做过语法检查与定点验证，端到端从未跑过**——macOS 上「构建 + 测试 + 启动」未完整跑过一遍；`check-consistency.sh` 的 `screencapture` 分支所需的终端「屏幕录制」TCC 权限**已于 2026-09-28 晚授予，`screencapture -x` 实测可用（2940×1912 PNG）**，现存限制仅为「对 OpenGL 窗口可能抓到导航前的旧帧」（已登记 `docs/KNOWN_LIMITATIONS.md` §20）。本文档旧版提到的 `./scripts/dev.sh`（构建+运行）、`./scripts/test.sh`、`./scripts/screenshot.sh <page>`、`./scripts/reset-db.sh` **在本仓库中不存在**（`git ls-files scripts/` 可核），不要再照抄执行。
 
 构建入口：`CMakeLists.txt` 顶层 → `src/main.cpp`。
-EUI-NEO 依赖：`../EUI-NEO/`（同级目录，通过 `EUI_NEO_DIR` cache 变量 `add_subdirectory` 集成，**不是 git submodule**）。**当前依赖 rev**：`72a5187`（2026-09-28，与 `DEVDESK_EUI_NEO_MIN_REV` 一致；EUI-NEO 本地 main 领先 origin 82 个提交（2026-09-28 实测），**已决策永不 push 到 origin**（2026-09-28 用户决策）——origin/main 停在 v0.6.0，本地领先是长期状态、提交数只会继续增长）。**EUI-NEO 需保持本地 main 最新**（含 onWindowDestroyed/requestFocus/trayMenu/windowEffect/lineStyles/getMonitorWorkAreas/setSystemPowerHandler/styledMenu/onTrayMenu/windowIsFocused/input onCancel 等新 API），顶层 CMake configure 时打印 `EUI-NEO git rev` 并在缺失最低依赖 rev（`DEVDESK_EUI_NEO_MIN_REV`，与本行保持一致、消费 EUI 新 API 后两处同步更新）时软警告不 fail；原计划「EUI-NEO push 后启用硬版本检查」的前置条件因「永不 push」决策不再到来，硬版本检查保持未启用（审计 [11]）。
+EUI-NEO 依赖：`../EUI-NEO/`（同级目录，通过 `EUI_NEO_DIR` cache 变量 `add_subdirectory` 集成，**不是 git submodule**）。**当前依赖 rev**：`72a5187`（2026-09-30，与 `DEVDESK_EUI_NEO_MIN_REV` 一致；EUI-NEO 本地 main 领先 origin 93 个提交（2026-09-30 实测），**已决策永不 push 到 origin**（2026-09-28 用户决策）——origin/main 停在 v0.6.0，本地领先是长期状态、提交数只会继续增长）。**EUI-NEO 需保持本地 main 最新**（含 onWindowDestroyed/requestFocus/trayMenu/windowEffect/lineStyles/getMonitorWorkAreas/setSystemPowerHandler/styledMenu/onTrayMenu/windowIsFocused/input onCancel 等新 API），顶层 CMake configure 时打印 `EUI-NEO git rev` 并在缺失最低依赖 rev（`DEVDESK_EUI_NEO_MIN_REV`，与本行保持一致、消费 EUI 新 API 后两处同步更新）时软警告不 fail；原计划「EUI-NEO push 后启用硬版本检查」的前置条件因「永不 push」决策不再到来，硬版本检查保持未启用（审计 [11]）。
 
 ## 🏗️ 架构要点（4 层模块化）
 
@@ -268,7 +268,7 @@ main → 6 个 module_* (home / markdown / todo / claude_proxy / settings / pet)
 | `docs/superpowers/specs/2026-09-20-devdesk-design.md` | **唯一权威 spec**，所有架构 / API / token 决策都在这 |
 | `docs/mockups/palette-comparison.html` | 配色对比 demo（已确定方案 B）|
 | `docs/mockups/devdesk-prototype.html` | HTML 交互原型（待生成）|
-| `../EUI-NEO/` | 上游 GUI 框架（同级目录源码，非 submodule），通过 `EUI_NEO_DIR` 以 `add_subdirectory` 集成；**当前依赖 rev `72a5187`（本地 main 领先 origin 82 个提交且已决策永不 push，需保持最新，见「常用命令」段与审计 [11]）** |
+| `../EUI-NEO/` | 上游 GUI 框架（同级目录源码，非 submodule），通过 `EUI_NEO_DIR` 以 `add_subdirectory` 集成；**当前依赖 rev `72a5187`（本地 main 领先 origin 93 个提交（2026-09-30 实测）且已决策永不 push，需保持最新，见「常用命令」段与审计 [11]）** |
 | `docs/superpowers/specs/2026-09-27-*.md` | 09-27 批次 specs：wave1-fix / god-class-refactor / shared-config-and-failover |
 | `docs/superpowers/specs/2026-09-28-*.md` | 09-28 批次 specs：installer-and-dmg / devdesk-probes / r8-assembly-layer / tin06-test-scaffold-migration / setscrolloffset-upstream-m6-refactor / md01-reload-block-mapping / macos-three-features / ui-modernization / profile-run |
 
@@ -382,7 +382,7 @@ main → 6 个 module_* (home / markdown / todo / claude_proxy / settings / pet)
 - **codegraph 索引排除 worktree / build**：`D:/project/gui/codegraph.json` 的 `exclude` = `.claude/worktrees/**`、`DevDesk/.claude/worktrees/**`、`wt-*/**`、`**/build/**`（新增临时目录时同步维护，别把产物灌进索引）。
 - **`DevDesk.exe` 会锁 build 目录**：运行中链接报 `cannot open output file DevDesk.exe: Permission denied` → `taskkill -F -IM DevDesk.exe` 解锁（**别杀 `claude.exe` / `cc-switch.exe`**）。
 - **代理直测脚本**：`doc/scripts/proxy_smoke_test.py`（`proxy` / `upstream` / `all`；环境变量 `DEVDESK_PROXY` / `DEVDESK_MODEL` / `DEVDESK_TOKEN`）。
-- **EUI-NEO 最低依赖 rev `72a5187`**：`CMakeLists.txt` 的 `DEVDESK_EUI_NEO_MIN_REV`，需与本文件「常用命令」段的记录保持一致，消费 EUI 新 API 后两处同步更新；EUI-NEO 要跑在本地 main 最新（本地领先 origin 82 个提交；2026-09-28 用户决策永不 push，见「常用命令」段）。
+- **EUI-NEO 最低依赖 rev `72a5187`**：`CMakeLists.txt` 的 `DEVDESK_EUI_NEO_MIN_REV`，需与本文件「常用命令」段的记录保持一致，消费 EUI 新 API 后两处同步更新；EUI-NEO 要跑在本地 main 最新（本地领先 origin 93 个提交（2026-09-30 实测）；2026-09-28 用户决策永不 push，见「常用命令」段）。
 - **已踩过的坑（写码前先想一遍）**：
   - **单位错配（系统性）**：`windowSize` / `glfwCreateWindow` 是**客户区物理像素**，compose 侧按 `framebuffer/(dpiScale×uiScale)` 折算逻辑像素——菜单窗、启动窗、桌宠锚点都栽过。本机 125%：工作区 1920×1020 物理、任务栏 60 px，窗口客户区底部 52 物理 px 会被任务栏吃掉（贴底 UI 不可见）。
     - **上面这条只是 Windows 口径**；macOS 口径（2026-09-28 实机回填，三行实测）：① `windowSize` / `glfwCreateWindow` / `glfwSetWindowSizeLimits` 的单位是**点**——`core::window::windowScaleForPoint` 在 macOS **恒返 1.0**（Retina 的 2.0 是 contentScale/backing scale，**不是**窗口单位换算，乘上去会双倍放大）；② 本机实测 `framebuffer 2940×1602 / contentScale 2.0 → 逻辑 1470×801`，即 `screen.height` **等于客户区点高**（两平台都只除一次，无多除少除——"Retina 没折算"的假设已被此数据证伪）；③ 工作区 1470×833 点、标题栏 28 点 → 客户区 805 点，而设计最小窗高 845 点 > 833 点：最小窗尺寸必须经 `core::window_layout::minWindowSizeForWorkArea` 做**同一条换算**再与工作区取 min（只做其中一步就是把病换个平台复制）。非客户区外框同样按平台注入：macOS `{0,28}`、Windows `{14.4,37.6}@96dpi`（`window_layout_macos.cpp` / `_win.cpp`）。

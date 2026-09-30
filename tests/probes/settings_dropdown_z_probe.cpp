@@ -26,7 +26,7 @@
 // 后绘的「大小」行盖住展开的皮肤弹层。既有两道防线都抓不住这类：卡片级
 // zIndex(40)（2026-09-28 修的跨卡遮挡）救不了同卡内兄弟；L2 叶子扫描里相交
 // 叶子自身 subtreeMax 常为 0 也永不触发。修 = EUI-NEO dropdown open 态给
-// popup 子树挂 900 档（patch 生产线，eui-neo-dropdown-popup-z.patch），关闭态
+// popup 子树挂 900 档（EUI-NEO rev 72a5187，已落库），关闭态
 // 归 0 与旧行为逐位一致。主判据（probe_harness 新增 assertDrawnAbove）：
 //   1) 绘制序：popup 与「大小」字段的 LCA 处，popup 侧子级 subtreeMaxZ(900)
 //      必须严格大于字段侧(20)；
