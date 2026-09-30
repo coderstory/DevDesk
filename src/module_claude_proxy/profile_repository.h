@@ -35,6 +35,12 @@ struct Profile {
     std::string model;          // 默认模型（旧列；语义降级为 default 槽位未配置时的 fallback）
     std::string modelsConfigJson; // 6 槽位模型配置 JSON 原文（空串 = 未配置；provider-config §4.1）
     std::string extraEnvJson;   // 额外 env 键值 JSON 原文（空串 = 未配置）
+    // 高级设置 JSON（2026-09-30 advanced-json-editor 设计 §3.1，migration v11）：
+    // settings.json **除 env 外全部顶层属性**（model / permissions / statusLine /
+    // hooks / …）整体作为一份原始 JSON 存储，空串 = 未配置。**仅存原文，不拆
+    // 字段**；UI 落库统一 pretty-print（设计 D-6），读侧容错见 provider_config
+    // 的 effectiveExtraSettingsJson / applyExtraSettingsToSettingsDoc
+    std::string extraSettingsJson;
     int64_t sharedConfigId = 0; // 绑定共享配置片段 id（0 = 未绑定；0..1、不嵌套）
     std::string authField = "both";  // 认证字段三态（'both'/'bearer'/'api_key'；未知/空串按 both 读）
     // 上游方言覆盖（审计 CPX-13）：空串 = 未覆盖 = 按 baseUrl 的 host 推断
@@ -54,14 +60,16 @@ struct Profile {
     std::time_t updatedAt = 0;
 };
 
-// 共享配置片段（2026-09-27 shared-config-and-failover 设计 §2.1/§2.2）：
-// 纯 env 装饰层——只有名字 + extra_env，**不含 base_url / 密钥**，故不进路由、
-// 不进凭据链（Keychain 零交互、is_active 唯一性零影响）；一个 profile 绑定
-// 0..1 个片段，不嵌套（片段不引用片段）
+// 共享配置片段（2026-09-27 shared-config-and-failover 设计 §2.1/§2.2 建立；
+// 2026-09-30 advanced-json-editor 设计 §8 重构）：只有名字 + 高级属性 JSON 预设，
+// **不含 base_url / 密钥**，故不进路由、不进凭据链（Keychain 零交互、is_active
+// 唯一性零影响）；一个 profile 绑定 0..1 个片段，不嵌套（片段不引用片段）。
+// v11（migration kClaudeExtraSettingsJson）起 extra_env 列已删（旧片段 env 数据
+// 弃用不转换，设计 §8.3），片段内容 = settings.json 非 env 顶层属性 JSON
 struct SharedConfig {
     int64_t id = 0;
     std::string name;
-    std::string extraEnvJson;   // 与 Profile::extraEnvJson 同构同语义（空串 = 未配置）
+    std::string extraSettingsJson;   // 高级属性 JSON 预设原文（空串 = 未配置）
     std::time_t createdAt = 0;
     std::time_t updatedAt = 0;
 };
@@ -145,7 +153,12 @@ public:
                                         const std::string& authField = "both",
                                         const std::string& dialectOverride =
                                             std::string(),
-                                        int64_t fallbackProfileId = 0);
+                                        int64_t fallbackProfileId = 0,
+                                        // 高级设置 JSON 原文（空串 = 未配置；
+                                        // 尾插默认参与 dialect_override 同款先例，
+                                        // duplicateProfile「复制即配置」经此携带）
+                                        const std::string& extraSettingsJson =
+                                            std::string());
 
     // 更新 profile（profile.id 必须已存在；apiKeyPlain 非空则覆盖 Keychain，
     // 空则只更新 name / url / model / 片段绑定等元数据）。写侧规范化与 JSON
@@ -164,11 +177,15 @@ public:
     // 复制 Profile（设计 §4.2/§4.3，M4）：名称自动加「副本」后缀（重名递增
     // 避让，100 次仍冲突 → fail 不建行），API key 一并复制（源 key 缺失 →
     // fail，不建无 key 的副本），**副本不激活**（S-4）。
-    // 二段补写（models_config / extra_env）失败 → best-effort 删除刚建的副本
-    // 回滚：回滚成功 = fail 且零残留；回滚失败 = fail 且文案注明不完整副本 id
+    // 二段补写（models_config / extra_env / extra_settings_json）失败 →
+    // best-effort 删除刚建的副本回滚：回滚成功 = fail 且零残留；回滚失败 =
+    // fail 且文案注明不完整副本 id
     // shared_config_id 一并复制（属于配置，设计 §2.6）；
     // dialect_override 一并复制（同上，审计 CPX-13）；
-    // fallback_profile_id 一并复制（同上，设计 §3.7）
+    // fallback_profile_id 一并复制（同上，设计 §3.7）；
+    // extra_settings_json 一并复制（同上，advanced-json-editor 设计 §3.3 F-3：
+    // 二段补写门槛条件含「仅 JSON profile」——两个 env 字段均空、仅
+    // extraSettingsJson 非空时不得静默丢字段）
     // 纯行 + Keychain 层面操作，无代理 / 接管交互，R10-A2 整方法搬入
     core::Result<Profile> duplicateProfile(int64_t srcId);
 
@@ -196,19 +213,23 @@ public:
     //     回落 profile 自身值（片段值从不写进 profile 行）
     core::Result<std::vector<SharedConfig>> listSharedConfigs();
     core::Result<SharedConfig> createSharedConfig(const std::string& name,
-                                                  const std::string& extraEnvJson);
+                                                  const std::string& extraSettingsJson);
     core::Result<void> updateSharedConfig(const SharedConfig& config);
     core::Result<void> deleteSharedConfig(int64_t id, bool* activeBound = nullptr);
 
     // 片段冻结键集（G10，设计 §2.4）：profile 所绑片段 extra_env 的全部键
     //（别名归一后，与写进 live 的键形一致）。未绑定 / 片段已删 / JSON 非法 →
     // 空集（读路径容错）
+    // （2026-09-30 advanced-json-editor §8.4 登记待拆：片段重构后不再携带 env
+    // 键，本函数与消费方一并拆除——拆除批次见设计 §8.4 清单）
     core::Result<std::vector<std::string>> sharedEnvKeysFor(int64_t profileId);
 
-    // 片段 extra_env 原文（0 / 片段不存在 / 读失败 → 空串 = 未绑定；读路径容错，
-    // 悬空 id 退化成「未绑定」而不是让接管/G10 失败）。门面的 syncTakeOver /
-    // runProfile 直接经此读片段合成 env（接管 / 直连）
-    std::string sharedExtraEnvJsonFor(int64_t sharedConfigId) const;
+    // 片段高级属性 JSON 原文（0 / 片段不存在 / 读失败 → 空串 = 未绑定；读路径
+    // 容错，悬空 id 退化成「未绑定」而不是让接管失败）。v11 起片段内容为
+    // settings.json 非 env 顶层属性 JSON（旧 extra_env 已弃用，设计 §8）。
+    // 门面的 syncTakeOver / runProfile / 导出经此读片段
+    //（原 sharedExtraEnvJsonFor 改名，advanced-json-editor 设计 §3.3）
+    std::string sharedExtraSettingsJsonFor(int64_t sharedConfigId) const;
 
 private:
     // 从一行 SqlRow 构造 Profile（不含 apiKeyPlain）

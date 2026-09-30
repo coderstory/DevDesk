@@ -371,8 +371,9 @@ REGISTER_TEST(provider_config_migration_upgrade,
         // + v5 调用日志用量列（cc-switch 对照 §3.4）
         // + v6 共享配置片段表与 profile 绑定列
         // + v7 profile 认证字段 + v8 todo 归档列 kind 回填
-        // + v9 profile 方言覆盖列（CPX-13）+ v10 failover 备用列 → 全量到 10
-        DOCTEST_CHECK_EQ(db.schemaVersion(), 10);
+        // + v9 profile 方言覆盖列（CPX-13）+ v10 failover 备用列
+        // + v11 高级设置 JSON / 片段重构 → 全量到 11
+        DOCTEST_CHECK_EQ(db.schemaVersion(), 11);
 
         module::claude::ClaudeService svc(db, kTestKeychainService);
         auto profiles = svc.listProfiles();

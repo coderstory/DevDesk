@@ -112,7 +112,8 @@ core::Result<Profile> ClaudeService::createProfile(const std::string& name,
                                                    int64_t sharedConfigId,
                                                    const std::string& authField,
                                                    const std::string& dialectOverride,
-                                                   int64_t fallbackProfileId) {
+                                                   int64_t fallbackProfileId,
+                                                   const std::string& extraSettingsJson) {
     // R10-A2 段级拆分：校验 + INSERT ... RETURNING + Keychain 两段写 + 失败回滚
     //（DB 段）已迁 ProfileRepository::createProfile；本方法保留「首建自动激活」
     // 策略尾——创建成功后若当前无任何激活 Profile 则自动激活刚建的这条（经门面
@@ -122,7 +123,7 @@ core::Result<Profile> ClaudeService::createProfile(const std::string& name,
     // 「点击启用」文案）
     auto created = profileRepository_.createProfile(
         name, baseUrl, apiKey, model, sharedConfigId, authField,
-        dialectOverride, fallbackProfileId);
+        dialectOverride, fallbackProfileId, extraSettingsJson);
     if (created.isFail()) {
         return created;
     }
@@ -487,7 +488,7 @@ core::Result<void> ClaudeService::runProfile(int64_t id, std::string* hint) {
     // 关键：**零全局改动**——不启代理、不切激活、不读也不写 ~/.claude/settings.json
     const auto env = buildDirectEnv(p.baseUrl, key.value(), p.authField,
                                     p.modelsConfigJson, p.model, p.extraEnvJson,
-                                    profileRepository_.sharedExtraEnvJsonFor(
+                                    profileRepository_.sharedExtraSettingsJsonFor(
                                         p.sharedConfigId));
     platform::json::JsonObject envObj;
     for (const auto& [k, v] : env) {
@@ -766,7 +767,7 @@ core::Result<void> ClaudeService::syncTakeOver() {
     }
     return settingsTakeover_.syncTakeOver(
         active, proxyPort(),
-        profileRepository_.sharedExtraEnvJsonFor(active.sharedConfigId));
+        profileRepository_.sharedExtraSettingsJsonFor(active.sharedConfigId));
 }
 
 void ClaudeService::syncRestore() {

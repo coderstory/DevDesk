@@ -1158,7 +1158,7 @@ void openSharedEdit(SharedConfigDialogState& s, const SharedConfig& c) {
     s.name_ = c.name;
     s.error_.clear();
     s.envRows_.clear();
-    auto ee = parseExtraEnv(c.extraEnvJson);
+    auto ee = parseExtraEnv(c.extraSettingsJson);
     if (ee.isOk()) {
         for (const auto& [k, v] : ee.value()) s.envRows_.emplace_back(k, v);
     }
@@ -1204,7 +1204,7 @@ void submitSharedForm(SharedConfigDialogState& s,
         SharedConfig c;
         c.id = s.editId_;
         c.name = s.name_;
-        c.extraEnvJson = envJson;
+        c.extraSettingsJson = envJson;
         auto r = svc->updateSharedConfig(c);
         if (r.isFail()) {
             s.error_ = r.errorMessage();

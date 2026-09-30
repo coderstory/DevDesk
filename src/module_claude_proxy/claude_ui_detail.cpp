@@ -289,7 +289,7 @@ float drawDetailEnv(eui::Ui& ui, float x0, float y0, float w,
         if (v.sharedConfigs != nullptr && shown->sharedConfigId != 0) {
             const SharedConfig* sc =
                 findSharedById(*v.sharedConfigs, shown->sharedConfigId);
-            if (sc != nullptr) sharedJson = sc->extraEnvJson;
+            if (sc != nullptr) sharedJson = sc->extraSettingsJson;
         }
         const int port = v.svc ? v.svc->configuredProxyPort() : 0;
         envMap = buildProxyEnv(shown->modelsConfigJson, shown->model,

@@ -63,8 +63,8 @@ std::string suggestImportName(const std::string& baseUrl) {
 
 std::vector<std::string> sharedFrozenKeys(const SharedConfig& sc) {
     std::vector<std::string> keys;
-    if (sc.extraEnvJson.empty()) return keys;
-    auto parsed = parseExtraEnv(sc.extraEnvJson);
+    if (sc.extraSettingsJson.empty()) return keys;
+    auto parsed = parseExtraEnv(sc.extraSettingsJson);
     if (parsed.isOk()) {
         const auto mapped = applyEnvAliases(parsed.value()).env;
         keys.reserve(mapped.size());

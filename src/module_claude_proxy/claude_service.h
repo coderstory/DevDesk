@@ -76,6 +76,8 @@ public:
     // 非法值写侧归一为空串，审计 CPX-13。副本复制经本参数带上，见 duplicateProfile）
     // fallbackProfileId：建时即带备用（0 = 无；同 sharedConfigId「建时即设」口径，
     // 设计 §3.7。副本复制经本参数带上）
+    // extraSettingsJson：高级设置 JSON 原文（空串 = 未配置；advanced-json-editor
+    // 设计 §3.3。副本复制经本参数带上——「复制即配置」，审计 F-3）
     core::Result<Profile> createProfile(const std::string& name,
                                        const std::string& baseUrl,
                                        const std::string& apiKey,
@@ -85,7 +87,12 @@ public:
                                        const std::string& authField = "both",
                                        const std::string& dialectOverride =
                                            std::string(),
-                                       int64_t fallbackProfileId = 0);
+                                       int64_t fallbackProfileId = 0,
+                                       // 高级设置 JSON 原文（空串 = 未配置；
+                                       // advanced-json-editor 设计 §3.3 尾插默认参，
+                                       // 与 dialectOverride/fallbackProfileId 同款先例）
+                                       const std::string& extraSettingsJson =
+                                           std::string());
 
     // 更新 profile（profile.id 必须已存在）
     //   - 若 profile.apiKeyPlain 非空，则覆盖 Keychain

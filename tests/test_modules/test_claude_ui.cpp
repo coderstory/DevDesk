@@ -2997,12 +2997,12 @@ REGISTER_TEST(claude_ui_logic_shared_pure_functions,
     module::claude::SharedConfig empty;
     DOCTEST_CHECK(sharedFrozenKeys(empty).empty());
     module::claude::SharedConfig bad;
-    bad.extraEnvJson = "{ 不是 JSON";
+    bad.extraSettingsJson = "{ 不是 JSON";
     DOCTEST_CHECK(sharedFrozenKeys(bad).empty());
 
     // 别名归一：AUTO_COMPACT_ENABLED → DISABLE_AUTO_COMPACT（与写侧同口径）
     module::claude::SharedConfig sc;
-    sc.extraEnvJson = R"({"MY_A":"1","AUTO_COMPACT_ENABLED":"0"})";
+    sc.extraSettingsJson = R"({"MY_A":"1","AUTO_COMPACT_ENABLED":"0"})";
     const auto keys = sharedFrozenKeys(sc);
     DOCTEST_REQUIRE_EQ(keys.size(), static_cast<size_t>(2));
     DOCTEST_CHECK(keyIn(keys, "MY_A"));
@@ -3214,13 +3214,13 @@ REGISTER_TEST(claude_module_shared_editor_create,
         DOCTEST_REQUIRE(title != nullptr);
         DOCTEST_CHECK_EQ(title->text, std::string("已创建"));
     }
-    // DB 往返：name + extra_env 落地
+    // DB 往返：name + 片段 JSON 落地（v11 起存 extra_settings_json 列）
     {
         auto list = env.svc->listSharedConfigs();
         DOCTEST_REQUIRE(list.isOk());
         DOCTEST_REQUIRE_EQ(list.value().size(), static_cast<size_t>(1));
         DOCTEST_CHECK_EQ(list.value()[0].name, std::string("网关env"));
-        auto ee = module::claude::parseExtraEnv(list.value()[0].extraEnvJson);
+        auto ee = module::claude::parseExtraEnv(list.value()[0].extraSettingsJson);
         DOCTEST_REQUIRE(ee.isOk());
         DOCTEST_REQUIRE_EQ(ee.value().size(), static_cast<size_t>(1));
         DOCTEST_CHECK_EQ(ee.value().at("MY_GW"), std::string("v1"));

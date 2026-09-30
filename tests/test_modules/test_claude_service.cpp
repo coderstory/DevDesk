@@ -2113,12 +2113,12 @@ REGISTER_TEST(claude_shared_config_crud_and_binding,
     DOCTEST_REQUIRE(list.isOk());
     DOCTEST_REQUIRE_EQ(list.value().size(), 1u);
     DOCTEST_CHECK_EQ(list.value()[0].name, std::string("片段A"));
-    DOCTEST_CHECK_EQ(list.value()[0].extraEnvJson, f.value().extraEnvJson);
+    DOCTEST_CHECK_EQ(list.value()[0].extraSettingsJson, f.value().extraSettingsJson);
 
     // 改（改名 + 改 env）；不存在的 id → NotFound
     SharedConfig upd = f.value();
     upd.name = "片段A2";
-    upd.extraEnvJson = R"({"MY_KEY": "v2", "SECOND_KEY": "1"})";
+    upd.extraSettingsJson = R"({"MY_KEY": "v2", "SECOND_KEY": "1"})";
     DOCTEST_REQUIRE(svc.updateSharedConfig(upd).isOk());
     auto list2 = svc.listSharedConfigs();
     DOCTEST_REQUIRE(list2.isOk());
@@ -2288,6 +2288,110 @@ REGISTER_TEST(claude_shared_config_unbound_regression,
     DOCTEST_CHECK(keys.value().empty());
 
     test_support::cleanupProfileKey(kTestKeychainService, a.value().id);
+    return true;
+})
+
+// ===== 高级设置 JSON（2026-09-30 advanced-json-editor 设计 §3.3）=====
+
+// ---- 26b. Profile::extraSettingsJson 往返：createProfile 尾参 / updateProfile
+//      两分支 / getProfile / listProfiles（「漏改 SELECT 列静默失效」的回归闸，
+//      同 fallback_profile_id 口径）
+REGISTER_TEST(claude_profile_extra_settings_roundtrip,
+              "claude_service: extraSettingsJson createProfile 尾参 / updateProfile 两分支 / 三条 SELECT 往返", {
+    using namespace module::claude;
+    test_support::TestDb tdb(kDbPrefix, "xsettings_rt");
+    ClaudeService svc(tdb.handle(), kTestKeychainService);
+
+    const std::string settingsJson = R"({"model": "glm-5.3", "permissions": {"allow": ["Bash"]}})";
+    auto a = svc.createProfile("带JSON", "https://a.example.com",
+                               "sk-xs-test-0123456789abcdef", "",
+                               /*activateIfNoneActive=*/false,
+                               /*sharedConfigId=*/0, "both", "",
+                               /*fallbackProfileId=*/0,
+                               /*extraSettingsJson=*/settingsJson);
+    DOCTEST_REQUIRE(a.isOk());
+    DOCTEST_CHECK_EQ(a.value().extraSettingsJson, settingsJson);
+
+    // 未传尾参（既有调用方）→ 默认空串，既有行为零变化
+    auto b = svc.createProfile("无JSON", "https://b.example.com",
+                               "sk-xs-b-0123456789abcdef", "");
+    DOCTEST_REQUIRE(b.isOk());
+    DOCTEST_CHECK_EQ(b.value().extraSettingsJson, std::string());
+
+    // 三条 SELECT 都要读到（rowToProfile 的 if (isOk()) 守卫会把缺列吞成空串）
+    auto ga = svc.getProfile(a.value().id);
+    DOCTEST_REQUIRE(ga.isOk());
+    DOCTEST_CHECK_EQ(ga.value().extraSettingsJson, settingsJson);
+    auto la = svc.listProfiles();
+    DOCTEST_REQUIRE(la.isOk());
+    bool found = false;
+    for (const auto& p : la.value()) {
+        if (p.id == a.value().id) {
+            found = true;
+            DOCTEST_CHECK_EQ(p.extraSettingsJson, settingsJson);
+        }
+    }
+    DOCTEST_CHECK(found);
+
+    // updateProfile 分支一（apiKeyPlain 非空）也携带该列
+    Profile upd = ga.value();
+    upd.apiKeyPlain = "sk-xs-new-0123456789abcdef";
+    DOCTEST_REQUIRE(svc.updateProfile(upd).isOk());
+    auto gu = svc.getProfile(a.value().id);
+    DOCTEST_REQUIRE(gu.isOk());
+    DOCTEST_CHECK_EQ(gu.value().extraSettingsJson, settingsJson);
+
+    // updateProfile 分支二（只改元数据）：改 JSON 落库 + 清空落库
+    Profile upd2 = gu.value();
+    upd2.apiKeyPlain.clear();
+    upd2.extraSettingsJson = R"({"statusLine": {"type": "command"}})";
+    DOCTEST_REQUIRE(svc.updateProfile(upd2).isOk());
+    auto gu2 = svc.getProfile(a.value().id);
+    DOCTEST_REQUIRE(gu2.isOk());
+    DOCTEST_CHECK_EQ(gu2.value().extraSettingsJson,
+                     R"({"statusLine": {"type": "command"}})");
+    upd2.extraSettingsJson.clear();
+    DOCTEST_REQUIRE(svc.updateProfile(upd2).isOk());
+    auto gu3 = svc.getProfile(a.value().id);
+    DOCTEST_REQUIRE(gu3.isOk());
+    DOCTEST_CHECK_EQ(gu3.value().extraSettingsJson, std::string());
+
+    test_support::cleanupProfileKey(kTestKeychainService, a.value().id);
+    test_support::cleanupProfileKey(kTestKeychainService, b.value().id);
+    return true;
+})
+
+// ---- 26c. 复制链带 extraSettingsJson（审计 F-3）：纯 JSON profile（两个 env
+//      字段均空、仅 extraSettingsJson 非空）复制不得静默丢字段——门槛条件
+//      （models/extra_env 非空）不成立时，二段补写与 createProfile 尾参双通道
+//      必须有一个把它带上
+REGISTER_TEST(claude_profile_extra_settings_duplicate_pure_json,
+              "claude_service: 纯 JSON profile 复制携带 extraSettingsJson（F-3 门槛）", {
+    using namespace module::claude;
+    test_support::TestDb tdb(kDbPrefix, "xsettings_dup");
+    ClaudeService svc(tdb.handle(), kTestKeychainService);
+
+    const std::string settingsJson = R"({"hooks": {"PreToolUse": []}})";
+    auto a = svc.createProfile("纯JSON源", "https://a.example.com",
+                               "sk-xsd-test-0123456789abcdef", "",
+                               /*activateIfNoneActive=*/false,
+                               /*sharedConfigId=*/0, "both", "",
+                               /*fallbackProfileId=*/0,
+                               /*extraSettingsJson=*/settingsJson);
+    DOCTEST_REQUIRE(a.isOk());
+    auto ga = svc.getProfile(a.value().id);
+    DOCTEST_REQUIRE(ga.isOk());
+    DOCTEST_CHECK(ga.value().modelsConfigJson.empty());   // 前置：门槛不成立
+    DOCTEST_CHECK(ga.value().extraEnvJson.empty());
+
+    auto dup = svc.duplicateProfile(a.value().id);
+    DOCTEST_REQUIRE(dup.isOk());
+    auto gd = svc.getProfile(dup.value().id);
+    DOCTEST_REQUIRE(gd.isOk());
+    DOCTEST_CHECK_EQ(gd.value().extraSettingsJson, settingsJson);
+
+    test_support::cleanupProfileKey(kTestKeychainService, a.value().id);
+    test_support::cleanupProfileKey(kTestKeychainService, dup.value().id);
     return true;
 })
 

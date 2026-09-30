@@ -541,7 +541,7 @@ private:
         if (p.sharedConfigId != 0) {
             const SharedConfig* sc = findSharedById(
                 state_.list.cachedSharedConfigs_, p.sharedConfigId);
-            if (sc != nullptr) sharedJson = sc->extraEnvJson;
+            if (sc != nullptr) sharedJson = sc->extraSettingsJson;
         }
         // 占位值：apiKeyHint 即「前6 + *** + 尾4」形态（profile_repository
         // 脱敏生成，同源同口径）；hint 为空（Keychain 读不到）→ 传空串，
