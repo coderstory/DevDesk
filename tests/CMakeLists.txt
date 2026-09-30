@@ -39,6 +39,7 @@ add_executable(devdesk_tests
     test_modules/test_agent_store.cpp
     test_modules/test_agent_loop.cpp
     test_modules/test_agent_tools.cpp
+    test_modules/test_agent_ui.cpp
     test_modules/test_llm_client.cpp
     test_modules/test_todo_ui.cpp
     test_modules/test_ui_modern.cpp
@@ -185,6 +186,7 @@ foreach(_probe_source ${_devdesk_probe_sources})
         devdesk_module_home
         devdesk_module_markdown
         devdesk_module_todo
+        devdesk_agent
         devdesk_module_claude_proxy
         devdesk_module_settings
         devdesk_module_about
