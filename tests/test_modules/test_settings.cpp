@@ -2713,7 +2713,7 @@ REGISTER_TEST(settings_ctrl_s_save_shortcut,
 // ---- spec 缩水 A：跟随系统主题（themeMode 三档 + platform::prefersDarkTheme）----
 
 REGISTER_TEST(settings_theme_mode_roundtrip_and_legacy,
-              "settings: themeMode 默认 auto/读写往返/旧 theme 键派生/未知收敛（spec缩水 A）", {
+              "settings: themeMode 默认 auto/读写往返/非法值回落（spec缩水 A）", {
     using namespace module::settings;
     const auto path = test_support::tempConfigFile(kCfgPrefix, "thememode");
     removeQuietly(path);
@@ -2722,7 +2722,7 @@ REGISTER_TEST(settings_theme_mode_roundtrip_and_legacy,
     // 无文件 → 默认 auto（新人跟随系统）
     DOCTEST_CHECK_EQ(store.load().themeMode, std::string(kThemeModeAuto));
 
-    // 三档读写往返；theme 键随 darkTheme 同步写（main.cpp 兼容通道）
+    // 三档读写往返；theme 键随 darkTheme 同步写（main.cpp 启动通道）
     SettingsConfig light;
     light.themeMode = kThemeModeLight;
     light.darkTheme = false;
@@ -2742,24 +2742,19 @@ REGISTER_TEST(settings_theme_mode_roundtrip_and_legacy,
         DOCTEST_CHECK(loaded.darkTheme);
     }
 
-    // 存量文件（只有 theme 键）→ 派生为显式档，不静默转 auto
+    // themeMode 键缺失 → auto（只认 themeMode 键，不从 theme 键派生）
     {
         std::ofstream f(path, std::ios::trunc);
         f << R"({"theme": "light"})";
     }
-    DOCTEST_CHECK_EQ(store.load().themeMode, std::string(kThemeModeLight));
-    {
-        std::ofstream f(path, std::ios::trunc);
-        f << R"({"theme": "dark"})";
-    }
-    DOCTEST_CHECK_EQ(store.load().themeMode, std::string(kThemeModeDark));
+    DOCTEST_CHECK_EQ(store.load().themeMode, std::string(kThemeModeAuto));
 
-    // themeMode 非法值：有 legacy theme → 按 theme 派生；无 theme → auto
+    // themeMode 非法值 → auto（不按 theme 键派生）
     {
         std::ofstream f(path, std::ios::trunc);
         f << R"({"themeMode": "neon", "theme": "light"})";
     }
-    DOCTEST_CHECK_EQ(store.load().themeMode, std::string(kThemeModeLight));
+    DOCTEST_CHECK_EQ(store.load().themeMode, std::string(kThemeModeAuto));
     {
         std::ofstream f(path, std::ios::trunc);
         f << R"({"themeMode": "neon"})";

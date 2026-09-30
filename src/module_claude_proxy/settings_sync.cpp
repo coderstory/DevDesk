@@ -298,7 +298,7 @@ SyncResult takeOver(const Profile& profile, int proxyPort, const Paths& paths) {
     // 托管 env（纯函数，规则见 provider_config.h）：托管键（BASE_URL / 占位
     // token / 槽位）在最上层。片段 env 叠加随 advanced-json-editor §8.4 拆除
     //（片段走 JSON 域，经 profile.extraSettingsJson 在下方 apply 步并入）
-    const auto managed = buildProxyEnv(profile.modelsConfigJson, profile.model,
+    const auto managed = buildProxyEnv(profile.modelsConfigJson,
                                        profile.extraEnvJson, proxyPort);
     std::vector<std::string> managedKeys;
     managedKeys.reserve(managed.size());

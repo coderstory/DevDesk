@@ -360,17 +360,13 @@ core::Result<void> validateExtraSettingsJson(const std::string& text) {
     return core::Result<void>::ok();
 }
 
-ModelsConfig effectiveModelsConfig(const std::string& modelsConfigJson,
-                                   const std::string& legacyModel) {
+ModelsConfig effectiveModelsConfig(const std::string& modelsConfigJson) {
     ModelsConfig out;
     auto parsed = parseModelsConfig(modelsConfigJson);
     if (parsed.isOk()) {
         out = parsed.value();
     }
-    // 非法 JSON → 容错为全空槽位（读路径不炸，§4.2）
-    if (out.def.model.empty() && !legacyModel.empty()) {
-        out.def.model = legacyModel;  // 旧 model 列 fallback
-    }
+    // 非法 JSON → 容错为全空槽位（读路径不炸）
     return out;
 }
 
@@ -551,7 +547,7 @@ core::Result<ImportedConfig> parseImportedEnv(const std::string& text) {
 }
 
 std::map<std::string, std::string> buildProxyEnv(
-    const std::string& modelsConfigJson, const std::string& legacyModel,
+    const std::string& modelsConfigJson,
     const std::string& extraEnvJson,
     int proxyPort,
     std::map<std::string, EnvSource>* sourcesOut) {
@@ -588,7 +584,7 @@ std::map<std::string, std::string> buildProxyEnv(
     out["ANTHROPIC_AUTH_TOKEN"] = kProxyAuthPlaceholder;
     markOne("ANTHROPIC_AUTH_TOKEN", EnvSource::Managed);
 
-    const ModelsConfig mc = effectiveModelsConfig(modelsConfigJson, legacyModel);
+    const ModelsConfig mc = effectiveModelsConfig(modelsConfigJson);
     for (const auto& m : modelSlotTable()) {
         const ModelSlot& slot = mc.*m.slot;
         if (slot.model.empty()) continue;  // 空槽位跳过（规则 3）
@@ -607,7 +603,7 @@ std::map<std::string, std::string> buildProxyEnv(
 std::map<std::string, std::string> buildDirectEnv(
     const std::string& baseUrl, const std::string& apiKeyPlain,
     const std::string& authField,
-    const std::string& modelsConfigJson, const std::string& legacyModel,
+    const std::string& modelsConfigJson,
     const std::string& extraEnvJson) {
     std::map<std::string, std::string> out;
 
@@ -649,7 +645,7 @@ std::map<std::string, std::string> buildDirectEnv(
     }
 
     // 模型槽位（与 buildProxyEnv 规则 3/4 同款）：空槽位跳过；name 空则派生显示名
-    const ModelsConfig mc = effectiveModelsConfig(modelsConfigJson, legacyModel);
+    const ModelsConfig mc = effectiveModelsConfig(modelsConfigJson);
     for (const auto& m : modelSlotTable()) {
         const ModelSlot& slot = mc.*m.slot;
         if (slot.model.empty()) continue;  // 空槽位跳过
@@ -904,16 +900,15 @@ ReverseSyncParse parseEnvForReverseSync(
 
 ReverseSyncMerge mergeReverseSyncEnv(const ImportedConfig& cfg,
                                      const std::string& curModelsConfigJson,
-                                     const std::string& curLegacyModel,
                                      const std::string& curExtraEnvJson) {
     ReverseSyncMerge out;
     const auto isKeep = [&cfg](const std::string& key) {
         return containsKey(cfg.skippedKeys, key);
     };
 
-    // ---- models_config：以 effectiveModelsConfig(现值, 旧 model 列) 为基底 ----
+    // ---- models_config：以 effectiveModelsConfig(现值) 为基底 ----
     const ModelsConfig cur =
-        effectiveModelsConfig(curModelsConfigJson, curLegacyModel);
+        effectiveModelsConfig(curModelsConfigJson);
     ModelsConfig merged = cur;
     for (const auto& m : modelSlotTable()) {
         if (!isKeep(m.envKey)) {

@@ -33,9 +33,8 @@ namespace module::claude {
 
 namespace {
 
-// 旧全局 Keychain service 名（< 2026-09-30 的所有数据根共用它；现仅作一次性
-// 迁移源 migrateLegacyKeychainService，新代码的读写一律走按根派生的名字）
-constexpr const char* kLegacyKeychainService = "DevDesk";
+// Keychain service 名的固定前缀（按数据根派生时拼在短哈希之前）
+constexpr const char* kKeychainServicePrefix = "DevDesk";
 
 // 取当前 unix 秒
 std::time_t nowUnix() {
@@ -73,7 +72,7 @@ bool keyAtOldValue(const std::string& keychainService,
 // Keychain service 名按数据根派生（声明见 claude_service.h 纯函数段）
 std::string keychainServiceForDataRoot(const std::string& dataRoot) {
     if (dataRoot.empty()) {
-        return std::string();   // 空根无法派生（生产不可达；调用方兜底旧名）
+        return std::string();   // 空根无法派生（生产不可达；调用方兜底裸前缀）
     }
     unsigned char digest[SHA256_DIGEST_LENGTH];
     SHA256(reinterpret_cast<const unsigned char*>(dataRoot.data()),
@@ -85,16 +84,16 @@ std::string keychainServiceForDataRoot(const std::string& dataRoot) {
         oss << std::hex << std::setw(2) << std::setfill('0')
             << static_cast<int>(digest[i]);
     }
-    return std::string(kLegacyKeychainService) + "-" + oss.str();
+    return std::string(kKeychainServicePrefix) + "-" + oss.str();
 }
 
 namespace {
 
 // 生产路径（未显式传 service）：按当前数据根派生 service 名。派生失败
-//（空根，理论不可达）兜底旧全局名——名字退化但不至于抛错。
+//（空根，理论不可达）兜底裸前缀——名字退化但不至于抛错。
 std::string resolveKeychainService() {
     auto derived = keychainServiceForDataRoot(core::paths::appDataDir().string());
-    return derived.empty() ? std::string(kLegacyKeychainService) : derived;
+    return derived.empty() ? std::string(kKeychainServicePrefix) : derived;
 }
 
 } // namespace
@@ -107,9 +106,6 @@ ClaudeService::ClaudeService(core::data::SqliteDb& db,
                                                      : keychainService),
       keychainService_(keychainService.empty() ? resolveKeychainService()
                                                : keychainService),
-      legacyKeychainService_(keychainService.empty()
-                                 ? std::string(kLegacyKeychainService)
-                                 : std::string()),
       proxyRuntime_(*this) {}
 
 ClaudeService::~ClaudeService() {
@@ -232,12 +228,6 @@ core::Result<int> ClaudeService::cleanupOrphanKeychainEntries() {
     // R10-A2 段级拆分：listProfiles + Keychain 孤儿条目清理（「Keychain
     // 条目与行一一对应」不变式的维护者）已迁 ProfileRepository
     return profileRepository_.cleanupOrphanKeychainEntries();
-}
-
-core::Result<int> ClaudeService::migrateLegacyKeychainService() {
-    // 显式传 service（测试）时 legacyKeychainService_ 为空 → 迁移 no-op
-    return profileRepository_.migrateLegacyKeychainService(
-        legacyKeychainService_);
 }
 
 // ---------- API key ----------
@@ -526,7 +516,7 @@ core::Result<void> ClaudeService::runProfile(int64_t id, std::string* hint) {
     // appDataDir()/run-settings/run-<id>-<ts>.json。
     // 关键：**零全局改动**——不启代理、不切激活、不读也不写 ~/.claude/settings.json
     const auto env = buildDirectEnv(p.baseUrl, key.value(), p.authField,
-                                    p.modelsConfigJson, p.model, p.extraEnvJson);
+                                    p.modelsConfigJson, p.extraEnvJson);
     platform::json::JsonObject envObj;
     for (const auto& [k, v] : env) {
         envObj.set(k, platform::json::makeString(v));
@@ -682,7 +672,7 @@ core::Result<void> ClaudeService::syncCaptureActiveProfile() {
     };
 
     const ReverseSyncMerge merged = mergeReverseSyncEnv(
-        parsed.cfg, prof.modelsConfigJson, prof.model, prof.extraEnvJson);
+        parsed.cfg, prof.modelsConfigJson, prof.extraEnvJson);
 
     // ---- 逐字段比较（§3.5 无变化 → 零写入，不 bump updated_at）----
     // base_url：G2 命中（loopback 本地代理形态）→ 保持 profile 原值，不清
@@ -717,10 +707,9 @@ core::Result<void> ClaudeService::syncCaptureActiveProfile() {
     upd.baseUrl = newBaseUrl;
     if (merged.modelsChanged) {
         upd.modelsConfigJson = merged.modelsConfigJson;
-        // 旧 model 列显式跟随 default 槽位：updateProfile 内虽有同款跟随，但
-        // 「default 槽位被清空」时它拿不到空值，旧 model 会经
-        // effectiveModelsConfig 的 legacy fallback 复活，清空就落不了库
-        upd.model = effectiveModelsConfig(merged.modelsConfigJson, "").def.model;
+        // model 列显式跟随 default 槽位：updateProfile 内虽有同款跟随，但
+        // 「default 槽位被清空」时它拿不到空值，清空就落不了库
+        upd.model = effectiveModelsConfig(merged.modelsConfigJson).def.model;
     }
     if (merged.extraEnvChanged) {
         upd.extraEnvJson = merged.extraEnvJson;

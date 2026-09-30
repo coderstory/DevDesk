@@ -28,7 +28,7 @@ std::string truncateUtf8(const std::string& s, size_t maxBytes) {
 }
 
 std::string modelsSummary(const Profile& p) {
-    const ModelsConfig mc = effectiveModelsConfig(p.modelsConfigJson, p.model);
+    const ModelsConfig mc = effectiveModelsConfig(p.modelsConfigJson);
     int configured = 0;
     for (const auto& meta : modelSlotTable()) {
         if (!(mc.*meta.slot).model.empty()) ++configured;
@@ -78,8 +78,7 @@ std::string buildProfileExportJson(const Profile& p,
     // 属性 JSON 预设；env 域片段管线随 §8.4 拆除）——恒传空串，坏片段 JSON 的
     // 防静默 WARN 由调用方 doCopyConfig 覆盖两域
     const auto env = buildDirectEnv(p.baseUrl, keyPlaceholder, p.authField,
-                                    p.modelsConfigJson, p.model,
-                                    p.extraEnvJson);
+                                    p.modelsConfigJson, p.extraEnvJson);
     platform::json::JsonObject envObj;
     for (const auto& [k, v] : env) {
         envObj.set(k, platform::json::makeString(v));
