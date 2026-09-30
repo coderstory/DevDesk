@@ -28,6 +28,7 @@
 #include "provider_config.h"
 #include "settings_sync.h"
 
+#include <algorithm>
 #include <filesystem>
 #include <fstream>
 #include <map>
@@ -87,6 +88,101 @@ std::string topLevelString(const std::filesystem::path& f, const char* key) {
 
 // 临时 db 文件名前缀（共享工厂 test_support::tempDbPath / TestDb 的第一实参）
 constexpr const char* kDbPrefix = "devdesk_test_sync_db_";
+
+// ---- 假 Keychain（CPX-14 注入缝，同 test_claude_service.cpp:592 ScopedFakeKeychain
+// 与 tests/test_platform/test_keychain.cpp 的 CountingKeychain 写法）----
+// 存在的理由（merge-review R2）：走真门面的端到端用例里 createProfile 会向
+// **系统钥匙串**写测试密钥，而清理只在函数尾部 deleteSecret——中间任一
+// DOCTEST_REQUIRE 失败就残留一条真实条目（与 P0 钥匙串事故同款形状：测试写
+// 真实用户存储）。装上假后端后该用例对真钥匙串零读写，且「写了几条」本身
+// 变成可断言的（count() 恒 0 = 真的没碰真后端之外的东西）。
+struct FakeKeychain {
+    std::map<std::string, std::string> data;
+
+    static std::string keyOf(const std::string& service,
+                             const std::string& account) {
+        return service + '\x1f' + account;
+    }
+    void store(const std::string& service, const std::string& account,
+               const std::string& secret) {
+        data[keyOf(service, account)] = secret;
+    }
+    std::string load(const std::string& service,
+                     const std::string& account) const {
+        const auto it = data.find(keyOf(service, account));
+        return it == data.end() ? std::string() : it->second;
+    }
+    void remove(const std::string& service, const std::string& account) {
+        data.erase(keyOf(service, account));
+    }
+    size_t count() const { return data.size(); }
+};
+
+FakeKeychain* g_fakeKeychain = nullptr;
+
+core::Result<void> fakeStoreSecret(const std::string& service,
+                                   const std::string& account,
+                                   const std::string& secret) {
+    g_fakeKeychain->store(service, account, secret);
+    return core::Result<void>::ok();
+}
+
+core::Result<std::string> fakeLoadSecret(const std::string& service,
+                                         const std::string& account) {
+    if (g_fakeKeychain->load(service, account).empty()) {
+        return core::Result<std::string>::fail(core::ErrorCode::NotFound,
+                                               "Keychain item not found");
+    }
+    return core::Result<std::string>::ok(g_fakeKeychain->load(service, account));
+}
+
+core::Result<void> fakeDeleteSecret(const std::string& service,
+                                    const std::string& account) {
+    g_fakeKeychain->remove(service, account);
+    return core::Result<void>::ok();   // 不存在也 Ok（幂等，同真实实现）
+}
+
+core::Result<std::vector<std::string>> fakeDeleteSecretsNotIn(
+    const std::string& service, const std::vector<std::string>& keepAccounts) {
+    const std::string prefix = service + '\x1f';
+    std::vector<std::string> removed;
+    for (auto it = g_fakeKeychain->data.begin();
+         it != g_fakeKeychain->data.end();) {
+        if (it->first.compare(0, prefix.size(), prefix) == 0) {
+            const std::string account = it->first.substr(prefix.size());
+            if (std::find(keepAccounts.begin(), keepAccounts.end(), account) ==
+                keepAccounts.end()) {
+                removed.push_back(account);
+                it = g_fakeKeychain->data.erase(it);
+                continue;
+            }
+        }
+        ++it;
+    }
+    return core::Result<std::vector<std::string>>::ok(std::move(removed));
+}
+
+// RAII：安装假后端，析构恢复真实后端——用例 fail-fast（return false）或抛异常
+// 都不会把假后端泄漏给后续用例
+struct ScopedFakeKeychain {
+    FakeKeychain fake;
+    platform::keychain::Backend table;
+    const platform::keychain::Backend* prev;
+
+    ScopedFakeKeychain() {
+        g_fakeKeychain = &fake;
+        table = platform::keychain::Backend{
+            &fakeStoreSecret, &fakeLoadSecret, &fakeDeleteSecret,
+            &fakeDeleteSecretsNotIn};
+        prev = platform::keychain::setBackendForTest(&table);
+    }
+    ~ScopedFakeKeychain() {
+        platform::keychain::setBackendForTest(prev);
+        g_fakeKeychain = nullptr;
+    }
+    ScopedFakeKeychain(const ScopedFakeKeychain&) = delete;
+    ScopedFakeKeychain& operator=(const ScopedFakeKeychain&) = delete;
+};
 
 } // namespace
 
@@ -1425,9 +1521,16 @@ REGISTER_TEST(sync_restore_v1_sidecar_no_nonenv,
 // → 门面 §5.2① 装配生效 JSON（片段赢）→ 接管写入片段键且同键为片段值 →
 // restore 全部撤走。走真门面（startProxy/stopProxy）钉住装配这一跳——装配漏传
 // /传未生效化原文时必红（骨架照既有片段接管用例平移 JSON 域）
+//
+// 钥匙串隔离（merge-review R2）：本用例**装假 Keychain**（ScopedFakeKeychain，
+// CPX-14 注入缝）。原写法 createProfile 会向**系统钥匙串**写测试密钥，清理
+// 只有函数尾部那一次 deleteSecret——中间任一 DOCTEST_REQUIRE 失败就残留一条
+// 真实条目（与 P0 钥匙串事故同款形状）。装假后端后本用例对真钥匙串零读写，
+// 且末尾断言假后端里确实落过、也确实被清空（写链没被偷偷跳过）。
 REGISTER_TEST(sync_takeover_fragment_json_end_to_end,
               "claude_service: 片段 JSON 叠加端到端（门面装配片段赢→接管写入→还原撤走，F-8）", {
     using namespace module::claude;
+    ScopedFakeKeychain kc;   // 必须早于任何 createProfile（最早可能点）
     test_support::TestDb tdb(kDbPrefix, "fragjson");
     test_support::TempDir d("fragjson", kSyncTempDirPrefix);
     auto paths = makePaths(d);
@@ -1441,6 +1544,8 @@ REGISTER_TEST(sync_takeover_fragment_json_end_to_end,
     auto a = svc.createProfile("绑JSON", "https://j.example.com",
                                "sk-ind-test-0123456789abcdef", "");
     DOCTEST_REQUIRE(a.isOk());
+    // 前置：密钥确实落到了（假）后端——否则末尾「清空」恒真、等于没走写链
+    DOCTEST_REQUIRE_EQ(kc.fake.count(), static_cast<size_t>(1));
     Profile pa = a.value();
     pa.extraSettingsJson = R"({"statusLine": "profile-s", "permissions": {"p": 1}})";
     pa.sharedConfigId = frag.value().id;
@@ -1474,5 +1579,7 @@ REGISTER_TEST(sync_takeover_fragment_json_end_to_end,
     }
     platform::keychain::deleteSecret(kTestKeychainService,
                                      "claude:" + std::to_string(pa.id));
+    // 假后端清空 = 清理链真的跑过（不是被 REQUIRE 跳过）
+    DOCTEST_CHECK_EQ(kc.fake.count(), static_cast<size_t>(0));
     return true;
 })
