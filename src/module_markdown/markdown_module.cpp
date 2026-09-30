@@ -41,6 +41,7 @@
 #include <ui_kit/metrics.h>
 #include <ui_kit/toast.h>
 #include "markdown_service.h"
+#include "markdown_tools.h"
 #include "md_block_model.h"
 #include "md_block_interact.h"
 #include "md_highlight.h"
@@ -284,6 +285,9 @@ public:
             return;
         }
         service_ = std::make_unique<MarkdownService>(*db, ::core::paths::markdownDir());
+        // 智能体工具（agent M1 Task 9）：service 构造后即挂 md.search / md.read
+        markdownTools_ = std::make_unique<MarkdownTools>(*service_);
+        markdownTools_->registerAll();
         auto r = service_->rescan();
         if (r.isFail()) {
             LOG_ERROR("Markdown rescan 失败: " + r.errorMessage());
@@ -297,6 +301,11 @@ public:
     }
 
     void onStop() override {
+        // 智能体工具先注销（工具引用 service_；onStart 未建 service 时是 no-op）
+        if (markdownTools_) {
+            markdownTools_->unregisterAll();
+            markdownTools_.reset();
+        }
         // 退出前落盘：失败不能静默丢编辑（W7 P1-2）。EUI-NEO 无退出拦截
         // API，无法阻断退出弹 dialog，做同步有限重试（瞬时文件锁可自行恢复）
         // + 响亮日志兜底；编辑器内容不再有其他持久化通道。
@@ -4186,6 +4195,8 @@ private:
     static constexpr int64_t kPollIntervalMs = 5000;     // W8：文件变化轮询周期
 
     std::unique_ptr<MarkdownService> service_;
+    // 智能体工具集（agent M1 Task 9）：引用 service_，onStop 先注销再放 service
+    std::unique_ptr<MarkdownTools> markdownTools_;
     // 审计 [23]：视图状态 store（loadViewState 创建；未创建 = 不持久化，saveViewState 静默跳过）
     std::unique_ptr<MarkdownViewStateStore> viewStore_;
     std::vector<NoteMeta> notes_;      // 当前展示（全部或搜索结果）
