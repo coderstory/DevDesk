@@ -56,13 +56,13 @@ public:
     void recoverPendingSettingsRestore();
 
     // 接管（R10 spec §2.3 P-A4 双入参：激活 Profile + 当前代理端口，由门面
-    // 从 ProfileRepository / ProxyRuntime 取；sharedExtraEnvJson = 所绑共享
-    // 片段 extra_env 原文，同样由门面从 ProfileRepository 取）。返回失败原因
-    //（settings.json / sidecar 读写或解析失败），供调用方决定呈现方式；
-    // **接管失败不阻断上层操作**（启代理/切 profile 照常），失败原因并入
-    // warnings_（门面经 lastSyncWarnings() 透传 UI）
-    core::Result<void> syncTakeOver(const Profile& activeProfile, int proxyPort,
-                                    const std::string& sharedExtraEnvJson);
+    // 从 ProfileRepository / ProxyRuntime 取。advanced-json-editor §5.2①/§8.4：
+    // 生效高级设置 JSON 由门面预先装配进 Profile 副本的 extraSettingsJson
+    //（片段叠加片段赢在门面完成），原 sharedExtraEnvJson 形参拆除——片段不再
+    // 携带 env 键）。返回失败原因（settings.json / sidecar 读写或解析失败），
+    // 供调用方决定呈现方式；**接管失败不阻断上层操作**（启代理/切 profile
+    // 照常），失败原因并入 warnings_（门面经 lastSyncWarnings() 透传 UI）
+    core::Result<void> syncTakeOver(const Profile& activeProfile, int proxyPort);
 
     // 还原（CPX-02，R10-A4 收尾）：不再 void——失败返回 Result 上报（唯一
     // 调用点门面 stopProxy 内），失败原因并入 warnings_

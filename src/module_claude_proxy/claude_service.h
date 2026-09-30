@@ -143,14 +143,9 @@ public:
     //     回落 profile 自身值（片段值从不写进 profile 行）
     core::Result<std::vector<SharedConfig>> listSharedConfigs();
     core::Result<SharedConfig> createSharedConfig(const std::string& name,
-                                                 const std::string& extraEnvJson);
+                                                 const std::string& extraSettingsJson);
     core::Result<void> updateSharedConfig(const SharedConfig& config);
     core::Result<void> deleteSharedConfig(int64_t id);
-
-    // 片段冻结键集（G10，设计 §2.4）：profile 所绑片段 extra_env 的全部键
-    //（别名归一后，与写进 live 的键形一致）。未绑定 / 片段已删 / JSON 非法 →
-    // 空集（读路径容错）
-    core::Result<std::vector<std::string>> sharedEnvKeysFor(int64_t profileId);
 
     // 立即用当前激活 profile（含所绑片段）重写 settings.json（设计 §2.5：片段
     // 保存后必须当场生效）。通道未注入 / 接管开关关 → no-op 成功

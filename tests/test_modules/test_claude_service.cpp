@@ -2144,34 +2144,13 @@ REGISTER_TEST(claude_shared_config_crud_and_binding,
     DOCTEST_REQUIRE_EQ(la.value().size(), 1u);
     DOCTEST_CHECK_EQ(la.value()[0].sharedConfigId, f.value().id);
 
-    // 冻结键集（G10 用）= 片段 extra_env 的键
-    auto keys = svc.sharedEnvKeysFor(a.value().id);
-    DOCTEST_REQUIRE(keys.isOk());
-    DOCTEST_CHECK_EQ(keys.value().size(), 2u);
-    bool hasMyKey = false;
-    for (const auto& k : keys.value()) {
-        if (k == "MY_KEY") hasMyKey = true;
-    }
-    DOCTEST_CHECK(hasMyKey);
-
-    // 别名归一：键集口径与写侧一致（AUTO_COMPACT_ENABLED → DISABLE_AUTO_COMPACT）
-    auto f2 = svc.createSharedConfig("片段别名", R"({"AUTO_COMPACT_ENABLED": "1"})");
-    DOCTEST_REQUIRE(f2.isOk());
-    Profile aliased = ga.value();
-    aliased.sharedConfigId = f2.value().id;
-    DOCTEST_REQUIRE(svc.updateProfile(aliased).isOk());
-    auto keysAlias = svc.sharedEnvKeysFor(a.value().id);
-    DOCTEST_REQUIRE(keysAlias.isOk());
-    DOCTEST_REQUIRE_EQ(keysAlias.value().size(), 1u);
-    DOCTEST_CHECK_EQ(keysAlias.value()[0], std::string("DISABLE_AUTO_COMPACT"));
-
-    // 解绑（updateProfile 置 0）→ 键集空、DB 列回 0
+    //（原「冻结键集（G10 用）/ 别名归一键集 / 解绑键集空」三段随
+    // advanced-json-editor §8.4 拆除：片段不再携带 env 键，sharedEnvKeysFor
+    // 与 G10 守卫同批移除；绑定/解绑的 DB 往返断言保留如下）
+    // 解绑（updateProfile 置 0）→ DB 列回 0
     Profile unbind = ga.value();
     unbind.sharedConfigId = 0;
     DOCTEST_REQUIRE(svc.updateProfile(unbind).isOk());
-    auto keys2 = svc.sharedEnvKeysFor(a.value().id);
-    DOCTEST_REQUIRE(keys2.isOk());
-    DOCTEST_CHECK(keys2.value().empty());
     auto ga2 = svc.getProfile(a.value().id);
     DOCTEST_REQUIRE(ga2.isOk());
     DOCTEST_CHECK_EQ(ga2.value().sharedConfigId, 0);
@@ -2225,10 +2204,9 @@ REGISTER_TEST(claude_shared_config_delete_unbinds,
     DOCTEST_CHECK(again.errorCode() == core::ErrorCode::NotFound);
     DOCTEST_CHECK(svc.deleteSharedConfig(0).isFail());
 
-    // 悬空 id 的读路径容错：解绑后冻结键集为空，不炸
-    auto keys = svc.sharedEnvKeysFor(a.value().id);
-    DOCTEST_REQUIRE(keys.isOk());
-    DOCTEST_CHECK(keys.value().empty());
+    //（原「悬空 id 读路径冻结键集为空」断言随 sharedEnvKeysFor 拆除——
+    // advanced-json-editor §8.4；悬空绑定读路径容错由 getProfile 的
+    // sharedConfigId==0 断言承接）
 
     test_support::cleanupProfileKey(kTestKeychainService, a.value().id);
     test_support::cleanupProfileKey(kTestKeychainService, b.value().id);
@@ -2258,9 +2236,6 @@ REGISTER_TEST(claude_shared_config_duplicate_copies_binding,
     auto gd = svc.getProfile(dup.value().id);
     DOCTEST_REQUIRE(gd.isOk());
     DOCTEST_CHECK_EQ(gd.value().sharedConfigId, f.value().id);
-    auto keys = svc.sharedEnvKeysFor(dup.value().id);
-    DOCTEST_REQUIRE(keys.isOk());
-    DOCTEST_CHECK_EQ(keys.value().size(), 1u);
 
     test_support::cleanupProfileKey(kTestKeychainService, a.value().id);
     test_support::cleanupProfileKey(kTestKeychainService, dup.value().id);
@@ -2283,9 +2258,6 @@ REGISTER_TEST(claude_shared_config_unbound_regression,
     auto ga = svc.getProfile(a.value().id);
     DOCTEST_REQUIRE(ga.isOk());
     DOCTEST_CHECK_EQ(ga.value().sharedConfigId, 0);
-    auto keys = svc.sharedEnvKeysFor(a.value().id);
-    DOCTEST_REQUIRE(keys.isOk());
-    DOCTEST_CHECK(keys.value().empty());
 
     test_support::cleanupProfileKey(kTestKeychainService, a.value().id);
     return true;
@@ -3269,7 +3241,7 @@ REGISTER_TEST(claude_build_direct_env_three_state_auth_and_base_url,
 })
 
 REGISTER_TEST(claude_build_direct_env_slots_extra_env_and_managed_override,
-              "buildDirectEnv: 槽位/extra_env/共享片段并入 + 托管键压过 extra_env + 别名归一", {
+              "buildDirectEnv: 槽位/extra_env 并入 + 托管键压过 extra_env + 别名归一（片段 env 形参已拆）", {
     const std::string models =
         R"({"default": {"model": "claude-sonnet-4", "name": ""},
             "sonnet": {"model": "claude-sonnet-4-5", "name": "S4.5"},
@@ -3281,21 +3253,19 @@ REGISTER_TEST(claude_build_direct_env_slots_extra_env_and_managed_override,
         "AUTO_COMPACT_ENABLED": "1",
         "MY_VAR": "v"
     })";
-    // 共享片段叠在 profile 自身 extra_env 之上（片段赢，照 buildProxyEnv 规则 5）
-    const std::string shared =
-        R"({"MY_VAR": "shared-wins", "ANTHROPIC_API_KEY": "shared-key"})";
+    //（advanced-json-editor §8.4：共享片段 env 叠加形参已拆除——片段走 JSON 域）
     auto env = module::claude::buildDirectEnv(
         "https://api.anthropic.com/", "sk-real-key", "both",
-        models, "", extra, shared);
+        models, "", extra);
 
-    // 托管键压过 extra_env / 片段的同名旧值（BASE_URL 去尾斜杠后为 profile 值）
+    // 托管键压过 extra_env 的同名旧值（BASE_URL 去尾斜杠后为 profile 值）
     DOCTEST_CHECK_EQ(env["ANTHROPIC_BASE_URL"],
                      std::string("https://api.anthropic.com"));
     DOCTEST_CHECK_EQ(env["ANTHROPIC_AUTH_TOKEN"], std::string("sk-real-key"));
-    // 「第二密钥键」不存活：直连只写托管键一个（片段/extra 带进的另一键被跳过）
+    // 「第二密钥键」不存活：直连只写托管键一个（extra 带进的另一键被跳过）
     DOCTEST_CHECK(env.find("ANTHROPIC_API_KEY") == env.end());
-    // 共享片段键覆盖 profile extra_env 同名键
-    DOCTEST_CHECK_EQ(env["MY_VAR"], std::string("shared-wins"));
+    // extra_env 键原样入表
+    DOCTEST_CHECK_EQ(env["MY_VAR"], std::string("v"));
     // 槽位：非空槽位写 envKey；name 空 → 派生显示名（剥 [1M] 类标记）
     DOCTEST_CHECK_EQ(env["ANTHROPIC_MODEL"], std::string("claude-sonnet-4"));
     DOCTEST_CHECK_EQ(env["ANTHROPIC_DEFAULT_SONNET_MODEL"],

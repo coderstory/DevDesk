@@ -186,7 +186,10 @@ struct SharedConfigDialogState {
     bool open_ = false;
     int64_t editId_ = 0;             // 0 = 新建，非 0 = 编辑该 id
     std::string name_;               // 片段名（name UNIQUE，服务层校验）
-    std::vector<std::pair<std::string, std::string>> envRows_;  // 键值行
+    // 片段内容 JSON 原文（advanced-json-editor §8.1：弹窗 JSON 化——envRows_
+    // 键值行拆除，片段 = settings.json 非 env 顶层属性 JSON 预设；保存走
+    // validateExtraSettingsJson 同一套规则，落库统一 pretty）
+    std::string extraSettingsJson_;
     std::string error_;              // 校验/保存错误（红字）
 
     // 删除确认弹窗（删除 = 同事务解绑绑定它的 profile，设计 §2.6）

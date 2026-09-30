@@ -553,7 +553,7 @@ core::Result<ImportedConfig> parseImportedEnv(const std::string& text) {
 std::map<std::string, std::string> buildProxyEnv(
     const std::string& modelsConfigJson, const std::string& legacyModel,
     const std::string& extraEnvJson,
-    int proxyPort, const std::string& sharedExtraEnvJson,
+    int proxyPort,
     std::map<std::string, EnvSource>* sourcesOut) {
     std::map<std::string, std::string> out;
 
@@ -578,16 +578,8 @@ std::map<std::string, std::string> buildProxyEnv(
         markAll(out, EnvSource::Profile);
     }
 
-    // 共享配置片段叠在 profile 自身 env 之上（片段赢，设计 §2.3 优先级 2 > 3）：
-    // 解绑后同名键自动回落 profile 值（profile 行里的原值从未被删）；非法 JSON
-    // 同样读路径容错整体忽略
-    auto shared = parseExtraEnv(sharedExtraEnvJson);
-    if (shared.isOk()) {
-        for (const auto& [k, v] : applyEnvAliases(shared.value()).env) {
-            out[k] = v;
-            markOne(k, EnvSource::Shared);
-        }
-    }
+    //（原「共享配置片段叠在 profile 自身 env 之上」段随 advanced-json-editor
+    // §8.4 拆除：片段叠加走 JSON 域，env 域不再吃片段）
 
     out["ANTHROPIC_BASE_URL"] = "http://127.0.0.1:" + std::to_string(proxyPort);
     markOne("ANTHROPIC_BASE_URL", EnvSource::Managed);
@@ -616,23 +608,16 @@ std::map<std::string, std::string> buildDirectEnv(
     const std::string& baseUrl, const std::string& apiKeyPlain,
     const std::string& authField,
     const std::string& modelsConfigJson, const std::string& legacyModel,
-    const std::string& extraEnvJson,
-    const std::string& sharedExtraEnvJson) {
+    const std::string& extraEnvJson) {
     std::map<std::string, std::string> out;
 
     // 与 buildProxyEnv 同款（profile-run 设计 §4.2 规则 5）：extra_env 先入表
-    // （别名归一），共享片段叠在其上（片段赢），托管键随后写入压过两者——
-    // 导入数据可能带旧 BASE_URL / token，托管键必须最后落子
+    // （别名归一），托管键随后写入压过——导入数据可能带旧 BASE_URL / token，
+    // 托管键必须最后落子。（原共享片段叠加段随 advanced-json-editor §8.4 拆除）
     auto extra = parseExtraEnv(extraEnvJson);
     if (extra.isOk()) {
         out = applyEnvAliases(extra.value()).env;
         // 非法 JSON：读路径容错，整体忽略（与 effectiveModelsConfig 语义一致）
-    }
-    auto shared = parseExtraEnv(sharedExtraEnvJson);
-    if (shared.isOk()) {
-        for (const auto& [k, v] : applyEnvAliases(shared.value()).env) {
-            out[k] = v;
-        }
     }
 
     // 托管键 1：BASE_URL 去尾斜杠（照 claude_service.cpp 的 stripTrailingSlash
@@ -777,8 +762,7 @@ bool isLoopbackUrl(const std::string& url) {
 
 ReverseSyncParse parseEnvForReverseSync(
     const std::string& envJson,
-    const std::vector<std::string>& managedKeys,
-    const std::vector<std::string>& ownedKeys) {
+    const std::vector<std::string>& managedKeys) {
     ReverseSyncParse out;
     if (envJson.empty()) {  // 空 = 空 env 对象（无真相源，读侧已按 no-op 拦下）
         out.ok = true;
@@ -810,17 +794,11 @@ ReverseSyncParse parseEnvForReverseSync(
         markSkipped("ANTHROPIC_API_KEY");
     };
 
-    // 第一遍：G1 托管键 / G10 绑定片段键 / G4 空值 / G6 非字符串或超长 → 跳过
-    //（不写也不清）。G10 排在 G1 前面：片段键通常也在 sidecar 托管键并集里，两者
-    // 处置相同（都是跳过），但先判 G10 才能给出「被片段冻结」这条更准确的警告
+    // 第一遍：G1 托管键 / G4 空值 / G6 非字符串或超长 → 跳过（不写也不清）。
+    //（原 G10 绑定片段键分支随 advanced-json-editor §8.4 拆除——片段不再
+    // 携带 env 键，守卫是永不触发的死通道）
     std::map<std::string, std::string> valid;
-    std::vector<std::string> frozenKeys;  // G10 命中（聚合成一条警告，不逐键刷屏）
     for (const auto& key : env.keys()) {
-        if (containsKey(ownedKeys, key)) {  // G10：捕获目标所绑片段冻结的键
-            markSkipped(key);
-            frozenKeys.push_back(key);
-            continue;
-        }
         if (containsKey(managedKeys, key)) {  // G1
             markSkipped(key);
             continue;
@@ -842,18 +820,6 @@ ReverseSyncParse parseEnvForReverseSync(
             continue;
         }
         valid[key] = v;
-    }
-
-    // G10 汇总一条警告（设计 §2.4：live 里片段键的改动不回流，且下次接管会被
-    // 片段值覆盖回去——必须让用户看得见，否则观感是「我改了却没保存」）
-    if (!frozenKeys.empty()) {
-        std::string joined;
-        for (const auto& k : frozenKeys) {
-            if (!joined.empty()) joined += ", ";
-            joined += k;
-        }
-        out.cfg.warnings.push_back(
-            "键 " + joined + " 由共享配置片段冻结，settings.json 中的改动不回写");
     }
 
     // G2：loopback BASE_URL（本地代理形态）→ base_url 与本次 token 都不写也不清

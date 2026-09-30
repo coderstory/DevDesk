@@ -32,23 +32,13 @@ std::string modelsSummary(const Profile& p);
 // 提取不到（无 BASE_URL）→「导入 <日期>」；用户可改
 std::string suggestImportName(const std::string& baseUrl);
 
-// ---- 共享配置片段（批 2，设计 §2.10；纯函数，无 IO）----
-
-// 片段 K 键集：extra_env 全部键经 applyEnvAliases 别名归一（与写进 live 的
-// 键形、服务层 sharedEnvKeysFor 同口径；空串/非法 JSON → 空集，读路径容错）。
-// 片段赢预览的置灰行 / 新增同键拦截的判定源
-std::vector<std::string> sharedFrozenKeys(const SharedConfig& sc);
-
-// 键名归一（同写侧口径）：别名 → 官方键名，未命中透传原名。
-// 行键与 K 比对前先归一——「用户敲了别名、片段里是官方名」也算同键
-std::string normalizedEnvKey(const std::string& k);
+// ---- 共享配置片段（批 2 建立；advanced-json-editor §8.2 拆除 frozenKeys
+// ---- 家族：片段不再携带 env 键，sharedFrozenKeys/normalizedEnvKey/keyIn
+// ---- 随 UI 冻结视觉一同移除，findSharedById 保留）----
 
 // 片段按 id 查找（快照定位；未绑定/不存在 → nullptr）
 const SharedConfig* findSharedById(const std::vector<SharedConfig>& configs,
                                    int64_t id);
-
-// 键集成员判定（小向量线性扫，片段键集 ≤64）
-bool keyIn(const std::vector<std::string>& keys, const std::string& k);
 
 // 「复制配置」序列化（2026-09-30 batch-fix C §4.2② 建立；advanced-json-editor
 // §6 升级为**完整 settings.json 形态**，已拍板②；纯函数，无 IO）：

@@ -937,14 +937,14 @@ core::Result<SharedConfig> ProfileRepository::createSharedConfig(
         return core::Result<SharedConfig>::fail(core::ErrorCode::ValidationError,
             "共享配置片段名不能为空");
     }
-    // 信任边界：不把坏 JSON 落库（读侧另有容错）。（v11 过渡注：片段内容自
-    // advanced-json-editor §8 起为高级属性 JSON 原文，本处校验随 §8.1 切换到
-    // validateExtraSettingsJson 同一套规则；过渡期 env 域 UI 仍经此写）
+    // 信任边界：不把坏 JSON 落库（读侧另有容错）。片段内容 = 高级属性 JSON
+    //（advanced-json-editor §8.1：与表单保存同一套 validateExtraSettingsJson
+    // 规则，含 env 键拒绝——片段是 settings.json 属性预设，不是 env 装饰层）
     if (!extraSettingsJson.empty()) {
-        auto ee = parseExtraEnv(extraSettingsJson);
-        if (ee.isFail()) {
-            return core::Result<SharedConfig>::fail(ee.errorCode(),
-                "共享配置片段 JSON 非法: " + ee.errorMessage());
+        auto v = validateExtraSettingsJson(extraSettingsJson);
+        if (v.isFail()) {
+            return core::Result<SharedConfig>::fail(v.errorCode(),
+                "共享配置片段 JSON 非法: " + v.errorMessage());
         }
     }
 
@@ -1035,10 +1035,10 @@ core::Result<void> ProfileRepository::updateSharedConfig(
             "共享配置片段名不能为空");
     }
     if (!config.extraSettingsJson.empty()) {
-        auto ee = parseExtraEnv(config.extraSettingsJson);
-        if (ee.isFail()) {
-            return core::Result<void>::fail(ee.errorCode(),
-                "共享配置片段 JSON 非法: " + ee.errorMessage());
+        auto v = validateExtraSettingsJson(config.extraSettingsJson);
+        if (v.isFail()) {
+            return core::Result<void>::fail(v.errorCode(),
+                "共享配置片段 JSON 非法: " + v.errorMessage());
         }
     }
     auto exists = requireSharedConfigExists(config.id);
@@ -1155,29 +1155,6 @@ std::string ProfileRepository::sharedExtraSettingsJsonFor(
     if (row.isFail()) return {};
     auto txt = row.value().getString("extra_settings_json");
     return txt.isOk() ? txt.value() : std::string();
-}
-
-core::Result<std::vector<std::string>> ProfileRepository::sharedEnvKeysFor(
-    int64_t profileId) {
-    auto p = getProfile(profileId);
-    if (p.isFail()) {
-        return core::Result<std::vector<std::string>>::fail(p.errorCode(),
-                                                            p.errorMessage());
-    }
-    std::vector<std::string> keys;
-    const std::string json = sharedExtraSettingsJsonFor(p.value().sharedConfigId);
-    if (json.empty()) {
-        return core::Result<std::vector<std::string>>::ok(std::move(keys));
-    }
-    // 键集口径与写侧一致（applyEnvAliases 归一后）：live 里的片段键就是这个形状
-    auto parsed = parseExtraEnv(json);
-    if (parsed.isOk()) {
-        for (const auto& [k, v] : applyEnvAliases(parsed.value()).env) {
-            keys.push_back(k);
-        }
-    }
-    // JSON 非法 → 空集（读路径容错：宁可少挡几个键，不让整次切换失败）
-    return core::Result<std::vector<std::string>>::ok(std::move(keys));
 }
 
 } // namespace module::claude

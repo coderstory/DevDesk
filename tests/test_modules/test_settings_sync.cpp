@@ -1056,203 +1056,6 @@ REGISTER_TEST(sync_reverse_read_env_and_sidecar,
     return true;
 })
 
-// ---- 15. 共享配置片段：合并优先级 + 接管（托管键集含片段键）+ 还原 ----
-// 优先级（低→高）：profile 自身 extra_env → 共享片段 extra_env → 代理托管键；
-// 片段在这批只做数据层/服务层，UI 留下批，故这里全走纯函数与 takeOver 直调。
-
-REGISTER_TEST(sync_build_proxy_env_shared_config,
-              "settings_sync: 共享片段覆盖 profile env，托管键仍最高", {
-    using module::claude::buildProxyEnv;
-
-    const std::string profileEnv =
-        R"({"MY_KEY": "from-profile", "PROFILE_ONLY": "1"})";
-    const std::string sharedEnv =
-        R"({"MY_KEY": "from-shared", "SHARED_ONLY": "1"})";
-
-    // 同键 → 片段赢；各自独有键都在
-    const auto env = buildProxyEnv("", "", profileEnv, 8888, sharedEnv);
-    DOCTEST_CHECK_EQ(env.at("MY_KEY"), std::string("from-shared"));
-    DOCTEST_CHECK_EQ(env.at("PROFILE_ONLY"), std::string("1"));
-    DOCTEST_CHECK_EQ(env.at("SHARED_ONLY"), std::string("1"));
-    // 托管键赢两者（片段里塞 BASE_URL/token 也不生效）
-    DOCTEST_CHECK_EQ(env.at("ANTHROPIC_BASE_URL"),
-                     std::string("http://127.0.0.1:8888"));
-    DOCTEST_CHECK_EQ(env.at("ANTHROPIC_AUTH_TOKEN"),
-                     std::string("PROXY_MANAGED"));
-
-    // 托管键（模型槽位）赢片段：default 槽位与片段同键 → 槽位值生效
-    const auto slotWins = buildProxyEnv(
-        R"({"default": {"model": "slot-model"}})", "", profileEnv, 8888,
-        R"({"ANTHROPIC_MODEL": "shared-model"})");
-    DOCTEST_CHECK_EQ(slotWins.at("ANTHROPIC_MODEL"), std::string("slot-model"));
-
-    // 未绑定片段（空串）→ 与改动前逐字一致
-    const auto noShared = buildProxyEnv("", "", profileEnv, 8888);
-    DOCTEST_CHECK_EQ(noShared.at("MY_KEY"), std::string("from-profile"));
-    DOCTEST_CHECK(noShared.find("SHARED_ONLY") == noShared.end());
-
-    // 片段 JSON 非法 → 读路径容错整体忽略（不炸、不部分生效）
-    const auto badShared = buildProxyEnv("", "", profileEnv, 8888, "{bad-json");
-    DOCTEST_CHECK_EQ(badShared.at("MY_KEY"), std::string("from-profile"));
-    return true;
-})
-
-REGISTER_TEST(sync_takeover_with_shared_config,
-              "settings_sync: 接管写合并 env，片段键进托管集随还原撤走", {
-    using namespace module::claude;
-    test_support::TempDir d("shared", kSyncTempDirPrefix);
-    auto paths = makePaths(d);
-    d.write(paths.settingsFile, R"({"env": {"MY_KEY": "user"}})");
-
-    Profile p;
-    p.model = "m-1";
-    p.extraEnvJson = R"({"MY_KEY": "profile", "PROFILE_ONLY": "1"})";
-    const std::string sharedEnv =
-        R"({"MY_KEY": "shared", "SHARED_ONLY": "1"})";
-
-    auto r = settings_sync::takeOver(p, 8888, paths, sharedEnv);
-    DOCTEST_REQUIRE(r.ok);
-    {
-        const auto env = readEnv(paths.settingsFile);
-        DOCTEST_CHECK_EQ(env.at("MY_KEY"), std::string("shared"));  // 片段赢
-        DOCTEST_CHECK_EQ(env.at("SHARED_ONLY"), std::string("1"));
-        DOCTEST_CHECK_EQ(env.at("PROFILE_ONLY"), std::string("1"));
-        DOCTEST_CHECK_EQ(env.at("ANTHROPIC_MODEL"), std::string("m-1"));
-        // settings.json 里不留片段痕迹（只有合并后的扁平 env，无出处标记）
-        DOCTEST_CHECK(d.read(paths.settingsFile).find("shared_config") ==
-                      std::string::npos);
-    }
-    // 片段键进 sidecar 托管键集：还原时随快照撤走（活文件不留片段键）
-    {
-        auto rd = readSettingsEnvForSync(paths);
-        DOCTEST_REQUIRE(rd.ok);
-        DOCTEST_CHECK(hasKeyEntry(rd.managedKeys, "SHARED_ONLY"));
-        DOCTEST_CHECK(hasKeyEntry(rd.managedKeys, "MY_KEY"));
-    }
-    DOCTEST_REQUIRE(settings_sync::restore(paths).ok);
-    {
-        const auto env = readEnv(paths.settingsFile);
-        DOCTEST_CHECK_EQ(env.at("MY_KEY"), std::string("user"));  // 快照原值恢复
-        DOCTEST_CHECK(env.find("SHARED_ONLY") == env.end());   // 原本不存在 → 删
-        DOCTEST_CHECK(env.find("PROFILE_ONLY") == env.end());
-        DOCTEST_CHECK(env.find("ANTHROPIC_MODEL") == env.end());
-    }
-
-    // 解绑后重接管（同一路径、片段参数改空）：片段键从 live 撤走，同名键回落
-    // profile 自身值（不写也不清从未删过 profile 行里的原值）
-    DOCTEST_REQUIRE(settings_sync::takeOver(p, 8888, paths).ok);
-    {
-        const auto env = readEnv(paths.settingsFile);
-        DOCTEST_CHECK_EQ(env.at("MY_KEY"), std::string("profile"));
-        DOCTEST_CHECK(env.find("SHARED_ONLY") == env.end());
-        DOCTEST_CHECK_EQ(env.at("PROFILE_ONLY"), std::string("1"));
-    }
-    DOCTEST_REQUIRE(settings_sync::restore(paths).ok);
-    return true;
-})
-
-// ---- 16. 服务级 G10：片段键在 live 被改 → 切换时不写也不清 ----
-// 场景刻意把 sidecar 拿掉（模拟与其它工具互抢 / 手工清理）：此时 G1 无托管键集
-// 可依据，只有 G10 能挡住片段键被反向收编 —— 这正是「按绑定关系取键集」的证明。
-
-REGISTER_TEST(sync_service_g10_frozen_key_not_captured,
-              "claude_service: G10 绑定片段键不被反向同步收编", {
-    using namespace module::claude;
-    test_support::TestDb tdb(kDbPrefix, "g10svc");
-    test_support::TempDir d("g10svc", kSyncTempDirPrefix);
-    auto paths = makePaths(d);
-
-    ClaudeService svc(tdb.handle(), kTestKeychainService);
-    svc.setSettingsSyncPaths(paths);
-    svc.setSettingsTakeOverEnabled(true);
-
-    auto frag = svc.createSharedConfig("片段S", R"({"MY_KEY": "from-shared"})");
-    DOCTEST_REQUIRE(frag.isOk());
-    auto a = svc.createProfile("绑片段", "https://a.example.com",
-                               "sk-ind-test-0123456789abcdef", "");
-    DOCTEST_REQUIRE(a.isOk());
-    Profile pa = a.value();
-    pa.extraEnvJson = R"({"MY_KEY": "from-profile"})";  // 被片段覆盖，行里保留
-    pa.sharedConfigId = frag.value().id;
-    DOCTEST_REQUIRE(svc.updateProfile(pa).isOk());
-    DOCTEST_REQUIRE(svc.setActiveProfile(pa.id).isOk());
-    DOCTEST_REQUIRE(svc.startProxy("127.0.0.1", 0).isOk());
-    DOCTEST_CHECK_EQ(readEnv(paths.settingsFile).at("MY_KEY"),
-                     std::string("from-shared"));  // 片段值进 live
-
-    // 拿掉 sidecar + 用户在 live 手工改片段键（其余字段的缺席清空是既有 G5 语义，
-    // 与本守卫无关，这里只看片段键的处置）
-    std::error_code ec;
-    std::filesystem::remove(paths.sidecarFile, ec);
-    d.write(paths.settingsFile, R"({"env": {"MY_KEY": "live-edited"}})");
-
-    auto b = svc.createProfile("不绑", "https://b.example.com",
-                               "sk-ind-test-fedcba9876543210", "");
-    DOCTEST_REQUIRE(b.isOk());
-    DOCTEST_REQUIRE(svc.setActiveProfile(b.value().id).isOk());
-
-    // 不写：A 行的 MY_KEY 仍是 profile 原值（没被 live-edited 覆盖）
-    auto ga = svc.getProfile(pa.id);
-    DOCTEST_REQUIRE(ga.isOk());
-    auto parsed = parseExtraEnv(ga.value().extraEnvJson);
-    DOCTEST_REQUIRE(parsed.isOk());
-    DOCTEST_CHECK_EQ(parsed.value().at("MY_KEY"), std::string("from-profile"));
-    // 不清：冻结键仍在（缺席清空不适用于它）
-    DOCTEST_CHECK_EQ(parsed.value().size(), 1u);
-
-    svc.stopProxy();
-    platform::keychain::deleteSecret(kTestKeychainService,
-                                     "claude:" + std::to_string(pa.id));
-    platform::keychain::deleteSecret(kTestKeychainService,
-                                     "claude:" + std::to_string(b.value().id));
-    return true;
-})
-
-// ---- 17. 服务级：删片段 → 同事务解绑 + 代理在跑则立即 re-takeover ----
-
-REGISTER_TEST(sync_service_shared_config_delete_retakeover,
-              "claude_service: 删片段当场解绑并重写 live（回落 profile 值）", {
-    using namespace module::claude;
-    test_support::TestDb tdb(kDbPrefix, "fragdel");
-    test_support::TempDir d("fragdel", kSyncTempDirPrefix);
-    auto paths = makePaths(d);
-
-    ClaudeService svc(tdb.handle(), kTestKeychainService);
-    svc.setSettingsSyncPaths(paths);
-    svc.setSettingsTakeOverEnabled(true);
-
-    auto frag = svc.createSharedConfig("片段S", R"({"MY_KEY": "from-shared"})");
-    DOCTEST_REQUIRE(frag.isOk());
-    auto a = svc.createProfile("绑片段", "https://a.example.com",
-                               "sk-ind-test-0123456789abcdef", "");
-    DOCTEST_REQUIRE(a.isOk());
-    Profile pa = a.value();
-    pa.extraEnvJson = R"({"MY_KEY": "from-profile"})";
-    pa.sharedConfigId = frag.value().id;
-    DOCTEST_REQUIRE(svc.updateProfile(pa).isOk());
-    DOCTEST_REQUIRE(svc.setActiveProfile(pa.id).isOk());
-    DOCTEST_REQUIRE(svc.startProxy("127.0.0.1", 0).isOk());
-    DOCTEST_CHECK_EQ(readEnv(paths.settingsFile).at("MY_KEY"),
-                     std::string("from-shared"));
-
-    // 删片段：同事务解绑 + 代理在跑 → 当场 re-takeover（片段键撤走、同名键回落
-    // profile 自身值）；「改了不生效」不会被留到下次切换
-    DOCTEST_REQUIRE(svc.deleteSharedConfig(frag.value().id).isOk());
-    DOCTEST_CHECK_EQ(readEnv(paths.settingsFile).at("MY_KEY"),
-                     std::string("from-profile"));
-    auto ga = svc.getProfile(pa.id);
-    DOCTEST_REQUIRE(ga.isOk());
-    DOCTEST_CHECK_EQ(ga.value().sharedConfigId, 0);
-
-    svc.stopProxy();
-    platform::keychain::deleteSecret(kTestKeychainService,
-                                     "claude:" + std::to_string(pa.id));
-    return true;
-})
-
-// ===== 接管/还原往返·高级设置 JSON（2026-09-30 advanced-json-editor 设计 §10，
-// ===== sidecar v2：nonEnvKeys/nonEnvSnapshot + merge-only 补拍，F-1）=====
-
 // 读 sidecar 的 nonEnvSnapshot / nonEnvKeys（§5.1 v2 形态断言用）
 static std::map<std::string, std::string> readSidecarNonEnvSnapshot(
     const std::filesystem::path& f) {
@@ -1286,6 +1089,136 @@ static std::vector<std::string> readSidecarNonEnvKeys(
     if (!obj.has("nonEnvKeys") || !obj.get("nonEnvKeys").isObject()) return out;
     return obj.get("nonEnvKeys").asObject().keys();
 }
+
+// ---- 15. 共享配置片段（advanced-json-editor §8 重构后）：env 域片段管线
+// ---- 已拆除——片段不再携带 env 键，叠加走 JSON 域（effectiveExtraSettingsJson
+// ---- + applyExtraSettingsToSettingsDoc）。本组钉住「域搬迁不残留双通道」。
+
+REGISTER_TEST(sync_build_proxy_env_shared_config,
+              "settings_sync: 片段 env 域管线已拆——buildProxyEnv 不再吃片段，JSON 域为唯一叠加通道", {
+    using module::claude::buildProxyEnv;
+    using module::claude::effectiveExtraSettingsJson;
+    using module::claude::applyExtraSettingsToSettingsDoc;
+
+    const std::string profileEnv =
+        R"({"MY_KEY": "from-profile", "PROFILE_ONLY": "1"})";
+
+    // env 域：profile 自身 env + 托管键（原「片段 env 叠加」形参已拆除——
+    // 片段键不再出现在 env 块）
+    const auto env = buildProxyEnv("", "", profileEnv, 8888);
+    DOCTEST_CHECK_EQ(env.at("MY_KEY"), std::string("from-profile"));
+    DOCTEST_CHECK_EQ(env.at("PROFILE_ONLY"), std::string("1"));
+    DOCTEST_CHECK_EQ(env.at("ANTHROPIC_BASE_URL"),
+                     std::string("http://127.0.0.1:8888"));
+    DOCTEST_CHECK_EQ(env.at("ANTHROPIC_AUTH_TOKEN"),
+                     std::string("PROXY_MANAGED"));
+    DOCTEST_CHECK_EQ(env.size(), static_cast<size_t>(4));   // 无任何片段键混入
+
+    // JSON 域 = 唯一片段通道：片段 JSON 叠在 profile JSON 之上（片段赢），
+    // 经 apply 并入 settings 文档顶层（env 块不受影响）
+    const std::string effective = effectiveExtraSettingsJson(
+        R"({"statusLine": "profile-s"})",
+        R"({"statusLine": "frag-s", "hooks": {}})");
+    platform::json::JsonObject root;
+    root.set("env", platform::json::JsonValue(platform::json::makeObject()));
+    auto apply = applyExtraSettingsToSettingsDoc(root, effective);
+    DOCTEST_REQUIRE_EQ(apply.writtenKeys.size(), static_cast<size_t>(2));
+    DOCTEST_CHECK_EQ(root.get("statusLine").asString(), std::string("frag-s"));
+    DOCTEST_CHECK(root.get("hooks").isObject());
+    DOCTEST_CHECK(root.get("env").isObject());
+    return true;
+})
+
+REGISTER_TEST(sync_takeover_with_shared_config,
+              "settings_sync: 生效 JSON（门面装配语义）进 nonEnv 记账，随还原撤走", {
+    using namespace module::claude;
+    test_support::TempDir d("shared", kSyncTempDirPrefix);
+    auto paths = makePaths(d);
+    d.write(paths.settingsFile, R"({"env": {"MY_KEY": "user"}})");
+
+    // p.extraSettingsJson = 门面 §5.2① 装配后的生效 JSON（profile ⊕ 片段、
+    // 片段赢——片段叠加本身在门面完成，直调 takeOver 拿到的是装配结果）
+    Profile p;
+    p.model = "m-1";
+    p.extraEnvJson = R"({"PROFILE_ONLY": "1"})";
+    p.extraSettingsJson = effectiveExtraSettingsJson(
+        R"({"statusLine": "profile-s"})",
+        R"({"statusLine": "frag-s", "hooks": {}})");
+
+    auto r = settings_sync::takeOver(p, 8888, paths);
+    DOCTEST_REQUIRE(r.ok);
+    {
+        // 片段赢的同名键以片段值写入顶层；env 块零片段痕迹
+        DOCTEST_CHECK_EQ(topLevelString(paths.settingsFile, "statusLine"),
+                         std::string("frag-s"));
+        DOCTEST_CHECK(settings_sync::hasPendingSnapshot(paths));
+        const auto keys = readSidecarNonEnvKeys(paths.sidecarFile);
+        DOCTEST_CHECK(hasKeyEntry(keys, "statusLine"));
+        DOCTEST_CHECK(hasKeyEntry(keys, "hooks"));
+    }
+    // 还原：全部撤走（快照无原值 → 删除）
+    DOCTEST_REQUIRE(settings_sync::restore(paths).ok);
+    DOCTEST_CHECK(topLevelString(paths.settingsFile, "statusLine").empty());
+    DOCTEST_CHECK(topLevelString(paths.settingsFile, "hooks").empty());
+    // 解绑语义（同一装配，片段改空）：profile 自身值生效（回落）
+    p.extraSettingsJson = effectiveExtraSettingsJson(
+        R"({"statusLine": "profile-s"})", "");
+    DOCTEST_REQUIRE(settings_sync::takeOver(p, 8888, paths).ok);
+    DOCTEST_CHECK_EQ(topLevelString(paths.settingsFile, "statusLine"),
+                     std::string("profile-s"));
+    DOCTEST_REQUIRE(settings_sync::restore(paths).ok);
+    return true;
+})
+
+// ---- 16. 服务级 G10：片段键在 live 被改 → 切换时不写也不清 ----
+// 场景刻意把 sidecar 拿掉（模拟与其它工具互抢 / 手工清理）：此时 G1 无托管键集
+// 可依据，只有 G10 能挡住片段键被反向收编 —— 这正是「按绑定关系取键集」的证明。
+
+REGISTER_TEST(sync_service_shared_config_delete_retakeover,
+              "claude_service: 删片段当场解绑并重写 live（JSON 域片段键撤走、profile 自身值回落）", {
+    using namespace module::claude;
+    test_support::TestDb tdb(kDbPrefix, "fragdel");
+    test_support::TempDir d("fragdel", kSyncTempDirPrefix);
+    auto paths = makePaths(d);
+
+    ClaudeService svc(tdb.handle(), kTestKeychainService);
+    svc.setSettingsSyncPaths(paths);
+    svc.setSettingsTakeOverEnabled(true);
+
+    // 片段 = 高级属性 JSON 预设（v11 起片段不再携带 env 键）
+    auto frag = svc.createSharedConfig("片段S", R"({"statusLine": "frag-s"})");
+    DOCTEST_REQUIRE(frag.isOk());
+    auto a = svc.createProfile("绑片段", "https://a.example.com",
+                               "sk-ind-test-0123456789abcdef", "");
+    DOCTEST_REQUIRE(a.isOk());
+    Profile pa = a.value();
+    pa.extraSettingsJson = R"({"statusLine": "profile-s"})";   // 片段赢场景：行里保留
+    pa.sharedConfigId = frag.value().id;
+    DOCTEST_REQUIRE(svc.updateProfile(pa).isOk());
+    DOCTEST_REQUIRE(svc.setActiveProfile(pa.id).isOk());
+    DOCTEST_REQUIRE(svc.startProxy("127.0.0.1", 0).isOk());
+    // 生效 JSON（门面装配）写入顶层：同键片段值赢
+    DOCTEST_CHECK_EQ(topLevelString(paths.settingsFile, "statusLine"),
+                     std::string("frag-s"));
+
+    // 删片段：同事务解绑 + 代理在跑 → 当场 re-takeover（片段键撤走、同名键
+    // 回落 profile 自身值——陈旧非 env 键删除 + 生效 JSON 重建的净结果）；
+    // 「改了不生效」不会被留到下次切换
+    DOCTEST_REQUIRE(svc.deleteSharedConfig(frag.value().id).isOk());
+    DOCTEST_CHECK_EQ(topLevelString(paths.settingsFile, "statusLine"),
+                     std::string("profile-s"));
+    auto ga = svc.getProfile(pa.id);
+    DOCTEST_REQUIRE(ga.isOk());
+    DOCTEST_CHECK_EQ(ga.value().sharedConfigId, 0);
+
+    svc.stopProxy();
+    platform::keychain::deleteSecret(kTestKeychainService,
+                                     "claude:" + std::to_string(pa.id));
+    return true;
+})
+
+// ===== 接管/还原往返·高级设置 JSON（2026-09-30 advanced-json-editor 设计 §10，
+// ===== sidecar v2：nonEnvKeys/nonEnvSnapshot + merge-only 补拍，F-1）=====
 
 // ① 接管写入 env + JSON 属性；live 已有同名非 env 键时 JSON 值胜，旧值进
 //    nonEnvSnapshot（D-3：被覆盖旧值还原无损）
@@ -1475,5 +1408,59 @@ REGISTER_TEST(sync_restore_v1_sidecar_no_nonenv,
     DOCTEST_CHECK(env.find("ANTHROPIC_BASE_URL") == env.end());
     DOCTEST_CHECK_EQ(topLevelString(paths.settingsFile, "statusLine"),
                      std::string("user-s"));
+    return true;
+})
+
+// ⑥ 片段叠加端到端（F-8）：绑定片段（片段与 profile JSON 各含独有键 + 同键）
+// → 门面 §5.2① 装配生效 JSON（片段赢）→ 接管写入片段键且同键为片段值 →
+// restore 全部撤走。走真门面（startProxy/stopProxy）钉住装配这一跳——装配漏传
+// /传未生效化原文时必红（骨架照既有片段接管用例平移 JSON 域）
+REGISTER_TEST(sync_takeover_fragment_json_end_to_end,
+              "claude_service: 片段 JSON 叠加端到端（门面装配片段赢→接管写入→还原撤走，F-8）", {
+    using namespace module::claude;
+    test_support::TestDb tdb(kDbPrefix, "fragjson");
+    test_support::TempDir d("fragjson", kSyncTempDirPrefix);
+    auto paths = makePaths(d);
+
+    ClaudeService svc(tdb.handle(), kTestKeychainService);
+    svc.setSettingsSyncPaths(paths);
+    svc.setSettingsTakeOverEnabled(true);
+
+    auto frag = svc.createSharedConfig("片段J", R"({"statusLine": "frag-s", "hooks": {"a": 1}})");
+    DOCTEST_REQUIRE(frag.isOk());
+    auto a = svc.createProfile("绑JSON", "https://j.example.com",
+                               "sk-ind-test-0123456789abcdef", "");
+    DOCTEST_REQUIRE(a.isOk());
+    Profile pa = a.value();
+    pa.extraSettingsJson = R"({"statusLine": "profile-s", "permissions": {"p": 1}})";
+    pa.sharedConfigId = frag.value().id;
+    DOCTEST_REQUIRE(svc.updateProfile(pa).isOk());
+    DOCTEST_REQUIRE(svc.setActiveProfile(pa.id).isOk());
+    DOCTEST_REQUIRE(svc.startProxy("127.0.0.1", 0).isOk());
+    {
+        // 片段独有键 + profile 独有键都在；同键为片段值（片段赢，门面装配）
+        DOCTEST_CHECK_EQ(topLevelString(paths.settingsFile, "statusLine"),
+                         std::string("frag-s"));
+        auto liveDoc = platform::json::parse(d.read(paths.settingsFile));
+        DOCTEST_REQUIRE(liveDoc.isOk());
+        DOCTEST_CHECK(liveDoc.value().asObject().get("hooks").isObject());
+        DOCTEST_CHECK(liveDoc.value().asObject().get("permissions").isObject());
+        // 片段键进 nonEnv 记账（还原撤走的依据）
+        const auto keys = readSidecarNonEnvKeys(paths.sidecarFile);
+        DOCTEST_CHECK(hasKeyEntry(keys, "statusLine"));
+        DOCTEST_CHECK(hasKeyEntry(keys, "hooks"));
+        DOCTEST_CHECK(hasKeyEntry(keys, "permissions"));
+    }
+    // stopProxy → restore：全部撤走（live 无原值 → 删除）
+    svc.stopProxy();
+    {
+        DOCTEST_CHECK(topLevelString(paths.settingsFile, "statusLine").empty());
+        DOCTEST_CHECK(topLevelString(paths.settingsFile, "permissions").empty());
+        auto doc = platform::json::parse(d.read(paths.settingsFile));
+        DOCTEST_REQUIRE(doc.isOk());
+        DOCTEST_CHECK_FALSE(doc.value().asObject().has("hooks"));
+    }
+    platform::keychain::deleteSecret(kTestKeychainService,
+                                     "claude:" + std::to_string(pa.id));
     return true;
 })

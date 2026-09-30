@@ -79,8 +79,9 @@ void drawProfileListPanel(eui::Ui& ui, float leftW, float bodyH,
                           const std::string& sharedConfigsError,
                           const ProfileListActions& actions);
 
-// 共享配置区块（批 2，设计 §2.10「片段列表入口」）：标题行 + 片段卡片
-//（name + N 个键）+「+ 新建片段」按钮。
+// 共享配置区块（批 2 建立；advanced-json-editor §8.2 改造：片段卡片副文案
+// 从「N 个键」改为「高级属性 JSON 预设」——片段不再携带 env 键，键数计数
+// 语义失效）：标题行 + 片段卡片（name + 预设副文案）+「+ 新建片段」按钮。
 // 2026-09-28（组 B P4）：区块**钉面板底**（底沿 = 底部按钮行上沿 − 12），
 // 高度由调用方按 sharedBlockH(bodyH, 片段数, 是否有错) 算出并传入（调用方需要
 // 它才能排列表视口 —— 高度只有一个来源）；片段装不下时在区块内部滚，卡片全部

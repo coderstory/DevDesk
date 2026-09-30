@@ -741,7 +741,8 @@ REGISTER_TEST(provider_config_reverse_parse_mapping,
     return true;
 })
 
-// ---- 守卫表 G1–G6 + G10（§3.3/§2.4）：每条守卫一个专测，编号与用例名一一对应
+// ---- 守卫表 G1–G6（§3.3；G10 随 advanced-json-editor §8.4 片段 env 拆除）：
+// ---- 每条守卫一个专测，编号与用例名一一对应
 //（provider_config.h 的守卫表注释列出同样的编号 ↔ 用例名映射）----
 
 // G1 sidecar 托管键 → 跳过（不写也不清）
@@ -854,51 +855,6 @@ REGISTER_TEST(provider_config_guard_G6_invalid_value,
     return true;
 })
 
-// G10 捕获目标所绑共享配置片段的键 → 跳过（不写也不清）+ 一条聚合警告
-REGISTER_TEST(provider_config_guard_G10_shared_config_key,
-              "provider_config: 守卫 G10 共享片段键跳过（reverse）", {
-    using module::claude::parseEnvForReverseSync;
-
-    // 片段冻结 MY_KEY / OTHER_KEY；live 里两者被用户手工改过（值不同）
-    auto g10 = parseEnvForReverseSync(
-        R"({"MY_KEY": "live-edited", "OTHER_KEY": "v2", "FREE_KEY": "keep"})",
-        /*managedKeys=*/{}, /*ownedKeys=*/{"MY_KEY", "OTHER_KEY"});
-    DOCTEST_REQUIRE(g10.ok);
-    DOCTEST_CHECK(hasEntry(g10.skippedKeys, "MY_KEY"));
-    DOCTEST_CHECK(hasEntry(g10.skippedKeys, "OTHER_KEY"));
-    // 冻结键不收编（profile 行里的原值保持不动 = 不写也不清）
-    DOCTEST_CHECK(g10.cfg.extraEnv.find("MY_KEY") == g10.cfg.extraEnv.end());
-    DOCTEST_CHECK(g10.cfg.extraEnv.find("OTHER_KEY") == g10.cfg.extraEnv.end());
-    // 未冻结的键照常收编（G10 不扩大误伤面）
-    DOCTEST_CHECK_EQ(g10.cfg.extraEnv.at("FREE_KEY"), std::string("keep"));
-    DOCTEST_CHECK_EQ(g10.cfg.warnings.size(), 1u);  // 聚合一条，不逐键刷屏
-    DOCTEST_CHECK(g10.cfg.warnings[0].find("MY_KEY") != std::string::npos);
-
-    // 未绑定片段（ownedKeys 空）→ 与改动前逐字一致（键照常收编、零警告）
-    auto none = parseEnvForReverseSync(
-        R"({"MY_KEY": "live-edited", "FREE_KEY": "keep"})", {});
-    DOCTEST_REQUIRE(none.ok);
-    DOCTEST_CHECK(none.skippedKeys.empty());
-    DOCTEST_CHECK(none.cfg.warnings.empty());
-    DOCTEST_CHECK_EQ(none.cfg.extraEnv.at("MY_KEY"), std::string("live-edited"));
-
-    // 片段键同时命中 G1（sidecar 托管）→ 仍按跳过处置，警告归 G10（先判 G10）
-    auto both = parseEnvForReverseSync(R"({"MY_KEY": "x"})", {"MY_KEY"},
-                                       {"MY_KEY"});
-    DOCTEST_REQUIRE(both.ok);
-    DOCTEST_CHECK(hasEntry(both.skippedKeys, "MY_KEY"));
-    DOCTEST_CHECK(both.cfg.extraEnv.empty());
-
-    // 合并段（mergeReverseSyncEnv 零改动）：G10 键保持 profile 行里的原值
-    //（不写也不清），未冻结键按「出现覆盖」收编
-    auto m = module::claude::mergeReverseSyncEnv(
-        g10.cfg, "", "", R"({"MY_KEY": "profile-own", "FREE_KEY": "old"})");
-    auto ec = module::claude::parseExtraEnv(m.extraEnvJson);
-    DOCTEST_REQUIRE(ec.isOk());
-    DOCTEST_CHECK_EQ(ec.value().at("MY_KEY"), std::string("profile-own"));
-    DOCTEST_CHECK_EQ(ec.value().at("FREE_KEY"), std::string("keep"));
-    return true;
-})
 
 // ---- 合并语义（§3.4 出现覆盖 / 缺席清空 / 守卫不写也不清）----
 REGISTER_TEST(provider_config_reverse_merge_clear_keep_override,

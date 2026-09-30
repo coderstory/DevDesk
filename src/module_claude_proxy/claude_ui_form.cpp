@@ -1185,7 +1185,7 @@ void drawDeleteConfirmDialog(eui::Ui& ui, const eui::Screen& screen,
 void openSharedCreate(SharedConfigDialogState& s) {
     s.editId_ = 0;
     s.name_.clear();
-    s.envRows_.clear();
+    s.extraSettingsJson_.clear();
     s.error_.clear();
     s.open_ = true;
 }
@@ -1194,11 +1194,9 @@ void openSharedEdit(SharedConfigDialogState& s, const SharedConfig& c) {
     s.editId_ = c.id;
     s.name_ = c.name;
     s.error_.clear();
-    s.envRows_.clear();
-    auto ee = parseExtraEnv(c.extraSettingsJson);
-    if (ee.isOk()) {
-        for (const auto& [k, v] : ee.value()) s.envRows_.emplace_back(k, v);
-    }
+    // 预填片段 JSON 原文（DB 恒为 pretty 保存值；外部改库原文按原样预填，
+    // 格式化按钮负责规范化——与表单高级设置 JSON 同口径）
+    s.extraSettingsJson_ = c.extraSettingsJson;
     s.open_ = true;
 }
 
@@ -1214,22 +1212,26 @@ void submitSharedForm(SharedConfigDialogState& s,
         s.error_ = "片段名不能为空";
         return;
     }
-    std::map<std::string, std::string> envMap;   // 空键行跳过（同表单口径）
-    for (const auto& row : s.envRows_) {
-        if (row.first.empty()) continue;
-        envMap[row.first] = row.second;
-    }
-    std::string envJson;
-    if (!envMap.empty()) {
-        auto r = serializeExtraEnv(envMap);
-        if (r.isFail()) {
-            s.error_ = "env 序列化失败: " + r.errorMessage();
+    // 片段 JSON（advanced-json-editor §8.1）：保存走 validateExtraSettingsJson
+    // 同一套规则（含 env 键拒绝——片段是 settings.json 属性预设，不是 env 装饰
+    // 层了）；通过 → 落库前统一 pretty（空串跳过，= 未配置）
+    std::string settingsPretty;
+    if (!s.extraSettingsJson_.empty()) {
+        auto v = validateExtraSettingsJson(s.extraSettingsJson_);
+        if (v.isFail()) {
+            s.error_ = v.errorMessage();
             return;
         }
-        envJson = r.value();
+        auto parsed = platform::json::parse(s.extraSettingsJson_);
+        if (parsed.isOk()) {
+            auto pretty = platform::json::stringify(parsed.value(),
+                                                    /*pretty=*/true);
+            if (pretty.isOk()) settingsPretty = pretty.value();
+        }
+        if (settingsPretty.empty()) settingsPretty = s.extraSettingsJson_;
     }
     if (s.editId_ == 0) {
-        auto r = svc->createSharedConfig(s.name_, envJson);
+        auto r = svc->createSharedConfig(s.name_, settingsPretty);
         if (r.isFail()) {
             s.error_ = r.errorMessage();   // 重名等校验错误红字回显
             return;
@@ -1241,7 +1243,7 @@ void submitSharedForm(SharedConfigDialogState& s,
         SharedConfig c;
         c.id = s.editId_;
         c.name = s.name_;
-        c.extraSettingsJson = envJson;
+        c.extraSettingsJson = settingsPretty;
         auto r = svc->updateSharedConfig(c);
         if (r.isFail()) {
             s.error_ = r.errorMessage();
@@ -1256,7 +1258,10 @@ void submitSharedForm(SharedConfigDialogState& s,
     }
 }
 
-// 共享配置片段编辑弹窗（name 行 + 键值编辑器；编辑态底部多一枚「删除」）
+// 共享配置片段编辑弹窗（advanced-json-editor §8.1 JSON 化：name 行 + 高级设置
+// JSON 编辑框四件（label / 多行框 / 格式化按钮 / 行内红字），§7 同款组件复用；
+// 编辑态底部多一枚「删除」。几何按 h=460 逐项核：name 82-118 / label 128 /
+// 框 146-316 / 格式化 324-356 / 红字 364-380 / 按钮行 h-60=400）
 void drawSharedConfigDialog(eui::Ui& ui, const eui::Screen& screen,
                             const core::theme::Tokens& t,
                             const components::theme::ThemeColorTokens& themeTokens,
@@ -1265,7 +1270,6 @@ void drawSharedConfigDialog(eui::Ui& ui, const eui::Screen& screen,
     const float w = ui_kit::dialogWidthPx(ui_kit::DialogWidth::Form);
     const float h = 460.0f;
     const bool isEdit = (s.editId_ != 0);
-    constexpr size_t kMaxVisibleRows = 5;
 
     ui_kit::DialogFrame frame;
     frame.id = "claude.dialog.shared";
@@ -1283,7 +1287,7 @@ void drawSharedConfigDialog(eui::Ui& ui, const eui::Screen& screen,
         // 片段名
         ui.text("claude.dialog.shared.name.label")
             .position(28.0f, 64.0f).size(w - 56.0f, 16.0f)
-            .text("片段名（共享给所有 Profile 的 env 装饰层，不含密钥/Base URL）")
+            .text("片段名（共享给所有 Profile 的高级属性预设，不含密钥/Base URL）")
             .fontSize(11.0f).lineHeight(16.0f)
             .color(t.colors.textTertiary).build();
         components::input(ui, "claude.dialog.shared.name")
@@ -1294,84 +1298,53 @@ void drawSharedConfigDialog(eui::Ui& ui, const eui::Screen& screen,
             .onCancel([sp = &s] { sp->open_ = false; })   // Esc=取消（同表单各输入框）
             .build();
 
-        // 键值编辑器（kMaxVisibleRows 同款；行 = 该片段的冻结键集 K 的来源）
-        ui.text("claude.dialog.shared.env.label")
+        // 高级设置 JSON 编辑框（§7 同款四件：label / 多行框 / 格式化按钮 /
+        // 行内红字——片段即 settings.json 属性预设，绑定它的 Profile 生成时
+        // 逐键叠加、片段赢，解绑回落）
+        ui.text("claude.dialog.shared.json.label")
             .position(28.0f, 128.0f).size(w - 56.0f, 16.0f)
-            .text("额外环境变量（绑定它的 Profile 将冻结这些键，片段单点决定）")
+            .text("高级设置 JSON（settings.json 除 env 外的属性，绑定它的 Profile 写入时覆盖同名键）")
             .fontSize(11.0f).lineHeight(16.0f)
             .color(t.colors.textTertiary).build();
-        const size_t visible = s.envRows_.size() < kMaxVisibleRows
-            ? s.envRows_.size() : kMaxVisibleRows;
-        for (size_t i = 0; i < visible; ++i) {
-            const float y = 148.0f + static_cast<float>(i) * 36.0f;
-            const std::string idx = std::to_string(i);
-            components::input(ui, "claude.dialog.shared.env.row." + idx + ".key")
-                .position(28.0f, y).size(220.0f, 30.0f)
-                .value(s.envRows_[i].first).placeholder("ENV_KEY")
-                .fontSize(12.0f).theme(themeTokens)
-                .onChange([sp = &s, i](const std::string& v) {
-                    sp->envRows_[i].first = v;
-                })
-                .onCancel([sp = &s] { sp->open_ = false; })
-                .build();
-            if (!s.envRows_[i].first.empty() &&
-                envVarHint(s.envRows_[i].first) == nullptr) {
-                ui.rect("claude.dialog.shared.env.row." + idx + ".key.unknown")
-                    .position(28.0f, y).size(220.0f, 30.0f)
-                    .color(eui::Color{0.0f, 0.0f, 0.0f, 0.0f})
-                    .border(1.0f, t.colors.error)
-                    .radius(t.sizes.radiusSmall)
-                    .build();
-            }
-            components::input(ui, "claude.dialog.shared.env.row." + idx + ".value")
-                .position(258.0f, y).size(414.0f, 30.0f)
-                .value(s.envRows_[i].second).placeholder("值（字符串）")
-                .fontSize(12.0f).theme(themeTokens)
-                .onChange([sp = &s, i](const std::string& v) {
-                    sp->envRows_[i].second = v;
-                })
-                .onCancel([sp = &s] { sp->open_ = false; })
-                .build();
-            components::button(ui, "claude.dialog.shared.env.row." + idx + ".del")
-                .position(682.0f, y).size(50.0f, 30.0f)
-                .icon(0xF00D)   // fa-xmark（同 profile 表单 env 行）
-                .fontSize(12.0f)
-                .colors(t.colors.surfaceElevated, t.colors.hover,
-                        t.colors.active)
-                .textColor(t.colors.error)
-                .iconColor(t.colors.error)
-                .radius(t.sizes.radiusSmall)
-                .border(1.0f, t.colors.borderDefault)
-                .onClick([sp = &s, i] {
-                    if (i < sp->envRows_.size()) {
-                        sp->envRows_.erase(sp->envRows_.begin() +
-                                           static_cast<long>(i));
-                    }
-                })
-                .build();
-        }
-        components::button(ui, "claude.dialog.shared.env.add")
-            .position(28.0f, 330.0f).size(110.0f, 30.0f)
-            .text("+ 添加变量").fontSize(12.0f)
+        components::input(ui, "claude.dialog.shared.json")
+            .position(28.0f, 146.0f).size(w - 56.0f, 170.0f)
+            .value(s.extraSettingsJson_)
+            .placeholder(R"({ "model": "...", "permissions": { ... } })")
+            .multiline(true).scrollbar(true)
+            .fontSize(12.0f).theme(themeTokens)
+            .onChange([sp = &s](const std::string& v) {
+                sp->extraSettingsJson_ = v;
+                sp->error_.clear();
+            })
+            .onCancel([sp = &s] { sp->open_ = false; })   // Esc=取消（同表单各输入框）
+            .build();
+        components::button(ui, "claude.dialog.shared.json.format")
+            .position(28.0f, 324.0f).size(110.0f, 32.0f)
+            .text("格式化").fontSize(12.0f)
             .colors(t.colors.surfaceElevated, t.colors.hover, t.colors.active)
             .textColor(t.colors.textPrimary)
             .radius(t.sizes.radiusSmall)
             .border(1.0f, t.colors.borderDefault)
-            .onClick([sp = &s] { sp->envRows_.emplace_back(); })
+            .onClick([sp = &s] {
+                sp->error_.clear();
+                if (sp->extraSettingsJson_.empty()) return;
+                auto parsed = platform::json::parse(sp->extraSettingsJson_);
+                if (parsed.isFail()) {
+                    sp->error_ = "解析失败: " + parsed.errorMessage();
+                    return;
+                }
+                auto pretty = platform::json::stringify(parsed.value(),
+                                                        /*pretty=*/true);
+                if (pretty.isFail()) {
+                    sp->error_ = "序列化失败: " + pretty.errorMessage();
+                    return;
+                }
+                sp->extraSettingsJson_ = pretty.value();
+            })
             .build();
-        if (s.envRows_.size() > kMaxVisibleRows) {
-            ui.text("claude.dialog.shared.env.overflow")
-                .position(150.0f, 336.0f).size(w - 150.0f - 28.0f, 16.0f)
-                .text("另有 " + std::to_string(s.envRows_.size() -
-                                               kMaxVisibleRows) +
-                      " 项已保存（保存时全量写入，列表仅显示前 " +
-                      std::to_string(kMaxVisibleRows) + " 项）")
-                .fontSize(11.0f).lineHeight(16.0f)
-                .color(t.colors.textTertiary).build();
-        }
         if (!s.error_.empty()) {
             ui.text("claude.dialog.shared.error")
-                .position(28.0f, 368.0f).size(w - 56.0f, 18.0f)
+                .position(28.0f, 364.0f).size(w - 56.0f, 18.0f)
                 .text(s.error_).fontSize(12.0f).lineHeight(18.0f)
                 .color(t.colors.error).build();
         }

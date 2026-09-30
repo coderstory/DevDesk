@@ -99,14 +99,13 @@ struct SettingsEnvRead {
 SettingsEnvRead readSettingsEnvForSync(const Paths& paths);
 
 // 接管。profile 可为默认构造（无激活 profile 时只写 BASE_URL + 占位凭据）。
-// sharedExtraEnvJson = 该 profile 所绑共享配置片段的 extra_env 原文（空串 =
-// 未绑定）：片段值叠在 profile 自身 env 之上（片段赢），其键与 profile 的
-// extra_env 键同样进托管键集——停代理还原时按快照撤走，live 不留痕迹。
-// 生效高级设置 JSON 经 profile.extraSettingsJson 携带（§5.2① 门面装配；
-// 片段 JSON 域叠加自 §8 起在门面 effectiveExtraSettingsJson 完成后再传副本），
-// 其写入键进 sidecar nonEnvKeys / nonEnvSnapshot 记账（§5.1 sidecar v2）
-SyncResult takeOver(const Profile& profile, int proxyPort, const Paths& paths,
-                    const std::string& sharedExtraEnvJson = "");
+// 生效高级设置 JSON 经 profile.extraSettingsJson 携带（§5.2① 门面装配：门面
+// 先算 effectiveExtraSettingsJson(profile JSON, 片段 JSON) 再传副本——片段赢
+// 的叠加在门面完成；advanced-json-editor §8.4：原 sharedExtraEnvJson 形参拆除，
+// 片段不再携带 env 键）。其写入键进 sidecar nonEnvKeys / nonEnvSnapshot 记账
+//（§5.1 sidecar v2），env 托管键照旧
+SyncResult takeOver(const Profile& profile, int proxyPort,
+                    const Paths& paths);
 
 // 还原（写回后删 sidecar；settings.json 解析失败 → fail 且保留 sidecar 供人工
 // 恢复）。**无 sidecar 时不再无条件 no-op**：settings.json 里若仍留着本机代理

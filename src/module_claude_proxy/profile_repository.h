@@ -217,13 +217,6 @@ public:
     core::Result<void> updateSharedConfig(const SharedConfig& config);
     core::Result<void> deleteSharedConfig(int64_t id, bool* activeBound = nullptr);
 
-    // 片段冻结键集（G10，设计 §2.4）：profile 所绑片段 extra_env 的全部键
-    //（别名归一后，与写进 live 的键形一致）。未绑定 / 片段已删 / JSON 非法 →
-    // 空集（读路径容错）
-    // （2026-09-30 advanced-json-editor §8.4 登记待拆：片段重构后不再携带 env
-    // 键，本函数与消费方一并拆除——拆除批次见设计 §8.4 清单）
-    core::Result<std::vector<std::string>> sharedEnvKeysFor(int64_t profileId);
-
     // 片段高级属性 JSON 原文（0 / 片段不存在 / 读失败 → 空串 = 未绑定；读路径
     // 容错，悬空 id 退化成「未绑定」而不是让接管失败）。v11 起片段内容为
     // settings.json 非 env 顶层属性 JSON（旧 extra_env 已弃用，设计 §8）。

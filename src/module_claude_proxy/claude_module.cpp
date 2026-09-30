@@ -40,6 +40,7 @@
 
 #include <eui/dsl.h>
 
+#include <algorithm>
 #include <atomic>
 #include <ctime>
 #include <string>
@@ -182,6 +183,53 @@ public:
         } else {
             dv.dialectText = "-";
             dv.fallbackName = "-";
+        }
+
+        // 高级配置 pane 的键来源清单（advanced-json-editor 设计 §8.5，0edd3cf
+        // 形态复用）：生效 JSON = profile ⊕ 片段（片段赢，§8.2 生成时叠加）。
+        // 逐顶层键给来源：键 ∈ 片段对象 → 片段（envSourceLabel(Shared)——片段
+        // 赢的键都来自片段）；其余 → 本 Profile。"model" 键 → 附加说明（覆盖
+        // 模型槽位，D-4）。与列表快照同源、compose 内装配（pane 零服务调用）。
+        // 空态/解析失败经 keys 空 + note 区分（约定见 DetailView 注释）
+        if (shown != nullptr) {
+            std::string fragmentJson;
+            if (shown->sharedConfigId != 0) {
+                const SharedConfig* sc = findSharedById(
+                    state_.list.cachedSharedConfigs_, shown->sharedConfigId);
+                if (sc != nullptr) fragmentJson = sc->extraSettingsJson;
+            }
+            const std::string effective = effectiveExtraSettingsJson(
+                shown->extraSettingsJson, fragmentJson);
+            if (!effective.empty()) {
+                auto parsed = platform::json::parse(effective);
+                if (parsed.isOk() && parsed.value().isObject()) {
+                    auto effObj = parsed.value().asObject();
+                    // 片段对象键集（片段赢的键 = 片段里出现过的键）
+                    std::vector<std::string> fragmentKeys;
+                    if (!fragmentJson.empty()) {
+                        auto fp = platform::json::parse(fragmentJson);
+                        if (fp.isOk() && fp.value().isObject()) {
+                            fragmentKeys = fp.value().asObject().keys();
+                        }
+                    }
+                    for (const auto& k : effObj.keys()) {
+                        const bool fromFragment =
+                            std::find(fragmentKeys.begin(), fragmentKeys.end(),
+                                      k) != fragmentKeys.end();
+                        dv.extraSettingsKeys.emplace_back(
+                            k, fromFragment
+                                   ? envSourceLabel(EnvSource::Shared)
+                                   : envSourceLabel(EnvSource::Profile));
+                        if (k == "model") {
+                            dv.extraSettingsNote =
+                                "「model」覆盖模型槽位（ANTHROPIC_MODEL 不写入）";
+                        }
+                    }
+                } else {
+                    dv.extraSettingsNote =
+                        "（JSON 解析失败，接管时将忽略）";
+                }
+            }
         }
 
         ui.column("claude.root")

@@ -52,17 +52,6 @@ constexpr float kActTopGap = 20.0f;     // 内容框底 → actY
 constexpr float kActBottomPad = 24.0f;  // actY+61 → 面板底
 constexpr float kActReserve = kActionBlockH + kActBottomPad;  // 85
 
-// 生效 env 的来源短标签（P3）：三类来源 → 中文标签。放这里而不是
-// provider_config（那边只管数据与合并规则，不持有 UI 文案）。
-const char* envSourceLabel(EnvSource s) {
-    switch (s) {
-        case EnvSource::Shared:  return "片段";
-        case EnvSource::Profile: return "本 Profile";
-        case EnvSource::Managed: return "托管键";
-    }
-    return "?";
-}
-
 // 模型映射域的 env 键（E1，2026-09-30）：详情页已有独立的「模型映射」页签，
 // 槽位派生的键（各槽位 envKey + 官方 *_NAME 变体）在那里逐行展示，本 pane
 // 再列一遍纯属重复。键集**从槽位表派生**（provider_config 的
@@ -79,6 +68,16 @@ bool isModelMappingEnvKey(const std::string& key) {
 }
 
 }  // namespace
+
+const char* envSourceLabel(EnvSource s) {
+    // 公开单一来源（.h 声明；compose 装配高级属性键来源复用，不手抄文案）
+    switch (s) {
+        case EnvSource::Shared:  return "片段";
+        case EnvSource::Profile: return "本 Profile";
+        case EnvSource::Managed: return "托管键";
+    }
+    return "?";
+}
 
 float drawDetailBasic(eui::Ui& ui, float x0, float y0, float w,
                       const core::theme::Tokens& t, const DetailView& v,
@@ -168,9 +167,9 @@ float drawDetailBasic(eui::Ui& ui, float x0, float y0, float w,
         .fontSize(11.0f).lineHeight(16.0f)
         .verticalAlign(eui::VerticalAlign::Center)
         .color(ccManaged ? t.colors.success : t.colors.textTertiary).build();
-    // 批 2（设计 §2.10「详情/列表」）：共享配置绑定行——「共享配置：片段 A
-    //（N 个键）」；未绑定 → 「共享配置：未绑定」。N = 片段 extra_env 键数
-    //（K 集大小，sharedFrozenKeys 与写侧同口径）
+    // 批 2（设计 §2.10「详情/列表」）建立、advanced-json-editor §8.2 改造：
+    // 共享配置绑定行——片段不再携带 env 键，「N 个键」计数语义失效，改标
+    // 「高级属性预设」（来源标注由高级配置 pane 的键清单承接，§8.5）
     const bool bound = shown != nullptr && shown->sharedConfigId != 0 &&
                        v.sharedConfigs != nullptr;
     std::string sharedText = "共享配置：未绑定";
@@ -178,9 +177,7 @@ float drawDetailBasic(eui::Ui& ui, float x0, float y0, float w,
         const SharedConfig* sc =
             findSharedById(*v.sharedConfigs, shown->sharedConfigId);
         if (sc != nullptr) {
-            sharedText = "共享配置：" + sc->name + "（" +
-                         std::to_string(sharedFrozenKeys(*sc).size()) +
-                         " 个键）";
+            sharedText = "共享配置：" + sc->name + "（高级属性预设）";
         } else {
             sharedText = "共享配置：片段已删除（悬空绑定）";
         }
@@ -283,17 +280,12 @@ float drawDetailEnv(eui::Ui& ui, float x0, float y0, float w,
     std::map<std::string, std::string> envMap;
     std::map<std::string, EnvSource> envSources;
     if (shown != nullptr) {
-        // 所绑片段（未绑定 → 空串 = 未绑定，buildProxyEnv 按「无片段」处理）
-        std::string sharedJson;
-        if (v.sharedConfigs != nullptr && shown->sharedConfigId != 0) {
-            const SharedConfig* sc =
-                findSharedById(*v.sharedConfigs, shown->sharedConfigId);
-            if (sc != nullptr) sharedJson = sc->extraSettingsJson;
-        }
+        //（原「所绑片段」取数随 advanced-json-editor §8.4 拆除：片段不再携带
+        // env 键，env pane 只列 profile 自身 env ∪ 托管键；片段高级属性的
+        // 来源标注在高级配置 pane，§8.5）
         const int port = v.svc ? v.svc->configuredProxyPort() : 0;
         envMap = buildProxyEnv(shown->modelsConfigJson, shown->model,
-                               shown->extraEnvJson, port, sharedJson,
-                               &envSources);
+                               shown->extraEnvJson, port, &envSources);
         // 模型映射键出列（E1，按键名不按来源）。必须在行数预算之前滤：
         // 行数、「另有 N 项」、PaneRows 的口径都按过滤后的可见键计。
         for (auto it = envMap.begin(); it != envMap.end();) {
@@ -425,23 +417,13 @@ float drawDetailEnv(eui::Ui& ui, float x0, float y0, float w,
             .text(shownVal).fontSize(keyFs).lineHeight(line1H)
             .verticalAlign(eui::VerticalAlign::Center)
             .color(t.colors.textSecondary).build();
-        // 来源标注（P3）：三类来源，片段额外带名（截断到固定列宽，见上）
+        // 来源标注（P3）：托管键 / 本 Profile 两类（原 Shared 带名分支随
+        // advanced-json-editor §8.4 片段 env 消亡自然移除；枚举与 envSourceLabel
+        // 保留，§8.5 复用于高级属性键标注）
         const auto srcIt = envSources.find(k);
         const EnvSource src = srcIt != envSources.end()
             ? srcIt->second : EnvSource::Profile;
         std::string srcText = envSourceLabel(src);
-        if (src == EnvSource::Shared) {
-            std::string scName;
-            if (shown != nullptr && v.sharedConfigs != nullptr &&
-                shown->sharedConfigId != 0) {
-                const SharedConfig* sc =
-                    findSharedById(*v.sharedConfigs, shown->sharedConfigId);
-                if (sc != nullptr) scName = sc->name;
-            }
-            if (!scName.empty()) {
-                srcText += "・" + truncateUtf8(scName, 12);
-            }
-        }
         // 行带 2：来源 | 官方说明。说明列加 .clip()（旧无 —— 长说明横穿值列，
         // 是「文本都重叠」的元凶之一）
         ui.text(std::string("claude.env.src.") + rid)
@@ -752,15 +734,21 @@ float drawDetailCallsPane(eui::Ui& ui, float x0, float y0, float w,
     return viewY;
 }
 
-// 高级配置 pane（2026-09-30 batch-fix B，设计 §3.2④，详情 tab 3）：方言 +
-// 备用 Profile 两行只读。行样式复用基础 pane 的 label+值盒写法（同款
-// Center 对齐 + surfaceElevated 盒）；固定两行内容，高度与容器无关
-//（同基础/模型 pane 的 (void)contentBottom 口径）。数据由 compose 装配进
-// DetailView.dialectText / fallbackName（注释见 .h），本函数零服务调用。
+// 高级配置 pane（2026-09-30 batch-fix B 建立；advanced-json-editor §8.5 加
+// JSON 键来源清单，0edd3cf 形态复用）：方言 + 备用 Profile 两行只读 + 生效
+// JSON 的逐顶层键来源行。行样式复用基础 pane 的 label+值盒写法（同款
+// Center 对齐 + surfaceElevated 盒）。数据由 compose 装配进 DetailView
+//（dialectText / fallbackName / extraSettingsKeys / extraSettingsNote，
+// 注释见 .h），本函数零服务调用。
+//
+// **contentBottom 真消费（裁决⑤，变异⑥护栏）**：键清单行数纯按内容框可用高
+// 推（8 行为暂定上限，溢出走「另有 N 项」）——本 pane 不再是「固定行数、高度
+// 与容器无关」的 (void)contentBottom 形态；内容底沿恒 ≤ contentBottom，动作区
+// 五页签同高不变式因此保持（分发区注释与 actY 相等断言同步成立）
 float drawDetailAdvanced(eui::Ui& ui, float x0, float y0, float w,
                          const core::theme::Tokens& t, const DetailView& v,
                          float contentBottom) {
-    (void)contentBottom;  // 固定 2 行字段，高度与容器无关
+    // 方言行（固定）
     ui.text("claude.field.dialect.label")
         .position(x0, y0).size(w, 14.0f)
         .text("生效方言").fontSize(11.0f).lineHeight(14.0f)
@@ -776,6 +764,7 @@ float drawDetailAdvanced(eui::Ui& ui, float x0, float y0, float w,
         .verticalAlign(eui::VerticalAlign::Center)
         .color(t.colors.textPrimary).build();
     const float fbY = y0 + 56.0f;
+    // 备用行（固定）
     ui.text("claude.field.fallback.label")
         .position(x0, fbY).size(w, 14.0f)
         .text("备用 Profile").fontSize(11.0f).lineHeight(14.0f)
@@ -790,7 +779,92 @@ float drawDetailAdvanced(eui::Ui& ui, float x0, float y0, float w,
         .text(v.fallbackName).fontSize(t.sizes.fontSizeSmall).lineHeight(28.0f)
         .verticalAlign(eui::VerticalAlign::Center)
         .color(t.colors.textPrimary).build();
-    return fbY + 18.0f + 28.0f;   // 固定底沿 = y0 + 102
+    float ey = fbY + 18.0f + 28.0f;   // = y0 + 102（既有固定底沿）
+
+    // ---- 键来源清单（§8.5）：行高/行距与行数预算（P2 口径）----
+    constexpr float kKeyRowH = 28.0f;
+    constexpr float kKeyPitch = 34.0f;    // 行卡 + 6 间距
+    constexpr float kNoteH = 18.0f;       // 来源说明行（model 覆盖提示）
+    constexpr float kOverflowH = 18.0f;   // 「另有 N 项」提示行
+    constexpr int kMaxKeyRows = 8;        // 暂定上限（contentBottom 消费才是护栏）
+    if (v.extraSettingsKeys.empty()) {
+        // 空态两种成因（compose 约定：note 空 = 未配置；note 非空 = 解析失败
+        // 提示原样展示）
+        const std::string statusText = v.extraSettingsNote.empty()
+            ? std::string("未配置高级属性 JSON")
+            : v.extraSettingsNote;
+        ui.text("claude.advjson.status")
+            .position(x0, ey).size(w, kNoteH)
+            .text(statusText).fontSize(11.0f).lineHeight(kNoteH)
+            .verticalAlign(eui::VerticalAlign::Center)
+            .color(t.colors.textTertiary).build();
+        return std::min(ey + kNoteH, contentBottom);
+    }
+    ui.text("claude.advjson.label")
+        .position(x0, ey).size(w, 14.0f)
+        .text("高级属性（生效 JSON 逐键来源）").fontSize(11.0f).lineHeight(14.0f)
+        .verticalAlign(eui::VerticalAlign::Center)
+        .color(t.colors.textTertiary).build();
+    ey += 18.0f;
+    // 行数预算：可用高 = contentBottom − 当前底沿；说明行/溢出行要放得下
+    //（放不下就让行，让到 0 行为止——0 行时只画提示，不画越界行）
+    const float availH = std::max(0.0f, contentBottom - ey);
+    const bool hasNote = !v.extraSettingsNote.empty();
+    const float tailH = (hasNote ? kNoteH : 0.0f) + kOverflowH;
+    size_t shownRows = std::min(
+        v.extraSettingsKeys.size(),
+        static_cast<size_t>(std::max(0, static_cast<int>(availH / kKeyPitch))));
+    shownRows = std::min(shownRows, static_cast<size_t>(kMaxKeyRows));
+    while (shownRows > 0 &&
+           static_cast<float>(shownRows) * kKeyPitch + tailH > availH) {
+        --shownRows;
+    }
+    const bool overflow = v.extraSettingsKeys.size() > shownRows;
+    const size_t keyCount = v.extraSettingsKeys.size();
+    for (size_t i = 0; i < shownRows; ++i) {
+        const auto& [k, src] = v.extraSettingsKeys[i];
+        const std::string idx = std::to_string(i);
+        ui.rect("claude.advjson.row.bg." + idx)
+            .position(x0, ey).size(w, kKeyRowH)
+            .color(t.colors.surfaceElevated).radius(t.sizes.radiusSmall)
+            .border(1.0f, t.colors.borderMuted).build();
+        ui.text("claude.advjson.row.key." + idx)
+            .position(x0 + 12.0f, ey).size(w * 0.4f, kKeyRowH)
+            .clip()
+            .text(k).fontSize(12.0f).lineHeight(kKeyRowH)
+            .verticalAlign(eui::VerticalAlign::Center)
+            .color(t.colors.primary).build();
+        ui.text("claude.advjson.row.src." + idx)
+            .position(x0 + w * 0.4f + 20.0f, ey).size(w * 0.6f - 32.0f, kKeyRowH)
+            .clip()
+            .text(src).fontSize(11.0f).lineHeight(kKeyRowH)
+            .verticalAlign(eui::VerticalAlign::Center)
+            .color(src == std::string(envSourceLabel(EnvSource::Shared))
+                       ? t.colors.textSecondary
+                       : t.colors.textTertiary).build();
+        ey += kKeyPitch;
+    }
+    if (overflow) {
+        ui.text("claude.advjson.overflow")
+            .position(x0, ey).size(w, kOverflowH)
+            .text("另有 " + std::to_string(keyCount - shownRows) +
+                  " 项（编辑该 Profile 可查看全部）")
+            .fontSize(11.0f).lineHeight(kOverflowH)
+            .verticalAlign(eui::VerticalAlign::Center)
+            .color(t.colors.textTertiary).build();
+        ey += kOverflowH;
+    }
+    if (hasNote) {
+        ui.text("claude.advjson.note")
+            .position(x0, ey).size(w, kNoteH)
+            .text(v.extraSettingsNote).fontSize(11.0f).lineHeight(kNoteH)
+            .verticalAlign(eui::VerticalAlign::Center)
+            .color(t.colors.warning).build();
+        ey += kNoteH;
+    }
+    // 真消费兜底：内容底沿不越过内容框（理论可达性低——行数预算已按
+    // contentBottom 推；min() 是护栏不是布局来源）
+    return std::min(ey, contentBottom);
 }
 
 // 操作按钮组（全量接线）+ 「运行」副提示 + 分隔线。actY 由 drawDetailPanel
@@ -1102,11 +1176,14 @@ void drawDetailPanel(eui::Ui& ui, float rightW, float bodyH, float xOffset,
             //   ① 正常档（bodyH ≥ 445 ⟺ 客户区高 ≥ 639）：内容被内容框约束住，
             //      五个页签都取 actYFloor → **分隔线 y 全等**（这是不变量成立的条件，
             //      不是无条件等式 —— 曾经这么写是错的）；
-            //   ② 更矮时：基础信息 / 模型映射 / 高级配置三个 pane 是**固定行数
-            //      内容**（6 字段 / 6 槽位表行 / 2 字段，paneBottom 恒 312 / 340 /
-            //      214，都无视 contentBottom），`paneBottom + kActTopGap >
-            //      actYFloor` → 左支接管，动作区随内容下移，五页签**不再同高**
-            //     （模型支早 ~28px 触发，高级配置支最晚 —— 2026-09-30 batch-fix B）；
+            //   ② 更矮时：基础信息 / 模型映射两个 pane 是**固定行数内容**
+            //     （6 字段 / 6 槽位表行，paneBottom 恒 312 / 340，都无视
+            //     contentBottom），`paneBottom + kActTopGap > actYFloor` → 左支
+            //     接管，动作区随内容下移，五页签**不再同高**。高级配置 pane 自
+            //     advanced-json-editor §8.5（裁决⑤）起**真消费 contentBottom**
+            //     （键清单行数按可用高推 + 底沿 clamp），不再有与容器无关的固定
+            //     底沿——正常档与更矮档都吃右支锚定，五页签同高不变式因此保持
+            //    （§10 变异⑥的护栏 = contentBottom 消费，行数上限 8 只是暂定）；
             //   ③ 再矮（内容底已越过 bodyH − kActionBlockH）：用 actYHi 夹住 ——
             //      宁可让动作区压在内容上（可见的重叠），也不让它越出容器底
             //      （贴底锚定的下限语义；旧式纯 max() 会把它推出面板）。

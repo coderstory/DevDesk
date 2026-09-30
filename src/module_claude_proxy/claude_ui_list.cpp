@@ -731,8 +731,9 @@ void drawSharedConfigBlock(eui::Ui& ui, float width, float blockH,
                             inner.text(cid + ".keys")
                                 .position(16.0f, 32.0f)
                                 .size(contentWidth - 32.0f, 14.0f)
-                                .text(std::to_string(sharedFrozenKeys(sc).size()) +
-                                      " 个键 · 绑定它的 Profile 冻结这些键")
+                                .text(sc.extraSettingsJson.empty()
+                                          ? std::string("高级属性 JSON 预设（未配置）")
+                                          : std::string("高级属性 JSON 预设 · 绑定它的 Profile 写入时覆盖同名键"))
                                 .fontSize(11.0f).lineHeight(14.0f)
                                 .color(t.colors.textSecondary)
                                 .build();
