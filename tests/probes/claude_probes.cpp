@@ -609,14 +609,27 @@ int main(int argc, char* argv[]) {
 #pragma clang diagnostic pop
 #endif
             std::ofstream ofs(path, std::ios::binary);
-            ofs << "P6\n" << fbW << " " << fbH << "\n255\n";
-            for (int row = fbH - 1; row >= 0; --row) {  // GL 原点左下 → 翻转
-                ofs.write(reinterpret_cast<const char*>(
-                              px.data() + static_cast<std::size_t>(row) *
-                                              static_cast<std::size_t>(fbW) * 3u),
-                          static_cast<std::streamsize>(fbW) * 3);
+            if (!ofs) {
+                // 打开失败（路径不可写/磁盘满）不能静默假成功——视觉证据
+                // 没落盘就得置红，否则审计会拿到「看起来生成了」的假象
+                std::cerr << "claude_probes: dump 打开失败: " << path << "\n";
+                passed = false;
+            } else {
+                ofs << "P6\n" << fbW << " " << fbH << "\n255\n";
+                for (int row = fbH - 1; row >= 0; --row) {  // GL 原点左下 → 翻转
+                    ofs.write(reinterpret_cast<const char*>(
+                                  px.data() + static_cast<std::size_t>(row) *
+                                                  static_cast<std::size_t>(fbW) * 3u),
+                              static_cast<std::streamsize>(fbW) * 3);
+                }
+                ofs.close();  // 显式 close 后判流状态：写失败/flush 失败在这里暴露
+                if (!ofs) {
+                    std::cerr << "claude_probes: dump 写入失败: " << path << "\n";
+                    passed = false;
+                } else {
+                    std::cout << "claude_probes: dump " << path << "\n";
+                }
             }
-            std::cout << "claude_probes: dump " << path << "\n";
             renderBackend->present();
         };
         // 状态切换后 EUI 过渡动画（弹窗 opacity fade / tabs 指示器位移）需要
