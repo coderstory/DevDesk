@@ -286,6 +286,13 @@ public:
             [this](int64_t id, const std::string& name) {
                 doDeleteShared(id, name);
             });
+        // 高级设置 JSON 全屏编辑覆盖层（2026-09-30 json-fullscreen）：画在全部
+        // 弹窗之后 + 显式 z=1050——盖住表单 dialog（默认 1000）、让位 toast
+        //（1100，「应用」成功的确认可见）。可见性派生自 formOpen_ &&
+        // formJsonFullscreen_（应用成功关表单 → 全屏同帧消失，零孤儿态）
+        drawJsonFullscreenOverlay(ui, screen, t, themeTokens, state_.form,
+                                  formHooks(),
+                                  state_.list.cachedSharedConfigs_);
         harvestTestResult();  // 后台「测试连通」结果回 UI（每帧轮询）
         drawToast(ui, screen, themeTokens);
 
@@ -386,10 +393,16 @@ public:
     }
 
 private:
-    // 审计 M5：Esc 关最上层弹窗（顺序 = 绘制序/z 序倒序：共享片段删除确认 >
-    // 共享片段编辑 > 调用记录 > 删除确认 > 表单——批 2 起共享片段两弹窗画在
-    // 最上层 → Esc 最先关它们）。返回 true = 本键已消费；无弹窗返回 false
+    // 审计 M5：Esc 关最上层弹窗（顺序 = 绘制序/z 序倒序：全屏 JSON 编辑覆盖层
+    //（z=1050，画在所有弹窗之上）> 共享片段删除确认 > 共享片段编辑 > 调用记录
+    // > 删除确认 > 表单）。返回 true = 本键已消费；无弹窗返回 false
     bool closeTopmostDialog() {
+        // 全屏编辑覆盖层先于一切弹窗（2026-09-30 json-fullscreen：Esc 退全屏
+        // 回表单，第二次 Esc 才关表单）
+        if (state_.form.formJsonFullscreen_ && state_.form.formOpen_) {
+            state_.form.formJsonFullscreen_ = false;
+            return true;
+        }
         if (state_.shared.deleteConfirmOpen_) { state_.shared.deleteConfirmOpen_ = false; return true; }
         if (state_.shared.open_) { state_.shared.open_ = false; return true; }
         if (state_.logs.callsDialogOpen_) { state_.logs.callsDialogOpen_ = false; return true; }

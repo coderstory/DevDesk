@@ -36,6 +36,28 @@ constexpr const char* kAuthFieldLabels[] = {
     "双发（默认）", "只发 Authorization: Bearer", "只发 x-api-key"};
 constexpr int kAuthFieldCount = 3;
 
+// 「格式化」共用体（2026-09-30 json-fullscreen 自表单按钮 lambda 提升为自由
+// 函数）：parse → stringify(pretty)，不自写格式化器；键序会重排为字典序——
+// 与 settings_sync 写 settings.json 同一条序列化通道，round-trip 语义不变。
+// 失败 → 行内红字（formAdvancedJsonError_，与校验失败共用）。表单按钮与全屏
+// 覆盖层按钮同调本函数——单一来源，不复制逻辑
+void formatAdvancedJson(FormState& f) {
+    f.formAdvancedJsonError_.clear();
+    if (f.formExtraSettingsJson_.empty()) return;
+    auto parsed = platform::json::parse(f.formExtraSettingsJson_);
+    if (parsed.isFail()) {
+        f.formAdvancedJsonError_ = "解析失败: " + parsed.errorMessage();
+        return;
+    }
+    auto pretty = platform::json::stringify(parsed.value(),
+                                            /*pretty=*/true);
+    if (pretty.isFail()) {
+        f.formAdvancedJsonError_ = "序列化失败: " + pretty.errorMessage();
+        return;
+    }
+    f.formExtraSettingsJson_ = pretty.value();
+}
+
 } // namespace
 
 // ============ 新建/编辑 Profile 表单弹窗（tabs 三页，§6.1） ============
@@ -59,6 +81,8 @@ void openCreateForm(FormState& f, ImportState& imp) {
     // 高级设置 JSON 复位（advanced-json-editor §7.1：新建默认未配置）
     f.formExtraSettingsJson_.clear();
     f.formAdvancedJsonError_.clear();
+    // 全屏编辑态复位（json-fullscreen：新表单不带上一份的全屏残留）
+    f.formJsonFullscreen_ = false;
     // 批 3：备用 Profile 复位（新建默认不启用 failover）
     f.formFallbackProfileId_ = 0;
     f.formFallbackDdOpen_ = false;
@@ -92,6 +116,8 @@ void openEditForm(FormState& f, ImportState& imp, const Profile& p,
     // 外部改库的非 pretty 原文按原样预填，格式化按钮负责规范化
     f.formExtraSettingsJson_ = p.extraSettingsJson;
     f.formAdvancedJsonError_.clear();
+    // 全屏编辑态复位（json-fullscreen：重开表单不带上一份的全屏残留）
+    f.formJsonFullscreen_ = false;
     // 批 3：备用 Profile 回显（悬空/自引用 → 下拉逐帧归一为「无」，见绘制处）
     f.formFallbackProfileId_ = p.fallbackProfileId;
     f.formFallbackDdOpen_ = false;
@@ -710,9 +736,9 @@ void drawFormAdvancedTab(eui::Ui& ui, float w,
         .onCancel([fp = &f] { fp->formOpen_ = false; })   // 审计 [21]：Esc=取消（导入框同款）
         .build();
 
-    // 「格式化」按钮（D-2：parse → stringify(pretty)，不自写格式化器；键序
-    // 会重排为字典序——与 settings_sync 写 settings.json 同一条序列化通道，
-    // round-trip 语义不变）。失败 → 行内红字（与校验失败共用）
+    // 「格式化」按钮（D-2：parse → stringify(pretty)——本体在匿名空间
+    // formatAdvancedJson，json-fullscreen 起与全屏覆盖层按钮共用）。失败 →
+    // 行内红字（与校验失败共用）
     components::button(ui, "claude.form.advanced.json.format")
         .position(28.0f, 440.0f).size(110.0f, 32.0f)
         .text("格式化").fontSize(12.0f)
@@ -720,32 +746,27 @@ void drawFormAdvancedTab(eui::Ui& ui, float w,
         .textColor(t.colors.textPrimary)
         .radius(t.sizes.radiusSmall)
         .border(1.0f, t.colors.borderDefault)
-        .onClick([fp = &f] {
-            fp->formAdvancedJsonError_.clear();
-            if (fp->formExtraSettingsJson_.empty()) return;
-            auto parsed = platform::json::parse(fp->formExtraSettingsJson_);
-            if (parsed.isFail()) {
-                fp->formAdvancedJsonError_ =
-                    "解析失败: " + parsed.errorMessage();
-                return;
-            }
-            auto pretty = platform::json::stringify(parsed.value(),
-                                                    /*pretty=*/true);
-            if (pretty.isFail()) {
-                fp->formAdvancedJsonError_ =
-                    "序列化失败: " + pretty.errorMessage();
-                return;
-            }
-            fp->formExtraSettingsJson_ = pretty.value();
-        })
+        .onClick([fp = &f] { formatAdvancedJson(*fp); })
+        .build();
+    // 「全屏编辑」入口（2026-09-30 json-fullscreen）：与「格式化」并排，副按钮
+    // 同款。只置位 formJsonFullscreen_——覆盖层由 compose 在全部弹窗之后绘制
+    //（claude_module.cpp drawJsonFullscreenOverlay），表单态本帧不动
+    components::button(ui, "claude.form.advanced.json.fs")
+        .position(150.0f, 440.0f).size(110.0f, 32.0f)
+        .text("全屏编辑").fontSize(12.0f)
+        .colors(t.colors.surfaceElevated, t.colors.hover, t.colors.active)
+        .textColor(t.colors.textPrimary)
+        .radius(t.sizes.radiusSmall)
+        .border(1.0f, t.colors.borderDefault)
+        .onClick([fp = &f] { fp->formJsonFullscreen_ = true; })
         .build();
     // 已绑定片段提示行（§7.3：取代拆除的 frozenKeys/chip——文本框无逐键行，
-    // 片段赢语义在此明示）
+    // 片段赢语义在此明示；json-fullscreen 起右移让位「全屏编辑」按钮）
     if (const SharedConfig* boundSc =
             findSharedById(sharedConfigs, f.formSharedConfigId_);
         boundSc != nullptr) {
         ui.text("claude.form.advanced.json.boundhint")
-            .position(150.0f, 448.0f).size(w - 178.0f, 16.0f)
+            .position(272.0f, 448.0f).size(w - 300.0f, 16.0f)
             .text("已绑定片段「" + truncateUtf8(boundSc->name, 16) +
                   "」：同名键以片段为准（解绑后回落本页值）")
             .fontSize(11.0f).lineHeight(16.0f)
@@ -1128,6 +1149,122 @@ void drawProfileFormDialog(eui::Ui& ui, const eui::Screen& screen,
             ui_kit::drawDialogButtons(ui, "claude.dialog.form", w, h, cancel, confirm, t,
                                       themeTokens);
     });
+}
+
+// ============ 高级设置 JSON 全屏编辑覆盖层（2026-09-30 json-fullscreen）============
+// 层级落点（任务两案取「ui_kit 顶层 overlay」案，理由见 commit message）：画在
+// compose 全部弹窗之后（claude_module.cpp）+ 显式 zIndex 1050——介于表单弹窗
+//（EUI-NEO dialog 默认 1000）与 toast（1100）之间：盖住表单 dialog（本需求），
+// 又让位 toast（「应用」成功的确认必须可见）。
+// 可见性派生自 formOpen_ && formJsonFullscreen_：「应用」复用 submitForm，成功
+// 路径关表单 → 全屏同帧消失（若留在全屏，会出现无表单的孤儿覆盖层，且「完成」
+// 回表单无处可回；toast 确认由既有 hooks 照发）。文本/红字/落库全部复用表单
+// 既有字段与路径——本函数只是同一状态的大画布
+void drawJsonFullscreenOverlay(eui::Ui& ui, const eui::Screen& screen,
+                               const core::theme::Tokens& t,
+                               const components::theme::ThemeColorTokens& themeTokens,
+                               FormState& f, const FormSubmitHooks& hooks,
+                               const std::vector<SharedConfig>& sharedConfigs) {
+    // 结构性不变式（审计 F-3）：表单不在场 ⇒ 全屏旗必复位——任何关表单路径
+    //（取消 / Esc / 应用成功）之后下一帧即清，不依赖 openCreate/openEditForm
+    // 两个入口的顺手复位（旗与 formOpen_ 的从属关系在此收口）
+    if (!f.formJsonFullscreen_ || !f.formOpen_) {
+        f.formJsonFullscreen_ = false;
+        return;
+    }
+    const float w = screen.width;
+    const float h = screen.height;
+
+    ui.stack("claude.jsonfs.root")
+        .size(w, h)
+        .zIndex(1050)
+        .content([&] {
+            // 整页不透明底（模块页平时不自铺底色——底=窗口 clearColor；全屏态
+            // 必须盖住底下全部内容，故自铺不透明 background）+ blockPointer
+            //（与 dialog 面板 hit 同款模态手法：点击不穿透到表单弹窗）
+            ui.rect("claude.jsonfs.bg")
+                .size(w, h)
+                .color(t.colors.background)
+                .blockPointer()
+                .build();
+
+            ui_kit::drawDialogTitle(ui, "claude.jsonfs.title", w,
+                                    "高级设置 JSON（全屏）", 20.0f,
+                                    t.colors.textPrimary,
+                                    {.y = 20.0f, .height = 26.0f,
+                                     .lineHeight = 26.0f});
+            // 末句 = 审计 F-2：应用闸门里的基础项（名称/URL/Key）错误修复字段在
+            // 基础页、全屏态不可达——明示「回表单补填」这条修复路径
+            ui.text("claude.jsonfs.hint")
+                .position(28.0f, 48.0f).size(w - 56.0f, 16.0f)
+                .text("与表单弹窗同一份编辑缓冲：格式化 / 应用（=保存）在此生效；"
+                      "Esc 或「完成」返回表单，未应用的文本保留；"
+                      "基础项（名称/URL/Key）缺失需回表单基础页补填")
+                .fontSize(11.0f).lineHeight(16.0f)
+                .color(t.colors.textTertiary).build();
+
+            // 大号多行编辑框：占满内容区减标题区与底部按钮行。value/onChange
+            // 与表单框同接 formExtraSettingsJson_（同一编辑缓冲）；Esc 走
+            // onCancel 退全屏回表单（表单框的 Esc 是关表单——层级不同语义不同）
+            components::input(ui, "claude.jsonfs.editor")
+                .position(28.0f, 72.0f).size(w - 56.0f, h - 176.0f)
+                .value(f.formExtraSettingsJson_)
+                .placeholder(R"({ "model": "...", "permissions": { ... } })")
+                .multiline(true).scrollbar(true)
+                .fontSize(13.0f).theme(themeTokens)
+                .onChange([fp = &f](const std::string& v) {
+                    fp->formExtraSettingsJson_ = v;
+                    fp->formAdvancedJsonError_.clear();
+                })
+                .onCancel([fp = &f] { fp->formJsonFullscreen_ = false; })
+                .build();
+
+            // 红字（同源分层与表单侧一致：优先 formError_ 提交闸门，其次
+            // 格式化/校验行内红字——两个来源都是表单弹窗自己在显示的那份）
+            const std::string& fsError = !f.formError_.empty()
+                                             ? f.formError_
+                                             : f.formAdvancedJsonError_;
+            if (!fsError.empty()) {
+                ui.text("claude.jsonfs.error")
+                    .position(28.0f, h - 96.0f).size(w - 56.0f, 16.0f)
+                    .text(fsError).fontSize(12.0f).lineHeight(16.0f)
+                    .color(t.colors.error).build();
+            }
+
+            // 底部按钮行：「格式化」（与表单按钮共用 formatAdvancedJson）/
+            //「应用」（= submitForm 整条既有路径：校验 → formError_ 闸门 →
+            // pretty 落库 → toast）/「完成」（退全屏回表单，文本留在缓冲）
+            components::button(ui, "claude.jsonfs.format")
+                .position(28.0f, h - 68.0f).size(110.0f, 40.0f)
+                .text("格式化").fontSize(12.0f)
+                .colors(t.colors.surfaceElevated, t.colors.hover, t.colors.active)
+                .textColor(t.colors.textPrimary)
+                .radius(t.sizes.radiusSmall)
+                .border(1.0f, t.colors.borderDefault)
+                .onClick([fp = &f] { formatAdvancedJson(*fp); })
+                .build();
+            components::button(ui, "claude.jsonfs.apply")
+                .position(150.0f, h - 68.0f).size(110.0f, 40.0f)
+                .text("应用").fontSize(12.0f)
+                .colors(t.colors.primary, t.colors.primaryHover,
+                        t.colors.primaryPressed)
+                .textColor(t.colors.onPrimary)
+                .radius(t.sizes.radiusSmall)
+                .onClick([fp = &f, hooks, scs = &sharedConfigs] {
+                    submitForm(*fp, hooks, *scs);
+                })
+                .build();
+            components::button(ui, "claude.jsonfs.done")
+                .position(272.0f, h - 68.0f).size(110.0f, 40.0f)
+                .text("完成").fontSize(12.0f)
+                .colors(t.colors.surfaceElevated, t.colors.hover, t.colors.active)
+                .textColor(t.colors.textPrimary)
+                .radius(t.sizes.radiusSmall)
+                .border(1.0f, t.colors.borderDefault)
+                .onClick([fp = &f] { fp->formJsonFullscreen_ = false; })
+                .build();
+        })
+        .build();
 }
 
 // ============ 删除确认弹窗 ============

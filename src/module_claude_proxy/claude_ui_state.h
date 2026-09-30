@@ -162,6 +162,12 @@ struct FormState {
     // 高级设置 JSON 的行内红字（§7.2 的 claude.form.advanced.json.error 节点；
     // 格式化/校验失败共用，onChange 清空——与 formError_ 提交闸门分层）
     std::string formAdvancedJsonError_;
+    // 高级设置 JSON 全屏编辑态（2026-09-30 json-fullscreen）：true = 全屏覆盖层
+    // 在场。覆盖层可见性派生自 formOpen_ && formJsonFullscreen_（「应用」复用
+    // submitForm 成功关表单 → 全屏同帧随之消失，零孤儿态）；文本/红字一律复用
+    // formExtraSettingsJson_ / formError_ / formAdvancedJsonError_——全屏只是
+    // 同一状态的大画布，不出现第二份状态
+    bool formJsonFullscreen_ = false;
 
     // 批 3（设计 §3.4/§3.8）：备用 Profile（failover）绑定（2026-09-30
     // batch-fix B 起渲染在**高级配置页**，原基础页整段迁入；复用批 2 绑定

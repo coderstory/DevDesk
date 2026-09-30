@@ -77,6 +77,17 @@ void drawProfileFormDialog(eui::Ui& ui, const eui::Screen& screen,
                            const std::vector<Profile>& profiles,
                            const FormSubmitHooks& hooks);
 
+// 高级设置 JSON 全屏编辑覆盖层（2026-09-30 json-fullscreen）：窗口级覆盖层，
+// 由 compose 在全部弹窗之后调用（z=1050：盖表单弹窗默认 1000、让位 toast
+// 1100）。可见性派生自 formOpen_ && formJsonFullscreen_（应用成功关表单 →
+// 全屏同帧消失）；文本/红字/落库全部复用表单既有字段与 submitForm 路径——
+// 同一编辑缓冲的大画布，不出现第二份状态
+void drawJsonFullscreenOverlay(eui::Ui& ui, const eui::Screen& screen,
+                               const core::theme::Tokens& t,
+                               const components::theme::ThemeColorTokens& themeTokens,
+                               FormState& f, const FormSubmitHooks& hooks,
+                               const std::vector<SharedConfig>& sharedConfigs);
+
 // 删除确认弹窗（确认后回调模块执行真删除）
 void drawDeleteConfirmDialog(eui::Ui& ui, const eui::Screen& screen,
                              const core::theme::Tokens& t,
