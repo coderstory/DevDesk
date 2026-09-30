@@ -6,6 +6,7 @@
 
 #include <map>
 #include <memory>
+#include <mutex>
 #include <string>
 #include <vector>
 
@@ -33,6 +34,10 @@ public:
     virtual ~ITool() = default;
     virtual std::string name() const = 0;           // 如 "todo.create"
     virtual std::string schemaJson() const = 0;     // Anthropic tool 定义 JSON
+    // 破坏性工具（删数据 / 切配置等不可逆副作用）覆写返回 true。AgentLoop 在
+    // task.allowDestructive=0 时遇破坏性工具直接终止 run（spec §5.3：不挂起确认）。
+    // 默认 false = 只读 / 写但可逆。M2 的 todo.delete / md.delete 等再覆写。
+    virtual bool isDestructive() const { return false; }
     virtual Result<ToolResult> execute(const ToolArgs& args) = 0;
 };
 
@@ -58,7 +63,9 @@ public:
 private:
     ToolRegistry() = default;
     std::map<std::string, std::shared_ptr<ITool>> tools_;
-    mutable std::mutex mutex_;  // 读写各一把锁（实现时定粒度，见 §10 线程模型）
+    // 单锁：register/unregister/find/allSchemasJson 全部经这把 mutex 串行化
+    //（onStart/onStop 主线程写，AgentLoop 工作线程读；见 §10 线程模型）
+    mutable std::mutex mutex_;
 };
 
 } // namespace core

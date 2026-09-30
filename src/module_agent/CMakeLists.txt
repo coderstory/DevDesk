@@ -1,5 +1,6 @@
 add_library(devdesk_agent STATIC
     agent_store.cpp
+    agent_loop.cpp
 )
 
 devdesk_apply_warnings(devdesk_agent)
@@ -13,8 +14,8 @@ target_include_directories(devdesk_agent PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/..
 )
 
-# 落库层只依赖 core（SqliteDb/Result）；platform 留给后续 Task 接 AgentLoop 的
-# HTTP/JSON 侧（plan task-3-brief：链接同款 core/platform 依赖）
+# 依赖 core（SqliteDb/Result/llm_endpoint）+ platform（AgentLoop 的 blocks JSON
+# 解析拼装）；HTTP 侧（LlmClient）留给后续 Task
 target_link_libraries(devdesk_agent PUBLIC
     devdesk_core
     devdesk_platform
