@@ -147,10 +147,11 @@ function(devdesk_add_eui_includes target)
     )
 endfunction()
 
-# 功能模块（home / markdown / todo / claude_proxy / settings / about）
+# 功能模块（home / markdown / todo / claude_proxy / settings / about / agent）
 add_subdirectory(src/module_home)
 add_subdirectory(src/module_markdown)
 add_subdirectory(src/module_todo)
+add_subdirectory(src/module_agent)
 add_subdirectory(src/module_claude_proxy)
 add_subdirectory(src/module_settings)
 add_subdirectory(src/module_about)
@@ -180,6 +181,7 @@ target_link_libraries(DevDesk PRIVATE
     devdesk_module_home
     devdesk_module_markdown
     devdesk_module_todo
+    devdesk_agent
     devdesk_module_claude_proxy
     devdesk_module_settings
     devdesk_module_about

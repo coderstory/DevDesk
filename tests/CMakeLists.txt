@@ -34,6 +34,7 @@ add_executable(devdesk_tests
     test_modules/test_md_preview_highlight.cpp
     test_modules/test_md_sync_map.cpp
     test_modules/test_todo_service.cpp
+    test_modules/test_agent_store.cpp
     test_modules/test_todo_ui.cpp
     test_modules/test_ui_modern.cpp
     test_modules/test_view_state.cpp
@@ -148,6 +149,7 @@ target_link_libraries(devdesk_tests PRIVATE
     devdesk_module_home
     devdesk_module_markdown
     devdesk_module_todo
+    devdesk_agent
     devdesk_module_claude_proxy
     devdesk_module_settings
     devdesk_module_about
