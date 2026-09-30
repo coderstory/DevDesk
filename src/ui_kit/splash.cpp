@@ -41,6 +41,9 @@ SplashState& splashState() {
 } // namespace
 
 bool drawSplashIfNeeded(eui::Ui& ui, const eui::Screen& screen) {
+    // 测试缝（splash.h）：置位时最短路返回，不触碰 SplashState（不启动
+    // 计时/日志/shader）。标志本体是 splash.h 的 inline 函数局部 static
+    if (splashDisabledForTestsFlag()) return false;
     SplashState& state = splashState();
     if (!state.active) return false;
 
