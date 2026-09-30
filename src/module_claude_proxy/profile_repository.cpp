@@ -904,11 +904,29 @@ core::Result<Profile> ProfileRepository::duplicateProfile(int64_t srcId) {
     }
 
     // 源 key 缺失（Keychain 孤儿）→ fail：不建无 key 的副本
-    //（与 createProfile 的「apiKey 必填」约束一致）
+    //（与 createProfile 的「apiKey 必填」约束一致）。失败分三态报
+    //（2026-09-30 复盘：原来三态合成一句「密钥缺失」，用户分不清是没填过、
+    // 读失败还是存了空串，也无从知道怎么恢复）：
+    //   条目不存在（NotFound）→「密钥缺失」+ 恢复提示
+    //   读失败（非 NotFound 的真实错误）→ 原样透传错误码与信息（读不了 ≠ 没有）
+    //   条目在但值是空串 →「密钥为空串」+ 恢复提示
     auto keyR = loadApiKey(srcId);
-    if (keyR.isFail() || keyR.value().empty()) {
-        return core::Result<Profile>::fail(core::ErrorCode::InvalidApiKey,
-            "源 Profile 的密钥缺失，无法复制");
+    if (keyR.isFail()) {
+        if (keyR.errorCode() == core::ErrorCode::NotFound) {
+            return core::Result<Profile>::fail(
+                core::ErrorCode::InvalidApiKey,
+                "源 Profile 的密钥缺失（Keychain 无对应条目），无法复制；"
+                "编辑该 Profile 重新填一次 API Key 即可");
+        }
+        return core::Result<Profile>::fail(
+            keyR.errorCode(),
+            "读取源 Profile 密钥失败：" + keyR.errorMessage());
+    }
+    if (keyR.value().empty()) {
+        return core::Result<Profile>::fail(
+            core::ErrorCode::InvalidApiKey,
+            "源 Profile 的密钥为空串，无法复制；"
+            "编辑该 Profile 重新填一次 API Key 即可");
     }
 
     // 一行 SQLite + 一条 Keychain（account 自动为 claude:<新 id>，与源不同）；

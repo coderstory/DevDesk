@@ -2239,6 +2239,65 @@ REGISTER_TEST(claude_dup_missing_key_fails,
     return true;
 })
 
+// 复制失败三态（2026-09-30 复盘）：条目不存在 / 读失败 / 值为空串，文案可分辨
+// 且带恢复提示——原来三态合成一句「密钥缺失」，用户分不清病因也无从恢复。
+// 全程注入缝假 keychain：三态都是确定性构造，不依赖真实 Keychain 行为。
+REGISTER_TEST(claude_dup_missing_key_three_states,
+              "claude_service: 复制失败三态（NotFound / 读错误 / 空串）+ 恢复提示", {
+    test_support::TestDb tdb(kDbPrefix, "dup3state");
+    ScopedFakeKeychain kc;
+    module::claude::ClaudeService svc(tdb.handle(), kTestKeychainService);
+    const std::string hint = "编辑该 Profile 重新填一次 API Key 即可";
+
+    auto created = svc.createProfile("三态源", "https://s.example.com",
+                                     "sk-ant-3state-0001", "m");
+    DOCTEST_REQUIRE(created.isOk());
+    const int64_t id = created.value().id;
+    const std::string account = created.value().keychainAccount;
+
+    // 态一：条目不存在（NotFound，历史孤儿形态）→「密钥缺失」+ 恢复提示
+    kc.fake.data.erase(FakeKeychain::keyOf(kTestKeychainService, account));
+    auto dupMissing = svc.duplicateProfile(id);
+    DOCTEST_CHECK(dupMissing.isFail());
+    DOCTEST_CHECK(dupMissing.errorCode() == core::ErrorCode::InvalidApiKey);
+    DOCTEST_CHECK(dupMissing.errorMessage().find("密钥缺失") !=
+                  std::string::npos);
+    DOCTEST_CHECK(dupMissing.errorMessage().find(hint) != std::string::npos);
+
+    // 态二：读失败（非 NotFound 的真实错误）→ 原样透传错误码与信息
+    //（读不了 ≠ 没有，不能报「密钥缺失」误导用户去重填）
+    kc.table.loadSecret = [](const std::string&, const std::string&) {
+        return core::Result<std::string>::fail(core::ErrorCode::Internal,
+                                               "注入：读取失败");
+    };
+    auto dupErr = svc.duplicateProfile(id);
+    DOCTEST_CHECK(dupErr.isFail());
+    DOCTEST_CHECK(dupErr.errorCode() == core::ErrorCode::Internal);
+    DOCTEST_CHECK(dupErr.errorMessage().find("读取源 Profile 密钥失败") !=
+                  std::string::npos);
+    DOCTEST_CHECK(dupErr.errorMessage().find("注入：读取失败") !=
+                  std::string::npos);
+    DOCTEST_CHECK(dupErr.errorMessage().find("密钥缺失") == std::string::npos);
+    // 恢复假实现（态三还要正常读）
+    kc.table.loadSecret = &fakeLoad;
+
+    // 态三：条目在但值是空串 →「密钥为空串」+ 恢复提示
+    DOCTEST_REQUIRE(platform::keychain::storeSecret(
+        kTestKeychainService, account, "").isOk());
+    auto dupEmpty = svc.duplicateProfile(id);
+    DOCTEST_CHECK(dupEmpty.isFail());
+    DOCTEST_CHECK(dupEmpty.errorCode() == core::ErrorCode::InvalidApiKey);
+    DOCTEST_CHECK(dupEmpty.errorMessage().find("密钥为空串") !=
+                  std::string::npos);
+    DOCTEST_CHECK(dupEmpty.errorMessage().find(hint) != std::string::npos);
+
+    // 三个失败态都没建行（不建无 key 的副本）
+    auto after = svc.listProfiles();
+    DOCTEST_REQUIRE(after.isOk());
+    DOCTEST_CHECK_EQ(static_cast<int>(after.value().size()), 1);
+    return true;
+})
+
 // ---- 22. 二段写失败 → 回滚（零残留：行没了、Keychain 条目也清了）----
 
 REGISTER_TEST(claude_dup_stage2_rollback,
