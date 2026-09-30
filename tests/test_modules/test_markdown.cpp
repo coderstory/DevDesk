@@ -235,7 +235,7 @@ REGISTER_TEST(md_tree_grouping, "md_tree: 根组常显置顶 + 顶层文件夹/�
     DOCTEST_CHECK_EQ(rows[2].relPath, std::string("inbox"));
     DOCTEST_CHECK_EQ(rows[3].name, std::string("b.md"));
     DOCTEST_CHECK_EQ(rows[3].relPath, std::string("inbox/b.md"));
-    DOCTEST_CHECK_EQ(rows[3].depth, 1);
+    DOCTEST_CHECK_EQ(rows[3].depth, 2);  // 顶层夹（1）的直接文件 → 2
     DOCTEST_CHECK_EQ(rows[4].name, std::string("c.md"));
     DOCTEST_CHECK(rows[5].isFolder);
     DOCTEST_CHECK_EQ(rows[5].name, std::string("work"));
@@ -271,24 +271,24 @@ REGISTER_TEST(md_tree_collapse_and_deep_files, "md_tree: 收起隐藏整棵子�
     DOCTEST_CHECK_EQ(rows[1].depth, 1);
     DOCTEST_CHECK(rows[2].isFolder);
     DOCTEST_CHECK_EQ(rows[2].name, std::string("a"));
-    DOCTEST_CHECK_EQ(rows[2].depth, 0);
+    DOCTEST_CHECK_EQ(rows[2].depth, 1);  // 顶层夹 = 根组行的子行（2026-09-30 起）
     DOCTEST_CHECK_EQ(rows[3].name, std::string("top.md"));  // a 的直接子文件
     DOCTEST_CHECK_EQ(rows[3].relPath, std::string("a/top.md"));
-    DOCTEST_CHECK_EQ(rows[3].depth, 1);
+    DOCTEST_CHECK_EQ(rows[3].depth, 2);
     DOCTEST_CHECK(rows[4].isFolder);                        // 二级夹行
     DOCTEST_CHECK_EQ(rows[4].name, std::string("deep"));
     DOCTEST_CHECK_EQ(rows[4].relPath, std::string("a/deep"));
-    DOCTEST_CHECK_EQ(rows[4].depth, 1);
+    DOCTEST_CHECK_EQ(rows[4].depth, 2);
     DOCTEST_CHECK_EQ(rows[5].name, std::string("y.md"));     // 二级夹的直接子文件
     DOCTEST_CHECK_EQ(rows[5].relPath, std::string("a/deep/y.md"));
-    DOCTEST_CHECK_EQ(rows[5].depth, 2);
+    DOCTEST_CHECK_EQ(rows[5].depth, 3);
     DOCTEST_CHECK(rows[6].isFolder);                        // 三级夹行（新）
     DOCTEST_CHECK_EQ(rows[6].name, std::string("more"));
     DOCTEST_CHECK_EQ(rows[6].relPath, std::string("a/deep/more"));
-    DOCTEST_CHECK_EQ(rows[6].depth, 2);
+    DOCTEST_CHECK_EQ(rows[6].depth, 3);
     DOCTEST_CHECK_EQ(rows[7].name, std::string("x.md"));     // 三级夹的文件：文件名
     DOCTEST_CHECK_EQ(rows[7].relPath, std::string("a/deep/more/x.md"));
-    DOCTEST_CHECK_EQ(rows[7].depth, 3);
+    DOCTEST_CHECK_EQ(rows[7].depth, 4);
     // 收起二级夹 → 只剩子夹行（一级夹自己的文件行不受影响）
     const auto subCollapsed = buildTreeRows(notes, {}, {"a/deep"});
     DOCTEST_CHECK_EQ(subCollapsed.size(), static_cast<size_t>(5));
@@ -306,12 +306,12 @@ REGISTER_TEST(md_tree_two_level_empty_subfolders, "md_tree: 空目录行（磁�
     DOCTEST_CHECK(rows[0].isFolder);
     DOCTEST_CHECK_EQ(rows[0].name, std::string("根目录"));  // 常显置顶
     DOCTEST_CHECK_EQ(rows[1].name, std::string("工作"));    // UTF-8 字节序：工 < 归
-    DOCTEST_CHECK_EQ(rows[1].depth, 0);
+    DOCTEST_CHECK_EQ(rows[1].depth, 1);                     // 顶层夹 = 根组的子行
     DOCTEST_CHECK_EQ(rows[2].name, std::string("周会"));    // 空子夹行（W10）
     DOCTEST_CHECK_EQ(rows[2].relPath, std::string("工作/周会"));
-    DOCTEST_CHECK_EQ(rows[2].depth, 1);
+    DOCTEST_CHECK_EQ(rows[2].depth, 2);
     DOCTEST_CHECK_EQ(rows[3].name, std::string("归档"));
-    DOCTEST_CHECK_EQ(rows[3].depth, 0);
+    DOCTEST_CHECK_EQ(rows[3].depth, 1);
 
     // 三级目录（磁盘枚举，无笔记）同样有行位（2026-09-29 起层级不设上限；
     // 旧版「三级目录不进树」是两级渲染的配套限制，已随层级放开删除）
@@ -320,10 +320,10 @@ REGISTER_TEST(md_tree_two_level_empty_subfolders, "md_tree: 空目录行（磁�
     DOCTEST_CHECK_EQ(deep[1].name, std::string("a"));
     DOCTEST_CHECK_EQ(deep[2].name, std::string("b"));
     DOCTEST_CHECK_EQ(deep[2].relPath, std::string("a/b"));
-    DOCTEST_CHECK_EQ(deep[2].depth, 1);
+    DOCTEST_CHECK_EQ(deep[2].depth, 2);
     DOCTEST_CHECK_EQ(deep[3].name, std::string("c"));
     DOCTEST_CHECK_EQ(deep[3].relPath, std::string("a/b/c"));
-    DOCTEST_CHECK_EQ(deep[3].depth, 2);
+    DOCTEST_CHECK_EQ(deep[3].depth, 3);
     return true;
 })
 
@@ -354,7 +354,7 @@ REGISTER_TEST(md_tree_root_group_always, "md_tree: 根组标题常显（无根�
     DOCTEST_CHECK(withEmpty[1].isFolder);
     DOCTEST_CHECK_EQ(withEmpty[1].name, std::string("空文件夹"));
     DOCTEST_CHECK_EQ(withEmpty[1].relPath, std::string("空文件夹"));
-    DOCTEST_CHECK_EQ(withEmpty[1].depth, 0);
+    DOCTEST_CHECK_EQ(withEmpty[1].depth, 1);  // 顶层夹 = 根组的子行
     return true;
 })
 
@@ -644,8 +644,10 @@ REGISTER_TEST(md_tree_row_geometry,
     ui.layout(screen.width, screen.height);
 
     // 行序（W9 根组置顶 + 组内文件在前/子夹在后）：
-    //   [0] 根目录(夹,d0) [1] solo.md(文件,d1) [2] 工作(夹,d0)
-    //   [3] 周报.md(文件,d1) [4] 周会(夹,d1) [5] 纪要.md(文件,d2)
+    //   [0] 根目录(夹,d0) [1] solo.md(文件,d1) [2] 工作(夹,d1)
+    //   [3] 周报.md(文件,d2) [4] 周会(夹,d2) [5] 纪要.md(文件,d3)
+    //（2026-09-30 起根组行 = 整棵树的根：顶层夹与其直接文件同层 d1，旧口径
+    //  顶层夹 d0 = 与根行同级已废——见 md_module_root_row_new_folder_inside）
     struct RowSpec { const char* id; bool folder; };
     const RowSpec rows[] = {{"md.tree.node.0", true},  {"md.tree.node.1", false},
                             {"md.tree.node.2", true},  {"md.tree.node.3", false},
@@ -683,15 +685,16 @@ REGISTER_TEST(md_tree_row_geometry,
 
     // c. x 方向同层级统一（同 kind + 同 depth → 同 x，整数不差半像素）
     const auto xOf = [&](const char* id) { return ui.find(id)->frame.x; };
-    // 顶层夹（d0）：node.0 与 node.2 各列 x 一致
-    DOCTEST_CHECK_EQ(xOf("md.tree.node.0.arrow"), xOf("md.tree.node.2.arrow"));
-    DOCTEST_CHECK_EQ(xOf("md.tree.node.0.ficon"), xOf("md.tree.node.2.ficon"));
-    DOCTEST_CHECK_EQ(xOf("md.tree.node.0.name"), xOf("md.tree.node.2.name"));
-    // 子夹（d1）= 顶层夹 + 一级缩进 16
+    // 顶层夹 = 根组行的**子**行：node.2 各列 = node.0 + 一级缩进 16
+    //（2026-09-30 修复前两者 x 相等——顶层夹渲染成根行的兄弟，本次改掉）
+    DOCTEST_CHECK_EQ(xOf("md.tree.node.2.arrow"), xOf("md.tree.node.0.arrow") + 16.0f);
+    DOCTEST_CHECK_EQ(xOf("md.tree.node.2.ficon"), xOf("md.tree.node.0.ficon") + 16.0f);
+    DOCTEST_CHECK_EQ(xOf("md.tree.node.2.name"), xOf("md.tree.node.0.name") + 16.0f);
+    // 子夹（d2）= 顶层夹（d1）+ 一级缩进 16
     DOCTEST_CHECK_EQ(xOf("md.tree.node.4.name"), xOf("md.tree.node.2.name") + 16.0f);
-    // 文件行 d1（solo.md 与 工作/周报.md）x 一致；d2 = d1 + 16
-    DOCTEST_CHECK_EQ(xOf("md.tree.node.3.name"), xOf("md.tree.node.1.name"));
-    DOCTEST_CHECK_EQ(xOf("md.tree.node.5.name"), xOf("md.tree.node.1.name") + 16.0f);
+    // 文件行：d1（solo.md）→ d2（工作/周报.md，= d1 + 16）→ d3（纪要.md，= d1 + 32）
+    DOCTEST_CHECK_EQ(xOf("md.tree.node.3.name"), xOf("md.tree.node.1.name") + 16.0f);
+    DOCTEST_CHECK_EQ(xOf("md.tree.node.5.name"), xOf("md.tree.node.1.name") + 32.0f);
     // 文件行内 icon → name 间距恒定 24（12 → 36）；且箭头列不与文件夹图标列重叠
     DOCTEST_CHECK_EQ(xOf("md.tree.node.1.name") - xOf("md.tree.node.1.icon"), 24.0f);
     const auto* arrow0 = ui.find("md.tree.node.2.arrow");
@@ -1246,6 +1249,133 @@ REGISTER_TEST(md_module_tree_select_dir_new_note,
     DOCTEST_REQUIRE(clickId("md.tree.node." + std::to_string(weekMeeting2) + ".toggle"));
     frame("sel16");
     DOCTEST_CHECK_EQ(treeRowIndex(ui, "纪要.md", false) >= 0, true);  // 展开回来
+
+    mod->onStop();
+    return true;
+})
+
+// ---- 2b4b''''. 根行选中 → 新建文件夹：落点 = 笔记根（逻辑）**且**树里呈现在根行之下（几何）----
+//
+// 2026-09-30 用户实测：「内置根目录选中 → 新建目录：新目录成为根的兄弟（读起来像
+// 落在笔记根之外/上一级）；选中其它目录新建 = 正确落在其子下」。两个面分开钉——
+// 诊断结论：落点派生本就正确（根行 relPath "" → newItemParentDir 返回 "" = 笔记根，
+// service 端 isSafeNewNotePath 还挡死 ".."/绝对路径），错的是 md_tree 把**顶层夹**
+// 与根组行画成同一 depth（都 0）→ 建出来的顶层夹在树里与根行同级，读成「根的兄弟/
+// 笔记根之外」。本用例同时锁两头：
+//   a. 逻辑：根行选中新建 → 父路径 == 笔记根（env.dir/x）；不是笔记根之外
+//      （env.dir.parent()/x）、也不是先选中过又切走的 工作/x；弹窗「创建在：」
+//      显示 = 根目录（模块知道落点，显示与落盘一致）；
+//   b. 几何：新夹行 name x == 根行 name x + 16（根的**子**行，与根的直接文件行
+//      同层），且 == 其它顶层夹（工作）的 x（同层对齐）。修复前 新夹行 x ==
+//      根行 x（同级/兄弟）——变异回退这条必红。
+REGISTER_TEST(md_module_root_row_new_folder_inside,
+              "markdown_module: 根行选中新建文件夹落笔记根 + 树里呈现为根的子行（headless）", {
+    test_support::MdHeadlessEnv env(kDirPrefix, "rootnewfolder", kDbName);
+    DOCTEST_REQUIRE(env.db != nullptr);
+    DOCTEST_REQUIRE(writeTextFile(env.dir / "solo.md", "# solo\n"));
+    DOCTEST_REQUIRE(writeTextFile(env.dir / "工作" / "周报.md", "# 周报\n"));
+
+    std::unique_ptr<::core::Module> mod(create_markdown_module());
+    mod->onStart();
+
+    eui::Screen screen;
+    screen.width = 1600.0f;
+    screen.height = 1000.0f;
+    eui::Ui ui;
+    auto frame = [&](const char* page) {
+        ui.begin(page);
+        mod->compose(ui, screen);
+        ui.end();
+        ui.layout(screen.width, screen.height);  // 几何断言前必须 layout 出 frame.x
+    };
+    const auto clickId = [&](const std::string& id) -> bool {
+        const auto* el = ui.find(id);
+        if (el == nullptr || el->onClick == nullptr) return false;
+        el->onClick();
+        return true;
+    };
+    const auto typeId = [&](const std::string& id, const std::string& text) -> bool {
+        const auto* hit = ui.find(id + ".hit");
+        if (hit == nullptr || hit->onTextInput == nullptr) return false;
+        core::TextInputEvent ev;
+        ev.text = text;
+        hit->onTextInput(ev);
+        return true;
+    };
+    const auto xOfName = [&](const std::string& displayName) -> float {
+        const int i = treeRowIndex(ui, displayName, /*folder=*/true);
+        if (i < 0) return -1.0f;
+        const auto* el = ui.find("md.tree.node." + std::to_string(i) + ".name");
+        return el != nullptr ? el->frame.x : -1.0f;
+    };
+
+    // 帧1：树 = [根目录, solo.md, 工作, 周报.md]
+    frame("rf1");
+    DOCTEST_CHECK_EQ(treeRowIndex(ui, "根目录", true), 0);
+    DOCTEST_CHECK_EQ(treeRowIndex(ui, "solo.md", false), 1);
+    DOCTEST_CHECK_EQ(treeRowIndex(ui, "工作", true), 2);
+    DOCTEST_CHECK_EQ(treeRowIndex(ui, "周报.md", false), 3);
+
+    // 先选「工作」再点根目录行（复现用户路径：选中态从子目录切回根）
+    const int work0 = treeRowIndex(ui, "工作", true);
+    DOCTEST_REQUIRE(clickId("md.tree.node." + std::to_string(work0) + ".row"));
+    frame("rf2");
+    DOCTEST_CHECK(folderRowSelected(ui, "工作"));
+    DOCTEST_REQUIRE(clickId("md.tree.node.0.row"));
+    frame("rf3");
+    DOCTEST_CHECK(folderRowSelected(ui, "根目录"));
+    DOCTEST_CHECK(!folderRowSelected(ui, "工作"));
+
+    // + 文件夹：弹窗「创建在」显示 = 根目录（落点提示与实际落点同源）
+    DOCTEST_REQUIRE(clickId("md.tree.newfolder.bg"));
+    frame("rf4");
+    DOCTEST_CHECK_EQ(ui.find("md.dialog.newfolder.parent.dd.label")->text,
+                     std::string("根目录"));
+    DOCTEST_REQUIRE(typeId("md.dialog.newfolder.input", "新目录"));
+    frame("rf5");
+    DOCTEST_REQUIRE(clickId("md.dialog.newfolder.confirm.bg"));
+    frame("rf6");
+
+    // a. 逻辑：落点 = 笔记根（不是笔记根之外、不是之前选中过的 工作）
+    DOCTEST_CHECK(fs::is_directory(env.dir / "新目录"));
+    DOCTEST_CHECK(!fs::exists(env.dir.parent_path() / "新目录"));
+    DOCTEST_CHECK(!fs::exists(env.dir / "工作" / "新目录"));
+    // 建完选中态跟到新夹（与「新建的目录 = 新的选中目录」既有口径一致）
+    DOCTEST_CHECK(folderRowSelected(ui, "新目录"));
+
+    // b. 几何：新顶层夹行 = 根行的**子**行（x = 根行 + 16），与其它顶层夹同层；
+    //    修复前 与根行同 x（兄弟位）→ 本组断言红
+    const float rootX = xOfName("根目录");
+    const float newX = xOfName("新目录");
+    const float workX = xOfName("工作");
+    DOCTEST_CHECK_MESSAGE(newX == rootX + 16.0f,
+                          "新顶层夹 name x=" + std::to_string(newX) +
+                              " ≠ 根行 x=" + std::to_string(rootX) + " + 16（应为其子行）");
+    DOCTEST_CHECK_MESSAGE(workX == rootX + 16.0f,
+                          "顶层夹 工作 name x=" + std::to_string(workX) +
+                              " ≠ 根行 x=" + std::to_string(rootX) + " + 16");
+    DOCTEST_CHECK_MESSAGE(newX == workX,
+                          "同为顶层夹，新目录与 工作 x 不一致: " + std::to_string(newX) +
+                              " vs " + std::to_string(workX));
+
+    // 对照组（用户实测的另一半）：选中普通目录新建 = 正确落在其子下，且呈现在其行之下
+    const int work1 = treeRowIndex(ui, "工作", true);
+    DOCTEST_REQUIRE(clickId("md.tree.node." + std::to_string(work1) + ".row"));
+    frame("rf7");
+    DOCTEST_CHECK(folderRowSelected(ui, "工作"));
+    DOCTEST_REQUIRE(clickId("md.tree.newfolder.bg"));
+    frame("rf8");
+    DOCTEST_CHECK_EQ(ui.find("md.dialog.newfolder.parent.dd.label")->text,
+                     std::string("工作"));
+    DOCTEST_REQUIRE(typeId("md.dialog.newfolder.input", "子夹"));
+    frame("rf9");
+    DOCTEST_REQUIRE(clickId("md.dialog.newfolder.confirm.bg"));
+    frame("rf10");
+    DOCTEST_CHECK(fs::is_directory(env.dir / "工作" / "子夹"));
+    const float subX = xOfName("子夹");
+    DOCTEST_CHECK_MESSAGE(subX == workX + 16.0f,
+                          "子夹 name x=" + std::to_string(subX) +
+                              " ≠ 工作 x=" + std::to_string(workX) + " + 16");
 
     mod->onStop();
     return true;
