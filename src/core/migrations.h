@@ -317,6 +317,52 @@ inline const Migration kClaudeExtraSettingsJson = {
     )"
 };
 
+// 智能体子系统三表（spec 2026-09-30-agent-design §6，R4：v11 已被
+// kClaudeExtraSettingsJson 占用，顺延 v12）
+inline const Migration kAgentTables = {
+    .version = 12,
+    .description = "agent subsystem tables: agent_tasks / agent_runs / agent_messages",
+    .sql = R"(
+        CREATE TABLE IF NOT EXISTS agent_tasks (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          name TEXT NOT NULL,
+          goal TEXT NOT NULL,
+          trigger_type TEXT NOT NULL,
+          trigger_config TEXT NOT NULL DEFAULT '',
+          model_slot TEXT NOT NULL DEFAULT 'default',
+          max_iterations INTEGER NOT NULL DEFAULT 10,
+          allow_destructive INTEGER NOT NULL DEFAULT 0,
+          enabled INTEGER NOT NULL DEFAULT 1,
+          created_at INTEGER NOT NULL,
+          updated_at INTEGER NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS agent_runs (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          task_id INTEGER NOT NULL,
+          status TEXT NOT NULL,
+          started_at INTEGER NOT NULL,
+          ended_at INTEGER,
+          iterations INTEGER NOT NULL DEFAULT 0,
+          input_tokens INTEGER,
+          output_tokens INTEGER,
+          error TEXT,
+          FOREIGN KEY (task_id) REFERENCES agent_tasks(id) ON DELETE CASCADE
+        );
+        CREATE INDEX IF NOT EXISTS idx_agent_runs_task ON agent_runs(task_id, started_at DESC);
+        CREATE TABLE IF NOT EXISTS agent_messages (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          run_id INTEGER NOT NULL,
+          seq INTEGER NOT NULL,
+          role TEXT NOT NULL,
+          content_json TEXT NOT NULL,
+          tool_call_id TEXT,
+          created_at INTEGER NOT NULL,
+          FOREIGN KEY (run_id) REFERENCES agent_runs(id) ON DELETE CASCADE
+        );
+        CREATE INDEX IF NOT EXISTS idx_agent_messages_run ON agent_messages(run_id, seq);
+    )"
+};
+
 // 所有 migrations 的权威列表（顺序敏感，必须按 version 升序）
 inline const std::vector<core::data::Migration>& all() {
     static const std::vector<core::data::Migration> kMigrations = {
@@ -331,6 +377,7 @@ inline const std::vector<core::data::Migration>& all() {
         kClaudeProfileDialectOverride,
         kClaudeFailoverColumns,
         kClaudeExtraSettingsJson,
+        kAgentTables,
     };
     return kMigrations;
 }

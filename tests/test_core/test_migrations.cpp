@@ -207,9 +207,9 @@ REGISTER_TEST(migrate_call_logs_usage_columns,
         DOCTEST_REQUIRE(r.value().migrate().isOk());
         auto& db = r.value().db();
         // v7（认证字段）+ v8（归档列 kind 回填）+ v9（方言覆盖列）+ v10
-        //（failover 备用列）+ v11（高级设置 JSON / 片段重构）已执行：
-        // 全量迁移后 schema_version = 11
-        DOCTEST_CHECK_EQ(db.schemaVersion(), 11);
+        //（failover 备用列）+ v11（高级设置 JSON / 片段重构）+ v12（智能体
+        // 三表）已执行：全量迁移后 schema_version = 12
+        DOCTEST_CHECK_EQ(db.schemaVersion(), 12);
 
         auto prep = db.prepare(
             "SELECT status_code, latency_ms, request_bytes, response_bytes, "
@@ -291,9 +291,9 @@ REGISTER_TEST(migrate_shared_configs_v6,
         DOCTEST_REQUIRE(r.value().migrate().isOk());
         auto& db = r.value().db();
         // v7（认证字段）/ v8（归档列 kind 回填）/ v9（方言覆盖列）/ v10
-        //（failover 备用列）+ v11（高级设置 JSON / 片段重构）随后执行：
-        // 全量迁移后 schema_version = 11
-        DOCTEST_CHECK_EQ(db.schemaVersion(), 11);
+        //（failover 备用列）+ v11（高级设置 JSON / 片段重构）+ v12（智能体
+        // 三表）随后执行：全量迁移后 schema_version = 12
+        DOCTEST_CHECK_EQ(db.schemaVersion(), 12);
 
         // 新表存在且可插入片段行（v11 起 extra_env 列已删——片段行不再携带
         // env 域数据，设计 advanced-json-editor §8.3）
@@ -369,8 +369,8 @@ REGISTER_TEST(migrate_archive_kind_v8,
         DOCTEST_REQUIRE(r.value().migrate().isOk());
         auto& db = r.value().db();
         // v9（方言覆盖列）/ v10（failover 备用列）/ v11（高级设置 JSON /
-        // 片段重构）随后执行
-        DOCTEST_CHECK_EQ(db.schemaVersion(), 11);
+        // 片段重构）/ v12（智能体三表）随后执行
+        DOCTEST_CHECK_EQ(db.schemaVersion(), 12);
 
         struct Expect { const char* title; const char* kind; };
         Expect expects[4] = {
@@ -431,7 +431,7 @@ REGISTER_TEST(migrate_dialect_override_v9,
         DOCTEST_REQUIRE(r.isOk());
         DOCTEST_REQUIRE(r.value().migrate().isOk());
         auto& db = r.value().db();
-        DOCTEST_CHECK_EQ(db.schemaVersion(), 11);
+        DOCTEST_CHECK_EQ(db.schemaVersion(), 12);
 
         // 存量行零迁移：新列为空串（未覆盖 = 回落 host 推断）
         auto q = db.prepare(
@@ -493,7 +493,7 @@ REGISTER_TEST(migrate_failover_columns_v10,
         DOCTEST_REQUIRE(r.isOk());
         DOCTEST_REQUIRE(r.value().migrate().isOk());
         auto& db = r.value().db();
-        DOCTEST_CHECK_EQ(db.schemaVersion(), 11);
+        DOCTEST_CHECK_EQ(db.schemaVersion(), 12);
 
         // 存量行零迁移：新列默认 0（无备用）
         auto q = db.prepare(
@@ -560,7 +560,7 @@ REGISTER_TEST(migrate_extra_settings_v11,
         DOCTEST_REQUIRE(r.isOk());
         DOCTEST_REQUIRE(r.value().migrate().isOk());
         auto& db = r.value().db();
-        DOCTEST_CHECK_EQ(db.schemaVersion(), 11);
+        DOCTEST_CHECK_EQ(db.schemaVersion(), 12);
 
         // ① 存量 profile 行零迁移：extra_settings_json 默认空串（未配置）
         auto q = db.prepare(
@@ -606,5 +606,27 @@ REGISTER_TEST(migrate_extra_settings_v11,
     } // Database 在此析构（关闭 sqlite 句柄）
 
     std::filesystem::remove(path, ec);
+    return true;
+})
+
+REGISTER_TEST(migrations_v12_agent_tables,
+              "migrations: v12 建 agent_tasks/agent_runs/agent_messages 三表", {
+    test_support::TestDb tdb("agentmig", "v12");
+    auto& db = tdb.handle();
+    DOCTEST_CHECK_EQ(db.schemaVersion(), 12);
+    const char* const kTables[] = {"agent_tasks", "agent_runs", "agent_messages"};
+    for (const char* t : kTables) {
+        auto st = db.prepare(
+            "SELECT COUNT(*) AS n FROM sqlite_master WHERE type='table' AND name=?");
+        DOCTEST_REQUIRE(st.isOk());
+        DOCTEST_REQUIRE(st.value().bind(1, std::string(t)).isOk());
+        DOCTEST_REQUIRE(st.value().step().isOk());
+        const auto row = st.value().currentRow();
+        DOCTEST_REQUIRE(row.isOk());
+        DOCTEST_CHECK_EQ(row.value().getInt64("n").valueOr(0), 1);
+    }
+    // agent_tasks 关键列存在（allow_destructive / model_slot / trigger_type）
+    auto q = db.prepare("SELECT allow_destructive, model_slot, trigger_config, enabled FROM agent_tasks");
+    DOCTEST_CHECK(q.isOk());
     return true;
 })
