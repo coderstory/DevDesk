@@ -6,6 +6,15 @@
 
 > **当前基线（2026-09-24，master @ 817af80）**：用例 **407**（`grep REGISTER_TEST` 口径，本会话 324 → 407；全绿与否以主会话终验为准）。各波次条目内的测试数为该波时点事实，不代表当前总数；波次按合并时间倒序排列。
 
+## [Schema] 2026-09-30 —— 删版本化迁移，改单份当前 schema 建表（无历史包袱）
+
+- refactor(core)：`src/core/migrations.h`（11 条版本化迁移 v1–v11）→ `src/core/schema.h`，一份 `core::schema::kSql`（9 表 + 5 索引 + FTS5 虚表 + 默认 Todo 列种子）。`SqliteDb::runMigrations(vector<Migration>)` + `schemaVersion()` → `applySchema(const std::string&)`：整份脚本一个事务幂等执行。`Migration` 结构体、`schema_version` 建表/查询/插入、「数据库比二进制新」降级守卫**全部删除**。
+- **为什么**（用户决策）：程序尚未开发完毕，不存在需要升级的真实旧数据。版本化迁移是为「已发布产品要保住存量行」准备的，这份包袱在本项目没有对象；而 DROP COLUMN（曾要求 SQLite ≥3.35）之类约束因此自动消失——新库直接建最终形态。
+- **已知后果（既定决策，不是 bug）**：**旧 DB 文件不再被升级**。schema 改动后旧库缺列就是缺列，本程序不检测、不迁移、不告警、不自动重建——删掉旧 db 文件重来即可。当前形态的旧库不受影响（全部 `CREATE ... IF NOT EXISTS`，打开即命中，不改结构）。
+- 幂等：DDL 靠 `IF NOT EXISTS`，唯一的种子 INSERT 靠 `WHERE NOT EXISTS (SELECT 1 FROM todo_columns)`（`todo_columns.title` 无 UNIQUE，写不了 ON CONFLICT）——连跑多次种子仍是 4 行，且不覆盖用户改过/删过/加过的行。
+- test：新增 `tests/test_core/test_schema.cpp`（原 test_migrations.cpp 改名重写）——逐表逐列断言最终形态（`PRAGMA table_info` 的 name:type:notnull:default 逐条比对）、种子行含 kind、连跑两次 sqlite_master 逐条相同且不踩用户数据、断言**无** `schema_version` 表 / 无 trigger / 无 view。`test_provider_config` 的「旧库升级」用例改为「新列默认值 + 空 JSON 读侧回落」；`test_markdown_service` 原内联复制的 markdown DDL 改为共用 `core::schema::kSql`。变异验证：删 `claude_profiles.fallback_profile_id` 列 / 改 `auth_field` 默认值 → 新断言红，恢复即绿。
+- 实测（macOS/arm64 Debug）：定向 `--filter schema` **Total 8 / Passed 8 / Failed 0**；全量 **Total 894 / Passed 888 / Failed 0**。另用一次性程序对全新空 DB 连跑两次 `applySchema` 核验：两次均无错、25 个 sqlite_master 对象逐条相同、9 张表列清单与 schema 逐列一致。
+
 ## [DataRoot] 2026-09-29 —— 应用数据根搬到用户主目录 `<home>/DevDesk`（`03c896c`）
 
 - fix(paths)：三个平台的 `platformDefaultAppDataDir()` 从系统惯例位置改为用户主目录下一级——macOS `~/DevDesk`（原 `~/Library/Application Support/DevDesk`）、Windows `%USERPROFILE%\DevDesk`（原 `%APPDATA%\DevDesk`）、POSIX `~/DevDesk`（原 `~/.local/share/DevDesk`）。主目录来源按平台取（macOS/POSIX `HOME`、Windows `USERPROFILE`，与同文件 `claudeSettingsFile` 同源；不硬编码、不用 cwd）。**为什么**：数据根要默认可见（`~/Library/Application Support` 在 Finder 里是隐藏的），且笔记目录后续要做 git 仓库、用户会自己去 commit / 推远端。单一数据根设计（`appDataDir()` 唯一入口 / `DEVDESK_DATA_ROOT` 优先 / `executableDir` + `claudeSettingsFile` 两个刻意例外）不变。

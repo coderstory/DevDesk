@@ -327,13 +327,6 @@ void ensureDirectoriesExist();
 // src/core/sqlite_db.h
 namespace core::data {
 
-// 单条迁移
-struct Migration {
-    int version;
-    std::string description;
-    std::string sql;  // 多条用 ; 分隔
-};
-
 // SQLite 支持的标量类型（替代 std::any，类型安全）
 using SqlValue = std::variant<std::monostate, int64_t, double, std::string, std::vector<uint8_t>>;
 
@@ -385,11 +378,8 @@ public:
     // 事务（自动 commit/rollback；包在 mutex 内）
     Result<void> transaction(std::function<Result<void>()> fn);
 
-    // 运行迁移（幂等；包在事务里）
-    Result<void> runMigrations(const std::vector<Migration>& migrations);
-
-    // 当前 schema 版本
-    int schemaVersion() const;
+    // 幂等执行整份 schema 脚本（core::schema::kSql），整份包在一个事务里
+    Result<void> applySchema(const std::string& sql);
 
     // 内部：取互斥锁供 Statement 内部使用
     std::recursive_mutex& mutex();
@@ -1705,7 +1695,7 @@ main()
   ├─► core::log::addConsoleOutput()
   │
   ├─► core::data::SqliteDb::open(sqliteDbFile())
-  │     └─► runMigrations(ALL_MIGRATIONS)
+  │     └─► applySchema(core::schema::kSql)  // 单份当前 schema，幂等，无版本号
   │
   ├─► 创建所有模块实例
   │     ├─ HomeModule(homeService, todoService, markdownService, claudeService)
@@ -1929,7 +1919,7 @@ if (!result.isOk()) {
 | 层级 | 范围 | 工具 |
 |------|------|------|
 | 单元测试 | `core::Result`、`paths`、`sqlite_db`、`theme`、各 `service` | doctest |
-| 集成测试 | SQLite 迁移、`MarkdownService` + 文件系统、proxy 转发 | doctest |
+| 集成测试 | SQLite schema、`MarkdownService` + 文件系统、proxy 转发 | doctest |
 | 端到端 | 应用启动、UI 交互 | AI 手动验证 + 自动截屏 |
 
 ### 12.3 测试覆盖目标与度量

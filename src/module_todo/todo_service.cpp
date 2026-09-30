@@ -369,7 +369,7 @@ core::Result<void> TodoService::deleteColumn(int64_t id) {
 core::Result<void> TodoService::reorderColumns(const std::vector<int64_t>& ids) {
     auto txResult = db_.transaction([&]() -> core::Result<void> {
         // 按 ids 顺序重新设置 position = 0, 1, 2, ...
-        // v1 建表 position 无唯一约束（migrations 里 todo_columns 既无 UNIQUE
+        // 建表时 position 无唯一约束（schema 里 todo_columns 既无 UNIQUE
         // 列也无 (position) 唯一索引），逐行覆盖即可，无需负位段过渡。
         // 边界：ids 必须是全部列的一次排列——同列内出现重复 id 时后写者胜；
         // 唯一调用点 doShiftColumn 按 columns_ 顺序传全集，非全集不可达。

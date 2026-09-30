@@ -297,81 +297,22 @@ Result<void> SqliteDb::transaction(std::function<Result<void>()> fn) {
     return result;
 }
 
-Result<void> SqliteDb::runMigrations(const std::vector<Migration>& migrations) {
-    // 创建 schema_version 表
-    auto initResult = exec(R"(
-        CREATE TABLE IF NOT EXISTS schema_version (
-            version INTEGER PRIMARY KEY,
-            description TEXT NOT NULL,
-            applied_at INTEGER NOT NULL
-        )
-    )");
-    if (initResult.isFail()) return initResult;
-
-    int current = schemaVersion();
-    // 「数据库比二进制新」守卫（审计 2026-09-23 [37]）：降级运行旧 exe 时
-    // schema_version 高于本二进制已知的最大迁移版本，下方循环会静默跳过
-    // 全部迁移，后续 SQL 得到莫名的列缺失错误。这里显式失败并给明确文案。
-    int knownMax = 0;
-    for (const auto& m : migrations) {
-        knownMax = (m.version > knownMax) ? m.version : knownMax;
-    }
-    if (current > knownMax) {
-        const std::string msg =
-            "数据库 schema 版本 v" + std::to_string(current) +
-            " 高于本版本 DevDesk 支持的最大迁移版本 v" + std::to_string(knownMax) +
-            "（数据库被更新版本的 DevDesk 打开过，请使用新版 DevDesk）";
-        LOG_FATAL(msg);
+Result<void> SqliteDb::applySchema(const std::string& sql) {
+    // 单份当前 schema 幂等落库：整份脚本包在一个事务里（失败整体回滚，库里不留半截结构）。
+    // 幂等性由脚本自身保证——DDL 全部 CREATE ... IF NOT EXISTS，种子 INSERT 自带
+    // `WHERE NOT EXISTS` 守卫。没有 schema_version 表、没有版本比较、没有「数据库比
+    // 二进制新」守卫：项目不迁移、不兼容旧数据（口径见 src/core/schema.h 抬头）。
+    // 旧库不会被升级，也不为此加检测/兜底——缺列就是缺列，重来即可。
+    auto txResult = transaction([&]() -> core::Result<void> {
+        return exec(sql);
+    });
+    if (txResult.isFail()) {
+        const std::string msg = "应用 schema 失败: " + txResult.errorMessage();
+        LOG_ERROR(msg);
         return Result<void>::fail(ErrorCode::DatabaseMigrationFailed, msg);
     }
-    for (const auto& m : migrations) {
-        if (m.version <= current) continue;
-        auto txResult = transaction([&]() -> core::Result<void> {
-            auto execResult = exec(m.sql);
-            if (execResult.isFail()) return execResult;
-            auto prep = prepare(
-                "INSERT INTO schema_version (version, description, applied_at) VALUES (?, ?, ?)");
-            if (prep.isFail()) {
-                return core::Result<void>::fail(prep.errorCode(), prep.errorMessage());
-            }
-            auto& stmt = prep.value();
-            if (auto b = stmt.bind(1, static_cast<int64_t>(m.version)); b.isFail()) {
-                return core::Result<void>::fail(b.errorCode(), b.errorMessage());
-            }
-            if (auto b = stmt.bind(2, m.description); b.isFail()) {
-                return core::Result<void>::fail(b.errorCode(), b.errorMessage());
-            }
-            if (auto b = stmt.bind(3, static_cast<int64_t>(std::time(nullptr))); b.isFail()) {
-                return core::Result<void>::fail(b.errorCode(), b.errorMessage());
-            }
-            auto stepResult = stmt.step();
-            if (stepResult.isFail()) {
-                return core::Result<void>::fail(stepResult.errorCode(), stepResult.errorMessage());
-            }
-            return core::Result<void>::ok();
-        });
-        if (txResult.isFail()) {
-            return Result<void>::fail(ErrorCode::DatabaseMigrationFailed,
-                "迁移 v" + std::to_string(m.version) + " 失败: " + txResult.errorMessage());
-        }
-        LOG_INFO("已应用迁移 v" + std::to_string(m.version) + ": " + m.description);
-    }
+    LOG_INFO("数据库 schema 已就绪（幂等 schema 脚本）");
     return Result<void>::ok();
-}
-
-int SqliteDb::schemaVersion() const {
-    std::lock_guard<std::recursive_mutex> lock(const_cast<std::recursive_mutex&>(mutex_));
-    sqlite3_stmt* stmt = nullptr;
-    if (sqlite3_prepare_v2(handle_, "SELECT MAX(version) FROM schema_version", -1, &stmt, nullptr) != SQLITE_OK) {
-        if (stmt) sqlite3_finalize(stmt);
-        return 0;
-    }
-    int v = 0;
-    if (sqlite3_step(stmt) == SQLITE_ROW) {
-        v = sqlite3_column_int(stmt, 0);
-    }
-    sqlite3_finalize(stmt);
-    return v;
 }
 
 } // namespace core::data

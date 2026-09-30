@@ -1,5 +1,5 @@
 // src/core/database.h
-// DevDesk 数据库门面（封装 SqliteDb + migrations）
+// DevDesk 数据库门面（封装 SqliteDb + 当前 schema）
 //
 // 用法（main.cpp）：
 //   auto r = core::Database::open(core::paths::sqliteDbFile());
@@ -10,18 +10,17 @@
 #pragma once
 
 #include <filesystem>
-#include <vector>
 
 #include "result.h"
 #include "sqlite_db.h"
 
 namespace core {
 
-// 应用级数据库：单连接 + 迁移管理
+// 应用级数据库：单连接 + schema 落库
 //
 // 职责：
 //   - 打开底层的 SqliteDb
-//   - 应用所有 registered migrations（顺序按 version 升序）
+//   - 应用当前 schema（core::schema::kSql，单份幂等脚本）
 //   - 提供 db() 访问器给 module_* 层的 service 用
 class Database {
 public:
@@ -38,10 +37,10 @@ public:
     Database(Database&& other) noexcept;
     Database& operator=(Database&& other) noexcept;
 
-    // 在 path 处打开 SQLite 文件，应用 migrations（已应用过的会被跳过）
+    // 在 path 处打开 SQLite 文件并应用当前 schema（幂等，重复调用安全）
     static core::Result<Database> open(const std::filesystem::path& path);
 
-    // 应用所有未跑的 migrations
+    // 应用当前 schema（core::schema::kSql）
     core::Result<void> migrate();
 
     // 滚动清理调用日志（spec §11.5 保留策略）：删除 started_at 早于
@@ -54,10 +53,9 @@ public:
     const core::data::SqliteDb& db() const { return db_; }
 
 private:
-    Database(core::data::SqliteDb db, std::vector<core::data::Migration> migrations);
+    explicit Database(core::data::SqliteDb db);
 
     core::data::SqliteDb db_;
-    std::vector<core::data::Migration> migrations_;
 };
 
 // 滚动清理调用日志（自由函数版，实现见 database.cpp）：Database::pruneCallLogs
@@ -67,7 +65,7 @@ core::Result<int64_t> pruneCallLogs(core::data::SqliteDb& db, int retentionDays)
 
 // ============ 进程级数据库共享访问器 ============
 //
-// main.cpp 在启动时（跑完 migrations 之后）调用 registerAppDatabase()，
+// main.cpp 在启动时（落完 schema 之后）调用 registerAppDatabase()，
 // module_* 层在 onStart() 里用 appDatabase() 拿到同一份连接，
 // 保持 spec §6.3 的"单连接 + recursive_mutex"设计。
 //

@@ -9,7 +9,7 @@
 //   - 非法 JSON 容错（读路径不炸）
 //   - displayName 派生（剥 [1M] 等标记）
 //   - 别名映射（AUTO_COMPACT_ENABLED → DISABLE_AUTO_COMPACT 值取反 + 透传标记）
-//   - ClaudeService 读写 API 往返 + 旧库升级（migration v3）
+//   - ClaudeService 读写 API 往返 + 新列默认值（不做旧库升级：项目无历史包袱）
 //   - 槽位单一真相源（审计 CPX-08）：表行驱动的派生面一致性（用例遍历
 //     modelSlotTable()，加一行槽位即自动进入覆盖，无需改用例）
 #include "doctest.h"
@@ -17,7 +17,7 @@
 
 #include "claude_service.h"
 #include "core/database.h"
-#include "core/migrations.h"
+#include "core/schema.h"
 #include "core/sqlite_db.h"
 #include "platform/keychain.h"
 #include "env_var_hints.h"
@@ -333,60 +333,42 @@ REGISTER_TEST(provider_config_service_roundtrip,
     return true;
 })
 
-// ---- 9. 旧库升级（v2 → v3）：存量行零迁移，读出为空串 ----
-REGISTER_TEST(provider_config_migration_upgrade,
-              "migration v3: 旧库升级加列，存量行 models_config/extra_env 为空串", {
-    auto path = test_support::tempDbPath(kDbPrefix, "upgrade");
+// ---- 9. 新列默认值 + 空 JSON 读侧回落（不做旧库升级，项目无历史包袱）----
+REGISTER_TEST(provider_config_new_column_defaults,
+              "claude_profiles: 新列默认值空串/0/'' 且空 models_config 回落 model 列", {
+    auto path = test_support::tempDbPath(kDbPrefix, "defaults");
     std::error_code ec;
     std::filesystem::remove(path, ec);
 
-    // 手工构造 v2 旧库（只跑前两条 migration），插入存量 profile 行
-    {
-        auto openR = core::data::SqliteDb::open(path);
-        DOCTEST_REQUIRE(openR.isOk());
-        auto& db = openR.value();
-        std::vector<core::data::Migration> oldMigrations = {
-            core::migrations::kCreateInitialTables,
-            core::migrations::kSeedDefaultTodoColumns,
-        };
-        DOCTEST_REQUIRE(db.runMigrations(oldMigrations).isOk());
-
-        auto ins = db.prepare(
-            "INSERT INTO claude_profiles (name, base_url, api_key_hint, "
-            "api_key_check, keychain_account, model, is_active, "
-            "created_at, updated_at) VALUES "
-            "('旧供应商', 'https://old.example.com', 'sk-***abcd', "
-            "'deadbeef', 'claude:1', 'claude-3-5-haiku', 1, 0, 0)");
-        DOCTEST_REQUIRE(ins.isOk());
-        DOCTEST_REQUIRE(ins.value().step().isOk());
-    }  // 句柄关闭（Windows 文件锁）
-
-    // 重新打开 + 全量 migrate → v3 补两列
     {
         auto r = core::Database::open(path);
         DOCTEST_REQUIRE(r.isOk());
         DOCTEST_REQUIRE(r.value().migrate().isOk());
         auto& db = r.value().db();
-        // v3 供应商配置迁移 + v4 todo kind 迁移（W9 批次并入后全量到 4）
-        // + v5 调用日志用量列（cc-switch 对照 §3.4）
-        // + v6 共享配置片段表与 profile 绑定列
-        // + v7 profile 认证字段 + v8 todo 归档列 kind 回填
-        // + v9 profile 方言覆盖列（CPX-13）+ v10 failover 备用列
-        // + v11 高级设置 JSON / 片段重构 → 全量到 11
-        DOCTEST_CHECK_EQ(db.schemaVersion(), 11);
+
+        // 只写 v1 就有的列，其余走 schema 默认值
+        auto ins = db.prepare(
+            "INSERT INTO claude_profiles (name, base_url, api_key_hint, "
+            "api_key_check, keychain_account, model, is_active, "
+            "created_at, updated_at) VALUES "
+            "('默认供应商', 'https://old.example.com', 'sk-***abcd', "
+            "'deadbeef', 'claude:1', 'claude-3-5-haiku', 1, 0, 0)");
+        DOCTEST_REQUIRE(ins.isOk());
+        DOCTEST_REQUIRE(ins.value().step().isOk());
 
         module::claude::ClaudeService svc(db, kTestKeychainService);
         auto profiles = svc.listProfiles();
         DOCTEST_REQUIRE(profiles.isOk());
         DOCTEST_REQUIRE_EQ(profiles.value().size(), 1u);
         const auto& p = profiles.value()[0];
-        DOCTEST_CHECK_EQ(p.name, std::string("旧供应商"));
+        DOCTEST_CHECK_EQ(p.name, std::string("默认供应商"));
         DOCTEST_CHECK_EQ(p.model, std::string("claude-3-5-haiku"));
-        DOCTEST_CHECK(p.modelsConfigJson.empty());  // 存量行零迁移
-        DOCTEST_CHECK(p.extraEnvJson.empty());
-        DOCTEST_CHECK(p.dialectOverride.empty());   // 存量行零迁移（v9，CPX-13）
+        DOCTEST_CHECK(p.modelsConfigJson.empty());  // schema 默认 ''
+        DOCTEST_CHECK(p.extraEnvJson.empty());      // schema 默认 ''
+        DOCTEST_CHECK(p.dialectOverride.empty());   // schema 默认 ''
+        DOCTEST_CHECK(p.extraSettingsJson.empty()); // schema 默认 ''
 
-        // 旧数据经兼容读取 → default 槽位 = 旧 model
+        // 未配置的 JSON 列 → default 槽位 = model 列
         auto eff = module::claude::effectiveModelsConfig(
             p.modelsConfigJson, p.model);
         DOCTEST_CHECK_EQ(eff.def.model, std::string("claude-3-5-haiku"));

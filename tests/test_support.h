@@ -262,8 +262,8 @@ public:
     ScopedAppDatabase& operator=(const ScopedAppDatabase&) = delete;
 };
 
-// ==================== 5) 已 migrate 的临时数据库（TIN-06b）====================
-// 临时 db 路径工厂（只造路径、不落盘，调用方自己 open）。原 test_migrations /
+// ==================== 5) 已落 schema 的临时数据库（TIN-06b）====================
+// 临时 db 路径工厂（只造路径、不落盘，调用方自己 open）。原 test_schema /
 // test_claude_service / test_claude_ui / test_home / test_provider_config /
 // test_proxy_router / test_settings_sync / test_theme_hierarchy /
 // test_todo_service / test_todo_ui 十份同款工厂合流——原先每份各带自己的
