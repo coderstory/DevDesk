@@ -96,7 +96,9 @@ core::Result<std::vector<std::string>> realDeleteSecretsNotIn(
         }
         const std::string account =
             name.substr(prefix.size(), name.size() - prefix.size() - suffix.size());
-        if (keep.count(account)) continue;
+        // P0 护栏②：白名单前缀（claude:）之外的 account 一律保留——
+        // shouldDeleteOrphan 统一决策，见 keychain.h 说明
+        if (!shouldDeleteOrphan(account, keep)) continue;
         std::error_code rmEc;
         std::filesystem::remove(entry.path(), rmEc);
         if (rmEc) {

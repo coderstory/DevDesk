@@ -316,6 +316,18 @@ public:
         // 恒读快照，首帧必须有值——异步首刷会让页面先闪一帧空列表（硬约束：
         // 不得空帧/闪空）；此后每次刷新都走 refreshDataCache 的后台线程
         applyDataRefresh(state_.list, runDataRefresh(svc, true, true));
+        // 一次性迁移（2026-09-30 数据丢失事故根治）：旧全局 service
+        // "DevDesk" 的 profile 密钥搬进按数据根派生的独立命名空间。必须
+        // 先于孤儿清理——迁移先把条目写进本实例的 service，清理的 keep
+        // （来自 DB 行）才与新命名空间对得上
+        auto mig = svc->migrateLegacyKeychainService();
+        if (mig.isFail()) {
+            LOG_WARN("onStart: 旧 Keychain service 迁移失败 - " +
+                     mig.errorMessage());
+        } else if (mig.value() > 0) {
+            LOG_INFO("onStart: 已迁移 " + std::to_string(mig.value()) +
+                     " 个密钥到数据根派生 service");
+        }
         // 启动时孤儿密钥清理（一次扫描，删除无对应 profile 的 keychain 条目）
         auto orphan = svc->cleanupOrphanKeychainEntries();
         if (orphan.isFail()) {

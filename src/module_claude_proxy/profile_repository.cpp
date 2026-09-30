@@ -707,6 +707,18 @@ core::Result<int> ProfileRepository::cleanupOrphanKeychainEntries() {
         keep.push_back(prof.keychainAccount);
     }
 
+    // P0 误删护栏①（2026-09-30 事故）：keep 为空 = 当前数据根一个 profile 都
+    // 没有。而 Keychain 的 service 命名空间是**全局**的、不随 DEVDESK_DATA_ROOT
+    // 隔离——deleteSecretsNotIn 的语义是「凡不在 keep 里的都删」，空 keep 进
+    // 扫描就会把该命名空间下**全部**条目（包括其它数据根 / 用户真实 key）清光。
+    // 空根实例启动（测试 / 误设环境变量）正是这个形态。空 keep 只可能是
+    // 「新根还没建 profile」，此时唯一安全的动作是整个跳过，一个条目都不碰。
+    if (keep.empty()) {
+        LOG_WARN("跳过清理：当前数据根无 profile，防误删（keychain service=" +
+                 keychainService_ + " 的条目一律保留）");
+        return core::Result<int>::ok(0);
+    }
+
     auto delR = platform::keychain::deleteSecretsNotIn(keychainService_, keep);
     if (delR.isFail()) {
         return core::Result<int>::fail(delR.errorCode(), delR.errorMessage());
@@ -717,6 +729,76 @@ core::Result<int> ProfileRepository::cleanupOrphanKeychainEntries() {
                  " 个孤儿 Keychain 密钥（无对应 profile）");
     }
     return core::Result<int>::ok(removed);
+}
+
+core::Result<int> ProfileRepository::migrateLegacyKeychainService(
+    const std::string& legacyService) {
+    // 显式传 service（测试）→ legacy 为空；同名则无需迁移（防自读自删）
+    if (legacyService.empty() || legacyService == keychainService_) {
+        return core::Result<int>::ok(0);
+    }
+    auto profilesR = listProfiles();
+    if (profilesR.isFail()) {
+        return core::Result<int>::fail(profilesR.errorCode(),
+                                       profilesR.errorMessage());
+    }
+    int migrated = 0;
+    for (const auto& prof : profilesR.value()) {
+        const std::string& account = prof.keychainAccount;
+        if (account.empty()) {
+            continue;
+        }
+        auto oldR = platform::keychain::loadSecret(legacyService, account);
+        const bool oldExists = oldR.isOk() && !oldR.value().empty();
+        if (!oldExists) {
+            // 旧没有 = 已迁完 / 本就无 key（如用户从未填）→ 零动作
+            continue;
+        }
+        auto newR = platform::keychain::loadSecret(keychainService_, account);
+        const bool newExists = newR.isOk() && !newR.value().empty();
+        if (newExists) {
+            // 新已有、旧还有 = 上轮迁移的残留（删旧失败 / 崩在中途），或用户
+            // 在新 service 上重填过 key 后旧值成了陈旧副本：新 service 是
+            // 权威，删掉旧条目即达稳态
+            auto delR = platform::keychain::deleteSecret(legacyService, account);
+            if (delR.isFail()) {
+                LOG_WARN("迁移残留清理失败（不影响新条目，下次重试）：account=" +
+                         account + " - " + delR.errorMessage());
+                continue;
+            }
+            ++migrated;
+            continue;
+        }
+        // 读旧写新：先写新成功才删旧（顺序不可换——反过来失败就丢 key）
+        auto storeR = platform::keychain::storeSecret(keychainService_, account,
+                                                      oldR.value());
+        if (storeR.isFail()) {
+            // 失败补偿：各平台存储不承诺「失败时未落盘」（同 TwoPhaseKeyWrite
+            // 口径），尽力清掉可能半写入的新条目，保持旧条目完好、下次重试
+            auto cleanR =
+                platform::keychain::deleteSecret(keychainService_, account);
+            if (cleanR.isFail()) {
+                LOG_WARN("迁移失败且半写入清理也失败（下次重试）：account=" +
+                         account + " - " + cleanR.errorMessage());
+            }
+            LOG_WARN("迁移失败（旧条目保留，下次启动重试）：account=" + account +
+                     " - " + storeR.errorMessage());
+            continue;
+        }
+        auto delR = platform::keychain::deleteSecret(legacyService, account);
+        if (delR.isFail()) {
+            LOG_WARN("迁移后旧条目删除失败（新条目已就位，下次重试清理）："
+                     "account=" + account + " - " + delR.errorMessage());
+            // 数据已在新 service 就位，仍计为迁移成功
+        }
+        ++migrated;
+    }
+    if (migrated > 0) {
+        LOG_INFO("已从旧 Keychain service \"" + legacyService + "\" 迁移 " +
+                 std::to_string(migrated) + " 个密钥到 \"" + keychainService_ +
+                 "\"（一次性）");
+    }
+    return core::Result<int>::ok(migrated);
 }
 
 // ---------- API key ----------
@@ -822,11 +904,29 @@ core::Result<Profile> ProfileRepository::duplicateProfile(int64_t srcId) {
     }
 
     // 源 key 缺失（Keychain 孤儿）→ fail：不建无 key 的副本
-    //（与 createProfile 的「apiKey 必填」约束一致）
+    //（与 createProfile 的「apiKey 必填」约束一致）。失败分三态报
+    //（2026-09-30 复盘：原来三态合成一句「密钥缺失」，用户分不清是没填过、
+    // 读失败还是存了空串，也无从知道怎么恢复）：
+    //   条目不存在（NotFound）→「密钥缺失」+ 恢复提示
+    //   读失败（非 NotFound 的真实错误）→ 原样透传错误码与信息（读不了 ≠ 没有）
+    //   条目在但值是空串 →「密钥为空串」+ 恢复提示
     auto keyR = loadApiKey(srcId);
-    if (keyR.isFail() || keyR.value().empty()) {
-        return core::Result<Profile>::fail(core::ErrorCode::InvalidApiKey,
-            "源 Profile 的密钥缺失，无法复制");
+    if (keyR.isFail()) {
+        if (keyR.errorCode() == core::ErrorCode::NotFound) {
+            return core::Result<Profile>::fail(
+                core::ErrorCode::InvalidApiKey,
+                "源 Profile 的密钥缺失（Keychain 无对应条目），无法复制；"
+                "编辑该 Profile 重新填一次 API Key 即可");
+        }
+        return core::Result<Profile>::fail(
+            keyR.errorCode(),
+            "读取源 Profile 密钥失败：" + keyR.errorMessage());
+    }
+    if (keyR.value().empty()) {
+        return core::Result<Profile>::fail(
+            core::ErrorCode::InvalidApiKey,
+            "源 Profile 的密钥为空串，无法复制；"
+            "编辑该 Profile 重新填一次 API Key 即可");
     }
 
     // 一行 SQLite + 一条 Keychain（account 自动为 claude:<新 id>，与源不同）；

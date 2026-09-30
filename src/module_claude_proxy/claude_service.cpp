@@ -21,16 +21,21 @@
 #include <ctime>
 #include <filesystem>
 #include <fstream>
+#include <iomanip>
 #include <map>
+#include <sstream>
 #include <string>
 #include <utility>
+
+#include <openssl/sha.h>
 
 namespace module::claude {
 
 namespace {
 
-// 默认 Keychain service name（约定：DevDesk 全部密钥都用此 service）
-constexpr const char* kDefaultKeychainService = "DevDesk";
+// 旧全局 Keychain service 名（< 2026-09-30 的所有数据根共用它；现仅作一次性
+// 迁移源 migrateLegacyKeychainService，新代码的读写一律走按根派生的名字）
+constexpr const char* kLegacyKeychainService = "DevDesk";
 
 // 取当前 unix 秒
 std::time_t nowUnix() {
@@ -63,16 +68,48 @@ bool keyAtOldValue(const std::string& keychainService,
 
 } // namespace
 
-// ---------- 构造 / 行解析 ----------
+// ---------- Keychain service 派生 / 构造 / 行解析 ----------
+
+// Keychain service 名按数据根派生（声明见 claude_service.h 纯函数段）
+std::string keychainServiceForDataRoot(const std::string& dataRoot) {
+    if (dataRoot.empty()) {
+        return std::string();   // 空根无法派生（生产不可达；调用方兜底旧名）
+    }
+    unsigned char digest[SHA256_DIGEST_LENGTH];
+    SHA256(reinterpret_cast<const unsigned char*>(dataRoot.data()),
+           dataRoot.size(), digest);
+    std::ostringstream oss;
+    // 前 4 字节 8 位 hex（同 ProfileRepository::sha256HexPrefix 口径：
+    // 8 位足够区分数据根，又不至于把 service 名拉长）
+    for (int i = 0; i < 4 && i < SHA256_DIGEST_LENGTH; ++i) {
+        oss << std::hex << std::setw(2) << std::setfill('0')
+            << static_cast<int>(digest[i]);
+    }
+    return std::string(kLegacyKeychainService) + "-" + oss.str();
+}
+
+namespace {
+
+// 生产路径（未显式传 service）：按当前数据根派生 service 名。派生失败
+//（空根，理论不可达）兜底旧全局名——名字退化但不至于抛错。
+std::string resolveKeychainService() {
+    auto derived = keychainServiceForDataRoot(core::paths::appDataDir().string());
+    return derived.empty() ? std::string(kLegacyKeychainService) : derived;
+}
+
+} // namespace
 
 ClaudeService::ClaudeService(core::data::SqliteDb& db,
                              const std::string& keychainService)
     : db_(db),
       callLogStore_(db),
-      profileRepository_(db, keychainService.empty() ? kDefaultKeychainService
+      profileRepository_(db, keychainService.empty() ? resolveKeychainService()
                                                      : keychainService),
-      keychainService_(keychainService.empty() ? kDefaultKeychainService
+      keychainService_(keychainService.empty() ? resolveKeychainService()
                                                : keychainService),
+      legacyKeychainService_(keychainService.empty()
+                                 ? std::string(kLegacyKeychainService)
+                                 : std::string()),
       proxyRuntime_(*this) {}
 
 ClaudeService::~ClaudeService() {
@@ -195,6 +232,12 @@ core::Result<int> ClaudeService::cleanupOrphanKeychainEntries() {
     // R10-A2 段级拆分：listProfiles + Keychain 孤儿条目清理（「Keychain
     // 条目与行一一对应」不变式的维护者）已迁 ProfileRepository
     return profileRepository_.cleanupOrphanKeychainEntries();
+}
+
+core::Result<int> ClaudeService::migrateLegacyKeychainService() {
+    // 显式传 service（测试）时 legacyKeychainService_ 为空 → 迁移 no-op
+    return profileRepository_.migrateLegacyKeychainService(
+        legacyKeychainService_);
 }
 
 // ---------- API key ----------

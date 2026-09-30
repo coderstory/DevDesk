@@ -3,12 +3,32 @@
 #pragma once
 
 #include <atomic>
+#include <set>
 #include <string>
 #include <vector>
 
 #include <core/result.h>
 
 namespace platform::keychain {
+
+// ---------- 孤儿清理白名单前缀（P0 护栏②，2026-09-30）----------
+// deleteSecretsNotIn 的语义是「凡不在 keep 里的都删」——对 service 命名空间
+// 是无差别全清。本应用在 service 下的条目**只有** profile 密钥，account 约定
+// 固定为 claude:<profile id>；未来若同 service 下出现别的用途条目（不同
+// 前缀），一次孤儿清理就会把它们连带删掉。故所有平台的扫描删除一律经
+// shouldDeleteOrphan() 决策：白名单前缀（claude:）之外的一律保留（不删、不
+// 计数）。前缀比较大小写敏感（account 由本应用生成，恒为小写形态）。
+inline bool deletableOrphanAccount(const std::string& account) {
+    return account.rfind("claude:", 0) == 0;
+}
+
+// 扫描到一个 account 时的统一决策：不在 keep 集合里 **且** 命中白名单前缀
+// → 才允许删除。各平台实现（macOS / Windows / posix 文件后备）的删除分支
+// 都必须经过本函数，保证三平台语义一字不差。
+inline bool shouldDeleteOrphan(const std::string& account,
+                               const std::set<std::string>& keepAccounts) {
+    return keepAccounts.count(account) == 0 && deletableOrphanAccount(account);
+}
 
 // ---------- 真实实现（按平台拆文件：keychain_win / keychain_posix / keychain_macos）----------
 core::Result<void> realStoreSecret(const std::string& service,

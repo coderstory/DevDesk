@@ -45,9 +45,13 @@ const std::string& claudeUpstreamSessionId();
 class ClaudeService {
 public:
     // 构造时不持有所有权，db 由调用方确保生命周期
-    // keychainService 默认 "DevDesk"；测试可传 "DevDeskTest" 隔离
+    // keychainService：空串（默认）= 生产形态——service 名按数据根派生
+    //   "DevDesk-<短哈希>"（keychainServiceForDataRoot），并把旧全局名
+    //   "DevDesk" 记作一次性迁移源（migrateLegacyKeychainService）；
+    //   非空 = 原样使用且**禁用迁移**（测试隔离形态，测试传 "DevDeskTest…"——
+    //   迁移源保持为空，绝不触碰旧全局命名空间）
     explicit ClaudeService(core::data::SqliteDb& db,
-                           const std::string& keychainService = "DevDesk");
+                           const std::string& keychainService = std::string());
     ~ClaudeService();
 
     ClaudeService(const ClaudeService&) = delete;
@@ -114,6 +118,13 @@ public:
     // 返回清理数量
     core::Result<int> cleanupOrphanKeychainEntries();
 
+    // 一次性迁移（2026-09-30 数据丢失事故根治，须先于孤儿清理调用）：把旧
+    // 全局 service "DevDesk" 下的 profile 密钥搬进本实例按数据根派生的
+    // service（读旧、写新、删旧；幂等，可反复调用）。显式传 service 构造
+    // （测试）时迁移源为空 → 本方法 no-op 返回 0。详见
+    // ProfileRepository::migrateLegacyKeychainService
+    core::Result<int> migrateLegacyKeychainService();
+
     // ---- API key ----
 
     // 显式从 Keychain 加载明文 API key（仅在需要发请求时调用，用完即丢弃）
@@ -126,7 +137,9 @@ public:
 
     // 复制 Profile（设计 §4.2/§4.3，M4）：名称自动加「副本」后缀（重名递增
     // 避让，100 次仍冲突 → fail 不建行），API key 一并复制（源 key 缺失 →
-    // fail，不建无 key 的副本），**副本不激活**（S-4）。
+    // fail，不建无 key 的副本；失败分三态：条目不存在 / 读失败（原样透传
+    // 错误码）/ 值为空串，前两者文案带恢复提示「编辑该 Profile 重新填一次
+    // API Key 即可」），**副本不激活**（S-4）。
     // 二段补写（models_config / extra_env）失败 → best-effort 删除刚建的副本
     // 回滚：回滚成功 = fail 且零残留；回滚失败 = fail 且文案注明不完整副本 id
     // shared_config_id 一并复制（属于配置，设计 §2.6）；
@@ -353,6 +366,9 @@ private:
     // 持久化入口（职责边界见 R10 spec §2.2；门面只留策略编排与转发）
     ProfileRepository profileRepository_;
     std::string keychainService_;
+    // 旧全局 service 名（一次性迁移源）。仅派生构造（生产）非空；显式传
+    // service（测试）为空串 = 禁用迁移（防测试误迁真实 "DevDesk" 命名空间）
+    std::string legacyKeychainService_;
 
     // R10-A4：settings.json 接管/还原的协议侧（路径注入 / 接管开关 / 托管
     // 快照检测 / 上层覆盖警告状态都在这；见 settings_takeover.{h,cpp}）。
@@ -377,5 +393,13 @@ private:
 // 调用记录时间列（W10 复审项：只显 HH:MM 会让跨天记录的新旧判断误导）：
 //   今日 → "HH:MM"；昨天 → "昨天 HH:MM"；更早 → "MM-DD"
 std::string formatCallTime(std::time_t ts, std::time_t now);
+
+// Keychain service 名按数据根派生（2026-09-30 数据丢失事故根治）：
+// "DevDesk-" + SHA256(dataRoot) 前 4 字节的 8 位 hex。Keychain 的 service 是
+// **全局**命名空间、不随 DEVDESK_DATA_ROOT 隔离——旧版所有数据根共用
+// "DevDesk"，多根互踩之外，任一数据根的孤儿清理都能扫到其它根的真实密钥；
+// 按根派生后每个数据根（含测试实例）拿独立命名空间，互不可见、互不可清。
+// dataRoot 为空 → 返回空串（生产不可达，调用方兜底旧名）。
+std::string keychainServiceForDataRoot(const std::string& dataRoot);
 
 } // namespace module::claude
