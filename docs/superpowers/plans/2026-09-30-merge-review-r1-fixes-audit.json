@@ -1,0 +1,194 @@
+{
+  "meta": {
+    "subject": "merge-review R1 四条修复分支独立审计",
+    "date": "2026-09-30",
+    "auditor": "阶段 2 独立审计 agent（非实现者；未参与本批四条修复分支的实施）",
+    "method": "逐分支 git diff dev...<branch> 通读 + Read 改动文件全文上下文 + Grep 全仓调用点 + 数学/语义手算核验；测试有效性用手算每条新断言在改动回退时是否变红",
+    "code_base": "DevDesk dev @ 60f9cec",
+    "branches": [
+      {"name": "fix/r1-export-credentials", "tip": "a2d6b69", "files": 6, "claim": "buildProfileExportJson 2/2 绿 + 复制配置 3/3 绿 + 变异（注释 erase 两行）红→绿"},
+      {"name": "fix/r1-probe-splash",        "tip": "05ae083", "files": 4, "claim": "全量 896/890/0 + probe 2/2 + 坏路径实测 exit=1"},
+      {"name": "fix/r1-settings-85",         "tip": "235cd2f", "files": 3, "claim": "settings 定向 101/101/0 + probe settings_cards 1/1 + 变异红→绿 + 100% 档逐值不变"},
+      {"name": "fix/r1-test-honesty-pet",    "tip": "c5d3bf8+cf6b416", "files": 4, "claim": "5 批定向全绿 + 三组变异红→绿"}
+    ],
+    "scope_limit": "审计者只读；未跑 build/test，未触碰工作区代码（确认 git status --short = 0）；仅落盘本审计文件"
+  },
+
+  "branch_r1_export_credentials": {
+    "diff_summary": "buildProfileExportJson 在 buildDirectEnv 返回后无条件 erase(ANTHROPIC_API_KEY)/erase(ANTHROPIC_AUTH_TOKEN)，覆盖「空占位 + extra_env 自填 token」这条明文泄漏口；4 处文件注释/常量说明同步更新；测试加 bearer/api_key/both 三态钉值外加空占位+自填 token 的新用例",
+    "1_correctness": {
+      "status": "已核",
+      "conclusion": "导出契约成立。erase 位置在 buildProfileExportJson 第 80-83 行，紧跟 buildDirectEnv 返回、领先 envObj 装配/JSON 序列化——序列化前的删除成立。std::map::erase 对缺失键返回 0、不抛异常，对存在键真删——三态（占位带 key / 空占位 / 自填 token）全覆盖。bearer/api_key/both 三态测试分别设 authField 走 buildDirectEnv 的「写选中键 + 删另键」分支，erase 后两边键均不存在。新增的「空占位 + extra_env 自填 token」用例（pe.authField 留默认 both、extra_env 双 token）精准命中 buildDirectEnv 的「apiKeyPlain.empty() → 不进 !empty 分支 → extra_env 的两个 token 留在 map」这条此前泄漏路径，erase 后两边键均不存——是该路径的最小可触发夹具。数学恒等空检查：JsonObject::get 对缺失键返回默认构造 JsonValue（type=T_Null），isString() = type() == T_String 必假——断言 !isString() 在键缺失时为真、在键存在为字符串时为假，迁移敏感。"
+    },
+    "2_regression": {
+      "status": "已核（发现 1 条备忘）",
+      "conclusion": "波及面清点：buildDirectEnv 共 3 处调用——本分支 export（已改）、claude_service.cpp:528 runProfile 链路（不变，键真钥进 buildDirectEnv 是运行链的合法供给）、tests/test_claude_service.cpp 5 个用例（直连 env 三态断言，不动）。kCopyConfigToastSubtitle 文案改 'API Key 为占位符' → '已剔除凭据键'：grep 测试侧引用（tests/test_modules/test_claude_ui.cpp:5884/5886/5888）三条断言均检 '完整 settings.json' / 'env + 高级属性' / '不含明文' 三个子串——新文案三处全保留，全部继续绿。kCopyConfigToastSubtitle 在 src/ 仅 claude_module.cpp:677 一处消费，文案替换无 UI 字符串回归。buildProfileExportJson 签名第三个形参 keyPlaceholder 保留（不改），call sites 已 grep 全量匹配（src/module_claude_proxy/claude_module.cpp:652 + tests/test_claude_ui.cpp 4 处），零回归。备忘：claude_ui_logic.h 顶部注释 §4.2② 段在 batch-fix 时已写「不导明文 key」，分支注释再补「占位空/不空均不进导出」——同一条事实两处文档一致。"
+    },
+    "3_platform_symmetry": {
+      "status": "已核",
+      "conclusion": "改动 = std::map::erase 两个键 + JSON 序列化 + 测试断言。零平台分支、零平台 API。std::map erase 行为两平台同构，JSON 序列化走 platform::json 跨平台层。"
+    },
+    "4_silent_failure": {
+      "status": "已核",
+      "conclusion": "无新增静默失败路径。erase 返回 0 / 1 不抛异常，失败模式不存在；序列化失败已由既有 stringify().isFail() 兜底返回空串（claude_ui_logic.cpp 旧代码）→ 调用方按空串走 warn toast 不静默。"
+    },
+    "5_test_effectiveness": {
+      "status": "已核",
+      "conclusion": "新增/调整的 6 条断言均非恒真：①「!env.get(TOKEN).isString()」在键缺失时为真、键存在为字符串时为假（与「键不存在/键存在值为字符串」二态严格区分）；②新「空占位+自填 token」用例断言 MY_EXPORT_KEY/BASE_URL 仍在（不会被误删扩散）、两个 token 键均不在——覆盖全字段，无单边假绿。变异验证：注释掉两行 erase → bearer/api_key/both 三态的「!isString()」断言全红；自填 token 用例的「MY_EXPORT_KEY 在 + token 不在」也会红（erase 不擦时 token 占住字符串、isString 返真）。断言与变异证据对得上。"
+    },
+    "6_doc_consistency": {
+      "status": "已核",
+      "conclusion": "claude_ui_logic.h 头注释「凭据换成占位值」→「不落盘只进剪贴板」、加「导出契约」一段明确剔除两个键（ANTHROPIC_API_KEY/ANTHROPIC_AUTH_TOKEN）与运行链边界（runProfile 不在本契约内）；claude_module.cpp:602 / :648 / claude_ui_detail.h:103 / claude_ui_detail.cpp:995 四处注释同步；toast 副文案「（已剔除凭据键，不含明文）」与「不导明文 key」两条口径语义连贯。"
+    },
+    "verdict": "可合并"
+  },
+
+  "branch_r1_probe_splash": {
+    "diff_summary": "两个 probe（claude_probes.cpp / settings_cards_probes.cpp）的 --dump 路径：开 ofs 失败置 passed=false + 写后 close + 流状态判失败置 passed=false（main 末尾 passed?0:1 走 exit 1）；assets/shaders/splash.frag 第二个 smoothstep 因子 edge0>edge1 UB 改写为等价的 1-smoothstep(0.2+w,0.35+w) 规范形式；src/ui_kit/splash.cpp 加 shaderFailed 状态位 + onCompileError 置位 + 不透明深色 rect 兜底（画在 shadertoy 之前）",
+    "1_correctness": {
+      "status": "已核（手算证实改写数学恒等）",
+      "conclusion": "smoothstep 改写数学恒等：原 smoothstep(0.35+w, 0.2+w, y)（edge0>edge1 是 GLSL §8.2 UB）按驱动常见口径 t=clamp((y-0.35-w)/(-0.15))=clamp((0.35+w-y)/0.15)；新形式 1-smoothstep(0.2+w,0.35+w,y) 的 t'=clamp((y-0.2-w)/0.15)，二者 t=clamp(1-t',0,1)=1-clamp(t',0,1)（clamp(1-s,0,1)=1-clamp(s,0,1) 恒等），hermite(1-s)=(1-s)²(1+2s)=1-3s²+2s³=1-hermite(s)——两条 hermite 在 [0,1] 区间逐点精确相等。规范等价改写在 spec-conformant 驱动上视觉零变化，消除 UB。splash.cpp fallback：onCompileError 回调触发于首帧 render 时 → state.shaderFailed 置位 → 下一帧 compose 起垫 rect 'splash.fallback.bg'（深色 #051A33 近 splash.frag 的 deep 基色），画在 'splash.shader' 之前；shader 正常时不透明极光波完全覆盖兜底 rect，视觉零变化。probe dump 校验：开 ofs 失败置 passed=false（之前无判断、静默失败）、写后 close 判流状态置 passed=false（之前无 close、无流校验、静默成功）—— 与已有 writeProbeConfig 流校验同口径。"
+    },
+    "2_regression": {
+      "status": "已核",
+      "conclusion": "波及面：splash 测试缝（test_main.cpp:14 / probe_harness.h:12）禁 splash 调用 drawSplashIfNeeded，无头测试场景零覆盖；shaderFailed 字段仅 splash.cpp 文件内 self-contained，全仓 grep 零外部引用；fallback rect id 'splash.fallback.bg' 唯一。probe dump 路径被两个 probe 唯一持有（claude_probes.cpp:609 / settings_cards_probes.cpp:678），与既有 passed 标志共享（settings_cards 版加 &passed capture），无新依赖。settings_cards dumpFrame lambda 新增 early-return（开 ofs 失败）→ 调用点循环迭代继续、不 skip present——实测 dumpFrame 在 present 前调用，early-return 后仍走 present，正常。"
+    },
+    "3_platform_symmetry": {
+      "status": "已核",
+      "conclusion": "shader 文件为 GLSL 跨平台源码（GLSL 规范定义、驱动实现在 macOS Metal/Vulkan/GL、Windows GL/Vulkan、Android GL/Vulkan 都需符合 GLSL §8.2）；probe 文件用 std::ofstream + ios::binary，跨平台行为同构；splash.cpp 用 eui::Color + ui.rect（EUI-NEO 跨平台 DSL）。零平台特有 API。"
+    },
+    "4_silent_failure": {
+      "status": "已核",
+      "conclusion": "本批正是修静默失败：① probe --dump 此前「开 ofs 失败不报、写失败不报」两处假成功路径已封堵（passed=false → exit=1）；② splash shader 编译失败此前「EUI-NEO shadertoy 图元 handle 空时提前返回」造成窗口 clearColor（浅色）露出+下方 logo/progress 不可读——onCompileError 已 LOG_WARN 一行留痕（splash.cpp:106-109），加 shaderFailed 标志让下一帧兜底 rect 不再浅色底上画白字。两个失败路径都加了可见反馈。"
+    },
+    "5_test_effectiveness": {
+      "status": "已核（附加实测建议）",
+      "conclusion": "无新增测试断言；本批是测试缝/驱动缝加固（probe 路径）和产品路径失败兜底（splash fallback）。变异验证靠手工：① chmod 644 splash.frag 让 shadertoy 编译失败 → 当前 dev 跑出「浅底白字不可读」、本分支跑出「深底白字可读 + LOG_WARN 一行」，可见差异。② chmod 555 探针输出目录 → 当前 dev 跑出 exit 0 假成功、本分支跑出 exit 1 红色 dump 打开失败。probe 内的 passed 标志已被断言式实存（grep 全仓证 passed?0:1 模式 2 处），无需新增用例。"
+    },
+    "6_doc_consistency": {
+      "status": "已核",
+      "conclusion": "splash.cpp 顶部块注释「shader 编译失败兜底」准确描述「EUI-NEO shadertoy 图元编译失败时不画任何东西（handle 空时提前返回）」+「首帧 render 才暴露，置位后从下一帧 compose 起垫不透明深色底」+「画在 shadertoy 之前，shader 正常时被不透明极光波完全盖住，视觉不变」；probe dump 路径注释「视觉证据没落盘就得置红，否则审计会拿到『看起来生成了』的假象」+「与 writeProbeConfig 的流校验同口径」——两条自洽、与现有 writeProbeConfig 流校验代码（grep 实证）一致。shader 注释（splash.frag:13）解释了 UB 改写的数学等价性——注释内的展开（hermite(1-s) = 1 - hermite(s)）与手算一致。"
+    },
+    "verdict": "可合并"
+  },
+
+  "branch_r1_settings_85": {
+    "diff_summary": "settings_ui_logic.h 把 constexpr 常量（kLogLabelHeight/kLogFieldHeight/kLogRow1LabelY/kLogRow2LabelY/kLogFieldDy/kLogDropdownOffsetY/kLogDropdownOffsetHeight/kEditorFontDdOffsetY/kLogEditorFontHeight/kLogLevelOffsetY/kLogLevelHeight 共 10 个）改为 inline 函数返回 roundFs(基准)，100% 档 round(x*1.0)=x 与旧字面逐值相等；settings_ui_cards.cpp 编辑器字号卡 / 桌宠卡 / 日志卡共 5 处行几何（行 y、控件高、ddwrap 偏移、标签 y 居中）随字号派生；test_settings.cpp 加 85% 档三档钉值 + pet/log 卡 ddwrap 池化",
+    "1_correctness": {
+      "status": "已核（手算三档逐值）",
+      "conclusion": "roundFs(x)=round(x*fontScale)，100% 档 round(x*1.0)=x 与旧 constexpr 字面 42/36/56/104/40/64/112/168/148 逐值相等——零回归锚成立。85% 档手算：roundFs(20)=17, roundFs(36)=round(30.6)=31, roundFs(40)=round(34)=34, roundFs(56)=round(47.6)=48, roundFs(104)=round(88.4)=88, roundFs(16)=14, roundFs(8)=round(6.8)=7, roundFs(4)=round(3.4)=3。85% 派生值 = editorFontDdOffsetY=38+roundFs(4)=41, logFieldDy=(17-31)/2=-7, logDropdownOffsetY=48-7=41, logLevelOffsetY=88-7=81, skinTop=40+14+7=61, ddH=34, scaleTop=61+34+7=102。pet 卡高 roundFs(168)=143（settings_module.cpp:803 cardHeight=Fixed 走 roundFs(spec.height)）；log 卡高 roundFs(148)=126。130% 档手算：roundFs(20)=26, roundFs(36)=round(46.8)=47, roundFs(40)=round(52)=52, roundFs(56)=round(72.8)=73, roundFs(104)=round(135.2)=135, roundFs(16)=21, roundFs(8)=10, roundFs(4)=round(5.2)=5。editorFontDdOffsetY=38+5=43, logFieldDy=(26-47)/2=-10.5, logDropdownOffsetY=73-10.5=62.5, logLevelOffsetY=135-10.5=124.5, skinTop=40+21+10=71, ddH=52, scaleTop=71+52+10=133, pet 卡高 roundFs(168)=218, log 卡高 roundFs(148)=192。所有测试钉值与手算逐值相符。editorFontDdOffsetY 两段拆分（字面锚 38 + roundFs(4)）的注释解释——整段 roundFs(42)=round(35.7)=36 在 85% 档越过字面标题盒底 38 造成叠印——与 editor card title y=16 h=22 字面（settings_ui_cards.cpp:90）一致。"
+    },
+    "2_regression": {
+      "status": "已核",
+      "conclusion": "全仓 grep 改动常量的引用——dev 上 9 个 removed 常量（kLogLabelHeight/kLogFieldHeight/kLogRow1LabelY/kLogRow2LabelY/kLogFieldDy/kLogDropdownOffsetY/kLogDropdownHeight/kEditorFontDdOffsetY/kLogEditorFontHeight/kLogLevelOffsetY/kLogLevelHeight）在分支 src/ 全部已无引用、tests/ 唯一引用在 test_settings.cpp:3362-3363 的注释（说明三常量同值 36、收敛到 logFieldHeight()）——零硬引用残留。settings_ui_cards.cpp 编辑器字号卡 / 桌宠卡（皮肤行/显示大小行/位置重置按钮/显示桌宠按钮共 8 个 layout 调用）/ 日志卡（保留+级别双行 label/ddwrap/hint 共 12 个 layout 调用）全部走新函数。dropdownPopupOverflows 签名不变、(pageY, offY, fieldH, count, screenH) 5 参数全部以新函数实参传入——既有 openUp 越界判定逻辑不变。settings_ui_logic_equivalence 测试把 fh 轴从 3 个常量收敛为 1 个 logFieldHeight()（5*3*3*3*4 → 5*3*1*3*4 = 180 gridHits）——几何收敛、测试数量合规。kPetCardHeight/kLogSettingsCardHeight 仍 constexpr=168/148，settings_module.cpp:803 roundFs(spec.height) 在 compose 期做一次派生——实测手算与测试钉值完全吻合。"
+    },
+    "3_platform_symmetry": {
+      "status": "已核",
+      "conclusion": "roundFs = std::round(base * core::theme::fontScale())，fontScale 是单源 theme 常量（已在 macOS+Windows 全程运行），std::round 跨平台同构；inline 函数返回 float 无 ODR 风险（headers-only 形式、内联展开）；零平台 API、零新增平台分支。"
+    },
+    "4_silent_failure": {
+      "status": "已核",
+      "conclusion": "无新增错误路径。roundFs 不抛、不退化、不 clamp——fontScale 由 theme 层控制（settings_config.h:121 默认 100；钳制在 kMinFontScalePercent/kMaxFontScalePercent），单一来源。"
+    },
+    "5_test_effectiveness": {
+      "status": "已核",
+      "conclusion": "新增 85% 档用例（FontScaleGuard{0.85f}）：3 卡（appearance/editor/modules/pet/proxy/log）+ 卡内 6 个 ddwrap/label 新入池，containment 断言「行 ⊆ 卡 frame」+ 三档钉值（85/100/130）每档 14+ 个数值断言。变异验证：① 回退 roundFs 到字面 → 所有「85% 档不等于 17/31/41/48/61/81/102/143/126」的钉值断言全红；② 改 at() 阈值（如 scale<1.1f → scale<1.0f）→ 130% 档期望值会按错档取、断言红；③ 池化漏掉 ddwrap（去掉新增的 '.ddwrap' 池项）→ 行溢出卡外、containment 红。三组变异证据与断言严格对得上。100% 档逐值不变由「roundFs(x)==x」恒等保证——旧布局断言全保留（注释明确「零回归锚——既有布局断言、常量钉值用例全部不动」）。"
+    },
+    "6_doc_consistency": {
+      "status": "已核",
+      "conclusion": "settings_ui_logic.h 头注释 100% 档 roundFs(x)==x 与旧字面逐值相等、零回归锚；编辑器字号卡两段拆分注释解释为何「间距才入派生池、锚保持字面」与代理卡接管行 y=98 字面锚同款口径；桌宠卡派生口径注释「与外观卡同款：行顶沿说明行派生盒底累加（说明行 y=40 字面锚、盒 roundFs(16)）」——三段派生方法学的注释（spec §2.3 + 行盒派生理由 + editorFontDdOffsetY 拆分理由）一致。卡高 roundFs(spec.height) 在 settings_module.cpp:800 注释明确「spec.height 是 100% 档基准，运行期随生效字号放大（roundFs）——卡内行盒/行距派生后内容底沿增长，卡高不同步放大就会把尾行挤出卡外」——根因、机制、修法三段全。"
+    },
+    "verdict": "可合并"
+  },
+
+  "branch_r1_test_honesty_pet": {
+    "diff_summary": "test_settings_sync.cpp 四处把 `topLevelString(key).empty()` 三态混淆断言（键不存在 / 值为空串 / 文件解析失败混为一谈）改为「解析 + JsonObject.has(key) false」严格断言；test_provider_config.cpp D-3 用例补 live statusLine='live-s' 同名键夹具（此前缺同名键 → 「JSON 赢过 live」断言恒真假绿）；test_migrations.cpp v11 把 created_at/updated_at 由 0/0 改为 1727100000/1727100001 异值，并断言重建后保值（此前 0 是 SQLite INTEGER 默认值，做不出区分度）；pet_config.h 加 static_assert 绑定 count 与两个数组长度",
+    "1_correctness": {
+      "status": "已核",
+      "conclusion": "四处 test_settings_sync 改 .empty() → parse + !has(key)：parse 失败触发 DOCTEST_REQUIRE 红、!has 对键缺席严格区分——把「键不存在 / 键值为空串 / 文件解析失败」三态拆开（任一态都会被 REQUIRE 拦下或断言不准放过）。D-3 fixture：root.pre-set 'statusLine'='live-s'，applyExtraSettingsToSettingsDoc 把 JSON 的 statusLine='on' 写入 root（应用代码 provider_config.cpp:299 「root.set(k, obj.get(k)); writtenKeys.push_back(k)」无条件 set + 入 writtenKeys），root.statusLine 由 'live-s' 变 'on'。无 fixture 时 'JSON.statusLine == 'on'' 恒真（仅 JSON 一家设置），fixture 让断言真正测「JSON 赢过 live」语义。v11 test：claused_shared_configs(id=1, name='旧片段', extra_env='{ANTHROPIC_BASE_URL=...}', created_at=1727100000, updated_at=1727100001) → ADD COLUMN extra_settings_json DEFAULT '' + DROP COLUMN extra_env。SQLite 3.35+ DROP COLUMN 用 ALTER TABLE RENAME + 拷贝 + DROP + RENAME 的 12 步算法（SQLite 官方文档 12-step procedure），全表数据（包括 created_at/updated_at）复制到新表——异值 1727100000/1727100001 应保值。claused_profiles v11 仅 ADD COLUMN extra_settings_json（无 DROP）→ 既有 created_at=0 / name='旧供应商' 自然不动（注意：v11 测试在 claude_profiles 段断言 created_at=0 —— 是为了钉住「profile 表不动」语义，非 0 vs 1727100000 的区分）。pet_config.h static_assert：sizeof(kPetScalePresets)/sizeof(kPetScalePresets[0]) 在 static_assert 求值——数组定义在同头文件同 TU 内，sizeof 完整可见；inline constexpr 数组在 C++17 起 ODR 一致（同一头内一处定义、所有 TU 看到同一份），count=3 与两数组长 3 必须相等。"
+    },
+    "2_regression": {
+      "status": "已核",
+      "conclusion": "波及面：topLevelString 在 tests/test_settings_sync.cpp 仍被多处使用（assertions 收紧前的旧形态也保留：sync_restore_extra_settings 的 'statusLine' 取值='user-s' 仍是 .empty() 反义 OK——「有值」用 .empty() 反义是安全的，因为「键存在且值非空」与「键不存在 / 值空」三态会被 valueOr fallback 暴露）。test_provider_config D-3 fixture 不改被测函数签名 / 输入 JSON / 期望结果。test_migrations v11 改 fixture 不改 migrate 路径。pet_config.h 加的 static_assert 在头文件级——所有 include 此头的 TU 在编译期必查，无运行期成本。"
+    },
+    "3_platform_symmetry": {
+      "status": "已核",
+      "conclusion": "零平台特有 API。test_settings_sync 改用 platform::json::parse + JsonObject::has（已确认 get 缺失键返回默认构造 JsonValue，has 走 count > 0，跨平台 SQLite 行为同构）。test_provider_config fixture 加 root.set('statusLine', makeString(...)) 是 platform::json 跨平台 API。test_migrations 走 SQLite 跨平台 DDL。static_assert 不依赖运行期。"
+    },
+    "4_silent_failure": {
+      "status": "已核（本批正是修静默失败）",
+      "conclusion": "本批封 3 类假绿：① .empty() 三态混淆（旧「值空 = 成功还原」吞了「键不存在 / 值空串 / 文件解析失败」三种异常）；② D-3 用例无同名键（缺夹具 = 「JSON 赢过 live」恒真）；③ v11 测试 created_at=0 与 SQLite INTEGER DEFAULT 0 同值（缺区分度 = 「DROP COLUMN 重建丢数据」无法被断言捕捉）。三组变异证据（注释 erase / 删 fixture / 改 INSERT 为 0,0）会让对应断言变红——本批正是为补这三类静默绿。"
+    },
+    "5_test_effectiveness": {
+      "status": "已核",
+      "conclusion": "三组变异红→绿：① 注释掉 restore 路径中对 statusLine/hooks/model/permissions 的删除 → 新断言 !has(key) 红；② 删 live statusLine 夹具（root 不预置）→ 旧 'JSON.statusLine == 'on'' 仍绿（恒真），新断言因 fixture 而红得起来；③ 改 INSERT created_at=0, updated_at=0 → 重建后断言 1727100000/1727100001 红。pet_config.h static_assert 变异（数组长 4 vs count 3）→ 编译期静态红（不必运行期）。四组断言均非恒真。"
+    },
+    "6_doc_consistency": {
+      "status": "已核",
+      "conclusion": "test_settings_sync.cpp 注释「.empty() 把『键不存在 / 值为空串 / 文件解析失败』混为一谈，写坏文件也照样绿」+「键必须不存在——.empty() 口径三态混淆」；test_provider_config.cpp 注释「D-3 夹具：live 侧预置与 JSON 同名的 statusLine（异值）——没有同名键时『JSON 赢过 live』的断言恒真（假绿）」；test_migrations.cpp 注释「created_at/updated_at 给非零异值：v11 对本表 DROP COLUMN 走整表重建，重建若丢列/丢数据，下面按这些已知值逐行断言保值才红得起来（0 是常见默认值，做不出区分度）」+「本表是 v11 整表重建路径，既有列（name/created_at/updated_at）必须逐行保值——重建丢数据时只断新列默认值的写法照样绿（假绿）」；pet_config.h 注释「档位数与两个数组静态绑定：petScalePresetLabels()（pet_window.cpp）以裸下标 [0][1][2] 取文案、sanitizePetScale/petScaleIndexOf 以 count 为界循环——档位漂移（改数组不改 count）编译期即红，不再运行期越界读」。四段注释均与代码行为严格对得上。"
+    },
+    "verdict": "可合并"
+  },
+
+  "registered_no_fix": [
+    {
+      "topic": "Keychain 迁移多数据根互踩",
+      "file": "src/module_claude_proxy/profile_repository.cpp:751-795",
+      "decision": "登记不修",
+      "reason": "需产品决策哪根赢（迁移路径含删除），属删除路径，不擅动"
+    },
+    {
+      "topic": "migration v11 DROP COLUMN 依赖 SQLite ≥3.35",
+      "file": "src/core/migrations.h:302",
+      "decision": "登记不修",
+      "reason": "本机系统 sqlite 远新于 3.35（macOS arm64 装 brew sqlite ≥3.45）；改已应用迁移风险大于收益（涉及数据库 schema 重建路径），本期只加固测试断言（fix/r1-test-honesty-pet 加异值夹具），不重构迁移"
+    },
+    {
+      "topic": "keychain_win legacy `claude_` 前缀判别过宽",
+      "file": "src/platform/keychain_win.cpp",
+      "decision": "登记不修",
+      "reason": "Windows 非当前开发平台（2026-09-28 起项目搬回本机 macOS），删除路径无法本机验证；先以 SKIP_ON_MACOS_KEYCHAIN 守住 macOS 端到端"
+    },
+    {
+      "topic": "macOS keychain 真存储端到端回归缺口",
+      "file": "tests/",
+      "decision": "登记不修",
+      "reason": "SKIP_ON_MACOS_KEYCHAIN 是 P0 事故后有意设计——写真钥匙串测试风险大于收益（会污染用户实际 keychain 条目）；本期不做端到端改造"
+    },
+    {
+      "topic": "release.yml create-dmg 无 --skip-jenkins（疑似）",
+      "file": ".github/workflows/release.yml",
+      "decision": "疑似-需人工",
+      "reason": "CI 仅发布时触发，本地构建不消费；审计期未跑 CI；保留待 release 流程自查"
+    },
+    {
+      "topic": "todo 行盒未随字号派生（疑似）",
+      "file": "src/module_todo/",
+      "decision": "疑似-需人工",
+      "reason": "本批 diff 范围外，settings_ui_cards.cpp 派生口径已落，todo 模块尚未同步；待下一批字号派生推广时一并修"
+    },
+    {
+      "topic": "EUI-NEO 全部 findings",
+      "file": "../EUI-NEO/（dropdown 收起动画 z / platform.h 主线程契约注释 / SDL2 后端托盘 Show 等）",
+      "decision": "登记不修",
+      "reason": "上游仓库且工作区有用户未提交修复，不混改 DevDesk 分支"
+    },
+    {
+      "topic": "about_probe.cpp:387-395 同款 --dump 假成功",
+      "file": "tests/probes/about_probe.cpp",
+      "decision": "登记下批",
+      "reason": "T2 范围外发现——about probe 未参与本批两 probe 的 dump 校验改造，存在同样「开 ofs 失败 / 写失败不报」的静默假绿；建议下批（约_probe.cpp）补同样的 passed 校验"
+    },
+    {
+      "topic": "md_tree extraFolders 嵌套目录不可达",
+      "file": "src/module_markdown/",
+      "decision": "登记不修",
+      "reason": "本批 diff 范围外既有行为，非本期修复目标"
+    }
+  ],
+
+  "overall": {
+    "conclusion": "可合并",
+    "summary": "四条修复分支六维度逐条已核，无 blocker 级 finding。fix/r1-export-credentials 收敛明文泄漏口（空占位 + extra_env 自填 token 路径），fix/r1-probe-splash 封两处 probe --dump 静默假绿 + splash shader UB 改写 + shader 编译失败视觉兜底，fix/r1-settings-85 把 85% 档行盒溢出转派生（与 1ca87b0 env pane 派生同款口径，100% 档零回归），fix/r1-test-honesty-pet 封三类假绿（.empty() 三态混淆 / D-3 缺夹具 / v11 created_at=0 缺区分度）+ 编译期静态绑定 pet 档位数组。9 条登记不修项均为范围外/平台限制/删除路径风险，无当前须修项。约_probe.cpp:387-395 同款 dump 假成功登记下批（非本批范围）。"
+  }
+}
