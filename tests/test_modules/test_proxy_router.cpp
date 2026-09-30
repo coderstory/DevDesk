@@ -108,8 +108,8 @@ bool anyHeaderValueContains(const httplib::Headers& h, const std::string& frag) 
 // 原始 httplib mock 上游：伪头断言需要**未去重**的 Headers multimap
 // （get_header_value_count / count）。platform::http::Server 的 ctx.headers
 // 已按小写键去重（CP-06：httplib 的大小写不敏感 multimap 降级时键统一小写），
-// 且它自己对每封收到的请求也注入同名伪头（httplib.h:7186-7192，键同样被降为
-// 小写），无法区分「代理转发来的」与「mock 自己注入的」。
+// 且 has_header/get_header_value 对禁用名直接拒见（0.58.0
+// is_prohibited_header_name）——只有直读 multimap 能看到真泄漏。
 class RawUpstream {
 public:
     RawUpstream() = default;
@@ -150,8 +150,10 @@ private:
     int port_ = 0;
 };
 
-// cpp-httplib 服务端对**每封收到的请求**注入的本地连接伪头（httplib.h:7186-7192），
-// 就是代理必须从客户端头里过滤掉的那 4 个名字
+// 本地连接伪头（REMOTE_ADDR/REMOTE_PORT/LOCAL_ADDR/LOCAL_PORT）：0.18.x 的
+// httplib 服务端对每封收到的请求注入（旧 httplib.h:7186-7192）；0.58.0 起改为
+// is_prohibited_header_name 主动禁止、不再注入（httplib.h:8014 起）。代理侧
+// 剥离保留为纵深防御（客户端仍可能手工携带）；断言预期 0 条——>0 即泄漏。
 const char* const kPseudoHeaders[] = {"REMOTE_ADDR", "REMOTE_PORT",
                                       "LOCAL_ADDR", "LOCAL_PORT"};
 
@@ -719,8 +721,8 @@ REGISTER_TEST(proxy_router_drops_httplib_pseudo_headers,
     module::claude::ProxyRouter router(svc, proxyServer);
     router.registerRoutes();
 
-    // 模拟路由收到的头：httplib 注入的大写伪头（值换成本机不可能出现的标记值）
-    // + 客户端大小写变体 + 必须保留的正常头
+    // 模拟恶意/旧版客户端手工携带的伪头（大小写变体，值换成本机不可能出现的
+    // 标记值）+ 必须保留的正常头
     HeaderMap clientH;
     clientH["REMOTE_ADDR"] = "198.51.100.21";
     clientH["REMOTE_PORT"] = "19861";
@@ -739,11 +741,10 @@ REGISTER_TEST(proxy_router_drops_httplib_pseudo_headers,
     auto r = directCall(router, "POST", "/v1/messages", reqBody, clientH);
     DOCTEST_CHECK_EQ(r.status, 200);
 
-    // 上游 mock 自己也对每封收到的请求注入一份伪头（httplib.h:7186-7192 服务端
-    // 行为）；Headers 键大小写不敏感（httplib.h:506-508），所以每个伪头名在
-    // 上游应**恰好 1 条**——就是 mock 自注入那条；≥2 即代理转发了伪头（任何拼写）
+    // 0.58.0 起上游 mock 不再自注入伪头（is_prohibited_header_name 主动禁止）——
+    // 任何 >0 计数都只能来自代理转发，即泄漏
     for (const char* name : kPseudoHeaders) {
-        DOCTEST_CHECK_EQ(seen.count(name), 1u);
+        DOCTEST_CHECK_EQ(seen.count(name), 0u);
     }
     // 兜底：标记值以任意拼写/键名出现 = 泄漏
     DOCTEST_CHECK_FALSE(anyHeaderValueContains(seen, "198.51.100."));
@@ -764,10 +765,10 @@ REGISTER_TEST(proxy_router_drops_httplib_pseudo_headers,
     return true;
 })
 
-// ---- 11. 端到端（真 httplib 注入）：缓冲 + 流式两条路径都不转发伪头 ----
+// ---- 11. 端到端：缓冲 + 流式两条路径都不转发伪头 ----
 
 REGISTER_TEST(proxy_router_pseudo_headers_filtered_end_to_end,
-              "proxy_router: 端到端不转发伪头（缓冲 + 流式，真 httplib 注入）", {
+              "proxy_router: 端到端不转发伪头（缓冲 + 流式）", {
     // 上游 mock 捕获每封请求的原始头
     RawUpstream upstream;
     std::vector<httplib::Headers> snaps;
@@ -784,14 +785,14 @@ REGISTER_TEST(proxy_router_pseudo_headers_filtered_end_to_end,
     DOCTEST_REQUIRE(created.isOk());
     DOCTEST_REQUIRE(svc.setActiveProfile(created.value().id).isOk());
 
-    // 起真代理 server（其 httplib 会对每封收到的请求注入 LOCAL_ADDR 等伪头）
+    // 起真代理 server
     auto started = svc.startProxy("127.0.0.1", 0);
     DOCTEST_REQUIRE(started.isOk());
     DOCTEST_CHECK(svc.isProxyRunning());
     const std::string proxyUrl =
         "http://127.0.0.1:" + std::to_string(started.value());
 
-    // 客户端头：正常头 + 小写伪头 canary（与代理端注入的大写伪头同属 CI 同名）
+    // 客户端头：正常头 + 小写伪头 canary（模拟客户端手工携带）
     HeaderMap reqH;
     reqH["Content-Type"] = "application/json";
     reqH["anthropic-version"] = "2023-06-01";
@@ -827,10 +828,9 @@ REGISTER_TEST(proxy_router_pseudo_headers_filtered_end_to_end,
 
     DOCTEST_REQUIRE_EQ(snaps.size(), 2u);
     for (const auto& h : snaps) {
-        // 每个伪头名恰好 1 条（上游自注入）——代理注入的（大写）与客户端
-        // canary（小写）都被过滤；≥2 即泄漏
+        // 0.58.0 起无任何自注入——计数 >0 只能是客户端伪头穿透代理 = 泄漏
         for (const char* name : kPseudoHeaders) {
-            DOCTEST_CHECK_EQ(h.count(name), 1u);
+            DOCTEST_CHECK_EQ(h.count(name), 0u);
         }
         DOCTEST_CHECK_FALSE(anyHeaderValueContains(h, "198.51.100."));
         DOCTEST_CHECK_FALSE(anyHeaderValueEq(h, "19871"));
