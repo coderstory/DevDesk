@@ -227,19 +227,25 @@ add_custom_command(TARGET DevDesk POST_BUILD
     COMMENT "Copying pet skins to build directory"
 )
 
-# 托盘 template 图标（assets/tray-icon-template.png，2026-09-30 Bug A 修）：
-# main.cpp .trayIcon() 传入，运行时经 EUI-NEO resolveIconPath 的 exeDir/assets
-# 候选在 .app bundle 内命中（build-app.sh 把 <build>/assets 整树拷进
-# Contents/MacOS/assets，本命令负责先把图标送进 <build>/assets）。文件入 git，
-# 无需守卫（同上 pets）。单文件用 copy_if_different；目录由上面 pets 的
-# copy_directory 先建，make_directory 兜底防顺序依赖。
+# 托盘图标（assets/tray-icon-template.png，2026-09-30 Bug A 修；macOS 侧
+# template 蒙版，Windows 侧品牌 .ico tray-icon-win.ico —— 路径由
+# platform::tray::defaultIconPath() 按平台分发，main.cpp 不带平台宏）。
+# 运行时经 EUI-NEO resolveIconPath 的 exeDir/assets 候选在 .app bundle 内命中
+# （build-app.sh 把 <build>/assets 整树拷进 Contents/MacOS/assets，本命令负责
+# 先把图标送进 <build>/assets）。两个文件均入 git，无需平台守卫（同上 pets：
+# macOS 多拷一个 .ico 无害，反而让「产物里两个文件都在」可被用例直接验证）。
+# 单文件用 copy_if_different；目录由上面 pets 的 copy_directory 先建，
+# make_directory 兜底防顺序依赖。
 add_custom_command(TARGET DevDesk POST_BUILD
     COMMAND ${CMAKE_COMMAND} -E make_directory
         "$<TARGET_FILE_DIR:DevDesk>/assets"
     COMMAND ${CMAKE_COMMAND} -E copy_if_different
         "${CMAKE_SOURCE_DIR}/assets/tray-icon-template.png"
         "$<TARGET_FILE_DIR:DevDesk>/assets/tray-icon-template.png"
-    COMMENT "Copying tray template icon to build directory"
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        "${CMAKE_SOURCE_DIR}/assets/tray-icon-win.ico"
+        "$<TARGET_FILE_DIR:DevDesk>/assets/tray-icon-win.ico"
+    COMMENT "Copying tray icons to build directory"
 )
 
 # 启动 splash shader（assets/shaders/splash.frag，随仓库分发；运行时经

@@ -16,6 +16,7 @@ if(WIN32)
         file_watcher_win.cpp
         http_client_ca_win.cpp
         terminal_launch_win.cpp
+        tray_icon_win.cpp              # 托盘图标走真 .ico（ExtractIconExW 不认 PNG）
     )
 elseif(APPLE)
     target_sources(devdesk_platform PRIVATE
@@ -25,6 +26,7 @@ elseif(APPLE)
         file_watcher_macos.cpp
         http_client_ca_posix.cpp
         terminal_launch_macos.cpp
+        tray_icon_macos.cpp            # 托盘图标走 22×22 template 蒙版（不变）
     )
 else()
     target_sources(devdesk_platform PRIVATE
@@ -34,6 +36,7 @@ else()
         file_watcher_stub.cpp
         http_client_ca_posix.cpp
         terminal_launch_posix.cpp
+        tray_icon_posix.cpp            # 其它 POSIX 兜底：返回空串（用应用图标）
     )
 endif()
 
