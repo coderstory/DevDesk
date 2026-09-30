@@ -1,0 +1,97 @@
+{
+  "meta": {
+    "subject": "独立只读审计——fix/shared-list-cap-2 5835a0f（git diff a1451e9...fix/shared-list-cap-2，6 文件：claude_ui_list.cpp 限高实现 + test_claude_ui.cpp +1 用例 + claude_probes.cpp +⑤ 断言（8 片段种子 × 3 档尺寸）+ test_ui_modern.cpp 2 处机械回归 + verify 文档 + 1 截图）",
+    "date": "2026-09-30",
+    "auditor": "独立只读审计 agent（未参与实现；唯一写 = 本审计文件）",
+    "method": "分支版全量实读（git show / worktree wt-shared-list-cap）：claude_ui_list.cpp 全 834 行、claude_ui_list.h、claude_ui_state.h、claude_module.cpp bodyH 推导、新用例全 100 行、probe ⑤ 全 42 行 + 种子段、test_ui_modern 新旧对照；EUI-NEO 实读 components/scrollview.h（scrollable/maxOffset/measure 路径）与 components/virtuallist.h（slot 窗 firstIndex/lastIndex 公式）；独立复算：204=76+128 常量链、恰 2 条 scrollable 判别、probe 变异三档 210/490/291、test_ui_modern 视口 568→458 与行窗 1516/2416 对账；grep 对账 sharedH 消费点 / 平台宏 / 其它 use>2 片段用例的点击面",
+    "code_base": "fix/shared-list-cap-2 5835a0f（= master a1451e9 + 1 commit；行号 = 分支快照实测，EUI-NEO 侧 = 本地 main 检出）",
+    "note": "只读约束：未重跑构建/测试/变异（verify 文档的判据 1/3 数字为结构复核 + 独立算术复算，非复测）。审计文件落盘于 master 工作树（merge 前核，不影响分支）"
+  },
+  "audit_points": {
+    "1_correctness_math_and_scroll": {
+      "status": "已核（成立）",
+      "conclusion": "①常量链逐项实测：kSharedHeaderBottom 30（:48）+ kSharedBtnTopGap 12（:51）+ kSharedBtnH 34（:52）= kSharedFixedH 76（:61-62）；行 = kSharedCardH 56（:49）+ kSharedCardGap 8（:50）= 64；kSharedCardsH = 2×64 = 128（:88-89）；sharedBlockNaturalH() = 76+128 = 204 恒定（:96-98）；条目视口 contentH = blockH − kSharedFixedH = 128（:669-670）。「整行」取口核过：行容器 = 定高 stack 56+8（含行尾距，:719-723）+ scrollView gap(0)（:706）→ 内容高 = N×64，故 128 取口下恰 2 条 内容 128 == 视口 128；EUI-NEO scrollview.h:71 scrollable = initialContentHeight > height_（严格 >）+ :80 maxOffset = max(0, contentH − height_) → 恰 2 条 scrollable=false、滚动条组件根本不构建（:110-124 在 scrollable 才 build）+ maxOffset==0，实现级保证成立；120 取口会出 8px 余量的推断同样由 :71 证实（128>120 → scrollable）——注释理由属实。②≥3 条滚动：N=3 内容 192 > 128 → scrollable、maxOffset=64、scroll 组件构建；probe 8 条 → 512−128=384>0。③跨帧保持：偏移存模块态 claude_ui_state.h:100 sharedScrollOffset_（失败态还有 :102 的 sharedScrollKey_ 归零逻辑，F-09，未被本次触碰），compose 经 .offset(st.sharedScrollOffset_) 回灌（:711）、onChange 写回（:712）；测试 ⑦（:5374-5381）onScrollOffsetChanged(64) → 换 Ui 重 compose → scrollOffset==64（scrollview.h:81 clamp(64,0,64)=64），真断状态非恒真。④签名收敛核实：sharedBlockH(float bodyH)（:102），count/hasError 两参已去，错误态/空态不再改变块高（策略声明与实现一致）。"
+    },
+    "2_regression_surface": {
+      "status": "已核（声称成立；附 2 条低/信息级登记见 findings）",
+      "conclusion": "①sharedH 消费点全量 grep（src/ + tests/）实测：命中仅 claude_ui_list.cpp（:433 计算 + :456/:458、:475/:477、:583/:585 三路径 .size+调用 + listH 推导消费 sharedBlockTop :503-504）+ claude_ui_list.h:86 注释；模块外零消费（claude_module.cpp 的 sharedHooks 是无关同名前缀，claude_ui_form.cpp 的 sharedConfigs.size() 只用于下拉项、非布局）。实现者 grep 声称成立，唯引用行号 :447/:466 与实际 :458/:477 有约 11 行漂移（S-4）。②test_ui_modern 两处改动 = 真机械回归，逐数字复算：0 片段档 sharedH 94→204 → 列表视口 V=sharedBlockTop−12−56 由 568→458（Δ110，与注释一致）。旧断言（offset 600 + row17）在新 V 下 lastPixel=600+458+458=1516 → lastIndex=ceil(1516/108)+1=16（virtuallist.h:87-102，含 +1 槽）→ 渲染行 0..15，行 17 不渲染 → 旧断言必红，改动必要；新 offset 1500：firstIndex=floor((1500−458)/108)=9 → 行 0 被裁（.bg 改挂行 17 必要），行 17 内容区 [1836,1944) ⊂ 可视区 [1500,1958) —— 断言行真在可视区内（不止 overscan），maxOffset=2700−458=2242>1500（偏移合法不 clamp）。测试原语义（偏移写回 profilesScrollOffset_ / slot 窗按新偏移重渲 / .bg 命中层随行保留）全部保留，无掩盖。③极矮窗退化路径仍在：guard① sharedH < kSharedFixedH+kSharedInfoH=94 的 LOG_ERROR（:435-440，触发域 bodyH<334 不变，因 maxH=bodyH−240<94）；guard② listH < 96 的 LOG_ERROR（:508-513）；listH 有 max(0,·) 夹（:503-504）；空/错路径同样钉底同款 sharedH（:454-462/:473-481）。④存量用例回归面核过：claude_shared_block_outside_viewport（:1423，1 片段×8 profile×{1000,720,500}）与 claude_shared_block_bottom_anchored（:5175，8 片段×4 档）只锁锚点/间距不变量，与块高解耦，零改动即成立；8 片档 scrollMaxOffset 384>60 等旧断言仍真。其余触点（claude_module_shared_block_and_card 等）均为 1-2 片段、只点 card.0/card.1 —— 恰在可视区内，无隐藏红。"
+    },
+    "3_platform_symmetry": {
+      "status": "已核（零平台差异）",
+      "conclusion": "4 个代码文件的全部 diff hunk 无 #ifdef/#if（逐 hunk 实读）；claude_ui_list.cpp 全文件 0 处 #if（grep 计数 0）；claude_probes.cpp 的 2 处 #if 为预存的 __clang__ 诊断 pragma（:445/:451），不在本次新增 hunk 内。改动为纯布局算术 + 断言，两平台同一代码路径，无平台宏、无平台分支、无新依赖。"
+    },
+    "4_silent_failure_error_state": {
+      "status": "已核（错误提示未丢；1 条信息级登记见 findings）",
+      "conclusion": "①UI 错误提示保留：claude.shared.error 仍绘制（:686-692，contentTop=30 处、18 高），sharedConfigsError 经三路径照传（:460/:479/:588），错误态与空态同款「提示行画在条目框架顶、其余留白」——恒高策略是有意的（verify 文档有言），不再因错误态收缩。②LOG_ERROR 退化守门两处原样：区块压扁守门（:435-440，sharedH<94，触发域 bodyH<334）与列表保底视口守门（:508-513，listH<96）齐全，未因去 hasError 参数而丢。③F-09 归零签名以错误位起头（:676 scrollKey = error?1:0），「错误→恢复」路径仍归零，未回归。④唯一静默带（S-3，非本次引入）：bodyH∈[334,444) 时区块被 clamp 到 [94,204)，条目视口 <2 行且无日志（guard① 阈值 94 未随恒高上调）——在 720 最小窗之下、旧形态同样静默，info 级登记。"
+    },
+    "5_test_effectiveness": {
+      "status": "已核（变异证据为真；1 条 info 登记见 findings）",
+      "conclusion": "①红行 5331 实证 = ①「|block.height−204|≤0.5」（实读该行文本）；tests/doctest.h:25-54 全部 CHECK fail-fast（失败即 return false），变异跑在 count=0 首轮即红 → 文档「Total:1 Passed:0 Failed:1」自洽；①本身非恒真（旧形态 94/140/268 ≠ 204）。②probe 变异数字独立复算全对上：bodyH = contentH − 64 − 16 − (18+16) = windowH−194（claude_module.cpp:99-100 + kHeaderH=64 metrics.h:31 + kGuideBarH=18 claude_ui_list.h:31 + spacingLarge=16）→ 720→526、1000→806、801→607；变异 sharedH=min(588, bodyH−240) → 视口 210/490/291 与文档逐字一致；1200×720 的 card2 top 476 / 视口底 558（scroll.y=348=526−76−102）亦自洽 → 变异证据可信、非编造。③「恰 2 条不出滚动条」断言非常真性判定：⑤（:5347 maxOffset==0）在逆变异（改回随条目数涨）下不红（旧代码 ≤2 条同样 maxOffset=0）——它是需求级断言（防「取口缩到 1 行」类回归），判别力由 ①/④/⑥ 承担：⑥（:5364-5368）旧代码 count=3 视口 192 → card2 顶 128 < 191.5 → 红，④（128）同理；生产侧「不出滚动条」由 scrollview.h:71 严格 > 保证。④⑦ 非恒真：偏移持久化若删 onScrollOffsetChanged 写回即红；maxOffset≥64 恰压线（192−128=64）通过。⑤覆盖度：新用例 0/1/2/3 条 × 2 帧（含跨帧），probe 8 条 × 3 档尺寸 + 截图，空态/1 条留白、恰 2 条、≥3 条三个口径都有数值断言，无假绿。"
+    }
+  },
+  "findings": [
+    {
+      "id": "S-1",
+      "severity": "low",
+      "type": "doc-drift",
+      "file": "src/module_claude_proxy/claude_ui_list.h",
+      "line": 86,
+      "issue": "头文件注释仍写旧三参签名『高度由调用方按 sharedBlockH(bodyH, 片段数, 是否有错) 算出并传入』；实际签名已收敛为 sharedBlockH(float bodyH)（claude_ui_list.cpp:102），count/hasError 两参本次删除",
+      "impact": "该注释正是「高度单一来源」契约的门口（调用方按它排列表视口）——本次改动的核心之一就是删掉这两个参数，注释反向残留会让后续维护者按旧契约传参/误判块高与片段数相关；属本轮唯一与实现相矛盾的文档点",
+      "suggestion": "一行修复：改为『sharedBlockH(bodyH)，自然高恒 204（kSharedFixedH + kSharedCardsH），条目数/错误态不再入参』；不阻塞合并，合入前顺手改"
+    },
+    {
+      "id": "S-2",
+      "severity": "info",
+      "type": "test-proxy",
+      "file": "tests/test_modules/test_claude_ui.cpp",
+      "line": 5347,
+      "issue": "⑤「不出滚动条」以 scrollMaxOffset == 0 代理，未直接断言滚动条元素 claude.shared.scroll.scroll 的缺席（EUI-NEO scrollview.h:110-124 仅 scrollable 时构建该元素）",
+      "impact": "当前契约下 maxOffset==0 ⟺ 无滚动条（scrollview.h:71 严格 >、:80 max(0,·)），代理成立；但若上游把 scrollable 放宽为 >=（内容==视口也建滚动条），本用例仍绿而用户会看到空滚动条——恰是 128-vs-120 取口要防的形状，回归会从断言网漏过（依赖外部组件的隐含契约）",
+      "suggestion": "count≤2 加 DOCTEST_CHECK(ui.find(\"claude.shared.scroll.scroll\") == nullptr)、count≥3 加 != nullptr，两行把真形状锁死；不阻塞"
+    },
+    {
+      "id": "S-3",
+      "severity": "info",
+      "type": "scope-note",
+      "file": "src/module_claude_proxy/claude_ui_list.cpp",
+      "line": 435,
+      "issue": "恒高后存在「半压扁带」：bodyH∈[334,444)（客户区 <638，低于 720 最小窗）时区块被 min(204, bodyH−240) 夹到 [94,204)，条目视口 <2 行（仍可滚、无重叠）但无任何日志——guard① 阈值 94 未随恒高上调",
+      "impact": "非本次引入（旧形态该带同样静默，且当时无「2 行」承诺）、在支持的最小窗之下，功能无碍；但 verify 文档第 25-26 行『条目区 < 2 行仍可滚，LOG_ERROR 守门原样』的表述让守门显得覆盖 <2 行全域，实际只覆盖 sharedH<94（视口 <18）——口径偏宽，若后续有审计按该句核对会误判",
+      "suggestion": "不修代码（该带低于支持域、加了日志反成噪音）；guard① 注释补一句『[94,204) 带条目视口 <2 行同样静默，位于最小窗之下』，或把 verify 文档措辞收窄到 <94"
+    },
+    {
+      "id": "S-4",
+      "severity": "nano",
+      "type": "doc-accuracy",
+      "file": "docs/superpowers/plans/2026-09-30-shared-list-cap-verify.md",
+      "line": 40,
+      "issue": "两处口径漂移：①第 40 行『含 blockH0 跨档相等断言』——测试中并无该变量/跨档比较，实际形态是 0/1/2/3 各档独立断 |高−204|≤0.5（fail-fast，等价且更强）；②第 99 行『:447/:466/:585 三路径调用』实际为 :458/:477/:585",
+      "impact": "纯文档精度问题，数值结论不受影响；但审计/复查按行号或断言之名按图索骥会对不上",
+      "suggestion": "改成与实际一致的表述（『0/1/2/3 档各断 204』与 :458/:477/:585）；不阻塞"
+    },
+    {
+      "id": "S-5",
+      "severity": "nano",
+      "type": "pre-existing",
+      "file": "tests/probes/claude_probes.cpp",
+      "line": 98,
+      "issue": "probe 种子名 \"片段\" + std::to_string(static_cast<char>('A' + i)) —— std::to_string 对 char 走整型提升，生成的是 ASCII 码字符串 \"片段65\"..\"片段72\" 而非 片段A..片段H（截图里 片段65/片段66 的出处；verify 文档『8 片段种子』与截图因此自洽，非文档错误）",
+      "impact": "预存代码（不在本次 hunk 内）、纯命名观感；顺带解释了截图证据链，登记以免后续审计把它当『截图与种子对不上』的疑点重复调查",
+      "suggestion": "后续 probe 批顺手改 std::to_string(static_cast<int>('A' + i)) 或直接字面量数组；不属本次改动义务"
+    }
+  ],
+  "conclusion": {
+    "verdict": "通过——五点全核、无 medium/high；唯一 low 为头文件注释漂移（合入前顺手一行，不阻塞）",
+    "highest_severity": "low",
+    "counts": { "total": 5, "low": 1, "info": 2, "nano": 2 },
+    "points_one_line": {
+      "1_correctness": "204=76+128、行 64=56+8、恰 2 条靠 scrollview.h:71 严格 > 保证 scrollable=false/maxOffset=0（无滚动条）、≥3 条 maxOffset=64 可滚、偏移存模块态跨帧保持——全部成立",
+      "2_regression_surface": "sharedH 消费点全在本文件（grep 复核成立，行号有 11 行漂移）；test_ui_modern 两处为真机械回归（视口 568→458，旧断言必红、新 offset 下行 17 真在可视区，无掩盖）；极矮窗两条退化守门原样",
+      "3_platform_symmetry": "diff 全 hunk 零 #ifdef/#if（claude_ui_list.cpp 全文件 0 处），纯算术双平台同路径",
+      "4_silent_failure": "错误提示（claude.shared.error :686-692）与两条 LOG_ERROR 守门（:435/:508）均未丢；[94,204) 半压扁带无日志为非本次引入、低于最小窗（登记 S-3）",
+      "5_test_effectiveness": "红行 5331 实读命中、fail-fast 语义自洽、probe 210/490/291 独立复算逐字吻合、⑥ 对逆变异有判别力、⑤ 为需求级代理断言（真滚动条元素未直断，登记 S-2）"
+    },
+    "note": "本审计为实现者之外的独立只读复核；判据 1/3 的运行数字未复测（只读约束），但结构、常量链与全部变异数字均被独立复算对上。"
+  }
+}

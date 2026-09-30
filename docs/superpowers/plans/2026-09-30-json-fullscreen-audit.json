@@ -1,0 +1,103 @@
+{
+  "meta": {
+    "subject": "独立只读审计——feat/json-fullscreen-editor 217237d（git diff a1451e9...feat/json-fullscreen-editor，7 文件：claude_module.cpp / claude_ui_form.cpp+h / claude_ui_state.h / claude_probes.cpp / test_claude_ui.cpp / verify 文档）",
+    "date": "2026-09-30",
+    "auditor": "独立只读审计 agent（未参与实现，唯一写 = 本审计文件）",
+    "method": "分支版全量实读（git show feat/json-fullscreen-editor:<path>；工作树在 base a1451e9，分支内容一律经 git show 取）；EUI-NEO 机制的来源级核对：core/dsl.h:123/:246/:1765/:1776（subtreeMaxZIndex 上界语义 + 兄弟 stable_sort）、components/dialog.h:98/:106/:239（z=1000 + 全屏 backdrop + onClick=requestClose）、components/toast.h:241（1100）、components/contextmenu.h:369（1050）、core/runtime/runtime_input.h:111-121/:155-167（reverse z 命中序）/:416/:430（onContextMenu 需 topmostHover）、components/input.h:151-170（value→state 逐帧单向同步）/:207（focusable 命中）/ :359-363（Esc→onCancel）、core/runtime/runtime_lifecycle.h:127-129（press→setFocusedId(hitTestFocusable)）；DevDesk 接线核对：core/router.cpp:70-75/:85-92（单页 compose + 焦点未消费才派发模块）、main.cpp:617-620、ui_kit/metrics.h:45-56（Form=760）。独立复证：读 /tmp/jsonfs-probe/jsonfs_json_fs.png 实图（覆盖层实际盖满全窗、表单 dialog 不可见）。只读约束：未重跑构建/测试/变异（分支构建产物 mtime 16:06、dump 16:06-16:07、commit 16:08 仅作时序旁证；不跑 devdesk_tests 的原因：claude 用例会写系统 Keychain）",
+    "code_base": "feat/json-fullscreen-editor 217237d（= a1451e9 + 1 commit；行号 = 分支快照实测）",
+    "note": "审计文件落盘于 master 工作树（不影响分支）"
+  },
+  "audit_points": {
+    "1_correctness_z_and_esc": {
+      "status": "已核（层级与 Esc 双通道正确；档位本身无测试钉——见 F-1）",
+      "conclusion": "①z 档位出处逐条在案：dialog 默认 1000（EUI-NEO/components/dialog.h:239 zIndex_=1000，:98 恒调 .zIndex(zIndex_) → 表单弹窗根栈 = 全屏 stack + 1000，claude 侧 ui_kit::drawDialogFrame 走哨兵不覆盖）、toast 1100（components/toast.h:241）、contextmenu 1050（components/contextmenu.h:369，与覆盖层同值）。②「上界机制会不会拦 1050」= 不会：dsl.h:246 的 subtreeMaxZIndex 是**子树取 max 的上界键、只提升不封顶**（:1765 自身 z 起步、:1776 兄弟按该键 stable_sort）；1050 的覆盖层根与 1000 的五个弹窗根同属 claude 模块的 ui root 兄弟 → 覆盖层排后绘制、排前命中。全屏态下覆盖层子树内最高 z 即 1050，模块 root 子树最高仍是 toast 的 1100（该 1100 改动前已存在）→ 覆盖层没有抬高模块 root 的对外档位，app 级/兄弟模块序零变化。③toast 让位成立：1100 > 1050 且 drawToast 绘制序在后（claude_module.cpp:296 之后），即便同值也赢。④唯一同值 1050 的 contextmenu 不可能共存：进入全屏必经表单弹窗，而右键菜单 onSelect 先置 ctxMenuOpen_=false 再派发动作（claude_ui_list.cpp:804-807），且全屏态下覆盖层 bg 是唯一 topmostHover（onContextMenu 派发要求 topmostHover，runtime_input.h:416/:430）→ 卡片的右键不可达。⑤Esc 双通道真互斥：app 级 onKeyEvent 只在焦点元素未消费时派发到当前页模块（main.cpp:617-620 → router.cpp:70-75，router.h:48-49 明文），input 聚焦时 Esc 必被 onCancel 吃掉（input.h:359-363）；且进入全屏的那次点击（「全屏编辑」按钮非 focusable，input.h:207 只认 focusable 命中）必清焦点（lifecycle:127-129）——所以全屏刚开时 Esc 稳定走模块通道 closeTopmostDialog（claude_module.cpp:400-405 第一分支），点进大框后 Esc 稳定走输入框通道，二者不同帧同发。⑥序链次序正确：closeTopmostDialog 把全屏列最前，与绘制序（覆盖层在五弹窗之后、toast/右键菜单之前，claude_module.cpp:275-296）一致。"
+    },
+    "2_regression_surface": {
+      "status": "已核",
+      "conclusion": "①挂载点零外溢：Router 每帧只 compose 当前页模块（router.cpp:85-92），覆盖层是 claude 模块 compose 内的 root 兄弟；模块 root 的 subtreeMaxZIndex 改动前后同为 1100（toast 旧有）→ 对其它模块/ app 级绘制序零影响。②点击穿透：无。命中测试按 orderedRoots/orderedChildren 反序（runtime_input.h:111-121、:155-167），覆盖层 bg（blockPointer→interactive，dsl.h:545）全窗且 1050 → 恒 topmost；表单 dialog 的全屏 backdrop（dialog.h:106，onClick=requestClose=formOpen_=false）拿不到事件，弹窗不会被误关。③滚轮不穿透：bg 无 onScroll → 命中回落到表单 backdrop 的空 onScroll 消费位（dialog.h 同段），页面滚动区（claude.profiles.scroll）不会滚。④键盘不穿透：EUI-NEO 无 Tab 焦点遍历（InputKey::Tab 只在两端 backend 映射，core 无 next-focus 逻辑），press 已清焦点 → 隐藏的表单控件拿不到文本/按键。⑤与既有 submitForm 关闭链路零冲突：覆盖层「应用」= 表单「保存/创建」同一回调，成功路径置 formOpen_=false（claude_ui_form.cpp:352/:384 区），覆盖层可见性派生 formOpen_ && formJsonFullscreen_ → 同一次 compose 内一齐消失，无额外 onOpenChange 交互、无双关路径。⑥新按钮未挤压既有几何：boundhint 右移（x150→272，宽 w-300；w=Form=760，metrics.h:45）后最宽文本 ≈ 固定 26 字 ≈286px + 名 ≤16 字节 ≈ ≤96px = ≤382px < 460px，右缘 654 < 732 不越界。"
+    },
+    "3_platform_symmetry": {
+      "status": "已核",
+      "conclusion": "diff 内零平台宏（无 #if/#ifdef/_WIN32/__APPLE__），全走既有跨平台组件；多行编辑框有先例：表单自身的「高级设置 JSON」框（上一个里程碑）与共享片段弹窗（§8.1 JSON 化）同为 components::input(...).multiline(true).scrollbar(true)，本覆盖层是同一组件的第三次复用。覆盖层的自铺底色用主题 token（t.colors.background），无平台分支。probe 的三档尺寸矩阵（1200x720 / 1200x1000 / 1262x801）在 macOS 实跑，无平台相关断言。"
+    },
+    "4_silent_failure_surface": {
+      "status": "已核（红字同源可见；未应用退出按设计保留缓冲并在 hint 明示；另有 F-2 一处可达性代价）",
+      "conclusion": "①应用失败红字同源可见：覆盖层 error 节点读 !formError_.empty() ? formError_ : formAdvancedJsonError_（分支 claude_ui_form.cpp:1213-1224），与表单侧显示规则一致（表单底部行画 formError_：:1118-1123；行内 advanced error 仅在 formError_ 空时画：:768-776）——两处任一时刻显示的必然是同一份文本，无「失败了但没红字」的路径。②未应用退出**不是丢弃**：Esc/「完成」只置 formJsonFullscreen_=false，文本留在 formExtraSettingsJson_ 且回表单首行可见（用例 A ② 钉住），hint 行明写「未应用的文本保留」（:1190-1197）——静默丢弃只发生在随后取消整张表单（取消/Esc 表单级），那是表单既有语义、非本 diff 引入。③真正静默面已核无：应用失败不退全屏、不关表单、不落库（用例 B ③ 全表扫描钉住）。"
+    },
+    "5_test_effectiveness": {
+      "status": "2 条用例断言核对齐声称；发现 2 项（F-1 档位无钉 / F-6 红字同源非判别），另有 F-4 变异输出为节选",
+      "conclusion": "①2 新用例与 verify 文档声称逐条对齐（分支 test_claude_ui.cpp:3135-3496）：用例 A 覆盖几何（bg == 全窗 1600x1000 于 :3190-3195、panel ⊆ bg）、Esc 双通道（输入框 onCancel 消费 :3212-3219、模块级两次 Esc 序链 :3238-3260）、缓冲保留（表单框首行文本 == 输入原文 :3230-3236）；用例 B 覆盖缓冲往返两方向（:3318-3332 表单框→全屏格式化→保存→DB pretty；:3360-3372 全屏直输→保存→DB 含键）、红字同源 + 不退全屏 + 不落库（:3380-3405）。往返断言用 pretty-vs-compact 作判别器（第二份缓冲会让格式化空串 no-op → DB 仍 compact → 红），是真判别式，成立。②变异红→绿的引文行号精确对得上分支源（3191 = DOCTEST_REQUIRE(bg != nullptr)、3326 = click(ui,\"claude.jsonfs.format.bg\")，与文档所引 FAIL 行号逐字一致），机制自洽（两用例都依赖覆盖层节点在场/可点）。③见 F-1：z 档位本身无任何断言，覆盖层删掉会红、档位改错不会红。④见 F-6：红字同源断言在所选路径上非判别。⑤未复跑（只读约束 + 会写 Keychain）；分支 build/tests 产物 mtime 16:06、/tmp/jsonfs-probe 全窗 dump 2400x2000 完整在位，与文档时序自洽。"
+    },
+    "6_doc_fidelity": {
+      "status": "已核（commit message 与 diff 逐条一致；任务书偏离理由成立）",
+      "conclusion": "①commit message 逐条与 diff 对得上：z=1050/1000/1100（实证如上）、零第二份状态（两框同接 formExtraSettingsJson_/formError_/formAdvancedJsonError_；formatAdvancedJson 提升后语义与原内联 lambda 逐句等价——clear→empty return→parse→stringify→回写）、Esc 双通道、blockPointer 模态、提交闸门复用 submitForm 全部为实。②「应用成功随表单关闭同帧退全屏」与任务书「推荐留在全屏」的偏离**成立**：submitForm 成功路径无条件 formOpen_=false（:352、:384 区），若覆盖层坚持留在全屏 → (a) create 路径（formEditId_==0）再点「应用」会再次 createProfile → 真·二次建档（submitForm 只按 formEditId_ 分支，无幂等位）；(b) 表单已关则「完成」无处可回、红字/校验闸门成为无宿主覆盖层。toast 确认仍由既有 hooks 照发（1100 可见），用户不会失去成功反馈。理由在 commit message 与 verify 文档 §6 双处留痕，非事后补记。③F-4 记两处措辞级小差：verify §3 的变异输出为节选、§4「全部几何断言通过」指的是 probe 既有断言（json_fs 在 probe 里是 dump-only 步骤，无覆盖层专项断言，:465-478）。"
+    }
+  },
+  "findings": [
+    {
+      "id": "F-1",
+      "severity": "medium",
+      "type": "test-gap",
+      "file": "tests/test_modules/test_claude_ui.cpp",
+      "line": 3190,
+      "issue": "核心声称「z=1050 盖住表单 dialog」没有任何断言钉住：用例 A 的「盖住」只断言了 bg 几何全窗 + panel ⊆ bg（几何包含，与绘制序无关），用例 B/探究全部直接调 onClick/onTextInput/onKeyEvent（无命中测试）。变异 zIndex(1050)→zIndex(900) 后两用例仍全绿，而功能真坏：dialog 根栈 1000 > 900 会排在覆盖层之后绘制、命中测试反序遍历时其全屏 backdrop（dialog.h:106，onClick=requestClose）先被命中——在全屏框里任何一次点击都会变成「关表单」（formOpen_=false → 覆盖层同帧消失），且视觉上 760x600 的弹窗压在编辑器上。verify 文档 §3 的变异只删了整个调用，覆盖不到档位这一维。",
+      "impact": "本 diff 的中心机制（档位选型）无回归网；后续任何人调 z（或改 dialog 默认 1000、toast 1100）都不会被测试发现。EUI-NEO 的排序语义（subtreeMaxZIndex）本身也没被任何用例断言过——注释里「z 排序由 EUI-NEO stable_sort 保证」是口头委托。",
+      "suggestion": "成本极低：用例 A 里加三条断言——ui.find(\"claude.jsonfs.root\")->zIndex == 1050（Element::zIndex 是公开字段，测试已在读 frame/opacity/text 同族字段）、且 > 表单弹窗根（claude.dialog.form）的 zIndex、且 < ui.find(\"claude.toast 根\")->zIndex（若 toast 恒建）。若要更硬，可复用运行时命中（Runtime::hitTestInteractive 不在测试驱动面内，改断 orderedRoots 相对次序亦可）。"
+    },
+    {
+      "id": "F-2",
+      "severity": "low",
+      "type": "ux-cost",
+      "file": "src/module_claude_proxy/claude_ui_form.cpp",
+      "line": 1237,
+      "issue": "覆盖层「应用」直接复用 submitForm 全部闸门，其中「名称和 Base URL 不能为空」「新建 Profile 必须填写 API Key」（claude_ui_form.cpp:274-279、:307-311）这两类错误的修复字段在基础页——全屏态下被覆盖层遮住不可达（Tab/点击均不可达，见点 2 ④），用户只能红字→「完成」→改基础页→重进全屏。红字可见，不算静默失败，但错误提示与修复动作被断开。",
+      "impact": "新建 profile 且 key/名未填时，全屏编辑的「应用」是一条必然失败且当场修不了的路径（编辑态通常不触发）。",
+      "suggestion": "非阻塞。可选：hint 行补一句「基础项（名称/URL/Key）缺失需「完成」回表单补」（一行文案）；或全屏态「应用」前置本地预检并在红字里显式指向「完成→基础页」。"
+    },
+    {
+      "id": "F-3",
+      "severity": "low",
+      "type": "state-hygiene",
+      "file": "src/module_claude_proxy/claude_ui_state.h",
+      "line": 170,
+      "issue": "formJsonFullscreen_ 在「应用成功关表单」路径上不复位（submitForm 只置 formOpen_=false），复位全靠 openCreateForm/openEditForm 两个入口（claude_ui_form.cpp:85、:120）。今日无泄漏路径（formOpen_=true 的写点全域只有这两处 + dialog onOpenChange 镜像），但不变式「formOpen_==false ⇒ 该旗必为 false」只是隐含约定，没有结构性保障。",
+      "impact": "将来任何新增「不经过 openCreate/openEditForm 就置 formOpen_=true」的入口（如把某弹窗改成复用表单栈）会继承上一份全屏残态；closeTopmostDialog 的第一分支有 && formOpen_ 守卫，故最坏是残态旗随下一次开表单被重置，不产生可见错误——属可维护性风险。",
+      "suggestion": "submitForm 成功路径（两处 formOpen_=false 旁）或 drawJsonFullscreenOverlay 的 !formOpen_ 早退分支里顺手 formJsonFullscreen_=false，把不变式变成结构性的（一行）。"
+    },
+    {
+      "id": "F-4",
+      "severity": "low",
+      "type": "doc-fidelity",
+      "file": "docs/superpowers/plans/2026-09-30-json-fullscreen-verify.md",
+      "line": 30,
+      "issue": "两处措辞级失真：①§3 变异输出为节选——注释掉覆盖层调用后，用例 B 还会在 :3330（click claude.jsonfs.done.bg）与 fs_d6 的 DOCTEST_REQUIRE(claude.jsonfs.error != nullptr) 处继续变红（doctest CHECK 不中断用例），文档只引了 3326 一条。②§4「全部几何断言通过 → 三档尺寸矩阵无 FAIL」易读成 probe 也断言了覆盖层几何；实际 probe 新增步只有 onClick 驱动 + dumpState(\"json_fs\")（claude_probes.cpp:465-478），覆盖层的几何钉在单测里。",
+      "impact": "引用的行号与机制均属实、无不实声称，但读者若把节选当全量输出会低估变异的红面；§4 措辞有被误读成 probe 断言覆盖层几何的空间。",
+      "suggestion": "§3 补「（输出节选，用例 B 另有多条 CHECK/REQUIRE 同红）」；§4 改「probe 既有几何断言全通过 + 覆盖层态 dump 落图（覆盖层几何由单测断言）」。不阻塞。"
+    },
+    {
+      "id": "F-5",
+      "severity": "info",
+      "type": "deviation-note",
+      "file": "docs/superpowers/plans/2026-09-30-json-fullscreen-verify.md",
+      "line": 62,
+      "issue": "记录在案：与任务书「推荐应用成功留在全屏」的偏离成立（非缺陷）——孤儿覆盖层 + create 路径二次建档两条论证经源码实证：submitForm 只按 formEditId_ 分流（:308 区）且成功即关表单，留在全屏时再点「应用」会 createProfile 第二次；且表单关闭后「完成」无宿主、红字无宿主。",
+      "impact": "无；用户仍拿到 toast 成功反馈（1100 > 1050，且覆盖层已随表单同帧消失）。",
+      "suggestion": "保留；若产品仍想要「编辑态留在全屏」，需先给 submitForm 补幂等位（成功后把 formEditId_ 置为新 id 并保持 formOpen_），那是独立改动，不应塞进本 diff。"
+    },
+    {
+      "id": "F-6",
+      "severity": "info",
+      "type": "test-gap",
+      "file": "tests/test_modules/test_claude_ui.cpp",
+      "line": 3398,
+      "issue": "用例 B ③ 的「红字同源」在所选路径上非判别：submitForm 的 JSON 校验失败会**同时**写 formError_ 与 formAdvancedJsonError_（claude_ui_form.cpp:297-302 两条同样的错误串），而覆盖层读的是 formError_ 优先——无论实现读哪一个，断言 ferr->text == fsErrText 都成立；被声称的「优先 formError_ 提交闸门」这一分支没有任何用例踩到（能判别的是：JSON 合法但别的闸门失败时 formAdvancedJsonError_ 为空/过期、formError_ 非空）。",
+      "impact": "红字「同源可见」已证；「分层优先级」未被证。断言语义弱于 verify 文档表格给人的印象。",
+      "suggestion": "补 2-3 行：进入编辑表单后清空 JSON 框里的内容（或填合法 JSON），再点「应用」触发名称/URL 类闸门 → 全屏 error == formError_ 文案且 formAdvancedJsonError_ 为空，即钉住优先级分支。"
+    }
+  ],
+  "conclusion": {
+    "verdict": "可合并（无阻塞项）",
+    "blocking_findings": 0,
+    "summary": "六维度全部核完：①正确性已核——dialog 1000 / toast 1100 / contextmenu 1050 三处档位出处逐条在案（EUI-NEO dialog.h:239、toast.h:241、contextmenu.h:369），subtreeMaxZIndex 是只提升不封顶的兄弟排序键（dsl.h:246/:1765/:1776），1050 不被拦且不改模块 root 对外档位（旧有 toast 1100 已在最高）；同值 1050 的右键菜单不可共存（onSelect 先关、topmostHover 门槛）；Esc 双通道经 router 的「焦点未消费才派发模块」 + press 清焦点实证真互斥。②回归面已核——单页 compose、模块 root 档位不变、命中/滚轮/键盘三路穿透均不通，应用成功关闭链路与既有 submitForm 同源无冲突。③平台对称性已核——零平台宏、多行框第三次复用。④静默失败面已核——应用失败红字两来源同屏可见，未应用退出是保留缓冲并在 hint 明示，非静默丢弃。⑤测试有效性——2 用例断言与声称对齐、往返判别式成立、变异引文行号与分支源逐字吻合；但发现 F-1（z 档位本身零断言，zIndex 变异仍全绿——本 diff 中心机制的回归网缺口，medium）；F-6（红字同源断言非判别「优先 formError_」分支，info）。⑥文档口径已核——commit message 逐条与 diff 一致，任务书「留在全屏」的偏离理由经源码实证成立（create 二次建档 + 孤儿层），F-4 仅两处措辞级失真。共 6 条 findings：1 medium、3 low、2 info，无一阻塞；独立复证：实读 /tmp/jsonfs-probe/jsonfs_json_fs.png，覆盖层确实盖满全窗、表单 dialog 完全不可见。"
+  }
+}
