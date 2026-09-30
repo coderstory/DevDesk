@@ -184,6 +184,13 @@
       "file": "src/module_markdown/",
       "decision": "登记不修",
       "reason": "本批 diff 范围外既有行为，非本期修复目标"
+    },
+    {
+      "topic": "「复制配置」导出脱敏加固（merge-review R1-1，commit a2d6b69 / merge 02b3afa）",
+      "file": "src/module_claude_proxy/claude_ui_logic.cpp:72（buildProfileExportJson）",
+      "decision": "已修 → 2026-09-30 用户点验后撤回（revert commit 在 dev 上，message 含「撤回…不作 bug 修」）",
+      "reason": "加固内容 = 导出 JSON 无条件剔除 ANTHROPIC_API_KEY/ANTHROPIC_AUTH_TOKEN（堵 extra_env 自填 token 进剪贴板的明文口）。装包后用户点验报「复制配置」报「找不到凭证无法复制」——该报错属本项目既知状态（之前出现过、后来以别的口径处理过），用户明确判定不要再当 bug 修，要求撤回该部分代码。加固背后的审计发现（extra_env 自填凭据可绕过脱敏契约）仍记录在案，不等于否决。若要再做：需与复制路径口径同步后再评估",
+      "followup": "需与复制路径口径同步后再评估"
     }
   ],
 
