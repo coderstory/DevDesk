@@ -304,6 +304,12 @@ SyncResult takeOver(const Profile& profile, int proxyPort, const Paths& paths,
     managedKeys.reserve(managed.size());
     for (const auto& [k, v] : managed) managedKeys.push_back(k);
 
+    // 生效高级设置 JSON 本轮将写入的顶层键（§5.2③⑤ 输入；best-effort 枚举，
+    // 非法/超限 → 空集 = 本轮照常只写 env，用户可见的解析失败警告由下方
+    // applyExtraSettingsToSettingsDoc 统一发，防双报）
+    const std::vector<std::string> pendingNonEnvKeys =
+        extraSettingsTopLevelKeys(profile.extraSettingsJson);
+
     // 1. 读现有 settings.json（解析失败 → 中止不写，宁可不让用户自动接入）
     auto doc = parseJsonObjectFile(paths.settingsFile);
     if (!doc.ok) {
@@ -324,6 +330,8 @@ SyncResult takeOver(const Profile& profile, int proxyPort, const Paths& paths,
     //    sidecar 存在但损坏 → 中止，同理）
     JsonObject snapshotEnv = env;  // 首次接管：接管前的原 env
     std::vector<std::string> snapshotWarnings;  // 快照污染守卫命中（条目 2①）
+    JsonObject priorNonEnvSnapshot;             // sidecar 已有 nonEnvSnapshot
+    std::vector<std::string> priorNonEnvKeys;   // sidecar 已有 nonEnvKeys 并集
     if (fileExists(paths.sidecarFile)) {
         auto sidecar = parseJsonObjectFile(paths.sidecarFile);
         if (!sidecar.ok || !sidecar.exists) {
@@ -340,6 +348,15 @@ SyncResult takeOver(const Profile& profile, int proxyPort, const Paths& paths,
         if (sidecar.obj.has("envSnapshot") &&
             sidecar.obj.get("envSnapshot").isObject()) {
             snapshotEnv = sidecar.obj.get("envSnapshot").asObject();
+        }
+        // nonEnv 域既有记账（§5.2③：缺失字段 → 空集，读侧 .has() 守卫）
+        if (sidecar.obj.has("nonEnvSnapshot") &&
+            sidecar.obj.get("nonEnvSnapshot").isObject()) {
+            priorNonEnvSnapshot = sidecar.obj.get("nonEnvSnapshot").asObject();
+        }
+        if (sidecar.obj.has("nonEnvKeys") &&
+            sidecar.obj.get("nonEnvKeys").isObject()) {
+            priorNonEnvKeys = sidecar.obj.get("nonEnvKeys").asObject().keys();
         }
     } else {
         // 首份快照污染守卫（条目 2①）：现有 env 里的本机代理形态键是上次残留
@@ -364,11 +381,47 @@ SyncResult takeOver(const Profile& profile, int proxyPort, const Paths& paths,
     std::sort(managedKeys.begin(), managedKeys.end());
     managedKeys.erase(std::unique(managedKeys.begin(), managedKeys.end()),
                       managedKeys.end());
+
+    // nonEnv 域记账（§5.2③④，审计 F-1 merge-only 补拍）：快照政策与
+    // envSnapshot **刻意不同构**——envSnapshot 首拍兜的是整个 env 对象，后续
+    // 任何新托管键的原值都已在快照里，「不重拍」成立；nonEnv 域只拍本轮写入
+    // 键，照抄「不重拍」会在多轮接管下丢用户原值（反例见 §10 往返④）。因此：
+    //   sidecar 不存在（首拍）→ 对本轮将写入的每个非 env 键 K，live root 有 K
+    //     则记入 nonEnvSnapshot；
+    //   sidecar 已存在 → 只对「本轮将写入、且此前不在 nonEnvKeys 并集里」的
+    //     新增键 K 补拍（live 有 K 且快照无 K → 补入）。已在并集里的键维持原
+    //     快照条目不重拍——其 live 值必是 DevDesk 写的托管值，重拍会把托管值
+    //     当用户原值（保留原意图）。
+    // "env" 自身防御性跳过（extraSettings 写入路径永不托管 "env"，病态输入下
+    // 也不能把整个 env 块记成「非 env 键」）
     {
+        std::vector<std::string> prior = priorNonEnvKeys;
+        std::sort(prior.begin(), prior.end());
+        for (const auto& k : pendingNonEnvKeys) {
+            if (k == "env") continue;
+            const bool alreadyManaged =
+                std::binary_search(prior.begin(), prior.end(), k);
+            if (alreadyManaged) continue;   // 已托管：不重拍（F-1）
+            if (root.has(k) && !priorNonEnvSnapshot.has(k)) {
+                priorNonEnvSnapshot.set(k, root.get(k));
+            }
+        }
+    }
+    std::vector<std::string> nonEnvKeys = pendingNonEnvKeys;
+    nonEnvKeys.insert(nonEnvKeys.end(), priorNonEnvKeys.begin(),
+                      priorNonEnvKeys.end());
+    std::sort(nonEnvKeys.begin(), nonEnvKeys.end());
+    nonEnvKeys.erase(std::unique(nonEnvKeys.begin(), nonEnvKeys.end()),
+                     nonEnvKeys.end());
+    {
+        // sidecar v2（§5.1）：既有 managedKeys / envSnapshot 不动，增
+        // nonEnvKeys + nonEnvSnapshot（旧 sidecar 无新字段 = 读侧按空集，D-9）
         JsonObject sidecar;
         sidecar.set("managedKeys",
                     JsonValue(managedKeysObject(managedKeys)));
         sidecar.set("envSnapshot", JsonValue(snapshotEnv));
+        sidecar.set("nonEnvKeys", JsonValue(managedKeysObject(nonEnvKeys)));
+        sidecar.set("nonEnvSnapshot", JsonValue(priorNonEnvSnapshot));
         auto text = platform::json::stringify(JsonValue(sidecar));
         if (text.isFail()) {
             out.error = "sidecar 序列化失败: " + text.errorMessage();
@@ -400,11 +453,46 @@ SyncResult takeOver(const Profile& profile, int proxyPort, const Paths& paths,
         env = std::move(kept);
     }
 
-    // 4. 合并写入 env（托管键覆盖，用户 env 键保留），非 env 顶层字段不动
+    // 3.5 陈旧非 env 键删除（§5.2⑤，同 env 陈旧托管键同构）：在 nonEnvKeys
+    // 并集里、但本轮不写的键从 root 移除（如上一轮 JSON 有 statusLine、本轮
+    // 删掉了——留着会把上一轮的托管值固化成用户配置）。本轮写的键由下方
+    // apply 步写入，不在此列
+    {
+        JsonObject kept;
+        for (const auto& key : root.keys()) {
+            const bool pendingThisRound =
+                std::find(pendingNonEnvKeys.begin(), pendingNonEnvKeys.end(),
+                          key) != pendingNonEnvKeys.end();
+            if (key == "env" || pendingThisRound) {
+                kept.set(key, root.get(key));
+                continue;
+            }
+            const bool staleNonEnv =
+                std::find(nonEnvKeys.begin(), nonEnvKeys.end(), key) !=
+                nonEnvKeys.end();
+            if (staleNonEnv) continue;
+            kept.set(key, root.get(key));
+        }
+        root = std::move(kept);
+    }
+
+    // 4. 合并写入 env（托管键覆盖，用户 env 键保留）
     for (const auto& [k, v] : managed) {
         env.set(k, platform::json::makeString(v));
     }
     root.set("env", JsonValue(env));
+
+    // 4.5 生效 JSON 并入顶层（§4.2 步骤 2-3，设计 D-3/D-4）：非 env 属性赢过
+    // live 既有同名键；"model" 非空字符串触发 ANTHROPIC_MODEL 抑制（抑制发生
+    // 在合并写入之后的 apply 步，F-5 时序）。至此「非 env 顶层字段不动」的旧
+    // 边界（provider-config 时代）由本行取代
+    {
+        auto apply = applyExtraSettingsToSettingsDoc(root,
+                                                     profile.extraSettingsJson);
+        for (const auto& warn : apply.warnings) {
+            out.warnings.push_back("高级设置 JSON: " + warn);
+        }
+    }
 
     // 5. 原子写
     auto text = platform::json::stringify(JsonValue(root), /*pretty=*/true);
@@ -455,6 +543,18 @@ SyncResult restore(const Paths& paths) {
         sidecar.obj.get("envSnapshot").isObject()) {
         snapshotEnv = sidecar.obj.get("envSnapshot").asObject();
     }
+    // nonEnv 域记账读取（§5.3）：旧 sidecar 无新字段 → 空集（.has() 守卫，
+    // 无兼容分支——旧接管从未写过非 env 属性，空集 = root 层全透传，D-9）
+    std::vector<std::string> nonEnvKeys;
+    if (sidecar.obj.has("nonEnvKeys") &&
+        sidecar.obj.get("nonEnvKeys").isObject()) {
+        nonEnvKeys = sidecar.obj.get("nonEnvKeys").asObject().keys();
+    }
+    JsonObject nonEnvSnapshot;
+    if (sidecar.obj.has("nonEnvSnapshot") &&
+        sidecar.obj.get("nonEnvSnapshot").isObject()) {
+        nonEnvSnapshot = sidecar.obj.get("nonEnvSnapshot").asObject();
+    }
 
     // 读 settings.json（解析失败 → 报错并保留 sidecar）
     if (!fileExists(paths.settingsFile)) {
@@ -470,6 +570,33 @@ SyncResult restore(const Paths& paths) {
         return out;
     }
     JsonObject root = std::move(doc.obj);
+
+    // root 层重建（§5.3，managedKeys 的 env 重建循环同构外推到顶层）：在
+    // nonEnvKeys 里的键一律不透传当前值——nonEnvSnapshot 有该键 → 恢复原值，
+    // 没有 → 删除（键在接管前不存在 = 不在快照里）。"env" 自身防御性跳过
+    //（extraSettings 写入路径永不托管 "env"；防病态 sidecar 把整个 env 块删掉）
+    {
+        JsonObject rebuiltRoot;
+        for (const auto& key : root.keys()) {
+            if (key == "env") {
+                rebuiltRoot.set(key, root.get(key));
+                continue;
+            }
+            if (std::find(nonEnvKeys.begin(), nonEnvKeys.end(), key) !=
+                nonEnvKeys.end()) {
+                continue;   // 托管非 env 键统一走快照恢复，不透传当前值
+            }
+            rebuiltRoot.set(key, root.get(key));
+        }
+        for (const auto& key : nonEnvKeys) {
+            if (key == "env") continue;
+            if (nonEnvSnapshot.has(key)) {
+                rebuiltRoot.set(key, nonEnvSnapshot.get(key));   // 原值恢复
+            }   // 快照里没有 → 原本不存在 → 不进 rebuiltRoot（即删除）
+        }
+        root = std::move(rebuiltRoot);
+    }
+
     JsonObject env = root.has("env") && root.get("env").isObject()
         ? root.get("env").asObject() : JsonObject();
 

@@ -496,6 +496,16 @@ core::Result<void> ClaudeService::runProfile(int64_t id, std::string* hint) {
     }
     platform::json::JsonObject root;
     root.set("env", platform::json::JsonValue(std::move(envObj)));
+    // 生效高级设置 JSON 并入顶层（2026-09-30 advanced-json-editor 设计 §4.1
+    // 裁决①：直连会话同样带 hooks/permissions，三链不分叉；临时文件随会话
+    // 自删 + 24h 清扫兜底，无 sidecar 记账负担）。片段 JSON 域叠加自 §8 起
+    // 经 effectiveExtraSettingsJson 在此处并入（过渡期片段仍是 env 域，不动）
+    {
+        auto apply = applyExtraSettingsToSettingsDoc(root, p.extraSettingsJson);
+        for (const auto& w : apply.warnings) {
+            LOG_WARN("runProfile: 高级设置 JSON: " + w);
+        }
+    }
     auto text = platform::json::stringify(platform::json::JsonValue(std::move(root)));
     if (text.isFail()) {
         return core::Result<void>::fail(text.errorCode(),

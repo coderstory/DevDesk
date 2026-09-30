@@ -1249,3 +1249,231 @@ REGISTER_TEST(sync_service_shared_config_delete_retakeover,
                                      "claude:" + std::to_string(pa.id));
     return true;
 })
+
+// ===== 接管/还原往返·高级设置 JSON（2026-09-30 advanced-json-editor 设计 §10，
+// ===== sidecar v2：nonEnvKeys/nonEnvSnapshot + merge-only 补拍，F-1）=====
+
+// 读 sidecar 的 nonEnvSnapshot / nonEnvKeys（§5.1 v2 形态断言用）
+static std::map<std::string, std::string> readSidecarNonEnvSnapshot(
+    const std::filesystem::path& f) {
+    std::map<std::string, std::string> out;
+    std::ifstream i(f, std::ios::binary);
+    if (!i) return out;
+    std::ostringstream ss;
+    ss << i.rdbuf();
+    auto parsed = platform::json::parse(ss.str());
+    if (parsed.isFail() || !parsed.value().isObject()) return out;
+    auto obj = parsed.value().asObject();
+    if (!obj.has("nonEnvSnapshot") || !obj.get("nonEnvSnapshot").isObject())
+        return out;
+    auto snap = obj.get("nonEnvSnapshot").asObject();
+    for (const auto& k : snap.keys()) {
+        out[k] = snap.get(k).isString() ? snap.get(k).asString() : std::string();
+    }
+    return out;
+}
+
+static std::vector<std::string> readSidecarNonEnvKeys(
+    const std::filesystem::path& f) {
+    std::vector<std::string> out;
+    std::ifstream i(f, std::ios::binary);
+    if (!i) return out;
+    std::ostringstream ss;
+    ss << i.rdbuf();
+    auto parsed = platform::json::parse(ss.str());
+    if (parsed.isFail() || !parsed.value().isObject()) return out;
+    auto obj = parsed.value().asObject();
+    if (!obj.has("nonEnvKeys") || !obj.get("nonEnvKeys").isObject()) return out;
+    return obj.get("nonEnvKeys").asObject().keys();
+}
+
+// ① 接管写入 env + JSON 属性；live 已有同名非 env 键时 JSON 值胜，旧值进
+//    nonEnvSnapshot（D-3：被覆盖旧值还原无损）
+REGISTER_TEST(sync_takeover_extra_settings_written,
+              "settings_sync: 接管写入 JSON 属性，同名键 JSON 胜且旧值进 nonEnvSnapshot", {
+    using namespace module::claude;
+    test_support::TempDir d("xset1", kSyncTempDirPrefix);
+    auto paths = makePaths(d);
+    d.write(paths.settingsFile,
+            R"({"env": {"MY_KEY": "user"}, "model": "live-model", "statusLine": "live-s"})");
+
+    Profile p;
+    p.model = "m-1";
+    p.extraSettingsJson = R"({"model": "json-model", "statusLine": "json-s"})";
+
+    auto r = settings_sync::takeOver(p, 8888, paths);
+    DOCTEST_REQUIRE(r.ok);
+    // JSON 赢过 live 既有同名键（D-3）
+    DOCTEST_CHECK_EQ(topLevelString(paths.settingsFile, "model"),
+                     std::string("json-model"));
+    DOCTEST_CHECK_EQ(topLevelString(paths.settingsFile, "statusLine"),
+                     std::string("json-s"));
+    // env 照常写入；且 JSON 的 "model"（非空字符串）触发 ANTHROPIC_MODEL 抑制
+    //（D-4：def 槽位 env 键被顶层 model 对映键压制，不写入）
+    {
+        const auto envWritten = readEnv(paths.settingsFile);
+        DOCTEST_CHECK(envWritten.find("ANTHROPIC_MODEL") == envWritten.end());
+    }
+    // 旧值进 nonEnvSnapshot（还原无损的前提）
+    const auto snap = readSidecarNonEnvSnapshot(paths.sidecarFile);
+    DOCTEST_CHECK_EQ(snap.at("model"), std::string("live-model"));
+    DOCTEST_CHECK_EQ(snap.at("statusLine"), std::string("live-s"));
+    const auto keys = readSidecarNonEnvKeys(paths.sidecarFile);
+    DOCTEST_CHECK(hasKeyEntry(keys, "model"));
+    DOCTEST_CHECK(hasKeyEntry(keys, "statusLine"));
+    DOCTEST_REQUIRE(settings_sync::restore(paths).ok);
+    DOCTEST_CHECK_EQ(topLevelString(paths.settingsFile, "model"),
+                     std::string("live-model"));
+    DOCTEST_CHECK_EQ(topLevelString(paths.settingsFile, "statusLine"),
+                     std::string("live-s"));
+    return true;
+})
+
+// ② ANTHROPIC_MODEL 抑制：JSON 含非空 "model" → env 无该键（apply 步移除，
+//    F-5 时序）且该键仍在 managedKeys 并集（restore 语义不变）
+REGISTER_TEST(sync_takeover_model_suppress,
+              "settings_sync: JSON model 键抑制 ANTHROPIC_MODEL，managedKeys 并集仍含该键", {
+    using namespace module::claude;
+    test_support::TempDir d("xset2", kSyncTempDirPrefix);
+    auto paths = makePaths(d);
+    d.write(paths.settingsFile, R"({"env": {"MY_KEY": "user"}})");
+
+    Profile p;
+    p.model = "m-1";   // def 槽位（legacy fallback → buildProxyEnv 会生成该键）
+    p.extraSettingsJson = R"({"model": "json-model"})";
+    auto r = settings_sync::takeOver(p, 8888, paths);
+    DOCTEST_REQUIRE(r.ok);
+    // 抑制：env 无 ANTHROPIC_MODEL；JSON 的 model 在顶层
+    {
+        const auto envWritten = readEnv(paths.settingsFile);
+        DOCTEST_CHECK(envWritten.find("ANTHROPIC_MODEL") == envWritten.end());
+    }
+    DOCTEST_CHECK_EQ(topLevelString(paths.settingsFile, "model"),
+                     std::string("json-model"));
+    // managedKeys 并集仍含该键（buildProxyEnv 产出未变 → restore 语义不变）
+    auto rd = readSettingsEnvForSync(paths);
+    DOCTEST_REQUIRE(rd.ok);
+    DOCTEST_CHECK(hasKeyEntry(rd.managedKeys, "ANTHROPIC_MODEL"));
+
+    // restore：env 键按快照撤走；顶层 "model" 同样按 nonEnv 记账撤走
+    //（live 原本无 model 键 → 删除）
+    DOCTEST_REQUIRE(settings_sync::restore(paths).ok);
+    DOCTEST_CHECK(topLevelString(paths.settingsFile, "model").empty());
+
+    // 本轮 JSON 不含 model → 该键回到 buildProxyEnv 生成（m-1，槽位仍在）、
+    // 不再被抑制（F-5 的另一半：抑制只发生在「本轮 JSON 含 model」的 apply
+    // 步，不是持久状态——上一轮的抑制不残留，槽位键随 JSON 撤除自然恢复）
+    p.extraSettingsJson = R"({"statusLine": "on"})";
+    DOCTEST_REQUIRE(settings_sync::takeOver(p, 8888, paths).ok);
+    DOCTEST_CHECK_EQ(readEnv(paths.settingsFile).at("ANTHROPIC_MODEL"),
+                     std::string("m-1"));
+    DOCTEST_CHECK(topLevelString(paths.settingsFile, "statusLine") ==
+                  std::string("on"));
+    // JSON 改回空串 → 无抑制状态残留，键照常生成
+    p.extraSettingsJson = "";
+    DOCTEST_REQUIRE(settings_sync::takeOver(p, 8888, paths).ok);
+    DOCTEST_CHECK_EQ(readEnv(paths.settingsFile).at("ANTHROPIC_MODEL"),
+                     std::string("m-1"));
+    // restore：撤走（快照无原值 → 删除）
+    DOCTEST_REQUIRE(settings_sync::restore(paths).ok);
+    {
+        const auto envFinal = readEnv(paths.settingsFile);
+        DOCTEST_CHECK(envFinal.find("ANTHROPIC_MODEL") == envFinal.end());
+        DOCTEST_CHECK(envFinal.find("MY_KEY") != envFinal.end());   // 用户键保留
+    }
+    return true;
+})
+
+// ③ restore：JSON 写入且快照无原值的键被删除、快照有原值的键恢复、sidecar 删除
+REGISTER_TEST(sync_restore_extra_settings,
+              "settings_sync: restore 按 nonEnvKeys/nonEnvSnapshot 恢复或删除顶层键", {
+    using namespace module::claude;
+    test_support::TempDir d("xset3", kSyncTempDirPrefix);
+    auto paths = makePaths(d);
+    d.write(paths.settingsFile,
+            R"({"env": {}, "statusLine": "user-s", "permissions": {"p": 1}})");
+
+    Profile p;
+    p.extraSettingsJson = R"({"statusLine": "json-s", "hooks": {}})";
+    DOCTEST_REQUIRE(settings_sync::takeOver(p, 8888, paths).ok);
+    DOCTEST_CHECK_EQ(topLevelString(paths.settingsFile, "statusLine"),
+                     std::string("json-s"));
+    DOCTEST_CHECK(settings_sync::hasPendingSnapshot(paths));
+    DOCTEST_REQUIRE(settings_sync::restore(paths).ok);
+    // 快照有原值 → 恢复；快照无原值（原本不存在）→ 删除；sidecar 已删
+    DOCTEST_CHECK_EQ(topLevelString(paths.settingsFile, "statusLine"),
+                     std::string("user-s"));
+    DOCTEST_CHECK(topLevelString(paths.settingsFile, "hooks").empty());
+    DOCTEST_CHECK_FALSE(settings_sync::hasPendingSnapshot(paths));
+    // 用户自己的其他顶层键零触碰
+    auto doc = platform::json::parse(d.read(paths.settingsFile));
+    DOCTEST_REQUIRE(doc.isOk());
+    DOCTEST_CHECK(doc.value().asObject().has("permissions"));
+    return true;
+})
+
+// ④ merge-only 补拍（F-1 反例）：第 1 轮 JSON 无 statusLine、live 有手写值 →
+//    不进账；第 2 轮 JSON 加 statusLine 热切换 re-takeover → 原值补拍 →
+//    restore 恢复而非删除；且二次接管对已托管键不重拍
+REGISTER_TEST(sync_takeover_merge_only_snapshot,
+              "settings_sync: 二次接管 merge-only 补拍（新增键首拍、已托管键不重拍，F-1）", {
+    using namespace module::claude;
+    test_support::TempDir d("xset4", kSyncTempDirPrefix);
+    auto paths = makePaths(d);
+    d.write(paths.settingsFile,
+            R"({"env": {}, "model": "user-model", "statusLine": "user-s"})");
+
+    // 第 1 轮：JSON 只有 model（statusLine 不写入 → 不进 nonEnvKeys）
+    Profile p;
+    p.extraSettingsJson = R"({"model": "json-model"})";
+    DOCTEST_REQUIRE(settings_sync::takeOver(p, 8888, paths).ok);
+    {
+        const auto keys = readSidecarNonEnvKeys(paths.sidecarFile);
+        DOCTEST_CHECK(hasKeyEntry(keys, "model"));
+        DOCTEST_CHECK(!hasKeyEntry(keys, "statusLine"));   // 未写入 → 未进账
+        const auto snap = readSidecarNonEnvSnapshot(paths.sidecarFile);
+        DOCTEST_CHECK_EQ(snap.at("model"), std::string("user-model"));   // 首拍
+    }
+    // 第 2 轮（热切换 re-takeover，sidecar 已存在）：JSON 加 statusLine
+    p.extraSettingsJson = R"({"model": "json-model", "statusLine": "json-s"})";
+    DOCTEST_REQUIRE(settings_sync::takeOver(p, 8888, paths).ok);
+    {
+        const auto keys = readSidecarNonEnvKeys(paths.sidecarFile);
+        DOCTEST_CHECK(hasKeyEntry(keys, "statusLine"));
+        const auto snap = readSidecarNonEnvSnapshot(paths.sidecarFile);
+        // 补拍：statusLine 首次进账 → live 原值入快照（无此步 restore 会静默删它）
+        DOCTEST_CHECK_EQ(snap.at("statusLine"), std::string("user-s"));
+        // 不重拍：model 已在并集里，快照条目维持原值（live 现值是 JSON 托管值
+        // "json-model"，重拍会把托管值当用户原值）
+        DOCTEST_CHECK_EQ(snap.at("model"), std::string("user-model"));
+    }
+    // restore：两个键都恢复用户原值（F-1 反例的验收点）
+    DOCTEST_REQUIRE(settings_sync::restore(paths).ok);
+    DOCTEST_CHECK_EQ(topLevelString(paths.settingsFile, "model"),
+                     std::string("user-model"));
+    DOCTEST_CHECK_EQ(topLevelString(paths.settingsFile, "statusLine"),
+                     std::string("user-s"));
+    return true;
+})
+
+// ⑤ 旧形态 sidecar（无 nonEnv 新字段）→ restore 不误删任何非 env 键（D-9 空集守卫）
+REGISTER_TEST(sync_restore_v1_sidecar_no_nonenv,
+              "settings_sync: 旧形态 sidecar（无 nonEnv 字段）restore 不动非 env 键", {
+    using namespace module::claude;
+    test_support::TempDir d("xset5", kSyncTempDirPrefix);
+    auto paths = makePaths(d);
+    d.write(paths.settingsFile,
+            R"({"env": {"MY_KEY": "user", "ANTHROPIC_BASE_URL": "http://127.0.0.1:8888", "ANTHROPIC_AUTH_TOKEN": "PROXY_MANAGED"}, "statusLine": "user-s"})");
+    // 手工造 v1 形态 sidecar（只有 managedKeys + envSnapshot）
+    d.write(paths.sidecarFile,
+            R"({"managedKeys": {"ANTHROPIC_BASE_URL": "", "ANTHROPIC_AUTH_TOKEN": ""}, "envSnapshot": {"MY_KEY": "user"}})");
+
+    DOCTEST_REQUIRE(settings_sync::restore(paths).ok);
+    // env 域照旧还原；非 env 域全透传（空集 = 不透传判定不命中）
+    const auto env = readEnv(paths.settingsFile);
+    DOCTEST_CHECK_EQ(env.at("MY_KEY"), std::string("user"));
+    DOCTEST_CHECK(env.find("ANTHROPIC_BASE_URL") == env.end());
+    DOCTEST_CHECK_EQ(topLevelString(paths.settingsFile, "statusLine"),
+                     std::string("user-s"));
+    return true;
+})

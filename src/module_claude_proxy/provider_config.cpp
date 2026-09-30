@@ -3,6 +3,7 @@
 #include "provider_config.h"
 
 #include <algorithm>
+#include <optional>
 
 #include "env_var_hints.h"
 #include "platform/json.h"
@@ -26,15 +27,6 @@ struct EnvAlias {
 constexpr EnvAlias kEnvAliases[] = {
     {"AUTO_COMPACT_ENABLED", "DISABLE_AUTO_COMPACT", true},
 };
-
-// 键是否属于槽位表托管的模型键（envKey 或 *_NAME 键）
-bool isModelSlotEnvKey(const std::string& key) {
-    for (const auto& m : modelSlotTable()) {
-        if (key == m.envKey) return true;
-        if (m.nameKey != nullptr && key == m.nameKey) return true;
-    }
-    return false;
-}
 
 // 「未识别键」判定（审计 CPX-09 + CPX-08）：官方清单（env_var_hints.h 全量）里
 // 没有、也不是槽位表派生的托管键，才算未识别——原实现把 FABLE 两个自造键硬编码
@@ -71,6 +63,27 @@ std::string deriveDisplayName(const std::string& model) {
     const size_t pos = model.rfind('[');
     if (pos == std::string::npos || pos == 0) return model;
     return model.substr(0, pos);
+}
+
+const char* modelSlotDefEnvKey() {
+    // 单一来源 = 槽位表：jsonKey=="default" 行的 envKey（F-10，不手抄键名）。
+    // 槽位表恒有 default 行（DEVDESK_MODEL_SLOT_LIST 声明契约）；空串返回值
+    // 仅为理论兜底（表被改坏时抑制步静默失效，不崩）
+    for (const auto& m : modelSlotTable()) {
+        if (std::string(m.jsonKey) == "default") return m.envKey;
+    }
+    return "";
+}
+
+bool isModelSlotEnvKey(const std::string& key) {
+    // 槽位表托管的模型键（envKey 或 *_NAME 键）。原匿名命名空间 helper：F-10
+    // 起提升为公开判定，claude_ui_detail 的 isModelMappingEnvKey 转发本函数，
+    // 单一来源 = modelSlotTable()
+    for (const auto& m : modelSlotTable()) {
+        if (key == m.envKey) return true;
+        if (m.nameKey != nullptr && key == m.nameKey) return true;
+    }
+    return false;
 }
 
 core::Result<std::string> serializeModelsConfig(const ModelsConfig& config) {
@@ -149,6 +162,202 @@ core::Result<std::map<std::string, std::string>> parseExtraEnv(
         out[key] = val.asString();
     }
     return core::Result<std::map<std::string, std::string>>::ok(std::move(out));
+}
+
+// ---- 高级设置 JSON：生效合并 / 键枚举 / 文档并入 / 校验（advanced-json-editor
+// ---- 设计 §4.3；三条生成链共用，合并规则单一来源）----
+
+namespace {
+
+// 生效 JSON 的单侧解析（容错版，设计 §4.2 步骤 1）：空串 / 空白 → 未配置
+//（nullopt，非警告）；超限 / 解析失败 / 顶层非对象 → 警告 + 按未配置处理。
+// side = 警告文案里的来源名（"Profile 的" / "片段的"）
+std::optional<platform::json::JsonObject> parseExtraSettingsSide(
+    const std::string& text, const char* side,
+    std::vector<std::string>* warnings) {
+    if (isBlankText(text)) return std::nullopt;
+    if (text.size() > kMaxExtraSettingsBytes) {
+        if (warnings != nullptr) {
+            warnings->push_back(std::string(side) +
+                "高级设置 JSON 超过 1MB 上限，按未配置处理");
+        }
+        return std::nullopt;
+    }
+    auto parsed = platform::json::parse(text);
+    if (parsed.isFail()) {
+        if (warnings != nullptr) {
+            warnings->push_back(std::string(side) +
+                "高级设置 JSON 解析失败，按未配置处理: " + parsed.errorMessage());
+        }
+        return std::nullopt;
+    }
+    if (!parsed.value().isObject()) {
+        if (warnings != nullptr) {
+            warnings->push_back(std::string(side) +
+                "高级设置 JSON 顶层必须是 JSON 对象，按未配置处理");
+        }
+        return std::nullopt;
+    }
+    return parsed.value().asObject();
+}
+
+// "env" 顶层键的读侧兜底警告（D-5：防 DB 直写等非 UI 路径绕过校验后静默丢弃）
+void warnEnvKeySkipped(const char* side, std::vector<std::string>* warnings) {
+    if (warnings != nullptr) {
+        warnings->push_back(std::string(side) +
+            "高级设置 JSON 含顶层 \"env\" 键，已跳过（env 请用模型映射 / "
+            "高级 env 页配置）");
+    }
+}
+
+} // namespace
+
+std::string effectiveExtraSettingsJson(const std::string& profileJson,
+                                       const std::string& fragmentJson,
+                                       std::vector<std::string>* warningsOut) {
+    if (warningsOut != nullptr) warningsOut->clear();
+    auto profileObj = parseExtraSettingsSide(profileJson, "Profile 的", warningsOut);
+    auto fragmentObj = parseExtraSettingsSide(fragmentJson, "片段的", warningsOut);
+    if (!profileObj && !fragmentObj) return {};   // 双空 → 空串（含双未配置）
+
+    // 逐键叠加：profile 先入、片段后入（后写者赢 = 片段赢，D-10 / §4.2 步骤 1）；
+    // 解绑（片段为空）后同名键回落 profile 自身值——片段值从不写进 profile 行
+    platform::json::JsonObject merged;
+    auto addSide = [&](const std::optional<platform::json::JsonObject>& obj,
+                       const char* side) {
+        if (!obj) return;
+        for (const auto& k : obj->keys()) {
+            if (k == "env") {
+                warnEnvKeySkipped(side, warningsOut);
+                continue;
+            }
+            merged.set(k, obj->get(k));
+        }
+    };
+    addSide(profileObj, "Profile 的");
+    addSide(fragmentObj, "片段的");
+
+    if (merged.keys().empty()) return {};
+    // pretty 规范形输出（D-2：parse→stringify(pretty) 同一条序列化通道；
+    // 键序 = std::map 字典序）
+    auto text = platform::json::stringify(
+        platform::json::JsonValue(std::move(merged)), /*pretty=*/true);
+    if (text.isFail()) return {};   // 序列化失败理论不可达；按空处理
+    return text.value();
+}
+
+std::vector<std::string> extraSettingsTopLevelKeys(
+    const std::string& extraSettingsJson) {
+    std::vector<std::string> out;
+    // best-effort 枚举（静默容错）：空串 / 超限 / 非法 / 顶层非对象 → 空集。
+    // 用户可见的解析失败警告由 applyExtraSettingsToSettingsDoc 统一发，此处
+    // 不重复（takeOver 的快照段先于 apply 步跑，双报会刷两条同文警告）
+    if (isBlankText(extraSettingsJson) ||
+        extraSettingsJson.size() > kMaxExtraSettingsBytes) {
+        return out;
+    }
+    auto parsed = platform::json::parse(extraSettingsJson);
+    if (parsed.isFail() || !parsed.value().isObject()) return out;
+    auto obj = parsed.value().asObject();
+    for (const auto& k : obj.keys()) {
+        if (k == "env") continue;   // 永不写入（D-5）
+        out.push_back(k);
+    }
+    return out;
+}
+
+ExtraSettingsApply applyExtraSettingsToSettingsDoc(
+    platform::json::JsonObject& root, const std::string& extraSettingsJson) {
+    ExtraSettingsApply out;
+    if (isBlankText(extraSettingsJson)) return out;   // 空 = 无 JSON，零写入
+    if (extraSettingsJson.size() > kMaxExtraSettingsBytes) {
+        out.warnings.push_back(
+            "高级设置 JSON 超过 1MB 上限，本轮忽略（不并入 settings.json）");
+        return out;
+    }
+    auto parsed = platform::json::parse(extraSettingsJson);
+    if (parsed.isFail()) {
+        out.warnings.push_back("高级设置 JSON 解析失败，本轮忽略: " +
+                               parsed.errorMessage());
+        return out;
+    }
+    if (!parsed.value().isObject()) {
+        out.warnings.push_back("高级设置 JSON 顶层必须是 JSON 对象，本轮忽略");
+        return out;
+    }
+    auto obj = parsed.value().asObject();
+
+    // 逐键并入（§4.2 步骤 2）：非 env 键赢过 live settings.json 既有同名键
+    //（D-3：被覆盖旧值已在 sidecar 快照中，还原无损）
+    bool writeModel = false;
+    for (const auto& k : obj.keys()) {
+        if (k == "env") {
+            warnEnvKeySkipped("生效", &out.warnings);
+            continue;
+        }
+        root.set(k, obj.get(k));
+        out.writtenKeys.push_back(k);
+        if (k == "model") {
+            const auto mv = obj.get(k);
+            if (mv.isString() && !mv.asString().empty()) writeModel = true;
+        }
+    }
+
+    // 模型键抑制（已拍板 D-4①；机制时序按审计 F-5：发生在合并写入之后的
+    // apply 步，不是陈旧删除步）——生效 JSON 含非空字符串顶层 "model" → 从
+    // root.env 移除 ANTHROPIC_MODEL（def 槽位 / extra_env / 别名归一来的同名
+    // 键一并抑制），槽位 def 值失效。该键仍在 buildProxyEnv 产出与
+    // managedKeys 并集里（还原语义不变）；若本轮 JSON 不含 "model"，该键回到
+    // buildProxyEnv 生成、由既有陈旧删除逻辑自然撤走
+    if (writeModel) {
+        out.modelSuppressed = true;
+        if (root.has("env") && root.get("env").isObject()) {
+            auto envObj = root.get("env").asObject();
+            const std::string defKey = modelSlotDefEnvKey();
+            if (!defKey.empty() && envObj.has(defKey)) {
+                platform::json::JsonObject rebuilt;
+                for (const auto& k : envObj.keys()) {
+                    if (k == defKey) continue;
+                    rebuilt.set(k, envObj.get(k));
+                }
+                root.set("env", platform::json::JsonValue(std::move(rebuilt)));
+            }
+        }
+        // root.env 缺失 / 非对象（调用方未按前置准备）→ 只标记不抑制（不炸）
+    }
+
+    std::sort(out.writtenKeys.begin(), out.writtenKeys.end());
+    out.writtenKeys.erase(
+        std::unique(out.writtenKeys.begin(), out.writtenKeys.end()),
+        out.writtenKeys.end());
+    return out;
+}
+
+core::Result<void> validateExtraSettingsJson(const std::string& text) {
+    if (isBlankText(text)) return core::Result<void>::ok();   // 空串 = 未配置
+    if (text.size() > kMaxExtraSettingsBytes) {
+        return core::Result<void>::fail(
+            core::ErrorCode::ValidationError,
+            "高级设置 JSON 超过 1MB 上限: " + std::to_string(text.size()) +
+                " 字节");
+    }
+    auto parsed = platform::json::parse(text);
+    if (parsed.isFail()) {
+        return core::Result<void>::fail(parsed.errorCode(),
+            "高级设置 JSON 解析失败: " + parsed.errorMessage());
+    }
+    if (!parsed.value().isObject()) {
+        return core::Result<void>::fail(core::ErrorCode::ValidationError,
+            "高级设置 JSON 顶层必须是 JSON 对象");
+    }
+    auto obj = parsed.value().asObject();
+    for (const auto& k : obj.keys()) {
+        if (k == "env") {
+            return core::Result<void>::fail(core::ErrorCode::ValidationError,
+                "高级设置 JSON 不能包含 env 键（env 请用模型映射 / 高级 env 页配置）");
+        }
+    }
+    return core::Result<void>::ok();
 }
 
 ModelsConfig effectiveModelsConfig(const std::string& modelsConfigJson,

@@ -71,12 +71,11 @@ const char* envSourceLabel(EnvSource s) {
 //（provider_config.cpp），过滤集合与实际写入的键不可能漂移。
 // 按键名过滤而非按来源（Managed）过滤：用户手写在 extra_env / 共享片段里的
 // 模型键（如 ANTHROPIC_MODEL）同属模型域，一样不在本页重复展示。
+// F-10（2026-09-30 advanced-json-editor）：本函数自 provider_config 的
+// isModelSlotEnvKey 转发（判定下沉纯函数层——applyExtraSettingsToSettingsDoc
+// 的模型抑制判定同源），此处仅保留语义别名，不手抄键名。
 bool isModelMappingEnvKey(const std::string& key) {
-    for (const auto& meta : modelSlotTable()) {
-        if (key == meta.envKey) return true;
-        if (meta.nameKey != nullptr && key == meta.nameKey) return true;
-    }
-    return false;
+    return isModelSlotEnvKey(key);
 }
 
 }  // namespace

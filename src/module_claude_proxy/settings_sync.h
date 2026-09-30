@@ -16,22 +16,28 @@
 //      指向回环地址，或凭据键 == kProxyAuthPlaceholder）的键不进快照——它们是
 //      上次残留 / 别的工具的托管值，不是用户原值（还原时不该被"恢复"），
 //      该情况随 SyncResult.warnings 上报
-//   3. 只动 env 键：buildProxyEnv() 产出的托管键写入/覆盖；**写前先删「上一轮
-//      托管、本轮不再生成」的键**（如槽位被清空后的旧模型名——留着会被客户端
-//      拿去请求新供应商；这些键仍留在 managedKeys 并集里，还原语义不变）；
-//      用户自己的其他 env 键与所有非 env 顶层字段（permissions / hooks /
-//      model 等）原样保留
+//   3. 只动 env 键 + 生效高级设置 JSON 的顶层键（2026-09-30 advanced-json-editor
+//      设计 §4/§5，D-3/D-4）：buildProxyEnv() 产出的托管键写入/覆盖；**写前先删
+//      「上一轮托管、本轮不再生成」的键**（env 域与 nonEnv 域各一套，同构）；
+//      生效 JSON 的非 env 顶层键在 env 合并之后并入（赢过 live 既有同名键——
+//      被覆盖旧值已在首份快照中，还原无损）；JSON 含非空字符串顶层 "model" →
+//      apply 步同时从 env 移除 ANTHROPIC_MODEL（抑制唯一落点，F-5 时序）；
+//      用户自己的其他 env 键原样保留
 //      （读-改-写，platform::json；注意序列化会统一 pretty 格式，字段值不变）
 //   4. 原子写：同目录临时文件 + rename
 //   5. 上层覆盖检测（§5.3）：managed（企业策略）/ project（cwd 的
 //      .claude/settings.json + settings.local.json）层 env 含托管键
 //      （managedEnvKeyNames() 的 12 键全集 ∪ 本轮实际写入的托管键：profile
 //      extra_env 与共享片段键）→ LOG_WARN + 警告信息随 SyncResult 返回
-//      （UI 展示留给 Phase D），**提示不代改**
+//      （UI 展示留给 Phase D），**提示不代改**。检测域维持 env 键（裁决④：
+//      非 env 层同名键覆盖 = 文件分层正常语义，不扩）
 //
 // 还原协议（restore，代理停止 / 应用退出触发）：
 //   - 按 sidecar 快照按键级还原：快照里有值 → 恢复原值；原本不存在的键 →
-//     删除；其余一切不动；写回后删除 sidecar
+//     删除；其余一切不动；写回后删除 sidecar。还原域 = env 键（managedKeys/
+//     envSnapshot）+ 非 env 顶层键（nonEnvKeys/nonEnvSnapshot，sidecar v2 新增，
+//     merge-only 补拍防多轮接管丢用户原值——审计 F-1；旧 sidecar 无新字段 =
+//     空集 = root 层全透传，D-9）
 //   - 代理停止 = settings.json 永不指向死代理
 //
 // 崩溃兜底：启动时 sidecar 残留（上次没走完还原）→ recoverPendingSnapshot()
@@ -95,7 +101,10 @@ SettingsEnvRead readSettingsEnvForSync(const Paths& paths);
 // 接管。profile 可为默认构造（无激活 profile 时只写 BASE_URL + 占位凭据）。
 // sharedExtraEnvJson = 该 profile 所绑共享配置片段的 extra_env 原文（空串 =
 // 未绑定）：片段值叠在 profile 自身 env 之上（片段赢），其键与 profile 的
-// extra_env 键同样进托管键集——停代理还原时按快照撤走，live 不留痕迹
+// extra_env 键同样进托管键集——停代理还原时按快照撤走，live 不留痕迹。
+// 生效高级设置 JSON 经 profile.extraSettingsJson 携带（§5.2① 门面装配；
+// 片段 JSON 域叠加自 §8 起在门面 effectiveExtraSettingsJson 完成后再传副本），
+// 其写入键进 sidecar nonEnvKeys / nonEnvSnapshot 记账（§5.1 sidecar v2）
 SyncResult takeOver(const Profile& profile, int proxyPort, const Paths& paths,
                     const std::string& sharedExtraEnvJson = "");
 
