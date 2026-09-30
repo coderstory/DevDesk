@@ -53,3 +53,6 @@ build-release/
 # 打包产物（安装器/DMG 输出目录，spec §3.2/§5）
 installer/**/out/
 *.dmg
+
+# Claude Code worktree 工作区（临时，防 worktree 内容误提交）
+.claude/worktrees/
