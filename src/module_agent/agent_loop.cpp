@@ -22,6 +22,13 @@ namespace {
 // spec §5.2：max_iterations 硬上限 50（clamp 在 loop 内，不只 UI 钮制——L3b）
 constexpr int kMaxIterationsHardCap = 50;
 
+// spec §10 L3c：单条 tool_result 的 text 硬上限 32KB，超限截断 + 末尾
+// [truncated] 标记（防 md.read 长笔记 + 多迭代烧爆上下文致上游 400）。
+// 截断按**字节**算（上游按字节收），故纯 ASCII 恰好 32KB；标记本身不占
+// 32KB 配额（超了才有标记，标记是给模型看的额外提示）。
+constexpr size_t kMaxToolResultBytes = 32 * 1024;
+const char* kTruncatedMarker = "\n[truncated]";
+
 // tool_result blocks 数组文本。platform::json 只暴露 makeArray() 空桩 +
 // makeStringArray()（字符串专用），**没有对象数组的 push 口径**（json.h:107-109），
 // 故这里按「每块 stringify 后用逗号连接」拼出数组文本（每个元素本身是
@@ -53,6 +60,57 @@ std::string joinBlockArray(const std::vector<std::string>& blockTexts) {
 std::string strField(const platform::json::JsonObject& obj, const char* key) {
     platform::json::JsonValue v = obj.get(key);
     return v.isString() ? v.asString() : std::string();
+}
+
+// 工具返回的 contentJson → tool_result 的 text 块文本。
+// 形状规则（controller 裁定 2026-09-30）：
+//   - contentJson 解析成 JSON **字符串** → 用该字符串的值**原样**当文本
+//     （工具回 "done" 模型就该看到 done，而不是带引号的 "done"；回 "" 则是
+//     真空串，不是 "\"\""——M2 工具里既有回对象的也有回纯文本的）
+//   - 其他形状（对象/数组/数字/布尔）→ stringify(值)（对象是 M2 主流形状）
+//   - 解析失败（非 JSON 原文，如工具异常消息）→ 原文直接当文本，不再套引号
+//   - 空 contentJson → 空串（parse("") 返回 ok(null)，不特判就回喂 "null"）
+// 之后再按 kMaxToolResultBytes 截断。
+std::string toolResultText(const std::string& contentJson) {
+    std::string text;
+    if (!contentJson.empty()) {
+        auto cv = platform::json::parse(contentJson);
+        if (cv.isOk() && cv.value().isString()) {
+            text = cv.value().asString();               // 原样，不二次 stringify
+        } else if (cv.isOk()) {
+            auto s = platform::json::stringify(cv.value());
+            if (s.isFail()) {
+                LOG_FATAL("AgentLoop: 序列化 tool_result 文本失败：" + s.errorMessage());
+                std::abort();
+            }
+            text = s.value();
+        } else {
+            text = contentJson;                          // 非 JSON 原文，原样回喂
+        }
+    }
+    if (text.size() > kMaxToolResultBytes) {
+        // 按字节截断：切点可能落在多字节 UTF-8 字符中间 → 回退到字符边界，
+        // 否则拼出的 JSON 里会出现半个字符（非法 UTF-8，上游 400）
+        size_t cut = kMaxToolResultBytes;
+        while (cut > 0 && (static_cast<unsigned char>(text[cut]) & 0xC0) == 0x80) --cut;
+        text = text.substr(0, cut) + kTruncatedMarker;
+    }
+    return text;
+}
+
+// 造一个 tool_result 的 content 数组：[{"type":"text","text":<text>}]
+platform::json::JsonValue makeTextContent(const std::string& text) {
+    platform::json::JsonObject textBlock;
+    textBlock.set("type", platform::json::makeString("text"));
+    textBlock.set("text", platform::json::makeString(text));
+    auto textBlockText = platform::json::stringify(
+        platform::json::JsonValue(std::move(textBlock)));
+    if (textBlockText.isFail()) {
+        LOG_FATAL("AgentLoop: 序列化 tool_result content block 失败：" +
+                  textBlockText.errorMessage());
+        std::abort();
+    }
+    return parseArrayOrDie("[" + textBlockText.value() + "]", "tool_result.content");
 }
 
 } // namespace
@@ -126,7 +184,10 @@ Result<int64_t> AgentLoop::run(const AgentTask& task,
             error = "达到迭代上限 " + std::to_string(iterations);
             break;
         }
-        // （Task 5 补：墙钟超时判定位）
+        // 墙钟超时判定**不在 M1**（请求超时由 LlmEndpoint/HttpClient 层的
+        // 客户端超时兜底；AgentLoop 只管迭代上限与 cancel）——刻意留空，
+        // 不是遗漏。加在这里要连带定义「超时后能不能接着跑」（spec YAGNI
+        // 清单明列「长对话上下文截断靠 max_iterations 兜底」）。
         // model 原样传 task.modelSlot：槽位→真实 model id 由 LlmClient 解析（H1）
         auto resp = llm_.send(messages, toolsJson, std::string(), task.modelSlot);
         if (resp.isFail()) {
@@ -209,10 +270,10 @@ Result<int64_t> AgentLoop::run(const AgentTask& task,
             auto found = tools_.find(name);
             if (found.isFail()) {
                 // L3a：模块被禁用 / 工具已注销 → is_error 回喂让 LLM 自纠，
-                // **不中止 run**
+                // **不中止 run**。与正常回喂同一形状（text block 数组），
+                // 免得模型收到两种 content 形状（裁定 2026-09-30）
                 resultTexts.push_back(makeResult(
-                    platform::json::makeString("工具 " + name +
-                                               " 未找到，可能模块已禁用"),
+                    makeTextContent("工具 " + name + " 未找到，可能模块已禁用"),
                     true));
                 resultIds.push_back(id);
                 continue;
@@ -237,37 +298,10 @@ Result<int64_t> AgentLoop::run(const AgentTask& task,
             // content 按 Anthropic 工具协议只能是「字符串」或「content blocks
             // 数组」——工具返回的裸对象/数字塞进去上游直接 400（而所有 M2 工具
             // 返回的都是对象）。故统一包成 text block 数组：
-            //   [{"type":"text","text":<stringify(工具返回的值)>}]
-            // 工具 contentJson 为空 → 文本是 ""（不是 "null"、更不是 null：
-            // parse("") 返回 ok(null)，不特判就会回喂一个 "content":null）。
-            platform::json::JsonValue contentValue =
-                result.contentJson.empty()
-                    ? platform::json::makeString(std::string())
-                    : [&] {
-                          auto cv = platform::json::parse(result.contentJson);
-                          return cv.isOk() ? cv.value()
-                                           : platform::json::makeString(result.contentJson);
-                      }();
-            auto contentRaw = platform::json::stringify(contentValue);
-            if (contentRaw.isFail()) {
-                LOG_FATAL("AgentLoop: 序列化 tool_result content 失败：" +
-                          contentRaw.errorMessage());
-                std::abort();
-            }
-            platform::json::JsonObject textBlock;
-            textBlock.set("type", platform::json::makeString("text"));
-            textBlock.set("text", platform::json::makeString(contentRaw.value()));
-            auto textBlockText = platform::json::stringify(
-                platform::json::JsonValue(std::move(textBlock)));
-            if (textBlockText.isFail()) {
-                LOG_FATAL("AgentLoop: 序列化 tool_result content block 失败：" +
-                          textBlockText.errorMessage());
-                std::abort();
-            }
-            // （Task 5 补：>32KB 截断 + [truncated] 标记）
+            //   [{"type":"text","text":<工具返回的文本>}]
+            // 文本取法 + 32KB 截断见 toolResultText()（裁定 2026-09-30）。
             resultTexts.push_back(
-                makeResult(parseArrayOrDie("[" + textBlockText.value() + "]",
-                                           "tool_result.content"),
+                makeResult(makeTextContent(toolResultText(result.contentJson)),
                            result.isError));
             resultIds.push_back(id);
         }
