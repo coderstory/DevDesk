@@ -166,6 +166,21 @@ int main(int argc, char* argv[]) {
                                       mod->compose(u, screen);
                                   });
     };
+    // 真实命中分发：press + release 排队 → 下一 composeFrame 内 update 消费
+    //（settings_dropdown_z_probe 同款；⑤ 下拉 z 序用例走真命中路径）
+    auto clickPoint = [&](float cx, float cy) {
+        core::queuePointerButton(window, cx, cy, core::PointerButton::Left,
+                                 core::PointerAction::Press, {});
+        core::queuePointerButton(window, cx, cy, core::PointerButton::Left,
+                                 core::PointerAction::Release, {});
+    };
+    auto clickElement = [&](const core::dsl::Element& element) {
+        clickPoint(element.frame.x + element.frame.width * 0.5f,
+                   element.frame.y + element.frame.height * 0.5f);
+    };
+    auto floatEq = [](float a, float b) {
+        return std::fabs(a - b) < 0.5f;
+    };
 
     // 尺寸矩阵：最小窗 / 默认 / **真实 macOS 页面尺寸 1262×801**
     const std::vector<std::pair<float, float>> sizes = {
@@ -355,6 +370,148 @@ int main(int argc, char* argv[]) {
                               << runRight << " != 动作行右缘 " << rowRight
                               << "（等分溢出）\n";
                     passed = false;
+                }
+            }
+        }
+
+        // ⑤ 表单高级页双下拉 z 序（2026-09-30，与 settings 桌宠卡同类等值 z
+        // 碰撞；「弹窗内下拉」场景代表）：dialect.ddwrap(y122) / fallback.
+        // ddwrap(y192) / shared.ddwrap(y262) 三连下拉同挂在对话框内容容器下，
+        // 子树上界同为字段档 20 → 后绘的下方行盖住上方展开弹层。修 =
+        // EUI-NEO dropdown open 态 popup 子树 900 档（patch 生产线）。判据：
+        //   a) assertDrawnAbove：dialect popup 与 fallback 字段的 LCA 处，
+        //      popup 侧子级 subtreeMaxZ(900) > 字段侧(20)；
+        //   b) 重叠区真命中路由：点「dialect 弹层首项 ∩ fallback 字段」交集
+        //      中心（3 项弹层与 fallback 行相交——dialog 局部几何，窗尺寸无
+        //      关），点它必须选中方言并收起，fallback 下拉不得被误开。
+        {
+            composeFrame();
+            const core::dsl::Element* card =
+                ui != nullptr ? ui->find("claude.profile.0.bg") : nullptr;
+            if (card == nullptr || card->onClick == nullptr) {
+                std::cerr << "claude_probes[" << tag
+                          << "]: 'claude.profile.0.bg' not found (⑤)\n";
+                passed = false;
+            } else {
+                card->onClick();
+                composeFrame();
+                // 逐帧重查：compose 重建元素树，跨 compose 持有的指针作废
+                //（指针复用表现为 onClick 空 → bad_function_call）
+                if (auto* edit = ui->find("claude.act.edit.bg");
+                    edit != nullptr && edit->onClick != nullptr) {
+                    edit->onClick();
+                    composeFrame();
+                }
+                if (auto* tab3 = ui->find("claude.form.tabs.hit.3");
+                    tab3 != nullptr && tab3->onClick != nullptr) {
+                    tab3->onClick();
+                    composeFrame();
+                }
+                {
+                    const std::string ddDialect =
+                        "claude.form.advanced.dialect.dd";
+                    const std::string ddFallback =
+                        "claude.form.basic.fallback.dd";
+                    const core::dsl::Element* dialectField =
+                        ui != nullptr ? ui->find(ddDialect + ".field") : nullptr;
+                    const core::dsl::Element* fallbackField =
+                        ui != nullptr ? ui->find(ddFallback + ".field") : nullptr;
+                    if (dialectField == nullptr || fallbackField == nullptr) {
+                        std::cerr << "claude_probes[" << tag
+                                  << "]: dialect/fallback field missing (⑤)\n";
+                        passed = false;
+                    } else {
+                        // 开方言下拉（真命中，与生产点击路径一致）
+                        clickElement(*dialectField);
+                        composeFrame();
+                        // recompose 重建元素树 → 开前捕获的指针作废，重查
+                        const core::dsl::Element* popup =
+                            ui != nullptr
+                                ? ui->find(ddDialect + ".popup")
+                                : nullptr;
+                        const core::dsl::Element* item0 =
+                            ui != nullptr
+                                ? ui->find(ddDialect + ".item.0")
+                                : nullptr;
+                        const core::dsl::Element* fallbackFieldNow =
+                            ui != nullptr
+                                ? ui->find(ddFallback + ".field")
+                                : nullptr;
+                        if (popup == nullptr || item0 == nullptr ||
+                            fallbackFieldNow == nullptr) {
+                            std::cerr << "claude_probes[" << tag
+                                      << "]: dialect popup/item0 missing after "
+                                         "open (⑤)\n";
+                            passed = false;
+                        } else {
+                            if (!floatEq(popup->opacity, 1.0f)) {
+                                std::cerr << "claude_probes[" << tag
+                                          << "]: dialect popup opacity="
+                                          << popup->opacity << " (⑤)\n";
+                                passed = false;
+                            }
+                            // 前提守卫：弹层首项 ∩ fallback 字段（几何漂移
+                            // 先响这里，防 z 判据落空）
+                            if (!probe::detail::framesIntersect(*item0,
+                                                                *fallbackFieldNow)) {
+                                std::cerr << "claude_probes[" << tag
+                                          << "]: 前提失效：dialect 弹层首项"
+                                             "与 fallback 字段不相交 (⑤)\n";
+                                passed = false;
+                            }
+                            if (!probe::assertDrawnAbove(
+                                    *ui, ddDialect + ".popup",
+                                    ddFallback + ".field")) {
+                                std::cerr << "claude_probes[" << tag
+                                          << "]: 绘制序断言失败：dialect 弹层"
+                                             "未压过下方 fallback 行 (⑤)\n";
+                                passed = false;
+                            }
+                            // 重叠区真命中：点「弹层首项 ∩ fallback 字段」
+                            // 交集中心（项中心可能在交集外，那样命中序根本没
+                            // 被考验）→ 方言选中并收起，fallback 不得被误开
+                            //（pre-fix 被其字段截获）
+                            const float ox = std::max(item0->frame.x,
+                                                      fallbackFieldNow->frame.x);
+                            const float oy = std::max(item0->frame.y,
+                                                      fallbackFieldNow->frame.y);
+                            const float oRight = std::min(
+                                item0->frame.x + item0->frame.width,
+                                fallbackFieldNow->frame.x +
+                                    fallbackFieldNow->frame.width);
+                            const float oBottom = std::min(
+                                item0->frame.y + item0->frame.height,
+                                fallbackFieldNow->frame.y +
+                                    fallbackFieldNow->frame.height);
+                            clickPoint((ox + oRight) * 0.5f,
+                                       (oy + oBottom) * 0.5f);
+                            composeFrame();
+                            const core::dsl::Element* dialectHit =
+                                ui != nullptr ? ui->find(ddDialect + ".popup.hit")
+                                              : nullptr;
+                            const core::dsl::Element* fallbackHit =
+                                ui != nullptr
+                                    ? ui->find(ddFallback + ".popup.hit")
+                                    : nullptr;
+                            if (dialectHit == nullptr || !dialectHit->disabled) {
+                                std::cerr << "claude_probes[" << tag
+                                          << "]: dialect 弹层未收起 (⑤)\n";
+                                passed = false;
+                            }
+                            if (fallbackHit == nullptr || !fallbackHit->disabled) {
+                                std::cerr << "claude_probes[" << tag
+                                          << "]: fallback 下拉被误开（重叠区"
+                                             "点击被下方字段截获）(⑤)\n";
+                                passed = false;
+                            }
+                        }
+                    }
+                    // 收尾：取消关弹窗（不落任何改动），状态归零供下一尺寸档
+                    if (auto* cancel = ui->find("claude.dialog.form.cancel.bg");
+                        cancel != nullptr && cancel->onClick != nullptr) {
+                        cancel->onClick();
+                        composeFrame();
+                    }
                 }
             }
         }
