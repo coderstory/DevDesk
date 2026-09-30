@@ -34,6 +34,7 @@ add_executable(devdesk_tests
     test_modules/test_md_preview_highlight.cpp
     test_modules/test_md_sync_map.cpp
     test_modules/test_todo_service.cpp
+    test_modules/test_todo_tools.cpp
     test_modules/test_agent_store.cpp
     test_modules/test_agent_loop.cpp
     test_modules/test_llm_client.cpp
