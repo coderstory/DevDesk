@@ -3910,14 +3910,20 @@ REGISTER_TEST(claude_export_json_shape,
         DOCTEST_CHECK_EQ(env.get("ANTHROPIC_BASE_URL").asString(),
                          std::string("https://exp.example.com"));
     }
-    // 绑定片段：冻结键以片段值出现（片段赢，优先级 2 > 3）+ 片段独有键
+    // 绑定片段（advanced-json-editor §6：片段已重构为高级属性 JSON 预设）——
+    // 片段键并入**顶层**（非 env 域），同键片段赢；env 域不再吃片段
     {
-        const auto env = envOf(buildProfileExportJson(
-            p, R"({"MY_EXPORT_KEY":"frozen","SHARED_ONLY":"sv"})",
-            p.apiKeyHint));
-        DOCTEST_CHECK_EQ(env.get("MY_EXPORT_KEY").asString(),
+        const std::string jf = buildProfileExportJson(
+            p, R"({"MY_TOP_KEY":"frozen","SHARED_ONLY":"sv"})", p.apiKeyHint);
+        auto docF = platform::json::parse(jf);
+        DOCTEST_REQUIRE(docF.isOk());
+        auto rootF = docF.value().asObject();
+        DOCTEST_CHECK_EQ(rootF.get("MY_TOP_KEY").asString(),
                          std::string("frozen"));
-        DOCTEST_CHECK_EQ(env.get("SHARED_ONLY").asString(), std::string("sv"));
+        DOCTEST_CHECK_EQ(rootF.get("SHARED_ONLY").asString(), std::string("sv"));
+        const auto envF = envOf(jf);
+        DOCTEST_CHECK(!envF.get("MY_TOP_KEY").isString());
+        DOCTEST_CHECK(!envF.get("SHARED_ONLY").isString());
     }
     // 坏 extraEnvJson：读路径整体忽略（与运行功能同口径），导出仍成功
     {
@@ -5147,3 +5153,68 @@ REGISTER_TEST(claude_shared_block_bottom_anchored,
     return true;
 })
 
+
+// ---- 29. 复制配置完整形态升级（2026-09-30 advanced-json-editor 设计 §6，
+// 已拍板②）：顶层 = env + JSON 属性（如 model）；片段叠加片段赢；pretty 文本；
+// toast 副文案同步
+REGISTER_TEST(claude_export_full_settings_shape,
+              "claude_module: buildProfileExportJson 完整 settings.json 形态（env+高级属性/片段赢/pretty/toast）", {
+    using module::claude::kCopyConfigToastSubtitle;
+    module::claude::Profile p;
+    p.id = 9;
+    p.name = "全量导出";
+    p.baseUrl = "https://full.example.com";
+    p.authField = "both";
+    p.model = "m-full";
+    p.apiKeyHint = "sk-ant-***9876";
+    p.extraEnvJson = R"({"MY_FULL_KEY":"v1"})";
+    p.extraSettingsJson = R"({"model": "json-full", "statusLine": {"type": "command"}})";
+
+    const std::string j = buildProfileExportJson(p, "", p.apiKeyHint);
+    DOCTEST_REQUIRE(!j.empty());
+    auto doc = platform::json::parse(j);
+    DOCTEST_REQUIRE(doc.isOk());
+    auto root = doc.value().asObject();
+    // 顶层 = env + JSON 属性（完整 settings.json 形态）
+    DOCTEST_CHECK(root.get("env").isObject());
+    DOCTEST_CHECK_EQ(root.get("model").asString(), std::string("json-full"));
+    DOCTEST_REQUIRE(root.get("statusLine").isObject());
+    DOCTEST_CHECK_EQ(root.get("statusLine").asObject().get("type").asString(),
+                     std::string("command"));
+    const auto env = root.get("env").asObject();
+    DOCTEST_CHECK_EQ(env.get("ANTHROPIC_AUTH_TOKEN").asString(),
+                     std::string("sk-ant-***9876"));   // 占位非明文
+    DOCTEST_CHECK_EQ(env.get("MY_FULL_KEY").asString(), std::string("v1"));
+    // pretty 文本（可直接粘贴进 settings.json 的形态，含两空格缩进）
+    DOCTEST_CHECK(j.find("\n  \"") != std::string::npos);
+
+    // 片段叠加端到端：片段与 profile 各含独有键 + 同键 → 片段赢
+    {
+        const std::string jf = buildProfileExportJson(
+            p, R"({"statusLine": "frag-s", "hooks": {"PreToolUse": []}})",
+            p.apiKeyHint);
+        auto docF = platform::json::parse(jf);
+        DOCTEST_REQUIRE(docF.isOk());
+        auto rootF = docF.value().asObject();
+        DOCTEST_CHECK_EQ(rootF.get("statusLine").asString(), std::string("frag-s"));
+        DOCTEST_CHECK(rootF.get("hooks").isObject());
+        DOCTEST_CHECK_EQ(rootF.get("model").asString(), std::string("json-full"));
+    }
+    // 坏片段 JSON → 按 profile 自身 JSON 导出（读侧容错，不静默丢）
+    {
+        const std::string jb = buildProfileExportJson(p, "{broken", p.apiKeyHint);
+        auto docB = platform::json::parse(jb);
+        DOCTEST_REQUIRE(docB.isOk());
+        DOCTEST_CHECK_EQ(docB.value().asObject().get("statusLine")
+                             .asObject().get("type").asString(),
+                         std::string("command"));
+    }
+    // toast 副文案同步（§6）：完整形态措辞 + 占位声明
+    DOCTEST_CHECK(std::string(kCopyConfigToastSubtitle)
+                      .find("完整 settings.json") != std::string::npos);
+    DOCTEST_CHECK(std::string(kCopyConfigToastSubtitle)
+                      .find("env + 高级属性") != std::string::npos);
+    DOCTEST_CHECK(std::string(kCopyConfigToastSubtitle)
+                      .find("不含明文") != std::string::npos);
+    return true;
+})
