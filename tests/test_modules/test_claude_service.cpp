@@ -3595,3 +3595,53 @@ REGISTER_TEST(claude_build_direct_env_slots_extra_env_and_managed_override,
     DOCTEST_CHECK(env.find("AUTO_COMPACT_ENABLED") == env.end());
     return true;
 })
+
+// ===== Agent 模型槽位解析（agent 子系统 M1，Task 6）=====
+// resolveModelSlot：激活 profile 的槽位键 → 实际 model id（LlmClient 消费）
+
+REGISTER_TEST(claude_service_resolve_model_slot,
+              "claude_service: resolveModelSlot 解析激活 profile 槽位", {
+    using namespace module::claude;
+    // 本文件既有模式 = TestDb（含 migrate，claude_profiles 表在迁移里建）。
+    // InMemoryDb 是无迁移裸库（test_streaming_proxy 只拿它测代理运行态），
+    // profile CRUD 会因缺表失败
+    test_support::TestDb tdb(kDbPrefix, "resolve_slot");
+    ClaudeService svc(tdb.handle(), kTestKeychainService);
+
+    // 无激活 profile（新库新 service，未 setActive）→ nullopt
+    DOCTEST_CHECK(!svc.resolveModelSlot("default").has_value());
+    DOCTEST_CHECK(!svc.resolveModelSlot("sonnet").has_value());
+
+    auto p = svc.createProfile("R", "https://api.anthropic.com", "sk-test",
+                               "claude-sonnet-4-5");
+    DOCTEST_REQUIRE(p.isOk());
+    DOCTEST_REQUIRE(svc.setActiveProfile(p.value().id).isOk());
+
+    // 无 models_config → default 槽位回落 profile.model（旧列语义：
+    // 旧 model 列是 default 槽位的 fallback）
+    DOCTEST_CHECK(svc.resolveModelSlot("default").value_or("") ==
+                  "claude-sonnet-4-5");
+    DOCTEST_CHECK(!svc.resolveModelSlot("sonnet").has_value());
+
+    // 配置 models_config 后按槽位解析（updateProfile 为既有更新接口）
+    Profile pa = p.value();
+    pa.modelsConfigJson =
+        R"({"default": {"model": "m-default"},)"
+        R"("sonnet": {"model": "m-s"},)"
+        R"("subagent": {"model": "m-sub"}})";
+    DOCTEST_REQUIRE(svc.updateProfile(pa).isOk());
+
+    // default / def 等价，取 models_config 的 def 槽位
+    DOCTEST_CHECK(svc.resolveModelSlot("default").value_or("") == "m-default");
+    DOCTEST_CHECK(svc.resolveModelSlot("def").value_or("") == "m-default");
+    // 其余槽位按键解析
+    DOCTEST_CHECK(svc.resolveModelSlot("sonnet").value_or("") == "m-s");
+    DOCTEST_CHECK(svc.resolveModelSlot("subagent").value_or("") == "m-sub");
+    // 表内但未配置的槽位 → nullopt
+    DOCTEST_CHECK(!svc.resolveModelSlot("opus").has_value());
+    // 未知槽位键 → nullopt
+    DOCTEST_CHECK(!svc.resolveModelSlot("no-such-slot").has_value());
+
+    test_support::cleanupProfileKey(kTestKeychainService, p.value().id);
+    return true;
+})

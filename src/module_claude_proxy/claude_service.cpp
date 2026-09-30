@@ -382,6 +382,48 @@ std::optional<Profile> ClaudeService::resolveFallbackProfile(
     return fb;
 }
 
+// ---------- 模型槽位解析（agent 子系统 M1）----------
+
+std::optional<std::string> ClaudeService::resolveModelSlot(
+    const std::string& slot) {
+    auto profileR = profileRepository_.getActiveProfile();
+    if (profileR.isFail()) {
+        return std::nullopt;   // 无激活 profile → 无可解析（最常见路径）
+    }
+    Profile profile = std::move(profileR).value();
+
+    // "def" 是 "default" 的别名；表行 jsonKey 就是 "default"，先归一再查表
+    const std::string key = (slot == "def") ? "default" : slot;
+
+    // default 槽位保留旧列语义：models_config 未配置时回落 profile.model
+    if (key == "default") {
+        if (!profile.modelsConfigJson.empty()) {
+            auto cfgR = parseModelsConfig(profile.modelsConfigJson);
+            if (cfgR.isOk() && !cfgR.value().def.model.empty()) {
+                return cfgR.value().def.model;
+            }
+        }
+        if (profile.model.empty()) return std::nullopt;
+        return profile.model;
+    }
+
+    if (profile.modelsConfigJson.empty()) return std::nullopt;
+    auto cfgR = parseModelsConfig(profile.modelsConfigJson);
+    if (cfgR.isFail()) return std::nullopt;
+    const ModelsConfig& cfg = cfgR.value();
+    // 槽位键 ↔ 成员映射的唯一真相源 = kModelSlotMetas
+    //（provider_config.h 的 DEVDESK_MODEL_SLOT_LIST）；消费方遍历本表派生，
+    // 不手写槽位分支（表注释契约）
+    for (const ModelSlotMeta& meta : modelSlotTable()) {
+        if (key == meta.jsonKey) {
+            const std::string& model = (cfg.*(meta.slot)).model;
+            if (model.empty()) return std::nullopt;
+            return model;
+        }
+    }
+    return std::nullopt;   // 未知槽位键
+}
+
 // ---------- 连通性测试 ----------
 
 core::Result<platform::http::Response>

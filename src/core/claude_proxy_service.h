@@ -17,6 +17,7 @@
 
 #include "core/result.h"
 
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -43,6 +44,13 @@ public:
     // 接管实际使用的 settings.json 路径（配置通道未注入 = 空串）。设置页只用
     // 它做展示文本，故直接给 string，不把 filesystem::path 摆进接口
     virtual std::string settingsFilePath() const = 0;
+
+    // ---- Agent 模型槽位解析（agent 子系统 M1；LlmClient 消费）----
+    // 返回激活 profile 的 models_config 里 slot 槽位的实际 model id。
+    // "def" 与 "default" 等价；default 槽位未配置时回落 profile.model（旧列
+    // 语义）。无激活 profile / 槽位未配置 / model 空 → nullopt。
+    // non-const：与 getActiveProfile 链保持同一形态
+    virtual std::optional<std::string> resolveModelSlot(const std::string& slot) = 0;
 };
 
 // 适配器：把「进程内单例（有 static T* global()）」适配成上面的接口。
@@ -112,6 +120,12 @@ public:
             return std::string();
         }
         return svc->settingsSyncPaths().settingsFile.string();
+    }
+
+    std::optional<std::string> resolveModelSlot(const std::string& slot) override {
+        T* svc = T::global();
+        if (svc == nullptr) return std::nullopt;
+        return svc->resolveModelSlot(slot);
     }
 };
 
