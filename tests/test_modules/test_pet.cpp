@@ -323,9 +323,9 @@ REGISTER_TEST(pet_gating_defaults, "pet: 默认关闭、已知 ID 可持久化",
     cfg.enabledModules.push_back(kModuleIdPet);
     const SettingsConfig fixed = SettingsStore::sanitized(cfg);
     DOCTEST_CHECK(moduleEnabled(fixed, kModuleIdPet));
-    // 默认六模块数量不变（既有 gating 测试的基线；agent M1 起默认清单
-    // 含 agent，5 → 6）
-    DOCTEST_CHECK_EQ(SettingsConfig{}.enabledModules.size(), static_cast<size_t>(6));
+    // 默认清单数量基线（final-review Fix 2，2026-10-01：agent 回归默认
+    // 关闭——spec §8 L4，清单回 5 项；此前曾随 agent M1 短暂到 6）
+    DOCTEST_CHECK_EQ(SettingsConfig{}.enabledModules.size(), static_cast<size_t>(5));
     return true;
 });
 

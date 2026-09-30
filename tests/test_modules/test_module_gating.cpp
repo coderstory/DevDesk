@@ -55,18 +55,20 @@ void writeRawConfig(const std::filesystem::path& file,
 
 // ============ 1. enabledModules 配置 ============
 
-REGISTER_TEST(gating_config_defaults, "gating: enabledModules 缺省全启用 + 恒启用项", {
+REGISTER_TEST(gating_config_defaults, "gating: enabledModules 缺省默认清单（agent 默认关）+ 恒启用项", {
     using namespace module::settings;
     const SettingsConfig cfg;  // 默认构造 = 字段缺失的回退语义
-    DOCTEST_CHECK_EQ(cfg.enabledModules.size(), static_cast<size_t>(6));
+    DOCTEST_CHECK_EQ(cfg.enabledModules.size(), static_cast<size_t>(5));
     for (const char* id : {module::settings::kModuleIdHome,
                            module::settings::kModuleIdMarkdown,
                            module::settings::kModuleIdTodo,
                            module::settings::kModuleIdClaudeProxy,
-                           module::settings::kModuleIdSettings,
-                           module::settings::kModuleIdAgent}) {
+                           module::settings::kModuleIdSettings}) {
         DOCTEST_CHECK(moduleEnabled(cfg, id));
     }
+    // agent 默认关（spec §8 L4：跑 LLM 有成本，用户主动启用；final-review
+    // Fix 2 起默认清单不含之，防回归回默认全开）
+    DOCTEST_CHECK(!moduleEnabled(cfg, kModuleIdAgent));
     // home/settings 从列表里删掉也恒启用（sanitized 强制补齐 + 谓词硬编码）
     SettingsConfig stripped = cfg;
     stripped.enabledModules.assign(1, kModuleIdMarkdown);
@@ -141,10 +143,10 @@ REGISTER_TEST(gating_config_corrupt_falls_back, "gating: 字段损坏回退默�
     SettingsConfig loaded = SettingsStore(file).load();
     DOCTEST_CHECK(moduleEnabled(loaded, kModuleIdTodo));
     DOCTEST_CHECK(!moduleEnabled(loaded, kModuleIdMarkdown));
-    // 整个文件非 JSON → 全默认（全启用）
+    // 整个文件非 JSON → 全默认（默认清单；agent 默认关，final-review Fix 2）
     writeRawConfig(file, "{not json at all");
     loaded = SettingsStore(file).load();
-    DOCTEST_CHECK_EQ(loaded.enabledModules.size(), static_cast<size_t>(6));
+    DOCTEST_CHECK_EQ(loaded.enabledModules.size(), static_cast<size_t>(5));
     DOCTEST_CHECK(moduleEnabled(loaded, kModuleIdMarkdown));
     std::error_code ec;
     std::filesystem::remove(file, ec);

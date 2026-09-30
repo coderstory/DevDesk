@@ -1224,10 +1224,21 @@ REGISTER_TEST(settings_modules_card_renders, "settings: 模块管理卡渲染（
     // 桌宠（sw.3）与智能体（sw.4，agent M1 Task 12 加行）两行开关在
     DOCTEST_CHECK(ui.find("settings.card.modules.sw.3") != nullptr);
     DOCTEST_CHECK(ui.find("settings.card.modules.sw.4") != nullptr);
-    // agent 行开关默认勾选（settings_config 默认清单含 kModuleIdAgent）
     const auto* agentName = ui.find("settings.card.modules.name.4");
     DOCTEST_REQUIRE(agentName != nullptr);
     DOCTEST_CHECK(agentName->text == "智能体");
+    // agent 行开关默认**不**勾选（spec §8 L4：agent 默认关，用户主动启用；
+    // final-review Fix 2 起默认清单不含 kModuleIdAgent）。track 色 =
+    // checked ? on : off——默认开的 markdown 行（sw.0）与 agent 行（sw.4）
+    // 同主题下色必不同，抓「回退成默认勾选」的回归（Color 无 operator==，
+    // 逐分量比）
+    const auto* mdTrack = ui.find("settings.card.modules.sw.0.track");
+    const auto* agentTrack = ui.find("settings.card.modules.sw.4.track");
+    DOCTEST_REQUIRE(mdTrack != nullptr);
+    DOCTEST_REQUIRE(agentTrack != nullptr);
+    DOCTEST_CHECK(agentTrack->color.r != mdTrack->color.r ||
+                  agentTrack->color.g != mdTrack->color.g ||
+                  agentTrack->color.b != mdTrack->color.b);
     // 描述文案含重启提示（设计 §5.4）
     const auto* desc = ui.find("settings.card.modules.desc");
     DOCTEST_REQUIRE(desc != nullptr);

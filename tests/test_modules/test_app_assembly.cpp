@@ -99,9 +99,17 @@ private:
     StubModule settings_{::core::PageId::Settings, "settings", &log_};
 };
 
-// 全启用配置（SettingsConfig 默认值 = 五个模块全开）
+// 全启用配置：**显式列全门控键**（final-review Fix 2，2026-10-01 起 agent
+// 不在默认清单——spec §8 L4 默认关；all-on=7 契约按构造口径保住，断言不弱化）
 module::settings::SettingsConfig allOnConfig() {
-    return module::settings::SettingsConfig{};
+    module::settings::SettingsConfig cfg;
+    cfg.enabledModules = {module::settings::kModuleIdHome,
+                          module::settings::kModuleIdMarkdown,
+                          module::settings::kModuleIdTodo,
+                          module::settings::kModuleIdClaudeProxy,
+                          module::settings::kModuleIdSettings,
+                          module::settings::kModuleIdAgent};
+    return cfg;
 }
 
 // 只启用 home + settings（= 三个工具模块全关；moduleEnabled 对 home/settings

@@ -52,12 +52,12 @@ bool isKnownModuleId(const std::string& id) {
 } // namespace
 
 std::vector<std::string> defaultEnabledModules() {
-    // agent（智能体页，agent M1）：与 markdown/todo/claude_proxy 同为默认
-    // 启用的工具模块——registry 门控键 kModuleIdAgent 若不在默认清单，
-    // buildGatedEntries 会把它当「用户关闭」整页跳过（装配测试 all-on 7 条
-    // 亦依赖此默认值）
+    // agent（智能体页，agent M1）**不在默认清单**（final-review Fix 2，
+    // 2026-10-01）——spec §8 L4 明文「默认关闭（agent 跑 LLM 有成本，用户
+    // 主动启用）」，语义同 pet：用户经设置页模块开关写入 enabledModules 后
+    // 生效（sanitized 保留该 ID，重启装配门控按清单注册）
     return {kModuleIdHome, kModuleIdMarkdown, kModuleIdTodo,
-            kModuleIdClaudeProxy, kModuleIdSettings, kModuleIdAgent};
+            kModuleIdClaudeProxy, kModuleIdSettings};
 }
 
 bool moduleEnabled(const SettingsConfig& cfg, const std::string& moduleId) {
