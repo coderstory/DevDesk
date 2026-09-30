@@ -1473,3 +1473,96 @@ REGISTER_TEST(sync_takeover_fragment_json_end_to_end,
                                      "claude:" + std::to_string(pa.id));
     return true;
 })
+
+// ===== 非 env 托管键移除冲突告警（审计 CPX-12 的非 env 形态）=====
+// 3.5 步陈旧非 env 键删除此前**无任何日志**——用户在 live settings.json 手写的
+// 同名键被静默抹掉且毫不知情。本组钉住：①真冲突出警告（键名 + 「曾被接管
+// 写入，本轮会移除 live 同名手写值」+ 如何避免）；②键在并集里但 root 无该键
+// （陈旧清理正常路径）**零告警**（防噪音回归，必须有）。
+
+// 警告是否提到某键（键名出现在任一条 warnings 文本里）
+static bool warningsMention(const std::vector<std::string>& warns,
+                            const char* key) {
+    for (const auto& w : warns) {
+        if (w.find(key) != std::string::npos) return true;
+    }
+    return false;
+}
+
+// ① 真冲突：第 1 轮 JSON 写 statusLine + hooks（两键进 nonEnvKeys 并集）→ 用户
+//    在 live settings.json 手改同名键 → 第 2 轮 JSON 不再写它 → 3.5 步会移除
+//    live 值，必须出告警且文案含键名与规避方式
+REGISTER_TEST(sync_nonenv_removal_conflict_warns,
+              "settings_sync: 非 env 托管键本轮不写且 live 有同名值 → 出冲突警告", {
+    using namespace module::claude;
+    test_support::TempDir d("nonenvconf", kSyncTempDirPrefix);
+    auto paths = makePaths(d);
+    d.write(paths.settingsFile, R"({"env": {"MY_KEY": "user"}})");
+
+    // 第 1 轮：JSON 写 statusLine + hooks（两个键进 nonEnvKeys 并集）
+    Profile p;
+    p.extraSettingsJson = R"({"statusLine": "json-s", "hooks": {"a": 1}})";
+    auto r1 = settings_sync::takeOver(p, 8888, paths);
+    DOCTEST_REQUIRE(r1.ok);
+    // 第 1 轮无移除 → 零噪音（无冲突时不得有任何新输出）
+    DOCTEST_CHECK(r1.warnings.empty());
+    {
+        const auto keys = readSidecarNonEnvKeys(paths.sidecarFile);
+        DOCTEST_REQUIRE(hasKeyEntry(keys, "statusLine"));
+        DOCTEST_REQUIRE(hasKeyEntry(keys, "hooks"));
+    }
+
+    // 用户在 live settings.json 里手写同名键（接管后自己改）
+    d.write(paths.settingsFile,
+            R"({"env": {"MY_KEY": "user"}, "statusLine": "user-handwritten", "hooks": {"b": 2}})");
+
+    // 第 2 轮：JSON 不再写这两个键 → 3.5 步将移除 live 值 → 必须告警
+    p.extraSettingsJson = R"({"model": "json-model"})";
+    auto r2 = settings_sync::takeOver(p, 8888, paths);
+    DOCTEST_REQUIRE(r2.ok);
+    // 两个键各报一次、合并进同一条（去重 + 稳定排序，不刷两条同义噪声）
+    DOCTEST_REQUIRE_EQ(r2.warnings.size(), 1u);
+    DOCTEST_CHECK(warningsMention(r2.warnings, "statusLine"));
+    DOCTEST_CHECK(warningsMention(r2.warnings, "hooks"));
+    // 文案要点：曾被接管写入 / 会移除 live 手写值 / 如何避免（改高级配置 JSON）
+    const std::string& w = r2.warnings[0];
+    DOCTEST_CHECK(w.find("曾被 DevDesk 接管写入") != std::string::npos);
+    DOCTEST_CHECK(w.find("手写") != std::string::npos);
+    DOCTEST_CHECK(w.find("高级配置 JSON") != std::string::npos);
+    // 告警 ≠ 免删：本轮仍按陈旧清理移除（告警是告知，不改既有语义）
+    {
+        auto doc = platform::json::parse(d.read(paths.settingsFile));
+        DOCTEST_REQUIRE(doc.isOk());
+        DOCTEST_CHECK_FALSE(doc.value().asObject().has("statusLine"));
+        DOCTEST_CHECK_FALSE(doc.value().asObject().has("hooks"));
+    }
+    return true;
+})
+
+// ② 防噪音：键在 nonEnvKeys 并集里（历史托管过）、本轮不写、但 live root 里
+//    根本没有该键（用户已自行删掉）→ 陈旧清理的正常路径，静默跳过，不得报警。
+//    这条不钉住，接管反复切几轮就会刷出无意义告警
+REGISTER_TEST(sync_nonenv_removal_stale_absent_silent,
+              "settings_sync: 托管键在并集里但 live 无该键（陈旧清理）→ 零告警", {
+    using namespace module::claude;
+    test_support::TempDir d("nonenvstale", kSyncTempDirPrefix);
+    auto paths = makePaths(d);
+    d.write(paths.settingsFile, R"({"env": {"MY_KEY": "user"}})");
+
+    // 第 1 轮：JSON 写 statusLine（进并集）
+    Profile p;
+    p.extraSettingsJson = R"({"statusLine": "json-s"})";
+    DOCTEST_REQUIRE(settings_sync::takeOver(p, 8888, paths).ok);
+    DOCTEST_REQUIRE(
+        hasKeyEntry(readSidecarNonEnvKeys(paths.sidecarFile), "statusLine"));
+
+    // 用户自行把 statusLine 从 live settings.json 删了（键在并集里、root 无值）
+    d.write(paths.settingsFile, R"({"env": {"MY_KEY": "user"}})");
+
+    // 第 2 轮：JSON 不写它 → 无值可删 = 正常路径 → warnings 必须为空
+    p.extraSettingsJson = R"({"model": "json-model"})";
+    auto r2 = settings_sync::takeOver(p, 8888, paths);
+    DOCTEST_REQUIRE(r2.ok);
+    DOCTEST_CHECK(r2.warnings.empty());
+    return true;
+})
