@@ -120,8 +120,9 @@ private:
 class ProfileRepository {
 public:
     // 构造时不持有所有权，db 由调用方确保生命周期；keychainService 是
-    // Keychain service 名（生产 "DevDesk"，测试经 ClaudeService 传
-    // "DevDeskTest" 隔离）
+    // Keychain service 名（生产由 ClaudeService 按数据根派生
+    // "DevDesk-<短哈希>"，每个数据根独立命名空间；测试经 ClaudeService 传
+    // "DevDeskTest…" 隔离）
     explicit ProfileRepository(core::data::SqliteDb& db,
                                std::string keychainService);
 
@@ -196,6 +197,25 @@ public:
     // 整个跳过 + LOG_WARN，一个条目不碰；② 扫描删除只允许 account 命中
     // 白名单前缀 claude:（keychain.h shouldDeleteOrphan，前缀外保留不计数）
     core::Result<int> cleanupOrphanKeychainEntries();
+
+    // 一次性迁移（2026-09-30 数据丢失事故根治）：把旧全局 service
+    // legacyService 下的 profile 密钥搬进本实例的 keychainService_。
+    // 背景：旧版所有数据根共用 service "DevDesk"，而 Keychain service 是
+    // **全局**命名空间、不随 DEVDESK_DATA_ROOT 隔离——多根互踩之外，任一
+    // 空根实例一次孤儿清理就能扫光其它根的真实密钥。现 service 按数据根
+    // 派生（claude_service.h keychainServiceForDataRoot），历史密钥经本
+    // 方法一次性搬迁（claude_module onStart 调用，先于孤儿清理）。
+    // 逐行（claude_profiles 行的 keychain_account）语义：
+    //   新 service 已有该 account：旧 service 还有 → 删旧残留，计 1；
+    //     旧也没有 → 已迁完，零动作
+    //   新 service 没有、旧有 → 读旧、写新、删旧（先写新成功才删旧），计 1
+    //   两边都没有 → 零动作（profile 本就无 key）
+    // 写新失败 → 尽力清掉可能半写入的新条目（存储不承诺失败时未落盘，同
+    // TwoPhaseKeyWrite 口径），旧条目原样保留、下次启动重试；迁移绝不丢旧值。
+    // legacyService 为空或等于 keychainService_ → 直接返回 0（no-op）。
+    // 幂等：可反复调用，迁移完成后恒返回 0。返回本次实际迁移条数。
+    core::Result<int> migrateLegacyKeychainService(
+        const std::string& legacyService);
 
     // 显式从 Keychain 加载明文 API key（仅在需要发请求时调用，用完即丢弃）
     core::Result<std::string> loadApiKey(int64_t profileId);

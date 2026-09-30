@@ -731,6 +731,76 @@ core::Result<int> ProfileRepository::cleanupOrphanKeychainEntries() {
     return core::Result<int>::ok(removed);
 }
 
+core::Result<int> ProfileRepository::migrateLegacyKeychainService(
+    const std::string& legacyService) {
+    // 显式传 service（测试）→ legacy 为空；同名则无需迁移（防自读自删）
+    if (legacyService.empty() || legacyService == keychainService_) {
+        return core::Result<int>::ok(0);
+    }
+    auto profilesR = listProfiles();
+    if (profilesR.isFail()) {
+        return core::Result<int>::fail(profilesR.errorCode(),
+                                       profilesR.errorMessage());
+    }
+    int migrated = 0;
+    for (const auto& prof : profilesR.value()) {
+        const std::string& account = prof.keychainAccount;
+        if (account.empty()) {
+            continue;
+        }
+        auto oldR = platform::keychain::loadSecret(legacyService, account);
+        const bool oldExists = oldR.isOk() && !oldR.value().empty();
+        if (!oldExists) {
+            // 旧没有 = 已迁完 / 本就无 key（如用户从未填）→ 零动作
+            continue;
+        }
+        auto newR = platform::keychain::loadSecret(keychainService_, account);
+        const bool newExists = newR.isOk() && !newR.value().empty();
+        if (newExists) {
+            // 新已有、旧还有 = 上轮迁移的残留（删旧失败 / 崩在中途），或用户
+            // 在新 service 上重填过 key 后旧值成了陈旧副本：新 service 是
+            // 权威，删掉旧条目即达稳态
+            auto delR = platform::keychain::deleteSecret(legacyService, account);
+            if (delR.isFail()) {
+                LOG_WARN("迁移残留清理失败（不影响新条目，下次重试）：account=" +
+                         account + " - " + delR.errorMessage());
+                continue;
+            }
+            ++migrated;
+            continue;
+        }
+        // 读旧写新：先写新成功才删旧（顺序不可换——反过来失败就丢 key）
+        auto storeR = platform::keychain::storeSecret(keychainService_, account,
+                                                      oldR.value());
+        if (storeR.isFail()) {
+            // 失败补偿：各平台存储不承诺「失败时未落盘」（同 TwoPhaseKeyWrite
+            // 口径），尽力清掉可能半写入的新条目，保持旧条目完好、下次重试
+            auto cleanR =
+                platform::keychain::deleteSecret(keychainService_, account);
+            if (cleanR.isFail()) {
+                LOG_WARN("迁移失败且半写入清理也失败（下次重试）：account=" +
+                         account + " - " + cleanR.errorMessage());
+            }
+            LOG_WARN("迁移失败（旧条目保留，下次启动重试）：account=" + account +
+                     " - " + storeR.errorMessage());
+            continue;
+        }
+        auto delR = platform::keychain::deleteSecret(legacyService, account);
+        if (delR.isFail()) {
+            LOG_WARN("迁移后旧条目删除失败（新条目已就位，下次重试清理）："
+                     "account=" + account + " - " + delR.errorMessage());
+            // 数据已在新 service 就位，仍计为迁移成功
+        }
+        ++migrated;
+    }
+    if (migrated > 0) {
+        LOG_INFO("已从旧 Keychain service \"" + legacyService + "\" 迁移 " +
+                 std::to_string(migrated) + " 个密钥到 \"" + keychainService_ +
+                 "\"（一次性）");
+    }
+    return core::Result<int>::ok(migrated);
+}
+
 // ---------- API key ----------
 
 core::Result<std::string> ProfileRepository::loadApiKey(int64_t profileId) {
