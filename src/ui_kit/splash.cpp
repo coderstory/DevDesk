@@ -31,6 +31,8 @@ struct SplashState {
     std::chrono::steady_clock::time_point start;
     bool graphLoaded = false;
     eui::ShaderToyGraph graph;
+    // onCompileError（首帧 render 时才可达）置位 → 下一帧 compose 起垫深色兜底底色
+    bool shaderFailed = false;
 };
 
 SplashState& splashState() {
@@ -77,6 +79,21 @@ bool drawSplashIfNeeded(eui::Ui& ui, const eui::Screen& screen) {
         state.graph.addPass("image", fragPath, "");
     }
 
+    // shader 编译失败兜底：EUI-NEO shadertoy 图元编译失败时不画任何东西
+    //（shadertoy_primitive render() 在 handle 为空时提前返回），窗口 clearColor
+    //（浅色主题近白）直接露出，下方白字 logo / 进度条不可读。错误在首帧 render
+    // 才暴露（onCompileError 由渲染路径触发），置位后从下一帧 compose 起垫一层
+    // 不透明深色底（取 splash.frag 的 deep 基色 vec3(0.02,0.10,0.20)）。画在
+    // shadertoy **之前**——shader 正常时被不透明极光波完全盖住，视觉不变。
+    if (state.shaderFailed) {
+        ui.rect("splash.fallback.bg")
+            .position(0.0f, 0.0f)
+            .size(screen.width, screen.height)
+            .color(eui::Color{0.02f, 0.10f, 0.20f, 1.0f})
+            .opacity(opacity)
+            .build();
+    }
+
     // 全屏极光波（HTML demo 蓝配色，与 splash.frag 自述一致），淡出期随整体 opacity 一起透明
     ui.shadertoy("splash.shader")
         .position(0.0f, 0.0f)
@@ -86,6 +103,7 @@ bool drawSplashIfNeeded(eui::Ui& ui, const eui::Screen& screen) {
         .timeScale(1.0f)
         .opacity(opacity)
         .onCompileError([](const eui::ShaderToyError& error) {
+            splashState().shaderFailed = true;
             LOG_WARN("splash shader 编译失败: " + error.message + " [" +
                      error.sourcePath + ":" + std::to_string(error.line) + "]");
         })

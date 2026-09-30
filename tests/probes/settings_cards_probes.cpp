@@ -675,7 +675,7 @@ int main(int argc, char* argv[]) {
             std::cerr << "settings_cards_probes: 无渲染后端，--dump 不可用\n";
             passed = false;
         }
-        const auto dumpFrame = [fbW, fbH](const std::string& path) {
+        const auto dumpFrame = [fbW, fbH, &passed](const std::string& path) {
             std::vector<unsigned char> px(
                 static_cast<std::size_t>(fbW) *
                 static_cast<std::size_t>(fbH) * 3u);
@@ -691,6 +691,14 @@ int main(int argc, char* argv[]) {
 #pragma clang diagnostic pop
 #endif
             std::ofstream ofs(path, std::ios::binary);
+            if (!ofs) {
+                // 打开失败（路径不可写/磁盘满）不能静默假成功——视觉证据
+                // 没落盘就得置红，与 writeProbeConfig 的流校验同口径
+                std::cerr << "settings_cards_probes: dump 打开失败: " << path
+                          << "\n";
+                passed = false;
+                return;
+            }
             ofs << "P6\n" << fbW << " " << fbH << "\n255\n";
             for (int row = fbH - 1; row >= 0; --row) {  // GL 左下原点 → 翻转
                 ofs.write(reinterpret_cast<const char*>(
@@ -699,7 +707,14 @@ int main(int argc, char* argv[]) {
                                               3u),
                           static_cast<std::streamsize>(fbW) * 3);
             }
-            std::cout << "settings_cards_probes: dump " << path << "\n";
+            ofs.close();  // 显式 close 后判流状态：写失败/flush 失败在这里暴露
+            if (!ofs) {
+                std::cerr << "settings_cards_probes: dump 写入失败: " << path
+                          << "\n";
+                passed = false;
+            } else {
+                std::cout << "settings_cards_probes: dump " << path << "\n";
+            }
         };
         // 每档：置缩放 → warmup 120 帧（跨档重 compose 的 transition 落定）→
         // 末帧 render 后 present 前 dump。有界（2×120 帧）必退出
