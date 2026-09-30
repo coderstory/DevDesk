@@ -3,7 +3,7 @@
 //
 // 依赖规则遵守：HomeService 只依赖 core::data::SqliteDb，
 // 不依赖任何 module_*（markdown_index / todo_tasks / claude_call_logs
-// 都是 core::migrations 管理的稳定 schema，可独立只读查询）。
+// 都是 core::schema 定义的稳定 schema，可独立只读查询）。
 #pragma once
 
 #include "core/result.h"

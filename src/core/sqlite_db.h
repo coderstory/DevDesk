@@ -33,13 +33,6 @@ struct SqlRow {
     Result<std::string> getString(const std::string& col) const;
 };
 
-// 单条迁移
-struct Migration {
-    int version;
-    std::string description;
-    std::string sql;
-};
-
 // Statement 句柄
 class Statement {
 public:
@@ -86,9 +79,11 @@ public:
     Result<Statement> prepare(const std::string& sql);
 
     Result<void> transaction(std::function<Result<void>()> fn);
-    Result<void> runMigrations(const std::vector<Migration>& migrations);
 
-    int schemaVersion() const;
+    // 幂等执行整份 schema 脚本（core::schema::kSql），整份包在一个事务里。
+    // 无版本号、无 schema_version 表、**不升级旧库**：脚本全是 CREATE ... IF NOT
+    // EXISTS + 一条带 NOT EXISTS 守卫的种子 INSERT，连跑多次结果相同。
+    Result<void> applySchema(const std::string& sql);
 
     std::recursive_mutex& mutex() { return mutex_; }
     sqlite3* handle() { return handle_; }

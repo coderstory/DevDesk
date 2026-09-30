@@ -60,7 +60,7 @@ public:
     // 重命名列（id 不存在 → NotFound）
     core::Result<void> renameColumn(int64_t id, const std::string& title);
 
-    // 设置列颜色 token（migrations 种子 / 改色预设的名称；nullopt = 清除）
+    // 设置列颜色 token（schema 种子 / 改色预设的名称；nullopt = 清除）
     core::Result<void> setColumnColor(int64_t id, const std::optional<std::string>& color);
 
     // 删除列（外键 CASCADE 会自动删除其下所有任务）

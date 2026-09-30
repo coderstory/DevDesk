@@ -296,7 +296,7 @@ inline bool epochToYmd(int64_t epoch, int& year, int& month, int& day) {
 
 // ---- 三件套（W 计划 P2 遗留）纯函数 ----
 
-// 列颜色 token → 色点 hex（migrations 种子 + 改色预设共用一张表）。
+// 列颜色 token → 色点 hex（schema 种子 + 改色预设共用一张表）。
 // 空 / 未知 token → nullopt（列头不渲染色点）。
 inline std::optional<eui::Color> columnDotColor(const std::optional<std::string>& token) {
     if (!token.has_value()) return std::nullopt;

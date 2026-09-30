@@ -74,7 +74,7 @@ void setupLogging() {
     core::log::setLevel(core::log::Level::Info);
 }
 
-// 打开应用数据库并跑 migrations
+// 打开应用数据库并落当前 schema
 // 已先判 isFail()：取失败信息外的值走 value()（失败即 LOG_FATAL + abort，
 // 与 TU 的编译选项无关，CP-08 取值口收敛）
 ::core::Database& openAppDatabase() {

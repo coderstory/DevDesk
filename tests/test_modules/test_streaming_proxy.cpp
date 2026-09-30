@@ -32,7 +32,7 @@
 
 #include "claude_service.h"
 #include "core/database.h"
-#include "core/migrations.h"
+#include "core/schema.h"
 #include "core/proxy_stats.h"
 #include "core/sqlite_db.h"
 #include "json_scan.h"
@@ -1369,7 +1369,7 @@ REGISTER_TEST(streaming_call_log_usage_columns,
     // claude_call_logs.profile_id 有外键（open 即 PRAGMA foreign_keys=ON），
     // 而 makeProfile 的 id=1 只是内存里的号 → 再补一行 profile 供外键落地
     DOCTEST_REQUIRE(
-        env.db.handle().runMigrations(core::migrations::all()).isOk());
+        env.db.handle().applySchema(core::schema::kSql).isOk());
     DOCTEST_REQUIRE(env.db.handle().exec(
         "INSERT INTO claude_profiles (id, name, base_url, api_key_hint, "
         "api_key_check, keychain_account, model, is_active, created_at, updated_at) "
@@ -1443,7 +1443,7 @@ REGISTER_TEST(streaming_call_log_usage_absent,
     test_support::ScopedAppDatabase appDb(env.db.handle());
     // 同 streaming_call_log_usage_columns：先迁移建表，再补 profile 行满足外键
     DOCTEST_REQUIRE(
-        env.db.handle().runMigrations(core::migrations::all()).isOk());
+        env.db.handle().applySchema(core::schema::kSql).isOk());
     DOCTEST_REQUIRE(env.db.handle().exec(
         "INSERT INTO claude_profiles (id, name, base_url, api_key_hint, "
         "api_key_check, keychain_account, model, is_active, created_at, updated_at) "
