@@ -321,7 +321,7 @@ inline const Migration kClaudeExtraSettingsJson = {
 // kClaudeExtraSettingsJson 占用，顺延 v12）
 inline const Migration kAgentTables = {
     .version = 12,
-    .description = "agent subsystem tables: agent_tasks / agent_runs / agent_messages",
+    .description = "建智能体子系统三表 agent_tasks / agent_runs / agent_messages",
     .sql = R"(
         CREATE TABLE IF NOT EXISTS agent_tasks (
           id INTEGER PRIMARY KEY AUTOINCREMENT,
