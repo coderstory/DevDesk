@@ -40,8 +40,11 @@ namespace {
 //   区块底 = bodyH − 底部按钮行高 − kSharedBottomGap（锚点，不随片段数变）
 //   区块高 = min(自然高, 不侵占列表保底视口的上界)
 //   列表视口 = 区块顶 − 间距 − 列表起点（吃剩余高）
+// 2026-09-30 起自然高**恒定**（固定部分 + 2 行条目框架，见 kSharedCardsH）——
+// 用户需求「共享配置片段这个列表高度需要限制，最多显示 2 条，超过使用滚动条」：
 // 片段多到装不下时在**区块内部滚**（卡片仍然全部可达可编辑），「+ 新建片段」是
-// 区块的固定尾部 → 恒可见可点（用户报过的两个症状一起消掉）。
+// 区块的固定尾部 → 恒可见可点（用户报过的两个症状一起消掉）；条目增删 / 空态 /
+// 错误态区块高不再变 → 左列 Profile 列表视口不跟着重排。
 constexpr float kSharedHeaderBottom = 30.0f;   // 标题行 + 下边距
 constexpr float kSharedCardH = 56.0f;
 constexpr float kSharedCardGap = 8.0f;
@@ -73,21 +76,31 @@ float sharedBlockMaxH(float bodyH) {
                               kSharedListMinH - kSharedBottomGap);
 }
 
-// 区块自然高（内容全展开时）：固定部分 + 卡片区（或错误/空态行）
-float sharedBlockNaturalH(size_t snippetCount, bool hasError) {
-    float h = kSharedFixedH;
-    if (hasError || snippetCount == 0) {
-        h += kSharedInfoH;
-    } else {
-        h += static_cast<float>(snippetCount) * (kSharedCardH + kSharedCardGap);
-    }
-    return h;
+// 可视条目数封顶（2026-09-30 用户需求，原话：「共享配置片段这个列表高度需要
+// 限制，最多显示 2 条，超过使用滚动条」）：条目区恒 2 行高，不再随条目数涨
+constexpr size_t kSharedVisibleCards = 2;
+
+// 条目区高 = 2 个**整行**（行 = 卡 56 + 行距 8）。按整行取口而非「2 卡 + 1 间距」
+//（120）的理由：行容器自带行尾距，恰 2 条时内容高 128 == 视口 → 不出滚动条
+//（滚动条只在「超过 2 条」出现，对齐用户口径；120 会让恰 2 条也出一条 8px 的
+// 空滚动条）；卡 2 与「+ 新建片段」的间距 = 行尾距 8 + 按钮上间距 12 = 20，
+// 与旧自然高形态一致（旧行距本就含行尾距）
+constexpr float kSharedCardsH = static_cast<float>(kSharedVisibleCards) *
+                                (kSharedCardH + kSharedCardGap);
+
+// 区块自然高（2026-09-30 起恒定）：固定部分 + 2 行条目框架。空态 / 错误态 /
+// 1 条也按同一框架画（提示行画在框架顶部，其余留白，不收缩到实际条数）——
+// 理由：左列 Profile 列表视口 listH 由区块高推出（drawProfileListPanel 锚定式
+// 推导），区块恒高 → 增删片段 / 出错恢复整列不跳（旧形态 0 条 94 / 1 条 140 /
+// 4 条 332，每加一条全列重排一次）
+float sharedBlockNaturalH() {
+    return kSharedFixedH + kSharedCardsH;
 }
 
-// 区块实际高：自然高与上界取小（取到上界 = 卡片区要滚）
-float sharedBlockH(float bodyH, size_t snippetCount, bool hasError) {
-    return std::min(sharedBlockNaturalH(snippetCount, hasError),
-                    sharedBlockMaxH(bodyH));
+// 区块实际高：自然高与上界取小（取到上界 = 极矮窗退化：条目区 < 2 行仍可滚，
+// 退化守门见 drawProfileListPanel 的 LOG_ERROR）
+float sharedBlockH(float bodyH) {
+    return std::min(sharedBlockNaturalH(), sharedBlockMaxH(bodyH));
 }
 
 // Profile 卡片（点击选中，选中/激活高亮）。
@@ -417,9 +430,7 @@ void drawProfileListPanel(eui::Ui& ui, float leftW, float bodyH,
             // 两者都是「高度预算不足」，按统一原则必须**可见**：记 ERROR（不做
             // assert/abort —— 退化域低于支持的最小窗，GUI 不该为此崩，且 Release
             // 会把 assert 编掉、问题在两种构建下同样该现形）。
-            const bool sharedHasError = !sharedConfigsError.empty();
-            const float sharedH = sharedBlockH(bodyH, sharedConfigs.size(),
-                                               sharedHasError);
+            const float sharedH = sharedBlockH(bodyH);
             const float sharedBlockTop = sharedBlockBottomY(bodyH) - sharedH;
             if (sharedH < kSharedFixedH + kSharedInfoH) {
                 LOG_ERROR("[layout] 共享配置区块被压扁（标题/空态行与按钮重叠）: "
@@ -632,7 +643,9 @@ void drawProfileListPanel(eui::Ui& ui, float leftW, float bodyH,
 // 列表视口）；块内元素一律**相对块顶**从 0 起算（审计 F-08：此前有个恒传 0 的
 // `y` 形参、文档还写成「面板内绝对坐标」，与实现相反 —— 块的绝对位置由外层
 // `claude.shared.block` stack 的 .position 决定，块函数不该再持一个偏移）。
-// 卡片装不下时在块内滚（「+ 新建片段」是固定尾部，恒可见可点）。
+// 卡片装不下时在块内滚（条目区恒 2 行 = kSharedCardsH，超过 2 条出滚动条；
+// 「+ 新建片段」是固定尾部，恒可见可点）。空态 / 错误态提示行画在条目框架
+// 顶部、其余留白（区块高恒定，见 sharedBlockNaturalH 的理由）。
 // 几何常量与高度算式见文件顶部匿名命名空间。
 void drawSharedConfigBlock(eui::Ui& ui, float width, float blockH,
                            const core::theme::Tokens& t,

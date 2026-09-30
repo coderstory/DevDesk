@@ -710,16 +710,21 @@ REGISTER_TEST(uiModernVirtualProfileRows,
     DOCTEST_CHECK(ui.find("claude.profile.15.name") == nullptr);
 
     // 滚动回退语义：onScrollOffsetChanged 写 profilesScrollOffset_ →
-    // 重 compose 视口随偏移前移（原视口外的行进入渲染范围）
+    // 重 compose 视口随偏移前移（原视口外的行进入渲染范围）。
+    // 2026-09-30：共享配置片段列表限高 2 条后区块高 94→204，列表视口少 110px
+    //（slot 窗口语义未变，只是窗口更矮）→ 偏移从 600 提到 1500，让行 17
+    //（内容 y 1836，2 行距）重新落进「偏移 ± 1 视口 overscan」渲染窗
     const auto* root = ui.find("claude.profiles.scroll");
     DOCTEST_REQUIRE(root != nullptr);
     DOCTEST_REQUIRE(root->onScrollOffsetChanged != nullptr);
-    root->onScrollOffsetChanged(600.0f);
+    root->onScrollOffsetChanged(1500.0f);
     compose();
     DOCTEST_CHECK(ui.find("claude.profiles.scroll.slot.0") != nullptr);
     DOCTEST_CHECK(ui.find("claude.profile.17.name") != nullptr);
-    // 行命中节点 .bg 保留（选中/右键挂点行内，点击语义未动）
-    DOCTEST_CHECK(ui.find("claude.profile.0.bg") != nullptr);
+    // 行命中节点 .bg 保留（选中/右键挂点行内，点击语义未动）。2026-09-30：
+    // 视口变矮后 offset 1500 下第 0 行已被 slot 窗口裁掉（窗口化更明显，见上
+    // 初始断言），改在已渲染的行 17 上验 .bg
+    DOCTEST_CHECK(ui.find("claude.profile.17.bg") != nullptr);
 
     mod->onStop();
     return true;
