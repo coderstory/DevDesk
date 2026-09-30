@@ -5,9 +5,9 @@ Header-only HTTP/HTTPS client + server library by Yuji Hirose.
 ## Source
 
 - Upstream repo: https://github.com/yhirose/cpp-httplib
-- Version: **v0.18.5**
-- License: MIT (Copyright (c) 2024 Yuji Hirose)
-- Header: `httplib.h` (single file, ~10k lines)
+- Version: **v0.58.0**
+- License: MIT (Copyright (c) 2026 Yuji Hirose)
+- Header: `httplib.h` (single file, ~23k lines)
 
 ## Integration
 
