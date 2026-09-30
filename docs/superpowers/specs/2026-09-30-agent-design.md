@@ -411,10 +411,10 @@ agent 定位为「DevDesk 内部消费者」——经本地代理 = 复用全部
 
 ## 6. 数据模型
 
-三张新表，migration version 11（接续现有 `kClaudeFailoverColumns` v10，已核实 `src/core/migrations.h:282`）。
+三张新表，migration version **12**（R4 修正：原定 v11 已被并行交付的 `kClaudeExtraSettingsJson` 占用，2026-09-30 实测 `migrations.h` all() 末项 = v11；接续顺延 v12）。
 
 ```sql
--- migration v11：智能体子系统（spec 2026-09-30-agent-design §6）
+-- migration v12：智能体子系统（spec 2026-09-30-agent-design §6；R4 修正 v11→v12）
 --   - agent_tasks：任务定义（goal + 触发配置 + 迭代上限 + 模型槽位 + allow_destructive）
 --   - agent_runs：单次执行记录（一个 task 可有多次 run）
 --   - agent_messages：每轮消息（role + content blocks 原文，可审计 + 上下文重建）
@@ -533,7 +533,7 @@ UI 实现细节（具体组件、布局）在 plan 阶段定，本 spec 只约�
 | `module_claude_proxy` | `ClaudeTools.{h,cpp}`：4 个 ITool 实现（调 ClaudeService 既有方法）；onStart 注册；实现 `IClaudeProxyService::resolveModelSlot`（**non-const**，经 ProfileRepository 取激活 profile 的 models_config 解析槽位键→model id，M1） | claude_service.cpp 既有 43 签名、代理转发、failover |
 | `module_settings` | `AppTools.{h,cpp}`：1 个 ITool 实现（`app.read_settings`）；onStart 注册 | settings 配置、UI |
 | `module_agent` | `AppStatsTool`：1 个 ITool 实现（`app.stats`，经 SQLite 统计）；`AgentModule` + `AgentLoop` + `LlmClient` + `Scheduler` | — |
-| `core/migrations.h` | 加 `kAgentTables` v11（§6 SQL） | 既有 10 个 migration |
+| `core/migrations.h` | 加 `kAgentTables` v12（§6 SQL） | 既有 11 个 migration |
 | `core/module_interface.h` | `PageId::Agent` 枚举（加在 About 前）+ `pageIdToString` 分支 | Module 基类签名 |
 | `core/claude_proxy_service.h` | `IClaudeProxyService` 加 `resolveModelSlot` 虚方法 + `GlobalClaudeProxyService` 适配器转发 | 既有方法签名 |
 | `app_registry.h` | `kModuleRegistry` 加一行 Agent（About 前）+ `create_agent_module` 声明 | 既有 6 行 |
@@ -632,7 +632,7 @@ UI 实现细节（具体组件、布局）在 plan 阶段定，本 spec 只约�
 | 层 | 内容 |
 |---|---|
 | core | `tool.h`（ITool/ToolRegistry）+ `llm_endpoint.h`（LlmEndpoint）+ `IClaudeProxyService::resolveModelSlot` 扩展 + `GlobalClaudeProxyService` 适配器转发 |
-| 数据 | migration v11 三表（§6）+ 悬挂 run 清扫（§10 L2） |
+| 数据 | migration v12 三表（§6）+ 悬挂 run 清扫（§10 L2） |
 | module_agent | `AgentModule`（最小 UI：任务列表 / 新建表单 / 手动启动 / run 列表与详情最简版）+ `AgentLoop` + `LlmClient` + `AppStatsTool` |
 | 工具 | `TodoTools`（6 个）+ `MarkdownTools` M1 部分（`md.search` / `md.read`） |
 | 装配 | `PageId::Agent`、`kModuleRegistry`、`kModuleIdAgent`、main.cpp switch、CMakeLists、模块隔离守卫扩展、契约测试更新（router 序 / assembly 表，§9 M3 两用例） |
