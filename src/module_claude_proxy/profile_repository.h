@@ -178,7 +178,7 @@ public:
     // 复制 Profile（设计 §4.2/§4.3，M4）：名称自动加「副本」后缀（重名递增
     // 避让，100 次仍冲突 → fail 不建行），API key 一并复制（源 key 缺失 →
     // fail，不建无 key 的副本；失败分三态：条目不存在 / 读失败（原样透传
-    // 错误码）/ 值为空串，前两者文案带恢复提示「编辑该 Profile 重新填一次
+    // 错误码）/ 值为空串，首、末两态文案带恢复提示「编辑该 Profile 重新填一次
     // API Key 即可」），**副本不激活**（S-4）。
     // 二段补写（models_config / extra_env / extra_settings_json）失败 →
     // best-effort 删除刚建的副本回滚：回滚成功 = fail 且零残留；回滚失败 =
@@ -245,7 +245,8 @@ public:
     // 片段高级属性 JSON 原文（0 / 片段不存在 / 读失败 → 空串 = 未绑定；读路径
     // 容错，悬空 id 退化成「未绑定」而不是让接管失败）。v11 起片段内容为
     // settings.json 非 env 顶层属性 JSON（旧 extra_env 已弃用，设计 §8）。
-    // 门面的 syncTakeOver / runProfile / 导出经此读片段
+    // 门面的 syncTakeOver / runProfile 经此读片段；导出链（doCopyConfig）不经
+    // 此访问器——它走列表快照 cachedSharedConfigs_ 的 findSharedById
     //（原 sharedExtraEnvJsonFor 改名，advanced-json-editor 设计 §3.3）
     std::string sharedExtraSettingsJsonFor(int64_t sharedConfigId) const;
 

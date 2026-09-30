@@ -229,8 +229,15 @@ public:
                                    ? envSourceLabel(EnvSource::Shared)
                                    : envSourceLabel(EnvSource::Profile));
                         if (k == "model") {
-                            dv.extraSettingsNote =
-                                "「model」覆盖模型槽位（ANTHROPIC_MODEL 不写入）";
+                            // 说明只在抑制真发生时给：applyExtraSettingsTo-
+                            // SettingsDoc 的 ANTHROPIC_MODEL 抑制仅对**非空
+                            // 字符串** model 生效；空串 / 非字符串时该键照写
+                            // settings.json，此说明不适用（审计 R1-1）
+                            const auto mv = effObj.get(k);
+                            if (mv.isString() && !mv.asString().empty()) {
+                                dv.extraSettingsNote =
+                                    "「model」覆盖模型槽位（ANTHROPIC_MODEL 不写入）";
+                            }
                         }
                     }
                 } else {

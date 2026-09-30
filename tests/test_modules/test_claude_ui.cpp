@@ -3560,7 +3560,7 @@ REGISTER_TEST(claude_ui_json_fullscreen_buffer_roundtrip_and_error_gate,
     return true;
 })
 
-// ---- 运行第 6 键（2026-09-28 profile-run 设计 §6/§8；D-1 直连形态）----
+// ---- 运行第 7 键（2026-09-28 profile-run 设计 §6/§8；D-1 直连形态）----
 // ⚠️ 本文件用真实 ClaudeService（setGlobal）：点「运行」前**必须**注入假 launch，
 //    否则测试会真的启动 wt/powershell + claude（spec §6 第 4 项）
 REGISTER_TEST(claude_module_run_button_headless,
@@ -3606,7 +3606,7 @@ REGISTER_TEST(claude_module_run_button_headless,
     });
     // runProfile 直连形态不启代理：isProxyRunning 全程恒 false（零全局改动）
 
-    // 第 6 键存在且可点（无 profile 时：无选中 → toast「请先选择 Profile」，不启动）
+    // 第 7 键存在且可点（无 profile 时：无选中 → toast「请先选择 Profile」，不启动）
     {
         eui::Ui ui;
         compose(ui);
@@ -3746,8 +3746,8 @@ REGISTER_TEST(claude_module_shared_block_and_card,
         DOCTEST_CHECK(textOf(ui, "claude.shared.card.1.keys").find(
                           "高级属性 JSON 预设") != std::string::npos);
     }
-    // 点片段B 卡片 → 编辑弹窗打开、name/env 回显（parseExtraEnv 出 map 按
-    // 键名排序：MY_B 在前）
+    // 点片段B 卡片 → 编辑弹窗打开、name/高级设置 JSON 回显（§8.1 弹窗 JSON 化，
+    // 键值行已拆除；下方断言只覆盖 name 文本与 JSON 编辑框在场）
     {
         eui::Ui ui;
         compose(ui);
@@ -3855,7 +3855,7 @@ REGISTER_TEST(claude_module_shared_editor_create,
         compose(ui);
         DOCTEST_CHECK(type(ui, "claude.dialog.shared.name.hit", "网关env"));
         DOCTEST_CHECK(type(ui, "claude.dialog.shared.json.hit",
-                           R"({"MY_GW":"v1"})"));
+                           R"({"MY_GW":"v1","gateway":{"timeout":30,"retry":true}})"));
         DOCTEST_CHECK(click(ui, "claude.dialog.shared.confirm.bg"));
     }
     // 弹窗关 + 成功 toast
@@ -3869,16 +3869,25 @@ REGISTER_TEST(claude_module_shared_editor_create,
         DOCTEST_REQUIRE(title != nullptr);
         DOCTEST_CHECK_EQ(title->text, std::string("已创建"));
     }
-    // DB 往返：name + 片段 JSON 落地（v11 起存 extra_settings_json 列）
+    // DB 往返：name + 片段 JSON 落地（v11 起存 extra_settings_json 列）。
+    // 审计 R1-2：断言改经 platform::json 按对象核键值，含嵌套对象值——旧断言
+    // 用 env 域 parseExtraEnv（非字符串值即 fail），盖不住真实片段形态
     {
         auto list = env.svc->listSharedConfigs();
         DOCTEST_REQUIRE(list.isOk());
         DOCTEST_REQUIRE_EQ(list.value().size(), static_cast<size_t>(1));
         DOCTEST_CHECK_EQ(list.value()[0].name, std::string("网关env"));
-        auto ee = module::claude::parseExtraEnv(list.value()[0].extraSettingsJson);
-        DOCTEST_REQUIRE(ee.isOk());
-        DOCTEST_REQUIRE_EQ(ee.value().size(), static_cast<size_t>(1));
-        DOCTEST_CHECK_EQ(ee.value().at("MY_GW"), std::string("v1"));
+        auto doc = platform::json::parse(list.value()[0].extraSettingsJson);
+        DOCTEST_REQUIRE(doc.isOk());
+        DOCTEST_REQUIRE(doc.value().isObject());
+        const auto obj = doc.value().asObject();
+        DOCTEST_CHECK_EQ(obj.get("MY_GW").asString(), std::string("v1"));
+        DOCTEST_REQUIRE(obj.get("gateway").isObject());   // 嵌套对象往返不失真
+        const auto gw = obj.get("gateway").asObject();
+        DOCTEST_CHECK(gw.get("timeout").isNumber());
+        DOCTEST_CHECK_EQ(gw.get("timeout").asInt(), 30);
+        DOCTEST_CHECK(gw.get("retry").isBool());
+        DOCTEST_CHECK_EQ(gw.get("retry").asBool(), true);
     }
 
     mod->onStop();
@@ -5910,6 +5919,27 @@ REGISTER_TEST(claude_detail_advanced_key_sources,
         p.extraSettingsJson = "{broken json";
         DOCTEST_REQUIRE(env.svc->updateProfile(p).isOk());
     }
+    // 审计 R1-1：model 说明仅对**非空字符串** model 显示（抑制只在该形态真
+    // 发生——applyExtraSettingsToSettingsDoc）；空串 / 非字符串时键照写
+    // settings.json，说明不适用
+    auto emptyModel = env.svc->createProfile("空串model源",
+                                             "https://kse.example.com",
+                                             "sk-ant-ksrc-0003", "");
+    DOCTEST_REQUIRE(emptyModel.isOk());
+    {
+        module::claude::Profile p = emptyModel.value();
+        p.extraSettingsJson = R"({"model":""})";
+        DOCTEST_REQUIRE(env.svc->updateProfile(p).isOk());
+    }
+    auto nonStrModel = env.svc->createProfile("非串model源",
+                                              "https://ksn.example.com",
+                                              "sk-ant-ksrc-0004", "");
+    DOCTEST_REQUIRE(nonStrModel.isOk());
+    {
+        module::claude::Profile p = nonStrModel.value();
+        p.extraSettingsJson = R"({"model":123})";
+        DOCTEST_REQUIRE(env.svc->updateProfile(p).isOk());
+    }
 
     std::unique_ptr<::core::Module> mod(create_claude_module());
     eui::Screen screen;
@@ -6026,9 +6056,45 @@ REGISTER_TEST(claude_detail_advanced_key_sources,
         DOCTEST_CHECK(ui.find("claude.advjson.label") == nullptr);
     }
 
+    // 审计 R1-1：空串 / 非字符串 model —— key 行在场但「ANTHROPIC_MODEL 不
+    // 写入」说明不显示（说明只对非空字符串 model 显示）
+    for (const std::string target : {"空串model源", "非串model源"}) {
+        {
+            eui::Ui ui;
+            compose(ui);
+            bool clicked = false;
+            for (int i = 0; i < 8 && !clicked; ++i) {
+                const auto* name = ui.find("claude.profile." +
+                                           std::to_string(i) + ".name");
+                if (name != nullptr && name->text == target) {
+                    clicked = click(ui, "claude.profile." + std::to_string(i) +
+                                            ".bg");
+                }
+            }
+            DOCTEST_CHECK(clicked);
+        }
+        {
+            eui::Ui ui;
+            compose(ui);
+            DOCTEST_CHECK(click(ui, "claude.detail.tabs.hit.3"));
+        }
+        {
+            eui::Ui ui;
+            compose(ui);
+            // model 行在场（证明 pane 渲染到该 profile 且键被解析出）
+            const auto* k0 = ui.find("claude.advjson.row.key.0");
+            DOCTEST_REQUIRE(k0 != nullptr);
+            DOCTEST_CHECK_EQ(k0->text, std::string("model"));
+            // 说明不显示（修复前此处为 false → 断言先红后绿）
+            DOCTEST_CHECK(ui.find("claude.advjson.note") == nullptr);
+        }
+    }
+
     mod->onStop();
     cleanupProfileKey(kTestKeychainService, pid);
     cleanupProfileKey(kTestKeychainService, bad.value().id);
+    cleanupProfileKey(kTestKeychainService, emptyModel.value().id);
+    cleanupProfileKey(kTestKeychainService, nonStrModel.value().id);
     return true;
 })
 
