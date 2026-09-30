@@ -15,8 +15,11 @@
 #include "module_markdown/markdown_tools.h"
 #include "platform/json.h"
 
+#include <filesystem>
+#include <fstream>
 #include <memory>
 #include <string>
+#include <system_error>
 
 namespace {
 
@@ -141,6 +144,52 @@ REGISTER_TEST(md_tools_read_missing_path_is_error,
     return true;
 })
 
+// 评审修复（2026-10-01）：md.read 是新开的 LLM 信任边界——读到的内容经
+// AgentLoop 回喂并送上游 LLM API，路径逃逸 = 笔记目录外任意文件泄露。
+// 两种逃逸形态（service resolve() 收口前都能真实读出）：
+//   相对上跳 "../../x"；绝对路径 "/etc/passwd"（fs::path operator/ 对绝对
+//   RHS 是整体替换，notesDir 前缀都不剩）。
+// 用「目录外真实存在」的文件做相对上跳目标——修复前 isError 断言红
+//（内容被读出回喂），修复后绿；"../../x" 目标不存在，修复前靠
+// 「读不到文件」碰巧不漏，此用例钉的是「拒绝原因 = 越界」而非运气。
+REGISTER_TEST(md_tools_read_rejects_path_traversal,
+              "md.read: 路径逃逸（相对上跳/绝对路径）→ isError，目录外内容不回喂", {
+    ToolEnv env("traversal");
+    DOCTEST_REQUIRE(seedNotes(*env.svc));
+    env.tools->registerAll();
+
+    // 笔记目录外种一个真实文件（临时根下，与笔记目录平级）
+    const std::filesystem::path secret =
+        env.env.dir.parent_path() / "outside_secret.md";
+    DOCTEST_REQUIRE(test_support::writeTextFile(secret, "TOP_SECRET_OUTSIDE"));
+    struct Cleanup {
+        std::filesystem::path p;
+        ~Cleanup() {
+            std::error_code ec;
+            std::filesystem::remove(p, ec);
+        }
+    } cleanup{secret};  // RAII：fail-fast 早退也不留垃圾
+
+    // 相对上跳 + 目标真实存在（修复前：读出 TOP_SECRET_OUTSIDE，isError 断言红）
+    auto up = runTool("md.read", R"({"path":"../outside_secret.md"})");
+    DOCTEST_REQUIRE(up.isOk());
+    DOCTEST_CHECK(up.value().isError);
+    DOCTEST_CHECK(up.value().contentJson.find("TOP_SECRET_OUTSIDE") ==
+                  std::string::npos);
+
+    // 绝对路径逃逸（macOS 上 /etc/passwd 存在，修复前能整读回喂）
+    auto abs = runTool("md.read", R"({"path":"/etc/passwd"})");
+    DOCTEST_REQUIRE(abs.isOk());
+    DOCTEST_CHECK(abs.value().isError);
+    DOCTEST_CHECK(abs.value().contentJson.find("root:") == std::string::npos);
+
+    // 多级上跳形态：目标不存在也必须拒（拒绝理由是越界，不是文件缺失）
+    auto deep = runTool("md.read", R"({"path":"../../x"})");
+    DOCTEST_REQUIRE(deep.isOk());
+    DOCTEST_CHECK(deep.value().isError);
+    return true;
+})
+
 // ============ 工具级错误 ============
 
 REGISTER_TEST(md_tools_invalid_params_feed_error,
@@ -181,9 +230,14 @@ REGISTER_TEST(md_tools_schema_spot_check_and_registry,
         DOCTEST_REQUIRE(found.isOk());
         const std::string schema = found.value()->schemaJson();
         DOCTEST_CHECK(schema.find("input_schema") != std::string::npos);
-        DOCTEST_CHECK(schema.find("\"required\"") != std::string::npos);
         DOCTEST_CHECK(schema.find(std::string("\"name\":\"") + n + "\"") !=
                       std::string::npos);
+        // properties 键名抽查（batch 裁定）：宣传的入参键必须真实出现
+        DOCTEST_CHECK(schema.find(std::string("\"") +
+                                  (std::string(n) == "md.search" ? "query"
+                                                                 : "path") +
+                                  "\"") != std::string::npos);
+        DOCTEST_CHECK(schema.find("\"required\"") != std::string::npos);
         DOCTEST_CHECK_FALSE(found.value()->isDestructive());  // M1 只读
     }
 

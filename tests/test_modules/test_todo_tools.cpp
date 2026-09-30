@@ -349,16 +349,25 @@ REGISTER_TEST(todo_tools_schema_spot_check_and_registry,
         DOCTEST_CHECK(schema.find("input_schema") != std::string::npos);
         DOCTEST_CHECK(schema.find(std::string("\"name\":\"") + n + "\"") !=
                       std::string::npos);
+        // properties 键名抽查（batch 裁定）：每个工具宣传的入参键必须真实出现
+        const std::string nStr(n);
+        const char* expectedKey =
+            nStr == "todo.list"     ? "completed"
+            : (nStr == "todo.create" || nStr == "todo.update") ? "title"
+            : nStr == "todo.move"   ? "columnId"
+                                    : "id";  // complete / delete
+        DOCTEST_CHECK(schema.find(std::string("\"") + expectedKey + "\"") !=
+                      std::string::npos);
         // 必填键抽查：除 todo.list（全部参数可选、无 required）外，
         // 每个工具的 input_schema 都要声明 required
-        if (std::string(n) == "todo.list") {
+        if (nStr == "todo.list") {
             DOCTEST_CHECK(schema.find("\"required\"") == std::string::npos);
         } else {
             DOCTEST_CHECK(schema.find("\"required\"") != std::string::npos);
         }
         // 破坏性标记只有 todo.delete
         DOCTEST_CHECK_EQ(found.value()->isDestructive(),
-                         std::string(n) == "todo.delete");
+                         nStr == "todo.delete");
     }
 
     // 注销后不可再 find（模块开关插拔语义）；对不存在的名字重复注销是 no-op
