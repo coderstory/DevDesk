@@ -96,6 +96,17 @@ inline constexpr float kPetCardHeight = 168.0f;
 inline constexpr float kDirectoryCardHeight = 116.0f;   // 目录卡（模块；hint 底 100 + 16）
 inline constexpr float kLogSettingsCardHeight = 148.0f; // 日志卡（日志；编辑器字号迁出后收窄）
 
+// ---- 行盒/间距随生效字号派生（2026-09-30 spec §2.3 本期修）----
+// 根因（与详情页 env pane 同一台病，真机 130% 档墨迹越盒）：全局字号缩放只放大
+// 字号，行盒/行距按 100% 写死 → 文本 advance 超出盒贴边/叠印。派生口径与 env
+// pane 修复（1ca87b0）一致：**行盒 = round(基准 × fontScale)**，系数（基准/行
+// 字号）> 最坏 CJK 墨迹 1.25×，恒包住墨迹；**100% 档 round() 后与旧字面常量
+// 逐一相等**（零回归锚——既有布局断言、常量钉值用例全部不动）。字号本体仍走
+// fs()（不取整，与 env pane 同款），取整只发生在盒/间距上（像素对齐稳定）。
+inline float roundFs(float base) {
+    return std::round(base * ::core::theme::fontScale());
+}
+
 // ============ 下拉 openUp 越界判定几何 ============
 // 日志卡 / 编辑器字号卡的下拉贴近窗体底边，向下展开可能被裁剪；用同一套几何
 // 预先判断「向下展开是否出界」，出界则置 openUp 让 dropdown 向上展开。
@@ -112,23 +123,35 @@ inline constexpr float kLogSettingsCardHeight = 148.0f; // 日志卡（日志；
 // 行 y 取 56 / 104（标签中心与控件中心对齐 + 控件底边 132 = 卡高 148 − 16 下边距
 // 刚好用满）：行 1 控件底边 84 也是 openUp 几何的既有锚点（短窗向上展开时
 // 弹层顶边不越出窗体顶）。
+//
+// 2026-09-30 merge-review R1 本期修：行 y / 标签行高 / 下拉控件高原为字面
+// constexpr，不在 roundFs 派生池 —— 85% 字号档（fontScale=0.85）日志卡行 2
+// 下拉底沿 96+36=132 > 卡高 roundFs(148)=126，控件溢出卡外与 tail 卡叠印
+//（编辑器字号卡同池共享 kEditorFontDdOffsetY / 下拉高）。改走 roundFs 派生
+//（口径与 settings_ui_cards.cpp 已派生行一致）：行盒/控件随生效字号缩放，
+// 100% 档 roundFs(x)==x，y=56/104、高 20/36、偏移 48/96 与旧字面逐值相等
+//（零回归锚）。水平几何（x / 宽）不随字号缩放，保持字面常量。弹层三项
+//（kDropdownItemHeight 等）是 EUI-NEO 组件 chrome、不经 DevDesk 字号缩放，
+// 同样保持字面。
 inline constexpr float kLogLabelX = 28.0f;       // 标签列左边缘（卡内 padding）
 inline constexpr float kLogLabelWidth = 84.0f;   // 标签列宽（"日志保留" 4 字 ×12px = 48）
-inline constexpr float kLogLabelHeight = 20.0f;  // 标签行高 = 单行高度（不折行）
+inline float logLabelHeight() { return roundFs(20.0f); }  // 标签行盒高（100% = 20，单行不折行）
 inline constexpr float kLogFieldX = 124.0f;      // 控件列左边缘 = 28 + 84 + 12（一档间距）
 inline constexpr float kLogFieldWidth = 240.0f;  // 两个下拉同宽（同一列口径）
-inline constexpr float kLogFieldHeight = 36.0f;  // 两个下拉同高
-inline constexpr float kLogRow1LabelY = 56.0f;   // 行 1 标签 y（标题行 16..38 之下）
-inline constexpr float kLogRow2LabelY = 104.0f;  // 行 2 标签 y
+inline float logFieldHeight() { return roundFs(36.0f); }  // 两个下拉同高（100% = 36）
+inline float logRow1LabelY() { return roundFs(56.0f); }   // 行 1 标签 y（100% = 56，标题行 16..38 之下）
+inline float logRow2LabelY() { return roundFs(104.0f); }  // 行 2 标签 y（100% = 104）
 inline constexpr float kLogHintX = 388.0f;       // 说明列 x = 124 + 240 + 24
-// 控件相对标签行的 y 偏移：控件比标签高一档，取垂直居中 = (20 - 36)/2 = -8
-inline constexpr float kLogFieldDy = (kLogLabelHeight - kLogFieldHeight) * 0.5f;
-inline constexpr float kLogDropdownOffsetY = kLogRow1LabelY + kLogFieldDy;  // 48
-inline constexpr float kLogDropdownHeight = kLogFieldHeight;               // 36
-inline constexpr float kEditorFontDdOffsetY = 42.0f;   // 编辑器字号卡内 dropdown y（Task B 独立卡）
-inline constexpr float kLogEditorFontHeight = 36.0f;   // 编辑器字号 dropdown 高
-inline constexpr float kLogLevelOffsetY = kLogRow2LabelY + kLogFieldDy;     // 92
-inline constexpr float kLogLevelHeight = kLogFieldHeight;                  // 36
+// 控件相对标签行的 y 偏移：控件比标签高一档，取垂直居中（100% = (20-36)/2 = -8）
+inline float logFieldDy() { return (logLabelHeight() - logFieldHeight()) * 0.5f; }
+inline float logDropdownOffsetY() { return logRow1LabelY() + logFieldDy(); }  // 100% = 48
+inline float logLevelOffsetY() { return logRow2LabelY() + logFieldDy(); }     // 100% = 96
+// 编辑器字号卡内 dropdown y（Task B 独立卡；下拉高与日志卡同源 logFieldHeight）。
+// y 拆两段：字面锚（标题盒 16..38，标题盒高 22 字面、字号 token 化）+ 派生
+// 一档间距 roundFs(4)——若整段 roundFs(42)，85% 档缩到 36 会越过字面标题盒
+// 底 38（compose 实测 editor.title × editor.ddwrap 行盒叠印），故间距才入
+// 派生池、锚保持字面（与代理卡接管行 y=98 字面锚同款口径）
+inline float editorFontDdOffsetY() { return 38.0f + roundFs(4.0f); }  // 100% = 42
 inline constexpr float kDropdownPopupGap = 8.0f;       // 字段底边与弹层间距（spacing.compact）
 inline constexpr float kDropdownItemHeight = 34.0f;    // 单个菜单项高（control.menuItem）
 inline constexpr float kDropdownPopupPadding = 12.0f;  // 弹层上下 padding（spacing.small × 2）
@@ -192,17 +215,6 @@ int nearestIndex(int value, const int* presets, int count);
 // 非 token 的硬编码字号跟随全局缩放（单一来源 core::theme::fontScale；
 // token 字号已在 theme 层缩放，不要再经本函数包一层，避免双重缩放）。
 float fs(float base);
-
-// ---- 行盒/间距随生效字号派生（2026-09-30 spec §2.3 本期修）----
-// 根因（与详情页 env pane 同一台病，真机 130% 档墨迹越盒）：全局字号缩放只放大
-// 字号，行盒/行距按 100% 写死 → 文本 advance 超出盒贴边/叠印。派生口径与 env
-// pane 修复（1ca87b0）一致：**行盒 = round(基准 × fontScale)**，系数（基准/行
-// 字号）> 最坏 CJK 墨迹 1.25×，恒包住墨迹；**100% 档 round() 后与旧字面常量
-// 逐一相等**（零回归锚——既有布局断言、常量钉值用例全部不动）。字号本体仍走
-// fs()（不取整，与 env pane 同款），取整只发生在盒/间距上（像素对齐稳定）。
-inline float roundFs(float base) {
-    return std::round(base * ::core::theme::fontScale());
-}
 
 // 代理卡接管/警告行几何（drawProxyCard 与 proxyCardHeightFor 单一来源——
 // compose 的卡高公式与卡内绘制各写一份必然漂移，同本头「卡高与卡内几何同源」

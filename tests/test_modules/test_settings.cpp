@@ -1588,7 +1588,8 @@ REGISTER_TEST(settings_card_rows_scale_derived,
     screen.height = 1000.0f;
 
     // 每卡参与判定的行元素（条件行——降级提示 / 警告行——headless 默认档不
-    // 渲染，不列入；日志卡两行 20px 盒不在本期修清单，留作「未派生」对照钉）
+    // 渲染，不列入）。下拉字段包装（.ddwrap）自 2026-09-30 merge-review R1
+    // 起随字号派生并入池——85% 档字面行溢出卡外正是本判定要抓的形状
     struct CardRows {
         int tab;
         const char* card;
@@ -1601,7 +1602,8 @@ REGISTER_TEST(settings_card_rows_scale_derived,
           "settings.card.appearance.font.label",
           "settings.card.appearance.effect.label"}},
         {0, "settings.card.editor",
-         {"settings.card.editor.title", "settings.card.editor.hint"}},
+         {"settings.card.editor.title", "settings.card.editor.hint",
+          "settings.card.editor.ddwrap"}},
         {1, "settings.card.modules",
          {"settings.card.modules.title", "settings.card.modules.desc",
           "settings.card.modules.name.0", "settings.card.modules.rowdesc.0",
@@ -1609,7 +1611,9 @@ REGISTER_TEST(settings_card_rows_scale_derived,
           "settings.card.modules.name.2", "settings.card.modules.rowdesc.2",
           "settings.card.modules.name.3", "settings.card.modules.rowdesc.3"}},
         {1, "settings.card.pet",
-         {"settings.card.pet.title", "settings.card.pet.desc"}},
+         {"settings.card.pet.title", "settings.card.pet.desc",
+          "settings.card.pet.skin.label", "settings.card.pet.skin.ddwrap",
+          "settings.card.pet.scale.label", "settings.card.pet.scale.ddwrap"}},
         {1, "settings.card.directory",
          {"settings.card.directory.title", "settings.card.directory.hint"}},
         {1, "settings.card.proxy",
@@ -1619,8 +1623,9 @@ REGISTER_TEST(settings_card_rows_scale_derived,
           "settings.card.proxy.takeover.value"}},
         {2, "settings.card.log",
          {"settings.card.log.title", "settings.card.log.label",
-          "settings.card.log.hint", "settings.card.log.level.label",
-          "settings.card.log.level.hint"}},
+          "settings.card.log.hint", "settings.card.log.ddwrap",
+          "settings.card.log.level.label", "settings.card.log.level.hint",
+          "settings.card.log.level.ddwrap"}},
         {2, "settings.tab.log", {"settings.tab.log.title"}},
     };
 
@@ -1637,8 +1642,8 @@ REGISTER_TEST(settings_card_rows_scale_derived,
     // 写在用例体里，与 claude_env_tab_no_overlap 同款手法）：
     //   ① 行盒矩形两两不重叠（同 tab 全行池化，跨卡叠印也在此被抓）
     //   ② 卡 frame 两两不重叠 + 行盒 ⊆ 所属卡 frame（卡高没跟派生即红）
-    //   ③ 派生钉值：行盒高/y 偏移 == 字面期望（at130 选档）
-    const auto tabProblem = [&](eui::Ui& ui, int tab, bool at130) {
+    //   ③ 派生钉值：行盒高/y 偏移 == 字面期望（at 按 scale 三档选值）
+    const auto tabProblem = [&](eui::Ui& ui, int tab, float scale) {
         struct Rect {
             const char* id;
             float x0, y0, x1, y1;
@@ -1712,62 +1717,115 @@ REGISTER_TEST(settings_card_rows_scale_derived,
             return std::string();
         };
         std::string err;
+        // 三档期望值选取：at(a85, a100, a130) 按 scale 取——期望值全部按生产
+        // 公式 roundFs(基准) = round(基准 × scale) 手算（85% 档 / 100% 档 /
+        // 130% 档），改派生系数或改回字面必红
+        const auto at = [&](float a85, float a100, float a130) {
+            return scale < 0.9f ? a85 : (scale > 1.1f ? a130 : a100);
+        };
         if (tab == 0) {
             err = pin("appearance.title 高", heightOf("settings.card.appearance.title"),
-                      at130 ? 31.0f : 24.0f);
+                      at(20.0f, 24.0f, 31.0f));
             if (err.empty())
                 err = pin("appearance.desc 高",
                           heightOf("settings.card.appearance.desc"),
-                          at130 ? 23.0f : 18.0f);
+                          at(15.0f, 18.0f, 23.0f));
             if (err.empty())
                 err = pin("appearance.theme.label 高",
                           heightOf("settings.card.appearance.theme.label"),
-                          at130 ? 21.0f : 16.0f);
+                          at(14.0f, 16.0f, 21.0f));
             if (err.empty())
                 err = pin("editor.hint 高", heightOf("settings.card.editor.hint"),
-                          at130 ? 23.0f : 18.0f);
+                          at(15.0f, 18.0f, 23.0f));
+            if (err.empty())
+                err = pin("editor.ddwrap 行顶（editorFontDdOffsetY=38字面锚+roundFs(4)）",
+                          yOf("settings.card.editor.ddwrap") -
+                              yOf("settings.card.editor"),
+                          at(41.0f, 42.0f, 43.0f));
+            if (err.empty())
+                err = pin("editor.ddwrap 高（logFieldHeight=roundFs(36)）",
+                          heightOf("settings.card.editor.ddwrap"),
+                          at(31.0f, 36.0f, 47.0f));
             if (err.empty())
                 err = pin("appearance 卡高", heightOf("settings.card.appearance"),
-                          at130 ? 224.0f : 172.0f);
+                          at(146.0f, 172.0f, 224.0f));
         } else if (tab == 1) {
             err = pin("modules.name.0 高",
                       heightOf("settings.card.modules.name.0"),
-                      at130 ? 23.0f : 18.0f);
+                      at(15.0f, 18.0f, 23.0f));
             if (err.empty())
                 err = pin("modules 行距",
                           yOf("settings.card.modules.name.1") -
                               yOf("settings.card.modules.name.0"),
-                          at130 ? 73.0f : 56.0f);
+                          at(48.0f, 56.0f, 73.0f));
             if (err.empty())
                 err = pin("modules 行内偏移",
                           yOf("settings.card.modules.rowdesc.0") -
                               yOf("settings.card.modules.name.0"),
-                          at130 ? 26.0f : 20.0f);
+                          at(17.0f, 20.0f, 26.0f));
             if (err.empty())
                 err = pin("modules 卡高", heightOf("settings.card.modules"),
-                          at130 ? 374.0f : 288.0f);
+                          at(245.0f, 288.0f, 374.0f));
+            if (err.empty())
+                err = pin("pet.skin.ddwrap 行顶（skinTop=40+roundFs(16)+roundFs(8)）",
+                          yOf("settings.card.pet.skin.ddwrap") -
+                              yOf("settings.card.pet"),
+                          at(61.0f, 64.0f, 71.0f));
+            if (err.empty())
+                err = pin("pet.skin.ddwrap 高（ddH=roundFs(40)）",
+                          heightOf("settings.card.pet.skin.ddwrap"),
+                          at(34.0f, 40.0f, 52.0f));
+            if (err.empty())
+                err = pin("pet.scale.ddwrap 行顶（scaleTop=skinTop+ddH+roundFs(8)）",
+                          yOf("settings.card.pet.scale.ddwrap") -
+                              yOf("settings.card.pet"),
+                          at(102.0f, 112.0f, 133.0f));
+            if (err.empty())
+                err = pin("pet.scale.ddwrap 高（ddH=roundFs(40)）",
+                          heightOf("settings.card.pet.scale.ddwrap"),
+                          at(34.0f, 40.0f, 52.0f));
+            if (err.empty())
+                err = pin("pet 卡高", heightOf("settings.card.pet"),
+                          at(143.0f, 168.0f, 218.0f));
             if (err.empty())
                 err = pin("proxy.takeover.label 高",
                           heightOf("settings.card.proxy.takeover.label"),
-                          at130 ? 23.0f : 18.0f);
+                          at(15.0f, 18.0f, 23.0f));
             if (err.empty())
                 err = pin("proxy 卡高（无警告）",
                           heightOf("settings.card.proxy"),
-                          at130 ? 142.0f : 132.0f);
+                          at(127.0f, 132.0f, 142.0f));
         } else {
-            // 日志卡未在本期修清单（20px 盒 130% 档余量 4.4px）：两档都恒 20，
-            // 兼作「未派生行不随缩放变化」的对照钉
-            err = pin("log.label 高", heightOf("settings.card.log.label"), 20.0f);
+            // 日志卡 2026-09-30 merge-review R1 起入派生池（85% 档字面字段行
+            // 底沿 96+36=132 > 卡高 roundFs(148)=126 溢出）：标签盒/字段高/
+            // 行 y 随生效字号派生
+            err = pin("log.label 高（logLabelHeight=roundFs(20)）",
+                      heightOf("settings.card.log.label"),
+                      at(17.0f, 20.0f, 26.0f));
+            if (err.empty())
+                err = pin("log.ddwrap 行顶（logDropdownOffsetY）",
+                          yOf("settings.card.log.ddwrap") -
+                              yOf("settings.card.log"),
+                          at(41.0f, 48.0f, 62.5f));
+            if (err.empty())
+                err = pin("log.ddwrap 高（logFieldHeight=roundFs(36)）",
+                          heightOf("settings.card.log.ddwrap"),
+                          at(31.0f, 36.0f, 47.0f));
+            if (err.empty())
+                err = pin("log.level.ddwrap 行顶（logLevelOffsetY）",
+                          yOf("settings.card.log.level.ddwrap") -
+                              yOf("settings.card.log"),
+                          at(81.0f, 96.0f, 124.5f));
             if (err.empty())
                 err = pin("log 卡高", heightOf("settings.card.log"),
-                          at130 ? 192.0f : 148.0f);
+                          at(126.0f, 148.0f, 192.0f));
         }
         return err;
     };
 
     // 断言宏展开含 return，只能留在用例体——helper 只收集问题串（空串 = 该
     // tab 通过），逐 tab 一条
-    const auto runAllTabs = [&](bool at130) -> std::vector<std::string> {
+    const auto runAllTabs = [&](float scale) -> std::vector<std::string> {
         std::vector<std::string> problems;
         for (int tab : {0, 1, 2}) {
             if (!clickSettingsTab(*mod, screen, tab)) {
@@ -1775,11 +1833,13 @@ REGISTER_TEST(settings_card_rows_scale_derived,
                 continue;
             }
             eui::Ui ui;
-            ui.begin(at130 ? "fsderive130" : "fsderive100");
+            ui.begin(scale < 0.9f ? "fsderive85"
+                                  : (scale > 1.1f ? "fsderive130"
+                                                  : "fsderive100"));
             mod->compose(ui, screen);
             ui.end();
             ui.layout(screen.width, screen.height);
-            problems.push_back(tabProblem(ui, tab, at130));
+            problems.push_back(tabProblem(ui, tab, scale));
         }
         return problems;
     };
@@ -1787,14 +1847,24 @@ REGISTER_TEST(settings_card_rows_scale_derived,
     // 100% 档（零回归锚：几何与改前逐值相等）
     {
         FontScaleGuard g{1.0f};
-        for (const std::string& problem : runAllTabs(false)) {
+        for (const std::string& problem : runAllTabs(1.0f)) {
             DOCTEST_CHECK_MESSAGE(problem.empty(), problem);
         }
     }
     // 130% 档（用户机档位，真机根因复现）：行盒随字号派生 → 两两不重叠
     {
         FontScaleGuard g{1.3f};
-        for (const std::string& problem : runAllTabs(true)) {
+        for (const std::string& problem : runAllTabs(1.3f)) {
+            DOCTEST_CHECK_MESSAGE(problem.empty(), problem);
+        }
+    }
+    // 85% 档（kFontPresets[0]，2026-09-30 merge-review R1 溢出档）：此前
+    // pet/log 卡控件行字面几何在本档溢出卡外（pet 显示大小行字面底沿 152 >
+    // 卡高 roundFs(168)=143、日志卡字段行 132 > 126）——行盒 ⊆ 卡 frame 的
+    // containment 与三档钉值在本档把关
+    {
+        FontScaleGuard g{0.85f};
+        for (const std::string& problem : runAllTabs(0.85f)) {
             DOCTEST_CHECK_MESSAGE(problem.empty(), problem);
         }
     }
@@ -3286,10 +3356,12 @@ REGISTER_TEST(settings_ui_logic_equivalence,
     };
     int gridHits = 0;
     for (float top : {0.0f, 100.0f, 176.0f, 400.0f, 984.0f}) {
-        for (float off : {ms::kLogDropdownOffsetY, ms::kEditorFontDdOffsetY,
-                          ms::kLogLevelOffsetY}) {
-            for (float fh : {ms::kLogDropdownHeight, ms::kLogEditorFontHeight,
-                             ms::kLogLevelHeight}) {
+        for (float off : {ms::logDropdownOffsetY(), ms::editorFontDdOffsetY(),
+                          ms::logLevelOffsetY()}) {
+            // 三处下拉高 2026-09-30 merge-review R1 起单一来源
+            // logFieldHeight()（此前 kLogDropdownHeight / kLogEditorFontHeight /
+            // kLogLevelHeight 三常量同值 36），fh 轴随之收敛为 1 档
+            for (float fh : {ms::logFieldHeight()}) {
                 for (int n : {ms::kRetentionPresetCount,
                               ms::kEditorFontPresetCount,
                               ms::kLogLevelPresetCount}) {
@@ -3303,7 +3375,7 @@ REGISTER_TEST(settings_ui_logic_equivalence,
             }
         }
     }
-    DOCTEST_CHECK_EQ(gridHits, 5 * 3 * 3 * 3 * 4);
+    DOCTEST_CHECK_EQ(gridHits, 5 * 3 * 1 * 3 * 4);
 
     // 2) 弹层几何 / 卡片高度常量取值（拆分前后同源，值不得漂）
     DOCTEST_CHECK_EQ(ms::kDropdownItemHeight, 34.0f);
