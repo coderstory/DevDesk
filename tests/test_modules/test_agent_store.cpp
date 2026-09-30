@@ -42,3 +42,28 @@ REGISTER_TEST(agent_store_sweep_stale_runs, "agent_store: sweep 把遗留 runnin
     DOCTEST_CHECK(runs.value()[0].error->find("悬挂") != std::string::npos);
     return true;
 })
+
+// listTasks 的 9 列逐列还原：列名与 SELECT 拼写漂移是编译期看不见的错
+//（只在运行期表现为 Result::fail(NotFound)），Task 12 的任务列表 UI 直接吃它。
+// 入参取有区分度的值（modelSlot=sonnet / maxIterations=7 / allowDestructive=true），
+// 与默认列（enabled=1、trigger_config='' 由 createTask 固定写空）各占一条。
+REGISTER_TEST(agent_store_list_tasks_maps_columns, "agent_store: listTasks 列映射与值还原", {
+    test_support::TestDb tdb("agentstore", "lt");
+    module::agent::AgentStore store(tdb.handle());
+    auto taskId = store.createTask("整理逾期", "把逾期 todo 全部完成",
+                                   "manual", "sonnet", 7, true);
+    DOCTEST_REQUIRE(taskId.isOk());
+    auto tasks = store.listTasks();
+    DOCTEST_REQUIRE(tasks.isOk());
+    DOCTEST_REQUIRE_EQ(tasks.value().size(), 1u);
+    DOCTEST_CHECK_EQ(tasks.value()[0].id, taskId.value());
+    DOCTEST_CHECK_EQ(tasks.value()[0].name, std::string("整理逾期"));
+    DOCTEST_CHECK_EQ(tasks.value()[0].goal, std::string("把逾期 todo 全部完成"));
+    DOCTEST_CHECK_EQ(tasks.value()[0].triggerType, std::string("manual"));
+    DOCTEST_CHECK_EQ(tasks.value()[0].triggerConfig, std::string(""));
+    DOCTEST_CHECK_EQ(tasks.value()[0].modelSlot, std::string("sonnet"));
+    DOCTEST_CHECK_EQ(tasks.value()[0].maxIterations, 7);
+    DOCTEST_CHECK(tasks.value()[0].allowDestructive);
+    DOCTEST_CHECK(tasks.value()[0].enabled);
+    return true;
+})
