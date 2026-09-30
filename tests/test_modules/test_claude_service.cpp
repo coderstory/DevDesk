@@ -3639,6 +3639,13 @@ REGISTER_TEST(claude_service_resolve_model_slot,
     DOCTEST_CHECK(svc.resolveModelSlot("subagent").value_or("") == "m-sub");
     // 表内但未配置的槽位 → nullopt
     DOCTEST_CHECK(!svc.resolveModelSlot("opus").has_value());
+    // 表内但 model 为空串 → nullopt（"model 空 → nullopt" 契约）
+    {
+        Profile pe = p.value();
+        pe.modelsConfigJson = R"({"fable": {"model": "", "name": ""}})";
+        DOCTEST_REQUIRE(svc.updateProfile(pe).isOk());
+        DOCTEST_CHECK(!svc.resolveModelSlot("fable").has_value());
+    }
     // 未知槽位键 → nullopt
     DOCTEST_CHECK(!svc.resolveModelSlot("no-such-slot").has_value());
 
