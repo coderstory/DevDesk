@@ -1,6 +1,7 @@
 add_library(devdesk_agent STATIC
     agent_store.cpp
     agent_loop.cpp
+    app_stats_tool.cpp
     llm_client.cpp
 )
 

@@ -38,6 +38,7 @@ add_executable(devdesk_tests
     test_modules/test_todo_tools.cpp
     test_modules/test_agent_store.cpp
     test_modules/test_agent_loop.cpp
+    test_modules/test_agent_tools.cpp
     test_modules/test_llm_client.cpp
     test_modules/test_todo_ui.cpp
     test_modules/test_ui_modern.cpp
