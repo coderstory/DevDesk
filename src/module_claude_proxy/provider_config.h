@@ -6,7 +6,7 @@
 //   - 全部为纯函数（platform::json，无 IO / 无 DB），单测直接覆盖
 //   - Profile 里只存 JSON 原文（modelsConfigJson / extraEnvJson），
 //     槽位解析/派生/兼容合并收敛到这里
-//   - 空串 = 未配置（存量数据零迁移，读时兼容）
+//   - 空串 = 未配置（读路径容错，全空槽位）
 #pragma once
 
 #include <cstddef>
@@ -145,11 +145,8 @@ AuthField authFieldFromText(const std::string& text);
 // 枚举 → 文本：规范值（写侧规范化用，保证库里只有三个规范值之一）
 const char* authFieldToText(AuthField field);
 
-// 旧数据兼容读取（§4.2）：
-//   - models_config 为空串 / 非法 JSON → 全空槽位（读路径容错，不炸）
-//   - default 槽位为空且旧 model 列非空 → 旧值填入 default 槽位（fallback）
-ModelsConfig effectiveModelsConfig(const std::string& modelsConfigJson,
-                                   const std::string& legacyModel);
+// models_config 读入槽位：为空串 / 非法 JSON → 全空槽位（读路径容错，不炸）
+ModelsConfig effectiveModelsConfig(const std::string& modelsConfigJson);
 
 // ---- 非官方变量别名映射（§4.3 规则 6）----
 struct EnvAliasMapping {
@@ -265,7 +262,7 @@ core::Result<void> validateExtraSettingsJson(const std::string& text);
 //      settings.json，由代理注入）
 //   2. ANTHROPIC_AUTH_TOKEN = kProxyAuthPlaceholder（占位符：代理无鉴权，
 //      此键只是让 Claude Code 有值可发）
-//   3. 模型槽位（effectiveModelsConfig 兼容旧 model 列）→ 槽位表每行的 envKey
+//   3. 模型槽位（effectiveModelsConfig）→ 槽位表每行的 envKey
 //      （见 DEVDESK_MODEL_SLOT_LIST）；槽位空则跳过（Claude Code 回落内置映射）
 //   4. 显示名 → 对应行的 *_MODEL_NAME 键（表行 nameKey 为 nullptr 的槽位无官方
 //      _NAME 变体，不生成）；name 空则 deriveDisplayName 派生
@@ -295,7 +292,7 @@ enum class EnvSource {
 };
 
 std::map<std::string, std::string> buildProxyEnv(
-    const std::string& modelsConfigJson, const std::string& legacyModel,
+    const std::string& modelsConfigJson,
     const std::string& extraEnvJson,
     int proxyPort,
     // 可选出参：每个键的来源（见 EnvSource）。非空则先清空再填；传 nullptr
@@ -327,7 +324,7 @@ std::map<std::string, std::string> buildProxyEnv(
 std::map<std::string, std::string> buildDirectEnv(
     const std::string& baseUrl, const std::string& apiKeyPlain,
     const std::string& authField,
-    const std::string& modelsConfigJson, const std::string& legacyModel,
+    const std::string& modelsConfigJson,
     const std::string& extraEnvJson);
 
 // 托管键全集（审计 CPX-12）：BASE_URL + 占位 token + 槽位表派生的 env 键与
@@ -397,7 +394,6 @@ struct ReverseSyncMerge {
 
 ReverseSyncMerge mergeReverseSyncEnv(const ImportedConfig& cfg,
                                      const std::string& curModelsConfigJson,
-                                     const std::string& curLegacyModel,
                                      const std::string& curExtraEnvJson);
 
 // 副本命名（§4.2）：base + " 副本"；重名递增 base + " 副本 N"（N 从 2 起）；

@@ -360,9 +360,8 @@ SettingsConfig SettingsStore::load() const {
         // 只认 "light" 为浅色，其余一律深色（默认值安全）
         cfg.darkTheme = (obj.get(kKeyTheme).asString() != "light");
     }
-    // themeMode（spec 缩水 A）：新键优先（只认三档字面值）；键缺失/非法时
-    // 按 legacy "theme" 派生为显式档（存量用户的明确选择不能被静默改成
-    // auto）；两键都没有 = 首启用默认 auto。auto→深浅的实际解析在
+    // themeMode（spec 缩水 A）：只认 themeMode 键的三档字面值；键缺失/非法 →
+    // 回落默认 auto。auto→深浅的实际解析在
     // SettingsModule::applyThemeRuntime（load/sanitized 保持纯函数，
     // 不经 platform，单测机器无关）
     if (obj.has(kKeyThemeMode) && obj.get(kKeyThemeMode).isString()) {
@@ -370,15 +369,7 @@ SettingsConfig SettingsStore::load() const {
         if (mode == kThemeModeAuto || mode == kThemeModeLight ||
             mode == kThemeModeDark) {
             cfg.themeMode = mode;
-        } else if (obj.has(kKeyTheme) && obj.get(kKeyTheme).isString()) {
-            cfg.themeMode = (obj.get(kKeyTheme).asString() == "light")
-                                ? kThemeModeLight
-                                : kThemeModeDark;
         }
-    } else if (obj.has(kKeyTheme) && obj.get(kKeyTheme).isString()) {
-        cfg.themeMode = (obj.get(kKeyTheme).asString() == "light")
-                            ? kThemeModeLight
-                            : kThemeModeDark;
     }
     if (obj.has(kKeyFontScale) && obj.get(kKeyFontScale).isNumber()) {
         cfg.fontScalePercent =

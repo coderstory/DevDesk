@@ -97,9 +97,8 @@ struct SettingsConfig {
     // 与 darkTheme 的关系：darkTheme 恒为「当前应生效的档」，themeMode 是用户
     // 意图；auto 时由调用方经 resolveThemeDark(mode, platform::prefersDarkTheme())
     // 解析（SettingsModule onStart/onPageEnter/切档三处），core 不依赖 platform。
-    // 兼容：老 config.json 只有 theme 键 → load 派生为显式 light/dark（不把
-    // 存量用户静默切到 auto）；save 双写 themeMode + theme（theme 供未改动的
-    // main.cpp 启动路径读到「上次解析值」，settings onStart 随即幂等纠正）。
+    // save 双写 themeMode + theme（theme 供未改动的 main.cpp 启动路径读到
+    // 「上次解析值」，settings onStart 随即幂等纠正）。
     std::string themeMode = kThemeModeAuto;
     // Markdown 编辑器字号（px，spec §8.5「编辑器字体大小」，spec 缩水 B）。
     // 生效通道：SettingsModule onStart/切档写 core::theme::setEditorFontSize

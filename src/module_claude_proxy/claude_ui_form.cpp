@@ -103,8 +103,8 @@ void openEditForm(FormState& f, ImportState& imp, const Profile& p,
     f.formError_.clear();
     f.formKeyHint_ = p.apiKeyHint;
     f.formImportWarn_.clear();
-    // 槽位：models_config + 旧 model 列 fallback（§4.2 兼容读取）
-    f.formModels_ = effectiveModelsConfig(p.modelsConfigJson, p.model);
+    // 槽位：models_config（空 / 非法 JSON → 全空槽位）
+    f.formModels_ = effectiveModelsConfig(p.modelsConfigJson);
     // 认证字段：编辑必须回显当前值（否则用户以为看到的是默认值，一保存就坐实覆盖）
     f.formAuthField_ = authFieldFromText(p.authField);
     f.formAuthFieldOpen_ = false;
@@ -390,7 +390,7 @@ void submitForm(FormState& f, const FormSubmitHooks& hooks,
         Profile p = std::move(got).value();
         p.name = f.formName_;
         p.baseUrl = f.formUrl_;
-        p.model = f.formModels_.def.model;   // 旧列与 default 槽位同步（§4.2）
+        p.model = f.formModels_.def.model;   // model 列与 default 槽位同步
         p.modelsConfigJson = modelsJson;
         p.extraEnvJson = envJson;
         p.extraSettingsJson = extraSettingsPretty;   // 高级设置 JSON（§7.3 落库统一 pretty）

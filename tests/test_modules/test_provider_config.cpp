@@ -131,30 +131,25 @@ REGISTER_TEST(provider_config_invalid_json_tolerance,
     return true;
 })
 
-// ---- 4. 旧单 model 字段兼容读取（§4.2 fallback）----
-REGISTER_TEST(provider_config_legacy_model_fallback,
-              "provider_config: 旧 model 列 fallback 到 default 槽位", {
+// ---- 4. models_config 读入槽位（空 / 非法 JSON → 全空槽位）----
+REGISTER_TEST(provider_config_effective_models_read,
+              "provider_config: effectiveModelsConfig 读入槽位与容错", {
     using module::claude::effectiveModelsConfig;
 
-    // models_config 空 + 旧 model 非空 → default 槽位 = 旧值
-    auto c1 = effectiveModelsConfig("", "claude-sonnet-4-5");
-    DOCTEST_CHECK_EQ(c1.def.model, std::string("claude-sonnet-4-5"));
+    // 空串 → 全空槽位
+    auto c1 = effectiveModelsConfig("");
+    DOCTEST_CHECK(c1.def.model.empty());
     DOCTEST_CHECK(c1.sonnet.model.empty());
 
-    // models_config 非法 JSON → 容错为空 + fallback
-    auto c2 = effectiveModelsConfig("{broken", "claude-opus-4-6");
-    DOCTEST_CHECK_EQ(c2.def.model, std::string("claude-opus-4-6"));
+    // 非法 JSON → 容错为全空槽位（读路径不炸）
+    auto c2 = effectiveModelsConfig("{broken");
+    DOCTEST_CHECK(c2.def.model.empty());
 
-    // default 槽位已配置 → 不吃 fallback，其余槽位保留
+    // 正常 JSON → 逐槽位落位
     auto c3 = effectiveModelsConfig(
-        R"({"default": {"model": "m-default"}, "sonnet": {"model": "m-sonnet"}})",
-        "legacy-model");
+        R"({"default": {"model": "m-default"}, "sonnet": {"model": "m-sonnet"}})");
     DOCTEST_CHECK_EQ(c3.def.model, std::string("m-default"));
     DOCTEST_CHECK_EQ(c3.sonnet.model, std::string("m-sonnet"));
-
-    // 两者都空 → 空
-    auto c4 = effectiveModelsConfig("", "");
-    DOCTEST_CHECK(c4.def.model.empty());
     return true;
 })
 
@@ -382,14 +377,9 @@ REGISTER_TEST(provider_config_migration_upgrade,
         const auto& p = profiles.value()[0];
         DOCTEST_CHECK_EQ(p.name, std::string("旧供应商"));
         DOCTEST_CHECK_EQ(p.model, std::string("claude-3-5-haiku"));
-        DOCTEST_CHECK(p.modelsConfigJson.empty());  // 存量行零迁移
+        DOCTEST_CHECK(p.modelsConfigJson.empty());
         DOCTEST_CHECK(p.extraEnvJson.empty());
-        DOCTEST_CHECK(p.dialectOverride.empty());   // 存量行零迁移（v9，CPX-13）
-
-        // 旧数据经兼容读取 → default 槽位 = 旧 model
-        auto eff = module::claude::effectiveModelsConfig(
-            p.modelsConfigJson, p.model);
-        DOCTEST_CHECK_EQ(eff.def.model, std::string("claude-3-5-haiku"));
+        DOCTEST_CHECK(p.dialectOverride.empty());
     }
     std::filesystem::remove(path, ec);
     std::filesystem::remove(path.string() + "-wal", ec);
@@ -816,7 +806,7 @@ REGISTER_TEST(provider_config_guard_G5_absent_clears,
     // env 空 → 全部非守卫托管字段缺席 → 清空（models 槽位 + extra_env）
     auto parsed = parseEnvForReverseSync("{}", {});
     DOCTEST_REQUIRE(parsed.ok);
-    auto m = mergeReverseSyncEnv(parsed.cfg, curModels, "", R"({"K": "v"})");
+    auto m = mergeReverseSyncEnv(parsed.cfg, curModels, R"({"K": "v"})");
     DOCTEST_CHECK(m.modelsChanged);
     DOCTEST_CHECK(m.extraEnvChanged);
 
@@ -884,7 +874,7 @@ REGISTER_TEST(provider_config_reverse_merge_clear_keep_override,
     auto parsed = parseEnvForReverseSync(env, {"ANTHROPIC_MODEL"});
     DOCTEST_REQUIRE(parsed.ok);
 
-    auto m = mergeReverseSyncEnv(parsed.cfg, curModels, "", curExtra);
+    auto m = mergeReverseSyncEnv(parsed.cfg, curModels, curExtra);
     DOCTEST_CHECK(m.modelsChanged);
     DOCTEST_CHECK(m.extraEnvChanged);
 
@@ -914,22 +904,24 @@ REGISTER_TEST(provider_config_reverse_merge_no_change,
     using module::claude::mergeReverseSyncEnv;
     using module::claude::parseEnvForReverseSync;
 
-    // 无变化：env 与现值逐字段一致（含旧 model 列 fallback 等价——models_config
-    // 空 + 旧列 m-1，env 给 m-1 → 不算变化，零写入）
+    // 无变化：env 与现值逐字段一致（models_config 现值 default 槽位已是 m-1，
+    // env 给 m-1 → 不算变化，零写入）
     auto parsed = parseEnvForReverseSync(
         R"({"ANTHROPIC_MODEL": "m-1", "DISABLE_AUTOUPDATER": "1"})", {});
     DOCTEST_REQUIRE(parsed.ok);
-    auto m = mergeReverseSyncEnv(parsed.cfg, "", "m-1",
+    auto m = mergeReverseSyncEnv(parsed.cfg,
+                                 R"({"default": {"model": "m-1"}})",
                                  R"({"DISABLE_AUTOUPDATER": "1"})");
     DOCTEST_CHECK(!m.modelsChanged);
     DOCTEST_CHECK(!m.extraEnvChanged);
-    DOCTEST_CHECK(m.modelsConfigJson.empty());  // 回传原文（空 = 未配置）
+    DOCTEST_CHECK_EQ(m.modelsConfigJson,
+                     std::string(R"({"default": {"model": "m-1"}})"));  // 回传原文
     DOCTEST_CHECK(m.extraEnvJson.find("DISABLE_AUTOUPDATER") != std::string::npos);
 
     // extra_env 全清 → 空串（本层「空串 = 未配置」约定）
     auto empty = parseEnvForReverseSync("{}", {});
     DOCTEST_REQUIRE(empty.ok);
-    auto m2 = mergeReverseSyncEnv(empty.cfg, "", "", R"({"K": "v"})");
+    auto m2 = mergeReverseSyncEnv(empty.cfg, "", R"({"K": "v"})");
     DOCTEST_CHECK(!m2.modelsChanged);   // 两侧都空 → 不算变化
     DOCTEST_CHECK(m2.extraEnvChanged);  // 缺席 → 清空
     DOCTEST_CHECK(m2.extraEnvJson.empty());
@@ -1005,7 +997,7 @@ REGISTER_TEST(provider_config_slot_table_managed_keys,
         (mc.*m.slot).name = std::string("n-") + m.jsonKey;
         auto text = serializeModelsConfig(mc);
         DOCTEST_REQUIRE(text.isOk());
-        const auto env = buildProxyEnv(text.value(), "", "", 8888);
+        const auto env = buildProxyEnv(text.value(), "", 8888);
         std::vector<std::string> written;
         for (const auto& kv : env) {
             if (kv.first == "ANTHROPIC_BASE_URL" ||
@@ -1033,7 +1025,7 @@ REGISTER_TEST(provider_config_slot_table_managed_keys,
         }
         auto text = serializeModelsConfig(all);
         DOCTEST_REQUIRE(text.isOk());
-        const auto env = buildProxyEnv(text.value(), "", "", 8888);
+        const auto env = buildProxyEnv(text.value(), "", 8888);
         std::vector<std::string> written;
         for (const auto& kv : env) {
             if (kv.first == "ANTHROPIC_BASE_URL" ||
@@ -1074,7 +1066,7 @@ REGISTER_TEST(provider_config_slot_table_import_and_reverse,
         DOCTEST_REQUIRE(rp.ok);
         DOCTEST_CHECK_EQ(rp.cfg.recognizedSlots, 1);
         DOCTEST_CHECK_EQ((rp.cfg.models.*m.slot).model, std::string("m-x"));
-        auto merged = mergeReverseSyncEnv(rp.cfg, "", "", "");
+        auto merged = mergeReverseSyncEnv(rp.cfg, "", "");
         DOCTEST_CHECK(merged.modelsChanged);
         auto back = parseModelsConfig(merged.modelsConfigJson);
         DOCTEST_REQUIRE(back.isOk());

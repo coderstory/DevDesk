@@ -885,7 +885,7 @@ REGISTER_TEST(claude_cleanup_empty_keep_never_sweeps,
     return true;
 })
 
-// ---- 6c-3. 服务名按数据根派生 + 旧 service 一次性迁移（2026-09-30 根治）----
+// ---- 6c-3. 服务名按数据根派生 ----
 
 REGISTER_TEST(claude_keychain_service_for_data_root,
               "claude_service: keychainServiceForDataRoot 派生纯函数", {
@@ -900,144 +900,10 @@ REGISTER_TEST(claude_keychain_service_for_data_root,
     DOCTEST_CHECK(a != b);
     // 同根 → 稳定（跨次启动一致）
     DOCTEST_CHECK_EQ(a, module::claude::keychainServiceForDataRoot("/tmp/rootA"));
-    // 绝不与旧全局名同形（防迁移判定混淆）
+    // 绝不与裸前缀同形（派生名必带短哈希后缀）
     DOCTEST_CHECK(a != std::string("DevDesk"));
-    // 空根 → 空串（调用方兜底旧名）
+    // 空根 → 空串（调用方兜底裸前缀）
     DOCTEST_CHECK(module::claude::keychainServiceForDataRoot("").empty());
-    return true;
-})
-
-REGISTER_TEST(claude_service_migrate_legacy_keychain,
-              "claude_service: 旧 service 一次性迁移（读旧写新删旧）", {
-    DataRootEnv env(kDbPrefix, "migrate");
-    ScopedFakeKeychain kc;
-    test_support::TestDb tdb(kDbPrefix, "migrate");
-
-    // 变更前形态：profile 已存在、密钥在旧全局 service "DevDesk" 下
-    const std::string legacy = "DevDesk";
-    int64_t id = 0;
-    std::string account;
-    {
-        module::claude::ClaudeService oldSvc(tdb.handle(), legacy);
-        auto created = oldSvc.createProfile("Legacy", "https://l.example.com",
-                                            "sk-ant-legacy-0001", "m");
-        DOCTEST_REQUIRE(created.isOk());
-        id = created.value().id;
-        account = created.value().keychainAccount;
-        DOCTEST_REQUIRE(kc.fake.has(legacy, account));
-    }
-
-    // 新代码实例（默认构造 = 派生 service）；派生名不与旧名同形
-    const std::string derived = module::claude::keychainServiceForDataRoot(
-        core::paths::appDataDir().string());
-    DOCTEST_CHECK(derived != legacy);
-    module::claude::ClaudeService svc(tdb.handle());
-
-    // 迁移前：新 service 读不到 key
-    DOCTEST_CHECK(svc.loadApiKey(id).isFail());
-
-    auto r = svc.migrateLegacyKeychainService();
-    DOCTEST_REQUIRE(r.isOk());
-    DOCTEST_CHECK_EQ(r.value(), 1);
-
-    // 读旧写新删旧逐项核对
-    auto k = platform::keychain::loadSecret(derived, account);
-    DOCTEST_REQUIRE(k.isOk());
-    DOCTEST_CHECK_EQ(k.value(), std::string("sk-ant-legacy-0001"));
-    DOCTEST_CHECK(!kc.fake.has(legacy, account));
-    auto viaSvc = svc.loadApiKey(id);
-    DOCTEST_REQUIRE(viaSvc.isOk());
-    DOCTEST_CHECK_EQ(viaSvc.value(), std::string("sk-ant-legacy-0001"));
-
-    // 幂等：再跑一次 = 0，数据原样
-    auto again = svc.migrateLegacyKeychainService();
-    DOCTEST_REQUIRE(again.isOk());
-    DOCTEST_CHECK_EQ(again.value(), 0);
-    auto k2 = platform::keychain::loadSecret(derived, account);
-    DOCTEST_REQUIRE(k2.isOk());
-    DOCTEST_CHECK_EQ(k2.value(), std::string("sk-ant-legacy-0001"));
-
-    // 迁移后的启动序列（孤儿清理）不误删刚搬进来的条目
-    auto orphan = svc.cleanupOrphanKeychainEntries();
-    DOCTEST_REQUIRE(orphan.isOk());
-    auto k3 = platform::keychain::loadSecret(derived, account);
-    DOCTEST_REQUIRE(k3.isOk());
-    DOCTEST_CHECK_EQ(k3.value(), std::string("sk-ant-legacy-0001"));
-
-    test_support::cleanupProfileKey(derived.c_str(), id);
-    return true;
-})
-
-REGISTER_TEST(claude_service_migrate_disabled_and_failure,
-              "claude_service: 迁移仅派生模式启用；写新失败旧条目保留", {
-    DataRootEnv env(kDbPrefix, "migratefail");
-    ScopedFakeKeychain kc;
-
-    // 形态一：显式传 service（全部测试的形态）→ 迁移必须 no-op，
-    // 旧全局 "DevDesk" 命名空间一字不碰（防测试误迁真实密钥）
-    const std::string legacy = "DevDesk";
-    DOCTEST_REQUIRE(platform::keychain::storeSecret(
-        legacy, "claude:42", "sk-ant-do-not-touch").isOk());
-    test_support::TestDb tdb(kDbPrefix, "migratefail");
-    module::claude::ClaudeService explicitSvc(tdb.handle(), kTestKeychainService);
-    auto r0 = explicitSvc.migrateLegacyKeychainService();
-    DOCTEST_REQUIRE(r0.isOk());
-    DOCTEST_CHECK_EQ(r0.value(), 0);
-    auto untouched = platform::keychain::loadSecret(legacy, "claude:42");
-    DOCTEST_REQUIRE(untouched.isOk());
-    DOCTEST_CHECK_EQ(untouched.value(), std::string("sk-ant-do-not-touch"));
-
-    // 形态二：派生模式 + 注入「写新失败」（哨兵值走假后端先落值后报失败）
-    // → 半写入被补偿清掉、旧条目原样保留，修复后重试成功
-    test_support::TestDb tdb2(kDbPrefix, "migratefail2");
-    {
-        module::claude::ClaudeService oldSvc(tdb2.handle(), legacy);
-        auto created = oldSvc.createProfile("Doomed", "https://d.example.com",
-                                            "sk-ant-bad-0001", "m");
-        DOCTEST_REQUIRE(created.isOk());
-        const int64_t id = created.value().id;
-        const std::string account = created.value().keychainAccount;
-        // 直接改写旧条目为哨兵值（绕过两段写，模拟「旧 service 里躺着的值
-        // 会让写新失败」）。假后端「先落值、再报失败」：写入返回失败但值已落
-        const std::string poisoned = std::string("sk-ant-bad-") +
-                                     FakeKeychain::kStoreFailSentinel;
-        (void)platform::keychain::storeSecret(legacy, account, poisoned);
-        DOCTEST_REQUIRE(kc.fake.get(legacy, account) == poisoned);
-
-        module::claude::ClaudeService svc(tdb2.handle());
-        auto r = svc.migrateLegacyKeychainService();
-        DOCTEST_REQUIRE(r.isOk());
-        DOCTEST_CHECK_EQ(r.value(), 0);   // 全部失败
-        // 旧条目原样在（值逐字相同，含哨兵）
-        auto old = platform::keychain::loadSecret(legacy, account);
-        DOCTEST_REQUIRE(old.isOk());
-        DOCTEST_CHECK_EQ(old.value(),
-                         std::string("sk-ant-bad-INJECT-STORE-FAIL"));
-        // 半写入的新条目被补偿清掉（不是留着毒数据等下次重试误判）
-        DOCTEST_CHECK(!kc.fake.has(
-            module::claude::keychainServiceForDataRoot(
-                core::paths::appDataDir().string()),
-            account));
-
-        // 修复注入后重试 → 成功迁移
-        DOCTEST_REQUIRE(platform::keychain::storeSecret(
-            legacy, account, "sk-ant-good-0002").isOk());
-        auto retry = svc.migrateLegacyKeychainService();
-        DOCTEST_REQUIRE(retry.isOk());
-        DOCTEST_CHECK_EQ(retry.value(), 1);
-        auto fixed = svc.loadApiKey(id);
-        DOCTEST_REQUIRE(fixed.isOk());
-        DOCTEST_CHECK_EQ(fixed.value(), std::string("sk-ant-good-0002"));
-        DOCTEST_CHECK(!kc.fake.has(legacy, account));
-
-        test_support::cleanupProfileKey(
-            module::claude::keychainServiceForDataRoot(
-                core::paths::appDataDir().string()).c_str(),
-            id);
-    }
-    // 形态一的条目全程未动
-    DOCTEST_CHECK(kc.fake.has(legacy, "claude:42"));
-    DOCTEST_CHECK(platform::keychain::loadSecret(legacy, "claude:42").isOk());
     return true;
 })
 
@@ -3520,7 +3386,7 @@ REGISTER_TEST(claude_build_direct_env_three_state_auth_and_base_url,
     // bearer → 只写 ANTHROPIC_AUTH_TOKEN
     {
         auto env = module::claude::buildDirectEnv(
-            "https://api.anthropic.com/", "sk-bearer-1", "bearer", "", "", "");
+            "https://api.anthropic.com/", "sk-bearer-1", "bearer", "", "");
         DOCTEST_CHECK_EQ(env["ANTHROPIC_BASE_URL"],
                          std::string("https://api.anthropic.com"));  // 去尾斜杠
         DOCTEST_CHECK_EQ(env["ANTHROPIC_AUTH_TOKEN"], std::string("sk-bearer-1"));
@@ -3529,26 +3395,26 @@ REGISTER_TEST(claude_build_direct_env_three_state_auth_and_base_url,
     // api_key → 只写 ANTHROPIC_API_KEY
     {
         auto env = module::claude::buildDirectEnv(
-            "https://gw.example.com", "sk-api-1", "api_key", "", "", "");
+            "https://gw.example.com", "sk-api-1", "api_key", "", "");
         DOCTEST_CHECK_EQ(env["ANTHROPIC_API_KEY"], std::string("sk-api-1"));
         DOCTEST_CHECK(env.find("ANTHROPIC_AUTH_TOKEN") == env.end());
     }
     // both（默认）/ 未知值 → 只写 ANTHROPIC_AUTH_TOKEN
     {
         auto env = module::claude::buildDirectEnv(
-            "https://api.anthropic.com", "sk-both-1", "both", "", "", "");
+            "https://api.anthropic.com", "sk-both-1", "both", "", "");
         DOCTEST_CHECK_EQ(env["ANTHROPIC_AUTH_TOKEN"], std::string("sk-both-1"));
         DOCTEST_CHECK(env.find("ANTHROPIC_API_KEY") == env.end());
         // 未知 / 空串认证字段按 both 读（authFieldFromText 兜底，D-8 读侧口径）
         auto env2 = module::claude::buildDirectEnv(
-            "https://x.example.com", "sk-both-2", "什么奇怪的值", "", "", "");
+            "https://x.example.com", "sk-both-2", "什么奇怪的值", "", "");
         DOCTEST_CHECK_EQ(env2["ANTHROPIC_AUTH_TOKEN"], std::string("sk-both-2"));
         DOCTEST_CHECK(env2.find("ANTHROPIC_API_KEY") == env2.end());
     }
     // 空 baseUrl / 空密钥 → 对应托管键不写（不产生空值键；BASE_URL 空 = Claude
     // Code 回落内置默认上游）
     {
-        auto env = module::claude::buildDirectEnv("", "", "both", "", "", "");
+        auto env = module::claude::buildDirectEnv("", "", "both", "", "");
         DOCTEST_CHECK(env.find("ANTHROPIC_BASE_URL") == env.end());
         DOCTEST_CHECK(env.find("ANTHROPIC_AUTH_TOKEN") == env.end());
         DOCTEST_CHECK(env.find("ANTHROPIC_API_KEY") == env.end());
@@ -3572,7 +3438,7 @@ REGISTER_TEST(claude_build_direct_env_slots_extra_env_and_managed_override,
     //（advanced-json-editor §8.4：共享片段 env 叠加形参已拆除——片段走 JSON 域）
     auto env = module::claude::buildDirectEnv(
         "https://api.anthropic.com/", "sk-real-key", "both",
-        models, "", extra);
+        models, extra);
 
     // 托管键压过 extra_env 的同名旧值（BASE_URL 去尾斜杠后为 profile 值）
     DOCTEST_CHECK_EQ(env["ANTHROPIC_BASE_URL"],

@@ -232,13 +232,13 @@ void drawProfileCard(eui::Ui& ui,
             .build();
     }
 
-    // model（default 槽位，未配则旧 model 列 fallback——§6.2 列表卡片）。
+    // model（default 槽位——§6.2 列表卡片）。
     // 宽 = width-64（同 name/url；model 行下方无徽标，右缘留 16px 边距）
     ui.text(id + ".model")
         .position(64.0f, y + 62.0f)
         .size(width - 64.0f, 14.0f)
         .text(std::string("model: ") +
-              effectiveModelsConfig(p.modelsConfigJson, p.model).def.model)
+              effectiveModelsConfig(p.modelsConfigJson).def.model)
         .fontSize(11.0f)
         .lineHeight(14.0f)
         .color(t.colors.textSecondary)

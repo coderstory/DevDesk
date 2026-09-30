@@ -4381,15 +4381,14 @@ REGISTER_TEST(claude_ui_logic_pure_functions,
     // "αααα" = 8 字节；截 5 会落在第 3 个 α 的续字节上 → 回退到第 4 字节
     DOCTEST_CHECK_EQ(truncateUtf8("αααα", 5), std::string("αα…"));
 
-    // modelsSummary：空配置 → "-"；仅旧 model 列 → 默认 + 1/6；
-    // 仅槽位 → 「默认未配」+ 1/6（分母取自槽位表，不再硬编码 /6）
+    // modelsSummary：空配置 → "-"；model 列非空但无槽位配置 → 同样 "-"
+    //（models_config 是槽位的唯一真相源，model 列不再参与读时回退）
     module::claude::Profile emptyProfile;
     DOCTEST_CHECK_EQ(modelsSummary(emptyProfile), std::string("-"));
 
-    module::claude::Profile legacyOnly;
-    legacyOnly.model = "claude-sonnet-4-5";
-    DOCTEST_CHECK_EQ(modelsSummary(legacyOnly),
-                     std::string("默认 claude-sonnet-4-5 · 槽位已配 1/6"));
+    module::claude::Profile modelColumnOnly;
+    modelColumnOnly.model = "claude-sonnet-4-5";
+    DOCTEST_CHECK_EQ(modelsSummary(modelColumnOnly), std::string("-"));
 
     module::claude::ModelsConfig mc;
     mc.sonnet.model = "fangzhou/glm-5.3[1M]";

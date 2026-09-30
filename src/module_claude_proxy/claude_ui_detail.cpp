@@ -228,8 +228,6 @@ float drawDetailModels(eui::Ui& ui, float x0, float y0, float w,
         auto mr = parseModelsConfig(shown->modelsConfigJson);
         if (mr.isOk()) mc = mr.value();
     }
-    if (mc.def.model.empty() && shown && !shown->model.empty())
-        mc.def.model = shown->model;  // 旧列 fallback
     float sy = y0;
     int slotIdx = 0;
     for (const auto& meta : modelSlotTable()) {
@@ -284,8 +282,8 @@ float drawDetailEnv(eui::Ui& ui, float x0, float y0, float w,
         // env 键，env pane 只列 profile 自身 env ∪ 托管键；片段高级属性的
         // 来源标注在高级配置 pane，§8.5）
         const int port = v.svc ? v.svc->configuredProxyPort() : 0;
-        envMap = buildProxyEnv(shown->modelsConfigJson, shown->model,
-                               shown->extraEnvJson, port, &envSources);
+        envMap = buildProxyEnv(shown->modelsConfigJson, shown->extraEnvJson,
+                               port, &envSources);
         // 模型映射键出列（E1，按键名不按来源）。必须在行数预算之前滤：
         // 行数、「另有 N 项」、PaneRows 的口径都按过滤后的可见键计。
         for (auto it = envMap.begin(); it != envMap.end();) {

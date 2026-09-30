@@ -102,8 +102,7 @@ REGISTER_TEST(sync_build_proxy_env, "settings_sync: buildProxyEnv 槽位/派生/
         "fable":   {"model": "", "name": ""},
         "subagent": {"model": "glm-5.3[1M]", "name": ""}
     })";
-    const auto env = buildProxyEnv(modelsJson, "legacy-model",
-                                   /*extraEnvJson=*/"", 8888);
+    const auto env = buildProxyEnv(modelsJson, /*extraEnvJson=*/"", 8888);
 
     DOCTEST_CHECK_EQ(env.at("ANTHROPIC_BASE_URL"),
                      std::string("http://127.0.0.1:8888"));
@@ -129,12 +128,8 @@ REGISTER_TEST(sync_build_proxy_env, "settings_sync: buildProxyEnv 槽位/派生/
     DOCTEST_CHECK_EQ(env.at("CLAUDE_CODE_SUBAGENT_MODEL"), std::string("glm-5.3[1M]"));
     DOCTEST_CHECK(env.find("CLAUDE_CODE_SUBAGENT_MODEL_NAME") == env.end());
 
-    // models_config 空 + 旧 model 列 → fallback 填 default 槽位
-    const auto legacy = buildProxyEnv("", "claude-sonnet-4-5", "", 8888);
-    DOCTEST_CHECK_EQ(legacy.at("ANTHROPIC_MODEL"), std::string("claude-sonnet-4-5"));
-
     // 恒定写入占位凭据（无「空 token 跳过」分支了）
-    const auto noTok = buildProxyEnv("", "", "", 8888);
+    const auto noTok = buildProxyEnv("", "", 8888);
     DOCTEST_CHECK_EQ(noTok.at("ANTHROPIC_AUTH_TOKEN"),
                      std::string("PROXY_MANAGED"));
     return true;
@@ -150,7 +145,7 @@ REGISTER_TEST(sync_build_proxy_env_extra, "settings_sync: extra_env 别名与优
         "ANTHROPIC_BASE_URL": "https://stale.example.com",
         "ANTHROPIC_AUTH_TOKEN": "stale-token"
     })";
-    const auto env = buildProxyEnv("", "", extra, 9999);
+    const auto env = buildProxyEnv("", extra, 9999);
 
     // 别名归一：AUTO_COMPACT_ENABLED=1（开）→ DISABLE_AUTO_COMPACT=0（不禁用）
     DOCTEST_CHECK_EQ(env.at("DISABLE_AUTO_COMPACT"), std::string("0"));
@@ -184,6 +179,7 @@ REGISTER_TEST(sync_takeover_restore_roundtrip, "settings_sync: 接管合并与�
 
     Profile p;
     p.model = "fangzhou/glm-5.3[1M]";
+    p.modelsConfigJson = R"({"default": {"model": "fangzhou/glm-5.3[1M]"}})";
     p.extraEnvJson = R"({"DISABLE_AUTOUPDATER": "1"})";
     auto r = settings_sync::takeOver(p, 8888, paths);
     DOCTEST_REQUIRE(r.ok);
@@ -1105,7 +1101,7 @@ REGISTER_TEST(sync_build_proxy_env_shared_config,
 
     // env 域：profile 自身 env + 托管键（原「片段 env 叠加」形参已拆除——
     // 片段键不再出现在 env 块）
-    const auto env = buildProxyEnv("", "", profileEnv, 8888);
+    const auto env = buildProxyEnv("", profileEnv, 8888);
     DOCTEST_CHECK_EQ(env.at("MY_KEY"), std::string("from-profile"));
     DOCTEST_CHECK_EQ(env.at("PROFILE_ONLY"), std::string("1"));
     DOCTEST_CHECK_EQ(env.at("ANTHROPIC_BASE_URL"),
@@ -1277,7 +1273,8 @@ REGISTER_TEST(sync_takeover_model_suppress,
     d.write(paths.settingsFile, R"({"env": {"MY_KEY": "user"}})");
 
     Profile p;
-    p.model = "m-1";   // def 槽位（legacy fallback → buildProxyEnv 会生成该键）
+    p.model = "m-1";   // model 列
+    p.modelsConfigJson = R"({"default": {"model": "m-1"}})";  // def 槽位
     p.extraSettingsJson = R"({"model": "json-model"})";
     auto r = settings_sync::takeOver(p, 8888, paths);
     DOCTEST_REQUIRE(r.ok);
