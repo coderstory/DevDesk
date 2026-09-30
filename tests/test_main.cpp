@@ -11,6 +11,7 @@
 #include "core/router.h"
 #include "core/service_locator.h"
 #include "core/theme.h"
+#include "ui_kit/splash.h"
 #include <algorithm>
 #include <chrono>
 #include <cstdlib>
@@ -62,6 +63,7 @@ void setEnvVar(const char* key, const std::string& value) {
 //  10. 应用级通知（侧边栏）    ui_kit::ToastState 单例        ← app_sidebar.h
 //  11. 侧边栏折叠态            app 进程内单值（展开回厂）      ← app_sidebar.h
 //  12. 退出接线已挂门          armExitHook 幂等记账位回厂      ← app_assembly.h
+//  13. 启动 splash 测试缝      无头进程禁 splash（2.3s 时序不适用） ← ui_kit/splash.h
 // ==========================================================================
 // 日志级别的「出厂态」= 命令行选定的基线：--log → Debug，否则 Info。重置必须回到
 // 这个基线而不是硬编码 Info——硬编码会把 --log 的 Debug 在第一个用例前冲掉，
@@ -138,6 +140,11 @@ void resetCaseGlobals() {
     // 的——上一用例挂过后，本用例 exitHookArmed() 断言「装配即挂上」或首次
     // armExitHook() 幂等返回吃到残留已挂态。出厂态 = 未挂（false）
     ::app::assembly::resetAssemblyGlobals();
+    // 13) 启动 splash 测试缝（ui_kit/splash.h）：无头进程跑完不到 splash 的
+    // 2.3s 时序，不缝则 compose 期间 drawSplashIfNeeded 恒真、主界面永不绘制
+    //（2026-09-30 sidebar 几何用例全红的回归根因）。置位后恒返 false 且不启动
+    // 计时/日志/shader；生产 main.cpp 不调此 API，正常 splash 路径零变化
+    ::ui_kit::setSplashDisabledForTests(true);
 }
 
 // 单例运行结果：先收集、循环结束后统一批量输出——全量 800+ 例时逐条

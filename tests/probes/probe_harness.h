@@ -1,12 +1,15 @@
 #pragma once
 // probe_harness.h — DevDesk probes 基础设施（header-only，namespace probe）
 // 用法：probe main 直接 include 本头，按「初始化后端 → makeWindow →
-// 帧循环（pollOnce / composeModuleFrame）→ 扫描断言」编排。不依赖任何
-// DevDesk 模块代码，仅用 EUI-NEO core 层 API。
+// 帧循环（pollOnce / composeModuleFrame）→ 扫描断言」编排。仅用 EUI-NEO core
+// 层 API；唯一 DevDesk 侧依赖是 ui_kit 的 splash 测试缝（initializeWindowBackend
+// 里禁 splash，probe dump 不该拍到 splash——compose 路径同 app_sidebar）。
 
 #include "core/dsl_runtime.h"
 #include "core/input/input_state.h"
 #include "core/window/window_backend.h"
+
+#include <ui_kit/splash.h>
 
 #ifndef GLFW_INCLUDE_NONE
 #define GLFW_INCLUDE_NONE
@@ -30,6 +33,9 @@ inline core::window::RenderApi configuredRenderApi() {
 
 /// 窗口后端生命周期（GLFW），成对调用。
 inline bool initializeWindowBackend() {
+    // splash 测试缝：probe 进程同样活不过 splash 2.3s 时序，禁掉后 compose
+    // 路径（若后续 probe 直连 app::compose / drawSidebar）不会拍到 splash
+    ::ui_kit::setSplashDisabledForTests(true);
     return glfwInit() == GLFW_TRUE;
 }
 
