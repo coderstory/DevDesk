@@ -1,0 +1,126 @@
+{
+  "audit": "fix/keychain-cleanup-guard 孤儿清理双护栏 + service 派生迁移 独立只读审计",
+  "date": "2026-09-30",
+  "scope": {
+    "base": "a1451e9",
+    "branch": "fix/keychain-cleanup-guard",
+    "commits": [
+      "c0c3978 fix: 孤儿 Keychain 清理双护栏——空 profile 跳过 + claude: 白名单前缀",
+      "69e634b feat: Keychain service 按数据根派生 + 旧全局 service 一次性迁移",
+      "93c094f fix: duplicateProfile 密钥缺失三态可分辨 + 流式测试显式 service 隔离"
+    ],
+    "diff_stat": "13 files, +563/-21",
+    "method": "只读：diff/全文件研读 + 全库 grep 调用点 + 历史溯源（git log -S）；未复跑构建/测试（审计约束=唯一写为本文件），测试计数均引自 commit message 声明",
+    "incident_background": "memory:~/.claude/projects/-Users-coderstory-dev-gui/memory/dataroot-isolation-not-keychain.md（2026-09-30 凌晨测试实例空 keep 全清用户 3 个真实 key）"
+  },
+  "dimensions": {
+    "1_correctness": {
+      "verdict": "已核（3 Low/Info 项见 findings）",
+      "guard1_empty_keep": "已核。判定位置正确：listProfiles 失败先原样 fail 透传（profile_repository.cpp:699-702），keep 空判定在成功之后（:716）——不会把读失败当真空根掩盖。空 keep 返回 ok(0)+LOG_WARN（防误删文案含 service 名）。副作用：自身命名空间的孤儿在「零 profile」期间不清理（fail-safe 方向，可接受）",
+      "guard2_whitelist_prefix": "已核。account 命名全历史溯源：keychainAccountFor 恒为 \"claude:<id>\"，自首个 keychain 集成 5ee1ade 即如此（git log -S 证实），不存在无前缀的存量条目→无误保留（该删的删不到）。反向：前缀外的条目永远清不掉=垃圾堆积，仅限外部/手工条目，keychain.h 注释已写明。Windows 侧 encodeName/legacySanitize 两形态前缀比对（claude%3A / claude_）均成立，keep 集合双形态入集（keychain_win.cpp:244-249）——在用账号绝不会被 sweep 误删",
+      "service_derivation": "已核（F-3 一项 Low）。SHA256(dataRoot) 前 4 字节 8 hex（claude_service.cpp:74-88），与 ProfileRepository::sha256HexPrefix 口径一致；32 位碰撞对现实根数量可忽略。显式传 service=禁迁移的语义：生产唯一构造点 main.cpp:213 getClaudeService() 默认构造→派生 service+legacy_=\"DevDesk\"→迁移启用；grep 全库证实显式传 service 的构造全部在测试（kTestKeychainService/DevDeskTest*）→生产路径不漏迁移、测试路径不误迁，两向都闭环"
+    },
+    "2_regression": {
+      "verdict": "已核（F-2/F-6 项见 findings）",
+      "onStart_order": "已核。claude_module.cpp:316 migrate 先于 :325 cleanup；迁移失败的中间态也安全——cleanup 只扫本实例派生命名空间，未迁完的 account 尚不在该命名空间（无可删物），已迁的在 keep 里",
+      "db_row_but_key_lost": "已核。迁移按 DB 行驱动，「旧 service 空读」→ oldExists=false → 零动作、不计 migrated、不报成功——不把空读当成功。事故丢失的 key 迁移不可复原（如实）",
+      "three_platform_consistency": "已核。三平台 realDeleteSecretsNotIn 同签名；mac/posix 直调 shouldDeleteOrphan（原始 account 形态），win 在编码后 stem 形态做等价比对（注释说明不能直调的原因）；removed 返回形态差异（win 为编码 stem）keychain.h 已注明，cleanupOrphan 只用 size()。win 保留侧双编码形态入 keep，升级后首扫不误删旧命名在用文件",
+      "call_sites_grep": "已核。全库 grep：src 内唯一构造点 main.cpp:213（默认构造）；tests 内除 test_claude_service.cpp:934/1007（派生/迁移专测，故意默认构造）外全部显式传测试 service，含 93c094f 收口的 streaming 两处与多行的 theme_hierarchy（DevDeskTestThemeHier）"
+    },
+    "3_platform_symmetry": {
+      "verdict": "已核（F-5 Info 项见 findings）",
+      "windows_compile": "win 改动为纯 std::string 前缀比较+lambda，依赖的 encodeName/legacySanitize/<set> 均已在文件内；本机无 MinGW 未实测，可编译性=commit 声明（69e634b「Windows 侧随本改动保持可编译」）",
+      "service_param_threading": "已核。service 参数三平台贯通为既有参数，migrate/cleanup 用的 store/load/deleteSecret 三平台签名一致；win delete 双命名形态都删，对迁移删旧兼容"
+    },
+    "4_silent_failure": {
+      "verdict": "已核",
+      "migration_compensation_logging": "已核。三处失败全 LOG_WARN 且语义分明：半写入清理失败（:791 附近）、写新失败旧条目保留待重试、删旧失败（新条目已就位仍计成功）——无吞错路径",
+      "guard1_warn_visibility": "已核。LOG_WARN 在 ProfileRepository 内发出（不依赖调用方打日志），文案含被保护的 service 名；返回 ok(0) 不会被 claude_module 当失败二次告警（可接受，单一事实源）",
+      "dup_three_state": "已核。NotFound→「密钥缺失（Keychain 无对应条目）+重填提示」；非 NotFound 读失败→错误码原样透传+「读取源 Profile 密钥失败」前缀（读不了≠没有，不误导重填）；空串→「密钥为空串+重填提示」。两处头文件文档同步（claude_service.h:139-142、profile_repository.h:178-180）；旧用例断言的「密钥缺失」字样仍被 NotFound 分文案包含，兼容"
+    },
+    "5_test_effectiveness": {
+      "verdict": "已核，两条残留（F-1 Low / F-4 Info）",
+      "mutation_x4": "证据在 commit message：c0c3978 ×2（禁用护栏①→claude_cleanup_empty_keep_never_sweeps 红；放开白名单→keychain 用例红）、69e634b ×1（禁用迁移→迁移用例红）、93c094f ×1（三态合并回旧文案→claude_dup_missing_key_three_states 红），均红/绿/恢复闭环。变异敏感性经代码核可成立：guard① 在假后端 sweep 之前，假后端 fakeDeleteNotIn 是无白名单旧语义→去掉 guard① 用例必红",
+      "macos_real_keychain_limitation": "见 F-1：护栏② macOS 后端只有一行接线+共享谓词单测（keychain_orphan_sweep_prefix_whitelist 8 组断言含大小写/少冒号/空串边界）；真后端 sweep 集成用例 keychain_delete_secrets_not_in（含 notes:theme 幸存断言）在 macOS 按 SKIP_ON_MACOS_KEYCHAIN 政策跳过，仅 win/posix 可跑",
+      "streaming_rerun": "93c094f 将 test_streaming_proxy.cpp（DevDeskTestStreamingProxy）/test_streaming_stress.cpp（DevDeskTestStreamingStress）改显式 service，隔离语义钉死；「25/25 复跑」为 commit 声明，本审计未复跑"
+    },
+    "6_documentation": {
+      "verdict": "已核（F-2/F-4 项见 findings）",
+      "commit_vs_diff": "三条 commit message 逐项与 diff 对上：测试清单、用例名、变异项、平台说明（69e634b 的「三平台后端零改动」对其自身时点属实，后端改动在 c0c3978）",
+      "user_recovery_path": "已核。重填路径三处写明：dup 三态文案「编辑该 Profile 重新填一次 API Key 即可」（profile_repository.cpp:919/929）；migrateLegacyKeychainService 注释明写「用户在新 service 上重填过 key 后旧值成了陈旧副本：新 service 是权威，删旧即达稳态」（:760-763）——重填后旧条目残留由下次启动迁移自动清掉，不冲突；memory dataroot-isolation-not-keychain.md 恢复路径一致",
+      "missing": "无落盘 impl-verify/verify 文档（F-4）；数据根改名/移动致派生名失联的陷阱未写任何文档（F-2）"
+    }
+  },
+  "findings": [
+    {
+      "id": "F-1",
+      "severity": "Low",
+      "dimension": "5_test_effectiveness",
+      "title": "护栏② macOS 后端接线无自动化回归防护",
+      "detail": "真实后端 sweep 集成用例在 macOS 跳过（SKIP_ON_MACOS_KEYCHAIN），而模块测试用的 fakeDeleteNotIn 是无白名单旧语义——即 macOS 机器上没有任何测试执行「sweep 经 shouldDeleteOrphan」的集成路径；keychain_macos.cpp 的接线行被回退不会变红。",
+      "mitigation_present": "决策逻辑抽到 keychain.h 共享内联并由 8 组边界断言单测；win/posix 真后端用例覆盖同型接线；commit 限制说明已如实声明",
+      "recommendation": "接受为已声明残留；若想加固，可让 fakeDeleteNotIn 同调 shouldDeleteOrphan，使模块层用例对谓词回归敏感（仍防不了 macOS 接线行本身）",
+      "evidence": "tests/test_modules/test_claude_service.cpp:566-586（fakeDeleteNotIn 无白名单）、tests/test_platform/test_keychain.cpp:91（SKIP）、src/platform/keychain_macos.cpp:239"
+    },
+    {
+      "id": "F-2",
+      "severity": "Low",
+      "dimension": "2_regression",
+      "title": "迁移链不覆盖「派生名→派生名」：数据根路径改名/移动后 key 失联",
+      "detail": "migrateLegacyKeychainService 只从旧全局名 \"DevDesk\" 迁入当前派生名。数据根目录改名/移动、DEVDESK_DATA_ROOT 值拼写或尾斜杠变化（appDataDir 对 env 原样返回、不规范化，paths.cpp:22-36）→派生 service 变→既有 key 留在旧派生命名空间：不被迁移、guard① 只保证不被删、也不可达，表现同丢 key。",
+      "recommendation": "文档写明「数据根路径视为不可改名」；或后续为派生名迁移留链条（记录上次派生名）。低概率边角，不阻断",
+      "evidence": "claude_service.cpp:74-97、src/core/paths.cpp:22-36"
+    },
+    {
+      "id": "F-3",
+      "severity": "Low",
+      "dimension": "1_correctness",
+      "title": "空数据根兜底回退旧全局名，跨根互扫土壤在兜底路径复活",
+      "detail": "resolveKeychainService 派生失败（空根，注释称生产不可达）时回退 \"DevDesk\"。此时 legacy==service 使迁移自禁（防自读自删✓），但只要 keep 非空，清理仍会在全局命名空间扫删其它数据根的 claude: 条目——guard② 挡前缀外条目，挡不住这个。「生产不可达」依赖 platformDefaultAppDataDir 恒非空（如 HOME 异常场景未证）。",
+      "recommendation": "兜底语义改为「派生失败→禁用迁移与清理并 LOG_ERROR」，而非回退全局名",
+      "evidence": "claude_service.cpp:95-98、profile_repository.cpp:740（迁移同名 no-op）、:716（guard① 仅护空 keep）"
+    },
+    {
+      "id": "F-4",
+      "severity": "Info",
+      "dimension": "6_documentation",
+      "title": "变异 ×4 红绿证据未落盘 verify 文档",
+      "detail": "4 次变异自检证据只在三条 commit message（c0c3978×2、69e634b×1、93c094f×1），无 impl-verify/verify 落盘文件；与同仓 2026-09-30 其它工作（advanced-json/pet/wave-b 等均有 impl-verify.md）惯例不一致。claude 145/145、keychain 8/6/0、streaming 25/25 等计数为提交声明，本只读审计未复跑。",
+      "recommendation": "补一份简短 verify 文档或在 backlog 记一笔；复跑一次全量测试留输出",
+      "evidence": "docs/superpowers/plans/ 下无 keychain 相关 verify 文件（git ls-tree 证实）"
+    },
+    {
+      "id": "F-5",
+      "severity": "Info",
+      "dimension": "3_platform_symmetry",
+      "title": "win sweepableStem 与 mac/posix 谓词在假想形态上不等价",
+      "detail": "win 在编码后 stem 上比对，legacy 形态前缀 \"claude_\" 会命中假想的「claude_xxx 无冒号 account」（win 扫、mac/posix 留）。app 生成的 account 恒为 claude:<digits>，实际无差；win 注释已说明不能直调 shouldDeleteOrphan 的原因（比对形态不同）。",
+      "recommendation": "无需动作；如未来出现第二类 account 命名，需重新审视此处",
+      "evidence": "src/platform/keychain_win.cpp:252-262、src/platform/keychain.h:14-31"
+    },
+    {
+      "id": "F-6",
+      "severity": "Info",
+      "dimension": "2_regression",
+      "title": "「行在 key 无」的丢失现状启动期零提示",
+      "detail": "迁移对空读零动作（不假成功✓），但 DB 有行而两处命名空间都无 key 的 profile（事故受害形态）在启动日志无任何提示；用户要等复制（三态文案）或请求失败才发现。恢复路径=重填，已写明。",
+      "recommendation": "可选：迁移结束时报一行「N 个 profile 两侧均无密钥」INFO，提升事故可观测性",
+      "evidence": "profile_repository.cpp:734-798、memory dataroot-isolation-not-keychain.md How-to-apply #2"
+    }
+  ],
+  "verified_positives": [
+    "guard① 位置：listProfiles 失败先透传，真错不被空 keep 分支掩盖（profile_repository.cpp:699-716）",
+    "onStart 顺序：迁移(claude_module.cpp:316)先于清理(:325)，迁移失败中间态对清理也安全",
+    "生产/测试迁移触发两向闭环：生产唯一构造点默认构造→迁移启用；显式 service 全在测试→绝不触碰真实 \"DevDesk\" 命名空间（有专测 claude_service_migrate_disabled_and_failure 钉死）",
+    "迁移先写新成功才删旧 + 失败补偿清半写入 + 幂等；新已有旧还有→只删旧（重填后陈旧副本自愈，永不旧盖新）",
+    "win keep 集合双编码形态入集，升级后首扫不误删在用旧命名文件",
+    "claude: 前缀自首个 keychain 集成（5ee1ade）即存在，白名单无误保留风险",
+    "「同根稳定/异根互异/不与旧名同形/空根空串」派生性质有纯函数单测钉死"
+  ],
+  "conclusion": {
+    "verdict": "可合并",
+    "max_severity": "Low",
+    "finding_counts": { "Low": 3, "Info": 3, "blocker": 0 },
+    "note": "三护栏（guard①/guard②/派生+迁移）机制正确、顺序正确、触发语义两向闭环；Low 项均为边角/已声明残留，建议合并后收口 F-2（文档写明数据根不可改名）与 F-3（空根兜底改禁用而非回退全局名）"
+  }
+}
