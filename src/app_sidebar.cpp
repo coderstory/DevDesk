@@ -20,6 +20,7 @@
 #include "core/theme.h"
 #include "settings_config.h"
 #include <ui_kit/metrics.h>
+#include <ui_kit/splash.h>
 #include <ui_kit/toast.h>
 
 #include <eui/types.h>
@@ -270,6 +271,11 @@ void drawSidebar(eui::Ui& ui, const eui::Screen& screen) {
 }
 
 void compose(eui::Ui& ui, const eui::Screen& screen) {
+    // 启动 splash（ui_kit）：极光波 shader + logo + 进度条，2.0s 动画 +
+    // 0.3s 淡出后切主界面；splash 期间跳过主界面布局（不依赖 router）
+    if (ui_kit::drawSplashIfNeeded(ui, screen)) {
+        return;
+    }
     ::core::Router* router = ::core::appRouter();
     if (!router) return;
     // 首帧一次性落真实 contentScale（2026-09-28 组 A 的日志口径）：启动尺寸决策

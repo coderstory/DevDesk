@@ -240,6 +240,15 @@ add_custom_command(TARGET DevDesk POST_BUILD
     COMMENT "Copying tray template icon to build directory"
 )
 
+# 启动 splash shader（assets/shaders/splash.frag，随仓库分发；运行时经
+# eui::platform::resolveResourcePath 从 exe 旁或 cwd 的 assets/ 下解析，
+# 从 build 目录启动即可命中）
+add_custom_command(TARGET DevDesk POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_directory
+        "${CMAKE_SOURCE_DIR}/assets/shaders" "$<TARGET_FILE_DIR:DevDesk>/assets/shaders"
+    COMMENT "Copying splash shader to build directory"
+)
+
 # 构建版本自增（2026-09-28 about 页设计）：每次 cmake --build 都跑 bump-version
 # 脚本把 VERSION 文件 +1（不用 PRE_BUILD——Ninja 下 PRE_BUILD = PRE_LINK，仅目标
 # 重链时跑；ALL 保证每次构建都执行）。VERSION 经 CMAKE_CONFIGURE_DEPENDS 注册，

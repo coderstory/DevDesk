@@ -10,6 +10,7 @@ add_library(devdesk_ui_kit STATIC
     toast.cpp
     dialog_form.cpp
     card.cpp
+    splash.cpp
 )
 
 devdesk_apply_warnings(devdesk_ui_kit)
