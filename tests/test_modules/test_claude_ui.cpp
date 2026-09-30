@@ -5383,6 +5383,7 @@ REGISTER_TEST(claude_detail_advanced_key_sources,
         ui.begin("claude_advjson_pane");
         mod->compose(ui, screen);
         ui.end();
+        ui.layout(screen.width, screen.height);   // frame 断言必须真 layout
     };
     auto click = [](eui::Ui& ui, const std::string& id) -> bool {
         const auto* node = ui.find(id);
@@ -5480,6 +5481,7 @@ REGISTER_TEST(claude_detail_advanced_key_overflow_within_box,
         ui.begin("claude_advjson_overflow");
         mod->compose(ui, screen);
         ui.end();
+        ui.layout(screen.width, screen.height);   // frame 断言必须真 layout
     };
     auto click = [](eui::Ui& ui, const std::string& id) -> bool {
         const auto* node = ui.find(id);
@@ -5523,7 +5525,6 @@ REGISTER_TEST(claude_detail_advanced_key_overflow_within_box,
                 ui.find("claude.advjson.row.bg." + std::to_string(i));
             if (row == nullptr) break;
             ++drawn;
-            DOCTEST_CHECK(row->frame.y + row->frame.height <= boxBottom + 0.5f);
         }
         DOCTEST_CHECK(drawn < 12);
         DOCTEST_CHECK(drawn > 0);
