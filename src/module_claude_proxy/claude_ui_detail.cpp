@@ -746,45 +746,65 @@ float drawDetailCallsPane(eui::Ui& ui, float x0, float y0, float w,
 float drawDetailAdvanced(eui::Ui& ui, float x0, float y0, float w,
                          const core::theme::Tokens& t, const DetailView& v,
                          float contentBottom) {
+    // ---- 行几何（merge-review R2，2026-09-30）：全部从生效字号缩放派生 ----
+    // 根因（与 env pane E2 同一台病）：旧代码标签字号 11/12 与行盒 14/18/28/34
+    // 全按 100% 写死；全局字号缩放（core::theme::fontScale，设置页档位，最小档
+    // kFontPresets[0] = 85%）缩小字号却不动行盒 / 行距 → 墨迹越出行盒、与下一块
+    // 叠印。现在**字号随缩放、盒与纵向间距从 100% 基准 × fs 取整派生**：
+    //   字号：标签 / 来源 / 说明 / 空态小字 = 11×fs；键名 = 12×fs
+    //         （不取整，与 env pane 同款 —— 取整只发生在盒 / 间距上，像素对齐稳定）
+    //   盒 / 间距 = round(基准 × fs)：标签行盒 14、标签底→盒顶 18、值盒高 28、
+    //         值盒底→下一标签顶 10、行卡高 28、行间距 6、说明行 18、溢出行 18。
+    //         **100% 档 round(x×1.0) == x，与旧字面常量逐一相等**（零回归）；
+    //         85% 档 = 12 / 15 / 24 / 9 / 5，行盒恒包住墨迹（基准盒高 ≥ 1.25×
+    //         基准字号，缩放后比值不变）。
+    // 横向（列宽分割比例、内边距 12 / 20 / 32）按 env pane 既有做法**不缩放**。
+    const float fs = core::theme::fontScale();
+    const auto rfs = [fs](float base) { return std::round(base * fs); };
+    const float labelFs = 11.0f * fs;                // 标签 / 来源 / 说明小字
+    const float keyFs = 12.0f * fs;                  // 键名
+    const float labelH = rfs(14.0f);                 // 标签行盒（100% = 14）
+    const float labelGap = rfs(18.0f);               // 标签底 → 盒顶（100% = 18）
+    const float fieldH = rfs(28.0f);                 // 方言 / 备用值盒高（100% = 28）
+    const float fieldGap = rfs(10.0f);               // 值盒底 → 下一标签顶（100% = 10）
+    // ---- 键来源清单（§8.5）：行高/行距与行数预算（P2 口径）----
+    const float kKeyRowH = rfs(28.0f);               // 键行卡高（100% = 28）
+    const float kKeyPitch = kKeyRowH + rfs(6.0f);    // 行卡 + 6 间距（100% = 34）
+    const float kNoteH = rfs(18.0f);                 // 来源说明行（100% = 18）
+    const float kOverflowH = rfs(18.0f);             // 「另有 N 项」提示行（100% = 18）
+    constexpr int kMaxKeyRows = 8;        // 暂定上限（contentBottom 消费才是护栏）
     // 方言行（固定）
     ui.text("claude.field.dialect.label")
-        .position(x0, y0).size(w, 14.0f)
-        .text("生效方言").fontSize(11.0f).lineHeight(14.0f)
+        .position(x0, y0).size(w, labelH)
+        .text("生效方言").fontSize(labelFs).lineHeight(labelH)
         .verticalAlign(eui::VerticalAlign::Center)
         .color(t.colors.textTertiary).build();
     ui.rect("claude.field.dialect.bg")
-        .position(x0, y0 + 18.0f).size(w, 28.0f)
+        .position(x0, y0 + labelGap).size(w, fieldH)
         .color(t.colors.surfaceElevated).radius(t.sizes.radiusSmall)
         .border(1.0f, t.colors.borderMuted).build();
     ui.text("claude.field.dialect.value")
-        .position(x0 + 12.0f, y0 + 18.0f).size(w - 24.0f, 28.0f)
-        .text(v.dialectText).fontSize(t.sizes.fontSizeSmall).lineHeight(28.0f)
+        .position(x0 + 12.0f, y0 + labelGap).size(w - 24.0f, fieldH)
+        .text(v.dialectText).fontSize(t.sizes.fontSizeSmall).lineHeight(fieldH)
         .verticalAlign(eui::VerticalAlign::Center)
         .color(t.colors.textPrimary).build();
-    const float fbY = y0 + 56.0f;
+    const float fbY = y0 + labelGap + fieldH + fieldGap;
     // 备用行（固定）
     ui.text("claude.field.fallback.label")
-        .position(x0, fbY).size(w, 14.0f)
-        .text("备用 Profile").fontSize(11.0f).lineHeight(14.0f)
+        .position(x0, fbY).size(w, labelH)
+        .text("备用 Profile").fontSize(labelFs).lineHeight(labelH)
         .verticalAlign(eui::VerticalAlign::Center)
         .color(t.colors.textTertiary).build();
     ui.rect("claude.field.fallback.bg")
-        .position(x0, fbY + 18.0f).size(w, 28.0f)
+        .position(x0, fbY + labelGap).size(w, fieldH)
         .color(t.colors.surfaceElevated).radius(t.sizes.radiusSmall)
         .border(1.0f, t.colors.borderMuted).build();
     ui.text("claude.field.fallback.value")
-        .position(x0 + 12.0f, fbY + 18.0f).size(w - 24.0f, 28.0f)
-        .text(v.fallbackName).fontSize(t.sizes.fontSizeSmall).lineHeight(28.0f)
+        .position(x0 + 12.0f, fbY + labelGap).size(w - 24.0f, fieldH)
+        .text(v.fallbackName).fontSize(t.sizes.fontSizeSmall).lineHeight(fieldH)
         .verticalAlign(eui::VerticalAlign::Center)
         .color(t.colors.textPrimary).build();
-    float ey = fbY + 18.0f + 28.0f;   // = y0 + 102（既有固定底沿）
-
-    // ---- 键来源清单（§8.5）：行高/行距与行数预算（P2 口径）----
-    constexpr float kKeyRowH = 28.0f;
-    constexpr float kKeyPitch = 34.0f;    // 行卡 + 6 间距
-    constexpr float kNoteH = 18.0f;       // 来源说明行（model 覆盖提示）
-    constexpr float kOverflowH = 18.0f;   // 「另有 N 项」提示行
-    constexpr int kMaxKeyRows = 8;        // 暂定上限（contentBottom 消费才是护栏）
+    float ey = fbY + labelGap + fieldH;    // = y0 + 102（100% 档既有固定底沿）
     if (v.extraSettingsKeys.empty()) {
         // 空态两种成因（compose 约定：note 空 = 未配置；note 非空 = 解析失败
         // 提示原样展示）
@@ -793,17 +813,17 @@ float drawDetailAdvanced(eui::Ui& ui, float x0, float y0, float w,
             : v.extraSettingsNote;
         ui.text("claude.advjson.status")
             .position(x0, ey).size(w, kNoteH)
-            .text(statusText).fontSize(11.0f).lineHeight(kNoteH)
+            .text(statusText).fontSize(labelFs).lineHeight(kNoteH)
             .verticalAlign(eui::VerticalAlign::Center)
             .color(t.colors.textTertiary).build();
         return std::min(ey + kNoteH, contentBottom);
     }
     ui.text("claude.advjson.label")
-        .position(x0, ey).size(w, 14.0f)
-        .text("高级属性（生效 JSON 逐键来源）").fontSize(11.0f).lineHeight(14.0f)
+        .position(x0, ey).size(w, labelH)
+        .text("高级属性（生效 JSON 逐键来源）").fontSize(labelFs).lineHeight(labelH)
         .verticalAlign(eui::VerticalAlign::Center)
         .color(t.colors.textTertiary).build();
-    ey += 18.0f;
+    ey += labelGap;
     // 行数预算：可用高 = contentBottom − 当前底沿；说明行/溢出行要放得下
     //（放不下就让行，让到 0 行为止——0 行时只画提示，不画越界行）
     const float availH = std::max(0.0f, contentBottom - ey);
@@ -829,13 +849,13 @@ float drawDetailAdvanced(eui::Ui& ui, float x0, float y0, float w,
         ui.text("claude.advjson.row.key." + idx)
             .position(x0 + 12.0f, ey).size(w * 0.4f, kKeyRowH)
             .clip()
-            .text(k).fontSize(12.0f).lineHeight(kKeyRowH)
+            .text(k).fontSize(keyFs).lineHeight(kKeyRowH)
             .verticalAlign(eui::VerticalAlign::Center)
             .color(t.colors.primary).build();
         ui.text("claude.advjson.row.src." + idx)
             .position(x0 + w * 0.4f + 20.0f, ey).size(w * 0.6f - 32.0f, kKeyRowH)
             .clip()
-            .text(src).fontSize(11.0f).lineHeight(kKeyRowH)
+            .text(src).fontSize(labelFs).lineHeight(kKeyRowH)
             .verticalAlign(eui::VerticalAlign::Center)
             .color(src == std::string(envSourceLabel(EnvSource::Shared))
                        ? t.colors.textSecondary
@@ -847,7 +867,7 @@ float drawDetailAdvanced(eui::Ui& ui, float x0, float y0, float w,
             .position(x0, ey).size(w, kOverflowH)
             .text("另有 " + std::to_string(keyCount - shownRows) +
                   " 项（编辑该 Profile 可查看全部）")
-            .fontSize(11.0f).lineHeight(kOverflowH)
+            .fontSize(labelFs).lineHeight(kOverflowH)
             .verticalAlign(eui::VerticalAlign::Center)
             .color(t.colors.textTertiary).build();
         ey += kOverflowH;
@@ -855,7 +875,7 @@ float drawDetailAdvanced(eui::Ui& ui, float x0, float y0, float w,
     if (hasNote) {
         ui.text("claude.advjson.note")
             .position(x0, ey).size(w, kNoteH)
-            .text(v.extraSettingsNote).fontSize(11.0f).lineHeight(kNoteH)
+            .text(v.extraSettingsNote).fontSize(labelFs).lineHeight(kNoteH)
             .verticalAlign(eui::VerticalAlign::Center)
             .color(t.colors.warning).build();
         ey += kNoteH;

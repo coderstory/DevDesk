@@ -6223,6 +6223,268 @@ REGISTER_TEST(claude_detail_advanced_key_overflow_within_box,
     return true;
 })
 
+// ---- merge-review R2：高级配置 pane 字号/行盒随生效字号派生（85% 档钉值）----
+// 旧实现全部写死 100% 值（标签 11/行盒 14、标签底→盒顶 18、值盒 28、盒底→
+// 下一标签顶 10、键行卡 28、行距 6、说明行 18、溢出行 18）。全局字号 85% 档
+// （kFontPresets[0]）下字号缩小但行盒不动 → 盒内大片空白 + 行距相对过宽，
+// 内容易越内容框与下一块叠印。修法同 env pane E2：字号 = 基准×fs，盒/纵向
+// 间距 = round(基准×fs)。断言（**手算写死期望，不复刻实现表达式**）：
+//   100% 档：14 / 18 / 28 / 10 / 28 / 34 / 18 / 18，字号 11 / 12（旧字面逐值）
+//   85%  档：12 / 15 / 24 /  9 / 24 / 29 / 15 / 15，字号 9.35 / 10.2
+//            （round(14×0.85)=12、round(18×0.85)=15、round(28×0.85)=24、
+//              round(10×0.85)=round(8.5)=9、行距 24+round(6×0.85)=24+5=29、
+//              round(18×0.85)=15；字号不取整）
+REGISTER_TEST(claude_advjson_pane_geometry_follows_font_scale,
+              "claude_module: 高级配置 pane 字号行盒随生效字号派生（100% 逐值 + 85% 钉值）", {
+    TestEnv env;
+    auto p = env.svc->createProfile("派生档", "https://fs.example.com",
+                                    "sk-ant-fsc-0001", "m-fs");
+    DOCTEST_REQUIRE(p.isOk());
+    const int64_t pid = p.value().id;
+    {
+        // 12 个顶层键（> 暂定上限 8 → 必走「另有 N 项」溢出行）+ 非空字符串
+        // model 键（→ 说明行 note 在场）
+        module::claude::Profile pr = p.value();
+        std::string json = R"({"model":"m-user")";
+        for (int i = 0; i < 12; ++i) {
+            json += ",\"k" + std::to_string(i) + "\":\"v\"";
+        }
+        json += "}";
+        pr.extraSettingsJson = json;
+        DOCTEST_REQUIRE(env.svc->updateProfile(pr).isOk());
+    }
+
+    std::unique_ptr<::core::Module> mod(create_claude_module());
+    eui::Screen screen;
+    screen.width = 1262.0f;
+    screen.height = 1000.0f;
+    auto compose = [&](eui::Ui& ui) {
+        ui.begin("claude_advjson_scale");
+        mod->compose(ui, screen);
+        ui.end();
+        ui.layout(screen.width, screen.height);   // frame 断言必须真 layout
+    };
+    auto click = [](eui::Ui& ui, const std::string& id) -> bool {
+        const auto* node = ui.find(id);
+        if (node == nullptr || node->onClick == nullptr) return false;
+        node->onClick();
+        return true;
+    };
+    // 缩放守卫：fontScale 是进程级全局状态，RAII 还原
+    struct FontScaleGuard {
+        float prev;
+        explicit FontScaleGuard(float s)
+            : prev(::core::theme::fontScale()) {
+            ::core::theme::setFontScale(s);
+        }
+        ~FontScaleGuard() { ::core::theme::setFontScale(prev); }
+    };
+    // 选中卡片 + 切到「高级配置」页签（等缓存就绪；键清单仅在 shown 非空时渲染）
+    bool sawCard = false;
+    for (int i = 0; i < 250 && !sawCard; ++i) {
+        eui::Ui ui;
+        compose(ui);
+        sawCard = click(ui, "claude.profile.0.bg");
+        if (!sawCard) std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    }
+    DOCTEST_CHECK(sawCard);
+    bool sawTab = false;
+    bool sawPane = false;
+    for (int i = 0; i < 250 && !sawPane; ++i) {
+        eui::Ui ui;
+        compose(ui);
+        if (!sawTab) {
+            sawTab = click(ui, "claude.detail.tabs.hit.3");
+        }
+        sawPane = ui.find("claude.field.dialect.label") != nullptr;
+        if (!sawPane) std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    }
+    DOCTEST_CHECK(sawTab);
+    DOCTEST_CHECK(sawPane);
+
+    // 判据 helper：逐项核对本档期望派生值（返回空串 = 通过）。期望值由调用方
+    // 按档位**手算传入**（不复刻实现里的 rfs 表达式）
+    struct Geom {
+        float labelH, labelGap, fieldH, fieldGap;
+        float keyRowH, keyPitch, noteH, overflowH;
+        float labelFs, keyFs, valueFs;
+    };
+    const auto geomProblem = [&](eui::Ui& ui, const Geom& g,
+                                 int* drawnOut) -> std::string {
+        const auto* dL = ui.find("claude.field.dialect.label");
+        const auto* dB = ui.find("claude.field.dialect.bg");
+        const auto* dV = ui.find("claude.field.dialect.value");
+        const auto* fL = ui.find("claude.field.fallback.label");
+        const auto* fB = ui.find("claude.field.fallback.bg");
+        const auto* aL = ui.find("claude.advjson.label");
+        if (dL == nullptr || dB == nullptr || dV == nullptr || fL == nullptr ||
+            fB == nullptr || aL == nullptr) {
+            return "高级配置 pane 固定行元素缺失";
+        }
+        const auto near = [](float a, float b) {
+            return std::fabs(a - b) <= 0.01f;
+        };
+        // 标签行盒（行高 = 盒高，单行不折行）
+        if (!near(dL->lineHeight, g.labelH) || !near(dL->frame.height, g.labelH)) {
+            return "方言标签行盒 " + std::to_string(dL->frame.height) +
+                   " != " + std::to_string(g.labelH);
+        }
+        if (!near(fL->frame.height, g.labelH) || !near(aL->frame.height, g.labelH)) {
+            return "备用/高级属性标签行盒 != " + std::to_string(g.labelH);
+        }
+        // 标签底 → 值盒顶
+        if (!near(dB->frame.y - dL->frame.y, g.labelGap)) {
+            return "方言标签底→盒顶 " + std::to_string(dB->frame.y - dL->frame.y) +
+                   " != " + std::to_string(g.labelGap);
+        }
+        // 值盒高（两行同款）
+        if (!near(dB->frame.height, g.fieldH) ||
+            !near(fB->frame.height, g.fieldH) ||
+            !near(dV->frame.height, g.fieldH)) {
+            return "方言/备用值盒高 != " + std::to_string(g.fieldH);
+        }
+        // 值盒底 → 下一标签顶
+        if (!near(fL->frame.y - dB->frame.y, g.fieldH + g.fieldGap)) {
+            return "方言盒底→备用标签顶 " +
+                   std::to_string(fL->frame.y - dB->frame.y) + " != " +
+                   std::to_string(g.fieldH + g.fieldGap);
+        }
+        // 标签字号（小字 11×fs，值走 token 13×fs）
+        if (!near(dL->fontSize, g.labelFs) || !near(fL->fontSize, g.labelFs) ||
+            !near(aL->fontSize, g.labelFs)) {
+            return "标签字号 != " + std::to_string(g.labelFs);
+        }
+        if (!near(dV->fontSize, g.valueFs)) {
+            return "方言值字号 != " + std::to_string(g.valueFs);
+        }
+        // 键行卡：卡高 / 行距 / 字号 / 行高
+        int drawn = 0;
+        const ::core::dsl::Element* prevBg = nullptr;
+        for (int i = 0; i < 12; ++i) {
+            const std::string n = std::to_string(i);
+            const auto* bg = ui.find("claude.advjson.row.bg." + n);
+            if (bg == nullptr) break;
+            const auto* k = ui.find("claude.advjson.row.key." + n);
+            const auto* s = ui.find("claude.advjson.row.src." + n);
+            if (k == nullptr || s == nullptr) return "行 " + n + " 缺 key/src";
+            if (!near(bg->frame.height, g.keyRowH) ||
+                !near(k->frame.height, g.keyRowH) ||
+                !near(s->lineHeight, g.keyRowH)) {
+                return "键行卡高/行高 != " + std::to_string(g.keyRowH);
+            }
+            if (!near(k->fontSize, g.keyFs)) {
+                return "键名字号 " + std::to_string(k->fontSize) + " != " +
+                       std::to_string(g.keyFs);
+            }
+            if (!near(s->fontSize, g.labelFs)) {
+                return "来源字号 != " + std::to_string(g.labelFs);
+            }
+            if (prevBg != nullptr &&
+                !near(bg->frame.y - prevBg->frame.y, g.keyPitch)) {
+                return "键行距 " + std::to_string(bg->frame.y - prevBg->frame.y) +
+                       " != " + std::to_string(g.keyPitch);
+            }
+            prevBg = bg;
+            ++drawn;
+        }
+        if (drawn < 2) return "键行画得太少（行距断言无从判别）: " +
+                            std::to_string(drawn);
+        *drawnOut = drawn;
+        // 溢出行 + 说明行（12 键 > 上限 8，note 由 model 键触发，两者必在场）
+        const auto* ovf = ui.find("claude.advjson.overflow");
+        const auto* note = ui.find("claude.advjson.note");
+        if (ovf == nullptr || note == nullptr) return "溢出行/说明行缺场";
+        if (!near(ovf->frame.height, g.overflowH) ||
+            !near(ovf->lineHeight, g.overflowH)) {
+            return "溢出行高 != " + std::to_string(g.overflowH);
+        }
+        if (!near(note->frame.height, g.noteH) ||
+            !near(note->lineHeight, g.noteH)) {
+            return "说明行高 != " + std::to_string(g.noteH);
+        }
+        // 溢出/说明两行紧跟键清单（行数预算自然跟随派生行距）
+        const auto* box = ui.find("claude.detail.contentbox");
+        if (box == nullptr) return "内容框缺场";
+        const float boxBottom = box->frame.y + box->frame.height;
+        if (ovf->frame.y < prevBg->frame.y + prevBg->frame.height - 0.01f) {
+            return "溢出行压住最后一行键卡";
+        }
+        if (note->frame.y < ovf->frame.y + ovf->frame.height - 0.01f) {
+            return "说明行压住溢出行";
+        }
+        if (note->frame.y + note->frame.height > boxBottom + 0.5f) {
+            return "说明行越内容框底";
+        }
+        return {};
+    };
+
+    int drawn100 = 0;
+    int drawn85 = 0;
+    // 100% 档：全部与旧字面常量逐值相等（零回归锚）
+    {
+        eui::Ui ui;
+        compose(ui);
+        const std::string msg = geomProblem(ui, Geom{
+            /*labelH*/14.0f, /*labelGap*/18.0f, /*fieldH*/28.0f, /*fieldGap*/10.0f,
+            /*keyRowH*/28.0f, /*keyPitch*/34.0f, /*noteH*/18.0f, /*overflowH*/18.0f,
+            /*labelFs*/11.0f, /*keyFs*/12.0f, /*valueFs*/13.0f}, &drawn100);
+        DOCTEST_CHECK_MESSAGE(msg.empty(), msg);
+    }
+    // 85% 档（kFontPresets[0]，本次修的真机风险档）：钉值见上注释
+    {
+        FontScaleGuard guard{0.85f};
+        eui::Ui ui;
+        compose(ui);
+        const std::string msg = geomProblem(ui, Geom{
+            /*labelH*/12.0f, /*labelGap*/15.0f, /*fieldH*/24.0f, /*fieldGap*/9.0f,
+            /*keyRowH*/24.0f, /*keyPitch*/29.0f, /*noteH*/15.0f, /*overflowH*/15.0f,
+            /*labelFs*/9.35f, /*keyFs*/10.2f, /*valueFs*/11.05f}, &drawn85);
+        DOCTEST_CHECK_MESSAGE(msg.empty(), msg);
+    }
+    // 行数预算随派生行距自然跟随：85% 档行距 29 < 100% 档 34，同一可用高下画得
+    // 出的行数**只多不少**（不多 = 预算没把行白扔；不少 = 派生行距真被消费）。
+    // 12 键 > 暂定上限 8，两档都撞 8 行上限时该判据退化为 8 ≥ 8（仍成立）——
+    // 短窗档（行数由 availH 而非上限决定）才有判别力。
+    DOCTEST_CHECK(drawn85 >= drawn100);
+    {
+        // 短窗档：行数预算由 contentBottom 推（不撞 8 行上限），85% 档（行距
+        // 29）应比 100% 档（行距 34）**多画行**（实测 4 → 6）—— 派生行距真被
+        // 行数预算消费的判别力：行距若被写死回 34，本判据变红
+        auto drawnAt = [&](float h, int* out) -> bool {
+            eui::Screen s2;
+            s2.width = 1262.0f;
+            s2.height = h;
+            eui::Ui ui;
+            ui.begin("claude_advjson_scale_short");
+            mod->compose(ui, s2);
+            ui.end();
+            ui.layout(s2.width, s2.height);
+            *out = 0;
+            for (int i = 0; i < 12; ++i) {
+                if (ui.find("claude.advjson.row.bg." + std::to_string(i)) ==
+                    nullptr) {
+                    break;
+                }
+                ++*out;
+            }
+            return true;
+        };
+        int short100 = 0;
+        int short85 = 0;
+        DOCTEST_REQUIRE(drawnAt(720.0f, &short100));
+        DOCTEST_CHECK(short100 > 0);
+        {
+            FontScaleGuard guard{0.85f};
+            DOCTEST_REQUIRE(drawnAt(720.0f, &short85));
+        }
+        DOCTEST_CHECK(short85 > short100);
+    }
+
+    mod->onStop();
+    cleanupProfileKey(kTestKeychainService, pid);
+    return true;
+})
+
 // ---- 片段弹窗 JSON 化（advanced-json-editor 设计 §8.1）：JSON 保存/重开回读 +
 // env 键拒绝 + 格式化
 REGISTER_TEST(claude_shared_dialog_json_roundtrip,
