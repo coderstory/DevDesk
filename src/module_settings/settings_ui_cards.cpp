@@ -272,15 +272,18 @@ void drawEditorFontCard(const CardDrawArgs& args) {
                 .fontWeight(600)
                 .color(t.colors.textPrimary)
                 .build();
+            // 下拉 y/高随生效字号派生（2026-09-30 merge-review R1 本期修，
+            // 单一来源 logFieldHeight / editorFontDdOffsetY，见
+            // settings_ui_logic.h）；100% 档与旧字面 42/36 逐值相等
             ui.stack(id + ".ddwrap")
-                .position(28.0f, kEditorFontDdOffsetY)
-                .size(150.0f, kLogEditorFontHeight)
+                .position(28.0f, editorFontDdOffsetY())
+                .size(150.0f, logFieldHeight())
                 .content([&] {
                     const bool efontOpenUp = dropdownPopupOverflows(
-                        pageY, kEditorFontDdOffsetY, kLogEditorFontHeight,
+                        pageY, editorFontDdOffsetY(), logFieldHeight(),
                         kEditorFontPresetCount, screenH);
                     components::dropdown(ui, id + ".dd")
-                        .size(150.0f, kLogEditorFontHeight)
+                        .size(150.0f, logFieldHeight())
                         .theme(compTheme)
                         .items(std::vector<std::string>(
                             kEditorFontPresetLabels,
@@ -494,34 +497,47 @@ void drawPetCard(const CardDrawArgs& args) {
                     fitControlLabel(name, ddW - kDropdownFieldChrome,
                                     kDdFieldFont));
             }
+            // 行几何随生效字号派生（2026-09-30 merge-review R1 本期修）：皮肤/
+            // 显示大小两行的行 y 与控件高原为字面（64/74/112/122/40），不在
+            // roundFs 派生池 —— 85% 字号档（fontScale=0.85）卡高
+            // roundFs(168)=143 < 字面内容底沿 152，「显示大小」行溢出卡外 9px
+            // 与目录卡叠印。派生口径与外观卡同款：行顶沿说明行**派生盒底**
+            // 累加（说明行 y=40 字面锚、盒 roundFs(16)），控件高随字号派生，
+            // 标签在行内垂直居中；100% 档 roundFs(x)==x，全部回到旧字面
+            // 64/74/112/122/40（零回归锚）
+            const float ddH = roundFs(40.0f);        // 下拉/按钮控件高（100% = 40）
+            const float rowLabelH = roundFs(20.0f);  // 行标签盒高（100% = 20）
+            const float skinTop =
+                40.0f + roundFs(16.0f) + roundFs(8.0f);  // 100% = 64
+            const float scaleTop = skinTop + ddH + roundFs(8.0f);  // 100% = 112
             // 皮肤行（PET-ROW，2026-09-29 真机反馈「设置-模块-桌宠 下拉框
             // 不应该另起一行」）：标签左、控件右、**同一基线**——标签列
             // 28/72，控件列 104/40（与代理卡「代理端口 [输入]」同款列口径，
             // 卡内左边缘 28 对齐）。改前只有控件、无标签，控件独占一行，读起来
-            // 就是「下拉另起一行」。行 y 恒 64（控件高度 40）——标签 20 高需
-            // 在 64..104 内垂直居中 → y=74（中心 84 == 控件中心），皮肤下拉的
-            // openUp 几何（dropdownPopupOverflows 的字段偏移 64）也据此不变
+            // 就是「下拉另起一行」。行顶 skinTop（100% 档 = 64，控件高 40）——
+            // 标签 20 高需在行内垂直居中 → y=74（中心 84 == 控件中心），皮肤
+            // 下拉的 openUp 几何（dropdownPopupOverflows 的字段偏移）随行顶走
             ui.text(id + ".skin.label")
-                .position(28.0f, 74.0f)
-                .size(72.0f, 20.0f)
+                .position(28.0f, skinTop + (ddH - rowLabelH) * 0.5f)
+                .size(72.0f, rowLabelH)
                 .text("皮肤")
                 .fontSize(fs(12.0f))
-                .lineHeight(20.0f)
+                .lineHeight(rowLabelH)
                 .color(t.colors.textSecondary)
                 .build();
             ui.stack(id + ".skin.ddwrap")
-                .position(104.0f, 64.0f)
-                .size(ddW, 40.0f)
+                .position(104.0f, skinTop)
+                .size(ddW, ddH)
                 .content([&] {
                     // 跨模块剩余审计修：皮肤下拉是六处下拉里唯一无 openUp
                     // 防护的——≥3 皮肤时弹层（3×34+12=114）向下铺开越出
                     // scrollView 视口底被 clip 裁掉；与编辑器字号/日志卡同款
                     // 几何判定（卡顶 + 字段偏移 + 弹层高 vs 屏高）
                     const bool skinOpenUp = dropdownPopupOverflows(
-                        pageY, 64.0f, 40.0f,
+                        pageY, skinTop, ddH,
                         static_cast<int>(items.size()), screenH);
                     components::dropdown(ui, id + ".skin.dd")
-                        .size(ddW, 40.0f)
+                        .size(ddW, ddH)
                         .theme(compTheme)
                         .items(itemLabels)
                         .selected(selected)
@@ -539,29 +555,31 @@ void drawPetCard(const CardDrawArgs& args) {
                 .build();
             // 显示大小行（2026-09-30 用户需求「桌宠显示大小」）：三档下拉
             //（小 0.75× / 中 1.0× / 大 1.5×，默认中）。排法照皮肤行同款
-            // 「标签列 28/72 + 控件列 104」同基线口径，行距 48（皮肤行控件
-            // 底 104 + 8 = 本行顶 112，卡高 168 见 settings_ui_logic.h）。
+            // 「标签列 28/72 + 控件列 104」同基线口径，行顶 scaleTop =
+            // skinTop + ddH + roundFs(8)（100% 档：皮肤行控件底 104 + 8 = 本行
+            // 顶 112；卡高 168 见 settings_ui_logic.h）。行几何随字号派生，
+            // 2026-09-30 merge-review R1 本期修（见上 ddH/skinTop 注）。
             // 文案/档位单源在 pet 侧（petScalePresetLabels 桥快照），选择
             // 经桥切档：写盘 + 热切换（窗口关旧开新，尺寸同步缩放，点单位）
             ui.text(id + ".scale.label")
-                .position(28.0f, 122.0f)
-                .size(72.0f, 20.0f)
+                .position(28.0f, scaleTop + (ddH - rowLabelH) * 0.5f)
+                .size(72.0f, rowLabelH)
                 .text("大小")
                 .fontSize(fs(12.0f))
-                .lineHeight(20.0f)
+                .lineHeight(rowLabelH)
                 .color(t.colors.textSecondary)
                 .build();
             ui.stack(id + ".scale.ddwrap")
-                .position(104.0f, 112.0f)
-                .size(240.0f, 40.0f)
+                .position(104.0f, scaleTop)
+                .size(240.0f, ddH)
                 .content([&] {
                     // openUp 防护与皮肤下拉同款几何判定（卡顶 + 字段偏移 +
                     // 弹层高 vs 屏高；项数 = petScaleLabels.size()，当前 3×34+12）
                     const bool scaleOpenUp = dropdownPopupOverflows(
-                        pageY, 112.0f, 40.0f,
+                        pageY, scaleTop, ddH,
                         static_cast<int>(in.petScaleLabels.size()), screenH);
                     components::dropdown(ui, id + ".scale.dd")
-                        .size(240.0f, 40.0f)
+                        .size(240.0f, ddH)
                         .theme(compTheme)
                         .items(in.petScaleLabels)
                         .selected(in.petScaleIndex)
@@ -574,10 +592,11 @@ void drawPetCard(const CardDrawArgs& args) {
                         .build();
                 })
                 .build();
-            // 位置重置按钮（回主屏右下角，持久化坐标清回未设置）
+            // 位置重置按钮（回主屏右下角，持久化坐标清回未设置）——随皮肤行
+            // 顶/控件高派生走（100% 档 = 64/40，与皮肤下拉同一行）
             components::button(ui, id + ".reset")
-                .position(w - 28.0f - 160.0f, 64.0f)
-                .size(160.0f, 40.0f)
+                .position(w - 28.0f - 160.0f, skinTop)
+                .size(160.0f, ddH)
                 .text("位置重置")
                 .fontSize(14.0f)
                 .theme(compTheme, /*primary=*/false)
@@ -586,11 +605,12 @@ void drawPetCard(const CardDrawArgs& args) {
                 .onClick([f = a.resetPetPosition] { f(); })
                 .build();
             // 显示桌宠（PAB-13）：隐藏后的恢复入口（隐藏走右键「隐藏桌宠」
-            // 菜单项，之后本按钮即可重新开窗）。同排 y=64、居「位置重置」
-            // 左侧 8px；卡高保持 168（内容底沿 152 不变，故 contentKey 不变）
+            // 菜单项，之后本按钮即可重新开窗）。同排、居「位置重置」
+            // 左侧 8px；100% 档卡高保持 168（内容底沿 152 不变，故 contentKey
+            // 不变；行几何 2026-09-30 R1 起随字号派生，见上 ddH/skinTop 注）
             components::button(ui, id + ".show")
-                .position(w - 28.0f - 160.0f - 168.0f, 64.0f)
-                .size(160.0f, 40.0f)
+                .position(w - 28.0f - 160.0f - 168.0f, skinTop)
+                .size(160.0f, ddH)
                 .text("显示桌宠")
                 .fontSize(14.0f)
                 .theme(compTheme, /*primary=*/false)
@@ -910,23 +930,23 @@ void drawLogCard(const CardDrawArgs& args) {
                 "永久保留", "7 天", "30 天", "90 天", "180 天", "365 天"};
             // ---- 行 1：日志保留（标签列 + 控件列 + 说明列）----
             ui.text(id + ".label")
-                .position(kLogLabelX, kLogRow1LabelY)
-                .size(kLogLabelWidth, kLogLabelHeight)
+                .position(kLogLabelX, logRow1LabelY())
+                .size(kLogLabelWidth, logLabelHeight())
                 .text(fitControlLabel("日志保留", kLogLabelWidth, labelFont))
                 .fontSize(labelFont)
-                .lineHeight(kLogLabelHeight)
+                .lineHeight(logLabelHeight())
                 .color(t.colors.textSecondary)
                 .build();
             ui.stack(id + ".ddwrap")
-                .position(kLogFieldX, kLogDropdownOffsetY)
-                .size(kLogFieldWidth, kLogFieldHeight)
+                .position(kLogFieldX, logDropdownOffsetY())
+                .size(kLogFieldWidth, logFieldHeight())
                 .content([&] {
                     // 字段绝对底边 = 卡顶 + 卡内 y 偏移 + 字段高
                     const bool openUp = dropdownPopupOverflows(
-                        pageY, kLogDropdownOffsetY, kLogFieldHeight,
+                        pageY, logDropdownOffsetY(), logFieldHeight(),
                         kRetentionPresetCount, screenH);
                     components::dropdown(ui, id + ".dd")
-                        .size(kLogFieldWidth, kLogFieldHeight)
+                        .size(kLogFieldWidth, logFieldHeight())
                         .theme(compTheme)
                         .items(std::vector<std::string>(
                             kRetentionLabels,
@@ -947,11 +967,11 @@ void drawLogCard(const CardDrawArgs& args) {
                 })
                 .build();
             ui.text(id + ".hint")
-                .position(kLogHintX, kLogRow1LabelY)
-                .size(hintW, kLogLabelHeight)
+                .position(kLogHintX, logRow1LabelY())
+                .size(hintW, logLabelHeight())
                 .text("0 = 永久保留；30 天为默认。切换档位立即清理一次。")
                 .fontSize(hintFontSize)
-                .lineHeight(kLogLabelHeight)
+                .lineHeight(logLabelHeight())
                 .color(t.colors.textTertiary)
                 .build();
 
@@ -960,22 +980,22 @@ void drawLogCard(const CardDrawArgs& args) {
             // 切档即时 core::log::setLevel（DEBUG 起打 LOG_DEBUG 详录），
             // 重启由 onStart 恢复持久化档 ----
             ui.text(id + ".level.label")
-                .position(kLogLabelX, kLogRow2LabelY)
-                .size(kLogLabelWidth, kLogLabelHeight)
+                .position(kLogLabelX, logRow2LabelY())
+                .size(kLogLabelWidth, logLabelHeight())
                 .text(fitControlLabel("日志级别", kLogLabelWidth, labelFont))
                 .fontSize(labelFont)
-                .lineHeight(kLogLabelHeight)
+                .lineHeight(logLabelHeight())
                 .color(t.colors.textSecondary)
                 .build();
             ui.stack(id + ".level.ddwrap")
-                .position(kLogFieldX, kLogLevelOffsetY)
-                .size(kLogFieldWidth, kLogFieldHeight)
+                .position(kLogFieldX, logLevelOffsetY())
+                .size(kLogFieldWidth, logFieldHeight())
                 .content([&] {
                     const bool levelOpenUp = dropdownPopupOverflows(
-                        pageY, kLogLevelOffsetY, kLogFieldHeight,
+                        pageY, logLevelOffsetY(), logFieldHeight(),
                         kLogLevelPresetCount, screenH);
                     components::dropdown(ui, id + ".level.dd")
-                        .size(kLogFieldWidth, kLogFieldHeight)
+                        .size(kLogFieldWidth, logFieldHeight())
                         .theme(compTheme)
                         .items(std::vector<std::string>(
                             kLogLevelPresetLabels,
@@ -994,11 +1014,11 @@ void drawLogCard(const CardDrawArgs& args) {
                 })
                 .build();
             ui.text(id + ".level.hint")
-                .position(kLogHintX, kLogRow2LabelY)
-                .size(hintW, kLogLabelHeight)
+                .position(kLogHintX, logRow2LabelY())
+                .size(hintW, logLabelHeight())
                 .text("DEBUG 最详尽（排障）；默认 INFO。切档即时生效。")
                 .fontSize(hintFontSize)
-                .lineHeight(kLogLabelHeight)
+                .lineHeight(logLabelHeight())
                 .color(t.colors.textTertiary)
                 .build();
         })
