@@ -915,7 +915,7 @@ core::Result<Profile> ProfileRepository::duplicateProfile(int64_t srcId) {
         if (keyR.errorCode() == core::ErrorCode::NotFound) {
             return core::Result<Profile>::fail(
                 core::ErrorCode::InvalidApiKey,
-                "源 Profile 的密钥缺失（Keychain 无对应条目），无法复制；"
+                "源 Profile 的密钥缺失（Keychain 无对应条目），无法建副本；"
                 "编辑该 Profile 重新填一次 API Key 即可");
         }
         return core::Result<Profile>::fail(
@@ -925,7 +925,7 @@ core::Result<Profile> ProfileRepository::duplicateProfile(int64_t srcId) {
     if (keyR.value().empty()) {
         return core::Result<Profile>::fail(
             core::ErrorCode::InvalidApiKey,
-            "源 Profile 的密钥为空串，无法复制；"
+            "源 Profile 的密钥为空串，无法建副本；"
             "编辑该 Profile 重新填一次 API Key 即可");
     }
 

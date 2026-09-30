@@ -54,7 +54,7 @@ struct ProfileListActions {
     std::function<void(const Profile&)> requestEdit;              // 编辑
     std::function<void(int64_t)> requestDuplicate;                // 建副本
     // 复制配置（2026-09-30 batch-fix C，§5⑤）：入参带 Profile（序列化需要
-    // baseUrl/authField/槽位/extra_env，不是 id 能表达的）；与详情第 7 键
+    // baseUrl/authField/槽位/extra_env，不是 id 能表达的）；与详情第 6 键
     // 同源 doCopyConfig
     std::function<void(const Profile&)> requestCopyConfig;
     std::function<void(int64_t, const std::string&)> requestDelete;  // 删除
@@ -83,9 +83,10 @@ void drawProfileListPanel(eui::Ui& ui, float leftW, float bodyH,
 // 从「N 个键」改为「高级属性 JSON 预设」——片段不再携带 env 键，键数计数
 // 语义失效）：标题行 + 片段卡片（name + 预设副文案）+「+ 新建片段」按钮。
 // 2026-09-28（组 B P4）：区块**钉面板底**（底沿 = 底部按钮行上沿 − 12），
-// 高度由调用方按 sharedBlockH(bodyH, 片段数, 是否有错) 算出并传入（调用方需要
-// 它才能排列表视口 —— 高度只有一个来源）；片段装不下时在区块内部滚，卡片全部
-// 可达、「+ 新建片段」是固定尾部恒可见可点。
+// 高度由调用方按 sharedBlockH(bodyH) 算出并传入（区块恒高，与片段数 / 是否有错
+// 无关——增删片段、出错恢复整列不跳；调用方需要它才能排列表视口 —— 高度只有
+// 一个来源）；片段装不下时在区块内部滚，卡片全部可达、「+ 新建片段」是固定
+// 尾部恒可见可点。
 // 坐标系（审计 F-08 改准）：块内元素一律**相对块顶**从 0 起算 —— 块的绝对位置
 // 由外层 `claude.shared.block` stack 的 .position 决定，本函数不持偏移。
 // st：块内滚动偏移的读写目标（集签名变化时由本函数归零，见 .cpp）。

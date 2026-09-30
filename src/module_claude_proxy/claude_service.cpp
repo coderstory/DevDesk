@@ -521,8 +521,9 @@ core::Result<void> ClaudeService::runProfile(int64_t id, std::string* hint) {
     }
 
     // 顺序 3：直连 env（纯函数 buildDirectEnv：BASE_URL 去尾斜杠 / 密钥键三态 /
-    // 槽位 + 共享片段 + extra_env，托管键压过 extra_env）→ 序列化成 settings
-    // JSON（{"env": {...}}）→ 落盘 appDataDir()/run-settings/run-<id>-<ts>.json。
+    // 槽位 + extra_env，托管键压过 extra_env；共享片段已迁 JSON 域 §8.4，
+    // 不再进本函数）→ 序列化成 settings JSON（{"env": {...}}）→ 落盘
+    // appDataDir()/run-settings/run-<id>-<ts>.json。
     // 关键：**零全局改动**——不启代理、不切激活、不读也不写 ~/.claude/settings.json
     const auto env = buildDirectEnv(p.baseUrl, key.value(), p.authField,
                                     p.modelsConfigJson, p.model, p.extraEnvJson);
