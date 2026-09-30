@@ -2874,6 +2874,264 @@ REGISTER_TEST(claude_ui_advanced_tab_dialect_persists,
     return true;
 })
 
+// ---- 高级设置 JSON（2026-09-30 advanced-json-editor 设计 §7，headless）----
+// 变异④钉子（审计 F-7）：落库 pretty 断言的表单输入必须用 **compact/未格式化
+// 文本**——输入本身是 pretty 时「存原文」与「存 pretty」字节相同，变异恒绿
+REGISTER_TEST(claude_ui_advanced_json_pretty_persisted,
+              "claude_module: 高级设置 JSON compact 输入落库为 pretty 文本（headless，变异④钉子）", {
+    TestEnv env;
+    std::unique_ptr<::core::Module> mod(create_claude_module());
+    eui::Screen screen;
+    screen.width = 1600.0f;
+    screen.height = 1000.0f;
+    auto compose = [&](eui::Ui& ui, const char* tag) {
+        ui.begin(tag);
+        mod->compose(ui, screen);
+        ui.end();
+    };
+    auto click = [](eui::Ui& ui, const std::string& id) -> bool {
+        const auto* node = ui.find(id);
+        if (node == nullptr || node->onClick == nullptr) return false;
+        node->onClick();
+        return true;
+    };
+    auto type = [](eui::Ui& ui, const std::string& id,
+                   const std::string& text) -> bool {
+        const auto* node = ui.find(id);
+        if (node == nullptr || node->onTextInput == nullptr) return false;
+        core::TextInputEvent ev;
+        ev.text = text;
+        node->onTextInput(ev);
+        return true;
+    };
+
+    {
+        eui::Ui ui;
+        compose(ui, "json_c1");
+        DOCTEST_CHECK(click(ui, "claude.profiles.new.bg"));
+    }
+    {
+        eui::Ui ui;
+        compose(ui, "json_c2");
+        DOCTEST_CHECK(click(ui, "claude.form.tabs.hit.3"));
+    }
+    {
+        eui::Ui ui;
+        compose(ui, "json_c3");
+        // compact 单行输入（F-7：非 pretty 输入才能区分「存原文」与「存 pretty」）
+        DOCTEST_CHECK(type(ui, "claude.form.advanced.json.hit",
+                           R"({"model":"cmp-x","permissions":{"allow":["Bash"]}})"));
+    }
+    {
+        eui::Ui ui;
+        compose(ui, "json_c4");
+        DOCTEST_CHECK(click(ui, "claude.form.tabs.hit.0"));
+    }
+    {
+        eui::Ui ui;
+        compose(ui, "json_c5");
+        DOCTEST_CHECK(type(ui, "claude.dialog.form.name.hit", "JSON落库"));
+        DOCTEST_CHECK(type(ui, "claude.dialog.form.url.hit", "https://json.example.com"));
+        DOCTEST_CHECK(type(ui, "claude.dialog.form.key.hit", "sk-ant-json-0001"));
+        DOCTEST_CHECK(click(ui, "claude.dialog.form.confirm.bg"));
+    }
+    // 等后台刷新落库后断言：DB 中为 pretty 文本（含两空格缩进的键行）
+    bool ok = false;
+    int64_t createdId = 0;
+    for (int i = 0; i < 300 && !ok; ++i) {
+        mod->onPageEnter();
+        eui::Ui ui;
+        compose(ui, "json_poll");
+        auto list = env.svc->listProfiles();
+        if (list.isOk()) {
+            for (const auto& p : list.value()) {
+                if (p.name == "JSON落库") {
+                    createdId = p.id;
+                    ok = p.extraSettingsJson.find("\n  \"") != std::string::npos &&
+                         p.extraSettingsJson.find("cmp-x") != std::string::npos;
+                }
+            }
+        }
+        if (!ok) std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    }
+    DOCTEST_CHECK(ok);
+    DOCTEST_REQUIRE(createdId != 0);
+    mod->onStop();
+    cleanupProfileKey(kTestKeychainService, createdId);
+    return true;
+})
+
+REGISTER_TEST(claude_ui_advanced_json_invalid_and_env_key_rejected,
+              "claude_module: 高级设置 JSON 非法/含 env 键 → formError_ 红字不落库（headless）", {
+    TestEnv env;
+    std::unique_ptr<::core::Module> mod(create_claude_module());
+    eui::Screen screen;
+    screen.width = 1600.0f;
+    screen.height = 1000.0f;
+    auto compose = [&](eui::Ui& ui, const char* tag) {
+        ui.begin(tag);
+        mod->compose(ui, screen);
+        ui.end();
+    };
+    auto click = [](eui::Ui& ui, const std::string& id) -> bool {
+        const auto* node = ui.find(id);
+        if (node == nullptr || node->onClick == nullptr) return false;
+        node->onClick();
+        return true;
+    };
+    auto type = [](eui::Ui& ui, const std::string& id,
+                   const std::string& text) -> bool {
+        const auto* node = ui.find(id);
+        if (node == nullptr || node->onTextInput == nullptr) return false;
+        core::TextInputEvent ev;
+        ev.text = text;
+        node->onTextInput(ev);
+        return true;
+    };
+    // （lambda 返回 bool：DOCTEST_CHECK 的 fail-fast return 只能在 bool 函数里）
+    auto openFormTab3FillBasic = [&](const char* tag) -> bool {
+        {
+            eui::Ui ui;
+            compose(ui, tag);
+            if (!click(ui, "claude.profiles.new.bg")) return false;
+        }
+        {
+            eui::Ui ui;
+            compose(ui, tag);
+            if (!click(ui, "claude.form.tabs.hit.3")) return false;
+        }
+        return true;
+    };
+    auto fillBasicAndSave = [&](const char* tag) -> bool {
+        {
+            eui::Ui ui;
+            compose(ui, tag);
+            if (!click(ui, "claude.form.tabs.hit.0")) return false;
+        }
+        {
+            eui::Ui ui;
+            compose(ui, tag);
+            if (!type(ui, "claude.dialog.form.name.hit", "JSON坏值")) return false;
+            if (!type(ui, "claude.dialog.form.url.hit", "https://bad.example.com")) return false;
+            if (!type(ui, "claude.dialog.form.key.hit", "sk-ant-bad-0001")) return false;
+            if (!click(ui, "claude.dialog.form.confirm.bg")) return false;
+        }
+        return true;
+    };
+
+    // ① 非法 JSON：formError_ 非空、弹窗不关、不落库
+    DOCTEST_CHECK(openFormTab3FillBasic("jsonb_1"));
+    {
+        eui::Ui ui;
+        compose(ui, "jsonb_2");
+        DOCTEST_CHECK(type(ui, "claude.form.advanced.json.hit", "{broken json"));
+    }
+    DOCTEST_CHECK(fillBasicAndSave("jsonb_3"));
+    {
+        eui::Ui ui;
+        compose(ui, "jsonb_4");
+        const auto* err = ui.find("claude.dialog.form.error");
+        DOCTEST_REQUIRE(err != nullptr);
+        DOCTEST_CHECK(!err->text.empty());   // 红字在（弹窗不关 = form 仍开）
+    }
+    // 坏值不落库：库里没有名为「JSON坏值」的 profile（创建路径被校验挡下）
+    {
+        auto list = env.svc->listProfiles();
+        DOCTEST_REQUIRE(list.isOk());
+        for (const auto& p : list.value()) {
+            DOCTEST_CHECK(p.name != "JSON坏值");
+        }
+    }
+    // ② 含 env 键：专属文案拒绝（D-5 fail-fast）
+    {
+        eui::Ui ui;
+        compose(ui, "jsone_1");
+        // 改写 JSON 框内容：先清空（全选替换不可行 → 取消重开表单再输）
+        DOCTEST_CHECK(click(ui, "claude.dialog.form.cancel.bg"));
+    }
+    DOCTEST_CHECK(openFormTab3FillBasic("jsone_2"));
+    {
+        eui::Ui ui;
+        compose(ui, "jsone_3");
+        DOCTEST_CHECK(type(ui, "claude.form.advanced.json.hit",
+                           R"({"env":{"ANTHROPIC_BASE_URL":"https://x"}})"));
+    }
+    DOCTEST_CHECK(fillBasicAndSave("jsone_4"));
+    {
+        eui::Ui ui;
+        compose(ui, "jsone_5");
+        const auto* err = ui.find("claude.dialog.form.error");
+        DOCTEST_REQUIRE(err != nullptr);
+        DOCTEST_CHECK(err->text.find("不能包含 env 键") != std::string::npos);
+    }
+
+    // ③ 格式化按钮：compact 输入 → 失败分支行内红字（钉按钮接线）
+    {
+        eui::Ui ui;
+        compose(ui, "jsonf_0");
+        DOCTEST_CHECK(click(ui, "claude.dialog.form.cancel.bg"));
+    }
+    DOCTEST_CHECK(openFormTab3FillBasic("jsonf_1"));
+    {
+        eui::Ui ui;
+        compose(ui, "jsonf_2");
+        DOCTEST_CHECK(type(ui, "claude.form.advanced.json.hit", "{not json"));
+        DOCTEST_CHECK(click(ui, "claude.form.advanced.json.format.bg"));
+    }
+    {
+        eui::Ui ui;
+        compose(ui, "jsonf_3");
+        const auto* err = ui.find("claude.form.advanced.json.error");
+        DOCTEST_REQUIRE(err != nullptr);
+        DOCTEST_CHECK(err->text.find("解析失败") != std::string::npos);
+    }
+    // 成功分支：compact → 格式化 → 保存 → DB 为 pretty
+    {
+        eui::Ui ui;
+        compose(ui, "jsonf_4");
+        DOCTEST_CHECK(click(ui, "claude.dialog.form.cancel.bg"));
+    }
+    openFormTab3FillBasic("jsonf_5");
+    {
+        eui::Ui ui;
+        compose(ui, "jsonf_6");
+        DOCTEST_CHECK(type(ui, "claude.form.advanced.json.hit",
+                           R"({"statusLine":"on"})"));
+        DOCTEST_CHECK(click(ui, "claude.form.advanced.json.format.bg"));
+    }
+    DOCTEST_CHECK(fillBasicAndSave("jsonf_7"));
+    bool fmtOk = false;
+    for (int i = 0; i < 300 && !fmtOk; ++i) {
+        mod->onPageEnter();
+        eui::Ui ui;
+        compose(ui, "jsonf_poll");
+        auto list = env.svc->listProfiles();
+        if (list.isOk()) {
+            for (const auto& p : list.value()) {
+                if (p.name == "JSON坏值") {
+                    fmtOk = p.extraSettingsJson.find("\n  \"") != std::string::npos;
+                }
+            }
+        }
+        if (!fmtOk) std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    }
+    DOCTEST_CHECK(fmtOk);
+    // 清理本次创建的 profile
+    {
+        auto list = env.svc->listProfiles();
+        if (list.isOk()) {
+            for (const auto& p : list.value()) {
+                if (p.name == "JSON坏值") {
+                    cleanupProfileKey(kTestKeychainService, p.id);
+                }
+            }
+        }
+    }
+
+    mod->onStop();
+    return true;
+})
+
 // ---- 运行第 6 键（2026-09-28 profile-run 设计 §6/§8；D-1 直连形态）----
 // ⚠️ 本文件用真实 ClaudeService（setGlobal）：点「运行」前**必须**注入假 launch，
 //    否则测试会真的启动 wt/powershell + claude（spec §6 第 4 项）
@@ -3230,10 +3488,11 @@ REGISTER_TEST(claude_module_shared_editor_create,
     return true;
 })
 
-// ---- 3. 绑定下拉 + 片段赢预览：K 键行置灰只读 + chip「来自片段 X」；
-//      保存后 sharedConfigId 落库、profile 自有同名键非破坏保留 ----
+// ---- 3. 绑定下拉（advanced-json-editor §7.1 迁入高级配置页）：绑定保存落库、
+//      profile 自有同名键非破坏保留；env 页无绑定 UI、行恒为普通输入
+//      （frozenKeys/chip/置灰随片段 JSON 化拆除，§7.1/§8.2）----
 REGISTER_TEST(claude_module_shared_bind_and_frozen_preview,
-              "claude_module: 绑定下拉选片段 + 冻结行灰字chip + 保存落库（headless）", {
+              "claude_module: 绑定下拉（高级配置页）选片段 + 保存落库 + 同名键保留（headless）", {
     TestEnv env;
     auto f = env.svc->createSharedConfig("片段A", R"({"MY_KEY":"shared-val"})");
     DOCTEST_REQUIRE(f.isOk());
@@ -3241,7 +3500,7 @@ REGISTER_TEST(claude_module_shared_bind_and_frozen_preview,
                                     "sk-ant-sbind-0001", "");
     DOCTEST_REQUIRE(a.isOk());
     const int64_t pid = a.value().id;
-    // 自有 env 带与片段同名的键（片段赢场景：行里保留、冻结显示）
+    // 自有 env 带与片段同名的键（片段赢场景：行里保留，绑定/解绑不动物理数据）
     {
         module::claude::Profile p = a.value();
         p.extraEnvJson = R"({"MY_KEY":"own-val"})";
@@ -3271,7 +3530,7 @@ REGISTER_TEST(claude_module_shared_bind_and_frozen_preview,
         return node == nullptr ? std::string("<missing>") : node->text;
     };
 
-    // 选中卡片 → 编辑 → 高级 env 页：初始「无（不绑定片段）」，行是普通输入
+    // 选中卡片 → 编辑 → 高级配置页：初始「无（不绑定片段）」；env 页无绑定 UI
     {
         eui::Ui ui;
         compose(ui);
@@ -3285,48 +3544,52 @@ REGISTER_TEST(claude_module_shared_bind_and_frozen_preview,
     {
         eui::Ui ui;
         compose(ui);
-        DOCTEST_CHECK(click(ui, "claude.form.tabs.hit.2"));
+        DOCTEST_CHECK(click(ui, "claude.form.tabs.hit.3"));
     }
     {
         eui::Ui ui;
         compose(ui);
-        const auto* label = ui.find("claude.form.env.shared.dd.label");
+        const auto* label = ui.find("claude.form.advanced.shared.dd.label");
         DOCTEST_REQUIRE(label != nullptr);
         DOCTEST_CHECK_EQ(label->text, std::string("无（不绑定片段）"));
-        DOCTEST_CHECK(ui.find("claude.form.env.row.0.key.hit") != nullptr);
-        DOCTEST_CHECK(ui.find("claude.form.env.row.0.frozen.key") == nullptr);
-        DOCTEST_CHECK_EQ(textOf(ui, "claude.form.env.row.0.key.text"),
+        // env 页不再有绑定下拉（迁走后该节点不存在）
+        eui::Ui ui2;
+        compose(ui2);
+        DOCTEST_CHECK(click(ui2, "claude.form.tabs.hit.2"));
+        eui::Ui ui3;
+        compose(ui3);
+        DOCTEST_CHECK(ui3.find("claude.form.env.shared.dd.label") == nullptr);
+        // 同名键行恒为普通输入（无冻结渲染）
+        DOCTEST_CHECK(ui3.find("claude.form.env.row.0.key.hit") != nullptr);
+        DOCTEST_CHECK(ui3.find("claude.form.env.row.0.frozen.key") == nullptr);
+        DOCTEST_CHECK_EQ(textOf(ui3, "claude.form.env.row.0.key.text"),
                          std::string("MY_KEY"));
+        eui::Ui ui4;
+        compose(ui4);
+        DOCTEST_CHECK(click(ui4, "claude.form.tabs.hit.3"));
     }
-    // 拉开 → 选「片段A」→ 冻结预览：K 键行 → 灰字 + chip，输入控件消失
+    // 高级配置页拉开绑定下拉 → 选「片段A」→ 提示行出现（片段赢语义明示）
     {
         eui::Ui ui;
         compose(ui);
-        DOCTEST_CHECK(click(ui, "claude.form.env.shared.dd.field"));
-    }
-    {
-        eui::Ui ui;
-        compose(ui);
-        DOCTEST_CHECK(click(ui, "claude.form.env.shared.dd.item.1"));
+        DOCTEST_CHECK(click(ui, "claude.form.advanced.shared.dd.field"));
     }
     {
         eui::Ui ui;
         compose(ui);
-        const auto* label = ui.find("claude.form.env.shared.dd.label");
+        DOCTEST_CHECK(click(ui, "claude.form.advanced.shared.dd.item.1"));
+    }
+    {
+        eui::Ui ui;
+        compose(ui);
+        const auto* label = ui.find("claude.form.advanced.shared.dd.label");
         DOCTEST_REQUIRE(label != nullptr);
         DOCTEST_CHECK_EQ(label->text, std::string("片段A"));
-        // 冻结行：灰字 key / chip 标来源；同 id 的输入控件不再存在
-        const auto* fk = ui.find("claude.form.env.row.0.frozen.key");
-        DOCTEST_REQUIRE(fk != nullptr);
-        DOCTEST_CHECK_EQ(fk->text, std::string("MY_KEY"));
-        const auto* chip = ui.find("claude.form.env.row.0.frozen.chip");
-        DOCTEST_REQUIRE(chip != nullptr);
-        DOCTEST_CHECK(chip->text.find("片段A") != std::string::npos);
-        DOCTEST_CHECK(ui.find("claude.form.env.row.0.key.hit") == nullptr);
-        DOCTEST_CHECK(ui.find("claude.form.env.row.0.value.hit") == nullptr);
-        DOCTEST_CHECK(ui.find("claude.form.env.row.0.del") == nullptr);
+        const auto* hint = ui.find("claude.form.advanced.json.boundhint");
+        DOCTEST_REQUIRE(hint != nullptr);
+        DOCTEST_CHECK(hint->text.find("片段A") != std::string::npos);
     }
-    // 保存 → 绑定落库；自有同名键非破坏保留（行还在，片段赢由服务层保证）
+    // 保存 → 绑定落库；自有同名键非破坏保留（片段赢由生成时叠加保证）
     {
         eui::Ui ui;
         compose(ui);
@@ -3340,9 +3603,8 @@ REGISTER_TEST(claude_module_shared_bind_and_frozen_preview,
         DOCTEST_REQUIRE(ee.isOk());
         DOCTEST_CHECK_EQ(ee.value().at("MY_KEY"), std::string("own-val"));
     }
-    // 重开编辑：绑定下拉回显片段A，冻结行仍在。先等后台刷新把绑定带进
-    // 缓存（卡片「共享」角标 = 缓存里 sharedConfigId != 0 的可观测信号；
-    // 与真实应用一致——用户重开编辑前角标已可见），否则缓存里还是旧绑定
+    // 重开编辑：绑定下拉回显片段A。先等后台刷新把绑定带进缓存（卡片「共享」
+    // 角标 = 缓存里 sharedConfigId != 0 的可观测信号；与真实应用一致）
     bool sawBadge = false;
     for (int i = 0; i < 250 && !sawBadge; ++i) {
         eui::Ui ui;
@@ -3362,143 +3624,47 @@ REGISTER_TEST(claude_module_shared_bind_and_frozen_preview,
     {
         eui::Ui ui;
         compose(ui);
-        DOCTEST_CHECK(click(ui, "claude.form.tabs.hit.2"));
+        DOCTEST_CHECK(click(ui, "claude.form.tabs.hit.3"));
     }
     {
         eui::Ui ui;
         compose(ui);
-        const auto* label = ui.find("claude.form.env.shared.dd.label");
+        const auto* label = ui.find("claude.form.advanced.shared.dd.label");
         DOCTEST_REQUIRE(label != nullptr);
         DOCTEST_CHECK_EQ(label->text, std::string("片段A"));
-        DOCTEST_CHECK(ui.find("claude.form.env.row.0.frozen.key") != nullptr);
-        DOCTEST_CHECK(ui.find("claude.form.env.row.0.key.hit") == nullptr);
     }
-    // 下拉切回「无」→ 冻结行解冻回普通输入（解绑预览）
+    // 下拉切回「无」→ 保存 → 解绑落库（绑定态迁移的等价性：与迁移前同一
+    // 「悬空归一 + 保存落库」口径）
     {
         eui::Ui ui;
         compose(ui);
-        DOCTEST_CHECK(click(ui, "claude.form.env.shared.dd.field"));
-    }
-    {
-        eui::Ui ui;
-        compose(ui);
-        DOCTEST_CHECK(click(ui, "claude.form.env.shared.dd.item.0"));
+        DOCTEST_CHECK(click(ui, "claude.form.advanced.shared.dd.field"));
     }
     {
         eui::Ui ui;
         compose(ui);
-        DOCTEST_CHECK(ui.find("claude.form.env.row.0.key.hit") != nullptr);
-        DOCTEST_CHECK(ui.find("claude.form.env.row.0.frozen.key") == nullptr);
-    }
-
-    mod->onStop();
-    cleanupProfileKey(kTestKeychainService, pid);
-    return true;
-})
-
-// ---- 4. 新增同键拦截：绑定片段后手动加 K 键行 → 保存被拦 + 红字提示 ----
-REGISTER_TEST(claude_module_shared_new_key_blocked,
-              "claude_module: 新增片段冻结键保存被拦（headless）", {
-    TestEnv env;
-    auto f = env.svc->createSharedConfig("片段X", R"({"MY_KEY":"shared"})");
-    DOCTEST_REQUIRE(f.isOk());
-    auto a = env.svc->createProfile("拦截测试", "https://i.example.com",
-                                    "sk-ant-iblk-0001", "");
-    DOCTEST_REQUIRE(a.isOk());
-    const int64_t pid = a.value().id;
-    {
-        module::claude::Profile p = a.value();
-        p.sharedConfigId = f.value().id;   // 服务层已绑定
-        DOCTEST_REQUIRE(env.svc->updateProfile(p).isOk());
-    }
-
-    std::unique_ptr<::core::Module> mod(create_claude_module());
-    eui::Screen screen;
-    screen.width = 1600.0f;
-    screen.height = 1000.0f;
-    auto compose = [&](eui::Ui& ui) {
-        ui.begin("claude_shared_blocked");
-        mod->compose(ui, screen);
-        ui.end();
-    };
-    auto click = [](eui::Ui& ui, const std::string& id) -> bool {
-        const auto* node = ui.find(id);
-        if (node == nullptr || node->onClick == nullptr) {
-            std::cerr << "missing clickable: " << id << std::endl;
-            return false;
-        }
-        node->onClick();
-        return true;
-    };
-    auto type = [](eui::Ui& ui, const std::string& id,
-                   const std::string& text) -> bool {
-        const auto* node = ui.find(id);
-        if (node == nullptr || node->onTextInput == nullptr) {
-            std::cerr << "missing input: " << id << std::endl;
-            return false;
-        }
-        core::TextInputEvent ev;
-        ev.text = text;
-        node->onTextInput(ev);
-        return true;
-    };
-
-    // 编辑 → 高级 env 页（profile 无自有 env，空表）→ 添加一行并敲 K 键名
-    {
-        eui::Ui ui;
-        compose(ui);
-        DOCTEST_CHECK(click(ui, "claude.profile.0.bg"));
+        DOCTEST_CHECK(click(ui, "claude.form.advanced.shared.dd.item.0"));
     }
     {
         eui::Ui ui;
         compose(ui);
-        DOCTEST_CHECK(click(ui, "claude.act.edit.bg"));
-    }
-    {
-        eui::Ui ui;
-        compose(ui);
-        DOCTEST_CHECK(click(ui, "claude.form.tabs.hit.2"));
-    }
-    {
-        eui::Ui ui;
-        compose(ui);
-        DOCTEST_CHECK(click(ui, "claude.form.env.add.bg"));
-    }
-    {
-        eui::Ui ui;
-        compose(ui);
-        // 敲 K 键名 → 该行驶进冻结渲染（灰字+chip，输入控件消失 = 立即可见）
-        DOCTEST_CHECK(type(ui, "claude.form.env.row.0.key.hit", "MY_KEY"));
-    }
-    {
-        eui::Ui ui;
-        compose(ui);
-        DOCTEST_CHECK(ui.find("claude.form.env.row.0.frozen.key") != nullptr);
-        DOCTEST_CHECK(ui.find("claude.form.env.row.0.key.hit") == nullptr);
-        // 保存 → 红字拦截，不落库
         DOCTEST_CHECK(click(ui, "claude.dialog.form.confirm.bg"));
     }
     {
-        eui::Ui ui;
-        compose(ui);
-        const auto* err = ui.find("claude.dialog.form.error");
-        DOCTEST_REQUIRE(err != nullptr);
-        DOCTEST_CHECK(err->text.find("MY_KEY") != std::string::npos);
-        DOCTEST_CHECK(err->text.find("片段X") != std::string::npos);
-        DOCTEST_CHECK(err->text.find("共享配置") != std::string::npos);
-    }
-    // DB 未变：extra_env 仍空、绑定未动（表单仍开着）
-    {
         auto got = env.svc->getProfile(pid);
         DOCTEST_REQUIRE(got.isOk());
-        DOCTEST_CHECK_EQ(got.value().sharedConfigId, f.value().id);
-        DOCTEST_CHECK(got.value().extraEnvJson.empty());
+        DOCTEST_CHECK_EQ(got.value().sharedConfigId, 0);
+        // 解绑回落：profile 自身值原样保留（片段值从不写进 profile 行）
+        auto ee = module::claude::parseExtraEnv(got.value().extraEnvJson);
+        DOCTEST_REQUIRE(ee.isOk());
+        DOCTEST_CHECK_EQ(ee.value().at("MY_KEY"), std::string("own-val"));
     }
 
     mod->onStop();
     cleanupProfileKey(kTestKeychainService, pid);
     return true;
 })
+
 
 // ---- 5. 详情行「共享配置：片段 A（N 个键）」+ 列表卡片「共享」角标 ----
 REGISTER_TEST(claude_module_shared_detail_row_and_badge,
