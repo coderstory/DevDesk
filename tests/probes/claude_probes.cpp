@@ -41,6 +41,7 @@
 
 #include "module_claude_proxy/claude_service.h"
 
+#include <algorithm>
 #include <cmath>
 #include <cstdlib>
 #include <iostream>
@@ -584,12 +585,15 @@ int main(int argc, char* argv[]) {
         glfwFocusWindow(glfwWin);
         auto renderBackend = core::render::createRenderBackend(window);
         if (renderBackend == nullptr || !renderBackend->initialize()) {
-            std::cerr << "claude_probes: 渲染后端不可用，--dump 跳过\n";
+            // 请求了 --dump 却一张都拍不出来 = 视觉证据链为空，同「静默跳过 +
+            // 报成功」是同一类假绿，置红（末尾 kExpected 核对会再列一遍）
+            std::cerr << "claude_probes: 渲染后端不可用，--dump 一张都拍不出\n";
+            passed = false;
             renderBackend.reset();
         }
         const eui::Color clearColor = core::theme::current().colors.background;
         auto renderAndDump = [&](const std::string& path) {
-            if (renderBackend == nullptr) return;
+            if (renderBackend == nullptr) return false;
             core::render::ScopedRenderBackend scoped(*renderBackend);
             renderBackend->beginFrame(core::render::RenderSurface{
                 window, core::window::nativeWindowInfo(window), fbW, fbH,
@@ -609,11 +613,13 @@ int main(int argc, char* argv[]) {
 #pragma clang diagnostic pop
 #endif
             std::ofstream ofs(path, std::ios::binary);
+            bool dumped = true;
             if (!ofs) {
                 // 打开失败（路径不可写/磁盘满）不能静默假成功——视觉证据
                 // 没落盘就得置红，否则审计会拿到「看起来生成了」的假象
                 std::cerr << "claude_probes: dump 打开失败: " << path << "\n";
                 passed = false;
+                dumped = false;
             } else {
                 ofs << "P6\n" << fbW << " " << fbH << "\n255\n";
                 for (int row = fbH - 1; row >= 0; --row) {  // GL 原点左下 → 翻转
@@ -626,69 +632,107 @@ int main(int argc, char* argv[]) {
                 if (!ofs) {
                     std::cerr << "claude_probes: dump 写入失败: " << path << "\n";
                     passed = false;
-                } else {
-                    std::cout << "claude_probes: dump " << path << "\n";
+                    dumped = false;
                 }
             }
             renderBackend->present();
+            return dumped;
         };
         // 状态切换后 EUI 过渡动画（弹窗 opacity fade / tabs 指示器位移）需要
         // 若干帧收敛 —— 单帧即拍会抓到半透明中间态（实测 form_adv 半透明）。
         // 40 帧 ≈ 0.67s（pollOnce dt = 1/60），覆盖最长的弹窗 fade
+        //
+        // 2026-09-30（merge-review R2）：--dump 是**视觉证据链**，缺元素静默
+        // 跳过 = probe 报绿但证据链断（少几张图没人知道）。故 dump 路径一律
+        // **缺元素即失败**：require 找不到元素 / 找不到所需回调 → 打印缺哪个
+        // id、置红、该图不拍。非 dump 断言路径的容错保持原样（那里的
+        // `!= nullptr &&` 服务于交互流程推进，不是视觉证据）。
+        std::vector<std::string> dumped;   // 实际落盘的图名（末尾核对用）
         auto dumpState = [&](const std::string& name) {
             for (int i = 0; i < 40; ++i) {
                 composeFrame();
             }
-            renderAndDump(dumpPrefix + "_" + name + ".ppm");
+            if (renderAndDump(dumpPrefix + "_" + name + ".ppm")) {
+                dumped.push_back(name);
+            }
         };
+        // 目标元素守卫：缺元素 / 缺回调 → 打印「缺哪个 id + 哪一步」并置红，
+        // 返回 nullptr 让调用方短路（该分支不拍图，末尾核对再报一次）。
+        auto requireEl = [&](const std::string& step,
+                             const std::string& id,
+                             const char* callback) {
+            core::dsl::Element* el = ui != nullptr ? ui->find(id) : nullptr;
+            if (el == nullptr) {
+                std::cerr << "claude_probes: --dump " << step << " 目标元素 '"
+                          << id << "' 未找到——该图不拍，视觉证据链断\n";
+                passed = false;
+                return static_cast<core::dsl::Element*>(nullptr);
+            }
+            const bool hasClick = el->onClick != nullptr;
+            const bool hasCtx = el->onContextMenu != nullptr;
+            if ((std::string(callback) == "onClick" && !hasClick) ||
+                (std::string(callback) == "onContextMenu" && !hasCtx)) {
+                std::cerr << "claude_probes: --dump " << step << " 目标元素 '"
+                          << id << "' 缺 " << callback << " 回调——该图不拍，"
+                          << "视觉证据链断\n";
+                passed = false;
+                return static_cast<core::dsl::Element*>(nullptr);
+            }
+            return el;
+        };
+        // dump 目标图清单：末尾逐项核对，缺一张即红（与 require 互为双保险：
+        // require 拦的是「进不去」，这里是「图没落地」）
+        const std::vector<std::string> expected = {
+            "actions7", "detail_adv", "form_adv", "json_fs",
+            "shared_dialog", "ctx_menu"};
         composeFrame();
         // 选中 profile 0（详情 shown 优先用户选中——键来源标注 / JSON 框预填
         // 的落图前提）
-        if (auto* card = ui->find("claude.profile.0.bg");
-            card != nullptr && card->onClick != nullptr) {
+        if (auto* card = requireEl("选中 profile 0", "claude.profile.0.bg",
+                                  "onClick")) {
             card->onClick();
             composeFrame();
         }
         // ① 详情 tab 0：7 键操作组（batch-fix C）
         dumpState("actions7");
         // ② 详情 tab 3：高级配置 pane（batch-fix B）
-        if (auto* hit = ui->find("claude.detail.tabs.hit.3");
-            hit != nullptr && hit->onClick != nullptr) {
+        if (auto* hit = requireEl("切详情 tab3", "claude.detail.tabs.hit.3",
+                                  "onClick")) {
             hit->onClick();
             dumpState("detail_adv");
-            if (auto* hit0 = ui->find("claude.detail.tabs.hit.0");
-                hit0 != nullptr && hit0->onClick != nullptr) {
+            if (auto* hit0 = requireEl("复位详情 tab0", "claude.detail.tabs.hit.0",
+                                      "onClick")) {
                 hit0->onClick();
             }
         }
         // ③ 表单 tab 3：高级配置页（batch-fix B；编辑 profile 0）
-        if (auto* card = ui->find("claude.profile.0.bg");
-            card != nullptr && card->onClick != nullptr) {
+        if (auto* card = requireEl("重选 profile 0", "claude.profile.0.bg",
+                                  "onClick")) {
             card->onClick();
             composeFrame();
-            if (auto* edit = ui->find("claude.act.edit.bg");
-                edit != nullptr && edit->onClick != nullptr) {
+            if (auto* edit = requireEl("打开编辑表单", "claude.act.edit.bg",
+                                      "onClick")) {
                 edit->onClick();
                 composeFrame();
-                if (auto* tab3 = ui->find("claude.form.tabs.hit.3");
-                    tab3 != nullptr && tab3->onClick != nullptr) {
+                if (auto* tab3 = requireEl("切表单 tab3", "claude.form.tabs.hit.3",
+                                          "onClick")) {
                     tab3->onClick();
                     dumpState("form_adv");
                     // ⑥ 高级设置 JSON 全屏编辑覆盖层（2026-09-30 json-fullscreen）：
                     //    「全屏编辑」→ 覆盖层（z=1050 盖住表单 dialog）→「完成」
                     //    回表单，再走既有取消（全程不落任何改动）
-                    if (auto* fs = ui->find("claude.form.advanced.json.fs.bg");
-                        fs != nullptr && fs->onClick != nullptr) {
+                    if (auto* fs = requireEl("进 JSON 全屏", "claude.form.advanced.json.fs.bg",
+                                            "onClick")) {
                         fs->onClick();
                         dumpState("json_fs");
-                        if (auto* done = ui->find("claude.jsonfs.done.bg");
-                            done != nullptr && done->onClick != nullptr) {
+                        if (auto* done = requireEl("JSON 全屏完成", "claude.jsonfs.done.bg",
+                                                  "onClick")) {
                             done->onClick();
                             composeFrame();
                         }
                     }
-                    if (auto* cancel = ui->find("claude.dialog.form.cancel.bg");
-                        cancel != nullptr && cancel->onClick != nullptr) {
+                    if (auto* cancel = requireEl("关表单", "claude.dialog.form.cancel.bg",
+                                                "onClick")) {
                         cancel->onClick();   // 取消，不落任何改动
                     }
                 }
@@ -696,24 +740,41 @@ int main(int argc, char* argv[]) {
         }
         // ⑤ 共享片段编辑弹窗（advanced-json-editor §8.1 JSON 化：name + 高级
         // 设置 JSON 编辑框 + 格式化）
-        if (auto* card = ui->find("claude.shared.card.0.bg");
-            card != nullptr && card->onClick != nullptr) {
+        if (auto* card = requireEl("打开共享片段", "claude.shared.card.0.bg",
+                                  "onClick")) {
             card->onClick();
             dumpState("shared_dialog");
-            if (auto* cancel = ui->find("claude.dialog.shared.cancel.bg");
-                cancel != nullptr && cancel->onClick != nullptr) {
+            if (auto* cancel = requireEl("关共享弹窗", "claude.dialog.shared.cancel.bg",
+                                        "onClick")) {
                 cancel->onClick();   // 取消，不落任何改动
             }
         }
         // ④ 列表右键菜单（五项，batch-fix C）
-        if (auto* wrap = ui->find("claude.profile.0.wrap");
-            wrap != nullptr && wrap->onContextMenu != nullptr) {
+        if (auto* wrap = requireEl("开右键菜单", "claude.profile.0.wrap",
+                                  "onContextMenu")) {
             eui::PointerEvent pe;
             eui::Rect rect;
             pe.x = 600.0;
             pe.y = 300.0;
             wrap->onContextMenu(pe, rect);
             dumpState("ctx_menu");
+        }
+        // 全部目标拍完后只打一次成功日志；任一图缺失 → 报红（不静默放过）
+        for (const std::string& name : expected) {
+            if (std::find(dumped.begin(), dumped.end(), name) == dumped.end()) {
+                std::cerr << "claude_probes: --dump 目标图 '" << name
+                          << "' 未落盘（" << dumpPrefix << "_" << name
+                          << ".ppm）——视觉证据链断\n";
+                passed = false;
+            }
+        }
+        if (dumped.size() == expected.size()) {
+            std::cout << "claude_probes: --dump 目标 " << dumped.size() << "/"
+                      << expected.size() << " 张全部落盘:";
+            for (const std::string& name : dumped) {
+                std::cout << ' ' << dumpPrefix << '_' << name << ".ppm";
+            }
+            std::cout << "\n";
         }
     }
 
