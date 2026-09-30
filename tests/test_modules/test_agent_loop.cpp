@@ -18,12 +18,14 @@ class MockLlm : public core::LlmEndpoint {
 public:
     std::vector<core::LlmResponse> script;
     std::vector<std::vector<core::LlmMessage>> sentMessages;
+    std::vector<std::string> sentModels;   // 每次 send 收到的 model（原样，不解析）
     core::Result<core::LlmResponse> send(
         const std::vector<core::LlmMessage>& messages,
         const std::string& toolsJson, const std::string& systemPrompt,
         const std::string& model) override {
-        (void)toolsJson; (void)systemPrompt; (void)model;
+        (void)toolsJson; (void)systemPrompt;
         sentMessages.push_back(messages);
+        sentModels.push_back(model);
         if (cursor >= script.size())
             return core::Result<core::LlmResponse>::fail(core::ErrorCode::Internal, "script 耗尽");
         return core::Result<core::LlmResponse>::ok(script[cursor++]);
@@ -91,13 +93,53 @@ REGISTER_TEST(agent_loop_happy_path_tool_then_end, "agent_loop: tool_use→工�
     // 落库：4 条消息
     auto msgs = fx.store.listMessages(runId.value());
     DOCTEST_REQUIRE(msgs.isOk());
-    DOCTEST_CHECK_EQ(msgs.value().size(), 4u);
+    DOCTEST_REQUIRE_EQ(msgs.value().size(), 4u);
+    // 落库的 seq/role 顺序 = 累积顺序（审计契约，spec §6 agent_messages.seq）
+    DOCTEST_CHECK_EQ(msgs.value()[0].seq, 0);
+    DOCTEST_CHECK_EQ(msgs.value()[0].role, std::string("user"));
+    DOCTEST_CHECK(msgs.value()[0].contentJson.find("打招呼") != std::string::npos);
+    DOCTEST_CHECK(!msgs.value()[0].toolCallId.has_value());
+    DOCTEST_CHECK_EQ(msgs.value()[1].seq, 1);
+    DOCTEST_CHECK_EQ(msgs.value()[1].role, std::string("assistant"));
+    DOCTEST_CHECK_EQ(msgs.value()[2].seq, 2);
+    DOCTEST_CHECK_EQ(msgs.value()[2].role, std::string("user"));
+    DOCTEST_REQUIRE(msgs.value()[2].toolCallId.has_value());
+    DOCTEST_CHECK_EQ(msgs.value()[2].toolCallId.value(), std::string("tu1"));
+    DOCTEST_CHECK_EQ(msgs.value()[3].seq, 3);
+    DOCTEST_CHECK_EQ(msgs.value()[3].role, std::string("assistant"));
     auto runs = fx.store.listRuns(taskId.value(), 10);
     DOCTEST_REQUIRE(runs.isOk());
     DOCTEST_CHECK_EQ(runs.value()[0].status, std::string("completed"));
     DOCTEST_CHECK_EQ(runs.value()[0].iterations, 2);
     DOCTEST_CHECK_EQ(runs.value()[0].inputTokens.value_or(0), 20);  // 10+10 累计
     DOCTEST_CHECK_EQ(runs.value()[0].outputTokens.value_or(0), 10);
+    // model 原样传 task.modelSlot（槽位→model id 由 LlmClient 解析，loop 不解析）
+    DOCTEST_REQUIRE_EQ(fx.llm.sentModels.size(), 2u);
+    for (const auto& m : fx.llm.sentModels) {
+        DOCTEST_CHECK_EQ(m, std::string(task.modelSlot));
+    }
     fx.tools.unregisterTool("t.hello");
+    return true;
+})
+
+// I1：completed 的唯一定义是 end_turn。refusal（Anthropic 拒答）等非 end_turn 的
+// stop_reason 不能默认记成功——否则「模型没给出终局回复」的 run 在 UI 上看着
+// 跟正常跑完一样。
+REGISTER_TEST(agent_loop_refusal_is_failed, "agent_loop: stop_reason=refusal → run failed（不记 completed）", {
+    Fixture fx;
+    auto taskId = fx.store.createTask("t", "打招呼", "manual", "default", 10, false);
+    DOCTEST_REQUIRE(taskId.isOk());
+    AgentTask task; task.id = taskId.value(); task.goal = "打招呼"; task.modelSlot = "default";
+
+    fx.llm.script = { resp(R"([{"type":"text","text":"我不做这个"}])", "refusal") };
+    std::atomic<bool> cancel{false};
+    auto runId = fx.loop.run(task, cancel);
+    DOCTEST_REQUIRE(runId.isOk());
+    auto runs = fx.store.listRuns(taskId.value(), 10);
+    DOCTEST_REQUIRE(runs.isOk());
+    DOCTEST_REQUIRE_EQ(runs.value().size(), 1u);
+    DOCTEST_CHECK_EQ(runs.value()[0].status, std::string("failed"));
+    DOCTEST_REQUIRE(runs.value()[0].error.has_value());
+    DOCTEST_CHECK(runs.value()[0].error->find("stop_reason=refusal") != std::string::npos);
     return true;
 })

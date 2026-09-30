@@ -27,6 +27,17 @@ constexpr int kMaxIterationsHardCap = 50;
 // 故这里按「每块 stringify 后用逗号连接」拼出数组文本（每个元素本身是
 // stringify(合法 JsonValue)，由构造保证元素合法），再 parse 一次自检：
 // 拼装层出错当场 LOG_FATAL 终止，绝不把坏 body 发给上游。
+platform::json::JsonValue parseArrayOrDie(const std::string& text,
+                                          const char* what) {
+    auto v = platform::json::parse(text);
+    if (v.isFail() || !v.value().isArray()) {
+        LOG_FATAL(std::string("AgentLoop: ") + what +
+                  " 不是合法 blocks 数组（内部构造错误）：" + text);
+        std::abort();
+    }
+    return std::move(v.value());
+}
+
 std::string joinBlockArray(const std::vector<std::string>& blockTexts) {
     std::string text = "[";
     for (size_t i = 0; i < blockTexts.size(); ++i) {
@@ -34,11 +45,7 @@ std::string joinBlockArray(const std::vector<std::string>& blockTexts) {
         text += blockTexts[i];
     }
     text += "]";
-    auto check = platform::json::parse(text);
-    if (check.isFail() || !check.value().isArray()) {
-        LOG_FATAL("AgentLoop: 拼出的 content blocks 数组非法（内部构造错误）：" + text);
-        std::abort();
-    }
+    parseArrayOrDie(text, "content blocks");
     return text;
 }
 
@@ -133,11 +140,21 @@ Result<int64_t> AgentLoop::run(const AgentTask& task,
         ++iterations;
         if (!keepAssistant(r)) break;          // 落库失败 → fatal
         if (r.stopReason != "tool_use") {
-            if (r.stopReason == "max_tokens" || r.stopReason == "stop_sequence") {
+            // completed 的**唯一**定义是 end_turn（spec §5.2）。其余 stop_reason
+            // 逐个显式分类，不留「未知即成功」的开口：refusal / pause_turn
+            // （Anthropic）、stop / length（兼容网关）、以及默认空串（上游没给）
+            // 都是「没拿到模型承诺的终局回复」→ failed，不冒充 completed。
+            if (r.stopReason == "end_turn") {
+                status = "completed";
+            } else if (r.stopReason == "max_tokens" ||
+                       r.stopReason == "stop_sequence") {
                 status = "limited";            // 截断/受限（L1）
                 error = "stop_reason=" + r.stopReason;
+            } else {
+                status = "failed";
+                error = "stop_reason=" + r.stopReason;
             }
-            break;                             // end_turn（或上面 limited）
+            break;
         }
 
         // ---- 解析 tool_use blocks → 执行 → tool_result ----
@@ -217,14 +234,41 @@ Result<int64_t> AgentLoop::run(const AgentTask& task,
             } else {
                 result = exec.value();
             }
-            // content 用工具返回的 contentJson **解析后的值**（LLM 侧拿到结构化
-            // 结果而非一坨转义串）；解析失败退回原文串
-            auto contentVal = platform::json::parse(result.contentJson);
+            // content 按 Anthropic 工具协议只能是「字符串」或「content blocks
+            // 数组」——工具返回的裸对象/数字塞进去上游直接 400（而所有 M2 工具
+            // 返回的都是对象）。故统一包成 text block 数组：
+            //   [{"type":"text","text":<stringify(工具返回的值)>}]
+            // 工具 contentJson 为空 → 文本是 ""（不是 "null"、更不是 null：
+            // parse("") 返回 ok(null)，不特判就会回喂一个 "content":null）。
             platform::json::JsonValue contentValue =
-                contentVal.isOk() ? contentVal.value()
-                                  : platform::json::makeString(result.contentJson);
+                result.contentJson.empty()
+                    ? platform::json::makeString(std::string())
+                    : [&] {
+                          auto cv = platform::json::parse(result.contentJson);
+                          return cv.isOk() ? cv.value()
+                                           : platform::json::makeString(result.contentJson);
+                      }();
+            auto contentRaw = platform::json::stringify(contentValue);
+            if (contentRaw.isFail()) {
+                LOG_FATAL("AgentLoop: 序列化 tool_result content 失败：" +
+                          contentRaw.errorMessage());
+                std::abort();
+            }
+            platform::json::JsonObject textBlock;
+            textBlock.set("type", platform::json::makeString("text"));
+            textBlock.set("text", platform::json::makeString(contentRaw.value()));
+            auto textBlockText = platform::json::stringify(
+                platform::json::JsonValue(std::move(textBlock)));
+            if (textBlockText.isFail()) {
+                LOG_FATAL("AgentLoop: 序列化 tool_result content block 失败：" +
+                          textBlockText.errorMessage());
+                std::abort();
+            }
             // （Task 5 补：>32KB 截断 + [truncated] 标记）
-            resultTexts.push_back(makeResult(contentValue, result.isError));
+            resultTexts.push_back(
+                makeResult(parseArrayOrDie("[" + textBlockText.value() + "]",
+                                           "tool_result.content"),
+                           result.isError));
             resultIds.push_back(id);
         }
 
