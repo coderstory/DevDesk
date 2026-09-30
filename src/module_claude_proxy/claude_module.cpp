@@ -447,7 +447,7 @@ private:
                          state_.list.cachedSharedConfigs_);
         };
         a.requestDuplicate = [this](int64_t id) { doDuplicate(id); };
-        // 复制配置（2026-09-30 batch-fix C）：与详情第 7 键同源 doCopyConfig
+        // 复制配置（2026-09-30 batch-fix C）：与详情第 6 键同源 doCopyConfig
         a.requestCopyConfig = [this](const Profile& p) { doCopyConfig(p); };
         a.requestDelete = [this](int64_t id, const std::string& name) {
             state_.form.deleteTargetId_ = id;
@@ -501,7 +501,7 @@ private:
             state_.form.deleteConfirmOpen_ = true;
         };
         a.duplicate = [this](int64_t id) { doDuplicate(id); };
-        // 复制配置（2026-09-30 batch-fix C，设计 §4.2② 第 7 键接线）
+        // 复制配置（2026-09-30 batch-fix C，设计 §4.2② 第 6 键接线）
         a.copyConfig = [this](const Profile& p) { doCopyConfig(p); };
         a.run = [this](int64_t id) { doRun(id); };
         a.openCalls = [this] { openCallsDialog(state_.logs); };

@@ -54,7 +54,7 @@ struct ProfileListActions {
     std::function<void(const Profile&)> requestEdit;              // 编辑
     std::function<void(int64_t)> requestDuplicate;                // 建副本
     // 复制配置（2026-09-30 batch-fix C，§5⑤）：入参带 Profile（序列化需要
-    // baseUrl/authField/槽位/extra_env，不是 id 能表达的）；与详情第 7 键
+    // baseUrl/authField/槽位/extra_env，不是 id 能表达的）；与详情第 6 键
     // 同源 doCopyConfig
     std::function<void(const Profile&)> requestCopyConfig;
     std::function<void(int64_t, const std::string&)> requestDelete;  // 删除

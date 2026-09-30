@@ -313,8 +313,9 @@ std::map<std::string, std::string> buildProxyEnv(
 //      串 → 不写该键（Claude Code 回落内置默认上游）
 //   2. 密钥键按 profile 的「认证字段」三态**只写一个**（直连路径携带的
 //      **唯一凭据**；「双发」是代理路径的特性，且代理会剥客户端鉴权头、直连
-//      没有这层保护——extra_env / 共享片段带进的另一密钥键会被清掉，防止两个
-//      凭据并存时网关取到过期的那一个）：
+//      没有这层保护——extra_env 带进的另一密钥键会被清掉，防止两个凭据并存时
+//      网关取到过期的那一个；advanced-json-editor §8.4 起片段不再进 env 域，
+//      原文的「共享片段带进」字样随之删除）：
 //        bearer    → ANTHROPIC_AUTH_TOKEN
 //        api_key   → ANTHROPIC_API_KEY
 //        both      → ANTHROPIC_AUTH_TOKEN（默认；若上游网关要求 x-api-key，

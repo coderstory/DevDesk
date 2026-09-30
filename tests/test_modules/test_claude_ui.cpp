@@ -175,13 +175,13 @@ REGISTER_TEST(claude_module_compose_null_service,
     return true;
 })
 
-// ---- 1b. 6 键均分几何：第 6 键右缘对齐分隔线（回归闸）----
-// actW = (w0 - actGap*5)/6 —— EUI 的 row spacing 只在相邻子项之间生效，n 项只有
-// n−1 个间隙。旧算式扣 6 个 gap 会让第 6 键右缘比分隔线短一整个 gap（12px）。
+// ---- 1b. 7 键均分几何：第 7 键右缘对齐分隔线（回归闸）----
+// actW = (w0 - actGap*6)/7 —— EUI 的 row spacing 只在相邻子项之间生效，n 项只有
+// n−1 个间隙。旧算式多扣一个 gap 会让末键右缘比分隔线短一整个 gap（12px）。
 // 跑真实 layout 后比对计算 frame，无头也能锁死这个几何。
 
 REGISTER_TEST(claude_module_actions_row_alignment,
-              "claude_module: 6 键均分——第 6 键右缘对齐分隔线（headless layout）", {
+              "claude_module: 7 键均分——第 7 键右缘对齐分隔线（headless layout）", {
     module::claude::ClaudeService::setGlobal(nullptr);
     std::unique_ptr<::core::Module> mod(create_claude_module());
     eui::Screen screen;
@@ -194,11 +194,11 @@ REGISTER_TEST(claude_module_actions_row_alignment,
     ui.layout(screen.width, screen.height);
 
     const auto* divider = ui.find("claude.act.divider");
-    const auto* run6 = ui.find("claude.act.run.bg");   // 第 6 键（profile-run）
+    const auto* run7 = ui.find("claude.act.run.bg");   // 第 7 键（profile-run）
     DOCTEST_REQUIRE(divider != nullptr);
-    DOCTEST_REQUIRE(run6 != nullptr);
+    DOCTEST_REQUIRE(run7 != nullptr);
     const float dividerRight = divider->frame.x + divider->frame.width;
-    const float runRight = run6->frame.x + run6->frame.width;
+    const float runRight = run7->frame.x + run7->frame.width;
     DOCTEST_CHECK(runRight >= dividerRight - 0.5f);
     DOCTEST_CHECK(runRight <= dividerRight + 0.5f);
 
