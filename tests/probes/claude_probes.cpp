@@ -462,6 +462,19 @@ int main(int argc, char* argv[]) {
                     tab3 != nullptr && tab3->onClick != nullptr) {
                     tab3->onClick();
                     dumpState("form_adv");
+                    // ⑥ 高级设置 JSON 全屏编辑覆盖层（2026-09-30 json-fullscreen）：
+                    //    「全屏编辑」→ 覆盖层（z=1050 盖住表单 dialog）→「完成」
+                    //    回表单，再走既有取消（全程不落任何改动）
+                    if (auto* fs = ui->find("claude.form.advanced.json.fs.bg");
+                        fs != nullptr && fs->onClick != nullptr) {
+                        fs->onClick();
+                        dumpState("json_fs");
+                        if (auto* done = ui->find("claude.jsonfs.done.bg");
+                            done != nullptr && done->onClick != nullptr) {
+                            done->onClick();
+                            composeFrame();
+                        }
+                    }
                     if (auto* cancel = ui->find("claude.dialog.form.cancel.bg");
                         cancel != nullptr && cancel->onClick != nullptr) {
                         cancel->onClick();   // 取消，不落任何改动
