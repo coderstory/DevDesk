@@ -30,8 +30,9 @@ public:
     virtual ~LlmEndpoint() = default;
     // 发一次 /v1/messages 请求。messages 为完整对话历史（agent loop 累积），
     // toolsJson 为 Anthropic tools 定义数组。systemPrompt 可空。
-    // model 参数由调用方（LlmClient）经 IClaudeProxyService::resolveModelSlot
-    // 解析后传入（见下方 H1）——本接口只发，不解析槽位。
+    // model 形参语义 = **槽位键名**（AgentLoop 原样传 task.modelSlot，见
+    // H1 定案）：槽位 → 实际 model id 的解析由具体实现（LlmClient）在 send
+    // 内经 IClaudeProxyService::resolveModelSlot 完成——本抽象不解析槽位。
     virtual Result<LlmResponse> send(
         const std::vector<LlmMessage>& messages,
         const std::string& toolsJson,

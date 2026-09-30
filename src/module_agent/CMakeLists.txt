@@ -1,6 +1,7 @@
 add_library(devdesk_agent STATIC
     agent_store.cpp
     agent_loop.cpp
+    llm_client.cpp
 )
 
 devdesk_apply_warnings(devdesk_agent)
@@ -15,7 +16,7 @@ target_include_directories(devdesk_agent PUBLIC
 )
 
 # 依赖 core（SqliteDb/Result/llm_endpoint）+ platform（AgentLoop 的 blocks JSON
-# 解析拼装）；HTTP 侧（LlmClient）留给后续 Task
+# 解析拼装、LlmClient 的 HTTP 客户端与 JSON 组装）
 target_link_libraries(devdesk_agent PUBLIC
     devdesk_core
     devdesk_platform
