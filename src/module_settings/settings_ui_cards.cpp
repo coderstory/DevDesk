@@ -315,7 +315,8 @@ void drawEditorFontCard(const CardDrawArgs& args) {
 }
 
 // ---------- 卡片 2：模块管理（插拔方案 A §5.4） ----------
-// 三个工具模块各一行开关；关闭 = 下次启动不注册进 Router（不执行代码、
+// 四个工具模块（markdown/todo/claude_proxy/agent）+ 桌宠各一行开关；关闭 =
+// 下次启动不注册进 Router（不执行代码、
 // 不显示侧边栏入口）。home/settings 恒启用，不提供开关
 void drawModulesCard(const CardDrawArgs& args) {
     eui::Ui& ui = args.ui;

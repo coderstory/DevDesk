@@ -227,6 +227,10 @@ core::Result<fs::path> MarkdownService::resolve(const fs::path& relPath) const {
     //      再与规范化后的 notesDir_ 做**逐组件**前缀比较——字符串前缀比较会把
     //      "/notes/evil" 误判成 "/notes" 的内含（"/notesEVIL" 也以 "/notes" 开头）。
     //   3) fail 语义：ValidationError + 中文说明（回喂 LLM / UI toast 可读）。
+    //   边界（M2 重审）：symlink 不在**词法** containment 范围内——
+    //      lexically_normal 不解析链接。M1 工具无建 symlink 途径（工具集只
+    //      读写文本文件），需用户在笔记目录手植；M2 写路径工具上线时重审
+    //      （改 weakly_canonical 或 open 前校验）。
     const fs::path base = notesDir_.lexically_normal();
     const fs::path candidate = (notesDir_ / relPath).lexically_normal();
     auto baseIt = base.begin();

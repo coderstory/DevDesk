@@ -69,7 +69,8 @@ std::vector<::core::PageId> assembleAndStart(
     };
 
     // 3) 注册门控（方案 A）：清单已由 buildGatedEntries 按表门控（home/settings
-    // 恒注册 + 三个工具模块按 enabledModules），这里**纯注册**——注册顺序 =
+    // 恒注册 + 四个工具模块（markdown/todo/claude_proxy/agent）按
+    // enabledModules），这里**纯注册**——注册顺序 =
     // 列表顺序 = 表序；不注册 = onStart/compose/菜单项全部不可达，"零执行
     // 零菜单项"是结构性保证，不靠模块自觉检查开关
     for (const auto& entry : modules) {

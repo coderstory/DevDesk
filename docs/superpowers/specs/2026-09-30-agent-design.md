@@ -69,6 +69,7 @@ DevDesk 现有四层（`main → module_* → core → platform → EUI-NEO`）�
 
 1. 调度层触发任务 → `AgentLoop::run(task)` 在后台线程启动
 2. `AgentLoop` 取任务 goal 作 system+user 首条消息，构造 Anthropic `/v1/messages` 请求（带 `tools` 定义）
+   > **M1 实况标注（2026-10-01，final-review Fix 4）**：M1 无 system prompt（`AgentTask` 无该字段，`LlmEndpoint::send` 的 systemPrompt 形参传空串），goal 仅作 user 首条消息；system prompt 由 M2 引入。
 3. `LlmClient::send()` 先经 `core::IClaudeProxyService` 预检代理状态（未跑 → run 标 failed + error「代理未启」）+ 取实际端口；经 `resolveModelSlot(task.modelSlot)` 取实际 model id 填进 body（解析失败 → run 标 failed，见 §2.2 H1）；再经 `platform::http::HttpClient` POST 到本地代理 `127.0.0.1:<port>/v1/messages`（代理已由 `module_claude_proxy` 起好，按激活 profile 转发到真实上游，带 failover）
 4. 解析响应：若 `stop_reason == "tool_use"`，逐个 `tool_use` block → `core::ToolRegistry::find(name)` 取 `shared_ptr<ITool>`（keep-alive，防 unregister 悬垂）；**find NotFound（迭代间模块被拔）→ 构造 `tool_result {is_error: true, content: "工具 <name> 未找到，可能模块已禁用"}` 回喂 LLM，不中止 run**（L3a，让 LLM 自纠或换工具）→ `execute(args)` → 把 `tool_result` 拼进 messages → 回到步骤 3
 5. 若 `stop_reason == "end_turn"`（或达 `max_iterations`）→ run 结束，落库 agent_runs / agent_messages
@@ -196,6 +197,11 @@ public:
     // toolsJson 为 Anthropic tools 定义数组。systemPrompt 可空。
     // model 参数由调用方（LlmClient）经 IClaudeProxyService::resolveModelSlot
     // 解析后传入（见下方 H1）——本接口只发，不解析槽位。
+    // > **M1 实况标注（2026-10-01，final-review Fix 4；按 Task 7 裁定，
+    // > 上两行原文被取代）**：model 形参语义 = **槽位键名**（AgentLoop 原样
+    // > 传 task.modelSlot），槽位 → 实际 model id 的解析在 LlmClient::send
+    // > **内**经 IClaudeProxyService::resolveModelSlot 完成（proxy_.resolveModelSlot），
+    // > 本抽象不解析槽位——与上两行的「解析后传入」相反，实现以此为准。
     virtual Result<LlmResponse> send(
         const std::vector<LlmMessage>& messages,
         const std::string& toolsJson,
@@ -344,6 +350,8 @@ agent 定位为「DevDesk 内部消费者」——经本地代理 = 复用全部
 [assistant] 最终响应（stop_reason == end_turn）
 ```
 
+> **M1 实况标注（2026-10-01）**：`[system]` 行 M1 缺席——无 system prompt（`AgentTask` 无该字段），消息序列自 `[user] goal` 起；M2 引入。
+
 每轮的 messages 全量发给上游（Anthropic 无自动历史，agent 自管）。长对话超模型上下文时，按 `max_iterations` + 用户可配的截断策略（YAGNI：先不截断，靠 max_iterations 兜底）。
 
 ---
@@ -382,6 +390,8 @@ agent 定位为「DevDesk 内部消费者」——经本地代理 = 复用全部
 | 单次 LLM 请求超时 | 60s | 用户可配 |
 | 单 run 墙钟 | `max_iterations × 请求超时` | 硬上限 30 分钟 |
 | token 累计 | 上游返回的 input+output 累计 | 硬上限 200K（防烧钱） |
+
+> **M1 实况标注（2026-10-01，final-review Fix 4）**：30 分钟墙钟与 200K token 上限**M1 未实现**——M1 的实际边界 = `max_iterations`（默认 10，UI 可调至 50，loop 内 clamp）× 60s 请求超时（HttpClient 层）兜底；两硬上限由 M2 Scheduler 强制（见 agent_loop.cpp 墙钟超时判定注释）。
 
 **状态语义**（L1 统一）：
 
