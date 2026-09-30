@@ -17,6 +17,7 @@
 #include <GLFW/glfw3.h>
 
 #include <iostream>
+#include <algorithm>
 #include <cmath>
 #include <string>
 #include <unordered_map>
@@ -362,6 +363,90 @@ inline bool assertNoEqualZOverlap(core::dsl::Ui& ui, const std::string& popupId)
         }
     }
     return true;
+}
+
+/// 绘制序断言：topId 必须整子树排在 bottomId 之后绘制（= 盖在其上）。
+/// 判据 = 两者的最低公共祖先（LCA）处，top 侧子级 subtreeMaxZIndex 严格
+/// 大于 bottom 侧子级 subtreeMaxZIndex —— 兄弟按子树上界稳定排序
+///（core/dsl.h rebuildOrderedChildren），top 侧 > bottom 侧 ⇒ top 后绘；
+/// 等值 ⇒ DOM 序保持，bottom 若在 DOM 序靠后就盖住 top（本断言红）。
+/// 与 assertNoEqualZOverlap 互补：后者扫描叶子级 z 碰撞（叶子 subtreeMax
+/// 常为 0，抓不住「容器级等值 z」），本断言直接判 LCA 处的两个比较对象，
+/// 是「弹层不被下方兄弟盖住」的主判据（settings 桌宠卡双下拉类）。
+/// 父链按**指针**建（挂 id 链会在无名包装栈处断掉——对话框内部容器等
+/// 不设 id，id 链到那里即终结，LCA 假阴性 "no common ancestor"）。
+inline bool assertDrawnAbove(core::dsl::Ui& ui,
+                             const std::string& topId,
+                             const std::string& bottomId) {
+    const core::dsl::Element* top = ui.find(topId);
+    const core::dsl::Element* bottom = ui.find(bottomId);
+    if (top == nullptr || bottom == nullptr) {
+        std::cerr << "probe::assertDrawnAbove: element missing: '"
+                  << (top == nullptr ? topId : bottomId) << "'\n";
+        return false;
+    }
+    std::unordered_map<const core::dsl::Element*, const core::dsl::Element*> parentOf;
+    for (const auto& root : ui.roots()) {
+        std::vector<const core::dsl::Element*> stack{root.get()};
+        while (!stack.empty()) {
+            const core::dsl::Element* node = stack.back();
+            stack.pop_back();
+            for (const auto& child : node->children) {
+                parentOf[child.get()] = node;
+                stack.push_back(child.get());
+            }
+        }
+    }
+    auto chainOf = [&](const core::dsl::Element* leaf) {
+        std::vector<const core::dsl::Element*> chain;
+        for (const core::dsl::Element* node = leaf; node != nullptr;) {
+            chain.push_back(node);
+            const auto it = parentOf.find(node);
+            node = it == parentOf.end() ? nullptr : it->second;
+        }
+        return chain;
+    };
+    const std::vector<const core::dsl::Element*> topChain = chainOf(top);
+    const std::vector<const core::dsl::Element*> bottomChain = chainOf(bottom);
+    // LCA = bottom 链上第一个同时出现在 top 链中的节点（同根必存在）
+    std::size_t lcaTopIdx = 0;
+    std::size_t lcaBottomIdx = 0;
+    bool found = false;
+    for (std::size_t k = 0; k < bottomChain.size() && !found; ++k) {
+        const auto it = std::find(topChain.begin(), topChain.end(), bottomChain[k]);
+        if (it != topChain.end()) {
+            lcaBottomIdx = k;
+            lcaTopIdx = static_cast<std::size_t>(it - topChain.begin());
+            found = true;
+        }
+    }
+    if (!found) {
+        std::cerr << "probe::assertDrawnAbove: no common ancestor between '"
+                  << topId << "' and '" << bottomId << "'\n";
+        return false;
+    }
+    if (lcaTopIdx == 0 || lcaBottomIdx == 0) {
+        std::cerr << "probe::assertDrawnAbove: '" << topId << "' / '"
+                  << bottomId << "' 是祖先关系（绘制序由兄弟排序决定的对象"
+                     "应是 LCA 下两侧的直接子级），调用方选错比较对象\n";
+        return false;
+    }
+    // LCA 的直接子级 = 各自链上 LCA 的前一个节点
+    const core::dsl::Element* topChild = topChain[lcaTopIdx - 1];
+    const core::dsl::Element* bottomChild = bottomChain[lcaBottomIdx - 1];
+    if (topChild->subtreeMaxZIndex > bottomChild->subtreeMaxZIndex) {
+        return true;
+    }
+    auto label = [](const core::dsl::Element* e) {
+        return e->id.empty() ? std::string("<unnamed>") : e->id;
+    };
+    std::cerr << "probe::assertDrawnAbove: '" << topId << "'（LCA 侧子级 '"
+              << label(topChild) << "' subtreeMaxZ="
+              << topChild->subtreeMaxZIndex << "）未压过 '" << bottomId
+              << "'（LCA 侧子级 '" << label(bottomChild) << "' subtreeMaxZ="
+              << bottomChild->subtreeMaxZIndex << "）——等值/更低 z 时稳定"
+                 "排序保持 DOM 序，后者后绘盖住前者\n";
+    return false;
 }
 
 /// RAII：临时把元素 onScrollOffsetChanged 换成计数器包装（仍转发原回调），

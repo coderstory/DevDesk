@@ -19,6 +19,22 @@
 //     id→父 映射后扫描（spec §2.2）。
 //   - 输入走真命中分发（queue press/release → update → 立即 recompose）：弹层
 //     在 compose 时才按 open 状态进/出 DOM，漏 recompose 则断言全落空。
+//
+// 用例 5（2026-09-30）：桌宠卡「皮肤」弹层被下方「大小」行遮挡 —— 卡内等值
+// z 碰撞类。两个 ddwrap 是卡片根的直接子级、子树上界同为 dropdown 字段档
+// zIndex_=20，兄弟稳定排序（core/dsl.h rebuildOrderedChildren）保持 DOM 序 →
+// 后绘的「大小」行盖住展开的皮肤弹层。既有两道防线都抓不住这类：卡片级
+// zIndex(40)（2026-09-28 修的跨卡遮挡）救不了同卡内兄弟；L2 叶子扫描里相交
+// 叶子自身 subtreeMax 常为 0 也永不触发。修 = EUI-NEO dropdown open 态给
+// popup 子树挂 900 档（patch 生产线，eui-neo-dropdown-popup-z.patch），关闭态
+// 归 0 与旧行为逐位一致。主判据（probe_harness 新增 assertDrawnAbove）：
+//   1) 绘制序：popup 与「大小」字段的 LCA 处，popup 侧子级 subtreeMaxZ(900)
+//      必须严格大于字段侧(20)；
+//   2) 真命中路由：点「弹层首项 ∩ 大小字段」交集中心（前提守卫 = 交集非空），
+//      必须选中皮肤项并收起皮肤弹层，「大小」下拉不得被误开（重叠区点击被
+//      下方字段截获 = 命中序同病的第二症状）。
+// 变异口径：回退 EUI-NEO patch（popup 归 0）→ 1)(20≡20) 与 2)(点中
+// scale.dd.field，scale 弹层 .hit enabled) 双红；应用 patch → 双绿。
 
 #include "probes/probe_harness.h"
 #include <eui/detail/dsl_app_impl.h>  // app:: 层内联实现自给（链接需要）
@@ -28,6 +44,8 @@
 
 #include <cmath>
 #include <cstdlib>
+#include <filesystem>
+#include <fstream>
 #include <iostream>
 #include <memory>
 #include <string>
@@ -64,9 +82,45 @@ int main(int argc, char* argv[]) {
     }
 
     // 配置隔离：DEVDESK_CONFIG_PATH 指到临时路径（不落盘），探针与机器本地
-    // config.json 无关（onStart 吃真机配置会让卡片增减/几何漂移）
+    // config.json 无关（onStart 吃真机配置会让卡片增减/几何漂移）。
+    // 用例 5 前提 = 桌宠卡在树：enabledModules 显式含 pet（pet 默认关闭，
+    // 不加则桌宠卡整卡隐藏、皮肤下拉不存在）
     auto cfg = test_support::tempConfigFile("pfx_", "cfg");
+    {
+        std::ofstream f(cfg, std::ios::binary | std::ios::trunc);
+        f << "{\"enabledModules\":[\"pet\"]}";
+    }
     test_support::ScopedConfigPath scopedCfg(cfg);
+
+    // 皮肤夹具：DEVDESK_PETS_DIR → 临时目录 4 个空皮肤（discoverSkins 只要求
+    // pet.json 存在），弹层 4×34+12=148px；不设则读到本机真实 appData 皮肤
+    // 清单（用例 5 的弹层高度/首项几何不确定）
+    const std::filesystem::path petsDir = test_support::makeTempDir("pfx_", "pets");
+    bool petsFixtureOk = true;
+    {
+        std::error_code ec;
+        std::filesystem::create_directories(petsDir, ec);
+        petsFixtureOk = !ec;
+        for (int i = 0; petsFixtureOk && i < 4; ++i) {
+            const std::string name =
+                "skin-" + std::string(1, static_cast<char>('a' + i));
+            const std::filesystem::path dir = petsDir / name;
+            std::filesystem::create_directories(dir, ec);
+            petsFixtureOk = !ec;
+            if (petsFixtureOk) {
+                std::ofstream pf(dir / "pet.json", std::ios::binary);
+                pf << "{}";
+                petsFixtureOk = pf.good();
+            }
+        }
+    }
+    if (petsFixtureOk) {
+        test_support::setEnvVar("DEVDESK_PETS_DIR", petsDir.string());
+    } else {
+        std::cerr << "settings_dropdown_z_probe: 皮肤夹具创建失败\n";
+        std::error_code ec;
+        std::filesystem::remove_all(petsDir, ec);
+    }
 
     std::unique_ptr<::core::Module> mod(create_settings_module());
     mod->onStart();
@@ -90,13 +144,15 @@ int main(int argc, char* argv[]) {
                                   });
     };
     // 真实命中分发：press + release 排队 → 下一 composeFrame 内 update 消费
-    auto clickElement = [&](const core::dsl::Element& element) {
-        const float cx = element.frame.x + element.frame.width * 0.5f;
-        const float cy = element.frame.y + element.frame.height * 0.5f;
+    auto clickPoint = [&](float cx, float cy) {
         core::queuePointerButton(window, cx, cy, core::PointerButton::Left,
                                  core::PointerAction::Press, {});
         core::queuePointerButton(window, cx, cy, core::PointerButton::Left,
                                  core::PointerAction::Release, {});
+    };
+    auto clickElement = [&](const core::dsl::Element& element) {
+        clickPoint(element.frame.x + element.frame.width * 0.5f,
+                   element.frame.y + element.frame.height * 0.5f);
     };
 
     // 开下拉 → 断言（存在 / 可见 / 在窗内 / L2 z 扫描）→ 关下拉 → 断言不可见
@@ -208,11 +264,138 @@ int main(int argc, char* argv[]) {
     //    把它当「编辑器字号」目标开 → L2 扫描（链上界 30）→ 关
     passed = verifyDropdown("settings.card.editor.dd") && passed;
 
+    // 5) 桌宠卡双下拉（模块 tab，2026-09-30 用户实测「皮肤弹层被大小行遮住」）：
+    //    卡内等值 z 碰撞 —— 皮肤/大小两个 ddwrap 同为卡片根直接子级、子树上界
+    //    同为字段档 20，稳定排序保持 DOM 序 → 后绘的「大小」行盖住展开的皮肤
+    //    弹层。卡片 zIndex(40) 只救跨卡遮挡；L2 叶子扫描的相交叶子自身
+    //    subtreeMax=0 也抓不住。主判据 = assertDrawnAbove（LCA 处两侧子级子树
+    //    上界 900 > 20）+ 重叠区真命中路由（点弹层首项 ≠ 被下方字段截获）。
+    {
+        composeFrame();
+        const core::dsl::Element* tabModules =
+            ui != nullptr ? ui->find("settings.tabs.hit.1") : nullptr;
+        if (tabModules == nullptr) {
+            std::cerr << "settings_dropdown_z_probe: tab 'settings.tabs.hit.1' "
+                         "(模块) not found\n";
+            passed = false;
+        } else {
+            clickElement(*tabModules);
+            composeFrame();
+            const std::string skinDd = "settings.card.pet.skin.dd";
+            const std::string skinPopupId = skinDd + ".popup";
+            const std::string scaleDd = "settings.card.pet.scale.dd";
+            const core::dsl::Element* petCard =
+                ui != nullptr ? ui->find("settings.card.pet") : nullptr;
+            const core::dsl::Element* skinField =
+                ui != nullptr ? ui->find(skinDd + ".field") : nullptr;
+            const core::dsl::Element* scaleField =
+                ui != nullptr ? ui->find(scaleDd + ".field") : nullptr;
+            if (petCard == nullptr) {
+                std::cerr << "settings_dropdown_z_probe: 'settings.card.pet' "
+                             "missing（enabledModules 缺 pet？）\n";
+                passed = false;
+            } else if (skinField == nullptr || scaleField == nullptr) {
+                std::cerr << "settings_dropdown_z_probe: skin/scale field "
+                             "missing\n";
+                passed = false;
+            } else {
+                // 开皮肤下拉
+                clickElement(*skinField);
+                composeFrame();
+                // recompose 重建元素树 → 开前捕获的指针全部作废，逐帧重查
+                const core::dsl::Element* popup =
+                    ui != nullptr ? ui->find(skinPopupId) : nullptr;
+                const core::dsl::Element* item0 =
+                    ui != nullptr ? ui->find(skinDd + ".item.0") : nullptr;
+                const core::dsl::Element* scaleFieldNow =
+                    ui != nullptr ? ui->find(scaleDd + ".field") : nullptr;
+                if (popup == nullptr || item0 == nullptr ||
+                    scaleFieldNow == nullptr) {
+                    std::cerr << "settings_dropdown_z_probe: '" << skinPopupId
+                              << "' / '.item.0' / scale field not in tree after "
+                                 "open\n";
+                    passed = false;
+                } else {
+                    if (!floatEq(popup->opacity, 1.0f)) {
+                        std::cerr << "settings_dropdown_z_probe: '" << skinPopupId
+                                  << "' opacity=" << popup->opacity
+                                  << " (expected visible 1.0)\n";
+                        passed = false;
+                    }
+                    // 前提守卫：弹层首项必须与下方「大小」字段矩形相交（4 皮肤
+                    // 弹层 148px 从皮肤字段底 y+48 铺到 y+196，大小行 y+112..152
+                    // 恒在带内）——几何漂移到不相交时本断言先响，防 z 判据落空
+                    if (!probe::detail::framesIntersect(*item0, *scaleFieldNow)) {
+                        std::cerr << "settings_dropdown_z_probe: 前提失效：弹层"
+                                     "首项与「大小」字段不相交（几何漂移，z 序"
+                                     "判据对象不存在）item0=("
+                                  << item0->frame.x << "," << item0->frame.y
+                                  << "," << item0->frame.width << "x"
+                                  << item0->frame.height << ") scaleField=("
+                                  << scaleFieldNow->frame.x << ","
+                                  << scaleFieldNow->frame.y << ","
+                                  << scaleFieldNow->frame.width << "x"
+                                  << scaleFieldNow->frame.height << ")\n";
+                        passed = false;
+                    }
+                    // 主判据 1：绘制序 —— LCA（桌宠卡根）处 popup 侧子级
+                    // (skin.ddwrap) 子树上界必须严格大于字段侧 (scale.ddwrap)
+                    if (!probe::assertDrawnAbove(*ui, skinPopupId, scaleDd + ".field")) {
+                        std::cerr << "settings_dropdown_z_probe: 绘制序断言失败："
+                                     "皮肤弹层未压过下方「大小」字段\n";
+                        passed = false;
+                    }
+                    // 主判据 2：重叠区真命中 —— 点「弹层首项 ∩ 大小字段」交集
+                    // 中心（保证点在真重叠区内；项中心可能落在交集外，那样
+                    // 命中序根本没被考验）→ 选中皮肤项并收起；「大小」下拉不得
+                    // 被误开（pre-fix 命中序同病：点击被 scale.dd.field 截获 →
+                    // scale 弹层 .hit enabled → 红）
+                    const float ox = std::max(item0->frame.x, scaleFieldNow->frame.x);
+                    const float oy = std::max(item0->frame.y, scaleFieldNow->frame.y);
+                    const float oRight = std::min(
+                        item0->frame.x + item0->frame.width,
+                        scaleFieldNow->frame.x + scaleFieldNow->frame.width);
+                    const float oBottom = std::min(
+                        item0->frame.y + item0->frame.height,
+                        scaleFieldNow->frame.y + scaleFieldNow->frame.height);
+                    clickPoint((ox + oRight) * 0.5f, (oy + oBottom) * 0.5f);
+                    composeFrame();
+                    const core::dsl::Element* skinHit =
+                        ui != nullptr ? ui->find(skinPopupId + ".hit") : nullptr;
+                    const core::dsl::Element* scaleHit =
+                        ui != nullptr ? ui->find(scaleDd + ".popup.hit") : nullptr;
+                    if (skinHit == nullptr || !skinHit->disabled) {
+                        std::cerr << "settings_dropdown_z_probe: 皮肤弹层未收起"
+                                     "（.hit disabled="
+                                  << (skinHit != nullptr && skinHit->disabled ? 1 : 0)
+                                  << "）——弹层首项点击未生效\n";
+                        passed = false;
+                    }
+                    if (scaleHit == nullptr || !scaleHit->disabled) {
+                        std::cerr << "settings_dropdown_z_probe: 「大小」下拉被"
+                                     "误开（其弹层 .hit disabled="
+                                  << (scaleHit != nullptr && scaleHit->disabled ? 1 : 0)
+                                  << "）——重叠区点击被下方字段截获\n";
+                        passed = false;
+                    }
+                    // 收尾：把「大小」下拉自身也过一遍开/L2/关（同卡下拉无
+                    // 相互遮挡回归）
+                    passed = verifyDropdown(scaleDd) && passed;
+                }
+            }
+        }
+    }
+
     mod->onStop();
     runtime.shutdown(false);
     core::releaseInputQueue(window);
     core::window::destroyWindow(window);
     probe::terminateWindowBackend();
+    test_support::setEnvVar("DEVDESK_PETS_DIR", "");
+    {
+        std::error_code ec;
+        std::filesystem::remove_all(petsDir, ec);
+    }
     if (!passed) std::cerr << "FAIL\n";
     return passed ? 0 : 1;
 }
