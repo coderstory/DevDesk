@@ -275,6 +275,37 @@ std::vector<std::string> detectOverlayConflicts(
     return warnings;
 }
 
+// 非 env 顶层键移除冲突检测（detectOverlayConflicts 的非 env 同构版，审计
+// CPX-12 同类问题的非 env 形态）：返回 3.5 步**即将从 live root 移除**的键名
+// ——判据 = 该键在 nonEnvKeys 并集里（曾被 DevDesk 接管写入）+ 本轮
+// pendingNonEnvKeys 不含它（这轮不再写）+ live root 里确有该键。
+// 第三条正是 ①真冲突：live 值可能是用户手写的，也可能只是上一轮 DevDesk 写的
+// 托管值（用户随后手改后两者在 live 形态上不可区分）——两种都意味着「移除会
+// 动到用户能看见的键」，故一律告警，用户自己判断要不要保留。
+// ②键在并集里但 root 里根本没有 → 本函数遍历不到（无可删之物）= 陈旧清理的
+// 正常路径，静默零噪音（防噪音回归有用例钉住）
+// 返回值已去重 + 排序（稳定输出，同批只报一次）
+std::vector<std::string> detectNonEnvRemovalConflicts(
+    const JsonObject& root, const std::vector<std::string>& nonEnvKeys,
+    const std::vector<std::string>& pendingNonEnvKeys) {
+    std::vector<std::string> hits;
+    for (const auto& key : root.keys()) {
+        if (key == "env") continue;   // env 块永不由 3.5 步移除
+        const bool pendingThisRound =
+            std::find(pendingNonEnvKeys.begin(), pendingNonEnvKeys.end(),
+                      key) != pendingNonEnvKeys.end();
+        if (pendingThisRound) continue;
+        const bool managedBefore =
+            std::find(nonEnvKeys.begin(), nonEnvKeys.end(), key) !=
+            nonEnvKeys.end();
+        if (!managedBefore) continue;   // 从未托管 = 用户自己的键，不碰
+        hits.push_back(key);
+    }
+    std::sort(hits.begin(), hits.end());
+    hits.erase(std::unique(hits.begin(), hits.end()), hits.end());
+    return hits;
+}
+
 } // namespace
 
 Paths defaultPaths() {
@@ -457,6 +488,22 @@ SyncResult takeOver(const Profile& profile, int proxyPort, const Paths& paths) {
     // 并集里、但本轮不写的键从 root 移除（如上一轮 JSON 有 statusLine、本轮
     // 删掉了——留着会把上一轮的托管值固化成用户配置）。本轮写的键由下方
     // apply 步写入，不在此列
+    // 移除**前**先取冲突清单（审计 CPX-12 的非 env 形态：此处原为静默删除，
+    // 用户手写的同名键被无声抹掉而毫不知情）。清单并入 out.warnings——与
+    // detectOverlayConflicts 同一个出口（→ SettingsTakeOver::warnings_ →
+    // lastSyncWarnings → UI 详情页 / 设置页告警行，用户可见）
+    std::vector<std::string> nonEnvRemovalWarnings;
+    {
+        const std::vector<std::string> removed =
+            detectNonEnvRemovalConflicts(root, nonEnvKeys, pendingNonEnvKeys);
+        if (!removed.empty()) {
+            nonEnvRemovalWarnings.push_back(
+                "settings.json 顶层键 " + joinKeys(removed) +
+                " 曾被 DevDesk 接管写入，本轮接管会移除 live 文件中的同名手写值"
+                "（还原时按接管前快照恢复或删除）；如需保留该配置，请在 DevDesk 的"
+                "高级配置 JSON 里改，不要直接手改 settings.json");
+        }
+    }
     {
         JsonObject kept;
         for (const auto& key : root.keys()) {
@@ -508,10 +555,13 @@ SyncResult takeOver(const Profile& profile, int proxyPort, const Paths& paths) {
         return out;
     }
 
-    // 6. 上层覆盖检测（只警告不代改）+ 快照污染守卫命中
+    // 6. 上层覆盖检测（只警告不代改）+ 快照污染守卫命中 + 非 env 托管键
+    //    移除冲突（3.5 步收集）。三源同出口，UI 可见
     out.warnings = detectOverlayConflicts(paths, managedKeys);
     out.warnings.insert(out.warnings.end(), snapshotWarnings.begin(),
                         snapshotWarnings.end());
+    out.warnings.insert(out.warnings.end(), nonEnvRemovalWarnings.begin(),
+                        nonEnvRemovalWarnings.end());
     for (const auto& warn : out.warnings) {
         LOG_WARN("settings_sync: " + warn);
     }
