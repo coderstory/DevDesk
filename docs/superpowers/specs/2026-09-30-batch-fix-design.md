@@ -35,7 +35,7 @@
 | **D-B3** | 详情页 tabs 由四变五：`基础信息 / 模型映射 / 环境变量 / 高级配置 / 最近调用`（插在环境变量后、最近调用前，`detailTab_: 3=高级配置, 4=最近调用`） | 高级配置属属性展示，最近调用是时序记录，二者语义不同层；既有用例/探针经 `claude.detail.tabs.hit.3` 导航锚按索引点击处 +1（`detailTab_` 在测试代码零引用，见 §3.5 风险 3） |
 | **D-C1** | 「复制」改名「**建副本**」（详情 `claude.act.dup` 按钮 + 列表右键菜单项 + 相关 toast 文案），功能（`duplicateProfile`）零改动 | 09-27 spec 拍板过「复制=建副本」且功能正常；用户预期冲突纯粹是文案歧义 |
 | **D-C2** | 新增「**复制配置**」：把当前选中 profile 序列化成 settings.json 形态 JSON（`{"env": {...}}`）写系统剪贴板；**默认占位** apiKeyHint（前6+`***`+尾4，如 `sk-ant***1234`），不导出明文 key | 安全决策，理由见 §4.2；「含明文 key」的导出形态**不做**（已裁决 §5①） |
-| **D-C3** | 「复制配置」入口：详情操作按钮组第 7 键 + 列表右键菜单新增一项；服务层零改动 | 见 §4.3 布局与 §5⑥ |
+| **D-C3** | 「复制配置」入口：详情操作按钮组第 6 键 + 列表右键菜单新增一项；服务层零改动 | 见 §4.3 布局与 §5⑥ |
 
 ---
 
@@ -226,7 +226,7 @@
 |------|------|
 | `src/module_claude_proxy/claude_ui_logic.h/.cpp` | `buildProfileExportJson` 纯函数 |
 | `src/module_claude_proxy/claude_ui_detail.h` | `DetailActions` +`copyConfig` |
-| `src/module_claude_proxy/claude_ui_detail.cpp` | 改名（2 处文案）+ 第 7 键 + `actW` 公式 |
+| `src/module_claude_proxy/claude_ui_detail.cpp` | 改名（2 处文案）+ 第 6 键 + `actW` 公式 |
 | `src/module_claude_proxy/claude_ui_list.h/.cpp` | 菜单项改名 + 新项 + index 映射 + `ProfileListActions` +1 回调 |
 | `src/module_claude_proxy/claude_module.cpp` | 两处回调接线（详情 copyConfig / 列表 requestCopyConfig）+ include `core/window/window_backend.h` |
 | `tests/test_modules/test_claude_ui.cpp` | 序列化形状 / 改名 / index 映射 / 7 键几何用例 |
