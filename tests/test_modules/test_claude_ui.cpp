@@ -4414,10 +4414,11 @@ REGISTER_TEST(claude_ui_logic_pure_functions,
 })
 
 // ---- 28. 复制配置（2026-09-30 batch-fix C，设计 §4.2/§4.4）----
-// 纯函数形状：{"env":{...}} 顶层 / 尾斜杠剥离 / 三态凭据键 / 槽位 / extra_env /
-// 片段冻结键赢 / 占位非明文 / 空占位无凭据键
+// 纯函数形状：{"env":{...}} 顶层 / 尾斜杠剥离 / 槽位 / extra_env /
+// 片段冻结键赢 / 恒无凭据键（merge-review 2026-09-30：占位与 extra_env
+// 自填 token 一律不进导出）
 REGISTER_TEST(claude_export_json_shape,
-              "claude_module: buildProfileExportJson 形状（顶层 env/尾斜杠/三态键/片段赢/占位）", {
+              "claude_module: buildProfileExportJson 形状（顶层 env/尾斜杠/恒无凭据键/片段赢/extra_env）", {
     module::claude::Profile p;
     p.id = 7;
     p.name = "导出";
@@ -4438,7 +4439,8 @@ REGISTER_TEST(claude_export_json_shape,
         return envVal.asObject();
     };
 
-    // bearer：AUTH_TOKEN（占位，非明文）+ BASE_URL（尾斜杠已去）+ 槽位 + extra
+    // bearer：BASE_URL（尾斜杠已去）+ 槽位 + extra；凭据键恒不导出
+    //（merge-review 2026-09-30：占位 token 也不再进剪贴板）
     const std::string j1 = buildProfileExportJson(p, "", p.apiKeyHint);
     {
         auto doc = platform::json::parse(j1);
@@ -4450,31 +4452,42 @@ REGISTER_TEST(claude_export_json_shape,
         const auto env = envOf(j1);
         DOCTEST_CHECK_EQ(env.get("ANTHROPIC_BASE_URL").asString(),
                          std::string("https://exp.example.com"));
-        DOCTEST_CHECK_EQ(env.get("ANTHROPIC_AUTH_TOKEN").asString(),
-                         std::string("sk-ant-***1234"));   // 占位，非明文
+        DOCTEST_CHECK(!env.get("ANTHROPIC_AUTH_TOKEN").isString());
         DOCTEST_CHECK(!env.get("ANTHROPIC_API_KEY").isString());
         DOCTEST_CHECK_EQ(env.get("ANTHROPIC_MODEL").asString(),
                          std::string("m-expo"));
         DOCTEST_CHECK_EQ(env.get("MY_EXPORT_KEY").asString(), std::string("v1"));
     }
-    // api_key / both 三态键名各断言
+    // api_key / both：键名差异只剩 buildDirectEnv 内部三态，导出侧一律剔除
     {
         module::claude::Profile pk = p;
         pk.authField = "api_key";
         const auto env = envOf(buildProfileExportJson(pk, "", pk.apiKeyHint));
-        DOCTEST_CHECK_EQ(env.get("ANTHROPIC_API_KEY").asString(),
-                         std::string("sk-ant-***1234"));
+        DOCTEST_CHECK(!env.get("ANTHROPIC_API_KEY").isString());
         DOCTEST_CHECK(!env.get("ANTHROPIC_AUTH_TOKEN").isString());
     }
     {
         module::claude::Profile pb = p;
         pb.authField = "both";
         const auto env = envOf(buildProfileExportJson(pb, "", pb.apiKeyHint));
-        DOCTEST_CHECK_EQ(env.get("ANTHROPIC_AUTH_TOKEN").asString(),
-                         std::string("sk-ant-***1234"));
+        DOCTEST_CHECK(!env.get("ANTHROPIC_AUTH_TOKEN").isString());
         DOCTEST_CHECK(!env.get("ANTHROPIC_API_KEY").isString());
     }
-    // 空占位（Keychain 读不到）→ 无凭据键
+    // 空占位（Keychain 读不到）+ extra_env 自填 token（merge-review 2026-09-30
+    // 🔴：此形态曾是明文泄漏口）→ 两个凭据键一律不进导出，其余 env 照常
+    {
+        module::claude::Profile pe = p;
+        pe.extraEnvJson =
+            R"({"ANTHROPIC_API_KEY":"sk-user-plain-aaa",)"
+            R"("ANTHROPIC_AUTH_TOKEN":"sk-user-plain-bbb","MY_EXPORT_KEY":"v1"})";
+        const auto env = envOf(buildProfileExportJson(pe, "", std::string()));
+        DOCTEST_CHECK(!env.get("ANTHROPIC_API_KEY").isString());
+        DOCTEST_CHECK(!env.get("ANTHROPIC_AUTH_TOKEN").isString());
+        DOCTEST_CHECK_EQ(env.get("MY_EXPORT_KEY").asString(), std::string("v1"));
+        DOCTEST_CHECK_EQ(env.get("ANTHROPIC_BASE_URL").asString(),
+                         std::string("https://exp.example.com"));
+    }
+    // 空占位、extra_env 无凭据键 → 同样无凭据键（Keychain 读不到的兜底形态）
     {
         const auto env = envOf(buildProfileExportJson(p, "", std::string()));
         DOCTEST_CHECK(!env.get("ANTHROPIC_AUTH_TOKEN").isString());
@@ -5853,8 +5866,8 @@ REGISTER_TEST(claude_export_full_settings_shape,
     DOCTEST_CHECK_EQ(root.get("statusLine").asObject().get("type").asString(),
                      std::string("command"));
     const auto env = root.get("env").asObject();
-    DOCTEST_CHECK_EQ(env.get("ANTHROPIC_AUTH_TOKEN").asString(),
-                     std::string("sk-ant-***9876"));   // 占位非明文
+    DOCTEST_CHECK(!env.get("ANTHROPIC_AUTH_TOKEN").isString());   // 恒无凭据键
+    DOCTEST_CHECK(!env.get("ANTHROPIC_API_KEY").isString());
     DOCTEST_CHECK_EQ(env.get("MY_FULL_KEY").asString(), std::string("v1"));
     // pretty 文本（可直接粘贴进 settings.json 的形态，含两空格缩进）
     DOCTEST_CHECK(j.find("\n  \"") != std::string::npos);

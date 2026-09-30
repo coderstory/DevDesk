@@ -42,17 +42,20 @@ const SharedConfig* findSharedById(const std::vector<SharedConfig>& configs,
 
 // 「复制配置」序列化（2026-09-30 batch-fix C §4.2② 建立；advanced-json-editor
 // §6 升级为**完整 settings.json 形态**，已拍板②；纯函数，无 IO）：
-// env 域复用 buildDirectEnv 纯函数（BASE_URL 去尾斜杠 / 密钥键三态 / 槽位 /
-// extra_env 别名归一——与「运行」临时 settings 同一条管线）；非 env 域追加
+// env 域复用 buildDirectEnv 纯函数（BASE_URL 去尾斜杠 / 槽位 / extra_env 别名
+// 归一——与「运行」临时 settings 同一条管线）；非 env 域追加
 // effectiveExtraSettingsJson(p.extraSettingsJson, fragmentJson) 并入顶层
 //（片段叠加 + 片段赢，advanced-json-editor §4.2）。fragmentJson = 所绑片段的
 // extra_settings_json 原文（JSON 域，自 cachedSharedConfigs_ 快照取；空串 =
 // 未绑定）。序列化 = stringify(pretty)——完整形态 = 用户可直接粘贴进
 // settings.json 的文本（键序为字典序，D-2 同一条通道）。
-// keyPlaceholder = 凭据键的占位值："sk-ant-***<尾4>"（与详情页 apiKeyHint 同一
-// 脱敏口径，已裁决 §5②）；**不导明文 key**（剪贴板是跨应用共享面，§5① 裁决）；
-// 传空串 → buildDirectEnv 空值不写凭据键，导出即无 token 键（Keychain 读不到
-// 的兜底形态）。序列化失败（理论不可达）→ 返回空串，调用方按失败处理。
+// **导出契约（merge-review 2026-09-30）：任何情况下导出 JSON 都不含凭据键**——
+// buildDirectEnv 返回后无条件剔除 ANTHROPIC_API_KEY / ANTHROPIC_AUTH_TOKEN，
+// 无论来源（Keychain 占位、extra_env 用户自填明文均不进剪贴板，§5① 裁决）。
+// keyPlaceholder 形参保留（与「运行」管线同签名），其值不再进入导出内容。
+// 运行链不在此契约内：claude_service.cpp runProfile 传真钥，extra_env 自带
+// token 是运行链的合法供给方式。序列化失败（理论不可达）→ 返回空串，调用方
+// 按失败处理。
 std::string buildProfileExportJson(const Profile& p,
                                    const std::string& fragmentJson,
                                    const std::string& keyPlaceholder);
@@ -61,7 +64,7 @@ std::string buildProfileExportJson(const Profile& p,
 // 常量落 logic 层供无头断言，模块层直出）
 inline constexpr const char* kCopyConfigToastSubtitle =
     "已把该 Profile 的完整 settings.json 配置（env + 高级属性）导出到剪贴板"
-    "（API Key 为占位符，不含明文）";
+    "（已剔除凭据键，不含明文）";
 
 // ---- 调用记录弹窗常量（审计 [11]）----
 //
