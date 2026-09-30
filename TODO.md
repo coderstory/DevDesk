@@ -52,7 +52,7 @@
 
 ### 9. EUI-NEO 上游
 - ✅ `5b0cd34` styledmenu dismiss rect + requestDismiss 按值参数防 UAF
-- **永不 push 到 origin（2026-09-28 用户决策）**：EUI-NEO 本地 main 领先 origin 82 个提交（2026-09-28 实测），已决策永不推送——origin/main 停在 v0.6.0，本地领先是长期状态、提交数只会继续增长，不再按「待 push」跟踪。
+- **永不 push 到 origin（2026-09-28 用户决策）**：EUI-NEO 本地 main 领先 origin 94 个提交（2026-09-30 实测），已决策永不推送——origin/main 停在 v0.6.0，本地领先是长期状态、提交数只会继续增长，不再按「待 push」跟踪。
 
 ### 10. About 页布局调整（2026-09-28 真机反馈）
 - ✅ **已完成**（`a97355b`）
@@ -127,4 +127,4 @@
 - 全在 `master`（ddf3425 起 22+ commit）
 - 无残留 worktree
 - 未提交改动：`tests/probes/` 下 3 个 probe 源文件未跟踪（`claude_probes.cpp` / `home_probes.cpp` / `markdown_probes.cpp`，共 942 行，见 §4）——此前记的「0 未提交改动」不成立；除此之外工作区干净
-- EUI-NEO：**永不 push 到 origin（2026-09-28 用户决策）**，origin/main 停在 v0.6.0；本地 main 领先 origin 82 个提交（2026-09-28 实测）为长期状态，不再有「待 push」事项（见 §9）
+- EUI-NEO：**永不 push 到 origin（2026-09-28 用户决策）**，origin/main 停在 v0.6.0；本地 main 领先 origin 94 个提交（2026-09-30 实测）为长期状态，不再有「待 push」事项（见 §9）
