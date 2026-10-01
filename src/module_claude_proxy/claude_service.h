@@ -399,6 +399,13 @@ private:
     // settingsTakeover_.paths().settingsFile 为空 → 直接返回
     core::Result<void> syncCaptureActiveProfile();
 
+    // spec §10 线程模型 / agent M2 Task 8：setActiveProfile 的**服务内互斥锁**。
+    // 该方法体内有 DB 事务 + settings.json 接管同步（文件写 + Keychain）+ warnings_
+    // 内存态，agent 工作线程（claude.switch_profile 工具）与 UI 线程可并发进入——
+    // 靠这把锁串行。**只护这一个写方法**：其余读方法按本文件既有裁定（纯读随调用
+    // 方 SqliteDb recursive_mutex 串行化，见 resolveModelSlot 注释）保持无锁
+    std::mutex switchMutex_;
+
     core::data::SqliteDb& db_;
     CallLogStore callLogStore_;
     // R10-A2：claude_profiles 行 + SharedConfig 片段 + Keychain 条目的唯一

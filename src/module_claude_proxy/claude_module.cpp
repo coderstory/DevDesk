@@ -21,6 +21,7 @@
 // 本文件保留：Module 接口、compose 骨架（分区委派）、事件回调接线、onStart/
 // onStop、真接 ClaudeService 的操作。
 #include "claude_service.h"
+#include "claude_tools.h"
 #include "claude_ui_detail.h"
 #include "claude_ui_form.h"
 #include "claude_ui_list.h"
@@ -43,6 +44,7 @@
 #include <algorithm>
 #include <atomic>
 #include <ctime>
+#include <memory>
 #include <string>
 #include <thread>
 #include <vector>
@@ -355,6 +357,12 @@ public:
         } else {
             LOG_INFO("onStart: 代理未运行（默认不自动启动，等待用户手动启动）");
         }
+        // agent M2 Task 8：智能体工具注册（claude.* 四工具）。ClaudeService 就绪
+        // 后即挂；off 后 claudeTools_ 已被 onStop 置空，此处正常重挂（重入用例的
+        // find-ok 断言会抓到跳过）。注册失败只记日志——onStart 无错误回传通道，
+        // 注册表冲突属于要修的装配 bug（MarkdownTools 同款）
+        claudeTools_ = std::make_unique<ClaudeTools>(*svc);
+        claudeTools_->registerAll();
     }
 
     // 审计 perf [13]：进入页面（切页回来/同页重入）标记缓存脏，下一帧 compose
@@ -365,6 +373,13 @@ public:
         // 重入幂等（活门控 Task 4）：未启动的 off = no-op
         if (!started_) return;
         LOG_INFO("Claude 模块停止");
+        // agent M2 Task 8：智能体工具先注销（工具引用 ClaudeService::global()；
+        // onStart 早退时是 null = no-op），**先于**停代理——spec §3 teardown 契约：
+        // 工具不活过收尾（在跑 run 的收尾窗口里不再有新工具调用打进来）
+        if (claudeTools_) {
+            claudeTools_->unregisterAll();
+            claudeTools_.reset();
+        }
         ClaudeService* svc = ClaudeService::global();
         if (svc && svc->isProxyRunning()) {
             svc->stopProxy();
@@ -862,6 +877,12 @@ private:
     std::string testResultMsg_;
     bool testResultIsError_ = false;
     bool testResultStartProxy_ = false;
+
+    // agent M2 Task 8：智能体工具集（claude.list_profiles / switch_profile /
+    // test_connection / recent_logs），持有 ClaudeService::global() 的引用
+    //（进程级单例，生命周期长于本模块）。onStart 注册 / onStop 先注销；null =
+    // 未注册（onStart 早退或 onStop 已清理）
+    std::unique_ptr<ClaudeTools> claudeTools_;
 
     // 重入幂等守卫（活门控 Task 4）：double-onStart = no-op（不重跑同步首刷
     // 与孤儿 Keychain 清理）；double-onStop / 未启动的 off = no-op
