@@ -23,6 +23,7 @@
 #include <filesystem>
 #include <fstream>
 #include <memory>
+#include <sstream>
 #include <string>
 #include <system_error>
 
@@ -146,6 +147,57 @@ REGISTER_TEST(md_tools_read_missing_path_is_error,
     DOCTEST_REQUIRE(r.isOk());
     DOCTEST_CHECK(r.value().isError);
     DOCTEST_CHECK(r.value().contentJson.find("读取") != std::string::npos);
+    return true;
+})
+
+// M2 静态审计 F1（high，应用级致命）：md.read 是唯一「回文件原文」的工具，
+// 且**没有**任何自检。非 UTF-8 笔记（GBK / Latin-1 / 二进制——中文用户极常见）
+// 原样进 JSON 组装链路：platform::json 的 stringify 允许非法字节通过
+//（json.cpp YYJSON_WRITE_ALLOW_INVALID_UNICODE）而 parse 拒绝（默认 flag 严格
+// 校验 UTF-8）→ AgentLoop 的 parseArrayOrDie 自检判 fail → LOG_FATAL +
+// std::abort ⇒ **整个应用死亡**（未保存的笔记 / 待办 / 设置全丢），M2 起还发生
+// 在无人值守的 cron run 里。
+// 修复口径（工具边界，最小惊讶 + 零数据损坏）：读后校验 UTF-8，非法 → 走既有
+// toolError 通道（Result ok + isError + 中文说明）回喂 LLM，**不动盘上的原
+// 笔记**、也不把乱码当正文喂模型（乱码有被 md.update 原样写回、把用户笔记彻底
+// 毁掉的风险）。用户/模型收到的是可行动的显式失败，不是进程消失。
+// 红（修复前）：isError 断言失败——工具返回 ok + 原始非法字节；
+// 绿（修复后）：isError + 说明含「UTF-8」+ 回喂文本可被 platform::json 严格
+// 解析（= 良构 UTF-8，不再能打到 AgentLoop 的自检 abort）。
+REGISTER_TEST(md_tools_read_non_utf8_note_is_error,
+              "md.read: 非 UTF-8 笔记（GBK）→ isError 回喂，不触发 AgentLoop abort", {
+    ToolEnv env("read_gbk");
+    DOCTEST_REQUIRE(seedNotes(*env.svc));
+    env.tools->registerAll();
+
+    // 直接按字节落盘：GBK 的「中文」= D6 D0 CE C4（D6 是合法 UTF-8 前导，
+    // 但 D0 不是合法续字节 → 严格校验必拒）。不经 svc.write（那是文本路径，
+    // 且会把笔记写进索引——本用例只要磁盘上有这么一个文件）
+    const std::filesystem::path gbk = env.env.dir / "notes_gbk.md";
+    {
+        std::ofstream out(gbk, std::ios::binary | std::ios::trunc);
+        DOCTEST_REQUIRE(out.good());
+        out << "GBK note: \xD6\xD0\xCE\xC4\n";
+    }
+
+    auto r = runTool("md.read", R"({"path":"notes_gbk.md"})");
+    DOCTEST_REQUIRE(r.isOk());              // 工具级错误（不是 Result::fail）
+    DOCTEST_CHECK(r.value().isError);       // 修复前：false（原样回喂非法字节）
+    DOCTEST_CHECK(r.value().contentJson.find("UTF-8") != std::string::npos);
+    // 决定性断言：回喂文本必须能被严格 JSON 解析（非法 UTF-8 会被拒）——
+    // 即「abort 路径从工具输出不可达」在工具边界成立
+    DOCTEST_CHECK(platform::json::parse(r.value().contentJson).isOk());
+    // 原始 GBK 字节一个都不许出现在回喂里
+    DOCTEST_CHECK(r.value().contentJson.find(std::string("\xD6\xD0", 2)) ==
+                  std::string::npos);
+
+    // 非破坏：磁盘上的原笔记一字未改（工具只拒绝回喂）
+    {
+        std::ifstream in(gbk, std::ios::binary);
+        std::ostringstream oss;
+        oss << in.rdbuf();
+        DOCTEST_CHECK_EQ(oss.str(), std::string("GBK note: \xD6\xD0\xCE\xC4\n"));
+    }
     return true;
 })
 

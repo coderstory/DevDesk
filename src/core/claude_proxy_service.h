@@ -40,7 +40,8 @@ public:
 
     // ---- Claude Code settings 接管（设置页接管状态行 / 覆盖警告）----
     virtual bool isClaudeCodeManaged() const = 0;
-    virtual const std::vector<std::string>& lastSyncWarnings() const = 0;
+    // 按值（快照）——实现侧可能被 agent 线程改写（F2，M2 静态审计）
+    virtual std::vector<std::string> lastSyncWarnings() const = 0;
     // 接管实际使用的 settings.json 路径（配置通道未注入 = 空串）。设置页只用
     // 它做展示文本，故直接给 string，不把 filesystem::path 摆进接口
     virtual std::string settingsFilePath() const = 0;
@@ -105,13 +106,12 @@ public:
         return svc != nullptr && svc->isClaudeCodeManaged();
     }
 
-    const std::vector<std::string>& lastSyncWarnings() const override {
+    std::vector<std::string> lastSyncWarnings() const override {
         T* svc = T::global();
         if (svc != nullptr) {
             return svc->lastSyncWarnings();
         }
-        static const std::vector<std::string> kNoWarnings;
-        return kNoWarnings;
+        return {};
     }
 
     std::string settingsFilePath() const override {

@@ -46,7 +46,7 @@
 #include "module_agent/agent_loop.h"
 #include "module_agent/app_stats_tool.h"
 #include "module_agent/cron.h"
-#include "platform/json.h"
+#include "module_agent/trigger_config.h"
 
 namespace module::agent {
 namespace {
@@ -224,12 +224,17 @@ int parseIterInput(const std::string& text) {
     return any ? value : 0;
 }
 
-// trigger_config JSON 里的 cron 原文（只读展示用）；缺字段 / 坏 JSON → 空串
+// trigger_config 里的 cron 原文（只读展示用）。解析走 trigger_config.h 的唯一
+// 解码点（ARCH-02）；失败 → 表单显示空串（用户可重填），但**必须留痕**：
+// manual 任务的空 trigger_config 是正常态（不刷警告），schedule 任务的坏配置
+// 若无声吞掉，UI 上就是「任务存在、永不触发、没有任何提示」
 std::string cronTextOf(const AgentTaskRow& task) {
-    auto cfg = platform::json::parse(task.triggerConfig);
-    if (cfg.isOk() && cfg.value().isObject()) {
-        auto v = cfg.value().asObject().get("cron");
-        if (v.isString()) return v.asString();
+    auto cfg = decodeTriggerConfig(task.triggerConfig);
+    if (cfg.isOk()) return cfg.value().cron;
+    if (!task.triggerConfig.empty()) {
+        LOG_WARN("Agent: 任务 " + std::to_string(task.id) +
+                 " 的 trigger_config 无法解析（编辑表单按空 cron 显示）：" +
+                 cfg.errorMessage());
     }
     return {};
 }
@@ -536,8 +541,17 @@ void AgentModule::saveTaskEdit() {
             editError_ = "cron 表达式非法：" + expr.errorMessage();
             return;
         }
-        // 校验通过的表达式只含 [0-9 * , - / 空格]，直接拼进 JSON 无需转义
-        triggerConfig = std::string(R"({"cron":")") + cron + R"("})";
+        // ARCH-02（M2 静态审计）：编码唯一落点 = trigger_config.h。此前在这里
+        // 手拼 `{"cron":"<expr>"}`，靠「校验通过的表达式只含 [0-9 * , - / 空格]」
+        // 这条推理免转义——表达式字符集一变、或 trigger_config 加第二个键，
+        // 手拼点就得逐个想起来
+        auto encoded = encodeTriggerConfig(TriggerConfig{cron});
+        if (encoded.isFail()) {
+            editError_ = "保存失败：" + encoded.errorMessage();
+            LOG_ERROR("Agent: 触发配置编码失败: " + encoded.errorMessage());
+            return;
+        }
+        triggerConfig = encoded.value();
     }
     const int iter = editIter_ < 1 ? 1 : (editIter_ > 50 ? 50 : editIter_);
     auto updated = store_->updateTask(*editingTaskId_, deriveTaskName(goal), goal,

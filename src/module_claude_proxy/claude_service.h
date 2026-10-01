@@ -335,8 +335,13 @@ public:
     // 已接管（sidecar 快照存在；设置页「接管状态」行数据源，Phase D UI 用）
     bool isClaudeCodeManaged() const;
 
-    // 最近一次接管的上层覆盖检测警告（Phase D UI 展示；无警告为空）
-    const std::vector<std::string>& lastSyncWarnings() const;
+    // 最近一次接管的上层覆盖检测警告（Phase D UI 展示；无警告为空）。
+    // **按值返回快照**（F2，M2 静态审计）：M2 起 agent 线程的
+    // claude.switch_profile 会经 setActiveProfile → syncTakeOver 整体重写警告表，
+    // 而 UI 每帧读它——返回活引用即数据竞争 / UAF。快照在协议侧锁内拷贝
+    // （SettingsTakeOver::warningsSnapshot），本方法不取 switchMutex_：UI 每帧
+    // 调用不该被切 profile 的 DB 事务 / Keychain 访问阻塞
+    std::vector<std::string> lastSyncWarnings() const;
 
     // 启动崩溃补还原：sidecar 残留（上次没走完还原）→ 先还原。
     // main.cpp 在任何 startProxy 之前调用（调用时序见 settings_sync.h）

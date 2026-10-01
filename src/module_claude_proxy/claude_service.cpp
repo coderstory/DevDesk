@@ -716,8 +716,10 @@ bool ClaudeService::isClaudeCodeManaged() const {
     return settingsTakeover_.isClaudeCodeManaged();
 }
 
-const std::vector<std::string>& ClaudeService::lastSyncWarnings() const {
-    return settingsTakeover_.warnings();
+std::vector<std::string> ClaudeService::lastSyncWarnings() const {
+    // F2（M2 静态审计）：值快照，不是活引用——跨线程写入口见
+    // setActiveProfile → syncTakeOver（agent 线程）
+    return settingsTakeover_.warningsSnapshot();
 }
 
 void ClaudeService::recoverPendingSettingsRestore() {

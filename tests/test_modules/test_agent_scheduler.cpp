@@ -9,11 +9,15 @@
 #include "module_agent/agent_store.h"
 #include "module_agent/scheduler.h"
 #include "core/llm_endpoint.h"
+#include "core/logging.h"
 #include "core/tool.h"
 #include <algorithm>
 #include <atomic>
 #include <chrono>
+#include <filesystem>
+#include <fstream>
 #include <mutex>
+#include <sstream>
 #include <string>
 #include <thread>
 #include <vector>
@@ -212,6 +216,61 @@ REGISTER_TEST(scheduler_tick_skips_disabled_manual_and_bad_cron,
     for (int64_t id : {dis.value(), man.value(), bad.value(), noCfg.value()})
         DOCTEST_CHECK(store.listRuns(id, 10).value().empty());
     sched.stopAll();
+    return true;
+})
+
+// ARCH-02（M2 静态审计，high）：坏 trigger_config 此前是**静默** continue——
+// 用户看到任务在列表里存在、永不触发、没有任何提示（UI 用同一份 JSON 渲染，
+// 两边对「配置是否有效」的判断还会各自漂移）。修复后：解码失败 = 一条带
+// task id 的 LOG_WARN + 本分钟不派发。
+// 红（修复前）：日志里没有该 task id 的 WARN（断言失败）；
+// 绿（修复后）：日志含 task id + 「trigger_config」，且仍然不派发。
+REGISTER_TEST(scheduler_bad_trigger_config_logs_and_skips,
+              "scheduler: trigger_config 坏 → LOG_WARN 点名 task id 后跳过（不再静默）", {
+    test_support::TestDb tdb("agentsched", "badcfg");
+    module::agent::AgentStore store(tdb.handle());
+    MockLlm llm; llm.script = { endTurnResp() };
+    module::agent::AgentLoop loop(llm, core::ToolRegistry::instance(), store);
+    module::agent::Scheduler sched(store, loop, [] { return int64_t(3600 * 24); });
+
+    auto bad = store.createTask("坏配置", "g", "schedule", "default", 5, false,
+                                R"({"cron":"BROKEN"})");     // 有值但非法
+    DOCTEST_REQUIRE(bad.isOk());
+    auto empty = store.createTask("空配置", "g", "schedule", "default", 5, false);
+    DOCTEST_REQUIRE(empty.isOk());                           // trigger_config = ''
+    auto badJson = store.createTask("非JSON", "g", "schedule", "default", 5, false,
+                                    "{ not json !!!");
+    DOCTEST_REQUIRE(badJson.isOk());
+    auto nonObj = store.createTask("非对象", "g", "schedule", "default", 5, false,
+                                   R"(["cron"])");
+    DOCTEST_REQUIRE(nonObj.isOk());
+
+    // 日志捕获：core::log 只有 addFileOutput（无关闭接口，test_logging.cpp 同款
+    // 先例）——捕获后本进程后续日志都写这个临时文件，不影响用例正确性
+    const auto logPath = test_temp::tempPath("devdesk_test_sched_badcfg.log");
+    std::error_code ec;
+    std::filesystem::remove(logPath, ec);
+    core::log::addFileOutput(logPath);
+
+    DOCTEST_REQUIRE(sched.tickNow().isOk());
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    DOCTEST_CHECK_EQ(sched.activeRunCount(), 0u);            // 一个都不派发
+    for (const auto& t : {bad, empty, badJson, nonObj})
+        DOCTEST_CHECK(store.listRuns(t.value(), 10).value().empty());
+    sched.stopAll();
+
+    std::ifstream in(logPath, std::ios::binary);
+    std::ostringstream oss;
+    oss << in.rdbuf();
+    const std::string logText = oss.str();
+    for (const auto& t : {bad, empty, badJson, nonObj}) {
+        // 修复前：整段日志里连 task id 都不出现（静默 continue）
+        DOCTEST_CHECK_MESSAGE(
+            logText.find("任务 " + std::to_string(t.value())) != std::string::npos,
+            logText);
+        DOCTEST_CHECK(logText.find("trigger_config") != std::string::npos);
+    }
+    // 恢复进程日志落点：后续用例（含 test_logging）各自管理自己的输出
     return true;
 })
 
