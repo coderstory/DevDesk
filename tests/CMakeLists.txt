@@ -42,6 +42,7 @@ add_executable(devdesk_tests
     test_modules/test_todo_tools.cpp
     test_modules/test_agent_store.cpp
     test_modules/test_agent_cron.cpp
+    test_modules/test_agent_scheduler.cpp
     test_modules/test_agent_loop.cpp
     test_modules/test_agent_tools.cpp
     test_modules/test_agent_ui.cpp
