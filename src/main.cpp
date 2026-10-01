@@ -149,9 +149,10 @@ void prepareClaudeServiceBeforeModules();
         // 表 → 门控清单 → 按页填实例 → 装配（preStart → 注册 → startAll →
         // atexit；顺序有 headless 用例守着）。元数据见 app_registry.h、
         // 装配语义见 app_assembly.h；表新增页不在持有集 → nullptr 容错跳过。
-        // 查找提为**无捕获** lambda（constexpr 局部 = 静态存储期，持有集是
-        // 本函数 static unique_ptr，无需捕获即可引用）→ 可转函数指针，与
-        // 活门控 dispatchModuleToggle 的 ModuleLookup 共用同一份查找（单点）
+        // 查找提为**无捕获** lambda：持有集 home/markdown/… 是本函数
+        // static unique_ptr——静态存储期变量免捕获，故 lambda 零捕获、
+        // 可转函数指针，与活门控 dispatchModuleToggle 的 ModuleLookup
+        // 共用同一份查找（单点）
         constexpr app::assembly::ModuleLookup moduleForPage =
             +[](::core::PageId page) -> ::core::Module* {
                 switch (page) {
@@ -184,9 +185,10 @@ void prepareClaudeServiceBeforeModules();
         // 活门控 handler 注入（Task 2 桥的真实现）：settings 页拨开关 →
         // persist → app::toggle::onModuleToggled → 这里。handler 是函数指针
         //（无捕获约束）：router 经 getRouter() 现取（此时装配已完成，再次
-        // 调用只返回既有静态指针），lookup 复用上方 moduleForPage（constexpr
-        // 局部，无捕获 lambda 可引用）。注册顺序在装配之后 = 运行期拨开关
-        // 才会触达，启动期行为零变化
+        // 调用只返回既有静态指针）；moduleForPage 是 constexpr 局部——
+        // 无捕获 lambda 引用它经 lvalue-to-rvalue 读出常量表达式、非
+        // odr-use，免捕获且值烙进编译期（无悬垂）。注册顺序在装配之后 =
+        // 运行期拨开关才会触达，启动期行为零变化
         app::toggle::setToggleHandler(
             [](const std::string& moduleId, bool on) {
                 app::assembly::dispatchModuleToggle(moduleId, on, *getRouter(),
