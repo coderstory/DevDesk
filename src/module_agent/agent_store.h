@@ -54,13 +54,14 @@ public:
     Result<int64_t> startRunExclusive(int64_t taskId);
     Result<int64_t> startRun(int64_t taskId);                    // INSERT status='running'
     // 七列覆盖 + updated_at；**enabled 不在此列**（启停归 setTaskEnabled，
-    // 编辑表单与启停开关是两个独立动作，互不覆盖）。
+    // 编辑表单与启停开关是两个独立动作，互不覆盖）。id 不存在（0 行变更）
+    // → NotFound（与 getTask 同口径）。
     Result<void> updateTask(int64_t id, const std::string& name, const std::string& goal,
                             const std::string& triggerType,
                             const std::string& triggerConfig,
                             const std::string& modelSlot, int maxIterations,
                             bool allowDestructive);
-    Result<void> setTaskEnabled(int64_t id, bool enabled);
+    Result<void> setTaskEnabled(int64_t id, bool enabled);   // 不存在 → NotFound
     Result<void> finishRun(int64_t runId, const std::string& status,
                            int iterations,
                            std::optional<int64_t> inputTokens,

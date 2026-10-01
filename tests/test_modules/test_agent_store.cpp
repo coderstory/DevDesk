@@ -146,7 +146,12 @@ REGISTER_TEST(agent_store_update_enable_get_roundtrip,
     auto off = store.getTask(taskId.value());
     DOCTEST_REQUIRE(off.isOk());
     DOCTEST_CHECK_FALSE(off.value().enabled);
-    DOCTEST_CHECK(store.getTask(99999).isFail());
+    DOCTEST_CHECK(store.getTask(99999).errorCode() == core::ErrorCode::NotFound);
+    // 一类一规则（评审裁定 a）：UPDATE 目标行不存在 → fail(NotFound)，
+    // 不静默 no-op（0 行变更判定，与 getTask 同口径）
+    DOCTEST_CHECK(store.updateTask(99999, "n", "g", "manual", "", "default", 1, false)
+                      .errorCode() == core::ErrorCode::NotFound);
+    DOCTEST_CHECK(store.setTaskEnabled(99999, false).errorCode() == core::ErrorCode::NotFound);
     return true;
 })
 

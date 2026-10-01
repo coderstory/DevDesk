@@ -224,6 +224,13 @@ Result<void> AgentStore::updateTask(int64_t id, const std::string& name,
     if (ok.isFail()) return Result<void>::fail(ok.errorCode(), ok.errorMessage());
     auto step = s.step();
     if (step.isFail()) return Result<void>::fail(step.errorCode(), step.errorMessage());
+    // 一类一规则（与 getTask 同口径）：id 不存在 → fail(NotFound)，不静默 no-op。
+    // UPDATE 影响 0 行即目标行不存在（同 todo_service.cpp:329 既有口径）；持锁
+    // 覆盖 step + sqlite3_changes，计数不会被并发语句插队（recursive_mutex）。
+    if (sqlite3_changes(db_.handle()) == 0) {
+        return Result<void>::fail(ErrorCode::NotFound,
+                                  "任务不存在：id=" + std::to_string(id));
+    }
     return Result<void>::ok();
 }
 
@@ -238,6 +245,11 @@ Result<void> AgentStore::setTaskEnabled(int64_t id, bool enabled) {
     if (ok.isFail()) return Result<void>::fail(ok.errorCode(), ok.errorMessage());
     auto step = s.step();
     if (step.isFail()) return Result<void>::fail(step.errorCode(), step.errorMessage());
+    // 同 updateTask：id 不存在 → fail(NotFound)，不静默 no-op
+    if (sqlite3_changes(db_.handle()) == 0) {
+        return Result<void>::fail(ErrorCode::NotFound,
+                                  "任务不存在：id=" + std::to_string(id));
+    }
     return Result<void>::ok();
 }
 
