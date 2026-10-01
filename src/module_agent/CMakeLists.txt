@@ -1,6 +1,7 @@
 add_library(devdesk_agent STATIC
     agent_store.cpp
     cron.cpp
+    trigger_config.cpp
     agent_loop.cpp
     scheduler.cpp
     app_stats_tool.cpp

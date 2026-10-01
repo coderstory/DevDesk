@@ -7,9 +7,12 @@
 #include "test_support.h"
 #include "module_agent/agent_loop.h"
 #include "module_agent/agent_store.h"
+#include "module_agent/trigger_config.h"
 #include "core/llm_endpoint.h"
 #include "core/tool.h"
+#include "platform/json.h"
 #include <atomic>
+#include <string>
 
 namespace {
 
@@ -242,5 +245,66 @@ REGISTER_TEST(agent_store_list_runs_tie_breaks_by_id,
     DOCTEST_REQUIRE_EQ(latest.value().size(), static_cast<size_t>(1));
     DOCTEST_CHECK_EQ(latest.value()[0].id, newer.value());
     DOCTEST_CHECK_EQ(latest.value()[0].status, std::string("completed"));
+    return true;
+})
+
+// ===== ARCH-02（M2 静态审计）：trigger_config 编解码唯一真源 =====
+//
+// 本组钉住「store 行 ↔ TriggerConfig 结构」的往返与坏配置的**可判定性**：
+// 修复前编解码散在三处（UI 手拼 / cronTextOf 裸 parse / 调度器裸 parse），
+// 谁都不能保证自己那份和后一份同口径——这里以「encode 出来的字符串经 createTask
+// 落库、getTask 读出、decode 回来的结构必须逐字段相等」把两端钉在一起。
+REGISTER_TEST(agent_store_trigger_config_roundtrip,
+              "agent_store: trigger_config 往返（encode → createTask → getTask → decode 逐字段一致）", {
+    test_support::TestDb tdb("agentstore", "trigcfg");
+    module::agent::AgentStore store(tdb.handle());
+
+    // 常规表达式 + **转义敏感**表达式（引号 / 反斜杠 / 制表符——手拼 JSON 时
+    // 必炸的字符；json 层转义才对）。decode 回来的结构必须逐字相等
+    for (const char* expr : {"0 9 * * 1-5", "* * * * *",
+                             R"(a"b\c	d)"}) {
+        const module::agent::TriggerConfig cfg{expr};
+        auto encoded = module::agent::encodeTriggerConfig(cfg);
+        DOCTEST_REQUIRE(encoded.isOk());
+        // 编码产物必须是**合法 JSON 对象**（不是手拼的近似物）
+        auto parsed = platform::json::parse(encoded.value());
+        DOCTEST_REQUIRE(parsed.isOk());
+        DOCTEST_CHECK(parsed.value().isObject());
+
+        auto taskId = store.createTask("往返", "g", "schedule", "default", 5, false,
+                                       encoded.value());
+        DOCTEST_REQUIRE(taskId.isOk());
+        auto row = store.getTask(taskId.value());
+        DOCTEST_REQUIRE(row.isOk());
+        DOCTEST_CHECK_EQ(row.value().triggerConfig, encoded.value());
+
+        auto decoded = module::agent::decodeTriggerConfig(row.value().triggerConfig);
+        DOCTEST_REQUIRE(decoded.isOk());
+        DOCTEST_CHECK_EQ(decoded.value().cron, std::string(expr));
+    }
+    return true;
+})
+
+REGISTER_TEST(agent_store_trigger_config_decode_rejects_malformed,
+              "trigger_config decode: 空/坏 JSON/非对象/缺 cron/空 cron → Result fail", {
+    using module::agent::decodeTriggerConfig;
+    // 空串 = 非 schedule（或未配置）任务的正常态，但对「要 cron 的人」是坏配置
+    DOCTEST_CHECK(decodeTriggerConfig("").isFail());
+    DOCTEST_CHECK(decodeTriggerConfig("{ not json !!!").isFail());
+    DOCTEST_CHECK(decodeTriggerConfig(R"(["cron"])").isFail());      // 非对象
+    DOCTEST_CHECK(decodeTriggerConfig("{}").isFail());               // 缺 cron
+    DOCTEST_CHECK(decodeTriggerConfig(R"({"cron":123})").isFail());  // 类型不符
+    DOCTEST_CHECK(decodeTriggerConfig(R"({"cron":""})").isFail());   // 空表达式
+    // 错误信息可读（调度器把它拼进点名 task id 的 WARN）
+    auto bad = decodeTriggerConfig(R"({"cron":""})");
+    DOCTEST_CHECK(!bad.errorMessage().empty());
+    // 正常态：合法对象 + 非空字符串
+    auto good = decodeTriggerConfig(R"({"cron":"* * * * *"})");
+    DOCTEST_REQUIRE(good.isOk());
+    DOCTEST_CHECK_EQ(good.value().cron, std::string("* * * * *"));
+    // 多余键不致命（向后兼容：以后加键，旧读取路径不会因此判坏）
+    auto extra = decodeTriggerConfig(R"({"cron":"* * * * *","tz":"UTC"})");
+    DOCTEST_REQUIRE(extra.isOk());
+    DOCTEST_CHECK_EQ(extra.value().cron, std::string("* * * * *"));
     return true;
 })

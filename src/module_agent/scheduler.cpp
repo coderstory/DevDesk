@@ -15,7 +15,7 @@
 #include "core/logging.h"
 #include "core/time.h"
 #include "module_agent/cron.h"
-#include "platform/json.h"
+#include "module_agent/trigger_config.h"
 
 namespace module::agent {
 namespace {
@@ -188,15 +188,24 @@ core::Result<void> Scheduler::tickNow() {
     core::time::localTime(static_cast<std::time_t>(nowSec), &local);   // tm_wday 同步填充
     for (const auto& t : tasks.value()) {
         if (!t.enabled || t.triggerType != "schedule") continue;
-        auto cfg = platform::json::parse(t.triggerConfig);
-        std::string cronText;
-        if (cfg.isOk() && cfg.value().isObject()) {
-            auto v = cfg.value().asObject().get("cron");
-            if (v.isString()) cronText = v.asString();
+        // ARCH-02（M2 静态审计）：trigger_config 的解析唯一落点 = trigger_config.h。
+        // 坏配置**不再静默 continue**——点名 task id 的 WARN 是用户唯一能看见
+        // 「任务存在却永不触发」的通道（此前只有 UI 照常渲染、调度器无声跳过）
+        auto cfg = decodeTriggerConfig(t.triggerConfig);
+        if (cfg.isFail()) {
+            LOG_WARN("Scheduler: 任务 " + std::to_string(t.id) +
+                     " 的 trigger_config 无法解析，本分钟跳过不派发：" +
+                     cfg.errorMessage());
+            continue;
         }
-        if (cronText.empty()) continue;              // 配置缺失/坏 → 静默跳过不派发
-        auto expr = parseCron(cronText);
-        if (expr.isFail()) continue;                 // 保存期已校验；运行期坏配置不炸 tick
+        auto expr = parseCron(cfg.value().cron);
+        if (expr.isFail()) {
+            // 保存期已校验；运行期坏 cron（旧数据 / 手工改库）同样不许静默
+            LOG_WARN("Scheduler: 任务 " + std::to_string(t.id) +
+                     " 的 trigger_config 里的 cron 表达式非法，本分钟跳过不派发：" +
+                     expr.errorMessage());
+            continue;
+        }
         if (!cronMatches(expr.value(), local)) continue;
         {   // 同分钟防重（spec §5.1 lastFiredMinute）
             std::lock_guard<std::mutex> lock(mu_);
