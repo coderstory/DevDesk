@@ -8,6 +8,8 @@
 #include <string>
 #include <utility>
 #include <vector>
+#include <chrono>
+#include <thread>
 
 // macOS 扫描路径测试缝（仅 __APPLE__ 有实现，见 keychain_macos_scan.h）：
 // 只把枚举/删除两个边界动作换成可注入函数指针，决策循环不动 → 接线可断言
@@ -355,18 +357,26 @@ REGISTER_TEST(keychain_legacy_naming_still_readable,
 
     // 用新编码写一份合法密文（DPAPI 只能同机同用户解，密文必须真造），
     // 再在磁盘上改名成旧规则的名字，模拟升级前留下的文件
-    DOCTEST_REQUIRE(platform::keychain::storeSecret(
-        service, account, "sk-legacy-value").isOk());
+    DOCTEST_REQUIRE_MESSAGE(platform::keychain::storeSecret(
+                                service, account, "sk-legacy-value").isOk(),
+                            "storeSecret 失败（造不出新编码密文，后续 rename 无从谈起）");
 
     const auto dir = core::paths::appDataDir() / "keychain" / service;
     const auto encoded = dir / "legacy%3Aprobe.key";
     const auto legacy = dir / "legacy_probe.key";
     std::error_code ec;
-    DOCTEST_REQUIRE(std::filesystem::exists(encoded, ec));
-    std::filesystem::remove(legacy, ec);
-    ec.clear();
-    std::filesystem::rename(encoded, legacy, ec);
-    DOCTEST_REQUIRE_MESSAGE(!ec, "模拟旧命名文件失败: " + ec.message());
+    DOCTEST_REQUIRE_MESSAGE(std::filesystem::exists(encoded, ec),
+                            "store 后 encoded 不存在: " + encoded.string());
+    // Windows：刚创建的文件可能被 AV/Defender 短暂占位（sharing violation），
+    // 立即 rename 会失败——有界重试（5 × 20ms），超限才红
+    for (int attempt = 1; ; ++attempt) {
+        std::filesystem::remove(legacy, ec);
+        ec.clear();
+        std::filesystem::rename(encoded, legacy, ec);
+        if (!ec || attempt >= 5) break;
+        std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    }
+    DOCTEST_REQUIRE_MESSAGE(!ec, "模拟旧命名文件失败(重试5次): " + ec.message());
 
     // 新编码路径缺失 → 回退读旧命名文件
     auto r = platform::keychain::loadSecret(service, account);

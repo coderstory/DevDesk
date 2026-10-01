@@ -393,7 +393,7 @@ fi
 if [ "$RUN_TEST" = "1" ]; then
   echo "── 测试 ──"
   TEST_OUT=$("$TEST_BIN" $FILTER 2>&1) || true
-  FAIL_LINES=$(echo "$TEST_OUT" | grep "\[FAIL\]" | head -20)
+  FAIL_LINES=$(echo "$TEST_OUT" | grep -E "\[FAIL\]|^FAIL \[" | head -20)
   if [ -n "$FAIL_LINES" ]; then echo "$FAIL_LINES"; fi
   echo "$TEST_OUT" | grep -E "^(Total|Passed|Failed):" | tr '\n' ' '
   echo ""
