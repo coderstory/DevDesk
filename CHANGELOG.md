@@ -6,6 +6,14 @@
 
 > **当前基线（2026-09-24，master @ 817af80）**：用例 **407**（`grep REGISTER_TEST` 口径，本会话 324 → 407；全绿与否以主会话终验为准）。各波次条目内的测试数为该波时点事实，不代表当前总数；波次按合并时间倒序排列。
 
+## [LazyAssemble] 2026-10-01 —— claude 服务惰性装配 + auto-start 会话内恢复 + 侧边栏表序插入（`adeb3b8`）
+
+- feat(assembly,claude)：**claude 服务惰性装配**——启动期 claude 模块关闭时不再创建 `ClaudeService`；会话内在设置页开启该模块即可**即时装配**服务，不再需要重启。落点：`module_toggle_bridge` 增第二桥函数 `ensureClaudeServiceAssembled`，`main.cpp` 侧 `assembleClaudeServiceNow` 幂等拆分（重复调用安全）。
+- feat(settings)：**auto-start 会话内恢复**——会话内开启 claude 模块时读取 `claudeProxyAutoStart` 配置，为真则自动启动代理。
+- fix(router)：**侧边栏表序插入**——`Router::registerModule` 改为按 `PageId` 表序插入，off→on 重注册回原位，不再 append 到末尾。
+- fix(assembly,claude)：**退出时序 UAF**——惰性装配使 `ClaudeService` 构造晚于 exit hook 注册，`atexit` LIFO 反转导致退出路径踩悬空指针；两层修法：`~ClaudeService` 清 global 指针做防御 + `getClaudeService` 改**永不析构堆持有**，保证退出时 `stopProxy` 正常还原 `settings.json`。
+- **已知边界更新**：`[LiveToggle]` 遗留的「claude 启动期被关闭后、会话内重新开启需重启才能完成装配接线」与「模块重新启用后回侧边栏末位」两条边界，本批已消除。
+
 ## [LiveToggle] 2026-10-01 —— 模块开关即时生效（路线 A 注册表活门控）（`39b44f5`，13 提交）
 
 - feat(router,assembly,settings)：设置页「模块」开关从**重启生效**改为**即时生效**——路线 A（注册表活门控）。三层落点：`Router` 活门控基座（`fc68ee0`，新增 `unregisterModule` + register/unregister 幂等）→ 装配层 `dispatchModuleToggle`（`615ca70`，on/off 驱动注册与模块生命周期 + 当前页停在该模块时重定向）→ `main.cpp` 装配段注入活门控 handler（`149b279`）+ settings 侧经中立层桥头接 `app::toggle`（`8f4cd65`，可注入缝）。
