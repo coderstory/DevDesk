@@ -71,7 +71,15 @@ bool parseItem(const std::string& item, int lo, int hi, bool* out) {
         }
     }
     if (start < lo || end > hi) return false;           // 越界
-    for (int v = start; v <= end; v += step) out[v] = true;
+    // 步长上界 = 字段跨度（hi-lo+1）：步长大于跨度只可能在起点命中一次，等价写法
+    // 是单值——拒绝它同时堵死「巨大 step 让步进 `v += step` 有符号溢出 → 数组越界写」
+    // 这条 UB（评审实测：`5/2147483647 * * * *` / `0 0 */2147483647 * *` SEGV）。
+    if (step > hi - lo + 1) return false;
+    for (int v = start; v <= end;) {
+        out[v] = true;
+        if (step > end - v) break;   // 再步进必越过 end（且 end-v ≥ 0，无溢出）
+        v += step;
+    }
     return true;
 }
 

@@ -400,3 +400,31 @@ REGISTER_TEST(scheduler_stopall_cancels_inflight_resident_run,
     DOCTEST_CHECK_EQ(sched.activeRunCount(), 0u);
     return true;
 })
+
+// 评审修复轮（2026-10-01）：enqueueResident 的 stopFlag 检查与 push 原本不在同一把
+// 锁内 → stopAll 窗口里 push 的条目永不被消费（常驻线程已退出）。修复后「已停则不接单」
+// 在 mu_ 内判定。本用例钉住可观察后果：stopAll 之后入队**不产生任何 run**（有界观察窗，
+// 无时序余量——幽灵单若被消费，10ms 内必见 run 行）。
+REGISTER_TEST(scheduler_resident_enqueue_after_stop_is_dropped,
+              "scheduler: stopAll 后 enqueueResident 被丢弃（不产生 run）", {
+    test_support::TestDb tdb("agentsched", "stopped");
+    module::agent::AgentStore store(tdb.handle());
+    MockLlm llm; llm.script = { toolUseResp("test.res"), endTurnResp() };
+    core::ToolRegistry::instance().unregisterTool("test.res");
+    FastToolForSched tool{"test.res"};
+    ToolRegGuard guard{core::ToolRegistry::instance(), &tool};
+    module::agent::AgentLoop loop(llm, core::ToolRegistry::instance(), store);
+    module::agent::Scheduler sched(store, loop, {});
+    auto taskId = store.createTask("停后入队", "g", "resident", "default", 5, false);
+    DOCTEST_REQUIRE(taskId.isOk());
+    sched.start();                                           // 起常驻线程
+    sched.stopAll();                                         // 先停（常驻线程已 join）
+    sched.enqueueResident(taskId.value());                   // 停止后入队 → 丢弃
+    DOCTEST_CHECK_EQ(sched.residentQueueSize(), 0u);         // 不留幽灵单（杀「摘守卫」变异）
+    for (int i = 0; i < 50; ++i) {                           // 有界观察窗（500ms 上限）
+        DOCTEST_CHECK(store.listRuns(taskId.value(), 10).value().empty());
+        DOCTEST_CHECK_EQ(sched.activeRunCount(), 0u);
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+    return true;
+})

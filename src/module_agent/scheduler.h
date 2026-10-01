@@ -3,6 +3,13 @@
 // 自己的 run 线程表 + 分钟防重表。**「同 task 不并发」的闸不在本类**——
 // 单闸单点在 AgentLoop::run（内调 AgentStore::startRunExclusive），本类只做
 // 「起线程 + 等它自己收尾」的薄 spawn 包装（spec §5.1 / §10，M2 审计修订）。
+//
+// 契约（T6 接线依赖，勿回退）：
+//   ① **成员声明顺序**：Scheduler 实例必须声明在它引用的 loop_ / llm_ / store_ **之后**
+//      （C++ 逆序析构：Scheduler 先亡，其 run 线程 join 期间 loop/store 必须仍存活）。
+//   ② stopAll 可重复调用（幂等，每次收干当前 runs_），但**不支持并发调用**——它不做
+//      tickThread_/residentThread_ 的 join 与 runs_ 摘取的跨线程互斥（单线程收尾口径，
+//      与 AgentModule::onStop 一致）。
 #pragma once
 #include <atomic>
 #include <condition_variable>
@@ -39,6 +46,10 @@ public:
     // 降级 Phase 2）。pop 即 spawn、不等上一跑结束；同 task 连发两单由 AgentLoop
     // 内的单闸拒绝（不阻塞队列）。停止后不再入队（避免留永远不被消费的幽灵单）。
     void enqueueResident(int64_t taskId);
+    // 测试观察面（同 activeRunCount 口径）：常驻待跑队列长度。停止后入队必须不落地，
+    // 否则队列里会留一条永不被消费的幽灵单——这条不变式只能由队列长度断言钉住
+    // （去掉入队守卫时，run 数观察面看不见差别）。
+    size_t residentQueueSize();
 
 private:
     struct ActiveRun {

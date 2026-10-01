@@ -49,3 +49,21 @@ REGISTER_TEST(cron_parse_and_match_table,
     }
     return true;
 })
+
+// 评审修复轮（2026-10-01）：巨大 step 曾让步进 `v += step` 有符号溢出 → 数组越界写
+// SEGV（评审 ASan/UBSan 实测：`0 0 */2147483647 * *`，dom 起点 1 + INT_MAX 回绕成
+// 负数下标）。步长上界 = 字段跨度（步长 > 跨度只可能在起点命中一次，等价写法是单值；
+// 且它是唯一能让 step 大到溢出的入口）→ 超界即拒，解析失败即不崩。
+REGISTER_TEST(cron_rejects_oversized_step,
+              "cron: 巨大 step（INT_MAX / 超跨度）→ 拒绝且不崩", {
+    for (const char* bad : {"5/2147483647 * * * *", "*/2147483647 * * * *",
+                            "0 0 */2147483647 * *", "*/999999999 * * * *",
+                            "* * 1-31/32 * *", "* * * * 0-6/8"}) {
+        DOCTEST_CHECK_MESSAGE(module::agent::parseCron(bad).isFail(),
+                              "应拒绝: " + std::string(bad));
+    }
+    // 跨度内最大步长照常合法：分钟跨度 60 → `*/60` = 每小时第 0 分钟命中一次
+    DOCTEST_CHECK(fires("*/60 * * * *", tmOf(0, 9, 5, 10, 3)));
+    DOCTEST_CHECK(!fires("*/60 * * * *", tmOf(1, 9, 5, 10, 3)));
+    return true;
+})

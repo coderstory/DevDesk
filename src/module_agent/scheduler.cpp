@@ -55,9 +55,13 @@ void Scheduler::start() {
 }
 
 void Scheduler::enqueueResident(int64_t taskId) {
-    if (stopFlag_.load()) return;   // 已停：不再接单（不留无消费者的幽灵 job）
     {
+        // 停止判定与入队**同锁**（评审修复轮）：锁外判 stopFlag_ 时，stopAll 窗口里
+        // 落地的 push 会留在队列里永不被消费（常驻线程已 join 退出）——幽灵单。
+        // 锁内判则二者原子：要么在 stop 前入队（可能被消费、也可能随 teardown 丢弃），
+        // 要么根本不入队。
         std::lock_guard<std::mutex> lock(mu_);
+        if (stopFlag_.load()) return;   // 已停：不再接单
         residentQueue_.push_back(taskId);
     }
     cv_.notify_one();
@@ -95,6 +99,11 @@ void Scheduler::stopAll() {
 size_t Scheduler::activeRunCount() {
     std::lock_guard<std::mutex> lock(mu_);
     return runs_.size();
+}
+
+size_t Scheduler::residentQueueSize() {
+    std::lock_guard<std::mutex> lock(mu_);
+    return residentQueue_.size();
 }
 
 void Scheduler::reapDone() {
@@ -209,10 +218,12 @@ core::Result<void> Scheduler::dispatchRun(int64_t taskId) {
     auto run = std::make_unique<ActiveRun>();
     run->taskId = taskId;
     ActiveRun* raw = run.get();
-    {
-        std::lock_guard<std::mutex> lock(mu_);
-        runs_.push_back(std::move(run));
-    }
+    // 入表 + 线程创建在**同一把 mu_** 内完成（评审修复轮）：stopAll / reapDone 在锁内
+    // 读 `joinable()` 并 join，创建若在锁外，收尾窗口会看到「表里有条目、thread 尚未
+    // 赋值」的半成品（漏 join 或对未赋值 thread 操作）。run 线程体不取 mu_（只碰
+    // cancel/done/runId 三个原子 + loop_/store_），故持锁创建不会死锁。
+    std::lock_guard<std::mutex> lock(mu_);
+    runs_.push_back(std::move(run));
     try {
         raw->thread = std::thread([this, raw, task] {
             try {
@@ -237,7 +248,6 @@ core::Result<void> Scheduler::dispatchRun(int64_t taskId) {
         });
     } catch (const std::system_error& e) {
         // 线程创建失败：闸尚未被调用（在 loop 内）→ 库中无行可收尾，只摘除占位
-        std::lock_guard<std::mutex> lock(mu_);
         for (auto it = runs_.begin(); it != runs_.end(); ++it) {
             if (it->get() == raw) {
                 runs_.erase(it);
