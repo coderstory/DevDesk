@@ -60,6 +60,26 @@ std::string runStatusText(const std::string& status) {
     return "—";
 }
 
+// run 列表行文案（Task 11 契约）：状态中文化 / 耗时（endedAt-startedAt 秒）/
+// 迭代 N / token 合计（input+output；两者皆空显示「—」）。
+// 分隔符用「 · 」——测试按数值子串钉（如 "205000"），不加千分位
+std::string runRowText(const AgentRunRow& run) {
+    std::string s = runStatusText(run.status);
+    if (run.endedAt) {
+        int64_t secs = *run.endedAt - run.startedAt;
+        if (secs < 0) secs = 0;   // 时钟回拨防御：不显示负耗时
+        s += " · 耗时 " + std::to_string(secs) + "s";
+    }
+    s += " · 迭代 " + std::to_string(run.iterations);
+    if (run.inputTokens || run.outputTokens) {
+        s += " · token " + std::to_string(run.inputTokens.value_or(0) +
+                                          run.outputTokens.value_or(0));
+    } else {
+        s += " · token —";
+    }
+    return s;
+}
+
 // 消息行预览：role + ": " + content 前 80 字节（超长在 UTF-8 边界回退，
 // 不切半个字符，末尾加省略号）。content 用 contentJson 原文（M1 最小实现，
 // 不做 blocks 提取）
@@ -112,6 +132,9 @@ constexpr int kTriggerScheduleIdx = 1;
 // 4 个 8px 间距 = 204）+ 上下 padding 12×2 = 228，取 240 留 12px 余量。列表高度
 // 计算里的减项必须与它一致（compose 的 gapCount/listH），否则行会溢出页底
 constexpr float kEditFormH = 240.0f;
+
+// 详情区 run 列表长度上限（契约表：最近 5 次）
+constexpr int kRunListLimit = 5;
 
 int triggerIndexOf(const std::string& triggerType) {
     for (int i = 0; i < kTriggerCount; ++i) {
@@ -492,8 +515,9 @@ void AgentModule::toggleExpand(int64_t taskId) {
     } else {
         expandedTaskId_ = taskId;
     }
+    selectedRunId_.reset();   // 展开语义：默认选中最近一次 run（runlist[0]）
     detailMessages_.clear();
-    tasksDirty_ = true;   // 触发一次刷新装载详情消息
+    tasksDirty_ = true;   // 触发一次刷新装载 run 列表与详情消息
 }
 
 // 重查任务 / 各任务最近 run / 展开详情的消息。触发条件（compose 内判定）：
@@ -506,6 +530,7 @@ void AgentModule::refreshData() {
     tasksDirty_ = false;
     tasks_.clear();
     latestRuns_.clear();
+    taskRuns_.clear();
     auto t = store_->listTasks();
     if (t.isFail()) {
         LOG_ERROR("Agent: 读取任务失败: " + t.errorMessage());
@@ -513,21 +538,53 @@ void AgentModule::refreshData() {
         tasks_ = std::move(t).value();
     }
     for (const auto& task : tasks_) {
-        auto runs = store_->listRuns(task.id, 1);
-        if (runs.isOk() && !runs.value().empty()) {
-            latestRuns_[task.id] = runs.value().front();
+        auto runs = store_->listRuns(task.id, kRunListLimit);
+        if (runs.isFail()) {
+            LOG_ERROR("Agent: 读取 run 列表失败: " + runs.errorMessage());
+            continue;
         }
+        auto list = std::move(runs).value();
+        // 最近一次在前（契约）：store 的 ORDER BY started_at DESC 只有秒精度，
+        // 「同一秒内连起两次 run」并列时顺序未定义——按 (startedAt, id) 逆序兜底，
+        // 让 runlist[0] 与状态列取到的都是确定的最近一次
+        std::stable_sort(list.begin(), list.end(),
+                         [](const AgentRunRow& a, const AgentRunRow& b) {
+                             if (a.startedAt != b.startedAt) {
+                                 return a.startedAt > b.startedAt;
+                             }
+                             return a.id > b.id;
+                         });
+        if (!list.empty()) {
+            latestRuns_[task.id] = list.front();
+        }
+        taskRuns_[task.id] = std::move(list);
     }
     if (expandedTaskId_) {
         detailMessages_.clear();
-        auto it = latestRuns_.find(*expandedTaskId_);
-        if (it != latestRuns_.end()) {
-            auto msgs = store_->listMessages(it->second.id);
+        auto it = taskRuns_.find(*expandedTaskId_);
+        if (it != taskRuns_.end() && !it->second.empty()) {
+            // 选中 run：显式选中（点过 runlist 行）优先；不在本任务列表里
+            //（换了任务 / 被 5 条上限挤出）→ 回落最近一次
+            bool stillListed = false;
+            if (selectedRunId_) {
+                for (const auto& r : it->second) {
+                    if (r.id == *selectedRunId_) {
+                        stillListed = true;
+                        break;
+                    }
+                }
+            }
+            if (!stillListed) {
+                selectedRunId_ = it->second.front().id;
+            }
+            auto msgs = store_->listMessages(*selectedRunId_);
             if (msgs.isOk()) {
                 detailMessages_ = std::move(msgs).value();
             } else {
                 LOG_ERROR("Agent: 读取 run 消息失败: " + msgs.errorMessage());
             }
+        } else {
+            selectedRunId_.reset();   // 该任务还没有 run
         }
     }
     bool anyAlive = false;
@@ -1009,10 +1066,60 @@ void AgentModule::compose(::eui::Ui& ui, const ::eui::Screen& screen) {
                                         .wrap(false)
                                         .color(t.colors.textSecondary)
                                         .build();
+                                    // run 列表（Task 11 契约）：最近 5 次，空
+                                    // run 时不渲染；点行 → 选中该 run 载其消息
+                                    const auto runsIt = taskRuns_.find(task.id);
+                                    if (runsIt != taskRuns_.end() &&
+                                        !runsIt->second.empty()) {
+                                        const auto& runs = runsIt->second;
+                                        const float runW = contentW - 24.0f;
+                                        ui.column(id + ".runlist")
+                                            .width(runW)
+                                            .height(::eui::SizeValue::wrapContent())
+                                            .gap(4.0f)
+                                            .content([&] {
+                                                for (size_t i = 0; i < runs.size();
+                                                     ++i) {
+                                                    const std::string runRowId =
+                                                        id + ".runlist." +
+                                                        std::to_string(i);
+                                                    const bool selected =
+                                                        selectedRunId_ &&
+                                                        *selectedRunId_ == runs[i].id;
+                                                    ui.text(runRowId)
+                                                        .size(runW, 18.0f)
+                                                        .text(runRowText(runs[i]))
+                                                        .fontSize(12.0f)
+                                                        .lineHeight(18.0f)
+                                                        .wrap(false)
+                                                        .color(selected
+                                                                   ? t.colors.primary
+                                                                   : t.colors.textSecondary)
+                                                        .onClick([this, runId = runs[i].id] {
+                                                            selectedRunId_ = runId;
+                                                            tasksDirty_ = true;
+                                                        })
+                                                        .build();
+                                                    if (runs[i].error &&
+                                                        !runs[i].error->empty()) {
+                                                        ui.text(runRowId + ".err")
+                                                            .size(runW, 16.0f)
+                                                            .text("错误：" +
+                                                                  *runs[i].error)
+                                                            .fontSize(11.0f)
+                                                            .lineHeight(16.0f)
+                                                            .wrap(false)
+                                                            .color(t.colors.error)
+                                                            .build();
+                                                    }
+                                                }
+                                            })
+                                            .build();
+                                    }
                                     if (detailMessages_.empty()) {
                                         ui.text(id + ".detail.empty")
                                             .size(contentW - 24.0f, 18.0f)
-                                            .text("（最近一次 run 还没有消息）")
+                                            .text("（选中的 run 还没有消息）")
                                             .fontSize(12.0f)
                                             .lineHeight(18.0f)
                                             .color(t.colors.textTertiary)

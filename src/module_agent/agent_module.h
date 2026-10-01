@@ -114,8 +114,11 @@ private:
     // compose 数据缓存（仅主线程读写；run 线程只经 SQLite 触库，不碰这里）
     std::vector<AgentTaskRow> tasks_;
     std::map<int64_t, AgentRunRow> latestRuns_;     // taskId → 最近一次 run
+    // 展开详情的 run 列表（每任务最近 5 次，refreshData 装载；Task 11）
+    std::map<int64_t, std::vector<AgentRunRow>> taskRuns_;
     std::optional<int64_t> expandedTaskId_;         // 展开详情的任务（单开）
-    std::vector<AgentMessageRow> detailMessages_;   // 展开 task 最近 run 的消息
+    std::optional<int64_t> selectedRunId_;          // 详情区选中的 run（默认最近一次）
+    std::vector<AgentMessageRow> detailMessages_;   // 选中 run 的消息
     std::string goalInput_;
     std::string formError_;
     // 编辑态（Task 10）：editingTaskId_ 非空 = 表单展开（契约表 agent.edit.form 的

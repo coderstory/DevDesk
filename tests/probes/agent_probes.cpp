@@ -9,6 +9,11 @@
 //      composeFrame 的 update 消费——claude_probes.cpp:169-182 同款真实命中
 //      路径）→ fakeProxy 脚本化 end_turn → 有界轮询 run 落库 completed →
 //      composeFrame 后状态列显示「成功」。
+//   ④ M2 Task 11：schedule 任务（种 2 次 run，completed + limited/error）——
+//      点任务行展开 → runlist 容器与两行存在且帧非零宽高、行文案含状态中文与
+//      token 合计、错误行含 error 原文；再点 agent.task.<id>.edit →
+//      agent.edit.form 出现且帧完全落在页面内容区内（frameContains），
+//      schedule 任务渲染 agent.edit.cron。
 //
 // 断言机制：probe 无几何断言 helper，全部手搓 check() + nearEq()
 // （about_probe.cpp:60,94-99 口径）。收尾顺序照 about_probe.cpp:449-453。
@@ -118,6 +123,27 @@ int main(int argc, char* argv[]) {
     }
     const std::string tid = std::to_string(created.value());
 
+    // ④ 用：schedule 任务 + 两次 run（一次 completed，一次 limited 带 error/token）
+    // ——两次 run 都在 onStart 之后种（否则被 sweepStaleRuns 清成 failed）
+    auto sched = store.createTask("定时任务", "直接回复完成，不调用任何工具",
+                                  "schedule", "default", 10, false,
+                                  R"({"cron":"0 9 * * 1-5"})");
+    bool schedSeeded = sched.isOk();
+    std::string sid;
+    if (schedSeeded) {
+        sid = std::to_string(sched.value());
+        auto sr1 = store.startRun(sched.value());
+        auto sr2 = store.startRun(sched.value());
+        if (sr1.isOk() && sr2.isOk()) {
+            store.finishRun(sr1.value(), "limited", 7, int64_t(190000),
+                            int64_t(15000), std::string("token 累计超上限 200K"));
+            store.finishRun(sr2.value(), "completed", 1, std::nullopt,
+                            std::nullopt, std::nullopt);
+        } else {
+            schedSeeded = false;
+        }
+    }
+
     core::dsl::Runtime runtime;
     runtime.initialize(window);
 
@@ -216,6 +242,94 @@ int main(int argc, char* argv[]) {
         if (status != nullptr) {
             check(status->text.find("成功") != std::string::npos,
                   "状态列实测「" + status->text + "」期望含「成功」");
+        }
+    }
+
+    // ---- ④ 编辑入口 + run 列表（Task 11）：真实指针点击路径 ----
+    if (!schedSeeded) {
+        std::cerr << "agent_probes: schedule 任务/run 种子失败\n";
+        passed = false;
+    } else {
+        const auto* schedRow = ui != nullptr ? ui->find("agent.task." + sid) : nullptr;
+        const auto* schedTitle =
+            ui != nullptr ? ui->find("agent.task." + sid + ".title") : nullptr;
+        const auto* editBtn =
+            ui != nullptr ? ui->find("agent.task." + sid + ".edit") : nullptr;
+        if (schedRow == nullptr || schedTitle == nullptr || editBtn == nullptr) {
+            std::cerr << "agent_probes: schedule 任务行/标题/edit 按钮缺失\n";
+            passed = false;
+        } else {
+            check(frameContains(*schedRow, *editBtn),
+                  "edit 未完全落在任务行内 edit" + frameStr(editBtn) + " row" +
+                      frameStr(schedRow));
+            // 点标题中心展开（标题元素不带 onClick，命中落到任务行本体）
+            const float tx = schedTitle->frame.x + schedTitle->frame.width * 0.5f;
+            const float ty = schedTitle->frame.y + schedTitle->frame.height * 0.5f;
+            core::queuePointerButton(window, tx, ty, core::PointerButton::Left,
+                                     core::PointerAction::Press, {});
+            core::queuePointerButton(window, tx, ty, core::PointerButton::Left,
+                                     core::PointerAction::Release, {});
+            composeFrame();
+            check(ui != nullptr && ui->find("agent.task." + sid + ".detail") != nullptr,
+                  "点任务行未展开详情（agent.task." + sid + ".detail 缺失）");
+            const auto* runlist =
+                ui != nullptr ? ui->find("agent.task." + sid + ".runlist") : nullptr;
+            if (runlist == nullptr) {
+                std::cerr << "agent_probes: run 列表容器缺失\n";
+                passed = false;
+            } else {
+                const auto* row0 = ui->find("agent.task." + sid + ".runlist.0");
+                const auto* row1 = ui->find("agent.task." + sid + ".runlist.1");
+                if (row0 == nullptr || row1 == nullptr) {
+                    std::cerr << "agent_probes: run 列表行缺失\n";
+                    passed = false;
+                } else {
+                    check(row0->frame.width > 0.0f && row0->frame.height > 0.0f,
+                          "runlist.0 零尺寸 " + frameStr(row0));
+                    check(row1->frame.width > 0.0f && row1->frame.height > 0.0f,
+                          "runlist.1 零尺寸 " + frameStr(row1));
+                    check(row0->text.find("成功") != std::string::npos,
+                          "runlist.0 非最近一次 run，实测「" + row0->text + "」");
+                    check(row1->text.find("受限") != std::string::npos &&
+                              row1->text.find("205000") != std::string::npos,
+                          "runlist.1 缺状态/token 合计，实测「" + row1->text + "」");
+                    const auto* errRow =
+                        ui->find("agent.task." + sid + ".runlist.1.err");
+                    check(errRow != nullptr &&
+                              errRow->text.find("200K") != std::string::npos,
+                          "runlist.1.err 缺 error 原文");
+                }
+            }
+            // 点 edit 中心 → 编辑表单出现且完全落在页面内容区内。
+            // 注意：composeFrame 会重建元素树，跨帧持有的 Element* 立即失效
+            //（上面那次展开点击后必须重新 find，否则用的是已析构元素的 frame）
+            const auto* editBtnNow = ui->find("agent.task." + sid + ".edit");
+            if (editBtnNow == nullptr) {
+                std::cerr << "agent_probes: 重新查找 edit 按钮失败\n";
+                passed = false;
+            }
+            const float ex = editBtnNow->frame.x + editBtnNow->frame.width * 0.5f;
+            const float ey = editBtnNow->frame.y + editBtnNow->frame.height * 0.5f;
+            core::queuePointerButton(window, ex, ey, core::PointerButton::Left,
+                                     core::PointerAction::Press, {});
+            core::queuePointerButton(window, ex, ey, core::PointerButton::Left,
+                                     core::PointerAction::Release, {});
+            composeFrame();
+            const auto* form = ui != nullptr ? ui->find("agent.edit.form") : nullptr;
+            const auto* pageNow = ui != nullptr ? ui->find("agent.page") : nullptr;
+            if (form == nullptr || pageNow == nullptr) {
+                std::cerr << "agent_probes: 点 edit 后 agent.edit.form 缺失\n";
+                passed = false;
+            } else {
+                check(frameContains(*pageNow, *form),
+                      "编辑表单未落在页面内容区内 form" + frameStr(form) + " page" +
+                          frameStr(pageNow));
+                check(ui->find("agent.edit.cron") != nullptr,
+                      "schedule 任务的编辑表单未渲染 cron 输入");
+                const auto* save = ui->find("agent.edit.save");
+                check(save != nullptr && save->frame.width > 0.0f,
+                      "编辑表单缺保存按钮");
+            }
         }
     }
 

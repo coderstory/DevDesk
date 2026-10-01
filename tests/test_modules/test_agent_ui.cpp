@@ -580,3 +580,71 @@ REGISTER_TEST(agent_ui_resident_enqueue_starts_run,
     mod.onStop();
     return true;
 })
+
+// ============ 7) run 详情完整展示（M2 Task 11） ============
+
+REGISTER_TEST(agent_ui_run_detail_full_display,
+              "agent_ui: 展开任务显示最近 5 次 run（状态/耗时/迭代/token/错误）并可选中查看消息", {
+    test_support::TestDb tdb("agentui", "rundetail");
+    FakeProxy proxy;
+    ToolGuard statsGuard{"app.stats"};
+    core::ToolRegistry::instance().unregisterTool("app.stats");
+    module::agent::AgentStore store(tdb.handle());
+    auto taskId = store.createTask("详情", "g", "manual", "default", 10, false);
+    DOCTEST_REQUIRE(taskId.isOk());
+    const std::string tid = std::to_string(taskId.value());
+    // 种 2 次 run：一次 limited 带 error + token，一次 completed（无 token）
+    auto r1 = store.startRun(taskId.value());
+    DOCTEST_REQUIRE(r1.isOk());
+    DOCTEST_REQUIRE(store.appendMessage(r1.value(), 0, "user",
+                                        R"([{"type":"text","text":"g"}])",
+                                        std::nullopt).isOk());
+    DOCTEST_REQUIRE(store.finishRun(r1.value(), "limited", 7, int64_t(190000),
+                                    int64_t(15000),
+                                    std::string("token 累计超上限 200K")).isOk());
+    auto r2 = store.startRun(taskId.value());
+    DOCTEST_REQUIRE(r2.isOk());
+    DOCTEST_REQUIRE(store.finishRun(r2.value(), "completed", 1, std::nullopt,
+                                    std::nullopt, std::nullopt).isOk());
+
+    module::agent::AgentModule::Deps deps;
+    deps.db = &tdb.handle();
+    deps.proxy = &proxy;
+    module::agent::AgentModule mod(deps);
+    mod.onStart();
+    const eui::Screen screen{1600.0f, 1000.0f};
+    eui::Ui ui;
+    composeTo(ui, mod, screen, "agent_ui_rundetail");
+    const auto* rowEl = ui.find("agent.task." + tid);
+    DOCTEST_REQUIRE(rowEl != nullptr);
+    DOCTEST_REQUIRE(rowEl->onClick != nullptr);
+    rowEl->onClick();
+    eui::Ui ui2;
+    composeTo(ui2, mod, screen, "agent_ui_rundetail2");
+    DOCTEST_REQUIRE_MESSAGE(ui2.find("agent.task." + tid + ".runlist") != nullptr,
+                            "展开详情缺 run 列表容器 agent.task.<id>.runlist");
+    const auto* row0 = ui2.find("agent.task." + tid + ".runlist.0");
+    DOCTEST_REQUIRE(row0 != nullptr);                        // 最近一次在前
+    DOCTEST_CHECK_MESSAGE(row0->text.find("成功") != std::string::npos,
+                          "runlist.0 应为最近一次 run（completed→成功），实测：" +
+                              row0->text);
+    DOCTEST_CHECK(row0->text.find("token —") != std::string::npos);   // NULL token
+    const auto* row1 = ui2.find("agent.task." + tid + ".runlist.1");
+    DOCTEST_REQUIRE(row1 != nullptr);
+    DOCTEST_CHECK(row1->text.find("受限") != std::string::npos);      // limited 行
+    DOCTEST_CHECK(row1->text.find("迭代 7") != std::string::npos);
+    DOCTEST_CHECK_MESSAGE(row1->text.find("205000") != std::string::npos,
+                          "token 合计未落进文案，实测：" + row1->text);  // 190000+15000
+    const auto* errRow = ui2.find("agent.task." + tid + ".runlist.1.err");
+    DOCTEST_REQUIRE(errRow != nullptr);
+    DOCTEST_CHECK(errRow->text.find("200K") != std::string::npos);
+    // 默认选中最近一次（r2，无消息）；点选 limited run → 消息区切到该 run
+    row1->onClick();
+    eui::Ui ui3;
+    composeTo(ui3, mod, screen, "agent_ui_rundetail3");
+    const auto* msg0 = ui3.find("agent.task." + tid + ".msg.0");
+    DOCTEST_REQUIRE_MESSAGE(msg0 != nullptr, "选中 run 后消息区缺 agent.task.<id>.msg.0");
+    DOCTEST_CHECK(msg0->text.find("user") != std::string::npos);
+    mod.onStop();
+    return true;
+})
