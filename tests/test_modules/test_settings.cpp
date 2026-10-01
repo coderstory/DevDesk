@@ -9,6 +9,7 @@
 //       字号缩放/保留档文案/下拉持有者语义）+ 卡片注册表（tab 归属/顺序/门控）
 #include "doctest.h"
 #include "test_support.h"
+#include "app_tools.h"          // M2 Task 9：app.read_settings 工厂
 #include "settings_config.h"
 #include "settings_ui_logic.h"
 
@@ -19,7 +20,9 @@
 #include "core/paths.h"
 #include "core/service_locator.h"
 #include "core/theme.h"
+#include "core/tool.h"          // M2 Task 9：ITool / ToolArgs
 #include "module_pet/pet_window.h"  // PET-CLOSE：桌宠开关即时性断言读窗口可见意图
+#include "platform/json.h"      // M2 Task 9：读 app.read_settings 的 JSON 出参
 #include "platform/keychain.h"
 #include "platform/system_theme.h"
 
@@ -3636,3 +3639,136 @@ REGISTER_TEST(settings_cards_no_outer_cardframe,
     return true;
 })
 
+
+// ===== M2 Task 9：AppTools（app.read_settings）=====
+// 工具的取数面 = SettingsStore(configPath).load()（自持实例，不摸模块成员 ——
+// agent 工作线程调用天然安全）。以下用例钉三件事：读回持久化值、输出经
+// sanitized 钳制且只暴露字段白名单（不泄配置里的敏感键）、磁盘异常不静默。
+
+REGISTER_TEST(app_read_settings_tool_roundtrip,
+              "app_tools: app.read_settings 读回持久化配置（只读非破坏）", {
+    const auto path = test_support::tempConfigFile(kCfgPrefix, "appread");
+    module::settings::SettingsStore store(path);
+    module::settings::SettingsConfig cfg;                    // 默认值 + 改两处
+    cfg.fontScalePercent = 110;
+    cfg.proxyPort = 9999;
+    DOCTEST_REQUIRE(store.save(cfg).isOk());
+    auto tool = module::settings::makeAppReadSettingsTool(path);
+    DOCTEST_CHECK_EQ(tool->name(), std::string("app.read_settings"));
+    DOCTEST_CHECK_FALSE(tool->isDestructive());
+    auto r = tool->execute(core::ToolArgs{"{}"});
+    DOCTEST_REQUIRE(r.isOk());
+    DOCTEST_CHECK_FALSE(r.value().isError);
+    auto parsed = platform::json::parse(r.value().contentJson);
+    DOCTEST_REQUIRE(parsed.isOk());
+    auto obj = parsed.value().asObject();
+    DOCTEST_CHECK_EQ(obj.get("fontScalePercent").asInt(), 110);
+    DOCTEST_CHECK_EQ(obj.get("proxyPort").asInt(), 9999);
+    DOCTEST_CHECK(obj.get("themeMode").isString());
+    return true;
+})
+
+// 安全面（Task 9 约束）：输出只含白名单字段——不 dump 整份 config，配置里
+// 将来若混入敏感键（此处以 apiToken 模拟）也不得外泄；越界值以 sanitized 后的
+// 「能生效的值」返回（agent 看到的必须与真正生效的一致，不是盘上原文）。
+// 盘上文件直写 raw JSON = 绕开 save 的 sanitized（模拟手改 / 旧版本写坏）。
+REGISTER_TEST(app_read_settings_tool_sanitizes_and_whitelists_fields,
+              "app_tools: app.read_settings 输出钳制 + 字段白名单（不泄敏感键）", {
+    const auto path =
+        test_support::tempConfigFile(kCfgPrefix, "appread_sanitize");
+    removeQuietly(path);
+    // 盘上键名（不是工具出参键名）：fontScalePercentV3 是 W9 换键后的名字，
+    // 端口盘上叫 claudeProxyPort —— 直写必须按盘上契约，否则测的是「键没读到」
+    DOCTEST_REQUIRE(test_support::writeTextFile(
+        path,
+        std::string("{\n") +
+            "\"fontScalePercentV3\": 9999,\n" +
+            "\"logRetentionDays\": -5,\n" +
+            "\"claudeProxyPort\": 70000,\n" + "\"themeMode\": \"neon\",\n" +
+            "\"windowEffect\": \"liquid-glass\",\n" +
+            "\"apiToken\": \"sk-should-never-leak\",\n" +
+            "\"enabledModules\": [\"markdown\", \"not-a-module\"]\n" + "}\n"));
+
+    auto tool = module::settings::makeAppReadSettingsTool(path);
+    auto r = tool->execute(core::ToolArgs{"{}"});
+    DOCTEST_REQUIRE(r.isOk());
+    DOCTEST_CHECK_FALSE(r.value().isError);
+    auto parsed = platform::json::parse(r.value().contentJson);
+    DOCTEST_REQUIRE(parsed.isOk());
+    auto obj = parsed.value().asObject();
+
+    // 钳制：越界收敛（proxyPort 越界回落默认，不是钳边界——与 sanitized 同语义）
+    DOCTEST_CHECK_EQ(obj.get("fontScalePercent").asInt(),
+                     static_cast<int64_t>(
+                         module::settings::kMaxFontScalePercent));
+    DOCTEST_CHECK_EQ(obj.get("logRetentionDays").asInt(), 0);
+    DOCTEST_CHECK_EQ(obj.get("proxyPort").asInt(),
+                     static_cast<int64_t>(module::settings::kDefaultProxyPort));
+    DOCTEST_CHECK_EQ(obj.get("themeMode").asString(),
+                     std::string(module::settings::kThemeModeAuto));
+    DOCTEST_CHECK_EQ(obj.get("windowEffect").asString(),
+                     std::string(module::settings::kWindowEffectOff));
+
+    // 白名单：恰好 9 个键；敏感 / 未知键一个都不出现
+    DOCTEST_CHECK_EQ(obj.keys().size(), 9u);
+    DOCTEST_CHECK_FALSE(obj.has("apiToken"));
+    DOCTEST_CHECK(r.value().contentJson.find("sk-should-never-leak") ==
+                  std::string::npos);
+
+    // 模块开关数组：未知 ID 被过滤 + 恒启用项补齐（sanitized 口径）
+    auto mods = obj.get("enabledModules");
+    DOCTEST_REQUIRE(mods.isArray());
+    DOCTEST_CHECK_EQ(mods.size(), 3);
+    DOCTEST_CHECK_EQ(mods[0].asString(), std::string("markdown"));
+    DOCTEST_CHECK(r.value().contentJson.find("not-a-module") ==
+                  std::string::npos);
+    return true;
+})
+
+// 磁盘异常（Task 9 约束）：配置路径存在但不可读 → isError 回喂。
+// load() 对同类异常静默回落默认值（settings_config.cpp:336 只 WARN）——
+// 工具若照抄，agent 会把「读不到」当成「用户就是这么配的」= 静默假答案。
+REGISTER_TEST(app_read_settings_tool_reports_unreadable_config,
+              "app_tools: app.read_settings 配置不可读 → isError（不静默回落）", {
+    const auto path = test_support::tempConfigFile(kCfgPrefix, "appread_dir");
+    removeQuietly(path);
+    // 目录占位 = 确定性的「打不开的配置文件」（ifstream 对目录的行为随平台 /
+    // 标准库而异，故实现按 is_directory 显式识别这一支）
+    std::error_code ec;
+    std::filesystem::create_directories(path, ec);
+    DOCTEST_REQUIRE(!ec);
+
+    auto tool = module::settings::makeAppReadSettingsTool(path);
+    auto r = tool->execute(core::ToolArgs{"{}"});
+    DOCTEST_REQUIRE(r.isOk());          // 工具级错误走 isError，不是 Result fail
+    DOCTEST_CHECK(r.value().isError);
+    auto parsed = platform::json::parse(r.value().contentJson);
+    DOCTEST_REQUIRE(parsed.isOk());
+    DOCTEST_CHECK(parsed.value().asObject().get("error").isString());
+
+    std::filesystem::remove_all(path, ec);
+    return true;
+})
+
+// 非破坏性：无配置文件（首次启动路径）→ 默认值 + isError=false，且**不落盘**
+//（只读工具不得创建 / 改写配置文件——写入口只有设置页与 SettingsStore::save）。
+REGISTER_TEST(app_read_settings_tool_missing_file_is_defaults_without_write,
+              "app_tools: app.read_settings 无配置文件 → 默认值且不落盘", {
+    const auto path =
+        test_support::tempConfigFile(kCfgPrefix, "appread_missing");
+    removeQuietly(path);
+    DOCTEST_REQUIRE(!std::filesystem::exists(path));
+
+    auto tool = module::settings::makeAppReadSettingsTool(path);
+    auto r = tool->execute(core::ToolArgs{"{}"});
+    DOCTEST_REQUIRE(r.isOk());
+    DOCTEST_CHECK_FALSE(r.value().isError);
+    auto parsed = platform::json::parse(r.value().contentJson);
+    DOCTEST_REQUIRE(parsed.isOk());
+    DOCTEST_CHECK_EQ(parsed.value().asObject().get("fontScalePercent").asInt(),
+                     100);
+
+    std::error_code ec;
+    DOCTEST_CHECK_FALSE(std::filesystem::exists(path, ec));
+    return true;
+})
