@@ -250,7 +250,7 @@ if (on) {
 - [ ] **Step 2: probe**：`(cd build && ctest -L probe --output-on-failure)` 全绿（含 module_toggle_sidebar_probe）
 - [ ] **Step 3: 隔离守卫**：`bash scripts/check-module-isolation.sh` 退出码 0（settings 模块本计划零改动，必须保持）
 - [ ] **Step 4: 启动契约复核**：test_app_assembly 的 buildGatedEntries 系列 + test_module_gating 全绿零改动
-- [ ] **Step 5: app 级冒烟（真 getClaudeService 链路，headless 测不到的那段）**：隔离 `DEVDESK_DATA_ROOT` 启动（禁碰用户真实数据根与 `/Applications/DevDesk.app`，禁 `pkill -f DevDesk`）——配置写入「claude 关 + claudeProxyAutoStart=true」→ 启动确认 8888 未监听、`Claude 模块已关闭` LOG → 设置页拨 claude 开 → 确认代理起（LOG「Claude 代理已在运行/startProxy 成功」）+ Claude 页可用（不再是死页 toast）→ off→on→on 连拨无重复绑定报错
+- [ ] **Step 5: app 级冒烟（真 getClaudeService 链路，headless 测不到的那段）**：隔离 `DEVDESK_DATA_ROOT` 启动（禁碰用户真实数据根与 `/Applications/DevDesk.app`，禁 `pkill -f DevDesk`）——配置写入「claude 关 + claudeProxyAutoStart=true」→ 启动确认 8888 未监听、`Claude 模块已关闭` LOG → 设置页拨 claude 开 → 确认代理起（LOG「Claude 代理已在运行/startProxy 成功」）+ Claude 页可用（不再是死页 toast）→ off→on→on 连拨无重复绑定报错 →⑤ 拨开 claude 后直接退出：确认无崩溃、onStop/还原日志正常（终审 高: atexit LIFO 退出时序）
 - [ ] **Step 6: CHANGELOG**：根目录 `CHANGELOG.md` 追加条目（惰性装配 + auto-start 会话内恢复 + 侧边栏表序插入）；`docs/KNOWN_LIMITATIONS.md` 经审计确认不存在（2026-10-01 实查），无登记项需同步——仅更新 CHANGELOG.md
 - [ ] **Step 7: 汇报** Total/Passed 对比基线 + 冒烟截图路径；合并与安装到 `/Applications/DevDesk.app` 由主会话执行（四律阶段 5，不在本任务内）
 
@@ -270,3 +270,4 @@ if (on) {
 4. 「新桥函数由 main.cpp 文件级实现」按链接面实况收窄为：**缝落 module_toggle_bridge.cpp（默认 no-op + setter），真实现是 main.cpp 文件级函数经 setter 注入**——app_assembly.cpp 被 devdesk_tests（tests/CMakeLists.txt:4）与 module_toggle_sidebar_probe（:190）链接且都不链 main.cpp，直呼 main.cpp 符号即链接失败。与「照 module_toggle_bridge.h 既有模式」的裁定一致（既有缝就是 setter 模式，实现 TU 是 module_toggle_bridge.cpp 而非 app_assembly.cpp）。
 5. 验收项 1 的端到端断言（dispatch → global() 非空 + isProxyRunning）在 headless 层以「seam 注入真 ClaudeService handler」达成；main.cpp 的 static unique_ptr 持有段不在测试链接面，由 T3 Step 5 app 级冒烟补盖。
 6. 方案独立审计（2026-10-01，dev `1e676fb`）裁定**可执行**，3 点修订已并入（gate 日志话术 / 两段红口径 / KNOWN_LIMITATIONS 引用）；审计确认幂等语义、链接面、表序插入对 stopAll 影响方向均与实况吻合。
+7. 终审（2026-10-01）发现并修复退出时序 UAF：`~ClaudeService` 清 global（claude_service.cpp），防惰性装配反转 atexit LIFO；冒烟补「拨开后退出」一步。

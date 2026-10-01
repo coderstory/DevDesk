@@ -349,9 +349,11 @@ void prepareClaudeServiceBeforeModules() {
     const auto settingsCfg = settingsStore.load();
     if (!module::settings::moduleEnabled(
             settingsCfg, module::settings::kModuleIdClaudeProxy)) {
+        // 括号收在「不监听」后（不再把后半句一起裹进「端口 …」括注）：
+        // 收尾不再出现「（惰性装配）））」式双全角右括号叠 C++ 右括号（终审 2026-10-01）
         LOG_INFO("Claude 模块已关闭：代理/ClaudeService 整体下线（端口 " +
                  std::to_string(settingsCfg.proxyPort) +
-                 " 不监听；重新启用可在设置页开启，会话内即时生效（惰性装配））");
+                 " 不监听）；重新启用可在设置页开启，会话内即时生效（惰性装配）");
         return;
     }
     // ClaudeService 创建 + Claude Code 接管通道注入 + 端口注入 + 崩溃补还原
