@@ -1,5 +1,9 @@
 // tests/test_modules/test_markdown_tools.cpp
-// MarkdownTools M1 用例（agent M1 Task 9）：md.search / md.read 两个只读工具。
+// MarkdownTools 用例（agent M1 Task 9 起，M2 Task 7 扩三工具）：
+//   md.search / md.read            只读；
+//   md.create                      写但可逆（已存在拒绝覆盖）；
+//   md.list_tags                   只读（tags + noteCount）；
+//   md.delete                      **破坏性**（isDestructive 已覆写，越界路径拒绝）。
 //
 // 错误回喂约定（spec §10 M1 统一）：参数非法 / 目标不存在 → execute 返回
 // Result ok + ToolResult.isError=true + content 含中文说明；Result::fail 只留给
@@ -302,6 +306,8 @@ REGISTER_TEST(md_create_list_tags_delete_roundtrip,
     DOCTEST_REQUIRE(tags.isOk());
     DOCTEST_CHECK_FALSE(tags.value().isError);
     DOCTEST_CHECK(tags.value().contentJson.find("\"name\":\"alpha\"") != std::string::npos);
+    // noteCount 真的按引用数出（alpha 只挂在 m2.md 一篇上 → 1）
+    DOCTEST_CHECK(tags.value().contentJson.find("\"noteCount\":1") != std::string::npos);
     // delete：破坏性标志 + 删除生效 + 越界路径拒绝
     auto delTool = core::ToolRegistry::instance().find("md.delete");
     DOCTEST_REQUIRE(delTool.isOk());
