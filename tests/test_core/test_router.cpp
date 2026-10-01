@@ -359,6 +359,35 @@ REGISTER_TEST(router_navigate_nothing_registered_stays, "router: 全未注册时
     return true;
 })
 
+// ============ 活门控基座（live-module-toggle Task 1）：registerModule 幂等 +
+// unregisterModule ============
+//
+// 后续任务（T3 设置页开关）在运行期注册/注销模块：重复注册不得产生双条目
+// （侧边栏同页双入口），未注册 / 空指针的注销必须是幂等 no-op。
+
+REGISTER_TEST(router_unregister_and_idempotent_register,
+              "router: unregisterModule 移除注册；register/unregister 双向幂等", {
+    ::core::Router router;
+    StubModule a(::core::PageId::Agent, "agent");
+    StubModule b(::core::PageId::About, "about");
+    router.registerModule(&a);
+    router.registerModule(&a);            // 重复注册
+    DOCTEST_CHECK_EQ(router.modules().size(), static_cast<size_t>(1));  // 幂等：不双条目
+    router.registerModule(&b);
+    DOCTEST_CHECK(router.isRegistered(a.pageId()));
+    DOCTEST_CHECK(router.isRegistered(b.pageId()));
+
+    router.unregisterModule(&a);
+    DOCTEST_CHECK_FALSE(router.isRegistered(a.pageId()));
+    DOCTEST_CHECK(router.isRegistered(b.pageId()));
+    router.unregisterModule(&a);          // 再卸 = no-op
+    router.unregisterModule(nullptr);     // null = no-op
+    DOCTEST_CHECK_EQ(router.modules().size(), static_cast<size_t>(1));
+    // 注销当前页后 currentPage 不自动改（重定向是 app 层职责，Task 5），
+    // 但 navigateTo 到其他页仍正常
+    return true;
+})
+
 // ============ 唯一换算 core::windowToCompose（审计 M4）============
 //
 // 指针空间 → 页面 compose 坐标：compose = 指针 / dpiScale - 页面原点。

@@ -15,6 +15,11 @@ public:
 
     void registerModule(Module* module);
 
+    // 注销模块（活门控 live-toggle）：从注册表移除**首个**匹配指针；nullptr /
+    // 未注册 = 幂等 no-op。只动注册表，不负责模块生命周期（onStop 由调用方
+    // 先行调用）；当前页被注销后 currentPage 不自动改（重定向是 app 层职责）。
+    void unregisterModule(Module* module);
+
     // 导航到目标页；payload 为可选的跨模块跳转负载（默认空 = 纯导航，
     // 既有调用零改动兼容）。非空 payload 会挂到目标页上，等目标页在
     // compose 里通过 consumePendingPayload() 取走。
