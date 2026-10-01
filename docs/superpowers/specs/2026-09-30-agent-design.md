@@ -391,7 +391,7 @@ agent 定位为「DevDesk 内部消费者」——经本地代理 = 复用全部
 | 单 run 墙钟 | `max_iterations × 请求超时` | 硬上限 30 分钟 |
 | token 累计 | 上游返回的 input+output 累计 | 硬上限 200K（防烧钱） |
 
-> **M1 实况标注（2026-10-01，final-review Fix 4）**：30 分钟墙钟与 200K token 上限**M1 未实现**——M1 的实际边界 = `max_iterations`（默认 10，UI 可调至 50，loop 内 clamp）× 60s 请求超时（HttpClient 层）兜底；两硬上限由 M2 Scheduler 强制（见 agent_loop.cpp 墙钟超时判定注释）。
+> **M1 实况标注（2026-10-01，final-review Fix 4）**：30 分钟墙钟与 200K token 上限**M1 未实现**——M1 的实际边界 = `max_iterations`（默认 10，UI 可调至 50，loop 内 clamp）× 60s 请求超时（HttpClient 层）兜底；两硬上限由 AgentLoop 检查点强制（Scheduler 等触发路径经 loop 组合传递全覆盖；见 agent_loop.cpp 墙钟超时判定注释）。
 
 **状态语义**（L1 统一）：
 
