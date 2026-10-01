@@ -15,7 +15,7 @@
 - **不抛异常**：错误一律 `core::Result<T>`；模块隔离铁律——module_settings 不得 include 兄弟模块头，桥头落 **src 根**（`module_pet_bridge.h` 同级同模式）；改完跑 `bash scripts/check-module-isolation.sh`（settings 不 link 兄弟模块库的断言必须继续绿）。
 - **启动期契约零变化**：`buildGatedEntries` 及其全部既有测试（test_app_assembly 的 registry/gated 用例）不得改语义；两个门控路径共用同一谓词 `module::settings::moduleEnabled`（settings_config.h:148）。
 - **ToolRegistry 既有语义**（src/core/tool.cpp:11）：同名同指针注册 = no-op ok；同名不同指针 = fail。重入实现必须在此语义下工作。
-- **Router 既有语义**（src/core/router.cpp）：`navigateTo` 对未注册页已回退 Home（LOG_WARN）；`isRegistered(PageId)` 已存在；`stopAll` 按注册序（todo/markdown 先于 agent——UAF 修复 555a728 的前提，不得改序）。
+- **Router 既有语义**（src/core/router.cpp）：`navigateTo` 对未注册页已回退 Home（LOG_WARN）；`isRegistered(PageId)` 已存在；`stopAll` 按注册序（todo/markdown 先于 agent——UAF 修复 `e24951c` fix(todo): 退出时 UAF 窗口——onStop 不再 reset service_ 的前提，不得改序）（原引 555a728 有误：该 sha 是 CI 的 `_WIN32_WINNT` 宏定义提交，与 stopAll 顺序无关）。
 - **TDD**：每任务先失败测试后实现；测试名/断言按本计划，不为绿灯弱化。
 - **构建**：一律 `bash scripts/build-test-run.sh`（禁手敲 cmake）；定向 `./build/tests/devdesk_tests <子串>`；全量基线 **948/942/0**（+probe 9/9），每任务提交前全量不得回归。
 - **提交**：原子提交、显式 pathspec、禁 `git add -A`、提交前 `git status --porcelain`（仓库根 NUL 出现即删）。

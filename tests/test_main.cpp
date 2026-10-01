@@ -11,6 +11,7 @@
 #include "core/router.h"
 #include "core/service_locator.h"
 #include "core/theme.h"
+#include "module_toggle_bridge.h"
 #include "ui_kit/splash.h"
 #include <algorithm>
 #include <chrono>
@@ -64,7 +65,13 @@ void setEnvVar(const char* key, const std::string& value) {
 //  11. 侧边栏折叠态            app 进程内单值（展开回厂）      ← app_sidebar.h
 //  12. 退出接线已挂门          armExitHook 幂等记账位回厂      ← app_assembly.h
 //  13. 启动 splash 测试缝      无头进程禁 splash（2.3s 时序不适用） ← ui_kit/splash.h
+//  14. 模块开关桥 handler      两条桥的注入槽（模块开关 + claude 惰性装配）← module_toggle_bridge.h
 // ==========================================================================
+// 同口径纪律（审计 SYS-02）：**进程级单例一律永不析构**——服务/注册表/统计
+// 状态这类「与进程同寿」的对象不得写成「函数局部 static」（首次构造晚于
+// armExitHook 时，atexit LIFO 会让析构先于 exit hook 跑，退出期读它就是 UAF；
+// 见 main.cpp getClaudeService / core/tool.cpp instance / core/proxy_stats.cpp
+// state）。新增单例请照堆持有惯用法写，并在下方位点清账。
 // 日志级别的「出厂态」= 命令行选定的基线：--log → Debug，否则 Info。重置必须回到
 // 这个基线而不是硬编码 Info——硬编码会把 --log 的 Debug 在第一个用例前冲掉，
 // 命令行开关（文档承诺「打开 Debug 级控制台日志」）静默失效。
@@ -145,6 +152,12 @@ void resetCaseGlobals() {
     //（2026-09-30 sidebar 几何用例全红的回归根因）。置位后恒返 false 且不启动
     // 计时/日志/shader；生产 main.cpp 不调此 API，正常 splash 路径零变化
     ::ui_kit::setSplashDisabledForTests(true);
+    // 14) 模块开关桥 handler（module_toggle_bridge.h，审计 SYS-04）：两条桥的
+    // 注入槽都是进程级函数指针——用例体内 set 后 fail-fast 提前返回会留桩，
+    // 后续用例/后续 TU 拿到上一个用例的 handler。出厂态 = 两条都是 nullptr
+    //（默认 no-op + LOG_WARN）
+    ::app::toggle::setToggleHandler(nullptr);
+    ::app::toggle::setClaudeAssemblyHandler(nullptr);
 }
 
 // 单例运行结果：先收集、循环结束后统一批量输出——全量 800+ 例时逐条

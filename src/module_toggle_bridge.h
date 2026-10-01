@@ -20,8 +20,9 @@ void onModuleToggled(const std::string& moduleId, bool on);
 // ---- 第二桥（2026-10-01 惰性装配计划 T1）：claude 惰性装配缝 ----
 // settings 页会话内开启 claude 模块 → dispatchModuleToggle on 路径（app_assembly）
 // 经此缝补装配 ClaudeService（启动期门控关 = 服务未创建）。真实现由 main.cpp
-// 文件级静态函数注入（无捕获可转函数指针）；nullptr = 恢复默认 no-op +
-// LOG_WARN（启动早期/测试环境不崩）。
+// 装配段注入：函数定义在 main.cpp 的匿名命名空间内（internal linkage，外部 TU
+// 不可见），无捕获 → 可转函数指针、目标静态存储期 ≥ 进程寿命；
+// nullptr = 恢复默认 no-op + LOG_WARN（启动早期/测试环境不崩）。
 using ClaudeAssemblyHandler = void (*)(bool autoStart);
 void setClaudeAssemblyHandler(ClaudeAssemblyHandler handler);  // nullptr = 恢复默认 no-op
 void ensureClaudeServiceAssembled(bool autoStart);

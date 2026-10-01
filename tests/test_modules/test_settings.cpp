@@ -2687,7 +2687,9 @@ REGISTER_TEST(settings_ctrl_s_save_shortcut,
         DOCTEST_CHECK(!mod->onKeyEvent(ctrlAltS));
     }
     // 3) 端口草稿 ≠ 已应用端口 → Ctrl+S 提交草稿（等价点「应用」，
-    //    ClaudeService::configuredProxyPort 同步；代理未运行 → 状态「下次启动生效」）
+    //    ClaudeService::configuredProxyPort 同步；代理未运行 → 状态文案
+    //    「手动启动代理，或启用 claude 模块时生效」——口径见 settings_module.cpp
+    //    的 applyProxyPort / 审计 ARCH-09）
     frame("css2");
     {
         auto* input = ui.find("settings.card.proxy.port.input.hit");

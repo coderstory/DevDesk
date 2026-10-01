@@ -203,9 +203,13 @@ void ensureClaudeServiceAssembledImpl(bool autoStart);
             });
         // 惰性装配桥注入（2026-10-01 计划 T1）：会话内拨 claude 开关 →
         // dispatchModuleToggle on 路径 → app::toggle::ensureClaudeServiceAssembled
-        // → 这里（装配单例 + autoStart 才 startProxy）。实现是文件级静态函数
-        //（无捕获可转函数指针）。注册顺序在装配之后 = 运行期拨开关才会触达，
-        // 启动期行为零变化（同上方 setToggleHandler 既有口径）
+        // → 这里（装配单例 + autoStart 才 startProxy）。实现是**文件作用域
+        // 函数**——定义在本文件匿名命名空间内（:45 `namespace {` … :565），
+        // internal linkage，别的 TU 看不见（审计 ARCH-08 记的「外部链接」前提
+        // 不成立，此处按实际形态记述；与「文件级 static」效果等价，故原注释
+        // 只是措辞不精确）。无捕获 → 可转函数指针注入；目标静态存储期 ≥ 进程
+        // 寿命，缝里存地址无悬垂窗口。注册顺序在装配之后 = 运行期拨开关才会
+        // 触达，启动期行为零变化（同上方 setToggleHandler 既有口径）
         app::toggle::setClaudeAssemblyHandler(&ensureClaudeServiceAssembledImpl);
         initialized = true;
     }
@@ -393,6 +397,8 @@ void assembleClaudeServiceNow() {
     auto* claudeSvc = getClaudeService();
     // 配置端口注入（审计 [14]）：Claude 页手动启动 / 下方自启都经
     // service 的 configuredProxyPort 读值；设置页改端口时会再同步一次
+    //（本函数在会话内惰性装配时也被调 = 端口生效点之二；另一处说明见
+    // module_settings/settings_module.cpp 的 applyProxyPort，两处口径须同步）
     if (claudeSvc) {
         const module::settings::SettingsStore settingsStore(
             ::core::paths::configFile());
@@ -407,7 +413,9 @@ void assembleClaudeServiceNow() {
 }
 
 // 桥真实现（2026-10-01 计划 T1）：会话内惰性装配 + auto-start 会话内恢复。
-// 文件级静态函数（无捕获 → 可转函数指针）。startClaudeProxy 自身幂等
+// 文件作用域函数，定义在本文件匿名命名空间内（internal linkage，外部 TU 不可见；
+// 无捕获 → 可转函数指针，注入点见 getRouter() 的 initialized 块）。
+// startClaudeProxy 自身幂等
 //（isProxyRunning 早退，main.cpp:313-316）——重复 on 不二次 bind 端口。
 // autoStart=true 时 startProxy 用的端口来自 assembleClaudeServiceNow 刚注入的
 // configuredProxyPort（设置页现值）
