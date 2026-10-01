@@ -6,6 +6,7 @@
 #include "module_agent/agent_loop.h"
 
 #include <algorithm>
+#include <chrono>
 #include <cstdlib>
 #include <optional>
 #include <string>
@@ -21,6 +22,16 @@ namespace {
 
 // spec §5.2：max_iterations 硬上限 50（clamp 在 loop 内，不只 UI 钮制——L3b）
 constexpr int kMaxIterationsHardCap = 50;
+
+// spec §5.2（M2 强制，原 M1 实况标注「刻意留空」由此接棒）：
+constexpr int64_t kTokenHardCap = 200000;               // token 累计硬上限
+constexpr int64_t kWallClockHardCapMs = 30 * 60 * 1000; // 单 run 墙钟硬上限 30 分钟
+constexpr int64_t kRequestTimeoutMs = 60 * 1000;        // 请求超时默认（spec §5.2 表）
+
+int64_t defaultNowMs() {
+    return std::chrono::duration_cast<std::chrono::milliseconds>(
+               std::chrono::steady_clock::now().time_since_epoch()).count();
+}
 
 // spec §10 L3c：单条 tool_result 的 text 硬上限 32KB，超限截断 + 末尾
 // [truncated] 标记（防 md.read 长笔记 + 多迭代烧爆上下文致上游 400）。
@@ -115,15 +126,32 @@ platform::json::JsonValue makeTextContent(const std::string& text) {
 
 } // namespace
 
+// store 行 → AgentTask 的唯一映射（声明见 agent_loop.h）：逐字段搬运，缺一个
+// 字段就是「某条路径上任务参数悄悄退回默认值」。trigger/enabled 不进执行体。
+AgentTask taskFromRow(const AgentTaskRow& row) {
+    AgentTask t;
+    t.id = row.id;
+    t.name = row.name;
+    t.goal = row.goal;
+    t.modelSlot = row.modelSlot;
+    t.maxIterations = row.maxIterations;
+    t.allowDestructive = row.allowDestructive;
+    return t;
+}
+
 AgentLoop::AgentLoop(core::LlmEndpoint& llm, core::ToolRegistry& tools,
-                     AgentStore& store)
-    : llm_(llm), tools_(tools), store_(store) {}
+                     AgentStore& store, NowMsFn nowMs)
+    : llm_(llm), tools_(tools), store_(store), nowMs_(std::move(nowMs)) {}
 
 Result<int64_t> AgentLoop::run(const AgentTask& task,
                                std::atomic<bool>& cancelToken) {
     // 起 run 行（started_at 由 store 记）。这一步失败 = 库里连 run 都没有，
     // 无处标状态，直接把错误上抛给调用方。
-    auto started = store_.startRun(task.id);
+    // **单闸**（M2 Task 2）：startRunExclusive = 全仓唯一「同 task 不并发」闸点，
+    // 手动「启动」（AgentModule 直调 loop_）与 Scheduler/cron 派发（dispatchRun
+    // 只 spawn 线程、不预插行）都经此处；他路在跑 → fail(AlreadyExists) 原样上抛，
+    // 本次不落行、不发请求。
+    auto started = store_.startRunExclusive(task.id);
     if (started.isFail()) return started;
     const int64_t runId = started.value();
 
@@ -172,6 +200,12 @@ Result<int64_t> AgentLoop::run(const AgentTask& task,
 
     const std::string toolsJson = tools_.allSchemasJson();
     const int effectiveMax = std::min(task.maxIterations, kMaxIterationsHardCap);
+    // spec §5.2：单 run 墙钟预算 = min(max_iterations × 请求超时(60s), 30 分钟)。
+    // startMs 取进循环前的时刻；判定只在循环顶部做（见下），不在请求中途打断。
+    const int64_t startMs = nowMs_ ? nowMs_() : defaultNowMs();
+    const int64_t wallBudgetMs =
+        std::min<int64_t>(static_cast<int64_t>(effectiveMax) * kRequestTimeoutMs,
+                          kWallClockHardCapMs);
 
     while (!fatal) {
         if (cancelToken.load()) {
@@ -179,15 +213,18 @@ Result<int64_t> AgentLoop::run(const AgentTask& task,
             error = "用户取消";
             break;
         }
+        // spec §5.2 墙钟上限（M2）：cancel 检查之后、迭代上限之前——用户取消
+        // 永远优先（取消不能被"超限"吞成 limited），且超限轮不再发请求。
+        if ((nowMs_ ? nowMs_() : defaultNowMs()) - startMs >= wallBudgetMs) {
+            status = "limited";
+            error = "达到墙钟上限 " + std::to_string(wallBudgetMs / 1000) + "s";
+            break;
+        }
         if (iterations >= effectiveMax) {
             status = "limited";
             error = "达到迭代上限 " + std::to_string(iterations);
             break;
         }
-        // 墙钟超时判定**不在 M1**（请求超时由 LlmEndpoint/HttpClient 层的
-        // 客户端超时兜底；AgentLoop 只管迭代上限与 cancel）——刻意留空，
-        // 不是遗漏。加在这里要连带定义「超时后能不能接着跑」（spec YAGNI
-        // 清单明列「长对话上下文截断靠 max_iterations 兜底」）。
         // model 原样传 task.modelSlot：槽位→真实 model id 由 LlmClient 解析（H1）
         auto resp = llm_.send(messages, toolsJson, std::string(), task.modelSlot);
         if (resp.isFail()) {
@@ -200,6 +237,15 @@ Result<int64_t> AgentLoop::run(const AgentTask& task,
         if (r.outputTokens > 0) outTotal += r.outputTokens;
         ++iterations;
         if (!keepAssistant(r)) break;          // 落库失败 → fatal
+        // spec §5.2 token 上限（M2）：检查点在 keepAssistant **之后**——破限轮的
+        // assistant 消息与用量照实落库（spec §10 审计），落库完立即判停，不再
+        // 执行本轮工具、不再发下一轮。
+        if (inTotal + outTotal > kTokenHardCap) {
+            status = "limited";
+            error = "token 累计超上限 200K（input " + std::to_string(inTotal) +
+                    " + output " + std::to_string(outTotal) + "）";
+            break;
+        }
         if (r.stopReason != "tool_use") {
             // completed 的**唯一**定义是 end_turn（spec §5.2）。其余 stop_reason
             // 逐个显式分类，不留「未知即成功」的开口：refusal / pause_turn

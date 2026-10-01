@@ -54,6 +54,49 @@ std::optional<RowError> rowStr(const core::data::SqlRow& row, const char* col,
     return std::nullopt;
 }
 
+// agent_tasks 的九列列序：listTasks / getTask 共用同一份 SELECT 列清单 +
+// 同一份行映射——列名与取值散成两份就是下一次「改一处漏一处」。
+constexpr const char* kTaskColumns =
+    "id,name,goal,trigger_type,trigger_config,model_slot,"
+    "max_iterations,allow_destructive,enabled";
+
+// 一行 agent_tasks → AgentTaskRow（列缺失/类型不符一律 fail，不静默默认值）
+Result<AgentTaskRow> taskRowFrom(const core::data::SqlRow& row) {
+    AgentTaskRow t;
+    int64_t maxIter = 0, allowDestr = 0, enabled = 0;
+    if (auto e = rowInt(row, "id", t.id)) {
+        return Result<AgentTaskRow>::fail(e->first, e->second);
+    }
+    if (auto e = rowStr(row, "name", t.name)) {
+        return Result<AgentTaskRow>::fail(e->first, e->second);
+    }
+    if (auto e = rowStr(row, "goal", t.goal)) {
+        return Result<AgentTaskRow>::fail(e->first, e->second);
+    }
+    if (auto e = rowStr(row, "trigger_type", t.triggerType)) {
+        return Result<AgentTaskRow>::fail(e->first, e->second);
+    }
+    if (auto e = rowStr(row, "trigger_config", t.triggerConfig)) {
+        return Result<AgentTaskRow>::fail(e->first, e->second);
+    }
+    if (auto e = rowStr(row, "model_slot", t.modelSlot)) {
+        return Result<AgentTaskRow>::fail(e->first, e->second);
+    }
+    if (auto e = rowInt(row, "max_iterations", maxIter)) {
+        return Result<AgentTaskRow>::fail(e->first, e->second);
+    }
+    if (auto e = rowInt(row, "allow_destructive", allowDestr)) {
+        return Result<AgentTaskRow>::fail(e->first, e->second);
+    }
+    if (auto e = rowInt(row, "enabled", enabled)) {
+        return Result<AgentTaskRow>::fail(e->first, e->second);
+    }
+    t.maxIterations = static_cast<int>(maxIter);
+    t.allowDestructive = (allowDestr != 0);
+    t.enabled = (enabled != 0);
+    return Result<AgentTaskRow>::ok(std::move(t));
+}
+
 } // namespace
 
 AgentStore::AgentStore(core::data::SqliteDb& db) : db_(db) {}
@@ -61,7 +104,8 @@ AgentStore::AgentStore(core::data::SqliteDb& db) : db_(db) {}
 Result<int64_t> AgentStore::createTask(const std::string& name, const std::string& goal,
                                        const std::string& triggerType,
                                        const std::string& modelSlot,
-                                       int maxIterations, bool allowDestructive) {
+                                       int maxIterations, bool allowDestructive,
+                                       const std::string& triggerConfig) {
     std::lock_guard<std::recursive_mutex> lock(db_.mutex());
     auto st = db_.prepare(
         "INSERT INTO agent_tasks(name, goal, trigger_type, trigger_config, model_slot,"
@@ -72,7 +116,7 @@ Result<int64_t> AgentStore::createTask(const std::string& name, const std::strin
     auto& s = st.value();
     // brief 原示例的 && 串联不可编译（Result<void> 无 operator&&），改 bindAll
     // helper：逐个绑定、失败即透传，语义与逐个 if 检查一致
-    auto ok = bindAll(s, name, goal, triggerType, std::string(""), modelSlot,
+    auto ok = bindAll(s, name, goal, triggerType, triggerConfig, modelSlot,
                       static_cast<int64_t>(maxIterations),
                       static_cast<int64_t>(allowDestructive ? 1 : 0), now, now);
     if (ok.isFail()) return Result<int64_t>::fail(ok.errorCode(), ok.errorMessage());
@@ -84,9 +128,8 @@ Result<int64_t> AgentStore::createTask(const std::string& name, const std::strin
 
 Result<std::vector<AgentTaskRow>> AgentStore::listTasks() {
     std::lock_guard<std::recursive_mutex> lock(db_.mutex());
-    auto st = db_.prepare(
-        "SELECT id,name,goal,trigger_type,trigger_config,model_slot,"
-        "max_iterations,allow_destructive,enabled FROM agent_tasks ORDER BY id");
+    auto st = db_.prepare(std::string("SELECT ") + kTaskColumns +
+                          " FROM agent_tasks ORDER BY id");
     if (st.isFail()) {
         return Result<std::vector<AgentTaskRow>>::fail(st.errorCode(), st.errorMessage());
     }
@@ -97,41 +140,33 @@ Result<std::vector<AgentTaskRow>> AgentStore::listTasks() {
     std::vector<AgentTaskRow> out;
     out.reserve(rows.value().size());
     for (const auto& row : rows.value()) {
-        AgentTaskRow t;
-        int64_t maxIter = 0, allowDestr = 0, enabled = 0;
-        if (auto e = rowInt(row, "id", t.id)) {
-            return Result<std::vector<AgentTaskRow>>::fail(e->first, e->second);
+        auto t = taskRowFrom(row);
+        if (t.isFail()) {
+            return Result<std::vector<AgentTaskRow>>::fail(t.errorCode(), t.errorMessage());
         }
-        if (auto e = rowStr(row, "name", t.name)) {
-            return Result<std::vector<AgentTaskRow>>::fail(e->first, e->second);
-        }
-        if (auto e = rowStr(row, "goal", t.goal)) {
-            return Result<std::vector<AgentTaskRow>>::fail(e->first, e->second);
-        }
-        if (auto e = rowStr(row, "trigger_type", t.triggerType)) {
-            return Result<std::vector<AgentTaskRow>>::fail(e->first, e->second);
-        }
-        if (auto e = rowStr(row, "trigger_config", t.triggerConfig)) {
-            return Result<std::vector<AgentTaskRow>>::fail(e->first, e->second);
-        }
-        if (auto e = rowStr(row, "model_slot", t.modelSlot)) {
-            return Result<std::vector<AgentTaskRow>>::fail(e->first, e->second);
-        }
-        if (auto e = rowInt(row, "max_iterations", maxIter)) {
-            return Result<std::vector<AgentTaskRow>>::fail(e->first, e->second);
-        }
-        if (auto e = rowInt(row, "allow_destructive", allowDestr)) {
-            return Result<std::vector<AgentTaskRow>>::fail(e->first, e->second);
-        }
-        if (auto e = rowInt(row, "enabled", enabled)) {
-            return Result<std::vector<AgentTaskRow>>::fail(e->first, e->second);
-        }
-        t.maxIterations = static_cast<int>(maxIter);
-        t.allowDestructive = (allowDestr != 0);
-        t.enabled = (enabled != 0);
-        out.push_back(std::move(t));
+        out.push_back(std::move(t.value()));
     }
     return Result<std::vector<AgentTaskRow>>::ok(std::move(out));
+}
+
+Result<AgentTaskRow> AgentStore::getTask(int64_t id) {
+    std::lock_guard<std::recursive_mutex> lock(db_.mutex());
+    auto st = db_.prepare(std::string("SELECT ") + kTaskColumns +
+                          " FROM agent_tasks WHERE id=?");
+    if (st.isFail()) return Result<AgentTaskRow>::fail(st.errorCode(), st.errorMessage());
+    auto& s = st.value();
+    if (auto r = s.bind(1, id); r.isFail()) {
+        return Result<AgentTaskRow>::fail(r.errorCode(), r.errorMessage());
+    }
+    auto has = s.step();
+    if (has.isFail()) return Result<AgentTaskRow>::fail(has.errorCode(), has.errorMessage());
+    if (!has.value()) {
+        return Result<AgentTaskRow>::fail(ErrorCode::NotFound,
+                                          "任务不存在：id=" + std::to_string(id));
+    }
+    auto row = s.currentRow();
+    if (row.isFail()) return Result<AgentTaskRow>::fail(row.errorCode(), row.errorMessage());
+    return taskRowFrom(row.value());
 }
 
 Result<int64_t> AgentStore::startRun(int64_t taskId) {
@@ -146,6 +181,76 @@ Result<int64_t> AgentStore::startRun(int64_t taskId) {
     if (step.isFail()) return Result<int64_t>::fail(step.errorCode(), step.errorMessage());
     return Result<int64_t>::ok(
         static_cast<int64_t>(sqlite3_last_insert_rowid(db_.handle())));
+}
+
+Result<int64_t> AgentStore::startRunExclusive(int64_t taskId) {
+    // 查存在性 → 插行必须在**同一把锁**内（db_.mutex() 是 recursive_mutex，
+    // 下面的 startRun 会再锁一次、同一线程可重入），中间不放锁 = 跨线程原子。
+    // 手动「启动」与 Scheduler/cron 派发都走 AgentLoop::run → 这里（唯一闸点）。
+    std::lock_guard<std::recursive_mutex> lock(db_.mutex());
+    auto st = db_.prepare(
+        "SELECT 1 FROM agent_runs WHERE task_id=? AND status='running' LIMIT 1");
+    if (st.isFail()) return Result<int64_t>::fail(st.errorCode(), st.errorMessage());
+    auto& s = st.value();
+    if (auto r = s.bind(1, taskId); r.isFail()) {
+        return Result<int64_t>::fail(r.errorCode(), r.errorMessage());
+    }
+    auto running = s.step();
+    if (running.isFail()) {
+        return Result<int64_t>::fail(running.errorCode(), running.errorMessage());
+    }
+    if (running.value()) {
+        return Result<int64_t>::fail(ErrorCode::AlreadyExists, "任务已在运行");
+    }
+    return startRun(taskId);   // 锁内 → 与上面的查同样原子
+}
+
+Result<void> AgentStore::updateTask(int64_t id, const std::string& name,
+                                    const std::string& goal,
+                                    const std::string& triggerType,
+                                    const std::string& triggerConfig,
+                                    const std::string& modelSlot, int maxIterations,
+                                    bool allowDestructive) {
+    std::lock_guard<std::recursive_mutex> lock(db_.mutex());
+    auto st = db_.prepare(
+        "UPDATE agent_tasks SET name=?,goal=?,trigger_type=?,trigger_config=?,"
+        "model_slot=?,max_iterations=?,allow_destructive=?,updated_at=? WHERE id=?");
+    if (st.isFail()) return Result<void>::fail(st.errorCode(), st.errorMessage());
+    auto& s = st.value();
+    const int64_t now = static_cast<int64_t>(std::time(nullptr));
+    auto ok = bindAll(s, name, goal, triggerType, triggerConfig, modelSlot,
+                      static_cast<int64_t>(maxIterations),
+                      static_cast<int64_t>(allowDestructive ? 1 : 0), now, id);
+    if (ok.isFail()) return Result<void>::fail(ok.errorCode(), ok.errorMessage());
+    auto step = s.step();
+    if (step.isFail()) return Result<void>::fail(step.errorCode(), step.errorMessage());
+    // 一类一规则（与 getTask 同口径）：id 不存在 → fail(NotFound)，不静默 no-op。
+    // UPDATE 影响 0 行即目标行不存在（同 todo_service.cpp:329 既有口径）；持锁
+    // 覆盖 step + sqlite3_changes，计数不会被并发语句插队（recursive_mutex）。
+    if (sqlite3_changes(db_.handle()) == 0) {
+        return Result<void>::fail(ErrorCode::NotFound,
+                                  "任务不存在：id=" + std::to_string(id));
+    }
+    return Result<void>::ok();
+}
+
+Result<void> AgentStore::setTaskEnabled(int64_t id, bool enabled) {
+    std::lock_guard<std::recursive_mutex> lock(db_.mutex());
+    auto st = db_.prepare(
+        "UPDATE agent_tasks SET enabled=?,updated_at=? WHERE id=?");
+    if (st.isFail()) return Result<void>::fail(st.errorCode(), st.errorMessage());
+    auto& s = st.value();
+    const int64_t now = static_cast<int64_t>(std::time(nullptr));
+    auto ok = bindAll(s, static_cast<int64_t>(enabled ? 1 : 0), now, id);
+    if (ok.isFail()) return Result<void>::fail(ok.errorCode(), ok.errorMessage());
+    auto step = s.step();
+    if (step.isFail()) return Result<void>::fail(step.errorCode(), step.errorMessage());
+    // 同 updateTask：id 不存在 → fail(NotFound)，不静默 no-op
+    if (sqlite3_changes(db_.handle()) == 0) {
+        return Result<void>::fail(ErrorCode::NotFound,
+                                  "任务不存在：id=" + std::to_string(id));
+    }
+    return Result<void>::ok();
 }
 
 Result<void> AgentStore::finishRun(int64_t runId, const std::string& status,

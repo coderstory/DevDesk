@@ -527,6 +527,109 @@ REGISTER_TEST(agent_loop_tool_notfound_same_shape, "agent_loop: 工具未找到�
     DOCTEST_CHECK_EQ(row.status, std::string("completed"));
     return true;
 })
+// ===== M2 Task 1：资源上限 =====
+
+// spec §5.2：token 累计（input+output）硬上限 200K。单轮响应即破限也必须停
+//（检查点在 keepAssistant 落库之后、下一轮工具执行之前——破限轮的 assistant
+// 消息与用量照实落库（spec §10 审计），落库完立即判停，不再发第二轮）。
+REGISTER_TEST(agent_loop_token_cap_limits_run,
+              "agent_loop: token 累计超 200K → limited + error 说明", {
+    Fixture fx;
+    auto taskId = fx.store.createTask("t", "烧token", "manual", "default", 10, false);
+    DOCTEST_REQUIRE(taskId.isOk());
+    AgentTask task; task.id = taskId.value(); task.goal = "烧token"; task.modelSlot = "default";
+    core::LlmResponse big = resp(R"([{"type":"text","text":"big"}])", "tool_use");
+    big.inputTokens = 150000; big.outputTokens = 60000;    // 累计 21 万 > 200K
+    core::LlmResponse next = resp(R"([{"type":"text","text":"more"}])", "end_turn");
+    next.inputTokens = 10; next.outputTokens = 5;
+    fx.llm.script = {big, next};   // 第二条必须永远发不出去
+    std::atomic<bool> cancel{false};
+    auto runId = fx.loop.run(task, cancel);
+    DOCTEST_REQUIRE(runId.isOk());
+    DOCTEST_REQUIRE_EQ(fx.llm.sentMessages.size(), 1u);    // 破限后不再发第二轮
+    AgentRunRow run;
+    DOCTEST_REQUIRE(onlyRun(fx, task, run));
+    DOCTEST_CHECK_EQ(run.status, std::string("limited"));
+    DOCTEST_REQUIRE(run.error.has_value());
+    DOCTEST_CHECK(run.error->find("200K") != std::string::npos);
+    DOCTEST_CHECK_EQ(run.inputTokens.value_or(0), 150000); // 用量照实落库
+    DOCTEST_CHECK_EQ(run.outputTokens.value_or(0), 60000);
+    // spec §10 审计：检查点在 keepAssistant **之后**——破限轮的 assistant 消息
+    // 必须已落库（若判定挪到落库之前，这里只剩 goal 一条）
+    auto msgs = fx.store.listMessages(runId.value());
+    DOCTEST_REQUIRE(msgs.isOk());
+    DOCTEST_REQUIRE_EQ(msgs.value().size(), 2u);           // goal + 破限轮 assistant
+    DOCTEST_CHECK_EQ(msgs.value()[1].role, std::string("assistant"));
+    return true;
+})
+
+// spec §5.2：单 run 墙钟 = max_iterations × 请求超时(60s)，硬上限 30 分钟。
+// 注入假时钟：每次 send 前推进 10 分钟 → 第二轮顶部即破 min(10×60s, 30min)
+// = 600s 预算（预算取 min，迭代上限 10 轮远未到）。
+// 与 brief 的唯一偏差：脚本响应用**真 tool_use 轮**（toolUseResp）而非 text 块 +
+// stop_reason=tool_use——后者命中「stop_reason=tool_use 但响应里没有 tool_use
+// block」分支，第一轮就 run failed 收尾，永远回不到循环顶部的墙钟检查点，
+// 用例恒红且测不到目标行为（agent_loop.cpp 该分支已有独立用例覆盖）。
+REGISTER_TEST(agent_loop_wall_clock_cap_limits_run,
+              "agent_loop: 墙钟超预算 → limited（时钟注入零等待）", {
+    Fixture fx;
+    auto taskId = fx.store.createTask("t", "磨洋工", "manual", "default", 10, false);
+    DOCTEST_REQUIRE(taskId.isOk());
+    AgentTask task; task.id = taskId.value(); task.goal = "磨洋工"; task.modelSlot = "default";
+    int64_t fakeNowMs = 0;
+    AgentLoop loop{fx.llm, fx.tools, fx.store,
+                   [&fakeNowMs] { return fakeNowMs; }};   // 注入时钟（新形参）
+    fx.llm.onSendHook = [&fakeNowMs] { fakeNowMs += 10 * 60 * 1000; };  // 每轮 +10min
+    // 工具名不存在 → is_error 回喂、run 继续（不引入注册表依赖，只烧轮次）
+    core::LlmResponse tu = toolUseResp("w1", "t.ghost");
+    tu.inputTokens = 1; tu.outputTokens = 1;   // token 累计远不触顶，只钉墙钟
+    fx.llm.script = {tu, tu, tu, tu};   // 4 条远小于迭代上限 10
+    std::atomic<bool> cancel{false};
+    auto runId = loop.run(task, cancel);
+    DOCTEST_REQUIRE(runId.isOk());
+    AgentRunRow run;
+    DOCTEST_REQUIRE(onlyRun(fx, task, run));
+    DOCTEST_CHECK_EQ(run.status, std::string("limited"));
+    DOCTEST_REQUIRE(run.error.has_value());
+    DOCTEST_CHECK(run.error->find("墙钟") != std::string::npos);
+    // 钉死「预算取 min」这一支（评审补）：maxIterations=10 → 预算 600s 紧于
+    // 30 分钟硬上限，第 2 轮循环顶即停 = 恰好 1 次 send。若 min 退化成取 max
+    // （1800s），要 3 轮才停且报 1800s —— 下面两条断言会红（原断言集对它假绿）。
+    DOCTEST_CHECK(run.error->find("600s") != std::string::npos);
+    DOCTEST_CHECK_EQ(fx.llm.sentMessages.size(), 1u);
+    return true;
+})
+
+// spec §5.2 的另一支：30 分钟**硬上限**本身。maxIterations=50（loop 内 clamp
+// 上界）→ 预算 = min(50×60s, 30min) = 1800s，由硬上限决定而非迭代数。
+// 同样注入假时钟：每次 send 前 +10 分钟，3 轮后（第 4 次循环顶）累计 1800s 破限；
+// 脚本给 4 条、迭代上限 50 远未到 —— 只有硬上限能让它停。
+REGISTER_TEST(agent_loop_wall_clock_hard_cap_30min_limits_run,
+              "agent_loop: 墙钟 30 分钟硬上限 → limited 1800s（时钟注入）", {
+    Fixture fx;
+    auto taskId = fx.store.createTask("t", "磨洋工", "manual", "default", 50, false);
+    DOCTEST_REQUIRE(taskId.isOk());
+    AgentTask task; task.id = taskId.value(); task.goal = "磨洋工"; task.modelSlot = "default";
+    task.maxIterations = 50;
+    int64_t fakeNowMs = 0;
+    AgentLoop loop{fx.llm, fx.tools, fx.store,
+                   [&fakeNowMs] { return fakeNowMs; }};
+    fx.llm.onSendHook = [&fakeNowMs] { fakeNowMs += 10 * 60 * 1000; };  // 每轮 +10min
+    core::LlmResponse tu = toolUseResp("h1", "t.ghost");   // 工具不存在 → is_error 回喂继续
+    tu.inputTokens = 1; tu.outputTokens = 1;               // token 远不触顶，只钉墙钟
+    fx.llm.script = {tu, tu, tu, tu};
+    std::atomic<bool> cancel{false};
+    auto runId = loop.run(task, cancel);
+    DOCTEST_REQUIRE(runId.isOk());
+    AgentRunRow run;
+    DOCTEST_REQUIRE(onlyRun(fx, task, run));
+    DOCTEST_CHECK_EQ(run.status, std::string("limited"));
+    DOCTEST_REQUIRE(run.error.has_value());
+    DOCTEST_CHECK(run.error->find("1800s") != std::string::npos);   // 硬上限 30 分钟
+    DOCTEST_CHECK_EQ(fx.llm.sentMessages.size(), 3u);   // 3 轮后才破（不是第 1 轮）
+    return true;
+})
+
 // 裁定 2：goal 含引号 / 反斜杠 / 换行时，首条 user 消息仍必须是合法 JSON
 // 且 text 块与原文逐字节相同（每个 run 都走这条路径，转义坏了全盘皆输）。
 REGISTER_TEST(agent_loop_goal_escaping, "agent_loop: goal 含引号/反斜杠/换行 → 首条消息仍合法且原文逐字保真", {

@@ -5,6 +5,7 @@
 #pragma once
 #include <atomic>
 #include <cstdint>
+#include <functional>
 #include <string>
 #include <vector>
 #include "core/llm_endpoint.h"
@@ -24,11 +25,22 @@ struct AgentTask {
     bool allowDestructive = false;
 };
 
+// store 行 → 执行体入参的**唯一映射**（M2）：AgentModule（手动启动）、
+// Scheduler（cron 派发）、测试三方共用一份，避免各处手抄字段搬运漂移。
+// 只搬 AgentTask 关心的六项；trigger_type/trigger_config/enabled 归派发侧判定，
+// 不进执行体（run 不关心自己是被谁触发的）。
+struct AgentTaskRow;
+AgentTask taskFromRow(const AgentTaskRow& row);
+
 class AgentStore;
 
 class AgentLoop {
 public:
-    AgentLoop(core::LlmEndpoint& llm, core::ToolRegistry& tools, AgentStore& store);
+    // 单调时钟缝（spec §5.2 墙钟上限）：返回 steady 毫秒。默认空 = 走
+    // defaultNowMs()（steady_clock）；用例注入假时钟即可零等待验证超限判定。
+    using NowMsFn = std::function<int64_t()>;
+    AgentLoop(core::LlmEndpoint& llm, core::ToolRegistry& tools, AgentStore& store,
+              NowMsFn nowMs = {});
     // 同步跑一次（调用方在工作线程调）。落库 agent_runs/agent_messages。
     // 失败不抛：见 spec §5.2 状态语义（completed/failed/limited/cancelled）。
     Result<int64_t> run(const AgentTask& task, std::atomic<bool>& cancelToken);
@@ -36,5 +48,6 @@ private:
     core::LlmEndpoint& llm_;
     core::ToolRegistry& tools_;
     AgentStore& store_;
+    NowMsFn nowMs_;
 };
 } // namespace module::agent
