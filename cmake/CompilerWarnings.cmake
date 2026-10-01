@@ -46,12 +46,18 @@ function(devdesk_apply_warnings target_name)
         # ③ -Walloc-size-larger-than：同一条 flattenRecursive 内联链的另一面（GCC 把
         #    vector 尺寸当成了 SIZE_MAX），在 main.cpp 上冒出来；该选项带参数，故按
         #    GCC 要求的 `-Wno-error=选项=参数` 形式给出（参数取默认上限 PTRDIFF_MAX）。
+        # ④ -Wconversion-null：httplib.h:19037 CertOpenSystemStoreW(NULL, store_name)——
+        #    上游把 NULL 传给 HCRYPTPROV_LEGACY（整数形参），MinGW 的 NULL 定义触发
+        #    整数转换告警，叠全仓 -Werror 即编译红；MSVC 的 NULL 是 0 不报。与前三条
+        #    同一性质（MinGW 特有告警豁免），比 patch vendored 头干净（升级 0.59 时
+        #    vendor 文件保持原样）。
         if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
             target_compile_options(${target_name} PRIVATE
                 -Wno-error=array-bounds
                 -Wno-error=restrict
                 -Wno-error=stringop-overflow
-                -Wno-error=alloc-size-larger-than=9223372036854775807)
+                -Wno-error=alloc-size-larger-than=9223372036854775807
+                -Wno-error=conversion-null)
         endif()
     elseif(CMAKE_CXX_COMPILER_ID STREQUAL "MSVC")
         target_compile_options(${target_name} PRIVATE /W4)
