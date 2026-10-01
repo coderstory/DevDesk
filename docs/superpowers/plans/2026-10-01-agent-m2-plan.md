@@ -747,6 +747,9 @@ REGISTER_TEST(scheduler_stopall_cancels_inflight_resident_run,
 - Consumes: Task 4/5 Scheduler、既有 onStart/onStop 契约（agent_module.cpp:103-184）。
 - Produces: `AgentModule::Deps` 加 `Scheduler::NowFn schedulerNow;`（nullptr = 生产真实时钟；测试注入假时钟驱动 tick）。onStart：loop_ 创建成功后 `scheduler_ = std::make_unique<Scheduler>(*store_, *loop_, deps_.schedulerNow); scheduler_->start();`。onStop：既有「全取消 → 全 join → 清容器」之后、`unregisterTool("app.stats")` **之前**插入**判空**调用 `if (scheduler_) scheduler_->stopAll();`（spec §3 步骤 3「停常驻 worker 线程」的落位；db 为 null 时 onStart 早退、scheduler_ 从未创建——不判空即空指针崩）。成员声明序：`scheduler_` 放在 `loop_` / `llm_` / `store_` **之后**（逆向析构：先亡 scheduler_，再轮到它引用的 loop_/store_）；释放序 `loop_.reset()` 在 `scheduler_.reset()` 之前（Scheduler 持 AgentLoop&，stopAll 已 join 其线程，reset 安全）。compose 的常驻任务「入队」按钮由 Task 10 接线，本任务不碰 UI。
 
+- **需求：代理服务惰性可用（2026-10-01 终审 finding）**：`llm_` / `IClaudeProxyService` 解析从 onStart 一次性改为**首次使用时解析**（或装配后重解析）——启动 claude 关、会话内拨开 claude 后，已在运行的 agent 模块无须 off→on 即可用代理；null 时保留 WARN 并给出可操作提示。TDD 用例：注入 null 起始的 locator → 后置注册服务 → 首次使用路径拿到服务。
+- 关联：claude-lazy-assembly 终审 finding（2026-10-01）
+
 - [ ] **Step 1: 写失败测试**（test_agent_tools.cpp 追加；FakeProxy/ToolGuard/SlowTool 文件内已有，:103-156）：
 
 ```cpp
@@ -802,7 +805,8 @@ REGISTER_TEST(agent_module_onstop_stops_scheduler_runs,
 })
 ```
 
-- [ ] **Step 2: 红**（Deps 无 schedulerNow → 编译失败；补形参后用例卡「5s 未派发」为行为红）→ **Step 3: 实现**（如 Interfaces；onStart 的 scheduler 装配置于 statsTool_ 注册之前、llm_/loop_ 创建分支内）
+- [ ] **Step 1b: 惰性解析 TDD**（**先红**：test_agent_tools.cpp 追加用例——`deps.proxy = nullptr` 且 locator 起点未注册（test_main TIN-07 每用例 `ServiceLocator::resetForTest()`）→ `onStart()` 走现有早退分支（llm_/loop_ 不建，WARN 保留）→ 后置 `core::ScopedService<core::IClaudeProxyService> late(&proxy);` → **首次使用路径** `mod->startTask(taskId)` 应正常起 run 并落 `running` 行；当前实现在 agent_module.cpp:203-206 直接早退「服务未就绪」→ 断言红）→ **实现**（把解析收进单一私有无参入口 `ensureLlm()`，`startTask` 与 Scheduler 派发两路**首次使用前**都先调它：`llm_ == nullptr` 时 `deps_.proxy` 优先、否则 `ServiceLocator::requireService<core::IClaudeProxyService>()` → 有则建 `llm_` + `loop_`，并**在同一入口补建 scheduler_**（Task 4/5 的 Scheduler 持 `AgentLoop&`，onStart 早退时从未创建——不在这里补建，惰性路径下 cron 永远不触发）；仍无服务 → 保留 WARN 并补可操作提示「请在设置页开启 Claude 模块后重试」。onStart 的现有装配保留为预热，语义不变）→ **绿**（定向 `devdesk_tests agent_module`，Step 1 用例 + 既有 onstop_cancels_and_joins / onstart_reentry_idempotent 零回归）
+- [ ] **Step 2: 红**（Deps 无 schedulerNow → 编译失败；补形参后用例卡「5s 未派发」为行为红）→ **Step 3: 实现**（如 Interfaces；onStart 的 scheduler 装配置于 statsTool_ 注册之前、llm_/loop_ 创建分支内；**惰性路径的补建见 Step 1b**）
 - [ ] **Step 3b: 手抄映射除重**（agent_module.cpp:243-249 那六行 `t.id=…t.allowDestructive=…` 字段搬运删掉，改 `AgentTask t = taskFromRow(taskRecord);`——taskFromRow（Task 2）是 store 行 → AgentTask 的唯一映射，run 线程里不留第二份会漂移的副本；scheduler / tests 同用它）
 - [ ] **Step 4: 绿**（定向 `devdesk_tests agent_module`，既有 onstop_cancels_and_joins / onstart_reentry_idempotent 零回归）+ 全量
 - [ ] **Step 5: Commit** `git commit -m "feat(agent): AgentModule 装配 Scheduler（onStart 起 / onStop 契约顺序收口）" -- src/module_agent/agent_module.h src/module_agent/agent_module.cpp tests/test_modules/test_agent_tools.cpp`
