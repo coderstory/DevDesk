@@ -97,7 +97,17 @@ REGISTER_TEST(claude_tools_register_and_list_and_switch,
     env.tools->registerAll();
     for (const char* n : {"claude.list_profiles", "claude.switch_profile",
                           "claude.test_connection", "claude.recent_logs"}) {
-        DOCTEST_CHECK(core::ToolRegistry::instance().find(n).isOk());
+        auto found = core::ToolRegistry::instance().find(n);
+        DOCTEST_REQUIRE(found.isOk());
+        // schemaJson 契约（照 test_markdown_tools.cpp:239-246 先例）：schema 要真能
+        // 进 Anthropic tools 数组——非空 + 声明的 name 与注册名一致 + input_schema /
+        // required 两键齐（缺任一项请求侧会被上游拒或 LLM 看不到入参）
+        const std::string schema = found.value()->schemaJson();
+        DOCTEST_CHECK_FALSE(schema.empty());
+        DOCTEST_CHECK(schema.find(std::string("\"name\":\"") + n + "\"") !=
+                      std::string::npos);
+        DOCTEST_CHECK(schema.find("\"input_schema\"") != std::string::npos);
+        DOCTEST_CHECK(schema.find("\"required\"") != std::string::npos);
     }
     auto listed = runToolName("claude.list_profiles", "{}");
     DOCTEST_REQUIRE(listed.isOk());
@@ -376,18 +386,20 @@ REGISTER_TEST(claude_tools_switch_profile_concurrent_smoke,
 
     constexpr int kIterations = 25;
     std::barrier<> startLine(2);
-    int okA = 0;
-    int okB = 0;
-    std::string firstErr;
+    // 每线程只写自己槽位、join 之后主线程才读（评审微修：原实现的 firstErr 由两
+    // worker 无同步共写 = 用例自身的数据竞争——本用例正是在测锁，测具不该自带
+    // race；ok/err 分槽后全部跨线程可见性都由 join 建立）
+    int okPerSlot[2] = {0, 0};
+    std::string errPerSlot[2];
 
     auto worker = [&](int slot, int64_t id) {
         startLine.arrive_and_wait();
         for (int i = 0; i < kIterations; ++i) {
             auto r = env.svc->setActiveProfile(id);
             if (r.isOk()) {
-                (slot == 0 ? okA : okB) += 1;
-            } else if (firstErr.empty()) {
-                firstErr = r.errorMessage();
+                okPerSlot[slot] += 1;
+            } else if (errPerSlot[slot].empty()) {
+                errPerSlot[slot] = r.errorMessage();
             }
         }
     };
@@ -396,8 +408,8 @@ REGISTER_TEST(claude_tools_switch_profile_concurrent_smoke,
     t1.join();
     t2.join();
 
-    DOCTEST_CHECK_MESSAGE(okA == kIterations, firstErr);
-    DOCTEST_CHECK_MESSAGE(okB == kIterations, firstErr);
+    DOCTEST_CHECK_MESSAGE(okPerSlot[0] == kIterations, errPerSlot[0]);
+    DOCTEST_CHECK_MESSAGE(okPerSlot[1] == kIterations, errPerSlot[1]);
 
     // 终态自洽：激活行恰好一条，且是 A / B 之一
     auto list = env.svc->listProfiles();
