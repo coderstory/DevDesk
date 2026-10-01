@@ -1,6 +1,6 @@
 // src/module_settings/app_tools.cpp
 // AppTools M2 Task 9 实现：app.read_settings 单工具（同文件存放，照
-// module_agent/app_stats_tool.cpp 的「工厂 + 匿名命名空间小类」形态）。
+// module_agent 侧 app_stats_tool.cpp 的「工厂 + 匿名命名空间小类」形态）。
 //
 //   app.read_settings  {} → {"themeMode":…,"darkTheme":bool,
 //                            "fontScalePercent":N,"editorFontSize":N,

@@ -25,10 +25,14 @@
 #      5) src/module_agent/*.{h,cpp} 不得 include 兄弟模块头
 #         （module_home|markdown|todo|claude_proxy|settings|pet)/ 均零命中；
 #         按「include 路径形态」匹配——注释里不带斜杠的兄弟模块名不算违规
-#      6) 反向：todo/markdown/claude 的工具集与模块文件（todo_tools /
-#         markdown_tools / claude_tools / todo_module / markdown_module /
-#         claude_module）不得引用 module_agent/（工具注册方不回依赖消费方；
+#      6) 反向：todo/markdown/claude/**settings** 的工具集与模块文件（todo_tools /
+#         markdown_tools / claude_tools / app_tools / todo_module /
+#         markdown_module / claude_module / settings_module）不得引用
+#         module_agent/（工具注册方不回依赖消费方；
 #         各 tools 头注释里「不依赖 module_agent」不带斜杠，不误报）
+#         settings 族为 ARCH-02/ARCH-04 补入（M2 静态审计）：app.read_settings
+#         是 M2 新增的第 3 个工具落点，名单此前只补了 claude ——第三处落点
+#         从此不再只靠人记
 #
 # 退出码：0 = 通过；1 = 违规（逐条打印 文件:行:命中行）；2 = 环境错（不得静默绿）
 #
@@ -226,7 +230,10 @@ for tool_file in "$ROOT/src/module_todo/todo_tools.h" \
                  "$ROOT/src/module_markdown/markdown_module.cpp" \
                  "$ROOT/src/module_claude_proxy/claude_tools.h" \
                  "$ROOT/src/module_claude_proxy/claude_tools.cpp" \
-                 "$ROOT/src/module_claude_proxy/claude_module.cpp"; do
+                 "$ROOT/src/module_claude_proxy/claude_module.cpp" \
+                 "$ROOT/src/module_settings/app_tools.h" \
+                 "$ROOT/src/module_settings/app_tools.cpp" \
+                 "$ROOT/src/module_settings/settings_module.cpp"; do
     [ -f "$tool_file" ] && [ -r "$tool_file" ] || {
         echo "环境错误：不可读 $tool_file" >&2; exit 2; }
     check_absent_fixed "$tool_file" 'module_agent/'
