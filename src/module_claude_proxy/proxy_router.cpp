@@ -47,7 +47,8 @@ std::map<std::string, std::string> copyHeaders(
             k == "connection" || k == "transfer-encoding") {
             continue;
         }
-        // cpp-httplib 解析请求时注入的本地连接伪头（httplib.h:7186-7192）：
+        // cpp-httplib 0.18.x 解析请求时注入的本地连接伪头（0.58.0 起上游侧改为
+        // is_prohibited_header_name 主动禁止、不再注入）；剥离保留为纵深防御——
         // 转发到上游毫无意义，还会泄漏本机地址/端口、干扰网关的头校验
         if (k == "remote_addr" || k == "remote_port" ||
             k == "local_addr" || k == "local_port") {
