@@ -2135,9 +2135,9 @@ REGISTER_TEST(settings_pet_skin_row_inline,
 })
 
 // ---- 2026-09-29 用户真机反馈「设置-模块-桌宠取消勾选，桌宠没消失」----
-// 口径（PET-CLOSE）：模块开关的**注册门控**仍要重启（main 装配期），但桌宠
-// 是唯一有独立可见载体的模块 → 取消勾选立即关窗、重新勾选立即重开（本会话
-// 装配过时）。判据（去掉 settings 侧的桥调用逐条必红）：
+// 口径：模块开关即时生效（live-toggle 2026-10-01）；pet 窗口同步走 PET-CLOSE
+// 桥 → 取消勾选立即关窗、重新勾选立即重开。判据（去掉 settings 侧的桥调用
+// 逐条必红）：
 //   ① 点开关命中矩形（settings.card.modules.sw.3.hit，勾选态）→ pet 侧
 //      「窗口可见意图」由 true 翻 false（= 取消勾选即关窗，不是等重启）；
 //   ② enabledModules 持久化不受影响：盘上 config.json 去掉 pet（插拔语义不变）；

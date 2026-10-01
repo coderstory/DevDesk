@@ -6,6 +6,14 @@
 
 > **当前基线（2026-09-24，master @ 817af80）**：用例 **407**（`grep REGISTER_TEST` 口径，本会话 324 → 407；全绿与否以主会话终验为准）。各波次条目内的测试数为该波时点事实，不代表当前总数；波次按合并时间倒序排列。
 
+## [LiveToggle] 2026-10-01 —— 模块开关即时生效（路线 A 注册表活门控）（`39b44f5`，13 提交）
+
+- feat(router,assembly,settings)：设置页「模块」开关从**重启生效**改为**即时生效**——路线 A（注册表活门控）。三层落点：`Router` 活门控基座（`fc68ee0`，新增 `unregisterModule` + register/unregister 幂等）→ 装配层 `dispatchModuleToggle`（`615ca70`，on/off 驱动注册与模块生命周期 + 当前页停在该模块时重定向）→ `main.cpp` 装配段注入活门控 handler（`149b279`）+ settings 侧经中立层桥头接 `app::toggle`（`8f4cd65`，可注入缝）。
+- fix(modules)：四页面模块 onStart/onStop 重入幂等（`f955fb7`，double-onStart no-op 守卫）；todo/markdown service_ 进程级存活收口 off→on UAF 窗口（`6002c50`，onStart 复用存活服务，不重建悬空指针）。
+- test：侧边栏实时反映门控状态（`eb3d0d6`，无头 + probe 双层；probe 增真点击路径 + redirect-in-dispatch 断言 `2a2e2cc`）；装配层锁 D-1 off 路径 onStop 先于 unregisterModule 的时序（`83ab3ed`）。
+- fix(ui)：模块开关与托盘文案改即时生效口径 + claude 模块关闭后进入其页面给死页（无服务）toast 缓解（`3d20fc6`）。
+- **已知边界**：claude 在启动期被关闭的，会话内重新开启需要重启才能完成装配服务接线；模块重新启用后回侧边栏末位（不保留原顺序位）。
+
 ## [Schema] 2026-09-30 —— 删版本化迁移，改单份当前 schema 建表（无历史包袱）
 
 - refactor(core)：`src/core/migrations.h`（11 条版本化迁移 v1–v11）→ `src/core/schema.h`，一份 `core::schema::kSql`（9 表 + 5 索引 + FTS5 虚表 + 默认 Todo 列种子）。`SqliteDb::runMigrations(vector<Migration>)` + `schemaVersion()` → `applySchema(const std::string&)`：整份脚本一个事务幂等执行。`Migration` 结构体、`schema_version` 建表/查询/插入、「数据库比二进制新」降级守卫**全部删除**。
