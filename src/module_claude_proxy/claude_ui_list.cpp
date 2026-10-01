@@ -150,6 +150,35 @@ AvatarColors avatarColorsFor(const eui::Color& base, bool isDark) {
             eui::mixColor(base, eui::Color(0.0f, 0.0f, 0.0f), 0.25f)};
 }
 
+// 名字首**字符**（2026-10-01 审计 Important）：旧 `std::string(1, p.name[0])`
+// 只取首字节——CJK 首字符是 3 字节 UTF-8，截出单字节非法序列渲染成 ?（用户
+// 原「里面有个问号」的真实根因；英文名不受影响所以一直没暴露）。按首字节判
+// 序列长度取完整码点（0xxxxxxx=1 / 110xxxxx=2 / 1110xxxx=3 / 11110xxx=4），
+// 后续字节须是续字节（10xxxxxx）；非法 / 截断序列回退 ?（与空名占位同字形）。
+std::string firstUtf8CharOr(const std::string& name) {
+    if (name.empty()) return "?";
+    const auto b0 = static_cast<unsigned char>(name[0]);
+    size_t len = 0;
+    if ((b0 & 0x80u) == 0x00u) {
+        len = 1;
+    } else if ((b0 & 0xE0u) == 0xC0u) {
+        len = 2;
+    } else if ((b0 & 0xF0u) == 0xE0u) {
+        len = 3;
+    } else if ((b0 & 0xF8u) == 0xF0u) {
+        len = 4;
+    } else {
+        return "?";  // 0x80-0xBF 续字节打头 / 0xF8+ 超界 → 非法序列
+    }
+    if (name.size() < len) return "?";  // 序列被截断
+    for (size_t i = 1; i < len; ++i) {
+        if ((static_cast<unsigned char>(name[i]) & 0xC0u) != 0x80u) {
+            return "?";  // 续字节不合法
+        }
+    }
+    return name.substr(0, len);
+}
+
 // Profile 卡片（点击选中，选中/激活高亮）。
 // st 为引用：点击回调写回选中态（须指向存活到下一帧的对象 = 模块状态成员）
 void drawProfileCard(eui::Ui& ui,
@@ -200,10 +229,10 @@ void drawProfileCard(eui::Ui& ui,
         .radius(avatarSize * 0.5f)
         .border(1.5f, avatar.ring)
         .build();
-    // 头像首字（内容口径不变：名字首字符 / 空名占位 ?；颜色随包边派生保证圆内对比）
-    const std::string initial = p.name.empty()
-        ? std::string("?")
-        : std::string(1, p.name[0]);
+    // 头像首字（2026-10-01 审计修复：按 UTF-8 码点取首字符，见
+    // firstUtf8CharOr——旧取首**字节**使 CJK 名渲染成 ?；空名占位 ? 口径不变；
+    // 颜色随包边派生保证圆内对比）
+    const std::string initial = firstUtf8CharOr(p.name);
     ui.text(id + ".avatar.text")
         .position(16.0f, avatarY)
         .size(avatarSize, avatarSize)

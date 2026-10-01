@@ -5463,6 +5463,12 @@ REGISTER_TEST(claude_profile_avatar_color_ring_centered,
     // (c) 外层包边存在（描边环宽度 ≥ 1）
     DOCTEST_CHECK_MESSAGE(av->border.width >= 1.0f,
                           "头像圆圈缺外层包边（border 宽度 < 1）");
+    // (c) 环色是派生的同色系色，不是回退到旧的中性 borderDefault（审计 Minor：
+    // 只断宽度时，环色回退 borderDefault 仍旧绿）
+    const bool ringIsBorderDefault =
+        sameColor(av->border.color, t.colors.borderDefault);
+    DOCTEST_CHECK_MESSAGE(!ringIsBorderDefault,
+                          "头像包边色回退为中性 borderDefault（未用派生环色）");
 
     // (d) 垂直居中：圆心 y == 行（96 高卡片）中心 y，容差 0.5；字形同框
     const float rowCy = row->frame.y + row->frame.height * 0.5f;
@@ -5474,6 +5480,100 @@ REGISTER_TEST(claude_profile_avatar_color_ring_centered,
                               std::to_string(rowCy));
     DOCTEST_CHECK_MESSAGE(std::fabs(textCy - circleCy) <= 0.5f,
                           "头像字形框与圆圈不同心");
+
+    // (e) 深浅主题派生分支（2026-10-01 审计 Minor 补强）：两主题各 compose 一帧，
+    // fill/ring 必须不同（isDark 派生分支生效）、各自仍非占位色、环各自非中性
+    // borderDefault；结束恢复原主题（全局态还原，不污染后续用例）。
+    // g_current 是单例被 setDark/setLight 原地改写 → token 只能**值拷贝**快照，
+    // 引用会跨主题别名
+    const std::string themeBefore = core::theme::currentThemeName();
+    const auto avatarOf = [&](eui::Ui& ui) {
+        return ui.find("claude.profile.0.avatar");   // 断言由调用方做（宏含 return false，不能进非 bool helper）
+    };
+    core::theme::setLight();
+    const core::theme::Tokens tokensLight = core::theme::current();
+    eui::Ui uiLight;
+    compose(uiLight);
+    const auto* lightAv = avatarOf(uiLight);
+    DOCTEST_REQUIRE(lightAv != nullptr);
+    const eui::Color lightFill = lightAv->color;
+    const eui::Color lightRing = lightAv->border.color;
+    core::theme::setDark();
+    const core::theme::Tokens tokensDark = core::theme::current();
+    eui::Ui uiDark;
+    compose(uiDark);
+    const auto* darkAv = avatarOf(uiDark);
+    DOCTEST_REQUIRE(darkAv != nullptr);
+    DOCTEST_CHECK_MESSAGE(!sameColor(darkAv->color, lightFill),
+                          "深浅主题头像底色相同（isDark 派生分支未生效）");
+    DOCTEST_CHECK_MESSAGE(!sameColor(darkAv->border.color, lightRing),
+                          "深浅主题包边色相同（isDark 派生分支未生效）");
+    DOCTEST_CHECK_MESSAGE(!sameColor(darkAv->color,
+                                     tokensDark.colors.surfaceElevated) &&
+                              !sameColor(lightAv->color,
+                                         tokensLight.colors.surfaceElevated),
+                          "头像回退占位底色（深或浅主题）");
+    DOCTEST_CHECK_MESSAGE(!sameColor(darkAv->border.color,
+                                     tokensDark.colors.borderDefault) &&
+                              !sameColor(lightAv->border.color,
+                                         tokensLight.colors.borderDefault),
+                          "包边回退中性 borderDefault（深或浅主题）");
+    if (themeBefore == "Dark") {
+        core::theme::setDark();
+    } else {
+        core::theme::setLight();
+    }
+
+    mod->onStop();
+    return true;
+})
+
+// ---- 头像首字按 UTF-8 码点取（2026-10-01 审计 Important）----
+// 旧取法 std::string(1, p.name[0]) 只取首**字节**：CJK 首字符是 3 字节 UTF-8，
+// 截出单字节非法序列 → 渲染 ?（用户原话「里面有个问号」的真实根因，与空名
+// 占位 ? 无关；英文名 profile 显示正常）。修后按首字节判序列长度取完整码点，
+// 非法序列回退 ?。判据：CJK 名渲染首字 == 名首字符完整 UTF-8；英文名 == 首字符。
+REGISTER_TEST(claude_profile_avatar_initial_utf8,
+              "claude_module: Profile 头像首字按 UTF-8 码点取（CJK 不再渲染 ?）", {
+    TestEnv env;
+    auto cjk = env.svc->createProfile("智谱网关", "https://z.example.com",
+                                      "sk-ant-u8-001", "m");
+    DOCTEST_REQUIRE(cjk.isOk());
+    auto lat = env.svc->createProfile("Alpha", "https://a.example.com",
+                                      "sk-ant-u8-002", "m");
+    DOCTEST_REQUIRE(lat.isOk());
+
+    std::unique_ptr<::core::Module> mod(create_claude_module());
+    mod->onStart();
+    eui::Ui ui;
+    composeAtSize(mod.get(), ui, "claude_u8", 1262.0f, 801.0f);
+
+    // 列表按 name ASC 排序（"Alpha" < "智谱网关"），不能写死下标——经 service
+    // 的同一排序把名字映到行号
+    auto listed = env.svc->listProfiles();
+    DOCTEST_REQUIRE(listed.isOk());
+    const auto indexOfName = [&](const std::string& name) -> int {
+        for (size_t i = 0; i < listed.value().size(); ++i) {
+            if (listed.value()[i].name == name) return static_cast<int>(i);
+        }
+        return -1;
+    };
+    const int cjkIdx = indexOfName("智谱网关");
+    const int latIdx = indexOfName("Alpha");
+    DOCTEST_REQUIRE(cjkIdx >= 0);
+    DOCTEST_REQUIRE(latIdx >= 0);
+    const auto* txCjk =
+        ui.find("claude.profile." + std::to_string(cjkIdx) + ".avatar.text");
+    const auto* txLat =
+        ui.find("claude.profile." + std::to_string(latIdx) + ".avatar.text");
+    DOCTEST_REQUIRE(txCjk != nullptr);
+    DOCTEST_REQUIRE(txLat != nullptr);
+    // "智" = 3 字节 UTF-8（E6 99 BA）；旧取法只留首字节 0xE5 → 断言红
+    DOCTEST_CHECK_MESSAGE(txCjk->text == "智",
+                          "CJK 名首字未按码点取：渲染 text 长度 " +
+                              std::to_string(txCjk->text.size()) + "（应为 3）");
+    DOCTEST_CHECK_MESSAGE(txLat->text == "A",
+                          "拉丁名首字取错：" + txLat->text);
 
     mod->onStop();
     return true;
