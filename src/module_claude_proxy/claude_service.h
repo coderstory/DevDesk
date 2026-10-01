@@ -163,6 +163,22 @@ public:
     // 纯读（不改 is_active、不重写 settings.json——failover 是请求级，B10）
     std::optional<Profile> resolveFallbackProfile(const Profile& profile);
 
+    // ---- 模型槽位解析（agent 子系统 M1；IClaudeProxyService::resolveModelSlot
+    // 经 GlobalClaudeProxyService 转发到这里）----
+    // 激活 profile 的 models_config 里 slot 槽位 → 实际 model id。
+    //   - "def" 与 "default" 等价（agent 槽位键两写并存，表行 jsonKey 是
+    //     "default"，先归一再查表）
+    //   - 无激活 profile / 槽位未配置或 model 空 / 未知槽位键 → nullopt
+    //   - default 槽位特例（旧列语义：旧 model 列是 default 槽位的
+    //     fallback）：models_config **未配置或解析失败**时回落 profile.model
+    //    （回落也为空 → nullopt）
+    //   - 非 default 槽位：models_config 解析失败 → nullopt
+    // 槽位键 ↔ 成员映射的唯一真相源 = provider_config.h 的
+    // DEVDESK_MODEL_SLOT_LIST（经 kModelSlotMetas 遍历，不手写槽位分支）。
+    // 纯读：无锁（与 resolveFallbackProfile 同款，随调用方 SqliteDb
+    // recursive_mutex 串行化；其余为本地副本上的纯计算）
+    std::optional<std::string> resolveModelSlot(const std::string& slot);
+
     // ---- 连通性测试 ----
 
     core::Result<platform::http::Response> testConnection(const Profile& profile);

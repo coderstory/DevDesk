@@ -64,7 +64,7 @@ std::vector<std::string> columnDefs(core::data::SqliteDb& db, const std::string&
 // ============ 表与索引的存在性 ============
 
 REGISTER_TEST(schema_creates_all_tables,
-              "schema: applySchema 建出全部 8 张应用表", {
+              "schema: applySchema 建出全部 11 张应用表", {
     auto path = test_support::tempDbPath(kDbPrefix, "create");
     std::error_code ec;
     std::filesystem::remove(path, ec);
@@ -85,6 +85,9 @@ REGISTER_TEST(schema_creates_all_tables,
             "claude_profiles",
             "claude_call_logs",
             "claude_shared_configs",
+            "agent_tasks",
+            "agent_runs",
+            "agent_messages",
         };
         for (const auto& t : expected) {
             bool found = tables.count(t) > 0;
@@ -94,7 +97,7 @@ REGISTER_TEST(schema_creates_all_tables,
             }
         }
 
-        // 5 个索引（含 1 个部分唯一索引 + 1 个带 WHERE 的到期索引）
+        // 7 个索引（含 1 个部分唯一索引 + 1 个带 WHERE 的到期索引 + agent 2 个）
         auto indexes = listObjects(r.value().db(), "index");
         std::set<std::string> expectedIndexes{
             "idx_tasks_column",
@@ -102,6 +105,8 @@ REGISTER_TEST(schema_creates_all_tables,
             "idx_claude_active",
             "idx_call_logs_started",
             "idx_call_logs_profile",
+            "idx_agent_runs_task",
+            "idx_agent_messages_run",
         };
         for (const auto& i : expectedIndexes) {
             bool found = indexes.count(i) > 0;
@@ -324,6 +329,95 @@ REGISTER_TEST(schema_claude_tables_columns,
         // 旧列不存在（不是改名）
         DOCTEST_CHECK(
             db.prepare("SELECT extra_env FROM claude_shared_configs").isFail());
+    }
+
+    std::filesystem::remove(path, ec);
+    return true;
+})
+
+REGISTER_TEST(schema_agent_tables_columns,
+              "schema: agent 三表列定义符合最终形态（11/9/7 列，双 FK CASCADE）", {
+    auto path = test_support::tempDbPath(kDbPrefix, "cols_agent");
+    std::error_code ec;
+    std::filesystem::remove(path, ec);
+
+    {
+        auto r = core::Database::open(path);
+        DOCTEST_REQUIRE(r.isOk());
+        DOCTEST_REQUIRE(r.value().migrate().isOk());
+        auto& db = r.value().db();
+
+        // agent_tasks 11 列：默认值钉死（max_iterations=10 / allow_destructive=0 /
+        // enabled=1 / model_slot='default'）——AgentStore 落库契约的列形态基础
+        std::vector<std::string> expectTasks{
+            "id:INTEGER:0:<none>",
+            "name:TEXT:1:<none>",
+            "goal:TEXT:1:<none>",
+            "trigger_type:TEXT:1:<none>",
+            "trigger_config:TEXT:1:''",
+            "model_slot:TEXT:1:'default'",
+            "max_iterations:INTEGER:1:10",
+            "allow_destructive:INTEGER:1:0",
+            "enabled:INTEGER:1:1",
+            "created_at:INTEGER:1:<none>",
+            "updated_at:INTEGER:1:<none>",
+        };
+        DOCTEST_CHECK_EQ(columnDefs(db, "agent_tasks"), expectTasks);
+
+        // agent_runs 9 列：ended_at/tokens/error 全可空（运行中 / 未采集 / 无错误
+        // 与真实值区分）
+        std::vector<std::string> expectRuns{
+            "id:INTEGER:0:<none>",
+            "task_id:INTEGER:1:<none>",
+            "status:TEXT:1:<none>",
+            "started_at:INTEGER:1:<none>",
+            "ended_at:INTEGER:0:<none>",
+            "iterations:INTEGER:1:0",
+            "input_tokens:INTEGER:0:<none>",
+            "output_tokens:INTEGER:0:<none>",
+            "error:TEXT:0:<none>",
+        };
+        DOCTEST_CHECK_EQ(columnDefs(db, "agent_runs"), expectRuns);
+
+        // agent_messages 7 列：tool_call_id 可空（assistant 文本块无调用 id）
+        std::vector<std::string> expectMessages{
+            "id:INTEGER:0:<none>",
+            "run_id:INTEGER:1:<none>",
+            "seq:INTEGER:1:<none>",
+            "role:TEXT:1:<none>",
+            "content_json:TEXT:1:<none>",
+            "tool_call_id:TEXT:0:<none>",
+            "created_at:INTEGER:1:<none>",
+        };
+        DOCTEST_CHECK_EQ(columnDefs(db, "agent_messages"), expectMessages);
+
+        // FK CASCADE 生效：删 task 清 runs、删 run 清 messages（审计链随宿主走）
+        auto ins = db.prepare(
+            "INSERT INTO agent_tasks (name, goal, trigger_type, created_at, "
+            "updated_at) VALUES ('t','g','manual',1,1)");
+        DOCTEST_REQUIRE(ins.isOk());
+        DOCTEST_REQUIRE(ins.value().step().isOk());
+        auto insRun = db.prepare(
+            "INSERT INTO agent_runs (task_id, status, started_at) "
+            "VALUES (1, 'running', 1)");
+        DOCTEST_REQUIRE(insRun.isOk());
+        DOCTEST_REQUIRE(insRun.value().step().isOk());
+        auto insMsg = db.prepare(
+            "INSERT INTO agent_messages (run_id, seq, role, content_json, "
+            "created_at) VALUES (1, 0, 'user', '[]', 1)");
+        DOCTEST_REQUIRE(insMsg.isOk());
+        DOCTEST_REQUIRE(insMsg.value().step().isOk());
+        DOCTEST_REQUIRE(
+            db.prepare("PRAGMA foreign_keys=ON").isOk());  // 连接级开关先开
+        DOCTEST_REQUIRE(db.prepare("DELETE FROM agent_tasks WHERE id=1")
+                            .step()
+                            .isOk());
+        auto leftover = db.prepare("SELECT COUNT(*) AS n FROM agent_messages");
+        DOCTEST_REQUIRE(leftover.isOk());
+        DOCTEST_REQUIRE(leftover.value().step().isOk());
+        const auto row = leftover.value().currentRow();
+        DOCTEST_REQUIRE(row.isOk());
+        DOCTEST_CHECK_EQ(row.value().getInt64("n").valueOr(-1), 0);
     }
 
     std::filesystem::remove(path, ec);

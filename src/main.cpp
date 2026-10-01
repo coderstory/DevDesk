@@ -3,7 +3,7 @@
 // app::dslAppConfig() 和 app::compose()
 
 #include "app_assembly.h"
-#include "app_registry.h"  // kModuleRegistry：页面模块登记表（含 5 个工厂声明）
+#include "app_registry.h"  // kModuleRegistry：页面模块登记表（含 7 个工厂声明）
 #include "app_sidebar.h"
 #include "claude_service.h"
 #include "core/claude_proxy_service.h"
@@ -140,6 +140,7 @@ void prepareClaudeServiceBeforeModules();
     static std::unique_ptr<::core::Module> todo(create_todo_module());
     static std::unique_ptr<::core::Module> claude(create_claude_module());
     static std::unique_ptr<::core::Module> settings(create_settings_module());
+    static std::unique_ptr<::core::Module> agent(create_agent_module());
     static std::unique_ptr<::core::Module> about(create_about_module());
 
     static bool initialized = false;
@@ -154,6 +155,7 @@ void prepareClaudeServiceBeforeModules();
                 case ::core::PageId::Todo: return todo.get();
                 case ::core::PageId::ClaudeProxy: return claude.get();
                 case ::core::PageId::Settings: return settings.get();
+                case ::core::PageId::Agent: return agent.get();
                 case ::core::PageId::About: return about.get();
             }
             return nullptr;

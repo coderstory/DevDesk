@@ -40,7 +40,8 @@ constexpr const char* kKeySidebarCollapsed = "sidebarCollapsed";
 // 合法模块 ID 清单（sanitized 过滤未知项；与 kModuleId* 一一对应）
 const char* const kKnownModuleIds[] = {
     kModuleIdHome, kModuleIdMarkdown,     kModuleIdTodo,
-    kModuleIdClaudeProxy, kModuleIdSettings, kModuleIdPet};
+    kModuleIdClaudeProxy, kModuleIdSettings, kModuleIdAgent,
+    kModuleIdPet};
 
 bool isKnownModuleId(const std::string& id) {
     for (const char* known : kKnownModuleIds) {
@@ -51,6 +52,10 @@ bool isKnownModuleId(const std::string& id) {
 } // namespace
 
 std::vector<std::string> defaultEnabledModules() {
+    // agent（智能体页，agent M1）**不在默认清单**（final-review Fix 2，
+    // 2026-10-01）——spec §8 L4 明文「默认关闭（agent 跑 LLM 有成本，用户
+    // 主动启用）」，语义同 pet：用户经设置页模块开关写入 enabledModules 后
+    // 生效（sanitized 保留该 ID，重启装配门控按清单注册）
     return {kModuleIdHome, kModuleIdMarkdown, kModuleIdTodo,
             kModuleIdClaudeProxy, kModuleIdSettings};
 }

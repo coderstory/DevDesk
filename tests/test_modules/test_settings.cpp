@@ -1202,7 +1202,7 @@ REGISTER_TEST(settings_window_effect_apply_visuals, "settings: applyWindowVisual
 
 // ============ 模块插拔（方案 A）：模块管理卡 + 卡片门控 ============
 
-REGISTER_TEST(settings_modules_card_renders, "settings: 模块管理卡渲染（3 个工具模块开关）", {
+REGISTER_TEST(settings_modules_card_renders, "settings: 模块管理卡渲染（5 行模块开关）", {
     test_support::TestEnv env(kCfgPrefix, "modcard", true);
     test_support::ScopedConfigPath cfgEnv(test_support::tempConfigFile(kCfgPrefix, "modcard_cfg"));
     std::unique_ptr<::core::Module> mod(create_settings_module());
@@ -1221,6 +1221,24 @@ REGISTER_TEST(settings_modules_card_renders, "settings: 模块管理卡渲染（
     DOCTEST_CHECK(ui.find("settings.card.modules.sw.0") != nullptr);
     DOCTEST_CHECK(ui.find("settings.card.modules.sw.1") != nullptr);
     DOCTEST_CHECK(ui.find("settings.card.modules.sw.2") != nullptr);
+    // 桌宠（sw.3）与智能体（sw.4，agent M1 Task 12 加行）两行开关在
+    DOCTEST_CHECK(ui.find("settings.card.modules.sw.3") != nullptr);
+    DOCTEST_CHECK(ui.find("settings.card.modules.sw.4") != nullptr);
+    const auto* agentName = ui.find("settings.card.modules.name.4");
+    DOCTEST_REQUIRE(agentName != nullptr);
+    DOCTEST_CHECK(agentName->text == "智能体");
+    // agent 行开关默认**不**勾选（spec §8 L4：agent 默认关，用户主动启用；
+    // final-review Fix 2 起默认清单不含 kModuleIdAgent）。track 色 =
+    // checked ? on : off——默认开的 markdown 行（sw.0）与 agent 行（sw.4）
+    // 同主题下色必不同，抓「回退成默认勾选」的回归（Color 无 operator==，
+    // 逐分量比）
+    const auto* mdTrack = ui.find("settings.card.modules.sw.0.track");
+    const auto* agentTrack = ui.find("settings.card.modules.sw.4.track");
+    DOCTEST_REQUIRE(mdTrack != nullptr);
+    DOCTEST_REQUIRE(agentTrack != nullptr);
+    DOCTEST_CHECK(agentTrack->color.r != mdTrack->color.r ||
+                  agentTrack->color.g != mdTrack->color.g ||
+                  agentTrack->color.b != mdTrack->color.b);
     // 描述文案含重启提示（设计 §5.4）
     const auto* desc = ui.find("settings.card.modules.desc");
     DOCTEST_REQUIRE(desc != nullptr);
@@ -1765,7 +1783,7 @@ REGISTER_TEST(settings_card_rows_scale_derived,
                           at(17.0f, 20.0f, 26.0f));
             if (err.empty())
                 err = pin("modules 卡高", heightOf("settings.card.modules"),
-                          at(245.0f, 288.0f, 374.0f));
+                          at(293.0f, 344.0f, 447.0f));
             if (err.empty())
                 err = pin("pet.skin.ddwrap 行顶（skinTop=40+roundFs(16)+roundFs(8)）",
                           yOf("settings.card.pet.skin.ddwrap") -
@@ -3380,7 +3398,7 @@ REGISTER_TEST(settings_ui_logic_equivalence,
     DOCTEST_CHECK_EQ(ms::kSettingsTabHeight, 40.0f);
     DOCTEST_CHECK_EQ(ms::kAppearanceCardHeight, 172.0f);
     DOCTEST_CHECK_EQ(ms::kEditorFontCardHeight, 108.0f);
-    DOCTEST_CHECK_EQ(ms::kModulesCardHeight, 288.0f);
+    DOCTEST_CHECK_EQ(ms::kModulesCardHeight, 344.0f);  // 5 行开关（agent 加入）
     DOCTEST_CHECK_EQ(ms::kPetCardHeight, 168.0f);  // 两行控件（皮肤+显示大小）
     DOCTEST_CHECK_EQ(ms::kDirectoryCardHeight, 116.0f);
     DOCTEST_CHECK_EQ(ms::kLogSettingsCardHeight, 148.0f);

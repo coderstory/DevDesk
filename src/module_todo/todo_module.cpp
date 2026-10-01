@@ -20,6 +20,7 @@
 #include <ui_kit/toast.h>
 #include "todo_dialogs.h"
 #include "todo_service.h"
+#include "todo_tools.h"
 #include "todo_ui_board.h"
 #include "todo_ui_logic.h"
 #include "todo_view_state.h"
@@ -53,6 +54,7 @@ public:
             return;
         }
         service_ = std::make_unique<TodoService>(*db);
+        attachTools();
         reloadAll();
         // 审计 [23]：恢复列滚动（按列 id）+ 选中任务（reloadAll 之后，列/任务已就位）
         viewStore_ = std::make_unique<TodoViewStateStore>(todoViewStateFile());
@@ -63,7 +65,15 @@ public:
 
     void onStop() override {
         if (viewDirty_) saveViewState();  // 审计 [23]：退出前落盘视图状态
-        service_.reset();
+        // 只注销工具（工具引用 service）——**不 reset service_**（final-review
+        // Fix 1，2026-10-01）：Router::stopAll 按注册顺序停模块，todo/markdown
+        // 先于 agent；agent 的 run 线程可能正持 ToolRegistry::find() 的
+        // keep-alive shared_ptr 执行 todo.* 工具（工具内部持 TodoService&），
+        // 此刻 reset = 在 AgentModule::onStop join 之前释放对象 → UAF 窗口。
+        // 成员析构天然覆盖释放点：module 对象在 stopAll 全部返回后才析构，
+        // 且声明序 service_ 在 todoTools_ 之前 → 析构序 todoTools_ 先死、
+        // service_ 后死，工具内的引用不悬垂。
+        detachTools();
         LOG_INFO("Todo 模块停止");
     }
 
@@ -160,7 +170,10 @@ public:
             setStatus("数据库尚未注册，无法重试", true);
             return;
         }
-        if (!service_) service_ = std::make_unique<TodoService>(*db);
+        if (!service_) {
+            service_ = std::make_unique<TodoService>(*db);
+            attachTools();
+        }
         reloadAll();
         if (loadError_.empty()) {
             setStatus("已重新加载");
@@ -353,6 +366,23 @@ public:
     }
 
     // ============ 查找辅助 ============
+
+    // ---- 智能体工具（agent M1 Task 8）----
+    // TodoService 构造处旁挂工具集：service 与 tools 生命周期成对
+    //（service_ 存在 ⇒ todoTools_ 存在且已注册；onStop 只注销工具，service_
+    // 留给成员析构——退出时 agent run 线程可能仍持工具，见 onStop 注释）。
+    // retryLoad 晚建 service 时同样要补注册，故收成两个小口。
+    void attachTools() {
+        if (!service_ || todoTools_) return;
+        todoTools_ = std::make_unique<TodoTools>(*service_);
+        todoTools_->registerAll();
+    }
+
+    void detachTools() {
+        if (!todoTools_) return;
+        todoTools_->unregisterAll();
+        todoTools_.reset();
+    }
 
     void setColScrollOffset(size_t colIndex, float v) {
         if (colIndex >= columns_.size()) return;
@@ -923,6 +953,9 @@ private:
 
     // ============ 状态 ============
     std::unique_ptr<TodoService> service_;
+    // 智能体工具集（引用 service_；onStop 只注销注册，对象随成员析构销毁——
+    // 声明序在 service_ 之后 = 先于 service_ 析构，工具内引用不悬垂）
+    std::unique_ptr<TodoTools> todoTools_;
     std::vector<Column> columns_;
     std::vector<Task> tasks_;
     // 审计 [23]：列内滚动偏移按列 id 记忆（旧按列索引，重排/删列串列）+

@@ -180,8 +180,15 @@ private:
     // rescan 实体（调用方须已持有 rescanMu_）
     core::Result<void> rescanLocked();
 
-    // relPath (POSIX) → 绝对路径
-    std::filesystem::path resolve(const std::filesystem::path& relPath) const;
+    // relPath (POSIX) → 笔记目录内的绝对路径。
+    // 唯一收口（评审修复 2026-10-01）：先 lexically_normal 再逐组件确认仍在
+    // notesDir_ 之内——`notesDir_ / relPath` 对「相对上跳（../../x）」与
+    // 「绝对路径（operator/ 对绝对 RHS 整体替换）」两种形态都会逃出笔记目录，
+    // 而 md.read 等工具把 LLM 可控路径喂进这里、读到的内容会回喂上游 LLM API。
+    // 逃逸 → fail（ValidationError，中文说明）；M2 写路径（write/create/
+    // remove/rename）同此守卫。合法相对路径（含可规范化回目录内的形式）不受影响。
+    core::Result<std::filesystem::path> resolve(
+        const std::filesystem::path& relPath) const;
 
     // 把一个文件 upsert 到索引 + FTS（不做 rescan 的删除清理）
     // force=true 跳过 (size,mtime) 短路：watcher 事件已确证文件动过，

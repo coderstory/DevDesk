@@ -89,7 +89,9 @@ inline constexpr long kLogTailReadWindow = 256 * 1024;  // tail 只读末尾 256
 // 放大才不会把尾行挤出卡外。100% 档 roundFs(x) == x，与旧字面逐一相等。
 inline constexpr float kAppearanceCardHeight = 172.0f;  // 外观卡（通用；降级提示行底 156 + 16）
 inline constexpr float kEditorFontCardHeight = 108.0f;  // 编辑器字号卡（通用）
-inline constexpr float kModulesCardHeight = 288.0f;     // 模块插拔卡（模块）
+inline constexpr float kModulesCardHeight = 344.0f;     // 模块插拔卡（模块）；
+// 5 行开关（markdown/todo/claude/pet/agent）：尾行 y=68+4*56=292、盒底 328
+// + 16 下边距 = 344（2026-09-30 agent 开关行加入前为 288 = 4 行）
 // 桌宠卡（模块）：两行控件——皮肤行 y=64、显示大小行 y=112（各高 40），
 // 内容底沿 152 + 16 下边距 = 168（2026-09-30 加显示大小行后由 120 抬高）
 inline constexpr float kPetCardHeight = 168.0f;

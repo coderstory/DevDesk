@@ -154,6 +154,46 @@ inline constexpr const char* kSql = R"(
         extra_settings_json TEXT NOT NULL DEFAULT ''
     );
 
+    -- ==================== 智能体（agent M1，2026-09-30）====================
+    -- 手动触发的 agent run 三表：任务定义 / 运行实例 / 消息审计。
+    -- FK ON DELETE CASCADE：删任务清 runs，删 run 清 messages（审计链随宿主走，
+    -- 不留孤儿运行）。content_json 存 Anthropic content blocks 数组原文。
+    CREATE TABLE IF NOT EXISTS agent_tasks (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        name TEXT NOT NULL,
+        goal TEXT NOT NULL,
+        trigger_type TEXT NOT NULL,
+        trigger_config TEXT NOT NULL DEFAULT '',
+        model_slot TEXT NOT NULL DEFAULT 'default',
+        max_iterations INTEGER NOT NULL DEFAULT 10,
+        allow_destructive INTEGER NOT NULL DEFAULT 0,
+        enabled INTEGER NOT NULL DEFAULT 1,
+        created_at INTEGER NOT NULL,
+        updated_at INTEGER NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS agent_runs (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        task_id INTEGER NOT NULL,
+        status TEXT NOT NULL,
+        started_at INTEGER NOT NULL,
+        ended_at INTEGER,
+        iterations INTEGER NOT NULL DEFAULT 0,
+        input_tokens INTEGER,
+        output_tokens INTEGER,
+        error TEXT,
+        FOREIGN KEY (task_id) REFERENCES agent_tasks(id) ON DELETE CASCADE
+    );
+    CREATE TABLE IF NOT EXISTS agent_messages (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        run_id INTEGER NOT NULL,
+        seq INTEGER NOT NULL,
+        role TEXT NOT NULL,
+        content_json TEXT NOT NULL,
+        tool_call_id TEXT,
+        created_at INTEGER NOT NULL,
+        FOREIGN KEY (run_id) REFERENCES agent_runs(id) ON DELETE CASCADE
+    );
+
     -- ==================== 索引 ====================
     CREATE INDEX IF NOT EXISTS idx_tasks_column
         ON todo_tasks(column_id, position);
@@ -168,6 +208,12 @@ inline constexpr const char* kSql = R"(
         ON claude_call_logs(started_at DESC);
     CREATE INDEX IF NOT EXISTS idx_call_logs_profile
         ON claude_call_logs(profile_id, started_at DESC);
+
+    -- agent：run 按任务倒序取最近 / 消息按 run 内序回放
+    CREATE INDEX IF NOT EXISTS idx_agent_runs_task
+        ON agent_runs(task_id, started_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_agent_messages_run
+        ON agent_messages(run_id, seq);
 
     -- ==================== 种子数据 ====================
     -- 首次建库插入 4 个默认 Todo 列，kind 直接带最终值（不再「插完再按标题回填」）。

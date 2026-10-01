@@ -318,7 +318,8 @@ void drawEditorFontCard(const CardDrawArgs& args) {
 }
 
 // ---------- 卡片 2：模块管理（插拔方案 A §5.4） ----------
-// 三个工具模块各一行开关；关闭 = 下次启动不注册进 Router（不执行代码、
+// 四个工具模块（markdown/todo/claude_proxy/agent）+ 桌宠各一行开关；关闭 =
+// 下次启动不注册进 Router（不执行代码、
 // 不显示侧边栏入口）。home/settings 恒启用，不提供开关
 void drawModulesCard(const CardDrawArgs& args) {
     eui::Ui& ui = args.ui;
@@ -342,6 +343,8 @@ void drawModulesCard(const CardDrawArgs& args) {
          "Profile 管理 + 本地代理（关闭后 8888 不再监听）"},
         {kModuleIdPet, "桌宠",
          "桌面小宠物：透明置顶小窗，可拖拽/点击互动（默认关闭）"},
+        {kModuleIdAgent, "智能体",
+         "任务列表 + 手动触发运行（依赖 Claude 代理提供模型通道）"},
     };
     constexpr int kToggleCount = static_cast<int>(sizeof(kToggleable) / sizeof(kToggleable[0]));
     const auto compTheme = core::theme::componentTokens(t);

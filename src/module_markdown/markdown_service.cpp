@@ -176,7 +176,15 @@ void MarkdownService::onWatchEvent(std::vector<platform::FileWatchEvent> events)
                                          ev.relativePath.end())};
         if (rel.extension() != ".md") continue;  // 目录/非笔记事件交给标记兜底
         const std::string relPosix = toPosix(rel);
-        const auto absPath = resolve(rel);
+        const auto resolved = resolve(rel);
+        if (resolved.isFail()) {
+            // watcher 事件不该出现越界路径（事件本身来自笔记目录枚举），
+            // 出现即防御：跳过该事件，标记已置，下轮 poll 兜底
+            LOG_WARN("watcher 事件路径越界，跳过 " + ev.relativePath + ": " +
+                     resolved.errorMessage());
+            continue;
+        }
+        const auto absPath = resolved.value();
         std::error_code ec;
         const bool exists = fs::is_regular_file(absPath, ec) && !ec;
         core::Result<void> one = exists
@@ -206,10 +214,35 @@ core::Result<void> MarkdownService::rescan() {
     return rescanLocked();
 }
 
-fs::path MarkdownService::resolve(const fs::path& relPath) const {
+core::Result<fs::path> MarkdownService::resolve(const fs::path& relPath) const {
     // relPath 是 POSIX 风格的相对路径（'/' 分隔符）
     // std::filesystem 在 macOS/Linux 上接受 '/'，无需转换
-    return notesDir_ / relPath;
+    //
+    // containment 校验（安全收口，评审修复 2026-10-01）：
+    //   1) `notesDir_ / relPath` 的两种逃逸形态都必须拒——
+    //      相对上跳（"../../x"）与绝对路径（fs::path::operator/ 对绝对 RHS
+    //      是整体替换，notesDir 前缀都不剩，"notesDir//etc/passwd" =
+    //      "/etc/passwd"）。
+    //   2) 先 lexically_normal（"a/./b" → "a/b"，可规范化回目录内的形式放行），
+    //      再与规范化后的 notesDir_ 做**逐组件**前缀比较——字符串前缀比较会把
+    //      "/notes/evil" 误判成 "/notes" 的内含（"/notesEVIL" 也以 "/notes" 开头）。
+    //   3) fail 语义：ValidationError + 中文说明（回喂 LLM / UI toast 可读）。
+    //   边界（M2 重审）：symlink 不在**词法** containment 范围内——
+    //      lexically_normal 不解析链接。M1 工具无建 symlink 途径（工具集只
+    //      读写文本文件），需用户在笔记目录手植；M2 写路径工具上线时重审
+    //      （改 weakly_canonical 或 open 前校验）。
+    const fs::path base = notesDir_.lexically_normal();
+    const fs::path candidate = (notesDir_ / relPath).lexically_normal();
+    auto baseIt = base.begin();
+    auto candIt = candidate.begin();
+    for (; baseIt != base.end(); ++baseIt, ++candIt) {
+        if (candIt == candidate.end() || *candIt != *baseIt) {
+            return core::Result<fs::path>::fail(
+                core::ErrorCode::ValidationError,
+                "路径越出笔记目录，已拒绝: " + toPosix(relPath));
+        }
+    }
+    return core::Result<fs::path>::ok(candidate);
 }
 
 std::string MarkdownService::toPosix(const fs::path& p) {
@@ -637,7 +670,12 @@ core::Result<std::vector<NoteMeta>> MarkdownService::listInDirectory(
 
 core::Result<std::string> MarkdownService::read(const fs::path& relPath) {
     const std::string relPosix = toPosix(relPath);
-    const auto absPath = resolve(relPath);
+    const auto resolved = resolve(relPath);
+    if (resolved.isFail()) {
+        return core::Result<std::string>::fail(resolved.errorCode(),
+                                               resolved.errorMessage());
+    }
+    const auto absPath = resolved.value();
     std::ifstream ifs(absPath);
     if (!ifs) {
         return core::Result<std::string>::fail(
@@ -652,7 +690,12 @@ core::Result<std::string> MarkdownService::read(const fs::path& relPath) {
 core::Result<void> MarkdownService::write(const fs::path& relPath,
                                           const std::string& content) {
     const std::string relPosix = toPosix(relPath);
-    const auto absPath = resolve(relPath);
+    const auto resolved = resolve(relPath);
+    if (resolved.isFail()) {
+        return core::Result<void>::fail(resolved.errorCode(),
+                                        resolved.errorMessage());
+    }
+    const auto absPath = resolved.value();
 
     // 确保父目录存在
     const auto parent = absPath.parent_path();
@@ -693,7 +736,12 @@ core::Result<void> MarkdownService::create(const fs::path& relPath) {
         norm += ".md";
     }
     const std::string relPosix = toPosix(norm);
-    const auto absPath = resolve(norm);
+    const auto resolved = resolve(norm);
+    if (resolved.isFail()) {
+        return core::Result<void>::fail(resolved.errorCode(),
+                                        resolved.errorMessage());
+    }
+    const auto absPath = resolved.value();
 
     if (fs::exists(absPath)) {
         return core::Result<void>::fail(core::ErrorCode::AlreadyExists,
@@ -734,7 +782,13 @@ core::Result<void> MarkdownService::create(const fs::path& relPath) {
 
 core::Result<void> MarkdownService::remove(const fs::path& relPath) {
     const std::string relPosix = toPosix(relPath);
-    const auto absPath = resolve(relPath);
+    const auto resolved = resolve(relPath);
+    if (resolved.isFail()) {
+        // 越界路径拒绝删（否则 = 笔记目录外任意文件删除缺口）
+        return core::Result<void>::fail(resolved.errorCode(),
+                                        resolved.errorMessage());
+    }
+    const auto absPath = resolved.value();
 
     // 删文件（不存在也允许）
     std::error_code ec;
@@ -763,8 +817,18 @@ core::Result<std::string> MarkdownService::rename(const fs::path& oldRelPath,
     }
 
     std::error_code ec;
-    const auto absOld = resolve(oldRelPath);
-    const auto absNew = resolve(norm);
+    const auto resolvedOld = resolve(oldRelPath);
+    if (resolvedOld.isFail()) {
+        return core::Result<std::string>::fail(resolvedOld.errorCode(),
+                                               resolvedOld.errorMessage());
+    }
+    const auto resolvedNew = resolve(norm);
+    if (resolvedNew.isFail()) {
+        return core::Result<std::string>::fail(resolvedNew.errorCode(),
+                                               resolvedNew.errorMessage());
+    }
+    const auto absOld = resolvedOld.value();
+    const auto absNew = resolvedNew.value();
     if (!fs::exists(absOld, ec) || ec) {
         return core::Result<std::string>::fail(core::ErrorCode::FileNotFound,
             "原文件不存在: " + absOld.string());
@@ -1269,7 +1333,12 @@ core::Result<bool> MarkdownService::pollChanged() {
 }
 
 core::Result<int64_t> MarkdownService::fileMtime(const fs::path& relPath) const {
-    const auto absPath = resolve(relPath);
+    const auto resolved = resolve(relPath);
+    if (resolved.isFail()) {
+        return core::Result<int64_t>::fail(resolved.errorCode(),
+                                           resolved.errorMessage());
+    }
+    const auto absPath = resolved.value();
     const int64_t mtime = fileMtimeEpoch(absPath);
     if (mtime < 0) {
         return core::Result<int64_t>::fail(core::ErrorCode::FileNotFound,
