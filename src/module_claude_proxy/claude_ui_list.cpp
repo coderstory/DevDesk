@@ -17,6 +17,7 @@
 #include <core/ui_geometry.h>
 
 #include <algorithm>
+#include <cstdint>
 #include <functional>
 
 namespace module::claude {
@@ -103,6 +104,81 @@ float sharedBlockH(float bodyH) {
     return std::min(sharedBlockNaturalH(), sharedBlockMaxH(bodyH));
 }
 
+// ============ 头像圆圈随机色（2026-10-01 用户需求：白底圆圈 → 随机色 +
+// 外层包边；颜色来源集中本处数组常量，不散落魔法数）============
+// compose 每帧都跑，每帧真随机会闪烁 → 「随机」按 **profile id 稳定派生**：
+// FNV-1a 逐字节哈希取色板下标，同一 profile 永远同色，不同 profile 大概率不同色。
+// 色板 = 9 个低饱和暖色系基色（与主题 Claude Clay #D97757 同族协调），
+// 深浅主题各自由基色派生两档（eui::mixColor，header-only 值类型桥接）：
+//   浅色主题：fill = 基色调白成粉彩底；ring/字形 = 基色加深一档（对比恒定）
+//   深色主题：fill = 基色调暗成深底；ring/字形 = 基色调亮一档
+constexpr size_t kAvatarPaletteSize = 9;
+const eui::Color kAvatarPalette[kAvatarPaletteSize] = {
+    eui::Color("#D97757"),  // clay（与主题主色同族）
+    eui::Color("#C2846B"),  // 陶土
+    eui::Color("#B08D57"),  // 赭石
+    eui::Color("#A8977A"),  // 沙棕
+    eui::Color("#8F9779"),  // 灰绿
+    eui::Color("#7E9B8B"),  // 桉叶
+    eui::Color("#7A93A8"),  // 雾蓝
+    eui::Color("#9C8AA5"),  // 藕紫
+    eui::Color("#B37E85"),  // 豆沙
+};
+
+// FNV-1a 64：id 逐字节哈希（无依赖、跨帧跨启动一致；std::hash 整型实现未定义，
+// 不赌它）
+std::uint64_t avatarHash(std::uint64_t v) {
+    std::uint64_t hash = 14695981039346656037ULL;  // FNV offset basis
+    for (int i = 0; i < 8; ++i) {
+        hash ^= static_cast<std::uint8_t>(v >> (i * 8));
+        hash *= 1099511628211ULL;                  // FNV prime
+    }
+    return hash;
+}
+
+// 由基色 + 主题派生头像 {fill, ring}；字形色随 ring（加深/提亮一档后圆内对比恒定）
+struct AvatarColors {
+    eui::Color fill;
+    eui::Color ring;
+};
+AvatarColors avatarColorsFor(const eui::Color& base, bool isDark) {
+    if (isDark) {
+        return {eui::mixColor(base, eui::Color(0.0f, 0.0f, 0.0f), 0.55f),
+                eui::mixColor(base, eui::Color(1.0f, 1.0f, 1.0f), 0.45f)};
+    }
+    return {eui::mixColor(base, eui::Color(1.0f, 1.0f, 1.0f), 0.72f),
+            eui::mixColor(base, eui::Color(0.0f, 0.0f, 0.0f), 0.25f)};
+}
+
+// 名字首**字符**（2026-10-01 审计 Important）：旧 `std::string(1, p.name[0])`
+// 只取首字节——CJK 首字符是 3 字节 UTF-8，截出单字节非法序列渲染成 ?（用户
+// 原「里面有个问号」的真实根因；英文名不受影响所以一直没暴露）。按首字节判
+// 序列长度取完整码点（0xxxxxxx=1 / 110xxxxx=2 / 1110xxxx=3 / 11110xxx=4），
+// 后续字节须是续字节（10xxxxxx）；非法 / 截断序列回退 ?（与空名占位同字形）。
+std::string firstUtf8CharOr(const std::string& name) {
+    if (name.empty()) return "?";
+    const auto b0 = static_cast<unsigned char>(name[0]);
+    size_t len = 0;
+    if ((b0 & 0x80u) == 0x00u) {
+        len = 1;
+    } else if ((b0 & 0xE0u) == 0xC0u) {
+        len = 2;
+    } else if ((b0 & 0xF0u) == 0xE0u) {
+        len = 3;
+    } else if ((b0 & 0xF8u) == 0xF0u) {
+        len = 4;
+    } else {
+        return "?";  // 0x80-0xBF 续字节打头 / 0xF8+ 超界 → 非法序列
+    }
+    if (name.size() < len) return "?";  // 序列被截断
+    for (size_t i = 1; i < len; ++i) {
+        if ((static_cast<unsigned char>(name[i]) & 0xC0u) != 0x80u) {
+            return "?";  // 续字节不合法
+        }
+    }
+    return name.substr(0, len);
+}
+
 // Profile 卡片（点击选中，选中/激活高亮）。
 // st 为引用：点击回调写回选中态（须指向存活到下一帧的对象 = 模块状态成员）
 void drawProfileCard(eui::Ui& ui,
@@ -134,26 +210,37 @@ void drawProfileCard(eui::Ui& ui,
         .onClick([sp = &st, pid = p.id] { sp->selectedId_ = pid; })
         .build();
 
-    // 头像（圆形 - 用 rect 模拟）
+    // 头像（圆形 - 用 rect 模拟）。2026-10-01 用户需求三处改：
+    // ① 白底（surfaceElevated 占位）→ 按 profile id 稳定派生的随机色
+    // ② 外层包边 = 同色系加深/提亮一档描边环（1.5px；旧的 1px 中性 borderDefault
+    //    用户看不见，视为「没有包边」）
+    // ③ 垂直居中：旧 y+16 使圆心落在 y+36，而 96 高卡片的中心是 y+48（偏上 12px，
+    //    用户报「没有垂直居中」）→ 改 (h - 头像径) * 0.5 推导，行高变了也居中
+    const float avatarSize = 40.0f;
+    const float avatarY = y + (h - avatarSize) * 0.5f;
+    const AvatarColors avatar = avatarColorsFor(
+        kAvatarPalette[avatarHash(static_cast<std::uint64_t>(p.id)) %
+                       kAvatarPaletteSize],
+        t.isDark);
     ui.rect(id + ".avatar")
-        .position(16.0f, y + 16.0f)
-        .size(40.0f, 40.0f)
-        .color(t.colors.surfaceElevated)
-        .radius(20.0f)
-        .border(1.0f, t.colors.borderDefault)
+        .position(16.0f, avatarY)
+        .size(avatarSize, avatarSize)
+        .color(avatar.fill)
+        .radius(avatarSize * 0.5f)
+        .border(1.5f, avatar.ring)
         .build();
-    // 头像首字
-    const std::string initial = p.name.empty()
-        ? std::string("?")
-        : std::string(1, p.name[0]);
+    // 头像首字（2026-10-01 审计修复：按 UTF-8 码点取首字符，见
+    // firstUtf8CharOr——旧取首**字节**使 CJK 名渲染成 ?；空名占位 ? 口径不变；
+    // 颜色随包边派生保证圆内对比）
+    const std::string initial = firstUtf8CharOr(p.name);
     ui.text(id + ".avatar.text")
-        .position(16.0f, y + 16.0f)
-        .size(40.0f, 40.0f)
+        .position(16.0f, avatarY)
+        .size(avatarSize, avatarSize)
         .text(initial)
         .fontSize(16.0f)
-        .lineHeight(40.0f)
+        .lineHeight(avatarSize)
         .horizontalAlign(eui::HorizontalAlign::Center)
-        .color(t.colors.textPrimary)
+        .color(avatar.ring)
         .fontWeight(600)
         .build();
 

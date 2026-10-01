@@ -5436,6 +5436,192 @@ REGISTER_TEST(claude_profile_active_badge_centered,
     return true;
 })
 
+// ---- 头像圆圈三处改（2026-10-01 用户需求）----
+// 用户原话：「profile 列表里的 item 有个白色的圆圈，里面有个问号，且没有垂直
+// 居中。现在帮我改：这个圆圈改成随机颜色的圆圈，且有外层包边。」
+// 裁定：compose 每帧都跑，真随机会闪烁 → 「随机」= 按 profile id 稳定派生
+//（哈希 → 9 色板）；包边 = 同色系加深/提亮一档的描边环；垂直居中用数值断言
+// 钉住（圆心 y == 行 y + 行高/2，容差 0.5）。
+REGISTER_TEST(claude_profile_avatar_color_ring_centered,
+              "claude_module: Profile 头像圆圈稳定随机色 + 外层包边 + 垂直居中", {
+    TestEnv env;
+    for (int i = 0; i < 3; ++i) {
+        auto p = env.svc->createProfile(
+            "头像" + std::to_string(i),
+            "https://av" + std::to_string(i) + ".example.com",
+            "sk-ant-av-000" + std::to_string(i), "m");
+        DOCTEST_REQUIRE(p.isOk());
+    }
+
+    std::unique_ptr<::core::Module> mod(create_claude_module());
+    mod->onStart();
+
+    const auto compose = [&](eui::Ui& ui) {
+        composeAtSize(mod.get(), ui, "claude_avatar", 1262.0f, 801.0f);
+    };
+    const auto sameColor = [](const eui::Color& a, const eui::Color& b) {
+        return a.r == b.r && a.g == b.g && a.b == b.b && a.a == b.a;
+    };
+
+    eui::Ui ui1;
+    compose(ui1);
+    const auto* av = ui1.find("claude.profile.0.avatar");
+    const auto* tx = ui1.find("claude.profile.0.avatar.text");
+    const auto* row = ui1.find("claude.profile.0.wrap");
+    DOCTEST_REQUIRE(av != nullptr);
+    DOCTEST_REQUIRE(tx != nullptr);
+    DOCTEST_REQUIRE(row != nullptr);
+
+    // (a) 同一 profile 两次 compose 颜色一致（稳定派生，不闪烁）
+    eui::Ui ui2;
+    compose(ui2);
+    const auto* av2 = ui2.find("claude.profile.0.avatar");
+    DOCTEST_REQUIRE(av2 != nullptr);
+    DOCTEST_CHECK_MESSAGE(sameColor(av->color, av2->color),
+                          "同一 profile 两次 compose 头像色不一致（每帧随机闪烁）");
+
+    // (a) 非占位底色：既不是旧 surfaceElevated 占位，也不是纯白
+    const core::theme::Tokens& t = core::theme::current();
+    const bool isPlaceholder = sameColor(av->color, t.colors.surfaceElevated);
+    const bool isWhite = av->color.r >= 0.999f && av->color.g >= 0.999f &&
+                         av->color.b >= 0.999f;
+    DOCTEST_CHECK_MESSAGE(!isPlaceholder,
+                          "头像圆圈仍是占位底色 surfaceElevated（未改随机色）");
+    DOCTEST_CHECK_MESSAGE(!isWhite, "头像圆圈仍是纯白底");
+
+    // (b) 不同 profile 颜色不同（三个样本至少两色；id 确定 → 结果确定）
+    std::vector<eui::Color> fills;
+    for (int i = 0; i < 3; ++i) {
+        const auto* avi = ui1.find("claude.profile." + std::to_string(i) +
+                                   ".avatar");
+        DOCTEST_REQUIRE(avi != nullptr);
+        fills.push_back(avi->color);
+    }
+    const bool anyDistinct =
+        !sameColor(fills[0], fills[1]) || !sameColor(fills[1], fills[2]) ||
+        !sameColor(fills[0], fills[2]);
+    DOCTEST_CHECK_MESSAGE(anyDistinct,
+                          "三个不同 profile 的头像色全相同（派生未生效）");
+
+    // (c) 外层包边存在（描边环宽度 ≥ 1）
+    DOCTEST_CHECK_MESSAGE(av->border.width >= 1.0f,
+                          "头像圆圈缺外层包边（border 宽度 < 1）");
+    // (c) 环色是派生的同色系色，不是回退到旧的中性 borderDefault（审计 Minor：
+    // 只断宽度时，环色回退 borderDefault 仍旧绿）
+    const bool ringIsBorderDefault =
+        sameColor(av->border.color, t.colors.borderDefault);
+    DOCTEST_CHECK_MESSAGE(!ringIsBorderDefault,
+                          "头像包边色回退为中性 borderDefault（未用派生环色）");
+
+    // (d) 垂直居中：圆心 y == 行（96 高卡片）中心 y，容差 0.5；字形同框
+    const float rowCy = row->frame.y + row->frame.height * 0.5f;
+    const float circleCy = av->frame.y + av->frame.height * 0.5f;
+    const float textCy = tx->frame.y + tx->frame.height * 0.5f;
+    DOCTEST_CHECK_MESSAGE(std::fabs(circleCy - rowCy) <= 0.5f,
+                          "头像圆圈未垂直居中：圆心 " +
+                              std::to_string(circleCy) + " vs 行中心 " +
+                              std::to_string(rowCy));
+    DOCTEST_CHECK_MESSAGE(std::fabs(textCy - circleCy) <= 0.5f,
+                          "头像字形框与圆圈不同心");
+
+    // (e) 深浅主题派生分支（2026-10-01 审计 Minor 补强）：两主题各 compose 一帧，
+    // fill/ring 必须不同（isDark 派生分支生效）、各自仍非占位色、环各自非中性
+    // borderDefault；结束恢复原主题（全局态还原，不污染后续用例）。
+    // g_current 是单例被 setDark/setLight 原地改写 → token 只能**值拷贝**快照，
+    // 引用会跨主题别名
+    const std::string themeBefore = core::theme::currentThemeName();
+    const auto avatarOf = [&](eui::Ui& ui) {
+        return ui.find("claude.profile.0.avatar");   // 断言由调用方做（宏含 return false，不能进非 bool helper）
+    };
+    core::theme::setLight();
+    const core::theme::Tokens tokensLight = core::theme::current();
+    eui::Ui uiLight;
+    compose(uiLight);
+    const auto* lightAv = avatarOf(uiLight);
+    DOCTEST_REQUIRE(lightAv != nullptr);
+    const eui::Color lightFill = lightAv->color;
+    const eui::Color lightRing = lightAv->border.color;
+    core::theme::setDark();
+    const core::theme::Tokens tokensDark = core::theme::current();
+    eui::Ui uiDark;
+    compose(uiDark);
+    const auto* darkAv = avatarOf(uiDark);
+    DOCTEST_REQUIRE(darkAv != nullptr);
+    DOCTEST_CHECK_MESSAGE(!sameColor(darkAv->color, lightFill),
+                          "深浅主题头像底色相同（isDark 派生分支未生效）");
+    DOCTEST_CHECK_MESSAGE(!sameColor(darkAv->border.color, lightRing),
+                          "深浅主题包边色相同（isDark 派生分支未生效）");
+    DOCTEST_CHECK_MESSAGE(!sameColor(darkAv->color,
+                                     tokensDark.colors.surfaceElevated) &&
+                              !sameColor(lightAv->color,
+                                         tokensLight.colors.surfaceElevated),
+                          "头像回退占位底色（深或浅主题）");
+    DOCTEST_CHECK_MESSAGE(!sameColor(darkAv->border.color,
+                                     tokensDark.colors.borderDefault) &&
+                              !sameColor(lightAv->border.color,
+                                         tokensLight.colors.borderDefault),
+                          "包边回退中性 borderDefault（深或浅主题）");
+    if (themeBefore == "Dark") {
+        core::theme::setDark();
+    } else {
+        core::theme::setLight();
+    }
+
+    mod->onStop();
+    return true;
+})
+
+// ---- 头像首字按 UTF-8 码点取（2026-10-01 审计 Important）----
+// 旧取法 std::string(1, p.name[0]) 只取首**字节**：CJK 首字符是 3 字节 UTF-8，
+// 截出单字节非法序列 → 渲染 ?（用户原话「里面有个问号」的真实根因，与空名
+// 占位 ? 无关；英文名 profile 显示正常）。修后按首字节判序列长度取完整码点，
+// 非法序列回退 ?。判据：CJK 名渲染首字 == 名首字符完整 UTF-8；英文名 == 首字符。
+REGISTER_TEST(claude_profile_avatar_initial_utf8,
+              "claude_module: Profile 头像首字按 UTF-8 码点取（CJK 不再渲染 ?）", {
+    TestEnv env;
+    auto cjk = env.svc->createProfile("智谱网关", "https://z.example.com",
+                                      "sk-ant-u8-001", "m");
+    DOCTEST_REQUIRE(cjk.isOk());
+    auto lat = env.svc->createProfile("Alpha", "https://a.example.com",
+                                      "sk-ant-u8-002", "m");
+    DOCTEST_REQUIRE(lat.isOk());
+
+    std::unique_ptr<::core::Module> mod(create_claude_module());
+    mod->onStart();
+    eui::Ui ui;
+    composeAtSize(mod.get(), ui, "claude_u8", 1262.0f, 801.0f);
+
+    // 列表按 name ASC 排序（"Alpha" < "智谱网关"），不能写死下标——经 service
+    // 的同一排序把名字映到行号
+    auto listed = env.svc->listProfiles();
+    DOCTEST_REQUIRE(listed.isOk());
+    const auto indexOfName = [&](const std::string& name) -> int {
+        for (size_t i = 0; i < listed.value().size(); ++i) {
+            if (listed.value()[i].name == name) return static_cast<int>(i);
+        }
+        return -1;
+    };
+    const int cjkIdx = indexOfName("智谱网关");
+    const int latIdx = indexOfName("Alpha");
+    DOCTEST_REQUIRE(cjkIdx >= 0);
+    DOCTEST_REQUIRE(latIdx >= 0);
+    const auto* txCjk =
+        ui.find("claude.profile." + std::to_string(cjkIdx) + ".avatar.text");
+    const auto* txLat =
+        ui.find("claude.profile." + std::to_string(latIdx) + ".avatar.text");
+    DOCTEST_REQUIRE(txCjk != nullptr);
+    DOCTEST_REQUIRE(txLat != nullptr);
+    // "智" = 3 字节 UTF-8（E6 99 BA）；旧取法只留首字节 0xE5 → 断言红
+    DOCTEST_CHECK_MESSAGE(txCjk->text == "智",
+                          "CJK 名首字未按码点取：渲染 text 长度 " +
+                              std::to_string(txCjk->text.size()) + "（应为 3）");
+    DOCTEST_CHECK_MESSAGE(txLat->text == "A",
+                          "拉丁名首字取错：" + txLat->text);
+
+    mod->onStop();
+    return true;
+})
+
 // E-AUD-1（2026-09-30 审计）：长模型键在键列会截断显示 —— 键列宽 220px、
 // 估宽 8px/字符 → 100% 档 keyMaxChars=27，"ANTHROPIC_DEFAULT_HAIKU_MODEL"(31)
 // / "ANTHROPIC_DEFAULT_OPUS_MODEL"(29) 渲染成「前 26 字符 + …」，渲染文本
