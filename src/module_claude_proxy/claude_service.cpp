@@ -427,7 +427,7 @@ std::optional<std::string> ClaudeService::resolveModelSlot(
 // ---------- 连通性测试 ----------
 
 core::Result<platform::http::Response>
-ClaudeService::testConnection(const Profile& profile) {
+ClaudeService::probeProfile(const Profile& profile, int timeoutMs) {
     // 先取 API key（无 key 时也允许，UI 可用未授权请求触发 401 用作验证）
     auto keyResult = loadApiKey(profile.id);
     std::string key;
@@ -450,7 +450,7 @@ ClaudeService::testConnection(const Profile& profile) {
     const UpstreamDialect dialect =
         UpstreamDialect::forBaseUrl(profile.baseUrl, profile.dialectOverride);
     dialect.applyHeaders(req.headers, key, authFieldFromText(profile.authField));
-    req.timeoutMs = 15000;
+    req.timeoutMs = timeoutMs;
 
     auto resp = platform::http::send(req);
     if (resp.isFail()) {
@@ -463,6 +463,49 @@ ClaudeService::testConnection(const Profile& profile) {
              " -> " + std::to_string(resp.value().statusCode) +
              " (" + std::to_string(resp.value().elapsedMs) + "ms)");
     return core::Result<platform::http::Response>::ok(std::move(resp).value());
+}
+
+core::Result<platform::http::Response>
+ClaudeService::testConnection(const Profile& profile) {
+    // 探测体已拆至 probeProfile（前置校验传短超时）；本公开方法超时口径
+    // 逐字不变 = kTestConnectionTimeoutMs(15000)
+    return probeProfile(profile, kTestConnectionTimeoutMs);
+}
+
+core::Result<void> ClaudeService::validateProxyPreconditions(int probeTimeoutMs) {
+    // 检查 1：激活 profile（零网络，微秒级）。失败原样透传错误码 + 可操作
+    // 指引（文案出自 profile_repository.cpp:765-767，503 body 同源），前缀
+    // 标明是本校验挡下的
+    auto active = getActiveProfile();
+    if (active.isFail()) {
+        LOG_WARN("代理启动前置校验未通过：无激活 profile - " + active.errorMessage());
+        return core::Result<void>::fail(
+            active.errorCode(),
+            "代理启动前置校验未通过（1/2 激活 Profile）：" + active.errorMessage());
+    }
+    const Profile prof = std::move(active).value();
+
+    // 检查 2：连通测试（联网，最长 probeTimeoutMs）。探测失败 / 非 2xx 都算不过
+    auto resp = probeProfile(prof, probeTimeoutMs);
+    if (resp.isFail()) {
+        LOG_WARN("代理启动前置校验未通过：连通测试失败（profile id=" +
+                 std::to_string(prof.id) + "）- " + resp.errorMessage());
+        return core::Result<void>::fail(
+            resp.errorCode(),
+            "代理启动前置校验未通过（2/2 连通测试）：" + resp.errorMessage());
+    }
+    const int code = resp.value().statusCode;
+    if (code < 200 || code >= 300) {
+        LOG_WARN("代理启动前置校验未通过：上游返回 HTTP " + std::to_string(code) +
+                 "（profile id=" + std::to_string(prof.id) + "）");
+        return core::Result<void>::fail(
+            core::ErrorCode::HttpError,
+            "代理启动前置校验未通过（2/2 连通测试）：上游返回 HTTP " +
+                std::to_string(code) + "（检查 API Key 或 Base URL）");
+    }
+    LOG_INFO("代理启动前置校验通过：profile「" + prof.name + "」(id=" +
+             std::to_string(prof.id) + ") 连通 OK（HTTP " + std::to_string(code) + "）");
+    return core::Result<void>::ok();
 }
 
 // ---------- 调用日志（R10-A1：读写已抽至 CallLogStore，门面转发）----------

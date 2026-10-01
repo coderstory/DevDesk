@@ -343,6 +343,163 @@ REGISTER_TEST(claude_module_test_connection_async,
     return true;
 })
 
+// ---- 3b. 前置校验：无激活 profile 点「启动代理」→ 不冻结 UI、不起代理、给原因 ----
+REGISTER_TEST(claude_module_start_proxy_requires_active_profile,
+              "claude_module: 无激活 profile 点「启动代理」→ 后台校验挡下（不起代理 + toast 给原因）", {
+    TestEnv env;                       // 空库 = 事故现场；svc 已 setGlobal
+    // 红线：用例绝不绑 8888（本机开发会话的推理链路走 127.0.0.1:8888）。
+    // **不能写 0**——setConfiguredProxyPort 把越界值（含 0，kMinProxyPort=1）
+    // clamp 回 kDefaultProxyPort = 8888（proxy_runtime.cpp:107-117）→ 等于把红线
+    // 焊死。此处取系统空闲端口（本文件既有 helper，:81）
+    const int port = pickFreePort();
+    DOCTEST_REQUIRE(port > 0);
+    env.svc->setConfiguredProxyPort(port);
+    std::unique_ptr<::core::Module> mod(create_claude_module());
+    eui::Screen screen;
+    screen.width = 1600.0f;
+    screen.height = 1000.0f;
+    auto compose = [&](eui::Ui& ui) {
+        ui.begin("claude_pv");
+        mod->compose(ui, screen);
+        ui.end();
+    };
+
+    {   // 点击「启动代理」→ 立即返回
+        eui::Ui ui;
+        compose(ui);
+        // components::button 的**可点节点**是 `<id>.bg`（button.h:137/145：
+        // 根 stack 只作容器，onClick 挂在 bg rect 上）
+        const auto* btn = ui.find("claude.btn.proxy.bg");
+        DOCTEST_REQUIRE(btn != nullptr);
+        DOCTEST_REQUIRE(btn->onClick != nullptr);
+        btn->onClick();
+    }
+
+    // 轮询 compose（每帧收割）直到失败结果 toast（空库路径零网络，通常 1-2 帧）
+    bool gotResult = false;
+    for (int i = 0; i < 250 && !gotResult; ++i) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(20));
+        eui::Ui ui;
+        compose(ui);
+        const auto* title = ui.find("claude.toast.title");
+        const auto* msg = ui.find("claude.toast.message");
+        if (title != nullptr && msg != nullptr &&
+            title->text.find("启动代理失败") != std::string::npos &&
+            msg->text.find("前置校验未通过") != std::string::npos) {
+            gotResult = true;
+        }
+    }
+    DOCTEST_CHECK(gotResult);
+    DOCTEST_CHECK_FALSE(env.svc->isProxyRunning());   // 不 bind
+    DOCTEST_CHECK_EQ(env.svc->proxyPort(), 0);
+    mod->onStop();
+    return true;
+})
+
+// ---- 3c. A1 反方向钉子：startProxy 只在 UI 收割帧执行（校验在飞 / 已回但未收割都不 bind）----
+// 判别式：上游 1500ms 后才回 200；点击后在**不 compose** 的情况下静置 2000ms ——
+//   · 正解（startProxy 在 harvestTestResult 里）→ 线程早已跑完，但没人收割 → 仍不 bind；
+//   · 旧稿（startProxy 在线程里）→ 上游一回包线程立刻 bind → 循环里的 CHECK_FALSE 红
+//     （实测：变异在第 ~1544ms 被抓，距静置窗结束还有 ~450ms 余量）。
+REGISTER_TEST(claude_module_start_proxy_binds_only_at_harvest,
+              "claude_module: startProxy 只在 UI 收割帧执行（校验在飞时不 bind，A1）", {
+    TestEnv env;
+    // 红线：绝不绑 8888（本机开发会话推理链路）。**不能写 0**——0 会被
+    // setConfiguredProxyPort 钳制回 8888（proxy_runtime.cpp:107-117），而本用例
+    // 会真的走到 bind。取系统空闲端口（既有 helper；harvest 帧按此端口 bind）
+    const int port = pickFreePort();
+    DOCTEST_REQUIRE(port > 0);
+    env.svc->setConfiguredProxyPort(port);
+    platform::http::Server upstream("127.0.0.1", 0);
+    upstream.route("GET", "/v1/models",
+                   [](const platform::http::RequestCtx&,
+                      platform::http::ResponseWriter& w) {
+                       // 1500ms ≫ 一帧：探测在飞窗口足够长，「startProxy 又回
+                       // 线程」的变异（= 上游一回包线程立刻 bind）必然落在下面
+                       // 的静置窗内 → 必红（延迟 500ms 时静置窗 500ms ≈ 1:1，
+                       // 边界时序会漏咬）
+                       std::this_thread::sleep_for(std::chrono::milliseconds(1500));
+                       w.setStatus(200);
+                       w.setHeader("Content-Type", "application/json");
+                       w.write(R"({"data":[]})");
+                       w.end();
+                   });
+    DOCTEST_REQUIRE(upstream.start());
+    auto a = env.svc->createProfile(
+        "慢校验", "http://127.0.0.1:" + std::to_string(upstream.actualPort()),
+        "sk-ant-pv-harvest", "claude-sonnet-4-5");
+    DOCTEST_REQUIRE(a.isOk());
+    DOCTEST_REQUIRE(env.svc->setActiveProfile(a.value().id).isOk());
+
+    std::unique_ptr<::core::Module> mod(create_claude_module());
+    eui::Screen screen;
+    screen.width = 1600.0f;
+    screen.height = 1000.0f;
+    auto compose = [&](eui::Ui& ui) {
+        ui.begin("claude_pv_harvest");
+        mod->compose(ui, screen);
+        ui.end();
+    };
+
+    {   // 点「启动代理」→ 立即返回（不冻结 UI 由 3b 钉；这里钉「不立刻 bind」）
+        eui::Ui ui;
+        compose(ui);
+        // components::button 的**可点节点**是 `<id>.bg`（button.h:137/145：
+        // 根 stack 只作容器，onClick 挂在 bg rect 上）
+        const auto* btn = ui.find("claude.btn.proxy.bg");
+        DOCTEST_REQUIRE(btn != nullptr);
+        DOCTEST_REQUIRE(btn->onClick != nullptr);
+        btn->onClick();
+    }
+
+    // 点击立即返回的可见面：此刻 toast 是 pending 态「正在校验」，结果要等收割帧
+    //（上游挂 1500ms → 本帧必然仍在飞，不会收割，待观察值确定。3b 的空库路径
+    // 线程 ~µs 即回，下一帧 compose 已把它收割掉 → 那条断言与收割竞速、非确定，
+    // 故 pending 态的可观测性钉在这条 1500ms 上游的用例里）
+    {
+        eui::Ui ui;
+        compose(ui);
+        const auto* title = ui.find("claude.toast.title");
+        DOCTEST_REQUIRE(title != nullptr);
+        DOCTEST_CHECK(title->text.find("正在校验") != std::string::npos);
+        DOCTEST_CHECK_FALSE(env.svc->isProxyRunning());   // 仍在飞 = 未 bind
+    }
+
+    // 校验在飞 + 已回包但**尚无 compose 帧**的整个窗口：一律不 bind
+    //（100×20ms ≈ 2000ms > 上游 1500ms 延迟，留 500ms 余量给「线程已回包但没人
+    // 收割」那一段；这段刻意不 compose）
+    for (int i = 0; i < 100; ++i) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(20));
+        DOCTEST_CHECK_FALSE(env.svc->isProxyRunning());   // A1：绑定必须晚于收割帧
+    }
+    DOCTEST_CHECK_EQ(env.svc->proxyPort(), 0);
+
+    // 一帧 compose = 一次收割 → 这时才 bind（UI 线程内的亚毫秒操作）
+    bool started = false;
+    for (int i = 0; i < 50 && !started; ++i) {
+        eui::Ui ui;
+        compose(ui);
+        started = env.svc->isProxyRunning();
+        if (!started) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(20));
+        }
+    }
+    DOCTEST_CHECK(started);
+    DOCTEST_CHECK_EQ(env.svc->proxyPort(), port);   // bind 在配置的空闲端口上（非 8888）
+    {
+        eui::Ui ui;
+        compose(ui);
+        const auto* title = ui.find("claude.toast.title");
+        DOCTEST_REQUIRE(title != nullptr);
+        DOCTEST_CHECK(title->text.find("代理已启动") != std::string::npos);
+    }
+    env.svc->stopProxy();                 // 用完还原（onStop 也会停；显式更清楚）
+    mod->onStop();
+    upstream.stop();
+    cleanupProfileKey(kTestKeychainService, a.value().id);
+    return true;
+})
+
 // ---- 4. Profile 表单 tabs：槽位/env 填写 → 保存 → DB 往返 → 重开回显 ----
 // （provider-config Phase D，§6.1；输入经 input.hit 的 onTextInput 驱动，
 //   等价于真实键盘输入路径——insertAtCursor + onChange 回模块状态）
@@ -1680,6 +1837,28 @@ REGISTER_TEST(claude_module_keyboard_shortcuts,
     //    端口动态取（原写死 28888：多实例/残留进程会撞端口）——取系统空闲端口，
     //    万一在探测与 bind 之间被抢则换端口重试 ≤3 次；断言语义不变
     //    （启动后监听在配置的端口上）
+    //    2026-10-01 前置校验（本计划 T2）：Ctrl+Enter 与手动按钮同入口，起代理前
+    //    先过「激活 profile + 连通测试」，且**联网校验段在后台线程**、bind 在
+    //    compose 收割帧 —— 用例必须先备好「可达上游 + 激活 profile」，再把
+    //    「按一次键」改成「按键 + 收割帧轮询」。断言面不变：启动后监听在配置端口。
+    platform::http::Server upstream("127.0.0.1", 0);
+    upstream.route("GET", "/v1/models",
+                   [](const platform::http::RequestCtx&,
+                      platform::http::ResponseWriter& w) {
+                       w.setStatus(200);
+                       w.setHeader("Content-Type", "application/json");
+                       w.write(R"({"data":[]})");
+                       w.end();
+                   });
+    DOCTEST_REQUIRE(upstream.start());
+    // 上面的表单建档 profile 是**首建自动激活**，但 baseUrl 指向 kbd.example.com
+    //（真实网络）——换一套指向 mock 上游的 profile 并激活
+    auto mockProf = env.svc->createProfile(
+        "校验通过", "http://127.0.0.1:" + std::to_string(upstream.actualPort()),
+        "sk-ant-kbd-ok", "m");
+    DOCTEST_REQUIRE(mockProf.isOk());
+    DOCTEST_REQUIRE(env.svc->setActiveProfile(mockProf.value().id).isOk());
+
     int port = 0;
     bool started = false;
     for (int attempt = 0; attempt < 3 && !started; ++attempt) {
@@ -1687,12 +1866,24 @@ REGISTER_TEST(claude_module_keyboard_shortcuts,
         DOCTEST_REQUIRE(port > 0);
         env.svc->setConfiguredProxyPort(port);
         DOCTEST_CHECK(mod->onKeyEvent(ctrlPress(eui::InputKey::Enter)));
-        started = env.svc->isProxyRunning();
+        started = env.svc->isProxyRunning();   // 同步返回时必为 false（校验在飞）
+        // 收割帧轮询：bind 发生在 harvestTestResult（UI 线程、join 之后）
+        for (int i = 0; i < 50 && !started; ++i) {
+            eui::Ui ui;
+            compose(ui, "ks5");
+            started = env.svc->isProxyRunning();
+            if (!started) {
+                std::this_thread::sleep_for(std::chrono::milliseconds(20));
+            }
+        }
     }
     DOCTEST_CHECK(started);
     DOCTEST_CHECK_EQ(env.svc->proxyPort(), port);
+    // 停止是同步路径（isProxyRunning 早退分支），不经过线程/收割
     DOCTEST_CHECK(mod->onKeyEvent(ctrlPress(eui::InputKey::Enter)));
     DOCTEST_CHECK(!env.svc->isProxyRunning());
+    upstream.stop();
+    cleanupProfileKey(kTestKeychainService, mockProf.value().id);
 
     mod->onStop();
     cleanupProfileKey(kTestKeychainService, pid);
