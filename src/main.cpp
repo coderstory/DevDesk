@@ -243,19 +243,28 @@ claudeProxyProvider() {
 }
 
 // ClaudeService 单例（ClaudeModule 通过 ClaudeService::global() 读状态）
-// 持有 Database 的 db() 引用；生命周期与 openAppDatabase() 一致
+// 持有 Database 的 db() 引用（db 引用本身由 openAppDatabase() 保证仍有效）
+//
+// 持有方式 = 永不析构的堆持有（2026-10-01 终审高 finding + 修复轮 2 根修）：
+// exit hook（app_assembly armExitHook → router->stopAll() → 模块 onStop →
+// stopProxy + syncRestore 还原 settings.json）**必须**看到活着的服务。原先的
+// static unique_ptr 在惰性装配路径下构造晚于 armExitHook 注册 → atexit LIFO
+// 让析构先跑，exit hook 只能见到悬垂指针（修复轮 1 摘牌后则直接跳过 →
+// settings.json 停在死代理上）。改堆持有后本对象与进程同寿，退出序列恒为
+// 「exit hook 先还原 → 进程结束（不析构服务）」。~ClaudeService 的摘牌逻辑
+// 保留（测试用栈上实例仍需要）。
 ::module::claude::ClaudeService* getClaudeService() {
-    static std::unique_ptr<::module::claude::ClaudeService> svc;
-    static bool initialized = false;
-    if (!initialized) {
+    // 故意泄漏（进程级单例，见上）：unique_ptr 对象本身在堆上，永不释放
+    static auto* holder = new std::unique_ptr<::module::claude::ClaudeService>();
+    if (!*holder) {
         auto& db = openAppDatabase();
-        svc = std::make_unique<::module::claude::ClaudeService>(db.db());
+        *holder = std::make_unique<::module::claude::ClaudeService>(db.db());
         // Claude Code settings.json 接管通道（provider-config Phase C）：
         // 路径注入在此一次性完成，startProxy/stopProxy/setActiveProfile 的
         // 接管/还原触发收在 service 层，UI 不感知
-        svc->setSettingsSyncPaths(
+        (*holder)->setSettingsSyncPaths(
             ::module::claude::settings_sync::defaultPaths());
-        ::module::claude::ClaudeService::setGlobal(svc.get());
+        ::module::claude::ClaudeService::setGlobal(holder->get());
         // R0 / 审计 D6：与 setGlobal 同一时刻把代理运行面注册进 core 只读服务
         // 定位器（设置页经它取，不再直呼 global()）。注册点选在此 =
         //「单例已创建 ⟺ 定位器可解析」，与解耦前「global() 非空」逐字对应；
@@ -263,9 +272,8 @@ claudeProxyProvider() {
         // 提前 return）→ 定位器保持未注册 = 解耦前的 global() == nullptr
         ::core::ServiceLocator::set<::core::IClaudeProxyService>(
             &claudeProxyProvider());
-        initialized = true;
     }
-    return svc.get();
+    return holder->get();
 }
 
 // 桌宠气泡内容源②（pet 设计 §4.5，审计 [18]）：跨模块逾期计数桥。
