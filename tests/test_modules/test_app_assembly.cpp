@@ -668,18 +668,30 @@ public:
     ToggleCountModule(::core::PageId page, std::string name, int* starts,
                       int* stops)
         : page_(page), name_(std::move(name)), starts_(starts), stops_(stops) {}
+    // 观测 D-1 时序（T12 契约）：onStop 里登记「此刻本模块是否仍注册」。
+    // off 路径要求 onStop 先于 unregisterModule——顺序颠倒（先注销再停）时
+    // isRegistered 已为 false，断言 stopWhileRegistered == stops 必红
+    void observeRouter(const ::core::Router* router) { router_ = router; }
+    int stopWhileRegistered() const { return stopWhileRegistered_; }
     ::core::PageId pageId() const override { return page_; }
     std::string displayName() const override { return name_; }
     std::string iconGlyph() const override { return "•"; }
     void compose(eui::Ui&, const eui::Screen&) override {}
     void onStart() override { ++*starts_; }
-    void onStop() override { ++*stops_; }
+    void onStop() override {
+        ++*stops_;
+        if (router_ != nullptr && router_->isRegistered(page_)) {
+            ++stopWhileRegistered_;
+        }
+    }
 
 private:
     ::core::PageId page_;
     std::string name_;
     int* starts_;
     int* stops_;
+    const ::core::Router* router_ = nullptr;
+    int stopWhileRegistered_ = 0;
 };
 
 ToggleCountModule g_toggleAgent{::core::PageId::Agent, "agent",
@@ -705,6 +717,7 @@ REGISTER_TEST(assembly_dispatch_module_toggle_lifecycle,
     ::core::Router router;
     // 生产形态：Home 恒注册（导航兜底与 D-1 重定向 guard 都依赖它）
     router.registerModule(&g_toggleHome);
+    g_toggleAgent.observeRouter(&router);  // onStop 时序观测（D-1）
 
     // on：注册 + onStart
     app::assembly::dispatchModuleToggle(module::settings::kModuleIdAgent, true,
@@ -718,6 +731,7 @@ REGISTER_TEST(assembly_dispatch_module_toggle_lifecycle,
                                         router, &toggleLookupStub);
     DOCTEST_CHECK_FALSE(router.isRegistered(::core::PageId::Agent));
     DOCTEST_CHECK_EQ(g_agentStops, 1);
+    DOCTEST_CHECK_EQ(g_toggleAgent.stopWhileRegistered(), 1);
     DOCTEST_CHECK_FALSE(app::appNoticeVisible());
 
     // 再开 → 把 Agent 设为当前页 → 再关 → D-1 重定向 Home + toast
@@ -729,6 +743,9 @@ REGISTER_TEST(assembly_dispatch_module_toggle_lifecycle,
     app::assembly::dispatchModuleToggle(module::settings::kModuleIdAgent, false,
                                         router, &toggleLookupStub);
     DOCTEST_CHECK_EQ(g_agentStops, 2);
+    // 两次 onStop 都发生在「本模块仍注册」时 = onStop 先于 unregisterModule
+    //（D-1/T12 时序：运行线程在 onStop 内 join 后页才消失；顺序颠倒必红）
+    DOCTEST_CHECK_EQ(g_toggleAgent.stopWhileRegistered(), 2);
     DOCTEST_CHECK_EQ(router.currentPage(), ::core::PageId::Home);
     // toast 文案：shortName 取自注册表静态列（不依赖活实例），锁 D-1 反馈
     DOCTEST_CHECK(app::appNoticeVisible());
