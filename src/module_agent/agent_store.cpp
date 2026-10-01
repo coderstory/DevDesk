@@ -378,9 +378,13 @@ Result<std::vector<AgentMessageRow>> AgentStore::listMessages(int64_t runId) {
 Result<std::vector<AgentRunRow>> AgentStore::listRuns(int64_t taskId, int limit) {
     std::lock_guard<std::recursive_mutex> lock(db_.mutex());
     auto st = db_.prepare(
+        // id DESC 兜底（评审微修）：started_at 是秒精度，同一秒内连起两次 run 会
+        // 并列——只按 started_at DESC 时并列段顺序未定义，**LIMIT 窗口本身**可能把
+        // 较旧那条当「最近一次」返回（消费方：状态列 / runlist[0] / 默认选中 run）。
+        // id 单调递增，与插入序一致，故 (started_at, id) 双键 = 确定的最近优先。
         "SELECT id,task_id,status,started_at,ended_at,iterations,input_tokens,"
         "output_tokens,error FROM agent_runs WHERE task_id=?"
-        " ORDER BY started_at DESC LIMIT ?");
+        " ORDER BY started_at DESC, id DESC LIMIT ?");
     if (st.isFail()) {
         return Result<std::vector<AgentRunRow>>::fail(st.errorCode(), st.errorMessage());
     }

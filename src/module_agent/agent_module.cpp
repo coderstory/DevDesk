@@ -490,10 +490,6 @@ void AgentModule::createTaskFromForm() {
     tasksDirty_ = true;
 }
 
-void AgentModule::setEditTriggerIdx(int idx) {
-    editTriggerIdx_ = idx < 0 ? 0 : (idx > 2 ? 2 : idx);
-}
-
 void AgentModule::setEditCronDraft(const std::string& cron) {
     editCron_ = cron;
 }
@@ -604,9 +600,9 @@ void AgentModule::refreshData() {
             continue;
         }
         auto list = std::move(runs).value();
-        // 最近一次在前（契约）：store 的 ORDER BY started_at DESC 只有秒精度，
-        // 「同一秒内连起两次 run」并列时顺序未定义——按 (startedAt, id) 逆序兜底，
-        // 让 runlist[0] 与状态列取到的都是确定的最近一次
+        // 最近一次在前（契约）：store 侧已按 (started_at DESC, id DESC) 并列兜底，
+        // 这里再按 (startedAt, id) 逆序排一次是纵深防御——runlist[0] 与状态列的
+        // 「最近一次」语义不依赖调用方对 store 排序契约的记忆
         std::stable_sort(list.begin(), list.end(),
                          [](const AgentRunRow& a, const AgentRunRow& b) {
                              if (a.startedAt != b.startedAt) {

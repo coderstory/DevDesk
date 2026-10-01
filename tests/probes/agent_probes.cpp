@@ -307,28 +307,31 @@ int main(int argc, char* argv[]) {
             if (editBtnNow == nullptr) {
                 std::cerr << "agent_probes: 重新查找 edit 按钮失败\n";
                 passed = false;
-            }
-            const float ex = editBtnNow->frame.x + editBtnNow->frame.width * 0.5f;
-            const float ey = editBtnNow->frame.y + editBtnNow->frame.height * 0.5f;
-            core::queuePointerButton(window, ex, ey, core::PointerButton::Left,
-                                     core::PointerAction::Press, {});
-            core::queuePointerButton(window, ex, ey, core::PointerButton::Left,
-                                     core::PointerAction::Release, {});
-            composeFrame();
-            const auto* form = ui != nullptr ? ui->find("agent.edit.form") : nullptr;
-            const auto* pageNow = ui != nullptr ? ui->find("agent.page") : nullptr;
-            if (form == nullptr || pageNow == nullptr) {
-                std::cerr << "agent_probes: 点 edit 后 agent.edit.form 缺失\n";
-                passed = false;
             } else {
-                check(frameContains(*pageNow, *form),
-                      "编辑表单未落在页面内容区内 form" + frameStr(form) + " page" +
-                          frameStr(pageNow));
-                check(ui->find("agent.edit.cron") != nullptr,
-                      "schedule 任务的编辑表单未渲染 cron 输入");
-                const auto* save = ui->find("agent.edit.save");
-                check(save != nullptr && save->frame.width > 0.0f,
-                      "编辑表单缺保存按钮");
+                const float ex = editBtnNow->frame.x + editBtnNow->frame.width * 0.5f;
+                const float ey = editBtnNow->frame.y + editBtnNow->frame.height * 0.5f;
+                core::queuePointerButton(window, ex, ey, core::PointerButton::Left,
+                                         core::PointerAction::Press, {});
+                core::queuePointerButton(window, ex, ey, core::PointerButton::Left,
+                                         core::PointerAction::Release, {});
+                composeFrame();
+                const auto* form =
+                    ui != nullptr ? ui->find("agent.edit.form") : nullptr;
+                const auto* pageNow =
+                    ui != nullptr ? ui->find("agent.page") : nullptr;
+                if (form == nullptr || pageNow == nullptr) {
+                    std::cerr << "agent_probes: 点 edit 后 agent.edit.form 缺失\n";
+                    passed = false;
+                } else {
+                    check(frameContains(*pageNow, *form),
+                          "编辑表单未落在页面内容区内 form" + frameStr(form) + " page" +
+                              frameStr(pageNow));
+                    check(ui->find("agent.edit.cron") != nullptr,
+                          "schedule 任务的编辑表单未渲染 cron 输入");
+                    const auto* save = ui->find("agent.edit.save");
+                    check(save != nullptr && save->frame.width > 0.0f,
+                          "编辑表单缺保存按钮");
+                }
             }
         }
     }

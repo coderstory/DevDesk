@@ -66,10 +66,9 @@ public:
     void onStop() override;
 
     // 测试缝（agent_ui 用例直调，等价于用户在编辑表单里完成该动作）：
-    // 不引 EUI-NEO 下拉/输入的真事件机制——trigger 下拉的 onChange 另有
-    // `agent.edit.trigger.item.<i>` 的真实回调可直调，cron 输入框的
-    // onTextInput 只能追加、无法覆盖已有草稿，故草稿写入口落在这里
-    void setEditTriggerIdx(int idx);
+    // 不引 EUI-NEO 输入的真事件机制——cron 输入框的 onTextInput 只能追加、无法
+    // 覆盖已有草稿，故草稿写入口落在这里（trigger 下拉不需要缝：用例直调
+    // `agent.edit.trigger.item.<i>` 上真实挂的 onChange）
     void setEditCronDraft(const std::string& cron);
 
 private:
