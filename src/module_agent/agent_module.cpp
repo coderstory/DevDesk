@@ -7,18 +7,36 @@
 // eui::utf8(0xF544) 的 UTF-8 字节为 \xEF\x95\x84，与 app_registry.h
 // 图标列同值（assembly_registry_matches_module_getters 锁一致性）。
 //
-// 元素 id 契约表（plan task-12-brief，Task 13 UI 测试逐字钉）：
+// 元素 id 契约表（plan task-12/10/11-brief，UI 测试逐字钉）：
 //   agent.page / agent.title / agent.form.goal / agent.form.create /
 //   agent.tasklist / agent.task.<taskId> / agent.task.<taskId>.title /
 //   agent.task.<taskId>.run（text=="启动"）/ agent.task.<taskId>.status /
-//   agent.task.<taskId>.detail（展开才存在）/ agent.task.<taskId>.msg.<i>
+//   agent.task.<taskId>.edit（点开编辑表单）/ agent.task.<taskId>.toggle
+//     （text=="禁用"/"启用"，按 enabled）/ agent.task.<taskId>.enqueue
+//     （仅 trigger_type=="resident"）/
+//   agent.task.<taskId>.detail（展开才存在）/ agent.task.<taskId>.info
+//     （只读任务信息行）/ agent.task.<taskId>.msg.<i>
+//   agent.edit.form 及子元素（editingTaskId_ 非空才存在）：agent.edit.goal /
+//     .trigger（下拉：手动/定时/常驻）/ .cron（trigger==定时才渲染）/
+//     .slot（下拉）/ .iter / .destructive / .save / .cancel / .error
+//
+// 可点元素（edit/toggle/enqueue/save/cancel）用 actionChip：契约要求 id 元素本身
+// 同时带 text 与 onClick，而 components::button 的 onClick 落在 <id>.bg 上，故
+// 手搓「<id> 文本元素 + <id>.bg 底」两层（观感取自同一组 button token）。
+// 表单字段标签一律 .caption 后缀——components::dropdown 内部占用 <id>.label
+//（字段显示名），宿主标签若同 id 会串位（2026-10-02 实测的 UI 缺陷）。
 #include "agent_module.h"
 
 #include <algorithm>
+#include <functional>
 
 #include <components/button.h>
+#include <components/dropdown.h>
 #include <components/input.h>
+#include <components/switch.h>
 #include <eui/dsl.h>
+
+#include "model_slots.h"
 
 #include "core/component_theme.h"
 #include "core/database.h"
@@ -27,6 +45,8 @@
 #include "core/theme.h"
 #include "module_agent/agent_loop.h"
 #include "module_agent/app_stats_tool.h"
+#include "module_agent/cron.h"
+#include "platform/json.h"
 
 namespace module::agent {
 namespace {
@@ -41,6 +61,83 @@ std::string runStatusText(const std::string& status) {
     if (status == "cancelled") return "已取消";
     if (status == "running") return "运行中";
     return "—";
+}
+
+// run 列表行文案（Task 11 契约）：状态中文化 / 耗时（endedAt-startedAt 秒）/
+// 迭代 N / token 合计（input+output；两者皆空显示「—」）。
+// 分隔符用「 · 」——测试按数值子串钉（如 "205000"），不加千分位
+std::string runRowText(const AgentRunRow& run) {
+    std::string s = runStatusText(run.status);
+    if (run.endedAt) {
+        int64_t secs = *run.endedAt - run.startedAt;
+        if (secs < 0) secs = 0;   // 时钟回拨防御：不显示负耗时
+        s += " · 耗时 " + std::to_string(secs) + "s";
+    }
+    s += " · 迭代 " + std::to_string(run.iterations);
+    if (run.inputTokens || run.outputTokens) {
+        s += " · token " + std::to_string(run.inputTokens.value_or(0) +
+                                          run.outputTokens.value_or(0));
+    } else {
+        s += " · token —";
+    }
+    return s;
+}
+
+// 行内动作 chip（2026-10-02 用户反馈「编辑/禁用是纯文本、启动却是按钮」）：观感与
+// components::button 同源（同一组 token：底色/悬停/按下/描边/圆角/高度），但
+// **契约 id 必须落在可见文本元素上**（契约要求 id 元素同时带 text 与 onClick），
+// 而 components::button 把 onClick 挂在 <id>.bg 上。故手搓成与 button 同构的两层：
+//   <id>.bg   —— 底 + 悬停/按下态 + onClick（真实命中面）
+//   <id>      —— 文本元素，带 id/text/onClick；hitTestMode=None 让指针穿透到 bg
+//                （悬停态才一致），测试直调其 onClick 亦有效
+void actionChip(::eui::Ui& ui, const std::string& id, const std::string& label,
+                float width, bool primary, bool enabled,
+                const components::theme::ThemeColorTokens& tokens,
+                std::function<void()> onClick) {
+    constexpr float kChipH = 32.0f;
+    const ::core::Color base = primary ? tokens.primary : tokens.surface;
+    ::core::Color textColor =
+        primary ? ::core::Color{0.94f, 0.97f, 1.0f, 1.0f} : tokens.text;
+    if (!enabled) textColor = components::theme::withOpacity(textColor, 0.40f);
+    ui.stack(id + ".chip")
+        .size(width, kChipH)
+        .content([&] {
+            ui.rect(id + ".bg")
+                .size(width, kChipH)
+                .states(base, components::theme::buttonHover(tokens, base),
+                        components::theme::buttonPressed(tokens, base))
+                .radius(tokens.metrics.radius.overlay)
+                .border(components::theme::buttonBorder(tokens, primary))
+                .onClick(onClick)
+                .build();
+            ui.text(id)
+                .size(width, kChipH)
+                .text(label)
+                .fontSize(12.0f)
+                .lineHeight(20.0f)
+                .horizontalAlign(eui::HorizontalAlign::Center)
+                .verticalAlign(eui::VerticalAlign::Center)
+                .color(textColor)
+                .hitTestMode(::core::dsl::HitTestMode::None)
+                .onClick(onClick)
+                .build();
+        })
+        .build();
+}
+
+// 表单字段标签：统一 12px + 显式垂直居中（2026-10-02 用户反馈「文本没垂直居中」——
+// 光靠 lineHeight 撑高不会居中）。id 一律用 .caption：components::dropdown 内部有
+// <id>.label（字段显示名），宿主标签若同 id 会与之撞车串位
+void fieldCaption(::eui::Ui& ui, const std::string& id, const std::string& text,
+                  float width, float height, const ::core::Color& color) {
+    ui.text(id)
+        .size(width, height)
+        .text(text)
+        .fontSize(12.0f)
+        .lineHeight(20.0f)
+        .verticalAlign(eui::VerticalAlign::Center)
+        .color(color)
+        .build();
 }
 
 // 消息行预览：role + ": " + content 前 80 字节（超长在 UTF-8 边界回退，
@@ -70,6 +167,71 @@ std::string deriveTaskName(const std::string& goal) {
         --cut;
     }
     return goal.substr(0, cut) + "…";
+}
+
+// 模型槽位下拉的键集与显示名（Task 10：真源 = src/model_slots.h 的 X 宏表）。
+// 「一份真源、零漂移」：新增槽位只改 model_slots.h，本模块与 provider_config
+// 各自展开同一张表。键集进库（agent_tasks.model_slot），显示名只上屏
+#define DEVDESK_MODEL_SLOT_KEY(name, jsonKey, label, formLabel, envKey, nameKey) jsonKey,
+constexpr const char* kModelSlotKeys[] = {DEVDESK_MODEL_SLOT_LIST(DEVDESK_MODEL_SLOT_KEY)};
+#undef DEVDESK_MODEL_SLOT_KEY
+#define DEVDESK_MODEL_SLOT_LABEL(name, jsonKey, label, formLabel, envKey, nameKey) label,
+constexpr const char* kModelSlotLabels[] = {
+    DEVDESK_MODEL_SLOT_LIST(DEVDESK_MODEL_SLOT_LABEL)};
+#undef DEVDESK_MODEL_SLOT_LABEL
+constexpr int kModelSlotCount = static_cast<int>(
+    sizeof(kModelSlotKeys) / sizeof(kModelSlotKeys[0]));
+
+// 触发类型（agent_tasks.trigger_type）三档：下拉顺序 = 下标即本表下标
+constexpr const char* kTriggerKeys[] = {"manual", "schedule", "resident"};
+constexpr const char* kTriggerLabels[] = {"手动", "定时", "常驻"};
+constexpr int kTriggerCount = 3;
+constexpr int kTriggerScheduleIdx = 1;
+
+// 编辑表单固定高度：内层 4 行（标题 20 / 目标 40 / 触发 40 / 槽位 40 / 动作 32 +
+// 4 个 8px 间距 = 204）+ 上下 padding 12×2 = 228，取 240 留 12px 余量。列表高度
+// 计算里的减项必须与它一致（compose 的 gapCount/listH），否则行会溢出页底
+constexpr float kEditFormH = 240.0f;
+
+// 详情区 run 列表长度上限（契约表：最近 5 次）
+constexpr int kRunListLimit = 5;
+
+int triggerIndexOf(const std::string& triggerType) {
+    for (int i = 0; i < kTriggerCount; ++i) {
+        if (triggerType == kTriggerKeys[i]) return i;
+    }
+    return 0;   // 未知触发类型（旧数据）→ 显示「手动」，保存时按当前下拉值归一
+}
+
+int slotIndexOf(const std::string& slotKey) {
+    for (int i = 0; i < kModelSlotCount; ++i) {
+        if (slotKey == kModelSlotKeys[i]) return i;
+    }
+    return 0;
+}
+
+// 迭代上限输入框的容错解析：非数字字符忽略（正在输入的中间态），>1000 截断防溢出；
+// 无数字 → 0（保存时再 clamp 进 [1,50]，与 AgentLoop 的硬上限一致）
+int parseIterInput(const std::string& text) {
+    int value = 0;
+    bool any = false;
+    for (const char c : text) {
+        if (c < '0' || c > '9') continue;
+        any = true;
+        value = value * 10 + (c - '0');
+        if (value > 1000) return 1000;
+    }
+    return any ? value : 0;
+}
+
+// trigger_config JSON 里的 cron 原文（只读展示用）；缺字段 / 坏 JSON → 空串
+std::string cronTextOf(const AgentTaskRow& task) {
+    auto cfg = platform::json::parse(task.triggerConfig);
+    if (cfg.isOk() && cfg.value().isObject()) {
+        auto v = cfg.value().asObject().get("cron");
+        if (v.isString()) return v.asString();
+    }
+    return {};
 }
 
 // 简易 trim（空格 / \t \r \n）
@@ -120,23 +282,11 @@ void AgentModule::onStart() {
         LOG_WARN("Agent: 悬挂 run 清扫失败: " + swept.errorMessage());
     }
 
-    // proxy：deps 优先，缺省回退 core 服务定位器（settings 同款渠道）。
-    // 无代理 = LLM 通道不可用：store/工具照常装配，手动启动不可用（UI 禁用）
-    core::IClaudeProxyService* proxy = deps_.proxy;
-    if (proxy == nullptr) {
-        auto located =
-            ::core::ServiceLocator::requireService<::core::IClaudeProxyService>();
-        if (located.isOk()) {
-            proxy = located.value();
-        } else {
-            LOG_WARN("Agent: 代理服务未装配，LLM 通道不可用（手动启动禁用）");
-        }
-    }
-    if (proxy != nullptr) {
-        llm_ = std::make_unique<LlmClient>(*proxy, deps_.http);
-        loop_ = std::make_unique<AgentLoop>(*llm_, ::core::ToolRegistry::instance(),
-                                            *store_);
-    }
+    // LLM 通道装配（惰性单入口的预热调用，Task 6 Step 1b）：有服务 → 建
+    // llm_/loop_/scheduler_；无服务 → 只 WARN，store/工具照常装配，手动启动禁用。
+    // 同一个入口在首次使用时再被调用，故「启动时 claude 关、会话内拨开」无须
+    // off→on 本模块（claude-lazy-assembly 终审 finding，2026-10-01）
+    ensureLlm();
 
     // 注册自带工具（name 冲突属装配 bug，无错误回传通道，日志留痕不中断）
     statsTool_ = makeAppStatsTool(*db);
@@ -169,11 +319,21 @@ void AgentModule::onStop() {
         std::lock_guard<std::mutex> lock(runsMu_);
         runs_.clear();
     }
+    // Scheduler 收口（spec §3 步骤 3「停常驻 worker 线程」）：onStart 早退时
+    // scheduler_ 从未创建，必须判空；位置在「cancel 全部 + join 全部 + 清容器」
+    // 之后、unregisterTool 之前——工具注销必须晚于所有 run 线程退出（否则 run
+    // 线程里的工具执行摸到已注销的注册表）。stopAll 内部顺序：先停 tick/常驻
+    // 派发线程，再 cancel+join 在跑 run（先灭派发源，收尾窗口不再起新 run）。
+    if (scheduler_) scheduler_->stopAll();
     ::core::ToolRegistry::instance().unregisterTool("app.stats");
+    // 释放序：loop_/llm_/store_ 先走也安全——stopAll 已 join 其全部线程，析构期
+    // 的兜底 stopAll（幂等）只 join + 摘表，不触 loop_/store_（brief Task 6）
     loop_.reset();
     llm_.reset();
     store_.reset();
+    scheduler_.reset();
     statsTool_.reset();
+    llmMissingWarned_ = false;
     tasks_.clear();
     latestRuns_.clear();
     detailMessages_.clear();
@@ -201,7 +361,44 @@ void AgentModule::reapFinishedRuns() {
     }
 }
 
+// 惰性装配单入口（Task 6 Step 1b / 2026-10-01 claude-lazy-assembly 终审 finding）：
+// 代理服务从「onStart 一次性解析」改为「首次使用时解析」——启动 claude 关、
+// 会话内拨开 claude 后，已在运行的 agent 模块无须 off→on 即可用。
+// 幂等且单例：loop_ 非空即返回，故一个模块实例最多一个 LlmClient / AgentLoop /
+// Scheduler（不会起第二个 tick 线程）。scheduler_ 必须在本入口内与 loop_ 同建：
+// 早退路径下 onStart 从未创建它，不补建则惰性路径下 cron 永不触发。
+void AgentModule::ensureLlm() {
+    if (loop_ != nullptr) return;       // 已就绪（llm_/loop_/scheduler_ 三者同生共死）
+    if (store_ == nullptr) return;      // 装配未完成（db 缺失的早退路径）
+    core::IClaudeProxyService* proxy = deps_.proxy;
+    if (proxy == nullptr) {
+        auto located =
+            ::core::ServiceLocator::requireService<::core::IClaudeProxyService>();
+        if (located.isOk()) proxy = located.value();
+    }
+    if (proxy == nullptr) {
+        // 无服务：WARN 保留并补可操作提示；每段「无服务」只提示一次——本函数会
+        // 被页面帧调用，不节流会刷屏
+        if (!llmMissingWarned_) {
+            llmMissingWarned_ = true;
+            LOG_WARN("Agent: 代理服务未装配，LLM 通道不可用"
+                     "（请在设置页开启 Claude 模块后重试）");
+        }
+        return;
+    }
+    llm_ = std::make_unique<LlmClient>(*proxy, deps_.http);
+    loop_ = std::make_unique<AgentLoop>(*llm_, ::core::ToolRegistry::instance(),
+                                        *store_);
+    if (scheduler_ == nullptr) {
+        scheduler_ = std::make_unique<Scheduler>(*store_, *loop_, deps_.schedulerNow);
+        scheduler_->start();
+    }
+    llmMissingWarned_ = false;
+    LOG_INFO("Agent: LLM 通道就绪（惰性解析）");
+}
+
 void AgentModule::startTask(int64_t taskId) {
+    ensureLlm();   // 首次使用路径：会话内拨开的代理服务在这里被解析
     if (store_ == nullptr || loop_ == nullptr) {
         LOG_WARN("Agent: 服务未就绪（数据库 / LLM 通道），无法启动任务");
         return;
@@ -240,13 +437,9 @@ void AgentModule::startTask(int64_t taskId) {
         raw->thread = std::thread([this, raw, task = taskRecord] {
             // AgentLoop / store 的生命周期由 onStop 的 join 先于 reset 保证；
             // Result 落库在 run 内完成（agent_loop.cpp 收尾段）
-            AgentTask t;
-            t.id = task.id;
-            t.name = task.name;
-            t.goal = task.goal;
-            t.modelSlot = task.modelSlot;
-            t.maxIterations = task.maxIterations;
-            t.allowDestructive = task.allowDestructive;
+            // store 行 → AgentTask 的唯一映射（taskFromRow）：run 线程里不留
+            // 第二份会漂移的手抄副本（scheduler / tests 同用它）
+            const AgentTask t = taskFromRow(task);
             // Result 落库在 run 内完成（agent_loop.cpp 收尾段）；run 的
             // 返回值 = 起库失败（无处落状态）这类不可恢复错误——不能静默
             auto started = loop_->run(t, raw->cancel);
@@ -297,14 +490,90 @@ void AgentModule::createTaskFromForm() {
     tasksDirty_ = true;
 }
 
+void AgentModule::setEditCronDraft(const std::string& cron) {
+    editCron_ = cron;
+}
+
+// 打开编辑表单：字段以库为准回填（tasks_ 缓存可能滞后于库，编辑入口直接
+// getTask——与详情展示同源同一份 AgentTaskRow）
+void AgentModule::openTaskEditor(int64_t taskId) {
+    if (store_ == nullptr) return;
+    auto row = store_->getTask(taskId);
+    if (row.isFail()) {
+        formError_ = "读取任务失败：" + row.errorMessage();
+        LOG_WARN("Agent: 打开编辑表单失败: " + row.errorMessage());
+        return;
+    }
+    const AgentTaskRow& r = row.value();
+    editingTaskId_ = r.id;
+    editGoal_ = r.goal;
+    editCron_ = cronTextOf(r);
+    editSlot_ = r.modelSlot;
+    editIter_ = r.maxIterations;
+    editDestructive_ = r.allowDestructive;
+    editTriggerIdx_ = triggerIndexOf(r.triggerType);
+    editError_.clear();
+    editTriggerOpen_ = false;
+    editSlotOpen_ = false;
+}
+
+// 保存编辑表单（spec §14 UI 行「cron 输入校验」）：trigger==定时 时先经 parseCron
+// 校验，非法 → agent.edit.error 文案 + **不落库**（表单留在原地让用户改）；合法 →
+// updateTask 七列覆盖 + 退编辑态 + 置脏重查。enabled 不在此路径（归 toggle）
+void AgentModule::saveTaskEdit() {
+    if (store_ == nullptr || !editingTaskId_) return;
+    const std::string goal = trimCopy(editGoal_);
+    if (goal.empty()) {
+        editError_ = "请先填写任务目标";
+        return;
+    }
+    const std::string triggerType = kTriggerKeys[editTriggerIdx_];
+    std::string triggerConfig;
+    if (triggerType == std::string("schedule")) {
+        const std::string cron = trimCopy(editCron_);
+        auto expr = parseCron(cron);
+        if (expr.isFail()) {
+            editError_ = "cron 表达式非法：" + expr.errorMessage();
+            return;
+        }
+        // 校验通过的表达式只含 [0-9 * , - / 空格]，直接拼进 JSON 无需转义
+        triggerConfig = std::string(R"({"cron":")") + cron + R"("})";
+    }
+    const int iter = editIter_ < 1 ? 1 : (editIter_ > 50 ? 50 : editIter_);
+    auto updated = store_->updateTask(*editingTaskId_, deriveTaskName(goal), goal,
+                                      triggerType, triggerConfig, editSlot_, iter,
+                                      editDestructive_);
+    if (updated.isFail()) {
+        editError_ = "保存失败：" + updated.errorMessage();
+        LOG_ERROR("Agent: 保存任务失败: " + updated.errorMessage());
+        return;
+    }
+    editingTaskId_.reset();
+    editError_.clear();
+    tasksDirty_ = true;
+}
+
+// 启用/禁用取反（与编辑表单是两个独立动作：本路径不碰其它七列）
+void AgentModule::toggleTaskEnabled(const AgentTaskRow& task) {
+    if (store_ == nullptr) return;
+    auto r = store_->setTaskEnabled(task.id, !task.enabled);
+    if (r.isFail()) {
+        LOG_WARN("Agent: 启停切换失败（task " + std::to_string(task.id) +
+                 "）: " + r.errorMessage());
+        return;
+    }
+    tasksDirty_ = true;
+}
+
 void AgentModule::toggleExpand(int64_t taskId) {
     if (expandedTaskId_ && *expandedTaskId_ == taskId) {
         expandedTaskId_.reset();
     } else {
         expandedTaskId_ = taskId;
     }
+    selectedRunId_.reset();   // 展开语义：默认选中最近一次 run（runlist[0]）
     detailMessages_.clear();
-    tasksDirty_ = true;   // 触发一次刷新装载详情消息
+    tasksDirty_ = true;   // 触发一次刷新装载 run 列表与详情消息
 }
 
 // 重查任务 / 各任务最近 run / 展开详情的消息。触发条件（compose 内判定）：
@@ -317,6 +586,7 @@ void AgentModule::refreshData() {
     tasksDirty_ = false;
     tasks_.clear();
     latestRuns_.clear();
+    taskRuns_.clear();
     auto t = store_->listTasks();
     if (t.isFail()) {
         LOG_ERROR("Agent: 读取任务失败: " + t.errorMessage());
@@ -324,21 +594,53 @@ void AgentModule::refreshData() {
         tasks_ = std::move(t).value();
     }
     for (const auto& task : tasks_) {
-        auto runs = store_->listRuns(task.id, 1);
-        if (runs.isOk() && !runs.value().empty()) {
-            latestRuns_[task.id] = runs.value().front();
+        auto runs = store_->listRuns(task.id, kRunListLimit);
+        if (runs.isFail()) {
+            LOG_ERROR("Agent: 读取 run 列表失败: " + runs.errorMessage());
+            continue;
         }
+        auto list = std::move(runs).value();
+        // 最近一次在前（契约）：store 侧已按 (started_at DESC, id DESC) 并列兜底，
+        // 这里再按 (startedAt, id) 逆序排一次是纵深防御——runlist[0] 与状态列的
+        // 「最近一次」语义不依赖调用方对 store 排序契约的记忆
+        std::stable_sort(list.begin(), list.end(),
+                         [](const AgentRunRow& a, const AgentRunRow& b) {
+                             if (a.startedAt != b.startedAt) {
+                                 return a.startedAt > b.startedAt;
+                             }
+                             return a.id > b.id;
+                         });
+        if (!list.empty()) {
+            latestRuns_[task.id] = list.front();
+        }
+        taskRuns_[task.id] = std::move(list);
     }
     if (expandedTaskId_) {
         detailMessages_.clear();
-        auto it = latestRuns_.find(*expandedTaskId_);
-        if (it != latestRuns_.end()) {
-            auto msgs = store_->listMessages(it->second.id);
+        auto it = taskRuns_.find(*expandedTaskId_);
+        if (it != taskRuns_.end() && !it->second.empty()) {
+            // 选中 run：显式选中（点过 runlist 行）优先；不在本任务列表里
+            //（换了任务 / 被 5 条上限挤出）→ 回落最近一次
+            bool stillListed = false;
+            if (selectedRunId_) {
+                for (const auto& r : it->second) {
+                    if (r.id == *selectedRunId_) {
+                        stillListed = true;
+                        break;
+                    }
+                }
+            }
+            if (!stillListed) {
+                selectedRunId_ = it->second.front().id;
+            }
+            auto msgs = store_->listMessages(*selectedRunId_);
             if (msgs.isOk()) {
                 detailMessages_ = std::move(msgs).value();
             } else {
                 LOG_ERROR("Agent: 读取 run 消息失败: " + msgs.errorMessage());
             }
+        } else {
+            selectedRunId_.reset();   // 该任务还没有 run
         }
     }
     bool anyAlive = false;
@@ -369,6 +671,13 @@ void AgentModule::compose(::eui::Ui& ui, const ::eui::Screen& screen) {
     const float pad = t.sizes.spacingXXLarge;              // 40，照 claude 页
     const float contentW = screen.width - pad * 2.0f;
 
+    // 首次使用路径之二：页面帧。会话内拨开 claude 后回到本页（onPageEnter 置
+    // tasksDirty_）即解析服务——否则 loop_ 恒空、「启动」按钮永久禁用，惰性解析
+    // 在真实 UI 上不可达。已就绪时只做一次空指针判断，无每帧开销
+    if (store_ != nullptr && loop_ == nullptr && tasksDirty_) {
+        ensureLlm();
+    }
+
     // 数据刷新：脏标记或有 run 在身（每帧跟进状态/消息）；查询在主线程，
     // 量级 = 任务数 + 展开任务的消息数，M1 可接受
     if (store_ != nullptr && (tasksDirty_ || uiPolling_)) {
@@ -376,10 +685,13 @@ void AgentModule::compose(::eui::Ui& ui, const ::eui::Screen& screen) {
     }
 
     const bool hasError = !formError_.empty();
-    // 页 column 子项：title / form / [error] / tasklist，gap = spacingLarge
-    const int gapCount = hasError ? 3 : 2;
+    // 页 column 子项：title / form / [error] / [编辑表单] / tasklist，
+    // gap = spacingLarge；子项数一变，gapCount 与减项必须同步（否则 tasklist
+    // 高度算错 → 末尾行溢出页底）
+    const int gapCount = (hasError ? 3 : 2) + (editingTaskId_ ? 1 : 0);
     const float listH = screen.height - pad * 2.0f - 32.0f - 40.0f -
                         (hasError ? 16.0f : 0.0f) -
+                        (editingTaskId_ ? kEditFormH : 0.0f) -
                         static_cast<float>(gapCount) * t.sizes.spacingLarge;
 
     ui.column("agent.page")
@@ -431,6 +743,186 @@ void AgentModule::compose(::eui::Ui& ui, const ::eui::Screen& screen) {
                     .build();
             }
 
+            // ---- 编辑表单（Task 10）：editingTaskId_ 非空才渲染 ----
+            // 触发/槽位用 components::dropdown，包一层同尺寸 stack（settings 页
+            // 同款）：dropdown 根 stack 含弹层高度，直接当行子项会把行撑高
+            if (editingTaskId_) {
+                const float innerW = contentW - 24.0f;
+                const float labelW = 72.0f;
+                const float ddW = 140.0f;
+                const float rowGap = 12.0f;
+                const bool isSchedule = editTriggerIdx_ == kTriggerScheduleIdx;
+                ui.column("agent.edit.form")
+                    .size(contentW, kEditFormH)
+                    .padding(12.0f)
+                    .gap(8.0f)
+                    .content([&] {
+                        ui.text("agent.edit.form.title")
+                            .size(innerW, 20.0f)
+                            .text("编辑任务")
+                            .fontSize(13.0f)
+                            .lineHeight(20.0f)
+                            .fontWeight(700)
+                            .color(t.colors.textPrimary)
+                            .build();
+                        // 目标
+                        ui.row("agent.edit.goal.row")
+                            .size(innerW, 40.0f)
+                            .gap(rowGap)
+                            .alignItems(eui::Align::CENTER)
+                            .content([&] {
+                                fieldCaption(ui, "agent.edit.goal.caption", "任务目标", labelW,
+                                             40.0f, t.colors.textSecondary);
+                                components::input(ui, "agent.edit.goal")
+                                    .size(innerW - labelW - rowGap, 40.0f)
+                                    .value(editGoal_)
+                                    .placeholder("任务目标")
+                                    .fontSize(t.sizes.fontSizeBody)
+                                    .theme(themeTokens)
+                                    .onChange([this](const std::string& v) {
+                                        editGoal_ = v;
+                                    })
+                                    .build();
+                            })
+                            .build();
+                        // 触发方式 [+ cron（定时才渲染）]
+                        ui.row("agent.edit.trigger.row")
+                            .size(innerW, 40.0f)
+                            .gap(rowGap)
+                            .alignItems(eui::Align::CENTER)
+                            .content([&] {
+                                fieldCaption(ui, "agent.edit.trigger.caption", "触发方式", labelW,
+                                             40.0f, t.colors.textSecondary);
+                                ui.stack("agent.edit.trigger.wrap")
+                                    .size(ddW, 40.0f)
+                                    .content([&] {
+                                        components::dropdown(ui, "agent.edit.trigger")
+                                            .size(ddW, 40.0f)
+                                            .theme(themeTokens)
+                                            .items(std::vector<std::string>(
+                                                kTriggerLabels,
+                                                kTriggerLabels + kTriggerCount))
+                                            .selected(editTriggerIdx_)
+                                            .open(editTriggerOpen_)
+                                            .onOpenChange([this](bool v) {
+                                                editTriggerOpen_ = v;
+                                            })
+                                            .onChange([this](int idx) {
+                                                editTriggerIdx_ = idx;
+                                            })
+                                            .build();
+                                    })
+                                    .build();
+                                if (isSchedule) {
+                                    fieldCaption(ui, "agent.edit.cron.caption", "cron 表达式", 72.0f,
+                                                 40.0f, t.colors.textSecondary);
+                                    components::input(ui, "agent.edit.cron")
+                                        .size(innerW - labelW - ddW - 72.0f -
+                                                  rowGap * 3.0f,
+                                              40.0f)
+                                        .value(editCron_)
+                                        .placeholder("分 时 日 月 周，例如 0 9 * * 1-5")
+                                        .fontSize(t.sizes.fontSizeBody)
+                                        .theme(themeTokens)
+                                        .onChange([this](const std::string& v) {
+                                            editCron_ = v;
+                                        })
+                                        .build();
+                                }
+                            })
+                            .build();
+                        // 模型槽位 + 迭代上限 + 破坏性授权
+                        ui.row("agent.edit.meta.row")
+                            .size(innerW, 40.0f)
+                            .gap(rowGap)
+                            .alignItems(eui::Align::CENTER)
+                            .content([&] {
+                                fieldCaption(ui, "agent.edit.slot.caption", "模型槽位", labelW,
+                                             40.0f, t.colors.textSecondary);
+                                ui.stack("agent.edit.slot.wrap")
+                                    .size(ddW, 40.0f)
+                                    .content([&] {
+                                        components::dropdown(ui, "agent.edit.slot")
+                                            .size(ddW, 40.0f)
+                                            .theme(themeTokens)
+                                            .items(std::vector<std::string>(
+                                                kModelSlotLabels,
+                                                kModelSlotLabels + kModelSlotCount))
+                                            .selected(slotIndexOf(editSlot_))
+                                            .open(editSlotOpen_)
+                                            .onOpenChange([this](bool v) {
+                                                editSlotOpen_ = v;
+                                            })
+                                            .onChange([this](int idx) {
+                                                if (idx >= 0 && idx < kModelSlotCount) {
+                                                    editSlot_ = kModelSlotKeys[idx];
+                                                }
+                                            })
+                                            .build();
+                                    })
+                                    .build();
+                                fieldCaption(ui, "agent.edit.iter.caption", "迭代上限", 72.0f,
+                                             40.0f, t.colors.textSecondary);
+                                components::input(ui, "agent.edit.iter")
+                                    .size(100.0f, 40.0f)
+                                    .value(std::to_string(editIter_))
+                                    .fontSize(t.sizes.fontSizeBody)
+                                    .theme(themeTokens)
+                                    .onChange([this](const std::string& v) {
+                                        editIter_ = parseIterInput(v);
+                                    })
+                                    .build();
+                                // 破坏性授权开关：用 switch（settings 页同款，
+                                // 已在 DevDesk 编译面内）——components::checkbox
+                                // 头在 -Wall -Wextra -Werror 下有未使用变量告警
+                                //（EUI-NEO 侧既有问题，不属本次改动范围）
+                                components::toggleSwitch(ui, "agent.edit.destructive")
+                                    .size(innerW - labelW - ddW - 72.0f - 100.0f -
+                                              rowGap * 4.0f,
+                                          32.0f)
+                                    .text("允许破坏性操作")
+                                    .checked(editDestructive_)
+                                    .fontSize(12.0f)
+                                    .theme(themeTokens)
+                                    .onChange([this](bool v) {
+                                        editDestructive_ = v;
+                                    })
+                                    .build();
+                            })
+                            .build();
+                        // 保存 / 取消 / 错误文案
+                        ui.row("agent.edit.actions")
+                            .size(innerW, 32.0f)
+                            .gap(rowGap)
+                            .alignItems(eui::Align::CENTER)
+                            .content([&] {
+                                actionChip(ui, "agent.edit.save", "保存", 64.0f,
+                                           /*primary=*/true, /*enabled=*/true,
+                                           themeTokens,
+                                           [this] { saveTaskEdit(); });
+                                actionChip(ui, "agent.edit.cancel", "取消", 64.0f,
+                                           /*primary=*/false, /*enabled=*/true,
+                                           themeTokens, [this] {
+                                               editingTaskId_.reset();
+                                               editError_.clear();
+                                           });
+                                if (!editError_.empty()) {
+                                    ui.text("agent.edit.error")
+                                        .size(innerW - 64.0f * 2.0f - rowGap * 3.0f,
+                                              32.0f)
+                                        .text(editError_)
+                                        .fontSize(12.0f)
+                                        .lineHeight(32.0f)
+                                        .wrap(false)
+                                        .color(t.colors.error)
+                                        .build();
+                                }
+                            })
+                            .build();
+                    })
+                    .build();
+            }
+
             // ---- 任务列表 ----
             ui.column("agent.tasklist")
                 .size(contentW, std::max(0.0f, listH))
@@ -467,31 +959,69 @@ void AgentModule::compose(::eui::Ui& ui, const ::eui::Screen& screen) {
                         if (it != latestRuns_.end()) {
                             status = runStatusText(it->second.status);
                         }
-                        // 任务行：点击展开/收起详情；行内「启动」按钮独立消费
+                        // 行内控件宽度分配：状态 80 / 编辑 48 / 启停 48 /
+                        // [入队 56（仅常驻）] / 启动 72，间距 12；标题吃剩余宽度。
+                        // childCount 必须与实际子元素个数一致（间距数 = 子元素数-1）
+                        const bool resident = task.triggerType == "resident";
+                        const float rowGap = 12.0f;
+                        const int childCount = 5 + (resident ? 1 : 0);
+                        const float fixedW = 80.0f + 48.0f + 48.0f + 72.0f +
+                                             (resident ? 56.0f : 0.0f);
+                        const float titleW = contentW - fixedW -
+                                             rowGap * static_cast<float>(childCount - 1);
+                        // 任务行：点击展开/收起详情；行内控件各自独立消费点击
+                        //（子元素先于父行命中——runtime 逆向命中序）
                         ui.row(id)
                             .size(contentW, 44.0f)
                             .alignItems(eui::Align::CENTER)
-                            .gap(12.0f)
+                            .gap(rowGap)
                             .interactive(true)
                             .onClick([this, taskId = task.id] {
                                 toggleExpand(taskId);
                             })
                             .content([&] {
                                 ui.text(id + ".title")
-                                    .size(contentW - 90.0f - 72.0f - 12.0f * 2,
-                                          20.0f)
+                                    .size(titleW, 20.0f)
                                     .text(task.name)
                                     .fontSize(t.sizes.fontSizeBody)
                                     .lineHeight(20.0f)
                                     .color(t.colors.textPrimary)
                                     .build();
                                 ui.text(id + ".status")
-                                    .size(90.0f, 20.0f)
+                                    .size(80.0f, 20.0f)
                                     .text(status)
                                     .fontSize(12.0f)
                                     .lineHeight(20.0f)
                                     .color(t.colors.textSecondary)
                                     .build();
+                                // 编辑 / 启停 / 入队：契约要求 id 元素本身带 text
+                                // 与 onClick（text 元素挂 onClick 即 interactive）
+                                actionChip(ui, id + ".edit", "编辑", 48.0f,
+                                           /*primary=*/false, /*enabled=*/true,
+                                           themeTokens, [this, taskId = task.id] {
+                                               openTaskEditor(taskId);
+                                           });
+                                actionChip(ui, id + ".toggle",
+                                           task.enabled ? "禁用" : "启用", 48.0f,
+                                           /*primary=*/false, /*enabled=*/true,
+                                           themeTokens, [this, taskCopy = task] {
+                                               toggleTaskEnabled(taskCopy);
+                                           });
+                                if (resident) {
+                                    // 常驻入队（spec §5.1：常驻本阶段只跑手动
+                                    // 入队子任务）；Scheduler 未装配时置灰不可点
+                                    actionChip(ui, id + ".enqueue", "入队", 56.0f,
+                                               /*primary=*/false,
+                                               /*enabled=*/scheduler_ != nullptr,
+                                               themeTokens, [this, taskId = task.id] {
+                                                   if (scheduler_ == nullptr) {
+                                                       LOG_WARN("Agent: Scheduler 未"
+                                                                "就绪，常驻入队被忽略");
+                                                       return;
+                                                   }
+                                                   scheduler_->enqueueResident(taskId);
+                                               });
+                                }
                                 components::button(ui, id + ".run")
                                     .size(72.0f, 32.0f)
                                     .text("启动")
@@ -512,10 +1042,85 @@ void AgentModule::compose(::eui::Ui& ui, const ::eui::Screen& screen) {
                                 .padding(12.0f)
                                 .gap(6.0f)
                                 .content([&] {
+                                    // 只读任务信息行（Step 3b）：goal / cron 原文
+                                    //（定时任务）/ 模型槽位 / 迭代上限 / 破坏性标记。
+                                    // 字段来源 = 本循环迭代的同一份 AgentTaskRow
+                                    //（与编辑表单回填同源，不另起第二套读法）
+                                    std::string info = "目标：" + task.goal;
+                                    info += " · 触发：" + task.triggerType;
+                                    if (task.triggerType == "schedule") {
+                                        const std::string cron = cronTextOf(task);
+                                        info += " · cron：" +
+                                                (cron.empty() ? "（未设置）" : cron);
+                                    }
+                                    info += " · 槽位：" + task.modelSlot;
+                                    info += " · 迭代上限：" +
+                                            std::to_string(task.maxIterations);
+                                    info += task.allowDestructive
+                                                ? " · 破坏性：允许"
+                                                : " · 破坏性：禁止";
+                                    ui.text(id + ".info")
+                                        .size(contentW - 24.0f, 18.0f)
+                                        .text(info)
+                                        .fontSize(12.0f)
+                                        .lineHeight(18.0f)
+                                        .wrap(false)
+                                        .color(t.colors.textSecondary)
+                                        .build();
+                                    // run 列表（Task 11 契约）：最近 5 次，空
+                                    // run 时不渲染；点行 → 选中该 run 载其消息
+                                    const auto runsIt = taskRuns_.find(task.id);
+                                    if (runsIt != taskRuns_.end() &&
+                                        !runsIt->second.empty()) {
+                                        const auto& runs = runsIt->second;
+                                        const float runW = contentW - 24.0f;
+                                        ui.column(id + ".runlist")
+                                            .width(runW)
+                                            .height(::eui::SizeValue::wrapContent())
+                                            .gap(4.0f)
+                                            .content([&] {
+                                                for (size_t i = 0; i < runs.size();
+                                                     ++i) {
+                                                    const std::string runRowId =
+                                                        id + ".runlist." +
+                                                        std::to_string(i);
+                                                    const bool selected =
+                                                        selectedRunId_ &&
+                                                        *selectedRunId_ == runs[i].id;
+                                                    ui.text(runRowId)
+                                                        .size(runW, 18.0f)
+                                                        .text(runRowText(runs[i]))
+                                                        .fontSize(12.0f)
+                                                        .lineHeight(18.0f)
+                                                        .wrap(false)
+                                                        .color(selected
+                                                                   ? t.colors.primary
+                                                                   : t.colors.textSecondary)
+                                                        .onClick([this, runId = runs[i].id] {
+                                                            selectedRunId_ = runId;
+                                                            tasksDirty_ = true;
+                                                        })
+                                                        .build();
+                                                    if (runs[i].error &&
+                                                        !runs[i].error->empty()) {
+                                                        ui.text(runRowId + ".err")
+                                                            .size(runW, 16.0f)
+                                                            .text("错误：" +
+                                                                  *runs[i].error)
+                                                            .fontSize(11.0f)
+                                                            .lineHeight(16.0f)
+                                                            .wrap(false)
+                                                            .color(t.colors.error)
+                                                            .build();
+                                                    }
+                                                }
+                                            })
+                                            .build();
+                                    }
                                     if (detailMessages_.empty()) {
                                         ui.text(id + ".detail.empty")
                                             .size(contentW - 24.0f, 18.0f)
-                                            .text("（最近一次 run 还没有消息）")
+                                            .text("（选中的 run 还没有消息）")
                                             .fontSize(12.0f)
                                             .lineHeight(18.0f)
                                             .color(t.colors.textTertiary)

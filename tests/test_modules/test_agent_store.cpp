@@ -207,3 +207,40 @@ REGISTER_TEST(agent_loop_gate_rejects_when_task_already_running,
     DOCTEST_CHECK_EQ(runs.value()[0].status, std::string("running"));
     return true;
 })
+
+// 并列排序根治（评审微修）：agent_runs.started_at 是**秒精度**，同一秒内连起两次
+// run 会并列——只按 started_at DESC 时并列段顺序未定义，LIMIT 窗口本身就可能把较旧
+// 那条当「最近一次」返回（消费方：状态列 / runlist[0] / 默认选中 run）。用例用
+// 原生 SQL 把两条 run 的 started_at 钉成同值，直接钉住 tie-break。
+REGISTER_TEST(agent_store_list_runs_tie_breaks_by_id,
+              "agent_store: 同秒两次 run → listRuns 取最新（含 LIMIT 1 窗口）", {
+    test_support::TestDb tdb("agentstore", "runorder");
+    module::agent::AgentStore store(tdb.handle());
+    auto taskId = store.createTask("t", "g", "manual", "default", 10, false);
+    DOCTEST_REQUIRE(taskId.isOk());
+    auto older = store.startRun(taskId.value());
+    DOCTEST_REQUIRE(older.isOk());
+    DOCTEST_REQUIRE(store.finishRun(older.value(), "limited", 7, int64_t(190000),
+                                    int64_t(15000), std::string("limit")).isOk());
+    auto newer = store.startRun(taskId.value());
+    DOCTEST_REQUIRE(newer.isOk());
+    DOCTEST_REQUIRE(store.finishRun(newer.value(), "completed", 1, std::nullopt,
+                                    std::nullopt, std::nullopt).isOk());
+    // 把两条钉成同一秒（不依赖用例是否跨秒，杜绝负载敏感的假红/假绿）
+    DOCTEST_REQUIRE(tdb.handle()
+                        .exec("UPDATE agent_runs SET started_at = 1000")
+                        .isOk());
+    auto all = store.listRuns(taskId.value(), 10);
+    DOCTEST_REQUIRE(all.isOk());
+    DOCTEST_REQUIRE_EQ(all.value().size(), static_cast<size_t>(2));
+    DOCTEST_CHECK_EQ(all.value()[0].startedAt, all.value()[1].startedAt);  // 并列前提
+    DOCTEST_CHECK_EQ(all.value()[0].id, newer.value());   // 并列时最新在前
+    DOCTEST_CHECK_EQ(all.value()[1].id, older.value());
+    // LIMIT 1：微修前并列 + 未定义序，这里可能返回旧 run
+    auto latest = store.listRuns(taskId.value(), 1);
+    DOCTEST_REQUIRE(latest.isOk());
+    DOCTEST_REQUIRE_EQ(latest.value().size(), static_cast<size_t>(1));
+    DOCTEST_CHECK_EQ(latest.value()[0].id, newer.value());
+    DOCTEST_CHECK_EQ(latest.value()[0].status, std::string("completed"));
+    return true;
+})

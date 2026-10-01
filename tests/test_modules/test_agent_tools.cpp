@@ -7,12 +7,15 @@
 #include "doctest.h"
 #include "test_support.h"
 
+#include "core/service_locator.h"
 #include "core/tool.h"
 #include "module_agent/agent_module.h"
 #include "module_agent/agent_store.h"
 #include "module_agent/app_stats_tool.h"
 #include "platform/http_client.h"
 #include "platform/json.h"
+
+#include <eui/dsl.h>
 
 #include <atomic>
 #include <chrono>
@@ -422,5 +425,137 @@ REGISTER_TEST(agent_module_onstart_reentry_idempotent,
     DOCTEST_CHECK(core::ToolRegistry::instance().find("app.stats").isOk());
     mod.onStop();
     DOCTEST_CHECK(core::ToolRegistry::instance().find("app.stats").isFail());
+    return true;
+})
+
+// ============ AgentModule 装配 Scheduler（M2 Task 6）============
+
+// spec §3 teardown 契约 + plan Task 6：onStart 建 scheduler_ 并 start()；onStop 在
+// 「全取消 → 全 join → 清容器」之后、`unregisterTool("app.stats")` 之前判空调
+// stopAll()。断言三件：cron 真被 tick 线程派发（装配缺失即红）、在跑 run 收尾落
+// cancelled、onStop 之后工具与上游请求都不再发生（收尾不外溢）。
+// 时钟经 Deps::schedulerNow 注入假时钟，零墙钟等待（tick 轮询粒度 200ms 除外）。
+REGISTER_TEST(agent_module_onstop_stops_scheduler_runs,
+              "agent_module: onStop 收口 Scheduler 在跑 run（cancel→join→停线程→注销工具）", {
+    test_support::TestDb tdb("agenttools", "schedstop");
+    FakeProxy proxy;
+    ToolGuard statsGuard{"app.stats"};
+    core::ToolRegistry::instance().unregisterTool("app.stats");   // 起点干净
+    core::ToolRegistry::instance().unregisterTool("test.slow");
+    auto slow = std::make_shared<SlowTool>();
+    SlowTool* tool = slow.get();
+    DOCTEST_REQUIRE(core::ToolRegistry::instance().registerTool(slow).isOk());
+    ToolGuard slowGuard{"test.slow"};
+
+    module::agent::AgentStore store(tdb.handle());
+    auto created = store.createTask("定时慢", "调用 test.slow 一次", "schedule",
+                                    "default", 10, false, R"({"cron":"* * * * *"})");
+    DOCTEST_REQUIRE(created.isOk());
+    const int64_t taskId = created.value();
+
+    module::agent::AgentModule::Deps deps;
+    deps.db = &tdb.handle();
+    deps.proxy = &proxy;
+    std::atomic<int64_t> fakeNow{3600 * 24};
+    deps.schedulerNow = [&fakeNow] { return fakeNow.load(); };    // 假时钟注入
+    int httpCalls = 0;
+    deps.http = [&httpCalls](const platform::http::Request&) {
+        ++httpCalls;
+        platform::http::Response res;
+        res.statusCode = 200;
+        res.body = R"({"id":"m1","stop_reason":"tool_use","content":[)"
+                   R"({"type":"tool_use","id":"tu1","name":"test.slow","input":{}}],)"
+                   R"("usage":{"input_tokens":10,"output_tokens":5}})";
+        return core::Result<platform::http::Response>::ok(res);
+    };
+    std::unique_ptr<::core::Module> mod(new module::agent::AgentModule(deps));
+    mod->onStart();
+    fakeNow.store(3600 * 24 + 60);      // 推进一分钟 → tick 线程 ≤200ms 内探到翻转
+    for (int i = 0; i < 500 && tool->calls.load() < 1; ++i)
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    DOCTEST_REQUIRE_MESSAGE(tool->calls.load() == 1,
+                            "tick 线程 5s 内未派发 cron run（装配缺失？）");
+
+    mod->onStop();                       // 阻塞到 cancel+join+停线程完成
+    DOCTEST_CHECK(core::ToolRegistry::instance().find("app.stats").isFail());
+    DOCTEST_CHECK_EQ(tool->calls.load(), 1);   // onStop 后不再被调
+    DOCTEST_CHECK_EQ(httpCalls, 1);            // join 真等到了 run 收尾，收尾后无新请求
+    auto runs = store.listRuns(taskId, 10);
+    DOCTEST_REQUIRE(runs.isOk());
+    DOCTEST_REQUIRE_EQ(runs.value().size(), static_cast<size_t>(1));
+    DOCTEST_CHECK_EQ(runs.value()[0].status, std::string("cancelled"));
+    return true;
+})
+
+// Task 6 Step 1b（2026-10-01 终审 finding：claude-lazy-assembly）：onStart 时代理
+// 未装配 → 早退（llm_/loop_/scheduler_ 均不建，工具照常注册）→ 会话内后置注册
+// 服务 → **首次使用路径**（页面帧 / 手动启动）拿到服务；同一入口必须补建
+// scheduler_，否则惰性路径下 cron 永不触发（本用例第二条 REQUIRE 钉这个面）。
+REGISTER_TEST(agent_module_lazy_assembly_first_use,
+              "agent_module: 代理后置注册 → 首次使用解析（手动起 run + 惰性补建 Scheduler 跑 cron）", {
+    test_support::TestDb tdb("agenttools", "lazyassembly");
+    FakeProxy proxy;
+    ToolGuard statsGuard{"app.stats"};
+    core::ToolRegistry::instance().unregisterTool("app.stats");   // 起点干净
+
+    module::agent::AgentStore store(tdb.handle());
+    auto manual = store.createTask("手动", "直接回复完成", "manual", "default", 10, false);
+    DOCTEST_REQUIRE(manual.isOk());
+    auto scheduled = store.createTask("定时", "直接回复完成", "schedule", "default", 10,
+                                      false, R"({"cron":"* * * * *"})");
+    DOCTEST_REQUIRE(scheduled.isOk());
+
+    module::agent::AgentModule::Deps deps;
+    deps.db = &tdb.handle();
+    deps.proxy = nullptr;   // 起点无服务（test_main 每用例 ServiceLocator::resetForTest）
+    std::atomic<int64_t> fakeNow{3600 * 24};
+    deps.schedulerNow = [&fakeNow] { return fakeNow.load(); };
+    deps.http = [](const platform::http::Request&) {
+        platform::http::Response res;
+        res.statusCode = 200;
+        res.body = R"({"id":"m1","stop_reason":"end_turn","content":[)"
+                   R"({"type":"text","text":"done"}],)"
+                   R"("usage":{"input_tokens":1,"output_tokens":1}})";
+        return core::Result<platform::http::Response>::ok(res);
+    };
+    std::unique_ptr<::core::Module> mod(new module::agent::AgentModule(deps));
+    mod->onStart();   // 早退分支：LLM 通道未建，自带工具照常注册
+    DOCTEST_REQUIRE(core::ToolRegistry::instance().find("app.stats").isOk());
+    auto before = store.listRuns(manual.value(), 10);
+    DOCTEST_REQUIRE(before.isOk());
+    DOCTEST_REQUIRE(before.value().empty());   // 起点确无 run（下面的落行断言非空集恒真）
+
+    // 后置注册：模拟会话内用户拨开 claude 模块（不 off→on 本模块）
+    core::ScopedService<core::IClaudeProxyService> late(&proxy);
+
+    // 首次使用路径 = 页面帧（compose）→ 手动「启动」
+    const eui::Screen screen{1600.0f, 1000.0f};
+    eui::Ui ui;
+    ui.begin("agent_lazy_assembly");
+    mod->compose(ui, screen);
+    ui.end();
+    const auto* runBtn =
+        ui.find("agent.task." + std::to_string(manual.value()) + ".run.bg");
+    DOCTEST_REQUIRE_MESSAGE(runBtn != nullptr, "启动按钮未渲染（任务列表空？）");
+    DOCTEST_REQUIRE(runBtn->onClick != nullptr);
+    runBtn->onClick();
+
+    auto waitCompleted = [&store](int64_t taskId) {
+        for (int i = 0; i < 500; ++i) {
+            auto runs = store.listRuns(taskId, 1);
+            if (runs.isOk() && !runs.value().empty() &&
+                runs.value().front().status == "completed") {
+                return true;
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        }
+        return false;
+    };
+    DOCTEST_REQUIRE_MESSAGE(waitCompleted(manual.value()),
+                            "首次使用路径未起 run（惰性解析缺失？）");
+    // 惰性补建的 Scheduler 真在跑：cron 任务被 tick 线程派发（不补建即红）
+    DOCTEST_REQUIRE_MESSAGE(waitCompleted(scheduled.value()),
+                            "惰性路径下 cron 未被派发（scheduler_ 未在同一入口补建？）");
+    mod->onStop();
     return true;
 })
