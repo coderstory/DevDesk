@@ -48,9 +48,9 @@ public:
     // ============ 生命周期 ============
 
     void onStart() override {
-        // 重入幂等（活门控 Task 4）：已启动的 onStart = no-op。双 onStart 会
-        // 重建 service_（旧 todoTools_ 的 service 引用悬垂，attachTools 因
-        // todoTools_ 已在而跳过重挂）并重建 viewStore_
+        // 重入幂等守卫（活门控 Task 4）：double-onStart = no-op——不重跑
+        // attachTools/reloadAll/视图恢复。此守卫无自动化防回归（find 循环对
+        // 守卫回退不敏感），靠 agent 同型用例（sweep 可观察面）+ 评审把关
         if (started_) return;
         started_ = true;
         auto* db = ::core::appDatabase();
@@ -58,8 +58,15 @@ public:
             LOG_WARN("Todo: 数据库尚未注册，跳过数据加载");
             return;
         }
-        service_ = std::make_unique<TodoService>(*db);
-        attachTools();
+        // 服务复用而非重建（UAF 收口，评审裁定）：service 进程级存活——agent
+        // run 线程可能正持 ToolRegistry keep-alive 的 todo.* 工具引用旧
+        // service（onStop 有意不 reset service_，final-review Fix 1），off→on
+        // 窗口里重建 = 先析构旧对象 → UAF。复用前提：db 为进程级单例、运行期
+        // 不换；未来若改为运行期可配，需重审本前提
+        if (!service_) {
+            service_ = std::make_unique<TodoService>(*db);
+        }
+        attachTools();   // off 后 todoTools_ 已被 detachTools 置空，此处正常重挂
         reloadAll();
         // 审计 [23]：恢复列滚动（按列 id）+ 选中任务（reloadAll 之后，列/任务已就位）
         viewStore_ = std::make_unique<TodoViewStateStore>(todoViewStateFile());

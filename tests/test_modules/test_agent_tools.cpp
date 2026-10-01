@@ -402,11 +402,15 @@ REGISTER_TEST(agent_module_onstart_reentry_idempotent,
         return n;
     };
 
+    // 先种一条悬挂 running run（首 onStart 前）：下面的 count==0 才是真断言
+    //（onStart#1 的 sweepStaleRuns 把它清成 failed），不是空集恒真检查
+    DOCTEST_REQUIRE(store.startRun(taskId).isOk());
+
     mod.onStart();
     DOCTEST_CHECK(core::ToolRegistry::instance().find("app.stats").isOk());
     DOCTEST_CHECK_EQ(runningCount(), 0);   // 首次 onStart 清扫：种下的悬挂 run 已清
 
-    DOCTEST_REQUIRE(store.startRun(taskId).isOk());   // 双 onStart 前种 running run
+    DOCTEST_REQUIRE(store.startRun(taskId).isOk());   // 双 onStart 前再种一条
     mod.onStart();   // 双 onStart：no-op（不重复注册、不重建成员、不重跑清扫）
     DOCTEST_CHECK(core::ToolRegistry::instance().find("app.stats").isOk());
     DOCTEST_CHECK_EQ(runningCount(), 1);   // ← 回退守卫即红：二次清扫会把它清成 failed
