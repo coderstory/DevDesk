@@ -6,6 +6,16 @@
 
 > **当前基线（2026-09-24，master @ 817af80）**：用例 **407**（`grep REGISTER_TEST` 口径，本会话 324 → 407；全绿与否以主会话终验为准）。各波次条目内的测试数为该波时点事实，不代表当前总数；波次按合并时间倒序排列。
 
+## [M2-Agent] 2026-10-02 —— 智能体二期：资源上限 / 单一闸 / Scheduler / 8 新工具 / 任务与运行 UI
+
+- feat(agent)：**资源上限落地**——单次运行墙钟预算 `min(迭代 × 60s, 30min)` + 200K token 上限，由 **AgentLoop 检查点**强制（Scheduler 等触发路径经 loop 组合传递，全覆盖）；超限当轮的 assistant 消息**仍然入库**，只是不再发下一次请求。
+- feat(agent)：**AgentStore 补齐**——`createTask`（触发配置）/ `getTask` / `updateTask` / `setTaskEnabled`，以及 **`startRunExclusive` 单一闸**：手动触发与 cron 共用同一入口，锁内「查在跑 + 插 run」原子完成，**同一任务不并发**。
+- feat(scheduler)：**cron 调度**——vixie 语义解析（含溢出防护）+ tick 派发 + 常驻任务队列 + `stopAll` 收口顺序（**先停常驻、再停运行中 run**，避免常驻线程在停机窗口里新起 run）。
+- feat(agent,tools)：**新增 8 个工具**——`md.create` / `md.list_tags` / `md.delete`（破坏性 + 路径逃逸防护）/ `claude.list_profiles` / `claude.get_active_profile` / `claude.switch_profile`（破坏性）/ `claude.test_connection` / `app.read_settings`（**9 键白名单**，其余配置键零泄密）。
+- fix(agent,claude)：`setActiveProfile` 加服务内锁（`switchMutex_`），并发切换不再竞态。
+- feat(ui,agent)：**任务与运行管理界面**——任务列表 / 新建 / 编辑（cron 表达式保存期校验）/ 启停 / 常驻入队；模型槽位抽到中立头 `src/model_slots.h`；run 列表（状态 / 耗时 / 迭代 / token / 错误），选中 run 驱动消息区；补**真窗 probe**。
+- fix(claude)：**代理服务惰性解析**——会话内开启 claude 模块后，已经在跑的 agent 无须再 off→on 一轮。
+
 ## [LazyAssemble] 2026-10-01 —— claude 服务惰性装配 + auto-start 会话内恢复 + 侧边栏表序插入（`adeb3b8`）
 
 - feat(assembly,claude)：**claude 服务惰性装配**——启动期 claude 模块关闭时不再创建 `ClaudeService`；会话内在设置页开启该模块即可**即时装配**服务，不再需要重启。落点：`module_toggle_bridge` 增第二桥函数 `ensureClaudeServiceAssembled`，`main.cpp` 侧 `assembleClaudeServiceNow` 幂等拆分（重复调用安全）。
