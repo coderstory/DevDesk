@@ -323,9 +323,13 @@ std::optional<int> getProxyEventStatus() {
 }
 
 // 启动本地 Claude 代理（全局唯一实例）。
-// 调用方：dslAppConfig 初始化（设置 claudeProxyAutoStart=true 时）；手动启动
-// 走 Claude 页的启动按钮（provider-config Phase B 硬性需求 1）
-void startClaudeProxy() {
+// 调用方：prepareClaudeServiceBeforeModules（claudeProxyAutoStart=true 时，启动期）
+//        ensureClaudeServiceAssembledImpl(autoStart=true)（会话内开模块）
+//        notifyFailure=true（会话内 = 用户动作）→ 校验失败额外弹应用级 notice；
+//        启动期（默认 false）只记 LOG——启动自启是后台动作，弹无上下文失败窗
+//        UX 差（决策 D-1；审计 A3：showAppNotice 是进程级、启动期能弹，不弹是
+//        取舍不是限制）
+void startClaudeProxy(bool notifyFailure = false) {
     auto* svc = getClaudeService();
     if (!svc) {
         LOG_ERROR("startClaudeProxy: ClaudeService 初始化失败");
@@ -333,6 +337,18 @@ void startClaudeProxy() {
     }
     if (svc->isProxyRunning()) {
         LOG_INFO("Claude 代理已在运行 port=" + std::to_string(svc->proxyPort()));
+        return;
+    }
+
+    // 启动前置校验（2026-10-01 事故）：无激活 profile / 连通不过 → 不起代理，
+    // 零副作用（不 bind 8888、不接管 settings.json）。校验失败是预期内结果，
+    // 记 LOG_WARN 不记 ERROR
+    auto v = svc->validateProxyPreconditions();
+    if (v.isFail()) {
+        LOG_WARN("Claude 代理未启动（前置校验未通过）: " + v.errorMessage());
+        if (notifyFailure) {
+            app::showAppNotice("代理未启动", v.errorMessage());
+        }
         return;
     }
 
@@ -408,13 +424,15 @@ void assembleClaudeServiceNow() {
 
 // 桥真实现（2026-10-01 计划 T1）：会话内惰性装配 + auto-start 会话内恢复。
 // 文件级静态函数（无捕获 → 可转函数指针）。startClaudeProxy 自身幂等
-//（isProxyRunning 早退，main.cpp:313-316）——重复 on 不二次 bind 端口。
+//（isProxyRunning 早退，main.cpp:338-341）——重复 on 不二次 bind 端口。
 // autoStart=true 时 startProxy 用的端口来自 assembleClaudeServiceNow 刚注入的
 // configuredProxyPort（设置页现值）
 void ensureClaudeServiceAssembledImpl(bool autoStart) {
     assembleClaudeServiceNow();
     if (autoStart) {
-        startClaudeProxy();
+        // 会话内拨开关 = 用户动作 → 校验失败额外弹 notice 说明原因
+        //（启动期自启走默认 false：只记 LOG，见 startClaudeProxy 注释）
+        startClaudeProxy(/*notifyFailure=*/true);
     }
 }
 

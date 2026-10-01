@@ -532,6 +532,12 @@ private:
 
     // ============ 操作（全部真接 ClaudeService） ============
 
+    // 说明：手动启动 = 前置校验（联网，最长 kProxyPreStartProbeTimeoutMs）+ bind +
+    // 接管。**只有联网校验段进后台线程**——bind + syncTakeOver 必须回 UI 线程
+    // （审计 A1：settings_takeover 契约「仅 UI 线程」，理由见 harvestTestResult）。
+    // 与「测试连通」共用同一条后台线程 + 每帧收割模式
+    //（:744-787，回归见 test_claude_ui.cpp:272-276）。
+    // Ctrl+Enter 快捷键走同一入口（:415-419）
     void doToggleProxy() {
         ClaudeService* svc = ClaudeService::global();
         if (!svc) {
@@ -543,15 +549,28 @@ private:
             showToast("代理已停止", "本地代理已停止监听", false);
             return;
         }
-        // 端口读 service 上的配置值（审计 [14]：main 启动注入 + 设置页改端口
-        // 同步；默认 8888）。此前硬编码导致 8888 被占用时用户无处改端口
-        auto r = svc->startProxy("127.0.0.1", svc->configuredProxyPort());
-        if (r.isFail()) {
-            showToast("启动代理失败", r.errorMessage(), true);
+        harvestTestResult();   // 先收上一轮（页面不可见时 compose 不跑）
+        if (testThread_.joinable()) {
+            showToast("操作进行中", "上一次校验/测试仍在进行，请稍候", false);
             return;
         }
-        showToast("代理已启动",
-                  "监听 http://127.0.0.1:" + std::to_string(r.value()), false);
+        showToast("正在校验",
+                  "检测激活 Profile 与上游连通性（最长 " +
+                      std::to_string(ClaudeService::kProxyPreStartProbeTimeoutMs / 1000 + 1) +
+                      " 秒）…", false);
+        testThread_ = std::thread([this, svc] {
+            // 线程里**只**跑探测：联网 + 只读 SQL，零共享写。
+            // startProxy 绝不在这里执行（A1）——它由 harvestTestResult 在
+            // join 之后、UI 线程里调
+            auto v = svc->validateProxyPreconditions();      // 检查 1 + 检查 2
+            testResultStartProxy_ = v.isOk();   // 收割点据此决定是否起代理
+            if (v.isFail()) {
+                testResultTitle_ = "启动代理失败";
+                testResultMsg_ = v.errorMessage();
+                testResultIsError_ = true;
+            }
+            testDone_.store(true, std::memory_order_release);
+        });
     }
 
     void doSetActive(int64_t id) {
@@ -747,7 +766,9 @@ private:
         // 先收上一轮结果（页面不可见时 compose 不跑，会在这里积累）
         harvestTestResult();
         if (testThread_.joinable()) {
-            showToast("测试进行中", "请等待上一轮测试完成", false);
+            // 文案与 doToggleProxy 统一：两条路径共用 testThread_，说「测试」
+            // 会在「启动代理」被挡时误导（说「校验/测试」两者都覆盖）
+            showToast("操作进行中", "上一次校验/测试仍在进行，请稍候", false);
             return;
         }
         // ponytail 升级路径已落地：testConnection 是同步 HTTP（timeout 15s），
@@ -777,12 +798,35 @@ private:
         });
     }
 
-    // 收割后台测试结果：线程跑完后 join 并弹结果 toast（compose 每帧调）
+    // 收割后台结果：线程跑完后 join（回到 UI/compose 线程）再弹 toast。
+    // **代理启动也在这里**——join 之后已无并发写者，bind + syncTakeOver
+    // 回到 UI 线程（A1；settings_takeover.h:6-7 契约）。
+    // 未收割 = 不起代理：线程跑完但页面再未 compose（模块被关）时这里不会被调
+    // → 代理不会「偷偷」起来，与零副作用口径一致；重新开页首帧即收割。
     void harvestTestResult() {
         if (!testThread_.joinable()) return;
         if (!testDone_.load(std::memory_order_acquire)) return;  // 还在跑
         testThread_.join();
         testDone_.store(false);
+        if (testResultStartProxy_) {          // 校验通过 → 这时才 bind + 接管
+            testResultStartProxy_ = false;
+            ClaudeService* svc = ClaudeService::global();
+            if (svc != nullptr) {             // 模块已停/已析构 → 不起（零副作用）
+                // 端口读 service 上的配置值（审计 [14]：main 启动注入 + 设置页
+                // 改端口同步），bind + 一次 settings.json 写 = 亚毫秒级
+                auto r = svc->startProxy("127.0.0.1", svc->configuredProxyPort());
+                if (r.isFail()) {
+                    testResultTitle_ = "启动代理失败";
+                    testResultMsg_ = r.errorMessage();
+                    testResultIsError_ = true;
+                } else {
+                    testResultTitle_ = "代理已启动";
+                    testResultMsg_ = "监听 http://127.0.0.1:" +
+                                     std::to_string(r.value());
+                    testResultIsError_ = false;
+                }
+            }
+        }
         showToast(testResultTitle_, testResultMsg_, testResultIsError_);
     }
 
@@ -799,13 +843,19 @@ private:
     // 的「内存态一次性」口径，不落盘）
     bool serviceNotReadyWarned_ = false;
 
-    // 测试连通后台线程（结果经 testDone_ 原子标志回 compose 收割；
-    // 普通成员的发布顺序由 release/acquire + join 保证）
+    // 测试连通 / 启动代理后台线程（结果经 testDone_ 原子标志回 compose 收割；
+    // 普通成员的发布顺序由 release/acquire + join 保证）。
+    // testResultStartProxy_：本次后台校验是否通过 → harvestTestResult 据此在
+    // **UI 线程**起代理（A1）。单写者 = 后台线程（只在置 testDone_ 之前写）、
+    // 单读者 = join 之后的 UI 线程，join 即 happens-before，与同组结果成员
+    //（testResultTitle_/Msg_/IsError_，同为普通成员、同款发布序）一致，
+    // 故不需要 atomic
     std::thread testThread_;
     std::atomic<bool> testDone_{false};
     std::string testResultTitle_;
     std::string testResultMsg_;
     bool testResultIsError_ = false;
+    bool testResultStartProxy_ = false;
 
     // 重入幂等守卫（活门控 Task 4）：double-onStart = no-op（不重跑同步首刷
     // 与孤儿 Keychain 清理）；double-onStop / 未启动的 off = no-op

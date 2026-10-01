@@ -25,14 +25,17 @@
 #include "core/paths.h"
 #include "core/router.h"
 #include "core/service_locator.h"
+#include "platform/http_server.h"  // 前置校验用例的 mock 上游（200 /v1/models）
 
 #include <eui/dsl.h>
 
 #include <algorithm>
+#include <chrono>
 #include <filesystem>
 #include <fstream>
 #include <memory>
 #include <string>
+#include <thread>
 #include <vector>
 
 namespace {
@@ -837,16 +840,13 @@ std::unique_ptr<module::claude::ClaudeService> g_asmSvc;
 test_support::TestDb* g_asmDb = nullptr;  // 用例持有库，桩只借用
 int g_asmHandlerCalls = 0;
 bool g_asmLastAutoStart = false;
-int g_asmStartCalls = 0;  // startProxy 实际执行次数（幂等断言）
+int g_asmStartCalls = 0;  // 真正执行了 startProxy 的次数（幂等/校验挡下断言）
 bool g_asmStartOk = true; // handler 是 void 自由函数不能内嵌断言 → 落账本
 int g_asmSeamSeq = 0;     // seam 调用时序号（0 = 本用例未调）
 
-// 等价 main.cpp：assembleClaudeServiceNow（getClaudeService → 端口自读注入 →
-// recover）+ autoStart 分支（startClaudeProxy 的 isProxyRunning 早退语义照搬）
-void assemblyHandlerStub(bool autoStart) {
-    ++g_asmHandlerCalls;
-    g_asmLastAutoStart = autoStart;
-    g_asmSeamSeq = ++g_seqCounter;
+// 等价 main.cpp assembleClaudeServiceNow 的构造段（从 handler 桩抽出，供用例
+// 在 dispatch 之前预置「已装配 + 已有激活 profile」的生产形态）
+void asmEnsureService() {
     if (g_asmSvc == nullptr) {
         // getClaudeService static 守卫语义：重复调用返回同指针（这里用
         // unique_ptr 空判等价表达），setGlobal 在创建时完成一次
@@ -854,17 +854,34 @@ void assemblyHandlerStub(bool autoStart) {
             g_asmDb->handle(), "DevDeskTestClaudeService");
         module::claude::ClaudeService::setGlobal(g_asmSvc.get());
     }
+}
+
+// 等价 main.cpp：assembleClaudeServiceNow（getClaudeService → 端口自读注入 →
+// recover）+ startClaudeProxy（前置校验 → 失败 notice/零副作用 → 通过才 bind；
+// isProxyRunning 早退语义照搬）
+void assemblyHandlerStub(bool autoStart) {
+    ++g_asmHandlerCalls;
+    g_asmLastAutoStart = autoStart;
+    g_asmSeamSeq = ++g_seqCounter;
+    asmEnsureService();
     // 端口自读：SettingsStore(::core::paths::configFile()).load()（与 main 的
     // assembleClaudeServiceNow 同源；测试配置经 DEVDESK_CONFIG_PATH 隔离）
     const module::settings::SettingsStore store(::core::paths::configFile());
     const auto cfg = store.load();
     g_asmSvc->setConfiguredProxyPort(cfg.proxyPort);
     g_asmSvc->recoverPendingSettingsRestore();
-    if (autoStart && !g_asmSvc->isProxyRunning()) {
-        auto r = g_asmSvc->startProxy("127.0.0.1", 0);  // 端口 0 = OS 分配
-        ++g_asmStartCalls;
-        g_asmStartOk = r.isOk();
+    if (!autoStart) return;
+    if (g_asmSvc->isProxyRunning()) return;               // main 的早退语义
+    auto v = g_asmSvc->validateProxyPreconditions();      // ← 新增：前置校验
+    if (v.isFail()) {
+        // 会话内路径（用户动作）→ 应用级 notice（镜像 main.cpp notifyFailure=true
+        // 分支；真 main.cpp 不在本链接面，见上方说明）
+        app::showAppNotice("代理未启动", v.errorMessage());
+        return;                                           // 零副作用失败
     }
+    auto r = g_asmSvc->startProxy("127.0.0.1", 0);        // 端口 0 = OS 分配
+    ++g_asmStartCalls;
+    g_asmStartOk = r.isOk();
 }
 
 // 全局态还原守卫：析构 = stopProxy + setGlobal(原值) + handler 复位 nullptr +
@@ -929,9 +946,31 @@ REGISTER_TEST(assembly_dispatch_claude_lazy_assemble_autostart,
         test_support::tempConfigFile("assembly_lazy", "autostart"));
     DOCTEST_CHECK(writeLazyAssemblyConfig(scoped.cfgPath, true));
 
+    // 2026-10-01 新契约（本计划 T2 Step 1）：会话内 auto-start 前必须过前置
+    // 校验（激活 profile + 连通测试）→ 用例必须先起 mock 上游 + 种激活 profile。
+    // 旧版在**空 profile store** 上断言「代理已起」——那正是事故语义，已作废。
+    platform::http::Server upstream("127.0.0.1", 0);
+    upstream.route("GET", "/v1/models",
+                   [](const platform::http::RequestCtx&,
+                      platform::http::ResponseWriter& w) {
+                       w.setStatus(200);
+                       w.setHeader("Content-Type", "application/json");
+                       w.write(R"({"data":[{"id":"claude-sonnet-4-5"}]})");
+                       w.end();
+                   });
+    DOCTEST_REQUIRE(upstream.start());
+
     test_support::TestDb asmDb("assembly_lazy", "autostart_db");
     g_asmDb = &asmDb;
     app::toggle::setClaudeAssemblyHandler(&assemblyHandlerStub);
+
+    // 先装配服务并种激活 profile（等价生产：用户此前已在 Claude 页启用过一套）
+    asmEnsureService();
+    auto p = g_asmSvc->createProfile(
+        "asm", "http://127.0.0.1:" + std::to_string(upstream.actualPort()),
+        "sk-ant-asm-0001", "m");
+    DOCTEST_REQUIRE(p.isOk());
+    DOCTEST_REQUIRE(g_asmSvc->setActiveProfile(p.value().id).isOk());
 
     ::core::Router router;
     router.registerModule(&g_toggleHome);  // 生产形态：Home 恒注册
@@ -980,6 +1019,9 @@ REGISTER_TEST(assembly_dispatch_claude_lazy_assemble_autostart,
                                         router, &toggleLookupStub);
     DOCTEST_CHECK_EQ(g_asmHandlerCalls, 2);
     DOCTEST_CHECK_EQ(g_agentStarts, 1);
+
+    upstream.stop();
+    test_support::cleanupProfileKey("DevDeskTestClaudeService", p.value().id);
     return true;
 })
 
@@ -1017,5 +1059,42 @@ REGISTER_TEST(assembly_dispatch_claude_lazy_assemble_no_autostart,
                                         false, router, &toggleLookupStub);
     DOCTEST_CHECK_EQ(g_asmHandlerCalls, 1);
     DOCTEST_CHECK_EQ(g_claudeStops, 1);
+    return true;
+})
+
+// ---- 新增（本计划核心回归 = 事故现场）：空 profile store + autoStart=true
+// → 前置校验挡下：代理不起、不 bind、零接管，且用户可见面给原因
+REGISTER_TEST(assembly_dispatch_claude_toggle_blocked_by_preconditions,
+              "assembly: 会话内开 claude + autoStart，空 profile store → 前置校验挡下（代理不起/不接管）", {
+    resetLazyAssemblyLedger();
+    LazyAssemblyGuard guard;
+
+    test_support::ScopedConfigPath scoped(
+        test_support::tempConfigFile("assembly_pv", "noactive"));
+    DOCTEST_CHECK(writeLazyAssemblyConfig(scoped.cfgPath, true));   // autoStart=true
+
+    test_support::TestDb asmDb("assembly_pv", "noactive_db");       // 空库 = 事故现场
+    g_asmDb = &asmDb;
+    app::toggle::setClaudeAssemblyHandler(&assemblyHandlerStub);
+
+    ::core::Router router;
+    router.registerModule(&g_toggleHome);
+
+    app::assembly::dispatchModuleToggle(module::settings::kModuleIdClaudeProxy,
+                                        true, router, &toggleLookupStub);
+
+    auto* svc = module::claude::ClaudeService::global();
+    DOCTEST_CHECK(svc != nullptr);            // 服务仍装配（模块要能进页，死页缓解不回归）
+    DOCTEST_CHECK_EQ(g_asmStartCalls, 0);     // startProxy 一次都没跑（不 bind）
+    if (svc != nullptr) {
+        DOCTEST_CHECK_FALSE(svc->isProxyRunning());
+        DOCTEST_CHECK_EQ(svc->proxyPort(), 0);
+    }
+    DOCTEST_CHECK(router.isRegistered(::core::PageId::ClaudeProxy));  // 模块本身照常开启
+    DOCTEST_CHECK_EQ(g_claudeStarts, 1);      // onStart 照常
+    // 用户可见面（桩镜像 main.cpp 的 showAppNotice 分支；真 main.cpp 路径归 T3 冒烟）
+    DOCTEST_CHECK(app::appNoticeVisible());
+    DOCTEST_CHECK(app::appNoticeTitle() == std::string("代理未启动"));
+    DOCTEST_CHECK(app::appNoticeMessage().find("前置校验未通过") != std::string::npos);
     return true;
 })
