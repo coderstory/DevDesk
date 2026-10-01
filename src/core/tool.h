@@ -43,6 +43,8 @@ public:
 
 // 注册表（进程级单例，同 ClaudeService::global() 模式）。module_* 在 onStart
 // 调 register()，onStop 调 unregister()。AgentLoop 经 find() 取用。
+// 单例**永不析构**（见 tool.cpp instance()）：退出钩子 stopAll → 模块 onStop →
+// unregisterTool 仍需访问它，故不得依赖「构造于 main 之前」的静态析构序。
 // 线程安全：读写各一把锁（onStart/onStop 主线程写，AgentLoop 工作线程读）。
 class ToolRegistry {
 public:

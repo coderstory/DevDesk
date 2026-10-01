@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <fstream>
 #include <sstream>
+#include <string_view>
 #include <system_error>
 
 #include "claude_service.h"
@@ -148,14 +149,20 @@ std::vector<std::string> managedKeysFromSidecar(const JsonObject& sidecar) {
     return out;
 }
 
-// 本机代理形态的凭据键（条目 2）：值 == kProxyAuthPlaceholder 即「托管值」
-const std::vector<std::string>& proxyCredentialKeys() {
-    static const std::vector<std::string> kKeys = {
-        "ANTHROPIC_AUTH_TOKEN",
-        "ANTHROPIC_API_KEY",
-    };
-    return kKeys;
-}
+// 本机代理形态的凭据键（条目 2）：值 == kProxyAuthPlaceholder 即「托管值」。
+//
+// 形态要求（审计 SYS-01）：**命名空间作用域 + constexpr**（常量初始化 = 静态
+// 初始化期完成，零动态初始化、零析构、零分配）——本表位于退出链上：无 sidecar
+// 时 exit hook → stopProxy → syncRestore → clearResidualProxyKeys →
+// findProxyFormKeys 会读它。原「函数局部 static vector」在惰性装配路径下首次
+// 构造必然晚于 armExitHook（启动期 claude 关 → 会话内拨开才触达），atexit LIFO
+// 使其析构先于 exit hook 跑 → 退出期遍历已析构 vector（UAF）。constexpr 表不
+// 注册任何退出期动作，与构造/退出次序无关。
+// 通用检查口径：exit hook 调用链上的表一律禁止「函数局部 + 动态初始化 static」。
+constexpr std::string_view kProxyCredentialKeys[] = {
+    "ANTHROPIC_AUTH_TOKEN",
+    "ANTHROPIC_API_KEY",
+};
 
 // 找出 env 里属于「本机代理形态」的键（条目 2）：BASE_URL 指向回环地址，或
 // 凭据键等于占位符。命中说明这些值是上次接管残留 / 别的工具（cc-switch 等）
@@ -167,10 +174,13 @@ std::vector<std::string> findProxyFormKeys(const JsonObject& env) {
         isLoopbackUrl(env.get("ANTHROPIC_BASE_URL").asString())) {
         out.push_back("ANTHROPIC_BASE_URL");
     }
-    for (const auto& key : proxyCredentialKeys()) {
-        if (env.has(key) && env.get(key).isString() &&
-            env.get(key).asString() == kProxyAuthPlaceholder) {
-            out.push_back(key);
+    for (const std::string_view key : kProxyCredentialKeys) {
+        // JsonObject::has/get 只收 const std::string&（platform/json.h:34-35），
+        // 显式构造一次；本循环本就在做 JsonValue 深拷贝，这点分配可忽略
+        const std::string name(key);
+        if (env.has(name) && env.get(name).isString() &&
+            env.get(name).asString() == kProxyAuthPlaceholder) {
+            out.push_back(name);
         }
     }
     return out;

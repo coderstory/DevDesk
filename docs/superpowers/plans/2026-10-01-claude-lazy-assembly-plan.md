@@ -15,7 +15,7 @@
 - **不抛异常**：错误一律 `core::Result<T>`；module_settings 不 include 兄弟模块头（本计划不触碰 settings 模块源码，隔离守卫必须保持全绿）。
 - **启动期契约零变化**：`prepareClaudeServiceBeforeModules` 重构后外部可观察行为逐字不变——gate 不过 = 不创建 service / 不 bind 端口（gate LOG_INFO 文案按下方 T1 修订更新——「需重启」话术随惰性装配失效）；`claudeProxyAutoStart=false` = 不 startProxy（LOG_INFO 原文保留）。preStart 时序（assemble 早于模块 onStart，W3 事故点）不得回退。
 - **桥实现必须走缝，不许直接定义在 main.cpp**：app_assembly.cpp 被三处链接（DevDesk exe / devdesk_tests，tests/CMakeLists.txt:4；module_toggle_sidebar_probe，tests/CMakeLists.txt:190），**三处都不链 main.cpp**——dispatchModuleToggle 若直呼 main.cpp 符号 = 测试与 probe 链接即炸。新桥函数照 `setToggleHandler` 模式：声明在 `module_toggle_bridge.h`、缝落 `module_toggle_bridge.cpp`（默认 no-op + LOG_WARN）、真实现由 main.cpp 文件级函数经 setter 注入。
-- **Router 既有语义**：幂等 no-op 分支（router.cpp:14-16）保留；`stopAll` 按注册序的 UAF 前提（555a728）在新插入序下仍成立——表序 Todo(2) < Agent(5)，todo/markdown 先于 agent 的既有保证不弱化；`navigateTo` 回退、`isRegistered`、`unregisterModule` 不动。
+- **Router 既有语义**：幂等 no-op 分支（router.cpp:14-16）保留；`stopAll` 按注册序的 UAF 前提（`e24951c` fix(todo): 退出时 UAF 窗口——onStop 不再 reset service_，依据是 `Router::stopAll` 按 `modules_` 序停模块、todo/markdown 先于 agent；实现见 src/core/router.cpp 的 stopAll）在新插入序下仍成立——表序 Todo(2) < Agent(5)，todo/markdown 先于 agent 的既有保证不弱化；`navigateTo` 回退、`isRegistered`、`unregisterModule` 不动。
 - **core 层零 app 依赖**：registerModule 的插入比较只准用 `Module::pageId()`（module_interface.h header-only 透传），不得引入 registry / settings 头。
 - **PageId 枚举序 == kModuleRegistry 表序**是双契约钉死的既有事实（`core_pageid_order`，tests/test_core/test_router.cpp:451；`assembly_registry_table_shape`，tests/test_modules/test_app_assembly.cpp:493），表序插入直接消费它。
 - **TDD**：每任务先失败测试后实现；测试名/断言按本计划，不为绿灯弱化；若某用例首跑即绿，必须做变异验证（临时回退实现 → 红 → 还原）并在报告记录。

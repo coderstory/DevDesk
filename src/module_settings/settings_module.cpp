@@ -438,10 +438,18 @@ public:
             svc->setConfiguredProxyPort(port);
         }
         if (!svc || !svc->isProxyRunning()) {
+            // 生效时机有**两个**（审计 ARCH-09，勿改回单一「下次启动」口径）：
+            //   ① 启动期装配注入 —— main.cpp assembleClaudeServiceNow（读本页
+            //      落盘的 config.json proxyPort 喂 service.configuredProxyPort）；
+            //   ② 会话内开启 claude 模块时的惰性装配 —— 同函数经桥
+            //      app::toggle::ensureClaudeServiceAssembled 再读一次现值。
+            // 下一个生效点出现时，这里与 main.cpp 那处必须同步更新。
             setStatus("代理端口已保存：" + std::to_string(oldPort) + " → " +
-                      std::to_string(port) + "（下次启动代理生效）");
+                      std::to_string(port) +
+                      "（代理未运行：手动启动代理，或启用 claude 模块时生效）");
             LOG_INFO("Settings: 代理端口 " + std::to_string(oldPort) + " → " +
-                     std::to_string(port) + "（代理未运行，下次启动生效）");
+                     std::to_string(port) +
+                     "（代理未运行；手动启动代理 / 本会话内启用 claude 模块时生效）");
             return;
         }
         svc->stopProxy();

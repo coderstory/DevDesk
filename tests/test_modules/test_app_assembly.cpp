@@ -869,6 +869,9 @@ void assemblyHandlerStub(bool autoStart) {
 
 // 全局态还原守卫：析构 = stopProxy + setGlobal(原值) + handler 复位 nullptr +
 // clearAppNotice + 桩服务销毁（进程全局态全还原，含 fail-fast 早退路径）
+// 声明序契约（审计 SYS-05）：guard **必须晚于** TestDb 声明（析构逆序 ⇒ 服务
+// 先于库死亡）——ClaudeService 持 SqliteDb& + 经它构造的 CallLogStore/
+// ProfileRepository，库先关再停服务 = 悬垂引用。
 struct LazyAssemblyGuard {
     LazyAssemblyGuard() = default;  // 声明 deleted 拷贝会抑制隐式默认构造，显式补回
     module::claude::ClaudeService* prevGlobal =
@@ -923,13 +926,18 @@ bool writeLazyAssemblyConfig(const std::filesystem::path& cfgPath,
 REGISTER_TEST(assembly_dispatch_claude_lazy_assemble_autostart,
               "assembly: 会话内开 claude → dispatch on 先惰性装配真服务（global 非空+代理起+seam 序<onStart 序+重复 on 幂等+off/非 claude 不触缝）", {
     resetLazyAssemblyLedger();
+    // 声明序（审计 SYS-05）：TestDb **必须**在 LazyAssemblyGuard 之前声明——
+    // 作用域退出按声明逆序析构，守卫析构里的 stopProxy / 服务 reset 需要 DB
+    // 还活着（ClaudeService 持 SqliteDb& 引用 + CallLogStore/ProfileRepository
+    // 经它构造）。反过来的话 = 服务在「库已关闭」之后才停机（潜伏 UAF，一旦
+    // 用例触到库就变成只在收尾出现的高调试成本 flake）
+    test_support::TestDb asmDb("assembly_lazy", "autostart_db");
     LazyAssemblyGuard guard;
 
     test_support::ScopedConfigPath scoped(
         test_support::tempConfigFile("assembly_lazy", "autostart"));
     DOCTEST_CHECK(writeLazyAssemblyConfig(scoped.cfgPath, true));
 
-    test_support::TestDb asmDb("assembly_lazy", "autostart_db");
     g_asmDb = &asmDb;
     app::toggle::setClaudeAssemblyHandler(&assemblyHandlerStub);
 
@@ -986,13 +994,14 @@ REGISTER_TEST(assembly_dispatch_claude_lazy_assemble_autostart,
 REGISTER_TEST(assembly_dispatch_claude_lazy_assemble_no_autostart,
               "assembly: 会话内开 claude（autoStart=false）→ 只装配不起代理（global 非空 + isProxyRunning false）", {
     resetLazyAssemblyLedger();
+    // 声明序同上一用例（审计 SYS-05）：DB 必须先于守卫声明 → 后于守卫析构
+    test_support::TestDb asmDb("assembly_lazy", "noautostart_db");
     LazyAssemblyGuard guard;
 
     test_support::ScopedConfigPath scoped(
         test_support::tempConfigFile("assembly_lazy", "noautostart"));
     DOCTEST_CHECK(writeLazyAssemblyConfig(scoped.cfgPath, false));
 
-    test_support::TestDb asmDb("assembly_lazy", "noautostart_db");
     g_asmDb = &asmDb;
     app::toggle::setClaudeAssemblyHandler(&assemblyHandlerStub);
 

@@ -13,6 +13,21 @@ class Router {
 public:
     Router() = default;
 
+    // 注册模块（活门控 live-toggle）：重复注册同一指针 = 幂等 no-op（侧边栏不
+    // 出现同页双入口）；nullptr = no-op。
+    //
+    // 顺序语义（契约以本处为准，实现见 router.cpp）：插入位置按
+    // `Module::pageId()` **升序**；pageId 相等时新模块稳定插在等值区间**之后**
+    //（不打断既有相对序）。因此调用方可依赖「modules() 遍历序 == 侧边栏渲染
+    // 序 == 表序」，与注册先后无关——off→on 重注册回原位，不再 append 末尾。
+    //
+    // 单点真相：PageId 枚举序 == kModuleRegistry 表序
+    //（src/core/module_interface.h 的 PageId 枚举注释 + src/app_registry.h 的
+    // kModuleRegistry 表序注释）。两条契约各有测试钉死（test_router 的
+    // core_pageid_order / test_app_assembly 的 assembly_registry_table_shape），
+    // 改侧边栏顺序 = 改枚举序 + 表序，二者必须同步。本类只消费 pageId 数值序，
+    // 不引入 app 层依赖；若未来出现「不走侧边栏的页面」（模态页 / 桌宠页），
+    // 应给 Module 加显式排序键，不要挤进这个枚举序。
     void registerModule(Module* module);
 
     // 注销模块（活门控 live-toggle）：从注册表移除**首个**匹配指针；nullptr /
