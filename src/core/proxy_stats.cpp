@@ -94,8 +94,18 @@ struct State {
     }
 };
 
+// 永不析构持有（审计 SYS-03）：State 含 mutex + map，原「函数局部 static」的
+// 首次使用点是 home compose 的 snapshot()——compose 只在 armExitHook 注册之后
+// 才跑（main 装配段 → 主循环首帧），是**每个会话都成立**的确定序反转：atexit
+// LIFO ⇒ ~State 恒早于 exit hook。而 exit hook 的 stopProxy →
+// ProxyRuntime::stop 会 join 代理 worker，worker 的取消/releaser 路径写这里
+// （streaming_proxy.cpp 的 endStream）→ 对已析构 mutex 加锁 / 对已析构 map
+// 擦除（退出期 UB，中断同一 hook 里的 settings.json 还原与模块落盘）。
+// 进程级统计状态没有「必须释放」的语义（同 main.cpp getClaudeService 的永不
+// 析构堆持有）——与进程同寿即从根上取消「exit hook 必须见到后构造 static 仍
+// 活着」这一不成立的前提。resetForTest 仍可清状态，不受影响。
 State& state() {
-    static State s;
+    static auto& s = *new State();
     return s;
 }
 
