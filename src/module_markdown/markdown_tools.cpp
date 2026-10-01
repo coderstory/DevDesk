@@ -1,12 +1,19 @@
 // src/module_markdown/markdown_tools.cpp
-// MarkdownTools M1 实现（agent M1 Task 9）。每个工具一个小类，同文件存放：
-//   md.search  FTS5 全文搜索 → {"notes":[{path,title,sizeBytes,modifiedAt},...]}
-//   md.read    读取笔记全文 → {"path":...,"content":"<正文>"}
-// 两个都是只读工具（M1 不给 agent md.write/md.delete 写入口）。
+// MarkdownTools 实现（agent M1 Task 9 起，M2 Task 7 扩三工具）。每个工具一个小类，
+// 同文件存放：
+//   md.search    FTS5 全文搜索 → {"notes":[{path,title,sizeBytes,modifiedAt},...]}（只读）
+//   md.read      读取笔记全文 → {"path":...,"content":"<正文>"}（只读）
+//   md.create    新建笔记（已存在拒绝覆盖）→ {"path":...,"created":true}（写但可逆）
+//   md.list_tags 全部标签 + 笔记数 → {"tags":[{name,noteCount},...]}（只读）
+//   md.delete    删除笔记 → {"path":...,"deleted":true}（**破坏性**，isDestructive）
 //
 // 出参形状约定：结构化数据组对象再 stringify；数组用「逐元素 stringify + 文本
 // 拼接 + parse 校验」组装（platform::json 没有数组追加 API——agent_loop.cpp
 // joinBlockArray 同款先例）。
+//
+// 路径安全：笔记相对路径由 MarkdownService::resolve() 收口做 containment 校验
+// （相对上跳 / 绝对路径一律 ValidationError）——本文件不重复实现，但也不得绕过
+// service 直碰文件系统（md.create 的存在性探测同样走 svc_.read）。
 #include "markdown_tools.h"
 
 #include "core/logging.h"
@@ -166,6 +173,152 @@ private:
     MarkdownService& svc_;
 };
 
+// ============ md.create（写但可逆）============
+
+class MdCreateTool : public core::ITool {
+public:
+    explicit MdCreateTool(MarkdownService& svc) : svc_(svc) {}
+
+    std::string name() const override { return "md.create"; }
+
+    std::string schemaJson() const override {
+        return R"({"name":"md.create","description":"新建一篇笔记（路径已存在时拒绝，不覆盖既有内容）","input_schema":{"type":"object","properties":{"path":{"type":"string","description":"笔记相对路径（如 notes/a.md，必填，POSIX 分隔符）"},"content":{"type":"string","description":"笔记正文（UTF-8 Markdown，必填）"}},"required":["path","content"]}})";
+    }
+
+    Result<ToolResult> execute(const ToolArgs& args) override {
+        auto argsObj = parseArgs(args);
+        if (argsObj.isFail()) return toolError(argsObj.errorMessage());
+
+        const std::string path = strField(argsObj.value(), "path");
+        if (path.empty()) {
+            return toolError("缺少必填参数 path（笔记相对路径）");
+        }
+        const std::string content = strField(argsObj.value(), "content");
+        if (content.empty()) {
+            // 空正文多半是漏传 key 的静默错误（agent 没有 md.write，建错了只能
+            // md.delete 重来）——显式报错回喂比静默建空笔记安全
+            return toolError("笔记正文不能为空（必填字段 content）");
+        }
+
+        // 存在性探测：读得到 = 已有这篇笔记 → 拒绝覆盖（用户笔记不静默改写）。
+        // 读失败有两种：不存在（正常新建）/ 路径越界（write 会再拒一次并回喂）
+        if (svc_.read(std::filesystem::path(path)).isOk()) {
+            return toolError("笔记已存在，拒绝覆盖（如需重建先 md.delete）");
+        }
+
+        auto wr = svc_.write(std::filesystem::path(path), content);
+        if (wr.isFail()) {
+            return toolError("新建笔记失败: " + wr.errorMessage());
+        }
+
+        pj::JsonObject o;
+        o.set("path", pj::makeString(path));
+        o.set("created", pj::makeBool(true));
+        auto text = pj::stringify(pj::JsonValue(std::move(o)));
+        if (text.isFail()) {
+            return toolError("新建结果序列化失败: " + text.errorMessage());
+        }
+        return toolOk(text.value());
+    }
+
+private:
+    MarkdownService& svc_;
+};
+
+// ============ md.list_tags（只读）============
+
+class MdListTagsTool : public core::ITool {
+public:
+    explicit MdListTagsTool(MarkdownService& svc) : svc_(svc) {}
+
+    std::string name() const override { return "md.list_tags"; }
+
+    std::string schemaJson() const override {
+        return R"({"name":"md.list_tags","description":"列出全部标签及各自的笔记数（只读，无入参）","input_schema":{"type":"object","properties":{},"required":[]}})";
+    }
+
+    Result<ToolResult> execute(const ToolArgs& args) override {
+        // 无入参，但仍校验 args 合法性（非法 JSON → 工具级错误回喂）
+        auto argsObj = parseArgs(args);
+        if (argsObj.isFail()) return toolError(argsObj.errorMessage());
+
+        auto tags = svc_.listAllTags();
+        if (tags.isFail()) {
+            return toolError("读取标签失败: " + tags.errorMessage());
+        }
+
+        // 数组组装：逐标签 stringify 后文本拼接（同 md.search）
+        std::string joined;
+        for (const auto& t : tags.value()) {
+            pj::JsonObject o;
+            o.set("name", pj::makeString(t.name));
+            o.set("noteCount", pj::makeInt(t.noteCount));
+            auto one = pj::stringify(pj::JsonValue(std::move(o)));
+            if (one.isFail()) {
+                return toolError("标签序列化失败: " + one.errorMessage());
+            }
+            if (!joined.empty()) joined += ",";
+            joined += one.value();
+        }
+        const std::string content = "{\"tags\":[" + joined + "]}";
+        // 自有拼接必须可解析；失败 = 不变量破坏
+        if (pj::parse(content).isFail()) {
+            return Result<ToolResult>::fail(
+                core::ErrorCode::Internal, "工具结果 JSON 拼接失败（编程错误）");
+        }
+        return toolOk(content);
+    }
+
+private:
+    MarkdownService& svc_;
+};
+
+// ============ md.delete（破坏性）============
+
+// 类名避开 delete 关键字（C++ 关键字不能作标识符），工具名仍是 "md.delete"
+class MdDeleteTool : public core::ITool {
+public:
+    explicit MdDeleteTool(MarkdownService& svc) : svc_(svc) {}
+
+    std::string name() const override { return "md.delete"; }
+
+    // 删除不可恢复 → AgentLoop 在 task.allowDestructive=0 时直接终止 run（spec §5.3）
+    bool isDestructive() const override { return true; }
+
+    std::string schemaJson() const override {
+        return R"({"name":"md.delete","description":"删除一篇笔记（不可恢复的破坏性操作）","input_schema":{"type":"object","properties":{"path":{"type":"string","description":"笔记相对路径（如 notes/a.md，必填，POSIX 分隔符）"}},"required":["path"]}})";
+    }
+
+    Result<ToolResult> execute(const ToolArgs& args) override {
+        auto argsObj = parseArgs(args);
+        if (argsObj.isFail()) return toolError(argsObj.errorMessage());
+
+        const std::string path = strField(argsObj.value(), "path");
+        if (path.empty()) {
+            return toolError("缺少必填参数 path（笔记相对路径）");
+        }
+
+        // 越界路径（相对上跳 / 绝对路径）由 service resolve() containment 拒绝
+        // ——删外部文件的口子不能开在工具层
+        auto rm = svc_.remove(std::filesystem::path(path));
+        if (rm.isFail()) {
+            return toolError(rm.errorMessage());  // 原始错误消息（含越界说明）回喂
+        }
+
+        pj::JsonObject o;
+        o.set("path", pj::makeString(path));
+        o.set("deleted", pj::makeBool(true));
+        auto text = pj::stringify(pj::JsonValue(std::move(o)));
+        if (text.isFail()) {
+            return toolError("删除结果序列化失败: " + text.errorMessage());
+        }
+        return toolOk(text.value());
+    }
+
+private:
+    MarkdownService& svc_;
+};
+
 } // namespace
 
 // ============ MarkdownTools ============
@@ -173,6 +326,9 @@ private:
 MarkdownTools::MarkdownTools(MarkdownService& svc) {
     tools_.push_back(std::make_shared<MdSearchTool>(svc));
     tools_.push_back(std::make_shared<MdReadTool>(svc));
+    tools_.push_back(std::make_shared<MdCreateTool>(svc));
+    tools_.push_back(std::make_shared<MdListTagsTool>(svc));
+    tools_.push_back(std::make_shared<MdDeleteTool>(svc));
 }
 
 void MarkdownTools::registerAll() {
