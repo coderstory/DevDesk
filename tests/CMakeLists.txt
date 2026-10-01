@@ -182,8 +182,18 @@ foreach(_probe_source ${_devdesk_probe_sources})
     get_filename_component(_probe_name "${_probe_source}" NAME_WE)
     # module_toggle_bridge.cpp：settings 模块引用 app::toggle 桥符号，probe
     # 链接集（module_* 库）里没有 app_assembly.cpp，缝必须单独编进来
-    add_executable(${_probe_name} "${_probe_source}"
-        "${CMAKE_SOURCE_DIR}/src/module_toggle_bridge.cpp")
+    # module_toggle_sidebar_probe：活门控真窗口 probe 还要真 app::compose +
+    # 真 dispatchModuleToggle → 额外编译 app_sidebar.cpp + app_assembly.cpp
+    #（其余 probe 维持最小链接面，不拖 app 层）
+    if(_probe_name STREQUAL "module_toggle_sidebar_probe")
+        add_executable(${_probe_name} "${_probe_source}"
+            "${CMAKE_SOURCE_DIR}/src/module_toggle_bridge.cpp"
+            "${CMAKE_SOURCE_DIR}/src/app_sidebar.cpp"
+            "${CMAKE_SOURCE_DIR}/src/app_assembly.cpp")
+    else()
+        add_executable(${_probe_name} "${_probe_source}"
+            "${CMAKE_SOURCE_DIR}/src/module_toggle_bridge.cpp")
+    endif()
     target_include_directories(${_probe_name} PRIVATE
         ${CMAKE_SOURCE_DIR}/src
         ${CMAKE_SOURCE_DIR}/tests

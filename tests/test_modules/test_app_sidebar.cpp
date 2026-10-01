@@ -352,3 +352,78 @@ REGISTER_TEST(sidebar_compose_writes_page_origin,
     app::setSidebarCollapsed(false);  // 还原，不污染后续用例
     return true;
 })
+
+// ============ 5. 侧边栏实时反映（活门控 live-toggle，计划 Task 5） ============
+// 侧边栏 compose 每帧直接遍历 router->modules()（app_sidebar.cpp:183），注册表
+// 变化在下一次 compose 立即反映——本用例把这条「活门控实时反映」钉死：
+// 反注册后当帧条目消失、再注册后条目回来、其余条目 y 不受挤压错位
+//（条目 y 由 compose 循环变量决定，天然重排；置顶的 Home 条目尤其不许动）。
+REGISTER_TEST(sidebar_live_toggle_reflects_registration,
+              "sidebar: 注册/反注册后 compose 当帧反映（活门控）", {
+    app::setSidebarCollapsed(false);
+    RecordingModule home(::core::PageId::Home, "首页");
+    RecordingModule md(::core::PageId::Markdown, "笔记");
+    RecordingModule agent(::core::PageId::Agent, "智能体");
+    ::core::Router router;
+    router.registerModule(&home);
+    router.registerModule(&md);
+    router.registerModule(&agent);
+    test_support::ScopedAppRouter scoped(&router);
+
+    eui::Screen screen;
+    screen.width = 1600.0f;
+    screen.height = 1000.0f;
+
+    // 条目 id = "app.sidebar.item." + pageIdToString(page)（app_sidebar.cpp:187）；
+    // 元素本体是 .hit/.icon/.label 三个（基础 id 自身不构成元素，直接 find 为空）。
+    // 1) 注册态：Agent 条目在第 3 位（前有 Home/Markdown），y = 100 + 2×(40+4) = 188
+    {
+        eui::Ui ui;
+        ui.begin("live_toggle_on");
+        app::compose(ui, screen);
+        ui.end();
+        const auto* agentHit = ui.find("app.sidebar.item.Agent.hit");
+        DOCTEST_REQUIRE(agentHit != nullptr);
+        DOCTEST_CHECK(floatEq(agentHit->y, 188.0f));
+        const auto* agentLabel = ui.find("app.sidebar.item.Agent.label");
+        DOCTEST_REQUIRE(agentLabel != nullptr);
+        DOCTEST_CHECK(agentLabel->text == "智能体");
+    }
+
+    // 2) 反注册 → re-compose → 三件套全部消失；其余条目 y 原样（无挤压错位）
+    router.unregisterModule(&agent);
+    {
+        eui::Ui ui;
+        ui.begin("live_toggle_off");
+        app::compose(ui, screen);
+        ui.end();
+        DOCTEST_CHECK(ui.find("app.sidebar.item.Agent.hit") == nullptr);
+        DOCTEST_CHECK(ui.find("app.sidebar.item.Agent.icon") == nullptr);
+        DOCTEST_CHECK(ui.find("app.sidebar.item.Agent.label") == nullptr);
+        const auto* homeHit = ui.find("app.sidebar.item.Home.hit");
+        const auto* mdHit = ui.find("app.sidebar.item.Markdown.hit");
+        DOCTEST_REQUIRE(homeHit != nullptr);
+        DOCTEST_REQUIRE(mdHit != nullptr);
+        DOCTEST_CHECK(floatEq(homeHit->y, 100.0f));
+        DOCTEST_CHECK(floatEq(mdHit->y, 144.0f));
+    }
+
+    // 3) 再注册 → 条目回来（同一 y；顺序 = 注册表序，仍在末位）
+    router.registerModule(&agent);
+    {
+        eui::Ui ui;
+        ui.begin("live_toggle_re_on");
+        app::compose(ui, screen);
+        ui.end();
+        const auto* agentHit = ui.find("app.sidebar.item.Agent.hit");
+        DOCTEST_REQUIRE(agentHit != nullptr);
+        DOCTEST_CHECK(floatEq(agentHit->y, 188.0f));
+        const auto* homeHit = ui.find("app.sidebar.item.Home.hit");
+        const auto* mdHit = ui.find("app.sidebar.item.Markdown.hit");
+        DOCTEST_REQUIRE(homeHit != nullptr);
+        DOCTEST_REQUIRE(mdHit != nullptr);
+        DOCTEST_CHECK(floatEq(homeHit->y, 100.0f));
+        DOCTEST_CHECK(floatEq(mdHit->y, 144.0f));
+    }
+    return true;
+})
