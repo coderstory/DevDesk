@@ -14,6 +14,13 @@ else()
 endif()
 project(DevDesk VERSION ${DEVDESK_VERSION} LANGUAGES C CXX)
 
+if(WIN32)
+  # httplib 0.58+ 要求 Win10+（头内 #error + CreateFile2 需要 _WIN32_WINNT>=0x0A00）。
+  # MSYS2 MinGW 默认值偏低；本项目 Windows 门槛本就是 Win10+，全局统一定义
+  #（含 EUI-NEO 子目录与全部测试目标，避免各 TU 取值不一致）。
+  add_compile_definitions(_WIN32_WINNT=0x0A00 WINVER=0x0A00)
+endif()
+
 # VERSION 文件变更（bump_version 写入）→ 自动重新 configure
 set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${CMAKE_SOURCE_DIR}/VERSION")
 
