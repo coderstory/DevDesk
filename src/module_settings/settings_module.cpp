@@ -76,6 +76,11 @@
 // 件**（卡片单元只经回调触达，不知道 pet 模块存在）。两条边均单向
 //（claude/pet 不反向依赖 settings），无环；桌宠非 Router 页面模块，
 // 设计 2026-09-22 §4.7 接线表明确设置页承载桌宠卡。
+
+// app_tools.h：本模块的智能体工具集（agent M2 Task 9，app.read_settings）。
+// 工具自持 SettingsStore 纯读、不摸模块成员——注册进 core::ToolRegistry 供
+// module_agent 按名调用（工具归各自模块，见 M2 计划 Global Constraints）。
+#include "app_tools.h"
 #include "settings_config.h"
 #include "settings_ui_cards.h"
 #include "settings_ui_logic.h"
@@ -87,6 +92,7 @@
 #include "core/paths.h"
 #include "core/service_locator.h"
 #include "core/theme.h"
+#include "core/tool.h"
 #include "core/component_theme.h"
 #include "platform/file_open.h"
 #include "platform/system_theme.h"
@@ -185,6 +191,19 @@ public:
     void onStart() override {
         store_ = std::make_unique<SettingsStore>(::core::paths::configFile());
         cfg_ = store_->load();
+        // app.read_settings（agent M2 Task 9）：store 就绪后把只读设置工具注册
+        // 进全局注册表（模块隔离：agent 只经 core::ToolRegistry 按名取用，不
+        // include 本模块）。工具自持 SettingsStore(path) 纯读、不引用本对象，
+        // agent 工作线程并发调用安全。name 冲突属装配 bug（无错误回传通道），
+        // 日志留痕不中断——照 agent_module.cpp:143 statsTool_ 注册同款
+        appReadSettingsTool_ =
+            makeAppReadSettingsTool(::core::paths::configFile());
+        auto toolReg =
+            ::core::ToolRegistry::instance().registerTool(appReadSettingsTool_);
+        if (toolReg.isFail()) {
+            LOG_ERROR("Settings: app.read_settings 注册失败: " +
+                      toolReg.errorMessage());
+        }
         // 启动即应用持久化主题 + 字号缩放（main.cpp 的 dslAppConfig 也做过
         // 同样恢复——这里幂等重放，保证模块独立使用时行为一致）。主题走
         // applyThemeRuntime：themeMode=auto 时按 platform 检测结果解析深浅
@@ -217,6 +236,11 @@ public:
     }
 
     void onStop() override {
+        // 工具先注销再释放持有物（M2 teardown 契约：模块收尾最后一步注销工具，
+        // 在跑 run 不会悬垂——registry find() 返回 shared_ptr keep-alive）。
+        // app.read_settings 无在跑资源，但顺序与 agent_module.cpp:172 对齐
+        ::core::ToolRegistry::instance().unregisterTool("app.read_settings");
+        appReadSettingsTool_.reset();
         store_.reset();
         LOG_INFO("Settings 模块停止");
     }
@@ -1025,6 +1049,10 @@ private:
     // ---------- 状态 ----------
     std::unique_ptr<SettingsStore> store_;
     SettingsConfig cfg_;
+    // app.read_settings 工具（agent M2 Task 9）：onStart 注册 / onStop 注销。
+    // 持 shared_ptr 与注册表同寿（registerTool 失败也留成员，注销对未注册名
+    // 是 no-op——见 core/tool.cpp unregisterTool 语义）
+    std::shared_ptr<core::ITool> appReadSettingsTool_;
     // 当前打开的下拉（审计 THS-05：7 个 bool 收成一个索引，-1 = 全关）。
     // 取值 = static_cast<int>(Dropdown)，判读/开关走 settings_ui_logic.h 的
     // isDropdownOpen / applyDropdownOpen
