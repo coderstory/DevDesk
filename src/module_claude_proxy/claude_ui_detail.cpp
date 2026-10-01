@@ -153,10 +153,11 @@ float drawDetailBasic(eui::Ui& ui, float x0, float y0, float w,
     const bool ccManaged = svc && svc->isClaudeCodeManaged();
     // 审计 CPX-02：接管失败（无 sidecar → 未接管）与上层覆盖
     // 警告都要让用户看见，故不再以 ccManaged 为展示门。读的是
-    // 内存 getter（无 IO/DB，符合 H2），启停代理 / 切 profile
-    // 后下一帧即刷新
-    const auto& ccWarnings = svc ? svc->lastSyncWarnings()
-                                : std::vector<std::string>();
+    // 内存 getter（F2 起按值返回快照——写者可能是 agent 线程，见
+    // ClaudeService::lastSyncWarnings 头注；无 IO/DB，符合 H2），
+    // 启停代理 / 切 profile 后下一帧即刷新
+    const std::vector<std::string> ccWarnings =
+        svc ? svc->lastSyncWarnings() : std::vector<std::string>();
     const std::string ccPath =
         settings_sync::defaultPaths().settingsFile.string();
     const float toY = keyY + 56.0f;

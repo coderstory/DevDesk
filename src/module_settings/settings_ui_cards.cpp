@@ -854,7 +854,8 @@ void drawProxyCard(const CardDrawArgs& args) {
             // 审计 CPX-02：渲染门与卡高计算同源（svc 而非 managed）——
             // 未接管但警告非空（接管失败）时行必须画出来，否则卡高留了位
             if (svc) {
-                const auto& warns = svc->lastSyncWarnings();
+                // F2：按值快照（写者可能是 agent 线程），不是活引用
+                const std::vector<std::string> warns = svc->lastSyncWarnings();
                 // ponytail: 最多展示 2 条（卡片高度约束），更多警告在
                 // 日志（LOG_WARN 全量）可查；⚠ 换 FA（图标/文字拆两个元素）
                 const size_t shown =

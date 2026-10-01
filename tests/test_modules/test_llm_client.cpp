@@ -36,10 +36,8 @@ public:
         return core::Result<int>::fail(core::ErrorCode::Internal, "unused");
     }
     bool isClaudeCodeManaged() const override { return false; }
-    const std::vector<std::string>& lastSyncWarnings() const override {
-        static const std::vector<std::string> w;
-        return w;
-    }
+    // F2：接口改按值返回快照（M2 静态审计），桩同口径
+    std::vector<std::string> lastSyncWarnings() const override { return {}; }
     std::string settingsFilePath() const override { return {}; }
     std::optional<std::string> resolveModelSlot(const std::string& slot) override {
         (void)slot;

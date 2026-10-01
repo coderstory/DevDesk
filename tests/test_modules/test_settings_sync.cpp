@@ -29,6 +29,8 @@
 #include "settings_sync.h"
 
 #include <algorithm>
+#include <atomic>
+#include <barrier>
 #include <filesystem>
 #include <fstream>
 #include <map>
@@ -36,6 +38,9 @@
 #include <sstream>
 #include <stdexcept>
 #include <string>
+#include <thread>
+#include <type_traits>
+#include <utility>
 #include <vector>
 
 #if defined(_WIN32)
@@ -1675,5 +1680,116 @@ REGISTER_TEST(sync_nonenv_removal_stale_absent_silent,
     auto r2 = settings_sync::takeOver(p, 8888, paths);
     DOCTEST_REQUIRE(r2.ok);
     DOCTEST_CHECK(r2.warnings.empty());
+    return true;
+})
+
+// ---- 11. F2（M2 静态审计，medium-high）：lastSyncWarnings 必须是值快照 ----
+// 问题：M2 新增了**跨线程写入口**（agent 线程的 claude.switch_profile 工具 →
+// ClaudeService::setActiveProfile → syncTakeOver → SettingsTakeOver::warnings_
+// 整体赋值 = vector 缓冲被释放）。而门面 getter 返回 `const vector&`（活引用），
+// UI 每帧（claude_ui_detail / settings_module / settings_ui_cards）拿到它就开始
+// 遍历——写者重分配 + 读者遍历 = 数据竞争，缓冲区释放后即 UAF。
+// switchMutex_ 只护 setActiveProfile 的方法体，读者无锁，故必须让读侧拿**副本**。
+//
+// 钉法（本仓无 TSan/ASan，用「编译期结构钉 + 有界并发烟测」代替插桩）：
+//   ① 结构钉：getter 的返回类型必须**恰是** std::vector<std::string>（按值）。
+//      修复前是 const&，本行**编译失败** = 红（比运行期竞态更早、更确定地钉住）。
+//   ② 运行期：barrier 对齐后写者反复切 profile（每次经 syncTakeOver 整体重写
+//      warnings_）、读者反复取快照，断言每份快照自洽（条目恒为本夹具注入的
+//      「接管失败」类）、读者确曾读到写者的内容、且全程不崩不挂。
+//      变异说明：把 SettingsTakeOver 内那把锁去掉，本用例在无 ASan 下**不保证**
+//      必红（数据竞争是概率性的）——所以真正把关的是 ①（类型钉）+ 锁本身；
+//      ② 只作回归烟测，不冒充竞态证明。
+REGISTER_TEST(claude_service_last_sync_warnings_snapshot,
+              "claude_service: lastSyncWarnings 返回快照（非活引用）+ 并发读写不崩", {
+    static_assert(
+        std::is_same_v<
+            decltype(std::declval<const module::claude::ClaudeService&>()
+                         .lastSyncWarnings()),
+            std::vector<std::string>>,
+        "lastSyncWarnings 必须按值返回快照：活引用 = UI 每帧读被 agent 线程"
+        "整体重写的 vector（F2：数据竞争 + UAF）");
+    static_assert(
+        std::is_same_v<
+            decltype(std::declval<const module::claude::SettingsTakeOver&>()
+                         .warningsSnapshot()),
+            std::vector<std::string>>,
+        "warningsSnapshot 必须按值返回（协议侧锁内拷贝，写者也在同一把锁内）");
+
+    using namespace module::claude;
+    test_support::TestDb tdb(kDbPrefix, "snapshot");
+    test_support::TempDir d("snapshot", kSyncTempDirPrefix);
+    auto paths = makePaths(d);
+
+    ClaudeService svc(tdb.handle(), kTestKeychainService);
+    svc.setSettingsSyncPaths(paths);
+    svc.setSettingsTakeOverEnabled(true);
+    auto a = svc.createProfile("快照A", "https://gw.example.com",
+                               "sk-ind-test-0123456789abcdef", "");
+    DOCTEST_REQUIRE(a.isOk());
+    auto b = svc.createProfile("快照B", "https://gw2.example.com",
+                               "sk-ind-test-fedcba9876543210", "");
+    DOCTEST_REQUIRE(b.isOk());
+    DOCTEST_REQUIRE(svc.setActiveProfile(a.value().id).isOk());
+
+    // 夹具（与用例 10b 同款）：settings.json 可读（反向同步不中止）+ sidecar
+    // 损坏（每次 syncTakeOver 都失败）→ 每次切 profile 都把 warnings_ **整体
+    // 重写**一遍 = 修复前读者拿活引用时的重分配窗口
+    d.write(paths.settingsFile, R"({"env": {"MY_KEY": "user"}})");
+    d.write(paths.sidecarFile, "{broken");
+    auto started = svc.startProxy("127.0.0.1", 0);
+    DOCTEST_REQUIRE(started.isOk());
+    DOCTEST_REQUIRE(!svc.lastSyncWarnings().empty());   // 预置：读者开局即有内容
+
+    constexpr int kWriterIterations = 30;
+    std::barrier<> startLine(2);
+    std::atomic<bool> writerDone{false};
+    std::atomic<int> badEntries{0};
+    std::atomic<int> nonEmptySnapshots{0};
+    std::atomic<int> readerIterations{0};
+
+    auto writer = [&] {
+        startLine.arrive_and_wait();
+        for (int i = 0; i < kWriterIterations; ++i) {
+            // 成败都行：失败（撞闸/接管失败）也照样重写 warnings_，正是要打的窗口
+            (void)svc.setActiveProfile(i % 2 == 0 ? a.value().id : b.value().id);
+        }
+        writerDone.store(true);
+    };
+    auto reader = [&] {
+        startLine.arrive_and_wait();
+        do {   // do-while：至少读一次，读者这一侧不依赖调度时序
+            auto snap = svc.lastSyncWarnings();     // 值快照（锁内拷贝）
+            readerIterations.fetch_add(1);
+            if (!snap.empty()) nonEmptySnapshots.fetch_add(1);
+            for (const auto& w : snap) {
+                // 本夹具下 warnings_ 只可能是「接管失败」一条：快照若撕裂
+                // （读到半更新的 vector / 释放中的缓冲）就会在这里露出来
+                if (w.find("接管失败") == std::string::npos)
+                    badEntries.fetch_add(1);
+            }
+        } while (!writerDone.load());
+    };
+    std::thread tw(writer);
+    std::thread tr(reader);
+    tw.join();
+    tr.join();
+
+    DOCTEST_CHECK_EQ(badEntries.load(), 0);
+    DOCTEST_CHECK(nonEmptySnapshots.load() > 0);   // 读者真读到过写者的内容
+    DOCTEST_CHECK(readerIterations.load() > 0);
+
+    // 快照语义：读到的副本与下一次读互不影响（服务端状态不被读者改）
+    {
+        auto snap = svc.lastSyncWarnings();
+        snap.clear();
+        DOCTEST_CHECK(!svc.lastSyncWarnings().empty());
+    }
+
+    svc.stopProxy();
+    platform::keychain::deleteSecret(
+        kTestKeychainService, "claude:" + std::to_string(a.value().id));
+    platform::keychain::deleteSecret(
+        kTestKeychainService, "claude:" + std::to_string(b.value().id));
     return true;
 })

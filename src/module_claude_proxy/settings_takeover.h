@@ -3,7 +3,11 @@
 // R10 spec §2.2 CPX-01）：
 //   - 键级还原；接管失败不阻断上层操作（错误并入 warnings_，门面经
 //     lastSyncWarnings() 透传 UI）
-//   - 仅 UI 线程（现状同款）
+//   - 线程口径（F2，M2 静态审计修正）：**不再是「仅 UI 线程」**——M2 起
+//     agent 工作线程会经门面 setActiveProfile → syncTakeOver 写这里的状态。
+//     现状：warnings_（唯一被跨线程读写的字段）由本类自持 mu_ 护，读侧走
+//     warningsSnapshot() 值返回；文件层「接管 / 还原交错」的互斥**尚未**做
+//     （F3，本批范围外，勿把本条读成已解决）
 // 子对象不反向依赖彼此：接管入参（激活 Profile + 当前代理端口 + 所绑片段
 // env）由门面从 ProfileRepository / ProxyRuntime 取齐后一并传入
 //（R10 spec §2.3 P-A4 双入参，子对象不反向依赖那两个子对象）。
@@ -13,6 +17,7 @@
 #pragma once
 
 #include <filesystem>
+#include <mutex>
 #include <string>
 #include <vector>
 
@@ -48,8 +53,13 @@ public:
     // 已接管（sidecar 快照存在；设置页「接管状态」行数据源，Phase D UI 用）
     bool isClaudeCodeManaged() const;
 
-    // 最近一次接管的上层覆盖检测警告（Phase D UI 展示；无警告为空）
-    const std::vector<std::string>& warnings() const { return warnings_; }
+    // 最近一次接管的上层覆盖检测警告（Phase D UI 展示；无警告为空）。
+    // **返回副本（F2，M2 静态审计）**：写者不再只有 UI 线程——agent 线程的
+    // claude.switch_profile 工具经门面 setActiveProfile 会调 syncTakeOver 把
+    // warnings_ 整体重写（vector 缓冲释放）。早先按 const& 返回活引用，UI 每帧
+    // 拿到就遍历 = 数据竞争 / UAF。现在读侧一律锁内拷贝，写侧（下面三个写方法
+    // + setPaths）也持同一把 mu_。
+    std::vector<std::string> warningsSnapshot() const;
 
     // 启动崩溃补还原：sidecar 残留（上次没走完还原）→ 先还原。
     // main.cpp 在任何 startProxy 之前调用（调用时序见 settings_sync.h）
@@ -71,7 +81,12 @@ public:
 private:
     settings_sync::Paths paths_;
     bool enabled_ = true;  // 接管默认开（2026-09-27 恢复，见 setEnabled）
-    std::vector<std::string> warnings_;
+    // warnings_ 的跨线程互斥（F2）：写者 = UI 线程（startProxy/stopProxy 尾）或
+    // agent 线程（setActiveProfile → syncTakeOver），读者 = UI 每帧 + agent。
+    // 只护 warnings_ 这一个字段（不做「接管/还原整体互斥」——那是 F3 的范围，
+    // 本批不动）；paths_ 仍是启动期一次性注入的单写者状态
+    mutable std::mutex mu_;
+    std::vector<std::string> warnings_;   // mu_ 护
 };
 
 } // namespace module::claude

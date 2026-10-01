@@ -13,7 +13,15 @@ namespace module::claude {
 
 void SettingsTakeOver::setPaths(const settings_sync::Paths& paths) {
     paths_ = paths;
+    std::lock_guard<std::mutex> lock(mu_);
     warnings_.clear();
+}
+
+std::vector<std::string> SettingsTakeOver::warningsSnapshot() const {
+    // F2：值返回 + 锁内拷贝。返回活引用会让 UI 每帧遍历的缓冲被写者（agent
+    // 线程的 setActiveProfile → syncTakeOver）整体替换释放 → 竞争 / UAF
+    std::lock_guard<std::mutex> lock(mu_);
+    return warnings_;
 }
 
 bool SettingsTakeOver::isClaudeCodeManaged() const {
@@ -49,18 +57,27 @@ core::Result<void> SettingsTakeOver::syncTakeOver(
     // 上层；片段叠加已在门面装配进 extraSettingsJson——片段值不留痕迹，
     // 片段键经 JSON 域进 sidecar nonEnv 记账 → 停代理还原时随快照撤走）
     auto r = settings_sync::takeOver(activeProfile, proxyPort, paths_);
-    warnings_ = std::move(r.warnings);
+    size_t warnCount = 0;
+    {
+        // F2：warnings_ 整体重写（vector 缓冲释放）——与读侧 warningsSnapshot()
+        // 同一把 mu_，读者拿到的永远是某一次写完之后的自洽快照
+        std::lock_guard<std::mutex> lock(mu_);
+        warnings_ = std::move(r.warnings);
+        if (!r.ok) {
+            // 条目 3：失败不再只进日志——并入 warnings_（与 getter 一起
+            // 供 UI 透传）。调用方语义不变：接管失败不阻断起代理/切 profile
+            warnings_.push_back("Claude Code settings 接管失败: " + r.error);
+        }
+        warnCount = warnings_.size();
+    }
     if (!r.ok) {
-        // 条目 3：失败不再只进日志——并入 warnings_（与 getter 一起
-        // 供 UI 透传）。调用方语义不变：接管失败不阻断起代理/切 profile
-        warnings_.push_back("Claude Code settings 接管失败: " + r.error);
         LOG_WARN("Claude Code settings 接管失败: " + r.error);
         return core::Result<void>::fail(core::ErrorCode::Internal, r.error);
     }
     LOG_INFO("Claude Code settings 已接管: " + paths_.settingsFile.string() +
-             (warnings_.empty() ? std::string("")
-                                : "（含 " + std::to_string(warnings_.size()) +
-                                      " 条上层覆盖警告）"));
+             (warnCount == 0
+                  ? std::string("")
+                  : "（含 " + std::to_string(warnCount) + " 条上层覆盖警告）"));
     return core::Result<void>::ok();
 }
 
@@ -83,10 +100,14 @@ core::Result<void> SettingsTakeOver::syncRestore() {
         // CPX-02（R10-A4 收尾）：还原失败不再只进日志——并入 warnings_ 供 UI
         // 透传并返回 Result 上报（门面 stopProxy 经其 syncRestore() 包装
         // LOG_WARN 留痕）
+        std::lock_guard<std::mutex> lock(mu_);   // F2：同上，写侧持 mu_
         warnings_.push_back("Claude Code settings 还原失败: " + r.error);
         return core::Result<void>::fail(core::ErrorCode::Internal, r.error);
     }
-    warnings_.clear();
+    {
+        std::lock_guard<std::mutex> lock(mu_);   // F2
+        warnings_.clear();
+    }
     LOG_INFO("Claude Code settings 已还原（settings.json 不再指向本地代理）");
     return core::Result<void>::ok();
 }
