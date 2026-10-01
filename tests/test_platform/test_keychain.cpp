@@ -4,6 +4,7 @@
 #include <core/paths.h>
 
 #include <filesystem>
+#include <iostream>
 #include <set>
 #include <string>
 #include <utility>
@@ -350,16 +351,22 @@ REGISTER_TEST(keychain_account_names_do_not_fold,
 // 两侧都清（否则 load 会经回退把已删的密钥读回来）。
 REGISTER_TEST(keychain_legacy_naming_still_readable,
               "keychain: 旧命名文件仍可读且不被孤儿清理误删", {
+    // 临时诊断仪器（test(ci-diag)，定位后撤）：Windows CI 1ms 静默红、全日志
+    // 零 FAIL 行——失败未经过任何 DOCTEST 宏（每个宏都打 FAIL [file:line]）。
+    // 无条件步骤标记步进定位：下次日志里最后到达的标记即静默点。cerr + endl
+    // 强 flush（批量输出设计会把 cout 缓到结尾，cerr 无缓冲）。
     const std::string service = "DevDeskTestKeychainLegacy";
     const std::string account = "legacy:probe";   // 旧规则名 = legacy_probe
-
+    std::cerr << "[kc-legacy] entry" << std::endl;
     platform::keychain::deleteSecret(service, account);
+    std::cerr << "[kc-legacy] deleteSecret done" << std::endl;
 
     // 用新编码写一份合法密文（DPAPI 只能同机同用户解，密文必须真造），
     // 再在磁盘上改名成旧规则的名字，模拟升级前留下的文件
     DOCTEST_REQUIRE_MESSAGE(platform::keychain::storeSecret(
                                 service, account, "sk-legacy-value").isOk(),
                             "storeSecret 失败（造不出新编码密文，后续 rename 无从谈起）");
+    std::cerr << "[kc-legacy] store done" << std::endl;
 
     const auto dir = core::paths::appDataDir() / "keychain" / service;
     const auto encoded = dir / "legacy%3Aprobe.key";
@@ -367,6 +374,8 @@ REGISTER_TEST(keychain_legacy_naming_still_readable,
     std::error_code ec;
     DOCTEST_REQUIRE_MESSAGE(std::filesystem::exists(encoded, ec),
                             "store 后 encoded 不存在: " + encoded.string());
+    std::cerr << "[kc-legacy] exists done" << std::endl;
+
     // Windows：刚创建的文件可能被 AV/Defender 短暂占位（sharing violation），
     // 立即 rename 会失败——有界重试（5 × 20ms），超限才红
     for (int attempt = 1; ; ++attempt) {
@@ -376,18 +385,26 @@ REGISTER_TEST(keychain_legacy_naming_still_readable,
         if (!ec || attempt >= 5) break;
         std::this_thread::sleep_for(std::chrono::milliseconds(20));
     }
+    std::cerr << "[kc-legacy] rename done ec=" << ec.value() << std::endl;
     DOCTEST_REQUIRE_MESSAGE(!ec, "模拟旧命名文件失败(重试5次): " + ec.message());
 
     // 新编码路径缺失 → 回退读旧命名文件
     auto r = platform::keychain::loadSecret(service, account);
-    DOCTEST_REQUIRE(r.isOk());
-    DOCTEST_CHECK_EQ(r.value(), std::string("sk-legacy-value"));
+    DOCTEST_REQUIRE_MESSAGE(r.isOk(),
+                            "load 回退失败（新编码缺失时应读旧命名文件）");
+    DOCTEST_CHECK_MESSAGE(r.value() == std::string("sk-legacy-value"),
+                          "回退读到的值不符: '" + r.value() + "'");
+    std::cerr << "[kc-legacy] load done" << std::endl;
 
     // 孤儿清理：account 仍在 keep 集合里 → 旧命名文件必须保留
     auto swept = platform::keychain::deleteSecretsNotIn(service, {account});
-    DOCTEST_REQUIRE(swept.isOk());
-    DOCTEST_CHECK(swept.value().empty());
-    DOCTEST_CHECK(std::filesystem::exists(legacy, ec));
+    DOCTEST_REQUIRE_MESSAGE(swept.isOk(), "孤儿清理 deleteSecretsNotIn 调用失败");
+    DOCTEST_CHECK_MESSAGE(swept.value().empty(),
+                          "account 仍在 keep 集合却被当孤儿清理（清理条数 " +
+                              std::to_string(swept.value().size()) + "）");
+    DOCTEST_CHECK_MESSAGE(std::filesystem::exists(legacy, ec),
+                          "sweep 后旧命名文件不在: " + legacy.string());
+    std::cerr << "[kc-legacy] sweep done" << std::endl;
 
     // 删除：新旧两侧都清 → load 必须 NotFound（不能经回退把密钥读回来）
     DOCTEST_REQUIRE(platform::keychain::deleteSecret(service, account).isOk());
