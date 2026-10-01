@@ -20,12 +20,15 @@
 //     .trigger（下拉：手动/定时/常驻）/ .cron（trigger==定时才渲染）/
 //     .slot（下拉）/ .iter / .destructive / .save / .cancel / .error
 //
-// 可点元素（edit/toggle/enqueue/save/cancel）刻意用 text 元素挂 onClick 而非
-// components::button：契约要求 id 元素本身同时带 text 与 onClick，而 button 的
-// onClick 落在 <id>.bg 子元素上。
+// 可点元素（edit/toggle/enqueue/save/cancel）用 actionChip：契约要求 id 元素本身
+// 同时带 text 与 onClick，而 components::button 的 onClick 落在 <id>.bg 上，故
+// 手搓「<id> 文本元素 + <id>.bg 底」两层（观感取自同一组 button token）。
+// 表单字段标签一律 .caption 后缀——components::dropdown 内部占用 <id>.label
+//（字段显示名），宿主标签若同 id 会串位（2026-10-02 实测的 UI 缺陷）。
 #include "agent_module.h"
 
 #include <algorithm>
+#include <functional>
 
 #include <components/button.h>
 #include <components/dropdown.h>
@@ -78,6 +81,63 @@ std::string runRowText(const AgentRunRow& run) {
         s += " · token —";
     }
     return s;
+}
+
+// 行内动作 chip（2026-10-02 用户反馈「编辑/禁用是纯文本、启动却是按钮」）：观感与
+// components::button 同源（同一组 token：底色/悬停/按下/描边/圆角/高度），但
+// **契约 id 必须落在可见文本元素上**（契约要求 id 元素同时带 text 与 onClick），
+// 而 components::button 把 onClick 挂在 <id>.bg 上。故手搓成与 button 同构的两层：
+//   <id>.bg   —— 底 + 悬停/按下态 + onClick（真实命中面）
+//   <id>      —— 文本元素，带 id/text/onClick；hitTestMode=None 让指针穿透到 bg
+//                （悬停态才一致），测试直调其 onClick 亦有效
+void actionChip(::eui::Ui& ui, const std::string& id, const std::string& label,
+                float width, bool primary, bool enabled,
+                const components::theme::ThemeColorTokens& tokens,
+                std::function<void()> onClick) {
+    constexpr float kChipH = 32.0f;
+    const ::core::Color base = primary ? tokens.primary : tokens.surface;
+    ::core::Color textColor =
+        primary ? ::core::Color{0.94f, 0.97f, 1.0f, 1.0f} : tokens.text;
+    if (!enabled) textColor = components::theme::withOpacity(textColor, 0.40f);
+    ui.stack(id + ".chip")
+        .size(width, kChipH)
+        .content([&] {
+            ui.rect(id + ".bg")
+                .size(width, kChipH)
+                .states(base, components::theme::buttonHover(tokens, base),
+                        components::theme::buttonPressed(tokens, base))
+                .radius(tokens.metrics.radius.overlay)
+                .border(components::theme::buttonBorder(tokens, primary))
+                .onClick(onClick)
+                .build();
+            ui.text(id)
+                .size(width, kChipH)
+                .text(label)
+                .fontSize(12.0f)
+                .lineHeight(20.0f)
+                .horizontalAlign(eui::HorizontalAlign::Center)
+                .verticalAlign(eui::VerticalAlign::Center)
+                .color(textColor)
+                .hitTestMode(::core::dsl::HitTestMode::None)
+                .onClick(onClick)
+                .build();
+        })
+        .build();
+}
+
+// 表单字段标签：统一 12px + 显式垂直居中（2026-10-02 用户反馈「文本没垂直居中」——
+// 光靠 lineHeight 撑高不会居中）。id 一律用 .caption：components::dropdown 内部有
+// <id>.label（字段显示名），宿主标签若同 id 会与之撞车串位
+void fieldCaption(::eui::Ui& ui, const std::string& id, const std::string& text,
+                  float width, float height, const ::core::Color& color) {
+    ui.text(id)
+        .size(width, height)
+        .text(text)
+        .fontSize(12.0f)
+        .lineHeight(20.0f)
+        .verticalAlign(eui::VerticalAlign::Center)
+        .color(color)
+        .build();
 }
 
 // 消息行预览：role + ": " + content 前 80 字节（超长在 UTF-8 边界回退，
@@ -715,13 +775,8 @@ void AgentModule::compose(::eui::Ui& ui, const ::eui::Screen& screen) {
                             .gap(rowGap)
                             .alignItems(eui::Align::CENTER)
                             .content([&] {
-                                ui.text("agent.edit.goal.label")
-                                    .size(labelW, 40.0f)
-                                    .text("任务目标")
-                                    .fontSize(12.0f)
-                                    .lineHeight(40.0f)
-                                    .color(t.colors.textSecondary)
-                                    .build();
+                                fieldCaption(ui, "agent.edit.goal.caption", "任务目标", labelW,
+                                             40.0f, t.colors.textSecondary);
                                 components::input(ui, "agent.edit.goal")
                                     .size(innerW - labelW - rowGap, 40.0f)
                                     .value(editGoal_)
@@ -740,13 +795,8 @@ void AgentModule::compose(::eui::Ui& ui, const ::eui::Screen& screen) {
                             .gap(rowGap)
                             .alignItems(eui::Align::CENTER)
                             .content([&] {
-                                ui.text("agent.edit.trigger.label")
-                                    .size(labelW, 40.0f)
-                                    .text("触发方式")
-                                    .fontSize(12.0f)
-                                    .lineHeight(40.0f)
-                                    .color(t.colors.textSecondary)
-                                    .build();
+                                fieldCaption(ui, "agent.edit.trigger.caption", "触发方式", labelW,
+                                             40.0f, t.colors.textSecondary);
                                 ui.stack("agent.edit.trigger.wrap")
                                     .size(ddW, 40.0f)
                                     .content([&] {
@@ -768,13 +818,8 @@ void AgentModule::compose(::eui::Ui& ui, const ::eui::Screen& screen) {
                                     })
                                     .build();
                                 if (isSchedule) {
-                                    ui.text("agent.edit.cron.label")
-                                        .size(72.0f, 40.0f)
-                                        .text("cron 表达式")
-                                        .fontSize(12.0f)
-                                        .lineHeight(40.0f)
-                                        .color(t.colors.textSecondary)
-                                        .build();
+                                    fieldCaption(ui, "agent.edit.cron.caption", "cron 表达式", 72.0f,
+                                                 40.0f, t.colors.textSecondary);
                                     components::input(ui, "agent.edit.cron")
                                         .size(innerW - labelW - ddW - 72.0f -
                                                   rowGap * 3.0f,
@@ -796,13 +841,8 @@ void AgentModule::compose(::eui::Ui& ui, const ::eui::Screen& screen) {
                             .gap(rowGap)
                             .alignItems(eui::Align::CENTER)
                             .content([&] {
-                                ui.text("agent.edit.slot.label")
-                                    .size(labelW, 40.0f)
-                                    .text("模型槽位")
-                                    .fontSize(12.0f)
-                                    .lineHeight(40.0f)
-                                    .color(t.colors.textSecondary)
-                                    .build();
+                                fieldCaption(ui, "agent.edit.slot.caption", "模型槽位", labelW,
+                                             40.0f, t.colors.textSecondary);
                                 ui.stack("agent.edit.slot.wrap")
                                     .size(ddW, 40.0f)
                                     .content([&] {
@@ -825,13 +865,8 @@ void AgentModule::compose(::eui::Ui& ui, const ::eui::Screen& screen) {
                                             .build();
                                     })
                                     .build();
-                                ui.text("agent.edit.iter.label")
-                                    .size(72.0f, 40.0f)
-                                    .text("迭代上限")
-                                    .fontSize(12.0f)
-                                    .lineHeight(40.0f)
-                                    .color(t.colors.textSecondary)
-                                    .build();
+                                fieldCaption(ui, "agent.edit.iter.caption", "迭代上限", 72.0f,
+                                             40.0f, t.colors.textSecondary);
                                 components::input(ui, "agent.edit.iter")
                                     .size(100.0f, 40.0f)
                                     .value(std::to_string(editIter_))
@@ -865,31 +900,19 @@ void AgentModule::compose(::eui::Ui& ui, const ::eui::Screen& screen) {
                             .gap(rowGap)
                             .alignItems(eui::Align::CENTER)
                             .content([&] {
-                                ui.text("agent.edit.save")
-                                    .size(56.0f, 32.0f)
-                                    .text("保存")
-                                    .fontSize(12.0f)
-                                    .lineHeight(32.0f)
-                                    .horizontalAlign(eui::HorizontalAlign::Center)
-                                    .fontWeight(700)
-                                    .color(t.colors.primary)
-                                    .onClick([this] { saveTaskEdit(); })
-                                    .build();
-                                ui.text("agent.edit.cancel")
-                                    .size(56.0f, 32.0f)
-                                    .text("取消")
-                                    .fontSize(12.0f)
-                                    .lineHeight(32.0f)
-                                    .horizontalAlign(eui::HorizontalAlign::Center)
-                                    .color(t.colors.textSecondary)
-                                    .onClick([this] {
-                                        editingTaskId_.reset();
-                                        editError_.clear();
-                                    })
-                                    .build();
+                                actionChip(ui, "agent.edit.save", "保存", 64.0f,
+                                           /*primary=*/true, /*enabled=*/true,
+                                           themeTokens,
+                                           [this] { saveTaskEdit(); });
+                                actionChip(ui, "agent.edit.cancel", "取消", 64.0f,
+                                           /*primary=*/false, /*enabled=*/true,
+                                           themeTokens, [this] {
+                                               editingTaskId_.reset();
+                                               editError_.clear();
+                                           });
                                 if (!editError_.empty()) {
                                     ui.text("agent.edit.error")
-                                        .size(innerW - 56.0f * 2.0f - rowGap * 3.0f,
+                                        .size(innerW - 64.0f * 2.0f - rowGap * 3.0f,
                                               32.0f)
                                         .text(editError_)
                                         .fontSize(12.0f)
@@ -977,49 +1000,31 @@ void AgentModule::compose(::eui::Ui& ui, const ::eui::Screen& screen) {
                                     .build();
                                 // 编辑 / 启停 / 入队：契约要求 id 元素本身带 text
                                 // 与 onClick（text 元素挂 onClick 即 interactive）
-                                ui.text(id + ".edit")
-                                    .size(48.0f, 32.0f)
-                                    .text("编辑")
-                                    .fontSize(12.0f)
-                                    .lineHeight(32.0f)
-                                    .horizontalAlign(eui::HorizontalAlign::Center)
-                                    .color(t.colors.primary)
-                                    .onClick([this, taskId = task.id] {
-                                        openTaskEditor(taskId);
-                                    })
-                                    .build();
-                                ui.text(id + ".toggle")
-                                    .size(48.0f, 32.0f)
-                                    .text(task.enabled ? "禁用" : "启用")
-                                    .fontSize(12.0f)
-                                    .lineHeight(32.0f)
-                                    .horizontalAlign(eui::HorizontalAlign::Center)
-                                    .color(t.colors.textSecondary)
-                                    .onClick([this, taskCopy = task] {
-                                        toggleTaskEnabled(taskCopy);
-                                    })
-                                    .build();
+                                actionChip(ui, id + ".edit", "编辑", 48.0f,
+                                           /*primary=*/false, /*enabled=*/true,
+                                           themeTokens, [this, taskId = task.id] {
+                                               openTaskEditor(taskId);
+                                           });
+                                actionChip(ui, id + ".toggle",
+                                           task.enabled ? "禁用" : "启用", 48.0f,
+                                           /*primary=*/false, /*enabled=*/true,
+                                           themeTokens, [this, taskCopy = task] {
+                                               toggleTaskEnabled(taskCopy);
+                                           });
                                 if (resident) {
                                     // 常驻入队（spec §5.1：常驻本阶段只跑手动
                                     // 入队子任务）；Scheduler 未装配时置灰不可点
-                                    ui.text(id + ".enqueue")
-                                        .size(56.0f, 32.0f)
-                                        .text("入队")
-                                        .fontSize(12.0f)
-                                        .lineHeight(32.0f)
-                                        .horizontalAlign(eui::HorizontalAlign::Center)
-                                        .color(scheduler_ ? t.colors.primary
-                                                          : t.colors.textTertiary)
-                                        .disabled(scheduler_ == nullptr)
-                                        .onClick([this, taskId = task.id] {
-                                            if (scheduler_ == nullptr) {
-                                                LOG_WARN("Agent: Scheduler 未就绪，"
-                                                         "常驻入队被忽略");
-                                                return;
-                                            }
-                                            scheduler_->enqueueResident(taskId);
-                                        })
-                                        .build();
+                                    actionChip(ui, id + ".enqueue", "入队", 56.0f,
+                                               /*primary=*/false,
+                                               /*enabled=*/scheduler_ != nullptr,
+                                               themeTokens, [this, taskId = task.id] {
+                                                   if (scheduler_ == nullptr) {
+                                                       LOG_WARN("Agent: Scheduler 未"
+                                                                "就绪，常驻入队被忽略");
+                                                       return;
+                                                   }
+                                                   scheduler_->enqueueResident(taskId);
+                                               });
                                 }
                                 components::button(ui, id + ".run")
                                     .size(72.0f, 32.0f)
