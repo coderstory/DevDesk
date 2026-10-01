@@ -26,6 +26,7 @@
 #include "core/tool.h"
 #include "module_agent/agent_store.h"
 #include "module_agent/llm_client.h"
+#include "module_agent/scheduler.h"
 
 namespace core {
 class IClaudeProxyService;
@@ -46,6 +47,9 @@ public:
         // LlmClient 的 HTTP 缝（nullptr = 生产路径 platform::http::send；
         // 测试注入假发送，零真实网络）
         LlmClient::HttpFn http;
+        // Scheduler 的 unix 秒时钟缝（nullptr = 生产真实系统时间；测试注入假
+        // 时钟驱动 cron 判定，零墙钟等待）
+        Scheduler::NowFn schedulerNow;
     };
     explicit AgentModule(Deps d);
     // 兜底拆解：漏调 onStop（异常路径 / 用例 fail-fast）时先收 run 线程再
@@ -72,6 +76,10 @@ private:
         std::atomic<bool> done{false};
     };
 
+    // 惰性装配单入口（Task 6 Step 1b）：首次使用时解析 IClaudeProxyService 并
+    // 建 llm_/loop_/scheduler_（onStart 的装配退化为一次预热）。幂等——loop_ 非空
+    // 即返回，重复调用不会起第二个 Scheduler/tick 线程。
+    void ensureLlm();
     void startTask(int64_t taskId);
     void createTaskFromForm();
     void toggleExpand(int64_t taskId);
@@ -82,6 +90,10 @@ private:
     std::unique_ptr<AgentStore> store_;
     std::unique_ptr<LlmClient> llm_;
     std::unique_ptr<AgentLoop> loop_;
+    // 声明序契约（scheduler.h 头注释 ①）：scheduler_ 必须在它引用的 loop_ /
+    // llm_ / store_ **之后**——逆序析构下 Scheduler 先亡，其 run 线程 join 期间
+    // 被引用的 loop_/store_ 仍存活
+    std::unique_ptr<Scheduler> scheduler_;
     std::shared_ptr<::core::ITool> statsTool_;
 
     // run 线程表：主线程写（startTask/onStop），mutex 照 brief 骨架保留
@@ -103,6 +115,8 @@ private:
     // statsTool_ 重建后 registerTool 撞同名旧指针 fail（被日志吞）、注册表留
     // 旧工具而成员已换新；double-onStop / 未启动的 off = no-op
     bool started_ = false;
+    // 「无代理服务」WARN 去重（惰性解析可能从每帧 compose 触发：不节流会刷屏）
+    bool llmMissingWarned_ = false;
 };
 
 } // namespace module::agent

@@ -120,23 +120,11 @@ void AgentModule::onStart() {
         LOG_WARN("Agent: 悬挂 run 清扫失败: " + swept.errorMessage());
     }
 
-    // proxy：deps 优先，缺省回退 core 服务定位器（settings 同款渠道）。
-    // 无代理 = LLM 通道不可用：store/工具照常装配，手动启动不可用（UI 禁用）
-    core::IClaudeProxyService* proxy = deps_.proxy;
-    if (proxy == nullptr) {
-        auto located =
-            ::core::ServiceLocator::requireService<::core::IClaudeProxyService>();
-        if (located.isOk()) {
-            proxy = located.value();
-        } else {
-            LOG_WARN("Agent: 代理服务未装配，LLM 通道不可用（手动启动禁用）");
-        }
-    }
-    if (proxy != nullptr) {
-        llm_ = std::make_unique<LlmClient>(*proxy, deps_.http);
-        loop_ = std::make_unique<AgentLoop>(*llm_, ::core::ToolRegistry::instance(),
-                                            *store_);
-    }
+    // LLM 通道装配（惰性单入口的预热调用，Task 6 Step 1b）：有服务 → 建
+    // llm_/loop_/scheduler_；无服务 → 只 WARN，store/工具照常装配，手动启动禁用。
+    // 同一个入口在首次使用时再被调用，故「启动时 claude 关、会话内拨开」无须
+    // off→on 本模块（claude-lazy-assembly 终审 finding，2026-10-01）
+    ensureLlm();
 
     // 注册自带工具（name 冲突属装配 bug，无错误回传通道，日志留痕不中断）
     statsTool_ = makeAppStatsTool(*db);
@@ -169,11 +157,21 @@ void AgentModule::onStop() {
         std::lock_guard<std::mutex> lock(runsMu_);
         runs_.clear();
     }
+    // Scheduler 收口（spec §3 步骤 3「停常驻 worker 线程」）：onStart 早退时
+    // scheduler_ 从未创建，必须判空；位置在「cancel 全部 + join 全部 + 清容器」
+    // 之后、unregisterTool 之前——工具注销必须晚于所有 run 线程退出（否则 run
+    // 线程里的工具执行摸到已注销的注册表）。stopAll 内部顺序：先停 tick/常驻
+    // 派发线程，再 cancel+join 在跑 run（先灭派发源，收尾窗口不再起新 run）。
+    if (scheduler_) scheduler_->stopAll();
     ::core::ToolRegistry::instance().unregisterTool("app.stats");
+    // 释放序：loop_/llm_/store_ 先走也安全——stopAll 已 join 其全部线程，析构期
+    // 的兜底 stopAll（幂等）只 join + 摘表，不触 loop_/store_（brief Task 6）
     loop_.reset();
     llm_.reset();
     store_.reset();
+    scheduler_.reset();
     statsTool_.reset();
+    llmMissingWarned_ = false;
     tasks_.clear();
     latestRuns_.clear();
     detailMessages_.clear();
@@ -201,7 +199,44 @@ void AgentModule::reapFinishedRuns() {
     }
 }
 
+// 惰性装配单入口（Task 6 Step 1b / 2026-10-01 claude-lazy-assembly 终审 finding）：
+// 代理服务从「onStart 一次性解析」改为「首次使用时解析」——启动 claude 关、
+// 会话内拨开 claude 后，已在运行的 agent 模块无须 off→on 即可用。
+// 幂等且单例：loop_ 非空即返回，故一个模块实例最多一个 LlmClient / AgentLoop /
+// Scheduler（不会起第二个 tick 线程）。scheduler_ 必须在本入口内与 loop_ 同建：
+// 早退路径下 onStart 从未创建它，不补建则惰性路径下 cron 永不触发。
+void AgentModule::ensureLlm() {
+    if (loop_ != nullptr) return;       // 已就绪（llm_/loop_/scheduler_ 三者同生共死）
+    if (store_ == nullptr) return;      // 装配未完成（db 缺失的早退路径）
+    core::IClaudeProxyService* proxy = deps_.proxy;
+    if (proxy == nullptr) {
+        auto located =
+            ::core::ServiceLocator::requireService<::core::IClaudeProxyService>();
+        if (located.isOk()) proxy = located.value();
+    }
+    if (proxy == nullptr) {
+        // 无服务：WARN 保留并补可操作提示；每段「无服务」只提示一次——本函数会
+        // 被页面帧调用，不节流会刷屏
+        if (!llmMissingWarned_) {
+            llmMissingWarned_ = true;
+            LOG_WARN("Agent: 代理服务未装配，LLM 通道不可用"
+                     "（请在设置页开启 Claude 模块后重试）");
+        }
+        return;
+    }
+    llm_ = std::make_unique<LlmClient>(*proxy, deps_.http);
+    loop_ = std::make_unique<AgentLoop>(*llm_, ::core::ToolRegistry::instance(),
+                                        *store_);
+    if (scheduler_ == nullptr) {
+        scheduler_ = std::make_unique<Scheduler>(*store_, *loop_, deps_.schedulerNow);
+        scheduler_->start();
+    }
+    llmMissingWarned_ = false;
+    LOG_INFO("Agent: LLM 通道就绪（惰性解析）");
+}
+
 void AgentModule::startTask(int64_t taskId) {
+    ensureLlm();   // 首次使用路径：会话内拨开的代理服务在这里被解析
     if (store_ == nullptr || loop_ == nullptr) {
         LOG_WARN("Agent: 服务未就绪（数据库 / LLM 通道），无法启动任务");
         return;
@@ -240,13 +275,9 @@ void AgentModule::startTask(int64_t taskId) {
         raw->thread = std::thread([this, raw, task = taskRecord] {
             // AgentLoop / store 的生命周期由 onStop 的 join 先于 reset 保证；
             // Result 落库在 run 内完成（agent_loop.cpp 收尾段）
-            AgentTask t;
-            t.id = task.id;
-            t.name = task.name;
-            t.goal = task.goal;
-            t.modelSlot = task.modelSlot;
-            t.maxIterations = task.maxIterations;
-            t.allowDestructive = task.allowDestructive;
+            // store 行 → AgentTask 的唯一映射（taskFromRow）：run 线程里不留
+            // 第二份会漂移的手抄副本（scheduler / tests 同用它）
+            const AgentTask t = taskFromRow(task);
             // Result 落库在 run 内完成（agent_loop.cpp 收尾段）；run 的
             // 返回值 = 起库失败（无处落状态）这类不可恢复错误——不能静默
             auto started = loop_->run(t, raw->cancel);
@@ -368,6 +399,13 @@ void AgentModule::compose(::eui::Ui& ui, const ::eui::Screen& screen) {
     const auto themeTokens = ::core::theme::componentTokens(t);
     const float pad = t.sizes.spacingXXLarge;              // 40，照 claude 页
     const float contentW = screen.width - pad * 2.0f;
+
+    // 首次使用路径之二：页面帧。会话内拨开 claude 后回到本页（onPageEnter 置
+    // tasksDirty_）即解析服务——否则 loop_ 恒空、「启动」按钮永久禁用，惰性解析
+    // 在真实 UI 上不可达。已就绪时只做一次空指针判断，无每帧开销
+    if (store_ != nullptr && loop_ == nullptr && tasksDirty_) {
+        ensureLlm();
+    }
 
     // 数据刷新：脏标记或有 run 在身（每帧跟进状态/消息）；查询在主线程，
     // 量级 = 任务数 + 展开任务的消息数，M1 可接受
