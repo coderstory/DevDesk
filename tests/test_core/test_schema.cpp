@@ -409,9 +409,9 @@ REGISTER_TEST(schema_agent_tables_columns,
         DOCTEST_REQUIRE(insMsg.value().step().isOk());
         DOCTEST_REQUIRE(
             db.prepare("PRAGMA foreign_keys=ON").isOk());  // 连接级开关先开
-        DOCTEST_REQUIRE(db.prepare("DELETE FROM agent_tasks WHERE id=1")
-                            .step()
-                            .isOk());
+        auto del = db.prepare("DELETE FROM agent_tasks WHERE id=1");
+        DOCTEST_REQUIRE(del.isOk());
+        DOCTEST_REQUIRE(del.value().step().isOk());
         auto leftover = db.prepare("SELECT COUNT(*) AS n FROM agent_messages");
         DOCTEST_REQUIRE(leftover.isOk());
         DOCTEST_REQUIRE(leftover.value().step().isOk());
