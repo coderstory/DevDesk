@@ -252,6 +252,12 @@ core::Result<Profile> ClaudeService::getActiveProfile() {
 }
 
 core::Result<void> ClaudeService::setActiveProfile(int64_t id) {
+    // 服务内互斥（spec §10 / agent M2 Task 8）：agent 工作线程（claude.switch_profile
+    // 工具）与 UI 线程可并发进来切同一个 service——本方法体含 DB 事务 + settings.json
+    // 接管同步（文件写 + Keychain）+ warnings_ 内存态，非原子；锁护整个方法体。
+    // 其余读方法保持无锁（纯读随 SqliteDb recursive_mutex 串行化，见头文件注释）
+    std::lock_guard<std::mutex> lock(switchMutex_);
+
     if (id == 0) {
         return core::Result<void>::fail(core::ErrorCode::ValidationError,
             "id 不能为 0");
