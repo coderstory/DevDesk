@@ -477,3 +477,37 @@ REGISTER_TEST(core_pageid_order,
     DOCTEST_CHECK_EQ(about, 6);
     return true;
 })
+
+// ============ registerModule 表序插入（惰性装配计划 T2，2026-10-01）============
+// off→on 重注册（活门控）后模块不再 append 末尾，而是按 PageId 枚举序插入
+// （枚举序 == kModuleRegistry 表序，由 core_pageid_order 与
+// assembly_registry_table_shape 双契约钉死）——侧边栏条目回表序原位。
+REGISTER_TEST(router_register_inserts_table_order,
+              "router: 乱序注册仍得表序（Agent 先注册、Markdown 后注册 → modules() 序为表序）", {
+    ::core::Router router;
+    StubModule agent(::core::PageId::Agent, "agent");
+    StubModule markdown(::core::PageId::Markdown, "markdown");
+    StubModule home(::core::PageId::Home, "home");
+    // 乱序注册：Agent(5) 最先、Markdown(1) 其次、Home(0) 最后
+    router.registerModule(&agent);
+    router.registerModule(&markdown);
+    router.registerModule(&home);
+
+    const auto& mods = router.modules();
+    DOCTEST_CHECK_EQ(mods.size(), static_cast<size_t>(3));
+    // Markdown 排在 Agent 前（尽管 Agent 先注册）——push_back 旧序下
+    // mods = [agent, markdown, home]，此断言红
+    DOCTEST_CHECK(mods[0] == &home);
+    DOCTEST_CHECK(mods[1] == &markdown);
+    DOCTEST_CHECK(mods[2] == &agent);
+    // pageId 序严格按 PageId 枚举升序
+    DOCTEST_CHECK(static_cast<int>(mods[0]->pageId()) <
+                  static_cast<int>(mods[1]->pageId()));
+    DOCTEST_CHECK(static_cast<int>(mods[1]->pageId()) <
+                  static_cast<int>(mods[2]->pageId()));
+
+    // 重复注册仍幂等（modules().size() 不变，既有语义逐字保留）
+    router.registerModule(&agent);
+    DOCTEST_CHECK_EQ(mods.size(), static_cast<size_t>(3));
+    return true;
+})

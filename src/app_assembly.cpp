@@ -6,8 +6,11 @@
 
 #include "app_sidebar.h"  // app::showAppNotice（托盘失效入口的解释反馈）
 #include "core/logging.h"
+#include "core/paths.h"            // configFile()（惰性装配 autoStart 现读）
 #include "module_markdown/md_file_open.h"
+#include "module_toggle_bridge.h"  // ensureClaudeServiceAssembled（惰性装配缝）
 #include "platform/file_open.h"
+#include "settings_config.h"       // SettingsStore / kModuleIdClaudeProxy
 
 #include <eui/dsl.h>
 #include <eui/dsl_app.h>  // app::requestShow / requestUpdate / requestExit
@@ -264,6 +267,18 @@ void dispatchModuleToggle(const std::string& moduleId, bool on,
             return;
         }
         if (on) {
+            if (moduleId == module::settings::kModuleIdClaudeProxy) {
+                // 惰性装配（2026-10-01 计划 T1）：启动期 claude 关 → 会话内
+                // 开启时在此补装配。必须先于 registerModule/onStart——claude
+                // 模块 compose 期读 ClaudeService::global()（死页 toast 分支
+                // 是唯一防线）。autoStart 从持久配置现读（与会话内改设置后
+                // 拨开关的语义一致）；桥未装配（启动早期/测试）时为 no-op +
+                // LOG_WARN，不崩
+                const module::settings::SettingsStore store(
+                    ::core::paths::configFile());
+                app::toggle::ensureClaudeServiceAssembled(
+                    store.load().claudeProxyAutoStart);
+            }
             router.registerModule(mod);  // 幂等（重复注册 = no-op，Task 1）
             mod->onStart();
         } else {

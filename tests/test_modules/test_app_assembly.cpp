@@ -17,9 +17,12 @@
 
 #include "app_assembly.h"
 #include "app_sidebar.h"  // app::showAppNotice / appNotice*（D-1 toast 断言）
+#include "claude_service.h"  // 惰性装配真服务桩（devdesk_tests 链 claude_proxy 库）
+#include "module_toggle_bridge.h"
 #include "settings_config.h"
 
 #include "core/module_interface.h"
+#include "core/paths.h"
 #include "core/router.h"
 #include "core/service_locator.h"
 
@@ -690,12 +693,16 @@ int g_agentStarts = 0;
 int g_agentStops = 0;
 int g_homeStarts = 0;
 int g_homeStops = 0;
+// 时序账本（2026-10-01 惰性装配计划 T1，Review Focus #2 钉子）：seam 调用与
+// 桩模块 onStart 各取自增序号，断言 seam 序号 < onStart 序号
+int g_seqCounter = 0;
 
 class ToggleCountModule : public ::core::Module {
 public:
     ToggleCountModule(::core::PageId page, std::string name, int* starts,
-                      int* stops)
-        : page_(page), name_(std::move(name)), starts_(starts), stops_(stops) {}
+                      int* stops, int* seq = nullptr)
+        : page_(page), name_(std::move(name)), starts_(starts), stops_(stops),
+          seq_(seq) {}
     // 观测 D-1 时序（T12 契约）：onStop 里登记「此刻本模块是否仍注册」。
     // off 路径要求 onStop 先于 unregisterModule——顺序颠倒（先注销再停）时
     // isRegistered 已为 false，断言 stopWhileRegistered == stops 必红
@@ -705,7 +712,10 @@ public:
     std::string displayName() const override { return name_; }
     std::string iconGlyph() const override { return "•"; }
     void compose(eui::Ui&, const eui::Screen&) override {}
-    void onStart() override { ++*starts_; }
+    void onStart() override {
+        ++*starts_;
+        if (seq_ != nullptr) *seq_ = ++g_seqCounter;
+    }
     void onStop() override {
         ++*stops_;
         if (router_ != nullptr && router_->isRegistered(page_)) {
@@ -718,6 +728,7 @@ private:
     std::string name_;
     int* starts_;
     int* stops_;
+    int* seq_ = nullptr;  // 非空时记录 onStart 的全局时序号（惰性装配时序断言）
     const ::core::Router* router_ = nullptr;
     int stopWhileRegistered_ = 0;
 };
@@ -727,9 +738,19 @@ ToggleCountModule g_toggleAgent{::core::PageId::Agent, "agent",
 ToggleCountModule g_toggleHome{::core::PageId::Home, "home", &g_homeStarts,
                                &g_homeStops};
 
-// Agent 映桩对象、其余 nullptr（生产 = main.cpp getRouter 的 moduleForPage 语义）
+int g_claudeStarts = 0;
+int g_claudeStops = 0;
+int g_claudeStartSeq = 0;
+ToggleCountModule g_toggleClaude{::core::PageId::ClaudeProxy, "claude",
+                                 &g_claudeStarts, &g_claudeStops,
+                                 &g_claudeStartSeq};
+
+// Agent / ClaudeProxy 映桩对象、其余 nullptr（生产 = main.cpp getRouter 的
+// moduleForPage 语义）
 ::core::Module* toggleLookupStub(::core::PageId page) {
-    return page == ::core::PageId::Agent ? &g_toggleAgent : nullptr;
+    if (page == ::core::PageId::Agent) return &g_toggleAgent;
+    if (page == ::core::PageId::ClaudeProxy) return &g_toggleClaude;
+    return nullptr;
 }
 
 } // namespace
@@ -796,5 +817,205 @@ REGISTER_TEST(assembly_dispatch_module_toggle_lifecycle,
     DOCTEST_CHECK_EQ(g_agentStops, 2);
 
     app::clearAppNotice();  // 收尾回厂，不留给后续用例
+    return true;
+})
+
+// ---- 惰性装配（2026-10-01 计划 T1）：dispatch on 路径 → 第二桥 → 真服务 ----
+// seam 注入**真服务 handler**（等价 main.cpp ensureClaudeServiceAssembledImpl
+// 的逻辑：装配单例 → setConfiguredProxyPort → recover → autoStart 才起代理），
+// 驱动真 ClaudeService（devdesk_tests 链 devdesk_module_claude_proxy）。唯一
+// 刻意偏差：startProxy 用端口 0（OS 分配，test_claude_service 既有起代理用例
+// 同款）——不用 configuredProxyPort()（配置口径默认 8888，与生产/其他
+// worktree 并行测试撞端口）。headless 层钉的是 dispatch→seam 契约 + 真
+// service 可观察幂等语义；「真 main.cpp getClaudeService 被触发」不在
+// devdesk_tests 链接面（无 main.cpp），归 T3 app 级冒烟覆盖。
+// 进程全局态纪律：ClaudeService::setGlobal / 桥 handler / toast 都是进程级
+// ——RAII 守卫析构全还原（fail-fast 提前 return 也不泄漏）。
+namespace {
+
+std::unique_ptr<module::claude::ClaudeService> g_asmSvc;
+test_support::TestDb* g_asmDb = nullptr;  // 用例持有库，桩只借用
+int g_asmHandlerCalls = 0;
+bool g_asmLastAutoStart = false;
+int g_asmStartCalls = 0;  // startProxy 实际执行次数（幂等断言）
+bool g_asmStartOk = true; // handler 是 void 自由函数不能内嵌断言 → 落账本
+int g_asmSeamSeq = 0;     // seam 调用时序号（0 = 本用例未调）
+
+// 等价 main.cpp：assembleClaudeServiceNow（getClaudeService → 端口自读注入 →
+// recover）+ autoStart 分支（startClaudeProxy 的 isProxyRunning 早退语义照搬）
+void assemblyHandlerStub(bool autoStart) {
+    ++g_asmHandlerCalls;
+    g_asmLastAutoStart = autoStart;
+    g_asmSeamSeq = ++g_seqCounter;
+    if (g_asmSvc == nullptr) {
+        // getClaudeService static 守卫语义：重复调用返回同指针（这里用
+        // unique_ptr 空判等价表达），setGlobal 在创建时完成一次
+        g_asmSvc = std::make_unique<module::claude::ClaudeService>(
+            g_asmDb->handle(), "DevDeskTestClaudeService");
+        module::claude::ClaudeService::setGlobal(g_asmSvc.get());
+    }
+    // 端口自读：SettingsStore(::core::paths::configFile()).load()（与 main 的
+    // assembleClaudeServiceNow 同源；测试配置经 DEVDESK_CONFIG_PATH 隔离）
+    const module::settings::SettingsStore store(::core::paths::configFile());
+    const auto cfg = store.load();
+    g_asmSvc->setConfiguredProxyPort(cfg.proxyPort);
+    g_asmSvc->recoverPendingSettingsRestore();
+    if (autoStart && !g_asmSvc->isProxyRunning()) {
+        auto r = g_asmSvc->startProxy("127.0.0.1", 0);  // 端口 0 = OS 分配
+        ++g_asmStartCalls;
+        g_asmStartOk = r.isOk();
+    }
+}
+
+// 全局态还原守卫：析构 = stopProxy + setGlobal(原值) + handler 复位 nullptr +
+// clearAppNotice + 桩服务销毁（进程全局态全还原，含 fail-fast 早退路径）
+struct LazyAssemblyGuard {
+    LazyAssemblyGuard() = default;  // 声明 deleted 拷贝会抑制隐式默认构造，显式补回
+    module::claude::ClaudeService* prevGlobal =
+        module::claude::ClaudeService::global();
+    ~LazyAssemblyGuard() {
+        if (g_asmSvc && g_asmSvc->isProxyRunning()) {
+            g_asmSvc->stopProxy();
+        }
+        module::claude::ClaudeService::setGlobal(prevGlobal);
+        app::toggle::setClaudeAssemblyHandler(nullptr);
+        g_asmSvc.reset();
+        g_asmDb = nullptr;
+        app::clearAppNotice();
+    }
+    LazyAssemblyGuard(const LazyAssemblyGuard&) = delete;
+    LazyAssemblyGuard& operator=(const LazyAssemblyGuard&) = delete;
+};
+
+// 用例前置回厂（进程级账本清零；handler/服务由 LazyAssemblyGuard 兜底）
+void resetLazyAssemblyLedger() {
+    g_asmHandlerCalls = 0;
+    g_asmLastAutoStart = false;
+    g_asmStartCalls = 0;
+    g_asmStartOk = true;
+    g_asmSeamSeq = 0;
+    g_claudeStarts = 0;
+    g_claudeStops = 0;
+    g_claudeStartSeq = 0;
+    g_agentStarts = 0;
+    g_agentStops = 0;
+    g_seqCounter = 0;
+    app::clearAppNotice();
+}
+
+// 配置隔离：claude 门控关（enabledModules 不含 claude）+ autoStart 按用例给。
+// 返回 bool：DOCTEST_CHECK 宏含 `return false`，只能用在返回 bool 的函数里
+//（doctest.h 断言语义 #3）；断言由调用方（用例体）做
+bool writeLazyAssemblyConfig(const std::filesystem::path& cfgPath,
+                             bool autoStart) {
+    module::settings::SettingsConfig cfg;
+    cfg.enabledModules = {module::settings::kModuleIdHome,
+                          module::settings::kModuleIdMarkdown,
+                          module::settings::kModuleIdTodo,
+                          module::settings::kModuleIdSettings,
+                          module::settings::kModuleIdAgent};
+    cfg.claudeProxyAutoStart = autoStart;
+    return module::settings::SettingsStore(cfgPath).save(cfg).isOk();
+}
+
+} // namespace
+
+REGISTER_TEST(assembly_dispatch_claude_lazy_assemble_autostart,
+              "assembly: 会话内开 claude → dispatch on 先惰性装配真服务（global 非空+代理起+seam 序<onStart 序+重复 on 幂等+off/非 claude 不触缝）", {
+    resetLazyAssemblyLedger();
+    LazyAssemblyGuard guard;
+
+    test_support::ScopedConfigPath scoped(
+        test_support::tempConfigFile("assembly_lazy", "autostart"));
+    DOCTEST_CHECK(writeLazyAssemblyConfig(scoped.cfgPath, true));
+
+    test_support::TestDb asmDb("assembly_lazy", "autostart_db");
+    g_asmDb = &asmDb;
+    app::toggle::setClaudeAssemblyHandler(&assemblyHandlerStub);
+
+    ::core::Router router;
+    router.registerModule(&g_toggleHome);  // 生产形态：Home 恒注册
+
+    // on：dispatch → seam（惰性装配 + auto-start 会话内恢复）
+    app::assembly::dispatchModuleToggle(module::settings::kModuleIdClaudeProxy,
+                                        true, router, &toggleLookupStub);
+    auto* svc = module::claude::ClaudeService::global();
+    DOCTEST_CHECK(svc != nullptr);  // ① 装配完成（启动期关 → 会话内补装配）
+    DOCTEST_CHECK_EQ(g_asmHandlerCalls, 1);
+    DOCTEST_CHECK(g_asmLastAutoStart);
+    DOCTEST_CHECK(g_asmStartOk);
+    if (svc != nullptr) {
+        DOCTEST_CHECK(svc->isProxyRunning());  // ① autoStart=true → 代理已起
+        DOCTEST_CHECK(svc->proxyPort() > 0);
+    }
+    DOCTEST_CHECK(router.isRegistered(::core::PageId::ClaudeProxy));
+    DOCTEST_CHECK_EQ(g_claudeStarts, 1);
+    // ② 时序（Review Focus #2）：seam 调用严格先于桩模块 onStart
+    DOCTEST_CHECK(g_asmSeamSeq > 0);
+    DOCTEST_CHECK(g_claudeStartSeq > 0);
+    DOCTEST_CHECK(g_asmSeamSeq < g_claudeStartSeq);
+    const int firstPort = (svc != nullptr) ? svc->proxyPort() : 0;
+
+    // ③ 再拨 on → 幂等：同 svc 指针（static 守卫语义）+ 代理仍跑 + 同端口 +
+    //    startProxy 实际执行次数仍 == 1（无二次绑定副作用）
+    app::assembly::dispatchModuleToggle(module::settings::kModuleIdClaudeProxy,
+                                        true, router, &toggleLookupStub);
+    DOCTEST_CHECK_EQ(g_asmHandlerCalls, 2);
+    DOCTEST_CHECK(module::claude::ClaudeService::global() == svc);
+    if (svc != nullptr) {
+        DOCTEST_CHECK(svc->isProxyRunning());
+        DOCTEST_CHECK_EQ(svc->proxyPort(), firstPort);
+    }
+    DOCTEST_CHECK_EQ(g_asmStartCalls, 1);
+    DOCTEST_CHECK_EQ(g_claudeStarts, 2);
+
+    // ④ off → 不触 seam（off 路径零改动：service 进程级存活，off 不拆服务）
+    app::assembly::dispatchModuleToggle(module::settings::kModuleIdClaudeProxy,
+                                        false, router, &toggleLookupStub);
+    DOCTEST_CHECK_EQ(g_asmHandlerCalls, 2);
+    DOCTEST_CHECK_EQ(g_claudeStops, 1);
+
+    // ⑤ 非 claude id（agent）on → 不触缝
+    app::assembly::dispatchModuleToggle(module::settings::kModuleIdAgent, true,
+                                        router, &toggleLookupStub);
+    DOCTEST_CHECK_EQ(g_asmHandlerCalls, 2);
+    DOCTEST_CHECK_EQ(g_agentStarts, 1);
+    return true;
+})
+
+REGISTER_TEST(assembly_dispatch_claude_lazy_assemble_no_autostart,
+              "assembly: 会话内开 claude（autoStart=false）→ 只装配不起代理（global 非空 + isProxyRunning false）", {
+    resetLazyAssemblyLedger();
+    LazyAssemblyGuard guard;
+
+    test_support::ScopedConfigPath scoped(
+        test_support::tempConfigFile("assembly_lazy", "noautostart"));
+    DOCTEST_CHECK(writeLazyAssemblyConfig(scoped.cfgPath, false));
+
+    test_support::TestDb asmDb("assembly_lazy", "noautostart_db");
+    g_asmDb = &asmDb;
+    app::toggle::setClaudeAssemblyHandler(&assemblyHandlerStub);
+
+    ::core::Router router;
+    router.registerModule(&g_toggleHome);
+
+    app::assembly::dispatchModuleToggle(module::settings::kModuleIdClaudeProxy,
+                                        true, router, &toggleLookupStub);
+    auto* svc = module::claude::ClaudeService::global();
+    DOCTEST_CHECK(svc != nullptr);  // 已装配
+    DOCTEST_CHECK_EQ(g_asmHandlerCalls, 1);
+    DOCTEST_CHECK_FALSE(g_asmLastAutoStart);
+    DOCTEST_CHECK_EQ(g_asmStartCalls, 0);
+    if (svc != nullptr) {
+        DOCTEST_CHECK_FALSE(svc->isProxyRunning());  // 代理未起（Review Focus #5）
+        DOCTEST_CHECK_EQ(svc->proxyPort(), 0);
+    }
+    DOCTEST_CHECK_EQ(g_claudeStarts, 1);
+
+    // off → 不触缝
+    app::assembly::dispatchModuleToggle(module::settings::kModuleIdClaudeProxy,
+                                        false, router, &toggleLookupStub);
+    DOCTEST_CHECK_EQ(g_asmHandlerCalls, 1);
+    DOCTEST_CHECK_EQ(g_claudeStops, 1);
     return true;
 })

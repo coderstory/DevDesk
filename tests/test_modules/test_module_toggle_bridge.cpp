@@ -29,3 +29,29 @@ REGISTER_TEST(toggle_bridge_handler_roundtrip,
     DOCTEST_CHECK_EQ(g_rec.calls, 1);         // no-op 不再进 record
     return true;
 })
+
+// ---- 第二桥（2026-10-01 惰性装配计划 T1）：claude 惰性装配缝 ----
+// 同函数指针缝形态；复位纪律同行首注——每用例结束 setClaudeAssemblyHandler
+// (nullptr)，断言在复位前失败时后续用例首行 set 新 handler 覆盖。
+namespace {
+int g_asmCalls = 0;
+bool g_asmLastAutoStart = false;
+void recordAssembly(bool autoStart) {
+    g_asmCalls++;
+    g_asmLastAutoStart = autoStart;
+}
+} // namespace
+
+REGISTER_TEST(toggle_bridge_claude_assembly_seam,
+              "toggle_bridge: ensureClaudeServiceAssembled 缝注入/路由/复位；默认 no-op 不崩", {
+    g_asmCalls = 0;
+    g_asmLastAutoStart = false;
+    app::toggle::setClaudeAssemblyHandler(&recordAssembly);
+    app::toggle::ensureClaudeServiceAssembled(true);
+    DOCTEST_CHECK_EQ(g_asmCalls, 1);
+    DOCTEST_CHECK(g_asmLastAutoStart);
+    app::toggle::setClaudeAssemblyHandler(nullptr);   // 复位默认 no-op：不崩即通过
+    app::toggle::ensureClaudeServiceAssembled(false);
+    DOCTEST_CHECK_EQ(g_asmCalls, 1);          // no-op 不再进 record
+    return true;
+})

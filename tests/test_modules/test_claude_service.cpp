@@ -3538,3 +3538,38 @@ REGISTER_TEST(claude_service_resolve_model_slot,
     test_support::cleanupProfileKey(kTestKeychainService, p.value().id);
     return true;
 })
+
+// ---- 38. 退出时序：析构摘牌 global 单例（终审 2026-10-01 高 finding）----
+//
+// 场景=惰性装配反转 atexit LIFO：main.cpp 的 getClaudeService() 持有
+// static unique_ptr<ClaudeService>，会话内惰性装配路径下它构造在 armExitHook
+// 注册之后 → 退出时析构先于 exit hook，hook 里的模块 onStop（claude_module.cpp
+// 的 ClaudeService::global() 分支）读到的是已析构对象。契约：析构即摘牌，
+// global() 回 nullptr → onStop 走「未运行」分支，不悬垂读、不进 stopProxy。
+
+REGISTER_TEST(claude_service_destroy_clears_global,
+              "claude_service: 析构清 global 单例指针（退出时序 UAF 防护）", {
+    test_support::TestDb tdb(kDbPrefix, "global_clear");
+    {
+        module::claude::ClaudeService svc(tdb.handle(), kTestKeychainService);
+        module::claude::ClaudeService::setGlobal(&svc);
+        // 注册可见（非恒真断言：契约若退化成「setGlobal 不生效」本行先红）
+        DOCTEST_CHECK(module::claude::ClaudeService::global() == &svc);
+    }   // ← svc 析构（等价于退出时 unique_ptr 先析构、exit hook 的 onStop 后跑）
+    DOCTEST_CHECK(module::claude::ClaudeService::global() == nullptr);
+    return true;
+})
+
+// 守卫反向：`if (g == this)` 仅摘自己的牌——析构未注册对象不得误清别人的注册
+REGISTER_TEST(claude_service_destroy_keeps_other_global,
+              "claude_service: 析构未注册实例不动他人 global 注册（this 守卫）", {
+    test_support::TestDb tdb(kDbPrefix, "global_guard");
+    module::claude::ClaudeService registered(tdb.handle(), kTestKeychainService);
+    module::claude::ClaudeService::setGlobal(&registered);
+    {
+        module::claude::ClaudeService other(tdb.handle(), kTestKeychainService);
+    }   // other 析构：global 指向 registered，不该被清
+    DOCTEST_CHECK(module::claude::ClaudeService::global() == &registered);
+    module::claude::ClaudeService::setGlobal(nullptr);   // 用例内自清（同 resetCaseGlobals 口径）
+    return true;
+})

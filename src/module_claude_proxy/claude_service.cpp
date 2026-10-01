@@ -108,7 +108,20 @@ ClaudeService::ClaudeService(core::data::SqliteDb& db,
                                                : keychainService),
       proxyRuntime_(*this) {}
 
+// 全局单例指针（定义必须早于 ~ClaudeService：析构要在它身上摘牌，见下）
+namespace {
+    ClaudeService* g_globalClaudeService = nullptr;
+}
+
 ClaudeService::~ClaudeService() {
+    // 析构摘牌（终审 2026-10-01 高 finding：退出时序 UAF）。惰性装配路径
+    //（main.cpp 会话内拨开 claude）让 static unique_ptr<ClaudeService> 构造在
+    // armExitHook() 注册之后 → atexit LIFO：本析构先跑、exit hook 里的模块
+    // onStop 后跑。g_globalClaudeService 此前只写不清，onStop 经 global() 拿到
+    // 的就是已析构对象（悬垂读；isProxyRunning() 为真时还会 stopProxy() 写已
+    // 释放内存）。析构即摘牌 → onStop 拿到 nullptr，走「未运行」分支。
+    // `if (... == this)` 守卫：只摘自己那张牌，不误清他人注册。
+    if (g_globalClaudeService == this) g_globalClaudeService = nullptr;
     // 析构时确保停止代理（Server 析构会 join 线程）。审计 2026-09-23 [9]：
     // 与 stopProxy 同款顺序——先取消在途流，否则 ~Server 的 join 被阻塞在
     // readChunk 的 worker 卡住。R10-A3：停机序列已收进 ProxyRuntime::stop()
@@ -118,10 +131,6 @@ ClaudeService::~ClaudeService() {
 }
 
 // ---------- 全局单例 ----------
-
-namespace {
-    ClaudeService* g_globalClaudeService = nullptr;
-}
 
 void ClaudeService::setGlobal(ClaudeService* svc) { g_globalClaudeService = svc; }
 ClaudeService* ClaudeService::global() { return g_globalClaudeService; }

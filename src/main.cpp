@@ -131,6 +131,13 @@ void setupLogging() {
 // 结构上保证 ClaudeService 创建 + setGlobal 早于模块 onStart（W3 事故点）
 void prepareClaudeServiceBeforeModules();
 
+// 惰性装配单点（2026-10-01 计划 T1）：prepareClaudeServiceBeforeModules 与
+// 会话内开关（桥 ensureClaudeServiceAssembledImpl）共用；prepare 内部要调它，
+// 前向声明按上方同款模式提到定义之前（定义在 prepare 之后）
+void assembleClaudeServiceNow();
+// 桥真实现（定义在 prepare 之后）：getRouter() initialized 块注入其地址
+void ensureClaudeServiceAssembledImpl(bool autoStart);
+
 ::core::Router* getRouter() {
     static ::core::Router router;
     // 工厂 + 生命周期持有仍在本文件：静态对象必须构造在 armExitHook()（由
@@ -194,6 +201,12 @@ void prepareClaudeServiceBeforeModules();
                 app::assembly::dispatchModuleToggle(moduleId, on, *getRouter(),
                                                     moduleForPage);
             });
+        // 惰性装配桥注入（2026-10-01 计划 T1）：会话内拨 claude 开关 →
+        // dispatchModuleToggle on 路径 → app::toggle::ensureClaudeServiceAssembled
+        // → 这里（装配单例 + autoStart 才 startProxy）。实现是文件级静态函数
+        //（无捕获可转函数指针）。注册顺序在装配之后 = 运行期拨开关才会触达，
+        // 启动期行为零变化（同上方 setToggleHandler 既有口径）
+        app::toggle::setClaudeAssemblyHandler(&ensureClaudeServiceAssembledImpl);
         initialized = true;
     }
     return &router;
@@ -230,19 +243,28 @@ claudeProxyProvider() {
 }
 
 // ClaudeService 单例（ClaudeModule 通过 ClaudeService::global() 读状态）
-// 持有 Database 的 db() 引用；生命周期与 openAppDatabase() 一致
+// 持有 Database 的 db() 引用（db 引用本身由 openAppDatabase() 保证仍有效）
+//
+// 持有方式 = 永不析构的堆持有（2026-10-01 终审高 finding + 修复轮 2 根修）：
+// exit hook（app_assembly armExitHook → router->stopAll() → 模块 onStop →
+// stopProxy + syncRestore 还原 settings.json）**必须**看到活着的服务。原先的
+// static unique_ptr 在惰性装配路径下构造晚于 armExitHook 注册 → atexit LIFO
+// 让析构先跑，exit hook 只能见到悬垂指针（修复轮 1 摘牌后则直接跳过 →
+// settings.json 停在死代理上）。改堆持有后本对象与进程同寿，退出序列恒为
+// 「exit hook 先还原 → 进程结束（不析构服务）」。~ClaudeService 的摘牌逻辑
+// 保留（测试用栈上实例仍需要）。
 ::module::claude::ClaudeService* getClaudeService() {
-    static std::unique_ptr<::module::claude::ClaudeService> svc;
-    static bool initialized = false;
-    if (!initialized) {
+    // 故意泄漏（进程级单例，见上）：unique_ptr 对象本身在堆上，永不释放
+    static auto* holder = new std::unique_ptr<::module::claude::ClaudeService>();
+    if (!*holder) {
         auto& db = openAppDatabase();
-        svc = std::make_unique<::module::claude::ClaudeService>(db.db());
+        *holder = std::make_unique<::module::claude::ClaudeService>(db.db());
         // Claude Code settings.json 接管通道（provider-config Phase C）：
         // 路径注入在此一次性完成，startProxy/stopProxy/setActiveProfile 的
         // 接管/还原触发收在 service 层，UI 不感知
-        svc->setSettingsSyncPaths(
+        (*holder)->setSettingsSyncPaths(
             ::module::claude::settings_sync::defaultPaths());
-        ::module::claude::ClaudeService::setGlobal(svc.get());
+        ::module::claude::ClaudeService::setGlobal(holder->get());
         // R0 / 审计 D6：与 setGlobal 同一时刻把代理运行面注册进 core 只读服务
         // 定位器（设置页经它取，不再直呼 global()）。注册点选在此 =
         //「单例已创建 ⟺ 定位器可解析」，与解耦前「global() 非空」逐字对应；
@@ -250,9 +272,8 @@ claudeProxyProvider() {
         // 提前 return）→ 定位器保持未注册 = 解耦前的 global() == nullptr
         ::core::ServiceLocator::set<::core::IClaudeProxyService>(
             &claudeProxyProvider());
-        initialized = true;
     }
-    return svc.get();
+    return holder->get();
 }
 
 // 桌宠气泡内容源②（pet 设计 §4.5，审计 [18]）：跨模块逾期计数桥。
@@ -336,11 +357,35 @@ void prepareClaudeServiceBeforeModules() {
     const auto settingsCfg = settingsStore.load();
     if (!module::settings::moduleEnabled(
             settingsCfg, module::settings::kModuleIdClaudeProxy)) {
+        // 括号收在「不监听」后（不再把后半句一起裹进「端口 …」括注）：
+        // 收尾不再出现「（惰性装配）））」式双全角右括号叠 C++ 右括号（终审 2026-10-01）
         LOG_INFO("Claude 模块已关闭：代理/ClaudeService 整体下线（端口 " +
                  std::to_string(settingsCfg.proxyPort) +
-                 " 不监听；重新启用需改设置并重启）");
+                 " 不监听）；重新启用可在设置页开启，会话内即时生效（惰性装配）");
         return;
     }
+    // ClaudeService 创建 + Claude Code 接管通道注入 + 端口注入 + 崩溃补还原
+    // （2026-10-01 计划 T1：原 :344-359 段整段搬入 assembleClaudeServiceNow，
+    // 与会话内惰性装配共用单点；语义逐字不变）
+    assembleClaudeServiceNow();
+    // 硬性需求 1（provider-config Phase B）：代理默认不启动，
+    // claudeProxyAutoStart 门控；启动/停止按钮在 Claude 页
+    if (settingsCfg.claudeProxyAutoStart) {
+        startClaudeProxy();
+    } else {
+        LOG_INFO("Claude 代理未自动启动（claudeProxyAutoStart=false，"
+                 "可在设置页或 Claude 页手动启动）");
+    }
+}
+
+// 惰性装配单点（2026-10-01 计划 T1）：prepareClaudeServiceBeforeModules 的
+// :344-359 段逐字搬入，供「启动期门控开」与「会话内拨开关」两条路径共用。
+// 端口自读：函数内 SettingsStore(::core::paths::configFile()).load() 取
+// proxyPort，不依赖调用方传入（会话内路径没有现成的启动期配置可借）。
+// 幂等依据：getClaudeService 的 static 守卫（main.cpp:235-253）——重复调用 =
+// 返回同指针 + 重复 setConfiguredProxyPort / recover 均 no-op 安全
+//（recoverPendingSettingsRestore 无残留 sidecar 时即空操作）
+void assembleClaudeServiceNow() {
     // ClaudeService 创建 + Claude Code 接管通道注入（spec §10.4）。
     // ClaudeService 的创建 + setGlobal 在 getClaudeService() 内完成，模块
     // onStart 才能拿到非 null 的 global()——W3 修过的启动顺序不能因为
@@ -349,7 +394,9 @@ void prepareClaudeServiceBeforeModules() {
     // 配置端口注入（审计 [14]）：Claude 页手动启动 / 下方自启都经
     // service 的 configuredProxyPort 读值；设置页改端口时会再同步一次
     if (claudeSvc) {
-        claudeSvc->setConfiguredProxyPort(settingsCfg.proxyPort);
+        const module::settings::SettingsStore settingsStore(
+            ::core::paths::configFile());
+        claudeSvc->setConfiguredProxyPort(settingsStore.load().proxyPort);
     }
     // 崩溃补还原（provider-config Phase C §5.3）：上次异常退出时
     // sidecar 残留 → 先还原，且必须先于任何 startProxy（否则残留的
@@ -357,13 +404,17 @@ void prepareClaudeServiceBeforeModules() {
     if (claudeSvc) {
         claudeSvc->recoverPendingSettingsRestore();
     }
-    // 硬性需求 1（provider-config Phase B）：代理默认不启动，
-    // claudeProxyAutoStart 门控；启动/停止按钮在 Claude 页
-    if (settingsCfg.claudeProxyAutoStart) {
+}
+
+// 桥真实现（2026-10-01 计划 T1）：会话内惰性装配 + auto-start 会话内恢复。
+// 文件级静态函数（无捕获 → 可转函数指针）。startClaudeProxy 自身幂等
+//（isProxyRunning 早退，main.cpp:313-316）——重复 on 不二次 bind 端口。
+// autoStart=true 时 startProxy 用的端口来自 assembleClaudeServiceNow 刚注入的
+// configuredProxyPort（设置页现值）
+void ensureClaudeServiceAssembledImpl(bool autoStart) {
+    assembleClaudeServiceNow();
+    if (autoStart) {
         startClaudeProxy();
-    } else {
-        LOG_INFO("Claude 代理未自动启动（claudeProxyAutoStart=false，"
-                 "可在设置页或 Claude 页手动启动）");
     }
 }
 
