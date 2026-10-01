@@ -204,7 +204,7 @@ void ensureClaudeServiceAssembledImpl(bool autoStart);
         // 惰性装配桥注入（2026-10-01 计划 T1）：会话内拨 claude 开关 →
         // dispatchModuleToggle on 路径 → app::toggle::ensureClaudeServiceAssembled
         // → 这里（装配单例 + autoStart 才 startProxy）。实现是**文件作用域
-        // 函数**——定义在本文件匿名命名空间内（:45 `namespace {` … :565），
+        // 函数**——定义在本文件匿名命名空间内（:45 `namespace {` … :568），
         // internal linkage，别的 TU 看不见（审计 ARCH-08 记的「外部链接」前提
         // 不成立，此处按实际形态记述；与「文件级 static」效果等价，故原注释
         // 只是措辞不精确）。无捕获 → 可转函数指针注入；目标静态存储期 ≥ 进程
