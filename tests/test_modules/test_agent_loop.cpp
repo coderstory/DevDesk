@@ -447,6 +447,56 @@ REGISTER_TEST(agent_loop_cancel_stops_second_round, "agent_loop: cancel 置位 �
     return true;
 })
 
+// M2 静态审计 F1（high）第二道闸：工具回喂文本是**任意字节**来源——文件原文
+// （md.read 修复前的形状）与拼进错误消息的文件路径都可能带非法 UTF-8。
+// platform::json 的 stringify 放行非法字节、parse 拒绝 ⇒ 修复前
+// makeTextContent 的 parseArrayOrDie 自检判 fail → LOG_FATAL + std::abort
+// ⇒ **整个进程死亡**（不再是单 run 失败）。本用例从 AgentLoop 入口钉死这条
+// 路径：非法字节 → 清洗成 U+FFFD 后照常回喂，run 正常收尾。
+// 注意自检**不降级**：parseArrayOrDie 原样保留（它守的是「拼装层自身的
+// 结构错误」，与本条无关）；这里动的是「进入拼装层之前的文本归一化」。
+// 红（修复前）：本用例直接 std::abort（进程 SIGABRT，后续用例不再执行）；
+// 绿（修复后）：run completed，回喂文本良构且含替换字符 U+FFFD。
+REGISTER_TEST(agent_loop_tool_result_invalid_utf8_sanitized,
+              "agent_loop: 工具回非 UTF-8 文本 → U+FFFD 清洗回喂（不 abort 整进程）", {
+    Fixture fx;
+    FakeTool tool("t.binary");
+    ToolReg reg0(fx.tools, &tool);
+    DOCTEST_REQUIRE(reg0.ok());
+    AgentTask task;
+    DOCTEST_REQUIRE(setupTask(fx, task, "读二进制", 10, false));
+
+    // 工具回**裸文本**（非 JSON 原文，toolResultText 的第三条分支）且带 GBK
+    // 字节：D6 D0 CE C4 —— 修复前原样进 makeTextContent → 自检 abort
+    tool.resultJson = std::string("\xD6\xD0\xCE\xC4 binary");
+    fx.llm.script = {
+        toolUseResp("tu1", "t.binary"),
+        resp(R"([{"type":"text","text":"收到"}])", "end_turn"),
+    };
+    std::atomic<bool> cancel{false};
+    auto runId = fx.loop.run(task, cancel);      // 修复前：std::abort 在此
+    DOCTEST_REQUIRE(runId.isOk());
+    DOCTEST_REQUIRE_EQ(fx.llm.sentMessages.size(), 2u);
+
+    const std::string& fed = fx.llm.sentMessages[1][2].contentJson;
+    // 回喂块自身是良构 JSON（能解析 = 无非法 UTF-8 字节）
+    DOCTEST_CHECK(platform::json::parse(fed).isOk());
+    const std::string text = toolResultText(fed, 0);
+    DOCTEST_CHECK(text.find("\xEF\xBF\xBD") != std::string::npos);   // U+FFFD
+    DOCTEST_CHECK(text.find(std::string("\xD6\xD0", 2)) == std::string::npos);
+    DOCTEST_CHECK(text.find("binary") != std::string::npos);  // 可读部分保真
+
+    // 全部落库消息同样良构（落库与回喂同源，避免「库里的消息以后重放会炸」）
+    auto msgs = fx.store.listMessages(runId.value());
+    DOCTEST_REQUIRE(msgs.isOk());
+    for (const auto& m : msgs.value())
+        DOCTEST_CHECK(platform::json::parse(m.contentJson).isOk());
+    AgentRunRow row;
+    DOCTEST_REQUIRE(onlyRun(fx, task, row));
+    DOCTEST_CHECK_EQ(row.status, std::string("completed"));   // 不是 failed/abort
+    return true;
+})
+
 // ===== Task 5 携带裁定 =====
 
 // 裁定 1：contentJson 解析成 JSON **字符串**时，text 块用该字符串的值原样

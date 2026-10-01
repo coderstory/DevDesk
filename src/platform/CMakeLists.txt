@@ -2,6 +2,7 @@ add_library(devdesk_platform STATIC
     http_client.cpp
     http_server.cpp
     json.cpp
+    utf8.cpp                            # UTF-8 良构校验/清洗（M2 审计 F1：跨模块纯函数）
     file_open_common.cpp
     terminal_launch_common.cpp          # 跨平台纯函数（三支之外，无条件编译）
 )

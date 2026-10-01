@@ -18,6 +18,7 @@
 
 #include "core/logging.h"
 #include "platform/json.h"
+#include "platform/utf8.h"
 
 #include <filesystem>
 #include <string>
@@ -157,6 +158,21 @@ public:
         auto content = svc_.read(std::filesystem::path(path));
         if (content.isFail()) {
             return toolError("读取笔记失败: " + content.errorMessage());
+        }
+
+        // M2 静态审计 F1（high）：本工具是唯一回「文件原文」的工具，而
+        // platform::json 的 stringify 放行非法字节、parse 严格拒绝 → 非 UTF-8
+        // 笔记（GBK/Latin-1/二进制）走到 AgentLoop 的 parseArrayOrDie 自检会
+        // LOG_FATAL + std::abort（**整应用死**，M2 起还会发生在无人值守的
+        // cron run 里）。在工具边界拦下：非法 → 既有 toolError 通道回喂 LLM。
+        // 选择「显式失败」而非「替换字符后照常回喂」的理由：回喂乱码有被
+        // md.update 原样写回、把用户笔记彻底毁掉的风险；而失败是可行动的
+        // （模型可以告知用户另存为 UTF-8），且磁盘上的原笔记一字不动。
+        if (!platform::utf8::isValid(content.value())) {
+            LOG_WARN("md.read: 笔记不是合法 UTF-8，拒绝回喂（path=" + path + "）");
+            return toolError(
+                "笔记不是 UTF-8 编码（GBK/Latin-1/二进制等），无法作为文本读取；"
+                "请先用编辑器另存为 UTF-8 后重试");
         }
 
         pj::JsonObject o;

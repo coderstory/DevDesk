@@ -16,6 +16,7 @@
 #include "core/logging.h"
 #include "module_agent/agent_store.h"
 #include "platform/json.h"
+#include "platform/utf8.h"
 
 namespace module::agent {
 namespace {
@@ -81,7 +82,15 @@ std::string strField(const platform::json::JsonObject& obj, const char* key) {
 //   - 其他形状（对象/数组/数字/布尔）→ stringify(值)（对象是 M2 主流形状）
 //   - 解析失败（非 JSON 原文，如工具异常消息）→ 原文直接当文本，不再套引号
 //   - 空 contentJson → 空串（parse("") 返回 ok(null)，不特判就回喂 "null"）
-// 之后再按 kMaxToolResultBytes 截断。
+// 最后做一次 UTF-8 归一（清洗），再按 kMaxToolResultBytes 截断。
+//
+// M2 静态审计 F1（high）：工具文本是**任意字节**来源（文件原文 / 拼进错误
+// 消息的文件路径）。platform::json 的 stringify 放行非法 UTF-8
+//（YYJSON_WRITE_ALLOW_INVALID_UNICODE）而 parse 严格拒绝 → 非法字节会一路走到
+// makeTextContent 的 parseArrayOrDie 自检并 LOG_FATAL + std::abort（整进程死）。
+// 在**进入拼装层之前**把文本归一成良构 UTF-8（非法字节 → U+FFFD）后，这条
+// abort 路径从工具输出不可达；parseArrayOrDie 本身**原样保留**——它守的是
+// 「拼装层自身的结构错误」，那道自检不因本改动而放宽。
 std::string toolResultText(const std::string& contentJson) {
     std::string text;
     if (!contentJson.empty()) {
@@ -98,6 +107,11 @@ std::string toolResultText(const std::string& contentJson) {
         } else {
             text = contentJson;                          // 非 JSON 原文，原样回喂
         }
+    }
+    if (!platform::utf8::isValid(text)) {
+        LOG_WARN("AgentLoop: 工具文本含非法 UTF-8 字节，已替换为 U+FFFD 后回喂（" +
+                 std::to_string(text.size()) + " 字节）");
+        text = platform::utf8::sanitize(text);
     }
     if (text.size() > kMaxToolResultBytes) {
         // 按字节截断：切点可能落在多字节 UTF-8 字符中间 → 回退到字符边界，
