@@ -150,4 +150,26 @@ void navigateFromTray(::core::Router* router, ::core::PageId page);
 bool dispatchTrayNavigation(::core::tray::TrayMenuAction action,
                             ::core::Router& router);
 
+// ---- 模块开关即时生效（活门控 live-toggle；Task 2 桥 app::toggle 的执行体）----
+
+// 模块实例查找缝：PageId → 模块对象指针（生产 = main.cpp getRouter 的
+// moduleForPage 语义；表新增页不在持有集 → nullptr 容错）。函数指针形态与
+// app::toggle::ToggleHandler 的无捕获约束同构——handler 与 lookup 都不带状态
+using ModuleLookup = ::core::Module* (*)(::core::PageId page);
+
+// 模块开关即时生效执行体（settings 页拨开关 → persist → app::toggle 桥 → 这里）：
+//   on  = registerModule → onStart（gatingKey 现查注册表，与设置页谓词双保险；
+//         顺序同装配段 registerAll → startAll）
+//   off = onStop 先行（运行线程在 onStop 内 join，页消失前收束——T12 时序契约）
+//         → unregisterModule；若 router 当前页 == 该页 → navigateTo(Home)
+//         + showAppNotice("模块已关闭", "<shortName> 已关闭，已返回首页")
+//         （shortName 取注册表静态列，关闭态无活实例也可取——同
+//         trayPageDisplayName 的单源口径）
+// moduleId 不在表内 / 命中行无 gatingKey（home/settings/about 恒开）→
+// LOG_WARN + no-op（对恒开模块拨开关是配置层 no-op，不动生命周期）
+// 本函数不读 config.json：使能判定已由 settings 侧完成，这里只执行注册表
+// 与生命周期动作；router / lookup 注入（生产 = main.cpp 装配段，测试 = 桩）
+void dispatchModuleToggle(const std::string& moduleId, bool on,
+                          ::core::Router& router, ModuleLookup lookup);
+
 } // namespace app::assembly

@@ -249,4 +249,37 @@ void navigateFromTray(::core::Router* router, ::core::PageId page) {
     app::requestUpdate();
 }
 
+void dispatchModuleToggle(const std::string& moduleId, bool on,
+                          ::core::Router& router, ModuleLookup lookup) {
+    for (const auto& e : ::app::registry::kModuleRegistry) {
+        if (e.gatingKey == nullptr || moduleId != e.gatingKey) {
+            continue;  // 恒开行不参与拨开关；其余行键不匹配继续找
+        }
+        ::core::Module* mod = lookup(e.page);
+        if (mod == nullptr) {
+            LOG_WARN("模块开关: " + moduleId + " 无实例，跳过即时生效");
+            return;
+        }
+        if (on) {
+            router.registerModule(mod);  // 幂等（重复注册 = no-op，Task 1）
+            mod->onStart();
+        } else {
+            // 先停后注销（D-1）：运行线程在 onStop 内 join，页消失前收束
+            mod->onStop();
+            router.unregisterModule(mod);
+            // 当前页被注销 → 回首页 + toast。isRegistered(Home) 是防御分支
+            //（Home 恒注册，navigateTo 兜底同款口径），用 router 实例查询
+            if (router.currentPage() == e.page &&
+                router.isRegistered(::core::PageId::Home)) {
+                router.navigateTo(::core::PageId::Home);
+                app::showAppNotice("模块已关闭",
+                                   std::string(e.shortName) +
+                                       " 已关闭，已返回首页");
+            }
+        }
+        return;
+    }
+    LOG_WARN("模块开关: 未知或恒开模块 " + moduleId + "，忽略");
+}
+
 } // namespace app::assembly

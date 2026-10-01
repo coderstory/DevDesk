@@ -16,6 +16,7 @@
 #include "test_support.h"
 
 #include "app_assembly.h"
+#include "app_sidebar.h"  // app::showAppNotice / appNotice*（D-1 toast 断言）
 #include "settings_config.h"
 
 #include "core/module_interface.h"
@@ -648,5 +649,107 @@ REGISTER_TEST(assembly_maybe_start_pet_gated,
         [&](const module::pet::PetConfig&) { ++startCalls; });
     DOCTEST_CHECK_EQ(loadCalls, 0);
     DOCTEST_CHECK_EQ(startCalls, 0);
+    return true;
+})
+
+// ---- 活门控（live-toggle）dispatchModuleToggle：计数桩 + 查找缝 ----
+// ModuleLookup 是裸函数指针（无捕获约束）→ 桩与计数走文件级静态、自由函数
+// 直接引用（形态同 test_module_toggle_bridge 的 record 桩）。用例开头回厂
+// 计数与 toast 状态（进程级，fail-fast 提前 return 也不污染后续用例）。
+namespace {
+
+int g_agentStarts = 0;
+int g_agentStops = 0;
+int g_homeStarts = 0;
+int g_homeStops = 0;
+
+class ToggleCountModule : public ::core::Module {
+public:
+    ToggleCountModule(::core::PageId page, std::string name, int* starts,
+                      int* stops)
+        : page_(page), name_(std::move(name)), starts_(starts), stops_(stops) {}
+    ::core::PageId pageId() const override { return page_; }
+    std::string displayName() const override { return name_; }
+    std::string iconGlyph() const override { return "•"; }
+    void compose(eui::Ui&, const eui::Screen&) override {}
+    void onStart() override { ++*starts_; }
+    void onStop() override { ++*stops_; }
+
+private:
+    ::core::PageId page_;
+    std::string name_;
+    int* starts_;
+    int* stops_;
+};
+
+ToggleCountModule g_toggleAgent{::core::PageId::Agent, "agent",
+                                &g_agentStarts, &g_agentStops};
+ToggleCountModule g_toggleHome{::core::PageId::Home, "home", &g_homeStarts,
+                               &g_homeStops};
+
+// Agent 映桩对象、其余 nullptr（生产 = main.cpp getRouter 的 moduleForPage 语义）
+::core::Module* toggleLookupStub(::core::PageId page) {
+    return page == ::core::PageId::Agent ? &g_toggleAgent : nullptr;
+}
+
+} // namespace
+
+REGISTER_TEST(assembly_dispatch_module_toggle_lifecycle,
+              "assembly: dispatchModuleToggle on/off 驱动注册与生命周期（off 当前页重定向 Home + toast + 恒开/未知 no-op）", {
+    g_agentStarts = 0;
+    g_agentStops = 0;
+    g_homeStarts = 0;
+    g_homeStops = 0;
+    app::clearAppNotice();  // 进程级 toast 回厂（本用例只认自己触发的通知）
+
+    ::core::Router router;
+    // 生产形态：Home 恒注册（导航兜底与 D-1 重定向 guard 都依赖它）
+    router.registerModule(&g_toggleHome);
+
+    // on：注册 + onStart
+    app::assembly::dispatchModuleToggle(module::settings::kModuleIdAgent, true,
+                                        router, &toggleLookupStub);
+    DOCTEST_CHECK(router.isRegistered(::core::PageId::Agent));
+    DOCTEST_CHECK_EQ(g_agentStarts, 1);
+    DOCTEST_CHECK_EQ(g_agentStops, 0);
+
+    // off：onStop 先行 + 注销（当前页 Home ≠ Agent → 不重定向、无 toast）
+    app::assembly::dispatchModuleToggle(module::settings::kModuleIdAgent, false,
+                                        router, &toggleLookupStub);
+    DOCTEST_CHECK_FALSE(router.isRegistered(::core::PageId::Agent));
+    DOCTEST_CHECK_EQ(g_agentStops, 1);
+    DOCTEST_CHECK_FALSE(app::appNoticeVisible());
+
+    // 再开 → 把 Agent 设为当前页 → 再关 → D-1 重定向 Home + toast
+    app::assembly::dispatchModuleToggle(module::settings::kModuleIdAgent, true,
+                                        router, &toggleLookupStub);
+    DOCTEST_CHECK_EQ(g_agentStarts, 2);
+    router.navigateTo(::core::PageId::Agent);
+    DOCTEST_CHECK_EQ(router.currentPage(), ::core::PageId::Agent);
+    app::assembly::dispatchModuleToggle(module::settings::kModuleIdAgent, false,
+                                        router, &toggleLookupStub);
+    DOCTEST_CHECK_EQ(g_agentStops, 2);
+    DOCTEST_CHECK_EQ(router.currentPage(), ::core::PageId::Home);
+    // toast 文案：shortName 取自注册表静态列（不依赖活实例），锁 D-1 反馈
+    DOCTEST_CHECK(app::appNoticeVisible());
+    DOCTEST_CHECK_EQ(app::appNoticeTitle(), std::string("模块已关闭"));
+    DOCTEST_CHECK_EQ(app::appNoticeMessage(),
+                     std::string("智能体 已关闭，已返回首页"));
+
+    // 恒开模块（home 行 gatingKey==nullptr）→ no-op：计数不动、Home 不动
+    app::assembly::dispatchModuleToggle(module::settings::kModuleIdHome, true,
+                                        router, &toggleLookupStub);
+    DOCTEST_CHECK_EQ(g_homeStarts, 0);
+    DOCTEST_CHECK_EQ(g_homeStops, 0);
+    DOCTEST_CHECK_EQ(g_agentStarts, 2);
+    DOCTEST_CHECK(router.isRegistered(::core::PageId::Home));
+
+    // 未知 moduleId → no-op（WARN 分支）
+    app::assembly::dispatchModuleToggle("no_such_module", true, router,
+                                        &toggleLookupStub);
+    DOCTEST_CHECK_EQ(g_agentStarts, 2);
+    DOCTEST_CHECK_EQ(g_agentStops, 2);
+
+    app::clearAppNotice();  // 收尾回厂，不留给后续用例
     return true;
 })
