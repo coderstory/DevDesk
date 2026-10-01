@@ -13,7 +13,7 @@
 ## Global Constraints
 
 - **不抛异常**：错误一律 `core::Result<T>`；module_settings 不 include 兄弟模块头（本计划不触碰 settings 模块源码，隔离守卫必须保持全绿）。
-- **启动期契约零变化**：`prepareClaudeServiceBeforeModules` 重构后外部可观察行为逐字不变——gate 不过 = 不创建 service / 不 bind 端口（LOG_INFO 原文保留）；`claudeProxyAutoStart=false` = 不 startProxy（LOG_INFO 原文保留）。preStart 时序（assemble 早于模块 onStart，W3 事故点）不得回退。
+- **启动期契约零变化**：`prepareClaudeServiceBeforeModules` 重构后外部可观察行为逐字不变——gate 不过 = 不创建 service / 不 bind 端口（gate LOG_INFO 文案按下方 T1 修订更新——「需重启」话术随惰性装配失效）；`claudeProxyAutoStart=false` = 不 startProxy（LOG_INFO 原文保留）。preStart 时序（assemble 早于模块 onStart，W3 事故点）不得回退。
 - **桥实现必须走缝，不许直接定义在 main.cpp**：app_assembly.cpp 被三处链接（DevDesk exe / devdesk_tests，tests/CMakeLists.txt:4；module_toggle_sidebar_probe，tests/CMakeLists.txt:190），**三处都不链 main.cpp**——dispatchModuleToggle 若直呼 main.cpp 符号 = 测试与 probe 链接即炸。新桥函数照 `setToggleHandler` 模式：声明在 `module_toggle_bridge.h`、缝落 `module_toggle_bridge.cpp`（默认 no-op + LOG_WARN）、真实现由 main.cpp 文件级函数经 setter 注入。
 - **Router 既有语义**：幂等 no-op 分支（router.cpp:14-16）保留；`stopAll` 按注册序的 UAF 前提（555a728）在新插入序下仍成立——表序 Todo(2) < Agent(5)，todo/markdown 先于 agent 的既有保证不弱化；`navigateTo` 回退、`isRegistered`、`unregisterModule` 不动。
 - **core 层零 app 依赖**：registerModule 的插入比较只准用 `Module::pageId()`（module_interface.h header-only 透传），不得引入 registry / settings 头。
@@ -117,6 +117,8 @@ if (on) {
 
 - **claude_module.cpp 注释口径修正（零行为）**：:123-126 的「真修 = 惰性创建服务，越界记 backlog」改为「真修 = 惰性装配（2026-10-01 计划 T1）已落地：dispatch on 路径先装配服务，本分支理论不可达，保留为防御（零成本）」；toast 文案与 `serviceNotReadyWarned_` 逻辑**逐字不动**（防御分支保留）。
 
+- **main.cpp gate 日志文案修正（零行为）**：:339-342 的「重新启用需改设置并重启」改为「重新启用可在设置页开启，会话内即时生效（惰性装配）」——纯文案，gate 行为（不创建 service / 不 bind）逐字不变。
+
 - [ ] **Step 1: 写失败测试**（两条腿）：
 
   1a. `tests/test_modules/test_module_toggle_bridge.cpp` 追加（照文件内 `toggle_bridge_handler_roundtrip` 既有形态 + 收尾复位纪律）：
@@ -163,8 +165,8 @@ if (on) {
 
   （注：main.cpp 的 static unique_ptr 持有段不在 devdesk_tests 链接面（无 main.cpp），「真 getClaudeService 被触发」只能在 T3 的 app 级冒烟覆盖；headless 层钉的是 dispatch→seam 契约 + 真 service 的可观察幂等语义——控制器验收项 1 的「以 service 可观察面为准」按此落。）
 
-- [ ] **Step 2: 红**（ensureClaudeServiceAssembled/setClaudeAssemblyHandler 不存在 → 编译失败即 RED 证据；1b 两条用例在接线前 = seam 未触发断言红）
-- [ ] **Step 3: 实现**——module_toggle_bridge.h/.cpp 缝 → main.cpp 拆函数 + 注入 → app_assembly.cpp 接线 → claude_module.cpp 注释修正（按 Interfaces 各代码块）
+- [ ] **Step 2: 红（两段红口径，消解与 Review Focus #1 的措辞冲突）**：先只落 module_toggle_bridge.h/.cpp 的缝声明（默认 no-op）→ 编译通过、1a/1b 断言红（seam 未接线 = dispatch 不触发 handler / 服务未装配）；接线后补验幂等断言（用例一断言 3）。链接错误不是 RED 证据——Review Focus #1 以断言红为准。
+- [ ] **Step 3: 实现**——module_toggle_bridge.h/.cpp 缝 → main.cpp 拆函数 + 注入 → app_assembly.cpp 接线 → claude_module.cpp 注释修正 → main.cpp gate 日志文案（本 bullet）（按 Interfaces 各代码块）
 - [ ] **Step 4: 绿** + 定向（`./build/tests/devdesk_tests toggle_bridge` / `devdesk_tests dispatch` / `devdesk_tests claude`）+ 全量（启动契约用例零回归）+ `bash scripts/check-module-isolation.sh`
 - [ ] **Step 5: Commit** `feat(claude): 惰性装配 + auto-start 会话内恢复（第二桥函数 + dispatch 接线）`
 
@@ -249,7 +251,7 @@ if (on) {
 - [ ] **Step 3: 隔离守卫**：`bash scripts/check-module-isolation.sh` 退出码 0（settings 模块本计划零改动，必须保持）
 - [ ] **Step 4: 启动契约复核**：test_app_assembly 的 buildGatedEntries 系列 + test_module_gating 全绿零改动
 - [ ] **Step 5: app 级冒烟（真 getClaudeService 链路，headless 测不到的那段）**：隔离 `DEVDESK_DATA_ROOT` 启动（禁碰用户真实数据根与 `/Applications/DevDesk.app`，禁 `pkill -f DevDesk`）——配置写入「claude 关 + claudeProxyAutoStart=true」→ 启动确认 8888 未监听、`Claude 模块已关闭` LOG → 设置页拨 claude 开 → 确认代理起（LOG「Claude 代理已在运行/startProxy 成功」）+ Claude 页可用（不再是死页 toast）→ off→on→on 连拨无重复绑定报错
-- [ ] **Step 6: CHANGELOG**：根目录 `CHANGELOG.md` 追加条目（惰性装配 + auto-start 会话内恢复 + 侧边栏表序插入）；grep `docs/KNOWN_LIMITATIONS.md` 若登记过「模块开关 claude 需重启」类条目则同步更新
+- [ ] **Step 6: CHANGELOG**：根目录 `CHANGELOG.md` 追加条目（惰性装配 + auto-start 会话内恢复 + 侧边栏表序插入）；`docs/KNOWN_LIMITATIONS.md` 经审计确认不存在（2026-10-01 实查），无登记项需同步——仅更新 CHANGELOG.md
 - [ ] **Step 7: 汇报** Total/Passed 对比基线 + 冒烟截图路径；合并与安装到 `/Applications/DevDesk.app` 由主会话执行（四律阶段 5，不在本任务内）
 
 ## Self-Review 记录
@@ -267,3 +269,4 @@ if (on) {
 3. 控制器所指「tests/test_app_sidebar.cpp 新用例『Agent 回末位』（约 :1593）」——**该路径不存在**（实为 `tests/test_modules/test_app_sidebar.cpp`，且无同名既有用例、无 :1593 区域）；T2 按「新建该语义用例」落。
 4. 「新桥函数由 main.cpp 文件级实现」按链接面实况收窄为：**缝落 module_toggle_bridge.cpp（默认 no-op + setter），真实现是 main.cpp 文件级函数经 setter 注入**——app_assembly.cpp 被 devdesk_tests（tests/CMakeLists.txt:4）与 module_toggle_sidebar_probe（:190）链接且都不链 main.cpp，直呼 main.cpp 符号即链接失败。与「照 module_toggle_bridge.h 既有模式」的裁定一致（既有缝就是 setter 模式，实现 TU 是 module_toggle_bridge.cpp 而非 app_assembly.cpp）。
 5. 验收项 1 的端到端断言（dispatch → global() 非空 + isProxyRunning）在 headless 层以「seam 注入真 ClaudeService handler」达成；main.cpp 的 static unique_ptr 持有段不在测试链接面，由 T3 Step 5 app 级冒烟补盖。
+6. 方案独立审计（2026-10-01，dev `1e676fb`）裁定**可执行**，3 点修订已并入（gate 日志话术 / 两段红口径 / KNOWN_LIMITATIONS 引用）；审计确认幂等语义、链接面、表序插入对 stopAll 影响方向均与实况吻合。
