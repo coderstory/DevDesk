@@ -273,3 +273,46 @@ REGISTER_TEST(md_module_onstart_reentry_idempotent,
     DOCTEST_CHECK(core::ToolRegistry::instance().find("md.search").isFail());
     return true;
 })
+
+// ============ M2 Task 7：md.create / md.list_tags / md.delete ============
+
+// 三工具一轮闭环（spec §5.3 / §7）：
+//   md.create    写但可逆——已存在拒绝覆盖（不静默改写用户笔记）；
+//   md.list_tags 只读——{tags:[{name,noteCount}]}；
+//   md.delete    破坏性——isDestructive()=true（AgentLoop 未授权时直接终止
+//                run）+ 越界路径经 service resolve containment 拒绝。
+REGISTER_TEST(md_create_list_tags_delete_roundtrip,
+              "md_tools: md.create 建笔记（拒绝覆盖）、md.list_tags 统计、md.delete 破坏性删除", {
+    ToolEnv env("m2create");
+    env.tools->registerAll();
+    // create：成功 + 重复拒绝
+    auto made = runTool("md.create", R"({"path":"notes/m2.md","content":"# M2\n正文"})");
+    DOCTEST_REQUIRE(made.isOk());
+    DOCTEST_CHECK_FALSE(made.value().isError);
+    auto dup = runTool("md.create", R"({"path":"notes/m2.md","content":"再写"})");
+    DOCTEST_REQUIRE(dup.isOk());
+    DOCTEST_CHECK(dup.value().isError);                      // 已存在 → isError 回喂
+    auto readBack = runTool("md.read", R"({"path":"notes/m2.md"})");
+    DOCTEST_REQUIRE(readBack.isOk());
+    DOCTEST_CHECK(readBack.value().contentJson.find("正文") != std::string::npos);
+    // list_tags：给 m2.md 打 tag 后统计（经 service setTags）
+    DOCTEST_REQUIRE(env.svc->setTags(std::filesystem::path("notes/m2.md"),
+                                     {"alpha"}).isOk());
+    auto tags = runTool("md.list_tags", "{}");
+    DOCTEST_REQUIRE(tags.isOk());
+    DOCTEST_CHECK_FALSE(tags.value().isError);
+    DOCTEST_CHECK(tags.value().contentJson.find("\"name\":\"alpha\"") != std::string::npos);
+    // delete：破坏性标志 + 删除生效 + 越界路径拒绝
+    auto delTool = core::ToolRegistry::instance().find("md.delete");
+    DOCTEST_REQUIRE(delTool.isOk());
+    DOCTEST_CHECK(delTool.value()->isDestructive());
+    auto gone = runTool("md.delete", R"({"path":"notes/m2.md"})");
+    DOCTEST_REQUIRE(gone.isOk());
+    DOCTEST_CHECK_FALSE(gone.value().isError);
+    auto after = env.svc->read(std::filesystem::path("notes/m2.md"));
+    DOCTEST_CHECK(after.isFail());                           // 磁盘已删
+    auto escape = runTool("md.delete", R"({"path":"../../etc/passwd"})");
+    DOCTEST_REQUIRE(escape.isOk());
+    DOCTEST_CHECK(escape.value().isError);                   // resolve 拒绝越界
+    return true;
+})
