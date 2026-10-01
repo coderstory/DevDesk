@@ -243,9 +243,12 @@ void navigateFromTray(::core::Router* router, ::core::PageId page) {
     }
     router->navigateTo(::core::PageId::Home);
     app::requestShow();
+    // 活门控（Task 5 fix 轮 [2]）：与设置卡/开关即时生效同口径——去掉旧
+    // 「重启后生效」字样，保留启用入口指引
     app::showAppNotice("模块已关闭",
                        std::string("「") + trayPageDisplayName(page) +
-                           "」模块未启用，已转到首页。可在 设置 → 模块开关 中启用，重启后生效。");
+                           "」模块未启用，已转到首页。可在 设置 → 模块开关 "
+                           "中即时启用。");
     app::requestUpdate();
 }
 

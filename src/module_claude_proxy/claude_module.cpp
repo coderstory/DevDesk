@@ -120,6 +120,15 @@ public:
             profilesError = "服务未就绪（ClaudeService 未注册）";
             callsError = "服务未就绪（ClaudeService 未注册）";
             state_.list.dataDirty_ = true;   // 服务未就绪查不了，保持脏等下帧
+            // 活门控死页缓解（Task 5 fix 轮 [3]）：启动期关 → 会话内开的
+            // Claude 页没有代理服务，只有错误态文案解释不了「开了也没代理」。
+            // 补一次 toast 说明（compose 每帧走这里 → 状态位只发一次，不重置
+            // 不刷屏；真修 = 惰性创建服务，越界记 backlog）
+            if (!serviceNotReadyWarned_) {
+                showToast("Claude 服务未装配",
+                          "本会话内开启的模块需重启后才能提供代理服务", true);
+                serviceNotReadyWarned_ = true;
+            }
         } else {
             refreshDataCache(state_.list, svc);
             profiles = state_.list.cachedProfiles_;
@@ -779,6 +788,11 @@ private:
 
     // Toast（状态位 + 绘制接线统一走 ui_kit，任务 D / R1）
     ui_kit::ToastState toast_;
+
+    // 「服务未就绪」toast 只发一次的门（活门控死页缓解）：compose 每帧检测
+    // ClaudeService 缺位，置位后本实例生命周期内不再重复弹（同 proxyEverSeen_
+    // 的「内存态一次性」口径，不落盘）
+    bool serviceNotReadyWarned_ = false;
 
     // 测试连通后台线程（结果经 testDone_ 原子标志回 compose 收割；
     // 普通成员的发布顺序由 release/acquire + join 保证）

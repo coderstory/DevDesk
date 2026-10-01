@@ -157,6 +157,17 @@ REGISTER_TEST(claude_module_compose_null_service,
     DOCTEST_CHECK(ui.find("claude.profiles.error") != nullptr);
     DOCTEST_CHECK(ui.find("claude.profiles.empty") == nullptr);
 
+    // 活门控死页缓解（Task 5 fix 轮 [3]）：无服务 compose 补「未装配」toast，
+    // 说明「会话内开启的模块需重启才有代理服务」（缓解回退成静默即红）
+    {
+        const auto* warnTitle = ui.find("claude.toast.title");
+        DOCTEST_REQUIRE(warnTitle != nullptr);
+        DOCTEST_CHECK(warnTitle->text.find("未装配") != std::string::npos);
+        const auto* warnMsg = ui.find("claude.toast.message");
+        DOCTEST_REQUIRE(warnMsg != nullptr);
+        DOCTEST_CHECK(warnMsg->text.find("重启") != std::string::npos);
+    }
+
     // 无选中（shown.id == 0）+ 无服务：点「复制」不崩，toast 提示先选 Profile
     {
         const auto* dupBtn = ui.find("claude.act.dup.bg");

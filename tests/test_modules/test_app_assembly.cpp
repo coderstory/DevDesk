@@ -607,6 +607,34 @@ REGISTER_TEST(assembly_dispatch_tray_navigation,
     return true;
 })
 
+// ---- 活门控文案口径（Task 5 fix 轮 [2]）：托盘进未启用页的 toast = 即时生效口径 ----
+// navigateFromTray 落到未注册页 → 回首页 + toast。文案从「重启后生效」改为
+// 「即时启用」指引（与活门控一致）；断言「即时」在文、「重启」不在——
+// 文案回退即红。只注册 Home（markdown 未装配）构造未启用场景。
+REGISTER_TEST(assembly_navigate_from_tray_unregistered_toast_copy,
+              "assembly: navigateFromTray 未启用页 → 回首页 + toast 即时生效口径（无重启字样）", {
+    test_support::ScopedAppRouter scoped;
+    std::vector<std::string> log;
+    StubModule home(::core::PageId::Home, "首页", &log);
+    ::core::Router router;
+    router.registerModule(&home);
+    app::clearAppNotice();  // 进程级 toast 回厂（本用例只认自己触发的通知）
+
+    // markdown 未注册 → 托盘进 markdown 页 = 未启用场景（回首页 + toast）
+    app::assembly::navigateFromTray(&router, ::core::PageId::Markdown);
+    DOCTEST_CHECK_EQ(router.currentPage(), ::core::PageId::Home);
+    DOCTEST_CHECK(app::appNoticeVisible());
+    DOCTEST_CHECK_EQ(app::appNoticeTitle(), std::string("模块已关闭"));
+    const std::string msg = app::appNoticeMessage();
+    DOCTEST_CHECK(msg.find("笔记") != std::string::npos);  // shortName 单源
+    DOCTEST_CHECK(msg.find("设置 → 模块开关") != std::string::npos);  // 入口指引保留
+    DOCTEST_CHECK(msg.find("即时") != std::string::npos);  // 新口径在文
+    DOCTEST_CHECK(msg.find("重启") == std::string::npos);  // 旧字样回退即红
+
+    app::clearAppNotice();  // 收尾回厂，不留给后续用例
+    return true;
+})
+
 // ---- R8-C2 PAB-04：maybeStartPet 门控两态 ----
 
 REGISTER_TEST(assembly_maybe_start_pet_gated,

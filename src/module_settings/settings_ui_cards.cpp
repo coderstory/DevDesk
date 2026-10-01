@@ -363,8 +363,8 @@ void drawModulesCard(const CardDrawArgs& args) {
             ui.text(id + ".desc")
                 .position(28.0f, 40.0f)
                 .size(w - 56.0f, roundFs(16.0f))
-                .text("关闭模块后需重启应用生效（关闭 = 该模块代码不再执行、"
-                      "侧边栏不显示入口）")
+                .text("开关即时生效：关闭后该模块代码不再执行，侧边栏入口与"
+                      "页面当帧更新")
                 .fontSize(fs(12.0f))
                 .lineHeight(roundFs(16.0f))
                 .color(t.colors.textTertiary)
