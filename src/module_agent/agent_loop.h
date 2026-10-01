@@ -5,6 +5,7 @@
 #pragma once
 #include <atomic>
 #include <cstdint>
+#include <functional>
 #include <string>
 #include <vector>
 #include "core/llm_endpoint.h"
@@ -28,7 +29,11 @@ class AgentStore;
 
 class AgentLoop {
 public:
-    AgentLoop(core::LlmEndpoint& llm, core::ToolRegistry& tools, AgentStore& store);
+    // 单调时钟缝（spec §5.2 墙钟上限）：返回 steady 毫秒。默认空 = 走
+    // defaultNowMs()（steady_clock）；用例注入假时钟即可零等待验证超限判定。
+    using NowMsFn = std::function<int64_t()>;
+    AgentLoop(core::LlmEndpoint& llm, core::ToolRegistry& tools, AgentStore& store,
+              NowMsFn nowMs = {});
     // 同步跑一次（调用方在工作线程调）。落库 agent_runs/agent_messages。
     // 失败不抛：见 spec §5.2 状态语义（completed/failed/limited/cancelled）。
     Result<int64_t> run(const AgentTask& task, std::atomic<bool>& cancelToken);
@@ -36,5 +41,6 @@ private:
     core::LlmEndpoint& llm_;
     core::ToolRegistry& tools_;
     AgentStore& store_;
+    NowMsFn nowMs_;
 };
 } // namespace module::agent
