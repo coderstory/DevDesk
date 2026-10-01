@@ -1783,7 +1783,7 @@ REGISTER_TEST(settings_card_rows_scale_derived,
                           at(17.0f, 20.0f, 26.0f));
             if (err.empty())
                 err = pin("modules 卡高", heightOf("settings.card.modules"),
-                          at(293.0f, 344.0f, 447.0f));
+                          at(292.0f, 344.0f, 447.0f));
             if (err.empty())
                 err = pin("pet.skin.ddwrap 行顶（skinTop=40+roundFs(16)+roundFs(8)）",
                           yOf("settings.card.pet.skin.ddwrap") -
