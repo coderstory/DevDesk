@@ -46,6 +46,21 @@ void Scheduler::start() {
     } catch (const std::system_error& e) {
         LOG_ERROR(std::string("Scheduler: tick 线程创建失败: ") + e.what());
     }
+    try {
+        if (!residentThread_.joinable())
+            residentThread_ = std::thread([this] { residentThreadLoop(); });
+    } catch (const std::system_error& e) {
+        LOG_ERROR(std::string("Scheduler: 常驻线程创建失败: ") + e.what());
+    }
+}
+
+void Scheduler::enqueueResident(int64_t taskId) {
+    if (stopFlag_.load()) return;   // 已停：不再接单（不留无消费者的幽灵 job）
+    {
+        std::lock_guard<std::mutex> lock(mu_);
+        residentQueue_.push_back(taskId);
+    }
+    cv_.notify_one();
 }
 
 void Scheduler::stopAll() {
@@ -55,8 +70,14 @@ void Scheduler::stopAll() {
     // thread 即 std::terminate（实测崩溃报告：~ActiveRun → terminate）。
     // tickNow 派发不看 stopFlag_（测试直调零等待），故这条路径真实存在。
     stopFlag_.store(true);
-    // 顺序契约（spec §3）：**先灭派发源、再收在跑 run**——反序会让 tick 线程在
-    // 收尾窗口里再派发一个新 run，逃出 teardown。
+    {
+        std::lock_guard<std::mutex> lock(mu_);
+        cv_.notify_all();   // 唤醒常驻线程（其 wait 谓词含 stopFlag_）
+    }
+    // 顺序契约（spec §3，M2 审计修订）：**先灭派发源、再收在跑 run**——反序会让
+    // 常驻/tick 线程在收尾窗口里再 pop 一个 job、spawn 出新 run 逃出 teardown。
+    // 常驻线程先于 tick 线程 join（它是唯一会在「收尾窗口」里继续接单的源）。
+    if (residentThread_.joinable()) residentThread_.join();
     if (tickThread_.joinable()) tickThread_.join();
     std::vector<std::unique_ptr<ActiveRun>> doomed;
     {
@@ -116,6 +137,34 @@ void Scheduler::tickThreadLoop() {
         LOG_ERROR(std::string("Scheduler: tick 线程异常退出: ") + e.what());
     } catch (...) {
         LOG_ERROR("Scheduler: tick 线程未知异常退出");
+    }
+}
+
+void Scheduler::residentThreadLoop() {
+    try {
+        while (true) {
+            int64_t taskId = 0;
+            {
+                std::unique_lock<std::mutex> lock(mu_);
+                cv_.wait(lock, [this] {
+                    return stopFlag_.load() || !residentQueue_.empty();
+                });
+                // 先灭派发源：停了就**不 pop**（收尾窗口里不再起新 run）
+                if (stopFlag_.load()) break;
+                taskId = residentQueue_.front();
+                residentQueue_.pop_front();
+            }
+            // pop 即 spawn、不等上一跑结束；同 task 连发两单在 AgentLoop 的单闸处
+            // 被拒（WARN 后收尾，无行可落），不阻塞队列
+            auto fired = dispatchRun(taskId);
+            if (fired.isFail())
+                LOG_WARN("Scheduler: 常驻派发失败 task=" + std::to_string(taskId) +
+                         ": " + fired.errorMessage());
+        }
+    } catch (const std::exception& e) {
+        LOG_ERROR(std::string("Scheduler: 常驻线程异常退出: ") + e.what());
+    } catch (...) {
+        LOG_ERROR("Scheduler: 常驻线程未知异常退出");
     }
 }
 

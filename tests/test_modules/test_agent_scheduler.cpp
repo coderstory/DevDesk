@@ -297,3 +297,106 @@ REGISTER_TEST(scheduler_cross_path_single_gate_no_double_run,
     DOCTEST_CHECK_EQ(after.value()[0].status, std::string("cancelled"));
     return true;
 })
+
+// ==================== Task 5：常驻 worker 队列 + stopAll 收口 ====================
+
+REGISTER_TEST(scheduler_resident_queue_runs_enqueued_jobs,
+              "scheduler: 常驻队列两个不同任务各起一跑（确定 2 行 run）；空队列不空转", {
+    test_support::TestDb tdb("agentsched", "resident");
+    module::agent::AgentStore store(tdb.handle());
+    MockLlm llm;   // 文件内副本：send 带 std::mutex（并行派发下两 run 并发 send）
+    core::ToolRegistry::instance().unregisterTool("test.res");
+    FastToolForSched tool{"test.res"};   // 立即返回（文件内定义）
+    ToolRegGuard guard{core::ToolRegistry::instance(), &tool};
+    llm.script = { toolUseResp("test.res"), endTurnResp(),
+                   toolUseResp("test.res"), endTurnResp() };
+    module::agent::AgentLoop loop(llm, core::ToolRegistry::instance(), store);
+    module::agent::Scheduler sched(store, loop, {});         // 生产时钟即可
+    sched.start();                                           // 起常驻线程
+    // 两个**不同** taskId：闸不互相拒 → 跑数确定（同 task 连发的闸语义见下一用例）。
+    // 常驻线程 pop 即 spawn、不等上一跑结束，两跑响应的游标交错顺序不定 → 只断言
+    // 「每任务恰 1 跑 + 终态 completed」，不断言工具调用次数。
+    auto a = store.createTask("常驻A", "g", "resident", "default", 5, false);
+    auto b = store.createTask("常驻B", "g", "resident", "default", 5, false);
+    DOCTEST_REQUIRE(a.isOk());
+    DOCTEST_REQUIRE(b.isOk());
+    sched.enqueueResident(a.value());
+    sched.enqueueResident(b.value());
+    for (int i = 0; i < 1000; ++i) {                         // 有界等两跑落终态
+        auto ra = store.listRuns(a.value(), 10);
+        auto rb = store.listRuns(b.value(), 10);
+        if (ra.isOk() && rb.isOk() && ra.value().size() == 1 && rb.value().size() == 1 &&
+            ra.value()[0].status != "running" && rb.value()[0].status != "running") break;
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+    auto ra = store.listRuns(a.value(), 10);
+    auto rb = store.listRuns(b.value(), 10);
+    DOCTEST_REQUIRE(ra.isOk());
+    DOCTEST_REQUIRE(rb.isOk());
+    DOCTEST_REQUIRE_EQ(ra.value().size(), 1u);               // 每任务恰 1 跑（无第三跑）
+    DOCTEST_REQUIRE_EQ(rb.value().size(), 1u);
+    DOCTEST_CHECK_EQ(ra.value()[0].status, std::string("completed"));
+    DOCTEST_CHECK_EQ(rb.value()[0].status, std::string("completed"));
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));   // 空队列不空转
+    DOCTEST_CHECK_EQ(store.listRuns(a.value(), 10).value().size(), 1u);
+    DOCTEST_CHECK_EQ(store.listRuns(b.value(), 10).value().size(), 1u);
+    sched.stopAll();
+    return true;
+})
+
+REGISTER_TEST(scheduler_resident_same_task_twice_single_gate,
+              "scheduler: 同 task 连发两单 → 单闸只放一跑（1 行 run；第二单 WARN 后收尾）", {
+    test_support::TestDb tdb("agentsched", "residentdup");
+    module::agent::AgentStore store(tdb.handle());
+    MockLlm llm;
+    core::ToolRegistry::instance().unregisterTool("test.slow");
+    SlowToolForSched tool{"test.slow"};   // 睡 300ms：第一跑钉在闸内，第二单必撞闸
+    ToolRegGuard guard{core::ToolRegistry::instance(), &tool};
+    llm.script = { toolUseResp("test.slow"), endTurnResp() };
+    module::agent::AgentLoop loop(llm, core::ToolRegistry::instance(), store);
+    module::agent::Scheduler sched(store, loop, {});
+    sched.start();
+    auto taskId = store.createTask("常驻重发", "g", "resident", "default", 5, false);
+    DOCTEST_REQUIRE(taskId.isOk());
+    sched.enqueueResident(taskId.value());
+    sched.enqueueResident(taskId.value());                   // 同 task 连发两单
+    for (int i = 0; i < 1000; ++i) {                         // 有界等唯一一跑落终态
+        auto runs = store.listRuns(taskId.value(), 10);
+        if (runs.isOk() && runs.value().size() == 1 &&
+            runs.value()[0].status != "running") break;
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+    auto runs = store.listRuns(taskId.value(), 10);
+    DOCTEST_REQUIRE(runs.isOk());
+    DOCTEST_REQUIRE_EQ(runs.value().size(), 1u);             // 第二单从未落行
+    DOCTEST_CHECK_EQ(runs.value()[0].status, std::string("completed"));
+    DOCTEST_CHECK_EQ(tool.calls.load(), 1);                  // 单闸只放一跑（第二单未执行）
+    sched.stopAll();
+    return true;
+})
+
+REGISTER_TEST(scheduler_stopall_cancels_inflight_resident_run,
+              "scheduler: stopAll 取消在跑的常驻 run 并 join（teardown 契约）", {
+    test_support::TestDb tdb("agentsched", "stop");
+    module::agent::AgentStore store(tdb.handle());
+    MockLlm llm;
+    core::ToolRegistry::instance().unregisterTool("test.slow");
+    SlowToolForSched tool{"test.slow"};                      // 睡 300ms（Task 4 定义复用）
+    ToolRegGuard guard{core::ToolRegistry::instance(), &tool};
+    llm.script = { toolUseResp("test.slow") };
+    module::agent::AgentLoop loop(llm, core::ToolRegistry::instance(), store);
+    module::agent::Scheduler sched(store, loop, {});
+    sched.start();
+    auto taskId = store.createTask("常驻慢", "g", "resident", "default", 5, false);
+    DOCTEST_REQUIRE(taskId.isOk());
+    sched.enqueueResident(taskId.value());
+    for (int i = 0; i < 500 && tool.calls.load() < 1; ++i)
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    DOCTEST_REQUIRE(tool.calls.load() == 1);                 // 在跑（睡 300ms 中）
+    sched.stopAll();                                         // 阻塞到 cancel+join 完成
+    auto runs = store.listRuns(taskId.value(), 10);
+    DOCTEST_REQUIRE_EQ(runs.value().size(), 1u);
+    DOCTEST_CHECK_EQ(runs.value()[0].status, std::string("cancelled"));
+    DOCTEST_CHECK_EQ(sched.activeRunCount(), 0u);
+    return true;
+})

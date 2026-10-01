@@ -1,6 +1,6 @@
 // src/module_agent/scheduler.h
-// Scheduler：agent 任务的触发侧（agent M2）。定时（cron）+（Task 5）常驻 worker
-// 队列；自己的 run 线程表 + 分钟防重表。**「同 task 不并发」的闸不在本类**——
+// Scheduler：agent 任务的触发侧（agent M2）。定时（cron）触发 + 常驻 worker 队列；
+// 自己的 run 线程表 + 分钟防重表。**「同 task 不并发」的闸不在本类**——
 // 单闸单点在 AgentLoop::run（内调 AgentStore::startRunExclusive），本类只做
 // 「起线程 + 等它自己收尾」的薄 spawn 包装（spec §5.1 / §10，M2 审计修订）。
 #pragma once
@@ -28,13 +28,17 @@ public:
     using NowFn = std::function<int64_t()>;
     Scheduler(AgentStore& store, AgentLoop& loop, NowFn now = {});
     ~Scheduler();                       // 兜底 stopAll（幂等）
-    void start();                       // 起 tick 轮询线程（Task 5 再起常驻线程）
+    void start();                       // 起 tick 轮询线程 + 常驻 worker 线程（各自幂等守卫）
     void stopAll();                     // 停派发线程（tick/常驻）→ cancel 全部在跑 run → join（幂等）
     // 对每个 enabled 且 trigger_type='schedule' 的任务：解析 trigger_config 的
     // cron → matches(本地 tm) → 命中且 lastFiredMinute_[id] != 本分钟 → 派发。
     // 公开供测试直调（零等待）；tick 线程每 200ms 实时醒来探一次分钟翻转。
     core::Result<void> tickNow();
     size_t activeRunCount();            // 测试观察面：runs_ 容器条目数（含已收尾未 reap 的）
+    // 常驻 worker 手动入队（spec §5.1：常驻本阶段只跑手动入队子任务——事件触发
+    // 降级 Phase 2）。pop 即 spawn、不等上一跑结束；同 task 连发两单由 AgentLoop
+    // 内的单闸拒绝（不阻塞队列）。停止后不再入队（避免留永远不被消费的幽灵单）。
+    void enqueueResident(int64_t taskId);
 
 private:
     struct ActiveRun {
@@ -47,13 +51,17 @@ private:
     core::Result<void> dispatchRun(int64_t taskId);  // 薄 spawn 包装：闸在 AgentLoop::run 内
     void reapDone();
     void tickThreadLoop();
+    void residentThreadLoop();
     AgentStore& store_;
     AgentLoop& loop_;
     NowFn now_;
     std::atomic<bool> stopFlag_{false};
     std::thread tickThread_;
-    std::mutex mu_;                                 // 护 runs_ / lastFiredMinute_
+    std::thread residentThread_;
+    std::mutex mu_;                                 // 护 runs_ / lastFiredMinute_ / residentQueue_
+    std::condition_variable cv_;                    // 常驻队列有新单 / stopAll 唤醒
     std::map<int64_t, int64_t> lastFiredMinute_;    // taskId → 上次触发的分钟序（now/60）
     std::vector<std::unique_ptr<ActiveRun>> runs_;  // 派发线程写 / stopAll 与观察面读（mu_ 护）
+    std::deque<int64_t> residentQueue_;             // 常驻待跑 taskId（mu_ 护）
 };
 } // namespace module::agent
