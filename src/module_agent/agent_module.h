@@ -65,6 +65,13 @@ public:
     void onStart() override;
     void onStop() override;
 
+    // 测试缝（agent_ui 用例直调，等价于用户在编辑表单里完成该动作）：
+    // 不引 EUI-NEO 下拉/输入的真事件机制——trigger 下拉的 onChange 另有
+    // `agent.edit.trigger.item.<i>` 的真实回调可直调，cron 输入框的
+    // onTextInput 只能追加、无法覆盖已有草稿，故草稿写入口落在这里
+    void setEditTriggerIdx(int idx);
+    void setEditCronDraft(const std::string& cron);
+
 private:
     // 一次手动触发的 run：cancel 由 onStop/后续机制置位，done 由 run 线程
     // 收尾置位（startTask 收割已结束 run 的依据，保证「同 task 不并发」
@@ -82,6 +89,9 @@ private:
     void ensureLlm();
     void startTask(int64_t taskId);
     void createTaskFromForm();
+    void openTaskEditor(int64_t taskId);
+    void saveTaskEdit();
+    void toggleTaskEnabled(const AgentTaskRow& task);
     void toggleExpand(int64_t taskId);
     void refreshData();
     void reapFinishedRuns();
@@ -108,6 +118,15 @@ private:
     std::vector<AgentMessageRow> detailMessages_;   // 展开 task 最近 run 的消息
     std::string goalInput_;
     std::string formError_;
+    // 编辑态（Task 10）：editingTaskId_ 非空 = 表单展开（契约表 agent.edit.form 的
+    // 出现条件）；各字段在打开时从 getTask 回填
+    std::optional<int64_t> editingTaskId_;
+    std::string editGoal_, editCron_, editSlot_, editError_;
+    int editTriggerIdx_ = 0;      // 0=手动 1=定时 2=常驻（kTriggerTypes 下标）
+    int editIter_ = 10;
+    bool editDestructive_ = false;
+    bool editTriggerOpen_ = false;   // 触发类型下拉弹层开合（UI 态，不落库）
+    bool editSlotOpen_ = false;      // 模型槽位下拉弹层开合
     bool tasksDirty_ = false;   // onStart/onPageEnter/写操作置位 → 下帧重查
     bool uiPolling_ = false;    // 有 run 期间每帧跟进状态/消息，全终止后停
 

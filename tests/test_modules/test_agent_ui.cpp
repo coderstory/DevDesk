@@ -111,6 +111,23 @@ void typeInto(core::dsl::Element* hit, const std::string& text) {
     }
 }
 
+// 触发类型下拉切换：直调 item 上真实挂的 onChange 回调（components/dropdown.h
+// 的 items[i].onClick——与按钮/行「直调真实回调」同款口径），不模拟 EUI-NEO 下拉
+// 的展开与指针事件机制。返回 false = 该项不存在（调用方 REQUIRE 后转红）
+bool callDropdownChange(eui::Ui& ui, const std::string& ddId, int idx) {
+    const auto* item = ui.find(ddId + ".item." + std::to_string(idx));
+    if (item == nullptr || item->onClick == nullptr) return false;
+    item->onClick();
+    return true;
+}
+
+// cron 草稿写入：走模块测试缝（等价于用户改写输入框文本）。不用 input 的
+// onTextInput 真事件路径：它只能在光标处**追加**，无法覆盖已有草稿；且
+// test_main 每用例重置 ServiceLocator/全局单例，不重置 Ui 状态。
+void setCronInput(module::agent::AgentModule& mod, const std::string& cron) {
+    mod.setEditCronDraft(cron);
+}
+
 bool nearPx(float a, float b) { return std::fabs(a - b) <= 0.5f; }
 
 } // namespace
@@ -400,6 +417,166 @@ REGISTER_TEST(agent_ui_sidebar_registers_agent,
     DOCTEST_CHECK(router.currentPage() == ::core::PageId::Agent);
     DOCTEST_CHECK(ui.find("agent.title") != nullptr);
 
+    mod.onStop();
+    return true;
+})
+
+// ============ 6) 编辑表单 + cron 保存期校验 + 启用/禁用 + 常驻入队（M2 Task 10） ============
+
+REGISTER_TEST(agent_ui_edit_form_and_cron_validation,
+              "agent_ui: 编辑表单打开回填、非法 cron 拒存、合法 cron 落库、禁用切换、常驻入队按钮", {
+    test_support::TestDb tdb("agentui", "edit");
+    FakeProxy proxy;
+    ToolGuard statsGuard{"app.stats"};
+    core::ToolRegistry::instance().unregisterTool("app.stats");
+    module::agent::AgentStore store(tdb.handle());
+    auto taskId = store.createTask("旧任务", "旧目标", "manual", "default", 10, false);
+    DOCTEST_REQUIRE(taskId.isOk());
+    const std::string tid = std::to_string(taskId.value());
+
+    module::agent::AgentModule::Deps deps;
+    deps.db = &tdb.handle();
+    deps.proxy = &proxy;
+    module::agent::AgentModule mod(deps);
+    mod.onStart();
+
+    const eui::Screen screen{1600.0f, 1000.0f};
+    auto composeOnce = [&](eui::Ui& ui) { composeTo(ui, mod, screen, "agent_ui_edit"); };
+    eui::Ui ui;
+    composeOnce(ui);
+    const auto* edit = ui.find("agent.task." + tid + ".edit");
+    DOCTEST_REQUIRE_MESSAGE(edit != nullptr, "任务行缺 agent.task.<id>.edit 元素");
+    DOCTEST_REQUIRE(edit->onClick != nullptr);
+    edit->onClick();
+    eui::Ui ui2;
+    composeOnce(ui2);
+    DOCTEST_CHECK(ui2.find("agent.edit.form") != nullptr);
+    DOCTEST_CHECK(ui2.find("agent.edit.goal") != nullptr);
+    DOCTEST_CHECK(ui2.find("agent.edit.trigger") != nullptr);
+    DOCTEST_CHECK(ui2.find("agent.edit.slot") != nullptr);
+    DOCTEST_CHECK(ui2.find("agent.edit.iter") != nullptr);
+    DOCTEST_CHECK(ui2.find("agent.edit.destructive") != nullptr);
+    DOCTEST_CHECK(ui2.find("agent.edit.cron") == nullptr);   // manual 不渲染 cron 输入
+
+    // 切触发类型到「定时」（下拉 onChange 回调直调）→ cron 输入出现；非法表达式拒存
+    DOCTEST_REQUIRE_MESSAGE(callDropdownChange(ui2, "agent.edit.trigger", 1),
+                            "agent.edit.trigger.item.1 不存在（下拉未渲染？）");
+    eui::Ui ui3;
+    composeOnce(ui3);
+    DOCTEST_CHECK(ui3.find("agent.edit.cron") != nullptr);
+    setCronInput(mod, "0 9 * * 1-5x");
+    const auto* save = ui3.find("agent.edit.save");
+    DOCTEST_REQUIRE(save != nullptr);
+    DOCTEST_REQUIRE(save->onClick != nullptr);
+    save->onClick();
+    eui::Ui ui4;
+    composeOnce(ui4);
+    const auto* err = ui4.find("agent.edit.error");
+    DOCTEST_REQUIRE_MESSAGE(err != nullptr, "非法 cron 未在表单内报错（agent.edit.error 缺失）");
+    DOCTEST_CHECK(err->text.find("cron") != std::string::npos);
+    auto untouched = store.getTask(taskId.value());
+    DOCTEST_REQUIRE(untouched.isOk());
+    DOCTEST_CHECK_EQ(untouched.value().goal, std::string("旧目标"));   // 未落库
+    DOCTEST_CHECK_EQ(untouched.value().triggerType, std::string("manual"));
+
+    // 合法 cron → 落库 + 退编辑态
+    setCronInput(mod, "0 9 * * 1-5");
+    const auto* save2 = ui4.find("agent.edit.save");
+    DOCTEST_REQUIRE(save2 != nullptr);
+    save2->onClick();
+    auto updated = store.getTask(taskId.value());
+    DOCTEST_REQUIRE(updated.isOk());
+    DOCTEST_CHECK_EQ(updated.value().triggerType, std::string("schedule"));
+    DOCTEST_CHECK_EQ(updated.value().triggerConfig,
+                     std::string(R"({"cron":"0 9 * * 1-5"})"));
+    eui::Ui ui4b;
+    composeOnce(ui4b);
+    DOCTEST_CHECK(ui4b.find("agent.edit.form") == nullptr);   // 已退编辑态
+
+    // 启用/禁用切换：文案按 enabled，点击取反
+    eui::Ui ui5;
+    composeOnce(ui5);
+    const auto* toggle = ui5.find("agent.task." + tid + ".toggle");
+    DOCTEST_REQUIRE(toggle != nullptr);
+    DOCTEST_REQUIRE(toggle->onClick != nullptr);
+    DOCTEST_CHECK_EQ(toggle->text, std::string("禁用"));
+    toggle->onClick();
+    auto disabled = store.getTask(taskId.value());
+    DOCTEST_REQUIRE(disabled.isOk());
+    DOCTEST_CHECK_FALSE(disabled.value().enabled);
+    eui::Ui ui6;
+    composeOnce(ui6);
+    const auto* toggle2 = ui6.find("agent.task." + tid + ".toggle");
+    DOCTEST_REQUIRE(toggle2 != nullptr);
+    DOCTEST_CHECK_EQ(toggle2->text, std::string("启用"));   // 文案随 enabled 翻转
+
+    // 常驻任务才有入队按钮（本条是 schedule 任务）
+    DOCTEST_CHECK(ui5.find("agent.task." + tid + ".enqueue") == nullptr);
+
+    // 只读任务信息行（Step 3b）：展开任务 → info 逐项来自同一份 AgentTaskRow
+    const auto* rowEl = ui5.find("agent.task." + tid);
+    DOCTEST_REQUIRE(rowEl != nullptr);
+    DOCTEST_REQUIRE(rowEl->onClick != nullptr);
+    rowEl->onClick();
+    eui::Ui ui7;
+    composeOnce(ui7);
+    const auto* info = ui7.find("agent.task." + tid + ".info");
+    DOCTEST_REQUIRE_MESSAGE(info != nullptr, "展开详情缺只读信息行 agent.task.<id>.info");
+    DOCTEST_CHECK(info->text.find("旧目标") != std::string::npos);
+    DOCTEST_CHECK(info->text.find("0 9 * * 1-5") != std::string::npos);   // cron 原文
+    DOCTEST_CHECK(info->text.find("default") != std::string::npos);       // 模型槽位
+    DOCTEST_CHECK(info->text.find("迭代上限：10") != std::string::npos);
+    DOCTEST_CHECK(info->text.find("破坏性：禁止") != std::string::npos);
+    mod.onStop();
+    return true;
+})
+
+REGISTER_TEST(agent_ui_resident_enqueue_starts_run,
+              "agent_ui: 常驻任务行的「入队」按钮经 Scheduler 真派发起 run（落 completed）", {
+    test_support::TestDb tdb("agentui", "enqueue");
+    FakeProxy proxy;
+    ToolGuard statsGuard{"app.stats"};
+    core::ToolRegistry::instance().unregisterTool("app.stats");
+    module::agent::AgentStore store(tdb.handle());
+    auto taskId = store.createTask("常驻任务", "直接回复完成，不调用任何工具",
+                                   "resident", "default", 10, false);
+    DOCTEST_REQUIRE(taskId.isOk());
+    const std::string tid = std::to_string(taskId.value());
+
+    module::agent::AgentModule::Deps deps;
+    deps.db = &tdb.handle();
+    deps.proxy = &proxy;
+    deps.http = [](const platform::http::Request&) {
+        platform::http::Response res;
+        res.statusCode = 200;
+        res.body = R"({"id":"m1","stop_reason":"end_turn","content":[)"
+                   R"({"type":"text","text":"done"}],)"
+                   R"("usage":{"input_tokens":1,"output_tokens":1}})";
+        return core::Result<platform::http::Response>::ok(res);
+    };
+    module::agent::AgentModule mod(deps);
+    mod.onStart();
+
+    const eui::Screen screen{1600.0f, 1000.0f};
+    eui::Ui ui;
+    composeTo(ui, mod, screen, "agent_ui_enqueue");
+    const auto* enqueue = ui.find("agent.task." + tid + ".enqueue");
+    DOCTEST_REQUIRE_MESSAGE(enqueue != nullptr,
+                            "常驻任务行缺 agent.task.<id>.enqueue 按钮");
+    DOCTEST_REQUIRE(enqueue->onClick != nullptr);
+    enqueue->onClick();
+
+    bool completed = false;
+    for (int i = 0; i < 500; ++i) {
+        auto runs = store.listRuns(taskId.value(), 1);
+        if (runs.isOk() && !runs.value().empty() &&
+            runs.value().front().status == "completed") {
+            completed = true;
+            break;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+    DOCTEST_REQUIRE_MESSAGE(completed, "入队后 5s 内未落库 completed（未接到 scheduler？）");
     mod.onStop();
     return true;
 })
