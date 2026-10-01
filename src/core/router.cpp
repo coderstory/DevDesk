@@ -14,6 +14,15 @@ void Router::registerModule(Module* module) {
     for (auto* m : modules_) {
         if (m == module) return;   // 活门控（live-toggle）：重复注册 = no-op，
     }                              // 侧边栏不再出现同页双入口
+    // 表序插入（2026-10-01 计划 T2）：PageId 枚举序 == kModuleRegistry 表序
+    //（core_pageid_order / assembly_registry_table_shape 双契约钉死）——
+    // off→on 重注册回表序原位，不再 append 末尾
+    for (auto it = modules_.begin(); it != modules_.end(); ++it) {
+        if ((*it)->pageId() > module->pageId()) {
+            modules_.insert(it, module);
+            return;
+        }
+    }
     modules_.push_back(module);
 }
 

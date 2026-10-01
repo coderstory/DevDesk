@@ -427,3 +427,73 @@ REGISTER_TEST(sidebar_live_toggle_reflects_registration,
     }
     return true;
 })
+
+// ============ 6. Agent 重注册回表序末位（惰性装配计划 T2，2026-10-01）============
+// push_back 旧序下「Agent 先注册、Home/Markdown 后注册」会让 Agent 恒在第 1 位
+//（y=100）；registerModule 表序插入后 compose 序仍为表序 → Agent y=188 回末位。
+//（:411 注释「顺序 = 注册表序，仍在末位」的语义升级用例——既有用例注册序恰为
+// 表序故两序无差，本用例用乱序注册把两种序分开。）
+REGISTER_TEST(sidebar_re_register_lands_table_order,
+              "sidebar: Agent 先注册、Home/Markdown 后注册 → compose 序仍表序（Agent y=188 回末位）", {
+    app::setSidebarCollapsed(false);
+    RecordingModule agent(::core::PageId::Agent, "智能体");
+    RecordingModule home(::core::PageId::Home, "首页");
+    RecordingModule md(::core::PageId::Markdown, "笔记");
+    ::core::Router router;
+    test_support::ScopedAppRouter scoped(&router);
+
+    eui::Screen screen;
+    screen.width = 1600.0f;
+    screen.height = 1000.0f;
+
+    // 1) 只注册 Agent → compose → Agent y=100（唯一条目）
+    router.registerModule(&agent);
+    {
+        eui::Ui ui;
+        ui.begin("re_register_agent_only");
+        app::compose(ui, screen);
+        ui.end();
+        const auto* agentHit = ui.find("app.sidebar.item.Agent.hit");
+        DOCTEST_REQUIRE(agentHit != nullptr);
+        DOCTEST_CHECK(floatEq(agentHit->y, 100.0f));
+    }
+
+    // 2) 再注册 Home、Markdown → re-compose → Agent y==188（表序末位，
+    //    Home=100 / Markdown=144 插到它前面）——push_back 旧序下 Agent 恒 100，
+    //    此断言先红后绿（TDD 红源）
+    router.registerModule(&home);
+    router.registerModule(&md);
+    {
+        eui::Ui ui;
+        ui.begin("re_register_after_backfill");
+        app::compose(ui, screen);
+        ui.end();
+        const auto* homeHit = ui.find("app.sidebar.item.Home.hit");
+        const auto* mdHit = ui.find("app.sidebar.item.Markdown.hit");
+        const auto* agentHit = ui.find("app.sidebar.item.Agent.hit");
+        DOCTEST_REQUIRE(homeHit != nullptr);
+        DOCTEST_REQUIRE(mdHit != nullptr);
+        DOCTEST_REQUIRE(agentHit != nullptr);
+        DOCTEST_CHECK(floatEq(homeHit->y, 100.0f));
+        DOCTEST_CHECK(floatEq(mdHit->y, 144.0f));
+        DOCTEST_CHECK(floatEq(agentHit->y, 188.0f));
+    }
+
+    // 3) unregister(Agent) → 再 register(Agent) → y 仍 188（off→on 回原位）
+    router.unregisterModule(&agent);
+    router.registerModule(&agent);
+    {
+        eui::Ui ui;
+        ui.begin("re_register_off_on");
+        app::compose(ui, screen);
+        ui.end();
+        const auto* agentHit = ui.find("app.sidebar.item.Agent.hit");
+        DOCTEST_REQUIRE(agentHit != nullptr);
+        DOCTEST_CHECK(floatEq(agentHit->y, 188.0f));
+        const auto* homeHit = ui.find("app.sidebar.item.Home.hit");
+        DOCTEST_REQUIRE(homeHit != nullptr);
+        DOCTEST_CHECK(floatEq(homeHit->y, 100.0f));
+    }
+    app::setSidebarCollapsed(false);  // 还原，不污染后续用例
+    return true;
+})
