@@ -145,11 +145,14 @@ public:
         std::this_thread::sleep_for(std::chrono::milliseconds(300));
         sawAppStatsRegistered =
             core::ToolRegistry::instance().find("app.stats").isOk();
+        endMs = std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::steady_clock::now().time_since_epoch()).count();
         return core::Result<core::ToolResult>::ok(
             core::ToolResult{false, R"("ok")"});
     }
     std::atomic<int> calls{0};
     std::atomic<bool> sawAppStatsRegistered{false};
+    std::atomic<long long> endMs{0};  // execute 返回时刻（steady_clock 自 epoch 毫秒）
 };
 
 } // namespace
@@ -253,19 +256,22 @@ REGISTER_TEST(agent_module_onstop_cancels_and_joins,
     DOCTEST_CHECK_EQ(tool->calls.load(), 1);
 
     // 立即 onStop：应阻塞 join 到 run 收尾（跨过工具剩余睡眠）
-    const auto stopBegin = std::chrono::steady_clock::now();
     mod->onStop();
-    const long long stopMs =
+    const long long stopEndMs =
         std::chrono::duration_cast<std::chrono::milliseconds>(
-            std::chrono::steady_clock::now() - stopBegin).count();
+            std::chrono::steady_clock::now().time_since_epoch()).count();
 
     // join 完成：onStop 返回后工具不再被调用（100ms 观察窗计数不变）
     std::this_thread::sleep_for(std::chrono::milliseconds(100));
     DOCTEST_CHECK_EQ(tool->calls.load(), 1);
-    // join 真等了 run 收尾，不是立刻返回：至少跨过工具剩余睡眠的 250ms
-    DOCTEST_CHECK_MESSAGE(stopMs >= 250,
-                          "onStop 返回过快（未 join run 线程？实测 " +
-                              std::to_string(stopMs) + "ms）");
+    // join 真等了 run 收尾的确定性判据：onStop 返回时刻不早于工具 execute
+    // 返回时刻。旧判据 stopMs>=250 对负载敏感（观察到 calls=1 → 进入 onStop
+    // 之间耗掉大半睡眠是正常调度，CI 慢机上假红）；本判据在任意负载下都成立
+    //——未 join 则 onStop 近 0ms 返回，必然早于 endMs。
+    DOCTEST_CHECK_MESSAGE(stopEndMs >= tool->endMs.load(),
+                          "onStop 在工具 execute 返回前就返回了（未 join run 线程？stopEnd=" +
+                              std::to_string(stopEndMs) + " toolEnd=" +
+                              std::to_string(tool->endMs.load()) + "ms）");
     // run 落库 cancelled（cancel 下轮迭代前退出 → finishRun("cancelled")）
     auto runs = store.listRuns(taskId, 5);
     DOCTEST_REQUIRE(runs.isOk());
