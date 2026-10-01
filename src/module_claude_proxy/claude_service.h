@@ -152,7 +152,11 @@ public:
     core::Result<void> deleteSharedConfig(int64_t id);
 
     // 立即用当前激活 profile（含所绑片段）重写 settings.json（设计 §2.5：片段
-    // 保存后必须当场生效）。通道未注入 / 接管开关关 → no-op 成功
+    // 保存后必须当场生效）。通道未注入 / 接管开关关 → no-op 成功。
+    // ⚠️ 2026-10-01 审计（A2）：本入口**不经任何前置校验**——无激活 profile 时
+    // 同样会走 syncTakeOver 的无 profile 分支（claude_service.cpp:845-873）接管。
+    // **调用方必须先过 validateProxyPreconditions 校验**（或明确只做「片段保存 /
+    // 切 profile 后的重写」——此时接管本就在位）。本计划不改行为，只补口径注释。
     core::Result<void> reapplyTakeOver() { return syncTakeOver(); }
 
     // ---- failover 备用解析（2026-09-27 shared-config-and-failover 设计
@@ -217,6 +221,27 @@ public:
     std::optional<int> takeProxyEvent(std::time_t nowSec = std::time(nullptr));
 
     // ---- 代理 server 生命周期 ----
+
+    // 代理启动前置校验（2026-10-01 事故：无激活 profile 起代理 → 8888 全量 503，
+    // 本机推理路径被劫持）。「开启代理」前两项必须全过，任一不过 → fail 且
+    // **零副作用**（不 bind 端口、不接管 settings.json、不建 sidecar、不动激活行）：
+    //   1) 有激活且可读的 profile（getActiveProfile，一条只读 SQL，零网络）
+    //   2) 该 profile 连通测试通过（GET <baseUrl>/v1/models 返回 2xx）
+    // 探测通道复用 testConnection 的探测体（同上游方言装配：UA / 鉴权头 /
+    // opencode 会话头——否则会出现「探测按 A 方言、转发按 B 方言」错位）。
+    // 2xx 判定与 Claude 页「测试连通」逐字一致（claude_module.cpp:764-768）：
+    // 2xx = 连通成功；其余状态码（含 401/403/5xx）= 连通异常一律 fail——没有
+    // 可用 key 的 profile 会拿到 401，本条同时覆盖「Keychain 里没有 key」。
+    // 本函数是「开启代理」动作的前置步骤，联网段**不得在 UI 线程同步调用**
+    //（手动路径走后台线程 + compose 收割，见 claude_module.cpp doToggleProxy）。
+    core::Result<void> validateProxyPreconditions(
+        int probeTimeoutMs = kProxyPreStartProbeTimeoutMs);
+
+    // 前置校验的探测超时（毫秒）。取值依据：探测只发一个 GET /v1/models，
+    // 正常上游 RTT 百毫秒量级；2s 覆盖慢链路；黑洞上游（SYN 丢弃）由
+    // CURLOPT_TIMEOUT_MS 封顶（http_client.cpp:67）。短于 testConnection 的
+    // 15s：校验失败要用户可感知地快。
+    static constexpr int kProxyPreStartProbeTimeoutMs = 2000;
 
     // 启动本地 HTTP 代理（固定绑定 127.0.0.1，仅本机可访问，无鉴权）
     //   - bindAddress：默认 "127.0.0.1"
@@ -355,6 +380,13 @@ private:
     //     （保持门面签名不变）
     core::Result<void> syncTakeOver();
     void syncRestore();
+
+    // testConnection 的探测体（可配超时）：testConnection(profile) 恒传
+    // kTestConnectionTimeoutMs(15000)，前置校验传短超时。公开签名零变化
+    //（R10 交付的「43 签名」不动——超时是内部量，不进公开面）
+    core::Result<platform::http::Response> probeProfile(const Profile& profile,
+                                                        int timeoutMs);
+    static constexpr int kTestConnectionTimeoutMs = 15000;
 
     // 反向同步（设计 §3.1/§3.4/§3.5，M3）：读 settings.json 的 env → 对齐到
     // **当前激活 profile**（出现覆盖 / 缺席清空 / 守卫键不写也不清）。

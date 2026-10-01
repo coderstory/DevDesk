@@ -3573,3 +3573,163 @@ REGISTER_TEST(claude_service_destroy_keeps_other_global,
     module::claude::ClaudeService::setGlobal(nullptr);   // 用例内自清（同 resetCaseGlobals 口径）
     return true;
 })
+
+// ---- 18. validateProxyPreconditions（2026-10-01 事故：无 profile / 不连通不得起代理）----
+
+REGISTER_TEST(claude_pv_no_active_profile,
+              "claude_service: 前置校验① 无激活 profile → fail（NoActiveProfile）且零副作用", {
+    test_support::TestDb tdb(kDbPrefix, "pv_noactive");
+    module::claude::ClaudeService svc(tdb.handle(), kTestKeychainService);
+
+    auto r = svc.validateProxyPreconditions();
+    DOCTEST_CHECK(r.isFail());
+    DOCTEST_CHECK(r.errorCode() == core::ErrorCode::NoActiveProfile);
+    DOCTEST_CHECK(r.errorMessage().find("前置校验未通过（1/2 激活 Profile）") !=
+                  std::string::npos);
+    DOCTEST_CHECK(r.errorMessage().find("没有激活的 Claude profile") !=
+                  std::string::npos);          // 可操作指引随错误码原样透传
+    DOCTEST_CHECK_FALSE(svc.isProxyRunning());  // 不 bind
+    DOCTEST_CHECK_EQ(svc.proxyPort(), 0);
+    return true;
+})
+
+REGISTER_TEST(claude_pv_unreachable_no_takeover,
+              "claude_service: 前置校验② 上游不可达 → fail（NetworkUnreachable）且 settings.json 未被接管", {
+    test_support::TestDb tdb(kDbPrefix, "pv_conn");
+    TempSyncPaths sync("pv_conn");                   // 文件内桩：临时 settings.json + sidecar
+    module::claude::ClaudeService svc(tdb.handle(), kTestKeychainService);
+    svc.setSettingsSyncPaths(sync.paths());
+    svc.setSettingsTakeOverEnabled(true);            // 接管开关默认即 true，此处显式钉住
+    const std::string kOriginal = R"({"env":{"FOO":"bar"}})";
+    sync.writeSettings(kOriginal);
+
+    // 端口 1 = 几乎必然拒绝连接（既有用例同款，:1177）
+    auto created = svc.createProfile("Bad", "http://127.0.0.1:1",
+                                     "sk-ant-pv-7777", "m");
+    DOCTEST_REQUIRE(created.isOk());
+    DOCTEST_REQUIRE(svc.setActiveProfile(created.value().id).isOk());  // 首次激活：G0 不读文件
+
+    auto r = svc.validateProxyPreconditions(500);
+    DOCTEST_CHECK(r.isFail());
+    DOCTEST_CHECK(r.errorCode() == core::ErrorCode::NetworkUnreachable);
+    DOCTEST_CHECK(r.errorMessage().find("前置校验未通过（2/2 连通测试）") !=
+                  std::string::npos);
+    DOCTEST_CHECK_FALSE(svc.isProxyRunning());
+    DOCTEST_CHECK_EQ(svc.proxyPort(), 0);
+    // 事故本体断言：settings.json 一字未改、无 sidecar（= 没走到 syncTakeOver）
+    DOCTEST_CHECK_EQ(readFileToString(sync.settings), kOriginal);
+    DOCTEST_CHECK_FALSE(std::filesystem::exists(sync.sidecar));
+    DOCTEST_CHECK(svc.lastSyncWarnings().empty());
+    test_support::cleanupProfileKey(kTestKeychainService, created.value().id);
+    return true;
+})
+
+REGISTER_TEST(claude_pv_non_2xx_fails,
+              "claude_service: 前置校验③ 上游 401 → fail（无/坏 key 不得起代理）", {
+    platform::http::Server upstream401("127.0.0.1", 0);   // 模式照 :994-1010
+    upstream401.route("GET", "/v1/models",
+                      [](const platform::http::RequestCtx&,
+                         platform::http::ResponseWriter& w) {
+                          w.setStatus(401);
+                          w.setHeader("Content-Type", "application/json");
+                          w.write(R"({"error":{"type":"authentication_error"}})");
+                          w.end();
+                      });
+    DOCTEST_REQUIRE(upstream401.start());
+
+    test_support::TestDb tdb(kDbPrefix, "pv_401");
+    module::claude::ClaudeService svc(tdb.handle(), kTestKeychainService);
+    auto created = svc.createProfile(
+        "NoKey", "http://127.0.0.1:" + std::to_string(upstream401.actualPort()),
+        "sk-ant-pv-401", "m");
+    DOCTEST_REQUIRE(created.isOk());
+    DOCTEST_REQUIRE(svc.setActiveProfile(created.value().id).isOk());
+
+    auto r = svc.validateProxyPreconditions(2000);
+    DOCTEST_CHECK(r.isFail());
+    DOCTEST_CHECK(r.errorCode() == core::ErrorCode::HttpError);
+    DOCTEST_CHECK(r.errorMessage().find("401") != std::string::npos);
+    DOCTEST_CHECK_FALSE(svc.isProxyRunning());
+    upstream401.stop();
+    test_support::cleanupProfileKey(kTestKeychainService, created.value().id);
+    return true;
+})
+
+REGISTER_TEST(claude_pv_ok_then_start_proxy,
+              "claude_service: 前置校验④ 通过（2xx）→ 校验只探一次，startProxy 仍可用", {
+    platform::http::Server upstream("127.0.0.1", 0);       // 模式照 :952-968
+    int hitCount = 0;
+    std::string lastPath;
+    upstream.route("GET", "/v1/models",
+                   [&](const platform::http::RequestCtx& ctx,
+                       platform::http::ResponseWriter& w) {
+                       ++hitCount;
+                       lastPath = ctx.path;
+                       w.setStatus(200);
+                       w.setHeader("Content-Type", "application/json");
+                       w.write(R"({"data":[{"id":"claude-sonnet-4-5"}]})");
+                       w.end();
+                   });
+    DOCTEST_REQUIRE(upstream.start());
+
+    test_support::TestDb tdb(kDbPrefix, "pv_ok");
+    module::claude::ClaudeService svc(tdb.handle(), kTestKeychainService);
+    auto created = svc.createProfile(
+        "Good", "http://127.0.0.1:" + std::to_string(upstream.actualPort()),
+        "sk-ant-pv-ok-8888", "claude-sonnet-4-5");
+    DOCTEST_REQUIRE(created.isOk());
+    DOCTEST_REQUIRE(svc.setActiveProfile(created.value().id).isOk());
+
+    auto v = svc.validateProxyPreconditions(2000);
+    DOCTEST_CHECK(v.isOk());
+    DOCTEST_CHECK_EQ(hitCount, 1);
+    DOCTEST_CHECK_EQ(lastPath, std::string("/v1/models"));
+    DOCTEST_CHECK_FALSE(svc.isProxyRunning());   // 校验本身绝不 bind
+
+    // 通过后 startProxy 照常（端口 0 = OS 分配）
+    auto started = svc.startProxy("127.0.0.1", 0);
+    DOCTEST_REQUIRE(started.isOk());
+    DOCTEST_CHECK(svc.isProxyRunning());
+    DOCTEST_CHECK(svc.proxyPort() > 0);
+    // 不变式：校验不在 startProxy 内部（否则这里会变成 2——且 startProxy 的
+    // 「无激活 profile 仍接管」既有契约会被打破，见 test_settings_sync.cpp:744-758）
+    DOCTEST_CHECK_EQ(hitCount, 1);
+    svc.stopProxy();
+    upstream.stop();
+    test_support::cleanupProfileKey(kTestKeychainService, created.value().id);
+    return true;
+})
+
+REGISTER_TEST(claude_pv_timeout_honored,
+              "claude_service: 前置校验⑤ 探测超时按入参生效（不静默回落 15s）", {
+    // mock 上游挂 1500ms 才回 200：probeTimeoutMs=150 → 必须 fail。
+    // 若超时参数没接上（回落 testConnection 的 15000），请求会在 1.5s 后成功
+    // → 本用例红（断言是 ok/fail 二值，不依赖墙钟测量；10× 余量保证负载抖动
+    // 下也不会误判。收尾 slow.stop() 会 join 上游 worker，用例总耗时 ≈1.5s）
+    platform::http::Server slow("127.0.0.1", 0);
+    slow.route("GET", "/v1/models",
+               [](const platform::http::RequestCtx&,
+                  platform::http::ResponseWriter& w) {
+                   std::this_thread::sleep_for(std::chrono::milliseconds(1500));
+                   w.setStatus(200);
+                   w.setHeader("Content-Type", "application/json");
+                   w.write(R"({"data":[]})");
+                   w.end();
+               });
+    DOCTEST_REQUIRE(slow.start());
+
+    test_support::TestDb tdb(kDbPrefix, "pv_timeout");
+    module::claude::ClaudeService svc(tdb.handle(), kTestKeychainService);
+    auto created = svc.createProfile(
+        "Slow", "http://127.0.0.1:" + std::to_string(slow.actualPort()),
+        "sk-ant-pv-slow", "m");
+    DOCTEST_REQUIRE(created.isOk());
+    DOCTEST_REQUIRE(svc.setActiveProfile(created.value().id).isOk());
+
+    auto r = svc.validateProxyPreconditions(150);
+    DOCTEST_CHECK(r.isFail());
+    DOCTEST_CHECK_FALSE(svc.isProxyRunning());
+    slow.stop();
+    test_support::cleanupProfileKey(kTestKeychainService, created.value().id);
+    return true;
+})
