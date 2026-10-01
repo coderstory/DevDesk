@@ -25,6 +25,13 @@ struct AgentTask {
     bool allowDestructive = false;
 };
 
+// store 行 → 执行体入参的**唯一映射**（M2）：AgentModule（手动启动）、
+// Scheduler（cron 派发）、测试三方共用一份，避免各处手抄字段搬运漂移。
+// 只搬 AgentTask 关心的六项；trigger_type/trigger_config/enabled 归派发侧判定，
+// 不进执行体（run 不关心自己是被谁触发的）。
+struct AgentTaskRow;
+AgentTask taskFromRow(const AgentTaskRow& row);
+
 class AgentStore;
 
 class AgentLoop {

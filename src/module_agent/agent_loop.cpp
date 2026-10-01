@@ -126,6 +126,19 @@ platform::json::JsonValue makeTextContent(const std::string& text) {
 
 } // namespace
 
+// store 行 → AgentTask 的唯一映射（声明见 agent_loop.h）：逐字段搬运，缺一个
+// 字段就是「某条路径上任务参数悄悄退回默认值」。trigger/enabled 不进执行体。
+AgentTask taskFromRow(const AgentTaskRow& row) {
+    AgentTask t;
+    t.id = row.id;
+    t.name = row.name;
+    t.goal = row.goal;
+    t.modelSlot = row.modelSlot;
+    t.maxIterations = row.maxIterations;
+    t.allowDestructive = row.allowDestructive;
+    return t;
+}
+
 AgentLoop::AgentLoop(core::LlmEndpoint& llm, core::ToolRegistry& tools,
                      AgentStore& store, NowMsFn nowMs)
     : llm_(llm), tools_(tools), store_(store), nowMs_(std::move(nowMs)) {}
@@ -134,7 +147,11 @@ Result<int64_t> AgentLoop::run(const AgentTask& task,
                                std::atomic<bool>& cancelToken) {
     // 起 run 行（started_at 由 store 记）。这一步失败 = 库里连 run 都没有，
     // 无处标状态，直接把错误上抛给调用方。
-    auto started = store_.startRun(task.id);
+    // **单闸**（M2 Task 2）：startRunExclusive = 全仓唯一「同 task 不并发」闸点，
+    // 手动「启动」（AgentModule 直调 loop_）与 Scheduler/cron 派发（dispatchRun
+    // 只 spawn 线程、不预插行）都经此处；他路在跑 → fail(AlreadyExists) 原样上抛，
+    // 本次不落行、不发请求。
+    auto started = store_.startRunExclusive(task.id);
     if (started.isFail()) return started;
     const int64_t runId = started.value();
 
