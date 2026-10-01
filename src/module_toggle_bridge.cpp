@@ -24,4 +24,21 @@ void onModuleToggled(const std::string& moduleId, bool on) {
     g_handler(moduleId, on);
 }
 
+// ---- 第二桥（2026-10-01 惰性装配计划 T1）：claude 惰性装配缝 ----
+// 缝形态与第一桥同款：默认 no-op + LOG_WARN；真实现（装配单例 + auto-start
+// 会话内恢复）由 main.cpp 装配段经 setClaudeAssemblyHandler 注入。
+namespace { ClaudeAssemblyHandler g_claudeHandler = nullptr; }
+
+void setClaudeAssemblyHandler(ClaudeAssemblyHandler handler) {
+    g_claudeHandler = handler;
+}
+
+void ensureClaudeServiceAssembled(bool autoStart) {
+    if (g_claudeHandler == nullptr) {
+        LOG_WARN("claude 惰性装配桥未装配（启动早期/测试环境），跳过");
+        return;
+    }
+    g_claudeHandler(autoStart);
+}
+
 }  // namespace app::toggle

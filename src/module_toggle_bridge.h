@@ -17,6 +17,15 @@ using ToggleHandler = void (*)(const std::string& moduleId, bool on);
 void setToggleHandler(ToggleHandler handler);   // nullptr = 恢复默认 no-op
 void onModuleToggled(const std::string& moduleId, bool on);
 
+// ---- 第二桥（2026-10-01 惰性装配计划 T1）：claude 惰性装配缝 ----
+// settings 页会话内开启 claude 模块 → dispatchModuleToggle on 路径（app_assembly）
+// 经此缝补装配 ClaudeService（启动期门控关 = 服务未创建）。真实现由 main.cpp
+// 文件级静态函数注入（无捕获可转函数指针）；nullptr = 恢复默认 no-op +
+// LOG_WARN（启动早期/测试环境不崩）。
+using ClaudeAssemblyHandler = void (*)(bool autoStart);
+void setClaudeAssemblyHandler(ClaudeAssemblyHandler handler);  // nullptr = 恢复默认 no-op
+void ensureClaudeServiceAssembled(bool autoStart);
+
 }  // namespace app::toggle
 
 static_assert(std::is_same_v<decltype(&app::toggle::onModuleToggled),
@@ -25,3 +34,10 @@ static_assert(std::is_same_v<decltype(&app::toggle::onModuleToggled),
 static_assert(std::is_same_v<decltype(&app::toggle::setToggleHandler),
                              void (*)(app::toggle::ToggleHandler)>,
               "module_toggle_bridge: setToggleHandler 签名漂移");
+static_assert(std::is_same_v<decltype(&app::toggle::ensureClaudeServiceAssembled),
+                             void (*)(bool)>,
+              "module_toggle_bridge: ensureClaudeServiceAssembled 签名漂移");
+static_assert(
+    std::is_same_v<decltype(&app::toggle::setClaudeAssemblyHandler),
+                   void (*)(app::toggle::ClaudeAssemblyHandler)>,
+    "module_toggle_bridge: setClaudeAssemblyHandler 签名漂移");
