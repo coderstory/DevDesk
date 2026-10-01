@@ -8,10 +8,8 @@
 #include <string>
 
 namespace {
-app::toggle::ToggleHandler g_prev = nullptr;
 struct Recording {
     std::string lastId; bool lastOn = false; int calls = 0;
-    app::toggle::ToggleHandler self = nullptr;
 };
 Recording g_rec;
 void record(const std::string& id, bool on) {
@@ -21,7 +19,6 @@ void record(const std::string& id, bool on) {
 
 REGISTER_TEST(toggle_bridge_handler_roundtrip,
               "toggle_bridge: 注入 handler 后 onModuleToggled 路由到它；复位后回默认", {
-    g_prev = nullptr;  // 缝无 get accessor——测试直接 set/恢复（见实现注）
     app::toggle::setToggleHandler(&record);
     app::toggle::onModuleToggled("agent", true);
     DOCTEST_CHECK_EQ(g_rec.calls, 1);

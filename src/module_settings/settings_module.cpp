@@ -101,9 +101,9 @@
 
 // ---- 模块开关即时生效桥：app::toggle 自由函数声明 ----
 // 与 module_pet_bridge.h 同模式的中立桥头（src 根、应用层）：settings 不
-// include 任何 app/兄弟模块头；实现（函数指针缝 + 默认 no-op）在
-// app_assembly.cpp，真 handler 由 main.cpp 装配段注入。签名漂移 static_assert
-// 见该头。
+// include 任何 app/兄弟模块头；实现（函数指针缝 + 默认 no-op）落
+// module_toggle_bridge.cpp（与头成对的 src 根 TU，probe 链接面可解析），真
+// handler 由 main.cpp 装配段注入。签名漂移 static_assert 见该头。
 #include "module_toggle_bridge.h"
 
 #include <ui_kit/metrics.h>
