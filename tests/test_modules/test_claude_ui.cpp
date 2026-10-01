@@ -347,7 +347,13 @@ REGISTER_TEST(claude_module_test_connection_async,
 REGISTER_TEST(claude_module_start_proxy_requires_active_profile,
               "claude_module: 无激活 profile 点「启动代理」→ 后台校验挡下（不起代理 + toast 给原因）", {
     TestEnv env;                       // 空库 = 事故现场；svc 已 setGlobal
-    env.svc->setConfiguredProxyPort(0);   // 红线：用例绝不绑 8888（开发会话推理链路）；校验失败路径本不 bind，显式钉住防回归
+    // 红线：用例绝不绑 8888（本机开发会话的推理链路走 127.0.0.1:8888）。
+    // **不能写 0**——setConfiguredProxyPort 把越界值（含 0，kMinProxyPort=1）
+    // clamp 回 kDefaultProxyPort = 8888（proxy_runtime.cpp:107-117）→ 等于把红线
+    // 焊死。此处取系统空闲端口（本文件既有 helper，:81）
+    const int port = pickFreePort();
+    DOCTEST_REQUIRE(port > 0);
+    env.svc->setConfiguredProxyPort(port);
     std::unique_ptr<::core::Module> mod(create_claude_module());
     eui::Screen screen;
     screen.width = 1600.0f;
@@ -391,18 +397,28 @@ REGISTER_TEST(claude_module_start_proxy_requires_active_profile,
 })
 
 // ---- 3c. A1 反方向钉子：startProxy 只在 UI 收割帧执行（校验在飞 / 已回但未收割都不 bind）----
-// 判别式：上游 500ms 后才回 200；点击后在**不 compose** 的情况下静置 500ms ——
+// 判别式：上游 1500ms 后才回 200；点击后在**不 compose** 的情况下静置 2000ms ——
 //   · 正解（startProxy 在 harvestTestResult 里）→ 线程早已跑完，但没人收割 → 仍不 bind；
-//   · 旧稿（startProxy 在线程里）→ 上游一回包线程立刻 bind → 循环里的 CHECK_FALSE 红。
+//   · 旧稿（startProxy 在线程里）→ 上游一回包线程立刻 bind → 循环里的 CHECK_FALSE 红
+//     （实测：变异在第 ~1544ms 被抓，距静置窗结束还有 ~450ms 余量）。
 REGISTER_TEST(claude_module_start_proxy_binds_only_at_harvest,
               "claude_module: startProxy 只在 UI 收割帧执行（校验在飞时不 bind，A1）", {
     TestEnv env;
-    env.svc->setConfiguredProxyPort(0);   // 红线：绝不绑 8888；startProxy 端口由 OS 分配
+    // 红线：绝不绑 8888（本机开发会话推理链路）。**不能写 0**——0 会被
+    // setConfiguredProxyPort 钳制回 8888（proxy_runtime.cpp:107-117），而本用例
+    // 会真的走到 bind。取系统空闲端口（既有 helper；harvest 帧按此端口 bind）
+    const int port = pickFreePort();
+    DOCTEST_REQUIRE(port > 0);
+    env.svc->setConfiguredProxyPort(port);
     platform::http::Server upstream("127.0.0.1", 0);
     upstream.route("GET", "/v1/models",
                    [](const platform::http::RequestCtx&,
                       platform::http::ResponseWriter& w) {
-                       std::this_thread::sleep_for(std::chrono::milliseconds(500));
+                       // 1500ms ≫ 一帧：探测在飞窗口足够长，「startProxy 又回
+                       // 线程」的变异（= 上游一回包线程立刻 bind）必然落在下面
+                       // 的静置窗内 → 必红（延迟 500ms 时静置窗 500ms ≈ 1:1，
+                       // 边界时序会漏咬）
+                       std::this_thread::sleep_for(std::chrono::milliseconds(1500));
                        w.setStatus(200);
                        w.setHeader("Content-Type", "application/json");
                        w.write(R"({"data":[]})");
@@ -437,9 +453,9 @@ REGISTER_TEST(claude_module_start_proxy_binds_only_at_harvest,
     }
 
     // 点击立即返回的可见面：此刻 toast 是 pending 态「正在校验」，结果要等收割帧
-    //（上游挂 500ms → 本帧必然仍在飞，不会收割，待观察值确定。3b 的空库路径
+    //（上游挂 1500ms → 本帧必然仍在飞，不会收割，待观察值确定。3b 的空库路径
     // 线程 ~µs 即回，下一帧 compose 已把它收割掉 → 那条断言与收割竞速、非确定，
-    // 故 pending 态的可观测性钉在这条 500ms 上游的用例里）
+    // 故 pending 态的可观测性钉在这条 1500ms 上游的用例里）
     {
         eui::Ui ui;
         compose(ui);
@@ -450,8 +466,9 @@ REGISTER_TEST(claude_module_start_proxy_binds_only_at_harvest,
     }
 
     // 校验在飞 + 已回包但**尚无 compose 帧**的整个窗口：一律不 bind
-    // （25×20ms = 500ms，覆盖上游 500ms 延迟；这段刻意不 compose）
-    for (int i = 0; i < 25; ++i) {
+    //（100×20ms ≈ 2000ms > 上游 1500ms 延迟，留 500ms 余量给「线程已回包但没人
+    // 收割」那一段；这段刻意不 compose）
+    for (int i = 0; i < 100; ++i) {
         std::this_thread::sleep_for(std::chrono::milliseconds(20));
         DOCTEST_CHECK_FALSE(env.svc->isProxyRunning());   // A1：绑定必须晚于收割帧
     }
@@ -468,7 +485,7 @@ REGISTER_TEST(claude_module_start_proxy_binds_only_at_harvest,
         }
     }
     DOCTEST_CHECK(started);
-    DOCTEST_CHECK(env.svc->proxyPort() > 0);
+    DOCTEST_CHECK_EQ(env.svc->proxyPort(), port);   // bind 在配置的空闲端口上（非 8888）
     {
         eui::Ui ui;
         compose(ui);

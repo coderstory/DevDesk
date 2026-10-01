@@ -154,7 +154,7 @@ public:
     // 立即用当前激活 profile（含所绑片段）重写 settings.json（设计 §2.5：片段
     // 保存后必须当场生效）。通道未注入 / 接管开关关 → no-op 成功。
     // ⚠️ 2026-10-01 审计（A2）：本入口**不经任何前置校验**——无激活 profile 时
-    // 同样会走 syncTakeOver 的无 profile 分支（claude_service.cpp:845-873）接管。
+    // 同样会走 syncTakeOver 的无 profile 分支（claude_service.cpp:888-915）接管。
     // **调用方必须先过 validateProxyPreconditions 校验**（或明确只做「片段保存 /
     // 切 profile 后的重写」——此时接管本就在位）。本计划不改行为，只补口径注释。
     core::Result<void> reapplyTakeOver() { return syncTakeOver(); }

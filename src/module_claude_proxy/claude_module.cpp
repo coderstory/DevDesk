@@ -536,20 +536,26 @@ private:
     // 接管。**只有联网校验段进后台线程**——bind + syncTakeOver 必须回 UI 线程
     // （审计 A1：settings_takeover 契约「仅 UI 线程」，理由见 harvestTestResult）。
     // 与「测试连通」共用同一条后台线程 + 每帧收割模式
-    //（:744-787，回归见 test_claude_ui.cpp:272-276）。
-    // Ctrl+Enter 快捷键走同一入口（:415-419）
+    //（doTestConnection/harvestTestResult：:769-837；回归用例
+    // test_claude_ui.cpp:276 起的 claude_module_test_connection_async）。
+    // Ctrl+Enter 快捷键走同一入口（onKeyEvent 的 Enter 分支，:417）
     void doToggleProxy() {
         ClaudeService* svc = ClaudeService::global();
         if (!svc) {
             showToast("代理操作失败", "服务未就绪（ClaudeService 未注册）", true);
             return;
         }
+        // 先收割上一轮（页面不可见时 compose 不跑）：收割会 join 上一轮线程，
+        // 并且可能**刚把上一轮校验通过的代理起起来**——所以它必须排在下面的
+        // 「运行中」判断之前。反序（先判 isProxyRunning 再收割）会在一帧窗口内
+        // 把已在飞的校验当「未运行」→ 再点一次就误起第二条校验线程 →
+        // startProxy 撞 AlreadyExists → 弹「已在运行」误导文案
+        harvestTestResult();
         if (svc->isProxyRunning()) {
             svc->stopProxy();
             showToast("代理已停止", "本地代理已停止监听", false);
             return;
         }
-        harvestTestResult();   // 先收上一轮（页面不可见时 compose 不跑）
         if (testThread_.joinable()) {
             showToast("操作进行中", "上一次校验/测试仍在进行，请稍候", false);
             return;
