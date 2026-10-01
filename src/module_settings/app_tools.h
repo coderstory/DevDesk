@@ -14,6 +14,14 @@
 //   · 值取自 SettingsStore::load()，其返回值已经 sanitized（越界钳制 / 未知
 //     枚举收敛 / 模块 ID 过滤），agent 拿到的就是「真正会生效的值」。
 //
+// 副作用说明（load() 既有行为，本工具不新增写盘路径）：配置文件**可读但 JSON
+// 解析失败**时，load() 会把原始内容 copy 一份到 `<config>.json.bak` 再回落全
+// 默认值（settings_config.cpp:344-353）。本工具**不重做一遍 parse**、故不把这种
+// 「坏 JSON」判成 isError：真源只有 load() 一处，在工具里再解析一次等于把配置
+// 格式契约复制成两份、日后必然漂移；而坏 JSON 已有 .bak + LOG_WARN 的既有恢复
+// 路径（不属「静默无痕」）。工具只在**打不开 / 是目录 / 路径不可访问**这类
+// 「load() 会静默当成默认值」的磁盘异常上报 isError。
+//
 // 错误语义（spec §10 M1 统一）：配置不可读（磁盘异常）→ execute 返回
 // Result ok + ToolResult.isError=true + 中文说明（错误回喂 LLM）；
 // Result::fail 只留给编程不变量破坏。
