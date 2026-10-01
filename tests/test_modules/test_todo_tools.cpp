@@ -11,6 +11,7 @@
 #include "doctest.h"
 #include "test_support.h"
 
+#include "core/module_interface.h"
 #include "core/tool.h"
 #include "module_todo/todo_service.h"
 #include "module_todo/todo_tools.h"
@@ -62,7 +63,46 @@ bool seedTasks(module::todo::TodoService& svc, int n, const std::string& base) {
     return true;
 }
 
+// RAII：视图状态路径环境变量（无头用例不碰真实 appData 状态文件；
+// fail-fast 早退也撤销——test_todo_ui 的 TestEnv 同款机制）
+struct ViewStatePathGuard {
+    explicit ViewStatePathGuard(const std::string& path) {
+        test_support::setEnvVar("DEVDESK_TODO_VIEW_STATE_PATH", path);
+    }
+    ~ViewStatePathGuard() {
+        test_support::setEnvVar("DEVDESK_TODO_VIEW_STATE_PATH", "");
+    }
+    ViewStatePathGuard(const ViewStatePathGuard&) = delete;
+    ViewStatePathGuard& operator=(const ViewStatePathGuard&) = delete;
+};
+
 } // namespace
+
+// ============ TodoModule 生命周期重入（活门控 Task 4）============
+
+extern "C" ::core::Module* create_todo_module();
+
+REGISTER_TEST(todo_module_onstart_reentry_idempotent,
+              "todo_module: onStart→onStop→onStart 重入 + 双 onStart/双 onStop no-op", {
+    test_support::TestEnv env(kDbPrefix, "modreentry", /*registerAppDb=*/true);
+    const std::string statePath = env.path.string() + ".view_state.json";
+    ViewStatePathGuard vsGuard{statePath};
+    core::ToolRegistry::instance().unregisterTool("todo.list");   // 起点干净
+    std::unique_ptr<::core::Module> mod(create_todo_module());
+
+    mod->onStart();
+    DOCTEST_CHECK(core::ToolRegistry::instance().find("todo.list").isOk());
+    mod->onStart();   // 双 onStart：no-op（不重建 service_、不重复注册）
+    DOCTEST_CHECK(core::ToolRegistry::instance().find("todo.list").isOk());
+    mod->onStop();
+    DOCTEST_CHECK(core::ToolRegistry::instance().find("todo.list").isFail());
+    mod->onStop();    // 双 onStop：no-op
+    mod->onStart();   // off→on 循环：工具恢复
+    DOCTEST_CHECK(core::ToolRegistry::instance().find("todo.list").isOk());
+    mod->onStop();
+    DOCTEST_CHECK(core::ToolRegistry::instance().find("todo.list").isFail());
+    return true;
+})
 
 // ============ todo.list ============
 

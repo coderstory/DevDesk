@@ -312,6 +312,10 @@ public:
     }
 
     void onStart() override {
+        // 重入幂等（活门控 Task 4）：已启动的 onStart = no-op——不重跑同步
+        // 首刷与孤儿 Keychain 清理
+        if (started_) return;
+        started_ = true;
         LOG_INFO("Claude 模块启动");
         ClaudeService* svc = ClaudeService::global();
         if (!svc) {
@@ -344,12 +348,15 @@ public:
     void onPageEnter() override { state_.list.dataDirty_ = true; }
 
     void onStop() override {
+        // 重入幂等（活门控 Task 4）：未启动的 off = no-op
+        if (!started_) return;
         LOG_INFO("Claude 模块停止");
         ClaudeService* svc = ClaudeService::global();
         if (svc && svc->isProxyRunning()) {
             svc->stopProxy();
             LOG_INFO("onStop: 代理已停止");
         }
+        started_ = false;
     }
 
     // 产品审计 [22]：页级快捷键（通道 = app 级 onKeyEvent → Router 派发到
@@ -780,6 +787,10 @@ private:
     std::string testResultTitle_;
     std::string testResultMsg_;
     bool testResultIsError_ = false;
+
+    // 重入幂等守卫（活门控 Task 4）：double-onStart = no-op（不重跑同步首刷
+    // 与孤儿 Keychain 清理）；double-onStop / 未启动的 off = no-op
+    bool started_ = false;
 };
 
 } // namespace module::claude

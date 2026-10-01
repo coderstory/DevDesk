@@ -101,6 +101,11 @@ AgentModule::~AgentModule() {
 }
 
 void AgentModule::onStart() {
+    // 重入幂等（活门控 Task 4）：已启动的 onStart = no-op。双 onStart 会重建
+    // store_/llm_/loop_/statsTool_ 并重跑 sweepStaleRuns——statsTool_ 重复注册
+    // 撞同名旧指针 fail 被日志吞，清扫还会误伤重入期间新出现的 running run
+    if (started_) return;
+    started_ = true;
     // deps 优先，缺省回退既有装配渠道（照 todo 的 appDatabase 模式）
     core::data::SqliteDb* db = deps_.db ? deps_.db : ::core::appDatabase();
     if (db == nullptr) {
@@ -145,9 +150,11 @@ void AgentModule::onStart() {
 }
 
 void AgentModule::onStop() {
-    // teardown 顺序是结构契约（spec §3），勿改：
+    // 重入幂等（活门控 Task 4）：未启动的 off = no-op（设置页对未启用模块拨
+    // off 时 dispatchModuleToggle 仍会调 onStop）。teardown 顺序契约不动：
     // 1) 全部置取消 → 2) 全部 join → 3) 清容器 → 4) 注销工具 → 5) 放服务。
     // run 是同步循环，cancel 在下轮迭代检查点前退出（agent_loop.cpp while 顶）
+    if (!started_) return;
     {
         std::lock_guard<std::mutex> lock(runsMu_);
         for (auto& r : runs_) {
@@ -172,6 +179,7 @@ void AgentModule::onStop() {
     detailMessages_.clear();
     expandedTaskId_.reset();
     uiPolling_ = false;
+    started_ = false;
     LOG_INFO("Agent 模块停止");
 }
 

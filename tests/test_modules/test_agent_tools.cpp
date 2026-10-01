@@ -375,3 +375,48 @@ REGISTER_TEST(agent_module_ui_id_contract,
     mod->onStop();
     return true;
 })
+
+REGISTER_TEST(agent_module_onstart_reentry_idempotent,
+              "agent_module: onStart→onStop→onStart 重入 + 双 onStart/双 onStop no-op", {
+    test_support::TestDb tdb("agenttools", "reentry");
+    FakeProxy proxy;
+    ToolGuard statsGuard{"app.stats"};
+    core::ToolRegistry::instance().unregisterTool("app.stats");  // 起点干净
+    module::agent::AgentModule mod({&tdb.handle(), &proxy, nullptr});
+
+    // 双 onStart 的可观察面（find 之外）：重入幂等 = 不重跑 onStart 体——
+    // sweepStaleRuns 会把 running run 清成 failed，二次清扫对「重入期间新出现的
+    // running run」是数据误伤（活门控 on→on 重复 onStart 时它可能是活 run）
+    module::agent::AgentStore store(tdb.handle());
+    auto created = store.createTask("重入任务", "双 onStart 不应二次清扫",
+                                    "manual", "default", 10, false);
+    DOCTEST_REQUIRE(created.isOk());
+    const int64_t taskId = created.value();
+    auto runningCount = [&]() -> int {
+        auto runs = store.listRuns(taskId, 10);
+        if (runs.isFail()) return -1;
+        int n = 0;
+        for (const auto& r : runs.value()) {
+            if (r.status == "running") ++n;
+        }
+        return n;
+    };
+
+    mod.onStart();
+    DOCTEST_CHECK(core::ToolRegistry::instance().find("app.stats").isOk());
+    DOCTEST_CHECK_EQ(runningCount(), 0);   // 首次 onStart 清扫：种下的悬挂 run 已清
+
+    DOCTEST_REQUIRE(store.startRun(taskId).isOk());   // 双 onStart 前种 running run
+    mod.onStart();   // 双 onStart：no-op（不重复注册、不重建成员、不重跑清扫）
+    DOCTEST_CHECK(core::ToolRegistry::instance().find("app.stats").isOk());
+    DOCTEST_CHECK_EQ(runningCount(), 1);   // ← 回退守卫即红：二次清扫会把它清成 failed
+
+    mod.onStop();
+    DOCTEST_CHECK(core::ToolRegistry::instance().find("app.stats").isFail());
+    mod.onStop();    // 双 onStop：no-op
+    mod.onStart();   // off→on 循环：工具恢复
+    DOCTEST_CHECK(core::ToolRegistry::instance().find("app.stats").isOk());
+    mod.onStop();
+    DOCTEST_CHECK(core::ToolRegistry::instance().find("app.stats").isFail());
+    return true;
+})

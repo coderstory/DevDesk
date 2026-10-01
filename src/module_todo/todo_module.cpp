@@ -48,6 +48,11 @@ public:
     // ============ 生命周期 ============
 
     void onStart() override {
+        // 重入幂等（活门控 Task 4）：已启动的 onStart = no-op。双 onStart 会
+        // 重建 service_（旧 todoTools_ 的 service 引用悬垂，attachTools 因
+        // todoTools_ 已在而跳过重挂）并重建 viewStore_
+        if (started_) return;
+        started_ = true;
         auto* db = ::core::appDatabase();
         if (!db) {
             LOG_WARN("Todo: 数据库尚未注册，跳过数据加载");
@@ -64,6 +69,9 @@ public:
     }
 
     void onStop() override {
+        // 重入幂等（活门控 Task 4）：未启动的 off = no-op（设置页对未启用模块
+        // 拨 off 时 dispatchModuleToggle 仍会调 onStop，此路径不该落盘/注销）
+        if (!started_) return;
         if (viewDirty_) saveViewState();  // 审计 [23]：退出前落盘视图状态
         // 只注销工具（工具引用 service）——**不 reset service_**（final-review
         // Fix 1，2026-10-01）：Router::stopAll 按注册顺序停模块，todo/markdown
@@ -74,6 +82,7 @@ public:
         // 且声明序 service_ 在 todoTools_ 之前 → 析构序 todoTools_ 先死、
         // service_ 后死，工具内的引用不悬垂。
         detachTools();
+        started_ = false;
         LOG_INFO("Todo 模块停止");
     }
 
@@ -956,6 +965,9 @@ private:
     // 智能体工具集（引用 service_；onStop 只注销注册，对象随成员析构销毁——
     // 声明序在 service_ 之后 = 先于 service_ 析构，工具内引用不悬垂）
     std::unique_ptr<TodoTools> todoTools_;
+    // 重入幂等守卫（活门控 Task 4）：double-onStart / double-onStop / 未启动
+    // 的 off = no-op
+    bool started_ = false;
     std::vector<Column> columns_;
     std::vector<Task> tasks_;
     // 审计 [23]：列内滚动偏移按列 id 记忆（旧按列索引，重排/删列串列）+
