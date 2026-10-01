@@ -10,6 +10,7 @@
 #include "doctest.h"
 #include "test_support.h"
 
+#include "core/module_interface.h"
 #include "core/tool.h"
 #include "module_markdown/markdown_service.h"
 #include "module_markdown/markdown_tools.h"
@@ -245,5 +246,30 @@ REGISTER_TEST(md_tools_schema_spot_check_and_registry,
     DOCTEST_CHECK(core::ToolRegistry::instance().find("md.search").isFail());
     DOCTEST_CHECK(core::ToolRegistry::instance().find("md.read").isFail());
     env.tools->unregisterAll();  // 重复注销 no-op
+    return true;
+})
+
+// ============ MarkdownModule 生命周期重入（活门控 Task 4）============
+
+extern "C" ::core::Module* create_markdown_module();
+
+REGISTER_TEST(md_module_onstart_reentry_idempotent,
+              "markdown_module: onStart→onStop→onStart 重入 + 双 onStart/双 onStop no-op", {
+    test_support::MdHeadlessEnv env(kDirPrefix, "modreentry", "mdreentry.db");
+    core::ToolRegistry::instance().unregisterTool("md.search");   // 起点干净
+    core::ToolRegistry::instance().unregisterTool("md.read");
+    std::unique_ptr<::core::Module> mod(create_markdown_module());
+
+    mod->onStart();
+    DOCTEST_CHECK(core::ToolRegistry::instance().find("md.search").isOk());
+    mod->onStart();   // 双 onStart：no-op（不重建 service_、不重复注册）
+    DOCTEST_CHECK(core::ToolRegistry::instance().find("md.search").isOk());
+    mod->onStop();
+    DOCTEST_CHECK(core::ToolRegistry::instance().find("md.search").isFail());
+    mod->onStop();    // 双 onStop：no-op
+    mod->onStart();   // off→on 循环：工具恢复
+    DOCTEST_CHECK(core::ToolRegistry::instance().find("md.search").isOk());
+    mod->onStop();
+    DOCTEST_CHECK(core::ToolRegistry::instance().find("md.search").isFail());
     return true;
 })

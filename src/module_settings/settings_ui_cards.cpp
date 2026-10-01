@@ -363,8 +363,8 @@ void drawModulesCard(const CardDrawArgs& args) {
             ui.text(id + ".desc")
                 .position(28.0f, 40.0f)
                 .size(w - 56.0f, roundFs(16.0f))
-                .text("关闭模块后需重启应用生效（关闭 = 该模块代码不再执行、"
-                      "侧边栏不显示入口）")
+                .text("开关即时生效：关闭后该模块代码不再执行，侧边栏入口与"
+                      "页面当帧更新")
                 .fontSize(fs(12.0f))
                 .lineHeight(roundFs(16.0f))
                 .color(t.colors.textTertiary)
@@ -423,7 +423,7 @@ void drawModulesCard(const CardDrawArgs& args) {
 
 // ---------- 卡片 3：桌宠（M2 多皮肤 UI，设计 §4.5/§4.6） ----------
 // 皮肤下拉（discoverSkins 发现列表）+ 位置重置按钮；两者即时生效
-//（换肤热切换/位置直接挪窗），与开关不同（开关重启生效）
+//（换肤热切换/位置直接挪窗）；模块开关自活门控起也即时生效（app::toggle 桥）
 void drawPetCard(const CardDrawArgs& args) {
     eui::Ui& ui = args.ui;
     const std::string& id = args.id;

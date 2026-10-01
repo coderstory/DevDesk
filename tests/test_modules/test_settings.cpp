@@ -1239,10 +1239,12 @@ REGISTER_TEST(settings_modules_card_renders, "settings: 模块管理卡渲染（
     DOCTEST_CHECK(agentTrack->color.r != mdTrack->color.r ||
                   agentTrack->color.g != mdTrack->color.g ||
                   agentTrack->color.b != mdTrack->color.b);
-    // 描述文案含重启提示（设计 §5.4）
+    // 描述文案 = 即时生效口径（活门控）：断言「即时生效」在文、「重启」不在——
+    // 任一回退到旧的「需重启应用生效」文案都必红
     const auto* desc = ui.find("settings.card.modules.desc");
     DOCTEST_REQUIRE(desc != nullptr);
-    DOCTEST_CHECK(desc->text.find("重启") != std::string::npos);
+    DOCTEST_CHECK(desc->text.find("即时生效") != std::string::npos);
+    DOCTEST_CHECK(desc->text.find("重启") == std::string::npos);
     mod->onStop();
     ::core::theme::setDark();
     return true;

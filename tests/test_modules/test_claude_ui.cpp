@@ -157,6 +157,17 @@ REGISTER_TEST(claude_module_compose_null_service,
     DOCTEST_CHECK(ui.find("claude.profiles.error") != nullptr);
     DOCTEST_CHECK(ui.find("claude.profiles.empty") == nullptr);
 
+    // 活门控死页缓解（Task 5 fix 轮 [3]）：无服务 compose 补「未装配」toast，
+    // 说明「会话内开启的模块需重启才有代理服务」（缓解回退成静默即红）
+    {
+        const auto* warnTitle = ui.find("claude.toast.title");
+        DOCTEST_REQUIRE(warnTitle != nullptr);
+        DOCTEST_CHECK(warnTitle->text.find("未装配") != std::string::npos);
+        const auto* warnMsg = ui.find("claude.toast.message");
+        DOCTEST_REQUIRE(warnMsg != nullptr);
+        DOCTEST_CHECK(warnMsg->text.find("重启") != std::string::npos);
+    }
+
     // 无选中（shown.id == 0）+ 无服务：点「复制」不崩，toast 提示先选 Profile
     {
         const auto* dupBtn = ui.find("claude.act.dup.bg");
@@ -6838,5 +6849,29 @@ REGISTER_TEST(claude_shared_dialog_json_roundtrip,
     }
 
     mod->onStop();
+    return true;
+})
+
+// ---- N. onStart/onStop 重入幂等（活门控 Task 4）：双 onStart / 双 onStop 不崩 ----
+
+REGISTER_TEST(claude_module_onstart_reentry_idempotent,
+              "claude_module: onStart→onStop→onStart 重入 + 双 onStart/双 onStop no-op", {
+    TestEnv env;
+    DOCTEST_REQUIRE(module::claude::ClaudeService::global() != nullptr);
+    std::unique_ptr<::core::Module> mod(create_claude_module());
+
+    // 观察面（onStart 无注册表副作用，取服务状态一致性最低契约）：
+    // 硬性需求 1 —— onStart 不自动起代理（main 按设置门控 / 用户手动启动）
+    mod->onStart();
+    DOCTEST_CHECK(!module::claude::ClaudeService::global()->isProxyRunning());
+    mod->onStart();   // 双 onStart：no-op（不重跑同步首刷 + 孤儿 Keychain 清理）
+    DOCTEST_CHECK(!module::claude::ClaudeService::global()->isProxyRunning());
+    mod->onStop();
+    DOCTEST_CHECK(!module::claude::ClaudeService::global()->isProxyRunning());
+    mod->onStop();    // 双 onStop：no-op（代理未运行不重复 stop）
+    mod->onStart();   // off→on 循环
+    DOCTEST_CHECK(!module::claude::ClaudeService::global()->isProxyRunning());
+    mod->onStop();
+    DOCTEST_CHECK(!module::claude::ClaudeService::global()->isProxyRunning());
     return true;
 })

@@ -98,6 +98,11 @@ private:
     std::string formError_;
     bool tasksDirty_ = false;   // onStart/onPageEnter/写操作置位 → 下帧重查
     bool uiPolling_ = false;    // 有 run 期间每帧跟进状态/消息，全终止后停
+
+    // 重入幂等守卫（活门控 Task 4）：double-onStart = no-op——防 store_/
+    // statsTool_ 重建后 registerTool 撞同名旧指针 fail（被日志吞）、注册表留
+    // 旧工具而成员已换新；double-onStop / 未启动的 off = no-op
+    bool started_ = false;
 };
 
 } // namespace module::agent

@@ -839,10 +839,14 @@ REGISTER_TEST(sync_exit_sequence_stop_all,
         DOCTEST_CHECK(svc.isClaudeCodeManaged());
     }
 
-    // 模拟退出序列（main.cpp atexit → Router::stopAll）
+    // 模拟退出序列（main.cpp atexit → Router::stopAll）。生产序列 = 装配段
+    // registerModule → startAll onStart（模块恒先启动后停止）；onStart 重入
+    // 幂等守卫（活门控 Task 4）后，未启动模块的 onStop = no-op，故这里按真实
+    // 顺序补 onStart——被锁的契约是「启动过的模块退出时触发还原」，不变。
     std::unique_ptr<::core::Module> mod(create_claude_module());
     ::core::Router router;
     router.registerModule(mod.get());
+    mod->onStart();
     router.stopAll();
 
     // 断言：还原完成（用户键保留、托管键消失）、sidecar 已消费、代理已停

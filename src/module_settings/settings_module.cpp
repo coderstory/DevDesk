@@ -30,10 +30,12 @@
 //      连接；启动时 main.cpp 仍会按持久化配置再清一次，幂等）
 //   5b. 日志级别四档（spec §8.5「日志级别」，spec 缩水 D）——切档即时
 //      core::log::setLevel（下一行日志起生效）；重启由 onStart 恢复
-//   6. 模块管理（模块插拔方案 A，设计 2026-09-22 §5.4）：四个工具模块
+//   6. 模块管理（模块插拔方案 A，设计 2026-09-22 §5.4；活门控 2026-10-01
+//      起**即时生效**）：四个工具模块
 //      （markdown/todo/claude_proxy/agent）+ 桌宠各一行开关；home/settings
 //      恒启用不
-//      展示开关。开关只写 config.json，**重启生效**（注册是启动期行为）；
+//      展示开关。开关写 config.json + 经 app::toggle 桥发意图（handler 由
+//      main.cpp 装配段注入，未注入时桥内 no-op 仅写盘）；
 //      对应模块关闭时其专属卡片整卡隐藏（代理卡/目录卡，不显示故障态）
 //   7. 页面结构（Task B tab 化）：通用 / 模块 / 日志 三 tab
 //      （components::tabs）；「日志」tab 含日志查看卡（core::paths::logFile()
@@ -96,6 +98,13 @@
 // 链接全部 module_*）链接期解析。只读查询 / 改对方状态两组边界与签名漂移
 // static_assert 见该头。
 #include "module_pet_bridge.h"
+
+// ---- 模块开关即时生效桥：app::toggle 自由函数声明 ----
+// 与 module_pet_bridge.h 同模式的中立桥头（src 根、应用层）：settings 不
+// include 任何 app/兄弟模块头；实现（函数指针缝 + 默认 no-op）落
+// module_toggle_bridge.cpp（与头成对的 src 根 TU，probe 链接面可解析），真
+// handler 由 main.cpp 装配段注入。签名漂移 static_assert 见该头。
+#include "module_toggle_bridge.h"
 
 #include <ui_kit/metrics.h>
 #include <ui_kit/toast.h>
@@ -552,11 +561,11 @@ public:
         }
     }
 
-    // 模块开关（插拔方案 A §5.4）：只写 config.json，注册门控在下次启动的
-    // main.cpp 装配处生效。home/settings 恒启用，UI 不提供开关。
-    // 桌宠例外（PET-CLOSE）：写盘 + 注册门控的口径不变，但额外做一次**即时
-    // 窗口同步**（见 applyPetModuleVisibility）——其余模块无可即时撤销的可见
-    // 载体（侧边栏入口/页面注册都在启动装配期），保持「重启生效」
+    // 模块开关（插拔方案 A §5.4 / 活门控 2026-10-01）：本函数只写 config.json
+    // + 经 app::toggle 桥发「开关意图」，即时生效经桥路由（真 handler 由
+    // main.cpp 装配段注入）。home/settings 恒启用，UI 不提供开关。
+    // 桌宠例外（PET-CLOSE）：写盘 + 桥之外额外做一次**即时窗口同步**（见
+    // applyPetModuleVisibility）——桌宠有自己的可见载体，直接走老路。
     void applyModuleEnabled(const std::string& moduleId, bool on) {
         auto& v = cfg_.enabledModules;
         auto it = std::find(v.begin(), v.end(), moduleId);
@@ -572,10 +581,10 @@ public:
             applyPetModuleVisibility(on);
             return;
         }
-        setStatus((on ? "模块已开启" : "模块已关闭") +
-                  std::string("，重启 DevDesk 后生效"));
+        app::toggle::onModuleToggled(moduleId, on);   // 即时生效（桥内处理反馈）
+        setStatus((on ? "模块已开启：" : "模块已关闭：") + moduleId);
         LOG_INFO("Settings: 模块开关 " + moduleId + " → " +
-                 (on ? "启用" : "关闭") + "（重启生效）");
+                 (on ? "启用" : "关闭"));
     }
 
     void persist() {

@@ -279,13 +279,28 @@ public:
     // ==================== 生命周期 ====================
 
     void onStart() override {
+        // 重入幂等守卫（活门控 Task 4）：double-onStart = no-op——不重跑
+        // registerAll/rescan/刷新。此守卫无自动化防回归（find 循环对守卫回退
+        // 不敏感），靠 agent 同型用例（sweep 可观察面）+ 评审把关
+        if (started_) return;
+        started_ = true;
         auto* db = ::core::appDatabase();
         if (db == nullptr) {
             LOG_WARN("Markdown 模块启动：appDatabase() 为空，跳过真实索引");
             return;
         }
-        service_ = std::make_unique<MarkdownService>(*db, ::core::paths::markdownDir());
-        // 智能体工具（agent M1 Task 9）：service 构造后即挂 md.search / md.read
+        // 服务复用而非重建（UAF 收口，评审裁定）：service 进程级存活——agent
+        // run 线程可能正持 ToolRegistry keep-alive 的 md.* 工具引用旧 service，
+        // off→on 窗口里重建 = 先析构旧对象 → UAF。复用前提：db 指针（进程级
+        // 单例）与 notesDir（markdownDir，派生自进程级数据根）运行期不变；
+        // 未来若改为运行期可配，需重审本前提
+        if (!service_) {
+            service_ = std::make_unique<MarkdownService>(*db,
+                                                         ::core::paths::markdownDir());
+        }
+        // 智能体工具（agent M1 Task 9）：service 就绪后即挂 md.search / md.read
+        //（off 后 markdownTools_ 已被 onStop 置空，此处正常重挂；重入用例的
+        // find-ok 断言会抓到跳过）
         markdownTools_ = std::make_unique<MarkdownTools>(*service_);
         markdownTools_->registerAll();
         auto r = service_->rescan();
@@ -301,6 +316,9 @@ public:
     }
 
     void onStop() override {
+        // 重入幂等（活门控 Task 4）：未启动的 off = no-op（含无服务构造即
+        // onStop 的路径），不跑注销与编辑器落盘
+        if (!started_) return;
         // 智能体工具先注销（工具引用 service_；onStart 未建 service 时是 no-op）
         if (markdownTools_) {
             markdownTools_->unregisterAll();
@@ -318,6 +336,7 @@ public:
             LOG_ERROR("退出时保存笔记失败，未落盘的编辑已丢失: " + currentPath_ +
                       "（EUI-NEO 暂无退出拦截 API，无法阻断退出）");
         }
+        started_ = false;
         LOG_INFO("Markdown 模块停止");
     }
 
@@ -4197,6 +4216,9 @@ private:
     std::unique_ptr<MarkdownService> service_;
     // 智能体工具集（agent M1 Task 9）：引用 service_，onStop 先注销再放 service
     std::unique_ptr<MarkdownTools> markdownTools_;
+    // 重入幂等守卫（活门控 Task 4）：double-onStart / double-onStop / 未启动
+    // 的 off = no-op
+    bool started_ = false;
     // 审计 [23]：视图状态 store（loadViewState 创建；未创建 = 不持久化，saveViewState 静默跳过）
     std::unique_ptr<MarkdownViewStateStore> viewStore_;
     std::vector<NoteMeta> notes_;      // 当前展示（全部或搜索结果）

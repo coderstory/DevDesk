@@ -48,13 +48,25 @@ public:
     // ============ 生命周期 ============
 
     void onStart() override {
+        // 重入幂等守卫（活门控 Task 4）：double-onStart = no-op——不重跑
+        // attachTools/reloadAll/视图恢复。此守卫无自动化防回归（find 循环对
+        // 守卫回退不敏感），靠 agent 同型用例（sweep 可观察面）+ 评审把关
+        if (started_) return;
+        started_ = true;
         auto* db = ::core::appDatabase();
         if (!db) {
             LOG_WARN("Todo: 数据库尚未注册，跳过数据加载");
             return;
         }
-        service_ = std::make_unique<TodoService>(*db);
-        attachTools();
+        // 服务复用而非重建（UAF 收口，评审裁定）：service 进程级存活——agent
+        // run 线程可能正持 ToolRegistry keep-alive 的 todo.* 工具引用旧
+        // service（onStop 有意不 reset service_，final-review Fix 1），off→on
+        // 窗口里重建 = 先析构旧对象 → UAF。复用前提：db 为进程级单例、运行期
+        // 不换；未来若改为运行期可配，需重审本前提
+        if (!service_) {
+            service_ = std::make_unique<TodoService>(*db);
+        }
+        attachTools();   // off 后 todoTools_ 已被 detachTools 置空，此处正常重挂
         reloadAll();
         // 审计 [23]：恢复列滚动（按列 id）+ 选中任务（reloadAll 之后，列/任务已就位）
         viewStore_ = std::make_unique<TodoViewStateStore>(todoViewStateFile());
@@ -64,6 +76,9 @@ public:
     }
 
     void onStop() override {
+        // 重入幂等（活门控 Task 4）：未启动的 off = no-op（设置页对未启用模块
+        // 拨 off 时 dispatchModuleToggle 仍会调 onStop，此路径不该落盘/注销）
+        if (!started_) return;
         if (viewDirty_) saveViewState();  // 审计 [23]：退出前落盘视图状态
         // 只注销工具（工具引用 service）——**不 reset service_**（final-review
         // Fix 1，2026-10-01）：Router::stopAll 按注册顺序停模块，todo/markdown
@@ -74,6 +89,7 @@ public:
         // 且声明序 service_ 在 todoTools_ 之前 → 析构序 todoTools_ 先死、
         // service_ 后死，工具内的引用不悬垂。
         detachTools();
+        started_ = false;
         LOG_INFO("Todo 模块停止");
     }
 
@@ -956,6 +972,9 @@ private:
     // 智能体工具集（引用 service_；onStop 只注销注册，对象随成员析构销毁——
     // 声明序在 service_ 之后 = 先于 service_ 析构，工具内引用不悬垂）
     std::unique_ptr<TodoTools> todoTools_;
+    // 重入幂等守卫（活门控 Task 4）：double-onStart / double-onStop / 未启动
+    // 的 off = no-op
+    bool started_ = false;
     std::vector<Column> columns_;
     std::vector<Task> tasks_;
     // 审计 [23]：列内滚动偏移按列 id 记忆（旧按列索引，重排/删列串列）+

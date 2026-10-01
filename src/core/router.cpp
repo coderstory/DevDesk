@@ -10,7 +10,21 @@
 namespace core {
 
 void Router::registerModule(Module* module) {
-    if (module) modules_.push_back(module);
+    if (module == nullptr) return;
+    for (auto* m : modules_) {
+        if (m == module) return;   // 活门控（live-toggle）：重复注册 = no-op，
+    }                              // 侧边栏不再出现同页双入口
+    modules_.push_back(module);
+}
+
+void Router::unregisterModule(Module* module) {
+    if (module == nullptr) return;
+    for (auto it = modules_.begin(); it != modules_.end(); ++it) {
+        if (*it == module) {
+            modules_.erase(it);
+            return;                // 只移除首个匹配；重复调用幂等
+        }
+    }
 }
 
 bool Router::isRegistered(PageId page) const {
