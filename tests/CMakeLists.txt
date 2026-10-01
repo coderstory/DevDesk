@@ -2,6 +2,9 @@ add_executable(devdesk_tests
     test_main.cpp
     ${CMAKE_SOURCE_DIR}/src/app_sidebar.cpp
     ${CMAKE_SOURCE_DIR}/src/app_assembly.cpp
+    # app::toggle 桥实现缝：settings_module.cpp 引用其符号；probe 同样需要
+    #（probe 只链 module_* 库，app_assembly.cpp 不在 probe 链接集）
+    ${CMAKE_SOURCE_DIR}/src/module_toggle_bridge.cpp
     test_core/test_result.cpp
     test_core/test_paths.cpp
     test_core/test_logging.cpp
@@ -66,6 +69,7 @@ add_executable(devdesk_tests
     test_modules/test_editor_font.cpp
     test_modules/test_app_sidebar.cpp
     test_modules/test_app_assembly.cpp
+    test_modules/test_module_toggle_bridge.cpp
 )
 
 # ==================== 用例登记自检（TIN-10） ====================
@@ -176,7 +180,10 @@ file(GLOB _devdesk_probe_sources CONFIGURE_DEPENDS
 
 foreach(_probe_source ${_devdesk_probe_sources})
     get_filename_component(_probe_name "${_probe_source}" NAME_WE)
-    add_executable(${_probe_name} "${_probe_source}")
+    # module_toggle_bridge.cpp：settings 模块引用 app::toggle 桥符号，probe
+    # 链接集（module_* 库）里没有 app_assembly.cpp，缝必须单独编进来
+    add_executable(${_probe_name} "${_probe_source}"
+        "${CMAKE_SOURCE_DIR}/src/module_toggle_bridge.cpp")
     target_include_directories(${_probe_name} PRIVATE
         ${CMAKE_SOURCE_DIR}/src
         ${CMAKE_SOURCE_DIR}/tests

@@ -1,0 +1,25 @@
+// src/module_toggle_bridge.h —— 设置页 ↔ 应用层的模块开关即时生效桥。
+// 模式照 module_pet_bridge.h（中立层桥头 + 链接期解析 + static_assert 哨兵）：
+// settings 不 include 任何 app/兄弟模块头；符号在可执行文件链接期解析。
+// 实现 = 函数指针缝（默认 no-op + LOG_WARN）：app 装配段注入真实现（main.cpp
+// 装配段，实现落 app_assembly.cpp），测试注入 recording 桩。handler 为空时
+// onModuleToggled 只记日志不崩——启动早期/测试环境拨开关，写盘（settings
+// 侧已 persist）不受影响。
+#pragma once
+#include <string>
+#include <type_traits>
+
+namespace app::toggle {
+
+using ToggleHandler = void (*)(const std::string& moduleId, bool on);
+void setToggleHandler(ToggleHandler handler);   // nullptr = 恢复默认 no-op
+void onModuleToggled(const std::string& moduleId, bool on);
+
+}  // namespace app::toggle
+
+static_assert(std::is_same_v<decltype(&app::toggle::onModuleToggled),
+                             void (*)(const std::string&, bool)>,
+              "module_toggle_bridge: onModuleToggled 签名漂移");
+static_assert(std::is_same_v<decltype(&app::toggle::setToggleHandler),
+                             void (*)(app::toggle::ToggleHandler)>,
+              "module_toggle_bridge: setToggleHandler 签名漂移");

@@ -172,7 +172,8 @@ add_subdirectory(tests)
 
 # 主程序（app_sidebar.cpp = 侧边栏 + 根布局，app_assembly.cpp = 装配层，
 # 两者单测复用同一份实现）
-add_executable(DevDesk src/main.cpp src/app_sidebar.cpp src/app_assembly.cpp)
+add_executable(DevDesk src/main.cpp src/app_sidebar.cpp src/app_assembly.cpp
+    src/module_toggle_bridge.cpp)
 devdesk_apply_warnings(DevDesk)
 eui_neo_configure_app(DevDesk)
 
