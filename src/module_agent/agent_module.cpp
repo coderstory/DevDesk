@@ -7,37 +7,40 @@
 // eui::utf8(0xF544) 的 UTF-8 字节为 \xEF\x95\x84，与 app_registry.h
 // 图标列同值（assembly_registry_matches_module_getters 锁一致性）。
 //
-// 元素 id 契约表（plan task-12/10/11-brief，UI 测试逐字钉；2026-10-02 run 日志
-// 改造 + 可用工具区块 + 多行目标输入增补）：
-//   agent.page / agent.title /
-//   agent.form.goal.label（「任务目标」标签）/ agent.form.goal（多行输入）/
-//   agent.form.create /
+// 元素 id 契约表（plan task-12/10/11-brief + 2026-10-02 批次 A 骨架重做，UI 测试逐字钉）：
+//   页面    agent.page / agent.page.header / agent.title / agent.page.newTask
+//           （「+ 新建任务」按钮，唯一新建入口）/ agent.page.error（页级失败：
+//           编辑读库失败 / 启停失败，有错才渲染，下一次成功动作清）/
 //   agent.tools（可用工具区块容器）/ agent.tools.header（点开/收起）/
 //     agent.tools.header.label / agent.tools.header.hint /
-//     agent.tools.scroll / agent.tools.card.<k>
-//     （.bg 底 / .name / .desc / .params）
-//   agent.tasklist / agent.task.<taskId> / agent.task.<taskId>.title /
-//   agent.task.<taskId>.run（text=="启动"）/ agent.task.<taskId>.status /
-//   agent.task.<taskId>.edit（点开编辑表单）/ agent.task.<taskId>.toggle
-//     （text=="禁用"/"启用"，按 enabled）/ agent.task.<taskId>.enqueue
-//     （仅 trigger_type=="resident"）/
-//   agent.task.<taskId>.detail（展开才存在）/ agent.task.<taskId>.info
-//     （只读任务信息行）/ agent.task.<taskId>.runlist（最近 5 次 run）/
-//   agent.task.<taskId>.msgscroll（消息滚动区，展开才存在）/
-//   agent.task.<taskId>.msg.<i>（消息容器，列）/
-//     .msg.<i>.head / .msg.<i>.badge（角色徽章：用户/助手/工具）/
-//     .msg.<i>.toggle（展开/收起 chip）/ .msg.<i>.copy（复制 chip，展开才在）/
-//     .msg.<i>.preview（收起态 120 字节预览）/ .msg.<i>.blk.<j>（内容块，
-//     tool_use=🔧 chip 行 / tool_result=标签行）/ .msg.<i>.blk.<j>.out
-//     （tool_result 输出全文，wrap 多行）
-//   agent.edit.form 及子元素（editingTaskId_ 非空才存在）：agent.edit.goal /
-//     .trigger（下拉：手动/定时/常驻）/ .cron（trigger==定时才渲染）/
-//     .slot（下拉）/ .iter / .destructive / .save / .cancel / .error
+//     agent.tools.scroll / agent.tools.card.<k>（.bg / .name / .desc / .params）
+//   agent.tasklist（任务列表 scrollView；.content 是它的内容列，卡多出
+//     .scroll 滚动条）/ agent.task.<taskId>（行 44 高）/
+//     .title / .status / .detail（开详情弹窗）/ .edit（开任务弹窗的编辑态）/
+//     .toggle（text=="禁用"/"启用"，按 enabled）/ .enqueue（仅 trigger_type==
+//     "resident"）/ .run（text=="启动"；点它 = 起 run + 立即开详情弹窗）
+//   任务弹窗 agent.dialog.task（DialogFrame + drawDialogFrame；编辑 / 新建共用，
+//     taskDialogOpen_ 控开合，editingTaskId_ 非空 = 编辑态）：
+//     .title / .close（✕）/ .goal.caption / .goal（多行输入）/ .trigger.caption /
+//     .trigger（下拉：手动/定时/常驻）/ .cron.caption / .cron（仅定时才渲染）/
+//     .slot.caption / .slot（下拉）/ .iter.caption / .iter / .destructive（开关）/
+//     .error（有错才渲染）/ .cancel / .save
+//   详情弹窗 agent.dialog.detail（detailTaskId_ 非空才渲染内容）：
+//     .title / .close（✕）/ .info（配置摘要，与编辑弹窗同源 getTask）/
+//     .runlist（最近 5 次，倒序，选中/最近一次高亮）/.runlist.<i>[.err] /
+//     .msgs.title / .msgscroll（scrollView）/ .empty（选中 run 无消息）/
+//     .msg.<i>（消息容器，列）/.msg.<i>.head / .msg.<i>.badge（角色徽章：
+//     用户/助手/工具）/ .msg.<i>.toggle（展开/收起 chip）/ .msg.<i>.copy
+//     （复制 chip，展开才在）/ .msg.<i>.preview（收起态 120 字节预览）/
+//     .msg.<i>.blk.<j>（内容块，tool_use=🔧 chip 行 / tool_result=标签行）/
+//     .msg.<i>.blk.<j>.out（tool_result 输出全文，wrap 多行）
+//   弹窗关闭态不建内容节点（存在性即开关状态，测试据此判开合）。
 //
-// 可点元素（edit/toggle/enqueue/save/cancel）用 actionChip：契约要求 id 元素本身
-// 同时带 text 与 onClick，而 components::button 的 onClick 落在 <id>.bg 上，故
-// 手搓「<id> 文本元素 + <id>.bg 底」两层（观感取自同一组 button token）。
-// 表单字段标签一律 .caption 后缀——components::dropdown 内部占用 <id>.label
+// 可点元素（task 弹窗的按钮 / 行内动作 chip / ✕）用 actionChip 或 components::
+// button：契约要求 id 元素本身同时带 text 与 onClick，而 components::button 的
+// onClick 落在 <id>.bg 上，故行动作 chip 手搓「<id> 文本元素 + <id>.bg 底」两层
+//（观感取自同一组 button token）。
+// 弹窗内的字段标签一律 .caption 后缀——components::dropdown 内部占用 <id>.label
 //（字段显示名），宿主标签若同 id 会串位（2026-10-02 实测的 UI 缺陷）。
 // 注意 agent.tools.header.label 不受此约束：header 不是 dropdown，无内部 .label。
 #include "agent_module.h"
@@ -52,6 +55,8 @@
 #include <components/switch.h>
 #include <core/window/window_backend.h>
 #include <eui/dsl.h>
+#include <ui_kit/dialog_form.h>
+#include <ui_kit/metrics.h>
 
 #include "model_slots.h"
 
@@ -144,12 +149,15 @@ void actionChip(::eui::Ui& ui, const std::string& id, const std::string& label,
         .build();
 }
 
-// 表单字段标签：统一 12px + 显式垂直居中（2026-10-02 用户反馈「文本没垂直居中」——
-// 光靠 lineHeight 撑高不会居中）。id 一律用 .caption：components::dropdown 内部有
+// 弹窗字段标签：统一 12px + 显式垂直居中（2026-10-02 用户反馈「文本没垂直居中」
+// ——光靠 lineHeight 撑高不会居中）+ 显式定位（弹窗内容在 stack 里，不定位的
+// 子元素会堆在 (0,0)）。id 一律用 .caption：components::dropdown 内部有
 // <id>.label（字段显示名），宿主标签若同 id 会与之撞车串位
 void fieldCaption(::eui::Ui& ui, const std::string& id, const std::string& text,
-                  float width, float height, const ::core::Color& color) {
+                  float x, float y, float width, float height,
+                  const ::core::Color& color) {
     ui.text(id)
+        .position(x, y)
         .size(width, height)
         .text(text)
         .fontSize(12.0f)
@@ -205,16 +213,29 @@ constexpr const char* kTriggerLabels[] = {"手动", "定时", "常驻"};
 constexpr int kTriggerCount = 3;
 constexpr int kTriggerScheduleIdx = 1;
 
-// 编辑表单固定高度：内层 5 行（标题 20 / 目标 96 / 触发 40 / 槽位 40 / 动作 32
-// + 4 个 8px 间距 = 260）+ 上下 padding 12×2 = 284，取 300 留余量。2026-10-02
-// 目标输入改多行（96px ≈ 4 行视口，用户反馈③「输入框又小又简陋」）。列表高度
-// 计算里的减项必须与它一致（compose 的 gapCount/listH），否则行会溢出页底
-constexpr float kEditFormH = 300.0f;
+// 页面骨架几何（2026-10-02 批次 A1）：标题行高 / 「+ 新建任务」按钮宽 /
+// 任务行固定高（scrollView 的 step 与它同源）
+constexpr float kPageHeaderH = 40.0f;
+constexpr float kNewTaskBtnW = 140.0f;
+constexpr float kTaskRowH = 44.0f;
+// 页内错误行高（agent.page.error；进页面 column 的子项预算）
+constexpr float kPageErrorH = 16.0f;
 
-// 新建表单目标输入高（多行，与编辑表单同款 96）
+// 任务弹窗（A2）几何：目标输入高（多行 96 ≈ 4 行视口）+ 行高 / 标签宽 /
+// 字段间距 / 弹窗高。纵向排布（h = kTaskDialogH = 400）：
+//   标题 24..52 → 目标行 64..160 → 触发行 172..212 → 元信息行 224..264
+//   → 错误行 276..294 → 按钮行 h-60..h-20 = 340..380（底边距 20）
+// 触发 / cron 同行：cron 只在 触发方式==定时 时渲染，弹窗高度不变
+constexpr float kDialogRowH = 40.0f;
+constexpr float kDialogLabelW = 72.0f;
+constexpr float kDialogGap = 12.0f;
+constexpr float kTaskDialogH = 400.0f;
 constexpr float kGoalInputH = 96.0f;
 
-// 详情区 run 列表长度上限（契约表：最近 5 次）
+// 详情弹窗（A3）几何：内容高 660（窄屏由 dialog 组件按视口钳制）
+constexpr float kDetailDialogH = 660.0f;
+
+// run 列表长度上限（契约表：最近 5 次）
 constexpr int kRunListLimit = 5;
 
 // ---- run 日志消息区（2026-10-02 改造）----
@@ -373,8 +394,17 @@ void AgentModule::onStop() {
     llmMissingWarned_ = false;
     tasks_.clear();
     latestRuns_.clear();
+    taskRuns_.clear();
     detailMessages_.clear();
-    expandedTaskId_.reset();
+    detailTaskId_.reset();
+    detailTaskRow_.reset();
+    selectedRunId_.reset();
+    expandedMsgSeqs_.clear();
+    autoExpandedSeq_.reset();
+    taskDialogOpen_ = false;
+    editingTaskId_.reset();
+    editError_.clear();
+    pageError_.clear();
     uiPolling_ = false;
     started_ = false;
     LOG_INFO("Agent 模块停止");
@@ -504,44 +534,56 @@ void AgentModule::startTask(int64_t taskId) {
     tasksDirty_ = true;
 }
 
-void AgentModule::createTaskFromForm() {
-    if (store_ == nullptr) {
-        formError_ = "数据库未就绪";
-        return;
-    }
-    const std::string goal = trimCopy(goalInput_);
-    if (goal.empty()) {
-        formError_ = "请先填写任务目标";
-        return;
-    }
-    // M1 固定项：触发 manual、槽位 default、迭代上限 10（brief 指定）
-    auto created =
-        store_->createTask(deriveTaskName(goal), goal, "manual", "default", 10, false);
-    if (created.isFail()) {
-        formError_ = "创建失败：" + created.errorMessage();
-        LOG_ERROR("Agent: 创建任务失败: " + created.errorMessage());
-        return;
-    }
-    goalInput_.clear();
-    formError_.clear();
-    tasksDirty_ = true;
+// 打开任务弹窗的新建态：editingTaskId_ 清空即「新建」语义，字段回默认值
+//（manual / default / 10 / false / 空 goal）——与编辑态共用同一张表单
+void AgentModule::openNewTaskDialog() {
+    taskDialogOpen_ = true;
+    pageError_.clear();   // 成功动作清掉上一次的页内错误
+    editingTaskId_.reset();
+    editGoal_.clear();
+    editCron_.clear();
+    editSlot_ = kModelSlotKeys[0];   // "default"
+    editIter_ = 10;
+    editDestructive_ = false;
+    editTriggerIdx_ = 0;             // 手动
+    editError_.clear();
+    editTriggerOpen_ = false;
+    editSlotOpen_ = false;
+}
+
+// 关闭任务弹窗（取消 / ✕ / 遮罩 / Esc / 保存成功四条路径共用）：不落库、
+// 不碰任务列表，只退弹窗态与草稿
+void AgentModule::closeTaskDialog() {
+    taskDialogOpen_ = false;
+    editingTaskId_.reset();
+    editError_.clear();
+    editTriggerOpen_ = false;
+    editSlotOpen_ = false;
 }
 
 void AgentModule::setEditCronDraft(const std::string& cron) {
     editCron_ = cron;
 }
 
-// 打开编辑表单：字段以库为准回填（tasks_ 缓存可能滞后于库，编辑入口直接
-// getTask——与详情展示同源同一份 AgentTaskRow）
+void AgentModule::setDialogIterDraft(int iter) {
+    editIter_ = iter;
+}
+
+// 打开任务弹窗的编辑态：字段以库为准回填（tasks_ 缓存可能滞后于库，编辑入口
+// 直接 getTask——与详情弹窗的配置摘要同源同一份 AgentTaskRow）。
+// 读库失败（陈旧缓存：行已被外部删除）→ 页内错误行（agent.page.error）——
+// 2026-10-02 复审点名的静默路径：只 LOG 的话用户点「编辑」什么都不会发生
 void AgentModule::openTaskEditor(int64_t taskId) {
     if (store_ == nullptr) return;
     auto row = store_->getTask(taskId);
     if (row.isFail()) {
-        formError_ = "读取任务失败：" + row.errorMessage();
-        LOG_WARN("Agent: 打开编辑表单失败: " + row.errorMessage());
+        pageError_ = "读取任务失败：" + row.errorMessage();
+        LOG_WARN("Agent: 打开任务弹窗失败: " + row.errorMessage());
         return;
     }
     const AgentTaskRow& r = row.value();
+    pageError_.clear();   // 成功动作清掉上一次的页内错误
+    taskDialogOpen_ = true;
     editingTaskId_ = r.id;
     editGoal_ = r.goal;
     editCron_ = cronTextOf(r);
@@ -554,11 +596,15 @@ void AgentModule::openTaskEditor(int64_t taskId) {
     editSlotOpen_ = false;
 }
 
-// 保存编辑表单（spec §14 UI 行「cron 输入校验」）：trigger==定时 时先经 parseCron
-// 校验，非法 → agent.edit.error 文案 + **不落库**（表单留在原地让用户改）；合法 →
-// updateTask 七列覆盖 + 退编辑态 + 置脏重查。enabled 不在此路径（归 toggle）
-void AgentModule::saveTaskEdit() {
-    if (store_ == nullptr || !editingTaskId_) return;
+// 保存任务弹窗（新建 / 编辑同一路径）：trigger==定时 时先经 parseCron 校验，
+// 非法 → 弹窗内错误文案 + **不落库 + 弹窗不关**（用户就地改）；合法 → 编辑态
+// 走 updateTask（七列覆盖）、新建态走 createTask（含 trigger_config），成功
+// 即关弹窗 + 置脏重查。enabled 不在此路径（归行内启停）
+void AgentModule::saveTaskDialog() {
+    if (store_ == nullptr) {
+        editError_ = "数据库未就绪";
+        return;
+    }
     const std::string goal = trimCopy(editGoal_);
     if (goal.empty()) {
         editError_ = "请先填写任务目标";
@@ -586,44 +632,93 @@ void AgentModule::saveTaskEdit() {
         triggerConfig = encoded.value();
     }
     const int iter = editIter_ < 1 ? 1 : (editIter_ > 50 ? 50 : editIter_);
-    auto updated = store_->updateTask(*editingTaskId_, deriveTaskName(goal), goal,
-                                      triggerType, triggerConfig, editSlot_, iter,
-                                      editDestructive_);
-    if (updated.isFail()) {
-        editError_ = "保存失败：" + updated.errorMessage();
-        LOG_ERROR("Agent: 保存任务失败: " + updated.errorMessage());
-        return;
+    if (editingTaskId_) {
+        auto updated = store_->updateTask(*editingTaskId_, deriveTaskName(goal), goal,
+                                          triggerType, triggerConfig, editSlot_, iter,
+                                          editDestructive_);
+        if (updated.isFail()) {
+            editError_ = "保存失败：" + updated.errorMessage();
+            LOG_ERROR("Agent: 保存任务失败: " + updated.errorMessage());
+            return;
+        }
+    } else {
+        // createTask 七参：尾参 triggerConfig 默认空串（manual/resident 不写载荷）
+        auto created = store_->createTask(deriveTaskName(goal), goal, triggerType,
+                                          editSlot_, iter, editDestructive_,
+                                          triggerConfig);
+        if (created.isFail()) {
+            editError_ = "创建失败：" + created.errorMessage();
+            LOG_ERROR("Agent: 创建任务失败: " + created.errorMessage());
+            return;
+        }
     }
-    editingTaskId_.reset();
-    editError_.clear();
+    closeTaskDialog();
     tasksDirty_ = true;
 }
 
-// 启用/禁用取反（与编辑表单是两个独立动作：本路径不碰其它七列）
+// 启用/禁用取反（与任务弹窗是两个独立动作：本路径不碰其它七列）。
+// 失败（陈旧缓存的行已被删）→ 页内错误行，不静默
 void AgentModule::toggleTaskEnabled(const AgentTaskRow& task) {
     if (store_ == nullptr) return;
     auto r = store_->setTaskEnabled(task.id, !task.enabled);
     if (r.isFail()) {
+        pageError_ = "启停切换失败：" + r.errorMessage();
         LOG_WARN("Agent: 启停切换失败（task " + std::to_string(task.id) +
                  "）: " + r.errorMessage());
         return;
     }
+    pageError_.clear();
     tasksDirty_ = true;
 }
 
-void AgentModule::toggleExpand(int64_t taskId) {
-    if (expandedTaskId_ && *expandedTaskId_ == taskId) {
-        expandedTaskId_.reset();
-    } else {
-        expandedTaskId_ = taskId;
-    }
-    selectedRunId_.reset();   // 展开语义：默认选中最近一次 run（runlist[0]）
+// 打开详情弹窗（取代页内展开区）：每开一次都回到「最近一次 run」——
+// selectedRunId_ 清空后由 refreshData 回落 taskRuns_[task][0]
+void AgentModule::openTaskDetail(int64_t taskId) {
+    detailTaskId_ = taskId;
+    selectedRunId_.reset();
     detailMessages_.clear();
-    // 消息展开态按 seq 定位且只在 run 内有意义：切任务即清（切 run 的清在
-    // runlist 选中回调里）
+    // 消息展开态按 seq 定位且只在 run 内有意义：换任务即清
     expandedMsgSeqs_.clear();
+    autoExpandedSeq_.reset();
     ++msgScrollVersion_;
     tasksDirty_ = true;   // 触发一次刷新装载 run 列表与详情消息
+}
+
+// 关详情弹窗：只退弹窗态（不回写任务列表、不触发重查——列表数据本就是同一份）
+void AgentModule::closeTaskDetail() {
+    detailTaskId_.reset();
+    detailTaskRow_.reset();
+    selectedRunId_.reset();
+    detailMessages_.clear();
+    expandedMsgSeqs_.clear();
+    autoExpandedSeq_.reset();
+    ++msgScrollVersion_;
+}
+
+// 默认展开态（2026-10-02 用户反馈②的正面修复）：最近一条带 text 块的
+// assistant 消息默认展开——详情弹窗一打开就能看到最终回复，不必再点。
+// 只在该目标 seq 变化时改展开集：用户手动收起后，同一条不会被每帧刷新顶回来；
+// 目标变了（新回复落库）则收起上一条自动展开的、展开新的
+void AgentModule::applyDefaultMessageExpansion() {
+    std::optional<int64_t> target;
+    for (auto it = detailMessages_.rbegin(); it != detailMessages_.rend(); ++it) {
+        if (it->role != "assistant") continue;
+        const std::vector<MessageBlock> blocks = decodeMessageBlocks(it->contentJson);
+        for (const auto& b : blocks) {
+            if (b.type == MessageBlock::Type::Text && !b.text.empty()) {
+                target = it->seq;
+                break;
+            }
+        }
+        if (target) break;
+    }
+    if (target == autoExpandedSeq_) return;
+    if (autoExpandedSeq_) expandedMsgSeqs_.erase(*autoExpandedSeq_);
+    autoExpandedSeq_ = target;
+    if (target) {
+        expandedMsgSeqs_.insert(*target);
+        ++msgScrollVersion_;   // 内容高变了 → scrollView 重测
+    }
 }
 
 // 单条消息展开/收起（run 日志改造 2026-10-02）
@@ -682,9 +777,18 @@ void AgentModule::refreshData() {
         }
         taskRuns_[task.id] = std::move(list);
     }
-    if (expandedTaskId_) {
+    if (detailTaskId_) {
         detailMessages_.clear();
-        auto it = taskRuns_.find(*expandedTaskId_);
+        // 配置摘要快照（与任务弹窗的编辑态同源读法：getTask，不拿 tasks_
+        // 列表里的那份——列表可能滞后于库）
+        auto row = store_->getTask(*detailTaskId_);
+        if (row.isOk()) {
+            detailTaskRow_ = std::move(row).value();
+        } else {
+            detailTaskRow_.reset();
+            LOG_WARN("Agent: 详情弹窗读取任务失败: " + row.errorMessage());
+        }
+        auto it = taskRuns_.find(*detailTaskId_);
         if (it != taskRuns_.end() && !it->second.empty()) {
             // 选中 run：显式选中（点过 runlist 行）优先；不在本任务列表里
             //（换了任务 / 被 5 条上限挤出）→ 回落最近一次
@@ -709,6 +813,11 @@ void AgentModule::refreshData() {
         } else {
             selectedRunId_.reset();   // 该任务还没有 run
         }
+        // 消息装载后套默认展开态（进行中的 run 新落一条 assistant 文本会
+        // 自动成为新的展开目标——「完成即出现最终回复」）
+        applyDefaultMessageExpansion();
+    } else {
+        detailTaskRow_.reset();
     }
     bool anyAlive = false;
     {
@@ -742,11 +851,11 @@ void AgentModule::refreshData() {
 //       tool_use     → 「🔧 名称 + 参数摘要」单行 chip 文本
 //       tool_result  → 「工具输出」标签行 + 输出全文 wrap 多行（错误标红）
 void AgentModule::renderMessageRow(
-    ::eui::Ui& inner, float cw, const std::string& taskId, size_t index,
+    ::eui::Ui& inner, float cw, const std::string& prefix, size_t index,
     const AgentMessageRow& msg, const ::core::theme::Tokens& t,
     const components::theme::ThemeColorTokens& tokens) {
     (void)t;
-    const std::string mid = taskId + ".msg." + std::to_string(index);
+    const std::string mid = prefix + ".msg." + std::to_string(index);
     const bool expanded = expandedMsgSeqs_.count(msg.seq) > 0;
     const float boxH = estimateMessageHeight(msg, expanded, cw, 18.0f);
     const std::vector<MessageBlock> blocks =
@@ -891,87 +1000,63 @@ void AgentModule::compose(::eui::Ui& ui, const ::eui::Screen& screen) {
     }
 
     // 数据刷新：脏标记或有 run 在身（每帧跟进状态/消息）；查询在主线程，
-    // 量级 = 任务数 + 展开任务的消息数，M1 可接受
+    // 量级 = 任务数 + 弹窗选中 run 的消息数，可接受
     if (store_ != nullptr && (tasksDirty_ || uiPolling_)) {
         refreshData();
     }
 
-    const bool hasError = !formError_.empty();
     ensureToolsCache(/*forceReload=*/false);
     const float toolsListH =
-        toolsOpen_ ? std::min(static_cast<float>(toolsCache_.size()) *
-                                      kToolCardH,
-                                  kToolsListMaxH)
+        toolsOpen_ ? std::min(static_cast<float>(toolsCache_.size()) * kToolCardH,
+                              kToolsListMaxH)
                    : 0.0f;
-    const float toolsH =
-        kToolsHeaderH + (toolsOpen_ ? kMsgGap + toolsListH : 0.0f);
-    // 页 column 子项：title / form / [error] / tools / [编辑表单] / tasklist，
-    // gap = spacingLarge；子项数一变，gapCount 与减项必须同步（否则 tasklist
-    // 高度算错 → 末尾行溢出页底）。form 行高 = kGoalInputH（多行目标输入）
-    const int gapCount = (hasError ? 1 : 0) + 3 + (editingTaskId_ ? 1 : 0);
-    const float listH = screen.height - pad * 2.0f - 32.0f - kGoalInputH -
-                        toolsH -
-                        (hasError ? 16.0f : 0.0f) -
-                        (editingTaskId_ ? kEditFormH : 0.0f) -
-                        static_cast<float>(gapCount) * t.sizes.spacingLarge;
+    const float toolsH = kToolsHeaderH + (toolsOpen_ ? kMsgGap + toolsListH : 0.0f);
+    // 页 column 子项：标题行 / [页内错误行] / tools / tasklist（批次 A1 起页内
+    // 表单与页内详情区都已删除），gap = spacingLarge。子项数或行高一变，
+    // gapCount 与减项必须同步（否则列表高度算错 → 末尾行溢出页底）
+    const bool hasPageError = !pageError_.empty();
+    const int kPageGapCount = 2 + (hasPageError ? 1 : 0);
+    const float listH = screen.height - pad * 2.0f - kPageHeaderH - toolsH -
+                        (hasPageError ? kPageErrorH : 0.0f) -
+                        static_cast<float>(kPageGapCount) * t.sizes.spacingLarge;
 
     ui.column("agent.page")
         .size(screen.width, screen.height)
         .padding(pad)
         .gap(t.sizes.spacingLarge)
         .content([&] {
-            // ---- 标题 ----
-            ui.text("agent.title")
-                .size(contentW, 32.0f)
-                .text("智能体")
-                .fontSize(t.sizes.fontSizeTitle)
-                .lineHeight(32.0f)
-                .fontWeight(700)
-                .color(t.colors.textPrimary)
-                .build();
-
-            // ---- 新建表单：任务目标标签 + 多行输入 + 提交（2026-10-02 用户
-            // 反馈③：单行小框改多行 4 行视口 + 引导 placeholder；M1 固定项
-            // 槽位 default / 迭代上限 10 见 createTaskFromForm）----
-            ui.row("agent.form")
-                .size(contentW, kGoalInputH)
-                .gap(12.0f)
+            // ---- 标题行：标题 + 「+ 新建任务」（唯一新建入口 → A2 弹窗）----
+            ui.row("agent.page.header")
+                .size(contentW, kPageHeaderH)
+                .gap(kDialogGap)
+                .alignItems(eui::Align::CENTER)
                 .content([&] {
-                    // 标签顶对齐（多行输入框的标签贴顶，垂直居中会悬在半空）
-                    ui.text("agent.form.goal.label")
-                        .size(72.0f, 20.0f)
-                        .text("任务目标")
-                        .fontSize(12.0f)
-                        .lineHeight(20.0f)
-                        .verticalAlign(eui::VerticalAlign::Top)
-                        .color(t.colors.textSecondary)
+                    ui.text("agent.title")
+                        .size(contentW - kNewTaskBtnW - kDialogGap, 32.0f)
+                        .text("智能体")
+                        .fontSize(t.sizes.fontSizeTitle)
+                        .lineHeight(32.0f)
+                        .fontWeight(700)
+                        .color(t.colors.textPrimary)
                         .build();
-                    components::input(ui, "agent.form.goal")
-                        .size(contentW - 72.0f - 12.0f - 120.0f - 12.0f,
-                              kGoalInputH)
-                        .value(goalInput_)
-                        .placeholder("描述这个任务要做什么，例如：把逾期的待办全部完成")
-                        .fontSize(t.sizes.fontSizeBody)
-                        .multiline(true)
-                        .scrollbar(true)
-                        .theme(themeTokens)
-                        .onChange([this](const std::string& v) { goalInput_ = v; })
-                        .build();
-                    components::button(ui, "agent.form.create")
-                        .size(120.0f, 40.0f)
-                        .text("新建任务")
+                    components::button(ui, "agent.page.newTask")
+                        .size(kNewTaskBtnW, 40.0f)
+                        .text("+ 新建任务")
                         .theme(themeTokens)
                         .disabled(store_ == nullptr)
-                        .onClick([this] { createTaskFromForm(); })
+                        .onClick([this] { openNewTaskDialog(); })
                         .build();
                 })
                 .build();
-            if (hasError) {
-                ui.text("agent.form.error")
-                    .size(contentW, 16.0f)
-                    .text(formError_)
+
+            // ---- 页内错误行（有错才渲染）：弹窗之外的失败的唯一可见出口 ----
+            if (hasPageError) {
+                ui.text("agent.page.error")
+                    .size(contentW, kPageErrorH)
+                    .text(pageError_)
                     .fontSize(12.0f)
-                    .lineHeight(16.0f)
+                    .lineHeight(kPageErrorH)
+                    .verticalAlign(eui::VerticalAlign::Center)
                     .color(t.colors.error)
                     .build();
             }
@@ -1103,202 +1188,19 @@ void AgentModule::compose(::eui::Ui& ui, const ::eui::Screen& screen) {
                 })
                 .build();
 
-            // ---- 编辑表单（Task 10）：editingTaskId_ 非空才渲染 ----
-            // 触发/槽位用 components::dropdown，包一层同尺寸 stack（settings 页
-            // 同款）：dropdown 根 stack 含弹层高度，直接当行子项会把行撑高
-            if (editingTaskId_) {
-                const float innerW = contentW - 24.0f;
-                const float labelW = 72.0f;
-                const float ddW = 140.0f;
-                const float rowGap = 12.0f;
-                const bool isSchedule = editTriggerIdx_ == kTriggerScheduleIdx;
-                ui.column("agent.edit.form")
-                    .size(contentW, kEditFormH)
-                    .padding(12.0f)
-                    .gap(8.0f)
-                    .content([&] {
-                        ui.text("agent.edit.form.title")
-                            .size(innerW, 20.0f)
-                            .text("编辑任务")
-                            .fontSize(13.0f)
-                            .lineHeight(20.0f)
-                            .fontWeight(700)
-                            .color(t.colors.textPrimary)
-                            .build();
-                        // 目标（2026-10-02 用户反馈③：多行 4 行视口 + 引导文案）
-                        ui.row("agent.edit.goal.row")
-                            .size(innerW, kGoalInputH)
-                            .gap(rowGap)
-                            .content([&] {
-                                ui.text("agent.edit.goal.caption")
-                                    .size(labelW, 20.0f)
-                                    .text("任务目标")
-                                    .fontSize(12.0f)
-                                    .lineHeight(20.0f)
-                                    .verticalAlign(eui::VerticalAlign::Top)
-                                    .color(t.colors.textSecondary)
-                                    .build();
-                                components::input(ui, "agent.edit.goal")
-                                    .size(innerW - labelW - rowGap,
-                                          kGoalInputH)
-                                    .value(editGoal_)
-                                    .placeholder("描述这个任务要做什么…")
-                                    .fontSize(t.sizes.fontSizeBody)
-                                    .multiline(true)
-                                    .scrollbar(true)
-                                    .theme(themeTokens)
-                                    .onChange([this](const std::string& v) {
-                                        editGoal_ = v;
-                                    })
-                                    .build();
-                            })
-                            .build();
-                        // 触发方式 [+ cron（定时才渲染）]
-                        ui.row("agent.edit.trigger.row")
-                            .size(innerW, 40.0f)
-                            .gap(rowGap)
-                            .alignItems(eui::Align::CENTER)
-                            .content([&] {
-                                fieldCaption(ui, "agent.edit.trigger.caption", "触发方式", labelW,
-                                             40.0f, t.colors.textSecondary);
-                                ui.stack("agent.edit.trigger.wrap")
-                                    .size(ddW, 40.0f)
-                                    .content([&] {
-                                        components::dropdown(ui, "agent.edit.trigger")
-                                            .size(ddW, 40.0f)
-                                            .theme(themeTokens)
-                                            .items(std::vector<std::string>(
-                                                kTriggerLabels,
-                                                kTriggerLabels + kTriggerCount))
-                                            .selected(editTriggerIdx_)
-                                            .open(editTriggerOpen_)
-                                            .onOpenChange([this](bool v) {
-                                                editTriggerOpen_ = v;
-                                            })
-                                            .onChange([this](int idx) {
-                                                editTriggerIdx_ = idx;
-                                            })
-                                            .build();
-                                    })
-                                    .build();
-                                if (isSchedule) {
-                                    fieldCaption(ui, "agent.edit.cron.caption", "cron 表达式", 72.0f,
-                                                 40.0f, t.colors.textSecondary);
-                                    components::input(ui, "agent.edit.cron")
-                                        .size(innerW - labelW - ddW - 72.0f -
-                                                  rowGap * 3.0f,
-                                              40.0f)
-                                        .value(editCron_)
-                                        .placeholder("分 时 日 月 周，例如 0 9 * * 1-5")
-                                        .fontSize(t.sizes.fontSizeBody)
-                                        .theme(themeTokens)
-                                        .onChange([this](const std::string& v) {
-                                            editCron_ = v;
-                                        })
-                                        .build();
-                                }
-                            })
-                            .build();
-                        // 模型槽位 + 迭代上限 + 破坏性授权
-                        ui.row("agent.edit.meta.row")
-                            .size(innerW, 40.0f)
-                            .gap(rowGap)
-                            .alignItems(eui::Align::CENTER)
-                            .content([&] {
-                                fieldCaption(ui, "agent.edit.slot.caption", "模型槽位", labelW,
-                                             40.0f, t.colors.textSecondary);
-                                ui.stack("agent.edit.slot.wrap")
-                                    .size(ddW, 40.0f)
-                                    .content([&] {
-                                        components::dropdown(ui, "agent.edit.slot")
-                                            .size(ddW, 40.0f)
-                                            .theme(themeTokens)
-                                            .items(std::vector<std::string>(
-                                                kModelSlotLabels,
-                                                kModelSlotLabels + kModelSlotCount))
-                                            .selected(slotIndexOf(editSlot_))
-                                            .open(editSlotOpen_)
-                                            .onOpenChange([this](bool v) {
-                                                editSlotOpen_ = v;
-                                            })
-                                            .onChange([this](int idx) {
-                                                if (idx >= 0 && idx < kModelSlotCount) {
-                                                    editSlot_ = kModelSlotKeys[idx];
-                                                }
-                                            })
-                                            .build();
-                                    })
-                                    .build();
-                                fieldCaption(ui, "agent.edit.iter.caption", "迭代上限", 72.0f,
-                                             40.0f, t.colors.textSecondary);
-                                components::input(ui, "agent.edit.iter")
-                                    .size(100.0f, 40.0f)
-                                    .value(std::to_string(editIter_))
-                                    .fontSize(t.sizes.fontSizeBody)
-                                    .theme(themeTokens)
-                                    .onChange([this](const std::string& v) {
-                                        editIter_ = parseIterInput(v);
-                                    })
-                                    .build();
-                                // 破坏性授权开关：用 switch（settings 页同款，
-                                // 已在 DevDesk 编译面内）——components::checkbox
-                                // 头在 -Wall -Wextra -Werror 下有未使用变量告警
-                                //（EUI-NEO 侧既有问题，不属本次改动范围）
-                                components::toggleSwitch(ui, "agent.edit.destructive")
-                                    .size(innerW - labelW - ddW - 72.0f - 100.0f -
-                                              rowGap * 4.0f,
-                                          32.0f)
-                                    .text("允许破坏性操作")
-                                    .checked(editDestructive_)
-                                    .fontSize(12.0f)
-                                    .theme(themeTokens)
-                                    .onChange([this](bool v) {
-                                        editDestructive_ = v;
-                                    })
-                                    .build();
-                            })
-                            .build();
-                        // 保存 / 取消 / 错误文案
-                        ui.row("agent.edit.actions")
-                            .size(innerW, 32.0f)
-                            .gap(rowGap)
-                            .alignItems(eui::Align::CENTER)
-                            .content([&] {
-                                actionChip(ui, "agent.edit.save", "保存", 64.0f,
-                                           /*primary=*/true, /*enabled=*/true,
-                                           themeTokens,
-                                           [this] { saveTaskEdit(); });
-                                actionChip(ui, "agent.edit.cancel", "取消", 64.0f,
-                                           /*primary=*/false, /*enabled=*/true,
-                                           themeTokens, [this] {
-                                               editingTaskId_.reset();
-                                               editError_.clear();
-                                           });
-                                if (!editError_.empty()) {
-                                    ui.text("agent.edit.error")
-                                        .size(innerW - 64.0f * 2.0f - rowGap * 3.0f,
-                                              32.0f)
-                                        .text(editError_)
-                                        .fontSize(12.0f)
-                                        .lineHeight(32.0f)
-                                        .wrap(false)
-                                        .color(t.colors.error)
-                                        .build();
-                                }
-                            })
-                            .build();
-                    })
-                    .build();
-            }
-
-            // ---- 任务列表 ----
-            ui.column("agent.tasklist")
+            // ---- 任务列表（批次 A1）：scrollView 承载，viewport 高 = 页面剩余
+            // 高；行高固定 kTaskRowH（step 同源），内容超高自然出滚动条。
+            // 行内四个动作：启动 / 详情 / 编辑 / 禁用（常驻任务多一个入队）----
+            components::scrollView(ui, "agent.tasklist")
                 .size(contentW, std::max(0.0f, listH))
                 .gap(8.0f)
-                .content([&] {
+                .step(kTaskRowH)
+                .theme(themeTokens)
+                .contentKey("agent.tasklist.n" + std::to_string(tasks_.size()))
+                .content([&](eui::Ui& inner, float cw, float) {
                     if (store_ == nullptr) {
-                        ui.text("agent.error")
-                            .size(contentW, 20.0f)
+                        inner.text("agent.error")
+                            .size(cw, 20.0f)
                             .text("数据库未就绪（Agent 模块服务未装配）")
                             .fontSize(t.sizes.fontSizeBody)
                             .lineHeight(20.0f)
@@ -1307,9 +1209,9 @@ void AgentModule::compose(::eui::Ui& ui, const ::eui::Screen& screen) {
                         return;
                     }
                     if (tasks_.empty()) {
-                        ui.text("agent.empty")
-                            .size(contentW, 20.0f)
-                            .text("暂无任务——先在上方填写目标并点「新建任务」")
+                        inner.text("agent.empty")
+                            .size(cw, 20.0f)
+                            .text("暂无任务——点右上角「+ 新建任务」创建")
                             .fontSize(t.sizes.fontSizeBody)
                             .lineHeight(20.0f)
                             .color(t.colors.textTertiary)
@@ -1319,57 +1221,59 @@ void AgentModule::compose(::eui::Ui& ui, const ::eui::Screen& screen) {
                     for (const auto& task : tasks_) {
                         const std::string id =
                             "agent.task." + std::to_string(task.id);
-                        const bool expanded =
-                            expandedTaskId_ &&
-                            *expandedTaskId_ == task.id;
                         std::string status = "—";
                         auto it = latestRuns_.find(task.id);
                         if (it != latestRuns_.end()) {
                             status = runStatusText(it->second.status);
                         }
-                        // 行内控件宽度分配：状态 80 / 编辑 48 / 启停 48 /
+                        // 行内控件宽度分配：状态 80 / 详情 48 / 编辑 48 / 启停 48 /
                         // [入队 56（仅常驻）] / 启动 72，间距 12；标题吃剩余宽度。
                         // childCount 必须与实际子元素个数一致（间距数 = 子元素数-1）
                         const bool resident = task.triggerType == "resident";
                         const float rowGap = 12.0f;
-                        const int childCount = 5 + (resident ? 1 : 0);
-                        const float fixedW = 80.0f + 48.0f + 48.0f + 72.0f +
+                        const int childCount = 6 + (resident ? 1 : 0);
+                        const float fixedW = 80.0f + 48.0f * 3.0f + 72.0f +
                                              (resident ? 56.0f : 0.0f);
-                        const float titleW = contentW - fixedW -
-                                             rowGap * static_cast<float>(childCount - 1);
-                        // 任务行：点击展开/收起详情；行内控件各自独立消费点击
-                        //（子元素先于父行命中——runtime 逆向命中序）
-                        ui.row(id)
-                            .size(contentW, 44.0f)
+                        const float titleW =
+                            cw - fixedW - rowGap * static_cast<float>(childCount - 1);
+                        // 点行本体也开详情弹窗（行内控件各自独立消费点击——
+                        // 子元素先于父行命中，runtime 逆向命中序）
+                        inner.row(id)
+                            .size(cw, kTaskRowH)
                             .alignItems(eui::Align::CENTER)
                             .gap(rowGap)
                             .interactive(true)
                             .onClick([this, taskId = task.id] {
-                                toggleExpand(taskId);
+                                openTaskDetail(taskId);
                             })
                             .content([&] {
-                                ui.text(id + ".title")
+                                inner.text(id + ".title")
                                     .size(titleW, 20.0f)
                                     .text(task.name)
                                     .fontSize(t.sizes.fontSizeBody)
                                     .lineHeight(20.0f)
                                     .color(t.colors.textPrimary)
                                     .build();
-                                ui.text(id + ".status")
+                                inner.text(id + ".status")
                                     .size(80.0f, 20.0f)
                                     .text(status)
                                     .fontSize(12.0f)
                                     .lineHeight(20.0f)
                                     .color(t.colors.textSecondary)
                                     .build();
-                                // 编辑 / 启停 / 入队：契约要求 id 元素本身带 text
-                                // 与 onClick（text 元素挂 onClick 即 interactive）
-                                actionChip(ui, id + ".edit", "编辑", 48.0f,
+                                // 详情 / 编辑 / 启停 / 入队：契约要求 id 元素本身
+                                // 带 text 与 onClick（text 元素挂 onClick 即 interactive）
+                                actionChip(inner, id + ".detail", "详情", 48.0f,
+                                           /*primary=*/false, /*enabled=*/true,
+                                           themeTokens, [this, taskId = task.id] {
+                                               openTaskDetail(taskId);
+                                           });
+                                actionChip(inner, id + ".edit", "编辑", 48.0f,
                                            /*primary=*/false, /*enabled=*/true,
                                            themeTokens, [this, taskId = task.id] {
                                                openTaskEditor(taskId);
                                            });
-                                actionChip(ui, id + ".toggle",
+                                actionChip(inner, id + ".toggle",
                                            task.enabled ? "禁用" : "启用", 48.0f,
                                            /*primary=*/false, /*enabled=*/true,
                                            themeTokens, [this, taskCopy = task] {
@@ -1378,7 +1282,7 @@ void AgentModule::compose(::eui::Ui& ui, const ::eui::Screen& screen) {
                                 if (resident) {
                                     // 常驻入队（spec §5.1：常驻本阶段只跑手动
                                     // 入队子任务）；Scheduler 未装配时置灰不可点
-                                    actionChip(ui, id + ".enqueue", "入队", 56.0f,
+                                    actionChip(inner, id + ".enqueue", "入队", 56.0f,
                                                /*primary=*/false,
                                                /*enabled=*/scheduler_ != nullptr,
                                                themeTokens, [this, taskId = task.id] {
@@ -1390,160 +1294,452 @@ void AgentModule::compose(::eui::Ui& ui, const ::eui::Screen& screen) {
                                                    scheduler_->enqueueResident(taskId);
                                                });
                                 }
-                                components::button(ui, id + ".run")
+                                components::button(inner, id + ".run")
                                     .size(72.0f, 32.0f)
                                     .text("启动")
                                     .theme(themeTokens)
                                     .disabled(loop_ == nullptr)  // 无 LLM 通道禁用
                                     .onClick([this, taskId = task.id] {
                                         startTask(taskId);
+                                        // A3 契约：启动 run 后立即打开详情弹窗，
+                                        // 随页面既有刷新周期（uiPolling_）实时更新
+                                        openTaskDetail(taskId);
                                     })
                                     .build();
                             })
                             .build();
-                        // run 详情：展开时才存在（契约表）；消息行 = role+content
-                        // 前 80 字节（最近一次 run，seq 升序）
-                        if (expanded) {
-                            ui.column(id + ".detail")
-                                .width(contentW)
-                                .height(::eui::SizeValue::wrapContent())
-                                .padding(12.0f)
-                                .gap(6.0f)
-                                .content([&] {
-                                    // 只读任务信息行（Step 3b）：goal / cron 原文
-                                    //（定时任务）/ 模型槽位 / 迭代上限 / 破坏性标记。
-                                    // 字段来源 = 本循环迭代的同一份 AgentTaskRow
-                                    //（与编辑表单回填同源，不另起第二套读法）
-                                    std::string info = "目标：" + task.goal;
-                                    info += " · 触发：" + task.triggerType;
-                                    if (task.triggerType == "schedule") {
-                                        const std::string cron = cronTextOf(task);
-                                        info += " · cron：" +
-                                                (cron.empty() ? "（未设置）" : cron);
-                                    }
-                                    info += " · 槽位：" + task.modelSlot;
-                                    info += " · 迭代上限：" +
-                                            std::to_string(task.maxIterations);
-                                    info += task.allowDestructive
-                                                ? " · 破坏性：允许"
-                                                : " · 破坏性：禁止";
-                                    ui.text(id + ".info")
-                                        .size(contentW - 24.0f, 18.0f)
-                                        .text(info)
-                                        .fontSize(12.0f)
-                                        .lineHeight(18.0f)
-                                        .wrap(false)
-                                        .color(t.colors.textSecondary)
-                                        .build();
-                                    // run 列表（Task 11 契约）：最近 5 次，空
-                                    // run 时不渲染；点行 → 选中该 run 载其消息
-                                    const auto runsIt = taskRuns_.find(task.id);
-                                    if (runsIt != taskRuns_.end() &&
-                                        !runsIt->second.empty()) {
-                                        const auto& runs = runsIt->second;
-                                        const float runW = contentW - 24.0f;
-                                        ui.column(id + ".runlist")
-                                            .width(runW)
-                                            .height(::eui::SizeValue::wrapContent())
-                                            .gap(4.0f)
-                                            .content([&] {
-                                                for (size_t i = 0; i < runs.size();
-                                                     ++i) {
-                                                    const std::string runRowId =
-                                                        id + ".runlist." +
-                                                        std::to_string(i);
-                                                    const bool selected =
-                                                        selectedRunId_ &&
-                                                        *selectedRunId_ == runs[i].id;
-                                                    ui.text(runRowId)
-                                                        .size(runW, 18.0f)
-                                                        .text(runRowText(runs[i]))
-                                                        .fontSize(12.0f)
-                                                        .lineHeight(18.0f)
-                                                        .wrap(false)
-                                                        .color(selected
-                                                                   ? t.colors.primary
-                                                                   : t.colors.textSecondary)
-                                                        .onClick([this, runId = runs[i].id] {
-                                                            selectedRunId_ = runId;
-                                                            // seq 只在 run 内唯一：切 run 清消息展开态
-                                                            expandedMsgSeqs_.clear();
-                                                            ++msgScrollVersion_;
-                                                            tasksDirty_ = true;
-                                                        })
-                                                        .build();
-                                                    if (runs[i].error &&
-                                                        !runs[i].error->empty()) {
-                                                        ui.text(runRowId + ".err")
-                                                            .size(runW, 16.0f)
-                                                            .text("错误：" +
-                                                                  *runs[i].error)
-                                                            .fontSize(11.0f)
-                                                            .lineHeight(16.0f)
-                                                            .wrap(false)
-                                                            .color(t.colors.error)
-                                                            .build();
-                                                    }
-                                                }
-                                            })
-                                            .build();
-                                    }
-                                    if (detailMessages_.empty()) {
-                                        ui.text(id + ".detail.empty")
-                                            .size(contentW - 24.0f, 18.0f)
-                                            .text("（选中的 run 还没有消息）")
-                                            .fontSize(12.0f)
-                                            .lineHeight(18.0f)
-                                            .color(t.colors.textTertiary)
-                                            .build();
-                                    } else {
-                                    // 消息区（2026-10-02 改造）：块级渲染 +
-                                    // 单条展开全文 + 工具调用展示。外高按
-                                    // 估算钳在 [kMsgAreaMinH, kMsgAreaMaxH]，
-                                    // 真实内容超高由 scrollView 内滚。
-                                    // contentKey 带版本号：展开/收起改变内容
-                                    // 高，bump 让 MeasureCache 重测
-                                    const float msgW = contentW - 24.0f;
-                                    const float msgAreaH =
-                                        estimateMessagesAreaHeight(
-                                            detailMessages_, expandedMsgSeqs_,
-                                            msgW, 18.0f, kMsgAreaMinH,
-                                            kMsgAreaMaxH);
-                                    components::scrollView(
-                                        ui, id + ".msgscroll")
-                                        .size(msgW, msgAreaH)
-                                        .gap(6.0f)
-                                        .step(18.0f)
-                                        .theme(themeTokens)
-                                        .contentKey(
-                                            id + ".msgscroll.v" +
-                                            std::to_string(msgScrollVersion_) +
-                                            ".n" +
-                                            std::to_string(
-                                                detailMessages_.size()))
-                                        .content([&](eui::Ui& inner, float cw,
-                                                     float) {
-                                            for (size_t i = 0;
-                                                 i < detailMessages_.size();
-                                                 ++i) {
-                                                renderMessageRow(
-                                                    inner, cw, id, i,
-                                                    detailMessages_[i], t,
-                                                    themeTokens);
-                                            }
-                                        })
-                                        .build();
-                                    }
-                                })
-                                .build();
-                        }
                     }
                 })
                 .build();
         })
         .build();
+
+    // ---- 弹窗层（模态，画在页面之后）：关闭态不建内容节点，存在性即开关 ----
+    if (taskDialogOpen_) {
+        composeTaskDialog(ui, screen, t, themeTokens);
+    }
+    if (detailTaskId_) {
+        composeTaskDetailDialog(ui, screen, t, themeTokens);
+    }
 }
 
+// 任务弹窗（批次 A2）：新建 / 编辑共用同一张表单，外框走 ui_kit::DialogFrame +
+// drawDialogFrame（既有 13 处站点的共用范式）。关闭态在内容回调内直接 return：
+// 内容节点即开合状态（测试按存在性判），panel / backdrop 仍由组件照常构建
+//（保留 0.16s 淡入淡出与遮罩点击关闭）
+void AgentModule::composeTaskDialog(
+    ::eui::Ui& ui, const ::eui::Screen& screen, const ::core::theme::Tokens& t,
+    const components::theme::ThemeColorTokens& themeTokens) {
+    const float w = ui_kit::dialogWidthPx(ui_kit::DialogWidth::Form);
+    const float h = kTaskDialogH;
+    const float innerW = w - ui_kit::kDialogBodyInsetX;
+    const float x0 = ui_kit::kDialogInsetX;
+    const bool isSchedule = editTriggerIdx_ == kTriggerScheduleIdx;
+    const bool isEdit = editingTaskId_.has_value();
+
+    ui_kit::DialogFrame frame;
+    frame.id = "agent.dialog.task";
+    frame.width = ui_kit::DialogWidth::Form;
+    frame.height = h;
+    frame.open = taskDialogOpen_;
+    // 点遮罩 = 关弹窗（不落库）
+    frame.onOpenChange = [this](bool v) {
+        if (!v) closeTaskDialog();
+    };
+
+    ui_kit::drawDialogFrame(ui, screen, frame, themeTokens, [&] {
+        if (!taskDialogOpen_) return;
+        ui_kit::drawDialogTitle(ui, "agent.dialog.task.title", w,
+                                isEdit ? "编辑任务" : "新建任务",
+                                t.sizes.fontSizeLarge + 2.0f, t.colors.textPrimary);
+
+        // ✕ 关闭（与取消 / 遮罩 / Esc 同一条路径：不落库）
+        ui.text("agent.dialog.task.close")
+            .position(w - 56.0f, 22.0f)
+            .size(28.0f, 28.0f)
+            .text("✕")
+            .fontSize(14.0f)
+            .lineHeight(28.0f)
+            .horizontalAlign(eui::HorizontalAlign::Center)
+            .verticalAlign(eui::VerticalAlign::Center)
+            .color(t.colors.textTertiary)
+            .onClick([this] { closeTaskDialog(); })
+            .build();
+
+        // ---- 任务目标：多行（4 行视口）+ 引导 placeholder ----
+        ui.text("agent.dialog.task.goal.caption")
+            .position(x0, 64.0f)
+            .size(kDialogLabelW, 20.0f)
+            .text("任务目标")
+            .fontSize(12.0f)
+            .lineHeight(20.0f)
+            .verticalAlign(eui::VerticalAlign::Top)
+            .color(t.colors.textSecondary)
+            .build();
+        components::input(ui, "agent.dialog.task.goal")
+            .position(x0 + kDialogLabelW + kDialogGap, 64.0f)
+            .size(innerW - kDialogLabelW - kDialogGap, kGoalInputH)
+            .value(editGoal_)
+            .placeholder("描述这个任务要做什么，例如：把逾期的待办全部完成")
+            .fontSize(t.sizes.fontSizeBody)
+            .multiline(true)
+            .scrollbar(true)
+            .theme(themeTokens)
+            .onChange([this](const std::string& v) { editGoal_ = v; })
+            .onCancel([this] { closeTaskDialog(); })   // 输入框内 Esc = 关弹窗
+            .build();
+
+        // ---- 触发方式（定时才在同一行尾随 cron 输入：弹窗高度不随之变化）----
+        const float fieldX = x0 + kDialogLabelW + kDialogGap;   // 112
+        const float ddW = 140.0f;
+        const float triggerY = 172.0f;
+        fieldCaption(ui, "agent.dialog.task.trigger.caption", "触发方式", x0,
+                     triggerY, kDialogLabelW, kDialogRowH, t.colors.textSecondary);
+        ui.stack("agent.dialog.task.trigger.wrap")
+            .position(fieldX, triggerY)
+            .size(ddW, kDialogRowH)
+            .content([&] {
+                components::dropdown(ui, "agent.dialog.task.trigger")
+                    .size(ddW, kDialogRowH)
+                    .theme(themeTokens)
+                    .items(std::vector<std::string>(kTriggerLabels,
+                                                    kTriggerLabels + kTriggerCount))
+                    .selected(editTriggerIdx_)
+                    .open(editTriggerOpen_)
+                    .onOpenChange([this](bool v) { editTriggerOpen_ = v; })
+                    .onChange([this](int idx) { editTriggerIdx_ = idx; })
+                    .build();
+            })
+            .build();
+        if (isSchedule) {
+            const float cronLabelX = fieldX + ddW + kDialogGap;          // 264
+            const float cronX = cronLabelX + kDialogLabelW + kDialogGap;  // 348
+            fieldCaption(ui, "agent.dialog.task.cron.caption", "cron 表达式",
+                         cronLabelX, triggerY, kDialogLabelW, kDialogRowH,
+                         t.colors.textSecondary);
+            components::input(ui, "agent.dialog.task.cron")
+                .position(cronX, triggerY)
+                .size(innerW - (cronX - x0), kDialogRowH)
+                .value(editCron_)
+                .placeholder("分 时 日 月 周，例如 0 9 * * 1-5")
+                .fontSize(t.sizes.fontSizeBody)
+                .theme(themeTokens)
+                .onChange([this](const std::string& v) { editCron_ = v; })
+                .onCancel([this] { closeTaskDialog(); })
+                .build();
+        }
+
+        // ---- 模型槽位 + 迭代上限 + 破坏性授权（同一行）----
+        const float metaY = 224.0f;
+        const float iterLabelX = fieldX + ddW + kDialogGap;              // 264
+        const float iterX = iterLabelX + kDialogLabelW + kDialogGap;     // 348
+        fieldCaption(ui, "agent.dialog.task.slot.caption", "模型槽位", x0, metaY,
+                     kDialogLabelW, kDialogRowH, t.colors.textSecondary);
+        ui.stack("agent.dialog.task.slot.wrap")
+            .position(fieldX, metaY)
+            .size(ddW, kDialogRowH)
+            .content([&] {
+                components::dropdown(ui, "agent.dialog.task.slot")
+                    .size(ddW, kDialogRowH)
+                    .theme(themeTokens)
+                    .items(std::vector<std::string>(kModelSlotLabels,
+                                                    kModelSlotLabels + kModelSlotCount))
+                    .selected(slotIndexOf(editSlot_))
+                    .open(editSlotOpen_)
+                    .onOpenChange([this](bool v) { editSlotOpen_ = v; })
+                    .onChange([this](int idx) {
+                        if (idx >= 0 && idx < kModelSlotCount) {
+                            editSlot_ = kModelSlotKeys[idx];
+                        }
+                    })
+                    .build();
+            })
+            .build();
+        fieldCaption(ui, "agent.dialog.task.iter.caption", "迭代上限", iterLabelX,
+                     metaY, kDialogLabelW, kDialogRowH, t.colors.textSecondary);
+        components::input(ui, "agent.dialog.task.iter")
+            .position(iterX, metaY)
+            .size(100.0f, kDialogRowH)
+            .value(std::to_string(editIter_))
+            .fontSize(t.sizes.fontSizeBody)
+            .theme(themeTokens)
+            .onChange([this](const std::string& v) { editIter_ = parseIterInput(v); })
+            .onCancel([this] { closeTaskDialog(); })
+            .build();
+        // 破坏性授权开关：用 switch（settings 页同款，已在 DevDesk 编译面内）
+        // ——components::checkbox 头在 -Wall -Wextra -Werror 下有未使用变量告警
+        //（EUI-NEO 侧既有问题，不属本次改动范围）。SwitchBuilder 无 position，
+        // 包一层同尺寸 stack 定位（dropdown 同款）
+        const float switchX = iterX + 100.0f + kDialogGap;
+        const float switchW = innerW - (switchX - x0);
+        ui.stack("agent.dialog.task.destructive.wrap")
+            .position(switchX, metaY)
+            .size(switchW, kDialogRowH)
+            .content([&] {
+                components::toggleSwitch(ui, "agent.dialog.task.destructive")
+                    .size(switchW, 32.0f)
+                    .text("允许破坏性操作")
+                    .checked(editDestructive_)
+                    .fontSize(12.0f)
+                    .theme(themeTokens)
+                    .onChange([this](bool v) { editDestructive_ = v; })
+                    .build();
+            })
+            .build();
+
+        // ---- 校验 / 保存错误（有错才渲染，弹窗不关）----
+        ui_kit::drawDialogText(ui, "agent.dialog.task.error", w, editError_,
+                               t.sizes.fontSizeSmall, t.colors.error,
+                               {.x = x0, .y = 276.0f, .height = 18.0f,
+                                .lineHeight = 18.0f, .skipIfEmpty = true});
+
+        // ---- 底部按钮对：取消 / 保存。几何与 ui_kit 标准按钮对同源
+        //（(28, h-60) 与 (28+(w-68)/2+12, h-60)，各 (w-68)/2 × 40）----
+        const float btnW =
+            (w - ui_kit::kDialogInsetX * 2.0f - kDialogGap) * 0.5f;
+        const float btnY = h - 60.0f;
+        components::button(ui, "agent.dialog.task.cancel")
+            .position(x0, btnY)
+            .size(btnW, 40.0f)
+            .text("取消")
+            .fontSize(t.sizes.fontSizeBody - 1.0f)
+            .theme(themeTokens, false)
+            .textColor(t.colors.textPrimary)
+            .radius(t.sizes.radius)
+            .border(1.0f, t.colors.borderDefault)
+            .onClick([this] { closeTaskDialog(); })
+            .build();
+        components::button(ui, "agent.dialog.task.save")
+            .position(x0 + btnW + kDialogGap, btnY)
+            .size(btnW, 40.0f)
+            .text("保存")
+            .fontSize(t.sizes.fontSizeBody - 1.0f)
+            .theme(themeTokens, true)
+            .textColor(t.colors.onPrimary)
+            .radius(t.sizes.radius)
+            .onClick([this] { saveTaskDialog(); })
+            .build();
+    });
+}
+
+// 详情弹窗（批次 A3）：配置摘要 / run 列表 / 消息流三段。数据全部来自模块缓存
+//（detailTaskRow_ = getTask 快照、taskRuns_、detailMessages_），由页面既有刷新
+// 周期（tasksDirty_ / uiPolling_）驱动——run 进行中也能实时看到状态与新消息
+void AgentModule::composeTaskDetailDialog(
+    ::eui::Ui& ui, const ::eui::Screen& screen, const ::core::theme::Tokens& t,
+    const components::theme::ThemeColorTokens& themeTokens) {
+    const float w = ui_kit::dialogWidthPx(ui_kit::DialogWidth::Form);
+    // 固定内容高 660，窄屏由 dialog 组件按视口钳制（probe 有「不超出视口」断言）
+    const float h = std::min(kDetailDialogH, screen.height - 40.0f);
+    const float innerW = w - ui_kit::kDialogBodyInsetX;
+    const float x0 = ui_kit::kDialogInsetX;
+
+    ui_kit::DialogFrame frame;
+    frame.id = "agent.dialog.detail";
+    frame.width = ui_kit::DialogWidth::Form;
+    frame.height = h;
+    frame.open = detailTaskId_.has_value();
+    frame.onOpenChange = [this](bool v) {
+        if (!v) closeTaskDetail();
+    };
+
+    ui_kit::drawDialogFrame(ui, screen, frame, themeTokens, [&] {
+        if (!detailTaskId_) return;
+        ui_kit::drawDialogTitle(ui, "agent.dialog.detail.title", w, "任务详情",
+                                t.sizes.fontSizeLarge + 2.0f, t.colors.textPrimary);
+        ui.text("agent.dialog.detail.close")
+            .position(w - 56.0f, 22.0f)
+            .size(28.0f, 28.0f)
+            .text("✕")
+            .fontSize(14.0f)
+            .lineHeight(28.0f)
+            .horizontalAlign(eui::HorizontalAlign::Center)
+            .verticalAlign(eui::VerticalAlign::Center)
+            .color(t.colors.textTertiary)
+            .onClick([this] { closeTaskDetail(); })
+            .build();
+
+        // ---- ① 任务配置摘要（与任务弹窗同源读法：getTask 快照）----
+        std::string info;
+        if (detailTaskRow_) {
+            const AgentTaskRow& task = *detailTaskRow_;
+            info = "目标：" + task.goal;
+            info += " · 触发：" + task.triggerType;
+            if (task.triggerType == "schedule") {
+                const std::string cron = cronTextOf(task);
+                info += " · cron：" + (cron.empty() ? "（未设置）" : cron);
+            }
+            info += " · 槽位：" + task.modelSlot;
+            info += " · 迭代上限：" + std::to_string(task.maxIterations);
+            info += task.allowDestructive ? " · 破坏性：允许" : " · 破坏性：禁止";
+        } else {
+            info = "（任务信息读取失败）";
+        }
+        ui.text("agent.dialog.detail.info")
+            .position(x0, 60.0f)
+            .size(innerW, 36.0f)
+            .text(info)
+            .fontSize(12.0f)
+            .lineHeight(18.0f)
+            .wrap(true)
+            .maxWidth(innerW)
+            .color(t.colors.textSecondary)
+            .build();
+
+        // ---- ② run 列表（最近 5 次，倒序：最近一次在前；选中/最近一次高亮）----
+        const auto runsIt = taskRuns_.find(*detailTaskId_);
+        const std::vector<AgentRunRow>* runs =
+            runsIt != taskRuns_.end() ? &runsIt->second : nullptr;
+        ui.text("agent.dialog.detail.runs.title")
+            .position(x0, 104.0f)
+            .size(innerW, 18.0f)
+            .text(runs != nullptr && !runs->empty()
+                      ? "运行记录（最近 " + std::to_string(runs->size()) + " 次）"
+                      : "运行记录")
+            .fontSize(12.0f)
+            .lineHeight(18.0f)
+            .fontWeight(600)
+            .color(t.colors.textPrimary)
+            .build();
+        float runsH = 18.0f;
+        if (runs != nullptr && !runs->empty()) {
+            // 列内 gap 数 = **子元素数** - 1：error 行也是子元素，漏算它会让
+            // 列表底比真实占用矮一截 → 消息标题压到 error 行上（2026-10-02
+            // 批次 A 复审发现的真 bug，≥3 条 error 时可见）
+            float childrenH = 0.0f;
+            int childCount = 0;
+            for (const auto& run : *runs) {
+                ++childCount;
+                childrenH += 18.0f;
+                if (run.error && !run.error->empty()) {
+                    ++childCount;
+                    childrenH += 16.0f;
+                }
+            }
+            runsH = childrenH + 4.0f * static_cast<float>(childCount - 1);
+            ui.column("agent.dialog.detail.runlist")
+                .position(x0, 126.0f)
+                .size(innerW, runsH)
+                .gap(4.0f)
+                .content([&] {
+                    for (size_t i = 0; i < runs->size(); ++i) {
+                        const std::string runRowId =
+                            "agent.dialog.detail.runlist." + std::to_string(i);
+                        const AgentRunRow& run = (*runs)[i];
+                        const bool highlighted =
+                            selectedRunId_ && *selectedRunId_ == run.id;
+                        ui.text(runRowId)
+                            .size(innerW, 18.0f)
+                            .text(runRowText(run))
+                            .fontSize(12.0f)
+                            .lineHeight(18.0f)
+                            .wrap(false)
+                            .color(highlighted ? t.colors.primary
+                                               : t.colors.textSecondary)
+                            .onClick([this, runId = run.id] {
+                                selectedRunId_ = runId;
+                                // seq 只在 run 内唯一：切 run 清消息展开态
+                                expandedMsgSeqs_.clear();
+                                autoExpandedSeq_.reset();
+                                ++msgScrollVersion_;
+                                tasksDirty_ = true;
+                            })
+                            .build();
+                        if (run.error && !run.error->empty()) {
+                            ui.text(runRowId + ".err")
+                                .size(innerW, 16.0f)
+                                .text("错误：" + *run.error)
+                                .fontSize(11.0f)
+                                .lineHeight(16.0f)
+                                .wrap(false)
+                                .color(t.colors.error)
+                                .build();
+                        }
+                    }
+                })
+                .build();
+        } else {
+            ui.text("agent.dialog.detail.runlist.empty")
+                .position(x0, 126.0f)
+                .size(innerW, 18.0f)
+                .text("（还没有运行记录）")
+                .fontSize(12.0f)
+                .lineHeight(18.0f)
+                .color(t.colors.textTertiary)
+                .build();
+        }
+
+        // ---- ③ 消息流：scrollView 内滚。最终 assistant 文本块默认展开
+        //（applyDefaultMessageExpansion），thinking / tool_use / tool_result
+        // 所在消息默认折叠，点开才展开（保留块级渲染与实测高度）----
+        const float msgsTitleY = 134.0f + runsH;
+        ui.text("agent.dialog.detail.msgs.title")
+            .position(x0, msgsTitleY)
+            .size(innerW, 18.0f)
+            .text("消息（" + std::to_string(detailMessages_.size()) + "）")
+            .fontSize(12.0f)
+            .lineHeight(18.0f)
+            .fontWeight(600)
+            .color(t.colors.textPrimary)
+            .build();
+        const float scrollY = msgsTitleY + 22.0f;
+        // 消息区外高：内容估算（1.7.7 的 measureTextSize 实测高）夹在
+        // [kMsgAreaMinH, kMsgAreaMaxH] 内，再按弹窗剩余空间封顶——超出的真实
+        // 内容高由 scrollView 内滚（与页内详情区时代同一套估算与内滚机制）
+        const float availH = std::max(kMsgAreaMinH, h - scrollY - 24.0f);
+        const float scrollH = std::min(
+            estimateMessagesAreaHeight(detailMessages_, expandedMsgSeqs_, innerW,
+                                       18.0f, kMsgAreaMinH, kMsgAreaMaxH),
+            availH);
+        if (detailMessages_.empty()) {
+            ui.text("agent.dialog.detail.empty")
+                .position(x0, scrollY)
+                .size(innerW, scrollH)
+                .text("（选中的 run 还没有消息）")
+                .fontSize(12.0f)
+                .lineHeight(18.0f)
+                // 盒高 = 消息区高，文本垂直居中（B1 评审复查出的一处漏扫：
+                // 盒高 ≠ 行高时不给 verticalAlign 会顶在上缘）
+                .verticalAlign(eui::VerticalAlign::Center)
+                .color(t.colors.textTertiary)
+                .build();
+        } else {
+            components::scrollView(ui, "agent.dialog.detail.msgscroll")
+                .position(x0, scrollY)
+                .size(innerW, scrollH)
+                .gap(kMsgRowGap)
+                .step(18.0f)
+                .theme(themeTokens)
+                .contentKey("agent.dialog.detail.msgscroll.v" +
+                            std::to_string(msgScrollVersion_) + ".n" +
+                            std::to_string(detailMessages_.size()))
+                .content([&](eui::Ui& inner, float cw, float) {
+                    for (size_t i = 0; i < detailMessages_.size(); ++i) {
+                        renderMessageRow(inner, cw, "agent.dialog.detail", i,
+                                         detailMessages_[i], t, themeTokens);
+                    }
+                })
+                .build();
+        }
+    });
+}
+
+// 弹窗打开时 Esc = 关最上层弹窗（详情弹窗后开，优先于任务弹窗）。键走得到
+// 本通道 = 焦点元素没消费——弹窗输入框聚焦时 Esc 已被 input 的 onCancel 收走
+//（与 todo 模块 closeTopmostPopup 同一约定），天然让位不重复
+bool AgentModule::onKeyEvent(const ::eui::KeyEvent& event) {
+    if (!event.isDown()) return false;
+    if (event.key != eui::InputKey::Escape) return false;
+    if (detailTaskId_) {
+        closeTaskDetail();
+        return true;
+    }
+    if (taskDialogOpen_) {
+        closeTaskDialog();
+        return true;
+    }
+    return false;
+}
 std::string AgentModule::iconGlyph() const {
     return ::eui::utf8(0xF544);  // fa-robot
 }

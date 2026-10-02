@@ -378,12 +378,15 @@ REGISTER_TEST(agent_module_ui_id_contract,
     mod->compose(ui, screen);
     ui.end();
 
-    // 契约表逐项（plan task-12-brief 元素 id 契约表）
+    // 契约表逐项（2026-10-02 批次 A 骨架重做后的元素 id 契约）
     DOCTEST_CHECK(ui.find("agent.page") != nullptr);
     DOCTEST_CHECK(ui.find("agent.title") != nullptr);
-    DOCTEST_CHECK(ui.find("agent.form.goal") != nullptr);
-    DOCTEST_CHECK(ui.find("agent.form.create") != nullptr);
+    // 页内新建表单已删：新建入口 = 标题行「+ 新建任务」按钮（开任务弹窗）
+    DOCTEST_CHECK(ui.find("agent.form.goal") == nullptr);
+    DOCTEST_CHECK(ui.find("agent.form.create") == nullptr);
+    DOCTEST_CHECK(ui.find("agent.page.newTask") != nullptr);
     DOCTEST_CHECK(ui.find("agent.tasklist") != nullptr);
+    DOCTEST_CHECK(ui.find("agent.tasklist.content") != nullptr);   // scrollView 内容列
     DOCTEST_CHECK(ui.find("agent.task." + tid) != nullptr);
     DOCTEST_CHECK(ui.find("agent.task." + tid + ".title") != nullptr);
     // 启动按钮：text == "启动"（button 结构：<id>.text 子元素载文本）
@@ -394,38 +397,40 @@ REGISTER_TEST(agent_module_ui_id_contract,
     const auto* status = ui.find("agent.task." + tid + ".status");
     DOCTEST_REQUIRE(status != nullptr);
     DOCTEST_CHECK(status->text.find("成功") != std::string::npos);
-    // 未展开：detail 不存在（契约：展开时才存在）
-    DOCTEST_CHECK(ui.find("agent.task." + tid + ".detail") == nullptr);
+    // 详情改弹窗：未打开时弹窗内容节点不存在
+    DOCTEST_CHECK(ui.find("agent.dialog.detail.msgscroll") == nullptr);
 
-    // 点任务行 → 展开：detail + msg.0（role + content 前缀）；再点收起
+    // 点行内「详情」→ 弹窗打开（配置摘要 + 消息流），再点 ✕ 关闭
     {
-        const auto* row = ui.find("agent.task." + tid);
-        DOCTEST_REQUIRE(row != nullptr);
-        DOCTEST_REQUIRE(row->onClick != nullptr);
-        row->onClick();
+        const auto* detailBtn = ui.find("agent.task." + tid + ".detail");
+        DOCTEST_REQUIRE(detailBtn != nullptr);
+        DOCTEST_REQUIRE(detailBtn->onClick != nullptr);
+        detailBtn->onClick();
         eui::Ui ui2;
         ui2.begin("agent_ui2");
         mod->compose(ui2, screen);
         ui2.end();
-        DOCTEST_CHECK(ui2.find("agent.task." + tid + ".detail") != nullptr);
+        DOCTEST_CHECK(ui2.find("agent.dialog.detail") != nullptr);
+        DOCTEST_CHECK(ui2.find("agent.dialog.detail.info") != nullptr);
+        DOCTEST_CHECK(ui2.find("agent.dialog.detail.msgscroll") != nullptr);
         // 2026-10-02 run 日志改造：msg.<i> 是容器，role 在 .badge、预览在 .preview
-        const auto* msg0 = ui2.find("agent.task." + tid + ".msg.0");
-        DOCTEST_REQUIRE(msg0 != nullptr);
-        const auto* badge0 = ui2.find("agent.task." + tid + ".msg.0.badge");
+        const auto* badge0 = ui2.find("agent.dialog.detail.msg.0.badge");
         DOCTEST_REQUIRE(badge0 != nullptr);
         DOCTEST_CHECK(badge0->text == std::string("用户"));
-        const auto* preview0 = ui2.find("agent.task." + tid + ".msg.0.preview");
+        const auto* preview0 = ui2.find("agent.dialog.detail.msg.0.preview");
         DOCTEST_REQUIRE(preview0 != nullptr);
         DOCTEST_CHECK(preview0->text.find("把逾期待办全部完成") != std::string::npos);
-        const auto* row2 = ui2.find("agent.task." + tid);
-        DOCTEST_REQUIRE(row2 != nullptr);
-        DOCTEST_REQUIRE(row2->onClick != nullptr);
-        row2->onClick();
+        // 关弹窗（✕）→ 弹窗内容消失，任务列表原样还在
+        const auto* closeBtn = ui2.find("agent.dialog.detail.close");
+        DOCTEST_REQUIRE(closeBtn != nullptr);
+        DOCTEST_REQUIRE(closeBtn->onClick != nullptr);
+        closeBtn->onClick();
         eui::Ui ui3;
         ui3.begin("agent_ui3");
         mod->compose(ui3, screen);
         ui3.end();
-        DOCTEST_CHECK(ui3.find("agent.task." + tid + ".detail") == nullptr);
+        DOCTEST_CHECK(ui3.find("agent.dialog.detail.msgscroll") == nullptr);
+        DOCTEST_CHECK(ui3.find("agent.task." + tid + ".title") != nullptr);
     }
 
     mod->onStop();

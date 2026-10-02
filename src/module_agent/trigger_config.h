@@ -7,7 +7,7 @@
 // parse。后果：加第二个键要改三处；且调度器对坏配置是 `continue`（静默不派发）
 // 而 UI 照常渲染——用户看到任务存在、永不触发、没有任何提示。
 //
-// 现状（唯一真源）：写入点（AgentModule::saveTaskEdit）与两处读取点
+// 现状（唯一真源）：写入点（AgentModule::saveTaskDialog）与两处读取点
 // （cronTextOf / Scheduler::tickNow）**全部**经本文件的 encode/decode；
 // decode 失败由调用方转成「点名 task id 的 LOG_WARN + 跳过」。
 #pragma once

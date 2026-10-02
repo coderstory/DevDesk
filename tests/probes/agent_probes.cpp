@@ -1,29 +1,27 @@
 // tests/probes/agent_probes.cpp — 智能体页 probe（真窗口 + 真 Runtime 帧循环）
 //
 // 覆盖（与无头 test_agent_ui.cpp 互补——probe 负责真命中分发与帧内几何）：
-//   ① 页面骨架：agent.page 存在且 frame.width == 窗口逻辑宽（nearEq 0.5），
-//      agent.title / agent.form.goal / agent.form.create 存在；
-//   ② 种 1 条任务 → agent.task.<id>.run 存在，且 frame 完全落在
-//      agent.task.<id> 行内（手搓包含判断，0.5 容差）；
-//   ③ 点击 run 中心（core::queuePointerButton press+release 成对排队，下一帧
-//      composeFrame 的 update 消费——claude_probes.cpp:169-182 同款真实命中
-//      路径）→ fakeProxy 脚本化 end_turn → 有界轮询 run 落库 completed →
-//      composeFrame 后状态列显示「成功」。
-//   ④ M2 Task 11：schedule 任务（种 2 次 run，completed + limited/error）——
-//      点任务行展开 → runlist 容器与两行存在且帧非零宽高、行文案含状态中文与
-//      token 合计、错误行含 error 原文；再点 agent.task.<id>.edit →
-//      agent.edit.form 出现且帧完全落在页面内容区内（frameContains），
-//      schedule 任务渲染 agent.edit.cron。
-//   ⑤ run 日志改造（2026-10-02）：种 assistant tool_use + user tool_result
-//      （长输出）两条消息 → 真实点击「展开」chip → 消息高度增大、tool chip
-//      与输出全文可见（text 含标记）、复制 chip 出现；再点「收起」恢复。
-//   ⑥ id 唯一性：走 orderedRoots 全树，断言全帧无重复 id（T10 id 撞车教训）。
-//   ⑦ 可用工具区块：点 agent.tools.header → 卡片数 == 注册表工具数，
-//      card.0.name == "app.stats"；收起后卡片消失。
-//   ⑧ 多行目标输入：agent.form.goal 高 ≥ 90（单行时代 40）。
+//   ① 页面骨架（2026-10-02 批次 A1）：agent.page 铺满逻辑宽 / agent.title /
+//      agent.page.newTask / agent.tasklist 是 scrollView 节点（有 .content 列）；
+//   ② 任务行 + 行内「启动」：按钮 frame 完全落在任务行内；
+//   ③ 点「启动」中心（真指针 press+release，下一帧 composeFrame 消费）→
+//      fakeProxy 脚本化 end_turn → run 落库 completed → 状态列「成功」；
+//      且详情弹窗自动打开、最终 assistant 文本块默认展开（回复立即可见）；
+//   ④ 任务弹窗（编辑态）：点行内「编辑」→ agent.dialog.task 出现、**设计尺寸
+//      760x400**、字段行底 ≤ 按钮行顶、按钮行不溢面板底、全字段节点在、
+//      schedule 任务渲染 cron 输入；再真指针点开触发方式下拉 → 弹层最后一项
+//      完整在屏内且不挤动下方行，收起后点取消关窗（复审整改：原「面板不超
+//      视口」被 dialog 组件自身 clamp 兜住、零判别力，已换成上面这些可失败的
+//      尺寸/预算断言）；
+//   ⑤ 详情弹窗：**设计尺寸 760x660**、配置摘要 / run 列表（倒序 + 最近一次
+//      高亮）/ 消息滚动区底 ≤ 面板底（同样是可失败的预算断言）；
+//   ⑥ 任务列表滚动：种 30 条任务 → 内容高 > 视口高 → 出 .scroll 滚动条；
+//   ⑦ 弹窗打开时列表首行仍可见（列表没被弹窗挤掉 / 没被遮罩层吞掉）；
+//   ⑧ id 唯一性：走 orderedRoots 全树，断言全帧无重复 id（T10 id 撞车教训）；
+//   ⑨ 可用工具区块：点 agent.tools.header → 卡片数 == 注册表工具数。
 //
 // 断言机制：probe 无几何断言 helper，全部手搓 check() + nearEq()
-// （about_probe.cpp:60,94-99 口径）。收尾顺序照 about_probe.cpp:449-453。
+//（about_probe.cpp:60,94-99 口径）。收尾顺序照 about_probe.cpp:449-453。
 #include <GLFW/glfw3.h>  // 必须先于 harness：让 GLFW 默认拉平台 GL 头（claude_probes 同款）
 #include "probes/probe_harness.h"
 #include "test_support.h"
@@ -77,6 +75,13 @@ bool frameContains(const core::dsl::Element& outer, const core::dsl::Element& in
                outer.frame.y + outer.frame.height + 0.5f;
 }
 
+// 元素完全落在 w×h 视口内（0.5 容差）
+bool insideViewport(const core::dsl::Element& e, float w, float h) {
+    return e.frame.x >= -0.5f && e.frame.y >= -0.5f &&
+           e.frame.x + e.frame.width <= w + 0.5f &&
+           e.frame.y + e.frame.height <= h + 0.5f;
+}
+
 std::string frameStr(const core::dsl::Element* e) {
     return "(" + std::to_string(e->frame.x) + ", " + std::to_string(e->frame.y) +
            ", " + std::to_string(e->frame.width) + "x" +
@@ -93,7 +98,7 @@ void clickCenter(core::window::Handle win, const core::dsl::Element* e) {
                              core::PointerAction::Release, {});
 }
 
-// 全树收集 id（⑥ id 唯一性扫描）：Element::children 公开，递归走
+// 全树收集 id（⑧ id 唯一性扫描）：Element::children 公开，递归走
 void collectIds(const core::dsl::Element& e,
                 std::map<std::string, int>& counts) {
     ++counts[e.id];
@@ -127,15 +132,15 @@ int main(int argc, char* argv[]) {
         platform::http::Response res;
         res.statusCode = 200;
         res.body = R"({"id":"m1","stop_reason":"end_turn","content":[)"
-                   R"({"type":"text","text":"done"}],)"
+                   R"({"type":"text","text":"最终答复"}],)"
                    R"("usage":{"input_tokens":1,"output_tokens":1}})";
         return core::Result<platform::http::Response>::ok(res);
     };
     auto mod = std::make_unique<module::agent::AgentModule>(deps);
     mod->onStart();
 
-    // 种 1 条任务（fresh 库 → 首个 id；id 字符串进元素 id 契约）
     module::agent::AgentStore store(env.handle());
+    // 首条任务 = 列表首行（②⑦ 的锚点）+ 真跑一次 run（③）
     auto created = store.createTask("探针任务", "直接回复完成，不调用任何工具",
                                     "manual", "default", 10, false);
     if (created.isFail()) {
@@ -146,27 +151,39 @@ int main(int argc, char* argv[]) {
         probe::terminateWindowBackend();
         return 1;
     }
-    const std::string tid = std::to_string(created.value());
+    const int64_t firstTaskId = created.value();
+    const std::string tid = std::to_string(firstTaskId);
 
     // ④ 用：schedule 任务 + 两次 run（一次 completed，一次 limited 带 error/token）
     // ——两次 run 都在 onStart 之后种（否则被 sweepStaleRuns 清成 failed）
-    auto sched = store.createTask("定时任务", "直接回复完成，不调用任何工具",
-                                  "schedule", "default", 10, false,
-                                  R"({"cron":"0 9 * * 1-5"})");
-    bool schedSeeded = sched.isOk();
+    bool schedSeeded = false;
     std::string sid;
-    if (schedSeeded) {
-        sid = std::to_string(sched.value());
-        auto sr1 = store.startRun(sched.value());
-        auto sr2 = store.startRun(sched.value());
-        if (sr1.isOk() && sr2.isOk()) {
-            store.finishRun(sr1.value(), "limited", 7, int64_t(190000),
-                            int64_t(15000), std::string("token 累计超上限 200K"));
-            store.finishRun(sr2.value(), "completed", 1, std::nullopt,
-                            std::nullopt, std::nullopt);
-        } else {
-            schedSeeded = false;
+    {
+        auto sched = store.createTask("定时任务", "直接回复完成，不调用任何工具",
+                                      "schedule", "sonnet", 20, false,
+                                      R"({"cron":"0 9 * * 1-5"})");
+        if (sched.isOk()) {
+            sid = std::to_string(sched.value());
+            auto sr1 = store.startRun(sched.value());
+            auto sr2 = store.startRun(sched.value());
+            if (sr1.isOk() && sr2.isOk()) {
+                store.finishRun(sr1.value(), "limited", 7, int64_t(190000),
+                                int64_t(15000),
+                                std::string("token 累计超上限 200K"));
+                store.finishRun(sr2.value(), "completed", 1, std::nullopt,
+                                std::nullopt, std::nullopt);
+                schedSeeded = true;
+            }
         }
+    }
+    if (!schedSeeded) {
+        std::cerr << "agent_probes: schedule 任务/run 种子失败\n";
+    }
+
+    // ⑥ 用：补到 30 条任务 → 列表内容高远超视口 → 必出滚动条
+    for (int i = 0; i < 28; ++i) {
+        store.createTask("填充任务 " + std::to_string(i), "g", "manual", "default",
+                         10, false);
     }
 
     core::dsl::Runtime runtime;
@@ -194,30 +211,26 @@ int main(int argc, char* argv[]) {
 
     composeFrame();
 
-    // ---- ① 页面骨架：存在性 + agent.page 铺满逻辑宽 ----
+    // ---- ① 页面骨架：存在性 + agent.page 铺满逻辑宽 + 列表是 scrollView ----
     const auto* page = ui != nullptr ? ui->find("agent.page") : nullptr;
     if (page == nullptr) {
         std::cerr << "agent_probes: agent.page 不存在\n";
         passed = false;
     } else {
         check(nearEq(page->frame.width, w),
-              "agent.page 宽 " + frameStr(page) + " 期望宽 " +
-                  std::to_string(w));
+              "agent.page 宽 " + frameStr(page) + " 期望宽 " + std::to_string(w));
     }
     check(ui != nullptr && ui->find("agent.title") != nullptr,
           "agent.title 不存在");
-    check(ui != nullptr && ui->find("agent.form.goal") != nullptr,
-          "agent.form.goal 不存在");
-    check(ui != nullptr && ui->find("agent.form.create") != nullptr,
-          "agent.form.create 不存在");
-    // ⑧ 多行目标输入（2026-10-02 用户反馈③）：输入高 ≥90（单行时代 40）
-    if (const auto* goal = ui != nullptr ? ui->find("agent.form.goal")
-                                         : nullptr) {
-        check(goal->frame.height >= 90.0f,
-              "agent.form.goal 应为多行高 ≥90，实测 " + frameStr(goal));
-    }
+    check(ui != nullptr && ui->find("agent.page.newTask") != nullptr,
+          "agent.page.newTask（+ 新建任务）不存在");
+    // 旧页内新建表单已删
+    check(ui != nullptr && ui->find("agent.form") == nullptr,
+          "旧页内新建表单 agent.form 仍在");
+    check(ui != nullptr && ui->find("agent.tasklist.content") != nullptr,
+          "agent.tasklist 不是 scrollView（缺 .content 内容列）");
 
-    // ---- ② 任务行 + run 按钮：存在 + frame 完全落在行内 ----
+    // ---- ② 首行任务 + 「启动」按钮：frame 完全落在行内 ----
     const auto* row = ui != nullptr ? ui->find("agent.task." + tid) : nullptr;
     if (row == nullptr) {
         std::cerr << "agent_probes: agent.task." << tid << " 不存在\n";
@@ -234,7 +247,7 @@ int main(int argc, char* argv[]) {
         }
     }
 
-    // ---- ③ 点击 run 中心：真实命中分发 → run 落库 ----
+    // ---- ③ 点「启动」中心：真实命中分发 → run 落库 + 详情弹窗自动打开 ----
     const auto* runBtn = ui != nullptr ? ui->find("agent.task." + tid + ".run")
                                        : nullptr;
     if (runBtn == nullptr) {
@@ -242,21 +255,12 @@ int main(int argc, char* argv[]) {
                   << ".run 不存在\n";
         passed = false;
     } else {
-        // press + release 同帧排队，下一 composeFrame 内 update 消费
-        //（claude_probes.cpp:171-176 同款；指针坐标 = 窗口坐标，probe 窗口
-        // dpiScale=1 与逻辑坐标同值）
-        const float cx = runBtn->frame.x + runBtn->frame.width * 0.5f;
-        const float cy = runBtn->frame.y + runBtn->frame.height * 0.5f;
-        core::queuePointerButton(window, cx, cy, core::PointerButton::Left,
-                                 core::PointerAction::Press, {});
-        core::queuePointerButton(window, cx, cy, core::PointerButton::Left,
-                                 core::PointerAction::Release, {});
+        clickCenter(window, runBtn);   // press + release 同帧排队，下一帧消费
         composeFrame();
 
-        // 有界轮询（10ms 步进 ≤5s）等 run 线程落库 completed
         bool completed = false;
         for (int i = 0; i < 500; ++i) {
-            auto runs = store.listRuns(created.value(), 1);
+            auto runs = store.listRuns(firstTaskId, 1);
             if (runs.isOk() && !runs.value().empty() &&
                 runs.value().front().status == "completed") {
                 completed = true;
@@ -266,7 +270,6 @@ int main(int argc, char* argv[]) {
         }
         check(completed, "点击 run 后 5s 内未落库 completed（命中分发没走通？）");
 
-        // recompose 后状态列含「成功」（completed → 成功 映射）
         composeFrame();
         const auto* status = ui->find("agent.task." + tid + ".status");
         check(status != nullptr, "agent.task." + tid + ".status 不存在");
@@ -274,246 +277,260 @@ int main(int argc, char* argv[]) {
             check(status->text.find("成功") != std::string::npos,
                   "状态列实测「" + status->text + "」期望含「成功」");
         }
+        // 启动即开详情弹窗，且最终 assistant 文本块默认展开（回复立即可见）
+        const auto* detail = ui->find("agent.dialog.detail");
+        check(detail != nullptr, "点启动后详情弹窗未自动打开");
+        const auto* finalBlk = ui->find("agent.dialog.detail.msg.1.blk.0");
+        check(finalBlk != nullptr,
+              "详情弹窗缺默认展开的最终 assistant 文本块 msg.1.blk.0");
+        if (finalBlk != nullptr) {
+            check(finalBlk->text.find("最终答复") != std::string::npos,
+                  "最终回复内容未渲染，实测: " + finalBlk->text);
+        }
+        // 弹窗几何（评审口径：被 dialog 组件 clamp 兜住的「不超出视口」零判别力
+        // → 钉我们自己的设计尺寸与内部高度预算）
+        const auto* dpanel = ui->find("agent.dialog.detail.panel");
+        check(dpanel != nullptr && nearEq(dpanel->frame.width, 760.0f),
+              "详情弹窗宽应为设计值 760，实测 " +
+                  (dpanel ? frameStr(dpanel) : std::string("（缺 panel）")));
+        check(dpanel != nullptr && nearEq(dpanel->frame.height, 660.0f),
+              "详情弹窗高应为设计值 660，实测 " +
+                  (dpanel ? frameStr(dpanel) : std::string("（缺 panel）")));
+        check(dpanel != nullptr && insideViewport(*dpanel, w, h),
+              "详情弹窗未完整落在视口内（尺寸断言之外的兜底）");
+        if (dpanel != nullptr) {
+            const auto* scrollNow = ui->find("agent.dialog.detail.msgscroll");
+            check(scrollNow != nullptr &&
+                      scrollNow->frame.y + scrollNow->frame.height <=
+                          dpanel->frame.y + dpanel->frame.height - 19.5f,
+                  "消息滚动区溢出面板底（底边距应收 20）");
+            const auto* rl = ui->find("agent.dialog.detail.runlist");
+            const auto* mt = ui->find("agent.dialog.detail.msgs.title");
+            check(rl != nullptr && mt != nullptr &&
+                      rl->frame.y + rl->frame.height <= mt->frame.y + 0.5f,
+                  "run 列表压到消息标题");
+        }
+        // ⑦ 弹窗打开时列表首行仍可见（列表在弹窗层之下照常布局）
+        const auto* rowUnderDialog = ui->find("agent.task." + tid);
+        check(rowUnderDialog != nullptr && rowUnderDialog->frame.width > 0.0f &&
+                  rowUnderDialog->frame.height > 0.0f,
+              "弹窗打开后列表首行不可见/零尺寸");
+        if (rowUnderDialog != nullptr && page != nullptr) {
+            const auto* pageNow = ui->find("agent.page");
+            if (pageNow != nullptr) {
+                check(frameContains(*pageNow, *rowUnderDialog),
+                      "弹窗打开后列表首行跑到页面外 " + frameStr(rowUnderDialog));
+            }
+        }
+
+        // ---- ⑤ 详情弹窗三段：配置摘要 / run 列表 / 消息滚动区 ----
+        const auto* info = ui->find("agent.dialog.detail.info");
+        check(info != nullptr && info->text.find("manual") != std::string::npos,
+              "详情弹窗配置摘要缺失或触发行不对");
+        const auto* msgscroll = ui->find("agent.dialog.detail.msgscroll");
+        check(msgscroll != nullptr && msgscroll->frame.width > 0.0f &&
+                  msgscroll->frame.height > 0.0f,
+              "详情弹窗消息滚动区缺失/零尺寸");
+
+        // 关详情弹窗（真指针点 ✕），下面④要操作页面上的「编辑」
+        const auto* dclose = ui->find("agent.dialog.detail.close");
+        if (dclose == nullptr) {
+            check(false, "详情弹窗缺 ✕ 关闭面 agent.dialog.detail.close");
+        } else {
+            clickCenter(window, dclose);
+            composeFrame();
+            check(ui->find("agent.dialog.detail.msgscroll") == nullptr,
+                  "点 ✕ 后详情弹窗未关闭");
+        }
     }
 
-    // ---- ④ 编辑入口 + run 列表（Task 11）：真实指针点击路径 ----
+    // ---- ④ 任务弹窗（编辑态）：真实指针点行内「编辑」----
     if (!schedSeeded) {
-        std::cerr << "agent_probes: schedule 任务/run 种子失败\n";
         passed = false;
     } else {
-        const auto* schedRow = ui != nullptr ? ui->find("agent.task." + sid) : nullptr;
-        const auto* schedTitle =
-            ui != nullptr ? ui->find("agent.task." + sid + ".title") : nullptr;
-        const auto* editBtn =
-            ui != nullptr ? ui->find("agent.task." + sid + ".edit") : nullptr;
-        if (schedRow == nullptr || schedTitle == nullptr || editBtn == nullptr) {
-            std::cerr << "agent_probes: schedule 任务行/标题/edit 按钮缺失\n";
+        const auto* editBtn = ui != nullptr ? ui->find("agent.task." + sid + ".edit")
+                                            : nullptr;
+        if (editBtn == nullptr) {
+            std::cerr << "agent_probes: schedule 任务行缺 edit 按钮\n";
             passed = false;
         } else {
-            check(frameContains(*schedRow, *editBtn),
-                  "edit 未完全落在任务行内 edit" + frameStr(editBtn) + " row" +
-                      frameStr(schedRow));
-            // 点标题中心展开（标题元素不带 onClick，命中落到任务行本体）
-            const float tx = schedTitle->frame.x + schedTitle->frame.width * 0.5f;
-            const float ty = schedTitle->frame.y + schedTitle->frame.height * 0.5f;
-            core::queuePointerButton(window, tx, ty, core::PointerButton::Left,
-                                     core::PointerAction::Press, {});
-            core::queuePointerButton(window, tx, ty, core::PointerButton::Left,
-                                     core::PointerAction::Release, {});
+            clickCenter(window, editBtn);   // 元素指针跨帧失效 → 重新 find
             composeFrame();
-            check(ui != nullptr && ui->find("agent.task." + sid + ".detail") != nullptr,
-                  "点任务行未展开详情（agent.task." + sid + ".detail 缺失）");
-            const auto* runlist =
-                ui != nullptr ? ui->find("agent.task." + sid + ".runlist") : nullptr;
-            if (runlist == nullptr) {
-                std::cerr << "agent_probes: run 列表容器缺失\n";
+            const auto* panel = ui->find("agent.dialog.task.panel");
+            const auto* goal = ui->find("agent.dialog.task.goal");
+            if (panel == nullptr || goal == nullptr) {
+                std::cerr << "agent_probes: 点 edit 后任务弹窗未打开\n";
                 passed = false;
             } else {
-                const auto* row0 = ui->find("agent.task." + sid + ".runlist.0");
-                const auto* row1 = ui->find("agent.task." + sid + ".runlist.1");
-                if (row0 == nullptr || row1 == nullptr) {
-                    std::cerr << "agent_probes: run 列表行缺失\n";
-                    passed = false;
+                // 设计尺寸 + 内部预算（不是被组件 clamp 兜住的「不超视口」）
+                check(nearEq(panel->frame.width, 760.0f),
+                      "任务弹窗宽应为设计值 760，实测 " + frameStr(panel));
+                check(nearEq(panel->frame.height, 400.0f),
+                      "任务弹窗高应为设计值 400，实测 " + frameStr(panel));
+                check(insideViewport(*panel, w, h),
+                      "任务弹窗未完整落在视口内 " + frameStr(panel));
+                check(goal->frame.height >= 90.0f,
+                      "任务弹窗 goal 输入应为多行高 ≥90，实测 " + frameStr(goal));
+                check(ui->find("agent.dialog.task.trigger") != nullptr,
+                      "任务弹窗缺触发方式下拉");
+                check(ui->find("agent.dialog.task.slot") != nullptr,
+                      "任务弹窗缺模型槽位下拉");
+                check(ui->find("agent.dialog.task.iter") != nullptr,
+                      "任务弹窗缺迭代上限输入");
+                check(ui->find("agent.dialog.task.destructive") != nullptr,
+                      "任务弹窗缺破坏性开关");
+                check(ui->find("agent.dialog.task.cancel") != nullptr &&
+                          ui->find("agent.dialog.task.save") != nullptr,
+                      "任务弹窗缺取消/保存按钮");
+                check(ui->find("agent.dialog.task.cron") != nullptr,
+                      "schedule 任务的弹窗未渲染 cron 输入");
+                // 行底 ≤ 按钮行顶（行高改动 / 弹窗高改小即红）
+                const auto* saveBtn = ui->find("agent.dialog.task.save");
+                const auto* metaWrap =
+                    ui->find("agent.dialog.task.destructive.wrap");
+                check(saveBtn != nullptr && metaWrap != nullptr &&
+                          metaWrap->frame.y + metaWrap->frame.height <=
+                              saveBtn->frame.y + 0.5f,
+                      "任务弹窗字段行压到按钮行");
+                check(saveBtn != nullptr &&
+                          saveBtn->frame.y + saveBtn->frame.height <=
+                              panel->frame.y + panel->frame.height - 19.5f,
+                      "任务弹窗按钮行溢出面板底（底边距应收 20）");
+
+                // 下拉展开态（评审复查整改）：`.popup` / `.item.<i>` 是 dropdown
+                // 无条件构建的子节点，收起态一样存在/非零/在屏内 → 单看它们恒真。
+                // 这里钉**只有展开态才成立**的开档属性对（弹层 opacity 0↔1、
+                // zIndex 0↔900、命中层 disabled true↔false），真指针点开后再验几何
+                const auto* triggerField =
+                    ui->find("agent.dialog.task.trigger.field");
+                const auto* popupClosed =
+                    ui->find("agent.dialog.task.trigger.popup");
+                const float metaYBefore =
+                    metaWrap != nullptr ? metaWrap->frame.y : 0.0f;
+                check(popupClosed != nullptr && popupClosed->opacity == 0.0f &&
+                          popupClosed->zIndex == 0,
+                      "下拉收起态弹层应不可见（opacity 0 / zIndex 0）");
+                if (triggerField == nullptr) {
+                    check(false, "触发方式下拉字段命中面缺失");
                 } else {
-                    check(row0->frame.width > 0.0f && row0->frame.height > 0.0f,
-                          "runlist.0 零尺寸 " + frameStr(row0));
-                    check(row1->frame.width > 0.0f && row1->frame.height > 0.0f,
-                          "runlist.1 零尺寸 " + frameStr(row1));
-                    check(row0->text.find("成功") != std::string::npos,
-                          "runlist.0 非最近一次 run，实测「" + row0->text + "」");
-                    check(row1->text.find("受限") != std::string::npos &&
-                              row1->text.find("205000") != std::string::npos,
-                          "runlist.1 缺状态/token 合计，实测「" + row1->text + "」");
-                    const auto* errRow =
-                        ui->find("agent.task." + sid + ".runlist.1.err");
-                    check(errRow != nullptr &&
-                              errRow->text.find("200K") != std::string::npos,
-                          "runlist.1.err 缺 error 原文");
+                    clickCenter(window, triggerField);
+                    composeFrame();
+                    const auto* popupOpen =
+                        ui->find("agent.dialog.task.trigger.popup");
+                    check(popupOpen != nullptr && popupOpen->opacity == 1.0f &&
+                              popupOpen->zIndex > 0,
+                          "真指针点字段后弹层未展开（opacity/zIndex 未升档）");
+                    const auto* popupHit =
+                        ui->find("agent.dialog.task.trigger.popup.hit");
+                    check(popupHit != nullptr && !popupHit->disabled,
+                          "展开态弹层命中层仍 disabled");
+                    const auto* lastItem =
+                        ui->find("agent.dialog.task.trigger.item.2");
+                    check(lastItem != nullptr && lastItem->frame.width > 0.0f &&
+                              lastItem->frame.height > 0.0f,
+                          "下拉展开后最后一项缺失/零尺寸");
+                    if (lastItem != nullptr) {
+                        check(insideViewport(*lastItem, w, h),
+                              "下拉最后一项跑出屏外 " + frameStr(lastItem));
+                    }
+                    const auto* metaAfter =
+                        ui->find("agent.dialog.task.destructive.wrap");
+                    check(metaAfter != nullptr &&
+                              nearEq(metaAfter->frame.y, metaYBefore),
+                          "下拉展开挤动了下方行（展开前 " +
+                              std::to_string(metaYBefore) + " 展开后 " +
+                              (metaAfter ? std::to_string(metaAfter->frame.y)
+                                         : std::string("（缺行）")) + "）");
+                    // 再点一次收起 → 开档属性复位（反向钉）
+                    const auto* fieldNow =
+                        ui->find("agent.dialog.task.trigger.field");
+                    if (fieldNow != nullptr) {
+                        clickCenter(window, fieldNow);
+                        composeFrame();
+                        const auto* popupReclosed =
+                            ui->find("agent.dialog.task.trigger.popup");
+                        check(popupReclosed != nullptr &&
+                                  popupReclosed->opacity == 0.0f &&
+                                  popupReclosed->zIndex == 0,
+                              "再点字段后弹层未收起（opacity/zIndex 未复位）");
+                    }
                 }
-            }
-            // 点 edit 中心 → 编辑表单出现且完全落在页面内容区内。
-            // 注意：composeFrame 会重建元素树，跨帧持有的 Element* 立即失效
-            //（上面那次展开点击后必须重新 find，否则用的是已析构元素的 frame）
-            const auto* editBtnNow = ui->find("agent.task." + sid + ".edit");
-            if (editBtnNow == nullptr) {
-                std::cerr << "agent_probes: 重新查找 edit 按钮失败\n";
-                passed = false;
-            } else {
-                const float ex = editBtnNow->frame.x + editBtnNow->frame.width * 0.5f;
-                const float ey = editBtnNow->frame.y + editBtnNow->frame.height * 0.5f;
-                core::queuePointerButton(window, ex, ey, core::PointerButton::Left,
-                                         core::PointerAction::Press, {});
-                core::queuePointerButton(window, ex, ey, core::PointerButton::Left,
-                                         core::PointerAction::Release, {});
-                composeFrame();
-                const auto* form =
-                    ui != nullptr ? ui->find("agent.edit.form") : nullptr;
-                const auto* pageNow =
-                    ui != nullptr ? ui->find("agent.page") : nullptr;
-                if (form == nullptr || pageNow == nullptr) {
-                    std::cerr << "agent_probes: 点 edit 后 agent.edit.form 缺失\n";
-                    passed = false;
-                } else {
-                    check(frameContains(*pageNow, *form),
-                          "编辑表单未落在页面内容区内 form" + frameStr(form) + " page" +
-                              frameStr(pageNow));
-                    check(ui->find("agent.edit.cron") != nullptr,
-                          "schedule 任务的编辑表单未渲染 cron 输入");
-                    const auto* save = ui->find("agent.edit.save");
-                    check(save != nullptr && save->frame.width > 0.0f,
-                          "编辑表单缺保存按钮");
+
+                // 关弹窗（真指针点取消），恢复页面态
+                const auto* cancel = ui->find("agent.dialog.task.cancel");
+                if (cancel != nullptr) {
+                    clickCenter(window, cancel);
+                    composeFrame();
+                    check(ui->find("agent.dialog.task.goal") == nullptr,
+                          "点取消后任务弹窗未关闭");
                 }
             }
         }
     }
 
-    // ---- ⑤⑥⑦ run 日志块级渲染 + id 唯一性 + 可用工具区块 ----
+    // ---- ⑥ 任务列表滚动：30 条任务 → 内容高 > 视口高 → 出滚动条 ----
     {
-        // 种消息（③ 落库 completed 的那次 run 上追加）：
-        //   seq1 assistant = text + tool_use（工具调用展示钉子）
-        //   seq2 user      = tool_result 长输出（全文可见性钉子，600 字节）
-        auto runsNow = store.listRuns(created.value(), 1);
-        if (runsNow.isFail() || runsNow.value().empty()) {
-            std::cerr << "agent_probes: ⑤ 种消息失败——run 不存在\n";
-            passed = false;
+        const auto* list = ui->find("agent.tasklist");
+        const auto* content = ui->find("agent.tasklist.content");
+        const auto* bar = ui->find("agent.tasklist.scroll");
+        if (list == nullptr || content == nullptr) {
+            check(false, "任务列表 scrollView 节点缺失");
         } else {
-            const int64_t runId = runsNow.value().front().id;
-            // ③ 的真跑已占 seq 0（user goal）/ seq 1（assistant done），
-            // 种子用 seq 2/3，避免 seq 撞车（listMessages ORDER BY seq，
-            // 同 seq 按 rowid 稳定序 → 撞车会让 msg.<i> 错位）
-            const std::string longOutput(600, 'z');
-            store.appendMessage(runId, 2, "assistant",
-                                R"([{"type":"text","text":"我来查"},)"
-                                R"({"type":"tool_use","id":"tu1",)"
-                                R"("name":"todo.list","input":{"limit":5}}])",
-                                std::nullopt);
-            store.appendMessage(runId, 3, "user",
-                                R"([{"type":"tool_result","tool_use_id":"tu1",)"
-                                R"("content":[{"type":"text","text":")" +
-                                    longOutput +
-                                    R"("}],"is_error":false}])",
-                                std::string("tu1"));
+            check(content->frame.height > list->frame.height + 1.0f,
+                  "列表内容高 " + std::to_string(content->frame.height) +
+                      " 未超过视口高 " + std::to_string(list->frame.height) +
+                      "（种的任务不够多？）");
+            check(bar != nullptr && bar->frame.height > 0.0f,
+                  "内容超高时未出现滚动条 agent.tasklist.scroll");
+        }
+    }
 
-            // 展开第一个任务（真实指针点行）
-            const auto* rowNow = ui->find("agent.task." + tid);
-            if (rowNow == nullptr) {
-                std::cerr << "agent_probes: ⑤ 任务行缺失\n";
-                passed = false;
-            } else {
-                clickCenter(window, rowNow);
-                composeFrame();
-                const std::string base = "agent.task." + tid;
-                const auto* scroll = ui->find(base + ".msgscroll");
-                check(scroll != nullptr, "⑤ 消息滚动区 msgscroll 缺失");
-                const auto* m2c = ui->find(base + ".msg.3");
-                check(m2c != nullptr, "⑤ msg.3 缺失");
-                const float collapsedH = m2c ? m2c->frame.height : 0.0f;
-                // 展开 msg.2（assistant tool_use，真实点击「展开」chip）
-                const auto* tgl2u = ui->find(base + ".msg.2.toggle");
-                if (tgl2u == nullptr) {
-                    check(false, "⑤ msg.2.toggle 缺失");
-                } else {
-                    // 展开 msg.2（assistant tool_use）→ 🔧 chip 可见
-                    clickCenter(window, tgl2u);
-                    composeFrame();
-                    const auto* chip =
-                        ui->find(base + ".msg.2.blk.1");
-                    check(chip != nullptr, "⑤ tool_use 块 msg.2.blk.1 缺失");
-                    if (chip != nullptr) {
-                        check(chip->text.find("todo.list") !=
-                                      std::string::npos &&
-                                  chip->text.find("🔧") !=
-                                      std::string::npos,
-                              "⑤ tool chip 缺工具名/emoji，实测: " +
-                                  chip->text);
-                    }
-                    // 展开 msg.3（tool_result）→ 高度增大 + 输出全文 +
-                    // 复制 chip
-                    const auto* tgl3 = ui->find(base + ".msg.3.toggle");
-                    if (tgl3 == nullptr) {
-                        check(false, "⑤ msg.3.toggle 缺失");
-                    } else {
-                        clickCenter(window, tgl3);
-                        composeFrame();
-                        const auto* m2e = ui->find(base + ".msg.3");
-                        check(m2e != nullptr &&
-                                  m2e->frame.height > collapsedH,
-                              std::string("⑤ 展开后 msg.3 高度应大于收起高 ") +
-                                  std::to_string(collapsedH));
-                        const auto* out =
-                            ui->find(base + ".msg.3.blk.0.out");
-                        check(out != nullptr &&
-                                  out->text.size() >= 600 &&
-                                  out->text.find("zzz") !=
-                                      std::string::npos,
-                              "⑤ tool_result 输出全文未渲染");
-                        const auto* copyBtn =
-                            ui->find(base + ".msg.3.copy");
-                        check(copyBtn != nullptr &&
-                                  copyBtn->text == "复制",
-                              "⑤ 复制 chip 缺失或文案不对");
-                    }
-                }
+    // ---- ⑧ 全帧 id 唯一性（当前帧 = 页面 + 已关弹窗态）----
+    {
+        std::map<std::string, int> counts;
+        for (const auto& root : ui->orderedRoots()) {
+            if (root) collectIds(*root, counts);
+        }
+        size_t duplicated = 0;
+        std::string firstDup;
+        for (const auto& [key, n] : counts) {
+            if (n > 1) {
+                ++duplicated;
+                if (firstDup.empty()) firstDup = key;
             }
         }
+        check(duplicated == 0, "⑧ 全帧发现重复 id " + std::to_string(duplicated) +
+                                   " 个，首个: " + firstDup);
+    }
 
-        // ⑥ 全帧 id 唯一性（当前帧 = 任务展开态，元素最多的一帧）
-        {
-            std::map<std::string, int> counts;
-            for (const auto& root : ui->orderedRoots()) {
-                if (root) collectIds(*root, counts);
-            }
-            size_t duplicated = 0;
-            std::string firstDup;
-            for (const auto& [key, n] : counts) {
-                if (n > 1) {
-                    ++duplicated;
-                    if (firstDup.empty()) firstDup = key;
-                }
-            }
-            check(duplicated == 0,
-                  "⑥ 全帧发现重复 id " + std::to_string(duplicated) +
-                      " 个，首个: " + firstDup);
-        }
-
-        // 收起任务（再点行），避免 ⑦ 的头部被详情遮挡判错
-        const auto* rowCollapse = ui->find("agent.task." + tid);
-        if (rowCollapse != nullptr) {
-            clickCenter(window, rowCollapse);
-            composeFrame();
-        }
-
-        // ⑦ 可用工具区块：收起默认 → 点头部展开 → 卡片数 == 注册表数
+    // ---- ⑨ 可用工具区块：收起默认 → 点头部展开 → 卡片数 == 注册表数 ----
+    {
         const size_t registered = core::ToolRegistry::instance().listTools().size();
-        check(registered >= 1, "⑦ 注册表为空（app.stats 应已注册）");
+        check(registered >= 1, "⑨ 注册表为空（app.stats 应已注册）");
         const auto* toolsHeader = ui->find("agent.tools.header");
         if (toolsHeader == nullptr) {
-            check(false, "⑦ agent.tools.header 缺失");
+            check(false, "⑨ agent.tools.header 缺失");
         } else {
             const auto* toolsLabel = ui->find("agent.tools.header.label");
             check(toolsLabel != nullptr &&
                       toolsLabel->text.find("可用工具") != std::string::npos &&
                       toolsLabel->text.find(std::to_string(registered)) !=
                           std::string::npos,
-                  "⑦ 头部缺「可用工具（N）」计数，实测: " +
+                  "⑨ 头部缺「可用工具（N）」计数，实测: " +
                       (toolsLabel ? toolsLabel->text : std::string("（无）")));
             check(ui->find("agent.tools.card.0") == nullptr,
-                  "⑦ 收起态不应有工具卡");
+                  "⑨ 收起态不应有工具卡");
             clickCenter(window, toolsHeader);
             composeFrame();
             size_t cards = 0;
             for (size_t k = 0; k < registered + 4; ++k) {
-                if (ui->find("agent.tools.card." + std::to_string(k)) !=
-                    nullptr) {
+                if (ui->find("agent.tools.card." + std::to_string(k)) != nullptr) {
                     ++cards;
                 }
             }
             check(cards == registered,
-                  "⑦ 工具卡数 " + std::to_string(cards) + " != 注册表数 " +
+                  "⑨ 工具卡数 " + std::to_string(cards) + " != 注册表数 " +
                       std::to_string(registered));
-            const auto* cardName = ui->find("agent.tools.card.0.name");
-            check(cardName != nullptr && cardName->text == "app.stats",
-                  "⑦ card.0.name 应为 app.stats");
         }
     }
 
