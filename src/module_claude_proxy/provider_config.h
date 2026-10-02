@@ -200,6 +200,15 @@ std::string effectiveExtraSettingsJson(
 std::vector<std::string> extraSettingsTopLevelKeys(
     const std::string& extraSettingsJson);
 
+// settings.json **原文** → 高级设置 JSON（除 env 外全部顶层属性，pretty 规范形）。
+// batch-C C-4：「导入当前配置」用——parseImportedEnv 按职责只取 env 子对象，
+// 非 env 顶层属性（model / permissions / statusLine / hooks / …）不在它的返回值
+// 里，必须在此独立抽取，否则导入后高级配置恒空。
+// 空串 / 超 kMaxImportTextBytes / 解析失败 / 顶层非对象 / 除 env 外无键 → 空串
+//（= 未配置，与 extraSettingsJson 语义一致）；结果超 kMaxExtraSettingsBytes
+// 同样按空串（与 validateExtraSettingsJson 的上限口径一致，导入不产生超限值）
+std::string nonEnvTopLevelJson(const std::string& settingsDocText);
+
 // 并入 settings 文档的应用结果（§4.3）
 struct ExtraSettingsApply {
     std::vector<std::string> writtenKeys;   // 本轮写入的非 env 顶层键（排序去重）

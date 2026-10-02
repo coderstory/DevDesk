@@ -100,13 +100,11 @@ struct DetailActions {
     std::function<void(int64_t id)> enable;                          // 启用
     std::function<void(const Profile& p)> test;                      // 测试连通
     std::function<void(const Profile& p)> edit;                      // 编辑
-    std::function<void(int64_t id, const std::string& name)> requestDelete;  // 删除（确认弹窗）
-    std::function<void(int64_t id)> duplicate;                       // 建副本
-    // 复制配置（2026-09-30 batch-fix C，设计 §4.2②）：profile → settings.json
-    // 形态 JSON → 系统剪贴板（占位不导明文 key）。第 6 键 + 右键菜单双入口
-    std::function<void(const Profile& p)> copyConfig;
     std::function<void(int64_t id)> run;                             // 运行
     std::function<void()> openCalls;                                 // 「查看全部 →」
+    // batch-C C-3：删除 / 建副本 / 复制配置三键自详情动作行删除（重复入口，
+    // 已有列表右键菜单）→ 对应回调字段一并撤除；业务实体（doDuplicate /
+    // doCopyConfig / 删除确认弹窗）保留，经 ProfileListActions 供右键菜单
 };
 
 // ---- 五个 pane：各自返回内容底沿（见文件头契约）----

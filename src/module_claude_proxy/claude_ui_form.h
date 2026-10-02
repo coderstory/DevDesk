@@ -59,6 +59,12 @@ void startImportCurrentConfig(FormState& f, ImportState& imp,
 void submitForm(FormState& f, const FormSubmitHooks& hooks,
                 const std::vector<SharedConfig>& sharedConfigs);
 
+// 全屏 JSON「放弃修改」（batch-C C-2）：编辑缓冲恢复为**上次落库值**
+//（f.formExtraSettingsJsonBaseline_——新建/导入 = 预填值、编辑 = DB 值、保存
+// 成功后就地刷新）+ 清 JSON 行内红字 + 关全屏（表单仍开）。三条入口同调本函数：
+// 底部「放弃修改」按钮 / Esc / 点遮罩。当前文本 == 落库值时等价于关闭，不报错。
+void discardJsonFullscreenEdits(FormState& f);
+
 // ---- 共享配置片段弹窗状态机（批 2）----
 void openSharedCreate(SharedConfigDialogState& s);
 void openSharedEdit(SharedConfigDialogState& s, const SharedConfig& c);

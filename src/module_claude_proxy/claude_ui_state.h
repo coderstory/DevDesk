@@ -159,6 +159,12 @@ struct FormState {
     // 恒为 pretty 保存值；外部改库的非 pretty 原文按原样预填，格式化按钮负责
     // 规范化）；submitForm 校验通过后统一 pretty 落库（D-6）
     std::string formExtraSettingsJson_;
+    // 「上次落库值」基线（batch-C C-2：「放弃修改」的恢复目标）。写入点 =
+    // openCreateForm（清空）/ openEditForm（DB 值）/ startImportCurrentConfig
+    //（导入预填值）/ submitForm 落库成功（pretty 后的落库值）。语义 = 本次表单
+    // 会话开始时的持久化值，不是「进入全屏那一刻的缓冲」——用户在表单框里改过
+    // 再进全屏，放弃仍回落到库值
+    std::string formExtraSettingsJsonBaseline_;
     // 高级设置 JSON 的行内红字（§7.2 的 claude.form.advanced.json.error 节点；
     // 格式化/校验失败共用，onChange 清空——与 formError_ 提交闸门分层）
     std::string formAdvancedJsonError_;
