@@ -324,32 +324,6 @@ std::string maskSecret(const std::string& plaintext) {
     return maskMiddle(plaintext, 4, 2, "••••");
 }
 
-std::string quotaErrorHeadline(QuotaError kind, const std::string& detail) {
-    // G2 定的口径，本层只做归一入口，**不改文案**。
-    std::string head;
-    switch (kind) {
-        case QuotaError::None:
-            return std::string();
-        case QuotaError::Auth:
-            head = "密钥无效，请换一把 API Key";
-            break;
-        case QuotaError::Entitlement:
-            head = "套餐过期或无权限，换密钥没用，得续费或换账号";
-            break;
-        case QuotaError::Shape:
-            head = "上游响应结构不认识（供应商可能改了接口）";
-            break;
-        case QuotaError::Transient:
-            head = "网络失败，稍后重试";
-            break;
-        case QuotaError::NotConfigured:
-            head = "配置不完整，请去补全";
-            break;
-    }
-    if (detail.empty()) return head;
-    return head + "：" + detail;
-}
-
 std::string quotaTestMessage(const QuotaResult& result) {
     if (result.error == QuotaError::None) {
         std::ostringstream oss;

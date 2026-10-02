@@ -36,6 +36,7 @@
 #include <vector>
 
 #include "ccswitch_source.h"
+#include "quota_error_text.h"   // quotaErrorHeadline（文案表单点，G7 起三方共用）
 #include "quota_provider.h"
 #include "quota_store.h"
 
@@ -147,10 +148,10 @@ ProviderConfig buildQuotaTestConfig(const QuotaDialogState& st);
 // 露尾 4 等于把签名密钥的尾巴摆出来。
 std::string maskSecret(const std::string& plaintext);
 
-// QuotaError → 用户可读的一句话（G2 定的口径，本层只做**归一入口**，不改文案）。
-// 空 errorMessage 时回落到这张表；表里也没有时给出通用兜底（**永不返回空串**
-// ——空文案会被 UI 画成「什么都没发生」）。
-std::string quotaErrorHeadline(QuotaError kind, const std::string& detail);
+// ⚠ `quotaErrorHeadline` 的声明**已搬到 quota_error_text.h**（G7：这张文案表
+// 有了弹窗之外的第二、第三个消费者——首页错误行 + 落库兜底，留在弹窗层会让
+// store / home 反向依赖「弹窗配置」头）。本头照旧 include 它，既有调用点
+// （quota_dialog_config.cpp / claude_ui_quota.cpp / 用例）零改动。
 
 // 「测试连接」的完整结果文案：成功给一行摘要，失败给 headline + 供应商原文。
 std::string quotaTestMessage(const QuotaResult& result);

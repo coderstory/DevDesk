@@ -10,6 +10,7 @@
 
 #include "core/logging.h"
 #include "module_claude_proxy/claude_ui_logic.h"   // wakeAfterPublish（唯一唤醒出口）
+#include "quota_home_bridge.h"   // 手动刷新请求位（中立桥，G7 [刷新] 按钮）
 #include "quota_registry.h"
 
 namespace module::claude::quota {
@@ -35,7 +36,25 @@ std::atomic<int64_t>& globalWakeCount() {
     return count;
 }
 
+// 手动刷新请求位（G7）。进程级而非成员级：请求方（首页 UI 线程）与消费方
+// （后台 tick 线程）之间没有「同一个对象」的稳定引用可传 —— 与上面两个
+// 进程级缝同款理由。静态存储期 = 进程结束即析构，不与刷新器的生命周期赛跑
+// （存一个裸 QuotaProvider* 再跨线程解引用才是真的赛跑）。
+std::atomic<bool>& globalManualRefreshRequest() {
+    static std::atomic<bool> flag{false};
+    return flag;
+}
+
 }  // namespace
+
+void requestQuotaImmediateRefresh() {
+    globalManualRefreshRequest().store(true, std::memory_order_release);
+}
+
+bool consumeQuotaImmediateRefreshRequest() {
+    return globalManualRefreshRequest().exchange(false,
+                                                 std::memory_order_acquire);
+}
 
 bool quotaRefresherWakeSawReadyForTest() {
     return globalWakeSawReady().load(std::memory_order_relaxed);
@@ -46,6 +65,7 @@ int64_t quotaRefresherWakeCountForTest() {
 void quotaRefresherResetTestSeams() {
     globalWakeSawReady().store(false, std::memory_order_relaxed);
     globalWakeCount().store(0, std::memory_order_relaxed);
+    globalManualRefreshRequest().store(false, std::memory_order_relaxed);
 }
 
 QuotaRefresher::QuotaRefresher(QuotaStore& store,
@@ -82,10 +102,13 @@ void QuotaRefresher::stopAll() {
 }
 
 bool QuotaRefresher::isDue(const QuotaConfigRow& config, int64_t nowSec,
-                           int64_t lastFetchedAt) {
+                           int64_t lastFetchedAt, bool manual) {
     if (!config.enabled) return false;
-    if (!config.autoRefresh) return false;
     if (config.providerId.empty()) return false;   // 未配置：不该发请求
+    // 手动刷新：不等 interval、不看 auto_refresh（手动刷新档的唯一途径就是
+    // 它）。仍受上面两道闸——没打开的档、未配置的 profile 不该被强行查询。
+    if (manual) return true;
+    if (!config.autoRefresh) return false;
     if (lastFetchedAt <= 0) return true;          // 从未查过 → 立即到点
     // interval <= 0 = 「到点即刷」（每次扫描都算到期）。生产写 15；
     // 这条让「手动刷新档」与用例不必造一个极大 interval。
@@ -96,7 +119,8 @@ bool QuotaRefresher::isDue(const QuotaConfigRow& config, int64_t nowSec,
     return nowSec - lastFetchedAt >= intervalSec;
 }
 
-RefreshRoundResult QuotaRefresher::refreshProfile(int64_t profileId, int64_t nowSec) {
+RefreshRoundResult QuotaRefresher::refreshProfile(int64_t profileId,
+                                                  int64_t nowSec, bool manual) {
     RefreshRoundResult out;
     out.profileId = profileId;
 
@@ -112,9 +136,9 @@ RefreshRoundResult QuotaRefresher::refreshProfile(int64_t profileId, int64_t now
     auto prev = store_.loadResult(profileId);
     if (prev.isOk()) lastFetchedAt = prev.value().fetchedAt;
 
-    if (!isDue(cfg.value(), nowSec, lastFetchedAt)) {
+    if (!isDue(cfg.value(), nowSec, lastFetchedAt, manual)) {
         out.skipped = true;
-        out.skipReason = "未启用 / 未到点";
+        out.skipReason = manual ? "已关闭自动刷新且未开手动" : "未启用 / 未到点";
         return out;
     }
 
@@ -177,7 +201,8 @@ RefreshRoundResult QuotaRefresher::refreshProfile(int64_t profileId, int64_t now
     return out;
 }
 
-core::Result<std::vector<RefreshRoundResult>> QuotaRefresher::refreshNow() {
+core::Result<std::vector<RefreshRoundResult>> QuotaRefresher::refreshNow(
+    bool manual) {
     auto configs = store_.listConfigs();
     if (configs.isFail()) {
         return core::Result<std::vector<RefreshRoundResult>>::fail(
@@ -188,7 +213,7 @@ core::Result<std::vector<RefreshRoundResult>> QuotaRefresher::refreshNow() {
     out.reserve(configs.value().size());
     for (const QuotaConfigRow& cfg : configs.value()) {
         try {
-            out.push_back(refreshProfile(cfg.profileId, nowSec));
+            out.push_back(refreshProfile(cfg.profileId, nowSec, manual));
         } catch (const std::exception& e) {
             // 单个 profile 的意外不许中断整轮（其余 profile 的结果照样要刷）
             LOG_ERROR(std::string("QuotaRefresher: 单 profile 刷新异常: ") + e.what());
@@ -208,7 +233,17 @@ void QuotaRefresher::tickThreadLoop() {
         while (!stopFlag_.load()) {
             // sleep 切片：每片之间查 stopFlag_ → stopAll 最多等一片（~20ms），
             // 不是「一次睡到下一轮」（那会让退出等最多 scanIntervalSec）。
+            //
+            // G7 手动刷新：每片**先**查一次请求位再睡，置位后最坏等一片
+            //（默认 10×20ms = 200ms）就开跑一轮，不必等 scanIntervalSec 的
+            // 扫描节流。请求位只在本文件消费一次（exchange=false），重复点
+            // 两次不会连刷两轮。
+            bool manual = false;
             for (int i = 0; i < options_.slicesPerRound && !stopFlag_.load(); ++i) {
+                if (consumeQuotaImmediateRefreshRequest()) {
+                    manual = true;
+                    break;
+                }
                 std::this_thread::sleep_for(
                     std::chrono::milliseconds(options_.sliceMs));
             }
@@ -216,15 +251,15 @@ void QuotaRefresher::tickThreadLoop() {
 
             const int64_t nowSec = now_ ? now_() : systemNowSec();
             // 扫描节流：两次扫描之间至少隔 scanIntervalSec。注入时钟设 0 时
-            // 每片都扫（用例用），生产 60 秒一轮。
-            if (options_.scanIntervalSec > 0 &&
+            // 每片都扫（用例用），生产 60 秒一轮。手动刷新**不过节流**。
+            if (!manual && options_.scanIntervalSec > 0 &&
                 lastScanSec != std::numeric_limits<int64_t>::min() &&
                 nowSec - lastScanSec < options_.scanIntervalSec) {
                 continue;
             }
             lastScanSec = nowSec;
 
-            auto refreshed = refreshNow();
+            auto refreshed = refreshNow(manual);
             if (refreshed.isFail()) {
                 LOG_WARN("QuotaRefresher: 刷新轮失败: " + refreshed.errorMessage());
             }

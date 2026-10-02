@@ -20,6 +20,8 @@ add_library(devdesk_module_claude_proxy STATIC
     quota/provider_minimax_cn.cpp
     quota/quota_credential.cpp
     quota/quota_dialog_config.cpp
+    quota/quota_error_text.cpp
+    quota/quota_home_view.cpp
     quota/quota_refresh.cpp
     quota/quota_registry.cpp
     quota/quota_store.cpp
