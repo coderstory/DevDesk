@@ -11,6 +11,7 @@
 //   - fetch 契约：恒返回 QuotaResult、错误只走 error 字段、HttpSendFn 注入缝真被调用
 #include "doctest.h"
 
+#include "quota/deepseek_provider.h"
 #include "quota/quota_provider.h"
 #include "quota/quota_registry.h"
 
@@ -190,6 +191,61 @@ std::string firstInconsistentId(const QuotaProviderEntry* table) {
     return {};
 }
 
+// ---- G3：DeepSeek provider 的测试替身 ----
+
+// provider 实际发出的那个请求（断言其 URL / 头 / 超时确实如契约）
+struct CapturedRequest {
+    bool called = false;
+    std::string method;
+    std::string url;
+    std::map<std::string, std::string> headers;
+    long timeoutMs = 0;
+};
+
+// 假发送：记录请求 + 回一个固定 HTTP 响应。**零真实网络**。
+// 注意：断言宏内含 `return false`，不能写进返回非 bool 的 lambda——lambda 只记录，
+// 断言一律在用例体里做（与 G0 那条注入缝用例同规矩）。
+HttpSendFn httpResponding(CapturedRequest* sink, int statusCode, std::string body) {
+    return [sink, statusCode, body](const platform::http::Request& req)
+               -> core::Result<platform::http::Response> {
+        if (sink != nullptr) {
+            sink->called = true;
+            sink->method = req.method;
+            sink->url = req.url;
+            sink->headers = req.headers;
+            sink->timeoutMs = req.timeoutMs;
+        }
+        platform::http::Response resp;
+        resp.statusCode = statusCode;
+        resp.body = body;
+        return core::Result<platform::http::Response>::ok(std::move(resp));
+    };
+}
+
+// 传输层失败的真实形态：platform::http::send 网络失败时返回 Result::fail
+//（http_client.cpp:96-101），不是 ok(Response{networkError=true})。
+HttpSendFn httpTransportFailure() {
+    return [](const platform::http::Request&) -> core::Result<platform::http::Response> {
+        return core::Result<platform::http::Response>::fail(
+            core::ErrorCode::NetworkUnreachable, "connection refused");
+    };
+}
+
+ProviderConfig deepseekConfig(std::string apiKey = "sk-deepseek-test") {
+    ProviderConfig cfg;
+    cfg.providerId = "deepseek";
+    cfg.baseUrl = "https://api.deepseek.com";
+    cfg.apiKey = std::move(apiKey);
+    return cfg;
+}
+
+// DeepSeek /user/balance 的真实响应形态（金额是**字符串**小数，非 JSON number——
+// cc-switch balance.rs:415-420 的 parse_f64_field 两种都收，本用例两种都要钉住）
+const char* const kDeepSeekBalanceMultiCurrency =
+    R"({"is_available":true,"balance_infos":[)"
+    R"({"currency":"CNY","total_balance":"110.00","granted_balance":"10.00","topped_up_balance":"100.00"},)"
+    R"({"currency":"USD","total_balance":"4.25","granted_balance":"0.00","topped_up_balance":"4.25"}]})";
+
 }  // namespace
 
 // ==================== 显式注册表（非静态自注册）====================
@@ -281,9 +337,10 @@ REGISTER_TEST(claude_quota_detect_by_base_url_misses,
     // 未被 provider 声明过的 baseUrl（non_matcher 用基类默认 → 恒 false）
     DOCTEST_CHECK(module::claude::quota::detectByBaseUrl("https://non_matcher.example.com",
                                                          kFakeTable) == nullptr);
-    // 生产表（G0 尚无真实 provider）也不命中，且不炸
-    DOCTEST_CHECK(module::claude::quota::detectByBaseUrl("https://api.deepseek.com") ==
-                  nullptr);
+    // 生产表：无对应 provider 的 host 依旧不命中，且不炸（G3 起 api.deepseek.com
+    // 由 deepseek provider 命中，见 G3 段；这里换成仍无主的 host）
+    DOCTEST_CHECK(module::claude::quota::detectByBaseUrl(
+                      "https://api.unknown-vendor.example") == nullptr);
     return true;
 })
 
@@ -426,5 +483,262 @@ REGISTER_TEST(claude_quota_balance_kind_has_no_windows,
     DOCTEST_CHECK(r.windows.empty());
     DOCTEST_CHECK_EQ(r.balanceRemaining, 12.34);
     DOCTEST_CHECK_EQ(r.currency, std::string("CNY"));
+    return true;
+})
+
+// ==================== G3：DeepSeek 余额 provider ====================
+// 移植自 cc-switch（bfaaba16）src-tauri/src/services/balance.rs：
+//   detect_provider :26-43 的 deepseek 项 / query_deepseek :70-146
+// DeepSeek **只有余额**：无时间窗口、无 used、无 reset（cc-switch 未实现套餐 / 速率限制）。
+
+REGISTER_TEST(claude_quota_deepseek_identity_and_fields,
+              "claude_quota: G3 DeepSeek id/显示名/空 fields（沿用 profile 凭据）", {
+    const QuotaProvider* p = module::claude::quota::createDeepSeekProvider();
+    DOCTEST_CHECK(p != nullptr);
+    if (p == nullptr) return false;
+    DOCTEST_CHECK_EQ(p->id(), std::string("deepseek"));
+    DOCTEST_CHECK_EQ(p->displayName(), std::string("DeepSeek"));
+    // cc-switch get_balance 只有 base_url + api_key 两个入参 → 无额外字段，
+    // 密钥沿用 profile 凭据（G6 弹窗据此不渲染额外输入框）
+    DOCTEST_CHECK(p->fields().empty());
+    // 进程内单例：重复取回同一对象（注册表工厂契约）
+    DOCTEST_CHECK(p == module::claude::quota::createDeepSeekProvider());
+    return true;
+})
+
+REGISTER_TEST(claude_quota_deepseek_registered_in_production_table,
+              "claude_quota: G3 DeepSeek 已进生产注册表（哨兵之前）且可按 URL 探测", {
+    const QuotaProvider* byId = module::claude::quota::findProvider("deepseek");
+    DOCTEST_CHECK(byId != nullptr);
+    if (byId == nullptr) return false;
+    DOCTEST_CHECK_EQ(byId->id(), std::string("deepseek"));
+    DOCTEST_CHECK_EQ(byId->displayName(), std::string("DeepSeek"));
+    const QuotaProvider* byUrl =
+        module::claude::quota::detectByBaseUrl("https://api.deepseek.com/anthropic");
+    DOCTEST_CHECK(byUrl != nullptr);
+    if (byUrl == nullptr) return false;
+    DOCTEST_CHECK_EQ(byUrl->id(), std::string("deepseek"));
+    return true;
+})
+
+REGISTER_TEST(claude_quota_deepseek_matches_base_url_host_boundary,
+              "claude_quota: G3 DeepSeek baseUrl 探测走 host 标签边界（伪造域不命中）", {
+    const QuotaProvider* p = module::claude::quota::createDeepSeekProvider();
+    // 命中：官方域（带 / 路径、带端口、带子域、大小写）
+    DOCTEST_CHECK(p->matchesBaseUrl("https://api.deepseek.com"));
+    DOCTEST_CHECK(p->matchesBaseUrl("https://api.deepseek.com/v1"));
+    DOCTEST_CHECK(p->matchesBaseUrl("https://api.deepseek.com:443/anthropic"));
+    DOCTEST_CHECK(p->matchesBaseUrl("HTTPS://API.DEEPSEEK.COM/v1"));
+    // 不命中：伪造 / 别的供应商（cc-switch :28 是裸子串 contains，会把
+    // api.deepseek.com.evil.com 也放进来；契约 quota_provider.h:135-139 要求标签边界）
+    DOCTEST_CHECK_FALSE(p->matchesBaseUrl("https://api.deepseek.com.evil.com"));
+    DOCTEST_CHECK_FALSE(p->matchesBaseUrl("https://notapi.deepseek.com"));
+    DOCTEST_CHECK_FALSE(p->matchesBaseUrl("https://evil.com/?next=api.deepseek.com"));
+    DOCTEST_CHECK_FALSE(p->matchesBaseUrl("https://api.openai.com/v1"));
+    DOCTEST_CHECK_FALSE(p->matchesBaseUrl(""));
+    return true;
+})
+
+REGISTER_TEST(claude_quota_deepseek_request_shape,
+              "claude_quota: G3 DeepSeek 请求 URL/Bearer 头/方法/超时（域名写死，不派生 baseUrl）", {
+    CapturedRequest seen;
+    // 故意把 profile 的 baseUrl 指到一个网关：余量接口域名由 provider 写死
+    //（cc-switch :78 字面量；契约 quota_provider.h:97-100 baseUrl 只是事实记录）
+    ProviderConfig cfg = deepseekConfig("sk-abc123");
+    cfg.baseUrl = "https://my-gateway.internal/deepseek/v1";
+
+    const QuotaResult r = module::claude::quota::createDeepSeekProvider()->fetch(
+        cfg, httpResponding(&seen, 200, kDeepSeekBalanceMultiCurrency));
+
+    DOCTEST_CHECK(seen.called);  // 注入缝真被调用（零真实网络）
+    DOCTEST_CHECK_EQ(seen.method, std::string("GET"));
+    DOCTEST_CHECK_EQ(seen.url, std::string("https://api.deepseek.com/user/balance"));
+    DOCTEST_CHECK_EQ(seen.headers.at("Authorization"), std::string("Bearer sk-abc123"));
+    DOCTEST_CHECK_EQ(seen.headers.at("Accept"), std::string("application/json"));
+    DOCTEST_CHECK_EQ(seen.timeoutMs, 15000L);  // cc-switch :81 15 s
+    DOCTEST_CHECK(r.error == QuotaError::None);
+    return true;
+})
+
+REGISTER_TEST(claude_quota_deepseek_balance_ok_multi_currency_takes_first,
+              "claude_quota: G3 DeepSeek 正常余额（多币种取表序首条，金额字符串可解析）", {
+    CapturedRequest seen;
+    const QuotaResult r = module::claude::quota::createDeepSeekProvider()->fetch(
+        deepseekConfig(), httpResponding(&seen, 200, kDeepSeekBalanceMultiCurrency));
+
+    DOCTEST_CHECK(r.error == QuotaError::None);
+    DOCTEST_CHECK(r.errorMessage.empty());
+    DOCTEST_CHECK(r.kind == QuotaKind::Balance);
+    DOCTEST_CHECK(r.windows.empty());  // 钉死：Balance 型不许硬造窗口
+    // 多币种取**表序首条**：cc-switch :116-138 把 balance_infos 逐条各成一行、
+    // 按数组序展示（不排序、不挑币种）；DevDesk 契约只有单标量，
+    // 取首条 = cc-switch 展示序首行（DeepSeek 主币种在首条，顺序稳定）
+    DOCTEST_CHECK_EQ(r.balanceRemaining, 110.0);
+    DOCTEST_CHECK_EQ(r.currency, std::string("CNY"));
+    return true;
+})
+
+REGISTER_TEST(claude_quota_deepseek_currency_passthrough_no_conversion,
+              "claude_quota: G3 DeepSeek 币种原样保留、金额不换算（number 与 string 两种形态）", {
+    // number 形态（非 DeepSeek 现行格式，但 cc-switch parse_f64_field 两种都收）
+    const QuotaResult usd = module::claude::quota::createDeepSeekProvider()->fetch(
+        deepseekConfig(),
+        httpResponding(nullptr, 200,
+                       R"({"is_available":true,"balance_infos":[{"currency":"USD","total_balance":7.5}]})"));
+    DOCTEST_CHECK(usd.error == QuotaError::None);
+    DOCTEST_CHECK_EQ(usd.currency, std::string("USD"));  // 原样，不折成 CNY
+    DOCTEST_CHECK_EQ(usd.balanceRemaining, 7.5);         // 原值，不乘汇率
+
+    // string 形态：大数值 + 多小数位原样透传，不截断
+    const QuotaResult cny = module::claude::quota::createDeepSeekProvider()->fetch(
+        deepseekConfig(),
+        httpResponding(nullptr, 200,
+                       R"({"is_available":true,"balance_infos":[{"currency":"CNY","total_balance":"1234.5678"}]})"));
+    DOCTEST_CHECK(cny.error == QuotaError::None);
+    DOCTEST_CHECK_EQ(cny.currency, std::string("CNY"));
+    DOCTEST_CHECK_EQ(cny.balanceRemaining, 1234.5678);
+    return true;
+})
+
+REGISTER_TEST(claude_quota_deepseek_is_available_false_is_entitlement,
+              "claude_quota: G3 DeepSeek is_available=false → Entitlement（改密钥没用）", {
+    // cc-switch :131-135 把 is_available=false 映射成 "Insufficient balance"
+    const QuotaResult r = module::claude::quota::createDeepSeekProvider()->fetch(
+        deepseekConfig(),
+        httpResponding(nullptr, 200,
+                       R"({"is_available":false,"balance_infos":[)"
+                       R"({"currency":"CNY","total_balance":"0.00","granted_balance":"0.00","topped_up_balance":"0.00"}]})"));
+
+    DOCTEST_CHECK(r.error == QuotaError::Entitlement);
+    DOCTEST_CHECK(r.errorMessage.find("余额不足") != std::string::npos);
+    // 错误通道独占（契约约定 2）：失败态不许夹带半截成功值，也不许有窗口
+    DOCTEST_CHECK(r.windows.empty());
+    DOCTEST_CHECK_EQ(r.balanceRemaining, 0.0);
+    DOCTEST_CHECK(r.currency.empty());
+    DOCTEST_CHECK(r.kind == QuotaKind::Balance);
+    return true;
+})
+
+REGISTER_TEST(claude_quota_deepseek_is_available_missing_defaults_true,
+              "claude_quota: G3 DeepSeek is_available 缺失按 true（cc-switch unwrap_or(true)）", {
+    const QuotaResult r = module::claude::quota::createDeepSeekProvider()->fetch(
+        deepseekConfig(),
+        httpResponding(nullptr, 200,
+                       R"({"balance_infos":[{"currency":"CNY","total_balance":"9.99"}]})"));
+    DOCTEST_CHECK(r.error == QuotaError::None);  // 没有证据不判欠费
+    DOCTEST_CHECK_EQ(r.balanceRemaining, 9.99);
+    DOCTEST_CHECK_EQ(r.currency, std::string("CNY"));
+    return true;
+})
+
+REGISTER_TEST(claude_quota_deepseek_shape_errors,
+              "claude_quota: G3 DeepSeek 空 balance_infos / 结构不认识 → Shape", {
+    // 空数组（cc-switch 会静默回 success+无数据；DevDesk 契约要求 Shape——
+    // 「不是返回空卡」，见 quota_provider.h:46-47）
+    const QuotaResult empty = module::claude::quota::createDeepSeekProvider()->fetch(
+        deepseekConfig(),
+        httpResponding(nullptr, 200, R"({"is_available":true,"balance_infos":[]})"));
+    DOCTEST_CHECK(empty.error == QuotaError::Shape);
+    DOCTEST_CHECK_FALSE(empty.errorMessage.empty());
+
+    // 缺 balance_infos 根键
+    const QuotaResult missing = module::claude::quota::createDeepSeekProvider()->fetch(
+        deepseekConfig(), httpResponding(nullptr, 200, R"({"is_available":true})"));
+    DOCTEST_CHECK(missing.error == QuotaError::Shape);
+
+    // 根不是对象
+    const QuotaResult notObject = module::claude::quota::createDeepSeekProvider()->fetch(
+        deepseekConfig(), httpResponding(nullptr, 200, "[1,2,3]"));
+    DOCTEST_CHECK(notObject.error == QuotaError::Shape);
+
+    // 非法 JSON（拿到完整响应体后解析失败 = 确定性，cc-switch :107 同判）
+    const QuotaResult badJson = module::claude::quota::createDeepSeekProvider()->fetch(
+        deepseekConfig(), httpResponding(nullptr, 200, "not json at all"));
+    DOCTEST_CHECK(badJson.error == QuotaError::Shape);
+
+    // 条目缺 total_balance / currency
+    const QuotaResult noTotal = module::claude::quota::createDeepSeekProvider()->fetch(
+        deepseekConfig(),
+        httpResponding(nullptr, 200,
+                       R"({"is_available":true,"balance_infos":[{"currency":"CNY"}]})"));
+    DOCTEST_CHECK(noTotal.error == QuotaError::Shape);
+    const QuotaResult noCurrency = module::claude::quota::createDeepSeekProvider()->fetch(
+        deepseekConfig(),
+        httpResponding(nullptr, 200,
+                       R"({"is_available":true,"balance_infos":[{"total_balance":"1.00"}]})"));
+    DOCTEST_CHECK(noCurrency.error == QuotaError::Shape);
+    return true;
+})
+
+REGISTER_TEST(claude_quota_deepseek_transport_and_http_errors,
+              "claude_quota: G3 DeepSeek 传输失败/5xx/限流 → Transient；401→Auth；403→Entitlement", {
+    // fetch 非 const 成员 → 必须用非 const 指针（注册表返回的 const 指针只够读元信息）
+    QuotaProvider* p = module::claude::quota::createDeepSeekProvider();
+
+    // 空缝：不许 std::bad_function_call（契约 quota_provider.h:114-116）
+    const QuotaResult noSeam = p->fetch(deepseekConfig(), HttpSendFn{});
+    DOCTEST_CHECK(noSeam.error == QuotaError::Transient);
+
+    // 传输层失败（Result::fail）
+    const QuotaResult netFail = p->fetch(deepseekConfig(), httpTransportFailure());
+    DOCTEST_CHECK(netFail.error == QuotaError::Transient);
+
+    // 5xx / 429
+    DOCTEST_CHECK(p->fetch(deepseekConfig(), httpResponding(nullptr, 500, "{}")).error ==
+                  QuotaError::Transient);
+    DOCTEST_CHECK(p->fetch(deepseekConfig(), httpResponding(nullptr, 503, "{}")).error ==
+                  QuotaError::Transient);
+    DOCTEST_CHECK(p->fetch(deepseekConfig(), httpResponding(nullptr, 429, "{}")).error ==
+                  QuotaError::Transient);
+
+    // 401 → Auth（cc-switch :91-93 的 UNAUTHORIZED 分支；改密钥有用）
+    const QuotaResult auth =
+        p->fetch(deepseekConfig("sk-bad"), httpResponding(nullptr, 401, "{}"));
+    DOCTEST_CHECK(auth.error == QuotaError::Auth);
+    DOCTEST_CHECK(auth.errorMessage.find("401") != std::string::npos);
+
+    // 403 → Entitlement（cc-switch 与 401 同判「鉴权失败」，但契约
+    // quota_provider.h:44-46 把 403 归 Entitlement：凭据有效、产品权限没有）
+    const QuotaResult forbidden = p->fetch(deepseekConfig(), httpResponding(nullptr, 403, "{}"));
+    DOCTEST_CHECK(forbidden.error == QuotaError::Entitlement);
+    return true;
+})
+
+REGISTER_TEST(claude_quota_deepseek_missing_key_is_not_configured,
+              "claude_quota: G3 DeepSeek 缺 API key → NotConfigured（不发请求）", {
+    CapturedRequest seen;
+    const QuotaResult r = module::claude::quota::createDeepSeekProvider()->fetch(
+        deepseekConfig(""), httpResponding(&seen, 200, kDeepSeekBalanceMultiCurrency));
+    DOCTEST_CHECK(r.error == QuotaError::NotConfigured);
+    DOCTEST_CHECK_FALSE(seen.called);  // 配置不全不发请求（cc-switch :427-433 同判）
+    return true;
+})
+
+REGISTER_TEST(claude_quota_deepseek_never_has_windows,
+              "claude_quota: G3 DeepSeek 任何形态都无窗口（Balance 契约钉死）", {
+    // 这条是给后来者的护栏：DeepSeek 没有 5h/周/月窗口，任何「为凑数硬造一个窗口」
+    // 的改动都会在这里红（契约 quota_provider.h:66-68）。
+    struct Case {
+        int status;
+        const char* body;
+    };
+    const Case cases[] = {
+        {200, kDeepSeekBalanceMultiCurrency},
+        {200, R"({"is_available":false,"balance_infos":[{"currency":"CNY","total_balance":"0.00"}]})"},
+        {200, R"({"is_available":true,"balance_infos":[]})"},
+        {200, "not json"},
+        {401, "{}"},
+        {500, "{}"},
+    };
+    for (const Case& c : cases) {
+        const QuotaResult r = module::claude::quota::createDeepSeekProvider()->fetch(
+            deepseekConfig(), httpResponding(nullptr, c.status, c.body));
+        DOCTEST_CHECK(r.windows.empty());
+        DOCTEST_CHECK(r.kind == QuotaKind::Balance);
+    }
+    // 空缝形态也不许有窗口
+    const QuotaResult noSeam =
+        module::claude::quota::createDeepSeekProvider()->fetch(deepseekConfig(), HttpSendFn{});
+    DOCTEST_CHECK(noSeam.windows.empty());
     return true;
 })

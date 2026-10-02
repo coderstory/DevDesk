@@ -3,6 +3,8 @@
 // （实施计划 docs/superpowers/plans/2026-10-02-quota-implementation-plan.md §G0）
 #include "quota_registry.h"
 
+#include "deepseek_provider.h"
+
 namespace module::claude::quota {
 
 // 供应商显式表。**加一个 provider = 在这张表加一行**（G1-G4 各自加自己那一行，
@@ -16,7 +18,9 @@ namespace module::claude::quota {
 // constexpr：初始值全是常量表达式（函数指针 + nullptr），编译期落数据段，
 // 无运行期构造、无静态初始化顺序问题——这也是「显式表」相对静态自注册的另一半好处。
 constexpr QuotaProviderEntry kQuotaProviders[] = {
-    {nullptr, nullptr},  // ← 表尾哨兵；G1-G4 的行插在本行之前
+    // G3：DeepSeek（Balance 型：只有余额，无窗口）
+    {"deepseek", &createDeepSeekProvider},
+    {nullptr, nullptr},  // ← 表尾哨兵；G1/G2/G4 的行插在本行之前
 };
 
 const QuotaProvider* findProvider(const std::string& id,
