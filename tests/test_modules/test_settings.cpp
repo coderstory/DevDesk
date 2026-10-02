@@ -928,7 +928,6 @@ REGISTER_TEST(settings_takeover_status_row,
         std::ofstream out(overlay);
         out << R"({"env":{"ANTHROPIC_BASE_URL":"https://evil.example.com"}})";
     }
-    const fs::path cfgPath = dir / "config.json";
 
     auto r = ::core::Database::open(dir / "db.sqlite");
     DOCTEST_REQUIRE(r.isOk());
@@ -943,7 +942,6 @@ REGISTER_TEST(settings_takeover_status_row,
     paths.overlayFiles.push_back(overlay);
     svc.setSettingsSyncPaths(paths);
     svc.setSettingsTakeOverEnabled(true);
-    test_support::setEnvVar("DEVDESK_CONFIG_PATH", cfgPath.string());
 
     auto pr = svc.createProfile("接管", "https://up.example.com",
                                 "sk-takeover-0001", "");
@@ -1009,7 +1007,6 @@ REGISTER_TEST(settings_takeover_status_row,
 
     mod->onStop();
     module::claude::ClaudeService::setGlobal(nullptr);
-    test_support::setEnvVar("DEVDESK_CONFIG_PATH", "");
     platform::keychain::deleteSecret(
         "DevDeskTestTakeover", "claude:" + std::to_string(pr.value().id));
     fs::remove_all(dir, ec);
@@ -1030,7 +1027,6 @@ REGISTER_TEST(settings_takeover_warn_unmanaged,
     std::error_code ec;
     fs::remove_all(dir, ec);
     fs::create_directories(dir, ec);
-    const fs::path cfgPath = dir / "config.json";
 
     auto r = ::core::Database::open(dir / "db.sqlite");
     DOCTEST_REQUIRE(r.isOk());
@@ -1044,7 +1040,6 @@ REGISTER_TEST(settings_takeover_warn_unmanaged,
     paths.db = &db->db();
     svc.setSettingsSyncPaths(paths);
     svc.setSettingsTakeOverEnabled(true);
-    test_support::setEnvVar("DEVDESK_CONFIG_PATH", cfgPath.string());
 
     auto pr = svc.createProfile("警告未接管", "https://up.example.com",
                                 "sk-warn-unmanaged-0001", "");
@@ -1085,7 +1080,6 @@ REGISTER_TEST(settings_takeover_warn_unmanaged,
     svc.stopProxy();
     mod->onStop();
     module::claude::ClaudeService::setGlobal(nullptr);
-    test_support::setEnvVar("DEVDESK_CONFIG_PATH", "");
     platform::keychain::deleteSecret(
         "DevDeskTestWarnUnmanaged", "claude:" + std::to_string(pr.value().id));
     fs::remove_all(dir, ec);
@@ -2200,7 +2194,8 @@ REGISTER_TEST(settings_pet_skin_row_inline,
 // 逐条必红）：
 //   ① 点开关命中矩形（settings.card.modules.sw.3.hit，勾选态）→ pet 侧
 //      「窗口可见意图」由 true 翻 false（= 取消勾选即关窗，不是等重启）；
-//   ② enabledModules 持久化不受影响：盘上 config.json 去掉 pet（插拔语义不变）；
+//   ② enabledModules 持久化不受影响：app_config 表的 config.json:enabledModules
+//      行去掉 pet（插拔语义不变）；
 //   ③ 卡片门控即时预览不变：pet 卡随开关消失；
 //   ④ 重新勾选 → 意图回 true **且真的重新入队一条 pet 开窗请求**（窗口能再出现）。
 REGISTER_TEST(settings_pet_module_toggle_closes_window,
@@ -2266,13 +2261,26 @@ REGISTER_TEST(settings_pet_module_toggle_closes_window,
     DOCTEST_CHECK_MESSAGE(
         !module::pet::petWindowRequested(),
         "取消勾选后桌宠仍处于「应显示」状态（窗口没被关）");
-    // ② 持久化：盘上 enabledModules 去掉 pet
+    // ② 持久化：enabledModules 去掉 pet。E2 后配置在 app_config 表——原实现读
+    // 「盘上 config.json 文件」，而该文件已无人写（ifstream 恒打开失败 ⇒
+    // buf 恒空 ⇒ 断言恒真，属假绿），随本批改成与 ④ 同款的行解析断言
+    //（applyModuleEnabled → persist() 同步写库，取消勾选后立即能读回）
     {
-        std::ifstream in(cfgEnv.cfgPath);
-        std::ostringstream buf;
-        buf << in.rdbuf();
-        DOCTEST_CHECK_MESSAGE(buf.str().find("\"pet\"") == std::string::npos,
-                              "config.json 仍含 pet：" + buf.str());
+        const std::string row = test_support::readRawConfigRow(
+            ::core::appDatabase(), "config.json:enabledModules");
+        auto parsed = platform::json::parse(row);
+        DOCTEST_REQUIRE_MESSAGE(parsed.isOk(),
+                                "enabledModules 行不是合法 JSON: " + row);
+        DOCTEST_REQUIRE(parsed.value().isArray());
+        bool hasPet = false;
+        for (int i = 0; i < parsed.value().size(); ++i) {
+            if (parsed.value()[i].isString() &&
+                parsed.value()[i].asString() == "pet") {
+                hasPet = true;
+            }
+        }
+        DOCTEST_CHECK_MESSAGE(!hasPet,
+                              "取消勾选后 enabledModules 仍含 pet，实际: " + row);
     }
     // ③ 卡片门控即时预览不变（关掉的模块整卡隐藏）
     composeModules("petclose2");

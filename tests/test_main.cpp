@@ -106,22 +106,14 @@ void resetCaseGlobals() {
     // 注：控制台输出开关只有 addConsoleOutput、没有关闭 API，--log 打开后
     // 本进程内不可撤销（只影响是否往控制台打印，不影响用例隔离）
     ::core::log::setLevel(g_logLevelBaseline);
-    // 7) 路径环境变量：一律拉回「未设置」出厂态；两个视图状态例外——重置为
-    // 指向 scratch 的新文件并删除，让未显式隔离的用例 onStart 也拿默认态
+    // 7) 路径环境变量：一律拉回「未设置」出厂态。
+    //（视图状态已无环境变量缝——2026-10-03 批次 E2 起它是 app_config 表的一行，
+    //  隔离由用例自己注册的临时库承担，与这些路径变量无关；原
+    //  DEVDESK_MARKDOWN_VIEW_STATE_PATH / DEVDESK_TODO_VIEW_STATE_PATH 是
+    //  「只设不读」的死设置，已随本批清理删除）
     setEnvVar("DEVDESK_NOTES_DIR", "");
-    setEnvVar("DEVDESK_CONFIG_PATH", "");
     setEnvVar("DEVDESK_PETS_DIR", "");
     setEnvVar("DEVDESK_CLAUDE_CONFIG_DIR", "");
-    std::error_code ec;
-    // 审计 TIN-02：临时路径带 pid + 进程内自增后缀——并发 ctest（多 worktree
-    // 同时跑同一 exe）不会互删 / 互覆写这份视图状态草案文件
-    const auto scratch = test_temp::tempPath("devdesk_test_env_scratch");
-    const std::string mdVs = (scratch / "md_view_state.json").string();
-    const std::string todoVs = (scratch / "todo_view_state.json").string();
-    std::filesystem::remove(mdVs, ec);
-    std::filesystem::remove(todoVs, ec);
-    setEnvVar("DEVDESK_MARKDOWN_VIEW_STATE_PATH", mdVs);
-    setEnvVar("DEVDESK_TODO_VIEW_STATE_PATH", todoVs);
     // 8) ServiceLocator 槽位（core/service_locator.h，R0 新增的进程级槽）：
     // 用例体内 set<T>(&栈上对象) 后提前返回会把悬垂指针留在槽里，后续用例经
     // requireService<T>() 取到已析构对象（生产 main.cpp 注册的是常驻适配器）。
@@ -141,7 +133,7 @@ void resetCaseGlobals() {
     // setSidebarCollapsed(true) 翻折叠态后 fail-fast 提前返回时，残留折叠态让
     // 后续拿 sidebarWidth()/drawSidebar 布局断言（展开宽 208）的用例翻车。
     // 出厂态 = 展开（false）；走独立复位接口，不经生产写路径
-    // setSidebarCollapsed（configFile 非空会带出落盘副作用）
+    // setSidebarCollapsed（persist=true 会带出落库副作用）
     ::app::resetSidebarGlobals();
     // 12) 退出接线已挂门（app_assembly.h）：armExitHook 的幂等记账位是进程级
     // 的——上一用例挂过后，本用例 exitHookArmed() 断言「装配即挂上」或首次

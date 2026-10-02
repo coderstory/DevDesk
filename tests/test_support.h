@@ -312,18 +312,19 @@ struct DataRootEnv {
 // RAII：配置存储隔离。
 //
 // 2026-10-03（批次 E2）起配置的落点从 config.json **文件**换成 SQLite 的
-// app_config 表，故本夹具现在真正起隔离作用的是它顺带持有的那份已 migrate
-// 的临时库（并注册为进程级 appDatabase —— 生产代码正是经
-// core::appDatabase() 取连接）。DEVDESK_CONFIG_PATH 那一支保留是因为
-// core::paths::configFile() 还在（已无生产调用方，删除属另一批的欠账，
-// 见 report-E2.md 遗留问题）。
+// app_config 表，故本夹具真正起隔离作用的是它持有的那份已 migrate 的临时库
+//（并注册为进程级 appDatabase —— 生产代码正是经
+// core::appDatabase() 取连接）。
+// 构造入参 cfgPath 是旧「临时 config.json 路径」约定的遗留形参：E2 后没有任何
+// 代码写它，本夹具也不再把它指给任何环境变量（原 DEVDESK_CONFIG_PATH 支已随
+// core::paths::configFile() 一起删除，2026-10-03 清理批）——保留形参只为不动
+// 几十个调用点，析构时顺手清一次同名残骸。
 //
 // 析构顺序：先注销 appDatabase，再删库文件（反过来会在句柄仍开着时删文件）。
 struct ScopedConfigPath {
     std::filesystem::path cfgPath;
     std::unique_ptr<core::Database> db;
     ScopedConfigPath(std::filesystem::path p) : cfgPath(std::move(p)) {
-        setEnvVar("DEVDESK_CONFIG_PATH", cfgPath.string());
         auto r = core::Database::open(
             test_temp::tempPath("devdesk_test_cfgstore_.db"));
         if (r.isFail()) {
@@ -338,7 +339,6 @@ struct ScopedConfigPath {
     }
     ~ScopedConfigPath() {
         ::core::registerAppDatabase(nullptr);
-        setEnvVar("DEVDESK_CONFIG_PATH", "");
         std::error_code ec;
         std::filesystem::remove(cfgPath, ec);
         db.reset();
