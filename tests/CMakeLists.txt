@@ -57,6 +57,7 @@ add_executable(devdesk_tests
     test_modules/test_claude_service.cpp
     test_modules/test_claude_tools.cpp
     test_modules/test_claude_quota.cpp
+    test_modules/test_claude_quota_minimax.cpp
     test_modules/test_provider_config.cpp
     test_modules/test_settings_sync.cpp
     test_modules/test_claude_ui.cpp
