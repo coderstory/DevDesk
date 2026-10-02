@@ -832,6 +832,9 @@ REGISTER_TEST(claude_quota_opencode_go_detected_by_base_url_in_registry,
     // Zen 按量版不选中任何 provider（宁可不选，也不猜）
     DOCTEST_CHECK(module::claude::quota::detectByBaseUrl("https://opencode.ai/zen/v1") ==
                   nullptr);
+    return true;
+})
+
 // ==================== G3：DeepSeek 余额 provider ====================
 // 移植自 cc-switch（bfaaba16）src-tauri/src/services/balance.rs：
 //   detect_provider :26-43 的 deepseek 项 / query_deepseek :70-146
