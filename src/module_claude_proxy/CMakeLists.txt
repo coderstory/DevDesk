@@ -13,6 +13,7 @@ add_library(devdesk_module_claude_proxy STATIC
     provider_config.cpp
     proxy_router.cpp
     proxy_runtime.cpp
+    quota/opencode_go_provider.cpp
     quota/quota_registry.cpp
     settings_sync.cpp
     settings_takeover.cpp
