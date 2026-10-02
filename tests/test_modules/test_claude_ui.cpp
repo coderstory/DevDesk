@@ -5827,7 +5827,7 @@ REGISTER_TEST(claude_profile_avatar_initial_utf8,
 // 与上面 ACTIVE /「共享」胶囊同一条根因（claude_ui_list.cpp ⑧ 注释 + 本文件
 // claude_profile_active_badge_centered）：文字框与圆形底同 y 同高、
 // lineHeight == 圆高，缺 VerticalAlign::Center 时 runtime 把 ink 从行框顶沿
-// 起排（runtime_render.h:1063 y=frame.y），圆形里看着偏上。
+// 起排（runtime_render.h:1068 取 y=frame.y、:1069 才切到 frame 中线），圆形里看着偏上。
 // 与上面两条头像用例的分工：它们钉的是 frame 数值（圆心/首字码点），**frame
 // 数值对不代表墨迹居中**——本用例钉渲染锚点，是那两条的唯一补集。
 // 变异自检：删 .verticalAlign(Center) → 本用例 verticalAlign 断言红

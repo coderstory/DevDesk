@@ -1932,7 +1932,7 @@ REGISTER_TEST(md_module_tags_ui, "markdown_module: 标签 chip 行 + 左栏标�
 // ---- 2d2. 批次 B1（2026-10-02）文本垂直居中根治：标签 chip + 大纲行 ----
 // 三处底框与文本盒同 y 同高（chip 行高 == chip 高；大纲行高 == 行底 rect 高），
 // 缺 VerticalAlign::Center 时 runtime 从行框顶沿起排 ink
-//（runtime_render.h:1063 y=frame.y）→ 视觉偏上。判据与 md_tree_row_geometry 同款：
+//（runtime_render.h:1068 取 y=frame.y、:1069 才切到 frame 中线）→ 视觉偏上。判据与 md_tree_row_geometry 同款：
 //   a. 文本节点挂 VerticalAlign::Center（渲染锚点 = frame 中线）；
 //   b. 文本 frame 中心 y == 底框（chip 底 / 行底 rect）中心 y（±0.5）。
 // 变异自检：删任一 .verticalAlign(Center) → 该站点 a 断言红（frame 数值不变，
@@ -2013,7 +2013,7 @@ REGISTER_TEST(md_chip_and_outline_text_centered,
 
     // 编辑器顶栏 chip：名称 + ×（两处底框：chip 底 / 删除热区）
     DOCTEST_REQUIRE(ui.find("md.tags.chip.0.name") != nullptr);
-    // 判定纪律：本框架 fail-fast（第一个失败即 return），四处站点累积成一条
+    // 判定纪律：本框架 fail-fast（第一个失败即 return），六处站点累积成一条
     // 结论再断言——一次运行就能看全哪些站点没居中，而不是只看到第一个。
     std::string problems;
     const auto collect = [&](const std::string& textId, const std::string& bgId) {
@@ -2034,6 +2034,10 @@ REGISTER_TEST(md_chip_and_outline_text_centered,
     frame("cc5");
     DOCTEST_REQUIRE(ui.find("md.outline.item.0.label") != nullptr);
     collect("md.outline.item.0.label", "md.outline.item.0.row");
+    // 状态栏左右两段（B1 评审补漏：文本盒 == 状态栏底 rect 高 22、同 y）
+    DOCTEST_REQUIRE(ui.find("md.status.bg") != nullptr);
+    collect("md.status.save", "md.status.bg");
+    collect("md.status.pos", "md.status.bg");
 
     DOCTEST_CHECK_MESSAGE(problems.empty(), problems);
 
