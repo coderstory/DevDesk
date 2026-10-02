@@ -56,8 +56,8 @@ std::optional<RowError> rowStr(const core::data::SqlRow& row, const char* col,
 
 // 两张表的 SELECT 列清单各自一份常量：列名与取值散成两份就是「改一处漏一处」。
 constexpr const char* kConfigColumns =
-    "profile_id, provider_id, extra_json, secrets_json, enabled, "
-    "auto_refresh, interval_minutes";
+    "profile_id, provider_id, extra_json, secrets_json, ccswitch_provider_id, "
+    "enabled, auto_refresh, interval_minutes";
 
 constexpr const char* kResultColumns =
     "profile_id, kind, windows_json, balance_remaining, currency, plan_name, "
@@ -72,6 +72,7 @@ core::Result<QuotaConfigRow> configRowFrom(const core::data::SqlRow& row) {
     if (auto e = rowStr(row, "provider_id", out.providerId)) return core::Result<QuotaConfigRow>::fail(e->first, e->second);
     if (auto e = rowStr(row, "extra_json", out.extraJson)) return core::Result<QuotaConfigRow>::fail(e->first, e->second);
     if (auto e = rowStr(row, "secrets_json", out.secretsJson)) return core::Result<QuotaConfigRow>::fail(e->first, e->second);
+    if (auto e = rowStr(row, "ccswitch_provider_id", out.ccswitchProviderId)) return core::Result<QuotaConfigRow>::fail(e->first, e->second);
     if (auto e = rowInt(row, "enabled", enabled)) return core::Result<QuotaConfigRow>::fail(e->first, e->second);
     if (auto e = rowInt(row, "auto_refresh", autoRefresh)) return core::Result<QuotaConfigRow>::fail(e->first, e->second);
     if (auto e = rowInt(row, "interval_minutes", interval)) return core::Result<QuotaConfigRow>::fail(e->first, e->second);
@@ -277,12 +278,13 @@ core::Result<void> QuotaStore::saveConfig(const QuotaConfigRow& row) {
     }
     auto st = db_.prepare(
         "INSERT OR REPLACE INTO profile_quota_config "
-        "(profile_id, provider_id, extra_json, secrets_json, enabled, "
-        " auto_refresh, interval_minutes) VALUES (?, ?, ?, ?, ?, ?, ?)");
+        "(profile_id, provider_id, extra_json, secrets_json, "
+        " ccswitch_provider_id, enabled, auto_refresh, interval_minutes) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?)");
     if (st.isFail()) return core::Result<void>::fail(st.errorCode(), st.errorMessage());
     auto& stmt = st.value();
     auto b = bindAll(stmt, row.profileId, row.providerId, row.extraJson,
-                     stored.value(),
+                     stored.value(), row.ccswitchProviderId,
                      static_cast<int64_t>(row.enabled ? 1 : 0),
                      static_cast<int64_t>(row.autoRefresh ? 1 : 0),
                      static_cast<int64_t>(row.intervalMinutes));

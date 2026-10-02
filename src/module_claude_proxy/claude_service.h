@@ -128,6 +128,13 @@ public:
     // 列空 = 没配过（NotFound）；解不开 = 原样透传错误，不静默回落空串
     core::Result<std::string> loadApiKey(int64_t profileId);
 
+    // G6（2026-10-03）：ProfileRepository 的只读访问口。余量凭据缝
+    // （quota::ProfileCredentialSource）要拿同一个仓储实例读 profile 与
+    // api_key_encrypted；**不给它另造一个** —— 两个实例各自持有 db 引用与
+    // keychainService 名，构造参数一旦漂移就会出现「读 A 库、用 B 命名空间」。
+    // 该仓储本身无状态（只持 db 引用 + 名字），对外只暴露读接口语义。
+    ProfileRepository& profiles() { return profileRepository_; }
+
     // ---- 激活 ----
 
     core::Result<Profile> getActiveProfile();

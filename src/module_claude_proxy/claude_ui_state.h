@@ -19,6 +19,7 @@
 
 #include "claude_service.h"
 #include "provider_config.h"
+#include "quota/quota_dialog_config.h"
 
 #include <chrono>
 #include <cstdint>
@@ -255,7 +256,13 @@ struct LogsState {
     std::future<void> callsWorker_;
 };
 
-// ============ 容器：模块唯一的 UI 状态成员（compose 内一律 state_.xxx.yyy_）============
+// ============ 余量查询配置弹窗（G6，2026-10-03）============
+// 独立状态：它是**本模块第一批真正跑在生产路径上的余量 UI**，且带后台查询
+// （测试连接），所以不塞进 FormState —— 复用会让 profile 表单的状态被一次
+// 「测试连接」污染。**必须接入 anyDialogOpen 门控与 closeTopmostDialog Esc
+// 序链（绘制序最靠后 = 序链最顶层）**。
+using quota::QuotaDialogState;
+
 struct ClaudeUiState {
     ProfileListState list;
     DetailState detail;
@@ -263,6 +270,7 @@ struct ClaudeUiState {
     SharedConfigDialogState shared;   // 批 2：共享配置片段编辑弹窗（独立状态）
     ImportState import;
     LogsState logs;
+    QuotaDialogState quota;           // G6：余量查询配置弹窗
 };
 
 // ============ 数据缓存的后台刷新（审计 perf [13] + H2）============

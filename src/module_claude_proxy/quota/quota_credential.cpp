@@ -9,6 +9,7 @@
 #include "platform/http_client.h"
 #include "platform/json.h"
 #include "quota_store.h"
+#include "ccswitch_source.h"
 
 namespace module::claude::quota {
 
@@ -89,7 +90,40 @@ QuotaResult ProfileCredentialSource::resolveAndFetch(int64_t profileId,
     for (auto& kv : flatMapFromJson(cfg.value().secretsJson)) {
         pcfg.fields[kv.first] = kv.second;
     }
+    // ---- G6：cc-switch 覆盖（引用优先于任何落库副本）----
+    // ccswitch_provider_id 非空 → 该行的 extra/secrets **按不变量 2 必然是空**
+    //（quota_dialog_config.cpp 的 buildQuotaConfigRow 无条件清空），所以这里
+    // 直接覆盖是安全的；万一外部改了库留了副本，覆盖方向仍是「cc-switch 赢」
+    //——与「引用优先」的语义一致。
+    if (ccSwitch_ && !cfg.value().ccswitchProviderId.empty()) {
+        const CcSwitchProviderList list = ccSwitch_();
+        const CcSwitchProviderInfo* matched = nullptr;
+        for (const CcSwitchProviderInfo& info : list.providers) {
+            if (info.id == cfg.value().ccswitchProviderId) {
+                matched = &info;
+                break;
+            }
+        }
+        // 引用悬空（用户在 cc-switch 里删了这条）→ **不**静默用手填副本顶上：
+        // 报 NotConfigured，UI 引导「重新选择 cc-switch 供应商」。静默顶替会让
+        // 用户以为在查 cc-switch 的账号，实际发的是另一套凭据。
+        if (matched == nullptr) {
+            return notConfigured("cc-switch 里已找不到引用的供应商（"
+                                 "「" + cfg.value().ccswitchProviderId +
+                                 "」），请重新选择或改为手动填写");
+        }
+        if (!matched->accessKeyId.empty()) {
+            pcfg.fields["accessKeyId"] = matched->accessKeyId;
+        }
+        if (!matched->secretAccessKey.empty()) {
+            pcfg.fields["secretAccessKey"] = matched->secretAccessKey;
+        }
+    }
     return provider.fetch(pcfg, http);
+}
+
+CcSwitchProviderList readRealCcSwitchProviders() {
+    return listCcSwitchProviders();
 }
 
 HttpSendFn makeRealHttpSendFn() {

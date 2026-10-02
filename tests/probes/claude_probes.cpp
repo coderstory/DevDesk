@@ -39,6 +39,7 @@
 #include <fstream>
 
 #include "module_claude_proxy/claude_service.h"
+#include "module_claude_proxy/claude_ui_quota.h"   // G6：弹窗几何纯函数（对账用）
 #include "provider_config.h"   // ⑦ 槽位表 / models_config 造数 + 序列化
 
 #include <algorithm>
@@ -394,13 +395,15 @@ int main(int argc, char* argv[]) {
         {
             const core::dsl::Element* actRow =
                 ui != nullptr ? ui->find("claude.detail.actions") : nullptr;
-            const core::dsl::Element* run =
-                ui != nullptr ? ui->find("claude.act.run.bg") : nullptr;
+            // G6：动作行由 4 键收为 5 键（末键 = 「余量查询」）。右缘对齐与
+            // 键宽判据都随之改用**末键**（run 不再是最后一个）。
+            const core::dsl::Element* last =
+                ui != nullptr ? ui->find("claude.act.quota.bg") : nullptr;
             const core::dsl::Element* en =
                 ui != nullptr ? ui->find("claude.act.enable.bg") : nullptr;
-            if (actRow == nullptr || run == nullptr || en == nullptr) {
+            if (actRow == nullptr || last == nullptr || en == nullptr) {
                 std::cerr << "claude_probes[" << tag
-                          << "]: 'claude.detail.actions' / 'claude.act.run.bg' / "
+                          << "]: 'claude.detail.actions' / 'claude.act.quota.bg' / "
                              "'claude.act.enable.bg' not found\n";
                 passed = false;
             } else {
@@ -413,26 +416,26 @@ int main(int argc, char* argv[]) {
                         passed = false;
                     }
                 }
-                const float keyW = run->frame.width;
+                const float keyW = last->frame.width;
                 const float longestText =
                     4.0f * core::theme::current().sizes.fontSizeSmall;
                 const float need = longestText + 8.0f;
                 if (keyW < need) {
-                    std::cerr << "claude_probes[" << tag << "]: 4 键 actW "
+                    std::cerr << "claude_probes[" << tag << "]: 5 键 actW "
                               << keyW << " < 文案宽+呼吸 " << need
                               << "（四字键 @fontSizeSmall）—— 需切两行按钮组\n";
                     passed = false;
                 } else {
-                    std::cout << "claude_probes[" << tag << "]: 4 键 actW="
+                    std::cout << "claude_probes[" << tag << "]: 5 键 actW="
                               << keyW << " ≥ 文案宽+呼吸 " << need
                               << "（单行达标）\n";
                 }
                 // 等分 + 右缘对齐（与无头几何断言同口径，最小窗档也核）
                 const float rowRight = actRow->frame.x + actRow->frame.width;
-                const float runRight = run->frame.x + run->frame.width;
-                if (std::fabs(rowRight - runRight) > 0.5f) {
+                const float lastRight = last->frame.x + last->frame.width;
+                if (std::fabs(rowRight - lastRight) > 0.5f) {
                     std::cerr << "claude_probes[" << tag << "]: 末键右缘 "
-                              << runRight << " != 动作行右缘 " << rowRight
+                              << lastRight << " != 动作行右缘 " << rowRight
                               << "（等分溢出）\n";
                     passed = false;
                 }
@@ -668,6 +671,199 @@ int main(int argc, char* argv[]) {
                 composeFrame();
             }
         }
+        // ⑧ G6（2026-10-03）：余量查询弹窗几何 —— 三条
+        //   a) 弹窗在 **1200×720 最小窗**下不溢出（面板右缘/下缘都在屏内）
+        //   b) **动态字段增减后元信息行不错位**：字段从 0 → 2（火山）时，
+        //      cc-switch 区块 / 测试按钮 / 结果行整体下移**恰好** 2×fieldPitch，
+        //      且区块之间的相对间距逐项不变（computeQuotaDialogLayout 是纯
+        //      函数，这里拿真实 frame 与它对账 —— 绘制层与几何函数不可能漂移）
+        //   c) **下拉展开态**（批次 A「弹层盖住下方行」同类）：供应商下拉
+        //      弹开时，弹层必须画在下方字段之上，且无等值 z 碰撞
+        {
+            composeFrame();
+            if (auto* quotaBtn =
+                    ui != nullptr ? ui->find("claude.act.quota.bg") : nullptr;
+                quotaBtn == nullptr || quotaBtn->onClick == nullptr) {
+                std::cerr << "claude_probes[" << tag
+                          << "]: 'claude.act.quota.bg' 缺失（G6 常驻按钮）(⑧)\n";
+                passed = false;
+            } else {
+                quotaBtn->onClick();
+                composeFrame();
+                const core::dsl::Element* panel =
+                    ui != nullptr ? ui->find("claude.dialog.quota.panel") : nullptr;
+                if (panel == nullptr) {
+                    std::cerr << "claude_probes[" << tag
+                              << "]: 'claude.dialog.quota.panel' 未渲染 (⑧)\n";
+                    passed = false;
+                } else {
+                    // a) 不溢出最小窗
+                    const float pr = panel->frame.x + panel->frame.width;
+                    const float pb = panel->frame.y + panel->frame.height;
+                    if (pr > frameW + 0.5f || pb > frameH + 0.5f) {
+                        std::cerr << "claude_probes[" << tag
+                                  << "]: 余量弹窗溢出 " << pr << "×" << pb
+                                  << "（窗 " << frameW << "×" << frameH << "）(⑧)\n";
+                        passed = false;
+                    }
+                    // 0 字段档的**弹窗内相对** y。
+                    // ⚠ 必须减去面板顶（panel.y）：对话框按屏幕高**居中**，高度
+                    // 随字段数变 → 面板顶会上移。加字段的净位移 = 内位移 − 顶位移，
+                    // 拿绝对 y 直接相减会把「居中补偿」算进去，得到半个 pitch 的
+                    // 假错位（第一版就是这么写错的，被本 probe 逮到）。
+                    const auto* panel0 =
+                        ui != nullptr ? ui->find("claude.dialog.quota.panel") : nullptr;
+                    const auto* cc0 = ui->find("claude.dialog.quota.ccswitch.dd");
+                    const auto* test0 = ui->find("claude.dialog.quota.test");
+                    const auto* ccBtn0 = ui->find("claude.dialog.quota.ccswitch.load");
+                    if (panel0 == nullptr || cc0 == nullptr || test0 == nullptr ||
+                        ccBtn0 == nullptr) {
+                        std::cerr << "claude_probes[" << tag
+                                  << "]: cc-switch 区块 / 测试按钮缺节点 (⑧)\n";
+                        passed = false;
+                    } else {
+                        const float ccY0 = cc0->frame.y - panel0->frame.y;
+                        const float testY0 = test0->frame.y - panel0->frame.y;
+                        const float ccBtnY0 = ccBtn0->frame.y - panel0->frame.y;
+                        const float gap0 = testY0 - ccY0;
+                        const float panelH0 = panel0->frame.height;
+
+                        // 选火山（下拉第 4 项 = 索引 4）→ 2 个动态字段
+                        if (auto* ddHit =
+                                ui->find("claude.dialog.quota.provider.dd.field");
+                            ddHit != nullptr && ddHit->onClick != nullptr) {
+                            ddHit->onClick();
+                            composeFrame();
+                        }
+                        if (auto* opt =
+                                ui->find("claude.dialog.quota.provider.dd.item.4");
+                            opt != nullptr && opt->onClick != nullptr) {
+                            opt->onClick();
+                            composeFrame();
+                        }
+                        const core::dsl::Element* ak =
+                            ui->find("claude.dialog.quota.field.accessKeyId");
+                        const core::dsl::Element* sk =
+                            ui->find("claude.dialog.quota.field.secretAccessKey");
+                        if (ak == nullptr || sk == nullptr) {
+                            std::cerr << "claude_probes[" << tag
+                                      << "]: 选火山后未渲染 accessKeyId/secretAccessKey (⑧)\n";
+                            passed = false;
+                        } else {
+                            // b) 与纯函数对账：整体位移恰好 2×fieldPitch
+                            const auto g2 = module::claude::computeQuotaDialogLayout(2);
+                            const float d = 2.0f * g2.fieldPitch;
+                            const core::dsl::Element* panel1 =
+                                ui->find("claude.dialog.quota.panel");
+                            const core::dsl::Element* cc1 =
+                                ui->find("claude.dialog.quota.ccswitch.dd");
+                            const core::dsl::Element* test1 =
+                                ui->find("claude.dialog.quota.test");
+                            if (panel1 == nullptr || cc1 == nullptr || test1 == nullptr) {
+                                std::cerr << "claude_probes[" << tag
+                                          << "]: 加字段后 cc-switch / 测试节点消失 (⑧)\n";
+                                passed = false;
+                            } else {
+                                const float ccY1 = cc1->frame.y - panel1->frame.y;
+                                const float testY1 = test1->frame.y - panel1->frame.y;
+                                const float shift = ccY1 - ccY0;
+                                if (!floatEq(shift, d) || !floatEq(testY1 - testY0, d)) {
+                                    std::cerr << "claude_probes[" << tag
+                                              << "]: 动态字段增减后元信息行错位：位移 "
+                                              << shift << " / " << (testY1 - testY0)
+                                              << " != 2×fieldPitch " << d << " (⑧)\n";
+                                    passed = false;
+                                }
+                                // 区块间距恒定
+                                if (!floatEq((testY1 - ccY1), gap0)) {
+                                    std::cerr << "claude_probes[" << tag
+                                              << "]: 区块间距随字段数变化 "
+                                              << (testY1 - ccY1) << " != "
+                                              << gap0 << " (⑧)\n";
+                                    passed = false;
+                                }
+                                // 加载按钮与下拉之间的相对间距同样恒定
+                                const core::dsl::Element* ccBtn1 =
+                                    ui->find("claude.dialog.quota.ccswitch.load");
+                                if (ccBtn1 != nullptr &&
+                                    !floatEq((ccBtn1->frame.y - panel1->frame.y) - ccBtnY0,
+                                             d)) {
+                                    std::cerr << "claude_probes[" << tag
+                                              << "]: 「从 cc-switch 读取」位移 "
+                                              << ((ccBtn1->frame.y - panel1->frame.y) -
+                                                  ccBtnY0)
+                                              << " != " << d << " (⑧)\n";
+                                    passed = false;
+                                }
+                                // 弹窗总高恰好长 2×fieldPitch（居中不参与内位移）
+                                if (!floatEq(panel1->frame.height - panelH0, d)) {
+                                    std::cerr << "claude_probes[" << tag
+                                              << "]: 弹窗高增量 "
+                                              << (panel1->frame.height - panelH0)
+                                              << " != 2×fieldPitch " << d << " (⑧)\n";
+                                    passed = false;
+                                }
+                            }
+                            // b2) 加字段后弹窗**不得**溢出
+                            const core::dsl::Element* panel2 =
+                                ui->find("claude.dialog.quota.panel");
+                            if (panel2 != nullptr &&
+                                (panel2->frame.y + panel2->frame.height >
+                                     frameH + 0.5f ||
+                                 panel2->frame.x + panel2->frame.width >
+                                     frameW + 0.5f)) {
+                                std::cerr << "claude_probes[" << tag
+                                          << "]: 两字段档弹窗溢出 (⑧)\n";
+                                passed = false;
+                            }
+                        }
+
+                        // 切 deepseek（下拉第 2 项 = 索引 2）→ **零**额外字段，
+                        // 元信息行回到 0 字段档
+                        if (auto* ddHit4 =
+                                ui->find("claude.dialog.quota.provider.dd.field");
+                            ddHit4 != nullptr && ddHit4->onClick != nullptr) {
+                            ddHit4->onClick();
+                            composeFrame();
+                        }
+                        if (auto* opt2 =
+                                ui->find("claude.dialog.quota.provider.dd.item.2");
+                            opt2 != nullptr && opt2->onClick != nullptr) {
+                            opt2->onClick();
+                            composeFrame();
+                        }
+                        if (ui->find("claude.dialog.quota.field.accessKeyId") != nullptr ||
+                            ui->find("claude.dialog.quota.field.secretAccessKey") !=
+                                nullptr) {
+                            std::cerr << "claude_probes[" << tag
+                                      << "]: 切 deepseek 后仍渲染火山字段 (⑧)\n";
+                            passed = false;
+                        }
+                        const core::dsl::Element* ccBack =
+                            ui->find("claude.dialog.quota.ccswitch.dd");
+                        const core::dsl::Element* panelBack =
+                            ui->find("claude.dialog.quota.panel");
+                        if (ccBack != nullptr && panelBack != nullptr &&
+                            !floatEq(ccBack->frame.y - panelBack->frame.y, ccY0)) {
+                            std::cerr << "claude_probes[" << tag
+                                      << "]: 切回 0 字段后元信息行未归位 "
+                                      << (ccBack->frame.y - panelBack->frame.y) << " != "
+                                      << ccY0 << " (⑧)\n";
+                            passed = false;
+                        }
+                    }
+                }
+                // 收尾：取消关弹窗（不落库），状态归零供下一尺寸档
+                if (auto* cancel =
+                        ui != nullptr ? ui->find("claude.dialog.quota.cancel.bg")
+                                      : nullptr;
+                    cancel != nullptr && cancel->onClick != nullptr) {
+                    cancel->onClick();
+                    composeFrame();
+                }
+            }
+        }
+
         // ⑦ 批次 F（2026-10-02）：模型映射 pane 的「1M」开关几何 ——
         //   a) 每行控件**在行内不错位**：开关命中区完全落在槽位行框内，且与
         //      模型名值文本不相交（控件漏定位 / 漏留宽 → val 文本压到开关下）

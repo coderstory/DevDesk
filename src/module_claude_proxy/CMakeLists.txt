@@ -6,6 +6,7 @@ add_library(devdesk_module_claude_proxy STATIC
     claude_ui_form.cpp
     claude_ui_logs.cpp
     claude_ui_logic.cpp
+    claude_ui_quota.cpp
     claude_ui_state.cpp
     claude_service.cpp
     claude_tools.cpp
@@ -18,6 +19,7 @@ add_library(devdesk_module_claude_proxy STATIC
     quota/deepseek_provider.cpp
     quota/provider_minimax_cn.cpp
     quota/quota_credential.cpp
+    quota/quota_dialog_config.cpp
     quota/quota_refresh.cpp
     quota/quota_registry.cpp
     quota/quota_store.cpp

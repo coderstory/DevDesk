@@ -80,6 +80,19 @@ struct QuotaConfigRow {
     // 保护级别必须一致，不能让 secrets 落成明文而兄弟列是密文）。
     // 调用方只管给明文 / 拿明文，不感知存储形态。
     std::string secretsJson;
+    // **cc-switch provider 引用**（G6，2026-10-03）。非空 = 该 profile 的余量
+    // 凭据经 cc-switch 只读读取器现取（`CcSwitchQuotaCredentialSource`）；
+    // 空 = 凭据来自 extraJson / secretsJson（手填）。
+    //
+    // **为什么只存引用不存密钥**（ccswitch_source.h 的「引用而非复制」纪律在
+    // 落库侧的兑现）：用户在 cc-switch 改 key / 换 base_url，DevDesk 下一次查询
+    // 立刻生效，不需要同步 / 迁移 / 失效通知；DevDesk 库里也没有第二份密钥副本。
+    //
+    // **代码保证（不是注释保证）**：`saveQuotaDialogConfig`（quota_dialog_config.cpp）
+    // 在本字段非空时**强制**把 extraJson / secretsJson 清空后才落库 —— 即「选了
+    // cc-switch 就绝不会同时留一份手填副本」。用例见 test_claude_quota_dialog
+    // 的 `quota_dialog_saves_ccswitch_reference_without_secrets`。
+    std::string ccswitchProviderId;
     bool enabled = false;
     bool autoRefresh = true;
     int intervalMinutes = 15;

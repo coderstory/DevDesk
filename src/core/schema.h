@@ -175,15 +175,24 @@ inline constexpr const char* kSql = R"(
     -- profile_quota_config：**provider_id 空串 = 未配置**（不是「配了但没选
     -- 供应商」）——G7 的「未配置」态判据就是这一列为空，别改成 NULL 表达。
     -- extra_json 存 fields() 里 **非 secret** 键的 JSON 对象原文；secrets_json
-    -- 存 secret 键的同名结构（值形态随 §6 分平台保护，G5 只落原文不做加解密，
-    -- 保护责任在 G6 写入侧）。两者空串 = 该供应商不吃额外字段（沿用 profile 凭据）。
+    -- 存 secret 键的同名结构（**明文入库前必过 platform::credential::protect**，
+    -- 与 api_key_encrypted 复用同一对函数；POSIX 恒等 + 文件 0600，Windows
+    -- DPAPI 密文 hex）。两者空串 = 该供应商不吃额外字段（沿用 profile 凭据）。
     -- auto_refresh / interval_minutes 只在 enabled=1 时被定时器读；interval 0 或
     -- 负 = 「到点即刷」（每次 tick 都算到期），便于测试与「手动刷新档」表达。
+    --
+    -- **ccswitch_provider_id（G6，2026-10-03）**：用户选了 cc-switch 里某条
+    -- Claude 供应商时**只存这个引用**，绝不把它那份 AK/SK 复制进本表
+    -- （ccswitch_source.h 的「引用而非复制」纪律在此落库侧兑现）。查询时由
+    -- CcSwitchQuotaCredentialSource 现读现取——用户在 cc-switch 改 key /
+    -- 换 base_url，DevDesk 下一次查询立刻生效。空串 = 没走 cc-switch，
+    -- 凭据来自 extra_json / secrets_json（手填）。
     CREATE TABLE IF NOT EXISTS profile_quota_config (
         profile_id INTEGER PRIMARY KEY,
         provider_id TEXT NOT NULL DEFAULT '',
         extra_json TEXT NOT NULL DEFAULT '',
         secrets_json TEXT NOT NULL DEFAULT '',
+        ccswitch_provider_id TEXT NOT NULL DEFAULT '',
         enabled INTEGER NOT NULL DEFAULT 0,
         auto_refresh INTEGER NOT NULL DEFAULT 1,
         interval_minutes INTEGER NOT NULL DEFAULT 15

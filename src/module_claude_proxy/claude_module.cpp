@@ -27,13 +27,19 @@
 #include "claude_ui_list.h"
 #include "claude_ui_logic.h"
 #include "claude_ui_logs.h"
+#include "claude_ui_quota.h"
 #include "claude_ui_state.h"
 #include "core/logging.h"
 #include "core/module_interface.h"
 #include "core/theme.h"
 #include "core/component_theme.h"
+#include "core/database.h"
 #include "platform/json.h"
 #include "provider_config.h"
+#include "quota/quota_credential.h"
+#include "quota/quota_registry.h"
+#include "quota/quota_refresh.h"
+#include "quota/quota_store.h"
 #include "upstream_dialect.h"
 #include <core/platform/platform.h>   // core::platform::requestUiUpdate（唤醒主循环）
 #include <core/window/window_backend.h>
@@ -60,6 +66,12 @@ public:
     std::string iconGlyph() const override { return eui::utf8(0xF021); }  // fa-arrows-rotate
 
     ~ClaudeModule() override {
+        // G6：余量链的收尾**第一位**。两个线程都要 join 干净：
+        //   - QuotaRefresher 的析构自带 stopAll 兜底，但成员析构序不定，
+        //     这里显式先收，成员指针随后的 reset 才是 no-op；
+        //   - 「测试连接」线程留 joinable 即 std::terminate。
+        // 最坏阻塞 = 在途 provider 查询（timeout 15s × 到期 profile 数）。
+        stopQuotaRefresh();
         // 后台测试线程必须先收（最坏阻塞到 HTTP 超时 15s，避免悬垂 this）
         if (testThread_.joinable()) testThread_.join();
         // 审计 H2：后台刷新经 future 回传（工作线程不触碰 this），成员析构
@@ -317,6 +329,10 @@ public:
         drawJsonFullscreenOverlay(ui, screen, t, themeTokens, state_.form,
                                   formHooks(),
                                   state_.list.cachedSharedConfigs_);
+        // G6：余量查询弹窗（画在全部弹窗之后 = Esc 序链最顶层）
+        drawQuotaConfigDialog(ui, screen, t, themeTokens, state_.quota,
+                              quotaHooks());
+        harvestQuotaTestResult();   // 后台「测试连接」结果回 UI（每帧轮询）
         harvestTestResult();  // 后台「测试连通」结果回 UI（每帧轮询）
         drawToast(ui, screen, themeTokens);
 
@@ -364,6 +380,9 @@ public:
         // 注册表冲突属于要修的装配 bug（MarkdownTools 同款）
         claudeTools_ = std::make_unique<ClaudeTools>(*svc);
         claudeTools_->registerAll();
+        // G6（2026-10-03）：余量后台刷新**第一次进生产装配**。G0-G5 全程只被
+        // 测试调用过；这里启的是真线程（真 provider、真 HTTP 缝）。
+        startQuotaRefresh();
     }
 
     // 审计 perf [13]：进入页面（切页回来/同页重入）标记缓存脏，下一帧 compose
@@ -374,6 +393,10 @@ public:
         // 重入幂等（活门控 Task 4）：未启动的 off = no-op
         if (!started_) return;
         LOG_INFO("Claude 模块停止");
+        // G6：**先停余量刷新再停其余**。它在途请求最坏 = N 个到期 profile
+        // × provider timeout(15s)；停在代理之后会让退出等更久，且线程里的
+        // QuotaStore 引用会在模块成员析构后悬垂（stopAll 内 join 收干净）。
+        stopQuotaRefresh();
         // agent M2 Task 8：智能体工具先注销（工具引用 ClaudeService::global()；
         // onStart 早退时是 null = no-op），**先于**停代理——spec §3 teardown 契约：
         // 工具不活过收尾（在跑 run 的收尾窗口里不再有新工具调用打进来）
@@ -415,7 +438,8 @@ public:
         const bool anyDialogOpen =
             state_.form.formOpen_ || state_.form.deleteConfirmOpen_ ||
             state_.logs.callsDialogOpen_ ||
-            state_.shared.open_ || state_.shared.deleteConfirmOpen_;
+            state_.shared.open_ || state_.shared.deleteConfirmOpen_ ||
+            state_.quota.open;
         if (key.key == eui::InputKey::N) {
             if (anyDialogOpen) return false;
             openCreateForm(state_.form, state_.import);
@@ -447,6 +471,8 @@ private:
             discardJsonFullscreenEdits(state_.form);
             return true;
         }
+        // G6：余量弹窗绘制序在最后（见 compose 尾段）→ Esc 序链最顶层
+        if (state_.quota.open) { state_.quota.open = false; return true; }
         if (state_.shared.deleteConfirmOpen_) { state_.shared.deleteConfirmOpen_ = false; return true; }
         if (state_.shared.open_) { state_.shared.open_ = false; return true; }
         if (state_.logs.callsDialogOpen_) { state_.logs.callsDialogOpen_ = false; return true; }
@@ -524,6 +550,8 @@ private:
         // 列表右键菜单）→ 本处不再为它们接线；业务实体（doDuplicate /
         // doCopyConfig / 删除确认弹窗）由 listActions() 与 doDelete 保留
         a.run = [this](int64_t id) { doRun(id); };
+        // G6：余量查询（第 5 键，常驻）
+        a.quota = [this](int64_t id) { openQuotaDialog(id); };
         a.openCalls = [this] { openCallsDialog(state_.logs); };
         // 批次 F（2026-10-02）：模型映射 pane 的「1M」开关
         a.setOneM = [this](int64_t id, std::size_t slotIdx, bool on) {
@@ -849,6 +877,192 @@ private:
         }
     }
 
+    // ==================== G6：余量查询链（装配 + 弹窗操作）====================
+
+    // 起后台刷新。**幂等**：已有一套就直接返回（onStart 自身的重入幂等之外，
+    // 这一层再兜一次——单元测试里 onStart 可能被多次调）。
+    //
+    // 依赖缺失（appDatabase 未注册 / ClaudeService 未就绪）→ 记日志 + 不装，
+    // 弹窗仍可用（保存走 store，装不了就只能提示，不静默）。
+    void startQuotaRefresh() {
+        if (quotaRefresher_) return;
+        auto* db = ::core::appDatabase();
+        ClaudeService* svc = ClaudeService::global();
+        if (db == nullptr || svc == nullptr) {
+            LOG_WARN("startQuotaRefresh: appDatabase()/ClaudeService 缺位，余量刷新未启动");
+            return;
+        }
+        quotaStore_ = std::make_unique<quota::QuotaStore>(*db);
+        quotaCredentials_ = std::make_unique<quota::ProfileCredentialSource>(
+            svc->profiles(), *quotaStore_, &quota::readRealCcSwitchProviders);
+        quotaRefresher_ = std::make_unique<quota::QuotaRefresher>(
+            *quotaStore_, *quotaCredentials_,
+            quota::makeRegistryProviderResolver(), quota::makeRealHttpSendFn());
+        quotaRefresher_->start();
+        LOG_INFO("余量后台刷新已启动");
+    }
+
+    // 停并释放。**幂等 + 顺序固定**：先收测试线程与刷新线程，再按
+    // 「刷新器 → 凭据源 → store」的**反构造序**释放——三者互相持引用，
+    // 顺序错了就是悬垂（store 先死，刷新器下一次扫描解引用即 UB）。
+    void stopQuotaRefresh() {
+        if (quotaTestThread_.joinable()) quotaTestThread_.join();
+        quotaTestDone_.store(false, std::memory_order_release);
+        if (quotaRefresher_) {
+            quotaRefresher_->stopAll();   // 幂等 + join；析构里还有一次兜底
+            quotaRefresher_.reset();
+        }
+        quotaCredentials_.reset();
+        quotaStore_.reset();
+    }
+
+    // 打开余量查询弹窗：取 profile 事实（base_url / 密钥）+ 已存配置预填。
+    void openQuotaDialog(int64_t profileId) {
+        ClaudeService* svc = ClaudeService::global();
+        if (svc == nullptr) {
+            showToast("余量查询", "服务未就绪", true);
+            return;
+        }
+        auto profile = svc->getProfile(profileId);
+        if (profile.isFail()) {
+            showToast("余量查询失败", profile.errorMessage(), true);
+            return;
+        }
+        // 明文密钥只在这一次取，灌进弹窗状态（仅内存）；读失败不阻断开窗——
+        // 用户可能想在弹窗里改密钥，或者供应商根本不吃 profile 凭据。
+        std::string apiKey;
+        auto key = svc->loadApiKey(profileId);
+        if (key.isOk()) apiKey = key.value();
+        quota::QuotaConfigRow existing;
+        bool hasExisting = false;
+        if (quotaStore_) {
+            auto cfg = quotaStore_->loadConfig(profileId);
+            if (cfg.isOk()) {
+                existing = cfg.value();
+                hasExisting = true;
+            }
+        }
+        quota::openQuotaDialog(state_.quota, profileId, profile.value().baseUrl, apiKey,
+                               hasExisting ? &existing : nullptr);
+    }
+
+    // 「测试连接」：后台跑一次真 fetch（UI 线程不等 —— provider timeout 15s）。
+    // 结果槽独立于详情页的 testResult*（两个入口语义不同、不能互相覆盖）。
+    void runQuotaTestConnection(const quota::ProviderConfig& cfg) {
+        harvestQuotaTestResult();
+        if (quotaTestThread_.joinable()) {
+            state_.quota.testMessage = "上一次测试连接仍在进行，请稍候";
+            state_.quota.testIsError = true;
+            return;
+        }
+        const std::string providerId = cfg.providerId;
+        const quota::QuotaProvider* provider =
+            quota::findProvider(providerId);
+        if (provider == nullptr) {
+            state_.quota.testMessage = "未选择供应商";
+            state_.quota.testIsError = true;
+            return;
+        }
+        quotaTestResult_ = quota::QuotaResult{};
+        state_.quota.testMessage.clear();
+        state_.quota.testIsError = false;
+        quotaTestThread_ = std::thread([this, providerId, cfg] {
+            const quota::QuotaProvider* p = quota::findProvider(providerId);
+            if (p == nullptr) {
+                quotaTestResult_.error = quota::QuotaError::NotConfigured;
+                quotaTestResult_.errorMessage = "未注册的余量供应商：" + providerId;
+            } else {
+                quotaTestResult_ = p->fetch(cfg, quota::makeRealHttpSendFn());
+            }
+            quotaTestDone_.store(true, std::memory_order_release);
+            ::core::platform::requestUiUpdate();
+        });
+    }
+
+    // 收割「测试连接」结果（compose 每帧轮询；join 之后才读普通成员，
+    // join 即 happens-before，与 testThread_ 同款发布序）。
+    void harvestQuotaTestResult() {
+        if (!quotaTestThread_.joinable()) return;
+        if (!quotaTestDone_.load(std::memory_order_acquire)) return;
+        quotaTestThread_.join();
+        quotaTestDone_.store(false, std::memory_order_release);
+        state_.quota.testing = false;
+        state_.quota.testErrorKind = quotaTestResult_.error;
+        state_.quota.testMessage = quota::quotaTestMessage(quotaTestResult_);
+        state_.quota.testIsError = quotaTestResult_.error != quota::QuotaError::None;
+    }
+
+    // 保存弹窗配置：落库 + 关闭 + toast。**store 缺位时明确报错**，
+    // 不静默「关窗当作保存成功」。
+    void saveQuotaConfig(const quota::QuotaConfigRow& row) {
+        if (!quotaStore_) {
+            state_.quota.error = "数据库未就绪，无法保存（应用数据根未初始化）";
+            return;
+        }
+        auto saved = quotaStore_->saveConfig(row);
+        if (saved.isFail()) {
+            state_.quota.error = "保存失败：" + saved.errorMessage();
+            return;
+        }
+        state_.quota.open = false;
+        showToast("已保存",
+                  row.providerId.empty()
+                      ? std::string("已关闭该 Profile 的余量查询")
+                      : ("余量查询配置已保存（供应商：" + row.providerId +
+                         "），后台将在 " +
+                         std::to_string(quotaRefreshScanIntervalSec()) +
+                         " 秒内自动查询"),
+                  false);
+        // **不**在这里同步 refreshNow()：那是一次真实网络查询，provider
+        // timeout 15s × 到期 profile 数，直接把 UI 线程冻住 —— 这正是批次 W5
+        // 把「测试连通」挪后台要治的病，不能在保存路径上重新引入。
+        // 用户要立刻看结果，弹窗里的【测试连接】就是那条即时通道。
+        LOG_INFO("余量配置已保存（profile=" + std::to_string(row.profileId) +
+                 "，provider=" + row.providerId + "，ccswitch=" +
+                 row.ccswitchProviderId + "）");
+    }
+
+    // 后台扫描间隔（与 QuotaRefreshOptions::scanIntervalSec 的生产默认同源；
+    // 用例可注入毫秒级，本函数只给 toast 文案用）。
+    static int quotaRefreshScanIntervalSec() { return 60; }
+
+    QuotaDialogHooks quotaHooks() {
+        QuotaDialogHooks h;
+        h.save = [this](const quota::QuotaConfigRow& row) { saveQuotaConfig(row); };
+        h.testConnection = [this](const quota::ProviderConfig& cfg) {
+            runQuotaTestConnection(cfg);
+        };
+        h.setField = [this](const std::string& key, const std::string& value) {
+            for (quota::QuotaDialogField& f : state_.quota.fields) {
+                if (f.spec.key != key) continue;
+                f.value = value;
+                // **用户一改就从 cc-switch 来源脱钩**：值不再等于 cc-switch 那份，
+                // 继续标「来自 cc-switch」是撒谎。
+                f.fromCcSwitch = false;
+                f.sourceLabel = "手动填写";
+                return;
+            }
+        };
+        h.selectProvider = [this](int idx) {
+            state_.quota.providerIdx = idx;
+            state_.quota.providerDdOpen = false;
+            quota::syncQuotaDialogFields(state_.quota);
+            // 换供应商后已存的 cc-switch 引用多半对不上新供应商：不清掉，
+            // 保存时会把火山那套引用写到 deepseek 行上。
+            state_.quota.ccSwitchIdx = -1;
+        };
+        h.loadCcSwitch = [this] {
+            state_.quota.ccSwitchLoaded = false;   // 允许重读
+            quota::loadQuotaCcSwitch(state_.quota);
+        };
+        h.selectCcSwitch = [this](int idx) {
+            quota::selectQuotaCcSwitch(state_.quota, idx);
+        };
+        h.toast = [this](const std::string& title, const std::string& msg,
+                         bool isError) { showToast(title, msg, isError); };
+        return h;
+    }
+
     void doTestConnection(const Profile& p) {
         ClaudeService* svc = ClaudeService::global();
         if (!svc) return;
@@ -947,6 +1161,21 @@ private:
     std::string testResultMsg_;
     bool testResultIsError_ = false;
     bool testResultStartProxy_ = false;
+
+    // ---- G6：余量链的生产装配 ----
+    // **声明序 = 析构序的逆序**：store 先声明、刷新器后声明，于是成员自动析构
+    // 时刷新器先死。但刷新器**主动**析构时要 join 在途线程，所以真正的安全
+    // 靠 stopQuotaRefresh() 的显式「刷新器 → 凭据源 → store」顺序，不靠这个。
+    std::unique_ptr<quota::QuotaStore> quotaStore_;
+    std::unique_ptr<quota::ProfileCredentialSource> quotaCredentials_;
+    std::unique_ptr<quota::QuotaRefresher> quotaRefresher_;
+    // 弹窗「测试连接」的后台线程 + 结果槽（与详情页 testThread_ 语义同款、
+    // 槽位独立：两个入口的结果不能互相覆盖）。线程里**只**写普通成员
+    // quotaTestResult_ 与置原子标志；UI 线程 join 之后才读（join 即
+    // happens-before），不额外加锁。
+    std::thread quotaTestThread_;
+    std::atomic<bool> quotaTestDone_{false};
+    quota::QuotaResult quotaTestResult_;
 
     // agent M2 Task 8：智能体工具集（claude.list_profiles / switch_profile /
     // test_connection / recent_logs），持有 ClaudeService::global() 的引用
