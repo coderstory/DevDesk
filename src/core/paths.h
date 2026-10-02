@@ -41,11 +41,6 @@ std::filesystem::path platformDefaultAppDataDir();
 // 相对 cwd 的路径，等于把 cwd 依赖偷偷加回来）
 std::filesystem::path executableDir();
 
-// 配置文件（config.json）
-// 覆盖优先级（审计 CP-04）：DEVDESK_CONFIG_PATH（整文件路径）> DEVDESK_DATA_ROOT
-// （<根>/config.json）> 平台默认根
-std::filesystem::path configFile();
-
 // SQLite 数据库文件
 std::filesystem::path sqliteDbFile();
 

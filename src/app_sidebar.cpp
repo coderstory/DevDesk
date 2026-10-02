@@ -68,7 +68,7 @@ float sidebarWidth() {
 }
 
 // 测试缝（TIN-07）：折叠状态回厂（展开）。setSidebarCollapsed 是生产写路径
-//（configFile 非空时落盘），用例间回厂走这里——纯内存、不触发持久化副作用
+//（persist=true 时落库），用例间回厂走这里——纯内存、不触发持久化副作用
 void resetSidebarGlobals() { g_sidebarCollapsed = false; }
 
 // ---- 应用级 toast 通知（审计 [7]：托盘失效入口点击的解释通道）----

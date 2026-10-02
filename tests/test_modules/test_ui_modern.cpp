@@ -77,22 +77,14 @@ struct FakeClock {
 constexpr const char* kTodoDbPrefix = "devdesk_test_uimodern_todo_";
 
 struct TodoEnv : test_support::TestEnv {
-    std::filesystem::path statePath;
     std::unique_ptr<module::todo::TodoService> svc;
 
+    // 视图状态隔离（审计 [23]）自 2026-10-03（批次 E2）起由基类注册的临时库
+    // 承担：状态是 app_config 表的一行（键 todo_view_state，见
+    // todo_view_state.h）。原 DEVDESK_TODO_VIEW_STATE_PATH 文件缝已无人读
+    //（todo_view_state.cpp 不再 getenv），随清理批删除。
     TodoEnv() : test_support::TestEnv(kTodoDbPrefix, "", true) {
         svc = std::make_unique<module::todo::TodoService>(db->db());
-        statePath = path.string() + ".view_state.json";
-        std::error_code ec;
-        std::filesystem::remove(statePath, ec);
-        test_support::setEnvVar("DEVDESK_TODO_VIEW_STATE_PATH",
-                                statePath.string());
-    }
-
-    ~TodoEnv() {
-        test_support::setEnvVar("DEVDESK_TODO_VIEW_STATE_PATH", "");
-        std::error_code ec;
-        std::filesystem::remove(statePath, ec);
     }
 };
 
@@ -999,19 +991,15 @@ REGISTER_TEST(uiModernHomeApiBarChart,
 // 由第三条断言反证，避免整页 compose 早退时 find 恒 nullptr 造成的**假绿**。
 REGISTER_TEST(uiModernSettingsBodyGradientRemoved,
               "uiModern: 设置页无主体底板（settings.body.bg 必须不存在）", {
-    const std::filesystem::path cfgPath = test_temp::tempPath(
-        "devdesk_test_uimodern_settings_grad_cfg.json");
     const std::filesystem::path dbPath = test_temp::tempPath(
         "devdesk_test_uimodern_settings_grad.db");
     std::error_code ec;
-    std::filesystem::remove(cfgPath, ec);
     std::filesystem::remove(dbPath, ec);
     auto r = ::core::Database::open(dbPath);
     DOCTEST_REQUIRE(r.isOk());
     auto db = std::make_unique<::core::Database>(std::move(r.value()));
     DOCTEST_REQUIRE(db->migrate().isOk());
     ::core::registerAppDatabase(&db->db());
-    test_support::setEnvVar("DEVDESK_CONFIG_PATH", cfgPath.string());
     {
         std::unique_ptr<::core::Module> mod(create_settings_module());
         mod->onStart();
@@ -1026,9 +1014,7 @@ REGISTER_TEST(uiModernSettingsBodyGradientRemoved,
         DOCTEST_CHECK(ui.find("settings.card.appearance") != nullptr);
         mod->onStop();
     }
-    test_support::setEnvVar("DEVDESK_CONFIG_PATH", "");
     ::core::registerAppDatabase(nullptr);
-    std::filesystem::remove(cfgPath, ec);
     std::filesystem::remove(dbPath, ec);
     return true;
 })

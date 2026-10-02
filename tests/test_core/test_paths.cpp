@@ -60,7 +60,6 @@ std::filesystem::path legacyDefaultAppDataDirForTest(
 // 漏登记等于新路径不受数据根管辖，正是本审计项要堵的缝
 bool allDataPathsUnder(const std::filesystem::path& root) {
     DOCTEST_CHECK(isUnderOrEqual(core::paths::appDataDir(), root));
-    DOCTEST_CHECK(isUnderOrEqual(core::paths::configFile(), root));
     DOCTEST_CHECK(isUnderOrEqual(core::paths::markdownDir(), root));
     DOCTEST_CHECK(isUnderOrEqual(core::paths::petsDir(), root));
     DOCTEST_CHECK(isUnderOrEqual(core::paths::sqliteDbFile(), root));
@@ -75,17 +74,6 @@ REGISTER_TEST(paths_app_data_dir, "paths: appDataDir not empty", {
     auto p = core::paths::appDataDir();
     DOCTEST_CHECK_FALSE(p.empty());
     DOCTEST_CHECK(p.string().find("DevDesk") != std::string::npos);
-    return true;
-})
-
-REGISTER_TEST(paths_config_file, "paths: configFile in appDataDir", {
-    auto root = core::paths::appDataDir();
-    auto cfg = core::paths::configFile();
-    // 简单检查 cfg 路径以 root 开头（macOS equivalent 不支持）
-    auto cfg_str = cfg.string();
-    auto root_str = root.string();
-    DOCTEST_CHECK(cfg_str.find(root_str) == 0);
-    DOCTEST_CHECK(cfg_str.find("config.json") != std::string::npos);
     return true;
 })
 
@@ -159,7 +147,6 @@ REGISTER_TEST(paths_executable_dir, "paths: executableDir = 当前可执行文�
 REGISTER_TEST(paths_data_root_derives_all,
               "paths: DEVDESK_DATA_ROOT 单一入口派生全部数据路径（CP-04）", {
     // 自足隔离：细粒度单项覆盖一律清掉（空串 = 删除变量），只留数据根
-    const test_support::ScopedEnv cfgEnv("DEVDESK_CONFIG_PATH", "");
     const test_support::ScopedEnv notesEnv("DEVDESK_NOTES_DIR", "");
     const test_support::ScopedEnv petsEnv("DEVDESK_PETS_DIR", "");
 
@@ -177,8 +164,6 @@ REGISTER_TEST(paths_data_root_derives_all,
     DOCTEST_CHECK(allDataPathsUnder(tempRoot));
     // 派生的是「根下的固定名」，不是等于根本身（防止只把 appDataDir 换了、
     // 别的路径仍指向真实目录这种半吊子改动）
-    DOCTEST_CHECK_EQ(normPath(core::paths::configFile()),
-                     normPath(tempRoot / "config.json"));
     DOCTEST_CHECK_EQ(normPath(core::paths::markdownDir()),
                      normPath(tempRoot / "notes"));
     DOCTEST_CHECK_EQ(normPath(core::paths::petsDir()),
@@ -197,7 +182,6 @@ REGISTER_TEST(paths_data_root_derives_all,
 REGISTER_TEST(paths_data_root_absent_uses_platform_default,
               "paths: 未设 DEVDESK_DATA_ROOT 时落平台默认根（CP-04）", {
     const test_support::ScopedEnv clearRoot("DEVDESK_DATA_ROOT", "");
-    const test_support::ScopedEnv cfgEnv("DEVDESK_CONFIG_PATH", "");
     const test_support::ScopedEnv notesEnv("DEVDESK_NOTES_DIR", "");
     const test_support::ScopedEnv petsEnv("DEVDESK_PETS_DIR", "");
 
@@ -220,34 +204,30 @@ REGISTER_TEST(paths_data_root_absent_uses_platform_default,
 
 // ③ 覆盖优先级三档：细粒度单项 > DEVDESK_DATA_ROOT > 平台默认
 // 单项覆盖保留是向后兼容（既有测试按老变量隔离单条路径），但不能因此让数据根
-// 失效——这里是两档的边界
+// 失效——这里是两档的边界。（原 configFile 的单项覆盖 DEVDESK_CONFIG_PATH 已
+// 随 configFile() 一起删除：配置不再落文件，没有「单项覆盖」可谈）
 REGISTER_TEST(paths_override_precedence,
               "paths: 覆盖优先级 单项 > DEVDESK_DATA_ROOT > 平台默认（CP-04）", {
     const std::filesystem::path tempRoot =
         test_temp::tempPath("devdesk_test_data_root_prec");
     const std::filesystem::path notes =
         test_temp::tempPath("devdesk_test_notes_prec");
-    const std::filesystem::path config =
-        test_temp::tempPath("devdesk_test_config_prec");
     const std::filesystem::path pets = test_temp::tempPath("devdesk_test_pets_prec");
     const test_support::ScopedEnv dataRoot("DEVDESK_DATA_ROOT",
                                            tempRoot.string());
     const test_support::ScopedEnv notesEnv("DEVDESK_NOTES_DIR", notes.string());
-    const test_support::ScopedEnv cfgEnv("DEVDESK_CONFIG_PATH", config.string());
     const test_support::ScopedEnv petsEnv("DEVDESK_PETS_DIR", pets.string());
 
     // 单项覆盖压过数据根
     DOCTEST_CHECK_EQ(normPath(core::paths::markdownDir()), normPath(notes));
-    DOCTEST_CHECK_EQ(normPath(core::paths::configFile()), normPath(config));
     DOCTEST_CHECK_EQ(normPath(core::paths::petsDir()), normPath(pets));
     // 没有单项覆盖的路径照常跟数据根
     DOCTEST_CHECK(isUnderOrEqual(core::paths::appDataDir(), tempRoot));
     DOCTEST_CHECK(isUnderOrEqual(core::paths::sqliteDbFile(), tempRoot));
     DOCTEST_CHECK(isUnderOrEqual(core::paths::logsDir(), tempRoot));
 
-    // 清掉单项覆盖 → 三条立即回落到数据根派生（三档顺序里的第二档）
+    // 清掉单项覆盖 → 两条立即回落到数据根派生（三档顺序里的第二档）
     test_support::setEnvVar("DEVDESK_NOTES_DIR", "");
-    test_support::setEnvVar("DEVDESK_CONFIG_PATH", "");
     test_support::setEnvVar("DEVDESK_PETS_DIR", "");
     DOCTEST_CHECK(allDataPathsUnder(tempRoot));
     return true;
@@ -301,7 +281,6 @@ REGISTER_TEST(paths_default_root_no_legacy_touch,
     const test_support::TempDir fakeRoving("paths_fake_roving"); // Windows 旧根所在
     // 数据根与细粒度单项覆盖一律清空：只留平台默认根这一档
     const test_support::ScopedEnv rootEnv("DEVDESK_DATA_ROOT", "");
-    const test_support::ScopedEnv cfgEnv("DEVDESK_CONFIG_PATH", "");
     const test_support::ScopedEnv notesEnv("DEVDESK_NOTES_DIR", "");
     const test_support::ScopedEnv petsEnv("DEVDESK_PETS_DIR", "");
     // 用户主目录与（Windows 旧根来源）APPDATA 都指到临时目录；非 Windows 上
@@ -313,13 +292,13 @@ REGISTER_TEST(paths_default_root_no_legacy_touch,
         legacyDefaultAppDataDirForTest(fakeHome.path, fakeRoving.path);
     const std::filesystem::path newRoot = fakeHome.path / "DevDesk";
 
-    // 新根不存在 → appDataDir()/configFile() 仍返回新路径（纯解析，不要求存在，
-    // 也不产生副作用：新旧位置都还没被创建）
+    // 新根不存在 → appDataDir()/sqliteDbFile() 仍返回新路径（纯解析，不要求
+    // 存在，也不产生副作用：新旧位置都还没被创建）
     std::error_code ec;
     DOCTEST_CHECK_FALSE(std::filesystem::exists(newRoot, ec));
     DOCTEST_CHECK_EQ(normPath(core::paths::appDataDir()), normPath(newRoot));
-    DOCTEST_CHECK_EQ(normPath(core::paths::configFile()),
-                     normPath(newRoot / "config.json"));
+    DOCTEST_CHECK_EQ(normPath(core::paths::sqliteDbFile()),
+                     normPath(newRoot / "devdesk.db"));
     DOCTEST_CHECK_FALSE(std::filesystem::exists(newRoot, ec));
     DOCTEST_CHECK_FALSE(std::filesystem::exists(legacy, ec));
 
@@ -329,8 +308,8 @@ REGISTER_TEST(paths_default_root_no_legacy_touch,
                                               "{\"legacy\":true}"));
     DOCTEST_CHECK(test_support::writeTextFile(legacy / "notes" / "old.md",
                                               "# old note"));
-    DOCTEST_CHECK_EQ(normPath(core::paths::configFile()),
-                     normPath(newRoot / "config.json"));
+    DOCTEST_CHECK_EQ(normPath(core::paths::sqliteDbFile()),
+                     normPath(newRoot / "devdesk.db"));
     core::paths::ensureDirectoriesExist(); // 建的是新根，不是旧位置
     DOCTEST_CHECK(std::filesystem::exists(newRoot, ec));
     DOCTEST_CHECK(std::filesystem::exists(legacy, ec));
