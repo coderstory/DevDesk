@@ -1,6 +1,8 @@
 // src/module_settings/settings_config.cpp
 #include "settings_config.h"
 
+#include "window_effect_hint.h"
+
 #include <algorithm>
 
 #include <fstream>
@@ -285,13 +287,10 @@ std::string windowEffectDegradedHint(const std::string& mode,
         }
         if (active == WindowEffect::Transparent) {
             // 降级文案平台化（macos-three-features 设计 §5.3）：磨砂在 Windows
-            // 要求 Win11 22H2+、在 macOS 要求 macOS 11+ 系统磨砂——按编译平台
-            // 各写各的，避免在另一平台显示误导性系统要求
-#if defined(__APPLE__)
-            return "当前系统不支持磨砂（macOS 11+ 系统磨砂），已回退为半透";
-#else
-            return "当前系统不支持磨砂（需 Windows 11 22H2+），已回退为半透";
-#endif
+            // 要求 Win11 22H2+、在 macOS 要求 macOS 11+ 系统磨砂——按平台各写各的，
+            // 避免在另一平台显示误导性系统要求。平台差异走 window_effect_hint_*.cpp，
+            // 业务代码零平台宏（见该头文件）
+            return frostedDegradedHint();
         }
         return "当前系统不支持窗口效果，已回退为不透明";
     }

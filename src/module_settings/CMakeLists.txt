@@ -6,6 +6,13 @@ add_library(devdesk_module_settings STATIC
     app_tools.cpp
 )
 
+# 平台适配：磨砂降级文案按平台拆文件（业务代码零平台宏，见 window_effect_hint.h）
+if(WIN32)
+    target_sources(devdesk_module_settings PRIVATE window_effect_hint_win.cpp)
+else()
+    target_sources(devdesk_module_settings PRIVATE window_effect_hint_macos.cpp)
+endif()
+
 devdesk_apply_warnings(devdesk_module_settings)
 
 # 审计 CP-07 同类（macOS 复发）：**不要**把仓库根（`${CMAKE_CURRENT_SOURCE_DIR}/../..`）
