@@ -36,6 +36,23 @@ constexpr const char* kAuthFieldLabels[] = {
     "双发（默认）", "只发 Authorization: Bearer", "只发 x-api-key"};
 constexpr int kAuthFieldCount = 3;
 
+// ---- formError_ 的统一写入点（批次 C 评审必修：来源标记）----
+// formError_ 承载多来源红字（名称/URL 闸门、API Key 闸门、序列化、服务层失败、
+// JSON 校验…）。「放弃修改」只应清掉**JSON 源**的那一条——直接整片 clear 会把
+// 仍然成立的其它错误（如「名称和 Base URL 不能为空」）一起抹掉。因此定来源标记：
+// JSON 校验分支（submitForm 里唯一把同一条校验文案**同时**写进 formError_ 与
+// formAdvancedJsonError_ 的地方）置 fromJson=true，其余来源一律 false。
+// 全部写入点必须走这两个 helper（直接赋值会留下过期标记）
+void setFormError(FormState& f, const std::string& msg, bool fromJson = false) {
+    f.formError_ = msg;
+    f.formErrorFromJson_ = fromJson;
+}
+
+void clearFormError(FormState& f) {
+    f.formError_.clear();
+    f.formErrorFromJson_ = false;
+}
+
 // 「格式化」共用体（2026-09-30 json-fullscreen 自表单按钮 lambda 提升为自由
 // 函数）：parse → stringify(pretty)，不自写格式化器；键序会重排为字典序——
 // 与 settings_sync 写 settings.json 同一条序列化通道，round-trip 语义不变。
@@ -68,9 +85,16 @@ void formatAdvancedJson(FormState& f) {
 // 改过再进全屏，放弃同样回落到库值。文本本就等于落库值时等价于关闭，不报错。
 void discardJsonFullscreenEdits(FormState& f) {
     f.formExtraSettingsJson_ = f.formExtraSettingsJsonBaseline_;
-    // JSON 行内红字随文本回退一并清（提交闸门 formError_ 不动——它与 JSON
-    // 缓冲无关，例如「名称和 Base URL 不能为空」在放弃后依然成立）
+    // JSON 行内红字随文本回退一并清
     f.formAdvancedJsonError_.clear();
+    // 幽灵错误（批次 C 评审必修）：JSON 校验失败会在提交闸门留一条
+    // formError_ 红字。放弃后文本已回滚，这条错误描述的是**已被丢弃**的内容
+    // ——按来源标记精准清（formErrorFromJson_ 只由 JSON 校验分支置位；
+    // 名称/URL/Key/服务层等其它来源的 formError_ 一律保留——它们与 JSON
+    // 缓冲无关，放弃后依然成立）
+    if (f.formErrorFromJson_) {
+        clearFormError(f);
+    }
     f.formJsonFullscreen_ = false;
 }
 
@@ -81,7 +105,7 @@ void openCreateForm(FormState& f, ImportState& imp) {
     f.formName_.clear();
     f.formUrl_.clear();
     f.formKey_.clear();
-    f.formError_.clear();
+    clearFormError(f);
     f.formKeyHint_.clear();
     f.formImportWarn_.clear();
     f.formModels_ = ModelsConfig{};
@@ -116,7 +140,7 @@ void openEditForm(FormState& f, ImportState& imp, const Profile& p,
     f.formName_ = p.name;
     f.formUrl_ = p.baseUrl;
     f.formKey_.clear();   // 留空 = 不换 key（updateProfile 语义）
-    f.formError_.clear();
+    clearFormError(f);
     f.formKeyHint_ = p.apiKeyHint;
     f.formImportWarn_.clear();
     // 槽位：models_config（空 / 非法 JSON → 全空槽位）
@@ -207,7 +231,7 @@ void doApplyImport(FormState& f, ImportState& imp) {
     }
     imp.importReady_ = false;
     imp.importText_.clear();
-    f.formError_.clear();   // 导入成功清掉旧校验错误
+    clearFormError(f);   // 导入成功清掉旧校验错误
 }
 
 // ============ 导入当前配置（一键读 settings.json → 预填新建表单）============
@@ -290,7 +314,7 @@ bool serializeFormData(FormState& f, std::string* modelsJson, std::string* envJs
     if (anySlot) {
         auto r = serializeModelsConfig(f.formModels_);
         if (r.isFail()) {
-            f.formError_ = "模型配置序列化失败: " + r.errorMessage();
+            setFormError(f, "模型配置序列化失败: " + r.errorMessage());
             return false;
         }
         *modelsJson = r.value();
@@ -303,7 +327,7 @@ bool serializeFormData(FormState& f, std::string* modelsJson, std::string* envJs
     if (!envMap.empty()) {
         auto r = serializeExtraEnv(envMap);
         if (r.isFail()) {
-            f.formError_ = "env 序列化失败: " + r.errorMessage();
+            setFormError(f, "env 序列化失败: " + r.errorMessage());
             return false;
         }
         *envJson = r.value();
@@ -315,12 +339,12 @@ void submitForm(FormState& f, const FormSubmitHooks& hooks,
                 const std::vector<SharedConfig>& sharedConfigs) {
     ClaudeService* svc = ClaudeService::global();
     if (!svc) {
-        f.formError_ = "服务未就绪（ClaudeService 未注册）";
+        setFormError(f, "服务未就绪（ClaudeService 未注册）");
         return;
     }
     hooks.markDataDirty();   // 审计 perf [13]：写操作前即标脏（失败也不伤，下帧重查）
     if (f.formName_.empty() || f.formUrl_.empty()) {
-        f.formError_ = "名称和 Base URL 不能为空";
+        setFormError(f, "名称和 Base URL 不能为空");
         return;
     }
     // 批 2：悬空绑定防御（片段已删 / 快照未到位）——按未绑定保存，不留幽灵 id
@@ -340,7 +364,8 @@ void submitForm(FormState& f, const FormSubmitHooks& hooks,
     if (!f.formExtraSettingsJson_.empty()) {
         auto v = validateExtraSettingsJson(f.formExtraSettingsJson_);
         if (v.isFail()) {
-            f.formError_ = v.errorMessage();
+            // 唯一 fromJson=true 的写入点（批次 C 评审必修：放弃修改按来源清）
+            setFormError(f, v.errorMessage(), /*fromJson=*/true);
             f.formAdvancedJsonError_ = v.errorMessage();
             return;
         }
@@ -358,7 +383,7 @@ void submitForm(FormState& f, const FormSubmitHooks& hooks,
     if (f.formEditId_ == 0) {
         // 新建：API Key 必填
         if (f.formKey_.empty()) {
-            f.formError_ = "新建 Profile 必须填写 API Key";
+            setFormError(f, "新建 Profile 必须填写 API Key");
             return;
         }
         // 产品审计 2026-09-23 [6]：activateIfNoneActive=true——当前无激活
@@ -371,7 +396,7 @@ void submitForm(FormState& f, const FormSubmitHooks& hooks,
                                     /*fallbackProfileId=*/f.formFallbackProfileId_,
                                     /*extraSettingsJson=*/extraSettingsPretty);
         if (r.isFail()) {
-            f.formError_ = r.errorMessage();
+            setFormError(f, r.errorMessage());
             return;
         }
         // createProfile 无槽位/env 参数（最小 diff 不动签名），二段补写
@@ -386,8 +411,8 @@ void submitForm(FormState& f, const FormSubmitHooks& hooks,
             p.extraSettingsJson = extraSettingsPretty;
             auto u = svc->updateProfile(p);
             if (u.isFail()) {
-                f.formError_ = "已创建，但模型/env 写入失败: " +
-                               u.errorMessage();
+                setFormError(f, "已创建，但模型/env 写入失败: " +
+                                  u.errorMessage());
                 return;
             }
         }
@@ -412,7 +437,7 @@ void submitForm(FormState& f, const FormSubmitHooks& hooks,
         // 编辑：先取现有行（保留 keychain 引用等字段），再覆盖表单值
         auto got = svc->getProfile(f.formEditId_);
         if (got.isFail()) {
-            f.formError_ = got.errorMessage();
+            setFormError(f, got.errorMessage());
             return;
         }
         Profile p = std::move(got).value();
@@ -433,7 +458,7 @@ void submitForm(FormState& f, const FormSubmitHooks& hooks,
         p.dialectOverride = f.formDialectOverride_;
         auto r = svc->updateProfile(p);
         if (r.isFail()) {
-            f.formError_ = r.errorMessage();
+            setFormError(f, r.errorMessage());
             return;
         }
         f.formOpen_ = false;

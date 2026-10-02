@@ -3910,7 +3910,6 @@ REGISTER_TEST(claude_ui_json_fullscreen_buffer_roundtrip_and_error_gate,
         compose(ui, "fs_d4");
         DOCTEST_CHECK(click(ui, "claude.form.advanced.json.fs.bg"));
     }
-    std::string fsErrText;
     {
         eui::Ui ui;
         compose(ui, "fs_d5");
@@ -3924,7 +3923,11 @@ REGISTER_TEST(claude_ui_json_fullscreen_buffer_roundtrip_and_error_gate,
         const auto* err = ui.find("claude.jsonfs.error");
         DOCTEST_REQUIRE(err != nullptr);
         DOCTEST_CHECK(!err->text.empty());
-        fsErrText = err->text;
+        // 全屏红字 = 提交闸门 formError_（JSON 源，同文案双写）；表单侧同一帧
+        // 也有这条红字（fs_d8 断言放弃后两处都消失）
+        const auto* ferr = ui.find("claude.dialog.form.error");
+        DOCTEST_REQUIRE(ferr != nullptr);
+        DOCTEST_CHECK_EQ(ferr->text, err->text);
         // 应用失败不退全屏、表单不关（闸门拦截，同 submitForm 语义）
         DOCTEST_CHECK(ui.find("claude.jsonfs.root") != nullptr);
         DOCTEST_CHECK(ui.find("claude.dialog.form.panel") != nullptr);
@@ -3937,9 +3940,12 @@ REGISTER_TEST(claude_ui_json_fullscreen_buffer_roundtrip_and_error_gate,
     {
         eui::Ui ui;
         compose(ui, "fs_d8");
-        const auto* ferr = ui.find("claude.dialog.form.error");
-        DOCTEST_REQUIRE(ferr != nullptr);
-        DOCTEST_CHECK_EQ(ferr->text, fsErrText);   // 同源：同一 formError_
+        // 批次 C 评审必修：这条 formError_ 是 **JSON 源**（保存时
+        // validateExtraSettingsJson 失败写入，与 formAdvancedJsonError_ 同文案）
+        // → 「放弃修改」必须把它一并清掉，否则留下一条描述已丢弃文本的幽灵错误
+        //（旧断言 `ferr->text == fsErrText` 正是把幽灵错误固化成契约，已改）
+        DOCTEST_CHECK(ui.find("claude.dialog.form.error") == nullptr);
+        DOCTEST_CHECK(ui.find("claude.form.advanced.json.error") == nullptr);
         // 放弃 = 编辑缓冲回到落库值（坏片段没留下）
         const auto* adv = ui.find("claude.form.advanced.json.text.0");
         DOCTEST_REQUIRE(adv != nullptr);
@@ -4211,6 +4217,140 @@ REGISTER_TEST(claude_ui_json_fullscreen_discard_semantics,
         DOCTEST_CHECK_EQ(l0->text, savedJson);
         DOCTEST_CHECK(click(ui, "claude.dialog.form.cancel.bg"));   // 收尾不落库
     }
+    // ⑤ 幽灵错误（批次 C 评审必修）：全屏内「保存」因非法 JSON 被提交闸门拦下 →
+    //    formError_（提交闸门红字）+ formAdvancedJsonError_ 同文案双写；此时
+    //    放弃 → 缓冲已回滚，这条红字描述的是**已被丢弃**的内容 → 必须一并消失
+    DOCTEST_REQUIRE(openFullscreen());
+    {
+        eui::Ui ui;
+        compose(ui, "disc_err_type");
+        DOCTEST_CHECK(type(ui, "claude.jsonfs.editor.hit", "{broken"));
+    }
+    {
+        eui::Ui ui;
+        compose(ui, "disc_err_save");
+        DOCTEST_CHECK(click(ui, "claude.jsonfs.apply.bg"));   // 保存 → JSON 校验失败
+    }
+    {
+        eui::Ui ui;
+        compose(ui, "disc_err_gate");
+        // 闸门红字在：全屏 error 与表单 error 同文案（同一条 formError_）
+        const auto* ferr = ui.find("claude.dialog.form.error");
+        DOCTEST_REQUIRE(ferr != nullptr);
+        DOCTEST_CHECK(ferr->text.find("高级设置 JSON") != std::string::npos);
+        DOCTEST_CHECK(ui.find("claude.jsonfs.root") != nullptr);   // 未退全屏
+        DOCTEST_CHECK(click(ui, "claude.jsonfs.discard.bg"));      // 放弃修改
+    }
+    {
+        eui::Ui ui;
+        compose(ui, "disc_err_after");
+        DOCTEST_CHECK(ui.find("claude.jsonfs.root") == nullptr);
+        DOCTEST_CHECK(ui.find("claude.dialog.form.error") == nullptr);   // 无残留
+        DOCTEST_CHECK(ui.find("claude.form.advanced.json.error") == nullptr);
+        const auto* l0 = ui.find("claude.form.advanced.json.text.0");
+        DOCTEST_REQUIRE(l0 != nullptr);
+        DOCTEST_CHECK_EQ(l0->text, savedJson);
+    }
+    // ⑤b 同一条幽灵错误在「先改回合法、再放弃」路径上也要清：错误文案与当前
+    //     缓冲无关——按**来源**清，不按「当前文本是否仍非法」重新判定
+    {
+        eui::Ui ui;
+        compose(ui, "disc_err2_fs");
+        DOCTEST_CHECK(click(ui, "claude.form.advanced.json.fs.bg"));
+    }
+    {
+        eui::Ui ui;
+        compose(ui, "disc_err2_type");
+        DOCTEST_CHECK(type(ui, "claude.jsonfs.editor.hit", "{broken"));
+    }
+    {
+        eui::Ui ui;
+        compose(ui, "disc_err2_save");
+        DOCTEST_CHECK(click(ui, "claude.jsonfs.apply.bg"));   // 留下闸门红字
+    }
+    {
+        eui::Ui ui;
+        compose(ui, "disc_err2_fix");
+        // 全选（Ctrl/Cmd+A）后**同帧**输入合法 JSON → 缓冲整体改回合法。
+        // 必须同帧：InputState（选区）挂在 Ui 实例上，跨帧新 Ui 不保证保留
+        const auto* hit = ui.find("claude.jsonfs.editor.hit");
+        DOCTEST_REQUIRE(hit != nullptr);
+        DOCTEST_REQUIRE(hit->onKeyEvent != nullptr);
+        eui::KeyEvent selectAll;
+        selectAll.key = eui::InputKey::A;
+        selectAll.action = eui::KeyAction::Press;
+        selectAll.modifiers.control = true;   // shortcut() = control（非 Apple）
+        selectAll.modifiers.super = true;     // shortcut() = super（Apple）
+        DOCTEST_CHECK(hit->onKeyEvent(selectAll));
+        DOCTEST_REQUIRE(hit->onTextInput != nullptr);
+        core::TextInputEvent ev;
+        ev.text = R"({"ok":true})";
+        hit->onTextInput(ev);
+    }
+    {
+        eui::Ui ui;
+        compose(ui, "disc_err2_check_valid");
+        const auto* l0 = ui.find("claude.jsonfs.editor.text.0");
+        DOCTEST_REQUIRE(l0 != nullptr);
+        DOCTEST_CHECK_EQ(l0->text, std::string(R"({"ok":true})"));   // 已改回合法
+        // 闸门红字仍在（onChange 只清行内红字，提交闸门要等下一次提交/放弃）
+        DOCTEST_CHECK(ui.find("claude.dialog.form.error") != nullptr);
+        DOCTEST_CHECK(click(ui, "claude.jsonfs.discard.bg"));
+    }
+    {
+        eui::Ui ui;
+        compose(ui, "disc_err2_after");
+        DOCTEST_CHECK(ui.find("claude.dialog.form.error") == nullptr);
+        const auto* l0 = ui.find("claude.form.advanced.json.text.0");
+        DOCTEST_REQUIRE(l0 != nullptr);
+        DOCTEST_CHECK_EQ(l0->text, savedJson);
+        DOCTEST_CHECK(click(ui, "claude.dialog.form.cancel.bg"));
+    }
+    // ⑥ 精准性：**非** JSON 源的 formError_ 不被放弃清掉。新建表单（名称/URL
+    //    为空）→ 全屏内「保存」→ 基础项闸门先于 JSON 校验命中，写的是
+    //    「名称和 Base URL 不能为空」（fromJson=false）→ 放弃后这条红字必须还在
+    {
+        eui::Ui ui;
+        compose(ui, "disc_prec_new");
+        DOCTEST_CHECK(click(ui, "claude.profiles.new.bg"));
+    }
+    {
+        eui::Ui ui;
+        compose(ui, "disc_prec_tab3");
+        DOCTEST_CHECK(click(ui, "claude.form.tabs.hit.3"));
+    }
+    {
+        eui::Ui ui;
+        compose(ui, "disc_prec_fs");
+        DOCTEST_CHECK(click(ui, "claude.form.advanced.json.fs.bg"));
+    }
+    {
+        eui::Ui ui;
+        compose(ui, "disc_prec_type");
+        DOCTEST_CHECK(type(ui, "claude.jsonfs.editor.hit", R"({"a":1})"));
+    }
+    {
+        eui::Ui ui;
+        compose(ui, "disc_prec_save");
+        DOCTEST_CHECK(click(ui, "claude.jsonfs.apply.bg"));   // 基础项闸门
+    }
+    {
+        eui::Ui ui;
+        compose(ui, "disc_prec_gate");
+        const auto* ferr = ui.find("claude.dialog.form.error");
+        DOCTEST_REQUIRE(ferr != nullptr);
+        DOCTEST_CHECK(ferr->text.find("名称和 Base URL") != std::string::npos);
+        DOCTEST_CHECK(click(ui, "claude.jsonfs.discard.bg"));
+    }
+    {
+        eui::Ui ui;
+        compose(ui, "disc_prec_after");
+        const auto* ferr = ui.find("claude.dialog.form.error");
+        DOCTEST_REQUIRE(ferr != nullptr);   // 非 JSON 源 → 保留（仍成立）
+        DOCTEST_CHECK(ferr->text.find("名称和 Base URL") != std::string::npos);
+        DOCTEST_CHECK(click(ui, "claude.dialog.form.cancel.bg"));   // 收尾不落库
+    }
+
     // DB 未被放弃路径污染
     {
         auto got = env.svc->getProfile(pid);
