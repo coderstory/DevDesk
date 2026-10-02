@@ -7,9 +7,14 @@
 //   ③ 点「启动」中心（真指针 press+release，下一帧 composeFrame 消费）→
 //      fakeProxy 脚本化 end_turn → run 落库 completed → 状态列「成功」；
 //      且详情弹窗自动打开、最终 assistant 文本块默认展开（回复立即可见）；
-//   ④ 任务弹窗（编辑态）：点行内「编辑」→ agent.dialog.task 出现、面板不超出
-//      视口、全字段节点在、schedule 任务渲染 cron 输入；
-//   ⑤ 详情弹窗：配置摘要 / run 列表（倒序 + 最近一次高亮）/ 消息滚动区；
+//   ④ 任务弹窗（编辑态）：点行内「编辑」→ agent.dialog.task 出现、**设计尺寸
+//      760x400**、字段行底 ≤ 按钮行顶、按钮行不溢面板底、全字段节点在、
+//      schedule 任务渲染 cron 输入；再真指针点开触发方式下拉 → 弹层最后一项
+//      完整在屏内且不挤动下方行，收起后点取消关窗（复审整改：原「面板不超
+//      视口」被 dialog 组件自身 clamp 兜住、零判别力，已换成上面这些可失败的
+//      尺寸/预算断言）；
+//   ⑤ 详情弹窗：**设计尺寸 760x660**、配置摘要 / run 列表（倒序 + 最近一次
+//      高亮）/ 消息滚动区底 ≤ 面板底（同样是可失败的预算断言）；
 //   ⑥ 任务列表滚动：种 30 条任务 → 内容高 > 视口高 → 出 .scroll 滚动条；
 //   ⑦ 弹窗打开时列表首行仍可见（列表没被弹窗挤掉 / 没被遮罩层吞掉）；
 //   ⑧ id 唯一性：走 orderedRoots 全树，断言全帧无重复 id（T10 id 撞车教训）；
@@ -70,7 +75,7 @@ bool frameContains(const core::dsl::Element& outer, const core::dsl::Element& in
                outer.frame.y + outer.frame.height + 0.5f;
 }
 
-// 元素完全落在 w×h 视口内（弹窗几何断言：弹窗不超出视口）
+// 元素完全落在 w×h 视口内（0.5 容差）
 bool insideViewport(const core::dsl::Element& e, float w, float h) {
     return e.frame.x >= -0.5f && e.frame.y >= -0.5f &&
            e.frame.x + e.frame.width <= w + 0.5f &&
@@ -282,10 +287,29 @@ int main(int argc, char* argv[]) {
             check(finalBlk->text.find("最终答复") != std::string::npos,
                   "最终回复内容未渲染，实测: " + finalBlk->text);
         }
-        // 弹窗不超出视口（含按钮行 / 消息滚动区都在视口内）
+        // 弹窗几何（评审口径：被 dialog 组件 clamp 兜住的「不超出视口」零判别力
+        // → 钉我们自己的设计尺寸与内部高度预算）
         const auto* dpanel = ui->find("agent.dialog.detail.panel");
+        check(dpanel != nullptr && nearEq(dpanel->frame.width, 760.0f),
+              "详情弹窗宽应为设计值 760，实测 " +
+                  (dpanel ? frameStr(dpanel) : std::string("（缺 panel）")));
+        check(dpanel != nullptr && nearEq(dpanel->frame.height, 660.0f),
+              "详情弹窗高应为设计值 660，实测 " +
+                  (dpanel ? frameStr(dpanel) : std::string("（缺 panel）")));
         check(dpanel != nullptr && insideViewport(*dpanel, w, h),
-              "详情弹窗超出视口 " + (dpanel ? frameStr(dpanel) : std::string("（缺 panel）")));
+              "详情弹窗未完整落在视口内（尺寸断言之外的兜底）");
+        if (dpanel != nullptr) {
+            const auto* scrollNow = ui->find("agent.dialog.detail.msgscroll");
+            check(scrollNow != nullptr &&
+                      scrollNow->frame.y + scrollNow->frame.height <=
+                          dpanel->frame.y + dpanel->frame.height - 19.5f,
+                  "消息滚动区溢出面板底（底边距应收 20）");
+            const auto* rl = ui->find("agent.dialog.detail.runlist");
+            const auto* mt = ui->find("agent.dialog.detail.msgs.title");
+            check(rl != nullptr && mt != nullptr &&
+                      rl->frame.y + rl->frame.height <= mt->frame.y + 0.5f,
+                  "run 列表压到消息标题");
+        }
         // ⑦ 弹窗打开时列表首行仍可见（列表在弹窗层之下照常布局）
         const auto* rowUnderDialog = ui->find("agent.task." + tid);
         check(rowUnderDialog != nullptr && rowUnderDialog->frame.width > 0.0f &&
@@ -338,8 +362,13 @@ int main(int argc, char* argv[]) {
                 std::cerr << "agent_probes: 点 edit 后任务弹窗未打开\n";
                 passed = false;
             } else {
+                // 设计尺寸 + 内部预算（不是被组件 clamp 兜住的「不超视口」）
+                check(nearEq(panel->frame.width, 760.0f),
+                      "任务弹窗宽应为设计值 760，实测 " + frameStr(panel));
+                check(nearEq(panel->frame.height, 400.0f),
+                      "任务弹窗高应为设计值 400，实测 " + frameStr(panel));
                 check(insideViewport(*panel, w, h),
-                      "任务弹窗超出视口 " + frameStr(panel));
+                      "任务弹窗未完整落在视口内 " + frameStr(panel));
                 check(goal->frame.height >= 90.0f,
                       "任务弹窗 goal 输入应为多行高 ≥90，实测 " + frameStr(goal));
                 check(ui->find("agent.dialog.task.trigger") != nullptr,
@@ -355,6 +384,54 @@ int main(int argc, char* argv[]) {
                       "任务弹窗缺取消/保存按钮");
                 check(ui->find("agent.dialog.task.cron") != nullptr,
                       "schedule 任务的弹窗未渲染 cron 输入");
+                // 行底 ≤ 按钮行顶（行高改动 / 弹窗高改小即红）
+                const auto* saveBtn = ui->find("agent.dialog.task.save");
+                const auto* metaWrap =
+                    ui->find("agent.dialog.task.destructive.wrap");
+                check(saveBtn != nullptr && metaWrap != nullptr &&
+                          metaWrap->frame.y + metaWrap->frame.height <=
+                              saveBtn->frame.y + 0.5f,
+                      "任务弹窗字段行压到按钮行");
+                check(saveBtn != nullptr &&
+                          saveBtn->frame.y + saveBtn->frame.height <=
+                              panel->frame.y + panel->frame.height - 19.5f,
+                      "任务弹窗按钮行溢出面板底（底边距应收 20）");
+
+                // 下拉展开态（评审点 5）：真指针点字段 → 弹层最后一项完整在屏内，
+                // 且覆盖层不挤动下方行；再点一次收起
+                const auto* triggerField =
+                    ui->find("agent.dialog.task.trigger.field");
+                const float metaYBefore =
+                    metaWrap != nullptr ? metaWrap->frame.y : 0.0f;
+                if (triggerField == nullptr) {
+                    check(false, "触发方式下拉字段命中面缺失");
+                } else {
+                    clickCenter(window, triggerField);
+                    composeFrame();
+                    const auto* lastItem =
+                        ui->find("agent.dialog.task.trigger.item.2");
+                    check(lastItem != nullptr && lastItem->frame.width > 0.0f &&
+                              lastItem->frame.height > 0.0f,
+                          "下拉展开后最后一项缺失/零尺寸");
+                    if (lastItem != nullptr) {
+                        check(insideViewport(*lastItem, w, h),
+                              "下拉最后一项跑出屏外 " + frameStr(lastItem));
+                    }
+                    const auto* metaAfter =
+                        ui->find("agent.dialog.task.destructive.wrap");
+                    check(metaAfter != nullptr &&
+                              nearEq(metaAfter->frame.y, metaYBefore),
+                          "下拉展开挤动了下方行（展开前 " +
+                              std::to_string(metaYBefore) + " 展开后 " +
+                              (metaAfter ? std::to_string(metaAfter->frame.y)
+                                         : std::string("（缺行）")) + "）");
+                    const auto* fieldNow =
+                        ui->find("agent.dialog.task.trigger.field");
+                    if (fieldNow != nullptr) {
+                        clickCenter(window, fieldNow);   // 收起弹层
+                        composeFrame();
+                    }
+                }
 
                 // 关弹窗（真指针点取消），恢复页面态
                 const auto* cancel = ui->find("agent.dialog.task.cancel");
