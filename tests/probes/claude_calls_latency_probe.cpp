@@ -18,7 +18,7 @@
 // 输出（stdout，供报告引用）：
 //   click→行可见 墙钟 ms / 驱动帧数 / 阻塞等待累计 ms / 期间 animating 帧数
 // 用法：./build/tests/claude_calls_latency_probe [--size 1600x1000] [--idle-ms 3000]
-#include <GLFW/glfw3.h>   // 必须先于 harness
+// GL/GLFW 头由 probe_harness 统一给（glad 路线；见 settings_cards_probes.cpp:43 同款说明）
 
 #include "probes/probe_harness.h"
 #include "test_support.h"

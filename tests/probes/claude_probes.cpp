@@ -29,8 +29,7 @@
 // 1262×801 = 本机 macOS 真实页面尺寸（窗口 1470×801 − 侧边栏 208）——「真实
 // 窗口尺寸下的区域比例」类问题在无头侧唯一能覆盖的方式（方案 §5 全局项要求）。
 
-#include <GLFW/glfw3.h>  // 必须先于 harness：让 GLFW 默认拉平台 GL 头（--dump 用 glReadPixels）
-#include "probes/probe_harness.h"
+#include "probes/probe_harness.h"  // GL/GLFW 头由 harness 给（glad 路线；见 settings_cards_probes.cpp:43 同款说明）
 #include "test_support.h"
 #include "app_registry.h"
 #include "core/module_interface.h"
@@ -1014,6 +1013,12 @@ int main(int argc, char* argv[]) {
             std::cout << "\n";
         }
     }
+
+    // ---- 退出前落一张「当前状态图」（--screenshot <路径>，2026-10-03 帧捕获批次）----
+    // 与上面 --dump（多张 P6 PPM、需逐个目标 id 在场）互补：本开关是通用的
+    // 「跑一次 probe 就拿到此刻界面长什么样」，任何 probe 都能用，不依赖元素 id。
+    // 不传该开关时 captureIfRequested 立刻返回，行为与从前逐字一致。
+    probe::captureIfRequested(args, window, runtime, &passed);
 
     mod->onStop();
     for (int64_t id : ids) {

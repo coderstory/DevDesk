@@ -28,8 +28,7 @@
 //（P6）——不依赖系统截屏（OpenGL 窗口 screencapture 有旧帧坑、且裸 GLFW 探针
 // 窗在满屏应用下可能不被置前）；两帧按**动画时间**间隔 1.2s 取样（真机口径
 // 「同一位置间隔 1.2s 抓两帧」），不靠迭代计数猜。
-#include <GLFW/glfw3.h>  // 必须先于 harness：让 GLFW 默认拉平台 GL 头（--dump 用 glReadPixels）
-#include "probes/probe_harness.h"
+#include "probes/probe_harness.h"  // GL/GLFW 头由 harness 给（glad 路线；见 settings_cards_probes.cpp:43 同款说明）
 #include <eui/detail/dsl_app_impl.h>  // app:: 层内联实现自给（链接需要）
 #include "app_registry.h"             // create_about_module 声明
 #include "core/module_interface.h"

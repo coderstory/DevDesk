@@ -40,10 +40,10 @@
 //   （P6，PIL 可读；about_probe 同款手法，观感复核不依赖 screencapture——
 //   OpenGL 窗口 screencapture 有旧帧坑且锁屏下不可用）。
 
-// GLFW 头必须先于 probe_harness（后者 define GLFW_INCLUDE_NONE 会屏蔽平台 GL
-// 头，--dump 的 glReadPixels 需要它；about_probe.cpp:23 同款顺序）
-#include <GLFW/glfw3.h>
-
+// GL / GLFW 头由 probe_harness 统一给（2026-10-03 帧捕获批次：harness 改走 glad
+// 路线直接提供 glReadPixels 等 GL 符号，而 glad 与平台 GL 头互斥——同时包含会
+// 撞 glad.h 的 "OpenGL header already included" #error。这里不再单独 include
+// GLFW：harness 已带 <GLFW/glfw3.h> + <glad/glad.h>，--dump 的 glReadPixels 照常可用）
 #include "probes/probe_harness.h"
 #include "test_support.h"
 
