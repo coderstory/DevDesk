@@ -7,13 +7,21 @@
 // 其（后台）刷新以自由函数的形态住在同一单元的 .cpp 里。
 #include "claude_ui_state.h"
 
+#include "claude_ui_logic.h"   // wakeAfterPublish（结果就绪 → 唤醒主循环的唯一出口）
 #include "core/logging.h"
 
+#include <atomic>
 #include <chrono>
 #include <future>
+#include <memory>
 #include <utility>
 
 namespace module::claude {
+
+// 次序缝（批次 D 评审收尾 2026-10-02，口径同 claude_ui_logs.cpp 的
+// g_callsQueryWakeSawReady）：页面级刷新发出唤醒时，结果共享状态是否**已就绪**
+// （true = 先就绪、后唤醒）。文件末尾经 extern "C" 导出给无头用例。
+std::atomic<bool> g_dataRefreshWakeSawReady{false};
 
 DataRefresh runDataRefresh(ClaudeService* svc, bool wantProfiles,
                            bool wantRecent) {
@@ -55,6 +63,13 @@ DataRefresh runDataRefresh(ClaudeService* svc, bool wantProfiles,
             r.callsError = rR.errorMessage();
         }
     }
+    // 唤醒**不在这里**（批次 D 评审收尾 2026-10-02）：本函数由 worker lambda 调用，
+    // 此刻结果还只在局部变量 r 里、尚未 set_value 发布 → 在这里唤醒就是「先唤醒、
+    // 后就绪」（UI 抢跑消费唤醒位 → 结果没人上屏）。唤醒收在 refreshDataCache 派发
+    // 处的唯一出口 wakeAfterPublish()：先 promise.set_value 发布，再唤醒。
+    // 另：本函数在**后台线程**跑（compose 的 refreshDataCache 经 std::async 派发；
+    // proxy worker 落库只推版本号、不产生 UI 事件），没有那一下唤醒，快照要等用户
+    // 下一次动鼠标才被 compose 收割——这条路径连弹窗那种过渡动画的帧都没有。
     return r;
 }
 
@@ -101,7 +116,9 @@ void harvestDataRefresh(ProfileListState& st) {
         std::future_status::ready) {
         return;   // 还在跑
     }
-    applyDataRefresh(st, st.refreshFuture_.get());
+    DataRefresh r = st.refreshFuture_.get();   // shared_future::get 不失效
+    st.refreshFuture_ = {};                    // 显式清空 = 让出「在途」判据
+    applyDataRefresh(st, std::move(r));
 }
 
 bool refreshDue(const ProfileListState& st) {
@@ -132,8 +149,33 @@ void refreshDataCache(ProfileListState& st, ClaudeService* svc) {
         return;   // 节流窗口内：下帧再判（可见最多晚一个节流 tick + 1 帧）
     }
     st.lastRefreshPost_ = std::chrono::steady_clock::now();
-    st.refreshFuture_ = std::async(std::launch::async, runDataRefresh, svc,
-                                   wantProfiles, wantProfiles || verChanged);
+    // 后台刷新：**先就绪、后唤醒**（批次 D 评审收尾 2026-10-02，与 claude_ui_logs.cpp
+    // 的调用记录查询同一形态）。次序不能反：std::async 在 callable 返回之后才发布
+    // 值，任务内先唤醒会让 UI 抢跑（compose 收割看到「未就绪」→ 唤醒位已被消费 →
+    // 结果没人上屏）。框架惯例见 EUI-NEO core/async::finishTask / image_source.cpp:949。
+    auto promise = std::make_shared<std::promise<DataRefresh>>();
+    std::shared_future<DataRefresh> published = promise->get_future().share();
+    st.refreshFuture_ = published;
+    st.refreshWorker_ = std::async(
+        std::launch::async,
+        [svc, wantProfiles, wantRecent = wantProfiles || verChanged, promise,
+         published]() {
+            // 次序缝复位（同 claude_ui_logs.cpp）：本轮没探到「已就绪才唤醒」即判红
+            g_dataRefreshWakeSawReady.store(false, std::memory_order_relaxed);
+            try {
+                promise->set_value(
+                    runDataRefresh(svc, wantProfiles, wantRecent));  // ① 就绪
+            } catch (...) {
+                promise->set_exception(std::current_exception());
+            }
+            // ② 就绪之后才唤醒（唯一出口，内部先探真实就绪再发）
+            wakeAfterPublish(published, g_dataRefreshWakeSawReady);
+        });
 }
 
 } // namespace module::claude
+
+// ============ 批次 D 次序缝（生产零调用点，照 CPX-06 测试缝先例）============
+extern "C" bool claude_data_refresh_wake_saw_ready_for_test() {
+    return module::claude::g_dataRefreshWakeSawReady.load();
+}

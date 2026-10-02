@@ -35,6 +35,7 @@
 #include "platform/json.h"
 #include "provider_config.h"
 #include "upstream_dialect.h"
+#include <core/platform/platform.h>   // core::platform::requestUiUpdate（唤醒主循环）
 #include <core/window/window_backend.h>
 #include <ui_kit/metrics.h>
 #include <ui_kit/toast.h>
@@ -591,6 +592,10 @@ private:
                 testResultIsError_ = true;
             }
             testDone_.store(true, std::memory_order_release);
+            // 批次 D（2026-10-02）：后台探测就绪后唤醒主循环。状态（testDone_ +
+            // 文案三段）已经落好才发，次序即「先就绪、后唤醒」；不唤醒则 toast
+            // 要等用户下一次动鼠标才被 compose 收割（harvestTestResult 每帧轮询）。
+            core::platform::requestUiUpdate();
         });
     }
 
@@ -816,6 +821,8 @@ private:
                 }
             }
             testDone_.store(true, std::memory_order_release);
+            // 批次 D（2026-10-02）：同上方校验线程——结果先落状态，再唤醒主循环
+            core::platform::requestUiUpdate();
         });
     }
 

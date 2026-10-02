@@ -11,11 +11,44 @@
 
 #include "claude_service.h"
 
+#include <core/platform/platform.h>   // core::platform::requestUiUpdate
+
+#include <atomic>
+#include <chrono>
 #include <cstddef>
 #include <cstdint>
+#include <future>
 #include <string>
 
 namespace module::claude {
+
+// 批次 D 评审收尾（2026-10-02）：后台任务**结果就绪 → 唤醒主循环**的唯一出口。
+//
+// 为什么要有这个函数：UI 主循环在无动画/无输入时阻塞在 glfwWaitEvents
+//（EUI-NEO core/app/glfw_app_main.cpp 帧末），后台跑完不唤醒 → 结果没人 recompose，
+// 要等用户下一次动鼠标才上屏（本批次主诉「加载特别慢」的根因）。
+//
+// 次序不能反（评审定的 major）：std::async 在 callable **返回之后**才发布值，
+// 若在任务里先唤醒、后 set_value，UI 会抢跑——compose 收割时 wait_for(0) 看到
+// 「未就绪」→ 唤醒位已被消费、脏标记已清 → 结果落在内存里没人再上屏，原症状
+// 间歇复现。框架惯例：EUI-NEO core/async::finishTask（先落状态再 postReadyEvent）、
+// core/render/image_source.cpp、core/platform/network.cpp。
+//
+// 把「探就绪」和「唤醒」绑在同一个出口里，是为了让次序可判定：seam 在**唤醒那一刻**
+// 真读一次共享状态（不是另找一处写死 true）。次序写反 / 绕过本函数直接唤醒 →
+// seam 停在 false → 无头用例判红（见 test_claude_calls_latency.cpp）。
+template <typename T>
+void wakeAfterPublish(const std::shared_future<T>& published,
+                      std::atomic<bool>& sawReadySeam) {
+    sawReadySeam.store(published.wait_for(std::chrono::seconds(0)) ==
+                           std::future_status::ready,
+                       std::memory_order_relaxed);
+    // 不唤醒 = 结果要等用户下一次输入；glfwPostEmptyEvent 文档标注
+    // 「may be called from any thread」，后台线程调用合法。
+    // 用 core 层而不是 app::requestUpdate()：后者的定义只编进 app main TU
+    //（glfw_app_main.cpp），probe/无头链接报 Undefined symbols。
+    core::platform::requestUiUpdate();
+}
 
 // 格式化毫秒数为 "1234ms" / "1.2s"
 std::string formatLatency(int64_t ms);

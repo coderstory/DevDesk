@@ -72,9 +72,12 @@ struct ProfileListState {
     bool dataDirty_ = true;
     bool dataLoaded_ = false;   // 快照是否装载过（冷启动兜底判据，见 refreshDataCache）
     uint64_t seenCallLogVersion_ = ~0ull;
-    // 审计 H2：后台刷新在途 future（工作线程不触碰 this，结果经值回渲染线程；
-    // 成员析构 = future 析构，自动等本轮查询结束 → 无悬垂）
-    std::future<DataRefresh> refreshFuture_;
+    // 审计 H2：后台刷新结果槽 + worker 生命周期（语义同 LogsState::callsFuture_ /
+    // callsWorker_，批次 D 评审收尾 2026-10-02）：shared_future = 结果共享状态，
+    // worker set_value 发布 → 之后再 requestUiUpdate 唤醒；std::async 的 future
+    // 留作 join 句柄。在途判据 = refreshFuture_.valid()。
+    std::shared_future<DataRefresh> refreshFuture_;
+    std::future<void> refreshWorker_;
     std::chrono::steady_clock::time_point lastRefreshPost_{};  // 节流窗口起点
     // 刷新节流窗口（原 static constexpr 成员；static 成员随 struct 走，
     // 只声明在状态旁边，不占实例字节）
@@ -227,9 +230,15 @@ struct LogsState {
     bool callsPageDirty_ = true;     // 置脏 → 下一帧（弹窗打开时）发一次读意图
     bool callsPageLoaded_ = false;   // 快照是否装载过（未装载显示「加载中…」）
     std::chrono::steady_clock::time_point callsEarliestQueryAt_{};  // 最早派发时刻
-    // 后台查询在途 future（工作线程不触碰 this，结果经值回渲染线程；成员析构
-    // = future 析构，自动等本轮查询结束 → 无悬垂）
-    std::future<CallsPage> callsFuture_;
+    // 后台查询结果槽 + worker 生命周期（工作线程不触碰 this；成员析构自动等本轮
+    // 查询结束 → 无悬垂）。批次 D 评审收尾（2026-10-02）改成 shared_future 的一对：
+    //   callsFuture_ 结果**共享状态**（worker 里 promise.set_value 发布 → 就绪），
+    //                渲染线程 wait_for(0) 收割后显式清空（shared_future::get 不失效）
+    //   callsWorker_ std::async 的 future，只是 join 句柄——不留它就等于同步派发
+    //                （临时 future 析构会阻塞到任务跑完）；它不表示「在途」。
+    // 「在途」判据仍是 callsFuture_.valid()（派发即有效、收割即清空，语义同旧版）。
+    std::shared_future<CallsPage> callsFuture_;
+    std::future<void> callsWorker_;
 };
 
 // ============ 容器：模块唯一的 UI 状态成员（compose 内一律 state_.xxx.yyy_）============

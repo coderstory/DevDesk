@@ -95,6 +95,7 @@
 #include "core/tool.h"
 #include "core/component_theme.h"
 #include "platform/file_open.h"
+#include <core/platform/platform.h>   // core::platform::requestUiUpdate（唤醒主循环）
 #include "platform/system_theme.h"
 
 // ---- 审计 [5][36] 解耦桥：module_pet 自由函数声明 ----
@@ -1013,7 +1014,9 @@ private:
         if (logTailFuture_.valid() &&
             logTailFuture_.wait_for(std::chrono::seconds(0)) ==
                 std::future_status::ready) {
-            applyLogTail(logTailFuture_.get());
+            auto lines = logTailFuture_.get();   // shared_future::get 不失效
+            logTailFuture_ = {};                 // 显式清空 = 让出「在途」判据
+            applyLogTail(std::move(lines));
         }
         if (!logTailLoaded_) {
             // 冷启动兜底：快照从未装载过（调用方未走 onStart）时本帧同步读一次。
@@ -1027,7 +1030,22 @@ private:
             return;
         }
         logTailDirty_ = false;
-        logTailFuture_ = std::async(std::launch::async, readLogTailLines);
+        // 批次 D 评审收尾（2026-10-02）：**先就绪、后唤醒**（与 claude_ui_logs.cpp /
+        // claude_ui_state.cpp 同一形态）。std::async 在 callable 返回之后才发布值，
+        // 任务内先唤醒会让 UI 抢跑（compose 收割看到「未就绪」→ 唤醒位已被消费 →
+        // 结果没人上屏，本卡停在旧快照）。原先完全没唤醒：日志 tail 要等用户下一次
+        // 动鼠标才被 compose 收割。
+        auto promise =
+            std::make_shared<std::promise<std::vector<std::string>>>();
+        logTailFuture_ = promise->get_future().share();
+        logTailWorker_ = std::async(std::launch::async, [promise] {
+            try {
+                promise->set_value(readLogTailLines());   // ① 结果落到共享状态
+            } catch (...) {
+                promise->set_exception(std::current_exception());
+            }
+            core::platform::requestUiUpdate();            // ② 就绪之后才唤醒
+        });
     }
 
     // 审计 THS-01：外部状态只读快照的刷新点（H2 同款：读一次 → 存成员 →
@@ -1079,9 +1097,12 @@ private:
     unsigned logTailVersion_ = 0;         // tail 读取版本号（进日志查看卡 contentKey）
     bool logTailDirty_ = true;            // 待重读标记（切日志 tab / 点刷新置位）
     bool logTailLoaded_ = false;          // 快照是否装载过（冷启动兜底，见 refreshLogTailCache）
-    // 审计 H2：后台读盘的在途 future（读盘线程不碰成员，结果经值回渲染线程；
-    // 成员析构 = future 析构，自动等读盘结束 → 无悬垂）
-    std::future<std::vector<std::string>> logTailFuture_;
+    // 审计 H2：后台读盘结果槽 + worker 生命周期（批次 D 评审收尾：结果槽改
+    // shared_future，worker set_value 发布 → 再 requestUiUpdate 唤醒；
+    // std::async 的 future 只作 join 句柄，不留它 = 同步派发）。在途判据 =
+    // logTailFuture_.valid()（派发即有效、收割即清空，语义同旧版）。
+    std::shared_future<std::vector<std::string>> logTailFuture_;
+    std::future<void> logTailWorker_;
     // ---- 审计 THS-01：外部状态只读快照（compose 不做 fs 查询）----
     bool externalStateLoaded_ = false;    // 首次装载标记（compose 冷启动兜底）
     bool takeoverManaged_ = false;        // Claude Code 接管（sidecar 存在性）

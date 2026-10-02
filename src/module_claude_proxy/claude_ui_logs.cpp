@@ -18,6 +18,8 @@
 #include <chrono>
 #include <ctime>
 #include <functional>
+#include <future>   // promise / shared_future（先就绪、后唤醒）
+#include <memory>
 #include <string>
 #include <thread>
 #include <utility>
@@ -34,7 +36,31 @@ namespace module::claude {
 std::atomic<int> g_callsQueryDispatches{0};
 std::atomic<unsigned long long> g_callsQueryDispatchThread{0};
 
+// 批次 D 诊断（2026-10-02）计时缝：把「打开弹窗 → 首帧 → 查询派发 → 结果上屏」
+// 每一段的绝对时刻用 steady_clock 纳秒打点（0 = 该事件还没发生），无头用例读
+// 差值即得各段耗时（口径与 g_callsQueryDispatches 同：生产零读取点）。
+//   dispatch_ns      派发点（渲染线程，std::async 之前一行）
+//   worker_start_ns  worker 进入 runCallsQuery（= 线程唤醒完成、开始查库）
+//   worker_done_ns   worker 查出结果（含 countCalls），已发出唤醒请求
+//   harvest_ns       渲染线程把结果搬进快照（applyCallsPage 成功分支）
+std::atomic<long long> g_callsQueryDispatchNs{0};
+std::atomic<long long> g_callsQueryWorkerStartNs{0};
+std::atomic<long long> g_callsQueryWorkerDoneNs{0};
+std::atomic<long long> g_callsQueryHarvestNs{0};
+// 次序缝（批次 D 评审收尾 2026-10-02）：唤醒那一刻**真实探一次**结果共享状态是否
+// 已就绪（worker 里 published.wait_for(0) == ready）。「先唤醒、后就绪」是本批次
+// 修过的原始 bug 的复发形态，而它只靠最终结果断言抓不到（发布与消费的窗口极窄）
+// ——这条探针把它变成可判定断言。
+std::atomic<bool> g_callsQueryWakeSawReady{false};
+
 namespace {
+
+// steady_clock 纳秒（唯一用途：上面四个计时缝）
+long long steadyNs() {
+    return std::chrono::duration_cast<std::chrono::nanoseconds>(
+               std::chrono::steady_clock::now().time_since_epoch())
+        .count();
+}
 
 // 唯一跑在后台线程的调用记录 DB 入口（static：不碰成员，可安全脱离渲染
 // 线程）。当页行 + 总匹配数在**同一次派发**内取（原先渲染路径每键两次同步
@@ -47,6 +73,7 @@ CallsPage runCallsQuery(ClaudeService* svc, ClaudeService::CallLogQuery q) {
         static_cast<unsigned long long>(
             std::hash<std::thread::id>{}(std::this_thread::get_id())),
         std::memory_order_relaxed);
+    g_callsQueryWorkerStartNs.store(steadyNs(), std::memory_order_relaxed);
     CallsPage p;
     auto r = svc->queryCalls(q);
     if (r.isFail()) {
@@ -101,6 +128,7 @@ void applyCallsPage(LogsState& st, CallsPage p,
     }
     st.allCalls_ = std::move(p.rows);
     st.callsTotalMatches_ = p.total;
+    g_callsQueryHarvestNs.store(steadyNs(), std::memory_order_relaxed);
 }
 
 // 审计 CPX-06：弹窗打开时 compose 每帧调，只做两件零 IO 的事——
@@ -114,7 +142,9 @@ void refreshCallsCache(LogsState& st,
     if (st.callsFuture_.valid() &&
         st.callsFuture_.wait_for(std::chrono::seconds(0)) ==
             std::future_status::ready) {
-        applyCallsPage(st, st.callsFuture_.get(), toast);
+        CallsPage page = st.callsFuture_.get();   // shared_future::get 不失效
+        st.callsFuture_ = {};                     // 显式清空 = 让出「在途」判据
+        applyCallsPage(st, std::move(page), toast);
     }
     if (!st.callsPageDirty_ || st.callsFuture_.valid()) {
         return;   // 空闲帧零开销 / 上一轮在途不叠加（脏标记留到下帧再判）
@@ -133,8 +163,37 @@ void refreshCallsCache(LogsState& st,
     st.callsPageDirty_ = false;
     // 测试缝：派发点计数（在渲染线程上做 → 同帧可读，断言不靠时序）
     g_callsQueryDispatches.fetch_add(1, std::memory_order_relaxed);
-    st.callsFuture_ = std::async(std::launch::async, runCallsQuery, svc,
-                                 callsQueryNow(st));
+    g_callsQueryDispatchNs.store(steadyNs(), std::memory_order_relaxed);
+    // 后台查询：**先就绪、后唤醒**（批次 D 评审收尾 2026-10-02）。次序不能反——
+    // std::async 在 callable **返回之后**才发布值，若在任务内先唤醒，UI 可能抢跑：
+    // compose 收割时 wait_for(0) 看到「未就绪」→ 唤醒位已被消费、脏标记已清 →
+    // 结果落在内存里没人再上屏，原症状间歇复现（且无头用例抓不到）。
+    // 框架惯例同款：EUI-NEO core/async::finishTask（先落状态再 postReadyEvent）、
+    // core/render/image_source.cpp:949、core/platform/network.cpp:250-257。
+    // 为什么用 core::platform::requestUiUpdate() 而不是 app::requestUpdate()：
+    // 后者的定义只编进 app main TU（glfw_app_main.cpp），probe/无头链接不到
+    //（ui_kit/splash.h 已为同一坑把测试缝改成 header inline）；core 层符号全部
+    // 消费方链得到，且 glfwPostEmptyEvent 文档标注「may be called from any
+    // thread」。失败也要唤醒（失败要弹 toast），故 set_* 之后无条件发。
+    auto promise = std::make_shared<std::promise<CallsPage>>();
+    std::shared_future<CallsPage> published = promise->get_future().share();
+    st.callsFuture_ = published;
+    st.callsWorker_ = std::async(
+        std::launch::async,
+        [svc, q = callsQueryNow(st), promise, published]() {
+            // 次序缝复位：本轮若没有任何一次「唤醒前探到已就绪」的记录，用例判红
+            // （唤醒被绕过 / 唤醒跑在发布之前 都会让它停在 false）
+            g_callsQueryWakeSawReady.store(false, std::memory_order_relaxed);
+            try {
+                // worker 启动计时缝在 runCallsQuery 入口记（同旧版口径）
+                promise->set_value(runCallsQuery(svc, q));   // ① 结果落到共享状态
+            } catch (...) {
+                promise->set_exception(std::current_exception());
+            }
+            // ② 就绪之后才唤醒（唯一出口，内部先探一次真实就绪再发）
+            wakeAfterPublish(published, g_callsQueryWakeSawReady);
+            g_callsQueryWorkerDoneNs.store(steadyNs(), std::memory_order_relaxed);
+        });
 }
 
 } // namespace
@@ -402,4 +461,27 @@ extern "C" int claude_calls_query_dispatches_for_test() {
 
 extern "C" unsigned long long claude_calls_query_last_thread_for_test() {
     return module::claude::g_callsQueryDispatchThread.load();
+}
+
+// 批次 D 诊断（2026-10-02）：四个计时点的 steady_clock 纳秒时刻（0 = 未发生）。
+// 用例读差值得「派发 → worker 启动 → worker 查完 → 结果上屏」各段耗时。
+extern "C" long long claude_calls_query_dispatch_ns_for_test() {
+    return module::claude::g_callsQueryDispatchNs.load();
+}
+
+extern "C" long long claude_calls_query_worker_start_ns_for_test() {
+    return module::claude::g_callsQueryWorkerStartNs.load();
+}
+
+extern "C" long long claude_calls_query_worker_done_ns_for_test() {
+    return module::claude::g_callsQueryWorkerDoneNs.load();
+}
+
+extern "C" long long claude_calls_query_harvest_ns_for_test() {
+    return module::claude::g_callsQueryHarvestNs.load();
+}
+
+// 次序缝：最近一次唤醒发出时，结果共享状态是否**已经就绪**（true = 先就绪后唤醒）
+extern "C" bool claude_calls_query_wake_saw_ready_for_test() {
+    return module::claude::g_callsQueryWakeSawReady.load();
 }
