@@ -106,6 +106,11 @@ public:
     Result<void> applySchema(const std::string& sql);
 
     std::recursive_mutex& mutex() { return *mutex_; }
+    // 裸句柄逃生口：**调用方须自持 mutex()**，且锁须覆盖到用完为止（同仓库惯例，
+    // 见 proxy_router.cpp:118 lastInsertRowId 的调用点注释）。
+    // 逃生口的理由：sqlite3_changes / sqlite3_last_insert_rowid 这类「连接级上次
+    // 操作结果」只能从裸句柄取。它们与写语句的配对是**跨调用**原子性，
+    // SQLITE_OPEN_FULLMUTEX（见 sqlite_db.cpp open()）只锁单次 API 调用、盖不住。
     sqlite3* handle() { return handle_; }
 
 private:

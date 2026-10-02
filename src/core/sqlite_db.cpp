@@ -213,7 +213,20 @@ int Statement::columnCount() const {
 
 Result<SqliteDb> SqliteDb::open(const std::filesystem::path& file) {
     sqlite3* handle = nullptr;
-    int rc = sqlite3_open(file.string().c_str(), &handle);
+    // SQLITE_OPEN_FULLMUTEX = 兜底（2026-10-02 评审收尾，防的是**将来**再漏一处锁）：
+    // 本进程只有这一条连接、流量极小，代价只是 sqlite 内部的连接级互斥——单线程
+    // 路径上就是一次无竞争的加解锁；换来的是任何未来漏掉的锁从「用户侧崩溃
+    // （SIGSEGV/SIGBUS，见 sqlite_db.h 抬头）」降级成「正确串行化」。
+    // 本机实测（macOS 系统 libsqlite3，sqlite3_threadsafe()==2）：裸 sqlite3_open 的
+    // sqlite3_db_mutex(handle)==NULL（连接内部零自锁），加上本 flag 后非 NULL。
+    //
+    // 上面那把 recursive_mutex **必须留着**，FULLMUTEX 替代不了它：FULLMUTEX 只保证
+    // **单次** sqlite3 API 调用互斥，盖不住跨调用的原子性——transaction() 的
+    // BEGIN+fn()+COMMIT 整段、以及 sqlite3_changes / sqlite3_last_insert_rowid
+    // 这类「连接级上次操作结果」与写语句的配对（AgentStore/TodoService 靠它判断
+    // 这一行是否被自己改到），只有本仓库这把锁在保证；去掉它 FULLMUTEX 不会补上。
+    int rc = sqlite3_open_v2(file.string().c_str(), &handle,
+        SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE | SQLITE_OPEN_FULLMUTEX, nullptr);
     if (rc != SQLITE_OK) {
         std::string err = handle ? sqlite3_errmsg(handle) : "unknown";
         if (handle) sqlite3_close(handle);

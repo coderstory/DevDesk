@@ -19,16 +19,24 @@
 //
 // 本用例就是按这两条形状打：持锁读（UI）× 无锁读（agent）× 持锁写（scheduler），
 // 三个线程 barrier 对齐、有界轮数、无 sleep。
-// **变异验证口径**：回退 src/core/sqlite_db.cpp 的持锁 finalize/close（或把
-// Statement::releaseStmt 改回裸 sqlite3_finalize），本用例在数百轮内即
-// SIGSEGV/SIGBUS 或挂死（= ctest 失败）；恢复修复则 8 线程 × 5000 轮稳定全绿。
+// **变异验证口径**（2026-10-02 评审收尾后必须连 flag 一起看）：本用例「崩」这件事
+// 只在**没有** SQLITE_OPEN_FULLMUTEX 的构建上成立——把 Statement::releaseStmt 改回
+// 裸 sqlite3_finalize（或回退持锁 finalize/close），在去掉该 flag 的连接上跑，数百轮
+// 内即 SIGSEGV/SIGBUS 或挂死（= ctest 失败）；**加上 flag 后同一次漏锁会被 sqlite
+// 内部的连接级互斥串行化，不再崩**（实测：摘掉 columnCount 的锁 + 20 万轮 = 全绿）。
+// 即：现在绿灯 ≠ 没漏锁，漏锁被兜底降级成静默串行（这正是加 flag 的目的）；要抓漏锁
+// 得回到无 flag 构建复现，或靠锁内静态审计。原始崩溃复现证据见 fix-report §2。
+// 恢复修复（且带 flag）则 8 线程 × 5000 轮稳定全绿。
 #include "doctest.h"
 #include "core/sqlite_db.h"
+
+#include <sqlite3.h>   // 仅 (c) 段用：sqlite3_threadsafe / sqlite3_db_mutex 证明 FULLMUTEX 生效
 
 #include <atomic>
 #include <barrier>
 #include <cstdlib>
 #include <filesystem>
+#include <memory>
 #include <string>
 #include <thread>
 #include <vector>
@@ -167,5 +175,123 @@ REGISTER_TEST(sqlite_cross_thread_same_connection,
     auto verdict = row.value().getString("integrity_check");
     DOCTEST_REQUIRE(verdict.isOk());
     DOCTEST_CHECK(verdict.value() == "ok");
+    return true;
+})
+
+// ==================== 评审收尾补强用例（2026-10-02） ====================
+//
+// 主用例（上面那条）打的是三种真实线程形状；本条补两个主用例形状外的边界，外加
+// 一条对 FULLMUTEX 兜底的自证：
+//   (a) `Statement::columnCount()` 被一个线程**无外层锁**狂打，同时另一线程不断
+//       prepare + 析构（每次析构 = 一次持锁 finalize）。旧实现的 columnCount 不持锁，
+//       正是 2026-10-02 补锁的那一处（见 sqlite_db.cpp 顶部注释）。
+//   (b) 语句活得比宿主 `SqliteDb` 久：语句 move 到宿主作用域外，宿主先析构
+//       （close_v2 → 连接转 zombie，内存留到最后一条语句 finalize），两个线程再同时
+//       用这条「宿主已亡」的语句。锁对象必须随 Statement 的 shared_ptr 存活——旧写法
+//       Statement 持「db 的 mutex 引用」，这里是悬垂加锁；语句内存也必须活到它自己
+//       finalize（zombie 语义，实测量过：zombie 上读元数据仍返回正确列数）。
+//   (c) FULLMUTEX 兜底确实生效（不是只改了代码）：库支持线程安全时，带 flag 打开的
+//       连接内部必须有真锁。本机（macOS 系统 libsqlite3，sqlite3_threadsafe()==2）
+//       实测裸 sqlite3_open 的 sqlite3_db_mutex()==NULL、加 FULLMUTEX 后非 NULL。
+//
+// 变异口径（诚实边界）：本条的 (a)/(b) 是**结构性回归守卫**，不是「旧实现必崩」的
+// canary——实测把 columnCount 的锁摘掉（回到修复前）后，本条 20 万轮仍全绿：漏锁现在
+// 被 FULLMUTEX 在 sqlite 内部串行化掉了，崩不出来。真正的变异证据只有主用例在**无该
+// flag** 的构建上重现的那次（fix-report §2.2，链接旧实现 3/3 SIGSEGV）；本条管的是
+// 「锁与所有权结构还在不在」，以及 (c) 那种「flag 到底有没有生效」的自证。
+// 轮数复用主用例的 stressIters()（默认 5000）：本轮打的是「一次调用 vs 一次 finalize」
+// 的窄窗口，轮数不够等于没打；默认值不随环境漂移，深压测同样用环境变量放大。
+
+REGISTER_TEST(sqlite_stmt_lifecycle_cross_thread,
+              "SqliteDb: columnCount 跨线程竞争 + 语句活过宿主（锁 shared_ptr 存活）+ FULLMUTEX 兜底生效", {
+    const long iters = stressIters();
+
+    auto path = test_temp::tempPath("devdesk_sqlite_stmt_lifecycle.db");
+    std::error_code ec;
+    std::filesystem::remove(path, ec);
+
+    auto opened = core::data::SqliteDb::open(path);
+    DOCTEST_REQUIRE(opened.isOk());   // 断言全部前置在起线程之前（同主用例：线程跑
+    auto& db = opened.value();        // 起来后 fail-fast return 会撞 joinable thread）
+
+    // (c) FULLMUTEX 兜底生效的自证（见文件尾注释）
+    if (sqlite3_threadsafe() != 0) {   // THREADSAFE=0 的库会忽略该 flag，按库能力门控
+        DOCTEST_CHECK(sqlite3_db_mutex(db.handle()) != nullptr);
+    }
+
+    DOCTEST_REQUIRE(db.exec(
+        "CREATE TABLE t(id INTEGER PRIMARY KEY, v TEXT)").isOk());
+    DOCTEST_REQUIRE(db.exec("INSERT INTO t(id,v) VALUES(1,'x')").isOk());
+
+    // ---- (a) 稳定语句 columnCount（自带锁）× 另一线程 prepare→析构（持锁 finalize）----
+    auto stable = db.prepare("SELECT id,v FROM t WHERE id=?");
+    DOCTEST_REQUIRE(stable.isOk());
+    DOCTEST_REQUIRE(stable.value().bind(1, static_cast<int64_t>(1)).isOk());
+    DOCTEST_REQUIRE(stable.value().columnCount() == 2);   // 列数恒定，供跨线程比对
+
+    std::barrier<> gate(3);   // 2 个 worker + 本线程（计数含 main，同主用例）
+    std::atomic<long> cols{0}, finals{0}, failures{0};
+
+    std::thread reader([&] {
+        gate.arrive_and_wait();
+        for (long i = 0; i < iters; ++i) {
+            // 刻意不持外层锁：columnCount 必须自带锁（2026-10-02 补的就是这处）
+            if (stable.value().columnCount() != 2) { ++failures; continue; }
+            ++cols;
+        }
+    });
+    std::thread churn([&] {
+        gate.arrive_and_wait();
+        for (long i = 0; i < iters; ++i) {
+            auto st = db.prepare("SELECT id,v FROM t WHERE id=1");
+            if (st.isFail()) { ++failures; continue; }
+            auto rows = st.value().fetchAll();
+            if (rows.isFail() || rows.value().size() != 1) { ++failures; continue; }
+            ++finals;
+        }   // 本轮 st 在此析构 → releaseStmt() 持锁 finalize
+    });
+
+    gate.arrive_and_wait();
+    reader.join();
+    churn.join();
+    DOCTEST_CHECK(failures.load() == 0);
+    DOCTEST_CHECK(cols.load() == iters);
+    DOCTEST_CHECK(finals.load() == iters);
+
+    // ---- (b) 语句活过宿主（move 出 + 宿主先析构，close_v2 转 zombie）----
+    auto orphanPath = test_temp::tempPath("devdesk_sqlite_orphan_stmt.db");
+    std::filesystem::remove(orphanPath, ec);
+    std::unique_ptr<core::data::Statement> orphan;
+    {
+        auto owner = core::data::SqliteDb::open(orphanPath);
+        DOCTEST_REQUIRE(owner.isOk());
+        auto st = owner.value().prepare("SELECT 1 AS one");
+        DOCTEST_REQUIRE(st.isOk());
+        orphan = std::make_unique<core::data::Statement>(std::move(st.value()));
+    }   // owner 析构：句柄 close_v2；语句未 finalize → zombie，内存留到语句终结
+
+    DOCTEST_REQUIRE(orphan != nullptr);
+    DOCTEST_REQUIRE(orphan->columnCount() == 1);
+
+    std::barrier<> gate2(3);   // 2 个 worker + 本线程
+    std::atomic<long> orphanReads{0}, orphanBad{0};
+    auto hammerOrphan = [&] {
+        gate2.arrive_and_wait();
+        for (long i = 0; i < iters; ++i) {
+            // 锁若没随 shared_ptr 存活（旧写法 = db 的 mutex 引用），这里就是对
+            // 已释放 mutex 加锁 → UAF
+            if (orphan->columnCount() != 1) { ++orphanBad; continue; }
+            ++orphanReads;
+        }
+    };
+    std::thread o1(hammerOrphan), o2(hammerOrphan);
+    gate2.arrive_and_wait();
+    o1.join();
+    o2.join();
+    DOCTEST_CHECK(orphanBad.load() == 0);
+    DOCTEST_CHECK(orphanReads.load() == 2 * iters);
+
+    orphan.reset();   // Statement 析构 → 持锁 finalize → zombie 连接此刻真正回收
+    std::filesystem::remove(orphanPath, ec);
     return true;
 })
