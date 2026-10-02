@@ -1584,3 +1584,38 @@ REGISTER_TEST(provider_config_one_m_normalize,
                      module::claude::deriveDisplayName("m-def"));
     return true;
 })
+
+REGISTER_TEST(provider_config_reverse_sync_normalizes_one_m_markers,
+              "provider_config: 反向同步归一 1M 标记（不支持槽位的手写标记不落库）", {
+    // 审计 m4：provider_config.h 原先自认「未覆盖反向同步（settings.json → profile）
+    // 路径」。后果——用户手写 [1M] 到**不支持 1M 的槽位**（haiku 是全表唯一
+    // supportsOneM=false）再被反向同步进库时，标记照落库，下次打开表单开关状态
+    // 与落库值不一致。
+    using module::claude::mergeReverseSyncEnv;
+    using module::claude::parseEnvForReverseSync;
+    using module::claude::parseModelsConfig;
+
+    // 现值（已归一：haiku 无标记、def 带规范标记）
+    const std::string curModels = R"json({
+        "default": {"model": "m-old[1M]", "name": ""},
+        "haiku":   {"model": "m-haiku-old", "name": ""}
+    })json";
+    // settings.json 侧：用户给不支持 1M 的 haiku 手写了 [1m]（小写也不放过）
+    auto parsed = parseEnvForReverseSync(
+        R"({"ANTHROPIC_MODEL": "m-new[1m]", "ANTHROPIC_DEFAULT_HAIKU_MODEL": "m-haiku-new[1m]"})",
+        {});
+    DOCTEST_REQUIRE(parsed.ok);
+
+    const auto m = mergeReverseSyncEnv(parsed.cfg, curModels, "{}");
+    auto mc = parseModelsConfig(m.modelsConfigJson);
+    DOCTEST_REQUIRE(mc.isOk());
+    // 支持 1M 的 default：保留 + 规范化大小写
+    DOCTEST_CHECK_EQ(mc.value().def.model, std::string("m-new[1M]"));
+    // **不支持 1M 的 haiku：标记被剥掉**（这条就是本次修的那条）
+    DOCTEST_CHECK_EQ(mc.value().haiku.model, std::string("m-haiku-new"));
+
+    // 反向对照：若现值本身就与归一后的结果一致，判为「无变化」，不产生写库
+    const auto same = mergeReverseSyncEnv(parsed.cfg, m.modelsConfigJson, "{}");
+    DOCTEST_CHECK_FALSE(same.modelsChanged);
+    return true;
+})

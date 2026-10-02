@@ -45,6 +45,20 @@ namespace module::agent {
 
 class AgentLoop;
 
+// UI 轮询判停的**唯一判定**（2026-10-03 审计 m7）。
+//
+// 真因：AgentLoop 收尾 finishRun 写库失败时，DB 里那行永远停在 'running'（run
+// 线程早已结束、行再也等不到改写）。若「DB 里有 running 行」就当作「还有 run 在
+// 跑」，uiPolling_ 永不复位 → 此后**每帧一次 refreshData()**（N+1 次查询）
+// 直到重启。触发条件窄（磁盘满 / DB 写错），后果重（100% CPU + 持续磁盘 IO +
+// UI 卡死）。
+//
+// 孤儿 runId（收尾失败，由 AgentLoop 的 FinishFailureFn 记入）必须排除。
+// 注意比对的是 AgentRunRow::**id**（runId），不是 map 的键（键是 taskId）。
+// 抽成自由函数是为了能被单测直接钉死——判停逻辑一旦回退，测试会红。
+bool hasLiveRun(const std::map<int64_t, AgentRunRow>& latestRuns,
+                const std::set<int64_t>& orphanedRunIds);
+
 class AgentModule : public ::core::Module {
 public:
     // 依赖注入：测试直接构造传 fake；生产工厂传空 Deps，onStart 内回退
@@ -154,6 +168,10 @@ private:
     //（现全部调用点同在主线程，属纵深防御，不为省锁去改契约）
     std::mutex runsMu_;
     std::vector<std::unique_ptr<ActiveRun>> runs_;
+    // 收尾写库失败的 runId（AgentLoop 的 FinishFailureFn 回报，run 线程写）。
+    // 这些 run 的 DB 行永远停在 'running'，判停时必须排除，否则 uiPolling_
+    // 永不复位 → 每帧一次 refreshData() 直到重启。与 runs_ 同用 runsMu_。
+    std::set<int64_t> orphanedRunIds_;
 
     // compose 数据缓存（仅主线程读写；run 线程只经 SQLite 触库，不碰这里）
     std::vector<AgentTaskRow> tasks_;

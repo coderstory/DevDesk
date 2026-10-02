@@ -37,6 +37,23 @@ void replaceFile(const std::filesystem::path& tmp,
                  const std::filesystem::path& target,
                  std::error_code& ec);
 
+// 让 tmp **以「仅属主可读写」的权限就位**（不写内容），供 atomicWriteFile 在
+// 打开写句柄之前先调。
+//
+// 为什么需要它：直接 `ofstream(tmp, trunc)` 建文件时，POSIX 上权限位由 umask 决定
+//（典型 0644），且**在 open() 那一刻就定死**。事后 chmod 追不回来——chmod 之前
+// 若已被别的用户 open 住，那把 fd 之后仍可读，而我们会往同一个 inode 里写密钥。
+// 所以收紧必须发生在 open(O_CREAT) 之前：让文件从出生起就是 0600。
+// 存在即失败返回 false 且填 ec。
+//
+// POSIX（atomic_write_posix.cpp）：open(O_CREAT|O_EXCL, S_IRUSR|S_IWUSR) 新建；
+//   若已存在（上一轮崩溃的残留）→ 先 permissions(replace) 收紧再复用。
+// Windows（atomic_write_win.cpp）：权限模型是 ACL 而非 POSIX 模式位，数据根在
+//   %USERPROFILE% 下、NTFS 继承的默认 ACL 已是「仅本用户 + Administrators/SYSTEM」，
+//   故此处无 chmod 可做；只把「先建后写」的次序固定下来。**诚实说明**：本函数在
+//   Windows 上不构成额外的安全加固，那边的凭据落点保护由目录 ACL 承担。
+bool prepareRestrictedFile(const std::filesystem::path& tmp, std::error_code& ec);
+
 } // namespace detail
 
 } // namespace core

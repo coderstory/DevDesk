@@ -1,6 +1,7 @@
 // src/core/file_perms.h
 // 凭据落点文件权限（平台适配：接口隔离，实现按平台拆文件
-// file_perms_win.cpp / file_perms_macos.cpp / file_perms_posix.cpp）
+// file_perms_posix.cpp / file_perms_win.cpp —— **没有 _macos.cpp**，macOS 走
+// _posix 那份；原抬头写的 file_perms_macos.cpp 不存在，别去找）
 //
 // 背景（2026-10-02 存储统一设计 §6.2/§6.3）：profile 的 API key 从系统钥匙串
 // 迁进 SQLite 列后，macOS / POSIX 上**列里就是明文**——保护级别 = 文件权限级。

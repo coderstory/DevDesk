@@ -3,6 +3,8 @@
 // （实施计划 docs/superpowers/plans/2026-10-02-quota-implementation-plan.md §G0）
 #include "quota_registry.h"
 
+#include <iterator>
+
 #include "opencode_go_provider.h"  // G1：OpenCode Go 工厂
 #include "deepseek_provider.h"    // G3：DeepSeek 工厂
 #include "provider_minimax_cn.h"   // G2：MiniMax 中国站工厂
@@ -30,6 +32,12 @@ constexpr QuotaProviderEntry kQuotaProviders[] = {
     {"volcano", &volcanoProvider},  // G4 火山方舟（Agent Plan / Coding Plan）
     {nullptr, nullptr},  // ← 表尾哨兵；后续 provider 的行插在本行之前
 };
+
+std::size_t quotaProviderTableLength() {
+    // 就地 std::size：长度由表本身算出，头文件里那行是边界未知的 extern 数组
+    //（对它 sizeof 编译不过，见 quota_registry.h 本函数的说明）
+    return std::size(kQuotaProviders);
+}
 
 const QuotaProvider* findProvider(const std::string& id,
                                   std::span<const QuotaProviderEntry> table) {

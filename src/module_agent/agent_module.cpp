@@ -73,6 +73,23 @@
 #include "module_agent/trigger_config.h"
 
 namespace module::agent {
+
+bool hasLiveRun(const std::map<int64_t, AgentRunRow>& latestRuns,
+                const std::set<int64_t>& orphanedRunIds) {
+    for (const auto& [taskId, run] : latestRuns) {
+        (void)taskId;
+        if (run.status != "running") continue;
+        // 孤儿 = 收尾写库失败，那行永远停在 running 却没有任何活线程在跑；
+        // 算进去 uiPolling_ 就永不复位（见 agent_module.h 本函数的说明）。
+        // ⚠️ 比对的是 **run.id（runId）**而不是 map 的键——键是 taskId
+        //（latestRuns_ 是「taskId → 最近一次 run」），而 FinishFailureFn 回报的是
+        // runId。写成用键比对会永远查不中，等于没排除。
+        if (orphanedRunIds.count(run.id) != 0) continue;
+        return true;
+    }
+    return false;
+}
+
 namespace {
 
 // run 状态 → 中文展示（契约：完成态含「成功/失败/已取消」；无 run / 未知态
@@ -456,7 +473,18 @@ void AgentModule::ensureLlm() {
     }
     llm_ = std::make_unique<LlmClient>(*proxy, deps_.http);
     loop_ = std::make_unique<AgentLoop>(*llm_, ::core::ToolRegistry::instance(),
-                                        *store_);
+                                        *store_, AgentLoop::NowMsFn{},
+                                        [this](int64_t runId, std::string reason) {
+                                            // 收尾写库失败 → 那个 runId 的 DB 行永远停在
+                                            // running。记下来，refreshData 的 dbRunning
+                                            // 判定把它排除，否则 uiPolling_ 永不复位
+                                            // （每帧一次 refreshData 直到重启）。
+                                            std::lock_guard<std::mutex> lock(runsMu_);
+                                            orphanedRunIds_.insert(runId);
+                                            LOG_ERROR("Agent: run " + std::to_string(runId) +
+                                                      " 收尾写库失败，已记为孤儿 run（"
+                                                      "不计入 UI 轮询判停）：" + reason);
+                                        });
     if (scheduler_ == nullptr) {
         scheduler_ = std::make_unique<Scheduler>(*store_, *loop_, deps_.schedulerNow);
         scheduler_->start();
@@ -831,11 +859,9 @@ void AgentModule::refreshData() {
         }
     }
     bool dbRunning = false;
-    for (const auto& [id, run] : latestRuns_) {
-        if (run.status == "running") {
-            dbRunning = true;
-            break;
-        }
+    {
+        std::lock_guard<std::mutex> lock(runsMu_);
+        dbRunning = hasLiveRun(latestRuns_, orphanedRunIds_);
     }
     if (!anyAlive && !dbRunning) {
         uiPolling_ = false;
