@@ -17,6 +17,7 @@ add_library(devdesk_module_claude_proxy STATIC
     quota/deepseek_provider.cpp
     quota/provider_minimax_cn.cpp
     quota/quota_registry.cpp
+    quota/quota_volcano.cpp
     settings_sync.cpp
     settings_takeover.cpp
     streaming_proxy.cpp

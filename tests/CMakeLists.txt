@@ -61,6 +61,7 @@ add_executable(devdesk_tests
     test_modules/test_claude_tools.cpp
     test_modules/test_claude_quota.cpp
     test_modules/test_claude_quota_minimax.cpp
+    test_modules/test_claude_quota_volcano.cpp
     test_modules/test_provider_config.cpp
     test_modules/test_settings_sync.cpp
     test_modules/test_claude_ui.cpp
@@ -84,8 +85,7 @@ add_executable(devdesk_tests
     test_modules/test_module_toggle_bridge.cpp
 )
 
-# ==================== 用例登记自检（TIN-10） ====================
-# 上面是**手工源表**：漏登记一个用例 .cpp = 该文件永不编译、用例永不注册，
+# ==================== 用例登记自检（TIN-10） =============# 上面是**手工源表**：漏登记一个用例 .cpp = 该文件永不编译、用例永不注册，
 # 套件仍然全绿且无任何提示（唯一信号是 Total 变小，文档改成「以运行输出为准」
 # 后更难察觉）。这里拿磁盘实况与已登记表求差，非空即 configure 期 FATAL_ERROR。
 # 只读 GLOB + 计数，不改任何编译行为。
@@ -183,8 +183,7 @@ target_link_libraries(devdesk_tests PRIVATE
 
 add_test(NAME devdesk_unit_tests COMMAND devdesk_tests)
 
-# ==================== 独立 probe 可执行（probes/ 目录） ====================
-# probes/ 下每个 .cpp 是独立小程序（如 dropdown z 可视化验证），不属于
+# ==================== 独立 probe 可执行（probes/ 目录） =============# probes/ 下每个 .cpp 是独立小程序（如 dropdown z 可视化验证），不属于
 # devdesk_tests 用例（已在上方 TIN-10 自检中排除）：单独编译成可执行，
 # 以 LABELS "probe" 注册 ctest，便于定向跑单个 probe。
 file(GLOB _devdesk_probe_sources CONFIGURE_DEPENDS

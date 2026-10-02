@@ -6,6 +6,7 @@
 #include "opencode_go_provider.h"  // G1：OpenCode Go 工厂
 #include "deepseek_provider.h"    // G3：DeepSeek 工厂
 #include "provider_minimax_cn.h"   // G2：MiniMax 中国站工厂
+#include "quota_volcano.h"        // G4：火山方舟工厂
 
 namespace module::claude::quota {
 
@@ -20,12 +21,13 @@ namespace module::claude::quota {
 // constexpr：初始值全是常量表达式（函数指针 + nullptr），编译期落数据段，
 // 无运行期构造、无静态初始化顺序问题——这也是「显式表」相对静态自注册的另一半好处。
 constexpr QuotaProviderEntry kQuotaProviders[] = {
-// G1：OpenCode Go（$10/月订阅；base_url 两档 /zen/go 与 /zen/go/v1）
+    // G1：OpenCode Go（$10/月订阅；base_url 两档 /zen/go 与 /zen/go/v1）
     {"opencode_go", &createOpenCodeGoProvider},
     // G3：DeepSeek（Balance 型：只有余额，无窗口）
     {"deepseek", &createDeepSeekProvider},
     // G2：MiniMax 中国站（旧域 api.minimaxi.com；百分比反转 + weekly 门控）
     {"minimax_cn", &createMinimaxCn},
+    {"volcano", &volcanoProvider},  // G4 火山方舟（Agent Plan / Coding Plan）
     {nullptr, nullptr},  // ← 表尾哨兵；后续 provider 的行插在本行之前
 };
 
