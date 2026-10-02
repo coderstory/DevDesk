@@ -88,24 +88,15 @@ bool channelsClose(const eui::Color& a, const eui::Color& b, float eps) {
 
 // RAII：临时库（test_support::TestEnv，registerAppDb = true —— todo 模块
 // onStart 经 ::core::appDatabase() 拿库）+ TodoService glue（test_todo_ui.cpp
-// 同款，keep-local TIN-06 约定）；视图状态路径经环境变量隔离，析构清。
+// 同款，keep-local TIN-06 约定）。视图状态**不另找路径**：自批次 E2 起它是
+// app_config 表的一行（键 kTodoViewStateKey），就存在上面这个已注册的临时库
+// 里 —— 原 DEVDESK_TODO_VIEW_STATE_PATH 文件缝已无人读（todo_view_state.cpp
+// 不再 getenv），留着只会让人以为视图状态是从那条环境变量来的。
 struct ProbeEnv : test_support::TestEnv {
     std::unique_ptr<module::todo::TodoService> svc;
-    std::filesystem::path statePath;
 
     ProbeEnv() : test_support::TestEnv(kDbPrefix, "", true) {
         svc = std::make_unique<module::todo::TodoService>(handle());
-        statePath = std::filesystem::path(path.string() + ".view_state.json");
-        std::error_code ec;
-        std::filesystem::remove(statePath, ec);
-        test_support::setEnvVar("DEVDESK_TODO_VIEW_STATE_PATH",
-                                statePath.string());
-    }
-
-    ~ProbeEnv() {
-        test_support::setEnvVar("DEVDESK_TODO_VIEW_STATE_PATH", "");
-        std::error_code ec;
-        std::filesystem::remove(statePath, ec);
     }
 };
 
