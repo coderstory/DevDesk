@@ -40,16 +40,6 @@ fs::path appDataDir() {
     return platformDefaultAppDataDir();
 }
 
-fs::path configFile() {
-    // 覆盖优先级（审计 CP-04）：DEVDESK_CONFIG_PATH（整文件路径，最细粒度）
-    // > DEVDESK_DATA_ROOT（经 appDataDir 派生）> 平台默认根。
-    // 单项覆盖保留是向后兼容：既有测试仍按老变量隔离单条路径。
-    if (const char* env = std::getenv("DEVDESK_CONFIG_PATH")) {
-        return fs::path(env);
-    }
-    return appDataDir() / "config.json";
-}
-
 fs::path sqliteDbFile() {
     return appDataDir() / "devdesk.db";
 }
@@ -71,7 +61,8 @@ namespace {
 constexpr const char* kRequiredGitignoreLines[] = {
     "*.db",                           // 主库（凭据进库后凭据页就在里面）
     "*.db-*",                         // WAL 伴生（-wal / -shm，会复制凭据页）
-    "config.json*",                   // 应用配置与它的 .bak 备份
+    "config.json*",                   // 旧配置文件的磁盘残骸（E2 后应用不再读写，
+                                      // 但用户盘上可能还有，仍须防误提交）
     "run-settings/",                  // 每会话临时 settings（含明文 API key）
     "claude_settings_snapshot.json",  // 接管前 settings.json 原 env 快照（可能含真 token）
     "logs/",                          // 日志（含 profile 名与路径）

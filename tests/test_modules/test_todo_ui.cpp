@@ -71,25 +71,16 @@ float contrastRatio(const eui::Color& a, const eui::Color& b) {
 
 // RAII：临时库（共享 test_support::TestEnv；注册全局 appDatabase，todo 模块
 // onStart 依赖，析构时一定解除注册防悬垂污染后续用例）+ TodoService
-// 模块 glue，keep-local（TIN-06）：共享 TestEnv 基座 + TodoService/statePath glue。
+// 模块 glue，keep-local（TIN-06）：共享 TestEnv 基座 + TodoService glue。
 struct TestEnv : test_support::TestEnv {
-    std::filesystem::path statePath;  // 审计 [23]：视图状态文件按用例隔离
     std::unique_ptr<module::todo::TodoService> svc;
 
-    // 视图状态路径经环境变量注入（无头用例不碰真实 %APPDATA% 状态文件）
+    // 视图状态隔离（审计 [23]）自 2026-10-03（批次 E2）起由基类注册的临时库
+    // 承担——状态是 app_config 表的一行（键 todo_view_state），无头用例
+    // 因此不碰真实数据根。原 DEVDESK_TODO_VIEW_STATE_PATH 文件缝已无人读
+    //（todo_view_state.cpp 不再 getenv），随清理批删除。
     TestEnv() : test_support::TestEnv(kDbPrefix, "", true) {
         svc = std::make_unique<module::todo::TodoService>(db->db());
-        statePath = path.string() + ".view_state.json";
-        std::error_code ec;
-        std::filesystem::remove(statePath, ec);
-        test_support::setEnvVar("DEVDESK_TODO_VIEW_STATE_PATH",
-                                statePath.string());
-    }
-
-    ~TestEnv() {
-        test_support::setEnvVar("DEVDESK_TODO_VIEW_STATE_PATH", "");
-        std::error_code ec;
-        std::filesystem::remove(statePath, ec);
     }
 };
 

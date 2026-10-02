@@ -63,19 +63,10 @@ bool seedTasks(module::todo::TodoService& svc, int n, const std::string& base) {
     return true;
 }
 
-// RAII：视图状态路径环境变量（无头用例不碰真实 appData 状态文件；
-// fail-fast 早退也撤销——test_todo_ui 的 TestEnv 同款机制）
-struct ViewStatePathGuard {
-    explicit ViewStatePathGuard(const std::string& path) {
-        test_support::setEnvVar("DEVDESK_TODO_VIEW_STATE_PATH", path);
-    }
-    ~ViewStatePathGuard() {
-        test_support::setEnvVar("DEVDESK_TODO_VIEW_STATE_PATH", "");
-    }
-    ViewStatePathGuard(const ViewStatePathGuard&) = delete;
-    ViewStatePathGuard& operator=(const ViewStatePathGuard&) = delete;
-};
-
+// 视图状态隔离（审计 [23]）：原 ViewStatePathGuard 把
+// DEVDESK_TODO_VIEW_STATE_PATH 指到临时文件——2026-10-03（批次 E2）起状态是
+// app_config 表的一行（键 todo_view_state），隔离由用例注册的临时库承担，
+// 该环境变量无人再读，守卫随清理批删除。
 } // namespace
 
 // ============ TodoModule 生命周期重入（活门控 Task 4）============
@@ -85,8 +76,6 @@ extern "C" ::core::Module* create_todo_module();
 REGISTER_TEST(todo_module_onstart_reentry_idempotent,
               "todo_module: onStart→onStop→onStart 重入 + 双 onStart/双 onStop no-op", {
     test_support::TestEnv env(kDbPrefix, "modreentry", /*registerAppDb=*/true);
-    const std::string statePath = env.path.string() + ".view_state.json";
-    ViewStatePathGuard vsGuard{statePath};
     core::ToolRegistry::instance().unregisterTool("todo.list");   // 起点干净
     std::unique_ptr<::core::Module> mod(create_todo_module());
 

@@ -345,10 +345,8 @@ REGISTER_TEST(pet_settings_roundtrip, "pet: pet_config.json 读写往返 + 钳�
     // 「库未就绪」如实失败（这是设计，不是缺陷）。
     test_support::TestEnv cfgDbEnv("devdesk_test_pet_", "petcfg1", /*registerAppDb=*/true);
     using namespace module::pet;
-    const std::filesystem::path file =
-        test_temp::tempPath("devdesk_test_pet_config.json");
-    std::error_code ec;
-    std::filesystem::remove(file, ec);
+    // 原落点 petsDir()/pet_config.json 与其临时同名路径已随 E2 停用——本用例
+    // 读写全走下面注册的 app_config 表（死名随清理批删除）
     PetConfigStore store(::core::appDatabase());
     PetConfig cfg;
     cfg.skinName = "my-cat";
@@ -366,7 +364,6 @@ REGISTER_TEST(pet_settings_roundtrip, "pet: pet_config.json 读写往返 + 钳�
     DOCTEST_CHECK_EQ(sanitizedCfg.skinName, "robot");
     DOCTEST_CHECK_EQ(sanitizedCfg.x, 32767);
     DOCTEST_CHECK_EQ(PetConfigStore::sanitized(PetConfig{}).x, -1);
-    std::filesystem::remove(file, ec);
     return true;
 });
 
@@ -999,8 +996,8 @@ REGISTER_TEST(pet_apply_skin_and_reset, "pet: applyPetSkin 校验/持久化 + �
         out << "{\"name\":\"pixel-dog\",\"states\":{\"idle\":[\"d0.png\"]}}";
     }
     // 预置配置：已知位置 + 默认皮肤（无头环境窗口未开 → 只持久化路径）
-    // pet_config 落点已是 app_config 表（E2），cfgFile 只作「不再写文件」的证据
-    const std::filesystem::path cfgFile = root / "pet_config.json";
+    // pet_config 落点已是 app_config 表（E2）——不写任何 pet_config.json 文件
+    //（原同名的 cfgFile 临时路径量从未被读写，属死名，随清理批删除）
     {
         PetConfigStore store(::core::appDatabase());
         PetConfig cfg;
@@ -1687,7 +1684,6 @@ REGISTER_TEST(pet_scale_config_roundtrip,
               "pet: scale 持久化往返 + 档位桥读写", {
     using namespace module::pet;
     const PetsDirEnv pets("scalecfg");
-    const std::filesystem::path cfgFile = pets.root / "pet_config.json";
     {
         PetConfigStore store(::core::appDatabase());
         PetConfig cfg;
