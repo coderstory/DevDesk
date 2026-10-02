@@ -1448,3 +1448,139 @@ REGISTER_TEST(provider_config_non_env_top_level_json,
     }
     return true;
 })
+
+// ---- 批次 F（2026-10-02）：1M 上下文标记（槽位 supportsOneM 列 + 三纯函数）----
+// 语义照 cc-switch useModelState.ts（hasClaudeOneMMarker / stripClaudeOneMMarker /
+// setClaudeOneMMarker）：trimEnd 后**大小写不敏感**判尾；strip 命中才切尾 4 字符
+// 再 trimEnd、未命中原样返回；set 先 strip 再 trim 得 base，**base 空返回空串**
+// （空 base 不许带标记）。
+REGISTER_TEST(provider_config_one_m_marker_pure,
+              "provider_config: [1M] 标记 判定/剥离/设置（大小写不敏感 + 空 base）", {
+    using module::claude::hasOneMMarker;
+    using module::claude::stripOneMMarker;
+    using module::claude::setOneMMarker;
+
+    // 判定：大小写不敏感 + 容忍尾空白；非尾部 / 空串不算
+    DOCTEST_CHECK(hasOneMMarker("claude-opus-5-5[1M]"));
+    DOCTEST_CHECK(hasOneMMarker("claude-opus-5-5[1m]"));
+    DOCTEST_CHECK(hasOneMMarker("claude-opus-5-5 [1M]  "));
+    DOCTEST_CHECK_FALSE(hasOneMMarker("claude-opus-5-5"));
+    DOCTEST_CHECK_FALSE(hasOneMMarker(""));
+    DOCTEST_CHECK_FALSE(hasOneMMarker("[1M]-prefix"));
+    // 整串即标记：判定为真（cc-switch 同款 endsWith 语义），剥离后是空串
+    DOCTEST_CHECK(hasOneMMarker("[1M]"));
+
+    // 剥离：命中才动；未命中原样返回（含大小写混合）
+    DOCTEST_CHECK_EQ(stripOneMMarker("m-sonnet[1M]"), std::string("m-sonnet"));
+    DOCTEST_CHECK_EQ(stripOneMMarker("m-sonnet[1m]"), std::string("m-sonnet"));
+    DOCTEST_CHECK_EQ(stripOneMMarker("m-sonnet [1M] "), std::string("m-sonnet"));
+    DOCTEST_CHECK_EQ(stripOneMMarker("m-sonnet"), std::string("m-sonnet"));
+    DOCTEST_CHECK_EQ(stripOneMMarker(""), std::string(""));
+    DOCTEST_CHECK_EQ(stripOneMMarker("[1M]"), std::string(""));
+
+    // 设置：off = 纯 base；on = base + 规范大写标记（**重复拼接防护**：已含
+    // 标记（任意大小写）时再 on 只有一个 [1M]）；空 base 恒返回空串
+    DOCTEST_CHECK_EQ(setOneMMarker("m-sonnet", true), std::string("m-sonnet[1M]"));
+    DOCTEST_CHECK_EQ(setOneMMarker("m-sonnet", false), std::string("m-sonnet"));
+    DOCTEST_CHECK_EQ(setOneMMarker("m-sonnet[1m]", true), std::string("m-sonnet[1M]"));
+    DOCTEST_CHECK_EQ(setOneMMarker("m-sonnet[1M]", true), std::string("m-sonnet[1M]"));
+    DOCTEST_CHECK_EQ(setOneMMarker("m-sonnet[1M]", false), std::string("m-sonnet"));
+    DOCTEST_CHECK_EQ(setOneMMarker("  m-sonnet  ", true), std::string("m-sonnet[1M]"));
+    // 空 base（空串 / 纯空白 / 整串即标记）→ 不允许带标记
+    DOCTEST_CHECK_EQ(setOneMMarker("", true), std::string(""));
+    DOCTEST_CHECK_EQ(setOneMMarker("   ", true), std::string(""));
+    DOCTEST_CHECK_EQ(setOneMMarker("[1M]", true), std::string(""));
+    return true;
+})
+
+// 槽位 supportsOneM 列：**逐槽位钉死取值**（谁改错立刻红）。
+// 取值**照抄 cc-switch 参考实现**（用户 2026-10-02 指示「直接照 cc-switch 的
+// 业务逻辑抄，不要自己保守裁决」）：ClaudeFormFields.tsx 的 modelRoleRows ——
+// sonnet / opus / fable / subagent = true，haiku = false。def 槽位 cc-switch 无
+// 对应行（它的 ANTHROPIC_MODEL 是独立输入框，不在角色表里）→ 按主模型语义 true。
+// 反向断言（表里不得有未钉的槽位）：将来新增槽位必须同时进本用例，否则红。
+REGISTER_TEST(provider_config_one_m_slot_support_table,
+              "provider_config: 槽位 supportsOneM 列（六槽位取值逐个钉死）", {
+    const auto table = module::claude::modelSlotTable();
+    DOCTEST_REQUIRE_EQ(table.size(), module::claude::kModelSlotCount);
+    DOCTEST_REQUIRE_EQ(table.size(), static_cast<size_t>(6));   // 表长硬钉
+    struct Expected {
+        const char* key;
+        bool oneM;
+    };
+    const Expected expected[] = {
+        {"default", true},    // ANTHROPIC_MODEL（主模型）
+        {"sonnet", true},
+        {"opus", true},
+        {"haiku", false},     // 小快模型，无 1M 变体（cc-switch: false）
+        {"fable", true},
+        {"subagent", true},   // cc-switch: true —— 勿改回「保守 false」
+    };
+    DOCTEST_REQUIRE_EQ(sizeof(expected) / sizeof(expected[0]),
+                       static_cast<size_t>(6));
+    for (const auto& e : expected) {
+        const module::claude::ModelSlotMeta* hit = nullptr;
+        for (const auto& m : table) {
+            if (std::string(m.jsonKey) == e.key) {
+                hit = &m;
+                break;
+            }
+        }
+        DOCTEST_REQUIRE_MESSAGE(hit != nullptr,
+                                std::string("槽位表缺行: ") + e.key);
+        DOCTEST_CHECK_MESSAGE(
+            hit->supportsOneM == e.oneM,
+            std::string("槽位 ") + e.key + " 的 supportsOneM 应为 " +
+                (e.oneM ? "true" : "false") + "（照 cc-switch 取值，改错即红）");
+    }
+    // 反向：表里每一行都必须被上面的清单钉到（新增槽位漏进用例 = 红）
+    for (const auto& m : table) {
+        bool listed = false;
+        for (const auto& e : expected) {
+            if (std::string(m.jsonKey) == e.key) {
+                listed = true;
+                break;
+            }
+        }
+        DOCTEST_CHECK_MESSAGE(listed,
+                              std::string("槽位未进本用例（新增槽位请同步）: ") +
+                                  m.jsonKey);
+    }
+    return true;
+})
+
+// 保存前归一（UI 写入口调用）：支持槽位标记规范化成大写 [1M]；不支持槽位
+// 强制剥离；无标记 / 空槽位原样不动（displayName 派生不因标记变化而变）
+REGISTER_TEST(provider_config_one_m_normalize,
+              "provider_config: 保存前归一（不支持槽位强制剥离 + 大小写规范化）", {
+    using module::claude::ModelsConfig;
+    using module::claude::normalizeOneMMarkers;
+    using module::claude::modelSlotTable;
+
+    ModelsConfig c;
+    c.def.model = "m-def[1m]";        // 支持 → 规范化（大小写）
+    c.sonnet.model = "m-sonnet";      // 支持、无标记 → 不动
+    c.opus.model = "";                // 空槽位 → 不动
+    c.haiku.model = "m-haiku[1M]";    // **唯一不支持槽位** → 强制剥离
+    c.fable.model = "m-fable [1m] ";  // 支持 → 规范化成 base+[1M]
+    c.subagent.model = "m-sub[1m]";   // 支持（照 cc-switch）→ 规范化
+    normalizeOneMMarkers(c);
+    DOCTEST_CHECK_EQ(c.def.model, std::string("m-def[1M]"));
+    DOCTEST_CHECK_EQ(c.sonnet.model, std::string("m-sonnet"));
+    DOCTEST_CHECK_EQ(c.opus.model, std::string(""));
+    DOCTEST_CHECK_EQ(c.haiku.model, std::string("m-haiku"));
+    DOCTEST_CHECK_EQ(c.fable.model, std::string("m-fable[1M]"));
+    DOCTEST_CHECK_EQ(c.subagent.model, std::string("m-sub[1M]"));
+
+    // 幂等：再归一一次结果不变（保存重入 / 多次写不累积）
+    const ModelsConfig once = c;
+    normalizeOneMMarkers(c);
+    for (const auto& m : modelSlotTable()) {
+        DOCTEST_CHECK_EQ((c.*m.slot).model, (once.*m.slot).model);
+    }
+
+    // 显示名（派生）不因标记变化而变：归一前后 deriveDisplayName 同值
+    DOCTEST_CHECK_EQ(module::claude::deriveDisplayName("m-def[1M]"),
+                     module::claude::deriveDisplayName("m-def"));
+    return true;
+})

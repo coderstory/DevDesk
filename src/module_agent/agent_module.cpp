@@ -197,10 +197,11 @@ std::string deriveTaskName(const std::string& goal) {
 // 模型槽位下拉的键集与显示名（Task 10：真源 = src/model_slots.h 的 X 宏表）。
 // 「一份真源、零漂移」：新增槽位只改 model_slots.h，本模块与 provider_config
 // 各自展开同一张表。键集进库（agent_tasks.model_slot），显示名只上屏
-#define DEVDESK_MODEL_SLOT_KEY(name, jsonKey, label, formLabel, envKey, nameKey) jsonKey,
+//（末参 supportsOneM 本模块不消费，形参占位——表行契约见 model_slots.h）
+#define DEVDESK_MODEL_SLOT_KEY(name, jsonKey, label, formLabel, envKey, nameKey, oneM) jsonKey,
 constexpr const char* kModelSlotKeys[] = {DEVDESK_MODEL_SLOT_LIST(DEVDESK_MODEL_SLOT_KEY)};
 #undef DEVDESK_MODEL_SLOT_KEY
-#define DEVDESK_MODEL_SLOT_LABEL(name, jsonKey, label, formLabel, envKey, nameKey) label,
+#define DEVDESK_MODEL_SLOT_LABEL(name, jsonKey, label, formLabel, envKey, nameKey, oneM) label,
 constexpr const char* kModelSlotLabels[] = {
     DEVDESK_MODEL_SLOT_LIST(DEVDESK_MODEL_SLOT_LABEL)};
 #undef DEVDESK_MODEL_SLOT_LABEL
