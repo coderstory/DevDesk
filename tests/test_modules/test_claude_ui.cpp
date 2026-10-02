@@ -5787,7 +5787,6 @@ REGISTER_TEST(claude_profile_avatar_initial_utf8,
     auto lat = env.svc->createProfile("Alpha", "https://a.example.com",
                                       "sk-ant-u8-002", "m");
     DOCTEST_REQUIRE(lat.isOk());
-
     std::unique_ptr<::core::Module> mod(create_claude_module());
     mod->onStart();
     eui::Ui ui;
@@ -5821,6 +5820,54 @@ REGISTER_TEST(claude_profile_avatar_initial_utf8,
                           "拉丁名首字取错：" + txLat->text);
 
     mod->onStop();
+    return true;
+})
+
+// 批次 B1（2026-10-02 文本垂直居中根治）：Profile 卡头像首字。
+// 与上面 ACTIVE /「共享」胶囊同一条根因（claude_ui_list.cpp ⑧ 注释 + 本文件
+// claude_profile_active_badge_centered）：文字框与圆形底同 y 同高、
+// lineHeight == 圆高，缺 VerticalAlign::Center 时 runtime 把 ink 从行框顶沿
+// 起排（runtime_render.h:1063 y=frame.y），圆形里看着偏上。
+// 与上面两条头像用例的分工：它们钉的是 frame 数值（圆心/首字码点），**frame
+// 数值对不代表墨迹居中**——本用例钉渲染锚点，是那两条的唯一补集。
+// 变异自检：删 .verticalAlign(Center) → 本用例 verticalAlign 断言红
+//（frame 数值不变、只有渲染锚点回 frame 顶，故上面两条不会红）。
+REGISTER_TEST(claude_profile_avatar_centered,
+              "claude_module: Profile 头像首字垂直居中（锚点 = 圆形底中心）", {
+    TestEnv env;
+    auto p = env.svc->createProfile("Zed", "https://avatar.example.com",
+                                    "sk-ant-avatar-001", "m-avatar");
+    DOCTEST_REQUIRE(p.isOk());
+    const int64_t pid = p.value().id;
+
+    std::unique_ptr<::core::Module> mod(create_claude_module());
+    mod->onStart();
+    eui::Ui ui;
+    composeAtSize(mod.get(), ui, "claude_avatar", 1262.0f, 801.0f);
+
+    const auto* txt = ui.find("claude.profile.0.avatar.text");
+    const auto* bg = ui.find("claude.profile.0.avatar");
+    DOCTEST_REQUIRE(txt != nullptr);
+    DOCTEST_REQUIRE(bg != nullptr);
+    DOCTEST_CHECK_EQ(txt->text, std::string("Z"));   // 首字
+    DOCTEST_CHECK_MESSAGE(txt->verticalAlign == eui::VerticalAlign::Center,
+                          "头像首字未挂 VerticalAlign::Center"
+                          "（ink 从行框顶沿起排 → 圆形内偏上）");
+    DOCTEST_CHECK_MESSAGE(txt->horizontalAlign == eui::HorizontalAlign::Center,
+                          "头像首字未水平居中");
+    DOCTEST_CHECK_MESSAGE(
+        std::fabs((txt->frame.y + txt->frame.height * 0.5f) -
+                  (bg->frame.y + bg->frame.height * 0.5f)) <= 0.5f,
+        "头像首字 frame 中心 y=" +
+            std::to_string(txt->frame.y + txt->frame.height * 0.5f) +
+            " != 圆形底中心 y=" +
+            std::to_string(bg->frame.y + bg->frame.height * 0.5f));
+    // 圆形底尺寸不变（40×40 圆，radius 20）
+    DOCTEST_CHECK_EQ(bg->frame.width, 40.0f);
+    DOCTEST_CHECK_EQ(bg->frame.height, 40.0f);
+
+    mod->onStop();
+    cleanupProfileKey(kTestKeychainService, pid);
     return true;
 })
 

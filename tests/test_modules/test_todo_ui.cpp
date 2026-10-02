@@ -1189,6 +1189,58 @@ REGISTER_TEST(todo_ui_card_text_centered,
     return true;
 })
 
+// ---- 批次 B1（2026-10-02）文本垂直居中根治：卡内 chip 胶囊（drawChip）----
+// drawChip（todo_ui_common.h，卡片优先级/截止/标签 pill 与详情弹窗标签区共用）
+// 的文本盒与胶囊底同 y 同高（kChipHeight）、lineHeight 也 == kChipHeight，缺
+// VerticalAlign::Center 时 runtime 把 ink 从行框顶沿起排（runtime_render.h:1063
+// y=frame.y）→ 胶囊里的字看着偏上。
+// 变异自检：删 drawChip 里的 .verticalAlign(Center) → 本用例 verticalAlign
+// 断言红（frame 数值不变，只有渲染锚点回 frame 顶）。
+REGISTER_TEST(todo_ui_chip_text_centered,
+              "todo_ui: 卡内 chip 文字垂直居中（锚点 = 胶囊底中心）", {
+    TestEnv env;
+    DOCTEST_REQUIRE(env.ready);
+    auto col = env.svc->createColumn("chip列");
+    DOCTEST_REQUIRE(col.isOk());
+    auto c = env.svc->createTask(col.value().id, "带标签卡");
+    DOCTEST_REQUIRE(c.isOk());
+    {
+        module::todo::Task t3 = c.value();
+        t3.tags = {"重要", "前端"};
+        DOCTEST_REQUIRE(env.svc->updateTask(t3).isOk());
+    }
+
+    std::unique_ptr<::core::Module> mod(create_todo_module());
+    mod->onStart();
+    Frame frame(mod.get());
+    frame.ui.layout(1600.0f, 1000.0f);  // 几何断言前必须 layout 出 frame
+
+    // 迁移默认 4 列 + 新建 1 列 → 「chip列」= col.4，首卡 = card.0，
+    // 首个标签 chip id = card.0.tag.0（drawChip 后缀 .bg / .text）
+    const std::string chip = "todo.col.4.card.0.tag.0";
+    const auto* txt = frame.ui.find(chip + ".text");
+    const auto* bg = frame.ui.find(chip + ".bg");
+    DOCTEST_REQUIRE(txt != nullptr);
+    DOCTEST_REQUIRE(bg != nullptr);
+    DOCTEST_CHECK_EQ(txt->text, std::string("重要"));
+    DOCTEST_CHECK_MESSAGE(
+        txt->verticalAlign == eui::VerticalAlign::Center,
+        "chip 文本未挂 VerticalAlign::Center（ink 从行框顶沿起排 → 胶囊内偏上）");
+    DOCTEST_CHECK_MESSAGE(
+        std::fabs((txt->frame.y + txt->frame.height * 0.5f) -
+                  (bg->frame.y + bg->frame.height * 0.5f)) <= 0.5f,
+        "chip 文本 frame 中心 y=" +
+            std::to_string(txt->frame.y + txt->frame.height * 0.5f) +
+            " != 胶囊底中心 y=" +
+            std::to_string(bg->frame.y + bg->frame.height * 0.5f));
+    // 胶囊几何不变（高 = kChipHeight 单源常量）
+    DOCTEST_CHECK_EQ(bg->frame.height, module::todo::ui::kChipHeight);
+    DOCTEST_CHECK_EQ(txt->lineHeight, module::todo::ui::kChipHeight);
+
+    mod->onStop();
+    return true;
+})
+
 // ---- 2026-09-28 真机缺陷 3 纯函数：同列重排行号换算 + 落库插入位 ----
 REGISTER_TEST(todo_ui_reorder_pure_helpers,
               "todo_ui: 同列重排——行号换算与插入位（纯函数）", {

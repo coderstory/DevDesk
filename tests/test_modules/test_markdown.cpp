@@ -1929,6 +1929,118 @@ REGISTER_TEST(md_module_tags_ui, "markdown_module: 标签 chip 行 + 左栏标�
     return true;
 })
 
+// ---- 2d2. 批次 B1（2026-10-02）文本垂直居中根治：标签 chip + 大纲行 ----
+// 三处底框与文本盒同 y 同高（chip 行高 == chip 高；大纲行高 == 行底 rect 高），
+// 缺 VerticalAlign::Center 时 runtime 从行框顶沿起排 ink
+//（runtime_render.h:1063 y=frame.y）→ 视觉偏上。判据与 md_tree_row_geometry 同款：
+//   a. 文本节点挂 VerticalAlign::Center（渲染锚点 = frame 中线）；
+//   b. 文本 frame 中心 y == 底框（chip 底 / 行底 rect）中心 y（±0.5）。
+// 变异自检：删任一 .verticalAlign(Center) → 该站点 a 断言红（frame 数值不变，
+// 仅渲染锚点回 frame 顶）；若把文本盒挪出底框 → b 断言红。
+REGISTER_TEST(md_chip_and_outline_text_centered,
+              "markdown: 标签 chip / 大纲行文本垂直居中（数值锁）", {
+    test_support::MdHeadlessEnv env(kDirPrefix, "chipcenter", kDbName);
+    DOCTEST_REQUIRE(env.db != nullptr);
+    DOCTEST_REQUIRE(writeTextFile(env.dir / "note.md", "# A\n正文\n"));
+
+    std::unique_ptr<::core::Module> mod(create_markdown_module());
+    mod->onStart();
+
+    eui::Screen screen;
+    screen.width = 1600.0f;
+    screen.height = 1000.0f;
+    eui::Ui ui;
+    auto frame = [&](const char* page) {
+        ui.begin(page);
+        mod->compose(ui, screen);
+        ui.end();
+        ui.layout(screen.width, screen.height);  // 几何断言前必须 layout 出 frame
+    };
+
+    // 判据 helper：空串 = 通过（断言宏展开含 return，只能写在用例体里，
+    // helper 回传结论、由用例断）。textId 的 frame 须与底框（chip 底 / 行底
+    // rect）中心一致，且挂 VerticalAlign::Center。
+    const auto centeredProblem = [&](const std::string& textId,
+                                     const std::string& bgId) -> std::string {
+        const auto* txt = ui.find(textId);
+        const auto* bg = ui.find(bgId);
+        if (txt == nullptr) return "缺文本 " + textId;
+        if (bg == nullptr) return "缺底框 " + bgId;
+        const std::string box =
+            textId + "{cy=" +
+            std::to_string(txt->frame.y + txt->frame.height * 0.5f) +
+            ",h=" + std::to_string(txt->frame.height) + ",lh=" +
+            std::to_string(txt->lineHeight) + "} bg{cy=" +
+            std::to_string(bg->frame.y + bg->frame.height * 0.5f) +
+            ",h=" + std::to_string(bg->frame.height) + "}";
+        if (txt->verticalAlign != eui::VerticalAlign::Center) {
+            return textId + " 未挂 VerticalAlign::Center（ink 从行框顶沿起排）";
+        }
+        if (std::fabs((txt->frame.y + txt->frame.height * 0.5f) -
+                      (bg->frame.y + bg->frame.height * 0.5f)) > 0.5f) {
+            return textId + " frame 中心 y != 底框中心 y " + box;
+        }
+        return {};
+    };
+
+    // 帧1：打开 note.md（真实树行 onClick 链路）
+    frame("cc1");
+    const core::dsl::Element* fileRow = nullptr;
+    for (int i = 0; i < 6 && fileRow == nullptr; ++i) {
+        const auto* nm = ui.find("md.tree.node." + std::to_string(i) + ".name");
+        if (nm != nullptr && nm->text == "note.md") {
+            fileRow = ui.find("md.tree.node." + std::to_string(i) + ".row");
+        }
+    }
+    DOCTEST_REQUIRE(fileRow != nullptr);
+    DOCTEST_REQUIRE(fileRow->onClick != nullptr);
+    fileRow->onClick();
+
+    // 帧2：编辑器标签行出现 → 输入「工作」并点「＋」提交
+    frame("cc2");
+    const auto* addHit = ui.find("md.tags.add.hit");
+    DOCTEST_REQUIRE(addHit != nullptr);
+    DOCTEST_REQUIRE(addHit->onTextInput != nullptr);
+    core::TextInputEvent tie;
+    tie.text = "工作";
+    addHit->onTextInput(tie);
+    frame("cc3");
+    const auto* addBtn = ui.find("md.tags.addbtn.bg");
+    DOCTEST_REQUIRE(addBtn != nullptr);
+    DOCTEST_REQUIRE(addBtn->onClick != nullptr);
+    addBtn->onClick();
+    frame("cc4");
+
+    // 编辑器顶栏 chip：名称 + ×（两处底框：chip 底 / 删除热区）
+    DOCTEST_REQUIRE(ui.find("md.tags.chip.0.name") != nullptr);
+    // 判定纪律：本框架 fail-fast（第一个失败即 return），四处站点累积成一条
+    // 结论再断言——一次运行就能看全哪些站点没居中，而不是只看到第一个。
+    std::string problems;
+    const auto collect = [&](const std::string& textId, const std::string& bgId) {
+        const std::string p = centeredProblem(textId, bgId);
+        if (!p.empty()) problems += (problems.empty() ? "" : " | ") + p;
+    };
+    collect("md.tags.chip.0.name", "md.tags.chip.0.bg");
+    collect("md.tags.chip.0.x", "md.tags.chip.0.del");
+    // 左栏标签筛选 chip（同标签带笔记数）
+    DOCTEST_REQUIRE(ui.find("md.tags.filter.0.name") != nullptr);
+    collect("md.tags.filter.0.name", "md.tags.filter.0.bg");
+
+    // 帧5：顶栏大纲开关 → 浮动面板 + 大纲行（底 = 行 rect，含 hover/选中高亮）
+    const auto* toggle = ui.find("md.outline.toggle.hit");
+    DOCTEST_REQUIRE(toggle != nullptr);
+    DOCTEST_REQUIRE(toggle->onClick != nullptr);
+    toggle->onClick();
+    frame("cc5");
+    DOCTEST_REQUIRE(ui.find("md.outline.item.0.label") != nullptr);
+    collect("md.outline.item.0.label", "md.outline.item.0.row");
+
+    DOCTEST_CHECK_MESSAGE(problems.empty(), problems);
+
+    mod->onStop();
+    return true;
+})
+
 // ---- 2e. 生命周期（审计 [4][20]）：树行右键菜单 → 删除/重命名 真实链路 ----
 
 REGISTER_TEST(md_module_delete_note_ui, "markdown_module: 右键→删除→确认弹窗（取消保留/确认落删），编辑器联动清空（headless）", {
