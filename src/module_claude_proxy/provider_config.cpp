@@ -1005,6 +1005,15 @@ ReverseSyncMerge mergeReverseSyncEnv(const ImportedConfig& cfg,
             (merged.*m.slot).name = (cfg.models.*m.slot).name;
         }
     }
+    // 反向同步也要走同一套 1M 归一（normalizeOneMarkers）：用户在 settings.json
+    // 手写 `[1M]` 到**不支持 1M 的槽位**（如 haiku）时，不剥标记就会原样落库，
+    // 下次打开表单开关状态与落库值不一致——provider_config.h:117-118 原先自认
+    // 这条路径未覆盖。归一放在**比较之前**：这样「唯一的差异就是一个本就该剥掉的
+    // 标记」时 modelsConfigEqual 判为相等，不产生一次无意义的写库。
+    // 口径与 UI 写入口（claude_ui_form.cpp:321 / claude_module.cpp:637）同一条
+    // 函数，同样幂等。
+    normalizeOneMMarkers(merged);
+
     out.modelsConfigJson = curModelsConfigJson;
     if (!modelsConfigEqual(merged, cur)) {
         auto text = serializeModelsConfig(merged);

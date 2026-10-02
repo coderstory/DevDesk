@@ -113,9 +113,12 @@ std::string setOneMMarker(const std::string& model, bool enabled);
 //   支持 1M（meta.supportsOneM）且串尾有标记 → 规范成 base + "[1M]"（大小写）
 //   不支持且有标记                         → **强制剥离**（手输的标记不落库）
 //   无标记 / 空槽位                        → 原样不动
-// 幂等（重复保存不累积）。消费方：claude_ui_form 的表单保存、claude_module 的
-// 模型映射 1M 开关。**未覆盖**反向同步（settings.json → profile）路径——见交付
-// 报告遗留问题
+// 幂等（重复保存不累积）。消费方（**全部三条写入口**）：
+//   claude_ui_form 的表单保存、claude_module 的模型映射 1M 开关，
+//   以及 mergeReverseSyncEnv 的反向同步（settings.json → profile，2026-10-03 补）。
+//   反向同步原先漏掉，导致用户手写 [1M] 到不支持的槽位时标记照落库、
+//   表单开关与落库值不一致；现已在 provider_config.cpp:mergeReverseSyncEnv 里
+//   于比较**之前**归一。
 void normalizeOneMMarkers(ModelsConfig& config);
 
 // ---- models_config 序列化 / 反序列化 ----
