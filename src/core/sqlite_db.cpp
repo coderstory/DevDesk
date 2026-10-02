@@ -255,9 +255,30 @@ Result<SqliteDb> SqliteDb::open(const std::filesystem::path& file) {
     // 事务才落盘——所以这里显式跑一次空写事务把三件套逼出来，再统一 chmod。
     // 每次 open 都做（不只在新建时设）：-wal/-shm 在连接关闭时被 sqlite 删除，
     // 下次打开是全新 0644 文件，只在建库时设等于没设。
-    // 失败处置：SQLITE_BUSY 等属可容忍（另一进程持锁时）→ WARN 不阻断；
-    // chmod 失败则不静默——那是「凭据可能被同机他人读到」，一律 ERROR 留痕。
-    sqlite3_exec(handle, "BEGIN IMMEDIATE; COMMIT;", nullptr, nullptr, nullptr);
+    //
+    // 失败处置（原注释声称「WARN 不阻断」，但返回值被直接丢弃 → 实际零日志）：
+    //   ① 空事务失败（典型 SQLITE_BUSY，另一进程持锁）→ 取返回码并 LOG_WARN。
+    //      不阻断开库：锁竞争是瞬时的，硬失败会让「另一个 DevDesk 开着」变成
+    //      「本进程起不来」，比留着 0644 的 -wal 更糟。
+    //   ② chmod 失败 → LOG_ERROR 不静默：那是「凭据可能被同机他人读到」。
+    //
+    // ⚠️ **残留缺口（本行不掩盖它）**：若 ① 失败，此刻 -wal/-shm 尚未被创建，
+    // 下面的 restrictSqliteStoreFiles 对不存在的文件跳过（file_perms_posix.cpp:41
+    // `if (!exists) continue`）。本会话内稍后由首个写事务创建的 -wal/-shm 因此
+    // **不会**被 chmod，落回 umask 的 0644，凭证页就留在 0644 的 -wal 里。
+    // 也就是说「每次打开都校正」只在空事务成功时成立。要彻底关掉这个洞需要把
+    // 收紧动作放到一次**成功写事务之后**（例如 applySchema 落库后），那会动
+    // sqlite_db.h 的成员或 database.cpp 的装配顺序，超出本条范围——记在此处，
+    // 由后续批次接手，不要把上面 ① 的 WARN 当成「已经处理好了」。
+    char* warmupErr = nullptr;
+    const int warmupRc = sqlite3_exec(handle, "BEGIN IMMEDIATE; COMMIT;", nullptr,
+                                       nullptr, &warmupErr);
+    if (warmupRc != SQLITE_OK) {
+        LOG_WARN(std::string("SQLite 空写事务失败（-wal/-shm 可能未被创建，"
+                             "本会话稍后由写事务创建时不会自动 chmod 0600）：") +
+                 (warmupErr ? warmupErr : sqlite3_errmsg(handle)));
+    }
+    if (warmupErr != nullptr) sqlite3_free(warmupErr);
     if (auto permR = core::fileperms::restrictSqliteStoreFiles(file); permR.isFail()) {
         LOG_ERROR("数据库文件权限收紧失败（凭据落点可能对同机其他用户可读）: " +
                   permR.errorMessage());

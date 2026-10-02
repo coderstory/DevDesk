@@ -20,6 +20,7 @@ add_executable(devdesk_tests
     test_core/test_window_layout.cpp
     test_core/test_tool_registry.cpp
     test_core/test_file_perms.cpp
+    test_core/test_atomic_write.cpp
     test_platform/test_http_client.cpp
     test_platform/test_http_server.cpp
     test_platform/test_keychain.cpp
@@ -63,6 +64,7 @@ add_executable(devdesk_tests
     test_modules/test_claude_quota.cpp
     test_modules/test_claude_quota_ccswitch.cpp
     test_modules/test_claude_quota_minimax.cpp
+    test_modules/test_claude_quota_store.cpp
     test_modules/test_claude_quota_volcano.cpp
     test_modules/test_provider_config.cpp
     test_modules/test_settings_sync.cpp

@@ -20,6 +20,8 @@
 //      三窗口一个都解析不出来 = 响应形态不认识（Shape），**不是**渲染空卡。
 #include "opencode_go_provider.h"
 
+#include "quota_percent.h"
+
 #include <algorithm>
 #include <cctype>
 #include <cstddef>
@@ -103,7 +105,7 @@ std::vector<QuotaWindow> parseWindows(const platform::json::JsonObject& usage) {
         if (!parsePercent(fields.get("percent"), &percent)) continue;
         QuotaWindow out;
         out.key = spec.canonicalKey;
-        out.usedPercent = percent;
+        out.usedPercent = clampUsedPercent(percent);
         if (percent > 0.0) out.resetsAt = resetTime(fields.get("resetsAt"));
         windows.push_back(std::move(out));
     }
@@ -178,7 +180,7 @@ public:
         return parts.path == "/zen/go" || parts.path == "/zen/go/v1";
     }
 
-    QuotaResult fetch(const ProviderConfig& cfg, const HttpSendFn& http) override {
+    QuotaResult fetch(const ProviderConfig& cfg, const HttpSendFn& http) const override {
         // 空缝 → Transient：不许直接调用触发 std::bad_function_call
         //（项目铁律「不抛 C++ 异常」；契约见 quota_provider.h:113-116）
         if (!http) {
@@ -201,6 +203,17 @@ public:
         }
         const platform::http::Response response =
             sent.valueOr(platform::http::Response{});
+
+        // 传输层失败有两种形态，缺一不可（G3/G4 都查这条，G1/G2 原来漏了）：
+        //   ① Result::fail —— 已在上面拦下
+        //   ② ok(Response{statusCode=0, networkError=true}) —— 超时 / 连接失败 /
+        //      读体中断。不查的话 statusCode 0 会落进下面的 <200 分支，用户看到
+        //      「余量接口返回 HTTP 0」——一个**不存在的**状态码，把排查方向指向
+        //      上游 HTTP 状态，而真因（超时）在网络层，一个字都不出现。
+        if (response.networkError) {
+            return failure(QuotaError::Transient,
+                           "网络请求失败：" + response.errorMessage);
+        }
 
         if (response.statusCode == 401) {
             return failure(QuotaError::Auth, "API Key 无效或已过期（HTTP 401）");

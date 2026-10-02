@@ -15,8 +15,13 @@
 //     （上游注释 :429-435，commit e06ff90f：同一账号体系与 Key）
 //   - base_resp **存在**但 status_code 缺失/非整数 → 上游 `unwrap_or(-1)` + `!= 0`
 //     → 算业务错误，而不是「当成功继续解析」
-//   - 百分比不做 0-100 裁剪（上游约定：下游渲染层负责显示策略）
+//   - 百分比裁剪：上游记的是「渲染层负责显示策略」，但渲染层 G7 尚不存在——
+//     那句约定在本仓库当前形态下无人兑现，故裁剪在本 provider 落地
+//     （clampUsedPercent，见 quota_percent.h）。本 provider 上游给的是**剩余**%，
+//     故先反转成「已用」再裁剪
 #include "provider_minimax_cn.h"
+
+#include "quota_percent.h"
 
 #include <algorithm>
 #include <cctype>
@@ -233,7 +238,7 @@ QuotaResult parseRemainsBody(const platform::json::JsonValue& body) {
     if (jsonNumber(general.get("current_interval_remaining_percent"), remain)) {
         QuotaWindow w;
         w.key = "five_hour";
-        w.usedPercent = 100.0 - remain;  // **反转**：本 provider 唯一的符号级错误源
+        w.usedPercent = clampUsedPercent(100.0 - remain);  // **反转**：本 provider 唯一的符号级错误源
         int64_t endMs = 0;
         if (jsonInteger(general.get("end_time"), endMs)) w.resetsAt = millisToIso8601(endMs);
         windows.push_back(std::move(w));
@@ -246,7 +251,7 @@ QuotaResult parseRemainsBody(const platform::json::JsonValue& body) {
         if (jsonNumber(general.get("current_weekly_remaining_percent"), remain)) {
             QuotaWindow w;
             w.key = "weekly";
-            w.usedPercent = 100.0 - remain;
+            w.usedPercent = clampUsedPercent(100.0 - remain);
             int64_t endMs = 0;
             if (jsonInteger(general.get("weekly_end_time"), endMs)) {
                 w.resetsAt = millisToIso8601(endMs);
@@ -280,7 +285,7 @@ public:
         return hostMatchesAny(baseUrl);
     }
 
-    QuotaResult fetch(const ProviderConfig& cfg, const HttpSendFn& http) override {
+    QuotaResult fetch(const ProviderConfig& cfg, const HttpSendFn& http) const override {
         if (cfg.apiKey.empty()) {
             // 配置不完整（缺字段）→ NotConfigured：不打网络，UI 引导去配置
             return makeError(QuotaError::NotConfigured,
@@ -304,6 +309,15 @@ public:
             return makeError(QuotaError::Transient, "网络错误：" + resp.errorMessage());
         }
         const platform::http::Response& response = resp.value();
+        // 与 G3 / G4 同款：传输层失败的第二种形态（ok(Response{statusCode=0,
+        // networkError=true}）——超时 / 连接失败 / 读体中断。第一种形态
+        // （Result::fail）已在上面拦下。不查这条的话 statusCode 0 会落进下面的
+        // <200 分支，用户看到「接口返回 HTTP 0」——一个不存在的状态码，
+        // 把排查方向指向上游 HTTP，而真因在网络层。
+        if (response.networkError) {
+            return makeError(QuotaError::Transient,
+                             "网络请求失败：" + response.errorMessage);
+        }
 
         // 401 / 403 → Auth：上游把两者一起当「密钥无效」（coding_plan.rs:452-463），
         // 不做 403 = 无权限的细分。

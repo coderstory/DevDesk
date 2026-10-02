@@ -216,6 +216,26 @@ REGISTER_TEST(claude_quota_volcano_region_extraction,
     return true;
 })
 
+REGISTER_TEST(claude_quota_volcano_region_extraction_is_case_insensitive,
+              "claude_quota: 火山 region 对 host 大小写不敏感（混合大小写不回落成 cn-beijing）", {
+    // 为什么这条单列：base_url 是用户手填 / 粘贴导入的自由文本。matchesBaseUrl
+    // 走 hostIsVolces + pathSegments，两处都小写化 → 混合大小写**照样命中**本
+    // provider；而 region 提取若不小写化，标签 `CN-Shanghai` 匹配不上小写前缀
+    // `cn-` → 回落 cn-beijing → 签名 credential scope 与账号不符被网关拒签，
+    // 而 authMessage 恰好把排查方向指向「检查你的 AK/SK」，用户会去反复更换
+    // 一把**本来正确**的密钥。
+    DOCTEST_CHECK_EQ(volc::regionFromBaseUrl("https://Ark.CN-Shanghai.volces.com/api/coding"),
+                     std::string("cn-shanghai"));
+    DOCTEST_CHECK_EQ(volc::regionFromBaseUrl("https://ARK.AP-Southeast-1.volces.com/api/plan"),
+                     std::string("ap-southeast-1"));
+    DOCTEST_CHECK_EQ(volc::regionFromBaseUrl("HTTPS://ark.CN-Beijing.volces.com/api/coding"),
+                     std::string("cn-beijing"));
+    // 钉死「大小写混合」与「全小写」给的是同一个 region（不是碰巧都回落成默认值）
+    DOCTEST_CHECK_EQ(volc::regionFromBaseUrl("https://Ark.CN-Shanghai.volces.com/api/coding"),
+                     volc::regionFromBaseUrl("https://ark.cn-shanghai.volces.com/api/coding"));
+    return true;
+})
+
 // ==================== canonical query / uri encode ====================
 
 REGISTER_TEST(claude_quota_volcano_canonical_query_sorted_and_encoded,
@@ -543,6 +563,79 @@ REGISTER_TEST(claude_quota_volcano_coding_plan_fallback_arrays_and_unknown_level
     DOCTEST_CHECK_EQ(rDetails.windows.size(), static_cast<std::size_t>(1));
     DOCTEST_CHECK_EQ(rDetails.windows[0].key, std::string("monthly"));
     DOCTEST_CHECK(within(rDetails.windows[0].usedPercent, 7.25));
+    return true;
+})
+
+REGISTER_TEST(claude_quota_volcano_coding_plan_level_without_percent_is_shape_not_zero,
+              "claude_quota: 火山 Coding Plan 有 Level 无 Percent → Shape（绝不画成「已用 0%」）", {
+    // 契约（quota_provider.h 约定 2）的反向：没拿到值时**不得**画成有效值。
+    // 0.0 的语义是「已用 0%」= 还剩 100%，把「字段漂移」伪装成「额度充足」。
+    // 本夹具：Level 可识别（所以窗口周期认得出来），但三个百分比字段一个都没有
+    // ——正是上游给 Coding Plan 改字段名时会落进的形态。
+    //
+    // 其余三家 provider 在同类输入下都报 Shape（opencode_go / minimax_cn /
+    // deepseek），这里原先是**唯一**返回 error==None 成功结果的一条。
+    ScriptedHttp http;
+    http.responses.push_back(httpResp(200, R"({"Result":{}})"));  // AFP 无额度
+    http.responses.push_back(httpResp(200, R"({
+      "Result": { "QuotaUsage": [
+        { "Level": "session", "ResetTimestamp": 1782053286 },
+        { "Level": "weekly",  "ResetTimestamp": 1782057600 },
+        { "Level": "monthly", "ResetTimestamp": 1784303999 } ] } })"));
+
+    const QuotaResult r = module::claude::quota::volcanoProvider()->fetch(
+        volcanoConfig(), http.fn());
+
+    // 必须是「形态不认识」的失败，不是一条成功的空卡
+    DOCTEST_CHECK(r.error == QuotaError::Shape);
+    // 失败结果里绝不许夹带半截成功值（画出来就是三条满格 = 还剩 100% 的假象）
+    DOCTEST_CHECK(r.windows.empty());
+    DOCTEST_CHECK(r.planName.empty());
+    // 报错带截断后的原始响应，便于核对真实字段名
+    DOCTEST_CHECK(contains(r.errorMessage, "QuotaUsage"));
+    return true;
+})
+
+REGISTER_TEST(claude_quota_volcano_coding_plan_partial_percent_keeps_parsed_windows,
+              "claude_quota: 火山 Coding Plan 部分条目缺 Percent → 只丢那一条，不伪造其余", {
+    // 反向对照：缺百分比的**只有一条**时，其余条目必须照常解析（不是一有缺失就
+    // 整个丢弃，也不是把缺的那条补成 0）。
+    ScriptedHttp http;
+    http.responses.push_back(httpResp(200, R"({"Result":{}})"));
+    http.responses.push_back(httpResp(200, R"({
+      "Result": { "QuotaUsage": [
+        { "Level": "session", "ResetTimestamp": 1782053286 },
+        { "Level": "weekly",  "Percent": 42.5, "ResetTimestamp": 1782057600 } ] } })"));
+
+    const QuotaResult r = module::claude::quota::volcanoProvider()->fetch(
+        volcanoConfig(), http.fn());
+    DOCTEST_CHECK(r.error == QuotaError::None);
+    DOCTEST_CHECK_EQ(r.windows.size(), static_cast<std::size_t>(1));
+    DOCTEST_CHECK_EQ(r.windows[0].key, std::string("weekly"));
+    DOCTEST_CHECK(within(r.windows[0].usedPercent, 42.5));
+    return true;
+})
+
+REGISTER_TEST(claude_quota_volcano_coding_plan_percent_is_clamped_to_range,
+              "claude_quota: 火山 Coding Plan 百分比裁剪到 [0,100]（上游给 150 不外流）", {
+    // 上游给 >100（超额 / 量纲漂移）时不得原样画出去。裁剪由代码保证
+    //（clampUsedPercent），不是「渲染层负责」——渲染层 G7 尚不存在。
+    ScriptedHttp http;
+    http.responses.push_back(httpResp(200, R"({"Result":{}})"));
+    http.responses.push_back(httpResp(200, R"({
+      "Result": { "QuotaUsage": [
+        { "Level": "weekly",  "Percent": 150.0 },
+        { "Level": "monthly", "Percent": -7.5 } ] } })"));
+
+    const QuotaResult r = module::claude::quota::volcanoProvider()->fetch(
+        volcanoConfig(), http.fn());
+    DOCTEST_CHECK(r.error == QuotaError::None);
+    const QuotaWindow* wk = findWindow(r, "weekly");
+    const QuotaWindow* mo = findWindow(r, "monthly");
+    DOCTEST_REQUIRE(wk != nullptr);
+    DOCTEST_REQUIRE(mo != nullptr);
+    DOCTEST_CHECK(within(wk->usedPercent, 100.0));
+    DOCTEST_CHECK(within(mo->usedPercent, 0.0));
     return true;
 })
 

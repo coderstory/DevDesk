@@ -108,7 +108,7 @@ public:
         return hostMatches(hostOf(baseUrl), kDeepSeekDomain);
     }
 
-    QuotaResult fetch(const ProviderConfig& cfg, const HttpSendFn& http) override {
+    QuotaResult fetch(const ProviderConfig& cfg, const HttpSendFn& http) const override {
         // 空缝不许 std::bad_function_call（契约 :114-116）
         if (!http) return failure(QuotaError::Transient, "HTTP 发送缝未注入");
         // cc-switch :427-433：空 key 是确定性失败且**不发请求**。DevDesk 归

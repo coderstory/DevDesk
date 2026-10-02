@@ -29,6 +29,8 @@
 #include <utility>
 #include <vector>
 
+#include "quota_percent.h"
+
 #include "platform/json.h"
 
 namespace module::claude::quota {
@@ -159,6 +161,17 @@ std::string regionFromBaseUrl(const std::string& baseUrl) {
     if (scheme != std::string::npos) host = host.substr(scheme + 3);
     const std::size_t slash = host.find('/');
     if (slash != std::string::npos) host = host.substr(0, slash);
+
+    // host 必须先小写化再切段比前缀：base_url 是用户手填 / 粘贴导入的自由文本，
+    // 而同文件其余 URL helper（hostIsVolces / pathSegments）都比小写后的形式。
+    // 不做这一步时，`Ark.CN-Shanghai.volces.com` 会「匹配得上本 provider
+    // （matchesBaseUrl 小写化）却拿不到 region（这里不）」——回落成 cn-beijing，
+    // 签名 scope 与账号不符被网关拒签，而错误文案又把方向指向「检查你的 AK/SK」，
+    // 用户会去反复更换一把**本来正确**的密钥。形式与 isAuthErrorCode 同款
+    //（lowerAscii 定义在本 TU 另一个匿名命名空间、位于本函数之后，故就地小写）。
+    std::transform(host.begin(), host.end(), host.begin(), [](unsigned char c) {
+        return static_cast<char>(std::tolower(c));
+    });
 
     std::size_t begin = 0;
     while (begin <= host.size()) {
@@ -374,6 +387,20 @@ std::optional<OpenApiError> responseError(const JsonValue& body) {
     return out;
 }
 
+// 面向用户的错误文案里塞上游原文时的统一截断（上限 700）。
+// 上游 / 中间网关返一张几百 KB 的 HTML 错误页时，不截断会让错误行撑爆布局、
+// 并把整页内容带进日志。这条是**代码**保证，不是「记得截断」的约定——本 TU 里
+// 每一处把上游原文拼进 errorMessage 的地方都必须过它。
+constexpr std::size_t kMaxErrorTextChars = 700;
+
+std::string truncateForError(std::string text) {
+    if (text.size() > kMaxErrorTextChars) {
+        text.resize(kMaxErrorTextChars);
+        text += "…（已截断）";
+    }
+    return text;
+}
+
 // 鉴权失败文案：必须同时点出「AK/SK」与「签名」两条排查方向
 // （coding_plan.rs:922-924 的 VOLCENGINE_AKSK_HINT 是英文单条，这里按本仓库
 //  "面向用户的中文文案"约定改写，信息量不减少）。
@@ -382,7 +409,7 @@ std::string authMessage(const std::string& where, const std::string& code,
     std::string out = "火山方舟鉴权失败（" + where;
     if (!code.empty()) out += "，" + code;
     out += "）";
-    if (!message.empty()) out += "：" + message;
+    if (!message.empty()) out += "：" + truncateForError(message);
     out += "。请检查账号的 AccessKey ID / Secret（AK/SK）是否正确、该账号是否有 Ark 用量查询"
            "（OpenAPI）权限；若 AK/SK 无误，则可能是请求签名未被网关接受。";
     return out;
@@ -440,10 +467,12 @@ CallOutcome openApiCall(const std::string& region, const std::string& accessKeyI
                             authMessage("HTTP " + status, err->code, err->message)};
                 }
                 return {CallKind::Soft, {},
-                        "API 错误（HTTP " + status + "，" + err->code + "）：" + err->message};
+                        "API 错误（HTTP " + status + "，" + err->code + "）：" +
+                            truncateForError(err->message)};
             }
         }
-        return {CallKind::Soft, {}, "API 错误（HTTP " + status + "）：" + resp.body};
+        return {CallKind::Soft, {},
+                "API 错误（HTTP " + status + "）：" + truncateForError(resp.body)};
     }
 
     // 先整体解析再判错误信封——读体失败是瞬时，解析失败是确定性（两者分属不同通道）
@@ -456,7 +485,8 @@ CallOutcome openApiCall(const std::string& region, const std::string& accessKeyI
         if (volcano_detail::isAuthErrorCode(err->code)) {
             return {CallKind::Auth, {}, authMessage(err->code, "", err->message)};
         }
-        return {CallKind::Soft, {}, "API 错误（" + err->code + "）：" + err->message};
+        return {CallKind::Soft, {},
+                "API 错误（" + err->code + "）：" + truncateForError(err->message)};
     }
     return {CallKind::Body, parsed.value(), ""};
 }
@@ -476,7 +506,8 @@ std::string canonicalWindowKey(const std::string& label) {
 // GetAFPUsage → 窗口（coding_plan.rs:1122-1148）。
 // 展示 5h / 周 / 月（与控制台一致）；AFPDaily 被官方控制台隐藏（其 Quota 常高于周上限，
 // 属历史默认值而非强制限额）→ 跳过。Quota 是绝对额度，已用% = Used/Quota*100，
-// **不做范围裁剪**（下游渲染层负责显示策略）；Quota <= 0 视为该窗口未订阅 / 未启用 → 跳过，
+// 范围裁剪走 clampUsedPercent（quota_percent.h）——**不再**假手「下游渲染层负责」，
+// G7 尚不存在，那句承诺当前无人兑现；Quota <= 0 视为该窗口未订阅 / 未启用 → 跳过，
 // 这也让"已鉴权但无 Agent Plan"产出空结果，从而回落到 Coding Plan 探测。
 void appendAfpWindows(const JsonValue& result, std::vector<QuotaWindow>& windows) {
     if (!result.isObject()) return;
@@ -500,7 +531,7 @@ void appendAfpWindows(const JsonValue& result, std::vector<QuotaWindow>& windows
         jsonF64(windowObj.get("Used"), used);  // 缺失按 0（cc-switch: unwrap_or(0.0)）
         QuotaWindow out;
         out.key = entry.canonicalKey;
-        out.usedPercent = used / quota * 100.0;
+        out.usedPercent = clampUsedPercent(used / quota * 100.0);
         out.resetsAt = resetTimeOf(windowObj.get("ResetTime"));
         windows.push_back(std::move(out));
     }
@@ -529,18 +560,26 @@ void appendCodingPlanWindows(const JsonValue& result, std::vector<QuotaWindow>& 
         const std::string key = canonicalWindowKey(label);
         if (key.empty()) continue;
 
+        // 「读不到百分比」绝不能降级成 0.0。0.0 的语义是「已用 0%」= 还剩 100%：
+        // 字段一改名 / 一漂形态，这条兜底就把「拿不到数据」画成「额度充足」，
+        // 正是 quota_provider.h 约定 2 明令禁止的假象（"error != None 时不得被当作
+        // 有效值呈现" 的反向也成立）。本函数自己就防御式兼容了三个数组名与五个
+        // Level 字段名，说明形态漂移是预期内的——漂的若是 Percent 这一支，
+        // 读不到就跳过该条目，让「本轮没解析出任何额度窗口」落到 queryVolcano
+        // 已有的 emptyResponses → QuotaError::Shape 分支（那里带截断后的原始
+        // 响应，便于核对真实字段名），而不是返回 error == None 的成功结果。
         double percent = 0.0;
         if (!jsonF64(itemObj.get("Percent"), percent) &&
             !jsonF64(itemObj.get("UsedPercent"), percent) &&
             !jsonF64(itemObj.get("UsagePercent"), percent)) {
-            percent = 0.0;
+            continue;
         }
         JsonValue resetValue = itemObj.get("ResetTime");
         if (resetValue.isNull()) resetValue = itemObj.get("ResetTimestamp");
 
         QuotaWindow out;
         out.key = key;
-        out.usedPercent = percent;
+        out.usedPercent = clampUsedPercent(percent);
         out.resetsAt = resetTimeOf(resetValue);
         windows.push_back(std::move(out));
     }
@@ -723,7 +762,7 @@ public:
         return segments[1] == "plan" || segments[1] == "coding";
     }
 
-    QuotaResult fetch(const ProviderConfig& cfg, const HttpSendFn& http) override {
+    QuotaResult fetch(const ProviderConfig& cfg, const HttpSendFn& http) const override {
         // 空缝必须返回错误而不是调用（调用即 std::bad_function_call，违反项目
         // "不抛 C++ 异常"铁律，见 quota_provider.h 的 HttpSendFn 约定）。
         if (!http) {
