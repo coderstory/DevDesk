@@ -161,7 +161,7 @@ public:
         dv.modelValue = shown ? modelsSummary(*shown) : std::string("-");
         dv.urlValue = shown ? shown->baseUrl : std::string("-");
         dv.tokenValue = shown
-            ? (shown->apiKeyHint + " [Keychain]")
+            ? (shown->apiKeyHint + " [本机库]")
             : std::string("(无激活 profile)");
         dv.recent = &recent;
         dv.callsError = callsError;
@@ -330,7 +330,7 @@ public:
 
     void onStart() override {
         // 重入幂等（活门控 Task 4）：已启动的 onStart = no-op——不重跑同步
-        // 首刷与孤儿 Keychain 清理
+        // 首刷与旧 Keychain 残留清理
         if (started_) return;
         started_ = true;
         LOG_INFO("Claude 模块启动");
@@ -344,10 +344,10 @@ public:
         // 恒读快照，首帧必须有值——异步首刷会让页面先闪一帧空列表（硬约束：
         // 不得空帧/闪空）；此后每次刷新都走 refreshDataCache 的后台线程
         applyDataRefresh(state_.list, runDataRefresh(svc, true, true));
-        // 启动时孤儿密钥清理（一次扫描，删除无对应 profile 的 keychain 条目）
+        // 启动时旧 Keychain 残留清理（凭据已迁进数据库；见 profile_repository）
         auto orphan = svc->cleanupOrphanKeychainEntries();
         if (orphan.isFail()) {
-            LOG_WARN("onStart: 孤儿 Keychain 清理失败 - " + orphan.errorMessage());
+            LOG_WARN("onStart: 旧 Keychain 残留清理失败 - " + orphan.errorMessage());
         }
         // 硬性需求 1（provider-config Phase B）：代理默认不启动，不再兜底
         // startProxy——由 main.cpp 按设置页「随应用启动」门控，或用户点本页
@@ -653,7 +653,7 @@ private:
     // 复制配置（2026-09-30 batch-fix C，设计 §4.2②）：当前 profile →
     // settings.json 形态 JSON → 系统剪贴板。占位 sk-ant-***<尾4>（与详情页
     // apiKeyHint 同一脱敏口径），**不导明文 key**（§5① 裁决——剪贴板是跨
-    // 应用共享面，明文一经粘贴即离开 Keychain 托管）。setClipboardText 返回
+    // 应用共享面，明文一经粘贴即离开本机存储托管）。setClipboardText 返回
     // void、模块层无窗口句柄无法回读校验 → 接线处固定 LOG_WARN 一行留痕
     //（低概率写失败时 toast 已提示成功，属已知限制，audit F5）
     void doCopyConfig(const Profile& p) {
@@ -697,13 +697,29 @@ private:
             }
         }
         // 占位值：apiKeyHint 即「前6 + *** + 尾4」形态（profile_repository
-        // 脱敏生成，同源同口径）；hint 为空（Keychain 读不到）→ 传空串，
+        // 脱敏生成，同源同口径）；hint 为空（该 profile 没存过密钥）→ 传空串，
         // buildDirectEnv 空值不写凭据键 → 导出无 token 键
         const std::string json = buildProfileExportJson(
             p, fragmentJson, /*keyPlaceholder=*/p.apiKeyHint);
         if (json.empty()) {
             showToast("复制配置失败", "配置序列化失败", true);
             return;
+        }
+        // 导出脱敏守卫（2026-10-02 存储统一设计 §6.4 硬约束 2）：剪贴板是**全局
+        // 可读出口**，凭据进库后「导出不含凭据」这件事不再有结构性保证（改动一
+        // 行就能把 api_key_encrypted 读出来塞进去）。这里做一次**实值校验**：
+        // 真把本 profile 的明文密钥取出来，看它是否出现在待写剪贴板的文本里——
+        // 出现即中止（宁可复制失败，也不把凭据丢进系统剪贴板）。
+        // 成本：一次 SELECT + 一次 unprotect，只在用户点「复制配置」时发生。
+        if (svc != nullptr) {
+            auto secret = svc->loadApiKey(p.id);
+            if (secret.isOk() && !secret.value().empty() &&
+                json.find(secret.value()) != std::string::npos) {
+                LOG_ERROR("复制配置: 导出文本命中明文凭据，已中止（profile id=" +
+                          std::to_string(p.id) + "）");
+                showToast("复制配置失败", "导出内容含明文凭据，已中止", true);
+                return;
+            }
         }
         core::window::setClipboardText(json);
         // void API 无回读下的最低留痕（§4.2②）：profile id + 导出键数
@@ -746,7 +762,7 @@ private:
                       "删除的是激活 Profile，已停止代理并还原 Claude Code 配置",
                       false);
         } else {
-            showToast("已删除", "Profile 已删除（含 Keychain 条目）", false);
+            showToast("已删除", "Profile 已删除（含保存的 API Key）", false);
         }
     }
 

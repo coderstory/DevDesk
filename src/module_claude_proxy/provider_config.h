@@ -283,8 +283,8 @@ std::map<std::string, std::string> buildProxyEnv(
     std::map<std::string, EnvSource>* sourcesOut = nullptr);
 
 // ---- 直连 env 生成（2026-09-28 profile-run 设计 §4.2，D-1：临时 settings + --settings）----
-// 输入 = profile 数据字段 + Keychain 已读出的密钥值（**本函数不读 Keychain**，
-// 读失败由调用方在调本函数前中止）；输出 = 临时 settings.json 的 env 子对象
+// 输入 = profile 数据字段 + 已读出的密钥明文（**本函数不碰存储**，读失败由
+// 调用方在调本函数前中止）；输出 = 临时 settings.json 的 env 子对象
 // （纯函数，无 IO）。与 buildProxyEnv 同款的槽位 loop / extra_env 别名归一，
 // 仅托管键不同（直连形态）。（advanced-json-editor §8.4：原共享片段叠加形参
 // 拆除——片段叠加走 JSON 域）
@@ -299,7 +299,7 @@ std::map<std::string, std::string> buildProxyEnv(
 //        api_key   → ANTHROPIC_API_KEY
 //        both      → ANTHROPIC_AUTH_TOKEN（默认；若上游网关要求 x-api-key，
 //                    把该 profile 的认证字段设为 api_key 即可）
-//      密钥值空串 → 不写该键（上层已用读 Keychain 失败挡住绝大部分空值）
+//      密钥值空串 → 不写该键（上层已用读凭据列失败挡住绝大部分空值）
 //   3. 模型槽位（effectiveModelsConfig）：空槽位跳过；*_NAME 派生显示名，
 //      subagent 槽位对应 CLAUDE_CODE_SUBAGENT_MODEL（照表派生）
 //   4. extra_env 先入表；托管键（BASE_URL 与密钥键）最后写入压过它们

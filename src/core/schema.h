@@ -98,13 +98,27 @@ inline constexpr const char* kSql = R"(
     --   正确方言，只能显式覆盖。
     -- shared_config_id 绑定的共享片段 id：0 = 未绑定（0..1 绑定，不嵌套）。
     -- fallback_profile_id failover 备用供应商 id：0 = 无备用（0..1 单跳，不换第三家）。
+    --
+    -- 凭据三列（2026-10-02 存储统一设计 §4.2/§6.2——**正面推翻**旧不变式
+    -- 「API key 明文永不入 SQLite」）：
+    --   api_key_encrypted 凭据本体，存储形态分平台（platform/credential_protection.h）：
+    --        macOS / POSIX = 明文，保护级别 = 文件权限 0600（core/file_perms.h 收紧
+    --                        devdesk.db + -wal + -shm，每次打开校正）
+    --        Windows       = DPAPI 密文的 hex 文本，保护级别 = 加密级
+    --     空串 = 该 profile 没有密钥（「没有」与「有但解不开」由读侧错误码区分，
+    --     不靠列内容区分）。旧的 keychain_account 列已随之删除——Keychain 不再是
+    --     凭据来源，只剩启动时的一次性残留清理（claude:<id> 前缀之外的条目保留）。
+    --   api_key_hint      UI 显示用（前 6 + "***" + 尾 4），脱敏形态，导出/复制链
+    --                     径只允许用它，绝不用 api_key_encrypted。
+    --   api_key_check     全量 SHA256 hex（64 字符）——作「密钥是否变更」判据。
+    --                     旧语义（前 8 hex，与 Keychain 明文比对）前提已消失。
     CREATE TABLE IF NOT EXISTS claude_profiles (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         name TEXT UNIQUE NOT NULL,
         base_url TEXT NOT NULL,
         api_key_hint TEXT NOT NULL,
         api_key_check TEXT NOT NULL,
-        keychain_account TEXT NOT NULL,
+        api_key_encrypted TEXT NOT NULL DEFAULT '',
         model TEXT NOT NULL,
         is_active INTEGER NOT NULL DEFAULT 0,
         created_at INTEGER NOT NULL,
@@ -144,7 +158,7 @@ inline constexpr const char* kSql = R"(
     -- 当成「可选路上游」（is_active 唯一索引 / listProfiles / 自动激活 / 复制命名 /
     -- 孤儿密钥清理 / 代理 getActiveProfile），塞一行没有 base_url/密钥的特殊行等于给
     -- 这 6 条路径各加一个 kind 判断，漏判一次就把片段当供应商转发。
-    -- 片段不含 base_url / 密钥：定位为纯装饰层（不进路由表、Keychain 零交互）。
+    -- 片段不含 base_url / 密钥：定位为纯装饰层（不进路由表、不碰凭据列）。
     -- 定位是「settings.json 非 env 属性的 JSON 预设」（extra_settings_json）。
     CREATE TABLE IF NOT EXISTS claude_shared_configs (
         id INTEGER PRIMARY KEY AUTOINCREMENT,

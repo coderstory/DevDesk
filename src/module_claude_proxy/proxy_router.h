@@ -10,7 +10,7 @@
 //
 // 两条路径的公共部分：
 //      - 查 active profile（无 → 503 Service Unavailable）
-//      - 读 API key from Keychain
+//      - 读 API key（来自本行凭据列）
 //      - 用 platform::http 转发到 base_url + path
 //      - 写回上游响应（含 status / headers / body）
 //      - 写入一条 claude_call_logs
@@ -60,8 +60,8 @@ public:
     static bool shouldUseStreaming(const std::string& path,
                                    const std::string& body);
 
-    // 注入 profile 提供者（默认走 service_.getActiveProfile() + Keychain）。
-    // 测试可注入固定 Profile 以绕过 DB / Keychain。
+    // 注入 profile 提供者（默认走 service_.getActiveProfile() + 凭据列）。
+    // 测试可注入固定 Profile 以绕过 DB。
     using ProfileProvider = std::function<core::Result<Profile>()>;
     void setProfileProvider(ProfileProvider provider) {
         profileProvider_ = std::move(provider);

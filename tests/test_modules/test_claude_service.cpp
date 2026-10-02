@@ -14,6 +14,7 @@
 #include "core/sqlite_db.h"
 #include "platform/http_server.h"
 #include "platform/json.h"
+#include "platform/credential_protection.h"
 #include "platform/keychain.h"
 #include "provider_config.h"
 #include "settings_sync.h"
@@ -152,9 +153,9 @@ REGISTER_TEST(claude_service_create_get_profile,
     DOCTEST_CHECK(p.apiKeyPlain.empty());
     // hint 应脱敏（前 6 + *** + 后 4）
     DOCTEST_CHECK(p.apiKeyHint.find("***") != std::string::npos);
-    DOCTEST_CHECK(p.apiKeyCheck.size() == 8);
-    DOCTEST_CHECK_EQ(p.keychainAccount, std::string("claude:") +
-                                        std::to_string(p.id));
+    // api_key_check = **全量** SHA256 hex（64 字符；2026-10-02 存储统一前是
+    // 前 8 hex「防误操作校验」，旧前提「与 Keychain 明文比对」已消失）
+    DOCTEST_CHECK_EQ(p.apiKeyCheck.size(), static_cast<size_t>(64));
 
     // getProfile 应返回除 apiKeyPlain 外全部字段
     auto got = svc.getProfile(p.id);
@@ -195,8 +196,6 @@ REGISTER_TEST(claude_service_list_profiles,
         DOCTEST_CHECK(p.apiKeyPlain.empty());
     }
 
-    test_support::cleanupProfileKey(kTestKeychainService, a.value().id);
-    test_support::cleanupProfileKey(kTestKeychainService, b.value().id);
     return true;
 })
 
@@ -608,33 +607,74 @@ struct ScopedFakeKeychain {
     ScopedFakeKeychain& operator=(const ScopedFakeKeychain&) = delete;
 };
 
+// ---------- 凭据保护注入缝（2026-10-02 存储统一）----------
+// 迁移前「段一写失败」的注入面在 Keychain 后端；凭据进库后该失败点变成
+// platform::credential::protect / unprotect，注入面随之挪过来。形态与
+// ScopedFakeKeychain 一字同款（RAII，析构必复位）。
+core::Result<std::string> failProtect(const std::string&) {
+    return core::Result<std::string>::fail(core::ErrorCode::Internal,
+                                           "注入：protect 失败");
+}
+
+core::Result<std::string> failUnprotect(const std::string&) {
+    return core::Result<std::string>::fail(
+        core::ErrorCode::Internal, "注入：列形态损坏，解不开");
+}
+
+// protect 恒失败（模拟 Windows DPAPI 报错 / 平台保护不可用）
+struct ScopedFailProtect {
+    platform::credential::Backend table;
+    const platform::credential::Backend* prev;
+    ScopedFailProtect() {
+        table = platform::credential::Backend{
+            &failProtect, &platform::credential::realUnprotect};
+        prev = platform::credential::setBackendForTest(&table);
+    }
+    ~ScopedFailProtect() { platform::credential::setBackendForTest(prev); }
+    ScopedFailProtect(const ScopedFailProtect&) = delete;
+    ScopedFailProtect& operator=(const ScopedFailProtect&) = delete;
+};
+
+// unprotect 恒失败（模拟换机 / 换用户 / 列被篡改）
+struct ScopedFailUnprotect {
+    platform::credential::Backend table;
+    const platform::credential::Backend* prev;
+    ScopedFailUnprotect() {
+        table = platform::credential::Backend{
+            &platform::credential::realProtect, &failUnprotect};
+        prev = platform::credential::setBackendForTest(&table);
+    }
+    ~ScopedFailUnprotect() { platform::credential::setBackendForTest(prev); }
+    ScopedFailUnprotect(const ScopedFailUnprotect&) = delete;
+    ScopedFailUnprotect& operator=(const ScopedFailUnprotect&) = delete;
+};
+
 } // namespace
 
-// 段一（Keychain 写）失败 → 按捕获到的旧值回写
+// 段一（凭据三列）失败 → 旧值完好（写入前就失败，不留半截）
 REGISTER_TEST(claude_cpx14_stage1_key_write_fail_restores_old,
-              "claude_service: CPX-14 段一 Keychain 写失败回写旧值", {
+              "claude_service: CPX-14 段一保护失败 → 旧密钥完好", {
     test_support::TestDb tdb(kDbPrefix, "cpx14stage1");
-    ScopedFakeKeychain kc;
     module::claude::ClaudeService svc(tdb.handle(), kTestKeychainService);
 
     auto created = svc.createProfile("Outer", "https://a.example.com",
                                      "sk-ant-old-0001", "m");
     DOCTEST_REQUIRE(created.isOk());
     const int64_t id = created.value().id;
-    const std::string account = created.value().keychainAccount;
-    DOCTEST_CHECK_EQ(kc.fake.get(kTestKeychainService, account),
-                     std::string("sk-ant-old-0001"));
 
-    // 注入：新密钥含哨兵 → 假后端落值后报失败 → writeKey 内部按旧值回写
-    module::claude::Profile p = created.value();
-    p.apiKeyPlain = std::string("sk-ant-new-0002-") +
-                    FakeKeychain::kStoreFailSentinel;
-    auto upd = svc.updateProfile(p);
-    DOCTEST_CHECK(upd.isFail());
+    // 注入：新密钥写入时 protect 失败（旧值 = 当前凭据，先捕获）
+    {
+        ScopedFailProtect cred;
+        module::claude::Profile p = created.value();
+        p.apiKeyPlain = "sk-ant-new-0002";
+        auto upd = svc.updateProfile(p);
+        DOCTEST_CHECK(upd.isFail());
+    }
 
-    // 补偿生效：Keychain 里是旧值，而不是刚写坏的新值
-    DOCTEST_CHECK_EQ(kc.fake.get(kTestKeychainService, account),
-                     std::string("sk-ant-old-0001"));
+    // 段一在落任何字节之前失败 → 旧值**压根没被动过**（比「写坏再回写」更强）
+    auto key = svc.loadApiKey(id);
+    DOCTEST_REQUIRE(key.isOk());
+    DOCTEST_CHECK_EQ(key.value(), std::string("sk-ant-old-0001"));
     // 段一失败即返回，段二没跑过：DB 元数据与旧密钥仍一致
     auto got = svc.getProfile(id);
     DOCTEST_REQUIRE(got.isOk());
@@ -642,26 +682,30 @@ REGISTER_TEST(claude_cpx14_stage1_key_write_fail_restores_old,
     DOCTEST_CHECK_EQ(got.value().apiKeyHint, created.value().apiKeyHint);
 
     // 正常路径未被注入层带坏（同一用例内换回合法密钥 → 写入成功）
-    p.apiKeyPlain = "sk-ant-new-0002";
-    DOCTEST_CHECK(svc.updateProfile(p).isOk());
-    DOCTEST_CHECK_EQ(kc.fake.get(kTestKeychainService, account),
-                     std::string("sk-ant-new-0002"));
+    module::claude::Profile p2 = created.value();
+    p2.apiKeyPlain = "sk-ant-new-0002";
+    DOCTEST_CHECK(svc.updateProfile(p2).isOk());
+    auto key2 = svc.loadApiKey(id);
+    DOCTEST_REQUIRE(key2.isOk());
+    DOCTEST_CHECK_EQ(key2.value(), std::string("sk-ant-new-0002"));
+    // 判据真的在跟：全量 SHA256 随新密钥重算
+    auto got2 = svc.getProfile(id);
+    DOCTEST_REQUIRE(got2.isOk());
+    DOCTEST_CHECK_NE(got2.value().apiKeyCheck, created.value().apiKeyCheck);
+    DOCTEST_CHECK_EQ(got2.value().apiKeyCheck.size(), static_cast<size_t>(64));
     return true;
 })
 
-// 段二（DB 删行）失败 → 密钥已删时补偿回写 + 行保留可重试
+// 段二（DB 删行）失败 → 凭据已清时补偿回写 + 行保留可重试
 REGISTER_TEST(claude_cpx14_delete_stage2_fail_restores_key,
-              "claude_service: CPX-14 段二删行失败回写已删密钥", {
+              "claude_service: CPX-14 段二删行失败回写已清凭据", {
     test_support::TestDb tdb(kDbPrefix, "cpx14delstage2");
-    ScopedFakeKeychain kc;
     module::claude::ClaudeService svc(tdb.handle(), kTestKeychainService);
 
     auto created = svc.createProfile("Victim", "https://v.example.com",
                                      "sk-ant-victim-0003", "m");
     DOCTEST_REQUIRE(created.isOk());
     const int64_t id = created.value().id;
-    const std::string account = created.value().keychainAccount;
-    DOCTEST_REQUIRE(kc.fake.has(kTestKeychainService, account));
 
     // 段二注入失败：BEFORE DELETE 触发器 RAISE(ABORT) → DELETE 语句确定性失败
     DOCTEST_REQUIRE(tdb.handle().exec(
@@ -671,28 +715,28 @@ REGISTER_TEST(claude_cpx14_delete_stage2_fail_restores_key,
     auto del = svc.deleteProfile(id);
     DOCTEST_CHECK(del.isFail());
 
-    // 段一确实删过密钥（不是「段一失败即中止」）：段二失败后补偿把它写回来
-    DOCTEST_CHECK_EQ(kc.fake.get(kTestKeychainService, account),
-                     std::string("sk-ant-victim-0003"));
+    // 段一确实清过凭据列（不是「段一失败即中止」）：段二失败后补偿把它写回来
+    auto k = svc.loadApiKey(id);
+    DOCTEST_REQUIRE(k.isOk());
+    DOCTEST_CHECK_EQ(k.value(), std::string("sk-ant-victim-0003"));
     // 行保留（用户可重试，密钥没丢）
     DOCTEST_CHECK(svc.getProfile(id).isOk());
 
-    // 撤掉注入源后重试 → 成功，两边都清干净（补偿没把正常路径带坏）
+    // 撤掉注入源后重试 → 成功，行没了（凭据随之不可达）
     DOCTEST_REQUIRE(tdb.handle().exec("DROP TRIGGER cpx14_block_delete").isOk());
     DOCTEST_CHECK(svc.deleteProfile(id).isOk());
     DOCTEST_CHECK(svc.getProfile(id).isFail());
-    DOCTEST_CHECK(!kc.fake.has(kTestKeychainService, account));
     return true;
 })
 
-// 段二（回填 keychain_account）失败 → 删行回滚 + 段一写入的密钥被清掉
-REGISTER_TEST(claude_cpx14_create_stage2_fail_rolls_back,
-              "claude_service: CPX-14 回填 account 失败删行回滚", {
-    test_support::TestDb tdb(kDbPrefix, "cpx14createstage2");
-    ScopedFakeKeychain kc;
+// 建行失败零残留（2026-10-02 存储统一：凭据与元数据同一条 INSERT，天然原子）
+// 旧实现是「段一 Keychain + 段二回填 account + 任一失败回滚 INSERT」，回滚路径
+// 随两存储合并而删除——本用例证明两条失败路径都不留半截行 / 半截凭据。
+REGISTER_TEST(claude_cpx14_create_fail_no_residue,
+              "claude_service: 建行失败零残留（重名 / 保护失败）", {
+    test_support::TestDb tdb(kDbPrefix, "createfail");
     module::claude::ClaudeService svc(tdb.handle(), kTestKeychainService);
 
-    // 基线一条无关 profile（创建走完整两段写正常路径）
     auto base = svc.createProfile("Base", "https://base.example.com",
                                   "sk-ant-base-0004", "m");
     DOCTEST_REQUIRE(base.isOk());
@@ -700,32 +744,36 @@ REGISTER_TEST(claude_cpx14_create_stage2_fail_rolls_back,
     DOCTEST_REQUIRE(before.isOk());
     const size_t countBefore = before.value().size();
 
-    // 段二注入失败：BEFORE UPDATE 触发器 RAISE(ABORT) → 回填 keychain_account
-    // 的 UPDATE 必失败（此刻段一已把密钥写进 Keychain）
-    DOCTEST_REQUIRE(tdb.handle().exec(
-        "CREATE TRIGGER cpx14_block_update BEFORE UPDATE ON claude_profiles "
-        "BEGIN SELECT RAISE(ABORT, 'cpx14: update blocked'); END").isOk());
+    // 路径一：重名 → INSERT 撞 UNIQUE，单条语句原子失败，一行都不落
+    auto dup = svc.createProfile("Base", "https://d.example.com",
+                                 "sk-ant-doomed-0005", "m");
+    DOCTEST_CHECK(dup.isFail());
+    DOCTEST_CHECK(dup.errorCode() == core::ErrorCode::ProfileAlreadyExists);
 
-    auto created = svc.createProfile("Doomed", "https://d.example.com",
-                                     "sk-ant-doomed-0005", "m");
-    DOCTEST_CHECK(created.isFail());
+    // 路径二：protect 失败 → 在 INSERT **之前**失败
+    {
+        ScopedFailProtect cred;
+        auto doomed = svc.createProfile("Doomed", "https://d.example.com",
+                                        "sk-ant-doomed-0006", "m");
+        DOCTEST_CHECK(doomed.isFail());
+    }
 
-    // 零残留一：段一写入的密钥被补偿清掉（不留孤儿密钥）
-    const std::string doomedAccount = kc.fake.lastStoredAccount;
-    DOCTEST_CHECK_EQ(doomedAccount.substr(0, 7), std::string("claude:"));
-    DOCTEST_CHECK(!kc.fake.has(kTestKeychainService, doomedAccount));
-    // 零残留二：INSERT 的行也回滚了
     auto after = svc.listProfiles();
     DOCTEST_REQUIRE(after.isOk());
     DOCTEST_CHECK_EQ(after.value().size(), countBefore);
 
+    // 基线那行的密钥没被两次失败带坏
+    auto baseKey = svc.loadApiKey(base.value().id);
+    DOCTEST_REQUIRE(baseKey.isOk());
+    DOCTEST_CHECK_EQ(baseKey.value(), std::string("sk-ant-base-0004"));
+
     // 撤掉注入源后重试 → 成功（正常路径未被注入层带坏）
-    DOCTEST_REQUIRE(tdb.handle().exec("DROP TRIGGER cpx14_block_update").isOk());
     auto ok = svc.createProfile("Doomed", "https://d.example.com",
-                                "sk-ant-doomed-0005", "m");
+                                "sk-ant-doomed-0006", "m");
     DOCTEST_REQUIRE(ok.isOk());
-    DOCTEST_CHECK_EQ(kc.fake.get(kTestKeychainService, ok.value().keychainAccount),
-                     std::string("sk-ant-doomed-0005"));
+    auto okKey = svc.loadApiKey(ok.value().id);
+    DOCTEST_REQUIRE(okKey.isOk());
+    DOCTEST_CHECK_EQ(okKey.value(), std::string("sk-ant-doomed-0006"));
     return true;
 })
 
@@ -1689,11 +1737,11 @@ REGISTER_TEST(claude_reverse_absent_clears,
     auto g = svc.getProfile(a.value().id);
     DOCTEST_REQUIRE(g.isOk());
     DOCTEST_CHECK(g.value().baseUrl.empty());          // 缺席 → 清空
-    DOCTEST_CHECK(g.value().keychainAccount.empty());  // 三列元数据一并清空
-    DOCTEST_CHECK(g.value().apiKeyHint.empty());
+    DOCTEST_CHECK(g.value().apiKeyHint.empty());       // 三列一并清空
     DOCTEST_CHECK(g.value().apiKeyCheck.empty());
-    auto k = svc.loadApiKey(a.value().id);             // Keychain 条目已删
+    auto k = svc.loadApiKey(a.value().id);             // 凭据列已清
     DOCTEST_CHECK(k.isFail());
+    DOCTEST_CHECK(k.errorCode() == core::ErrorCode::NotFound);
     DOCTEST_CHECK_EQ(g.value().model, std::string("only-default"));
     auto mc = parseModelsConfig(g.value().modelsConfigJson);
     DOCTEST_REQUIRE(mc.isOk());
@@ -2040,10 +2088,7 @@ REGISTER_TEST(claude_dup_profile_basic,
     DOCTEST_CHECK_EQ(cp.model, std::string("m-def"));
     DOCTEST_CHECK_EQ(cp.apiKeyCheck, pa.apiKeyCheck);
     DOCTEST_CHECK(!cp.isActive);                       // S-4：副本不激活
-    DOCTEST_CHECK_EQ(cp.keychainAccount,
-                     std::string("claude:") + std::to_string(cp.id));
-    DOCTEST_CHECK_NE(cp.keychainAccount, pa.keychainAccount);
-    // Keychain：副本 account 下是同一条源密钥
+    // 凭据本体现在在副本自己那一行里（旧形态是 Keychain 的 claude:<新 id> 条目）
     auto k = svc.loadApiKey(cp.id);
     DOCTEST_REQUIRE(k.isOk());
     DOCTEST_CHECK_EQ(k.value(), std::string("sk-src-key-0123456789abcdef"));
@@ -2089,7 +2134,8 @@ REGISTER_TEST(claude_dup_missing_key_fails,
     auto a = svc.createProfile("缺钥源", "https://src.example.com",
                                "sk-src-key-0123456789abcdef", "");
     DOCTEST_REQUIRE(a.isOk());
-    test_support::cleanupProfileKey(kTestKeychainService, a.value().id);            // 造 Keychain 孤儿
+    // 造「没存过密钥」的形态（2026-10-02：凭据在库列里，不再靠删 Keychain 条目）
+    DOCTEST_REQUIRE(test_support::clearStoredCredential(tdb.handle(), a.value().id));
 
     auto before = svc.listProfiles();
     DOCTEST_REQUIRE(before.isOk());
@@ -2106,23 +2152,26 @@ REGISTER_TEST(claude_dup_missing_key_fails,
 })
 
 // 复制失败三态（2026-09-30 复盘）：条目不存在 / 读失败 / 值为空串，文案可分辨
-// 且带恢复提示——原来三态合成一句「密钥缺失」，用户分不清病因也无从恢复。
-// 全程注入缝假 keychain：三态都是确定性构造，不依赖真实 Keychain 行为。
-REGISTER_TEST(claude_dup_missing_key_three_states,
-              "claude_service: 复制失败三态（NotFound / 读错误 / 空串）+ 恢复提示", {
-    test_support::TestDb tdb(kDbPrefix, "dup3state");
-    ScopedFakeKeychain kc;
+// 且带恢复提示——迁移前是「条目不存在 / 读失败 / 值为空串」三态，凭据进库后
+// 「列空」与「值为空串」在单列模型下是同一种形态，收敛为**两态**：
+//   列空（NotFound）→「密钥缺失」+ 恢复提示
+//   读失败（非 NotFound，如 Windows DPAPI 解不开）→ 原样透传（读不了 ≠ 没有）
+// 两态都确定性构造（不再依赖真实 Keychain 行为，macOS 上也能跑）。
+REGISTER_TEST(claude_dup_missing_key_two_states,
+              "claude_service: 复制失败两态（列空 / 解不开）+ 恢复提示", {
+    test_support::TestDb tdb(kDbPrefix, "dup2state");
     module::claude::ClaudeService svc(tdb.handle(), kTestKeychainService);
     const std::string hint = "编辑该 Profile 重新填一次 API Key 即可";
 
-    auto created = svc.createProfile("三态源", "https://s.example.com",
-                                     "sk-ant-3state-0001", "m");
+    auto created = svc.createProfile("两态源", "https://s.example.com",
+                                     "sk-ant-2state-0001", "m");
     DOCTEST_REQUIRE(created.isOk());
     const int64_t id = created.value().id;
-    const std::string account = created.value().keychainAccount;
 
-    // 态一：条目不存在（NotFound，历史孤儿形态）→「密钥缺失」+ 恢复提示
-    kc.fake.data.erase(FakeKeychain::keyOf(kTestKeychainService, account));
+    // 态一：凭据列为空（没有密钥）→「密钥缺失」+ 恢复提示
+    DOCTEST_REQUIRE(tdb.handle().exec(
+        "UPDATE claude_profiles SET api_key_encrypted = '', api_key_hint = '', "
+        "api_key_check = '' WHERE id = " + std::to_string(id)).isOk());
     auto dupMissing = svc.duplicateProfile(id);
     DOCTEST_CHECK(dupMissing.isFail());
     DOCTEST_CHECK(dupMissing.errorCode() == core::ErrorCode::InvalidApiKey);
@@ -2130,37 +2179,37 @@ REGISTER_TEST(claude_dup_missing_key_three_states,
                   std::string::npos);
     DOCTEST_CHECK(dupMissing.errorMessage().find(hint) != std::string::npos);
 
-    // 态二：读失败（非 NotFound 的真实错误）→ 原样透传错误码与信息
-    //（读不了 ≠ 没有，不能报「密钥缺失」误导用户去重填）
-    kc.table.loadSecret = [](const std::string&, const std::string&) {
-        return core::Result<std::string>::fail(core::ErrorCode::Internal,
-                                               "注入：读取失败");
-    };
-    auto dupErr = svc.duplicateProfile(id);
-    DOCTEST_CHECK(dupErr.isFail());
-    DOCTEST_CHECK(dupErr.errorCode() == core::ErrorCode::Internal);
-    DOCTEST_CHECK(dupErr.errorMessage().find("读取源 Profile 密钥失败") !=
-                  std::string::npos);
-    DOCTEST_CHECK(dupErr.errorMessage().find("注入：读取失败") !=
-                  std::string::npos);
-    DOCTEST_CHECK(dupErr.errorMessage().find("密钥缺失") == std::string::npos);
-    // 恢复假实现（态三还要正常读）
-    kc.table.loadSecret = &fakeLoad;
+    // 恢复正常凭据（态二要正常读列）
+    module::claude::Profile fix = created.value();
+    fix.apiKeyPlain = "sk-ant-2state-0001";
+    DOCTEST_REQUIRE(svc.updateProfile(fix).isOk());
 
-    // 态三：条目在但值是空串 →「密钥为空串」+ 恢复提示
-    DOCTEST_REQUIRE(platform::keychain::storeSecret(
-        kTestKeychainService, account, "").isOk());
-    auto dupEmpty = svc.duplicateProfile(id);
-    DOCTEST_CHECK(dupEmpty.isFail());
-    DOCTEST_CHECK(dupEmpty.errorCode() == core::ErrorCode::InvalidApiKey);
-    DOCTEST_CHECK(dupEmpty.errorMessage().find("密钥为空串") !=
-                  std::string::npos);
-    DOCTEST_CHECK(dupEmpty.errorMessage().find(hint) != std::string::npos);
+    // 态二：解不开（非 NotFound 的真实错误，如换机 / 换用户 / 列被篡改）→
+    // 原样透传错误码与信息（读不了 ≠ 没有，不能报「密钥缺失」误导用户去重填）
+    {
+        ScopedFailUnprotect cred;
+        auto dupErr = svc.duplicateProfile(id);
+        DOCTEST_CHECK(dupErr.isFail());
+        DOCTEST_CHECK(dupErr.errorCode() == core::ErrorCode::Internal);
+        DOCTEST_CHECK(dupErr.errorMessage().find("读取源 Profile 密钥失败") !=
+                      std::string::npos);
+        DOCTEST_CHECK(dupErr.errorMessage().find("注入：列形态损坏，解不开") !=
+                      std::string::npos);
+        DOCTEST_CHECK(dupErr.errorMessage().find("密钥缺失") ==
+                      std::string::npos);
+    }
 
-    // 三个失败态都没建行（不建无 key 的副本）
+    // 两个失败态都没建行（不建无 key 的副本）
     auto after = svc.listProfiles();
     DOCTEST_REQUIRE(after.isOk());
     DOCTEST_CHECK_EQ(static_cast<int>(after.value().size()), 1);
+
+    // 撤掉注入源后复制成功（正常路径未被注入层带坏）
+    auto ok = svc.duplicateProfile(id);
+    DOCTEST_REQUIRE(ok.isOk());
+    auto copyKey = svc.loadApiKey(ok.value().id);
+    DOCTEST_REQUIRE(copyKey.isOk());
+    DOCTEST_CHECK_EQ(copyKey.value(), std::string("sk-ant-2state-0001"));
     return true;
 })
 
@@ -2667,18 +2716,19 @@ REGISTER_TEST(claude_service_resolve_fallback_profile,
     dangling.fallbackProfileId = 987654;
     DOCTEST_CHECK_FALSE(svc.resolveFallbackProfile(dangling).has_value());
 
-    // 备用存在但 Keychain 缺 key → nullopt（「备用失效」档）
+    // 备用存在但凭据列空 → nullopt（「备用失效」档）
     Profile noKey = a.value();
     noKey.fallbackProfileId = b.value().id;
-    platform::keychain::deleteSecret(
-        kTestKeychainService, "claude:" + std::to_string(b.value().id));
+    DOCTEST_REQUIRE(test_support::clearStoredCredential(tdb.handle(), b.value().id));
     DOCTEST_CHECK_FALSE(svc.resolveFallbackProfile(noKey).has_value());
 
     // 备用可用 → 返回完整备用（含明文 key，供代理转发注入）
-    // loadApiKey 读不到 = 上面已删 → 先重建 key（直接写 Keychain）
-    DOCTEST_REQUIRE(platform::keychain::storeSecret(
-        kTestKeychainService, "claude:" + std::to_string(b.value().id),
-        "sk-b-test-0123456789abcdef").isOk());
+    // 上面已清空 → 先重建 key（经服务写回本行凭据列）
+    {
+        Profile reb = b.value();
+        reb.apiKeyPlain = "sk-b-test-0123456789abcdef";
+        DOCTEST_REQUIRE(svc.updateProfile(reb).isOk());
+    }
     auto fb = svc.resolveFallbackProfile(noKey);
     DOCTEST_REQUIRE(fb.has_value());
     DOCTEST_CHECK_EQ(fb->id, b.value().id);
@@ -3241,7 +3291,7 @@ REGISTER_TEST(claude_service_run_profile_merges_extra_settings,
 })
 
 REGISTER_TEST(claude_service_run_profile_key_read_failure_aborts,
-              "claude_service: runProfile 读 Keychain 失败 → fail 且不落盘、不开窗", {
+              "claude_service: runProfile 读凭据失败 → fail 且不落盘、不开窗", {
     test_support::DataRootEnv root(kDbPrefix, "runprofile2");
     test_support::TestDb tdb(kDbPrefix, "runprofile2");
     module::claude::ClaudeService svc(tdb.handle(), kTestKeychainService);
@@ -3251,18 +3301,9 @@ REGISTER_TEST(claude_service_run_profile_key_read_failure_aborts,
     DOCTEST_REQUIRE(a.isOk());
     DOCTEST_REQUIRE(svc.setActiveProfile(a.value().id).isOk());
 
-    // 注入 load 失败的后端（CPX-14 缝）：createProfile 在注入前已完成，
-    // store/delete 仍走真实实现——只让「读」失败
-    const auto failLoad = [](const std::string&, const std::string&)
-        -> core::Result<std::string> {
-        return core::Result<std::string>::fail(core::ErrorCode::Internal,
-            "注入：Keychain 读失败");
-    };
-    platform::keychain::Backend table{&platform::keychain::realStoreSecret,
-                                      failLoad,
-                                      &platform::keychain::realDeleteSecret,
-                                      &platform::keychain::realDeleteSecretsNotIn};
-    const auto* prev = platform::keychain::setBackendForTest(&table);
+    // 注入「读凭据失败」（2026-10-02 存储统一后注入面从 Keychain 挪到
+    // credential::unprotect）：createProfile 在注入前已完成，只让「读」失败
+    ScopedFailUnprotect cred;
 
     int calls = 0;
     svc.setTerminalLauncher([&](const platform::terminal::LaunchSpec&) {
@@ -3276,8 +3317,6 @@ REGISTER_TEST(claude_service_run_profile_key_read_failure_aborts,
     DOCTEST_CHECK(!std::filesystem::exists(
         std::filesystem::path(root.dir) / "run-settings"));
 
-    platform::keychain::setBackendForTest(prev);   // 先还原再清密钥（清密钥走真实后端）
-    test_support::cleanupProfileKey(kTestKeychainService, a.value().id);
     return true;
 })
 

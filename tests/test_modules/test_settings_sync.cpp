@@ -1528,11 +1528,27 @@ REGISTER_TEST(sync_restore_v1_sidecar_no_nonenv,
 // restore 全部撤走。走真门面（startProxy/stopProxy）钉住装配这一跳——装配漏传
 // /传未生效化原文时必红（骨架照既有片段接管用例平移 JSON 域）
 //
-// 钥匙串隔离（merge-review R2）：本用例**装假 Keychain**（ScopedFakeKeychain，
-// CPX-14 注入缝）。原写法 createProfile 会向**系统钥匙串**写测试密钥，清理
-// 只有函数尾部那一次 deleteSecret——中间任一 DOCTEST_REQUIRE 失败就残留一条
-// 真实条目（与 P0 钥匙串事故同款形状）。装假后端后本用例对真钥匙串零读写，
-// 且末尾断言假后端里确实落过、也确实被清空（写链没被偷偷跳过）。
+// 钥匙串隔离（merge-review R2 + 2026-10-02 存储统一）：本用例仍**装假 Keychain**
+// （ScopedFakeKeychain，CPX-14 注入缝）——凭据已改落 SQLite 列，Keychain 现在
+// 一个字节都不该被写。断言因此分两半：① 假后端**始终为空**（「迁库后 Keychain
+// 不再是凭据源」的回归网）；② 库列里确实落了值（「写链真跑过」的证据从 Keychain
+// 换到库列，否则本用例的其余断言全是恒真）。
+namespace {
+// 该 profile 的凭据列长度（> 0 = 凭据真的落库了）
+std::size_t storedCredentialLength(core::data::SqliteDb& db, int64_t id) {
+    auto prep = db.prepare(
+        "SELECT api_key_encrypted FROM claude_profiles WHERE id = ?");
+    if (prep.isFail()) return 0;
+    auto& stmt = prep.value();
+    if (stmt.bind(1, id).isFail()) return 0;
+    auto step = stmt.step();
+    if (step.isFail() || !step.value()) return 0;
+    auto row = stmt.currentRow();
+    if (row.isFail()) return 0;
+    auto v = row.value().getString("api_key_encrypted");
+    return v.isOk() ? v.value().size() : 0;
+}
+} // namespace
 REGISTER_TEST(sync_takeover_fragment_json_end_to_end,
               "claude_service: 片段 JSON 叠加端到端（门面装配片段赢→接管写入→还原撤走，F-8）", {
     using namespace module::claude;
@@ -1550,8 +1566,10 @@ REGISTER_TEST(sync_takeover_fragment_json_end_to_end,
     auto a = svc.createProfile("绑JSON", "https://j.example.com",
                                "sk-ind-test-0123456789abcdef", "");
     DOCTEST_REQUIRE(a.isOk());
-    // 前置：密钥确实落到了（假）后端——否则末尾「清空」恒真、等于没走写链
-    DOCTEST_REQUIRE_EQ(kc.fake.count(), static_cast<size_t>(1));
+    // 前置：密钥确实落进了库列——否则本用例等于没走凭据写链
+    DOCTEST_REQUIRE(storedCredentialLength(tdb.handle(), a.value().id) > 0);
+    // 且 Keychain 侧一个字节都没写（迁库后的硬性质）
+    DOCTEST_CHECK_EQ(kc.fake.count(), static_cast<size_t>(0));
     Profile pa = a.value();
     pa.extraSettingsJson = R"({"statusLine": "profile-s", "permissions": {"p": 1}})";
     pa.sharedConfigId = frag.value().id;
@@ -1583,10 +1601,10 @@ REGISTER_TEST(sync_takeover_fragment_json_end_to_end,
         DOCTEST_CHECK_FALSE(doc.value().asObject().has("permissions"));
         DOCTEST_CHECK_FALSE(doc.value().asObject().has("hooks"));
     }
-    platform::keychain::deleteSecret(kTestKeychainService,
-                                     "claude:" + std::to_string(pa.id));
-    // 假后端清空 = 清理链真的跑过（不是被 REQUIRE 跳过）
+    // 全程 Keychain 零读写（迁库后凭据只在本行 api_key_encrypted 列），
+    // 且库列里的密钥仍在（stopProxy/restore 不碰 profile 凭据）
     DOCTEST_CHECK_EQ(kc.fake.count(), static_cast<size_t>(0));
+    DOCTEST_CHECK(storedCredentialLength(tdb.handle(), pa.id) > 0);
     return true;
 })
 

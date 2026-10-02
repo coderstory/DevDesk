@@ -84,8 +84,11 @@ const SharedConfig* findSharedById(const std::vector<SharedConfig>& configs,
 // settings.json 的文本（键序为字典序，D-2 同一条通道）。
 // keyPlaceholder = 凭据键的占位值："sk-ant-***<尾4>"（与详情页 apiKeyHint 同一
 // 脱敏口径，已裁决 §5②）；**不导明文 key**（剪贴板是跨应用共享面，§5① 裁决）；
-// 传空串 → buildDirectEnv 空值不写凭据键，导出即无 token 键（Keychain 读不到
-// 的兜底形态）。序列化失败（理论不可达）→ 返回空串，调用方按失败处理。
+// 传空串 → buildDirectEnv 空值不写凭据键，导出即无 token 键（该 profile 没存
+// 过密钥的兜底形态）。序列化失败（理论不可达）→ 返回空串，调用方按失败处理。
+// **硬约束（设计 §6.4）**：keyPlaceholder 只允许传 apiKeyHint 这类脱敏形态；
+// 调用方必须在调用前守住「导出结果不含凭据」——回归网见
+// tests/test_modules/test_claude_ui.cpp 的「导出不含凭据」用例。
 std::string buildProfileExportJson(const Profile& p,
                                    const std::string& fragmentJson,
                                    const std::string& keyPlaceholder);

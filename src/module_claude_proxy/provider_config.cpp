@@ -650,8 +650,8 @@ std::map<std::string, std::string> buildDirectEnv(
     }
 
     // 托管键 2：密钥键按认证字段三态只写一个（直连形态；见 provider_config.h
-    // buildDirectEnv 注释的三态表）。密钥值为空串 → 不写（读 Keychain 成功但
-    // 条目为空属于异常数据，宁可不写也不发空值）。
+    // buildDirectEnv 注释的三态表）。密钥值为空串 → 不写（读凭据列成功但列
+    // 为空属于异常数据，宁可不写也不发空值）。
     // 写选中键的同时**清掉另一密钥键**：extra_env 可能带进反向的 token 键
     //（如默认 both 形态下 extra_env 里有 ANTHROPIC_API_KEY）——留着会让直连
     // 请求携带两个凭据，网关可能取到过期/错误的那一个（代理路径免疫：客户端
@@ -809,8 +809,8 @@ ReverseSyncParse parseEnvForReverseSync(
             if (key == a.alias) out.cfg.skippedKeys.push_back(a.official);
         }
     };
-    // token 目标只有一个（Keychain 条目）：任一 token 键命中守卫都按「整个
-    // token 字段不写也不清」登记
+    // token 目标只有一个（本 profile 的凭据列）：任一 token 键命中守卫都按
+    // 「整个 token 字段不写也不清」登记
     auto markTokenSkipped = [&markSkipped]() {
         markSkipped("ANTHROPIC_AUTH_TOKEN");
         markSkipped("ANTHROPIC_API_KEY");

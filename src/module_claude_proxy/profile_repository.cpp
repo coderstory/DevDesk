@@ -6,6 +6,7 @@
 #include "profile_repository.h"
 
 #include "core/logging.h"
+#include "platform/credential_protection.h"
 #include "platform/keychain.h"
 #include "provider_config.h"
 #include "upstream_dialect.h"
@@ -22,12 +23,6 @@
 namespace module::claude {
 
 namespace {
-
-// Keychain account 命名：DevDesk:claude:<profile_id>  ← 但 platform::keychain
-// 接受 service+account 两个独立字符串，所以这里 account 用 "claude:<id>"
-std::string keychainAccountFor(int64_t profileId) {
-    return "claude:" + std::to_string(profileId);
-}
 
 // 取当前 unix 秒
 std::time_t nowUnix() {
@@ -57,24 +52,24 @@ std::string normalizeDialectOverride(const std::string& text) {
     return kind ? std::string(dialectKindToText(*kind)) : std::string();
 }
 
-} // namespace
-
-// ---------- 静态工具 ----------
-
-std::string ProfileRepository::sha256HexPrefix(const std::string& s) {
+// 全量 SHA256 hex（64 字符）。2026-10-02 存储统一：api_key_check 的旧语义是
+// 「前 8 hex，与 Keychain 明文比对」，前提（Keychain 里另存一份明文）已消失，
+// 改为全量摘要作「密钥是否变更」判据——碰撞面从 32 bit 收到 256 bit。
+std::string sha256Hex(const std::string& s) {
     unsigned char digest[SHA256_DIGEST_LENGTH];
     SHA256(reinterpret_cast<const unsigned char*>(s.data()), s.size(), digest);
 
     std::ostringstream oss;
-    // 仅取前 8 个 hex 字符（4 字节）足够做防误操作校验
-    for (int i = 0; i < 4 && i < SHA256_DIGEST_LENGTH; ++i) {
+    for (int i = 0; i < SHA256_DIGEST_LENGTH; ++i) {
         oss << std::hex << std::setw(2) << std::setfill('0')
             << static_cast<int>(digest[i]);
     }
     return oss.str();
 }
 
-std::string ProfileRepository::makeApiKeyHint(const std::string& apiKey) {
+// UI / 导出用的脱敏形态：前 6 + "***" + 尾 4（太短则全 *）。
+// 导出链（claude_module.cpp doCopyConfig）只允许拿它当占位值，绝不用明文。
+std::string makeApiKeyHint(const std::string& apiKey) {
     if (apiKey.size() <= 10) {
         // 太短就全部用 *
         return std::string(apiKey.size(), '*');
@@ -87,31 +82,94 @@ std::string ProfileRepository::makeApiKeyHint(const std::string& apiKey) {
     return hint;
 }
 
+// 凭据三列的唯一写口（段一 / 补偿共用；空 stored = 清空三列 = 「该行没有密钥」）。
+// hint / check 由调用方算好一并传入，保证三列永远同批更新、不会漂移。
+core::Result<void> writeCredentialColumns(core::data::SqliteDb& db,
+                                          int64_t profileId,
+                                          const std::string& stored,
+                                          const std::string& hint,
+                                          const std::string& check) {
+    auto prep = db.prepare(
+        "UPDATE claude_profiles SET api_key_encrypted = ?, api_key_hint = ?, "
+        "api_key_check = ?, updated_at = ? WHERE id = ?");
+    if (prep.isFail()) {
+        return core::Result<void>::fail(prep.errorCode(), prep.errorMessage());
+    }
+    auto& stmt = prep.value();
+    stmt.bind(1, stored);
+    stmt.bind(2, hint);
+    stmt.bind(3, check);
+    stmt.bind(4, static_cast<int64_t>(nowUnix()));
+    stmt.bind(5, profileId);
+    auto stepR = stmt.step();
+    if (stepR.isFail()) {
+        return core::Result<void>::fail(stepR.errorCode(), stepR.errorMessage());
+    }
+    return core::Result<void>::ok();
+}
+
+// 读该行的存储形态（不存在 / 读失败 → 空串 = 没有密钥）
+std::string readStoredCredential(core::data::SqliteDb& db, int64_t profileId) {
+    auto prep = db.prepare(
+        "SELECT api_key_encrypted FROM claude_profiles WHERE id = ?");
+    if (prep.isFail()) return std::string();
+    auto& stmt = prep.value();
+    if (stmt.bind(1, profileId).isFail()) return std::string();
+    auto stepR = stmt.step();
+    if (stepR.isFail() || !stepR.value()) return std::string();
+    auto row = stmt.currentRow();
+    if (row.isFail()) return std::string();
+    auto v = row.value().getString("api_key_encrypted");
+    return v.isOk() ? v.value() : std::string();
+}
+
+} // namespace
+
 // ---------- 两段写助手（CPX-07）----------
 
-TwoPhaseKeyWrite::TwoPhaseKeyWrite(std::string keychainService,
-                                   std::string account, std::string oldKey)
-    : service_(std::move(keychainService)),
-      account_(std::move(account)),
-      oldKey_(std::move(oldKey)) {}
+TwoPhaseKeyWrite::TwoPhaseKeyWrite(core::data::SqliteDb& db, int64_t profileId,
+                                   std::string oldStored, std::string oldPlain)
+    : db_(db),
+      profileId_(profileId),
+      oldStored_(std::move(oldStored)),
+      oldPlain_(std::move(oldPlain)) {}
 
-TwoPhaseKeyWrite TwoPhaseKeyWrite::capture(const std::string& keychainService,
-                                           const std::string& account) {
-    auto old = platform::keychain::loadSecret(keychainService, account);
-    return TwoPhaseKeyWrite(keychainService, account,
-                            old.isOk() ? old.value() : std::string());
+TwoPhaseKeyWrite TwoPhaseKeyWrite::capture(core::data::SqliteDb& db,
+                                           int64_t profileId) {
+    std::string stored = readStoredCredential(db, profileId);
+    std::string plain;
+    // 明文只为「密钥是否已回到旧值」的诊断比较而留；解不开就留空（捕获阶段
+    // 不报错——回写走原样 stored 字节，不需要明文）
+    if (!stored.empty()) {
+        auto p = platform::credential::unprotect(stored);
+        if (p.isOk()) plain = p.value();
+    }
+    return TwoPhaseKeyWrite(db, profileId, std::move(stored), std::move(plain));
 }
 
 core::Result<void> TwoPhaseKeyWrite::writeKey(const std::string& newKey) {
-    auto r = newKey.empty()
-        ? platform::keychain::deleteSecret(service_, account_)
-        : platform::keychain::storeSecret(service_, account_, newKey);
+    std::string stored;
+    std::string hint;
+    std::string check;
+    if (!newKey.empty()) {
+        auto prot = platform::credential::protect(newKey);
+        if (prot.isFail()) {
+            // 段一在**落任何字节之前**就失败：旧值完好，无需补偿（比旧的
+            // 「先写坏再回写」更强——回写照做的理由因此只对下面的落库失败成立）
+            return core::Result<void>::fail(prot.errorCode(),
+                                            prot.errorMessage());
+        }
+        stored = prot.value();
+        hint = makeApiKeyHint(newKey);
+        check = sha256Hex(newKey);
+    }
+
+    auto r = writeCredentialColumns(db_, profileId_, stored, hint, check);
     if (r.isFail()) {
-        // 段一失败也可能已破坏旧值 → 尽力回写。CP-11 后 Windows 侧 storeSecret
-        // 走 core::atomicWriteFile（tmp 全量写成功才做覆盖式替换，原有「trunc 写
-        // 留半截文件」通道已消除），但替换阶段（remove 后 rename）失败仍会丢旧值；
-        // POSIX 兜底仍是 ofstream 原地覆盖写、macOS 是先删后加——三者都不承诺
-        // 失败时旧值完好，故回写照做
+        // 段一落库失败也可能已动过旧值（语句级失败通常在提交前回滚，但 SQLite
+        // 的错误窗口不承诺旧值完好）→ 尽力回写。旧值以**存储形态原样字节**回写
+        // （不经 protect 重编码），DPAPI 那种「同一明文两次加密结果不同」的平台
+        // 也能回到逐字节的旧状态
         keyTouched_ = true;
         compensate();
         return r;
@@ -124,20 +182,22 @@ core::Result<void> TwoPhaseKeyWrite::writeDb(
     const std::function<core::Result<void>()>& dbWrite) {
     auto r = dbWrite();
     if (r.isFail()) {
-        compensate();   // 段二失败 → Keychain 回到旧值
+        compensate();   // 段二失败 → 凭据三列回到旧值
     }
     return r;
 }
 
 void TwoPhaseKeyWrite::compensate() {
     if (!keyTouched_) return;   // 没改过（或已回写）→ 无需动作
-    auto r = oldKey_.empty()
-        ? platform::keychain::deleteSecret(service_, account_)
-        : platform::keychain::storeSecret(service_, account_, oldKey_);
+    const std::string hint = oldPlain_.empty() ? std::string()
+                                              : makeApiKeyHint(oldPlain_);
+    const std::string check = oldPlain_.empty() ? std::string()
+                                               : sha256Hex(oldPlain_);
+    auto r = writeCredentialColumns(db_, profileId_, oldStored_, hint, check);
     if (r.isFail()) {
-        // 保留 keyTouched_：Keychain 还没回到旧值（密钥可能不可用）
-        LOG_ERROR("两段写补偿：回写 Keychain 旧值失败（account=" + account_ +
-                  "）: " + r.errorMessage());
+        // 保留 keyTouched_：三列还没回到旧值（密钥可能不可用）
+        LOG_ERROR("两段写补偿：回写凭据列旧值失败（profile id=" +
+                  std::to_string(profileId_) + "）: " + r.errorMessage());
         return;
     }
     keyTouched_ = false;
@@ -162,7 +222,6 @@ core::Result<Profile> ProfileRepository::rowToProfile(
     auto url = row.getString("base_url");
     auto hint = row.getString("api_key_hint");
     auto check = row.getString("api_key_check");
-    auto acct = row.getString("keychain_account");
     auto model = row.getString("model");
     auto modelsCfg = row.getString("models_config");
     auto extraEnv = row.getString("extra_env");
@@ -179,7 +238,6 @@ core::Result<Profile> ProfileRepository::rowToProfile(
     if (url.isOk()) p.baseUrl = url.value();
     if (hint.isOk()) p.apiKeyHint = hint.value();
     if (check.isOk()) p.apiKeyCheck = check.value();
-    if (acct.isOk()) p.keychainAccount = acct.value();
     if (model.isOk()) p.model = model.value();
     if (modelsCfg.isOk()) p.modelsConfigJson = modelsCfg.value();
     if (extraEnv.isOk()) p.extraEnvJson = extraEnv.value();
@@ -207,7 +265,7 @@ core::Result<Profile> ProfileRepository::rowToProfile(
 core::Result<std::vector<Profile>> ProfileRepository::listProfiles() {
     auto prep = db_.prepare(
         "SELECT id, name, base_url, api_key_hint, api_key_check, "
-        "keychain_account, model, models_config, extra_env, extra_settings_json, "
+        "model, models_config, extra_env, extra_settings_json, "
         "shared_config_id, auth_field, dialect_override, fallback_profile_id, is_active, "
         "created_at, updated_at "
         "FROM claude_profiles ORDER BY is_active DESC, name ASC");
@@ -238,7 +296,7 @@ core::Result<std::vector<Profile>> ProfileRepository::listProfiles() {
 core::Result<Profile> ProfileRepository::getProfile(int64_t id) {
     auto prep = db_.prepare(
         "SELECT id, name, base_url, api_key_hint, api_key_check, "
-        "keychain_account, model, models_config, extra_env, extra_settings_json, "
+        "model, models_config, extra_env, extra_settings_json, "
         "shared_config_id, auth_field, dialect_override, fallback_profile_id, is_active, "
         "created_at, updated_at "
         "FROM claude_profiles WHERE id = ?");
@@ -298,19 +356,27 @@ core::Result<Profile> ProfileRepository::createProfile(const std::string& name,
     const std::string cleanedDialectOverride =
         normalizeDialectOverride(dialectOverride);
     const std::string hint = makeApiKeyHint(apiKey);
-    const std::string check = sha256HexPrefix(apiKey);
+    const std::string check = sha256Hex(apiKey);
 
-    // 先插入一行并直接取回 rowid（审计 2026-09-23 [7]）：旧实现是
+    // 凭据先过平台保护（Windows = DPAPI 加密；macOS/POSIX = 原样）。
+    // 放在 INSERT 之前：保护失败就一字节都不落，不留「行了但密钥坏」的中间态
+    auto protectedKey = platform::credential::protect(apiKey);
+    if (protectedKey.isFail()) {
+        return core::Result<Profile>::fail(protectedKey.errorCode(),
+            "API Key 保护失败（未建行）: " + protectedKey.errorMessage());
+    }
+
+    // 单条 INSERT 并直接取回 rowid（审计 2026-09-23 [7]）：旧实现是
     // INSERT 与 SELECT last_insert_rowid() 两条语句，中间不持锁——代理
     // worker 线程的 logCall INSERT 穿插其间会改写连接级 last_insert_rowid，
-    // 导致 newId 取错：密钥存进错误 account、UPDATE 回填落空（profile 损坏
-    // + 孤儿密钥）。INSERT ... RETURNING id（SQLite ≥3.35）单语句原子取回，
+    // 导致 newId 取错。INSERT ... RETURNING id（SQLite ≥3.35）单语句原子取回，
     // rowid 随本条 INSERT 的结果行返回，不再依赖连接级状态。
-    // （keychain_account 仍先占位空串、storeSecret 成功后 UPDATE 回填，
-    // Keychain 失败时按 newId 精确 DELETE 回滚。）
+    // 2026-10-02 存储统一：凭据与元数据在同一行 → 旧的两段写（段一 Keychain、
+    // 段二回填 keychain_account、任一失败回滚 INSERT）在单条语句里天然原子，
+    // 回滚路径随之删除（行为等价且更强：不存在「行了但密钥没落」的窗口）。
     auto prep = db_.prepare(
         "INSERT INTO claude_profiles "
-        "(name, base_url, api_key_hint, api_key_check, keychain_account, "
+        "(name, base_url, api_key_hint, api_key_check, api_key_encrypted, "
         " model, shared_config_id, auth_field, dialect_override, "
         " fallback_profile_id, extra_settings_json, is_active, created_at, "
         " updated_at) "
@@ -323,7 +389,7 @@ core::Result<Profile> ProfileRepository::createProfile(const std::string& name,
     stmt.bind(2, cleanedUrl);
     stmt.bind(3, hint);
     stmt.bind(4, check);
-    stmt.bind(5, std::string(""));   // 插入后用 UPDATE 回填真实 account
+    stmt.bind(5, protectedKey.value());  // 凭据本体（分平台形态）
     stmt.bind(6, cleanedModel);
     stmt.bind(7, sharedConfigId);    // 建时即绑定（0 = 不绑定）
     stmt.bind(8, cleanedAuthField);  // 认证字段（写侧已规范化）
@@ -372,64 +438,6 @@ core::Result<Profile> ProfileRepository::createProfile(const std::string& name,
                  drain.errorMessage());
     }
 
-    // 两段写（CPX-07）：段一 Keychain（account 由自增 id 生成，旧值必为空 =
-    // 该条目尚不存在）→ 段二 DB 回填 keychain_account。任一段失败都回滚本次
-    // INSERT 的行（恢复「没建过」的原状），Keychain 侧由助手按旧值回写
-    // （旧值为空 = 删除条目，不留半截密钥）。
-    const std::string account = keychainAccountFor(newId);
-    TwoPhaseKeyWrite keyTx(keychainService_, account, std::string());
-    // 回滚本次 INSERT；回滚本身再失败会留下无密钥的幽灵 profile 行，
-    // 至少留 ERROR 痕迹可诊断（审计 2026-09-23 [25]）
-    const auto rollbackInsertedRow = [&]() {
-        auto delPrep = db_.prepare("DELETE FROM claude_profiles WHERE id = ?");
-        if (delPrep.isOk()) {
-            auto& delStmt = delPrep.value();
-            delStmt.bind(1, newId);
-            auto delStep = delStmt.step();
-            if (delStep.isFail()) {
-                LOG_ERROR("createProfile 失败后的回滚 DELETE 也失败，存在悬空 "
-                          "profile 行 id=" + std::to_string(newId) + ": " +
-                          delStep.errorMessage());
-            }
-        } else {
-            LOG_ERROR("createProfile 失败后的回滚 DELETE prepare 失败，存在悬空 "
-                      "profile 行 id=" + std::to_string(newId) + ": " +
-                      delPrep.errorMessage());
-        }
-    };
-
-    auto kcStore = keyTx.writeKey(apiKey);
-    if (kcStore.isFail()) {
-        rollbackInsertedRow();
-        return core::Result<Profile>::fail(kcStore.errorCode(),
-            "Keychain 存储失败: " + kcStore.errorMessage());
-    }
-
-    // 段二：回填 keychain_account
-    auto backfill = keyTx.writeDb([&]() -> core::Result<void> {
-        auto updPrep = db_.prepare(
-            "UPDATE claude_profiles SET keychain_account = ? WHERE id = ?");
-        if (updPrep.isFail()) {
-            return core::Result<void>::fail(updPrep.errorCode(),
-                                            updPrep.errorMessage());
-        }
-        auto& updStmt = updPrep.value();
-        updStmt.bind(1, account);
-        updStmt.bind(2, newId);
-        auto uStep = updStmt.step();
-        if (uStep.isFail()) {
-            return core::Result<void>::fail(uStep.errorCode(),
-                                            uStep.errorMessage());
-        }
-        return core::Result<void>::ok();
-    });
-    if (backfill.isFail()) {
-        // 行缺 keychain_account = 密钥不可达，与段一失败同等对待 → 一并回滚
-        rollbackInsertedRow();
-        return core::Result<Profile>::fail(backfill.errorCode(),
-                                           backfill.errorMessage());
-    }
-
     LOG_INFO("已创建 Claude profile id=" + std::to_string(newId) +
              " name=" + cleanedName);
 
@@ -441,7 +449,6 @@ core::Result<Profile> ProfileRepository::createProfile(const std::string& name,
     out.baseUrl = cleanedUrl;
     out.apiKeyHint = hint;
     out.apiKeyCheck = check;
-    out.keychainAccount = account;
     out.model = cleanedModel;
     out.sharedConfigId = sharedConfigId;
     out.authField = cleanedAuthField;   // 必须带上：二段补写以本返回值为基
@@ -514,25 +521,22 @@ core::Result<void> ProfileRepository::updateProfile(const Profile& profile,
         }
     }
 
-    // 1. 如果 apiKeyPlain 非空，覆盖 Keychain
+    // 1. 如果 apiKeyPlain 非空，覆盖凭据三列
     if (!profile.apiKeyPlain.empty()) {
-        const std::string newCheck = sha256HexPrefix(profile.apiKeyPlain);
-        const std::string newHint = makeApiKeyHint(profile.apiKeyPlain);
-        // 两段写（CPX-07）：段一 Keychain（旧值 = 当前密钥，先捕获）→ 段二 DB。
-        // 段二失败时按旧值回写 Keychain——原实现没有补偿，留下「密钥已换、
+        // 两段写（CPX-07）：段一凭据三列（旧值 = 当前凭据，先捕获）→ 段二其余
+        // 元数据。段二失败时按旧值回写三列——原实现没有补偿，留下「密钥已换、
         // api_key_hint / api_key_check 没换」的不一致态，事后无从判断。
-        TwoPhaseKeyWrite keyTx = TwoPhaseKeyWrite::capture(
-            keychainService_, old.value().keychainAccount);
-        auto kcStore = keyTx.writeKey(profile.apiKeyPlain);
-        if (kcStore.isFail()) {
-            return core::Result<void>::fail(kcStore.errorCode(),
-                "Keychain 更新失败: " + kcStore.errorMessage());
+        TwoPhaseKeyWrite keyTx = TwoPhaseKeyWrite::capture(db_, profile.id);
+        auto keyWrite = keyTx.writeKey(profile.apiKeyPlain);
+        if (keyWrite.isFail()) {
+            return core::Result<void>::fail(keyWrite.errorCode(),
+                "保存 API Key 失败: " + keyWrite.errorMessage());
         }
 
         auto stepR = keyTx.writeDb([&]() -> core::Result<void> {
             auto prep = db_.prepare(
                 "UPDATE claude_profiles SET "
-                "name = ?, base_url = ?, api_key_hint = ?, api_key_check = ?, "
+                "name = ?, base_url = ?, "
                 "model = ?, models_config = ?, extra_env = ?, extra_settings_json = ?, "
                 "shared_config_id = ?, "
                 "auth_field = ?, dialect_override = ?, fallback_profile_id = ?, "
@@ -545,18 +549,16 @@ core::Result<void> ProfileRepository::updateProfile(const Profile& profile,
             auto& stmt = prep.value();
             stmt.bind(1, cleanedName);
             stmt.bind(2, cleanedUrl);
-            stmt.bind(3, newHint);
-            stmt.bind(4, newCheck);
-            stmt.bind(5, cleanedModel);
-            stmt.bind(6, profile.modelsConfigJson);
-            stmt.bind(7, profile.extraEnvJson);
-            stmt.bind(8, profile.extraSettingsJson);
-            stmt.bind(9, profile.sharedConfigId);
-            stmt.bind(10, cleanedAuthField);
-            stmt.bind(11, cleanedDialectOverride);
-            stmt.bind(12, profile.fallbackProfileId);
-            stmt.bind(13, static_cast<int64_t>(now));
-            stmt.bind(14, profile.id);
+            stmt.bind(3, cleanedModel);
+            stmt.bind(4, profile.modelsConfigJson);
+            stmt.bind(5, profile.extraEnvJson);
+            stmt.bind(6, profile.extraSettingsJson);
+            stmt.bind(7, profile.sharedConfigId);
+            stmt.bind(8, cleanedAuthField);
+            stmt.bind(9, cleanedDialectOverride);
+            stmt.bind(10, profile.fallbackProfileId);
+            stmt.bind(11, static_cast<int64_t>(now));
+            stmt.bind(12, profile.id);
             auto step = stmt.step();
             if (step.isFail()) {
                 std::string msg = step.errorMessage();
@@ -632,18 +634,17 @@ core::Result<void> ProfileRepository::deleteProfile(int64_t id,
     const bool wasActiveVal = p.value().isActive;
     if (wasActive) *wasActive = wasActiveVal;
 
-    // 两段写（CPX-07）：段一清 Keychain（旧值先捕获）→ 段二删 SQLite 行。
-    // 顺序不能反：先删行会让 Keychain 失败时留下永久孤儿密钥。段二失败时按
-    // 旧值回写 Keychain（原实现无补偿：密钥已删、行还在，用户重试时密钥已丢）。
-    TwoPhaseKeyWrite keyTx = TwoPhaseKeyWrite::capture(
-        keychainService_, p.value().keychainAccount);
-    auto kcDel = keyTx.writeKey(std::string());   // 空串 = 删除该条目
-    if (kcDel.isFail()) {
-        LOG_ERROR("清理 Keychain 失败，中止删除 profile id=" +
-                  std::to_string(id) + ": " + kcDel.errorMessage());
+    // 两段写（CPX-07）：段一清凭据三列（旧值先捕获）→ 段二删 SQLite 行。
+    // 顺序不能反：先删行会让「凭据还在」的失败路径无从补偿。段二失败时按
+    // 旧值回写三列（原实现无补偿：密钥已删、行还在，用户重试时密钥已丢）。
+    TwoPhaseKeyWrite keyTx = TwoPhaseKeyWrite::capture(db_, id);
+    auto keyClear = keyTx.writeKey(std::string());   // 空串 = 清空三列
+    if (keyClear.isFail()) {
+        LOG_ERROR("清理凭据失败，中止删除 profile id=" +
+                  std::to_string(id) + ": " + keyClear.errorMessage());
         return core::Result<void>::fail(
-            kcDel.errorCode(),
-            "清理 Keychain 失败，profile 未删除: " + kcDel.errorMessage());
+            keyClear.errorCode(),
+            "清理保存的 API Key 失败，profile 未删除: " + keyClear.errorMessage());
     }
 
     // 段二：删 SQLite 行（FK CASCADE 会级联清空该 profile 的调用日志）。
@@ -693,39 +694,41 @@ core::Result<void> ProfileRepository::deleteProfile(int64_t id,
 }
 
 core::Result<int> ProfileRepository::cleanupOrphanKeychainEntries() {
-    // 一次扫描：keychainService_ 命名空间归 Claude profile 独占，
-    // 不在 claude_profiles.keychain_account 里的条目即孤儿密钥
+    // 2026-10-02 存储统一：凭据已迁进 claude_profiles.api_key_encrypted，
+    // platform::keychain 不再是凭据来源。本方法因此从「孤儿密钥清理」变成
+    // **旧 Keychain 残留的一次性清理**（设计 §6.3 硬约束 3）：本 service 命名
+    // 空间下剩下的 claude:* 条目全是没人管的旧钥匙（旧 account 约定
+    // claude:<id>，见 keychain.h 白名单前缀），迁库后一律清掉；白名单前缀之外
+    // 的 account 保留不删、不计数（三平台一致，keychain.h shouldDeleteOrphan）。
     auto profilesR = listProfiles();
     if (profilesR.isFail()) {
         return core::Result<int>::fail(profilesR.errorCode(),
                                        profilesR.errorMessage());
     }
-    std::vector<std::string> keep;
-    keep.reserve(profilesR.value().size());
-    for (const auto& prof : profilesR.value()) {
-        keep.push_back(prof.keychainAccount);
-    }
 
-    // P0 误删护栏①（2026-09-30 事故）：keep 为空 = 当前数据根一个 profile 都
-    // 没有。而 Keychain 的 service 命名空间是**全局**的、不随 DEVDESK_DATA_ROOT
-    // 隔离——deleteSecretsNotIn 的语义是「凡不在 keep 里的都删」，空 keep 进
-    // 扫描就会把该命名空间下**全部**条目（包括其它数据根 / 用户真实 key）清光。
-    // 空根实例启动（测试 / 误设环境变量）正是这个形态。空 keep 只可能是
-    // 「新根还没建 profile」，此时唯一安全的动作是整个跳过，一个条目都不碰。
-    if (keep.empty()) {
+    // P0 误删护栏（2026-09-30 事故，**这条优先于一切**）：当前数据根零 profile
+    // 说明这个实例还没在这个根上建过任何东西——而 Keychain 的 service 命名空间
+    // 隔离级别弱于 DEVDESK_DATA_ROOT（可以是共享名 / 裸前缀 / 别的根），
+    // 「空根也要清残留」会把该命名空间下**全部**条目（包括用户真实密钥）清光。
+    // 空根只可能是「新根还没建 profile」或「测试/误设环境变量」两种情形，两种
+    // 情形下唯一安全的动作都是整个跳过、一个条目不碰。
+    if (profilesR.value().empty()) {
         LOG_WARN("跳过清理：当前数据根无 profile，防误删（keychain service=" +
                  keychainService_ + " 的条目一律保留）");
         return core::Result<int>::ok(0);
     }
 
-    auto delR = platform::keychain::deleteSecretsNotIn(keychainService_, keep);
+    // keep 传空：残留清理的目标就是「本命名空间下所有 claude:* 条目」——
+    // 保留名单为空是**本设计的有意选择**，不是漏传（凭据真身已在库列里，
+    // Keychain 里留着任何 claude:* 条目都只是旧副本）
+    auto delR = platform::keychain::deleteSecretsNotIn(keychainService_, {});
     if (delR.isFail()) {
         return core::Result<int>::fail(delR.errorCode(), delR.errorMessage());
     }
     const int removed = static_cast<int>(delR.value().size());
     if (removed > 0) {
         LOG_INFO("已清理 " + std::to_string(removed) +
-                 " 个孤儿 Keychain 密钥（无对应 profile）");
+                 " 个旧 Keychain 残留密钥（凭据已迁至数据库，Keychain 不再是来源）");
     }
     return core::Result<int>::ok(removed);
 }
@@ -737,8 +740,15 @@ core::Result<std::string> ProfileRepository::loadApiKey(int64_t profileId) {
     if (p.isFail()) {
         return core::Result<std::string>::fail(p.errorCode(), p.errorMessage());
     }
-    return platform::keychain::loadSecret(keychainService_,
-                                          p.value().keychainAccount);
+    const std::string stored = readStoredCredential(db_, profileId);
+    if (stored.empty()) {
+        // 「没有密钥」与「有但解不开」必须可分辨（设计 §7 教训③：不静默回落
+        // 空串——那会把不可用伪装成没配过，用户无从诊断）
+        return core::Result<std::string>::fail(
+            core::ErrorCode::NotFound,
+            "该 Profile 没有保存 API Key（列空）");
+    }
+    return platform::credential::unprotect(stored);
 }
 
 // ---------- 激活 ----------
@@ -746,7 +756,7 @@ core::Result<std::string> ProfileRepository::loadApiKey(int64_t profileId) {
 core::Result<Profile> ProfileRepository::getActiveProfile() {
     auto prep = db_.prepare(
         "SELECT id, name, base_url, api_key_hint, api_key_check, "
-        "keychain_account, model, models_config, extra_env, extra_settings_json, "
+        "model, models_config, extra_env, extra_settings_json, "
         "shared_config_id, auth_field, dialect_override, fallback_profile_id, is_active, "
         "created_at, updated_at "
         "FROM claude_profiles WHERE is_active = 1 LIMIT 1");
@@ -832,19 +842,19 @@ core::Result<Profile> ProfileRepository::duplicateProfile(int64_t srcId) {
             "副本命名连续 100 次冲突，请先重命名或删除部分 Profile");
     }
 
-    // 源 key 缺失（Keychain 孤儿）→ fail：不建无 key 的副本
-    //（与 createProfile 的「apiKey 必填」约束一致）。失败分三态报
-    //（2026-09-30 复盘：原来三态合成一句「密钥缺失」，用户分不清是没填过、
-    // 读失败还是存了空串，也无从知道怎么恢复）：
-    //   条目不存在（NotFound）→「密钥缺失」+ 恢复提示
-    //   读失败（非 NotFound 的真实错误）→ 原样透传错误码与信息（读不了 ≠ 没有）
-    //   条目在但值是空串 →「密钥为空串」+ 恢复提示
+    // 源 key 缺失 → fail：不建无 key 的副本
+    //（与 createProfile 的「apiKey 必填」约束一致）。2026-10-02 存储统一后
+    // 只剩**两态**（旧的三态里「条目在但值是空串」与「条目不存在」在单列模型
+    // 下是同一种形态——列空）：
+    //   列空（NotFound）→「密钥缺失」+ 恢复提示
+    //   读失败（非 NotFound 的真实错误，如 Windows 换机后 DPAPI 解不开）→
+    //   原样透传错误码与信息（读不了 ≠ 没有，不误导用户去重填）
     auto keyR = loadApiKey(srcId);
     if (keyR.isFail()) {
         if (keyR.errorCode() == core::ErrorCode::NotFound) {
             return core::Result<Profile>::fail(
                 core::ErrorCode::InvalidApiKey,
-                "源 Profile 的密钥缺失（Keychain 无对应条目），无法建副本；"
+                "源 Profile 的密钥缺失（该 Profile 未保存 API Key），无法建副本；"
                 "编辑该 Profile 重新填一次 API Key 即可");
         }
         return core::Result<Profile>::fail(
@@ -852,13 +862,15 @@ core::Result<Profile> ProfileRepository::duplicateProfile(int64_t srcId) {
             "读取源 Profile 密钥失败：" + keyR.errorMessage());
     }
     if (keyR.value().empty()) {
+        // 保护层理论上不会把空串存成非空（protect 对空串直接返回空串），
+        // 但真发生了要如实报，不能拿空 key 去建副本
         return core::Result<Profile>::fail(
             core::ErrorCode::InvalidApiKey,
             "源 Profile 的密钥为空串，无法建副本；"
             "编辑该 Profile 重新填一次 API Key 即可");
     }
 
-    // 一行 SQLite + 一条 Keychain（account 自动为 claude:<新 id>，与源不同）；
+    // 一行 SQLite（凭据三列随 createProfile 一并写入，不再有第二个存储）；
     // 副本不激活（S-4）→ 不触发 setActiveProfile、也不触发反向同步。
     // 片段绑定在 createProfile 处一并带上（设计 §2.6：它属于配置）——若留到
     // 二段补写才设，二段条件（models/extra_env 非空）不成立时就会丢掉绑定；

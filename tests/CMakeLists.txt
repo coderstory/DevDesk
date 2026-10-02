@@ -18,9 +18,11 @@ add_executable(devdesk_tests
     test_core/test_time.cpp
     test_core/test_window_layout.cpp
     test_core/test_tool_registry.cpp
+    test_core/test_file_perms.cpp
     test_platform/test_http_client.cpp
     test_platform/test_http_server.cpp
     test_platform/test_keychain.cpp
+    test_platform/test_credential_protection.cpp
     test_platform/test_json.cpp
     test_platform/test_utf8.cpp
     test_platform/test_file_open.cpp
@@ -55,6 +57,7 @@ add_executable(devdesk_tests
     test_modules/test_view_state.cpp
     test_modules/test_claude.cpp
     test_modules/test_claude_service.cpp
+    test_modules/test_credential_storage.cpp
     test_modules/test_claude_tools.cpp
     test_modules/test_provider_config.cpp
     test_modules/test_settings_sync.cpp

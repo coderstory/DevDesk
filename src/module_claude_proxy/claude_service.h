@@ -1,12 +1,17 @@
 // src/module_claude_proxy/claude_service.h
 // Claude API Profile 服务层 + 本地 HTTP 代理（spec §8.3 + §10.4）
 //
-// 设计要点：
-//   - API key 明文从不入 SQLite（spec §6.2.2）
-//   - 全部 API key 由 platform::keychain 保管（macOS Keychain / 文件后备）
-//   - SQLite 中只存引用 + 元数据 + 前 8 字符 SHA256 hex（防误删校验用）
+// 设计要点（2026-10-02 存储统一设计 §4.2 改写前两条：旧不变式「API key 明文
+// 永不入 SQLite / 全部由 platform::keychain 保管」已被本设计**正面推翻**）：
+//   - 凭据本体存在 claude_profiles.api_key_encrypted 列，形态分平台
+//     （platform/credential_protection.h：macOS/POSIX 明文 + 文件权限 0600；
+//     Windows DPAPI 密文）。platform::keychain 不再是凭据来源，只剩启动时的
+//     一次性残留清理
+//   - api_key_hint 是脱敏形态（UI / 导出占位用）；api_key_check 是全量 SHA256
+//     hex（「密钥是否变更」判据）
 //   - is_active 字段用 UNIQUE INDEX WHERE is_active=1 保证全局唯一
-//   - Profile.apiKeyPlain 仅在 loadApiKey() 时填充，平时为空字符串
+//   - Profile.apiKeyPlain 仅在 loadApiKey() 时填充（或作为 update 的「要覆盖」
+//     信号），平时为空字符串
 //   - 代理 server 由 ClaudeService 独占（仅一份实例）
 #pragma once
 
@@ -97,11 +102,11 @@ public:
                                            std::string());
 
     // 更新 profile（profile.id 必须已存在）
-    //   - 若 profile.apiKeyPlain 非空，则覆盖 Keychain
+    //   - 若 profile.apiKeyPlain 非空，则覆盖凭据三列（encrypted/hint/check）
     core::Result<void> updateProfile(const Profile& profile);
 
-    // 删除 profile（同时清理 Keychain 条目）。
-    // Keychain 清理失败会中止删除并返回错误（SQLite 行保留，可重试）
+    // 删除 profile（同时清空凭据三列，再删行）。
+    // 凭据清理失败会中止删除并返回错误（SQLite 行保留，可重试）
     //
     // 产品审计 2026-09-23 [1]（provider-config 设计 §7 安全第 5 条）：
     // 删除的是激活 profile 且代理运行中 → 删除成功后 stopProxy()
@@ -111,14 +116,16 @@ public:
     // toast 告知用户「已停止代理并还原 Claude Code 配置」
     core::Result<void> deleteProfile(int64_t id, bool* proxyStopped = nullptr);
 
-    // 启动时孤儿清理：把 keychainService_ 命名空间里没有对应
-    // claude_profiles 行的密钥清掉（历史 bug 遗留的 claude:* 孤儿）。
-    // 返回清理数量
+    // 启动时的**旧 Keychain 残留清理**（2026-10-02 存储统一 §6.3）：凭据已迁进
+    // 数据库，keychainService_ 命名空间下剩下的 claude:* 条目全是没人管的旧钥匙，
+    // 一次性清掉（白名单前缀之外的 account 保留不删）。护栏：当前数据根零 profile
+    // → 整个跳过，一个条目不碰（P0 误删事故的回归网）。返回清理数量
     core::Result<int> cleanupOrphanKeychainEntries();
 
     // ---- API key ----
 
-    // 显式从 Keychain 加载明文 API key（仅在需要发请求时调用，用完即丢弃）
+    // 从凭据列加载明文 API key（仅在需要发请求时调用，用完即丢弃）。
+    // 列空 = 没配过（NotFound）；解不开 = 原样透传错误，不静默回落空串
     core::Result<std::string> loadApiKey(int64_t profileId);
 
     // ---- 激活 ----
@@ -416,7 +423,7 @@ private:
     // R10-A2：claude_profiles 行 + SharedConfig 片段 + Keychain 条目的唯一
     // 持久化入口（职责边界见 R10 spec §2.2；门面只留策略编排与转发）
     ProfileRepository profileRepository_;
-    std::string keychainService_;
+    std::string keychainService_;   // 仅用于旧 Keychain 残留清理（不再存凭据）
 
     // R10-A4：settings.json 接管/还原的协议侧（路径注入 / 接管开关 / 托管
     // 快照检测 / 上层覆盖警告状态都在这；见 settings_takeover.{h,cpp}）。
@@ -442,11 +449,12 @@ private:
 //   今日 → "HH:MM"；昨天 → "昨天 HH:MM"；更早 → "MM-DD"
 std::string formatCallTime(std::time_t ts, std::time_t now);
 
-// Keychain service 名按数据根派生："DevDesk-" + SHA256(dataRoot) 前 4 字节的
+// 旧 Keychain 命名空间名按数据根派生："DevDesk-" + SHA256(dataRoot) 前 4 字节的
 // 8 位 hex。Keychain 的 service 是**全局**命名空间、不随 DEVDESK_DATA_ROOT
-// 隔离——所有数据根共用一个名字的话，多根互踩之外，任一数据根的孤儿清理都能
+// 隔离——所有数据根共用一个名字的话，多根互踩之外，任一数据根的残留清理都能
 // 扫到其它根的真实密钥；按根派生后每个数据根（含测试实例）拿独立命名空间，
 // 互不可见、互不可清。dataRoot 为空 → 返回空串（生产不可达，调用方兜底裸前缀）。
+// 2026-10-02 存储统一后这个名字**只用于残留清理**（凭据已迁进数据库）。
 std::string keychainServiceForDataRoot(const std::string& dataRoot);
 
 } // namespace module::claude

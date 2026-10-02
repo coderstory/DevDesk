@@ -12,6 +12,7 @@ add_library(devdesk_platform STATIC
 if(WIN32)
     target_sources(devdesk_platform PRIVATE
         keychain_win.cpp
+        credential_protection_win.cpp  # DPAPI 密文入库（不得降级明文）
         file_open_win.cpp
         system_theme_win.cpp
         file_watcher_win.cpp
@@ -22,6 +23,7 @@ if(WIN32)
 elseif(APPLE)
     target_sources(devdesk_platform PRIVATE
         keychain_macos.cpp
+        credential_protection_posix.cpp  # macOS 与 Linux 同实现，共用 _posix
         file_open_macos.cpp
         system_theme_macos.cpp
         file_watcher_macos.cpp
@@ -32,6 +34,7 @@ elseif(APPLE)
 else()
     target_sources(devdesk_platform PRIVATE
         keychain_posix.cpp
+        credential_protection_posix.cpp
         file_open_posix.cpp
         system_theme_posix.cpp
         file_watcher_stub.cpp

@@ -68,7 +68,7 @@ REGISTER_TEST(keychain_delete_nonexistent, "keychain: delete nonexistent ok", {
 // accountLength 传 0 = 匹配任意值），于是「空 account」会被静默当成「随便给我
 // 一条」——load 返回**别人**的密钥、delete 删掉**别人**的条目。本仓库空 account
 // 有确切含义 =「该 profile 没有密钥」（反向同步「缺席即清空」会清空
-// keychain_account），此时必须回答「没有这条」。见 keychain_macos.cpp 的
+// account），此时必须回答「没有这条」。见 keychain_macos.cpp 的
 // 「空 service / 空 account 守卫」段。
 // 断言顺序是**故意的**：store 放最前。守卫被摘掉时它先红（fail-fast），后面的
 // load / delete 断言就不再执行 —— 否则 load 会真的从用户真实钥匙串里读出一条

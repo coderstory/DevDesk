@@ -742,6 +742,13 @@ const DslAppConfig& dslAppConfig() {
         app::assembly::captureOpenFileFromArgv();
         LOG_INFO("DevDesk 启动中...");
         LOG_INFO("应用数据目录: " + paths::appDataDir().string());
+        // 数据根内置 .gitignore（2026-10-02 存储统一 §6.3 硬约束 1）：凭据进库后
+        // devdesk.db / -wal 落在将来会被 `git add .` 扫到的数据根里，必须靠这份
+        // 忽略规则挡住误提交。写失败只 WARN——少一道防误提交的闸不该让应用起不来
+        if (auto gi = paths::ensureDataRootGitignore(); gi.isFail()) {
+            LOG_WARN("数据根 .gitignore 写入失败（防误提交的一道闸缺失）: " +
+                     gi.errorMessage());
+        }
         openAppDatabase();
         const module::settings::SettingsStore settingsStore(
             paths::configFile());

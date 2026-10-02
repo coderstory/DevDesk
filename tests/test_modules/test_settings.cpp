@@ -813,8 +813,8 @@ REGISTER_TEST(settings_retention_change_prunes_immediately, "settings: retention
     auto& sq = env.db->db();
     DOCTEST_CHECK(sq.exec(
         "INSERT INTO claude_profiles (name, base_url, api_key_hint, api_key_check, "
-        "keychain_account, model, created_at, updated_at) VALUES "
-        "('p1', 'http://x', 'sk-***', 'chk', 'acct', 'm', " +
+        "model, created_at, updated_at) VALUES "
+        "('p1', 'http://x', 'sk-***', 'chk', 'm', " +
         std::to_string(now) + ", " + std::to_string(now) + ")"
     ).isOk());
     // 40 天前 ×2 + 5 天前 ×1：切到「30 天」应立即删掉前两条
@@ -3546,7 +3546,9 @@ REGISTER_TEST(settings_ui_logic_equivalence,
     DOCTEST_CHECK_EQ(ms::kEditorFontCardHeight, 108.0f);
     DOCTEST_CHECK_EQ(ms::kModulesCardHeight, 344.0f);  // 5 行开关（agent 加入）
     DOCTEST_CHECK_EQ(ms::kPetCardHeight, 168.0f);  // 两行控件（皮肤+显示大小）
-    DOCTEST_CHECK_EQ(ms::kDirectoryCardHeight, 116.0f);
+    // 2026-10-02 存储统一 §6.3：目录卡加「数据根忽略规则（.gitignore）」路径行
+    // （新行 y=126 高 34，盒底 160 + 16 下边距）→ 116 抬到 176。
+    DOCTEST_CHECK_EQ(ms::kDirectoryCardHeight, 176.0f);
     DOCTEST_CHECK_EQ(ms::kLogSettingsCardHeight, 148.0f);
 
     // 3) 档位表（值 + 标签，逐项钉死）

@@ -514,6 +514,17 @@ inline std::filesystem::path tempConfigFile(const std::string& prefix,
 
 // 清掉某个测试 Keychain service 下某 profile 的密钥（原 test_claude_service.cpp
 // / test_claude_ui.cpp 两份 cleanupKey 合流；service 由调用方传自身的测试常量）
+// 把某 profile 的凭据清空（造「该 profile 没存过 API Key」的形态）。
+// 2026-10-02 存储统一：凭据已从 Keychain 迁到 claude_profiles.api_key_encrypted
+// 列——「造一个没 key 的 profile」不再能靠删 Keychain 条目做到（那条路径已与
+// 凭据无关，删它只会让人误以为测到了空 key 分支）。
+inline bool clearStoredCredential(core::data::SqliteDb& db, int64_t profileId) {
+    return db.exec("UPDATE claude_profiles SET api_key_encrypted = '', "
+                   "api_key_hint = '', api_key_check = '' WHERE id = " +
+                   std::to_string(profileId))
+        .isOk();
+}
+
 inline void cleanupProfileKey(const char* service, int64_t profileId) {
     platform::keychain::deleteSecret(service,
                                      "claude:" + std::to_string(profileId));
