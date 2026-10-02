@@ -957,12 +957,10 @@ void drawDetailActions(eui::Ui& ui, float x0, float w, float actY,
         .radius(t.sizes.radius)
         .build();
     const float actGap = 12.0f;
-    // 4 键均分（batch-C C-3：删除/建副本/复制配置三键自本行动作组删除——它们
-    // 已在 profile 列表右键菜单里（drawProfileContextMenu，动作同源委托），
-    // 详情页三键属重复入口；余 启用/测试连通/编辑/运行）。按钮数改一处，
-    // gap 数也要跟着改：扣 **3** 个 gap —— EUI 的 row spacing 只在相邻子项之间
-    // 生效，n 项只有 n−1 个间隙，故 (w-actGap*3)/4 恰好齐右缘
-    const float actW = (w - actGap * 3.0f) / 4.0f;
+    // 5 键均分（G6：启用/测试连通/编辑/运行/**余量查询**）。按钮数改一处，
+    // gap 数也要跟着改：扣 **4** 个 gap —— EUI 的 row spacing 只在相邻子项之间
+    // 生效，n 项只有 n−1 个间隙，故 (w−actGap*4)/5 恰好齐右缘
+    const float actW = (w - actGap * 4.0f) / 5.0f;
     ui.row("claude.detail.actions")
         .position(x0, actY)
         .size(w, 36.0f)
@@ -1045,6 +1043,27 @@ void drawDetailActions(eui::Ui& ui, float x0, float w, float actY,
                 .onClick([f = a.run, warn = a.warn, shownId] {
                     if (shownId == 0) {
                         warn("运行失败", "请先选择 Profile");
+                        return;
+                    }
+                    f(shownId);
+                })
+                .build();
+            // 余量查询（G6，第 5 键）：**常驻**——没配、cc-switch 读不到、
+            // 一个 profile 都没建时都在。用户原话「按钮都需要的」：配置入口
+            // 不能因为「还没配置」而不存在，否则用户永远找不到怎么配。
+            // 未选中 profile 时照样渲染（点了给提示，不静默）
+            components::button(ui, "claude.act.quota")
+                .size(actW, 36.0f)
+                .text("余量查询")
+                .fontSize(t.sizes.fontSizeSmall)
+                .colors(t.colors.surfaceElevated,
+                        t.colors.hover, t.colors.active)
+                .textColor(t.colors.textPrimary)
+                .radius(t.sizes.radius)
+                .border(1.0f, t.colors.borderDefault)
+                .onClick([f = a.quota, warn = a.warn, shownId] {
+                    if (shownId == 0) {
+                        warn("余量查询", "请先新建或选择一个 Profile");
                         return;
                     }
                     f(shownId);

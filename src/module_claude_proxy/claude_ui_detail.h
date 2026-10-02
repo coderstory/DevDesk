@@ -101,6 +101,10 @@ struct DetailActions {
     std::function<void(const Profile& p)> test;                      // 测试连通
     std::function<void(const Profile& p)> edit;                      // 编辑
     std::function<void(int64_t id)> run;                             // 运行
+    // G6（2026-10-03）：余量查询弹窗（第 5 键，**常驻**）。入参 = profile id。
+    // 弹窗自己负责「选供应商 / 读 cc-switch / 测试连接 / 保存」，本回调只负责
+    // 打开它。**不因「还没配置」而不渲染**（用户原话「按钮都需要的」）。
+    std::function<void(int64_t id)> quota;
     std::function<void()> openCalls;                                 // 「查看全部 →」
     // batch-C C-3：删除 / 建副本 / 复制配置三键自详情动作行删除（重复入口，
     // 已有列表右键菜单）→ 对应回调字段一并撤除；业务实体（doDuplicate /

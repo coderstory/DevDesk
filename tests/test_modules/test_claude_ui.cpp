@@ -9,6 +9,7 @@
 
 #include "claude_service.h"
 #include "claude_ui_logic.h"
+#include "claude_ui_quota.h"      // G6：余量查询弹窗绘制 + 几何纯函数
 #include "core/database.h"
 #include "platform/json.h"
 #include "core/input/input_types.h"
@@ -20,10 +21,12 @@
 #include "platform/keychain.h"
 #include "platform/terminal_launch.h"
 #include "provider_config.h"
+#include "quota/quota_store.h"
 #include "settings_sync.h"
 
 #include <eui/dsl.h>
 #include <components/input.h>   // InputState：读回编辑框文本（格式化当场改写的判据）
+#include <ui_kit/dialog_form.h>  // G6：弹窗宽度（几何不溢出断言用）
 
 #include <chrono>
 #include <cmath>
@@ -189,14 +192,14 @@ REGISTER_TEST(claude_module_compose_null_service,
     return true;
 })
 
-// ---- 1b. 4 键均分几何：末键（运行）右缘对齐分隔线（回归闸）----
-// actW = (w0 - actGap*3)/4 —— batch-C C-3 删掉 删除/建副本/复制配置 三键后
-// 由 7 键收为 4 键（启用/测试连通/编辑/运行）。EUI 的 row spacing 只在相邻
-// 子项之间生效，n 项只有 n−1 个间隙；多扣一个 gap 会让末键右缘短一整个 gap。
+// ---- 1b. 5 键均分几何：末键（余量查询）右缘对齐分隔线（回归闸）----
+// actW = (w0 - actGap*4)/5 —— G6 加入「余量查询」后由 4 键收为 5 键
+// （启用/测试连通/编辑/运行/余量查询）。EUI 的 row spacing 只在相邻子项之间
+// 生效，n 项只有 n−1 个间隙；多扣一个 gap 会让末键右缘短一整个 gap。
 // 跑真实 layout 后比对计算 frame，无头也能锁死这个几何。
 
 REGISTER_TEST(claude_module_actions_row_alignment,
-              "claude_module: 4 键均分——第 4 键（运行）右缘对齐分隔线（headless layout）", {
+              "claude_module: 5 键均分——第 5 键（余量查询）右缘对齐分隔线（headless layout）", {
     module::claude::ClaudeService::setGlobal(nullptr);
     std::unique_ptr<::core::Module> mod(create_claude_module());
     eui::Screen screen;
@@ -210,17 +213,17 @@ REGISTER_TEST(claude_module_actions_row_alignment,
 
     const auto* divider = ui.find("claude.act.divider");
     const auto* row = ui.find("claude.detail.actions");
-    const auto* run4 = ui.find("claude.act.run.bg");   // 第 4 键（profile-run）
+    const auto* quota5 = ui.find("claude.act.quota.bg");
     DOCTEST_REQUIRE(divider != nullptr);
     DOCTEST_REQUIRE(row != nullptr);
-    DOCTEST_REQUIRE(run4 != nullptr);
+    DOCTEST_REQUIRE(quota5 != nullptr);
     const float dividerRight = divider->frame.x + divider->frame.width;
-    const float runRight = run4->frame.x + run4->frame.width;
-    DOCTEST_CHECK(runRight >= dividerRight - 0.5f);
-    DOCTEST_CHECK(runRight <= dividerRight + 0.5f);
-    // 单键宽 = (行宽 − 3×gap) / 4（gap=12）
-    const float expect = (row->frame.width - 12.0f * 3.0f) / 4.0f;
-    DOCTEST_CHECK(std::fabs(run4->frame.width - expect) < 0.01f);
+    const float quotaRight = quota5->frame.x + quota5->frame.width;
+    DOCTEST_CHECK(quotaRight >= dividerRight - 0.5f);
+    DOCTEST_CHECK(quotaRight <= dividerRight + 0.5f);
+    // 单键宽 = (行宽 − 4×gap) / 5（gap=12）
+    const float expect = (row->frame.width - 12.0f * 4.0f) / 5.0f;
+    DOCTEST_CHECK(std::fabs(quota5->frame.width - expect) < 0.01f);
     DOCTEST_CHECK(std::fabs(ui.find("claude.act.enable.bg")->frame.width - expect) <
                   0.01f);
 
@@ -5711,12 +5714,16 @@ REGISTER_TEST(claude_copyconfig_seven_keys_geometry,
     DOCTEST_REQUIRE(row != nullptr);
     DOCTEST_REQUIRE(run != nullptr);
     const float w0 = row->frame.width;
-    const float expect = (w0 - 12.0f * 3.0f) / 4.0f;
+    // G6：动作行 4 → 5 键（加入「余量查询」），末键右缘对齐断言随之改口径
+    const float expect = (w0 - 12.0f * 4.0f) / 5.0f;
     DOCTEST_CHECK(std::fabs(run->frame.width - expect) < 0.01f);
     // 行右缘对齐：末键右缘 == row 右缘（浮点 0.5px 容差）
     const float rowRight = row->frame.x + row->frame.width;
-    const float runRight = run->frame.x + run->frame.width;
-    DOCTEST_CHECK(std::fabs(rowRight - runRight) < 0.5f);
+    // G6：末键从「运行」变成「余量查询」（第 5 键），右缘对齐断言随之换键
+    const auto* quota5 = ui.find("claude.act.quota.bg");
+    DOCTEST_REQUIRE(quota5 != nullptr);
+    const float quotaRight = quota5->frame.x + quota5->frame.width;
+    DOCTEST_CHECK(std::fabs(rowRight - quotaRight) < 0.5f);
     mod->onStop();
     cleanupProfileKey(kTestKeychainService, pid);
     return true;
@@ -7918,5 +7925,375 @@ REGISTER_TEST(claude_ui_form_one_m_normalize_on_save,
     }
     mod->onStop();
     cleanupProfileKey(kTestKeychainService, pid);
+    return true;
+})
+
+// ============================================================================
+// G6（2026-10-03）：余量查询弹窗的**无头渲染断言**
+//
+// 逻辑层（字段集合 / 保存行 / 脱敏）在 test_claude_quota_dialog.cpp；这里只管
+// 「画出来没有、画对没有」：
+//   ① 未配置时按钮**存在**（用户硬要求：常驻）
+//   ② 选火山 → 渲染两个字段、secret 字段明文不进 InputState；
+//      选 deepseek → **不渲染**任何额外字段
+//   ③ cc-switch 读不到 → 明确文案节点出现 + 仍可手填
+//   ④ 「测试连接」两条路径都显示得出（不静默）
+//   ⑤ 保存 → 配置表落库正确（provider_id / ccswitch 引用 / 手填值）
+//   ⑥ 弹窗几何在 1200×720 下不溢出；动态字段增减后按钮行与内容底**不错位**
+// ============================================================================
+
+namespace {
+
+// 无头 compose 一帧（与既有 compose lambda 同形）
+void composeQuotaFrame(::core::Module& mod, eui::Ui& ui, eui::Screen screen,
+                       const char* treeId) {
+    ui.begin(treeId);
+    mod.compose(ui, screen);
+    ui.end();
+}
+
+// 从 InputState 读回输入框文本（secret 明文断言靠它）
+std::string inputText(eui::Ui& ui, const std::string& id) {
+    using InputState = components::input_detail::InputModel::InputState;
+    const auto& st = ui.state<InputState>(id);
+    return st.text;
+}
+
+}  // namespace
+
+// ---- ① 按钮常驻：没配、没 cc-switch、一个 profile 都没有时都在 ----
+REGISTER_TEST(claude_quota_button_always_present,
+              "claude_module: 「余量查询」按钮常驻（无 profile / 未配置也在）", {
+    module::claude::ClaudeService::setGlobal(nullptr);
+    std::unique_ptr<::core::Module> mod(create_claude_module());
+    eui::Screen screen;
+    screen.width = 1600.0f;
+    screen.height = 1000.0f;
+    eui::Ui ui;
+    composeQuotaFrame(*mod, ui, screen, "claude_quota_btn");
+    DOCTEST_CHECK(ui.find("claude.act.quota") != nullptr);
+    DOCTEST_CHECK(ui.find("claude.act.quota.bg") != nullptr);
+    mod->onStop();
+    return true;
+})
+
+// ---- ② 选火山 → 两个字段（secret 明文不进 InputState）；deepseek → 零字段 ----
+REGISTER_TEST(claude_quota_dialog_dynamic_field_render,
+              "claude_module: 弹窗按 provider 动态渲染字段（火山 2 / deepseek 0）", {
+    ::setenv("CCSWITCH_DB_PATH", "/nonexistent-g6/cc-switch.db", 1);
+    TestEnv env;
+    auto volcano = env.svc->createProfile(
+        "火山", "https://ark.cn-beijing.volces.com/api/coding/v3", "sk-ant-vv", "m");
+    DOCTEST_REQUIRE(volcano.isOk());
+    auto deepseek = env.svc->createProfile("DS", "https://api.deepseek.com",
+                                           "sk-ant-dd", "m");
+    DOCTEST_REQUIRE(deepseek.isOk());
+    DOCTEST_REQUIRE(env.svc->setActiveProfile(volcano.value().id).isOk());
+
+    std::unique_ptr<::core::Module> mod(create_claude_module());
+    mod->onStart();   // 生产里 main.cpp 一定先 onStart（余量 store 在那里建）
+    eui::Screen screen;
+    screen.width = 1600.0f;
+    screen.height = 1000.0f;
+    const auto compose = [&](eui::Ui& ui, const char* tree) {
+        composeQuotaFrame(*mod, ui, screen, tree);
+    };
+
+    // 点「余量查询」→ 弹窗开；base_url 是火山 → 默认选中火山 → 两个字段
+    {
+        eui::Ui ui;
+        compose(ui, "claude_quota_open");
+        DOCTEST_REQUIRE(clickById(ui, "claude.act.quota.bg"));
+        eui::Ui ui2;
+        compose(ui2, "claude_quota_open2");
+        DOCTEST_CHECK(ui2.find("claude.dialog.quota") != nullptr);
+        DOCTEST_CHECK(ui2.find("claude.dialog.quota.provider.dd") != nullptr);
+        DOCTEST_CHECK(ui2.find("claude.dialog.quota.field.accessKeyId") != nullptr);
+        DOCTEST_CHECK(ui2.find("claude.dialog.quota.field.secretAccessKey") != nullptr);
+        // 字段来源标注节点（任务书要求）
+        DOCTEST_CHECK(ui2.find("claude.dialog.quota.field.accessKeyId.source") != nullptr);
+        DOCTEST_CHECK(ui2.find("claude.dialog.quota.field.secretAccessKey.source") != nullptr);
+        // cc-switch 读取按钮恒在
+        DOCTEST_CHECK(ui2.find("claude.dialog.quota.ccswitch.load") != nullptr);
+        DOCTEST_CHECK(ui2.find("claude.dialog.quota.test") != nullptr);
+        DOCTEST_CHECK(ui2.find("claude.dialog.quota.confirm") != nullptr);
+        DOCTEST_CHECK(ui2.find("claude.dialog.quota.cancel") != nullptr);
+    }
+
+    // 切到 deepseek（下拉第 2 项 = 索引 2）→ **零**额外字段
+    {
+        eui::Ui ui;
+        compose(ui, "claude_quota_switch");
+        clickById(ui, "claude.act.quota.bg");
+        // 展开供应商下拉（字段本身的 hit 区挂 onOpenChange）
+        eui::Ui openUi;
+        compose(openUi, "claude_quota_ddopen");
+        const auto* ddField = openUi.find("claude.dialog.quota.provider.dd.field");
+        DOCTEST_REQUIRE(ddField != nullptr);
+        DOCTEST_REQUIRE(ddField->onClick != nullptr);
+        ddField->onClick();
+        // 弹层选项节点（EUI dropdown 的 <id>.item.<index>）
+        eui::Ui optUi;
+        compose(optUi, "claude_quota_ddopt");
+        const auto* opt = optUi.find("claude.dialog.quota.provider.dd.item.2");
+        DOCTEST_REQUIRE(opt != nullptr);
+        DOCTEST_REQUIRE(opt->onClick != nullptr);
+        opt->onClick();
+        eui::Ui after;
+        compose(after, "claude_quota_after_switch");
+        DOCTEST_CHECK(after.find("claude.dialog.quota.field.accessKeyId") == nullptr);
+        DOCTEST_CHECK(after.find("claude.dialog.quota.field.secretAccessKey") == nullptr);
+        DOCTEST_CHECK(after.find("claude.dialog.quota.provider.dd") != nullptr);
+        // 下拉收起（选完即收，与既有弹窗下拉同口径）
+        DOCTEST_CHECK(after.find("claude.dialog.quota.provider.dd.popup") != nullptr);
+    }
+
+    mod->onStop();
+    cleanupProfileKey(kTestKeychainService, volcano.value().id);
+    cleanupProfileKey(kTestKeychainService, deepseek.value().id);
+    ::setenv("CCSWITCH_DB_PATH", "", 1);
+    return true;
+})
+
+// ---- ②b secret 字段：明文不进 InputState（绘制层结构保证，不是注释）----
+// 造一行**已保存了 secret** 的余量配置，开弹窗 → secret 输入框里必须是脱敏串，
+// 明文一个字符都不许出现在 EUI 的 InputState 里。
+REGISTER_TEST(claude_quota_dialog_secret_not_echoed,
+              "claude_module: secret 字段渲染的是脱敏串，InputState 里没有明文", {
+    ::setenv("CCSWITCH_DB_PATH", "/nonexistent-g6/cc-switch.db", 1);
+    TestEnv env;
+    test_support::ScopedAppDatabase scoped(env.db->db());
+    auto p = env.svc->createProfile(
+        "火山", "https://ark.cn-beijing.volces.com/api/coding/v3", "sk-ant-vv", "m");
+    DOCTEST_REQUIRE(p.isOk());
+    DOCTEST_REQUIRE(env.svc->setActiveProfile(p.value().id).isOk());
+
+    // 预置一行带 secret 的配置（夹具密钥，非真实凭据）
+    module::claude::quota::QuotaStore store(env.db->db());
+    module::claude::quota::QuotaConfigRow row;
+    row.profileId = p.value().id;
+    row.providerId = "volcano";
+    row.secretsJson = R"({"secretAccessKey":"G6-FIXTURE-SK-abcdef123456"})";
+    row.enabled = true;
+    DOCTEST_REQUIRE(store.saveConfig(row).isOk());
+
+    std::unique_ptr<::core::Module> mod(create_claude_module());
+    mod->onStart();   // store 在 onStart 里建；没它读不到已存配置
+    eui::Screen screen;
+    screen.width = 1600.0f;
+    screen.height = 1000.0f;
+
+    eui::Ui ui;
+    composeQuotaFrame(*mod, ui, screen, "claude_quota_secret");
+    DOCTEST_REQUIRE(clickById(ui, "claude.act.quota.bg"));
+    eui::Ui ui2;
+    composeQuotaFrame(*mod, ui2, screen, "claude_quota_secret2");
+
+    // 输入框**恒为空**（EUI input 是所见即所得：预填任何内容，用户一打字
+    // 就会把光标插进去、回传「脱敏串 + 新字符」的混合物）
+    DOCTEST_CHECK_EQ(inputText(ui2, "claude.dialog.quota.field.secretAccessKey"),
+                     std::string(""));
+    DOCTEST_CHECK_EQ(inputText(ui2, "claude.dialog.quota.field.accessKeyId"),
+                     std::string(""));
+    // 「已设置」脱敏回显走独立节点：看得见状态，但不含明文
+    const auto* masked = ui2.find("claude.dialog.quota.field.secretAccessKey.masked");
+    DOCTEST_REQUIRE(masked != nullptr);
+    DOCTEST_CHECK(masked->text.find("已设置") != std::string::npos);
+    DOCTEST_CHECK(masked->text.find("G6-FIXTURE-SK-abcdef123456") == std::string::npos);
+    DOCTEST_CHECK(masked->text.find("abcdef") == std::string::npos);
+    // **整棵元素树**里都不许出现明文（不只是这两个框 —— 任何一处漏出去
+    // 都是把 AK/SK 画在屏幕上）。深度优先走 children 逐节点查 text。
+    {
+        const std::string secret = "G6-FIXTURE-SK-abcdef123456";
+        bool leaked = false;
+        std::string leakedId;
+        const std::function<void(const core::dsl::Element&)> walk =
+            [&](const core::dsl::Element& e) {
+                if (e.text.find(secret) != std::string::npos) {
+                    leaked = true;
+                    leakedId = e.id;
+                }
+                for (const auto& child : e.children) {
+                    if (child) walk(*child);
+                }
+            };
+        for (const auto& root : ui2.roots()) {
+            if (root) walk(*root);
+        }
+        DOCTEST_CHECK(!leaked);
+        if (leaked) {
+            std::cerr << "secret leaked into element: " << leakedId << std::endl;
+        }
+    }
+
+    mod->onStop();
+    cleanupProfileKey(kTestKeychainService, p.value().id);
+    ::setenv("CCSWITCH_DB_PATH", "", 1);
+    return true;
+})
+
+// ---- ③ cc-switch 读不到 → 明确文案 + 仍可手填 ----
+REGISTER_TEST(claude_quota_dialog_ccswitch_unavailable_message,
+              "claude_module: cc-switch 读不到时弹窗给出明确文案且不崩", {
+    ::setenv("CCSWITCH_DB_PATH", "/nonexistent-g6/cc-switch.db", 1);
+    TestEnv env;
+    auto p = env.svc->createProfile(
+        "火山", "https://ark.cn-beijing.volces.com/api/coding/v3", "sk-ant-vv", "m");
+    DOCTEST_REQUIRE(p.isOk());
+    DOCTEST_REQUIRE(env.svc->setActiveProfile(p.value().id).isOk());
+
+    std::unique_ptr<::core::Module> mod(create_claude_module());
+    mod->onStart();
+    eui::Screen screen;
+    screen.width = 1600.0f;
+    screen.height = 1000.0f;
+
+    eui::Ui ui;
+    composeQuotaFrame(*mod, ui, screen, "claude_quota_cc1");
+    clickById(ui, "claude.act.quota.bg");
+    eui::Ui ui2;
+    composeQuotaFrame(*mod, ui2, screen, "claude_quota_cc2");
+    DOCTEST_REQUIRE(clickById(ui2, "claude.dialog.quota.ccswitch.load.bg"));
+    eui::Ui ui3;
+    composeQuotaFrame(*mod, ui3, screen, "claude_quota_cc3");
+    const auto* note = ui3.find("claude.dialog.quota.ccswitch.note");
+    DOCTEST_REQUIRE(note != nullptr);
+    DOCTEST_CHECK(note->text.find("未找到 cc-switch 配置") != std::string::npos);
+    DOCTEST_CHECK(note->text.find("可手动填写") != std::string::npos);
+    // 候选下拉仍在（显示「无可用候选」），不消失
+    DOCTEST_CHECK(ui3.find("claude.dialog.quota.ccswitch.dd") != nullptr);
+    // 字段仍可手填
+    DOCTEST_CHECK(ui3.find("claude.dialog.quota.field.accessKeyId") != nullptr);
+
+    mod->onStop();
+    cleanupProfileKey(kTestKeychainService, p.value().id);
+    ::setenv("CCSWITCH_DB_PATH", "", 1);
+    return true;
+})
+
+// ---- ④ 「测试连接」失败路径显示得出（不静默）----
+// **零真实网络**：选火山但不填 AK/SK —— provider 在发请求**之前**就返回
+// NotConfigured（quota_volcano.cpp 的 AK/SK 空判），于是这条断言验的是
+// 「后台结果 → UI 文案」整条链，而不会真的去打火山网关。
+REGISTER_TEST(claude_quota_dialog_test_connection_reports,
+              "claude_module: 测试连接失败有文案显示（不静默吞掉）", {
+    ::setenv("CCSWITCH_DB_PATH", "/nonexistent-g6/cc-switch.db", 1);
+    TestEnv env;
+    test_support::ScopedAppDatabase scoped(env.db->db());
+    auto p = env.svc->createProfile(
+        "火山", "https://ark.cn-beijing.volces.com/api/coding/v3", "sk-ant-vv", "m");
+    DOCTEST_REQUIRE(p.isOk());
+    DOCTEST_REQUIRE(env.svc->setActiveProfile(p.value().id).isOk());
+
+    std::unique_ptr<::core::Module> mod(create_claude_module());
+    mod->onStart();
+    eui::Screen screen;
+    screen.width = 1600.0f;
+    screen.height = 1000.0f;
+
+    eui::Ui ui;
+    composeQuotaFrame(*mod, ui, screen, "claude_quota_tc1");
+    clickById(ui, "claude.act.quota.bg");
+    eui::Ui ui2;
+    composeQuotaFrame(*mod, ui2, screen, "claude_quota_tc2");
+    DOCTEST_REQUIRE(clickById(ui2, "claude.dialog.quota.test.bg"));
+
+    // 有界轮询收割（不用长 sleep）：后台线程跑完 + compose 收割后结果行出现
+    bool got = false;
+    std::string shown;
+    for (int i = 0; i < 400 && !got; ++i) {
+        eui::Ui frame;
+        composeQuotaFrame(*mod, frame, screen, "claude_quota_tcpoll");
+        const auto* res = frame.find("claude.dialog.quota.result");
+        if (res != nullptr) {
+            shown = res->text;
+            got = true;
+        }
+    }
+    DOCTEST_CHECK(got);
+    DOCTEST_CHECK(!shown.empty());
+    // 文案必须指向「配置不完整」而不是空串 / 「测试中」
+    DOCTEST_CHECK(shown.find("配置") != std::string::npos);
+    DOCTEST_CHECK(shown.find("测试中") == std::string::npos);
+
+    mod->onStop();
+    cleanupProfileKey(kTestKeychainService, p.value().id);
+    ::setenv("CCSWITCH_DB_PATH", "", 1);
+    return true;
+})
+
+// ---- ⑤ 保存 → 配置表落库正确 ----
+REGISTER_TEST(claude_quota_dialog_saves_to_db,
+              "claude_module: 弹窗保存后 profile_quota_config 行正确", {
+    ::setenv("CCSWITCH_DB_PATH", "/nonexistent-g6/cc-switch.db", 1);
+    TestEnv env;
+    // 保存走 QuotaStore → core::appDatabase()，必须注册（模块装配同款）
+    test_support::ScopedAppDatabase scoped(env.db->db());
+    auto p = env.svc->createProfile(
+        "火山", "https://ark.cn-beijing.volces.com/api/coding/v3", "sk-ant-vv", "m");
+    DOCTEST_REQUIRE(p.isOk());
+    DOCTEST_REQUIRE(env.svc->setActiveProfile(p.value().id).isOk());
+
+    std::unique_ptr<::core::Module> mod(create_claude_module());
+    mod->onStart();
+    eui::Screen screen;
+    screen.width = 1600.0f;
+    screen.height = 1000.0f;
+
+    eui::Ui ui;
+    composeQuotaFrame(*mod, ui, screen, "claude_quota_sv1");
+    clickById(ui, "claude.act.quota.bg");
+    eui::Ui ui2;
+    composeQuotaFrame(*mod, ui2, screen, "claude_quota_sv2");
+    DOCTEST_REQUIRE(clickById(ui2, "claude.dialog.quota.confirm.bg"));
+
+    // 落库校验（期望值是手写字面量，不来自被测代码的输出）
+    module::claude::quota::QuotaStore store(*core::appDatabase());
+    auto row = store.loadConfig(p.value().id);
+    DOCTEST_REQUIRE(row.isOk());
+    DOCTEST_CHECK_EQ(row.value().providerId, std::string("volcano"));
+    DOCTEST_CHECK_EQ(row.value().ccswitchProviderId, std::string(""));
+    DOCTEST_CHECK(row.value().enabled);
+    DOCTEST_CHECK(row.value().secretsJson.find("sk-ant-vv") == std::string::npos);
+
+    mod->onStop();
+    cleanupProfileKey(kTestKeychainService, p.value().id);
+    ::setenv("CCSWITCH_DB_PATH", "", 1);
+    return true;
+})
+
+// ---- ⑥ 弹窗几何：1200×720 不溢出；字段增减后按钮行不错位 ----
+// 几何是**纯函数**（computeQuotaDialogLayout），无头直接断言它：
+//  ① 弹窗高 ≤ 最小窗高 720
+//  ② 内容底恒 ≤ 按钮行上沿（动态字段增减不压按钮）
+//  ③ 字段数 +2 → 下方**所有**区块整体下移恰好 2×fieldPitch（不错位）
+REGISTER_TEST(claude_quota_dialog_geometry_no_overflow,
+              "claude_module: 弹窗 1200×720 不溢出，动态字段增减后元信息行不错位", {
+    const auto g0 = module::claude::computeQuotaDialogLayout(0);
+    const auto g2 = module::claude::computeQuotaDialogLayout(2);
+    // ① 不溢出最小窗（弹窗宽固定 ui_kit::DialogWidth::Form = 760 ≤ 1200）
+    DOCTEST_CHECK(g0.height > 0.0f);
+    DOCTEST_CHECK(g2.height > 0.0f);
+    DOCTEST_CHECK(g0.height <= 720.0f);
+    DOCTEST_CHECK(g2.height <= 720.0f);
+    DOCTEST_CHECK(ui_kit::dialogWidthPx(ui_kit::DialogWidth::Form) <= 1200.0f);
+    // ② 内容底恒在按钮行上沿之上
+    DOCTEST_CHECK(g0.contentBottom <= g0.buttonsY - 8.0f + 0.01f);
+    DOCTEST_CHECK(g2.contentBottom <= g2.buttonsY - 8.0f + 0.01f);
+    // ③ 字段 +2 → 下方区块整体下移恰好 2×fieldPitch，区块间距恒定
+    const float d = 2.0f * g2.fieldPitch;
+    DOCTEST_CHECK(std::fabs((g2.ccSwitchY - g0.ccSwitchY) - d) < 0.01f);
+    DOCTEST_CHECK(std::fabs((g2.ccNoteY - g0.ccNoteY) - d) < 0.01f);
+    DOCTEST_CHECK(std::fabs((g2.ccDdY - g0.ccDdY) - d) < 0.01f);
+    DOCTEST_CHECK(std::fabs((g2.testBtnY - g0.testBtnY) - d) < 0.01f);
+    DOCTEST_CHECK(std::fabs((g2.resultY - g0.resultY) - d) < 0.01f);
+    // 区块之间的相对间距在两档下**逐项相同**（这才是「不错位」的实质）
+    DOCTEST_CHECK(std::fabs((g2.ccNoteY - g2.ccSwitchY) -
+                            (g0.ccNoteY - g0.ccSwitchY)) < 0.01f);
+    DOCTEST_CHECK(std::fabs((g2.testBtnY - g2.ccDdY) -
+                            (g0.testBtnY - g0.ccDdY)) < 0.01f);
+    // 按钮行恒在弹窗底 60 处（与 ui_kit::drawDialogButtons 同款）
+    DOCTEST_CHECK(std::fabs(g0.buttonsY - (g0.height - 60.0f)) < 0.01f);
+    DOCTEST_CHECK(std::fabs(g2.buttonsY - (g2.height - 60.0f)) < 0.01f);
     return true;
 })
