@@ -328,10 +328,21 @@ private:
     float scale_ = 1.0f;
 };
 
-/// 一次性便捷（只拍一张的场景）：建会话 → 渲染一帧 → 写 PNG → 销毁后端。
+/// 一次性便捷（只拍一张的场景）：建会话 → **把过渡动画跑完** → 渲染一帧 →
+/// 写 PNG → 销毁后端。
+///
+/// 为什么必须先跑动画：dialog 的面板透明度是 `.opacity(open_ ? 1 : 0)` 给出的
+/// **过渡目标值**（EUI-NEO components/dialog.h:89），真正的不透明度由
+/// `.animate(Opacity).transition()` 逐帧插值。刚 open 就 glReadPixels 会抓到
+/// 半透明面板——底下整页内容透上来，截图看起来像「弹窗背景是透明的」这种
+/// 产品缺陷，实际是采集时机早于动画结束。推进 24 帧（400ms @60fps）盖过
+/// 仓库里最长的过渡时长，落图才是稳定态。
 inline bool captureFramePng(core::window::Handle window,
                             core::dsl::Runtime& runtime,
                             const std::string& path) {
+    for (int i = 0; i < 24; ++i) {
+        pollOnce(window, runtime);
+    }
     FrameCapture capture(window);
     return capture.capturePng(runtime, path);
 }
