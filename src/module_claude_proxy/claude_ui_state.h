@@ -139,6 +139,14 @@ struct FormState {
     std::string formKey_;
     std::string formKeyHint_;  // 编辑时显示现有 key 脱敏提示
     std::string formError_;
+    // formError_ 的来源标记（批次 C 评审必修）：true = 这条红字来自**高级设置
+    // JSON 校验失败**（submitForm 的 validateExtraSettingsJson 分支——唯一同时
+    // 写 formError_ 与 formAdvancedJsonError_ 的地方），false = 其它来源
+    //（名称/URL 闸门 / API Key 闸门 / 序列化 / 服务层失败）。「放弃修改」据此
+    // **精准**清幽灵错误：只清 JSON 源那条，其它仍然成立的错误一律保留。
+    // 维护约定：formError_ 的所有写入必须走 claude_ui_form.cpp 的
+    // setFormError() / clearFormError()（直接赋值会留下过期标记）
+    bool formErrorFromJson_ = false;
     std::string formImportWarn_;  // 导入当前配置的接管态警告（弹窗内展示，不阻断）
     AuthField formAuthField_ = AuthField::Both;  // 认证字段（鉴权头三态）
     bool formAuthFieldOpen_ = false;             // 下拉展开态
@@ -162,6 +170,12 @@ struct FormState {
     // 恒为 pretty 保存值；外部改库的非 pretty 原文按原样预填，格式化按钮负责
     // 规范化）；submitForm 校验通过后统一 pretty 落库（D-6）
     std::string formExtraSettingsJson_;
+    // 「上次落库值」基线（batch-C C-2：「放弃修改」的恢复目标）。写入点 =
+    // openCreateForm（清空）/ openEditForm（DB 值）/ startImportCurrentConfig
+    //（导入预填值）/ submitForm 落库成功（pretty 后的落库值）。语义 = 本次表单
+    // 会话开始时的持久化值，不是「进入全屏那一刻的缓冲」——用户在表单框里改过
+    // 再进全屏，放弃仍回落到库值
+    std::string formExtraSettingsJsonBaseline_;
     // 高级设置 JSON 的行内红字（§7.2 的 claude.form.advanced.json.error 节点；
     // 格式化/校验失败共用，onChange 清空——与 formError_ 提交闸门分层）
     std::string formAdvancedJsonError_;

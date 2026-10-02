@@ -441,10 +441,10 @@ private:
     //（z=1050，画在所有弹窗之上）> 共享片段删除确认 > 共享片段编辑 > 调用记录
     // > 删除确认 > 表单）。返回 true = 本键已消费；无弹窗返回 false
     bool closeTopmostDialog() {
-        // 全屏编辑覆盖层先于一切弹窗（2026-09-30 json-fullscreen：Esc 退全屏
-        // 回表单，第二次 Esc 才关表单）
+        // 全屏编辑覆盖层先于一切弹窗（2026-09-30 json-fullscreen；batch-C C-2
+        // 起 Esc = 「放弃修改」：恢复上次落库值 + 退全屏，第二次 Esc 才关表单）
         if (state_.form.formJsonFullscreen_ && state_.form.formOpen_) {
-            state_.form.formJsonFullscreen_ = false;
+            discardJsonFullscreenEdits(state_.form);
             return true;
         }
         if (state_.shared.deleteConfirmOpen_) { state_.shared.deleteConfirmOpen_ = false; return true; }
@@ -520,14 +520,9 @@ private:
             openEditForm(state_.form, state_.import, p,
                          state_.list.cachedSharedConfigs_);
         };
-        a.requestDelete = [this](int64_t id, const std::string& name) {
-            state_.form.deleteTargetId_ = id;
-            state_.form.deleteTargetName_ = name;
-            state_.form.deleteConfirmOpen_ = true;
-        };
-        a.duplicate = [this](int64_t id) { doDuplicate(id); };
-        // 复制配置（2026-09-30 batch-fix C，设计 §4.2② 第 6 键接线）
-        a.copyConfig = [this](const Profile& p) { doCopyConfig(p); };
+        // batch-C C-3：删除 / 建副本 / 复制配置三键自详情动作行删除（入口只剩
+        // 列表右键菜单）→ 本处不再为它们接线；业务实体（doDuplicate /
+        // doCopyConfig / 删除确认弹窗）由 listActions() 与 doDelete 保留
         a.run = [this](int64_t id) { doRun(id); };
         a.openCalls = [this] { openCallsDialog(state_.logs); };
         return a;

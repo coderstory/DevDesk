@@ -1383,3 +1383,68 @@ REGISTER_TEST(provider_config_model_slot_def_env_key,
     DOCTEST_CHECK_FALSE(isModelSlotEnvKey("MY_CUSTOM_KEY"));
     return true;
 })
+
+// ---- batch-C C-4：nonEnvTopLevelJson（settings.json 原文 → 非 env 顶层属性）----
+// 抽取规则边界（评审 minor：补测试）：空/纯空白 / 超输入上限 / 非法 JSON /
+// 顶层非对象 / 除 env 外无键 → **静默**空串（无 warning 通道，与
+// validateExtraSettingsJson「超限按未配置」同口径，导入不产生超限值）；
+// 正常路径 = pretty 规范形 + env 排除 + 键序字典序（与 effectiveExtraSettingsJson
+// 同一条序列化通道）。
+REGISTER_TEST(provider_config_non_env_top_level_json,
+              "provider_config: nonEnvTopLevelJson 抽取规则与边界（空/非对象/无键/超限静默）", {
+    using module::claude::nonEnvTopLevelJson;
+
+    // 正常：非 env 顶层属性全取 + env 排除 + pretty + 字典序
+    {
+        const std::string j = nonEnvTopLevelJson(R"({
+            "statusLine": {"type": "command"},
+            "env": {"ANTHROPIC_BASE_URL": "https://x"},
+            "model": "m-1",
+            "permissions": {"allow": ["Bash"]}
+        })");
+        DOCTEST_REQUIRE(!j.empty());
+        DOCTEST_CHECK(j.find("\n  \"") != std::string::npos);   // pretty 形
+        auto parsed = platform::json::parse(j);
+        DOCTEST_REQUIRE(parsed.isOk());
+        auto obj = parsed.value().asObject();
+        DOCTEST_CHECK(obj.has("model"));
+        DOCTEST_CHECK(obj.has("permissions"));
+        DOCTEST_CHECK(obj.has("statusLine"));
+        DOCTEST_CHECK_FALSE(obj.has("env"));
+        DOCTEST_REQUIRE_EQ(obj.keys().size(), static_cast<size_t>(3));
+        DOCTEST_CHECK_EQ(obj.keys()[0], std::string("model"));
+        DOCTEST_CHECK_EQ(obj.keys()[1], std::string("permissions"));
+        DOCTEST_CHECK_EQ(obj.keys()[2], std::string("statusLine"));
+    }
+    // 空 / 纯空白 → 空串
+    DOCTEST_CHECK(nonEnvTopLevelJson("").empty());
+    DOCTEST_CHECK(nonEnvTopLevelJson("   \n\t ").empty());
+    // 非法 JSON / 顶层非对象（数组、标量）→ 空串（读路径容错，不炸）
+    DOCTEST_CHECK(nonEnvTopLevelJson("{broken").empty());
+    DOCTEST_CHECK(nonEnvTopLevelJson("[1,2,3]").empty());
+    DOCTEST_CHECK(nonEnvTopLevelJson("\"just-a-string\"").empty());
+    // 只有 env（含 env = 空对象）→ 空串（= 未配置，与 extraSettingsJson 语义一致）
+    DOCTEST_CHECK(nonEnvTopLevelJson(R"({"env": {"A": "1"}})").empty());
+    DOCTEST_CHECK(nonEnvTopLevelJson(R"({"env": {}})").empty());
+    // 输入超上限（kMaxImportTextBytes = 1MB）→ 静默空串（挡在解析之前）
+    {
+        const std::string huge = "{\"model\":\"" +
+            std::string(module::claude::kMaxImportTextBytes, 'x') + "\"}";
+        DOCTEST_CHECK(huge.size() > module::claude::kMaxImportTextBytes);
+        DOCTEST_CHECK(nonEnvTopLevelJson(huge).empty());
+    }
+    // 输出超上限（kMaxExtraSettingsBytes = 1MB）：compact 输入 < 1MB、pretty 后
+    // 超限 → 静默空串（不产超限值；不设 warning 通道）
+    {
+        std::string big = "{\"big\":[";
+        big.reserve(500000);
+        for (int i = 0; i < 200000; ++i) {
+            if (i > 0) big += ',';
+            big += '1';
+        }
+        big += "]}";
+        DOCTEST_REQUIRE(big.size() <= module::claude::kMaxImportTextBytes);
+        DOCTEST_CHECK(nonEnvTopLevelJson(big).empty());
+    }
+    return true;
+})

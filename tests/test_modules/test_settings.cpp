@@ -3050,6 +3050,145 @@ REGISTER_TEST(settings_log_level_applied_on_start_and_click,
     return true;
 })
 
+// ---- batch-C C-5：日志级别「切档 → 立即生效 → 重启后仍生效」三段可观察 ----
+// 诊断（详见 report-C.md）：机制层 ①（即时 setLevel + persist）②（onStart 恢复）
+// ④（四档 ↔ core::log::Level 映射）**都是对的**（上一条用例钉着）；用户「看不到
+// 任何效果」的缺口在可见面——日志级别下拉与「运行日志」卡同在日志 tab，而 tail
+// 快照只在「切 tab / 点刷新」时置脏重读，切档后同屏日志内容一动不动。
+// 本用例把三段钉死：
+//   (a) 切档后后续 LOG_DEBUG **真进日志文件**（过滤对写入生效，非仅内存字段）；
+//   (b) 不切 tab、不点刷新，「运行日志」卡自己重读到新行（可见面）；
+//   (c) 新实例 onStart 恢复持久化档（重启后仍生效）。
+REGISTER_TEST(settings_log_level_effective_visible_and_persistent,
+              "settings: 日志级别切档→文件真过滤 + 运行日志卡自动重读 + 重启恢复（batch-C C-5）", {
+    test_support::TestEnv env(kCfgPrefix, "lvlvis", true);
+    test_support::ScopedConfigPath cfgEnv(
+        test_support::tempConfigFile(kCfgPrefix, "lvlvis_cfg"));
+    test_support::AppDataEnv appdata("lvlvis");   // 日志文件隔离到临时 HOME
+    {
+        std::ofstream out(cfgEnv.cfgPath);
+        out << R"({"logLevel": "INFO"})";
+    }
+    writeLogFile("C5-SEED\n");   // 冷启动即有一次装载（tailLoaded_ 走 onStart 路径）
+
+    const core::log::Level prev = core::log::level();
+    core::log::addFileOutput(::core::paths::logFile());   // 与生产 main 同款：落文件
+    core::log::setLevel(core::log::Level::Info);
+
+    auto readLogFile = []() -> std::string {
+        std::ifstream f(::core::paths::logFile(), std::ios::binary);
+        std::ostringstream ss;
+        ss << f.rdbuf();
+        return ss.str();
+    };
+
+    std::unique_ptr<::core::Module> mod(create_settings_module());
+    mod->onStart();
+    eui::Screen screen;
+    screen.width = 1600.0f;
+    screen.height = 1000.0f;
+
+    // 前置：INFO 档下 DEBUG 行被过滤（写进文件的是空）
+    LOG_INFO("C5-INFO-BEFORE");
+    LOG_DEBUG("C5-DEBUG-BEFORE");
+    {
+        const std::string log = readLogFile();
+        DOCTEST_CHECK(log.find("C5-INFO-BEFORE") != std::string::npos);
+        DOCTEST_CHECK(log.find("C5-DEBUG-BEFORE") == std::string::npos);
+    }
+
+    // 进日志 tab（级别下拉 + 运行日志卡同屏）
+    DOCTEST_REQUIRE(clickSettingsTab(*mod, screen, 2));
+    // 日志查看卡渲染出的行（"" 结束；同 settings_h2_log_tail_snapshot 口径）
+    auto tailLines = [&]() -> std::vector<std::string> {
+        eui::Ui ui;
+        ui.begin("settings_c5_probe");
+        mod->compose(ui, screen);
+        ui.end();
+        ui.layout(screen.width, screen.height);
+        std::vector<std::string> out;
+        for (size_t i = 0;; ++i) {
+            const auto* e =
+                ui.find("settings.tab.log.line." + std::to_string(i));
+            if (e == nullptr) break;
+            out.push_back(e->text);
+        }
+        return out;
+    };
+    auto hasLine = [](const std::vector<std::string>& lines,
+                      const char* needle) {
+        for (const auto& l : lines) {
+            if (l.find(needle) != std::string::npos) return true;
+        }
+        return false;
+    };
+    DOCTEST_CHECK(hasLine(tailLines(), "C5-SEED"));   // 基准快照已装载
+
+    // 切 DEBUG（点下拉第 0 项）
+    {
+        eui::Ui ui;
+        ui.begin("settings_c5_click");
+        mod->compose(ui, screen);
+        ui.end();
+        const auto* item = ui.find("settings.card.log.level.dd.item.0");
+        DOCTEST_REQUIRE(item != nullptr);
+        DOCTEST_REQUIRE(item->onClick != nullptr);
+        item->onClick();
+    }
+    DOCTEST_CHECK(core::log::level() == core::log::Level::Debug);   // 立即生效
+
+    // (a) 过滤对「写入」生效：切档后的 DEBUG 行真落进日志文件
+    LOG_DEBUG("C5-DEBUG-AFTER");
+    {
+        const std::string log = readLogFile();
+        DOCTEST_CHECK(log.find("C5-DEBUG-AFTER") != std::string::npos);
+        DOCTEST_CHECK(log.find("C5-DEBUG-BEFORE") == std::string::npos);
+    }
+
+    // (b) 可见面：不切 tab、不点刷新 → 运行日志卡自己重读到新行
+    //（tail 读盘异步：置脏后隔帧收割，有界轮询等可见）
+    bool visible = false;
+    for (int i = 0; i < 40 && !visible; ++i) {
+        visible = hasLine(tailLines(), "C5-DEBUG-AFTER");
+        if (!visible) std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    }
+    DOCTEST_CHECK(visible);
+
+    // 门禁补测（批次 C 评审 [2]）：切档后的可见回显两处——
+    //   ① 下拉选中态：field 上的 label 文本换成新档文案（不是只改了 cfg_ 字段）
+    //   ② 页头状态行：setStatus 那句「日志级别：DEBUG（即时生效）」
+    {
+        eui::Ui ui;
+        ui.begin("settings_c5_selected");
+        mod->compose(ui, screen);
+        ui.end();
+        const auto* label = ui.find("settings.card.log.level.dd.label");
+        DOCTEST_REQUIRE(label != nullptr);
+        DOCTEST_CHECK_EQ(label->text, std::string("DEBUG（详尽）"));
+        const auto* sub = ui.find("settings.subtitle");
+        DOCTEST_REQUIRE(sub != nullptr);
+        DOCTEST_CHECK_EQ(sub->text, std::string("日志级别：DEBUG（即时生效）"));
+    }
+
+    // 配置落盘 + (c) 重启（新实例 onStart）恢复持久化档
+    {
+        module::settings::SettingsStore store(cfgEnv.cfgPath);
+        DOCTEST_CHECK_EQ(store.load().logLevel,
+                         std::string(module::settings::kLogLevelDebug));
+    }
+    mod->onStop();
+    std::unique_ptr<::core::Module> mod2(create_settings_module());
+    mod2->onStart();
+    DOCTEST_CHECK(core::log::level() == core::log::Level::Debug);
+    LOG_DEBUG("C5-DEBUG-RESTART");
+    DOCTEST_CHECK(readLogFile().find("C5-DEBUG-RESTART") != std::string::npos);
+    mod2->onStop();
+
+    core::log::setLevel(prev);  // 恢复（测试进程默认 Info）
+    ::core::theme::setDark();   // onStart 的 auto 解析可能 setLight，防串扰
+    return true;
+})
+
 // ---- 审计 H2：日志 tail 读盘在后台线程，compose 只读快照 ----
 // 回归：此前 compose 顶部同步读 256KB 日志文件（在渲染帧里与代理 worker 的
 // DB 写抢同一把锁）。现在切 tab / 点刷新只置脏标记 → 发一次读意图

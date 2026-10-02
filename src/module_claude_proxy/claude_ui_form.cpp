@@ -36,6 +36,23 @@ constexpr const char* kAuthFieldLabels[] = {
     "双发（默认）", "只发 Authorization: Bearer", "只发 x-api-key"};
 constexpr int kAuthFieldCount = 3;
 
+// ---- formError_ 的统一写入点（批次 C 评审必修：来源标记）----
+// formError_ 承载多来源红字（名称/URL 闸门、API Key 闸门、序列化、服务层失败、
+// JSON 校验…）。「放弃修改」只应清掉**JSON 源**的那一条——直接整片 clear 会把
+// 仍然成立的其它错误（如「名称和 Base URL 不能为空」）一起抹掉。因此定来源标记：
+// JSON 校验分支（submitForm 里唯一把同一条校验文案**同时**写进 formError_ 与
+// formAdvancedJsonError_ 的地方）置 fromJson=true，其余来源一律 false。
+// 全部写入点必须走这两个 helper（直接赋值会留下过期标记）
+void setFormError(FormState& f, const std::string& msg, bool fromJson = false) {
+    f.formError_ = msg;
+    f.formErrorFromJson_ = fromJson;
+}
+
+void clearFormError(FormState& f) {
+    f.formError_.clear();
+    f.formErrorFromJson_ = false;
+}
+
 // 「格式化」共用体（2026-09-30 json-fullscreen 自表单按钮 lambda 提升为自由
 // 函数）：parse → stringify(pretty)，不自写格式化器；键序会重排为字典序——
 // 与 settings_sync 写 settings.json 同一条序列化通道，round-trip 语义不变。
@@ -60,6 +77,27 @@ void formatAdvancedJson(FormState& f) {
 
 } // namespace
 
+// batch-C C-2：全屏 JSON「放弃修改」（按钮 / Esc / 点遮罩三入口同此）。
+// 语义变更记录：2026-09-30 json-fullscreen 初版把 Esc = 「退全屏、文本留在
+// 缓冲」（配合当时的「完成」键）；C-2 起「完成」删除、Esc/遮罩改为**放弃**
+//（与常见 modal「Esc = 放弃并关闭」一致，防误丢）。恢复目标 = 上次落库值
+//（formExtraSettingsJsonBaseline_），不是「进全屏那一刻的缓冲」——在表单框里
+// 改过再进全屏，放弃同样回落到库值。文本本就等于落库值时等价于关闭，不报错。
+void discardJsonFullscreenEdits(FormState& f) {
+    f.formExtraSettingsJson_ = f.formExtraSettingsJsonBaseline_;
+    // JSON 行内红字随文本回退一并清
+    f.formAdvancedJsonError_.clear();
+    // 幽灵错误（批次 C 评审必修）：JSON 校验失败会在提交闸门留一条
+    // formError_ 红字。放弃后文本已回滚，这条错误描述的是**已被丢弃**的内容
+    // ——按来源标记精准清（formErrorFromJson_ 只由 JSON 校验分支置位；
+    // 名称/URL/Key/服务层等其它来源的 formError_ 一律保留——它们与 JSON
+    // 缓冲无关，放弃后依然成立）
+    if (f.formErrorFromJson_) {
+        clearFormError(f);
+    }
+    f.formJsonFullscreen_ = false;
+}
+
 // ============ 新建/编辑 Profile 表单弹窗（tabs 三页，§6.1） ============
 void openCreateForm(FormState& f, ImportState& imp) {
     f.formEditId_ = 0;   // 0 = 新建
@@ -67,7 +105,7 @@ void openCreateForm(FormState& f, ImportState& imp) {
     f.formName_.clear();
     f.formUrl_.clear();
     f.formKey_.clear();
-    f.formError_.clear();
+    clearFormError(f);
     f.formKeyHint_.clear();
     f.formImportWarn_.clear();
     f.formModels_ = ModelsConfig{};
@@ -78,8 +116,10 @@ void openCreateForm(FormState& f, ImportState& imp) {
     // 高级配置页，frozenKeys 预览随片段 JSON 化拆除）
     f.formSharedConfigId_ = 0;
     f.formSharedDdOpen_ = false;
-    // 高级设置 JSON 复位（advanced-json-editor §7.1：新建默认未配置）
+    // 高级设置 JSON 复位（advanced-json-editor §7.1：新建默认未配置）；
+    // 基线一并复位（batch-C C-2：新建的「上次落库值」= 空——没有可回落的旧值）
     f.formExtraSettingsJson_.clear();
+    f.formExtraSettingsJsonBaseline_.clear();
     f.formAdvancedJsonError_.clear();
     // 全屏编辑态复位（json-fullscreen：新表单不带上一份的全屏残留）
     f.formJsonFullscreen_ = false;
@@ -100,7 +140,7 @@ void openEditForm(FormState& f, ImportState& imp, const Profile& p,
     f.formName_ = p.name;
     f.formUrl_ = p.baseUrl;
     f.formKey_.clear();   // 留空 = 不换 key（updateProfile 语义）
-    f.formError_.clear();
+    clearFormError(f);
     f.formKeyHint_ = p.apiKeyHint;
     f.formImportWarn_.clear();
     // 槽位：models_config（空 / 非法 JSON → 全空槽位）
@@ -113,8 +153,10 @@ void openEditForm(FormState& f, ImportState& imp, const Profile& p,
     f.formSharedConfigId_ = p.sharedConfigId;
     f.formSharedDdOpen_ = false;
     // 高级设置 JSON 预填（advanced-json-editor §7.1）：DB 恒为 pretty 保存值；
-    // 外部改库的非 pretty 原文按原样预填，格式化按钮负责规范化
+    // 外部改库的非 pretty 原文按原样预填，格式化按钮负责规范化。
+    // 基线 = 同一份 DB 值（batch-C C-2：「放弃修改」的恢复目标）
     f.formExtraSettingsJson_ = p.extraSettingsJson;
+    f.formExtraSettingsJsonBaseline_ = p.extraSettingsJson;
     f.formAdvancedJsonError_.clear();
     // 全屏编辑态复位（json-fullscreen：重开表单不带上一份的全屏残留）
     f.formJsonFullscreen_ = false;
@@ -189,7 +231,7 @@ void doApplyImport(FormState& f, ImportState& imp) {
     }
     imp.importReady_ = false;
     imp.importText_.clear();
-    f.formError_.clear();   // 导入成功清掉旧校验错误
+    clearFormError(f);   // 导入成功清掉旧校验错误
 }
 
 // ============ 导入当前配置（一键读 settings.json → 预填新建表单）============
@@ -247,6 +289,13 @@ void startImportCurrentConfig(FormState& f, ImportState& imp,
     imp.importReady_ = true;   // 保留高级 env 页预览标记（识别数 + 警告角标）
     f.formName_ = suggestImportName(imp.importPreview_.baseUrl);
 
+    // 高级配置（batch-C C-4）：settings.json 除 env 外的顶层属性 → 表单的
+    // 「高级设置 JSON」。parseImportedEnv 按其职责只取 env 子对象，doApplyImport
+    // 也只回填基础/槽位/env 三域——非 env 顶层属性必须在此独立抽取，否则导入后
+    // 高级配置恒空。基线同步（「放弃修改」回落到这份导入预填值）
+    f.formExtraSettingsJson_ = nonEnvTopLevelJson(content);
+    f.formExtraSettingsJsonBaseline_ = f.formExtraSettingsJson_;
+
     // 接管态警告：sidecar 存在 → 导入的是代理配置而非原始上游
     if (settings_sync::hasPendingSnapshot(paths)) {
         f.formImportWarn_ =
@@ -265,7 +314,7 @@ bool serializeFormData(FormState& f, std::string* modelsJson, std::string* envJs
     if (anySlot) {
         auto r = serializeModelsConfig(f.formModels_);
         if (r.isFail()) {
-            f.formError_ = "模型配置序列化失败: " + r.errorMessage();
+            setFormError(f, "模型配置序列化失败: " + r.errorMessage());
             return false;
         }
         *modelsJson = r.value();
@@ -278,7 +327,7 @@ bool serializeFormData(FormState& f, std::string* modelsJson, std::string* envJs
     if (!envMap.empty()) {
         auto r = serializeExtraEnv(envMap);
         if (r.isFail()) {
-            f.formError_ = "env 序列化失败: " + r.errorMessage();
+            setFormError(f, "env 序列化失败: " + r.errorMessage());
             return false;
         }
         *envJson = r.value();
@@ -290,12 +339,12 @@ void submitForm(FormState& f, const FormSubmitHooks& hooks,
                 const std::vector<SharedConfig>& sharedConfigs) {
     ClaudeService* svc = ClaudeService::global();
     if (!svc) {
-        f.formError_ = "服务未就绪（ClaudeService 未注册）";
+        setFormError(f, "服务未就绪（ClaudeService 未注册）");
         return;
     }
     hooks.markDataDirty();   // 审计 perf [13]：写操作前即标脏（失败也不伤，下帧重查）
     if (f.formName_.empty() || f.formUrl_.empty()) {
-        f.formError_ = "名称和 Base URL 不能为空";
+        setFormError(f, "名称和 Base URL 不能为空");
         return;
     }
     // 批 2：悬空绑定防御（片段已删 / 快照未到位）——按未绑定保存，不留幽灵 id
@@ -315,7 +364,8 @@ void submitForm(FormState& f, const FormSubmitHooks& hooks,
     if (!f.formExtraSettingsJson_.empty()) {
         auto v = validateExtraSettingsJson(f.formExtraSettingsJson_);
         if (v.isFail()) {
-            f.formError_ = v.errorMessage();
+            // 唯一 fromJson=true 的写入点（批次 C 评审必修：放弃修改按来源清）
+            setFormError(f, v.errorMessage(), /*fromJson=*/true);
             f.formAdvancedJsonError_ = v.errorMessage();
             return;
         }
@@ -333,7 +383,7 @@ void submitForm(FormState& f, const FormSubmitHooks& hooks,
     if (f.formEditId_ == 0) {
         // 新建：API Key 必填
         if (f.formKey_.empty()) {
-            f.formError_ = "新建 Profile 必须填写 API Key";
+            setFormError(f, "新建 Profile 必须填写 API Key");
             return;
         }
         // 产品审计 2026-09-23 [6]：activateIfNoneActive=true——当前无激活
@@ -346,7 +396,7 @@ void submitForm(FormState& f, const FormSubmitHooks& hooks,
                                     /*fallbackProfileId=*/f.formFallbackProfileId_,
                                     /*extraSettingsJson=*/extraSettingsPretty);
         if (r.isFail()) {
-            f.formError_ = r.errorMessage();
+            setFormError(f, r.errorMessage());
             return;
         }
         // createProfile 无槽位/env 参数（最小 diff 不动签名），二段补写
@@ -361,12 +411,15 @@ void submitForm(FormState& f, const FormSubmitHooks& hooks,
             p.extraSettingsJson = extraSettingsPretty;
             auto u = svc->updateProfile(p);
             if (u.isFail()) {
-                f.formError_ = "已创建，但模型/env 写入失败: " +
-                               u.errorMessage();
+                setFormError(f, "已创建，但模型/env 写入失败: " +
+                                  u.errorMessage());
                 return;
             }
         }
         f.formOpen_ = false;
+        // 落库成功 → 基线随落库值刷新（batch-C C-2：「放弃修改」的恢复目标
+        // 恒等于真实的持久化值；纯表单路径不触发，但保持不变量成本为零）
+        f.formExtraSettingsJsonBaseline_ = extraSettingsPretty;
         hooks.selectProfile(r.value().id);
         // 审计 2026-09-23 [6]：按是否自动激活分文案——只说「已保存」会让
         // 用户以为点「启动代理」就能用（无激活时 Claude Code 直接 503）
@@ -384,7 +437,7 @@ void submitForm(FormState& f, const FormSubmitHooks& hooks,
         // 编辑：先取现有行（保留 keychain 引用等字段），再覆盖表单值
         auto got = svc->getProfile(f.formEditId_);
         if (got.isFail()) {
-            f.formError_ = got.errorMessage();
+            setFormError(f, got.errorMessage());
             return;
         }
         Profile p = std::move(got).value();
@@ -405,10 +458,12 @@ void submitForm(FormState& f, const FormSubmitHooks& hooks,
         p.dialectOverride = f.formDialectOverride_;
         auto r = svc->updateProfile(p);
         if (r.isFail()) {
-            f.formError_ = r.errorMessage();
+            setFormError(f, r.errorMessage());
             return;
         }
         f.formOpen_ = false;
+        // 落库成功 → 基线随落库值刷新（同创建路径，batch-C C-2）
+        f.formExtraSettingsJsonBaseline_ = extraSettingsPretty;
         hooks.toast("已保存", "Profile「" + f.formName_ + "」已更新", false);
     }
 }
@@ -1155,11 +1210,12 @@ void drawProfileFormDialog(eui::Ui& ui, const eui::Screen& screen,
 // 层级落点（任务两案取「ui_kit 顶层 overlay」案，理由见 commit message）：画在
 // compose 全部弹窗之后（claude_module.cpp）+ 显式 zIndex 1050——介于表单弹窗
 //（EUI-NEO dialog 默认 1000）与 toast（1100）之间：盖住表单 dialog（本需求），
-// 又让位 toast（「应用」成功的确认必须可见）。
-// 可见性派生自 formOpen_ && formJsonFullscreen_：「应用」复用 submitForm，成功
-// 路径关表单 → 全屏同帧消失（若留在全屏，会出现无表单的孤儿覆盖层，且「完成」
-// 回表单无处可回；toast 确认由既有 hooks 照发）。文本/红字/落库全部复用表单
-// 既有字段与路径——本函数只是同一状态的大画布
+// 又让位 toast（「保存」成功的确认必须可见）。
+// 可见性派生自 formOpen_ && formJsonFullscreen_：「保存」复用 submitForm，成功
+// 路径关表单 → 全屏同帧消失（若留在全屏，会出现无表单的孤儿覆盖层）。文本/
+// 红字/落库全部复用表单既有字段与路径——本函数只是同一状态的大画布。
+// 底部三键（batch-C C-2）：格式化 / 保存 / 放弃修改；Esc 与点遮罩 = 放弃修改
+//（原「完成」键与其「留文本回表单」语义删除）。
 void drawJsonFullscreenOverlay(eui::Ui& ui, const eui::Screen& screen,
                                const core::theme::Tokens& t,
                                const components::theme::ThemeColorTokens& themeTokens,
@@ -1181,11 +1237,17 @@ void drawJsonFullscreenOverlay(eui::Ui& ui, const eui::Screen& screen,
         .content([&] {
             // 整页不透明底（模块页平时不自铺底色——底=窗口 clearColor；全屏态
             // 必须盖住底下全部内容，故自铺不透明 background）+ blockPointer
-            //（与 dialog 面板 hit 同款模态手法：点击不穿透到表单弹窗）
+            //（与 dialog 面板 hit 同款模态手法：点击不穿透到表单弹窗）。
+            // batch-C C-2：点击 = 「放弃修改」（与 Esc 同语义，常见 modal 的
+            // 「点遮罩关闭」惯例）。用 rect.onClick 而非 components::mouseArea
+            // —— mouseArea 的 tap 派发在元素 onRelease（要真 press+release 且在
+            // 界内），与全仓「rect.onClick」既有径（如 claude.calls.viewall.hit）
+            // 不一致；这里保持 rect 形态，模态与点击语义一处表达
             ui.rect("claude.jsonfs.bg")
                 .size(w, h)
                 .color(t.colors.background)
                 .blockPointer()
+                .onClick([fp = &f] { discardJsonFullscreenEdits(*fp); })
                 .build();
 
             ui_kit::drawDialogTitle(ui, "claude.jsonfs.title", w,
@@ -1193,19 +1255,19 @@ void drawJsonFullscreenOverlay(eui::Ui& ui, const eui::Screen& screen,
                                     t.colors.textPrimary,
                                     {.y = 20.0f, .height = 26.0f,
                                      .lineHeight = 26.0f});
-            // 末句 = 审计 F-2：应用闸门里的基础项（名称/URL/Key）错误修复字段在
+            // 末句 = 审计 F-2：保存闸门里的基础项（名称/URL/Key）错误修复字段在
             // 基础页、全屏态不可达——明示「回表单补填」这条修复路径
             ui.text("claude.jsonfs.hint")
                 .position(28.0f, 48.0f).size(w - 56.0f, 16.0f)
-                .text("与表单弹窗同一份编辑缓冲：格式化 / 应用（=保存）在此生效；"
-                      "Esc 或「完成」返回表单，未应用的文本保留；"
+                .text("与表单弹窗同一份编辑缓冲：格式化 / 保存（= 整表单提交）在此生效；"
+                      "「放弃修改」、Esc 或点击遮罩 = 丢弃本次改动并回到上次保存值；"
                       "基础项（名称/URL/Key）缺失需回表单基础页补填")
                 .fontSize(11.0f).lineHeight(16.0f)
                 .color(t.colors.textTertiary).build();
 
             // 大号多行编辑框：占满内容区减标题区与底部按钮行。value/onChange
             // 与表单框同接 formExtraSettingsJson_（同一编辑缓冲）；Esc 走
-            // onCancel 退全屏回表单（表单框的 Esc 是关表单——层级不同语义不同）
+            // onCancel（batch-C C-2 起 = 放弃修改，不再是「保留文本回表单」）
             components::input(ui, "claude.jsonfs.editor")
                 .position(28.0f, 72.0f).size(w - 56.0f, h - 176.0f)
                 .value(f.formExtraSettingsJson_)
@@ -1216,7 +1278,7 @@ void drawJsonFullscreenOverlay(eui::Ui& ui, const eui::Screen& screen,
                     fp->formExtraSettingsJson_ = v;
                     fp->formAdvancedJsonError_.clear();
                 })
-                .onCancel([fp = &f] { fp->formJsonFullscreen_ = false; })
+                .onCancel([fp = &f] { discardJsonFullscreenEdits(*fp); })
                 .build();
 
             // 红字（同源分层与表单侧一致：优先 formError_ 提交闸门，其次
@@ -1231,9 +1293,12 @@ void drawJsonFullscreenOverlay(eui::Ui& ui, const eui::Screen& screen,
                     .color(t.colors.error).build();
             }
 
-            // 底部按钮行：「格式化」（与表单按钮共用 formatAdvancedJson）/
-            //「应用」（= submitForm 整条既有路径：校验 → formError_ 闸门 →
-            // pretty 落库 → toast）/「完成」（退全屏回表单，文本留在缓冲）
+            // 底部按钮行（batch-C C-2 定稿三键）：「格式化」（与表单按钮共用
+            // formatAdvancedJson）/「保存」（= submitForm 整条既有路径：校验 →
+            // formError_ 闸门 → pretty 落库 → toast；节点 id 沿用
+            // claude.jsonfs.apply，仅文案由「应用」改「保存」）/「放弃修改」
+            //（discardJsonFullscreenEdits：恢复上次落库值 + 退全屏；原「完成」
+            // 键已删——它的「留文本回表单」语义被放弃语义取代）
             components::button(ui, "claude.jsonfs.format")
                 .position(28.0f, h - 68.0f).size(110.0f, 40.0f)
                 .text("格式化").fontSize(12.0f)
@@ -1245,7 +1310,7 @@ void drawJsonFullscreenOverlay(eui::Ui& ui, const eui::Screen& screen,
                 .build();
             components::button(ui, "claude.jsonfs.apply")
                 .position(150.0f, h - 68.0f).size(110.0f, 40.0f)
-                .text("应用").fontSize(12.0f)
+                .text("保存").fontSize(12.0f)
                 .colors(t.colors.primary, t.colors.primaryHover,
                         t.colors.primaryPressed)
                 .textColor(t.colors.onPrimary)
@@ -1254,14 +1319,14 @@ void drawJsonFullscreenOverlay(eui::Ui& ui, const eui::Screen& screen,
                     submitForm(*fp, hooks, *scs);
                 })
                 .build();
-            components::button(ui, "claude.jsonfs.done")
+            components::button(ui, "claude.jsonfs.discard")
                 .position(272.0f, h - 68.0f).size(110.0f, 40.0f)
-                .text("完成").fontSize(12.0f)
+                .text("放弃修改").fontSize(12.0f)
                 .colors(t.colors.surfaceElevated, t.colors.hover, t.colors.active)
                 .textColor(t.colors.textPrimary)
                 .radius(t.sizes.radiusSmall)
                 .border(1.0f, t.colors.borderDefault)
-                .onClick([fp = &f] { fp->formJsonFullscreen_ = false; })
+                .onClick([fp = &f] { discardJsonFullscreenEdits(*fp); })
                 .build();
         })
         .build();

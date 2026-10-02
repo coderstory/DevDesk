@@ -151,8 +151,12 @@ REGISTER_TEST(claude_module_compose_null_service,
     DOCTEST_CHECK(ui.find("claude.act.enable") != nullptr);
     DOCTEST_CHECK(ui.find("claude.act.test") != nullptr);
     DOCTEST_CHECK(ui.find("claude.act.edit") != nullptr);
-    DOCTEST_CHECK(ui.find("claude.act.del") != nullptr);
-    DOCTEST_CHECK(ui.find("claude.act.dup") != nullptr);   // 第 5 键（M5）
+    DOCTEST_CHECK(ui.find("claude.act.run") != nullptr);   // 第 4 键（profile-run）
+    // batch-C C-3：删除 / 建副本 / 复制配置三键自详情动作行**删除**（入口只剩
+    // 列表右键菜单，业务逻辑同源保留）；这里不再渲染这三个节点
+    DOCTEST_CHECK(ui.find("claude.act.del") == nullptr);
+    DOCTEST_CHECK(ui.find("claude.act.dup") == nullptr);
+    DOCTEST_CHECK(ui.find("claude.act.copyconfig") == nullptr);
     // 无服务时显示错误态（W7：不再静默吞错显示假空态）
     DOCTEST_CHECK(ui.find("claude.profiles.error") != nullptr);
     DOCTEST_CHECK(ui.find("claude.profiles.empty") == nullptr);
@@ -168,32 +172,28 @@ REGISTER_TEST(claude_module_compose_null_service,
         DOCTEST_CHECK(warnMsg->text.find("重启") != std::string::npos);
     }
 
-    // 无选中（shown.id == 0）+ 无服务：点「复制」不崩，toast 提示先选 Profile
+    // 无选中（shown.id == 0）+ 无服务：动作行只剩 4 键，删/副本/复制配置三键
+    // 不再渲染（batch-C C-3）——「未选中提示」通道转由右键菜单的 warn 覆盖
+    //（右键菜单用例见 test_ui_modern 与 claude_copyconfig_ctx_menu_* 用例）
     {
-        const auto* dupBtn = ui.find("claude.act.dup.bg");
-        DOCTEST_REQUIRE(dupBtn != nullptr);
-        DOCTEST_REQUIRE(dupBtn->onClick != nullptr);
-        dupBtn->onClick();
-        eui::Ui ui2;
-        ui2.begin("claude_null2");
-        mod->compose(ui2, screen);
-        ui2.end();
-        const auto* msg = ui2.find("claude.toast.message");
-        DOCTEST_REQUIRE(msg != nullptr);
-        DOCTEST_CHECK(msg->text.find("请先选择 Profile") != std::string::npos);
+        DOCTEST_CHECK(ui.find("claude.act.del.bg") == nullptr);
+        DOCTEST_CHECK(ui.find("claude.act.dup.bg") == nullptr);
+        DOCTEST_CHECK(ui.find("claude.act.copyconfig.bg") == nullptr);
+        DOCTEST_CHECK(ui.find("claude.act.run.bg") != nullptr);
     }
 
     mod->onStop();
     return true;
 })
 
-// ---- 1b. 7 键均分几何：第 7 键右缘对齐分隔线（回归闸）----
-// actW = (w0 - actGap*6)/7 —— EUI 的 row spacing 只在相邻子项之间生效，n 项只有
-// n−1 个间隙。旧算式多扣一个 gap 会让末键右缘比分隔线短一整个 gap（12px）。
+// ---- 1b. 4 键均分几何：末键（运行）右缘对齐分隔线（回归闸）----
+// actW = (w0 - actGap*3)/4 —— batch-C C-3 删掉 删除/建副本/复制配置 三键后
+// 由 7 键收为 4 键（启用/测试连通/编辑/运行）。EUI 的 row spacing 只在相邻
+// 子项之间生效，n 项只有 n−1 个间隙；多扣一个 gap 会让末键右缘短一整个 gap。
 // 跑真实 layout 后比对计算 frame，无头也能锁死这个几何。
 
 REGISTER_TEST(claude_module_actions_row_alignment,
-              "claude_module: 7 键均分——第 7 键右缘对齐分隔线（headless layout）", {
+              "claude_module: 4 键均分——第 4 键（运行）右缘对齐分隔线（headless layout）", {
     module::claude::ClaudeService::setGlobal(nullptr);
     std::unique_ptr<::core::Module> mod(create_claude_module());
     eui::Screen screen;
@@ -206,13 +206,20 @@ REGISTER_TEST(claude_module_actions_row_alignment,
     ui.layout(screen.width, screen.height);
 
     const auto* divider = ui.find("claude.act.divider");
-    const auto* run7 = ui.find("claude.act.run.bg");   // 第 7 键（profile-run）
+    const auto* row = ui.find("claude.detail.actions");
+    const auto* run4 = ui.find("claude.act.run.bg");   // 第 4 键（profile-run）
     DOCTEST_REQUIRE(divider != nullptr);
-    DOCTEST_REQUIRE(run7 != nullptr);
+    DOCTEST_REQUIRE(row != nullptr);
+    DOCTEST_REQUIRE(run4 != nullptr);
     const float dividerRight = divider->frame.x + divider->frame.width;
-    const float runRight = run7->frame.x + run7->frame.width;
+    const float runRight = run4->frame.x + run4->frame.width;
     DOCTEST_CHECK(runRight >= dividerRight - 0.5f);
     DOCTEST_CHECK(runRight <= dividerRight + 0.5f);
+    // 单键宽 = (行宽 − 3×gap) / 4（gap=12）
+    const float expect = (row->frame.width - 12.0f * 3.0f) / 4.0f;
+    DOCTEST_CHECK(std::fabs(run4->frame.width - expect) < 0.01f);
+    DOCTEST_CHECK(std::fabs(ui.find("claude.act.enable.bg")->frame.width - expect) <
+                  0.01f);
 
     mod->onStop();
     return true;
@@ -259,8 +266,12 @@ REGISTER_TEST(claude_module_compose_with_data,
     DOCTEST_CHECK(ui.find("claude.act.enable") != nullptr);
     DOCTEST_CHECK(ui.find("claude.act.test") != nullptr);
     DOCTEST_CHECK(ui.find("claude.act.edit") != nullptr);
-    DOCTEST_CHECK(ui.find("claude.act.del") != nullptr);
-    DOCTEST_CHECK(ui.find("claude.act.dup") != nullptr);   // 第 5 键（M5）
+    DOCTEST_CHECK(ui.find("claude.act.run") != nullptr);   // 第 4 键（profile-run）
+    // batch-C C-3：删除 / 建副本 / 复制配置三键自详情动作行**删除**（入口只剩
+    // 列表右键菜单，业务逻辑同源保留）；这里不再渲染这三个节点
+    DOCTEST_CHECK(ui.find("claude.act.del") == nullptr);
+    DOCTEST_CHECK(ui.find("claude.act.dup") == nullptr);
+    DOCTEST_CHECK(ui.find("claude.act.copyconfig") == nullptr);
     DOCTEST_CHECK(ui.find("claude.btn.proxy") != nullptr);
 
     mod->onStop();
@@ -913,6 +924,175 @@ REGISTER_TEST(claude_module_import_current_full_chain,
         cleanupProfileKey(kTestKeychainService, p.id);
     }
 
+    mod->onStop();
+    return true;
+})
+
+// ---- 6b. batch-C C-4：「导入当前配置」必须读入高级配置 ----
+// 症状：导入后「高级配置」（高级设置 JSON）为空。
+// 根因（诊断证据见 report-C.md）：parseImportedEnv 按其职责只取 env 子对象
+// （非 env 顶层属性不在返回值里），doApplyImport 也只回填基础/槽位/env 三域；
+// 非 env 顶层属性此前**没有任何一条导入路径读它** → 修 = startImportCurrentConfig
+// 抽取非 env 顶层属性写入 formExtraSettingsJson_（与源一致，pretty 规范形）。
+REGISTER_TEST(claude_module_import_current_reads_advanced_json,
+              "claude_module: 导入当前配置读入高级配置（非 env 顶层属性→高级设置 JSON，headless）", {
+    TestEnv env;
+    test_support::TempDir d("adv", kImportTempDirPrefix);
+    const auto paths = importPaths(d);
+    env.svc->setSettingsSyncPaths(paths);
+    env.svc->setSettingsTakeOverEnabled(true);
+    // 整段 settings.json：env（基础/槽位域）+ 三个非 env 顶层属性（高级配置域）
+    d.write(d.file("settings.json"), R"({
+        "permissions": {"allow": ["Bash"]},
+        "statusLine": {"type": "command", "command": "~/sl.sh"},
+        "model": "m-adv",
+        "env": {
+            "ANTHROPIC_BASE_URL": "https://adv.example.com",
+            "ANTHROPIC_AUTH_TOKEN": "sk-imp-adv-0001"
+        }
+    })");
+
+    std::unique_ptr<::core::Module> mod(create_claude_module());
+    eui::Screen screen;
+    screen.width = 1600.0f;
+    screen.height = 1000.0f;
+    auto compose = [&](eui::Ui& ui) {
+        ui.begin("claude_imp_adv");
+        mod->compose(ui, screen);
+        ui.end();
+    };
+    auto click = [](eui::Ui& ui, const std::string& id) -> bool {
+        const auto* node = ui.find(id);
+        if (node == nullptr || node->onClick == nullptr) {
+            std::cerr << "missing clickable: " << id << std::endl;
+            return false;
+        }
+        node->onClick();
+        return true;
+    };
+    // 多行输入框全文（逐行 .text.N 拼接）
+    auto joinedText = [](eui::Ui& ui,
+                         const std::string& prefix) -> std::string {
+        std::string out;
+        for (size_t i = 0;; ++i) {
+            const auto* n = ui.find(prefix + std::to_string(i));
+            if (n == nullptr) break;
+            if (!out.empty()) out += "\n";
+            out += n->text;
+        }
+        return out;
+    };
+
+    // 导入（按钮存在 → 点击 → 弹窗预填）
+    {
+        eui::Ui ui;
+        compose(ui);
+        DOCTEST_CHECK(click(ui, "claude.profiles.import.bg"));
+    }
+    // 高级配置页：高级设置 JSON 缓冲 = 源文件非 env 顶层属性（三个键全在；
+    // env 键不外泄——它属 env 域）。多行 pretty 会超出表单小框的可视行数
+    //（输入框只渲染视口内的行节点），故经「全屏编辑」读**全量**缓冲
+    std::string advText;
+    {
+        eui::Ui ui;
+        compose(ui);
+        DOCTEST_CHECK(click(ui, "claude.form.tabs.hit.3"));
+    }
+    {
+        eui::Ui ui;
+        compose(ui);
+        DOCTEST_CHECK(click(ui, "claude.form.advanced.json.fs.bg"));
+    }
+    {
+        eui::Ui ui;
+        compose(ui);
+        advText = joinedText(ui, "claude.jsonfs.editor.text.");
+        DOCTEST_CHECK(advText.find("permissions") != std::string::npos);
+        DOCTEST_CHECK(advText.find("statusLine") != std::string::npos);
+        DOCTEST_CHECK(advText.find("m-adv") != std::string::npos);
+        DOCTEST_CHECK(advText.find("\"env\"") == std::string::npos);
+        // 逐键与源一致（解析后比对，格式无关）
+        auto parsed = platform::json::parse(advText);
+        DOCTEST_REQUIRE(parsed.isOk());
+        DOCTEST_REQUIRE(parsed.value().isObject());
+        auto obj = parsed.value().asObject();
+        DOCTEST_CHECK(obj.has("permissions"));
+        DOCTEST_CHECK(obj.has("statusLine"));
+        DOCTEST_CHECK(obj.has("model"));
+        DOCTEST_CHECK(!obj.has("env"));
+        DOCTEST_CHECK_EQ(obj.get("model").asString(), std::string("m-adv"));
+        DOCTEST_CHECK_EQ(obj.get("statusLine").asObject().get("command").asString(),
+                         std::string("~/sl.sh"));
+        // 「放弃修改」回落到基线 = 导入预填值（batch-C C-2 × C-4 交叉）：
+        // 放弃后缓冲仍是同一份导入 JSON，保存路径不受影响
+        DOCTEST_CHECK(click(ui, "claude.jsonfs.discard.bg"));
+    }
+    {
+        eui::Ui ui;
+        compose(ui);
+        DOCTEST_CHECK(ui.find("claude.jsonfs.root") == nullptr);
+        DOCTEST_CHECK(ui.find("claude.jsonfs.editor.text.0") == nullptr);
+        // 表单小框仍在、首行 = pretty 的 "{"（缓冲未被清空——放弃 = 回导入基线）
+        const auto* first = ui.find("claude.form.advanced.json.text.0");
+        DOCTEST_REQUIRE(first != nullptr);
+        DOCTEST_CHECK_EQ(first->text, std::string("{"));
+    }
+    // 保存 → 落库 → 详情「高级配置」页签 pane 逐键显示同一组键（用户可见面）
+    {
+        eui::Ui ui;
+        compose(ui);
+        DOCTEST_CHECK(click(ui, "claude.dialog.form.confirm.bg"));
+    }
+    // 保存是异步刷新（H2）：有界轮询等卡片/详情进快照
+    bool saved = false;
+    int64_t pid = 0;
+    for (int i = 0; i < 300 && !saved; ++i) {
+        mod->onPageEnter();
+        eui::Ui ui;
+        compose(ui);
+        auto list = env.svc->listProfiles();
+        if (list.isOk()) {
+            for (const auto& p : list.value()) {
+                if (p.name.find("adv.example.com") != std::string::npos) {
+                    pid = p.id;
+                    saved = p.extraSettingsJson.find("statusLine") !=
+                            std::string::npos;
+                }
+            }
+        }
+        if (!saved) std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    }
+    DOCTEST_CHECK(saved);   // 高级配置真落库（不只是 UI 显示）
+    {
+        eui::Ui ui;
+        compose(ui);
+        DOCTEST_CHECK(click(ui, "claude.profile.0.bg"));
+    }
+    {
+        eui::Ui ui;
+        compose(ui);
+        DOCTEST_CHECK(click(ui, "claude.detail.tabs.hit.3"));
+    }
+    {
+        eui::Ui ui;
+        compose(ui);
+        // 详情「高级配置」pane：逐键来源行（键名节点）
+        std::vector<std::string> keys;
+        for (size_t i = 0;; ++i) {
+            const auto* n =
+                ui.find("claude.advjson.row.key." + std::to_string(i));
+            if (n == nullptr) break;
+            keys.push_back(n->text);
+        }
+        DOCTEST_CHECK(std::find(keys.begin(), keys.end(), "model") != keys.end());
+        DOCTEST_CHECK(std::find(keys.begin(), keys.end(), "permissions") !=
+                      keys.end());
+        DOCTEST_CHECK(std::find(keys.begin(), keys.end(), "statusLine") !=
+                      keys.end());
+        DOCTEST_CHECK(std::find(keys.begin(), keys.end(), "env") == keys.end());
+    }
+
+    if (pid != 0) cleanupProfileKey(kTestKeychainService, pid);
     mod->onStop();
     return true;
 })
@@ -2097,11 +2277,23 @@ REGISTER_TEST(claude_ui_esc_closes_delete_confirm,
     // 0) 无弹窗：不消费（兜底不越权吃键）
     DOCTEST_CHECK(!mod->onKeyEvent(escPress()));
 
-    // 1) 选中 profile → 「删除」→ 确认弹窗（无输入框）→ Esc = 取消，profile 不删
+    // 1) 选中 profile → 右键菜单「删除」→ 确认弹窗（无输入框）→ Esc = 取消，
+    //    profile 不删（batch-C C-3：详情动作行的「删除」键已删，入口 = 右键菜单）
     frame("esc1");
     DOCTEST_CHECK(click(ui, "claude.profile.0.bg"));   // 详情面板需要选中项
     frame("esc2");
-    DOCTEST_CHECK(click(ui, "claude.act.del.bg"));
+    {
+        const auto* wrap = ui.find("claude.profile.0.wrap");
+        DOCTEST_REQUIRE(wrap != nullptr);
+        DOCTEST_REQUIRE(wrap->onContextMenu != nullptr);
+        eui::PointerEvent pe;
+        eui::Rect rect;
+        pe.x = 400;
+        pe.y = 300;
+        wrap->onContextMenu(pe, rect);
+    }
+    frame("esc2b");
+    DOCTEST_CHECK(click(ui, "claude.list.ctx.level.0.item.3"));   // 删除
     frame("esc3");
     DOCTEST_REQUIRE(ui.find("claude.dialog.delete.panel") != nullptr);
     DOCTEST_CHECK_EQ(ui.find("claude.dialog.delete.panel")->opacity, 1.0f);
@@ -2231,24 +2423,38 @@ REGISTER_TEST(claude_module_duplicate_profile_ui,
         return true;
     };
 
-    // 第 5 键存在且可点（.bg 点击节点，与同区其他键同款）；列表序 =
-    // is_active DESC, name ASC → index 1 =「中转」，选中它
+    // batch-C C-3：详情动作行不再有「建副本」键（入口只剩右键菜单）；
+    // 列表序 = is_active DESC, name ASC → index 1 =「中转」，选中它
     {
         eui::Ui ui;
         compose(ui);
-        DOCTEST_CHECK(ui.find("claude.act.dup") != nullptr);
-        DOCTEST_CHECK(ui.find("claude.act.dup.bg") != nullptr);
+        DOCTEST_CHECK(ui.find("claude.act.dup") == nullptr);
         DOCTEST_CHECK(click(ui, "claude.profile.1.bg"));
     }
-    // 详情面板跟随选中项 → 复制源就是它（shown）
-    {
+    // 右键菜单「建副本」（item.1）→ 复制源 = 选中项（shown 同源委托）
+    auto dupViaCtxMenu = [&](const char* tag) -> bool {
         eui::Ui ui;
         compose(ui);
         const auto* nameV = ui.find("claude.field.name.value");
-        DOCTEST_REQUIRE(nameV != nullptr);
+        if (nameV == nullptr) return false;
         DOCTEST_CHECK_EQ(nameV->text, std::string("中转"));
-        DOCTEST_CHECK(click(ui, "claude.act.dup.bg"));
-    }
+        const auto* wrap = ui.find("claude.profile.1.wrap");
+        if (wrap == nullptr || wrap->onContextMenu == nullptr) return false;
+        eui::PointerEvent pe;
+        eui::Rect rect;
+        pe.x = 400;
+        pe.y = 300;
+        wrap->onContextMenu(pe, rect);
+        eui::Ui ui2;
+        ui2.begin(tag);
+        mod->compose(ui2, screen);
+        ui2.end();
+        const auto* item = ui2.find("claude.list.ctx.level.0.item.1");
+        if (item == nullptr || item->onClick == nullptr) return false;
+        item->onClick();
+        return true;
+    };
+    DOCTEST_REQUIRE(dupViaCtxMenu("claude_dup_ctx"));
     // 成功 toast（同帧可见）：副本名 + 明示未激活
     {
         eui::Ui ui;
@@ -3431,7 +3637,24 @@ REGISTER_TEST(claude_ui_json_fullscreen_enter_cover_and_esc,
         DOCTEST_CHECK_EQ(bg->frame.width, screen.width);
         DOCTEST_CHECK_EQ(bg->frame.height, screen.height);
         DOCTEST_CHECK(ui.find("claude.jsonfs.editor.hit") != nullptr);
-        DOCTEST_CHECK(ui.find("claude.jsonfs.apply.bg") != nullptr);
+        // batch-C C-2：底部三键 = 格式化 / 保存（原「应用」语义，文案改「保存」）
+        // / 放弃修改（新节点）；原「完成」（claude.jsonfs.done）整键删除
+        DOCTEST_CHECK(ui.find("claude.jsonfs.format.bg") != nullptr);
+        const auto* saveBtn = ui.find("claude.jsonfs.apply.bg");
+        DOCTEST_REQUIRE(saveBtn != nullptr);
+        const auto* saveText = ui.find("claude.jsonfs.apply.text");
+        DOCTEST_REQUIRE(saveText != nullptr);
+        DOCTEST_CHECK_EQ(saveText->text, std::string("保存"));
+        const auto* discardBtn = ui.find("claude.jsonfs.discard.bg");
+        DOCTEST_REQUIRE(discardBtn != nullptr);
+        const auto* discardText = ui.find("claude.jsonfs.discard.text");
+        DOCTEST_REQUIRE(discardText != nullptr);
+        DOCTEST_CHECK_EQ(discardText->text, std::string("放弃修改"));
+        DOCTEST_CHECK(ui.find("claude.jsonfs.done.bg") == nullptr);
+        DOCTEST_CHECK(ui.find("claude.jsonfs.done.text") == nullptr);
+        // 按钮行右缘不溢出覆盖层（三键同行：x=28 / 150 / 272，各 110 宽）
+        DOCTEST_CHECK(discardBtn->frame.x + discardBtn->frame.width <=
+                      screen.width - 27.0f);
         const auto* panel = ui.find("claude.dialog.form.panel");
         DOCTEST_REQUIRE(panel != nullptr);   // 表单弹窗仍画（被盖在下面）
         DOCTEST_CHECK(panel->frame.x >= bg->frame.x - 0.5f);
@@ -3454,7 +3677,9 @@ REGISTER_TEST(claude_ui_json_fullscreen_enter_cover_and_esc,
         DOCTEST_REQUIRE(toastRoot != nullptr);
         DOCTEST_CHECK(fsRoot->zIndex < toastRoot->zIndex);
     }
-    // 全屏框输入 → Esc（输入框 onCancel 消费）→ 回表单，文本保留在缓冲
+    // 全屏框输入 → Esc（输入框 onCancel 消费）→ 回表单；batch-C C-2 起
+    // **Esc = 放弃修改**（原语义「保留文本回表单」已变）：编辑缓冲恢复为
+    // 上次落库值 + 关闭全屏，表单仍开
     {
         eui::Ui ui;
         compose(ui, "fs_a5");
@@ -3466,7 +3691,7 @@ REGISTER_TEST(claude_ui_json_fullscreen_enter_cover_and_esc,
         eui::KeyEvent esc;
         esc.key = eui::InputKey::Escape;
         esc.action = eui::KeyAction::Press;
-        DOCTEST_CHECK(hit->onKeyEvent(esc));   // 输入框消费（退全屏，不关表单）
+        DOCTEST_CHECK(hit->onKeyEvent(esc));   // 输入框消费（放弃修改 + 退全屏）
     }
     {
         eui::Ui ui;
@@ -3476,12 +3701,12 @@ REGISTER_TEST(claude_ui_json_fullscreen_enter_cover_and_esc,
         DOCTEST_REQUIRE(panel != nullptr);   // 回到表单（弹窗还开）
         DOCTEST_CHECK_EQ(panel->opacity, 1.0f);
         DOCTEST_CHECK(ui.find("claude.form.advanced.json.fs.bg") != nullptr);
-        // 未应用的编辑留在缓冲、回表单可见（多行框首行 = 输入原文）
-        const auto* line = ui.find("claude.form.advanced.json.text.0");
-        DOCTEST_REQUIRE(line != nullptr);
-        DOCTEST_CHECK_EQ(line->text, std::string(R"({"keep":"me"})"));
+        // 新建表单的落库基线 = 空 → 放弃后编辑缓冲回到空（多行空值渲染
+        // 单节点 .text（占位符），不产生 .text.N 行节点）
+        DOCTEST_CHECK(ui.find("claude.form.advanced.json.text.0") == nullptr);
     }
-    // 重进全屏 → 模块级 Esc（closeTopmostDialog）先退全屏、再按一次才关表单
+    // 重进全屏 → 模块级 Esc（closeTopmostDialog）先退全屏（= 放弃修改）、
+    // 再按一次才关表单
     {
         eui::Ui ui;
         compose(ui, "fs_a7");
@@ -3494,7 +3719,7 @@ REGISTER_TEST(claude_ui_json_fullscreen_enter_cover_and_esc,
         eui::KeyEvent esc;
         esc.key = eui::InputKey::Escape;
         esc.action = eui::KeyAction::Press;
-        DOCTEST_CHECK(mod->onKeyEvent(esc));   // 消费 = 退全屏
+        DOCTEST_CHECK(mod->onKeyEvent(esc));   // 消费 = 放弃修改 + 退全屏
     }
     {
         eui::Ui ui;
@@ -3550,9 +3775,10 @@ REGISTER_TEST(claude_ui_json_fullscreen_buffer_roundtrip_and_error_gate,
         return true;
     };
 
-    // ① 方向 A（表单框 → 全屏框 → 应用落库）：表单框输 compact → 全屏内点
-    //    「格式化」（若全屏是第二份缓冲则空串 no-op，落库仍是 compact → 红）
-    //    → 「完成」回表单 → 保存 → DB 为 pretty
+    // ① 方向 A（表单框 → 全屏框 → 保存落库）：新建表单→基础项先填全→高级配置页
+    //    输 compact → 全屏内点「格式化」（若全屏是第二份缓冲则空串 no-op，
+    //    全屏编辑器看不到 pretty 形 → 红）→「保存」（batch-C C-2：原「应用」
+    //    语义 + 新文案）= submitForm 全路径 → 关表单落库
     {
         eui::Ui ui;
         compose(ui, "fs_b1");
@@ -3561,6 +3787,9 @@ REGISTER_TEST(claude_ui_json_fullscreen_buffer_roundtrip_and_error_gate,
     {
         eui::Ui ui;
         compose(ui, "fs_b2");
+        DOCTEST_CHECK(type(ui, "claude.dialog.form.name.hit", "FS往返A"));
+        DOCTEST_CHECK(type(ui, "claude.dialog.form.url.hit", "https://fs-a.example.com"));
+        DOCTEST_CHECK(type(ui, "claude.dialog.form.key.hit", "sk-ant-fs-a-0001"));
         DOCTEST_CHECK(click(ui, "claude.form.tabs.hit.3"));
     }
     {
@@ -3573,25 +3802,22 @@ REGISTER_TEST(claude_ui_json_fullscreen_buffer_roundtrip_and_error_gate,
     {
         eui::Ui ui;
         compose(ui, "fs_b4");
+        // 全屏编辑器与表单同缓冲：进全屏即见表单框里输的 compact 原文
+        const auto* l0 = ui.find("claude.jsonfs.editor.text.0");
+        DOCTEST_REQUIRE(l0 != nullptr);
+        DOCTEST_CHECK_EQ(l0->text,
+                         std::string(R"({"model":"fs-a","statusLine":"on"})"));
         DOCTEST_CHECK(click(ui, "claude.jsonfs.format.bg"));
     }
     {
         eui::Ui ui;
         compose(ui, "fs_b5");
-        DOCTEST_CHECK(click(ui, "claude.jsonfs.done.bg"));
-    }
-    {
-        eui::Ui ui;
-        compose(ui, "fs_b6");
-        DOCTEST_CHECK(click(ui, "claude.form.tabs.hit.0"));
-    }
-    {
-        eui::Ui ui;
-        compose(ui, "fs_b7");
-        DOCTEST_CHECK(type(ui, "claude.dialog.form.name.hit", "FS往返A"));
-        DOCTEST_CHECK(type(ui, "claude.dialog.form.url.hit", "https://fs-a.example.com"));
-        DOCTEST_CHECK(type(ui, "claude.dialog.form.key.hit", "sk-ant-fs-a-0001"));
-        DOCTEST_CHECK(click(ui, "claude.dialog.form.confirm.bg"));
+        // 格式化作用在同一缓冲：全屏首行变 pretty 的 "{"；底层表单框（被盖住）
+        // 同步可见同一份 pretty 文本
+        const auto* l0 = ui.find("claude.jsonfs.editor.text.0");
+        DOCTEST_REQUIRE(l0 != nullptr);
+        DOCTEST_CHECK_EQ(l0->text, std::string("{"));
+        DOCTEST_CHECK(click(ui, "claude.jsonfs.apply.bg"));   // 保存
     }
     bool okA = false;
     int64_t idA = 0;
@@ -3613,8 +3839,8 @@ REGISTER_TEST(claude_ui_json_fullscreen_buffer_roundtrip_and_error_gate,
     }
     DOCTEST_CHECK(okA);   // pretty 落库 = 全屏「格式化」确实作用在同一缓冲
 
-    // ② 方向 B（全屏框 → 表单框 → 保存落库）：新建表单 → 高级配置页 → 直接进
-    //    全屏输入 compact → 「完成」回表单 → 保存 → DB 含该键
+    // ② 方向 B（全屏框 → 表单保存落库）：新建表单→基础项填全→高级配置页→
+    //    直接进全屏输入 compact →「保存」→ DB 含该键
     {
         eui::Ui ui;
         compose(ui, "fs_c1");
@@ -3623,6 +3849,9 @@ REGISTER_TEST(claude_ui_json_fullscreen_buffer_roundtrip_and_error_gate,
     {
         eui::Ui ui;
         compose(ui, "fs_c2");
+        DOCTEST_CHECK(type(ui, "claude.dialog.form.name.hit", "FS往返B"));
+        DOCTEST_CHECK(type(ui, "claude.dialog.form.url.hit", "https://fs-b.example.com"));
+        DOCTEST_CHECK(type(ui, "claude.dialog.form.key.hit", "sk-ant-fs-b-0001"));
         DOCTEST_CHECK(click(ui, "claude.form.tabs.hit.3"));
     }
     {
@@ -3635,20 +3864,7 @@ REGISTER_TEST(claude_ui_json_fullscreen_buffer_roundtrip_and_error_gate,
         compose(ui, "fs_c4");
         DOCTEST_CHECK(type(ui, "claude.jsonfs.editor.hit",
                            R"({"model":"fs-b"})"));
-        DOCTEST_CHECK(click(ui, "claude.jsonfs.done.bg"));
-    }
-    {
-        eui::Ui ui;
-        compose(ui, "fs_c5");
-        DOCTEST_CHECK(click(ui, "claude.form.tabs.hit.0"));
-    }
-    {
-        eui::Ui ui;
-        compose(ui, "fs_c6");
-        DOCTEST_CHECK(type(ui, "claude.dialog.form.name.hit", "FS往返B"));
-        DOCTEST_CHECK(type(ui, "claude.dialog.form.url.hit", "https://fs-b.example.com"));
-        DOCTEST_CHECK(type(ui, "claude.dialog.form.key.hit", "sk-ant-fs-b-0001"));
-        DOCTEST_CHECK(click(ui, "claude.dialog.form.confirm.bg"));
+        DOCTEST_CHECK(click(ui, "claude.jsonfs.apply.bg"));   // 保存
     }
     bool okB = false;
     int64_t idB = 0;
@@ -3669,9 +3885,11 @@ REGISTER_TEST(claude_ui_json_fullscreen_buffer_roundtrip_and_error_gate,
     }
     DOCTEST_CHECK(okB);   // 全屏框的输入确实写进了表单保存的那份缓冲
 
-    // ③ 校验红字同源：编辑 ①的 profile → 全屏内改坏 JSON → 「应用」→ 全屏
-    //    error 节点非空且不退全屏；「完成」回表单后 claude.dialog.form.error
-    //    与全屏 error 文本相等（同一 formError_，两处显示）
+    // ③ 校验红字同源：编辑 ①的 profile → 全屏内改坏 JSON → 「保存」→ 全屏
+    //    error 节点非空且不退全屏；「放弃修改」（batch-C C-2，原「完成」回表单）
+    //    回表单后 claude.dialog.form.error 与全屏 error 文本相等（同一
+    //    formError_，两处显示；放弃只清 JSON 行内红字与编辑缓冲，提交闸门
+    //    文案保留）
     {
         eui::Ui ui;
         compose(ui, "fs_d1");
@@ -3692,7 +3910,6 @@ REGISTER_TEST(claude_ui_json_fullscreen_buffer_roundtrip_and_error_gate,
         compose(ui, "fs_d4");
         DOCTEST_CHECK(click(ui, "claude.form.advanced.json.fs.bg"));
     }
-    std::string fsErrText;
     {
         eui::Ui ui;
         compose(ui, "fs_d5");
@@ -3706,7 +3923,11 @@ REGISTER_TEST(claude_ui_json_fullscreen_buffer_roundtrip_and_error_gate,
         const auto* err = ui.find("claude.jsonfs.error");
         DOCTEST_REQUIRE(err != nullptr);
         DOCTEST_CHECK(!err->text.empty());
-        fsErrText = err->text;
+        // 全屏红字 = 提交闸门 formError_（JSON 源，同文案双写）；表单侧同一帧
+        // 也有这条红字（fs_d8 断言放弃后两处都消失）
+        const auto* ferr = ui.find("claude.dialog.form.error");
+        DOCTEST_REQUIRE(ferr != nullptr);
+        DOCTEST_CHECK_EQ(ferr->text, err->text);
         // 应用失败不退全屏、表单不关（闸门拦截，同 submitForm 语义）
         DOCTEST_CHECK(ui.find("claude.jsonfs.root") != nullptr);
         DOCTEST_CHECK(ui.find("claude.dialog.form.panel") != nullptr);
@@ -3714,14 +3935,21 @@ REGISTER_TEST(claude_ui_json_fullscreen_buffer_roundtrip_and_error_gate,
     {
         eui::Ui ui;
         compose(ui, "fs_d7");
-        DOCTEST_CHECK(click(ui, "claude.jsonfs.done.bg"));
+        DOCTEST_CHECK(click(ui, "claude.jsonfs.discard.bg"));   // 放弃修改
     }
     {
         eui::Ui ui;
         compose(ui, "fs_d8");
-        const auto* ferr = ui.find("claude.dialog.form.error");
-        DOCTEST_REQUIRE(ferr != nullptr);
-        DOCTEST_CHECK_EQ(ferr->text, fsErrText);   // 同源：同一 formError_
+        // 批次 C 评审必修：这条 formError_ 是 **JSON 源**（保存时
+        // validateExtraSettingsJson 失败写入，与 formAdvancedJsonError_ 同文案）
+        // → 「放弃修改」必须把它一并清掉，否则留下一条描述已丢弃文本的幽灵错误
+        //（旧断言 `ferr->text == fsErrText` 正是把幽灵错误固化成契约，已改）
+        DOCTEST_CHECK(ui.find("claude.dialog.form.error") == nullptr);
+        DOCTEST_CHECK(ui.find("claude.form.advanced.json.error") == nullptr);
+        // 放弃 = 编辑缓冲回到落库值（坏片段没留下）
+        const auto* adv = ui.find("claude.form.advanced.json.text.0");
+        DOCTEST_REQUIRE(adv != nullptr);
+        DOCTEST_CHECK(adv->text.find("{broken") == std::string::npos);
         DOCTEST_CHECK(click(ui, "claude.dialog.form.cancel.bg"));   // 不落坏值
     }
     // 坏值未落库：全表扫描，任何 profile 的 extraSettingsJson 都不含 "{broken"
@@ -3794,6 +4022,344 @@ REGISTER_TEST(claude_ui_json_fullscreen_buffer_roundtrip_and_error_gate,
     if (idA != 0) cleanupProfileKey(kTestKeychainService, idA);
     if (idB != 0) cleanupProfileKey(kTestKeychainService, idB);
     mod->onStop();
+    return true;
+})
+
+// ---- batch-C C-2：全屏 JSON「放弃修改」语义（按钮 / 点遮罩 / Esc 三通道）----
+// 契约（brief-C C-2）：
+//   底部三键 = 格式化 / 保存（原「应用」语义，沿用 claude.jsonfs.apply 节点，
+//   文案改「保存」）/ 放弃修改（新节点 claude.jsonfs.discard）；原「完成」
+//   （claude.jsonfs.done）删除。
+//   放弃 = 编辑缓冲恢复**上次落库值** + 关全屏（表单仍开，不报错）；
+//   Esc / 点遮罩同「放弃修改」（原 Esc「保留文本回表单」语义已作废——防误丢）。
+REGISTER_TEST(claude_ui_json_fullscreen_discard_semantics,
+              "claude_module: JSON 全屏「放弃修改」= 缓冲恢复落库值（按钮/遮罩/Esc 三通道，headless）", {
+    TestEnv env;
+    // DB 原值用 compact 原文（读侧按原样预填，格式化按钮才规范化）——便于
+    // 「恢复为落库值」用整串相等断言区分「恢复了」与「没动」
+    const std::string savedJson = R"({"model":"keep-me","statusLine":"on"})";
+    auto p = env.svc->createProfile("放弃源", "https://discard.example.com",
+                                    "sk-ant-disc-0001", "m",
+                                    /*activateIfNoneActive=*/true,
+                                    /*sharedConfigId=*/0, "both", "",
+                                    /*fallbackProfileId=*/0, savedJson);
+    DOCTEST_REQUIRE(p.isOk());
+    const int64_t pid = p.value().id;
+
+    std::unique_ptr<::core::Module> mod(create_claude_module());
+    mod->onStart();
+    eui::Screen screen;
+    screen.width = 1600.0f;
+    screen.height = 1000.0f;
+    auto compose = [&](eui::Ui& ui, const char* tag) {
+        ui.begin(tag);
+        mod->compose(ui, screen);
+        ui.end();
+        ui.layout(screen.width, screen.height);
+    };
+    auto click = [](eui::Ui& ui, const std::string& id) -> bool {
+        const auto* node = ui.find(id);
+        if (node == nullptr || node->onClick == nullptr) return false;
+        node->onClick();
+        return true;
+    };
+    auto type = [](eui::Ui& ui, const std::string& id,
+                   const std::string& text) -> bool {
+        const auto* node = ui.find(id);
+        if (node == nullptr || node->onTextInput == nullptr) return false;
+        core::TextInputEvent ev;
+        ev.text = text;
+        node->onTextInput(ev);
+        return true;
+    };
+    // 全屏编辑器全文（多行 .text.N 逐行拼；空值走单节点 .text 占位符 → 空串）
+    auto editorText = [](eui::Ui& ui) -> std::string {
+        std::string out;
+        bool any = false;
+        for (size_t i = 0;; ++i) {
+            const auto* n =
+                ui.find("claude.jsonfs.editor.text." + std::to_string(i));
+            if (n == nullptr) break;
+            if (any) out += "\n";
+            out += n->text;
+            any = true;
+        }
+        return out;
+    };
+    // 返回 bool（DOCTEST_CHECK 展开含 `return false;`——显式 void 会撞
+    // "void block should not return a value"；不写返回类型又会被推导成 bool
+    // 而尾路径缺 return）。调用方用 DOCTEST_REQUIRE 包。
+    auto openFullscreen = [&]() -> bool {
+        {
+            eui::Ui ui;
+            compose(ui, "disc_sel");
+            DOCTEST_CHECK(click(ui, "claude.profile.0.bg"));
+        }
+        {
+            eui::Ui ui;
+            compose(ui, "disc_edit");
+            DOCTEST_CHECK(click(ui, "claude.act.edit.bg"));
+        }
+        {
+            eui::Ui ui;
+            compose(ui, "disc_tab3");
+            DOCTEST_CHECK(click(ui, "claude.form.tabs.hit.3"));
+        }
+        {
+            eui::Ui ui;
+            compose(ui, "disc_fs");
+            DOCTEST_CHECK(click(ui, "claude.form.advanced.json.fs.bg"));
+        }
+        return true;
+    };
+
+    // 进全屏：编辑器 = 落库原文（int64 真值经 DB 预填，非第二份缓冲）
+    DOCTEST_REQUIRE(openFullscreen());
+    {
+        eui::Ui ui;
+        compose(ui, "disc_in");
+        DOCTEST_REQUIRE(ui.find("claude.jsonfs.root") != nullptr);
+        DOCTEST_CHECK_EQ(editorText(ui), savedJson);
+    }
+
+    // ① 按钮通道：插入坏片段 → 「放弃修改」→ 缓冲回落库值、全屏关、表单开、
+    //    无红字（formAdvancedJsonError_ 一并清）
+    {
+        eui::Ui ui;
+        compose(ui, "disc_btn_type");
+        DOCTEST_CHECK(type(ui, "claude.jsonfs.editor.hit", "{broken"));
+    }
+    {
+        eui::Ui ui;
+        compose(ui, "disc_btn_pre");
+        DOCTEST_CHECK(editorText(ui) != savedJson);   // 改动已进缓冲
+        DOCTEST_CHECK(click(ui, "claude.jsonfs.discard.bg"));
+    }
+    {
+        eui::Ui ui;
+        compose(ui, "disc_btn_after");
+        DOCTEST_CHECK(ui.find("claude.jsonfs.root") == nullptr);   // 全屏已关
+        DOCTEST_CHECK(ui.find("claude.dialog.form.panel") != nullptr);  // 表单仍开
+        DOCTEST_CHECK(ui.find("claude.form.advanced.json.error") == nullptr);
+        const auto* l0 = ui.find("claude.form.advanced.json.text.0");
+        DOCTEST_REQUIRE(l0 != nullptr);
+        DOCTEST_CHECK_EQ(l0->text, savedJson);   // 恢复为落库值
+    }
+
+    // ② 点遮罩通道：重进全屏 → 改坏 → 点覆盖层底（claude.jsonfs.bg）→ 同放弃
+    DOCTEST_REQUIRE(openFullscreen());
+    {
+        eui::Ui ui;
+        compose(ui, "disc_mask_type");
+        DOCTEST_REQUIRE(ui.find("claude.jsonfs.root") != nullptr);
+        DOCTEST_CHECK(type(ui, "claude.jsonfs.editor.hit", "{broken"));
+    }
+    {
+        eui::Ui ui;
+        compose(ui, "disc_mask_pre");
+        DOCTEST_CHECK(editorText(ui) != savedJson);
+        DOCTEST_CHECK(click(ui, "claude.jsonfs.bg"));   // 遮罩点击 = 放弃修改
+    }
+    {
+        eui::Ui ui;
+        compose(ui, "disc_mask_after");
+        DOCTEST_CHECK(ui.find("claude.jsonfs.root") == nullptr);
+        DOCTEST_CHECK(ui.find("claude.dialog.form.panel") != nullptr);
+        const auto* l0 = ui.find("claude.form.advanced.json.text.0");
+        DOCTEST_REQUIRE(l0 != nullptr);
+        DOCTEST_CHECK_EQ(l0->text, savedJson);
+    }
+
+    // ③ Esc 通道（模块级 closeTopmostDialog，输入框未聚焦可达）：同放弃 +
+    //    只消费一层（第二次 Esc 才关表单）
+    DOCTEST_REQUIRE(openFullscreen());
+    {
+        eui::Ui ui;
+        compose(ui, "disc_esc_type");
+        DOCTEST_REQUIRE(ui.find("claude.jsonfs.root") != nullptr);
+        DOCTEST_CHECK(type(ui, "claude.jsonfs.editor.hit", "{broken"));
+    }
+    {
+        eui::Ui ui;
+        compose(ui, "disc_esc_pre");
+        DOCTEST_CHECK(editorText(ui) != savedJson);
+        eui::KeyEvent esc;
+        esc.key = eui::InputKey::Escape;
+        esc.action = eui::KeyAction::Press;
+        DOCTEST_CHECK(mod->onKeyEvent(esc));   // 消费 = 放弃修改 + 退全屏
+    }
+    {
+        eui::Ui ui;
+        compose(ui, "disc_esc_after");
+        DOCTEST_CHECK(ui.find("claude.jsonfs.root") == nullptr);
+        DOCTEST_CHECK(ui.find("claude.dialog.form.panel") != nullptr);
+        const auto* l0 = ui.find("claude.form.advanced.json.text.0");
+        DOCTEST_REQUIRE(l0 != nullptr);
+        DOCTEST_CHECK_EQ(l0->text, savedJson);
+    }
+
+    // ④ 边界：当前文本 == 落库值（未改动）时放弃 = 等价于关闭，不报错
+    DOCTEST_REQUIRE(openFullscreen());
+    {
+        eui::Ui ui;
+        compose(ui, "disc_noop");
+        DOCTEST_REQUIRE(ui.find("claude.jsonfs.root") != nullptr);
+        DOCTEST_CHECK(click(ui, "claude.jsonfs.discard.bg"));
+    }
+    {
+        eui::Ui ui;
+        compose(ui, "disc_noop_after");
+        DOCTEST_CHECK(ui.find("claude.jsonfs.root") == nullptr);
+        DOCTEST_CHECK(ui.find("claude.dialog.form.panel") != nullptr);
+        DOCTEST_CHECK(ui.find("claude.form.advanced.json.error") == nullptr);
+        const auto* l0 = ui.find("claude.form.advanced.json.text.0");
+        DOCTEST_REQUIRE(l0 != nullptr);
+        DOCTEST_CHECK_EQ(l0->text, savedJson);
+        DOCTEST_CHECK(click(ui, "claude.dialog.form.cancel.bg"));   // 收尾不落库
+    }
+    // ⑤ 幽灵错误（批次 C 评审必修）：全屏内「保存」因非法 JSON 被提交闸门拦下 →
+    //    formError_（提交闸门红字）+ formAdvancedJsonError_ 同文案双写；此时
+    //    放弃 → 缓冲已回滚，这条红字描述的是**已被丢弃**的内容 → 必须一并消失
+    DOCTEST_REQUIRE(openFullscreen());
+    {
+        eui::Ui ui;
+        compose(ui, "disc_err_type");
+        DOCTEST_CHECK(type(ui, "claude.jsonfs.editor.hit", "{broken"));
+    }
+    {
+        eui::Ui ui;
+        compose(ui, "disc_err_save");
+        DOCTEST_CHECK(click(ui, "claude.jsonfs.apply.bg"));   // 保存 → JSON 校验失败
+    }
+    {
+        eui::Ui ui;
+        compose(ui, "disc_err_gate");
+        // 闸门红字在：全屏 error 与表单 error 同文案（同一条 formError_）
+        const auto* ferr = ui.find("claude.dialog.form.error");
+        DOCTEST_REQUIRE(ferr != nullptr);
+        DOCTEST_CHECK(ferr->text.find("高级设置 JSON") != std::string::npos);
+        DOCTEST_CHECK(ui.find("claude.jsonfs.root") != nullptr);   // 未退全屏
+        DOCTEST_CHECK(click(ui, "claude.jsonfs.discard.bg"));      // 放弃修改
+    }
+    {
+        eui::Ui ui;
+        compose(ui, "disc_err_after");
+        DOCTEST_CHECK(ui.find("claude.jsonfs.root") == nullptr);
+        DOCTEST_CHECK(ui.find("claude.dialog.form.error") == nullptr);   // 无残留
+        DOCTEST_CHECK(ui.find("claude.form.advanced.json.error") == nullptr);
+        const auto* l0 = ui.find("claude.form.advanced.json.text.0");
+        DOCTEST_REQUIRE(l0 != nullptr);
+        DOCTEST_CHECK_EQ(l0->text, savedJson);
+    }
+    // ⑤b 同一条幽灵错误在「先改回合法、再放弃」路径上也要清：错误文案与当前
+    //     缓冲无关——按**来源**清，不按「当前文本是否仍非法」重新判定
+    {
+        eui::Ui ui;
+        compose(ui, "disc_err2_fs");
+        DOCTEST_CHECK(click(ui, "claude.form.advanced.json.fs.bg"));
+    }
+    {
+        eui::Ui ui;
+        compose(ui, "disc_err2_type");
+        DOCTEST_CHECK(type(ui, "claude.jsonfs.editor.hit", "{broken"));
+    }
+    {
+        eui::Ui ui;
+        compose(ui, "disc_err2_save");
+        DOCTEST_CHECK(click(ui, "claude.jsonfs.apply.bg"));   // 留下闸门红字
+    }
+    {
+        eui::Ui ui;
+        compose(ui, "disc_err2_fix");
+        // 全选（Ctrl/Cmd+A）后**同帧**输入合法 JSON → 缓冲整体改回合法。
+        // 必须同帧：InputState（选区）挂在 Ui 实例上，跨帧新 Ui 不保证保留
+        const auto* hit = ui.find("claude.jsonfs.editor.hit");
+        DOCTEST_REQUIRE(hit != nullptr);
+        DOCTEST_REQUIRE(hit->onKeyEvent != nullptr);
+        eui::KeyEvent selectAll;
+        selectAll.key = eui::InputKey::A;
+        selectAll.action = eui::KeyAction::Press;
+        selectAll.modifiers.control = true;   // shortcut() = control（非 Apple）
+        selectAll.modifiers.super = true;     // shortcut() = super（Apple）
+        DOCTEST_CHECK(hit->onKeyEvent(selectAll));
+        DOCTEST_REQUIRE(hit->onTextInput != nullptr);
+        core::TextInputEvent ev;
+        ev.text = R"({"ok":true})";
+        hit->onTextInput(ev);
+    }
+    {
+        eui::Ui ui;
+        compose(ui, "disc_err2_check_valid");
+        const auto* l0 = ui.find("claude.jsonfs.editor.text.0");
+        DOCTEST_REQUIRE(l0 != nullptr);
+        DOCTEST_CHECK_EQ(l0->text, std::string(R"({"ok":true})"));   // 已改回合法
+        // 闸门红字仍在（onChange 只清行内红字，提交闸门要等下一次提交/放弃）
+        DOCTEST_CHECK(ui.find("claude.dialog.form.error") != nullptr);
+        DOCTEST_CHECK(click(ui, "claude.jsonfs.discard.bg"));
+    }
+    {
+        eui::Ui ui;
+        compose(ui, "disc_err2_after");
+        DOCTEST_CHECK(ui.find("claude.dialog.form.error") == nullptr);
+        const auto* l0 = ui.find("claude.form.advanced.json.text.0");
+        DOCTEST_REQUIRE(l0 != nullptr);
+        DOCTEST_CHECK_EQ(l0->text, savedJson);
+        DOCTEST_CHECK(click(ui, "claude.dialog.form.cancel.bg"));
+    }
+    // ⑥ 精准性：**非** JSON 源的 formError_ 不被放弃清掉。新建表单（名称/URL
+    //    为空）→ 全屏内「保存」→ 基础项闸门先于 JSON 校验命中，写的是
+    //    「名称和 Base URL 不能为空」（fromJson=false）→ 放弃后这条红字必须还在
+    {
+        eui::Ui ui;
+        compose(ui, "disc_prec_new");
+        DOCTEST_CHECK(click(ui, "claude.profiles.new.bg"));
+    }
+    {
+        eui::Ui ui;
+        compose(ui, "disc_prec_tab3");
+        DOCTEST_CHECK(click(ui, "claude.form.tabs.hit.3"));
+    }
+    {
+        eui::Ui ui;
+        compose(ui, "disc_prec_fs");
+        DOCTEST_CHECK(click(ui, "claude.form.advanced.json.fs.bg"));
+    }
+    {
+        eui::Ui ui;
+        compose(ui, "disc_prec_type");
+        DOCTEST_CHECK(type(ui, "claude.jsonfs.editor.hit", R"({"a":1})"));
+    }
+    {
+        eui::Ui ui;
+        compose(ui, "disc_prec_save");
+        DOCTEST_CHECK(click(ui, "claude.jsonfs.apply.bg"));   // 基础项闸门
+    }
+    {
+        eui::Ui ui;
+        compose(ui, "disc_prec_gate");
+        const auto* ferr = ui.find("claude.dialog.form.error");
+        DOCTEST_REQUIRE(ferr != nullptr);
+        DOCTEST_CHECK(ferr->text.find("名称和 Base URL") != std::string::npos);
+        DOCTEST_CHECK(click(ui, "claude.jsonfs.discard.bg"));
+    }
+    {
+        eui::Ui ui;
+        compose(ui, "disc_prec_after");
+        const auto* ferr = ui.find("claude.dialog.form.error");
+        DOCTEST_REQUIRE(ferr != nullptr);   // 非 JSON 源 → 保留（仍成立）
+        DOCTEST_CHECK(ferr->text.find("名称和 Base URL") != std::string::npos);
+        DOCTEST_CHECK(click(ui, "claude.dialog.form.cancel.bg"));   // 收尾不落库
+    }
+
+    // DB 未被放弃路径污染
+    {
+        auto got = env.svc->getProfile(pid);
+        DOCTEST_REQUIRE(got.isOk());
+        DOCTEST_CHECK_EQ(got.value().extraSettingsJson, savedJson);
+    }
+
+    mod->onStop();
+    cleanupProfileKey(kTestKeychainService, pid);
     return true;
 })
 
@@ -4747,9 +5313,11 @@ REGISTER_TEST(claude_export_json_shape,
     return true;
 })
 
-// UI 侧：改名「建副本」（D-C1）+ 第 7 键「复制配置」+ actW 等分几何 + 点击派发
-REGISTER_TEST(claude_copyconfig_ui_seven_keys,
-              "claude_module: 建副本改名 + 复制配置第7键（文案/等分宽/右缘对齐/点击派发）", {
+// UI 侧 batch-C C-3：详情动作行由 7 键收为 4 键（启用/测试连通/编辑/运行），
+// 删除 / 建副本 / 复制配置三键**只**保留列表右键菜单入口（业务逻辑同源保留：
+// requestDelete / requestDuplicate / requestCopyConfig）
+REGISTER_TEST(claude_copyconfig_ctx_menu_after_row_slim,
+              "claude_module: 详情动作行 4 键 + 复制配置仅右键菜单（文案/节点收口/点击派发）", {
     TestEnv env;
     std::unique_ptr<::core::Module> mod(create_claude_module());
     mod->onStart();
@@ -4771,19 +5339,17 @@ REGISTER_TEST(claude_copyconfig_ui_seven_keys,
         return true;
     };
 
-    // 无选中（库空 → shown 为 null）点击 → warn（沿用 warn 通道，spec §4.2②；
-    // 须在造数前做——有激活 profile 时 shown 回落激活项，warn 不可达）
+    // 库空（shown 为 null）：三键节点一律不在动作行（batch-C C-3 收口），
+    // 4 键仍在（防误渲染提示）
     {
         eui::Ui ui;
         compose(ui);
-        DOCTEST_CHECK(click(ui, "claude.act.copyconfig.bg"));
-    }
-    {
-        eui::Ui ui;
-        compose(ui);
-        const auto* title = ui.find("claude.toast.title");
-        DOCTEST_REQUIRE(title != nullptr);
-        DOCTEST_CHECK_EQ(title->text, std::string("复制配置失败"));
+        for (const char* k : {"claude.act.del", "claude.act.dup",
+                              "claude.act.copyconfig"}) {
+            DOCTEST_CHECK(ui.find(std::string(k) + ".bg") == nullptr);
+        }
+        DOCTEST_CHECK(ui.find("claude.act.enable.bg") != nullptr);
+        DOCTEST_CHECK(ui.find("claude.act.run.bg") != nullptr);
     }
 
     auto a = env.svc->createProfile("导出源", "https://cfg.example.com",
@@ -4805,30 +5371,37 @@ REGISTER_TEST(claude_copyconfig_ui_seven_keys,
     }
     DOCTEST_CHECK(cardReady);
 
-    // 改名断言（D-C1）：按钮文本「建副本」，warn 标题「建副本失败」
+    // 动作行只剩 4 键（§4.2③ 顺序：启用/测试连通/编辑/运行），且窄行下
+    // 维持单行等分（第 4 键右缘对齐分隔线见 claude_copyconfig_seven_keys_geometry）
     {
         eui::Ui ui;
         compose(ui);
-        const auto* dup = ui.find("claude.act.dup.text");
-        DOCTEST_REQUIRE(dup != nullptr);
-        DOCTEST_CHECK_EQ(dup->text, std::string("建副本"));
-        const auto* cc = ui.find("claude.act.copyconfig.text");
-        DOCTEST_REQUIRE(cc != nullptr);
-        DOCTEST_CHECK_EQ(cc->text, std::string("复制配置"));
-        // 7 键齐（§4.2③ 顺序：启用/测试连通/编辑/删除/建副本/复制配置/运行）
         for (const char* k : {"claude.act.enable", "claude.act.test",
-                              "claude.act.edit", "claude.act.del",
-                              "claude.act.dup", "claude.act.copyconfig",
-                              "claude.act.run"}) {
+                              "claude.act.edit", "claude.act.run"}) {
             DOCTEST_CHECK(ui.find(std::string(k) + ".bg") != nullptr);
         }
+        for (const char* k : {"claude.act.del", "claude.act.dup",
+                              "claude.act.copyconfig"}) {
+            DOCTEST_CHECK(ui.find(std::string(k) + ".bg") == nullptr);
+        }
     }
-    // 选中后点击 → 真派发：toast「已复制配置」（headless 下 setClipboardText
-    // 经 GLFW 未 init 早退 = 安全 no-op，不写真剪贴板；剪贴板真写以真机验收）
+    // 右键菜单 → 「复制配置」（item.2）→ 真派发：toast「已复制配置」
+    //（headless 下 setClipboardText 经 GLFW 未 init 早退 = 安全 no-op，不写真
+    // 剪贴板；剪贴板真写以真机验收）
     {
         eui::Ui ui;
         compose(ui);
-        DOCTEST_CHECK(click(ui, "claude.act.copyconfig.bg"));
+        const auto* wrap = ui.find("claude.profile.0.wrap");
+        DOCTEST_REQUIRE(wrap != nullptr);
+        DOCTEST_REQUIRE(wrap->onContextMenu != nullptr);
+        eui::PointerEvent pe;
+        eui::Rect rect;
+        pe.x = 400;
+        pe.y = 300;
+        wrap->onContextMenu(pe, rect);
+        eui::Ui ui2;
+        compose(ui2);
+        DOCTEST_CHECK(click(ui2, "claude.list.ctx.level.0.item.2"));
     }
     {
         eui::Ui ui;
@@ -5111,10 +5684,10 @@ REGISTER_TEST(claude_detail_advanced_pane_readonly,
     return true;
 })
 
-// 7 键几何（macOS 真实页面 1262×801）：actW == (w0 − 6×12) / 7 且行右缘与容器
-// 右缘对齐（等分无溢出）；放在 composeAtSize 声明之后（组 B helpers 区）
+// 4 键几何（macOS 真实页面 1262×801）：actW == (w0 − 3×12) / 4 且行右缘与容器
+// 右缘对齐（等分无溢出）；batch-C C-3 后末键 = 运行。放在 composeAtSize 声明之后
 REGISTER_TEST(claude_copyconfig_seven_keys_geometry,
-              "claude_module: 复制配置第7键 actW 等分几何（macOS 真实尺寸）", {
+              "claude_module: 动作行 4 键 actW 等分几何（macOS 真实尺寸）", {
     TestEnv env;
     auto a = env.svc->createProfile("几何源", "https://geo.example.com",
                                     "sk-ant-geo-0001", "m");
@@ -5128,14 +5701,11 @@ REGISTER_TEST(claude_copyconfig_seven_keys_geometry,
     eui::Ui ui;
     composeAtSize(mod.get(), ui, "claude_copycfg_geom", kW, kH);
     const auto* row = ui.find("claude.detail.actions");
-    const auto* cc = ui.find("claude.act.copyconfig.bg");
     const auto* run = ui.find("claude.act.run.bg");
     DOCTEST_REQUIRE(row != nullptr);
-    DOCTEST_REQUIRE(cc != nullptr);
     DOCTEST_REQUIRE(run != nullptr);
     const float w0 = row->frame.width;
-    const float expect = (w0 - 12.0f * 6.0f) / 7.0f;
-    DOCTEST_CHECK(std::fabs(cc->frame.width - expect) < 0.01f);
+    const float expect = (w0 - 12.0f * 3.0f) / 4.0f;
     DOCTEST_CHECK(std::fabs(run->frame.width - expect) < 0.01f);
     // 行右缘对齐：末键右缘 == row 右缘（浮点 0.5px 容差）
     const float rowRight = row->frame.x + row->frame.width;

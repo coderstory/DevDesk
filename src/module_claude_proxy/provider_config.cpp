@@ -246,6 +246,31 @@ std::string effectiveExtraSettingsJson(const std::string& profileJson,
     return text.value();
 }
 
+// batch-C C-4：settings.json 原文 → 非 env 顶层属性 JSON（pretty）。
+// 与 parseImportedEnv 同一条输入上限（kMaxImportTextBytes，挡在解析之前）；
+// 与 effectiveExtraSettingsJson 同一条输出通道（parse → 逐键拷贝 → stringify
+// pretty，键序 = std::map 字典序）——不新写第二套序列化口径。
+std::string nonEnvTopLevelJson(const std::string& settingsDocText) {
+    if (settingsDocText.empty() ||
+        settingsDocText.size() > kMaxImportTextBytes) {
+        return {};
+    }
+    auto parsed = platform::json::parse(settingsDocText);
+    if (parsed.isFail() || !parsed.value().isObject()) return {};
+    auto obj = parsed.value().asObject();
+    platform::json::JsonObject out;
+    for (const auto& k : obj.keys()) {
+        if (k == "env") continue;   // env 属 env 域（基础/槽位/env 页）
+        out.set(k, obj.get(k));
+    }
+    if (out.keys().empty()) return {};
+    auto text = platform::json::stringify(
+        platform::json::JsonValue(std::move(out)), /*pretty=*/true);
+    if (text.isFail()) return {};
+    if (text.value().size() > kMaxExtraSettingsBytes) return {};   // 超限 = 未配置
+    return text.value();
+}
+
 std::vector<std::string> extraSettingsTopLevelKeys(
     const std::string& extraSettingsJson) {
     std::vector<std::string> out;

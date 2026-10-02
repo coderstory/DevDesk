@@ -16,8 +16,8 @@ enum class PageId {
     Markdown,
     Todo,
     ClaudeProxy,
+    Agent,       // batch-C C-1：Agent 移到 Settings 之前（侧边栏顺序）
     Settings,
-    Agent,
     About,
 };
 
@@ -27,8 +27,8 @@ inline const char* pageIdToString(PageId id) {
         case PageId::Markdown: return "Markdown";
         case PageId::Todo: return "Todo";
         case PageId::ClaudeProxy: return "ClaudeProxy";
-        case PageId::Settings: return "Settings";
         case PageId::Agent: return "Agent";
+        case PageId::Settings: return "Settings";
         case PageId::About: return "About";
     }
     return "?";

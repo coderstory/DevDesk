@@ -474,12 +474,17 @@ public:
     }
 
     // 日志级别切档（spec 缩水 D）：core::log::setLevel 即时应用（下一行日志
-    // 起生效，无缓冲），persist 供下次启动由 onStart 恢复
+    // 起生效，无缓冲），persist 供下次启动由 onStart 恢复。
+    // batch-C C-5：切档同时把「运行日志」快照置脏——级别下拉与日志查看卡同在
+    // 日志 tab，而 tail 快照原本只在「切 tab / 点刷新」时重读，切档后同屏内容
+    // 一动不动（用户反馈「切了看不到任何效果」；级别本身已即时生效，缺的是
+    // 可见面）。置脏后下一帧起后台重读，DEBUG 档的 compose 详录立刻可见
     void applyLogLevelPreset(int index) {
         if (index < 0 || index >= kLogLevelPresetCount) return;
         cfg_.logLevel = kLogLevelPresets[index];
         ::core::log::setLevel(parseLogLevel(cfg_.logLevel));
         persist();
+        logTailDirty_ = true;   // 可见面即时跟随（C-5）
         setStatus("日志级别：" + cfg_.logLevel + "（即时生效）");
         LOG_INFO("Settings: 日志级别 → " + cfg_.logLevel + "（core::log::setLevel）");
     }

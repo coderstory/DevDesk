@@ -886,7 +886,8 @@ float drawDetailAdvanced(eui::Ui& ui, float x0, float y0, float w,
     return std::min(ey, contentBottom);
 }
 
-// 操作按钮组（全量接线）+ 「运行」副提示 + 分隔线。actY 由 drawDetailPanel
+// 操作按钮组（4 键：启用/测试连通/编辑/运行，batch-C C-3）+ 「运行」副提示
+// + 分隔线。actY 由 drawDetailPanel
 // **锚定容器底**给出（P1，2026-09-28）：旧式 `actY = paneBottom + 20` 跟着内容
 // 底跑，数据少时动作区浮在上部、下方 60% 空白，四个页签的分隔线互差 171px。
 // 本函数只按传入的 actY 画，不再自己算锚点（锚点是容器级决策）。
@@ -904,11 +905,12 @@ void drawDetailActions(eui::Ui& ui, float x0, float w, float actY,
         .radius(t.sizes.radius)
         .build();
     const float actGap = 12.0f;
-    // 7 键均分（设计 §4.1，M5 + profile-run + batch-fix C：启用/测试连通/
-    // 编辑/删除/建副本/复制配置/运行）——按钮数改一处，gap 数也要跟着改。
-    // 扣 **6** 个 gap：EUI 的 row spacing 只在相邻子项之间生效，
-    // n 项只有 n−1 个间隙；旧 6 键式 (w-actGap*5)/6 恰好齐右缘。
-    const float actW = (w - actGap * 6.0f) / 7.0f;
+    // 4 键均分（batch-C C-3：删除/建副本/复制配置三键自本行动作组删除——它们
+    // 已在 profile 列表右键菜单里（drawProfileContextMenu，动作同源委托），
+    // 详情页三键属重复入口；余 启用/测试连通/编辑/运行）。按钮数改一处，
+    // gap 数也要跟着改：扣 **3** 个 gap —— EUI 的 row spacing 只在相邻子项之间
+    // 生效，n 项只有 n−1 个间隙，故 (w-actGap*3)/4 恰好齐右缘
+    const float actW = (w - actGap * 3.0f) / 4.0f;
     ui.row("claude.detail.actions")
         .position(x0, actY)
         .size(w, 36.0f)
@@ -972,65 +974,11 @@ void drawDetailActions(eui::Ui& ui, float x0, float w, float actY,
                     f(shownCopy);
                 })
                 .build();
-            // 删除（确认 dialog）
-            components::button(ui, "claude.act.del")
-                .size(actW, 36.0f)
-                .text("删除")
-                .fontSize(t.sizes.fontSizeSmall)
-                .colors(t.colors.surfaceElevated,
-                        t.colors.hover, t.colors.active)
-                .textColor(t.colors.error)
-                .radius(t.sizes.radius)
-                .border(1.0f, t.colors.borderDefault)
-                .onClick([f = a.requestDelete, warn = a.warn, shownCopy] {
-                    if (shownCopy.id == 0) {
-                        warn("删除失败", "请先新建或选择一个 Profile");
-                        return;
-                    }
-                    f(shownCopy.id, shownCopy.name);
-                })
-                .build();
-            // 建副本（第 5 键，设计 §4.1/§4.2；2026-09-30 batch-fix C 改名
-            // D-C1——原「复制」与「复制到剪贴板」的预期冲突，纯文案歧义，
-            // duplicateProfile 行为零改动）：副本不激活
-            components::button(ui, "claude.act.dup")
-                .size(actW, 36.0f)
-                .text("建副本")
-                .fontSize(t.sizes.fontSizeSmall)
-                .colors(t.colors.surfaceElevated,
-                        t.colors.hover, t.colors.active)
-                .textColor(t.colors.textPrimary)
-                .radius(t.sizes.radius)
-                .border(1.0f, t.colors.borderDefault)
-                .onClick([f = a.duplicate, warn = a.warn, shownId] {
-                    if (shownId == 0) {
-                        warn("建副本失败", "请先选择 Profile");
-                        return;
-                    }
-                    f(shownId);
-                })
-                .build();
-            // 复制配置（第 6 键，2026-09-30 batch-fix C，D-C2/§5③⑤）：profile
-            // → settings.json 形态 JSON → 系统剪贴板，占位不导明文 key；
-            // 样式与中性键一致（surfaceElevated + 描边）
-            components::button(ui, "claude.act.copyconfig")
-                .size(actW, 36.0f)
-                .text("复制配置")
-                .fontSize(t.sizes.fontSizeSmall)
-                .colors(t.colors.surfaceElevated,
-                        t.colors.hover, t.colors.active)
-                .textColor(t.colors.textPrimary)
-                .radius(t.sizes.radius)
-                .border(1.0f, t.colors.borderDefault)
-                .onClick([f = a.copyConfig, warn = a.warn, shownCopy] {
-                    if (shownCopy.id == 0) {
-                        warn("复制配置失败", "请先选择 Profile");
-                        return;
-                    }
-                    f(shownCopy);
-                })
-                .build();
-            // 运行（第 7 键，2026-09-28 profile-run 设计
+            // 删除 / 建副本 / 复制配置（batch-C C-3）：三个重复入口已从本行
+            // 删除——同源业务逻辑（requestDelete → 确认弹窗 / doDuplicate /
+            // doCopyConfig）保留在列表右键菜单（claude_ui_list.cpp 的
+            // drawProfileContextMenu，五项菜单），详情页不再重复渲染
+            // 运行（第 4 键，2026-09-28 profile-run 设计
             // D-1/D-2/D-4）：在新终端里用该 Profile 打开
             // 一个 claude 会话
             components::button(ui, "claude.act.run")
