@@ -75,8 +75,9 @@ Result<std::string> SqlRow::getString(const std::string& col) const {
 
 // ============ Statement ============
 
-Statement::Statement(sqlite3* db, sqlite3_stmt* stmt, std::recursive_mutex& mutex)
-    : db_(db), stmt_(stmt), mutex_(mutex) {}
+Statement::Statement(sqlite3* db, sqlite3_stmt* stmt,
+                     std::shared_ptr<std::recursive_mutex> mutex)
+    : db_(db), stmt_(stmt), mutex_(std::move(mutex)) {}
 
 Statement::Statement(Statement&& other) noexcept
     : db_(other.db_), stmt_(other.stmt_), mutex_(other.mutex_) {
@@ -86,51 +87,63 @@ Statement::Statement(Statement&& other) noexcept
 
 Statement& Statement::operator=(Statement&& other) noexcept {
     if (this != &other) {
-        if (stmt_) sqlite3_finalize(stmt_);
+        releaseStmt();
         db_ = other.db_;
         stmt_ = other.stmt_;
-        // mutex_ 是引用，不可赋值
+        mutex_ = other.mutex_;   // 锁跟句柄走（shared_ptr，可赋值）
         other.db_ = nullptr;
         other.stmt_ = nullptr;
     }
     return *this;
 }
 
-Statement::~Statement() {
-    if (stmt_) sqlite3_finalize(stmt_);
+// 跨线程纪律（2026-10-02 真机崩溃根因，见文件头注释）：finalize 也是 sqlite3*
+// 句柄操作——它把 VDBE 还回连接、归还 lookaside 空闲链，必须与 prepare/step
+// 取同一把锁。锁在这里取，不能推给调用方：ProfileRepository/ClaudeService 等
+// 「纯读」路径只持每次调用的锁，Statement 析构点落在锁外（旧实现即此处裸调
+// finalize → 与另一线程的 step 并发 → sqlite3DbMallocRawNNTyped 段错误）。
+Statement::~Statement() { releaseStmt(); }
+
+void Statement::releaseStmt() noexcept {
+    if (!stmt_) return;
+    {
+        std::lock_guard<std::recursive_mutex> lock(*mutex_);
+        sqlite3_finalize(stmt_);
+    }
+    stmt_ = nullptr;
 }
 
 // 审计 L5：bind 原不持锁（step/currentRow 持），跨线程共用同一语句时
 // bind 与 step 可以交错——全部统一到同一把 recursive_mutex
 Result<void> Statement::bind(int index, int64_t value) {
-    std::lock_guard<std::recursive_mutex> lock(mutex_);
+    std::lock_guard<std::recursive_mutex> lock(*mutex_);
     return checkRc(db_, sqlite3_bind_int64(stmt_, index, value), "bind_int64");
 }
 
 Result<void> Statement::bind(int index, double value) {
-    std::lock_guard<std::recursive_mutex> lock(mutex_);
+    std::lock_guard<std::recursive_mutex> lock(*mutex_);
     return checkRc(db_, sqlite3_bind_double(stmt_, index, value), "bind_double");
 }
 
 Result<void> Statement::bind(int index, const std::string& value) {
-    std::lock_guard<std::recursive_mutex> lock(mutex_);
+    std::lock_guard<std::recursive_mutex> lock(*mutex_);
     return checkRc(db_, sqlite3_bind_text(stmt_, index, value.c_str(),
         static_cast<int>(value.size()), SQLITE_TRANSIENT), "bind_text");
 }
 
 Result<void> Statement::bind(int index, std::nullptr_t) {
-    std::lock_guard<std::recursive_mutex> lock(mutex_);
+    std::lock_guard<std::recursive_mutex> lock(*mutex_);
     return checkRc(db_, sqlite3_bind_null(stmt_, index), "bind_null");
 }
 
 Result<void> Statement::bind(int index, const std::vector<uint8_t>& blob) {
-    std::lock_guard<std::recursive_mutex> lock(mutex_);
+    std::lock_guard<std::recursive_mutex> lock(*mutex_);
     return checkRc(db_, sqlite3_bind_blob(stmt_, index, blob.data(),
         static_cast<int>(blob.size()), SQLITE_TRANSIENT), "bind_blob");
 }
 
 Result<bool> Statement::step() {
-    std::lock_guard<std::recursive_mutex> lock(mutex_);
+    std::lock_guard<std::recursive_mutex> lock(*mutex_);
     int rc = sqlite3_step(stmt_);
     if (rc == SQLITE_ROW) return Result<bool>::ok(true);
     if (rc == SQLITE_DONE) return Result<bool>::ok(false);
@@ -139,7 +152,7 @@ Result<bool> Statement::step() {
 }
 
 Result<SqlRow> Statement::currentRow() const {
-    std::lock_guard<std::recursive_mutex> lock(mutex_);
+    std::lock_guard<std::recursive_mutex> lock(*mutex_);
     SqlRow row;
     int n = sqlite3_column_count(stmt_);
     row.columnNames.reserve(n);
@@ -192,6 +205,7 @@ Result<std::vector<SqlRow>> Statement::fetchAll() {
 }
 
 int Statement::columnCount() const {
+    std::lock_guard<std::recursive_mutex> lock(*mutex_);
     return sqlite3_column_count(stmt_);
 }
 
@@ -220,27 +234,38 @@ SqliteDb::~SqliteDb() {
         // 审计 L5：原用 sqlite3_close，未 finalize 的语句会让它返回 SQLITE_BUSY
         // 且被忽略——句柄静默不关（Windows 上文件句柄泄漏）。close_v2 是延迟
         // 关闭语义：连接变 zombie，最后一条语句 finalize 时真正回收。
+        // 跨线程纪律（2026-10-02）：close 同样是句柄操作，持锁执行——否则
+        // 会和另一线程正在跑的最后一次 step 并发。
+        std::lock_guard<std::recursive_mutex> lock(*mutex_);
         sqlite3_close_v2(handle_);
         handle_ = nullptr;
     }
 }
 
+// 移动不换锁：mutex_ 是 shared_ptr，被搬走的对象与搬入的对象共用同一把
+// （旧实现每次移动都新造一把 mutex，锁与句柄就此分家——见 sqlite_db.h 注释）
 SqliteDb::SqliteDb(SqliteDb&& other) noexcept
-    : handle_(other.handle_), mutex_() {
+    : handle_(other.handle_), mutex_(other.mutex_) {
     other.handle_ = nullptr;
 }
 
 SqliteDb& SqliteDb::operator=(SqliteDb&& other) noexcept {
     if (this != &other) {
-        if (handle_) sqlite3_close(handle_);
+        if (handle_) {
+            std::lock_guard<std::recursive_mutex> lock(*mutex_);
+            // 与析构同款：close_v2 延迟关闭（原来用 sqlite3_close，语句未
+            // finalize 时静默不关 → 句柄泄漏；审计 L5 的结论漏在了这条路径）
+            sqlite3_close_v2(handle_);
+        }
         handle_ = other.handle_;
         other.handle_ = nullptr;
+        mutex_ = other.mutex_;
     }
     return *this;
 }
 
 Result<void> SqliteDb::exec(const std::string& sql) {
-    std::lock_guard<std::recursive_mutex> lock(mutex_);
+    std::lock_guard<std::recursive_mutex> lock(*mutex_);
     char* errMsg = nullptr;
     int rc = sqlite3_exec(handle_, sql.c_str(), nullptr, nullptr, &errMsg);
     if (rc != SQLITE_OK) {
@@ -253,7 +278,7 @@ Result<void> SqliteDb::exec(const std::string& sql) {
 
 Result<Statement> SqliteDb::prepare(const std::string& sql) {
     // 审计 L5：prepare 与 exec/step/currentRow 共用同一把锁
-    std::lock_guard<std::recursive_mutex> lock(mutex_);
+    std::lock_guard<std::recursive_mutex> lock(*mutex_);
     sqlite3_stmt* stmt = nullptr;
     int rc = sqlite3_prepare_v2(handle_, sql.c_str(), -1, &stmt, nullptr);
     if (rc != SQLITE_OK) {
@@ -274,7 +299,7 @@ Result<void> SqliteDb::transaction(std::function<Result<void>()> fn) {
     // fn() 内部的 exec/prepare/step 取的是同一把锁（同线程重入，不死锁）；
     // 前提约束：fn() 内只做 DB 操作（现有全部调用方满足），不得做长阻塞
     // 的 IO/网络，否则会拖住其他线程的语句。
-    std::lock_guard<std::recursive_mutex> lock(mutex_);
+    std::lock_guard<std::recursive_mutex> lock(*mutex_);
     char* err = nullptr;
     if (sqlite3_exec(handle_, "BEGIN", nullptr, nullptr, &err) != SQLITE_OK) {
         std::string e = err ? err : "?";
