@@ -105,7 +105,7 @@ JsonValue makeDouble(double d);
 JsonValue makeString(const std::string& s);
 JsonValue makeObject();
 JsonValue makeArray();
-// 字符串数组工厂（config.json 的 enabledModules；此前 makeArray 是空桩）
+// 字符串数组工厂（应用配置的 enabledModules；此前 makeArray 是空桩）
 JsonValue makeStringArray(const std::vector<std::string>& items);
 
 } // namespace json

@@ -9,7 +9,7 @@
 //   1. 读现有 settings.json（不存在 → 视为空对象；解析失败 → **中止不写**——
 //      宁可不让用户自动接入，不能弄坏用户文件）
 //   2. 首份快照：接管前把原 env 对象完整存入 sidecar（DevDesk 数据目录的
-//      claude_settings_snapshot.json，**不往 settings.json 塞标记字段**）；
+//      app_config 表的 claude.settings_snapshot 键，**不往 settings.json 塞标记字段**）；
 //      sidecar 已存在则保留首份快照（热切换 / 重生成 token 不覆盖），
 //      仅把新的托管键并入 managedKeys（防旧托管键漏还原）。
 //      **污染守卫**：首份快照拍之前先扫现有 env，命中「本机代理形态」（BASE_URL
@@ -54,17 +54,29 @@
 #include <string>
 #include <vector>
 
+#include "core/sqlite_db.h"
+
 namespace module::claude {
 
 struct Profile;
 
 namespace settings_sync {
 
-// 路径注入点：生产用 defaultPaths()（core::paths），测试传临时目录，
-// 绝不碰真实 ~/.claude
+// sidecar（接管前 settings.json 的 env 快照）的 app_config 键名。
+// 2026-10-03（批次 E2，用户第 17 条「所有 app 配置全部进 SQLite」）起 sidecar
+// 不再是 appDataDir()/claude_settings_snapshot.json 那个文件，而是这一行。
+// **无迁移**：磁盘上的旧 sidecar 不读不导入（项目无兼容包袱）。
+inline constexpr const char* kSidecarConfigKey = "claude.settings_snapshot";
+
+// 注入点：生产用 defaultPaths()（core::paths + core::appDatabase()），测试传
+// 临时目录 + 临时库句柄，绝不碰真实 ~/.claude，也绝不碰用户真实数据根
 struct Paths {
     std::filesystem::path settingsFile;  // ~/.claude/settings.json
-    std::filesystem::path sidecarFile;   // appDataDir()/claude_settings_snapshot.json
+    // sidecar 的落点 = app_config 表的 kSidecarConfigKey 这一行。
+    // nullptr = 数据库未就绪：所有 sidecar 操作按「无快照」处理并 WARN，
+    // **不静默当成没接管过**（那会让 restore 跳过后把用户 settings.json 留在
+    // 代理形态）。
+    core::data::SqliteDb* db = nullptr;
     // 上层覆盖检测要读的文件（managed + project 层；user 层就是 settingsFile 自身，不列）
     std::vector<std::filesystem::path> overlayFiles;
 };

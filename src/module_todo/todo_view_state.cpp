@@ -1,18 +1,22 @@
 // src/module_todo/todo_view_state.cpp
-// todo_view_state.json 读写（容错模式照抄 pet_config：缺失/损坏回退默认）
+// todo 视图状态的 app_config 表存取（接口见 todo_view_state.h）
+//
+// 迁移前读写 appDataDir()/todo_view_state.json；2026-10-03（批次 E2，用户第 17
+// 条「所有 app 配置全部进 SQLite，不要 JSON 文件了」）起整份存 app_config 表的
+// 一行（键 todo_view_state），**不读旧文件、不迁移**。
+//
+// 整份一行而非按顶层键拆分：与 pet_config 同款裁决——本状态**只有一个写者**
+// （TodoService / 模块页），且每次都是「load 整个结构 → 改 → 整个存回」，
+// 拆行的「多写者互不覆盖」收益不存在，成本却是每次 save 多次 UPSERT。
 #include "module_todo/todo_view_state.h"
 
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
-#include <cstdlib>
-#include <fstream>
-#include <sstream>
 #include <utility>
 
-#include "core/atomic_write.h"
+#include "core/app_config.h"
 #include "core/logging.h"
-#include "core/paths.h"
 #include "platform/json.h"
 
 namespace module::todo {
@@ -36,16 +40,7 @@ bool parseColumnId(const std::string& key, int64_t& out) {
 }
 } // namespace
 
-std::filesystem::path todoViewStateFile() {
-    // 环境变量覆盖（无头测试隔离真实 %APPDATA% 状态文件；与 markdownDir 同款机制）
-    if (const char* env = std::getenv("DEVDESK_TODO_VIEW_STATE_PATH")) {
-        if (*env != '\0') return std::filesystem::path(env);
-    }
-    return core::paths::appDataDir() / "todo_view_state.json";
-}
-
-TodoViewStateStore::TodoViewStateStore(std::filesystem::path file)
-    : file_(std::move(file)) {}
+TodoViewStateStore::TodoViewStateStore(core::data::SqliteDb* db) : db_(db) {}
 
 TodoViewState TodoViewStateStore::sanitized(const TodoViewState& st) {
     TodoViewState out;
@@ -58,27 +53,32 @@ TodoViewState TodoViewStateStore::sanitized(const TodoViewState& st) {
     return out;
 }
 
-TodoViewState TodoViewStateStore::load() const {
+core::Result<TodoViewState> TodoViewStateStore::loadChecked() const {
     TodoViewState st;  // 全默认值兜底
-
-    std::error_code ec;
-    if (!std::filesystem::exists(file_, ec) || ec) {
-        return st;  // 首次启动：无视图状态文件，正常路径
+    if (db_ == nullptr) {
+        return core::Result<TodoViewState>::fail(
+            core::ErrorCode::NotFound,
+            "应用数据库未就绪（core::appDatabase() 为空）");
     }
-
-    std::ifstream f(file_);
-    if (!f) {
-        LOG_WARN("Todo: 无法读取视图状态文件，使用默认值: " + file_.string());
-        return st;
+    auto raw = core::appconfig::get(*db_, kTodoViewStateKey);
+    if (raw.isFail()) {
+        // 键不存在 = 首次启动（正常路径，静默用默认）；表不存在 / SQL 失败 =
+        // 真故障，报出来而不是与「没配过」混同
+        if (raw.errorCode() == core::ErrorCode::NotFound) {
+            return core::Result<TodoViewState>::ok(st);
+        }
+        return core::Result<TodoViewState>::fail(
+            raw.errorCode(),
+            "读取 app_config[" + std::string(kTodoViewStateKey) + "] 失败: " +
+                raw.errorMessage());
     }
-    std::ostringstream ss;
-    ss << f.rdbuf();
-    f.close();
-
-    auto parsed = platform::json::parse(ss.str());
+    auto parsed = platform::json::parse(raw.value());
     if (parsed.isFail() || !parsed.value().isObject()) {
-        LOG_WARN("Todo: 视图状态文件解析失败，使用默认值: " + file_.string());
-        return st;
+        return core::Result<TodoViewState>::fail(
+            core::ErrorCode::JsonParseError,
+            "app_config[" + std::string(kTodoViewStateKey) +
+                "] 不是合法 JSON 对象: " +
+                (parsed.isFail() ? parsed.errorMessage() : std::string("顶层非对象")));
     }
     platform::json::JsonObject obj = parsed.value().asObject();
 
@@ -89,10 +89,9 @@ TodoViewState TodoViewStateStore::load() const {
             if (!parseColumnId(key, id)) continue;
             platform::json::JsonValue v = scrolls.get(key);
             if (v.isNumber()) {
-                // 数字双分支读取：两种历史落盘形态都要认——旧版 %.17g 把整值
-                // 浮点（如 512.0）写成 "512"，回读走 Int 分支；新版 yyjson
-                // writer 写成 "512.0"，走 Double 分支。只有 asDouble() 会丢值
-                // （走 Int 分支时 dblVal 为 0），故 Int 分支回退 asInt()。
+                // 数字双分支读取：两种落盘形态都要认——整值可能写成 "512"
+                // 走 Int 分支，也可能写成 "512.0" 走 Double 分支。只有
+                // asDouble() 会丢值（走 Int 分支时返回 0），故回退 asInt()。
                 const double d = v.asDouble() != 0.0
                                      ? v.asDouble()
                                      : static_cast<double>(v.asInt());
@@ -103,11 +102,26 @@ TodoViewState TodoViewStateStore::load() const {
     if (obj.has(kKeySelectedTask) && obj.get(kKeySelectedTask).isNumber()) {
         st.selectedTaskId = obj.get(kKeySelectedTask).asInt();
     }
-    return sanitized(st);
+    return core::Result<TodoViewState>::ok(sanitized(st));
+}
+
+TodoViewState TodoViewStateStore::load() const {
+    auto loaded = loadChecked();
+    if (loaded.isFail()) {
+        LOG_ERROR("Todo: 读取视图状态失败，回退默认值（本次改动将无法保存）: " +
+                  loaded.errorMessage());
+        return sanitized(TodoViewState{});
+    }
+    return loaded.value();
 }
 
 core::Result<void> TodoViewStateStore::save(const TodoViewState& stRaw) const {
     const TodoViewState st = sanitized(stRaw);
+    if (db_ == nullptr) {
+        return core::Result<void>::fail(
+            core::ErrorCode::NotFound,
+            "应用数据库未就绪（core::appDatabase() 为空），视图状态未保存");
+    }
 
     platform::json::JsonObject scrolls;
     for (const auto& [id, offset] : st.columnScrolls) {
@@ -124,23 +138,9 @@ core::Result<void> TodoViewStateStore::save(const TodoViewState& stRaw) const {
         return core::Result<void>::fail(core::ErrorCode::Internal,
                                         "视图状态序列化失败: " + text.errorMessage());
     }
-
-    // 父目录确保存在（appDataDir 正常已由 ensureDirectoriesExist 建好，兜底）
-    std::error_code ec;
-    const auto parent = file_.parent_path();
-    if (!parent.empty() && !std::filesystem::exists(parent, ec) && !ec) {
-        std::filesystem::create_directories(parent, ec);
-        if (ec) {
-            return core::Result<void>::fail(core::ErrorCode::Internal,
-                                            "视图状态目录创建失败: " + ec.message());
-        }
-    }
-
-    // 原子写（tmp → remove → rename，core/atomic_write.h 唯一实现，审计 THS-03）：
-    // 旧的 std::ofstream(file_, trunc) 原地写在写窗口内崩溃/断电会把文件截成
-    // 半截，load 走解析失败分支静默回落默认值（列滚动位置/选中任务丢失；
-    // 本函数由卡片点击/右键高频触发，暴露窗口最多）
-    return core::atomicWriteFile(file_, text.value() + "\n", "视图状态");
+    // 一次 UPSERT 即一次提交——与旧的「原子写文件」等价（且顺带拿到事务的
+    // 原子性：要么这行是新值，要么还是旧值，不会出现半截）
+    return core::appconfig::set(*db_, kTodoViewStateKey, text.value());
 }
 
 size_t TodoViewStateStore::pruneScrolls(std::map<int64_t, float>& scrolls,

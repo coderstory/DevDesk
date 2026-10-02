@@ -1,14 +1,24 @@
 // src/module_pet/pet_config.h
 // 桌宠自身持久化配置（2026-09-22-desktop-pet-design.md §4.6）：
-//   petsDir()/pet_config.json —— pet 字段从 config.json 迁出（模块隔离：
-//   module_pet 不再依赖 module_settings 的 SettingsStore，module_* 互依禁令）
+//   **SQLite app_config 表**（键 `pet_config`）—— 原 petsDir()/pet_config.json
+//   已于 2026-10-03（批次 E2，用户第 17 条「所有 app 配置全部进 SQLite」）
+//   退役：不读、不写、不迁移。pet 字段当初从 config.json 迁出过一次
+//   （模块隔离：module_pet 不依赖 module_settings 的 SettingsStore），本次是
+//   迁到**中立层** app_config 表，模块隔离禁令依旧不破。
+//
+// 为什么整份存一行、而不像 config.json 那样按顶层键拆行（裁决）：
+//   本配置**只有一个写者**（pet_window 的 applyPetSkin / applyPetScale /
+//   applyPetPosition），且每次都是「load 整个结构 → 改一两个字段 → 整个存回」。
+//   拆行的收益（多写者互不覆盖）在这里不存在，成本却是每次 save 4 次 UPSERT
+//   + 一次清理。config.json 那边收益真实（main / app_sidebar /
+//   settings_module / app_assembly / app_tools 各写各的），故那边拆。
 #pragma once
 
 #include <cmath>
-#include <filesystem>
 #include <string>
 
 #include "core/result.h"
+#include "core/sqlite_db.h"
 #include "module_pet/pet_skin.h"  // kDefaultSkinName
 
 namespace module::pet {
@@ -34,7 +44,7 @@ static_assert(kPetScalePresetCount == sizeof(kPetScalePresetLabels) /
               "kPetScalePresetLabels 元素数必须等于 kPetScalePresetCount");
 
 // 越界/漂移值收敛：精确命中三档之一（1e-6 容差）原样返回，否则回默认中档
-// （防手改 pet_config.json 注入任意缩放）。load 与 applyPetScale 共用
+// （防脏值注入任意缩放）。load 与 applyPetScale 共用
 inline double sanitizePetScale(double scale) {
     for (int i = 0; i < kPetScalePresetCount; ++i) {
         if (std::abs(scale - kPetScalePresets[i]) < 1e-6) {
@@ -63,29 +73,34 @@ struct PetConfig {
                                               //  默认中档 1.0×；sanitized 收敛非法值）
     // 【历史，不是当前字段】挂机穿透（clickThrough）功能已于 2026-09-24 移除：
     // 死锁设计——开启后鼠标穿透导致右键也点不中桌宠，只能回设置页关，用户易被
-    // 困住。字段自此不再读写；旧 pet_config.json 里残留的 clickThrough 键被 load
+    // 困住。字段自此不再读写；旧配置里残留的 clickThrough 键被 load
     // 静默忽略（本结构只有 skinName/x/y/scale 四个键），下次 save 时随整文件
     // 重写消失
 };
 
-// 默认配置文件位置（core::paths::petsDir() 下；DEVDESK_PETS_DIR 单项覆盖
-// 或 DEVDESK_DATA_ROOT 整体隔离）
-std::filesystem::path petConfigFile();
+// 默认 app_config 键名（供测试与工具层拼键名；实现与 save/load 同一来源）
+inline constexpr const char* kPetConfigKey = "pet_config";
 
-// pet_config.json 读写（不抛异常；文件不存在/损坏一律回退默认值）。
-// 文件路径由构造注入（生产传 petConfigFile()，测试传临时文件）
+// pet_config 读写（不抛异常；键缺失 / 值损坏一律回退默认值）。
+// db：应用共享连接（生产传 ::core::appDatabase()，测试传临时库句柄）。允许为
+// nullptr，但那不是「没配置」而是「数据库没就绪」：save() 返回 fail Result，
+// load() 回退默认值并打 LOG_ERROR。
 class PetConfigStore {
 public:
-    explicit PetConfigStore(std::filesystem::path file);
+    explicit PetConfigStore(core::data::SqliteDb* db);
 
     PetConfig load() const;
+
+    // 与 load() 同源，把「库未就绪 / 表不存在 / 值损坏」如实报出来
+    core::Result<PetConfig> loadChecked() const;
+
     core::Result<void> save(const PetConfig& cfg) const;
 
     // 数值越界收敛到合法范围（load 时应用；也供单测直接验证）
     static PetConfig sanitized(const PetConfig& cfg);
 
 private:
-    std::filesystem::path file_;
+    core::data::SqliteDb* db_ = nullptr;
 };
 
 } // namespace module::pet

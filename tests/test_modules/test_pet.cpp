@@ -70,9 +70,18 @@ void removeTreeQuietly(const std::filesystem::path& p) {
 // ScopedConfigPath 同款约定，原类名已随 TIN-06 移除法）。构造 = 清残留 + 建临时目录 + 指环境变量；析构 = 环境变量拉回
 // 未设置 + 删临时目录。断言 fail-fast 提前 return false 也会走析构，不留
 // 环境/磁盘泄漏给同进程后续用例（旧版手工 set/clear 配对失败即跳尾）。
+// 皮肤目录隔离 + **已注册的应用库**。
+// 2026-10-03（批次 E2）起 pet_config 的落点从 petsDir()/pet_config.json 迁到
+// app_config 表，生产代码经 core::appDatabase() 取连接——没有这份注册，
+// 桌宠各桥（applyPetSkin / applyPetScale / currentSkinName）的 save 会因库
+// 未就绪而 fail，整组用例必红。TestEnv 的析构顺序：先注销 appDatabase，
+// 再删库文件（不能反过来，句柄还开着就删文件）。
 struct PetsDirEnv {
     const std::filesystem::path root;
-    explicit PetsDirEnv(const std::string& tag) : root(test_support::makeTempDir(kPetDirPrefix, tag.c_str())) {
+    test_support::TestEnv db;
+    explicit PetsDirEnv(const std::string& tag)
+        : root(test_support::makeTempDir(kPetDirPrefix, tag.c_str())),
+          db("devdesk_test_pet_", tag, /*registerAppDb=*/true) {
         removeTreeQuietly(root);
         test_support::setEnvVar("DEVDESK_PETS_DIR", root.string());
     }
@@ -82,6 +91,7 @@ struct PetsDirEnv {
         test_support::setEnvVar("DEVDESK_PETS_DIR", "");
         removeTreeQuietly(root);
     }
+    core::data::SqliteDb& handle() { return db.handle(); }
 };
 
 // PNG 结构断言：魔数 + IHDR 宽高（不做完整解码，解码属 EUI-NEO stb 路径）
@@ -330,12 +340,16 @@ REGISTER_TEST(pet_gating_defaults, "pet: 默认关闭、已知 ID 可持久化",
 });
 
 REGISTER_TEST(pet_settings_roundtrip, "pet: pet_config.json 读写往返 + 钳制", {
+    // 2026-10-03（批次 E2）：配置落在 app_config 表，生产代码经
+    // core::appDatabase() 取连接；没有这份注册的临时库，save() 会因
+    // 「库未就绪」如实失败（这是设计，不是缺陷）。
+    test_support::TestEnv cfgDbEnv("devdesk_test_pet_", "petcfg1", /*registerAppDb=*/true);
     using namespace module::pet;
     const std::filesystem::path file =
         test_temp::tempPath("devdesk_test_pet_config.json");
     std::error_code ec;
     std::filesystem::remove(file, ec);
-    PetConfigStore store(file);
+    PetConfigStore store(::core::appDatabase());
     PetConfig cfg;
     cfg.skinName = "my-cat";
     cfg.x = 1600;
@@ -985,9 +999,10 @@ REGISTER_TEST(pet_apply_skin_and_reset, "pet: applyPetSkin 校验/持久化 + �
         out << "{\"name\":\"pixel-dog\",\"states\":{\"idle\":[\"d0.png\"]}}";
     }
     // 预置配置：已知位置 + 默认皮肤（无头环境窗口未开 → 只持久化路径）
+    // pet_config 落点已是 app_config 表（E2），cfgFile 只作「不再写文件」的证据
     const std::filesystem::path cfgFile = root / "pet_config.json";
     {
-        PetConfigStore store(cfgFile);
+        PetConfigStore store(::core::appDatabase());
         PetConfig cfg;
         cfg.skinName = "robot";
         cfg.x = 500;
@@ -997,13 +1012,13 @@ REGISTER_TEST(pet_apply_skin_and_reset, "pet: applyPetSkin 校验/持久化 + �
     // 未发现的皮肤名被拒绝，配置不动
     applyPetSkin("no-such-skin");
     {
-        const PetConfig cfg = PetConfigStore(cfgFile).load();
+        const PetConfig cfg = PetConfigStore(::core::appDatabase()).load();
         DOCTEST_CHECK_EQ(cfg.skinName, "robot");
     }
     // 合法皮肤名 → 持久化生效，位置不动（窗口未开）
     applyPetSkin("pixel-dog");
     {
-        const PetConfig cfg = PetConfigStore(cfgFile).load();
+        const PetConfig cfg = PetConfigStore(::core::appDatabase()).load();
         DOCTEST_CHECK_EQ(cfg.skinName, "pixel-dog");
         DOCTEST_CHECK_EQ(cfg.x, 500);
         DOCTEST_CHECK_EQ(cfg.y, 600);
@@ -1011,7 +1026,7 @@ REGISTER_TEST(pet_apply_skin_and_reset, "pet: applyPetSkin 校验/持久化 + �
     // 位置重置 → 坐标清回 -1（未设置哨兵），皮肤不被动
     resetPetPosition();
     {
-        const PetConfig cfg = PetConfigStore(cfgFile).load();
+        const PetConfig cfg = PetConfigStore(::core::appDatabase()).load();
         DOCTEST_CHECK_EQ(cfg.x, -1);
         DOCTEST_CHECK_EQ(cfg.y, -1);
         DOCTEST_CHECK_EQ(cfg.skinName, "pixel-dog");
@@ -1264,12 +1279,16 @@ REGISTER_TEST(pet_multi_monitor_clamp, "pet: 多显示器按位置选屏钳制�
 });
 
 REGISTER_TEST(pet_negative_coord_persist, "pet: 副屏负坐标落盘往返（M2 任务A 哨兵）", {
+    // 2026-10-03（批次 E2）：配置落在 app_config 表，生产代码经
+    // core::appDatabase() 取连接；没有这份注册的临时库，save() 会因
+    // 「库未就绪」如实失败（这是设计，不是缺陷）。
+    test_support::TestEnv cfgDbEnv("devdesk_test_pet_", "petcfg2", /*registerAppDb=*/true);
     using namespace module::pet;
     const std::filesystem::path file =
         test_temp::tempPath("devdesk_test_pet_config_neg.json");
     std::error_code ec;
     std::filesystem::remove(file, ec);
-    PetConfigStore store(file);
+    PetConfigStore store(::core::appDatabase());
     // 左副屏坐标落盘 → 读回原值（旧 sanitize 的 x<-1→-1 会把它吞成「未设置」）
     PetConfig cfg;
     cfg.skinName = "robot";
@@ -1337,7 +1356,7 @@ REGISTER_TEST(pet_bridge_readonly_accessors,
     // 换皮肤名走盘 store（applyPetSkin 需 discoverSkins 命中，桥只读同一张盘）
     PetConfig cfg;
     cfg.skinName = "bridge-skin";
-    DOCTEST_CHECK(!PetConfigStore(petConfigFile()).save(cfg).isFail());
+    DOCTEST_CHECK(!PetConfigStore(::core::appDatabase()).save(cfg).isFail());
     DOCTEST_CHECK_EQ(currentSkinName(), std::string("bridge-skin"));
     return true;
 });
@@ -1350,12 +1369,9 @@ REGISTER_TEST(pet_bridge_readonly_accessors,
 
 namespace {
 
-std::string readAllBytes(const std::filesystem::path& p) {
-    std::ifstream f(p, std::ios::binary);
-    std::ostringstream ss;
-    ss << f.rdbuf();
-    return ss.str();
-}
+// 2026-10-03（批次 E2）：桌宠配置不再落文件，这里原样读文件的 helper 已无
+// 调用方（配置字节改由 test_support::readRawConfigRow 从 app_config 行读），
+// 故一并删除 —— 留着会触发 -Werror=unused-function。
 
 std::filesystem::path tmpPathOf(const std::filesystem::path& p) {
     return std::filesystem::path(p.string() + ".devdesk-tmp");
@@ -1364,6 +1380,10 @@ std::filesystem::path tmpPathOf(const std::filesystem::path& p) {
 } // namespace
 
 REGISTER_TEST(pet_config_save_failure_keeps_old, "pet: 配置原子写失败不破坏旧文件（THS-03）", {
+    // 2026-10-03（批次 E2）：配置落在 app_config 表，生产代码经
+    // core::appDatabase() 取连接；没有这份注册的临时库，save() 会因
+    // 「库未就绪」如实失败（这是设计，不是缺陷）。
+    test_support::TestEnv cfgDbEnv("devdesk_test_pet_", "petcfg3", /*registerAppDb=*/true);
     using namespace module::pet;
     const std::filesystem::path file =
         std::filesystem::temp_directory_path() / "devdesk_test_pet_config_atomic.json";
@@ -1372,26 +1392,40 @@ REGISTER_TEST(pet_config_save_failure_keeps_old, "pet: 配置原子写失败不�
     std::filesystem::remove_all(tmp, ec);
     std::filesystem::remove(file, ec);
 
-    PetConfigStore store(file);
+    PetConfigStore store(::core::appDatabase());
     PetConfig cfg;
     cfg.skinName = "my-cat";
     cfg.x = 1600;
     cfg.y = 800;
     DOCTEST_REQUIRE(store.save(cfg).isOk());
-    // 成功后字节与旧实现一致：serialize 结果 + "\n" 尾
-    const std::string bytes = readAllBytes(file);
-    DOCTEST_CHECK(!bytes.empty());
-    DOCTEST_CHECK_EQ(bytes.back(), '\n');
+    // 2026-10-03（批次 E2）：桌宠配置整份存 app_config 的 pet_config 行。
+    // 「一次成功落盘」的证据不再是文件字节，而是那一行的原文 —— 且它必须是
+    // **完整的一份配置**（skinName/x/y/scale 四键都在），不是半截。
+    const std::string row = test_support::readRawConfigRow(
+        ::core::appDatabase(), module::pet::kPetConfigKey);
+    DOCTEST_CHECK(!row.empty());
+    {
+        auto parsed = platform::json::parse(row);
+        DOCTEST_REQUIRE(parsed.isOk());
+        DOCTEST_REQUIRE(parsed.value().isObject());
+        auto o = parsed.value().asObject();
+        DOCTEST_CHECK(o.has("skinName"));
+        DOCTEST_CHECK(o.has("x"));
+        DOCTEST_CHECK(o.has("y"));
+        DOCTEST_CHECK(o.has("scale"));
+    }
 
-    // 落盘通道被占住 → 保存失败，但上一次成功落盘的配置必须原样可读
-    DOCTEST_REQUIRE(std::filesystem::create_directory(tmp, ec));
+    // 保存失败（库未就绪）时，上一次成功落库的配置必须原样可读 —— 与旧的
+    // 「原子写失败不破坏旧文件」是同一个不变式，只是失败注入从「目录占住
+    // 临时文件」换成了「连接为空」。整份存一行 = 单条 UPSERT，本身就是原子的。
+    PetConfigStore noDb(nullptr);
     PetConfig changed;
     changed.skinName = "robot";
     changed.x = 0;
     changed.y = 0;
-    DOCTEST_CHECK(store.save(changed).isFail());
+    DOCTEST_CHECK(noDb.save(changed).isFail());
 
-    PetConfigStore reopened(file);
+    PetConfigStore reopened(::core::appDatabase());
     const PetConfig loaded = reopened.load();
     DOCTEST_CHECK_EQ(loaded.skinName, std::string("my-cat"));
     DOCTEST_CHECK_EQ(loaded.x, 1600);
@@ -1655,7 +1689,7 @@ REGISTER_TEST(pet_scale_config_roundtrip,
     const PetsDirEnv pets("scalecfg");
     const std::filesystem::path cfgFile = pets.root / "pet_config.json";
     {
-        PetConfigStore store(cfgFile);
+        PetConfigStore store(::core::appDatabase());
         PetConfig cfg;
         cfg.scale = 1.5;
         DOCTEST_CHECK(store.save(cfg).isOk());
@@ -1669,11 +1703,11 @@ REGISTER_TEST(pet_scale_config_roundtrip,
     // 桥：无窗口路径——切档只写盘，读回一致；越界下标拒绝不动
     DOCTEST_CHECK_EQ(currentPetScaleIndex(), 2);  // 上面存的 1.5
     applyPetScaleIndex(0);                        // 1.5 → 0.75
-    DOCTEST_CHECK_EQ(PetConfigStore(cfgFile).load().scale, 0.75);
+    DOCTEST_CHECK_EQ(PetConfigStore(::core::appDatabase()).load().scale, 0.75);
     applyPetScaleIndex(7);                        // 越界：配置不动
-    DOCTEST_CHECK_EQ(PetConfigStore(cfgFile).load().scale, 0.75);
+    DOCTEST_CHECK_EQ(PetConfigStore(::core::appDatabase()).load().scale, 0.75);
     applyPetScaleIndex(1);                        // 回默认中档
-    DOCTEST_CHECK_EQ(PetConfigStore(cfgFile).load().scale, 1.0);
+    DOCTEST_CHECK_EQ(PetConfigStore(::core::appDatabase()).load().scale, 1.0);
     DOCTEST_CHECK_EQ(currentPetScaleIndex(), 1);
     // 桥文案：三档与下标一一对应（单源 = pet_config.h，设置页只消费）
     const std::vector<std::string> labels = petScalePresetLabels();

@@ -212,7 +212,7 @@ void applyPetSkin(const std::string& skinName);
 // 主显示器工作区右下角默认位
 void resetPetPosition();
 
-// 审计 [5][36] 设置页桥（只读）：当前皮肤名，读 pet_config.json
+// 审计 [5][36] 设置页桥（只读）：当前皮肤名，读 app_config 的 pet_config 键
 // （applyPetSkin 双写运行时 + 盘，盘即真值；与设置页「初值读 pet_config」
 // 原语义一致）。标量返回值——module_settings 侧只 extern 声明该自由函数
 // 即可调用（不 include 本头、不 link 本模块），避免共享 PetConfig 结构体
@@ -223,7 +223,7 @@ std::string currentSkinName();
 // 消费，声明/签名哨兵同 currentSkinName 先例）----
 
 // 当前显示大小档位下标（0=小 0.75× / 1=中 1.0× / 2=大 1.5×），读
-// pet_config.json（非法值已由 sanitize 收敛默认档）
+// pet_config 键（非法值已由 sanitize 收敛默认档）
 int currentPetScaleIndex();
 
 // 三档文案（与档位下标一一对应；单源 = pet_config.h kPetScalePresetLabels，

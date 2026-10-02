@@ -7,7 +7,7 @@
 //（test_module_gating），门控**接线**零测。这里把装配顺序、模块门控注册、
 // 退出接线与几个纯函数收进来，并把 DB / 配置来源改为显式参数（注入模块指针
 // + SettingsConfig + 笔记目录），测试用桩模块 + 临时目录直接无头驱动；
-// main.cpp 只留编排调用（模块工厂持有、config.json 快照、桌宠开窗）。
+// main.cpp 只留编排调用（模块工厂持有、应用配置快照、桌宠开窗）。
 //
 // 装配顺序（结构保证，勿改）：
 //   preStart → registerAppRouter → 门控注册 → startAll → armExitHook
@@ -167,7 +167,7 @@ using ModuleLookup = ::core::Module* (*)(::core::PageId page);
 //         trayPageDisplayName 的单源口径）
 // moduleId 不在表内 / 命中行无 gatingKey（home/settings/about 恒开）→
 // LOG_WARN + no-op（对恒开模块拨开关是配置层 no-op，不动生命周期）
-// 本函数不读 config.json：使能判定已由 settings 侧完成，这里只执行注册表
+// 本函数不读应用配置：使能判定已由 settings 侧完成，这里只执行注册表
 // 与生命周期动作；router / lookup 注入（生产 = main.cpp 装配段，测试 = 桩）
 void dispatchModuleToggle(const std::string& moduleId, bool on,
                           ::core::Router& router, ModuleLookup lookup);

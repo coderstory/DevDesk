@@ -64,7 +64,7 @@ std::vector<std::string> columnDefs(core::data::SqliteDb& db, const std::string&
 // ============ 表与索引的存在性 ============
 
 REGISTER_TEST(schema_creates_all_tables,
-              "schema: applySchema 建出全部 13 张应用表", {
+              "schema: applySchema 建出全部 15 张应用表", {
     auto path = test_support::tempDbPath(kDbPrefix, "create");
     std::error_code ec;
     std::filesystem::remove(path, ec);
@@ -90,6 +90,9 @@ REGISTER_TEST(schema_creates_all_tables,
             "agent_tasks",
             "agent_runs",
             "agent_messages",
+            // 2026-10-03 批次 E2：六类 JSON 配置的落点（通用表 + run-settings 记录表）
+            "app_config",
+            "claude_run_settings",
         };
         for (const auto& t : expected) {
             bool found = tables.count(t) > 0;
@@ -99,7 +102,8 @@ REGISTER_TEST(schema_creates_all_tables,
             }
         }
 
-        // 7 个索引（含 1 个部分唯一索引 + 1 个带 WHERE 的到期索引 + agent 2 个）
+        // 8 个索引（含 1 个部分唯一索引 + 1 个带 WHERE 的到期索引 + agent 2 个
+        // + run-settings 1 个）
         auto indexes = listObjects(r.value().db(), "index");
         std::set<std::string> expectedIndexes{
             "idx_tasks_column",
@@ -109,6 +113,8 @@ REGISTER_TEST(schema_creates_all_tables,
             "idx_call_logs_profile",
             "idx_agent_runs_task",
             "idx_agent_messages_run",
+            // 2026-10-03 批次 E2：直连会话记录按写入时刻倒序取最近
+            "idx_run_settings_written",
         };
         for (const auto& i : expectedIndexes) {
             bool found = indexes.count(i) > 0;
@@ -421,6 +427,82 @@ REGISTER_TEST(schema_agent_tables_columns,
         DOCTEST_REQUIRE(row.isOk());
         DOCTEST_CHECK_EQ(row.value().getInt64("n").valueOr(-1), 0);
     }
+
+    std::filesystem::remove(path, ec);
+    return true;
+})
+
+REGISTER_TEST(schema_config_and_run_settings_columns,
+              "schema: app_config + claude_run_settings 列定义符合最终形态（E2）", {
+    auto path = test_support::tempDbPath(kDbPrefix, "cols_cfg");
+    std::error_code ec;
+    std::filesystem::remove(path, ec);
+
+    {
+        auto r = core::Database::open(path);
+        DOCTEST_REQUIRE(r.isOk());
+        DOCTEST_REQUIRE(r.value().migrate().isOk());
+        auto& db = r.value().db();
+
+        // app_config：通用「键 → 值」配置存储。value 恒 TEXT 且 NOT NULL
+        //（存得住任意字节：中文 / 空串 / JSON / 换行 / 超长串）；
+        // updated_at 恒 NOT NULL INTEGER。
+        std::vector<std::string> expectConfig{
+            "key:TEXT:0:<none>",      // TEXT PRIMARY KEY：SQLite 报 notnull=0（历史行为）
+            "value:TEXT:1:<none>",
+            "updated_at:INTEGER:1:<none>",
+        };
+        DOCTEST_CHECK_EQ(columnDefs(db, "app_config"), expectConfig);
+
+        // claude_run_settings：run-settings 每次运行一行（单键会被覆盖，故
+        // 单独建表）。run_key UNIQUE（PRIMARY KEY 之外的唯一约束由索引实现，
+        // PRAGMA table_info 不体现，故另用一条真插入验证）。
+        std::vector<std::string> expectRuns{
+            "id:INTEGER:0:<none>",
+            "run_key:TEXT:1:<none>",
+            "profile_id:INTEGER:1:<none>",
+            "profile_name:TEXT:1:''",
+            "written_at:INTEGER:1:<none>",
+            "file_path:TEXT:1:''",
+            "settings_json:TEXT:1:''",
+        };
+        DOCTEST_CHECK_EQ(columnDefs(db, "claude_run_settings"), expectRuns);
+
+        // 真能连写 N 份互不覆盖（同一 profile 两次不同 run_key）
+        auto ins = db.prepare(
+            "INSERT INTO claude_run_settings (run_key, profile_id, profile_name, "
+            "written_at, file_path, settings_json) VALUES (?, 1, 'p', 100, ?, ?)");
+        DOCTEST_REQUIRE(ins.isOk());
+        for (int i = 0; i < 3; ++i) {
+            DOCTEST_REQUIRE(ins.value().bind(1, "run-" + std::to_string(i)).isOk());
+            DOCTEST_REQUIRE(ins.value()
+                                .bind(2, "/tmp/run-" + std::to_string(i) + ".json")
+                                .isOk());
+            DOCTEST_REQUIRE(ins.value().bind(3, "{\"env\":{}}").isOk());
+            DOCTEST_REQUIRE(ins.value().step().isOk());
+            DOCTEST_REQUIRE(ins.value().reset().isOk());
+        }
+        auto q = db.prepare(
+            "SELECT run_key, file_path FROM claude_run_settings ORDER BY run_key");
+        DOCTEST_REQUIRE(q.isOk());
+        auto rows = q.value().fetchAll();
+        DOCTEST_REQUIRE(rows.isOk());
+        DOCTEST_REQUIRE_EQ(rows.value().size(), 3u);
+        DOCTEST_CHECK_EQ(rows.value()[0].getString("run_key").valueOr("?"),
+                         std::string("run-0"));
+        DOCTEST_CHECK_EQ(rows.value()[2].getString("run_key").valueOr("?"),
+                         std::string("run-2"));
+        // 每份各自的文件路径没被后一份覆盖
+        DOCTEST_CHECK_EQ(rows.value()[1].getString("file_path").valueOr("?"),
+                         std::string("/tmp/run-1.json"));
+
+        // run_key 的 UNIQUE 真的生效（重复插入必须失败，不是静默覆盖）
+        auto dup = db.prepare(
+            "INSERT INTO claude_run_settings (run_key, profile_id, written_at) "
+            "VALUES ('run-1', 1, 200)");
+        DOCTEST_REQUIRE(dup.isOk());
+        DOCTEST_CHECK(dup.value().step().isFail());
+    } // Database 在此析构（Windows 不允许删除打开中的文件）
 
     std::filesystem::remove(path, ec);
     return true;

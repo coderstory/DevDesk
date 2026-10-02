@@ -14,8 +14,8 @@
 #include "app_sidebar.h"
 
 #include "core/component_theme.h"
+#include "core/database.h"
 #include "core/logging.h"
-#include "core/paths.h"
 #include "core/router.h"
 #include "core/theme.h"
 #include "settings_config.h"
@@ -42,18 +42,24 @@ ui_kit::ToastState g_appNotice;
 
 bool sidebarCollapsed() { return g_sidebarCollapsed; }
 
-void setSidebarCollapsed(bool collapsed,
-                         const std::filesystem::path& configFile) {
+void setSidebarCollapsed(bool collapsed, bool persist) {
     g_sidebarCollapsed = collapsed;
-    if (configFile.empty()) return;
-    // 持久化：load → 改单字段 → save，保留其余配置（主题/字号/模块开关）；
-    // 失败只记日志不回滚内存态（跟主题持久化同宽容度，下次启动回默认展开）
-    const module::settings::SettingsStore store(configFile);
+    if (!persist) return;
+    core::data::SqliteDb* db = ::core::appDatabase();
+    if (db == nullptr) {
+        LOG_WARN("侧边栏折叠状态未持久化（应用数据库未就绪，不影响本次会话）");
+        return;
+    }
+    // 持久化：load → 改单字段 → save，保留其余配置（主题/字号/模块开关）。
+    // SettingsStore::save 把 11 个顶层键放在**一个事务**里逐行写，其余行原样
+    // 保留 —— 语义与旧的「重写整份 config.json」等价，但别的写者（主题切换 /
+    // 设置页）不会因为本函数手慢而丢字段。失败只记日志不回滚内存态
+    //（跟主题持久化同宽容度，下次启动回默认展开）
+    const module::settings::SettingsStore store(db);
     auto cfg = store.load();
     cfg.sidebarCollapsed = collapsed;
     if (store.save(cfg).isFail()) {
-        LOG_WARN("侧边栏折叠状态持久化失败（不影响本次会话）: " +
-                 configFile.string());
+        LOG_WARN("侧边栏折叠状态持久化失败（不影响本次会话）");
     }
 }
 
@@ -253,8 +259,7 @@ void drawSidebar(eui::Ui& ui, const eui::Screen& screen) {
                         t.colors.active)
                 .radius(t.sizes.radius)
                 .onClick([] {
-                    setSidebarCollapsed(!sidebarCollapsed(),
-                                        ::core::paths::configFile());
+                    setSidebarCollapsed(!sidebarCollapsed(), true);
                 })
                 .build();
             ui.text("app.sidebar.toggle.icon")
