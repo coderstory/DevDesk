@@ -192,12 +192,14 @@ QuotaResult parseRemainsBody(const platform::json::JsonValue& body) {
             }
             // 错误码与上游文案原样透出：这是用户 / 日志定位问题的唯一线索。
             // 分类依据：上游对非零 status_code 只给「通用失败」（make_error），
-            // 既不区分鉴权也不区分配额 → 没有把它判成 Auth / Entitlement 的依据；
-            // 在官方码表被证实前一律 Transient（G8：保留上次成功值 + 可能过期角标，
-            // 不会把用户的密钥问题误报成「没有该产品权限」）。
-            return makeError(QuotaError::Transient,
+            // **不细分**是鉴权 / 配额 / 限流，因此也**不编造**「码值 → 语义」表；
+            // 但这一类的现实主因是「套餐过期 / 额度用尽」（改密钥没用、得续费），
+            // 正是 QuotaError::Entitlement 的处置语义（quota_provider.h:44-46）。
+            // 不判 Transient：那会引导用户当网络抖动去重试（G8 只挂「可能过期」角标）。
+            return makeError(QuotaError::Entitlement,
                              "MiniMax 接口业务错误（code " + std::to_string(code) +
-                                 "）：" + msg);
+                                 "）：" + msg +
+                                 "——可能套餐已过期或额度已用尽，可到 MiniMax 控制台确认");
         }
     }
 

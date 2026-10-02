@@ -296,7 +296,7 @@ REGISTER_TEST(claude_quota_minimax_weekly_percent_missing_keeps_five_hour,
 // ==================== 错误分类 ====================
 
 REGISTER_TEST(claude_quota_minimax_business_error_on_http_200,
-              "claude_quota: HTTP 200 + base_resp.status_code != 0 → 业务错误走 error 通道", {
+              "claude_quota: HTTP 200 + base_resp.status_code != 0 → Entitlement（套餐/额度类，不是可重试）", {
     QuotaProvider* p = createMinimaxCn();
     // HTTP 200 也可能是失败：真实错误码在 body.base_resp 里
     const char* body = R"({
@@ -307,17 +307,22 @@ REGISTER_TEST(claude_quota_minimax_business_error_on_http_200,
 
     DOCTEST_CHECK_EQ(fake.calls, 1);
     DOCTEST_CHECK(r.error != QuotaError::None);
-    DOCTEST_CHECK(r.error == QuotaError::Transient);
+    // 业务失败 → Entitlement：改密钥没用、得看套餐（G8 不会挂「可能过期」角标了事）
+    DOCTEST_CHECK(r.error == QuotaError::Entitlement);
+    // 反向钉死：不许回退成 Transient（那会把「套餐过期」引导成「网络抖动，重试」）
+    DOCTEST_CHECK(r.error != QuotaError::Transient);
     // 失败结果里不许夹带半截成功值（G7 五态：不画 0% 条）
     DOCTEST_CHECK(r.windows.empty());
     // 上游错误码与文案必须原样透出（用户/日志才能定位）
     DOCTEST_CHECK(r.errorMessage.find("1027") != std::string::npos);
     DOCTEST_CHECK(r.errorMessage.find("service busy") != std::string::npos);
+    // 且要给出正确引导：套餐 / 额度，而不是「重试」
+    DOCTEST_CHECK(r.errorMessage.find("过期") != std::string::npos);
     return true;
 })
 
 REGISTER_TEST(claude_quota_minimax_base_resp_without_status_code_is_business_error,
-              "claude_quota: base_resp 存在但 status_code 非整数 → 视为业务错误（照上游 -1 语义）", {
+              "claude_quota: base_resp 存在但 status_code 非整数 → 同样按业务失败走 Entitlement（照上游 -1 语义）", {
     QuotaProvider* p = createMinimaxCn();
     // cc-switch `unwrap_or(-1)` + `!= 0` → 缺字段 = 业务失败，不是「当成功继续解析」
     const char* body = R"({
@@ -329,7 +334,7 @@ REGISTER_TEST(claude_quota_minimax_base_resp_without_status_code_is_business_err
     FakeHttp fake;
     const QuotaResult r = p->fetch(cnConfig(), httpReturning(fake, 200, body));
 
-    DOCTEST_CHECK(r.error == QuotaError::Transient);
+    DOCTEST_CHECK(r.error == QuotaError::Entitlement);
     DOCTEST_CHECK(r.windows.empty());
     DOCTEST_CHECK(r.errorMessage.find("gateway hiccup") != std::string::npos);
     return true;
