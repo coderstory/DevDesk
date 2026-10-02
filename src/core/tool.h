@@ -62,6 +62,11 @@ public:
     // 全部工具的 schemaJson（拼成 Anthropic tools 数组）
     std::string allSchemasJson() const;
 
+    // 只读枚举：全部已注册工具的 shared_ptr 快照（keep-alive，find 同口径——
+    // 调用方持有期间 unregister 不悬垂）。map 序（name 字典序）。
+    // 「可用工具」展示面（agent 页）用；无过滤、无副作用。
+    std::vector<std::shared_ptr<ITool>> listTools() const;
+
 private:
     ToolRegistry() = default;
     std::map<std::string, std::shared_ptr<ITool>> tools_;

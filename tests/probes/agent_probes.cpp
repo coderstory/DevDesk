@@ -14,6 +14,13 @@
 //      token 合计、错误行含 error 原文；再点 agent.task.<id>.edit →
 //      agent.edit.form 出现且帧完全落在页面内容区内（frameContains），
 //      schedule 任务渲染 agent.edit.cron。
+//   ⑤ run 日志改造（2026-10-02）：种 assistant tool_use + user tool_result
+//      （长输出）两条消息 → 真实点击「展开」chip → 消息高度增大、tool chip
+//      与输出全文可见（text 含标记）、复制 chip 出现；再点「收起」恢复。
+//   ⑥ id 唯一性：走 orderedRoots 全树，断言全帧无重复 id（T10 id 撞车教训）。
+//   ⑦ 可用工具区块：点 agent.tools.header → 卡片数 == 注册表工具数，
+//      card.0.name == "app.stats"；收起后卡片消失。
+//   ⑧ 多行目标输入：agent.form.goal 高 ≥ 90（单行时代 40）。
 //
 // 断言机制：probe 无几何断言 helper，全部手搓 check() + nearEq()
 // （about_probe.cpp:60,94-99 口径）。收尾顺序照 about_probe.cpp:449-453。
@@ -30,6 +37,7 @@
 #include <cmath>
 #include <cstdint>
 #include <iostream>
+#include <map>
 #include <memory>
 #include <optional>
 #include <string>
@@ -73,6 +81,25 @@ std::string frameStr(const core::dsl::Element* e) {
     return "(" + std::to_string(e->frame.x) + ", " + std::to_string(e->frame.y) +
            ", " + std::to_string(e->frame.width) + "x" +
            std::to_string(e->frame.height) + ")";
+}
+
+// 点击元素中心（真实指针 press+release 成对排队，下一帧消费）
+void clickCenter(core::window::Handle win, const core::dsl::Element* e) {
+    const float cx = e->frame.x + e->frame.width * 0.5f;
+    const float cy = e->frame.y + e->frame.height * 0.5f;
+    core::queuePointerButton(win, cx, cy, core::PointerButton::Left,
+                             core::PointerAction::Press, {});
+    core::queuePointerButton(win, cx, cy, core::PointerButton::Left,
+                             core::PointerAction::Release, {});
+}
+
+// 全树收集 id（⑥ id 唯一性扫描）：Element::children 公开，递归走
+void collectIds(const core::dsl::Element& e,
+                std::map<std::string, int>& counts) {
+    ++counts[e.id];
+    for (const auto& child : e.children) {
+        if (child) collectIds(*child, counts);
+    }
 }
 
 }  // namespace
@@ -183,6 +210,12 @@ int main(int argc, char* argv[]) {
           "agent.form.goal 不存在");
     check(ui != nullptr && ui->find("agent.form.create") != nullptr,
           "agent.form.create 不存在");
+    // ⑧ 多行目标输入（2026-10-02 用户反馈③）：输入高 ≥90（单行时代 40）
+    if (const auto* goal = ui != nullptr ? ui->find("agent.form.goal")
+                                         : nullptr) {
+        check(goal->frame.height >= 90.0f,
+              "agent.form.goal 应为多行高 ≥90，实测 " + frameStr(goal));
+    }
 
     // ---- ② 任务行 + run 按钮：存在 + frame 完全落在行内 ----
     const auto* row = ui != nullptr ? ui->find("agent.task." + tid) : nullptr;
@@ -331,6 +364,156 @@ int main(int argc, char* argv[]) {
                           "编辑表单缺保存按钮");
                 }
             }
+        }
+    }
+
+    // ---- ⑤⑥⑦ run 日志块级渲染 + id 唯一性 + 可用工具区块 ----
+    {
+        // 种消息（③ 落库 completed 的那次 run 上追加）：
+        //   seq1 assistant = text + tool_use（工具调用展示钉子）
+        //   seq2 user      = tool_result 长输出（全文可见性钉子，600 字节）
+        auto runsNow = store.listRuns(created.value(), 1);
+        if (runsNow.isFail() || runsNow.value().empty()) {
+            std::cerr << "agent_probes: ⑤ 种消息失败——run 不存在\n";
+            passed = false;
+        } else {
+            const int64_t runId = runsNow.value().front().id;
+            // ③ 的真跑已占 seq 0（user goal）/ seq 1（assistant done），
+            // 种子用 seq 2/3，避免 seq 撞车（listMessages ORDER BY seq，
+            // 同 seq 按 rowid 稳定序 → 撞车会让 msg.<i> 错位）
+            const std::string longOutput(600, 'z');
+            store.appendMessage(runId, 2, "assistant",
+                                R"([{"type":"text","text":"我来查"},)"
+                                R"({"type":"tool_use","id":"tu1",)"
+                                R"("name":"todo.list","input":{"limit":5}}])",
+                                std::nullopt);
+            store.appendMessage(runId, 3, "user",
+                                R"([{"type":"tool_result","tool_use_id":"tu1",)"
+                                R"("content":[{"type":"text","text":")" +
+                                    longOutput +
+                                    R"("}],"is_error":false}])",
+                                std::string("tu1"));
+
+            // 展开第一个任务（真实指针点行）
+            const auto* rowNow = ui->find("agent.task." + tid);
+            if (rowNow == nullptr) {
+                std::cerr << "agent_probes: ⑤ 任务行缺失\n";
+                passed = false;
+            } else {
+                clickCenter(window, rowNow);
+                composeFrame();
+                const std::string base = "agent.task." + tid;
+                const auto* scroll = ui->find(base + ".msgscroll");
+                check(scroll != nullptr, "⑤ 消息滚动区 msgscroll 缺失");
+                const auto* m2c = ui->find(base + ".msg.3");
+                check(m2c != nullptr, "⑤ msg.3 缺失");
+                const float collapsedH = m2c ? m2c->frame.height : 0.0f;
+                // 展开 msg.2（assistant tool_use，真实点击「展开」chip）
+                const auto* tgl2u = ui->find(base + ".msg.2.toggle");
+                if (tgl2u == nullptr) {
+                    check(false, "⑤ msg.2.toggle 缺失");
+                } else {
+                    // 展开 msg.2（assistant tool_use）→ 🔧 chip 可见
+                    clickCenter(window, tgl2u);
+                    composeFrame();
+                    const auto* chip =
+                        ui->find(base + ".msg.2.blk.1");
+                    check(chip != nullptr, "⑤ tool_use 块 msg.2.blk.1 缺失");
+                    if (chip != nullptr) {
+                        check(chip->text.find("todo.list") !=
+                                      std::string::npos &&
+                                  chip->text.find("🔧") !=
+                                      std::string::npos,
+                              "⑤ tool chip 缺工具名/emoji，实测: " +
+                                  chip->text);
+                    }
+                    // 展开 msg.3（tool_result）→ 高度增大 + 输出全文 +
+                    // 复制 chip
+                    const auto* tgl3 = ui->find(base + ".msg.3.toggle");
+                    if (tgl3 == nullptr) {
+                        check(false, "⑤ msg.3.toggle 缺失");
+                    } else {
+                        clickCenter(window, tgl3);
+                        composeFrame();
+                        const auto* m2e = ui->find(base + ".msg.3");
+                        check(m2e != nullptr &&
+                                  m2e->frame.height > collapsedH,
+                              std::string("⑤ 展开后 msg.3 高度应大于收起高 ") +
+                                  std::to_string(collapsedH));
+                        const auto* out =
+                            ui->find(base + ".msg.3.blk.0.out");
+                        check(out != nullptr &&
+                                  out->text.size() >= 600 &&
+                                  out->text.find("zzz") !=
+                                      std::string::npos,
+                              "⑤ tool_result 输出全文未渲染");
+                        const auto* copyBtn =
+                            ui->find(base + ".msg.3.copy");
+                        check(copyBtn != nullptr &&
+                                  copyBtn->text == "复制",
+                              "⑤ 复制 chip 缺失或文案不对");
+                    }
+                }
+            }
+        }
+
+        // ⑥ 全帧 id 唯一性（当前帧 = 任务展开态，元素最多的一帧）
+        {
+            std::map<std::string, int> counts;
+            for (const auto& root : ui->orderedRoots()) {
+                if (root) collectIds(*root, counts);
+            }
+            size_t duplicated = 0;
+            std::string firstDup;
+            for (const auto& [key, n] : counts) {
+                if (n > 1) {
+                    ++duplicated;
+                    if (firstDup.empty()) firstDup = key;
+                }
+            }
+            check(duplicated == 0,
+                  "⑥ 全帧发现重复 id " + std::to_string(duplicated) +
+                      " 个，首个: " + firstDup);
+        }
+
+        // 收起任务（再点行），避免 ⑦ 的头部被详情遮挡判错
+        const auto* rowCollapse = ui->find("agent.task." + tid);
+        if (rowCollapse != nullptr) {
+            clickCenter(window, rowCollapse);
+            composeFrame();
+        }
+
+        // ⑦ 可用工具区块：收起默认 → 点头部展开 → 卡片数 == 注册表数
+        const size_t registered = core::ToolRegistry::instance().listTools().size();
+        check(registered >= 1, "⑦ 注册表为空（app.stats 应已注册）");
+        const auto* toolsHeader = ui->find("agent.tools.header");
+        if (toolsHeader == nullptr) {
+            check(false, "⑦ agent.tools.header 缺失");
+        } else {
+            const auto* toolsLabel = ui->find("agent.tools.header.label");
+            check(toolsLabel != nullptr &&
+                      toolsLabel->text.find("可用工具") != std::string::npos &&
+                      toolsLabel->text.find(std::to_string(registered)) !=
+                          std::string::npos,
+                  "⑦ 头部缺「可用工具（N）」计数，实测: " +
+                      (toolsLabel ? toolsLabel->text : std::string("（无）")));
+            check(ui->find("agent.tools.card.0") == nullptr,
+                  "⑦ 收起态不应有工具卡");
+            clickCenter(window, toolsHeader);
+            composeFrame();
+            size_t cards = 0;
+            for (size_t k = 0; k < registered + 4; ++k) {
+                if (ui->find("agent.tools.card." + std::to_string(k)) !=
+                    nullptr) {
+                    ++cards;
+                }
+            }
+            check(cards == registered,
+                  "⑦ 工具卡数 " + std::to_string(cards) + " != 注册表数 " +
+                      std::to_string(registered));
+            const auto* cardName = ui->find("agent.tools.card.0.name");
+            check(cardName != nullptr && cardName->text == "app.stats",
+                  "⑦ card.0.name 应为 app.stats");
         }
     }
 

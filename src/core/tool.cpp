@@ -58,4 +58,14 @@ std::string ToolRegistry::allSchemasJson() const {
     return out;
 }
 
+std::vector<std::shared_ptr<ITool>> ToolRegistry::listTools() const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    std::vector<std::shared_ptr<ITool>> out;
+    out.reserve(tools_.size());
+    for (const auto& [name, tool] : tools_) {
+        out.push_back(tool);   // keep-alive 快照（find 同口径）
+    }
+    return out;
+}
+
 } // namespace core

@@ -158,6 +158,56 @@ public:
 
 } // namespace
 
+REGISTER_TEST(tool_registry_list_tools_snapshot,
+              "tool_registry: listTools 只读枚举（map 序快照，keep-alive）", {
+    core::ToolRegistry& reg = core::ToolRegistry::instance();
+
+    class NamedTool : public core::ITool {
+    public:
+        explicit NamedTool(std::string n) : n_(std::move(n)) {}
+        std::string name() const override { return n_; }
+        std::string schemaJson() const override {
+            return R"({"name":")" + n_ + R"("})";
+        }
+        core::Result<core::ToolResult> execute(const core::ToolArgs&) override {
+            return core::Result<core::ToolResult>::ok(
+                core::ToolResult{false, R"("ok")"});
+        }
+    private:
+        std::string n_;
+    };
+
+    core::ToolRegistry::instance().unregisterTool("test.zeta");
+    core::ToolRegistry::instance().unregisterTool("test.alpha");
+    auto a = std::make_shared<NamedTool>("test.alpha");
+    auto z = std::make_shared<NamedTool>("test.zeta");
+    DOCTEST_REQUIRE(reg.registerTool(a).isOk());
+    DOCTEST_REQUIRE(reg.registerTool(z).isOk());
+    ToolGuard g1{"test.alpha"};
+    ToolGuard g2{"test.zeta"};
+
+    auto tools = reg.listTools();
+    bool sawAlpha = false, sawZeta = false;
+    int alphaIdx = -1, zetaIdx = -1;
+    for (size_t i = 0; i < tools.size(); ++i) {
+        if (tools[i]->name() == "test.alpha") { sawAlpha = true; alphaIdx = static_cast<int>(i); }
+        if (tools[i]->name() == "test.zeta") { sawZeta = true; zetaIdx = static_cast<int>(i); }
+    }
+    DOCTEST_CHECK(sawAlpha);
+    DOCTEST_CHECK(sawZeta);
+    DOCTEST_CHECK_MESSAGE(alphaIdx < zetaIdx,
+                          "listTools 应按 map 序（name 字典序）alpha 在 zeta 前");
+
+    // keep-alive：摘除注册表条目后快照仍可用（shared_ptr 持活）
+    reg.unregisterTool("test.alpha");
+    bool stillUsable = false;
+    for (const auto& t : tools) {
+        if (t->name() == "test.alpha") stillUsable = true;
+    }
+    DOCTEST_CHECK(stillUsable);
+    return true;
+})
+
 REGISTER_TEST(agent_module_registers_own_tool,
               "agent_module: onStart 注册 app.stats、onStop 注销（生命周期）", {
     test_support::TestDb tdb("agenttools", "modtool");
@@ -358,10 +408,15 @@ REGISTER_TEST(agent_module_ui_id_contract,
         mod->compose(ui2, screen);
         ui2.end();
         DOCTEST_CHECK(ui2.find("agent.task." + tid + ".detail") != nullptr);
+        // 2026-10-02 run 日志改造：msg.<i> 是容器，role 在 .badge、预览在 .preview
         const auto* msg0 = ui2.find("agent.task." + tid + ".msg.0");
         DOCTEST_REQUIRE(msg0 != nullptr);
-        DOCTEST_CHECK(msg0->text.find("user") != std::string::npos);
-        DOCTEST_CHECK(msg0->text.find("把逾期待办全部完成") != std::string::npos);
+        const auto* badge0 = ui2.find("agent.task." + tid + ".msg.0.badge");
+        DOCTEST_REQUIRE(badge0 != nullptr);
+        DOCTEST_CHECK(badge0->text == std::string("用户"));
+        const auto* preview0 = ui2.find("agent.task." + tid + ".msg.0.preview");
+        DOCTEST_REQUIRE(preview0 != nullptr);
+        DOCTEST_CHECK(preview0->text.find("把逾期待办全部完成") != std::string::npos);
         const auto* row2 = ui2.find("agent.task." + tid);
         DOCTEST_REQUIRE(row2 != nullptr);
         DOCTEST_REQUIRE(row2->onClick != nullptr);

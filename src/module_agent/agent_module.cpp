@@ -7,15 +7,29 @@
 // eui::utf8(0xF544) 的 UTF-8 字节为 \xEF\x95\x84，与 app_registry.h
 // 图标列同值（assembly_registry_matches_module_getters 锁一致性）。
 //
-// 元素 id 契约表（plan task-12/10/11-brief，UI 测试逐字钉）：
-//   agent.page / agent.title / agent.form.goal / agent.form.create /
+// 元素 id 契约表（plan task-12/10/11-brief，UI 测试逐字钉；2026-10-02 run 日志
+// 改造 + 可用工具区块 + 多行目标输入增补）：
+//   agent.page / agent.title /
+//   agent.form.goal.label（「任务目标」标签）/ agent.form.goal（多行输入）/
+//   agent.form.create /
+//   agent.tools（可用工具区块容器）/ agent.tools.header（点开/收起）/
+//     agent.tools.header.label / agent.tools.header.hint /
+//     agent.tools.scroll / agent.tools.card.<k>
+//     （.bg 底 / .name / .desc / .params）
 //   agent.tasklist / agent.task.<taskId> / agent.task.<taskId>.title /
 //   agent.task.<taskId>.run（text=="启动"）/ agent.task.<taskId>.status /
 //   agent.task.<taskId>.edit（点开编辑表单）/ agent.task.<taskId>.toggle
 //     （text=="禁用"/"启用"，按 enabled）/ agent.task.<taskId>.enqueue
 //     （仅 trigger_type=="resident"）/
 //   agent.task.<taskId>.detail（展开才存在）/ agent.task.<taskId>.info
-//     （只读任务信息行）/ agent.task.<taskId>.msg.<i>
+//     （只读任务信息行）/ agent.task.<taskId>.runlist（最近 5 次 run）/
+//   agent.task.<taskId>.msgscroll（消息滚动区，展开才存在）/
+//   agent.task.<taskId>.msg.<i>（消息容器，列）/
+//     .msg.<i>.head / .msg.<i>.badge（角色徽章：用户/助手/工具）/
+//     .msg.<i>.toggle（展开/收起 chip）/ .msg.<i>.copy（复制 chip，展开才在）/
+//     .msg.<i>.preview（收起态 120 字节预览）/ .msg.<i>.blk.<j>（内容块，
+//     tool_use=🔧 chip 行 / tool_result=标签行）/ .msg.<i>.blk.<j>.out
+//     （tool_result 输出全文，wrap 多行）
 //   agent.edit.form 及子元素（editingTaskId_ 非空才存在）：agent.edit.goal /
 //     .trigger（下拉：手动/定时/常驻）/ .cron（trigger==定时才渲染）/
 //     .slot（下拉）/ .iter / .destructive / .save / .cancel / .error
@@ -25,6 +39,7 @@
 // 手搓「<id> 文本元素 + <id>.bg 底」两层（观感取自同一组 button token）。
 // 表单字段标签一律 .caption 后缀——components::dropdown 内部占用 <id>.label
 //（字段显示名），宿主标签若同 id 会串位（2026-10-02 实测的 UI 缺陷）。
+// 注意 agent.tools.header.label 不受此约束：header 不是 dropdown，无内部 .label。
 #include "agent_module.h"
 
 #include <algorithm>
@@ -33,7 +48,9 @@
 #include <components/button.h>
 #include <components/dropdown.h>
 #include <components/input.h>
+#include <components/scrollview.h>
 #include <components/switch.h>
+#include <core/window/window_backend.h>
 #include <eui/dsl.h>
 
 #include "model_slots.h"
@@ -46,6 +63,8 @@
 #include "module_agent/agent_loop.h"
 #include "module_agent/app_stats_tool.h"
 #include "module_agent/cron.h"
+#include "module_agent/message_blocks.h"
+#include "module_agent/tool_info.h"
 #include "module_agent/trigger_config.h"
 
 namespace module::agent {
@@ -140,33 +159,31 @@ void fieldCaption(::eui::Ui& ui, const std::string& id, const std::string& text,
         .build();
 }
 
-// 消息行预览：role + ": " + content 前 80 字节（超长在 UTF-8 边界回退，
-// 不切半个字符，末尾加省略号）。content 用 contentJson 原文（M1 最小实现，
-// 不做 blocks 提取）
+// 消息收起态预览：解码后纯文本前 120 字节（UTF-8 边界回退 + 省略号）。
+// 2026-10-02 改造：role 前缀挪进独立徽章（.badge），预览只承担文本；
+// 解码/截断统一走 message_blocks（单一解码点，兼容旧纯文本行）
 std::string messagePreview(const AgentMessageRow& m) {
-    constexpr size_t kMaxPreviewBytes = 80;
-    std::string content = m.contentJson;
-    if (content.size() > kMaxPreviewBytes) {
-        size_t cut = kMaxPreviewBytes;
-        while (cut > 0 &&
-               (static_cast<unsigned char>(content[cut]) & 0xC0) == 0x80) {
-            --cut;
-        }
-        content = content.substr(0, cut) + "…";
-    }
-    return m.role + ": " + content;
+    return messagePreviewFromJson(m.contentJson, 120);
 }
 
 // 任务名派生：M1 表单只有 goal 一个输入，任务名取 goal 前 24 字节
 //（UTF-8 边界回退）。goal 非空（调用方保证）故派生结果恒非空
+// 任务名派生：M1 表单只有 goal 一个输入，任务名取 goal 前 24 字节
+//（UTF-8 边界边界回退）。goal 非空（调用方保证）故派生结果恒非空。
+// 2026-10-02 goal 改多行输入：换行压成空格，任务名恒单行
 std::string deriveTaskName(const std::string& goal) {
     constexpr size_t kMaxNameBytes = 24;
-    if (goal.size() <= kMaxNameBytes) return goal;
+    std::string flat;
+    flat.reserve(goal.size());
+    for (const char c : goal) {
+        flat += (c == '\n' || c == '\r') ? ' ' : c;
+    }
+    if (flat.size() <= kMaxNameBytes) return flat;
     size_t cut = kMaxNameBytes;
-    while (cut > 0 && (static_cast<unsigned char>(goal[cut]) & 0xC0) == 0x80) {
+    while (cut > 0 && (static_cast<unsigned char>(flat[cut]) & 0xC0) == 0x80) {
         --cut;
     }
-    return goal.substr(0, cut) + "…";
+    return flat.substr(0, cut) + "…";
 }
 
 // 模型槽位下拉的键集与显示名（Task 10：真源 = src/model_slots.h 的 X 宏表）。
@@ -188,13 +205,28 @@ constexpr const char* kTriggerLabels[] = {"手动", "定时", "常驻"};
 constexpr int kTriggerCount = 3;
 constexpr int kTriggerScheduleIdx = 1;
 
-// 编辑表单固定高度：内层 4 行（标题 20 / 目标 40 / 触发 40 / 槽位 40 / 动作 32 +
-// 4 个 8px 间距 = 204）+ 上下 padding 12×2 = 228，取 240 留 12px 余量。列表高度
+// 编辑表单固定高度：内层 5 行（标题 20 / 目标 96 / 触发 40 / 槽位 40 / 动作 32
+// + 4 个 8px 间距 = 260）+ 上下 padding 12×2 = 284，取 300 留余量。2026-10-02
+// 目标输入改多行（96px ≈ 4 行视口，用户反馈③「输入框又小又简陋」）。列表高度
 // 计算里的减项必须与它一致（compose 的 gapCount/listH），否则行会溢出页底
-constexpr float kEditFormH = 240.0f;
+constexpr float kEditFormH = 300.0f;
+
+// 新建表单目标输入高（多行，与编辑表单同款 96）
+constexpr float kGoalInputH = 96.0f;
 
 // 详情区 run 列表长度上限（契约表：最近 5 次）
 constexpr int kRunListLimit = 5;
+
+// ---- run 日志消息区（2026-10-02 改造）----
+// 消息滚动区外高钳制：min ~5 行，max 520（≈26 行）——超出的真实内容高由
+// scrollView 内滚（EUI-NEO 内部滚动容器），外高不再往上加
+constexpr float kMsgAreaMinH = 96.0f;
+constexpr float kMsgAreaMaxH = 520.0f;
+
+// 可用工具区块：头部行高 / 工具卡高 / 滚动区最大高（卡多了内滚）
+constexpr float kToolsHeaderH = 28.0f;
+constexpr float kToolCardH = 44.0f;
+constexpr float kToolsListMaxH = 240.0f;
 
 int triggerIndexOf(const std::string& triggerType) {
     for (int i = 0; i < kTriggerCount; ++i) {
@@ -587,7 +619,28 @@ void AgentModule::toggleExpand(int64_t taskId) {
     }
     selectedRunId_.reset();   // 展开语义：默认选中最近一次 run（runlist[0]）
     detailMessages_.clear();
+    // 消息展开态按 seq 定位且只在 run 内有意义：切任务即清（切 run 的清在
+    // runlist 选中回调里）
+    expandedMsgSeqs_.clear();
+    ++msgScrollVersion_;
     tasksDirty_ = true;   // 触发一次刷新装载 run 列表与详情消息
+}
+
+// 单条消息展开/收起（run 日志改造 2026-10-02）
+void AgentModule::toggleMessageExpanded(int64_t seq) {
+    if (expandedMsgSeqs_.count(seq) > 0) {
+        expandedMsgSeqs_.erase(seq);
+    } else {
+        expandedMsgSeqs_.insert(seq);
+    }
+    ++msgScrollVersion_;   // 内容高变了 → scrollView 重测
+}
+
+// 「可用工具」注册表快照（惰性装载；展开时强制重装反映模块启停）
+void AgentModule::ensureToolsCache(bool forceReload) {
+    if (toolsCacheLoaded_ && !forceReload) return;
+    toolsCache_ = listRegisteredTools();
+    toolsCacheLoaded_ = true;
 }
 
 // 重查任务 / 各任务最近 run / 展开详情的消息。触发条件（compose 内判定）：
@@ -679,6 +732,151 @@ void AgentModule::refreshData() {
     }
 }
 
+// 单条消息行渲染（run 日志改造 2026-10-02）。结构：
+//   msg.<i>（列，定高 = 估算高，宁高勿低）
+//     .head    —— 角色徽章 + 展开/收起 chip +（展开时）复制 chip
+//     收起：.preview（解码文本前 120 字节单行，点击也可展开）
+//     展开：逐块 .blk.<j>
+//       text/plain   → wrap 多行全文（maxWidth 必须显式给：measureTextSize
+//                      只认 element.maxWidth，.size() 不带它）
+//       tool_use     → 「🔧 名称 + 参数摘要」单行 chip 文本
+//       tool_result  → 「工具输出」标签行 + 输出全文 wrap 多行（错误标红）
+void AgentModule::renderMessageRow(
+    ::eui::Ui& inner, float cw, const std::string& taskId, size_t index,
+    const AgentMessageRow& msg, const ::core::theme::Tokens& t,
+    const components::theme::ThemeColorTokens& tokens) {
+    (void)t;
+    const std::string mid = taskId + ".msg." + std::to_string(index);
+    const bool expanded = expandedMsgSeqs_.count(msg.seq) > 0;
+    const float boxH = estimateMessageHeight(msg, expanded, cw, 18.0f);
+    const std::vector<MessageBlock> blocks =
+        decodeMessageBlocks(msg.contentJson);
+    const std::string badge = messageRoleBadge(msg);
+
+    inner.column(mid)
+        .size(cw, boxH)
+        .gap(kMsgGap)
+        .content([&] {
+            inner.row(mid + ".head")
+                .size(cw, kMsgHeaderH)
+                .gap(8.0f)
+                .alignItems(eui::Align::CENTER)
+                .content([&] {
+                    inner.text(mid + ".badge")
+                        .size(44.0f, 20.0f)
+                        .text(badge)
+                        .fontSize(11.0f)
+                        .lineHeight(20.0f)
+                        .fontWeight(600)
+                        .color(badge == "工具" ? tokens.primary
+                                              : t.colors.textSecondary)
+                        .build();
+                    actionChip(inner, mid + ".toggle",
+                               expanded ? "收起" : "展开", 48.0f,
+                               /*primary=*/false, /*enabled=*/true, tokens,
+                               [this, seq = msg.seq] {
+                                   toggleMessageExpanded(seq);
+                               });
+                    if (expanded) {
+                        actionChip(inner, mid + ".copy", "复制", 48.0f,
+                                   /*primary=*/false, /*enabled=*/true, tokens,
+                                   [text = messagePlainText(blocks)] {
+                                       // setClipboardText 返回 void（模块层无
+                                       // 窗口句柄无法回读校验）→ LOG 留痕，
+                                       // claude_module doCopyConfig 同款口径
+                                       core::window::setClipboardText(text);
+                                       LOG_INFO("Agent: 已复制消息全文 " +
+                                                std::to_string(text.size()) +
+                                                " 字节到剪贴板");
+                                   });
+                    }
+                })
+                .build();
+            if (!expanded) {
+                inner.text(mid + ".preview")
+                    .size(cw, 18.0f)
+                    .text(messagePreview(msg))
+                    .fontSize(12.0f)
+                    .lineHeight(18.0f)
+.wrap(false)
+                    .color(t.colors.textSecondary)
+                    // 点消息行也能展开（需求 B：click message 或专用 chip）
+                    .onClick([this, seq = msg.seq] {
+                        toggleMessageExpanded(seq);
+                    })
+                    .build();
+                return;
+            }
+            if (blocks.empty()) {
+                inner.text(mid + ".blk.empty")
+                    .size(cw, 18.0f)
+                    .text("（空消息）")
+                    .fontSize(12.0f)
+                    .lineHeight(18.0f)
+                    .color(t.colors.textTertiary)
+                    .build();
+                return;
+            }
+            for (size_t j = 0; j < blocks.size(); ++j) {
+                const MessageBlock& b = blocks[j];
+                const std::string bid = mid + ".blk." + std::to_string(j);
+                switch (b.type) {
+                    case MessageBlock::Type::Text:
+                    case MessageBlock::Type::Plain: {
+                        inner.text(bid)
+                            .size(cw, estimateTextBlockHeight(b.text, cw, 12.0f,
+                                                              18.0f))
+                            .text(b.text)
+                            .fontSize(12.0f)
+                            .lineHeight(18.0f)
+                            .wrap(true)
+                            .maxWidth(cw)
+                            .color(b.type == MessageBlock::Type::Plain
+                                       ? t.colors.textTertiary
+                                       : t.colors.textPrimary)
+                            .build();
+                        break;
+                    }
+                    case MessageBlock::Type::ToolUse: {
+                        inner.text(bid)
+                            .size(cw, kMsgHeaderH)
+                            .text("🔧 " + b.toolName + "  " +
+                                  toolArgsSummary(b.text, 120))
+                            .fontSize(12.0f)
+                            .lineHeight(20.0f)
+                            .wrap(false)
+                            .color(tokens.primary)
+                            .build();
+                        break;
+                    }
+                    case MessageBlock::Type::ToolResult: {
+                        inner.text(bid)
+                            .size(cw, 18.0f)
+                            .text(b.isError ? "工具输出（错误）" : "工具输出")
+                            .fontSize(11.0f)
+                            .lineHeight(18.0f)
+                            .color(b.isError ? t.colors.error
+                                             : t.colors.textTertiary)
+                            .build();
+                        inner.text(bid + ".out")
+                            .size(cw, estimateTextBlockHeight(b.text, cw, 12.0f,
+                                                              18.0f))
+                            .text(b.text)
+                            .fontSize(12.0f)
+                            .lineHeight(18.0f)
+                            .wrap(true)
+                            .maxWidth(cw)
+                            .color(b.isError ? t.colors.error
+                                             : t.colors.textSecondary)
+                            .build();
+                        break;
+                    }
+                }
+            }
+        })
+        .build();
+}
+
 void AgentModule::compose(::eui::Ui& ui, const ::eui::Screen& screen) {
     const auto& t = ::core::theme::current();
     const auto themeTokens = ::core::theme::componentTokens(t);
@@ -699,11 +897,20 @@ void AgentModule::compose(::eui::Ui& ui, const ::eui::Screen& screen) {
     }
 
     const bool hasError = !formError_.empty();
-    // 页 column 子项：title / form / [error] / [编辑表单] / tasklist，
+    ensureToolsCache(/*forceReload=*/false);
+    const float toolsListH =
+        toolsOpen_ ? std::min(static_cast<float>(toolsCache_.size()) *
+                                      kToolCardH,
+                                  kToolsListMaxH)
+                   : 0.0f;
+    const float toolsH =
+        kToolsHeaderH + (toolsOpen_ ? kMsgGap + toolsListH : 0.0f);
+    // 页 column 子项：title / form / [error] / tools / [编辑表单] / tasklist，
     // gap = spacingLarge；子项数一变，gapCount 与减项必须同步（否则 tasklist
-    // 高度算错 → 末尾行溢出页底）
-    const int gapCount = (hasError ? 3 : 2) + (editingTaskId_ ? 1 : 0);
-    const float listH = screen.height - pad * 2.0f - 32.0f - 40.0f -
+    // 高度算错 → 末尾行溢出页底）。form 行高 = kGoalInputH（多行目标输入）
+    const int gapCount = (hasError ? 1 : 0) + 3 + (editingTaskId_ ? 1 : 0);
+    const float listH = screen.height - pad * 2.0f - 32.0f - kGoalInputH -
+                        toolsH -
                         (hasError ? 16.0f : 0.0f) -
                         (editingTaskId_ ? kEditFormH : 0.0f) -
                         static_cast<float>(gapCount) * t.sizes.spacingLarge;
@@ -723,18 +930,30 @@ void AgentModule::compose(::eui::Ui& ui, const ::eui::Screen& screen) {
                 .color(t.colors.textPrimary)
                 .build();
 
-            // ---- 新建表单：goal 输入 + 提交（M1 单输入；槽位 default /
-            // 迭代上限 10 固定默认，见 createTaskFromForm）----
+            // ---- 新建表单：任务目标标签 + 多行输入 + 提交（2026-10-02 用户
+            // 反馈③：单行小框改多行 4 行视口 + 引导 placeholder；M1 固定项
+            // 槽位 default / 迭代上限 10 见 createTaskFromForm）----
             ui.row("agent.form")
-                .size(contentW, 40.0f)
+                .size(contentW, kGoalInputH)
                 .gap(12.0f)
-                .alignItems(eui::Align::CENTER)
                 .content([&] {
+                    // 标签顶对齐（多行输入框的标签贴顶，垂直居中会悬在半空）
+                    ui.text("agent.form.goal.label")
+                        .size(72.0f, 20.0f)
+                        .text("任务目标")
+                        .fontSize(12.0f)
+                        .lineHeight(20.0f)
+                        .verticalAlign(eui::VerticalAlign::Top)
+                        .color(t.colors.textSecondary)
+                        .build();
                     components::input(ui, "agent.form.goal")
-                        .size(contentW - 132.0f, 40.0f)
+                        .size(contentW - 72.0f - 12.0f - 120.0f - 12.0f,
+                              kGoalInputH)
                         .value(goalInput_)
-                        .placeholder("输入任务目标，例如：把逾期的待办全部完成")
+                        .placeholder("描述这个任务要做什么，例如：把逾期的待办全部完成")
                         .fontSize(t.sizes.fontSizeBody)
+                        .multiline(true)
+                        .scrollbar(true)
                         .theme(themeTokens)
                         .onChange([this](const std::string& v) { goalInput_ = v; })
                         .build();
@@ -756,6 +975,133 @@ void AgentModule::compose(::eui::Ui& ui, const ::eui::Screen& screen) {
                     .color(t.colors.error)
                     .build();
             }
+
+            // ---- 可用工具区块（2026-10-02 用户反馈④）：收起默认，头部点击
+            // 展开。列 ToolRegistry 全部已注册工具（name + 描述 + 参数名），
+            // 卡多了内滚（kToolsListMaxH）----
+            ui.column("agent.tools")
+                .size(contentW, toolsH)
+                .gap(kMsgGap)
+                .content([&] {
+                    ui.row("agent.tools.header")
+                        .size(contentW, kToolsHeaderH)
+                        .interactive(true)
+                        .gap(8.0f)
+                        .alignItems(eui::Align::CENTER)
+                        .onClick([this] {
+                            toolsOpen_ = !toolsOpen_;
+                            if (toolsOpen_) {
+                                ensureToolsCache(/*forceReload=*/true);
+                            }
+                        })
+                        .content([&] {
+                            ui.text("agent.tools.header.label")
+                                .size(contentW - 72.0f, 20.0f)
+                                .text("可用工具（" +
+                                      std::to_string(toolsCache_.size()) + "）")
+                                .fontSize(13.0f)
+                                .lineHeight(20.0f)
+                                .fontWeight(700)
+                                .color(t.colors.textPrimary)
+                                .build();
+                            ui.text("agent.tools.header.hint")
+                                .size(64.0f, 20.0f)
+                                .text(toolsOpen_ ? "收起 ▲" : "展开 ▼")
+                                .fontSize(12.0f)
+                                .lineHeight(20.0f)
+                                .color(t.colors.textTertiary)
+                                .build();
+                        })
+                        .build();
+                    if (toolsOpen_ && !toolsCache_.empty()) {
+                        components::scrollView(ui, "agent.tools.scroll")
+                            .size(contentW, toolsListH)
+                            .gap(kMsgGap)
+                            .step(kToolCardH)
+                            .theme(themeTokens)
+                            .contentKey("agent.tools.scroll.n" +
+                                        std::to_string(toolsCache_.size()))
+                            .content([&](eui::Ui& inner, float cw, float) {
+                                for (size_t k = 0; k < toolsCache_.size(); ++k) {
+                                    const ToolInfo& tool = toolsCache_[k];
+                                    const std::string cid =
+                                        "agent.tools.card." + std::to_string(k);
+                                    inner.stack(cid)
+                                        .size(cw, kToolCardH)
+                                        .content([&] {
+                                            inner.rect(cid + ".bg")
+                                                .position(0.0f, 0.0f)
+                                                .size(cw, kToolCardH)
+                                                .color(t.colors.surface)
+                                                .radius(t.sizes.radiusSmall)
+                                                .build();
+                                            // 工具名（左上）+ 参数名（同行右侧）
+                                            inner.text(cid + ".name")
+                                                .position(12.0f, 5.0f)
+                                                .size(cw - 24.0f, 18.0f)
+                                                .text(tool.name)
+                                                .fontSize(12.0f)
+                                                .lineHeight(18.0f)
+                                                .fontWeight(600)
+                                                .wrap(false)
+                                                .color(t.colors.primary)
+                                                .build();
+                                            inner.text(cid + ".desc")
+                                                .position(12.0f, 23.0f)
+                                                .size(cw - 24.0f, 16.0f)
+                                                .text(
+                                                    tool.description.empty()
+                                                        ? "（无描述）"
+                                                        : utf8Truncate(
+                                                              tool.description,
+                                                              100))
+                                                .fontSize(11.0f)
+                                                .lineHeight(16.0f)
+                                                .wrap(false)
+                                                .color(t.colors.textSecondary)
+                                                .build();
+                                            std::string params = "参数：";
+                                            if (tool.params.empty()) {
+                                                params += "无";
+                                            } else {
+                                                for (size_t p = 0;
+                                                     p < tool.params.size();
+                                                     ++p) {
+                                                    if (p > 0) params += ", ";
+                                                    params += tool.params[p];
+                                                }
+                                            }
+                                            inner.text(cid + ".params")
+                                                .position(
+                                                    12.0f + 8.0f +
+                                                        static_cast<float>(
+                                                            tool.name.size()) *
+                                                            7.5f,
+                                                    5.0f)
+                                                .size(std::max(
+                                                          40.0f,
+                                                          cw - 24.0f - 8.0f -
+                                                              static_cast<float>(
+                                                                  tool.name
+                                                                      .size()) *
+                                                                  7.5f),
+                                                      18.0f)
+                                                .text(params)
+                                                .fontSize(11.0f)
+                                                .lineHeight(18.0f)
+                                                .wrap(false)
+                                                .horizontalAlign(
+                                                    eui::HorizontalAlign::Right)
+                                                .color(t.colors.textTertiary)
+                                                .build();
+                                        })
+                                        .build();
+                                }
+                            })
+                            .build();
+                    }
+                })
+                .build();
 
             // ---- 编辑表单（Task 10）：editingTaskId_ 非空才渲染 ----
             // 触发/槽位用 components::dropdown，包一层同尺寸 stack（settings 页
@@ -779,19 +1125,27 @@ void AgentModule::compose(::eui::Ui& ui, const ::eui::Screen& screen) {
                             .fontWeight(700)
                             .color(t.colors.textPrimary)
                             .build();
-                        // 目标
+                        // 目标（2026-10-02 用户反馈③：多行 4 行视口 + 引导文案）
                         ui.row("agent.edit.goal.row")
-                            .size(innerW, 40.0f)
+                            .size(innerW, kGoalInputH)
                             .gap(rowGap)
-                            .alignItems(eui::Align::CENTER)
                             .content([&] {
-                                fieldCaption(ui, "agent.edit.goal.caption", "任务目标", labelW,
-                                             40.0f, t.colors.textSecondary);
+                                ui.text("agent.edit.goal.caption")
+                                    .size(labelW, 20.0f)
+                                    .text("任务目标")
+                                    .fontSize(12.0f)
+                                    .lineHeight(20.0f)
+                                    .verticalAlign(eui::VerticalAlign::Top)
+                                    .color(t.colors.textSecondary)
+                                    .build();
                                 components::input(ui, "agent.edit.goal")
-                                    .size(innerW - labelW - rowGap, 40.0f)
+                                    .size(innerW - labelW - rowGap,
+                                          kGoalInputH)
                                     .value(editGoal_)
-                                    .placeholder("任务目标")
+                                    .placeholder("描述这个任务要做什么…")
                                     .fontSize(t.sizes.fontSizeBody)
+                                    .multiline(true)
+                                    .scrollbar(true)
                                     .theme(themeTokens)
                                     .onChange([this](const std::string& v) {
                                         editGoal_ = v;
@@ -1112,6 +1466,9 @@ void AgentModule::compose(::eui::Ui& ui, const ::eui::Screen& screen) {
                                                                    : t.colors.textSecondary)
                                                         .onClick([this, runId = runs[i].id] {
                                                             selectedRunId_ = runId;
+                                                            // seq 只在 run 内唯一：切 run 清消息展开态
+                                                            expandedMsgSeqs_.clear();
+                                                            ++msgScrollVersion_;
                                                             tasksDirty_ = true;
                                                         })
                                                         .build();
@@ -1139,16 +1496,43 @@ void AgentModule::compose(::eui::Ui& ui, const ::eui::Screen& screen) {
                                             .lineHeight(18.0f)
                                             .color(t.colors.textTertiary)
                                             .build();
-                                    }
-                                    for (size_t i = 0; i < detailMessages_.size();
-                                         ++i) {
-                                        ui.text(id + ".msg." + std::to_string(i))
-                                            .size(contentW - 24.0f, 18.0f)
-                                            .text(messagePreview(detailMessages_[i]))
-                                            .fontSize(12.0f)
-                                            .lineHeight(18.0f)
-                                            .color(t.colors.textSecondary)
-                                            .build();
+                                    } else {
+                                    // 消息区（2026-10-02 改造）：块级渲染 +
+                                    // 单条展开全文 + 工具调用展示。外高按
+                                    // 估算钳在 [kMsgAreaMinH, kMsgAreaMaxH]，
+                                    // 真实内容超高由 scrollView 内滚。
+                                    // contentKey 带版本号：展开/收起改变内容
+                                    // 高，bump 让 MeasureCache 重测
+                                    const float msgW = contentW - 24.0f;
+                                    const float msgAreaH =
+                                        estimateMessagesAreaHeight(
+                                            detailMessages_, expandedMsgSeqs_,
+                                            msgW, 18.0f, kMsgAreaMinH,
+                                            kMsgAreaMaxH);
+                                    components::scrollView(
+                                        ui, id + ".msgscroll")
+                                        .size(msgW, msgAreaH)
+                                        .gap(6.0f)
+                                        .step(18.0f)
+                                        .theme(themeTokens)
+                                        .contentKey(
+                                            id + ".msgscroll.v" +
+                                            std::to_string(msgScrollVersion_) +
+                                            ".n" +
+                                            std::to_string(
+                                                detailMessages_.size()))
+                                        .content([&](eui::Ui& inner, float cw,
+                                                     float) {
+                                            for (size_t i = 0;
+                                                 i < detailMessages_.size();
+                                                 ++i) {
+                                                renderMessageRow(
+                                                    inner, cw, id, i,
+                                                    detailMessages_[i], t,
+                                                    themeTokens);
+                                            }
+                                        })
+                                        .build();
                                     }
                                 })
                                 .build();
