@@ -11,6 +11,7 @@
 //   漏加会以「测试红」而不是「上线后才知道」的形式暴露。
 #pragma once
 
+#include <cstddef>
 #include <span>
 #include <string>
 
@@ -36,6 +37,22 @@ struct QuotaProviderEntry {
 //     G1-G4 各自把行插到哨兵**之前**。
 //   - 行序 = 探测优先级（detectByBaseUrl 返回首个命中行），也是 UI 下拉序。
 extern const QuotaProviderEntry kQuotaProviders[];
+
+// 表的**物理长度**（含表尾哨兵那一行），由 quota_registry.cpp 就地 `std::size` 得出。
+//
+// 为什么单开一个函数而不是在消费方写 `sizeof(kQuotaProviders)/sizeof(QuotaProviderEntry)`：
+// 头文件里那行是 `extern const QuotaProviderEntry kQuotaProviders[]`——**边界未知**的
+// 数组，对它 `sizeof` 是 `invalid application of 'sizeof' to an incomplete type`
+// （AppleClang 实测，见 test_claude_quota.cpp 的同款编译期断言）。长度只有定义所在的
+// quota_registry.cpp 里才拿得到。
+//
+// 用途：结构守卫要比对「表长」与「哨兵前的前缀长度」，二者相等 ⟺ 哨兵真的是最后一行。
+// G1-G4 是四个 worktree 各自往同一张表**插到哨兵之前**插行，冲突解错方向就是新行落到
+// 哨兵之后——findProvider 在哨兵处 break，那个 provider 永久不可达，而一切照常编译、
+// 照常全绿。这条函数让那种事故变成一条会红的断言（见 quota_registry_table_structure_guard）。
+//
+// ⚠️ 它**不是**第二个真相源：没有人工维护的计数常量，长度始终由表本身算出。
+std::size_t quotaProviderTableLength();
 
 // 按 id 精确查（整串相等，不做前缀 / 大小写折叠）。
 // 返回：命中行的单例；空 id / 未命中 / 空表 / 该行工厂返回 nullptr → nullptr。

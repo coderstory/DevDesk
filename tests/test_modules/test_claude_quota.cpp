@@ -18,6 +18,7 @@
 
 #include <algorithm>
 #include <cstddef>
+#include <iterator>
 #include <map>
 #include <span>
 #include <string>
@@ -149,6 +150,23 @@ const QuotaProviderEntry kMismatchedTable[] = {
     {nullptr, nullptr},
 };
 
+// 「行落在哨兵之后」的坏表：结构与真表同形，区别只在哨兵占了中间一行、真实行
+// 跟在它后面——正是 G1-G4 合并冲突解错方向时的产物形态。
+// 对它，findProvider / detectByBaseUrl / firstDuplicateId / firstInconsistentId
+// **一律绿**（循环遇哨兵即停，谁也看不见后面的行）——这正是哨兵守卫存在的理由，
+// 先用它证明守卫非恒真，再对真表断言。
+const QuotaProviderEntry kRowAfterSentinelTable[] = {
+    {"fake_provider", &createFake},
+    {nullptr, nullptr},   // ← 哨兵错位到了中间
+    {"stranded", &createMatcher},  // ← 这行永久不可达
+};
+
+// 「整表没有哨兵」的坏表：查找会一路读出数组末尾（UB）。
+const QuotaProviderEntry kNoSentinelTable[] = {
+    {"fake_provider", &createFake},
+    {"matcher", &createMatcher},
+};
+
 // 落库 / UI 用的键值对：fields() 声明的键 → 值
 ProviderConfig configWith(std::string providerId, std::string baseUrl,
                           std::string apiKey) {
@@ -157,6 +175,33 @@ ProviderConfig configWith(std::string providerId, std::string baseUrl,
     cfg.baseUrl = std::move(baseUrl);
     cfg.apiKey = std::move(apiKey);
     return cfg;
+}
+
+// 哨兵位置守卫：表结构是否符合「哨兵是最后一行」的约定。返回首个问题的描述串，
+// 无问题返回空串。
+//
+// 为什么需要它：上面两个 helper 与 findProvider / detectByBaseUrl 的循环边界
+// **都是哨兵本身**（遇 `id == nullptr` 即停），所以「某行落在哨兵之后」对它们
+// 一律不可见 —— 编译通过、全部用例绿，而那个 provider 永久不可达。G1-G4 正是
+// 四个 worktree 各自往这张表**插到哨兵之前**插行，冲突解错方向就是插到哨兵之后
+//（本批次已因合并冲突丢过两次：`8ec5f54` / `a33330e`）。
+//
+// 遍历**一律按 len 走界**，不按哨兵数行：哨兵缺失时靠哨兵数行的 tableSpan 会走出
+// 数组——越界读是 UB，不是可诊断的红，测试会崩或随机绿，而不是给出一条能指认
+// 「末行不是哨兵」的失败。
+//
+// 两种坏法分别报（它们是不同的事，诊断信息也不同）：
+//   - 整表没有哨兵      → 查找会一路读出数组末尾
+//   - 哨兵之后还有行    → 那些行永久不可达（哨兵本该在最后一行）
+std::string sentinelPlacementProblem(const QuotaProviderEntry* table, std::size_t len) {
+    if (table == nullptr || len == 0) return "表为空";
+    std::size_t rows = 0;
+    while (rows < len && table[rows].id != nullptr) ++rows;
+    if (rows == len) return "整表没有哨兵（查找会一路读出数组末尾）";
+    if (rows + 1 != len) {
+        return "有 " + std::to_string(len - rows - 1) + " 行落在哨兵之后（哨兵必须在最后一行）";
+    }
+    return {};
 }
 
 // 结构守卫（对任意显式表可跑）：返回首个重复 id；无重复返回空串。
@@ -307,12 +352,37 @@ REGISTER_TEST(claude_quota_registry_table_structure_guard,
     DOCTEST_CHECK_EQ(firstDuplicateId(kFakeTable), std::string(""));
     DOCTEST_CHECK_EQ(firstInconsistentId(kFakeTable), std::string(""));
 
+    // ---- 哨兵守卫非恒真：对两类坏表必须报出来 ----
+    // 证明这一段不是恒真断言。长度用 sizeof 就地算（本地数组是完整类型），
+    // 不引入人工计数常量。
+    // ① 行落在哨兵之后：哨兵在第 2 行，第 3 行成为永久不可达的死行
+    DOCTEST_CHECK_EQ(sentinelPlacementProblem(kRowAfterSentinelTable,
+                                              std::size(kRowAfterSentinelTable)),
+                     std::string("有 1 行落在哨兵之后（哨兵必须在最后一行）"));
+    // ② 整表没有哨兵：报的是「没有哨兵」，不是「有行落在哨兵之后」——两种坏法
+    //    是不同的事，诊断信息不该混
+    DOCTEST_CHECK_EQ(sentinelPlacementProblem(kNoSentinelTable, std::size(kNoSentinelTable)),
+                     std::string("整表没有哨兵（查找会一路读出数组末尾）"));
+    // ③ 好表（哨兵确实在末行）不报——kFakeTable 是哨兵结尾的正常形态
+    DOCTEST_CHECK_EQ(sentinelPlacementProblem(kFakeTable, std::size(kFakeTable)),
+                     std::string(""));
+
     const QuotaProviderEntry* table = module::claude::quota::kQuotaProviders;
-    // 哨兵结尾：表非零长（G0 阶段只有哨兵一行，G1-G4 在它之前插行）
+    // 表长由 quota_registry.cpp 就地 std::size 得出：头文件里 kQuotaProviders 是
+    // 边界未知的 `extern const QuotaProviderEntry []`，对它 sizeof **编译不过**
+    //（AppleClang 实测 invalid application of 'sizeof' to an incomplete type），
+    // 故不能在消费方写 sizeof/kQuotaProviders 那条判定。
+    const std::size_t len = module::claude::quota::quotaProviderTableLength();
     DOCTEST_CHECK(table != nullptr);
+    // 真表哨兵位置正确：末行必须是哨兵，且哨兵之前没有落下的行
+    DOCTEST_CHECK_EQ(sentinelPlacementProblem(table, len), std::string(""));
+
+    // 哨兵之前的行的常规守卫（firstDuplicateId / firstInconsistentId 的循环边界
+    // **就是哨兵**，故它们的覆盖范围仅限哨兵之前的行——哨兵之后的行由上面那条
+    // 哨兵守卫负责，不要在这条注释里声称它看得见）。
     DOCTEST_CHECK_EQ(firstDuplicateId(table), std::string(""));
-    // 每一行都必须能被自己的 id 查到、且查到的就是它自己——**这才是「表加了行
-    // ≠ 生效」的探针**，放在哨兵之后的行、行 id 与实现 id 不一致的行都会在这里露出来。
+    // 哨兵之前的每一行都必须能被自己的 id 查到、且查到的就是它自己——这是
+    // 「行 id 与实现 id 张冠李戴」的探针。
     DOCTEST_CHECK_EQ(firstInconsistentId(table), std::string(""));
     return true;
 })
@@ -517,6 +587,15 @@ public:
             platform::http::Response resp;
             resp.statusCode = status;
             resp.body = body;
+            if (networkErrorFlag) {
+                // 传输层失败的**第二种形态**：Result 是 ok，但响应自报网络错误
+                //（超时 / 连接失败 / 读体中断）。platform::http::send 两种都会返回，
+                // provider 两形态都得查——漏掉这形态时 statusCode 0 会落进
+                // <200 分支，报出一个根本不存在的 HTTP 状态码。
+                resp.statusCode = 0;
+                resp.networkError = true;
+                resp.errorMessage = "curl error 28";
+            }
             return core::Result<platform::http::Response>::ok(resp);
         };
     }
@@ -526,6 +605,7 @@ public:
     int status = 200;
     std::string body = "{}";
     bool transportFails = false;
+    bool networkErrorFlag = false;
 };
 
 ProviderConfig openCodeGoConfig(const std::string& apiKey = "sk-zen-go") {
@@ -761,6 +841,51 @@ REGISTER_TEST(claude_quota_opencode_go_transient_classification,
     const QuotaResult noSeamResult = p->fetch(openCodeGoConfig(), noSeam);
     DOCTEST_CHECK(noSeamResult.error == QuotaError::Transient);
     DOCTEST_CHECK_FALSE(noSeamResult.errorMessage.empty());
+    return true;
+})
+
+REGISTER_TEST(claude_quota_opencode_go_network_error_is_not_reported_as_http_zero,
+              "claude_quota: OpenCode Go networkError → 报网络原因，不报「HTTP 0」", {
+    // M3：G1 原来只查 Result::fail 这一种传输失败形态，漏了
+    // ok(Response{statusCode=0, networkError=true})。漏掉时 statusCode 0 落进
+    // <200 分支 → 用户看到「余量接口返回 HTTP 0」——一个不存在的状态码，把
+    // 排查方向指向上游 HTTP，而真因（超时）在网络层，一个字都不出现。
+    QuotaProvider* p = createOpenCodeGoProvider();
+    DOCTEST_REQUIRE(p != nullptr);
+
+    RecordingHttp timedOut;
+    timedOut.networkErrorFlag = true;  // statusCode 会被置 0
+    const QuotaResult r = p->fetch(openCodeGoConfig(), timedOut.fn());
+
+    DOCTEST_CHECK(r.error == QuotaError::Transient);
+    // 文案必须带上真正的失败原因（curl 的错误串），而不是一个编造的 HTTP 码
+    DOCTEST_CHECK(r.errorMessage.find("curl error 28") != std::string::npos);
+    DOCTEST_CHECK(r.errorMessage.find("HTTP 0") == std::string::npos);
+    DOCTEST_CHECK(r.windows.empty());
+    return true;
+})
+
+REGISTER_TEST(claude_quota_opencode_go_percent_is_clamped_to_range,
+              "claude_quota: OpenCode Go 百分比裁剪到 [0,100]（上游给 150 不外流）", {
+    QuotaProvider* p = createOpenCodeGoProvider();
+    DOCTEST_REQUIRE(p != nullptr);
+
+    RecordingHttp over;
+    over.body = R"({"usage": {
+      "rolling": {"status": "ok", "percent": 150},
+      "weekly":  {"status": "ok", "percent": -3},
+      "monthly": {"status": "ok", "percent": 12.5} }})";
+    const QuotaResult r = p->fetch(openCodeGoConfig(), over.fn());
+
+    DOCTEST_CHECK(r.error == QuotaError::None);
+    DOCTEST_REQUIRE_EQ(r.windows.size(), static_cast<std::size_t>(3));
+    DOCTEST_CHECK(r.windows[0].usedPercent >= 0.0);
+    DOCTEST_CHECK(r.windows[0].usedPercent <= 100.0);
+    DOCTEST_CHECK(r.windows[1].usedPercent >= 0.0);
+    DOCTEST_CHECK(r.windows[1].usedPercent <= 100.0);
+    // 小数不取整（契约：上游给小数时不截断）
+    DOCTEST_CHECK(r.windows[2].usedPercent > 12.4);
+    DOCTEST_CHECK(r.windows[2].usedPercent < 12.6);
     return true;
 })
 

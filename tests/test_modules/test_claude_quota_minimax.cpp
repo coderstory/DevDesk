@@ -30,6 +30,7 @@ using module::claude::quota::QuotaError;
 using module::claude::quota::QuotaKind;
 using module::claude::quota::QuotaProvider;
 using module::claude::quota::QuotaResult;
+using module::claude::quota::QuotaWindow;
 
 // ---- 假发送：记录最后一次请求 + 返回固定 HTTP 响应（零真实网络）----
 struct FakeHttp {
@@ -55,6 +56,20 @@ HttpSendFn httpFailing(FakeHttp& out) {
         out.calls += 1;
         return core::Result<platform::http::Response>::fail(core::ErrorCode::NetworkUnreachable,
                                                             "connection refused");
+    };
+}
+
+// 传输层失败的**第二种形态**：Result 是 ok，但响应自报 networkError
+//（超时 / 连接失败 / 读体中断，statusCode 0）。platform::http::send 两种都会返回，
+// provider 两形态都得查。
+HttpSendFn httpNetworkError(FakeHttp& out) {
+    return [&out](const platform::http::Request&) -> core::Result<platform::http::Response> {
+        out.calls += 1;
+        platform::http::Response resp;
+        resp.statusCode = 0;
+        resp.networkError = true;
+        resp.errorMessage = "curl error 28";
+        return core::Result<platform::http::Response>::ok(std::move(resp));
     };
 }
 
@@ -247,7 +262,13 @@ REGISTER_TEST(claude_quota_minimax_weekly_status_2_also_skips_weekly,
 })
 
 REGISTER_TEST(claude_quota_minimax_no_range_clamping,
-              "claude_quota: 百分比不做 0-100 裁剪（与 cc-switch 约定一致，double 不截断）", {
+              "claude_quota: 百分比裁剪到 [0,100]（反转后；渲染层 G7 尚不存在，裁剪在此落地）", {
+    // ⚠️ 本条**改写**了本文件早先的契约：当时钉的是「不做 0-100 裁剪，
+    // 依 cc-switch 约定交给下游渲染层」。审计 m8 查明那个「下游」G7 **尚不存在**，
+    // 于是「下游负责」在本仓库当前形态下无人负责，上游给 remain=150 会反转成
+    // 已用 -50% 原样流出去。裁剪改在本 provider 落地（clampUsedPercent），
+    // 下方两条断言钉死裁剪后的值。
+    // 同一份夹具保留：负数与 >100 两种越界输入，正好覆盖裁剪的两个方向。
     QuotaProvider* p = createMinimaxCn();
     const char* body = R"({
       "model_remains": [
@@ -265,8 +286,10 @@ REGISTER_TEST(claude_quota_minimax_no_range_clamping,
 
     DOCTEST_CHECK(r.error == QuotaError::None);
     DOCTEST_CHECK_EQ(r.windows.size(), static_cast<std::size_t>(2));
-    DOCTEST_CHECK_EQ(r.windows[0].usedPercent, 105.0);  // 100 - (-5)
-    DOCTEST_CHECK_EQ(r.windows[1].usedPercent, -50.0);  // 100 - 150
+    // remain=-5 → 反转 105 → 裁到 100（不是「已用 105%」）
+    DOCTEST_CHECK_EQ(r.windows[0].usedPercent, 100.0);
+    // remain=150 → 反转 -50 → 裁到 0（不是「已用 -50%」，负数已用率无意义）
+    DOCTEST_CHECK_EQ(r.windows[1].usedPercent, 0.0);
     return true;
 })
 
@@ -418,6 +441,25 @@ REGISTER_TEST(claude_quota_minimax_transport_failure_is_transient,
     DOCTEST_CHECK(r.error == QuotaError::Transient);
     DOCTEST_CHECK(r.windows.empty());
     DOCTEST_CHECK(r.errorMessage.find("connection refused") != std::string::npos);
+    return true;
+})
+
+REGISTER_TEST(claude_quota_minimax_network_error_is_not_reported_as_http_zero,
+              "claude_quota: MiniMax networkError → 报网络原因，不报「HTTP 0」", {
+    // M3：G2 与 G1 原来都只查 Result::fail 这一种传输失败形态，漏了
+    // ok(Response{statusCode=0, networkError=true})。漏掉时 statusCode 0 落进
+    // <200 分支 → 用户看到「接口返回 HTTP 0」——一个不存在的状态码，把排查方向
+    // 指向上游 HTTP 状态码，而真因（超时 / 连接失败）在网络层。
+    QuotaProvider* p = createMinimaxCn();
+    FakeHttp fake;
+    const QuotaResult r = p->fetch(cnConfig(), httpNetworkError(fake));
+
+    DOCTEST_CHECK_EQ(fake.calls, 1);
+    DOCTEST_CHECK(r.error == QuotaError::Transient);
+    // 文案必须带上真正的失败原因（curl 的错误串），而不是一个编造的 HTTP 码
+    DOCTEST_CHECK(r.errorMessage.find("curl error 28") != std::string::npos);
+    DOCTEST_CHECK(r.errorMessage.find("HTTP 0") == std::string::npos);
+    DOCTEST_CHECK(r.windows.empty());
     return true;
 })
 
