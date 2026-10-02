@@ -64,7 +64,7 @@ std::vector<std::string> columnDefs(core::data::SqliteDb& db, const std::string&
 // ============ 表与索引的存在性 ============
 
 REGISTER_TEST(schema_creates_all_tables,
-              "schema: applySchema 建出全部 13 张应用表", {
+              "schema: applySchema 建出全部 15 张应用表", {
     auto path = test_support::tempDbPath(kDbPrefix, "create");
     std::error_code ec;
     std::filesystem::remove(path, ec);
