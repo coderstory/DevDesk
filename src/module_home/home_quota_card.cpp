@@ -220,6 +220,44 @@ QuotaCardMetrics computeQuotaCardMetrics(const std::vector<QuotaHomeRow>& rows,
     return m;
 }
 
+HomeQuotaBudget computeHomeQuotaBudget(float screenHeight, float statCardHeight,
+                                       float pad, float gap) {
+    HomeQuotaBudget out;
+    // 除「余量卡行内容 + 图表卡」以外，本页其余各块的固定占用。
+    // 每一项都对应 home_module 里真实绘制的那一块（kHomeWelcomeH / statH /
+    // kQuotaCardChromeH / kHomeActionsH），改任一块高度这里自动跟着走。
+    const float fixed = pad * 2.0f                    // 上下内边距
+                        + kHomeWelcomeH + gap          // 欢迎区
+                        + statCardHeight + gap        // 统计网格
+                        + kQuotaCardChromeH + gap     // 余量卡外壳（不含行内容）
+                        + gap                          // 图表卡与快捷按钮行之间
+                        + kHomeActionsH;               // 快捷按钮行
+
+    // ① 先按「图表不压缩」算一遍：窗口宽裕时余量卡能拿到多少
+    float chart = kHomeChartH;
+    float quotaBody = screenHeight - fixed - chart;
+    // ② **只有「压缩图表」真的换得到一张能画的余量卡时**才压缩。
+    //    这条判断不能省：矮到连 kHomeChartMinH 都腾不出 kQuotaCardMinBodyH 的
+    //    窗口（本机设计最小窗 720 正是这种），压缩图表换不来任何余量卡，只会把
+    //    用户本来看得懂的图表压成一条缝——那是净亏。
+    //    实测教训：先前写成无条件压缩，test_ui_modern 的「Home Token 分布」
+    //    几何用例（跑在 1200×720、峰值柱高钉死 84）当场红成 1。
+    const bool compressionCanHelp =
+        screenHeight - fixed - kHomeChartMinH >= kQuotaCardMinBodyH;
+    if (quotaBody < kQuotaCardMinBodyH && compressionCanHelp) {
+        const float need = kQuotaCardMinBodyH - quotaBody;   // 还差多少
+        chart = std::max(kHomeChartMinH, chart - need);
+        quotaBody = screenHeight - fixed - chart;
+    }
+    out.chartHeight = chart;
+    out.quotaBodyHeight = std::max(0.0f, quotaBody);
+    out.drawsQuotaCard = quotaBody >= kQuotaCardMinBodyH;
+    // 压到底仍装不下 = 本页装不下（余量卡整张不画，**图表保持完整高度**）。
+    // 不静默：pageStillOverflows 让调用方 / 用例能一眼看出「这不是余量卡的锅」。
+    out.pageStillOverflows = !out.drawsQuotaCard;
+    return out;
+}
+
 namespace {
 
 // 一行窗口（进度条 + 百分比 [+ 倒计时]）

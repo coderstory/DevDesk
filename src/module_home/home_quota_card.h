@@ -86,6 +86,43 @@ QuotaCardMetrics computeQuotaCardMetrics(const std::vector<QuotaHomeRow>& rows,
                                          float contentWidth,
                                          float maxBodyHeight = kQuotaCardMaxBodyH);
 
+// ============ 首页高度预算（**纯函数**，G8）============
+//
+// 为什么把它从 home_module 的 compose lambda 里提出来：那段预算算式原本是
+// 写在 lambda 体内的**内联算术**，谁也测不到它——于是「1200×720 下余量卡
+// 到底画不画」这件事只能靠人肉心算，而心算与代码漂移过一次（G7 遗留 1 的
+// 记载「既有内容 580 / 可用 640」与代码实算对不上）。提成纯函数后：阈值由
+// 一条用例钉死，改任一块高度时用例会红。
+struct HomeQuotaBudget {
+    // 余量卡行内容可用高度。< kQuotaCardMinBodyH 时 drawsQuotaCard == false。
+    float quotaBodyHeight = 0.0f;
+    // 为腾出余量卡空间，首页图表卡被压缩后的高度（>= kHomeChartMinH）。
+    float chartHeight = 0.0f;
+    // 首页内容仍然装不下（窗口比设计最小窗还矮）：余量卡整张不画，
+    // 且 chartHeight 停在压缩下限。这是**已知未解**的那一段，报告里如实记。
+    bool pageStillOverflows = false;
+    bool drawsQuotaCard = false;
+};
+
+// 首页「今日 token 图表卡」的标称高度（不压缩时）。
+constexpr float kHomeChartH = 260.0f;
+// 图表卡被压缩后的下限。再矮就不是图表了，宁可不画余量卡也不把图表压成一条缝。
+constexpr float kHomeChartMinH = 160.0f;
+// 快捷按钮行高。
+constexpr float kHomeActionsH = 44.0f;
+// 欢迎区高度。
+constexpr float kHomeWelcomeH = 72.0f;
+
+// 按窗口可用高度分配「余量卡行内容高」与「图表卡高」。
+// 规则（有序，先到先得）：
+//   1. 余量卡行内容至少要 kQuotaCardMinBodyH，否则整张不画（画一张只有标题
+//      的卡不如不画——见 kQuotaCardMinBodyH 处注释）；
+//   2. 图表卡从 kHomeChartH 起往下让位给规则 1，最多压到 kHomeChartMinH；
+//   3. 压到下限仍不够 → quotaBodyHeight 仍 < 下限，drawsQuotaCard == false，
+//      pageStillOverflows == true。
+HomeQuotaBudget computeHomeQuotaBudget(float screenHeight, float statCardHeight,
+                                       float pad, float gap);
+
 // 卡片回调（compose 每帧装配；自由函数不捕获 this）
 struct Hooks {
     std::function<void()> refreshAll;               // [刷新]

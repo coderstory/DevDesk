@@ -46,6 +46,20 @@
 
 namespace module::claude::quota {
 
+// **后台扫描间隔的生产默认值——全项目唯一的那个 60**（G6 裁决 8 的兑现）。
+//
+// 为什么单开一个常量：改扫描间隔这件事有**两处**消费者——
+//   ① QuotaRefreshOptions::scanIntervalSec 的默认成员初始值（真跑的 60）；
+//   ② 保存配置后的 toast 文案「后台将在 N 秒内自动查询」（给用户看的 60）。
+// 两处各写一个字面量 60 的话，改了①忘了②，用户看到的就与实际行为不符
+// （这是本会话反复出现的「两处字面量」型缺陷）。此处把字面量收敛到**一个**
+// constexpr 常量，两处都从它取——于是「文案与真跑的间隔」在**结构上**不可能漂移。
+//
+// 改这个值就是「用户承诺的自动查询延迟」变了，属产品决策：同步改
+// test_claude_quota_store 的 production_scan_interval_is_single_source
+// （那条用例把本常量钉在 60 上，改值必须连测试一起改，避免无声漂移）。
+inline constexpr int kQuotaProductionScanIntervalSec = 60;
+
 // 一轮刷新的产出（供调用方 / 用例断言「这一轮刷了谁」）。
 struct RefreshRoundResult {
     int64_t profileId = 0;
@@ -64,9 +78,10 @@ struct QuotaRefreshOptions {
     // 一轮 = slices 片 × sliceMs 毫秒。停机最多等一片。
     int slicesPerRound = 10;
     int sliceMs = 20;
-    // 扫描间隔（秒）：两次扫配置之间的最小间隔。真实 60 秒一轮；
+    // 扫描间隔（秒）：两次扫配置之间的最小间隔。真实 60 秒一轮
+    //（kQuotaProductionScanIntervalSec —— 与 toast 文案同源，别在这里另写字面量）；
     // 用例设 0 → 每片都扫。
-    int scanIntervalSec = 60;
+    int scanIntervalSec = kQuotaProductionScanIntervalSec;
 };
 
 class QuotaRefresher {

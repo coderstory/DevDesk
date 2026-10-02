@@ -21,13 +21,16 @@
 #include "module_claude_proxy/profile_repository.h"
 #include "platform/credential_protection.h"
 #include "quota/quota_credential.h"
+#include "quota/quota_error_text.h"
 #include "quota/quota_refresh.h"
 #include "quota/quota_store.h"
 
 #include <atomic>
 #include <cstdlib>
 #include <chrono>
+#include <iostream>
 #include <map>
+#include <stdexcept>
 #include <string>
 #include <thread>
 #include <utility>
@@ -1145,5 +1148,347 @@ REGISTER_TEST(claude_quota_refresher_stop_waits_for_inflight_fetch,
     DOCTEST_CHECK_MESSAGE(elapsed.count() < 10000, "stopAll 在在途请求上挂死");
     // 等完了 = 结果真落库了（没有半截状态）
     DOCTEST_CHECK(store.loadResult(1).isOk());
+    return true;
+})
+
+// ==================== G8：失败韧性收口 =================================
+//
+// spec §5.3 的四条收尾，本段逐条钉死。前三条此前**只有纯函数级**的覆盖
+// （claude_quota_is_due_predicate 测 isDue、claude_quota_store_auth_error…
+// 测落库），缺的是**整条链路**上的行为：失败后到底会不会重打供应商、
+// 一个 profile 炸了会不会带倒整轮、四类错误会不会被「保留旧值」吞掉。
+// 这里补的正是那三条「链路级」缺口。
+
+// ---- 假凭据来源之三：**指定 profile 抛异常**，其余照常转发 ----
+// 「单个 profile 失败不许中断整轮」这条只有它能测：另两个假件都不抛。
+class SelectivelyThrowingCredentialSource final : public QuotaCredentialSource {
+public:
+    explicit SelectivelyThrowingCredentialSource(int64_t throwForProfileId)
+        : throwFor_(throwForProfileId) {}
+
+    QuotaResult resolveAndFetch(int64_t profileId, const QuotaProvider& provider,
+                                const HttpSendFn& http) override {
+        ++calls;
+        if (profileId == throwFor_) {
+            throw std::runtime_error("该 profile 的凭据层炸了（注入）");
+        }
+        return provider.fetch(ProviderConfig{}, http);
+    }
+
+    std::atomic<int> calls{0};
+
+private:
+    int64_t throwFor_;
+};
+
+// 四类「非 Transient」错误的公共核对：last_error / last_error_kind 都写对，
+// 且**旧数据仍在**（错误不被保留逻辑吞掉）。
+// 返回 false 时由调用方用例判红——用例名带错误分类名，失败时一眼看出是哪类坏了。
+bool checkErrorClassNotMasked(QuotaStore& store, int64_t profileId, QuotaError kind,
+                              const char* label) {
+    std::string why;
+    auto row = store.loadResult(profileId);
+    if (row.isFail()) {
+        why = "loadResult 失败";
+    } else if (row.value().lastErrorKind != kind) {
+        why = "lastErrorKind 不等于该分类";
+    } else if (row.value().lastError.empty()) {
+        why = "last_error 为空串（UI 会画出空白错误行 = 静默失败面）";
+    } else if (row.value().lastErrorKind == QuotaError::Transient) {
+        why = "被降级成 Transient（会挂「可能过期」角标掩盖真因）";
+    } else if (!row.value().hasEverSucceeded) {
+        why = "有旧值却被抹掉了（hasEverSucceeded=false）";
+    } else if (row.value().windows.size() != 2u) {
+        why = "旧窗口被抹掉了";
+    } else if (row.value().windows[0].usedPercent != 62.5) {
+        why = "旧窗口数值被改写";
+    } else if (row.value().lastSuccessAt != 1000) {
+        why = "lastSuccessAt 被失败推进了（数据时间与数据本身自相矛盾）";
+    }
+    if (!why.empty()) {
+        std::cerr << "FAIL [" << label << "] " << why << std::endl;
+        return false;
+    }
+    return true;
+}
+
+REGISTER_TEST(claude_quota_refresher_failure_advances_attempt_clock,
+              "claude_quota_refresher: 失败也推进 fetched_at —— 持续失败不重试风暴", {
+    test_support::TestDb tdb("quotarefresh", "failclock");
+    QuotaStore store(tdb.handle());
+    FakeClock clock;
+
+    QuotaConfigRow cfg;
+    cfg.profileId = 1;
+    cfg.providerId = "scripted";
+    cfg.enabled = true;
+    cfg.autoRefresh = true;
+    cfg.intervalMinutes = 15;
+    DOCTEST_REQUIRE(store.saveConfig(cfg).isOk());
+
+    // provider **一直失败**（网络一直抖 / 上游一直 5xx）
+    ScriptedProvider provider{failure(QuotaError::Transient, "网络超时")};
+    ForwardingCredentialSource creds;
+    QuotaRefreshOptions opts;
+    opts.slicesPerRound = 1;
+    opts.sliceMs = 1;
+    opts.scanIntervalSec = 0;   // 每片都扫：模拟后台 tick 不停地来
+    QuotaRefresher refresher(store, creds,
+                             [&provider](const std::string&) -> QuotaProvider* {
+                                 return &provider;
+                             },
+                             HttpSendFn{}, [&clock] { return clock.now; }, opts);
+
+    auto first = refresher.refreshNow();
+    DOCTEST_REQUIRE(first.isOk());
+    DOCTEST_REQUIRE_EQ(first.value().size(), 1u);
+    DOCTEST_CHECK(!first.value()[0].skipped);
+    DOCTEST_CHECK(first.value()[0].persisted);
+    DOCTEST_CHECK_EQ(provider.calls.load(), 1);
+
+    // 失败**也**写了 fetched_at（到期判定从「上次尝试」起算，见 quota_store.h）
+    auto row = store.loadResult(1);
+    DOCTEST_REQUIRE(row.isOk());
+    DOCTEST_CHECK_EQ(row.value().fetchedAt, clock.now);
+
+    // 🔴 关键断言：网络持续失败时，间隔内**不许**再打供应商。
+    // 若 fetched_at 只在成功时推进（拿到的是 0 / 旧值），这里每分钟都会重打一次
+    // → provider.calls 从 1 涨到 6，重试风暴。
+    for (int minute = 1; minute <= 5; ++minute) {
+        clock.now += 60;   // 每分钟扫一次，合计 5 分钟 < 15 分钟间隔
+        auto again = refresher.refreshNow();
+        DOCTEST_REQUIRE(again.isOk());
+        DOCTEST_CHECK(again.value()[0].skipped);
+    }
+    DOCTEST_CHECK_EQ(provider.calls.load(), 1);
+
+    // 防线不是「永不重试」，是「按间隔重试」：越过 15 分钟后重新到期
+    clock.now += 15 * 60;
+    auto due = refresher.refreshNow();
+    DOCTEST_REQUIRE(due.isOk());
+    DOCTEST_CHECK(!due.value()[0].skipped);
+    DOCTEST_CHECK_EQ(provider.calls.load(), 2);
+    return true;
+})
+
+REGISTER_TEST(claude_quota_refresher_one_bad_profile_does_not_break_round,
+              "claude_quota_refresher: 单个 profile 抛异常，其余照常刷新落库", {
+    test_support::TestDb tdb("quotarefresh", "onebad");
+    QuotaStore store(tdb.handle());
+    FakeClock clock;
+
+    for (int64_t id = 1; id <= 3; ++id) {
+        QuotaConfigRow cfg;
+        cfg.profileId = id;
+        cfg.providerId = "scripted";
+        cfg.enabled = true;
+        cfg.autoRefresh = true;
+        cfg.intervalMinutes = 15;
+        DOCTEST_REQUIRE(store.saveConfig(cfg).isOk());
+    }
+
+    ScriptedProvider provider{okTiered()};
+    // profile 2 抛异常；1 与 3 正常转发
+    SelectivelyThrowingCredentialSource creds(2);
+    QuotaRefreshOptions opts;
+    opts.slicesPerRound = 1;
+    opts.sliceMs = 1;
+    opts.scanIntervalSec = 0;
+    QuotaRefresher refresher(store, creds,
+                             [&provider](const std::string&) -> QuotaProvider* {
+                                 return &provider;
+                             },
+                             HttpSendFn{}, [&clock] { return clock.now; }, opts);
+
+    auto round = refresher.refreshNow();
+    DOCTEST_REQUIRE(round.isOk());
+    // 三个 profile 都有产出（一个都没被整轮吞掉）
+    DOCTEST_REQUIRE_EQ(round.value().size(), 3u);
+    // 炸的那个被标成 skipped + 有原因，且**没有**被记成成功
+    DOCTEST_CHECK(round.value()[1].skipped);
+    DOCTEST_CHECK(!round.value()[1].persisted);
+    DOCTEST_CHECK(!round.value()[1].skipReason.empty());
+    // 前后两个照常刷新落库 —— 这才是「整轮不中断」的真判据
+    DOCTEST_CHECK(round.value()[0].persisted);
+    DOCTEST_CHECK(round.value()[2].persisted);
+    // provider 只被正常的两个 profile 调了 2 次（炸的那个没走到 fetch）
+    DOCTEST_CHECK_EQ(provider.calls.load(), 2);
+
+    // 落库事实：1 / 3 有结果，2 没有
+    DOCTEST_CHECK(store.loadResult(1).isOk());
+    DOCTEST_CHECK(!store.loadResult(2).isOk());
+    DOCTEST_CHECK(store.loadResult(3).isOk());
+    return true;
+})
+
+REGISTER_TEST(claude_quota_store_auth_not_masked_by_retention,
+              "claude_quota_store: Auth 立即透出（旧值保留但错误不被吞）", {
+    test_support::TestDb tdb("quotastore", "maskauth");
+    QuotaStore store(tdb.handle());
+    DOCTEST_REQUIRE(store.applyFetchResult(1, okTiered(), 1000).isOk());
+    DOCTEST_REQUIRE(store.applyFetchResult(
+                        1, failure(QuotaError::Auth, "密钥无效"), 2000).isOk());
+    return checkErrorClassNotMasked(store, 1, QuotaError::Auth, "Auth");
+})
+
+REGISTER_TEST(claude_quota_store_entitlement_not_masked_by_retention,
+              "claude_quota_store: Entitlement 立即透出（旧值保留但错误不被吞）", {
+    test_support::TestDb tdb("quotastore", "maskent");
+    QuotaStore store(tdb.handle());
+    DOCTEST_REQUIRE(store.applyFetchResult(1, okTiered(), 1000).isOk());
+    DOCTEST_REQUIRE(store.applyFetchResult(
+                        1, failure(QuotaError::Entitlement, "套餐过期"), 2000).isOk());
+    return checkErrorClassNotMasked(store, 1, QuotaError::Entitlement, "Entitlement");
+})
+
+REGISTER_TEST(claude_quota_store_shape_not_masked_by_retention,
+              "claude_quota_store: Shape 立即透出（旧值保留但错误不被吞）", {
+    test_support::TestDb tdb("quotastore", "maskshape");
+    QuotaStore store(tdb.handle());
+    DOCTEST_REQUIRE(store.applyFetchResult(1, okTiered(), 1000).isOk());
+    DOCTEST_REQUIRE(store.applyFetchResult(
+                        1, failure(QuotaError::Shape, "响应结构不认识"), 2000).isOk());
+    return checkErrorClassNotMasked(store, 1, QuotaError::Shape, "Shape");
+})
+
+REGISTER_TEST(claude_quota_store_not_configured_not_masked_by_retention,
+              "claude_quota_store: NotConfigured 立即透出（旧值保留但错误不被吞）", {
+    test_support::TestDb tdb("quotastore", "masknotcfg");
+    QuotaStore store(tdb.handle());
+    DOCTEST_REQUIRE(store.applyFetchResult(1, okTiered(), 1000).isOk());
+    DOCTEST_REQUIRE(store.applyFetchResult(
+                        1, failure(QuotaError::NotConfigured, "配置不完整"), 2000).isOk());
+    return checkErrorClassNotMasked(store, 1, QuotaError::NotConfigured, "NotConfigured");
+})
+
+REGISTER_TEST(claude_quota_store_error_headline_points_at_the_right_fix,
+              "claude_quota_store: 四类错误的头条文案各自指向正确处置（不把用户引向错方向）", {
+    // 「文案把用户引向错误方向」是本批明确要找的缺陷类型。四类错误的处置方向
+    // 各不相同，把 Entitlement 说成「换密钥」或把 Transient 说成「套餐过期」
+    // 都会让用户白折腾。这里逐类钉死 headline 的**关键词**。
+    const auto headline = [](QuotaError kind) {
+        return module::claude::quota::quotaErrorHeadline(kind, std::string());
+    };
+    // Auth → 让用户换密钥
+    DOCTEST_CHECK(headline(QuotaError::Auth).find("换一把") != std::string::npos);
+    DOCTEST_CHECK(headline(QuotaError::Auth).find("重试") == std::string::npos);
+    // Entitlement → 明说换密钥没用、得续费（minimax 套餐过期走的就是这条）
+    DOCTEST_CHECK(headline(QuotaError::Entitlement).find("换密钥没用") != std::string::npos);
+    DOCTEST_CHECK(headline(QuotaError::Entitlement).find("续费") != std::string::npos);
+    DOCTEST_CHECK(headline(QuotaError::Entitlement).find("换一把") == std::string::npos);
+    // Transient → 才轮到「重试」
+    DOCTEST_CHECK(headline(QuotaError::Transient).find("重试") != std::string::npos);
+    // Shape → 是「供应商改了接口」，不是「你的网络有问题」
+    DOCTEST_CHECK(headline(QuotaError::Shape).find("结构") != std::string::npos);
+    DOCTEST_CHECK(headline(QuotaError::Shape).find("重试") == std::string::npos);
+    // NotConfigured → 去补配置，不是重试
+    DOCTEST_CHECK(headline(QuotaError::NotConfigured).find("补全") != std::string::npos);
+    DOCTEST_CHECK(headline(QuotaError::NotConfigured).find("重试") == std::string::npos);
+    // None 不该有文案（成功态）
+    DOCTEST_CHECK(headline(QuotaError::None).empty());
+    return true;
+})
+
+REGISTER_TEST(claude_quota_production_scan_interval_is_single_source,
+              "claude_quota_refresh: 扫描间隔只有一个真相源（结构默认值 == 承诺给用户的秒数）", {
+    // G6 裁决 8 的欠账兑现：以前 toast 文案与 QuotaRefreshOptions 各写一个字面量
+    // 60，改一边另一边不动。现在两边都从 kQuotaProductionScanIntervalSec 取。
+    // 本用例把那个常量钉在 60 上：改它是产品决策（用户承诺的自动查询延迟变了），
+    // 必须连本用例一起改，避免无声漂移。
+    DOCTEST_CHECK_EQ(module::claude::quota::kQuotaProductionScanIntervalSec, 60);
+    // 结构默认值真的取自那个常量（不是又抄了一遍 60）
+    const QuotaRefreshOptions defaults;
+    DOCTEST_CHECK_EQ(defaults.scanIntervalSec,
+                     module::claude::quota::kQuotaProductionScanIntervalSec);
+    // 用例注入的 0 仍能覆盖（测试专用短间隔这条路没被常量锁死）
+    QuotaRefreshOptions injected;
+    injected.scanIntervalSec = 0;
+    DOCTEST_CHECK_EQ(injected.scanIntervalSec, 0);
+    return true;
+})
+
+REGISTER_TEST(claude_quota_refresher_manual_path_bypasses_interval_and_auto_refresh,
+              "claude_quota_refresher: 手动刷新绕过 interval 与 auto_refresh（G6 L1 的唤醒通道终点）", {
+    // G6 遗留 L1「保存后不即时刷新」的收口：G7 给首页 [刷新] 按钮加了**唤醒通道**
+    //（进程级 atomic 请求位 + tick 线程每片查），tick 拿到位后走
+    // refreshNow(manual=true)。本用例盯的就是那个终点——**不改**它，不要求它
+    // 同步 refreshNow（后者是 15s×N 的真网络查询，会冻 UI）。
+    //
+    // 这里的配置刻意设成「自动刷新关 + 刚查过」：这两种情况下
+    // refreshNow(false) 一定不刷，于是「手动通道有没有真的开一路」无所遁形。
+    test_support::TestDb tdb("quotarefresh", "manual");
+    QuotaStore store(tdb.handle());
+    FakeClock clock;
+
+    QuotaConfigRow cfg;
+    cfg.profileId = 1;
+    cfg.providerId = "scripted";
+    cfg.enabled = true;
+    cfg.autoRefresh = false;        // ← 手动通道必须无视它
+    cfg.intervalMinutes = 15;
+    DOCTEST_REQUIRE(store.saveConfig(cfg).isOk());
+
+    ScriptedProvider provider{okTiered()};
+    ForwardingCredentialSource creds;
+    QuotaRefreshOptions opts;
+    opts.slicesPerRound = 1;
+    opts.sliceMs = 1;
+    opts.scanIntervalSec = 0;
+    QuotaRefresher refresher(store, creds,
+                             [&provider](const std::string&) -> QuotaProvider* {
+                                 return &provider;
+                             },
+                             HttpSendFn{}, [&clock] { return clock.now; }, opts);
+
+    // 自动通道：auto_refresh=false → 一条都不刷
+    auto autoRound = refresher.refreshNow(false);
+    DOCTEST_REQUIRE(autoRound.isOk());
+    DOCTEST_CHECK(autoRound.value()[0].skipped);
+    DOCTEST_CHECK_EQ(provider.calls.load(), 0);
+
+    // 手动通道：无视 auto_refresh 与 interval，真的发一次
+    auto manualRound = refresher.refreshNow(true);
+    DOCTEST_REQUIRE(manualRound.isOk());
+    DOCTEST_CHECK(!manualRound.value()[0].skipped);
+    DOCTEST_CHECK(manualRound.value()[0].persisted);
+    DOCTEST_CHECK_EQ(provider.calls.load(), 1);
+
+    // 结果真落库（不是只调了 provider）
+    auto row = store.loadResult(1);
+    DOCTEST_REQUIRE(row.isOk());
+    DOCTEST_CHECK(row.value().hasEverSucceeded);
+
+    // 手动刷新**不**把 auto_refresh 打开：再走自动通道依然不刷
+    auto afterManual = refresher.refreshNow(false);
+    DOCTEST_REQUIRE(afterManual.isOk());
+    DOCTEST_CHECK(afterManual.value()[0].skipped);
+    DOCTEST_CHECK_EQ(provider.calls.load(), 1);
+
+    // 两道闸仍然生效：enabled=false 的档，手动通道也**不**该强行刷。
+    // 注意手动一轮会**同时**重刷所有「enabled 且配了 provider」的档（profile 1
+    // 也算），所以这里断言的是「调用次数只 +1」——如果 enabled=false 那道闸
+    // 失效，次数会 +2（profile 1 与 2 各一次）。
+    QuotaConfigRow off = cfg;
+    off.profileId = 2;
+    off.enabled = false;
+    DOCTEST_REQUIRE(store.saveConfig(off).isOk());
+    const int callsBefore = provider.calls.load();
+    auto manualOff = refresher.refreshNow(true);
+    DOCTEST_REQUIRE(manualOff.isOk());
+    DOCTEST_REQUIRE_EQ(manualOff.value().size(), 2u);
+    DOCTEST_CHECK(manualOff.value()[1].skipped);
+    DOCTEST_CHECK_EQ(provider.calls.load(), callsBefore + 1);   // 只有 profile 1
+
+    // provider_id 为空的档同样不该被强行查询
+    QuotaConfigRow none = cfg;
+    none.profileId = 3;
+    none.providerId.clear();
+    DOCTEST_REQUIRE(store.saveConfig(none).isOk());
+    const int callsBeforeNone = provider.calls.load();
+    auto manualNone = refresher.refreshNow(true);
+    DOCTEST_REQUIRE(manualNone.isOk());
+    DOCTEST_REQUIRE_EQ(manualNone.value().size(), 3u);
+    DOCTEST_CHECK(manualNone.value()[2].skipped);
+    DOCTEST_CHECK_EQ(provider.calls.load(), callsBeforeNone + 1);  // 只有 profile 1
     return true;
 })
