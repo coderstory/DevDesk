@@ -296,10 +296,16 @@ echo "── 构建（增量）──"
 # "win 的编译卡住了 没输出"）。CI 里设这个变量即可看到实时进度。
 if [ "${DEVDESK_BUILD_VERBOSE:-0}" = "1" ]; then
   _build_log="$(mktemp -t devdesk-build.XXXXXX)"
-  if ! cmake --build "$BUILD_DIR" 2>&1 | tee "$_build_log"; then
+  # ⚠ 退出码必须取 PIPESTATUS[0]（= cmake 的码），不能取管道的码：管道码是**最后一个**
+  #   命令的码，这里恒为 `tee` 的 0，于是 `if !` 永远不成立 —— 构建失败也照样打
+  #   「✅ 构建成功」。没有 pipefail 时 PIPESTATUS 是唯一正确来源（bash 数组，
+  #   读一次即失效，故立刻存进变量）。实测抓到过这个静默假绿。
+  cmake --build "$BUILD_DIR" 2>&1 | tee "$_build_log"
+  _build_rc=${PIPESTATUS[0]}
+  if [ "$_build_rc" -ne 0 ]; then
     echo "──── 错误摘要 ────"
     grep -iE "error|FAILED" "$_build_log" | head -30
-    echo "❌ 构建失败（上方为错误摘要）"; rm -f "$_build_log"; exit 1
+    echo "❌ 构建失败（上方为错误摘要）"; rm -f "$_build_log"; exit "$_build_rc"
   fi
   rm -f "$_build_log"
   echo "✅ 构建成功"
