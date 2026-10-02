@@ -56,6 +56,8 @@
 #include "core/module_interface.h"
 #include "core/proxy_stats.h"
 #include "module_home/home_service.h"  // startOfDayEpoch（逐时 token 种子的本地零点锚）
+#include "quota/quota_store.h"  // G7：余量卡种子走真落库口（编解码单点）
+#include <vector>
 #include "core/theme.h"
 
 #include <cmath>
@@ -165,6 +167,65 @@ int main(int argc, char* argv[]) {
     const float w = static_cast<float>(args.windowW);
     const float h = static_cast<float>(args.windowH);
     bool passed = true;
+
+    // ---- G7 余量卡种子（组 G/H 前提）----
+    // p1（上一段的种子，无 quota 配置行）= 未配置态；另建 8 个 profile 走
+    // 「正常 Tiered」+ 一个 Balance 型，逐行都是「行首 + 条 + （错误行）」。
+    // 行数刻意超过卡片视口上限 → 组 H 能断言「出滚动条」。
+    {
+        using namespace module::claude::quota;
+        QuotaStore store(env.db->db());
+        const int64_t base = static_cast<int64_t>(std::time(nullptr));
+        for (int i = 0; i < 8; ++i) {
+            const std::string name = "quota-p" + std::to_string(i);
+            if (!env.db->db()
+                     .exec("INSERT INTO claude_profiles (name, base_url, "
+                           "api_key_hint, api_key_check, model, created_at, "
+                           "updated_at) VALUES ('" +
+                           name +
+                           "', 'https://example.invalid', 'sk-***', 'chk', 'm', " +
+                           std::to_string(base) + ", " + std::to_string(base) +
+                           ")")
+                     .isOk()) {
+                std::cerr << "home_probes: 余量种子 profile 插入失败\n";
+                passed = false;
+                break;
+            }
+            auto st = env.db->db().prepare("SELECT last_insert_rowid() AS id");
+            auto rows = st.isOk() ? st.value().fetchAll()
+                                  : core::Result<std::vector<core::data::SqlRow>>::fail(
+                                        st.errorCode(), st.errorMessage());
+            if (rows.isFail() || rows.value().empty()) {
+                std::cerr << "home_probes: 取余量种子 profileId 失败\n";
+                passed = false;
+                break;
+            }
+            const int64_t pid = rows.value()[0].getInt64("id").value();
+
+            QuotaConfigRow cfg;
+            cfg.profileId = pid;
+            cfg.providerId = (i == 7) ? "deepseek" : "opencode_go";
+            cfg.enabled = true;
+            cfg.autoRefresh = true;
+            cfg.intervalMinutes = 15;
+            store.saveConfig(cfg);
+
+            QuotaResult r;
+            r.kind = (i == 7) ? QuotaKind::Balance : QuotaKind::Tiered;
+            if (r.kind == QuotaKind::Balance) {
+                r.balanceRemaining = 8.5 + i;
+                r.currency = "CNY";
+            } else {
+                QuotaWindow w;
+                w.key = (i % 2 == 0) ? "five_hour" : "weekly";
+                w.usedPercent = 20.0 + static_cast<double>(i) * 8.0;
+                if (i == 3) w.resetsAt = "2030-01-01T00:00:00";
+                r.windows.push_back(w);
+            }
+            store.applyFetchResult(pid, r, base);
+        }
+    }
+
 
     core::dsl::Ui* ui = nullptr;
     // 单帧标准单元：pollOnce（输入派发 + 交互）→ compose（recompose 树 +
@@ -385,6 +446,129 @@ int main(int argc, char* argv[]) {
         }
         core::proxy_stats::endStream(streamId);
         core::proxy_stats::resetForTest();  // 清时钟与状态
+    }
+
+    // ==================== 组 G：G7 余量卡几何（P1） ====================
+    // 三条，都用**数字**判（不接受「看起来对」）：
+    //   G(a) 余量卡横向不溢出窗口
+    //   G(b) **上方统计网格的 x/y/w/h 逐字不变**（余量卡是插在它下方的新块，
+    //       不能把既有统计卡的 y/h 顶走 —— 这是简报点名的必测项）
+    //   G(c) 余量卡在统计网格**之下**、且整页底（快捷按钮行）没有被顶出屏外
+    {
+        composeFrame();
+        const core::dsl::Element* card =
+            ui != nullptr ? ui->find("home.quota") : nullptr;
+        const core::dsl::Element* stats =
+            ui != nullptr ? ui->find("home.stats") : nullptr;
+        const core::dsl::Element* acts =
+            ui != nullptr ? ui->find("home.actions") : nullptr;
+        if (card == nullptr || stats == nullptr) {
+            std::cerr << "home_probes: 组 G 结构缺失 (card="
+                      << (card != nullptr ? "ok" : "null")
+                      << ", stats=" << (stats != nullptr ? "ok" : "null")
+                      << ")\n";
+            passed = false;
+        } else {
+            const float scale = core::theme::fontScale();
+            // 期望值来自 home_module.cpp 的既有常量（pad 40 / header 72 /
+            // gap 20 / statH 144×fontScale / contentW = 屏宽 − 80），
+            // 不是从当前帧反推的（反推等于「测了它自己」）。
+            const float expectPad = 40.0f;
+            const float expectHeaderH = 72.0f;
+            const float expectGap = 20.0f;
+            const float expectStatH = 144.0f * scale;
+            const float expectStatsY = expectPad + expectHeaderH + expectGap;
+            const float expectStatsW = static_cast<float>(args.windowW) -
+                                       expectPad * 2.0f;
+            if (std::fabs(stats->frame.x - expectPad) > 0.5f ||
+                std::fabs(stats->frame.width - expectStatsW) > 0.5f ||
+                std::fabs(stats->frame.y - expectStatsY) > 0.5f ||
+                std::fabs(stats->frame.height - expectStatH) > 0.5f) {
+                std::cerr << "home_probes: 组 G(b) FAIL——统计网格几何被顶走："
+                          << "x=" << stats->frame.x << "(期望 " << expectPad
+                          << ") w=" << stats->frame.width << "(期望 "
+                          << expectStatsW << ") y=" << stats->frame.y
+                          << "(期望 " << expectStatsY << ") h="
+                          << stats->frame.height << "(期望 " << expectStatH
+                          << ")\n";
+                passed = false;
+            }
+            // (a) 横向不溢出
+            if (card->frame.x < -0.5f ||
+                card->frame.x + card->frame.width >
+                    static_cast<float>(args.windowW) + 0.5f) {
+                std::cerr << "home_probes: 组 G(a) FAIL——余量卡横向溢出：x="
+                          << card->frame.x << " w=" << card->frame.width
+                          << "（窗宽 " << args.windowW << "）\n";
+                passed = false;
+            }
+            // (c) 在统计网格之下且不相交
+            if (card->frame.y < stats->frame.y + stats->frame.height - 0.5f) {
+                std::cerr << "home_probes: 组 G(c) FAIL——余量卡压住统计网格："
+                          << "card.y=" << card->frame.y << " stats 底="
+                          << (stats->frame.y + stats->frame.height) << "\n";
+                passed = false;
+            }
+            // (c) 快捷按钮行仍在屏内（余量卡不能把既有内容顶出可视区）
+            if (acts != nullptr &&
+                acts->frame.y + acts->frame.height >
+                    static_cast<float>(args.windowH) + 0.5f) {
+                std::cerr << "home_probes: 组 G(c) FAIL——快捷按钮行被顶出窗口："
+                          << "底=" << (acts->frame.y + acts->frame.height)
+                          << " > 窗高 " << args.windowH << "\n";
+                passed = false;
+            }
+        }
+    }
+
+    // ==================== 组 H：G7 余量卡滚动（P1） ====================
+    // H(a) 行多 → scrollView 出滚动条，且滚动条不高于视口
+    // H(b) 删掉全部余量数据后重排 → **滚动条消失**（证明它是内容驱动的，
+    //      不是「无条件画一根」的装饰）
+    {
+        const core::dsl::Element* bar =
+            ui != nullptr ? ui->find("home.quota.scroll.scroll") : nullptr;
+        const core::dsl::Element* view =
+            ui != nullptr ? ui->find("home.quota.scroll") : nullptr;
+        if (bar == nullptr || view == nullptr) {
+            std::cerr << "home_probes: 组 H(a) FAIL——profile 多时未出滚动条"
+                      << "(scroll=" << (view != nullptr ? "ok" : "null")
+                      << ", bar=" << (bar != nullptr ? "ok" : "null") << ")\n";
+            passed = false;
+        } else if (bar->frame.height > view->frame.height + 0.5f ||
+                   bar->frame.height <= 0.0f) {
+            std::cerr << "home_probes: 组 H(a) FAIL——滚动条高 " << bar->frame.height
+                      << " 越界（视口高 " << view->frame.height << "）\n";
+            passed = false;
+        }
+    }
+    {
+        // H(b)：清空余量数据**并删掉这批种子 profile** 后重排，滚动条必须消失。
+        // ⚠ 只删余量两表是不够的：剩下的 profile 全是「未配置」行，9 行 ×
+        // (24 头 + 10 间距) = 296 > 250 视口，**本来就该**出滚动条——那是
+        // 正确行为，断言它「不该出」才是错的。
+        auto& sq = env.db->db();
+        if (!sq.exec("DELETE FROM profile_quota_config").isOk() ||
+            !sq.exec("DELETE FROM profile_quota_result").isOk() ||
+            !sq.exec("DELETE FROM claude_profiles WHERE name LIKE 'quota-p%'")
+                 .isOk()) {
+            std::cerr << "home_probes: 组 H(b) 清库失败\n";
+            passed = false;
+        }
+        composeFrame();
+        composeFrame();
+        const core::dsl::Element* bar =
+            ui != nullptr ? ui->find("home.quota.scroll.scroll") : nullptr;
+        if (bar != nullptr) {
+            std::cerr << "home_probes: 组 H(b) FAIL——只剩 1 行（未配置）时"
+                      << "仍画了滚动条（内容不满视口不该出）\n";
+            passed = false;
+        }
+        if (ui != nullptr && ui->find("home.quota.row.1.config.bg") == nullptr) {
+            std::cerr << "home_probes: 组 H(b) FAIL——未配置行的「去配置」按钮"
+                      << "在清库后消失了\n";
+            passed = false;
+        }
     }
 
     // ---- 退出前落一张「当前状态图」（--screenshot <路径>，2026-10-03 帧捕获批次）----

@@ -96,13 +96,18 @@ public:
     void stopAll();
 
     // 同步跑一轮（不经线程）。用例直调它注入时钟；生产只有测试与手动刷新用。
+    // `manual = true`（G7 首页 [刷新] 按钮走的就是这条，见
+    // quota_home_bridge.h 的 requestQuotaImmediateRefresh）：**不等 interval，
+    // 也不看 auto_refresh**（手动刷新档的唯一刷新途径就是它），但仍然尊重
+    // 总开关 enabled 与「provider_id 非空」——没开的档不该被强行查询。
     // 返回这一轮每个 profile 的产出（顺序 = profile_id 升序）。
-    core::Result<std::vector<RefreshRoundResult>> refreshNow();
+    core::Result<std::vector<RefreshRoundResult>> refreshNow(bool manual = false);
 
     // 到期判定（可单测的纯逻辑）：enabled && auto_refresh && 距上次尝试
     // >= interval 分钟。lastFetchedAt = 0（从未查过）→ 恒到期。
+    // manual = true 时只保留 enabled 与 provider_id 两道（见 refreshNow）。
     static bool isDue(const QuotaConfigRow& config, int64_t nowSec,
-                      int64_t lastFetchedAt);
+                      int64_t lastFetchedAt, bool manual = false);
 
     // 就绪缝：最近一次唤醒发出时，结果是否**已经从库里读得回来**。
     //
@@ -116,7 +121,8 @@ public:
 private:
     void tickThreadLoop();
     // 单个 profile 的完整一轮：查配置 → 到点则取凭据查询 → 落库 → 唤醒 UI。
-    RefreshRoundResult refreshProfile(int64_t profileId, int64_t nowSec);
+    RefreshRoundResult refreshProfile(int64_t profileId, int64_t nowSec,
+                                      bool manual);
 
     QuotaStore& store_;
     QuotaCredentialSource& credentials_;

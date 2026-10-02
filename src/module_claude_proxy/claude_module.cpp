@@ -31,6 +31,7 @@
 #include "claude_ui_state.h"
 #include "core/logging.h"
 #include "core/module_interface.h"
+#include "core/router.h"   // appRouter（消费首页发来的「去配置」负载）
 #include "core/theme.h"
 #include "core/component_theme.h"
 #include "core/database.h"
@@ -81,6 +82,11 @@ public:
     // ============ UI（骨架：分区委派，各区实现见 claude_ui_*.cpp） ============
 
     void compose(eui::Ui& ui, const eui::Screen& screen) override {
+        // G7：先消费本页的跨模块跳转负载（首页余量卡的「去配置」按钮发来的
+        // "action:quota_config:<profileId>"）。**每帧调用一次**——
+        // consumePendingPayload 是取走即清的一次性语义，多调无害；
+        // 放在 compose 最前面，保证同帧就画出弹窗（不闪一帧空列表）。
+        consumeQuotaConfigPayload();
         const auto& t = core::theme::current();
         const auto themeTokens = core::theme::componentTokens(t);
         const float pad = t.sizes.spacingXXLarge;        // 40
@@ -944,6 +950,32 @@ private:
         }
         quota::openQuotaDialog(state_.quota, profileId, profile.value().baseUrl, apiKey,
                                hasExisting ? &existing : nullptr);
+    }
+
+    // G7：消费 Router 挂在本页的「去配置」负载 "action:quota_config:<id>"。
+    // 为什么走 Router 而不是让首页直接调本模块：module_home 不得 include
+    // module_claude_proxy（模块隔离），Router 负载是仓库既有的跨模块通道
+    // （同 markdown 的 "action:new_note"）。
+    void consumeQuotaConfigPayload() {
+        auto* router = ::core::appRouter();
+        if (router == nullptr) return;
+        const std::string payload =
+            router->consumePendingPayload(::core::PageId::ClaudeProxy);
+        static const std::string kPrefix = "action:quota_config:";
+        if (payload.rfind(kPrefix, 0) != 0) return;   // 不是本模块的负载
+        const std::string idText = payload.substr(kPrefix.size());
+        if (idText.empty()) return;
+        // 全数字才认：负载是外部拼的字符串，atoi 遇非数字返 0 → 会去开
+        // profile 0 的弹窗（不存在 → 弹 toast 报错），但静默开错页更糟。
+        bool allDigits = true;
+        for (char c : idText) {
+            if (c < '0' || c > '9') { allDigits = false; break; }
+        }
+        if (!allDigits) {
+            LOG_WARN("余量配置负载 id 非法: " + payload);
+            return;
+        }
+        openQuotaDialog(std::strtoll(idText.c_str(), nullptr, 10));
     }
 
     // 「测试连接」：后台跑一次真 fetch（UI 线程不等 —— provider timeout 15s）。

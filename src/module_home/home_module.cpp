@@ -13,7 +13,9 @@
 #include "core/proxy_stats.h"
 #include "core/router.h"
 #include "core/theme.h"
+#include "home_quota_card.h"
 #include "home_service.h"
+#include "quota_home_bridge.h"
 
 #include <eui/dsl.h>
 
@@ -627,6 +629,65 @@ public:
                         }
                     })
                     .build();
+                }
+
+                // ========== 供应商余量（G7）============
+                // 位置：统计网格**下方**的独立全宽区块（spec §5.1「不占第 6 张
+                // 统计格」——审计实测 1200 宽下 statW ≈ 135px × 固定 144px 高，
+                // 放不下「每 profile 一行 + 多窗口进度条」）。
+                // 数据来源：只读库（中立桥 quota_home_bridge.h）。**首页不发
+                // HTTP** —— 后台刷新由 claude_module 起的 QuotaRefresher 负责，
+                // 两模块生命周期解耦；`[刷新]` 按钮只是往刷新侧写一个请求信号。
+                // 门控：claude_proxy 模块关闭 → 整卡隐藏（没有 profile 可显示，
+                // 且刷新器根本没在跑，显示一张点不动的卡是骗人）。
+                if (moduleRegistered(::core::PageId::ClaudeProxy)) {
+                    // 窗口剩余高度预算：首页整页**没有外层滚动容器**（page
+                    // column 高度固定 = 屏高），卡片若不封顶就会把下方的图表与
+                    // 快捷按钮顶出可视区。预算按本页各块的**真实常量**现算，
+                    // 不写死一个魔数（改任一块的高度时这里自动跟着走）。
+                    const float quotaChartH = 260.0f;   // 与下方图表卡同值
+                    const float quotaActH = 44.0f;      // 与快捷按钮行同值
+                    const float quotaReserve =
+                        pad * 2.0f                      // 上下内边距
+                        + 72.0f + gap                   // 欢迎区 + 间距
+                        + statH + gap                   // 统计网格 + 间距
+                        + module::home::quota_card::kQuotaCardChromeH
+                        + gap                            // 卡片外壳 + 间距
+                        + quotaChartH + gap              // 图表卡 + 间距
+                        + quotaActH;                     // 快捷按钮行
+                    const float quotaBodyAvail =
+                        screen.height - quotaReserve;
+                    if (quotaBodyAvail >=
+                        module::home::quota_card::kQuotaCardMinBodyH) {
+                    std::vector<module::claude::quota::QuotaHomeRow> quotaRows;
+                    std::string quotaErr;
+                    if (auto* qdb = ::core::appDatabase()) {
+                        auto qr =
+                            module::claude::quota::listQuotaHomeRows(*qdb);
+                        if (qr.isOk()) {
+                            quotaRows = std::move(qr.value());
+                        } else {
+                            // 不静默：查询失败会在卡上显形（不是「暂无 profile」）
+                            quotaErr = qr.errorMessage();
+                            LOG_ERROR("Home 余量卡读取失败: " + quotaErr);
+                        }
+                    } else {
+                        quotaErr = "数据库未初始化（appDatabase 为空）";
+                    }
+                    module::home::quota_card::Hooks hooks;
+                    hooks.refreshAll = [] {
+                        module::claude::quota::
+                            requestQuotaImmediateRefresh();
+                    };
+                    hooks.openConfig = [this](int64_t profileId) {
+                        navigateTo(::core::PageId::ClaudeProxy,
+                                   "action:quota_config:" +
+                                       std::to_string(profileId));
+                    };
+                    hooks.loadError = quotaErr;
+                    module::home::quota_card::drawQuotaCard(
+                        ui, t, contentW, quotaRows, hooks, quotaBodyAvail);
+                    }  // 窗口够高才画（见上）
                 }
 
                 // ========== 今日 Token 用量分布（每小时输出 token 合计，去头去尾） ==========

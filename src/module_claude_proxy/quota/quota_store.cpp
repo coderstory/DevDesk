@@ -13,6 +13,8 @@
 #include "platform/credential_protection.h"
 #include "platform/json.h"
 
+#include "quota_error_text.h"
+
 namespace module::claude::quota {
 
 using core::ErrorCode;
@@ -459,6 +461,15 @@ core::Result<void> QuotaStore::applyFetchResult(int64_t profileId,
         }
         row.lastError = result.errorMessage;
         row.lastErrorKind = result.error;
+        // **代码保证：last_error 列在「有错」时恒非空**（G7）。
+        // 落库前 provider 若给了空 errorMessage，这里补成 headline 文案；
+        // 不补的话首页错误行会画出空白 —— 空文案在 UI 上等于「什么都没发生」，
+        // 是本项目审计里点名的静默失败面。这条是**兜底而不是唯一防线**：
+        // 读侧（quota_home_view.cpp）还会在 last_error 为空时再兜一次，
+        // 好让本改动之前落下的旧行（无迁移纪律：老行不迁）也显示得出话。
+        if (row.lastError.empty()) {
+            row.lastError = quotaErrorHeadline(result.error, std::string());
+        }
     }
 
     auto st = db_.prepare(
