@@ -17,7 +17,10 @@ add_library(devdesk_module_claude_proxy STATIC
     quota/ccswitch_source.cpp
     quota/deepseek_provider.cpp
     quota/provider_minimax_cn.cpp
+    quota/quota_credential.cpp
+    quota/quota_refresh.cpp
     quota/quota_registry.cpp
+    quota/quota_store.cpp
     quota/quota_volcano.cpp
     settings_sync.cpp
     settings_takeover.cpp

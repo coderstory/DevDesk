@@ -180,7 +180,7 @@ public:
         return parts.path == "/zen/go" || parts.path == "/zen/go/v1";
     }
 
-    QuotaResult fetch(const ProviderConfig& cfg, const HttpSendFn& http) override {
+    QuotaResult fetch(const ProviderConfig& cfg, const HttpSendFn& http) const override {
         // 空缝 → Transient：不许直接调用触发 std::bad_function_call
         //（项目铁律「不抛 C++ 异常」；契约见 quota_provider.h:113-116）
         if (!http) {

@@ -63,6 +63,7 @@ add_executable(devdesk_tests
     test_modules/test_claude_quota.cpp
     test_modules/test_claude_quota_ccswitch.cpp
     test_modules/test_claude_quota_minimax.cpp
+    test_modules/test_claude_quota_store.cpp
     test_modules/test_claude_quota_volcano.cpp
     test_modules/test_provider_config.cpp
     test_modules/test_settings_sync.cpp

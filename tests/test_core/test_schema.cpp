@@ -64,7 +64,7 @@ std::vector<std::string> columnDefs(core::data::SqliteDb& db, const std::string&
 // ============ 表与索引的存在性 ============
 
 REGISTER_TEST(schema_creates_all_tables,
-              "schema: applySchema 建出全部 11 张应用表", {
+              "schema: applySchema 建出全部 13 张应用表", {
     auto path = test_support::tempDbPath(kDbPrefix, "create");
     std::error_code ec;
     std::filesystem::remove(path, ec);
@@ -85,6 +85,8 @@ REGISTER_TEST(schema_creates_all_tables,
             "claude_profiles",
             "claude_call_logs",
             "claude_shared_configs",
+            "profile_quota_config",
+            "profile_quota_result",
             "agent_tasks",
             "agent_runs",
             "agent_messages",
@@ -578,6 +580,101 @@ REGISTER_TEST(schema_is_idempotent_preserves_user_data,
                          std::string("x"));
         DOCTEST_CHECK_EQ(rows.value()[3].getString("title").valueOr("?"),
                          std::string("临时"));
+    }
+
+    std::filesystem::remove(path, ec);
+    return true;
+})
+
+// ============ 供应商余量两表（G5）============
+// 逐列断言对齐 spec 2026-10-02-provider-quota-and-storage §4.1 的 DDL。改列 /
+// 改默认值 / 类型漂移都在这里露出来——与仓库既有「逐表逐列」用例同一口径。
+REGISTER_TEST(schema_quota_tables_columns,
+              "schema: 余量两表列定义符合最终形态（配置 7 列 / 结果 10 列）", {
+    auto path = test_support::tempDbPath(kDbPrefix, "cols_quota");
+    std::error_code ec;
+    std::filesystem::remove(path, ec);
+
+    {
+        auto r = core::Database::open(path);
+        DOCTEST_REQUIRE(r.isOk());
+        DOCTEST_REQUIRE(r.value().migrate().isOk());
+        auto& db = r.value().db();
+
+        // profile_id 是 INTEGER PRIMARY KEY：PRAGMA 报 notnull=0（SQLite 对
+        // INTEGER PRIMARY KEY 的历史行为，照抄实际值，不写成 1）。
+        std::vector<std::string> expectConfig{
+            "profile_id:INTEGER:0:<none>",
+            "provider_id:TEXT:1:''",
+            "extra_json:TEXT:1:''",
+            "secrets_json:TEXT:1:''",
+            "enabled:INTEGER:1:0",
+            "auto_refresh:INTEGER:1:1",
+            "interval_minutes:INTEGER:1:15",
+        };
+        DOCTEST_CHECK_EQ(columnDefs(db, "profile_quota_config"), expectConfig);
+
+        std::vector<std::string> expectResult{
+            "profile_id:INTEGER:0:<none>",
+            "kind:TEXT:1:''",
+            "windows_json:TEXT:1:''",
+            "balance_remaining:REAL:1:0",
+            "currency:TEXT:1:''",
+            "plan_name:TEXT:1:''",
+            "fetched_at:INTEGER:1:0",
+            "last_success_at:INTEGER:1:0",
+            "last_error:TEXT:1:''",
+            "last_error_kind:TEXT:1:''",
+        };
+        DOCTEST_CHECK_EQ(columnDefs(db, "profile_quota_result"), expectResult);
+
+        // 默认值必须真的落成 DDL 写的值（不是靠 INSERT 时的 C++ 侧默认）：
+        // 只插 profile_id，其余全空 → 读回 default。
+        DOCTEST_REQUIRE(db.exec(
+            "INSERT INTO profile_quota_config (profile_id) VALUES (7)").isOk());
+        auto q = db.prepare(
+            "SELECT provider_id, extra_json, secrets_json, enabled, "
+            "auto_refresh, interval_minutes FROM profile_quota_config "
+            "WHERE profile_id = 7");
+        DOCTEST_REQUIRE(q.isOk());
+        auto rows = q.value().fetchAll();
+        DOCTEST_REQUIRE(rows.isOk());
+        DOCTEST_REQUIRE_EQ(rows.value().size(), 1u);
+        const auto cfg = rows.value()[0];
+        // 「未配置」= provider_id 空串（不是 NULL）
+        DOCTEST_CHECK(cfg.isNull("provider_id") == false);
+        DOCTEST_CHECK_EQ(cfg.getString("provider_id").valueOr("?"), std::string(""));
+        DOCTEST_CHECK_EQ(cfg.getString("extra_json").valueOr("?"), std::string(""));
+        DOCTEST_CHECK_EQ(cfg.getString("secrets_json").valueOr("?"), std::string(""));
+        DOCTEST_CHECK_EQ(cfg.getInt64("enabled").valueOr(-1), int64_t(0));
+        DOCTEST_CHECK_EQ(cfg.getInt64("auto_refresh").valueOr(-1), int64_t(1));
+        DOCTEST_CHECK_EQ(cfg.getInt64("interval_minutes").valueOr(-1), int64_t(15));
+
+        // 结果表的默认 = 「从未成功过」那一行：kind 空、windows_json 空、
+        // balance 0、last_error 空。G7 靠这组默认值区分「未查过」与「查到了 0」。
+        DOCTEST_REQUIRE(db.exec(
+            "INSERT INTO profile_quota_result (profile_id) VALUES (7)").isOk());
+        auto q2 = db.prepare(
+            "SELECT kind, windows_json, balance_remaining, currency, plan_name, "
+            "fetched_at, last_success_at, last_error, last_error_kind "
+            "FROM profile_quota_result WHERE profile_id = 7");
+        DOCTEST_REQUIRE(q2.isOk());
+        auto rows2 = q2.value().fetchAll();
+        DOCTEST_REQUIRE(rows2.isOk());
+        DOCTEST_REQUIRE_EQ(rows2.value().size(), 1u);
+        const auto res = rows2.value()[0];
+        DOCTEST_CHECK_EQ(res.getString("kind").valueOr("?"), std::string(""));
+        DOCTEST_CHECK_EQ(res.getString("windows_json").valueOr("?"), std::string(""));
+        DOCTEST_CHECK_EQ(res.getDouble("balance_remaining").valueOr(-1.0), 0.0);
+        DOCTEST_CHECK_EQ(res.getString("currency").valueOr("?"), std::string(""));
+        DOCTEST_CHECK_EQ(res.getString("plan_name").valueOr("?"), std::string(""));
+        DOCTEST_CHECK_EQ(res.getInt64("fetched_at").valueOr(-1), int64_t(0));
+        // last_success_at 与 fetched_at 是**两列**（评审 m1）：前者只在成功时
+        // 推进，供 G7 显示「数据时间」；后者成败都推进，供定时器判到期。
+        // 默认都为 0 = 从未查过。
+        DOCTEST_CHECK_EQ(res.getInt64("last_success_at").valueOr(-1), int64_t(0));
+        DOCTEST_CHECK_EQ(res.getString("last_error").valueOr("?"), std::string(""));
+        DOCTEST_CHECK_EQ(res.getString("last_error_kind").valueOr("?"), std::string(""));
     }
 
     std::filesystem::remove(path, ec);
