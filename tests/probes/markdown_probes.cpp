@@ -44,6 +44,7 @@
 #include "core/module_interface.h"
 #include "core/database.h"
 #include "module_markdown/md_ids.h"
+#include "module_markdown/md_view_state.h"  // kMarkdownViewStateKey（视图状态行键单一来源）
 
 #include <components/input.h>  // input_detail::InputModel::InputState（滚动断言读口）
 
@@ -62,19 +63,19 @@ bool floatEq(float a, float b) { return std::fabs(a - b) < 0.5f; }
 
 // markdown 探针专用环境：已 migrate 的临时库注册为进程级 appDatabase
 //（模块 onStart 经 core::appDatabase() 拿连接，null 时跳过真实索引）+ 笔记
-// 目录 / 视图状态文件重定向（同 test_support::MdHeadlessEnv 语义，这里内联
-// 实现——不变更 test_support.h）。析构反转：注销 appDatabase → 还原环境变量
-// → 删整棵临时目录。
+// 目录重定向（同 test_support::MdHeadlessEnv 语义，这里内联实现——不变更
+// test_support.h）。视图状态**不归它管**：自批次 E2 起那是 app_config 表的
+// 一行（键 kMarkdownViewStateKey），由 main 在 onStart 前用
+// test_support::seedAppConfigRow 写进下面这个连接；旧的
+// DEVDESK_MARKDOWN_VIEW_STATE_PATH 文件缝已无人读，一并撤掉。
+// 析构反转：注销 appDatabase → 还原环境变量 → 删整棵临时目录。
 struct ProbeMdEnv {
     std::unique_ptr<core::Database> db;
     std::filesystem::path dir;       // 笔记目录（DEVDESK_NOTES_DIR）
-    std::filesystem::path viewState; // 视图状态文件（DEVDESK_MARKDOWN_VIEW_STATE_PATH）
     std::string savedNotes;
-    std::string savedView;
 
     ProbeMdEnv() {
         dir = test_support::makeTempDir("mkprobe_", "notes");
-        viewState = dir / "view_state.json";
         auto r = core::Database::open(dir / "devdesk.db");
         if (r.isFail()) {
             throw std::runtime_error("md probe: Database::open failed: " +
@@ -87,17 +88,12 @@ struct ProbeMdEnv {
         ::core::registerAppDatabase(&db->db());  // 模块 onStart 依赖（同 MdHeadlessEnv）
         const char* cur = std::getenv("DEVDESK_NOTES_DIR");
         savedNotes = cur ? cur : "";
-        cur = std::getenv("DEVDESK_MARKDOWN_VIEW_STATE_PATH");
-        savedView = cur ? cur : "";
         test_support::setEnvVar("DEVDESK_NOTES_DIR", dir.string());
-        test_support::setEnvVar("DEVDESK_MARKDOWN_VIEW_STATE_PATH",
-                                viewState.string());
     }
 
     ~ProbeMdEnv() {
         ::core::registerAppDatabase(nullptr);
         test_support::setEnvVar("DEVDESK_NOTES_DIR", savedNotes);
-        test_support::setEnvVar("DEVDESK_MARKDOWN_VIEW_STATE_PATH", savedView);
         std::error_code ec;
         std::filesystem::remove_all(dir, ec);
     }
@@ -126,6 +122,8 @@ std::string makeLongNote() {
 // 视图状态预置：mode=1（ViewMode::Split，枚举 0=Edit 1=Split 2=Preview 3=Live）
 // + lastPath="note.md"——onStart 的 loadViewState（markdown_module.cpp:3287）
 // 直接恢复「打开 note.md + 双栏态」，探针无需依赖树行索引/点击顺序。
+// **落点是 app_config 表的 markdown_view_state 行**（批次 E2 之后视图状态不再
+// 落 markdown_view_state.json 文件），故这段文本原样作为该行的值写进去。
 constexpr const char* kSplitViewStateJson =
     "{\"lastPath\":\"note.md\",\"mode\":1,\"collapsedDirs\":[]}";
 
@@ -167,13 +165,26 @@ int main(int argc, char* argv[]) {
         probe::terminateWindowBackend();
         return 2;
     }
-    auto cfg = test_support::tempConfigFile("pfx_", "cfg");
-    test_support::ScopedConfigPath scopedCfg(cfg);
-
-    // markdown 环境 + 内容预置（视图状态在 onStart 前落盘）
+    // markdown 环境 + 内容预置（视图状态在 onStart 前写进 app_config 表）
+    //
+    // ProbeMdEnv 自带一份已 migrate 的临时库并注册为进程级 appDatabase，模块
+    // onStart 的 loadViewState 正是经 core::appDatabase() 读它 —— 故视图状态
+    // 预置也写进**同一个连接**（markdown_view_state 行，批次 E2 之后落点），
+    // 与生产读路径同一条。原 ScopedConfigPath + 临时 config.json 已删：视图
+    // 状态自 E2 起不再落文件，那份夹具注册的第一个连接会被紧随其后的
+    // ProbeMdEnv 整个盖掉（appDatabase 是单槽），留着只会让人误以为视图状态
+    // 是从「它」那儿来的。DEVDESK_MARKDOWN_VIEW_STATE_PATH 同样无人再读。
     ProbeMdEnv mdEnv;
     test_support::writeTextFile(mdEnv.dir / "note.md", makeLongNote());
-    test_support::writeTextFile(mdEnv.viewState, kSplitViewStateJson);
+    // 预置失败即退出 4：视图状态没生效时模块停在默认 Edit 态，下面组 A / 组 D
+    // 会报「双栏结构缺失」——症状指着一个跟根因无关的几何断言。
+    if (!test_support::seedAppConfigRow(
+            module::markdown::kMarkdownViewStateKey, kSplitViewStateJson)) {
+        std::cerr << "markdown_probes: 视图状态预置失败 —— app_config 表的 '"
+                  << module::markdown::kMarkdownViewStateKey
+                  << "' 行没写进去（组 A/D 依赖「打开 note.md + 双栏态」）\n";
+        return 4;
+    }
 
     std::unique_ptr<::core::Module> mod(create_markdown_module());
     mod->onStart();  // rescan + loadViewState：打开 note.md 并恢复双栏态

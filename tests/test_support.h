@@ -427,10 +427,16 @@ struct TestEnv : TestDb {
 
 // ==================== 6) 笔记无头环境（TIN-06b）====================
 // RAII：临时笔记目录 + 目录内已 migrate 的临时库（注册为 appDatabase），并把
-// 视图状态文件 / 笔记目录两个环境变量指到该临时目录，析构撤销环境变量 + 删
-// 整棵目录。原 test_markdown.cpp 的 MdUiEnv / test_md_highlight.cpp 的 MdHlEnv
+// 笔记目录环境变量指到该临时目录，析构撤销环境变量 + 删整棵目录。原
+// test_markdown.cpp 的 MdUiEnv / test_md_highlight.cpp 的 MdHlEnv
 // / test_md_keyboard.cpp 的 MdKbEnv 三份合流——三份 body 一字不差，只有临时目录
 // 前缀与库文件名不同（前缀保留，便于辨认残骸是谁留下的）。构造失败即抛。
+//
+// 视图状态隔离（审计 [23]）自 2026-10-03（批次 E2）起改由**上面这个已注册的
+// 临时库**承担：状态是 app_config 表的一行（键 kMarkdownViewStateKey），用例经
+// test_support::writeRawConfigRow 写进去。原 DEVDESK_MARKDOWN_VIEW_STATE_PATH
+// 文件缝（md_view_state.cpp 已不再 getenv）随之撤掉——继续设它只会让人以为
+// 视图状态是从那条环境变量来的，而实际写了什么它根本不读。
 struct MdHeadlessEnv {
     std::filesystem::path dir;
     std::unique_ptr<core::Database> db;
@@ -448,16 +454,12 @@ struct MdHeadlessEnv {
             throw std::runtime_error("migrate failed");
         }
         ::core::registerAppDatabase(&db->db());
-        // 视图状态文件隔离（审计 [23]）：无头用例不碰真实 %APPDATA% 状态
-        setEnvVar("DEVDESK_MARKDOWN_VIEW_STATE_PATH",
-                  (dir / "view_state.json").string());
         // 笔记目录隔离：只对本用例生效
         setEnvVar("DEVDESK_NOTES_DIR", dir.string());
     }
 
     ~MdHeadlessEnv() {
         setEnvVar("DEVDESK_NOTES_DIR", "");
-        setEnvVar("DEVDESK_MARKDOWN_VIEW_STATE_PATH", "");
         ::core::registerAppDatabase(nullptr);
         std::error_code ec;
         std::filesystem::remove_all(dir, ec);
@@ -639,6 +641,35 @@ inline bool seedConfigJsonRows(core::data::SqliteDb* db,
         if (cleared.isFail()) return cleared;
         return core::appconfig::setMany(*db, entries);
     }).isOk();
+}
+
+// ---- 预置进「进程级已注册的那个连接」（2026-10-03，E2 回归修复）----
+//
+// 上面三个 helper 收 db 句柄；探针 / 无头用例手上**没有**句柄——它们只有
+// ::core::appDatabase()（夹具 ScopedConfigPath / ProbeMdEnv 注册进去的那个，
+// 生产模块 onStart 正是经它取连接）。这两个是它的「已注册连接」入口。
+//
+// **为什么必须当场读回校验**（E2 的实测教训）：批次 E2 把配置从 JSON 文件搬进
+// app_config 表，三条探针仍往文件写，配置预置**静默失效**，探针却以
+// 「settings.card.pet missing（enabledModules 缺 pet？）」这种下游症状变红——
+// 报错指着一个跟根因毫无关系的元素，排查方向整个跑偏。预置失败必须在写入点
+// 当场报出来（false），由调用方 fail-fast，绝不带着没落地的配置往下跑断言。
+inline bool seedAppConfigRow(const char* key, const std::string& text) {
+    auto* db = ::core::appDatabase();
+    if (db == nullptr) return false;
+    return writeRawConfigRow(db, key, text) && readRawConfigRow(db, key) == text;
+}
+
+// 同上，但输入是一整份 config.json 文本（按顶层键分发进该命名空间的各行）。
+// 校验 = 该命名空间下**至少一行**落库且读得回（整份替换语义已清过旧行，空清单
+// 就是预置没生效）。
+inline bool seedAppConfigJson(const char* keyNamespace,
+                              const std::string& jsonText) {
+    auto* db = ::core::appDatabase();
+    if (db == nullptr) return false;
+    if (!seedConfigJsonRows(db, keyNamespace, jsonText)) return false;
+    auto rows = core::appconfig::listWithPrefix(*db, keyNamespace);
+    return rows.isOk() && !rows.value().empty();
 }
 
 // ==================== 8) 快捷键修饰键（与实现同源，2026-09-29）====================

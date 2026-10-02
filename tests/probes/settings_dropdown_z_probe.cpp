@@ -37,6 +37,10 @@
 // 4 皮肤目录）创建失败即**置红 + 提前结束**，不回落本机真实 appData 皮肤清单。
 // 用例 5 的几何前提（4 项弹层 148px、首项与「大小」行相交）只在固定夹具下
 // 成立；夹具缺失时跑真实数据 = 非 hermetic，夹具失准却可能仍绿。
+// 配置夹具同款口径（2026-10-03，批次 E2 回归修复）：配置落点是 app_config 表，
+// 预置写进已注册为进程级 appDatabase 的临时库并**当场读回校验**，失败即置红 +
+// 提前结束——E2 当初就是预置静默失效（仍往 config.json 写）、症状报在
+// 「card.pet missing」上，排查方向整个跑偏。
 //
 // 变异口径：回退 EUI-NEO patch（popup 归 0）→ 1)(20≡20) 与 2)(点中
 // scale.dd.field，scale 弹层 .hit enabled) 双红；应用 patch → 双绿。
@@ -48,6 +52,7 @@
 #include "test_support.h"
 #include "app_registry.h"
 #include "core/module_interface.h"
+#include "settings_config.h"  // SettingsStore::keyNamespace()（配置键前缀单一来源）
 
 #include <cmath>
 #include <cstdlib>
@@ -88,16 +93,30 @@ int main(int argc, char* argv[]) {
         return 2;
     }
 
-    // 配置隔离：DEVDESK_CONFIG_PATH 指到临时路径（不落盘），探针与机器本地
-    // config.json 无关（onStart 吃真机配置会让卡片增减/几何漂移）。
-    // 用例 5 前提 = 桌宠卡在树：enabledModules 显式含 pet（pet 默认关闭，
-    // 不加则桌宠卡整卡隐藏、皮肤下拉不存在）
-    auto cfg = test_support::tempConfigFile("pfx_", "cfg");
-    {
-        std::ofstream f(cfg, std::ios::binary | std::ios::trunc);
-        f << "{\"enabledModules\":[\"pet\"]}";
+    // 配置隔离：配置预置进 app_config 表（批次 E2 之后落点，不再有 config.json
+    // 文件），写进 ScopedConfigPath 已注册为进程级 appDatabase 的那份临时库——
+    // 生产 settings 模块 onStart 正是经 core::appDatabase() 取连接（settings_
+    // module.cpp:193），故这条路径与生产读路径**同一条**，不是模拟。
+    // 前提 = 桌宠卡在树：enabledModules 显式含 pet（pet 默认关闭，不加则桌宠卡
+    // 整卡隐藏、皮肤下拉不存在）
+    //
+    // fail-fast（与下面皮肤夹具同款口径）：预置没落库还往下跑，症状是
+    // 「settings.card.pet missing」——报错指着几何/z 判据，真正的原因却在上游
+    // 预置，排查方向整个跑偏（这正是 E2 回归当初的现场）。此处当场报。
+    test_support::ScopedConfigPath scopedCfg(
+        test_support::tempConfigFile("pfx_", "cfg"));
+    if (!test_support::seedAppConfigJson(
+            module::settings::SettingsStore::keyNamespace(),
+            "{\"enabledModules\":[\"pet\"]}")) {
+        std::cerr << "settings_dropdown_z_probe: 配置预置失败 —— app_config 表的 '"
+                  << module::settings::SettingsStore::keyNamespace()
+                  << "enabledModules' 行没写进去（用例 5 依赖 enabledModules "
+                     "显式含 pet，否则桌宠卡整卡不出现）。置红并中止。\n";
+        core::releaseInputQueue(window);
+        core::window::destroyWindow(window);
+        probe::terminateWindowBackend();
+        return 5;
     }
-    test_support::ScopedConfigPath scopedCfg(cfg);
 
     // 皮肤夹具：DEVDESK_PETS_DIR → 临时目录 4 个空皮肤（discoverSkins 只要求
     // pet.json 存在），弹层 4×34+12=148px；不设则读到本机真实 appData 皮肤
@@ -316,7 +335,10 @@ int main(int argc, char* argv[]) {
                 ui != nullptr ? ui->find(scaleDd + ".field") : nullptr;
             if (petCard == nullptr) {
                 std::cerr << "settings_dropdown_z_probe: 'settings.card.pet' "
-                             "missing（enabledModules 缺 pet？）\n";
+                             "missing —— 预置已读回校验过 app_config 的 '"
+                          << module::settings::SettingsStore::keyNamespace()
+                          << "enabledModules' = [\"pet\"]，故此处为空 = "
+                             "模块门控与配置读出之间断了（不再是「预置没生效」）\n";
                 passed = false;
             } else if (skinField == nullptr || scaleField == nullptr) {
                 std::cerr << "settings_dropdown_z_probe: skin/scale field "

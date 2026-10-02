@@ -24,10 +24,14 @@
 //        未加 → 红 = 证伪门禁，spec §6(d) 判定口径）。
 //
 // 搭法前提（确定性都与机器本地配置无关）：
-//   - test_support::ScopedConfigPath 指到探针写的临时 config.json
-//     （themeMode=light 锁浅色 token；windowEffect=frosted 令降级提示非空；
+//   - 配置预置写进 app_config 表（批次 E2 之后配置不再有 JSON 文件）——写的是
+//     ScopedConfigPath 已注册为进程级 appDatabase 的那份临时库，即生产模块
+//     onStart 的**同一条读路径**（settings_module.cpp:193 经 core::appDatabase()）。
+//     内容 = themeMode=light 锁浅色 token；windowEffect=frosted 令降级提示非空；
 //     enabledModules 显式含 pet/markdown/todo/claude_proxy —— pet 默认关闭，
-//     不加则桌宠卡整卡隐藏、皮肤下拉不存在）；
+//     不加则桌宠卡整卡隐藏、皮肤下拉不存在；pet_config 行指长名皮肤（§③）。
+//     每处预置都**当场读回校验**，失败即置红退出，不带着没落地的配置往下跑断言
+//     （E2 回归当初正是预置静默失效、症状报在「card.pet missing」上）；
 //   - DEVDESK_PETS_DIR 指到临时目录 + 4 个含 pet.json 的空皮肤目录
 //     （discoverSkins 只要求 pet.json 存在，pet_skin.cpp:210-228）——
 //     4 皮肤让弹层 4×34+12=148px 高（settings_ui_logic.h:101-103），
@@ -47,7 +51,9 @@
 #include "probes/probe_harness.h"
 #include "test_support.h"
 
+#include "settings_config.h"     // SettingsStore::keyNamespace()（配置键前缀单一来源）
 #include "settings_ui_logic.h"  // ②③ 判据：文案宽度估算 / 下拉 chrome 常量
+#include "module_pet/pet_config.h"  // kPetConfigKey（桌宠配置行键单一来源）
 
 #include "app_registry.h"
 #include "core/module_interface.h"
@@ -102,14 +108,17 @@ const eui::Color kEuiDefaultBlue(0.2196f, 0.4431f, 0.8784f, 1.0f);
 // ---- 探针夹具 ----
 
 // 写探针配置：浅色档（确定性 token）+ frosted（降级提示非空）+ 四模块启用
-bool writeProbeConfig(const std::filesystem::path& file) {
-    std::ofstream f(file, std::ios::binary | std::ios::trunc);
-    if (!f) {
-        return false;
-    }
-    f << "{\"themeMode\":\"light\",\"windowEffect\":\"frosted\","
-         "\"enabledModules\":[\"pet\",\"markdown\",\"todo\",\"claude_proxy\"]}";
-    return f.good();
+// **落点是 app_config 表**（批次 E2 之后配置不再有 config.json 文件）：一段
+// 整份 JSON 文本按顶层键分发进 SettingsStore 命名空间的各行，写进已注册为
+// 进程级 appDatabase 的临时库 —— 生产 settings 模块 onStart 正是经
+// core::appDatabase() 读这些行（settings_module.cpp:193），故这是**生产读
+// 路径本身**，不是模拟。前缀取 SettingsStore::keyNamespace() 而非写死字面量：
+// 键前缀改名时探针跟着走，不留一处「注释说改了、探针还写旧前缀」的漂移。
+bool writeProbeConfig() {
+    return test_support::seedAppConfigJson(
+        module::settings::SettingsStore::keyNamespace(),
+        "{\"themeMode\":\"light\",\"windowEffect\":\"frosted\","
+        "\"enabledModules\":[\"pet\",\"markdown\",\"todo\",\"claude_proxy\"]}");
 }
 
 // 探针皮肤夹具：DEVDESK_PETS_DIR 下建 4 个含 pet.json 的皮肤目录
@@ -227,19 +236,20 @@ int main(int argc, char* argv[]) {
         return 2;
     }
 
-    // 配置隔离：探针写临时 config.json（浅色 + frosted + pet 启用），
-    // onStart 吃它，与机器本地配置无关
-    auto cfg = test_support::tempConfigFile("pfx_", "cfg");
-    if (!writeProbeConfig(cfg)) {
-        std::cerr << "settings_cards_probes: 写临时配置失败 "
-                  << cfg.string() << "\n";
-        test_support::setEnvVar("DEVDESK_CONFIG_PATH", "");
+    // 配置隔离：预置浅色 + frosted + 四模块启用（落点 app_config 表，见
+    // writeProbeConfig），与机器本地配置无关。预置失败即退出 3——带着没落地的
+    // 配置往下跑，症状会报在「桌宠卡不在树上」这类下游元素上（E2 回归现场）。
+    test_support::ScopedConfigPath scopedCfg(
+        test_support::tempConfigFile("pfx_", "cfg"));
+    if (!writeProbeConfig()) {
+        std::cerr << "settings_cards_probes: 配置预置失败 —— app_config 表的 '"
+                  << module::settings::SettingsStore::keyNamespace()
+                  << "' 命名空间（themeMode/windowEffect/enabledModules）没写进去\n";
         core::releaseInputQueue(window);
         core::window::destroyWindow(window);
         probe::terminateWindowBackend();
         return 3;
     }
-    test_support::ScopedConfigPath scopedCfg(cfg);
 
     // 皮肤夹具：DEVDESK_PETS_DIR → 临时目录（4 个空皮肤），析构还原并清理
     const std::filesystem::path petsDir =
@@ -254,15 +264,30 @@ int main(int argc, char* argv[]) {
 
     // ③ 长名皮肤夹具（2026-09-29 真机反馈「桌宠设置的下拉框不应该换行」）：
     // 25 字符名在 240 宽下拉里文本会画出控件右边缘（真机复现），故额外造一个
-    // 长名皮肤并把当前皮肤指向它（pet_config.json = currentSkinName 真值来源）
+    // 长名皮肤并把当前皮肤指向它。**当前皮肤的落点是 app_config 的 pet_config
+    // 行**（批次 E2 之后 petsDir()/pet_config.json 已退役：不读、不写、不迁移），
+    // 键名取 kPetConfigKey 常量而非字面量，与生产 currentSkinName() 同一来源。
+    // 预置失败即退出 5：长名皮肤没生效时，下面「字段宽 ≥ 最长名所需宽」那条断言
+    // 会拿短名去比，看着像布局回归，实则是夹具没生效。
     const std::string kLongSkin = "super-long-skin-name-here";
     {
         std::error_code skinEc;
         std::filesystem::create_directories(petsDir / kLongSkin, skinEc);
         std::ofstream(petsDir / kLongSkin / "pet.json", std::ios::binary)
             << "{}";
-        std::ofstream(petsDir / "pet_config.json", std::ios::binary)
-            << "{\"skinName\":\"" << kLongSkin << "\",\"x\":-1,\"y\":-1}";
+        if (!test_support::seedAppConfigRow(
+                module::pet::kPetConfigKey,
+                "{\"skinName\":\"" + kLongSkin + "\",\"x\":-1,\"y\":-1}")) {
+            std::cerr << "settings_cards_probes: 桌宠配置预置失败 —— app_config "
+                         "表的 '"
+                      << module::pet::kPetConfigKey << "' 行没写进去\n";
+            std::error_code ec;
+            std::filesystem::remove_all(petsDir, ec);
+            core::releaseInputQueue(window);
+            core::window::destroyWindow(window);
+            probe::terminateWindowBackend();
+            return 5;
+        }
     }
 
     std::unique_ptr<::core::Module> mod(create_settings_module());
@@ -366,6 +391,24 @@ int main(int argc, char* argv[]) {
                     passed = false;
                 } else {
                     namespace ms = module::settings;
+                    // ③-0 夹具生效性守卫（E2 回归修复新增，变异验证的反面
+                    //     教材）：皮肤字段文案**必须**等于预置的长名。它同时是
+                    //     「生产 currentSkinName() 真从 app_config 的
+                    //     pet_config 行读到了我们写的那一行」的唯一证据。
+                    //     缺这条，长名夹具就是装饰品——预置一旦失效，label
+                    //     退回默认皮肤（短名），下面 ③②「文案估算宽 ≤ 可用宽」
+                    //     就变成拿 6 字符去比 25 字符的余量，**恒绿**：探针在
+                    //     它最该抓的那个回归（长名画出控件右边缘，真机复现）
+                    //     面前退化成恒真断言。恒真即假绿，必须重写而非删。
+                    if (skinLabel->text != kLongSkin) {
+                        std::cerr << "settings_cards_probes: 皮肤字段文案 '"
+                                  << skinLabel->text << "' != 预置长名 '"
+                                  << kLongSkin
+                                  << "' —— app_config 的 pet_config 行没被生产"
+                                     "读出（currentSkinName 回落到默认皮肤），"
+                                     "长名夹具失效\n";
+                        passed = false;
+                    }
                     const float fieldW = field->frame.width;
                     const float needW =
                         ms::estimatedTextWidth(kLongSkin, skinLabel->fontSize) +
