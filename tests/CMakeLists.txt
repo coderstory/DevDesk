@@ -9,6 +9,7 @@ add_executable(devdesk_tests
     test_core/test_paths.cpp
     test_core/test_logging.cpp
     test_core/test_sqlite.cpp
+    test_core/test_sqlite_concurrency.cpp
     test_core/test_theme.cpp
     test_core/test_theme_fontscale.cpp
     test_core/test_router.cpp

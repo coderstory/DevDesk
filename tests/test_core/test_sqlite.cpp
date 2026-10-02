@@ -148,8 +148,10 @@ REGISTER_TEST(sqlite_close_with_unfinalized_stmt,
         DOCTEST_REQUIRE(db.exec("CREATE TABLE t (id INTEGER)").isOk());
         auto prep = db.prepare("SELECT id FROM t");
         DOCTEST_REQUIRE(prep.isOk());
-        // 语句比 db 活得久（移出内层作用域）；注意语句析构前不可再 step/bind：
-        // Statement 持有 db 的 mutex 引用，db 没了就是悬垂（本用例只让它析构）
+        // 语句比 db 活得久（移出内层作用域）。2026-10-02 起 Statement 持锁的
+        // shared_ptr（不再是 db 的 mutex 引用），db 先亡也不悬垂——但连接此时已是
+        // close_v2 的 zombie（未定义「继续 step」的语义），故本用例仍只让它析构；
+        // 「宿主已亡的语句被跨线程继续用」的形状在 test_sqlite_concurrency.cpp。
         kept.emplace(std::move(prep.value()));
     } // db 在此析构：有未 finalize 的语句 → 延迟关闭，不得崩
 
