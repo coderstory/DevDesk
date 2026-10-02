@@ -1192,7 +1192,7 @@ REGISTER_TEST(todo_ui_card_text_centered,
 // ---- 批次 B1（2026-10-02）文本垂直居中根治：卡内 chip 胶囊（drawChip）----
 // drawChip（todo_ui_common.h，卡片优先级/截止/标签 pill 与详情弹窗标签区共用）
 // 的文本盒与胶囊底同 y 同高（kChipHeight）、lineHeight 也 == kChipHeight，缺
-// VerticalAlign::Center 时 runtime 把 ink 从行框顶沿起排（runtime_render.h:1063
+// VerticalAlign::Center 时 runtime 把 ink 从行框顶沿起排（runtime_render.h:1068
 // y=frame.y）→ 胶囊里的字看着偏上。
 // 变异自检：删 drawChip 里的 .verticalAlign(Center) → 本用例 verticalAlign
 // 断言红（frame 数值不变，只有渲染锚点回 frame 顶）。

@@ -45,8 +45,8 @@ inline void drawChip(eui::Ui& ui,
         .lineHeight(kChipHeight)
         .horizontalAlign(eui::HorizontalAlign::Center)
         // B1（2026-10-02）：文本盒 == 胶囊高，须显式垂直居中——缺它 ink 从
-        // 行框顶沿起排 → 胶囊里的字偏上（本 helper 是标签/截止/优先级 pill
-        // 的唯一绘制点，改这里 = 卡片与详情弹窗一起修）
+        // 行框顶沿起排 → 胶囊里的字偏上（本 helper 是卡片截止 chip / 卡片标签
+        // chip / 详情弹窗标签 chip 的唯一绘制点，改这里 = 三处一起修）
         .verticalAlign(eui::VerticalAlign::Center)
         .color(fg)
         .fontWeight(600)

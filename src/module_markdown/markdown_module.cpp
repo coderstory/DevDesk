@@ -1455,6 +1455,8 @@ private:
             .text(left)
             .fontSize(11.0f)
             .lineHeight(22.0f)
+            // B1（2026-10-02）：文本盒 == 状态栏底 rect 高，须显式垂直居中
+            .verticalAlign(eui::VerticalAlign::Center)
             .color(leftColor)
             .build();
 
@@ -1504,6 +1506,8 @@ private:
             .fontSize(11.0f)
             .lineHeight(22.0f)
             .horizontalAlign(eui::HorizontalAlign::Right)
+            // B1（2026-10-02）：文本盒 == 状态栏底 rect 高，须显式垂直居中
+            .verticalAlign(eui::VerticalAlign::Center)
             .color(t.colors.textTertiary)
             .build();
     }
