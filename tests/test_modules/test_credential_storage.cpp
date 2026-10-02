@@ -205,6 +205,98 @@ REGISTER_TEST(credential_residue_cleanup_guard_no_profiles_deletes_nothing,
     return true;
 })
 
+// ---- 护栏③：旧形态的库（没有 api_key_encrypted 列）绝不能放行清理 ----
+// 2026-10-03 安全审计 F1 blocker 的回归网：只看「有没有 profile」会放行——
+// 旧库同样有 claude_profiles 行，而 listProfiles 的 SELECT 不引用新列，在旧库上
+// 照样成功返回行 → keep 传空 → 把用户 Keychain 里真实可用的 API Key 全清空。
+REGISTER_TEST(credential_residue_cleanup_guard_unmigrated_legacy_db,
+              "credential: 旧 schema 库（无 api_key_encrypted 列）不清理任何 Keychain 条目", {
+    test_support::TestDb tdb(kCredPrefix, "legacy_db");
+    ScopedFakeKc kc;
+
+    // 把库改造成**旧形态**：按本设计之前的 17 列建表（无 api_key_encrypted），
+    // 并塞一行——这正是用户升级前机器上的形态。
+    DOCTEST_REQUIRE(tdb.handle().exec("DROP TABLE claude_profiles").isOk());
+    DOCTEST_REQUIRE(tdb.handle().exec(
+        "CREATE TABLE claude_profiles ("
+        " id INTEGER PRIMARY KEY AUTOINCREMENT,"
+        " name TEXT UNIQUE NOT NULL, base_url TEXT NOT NULL,"
+        " api_key_hint TEXT NOT NULL, api_key_check TEXT NOT NULL,"
+        " keychain_account TEXT NOT NULL, model TEXT NOT NULL,"
+        " is_active INTEGER NOT NULL DEFAULT 0,"
+        " created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL,"
+        " models_config TEXT NOT NULL DEFAULT '',"
+        " extra_env TEXT NOT NULL DEFAULT '',"
+        " shared_config_id INTEGER NOT NULL DEFAULT 0,"
+        " auth_field TEXT NOT NULL DEFAULT 'both',"
+        " dialect_override TEXT NOT NULL DEFAULT '',"
+        " fallback_profile_id INTEGER NOT NULL DEFAULT 0,"
+        " extra_settings_json TEXT NOT NULL DEFAULT '')")
+                        .isOk());
+    DOCTEST_REQUIRE(tdb.handle().exec(
+        "INSERT INTO claude_profiles (name, base_url, api_key_hint, "
+        "api_key_check, keychain_account, model, created_at, updated_at) VALUES "
+        "('老库行', 'https://old.example.com', 'sk-ant-***abcd', 'deadbeef', "
+        "'claude:1', 'm', 0, 0)")
+                        .isOk());
+    // 用户 Keychain 里的真实密钥
+    kc.fake.put(kSvc, "claude:1", "user-real-key-1");
+    kc.fake.put(kSvc, "claude:2", "user-real-key-2");
+
+    module::claude::ClaudeService svc(tdb.handle(), kSvc);
+
+    // 前置证据：旧库上 listProfiles 照样成功返回行（= 旧判据会放行清理）
+    auto list = svc.listProfiles();
+    DOCTEST_REQUIRE(list.isOk());
+    DOCTEST_CHECK_EQ(static_cast<int>(list.value().size()), 1);
+
+    auto r = svc.cleanupOrphanKeychainEntries();
+    DOCTEST_REQUIRE(r.isOk());
+    DOCTEST_CHECK_EQ(r.value(), 0);
+    DOCTEST_CHECK(kc.fake.has(kSvc, "claude:1"));   // 一个都不许删
+    DOCTEST_CHECK(kc.fake.has(kSvc, "claude:2"));
+    DOCTEST_CHECK_EQ(kc.fake.size(), static_cast<size_t>(2));
+    return true;
+})
+
+// ---- 护栏③ 的另一半：两种「空」的区别 ----
+//   · 列不可读（旧库）           → 跳过（上面那条用例）
+//   · 列可读但没有一行存过密钥   → 同样跳过（fail-safe：那种状态下「Keychain
+//     里只剩残留」是个赌注，护栏口径是「宁可不清理，也不能误删」）
+// 一旦有一行真的存着凭据 → 清理恢复执行（此时 Keychain 必是旧副本）。
+REGISTER_TEST(credential_residue_cleanup_requires_at_least_one_stored_key,
+              "credential: 全部 profile 都没存过密钥时不清理；有一行存了才清理", {
+    test_support::TestDb tdb(kCredPrefix, "nokeys");
+    ScopedFakeKc kc;
+    module::claude::ClaudeService svc(tdb.handle(), kSvc);
+
+    auto created = svc.createProfile("甲", "https://a.example.com",
+                                     "sk-ant-holder-01", "m");
+    DOCTEST_REQUIRE(created.isOk());
+    const int64_t id = created.value().id;
+    // 清空凭据列 = 「用户从没配过 key」的形态（新形态库、列可读、值为空）
+    DOCTEST_REQUIRE(test_support::clearStoredCredential(tdb.handle(), id));
+
+    kc.fake.put(kSvc, "claude:1", "user-real-key-1");
+    kc.fake.put(kSvc, "notes:theme", "someone-elses-entry");
+
+    auto skipped = svc.cleanupOrphanKeychainEntries();
+    DOCTEST_REQUIRE(skipped.isOk());
+    DOCTEST_CHECK_EQ(skipped.value(), 0);
+    DOCTEST_CHECK(kc.fake.has(kSvc, "claude:1"));   // 保住
+
+    // 补上密钥（同一行 → 库里的凭据体系成立）→ 残留清理恢复执行
+    module::claude::Profile p = created.value();
+    p.apiKeyPlain = "sk-ant-holder-02";
+    DOCTEST_REQUIRE(svc.updateProfile(p).isOk());
+    auto swept = svc.cleanupOrphanKeychainEntries();
+    DOCTEST_REQUIRE(swept.isOk());
+    DOCTEST_CHECK_EQ(swept.value(), 1);
+    DOCTEST_CHECK(!kc.fake.has(kSvc, "claude:1"));
+    DOCTEST_CHECK(kc.fake.has(kSvc, "notes:theme"));   // 前缀外仍保留
+    return true;
+})
+
 REGISTER_TEST(credential_residue_cleanup_sweeps_only_claude_prefix,
               "credential: 有 profile 时清 claude:* 残留，前缀外的条目保留", {
     test_support::TestDb tdb(kCredPrefix, "sweep");
@@ -214,7 +306,6 @@ REGISTER_TEST(credential_residue_cleanup_sweeps_only_claude_prefix,
     auto created = svc.createProfile("甲", "https://a.example.com",
                                      "sk-ant-sweep-key-01", "m");
     DOCTEST_REQUIRE(created.isOk());
-
     kc.fake.put(kSvc, "claude:1", "leftover-1");
     kc.fake.put(kSvc, "claude:2", "leftover-2");
     kc.fake.put(kSvc, "notes:theme", "someone-elses-entry");

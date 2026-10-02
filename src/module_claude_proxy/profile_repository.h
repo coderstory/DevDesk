@@ -215,9 +215,15 @@ public:
     // 凭据已迁进本库，keychainService_ 命名空间下剩下的 claude:* 条目全是没人管
     // 的旧钥匙 → 一次性清掉（不在白名单前缀内的 account 一律保留、不计数——
     // keychain.h shouldDeleteOrphan 的三平台统一语义）。返回清理数量。
-    // P0 误删护栏（2026-09-30 事故）：**当前数据根零 profile → 整个跳过 +
-    // LOG_WARN，一个条目不碰**（Keychain service 命名空间的隔离级别弱于
-    // DEVDESK_DATA_ROOT，空根实例启动正是误删真实密钥的形态——出过一次事故）。
+    // 三道护栏（少一条都会误删用户真实密钥，事故各出过一次）：
+    //   ① 当前数据根零 profile → 整体跳过 + LOG_WARN，一个条目不碰
+    //      （service 命名空间的隔离级别弱于 DEVDESK_DATA_ROOT）
+    //   ② 白名单前缀 claude:（前缀外保留不删、不计数）
+    //   ③ **凭据真的已迁进库**才允许清理（2026-10-03 安全审计 F1 blocker）：
+    //      api_key_encrypted 列必须可读，且至少一行真的存着凭据。只看「有没有
+    //      profile」会被**旧形态的库**骗过——旧库同样有行，而 listProfiles 的
+    //      SELECT 不引用新列，在旧库上照样成功返回行 → keep 传空 → 把用户
+    //      Keychain 里真实可用的 API Key 全清空。
     core::Result<int> cleanupOrphanKeychainEntries();
 
     // 取该 profile 的明文 API key（仅发请求时调用，用完即丢弃）。

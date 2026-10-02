@@ -154,11 +154,56 @@ REGISTER_TEST(paths_data_root_gitignore_content,
     DOCTEST_CHECK(text.find("*.db-*") != std::string::npos);
     DOCTEST_CHECK(text.find("config.json*") != std::string::npos);
     DOCTEST_CHECK(text.find("run-settings/") != std::string::npos);
+    // 2026-10-03 安全审计 F2：接管前 settings.json 原 env 快照（可能含用户真
+    // token）就在数据根里，漏了它等于打穿这个文件存在的理由
+    DOCTEST_CHECK(text.find("claude_settings_snapshot.json") != std::string::npos);
     // 放行 .gitignore 自身（数据根要能进 git）
     DOCTEST_CHECK(text.find("!/.gitignore") != std::string::npos);
 
-    // 幂等：重复调用结果一致（内容固定，整体重写）
+    // 幂等：重复调用结果一致（内容已齐全 → 一个字节都不动）
     DOCTEST_REQUIRE(core::paths::ensureDataRootGitignore().isOk());
     DOCTEST_CHECK_EQ(readAll(gi), text);
+    return true;
+})
+
+// 2026-10-03 安全审计 F4：原实现每次启动**整体覆盖** .gitignore——用户自己加的
+// 规则被静默清掉，而正文还写着「可自行追加」，自相矛盾。本用例盯住新口径：
+// 只追加缺失的必需项，用户写的任何一行都不动。
+REGISTER_TEST(paths_gitignore_appends_only_and_preserves_user_rules,
+              "paths: 数据根 .gitignore 只追加缺失项，用户规则逐字保留", {
+    test_support::DataRootEnv root(kPermPrefix, "gi_keep");
+    const std::filesystem::path gi = core::paths::dataRootGitignoreFile();
+
+    const std::string userContent =
+        "# 我自己写的规则（下面三行不许被应用改动）\n"
+        "my-notes/\n"
+        "*.tmp\n"
+        "\n"
+        "# 我故意注释掉 db 屏蔽，核对它不会被当成「已有规则」\n"
+        "# *.db\n";
+    {
+        std::ofstream out(gi, std::ios::binary);
+        DOCTEST_REQUIRE(out.good());
+        out << userContent;
+    }
+
+    DOCTEST_REQUIRE(core::paths::ensureDataRootGitignore().isOk());
+    const std::string after = readAll(gi);
+
+    // 用户内容逐字保留（且在文件开头，未被重排 / 未被覆盖）
+    DOCTEST_CHECK(after.rfind(userContent, 0) == 0);
+    DOCTEST_CHECK(after.find("my-notes/") != std::string::npos);
+    DOCTEST_CHECK(after.find("*.tmp") != std::string::npos);
+
+    // 必需项被补齐（含注释掉的那条——注释行不算已有规则）
+    DOCTEST_CHECK(after.find("\n*.db\n") != std::string::npos);
+    DOCTEST_CHECK(after.find("*.db-*") != std::string::npos);
+    DOCTEST_CHECK(after.find("config.json*") != std::string::npos);
+    DOCTEST_CHECK(after.find("run-settings/") != std::string::npos);
+    DOCTEST_CHECK(after.find("claude_settings_snapshot.json") != std::string::npos);
+
+    // 幂等：内容已齐全 → 再跑一次一个字节都不变（也不碰用户规则）
+    DOCTEST_REQUIRE(core::paths::ensureDataRootGitignore().isOk());
+    DOCTEST_CHECK_EQ(readAll(gi), after);
     return true;
 })

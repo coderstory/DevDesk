@@ -3,6 +3,7 @@
 #include "claude_service.h"
 
 #include "core/atomic_write.h"
+#include "core/file_perms.h"
 #include "core/logging.h"
 #include "core/paths.h"
 #include "core/time.h"
@@ -667,6 +668,19 @@ core::Result<void> ClaudeService::runProfile(int64_t id, std::string* hint) {
     if (wrote.isFail()) {
         return core::Result<void>::fail(wrote.errorCode(),
             "写临时 settings 失败，未打开会话: " + wrote.errorMessage());
+    }
+    // 权限收紧（2026-10-03 安全审计 F3 blocker）：这份临时 settings 里带**明文
+    // API key**（buildDirectEnv 的密钥键三态之一），而 core::atomicWriteFile 不设
+    // 权限 → 默认 umask 022 下落成 0644，同机其他本地用户可直读（实测本机现存
+    // 的 run-*.json 就是 -rw-r--r--）。口径抄 keychain_posix.cpp:34-50「写完
+    // chmod 0600，失败即回滚」：收紧失败就**删掉已落盘的明文文件**并按失败返回
+    // ——宁可这次会话开不起来，也不留下他人可读的明文密钥。
+    if (auto permR = core::fileperms::restrictToOwnerOnly(file); permR.isFail()) {
+        std::error_code rmEc;
+        std::filesystem::remove(file, rmEc);
+        return core::Result<void>::fail(permR.errorCode(),
+            "临时 settings 权限收紧失败，已删除该文件且未打开会话: " +
+                permR.errorMessage());
     }
 
     // 顺序 4：派发终端（D-1：claude --settings <临时文件>；会话正文退出后自删
