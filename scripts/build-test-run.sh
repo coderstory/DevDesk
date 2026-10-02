@@ -411,6 +411,34 @@ if [ "$RUN_TEST" = "1" ]; then
   fi
 fi
 
+# ---- 3a. UI probe（无头渲染几何/结构断言；与 doctest 是两条独立门禁）----
+# ⚠ **为什么必须并进来**：doctest 与 probe 覆盖的东西不重叠，**只跑一条会漏掉整类回归**。
+#   实测事故（2026-10-03）：批次 E2 把六类配置从 JSON 搬进 SQLite，doctest 全量绿
+#   （1229/1223/0），而三条 probe 因为仍在写 JSON 文件、预置静默失效而变红
+#   （3/13 红）。两条门禁给出**相反信号**，只跑 doctest 就把回归合进了 dev。
+#   合并后必须看到 **两个** 数字，缺一即视为未验收。
+# 走 ctest 而非直接跑 probe 可执行文件：它自带超时与 label 过滤。
+# `$FILTER` 非空时跳过（那是定点排查单条 doctest 用例的形态，probe 与之无关），
+# 并明确打印跳过原因 —— 静默跳过正是这条门禁当初失效的同类毛病。
+if [ "$RUN_TEST" = "1" ]; then
+  if [ -n "$FILTER" ]; then
+    echo "── UI probe ──"
+    echo "⏭ 跳过（--filter 定点模式：probe 与该筛选无关）"
+  else
+    echo "── UI probe ──"
+    PROBE_OUT=$(cd "$BUILD_DIR" && ctest -L probe 2>&1) || true
+    echo "$PROBE_OUT" | grep -E "tests passed|tests failed" | tail -1
+    # ⚠ 只认 "100% tests passed"：ctest 的失败列表在输出末尾，grep 漏了就静默绿。
+    if echo "$PROBE_OUT" | grep -q "100% tests passed"; then
+      echo "✅ UI probe 全绿"
+    else
+      echo "$PROBE_OUT" | grep -E "^\s+[0-9]+ - .*Failed" | head -20
+      echo "❌ UI probe 有失败（上方为失败清单；要看完整输出跑: cd $BUILD_DIR && ctest -L probe --output-on-failure）"
+      exit 1
+    fi
+  fi
+fi
+
 # ---- 3b. 模块隔离静态守卫（TIN-01；纯静态检查，--no-test 也跑）----
 # 原守卫编在 test_settings.cpp 里、靠 __FILE__ 上溯仓库根，ccache 把 __FILE__
 # 相对化后 cwd=仓库根 必误报「找不到仓库根」；改由独立脚本承担（脚本自身不读
