@@ -10,6 +10,7 @@
 #include "credential_protection.h"
 
 #include <cstddef>
+#include <limits>
 #include <string>
 
 #ifndef WIN32_LEAN_AND_MEAN
@@ -69,6 +70,19 @@ std::string dpapiError(const char* what) {
 } // namespace
 
 core::Result<std::string> realProtect(const std::string& plaintext) {
+    // DATA_BLOB::cbData 是 DWORD（32 位），std::string::size() 是 size_t
+    //（Win64 上 64 位）——窄化会**静默截断**，把「输入超长」变成「一条被截短的
+    // 密钥」而不是一次失败，且 DPAPI 照样加密成功、用的时候才解不出原值。
+    // API 密钥只有几十字节，这条分支理论不可达；但按本批纪律（凡是需要保证的
+    // 东西用代码保证，不许用注释保证），显式判一次，别写一句「反正不会发生」。
+    // 用 numeric_limits 而不是 MAXDWORD 宏：后者是 windows.h 里的宏，本文件
+    // 未在本机编译验证过（无 MinGW 交叉链），少一个外部符号依赖少一分风险。
+    if (plaintext.size() >
+        static_cast<std::size_t>(std::numeric_limits<DWORD>::max())) {
+        return core::Result<std::string>::fail(
+            core::ErrorCode::Internal,
+            "待加密凭据超过 DPAPI 单块长度上限（DWORD 32 位）");
+    }
     DATA_BLOB input{};
     input.pbData = reinterpret_cast<BYTE*>(const_cast<char*>(plaintext.data()));
     input.cbData = static_cast<DWORD>(plaintext.size());
@@ -95,6 +109,14 @@ core::Result<std::string> realUnprotect(const std::string& stored) {
             "凭据列形态损坏（DPAPI blob 的 hex 形态不成立）");
     }
 
+    // 同 protect 侧：cbData 是 DWORD，blob.size() 是 size_t —— 窄化前显式判一次。
+    // 正常路径下 blob 是库里 hex 列解出来的（远小于 4 GB），但「形态损坏」这条
+    // 分支正是要防的东西，不该在这里留一个静默截断的口子。
+    if (blob.size() > static_cast<std::size_t>(std::numeric_limits<DWORD>::max())) {
+        return core::Result<std::string>::fail(
+            core::ErrorCode::Internal,
+            "凭据列解出的 blob 超过 DPAPI 单块长度上限（DWORD 32 位）");
+    }
     DATA_BLOB input{};
     input.pbData = reinterpret_cast<BYTE*>(blob.data());
     input.cbData = static_cast<DWORD>(blob.size());
