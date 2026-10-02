@@ -35,6 +35,10 @@
 #include <thread>
 #include <vector>
 
+#if !defined(_WIN32)
+#include <sys/stat.h>   // 审计 F3：run-settings 权限位断言
+#endif
+
 namespace {
 
 constexpr const char* kTestKeychainService = "DevDeskTestClaudeService";
@@ -3145,6 +3149,21 @@ REGISTER_TEST(claude_service_dialect_override_survives_reverse_sync,
 // ---- 运行（profile-run 设计 §5/§8；D-1（V3）：直连——临时 settings + --settings，
 //      零全局改动：不启代理、不切激活、不读写 ~/.claude/settings.json）----
 
+// run-settings 临时设置文件权限（2026-10-03 安全审计 F3）：里面带**明文 API
+// key**，必须 0600。平台分支放在函数体内（不能进 doctest 宏参数——宏参数里嵌
+// 预处理指令是 UB，-Werror,-Wembedded-directive 直接编译失败）。
+// Windows：DPAPI/ACL 口径，权限位不适用 → 恒 true（真实保护见 credential 用例）。
+bool runSettingsFileIsOwnerOnly(const std::filesystem::path& p) {
+#if defined(_WIN32)
+    (void)p;
+    return true;
+#else
+    struct stat st {};
+    if (::stat(p.string().c_str(), &st) != 0) return false;
+    return (static_cast<unsigned>(st.st_mode) & 07777u) == 0600u;
+#endif
+}
+
 REGISTER_TEST(claude_service_run_profile_direct_env_writes_temp_settings,
               "claude_service: runProfile 直连——不启代理、写 run-settings 临时文件、假 launch 收到 --settings 参数", {
     test_support::DataRootEnv root(kDbPrefix, "runprofile1");
@@ -3198,6 +3217,10 @@ REGISTER_TEST(claude_service_run_profile_direct_env_writes_temp_settings,
 
     // ③ 落盘文件 = --settings 指向的同一路径；内容 = 合法 settings JSON（env 子对象）
     DOCTEST_REQUIRE(std::filesystem::exists(settingsFile));
+    // ③b 权限 0600（2026-10-03 安全审计 F3）：文件里有**明文 API key**，
+    // core::atomicWriteFile 不设权限 → 默认 umask 022 下落成 0644（同机其他本地
+    // 用户可直读，实测本机现存 run-*.json 就是 -rw-r--r--）→ 写后必须收紧
+    DOCTEST_CHECK(runSettingsFileIsOwnerOnly(settingsFile));
     auto parsed = platform::json::parse(readFileToString(settingsFile));
     DOCTEST_REQUIRE(parsed.isOk());
     DOCTEST_REQUIRE(parsed.value().isObject());

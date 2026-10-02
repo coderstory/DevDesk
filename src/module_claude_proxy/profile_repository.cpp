@@ -123,6 +123,41 @@ std::string readStoredCredential(core::data::SqliteDb& db, int64_t profileId) {
     return v.isOk() ? v.value() : std::string();
 }
 
+// 「凭据真的已经迁进库了吗」探测（旧 Keychain 残留清理的护栏③，2026-10-03
+// 安全审计 F1 blocker）：
+// 只看「当前数据根有没有 profile」是不够的——**旧形态的库**（本设计之前建的）
+// 同样有 claude_profiles 行，而 listProfiles 的 SELECT 不引用新列，在旧库上
+// 照样成功返回行 → 护栏放行 → keep 传空 → 把用户 Keychain 里**真实可用**的
+// API Key 全清空。审计已用 /tmp 的老库实测复现（老表 SELECT 成功 / 查新列报
+// no such column）。
+// 判据 = 新列**可读**：旧库缺列 → prepare 直接失败，读都不用读就能否掉。
+// 两种「空」的区别就在这一步：
+//   · 列不可读  = 未知形态的库（旧库 / 半成品库）→ 凭据可能还在 Keychain
+//     → **必须整体跳过**
+//   · 列可读但值为空 = 本形态的库，只是这些 profile 没有密钥（从没配过 / 反向
+//     同步清空过）→ 下面按「至少一行有密钥」再判一次（fail-safe，见调用处）
+struct CredentialColumnProbe {
+    bool readable = false;     // 新列可读 = 库是本形态建的（凭据体系已是库列）
+    int64_t rows = 0;          // claude_profiles 行数
+    int64_t rowsWithKey = 0;   // 凭据列非空的行数
+};
+
+CredentialColumnProbe probeCredentialColumn(core::data::SqliteDb& db) {
+    CredentialColumnProbe out;
+    auto prep = db.prepare("SELECT api_key_encrypted FROM claude_profiles");
+    if (prep.isFail()) return out;   // 旧库：no such column → readable 保持 false
+    auto rows = prep.value().fetchAll();
+    if (rows.isFail()) return out;
+    for (const auto& row : rows.value()) {
+        auto v = row.getString("api_key_encrypted");
+        if (v.isFail()) return out;   // 逐行读不到 = 形态不对 → 同样按未迁移处理
+        ++out.rows;
+        if (!v.value().empty()) ++out.rowsWithKey;
+    }
+    out.readable = true;
+    return out;
+}
+
 } // namespace
 
 // ---------- 两段写助手（CPX-07）----------
@@ -718,9 +753,28 @@ core::Result<int> ProfileRepository::cleanupOrphanKeychainEntries() {
         return core::Result<int>::ok(0);
     }
 
+    // 护栏③（2026-10-03 安全审计 F1 blocker）：光有 profile 不代表凭据已迁进
+    // 库——**旧形态的库**同样有行，只看行数会把用户 Keychain 里的真实 key 全清光。
+    // 判据 = api_key_encrypted 列可读（旧库缺列 → prepare 直接失败）；逐行读不到
+    // 也按未迁移处理。列可读但**没有任何一行存有密钥**时同样整体跳过：那种状态下
+    // 「Keychain 里只剩残留」是个赌注，而护栏的一贯口径是「宁可不清理，也不能误删」。
+    const CredentialColumnProbe probe = probeCredentialColumn(db_);
+    if (!probe.readable) {
+        LOG_WARN("跳过清理：库中没有 api_key_encrypted 列（旧形态库，凭据未迁入库），"
+                 "Keychain 条目一律保留，防误删（keychain service=" +
+                 keychainService_ + "）");
+        return core::Result<int>::ok(0);
+    }
+    if (probe.rowsWithKey == 0) {
+        LOG_WARN("跳过清理：库里 " + std::to_string(probe.rows) +
+                 " 个 profile 都没有存过密钥（凭据未落库），Keychain 条目一律保留，"
+                 "防误删（keychain service=" + keychainService_ + "）");
+        return core::Result<int>::ok(0);
+    }
+
     // keep 传空：残留清理的目标就是「本命名空间下所有 claude:* 条目」——
-    // 保留名单为空是**本设计的有意选择**，不是漏传（凭据真身已在库列里，
-    // Keychain 里留着任何 claude:* 条目都只是旧副本）
+    // 保留名单为空是**本设计的有意选择**，不是漏传。走到这里已经证明「库是
+    // 本形态的、且至少一行真的存着凭据」，Keychain 里的 claude:* 只可能是旧副本。
     auto delR = platform::keychain::deleteSecretsNotIn(keychainService_, {});
     if (delR.isFail()) {
         return core::Result<int>::fail(delR.errorCode(), delR.errorMessage());

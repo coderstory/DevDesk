@@ -58,8 +58,9 @@ std::filesystem::path sqliteDbFile();
 // 路径可经 DEVDESK_GITIGNORE_PATH 覆盖（测试隔离用；生产不需要）。
 std::filesystem::path dataRootGitignoreFile();
 
-// 在数据根写入 / 校正 .gitignore（幂等：内容固定，每次都整体重写以吃上后续
-// 新增的忽略项）。写失败返回 Result 的错误（调用方记日志，不阻断启动——
+// 在数据根写入 / 校正 .gitignore（幂等**追加**语义：读现有内容 → 只补缺失的必需
+// 屏蔽项 → 写回；内容已齐全时一个字节都不动）。**绝不覆盖用户自己写的规则**——
+// 应用只追加，不改不删。写失败返回 Result 的错误（调用方记日志，不阻断启动——
 // 缺了它只是少一道防误提交的闸，不该让应用起不来）。
 core::Result<void> ensureDataRootGitignore();
 

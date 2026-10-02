@@ -4,6 +4,9 @@
 
 #include <cstdlib>
 #include <filesystem>
+#include <fstream>
+#include <set>
+#include <sstream>
 
 namespace fs = std::filesystem;
 
@@ -60,27 +63,46 @@ fs::path dataRootGitignoreFile() {
     return appDataDir() / ".gitignore";
 }
 
-core::Result<void> ensureDataRootGitignore() {
-    // 内容固定且短：每次整体重写（幂等），这样后续新增忽略项对既有用户也立即
-    // 生效。为什么这些条目（2026-10-02 存储统一 §6.3 硬约束 1）：
-    //   *.db / *.db-*  库与 WAL 伴生件（WAL 会把凭据页复制进去；-shm 同族）
-    //   config.json*   应用配置与它的 .bak 备份
-    //   run-settings/  每会话临时 settings（带明文 API key 的那个目录）
-    //   logs/          日志（含 profile 名与路径，不必进仓库）
-    //   pets/          皮肤（混了用户自加皮肤，属本机资产）
-    // 结尾显式放行 .gitignore 自身——数据根本身要能进 git。
-    static constexpr const char* kContent =
-        "# DevDesk 数据根忽略规则（本文件由应用自动写入，可自行追加）\n"
-        "# 为什么：凭据存在 devdesk.db 里，WAL 伴生文件会把凭据页复制进去；\n"
-        "# 数据根若被 `git add .` 扫走，密钥就跟着上远端。\n"
-        "*.db\n"
-        "*.db-*\n"
-        "config.json*\n"
-        "run-settings/\n"
-        "logs/\n"
-        "pets/\n"
-        "!/.gitignore\n";
+namespace {
 
+// 数据根 .gitignore 必须包含的屏蔽项（2026-10-02 存储统一 §6.3 硬约束 1；
+// 2026-10-03 安全审计 F2 补 claude_settings_snapshot.json——它就在数据根里、
+// 0644、可能含用户真实 token，漏了它等于打穿这个文件存在的理由）。
+constexpr const char* kRequiredGitignoreLines[] = {
+    "*.db",                           // 主库（凭据进库后凭据页就在里面）
+    "*.db-*",                         // WAL 伴生（-wal / -shm，会复制凭据页）
+    "config.json*",                   // 应用配置与它的 .bak 备份
+    "run-settings/",                  // 每会话临时 settings（含明文 API key）
+    "claude_settings_snapshot.json",  // 接管前 settings.json 原 env 快照（可能含真 token）
+    "logs/",                          // 日志（含 profile 名与路径）
+    "pets/",                          // 桌宠皮肤（混了用户自加皮肤，属本机资产）
+    "!/.gitignore",                   // 放行自身（数据根本身要能进 git）
+};
+
+std::string trimAscii(const std::string& s) {
+    size_t b = 0;
+    size_t e = s.size();
+    auto sp = [](char c) { return c == ' ' || c == '\t' || c == '\r' || c == '\n'; };
+    while (b < e && sp(s[b])) ++b;
+    while (e > b && sp(s[e - 1])) --e;
+    return s.substr(b, e - b);
+}
+
+std::string readWholeFile(const fs::path& file) {
+    std::ifstream in(file, std::ios::binary);
+    if (!in) return std::string();
+    std::ostringstream oss;
+    oss << in.rdbuf();
+    return oss.str();
+}
+
+} // namespace
+
+core::Result<void> ensureDataRootGitignore() {
+    // 幂等**追加**语义（2026-10-03 安全审计 F4）：原实现每次启动整体重写，
+    // 用户自己加的规则会被静默清掉——而文件正文还写着「可自行追加」，自相矛盾。
+    // 现在的口径：读现有内容 → 只补缺失的必需行 → 写回；内容已齐全则**一个字节
+    // 都不动**（连 mtime 都不变）。
     const fs::path file = dataRootGitignoreFile();
     std::error_code ec;
     if (!file.parent_path().empty()) {
@@ -92,12 +114,48 @@ core::Result<void> ensureDataRootGitignore() {
                     ec.message());
         }
     }
-    auto written = core::atomicWriteFile(file, kContent, ".gitignore");
-    if (written.isFail()) {
-        return core::Result<void>::fail(written.errorCode(),
-                                        written.errorMessage());
+
+    const std::string existing = readWholeFile(file);
+
+    // 已有的**规则行**（跳过空行与注释行——`# *.db` 是用户注释掉的规则，不算已有）
+    std::set<std::string> present;
+    {
+        std::istringstream iss(existing);
+        std::string line;
+        while (std::getline(iss, line)) {
+            const std::string t = trimAscii(line);
+            if (t.empty() || t[0] == '#') continue;
+            present.insert(t);
+        }
     }
-    return core::Result<void>::ok();
+
+    std::string missing;
+    for (const char* want : kRequiredGitignoreLines) {
+        if (present.count(want) == 0) {
+            missing += want;
+            missing += '\n';
+        }
+    }
+
+    if (existing.empty()) {
+        static constexpr const char* kHeader =
+            "# DevDesk 数据根忽略规则（本文件由应用维护，可自行追加规则）\n"
+            "# 为什么需要它：凭据存在 devdesk.db 里，WAL 伴生文件会把凭据页复制进去；\n"
+            "# 数据根若被 `git add .` 扫走，密钥就跟着上远端。\n"
+            "# 应用只**追加**缺失的必需项，不动你写的任何一行。\n";
+        return core::atomicWriteFile(file, std::string(kHeader) + missing,
+                                     ".gitignore");
+    }
+
+    if (missing.empty()) {
+        return core::Result<void>::ok();   // 齐全 → 不动内容（用户规则原样保留）
+    }
+
+    std::string content = existing;
+    if (content.back() != '\n') content += '\n';
+    content += "\n# ↓ 以下为 DevDesk 自动补充的缺失屏蔽项（你原有的内容未改动）\n";
+    content += missing;
+    return core::atomicWriteFile(file, content, ".gitignore");
 }
 
 fs::path markdownDir() {
