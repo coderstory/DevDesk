@@ -11,6 +11,16 @@ core::Result<void> atomicWriteFile(const std::filesystem::path& target,
     std::filesystem::path tmp = target;
     tmp += ".devdesk-tmp";
     {
+        // 权限**先**就位再打开写句柄：POSIX 上权限位在 open(O_CREAT) 那一刻定死，
+        // 事后 chmod 追不回已被别的用户 open 住的 fd——那把 fd 之后仍能读到我们
+        // 写进去的内容（本工具的调用点里有含明文 API key 的文件）。见
+        // detail::prepareRestrictedFile。
+        std::error_code permEc;
+        if (!detail::prepareRestrictedFile(tmp, permEc)) {
+            return core::Result<void>::fail(
+                core::ErrorCode::Internal,
+                label + "临时文件创建失败 " + tmp.string() + ": " + permEc.message());
+        }
         std::ofstream f(tmp, std::ios::binary | std::ios::trunc);
         if (!f) {
             return core::Result<void>::fail(core::ErrorCode::Internal,
