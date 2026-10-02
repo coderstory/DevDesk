@@ -411,50 +411,47 @@ int main(int argc, char* argv[]) {
                 // 展开 msg.2（assistant tool_use，真实点击「展开」chip）
                 const auto* tgl2u = ui->find(base + ".msg.2.toggle");
                 if (tgl2u == nullptr) {
+                    check(false, "⑤ msg.2.toggle 缺失");
                 } else {
-                    if (tgl2u == nullptr) {
-                        check(false, "⑤ msg.2.toggle 缺失");
+                    // 展开 msg.2（assistant tool_use）→ 🔧 chip 可见
+                    clickCenter(window, tgl2u);
+                    composeFrame();
+                    const auto* chip =
+                        ui->find(base + ".msg.2.blk.1");
+                    check(chip != nullptr, "⑤ tool_use 块 msg.2.blk.1 缺失");
+                    if (chip != nullptr) {
+                        check(chip->text.find("todo.list") !=
+                                      std::string::npos &&
+                                  chip->text.find("🔧") !=
+                                      std::string::npos,
+                              "⑤ tool chip 缺工具名/emoji，实测: " +
+                                  chip->text);
+                    }
+                    // 展开 msg.3（tool_result）→ 高度增大 + 输出全文 +
+                    // 复制 chip
+                    const auto* tgl3 = ui->find(base + ".msg.3.toggle");
+                    if (tgl3 == nullptr) {
+                        check(false, "⑤ msg.3.toggle 缺失");
                     } else {
-                        // 展开 msg.2（assistant tool_use）→ 🔧 chip 可见
-                        clickCenter(window, tgl2u);
+                        clickCenter(window, tgl3);
                         composeFrame();
-                        const auto* chip =
-                            ui->find(base + ".msg.2.blk.1");
-                        check(chip != nullptr, "⑤ tool_use 块 msg.2.blk.1 缺失");
-                        if (chip != nullptr) {
-                            check(chip->text.find("todo.list") !=
-                                          std::string::npos &&
-                                      chip->text.find("🔧") !=
-                                          std::string::npos,
-                                  "⑤ tool chip 缺工具名/emoji，实测: " +
-                                      chip->text);
-                        }
-                        // 展开 msg.3（tool_result）→ 高度增大 + 输出全文 +
-                        // 复制 chip
-                        const auto* tgl3 = ui->find(base + ".msg.3.toggle");
-                        if (tgl3 == nullptr) {
-                            check(false, "⑤ msg.3.toggle 缺失");
-                        } else {
-                            clickCenter(window, tgl3);
-                            composeFrame();
-                            const auto* m2e = ui->find(base + ".msg.3");
-                            check(m2e != nullptr &&
-                                      m2e->frame.height > collapsedH,
-                                  std::string("⑤ 展开后 msg.3 高度应大于收起高 ") +
-                                      std::to_string(collapsedH));
-                            const auto* out =
-                                ui->find(base + ".msg.3.blk.0.out");
-                            check(out != nullptr &&
-                                      out->text.size() >= 600 &&
-                                      out->text.find("zzz") !=
-                                          std::string::npos,
-                                  "⑤ tool_result 输出全文未渲染");
-                            const auto* copyBtn =
-                                ui->find(base + ".msg.3.copy");
-                            check(copyBtn != nullptr &&
-                                      copyBtn->text == "复制",
-                                  "⑤ 复制 chip 缺失或文案不对");
-                        }
+                        const auto* m2e = ui->find(base + ".msg.3");
+                        check(m2e != nullptr &&
+                                  m2e->frame.height > collapsedH,
+                              std::string("⑤ 展开后 msg.3 高度应大于收起高 ") +
+                                  std::to_string(collapsedH));
+                        const auto* out =
+                            ui->find(base + ".msg.3.blk.0.out");
+                        check(out != nullptr &&
+                                  out->text.size() >= 600 &&
+                                  out->text.find("zzz") !=
+                                      std::string::npos,
+                              "⑤ tool_result 输出全文未渲染");
+                        const auto* copyBtn =
+                            ui->find(base + ".msg.3.copy");
+                        check(copyBtn != nullptr &&
+                                  copyBtn->text == "复制",
+                              "⑤ 复制 chip 缺失或文案不对");
                     }
                 }
             }

@@ -21,8 +21,12 @@
 #include "module_agent/tool_info.h"
 #include "module_agent/agent_store.h"
 
+#include <core/render/text.h>
+
+#include <cmath>
 #include <set>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace {
@@ -215,14 +219,28 @@ REGISTER_TEST(msg_blocks_height_estimator_monotonic_and_clamped,
     DOCTEST_CHECK(h2 > h1);
     DOCTEST_CHECK(h1 >= 18.0f);  // 至少一行
 
-    // 消息高：展开 > 收起（同一条消息）。row 按 AgentStore 落库形态构造
+    // 消息高：内容超一行的消息展开 > 收起（F1 改真测量后，单行消息展开与
+    // 收起同高是正确语义——没有更多内容可展示，故用会换行的长内容钉）
+    const float narrowW = 200.0f;
     module::agent::AgentMessageRow row;
     row.seq = 0;
     row.role = "user";
-    row.contentJson = R"([{"type":"text","text":"hello"}])";
-    float hCollapsed = estimateMessageHeight(row, /*expanded=*/false, w, 18.0f);
-    float hExpanded = estimateMessageHeight(row, /*expanded=*/true, w, 18.0f);
+    row.contentJson =
+        R"([{"type":"text","text":")" + std::string(200, 'a') + R"("}])";
+    float hCollapsed =
+        estimateMessageHeight(row, /*expanded=*/false, narrowW, 18.0f);
+    float hExpanded =
+        estimateMessageHeight(row, /*expanded=*/true, narrowW, 18.0f);
     DOCTEST_CHECK(hExpanded > hCollapsed);
+    // 单行消息：展开与收起同高（真测量下不再有「+1 保险行」虚高）
+    module::agent::AgentMessageRow oneLiner;
+    oneLiner.seq = 1;
+    oneLiner.role = "user";
+    oneLiner.contentJson = R"([{"type":"text","text":"hello"}])";
+    DOCTEST_CHECK_EQ(estimateMessageHeight(oneLiner, /*expanded=*/true, w,
+                                           18.0f),
+                     estimateMessageHeight(oneLiner, /*expanded=*/false, w,
+                                           18.0f));
 
     // 区域高：钳制生效——再多消息也不超过 maxH
     std::vector<module::agent::AgentMessageRow> many;
@@ -275,5 +293,73 @@ REGISTER_TEST(msg_blocks_tool_info_malformed_schema,
         R"({"name":"app.stats","description":"统计"})");
     DOCTEST_CHECK_EQ(noSchema.name, std::string("app.stats"));
     DOCTEST_CHECK(noSchema.params.empty());
+    return true;
+})
+
+// ============ 评审微修 F1/F2（2026-10-02）============
+
+REGISTER_TEST(msg_blocks_height_matches_text_measurement,
+              "msg_blocks: 估算高度 == TextPrimitive::measureTextSize 行数×lineHeight（真测量口径）", {
+    using namespace module::agent;
+    const float fs = 12.0f;
+    const float lh = 18.0f;
+    // 宽字形串（m/w/W/@）/ base64 段 / 大写段：0.55em 启发式会显著低估的样本
+    const std::vector<std::pair<std::string, float>> cases = {
+        {std::string(80, 'm'), 200.0f},
+        {std::string(80, 'i'), 200.0f},
+        {"WWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWW@@@@@@@@@@@@@@@@@@@@@@@@", 180.0f},
+        {"QUJDREVGR0hJSktMTU5PUFFSU1RVVldYWVphYmNkZWZnaGlqa2xtbm9wcXJzdHV2d3h5ejAxMjM0NTY3ODkrLw==",
+         220.0f},
+        {"ABC DEF GHI JKL MNO PQR STU VWX YZA BCD EFG HIJ KLM NOP QRS TUV",
+         150.0f},
+        {"短", 200.0f},
+    };
+    for (const auto& [text, cw] : cases) {
+        core::TextStyle style;
+        style.text = text;
+        style.fontSize = fs;
+        style.maxWidth = cw;
+        style.wrap = true;
+        style.lineHeight = lh;
+        const core::Vec2 measured = core::TextPrimitive::measureTextSize(style);
+        const float expectLines =
+            measured.y > 0.0f ? std::max(1.0f, std::round(measured.y / lh))
+                              : 1.0f;
+        const float h = estimateTextBlockHeight(text, cw, fs, lh);
+        DOCTEST_CHECK_MESSAGE(
+            std::fabs(h - expectLines * lh) <= 0.51f,
+            "估算 " + std::to_string(h) + " != 测量行数 " +
+                std::to_string(expectLines) + "×" + std::to_string(lh) +
+                "（样本: " + text.substr(0, 16) + "… cw=" +
+                std::to_string(cw) + "）");
+    }
+    // 真测量判据：同长度下宽字形串（m）比窄字形串（i）行数多 → 估算更高。
+    // 若测量退化（字体不可用）两者相等，这里必红——防「退化成 1 行」假绿
+    const float hWide = estimateTextBlockHeight(std::string(80, 'm'), 200.0f,
+                                                fs, lh);
+    const float hNarrow = estimateTextBlockHeight(std::string(80, 'i'), 200.0f,
+                                                  fs, lh);
+    DOCTEST_CHECK_MESSAGE(hWide > hNarrow,
+                          "宽字形 m×80 应比窄字形 i×80 高（实测 " +
+                              std::to_string(hWide) + " vs " +
+                              std::to_string(hNarrow) + "）");
+    return true;
+})
+
+REGISTER_TEST(msg_blocks_tool_result_nontext_block_preserved,
+              "msg_blocks: tool_result 非 text 块回落原文（评审 F2 不丢内容）", {
+    // content 数组含 image 块：此前 continue 静默丢，现在 stringify 保留
+    auto blocks = module::agent::decodeMessageBlocks(
+        R"([{"type":"tool_result","tool_use_id":"t1","content":[)"
+        R"({"type":"text","text":"文字部分"},)"
+        R"({"type":"image","source":{"type":"base64","media_type":"image/png","data":"AAAA"}})"
+        R"(],"is_error":false}])");
+    const auto* tr = findBlock(blocks, MessageType::ToolResult);
+    DOCTEST_REQUIRE(tr != nullptr);
+    DOCTEST_CHECK_MESSAGE(tr->text.find("文字部分") != std::string::npos,
+                          "text 块内容丢失: " + tr->text);
+    DOCTEST_CHECK_MESSAGE(tr->text.find("image") != std::string::npos &&
+                              tr->text.find("AAAA") != std::string::npos,
+                          "非 text 块（image）内容被静默丢弃: " + tr->text);
     return true;
 })

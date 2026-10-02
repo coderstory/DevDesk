@@ -58,12 +58,12 @@ std::string messagePreviewFromJson(const std::string& contentJson,
 // 工具参数摘要：input JSON 压成单行（换行/连续空白折叠）+ UTF-8 截断。
 std::string toolArgsSummary(const std::string& inputJson, size_t maxBytes);
 
-// ---- 高度估算（scroll 区域外高的依据；宁高勿低——估算偏大只会多留白，
-//      偏小会让下一行文字压上来）----
+// ---- 高度估算（scroll 区域外高的依据）----
 
-// 展开的单个文本块高：按「字符宽单元」估行数（CJK=1 单元、ASCII≈0.55 单元，
-// 每单元宽 fontSize*0.55），行数 = 单元数 / 每行单元容量（各段独立，\n 分段），
-// 至少 1 行，末尾 +1 行保险。lines*lineHeight。
+// 展开的单个文本块高。**真实测量**（评审 F1）：直接调渲染同一台引擎
+// core::TextPrimitive::measureTextSize（style.maxWidth=contentW、wrap=true、
+// lineHeight），行数 = 返回高 / lineHeight，至少 1 行。字体不可用（测量全零）
+// 时退「按 1 行」，不崩不谎报。
 float estimateTextBlockHeight(const std::string& text, float contentW,
                               float fontSize, float lineHeight);
 
@@ -72,16 +72,20 @@ float estimateTextBlockHeight(const std::string& text, float contentW,
 float estimateMessageHeight(const AgentMessageRow& msg, bool expanded,
                             float contentW, float lineHeight);
 
-// 消息区滚动容器的建议外高：clamp(Σ 消息高 + 间距, minH, maxH)。
+// 消息区滚动容器的建议外高：clamp(Σ 消息高 + 消息间 kMsgRowGap, minH, maxH)。
 // 真实内容高由 scrollView 自测（contentKey 变更重测），本估算只给外高。
 float estimateMessagesAreaHeight(const std::vector<AgentMessageRow>& msgs,
                                  const std::set<int64_t>& expandedSeqs,
                                  float contentW, float lineHeight,
                                  float minH, float maxH);
 
-// 消息头（role 徽章行）固定高与块间距——估算与 compose 必须同源
+// 消息内列间距（头行 → 内容、块 → 块）：与 renderMessageRow 的
+// column().gap(kMsgGap) 同源
 constexpr float kMsgHeaderH = 20.0f;
 constexpr float kMsgGap = 4.0f;
+// 消息与消息之间的行距：与 compose 里 msgscroll 的 .gap(kMsgRowGap) 同源
+//（两者数值不同：列内紧凑 4、条间留白 6）
+constexpr float kMsgRowGap = 6.0f;
 
 // 消息角色徽章文案：user=用户 / assistant=助手 / 含 tool_result 块的消息
 //（落库 role 是 "user"，按内容判）= 工具；其余原样。

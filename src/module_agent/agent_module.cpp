@@ -14,7 +14,8 @@
 //   agent.form.create /
 //   agent.tools（可用工具区块容器）/ agent.tools.header（点开/收起）/
 //     agent.tools.header.label / agent.tools.header.hint /
-//     agent.tools.scroll / agent.tools.card.<k>（.name / .desc / .params）
+//     agent.tools.scroll / agent.tools.card.<k>
+//     （.bg 底 / .name / .desc / .params）
 //   agent.tasklist / agent.task.<taskId> / agent.task.<taskId>.title /
 //   agent.task.<taskId>.run（text=="启动"）/ agent.task.<taskId>.status /
 //   agent.task.<taskId>.edit（点开编辑表单）/ agent.task.<taskId>.toggle

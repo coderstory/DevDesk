@@ -5,6 +5,8 @@
 #include <algorithm>
 #include <cmath>
 
+#include <core/render/text.h>
+
 #include "platform/json.h"
 
 namespace module::agent {
@@ -19,6 +21,12 @@ std::string strField(const pj::JsonObject& obj, const char* key) {
     return v.isString() ? v.asString() : std::string();
 }
 
+// 未知/异常块：stringify 保留原文（失败再退 JSON 原始片段，不静默丢）
+std::string rawOf(const pj::JsonValue& blockValue) {
+    auto text = pj::stringify(blockValue);
+    return text.isOk() ? text.value() : std::string();
+}
+
 // tool_result.content 摊平：字符串 → 原值；blocks 数组 → 拼接各 text 块；
 // 其他 → stringify 原文（容错，不丢内容）。
 std::string flattenToolResultContent(const pj::JsonValue& content) {
@@ -27,22 +35,22 @@ std::string flattenToolResultContent(const pj::JsonValue& content) {
         std::string out;
         for (int i = 0; i < content.size(); ++i) {
             pj::JsonValue item = content[i];
-            if (!item.isObject()) continue;
-            pj::JsonObject block = item.asObject();
-            if (strField(block, "type") != "text") continue;
+            std::string piece;
+            if (item.isObject() &&
+                strField(item.asObject(), "type") == "text") {
+                piece = strField(item.asObject(), "text");
+            } else {
+                // 非 text 块（image 等）/ 非对象项：stringify 原文保留，
+                // 与头注释「不丢内容」对齐（评审 F2：此前 continue 静默丢）
+                piece = rawOf(item);
+            }
             if (!out.empty()) out += "\n";
-            out += strField(block, "text");
+            out += piece;
         }
         return out;
     }
     if (content.isNull()) return std::string();
     auto text = pj::stringify(content);
-    return text.isOk() ? text.value() : std::string();
-}
-
-// 未知/异常块：stringify 保留原文（失败再退 JSON 原始片段，不静默丢）
-std::string rawOf(const pj::JsonValue& blockValue) {
-    auto text = pj::stringify(blockValue);
     return text.isOk() ? text.value() : std::string();
 }
 
@@ -62,32 +70,6 @@ std::string flattenToSingleLine(const std::string& s) {
         out += c;
     }
     return out;
-}
-
-// 字符宽单元数：CJK/全角 = 1.0 单元，其余 ≈ 0.55 单元（估算口径，宁大勿小）
-double charUnits(const std::string& utf8) {
-    double units = 0.0;
-    size_t i = 0;
-    while (i < utf8.size()) {
-        const unsigned char c = static_cast<unsigned char>(utf8[i]);
-        size_t len = 1;
-        if (c >= 0xF0) {
-            len = 4;
-        } else if (c >= 0xE0) {
-            len = 3;
-        } else if (c >= 0xC0) {
-            len = 2;
-        }
-        if (i + len > utf8.size()) len = 1;   // 截断的多字节序列：当单字节
-        // CJK 统一表意 / 全角标点 / 假名 / 谚文：首字节范围覆盖常用多字节面
-        if (len >= 3) {
-            units += 1.0;
-        } else {
-            units += 0.55;
-        }
-        i += len;
-    }
-    return units;
 }
 
 } // namespace
@@ -201,26 +183,23 @@ std::string toolArgsSummary(const std::string& inputJson, size_t maxBytes) {
 
 float estimateTextBlockHeight(const std::string& text, float contentW,
                               float fontSize, float lineHeight) {
-    if (contentW <= 0.0f || fontSize <= 0.0f || lineHeight <= 0.0f) {
-        return lineHeight > 0.0f ? lineHeight : 0.0f;
+    const float lh = lineHeight > 0.0f ? lineHeight : fontSize * 1.2f;
+    if (text.empty() || contentW <= 0.0f || fontSize <= 0.0f) {
+        return lh;   // 至少一行
     }
-    // 每行可容纳的字符单元数（单元宽 = fontSize*0.55）
-    const double unitsPerLine =
-        std::max(1.0, static_cast<double>(contentW) / (fontSize * 0.55));
-    int lines = 0;
-    size_t start = 0;
-    while (start <= text.size()) {
-        const size_t nl = text.find('\n', start);
-        const size_t end = nl == std::string::npos ? text.size() : nl;
-        const std::string paragraph = text.substr(start, end - start);
-        const double units = charUnits(paragraph);
-        lines += static_cast<int>(std::ceil(units / unitsPerLine));
-        if (nl == std::string::npos) break;
-        start = nl + 1;
-    }
-    // 空 text 也至少占一行；末尾 +1 行保险（估窄了会把下一行顶压上来）
-    const int safeLines = std::max(lines, 1) + 1;
-    return static_cast<float>(safeLines) * lineHeight;
+    // 真实测量（评审 F1）：与渲染同一台引擎——TextPrimitive::measureTextSize
+    // 按 style.maxWidth 做同样的换行判定，返回 {maxLineWidth, 行数×lineHeight}。
+    // 不再用「0.55em/ASCII」启发式（宽字形 m/w/W/@ 与窄字形 i/l/1 差异大）。
+    core::TextStyle style;
+    style.text = text;
+    style.fontSize = fontSize;
+    style.maxWidth = contentW;
+    style.wrap = true;
+    style.lineHeight = lh;
+    const core::Vec2 size = core::TextPrimitive::measureTextSize(style);
+    // 字体不可用（测量返回零宽零高）时退「按行数 1」——不崩不谎报
+    const float lines = size.y > 0.0f ? std::round(size.y / lh) : 1.0f;
+    return std::max(1.0f, lines) * lh;
 }
 
 float estimateMessageHeight(const AgentMessageRow& msg, bool expanded,
@@ -262,7 +241,7 @@ float estimateMessagesAreaHeight(const std::vector<AgentMessageRow>& msgs,
                                  float minH, float maxH) {
     float total = 0.0f;
     for (size_t i = 0; i < msgs.size(); ++i) {
-        if (i > 0) total += kMsgGap;
+        if (i > 0) total += kMsgRowGap;   // 条间行距 = scrollView 的 gap（同源）
         const bool expanded = expandedSeqs.count(msgs[i].seq) > 0;
         total += estimateMessageHeight(msgs[i], expanded, contentW, lineHeight);
     }
