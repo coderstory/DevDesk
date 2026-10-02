@@ -14,6 +14,7 @@ add_library(devdesk_module_claude_proxy STATIC
     proxy_router.cpp
     proxy_runtime.cpp
     quota/quota_registry.cpp
+    quota/quota_volcano.cpp
     settings_sync.cpp
     settings_takeover.cpp
     streaming_proxy.cpp
