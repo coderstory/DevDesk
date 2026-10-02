@@ -5,6 +5,7 @@
 
 #include "opencode_go_provider.h"  // G1：OpenCode Go 工厂
 #include "deepseek_provider.h"    // G3：DeepSeek 工厂
+#include "provider_minimax_cn.h"   // G2：MiniMax 中国站工厂
 
 namespace module::claude::quota {
 
@@ -23,6 +24,8 @@ constexpr QuotaProviderEntry kQuotaProviders[] = {
     {"opencode_go", &createOpenCodeGoProvider},
     // G3：DeepSeek（Balance 型：只有余额，无窗口）
     {"deepseek", &createDeepSeekProvider},
+    // G2：MiniMax 中国站（旧域 api.minimaxi.com；百分比反转 + weekly 门控）
+    {"minimax_cn", &createMinimaxCn},
     {nullptr, nullptr},  // ← 表尾哨兵；后续 provider 的行插在本行之前
 };
 
