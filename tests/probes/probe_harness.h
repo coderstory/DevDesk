@@ -104,6 +104,17 @@ struct ProbeArgs {
     // （见文件头「帧捕获」段）。**空 = 既有行为逐字不变**（不建渲染后端、不渲染、
     // 不写文件、不改退出码）。
     std::string screenshotPath;
+    // --screenshot-seeded <路径>：**中途**状态点落图（与 screenshotPath 相互
+    // 独立、两个可同时给）。存在的理由：探针收尾前常会做「破坏性收尾断言」
+    // （home_probes 组 H(b) 会清空余量表再断言），退出点那张图拍到的是**收尾后**
+    // 的空态；本开关让探针能在「数据还在」的中途点另拍一张。
+    // 空 = 零开销，行为与从前逐字一致。
+    std::string screenshotSeedPath;
+    // --quota-fixture <路径>：**home_probes 专用**（其余 probe 忽略）。让余量卡
+    // 种子改用一份「真机落下的 JSON」（quota_live_probe --dump 的产物），从而
+    // 「真网络 → 真落库 → 真渲染 → 真落图」这条链能被一次跑通并留证据。
+    // 空 = 用离线假种子（默认，门禁跑的就是这一条，见 home_probes.cpp）。
+    std::string quotaFixturePath;
 };
 
 inline int parseLeadingInt(const std::string& text, int fallback) {
@@ -117,7 +128,8 @@ inline int parseLeadingInt(const std::string& text, int fallback) {
     return value > 0 ? value : fallback;
 }
 
-/// 解析 --frames N / --size WxH / --manual / --screenshot <路径>；未知参数忽略。
+/// 解析 --frames N / --size WxH / --manual / --screenshot <路径> /
+/// --screenshot-seeded <路径> / --quota-fixture <路径>；未知参数忽略。
 inline ProbeArgs parseProbeArgs(int argc, char* argv[]) {
     ProbeArgs args;
     for (int i = 1; i < argc; ++i) {
@@ -133,6 +145,10 @@ inline ProbeArgs parseProbeArgs(int argc, char* argv[]) {
             }
         } else if (arg == "--screenshot" && i + 1 < argc) {
             args.screenshotPath = argv[++i];
+        } else if (arg == "--screenshot-seeded" && i + 1 < argc) {
+            args.screenshotSeedPath = argv[++i];
+        } else if (arg == "--quota-fixture" && i + 1 < argc) {
+            args.quotaFixturePath = argv[++i];
         } else if (arg == "--manual") {
             args.manual = true;
         }
@@ -362,6 +378,29 @@ inline bool captureIfRequested(const ProbeArgs& args,
         captureFramePng(window, runtime, args.screenshotPath);
     if (!captured) {
         std::cerr << "probe: --screenshot 落图失败: " << args.screenshotPath
+                  << "（退出码将非零：视觉证据链缺失不能当通过）\n";
+        if (passed != nullptr) {
+            *passed = false;
+        }
+    }
+    return captured;
+}
+
+/// --screenshot-seeded 的标准接线点：**中途**状态点落图（语义见 ProbeArgs）。
+/// 与 captureIfRequested 同款契约——未传路径 = 立刻 return true（零开销），
+/// 传了但落图失败 = stderr 诊断 + 置 *passed = false（不静默）。
+inline bool captureSeedIfRequested(const ProbeArgs& args,
+                                   core::window::Handle window,
+                                   core::dsl::Runtime& runtime,
+                                   bool* passed = nullptr) {
+    if (args.screenshotSeedPath.empty()) {
+        return true;
+    }
+    const bool captured =
+        captureFramePng(window, runtime, args.screenshotSeedPath);
+    if (!captured) {
+        std::cerr << "probe: --screenshot-seeded 落图失败: "
+                  << args.screenshotSeedPath
                   << "（退出码将非零：视觉证据链缺失不能当通过）\n";
         if (passed != nullptr) {
             *passed = false;

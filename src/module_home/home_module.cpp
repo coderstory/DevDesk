@@ -22,6 +22,7 @@
 #include <components/button.h>
 #include <components/card.h>
 #include <components/linechart.h>
+#include <components/scrollview.h>
 #include <components/theme.h>
 
 #include <ctime>
@@ -335,7 +336,10 @@ public:
         const auto& t = core::theme::current();
         const float pad = t.sizes.spacingXXLarge;       // 40
         const float gap = t.sizes.spacingLarge * 1.25f; // 20
-        const float contentW = screen.width - pad * 2.0f;
+        // ⚠ contentW **不在这里定义**：整页已挂进 home.scroll，内容宽取决于
+        // scrollView 是否出了滚动条（出了就收窄 scrollbarWidth + gap），只有
+        // scrollView 的 content 回调拿到的 innerW 说了算——见下方 home.scroll
+        // 段的同名遮蔽定义。写死 screen.width 版会横向溢出。
         // 审计 M6：header 右侧按钮组宽（标题列 = contentW - 本值）——header 行
         // gap=0，两段必须相加等于 contentW；字面量写死两处改一处忘一处就右缘错位
         constexpr float kHeaderActionsW = 212.0f;
@@ -361,8 +365,41 @@ public:
         // 运行时跟随，磨砂 Phase B/D）——不再自铺不透明底，否则半透/磨砂档
         // 下页面 alpha 恒为 1，主体看不见效果（用户实测主窗主体无效果的根因）
 
-        ui.column("home.root")
+        // ---- 首页外层滚动容器（2026-10-03 final 批，G7 遗留 1 / G8 遗留 1）----
+        //
+        // 为什么是「整页包一层」而不是「只把余量卡塞进 scrollView」：矮窗下
+        // 真正装不下的是**整页**（不含余量卡就已超客户区），只给卡片一个滚动
+        // 容器解决不了这个问题——那会让卡片占满视口，把欢迎区/统计/图表/快捷
+        // 按钮全挤走，观感更差。整页包一层后，超出的部分由滚动条吸收，各块
+        // 几何在「页面装得下」的屏高区间**逐字不变**（scrollView 内容不溢出
+        // 时连滚动条都不出现）。
+        //
+        // ⚠ 上游坑（markdown_module.cpp 同款，已核 EUI-NEO core/layout.h）：
+        //   `layoutColumn()` 算子元素位置时**只看流式游标**（layout.h:605-611），
+        //   只有 `layoutStack()` 才认 `hasX_/hasY_`（layout.h:622-623）——即
+        //   **position() 挂在 column 的流式子元素上会被静默忽略**。所以下面
+        //   home.root 的直接子块（header / stats / quota 卡 / 图表卡 / actions）
+        //   一律不用 position()，只用 flow + size()；用 position() 的只有卡
+        //   **内部**的元素（它们是 card 自己的 stack 子节点，不受影响）。
+        //
+        // 形参 `ui` **刻意与外层同名**：一旦整页被 scrollView 的 content 回调
+        // 包住，下面这 600 行整页代码一行都不用改就换了个容器（遮蔽外层 ui）。
+        // `innerW` 才是内容宽——出滚动条时 scrollView 会把内容列收窄
+        // （scrollbarWidth + gap），用 screen.width 会让 home.root 横向溢出。
+        components::scrollView(ui, "home.scroll")
             .size(screen.width, screen.height)
+            .theme(core::theme::componentTokens(t))
+            .content([&](eui::Ui& ui, float innerW, float) {
+            // ⚠ 遮蔽外层的 contentW（screen.width 版）：出滚动条时内容列变窄，
+            // 必须跟着 innerW 走，否则横向溢出（markdown 的 scrollView 同款口径）。
+            const float contentW = innerW - pad * 2.0f;
+        ui.column("home.root")
+            // 高度用 wrapContent：**固定高度会让 scrollView 的测量 pass 永远
+            // 量到「正好等于视口」→ contentHeight 恒等于视口 → 永远不判可滚**
+            // （core/layout.h measureColumnContent 按子元素实测高求和，固定高
+            // 会把 wrapContent 那层测量吃掉）。
+            .width(innerW)
+            .height(core::SizeValue::wrapContent())
             .padding(pad)
             .gap(gap)
             .content([&] {
@@ -956,8 +993,10 @@ public:
                     })
                     .build();
                 }  // if (actCount > 0)
-            })
-            .build();
+            })   // home.root 的 content
+            .build();  // home.root
+    })  // home.scroll 的 content（收尾多这一层）
+        .build();  // home.scroll
     }
 
 private:

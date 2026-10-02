@@ -462,6 +462,16 @@ if ! bash scripts/check-quota-write-paths.sh; then
   exit 1
 fi
 
+# ---- 3b-3. 探针门禁标签守卫（G8 遗留 4；纯静态检查，--no-test 也跑）----
+# 真机出网探针（tools/quota_live_probe.cpp）必须有「想跑的人才找得到」的显式入口，
+# 又**绝不能**进默认门禁（真网络 + 本机 cc-switch 凭据 + 每次实打实打四家）。
+# 那条「绝不进」原本只是一句注释；本守卫把它钉成会红的断言（自带 --self-test）。
+echo "── 探针门禁标签守卫 ──"
+if ! bash scripts/check-probe-gate-labels.sh; then
+  echo "❌ 探针门禁标签守卫失败（quota_live_probe 必须挂 live 标签、不得挂 probe，门禁脚本不得调用它）"
+  exit 1
+fi
+
 # ---- 3c. 安装到 /Applications（--install，仅 macOS；默认不开则整段不执行）----
 # 顺序即「事故的反面」，每一步都在补一个曾经漏掉的环节：
 #   ① 重组 bundle：build-app.sh 会 rm -rf 重建 .app + 拷二进制 + 刷 Info.plist 版本 + 拷 assets。

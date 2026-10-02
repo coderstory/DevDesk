@@ -9,10 +9,15 @@
 // （格式层拒绝，非权限问题）——所以本 provider 的 fields() 收 AK/SK，不吃 profile 的
 // apiKey（coding_plan.rs:837-847）。
 //
-// ⚠️ 诚实边界：本签名实现**从未在真实火山服务端验证过**（无火山账号 / 无 AK/SK）。
-// 单测锁的是结构契约（canonical 串拼装 + 三处偏离标准 SigV4 的火山特性 + 密钥派生
-// 链），期望值由**独立实现**（Python hmac/hashlib 按同一规格重算）给出，不是本文件
-// 自己反算的；但"服务端会接受这个签名"这件事，只能等有账号时出网手测一次。
+// ✅ **真机出网已验证（G8，2026-10-03）**：拿本机 cc-switch 里的真实 AK/SK 打
+// `https://open.volcengineapi.com/`，`GetAFPUsage` 与 `GetCodingPlanUsage` **两次
+// 都返回 HTTP 200 且 Result 非空**（`Status:"Running"`、解析出 5h/周/月三窗口）
+// ——即「本文件这套 SigV4 变体被真实火山网关接受」这件事**已被证据关掉**，不再是
+// 「只能等有账号时手测」的悬案。证据留在 .superpowers/sdd/2026-10-03-quota 的
+// G8 / final 报告里；可复跑入口见 tools/quota_live_probe.cpp 文件头。
+// ⚠️ 验证过 ≠ 覆盖全部形态：验的是 cn-beijing + GetAFPUsage/GetCodingPlanUsage
+// 这两条路径；换 region / 换 Action 是否仍逐字节一致**没有被验证**，新增形态
+// 仍应先跑一次上面那个入口。
 #include "quota_volcano.h"
 
 #include <openssl/hmac.h>
