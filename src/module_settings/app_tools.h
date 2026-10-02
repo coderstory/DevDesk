@@ -9,7 +9,7 @@
 //   · 输出是 **SettingsConfig 的白名单字段集**（9 键，清单钉在 app_tools.cpp
 //     的字段白名单注释处，新增字段必须同步该注释与本头），不是整份
 //     config.json 的转储：配置文件里将来若混入敏感键也不会外泄；
-//   · 凭据本体不在 config.json——API Key 存在 SQLite 的
+//   · 凭据本体不在本工具的输出里——API Key 存在 SQLite 的
 //     claude_profiles.api_key_encrypted 列（2026-10-02 存储统一前在
 //     platform::keychain），本工具的字段白名单里没有任何凭据键，故无凭据面；
 //   · 值取自 SettingsStore::load()，其返回值已经 sanitized（越界钳制 / 未知
@@ -28,17 +28,19 @@
 // Result::fail 只留给编程不变量破坏。
 #pragma once
 
-#include <filesystem>
 #include <memory>
 
+#include "core/sqlite_db.h"
 #include "core/tool.h"
 
 namespace module::settings {
 
-// 工厂：产出 "app.read_settings" 只读工具。configPath = 配置文件完整路径
-//（生产传 ::core::paths::configFile()，测试传临时文件）。工具自持
+// 工厂：产出 "app.read_settings" 只读工具。db = 应用共享连接
+//（生产传 ::core::appDatabase()，测试传临时库句柄）。工具自持
 // SettingsStore 实例、不摸模块成员——agent 工作线程调用天然安全，不需要锁。
-std::shared_ptr<core::ITool> makeAppReadSettingsTool(
-    const std::filesystem::path& configPath);
+//
+// 2026-10-03（批次 E2）起配置落点从 config.json 改为 SQLite 的 app_config 表，
+// 入参随之从「配置文件路径」改为「共享连接」。
+std::shared_ptr<core::ITool> makeAppReadSettingsTool(core::data::SqliteDb* db);
 
 } // namespace module::settings

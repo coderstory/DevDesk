@@ -7,6 +7,7 @@
 #include "core/logging.h"
 #include "core/paths.h"
 #include "core/time.h"
+#include "platform/credential_protection.h"
 #include "platform/json.h"
 #include "platform/keychain.h"
 #include "platform/terminal_launch_common.h"
@@ -661,11 +662,40 @@ core::Result<void> ClaudeService::runProfile(int64_t id, std::string* hint) {
     // per-launch 24h 清扫（§5）：上次崩溃 / 强制结束的会话留下的孤儿文件在此兜底
     platform::terminal::sweepStaleRunSettingsFiles(dir);
 
-    const std::filesystem::path file =
-        dir / ("run-" + std::to_string(id) + "-" +
-               std::to_string(static_cast<long long>(nowUnix())) + ".json");
+    const auto writtenAt = nowUnix();
+    // 键用**毫秒**而不是秒：run_key 上有 UNIQUE 约束，而同一 profile 在同一秒
+    // 内连开两次是可能的（用户狂点）。键一旦撞了，唯一诚实的处置是那次会话
+    // 开不起来——不能靠「换个键重试」糊过去，因为补偿路径 forgetRunSettings()
+    // 拿的是调用点算出的那个键，两边不一致就会删不掉、留下一条指向不存在文件
+    // 的假记录。毫秒把碰撞概率压到可忽略，也让文件名的 24h 清扫规则不受影响。
+    const auto writtenAtMs =
+        std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::system_clock::now().time_since_epoch())
+            .count();
+    const std::string runKey = "run-" + std::to_string(id) + "-" +
+                               std::to_string(writtenAtMs);
+    const std::filesystem::path file = dir / (runKey + ".json");
+
+    // ---- DB 记录先行（2026-10-03 批次 E2）----------------------------------
+    // 口径（见 schema.h 的 claude_run_settings）：**DB 行是记录与追踪的真值，
+    // 文件是喂给外部进程的临时载体**。`claude --settings <path>` 是外部进程
+    // 契约，本批未验证也不臆测 claude CLI 是否有 stdin 形态，故文件不能去。
+    // 先落库的理由：会话随后可能被强杀，文件也会被自删/24h 清扫；只有库里的
+    // 这一行能长期留住「这次直连用的到底是什么 settings」。
+    // settings_json **含明文 API key** → 经 E1 的分平台保护入库
+    //（macOS/POSIX 明文 + 库文件 0600；Windows DPAPI 密文 hex），不新写一套加密。
+    auto record = recordRunSettings(runKey, id, p.name, writtenAt, file.string(),
+                                    text.value());
+    if (record.isFail()) {
+        return core::Result<void>::fail(record.errorCode(),
+            "记录直连会话 settings 失败，未打开会话: " + record.errorMessage());
+    }
+
     auto wrote = core::atomicWriteFile(file, text.value(), "临时 settings");
     if (wrote.isFail()) {
+        // 文件没落地 → 这条记录描述的是一次没发生的会话，撤掉（宁可少一条，
+        // 不要留下一条指向不存在文件的「记录」）
+        forgetRunSettings(runKey);
         return core::Result<void>::fail(wrote.errorCode(),
             "写临时 settings 失败，未打开会话: " + wrote.errorMessage());
     }
@@ -678,6 +708,7 @@ core::Result<void> ClaudeService::runProfile(int64_t id, std::string* hint) {
     if (auto permR = core::fileperms::restrictToOwnerOnly(file); permR.isFail()) {
         std::error_code rmEc;
         std::filesystem::remove(file, rmEc);
+        forgetRunSettings(runKey);
         return core::Result<void>::fail(permR.errorCode(),
             "临时 settings 权限收紧失败，已删除该文件且未打开会话: " +
                 permR.errorMessage());
@@ -696,6 +727,7 @@ core::Result<void> ClaudeService::runProfile(int64_t id, std::string* hint) {
         // 会话没起来 → 替它做掉「退出后自删」（best-effort），不留孤儿等 24h 清扫
         std::error_code rmEc;
         std::filesystem::remove(file, rmEc);
+        forgetRunSettings(runKey);
         return launched;
     }
 
@@ -708,6 +740,57 @@ core::Result<void> ClaudeService::runProfile(int64_t id, std::string* hint) {
     LOG_INFO("已直连打开 Claude Code 会话（profile id=" + std::to_string(id) +
              "，临时 settings=" + file.string() + "）");
     return core::Result<void>::ok();
+}
+
+// ---------- 直连会话 settings 的 DB 记录（2026-10-03 批次 E2）----------------
+
+core::Result<void> ClaudeService::recordRunSettings(
+    const std::string& runKey, int64_t profileId,
+    const std::string& profileName, std::time_t writtenAt,
+    const std::string& filePath, const std::string& settingsJson) const {
+    // 含明文 API key → 走 E1 的分平台保护再入库（不新写一套加密）
+    auto protectedJson =
+        platform::credential::protect(settingsJson);
+    if (protectedJson.isFail()) {
+        return core::Result<void>::fail(protectedJson.errorCode(),
+            "临时 settings 凭据保护失败: " + protectedJson.errorMessage());
+    }
+    auto prep = db_.prepare(
+        "INSERT INTO claude_run_settings (run_key, profile_id, profile_name, "
+        "written_at, file_path, settings_json) VALUES (?, ?, ?, ?, ?, ?)");
+    if (prep.isFail()) {
+        return core::Result<void>::fail(prep.errorCode(), prep.errorMessage());
+    }
+    if (auto b = prep.value().bind(1, runKey); b.isFail()) return b;
+    if (auto b = prep.value().bind(2, profileId); b.isFail()) return b;
+    if (auto b = prep.value().bind(3, profileName); b.isFail()) return b;
+    if (auto b = prep.value().bind(4, static_cast<int64_t>(writtenAt)); b.isFail()) return b;
+    if (auto b = prep.value().bind(5, filePath); b.isFail()) return b;
+    if (auto b = prep.value().bind(6, protectedJson.value()); b.isFail()) return b;
+    auto stepped = prep.value().step();
+    if (stepped.isFail()) {
+        return core::Result<void>::fail(stepped.errorCode(), stepped.errorMessage());
+    }
+    return core::Result<void>::ok();
+}
+
+void ClaudeService::forgetRunSettings(const std::string& runKey) const {
+    // 走绑定参数而不是把键拼进 SQL 文本——键虽是自造的，拼串仍是坏习惯
+    auto prep = db_.prepare("DELETE FROM claude_run_settings WHERE run_key = ?");
+    if (prep.isFail()) {
+        LOG_WARN("recordRunSettings 补偿删除失败（prepare）: " +
+                 prep.errorMessage());
+        return;
+    }
+    if (auto b = prep.value().bind(1, runKey); b.isFail()) {
+        LOG_WARN("recordRunSettings 补偿删除失败（bind）: " + b.errorMessage());
+        return;
+    }
+    auto stepped = prep.value().step();
+    if (stepped.isFail()) {
+        LOG_WARN("recordRunSettings 补偿删除失败（留下一条指向不存在文件的记录）: " +
+                 stepped.errorMessage());
+    }
 }
 
 // ---------- 在途流式上游登记（审计 2026-09-23 [9]）----------

@@ -21,6 +21,7 @@
 #include "core/service_locator.h"
 #include "core/theme.h"
 #include "core/tool.h"          // M2 Task 9：ITool / ToolArgs
+#include "module_pet/pet_config.h"   // pet_config 键名常量（E2）
 #include "module_pet/pet_window.h"  // PET-CLOSE：桌宠开关即时性断言读窗口可见意图
 #include "platform/json.h"      // M2 Task 9：读 app.read_settings 的 JSON 出参
 #include "platform/keychain.h"
@@ -66,13 +67,10 @@ void removeQuietly(const std::filesystem::path& p) {
     std::filesystem::remove(p, ec);
 }
 
-// 原样读回文件（二进制，不做换行转换）——用于比对原子写/备份落盘的字节内容
-std::string readFileRaw(const std::filesystem::path& p) {
-    std::ifstream f(p, std::ios::binary);
-    std::ostringstream ss;
-    ss << f.rdbuf();
-    return ss.str();
-}
+// 原样读回文件（二进制，不做换行转换）——用于比对落盘字节内容。
+// 2026-10-03（批次 E2）：配置不再落文件，读配置字节改走
+// test_support::readRawConfigRow；本 helper 仍在用（宠物皮肤 pet.json 夹具、
+// settings.json 接管用例都要按字节读文件），故保留。
 
 // 数据根（APPDATA / HOME）隔离已收进共享头 test_support::AppDataEnv；
 // 以下两个是「模块 tail 读的就是这个文件」的写/追加助手，只读 ::core::paths::logFile()
@@ -276,9 +274,13 @@ std::string proxyPortSingleSourceReport() {
 } // namespace
 
 REGISTER_TEST(settings_defaults_on_missing_file, "settings: missing file -> defaults", {
+    // 2026-10-03（批次 E2）：配置落点是 app_config 表，本用例需要一份
+    // 已 migrate 且注册为进程级 appDatabase 的临时库（生产代码正是经
+    // core::appDatabase() 取连接；不注册则 save 一律失败）
+    test_support::TestEnv cfgDbEnv(kCfgPrefix, "cfg1", true);
     const auto path = test_support::tempConfigFile(kCfgPrefix, "missing");
     removeQuietly(path);
-    module::settings::SettingsStore store(path);
+    module::settings::SettingsStore store(::core::appDatabase());
     const auto cfg = store.load();
     DOCTEST_CHECK(cfg.darkTheme);                        // 默认深色（方案 B Dark）
     DOCTEST_CHECK_EQ(cfg.fontScalePercent, 100);  // W9 默认（em 语义修复后）
@@ -287,10 +289,14 @@ REGISTER_TEST(settings_defaults_on_missing_file, "settings: missing file -> defa
 })
 
 REGISTER_TEST(settings_proxy_autostart_default_off, "settings: claudeProxyAutoStart 默认 false + 读写往返", {
+    // 2026-10-03（批次 E2）：配置落点是 app_config 表，本用例需要一份
+    // 已 migrate 且注册为进程级 appDatabase 的临时库（生产代码正是经
+    // core::appDatabase() 取连接；不注册则 save 一律失败）
+    test_support::TestEnv cfgDbEnv(kCfgPrefix, "cfg2", true);
     // 硬性需求 1（provider-config Phase B）：默认不启动代理
     const auto path = test_support::tempConfigFile(kCfgPrefix, "autostart");
     removeQuietly(path);
-    module::settings::SettingsStore store(path);
+    module::settings::SettingsStore store(::core::appDatabase());
 
     // 默认 false
     DOCTEST_CHECK_FALSE(store.load().claudeProxyAutoStart);
@@ -303,8 +309,9 @@ REGISTER_TEST(settings_proxy_autostart_default_off, "settings: claudeProxyAutoSt
 
     // 存量 config.json（无该键）→ 保持默认 false
     {
-        std::ofstream f(path, std::ios::trunc);
-        f << R"({"theme": "light", "logRetentionDays": 30})";
+        // 2026-10-03（批次 E2）：配置不再是文件，改按顶层键写进 app_config 表各行
+        DOCTEST_REQUIRE(test_support::seedConfigJsonRows(
+            ::core::appDatabase(), module::settings::SettingsStore::keyNamespace(), R"({"theme": "light", "logRetentionDays": 30})"));
     }
     DOCTEST_CHECK_FALSE(store.load().claudeProxyAutoStart);
     removeQuietly(path);
@@ -312,10 +319,14 @@ REGISTER_TEST(settings_proxy_autostart_default_off, "settings: claudeProxyAutoSt
 })
 
 REGISTER_TEST(settings_proxy_port_roundtrip_clamp, "settings: proxyPort 默认/读写往返/非法回落/输入解析", {
+    // 2026-10-03（批次 E2）：配置落点是 app_config 表，本用例需要一份
+    // 已 migrate 且注册为进程级 appDatabase 的临时库（生产代码正是经
+    // core::appDatabase() 取连接；不注册则 save 一律失败）
+    test_support::TestEnv cfgDbEnv(kCfgPrefix, "cfg3", true);
     using namespace module::settings;
     const auto path = test_support::tempConfigFile(kCfgPrefix, "proxyport");
     removeQuietly(path);
-    SettingsStore store(path);
+    SettingsStore store(::core::appDatabase());
 
     auto withPort = [](int port) {
         SettingsConfig c;
@@ -340,8 +351,9 @@ REGISTER_TEST(settings_proxy_port_roundtrip_clamp, "settings: proxyPort 默认/�
 
     // 存量 config.json 无 claudeProxyPort 键 → 默认 8888
     {
-        std::ofstream f(path, std::ios::trunc);
-        f << R"({"theme": "dark", "claudeProxyAutoStart": true})";
+        // 2026-10-03（批次 E2）：配置不再是文件，改按顶层键写进 app_config 表各行
+        DOCTEST_REQUIRE(test_support::seedConfigJsonRows(
+            ::core::appDatabase(), module::settings::SettingsStore::keyNamespace(), R"({"theme": "dark", "claudeProxyAutoStart": true})"));
     }
     DOCTEST_CHECK_EQ(store.load().proxyPort, 8888);
 
@@ -363,9 +375,13 @@ REGISTER_TEST(settings_proxy_port_roundtrip_clamp, "settings: proxyPort 默认/�
 })
 
 REGISTER_TEST(settings_save_load_roundtrip, "settings: save/load roundtrip", {
+    // 2026-10-03（批次 E2）：配置落点是 app_config 表，本用例需要一份
+    // 已 migrate 且注册为进程级 appDatabase 的临时库（生产代码正是经
+    // core::appDatabase() 取连接；不注册则 save 一律失败）
+    test_support::TestEnv cfgDbEnv(kCfgPrefix, "cfg4", true);
     const auto path = test_support::tempConfigFile(kCfgPrefix, "roundtrip");
     removeQuietly(path);
-    module::settings::SettingsStore store(path);
+    module::settings::SettingsStore store(::core::appDatabase());
 
     module::settings::SettingsConfig cfg;
     cfg.darkTheme = false;               // 浅色
@@ -383,9 +399,13 @@ REGISTER_TEST(settings_save_load_roundtrip, "settings: save/load roundtrip", {
 })
 
 REGISTER_TEST(settings_zero_days_permanent, "settings: 0 days = permanent retention", {
+    // 2026-10-03（批次 E2）：配置落点是 app_config 表，本用例需要一份
+    // 已 migrate 且注册为进程级 appDatabase 的临时库（生产代码正是经
+    // core::appDatabase() 取连接；不注册则 save 一律失败）
+    test_support::TestEnv cfgDbEnv(kCfgPrefix, "cfg5", true);
     const auto path = test_support::tempConfigFile(kCfgPrefix, "zero");
     removeQuietly(path);
-    module::settings::SettingsStore store(path);
+    module::settings::SettingsStore store(::core::appDatabase());
 
     module::settings::SettingsConfig cfg;
     cfg.logRetentionDays = 0;            // 0 = 永久保留（合法值，不得被钳成默认）
@@ -399,43 +419,55 @@ REGISTER_TEST(settings_zero_days_permanent, "settings: 0 days = permanent retent
 })
 
 REGISTER_TEST(settings_corrupted_json_fallback, "settings: corrupted json -> defaults", {
+    // 2026-10-03（批次 E2）：配置落点是 app_config 表，本用例需要一份
+    // 已 migrate 且注册为进程级 appDatabase 的临时库（生产代码正是经
+    // core::appDatabase() 取连接；不注册则 save 一律失败）
+    test_support::TestEnv cfgDbEnv(kCfgPrefix, "cfg6", true);
     const auto path = test_support::tempConfigFile(kCfgPrefix, "corrupt");
     auto bak = path;
     bak += ".bak";
     removeQuietly(path);
     removeQuietly(bak);
     const std::string broken = "{ this is not valid json !!!";
-    {
-        std::ofstream f(path, std::ios::trunc);
-        f << broken;
-        f.close();
-    }
-    module::settings::SettingsStore store(path);
+    // 坏内容塞进一个**已知的顶层键**（config.json:theme）——只有这样 load 才会
+    // 真的去解析它，走「解析失败」那一支。
+    DOCTEST_REQUIRE(test_support::writeRawConfigRow(
+        ::core::appDatabase(), "config.json:theme", broken));
+    module::settings::SettingsStore store(::core::appDatabase());
     const auto cfg = store.load();
     DOCTEST_CHECK(cfg.darkTheme);
     DOCTEST_CHECK_EQ(cfg.fontScalePercent, 100);  // 解析失败 → 默认
     DOCTEST_CHECK_EQ(cfg.logRetentionDays, 30);
-    // M3（2026-09-27）：坏内容另存 .bak；原文件既不被删除也不被改写
-    // （回落默认的既有行为不变，只是不再无声无息）
-    DOCTEST_REQUIRE(std::filesystem::exists(bak));
-    DOCTEST_CHECK_EQ(readFileRaw(bak), broken);
-    DOCTEST_REQUIRE(std::filesystem::exists(path));
-    DOCTEST_CHECK_EQ(readFileRaw(path), broken);
+    // 2026-10-03（批次 E2）：旧的 .bak 机制随 config.json 一起退役 —— 脏内容
+    // 不再有任何**文件**载体。「原始内容可查」改由两件事兑现：
+    // ① 坏行原样留在 app_config 里（查得出来，不会被静默改写成默认值）；
+    // ② loadChecked 对「读到的值不是合法 JSON」如实报错，而不是假装读到了。
+    DOCTEST_CHECK_EQ(
+        test_support::readRawConfigRow(::core::appDatabase(), "config.json:theme"),
+        broken);
+    auto checked = store.loadChecked();
+    DOCTEST_REQUIRE(checked.isFail());
+    DOCTEST_CHECK_EQ(static_cast<int>(checked.errorCode()),
+                     static_cast<int>(core::ErrorCode::JsonParseError));
     removeQuietly(path);
     removeQuietly(bak);
     return true;
 })
 
 REGISTER_TEST(settings_partial_file_uses_defaults, "settings: partial file -> per-field defaults", {
+    // 2026-10-03（批次 E2）：配置落点是 app_config 表，本用例需要一份
+    // 已 migrate 且注册为进程级 appDatabase 的临时库（生产代码正是经
+    // core::appDatabase() 取连接；不注册则 save 一律失败）
+    test_support::TestEnv cfgDbEnv(kCfgPrefix, "cfg7", true);
     const auto path = test_support::tempConfigFile(kCfgPrefix, "partial");
     removeQuietly(path);
     {
         // 只有 theme 字段；fontScale / logRetention 缺失 → 各自默认值
-        std::ofstream f(path, std::ios::trunc);
-        f << "{\"theme\": \"light\"}";
-        f.close();
+        // 2026-10-03（批次 E2）：配置不再是文件，改按顶层键写进 app_config 表各行
+        DOCTEST_REQUIRE(test_support::seedConfigJsonRows(
+            ::core::appDatabase(), module::settings::SettingsStore::keyNamespace(), "{\"theme\": \"light\"}"));
     }
-    module::settings::SettingsStore store(path);
+    module::settings::SettingsStore store(::core::appDatabase());
     const auto cfg = store.load();
     DOCTEST_CHECK_FALSE(cfg.darkTheme);            // theme=light 生效
     DOCTEST_CHECK_EQ(cfg.fontScalePercent, 100);   // 缺失 → 默认
@@ -448,28 +480,32 @@ REGISTER_TEST(settings_partial_file_uses_defaults, "settings: partial file -> pe
 // 旧键 fontScalePercent / fontScalePercentV2 的存量值（85/115/130）都是
 // 缩水语义下选的 → 一律忽略、回落默认 100；V3 键下的值按字面生效
 REGISTER_TEST(settings_legacy_fontscale_migration, "settings: legacy font scale keys reset to 100", {
+    // 2026-10-03（批次 E2）：配置落点是 app_config 表，本用例需要一份
+    // 已 migrate 且注册为进程级 appDatabase 的临时库（生产代码正是经
+    // core::appDatabase() 取连接；不注册则 save 一律失败）
+    test_support::TestEnv cfgDbEnv(kCfgPrefix, "cfg8", true);
     const auto path = test_support::tempConfigFile(kCfgPrefix, "legacy");
     removeQuietly(path);
     {
-        std::ofstream f(path, std::ios::trunc);
-        f << "{\"theme\": \"dark\", \"fontScalePercent\": 85}";
-        f.close();
+        // 2026-10-03（批次 E2）：配置不再是文件，改按顶层键写进 app_config 表各行
+        DOCTEST_REQUIRE(test_support::seedConfigJsonRows(
+            ::core::appDatabase(), module::settings::SettingsStore::keyNamespace(), "{\"theme\": \"dark\", \"fontScalePercent\": 85}"));
     }
-    module::settings::SettingsStore store(path);
+    module::settings::SettingsStore store(::core::appDatabase());
     DOCTEST_CHECK_EQ(store.load().fontScalePercent, 100);  // 最老键 → 重置
 
     {
-        std::ofstream f(path, std::ios::trunc);
-        f << "{\"fontScalePercentV2\": 130}";
-        f.close();
+        // 2026-10-03（批次 E2）：配置不再是文件，改按顶层键写进 app_config 表各行
+        DOCTEST_REQUIRE(test_support::seedConfigJsonRows(
+            ::core::appDatabase(), module::settings::SettingsStore::keyNamespace(), "{\"fontScalePercentV2\": 130}"));
     }
     DOCTEST_CHECK_EQ(store.load().fontScalePercent, 100);  // V2 键 → 重置
 
     {
         // V3 键按字面生效（旧键同时存在也被忽略）
-        std::ofstream f(path, std::ios::trunc);
-        f << "{\"fontScalePercent\": 85, \"fontScalePercentV2\": 130, \"fontScalePercentV3\": 115}";
-        f.close();
+        // 2026-10-03（批次 E2）：配置不再是文件，改按顶层键写进 app_config 表各行
+        DOCTEST_REQUIRE(test_support::seedConfigJsonRows(
+            ::core::appDatabase(), module::settings::SettingsStore::keyNamespace(), "{\"fontScalePercent\": 85, \"fontScalePercentV2\": 130, \"fontScalePercentV3\": 115}"));
     }
     DOCTEST_CHECK_EQ(store.load().fontScalePercent, 115);
     removeQuietly(path);
@@ -477,28 +513,32 @@ REGISTER_TEST(settings_legacy_fontscale_migration, "settings: legacy font scale 
 })
 
 REGISTER_TEST(settings_theme_value_mapping, "settings: theme string mapping", {
+    // 2026-10-03（批次 E2）：配置落点是 app_config 表，本用例需要一份
+    // 已 migrate 且注册为进程级 appDatabase 的临时库（生产代码正是经
+    // core::appDatabase() 取连接；不注册则 save 一律失败）
+    test_support::TestEnv cfgDbEnv(kCfgPrefix, "cfg9", true);
     const auto path = test_support::tempConfigFile(kCfgPrefix, "theme");
     removeQuietly(path);
     {
-        std::ofstream f(path, std::ios::trunc);
-        f << "{\"theme\": \"dark\"}";
-        f.close();
+        // 2026-10-03（批次 E2）：配置不再是文件，改按顶层键写进 app_config 表各行
+        DOCTEST_REQUIRE(test_support::seedConfigJsonRows(
+            ::core::appDatabase(), module::settings::SettingsStore::keyNamespace(), "{\"theme\": \"dark\"}"));
     }
-    module::settings::SettingsStore store(path);
+    module::settings::SettingsStore store(::core::appDatabase());
     DOCTEST_CHECK(store.load().darkTheme);
 
     {
-        std::ofstream f(path, std::ios::trunc);
-        f << "{\"theme\": \"light\"}";
-        f.close();
+        // 2026-10-03（批次 E2）：配置不再是文件，改按顶层键写进 app_config 表各行
+        DOCTEST_REQUIRE(test_support::seedConfigJsonRows(
+            ::core::appDatabase(), module::settings::SettingsStore::keyNamespace(), "{\"theme\": \"light\"}"));
     }
     DOCTEST_CHECK_FALSE(store.load().darkTheme);
 
     {
         // 未知字符串 → 安全回退深色（默认值）
-        std::ofstream f(path, std::ios::trunc);
-        f << "{\"theme\": \"whatever\"}";
-        f.close();
+        // 2026-10-03（批次 E2）：配置不再是文件，改按顶层键写进 app_config 表各行
+        DOCTEST_REQUIRE(test_support::seedConfigJsonRows(
+            ::core::appDatabase(), module::settings::SettingsStore::keyNamespace(), "{\"theme\": \"whatever\"}"));
     }
     DOCTEST_CHECK(store.load().darkTheme);
     removeQuietly(path);
@@ -524,9 +564,13 @@ REGISTER_TEST(settings_clamp_out_of_range, "settings: out-of-range values clampe
 })
 
 REGISTER_TEST(settings_save_clamps_before_write, "settings: save clamps, load returns clamped", {
+    // 2026-10-03（批次 E2）：配置落点是 app_config 表，本用例需要一份
+    // 已 migrate 且注册为进程级 appDatabase 的临时库（生产代码正是经
+    // core::appDatabase() 取连接；不注册则 save 一律失败）
+    test_support::TestEnv cfgDbEnv(kCfgPrefix, "cfg10", true);
     const auto path = test_support::tempConfigFile(kCfgPrefix, "clampwrite");
     removeQuietly(path);
-    module::settings::SettingsStore store(path);
+    module::settings::SettingsStore store(::core::appDatabase());
 
     module::settings::SettingsConfig cfg;
     cfg.fontScalePercent = 999;            // save 时应钳到 130
@@ -668,7 +712,7 @@ REGISTER_TEST(settings_port_error_clear_on_input,
     DOCTEST_REQUIRE(sub != nullptr);
     DOCTEST_CHECK(sub->text.find("端口无效") != std::string::npos);  // 红字校验错误行
     // 非法端口未落盘：临时 config 文件里的 proxyPort 仍是默认 8888
-    module::settings::SettingsStore store(cfgEnv.cfgPath);
+    module::settings::SettingsStore store(::core::appDatabase());
     DOCTEST_CHECK_EQ(store.load().proxyPort, 8888);
 
     // 下一次输入 → 校验错误清除，subtitle 回静态说明（formError「输入即清」语义）
@@ -804,9 +848,11 @@ REGISTER_TEST(settings_path_text_vertically_centered, "settings: path text verti
 // ---- 切换保留档位立即执行一次清理（W8：此前仅启动时清理） ----
 
 REGISTER_TEST(settings_retention_change_prunes_immediately, "settings: retention change prunes immediately", {
-    // 隔离：临时 config.json（DEVDESK_CONFIG_PATH）+ 临时 DB（appDatabase）
+    // 隔离：一份已 migrate 且注册为 appDatabase 的临时库。
+    // 2026-10-03（批次 E2）：配置与调用日志现在**同一个库**，所以这里只留
+    // 一个夹具 —— 此前还挂着 ScopedConfigPath（它也注册了一份库），页面清理
+    // 的是那一份、而本用例造日志用的是 env 这一份，两库不同，断言必红。
     test_support::TestEnv env(kCfgPrefix, "prune", true);
-    test_support::ScopedConfigPath cfgEnv(test_support::tempConfigFile(kCfgPrefix, "prune_cfg"));
     DOCTEST_REQUIRE(env.db != nullptr);
 
     const int64_t now = static_cast<int64_t>(std::time(nullptr));
@@ -893,7 +939,7 @@ REGISTER_TEST(settings_takeover_status_row,
     ScopedClaudeProxy proxyForSettings;  // R0/D6：设置页经定位器取代理运行面
     module::claude::settings_sync::Paths paths;
     paths.settingsFile = dir / "settings.json";
-    paths.sidecarFile = dir / "snapshot.json";
+    paths.db = &db->db();
     paths.overlayFiles.push_back(overlay);
     svc.setSettingsSyncPaths(paths);
     svc.setSettingsTakeOverEnabled(true);
@@ -995,7 +1041,7 @@ REGISTER_TEST(settings_takeover_warn_unmanaged,
     ScopedClaudeProxy proxyForSettings;  // R0/D6：设置页经定位器取代理运行面
     module::claude::settings_sync::Paths paths;
     paths.settingsFile = dir / "settings.json";
-    paths.sidecarFile = dir / "snapshot.json";
+    paths.db = &db->db();
     svc.setSettingsSyncPaths(paths);
     svc.setSettingsTakeOverEnabled(true);
     test_support::setEnvVar("DEVDESK_CONFIG_PATH", cfgPath.string());
@@ -1021,7 +1067,7 @@ REGISTER_TEST(settings_takeover_warn_unmanaged,
     DOCTEST_REQUIRE(started.isOk());
     DOCTEST_REQUIRE(!svc.lastSyncWarnings().empty());
     DOCTEST_CHECK(!svc.isClaudeCodeManaged());   // 未接管
-    DOCTEST_CHECK_FALSE(fs::exists(paths.sidecarFile));  // 失败在写盘之前
+    DOCTEST_CHECK_FALSE(test_support::configRowExists(&db->db(), module::claude::settings_sync::kSidecarConfigKey));  // 失败在写盘之前
 
     mod->onPageEnter();  // 刷新接管状态快照（真实流程同款刷新点）
     eui::Ui ui;
@@ -1049,15 +1095,20 @@ REGISTER_TEST(settings_takeover_warn_unmanaged,
 // ---- 窗口效果三档（磨砂 Phase D）----
 
 REGISTER_TEST(settings_window_effect_defaults_and_roundtrip, "settings: windowEffect 默认 off + 三档读写往返", {
+    // 2026-10-03（批次 E2）：配置落点是 app_config 表，本用例需要一份
+    // 已 migrate 且注册为进程级 appDatabase 的临时库（生产代码正是经
+    // core::appDatabase() 取连接；不注册则 save 一律失败）
+    test_support::TestEnv cfgDbEnv(kCfgPrefix, "cfg11", true);
     const auto path = test_support::tempConfigFile(kCfgPrefix, "wineffect");
     removeQuietly(path);
-    module::settings::SettingsStore store(path);
+    module::settings::SettingsStore store(::core::appDatabase());
 
     // 默认 off；存量 config.json（无该键）同样回落 off
     DOCTEST_CHECK_EQ(store.load().windowEffect, std::string(module::settings::kWindowEffectOff));
     {
-        std::ofstream f(path, std::ios::trunc);
-        f << R"({"theme": "dark", "logRetentionDays": 30})";
+        // 2026-10-03（批次 E2）：配置不再是文件，改按顶层键写进 app_config 表各行
+        DOCTEST_REQUIRE(test_support::seedConfigJsonRows(
+            ::core::appDatabase(), module::settings::SettingsStore::keyNamespace(), R"({"theme": "dark", "logRetentionDays": 30})"));
     }
     DOCTEST_CHECK_EQ(store.load().windowEffect, std::string(module::settings::kWindowEffectOff));
 
@@ -1077,8 +1128,9 @@ REGISTER_TEST(settings_window_effect_defaults_and_roundtrip, "settings: windowEf
     DOCTEST_CHECK_EQ(module::settings::SettingsStore::sanitized(bad).windowEffect,
                      std::string(module::settings::kWindowEffectOff));
     {
-        std::ofstream f(path, std::ios::trunc);
-        f << R"({"theme": "dark", "windowEffect": "vibrancy"})";
+        // 2026-10-03（批次 E2）：配置不再是文件，改按顶层键写进 app_config 表各行
+        DOCTEST_REQUIRE(test_support::seedConfigJsonRows(
+            ::core::appDatabase(), module::settings::SettingsStore::keyNamespace(), R"({"theme": "dark", "windowEffect": "vibrancy"})"));
     }
     DOCTEST_CHECK_EQ(store.load().windowEffect, std::string(module::settings::kWindowEffectOff));
     removeQuietly(path);
@@ -1262,7 +1314,7 @@ REGISTER_TEST(settings_gated_proxy_card_hidden, "settings: claude 模块关闭 �
                           module::settings::kModuleIdMarkdown,
                           module::settings::kModuleIdTodo,
                           module::settings::kModuleIdSettings};
-    DOCTEST_REQUIRE(module::settings::SettingsStore(cfgEnv.cfgPath).save(cfg).isOk());
+    DOCTEST_REQUIRE(module::settings::SettingsStore(::core::appDatabase()).save(cfg).isOk());
 
     std::unique_ptr<::core::Module> mod(create_settings_module());
     mod->onStart();  // 读临时 config：claude 关
@@ -1299,7 +1351,7 @@ REGISTER_TEST(settings_gated_directory_card_hidden, "settings: markdown 模块�
                           module::settings::kModuleIdTodo,
                           module::settings::kModuleIdClaudeProxy,
                           module::settings::kModuleIdSettings};
-    DOCTEST_REQUIRE(module::settings::SettingsStore(cfgEnv.cfgPath).save(cfg).isOk());
+    DOCTEST_REQUIRE(module::settings::SettingsStore(::core::appDatabase()).save(cfg).isOk());
 
     std::unique_ptr<::core::Module> mod(create_settings_module());
     mod->onStart();
@@ -1412,9 +1464,9 @@ REGISTER_TEST(settings_pet_dropdown_z_escape, "settings: pet skin dropdown popup
     test_support::TestEnv env(kCfgPrefix, "petz", true);
     test_support::ScopedConfigPath cfgEnv(test_support::tempConfigFile(kCfgPrefix, "petz_cfg"));
     {
-        std::ofstream out(cfgEnv.cfgPath);
-        out << "{\"theme\":\"dark\",\"enabledModules\":["
-               "\"home\",\"markdown\",\"todo\",\"claude_proxy\",\"settings\",\"pet\"]}";
+        // 2026-10-03（批次 E2）：配置不再是文件，改按顶层键写进 app_config 表各行
+        DOCTEST_REQUIRE(test_support::seedConfigJsonRows(
+            ::core::appDatabase(), module::settings::SettingsStore::keyNamespace(), "{\"theme\":\"dark\",\"enabledModules\":[" "\"home\",\"markdown\",\"todo\",\"claude_proxy\",\"settings\",\"pet\"]}"));
     }
     std::unique_ptr<::core::Module> mod(create_settings_module());
     mod->onStart();
@@ -1602,7 +1654,7 @@ REGISTER_TEST(settings_card_rows_scale_derived,
                           module::settings::kModuleIdPet,
                           module::settings::kModuleIdClaudeProxy};
     DOCTEST_REQUIRE(
-        module::settings::SettingsStore(cfgEnv.cfgPath).save(cfg).isOk());
+        module::settings::SettingsStore(::core::appDatabase()).save(cfg).isOk());
     std::unique_ptr<::core::Module> mod(create_settings_module());
     mod->onStart();  // 读临时 config：全模块启用、fontScale=100
 
@@ -1945,10 +1997,9 @@ REGISTER_TEST(settings_pet_skin_dropdown_label_fits,
     test_support::ScopedConfigPath cfgEnv(
         test_support::tempConfigFile(kCfgPrefix, "petskinfit_cfg"));
     {
-        std::ofstream out(cfgEnv.cfgPath);
-        out << "{\"theme\":\"dark\",\"enabledModules\":["
-               "\"home\",\"markdown\",\"todo\",\"claude_proxy\",\"settings\","
-               "\"pet\"]}";
+        // 2026-10-03（批次 E2）：配置不再是文件，改按顶层键写进 app_config 表各行
+        DOCTEST_REQUIRE(test_support::seedConfigJsonRows(
+            ::core::appDatabase(), module::settings::SettingsStore::keyNamespace(), "{\"theme\":\"dark\",\"enabledModules\":[" "\"home\",\"markdown\",\"todo\",\"claude_proxy\",\"settings\"," "\"pet\"]}"));
     }
     test_support::TempDir petsDir("pet_skins_fit");
     const std::string kLong = "super-long-skin-name-here";  // 25 字符
@@ -2042,8 +2093,14 @@ REGISTER_TEST(settings_pet_skin_dropdown_label_fits,
     std::ofstream(petsDir.path / kHuge / "pet.json") << "{}";
     {
         // 当前皮肤 = 超长名（pet_config.json 是 currentSkinName 的真值来源）
-        std::ofstream out(petsDir.path / "pet_config.json");
-        out << "{\"skinName\":\"" << kHuge << "\",\"x\":-1,\"y\":-1}";
+        const std::string cfgSeedJson =
+            std::string("{\"skinName\":\"") + kHuge + "\",\"x\":-1,\"y\":-1}";
+        // 2026-10-03（批次 E2）：桌宠配置整份存 app_config 的**一行**（键
+        // module::pet::kPetConfigKey），不像 config.json 那样按顶层键分行 ——
+        // 故这里写原文整行，不能用 seedConfigJsonRows（那会把 JSON 拆成
+        // pet_config:skinName / :x / :y 三行，读侧反而一行都取不到）。
+        DOCTEST_REQUIRE(test_support::writeRawConfigRow(
+            ::core::appDatabase(), module::pet::kPetConfigKey, cfgSeedJson));
     }
     mod->onPageEnter();  // 皮肤清单 / 当前皮肤的刷新点（THS-01）
     const Snapshot huge = snapshot();
@@ -2084,9 +2141,9 @@ REGISTER_TEST(settings_pet_skin_row_inline,
     test_support::ScopedConfigPath cfgEnv(
         test_support::tempConfigFile(kCfgPrefix, "petrow_cfg"));
     {
-        std::ofstream out(cfgEnv.cfgPath);
-        out << "{\"theme\":\"dark\",\"enabledModules\":[\"home\",\"markdown\","
-               "\"todo\",\"claude_proxy\",\"settings\",\"pet\"]}";
+        // 2026-10-03（批次 E2）：配置不再是文件，改按顶层键写进 app_config 表各行
+        DOCTEST_REQUIRE(test_support::seedConfigJsonRows(
+            ::core::appDatabase(), module::settings::SettingsStore::keyNamespace(), "{\"theme\":\"dark\",\"enabledModules\":[\"home\",\"markdown\"," "\"todo\",\"claude_proxy\",\"settings\",\"pet\"]}"));
     }
     std::unique_ptr<::core::Module> mod(create_settings_module());
     mod->onStart();
@@ -2152,9 +2209,9 @@ REGISTER_TEST(settings_pet_module_toggle_closes_window,
     test_support::ScopedConfigPath cfgEnv(
         test_support::tempConfigFile(kCfgPrefix, "petclose_cfg"));
     {
-        std::ofstream out(cfgEnv.cfgPath);
-        out << "{\"theme\":\"dark\",\"enabledModules\":[\"home\",\"markdown\","
-               "\"todo\",\"claude_proxy\",\"settings\",\"pet\"]}";
+        // 2026-10-03（批次 E2）：配置不再是文件，改按顶层键写进 app_config 表各行
+        DOCTEST_REQUIRE(test_support::seedConfigJsonRows(
+            ::core::appDatabase(), module::settings::SettingsStore::keyNamespace(), "{\"theme\":\"dark\",\"enabledModules\":[\"home\",\"markdown\"," "\"todo\",\"claude_proxy\",\"settings\",\"pet\"]}"));
     }
     // 皮肤夹具：DEVDESK_PETS_DIR 指临时目录并写入 shipped 形态皮肤（帧只需
     // PNG 头合法，无头不解码）。不造夹具时测试环境 exeDir/build/tests 没有
@@ -2237,11 +2294,25 @@ REGISTER_TEST(settings_pet_module_toggle_closes_window,
             DOCTEST_CHECK_EQ(reqs[0].pageId, "pet");
         }
     }
+    // 2026-10-03（批次 E2）：enabledModules 从 config.json 文件迁到 app_config 的
+    // config.json:enabledModules 行。这里把该行**当 JSON 解析**再查元素，而不是
+    // 在文本里 find —— 解析后才敢说「pet 确实在这个数组里」。
     {
-        std::ifstream in(cfgEnv.cfgPath);
-        std::ostringstream buf;
-        buf << in.rdbuf();
-        DOCTEST_CHECK(buf.str().find("\"pet\"") != std::string::npos);
+        const std::string row = test_support::readRawConfigRow(
+            ::core::appDatabase(), "config.json:enabledModules");
+        auto parsed = platform::json::parse(row);
+        DOCTEST_REQUIRE_MESSAGE(parsed.isOk(),
+                                "enabledModules 行不是合法 JSON: " + row);
+        DOCTEST_REQUIRE(parsed.value().isArray());
+        bool hasPet = false;
+        for (int i = 0; i < parsed.value().size(); ++i) {
+            if (parsed.value()[i].isString() &&
+                parsed.value()[i].asString() == "pet") {
+                hasPet = true;
+            }
+        }
+        DOCTEST_CHECK_MESSAGE(hasPet,
+                              "重新勾选后 enabledModules 里应含 pet，实际: " + row);
     }
 
     // 收尾：不留残留可见意图 / 待消费开窗请求（进程级 pet 运行时是共享状态）
@@ -2266,9 +2337,9 @@ REGISTER_TEST(settings_pet_show_button_toast_when_not_assembled,
     test_support::ScopedConfigPath cfgEnv(
         test_support::tempConfigFile(kCfgPrefix, "pettoast_cfg"));
     {
-        std::ofstream out(cfgEnv.cfgPath);
-        out << "{\"theme\":\"dark\",\"enabledModules\":[\"home\",\"markdown\","
-               "\"todo\",\"claude_proxy\",\"settings\",\"pet\"]}";
+        // 2026-10-03（批次 E2）：配置不再是文件，改按顶层键写进 app_config 表各行
+        DOCTEST_REQUIRE(test_support::seedConfigJsonRows(
+            ::core::appDatabase(), module::settings::SettingsStore::keyNamespace(), "{\"theme\":\"dark\",\"enabledModules\":[\"home\",\"markdown\"," "\"todo\",\"claude_proxy\",\"settings\",\"pet\"]}"));
     }
     // 皮肤根隔离到临时夹具（不读真机 appData 皮肤清单，pet 卡下拉非空）；
     // NotAssembled 分支本身不触皮肤发现
@@ -2338,9 +2409,9 @@ REGISTER_TEST(settings_pet_show_button_toast_when_start_failed,
     test_support::ScopedConfigPath cfgEnv(
         test_support::tempConfigFile(kCfgPrefix, "pettoastfail_cfg"));
     {
-        std::ofstream out(cfgEnv.cfgPath);
-        out << "{\"theme\":\"dark\",\"enabledModules\":[\"home\",\"markdown\","
-               "\"todo\",\"claude_proxy\",\"settings\",\"pet\"]}";
+        // 2026-10-03（批次 E2）：配置不再是文件，改按顶层键写进 app_config 表各行
+        DOCTEST_REQUIRE(test_support::seedConfigJsonRows(
+            ::core::appDatabase(), module::settings::SettingsStore::keyNamespace(), "{\"theme\":\"dark\",\"enabledModules\":[\"home\",\"markdown\"," "\"todo\",\"claude_proxy\",\"settings\",\"pet\"]}"));
     }
     // 皮肤根 = 「可发现但不可加载」的 robot：discoverSkins 只验 pet.json
     // 存在（pet_skin.cpp:231），loadSkin 要解析 JSON——写非法 JSON 使下拉
@@ -2405,9 +2476,9 @@ REGISTER_TEST(settings_pet_skin_dropdown_openup,
     test_support::ScopedConfigPath cfgEnv(
         test_support::tempConfigFile(kCfgPrefix, "petopenup_cfg"));
     {
-        std::ofstream out(cfgEnv.cfgPath);
-        out << "{\"theme\":\"dark\",\"enabledModules\":["
-               "\"home\",\"markdown\",\"todo\",\"claude_proxy\",\"settings\",\"pet\"]}";
+        // 2026-10-03（批次 E2）：配置不再是文件，改按顶层键写进 app_config 表各行
+        DOCTEST_REQUIRE(test_support::seedConfigJsonRows(
+            ::core::appDatabase(), module::settings::SettingsStore::keyNamespace(), "{\"theme\":\"dark\",\"enabledModules\":[" "\"home\",\"markdown\",\"todo\",\"claude_proxy\",\"settings\",\"pet\"]}"));
     }
     // 隔离皮肤清单：DEVDESK_PETS_DIR 指向临时目录，造 3 个皮肤（discoverSkins
     // 只验 pet.json 存在；TestEnv 已隔离 APPDATA，默认 0 皮肤 → 占位单项）
@@ -2523,9 +2594,9 @@ REGISTER_TEST(settings_pet_show_button_renders,
     test_support::TestEnv env(kCfgPrefix, "petshow", true);
     test_support::ScopedConfigPath cfgEnv(test_support::tempConfigFile(kCfgPrefix, "petshow_cfg"));
     {
-        std::ofstream out(cfgEnv.cfgPath);
-        out << "{\"theme\":\"dark\",\"enabledModules\":["
-               "\"home\",\"markdown\",\"todo\",\"claude_proxy\",\"settings\",\"pet\"]}";
+        // 2026-10-03（批次 E2）：配置不再是文件，改按顶层键写进 app_config 表各行
+        DOCTEST_REQUIRE(test_support::seedConfigJsonRows(
+            ::core::appDatabase(), module::settings::SettingsStore::keyNamespace(), "{\"theme\":\"dark\",\"enabledModules\":[" "\"home\",\"markdown\",\"todo\",\"claude_proxy\",\"settings\",\"pet\"]}"));
     }
     std::unique_ptr<::core::Module> mod(create_settings_module());
     mod->onStart();
@@ -2619,7 +2690,7 @@ REGISTER_TEST(settings_port_esc_discards_draft,
     DOCTEST_CHECK_EQ(shown3->text, std::string("8888"));   // 草稿清空回落
 
     // 未落盘：配置仍是默认 8888（旧行为 Esc=applyProxyPort 会写 9999 并重启代理）
-    module::settings::SettingsStore store(cfgEnv.cfgPath);
+    module::settings::SettingsStore store(::core::appDatabase());
     DOCTEST_CHECK_EQ(store.load().proxyPort, 8888);
 
     mod->onStop();
@@ -2660,11 +2731,15 @@ REGISTER_TEST(settings_ctrl_s_save_shortcut,
         return e;
     };
 
-    // 1) 无草稿：Ctrl+S → 配置落盘（onStart 只读不写，此处才出现文件）
+    // 1) 无草稿：Ctrl+S → 配置落库（onStart 只读不写，此处才出现行）
     //    + 状态行回显「设置已保存」
-    DOCTEST_CHECK(!std::filesystem::exists(cfgEnv.cfgPath));
+    // 2026-10-03（批次 E2）：落点从 config.json 文件改成 app_config 表的一行，
+    // 「落盘了没有」改看这一行在不在 —— 断言的是同一个可观测事实，只换了载体。
+    DOCTEST_CHECK(test_support::readRawConfigRow(
+                      ::core::appDatabase(), "config.json:claudeProxyPort").empty());
     DOCTEST_CHECK(mod->onKeyEvent(ctrlS(eui::KeyAction::Press)));
-    DOCTEST_CHECK(std::filesystem::exists(cfgEnv.cfgPath));
+    DOCTEST_CHECK(!test_support::readRawConfigRow(
+                      ::core::appDatabase(), "config.json:claudeProxyPort").empty());
     frame("css1");
     {
         const auto* sub = ui.find("settings.subtitle");
@@ -2672,7 +2747,7 @@ REGISTER_TEST(settings_ctrl_s_save_shortcut,
         DOCTEST_CHECK(sub->text.find("设置已保存") != std::string::npos);
     }
     {
-        module::settings::SettingsStore store(cfgEnv.cfgPath);
+        module::settings::SettingsStore store(::core::appDatabase());
         DOCTEST_CHECK_EQ(store.load().proxyPort, 8888);
     }
     // 2) 门控：裸 S（无 Ctrl）/ Release / 其他 Ctrl 组合 → 不消费
@@ -2711,7 +2786,7 @@ REGISTER_TEST(settings_ctrl_s_save_shortcut,
     frame("css3");
     DOCTEST_CHECK(mod->onKeyEvent(ctrlS(eui::KeyAction::Press)));
     {
-        module::settings::SettingsStore store(cfgEnv.cfgPath);
+        module::settings::SettingsStore store(::core::appDatabase());
         DOCTEST_CHECK_EQ(store.load().proxyPort, 9001);
     }
     DOCTEST_CHECK_EQ(svc.configuredProxyPort(), 9001);
@@ -2739,10 +2814,14 @@ REGISTER_TEST(settings_ctrl_s_save_shortcut,
 
 REGISTER_TEST(settings_theme_mode_roundtrip_and_legacy,
               "settings: themeMode 默认 auto/读写往返/非法值回落（spec缩水 A）", {
+    // 2026-10-03（批次 E2）：配置落点是 app_config 表，本用例需要一份
+    // 已 migrate 且注册为进程级 appDatabase 的临时库（生产代码正是经
+    // core::appDatabase() 取连接；不注册则 save 一律失败）
+    test_support::TestEnv cfgDbEnv(kCfgPrefix, "cfg12", true);
     using namespace module::settings;
     const auto path = test_support::tempConfigFile(kCfgPrefix, "thememode");
     removeQuietly(path);
-    SettingsStore store(path);
+    SettingsStore store(::core::appDatabase());
 
     // 无文件 → 默认 auto（新人跟随系统）
     DOCTEST_CHECK_EQ(store.load().themeMode, std::string(kThemeModeAuto));
@@ -2769,20 +2848,23 @@ REGISTER_TEST(settings_theme_mode_roundtrip_and_legacy,
 
     // themeMode 键缺失 → auto（只认 themeMode 键，不从 theme 键派生）
     {
-        std::ofstream f(path, std::ios::trunc);
-        f << R"({"theme": "light"})";
+        // 2026-10-03（批次 E2）：配置不再是文件，改按顶层键写进 app_config 表各行
+        DOCTEST_REQUIRE(test_support::seedConfigJsonRows(
+            ::core::appDatabase(), module::settings::SettingsStore::keyNamespace(), R"({"theme": "light"})"));
     }
     DOCTEST_CHECK_EQ(store.load().themeMode, std::string(kThemeModeAuto));
 
     // themeMode 非法值 → auto（不按 theme 键派生）
     {
-        std::ofstream f(path, std::ios::trunc);
-        f << R"({"themeMode": "neon", "theme": "light"})";
+        // 2026-10-03（批次 E2）：配置不再是文件，改按顶层键写进 app_config 表各行
+        DOCTEST_REQUIRE(test_support::seedConfigJsonRows(
+            ::core::appDatabase(), module::settings::SettingsStore::keyNamespace(), R"({"themeMode": "neon", "theme": "light"})"));
     }
     DOCTEST_CHECK_EQ(store.load().themeMode, std::string(kThemeModeAuto));
     {
-        std::ofstream f(path, std::ios::trunc);
-        f << R"({"themeMode": "neon"})";
+        // 2026-10-03（批次 E2）：配置不再是文件，改按顶层键写进 app_config 表各行
+        DOCTEST_REQUIRE(test_support::seedConfigJsonRows(
+            ::core::appDatabase(), module::settings::SettingsStore::keyNamespace(), R"({"themeMode": "neon"})"));
     }
     DOCTEST_CHECK_EQ(store.load().themeMode, std::string(kThemeModeAuto));
 
@@ -2814,8 +2896,9 @@ REGISTER_TEST(settings_theme_auto_follows_platform,
     test_support::TestEnv env(kCfgPrefix, "thauto", true);
     test_support::ScopedConfigPath cfgEnv(test_support::tempConfigFile(kCfgPrefix, "thauto_cfg"));
     {
-        std::ofstream out(cfgEnv.cfgPath);
-        out << R"({"themeMode": "auto", "theme": "dark"})";
+        // 2026-10-03（批次 E2）：配置不再是文件，改按顶层键写进 app_config 表各行
+        DOCTEST_REQUIRE(test_support::seedConfigJsonRows(
+            ::core::appDatabase(), module::settings::SettingsStore::keyNamespace(), R"({"themeMode": "auto", "theme": "dark"})"));
     }
     std::unique_ptr<::core::Module> mod(create_settings_module());
     mod->onStart();
@@ -2861,10 +2944,14 @@ REGISTER_TEST(settings_theme_mode_dropdown_click_persists,
 
 REGISTER_TEST(settings_editor_font_size_roundtrip_clamp,
               "settings: editorFontSize 默认 15/读写往返/越界钳制（spec缩水 B）", {
+    // 2026-10-03（批次 E2）：配置落点是 app_config 表，本用例需要一份
+    // 已 migrate 且注册为进程级 appDatabase 的临时库（生产代码正是经
+    // core::appDatabase() 取连接；不注册则 save 一律失败）
+    test_support::TestEnv cfgDbEnv(kCfgPrefix, "cfg13", true);
     using namespace module::settings;
     const auto path = test_support::tempConfigFile(kCfgPrefix, "edfont");
     removeQuietly(path);
-    SettingsStore store(path);
+    SettingsStore store(::core::appDatabase());
 
     // 默认 15 = fontSizeBody token 基准
     DOCTEST_CHECK_EQ(store.load().editorFontSize, kDefaultEditorFontSize);
@@ -2887,8 +2974,9 @@ REGISTER_TEST(settings_editor_font_size_roundtrip_clamp,
 
     // 存量文件无该键 → 默认 15
     {
-        std::ofstream f(path, std::ios::trunc);
-        f << R"({"theme": "dark", "logRetentionDays": 30})";
+        // 2026-10-03（批次 E2）：配置不再是文件，改按顶层键写进 app_config 表各行
+        DOCTEST_REQUIRE(test_support::seedConfigJsonRows(
+            ::core::appDatabase(), module::settings::SettingsStore::keyNamespace(), R"({"theme": "dark", "logRetentionDays": 30})"));
     }
     DOCTEST_CHECK_EQ(store.load().editorFontSize, 15);
     removeQuietly(path);
@@ -2917,7 +3005,7 @@ REGISTER_TEST(settings_editor_font_dropdown_applies_channel,
     DOCTEST_REQUIRE(item->onClick != nullptr);
     item->onClick();
     DOCTEST_CHECK_EQ(::core::theme::editorFontSize(), 17.0f);
-    module::settings::SettingsStore store(cfgEnv.cfgPath);
+    module::settings::SettingsStore store(::core::appDatabase());
     DOCTEST_CHECK_EQ(store.load().editorFontSize, 17);
 
     mod->onStop();
@@ -2968,10 +3056,14 @@ REGISTER_TEST(settings_about_text_helpers,
 
 REGISTER_TEST(settings_log_level_roundtrip_matrix,
               "settings: logLevel 默认 INFO/读写往返/未知收敛/parseLogLevel 矩阵（spec缩水 D）", {
+    // 2026-10-03（批次 E2）：配置落点是 app_config 表，本用例需要一份
+    // 已 migrate 且注册为进程级 appDatabase 的临时库（生产代码正是经
+    // core::appDatabase() 取连接；不注册则 save 一律失败）
+    test_support::TestEnv cfgDbEnv(kCfgPrefix, "cfg14", true);
     using namespace module::settings;
     const auto path = test_support::tempConfigFile(kCfgPrefix, "loglevel");
     removeQuietly(path);
-    SettingsStore store(path);
+    SettingsStore store(::core::appDatabase());
 
     // 默认 INFO
     DOCTEST_CHECK_EQ(store.load().logLevel, std::string(kLogLevelInfo));
@@ -3014,8 +3106,9 @@ REGISTER_TEST(settings_log_level_applied_on_start_and_click,
     test_support::TestEnv env(kCfgPrefix, "loglvl", true);
     test_support::ScopedConfigPath cfgEnv(test_support::tempConfigFile(kCfgPrefix, "loglvl_cfg"));
     {
-        std::ofstream out(cfgEnv.cfgPath);
-        out << R"({"logLevel": "WARN"})";
+        // 2026-10-03（批次 E2）：配置不再是文件，改按顶层键写进 app_config 表各行
+        DOCTEST_REQUIRE(test_support::seedConfigJsonRows(
+            ::core::appDatabase(), module::settings::SettingsStore::keyNamespace(), R"({"logLevel": "WARN"})"));
     }
     const core::log::Level prev = core::log::level();
     std::unique_ptr<::core::Module> mod(create_settings_module());
@@ -3040,7 +3133,7 @@ REGISTER_TEST(settings_log_level_applied_on_start_and_click,
     DOCTEST_REQUIRE(item->onClick != nullptr);
     item->onClick();
     DOCTEST_CHECK(core::log::level() == core::log::Level::Debug);
-    module::settings::SettingsStore store(cfgEnv.cfgPath);
+    module::settings::SettingsStore store(::core::appDatabase());
     DOCTEST_CHECK_EQ(store.load().logLevel,
                      std::string(module::settings::kLogLevelDebug));
 
@@ -3066,8 +3159,9 @@ REGISTER_TEST(settings_log_level_effective_visible_and_persistent,
         test_support::tempConfigFile(kCfgPrefix, "lvlvis_cfg"));
     test_support::AppDataEnv appdata("lvlvis");   // 日志文件隔离到临时 HOME
     {
-        std::ofstream out(cfgEnv.cfgPath);
-        out << R"({"logLevel": "INFO"})";
+        // 2026-10-03（批次 E2）：配置不再是文件，改按顶层键写进 app_config 表各行
+        DOCTEST_REQUIRE(test_support::seedConfigJsonRows(
+            ::core::appDatabase(), module::settings::SettingsStore::keyNamespace(), R"({"logLevel": "INFO"})"));
     }
     writeLogFile("C5-SEED\n");   // 冷启动即有一次装载（tailLoaded_ 走 onStart 路径）
 
@@ -3172,7 +3266,7 @@ REGISTER_TEST(settings_log_level_effective_visible_and_persistent,
 
     // 配置落盘 + (c) 重启（新实例 onStart）恢复持久化档
     {
-        module::settings::SettingsStore store(cfgEnv.cfgPath);
+        module::settings::SettingsStore store(::core::appDatabase());
         DOCTEST_CHECK_EQ(store.load().logLevel,
                          std::string(module::settings::kLogLevelDebug));
     }
@@ -3273,7 +3367,7 @@ REGISTER_TEST(settings_ths01_fs_snapshot,
                           module::settings::kModuleIdMarkdown,
                           module::settings::kModuleIdSettings,
                           module::settings::kModuleIdPet};
-    DOCTEST_REQUIRE(module::settings::SettingsStore(cfgEnv.cfgPath).save(cfg).isOk());
+    DOCTEST_REQUIRE(module::settings::SettingsStore(::core::appDatabase()).save(cfg).isOk());
 
     const auto notesDir = test_temp::tempPath("devdesk_ths01_notes");
     const auto petsDir = test_temp::tempPath("devdesk_ths01_pets");
@@ -3643,9 +3737,9 @@ REGISTER_TEST(settings_card_registry_order,
         test_support::TestEnv env(kCfgPrefix, "registryall", true);
         test_support::ScopedConfigPath cfgEnv(test_support::tempConfigFile(kCfgPrefix, "registryall_cfg"));
         {
-            std::ofstream out(cfgEnv.cfgPath);
-            out << "{\"theme\":\"dark\",\"enabledModules\":[\"home\","
-                   "\"markdown\",\"todo\",\"claude_proxy\",\"settings\",\"pet\"]}";
+            // 2026-10-03（批次 E2）：配置不再是文件，改按顶层键写进 app_config 表各行
+            DOCTEST_REQUIRE(test_support::seedConfigJsonRows(
+                ::core::appDatabase(), module::settings::SettingsStore::keyNamespace(), "{\"theme\":\"dark\",\"enabledModules\":[\"home\"," "\"markdown\",\"todo\",\"claude_proxy\",\"settings\",\"pet\"]}"));
         }
         std::unique_ptr<::core::Module> mod(create_settings_module());
         mod->onStart();
@@ -3675,9 +3769,9 @@ REGISTER_TEST(settings_card_registry_order,
         test_support::TestEnv env(kCfgPrefix, "registrygated", true);
         test_support::ScopedConfigPath cfgEnv(test_support::tempConfigFile(kCfgPrefix, "registrygated_cfg"));
         {
-            std::ofstream out(cfgEnv.cfgPath);
-            out << "{\"theme\":\"dark\",\"enabledModules\":[\"home\","
-                   "\"settings\"]}";
+            // 2026-10-03（批次 E2）：配置不再是文件，改按顶层键写进 app_config 表各行
+            DOCTEST_REQUIRE(test_support::seedConfigJsonRows(
+                ::core::appDatabase(), module::settings::SettingsStore::keyNamespace(), "{\"theme\":\"dark\",\"enabledModules\":[\"home\"," "\"settings\"]}"));
         }
         std::unique_ptr<::core::Module> mod(create_settings_module());
         mod->onStart();
@@ -3718,9 +3812,9 @@ REGISTER_TEST(settings_cards_no_outer_cardframe,
     test_support::ScopedConfigPath cfgEnv(
         test_support::tempConfigFile(kCfgPrefix, "noframe_cfg"));
     {
-        std::ofstream out(cfgEnv.cfgPath);
-        out << "{\"theme\":\"dark\",\"enabledModules\":["
-               "\"home\",\"markdown\",\"todo\",\"claude_proxy\",\"settings\",\"pet\"]}";
+        // 2026-10-03（批次 E2）：配置不再是文件，改按顶层键写进 app_config 表各行
+        DOCTEST_REQUIRE(test_support::seedConfigJsonRows(
+            ::core::appDatabase(), module::settings::SettingsStore::keyNamespace(), "{\"theme\":\"dark\",\"enabledModules\":[" "\"home\",\"markdown\",\"todo\",\"claude_proxy\",\"settings\",\"pet\"]}"));
     }
     std::unique_ptr<::core::Module> mod(create_settings_module());
     mod->onStart();
@@ -3790,13 +3884,17 @@ REGISTER_TEST(settings_cards_no_outer_cardframe,
 
 REGISTER_TEST(app_read_settings_tool_roundtrip,
               "app_tools: app.read_settings 读回持久化配置（只读非破坏）", {
+    // 2026-10-03（批次 E2）：配置落点是 app_config 表，本用例需要一份
+    // 已 migrate 且注册为进程级 appDatabase 的临时库（生产代码正是经
+    // core::appDatabase() 取连接；不注册则 save 一律失败）
+    test_support::TestEnv cfgDbEnv(kCfgPrefix, "cfg15", true);
     const auto path = test_support::tempConfigFile(kCfgPrefix, "appread");
-    module::settings::SettingsStore store(path);
+    module::settings::SettingsStore store(::core::appDatabase());
     module::settings::SettingsConfig cfg;                    // 默认值 + 改两处
     cfg.fontScalePercent = 110;
     cfg.proxyPort = 9999;
     DOCTEST_REQUIRE(store.save(cfg).isOk());
-    auto tool = module::settings::makeAppReadSettingsTool(path);
+    auto tool = module::settings::makeAppReadSettingsTool(::core::appDatabase());
     DOCTEST_CHECK_EQ(tool->name(), std::string("app.read_settings"));
     DOCTEST_CHECK_FALSE(tool->isDestructive());
     auto r = tool->execute(core::ToolArgs{"{}"});
@@ -3817,13 +3915,19 @@ REGISTER_TEST(app_read_settings_tool_roundtrip,
 // 盘上文件直写 raw JSON = 绕开 save 的 sanitized（模拟手改 / 旧版本写坏）。
 REGISTER_TEST(app_read_settings_tool_sanitizes_and_whitelists_fields,
               "app_tools: app.read_settings 输出钳制 + 字段白名单（不泄敏感键）", {
+    // 2026-10-03（批次 E2）：配置落点是 app_config 表，本用例需要一份
+    // 已 migrate 且注册为进程级 appDatabase 的临时库（生产代码正是经
+    // core::appDatabase() 取连接；不注册则 save 一律失败）
+    test_support::TestEnv cfgDbEnv(kCfgPrefix, "cfg16", true);
     const auto path =
         test_support::tempConfigFile(kCfgPrefix, "appread_sanitize");
     removeQuietly(path);
     // 盘上键名（不是工具出参键名）：fontScalePercentV3 是 W9 换键后的名字，
     // 端口盘上叫 claudeProxyPort —— 直写必须按盘上契约，否则测的是「键没读到」
-    DOCTEST_REQUIRE(test_support::writeTextFile(
-        path,
+    // 2026-10-03（批次 E2）：配置不再是文件，改按顶层键写进 app_config 各行。
+    // 未知键（apiToken）照样写进去 —— 那正是白名单要挡的东西。
+    DOCTEST_REQUIRE(test_support::seedConfigJsonRows(
+        ::core::appDatabase(), module::settings::SettingsStore::keyNamespace(),
         std::string("{\n") +
             "\"fontScalePercentV3\": 9999,\n" +
             "\"logRetentionDays\": -5,\n" +
@@ -3832,7 +3936,7 @@ REGISTER_TEST(app_read_settings_tool_sanitizes_and_whitelists_fields,
             "\"apiToken\": \"sk-should-never-leak\",\n" +
             "\"enabledModules\": [\"markdown\", \"not-a-module\"]\n" + "}\n"));
 
-    auto tool = module::settings::makeAppReadSettingsTool(path);
+    auto tool = module::settings::makeAppReadSettingsTool(::core::appDatabase());
     auto r = tool->execute(core::ToolArgs{"{}"});
     DOCTEST_REQUIRE(r.isOk());
     DOCTEST_CHECK_FALSE(r.value().isError);
@@ -3873,23 +3977,36 @@ REGISTER_TEST(app_read_settings_tool_sanitizes_and_whitelists_fields,
 // 工具若照抄，agent 会把「读不到」当成「用户就是这么配的」= 静默假答案。
 REGISTER_TEST(app_read_settings_tool_reports_unreadable_config,
               "app_tools: app.read_settings 配置不可读 → isError（不静默回落）", {
-    const auto path = test_support::tempConfigFile(kCfgPrefix, "appread_dir");
-    removeQuietly(path);
-    // 目录占位 = 确定性的「打不开的配置文件」（ifstream 对目录的行为随平台 /
-    // 标准库而异，故实现按 is_directory 显式识别这一支）
-    std::error_code ec;
-    std::filesystem::create_directories(path, ec);
-    DOCTEST_REQUIRE(!ec);
+    // 2026-10-03（批次 E2）：配置落点是 app_config 表，本用例需要一份
+    // 已 migrate 且注册为进程级 appDatabase 的临时库（生产代码正是经
+    // core::appDatabase() 取连接；不注册则 save 一律失败）
+    test_support::TestEnv cfgDbEnv(kCfgPrefix, "cfg17", true);
+    // 2026-10-03（批次 E2）：「读不到配置」的形态变了 —— 不再是「配置文件打不开」，
+    // 而是「app_config 表不存在」。用一个**只 open、没 migrate** 的连接造出这个
+    // 形态（表真的不存在，不是模拟），并另外钉住 db 为 nullptr 的那一支。
+    test_support::InMemoryDb noSchema;
+    auto noSchemaTool = module::settings::makeAppReadSettingsTool(&noSchema.handle());
+    auto noSchemaResult = noSchemaTool->execute(core::ToolArgs{"{}"});
+    DOCTEST_REQUIRE(noSchemaResult.isOk());   // 工具级错误走 isError，不是 Result fail
+    DOCTEST_CHECK(noSchemaResult.value().isError);
+    DOCTEST_CHECK(platform::json::parse(noSchemaResult.value().contentJson)
+                      .value()
+                      .asObject()
+                      .get("error")
+                      .isString());
 
-    auto tool = module::settings::makeAppReadSettingsTool(path);
+    auto nullDbTool = module::settings::makeAppReadSettingsTool(nullptr);
+    auto nullDbResult = nullDbTool->execute(core::ToolArgs{"{}"});
+    DOCTEST_REQUIRE(nullDbResult.isOk());
+    DOCTEST_CHECK(nullDbResult.value().isError);
+
+    // 对照支：库正常且表在 → 读得到，**不**是错误（否则前两条断言就成了
+    // 「工具对任何输入都报错」的恒真）
+    auto tool = module::settings::makeAppReadSettingsTool(::core::appDatabase());
     auto r = tool->execute(core::ToolArgs{"{}"});
-    DOCTEST_REQUIRE(r.isOk());          // 工具级错误走 isError，不是 Result fail
-    DOCTEST_CHECK(r.value().isError);
-    auto parsed = platform::json::parse(r.value().contentJson);
-    DOCTEST_REQUIRE(parsed.isOk());
-    DOCTEST_CHECK(parsed.value().asObject().get("error").isString());
+    DOCTEST_REQUIRE(r.isOk());
+    DOCTEST_CHECK_FALSE(r.value().isError);
 
-    std::filesystem::remove_all(path, ec);
     return true;
 })
 
@@ -3897,12 +4014,16 @@ REGISTER_TEST(app_read_settings_tool_reports_unreadable_config,
 //（只读工具不得创建 / 改写配置文件——写入口只有设置页与 SettingsStore::save）。
 REGISTER_TEST(app_read_settings_tool_missing_file_is_defaults_without_write,
               "app_tools: app.read_settings 无配置文件 → 默认值且不落盘", {
+    // 2026-10-03（批次 E2）：配置落点是 app_config 表，本用例需要一份
+    // 已 migrate 且注册为进程级 appDatabase 的临时库（生产代码正是经
+    // core::appDatabase() 取连接；不注册则 save 一律失败）
+    test_support::TestEnv cfgDbEnv(kCfgPrefix, "cfg18", true);
     const auto path =
         test_support::tempConfigFile(kCfgPrefix, "appread_missing");
     removeQuietly(path);
     DOCTEST_REQUIRE(!std::filesystem::exists(path));
 
-    auto tool = module::settings::makeAppReadSettingsTool(path);
+    auto tool = module::settings::makeAppReadSettingsTool(::core::appDatabase());
     auto r = tool->execute(core::ToolArgs{"{}"});
     DOCTEST_REQUIRE(r.isOk());
     DOCTEST_CHECK_FALSE(r.value().isError);

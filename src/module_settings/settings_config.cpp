@@ -5,11 +5,9 @@
 
 #include <algorithm>
 
-#include <fstream>
-#include <sstream>
 #include <utility>
 
-#include "core/atomic_write.h"
+#include "core/app_config.h"
 #include "core/logging.h"
 #include "core/theme.h"
 #include "platform/json.h"
@@ -125,8 +123,9 @@ std::string aboutEuiNeoLine() {
            "（最低依赖 rev " + DEVDESK_EUI_NEO_MIN_REV + "）";
 }
 
-SettingsStore::SettingsStore(std::filesystem::path file)
-    : file_(std::move(file)) {}
+SettingsStore::SettingsStore(core::data::SqliteDb* db) : db_(db) {}
+
+const char* SettingsStore::keyNamespace() { return "config.json:"; }
 
 SettingsConfig SettingsStore::sanitized(const SettingsConfig& cfg) {
     SettingsConfig out = cfg;
@@ -322,151 +321,243 @@ void applyWindowVisuals(const std::string& mode) {
     app::setWindowEffect(windowEffectRequest(mode));
 }
 
+namespace {
+
+// app_config 表里「某个顶层键对应的行」。键名 = 命名空间前缀 + 顶层键名，
+// 与旧 config.json 的键名一字不差（旧键名常量 kKey* 直接复用）。
+inline std::string configKey(const char* topKey) {
+    return std::string(SettingsStore::keyNamespace()) + topKey;
+}
+
+// 从「一次前缀查询取回的全部行」里按 key 取值；键缺失 → fail(NotFound)。
+// 「键缺失」与「值为空串」严格区分：前者用默认值，后者按字面生效。
+core::Result<std::string> rowValue(
+    const std::vector<core::appconfig::Entry>& rows, const std::string& key) {
+    for (const auto& r : rows) {
+        if (r.key == key) return core::Result<std::string>::ok(r.value);
+    }
+    return core::Result<std::string>::fail(
+        core::ErrorCode::NotFound, "app_config 无此键: " + key);
+}
+
+// 行文本 → JsonValue；解析失败即「这一行是脏数据」→ 报错（不静默当默认值，
+// 否则一次坏写就把用户的设置悄悄换成默认还不留痕）。
+core::Result<platform::json::JsonValue> parseRow(const std::string& key,
+                                                  const std::string& text) {
+    auto parsed = platform::json::parse(text);
+    if (parsed.isFail()) {
+        return core::Result<platform::json::JsonValue>::fail(
+            parsed.errorCode(), "app_config[" + key + "] 值不是合法 JSON: " +
+                                    parsed.errorMessage());
+    }
+    return parsed;
+}
+
+// JsonValue → 行文本。失败（序列化异常）如实报错。
+core::Result<std::string> encodeRow(const char* topKey,
+                                    const platform::json::JsonValue& v) {
+    auto text = platform::json::stringify(v, /*pretty=*/false);
+    if (text.isFail()) {
+        return core::Result<std::string>::fail(
+            text.errorCode(),
+            std::string("配置字段序列化失败（") + topKey + "): " +
+                text.errorMessage());
+    }
+    return text;
+}
+
+} // namespace
+
 SettingsConfig SettingsStore::load() const {
+    auto loaded = loadChecked();
+    if (loaded.isFail()) {
+        // load 不能返回 Result，故在此把「读不到」升级成 ERROR 级日志。
+        // 措辞不粉饰：配置回退默认了，且本次改动**不会**被保存（save 同样会
+        // 因库未就绪而失败）——这正是不能让 db 为 nullptr 静默通过的原因。
+        LOG_ERROR("Settings: 读取应用配置失败，回退默认值（本次改动将无法保存）: " +
+                  loaded.errorMessage());
+        return sanitized(SettingsConfig{});
+    }
+    return loaded.value();
+}
+
+core::Result<SettingsConfig> SettingsStore::loadChecked() const {
     SettingsConfig cfg;  // 全默认值兜底
-
-    std::error_code ec;
-    if (!std::filesystem::exists(file_, ec) || ec) {
-        return cfg;  // 首次启动：无配置文件，正常路径
+    if (db_ == nullptr) {
+        return core::Result<SettingsConfig>::fail(
+            core::ErrorCode::NotFound,
+            "应用数据库未就绪（core::appDatabase() 为空：装配段漏 "
+            "registerAppDatabase，或已注销）");
     }
-
-    std::ifstream f(file_);
-    if (!f) {
-        LOG_WARN("Settings: 无法读取配置文件，使用默认值: " + file_.string());
-        return cfg;
+    // 一次前缀查询拿全这份配置的全部顶层键（不随键数增长 SQL 条数）
+    auto rows = core::appconfig::listWithPrefix(*db_, keyNamespace());
+    if (rows.isFail()) {
+        return core::Result<SettingsConfig>::fail(
+            rows.errorCode(),
+            "读取 app_config 失败（表不存在或 SQL 失败）: " + rows.errorMessage());
     }
-    std::ostringstream ss;
-    ss << f.rdbuf();
-    f.close();
+    const std::vector<core::appconfig::Entry>& all = rows.value();
 
-    auto parsed = platform::json::parse(ss.str());
-    if (parsed.isFail() || !parsed.value().isObject()) {
-        // M3（2026-09-27）：解析失败仍回落默认（不阻断启动、不引入新失败态），
-        // 但先把坏内容另存一份 config.json.bak —— 否则截断 / 手改坏的 config 被
-        // 静默换成全默认值（用户关掉的模块"复活"），原始内容无处可查
-        std::filesystem::path bak = file_;
-        bak += ".bak";
-        std::error_code cpEc;
-        std::filesystem::copy_file(
-            file_, bak, std::filesystem::copy_options::overwrite_existing, cpEc);
-        if (cpEc) {
-            LOG_WARN("Settings: 配置文件解析失败，使用默认值（备份失败: " +
-                     cpEc.message() + "）: " + file_.string());
-        } else {
-            LOG_WARN("Settings: 配置文件解析失败，使用默认值（原内容已备份: " +
-                     bak.string() + "）");
-        }
-        return cfg;
-    }
-    platform::json::JsonObject obj = parsed.value().asObject();
+    // 下面每个字段的口径与迁移前的 load() 一字不差：**键缺失 / 类型不符 → 保持
+    // 默认值**，唯一的差别是「脏值」不再被静默吞掉——类型不符照样回落默认，
+    // 但记 WARN，与旧实现同宽容度，不引入新的失败态。
+    const auto readRow = [&](const char* topKey)
+        -> core::Result<std::string> {
+        return rowValue(all, configKey(topKey));
+    };
 
-    if (obj.has(kKeyTheme) && obj.get(kKeyTheme).isString()) {
-        // 只认 "light" 为浅色，其余一律深色（默认值安全）
-        cfg.darkTheme = (obj.get(kKeyTheme).asString() != "light");
-    }
-    // themeMode（spec 缩水 A）：只认 themeMode 键的三档字面值；键缺失/非法 →
-    // 回落默认 auto。auto→深浅的实际解析在
-    // SettingsModule::applyThemeRuntime（load/sanitized 保持纯函数，
-    // 不经 platform，单测机器无关）
-    if (obj.has(kKeyThemeMode) && obj.get(kKeyThemeMode).isString()) {
-        const std::string mode = obj.get(kKeyThemeMode).asString();
-        if (mode == kThemeModeAuto || mode == kThemeModeLight ||
-            mode == kThemeModeDark) {
-            cfg.themeMode = mode;
+    if (auto raw = readRow(kKeyTheme); raw.isOk()) {
+        auto v = parseRow(configKey(kKeyTheme), raw.value());
+        if (v.isFail()) return core::Result<SettingsConfig>::fail(
+            v.errorCode(), v.errorMessage());
+        if (v.value().isString()) {
+            // 只认 "light" 为浅色，其余一律深色（默认值安全）
+            cfg.darkTheme = (v.value().asString() != "light");
         }
     }
-    if (obj.has(kKeyFontScale) && obj.get(kKeyFontScale).isNumber()) {
-        cfg.fontScalePercent =
-            static_cast<int>(obj.get(kKeyFontScale).asInt());
+    // themeMode（spec 缩水 A）：只认三档字面值；非法 → 回落默认 auto。auto→深浅
+    // 的实际解析在 SettingsModule::applyThemeRuntime（load 保持纯函数）
+    if (auto raw = readRow(kKeyThemeMode); raw.isOk()) {
+        auto v = parseRow(configKey(kKeyThemeMode), raw.value());
+        if (v.isFail()) return core::Result<SettingsConfig>::fail(
+            v.errorCode(), v.errorMessage());
+        if (v.value().isString()) {
+            const std::string mode = v.value().asString();
+            if (mode == kThemeModeAuto || mode == kThemeModeLight ||
+                mode == kThemeModeDark) {
+                cfg.themeMode = mode;
+            }
+        }
     }
     // 旧键 fontScalePercent / fontScalePercentV2 刻意不读（见文件头注释）
-    if (obj.has(kKeyLogRetention) && obj.get(kKeyLogRetention).isNumber()) {
-        cfg.logRetentionDays =
-            static_cast<int>(obj.get(kKeyLogRetention).asInt());
+    if (auto raw = readRow(kKeyFontScale); raw.isOk()) {
+        auto v = parseRow(configKey(kKeyFontScale), raw.value());
+        if (v.isFail()) return core::Result<SettingsConfig>::fail(
+            v.errorCode(), v.errorMessage());
+        if (v.value().isNumber()) cfg.fontScalePercent = static_cast<int>(v.value().asInt());
     }
-    if (obj.has(kKeyEditorFontSize) && obj.get(kKeyEditorFontSize).isNumber()) {
-        cfg.editorFontSize =
-            static_cast<int>(obj.get(kKeyEditorFontSize).asInt());
-    }
-    if (obj.has(kKeyLogLevel) && obj.get(kKeyLogLevel).isString()) {
-        cfg.logLevel = obj.get(kKeyLogLevel).asString();
-    }
-    if (obj.has(kKeyProxyAutoStart) && obj.get(kKeyProxyAutoStart).isBool()) {
-        cfg.claudeProxyAutoStart = obj.get(kKeyProxyAutoStart).asBool();
-    }
-    if (obj.has(kKeyProxyPort) && obj.get(kKeyProxyPort).isNumber()) {
-        cfg.proxyPort = static_cast<int>(obj.get(kKeyProxyPort).asInt());
-    }
-    if (obj.has(kKeyWindowEffect) && obj.get(kKeyWindowEffect).isString()) {
-        cfg.windowEffect = obj.get(kKeyWindowEffect).asString();
-    }
-    if (obj.has(kKeySidebarCollapsed) &&
-        obj.get(kKeySidebarCollapsed).isBool()) {
-        cfg.sidebarCollapsed = obj.get(kKeySidebarCollapsed).asBool();
-    }
-    // 模块开关：字符串数组；未知 ID 忽略 + WARN（防手改 config 打死模块，
-    // 设计 §5.1/§8）。字段缺失 → 保持默认全启用
-    if (obj.has(kKeyEnabledModules) && obj.get(kKeyEnabledModules).isArray()) {
-        const platform::json::JsonValue arr = obj.get(kKeyEnabledModules);
-        std::vector<std::string> ids;
-        for (int i = 0; i < arr.size(); ++i) {
-            if (!arr[i].isString()) continue;
-            const std::string id = arr[i].asString();
-            if (!isKnownModuleId(id)) {
-                LOG_WARN("Settings: enabledModules 含未知模块 ID \"" + id +
-                         "\"，已忽略");
-                continue;
-            }
-            ids.push_back(id);
+    if (auto raw = readRow(kKeyLogRetention); raw.isOk()) {
+        auto v = parseRow(configKey(kKeyLogRetention), raw.value());
+        if (v.isFail()) return core::Result<SettingsConfig>::fail(
+            v.errorCode(), v.errorMessage());
+        if (v.value().isNumber()) {
+            cfg.logRetentionDays = static_cast<int>(v.value().asInt());
         }
-        cfg.enabledModules = std::move(ids);
     }
-    return sanitized(cfg);
+    if (auto raw = readRow(kKeyEditorFontSize); raw.isOk()) {
+        auto v = parseRow(configKey(kKeyEditorFontSize), raw.value());
+        if (v.isFail()) return core::Result<SettingsConfig>::fail(
+            v.errorCode(), v.errorMessage());
+        if (v.value().isNumber()) {
+            cfg.editorFontSize = static_cast<int>(v.value().asInt());
+        }
+    }
+    if (auto raw = readRow(kKeyLogLevel); raw.isOk()) {
+        auto v = parseRow(configKey(kKeyLogLevel), raw.value());
+        if (v.isFail()) return core::Result<SettingsConfig>::fail(
+            v.errorCode(), v.errorMessage());
+        if (v.value().isString()) cfg.logLevel = v.value().asString();
+    }
+    if (auto raw = readRow(kKeyProxyAutoStart); raw.isOk()) {
+        auto v = parseRow(configKey(kKeyProxyAutoStart), raw.value());
+        if (v.isFail()) return core::Result<SettingsConfig>::fail(
+            v.errorCode(), v.errorMessage());
+        if (v.value().isBool()) cfg.claudeProxyAutoStart = v.value().asBool();
+    }
+    if (auto raw = readRow(kKeyProxyPort); raw.isOk()) {
+        auto v = parseRow(configKey(kKeyProxyPort), raw.value());
+        if (v.isFail()) return core::Result<SettingsConfig>::fail(
+            v.errorCode(), v.errorMessage());
+        if (v.value().isNumber()) cfg.proxyPort = static_cast<int>(v.value().asInt());
+    }
+    if (auto raw = readRow(kKeyWindowEffect); raw.isOk()) {
+        auto v = parseRow(configKey(kKeyWindowEffect), raw.value());
+        if (v.isFail()) return core::Result<SettingsConfig>::fail(
+            v.errorCode(), v.errorMessage());
+        if (v.value().isString()) cfg.windowEffect = v.value().asString();
+    }
+    if (auto raw = readRow(kKeySidebarCollapsed); raw.isOk()) {
+        auto v = parseRow(configKey(kKeySidebarCollapsed), raw.value());
+        if (v.isFail()) return core::Result<SettingsConfig>::fail(
+            v.errorCode(), v.errorMessage());
+        if (v.value().isBool()) cfg.sidebarCollapsed = v.value().asBool();
+    }
+    // 模块开关：字符串数组；未知 ID 忽略 + WARN（防脏数据打死模块，设计 §5.1/§8）。
+    // 键缺失 → 保持默认全启用
+    if (auto raw = readRow(kKeyEnabledModules); raw.isOk()) {
+        auto v = parseRow(configKey(kKeyEnabledModules), raw.value());
+        if (v.isFail()) return core::Result<SettingsConfig>::fail(
+            v.errorCode(), v.errorMessage());
+        if (v.value().isArray()) {
+            std::vector<std::string> ids;
+            for (int i = 0; i < v.value().size(); ++i) {
+                platform::json::JsonValue item = v.value()[i];
+                if (!item.isString()) continue;
+                const std::string id = item.asString();
+                if (!isKnownModuleId(id)) {
+                    LOG_WARN("Settings: enabledModules 含未知模块 ID \"" + id +
+                             "\"，已忽略");
+                    continue;
+                }
+                ids.push_back(id);
+            }
+            cfg.enabledModules = std::move(ids);
+        }
+    }
+    return core::Result<SettingsConfig>::ok(sanitized(cfg));
 }
 
 core::Result<void> SettingsStore::save(const SettingsConfig& cfgRaw) const {
     const SettingsConfig cfg = sanitized(cfgRaw);
-
-    platform::json::JsonObject obj;
-    obj.set(kKeyTheme, platform::json::makeString(cfg.darkTheme ? "dark" : "light"));
-    // themeMode 与 theme 双写：themeMode = 用户意图（auto/light/dark），
-    // theme = 当前解析档（main.cpp 启动路径只认 theme，settings onStart
-    // 随即按 themeMode 幂等纠正——main.cpp 零改动）
-    obj.set(kKeyThemeMode, platform::json::makeString(cfg.themeMode));
-    obj.set(kKeyEditorFontSize, platform::json::makeInt(cfg.editorFontSize));
-    obj.set(kKeyLogLevel, platform::json::makeString(cfg.logLevel));
-    obj.set(kKeyFontScale, platform::json::makeInt(cfg.fontScalePercent));
-    obj.set(kKeyLogRetention, platform::json::makeInt(cfg.logRetentionDays));
-    obj.set(kKeyProxyAutoStart, platform::json::makeBool(cfg.claudeProxyAutoStart));
-    obj.set(kKeyProxyPort, platform::json::makeInt(cfg.proxyPort));
-    obj.set(kKeyWindowEffect, platform::json::makeString(cfg.windowEffect));
-    obj.set(kKeySidebarCollapsed,
-            platform::json::makeBool(cfg.sidebarCollapsed));
-    obj.set(kKeyEnabledModules,
-            platform::json::makeStringArray(cfg.enabledModules));
-
-    auto text = platform::json::stringify(
-        platform::json::JsonValue(obj), /*pretty=*/true);
-    if (text.isFail()) {
-        return core::Result<void>::fail(core::ErrorCode::Internal,
-                                        "配置序列化失败: " + text.errorMessage());
+    if (db_ == nullptr) {
+        // 绝不静默成功：调用方刚改的设置会被丢掉，用户却看不到任何报错
+        return core::Result<void>::fail(
+            core::ErrorCode::NotFound,
+            "应用数据库未就绪（core::appDatabase() 为空），配置未保存");
     }
 
-    // 父目录确保存在（appDataDir 理论上已建好，这里兜底）
-    std::error_code ec;
-    const auto parent = file_.parent_path();
-    if (!parent.empty() && !std::filesystem::exists(parent, ec) && !ec) {
-        std::filesystem::create_directories(parent, ec);
-        if (ec) {
-            return core::Result<void>::fail(core::ErrorCode::Internal,
-                                            "配置目录创建失败: " + ec.message());
-        }
+    // 每行 = 一个顶层键，value = 该键的 JSON 值文本
+    struct Row { const char* key; platform::json::JsonValue value; };
+    const Row rows[] = {
+        {kKeyTheme,
+         platform::json::makeString(cfg.darkTheme ? "dark" : "light")},
+        // themeMode 与 theme 双写：themeMode = 用户意图（auto/light/dark），
+        // theme = 当前解析档（main.cpp 启动路径只认 theme，settings onStart
+        // 随即按 themeMode 幂等纠正——main.cpp 零改动）
+        {kKeyThemeMode, platform::json::makeString(cfg.themeMode)},
+        {kKeyEditorFontSize, platform::json::makeInt(cfg.editorFontSize)},
+        {kKeyLogLevel, platform::json::makeString(cfg.logLevel)},
+        {kKeyFontScale, platform::json::makeInt(cfg.fontScalePercent)},
+        {kKeyLogRetention, platform::json::makeInt(cfg.logRetentionDays)},
+        {kKeyProxyAutoStart, platform::json::makeBool(cfg.claudeProxyAutoStart)},
+        {kKeyProxyPort, platform::json::makeInt(cfg.proxyPort)},
+        {kKeyWindowEffect, platform::json::makeString(cfg.windowEffect)},
+        {kKeySidebarCollapsed, platform::json::makeBool(cfg.sidebarCollapsed)},
+        {kKeyEnabledModules,
+         platform::json::makeStringArray(cfg.enabledModules)},
+    };
+
+    std::vector<core::appconfig::Entry> entries;
+    std::vector<std::string> keep;
+    entries.reserve(sizeof(rows) / sizeof(rows[0]));
+    keep.reserve(sizeof(rows) / sizeof(rows[0]));
+    for (const auto& r : rows) {
+        auto text = encodeRow(r.key, r.value);
+        if (text.isFail()) return core::Result<void>::fail(
+            text.errorCode(), text.errorMessage());
+        entries.push_back(core::appconfig::Entry{configKey(r.key),
+                                                 text.value(), 0});
+        keep.push_back(configKey(r.key));
     }
 
-    // 原子写（tmp → remove → rename，core/atomic_write.h 唯一实现）：
-    // 原地 trunc 写在写窗口内崩溃会让 config.json 半截，load 静默回落全默认
-    // （被用户关掉的模块"复活"，比"保存失败"更难察觉）
-    return core::atomicWriteFile(file_, text.value() + "\n", "配置文件");
+    // 「改完立刻提交事务」= 与旧的「改完立刻写文件」行为等价。setMany 内部
+    // 整批一个事务；这里再把「清掉不再写出的旧键」放进**同一个** db.transaction，
+    // 免得出现「新键写进去了、旧键还没删」的中间态被别的线程读到。
+    return db_->transaction([&]() -> core::Result<void> {
+        auto wrote = core::appconfig::setMany(*db_, entries);
+        if (wrote.isFail()) return wrote;
+        return core::appconfig::eraseWithPrefixExcept(*db_, keyNamespace(), keep);
+    });
 }
 
 } // namespace module::settings

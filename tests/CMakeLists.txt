@@ -14,6 +14,7 @@ add_executable(devdesk_tests
     test_core/test_theme_fontscale.cpp
     test_core/test_router.cpp
     test_core/test_schema.cpp
+    test_core/test_app_config.cpp
     test_core/test_proxy_stats.cpp
     test_core/test_time.cpp
     test_core/test_window_layout.cpp

@@ -411,6 +411,28 @@ private:
     // settingsTakeover_.paths().settingsFile 为空 → 直接返回
     core::Result<void> syncCaptureActiveProfile();
 
+    // ---- 直连会话 settings 的 DB 记录（2026-10-03 批次 E2）------------------
+    // run-settings 每次运行落一份、之后要读回来对比/追踪，单键会被覆盖，故
+    // 单独建 claude_run_settings 表（schema.h 有完整注释）。写入顺序 =
+    // 先 recordRunSettings（记录成立）→ 再落文件 → 再 chmod 0600 → 再启动会话；
+    // 中途任一步失败都 forgetRunSettings 撤掉刚落的行，不留指向不存在文件的
+    // 假记录。
+    //
+    // settingsJson **含明文 API key**（buildDirectEnv 的密钥键三态之一），
+    // 故入库前经 platform::credential 的分平台保护（E1 已落地，本批不新写
+    // 一套加密）：macOS/POSIX = 明文（保护靠库文件 0600）/ Windows = DPAPI
+    // 密文 hex。
+    core::Result<void> recordRunSettings(const std::string& runKey,
+                                         int64_t profileId,
+                                         const std::string& profileName,
+                                         std::time_t writtenAt,
+                                         const std::string& filePath,
+                                         const std::string& settingsJson) const;
+
+    // 撤掉一次未真正成行的记录（文件写失败 / chmod 失败 / 会话未启动）。
+    // 幂等：行不存在即成功。失败只记日志——补偿失败不该盖过原始错误。
+    void forgetRunSettings(const std::string& runKey) const;
+
     // spec §10 线程模型 / agent M2 Task 8：setActiveProfile 的**服务内互斥锁**。
     // 该方法体内有 DB 事务 + settings.json 接管同步（文件写 + Keychain）+ warnings_
     // 内存态，agent 工作线程（claude.switch_profile 工具）与 UI 线程可并发进入——

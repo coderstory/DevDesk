@@ -69,7 +69,7 @@ public:
         attachTools();   // off 后 todoTools_ 已被 detachTools 置空，此处正常重挂
         reloadAll();
         // 审计 [23]：恢复列滚动（按列 id）+ 选中任务（reloadAll 之后，列/任务已就位）
-        viewStore_ = std::make_unique<TodoViewStateStore>(todoViewStateFile());
+        viewStore_ = std::make_unique<TodoViewStateStore>(::core::appDatabase());
         restoreViewState();
         LOG_INFO("Todo 模块启动（" + std::to_string(columns_.size()) + " 列 / " +
                  std::to_string(tasks_.size()) + " 任务）");

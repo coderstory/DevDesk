@@ -19,13 +19,17 @@ namespace app {
 constexpr float kSidebarWidthExpanded = 208.0f;
 constexpr float kSidebarWidthCollapsed = 72.0f;
 
-// ---- 运行时折叠状态（进程内单值；启动由 main 从 config.json 恢复）----
+// ---- 运行时折叠状态（进程内单值；启动由 main 从 app_config 表恢复）----
 bool sidebarCollapsed();
 
-// collapsed = 目标态。configFile 非空则同时持久化（生产切换传
-// core::paths::configFile()，测试传临时文件；空路径 = 只改内存，启动恢复用）
-void setSidebarCollapsed(bool collapsed,
-                         const std::filesystem::path& configFile = {});
+// collapsed = 目标态。persist = true 时同时落库；**默认 false = 只改内存**。
+// 默认值沿用旧签名（第二参 `path = {}`，空路径 = 不落盘）的语义：启动恢复、
+// 纯内存翻转都不该顺手写一次库。要落库的写路径必须显式传 true。
+//
+// 2026-10-03（批次 E2）：落点从 config.json 改为 SQLite 的 app_config 表，
+// 原「configFile 非空即持久化」的路径入参随之改为布尔开关 —— 路径不再是
+// 「配置在哪」的决定因素，改由 core::appDatabase() 决定（null = 只改内存）。
+void setSidebarCollapsed(bool collapsed, bool persist = false);
 
 // 测试缝（TIN-07）：复位进程级折叠状态回厂（展开）。与 setSidebarCollapsed
 // 的区别：纯内存复位、零持久化副作用——resetCaseGlobals 用例间回厂用

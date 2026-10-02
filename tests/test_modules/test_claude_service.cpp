@@ -85,24 +85,25 @@ struct ScopedProxyEnv {
     ScopedProxyEnv& operator=(const ScopedProxyEnv&) = delete;
 };
 
-// 接管通道路径用的临时文件（settings.json + sidecar；绝不碰真实 ~/.claude）。
+// 接管通道用的临时 settings.json 文件（绝不碰真实 ~/.claude）。
 // runProfile 零全局回归闸（D-1）用它断言「settings.json 未被写、sidecar 未建」。
+//
+// 2026-10-03（批次 E2）：sidecar 已不是文件，而是 app_config 表的一行，故本
+// 结构**不再持有 sidecar 路径**，改持一个已 migrate 的连接供 paths() 填 db。
 struct TempSyncPaths {
     std::filesystem::path settings;
-    std::filesystem::path sidecar;
+    core::data::SqliteDb* db = nullptr;
 
-    explicit TempSyncPaths(const std::string& tag) {
+    TempSyncPaths(const std::string& tag, core::data::SqliteDb& database) {
         const std::string base = test_support::tempDbPath(kDbPrefix, tag).string();   // 复用同一 tempPath 工厂
         settings = base + ".settings.json";
-        sidecar = base + ".sidecar.json";
+        db = &database;
         std::error_code ec;
         std::filesystem::remove(settings, ec);
-        std::filesystem::remove(sidecar, ec);
     }
     ~TempSyncPaths() {
         std::error_code ec;
         std::filesystem::remove(settings, ec);
-        std::filesystem::remove(sidecar, ec);
     }
 
     void writeSettings(const std::string& content) const {
@@ -111,7 +112,7 @@ struct TempSyncPaths {
     module::claude::settings_sync::Paths paths() const {
         module::claude::settings_sync::Paths p;
         p.settingsFile = settings;
-        p.sidecarFile = sidecar;
+        p.db = db;
         return p;
     }
 };
@@ -127,10 +128,13 @@ std::string readFileToString(const std::filesystem::path& p) {
 // 前缀沿用原样；绝不碰真实 ~/.claude）
 constexpr const char* kRevTempDirPrefix = "devdesk_test_claude_rev_";
 
-module::claude::settings_sync::Paths makeSyncPaths(const test_support::TempDir& d) {
+// sidecar 自 2026-10-03（批次 E2）起是 app_config 表的一行，故这里要一并传入
+// 已 migrate 的连接（测试侧一律用同一个 tdb，避免各用例各开一库）。
+module::claude::settings_sync::Paths makeSyncPaths(const test_support::TempDir& d,
+                                                   core::data::SqliteDb& db) {
     module::claude::settings_sync::Paths p;
     p.settingsFile = d.file("settings.json");
-    p.sidecarFile = d.file("snapshot.json");
+    p.db = &db;
     return p;
 }
 
@@ -1544,7 +1548,7 @@ REGISTER_TEST(claude_reverse_capture_on_switch,
     using namespace module::claude;
     test_support::TestDb tdb(kDbPrefix, "revcap");
     test_support::TempDir d("revcap", kRevTempDirPrefix);
-    auto paths = makeSyncPaths(d);
+    auto paths = makeSyncPaths(d, tdb.handle());
 
     ClaudeService svc(tdb.handle(), kTestKeychainService);
     svc.setSettingsSyncPaths(paths);
@@ -1624,7 +1628,7 @@ REGISTER_TEST(claude_reverse_guard_keys_not_touched,
     using namespace module::claude;
     test_support::TestDb tdb(kDbPrefix, "revguard");
     test_support::TempDir d("revguard", kRevTempDirPrefix);
-    auto paths = makeSyncPaths(d);
+    auto paths = makeSyncPaths(d, tdb.handle());
 
     ClaudeService svc(tdb.handle(), kTestKeychainService);
     svc.setSettingsSyncPaths(paths);
@@ -1714,7 +1718,7 @@ REGISTER_TEST(claude_reverse_absent_clears,
     using namespace module::claude;
     test_support::TestDb tdb(kDbPrefix, "revclear");
     test_support::TempDir d("revclear", kRevTempDirPrefix);
-    auto paths = makeSyncPaths(d);
+    auto paths = makeSyncPaths(d, tdb.handle());
 
     ClaudeService svc(tdb.handle(), kTestKeychainService);
     svc.setSettingsSyncPaths(paths);
@@ -1768,7 +1772,7 @@ REGISTER_TEST(claude_reverse_broken_json_aborts,
     using namespace module::claude;
     test_support::TestDb tdb(kDbPrefix, "revbad");
     test_support::TempDir d("revbad", kRevTempDirPrefix);
-    auto paths = makeSyncPaths(d);
+    auto paths = makeSyncPaths(d, tdb.handle());
 
     ClaudeService svc(tdb.handle(), kTestKeychainService);
     svc.setSettingsSyncPaths(paths);
@@ -1841,7 +1845,7 @@ REGISTER_TEST(claude_reverse_missing_or_empty_noop,
     using namespace module::claude;
     test_support::TestDb tdb(kDbPrefix, "revnoop");
     test_support::TempDir d("revnoop", kRevTempDirPrefix);
-    auto paths = makeSyncPaths(d);
+    auto paths = makeSyncPaths(d, tdb.handle());
 
     ClaudeService svc(tdb.handle(), kTestKeychainService);
     svc.setSettingsSyncPaths(paths);
@@ -1919,7 +1923,7 @@ REGISTER_TEST(claude_reverse_no_active_skips,
     using namespace module::claude;
     test_support::TestDb tdb(kDbPrefix, "revnoact");
     test_support::TempDir d("revnoact", kRevTempDirPrefix);
-    auto paths = makeSyncPaths(d);
+    auto paths = makeSyncPaths(d, tdb.handle());
 
     ClaudeService svc(tdb.handle(), kTestKeychainService);
     svc.setSettingsSyncPaths(paths);
@@ -1946,7 +1950,7 @@ REGISTER_TEST(claude_reverse_no_change_zero_write,
     using namespace module::claude;
     test_support::TestDb tdb(kDbPrefix, "revsame");
     test_support::TempDir d("revsame", kRevTempDirPrefix);
-    auto paths = makeSyncPaths(d);
+    auto paths = makeSyncPaths(d, tdb.handle());
 
     ClaudeService svc(tdb.handle(), kTestKeychainService);
     svc.setSettingsSyncPaths(paths);
@@ -2006,7 +2010,7 @@ REGISTER_TEST(claude_reverse_sidecar_managed_key_skipped,
     using namespace module::claude;
     test_support::TestDb tdb(kDbPrefix, "revside");
     test_support::TempDir d("revside", kRevTempDirPrefix);
-    auto paths = makeSyncPaths(d);
+    auto paths = makeSyncPaths(d, tdb.handle());
 
     ClaudeService svc(tdb.handle(), kTestKeychainService);
     svc.setSettingsSyncPaths(paths);
@@ -2028,8 +2032,9 @@ REGISTER_TEST(claude_reverse_sidecar_managed_key_skipped,
 
     // sidecar 声明 ANTHROPIC_MODEL 是托管键；同批还有一个非托管变化（NEW_KEY），
     // 保证确实写了一次库（否则整次 no-op 会让「未被覆盖」白白通过）
-    d.write(paths.sidecarFile,
-            R"({"managedKeys": {"ANTHROPIC_MODEL": ""}, "envSnapshot": {}})");
+    test_support::writeRawConfigRow(
+        &tdb.handle(), module::claude::settings_sync::kSidecarConfigKey,
+        R"({"managedKeys": {"ANTHROPIC_MODEL": ""}, "envSnapshot": {}})");
     d.write(paths.settingsFile, R"({"env": {
         "ANTHROPIC_MODEL": "from-settings",
         "NEW_KEY": "n"
@@ -2060,7 +2065,7 @@ REGISTER_TEST(claude_dup_profile_basic,
     using namespace module::claude;
     test_support::TestDb tdb(kDbPrefix, "dup");
     test_support::TempDir d("dup", kRevTempDirPrefix);
-    auto paths = makeSyncPaths(d);
+    auto paths = makeSyncPaths(d, tdb.handle());
 
     ClaudeService svc(tdb.handle(), kTestKeychainService);
     svc.setSettingsSyncPaths(paths);
@@ -3109,7 +3114,7 @@ REGISTER_TEST(claude_service_dialect_override_survives_reverse_sync,
     using namespace module::claude;
     test_support::TestDb tdb(kDbPrefix, "dialect_sync");
     test_support::TempDir d("dialect_sync");
-    auto paths = makeSyncPaths(d);
+    auto paths = makeSyncPaths(d, tdb.handle());
 
     ClaudeService svc(tdb.handle(), kTestKeychainService);
     svc.setSettingsSyncPaths(paths);
@@ -3172,7 +3177,7 @@ REGISTER_TEST(claude_service_run_profile_direct_env_writes_temp_settings,
 
     // 接管通道注入（指向临时文件）——零全局回归闸的一部分：settings.json 与
     // sidecar 都不该被本次运行触碰
-    TempSyncPaths paths("runprofile1");
+    TempSyncPaths paths("runprofile1", tdb.handle());
     svc.setSettingsSyncPaths(paths.paths());
     const std::string settingsBefore = R"({
       "env": { "MY_EXISTING": "keep-me" },
@@ -3237,7 +3242,8 @@ REGISTER_TEST(claude_service_run_profile_direct_env_writes_temp_settings,
 
     // ④ 零全局回归闸：settings.json 内容未变、sidecar 未建、激活态未变、代理未动
     DOCTEST_CHECK_EQ(readFileToString(paths.settings), settingsBefore);
-    DOCTEST_CHECK(!std::filesystem::exists(paths.sidecar));
+    DOCTEST_CHECK(!test_support::configRowExists(
+        &tdb.handle(), module::claude::settings_sync::kSidecarConfigKey));
     auto activeAfter = svc.getActiveProfile();
     DOCTEST_REQUIRE(activeAfter.isOk());
     DOCTEST_CHECK_EQ(activeAfter.value().id, a.value().id);
@@ -3259,7 +3265,7 @@ REGISTER_TEST(claude_service_run_profile_merges_extra_settings,
     test_support::TestDb tdb(kDbPrefix, "runprofile6");
     module::claude::ClaudeService svc(tdb.handle(), kTestKeychainService);
 
-    TempSyncPaths paths("runprofile6");
+    TempSyncPaths paths("runprofile6", tdb.handle());
     svc.setSettingsSyncPaths(paths.paths());
 
     // 片段与 profile 各含独有键 + 同键（片段赢）；JSON 含顶层 model（触发
@@ -3305,7 +3311,8 @@ REGISTER_TEST(claude_service_run_profile_merges_extra_settings,
     DOCTEST_CHECK_EQ(envObj.get("ANTHROPIC_AUTH_TOKEN").asString(),
                      std::string("sk-ant-run-0006"));
     // 零全局闸（同既有直连用例）：settings.json / sidecar 未被触碰
-    DOCTEST_CHECK(!std::filesystem::exists(paths.sidecar));
+    DOCTEST_CHECK(!test_support::configRowExists(
+        &tdb.handle(), module::claude::settings_sync::kSidecarConfigKey));
 
     std::error_code rmEc;
     std::filesystem::remove(settingsFile, rmEc);
@@ -3350,7 +3357,7 @@ REGISTER_TEST(claude_service_run_profile_zero_global_change_gate,
     module::claude::ClaudeService svc(tdb.handle(), kTestKeychainService);
 
     // 接管通道路径注入（指向临时 settings.json）——回归闸断言的就是它**不被碰**
-    TempSyncPaths paths("runprofile3");
+    TempSyncPaths paths("runprofile3", tdb.handle());
     svc.setSettingsSyncPaths(paths.paths());
 
     auto a = svc.createProfile("甲", "https://a.example.com", "sk-ant-run-a", "");
@@ -3391,7 +3398,8 @@ REGISTER_TEST(claude_service_run_profile_zero_global_change_gate,
                      std::string("{ 这不是合法 JSON"));
 
     // ③ 回归闸汇总：sidecar 未建、激活态未变、代理未动、每次都开窗
-    DOCTEST_CHECK(!std::filesystem::exists(paths.sidecar));
+    DOCTEST_CHECK(!test_support::configRowExists(
+        &tdb.handle(), module::claude::settings_sync::kSidecarConfigKey));
     auto active = svc.getActiveProfile();
     DOCTEST_REQUIRE(active.isOk());
     DOCTEST_CHECK_EQ(active.value().id, a.value().id);
@@ -3658,7 +3666,7 @@ REGISTER_TEST(claude_pv_no_active_profile,
 REGISTER_TEST(claude_pv_unreachable_no_takeover,
               "claude_service: 前置校验② 上游不可达 → fail（NetworkUnreachable）且 settings.json 未被接管", {
     test_support::TestDb tdb(kDbPrefix, "pv_conn");
-    TempSyncPaths sync("pv_conn");                   // 文件内桩：临时 settings.json + sidecar
+    TempSyncPaths sync("pv_conn", tdb.handle());                   // 文件内桩：临时 settings.json + sidecar
     module::claude::ClaudeService svc(tdb.handle(), kTestKeychainService);
     svc.setSettingsSyncPaths(sync.paths());
     svc.setSettingsTakeOverEnabled(true);            // 接管开关默认即 true，此处显式钉住
@@ -3680,7 +3688,8 @@ REGISTER_TEST(claude_pv_unreachable_no_takeover,
     DOCTEST_CHECK_EQ(svc.proxyPort(), 0);
     // 事故本体断言：settings.json 一字未改、无 sidecar（= 没走到 syncTakeOver）
     DOCTEST_CHECK_EQ(readFileToString(sync.settings), kOriginal);
-    DOCTEST_CHECK_FALSE(std::filesystem::exists(sync.sidecar));
+    DOCTEST_CHECK_FALSE(test_support::configRowExists(
+        &tdb.handle(), module::claude::settings_sync::kSidecarConfigKey));
     DOCTEST_CHECK(svc.lastSyncWarnings().empty());
     test_support::cleanupProfileKey(kTestKeychainService, created.value().id);
     return true;

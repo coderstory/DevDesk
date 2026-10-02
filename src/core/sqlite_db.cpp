@@ -205,6 +205,16 @@ Result<std::vector<SqlRow>> Statement::fetchAll() {
     return Result<std::vector<SqlRow>>::ok(std::move(rows));
 }
 
+// 复位：sqlite3_reset 是句柄操作，锁与 prepare/bind/step 同一把
+// （2026-10-02 跨线程纪律：漏一处就是连接内部空闲链损坏 → 真机 SIGSEGV）。
+// 返回值语义注意：sqlite3_reset 报的是**上一次 step** 的结果，不是本次操作的；
+// 调用方在 step() 失败时不要靠它的返回值判断成败（app_config.cpp 的 setMany
+// 正是 step 失败即 return，不走到这里）。
+Result<void> Statement::reset() {
+    std::lock_guard<std::recursive_mutex> lock(*mutex_);
+    return checkRc(db_, sqlite3_reset(stmt_), "reset");
+}
+
 int Statement::columnCount() const {
     std::lock_guard<std::recursive_mutex> lock(*mutex_);
     return sqlite3_column_count(stmt_);
@@ -350,13 +360,38 @@ Result<void> SqliteDb::transaction(std::function<Result<void>()> fn) {
     // 前提约束：fn() 内只做 DB 操作（现有全部调用方满足），不得做长阻塞
     // 的 IO/网络，否则会拖住其他线程的语句。
     std::lock_guard<std::recursive_mutex> lock(*mutex_);
-    char* err = nullptr;
-    if (sqlite3_exec(handle_, "BEGIN", nullptr, nullptr, &err) != SQLITE_OK) {
-        std::string e = err ? err : "?";
-        sqlite3_free(err);
-        return Result<void>::fail(ErrorCode::DatabaseCorrupted, "BEGIN: " + e);
+
+    // 可重入（2026-10-03 批次 E2 踩到后补）：事务**深度**用 thread_local 记，
+    // 只记本线程——别的线程进不来（上面的锁已经挡住了，且 recursive_mutex
+    // 保证同一时刻只有一个线程持有）。
+    // 为什么需要：sqlite 不支持嵌套事务，内层再发一次 BEGIN 会拿到
+    // "cannot start a transaction within a transaction" 直接失败。组合型
+    // 调用（外层要把「批量写 + 清理旧键」做成一次原子提交，内层的批量写
+    // 自己也要一个事务）在配置落库那条路上是常态，不做可重入就只能二选一：
+    // 要么放弃整体原子性，要么让内层不开事务 —— 后者会把「内层必须自带
+    // 事务」的调用方（单独调 setMany 的那些）暴露成无原子性的裸写。
+    // 现在：内层只跑 fn()，最外层统一 BEGIN/COMMIT/ROLLBACK。
+    // 语义不变之处：深度 0 的调用（即绝大多数调用方）走的是原来那条路径，
+    // 一行代码没改；异常安全仍由 RAII lock_guard + 显式 ROLLBACK 保证。
+    static thread_local int txDepth = 0;
+    const bool outermost = (txDepth == 0);
+    if (outermost) {
+        char* err = nullptr;
+        if (sqlite3_exec(handle_, "BEGIN", nullptr, nullptr, &err) != SQLITE_OK) {
+            std::string e = err ? err : "?";
+            sqlite3_free(err);
+            return Result<void>::fail(ErrorCode::DatabaseCorrupted, "BEGIN: " + e);
+        }
     }
+    ++txDepth;
     auto result = fn();
+    --txDepth;
+    if (!outermost) {
+        // 内层：既不 COMMIT 也不 ROLLBACK —— 结果交给最外层裁决。
+        // 失败照样往外传，外层看到 isFail() 就会整批 ROLLBACK，原子性没丢。
+        return result;
+    }
+    char* err = nullptr;
     if (result.isOk()) {
         err = nullptr;
         if (sqlite3_exec(handle_, "COMMIT", nullptr, nullptr, &err) != SQLITE_OK) {

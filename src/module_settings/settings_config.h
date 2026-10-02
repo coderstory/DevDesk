@@ -4,7 +4,9 @@
 // 设计决策：
 //   - Config 结构放 module 内部（任务允许"core 或 module 内部皆可，选最小改动"），
 //     core 不感知具体设置项
-//   - 持久化：core::paths::configFile() + platform::json（yyjson 薄封装）
+//   - 持久化：SQLite 的 app_config 表（core/app_config.h）+ platform::json
+//     （yyjson 薄封装，只负责「把结构编码成字符串」）；2026-10-03 起不再有
+//     config.json，core::paths::configFile() 已无生产调用方
 //   - SettingsStore 的文件路径由构造注入，便于单测用临时文件做读写往返
 //
 // 字段说明：
@@ -17,7 +19,7 @@
 //     的限制已在 W5 消除，见 KNOWN_LIMITATIONS「已解决」。）
 //   - logRetentionDays: 调用日志保留天数，0 = 永久保留
 //     集成点：与 w3-t10-home 并行分支的"30 天日志清理任务"联动——
-//     T10 的清理逻辑应读取本字段（config.json 的 logRetentionDays），
+//     T10 的清理逻辑应读取本字段（app_config 的 logRetentionDays），
 //     接线留给集成阶段
 //   - windowEffect: 窗口效果三档 "off"|"translucent"|"frosted"（磨砂设计
 //     Phase D）。档位→参数映射（clearColor alpha / backdrop 请求 / 降级文案）
@@ -33,6 +35,7 @@
 #include "core/logging.h"
 #include "core/proxy_port.h"
 #include "core/result.h"
+#include "core/sqlite_db.h"
 
 namespace module::settings {
 
@@ -57,7 +60,7 @@ constexpr int kMinProxyPort = ::core::kMinProxyPort;
 constexpr int kMaxProxyPort = ::core::kMaxProxyPort;
 
 // ---- 模块开关 ID（模块插拔方案 A，设计 2026-09-22 §5.1）----
-// 字符串与 pageIdToString 的小写对齐；config.json 的 enabledModules 数组用。
+// 字符串与 pageIdToString 的小写对齐；app_config 的 enabledModules 键用。
 // pet 是桌宠（2026-09-22-desktop-pet-design.md §4.1）：不是 Router 页面模块
 //（无 PageId/侧边栏入口），但同样经 enabledModules 门控（关闭 = 不开窗口零执行）；
 // 默认不启用（氛围功能，用户主动开）。
@@ -75,14 +78,14 @@ inline constexpr const char* kModuleIdPet = "pet";
 // 默认全启用（字段缺失/解析失败回退；home/settings 恒启用见 kAlwaysOn）
 std::vector<std::string> defaultEnabledModules();
 
-// 窗口效果三档（磨砂设计 §3.4；档位字符串直接持久化进 config.json）
+// 窗口效果三档（磨砂设计 §3.4；档位字符串直接持久化进 app_config）
 inline constexpr const char* kWindowEffectOff = "off";
 inline constexpr const char* kWindowEffectTranslucent = "translucent";
 inline constexpr const char* kWindowEffectFrosted = "frosted";
 
 // 主题模式三档（spec §8.5「跟随系统主题」，spec 缩水任务 A）：
 //   auto（默认，跟随系统浅/深，检测见 platform::prefersDarkTheme）
-//   light / dark（固定档）。字符串直接持久化进 config.json 的 themeMode 键
+//   light / dark（固定档）。字符串直接持久化进 app_config 的 themeMode 键
 inline constexpr const char* kThemeModeAuto = "auto";
 inline constexpr const char* kThemeModeLight = "light";
 inline constexpr const char* kThemeModeDark = "dark";
@@ -202,23 +205,55 @@ std::string windowEffectDegradedHint(const std::string& mode,
 // 恢复 / 设置页切档 / 主题切换三处共用一条路径（EUI-NEO Phase B/C 运行时 API）
 void applyWindowVisuals(const std::string& mode);
 
-// config.json 读写（不抛异常；文件不存在/损坏一律回退默认值）
+// 应用配置读写（不抛异常）。
+//
+// **落点已从 config.json 改为 SQLite 的 app_config 表**（2026-10-03 用户第 17 条
+// 「所有 app 配置全部进 SQLite，不要 JSON 文件了」，批次 E2）。键的命名空间前缀
+// = `config.json:`，其下**按顶层键一行一个**（theme / themeMode / editorFontSize /
+// logLevel / fontScalePercentV3 / logRetentionDays / claudeProxyAutoStart /
+// claudeProxyPort / windowEffect / sidebarCollapsed / enabledModules），
+// 每行的 value 是该顶层键的 JSON 值文本（如 `"dark"` / `15` / `["home",…]`）。
+//
+// 为什么按顶层键拆行（裁决）：
+//   · 调用方有多处**各自只关心一两个键**且分别写回（main.cpp 的主题恢复 /
+//     窗口效果回调、app_sidebar 的折叠开关、settings_module 的整份保存、
+//     app_assembly 的惰性装配读 autoStart、app_tools 给 agent 线程只读）。
+//     整份单行时，这些写者会互相覆盖彼此没读到的字段；按顶层键分行后，
+//     一个写者只碰自己那几行，其余行原样不动。
+//   · 代价（明写）：一份配置 11 行而不是 1 行；load 是一次前缀查询（一条 SQL，
+//     不随键数增长）；save 是一次事务里的 11 次 UPSERT + 一次「清掉不再写出的
+//     旧键」。相比文件时代的「每次重写整个 JSON 文件」，事务反而更便宜。
+//
+// **无迁移、无兼容**（core/schema.h 抬高口径）：不读旧 config.json、不导入、
+// 不自动迁移。库里没有键 = 用默认值。旧文件留在磁盘上也不再被碰。
 class SettingsStore {
 public:
-    // file：配置文件完整路径（生产传 core::paths::configFile()，测试传临时文件）
-    explicit SettingsStore(std::filesystem::path file);
+    // db：应用共享连接（生产传 ::core::appDatabase()，测试传临时库的句柄）。
+    // **允许为 nullptr**——但那不是「没配置」，而是「数据库没就绪」：
+    // save() 会返回 fail Result（绝不静默丢弃用户刚改的设置），
+    // load() 回退默认值并打 LOG_ERROR。
+    explicit SettingsStore(core::data::SqliteDb* db);
 
-    // 读取配置；文件不存在 / 解析失败 / 字段缺失 → 对应默认值
+    // 读取配置；键缺失 → 对应默认值。数据库未就绪 / 表不存在 → 默认值 + LOG_ERROR
+    //（load 不能返回 Result，故另配 loadChecked() 供需要区分的调用方）。
     SettingsConfig load() const;
 
-    // 序列化写入 JSON（pretty）；失败返回 fail Result
+    // 与 load() 同源，但把「数据库未就绪 / 表不存在 / 单键读失败」如实报出来
+    //（ErrorCode + 原因），供单测与工具层判定「是不是真的读到了配置」。
+    core::Result<SettingsConfig> loadChecked() const;
+
+    // 写入配置：11 个顶层键在**一个事务**里逐行 UPSERT，并清掉本命名空间下
+    // 这轮不再写出的旧键（= 旧实现「重写整份文件」的语义）。失败返回 fail Result。
     core::Result<void> save(const SettingsConfig& cfg) const;
 
     // 数值越界收敛到合法范围（load 时应用；也供单测直接验证）
     static SettingsConfig sanitized(const SettingsConfig& cfg);
 
+    // 键的命名空间前缀（供测试与工具层拼键名；实现与 save/load 同一来源）
+    static const char* keyNamespace();
+
 private:
-    std::filesystem::path file_;
+    core::data::SqliteDb* db_ = nullptr;
 };
 
 } // namespace module::settings

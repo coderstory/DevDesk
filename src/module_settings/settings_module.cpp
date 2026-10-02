@@ -34,7 +34,7 @@
 //      起**即时生效**）：四个工具模块
 //      （markdown/todo/claude_proxy/agent）+ 桌宠各一行开关；home/settings
 //      恒启用不
-//      展示开关。开关写 config.json + 经 app::toggle 桥发意图（handler 由
+//      展示开关。开关写 app_config + 经 app::toggle 桥发意图（handler 由
 //      main.cpp 装配段注入，未注入时桥内 no-op 仅写盘）；
 //      对应模块关闭时其专属卡片整卡隐藏（代理卡/目录卡，不显示故障态）
 //   7. 页面结构（Task B tab 化）：通用 / 模块 / 日志 三 tab
@@ -190,7 +190,7 @@ public:
     // ============ 生命周期 ============
 
     void onStart() override {
-        store_ = std::make_unique<SettingsStore>(::core::paths::configFile());
+        store_ = std::make_unique<SettingsStore>(::core::appDatabase());
         cfg_ = store_->load();
         // app.read_settings（agent M2 Task 9）：store 就绪后把只读设置工具注册
         // 进全局注册表（模块隔离：agent 只经 core::ToolRegistry 按名取用，不
@@ -198,7 +198,7 @@ public:
         // agent 工作线程并发调用安全。name 冲突属装配 bug（无错误回传通道），
         // 日志留痕不中断——照 agent_module.cpp:143 statsTool_ 注册同款
         appReadSettingsTool_ =
-            makeAppReadSettingsTool(::core::paths::configFile());
+            makeAppReadSettingsTool(::core::appDatabase());
         auto toolReg =
             ::core::ToolRegistry::instance().registerTool(appReadSettingsTool_);
         if (toolReg.isFail()) {
@@ -412,7 +412,7 @@ public:
     }
 
     // 应用代理端口（总设计 §8.5 第 5 条，审计 2026-09-23 [14]）：
-    // 解析 draft → 写 config.json → 同步运行面端口镜像
+    // 解析 draft → 写 app_config → 同步运行面端口镜像
     //（service.setConfiguredProxyPort；Claude 页手动启动 / main 自启读它）
     // → 运行中自动 stop→start 重启。
     // 重启失败：代理已停、settings.json 已被 stopProxy 还原（不会指向死端口），
@@ -441,7 +441,7 @@ public:
         if (!svc || !svc->isProxyRunning()) {
             // 生效时机有**两个**（审计 ARCH-09，勿改回单一「下次启动」口径）：
             //   ① 启动期装配注入 —— main.cpp assembleClaudeServiceNow（读本页
-            //      落盘的 config.json proxyPort 喂 service.configuredProxyPort）；
+            //      落盘的 proxyPort 喂 service.configuredProxyPort）；
             //   ② 会话内开启 claude 模块时的惰性装配 —— 同函数经桥
             //      app::toggle::ensureClaudeServiceAssembled 再读一次现值。
             // 下一个生效点出现时，这里与 main.cpp 那处必须同步更新。
@@ -599,7 +599,7 @@ public:
         }
     }
 
-    // 模块开关（插拔方案 A §5.4 / 活门控 2026-10-01）：本函数只写 config.json
+    // 模块开关（插拔方案 A §5.4 / 活门控 2026-10-01）：本函数只写 app_config
     // + 经 app::toggle 桥发「开关意图」，即时生效经桥路由（真 handler 由
     // main.cpp 装配段注入）。home/settings 恒启用，UI 不提供开关。
     // 桌宠例外（PET-CLOSE）：写盘 + 桥之外额外做一次**即时窗口同步**（见
@@ -916,7 +916,7 @@ private:
                             .color(t.colors.textPrimary)
                             .build();
                         const std::string sub = statusMessage_.empty()
-                            ? "所有变更即时保存到 config.json · 左侧侧边栏切换页面"
+                            ? "所有变更即时保存到本地数据库 · 左侧侧边栏切换页面"
                             : statusMessage_;
                         ui.text("settings.subtitle")
                             .size(contentW, 20.0f)
@@ -1059,7 +1059,7 @@ private:
     //      （compose 顶部 + 代理卡，每帧 stat）
     //   ② fs::exists(markdownDir())（目录卡，每帧 stat）
     //   ③ discoverSkins（目录遍历 + 每皮肤 pet.json stat）+ currentSkinName
-    //      （读 pet_config.json）（桌宠卡，改动前为首帧一次性）
+    //      （读 app_config 的 pet_config 键）（桌宠卡，改动前为首帧一次性）
     // 调用点全在非渲染路径：onStart / onPageEnter / 切模块 tab / 打开目录后，
     // 另有 compose 顶部一次性冷启动兜底（见 compose）——四处覆盖了「进页面 /
     // 相关操作后」的全部可见变化时机；单次成本几十微秒，远低于原先每帧一次

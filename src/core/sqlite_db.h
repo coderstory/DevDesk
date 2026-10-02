@@ -71,6 +71,13 @@ public:
     Result<SqlRow> currentRow() const;
     Result<std::vector<SqlRow>> fetchAll();
 
+    // 复位语句：下一次 step() 从头开始跑（sqlite3_reset）。用途 = 复用**同一条**
+    // 语句处理多行时换绑前必须先复位，否则第二次 bind/step 接着上次的游标走
+    // （core/app_config.cpp 的 setMany 逐行 UPSERT 就靠它，一行一次 prepare
+    // 是浪费）。sqlite3_reset 是句柄操作 → 与 prepare/bind/step 同锁
+    // （2026-10-02 纪律，见文件头）。
+    Result<void> reset();
+
     int columnCount() const;
 
 private:

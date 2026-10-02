@@ -50,13 +50,13 @@ namespace {
 // 设计 §5.4）。**装配处的门控注册已移至 app_assembly**（可无头单测，专家
 // 审计 2026-09-27 M2）；这里保留同一份判定，供 pet 开窗与托盘菜单可用性。
 //
-// 进程内读一次 config.json（原 isModuleEnabled 的 static 局部缓存；设置页改
+// 进程内读一次应用配置（app_config 表；原 isModuleEnabled 的 static 局部缓存；设置页改
 // 开关只影响下次启动）。判定复用设置页同一个谓词 module::settings::moduleEnabled
 //（恒启用 home/settings、未知 ID 恒 false，语义已由 test_module_gating 覆盖）
 const module::settings::SettingsConfig& gatingConfigSnapshot() {
     static const module::settings::SettingsConfig cfg = [] {
         const module::settings::SettingsStore store(
-            ::core::paths::configFile());
+            ::core::appDatabase());
         return store.load();
     }();
     return cfg;
@@ -101,10 +101,10 @@ void setupLogging() {
         ::core::registerAppDatabase(&db->db());
         LOG_INFO("数据库已就绪: " + ::core::paths::sqliteDbFile().string());
         // 调用日志滚动清理（spec §11.5 保留策略）：保留天数读设置页配置
-        //（T11 集成接线：config.json 的 logRetentionDays，默认 30，
+        //（T11 集成接线：app_config 的 logRetentionDays，默认 30，
         // 0 = 永久保留跳过清理）；幂等，失败只记日志不阻断启动
         const module::settings::SettingsStore settingsStore(
-            ::core::paths::configFile());
+            ::core::appDatabase());
         const int retentionDays = settingsStore.load().logRetentionDays;
         if (retentionDays > 0) {
             const auto pruned = db->pruneCallLogs(retentionDays);
@@ -373,7 +373,7 @@ void startClaudeProxy(bool notifyFailure = false) {
 // ——不创建 ClaudeService（global() 保持 null）、不 bind 8888
 void prepareClaudeServiceBeforeModules() {
     const module::settings::SettingsStore settingsStore(
-        ::core::paths::configFile());
+        ::core::appDatabase());
     const auto settingsCfg = settingsStore.load();
     if (!module::settings::moduleEnabled(
             settingsCfg, module::settings::kModuleIdClaudeProxy)) {
@@ -400,7 +400,7 @@ void prepareClaudeServiceBeforeModules() {
 
 // 惰性装配单点（2026-10-01 计划 T1）：prepareClaudeServiceBeforeModules 的
 // :344-359 段逐字搬入，供「启动期门控开」与「会话内拨开关」两条路径共用。
-// 端口自读：函数内 SettingsStore(::core::paths::configFile()).load() 取
+// 端口自读：函数内 SettingsStore(::core::appDatabase()).load() 取
 // proxyPort，不依赖调用方传入（会话内路径没有现成的启动期配置可借）。
 // 幂等依据：getClaudeService 的 static 守卫（main.cpp:235-253）——重复调用 =
 // 返回同指针 + 重复 setConfiguredProxyPort / recover 均 no-op 安全
@@ -417,7 +417,7 @@ void assembleClaudeServiceNow() {
     // module_settings/settings_module.cpp 的 applyProxyPort，两处口径须同步）
     if (claudeSvc) {
         const module::settings::SettingsStore settingsStore(
-            ::core::paths::configFile());
+            ::core::appDatabase());
         claudeSvc->setConfiguredProxyPort(settingsStore.load().proxyPort);
     }
     // 崩溃补还原（provider-config Phase C §5.3）：上次异常退出时
@@ -593,13 +593,24 @@ namespace app {
 
 // DslAppConfig 在 eui::dsl_app.h 中定义（命名空间 app）
 const DslAppConfig& dslAppConfig() {
-    // 第一步：恢复持久化主题 + 全局字号缩放（只读 config.json，无 DB 依赖）。
+    // 第一步：**开库** → 恢复持久化主题 + 全局字号缩放（只读 app_config 表）。
     // 必须先于下面 DslAppConfig 的构造执行：clearColor 在构造时从 theme 快照
     //（运行时底色跟随走 app::setClearColor，EUI-NEO 磨砂 Phase B 起已有该 API，
     // 主题切换/窗口效果切档都即时生效，见下方 themeRestored 与 theme 回调）。
+    //
+    // **openAppDatabase() 被挪到这里**（2026-10-03 批次 E2）：配置落点从
+    // config.json 改成 SQLite 的 app_config 表之后，下面几处 SettingsStore
+    // 都要 core::appDatabase() 才拿得到连接。而本函数里 themeRestored 是
+    // **先声明**的函数内 static，它在第一次执行本函数时跑在下面那个
+    // `static bool initialized = ...` 之前 —— 不先把库打开，主题/字号/窗口效果
+    // 会在每次启动都读成默认值（用户设的浅色主题每次开 app 都变回深色）。
+    // 顺序：ensureDirectoriesExist（库文件要落在已建好的数据根里）→ setupLogging
+    //（openAppDatabase 内部有 LOG_INFO/LOG_FATAL）→ openAppDatabase → 读配置。
+    // openAppDatabase 自带 static 幂等闸，下面 initialized 里那次调用变 no-op。
     static const bool themeRestored = []() {
         ::core::paths::ensureDirectoriesExist();
         setupLogging();
+        openAppDatabase();
         // 默认 UI 字体：这里**不调** setDefaultFontFiles（调了即置 override、
         // 优先生效）。EUI-NEO resolveDefaultUiFontPath() 的优先级是
         // 「override → 系统 CJK 字体 → 打包兜底」，所以成品实际用的是系统字体：
@@ -616,16 +627,16 @@ const DslAppConfig& dslAppConfig() {
         // 走同一条路径，标题栏即时生效无需重启。仅 Windows 生效，其他平台
         // EUI-NEO 内部静默降级。
         // 窗口底色随主题即时跟随（磨砂 Phase B/D）：clearColor 走运行时 API，
-        // alpha 按当前窗口效果档位（重读 config.json——主题切换是低频用户操作）
+        // alpha 按当前窗口效果档位（重读 app_config——主题切换是低频用户操作）
         ::core::theme::setChangeHandler([](bool isDark) {
             app::setTitleBarAppearance(
                 core::platform::TitleBarAppearance{isDark});
             const module::settings::SettingsStore store(
-                ::core::paths::configFile());
+                ::core::appDatabase());
             module::settings::applyWindowVisuals(store.load().windowEffect);
         });
         const module::settings::SettingsStore store(
-            ::core::paths::configFile());
+            ::core::appDatabase());
         const auto cfg = store.load();
         if (cfg.darkTheme) {
             ::core::theme::setDark();
@@ -726,8 +737,7 @@ const DslAppConfig& dslAppConfig() {
             if (key.isDown() && key.modifiers.shortcut() &&
                 !key.modifiers.shift && !key.modifiers.alt &&
                 key.key == eui::InputKey::B) {
-                app::setSidebarCollapsed(!app::sidebarCollapsed(),
-                                         ::core::paths::configFile());
+                app::setSidebarCollapsed(!app::sidebarCollapsed(), true);
                 requestUpdate();
                 return;
             }
@@ -749,13 +759,13 @@ const DslAppConfig& dslAppConfig() {
             LOG_WARN("数据根 .gitignore 写入失败（防误提交的一道闸缺失）: " +
                      gi.errorMessage());
         }
-        openAppDatabase();
+        openAppDatabase();   // 幂等：themeRestored 里已开过库（见该处注释）
         const module::settings::SettingsStore settingsStore(
-            paths::configFile());
+            ::core::appDatabase());
         const auto settingsCfg = settingsStore.load();
-        // 侧边栏折叠启动恢复（app_sidebar）：config.json → 运行时状态。
-        // 空路径 = 只改内存不回写（保存发生在用户切换时）
-        app::setSidebarCollapsed(settingsCfg.sidebarCollapsed);
+        // 侧边栏折叠启动恢复（app_sidebar）：app_config → 运行时状态。
+        // persist=false = 只改内存不回写（保存发生在用户切换时）
+        app::setSidebarCollapsed(settingsCfg.sidebarCollapsed, false);
         // Claude 前置段（ClaudeService 创建 + setGlobal + 端口注入 + 崩溃补
         // 还原 + 条件自启）已随装配收进 getRouter() 的 preStart 钩子
         //（prepareClaudeServiceBeforeModules）——结构上仍早于模块 onStart，
@@ -767,10 +777,10 @@ const DslAppConfig& dslAppConfig() {
         app::assembly::maybeStartPet(
             gatingConfigSnapshot(),
             [] {
-                // 桌宠自身配置在 petsDir()/pet_config.json（模块隔离，不走
-                // config.json；pet 字段 2026-09-23 从 SettingsConfig 迁出）
+                // 桌宠自身配置在 app_config 的 pet_config 键（模块隔离，不走
+                // config.json 命名空间；pet 字段 2026-09-23 从 SettingsConfig 迁出）
                 return module::pet::PetConfigStore(
-                           module::pet::petConfigFile())
+                           ::core::appDatabase())
                     .load();
             },
             [](const module::pet::PetConfig& petCfg) {

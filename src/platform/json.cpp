@@ -289,7 +289,7 @@ JsonValue makeStringArray(const std::vector<std::string>& items) {
     return v;
 }
 
-// 解析（yyjson；T11 实装——此前是返回 null 的桩，config.json 持久化首个消费者）
+// 解析（yyjson；T11 实装——此前是返回 null 的桩，应用配置持久化首个消费者）
 core::Result<JsonValue> parse(const std::string& text) {
     yyjson_doc* doc = yyjson_read(text.data(), text.size(), 0);
     if (!doc) {

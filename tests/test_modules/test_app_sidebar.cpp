@@ -53,10 +53,12 @@ float RecordingModule::lastScreenHeight = 0.0f;
 // 合流），调用点统一 test_support::tempConfigFile(kCfgPrefix, name)
 constexpr const char* kCfgPrefix = "devdesk_test_sidebar_";
 
-void writeRawConfig(const std::filesystem::path& file,
-                    const std::string& json) {
-    std::ofstream f(file, std::ios::trunc);
-    f << json;
+// 「手改过的配置」按顶层键分发进 app_config 表各行（2026-10-03 批次 E2 之前
+// 是往 config.json 写这段文本）。返回 bool：doctest 断言宏含 `return false`。
+bool writeRawConfig(const std::string& json) {
+    return test_support::seedConfigJsonRows(
+        ::core::appDatabase(), module::settings::SettingsStore::keyNamespace(),
+        json);
 }
 
 // 桩 Router（Home = 当前页，compose 落到 RecordingModule）
@@ -75,11 +77,15 @@ bool floatEq(float a, float b) { return std::fabs(a - b) < 0.01f; }
 
 REGISTER_TEST(sidebar_config_default_and_roundtrip,
               "sidebar: sidebarCollapsed 默认 false + 存取往返", {
+    // 2026-10-03（批次 E2）：配置落在 app_config 表，生产代码经
+    // core::appDatabase() 取连接；没有这份注册的临时库，save() 会因
+    // 「库未就绪」如实失败（这是设计，不是缺陷）。
+    test_support::TestEnv cfgDbEnv("devdesk_test_sidebar_", "sbcfg1", /*registerAppDb=*/true);
     const std::filesystem::path file = test_support::tempConfigFile(kCfgPrefix, "roundtrip");
     std::error_code ec;
     std::filesystem::remove(file, ec);
 
-    const module::settings::SettingsStore store(file);
+    const module::settings::SettingsStore store(::core::appDatabase());
     // 默认值（无文件）
     DOCTEST_CHECK_FALSE(store.load().sidebarCollapsed);
     // 往返 true
@@ -97,13 +103,18 @@ REGISTER_TEST(sidebar_config_default_and_roundtrip,
 
 REGISTER_TEST(sidebar_config_legacy_missing_key,
               "sidebar: 老配置无 sidebarCollapsed 键 → 默认展开", {
+    // 2026-10-03（批次 E2）：配置落在 app_config 表，生产代码经
+    // core::appDatabase() 取连接；没有这份注册的临时库，save() 会因
+    // 「库未就绪」如实失败（这是设计，不是缺陷）。
+    test_support::TestEnv cfgDbEnv("devdesk_test_sidebar_", "sbcfg2", /*registerAppDb=*/true);
     const std::filesystem::path file = test_support::tempConfigFile(kCfgPrefix, "legacy");
     // 老格式：只有 theme（其余字段缺省）
-    writeRawConfig(file, R"({"theme": "light"})");
-    const module::settings::SettingsStore store(file);
+    DOCTEST_REQUIRE(writeRawConfig(R"({"theme": "light"})"));
+    const module::settings::SettingsStore store(::core::appDatabase());
     DOCTEST_CHECK_FALSE(store.load().sidebarCollapsed);
     // 显式 true 能读回
-    writeRawConfig(file, R"({"theme": "light", "sidebarCollapsed": true})");
+    DOCTEST_REQUIRE(writeRawConfig(
+        R"({"theme": "light", "sidebarCollapsed": true})"));
     DOCTEST_CHECK(store.load().sidebarCollapsed);
     return true;
 })
@@ -112,17 +123,21 @@ REGISTER_TEST(sidebar_config_legacy_missing_key,
 
 REGISTER_TEST(sidebar_toggle_persists,
               "sidebar: setSidebarCollapsed 翻内存态并落盘（保留其他字段）", {
+    // 2026-10-03（批次 E2）：配置落在 app_config 表，生产代码经
+    // core::appDatabase() 取连接；没有这份注册的临时库，save() 会因
+    // 「库未就绪」如实失败（这是设计，不是缺陷）。
+    test_support::TestEnv cfgDbEnv("devdesk_test_sidebar_", "sbcfg3", /*registerAppDb=*/true);
     const std::filesystem::path file = test_support::tempConfigFile(kCfgPrefix, "toggle");
     std::error_code ec;
     std::filesystem::remove(file, ec);
 
     // 预置一份带主题的配置，折叠切换后主题必须原样保留
-    module::settings::SettingsStore store(file);
+    module::settings::SettingsStore store(::core::appDatabase());
     module::settings::SettingsConfig base;
     base.darkTheme = false;  // light
     DOCTEST_CHECK(store.save(base).isOk());
 
-    app::setSidebarCollapsed(true, file);
+    app::setSidebarCollapsed(true, true);
     DOCTEST_CHECK(app::sidebarCollapsed());
     {
         const auto cfg = store.load();
@@ -130,7 +145,7 @@ REGISTER_TEST(sidebar_toggle_persists,
         DOCTEST_CHECK_FALSE(cfg.darkTheme);  // load→改→save 没有吃掉主题
     }
 
-    app::setSidebarCollapsed(false, file);
+    app::setSidebarCollapsed(false, true);
     DOCTEST_CHECK_FALSE(app::sidebarCollapsed());
     DOCTEST_CHECK_FALSE(store.load().sidebarCollapsed);
 
