@@ -566,6 +566,94 @@ int main(int argc, char* argv[]) {
                 }
             }
         }
+        // ⑥ batch-C C-2：全屏 JSON 覆盖层的三键布局与「完成」删除——**默认跑**
+        //（不在 --dump 守卫内：门禁勾选不能建立在一条默认不执行的断言上）。
+        // 编辑 profile 0 → 表单 tab3 → 「全屏编辑」→ 三键同行/不溢出/
+        // claude.jsonfs.done 不得再现 → 「放弃修改」真命中（真指针）关覆盖层。
+        {
+            composeFrame();
+            if (auto* card = ui != nullptr ? ui->find("claude.profile.0.bg") : nullptr;
+                card != nullptr && card->onClick != nullptr) {
+                card->onClick();
+                composeFrame();
+            }
+            if (auto* edit = ui != nullptr ? ui->find("claude.act.edit.bg") : nullptr;
+                edit != nullptr && edit->onClick != nullptr) {
+                edit->onClick();
+                composeFrame();
+            }
+            if (auto* tab3 =
+                    ui != nullptr ? ui->find("claude.form.tabs.hit.3") : nullptr;
+                tab3 != nullptr && tab3->onClick != nullptr) {
+                tab3->onClick();
+                composeFrame();
+            }
+            core::dsl::Element* fsBtn =
+                ui != nullptr ? ui->find("claude.form.advanced.json.fs.bg")
+                              : nullptr;
+            if (fsBtn == nullptr || fsBtn->onClick == nullptr) {
+                std::cerr << "claude_probes[" << tag
+                          << "]: 'claude.form.advanced.json.fs.bg' not found (⑥)\n";
+                passed = false;
+            } else {
+                fsBtn->onClick();
+                composeFrame();
+                const core::dsl::Element* fmt = ui->find("claude.jsonfs.format.bg");
+                const core::dsl::Element* save = ui->find("claude.jsonfs.apply.bg");
+                const core::dsl::Element* disc = ui->find("claude.jsonfs.discard.bg");
+                const core::dsl::Element* bg = ui->find("claude.jsonfs.bg");
+                if (fmt == nullptr || save == nullptr || disc == nullptr ||
+                    bg == nullptr) {
+                    std::cerr << "claude_probes[" << tag
+                              << "]: 全屏遮罩/三键缺节点（格式化/保存/放弃修改）(⑥)\n";
+                    passed = false;
+                } else {
+                    if (!(floatEq(fmt->frame.y, save->frame.y) &&
+                          floatEq(save->frame.y, disc->frame.y))) {
+                        std::cerr << "claude_probes[" << tag
+                                  << "]: 全屏三键不在同一行 (⑥)\n";
+                        passed = false;
+                    }
+                    if (!(save->frame.x >=
+                              fmt->frame.x + fmt->frame.width - 0.5f &&
+                          disc->frame.x >=
+                              save->frame.x + save->frame.width - 0.5f)) {
+                        std::cerr << "claude_probes[" << tag
+                                  << "]: 全屏三键重叠或顺序错 (⑥)\n";
+                        passed = false;
+                    }
+                    if (disc->frame.x + disc->frame.width > frameW - 27.0f) {
+                        std::cerr << "claude_probes[" << tag << "]: 「放弃修改」右缘 "
+                                  << (disc->frame.x + disc->frame.width)
+                                  << " 溢出覆盖层（窗宽 " << frameW
+                                  << "，内缩 28）(⑥)\n";
+                        passed = false;
+                    }
+                    if (ui->find("claude.jsonfs.done.bg") != nullptr) {
+                        std::cerr << "claude_probes[" << tag
+                                  << "]: 'claude.jsonfs.done' 应已删除"
+                                     "（batch-C C-2）(⑥)\n";
+                        passed = false;
+                    }
+                    // 「放弃修改」真命中（真指针 press+release → 下一帧消费）
+                    clickElement(*disc);
+                    composeFrame();
+                    if (ui->find("claude.jsonfs.root") != nullptr) {
+                        std::cerr << "claude_probes[" << tag
+                                  << "]: 点「放弃修改」后全屏未关 (⑥)\n";
+                        passed = false;
+                    }
+                }
+            }
+            // 收尾：取消关表单（不落任何改动），状态归零供下一尺寸档
+            if (auto* cancel =
+                    ui != nullptr ? ui->find("claude.dialog.form.cancel.bg")
+                                  : nullptr;
+                cancel != nullptr && cancel->onClick != nullptr) {
+                cancel->onClick();
+                composeFrame();
+            }
+        }
     }
 
     // ---- 可视化落图（--dump <prefix>，about_probe --manual 同款）：真渲染 +
@@ -734,50 +822,8 @@ int main(int argc, char* argv[]) {
                                             "onClick")) {
                         fs->onClick();
                         dumpState("json_fs");
-                        // 按钮行几何：三键在窗内、不溢出右缘；「完成」节点已删
-                        if (ui != nullptr) {
-                            const core::dsl::Element* fmt =
-                                ui->find("claude.jsonfs.format.bg");
-                            const core::dsl::Element* save =
-                                ui->find("claude.jsonfs.apply.bg");
-                            const core::dsl::Element* disc =
-                                ui->find("claude.jsonfs.discard.bg");
-                            if (fmt == nullptr || save == nullptr || disc == nullptr) {
-                                std::cerr << "claude_probes[" << "dump"
-                                          << "]: 全屏三键（格式化/保存/放弃修改）"
-                                             "缺节点\n";
-                                passed = false;
-                            } else {
-                                const float winW =
-                                    static_cast<float>(args.windowW);
-                                const float discRight =
-                                    disc->frame.x + disc->frame.width;
-                                if (discRight > winW - 27.0f) {
-                                    std::cerr << "claude_probes[" << "dump"
-                                              << "]: 「放弃修改」右缘 " << discRight
-                                              << " 溢出覆盖层（窗宽 " << winW
-                                              << "，内缩 28）\n";
-                                    passed = false;
-                                }
-                                // 三键同一行（y 相等）+ 从左到右不重叠
-                                if (std::fabs(fmt->frame.y - save->frame.y) > 0.5f ||
-                                    std::fabs(save->frame.y - disc->frame.y) > 0.5f ||
-                                    save->frame.x <
-                                        fmt->frame.x + fmt->frame.width - 0.5f ||
-                                    disc->frame.x <
-                                        save->frame.x + save->frame.width - 0.5f) {
-                                    std::cerr << "claude_probes[" << "dump"
-                                              << "]: 全屏按钮行错位（非同行/重叠）\n";
-                                    passed = false;
-                                }
-                            }
-                            if (ui->find("claude.jsonfs.done.bg") != nullptr) {
-                                std::cerr << "claude_probes[" << "dump"
-                                          << "]: 'claude.jsonfs.done' 应已删除"
-                                             "（batch-C C-2）\n";
-                                passed = false;
-                            }
-                        }
+                        // 按钮行几何/「完成」已删的断言在 **⑥ 默认段**（不在
+                        // --dump 守卫内，ctest -L probe 真跑）；此处只做落图导航
                         if (auto* disc = requireEl("JSON 全屏放弃修改",
                                                   "claude.jsonfs.discard.bg",
                                                   "onClick")) {

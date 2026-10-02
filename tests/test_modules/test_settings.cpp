@@ -3154,6 +3154,22 @@ REGISTER_TEST(settings_log_level_effective_visible_and_persistent,
     }
     DOCTEST_CHECK(visible);
 
+    // 门禁补测（批次 C 评审 [2]）：切档后的可见回显两处——
+    //   ① 下拉选中态：field 上的 label 文本换成新档文案（不是只改了 cfg_ 字段）
+    //   ② 页头状态行：setStatus 那句「日志级别：DEBUG（即时生效）」
+    {
+        eui::Ui ui;
+        ui.begin("settings_c5_selected");
+        mod->compose(ui, screen);
+        ui.end();
+        const auto* label = ui.find("settings.card.log.level.dd.label");
+        DOCTEST_REQUIRE(label != nullptr);
+        DOCTEST_CHECK_EQ(label->text, std::string("DEBUG（详尽）"));
+        const auto* sub = ui.find("settings.subtitle");
+        DOCTEST_REQUIRE(sub != nullptr);
+        DOCTEST_CHECK_EQ(sub->text, std::string("日志级别：DEBUG（即时生效）"));
+    }
+
     // 配置落盘 + (c) 重启（新实例 onStart）恢复持久化档
     {
         module::settings::SettingsStore store(cfgEnv.cfgPath);
