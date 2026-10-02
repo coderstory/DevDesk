@@ -18,15 +18,20 @@
 #include <memory>
 #include <mutex>
 #include <optional>
+#include <set>
 #include <string>
 #include <thread>
 #include <vector>
 
 #include "core/module_interface.h"
+#include "core/theme.h"
 #include "core/tool.h"
 #include "module_agent/agent_store.h"
 #include "module_agent/llm_client.h"
 #include "module_agent/scheduler.h"
+#include "module_agent/tool_info.h"
+
+#include <components/theme.h>
 
 namespace core {
 class IClaudeProxyService;
@@ -94,6 +99,17 @@ private:
     void toggleExpand(int64_t taskId);
     void refreshData();
     void reapFinishedRuns();
+    // run 日志（2026-10-02 改造）：单条消息展开/收起（seq 定位，切 run 即清）
+    void toggleMessageExpanded(int64_t seq);
+    // 「可用工具」区块：注册表快照的惰性装载（首次 compose 装一次，
+    // 每次展开重装一次——反映模块启停后的注册表变化）
+    void ensureToolsCache(bool forceReload);
+    // 单条消息行渲染（scroll 内容回调内逐条调）：角色徽章头行 + 收起预览 /
+    // 展开块级全文（text 块 wrap、tool_use 🔧 chip、tool_result 输出全文）
+    void renderMessageRow(::eui::Ui& inner, float cw, const std::string& taskId,
+                          size_t index, const AgentMessageRow& msg,
+                          const ::core::theme::Tokens& t,
+                          const components::theme::ThemeColorTokens& tokens);
 
     Deps deps_;
     std::unique_ptr<AgentStore> store_;
@@ -118,6 +134,15 @@ private:
     std::optional<int64_t> expandedTaskId_;         // 展开详情的任务（单开）
     std::optional<int64_t> selectedRunId_;          // 详情区选中的 run（默认最近一次）
     std::vector<AgentMessageRow> detailMessages_;   // 选中 run 的消息
+    // 展开全文的消息（按 seq 定位；切任务/切 run 清空——seq 只在 run 内唯一）
+    std::set<int64_t> expandedMsgSeqs_;
+    // scrollView contentKey 版本号：展开/收起改变内容高，bump 触发重测
+    //（MeasureCache 按 key 缓存，key 不变会吃到旧内容高）
+    uint64_t msgScrollVersion_ = 0;
+    // 「可用工具」区块（2026-10-02 用户反馈④）：收起默认，头部点击展开
+    bool toolsOpen_ = false;
+    std::vector<ToolInfo> toolsCache_;      // 注册表快照（惰性装载）
+    bool toolsCacheLoaded_ = false;
     std::string goalInput_;
     std::string formError_;
     // 编辑态（Task 10）：editingTaskId_ 非空 = 表单展开（契约表 agent.edit.form 的
