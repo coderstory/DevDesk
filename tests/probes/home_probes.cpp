@@ -47,6 +47,19 @@
 //   注意：badge 判据相对当前元素 frame（cw）度量，旧长文案按当前元素宽已能
 //   收纳，属弱守卫；数字（8 位）才是强判别。
 //
+// 组 I（G7 余量卡错误行，2026-10-03）：错误文案**只出现一次**且**不溢出内容列**。
+//   缺陷：错误文案被渲染两遍——head row 的 `.status`（statusTextFor 在
+//   showsErrorLine 时返回 lastError）+ 专属 `.error` 行；且 `.status` 无
+//   clip/wrap（maxWidth 只在 wrap=true 时生效，EUI-NEO text.cpp），第一遍
+//   溢出卡片右缘被截断（真机图 /tmp/af-home-quota-live.png 的 MiniMax 行）。
+//   I(a) 数「整棵余量树里携带该错误文案的 Text 元素个数」== 1 且必须是 .error
+//        —— 钉字符串在树中的出现次数，不是「某格是否为空」。
+//   I(b) 错误行 / head .status 的**右缘 ≤ 内容列右缘**（宽度比较，非字面量）；
+//        且无 clip/wrap 时文案宽必须 ≤ 盒宽。
+//   ⚠ 门禁那条（ctest -L probe）不带 --quota-fixture，只走离线假种子，故假种子
+//   里**必须**有一条错误行（i==8），否则本组空跑成恒真假绿——已由组内
+//   「错误行 < 1 即红」硬钉住。
+//
 // 运行：home_probes.exe [--frames N] [--size 1200x720]（尺寸矩阵最小窗跑
 // 1200x720；statW 只随窗**宽**变 → 各组几何在默认 1200x1000 下同型）。
 
@@ -315,7 +328,7 @@ int main(int argc, char* argv[]) {
                           << args.quotaFixturePath << "）\n";
             }
         } else {
-            for (int i = 0; i < 8; ++i) {
+            for (int i = 0; i < 9; ++i) {
                 const std::string name = "quota-p" + std::to_string(i);
                 if (!env.db->db()
                          .exec("INSERT INTO claude_profiles (name, base_url, "
@@ -352,11 +365,26 @@ int main(int argc, char* argv[]) {
                 store.saveConfig(cfg);
 
                 QuotaResult r;
-                r.kind = (i == 7) ? QuotaKind::Balance : QuotaKind::Tiered;
-                if (r.kind == QuotaKind::Balance) {
+                if (i == 8) {
+                    // 组 I 前提：**唯一一条错误行**（Transient + 从未成功过
+                    // → FailedNever → showsErrorLine 真）。没有它组 I 在门禁
+                    // 里就是空跑（`ctest -L probe` 不带 --quota-fixture，只走
+                    // 这批假种子）。文案刻意给长的：上游 detail 跟在 headline
+                    // 后面，真机上就是这样（见 /tmp/af-home-quota-live.png 的
+                    // MiniMax 行）—— 断言要钉的是「长文案也不越出内容列」。
+                    r.kind = QuotaKind::Tiered;
+                    r.error = QuotaError::Transient;
+                    r.errorMessage =
+                        "网络失败，稍后重试：套餐过期或无权限，换密钥没用，得续费"
+                        "或换账号：example.invalid 接口业务错误（code 2062）："
+                        "no active token plan subscription——可能套餐已过期或"
+                        "额度已用尽，可到控制台确认后再试";
+                } else if (i == 7) {
+                    r.kind = QuotaKind::Balance;
                     r.balanceRemaining = 8.5 + i;
                     r.currency = "CNY";
                 } else {
+                    r.kind = QuotaKind::Tiered;
                     QuotaWindow w;
                     w.key = (i % 2 == 0) ? "five_hour" : "weekly";
                     w.usedPercent = 20.0 + static_cast<double>(i) * 8.0;
@@ -700,6 +728,133 @@ int main(int argc, char* argv[]) {
                           << card->frame.width << "x" << card->frame.height
                           << "（屏高 " << args.windowH << "）\n";
                 passed = false;
+            }
+        }
+    }
+
+    // ==================== 组 I：G7 错误行只出现一次 + 不溢出 ====================
+    // 缺陷（2026-10-03 修）：错误文案被渲染**两遍** —— ① head row 的 `.status`
+    // 格（statusTextFor 在 showsErrorLine 时返回 row.lastError）② 专属错误行
+    // `.error`。且 `.status` 是既无 clip 又无 wrap 的单行盒（maxWidth 只在
+    // wrap=true 时生效，见 EUI-NEO text.cpp），于是第一遍直接溢出卡片右缘被
+    // 截断。真机证据：/tmp/af-home-quota-live.png 的 MiniMax 行。
+    //
+    // I(a) **只出现一次**：错误文案在整棵余量树里**有且仅有一处**携带它 ——
+    //     钉「字符串在树里出现几次」而不是「某个格是不是空」，后者回归成
+    //     「换个别的文案渲染两遍」就又绿了。
+    // I(b) **不溢出内容列**：错误文案所在格的**右缘** ≤ 内容列右缘。
+    //     钉的是**宽度比较**（本格右缘 vs 父行内容宽），不是某个字面量宽度 ——
+    //     换字号 / 换文案长度 / 换窗口宽都仍成立。
+    {
+        const auto rows =
+            module::claude::quota::listQuotaHomeRows(env.db->db());
+        // 错误行必须真的存在，否则本组是空跑（恒真假绿）。门禁那条不带
+        // --quota-fixture，靠上面的 i==8 假种子保证有错误行。
+        int errorRows = 0;
+        for (const auto& r : rows.value()) {
+            const bool isErr = r.state == module::claude::quota::QuotaCardState::Incomplete ||
+                               r.state == module::claude::quota::QuotaCardState::FailedNever ||
+                               r.state == module::claude::quota::QuotaCardState::FailedStale;
+            if (isErr && !r.lastError.empty()) ++errorRows;
+        }
+        if (rows.isFail() || errorRows < 1) {
+            std::cerr << "home_probes: 组 I FAIL——没有错误行可断言（错误行 "
+                      << errorRows << " 条）：本组会空跑成恒真假绿\n";
+            passed = false;
+        }
+        for (const auto& row : rows.value()) {
+            const bool isErr =
+                row.state == module::claude::quota::QuotaCardState::Incomplete ||
+                row.state == module::claude::quota::QuotaCardState::FailedNever ||
+                row.state == module::claude::quota::QuotaCardState::FailedStale;
+            if (!isErr || row.lastError.empty()) continue;
+
+            const std::string rid =
+                "home.quota.row." + std::to_string(row.profileId);
+            const core::dsl::Element* rowEl =
+                ui != nullptr ? ui->find(rid) : nullptr;
+            const core::dsl::Element* errEl =
+                ui != nullptr ? ui->find(rid + ".error") : nullptr;
+            const core::dsl::Element* statusEl =
+                ui != nullptr ? ui->find(rid + ".status") : nullptr;
+            if (rowEl == nullptr || errEl == nullptr || statusEl == nullptr) {
+                std::cerr << "home_probes: 组 I FAIL——错误行结构缺失 " << rid
+                          << "（row=" << (rowEl != nullptr ? "ok" : "null")
+                          << ", error=" << (errEl != nullptr ? "ok" : "null")
+                          << ", status=" << (statusEl != nullptr ? "ok" : "null")
+                          << "）\n";
+                passed = false;
+                continue;
+            }
+
+            // ---- I(a) 错误文案在整棵余量树里只出现一次 ----
+            // 递归扫 `home.quota` 子树，逐个 Text 元素数「文本里含该错误文案」
+            // 的格数。专属错误行必须**是**携带者之一（否则就是全树都没有）。
+            int carriers = 0;
+            std::vector<std::string> carrierIds;
+            std::vector<const core::dsl::Element*> stack{rowEl};
+            while (!stack.empty()) {
+                const core::dsl::Element* el = stack.back();
+                stack.pop_back();
+                if (el->kind == core::dsl::ElementKind::Text &&
+                    el->text.find(row.lastError) != std::string::npos) {
+                    ++carriers;
+                    carrierIds.push_back(el->id);
+                }
+                for (const core::dsl::Element* child : el->orderedChildren) {
+                    stack.push_back(child);
+                }
+            }
+            if (carriers != 1 || carrierIds.front() != rid + ".error") {
+                std::cerr << "home_probes: 组 I(a) FAIL——错误文案在余量树里出现 "
+                          << carriers << " 次（应恰好 1 次，且必须在专属错误行 "
+                          << rid << ".error）：";
+                for (const std::string& id : carrierIds) {
+                    std::cerr << " [" << id << "]";
+                }
+                std::cerr << "；.status 文本=「" << statusEl->text << "」\n";
+                passed = false;
+            }
+
+            // ---- I(b) 不溢出内容列：本格右缘 ≤ 内容列右缘 ----
+            // 宽度比较，不钉字面量：内容列 = 该行 `.head` 的内容右缘（即
+            // scrollView 给的 innerW），错误行与之同宽，故直接比父行右缘。
+            const float contentRight = rowEl->frame.x + rowEl->frame.width;
+            const float errRight = errEl->frame.x + errEl->frame.width;
+            if (errRight > contentRight + 0.5f) {
+                std::cerr << "home_probes: 组 I(b) FAIL——错误行右缘 " << errRight
+                          << " 越出内容列右缘 " << contentRight << "（超出 "
+                          << (errRight - contentRight) << "px）\n";
+                passed = false;
+            }
+            // 同一条对 head 的 .status 也钉一遍：它现在恒空（错误文案归错误行），
+            // 但**别的状态**下的状态标签也不该越出内容列——那正是本次顺带修的
+            // clip 缺失（回归 = 去掉 .clip() 且状态文案够长 →本格越界）。
+            const float statusRight = statusEl->frame.x + statusEl->frame.width;
+            if (statusRight > contentRight + 0.5f) {
+                std::cerr << "home_probes: 组 I(b) FAIL——head .status 右缘 "
+                          << statusRight << " 越出内容列右缘 " << contentRight
+                          << "\n";
+                passed = false;
+            }
+            // 文案装不下时**必须**有防溢护栏（clip 或 wrap）：maxWidth 单独
+            // 不生效（EUI-NEO text.cpp 只在 wrap=true 时用 maxWidth），所以
+            // 「没 clip 没 wrap + 文案比本格宽」= 真的会画出去。
+            for (const core::dsl::Element* el : {errEl, statusEl}) {
+                if (el->clip || el->wrap) continue;
+                core::TextStyle st;
+                st.text = el->text;
+                st.fontFamily = el->fontFamily;
+                st.fontSize = el->fontSize;
+                st.fontWeight = el->fontWeight;
+                st.lineHeight = el->lineHeight;
+                const float w = core::TextPrimitive::measureTextSize(st).x;
+                if (w > el->frame.width + 1.0f) {
+                    std::cerr << "home_probes: 组 I(b) FAIL——" << el->id
+                              << " 无 clip/wrap 且文案宽 " << w << " > 盒宽 "
+                              << el->frame.width << "（会画出内容列）\n";
+                    passed = false;
+                }
             }
         }
     }
