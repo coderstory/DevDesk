@@ -685,6 +685,9 @@ private:
                                 .fontSize(fs)
                                 .lineHeight(rowH)
                                 .horizontalAlign(eui::HorizontalAlign::Center)
+                                // B1（2026-10-02）：文本盒 == 胶囊高，须显式垂直
+                                // 居中——缺它 ink 从行框顶沿起排 → 胶囊内偏上
+                                .verticalAlign(eui::VerticalAlign::Center)
                                 .color(active ? t.colors.onPrimary
                                               : t.colors.textSecondary)
                                 .build();
@@ -1068,6 +1071,9 @@ private:
                                         .text(h.title.empty() ? "(无标题)" : h.title)
                                         .fontSize(t.sizes.fontSizeSmall)
                                         .lineHeight(30.0f)
+                                        // B1（2026-10-02）：文本盒 == 行底 rect 高，
+                                        // 须显式垂直居中（与树行 drawFileTreeItem 同款）
+                                        .verticalAlign(eui::VerticalAlign::Center)
                                         .color(current ? t.colors.primaryText
                                                        : t.colors.textPrimary)
                                         .fontWeight(current ? 700 : 400)
@@ -1353,6 +1359,9 @@ private:
                         .text(name)
                         .fontSize(fs)
                         .lineHeight(h)
+                        // B1（2026-10-02）：文本盒 == 胶囊高，须显式垂直居中
+                        //（缺它 ink 从行框顶沿起排 → chip 里的字偏上）
+                        .verticalAlign(eui::VerticalAlign::Center)
                         .color(t.colors.primaryText)
                         .fontWeight(600)
                         .build();
@@ -1372,6 +1381,8 @@ private:
                         .fontSize(fs)
                         .lineHeight(h)
                         .horizontalAlign(eui::HorizontalAlign::Center)
+                        // B1（2026-10-02）：文本盒 == 热区高，须显式垂直居中
+                        .verticalAlign(eui::VerticalAlign::Center)
                         .color(t.colors.primaryText)
                         .build();
                 })

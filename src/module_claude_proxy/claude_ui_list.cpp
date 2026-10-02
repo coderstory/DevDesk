@@ -240,6 +240,9 @@ void drawProfileCard(eui::Ui& ui,
         .fontSize(16.0f)
         .lineHeight(avatarSize)
         .horizontalAlign(eui::HorizontalAlign::Center)
+        // B1（2026-10-02）：文本盒 == 圆底高，须显式垂直居中——缺它 ink 从
+        // 行框顶沿起排（⑧ 同款缺陷，第三次复发点）
+        .verticalAlign(eui::VerticalAlign::Center)
         .color(avatar.ring)
         .fontWeight(600)
         .build();
