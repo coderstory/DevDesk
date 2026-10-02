@@ -23,8 +23,12 @@ target_include_directories(devdesk_agent PUBLIC
 )
 
 # 依赖 core（SqliteDb/Result/llm_endpoint）+ platform（AgentLoop 的 blocks JSON
-# 解析拼装、LlmClient 的 HTTP 客户端与 JSON 组装）
+# 解析拼装、LlmClient 的 HTTP 客户端与 JSON 组装）+ ui_kit（2026-10-02 批次 A：
+# 任务 / 详情弹窗走共享的 DialogFrame/drawDialogFrame 接线，与 todo / claude /
+# markdown 四处站点同源——不自造第二套弹窗外框）。
+# 注：ui_kit 是 presentation 能力层，不是兄弟模块，不涉模块隔离红线
 target_link_libraries(devdesk_agent PUBLIC
     devdesk_core
     devdesk_platform
+    devdesk_ui_kit
 )
