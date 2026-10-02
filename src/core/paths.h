@@ -4,6 +4,8 @@
 #include <filesystem>
 #include <string>
 
+#include "result.h"
+
 namespace core::paths {
 
 // 应用数据根目录 —— **全部应用数据的唯一根**（审计 CP-04）
@@ -46,6 +48,20 @@ std::filesystem::path configFile();
 
 // SQLite 数据库文件
 std::filesystem::path sqliteDbFile();
+
+// 数据根内置的 .gitignore（**数据根本身的忽略规则**，2026-10-02 存储统一
+// §6.3 硬约束 1）。为什么必须有它：数据根规划要进 git 仓库（见 appDataDir
+// 注释「笔记目录后续要做成 git 仓库」），而凭据迁进 SQLite 后
+// devdesk.db / devdesk.db-wal 里就有凭据页——WAL 文件默认 0644，一次
+// `git add .` 就把它带走。本文件与凭据文件权限（core/file_perms.h）是两道
+// 互补的闸：一道防误提交，一道防同机他人直读。
+// 路径可经 DEVDESK_GITIGNORE_PATH 覆盖（测试隔离用；生产不需要）。
+std::filesystem::path dataRootGitignoreFile();
+
+// 在数据根写入 / 校正 .gitignore（幂等：内容固定，每次都整体重写以吃上后续
+// 新增的忽略项）。写失败返回 Result 的错误（调用方记日志，不阻断启动——
+// 缺了它只是少一道防误提交的闸，不该让应用起不来）。
+core::Result<void> ensureDataRootGitignore();
 
 // Markdown 笔记根目录
 // 覆盖优先级：DEVDESK_NOTES_DIR > DEVDESK_DATA_ROOT（<根>/notes）> 平台默认根

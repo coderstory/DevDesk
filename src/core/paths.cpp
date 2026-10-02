@@ -1,4 +1,5 @@
 #include "paths.h"
+#include "atomic_write.h"
 #include "logging.h"
 
 #include <cstdlib>
@@ -48,6 +49,55 @@ fs::path configFile() {
 
 fs::path sqliteDbFile() {
     return appDataDir() / "devdesk.db";
+}
+
+fs::path dataRootGitignoreFile() {
+    // 覆盖优先级：DEVDESK_GITIGNORE_PATH（整文件路径，测试隔离用）>
+    // DEVDESK_DATA_ROOT（<根>/.gitignore）> 平台默认根
+    if (const char* env = std::getenv("DEVDESK_GITIGNORE_PATH")) {
+        if (*env != '\0') return fs::path(env);
+    }
+    return appDataDir() / ".gitignore";
+}
+
+core::Result<void> ensureDataRootGitignore() {
+    // 内容固定且短：每次整体重写（幂等），这样后续新增忽略项对既有用户也立即
+    // 生效。为什么这些条目（2026-10-02 存储统一 §6.3 硬约束 1）：
+    //   *.db / *.db-*  库与 WAL 伴生件（WAL 会把凭据页复制进去；-shm 同族）
+    //   config.json*   应用配置与它的 .bak 备份
+    //   run-settings/  每会话临时 settings（带明文 API key 的那个目录）
+    //   logs/          日志（含 profile 名与路径，不必进仓库）
+    //   pets/          皮肤（混了用户自加皮肤，属本机资产）
+    // 结尾显式放行 .gitignore 自身——数据根本身要能进 git。
+    static constexpr const char* kContent =
+        "# DevDesk 数据根忽略规则（本文件由应用自动写入，可自行追加）\n"
+        "# 为什么：凭据存在 devdesk.db 里，WAL 伴生文件会把凭据页复制进去；\n"
+        "# 数据根若被 `git add .` 扫走，密钥就跟着上远端。\n"
+        "*.db\n"
+        "*.db-*\n"
+        "config.json*\n"
+        "run-settings/\n"
+        "logs/\n"
+        "pets/\n"
+        "!/.gitignore\n";
+
+    const fs::path file = dataRootGitignoreFile();
+    std::error_code ec;
+    if (!file.parent_path().empty()) {
+        fs::create_directories(file.parent_path(), ec);
+        if (ec) {
+            return core::Result<void>::fail(
+                core::ErrorCode::FileWriteFailed,
+                "创建数据根失败: " + file.parent_path().string() + ": " +
+                    ec.message());
+        }
+    }
+    auto written = core::atomicWriteFile(file, kContent, ".gitignore");
+    if (written.isFail()) {
+        return core::Result<void>::fail(written.errorCode(),
+                                        written.errorMessage());
+    }
+    return core::Result<void>::ok();
 }
 
 fs::path markdownDir() {

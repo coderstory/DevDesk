@@ -1,5 +1,5 @@
 // src/module_claude_proxy/claude_service.cpp
-// ClaudeService 实现：Profile CRUD + Keychain + 上游连通性测试
+// ClaudeService 实现：Profile CRUD + 凭据列 + 上游连通性测试
 #include "claude_service.h"
 
 #include "core/atomic_write.h"
@@ -33,7 +33,7 @@ namespace module::claude {
 
 namespace {
 
-// Keychain service 名的固定前缀（按数据根派生时拼在短哈希之前）
+// 旧 Keychain service 名的固定前缀（残留清理命名空间派生时拼在短哈希之前）
 constexpr const char* kKeychainServicePrefix = "DevDesk";
 
 // 取当前 unix 秒
@@ -56,20 +56,22 @@ std::string stripTrailingSlash(const std::string& s) {
     return s;
 }
 
-// CPX-07：Keychain 当前是否处于给定值（读不到 = 条目不存在，按空串比较）。
+// CPX-07：本行凭据当前是否处于给定值（列空 = 没有密钥，按空串比较）。
 // 反向同步写库失败后用「实际状态」判断密钥是否已回到旧值，不信补偿返回值。
-bool keyAtOldValue(const std::string& keychainService,
-                   const std::string& account,
+// 2026-10-02 存储统一：读点从 Keychain 换到本行凭据列（解不开也按空串比较——
+// 本函数的用途只是「有没有回到旧值」，不是诊断）。
+bool keyAtOldValue(ProfileRepository& repo, int64_t profileId,
                    const std::string& expected) {
-    auto r = platform::keychain::loadSecret(keychainService, account);
+    auto r = repo.loadApiKey(profileId);
     return (r.isOk() ? r.value() : std::string()) == expected;
 }
 
 } // namespace
 
-// ---------- Keychain service 派生 / 构造 / 行解析 ----------
+// ---------- 旧 Keychain 命名空间派生 / 构造 / 行解析 ----------
 
-// Keychain service 名按数据根派生（声明见 claude_service.h 纯函数段）
+// 旧 Keychain 命名空间名按数据根派生（声明见 claude_service.h 纯函数段）。
+// 凭据已迁进数据库，这个名字如今只喂 cleanupOrphanKeychainEntries 的残留清理
 std::string keychainServiceForDataRoot(const std::string& dataRoot) {
     if (dataRoot.empty()) {
         return std::string();   // 空根无法派生（生产不可达；调用方兜底裸前缀）
@@ -89,7 +91,7 @@ std::string keychainServiceForDataRoot(const std::string& dataRoot) {
 
 namespace {
 
-// 生产路径（未显式传 service）：按当前数据根派生 service 名。派生失败
+// 生产路径（未显式传 service）：按当前数据根派生残留清理命名空间名。派生失败
 //（空根，理论不可达）兜底裸前缀——名字退化但不至于抛错。
 std::string resolveKeychainService() {
     auto derived = keychainServiceForDataRoot(core::paths::appDataDir().string());
@@ -135,7 +137,7 @@ ClaudeService::~ClaudeService() {
 void ClaudeService::setGlobal(ClaudeService* svc) { g_globalClaudeService = svc; }
 ClaudeService* ClaudeService::global() { return g_globalClaudeService; }
 
-// ---------- Profile CRUD（R10-A2：落库/Keychain 段已迁 ProfileRepository，
+// ---------- Profile CRUD（R10-A2：落库/凭据段已迁 ProfileRepository，
 // 本门面保留转发与策略尾：首建自动激活 / re-takeover 时机 / 停代理）----------
 
 core::Result<std::vector<Profile>> ClaudeService::listProfiles() {
@@ -156,7 +158,7 @@ core::Result<Profile> ClaudeService::createProfile(const std::string& name,
                                                    const std::string& dialectOverride,
                                                    int64_t fallbackProfileId,
                                                    const std::string& extraSettingsJson) {
-    // R10-A2 段级拆分：校验 + INSERT ... RETURNING + Keychain 两段写 + 失败回滚
+    // R10-A2 段级拆分：校验 + 单条 INSERT ... RETURNING（含凭据列）
     //（DB 段）已迁 ProfileRepository::createProfile；本方法保留「首建自动激活」
     // 策略尾——创建成功后若当前无任何激活 Profile 则自动激活刚建的这条（经门面
     // setActiveProfile，代理运行中会同步接管 settings.json）。已有激活 Profile
@@ -214,7 +216,7 @@ core::Result<void> ClaudeService::updateProfile(const Profile& profile) {
 
 core::Result<void> ClaudeService::deleteProfile(int64_t id, bool* proxyStopped) {
     if (proxyStopped) *proxyStopped = false;
-    // R10-A2 段级拆分：两段写删除（段一清 Keychain、段二删 SQLite 行，失败按
+    // R10-A2 段级拆分：两段写删除（段一清凭据三列、段二删 SQLite 行，失败按
     // 旧值回写）已迁 ProfileRepository::deleteProfile（wasActive 经出参回填）；
     // 本方法保留停代理策略尾——删的是激活 profile 且代理运行中 → 停代理
     //（stopProxy 内部 syncRestore 还原 ~/.claude/settings.json），settings.json
@@ -234,8 +236,8 @@ core::Result<void> ClaudeService::deleteProfile(int64_t id, bool* proxyStopped) 
 }
 
 core::Result<int> ClaudeService::cleanupOrphanKeychainEntries() {
-    // R10-A2 段级拆分：listProfiles + Keychain 孤儿条目清理（「Keychain
-    // 条目与行一一对应」不变式的维护者）已迁 ProfileRepository
+    // R10-A2 段级拆分：旧 Keychain 残留清理（方法名保留历史叫法，语义见
+    // profile_repository.h 与实现注释）已迁 ProfileRepository
     return profileRepository_.cleanupOrphanKeychainEntries();
 }
 
@@ -254,7 +256,7 @@ core::Result<Profile> ClaudeService::getActiveProfile() {
 core::Result<void> ClaudeService::setActiveProfile(int64_t id) {
     // 服务内互斥（spec §10 / agent M2 Task 8）：agent 工作线程（claude.switch_profile
     // 工具）与 UI 线程可并发进来切同一个 service——本方法体含 DB 事务 + settings.json
-    // 接管同步（文件写 + Keychain）+ warnings_ 内存态，非原子；锁护整个方法体。
+    // 接管同步（文件写 + 凭据列）+ warnings_ 内存态，非原子；锁护整个方法体。
     // 其余读方法保持无锁（纯读随 SqliteDb recursive_mutex 串行化，见头文件注释）
     std::lock_guard<std::mutex> lock(switchMutex_);
 
@@ -301,7 +303,7 @@ core::Result<void> ClaudeService::setActiveProfile(int64_t id) {
 // ---------- Profile 复制（设计 §4.2/§4.3）----------
 
 core::Result<Profile> ClaudeService::duplicateProfile(int64_t srcId) {
-    // R10-A2：整方法搬入 ProfileRepository（全部是行 + Keychain 层面操作，
+    // R10-A2：整方法搬入 ProfileRepository（全部是行 + 凭据列层面操作，
     // 无代理 / 接管交互，且副本不激活 S-4 → 不触发任何策略尾）
     return profileRepository_.duplicateProfile(srcId);
 }
@@ -603,12 +605,12 @@ core::Result<void> ClaudeService::runProfile(int64_t id, std::string* hint) {
     }
     const Profile& p = prof.value();
 
-    // 顺序 2：读 Keychain 密钥（D-1 直连形态：密钥由本功能带进临时 settings 文件，
+    // 顺序 2：读凭据列密钥（D-1 直连形态：密钥由本功能带进临时 settings 文件，
     // 不再由代理转发注入）。失败 / 条目不存在 → 中止，不落盘、不开窗（§5）。
     auto key = loadApiKey(id);
     if (key.isFail()) {
         return core::Result<void>::fail(key.errorCode(),
-            "读取 Keychain 密钥失败，未打开会话: " + key.errorMessage());
+            "读取 API Key 失败，未打开会话: " + key.errorMessage());
     }
 
     // 顺序 3：直连 env（纯函数 buildDirectEnv：BASE_URL 去尾斜杠 / 密钥键三态 /
@@ -787,11 +789,10 @@ core::Result<void> ClaudeService::syncCaptureActiveProfile() {
     // token：G1/G2 联动/G3 占位/G4 空值/G6 非法 → 不写也不清（保持原密钥）
     const bool tokenSkipped = isSkipped("ANTHROPIC_AUTH_TOKEN") ||
                               isSkipped("ANTHROPIC_API_KEY");
-    auto curKeyR =
-        platform::keychain::loadSecret(keychainService_, prof.keychainAccount);
+    auto curKeyR = profileRepository_.loadApiKey(prof.id);
     const std::string curKey = curKeyR.isOk() ? curKeyR.value() : std::string();
-    bool keyWrite = false;  // 出现 → 覆盖 Keychain（经 updateProfile）
-    bool keyClear = false;  // 缺席 → 清空（Keychain 条目 + 三列元数据）
+    bool keyWrite = false;  // 出现 → 覆盖本行凭据列（经 updateProfile）
+    bool keyClear = false;  // 缺席 → 清空（凭据三列一起清）
     if (!tokenSkipped) {
         if (!parsed.cfg.authToken.empty()) {
             keyWrite = (parsed.cfg.authToken != curKey);
@@ -802,7 +803,7 @@ core::Result<void> ClaudeService::syncCaptureActiveProfile() {
 
     if (!baseUrlChanged && !merged.modelsChanged && !merged.extraEnvChanged &&
         !keyWrite && !keyClear) {
-        return core::Result<void>::ok();  // 无变化：不 UPDATE、不写 Keychain
+        return core::Result<void>::ok();  // 无变化：不 UPDATE、不碰凭据列
     }
 
     // ---- 目标值 ----
@@ -818,18 +819,17 @@ core::Result<void> ClaudeService::syncCaptureActiveProfile() {
         upd.extraEnvJson = merged.extraEnvJson;
     }
 
-    // 两段写（CPX-07）：Keychain 侧统一走助手（§3.5 表末行的失败补偿即其
-    // 内置行为），旧值 = 上面 loadSecret 取到的 curKey。任一落库段失败 → 按
-    // 旧值回写 Keychain，profile 回到「改之前」的状态。回写失败的风险如实
-    // 登记于设计 §8.5
-    TwoPhaseKeyWrite keyTx(keychainService_, prof.keychainAccount, curKey);
+    // 两段写（CPX-07）：凭据三列统一走助手（§3.5 表末行的失败补偿即其内置
+    // 行为），旧值由 capture 自本行读回。任一落库段失败 → 按旧值回写三列，
+    // profile 回到「改之前」的状态。回写失败的风险如实登记于设计 §8.5
+    TwoPhaseKeyWrite keyTx = TwoPhaseKeyWrite::capture(db_, prof.id);
 
-    // key 缺席清空：先删 Keychain 条目（同 deleteProfile 的顺序——先 Keychain
-    // 后落库，失败即中止且 profile 一字未改；keychain 层不新增 API）
+    // key 缺席清空：先清凭据三列（同 deleteProfile 的顺序——先凭据后落库，
+    // 失败即中止且 profile 一字未改）
     if (keyClear) {
-        auto del = keyTx.writeKey(std::string());   // 空串 = 删除该条目
+        auto del = keyTx.writeKey(std::string());   // 空串 = 清空三列
         if (del.isFail()) {
-            LOG_ERROR("反向同步清理 Keychain 失败，中止本次切换（profile id=" +
+            LOG_ERROR("反向同步清理凭据失败，中止本次切换（profile id=" +
                       std::to_string(prof.id) + "）: " + del.errorMessage());
             return core::Result<void>::fail(del.errorCode(),
                 "清理该 Profile 的密钥失败，已中止本次切换: " + del.errorMessage());
@@ -837,8 +837,10 @@ core::Result<void> ClaudeService::syncCaptureActiveProfile() {
     }
 
     // 字段（+ key 写入）与元数据清除同属段二：updateProfile 内部也是
-    // Keychain → DB 的两段写（同一助手语义），keyClear 的「清三列」紧随其后；
-    // 任一步失败都由助手把 Keychain 回写到旧值
+    // 凭据三列 → 其余列的两段写（同一助手语义）；任一步失败都由助手把三列
+    // 回写到旧值。keyClear 的三列清除已由上面 writeKey("") 完成（2026-10-02：
+    // 旧实现另走一条最小 UPDATE 清三列，现在 writeKey 本身就是三列的同批写，
+    // 那条 UPDATE 是重复动作，删除）
     if (baseUrlChanged || merged.modelsChanged || merged.extraEnvChanged ||
         keyWrite || keyClear) {
         if (keyWrite) upd.apiKeyPlain = parsed.cfg.authToken;
@@ -851,36 +853,15 @@ core::Result<void> ClaudeService::syncCaptureActiveProfile() {
                                                     u.errorMessage());
                 }
             }
-            // 三列元数据清除（keychain_account / api_key_hint / api_key_check）：
-            // updateProfile 的空 apiKeyPlain 分支不触碰它们，故走这条最小 UPDATE
-            if (keyClear) {
-                auto prep = db_.prepare(
-                    "UPDATE claude_profiles SET keychain_account = '', "
-                    "api_key_hint = '', api_key_check = '', updated_at = ? "
-                    "WHERE id = ?");
-                if (prep.isFail()) {
-                    return core::Result<void>::fail(prep.errorCode(),
-                                                    prep.errorMessage());
-                }
-                auto& stmt = prep.value();
-                stmt.bind(1, static_cast<int64_t>(nowUnix()));
-                stmt.bind(2, prof.id);
-                auto stepR = stmt.step();
-                if (stepR.isFail()) {
-                    return core::Result<void>::fail(stepR.errorCode(),
-                                                    stepR.errorMessage());
-                }
-            }
             return core::Result<void>::ok();
         });
         if (w.isFail()) {
             std::string msg =
                 "反向同步写库失败，已中止本次切换: " + w.errorMessage();
-            // 是否要提示「密钥可能不可用」只看 Keychain 的实际状态，不信补偿
+            // 是否要提示「密钥可能不可用」只看凭据列的**实际状态**，不信补偿
             // 返回值：仍在旧值 = 已回到改之前（含「压根没写成」这种情形）
-            if ((keyWrite || keyClear) && !keyAtOldValue(keychainService_,
-                                                         prof.keychainAccount,
-                                                         curKey)) {
+            if ((keyWrite || keyClear) &&
+                !keyAtOldValue(profileRepository_, prof.id, curKey)) {
                 msg += "；该 Profile 的密钥可能处于不可用态，"
                        "重新填一次 API Key 即可恢复";
             }

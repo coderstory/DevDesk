@@ -141,8 +141,8 @@ int main(int argc, char* argv[]) {
         auto& sq = env.db->db();
         sq.exec(
             "INSERT INTO claude_profiles (name, base_url, api_key_hint, "
-            "api_key_check, keychain_account, model, created_at, updated_at) "
-            "VALUES ('p1', 'http://x', 'sk-***', 'chk', 'acct', 'm', " +
+            "api_key_check, model, created_at, updated_at) "
+            "VALUES ('p1', 'http://x', 'sk-***', 'chk', 'm', " +
             std::to_string(now) + ", " + std::to_string(now) + ")");
         sq.exec(
             "INSERT INTO claude_call_logs (profile_id, method, path, "

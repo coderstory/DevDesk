@@ -344,10 +344,10 @@ REGISTER_TEST(provider_config_new_column_defaults,
         // 只写 v1 就有的列，其余走 schema 默认值
         auto ins = db.prepare(
             "INSERT INTO claude_profiles (name, base_url, api_key_hint, "
-            "api_key_check, keychain_account, model, is_active, "
+            "api_key_check, model, is_active, "
             "created_at, updated_at) VALUES "
             "('默认供应商', 'https://old.example.com', 'sk-***abcd', "
-            "'deadbeef', 'claude:1', 'claude-3-5-haiku', 1, 0, 0)");
+            "'deadbeef', 'claude-3-5-haiku', 1, 0, 0)");
         DOCTEST_REQUIRE(ins.isOk());
         DOCTEST_REQUIRE(ins.value().step().isOk());
 

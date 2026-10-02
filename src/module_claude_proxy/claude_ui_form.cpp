@@ -7,6 +7,7 @@
 
 #include "claude_ui_logic.h"
 #include "env_var_hints.h"
+#include "platform/credential_protection.h"
 #include "platform/json.h"
 #include "provider_config.h"
 #include "settings_sync.h"
@@ -434,7 +435,7 @@ void submitForm(FormState& f, const FormSubmitHooks& hooks,
                         false);
         }
     } else {
-        // 编辑：先取现有行（保留 keychain 引用等字段），再覆盖表单值
+        // 编辑：先取现有行（保留凭据/片段绑定等字段），再覆盖表单值
         auto got = svc->getProfile(f.formEditId_);
         if (got.isFail()) {
             setFormError(f, got.errorMessage());
@@ -502,7 +503,7 @@ void drawFormBasicTab(eui::Ui& ui, float w,
 
     ui.text("claude.form.basic.key.label")
         .position(28.0f, 244.0f).size(w - 56.0f, 16.0f)
-        .text("API Key（存入 Keychain，不落数据库）")
+        .text("API Key（" + std::string(platform::credential::protectionDescription()) + "）")
         .fontSize(11.0f).lineHeight(16.0f)
         .color(t.colors.textTertiary).build();
     const std::string keyPlaceholder = isEdit
@@ -1357,7 +1358,7 @@ void drawDeleteConfirmDialog(eui::Ui& ui, const eui::Screen& screen,
             ui_kit::drawDialogText(
                 ui, "claude.dialog.delete.msg", w,
                 "将删除 Profile「" + f.deleteTargetName_ +
-                    "」及其 Keychain 中的 API Key，不可恢复。",
+                    "」及其保存的 API Key，不可恢复。",
                 t.sizes.fontSizeSmall, t.colors.textSecondary,
                 {.y = 58.0f, .height = 60.0f, .lineHeight = 20.0f,
                  .wrap = true});

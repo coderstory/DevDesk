@@ -9,8 +9,9 @@
 //   · 输出是 **SettingsConfig 的白名单字段集**（9 键，清单钉在 app_tools.cpp
 //     的字段白名单注释处，新增字段必须同步该注释与本头），不是整份
 //     config.json 的转储：配置文件里将来若混入敏感键也不会外泄；
-//   · 凭据本体不在 config.json——API Key 走 platform::keychain（service =
-//     每 profile 一个），本工具完全不触 Keychain，故无凭据面；
+//   · 凭据本体不在 config.json——API Key 存在 SQLite 的
+//     claude_profiles.api_key_encrypted 列（2026-10-02 存储统一前在
+//     platform::keychain），本工具的字段白名单里没有任何凭据键，故无凭据面；
 //   · 值取自 SettingsStore::load()，其返回值已经 sanitized（越界钳制 / 未知
 //     枚举收敛 / 模块 ID 过滤），agent 拿到的就是「真正会生效的值」。
 //

@@ -1,4 +1,5 @@
 #include "sqlite_db.h"
+#include "file_perms.h"
 #include "logging.h"
 
 #include <cstring>
@@ -236,6 +237,21 @@ Result<SqliteDb> SqliteDb::open(const std::filesystem::path& file) {
     // 启用外键 + WAL 模式
     sqlite3_exec(handle, "PRAGMA foreign_keys = ON;", nullptr, nullptr, nullptr);
     sqlite3_exec(handle, "PRAGMA journal_mode = WAL;", nullptr, nullptr, nullptr);
+
+    // 凭据落点保护（2026-10-02 存储统一 §6.3）：profile 的 API key 现在**就在
+    // 库里**（macOS/POSIX 明文列 / Windows DPAPI 密文列），而 WAL 把凭据页复制进
+    // -wal。三件套（db / -wal / -shm）一律收紧为「仅属主可读写」。
+    // 坑：PRAGMA journal_mode=WAL 本身**不建** -wal/-shm（实测），它们是首个写
+    // 事务才落盘——所以这里显式跑一次空写事务把三件套逼出来，再统一 chmod。
+    // 每次 open 都做（不只在新建时设）：-wal/-shm 在连接关闭时被 sqlite 删除，
+    // 下次打开是全新 0644 文件，只在建库时设等于没设。
+    // 失败处置：SQLITE_BUSY 等属可容忍（另一进程持锁时）→ WARN 不阻断；
+    // chmod 失败则不静默——那是「凭据可能被同机他人读到」，一律 ERROR 留痕。
+    sqlite3_exec(handle, "BEGIN IMMEDIATE; COMMIT;", nullptr, nullptr, nullptr);
+    if (auto permR = core::fileperms::restrictSqliteStoreFiles(file); permR.isFail()) {
+        LOG_ERROR("数据库文件权限收紧失败（凭据落点可能对同机其他用户可读）: " +
+                  permR.errorMessage());
+    }
 
     SqliteDb db;
     db.handle_ = handle;

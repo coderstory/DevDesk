@@ -97,10 +97,10 @@ void writeErrorJson(platform::http::ResponseWriter& out, int status,
     out.end();
 }
 
-// 取 profile 失败（无激活 profile / Keychain 读不到 key）的统一出口：
+// 取 profile 失败（无激活 profile / 凭据列读不到 key）的统一出口：
 // 两条转发路径（缓冲 handleRequest / 流式 handleStreamingRequest）共用同一
 // 状态码与文案，保证同一个失败在 stream:false 与 stream:true 下响应逐字一致
-// ——审计 CPX-10：此前缓冲路径内联另一套取 profile 逻辑，同一个 Keychain 读
+// ——审计 CPX-10：此前缓冲路径内联另一套取 profile 逻辑，同一个凭据读
 // 失败在 stream:false 报 500/keychain_read_failed、stream:true 报
 // 503/no_active_profile，排障要在两条路径间分叉。
 // （注：`keychain_read_failed` 是已消失的旧口径——CPX-10 合并后本函数是唯一
@@ -195,8 +195,8 @@ void ProxyRouter::handleRequest(
 
     // ---- 1. 取 profile（含明文 API key）----
     // 唯一入口 resolveProfile：注入路径（测试 / UI 的 profileProvider_，直接
-    // 给出完整 profile、绕过 DB / Keychain——否则测试的内存库里没有 profile，
-    // 缓冲转发永远 503）与生产路径（SQLite 取 active profile → Keychain 取明文
+    // 给出完整 profile、绕过 DB——否则测试的内存库里没有 profile，
+    // 缓冲转发永远 503）与生产路径（SQLite 取 active profile → 凭据列取明文
     // key）都在它内部收口，与流式路径共用同一失败语义（见 writeNoProfileError）。
     auto profileR = resolveProfile();
     if (profileR.isFail()) {
@@ -214,7 +214,7 @@ void ProxyRouter::handleRequest(
     // getProfile + loadApiKey，任一失败 / id==0 → nullopt）则换家重试一次；
     // 两次都失败 → 返回**第二次**的结果（错误更相关）。
     // 注入模式守卫（profileProvider_ 已设，测试/UI 直给完整 profile、绕过
-    // DB / Keychain）：跳过 resolveFallbackProfile、不换家（设计 §3.8 显式
+    // DB）：跳过 resolveFallbackProfile、不换家（设计 §3.8 显式
     // 声明，不依赖「内存库无 profile → 恒 nullopt」的巧合）。
     // 单次上游请求（头复制 + 方言归一），换家后按备用重算 forBaseUrl 与
     // upstream.url（§3.2）
@@ -345,7 +345,7 @@ core::Result<Profile> ProxyRouter::resolveProfile() {
         return profileProvider_();
     }
 
-    // 默认路径：SQLite 取 active profile → Keychain 取明文 key
+    // 默认路径：SQLite 取 active profile → 凭据列取明文 key
     auto activeR = service_.getActiveProfile();
     if (activeR.isFail()) {
         return core::Result<Profile>::fail(activeR.errorCode(),

@@ -841,9 +841,9 @@ REGISTER_TEST(uiModernHomeApiBarChart,
     const int64_t dayStart = module::home::startOfDayEpoch(std::time(nullptr));
     DOCTEST_CHECK(env.db->db().exec(
         "INSERT INTO claude_profiles (name, base_url, api_key_hint, "
-        " api_key_check, keychain_account, model, is_active, created_at, "
+        " api_key_check, model, is_active, created_at, "
         " updated_at) VALUES ('测试', 'https://api.anthropic.com', "
-        " 'sk-', 'CHECK', 'devdesk-test-uimodern', 'claude-sonnet-4-5', 1, "
+        " 'sk-', 'CHECK', 'claude-sonnet-4-5', 1, "
         " 1000, 1000)").isOk());
     const std::string sql =
         "INSERT INTO claude_call_logs (profile_id, method, path, status_code, "

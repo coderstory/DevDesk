@@ -353,8 +353,9 @@ REGISTER_TEST(claude_tools_test_connection_ok_and_error_paths,
     DOCTEST_CHECK(badId.value().isError);
     DOCTEST_CHECK_EQ(hitCount, 2);
 
-    // Keychain 里没有密钥 → loadApiKey fail → toolError（计划书：任一步 fail 即错）
-    test_support::cleanupProfileKey(kTestKeychainService, p.id);
+    // 凭据列空 → loadApiKey fail → toolError（计划书：任一步 fail 即错）
+    //（2026-10-02 存储统一：凭据在库列里，不再靠删 Keychain 条目造空 key）
+    DOCTEST_REQUIRE(test_support::clearStoredCredential(env.tdb.handle(), p.id));
     auto noKey = runToolName("claude.test_connection",
                              R"({"id":)" + std::to_string(p.id) + "}");
     DOCTEST_REQUIRE(noKey.isOk());

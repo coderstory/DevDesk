@@ -64,8 +64,8 @@ REGISTER_TEST(home_service_real_stats,
     // claude_call_logs：先建 profile（FK ON），2 条今天 + 1 条昨天
     DOCTEST_CHECK(sq.exec(
         "INSERT INTO claude_profiles (name, base_url, api_key_hint, api_key_check, "
-        "keychain_account, model, created_at, updated_at) VALUES "
-        "('p1', 'http://x', 'sk-***', 'chk', 'acct', 'm', " +
+        "model, created_at, updated_at) VALUES "
+        "('p1', 'http://x', 'sk-***', 'chk', 'm', " +
         std::to_string(now) + ", " + std::to_string(now) + ")"
     ).isOk());
     DOCTEST_CHECK(sq.exec(
@@ -133,8 +133,8 @@ REGISTER_TEST(home_prune_call_logs,
     auto& sq = env.db->db();
     DOCTEST_CHECK(sq.exec(
         "INSERT INTO claude_profiles (name, base_url, api_key_hint, api_key_check, "
-        "keychain_account, model, created_at, updated_at) VALUES "
-        "('p1', 'http://x', 'sk-***', 'chk', 'acct', 'm', " +
+        "model, created_at, updated_at) VALUES "
+        "('p1', 'http://x', 'sk-***', 'chk', 'm', " +
         std::to_string(now) + ", " + std::to_string(now) + ")"
     ).isOk());
     // 40 天前 / 35 天前 / 5 天前 各一条
@@ -279,8 +279,8 @@ REGISTER_TEST(home_last_rate_and_hourly_tokens,
     const int64_t dayStart = module::home::startOfDayEpoch(std::time(nullptr));
     DOCTEST_REQUIRE(sq.exec(
         "INSERT INTO claude_profiles (name, base_url, api_key_hint, "
-        "api_key_check, keychain_account, model, created_at, updated_at) "
-        "VALUES ('p1', 'http://x', 'sk-***', 'chk', 'acct', 'm', 1000, 1000)")
+        "api_key_check, model, created_at, updated_at) "
+        "VALUES ('p1', 'http://x', 'sk-***', 'chk', 'm', 1000, 1000)")
                         .isOk());
 
     // 阶段 A：只有老行（status_code / output_tokens 全 NULL）→ 没有成功调用

@@ -408,9 +408,9 @@ REGISTER_TEST(proxy_router_missing_api_key,
     DOCTEST_REQUIRE(created.isOk());
     DOCTEST_REQUIRE(svc.setActiveProfile(created.value().id).isOk());
 
-    // 故意删掉 Keychain 里的 key
-    platform::keychain::deleteSecret(
-        kTestKeychainService, "claude:" + std::to_string(created.value().id));
+    // 故意清掉库里的凭据列（2026-10-02 存储统一：Keychain 已不是凭据源）
+    DOCTEST_REQUIRE(test_support::clearStoredCredential(
+        tdb.handle(), created.value().id));
 
     platform::http::Server proxyServer("127.0.0.1", 0);
     module::claude::ProxyRouter router(svc, proxyServer);

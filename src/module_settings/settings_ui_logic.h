@@ -95,7 +95,10 @@ inline constexpr float kModulesCardHeight = 344.0f;     // 模块插拔卡（模
 // 桌宠卡（模块）：两行控件——皮肤行 y=64、显示大小行 y=112（各高 40），
 // 内容底沿 152 + 16 下边距 = 168（2026-09-30 加显示大小行后由 120 抬高）
 inline constexpr float kPetCardHeight = 168.0f;
-inline constexpr float kDirectoryCardHeight = 116.0f;   // 目录卡（模块；hint 底 100 + 16）
+inline constexpr float kDirectoryCardHeight = 176.0f;   // 目录卡（模块）；
+// 2026-10-02 存储统一 §6.3：加「数据根忽略规则（.gitignore）」路径行——
+// 新行 y=126 高 34（盒底 160）+ 16 下边距 = 176（旧值 116 = 原 hint 底 100 + 16）。
+// 注册表运行期取 roundFs(常量)，卡高公式与行几何同源。
 inline constexpr float kLogSettingsCardHeight = 148.0f; // 日志卡（日志；编辑器字号迁出后收窄）
 
 // ---- 行盒/间距随生效字号派生（2026-09-30 spec §2.3 本期修）----

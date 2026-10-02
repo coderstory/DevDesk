@@ -1372,9 +1372,9 @@ REGISTER_TEST(streaming_call_log_usage_columns,
         env.db.handle().applySchema(core::schema::kSql).isOk());
     DOCTEST_REQUIRE(env.db.handle().exec(
         "INSERT INTO claude_profiles (id, name, base_url, api_key_hint, "
-        "api_key_check, keychain_account, model, is_active, created_at, updated_at) "
+        "api_key_check, model, is_active, created_at, updated_at) "
         "VALUES (1, 'streaming-usage', 'http://127.0.0.1', 'sk-***', 'x', "
-        "'claude:1', 'claude-sonnet-4-5', 1, 0, 0)")
+        "'claude-sonnet-4-5', 1, 0, 0)")
                         .isOk());
 
     platform::http::Server proxy("127.0.0.1", 0);
@@ -1446,9 +1446,9 @@ REGISTER_TEST(streaming_call_log_usage_absent,
         env.db.handle().applySchema(core::schema::kSql).isOk());
     DOCTEST_REQUIRE(env.db.handle().exec(
         "INSERT INTO claude_profiles (id, name, base_url, api_key_hint, "
-        "api_key_check, keychain_account, model, is_active, created_at, updated_at) "
+        "api_key_check, model, is_active, created_at, updated_at) "
         "VALUES (1, 'streaming-no-usage', 'http://127.0.0.1', 'sk-***', 'x', "
-        "'claude:1', 'claude-sonnet-4-5', 1, 0, 0)")
+        "'claude-sonnet-4-5', 1, 0, 0)")
                         .isOk());
 
     platform::http::Server proxy("127.0.0.1", 0);

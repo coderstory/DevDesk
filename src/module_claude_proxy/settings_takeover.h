@@ -11,7 +11,7 @@
 // 子对象不反向依赖彼此：接管入参（激活 Profile + 当前代理端口 + 所绑片段
 // env）由门面从 ProfileRepository / ProxyRuntime 取齐后一并传入
 //（R10 spec §2.3 P-A4 双入参，子对象不反向依赖那两个子对象）。
-// 反向同步 syncCaptureActiveProfile（168 行跨 DB+Keychain+文件三写）按 Q2
+// 反向同步 syncCaptureActiveProfile（168 行跨 DB+凭据列+文件三写）按 Q2
 // 否决 4 留门面，本类不承载其任何一段（其唯一 settings_sync:: 读侧
 // readSettingsEnvForSync 命中保留在门面，见 R10 spec §2.4 P-A4 断言）。
 #pragma once

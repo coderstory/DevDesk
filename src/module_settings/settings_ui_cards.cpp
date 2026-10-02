@@ -701,6 +701,35 @@ void drawDirectoryCard(const CardDrawArgs& args) {
                 .lineHeight(roundFs(14.0f))
                 .color(t.colors.textTertiary)
                 .build();
+
+            // 数据根忽略规则路径（2026-10-02 存储统一 §6.3 硬约束 1 的 UI 面）：
+            // 凭据现在存在 devdesk.db 里（WAL 伴生件会把凭据页复制进去），数据根
+            // 又要进 git 仓库——必须让用户看得见「哪一份规则在挡 `git add .`」。
+            // 与应用启动时写入的同一个路径（core::paths::dataRootGitignoreFile）；
+            // 本行只展示，不提供编辑（内容由应用维护，用户要加规则直接编辑该文件）
+            ui.text(id + ".gitignore.label")
+                .position(28.0f, 108.0f)
+                .size(w - 56.0f, roundFs(14.0f))
+                .text("数据根忽略规则（防凭据误提交）")
+                .fontSize(fs(11.0f))
+                .lineHeight(roundFs(14.0f))
+                .color(t.colors.textTertiary)
+                .build();
+            ui.rect(id + ".gitignore.path.bg")
+                .position(28.0f, 126.0f)
+                .size(w - 56.0f, 34.0f)
+                .color(t.colors.surfaceElevated)
+                .radius(t.sizes.radiusSmall)
+                .border(1.0f, t.colors.borderMuted)
+                .build();
+            ui.text(id + ".gitignore.path.value")
+                .position(40.0f, 126.0f)
+                .size(w - 80.0f, 34.0f)
+                .text(::core::paths::dataRootGitignoreFile().string())
+                .fontSize(fs(13.0f))
+                .verticalAlign(eui::VerticalAlign::Center)
+                .color(t.colors.textSecondary)
+                .build();
         })
         .build();
 }

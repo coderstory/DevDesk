@@ -35,7 +35,7 @@ namespace {
 //   · store  → 先做的那步「删已存在条目」同样通配 → 通配覆盖 + 写一条
 //              空 account 的条目（此后 load 再也认不出它，成孤儿）
 // 而空 account 在本项目里是**有确切含义**的：ProfileRepository 用空
-// keychain_account 表示「该 profile 没有密钥」（反向同步「缺席即清空」把三列
+// account 表示「该 profile 没有密钥」（反向同步「缺席即清空」把三列
 // 元数据一并清空）。此时唯一正确的回答是「没有这条」，绝不能是「随手拿一条」。
 // 空 service 同理（serviceLength 0 也是通配，会跨 service 命中）。
 // 故在进入 Keychain API **之前**显式处置；三种操作的语义各自定死：
