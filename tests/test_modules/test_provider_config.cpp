@@ -1493,23 +1493,58 @@ REGISTER_TEST(provider_config_one_m_marker_pure,
     return true;
 })
 
-// 槽位 supportsOneM 列：表驱动断言（加槽位自动进入覆盖）+ 与 Claude 官方
-// 1M 上下文能力对齐（大上下文槽位 true / haiku·subagent false——依据见报告）。
+// 槽位 supportsOneM 列：**逐槽位钉死取值**（谁改错立刻红）。
+// 取值**照抄 cc-switch 参考实现**（用户 2026-10-02 指示「直接照 cc-switch 的
+// 业务逻辑抄，不要自己保守裁决」）：ClaudeFormFields.tsx 的 modelRoleRows ——
+// sonnet / opus / fable / subagent = true，haiku = false。def 槽位 cc-switch 无
+// 对应行（它的 ANTHROPIC_MODEL 是独立输入框，不在角色表里）→ 按主模型语义 true。
+// 反向断言（表里不得有未钉的槽位）：将来新增槽位必须同时进本用例，否则红。
 REGISTER_TEST(provider_config_one_m_slot_support_table,
-              "provider_config: 槽位 supportsOneM 列（表驱动 + 关键槽位取值）", {
+              "provider_config: 槽位 supportsOneM 列（六槽位取值逐个钉死）", {
     const auto table = module::claude::modelSlotTable();
     DOCTEST_REQUIRE_EQ(table.size(), module::claude::kModelSlotCount);
-    for (const auto& m : table) {
-        // 每行都必须显式声明（X 宏第 7 参）；jsonKey 反查期望值
-        const std::string key = m.jsonKey;
-        if (key == "default" || key == "sonnet" || key == "opus" ||
-            key == "fable") {
-            DOCTEST_CHECK_MESSAGE(m.supportsOneM,
-                                  "槽位 " + key + " 应支持 1M（大上下文）");
-        } else {
-            DOCTEST_CHECK_MESSAGE(!m.supportsOneM,
-                                  "槽位 " + key + " 不应支持 1M（保守）");
+    DOCTEST_REQUIRE_EQ(table.size(), static_cast<size_t>(6));   // 表长硬钉
+    struct Expected {
+        const char* key;
+        bool oneM;
+    };
+    const Expected expected[] = {
+        {"default", true},    // ANTHROPIC_MODEL（主模型）
+        {"sonnet", true},
+        {"opus", true},
+        {"haiku", false},     // 小快模型，无 1M 变体（cc-switch: false）
+        {"fable", true},
+        {"subagent", true},   // cc-switch: true —— 勿改回「保守 false」
+    };
+    DOCTEST_REQUIRE_EQ(sizeof(expected) / sizeof(expected[0]),
+                       static_cast<size_t>(6));
+    for (const auto& e : expected) {
+        const module::claude::ModelSlotMeta* hit = nullptr;
+        for (const auto& m : table) {
+            if (std::string(m.jsonKey) == e.key) {
+                hit = &m;
+                break;
+            }
         }
+        DOCTEST_REQUIRE_MESSAGE(hit != nullptr,
+                                std::string("槽位表缺行: ") + e.key);
+        DOCTEST_CHECK_MESSAGE(
+            hit->supportsOneM == e.oneM,
+            std::string("槽位 ") + e.key + " 的 supportsOneM 应为 " +
+                (e.oneM ? "true" : "false") + "（照 cc-switch 取值，改错即红）");
+    }
+    // 反向：表里每一行都必须被上面的清单钉到（新增槽位漏进用例 = 红）
+    for (const auto& m : table) {
+        bool listed = false;
+        for (const auto& e : expected) {
+            if (std::string(m.jsonKey) == e.key) {
+                listed = true;
+                break;
+            }
+        }
+        DOCTEST_CHECK_MESSAGE(listed,
+                              std::string("槽位未进本用例（新增槽位请同步）: ") +
+                                  m.jsonKey);
     }
     return true;
 })
@@ -1526,16 +1561,16 @@ REGISTER_TEST(provider_config_one_m_normalize,
     c.def.model = "m-def[1m]";        // 支持 → 规范化（大小写）
     c.sonnet.model = "m-sonnet";      // 支持、无标记 → 不动
     c.opus.model = "";                // 空槽位 → 不动
-    c.haiku.model = "m-haiku[1M]";    // 不支持 → 强制剥离
+    c.haiku.model = "m-haiku[1M]";    // **唯一不支持槽位** → 强制剥离
     c.fable.model = "m-fable [1m] ";  // 支持 → 规范化成 base+[1M]
-    c.subagent.model = "m-sub[1m]";   // 不支持 → 强制剥离
+    c.subagent.model = "m-sub[1m]";   // 支持（照 cc-switch）→ 规范化
     normalizeOneMMarkers(c);
     DOCTEST_CHECK_EQ(c.def.model, std::string("m-def[1M]"));
     DOCTEST_CHECK_EQ(c.sonnet.model, std::string("m-sonnet"));
     DOCTEST_CHECK_EQ(c.opus.model, std::string(""));
     DOCTEST_CHECK_EQ(c.haiku.model, std::string("m-haiku"));
     DOCTEST_CHECK_EQ(c.fable.model, std::string("m-fable[1M]"));
-    DOCTEST_CHECK_EQ(c.subagent.model, std::string("m-sub"));
+    DOCTEST_CHECK_EQ(c.subagent.model, std::string("m-sub[1M]"));
 
     // 幂等：再归一一次结果不变（保存重入 / 多次写不累积）
     const ModelsConfig once = c;

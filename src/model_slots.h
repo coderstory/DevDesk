@@ -25,12 +25,14 @@
 //     - _NAME键    官方 *_NAME 变体；nullptr = 无该变体（def / subagent 不生成）
 //     - supportsOneM  该槽位是否支持 1M 上下文标记（批次 F，2026-10-02）：
 //                     **尾插第 7 参**（既有 6 参逐字不动，消费方各自多一个形参）。
-//                     依据 = Claude 官方现行模型的 1M 上下文能力：主模型与大
-//                     上下文档（default / sonnet / opus / fable）true；haiku
-//                     （小快模型，无 1M 变体）false；subagent **保守 false**
-//                     （待确认项：CLAUDE_CODE_SUBAGENT_MODEL 是自由模型 id，
-//                     cc-switch 参考实现标 true —— 本表按「拿不准保守不支持」
-//                     裁决，详见交付报告遗留问题）
+//                     取值**照抄 cc-switch 参考实现**（用户 2026-10-02 明确指示
+//                     「直接照 cc-switch 的业务逻辑抄，不要自己保守裁决」）：
+//                     src/components/providers/forms/ClaudeFormFields.tsx 的
+//                     modelRoleRows（sonnet/opus/fable/subagent = true，
+//                     haiku = false；本表逐项对齐，subagent 亦为 true）。
+//                     def 槽位 cc-switch 无对应行（它的 ANTHROPIC_MODEL 是独立
+//                     输入框，不在角色表里）——本表按「1M 是主模型能力」取 true，
+//                     与 ANTHROPIC_MODEL 的实际语义一致。
 //
 // 为什么用 X 宏：C++ 无反射，成员名与全部元数据必须由同一处声明生成，才能做到
 // 「加一行、全链生效」且「漏改不静默」——表行引用不存在的成员 = 编译期报错；
@@ -51,7 +53,7 @@
       "ANTHROPIC_DEFAULT_FABLE_MODEL", "ANTHROPIC_DEFAULT_FABLE_MODEL_NAME",   \
       true)                                                                   \
     X(subagent, "subagent", "子代理", "Subagent",                              \
-      "CLAUDE_CODE_SUBAGENT_MODEL", nullptr, false)
+      "CLAUDE_CODE_SUBAGENT_MODEL", nullptr, true)
 
 // 注：本表原先内联在 module_claude_proxy/provider_config.h（审计 CPX-08 的落点），
 // M2 Task 10 迁到 src 根中立头——宏名与 6 参形态逐字不变，老消费方只多一行

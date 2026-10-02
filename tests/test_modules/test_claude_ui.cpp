@@ -7699,9 +7699,9 @@ REGISTER_TEST(claude_ui_model_one_m_switch,
     //   def     支持 + 无标记        → 开关可用、未勾
     //   sonnet  支持 + 串尾 [1m]     → **回显勾上**（大小写不敏感）
     //   opus    支持 + 无标记
-    //   haiku   不支持 + 串尾 [1M]   → 禁用 + 不勾（双重条件第二项不成立）
+    //   haiku   不支持（唯一）+ [1M] → 禁用 + 不勾（双重条件第二项不成立）
     //   fable   支持 + 空 base       → 禁用（空 base 不许勾）
-    //   subagent 不支持 + 空 base    → 禁用
+    //   subagent 支持 + 空 base      → 禁用（空 base 不许勾）
     module::claude::ModelsConfig mc;
     mc.def.model = "m-def";
     mc.sonnet.model = "m-sonnet[1m]";
@@ -7785,7 +7785,7 @@ REGISTER_TEST(claude_ui_model_one_m_switch,
             trackHaiku->color.a == trackDef->color.a;
         DOCTEST_CHECK_FALSE(sameColor);
     }
-    // 禁用行点了不落库：haiku(3) 不支持 / fable(4) 空 base / subagent(5) 不支持
+    // 禁用行点了不落库：haiku(3) 不支持 / fable(4) 空 base / subagent(5) 空 base
     {
         eui::Ui ui;
         compose(ui);
