@@ -54,12 +54,29 @@ constexpr const char* kTestKeychainService = "DevDeskTestSettingsSync";
 // 临时 settings.json / sidecar 目录（共享头 test_support::TempDir，前缀沿用原样）
 constexpr const char* kSyncTempDirPrefix = "devdesk_test_sync_";
 
-module::claude::settings_sync::Paths makePaths(const test_support::TempDir& d) {
+// 临时 db 文件名前缀（共享工厂 test_support::tempDbPath / TestDb 的第一实参）
+constexpr const char* kDbPrefix = "devdesk_test_sync_db_";
+
+// sidecar（接管前 settings.json 的 env 快照）自 2026-10-03（批次 E2）起**不是
+// 文件**，而是 app_config 表的一行（键 kSidecarConfigKey）——故每个用例除了
+// 临时 settings.json 目录，还得有一份已 migrate 的库供 sidecar 落行。
+// 命名对应：目录 d → 库 sdb，目录 d2 → 库 sdb2（同一用例内两个目录不能共用
+// 一份库：sidecar 只有一行，共用会让两个 Paths 互相看见对方的快照）。
+module::claude::settings_sync::Paths makePaths(const test_support::TempDir& d,
+                                               core::data::SqliteDb& db) {
     module::claude::settings_sync::Paths p;
     p.settingsFile = d.file("settings.json");
-    p.sidecarFile = d.file("snapshot.json");
+    p.db = &db;
     return p;
 }
+
+// sidecar 的库夹具（只造库，不注册 appDatabase——本文件全程显式传 db）
+struct SyncDb {
+    test_support::TestDb tdb;
+    explicit SyncDb(const std::string& tag)
+        : tdb(kDbPrefix, "syncsidecar_" + tag) {}
+    core::data::SqliteDb& handle() { return tdb.handle(); }
+};
 
 // 读 settings.json 的 env 块为 map（不存在 / 无 env → 空表）
 std::map<std::string, std::string> readEnv(const std::filesystem::path& f) {
@@ -91,8 +108,6 @@ std::string topLevelString(const std::filesystem::path& f, const char* key) {
     return obj.get(key).asString();
 }
 
-// 临时 db 文件名前缀（共享工厂 test_support::tempDbPath / TestDb 的第一实参）
-constexpr const char* kDbPrefix = "devdesk_test_sync_db_";
 
 // ---- 假 Keychain（CPX-14 注入缝，同 test_claude_service.cpp:592 ScopedFakeKeychain
 // 与 tests/test_platform/test_keychain.cpp 的 CountingKeychain 写法）----
@@ -264,7 +279,8 @@ REGISTER_TEST(sync_build_proxy_env_extra, "settings_sync: extra_env 别名与优
 REGISTER_TEST(sync_takeover_restore_roundtrip, "settings_sync: 接管合并与还原往返", {
     using namespace module::claude;
     test_support::TempDir d("roundtrip", kSyncTempDirPrefix);
-    auto paths = makePaths(d);
+    SyncDb sdb("sync_roundtrip");
+    auto paths = makePaths(d, sdb.handle());
 
     // 用户已有配置：非 env 字段 + 自有 env 键（有的键与托管键同名但值不同）
     d.write(paths.settingsFile, R"({
@@ -299,7 +315,7 @@ REGISTER_TEST(sync_takeover_restore_roundtrip, "settings_sync: 接管合并与�
         DOCTEST_CHECK_EQ(env.at("DISABLE_AUTOUPDATER"), std::string("1"));
         DOCTEST_CHECK_EQ(topLevelString(paths.settingsFile, "model"),
                          std::string("claude-sonnet-4-5"));
-        DOCTEST_CHECK(d.exists(paths.sidecarFile));
+        DOCTEST_CHECK(test_support::configRowExists(&sdb.handle(), module::claude::settings_sync::kSidecarConfigKey));
     }
 
     // 还原：同名托管键恢复用户原值，原本不存在的键删除，其余不动
@@ -317,7 +333,7 @@ REGISTER_TEST(sync_takeover_restore_roundtrip, "settings_sync: 接管合并与�
         DOCTEST_CHECK_EQ(topLevelString(paths.settingsFile, "model"),
                          std::string("claude-sonnet-4-5"));
         // sidecar 已删除
-        DOCTEST_CHECK(!d.exists(paths.sidecarFile));
+        DOCTEST_CHECK_FALSE(test_support::configRowExists(&sdb.handle(), module::claude::settings_sync::kSidecarConfigKey));
     }
     // env 值语义与接管前一致（格式被 pretty 归一，值逐键等价）
     (void)original;
@@ -328,7 +344,8 @@ REGISTER_TEST(sync_takeover_restore_roundtrip, "settings_sync: 接管合并与�
 REGISTER_TEST(sync_retakeover_keeps_first_snapshot, "settings_sync: 热切换保留首份快照并并入托管键", {
     using namespace module::claude;
     test_support::TempDir d("retake", kSyncTempDirPrefix);
-    auto paths = makePaths(d);
+    SyncDb sdb("sync_retake");
+    auto paths = makePaths(d, sdb.handle());
 
     d.write(paths.settingsFile,
             R"({"env": {"MY_KEY": "user"}})");
@@ -356,7 +373,7 @@ REGISTER_TEST(sync_retakeover_keeps_first_snapshot, "settings_sync: 热切换保
     }
     // 但 sidecar 仍记录它（还原语义不回归：旧托管键仍归 DevDesk 管）
     {
-        const auto sidecarText = d.read(paths.sidecarFile);
+        const auto sidecarText = test_support::readRawConfigRow(&sdb.handle(), module::claude::settings_sync::kSidecarConfigKey);
         DOCTEST_CHECK(sidecarText.find("ANTHROPIC_DEFAULT_SONNET_MODEL") !=
                       std::string::npos);
         DOCTEST_CHECK(sidecarText.find("ANTHROPIC_DEFAULT_OPUS_MODEL") !=
@@ -378,7 +395,8 @@ REGISTER_TEST(sync_retakeover_keeps_first_snapshot, "settings_sync: 热切换保
 REGISTER_TEST(sync_takeover_missing_file, "settings_sync: 无 settings.json 时创建最小文件", {
     using namespace module::claude;
     test_support::TempDir d("missing", kSyncTempDirPrefix);
-    auto paths = makePaths(d);
+    SyncDb sdb("sync_missing");
+    auto paths = makePaths(d, sdb.handle());
 
     Profile p;
     p.model = "m-1";
@@ -404,7 +422,7 @@ REGISTER_TEST(sync_takeover_missing_file, "settings_sync: 无 settings.json 时�
     DOCTEST_REQUIRE(settings_sync::restore(paths).ok);
     const auto env = readEnv(paths.settingsFile);
     DOCTEST_CHECK(env.find("ANTHROPIC_BASE_URL") == env.end());
-    DOCTEST_CHECK(!d.exists(paths.sidecarFile));
+    DOCTEST_CHECK_FALSE(test_support::configRowExists(&sdb.handle(), module::claude::settings_sync::kSidecarConfigKey));
     return true;
 })
 
@@ -412,7 +430,8 @@ REGISTER_TEST(sync_takeover_missing_file, "settings_sync: 无 settings.json 时�
 REGISTER_TEST(sync_parse_failure_aborts, "settings_sync: settings.json 解析失败中止不写", {
     using namespace module::claude;
     test_support::TempDir d("parsefail", kSyncTempDirPrefix);
-    auto paths = makePaths(d);
+    SyncDb sdb("sync_parsefail");
+    auto paths = makePaths(d, sdb.handle());
 
     const std::string broken = "{ not valid json !!!";
     d.write(paths.settingsFile, broken);
@@ -423,17 +442,17 @@ REGISTER_TEST(sync_parse_failure_aborts, "settings_sync: settings.json 解析失
     DOCTEST_CHECK(!r.error.empty());
     // 文件原样、无 sidecar
     DOCTEST_CHECK_EQ(d.read(paths.settingsFile), broken);
-    DOCTEST_CHECK(!d.exists(paths.sidecarFile));
+    DOCTEST_CHECK_FALSE(test_support::configRowExists(&sdb.handle(), module::claude::settings_sync::kSidecarConfigKey));
 
     // sidecar 损坏时 takeOver 同样中止（不把上次托管键误当用户原值）
     d.write(paths.settingsFile, "{}");
-    d.write(paths.sidecarFile, "{broken");
+    test_support::writeRawConfigRow(&sdb.handle(), module::claude::settings_sync::kSidecarConfigKey, "{broken");
     DOCTEST_CHECK(!settings_sync::takeOver(p, 8888, paths).ok);
 
     // sidecar 损坏时 restore 报错并保留文件（供人工恢复）
     auto rr = settings_sync::restore(paths);
     DOCTEST_CHECK(!rr.ok);
-    DOCTEST_CHECK(d.exists(paths.sidecarFile));
+    DOCTEST_CHECK(test_support::configRowExists(&sdb.handle(), module::claude::settings_sync::kSidecarConfigKey));
     return true;
 })
 
@@ -442,7 +461,8 @@ REGISTER_TEST(sync_takeover_snapshot_skips_proxy_form,
               "settings_sync: 首份快照跳过本机代理形态键（污染守卫）", {
     using namespace module::claude;
     test_support::TempDir d("pollute", kSyncTempDirPrefix);
-    auto paths = makePaths(d);
+    SyncDb sdb("sync_pollute");
+    auto paths = makePaths(d, sdb.handle());
 
     // 上次残留 / 别的工具（cc-switch 等）写的代理形态值 + 一个用户自有键
     d.write(paths.settingsFile, R"({
@@ -479,7 +499,8 @@ REGISTER_TEST(sync_restore_without_sidecar_clears_residual,
               "settings_sync: 无快照但仍是代理形态 → 最小清除（restore）", {
     using namespace module::claude;
     test_support::TempDir d("residual", kSyncTempDirPrefix);
-    auto paths = makePaths(d);
+    SyncDb sdb("sync_residual");
+    auto paths = makePaths(d, sdb.handle());
     d.write(paths.settingsFile, R"({
         "model": "claude-sonnet-4-5",
         "env": {
@@ -502,7 +523,7 @@ REGISTER_TEST(sync_restore_without_sidecar_clears_residual,
     DOCTEST_CHECK_EQ(env.at("MY_KEY"), std::string("user"));
     DOCTEST_CHECK_EQ(topLevelString(paths.settingsFile, "model"),
                      std::string("claude-sonnet-4-5"));
-    DOCTEST_CHECK(!d.exists(paths.sidecarFile));  // 不新增 sidecar
+    DOCTEST_CHECK_FALSE(test_support::configRowExists(&sdb.handle(), module::claude::settings_sync::kSidecarConfigKey));  // 不新增 sidecar
     return true;
 })
 
@@ -511,7 +532,8 @@ REGISTER_TEST(sync_restore_without_sidecar_noop,
               "settings_sync: 无快照且非代理形态 → 真 no-op（restore）", {
     using namespace module::claude;
     test_support::TempDir d("noop", kSyncTempDirPrefix);
-    auto paths = makePaths(d);
+    SyncDb sdb("sync_noop");
+    auto paths = makePaths(d, sdb.handle());
     const std::string original = R"({
         "permissions": {"allow": ["Bash"]},
         "env": {
@@ -524,11 +546,12 @@ REGISTER_TEST(sync_restore_without_sidecar_noop,
     auto r = settings_sync::restore(paths);
     DOCTEST_REQUIRE(r.ok);
     DOCTEST_CHECK_EQ(d.read(paths.settingsFile), original);  // 逐字节不变
-    DOCTEST_CHECK(!d.exists(paths.sidecarFile));
+    DOCTEST_CHECK_FALSE(test_support::configRowExists(&sdb.handle(), module::claude::settings_sync::kSidecarConfigKey));
 
     // settings.json 不存在 / 无 env 块 → 同样 no-op（不创建文件、不改内容）
     test_support::TempDir d2("noop2", kSyncTempDirPrefix);
-    auto paths2 = makePaths(d2);
+    SyncDb sdb2("sync_noop2");
+    auto paths2 = makePaths(d2, sdb2.handle());
     DOCTEST_CHECK(settings_sync::restore(paths2).ok);
     DOCTEST_CHECK(!d2.exists(paths2.settingsFile));
     d2.write(paths2.settingsFile, R"({"permissions": {}})");
@@ -542,7 +565,8 @@ REGISTER_TEST(sync_restore_without_sidecar_noop,
 REGISTER_TEST(sync_overlay_detection, "settings_sync: managed/project 层覆盖检测", {
     using namespace module::claude;
     test_support::TempDir d("overlay", kSyncTempDirPrefix);
-    auto paths = makePaths(d);
+    SyncDb sdb("sync_overlay");
+    auto paths = makePaths(d, sdb.handle());
 
     // 伪造 project 级 settings.local.json 含同名 env 键
     const auto projectLocal = d.file("settings.local.json");
@@ -578,7 +602,8 @@ REGISTER_TEST(sync_overlay_detection_managed_derived,
               "settings_sync: 覆盖检测含托管键全集与 profile 实键", {
     using namespace module::claude;
     test_support::TempDir d("overlayderived", kSyncTempDirPrefix);
-    auto paths = makePaths(d);
+    SyncDb sdb("sync_overlayderived");
+    auto paths = makePaths(d, sdb.handle());
 
     // profile：sonnet 槽位有值 + extra_env 一个自有键
     Profile p;
@@ -628,7 +653,8 @@ REGISTER_TEST(sync_overlay_detection_managed_derived,
 REGISTER_TEST(sync_crash_recovery_and_atomic, "settings_sync: 崩溃补还原与原子写残留", {
     using namespace module::claude;
     test_support::TempDir d("crash", kSyncTempDirPrefix);
-    auto paths = makePaths(d);
+    SyncDb sdb("sync_crash");
+    auto paths = makePaths(d, sdb.handle());
 
     const std::string original = R"({"env": {"MY_KEY": "user"}})";
     d.write(paths.settingsFile, original);
@@ -644,7 +670,7 @@ REGISTER_TEST(sync_crash_recovery_and_atomic, "settings_sync: 崩溃补还原与
     const auto env = readEnv(paths.settingsFile);
     DOCTEST_CHECK_EQ(env.at("MY_KEY"), std::string("user"));
     DOCTEST_CHECK(env.find("ANTHROPIC_BASE_URL") == env.end());
-    DOCTEST_CHECK(!d.exists(paths.sidecarFile));
+    DOCTEST_CHECK_FALSE(test_support::configRowExists(&sdb.handle(), module::claude::settings_sync::kSidecarConfigKey));
 
     // 无 sidecar 时 recover 是 no-op
     DOCTEST_CHECK(settings_sync::recoverPendingSnapshot(paths).ok);
@@ -664,7 +690,8 @@ REGISTER_TEST(sync_service_wiring, "claude_service: 接管通道三触发点接�
     using namespace module::claude;
     test_support::TestDb tdb(kDbPrefix, "wiring");
     test_support::TempDir d("wiring", kSyncTempDirPrefix);
-    auto paths = makePaths(d);
+    SyncDb sdb("sync_wiring");
+    auto paths = makePaths(d, sdb.handle());
 
     d.write(paths.settingsFile, R"({"env": {"MY_KEY": "user"}})");
 
@@ -746,7 +773,8 @@ REGISTER_TEST(sync_service_warnings_surface, "claude_service: 接管警告经 la
     using namespace module::claude;
     test_support::TestDb tdb(kDbPrefix, "warn");
     test_support::TempDir d("warn", kSyncTempDirPrefix);
-    auto paths = makePaths(d);
+    SyncDb sdb("sync_warn");
+    auto paths = makePaths(d, sdb.handle());
     const auto overlay = d.file("managed-settings.json");
     d.write(overlay, R"({"env": {"ANTHROPIC_BASE_URL": "https://corp.example.com"}})");
     paths.overlayFiles = {overlay};
@@ -770,7 +798,8 @@ REGISTER_TEST(sync_service_takeover_failure_reported,
     using namespace module::claude;
     test_support::TestDb tdb(kDbPrefix, "tofail");
     test_support::TempDir d("tofail", kSyncTempDirPrefix);
-    auto paths = makePaths(d);
+    SyncDb sdb("sync_tofail");
+    auto paths = makePaths(d, sdb.handle());
 
     ClaudeService svc(tdb.handle(), kTestKeychainService);
     svc.setSettingsSyncPaths(paths);
@@ -791,7 +820,7 @@ REGISTER_TEST(sync_service_takeover_failure_reported,
     // 运行中切 profile：settings.json 恢复可读、sidecar 损坏 → 接管仍失败，
     // 但切换必须成功（DB 已切），失败原因经 lastSyncWarnings 可见
     d.write(paths.settingsFile, R"({"env": {"MY_KEY": "user"}})");
-    d.write(paths.sidecarFile, "{broken");
+    test_support::writeRawConfigRow(&sdb.handle(), module::claude::settings_sync::kSidecarConfigKey, "{broken");
     auto b = svc.createProfile("接管失败B", "https://gw2.example.com",
                                "sk-ind-test-fedcba9876543210", "");
     DOCTEST_REQUIRE(b.isOk());
@@ -823,7 +852,8 @@ REGISTER_TEST(sync_exit_sequence_stop_all,
     using namespace module::claude;
     test_support::TestDb tdb(kDbPrefix, "exit");
     test_support::TempDir d("exit", kSyncTempDirPrefix);
-    auto paths = makePaths(d);
+    SyncDb sdb("sync_exit");
+    auto paths = makePaths(d, sdb.handle());
     d.write(paths.settingsFile, R"({"env": {"MY_KEY": "user"}})");
 
     ClaudeService svc(tdb.handle(), kTestKeychainService);
@@ -840,7 +870,7 @@ REGISTER_TEST(sync_exit_sequence_stop_all,
     {
         const auto env = readEnv(paths.settingsFile);
         DOCTEST_CHECK(env.find("ANTHROPIC_BASE_URL") != env.end());
-        DOCTEST_CHECK(d.exists(paths.sidecarFile));
+        DOCTEST_CHECK(test_support::configRowExists(&sdb.handle(), module::claude::settings_sync::kSidecarConfigKey));
         DOCTEST_CHECK(svc.isClaudeCodeManaged());
     }
 
@@ -859,7 +889,7 @@ REGISTER_TEST(sync_exit_sequence_stop_all,
     DOCTEST_CHECK_EQ(env.at("MY_KEY"), std::string("user"));
     DOCTEST_CHECK(env.find("ANTHROPIC_BASE_URL") == env.end());
     DOCTEST_CHECK(env.find("ANTHROPIC_AUTH_TOKEN") == env.end());
-    DOCTEST_CHECK(!d.exists(paths.sidecarFile));
+    DOCTEST_CHECK_FALSE(test_support::configRowExists(&sdb.handle(), module::claude::settings_sync::kSidecarConfigKey));
     DOCTEST_CHECK(!svc.isClaudeCodeManaged());
     DOCTEST_CHECK(!svc.isProxyRunning());
     return true;
@@ -873,7 +903,8 @@ REGISTER_TEST(sync_delete_active_profile_stops_proxy,
     using namespace module::claude;
     test_support::TestDb tdb(kDbPrefix, "delact");
     test_support::TempDir d("delact", kSyncTempDirPrefix);
-    auto paths = makePaths(d);
+    SyncDb sdb("sync_delact");
+    auto paths = makePaths(d, sdb.handle());
     d.write(paths.settingsFile, R"({"env": {"MY_KEY": "user"}})");
 
     ClaudeService svc(tdb.handle(), kTestKeychainService);
@@ -941,7 +972,8 @@ REGISTER_TEST(sync_switch_off_no_write,
     using namespace module::claude;
     test_support::TestDb tdb(kDbPrefix, "off");
     test_support::TempDir d("off", kSyncTempDirPrefix);
-    auto paths = makePaths(d);
+    SyncDb sdb("sync_off");
+    auto paths = makePaths(d, sdb.handle());
     const std::string original = R"({"env": {"MY_KEY": "user"}})";
     d.write(paths.settingsFile, original);
 
@@ -967,21 +999,22 @@ REGISTER_TEST(sync_switch_off_no_write,
     DOCTEST_REQUIRE(r.isOk());
     DOCTEST_CHECK_EQ(d.read(paths.settingsFile), original);
     DOCTEST_CHECK(!svc.isClaudeCodeManaged());
-    DOCTEST_CHECK(!d.exists(paths.sidecarFile));
+    DOCTEST_CHECK_FALSE(test_support::configRowExists(&sdb.handle(), module::claude::settings_sync::kSidecarConfigKey));
 
     // 路径 3：stopProxy → 不还原（未接管过，同样不动文件）
     svc.stopProxy();
     DOCTEST_CHECK_EQ(d.read(paths.settingsFile), original);
-    DOCTEST_CHECK(!d.exists(paths.sidecarFile));
+    DOCTEST_CHECK_FALSE(test_support::configRowExists(&sdb.handle(), module::claude::settings_sync::kSidecarConfigKey));
 
     // 遗留 sidecar（上次没走完还原）+ 开关关闭 → 补还原同样跳过，快照留给
     // 下次开启接管时处理（不代改用户文件）
-    d.write(paths.sidecarFile,
+    test_support::writeRawConfigRow(
+        &sdb.handle(), module::claude::settings_sync::kSidecarConfigKey,
             R"({"managedKeys": {"ANTHROPIC_BASE_URL": ""},)"
             R"( "envSnapshot": {"MY_KEY": "user"}})");
     svc.recoverPendingSettingsRestore();
     DOCTEST_CHECK_EQ(d.read(paths.settingsFile), original);
-    DOCTEST_CHECK(d.exists(paths.sidecarFile));
+    DOCTEST_CHECK(test_support::configRowExists(&sdb.handle(), module::claude::settings_sync::kSidecarConfigKey));
 
     platform::keychain::deleteSecret(
         kTestKeychainService, "claude:" + std::to_string(created.value().id));
@@ -1008,7 +1041,8 @@ REGISTER_TEST(sync_reverse_read_missing_empty_noenv,
               "settings_sync: 反向读——缺失/空文件/无 env 均 no-op 成功（reverse G7/G9）", {
     using module::claude::settings_sync::readSettingsEnvForSync;
     test_support::TempDir d("revnoop", kSyncTempDirPrefix);
-    auto paths = makePaths(d);
+    SyncDb sdb("sync_revnoop");
+    auto paths = makePaths(d, sdb.handle());
 
     // G7：文件不存在 → no-op 成功（调用方照常完成本次切换）
     {
@@ -1042,7 +1076,8 @@ REGISTER_TEST(sync_reverse_read_aborts_on_broken,
               "settings_sync: 反向读——坏 JSON/顶层非对象/env 非对象中止（reverse G8）", {
     using module::claude::settings_sync::readSettingsEnvForSync;
     test_support::TempDir d("revbad", kSyncTempDirPrefix);
-    auto paths = makePaths(d);
+    SyncDb sdb("sync_revbad");
+    auto paths = makePaths(d, sdb.handle());
 
     // 非法 JSON → 中止（S-2：调用方据此不切换，profile 一字未改）
     {
@@ -1078,7 +1113,8 @@ REGISTER_TEST(sync_reverse_read_unreadable_aborts,
               "settings_sync: 反向读——存在但打不开中止（reverse G8 读失败）", {
     using module::claude::settings_sync::readSettingsEnvForSync;
     test_support::TempDir d("revunreadable", kSyncTempDirPrefix);
-    auto paths = makePaths(d);
+    SyncDb sdb("sync_revunreadable");
+    auto paths = makePaths(d, sdb.handle());
     d.write(paths.settingsFile, R"({"env": {"MY_KEY": "user"}})");
 
     // 独占句柄（share mode = 0）：文件存在、GetFileAttributes 可见，ifstream 打不开
@@ -1108,7 +1144,8 @@ REGISTER_TEST(sync_reverse_read_env_and_sidecar,
               "settings_sync: 反向读——env 原文与 sidecar 托管键（reverse）", {
     using module::claude::settings_sync::readSettingsEnvForSync;
     test_support::TempDir d("revok", kSyncTempDirPrefix);
-    auto paths = makePaths(d);
+    SyncDb sdb("sync_revok");
+    auto paths = makePaths(d, sdb.handle());
     d.write(paths.settingsFile, R"json({
         "permissions": {"allow": ["Bash"]},
         "env": {
@@ -1134,7 +1171,8 @@ REGISTER_TEST(sync_reverse_read_env_and_sidecar,
     }
     // sidecar 存在 → 取 managedKeys 键集（对象 shape，非数组）
     {
-        d.write(paths.sidecarFile,
+        test_support::writeRawConfigRow(
+            &sdb.handle(), module::claude::settings_sync::kSidecarConfigKey,
                 R"({"managedKeys": {"ANTHROPIC_BASE_URL": "", "ANTHROPIC_MODEL": ""},)"
                 R"( "envSnapshot": {"MY_KEY": "user"}})");
         auto r = readSettingsEnvForSync(paths);
@@ -1147,7 +1185,7 @@ REGISTER_TEST(sync_reverse_read_env_and_sidecar,
     // sidecar 损坏 → 空集 + 不失败、不阻断（反向读是只读路径，坏 sidecar 不该
     // 把用户挡在切换之外；G2/G3 仍挡代理形态值）
     {
-        d.write(paths.sidecarFile, "{broken");
+        test_support::writeRawConfigRow(&sdb.handle(), module::claude::settings_sync::kSidecarConfigKey, "{broken");
         auto r = readSettingsEnvForSync(paths);
         DOCTEST_REQUIRE(r.ok);
         DOCTEST_CHECK(r.present);
@@ -1158,14 +1196,15 @@ REGISTER_TEST(sync_reverse_read_env_and_sidecar,
 })
 
 // 读 sidecar 的 nonEnvSnapshot / nonEnvKeys（§5.1 v2 形态断言用）
+// sidecar 自 2026-10-03（批次 E2）起是 app_config 表的一行，故这两个读侧
+// helper 的入参从「文件路径」改成「连接」，内容取自那一行的原文。
 static std::map<std::string, std::string> readSidecarNonEnvSnapshot(
-    const std::filesystem::path& f) {
+    core::data::SqliteDb& db) {
     std::map<std::string, std::string> out;
-    std::ifstream i(f, std::ios::binary);
-    if (!i) return out;
-    std::ostringstream ss;
-    ss << i.rdbuf();
-    auto parsed = platform::json::parse(ss.str());
+    const std::string text = test_support::readRawConfigRow(
+        &db, module::claude::settings_sync::kSidecarConfigKey);
+    if (text.empty()) return out;
+    auto parsed = platform::json::parse(text);
     if (parsed.isFail() || !parsed.value().isObject()) return out;
     auto obj = parsed.value().asObject();
     if (!obj.has("nonEnvSnapshot") || !obj.get("nonEnvSnapshot").isObject())
@@ -1178,13 +1217,12 @@ static std::map<std::string, std::string> readSidecarNonEnvSnapshot(
 }
 
 static std::vector<std::string> readSidecarNonEnvKeys(
-    const std::filesystem::path& f) {
+    core::data::SqliteDb& db) {
     std::vector<std::string> out;
-    std::ifstream i(f, std::ios::binary);
-    if (!i) return out;
-    std::ostringstream ss;
-    ss << i.rdbuf();
-    auto parsed = platform::json::parse(ss.str());
+    const std::string text = test_support::readRawConfigRow(
+        &db, module::claude::settings_sync::kSidecarConfigKey);
+    if (text.empty()) return out;
+    auto parsed = platform::json::parse(text);
     if (parsed.isFail() || !parsed.value().isObject()) return out;
     auto obj = parsed.value().asObject();
     if (!obj.has("nonEnvKeys") || !obj.get("nonEnvKeys").isObject()) return out;
@@ -1234,7 +1272,8 @@ REGISTER_TEST(sync_takeover_with_shared_config,
               "settings_sync: 生效 JSON（门面装配语义）进 nonEnv 记账，随还原撤走", {
     using namespace module::claude;
     test_support::TempDir d("shared", kSyncTempDirPrefix);
-    auto paths = makePaths(d);
+    SyncDb sdb("sync_shared");
+    auto paths = makePaths(d, sdb.handle());
     d.write(paths.settingsFile, R"({"env": {"MY_KEY": "user"}})");
 
     // p.extraSettingsJson = 门面 §5.2① 装配后的生效 JSON（profile ⊕ 片段、
@@ -1253,7 +1292,7 @@ REGISTER_TEST(sync_takeover_with_shared_config,
         DOCTEST_CHECK_EQ(topLevelString(paths.settingsFile, "statusLine"),
                          std::string("frag-s"));
         DOCTEST_CHECK(settings_sync::hasPendingSnapshot(paths));
-        const auto keys = readSidecarNonEnvKeys(paths.sidecarFile);
+        const auto keys = readSidecarNonEnvKeys(sdb.handle());
         DOCTEST_CHECK(hasKeyEntry(keys, "statusLine"));
         DOCTEST_CHECK(hasKeyEntry(keys, "hooks"));
     }
@@ -1285,7 +1324,8 @@ REGISTER_TEST(sync_service_shared_config_delete_retakeover,
     using namespace module::claude;
     test_support::TestDb tdb(kDbPrefix, "fragdel");
     test_support::TempDir d("fragdel", kSyncTempDirPrefix);
-    auto paths = makePaths(d);
+    SyncDb sdb("sync_fragdel");
+    auto paths = makePaths(d, sdb.handle());
 
     ClaudeService svc(tdb.handle(), kTestKeychainService);
     svc.setSettingsSyncPaths(paths);
@@ -1332,7 +1372,8 @@ REGISTER_TEST(sync_takeover_extra_settings_written,
               "settings_sync: 接管写入 JSON 属性，同名键 JSON 胜且旧值进 nonEnvSnapshot", {
     using namespace module::claude;
     test_support::TempDir d("xset1", kSyncTempDirPrefix);
-    auto paths = makePaths(d);
+    SyncDb sdb("sync_xset1");
+    auto paths = makePaths(d, sdb.handle());
     d.write(paths.settingsFile,
             R"({"env": {"MY_KEY": "user"}, "model": "live-model", "statusLine": "live-s"})");
 
@@ -1354,10 +1395,10 @@ REGISTER_TEST(sync_takeover_extra_settings_written,
         DOCTEST_CHECK(envWritten.find("ANTHROPIC_MODEL") == envWritten.end());
     }
     // 旧值进 nonEnvSnapshot（还原无损的前提）
-    const auto snap = readSidecarNonEnvSnapshot(paths.sidecarFile);
+    const auto snap = readSidecarNonEnvSnapshot(sdb.handle());
     DOCTEST_CHECK_EQ(snap.at("model"), std::string("live-model"));
     DOCTEST_CHECK_EQ(snap.at("statusLine"), std::string("live-s"));
-    const auto keys = readSidecarNonEnvKeys(paths.sidecarFile);
+    const auto keys = readSidecarNonEnvKeys(sdb.handle());
     DOCTEST_CHECK(hasKeyEntry(keys, "model"));
     DOCTEST_CHECK(hasKeyEntry(keys, "statusLine"));
     DOCTEST_REQUIRE(settings_sync::restore(paths).ok);
@@ -1374,7 +1415,8 @@ REGISTER_TEST(sync_takeover_model_suppress,
               "settings_sync: JSON model 键抑制 ANTHROPIC_MODEL，managedKeys 并集仍含该键", {
     using namespace module::claude;
     test_support::TempDir d("xset2", kSyncTempDirPrefix);
-    auto paths = makePaths(d);
+    SyncDb sdb("sync_xset2");
+    auto paths = makePaths(d, sdb.handle());
     d.write(paths.settingsFile, R"({"env": {"MY_KEY": "user"}})");
 
     Profile p;
@@ -1433,7 +1475,8 @@ REGISTER_TEST(sync_restore_extra_settings,
               "settings_sync: restore 按 nonEnvKeys/nonEnvSnapshot 恢复或删除顶层键", {
     using namespace module::claude;
     test_support::TempDir d("xset3", kSyncTempDirPrefix);
-    auto paths = makePaths(d);
+    SyncDb sdb("sync_xset3");
+    auto paths = makePaths(d, sdb.handle());
     d.write(paths.settingsFile,
             R"({"env": {}, "statusLine": "user-s", "permissions": {"p": 1}})");
 
@@ -1464,7 +1507,8 @@ REGISTER_TEST(sync_takeover_merge_only_snapshot,
               "settings_sync: 二次接管 merge-only 补拍（新增键首拍、已托管键不重拍，F-1）", {
     using namespace module::claude;
     test_support::TempDir d("xset4", kSyncTempDirPrefix);
-    auto paths = makePaths(d);
+    SyncDb sdb("sync_xset4");
+    auto paths = makePaths(d, sdb.handle());
     d.write(paths.settingsFile,
             R"({"env": {}, "model": "user-model", "statusLine": "user-s"})");
 
@@ -1473,19 +1517,19 @@ REGISTER_TEST(sync_takeover_merge_only_snapshot,
     p.extraSettingsJson = R"({"model": "json-model"})";
     DOCTEST_REQUIRE(settings_sync::takeOver(p, 8888, paths).ok);
     {
-        const auto keys = readSidecarNonEnvKeys(paths.sidecarFile);
+        const auto keys = readSidecarNonEnvKeys(sdb.handle());
         DOCTEST_CHECK(hasKeyEntry(keys, "model"));
         DOCTEST_CHECK(!hasKeyEntry(keys, "statusLine"));   // 未写入 → 未进账
-        const auto snap = readSidecarNonEnvSnapshot(paths.sidecarFile);
+        const auto snap = readSidecarNonEnvSnapshot(sdb.handle());
         DOCTEST_CHECK_EQ(snap.at("model"), std::string("user-model"));   // 首拍
     }
     // 第 2 轮（热切换 re-takeover，sidecar 已存在）：JSON 加 statusLine
     p.extraSettingsJson = R"({"model": "json-model", "statusLine": "json-s"})";
     DOCTEST_REQUIRE(settings_sync::takeOver(p, 8888, paths).ok);
     {
-        const auto keys = readSidecarNonEnvKeys(paths.sidecarFile);
+        const auto keys = readSidecarNonEnvKeys(sdb.handle());
         DOCTEST_CHECK(hasKeyEntry(keys, "statusLine"));
-        const auto snap = readSidecarNonEnvSnapshot(paths.sidecarFile);
+        const auto snap = readSidecarNonEnvSnapshot(sdb.handle());
         // 补拍：statusLine 首次进账 → live 原值入快照（无此步 restore 会静默删它）
         DOCTEST_CHECK_EQ(snap.at("statusLine"), std::string("user-s"));
         // 不重拍：model 已在并集里，快照条目维持原值（live 现值是 JSON 托管值
@@ -1506,11 +1550,13 @@ REGISTER_TEST(sync_restore_v1_sidecar_no_nonenv,
               "settings_sync: 旧形态 sidecar（无 nonEnv 字段）restore 不动非 env 键", {
     using namespace module::claude;
     test_support::TempDir d("xset5", kSyncTempDirPrefix);
-    auto paths = makePaths(d);
+    SyncDb sdb("sync_xset5");
+    auto paths = makePaths(d, sdb.handle());
     d.write(paths.settingsFile,
             R"({"env": {"MY_KEY": "user", "ANTHROPIC_BASE_URL": "http://127.0.0.1:8888", "ANTHROPIC_AUTH_TOKEN": "PROXY_MANAGED"}, "statusLine": "user-s"})");
     // 手工造 v1 形态 sidecar（只有 managedKeys + envSnapshot）
-    d.write(paths.sidecarFile,
+    test_support::writeRawConfigRow(
+        &sdb.handle(), module::claude::settings_sync::kSidecarConfigKey,
             R"({"managedKeys": {"ANTHROPIC_BASE_URL": "", "ANTHROPIC_AUTH_TOKEN": ""}, "envSnapshot": {"MY_KEY": "user"}})");
 
     DOCTEST_REQUIRE(settings_sync::restore(paths).ok);
@@ -1555,7 +1601,8 @@ REGISTER_TEST(sync_takeover_fragment_json_end_to_end,
     ScopedFakeKeychain kc;   // 必须早于任何 createProfile（最早可能点）
     test_support::TestDb tdb(kDbPrefix, "fragjson");
     test_support::TempDir d("fragjson", kSyncTempDirPrefix);
-    auto paths = makePaths(d);
+    SyncDb sdb("sync_fragjson");
+    auto paths = makePaths(d, sdb.handle());
 
     ClaudeService svc(tdb.handle(), kTestKeychainService);
     svc.setSettingsSyncPaths(paths);
@@ -1585,7 +1632,7 @@ REGISTER_TEST(sync_takeover_fragment_json_end_to_end,
         DOCTEST_CHECK(liveDoc.value().asObject().get("hooks").isObject());
         DOCTEST_CHECK(liveDoc.value().asObject().get("permissions").isObject());
         // 片段键进 nonEnv 记账（还原撤走的依据）
-        const auto keys = readSidecarNonEnvKeys(paths.sidecarFile);
+        const auto keys = readSidecarNonEnvKeys(sdb.handle());
         DOCTEST_CHECK(hasKeyEntry(keys, "statusLine"));
         DOCTEST_CHECK(hasKeyEntry(keys, "hooks"));
         DOCTEST_CHECK(hasKeyEntry(keys, "permissions"));
@@ -1630,7 +1677,8 @@ REGISTER_TEST(sync_nonenv_removal_conflict_warns,
               "settings_sync: 非 env 托管键本轮不写且 live 有同名值 → 出冲突警告", {
     using namespace module::claude;
     test_support::TempDir d("nonenvconf", kSyncTempDirPrefix);
-    auto paths = makePaths(d);
+    SyncDb sdb("sync_nonenvconf");
+    auto paths = makePaths(d, sdb.handle());
     d.write(paths.settingsFile, R"({"env": {"MY_KEY": "user"}})");
 
     // 第 1 轮：JSON 写 statusLine + hooks（两个键进 nonEnvKeys 并集）
@@ -1641,7 +1689,7 @@ REGISTER_TEST(sync_nonenv_removal_conflict_warns,
     // 第 1 轮无移除 → 零噪音（无冲突时不得有任何新输出）
     DOCTEST_CHECK(r1.warnings.empty());
     {
-        const auto keys = readSidecarNonEnvKeys(paths.sidecarFile);
+        const auto keys = readSidecarNonEnvKeys(sdb.handle());
         DOCTEST_REQUIRE(hasKeyEntry(keys, "statusLine"));
         DOCTEST_REQUIRE(hasKeyEntry(keys, "hooks"));
     }
@@ -1680,7 +1728,8 @@ REGISTER_TEST(sync_nonenv_removal_stale_absent_silent,
               "settings_sync: 托管键在并集里但 live 无该键（陈旧清理）→ 零告警", {
     using namespace module::claude;
     test_support::TempDir d("nonenvstale", kSyncTempDirPrefix);
-    auto paths = makePaths(d);
+    SyncDb sdb("sync_nonenvstale");
+    auto paths = makePaths(d, sdb.handle());
     d.write(paths.settingsFile, R"({"env": {"MY_KEY": "user"}})");
 
     // 第 1 轮：JSON 写 statusLine（进并集）
@@ -1688,7 +1737,7 @@ REGISTER_TEST(sync_nonenv_removal_stale_absent_silent,
     p.extraSettingsJson = R"({"statusLine": "json-s"})";
     DOCTEST_REQUIRE(settings_sync::takeOver(p, 8888, paths).ok);
     DOCTEST_REQUIRE(
-        hasKeyEntry(readSidecarNonEnvKeys(paths.sidecarFile), "statusLine"));
+        hasKeyEntry(readSidecarNonEnvKeys(sdb.handle()), "statusLine"));
 
     // 用户自行把 statusLine 从 live settings.json 删了（键在并集里、root 无值）
     d.write(paths.settingsFile, R"({"env": {"MY_KEY": "user"}})");
@@ -1737,7 +1786,8 @@ REGISTER_TEST(claude_service_last_sync_warnings_snapshot,
     using namespace module::claude;
     test_support::TestDb tdb(kDbPrefix, "snapshot");
     test_support::TempDir d("snapshot", kSyncTempDirPrefix);
-    auto paths = makePaths(d);
+    SyncDb sdb("sync_snapshot");
+    auto paths = makePaths(d, sdb.handle());
 
     ClaudeService svc(tdb.handle(), kTestKeychainService);
     svc.setSettingsSyncPaths(paths);
@@ -1754,7 +1804,7 @@ REGISTER_TEST(claude_service_last_sync_warnings_snapshot,
     // 损坏（每次 syncTakeOver 都失败）→ 每次切 profile 都把 warnings_ **整体
     // 重写**一遍 = 修复前读者拿活引用时的重分配窗口
     d.write(paths.settingsFile, R"({"env": {"MY_KEY": "user"}})");
-    d.write(paths.sidecarFile, "{broken");
+    test_support::writeRawConfigRow(&sdb.handle(), module::claude::settings_sync::kSidecarConfigKey, "{broken");
     auto started = svc.startProxy("127.0.0.1", 0);
     DOCTEST_REQUIRE(started.isOk());
     DOCTEST_REQUIRE(!svc.lastSyncWarnings().empty());   // 预置：读者开局即有内容

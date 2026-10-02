@@ -868,9 +868,9 @@ void assemblyHandlerStub(bool autoStart) {
     g_asmLastAutoStart = autoStart;
     g_asmSeamSeq = ++g_seqCounter;
     asmEnsureService();
-    // 端口自读：SettingsStore(::core::paths::configFile()).load()（与 main 的
-    // assembleClaudeServiceNow 同源；测试配置经 DEVDESK_CONFIG_PATH 隔离）
-    const module::settings::SettingsStore store(::core::paths::configFile());
+    // 端口自读：SettingsStore(::core::appDatabase()).load()（与 main 的
+    // assembleClaudeServiceNow 同源；测试配置经用例注册的临时库隔离）
+    const module::settings::SettingsStore store(::core::appDatabase());
     const auto cfg = store.load();
     g_asmSvc->setConfiguredProxyPort(cfg.proxyPort);
     g_asmSvc->recoverPendingSettingsRestore();
@@ -930,8 +930,7 @@ void resetLazyAssemblyLedger() {
 // 配置隔离：claude 门控关（enabledModules 不含 claude）+ autoStart 按用例给。
 // 返回 bool：DOCTEST_CHECK 宏含 `return false`，只能用在返回 bool 的函数里
 //（doctest.h 断言语义 #3）；断言由调用方（用例体）做
-bool writeLazyAssemblyConfig(const std::filesystem::path& cfgPath,
-                             bool autoStart) {
+bool writeLazyAssemblyConfig(bool autoStart) {
     module::settings::SettingsConfig cfg;
     cfg.enabledModules = {module::settings::kModuleIdHome,
                           module::settings::kModuleIdMarkdown,
@@ -939,7 +938,7 @@ bool writeLazyAssemblyConfig(const std::filesystem::path& cfgPath,
                           module::settings::kModuleIdSettings,
                           module::settings::kModuleIdAgent};
     cfg.claudeProxyAutoStart = autoStart;
-    return module::settings::SettingsStore(cfgPath).save(cfg).isOk();
+    return module::settings::SettingsStore(::core::appDatabase()).save(cfg).isOk();
 }
 
 } // namespace
@@ -957,7 +956,7 @@ REGISTER_TEST(assembly_dispatch_claude_lazy_assemble_autostart,
 
     test_support::ScopedConfigPath scoped(
         test_support::tempConfigFile("assembly_lazy", "autostart"));
-    DOCTEST_CHECK(writeLazyAssemblyConfig(scoped.cfgPath, true));
+    DOCTEST_CHECK(writeLazyAssemblyConfig(true));
 
     // 2026-10-01 新契约（本计划 T2 Step 1）：会话内 auto-start 前必须过前置
     // 校验（激活 profile + 连通测试）→ 用例必须先起 mock 上游 + 种激活 profile。
@@ -1046,7 +1045,7 @@ REGISTER_TEST(assembly_dispatch_claude_lazy_assemble_no_autostart,
 
     test_support::ScopedConfigPath scoped(
         test_support::tempConfigFile("assembly_lazy", "noautostart"));
-    DOCTEST_CHECK(writeLazyAssemblyConfig(scoped.cfgPath, false));
+    DOCTEST_CHECK(writeLazyAssemblyConfig(false));
 
     g_asmDb = &asmDb;
     app::toggle::setClaudeAssemblyHandler(&assemblyHandlerStub);
@@ -1086,7 +1085,7 @@ REGISTER_TEST(assembly_dispatch_claude_toggle_blocked_by_preconditions,
 
     test_support::ScopedConfigPath scoped(
         test_support::tempConfigFile("assembly_pv", "noactive"));
-    DOCTEST_CHECK(writeLazyAssemblyConfig(scoped.cfgPath, true));   // autoStart=true
+    DOCTEST_CHECK(writeLazyAssemblyConfig(true));   // autoStart=true
 
     g_asmDb = &asmDb;
     app::toggle::setClaudeAssemblyHandler(&assemblyHandlerStub);

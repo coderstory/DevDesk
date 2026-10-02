@@ -35,10 +35,10 @@ namespace module::pet {
 // 皮肤清单（扫皮肤根候选目录下含 pet.json 的目录；设置页下拉与右键换肤
 // 菜单同一数据源）
 std::vector<std::string> discoverSkins();
-// 当前皮肤名（读 pet_config.json；applyPetSkin 双写运行时 + 盘，盘即真值）
+// 当前皮肤名（读 app_config 的 pet_config 键；applyPetSkin 双写运行时 + 盘）
 std::string currentSkinName();
 // 当前显示大小档位下标（0=小 0.75× / 1=中 1.0× / 2=大 1.5×；读
-// pet_config.json，非法值已由 pet 侧 sanitize 收敛默认档）
+// pet_config 键，非法值已由 pet 侧 sanitize 收敛默认档）
 int currentPetScaleIndex();
 // 显示大小三档文案（与档位下标一一对应；单源在 pet_config.h，设置页
 // 下拉 items 直接消费，不自带一份防漂移）

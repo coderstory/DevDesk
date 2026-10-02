@@ -208,6 +208,54 @@ inline constexpr const char* kSql = R"(
         FOREIGN KEY (run_id) REFERENCES agent_runs(id) ON DELETE CASCADE
     );
 
+    -- ==================== 应用配置（E2：JSON 配置文件的唯一落点）================
+    -- 2026-10-03 用户第 17 条需求「所有 app 配置全部进 SQLite，不要 JSON 文件了」。
+    -- 取代原先六个 JSON 落点：config.json / pet_config.json / markdown_view_state.json
+    -- / todo_view_state.json / claude_settings_snapshot.json（这五个走本表）与
+    -- run-settings/*.json（走下面的 claude_run_settings）。
+    --
+    -- **一张通用表，不按配置各建一张**：每份配置一个命名空间前缀（如
+    -- `config.json:` / `pet_config`），前缀之下是它的键。六张表 = 六个真相源，
+    -- 备份/导出/审计都得逐张拼，漏一张丢一份。
+    --   value 恒为 TEXT 且**存得住任意字节**：中文 / 空串 / `{}` / `[]` / 含换行 /
+    --   超长串都按原样进出（每份配置用自己的结构编码成字符串，见 core/app_config.h）。
+    --   空串是合法配置值，与「键不存在」严格区分（读侧 NotFound vs 命中空串）。
+    -- 本表**不含密钥**：凭据走 claude_profiles.api_key_encrypted（E1 的分平台
+    -- 保护）；run-settings 的临时 settings 含明文 key，由 claude_run_settings
+    -- 自己那道保护兜（见该表注释）。
+    CREATE TABLE IF NOT EXISTS app_config (
+        key TEXT PRIMARY KEY,
+        value TEXT NOT NULL,
+        updated_at INTEGER NOT NULL
+    );
+
+    -- ==================== Claude 直连会话的临时 settings 记录 ====================
+    -- run-settings/*.json **不是配置文档**，是「每次运行落一份、之后要读回来对比/
+    -- 追踪」的记录：单键会被后一次覆盖，所以单独建表，一行一次运行。
+    --
+    -- 为什么还留着一个文件：`claude --settings <path>` 是**外部进程契约**，
+    -- 被启动的 claude CLI 只会按路径读文件，DevDesk 无法改成从库里读
+    -- （本次 E2 未验证、也不臆测 claude CLI 有无 stdin 形态的 --settings）。
+    -- 因此口径是：**DB 行是记录与追踪的真值，文件是喂给外部进程的临时载体**。
+    -- 写入顺序 = 先落库（记录先成立）→ 再落文件 → 再 chmod 0600 → 再启动会话；
+    -- 中途失败按 runProfile 的既有补偿删文件并按失败返回。
+    --
+    -- settings_json **含明文 API key**（buildDirectEnv 的密钥键三态之一），
+    -- 故经 platform/credential_protection 的分平台保护入库
+    -- （macOS/POSIX = 明文 + 库文件权限 0600；Windows = DPAPI 密文 hex），
+    -- **不新写一套加密**。空串合法（「没有 env」）。
+    -- written_at 供 24h 清扫与排序；file_path 记当时物化出来的文件路径
+    -- （会话退出自删 + 24h 清扫后该路径已不存在，属正常）。
+    CREATE TABLE IF NOT EXISTS claude_run_settings (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        run_key TEXT NOT NULL UNIQUE,
+        profile_id INTEGER NOT NULL,
+        profile_name TEXT NOT NULL DEFAULT '',
+        written_at INTEGER NOT NULL,
+        file_path TEXT NOT NULL DEFAULT '',
+        settings_json TEXT NOT NULL DEFAULT ''
+    );
+
     -- ==================== 索引 ====================
     CREATE INDEX IF NOT EXISTS idx_tasks_column
         ON todo_tasks(column_id, position);
@@ -228,6 +276,10 @@ inline constexpr const char* kSql = R"(
         ON agent_runs(task_id, started_at DESC);
     CREATE INDEX IF NOT EXISTS idx_agent_messages_run
         ON agent_messages(run_id, seq);
+
+    -- 直连会话记录：按写入时刻倒序取最近（run_key 已有 UNIQUE 索引）
+    CREATE INDEX IF NOT EXISTS idx_run_settings_written
+        ON claude_run_settings(written_at DESC);
 
     -- ==================== 种子数据 ====================
     -- 首次建库插入 4 个默认 Todo 列，kind 直接带最终值（不再「插完再按标题回填」）。

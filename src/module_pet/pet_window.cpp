@@ -19,6 +19,7 @@
 
 #include "core/component_theme.h"
 #include "core/logging.h"
+#include "core/database.h"   // core::appDatabase()（pet_config 落点）
 #include "core/paths.h"
 #include "core/platform/context_menu.h"
 #include "core/platform/power_events.h"
@@ -136,7 +137,7 @@ void clampPetPosIntoWorkAreaInPlace(int& x, int& y) {
     y = (cy == -1) ? -2 : cy;
 }
 
-// ---- 持久化（读-改-写 petsDir()/pet_config.json，只含 pet 字段；模块隔离，
+// ---- 持久化（读-改-写 app_config 的 pet_config 键，只含 pet 字段；模块隔离，
 // 不依赖 module_settings）----
 
 void savePetPosition() {
@@ -147,7 +148,7 @@ void savePetPosition() {
     // 审计 [12]：钳进工作区再落盘——拖到左/上边缘外（负坐标）直接写盘会被
     // -1「未设置」哨兵吞掉，重启跳回默认位（钳制与启动路径同一规则）
     clampPetPosIntoWorkAreaInPlace(x, y);
-    PetConfigStore store(petConfigFile());
+    PetConfigStore store(::core::appDatabase());
     PetConfig cfg = store.load();
     cfg.x = x;
     cfg.y = y;
@@ -806,7 +807,7 @@ void applyPetSkin(const std::string& skinName) {
         LOG_WARN("桌宠换肤被拒绝：皮肤 \"" + skinName + "\" 未在皮肤目录中发现");
         return;
     }
-    PetConfigStore store(petConfigFile());
+    PetConfigStore store(::core::appDatabase());
     PetConfig cfg = store.load();
     cfg.skinName = skinName;
     if (rt.handle != nullptr) {
@@ -840,7 +841,7 @@ void applyPetSkin(const std::string& skinName) {
 void resetPetPosition() {
     PetRuntime& rt = runtime();
     // 坐标清回 -1（未设置哨兵）：显示器布局变化后下次启动重算默认位
-    PetConfigStore store(petConfigFile());
+    PetConfigStore store(::core::appDatabase());
     PetConfig cfg = store.load();
     cfg.x = -1;
     cfg.y = -1;
@@ -859,16 +860,16 @@ void resetPetPosition() {
 }
 
 // 审计 [5][36]：设置页桌宠卡只读桥（契约见 pet_window.h 同名声明）。
-// 读 pet_config.json 而非 rt.config——设置页可能在窗口未开时读取（桌宠关/
+// 读 app_config 的 pet_config 键而非 rt.config——设置页可能在窗口未开读（桌宠关/
 // 隐藏），且 apply 双写保证盘与运行时一致
 std::string currentSkinName() {
-    return PetConfigStore(petConfigFile()).load().skinName;
+    return PetConfigStore(::core::appDatabase()).load().skinName;
 }
 
 // ---- 显示大小三档（声明见 pet_window.h；设置页经 module_pet_bridge.h 消费）----
 
 int currentPetScaleIndex() {
-    return petScaleIndexOf(PetConfigStore(petConfigFile()).load().scale);
+    return petScaleIndexOf(PetConfigStore(::core::appDatabase()).load().scale);
 }
 
 std::vector<std::string> petScalePresetLabels() {
@@ -882,7 +883,7 @@ void applyPetScaleIndex(int presetIndex) {
     }
     PetRuntime& rt = runtime();
     const double scale = kPetScalePresets[presetIndex];
-    PetConfigStore store(petConfigFile());
+    PetConfigStore store(::core::appDatabase());
     PetConfig cfg = store.load();
     cfg.scale = scale;
     if (rt.handle != nullptr) {

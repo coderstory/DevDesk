@@ -6,7 +6,7 @@
 
 #include "app_sidebar.h"  // app::showAppNotice（托盘失效入口的解释反馈）
 #include "core/logging.h"
-#include "core/paths.h"            // configFile()（惰性装配 autoStart 现读）
+#include "core/database.h"        // core::appDatabase()（autoStart 现读）
 #include "module_markdown/md_file_open.h"
 #include "module_toggle_bridge.h"  // ensureClaudeServiceAssembled（惰性装配缝）
 #include "platform/file_open.h"
@@ -275,7 +275,7 @@ void dispatchModuleToggle(const std::string& moduleId, bool on,
                 // 拨开关的语义一致）；桥未装配（启动早期/测试）时为 no-op +
                 // LOG_WARN，不崩
                 const module::settings::SettingsStore store(
-                    ::core::paths::configFile());
+                    ::core::appDatabase());
                 app::toggle::ensureClaudeServiceAssembled(
                     store.load().claudeProxyAutoStart);
             }

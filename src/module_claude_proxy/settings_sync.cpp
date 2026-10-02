@@ -9,6 +9,8 @@
 #include <system_error>
 
 #include "claude_service.h"
+#include "core/app_config.h"
+#include "core/database.h"   // core::appDatabase()
 #include "core/logging.h"
 #include "core/paths.h"
 #include "platform/json.h"
@@ -127,6 +129,84 @@ ParsedDoc parseJsonObjectFile(const fs::path& p) {
     out.obj = parsed.value().asObject();
     out.ok = true;
     return out;
+}
+
+// ---- sidecar 的 app_config 存取（2026-10-03 批次 E2：文件 → 表行）------------
+// 语义与迁移前的文件版逐条对齐，调用方无需改判读逻辑：
+//   · 键不存在 → exists=false / ok=true（= 没接管过，正常路径）
+//   · 值不是合法 JSON 对象 → ok=false + error（损坏，必须报出来）
+//   · db 为 nullptr → exists=false / ok=true，且调用点各自 WARN
+//     （统一由 sidecarDbMissing() 提示，不静默）
+bool sidecarDbMissing(const Paths& paths) {
+    if (paths.db != nullptr) return false;
+    LOG_WARN("settings_sync: 应用数据库未就绪，sidecar 快照不可用（"
+             "接管状态按「无快照」处理，还原域可能被跳过）");
+    return true;
+}
+
+bool sidecarExists(const Paths& paths) {
+    if (sidecarDbMissing(paths)) return false;
+    auto has = core::appconfig::has(*paths.db, kSidecarConfigKey);
+    if (has.isFail()) {
+        LOG_WARN("settings_sync: sidecar 存在性探测失败: " + has.errorMessage());
+        return false;
+    }
+    return has.value();
+}
+
+// 读 sidecar。返回结构与 parseJsonObjectFile 同款（exists / ok / error / obj），
+// 故上面的分支判读逻辑一行都不用改。
+ParsedDoc parseSidecar(const Paths& paths) {
+    ParsedDoc out;
+    if (sidecarDbMissing(paths)) {
+        out.ok = true;
+        return out;
+    }
+    auto raw = core::appconfig::get(*paths.db, kSidecarConfigKey);
+    if (raw.isFail()) {
+        if (raw.errorCode() == core::ErrorCode::NotFound) {
+            out.ok = true;   // 键不存在 → 调用方按空对象处理
+            return out;
+        }
+        out.error = "读取 app_config 失败: " + raw.errorMessage();
+        return out;
+    }
+    out.exists = true;
+    if (raw.value().empty()) {
+        out.ok = true;   // 空串视同不存在（对齐旧实现的 0 字节空文件口径）
+        return out;
+    }
+    auto parsed = platform::json::parse(raw.value());
+    if (parsed.isFail()) {
+        out.error = parsed.errorMessage();
+        return out;
+    }
+    if (!parsed.value().isObject()) {
+        out.error = "顶层不是 JSON 对象";
+        return out;
+    }
+    out.obj = parsed.value().asObject();
+    out.ok = true;
+    return out;
+}
+
+core::Result<void> writeSidecar(const Paths& paths,
+                                const std::string& text) {
+    if (paths.db == nullptr) {
+        return core::Result<void>::fail(
+            core::ErrorCode::NotFound,
+            "应用数据库未就绪，sidecar 快照无法保存");
+    }
+    return core::appconfig::set(*paths.db, kSidecarConfigKey, text);
+}
+
+void removeSidecar(const Paths& paths) {
+    if (sidecarDbMissing(paths)) return;
+    auto erased = core::appconfig::erase(*paths.db, kSidecarConfigKey);
+    if (erased.isFail()) {
+        LOG_WARN("settings_sync: sidecar 删除失败（不影响还原结果）: " +
+                 erased.errorMessage());
+    }
 }
 
 // sidecar 结构：{"managedKeys": {<键名>: "", ...}, "envSnapshot": {...}}。
@@ -321,7 +401,7 @@ std::vector<std::string> detectNonEnvRemovalConflicts(
 Paths defaultPaths() {
     Paths p;
     p.settingsFile = core::paths::claudeSettingsFile();
-    p.sidecarFile = core::paths::appDataDir() / "claude_settings_snapshot.json";
+    p.db = core::appDatabase();
     // managed（企业策略）+ project（当前工作目录）两层；user 层即 settingsFile
     std::error_code ec;
     const fs::path cwd = fs::current_path(ec);
@@ -373,11 +453,11 @@ SyncResult takeOver(const Profile& profile, int proxyPort, const Paths& paths) {
     std::vector<std::string> snapshotWarnings;  // 快照污染守卫命中（条目 2①）
     JsonObject priorNonEnvSnapshot;             // sidecar 已有 nonEnvSnapshot
     std::vector<std::string> priorNonEnvKeys;   // sidecar 已有 nonEnvKeys 并集
-    if (fileExists(paths.sidecarFile)) {
-        auto sidecar = parseJsonObjectFile(paths.sidecarFile);
+    if (sidecarExists(paths)) {
+        auto sidecar = parseSidecar(paths);
         if (!sidecar.ok || !sidecar.exists) {
-            out.error = "sidecar 快照损坏，中止接管（请人工检查 " +
-                        paths.sidecarFile.string() + "）";
+            out.error = "sidecar 快照损坏，中止接管（" +
+                        std::string(kSidecarConfigKey) + " 键）: " + sidecar.error;
             LOG_WARN("settings_sync: " + out.error);
             return out;
         }
@@ -468,7 +548,7 @@ SyncResult takeOver(const Profile& profile, int proxyPort, const Paths& paths) {
             out.error = "sidecar 序列化失败: " + text.errorMessage();
             return out;
         }
-        auto w = atomicWrite(paths.sidecarFile, text.value());
+        auto w = writeSidecar(paths, text.value());
         if (w.isFail()) {
             out.error = "sidecar 写入失败: " + w.errorMessage();
             LOG_WARN("settings_sync: " + out.error);
@@ -582,14 +662,14 @@ SyncResult takeOver(const Profile& profile, int proxyPort, const Paths& paths) {
 
 SyncResult restore(const Paths& paths) {
     SyncResult out;
-    if (!fileExists(paths.sidecarFile)) {
+    if (!sidecarExists(paths)) {
         // 无快照 = 没接管过 → 通常 no-op；但 settings.json 仍留本机代理形态键
         //（sidecar 被清掉 / 与其它工具互抢）时做最小清除（条目 2②）
         return clearResidualProxyKeys(paths);
     }
 
     // 读 sidecar（损坏 → 报错并保留，供人工恢复）
-    auto sidecar = parseJsonObjectFile(paths.sidecarFile);
+    auto sidecar = parseSidecar(paths);
     if (!sidecar.ok || !sidecar.exists) {
         out.error = "sidecar 快照损坏，跳过还原（保留文件供人工检查）: " +
                     sidecar.error;
@@ -692,18 +772,13 @@ SyncResult restore(const Paths& paths) {
     }
 
     // 还原成功才删 sidecar
-    std::error_code ec;
-    fs::remove(paths.sidecarFile, ec);
-    if (ec) {
-        LOG_WARN("settings_sync: sidecar 删除失败（不影响还原结果）: " +
-                 ec.message());
-    }
+    removeSidecar(paths);
     out.ok = true;
     return out;
 }
 
 bool hasPendingSnapshot(const Paths& paths) {
-    return fileExists(paths.sidecarFile);
+    return sidecarExists(paths);
 }
 
 SyncResult recoverPendingSnapshot(const Paths& paths) {
@@ -755,13 +830,13 @@ SettingsEnvRead readSettingsEnvForSync(const Paths& paths) {
     out.present = true;
 
     // sidecar 托管键（反向同步的 G1 输入）：缺失 → 空集；损坏 → 空集 + WARN
-    if (fileExists(paths.sidecarFile)) {
-        auto sidecar = parseJsonObjectFile(paths.sidecarFile);
+    if (sidecarExists(paths)) {
+        auto sidecar = parseSidecar(paths);
         if (sidecar.ok && sidecar.exists) {
             out.managedKeys = managedKeysFromSidecar(sidecar.obj);
         } else {
-            LOG_WARN("settings_sync: sidecar 快照损坏，反向同步按无托管键处理: " +
-                     paths.sidecarFile.string() +
+            LOG_WARN("settings_sync: sidecar 快照损坏，反向同步按无托管键处理（" +
+                     std::string(kSidecarConfigKey) + " 键）" +
                      (sidecar.error.empty() ? "" : ": " + sidecar.error));
         }
     }

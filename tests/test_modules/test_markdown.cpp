@@ -8,6 +8,7 @@
 #include "doctest.h"
 #include "test_support.h"
 #include "../frame_env.h"   // TIN-06 收尾波：headless 帧驱动三合一 HeadlessFrame
+#include "core/app_config.h"
 #include "core/database.h"
 #include "core/module_interface.h"
 #include "core/router.h"
@@ -3552,19 +3553,18 @@ REGISTER_TEST(md_view_state_mode_live,
               "markdown: 视图状态 mode 3（实时）通过净化 + 0-2 旧语义不变（M1）", {
     using module::markdown::MarkdownViewState;
     using module::markdown::MarkdownViewStateStore;
-    const fs::path file =
-        test_temp::tempPath("devdesk_md_view_state_live.json");
-    std::error_code ec;
-    fs::remove(file, ec);
+    // 2026-10-03（批次 E2）：落点从 markdown_view_state.json 文件改成 app_config
+    // 表的一行，故本用例改持一份已 migrate 的临时库。
+    test_support::TestDb env("devdesk_test_md_live_mode_", "mode");
+    core::data::SqliteDb& db = env.handle();
 
-    // 旧版落盘文件（同格式 JSON）→ mode 0-2 语义完全不变
+    // 既有数据（同格式 JSON）→ mode 0-2 语义完全不变
     for (int m = 0; m <= 2; ++m) {
-        {
-            std::ofstream f(file, std::ios::trunc);
-            f << "{\"lastPath\": \"old.md\", \"mode\": " << m
-              << ", \"collapsedDirs\": []}";
-        }
-        const MarkdownViewState loaded = MarkdownViewStateStore(file).load();
+        test_support::writeRawConfigRow(
+            &db, module::markdown::kMarkdownViewStateKey,
+            "{\"lastPath\": \"old.md\", \"mode\": " + std::to_string(m) +
+                ", \"collapsedDirs\": []}");
+        const MarkdownViewState loaded = MarkdownViewStateStore(&db).load();
         DOCTEST_CHECK_EQ(loaded.mode, m);
         DOCTEST_CHECK_EQ(loaded.lastPath, std::string("old.md"));
     }
@@ -3574,10 +3574,10 @@ REGISTER_TEST(md_view_state_mode_live,
     live.mode = 3;
     DOCTEST_CHECK_EQ(MarkdownViewStateStore::sanitized(live).mode, 3);
     {
-        MarkdownViewStateStore store(file);
+        MarkdownViewStateStore store(&db);
         DOCTEST_CHECK(store.save(live).isOk());
     }
-    DOCTEST_CHECK_EQ(MarkdownViewStateStore(file).load().mode, 3);
+    DOCTEST_CHECK_EQ(MarkdownViewStateStore(&db).load().mode, 3);
 
     // 越界回落 0（新域上界为 3）
     MarkdownViewState over;
@@ -3586,8 +3586,6 @@ REGISTER_TEST(md_view_state_mode_live,
     MarkdownViewState neg;
     neg.mode = -1;
     DOCTEST_CHECK_EQ(MarkdownViewStateStore::sanitized(neg).mode, 0);
-
-    fs::remove(file, ec);
     return true;
 })
 
@@ -3798,12 +3796,15 @@ REGISTER_TEST(md_module_live_input_roundtrip,
     std::vector<int> editBlocks;
     {
         DOCTEST_REQUIRE(writeTextFile(env.dir / "rt.md", text));  // 复位文档
-        // 路径 A 退出时处于实时态 → 视图状态文件会把 mode=3 带到下一次启动
-        //（M1 起四态都持久化）。本段要在【编辑态】做对照编辑，故清掉状态文件
-        {
-            std::error_code ec;
-            fs::remove(env.dir / "view_state.json", ec);
-        }
+        // 路径 A 退出时处于实时态 → 视图状态会把 mode=3 带到下一次启动
+        //（M1 起四态都持久化）。本段要在【编辑态】做对照编辑，故清掉视图状态。
+        // 2026-10-03（批次 E2）：状态不再是 markdown_view_state.json 文件，
+        // 而是 app_config 表的 markdown_view_state 行 —— 删文件已经不生效，
+        // 必须删那一行（否则本段会以实时态启动，后面的编辑态断言全找不到控件）。
+        DOCTEST_REQUIRE(core::appconfig::erase(
+                            *::core::appDatabase(),
+                            module::markdown::kMarkdownViewStateKey)
+                            .isOk());
         std::unique_ptr<::core::Module> mod(create_markdown_module());
         mod->onStart();
         eui::Screen screen;
@@ -4136,9 +4137,12 @@ REGISTER_TEST(md_module_live_state_reset_on_restore,
     DOCTEST_REQUIRE(writeTextFile(env.dir / "a.md", tallNoteDoc("R", 60)));
     // 预置视图状态：mode=3（实时）+ 上次笔记，onStart 尾部恢复
     {
-        std::ofstream f(env.dir / "view_state.json", std::ios::trunc);
-        f << "{\"lastPath\": \"a.md\", \"mode\": 3, \"collapsedDirs\": []}";
-        DOCTEST_REQUIRE(f.good());
+        // 2026-10-03（批次 E2）：markdown 视图状态从 markdown_view_state.json
+        // 文件迁到 app_config 表的一行（键 kMarkdownViewStateKey，整份一行），
+        // 故这里直接写那一行。MdHeadlessEnv 已把它注册为进程级 appDatabase。
+        DOCTEST_REQUIRE(test_support::writeRawConfigRow(
+            ::core::appDatabase(), module::markdown::kMarkdownViewStateKey,
+            "{\"lastPath\": \"a.md\", \"mode\": 3, \"collapsedDirs\": []}"));
     }
 
     std::unique_ptr<::core::Module> mod(create_markdown_module());

@@ -10,6 +10,7 @@
 #include "test_support.h"
 #include "settings_config.h"
 
+#include "core/app_config.h"
 #include "core/module_interface.h"
 #include "core/router.h"
 
@@ -45,10 +46,14 @@ private:
 // 合流），调用点统一 test_support::tempConfigFile(kCfgPrefix, name)
 constexpr const char* kCfgPrefix = "devdesk_test_gating_";
 
-void writeRawConfig(const std::filesystem::path& file,
-                    const std::string& json) {
-    std::ofstream f(file, std::ios::trunc);
-    f << json;
+// 「手改过的配置」按顶层键分发进 app_config 表各行——等价批次 E2 之前往
+// config.json 写这段文本（顶层键 = 行键）。负例原样保留。
+// 返回 bool（doctest 断言宏含 `return false`，只能在返回 bool 的函数里用；
+// 断言由调用方做）
+bool writeRawConfig(const std::string& json) {
+    return test_support::seedConfigJsonRows(
+        ::core::appDatabase(), module::settings::SettingsStore::keyNamespace(),
+        json);
 }
 
 } // namespace
@@ -84,10 +89,12 @@ REGISTER_TEST(gating_config_defaults, "gating: enabledModules 缺省默认清单
 
 REGISTER_TEST(gating_config_roundtrip, "gating: enabledModules 保存-加载往返", {
     using namespace module::settings;
+    test_support::TestEnv env(kCfgPrefix, "gating", /*registerAppDb=*/true);
+    (void)0;
     const auto file = test_support::tempConfigFile(kCfgPrefix, "roundtrip");
     SettingsConfig cfg;
     cfg.enabledModules = {kModuleIdMarkdown, kModuleIdHome, kModuleIdSettings};
-    const SettingsStore store(file);
+    const SettingsStore store(::core::appDatabase());
     DOCTEST_CHECK(store.save(cfg).isOk());
     const SettingsConfig loaded = store.load();
     DOCTEST_CHECK_EQ(loaded.enabledModules.size(), static_cast<size_t>(3));
@@ -103,12 +110,13 @@ REGISTER_TEST(gating_config_roundtrip, "gating: enabledModules 保存-加载往�
 
 REGISTER_TEST(gating_config_unknown_ids_filtered, "gating: 未知模块 ID 忽略 + 恒启用补齐", {
     using namespace module::settings;
+    test_support::TestEnv env(kCfgPrefix, "gating", /*registerAppDb=*/true);
+    (void)0;
     const auto file = test_support::tempConfigFile(kCfgPrefix, "unknown");
     // 手改 config 写入未知 ID + 漏掉恒启用项 + 重复项
-    writeRawConfig(file,
-                   "{\"enabledModules\": [\"home\", \"todo\", \"bogus\", "
-                   "\"todo\"]}");
-    const SettingsConfig loaded = SettingsStore(file).load();
+    DOCTEST_REQUIRE(writeRawConfig("{\"enabledModules\": [\"home\", \"todo\", \"bogus\", "
+                                  "\"todo\"]}"));
+    const SettingsConfig loaded = SettingsStore(::core::appDatabase()).load();
     DOCTEST_CHECK_EQ(loaded.enabledModules.size(), static_cast<size_t>(3));
     DOCTEST_CHECK(moduleEnabled(loaded, kModuleIdTodo));
     DOCTEST_CHECK(moduleEnabled(loaded, kModuleIdHome));
@@ -121,9 +129,11 @@ REGISTER_TEST(gating_config_unknown_ids_filtered, "gating: 未知模块 ID 忽�
 
 REGISTER_TEST(gating_config_empty_array, "gating: 空数组 = 四工具模块全关（home/settings 补齐）", {
     using namespace module::settings;
+    test_support::TestEnv env(kCfgPrefix, "gating", /*registerAppDb=*/true);
+    (void)0;
     const auto file = test_support::tempConfigFile(kCfgPrefix, "empty");
-    writeRawConfig(file, "{\"enabledModules\": []}");
-    const SettingsConfig loaded = SettingsStore(file).load();
+    DOCTEST_REQUIRE(writeRawConfig("{\"enabledModules\": []}"));
+    const SettingsConfig loaded = SettingsStore(::core::appDatabase()).load();
     DOCTEST_CHECK(!moduleEnabled(loaded, kModuleIdMarkdown));
     DOCTEST_CHECK(!moduleEnabled(loaded, kModuleIdTodo));
     DOCTEST_CHECK(!moduleEnabled(loaded, kModuleIdClaudeProxy));
@@ -137,15 +147,27 @@ REGISTER_TEST(gating_config_empty_array, "gating: 空数组 = 四工具模块全
 
 REGISTER_TEST(gating_config_corrupt_falls_back, "gating: 字段损坏回退默认全启用", {
     using namespace module::settings;
+    test_support::TestEnv env(kCfgPrefix, "gating", /*registerAppDb=*/true);
+    (void)0;
     const auto file = test_support::tempConfigFile(kCfgPrefix, "corrupt");
     // 数组里的非字符串项被跳过，但数组本身有效 → 列表按字面生效（只含 todo）
-    writeRawConfig(file, "{\"enabledModules\": [\"todo\", 42, true]}");
-    SettingsConfig loaded = SettingsStore(file).load();
+    DOCTEST_REQUIRE(writeRawConfig("{\"enabledModules\": [\"todo\", 42, true]}"));
+    SettingsConfig loaded = SettingsStore(::core::appDatabase()).load();
     DOCTEST_CHECK(moduleEnabled(loaded, kModuleIdTodo));
     DOCTEST_CHECK(!moduleEnabled(loaded, kModuleIdMarkdown));
-    // 整个文件非 JSON → 全默认（默认清单；agent 默认关，final-review Fix 2）
-    writeRawConfig(file, "{not json at all");
-    loaded = SettingsStore(file).load();
+    // 整份内容非 JSON → 全默认（默认清单；agent 默认关，final-review Fix 2）
+    // 2026-10-03（批次 E2）：seedConfigJsonRows 要求顶层是对象，遇到非对象
+    // 会返回 false —— 「值本身是坏的」这条负例改走原始行通道直接写进去。
+    const std::string kEnabledModulesRow =
+        std::string(module::settings::SettingsStore::keyNamespace()) +
+        "enabledModules";
+    DOCTEST_REQUIRE(core::appconfig::eraseWithPrefixExcept(
+                        *::core::appDatabase(),
+                        module::settings::SettingsStore::keyNamespace(), {})
+                        .isOk());
+    DOCTEST_REQUIRE(test_support::writeRawConfigRow(
+        ::core::appDatabase(), kEnabledModulesRow.c_str(), "{not json at all"));
+    loaded = SettingsStore(::core::appDatabase()).load();
     DOCTEST_CHECK_EQ(loaded.enabledModules.size(), static_cast<size_t>(5));
     DOCTEST_CHECK(moduleEnabled(loaded, kModuleIdMarkdown));
     std::error_code ec;
@@ -157,13 +179,15 @@ REGISTER_TEST(gating_config_corrupt_falls_back, "gating: 字段损坏回退默�
 
 REGISTER_TEST(gating_registration_respects_config, "gating: 关闭模块不注册进 Router（modules() 不含它）", {
     using namespace module::settings;
+    test_support::TestEnv env(kCfgPrefix, "gating", /*registerAppDb=*/true);
+    (void)0;
     const auto file = test_support::tempConfigFile(kCfgPrefix, "registration");
     SettingsConfig cfg;
     cfg.enabledModules = {kModuleIdHome, kModuleIdMarkdown, kModuleIdSettings};
-    DOCTEST_CHECK(SettingsStore(file).save(cfg).isOk());
+    DOCTEST_CHECK(SettingsStore(::core::appDatabase()).save(cfg).isOk());
 
     // 以下复刻 main.cpp getRouter() 的装配门控
-    const SettingsConfig loaded = SettingsStore(file).load();
+    const SettingsConfig loaded = SettingsStore(::core::appDatabase()).load();
     ::core::Router router;
     StubModule home(::core::PageId::Home, "home");
     StubModule markdown(::core::PageId::Markdown, "markdown");

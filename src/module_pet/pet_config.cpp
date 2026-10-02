@@ -1,14 +1,15 @@
 // src/module_pet/pet_config.cpp
-// pet_config.json 读写（照抄 SettingsStore 的容错模式：缺失/损坏回退默认）
+// pet_config 的 app_config 表存取（接口见 pet_config.h）
+//
+// 迁移前这里读写 petsDir()/pet_config.json；2026-10-03（批次 E2）起整份存
+// app_config 表的一行（键 pet_config），**不读旧文件、不迁移**（项目口径：
+// 无兼容包袱，core/schema.h 抬高「不升级旧库」）。
 #include "module_pet/pet_config.h"
 
-#include <fstream>
-#include <sstream>
 #include <utility>
 
-#include "core/atomic_write.h"
+#include "core/app_config.h"
 #include "core/logging.h"
-#include "core/paths.h"
 #include "platform/json.h"
 
 namespace module::pet {
@@ -18,25 +19,16 @@ constexpr const char* kKeySkin = "skinName";
 constexpr const char* kKeyX = "x";
 constexpr const char* kKeyY = "y";
 constexpr const char* kKeyScale = "scale";  // 显示大小档（0.75/1.0/1.5）
-// 【历史】clickThrough 键随「挂机穿透」功能于 2026-09-24 一并移除：save 只写
-// skinName/x/y/scale 四个键（与 pet_config.h:57 口径一致），旧 pet_config.json
-// 残留的 clickThrough 键被 load 静默
-// 忽略（向后兼容：不报错、也不做迁移），下次 save 重写整文件后自然消失
 } // namespace
 
-std::filesystem::path petConfigFile() {
-    return core::paths::petsDir() / "pet_config.json";
-}
-
-PetConfigStore::PetConfigStore(std::filesystem::path file)
-    : file_(std::move(file)) {}
+PetConfigStore::PetConfigStore(core::data::SqliteDb* db) : db_(db) {}
 
 PetConfig PetConfigStore::sanitized(const PetConfig& cfg) {
     PetConfig out = cfg;
     // 皮肤名只许 [A-Za-z0-9_-]（要拼进文件系统路径，防穿越）；
     // -1「未设置」哨兵单边独立生效；M2 多显示器：其他负值是左/上副屏的合法
     // 坐标原样保留（旧 x<-1→-1 收敛把副屏位置吞成未设置，重启跳回主屏）；
-    // 正负都钳进 int16 量级防手改乱值
+    // 正负都钳进 int16 量级防脏值
     if (out.skinName.empty() ||
         out.skinName.find_first_not_of(
             "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_") !=
@@ -47,32 +39,36 @@ PetConfig PetConfigStore::sanitized(const PetConfig& cfg) {
     if (out.y < -32767) out.y = -32767;
     if (out.x > 32767) out.x = 32767;
     if (out.y > 32767) out.y = 32767;
-    // 显示大小档：白名单外（手改 0.9 / 2.0 等）收敛默认中档
+    // 显示大小档：白名单外（0.9 / 2.0 等）收敛默认中档
     out.scale = sanitizePetScale(out.scale);
     return out;
 }
 
-PetConfig PetConfigStore::load() const {
+core::Result<PetConfig> PetConfigStore::loadChecked() const {
     PetConfig cfg;  // 全默认值兜底
-
-    std::error_code ec;
-    if (!std::filesystem::exists(file_, ec) || ec) {
-        return cfg;  // 首次启动：无配置文件，正常路径
+    if (db_ == nullptr) {
+        return core::Result<PetConfig>::fail(
+            core::ErrorCode::NotFound,
+            "应用数据库未就绪（core::appDatabase() 为空）");
     }
-
-    std::ifstream f(file_);
-    if (!f) {
-        LOG_WARN("Pet: 无法读取配置文件，使用默认值: " + file_.string());
-        return cfg;
+    auto raw = core::appconfig::get(*db_, kPetConfigKey);
+    if (raw.isFail()) {
+        // 键不存在 = 首次启动（正常路径，静默用默认）；表不存在 / SQL 失败 =
+        // 真故障，必须报出来而不是与「没配过」混同
+        if (raw.errorCode() == core::ErrorCode::NotFound) {
+            return core::Result<PetConfig>::ok(cfg);
+        }
+        return core::Result<PetConfig>::fail(
+            raw.errorCode(),
+            "读取 app_config[" + std::string(kPetConfigKey) + "] 失败: " +
+                raw.errorMessage());
     }
-    std::ostringstream ss;
-    ss << f.rdbuf();
-    f.close();
-
-    auto parsed = platform::json::parse(ss.str());
+    auto parsed = platform::json::parse(raw.value());
     if (parsed.isFail() || !parsed.value().isObject()) {
-        LOG_WARN("Pet: 配置文件解析失败，使用默认值: " + file_.string());
-        return cfg;
+        return core::Result<PetConfig>::fail(
+            core::ErrorCode::JsonParseError,
+            "app_config[" + std::string(kPetConfigKey) + "] 不是合法 JSON 对象: " +
+                (parsed.isFail() ? parsed.errorMessage() : std::string("顶层非对象")));
     }
     platform::json::JsonObject obj = parsed.value().asObject();
 
@@ -86,29 +82,42 @@ PetConfig PetConfigStore::load() const {
         cfg.y = static_cast<int>(obj.get(kKeyY).asInt());
     }
     if (obj.has(kKeyScale) && obj.get(kKeyScale).isNumber()) {
-        // 数字双分支读取（照抄 todo_view_state.cpp:94-97 同款先例）：两种落盘
-        // 形态都要认——新版 yyjson writer 把整值写成 "2.0" 走 Double 分支；
-        // 手改整数（如 "2"）走 Int 分支（Kind::Int 只填 intVal），只读
-        // asDouble() 恒返 0，会先读成 0 再被 sanitize 收敛默认档（日志还
-        // 谎报 scale=0）。故 asDouble 为 0 时回退 asInt
+        // 数字双分支读取（与 todo_view_state.cpp 同款先例）：两种落盘形态都要
+        // 认——序列化器可能把整值写成 "2.0" 走 Double 分支，也可能存成 "2" 走
+        // Int 分支，只读 asDouble() 恒返 0，会先读成 0 再被 sanitize 收敛默认
+        // 档。故 asDouble 为 0 时回退 asInt
         const platform::json::JsonValue v = obj.get(kKeyScale);
         cfg.scale = v.asDouble() != 0.0 ? v.asDouble()
                                         : static_cast<double>(v.asInt());
     } else if (obj.has(kKeyScale)) {
-        LOG_WARN("Pet: 配置 scale 键非法（非数字），回落默认 1.0: " +
-                 file_.string());
+        LOG_WARN("Pet: 配置 scale 键非法（非数字），回落默认 1.0");
     }
-    // 白名单外值（手改 0.9/2.0）回落默认档前出声（审计 F6）：scale 直接
-    // 决定用户可见档位，与 x/y 的静默钳制不同口径，收敛必须留日志可查
+    // 白名单外值（0.9 / 2.0）回落默认档前出声（审计 F6）：scale 直接决定用户
+    // 可见档位，与 x/y 的静默钳制不同口径，收敛必须留日志可查
     if (sanitizePetScale(cfg.scale) != cfg.scale) {
         LOG_WARN("Pet: 配置 scale=" + std::to_string(cfg.scale) +
                  " 不在三档白名单（0.75/1.0/1.5），回落默认 1.0");
     }
-    return sanitized(cfg);
+    return core::Result<PetConfig>::ok(sanitized(cfg));
+}
+
+PetConfig PetConfigStore::load() const {
+    auto loaded = loadChecked();
+    if (loaded.isFail()) {
+        LOG_ERROR("Pet: 读取桌宠配置失败，回退默认值（本次改动将无法保存）: " +
+                  loaded.errorMessage());
+        return sanitized(PetConfig{});
+    }
+    return loaded.value();
 }
 
 core::Result<void> PetConfigStore::save(const PetConfig& cfgRaw) const {
     const PetConfig cfg = sanitized(cfgRaw);
+    if (db_ == nullptr) {
+        return core::Result<void>::fail(
+            core::ErrorCode::NotFound,
+            "应用数据库未就绪（core::appDatabase() 为空），桌宠配置未保存");
+    }
 
     platform::json::JsonObject obj;
     obj.set(kKeySkin, platform::json::makeString(cfg.skinName));
@@ -116,29 +125,13 @@ core::Result<void> PetConfigStore::save(const PetConfig& cfgRaw) const {
     obj.set(kKeyY, platform::json::makeInt(cfg.y));
     obj.set(kKeyScale, platform::json::makeDouble(cfg.scale));
 
-    auto text = platform::json::stringify(
-        platform::json::JsonValue(obj), /*pretty=*/true);
+    auto text = platform::json::stringify(platform::json::JsonValue(obj),
+                                          /*pretty=*/true);
     if (text.isFail()) {
         return core::Result<void>::fail(core::ErrorCode::Internal,
                                         "配置序列化失败: " + text.errorMessage());
     }
-
-    // 父目录确保存在（petsDir 理论上已建好，这里兜底）
-    std::error_code ec;
-    const auto parent = file_.parent_path();
-    if (!parent.empty() && !std::filesystem::exists(parent, ec) && !ec) {
-        std::filesystem::create_directories(parent, ec);
-        if (ec) {
-            return core::Result<void>::fail(core::ErrorCode::Internal,
-                                            "配置目录创建失败: " + ec.message());
-        }
-    }
-
-    // 原子写（tmp → remove → rename，core/atomic_write.h 唯一实现，审计 THS-03
-    // 第二批收口）：旧的 std::ofstream(file_, trunc) 原地写在写窗口内崩溃/断电
-    // 会把 pet_config.json 截成半截，load 走解析失败分支静默回落默认值（桌宠
-    // 坐标回到「未设置」、皮肤选择回 robot）。尾处理照旧实现：serialize + "\n"
-    return core::atomicWriteFile(file_, text.value() + "\n", "配置文件");
+    return core::appconfig::set(*db_, kPetConfigKey, text.value());
 }
 
 } // namespace module::pet

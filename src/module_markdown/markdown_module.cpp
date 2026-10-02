@@ -3425,7 +3425,7 @@ private:
     // 收起目录。笔记可能已被外部删除——只在当前列表里能找到才重开，找不到
     // 静默跳过（下次成功 openNote 会覆盖旧值）。
     void loadViewState() {
-        viewStore_ = std::make_unique<MarkdownViewStateStore>(markdownViewStateFile());
+        viewStore_ = std::make_unique<MarkdownViewStateStore>(::core::appDatabase());
         const MarkdownViewState st = viewStore_->load();
         if (st.mode != static_cast<int>(mode_)) {
             // 直接赋值而非 setMode：恢复发生在启动期，setMode 的

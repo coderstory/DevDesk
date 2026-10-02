@@ -92,10 +92,13 @@ int pickFreePort() {
 // 前缀沿用原样；绝不碰真实 ~/.claude——settings_sync 的 Paths 注入模式）
 constexpr const char* kImportTempDirPrefix = "devdesk_test_import_cur_";
 
-module::claude::settings_sync::Paths importPaths(const test_support::TempDir& d) {
+// sidecar 自 2026-10-03（批次 E2）起是 app_config 表的一行（键
+// kSidecarConfigKey），不再是 snapshot.json 文件——故这里要一并传入库句柄。
+module::claude::settings_sync::Paths importPaths(
+    const test_support::TempDir& d, core::data::SqliteDb& db) {
     module::claude::settings_sync::Paths p;
     p.settingsFile = d.file("settings.json");
-    p.sidecarFile = d.file("snapshot.json");
+    p.db = &db;
     return p;
 }
 
@@ -814,7 +817,7 @@ REGISTER_TEST(claude_module_import_current_full_chain,
               "claude_module: 导入当前配置读settings.json预填表单（headless）", {
     TestEnv env;
     test_support::TempDir d("full", kImportTempDirPrefix);
-    const auto paths = importPaths(d);
+    const auto paths = importPaths(d, env.handle());
     env.svc->setSettingsSyncPaths(paths);
     env.svc->setSettingsTakeOverEnabled(true);
     // 整段 settings.json 形状（含非 env 顶层字段，验证取 env 子对象）
@@ -938,7 +941,7 @@ REGISTER_TEST(claude_module_import_current_reads_advanced_json,
               "claude_module: 导入当前配置读入高级配置（非 env 顶层属性→高级设置 JSON，headless）", {
     TestEnv env;
     test_support::TempDir d("adv", kImportTempDirPrefix);
-    const auto paths = importPaths(d);
+    const auto paths = importPaths(d, env.handle());
     env.svc->setSettingsSyncPaths(paths);
     env.svc->setSettingsTakeOverEnabled(true);
     // 整段 settings.json：env（基础/槽位域）+ 三个非 env 顶层属性（高级配置域）
@@ -1102,7 +1105,7 @@ REGISTER_TEST(claude_module_import_current_missing_file,
               "claude_module: 导入当前配置文件缺失toast不弹窗（headless）", {
     TestEnv env;
     test_support::TempDir d("miss", kImportTempDirPrefix);
-    const auto paths = importPaths(d);   // settings.json 不创建
+    const auto paths = importPaths(d, env.handle());   // settings.json 不创建
     env.svc->setSettingsSyncPaths(paths);
     env.svc->setSettingsTakeOverEnabled(true);
 
@@ -1182,7 +1185,7 @@ REGISTER_TEST(claude_module_import_current_takeover_warn,
               "claude_module: 导入当前配置接管态警告不阻断（headless）", {
     TestEnv env;
     test_support::TempDir d("takeover", kImportTempDirPrefix);
-    const auto paths = importPaths(d);
+    const auto paths = importPaths(d, env.handle());
     env.svc->setSettingsSyncPaths(paths);
     env.svc->setSettingsTakeOverEnabled(true);
     // 模拟接管态：settings.json 是代理托管值 + sidecar 快照残留
@@ -1193,8 +1196,11 @@ REGISTER_TEST(claude_module_import_current_takeover_warn,
             "MY_KEY": "user"
         }
     })");
-    d.write(d.file("snapshot.json"),
-            R"({"env": {"ANTHROPIC_BASE_URL": "https://orig.example.com"}})");
+    // 2026-10-03（批次 E2）：sidecar 不再是 snapshot.json 文件，而是 app_config
+    // 表的 claude.settings_snapshot 行（整份一行），故这里写那一行。
+    DOCTEST_REQUIRE(test_support::writeRawConfigRow(
+        &env.handle(), module::claude::settings_sync::kSidecarConfigKey,
+        R"({"env": {"ANTHROPIC_BASE_URL": "https://orig.example.com"}})"));
 
     std::unique_ptr<::core::Module> mod(create_claude_module());
     eui::Screen screen;
@@ -2519,7 +2525,7 @@ REGISTER_TEST(claude_module_ui_enable_captures_settings,
               "claude_module: 详情页启用触发反向同步（headless）", {
     TestEnv env;
     test_support::TempDir d("uienable", kImportTempDirPrefix);
-    env.svc->setSettingsSyncPaths(importPaths(d));
+    env.svc->setSettingsSyncPaths(importPaths(d, env.handle()));
     // Claude Code 侧（或 cc-switch）改过的真实上游值：非守卫键 → 会被收编
     d.write(d.file("settings.json"), R"({"env": {
         "ANTHROPIC_BASE_URL": "https://new.example.com/",
@@ -2601,7 +2607,7 @@ REGISTER_TEST(claude_module_takeover_warn_visible,
               "claude_module: 接管失败警告在详情页可见（headless）", {
     TestEnv env;
     test_support::TempDir d("warnfail", kImportTempDirPrefix);
-    env.svc->setSettingsSyncPaths(importPaths(d));
+    env.svc->setSettingsSyncPaths(importPaths(d, env.handle()));
     env.svc->setSettingsTakeOverEnabled(true);
     // 坏 settings.json（非法 JSON）→ takeOver 解析失败中止，全程不写 sidecar
     d.write(d.file("settings.json"), "{ 这不是合法 JSON");
@@ -2655,7 +2661,7 @@ REGISTER_TEST(claude_module_takeover_warn_summary,
               "claude_module: 上层覆盖警告条数+摘要（headless）", {
     TestEnv env;
     test_support::TempDir d("warnover", kImportTempDirPrefix);
-    auto paths = importPaths(d);
+    auto paths = importPaths(d, env.handle());
     // managed（企业策略）+ project 两层各含冲突 env 键 → 2 条覆盖警告
     paths.overlayFiles = {d.file("managed.json"), d.file("project.json")};
     env.svc->setSettingsSyncPaths(paths);

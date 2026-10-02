@@ -40,8 +40,10 @@
 
 #include "doctest.h" // test_temp::tempPath —— 临时路径唯一化（pid + 进程内序号）
 
+#include "core/app_config.h" // 第 9 节：app_config 行收发 helper
 #include "core/database.h" // TestDb / TestEnv / MdHeadlessEnv
 #include "core/router.h"   // ScopedAppRouter
+#include "platform/json.h"    // 第 9 节：seedConfigJsonRows 分发配置顶层键
 #include "platform/keychain.h" // cleanupProfileKey
 // 键盘事件类型（KeyEvent / KeyModifiers / InputKey）——注意此 "core/" 是 **EUI-NEO**
 // 的 core 目录（EUI-NEO 的命名空间也叫 core，与本仓库 src/core 合并同名），
@@ -307,18 +309,39 @@ struct DataRootEnv {
     DataRootEnv& operator=(const DataRootEnv&) = delete;
 };
 
-// RAII：DEVDESK_CONFIG_PATH 指向临时 config.json 路径，析构清空环境变量 +
-// 删文件（cfg 文件由用例自行写内容，同原 PruneEnv 语义）。原 test_settings.cpp
-// PruneEnv 的 cfg 段收编。
+// RAII：配置存储隔离。
+//
+// 2026-10-03（批次 E2）起配置的落点从 config.json **文件**换成 SQLite 的
+// app_config 表，故本夹具现在真正起隔离作用的是它顺带持有的那份已 migrate
+// 的临时库（并注册为进程级 appDatabase —— 生产代码正是经
+// core::appDatabase() 取连接）。DEVDESK_CONFIG_PATH 那一支保留是因为
+// core::paths::configFile() 还在（已无生产调用方，删除属另一批的欠账，
+// 见 report-E2.md 遗留问题）。
+//
+// 析构顺序：先注销 appDatabase，再删库文件（反过来会在句柄仍开着时删文件）。
 struct ScopedConfigPath {
     std::filesystem::path cfgPath;
-    explicit ScopedConfigPath(std::filesystem::path p) : cfgPath(std::move(p)) {
+    std::unique_ptr<core::Database> db;
+    ScopedConfigPath(std::filesystem::path p) : cfgPath(std::move(p)) {
         setEnvVar("DEVDESK_CONFIG_PATH", cfgPath.string());
+        auto r = core::Database::open(
+            test_temp::tempPath("devdesk_test_cfgstore_.db"));
+        if (r.isFail()) {
+            throw std::runtime_error("ScopedConfigPath: Database::open failed: " +
+                                     r.errorMessage());
+        }
+        db = std::make_unique<core::Database>(std::move(r.value()));
+        if (db->migrate().isFail()) {
+            throw std::runtime_error("ScopedConfigPath: migrate failed");
+        }
+        ::core::registerAppDatabase(&db->db());
     }
     ~ScopedConfigPath() {
+        ::core::registerAppDatabase(nullptr);
         setEnvVar("DEVDESK_CONFIG_PATH", "");
         std::error_code ec;
         std::filesystem::remove(cfgPath, ec);
+        db.reset();
     }
     ScopedConfigPath(const ScopedConfigPath&) = delete;
     ScopedConfigPath& operator=(const ScopedConfigPath&) = delete;
@@ -558,6 +581,64 @@ inline int countCI(const HeaderMap& h, const std::string& lowerKey) {
         if (k == lowerKey) ++n;
     }
     return n;
+}
+
+// ==================== 9) app_config / sidecar 原文存取（2026-10-03 批次 E2）============
+// 配置落点从 JSON 文件迁到 SQLite 之后，用例里「往文件里塞一段手写内容、
+// 跑一遍、再读回来看」这套写法改成「往 app_config 的某一**行**里塞原文」。
+// 下面三个 helper 是那一行的收发口，语义与旧的 TempDir::write/read/exists
+// 逐条对应（空串 = 不存在；原文按字节进出，不做任何规范化）。
+
+// 写入整份文档原文（模拟「脏数据/损坏内容」，如 "{broken"）
+inline bool writeRawConfigRow(core::data::SqliteDb* db, const char* key,
+                              const std::string& text) {
+    if (db == nullptr) return false;
+    return core::appconfig::set(*db, key, text).isOk();
+}
+
+// 读回整份文档原文；键不存在 → 空串
+inline std::string readRawConfigRow(core::data::SqliteDb* db, const char* key) {
+    if (db == nullptr) return std::string();
+    auto v = core::appconfig::get(*db, key);
+    return v.isOk() ? v.value() : std::string();
+}
+
+// 该行是否存在（等价旧的 TempDir::exists(paths.sidecarFile)）
+inline bool configRowExists(core::data::SqliteDb* db, const char* key) {
+    if (db == nullptr) return false;
+    auto v = core::appconfig::has(*db, key);
+    return v.isOk() && v.value();
+}
+
+// 把一段「手改过的配置 JSON」按**顶层键**分发进 app_config 表的各行——
+// 等价 2026-10-03（批次 E2）之前往 config.json 写这段文本（顶层键 = 行键，
+// 值存该键的 JSON 值文本）。用例里那些「手改成未知模块 ID / 乱类型 / 半截
+// JSON」的负例因此可以一字不改地保留原意。
+// 顶层不是对象或解析失败 → false（调用方 DOCTEST_REQUIRE 它）。
+inline bool seedConfigJsonRows(core::data::SqliteDb* db,
+                               const char* keyNamespace,
+                               const std::string& jsonText) {
+    if (db == nullptr) return false;
+    auto parsed = platform::json::parse(jsonText);
+    if (parsed.isFail() || !parsed.value().isObject()) return false;
+    auto obj = parsed.value().asObject();
+    std::vector<core::appconfig::Entry> entries;
+    for (const auto& k : obj.keys()) {
+        auto text = platform::json::stringify(obj.get(k), /*pretty=*/false);
+        if (text.isFail()) return false;
+        entries.push_back(
+            core::appconfig::Entry{std::string(keyNamespace) + k, text.value(), 0});
+    }
+    // **整份替换**语义（等价旧实现「往 config.json 写这段文本」）：先把本命名
+    // 空间下已有的行清掉再写。只补不删的话，上一次 save 留下的键会活下来，
+    // 「存量配置只有 theme → 别的字段回落默认」这类用例就会读到脏数据。
+    // 两步包在同一个事务里，免得中间态被别的线程读到。
+    return db->transaction([&]() -> core::Result<void> {
+        auto cleared = core::appconfig::eraseWithPrefixExcept(
+            *db, keyNamespace, {});
+        if (cleared.isFail()) return cleared;
+        return core::appconfig::setMany(*db, entries);
+    }).isOk();
 }
 
 // ==================== 8) 快捷键修饰键（与实现同源，2026-09-29）====================

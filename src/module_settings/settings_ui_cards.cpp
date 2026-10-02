@@ -436,7 +436,7 @@ void drawPetCard(const CardDrawArgs& args) {
     const float screenH = args.screenH;
 
     // 审计 THS-01：皮肤清单（discoverSkins = 目录遍历 + 每皮肤 pet.json
-    // stat）与当前皮肤名（读 pet_config.json）已移出渲染路径——快照由
+    // stat）与当前皮肤名（读 app_config 的 pet_config 键）已移出渲染路径——快照由
     // refreshExternalState 装载（原为「首帧惰性加载」，仍在渲染路径上），
     // 这里只读入参；审计 [5][36] 的 pet 侧只读桥调用点随之收在模块文件
     const auto compTheme = core::theme::componentTokens(t);

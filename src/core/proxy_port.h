@@ -3,7 +3,7 @@
 //
 // 为什么落在 core：这个值有两个消费方——module_claude_proxy（ClaudeService
 // 的钳制范围 / 默认端口 / startProxy 的默认实参）与 module_settings（设置页
-// 数字输入的范围提示 + config.json 落盘钳制），而 module_* 之间不能互相
+// 数字输入的范围提示 + 配置落库钳制），而 module_* 之间不能互相
 // include（防循环，见 CLAUDE.md「架构要点」）。此前两处各自定义同值常量、靠
 // 注释约定「保持字面一致」——改一处漏一处就是静默的行为分叉。R0 把取值收到
 // 这里，两侧都从本头取（现取值漂移只可能来自这一处）。
