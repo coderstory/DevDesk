@@ -1042,7 +1042,7 @@ private:
                       ? std::string("已关闭该 Profile 的余量查询")
                       : ("余量查询配置已保存（供应商：" + row.providerId +
                          "），后台将在 " +
-                         std::to_string(quotaRefreshScanIntervalSec()) +
+                         std::to_string(quota::kQuotaProductionScanIntervalSec) +
                          " 秒内自动查询"),
                   false);
         // **不**在这里同步 refreshNow()：那是一次真实网络查询，provider
@@ -1054,9 +1054,11 @@ private:
                  row.ccswitchProviderId + "）");
     }
 
-    // 后台扫描间隔（与 QuotaRefreshOptions::scanIntervalSec 的生产默认同源；
-    // 用例可注入毫秒级，本函数只给 toast 文案用）。
-    static int quotaRefreshScanIntervalSec() { return 60; }
+    // ⚠ 这里曾有一个本地 `static int quotaRefreshScanIntervalSec() { return 60; }`
+    // 给 toast 文案用——它与 QuotaRefreshOptions::scanIntervalSec 的默认 60 是
+    // **两处字面量**（G6 裁决 8 留下的欠账）：改了真跑的间隔、文案不会跟着变，
+    // 用户看到的「后台将在 N 秒内自动查询」与实际行为不符。现已收敛到
+    // quota_refresh.h 的 kQuotaProductionScanIntervalSec 单点，两处都从它取。
 
     QuotaDialogHooks quotaHooks() {
         QuotaDialogHooks h;

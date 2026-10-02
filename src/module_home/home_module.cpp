@@ -640,25 +640,27 @@ public:
                 // 两模块生命周期解耦；`[刷新]` 按钮只是往刷新侧写一个请求信号。
                 // 门控：claude_proxy 模块关闭 → 整卡隐藏（没有 profile 可显示，
                 // 且刷新器根本没在跑，显示一张点不动的卡是骗人）。
+                // 高度预算先算一次：余量卡与下方图表卡**共用**这一份结论
+                // （矮窗下图表要给余量卡让位），所以声明在门控 if 之外。
+                //
+                // 算式在 quota_card::computeHomeQuotaBudget（**纯函数**，可单测
+                // / probe 直接量）。原先这段算术内联在 compose lambda 里，谁也测不到，
+                // 于是「矮窗下余量卡画不画」只能靠人肉心算——而心算与代码漂移过
+                // 一次（G7 遗留 1 里记的「既有内容 580 / 可用 640」与代码实算对不上）。
+                //
+                // 首页整页**没有外层滚动容器**，所以规则是：余量卡行内容至少
+                // kQuotaCardMinBodyH，否则整张不画；不够就压缩下方图表卡
+                // （最多压到 kHomeChartMinH）给它让位——但**只在压缩真能换到
+                // 一张画得出来的余量卡时**才压。压不出就不压：宁可这窗看不见
+                // 余量卡，也不把用户本来看得懂的图表压成一条缝换零收益。
+                // 仍装不下时 pageStillOverflows 为真——那是「本页装不下」的实话，
+                // 不是余量卡的 bug（真要在设计最小窗也画出，得给首页加外层
+                // scrollView，那是另一件事，见 report-G8 遗留）。
+                const module::home::quota_card::HomeQuotaBudget quotaBudget =
+                    module::home::quota_card::computeHomeQuotaBudget(
+                        screen.height, statH, pad, gap);
                 if (moduleRegistered(::core::PageId::ClaudeProxy)) {
-                    // 窗口剩余高度预算：首页整页**没有外层滚动容器**（page
-                    // column 高度固定 = 屏高），卡片若不封顶就会把下方的图表与
-                    // 快捷按钮顶出可视区。预算按本页各块的**真实常量**现算，
-                    // 不写死一个魔数（改任一块的高度时这里自动跟着走）。
-                    const float quotaChartH = 260.0f;   // 与下方图表卡同值
-                    const float quotaActH = 44.0f;      // 与快捷按钮行同值
-                    const float quotaReserve =
-                        pad * 2.0f                      // 上下内边距
-                        + 72.0f + gap                   // 欢迎区 + 间距
-                        + statH + gap                   // 统计网格 + 间距
-                        + module::home::quota_card::kQuotaCardChromeH
-                        + gap                            // 卡片外壳 + 间距
-                        + quotaChartH + gap              // 图表卡 + 间距
-                        + quotaActH;                     // 快捷按钮行
-                    const float quotaBodyAvail =
-                        screen.height - quotaReserve;
-                    if (quotaBodyAvail >=
-                        module::home::quota_card::kQuotaCardMinBodyH) {
+                    if (quotaBudget.drawsQuotaCard) {
                     std::vector<module::claude::quota::QuotaHomeRow> quotaRows;
                     std::string quotaErr;
                     if (auto* qdb = ::core::appDatabase()) {
@@ -686,7 +688,8 @@ public:
                     };
                     hooks.loadError = quotaErr;
                     module::home::quota_card::drawQuotaCard(
-                        ui, t, contentW, quotaRows, hooks, quotaBodyAvail);
+                        ui, t, contentW, quotaRows, hooks,
+                        quotaBudget.quotaBodyHeight);
                     }  // 窗口够高才画（见上）
                 }
 
@@ -735,7 +738,13 @@ public:
                     for (size_t i = 0; i < barCount; ++i) {
                         peak = std::max(peak, hourly[range.first + i]);
                     }
-                    const float chartCardH = 260.0f;
+                    // 图表卡高度：窗口宽裕时是标称的 kHomeChartH；矮窗下按
+                    // computeHomeQuotaBudget 的结论压缩（给余量卡让位），最矮
+                    // 到 kHomeChartMinH。两处取自同一套常量，不会各写一个 260。
+                    const float chartCardH =
+                        quotaBudget.chartHeight > 0.0f
+                            ? quotaBudget.chartHeight
+                            : module::home::quota_card::kHomeChartH;
                     const float chartWrapH = chartCardH - 48.0f - 16.0f;  // 196
                     components::card(ui, "home.api.chart")
                         .size(contentW, chartCardH)

@@ -452,6 +452,16 @@ if ! bash scripts/check-module-isolation.sh; then
   exit 1
 fi
 
+# ---- 3b-2. 余量落库路径守卫（G8；纯静态检查，--no-test 也跑）----
+# 把 quota_store.h 不变量 3（「applyFetchResult 是落库唯一入口」）从**注释断言**
+# 变成会红的代码断言。少一次全量门禁的成本，远低于某天有人顺手加一句直写、
+# 韧性决策静默失效。守卫自带 --self-test 证明它不是恒绿。
+echo "── 余量落库路径守卫 ──"
+if ! bash scripts/check-quota-write-paths.sh; then
+  echo "❌ 余量落库路径守卫失败（profile_quota_result 的 DML 只能在 quota_store.cpp 的 applyFetchResult / deleteResult 里）"
+  exit 1
+fi
+
 # ---- 3c. 安装到 /Applications（--install，仅 macOS；默认不开则整段不执行）----
 # 顺序即「事故的反面」，每一步都在补一个曾经漏掉的环节：
 #   ① 重组 bundle：build-app.sh 会 rm -rf 重建 .app + 拷二进制 + 刷 Info.plist 版本 + 拷 assets。

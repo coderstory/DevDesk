@@ -884,3 +884,77 @@ REGISTER_TEST(home_quota_manual_refresh_due_rules,
     DOCTEST_CHECK(!cq::QuotaRefresher::isDue(none, 100000, 0, true));
     return true;
 })
+// ============ G8：首页高度预算（纯函数）============
+//
+// G7 遗留 1 的欠账：1200×720（设计最小窗）下看不到余量卡。这段把原先内联在
+// compose lambda 里、谁也测不到的预算算式提成纯函数，并把**阈值钉死**——
+// 「矮窗下画不画」从此是一条会红的断言，不是心算。
+REGISTER_TEST(home_quota_budget_threshold_is_pinned,
+              "home_quota: 高度预算阈值钉死（矮窗压缩图表给余量卡让位）", {
+    // 本机 theme 的实际取值（home_module.cpp:336-338 / 346：spacingXXLarge=40、
+    // spacingLarge×1.25=20、统计格 144×fontScale）。这里按 fontScale=1 取值。
+    const float pad = 40.0f;
+    const float gap = 20.0f;
+    const float statH = 144.0f;
+
+    // ---- ① 宽窗：图表不压缩，余量卡拿到上限 ----
+    const auto tall = module::home::quota_card::computeHomeQuotaBudget(1000.0f, statH, pad, gap);
+    DOCTEST_CHECK(tall.drawsQuotaCard);
+    DOCTEST_CHECK(!tall.pageStillOverflows);
+    DOCTEST_CHECK_EQ(tall.chartHeight, module::home::quota_card::kHomeChartH);
+    // quotaBodyHeight 是**可用空间**，不是最终行内容高；行内容高由
+    // computeQuotaCardMetrics 取 min(内容高, 可用空间) 并封顶
+    // kQuotaCardMaxBodyH。所以这里断言的是「够画」，不是「已达上限」。
+    DOCTEST_CHECK(tall.quotaBodyHeight >= module::home::quota_card::kQuotaCardMinBodyH);
+    // 真·很高时可用空间确实超过封顶值（封顶那条分支真的会被走到）
+    const auto huge = module::home::quota_card::computeHomeQuotaBudget(2000.0f, statH, pad, gap);
+    DOCTEST_CHECK(huge.quotaBodyHeight >= module::home::quota_card::kQuotaCardMaxBodyH);
+
+    // ---- ② 本机典型客户区高（805pt：工作区 833 − 标题栏 28）----
+    // 这是**修复前余量卡完全不画**的高度区间：原算式 reserve=750，805−750=55
+    // < 96。现在图表被压到给余量卡让位，余量卡照常画出。
+    const auto macDefault = module::home::quota_card::computeHomeQuotaBudget(805.0f, statH, pad, gap);
+    DOCTEST_CHECK(macDefault.drawsQuotaCard);
+    DOCTEST_CHECK(!macDefault.pageStillOverflows);
+    DOCTEST_CHECK(macDefault.quotaBodyHeight >= module::home::quota_card::kQuotaCardMinBodyH);
+    DOCTEST_CHECK(macDefault.chartHeight < module::home::quota_card::kHomeChartH);
+    DOCTEST_CHECK(macDefault.chartHeight >= module::home::quota_card::kHomeChartMinH);
+
+    // ---- ③ 临界点前后：阈值必须是**确定的**，不能是「差不多」----
+    // 逐像素扫 700..900，找到「最矮仍画得出」的那一屏，并断言它就是纯函数的边界
+    float lowestDrawing = 0.0f;
+    for (float h = 700.0f; h <= 900.0f; h += 1.0f) {
+        const auto b = module::home::quota_card::computeHomeQuotaBudget(h, statH, pad, gap);
+        if (b.drawsQuotaCard) lowestDrawing = (lowestDrawing == 0.0f) ? h : lowestDrawing;
+    }
+    DOCTEST_CHECK(lowestDrawing > 0.0f);
+    // 边界上下各差一像素，判定必须翻转（证明这是一个真阈值，不是恒真）
+    const auto justAbove = module::home::quota_card::computeHomeQuotaBudget(
+        lowestDrawing, statH, pad, gap);
+    const auto justBelow = module::home::quota_card::computeHomeQuotaBudget(
+        lowestDrawing - 1.0f, statH, pad, gap);
+    DOCTEST_CHECK(justAbove.drawsQuotaCard);
+    DOCTEST_CHECK(!justBelow.drawsQuotaCard);
+    DOCTEST_CHECK(justBelow.pageStillOverflows);
+    // 再矮一屏：压缩**换不来**余量卡（连 kHomeChartMinH 都腾不出下限），
+    // 于是图表保持完整高度 —— 宁可画不出余量卡，也不把图表压成一条缝。
+    // 这条与 ④ 是同一个语义的两个取样点。
+    const auto wayBelow = module::home::quota_card::computeHomeQuotaBudget(
+        lowestDrawing - 1.0f, statH, pad, gap);
+    DOCTEST_CHECK(!wayBelow.drawsQuotaCard);
+    DOCTEST_CHECK_EQ(wayBelow.chartHeight, module::home::quota_card::kHomeChartH);
+
+    // ---- ④ 设计最小窗 1200×720：仍是「本页装不下」，且**图表不许被压** ----
+    // 首页没有外层滚动容器，这是本批**未解**的那一段（见 report-G8 遗留）：
+    // 要在 720 也画出余量卡，得给首页加外层 scrollView，那不是纯函数能解决的。
+    //
+    // 关键：本窗高下压缩图表**换不来任何余量卡**（压到下限仍只有 70 < 96），
+    // 所以预算必须让图表保持完整高度 —— 否则是把用户本来看得懂的图表压成一条缝
+    // 换零收益。test_ui_modern 的「Home Token 分布」几何用例（跑在 1200×720、
+    // 峰值柱高钉死 84）就是这条的外部守门人。
+    const auto minWindow = module::home::quota_card::computeHomeQuotaBudget(720.0f, statH, pad, gap);
+    DOCTEST_CHECK(!minWindow.drawsQuotaCard);
+    DOCTEST_CHECK(minWindow.pageStillOverflows);
+    DOCTEST_CHECK_EQ(minWindow.chartHeight, module::home::quota_card::kHomeChartH);
+    return true;
+})
