@@ -501,27 +501,31 @@ REGISTER_TEST(assembly_registry_table_shape,
     const ::core::PageId kEnumOrder[] = {
         ::core::PageId::Home,       ::core::PageId::Markdown,
         ::core::PageId::Todo,       ::core::PageId::ClaudeProxy,
-        ::core::PageId::Settings,   ::core::PageId::Agent,
+        ::core::PageId::Agent,      ::core::PageId::Settings,
         ::core::PageId::About,
     };
     DOCTEST_CHECK_EQ(kRegistrySize, static_cast<size_t>(7));
     for (size_t i = 0; i < kRegistrySize; ++i) {
         // 表序 == PageId 枚举序（重排 = 侧边栏序静默变化，core_pageid_order
-        // 契约的装配侧镜像）
+        // 契约的装配侧镜像；batch-C C-1：Agent 在 Settings 之前）
         DOCTEST_CHECK(kModuleRegistry[i].page == kEnumOrder[i]);
     }
     // T3 口径：home/settings/about 恒注册（gatingKey==nullptr）；四个工具模块
-    // 各自带对应门控键
+    // 各自带对应门控键。空指针经 null-safe 取值（直接 std::string(nullptr) 是
+    // UB，clang -Wnonnull 会当编译错误拦下 —— 那样重构前后都无法编译）
+    auto gating = [](const char* key) {
+        return key != nullptr ? std::string(key) : std::string("<null>");
+    };
     DOCTEST_CHECK(kModuleRegistry[0].gatingKey == nullptr);
-    DOCTEST_CHECK_EQ(std::string(kModuleRegistry[1].gatingKey),
+    DOCTEST_CHECK_EQ(gating(kModuleRegistry[1].gatingKey),
                      std::string(module::settings::kModuleIdMarkdown));
-    DOCTEST_CHECK_EQ(std::string(kModuleRegistry[2].gatingKey),
+    DOCTEST_CHECK_EQ(gating(kModuleRegistry[2].gatingKey),
                      std::string(module::settings::kModuleIdTodo));
-    DOCTEST_CHECK_EQ(std::string(kModuleRegistry[3].gatingKey),
+    DOCTEST_CHECK_EQ(gating(kModuleRegistry[3].gatingKey),
                      std::string(module::settings::kModuleIdClaudeProxy));
-    DOCTEST_CHECK(kModuleRegistry[4].gatingKey == nullptr);
-    DOCTEST_CHECK_EQ(std::string(kModuleRegistry[5].gatingKey),
+    DOCTEST_CHECK_EQ(gating(kModuleRegistry[4].gatingKey),
                      std::string(module::settings::kModuleIdAgent));
+    DOCTEST_CHECK(kModuleRegistry[5].gatingKey == nullptr);
     DOCTEST_CHECK(kModuleRegistry[6].gatingKey == nullptr);
     return true;
 })
@@ -552,7 +556,7 @@ REGISTER_TEST(assembly_build_gated_entries_real_table,
     const ::core::PageId kEnumOrder[] = {
         ::core::PageId::Home,       ::core::PageId::Markdown,
         ::core::PageId::Todo,       ::core::PageId::ClaudeProxy,
-        ::core::PageId::Settings,   ::core::PageId::Agent,
+        ::core::PageId::Agent,      ::core::PageId::Settings,
         ::core::PageId::About,
     };
     for (size_t i = 0; i < allGated.size(); ++i) {

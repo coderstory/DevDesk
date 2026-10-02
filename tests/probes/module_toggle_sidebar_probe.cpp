@@ -273,8 +273,10 @@ int main(int argc, char* argv[]) {
     }
     const float homeY = homeHit->frame.y;
 
-    // ---- 2) on → 下一帧条目出现，y = 前一条目（Settings）下一格（itemH 40 + gap 4）----
-    //（注册序 = home, settings, agent → Agent 恒在末位；上一格锚取 Settings 条目）
+    // ---- 2) on → 下一帧条目出现，y = 前一条目（Home）下一格（itemH 40 + gap 4）----
+    //（注册序 = home, settings, agent；registerModule 按 PageId 序插入 →
+    // batch-C C-1 起 Agent(4) 在 Settings(5) 之前，侧边栏序 Home, Agent, Settings；
+    //  上一格锚取 Home 条目）
     app::assembly::dispatchModuleToggle(module::settings::kModuleIdAgent, true,
                                         router, &lookupForProbe);
     composeFrame();
@@ -285,10 +287,10 @@ int main(int argc, char* argv[]) {
     check(agentHit != nullptr, "on 后：Agent 条目应出现");
     check(settingsHit != nullptr, "on 后：Settings 条目应存在（y 锚）");
     if (agentHit != nullptr && settingsHit != nullptr) {
-        check(nearEq(agentHit->frame.y, settingsHit->frame.y + 44.0f),
-              "Agent 条目 y=" + std::to_string(agentHit->frame.y) + " 期望 " +
-                  std::to_string(settingsHit->frame.y + 44.0f) +
-                  "（Settings 下一格）");
+        check(nearEq(settingsHit->frame.y, agentHit->frame.y + 44.0f),
+              "Settings 条目 y=" + std::to_string(settingsHit->frame.y) +
+                  " 期望 " + std::to_string(agentHit->frame.y + 44.0f) +
+                  "（Agent 下一格——Agent 在 Settings 之前）");
         check(ui->find("app.sidebar.item.Agent.label") != nullptr,
               "展开态 Agent label 应存在");
     }

@@ -31,7 +31,8 @@ namespace app::registry {
 
 // 一行 = 一个 Router 页面模块。顺序 = 注册顺序 = 侧边栏顺序
 //（= PageId 枚举序，契约 test_router core_pageid_order，表序须一致）。
-// gatingKey == nullptr = 恒注册（home/settings；语义同 moduleEnabled 恒 true，
+// batch-C C-1：Agent 行移到 Settings 行之前（用户要求「智能体」在「设置」上面）。
+// gatingKey == nullptr = 恒注册（home/settings/about；语义同 moduleEnabled 恒 true，
 // 但显式表达不依赖谓词特殊逻辑——T3 拍板）。
 struct ModuleEntry {
     ::core::PageId page;
@@ -46,8 +47,8 @@ inline constexpr ModuleEntry kModuleRegistry[] = {
     {::core::PageId::Markdown,    module::settings::kModuleIdMarkdown,     "笔记",   "\xEF\x81\x84", &create_markdown_module},  // U+F044 fa-pen-to-square
     {::core::PageId::Todo,        module::settings::kModuleIdTodo,         "待办",   "\xEF\x81\x98", &create_todo_module},      // U+F058 fa-circle-check
     {::core::PageId::ClaudeProxy, module::settings::kModuleIdClaudeProxy,  "Claude", "\xEF\x80\xA1", &create_claude_module},     // U+F021 fa-arrows-rotate
-    {::core::PageId::Settings,    nullptr,                          "设置",   "\xEF\x80\x93", &create_settings_module},    // U+F013 fa-gear
     {::core::PageId::Agent,       module::settings::kModuleIdAgent,        "智能体", "\xEF\x95\x84", &create_agent_module},      // U+F544 fa-robot
+    {::core::PageId::Settings,    nullptr,                          "设置",   "\xEF\x80\x93", &create_settings_module},    // U+F013 fa-gear
     {::core::PageId::About,       nullptr,                          "关于",   "\xEF\x81\x9A", &create_about_module},       // U+F05A fa-circle-info
 };
 
