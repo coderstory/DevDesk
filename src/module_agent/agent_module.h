@@ -187,6 +187,10 @@ private:
     bool editDestructive_ = false;
     bool editTriggerOpen_ = false;   // 触发类型下拉弹层开合（UI 态，不落库）
     bool editSlotOpen_ = false;      // 模型槽位下拉弹层开合
+    // 页内错误行（agent.page.error）：动作在「弹窗之外」就失败时的唯一可见
+    // 出口——弹窗内的失败走 editError_（弹窗内红字），页级的失败（编辑读库
+    // 失败 / 启停失败，都是陈旧缓存的行已被外部删除）走这里；下一次成功动作清
+    std::string pageError_;
     bool tasksDirty_ = false;   // onStart/onPageEnter/写操作置位 → 下帧重查
     bool uiPolling_ = false;    // 有 run 期间每帧跟进状态/消息，全终止后停
 

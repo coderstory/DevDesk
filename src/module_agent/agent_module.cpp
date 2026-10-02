@@ -9,7 +9,8 @@
 //
 // 元素 id 契约表（plan task-12/10/11-brief + 2026-10-02 批次 A 骨架重做，UI 测试逐字钉）：
 //   页面    agent.page / agent.page.header / agent.title / agent.page.newTask
-//           （「+ 新建任务」按钮，唯一新建入口）/
+//           （「+ 新建任务」按钮，唯一新建入口）/ agent.page.error（页级失败：
+//           编辑读库失败 / 启停失败，有错才渲染，下一次成功动作清）/
 //   agent.tools（可用工具区块容器）/ agent.tools.header（点开/收起）/
 //     agent.tools.header.label / agent.tools.header.hint /
 //     agent.tools.scroll / agent.tools.card.<k>（.bg / .name / .desc / .params）
@@ -217,6 +218,8 @@ constexpr int kTriggerScheduleIdx = 1;
 constexpr float kPageHeaderH = 40.0f;
 constexpr float kNewTaskBtnW = 140.0f;
 constexpr float kTaskRowH = 44.0f;
+// 页内错误行高（agent.page.error；进页面 column 的子项预算）
+constexpr float kPageErrorH = 16.0f;
 
 // 任务弹窗（A2）几何：目标输入高（多行 96 ≈ 4 行视口）+ 行高 / 标签宽 /
 // 字段间距 / 弹窗高。纵向排布（h = kTaskDialogH = 400）：
@@ -401,6 +404,7 @@ void AgentModule::onStop() {
     taskDialogOpen_ = false;
     editingTaskId_.reset();
     editError_.clear();
+    pageError_.clear();
     uiPolling_ = false;
     started_ = false;
     LOG_INFO("Agent 模块停止");
@@ -534,6 +538,7 @@ void AgentModule::startTask(int64_t taskId) {
 //（manual / default / 10 / false / 空 goal）——与编辑态共用同一张表单
 void AgentModule::openNewTaskDialog() {
     taskDialogOpen_ = true;
+    pageError_.clear();   // 成功动作清掉上一次的页内错误
     editingTaskId_.reset();
     editGoal_.clear();
     editCron_.clear();
@@ -565,16 +570,19 @@ void AgentModule::setDialogIterDraft(int iter) {
 }
 
 // 打开任务弹窗的编辑态：字段以库为准回填（tasks_ 缓存可能滞后于库，编辑入口
-// 直接 getTask——与详情弹窗的配置摘要同源同一份 AgentTaskRow）
+// 直接 getTask——与详情弹窗的配置摘要同源同一份 AgentTaskRow）。
+// 读库失败（陈旧缓存：行已被外部删除）→ 页内错误行（agent.page.error）——
+// 2026-10-02 复审点名的静默路径：只 LOG 的话用户点「编辑」什么都不会发生
 void AgentModule::openTaskEditor(int64_t taskId) {
     if (store_ == nullptr) return;
     auto row = store_->getTask(taskId);
     if (row.isFail()) {
-        editError_ = "读取任务失败：" + row.errorMessage();
+        pageError_ = "读取任务失败：" + row.errorMessage();
         LOG_WARN("Agent: 打开任务弹窗失败: " + row.errorMessage());
         return;
     }
     const AgentTaskRow& r = row.value();
+    pageError_.clear();   // 成功动作清掉上一次的页内错误
     taskDialogOpen_ = true;
     editingTaskId_ = r.id;
     editGoal_ = r.goal;
@@ -648,15 +656,18 @@ void AgentModule::saveTaskDialog() {
     tasksDirty_ = true;
 }
 
-// 启用/禁用取反（与编辑表单是两个独立动作：本路径不碰其它七列）
+// 启用/禁用取反（与任务弹窗是两个独立动作：本路径不碰其它七列）。
+// 失败（陈旧缓存的行已被删）→ 页内错误行，不静默
 void AgentModule::toggleTaskEnabled(const AgentTaskRow& task) {
     if (store_ == nullptr) return;
     auto r = store_->setTaskEnabled(task.id, !task.enabled);
     if (r.isFail()) {
+        pageError_ = "启停切换失败：" + r.errorMessage();
         LOG_WARN("Agent: 启停切换失败（task " + std::to_string(task.id) +
                  "）: " + r.errorMessage());
         return;
     }
+    pageError_.clear();
     tasksDirty_ = true;
 }
 
@@ -1000,11 +1011,13 @@ void AgentModule::compose(::eui::Ui& ui, const ::eui::Screen& screen) {
                               kToolsListMaxH)
                    : 0.0f;
     const float toolsH = kToolsHeaderH + (toolsOpen_ ? kMsgGap + toolsListH : 0.0f);
-    // 页 column 子项：标题行 / tools / tasklist（批次 A1 起页内表单与页内详情区
-    // 都已删除），gap = spacingLarge。子项数或行高一变，gapCount 与减项必须同步
-    //（否则列表高度算错 → 末尾行溢出页底）
-    constexpr int kPageGapCount = 2;
+    // 页 column 子项：标题行 / [页内错误行] / tools / tasklist（批次 A1 起页内
+    // 表单与页内详情区都已删除），gap = spacingLarge。子项数或行高一变，
+    // gapCount 与减项必须同步（否则列表高度算错 → 末尾行溢出页底）
+    const bool hasPageError = !pageError_.empty();
+    const int kPageGapCount = 2 + (hasPageError ? 1 : 0);
     const float listH = screen.height - pad * 2.0f - kPageHeaderH - toolsH -
+                        (hasPageError ? kPageErrorH : 0.0f) -
                         static_cast<float>(kPageGapCount) * t.sizes.spacingLarge;
 
     ui.column("agent.page")
@@ -1035,6 +1048,18 @@ void AgentModule::compose(::eui::Ui& ui, const ::eui::Screen& screen) {
                         .build();
                 })
                 .build();
+
+            // ---- 页内错误行（有错才渲染）：弹窗之外的失败的唯一可见出口 ----
+            if (hasPageError) {
+                ui.text("agent.page.error")
+                    .size(contentW, kPageErrorH)
+                    .text(pageError_)
+                    .fontSize(12.0f)
+                    .lineHeight(kPageErrorH)
+                    .verticalAlign(eui::VerticalAlign::Center)
+                    .color(t.colors.error)
+                    .build();
+            }
 
             // ---- 可用工具区块（2026-10-02 用户反馈④）：收起默认，头部点击
             // 展开。列 ToolRegistry 全部已注册工具（name + 描述 + 参数名），
@@ -1578,11 +1603,20 @@ void AgentModule::composeTaskDetailDialog(
             .build();
         float runsH = 18.0f;
         if (runs != nullptr && !runs->empty()) {
-            runsH = 4.0f * static_cast<float>(runs->size() - 1);
+            // 列内 gap 数 = **子元素数** - 1：error 行也是子元素，漏算它会让
+            // 列表底比真实占用矮一截 → 消息标题压到 error 行上（2026-10-02
+            // 批次 A 复审发现的真 bug，≥3 条 error 时可见）
+            float childrenH = 0.0f;
+            int childCount = 0;
             for (const auto& run : *runs) {
-                runsH += 18.0f;
-                if (run.error && !run.error->empty()) runsH += 16.0f;
+                ++childCount;
+                childrenH += 18.0f;
+                if (run.error && !run.error->empty()) {
+                    ++childCount;
+                    childrenH += 16.0f;
+                }
             }
+            runsH = childrenH + 4.0f * static_cast<float>(childCount - 1);
             ui.column("agent.dialog.detail.runlist")
                 .position(x0, 126.0f)
                 .size(innerW, runsH)
@@ -1664,6 +1698,9 @@ void AgentModule::composeTaskDetailDialog(
                 .text("（选中的 run 还没有消息）")
                 .fontSize(12.0f)
                 .lineHeight(18.0f)
+                // 盒高 = 消息区高，文本垂直居中（B1 评审复查出的一处漏扫：
+                // 盒高 ≠ 行高时不给 verticalAlign 会顶在上缘）
+                .verticalAlign(eui::VerticalAlign::Center)
                 .color(t.colors.textTertiary)
                 .build();
         } else {
