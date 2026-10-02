@@ -86,10 +86,20 @@ const char* stateFallbackText(QuotaCardState state) {
     return "";
 }
 
-// 状态行文字：**有错用错误文案（按 kind 选好的），无错用状态标签**。
-// 不按「有没有数据」选 —— 那是把 401 显示成「可能过期」的根源。
+// 状态行文字：**有错时给空串**，无错用状态标签。
+//
+// 为什么有错给空：错误文案由**专属错误行**（渲染层的 `showErr` 块）渲染
+// **一次**。head 行再渲染一遍就是同一张卡上同一句话出现两次，而且 head 的
+// .status 是固定宽的单行盒、既没 clip 也没 wrap（maxWidth 只在 wrap=true
+// 时才生效，见 EUI-NEO text.cpp），长错误文案会把字直接画到卡片右缘之外
+// 被截断（真机落图 /tmp/af-home-quota-live.png 的 MiniMax 行：行首一遍被
+// 截断、下一行再来一遍）。
+//
+// 仍然**不按「有没有数据」选** —— 那是把 401 显示成「可能过期」的根源；
+// 按 kind 选文案这件事发生在桥里（row.lastError），这里只决定「这一格
+// 该不该有字」。
 std::string statusTextFor(const QuotaHomeRow& row) {
-    if (showsErrorLine(row.state)) return row.lastError;
+    if (showsErrorLine(row.state)) return std::string();
     return stateFallbackText(row.state);
 }
 
@@ -425,10 +435,19 @@ void drawQuotaCard(eui::Ui& ui, const core::theme::Tokens& t, float contentWidth
                                     std::min(kNameW, innerW * 0.24f);
                                 const float staleW = showStale ? kStaleW : 0.0f;
                                 const float cfgW = showCfg ? kConfigBtnW : 0.0f;
-                                const float gaps = kInnerGap *
-                                    static_cast<float>(
-                                        (staleW > 0.0f ? 1 : 0) +
-                                        (cfgW > 0.0f ? 1 : 0));
+                                // gap 插在**每两个相邻子元素之间**，而 head 的子
+                                // 元素恒为 name / provider / [stale] / status /
+                                // [cfg] —— 间隙数 = 子元素数 - 1，**不是**「有几
+                                // 个可选徽标」。旧算法只数 stale/cfg 两处，恒少算
+                                // name|provider 与 provider|stale 两处，statusW
+                                // 每次多出 2×kInnerGap = 16px，于是 .status 的
+                                // 右缘**恒**越出内容列右缘 16px（探针组 I(b) 实测
+                                // 1136 vs 1120）。这里按子元素数算，钉死。
+                                const int headChildCount =
+                                    3 + (staleW > 0.0f ? 1 : 0) +
+                                    (cfgW > 0.0f ? 1 : 0);
+                                const float gaps =
+                                    kInnerGap * static_cast<float>(headChildCount - 1);
                                 const float statusW = std::max(
                                     40.0f,
                                     innerW - nameW - kProviderW - staleW - cfgW -
@@ -472,6 +491,13 @@ void drawQuotaCard(eui::Ui& ui, const core::theme::Tokens& t, float contentWidth
                                             .text(statusTextFor(row))
                                             .fontSize(t.sizes.fontSizeSmall)
                                             .lineHeight(kHeadH)
+                                            // **单行盒不许把字画出盒**：maxWidth
+                                            // 只在 wrap=true 时生效（EUI-NEO
+                                            // text.cpp），而这一格是固定高单行、
+                                            // 不能换行（换行会把 kHeadH 撑破、
+                                            // 与 quotaRowHeight 的高度预算脱钩）。
+                                            // 故防溢只能靠 clip 剪裁。
+                                            .clip()
                                             .color(showErr ? t.colors.error
                                                            : t.colors
                                                                  .textTertiary)
@@ -563,13 +589,18 @@ void drawQuotaCard(eui::Ui& ui, const core::theme::Tokens& t, float contentWidth
                                     }
                                 }
 
-                                // ---- 错误行 ----
+                                // ---- 错误行（错误文案的**唯一**出处）----
                                 if (showErr) {
                                     inner.text(rowId + ".error")
                                         .size(innerW, kErrRowH)
                                         .text(row.lastError)
                                         .fontSize(t.sizes.fontSizeSmall)
                                         .lineHeight(kErrRowH)
+                                        // 同 head .status：固定高单行盒 +
+                                        // 上游原文长度不可控（headline 后面还
+                                        // 跟着供应商 detail），不 clip 就会画到
+                                        // 卡片右缘之外。
+                                        .clip()
                                         .color(t.colors.error)
                                         .build();
                                 }
