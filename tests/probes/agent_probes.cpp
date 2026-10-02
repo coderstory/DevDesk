@@ -397,17 +397,33 @@ int main(int argc, char* argv[]) {
                               panel->frame.y + panel->frame.height - 19.5f,
                       "任务弹窗按钮行溢出面板底（底边距应收 20）");
 
-                // 下拉展开态（评审点 5）：真指针点字段 → 弹层最后一项完整在屏内，
-                // 且覆盖层不挤动下方行；再点一次收起
+                // 下拉展开态（评审复查整改）：`.popup` / `.item.<i>` 是 dropdown
+                // 无条件构建的子节点，收起态一样存在/非零/在屏内 → 单看它们恒真。
+                // 这里钉**只有展开态才成立**的开档属性对（弹层 opacity 0↔1、
+                // zIndex 0↔900、命中层 disabled true↔false），真指针点开后再验几何
                 const auto* triggerField =
                     ui->find("agent.dialog.task.trigger.field");
+                const auto* popupClosed =
+                    ui->find("agent.dialog.task.trigger.popup");
                 const float metaYBefore =
                     metaWrap != nullptr ? metaWrap->frame.y : 0.0f;
+                check(popupClosed != nullptr && popupClosed->opacity == 0.0f &&
+                          popupClosed->zIndex == 0,
+                      "下拉收起态弹层应不可见（opacity 0 / zIndex 0）");
                 if (triggerField == nullptr) {
                     check(false, "触发方式下拉字段命中面缺失");
                 } else {
                     clickCenter(window, triggerField);
                     composeFrame();
+                    const auto* popupOpen =
+                        ui->find("agent.dialog.task.trigger.popup");
+                    check(popupOpen != nullptr && popupOpen->opacity == 1.0f &&
+                              popupOpen->zIndex > 0,
+                          "真指针点字段后弹层未展开（opacity/zIndex 未升档）");
+                    const auto* popupHit =
+                        ui->find("agent.dialog.task.trigger.popup.hit");
+                    check(popupHit != nullptr && !popupHit->disabled,
+                          "展开态弹层命中层仍 disabled");
                     const auto* lastItem =
                         ui->find("agent.dialog.task.trigger.item.2");
                     check(lastItem != nullptr && lastItem->frame.width > 0.0f &&
@@ -425,11 +441,18 @@ int main(int argc, char* argv[]) {
                               std::to_string(metaYBefore) + " 展开后 " +
                               (metaAfter ? std::to_string(metaAfter->frame.y)
                                          : std::string("（缺行）")) + "）");
+                    // 再点一次收起 → 开档属性复位（反向钉）
                     const auto* fieldNow =
                         ui->find("agent.dialog.task.trigger.field");
                     if (fieldNow != nullptr) {
-                        clickCenter(window, fieldNow);   // 收起弹层
+                        clickCenter(window, fieldNow);
                         composeFrame();
+                        const auto* popupReclosed =
+                            ui->find("agent.dialog.task.trigger.popup");
+                        check(popupReclosed != nullptr &&
+                                  popupReclosed->opacity == 0.0f &&
+                                  popupReclosed->zIndex == 0,
+                              "再点字段后弹层未收起（opacity/zIndex 未复位）");
                     }
                 }
 

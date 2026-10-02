@@ -1140,23 +1140,55 @@ REGISTER_TEST(agent_ui_dialog_geometry_design_size_and_budget,
             panel->frame.y + panel->frame.height - 19.5f,
         "按钮行溢出面板底（底边距应收 20）");
     DOCTEST_CHECK(nearPx(saveBtn->frame.height, 40.0f));
-    // 超长目标不改变行位置、不丢字符（输入框内部滚动）
-    DOCTEST_CHECK_EQ(inputText(ui2, "agent.dialog.task.goal").size(), longGoal.size());
+    // 超长目标不挤动**输入框自身几何**（宽 = 面板内宽 704 - 标签 72 - 间距 12
+    // = 620、高 = 设计 96）——只读输入框模型里的文本长度验证的是「值没丢」，
+    // 不是「框没被挤」，故不采用；行位置恒等在下面单独钉
+    DOCTEST_CHECK_MESSAGE(nearPx(goal->frame.width, 620.0f),
+                          "goal 输入框宽应恒为 620（超长文本不得挤动盒宽），实测 " +
+                              std::to_string(goal->frame.width));
+    DOCTEST_CHECK_MESSAGE(nearPx(goal->frame.height, 96.0f),
+                          "goal 输入框高应恒为 96，实测 " +
+                              std::to_string(goal->frame.height));
     DOCTEST_CHECK_MESSAGE(nearPx(metaRow->frame.y, panel->frame.y + 224.0f),
                           "元信息行 y 应恒为面板顶 +224，实测 " +
                               std::to_string(metaRow->frame.y));
 
-    // ---- ③ 下拉展开态（评审点：弹层不能既没修也没测）----
-    // 触发方式弹层（3 项）向下覆盖元信息行：最后一项必须完整落在屏内，
-    // 且覆盖是「不挤动布局」的（下方行 y 不变）
+    // ---- ③ 下拉展开态（评审复查整改）----
+    // 判据必须是**只有展开态才成立**的属性：`.popup` / `.item.<i>` 是 dropdown
+    // 无条件构建的子节点（EUI-NEO/components/dropdown.h:145/190 无 open 守卫），
+    // 收起态一样存在、一样非零、一样在屏内——拿它们单判是恒真断言。这里改钉
+    // 收起↔展开的**开档属性对**：弹层 opacity（收起 0 / 展开 1）与 z 档
+    // （收起 0 / 展开 900）+ 命中层 disabled（收起 true / 展开 false），
+    // 几何断言（最后一项在屏内）只有在这对属性成立时才有意义。
+    const auto* popupClosed = ui2.find("agent.dialog.task.trigger.popup");
+    DOCTEST_REQUIRE_MESSAGE(popupClosed != nullptr, "弹层节点缺失");
+    const auto* popupHitClosed = ui2.find("agent.dialog.task.trigger.popup.hit");
+    DOCTEST_REQUIRE_MESSAGE(popupHitClosed != nullptr, "弹层命中层缺失");
+    DOCTEST_CHECK_MESSAGE(popupClosed->opacity == 0.0f,
+                          "收起态弹层应不可见（opacity 0），实测 " +
+                              std::to_string(popupClosed->opacity));
+    DOCTEST_CHECK_MESSAGE(popupClosed->zIndex == 0,
+                          "收起态弹层不应在开档（zIndex 0），实测 " +
+                              std::to_string(popupClosed->zIndex));
+    DOCTEST_CHECK(popupHitClosed->disabled);
+
     const float metaYBefore = metaRow->frame.y;
     DOCTEST_REQUIRE_MESSAGE(clickId(ui2, "agent.dialog.task.trigger.field"),
                             "触发方式下拉字段命中面缺失");
     eui::Ui ui2b;
     composeTo(ui2b, mod, kScreen, "agent_ui_geo2b");
     const auto* popup = ui2b.find("agent.dialog.task.trigger.popup");
-    DOCTEST_REQUIRE_MESSAGE(popup != nullptr, "下拉弹层缺失");
-    DOCTEST_CHECK(popup->frame.height > 0.0f);
+    DOCTEST_REQUIRE_MESSAGE(popup != nullptr, "弹层节点缺失");
+    DOCTEST_CHECK_MESSAGE(popup->opacity == 1.0f,
+                          "点开字段后弹层仍不可见（opacity 应 1.0），实测 " +
+                              std::to_string(popup->opacity));
+    DOCTEST_CHECK_MESSAGE(popup->zIndex > 0,
+                          "点开字段后弹层未升到开档（zIndex 应 > 0），实测 " +
+                              std::to_string(popup->zIndex));
+    const auto* popupHitOpen = ui2b.find("agent.dialog.task.trigger.popup.hit");
+    DOCTEST_REQUIRE(popupHitOpen != nullptr);
+    DOCTEST_CHECK_FALSE(popupHitOpen->disabled);
+    // 展开态几何：最后一项完整在屏内（此断言以「弹层确实可见」为前提）
     const auto* lastItem = ui2b.find("agent.dialog.task.trigger.item.2");
     DOCTEST_REQUIRE_MESSAGE(lastItem != nullptr, "下拉最后一项（常驻）缺失");
     DOCTEST_CHECK(lastItem->frame.width > 0.0f && lastItem->frame.height > 0.0f);
@@ -1165,17 +1197,33 @@ REGISTER_TEST(agent_ui_dialog_geometry_design_size_and_budget,
             lastItem->frame.y + lastItem->frame.height <= kScreen.height + 0.5f,
         "下拉最后一项跑出屏外: y=" + std::to_string(lastItem->frame.y) +
             " 底=" + std::to_string(lastItem->frame.y + lastItem->frame.height));
+    // 弹层是覆盖层：展开时盖住下方元信息行（这是有意行为，见报告已知限制），
+    // 但**不挤动**布局（行 y 不变）
+    DOCTEST_CHECK_MESSAGE(popup->frame.y + popup->frame.height > metaYBefore,
+                          "弹层应向下覆盖元信息行（覆盖层语义变了？）");
     const auto* metaAfter = ui2b.find("agent.dialog.task.destructive.wrap");
     DOCTEST_REQUIRE(metaAfter != nullptr);
     DOCTEST_CHECK_MESSAGE(nearPx(metaAfter->frame.y, metaYBefore),
                           "下拉展开挤动了下方行：展开前 " +
                               std::to_string(metaYBefore) + " 展开后 " +
                               std::to_string(metaAfter->frame.y));
+    // 再点一次收起 → 开档属性复位（同一对断言的反向钉）
+    DOCTEST_REQUIRE(clickId(ui2b, "agent.dialog.task.trigger.field"));
+    eui::Ui ui2b2;
+    composeTo(ui2b2, mod, kScreen, "agent_ui_geo2b2");
+    const auto* popupReclosed = ui2b2.find("agent.dialog.task.trigger.popup");
+    DOCTEST_REQUIRE(popupReclosed != nullptr);
+    DOCTEST_CHECK_MESSAGE(popupReclosed->opacity == 0.0f && popupReclosed->zIndex == 0,
+                          "再点字段后弹层未收起（opacity/z 未复位）");
     // 更深的弹层（模型槽位 = X 宏表 6 项，弹层跨过面板底）也不能掉出屏底
-    DOCTEST_REQUIRE_MESSAGE(clickId(ui2b, "agent.dialog.task.slot.field"),
+    DOCTEST_REQUIRE_MESSAGE(clickId(ui2b2, "agent.dialog.task.slot.field"),
                             "模型槽位下拉字段命中面缺失");
     eui::Ui ui2c;
     composeTo(ui2c, mod, kScreen, "agent_ui_geo2c");
+    const auto* slotPopup = ui2c.find("agent.dialog.task.slot.popup");
+    DOCTEST_REQUIRE(slotPopup != nullptr);
+    DOCTEST_CHECK_MESSAGE(slotPopup->opacity == 1.0f && slotPopup->zIndex > 0,
+                          "槽位下拉未展开（opacity/z 未升档）");
     const auto* slotLast = ui2c.find("agent.dialog.task.slot.item.5");
     DOCTEST_REQUIRE_MESSAGE(slotLast != nullptr, "槽位下拉最后一项（子代理）缺失");
     DOCTEST_CHECK(slotLast->frame.width > 0.0f && slotLast->frame.height > 0.0f);
