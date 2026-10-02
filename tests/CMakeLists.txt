@@ -259,4 +259,34 @@ foreach(_probe_source ${_devdesk_probe_sources})
         set_tests_properties(${_probe_name}_screenshot_switch
             PROPERTIES LABELS "probe")
     endif()
+    # home 的**设计最小窗**尺寸档（2026-10-03 final 批）。默认那条按 1200×1000
+    # 跑，而「矮窗下余量卡画不画」这件事**只在 720 这档才有判别力**（1000 高的
+    # 旧实现也画）—— 只跑默认档等于这条断言恒真。补一条带 --size 的最小窗档，
+    # 让 G7 遗留 1 / G8 遗留 1 的修复真正进门禁。
+    if(_probe_name STREQUAL "home_probes")
+        add_test(NAME ${_probe_name}_min_window
+            COMMAND ${_probe_name} --size 1200x720)
+        set_tests_properties(${_probe_name}_min_window
+            PROPERTIES LABELS "probe")
+    endif()
 endforeach()
+
+# ==================== 真机出网探针（**默认门禁之外**，2026-10-03）============
+# 走真网络 + 需要用户本机 ~/.cc-switch/cc-switch.db + 每次实打实打四家供应商
+# 接口 → 绝不能进任何默认门禁（CI / 离线环境必红，且别的机器上没有凭据）。
+#
+# 但「跑它要打一长串编译命令」不可持续（G8 遗留 4：入口只有 .cpp 文件头那段
+# 手敲命令，而那段命令在 macOS 上照抄会直接 link 失败——漏了 yyjson 目标与
+# openssl 路径）。于是给一条**显式入口**：
+#     bash scripts/run-quota-live-probe.sh [--dump <path>] [provider_id ...]
+#     (cd build && ctest -L live)
+#
+# LABELS 只有 **live**、**没有 probe** —— 门禁跑的是 `ctest -L probe`，看不到它。
+# 这条「绝不进默认门禁」由 tests/test_modules/test_probe_gate_labels.cpp 的
+# 单测逐条解析本文件断言（改坏即全量红），不是靠注释保证。
+if(UNIX)
+    add_test(NAME quota_live_probe
+        COMMAND bash "${CMAKE_SOURCE_DIR}/scripts/run-quota-live-probe.sh"
+            "${CMAKE_BINARY_DIR}")
+    set_tests_properties(quota_live_probe PROPERTIES LABELS "live")
+endif()

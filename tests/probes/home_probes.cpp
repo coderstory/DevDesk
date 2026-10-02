@@ -55,8 +55,12 @@
 #include "app_registry.h"
 #include "core/module_interface.h"
 #include "core/proxy_stats.h"
+#include "module_home/home_quota_card.h"   // computeQuotaCardMetrics（组 H(a) 判据）
 #include "module_home/home_service.h"  // startOfDayEpoch（逐时 token 种子的本地零点锚）
 #include "quota/quota_store.h"  // G7：余量卡种子走真落库口（编解码单点）
+#include "platform/json.h"
+#include <fstream>
+#include <sstream>
 #include <vector>
 #include "core/theme.h"
 
@@ -115,6 +119,125 @@ bool textFitsOrGuarded(const core::dsl::Element& el) {
     return intrinsic.x <= el.frame.width + 1.0f;
 }
 
+// ============ --quota-fixture：真机数据种子（2026-10-03 final 批）============
+//
+// 默认（不给开关）走离线假种子：门禁 `ctest -L probe` 跑的是那一条，纯离线、
+// 可复现、不打任何供应商接口。给了开关就改用 `quota_live_probe --dump` 落的
+// JSON —— 即**四家真供应商真查回来的结果**，从而把
+// 「真网络 → 真 QuotaStore 落库 → 真中立桥 → 真卡片绘制 → 真落图」这条链
+// 一次跑通并留下 PNG 证据（G8 的诚实边界正是「UI 呈现层没被真机点验过」）。
+//
+// **为什么落库仍走真 QuotaStore::applyFetchResult**：fixture 只提供「这一次
+// fetch 返回了什么」，之后 encode/decode、失败韧性、五态判据、标签/裁剪
+// 全部是产品代码。若图好看而落库/解码绕过了产品代码，这张图证明不了任何事。
+//
+// ⚠ 凭据：fixture 里**没有**凭据（探针侧就不导出 apiKey / AK / SK）。这里也不
+// 需要——种子只落 config + result 两行，凭据对渲染是无关字段。
+//
+// 返回值 = 失败原因（空串 = 成功）。**失败必须让整个探针红**，不许退化成
+// 「悄悄改用假种子」——那会让这张图的身份变得不可知。
+
+std::string loadQuotaFixture(const std::string& path, core::data::SqliteDb& sq,
+                             module::claude::quota::QuotaStore& store,
+                             std::vector<int64_t>* createdProfileIds) {
+    namespace q = module::claude::quota;
+    std::ifstream in(path, std::ios::binary);
+    if (!in) {
+        return "打不开 fixture 文件 " + path;
+    }
+    std::ostringstream buf;
+    buf << in.rdbuf();
+    const auto parsed = platform::json::parse(buf.str());
+    if (parsed.isFail()) {
+        return "fixture JSON 解析失败: " + parsed.errorMessage();
+    }
+    if (!parsed.value().isObject()) {
+        return "fixture 根不是对象";
+    }
+    const platform::json::JsonValue providers =
+        parsed.value().asObject().get("providers");
+    if (!providers.isArray() || providers.size() == 0) {
+        return "fixture 的 providers 不是非空数组";
+    }
+    const int64_t fetchedAt = parsed.value().asObject()
+                                  .get("fetchedAt").asInt();
+
+    for (int i = 0; i < providers.size(); ++i) {
+        const platform::json::JsonValue pv = providers[i];
+        if (!pv.isObject()) {
+            return "fixture providers[" + std::to_string(i) + "] 不是对象";
+        }
+        const platform::json::JsonObject po = pv.asObject();
+        const std::string providerId = po.get("providerId").asString();
+        const std::string displayName = po.get("displayName").asString();
+        // profile 名取 cc-switch 条目名（= 用户在 cc-switch 里看到的那个名字），
+        // 而不是 displayName：后者是**供应商中文名**，拿它当 profile 名会让卡片
+        // 两列显示同一个词，看着像渲染重复——那是种子的锅，不是产品的锅。
+        std::string profileName = po.get("ccswitchName").asString();
+        if (profileName.empty()) profileName = displayName;
+        if (providerId.empty()) {
+            return "fixture providers[" + std::to_string(i) + "] 缺 providerId";
+        }
+
+        const int64_t now = static_cast<int64_t>(std::time(nullptr));
+        if (!sq.exec("INSERT INTO claude_profiles (name, base_url, api_key_hint, "
+                     "api_key_check, model, created_at, updated_at) VALUES ('" +
+                         profileName +
+                         "', 'https://example.invalid', 'sk-***', 'chk', 'm', " +
+                         std::to_string(now) + ", " + std::to_string(now) + ")")
+                 .isOk()) {
+            return "fixture profile 插入失败: " + profileName;
+        }
+        auto st = sq.prepare("SELECT last_insert_rowid() AS id");
+        auto rows = st.isOk() ? st.value().fetchAll()
+                              : core::Result<std::vector<core::data::SqlRow>>::fail(
+                                    st.errorCode(), st.errorMessage());
+        if (rows.isFail() || rows.value().empty()) {
+            return "取 fixture profileId 失败: " + profileName;
+        }
+        const int64_t pid = rows.value()[0].getInt64("id").value();
+        createdProfileIds->push_back(pid);
+
+        q::QuotaConfigRow cfg;
+        cfg.profileId = pid;
+        cfg.providerId = providerId;
+        cfg.enabled = true;
+        cfg.autoRefresh = true;
+        cfg.intervalMinutes = 15;
+        if (store.saveConfig(cfg).isFail()) {
+            return "fixture quota config 落库失败: " + profileName;
+        }
+
+        // 枚举按**列文本**反解（与探针侧 dump 时的正向映射同一对函数，不可能
+        // 各写一份）。kind 的两个取值直接比 quotaKindName 的输出，不另写字面量。
+        q::QuotaResult r;
+        r.kind = po.get("kind").asString() ==
+                         std::string(q::quotaKindName(q::QuotaKind::Balance))
+                     ? q::QuotaKind::Balance
+                     : q::QuotaKind::Tiered;
+        r.balanceRemaining = po.get("balanceRemaining").asDouble();
+        r.currency = po.get("currency").asString();
+        r.planName = po.get("planName").asString();
+        r.error = q::quotaErrorFromName(po.get("error").asString());
+        r.errorMessage = po.get("errorMessage").asString();
+        const platform::json::JsonValue wins = po.get("windows");
+        if (wins.isArray()) {
+            for (int j = 0; j < wins.size(); ++j) {
+                const platform::json::JsonObject wo = wins[j].asObject();
+                q::QuotaWindow w;
+                w.key = wo.get("key").asString();
+                w.usedPercent = wo.get("usedPercent").asDouble();
+                w.resetsAt = wo.get("resetsAt").asString();
+                r.windows.push_back(std::move(w));
+            }
+        }
+        if (store.applyFetchResult(pid, r, fetchedAt).isFail()) {
+            return "fixture quota result 落库失败: " + profileName;
+        }
+    }
+    return std::string();
+}
+
 }  // namespace
 
 int main(int argc, char* argv[]) {
@@ -169,60 +292,79 @@ int main(int argc, char* argv[]) {
     bool passed = true;
 
     // ---- G7 余量卡种子（组 G/H 前提）----
-    // p1（上一段的种子，无 quota 配置行）= 未配置态；另建 8 个 profile 走
-    // 「正常 Tiered」+ 一个 Balance 型，逐行都是「行首 + 条 + （错误行）」。
-    // 行数刻意超过卡片视口上限 → 组 H 能断言「出滚动条」。
+    // p1（上一段的种子，无 quota 配置行）= 未配置态。
+    // 默认再补 8 个**离线假** profile 走「正常 Tiered」+ 一个 Balance 型，逐行
+    // 都是「行首 + 条 + （错误行）」。行数刻意超过卡片视口上限 → 组 H 能断言
+    // 「出滚动条」。`--quota-fixture <json>` 则改用**真机数据**（探针 dump）。
+    // 两种模式的其余流程逐字相同 —— 断言不因模式而改。
+    std::vector<int64_t> fixtureProfileIds;  // 组 H(b) 收尾按 id 删（名字是供应商名）
     {
         using namespace module::claude::quota;
         QuotaStore store(env.db->db());
         const int64_t base = static_cast<int64_t>(std::time(nullptr));
-        for (int i = 0; i < 8; ++i) {
-            const std::string name = "quota-p" + std::to_string(i);
-            if (!env.db->db()
-                     .exec("INSERT INTO claude_profiles (name, base_url, "
-                           "api_key_hint, api_key_check, model, created_at, "
-                           "updated_at) VALUES ('" +
-                           name +
-                           "', 'https://example.invalid', 'sk-***', 'chk', 'm', " +
-                           std::to_string(base) + ", " + std::to_string(base) +
-                           ")")
-                     .isOk()) {
-                std::cerr << "home_probes: 余量种子 profile 插入失败\n";
+        if (!args.quotaFixturePath.empty()) {
+            const std::string err = loadQuotaFixture(
+                args.quotaFixturePath, env.db->db(), store, &fixtureProfileIds);
+            if (!err.empty()) {
+                std::cerr << "home_probes: --quota-fixture 加载失败: " << err
+                          << "（不退回假种子：图的身份必须可查）\n";
                 passed = false;
-                break;
-            }
-            auto st = env.db->db().prepare("SELECT last_insert_rowid() AS id");
-            auto rows = st.isOk() ? st.value().fetchAll()
-                                  : core::Result<std::vector<core::data::SqlRow>>::fail(
-                                        st.errorCode(), st.errorMessage());
-            if (rows.isFail() || rows.value().empty()) {
-                std::cerr << "home_probes: 取余量种子 profileId 失败\n";
-                passed = false;
-                break;
-            }
-            const int64_t pid = rows.value()[0].getInt64("id").value();
-
-            QuotaConfigRow cfg;
-            cfg.profileId = pid;
-            cfg.providerId = (i == 7) ? "deepseek" : "opencode_go";
-            cfg.enabled = true;
-            cfg.autoRefresh = true;
-            cfg.intervalMinutes = 15;
-            store.saveConfig(cfg);
-
-            QuotaResult r;
-            r.kind = (i == 7) ? QuotaKind::Balance : QuotaKind::Tiered;
-            if (r.kind == QuotaKind::Balance) {
-                r.balanceRemaining = 8.5 + i;
-                r.currency = "CNY";
             } else {
-                QuotaWindow w;
-                w.key = (i % 2 == 0) ? "five_hour" : "weekly";
-                w.usedPercent = 20.0 + static_cast<double>(i) * 8.0;
-                if (i == 3) w.resetsAt = "2030-01-01T00:00:00";
-                r.windows.push_back(w);
+                std::cout << "home_probes: --quota-fixture 已种入 "
+                          << fixtureProfileIds.size() << " 个真机 profile（"
+                          << args.quotaFixturePath << "）\n";
             }
-            store.applyFetchResult(pid, r, base);
+        } else {
+            for (int i = 0; i < 8; ++i) {
+                const std::string name = "quota-p" + std::to_string(i);
+                if (!env.db->db()
+                         .exec("INSERT INTO claude_profiles (name, base_url, "
+                               "api_key_hint, api_key_check, model, created_at, "
+                               "updated_at) VALUES ('" +
+                                   name +
+                                   "', 'https://example.invalid', 'sk-***', "
+                                   "'chk', 'm', " +
+                                   std::to_string(base) + ", " +
+                                   std::to_string(base) + ")")
+                         .isOk()) {
+                    std::cerr << "home_probes: 余量种子 profile 插入失败\n";
+                    passed = false;
+                    break;
+                }
+                auto st = env.db->db().prepare("SELECT last_insert_rowid() AS id");
+                auto rows = st.isOk()
+                                ? st.value().fetchAll()
+                                : core::Result<std::vector<core::data::SqlRow>>::fail(
+                                      st.errorCode(), st.errorMessage());
+                if (rows.isFail() || rows.value().empty()) {
+                    std::cerr << "home_probes: 取余量种子 profileId 失败\n";
+                    passed = false;
+                    break;
+                }
+                const int64_t pid = rows.value()[0].getInt64("id").value();
+
+                QuotaConfigRow cfg;
+                cfg.profileId = pid;
+                cfg.providerId = (i == 7) ? "deepseek" : "opencode_go";
+                cfg.enabled = true;
+                cfg.autoRefresh = true;
+                cfg.intervalMinutes = 15;
+                store.saveConfig(cfg);
+
+                QuotaResult r;
+                r.kind = (i == 7) ? QuotaKind::Balance : QuotaKind::Tiered;
+                if (r.kind == QuotaKind::Balance) {
+                    r.balanceRemaining = 8.5 + i;
+                    r.currency = "CNY";
+                } else {
+                    QuotaWindow w;
+                    w.key = (i % 2 == 0) ? "five_hour" : "weekly";
+                    w.usedPercent = 20.0 + static_cast<double>(i) * 8.0;
+                    if (i == 3) w.resetsAt = "2030-01-01T00:00:00";
+                    r.windows.push_back(w);
+                }
+                store.applyFetchResult(pid, r, base);
+            }
         }
     }
 
@@ -244,6 +386,12 @@ int main(int argc, char* argv[]) {
     };
 
     settleFrames(2);  // 首帧构建树（结构 diff 计入 paint 预算，组 B 前消化）
+
+    // ---- 「数据还在」的中途落图（--screenshot-seeded <路径>）----
+    // 为什么必须多这一个点：组 H(b) 是**破坏性收尾断言**（清空余量表），退出点
+    // 那张 --screenshot 拍到的是收尾后的空态。想看「余量卡长什么样」必须在此
+    // 处拍。未给该开关 = 立刻返回（零开销），既有行为逐字不变。
+    probe::captureSeedIfRequested(args, window, runtime, &passed);
 
     // ==================== 组 A：类 1(b) sparkline z（P1） ====================
     // home.stat.tokens.spark（lineChart chromeless 根，sparkwrap 顶带 y0..16，
@@ -449,11 +597,17 @@ int main(int argc, char* argv[]) {
     }
 
     // ==================== 组 G：G7 余量卡几何（P1） ====================
-    // 三条，都用**数字**判（不接受「看起来对」）：
-    //   G(a) 余量卡横向不溢出窗口
-    //   G(b) **上方统计网格的 x/y/w/h 逐字不变**（余量卡是插在它下方的新块，
-    //       不能把既有统计卡的 y/h 顶走 —— 这是简报点名的必测项）
-    //   G(c) 余量卡在统计网格**之下**、且整页底（快捷按钮行）没有被顶出屏外
+    // 四条，都用**数字**判（不接受「看起来对」）：
+    //   G(a) 余量卡横向不溢出**内容列**（不再是「窗口」——整页已挂进
+    //       home.scroll，出滚动条时内容列比窗口窄，判窗口是判错对象）
+    //   G(b) **上方统计网格的 x/y/h 逐字不变**，且宽 == 内容列宽 − pad×2
+    //   G(c) 余量卡在统计网格**之下**；快捷按钮行**没被挤出滚动内容**
+    //       （⚠ 2026-10-03 改口径：原判据是「底 ≤ 窗高」，那编码的是
+    //        「整页必须塞进视口」——正是矮窗看不到余量卡的根因。现在整页挂在
+    //        home.scroll 上，页脚**允许**在视口之外，但**必须仍在内容盒内**
+    //        = 用户滚得到。判据从「塞得进视口」改成「没被挤出内容」，不是
+    //        删掉断言。）
+    //   G(d) **余量卡在任意屏高都构建**（矮窗不再两面落空，见组 I 注释）
     {
         composeFrame();
         const core::dsl::Element* card =
@@ -462,23 +616,33 @@ int main(int argc, char* argv[]) {
             ui != nullptr ? ui->find("home.stats") : nullptr;
         const core::dsl::Element* acts =
             ui != nullptr ? ui->find("home.actions") : nullptr;
-        if (card == nullptr || stats == nullptr) {
+        const core::dsl::Element* root =
+            ui != nullptr ? ui->find("home.root") : nullptr;
+        const core::dsl::Element* pageScroll =
+            ui != nullptr ? ui->find("home.scroll.content") : nullptr;
+        if (card == nullptr || stats == nullptr || root == nullptr ||
+            pageScroll == nullptr) {
             std::cerr << "home_probes: 组 G 结构缺失 (card="
                       << (card != nullptr ? "ok" : "null")
                       << ", stats=" << (stats != nullptr ? "ok" : "null")
-                      << ")\n";
+                      << ", root=" << (root != nullptr ? "ok" : "null")
+                      << ", scrollContent="
+                      << (pageScroll != nullptr ? "ok" : "null") << ")\n";
             passed = false;
         } else {
             const float scale = core::theme::fontScale();
             // 期望值来自 home_module.cpp 的既有常量（pad 40 / header 72 /
-            // gap 20 / statH 144×fontScale / contentW = 屏宽 − 80），
-            // 不是从当前帧反推的（反推等于「测了它自己」）。
+            // gap 20 / statH 144×fontScale），不是从当前帧反推的
+            // （反推等于「测了它自己」）。**宽度不再写死成「屏宽 − 80」**：
+            // 出滚动条时内容列按框架口径收窄（scrollbarWidth + gap），那是
+            // 正确行为。改判「== 内容列宽 − pad×2」才是这条断言真正想守的
+            // 不变式——统计网格必须**铺满内容列**，不多不少。
             const float expectPad = 40.0f;
             const float expectHeaderH = 72.0f;
             const float expectGap = 20.0f;
             const float expectStatH = 144.0f * scale;
             const float expectStatsY = expectPad + expectHeaderH + expectGap;
-            const float expectStatsW = static_cast<float>(args.windowW) -
+            const float expectStatsW = pageScroll->frame.width -
                                        expectPad * 2.0f;
             if (std::fabs(stats->frame.x - expectPad) > 0.5f ||
                 std::fabs(stats->frame.width - expectStatsW) > 0.5f ||
@@ -493,13 +657,14 @@ int main(int argc, char* argv[]) {
                           << ")\n";
                 passed = false;
             }
-            // (a) 横向不溢出
+            // (a) 横向不溢出**内容列**（判窗口是判错对象：出滚动条时内容列比窗口窄）
             if (card->frame.x < -0.5f ||
                 card->frame.x + card->frame.width >
-                    static_cast<float>(args.windowW) + 0.5f) {
+                    pageScroll->frame.width + 0.5f) {
                 std::cerr << "home_probes: 组 G(a) FAIL——余量卡横向溢出：x="
                           << card->frame.x << " w=" << card->frame.width
-                          << "（窗宽 " << args.windowW << "）\n";
+                          << "（内容列宽 " << pageScroll->frame.width
+                          << "，窗宽 " << args.windowW << "）\n";
                 passed = false;
             }
             // (c) 在统计网格之下且不相交
@@ -509,20 +674,46 @@ int main(int argc, char* argv[]) {
                           << (stats->frame.y + stats->frame.height) << "\n";
                 passed = false;
             }
-            // (c) 快捷按钮行仍在屏内（余量卡不能把既有内容顶出可视区）
-            if (acts != nullptr &&
-                acts->frame.y + acts->frame.height >
-                    static_cast<float>(args.windowH) + 0.5f) {
-                std::cerr << "home_probes: 组 G(c) FAIL——快捷按钮行被顶出窗口："
-                          << "底=" << (acts->frame.y + acts->frame.height)
-                          << " > 窗高 " << args.windowH << "\n";
+            // (c) 快捷按钮行仍在**滚动内容盒内**（用户滚得到）。
+            // ⚠ 2026-10-03 改口径，理由见文件头组 G 注释：整页挂上 home.scroll
+            // 之后，页脚**允许**在视口之外（那正是滚动存在的意义），但绝不能
+            // 溢出内容盒——溢出去就等于滚到底也够不着 = 真丢内容。
+            if (acts != nullptr) {
+                const float actsBottom = acts->frame.y + acts->frame.height;
+                const float contentBottom = root->frame.y + root->frame.height;
+                if (actsBottom > contentBottom + 0.5f) {
+                    std::cerr << "home_probes: 组 G(c) FAIL——快捷按钮行溢出滚动"
+                              << "内容盒（滚到底也够不着）：底=" << actsBottom
+                              << " > 内容底=" << contentBottom << "\n";
+                    passed = false;
+                }
+            }
+            // (d) 余量卡在**当前屏高**确实构建出来了。
+            // 这是 G7 遗留 1 / G8 遗留 1 的判据本体：矮窗下旧实现两面落空
+            // （压不出余量卡 + 余量卡整张不画）。⚠ 本条只在探针实际跑的那个
+            // 屏高上有判别力 —— 默认 1200×1000 旧实现也画，所以门禁里另有
+            // home_probes_min_window（--size 1200x720）专门跑设计最小窗；
+            // 预算纯函数那条另有单测（test_home_quota_card 的
+            // home_quota_budget_* ），三处合起来才是完整守卫。
+            if (card->frame.height <= 0.0f || card->frame.width <= 0.0f) {
+                std::cerr << "home_probes: 组 G(d) FAIL——余量卡已构建但零尺寸："
+                          << card->frame.width << "x" << card->frame.height
+                          << "（屏高 " << args.windowH << "）\n";
                 passed = false;
             }
         }
     }
 
     // ==================== 组 H：G7 余量卡滚动（P1） ====================
-    // H(a) 行多 → scrollView 出滚动条，且滚动条不高于视口
+    // H(a) 滚动条**由内容溢出驱动**：出滚动条 ⟺ 内容高 > 视口高。
+    //     「出现」这一半是原有断言；「不溢出时不出现」这一半是 2026-10-03 补的
+    //     ——它让本断言在 --quota-fixture 模式（真机数据只有 4~5 行、内容未必
+    //     溢出）与「窗口更高 → 视口更大 → 内容装得下」两种情形下依然有意义，
+    //     而不是因为行数变了就整条失去判别力。
+    //     判据用 computeQuotaCardMetrics（home_quota_card.h 的公开契约函数），
+    //     cap 取**实测视口高**：于是 overflows 恰好等于「内容超出这个视口」。
+    //     ⚠ bar 为 null 不直接判红——那可能正是「不溢出」的正确答案；红不红由
+    //       overflows 与 bar 存在性是否一致决定。
     // H(b) 删掉全部余量数据后重排 → **滚动条消失**（证明它是内容驱动的，
     //      不是「无条件画一根」的装饰）
     {
@@ -530,16 +721,38 @@ int main(int argc, char* argv[]) {
             ui != nullptr ? ui->find("home.quota.scroll.scroll") : nullptr;
         const core::dsl::Element* view =
             ui != nullptr ? ui->find("home.quota.scroll") : nullptr;
-        if (bar == nullptr || view == nullptr) {
-            std::cerr << "home_probes: 组 H(a) FAIL——profile 多时未出滚动条"
-                      << "(scroll=" << (view != nullptr ? "ok" : "null")
-                      << ", bar=" << (bar != nullptr ? "ok" : "null") << ")\n";
+        // 溢出判据：内容（行高之和 + 行间距）是否超过视口。用桥读回真实行，
+        // 与卡片渲染的是同一份数据（否则就是拿种子猜渲染结果）。
+        const auto rows =
+            module::claude::quota::listQuotaHomeRows(env.db->db());
+        if (view == nullptr) {
+            std::cerr << "home_probes: 组 H(a) FAIL——滚动视口未构建\n";
             passed = false;
-        } else if (bar->frame.height > view->frame.height + 0.5f ||
-                   bar->frame.height <= 0.0f) {
-            std::cerr << "home_probes: 组 H(a) FAIL——滚动条高 " << bar->frame.height
-                      << " 越界（视口高 " << view->frame.height << "）\n";
+        } else if (rows.isFail() || rows.value().empty()) {
+            std::cerr << "home_probes: 组 H(a) FAIL——listQuotaHomeRows "
+                      << (rows.isFail() ? "失败: " + rows.errorMessage()
+                                        : std::string("返回空"))
+                      << "，拿不到内容高度\n";
             passed = false;
+        } else {
+            const auto m = module::home::quota_card::computeQuotaCardMetrics(
+                rows.value(), 0.0f, view->frame.height);
+            if (m.overflows != (bar != nullptr)) {
+                std::cerr << "home_probes: 组 H(a) FAIL——内容 "
+                          << (m.overflows ? "溢出" : "不溢出") << "视口 "
+                          << view->frame.height << "px，但滚动条"
+                          << (bar != nullptr ? "在" : "不在")
+                          << "（滚动条必须由内容溢出驱动）\n";
+                passed = false;
+            }
+            if (bar != nullptr &&
+                (bar->frame.height > view->frame.height + 0.5f ||
+                 bar->frame.height <= 0.0f)) {
+                std::cerr << "home_probes: 组 H(a) FAIL——滚动条高 "
+                          << bar->frame.height << " 越界（视口高 "
+                          << view->frame.height << "）\n";
+                passed = false;
+            }
         }
     }
     {
@@ -547,11 +760,17 @@ int main(int argc, char* argv[]) {
         // ⚠ 只删余量两表是不够的：剩下的 profile 全是「未配置」行，9 行 ×
         // (24 头 + 10 间距) = 296 > 250 视口，**本来就该**出滚动条——那是
         // 正确行为，断言它「不该出」才是错的。
+        // ⚠ 假种子按名字前缀删（quota-p%），**真机种子按 id 删**（--quota-fixture
+        // 的 profile 名就是供应商名，前缀删不掉——漏删会让本断言在真机模式下
+        // 测的根本不是「只剩一行」）。
         auto& sq = env.db->db();
+        std::string cleanup = "DELETE FROM claude_profiles WHERE name LIKE 'quota-p%'";
+        for (const int64_t fid : fixtureProfileIds) {
+            cleanup += " OR id = " + std::to_string(fid);
+        }
         if (!sq.exec("DELETE FROM profile_quota_config").isOk() ||
             !sq.exec("DELETE FROM profile_quota_result").isOk() ||
-            !sq.exec("DELETE FROM claude_profiles WHERE name LIKE 'quota-p%'")
-                 .isOk()) {
+            !sq.exec(cleanup).isOk()) {
             std::cerr << "home_probes: 组 H(b) 清库失败\n";
             passed = false;
         }

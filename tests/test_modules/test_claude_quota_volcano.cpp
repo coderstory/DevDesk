@@ -5,12 +5,15 @@
 // 被测实现逐字移植自 cc-switch `src-tauri/src/services/coding_plan.rs`（rev bfaaba16）
 // 火山分支（:835-1308）。行号对照见 quota_volcano.h 头注释。
 //
-// ⚠️ 诚实边界（本文件里最重要的一句）：火山签名**没有服务端金标准向量**。
-// 下面 signature_byte_exact_* 两条用例的期望值是用**独立实现**（Python hashlib/hmac
-// 按同一算法规格重算，非本仓库代码产出）算出来的，它能锁住「canonical 串拼装 +
-// 三处火山特有偏离 + 密钥派生链」的结构契约，能抓住 HMAC 用错、header 排序、
-// scope 结尾、日期格式等实现错误；但**它证明不了服务端会接受这个签名**——
-// 真实正确性必须等有火山账号时出网手测一次。
+// ✅ 「服务端会接受这个签名」**已于 G8 真机出网验证**（2026-10-03，cn-beijing +
+// 真实 AK/SK，两个 Action 都回 HTTP 200 且 Result 非空）——本文件当年写的
+// 「真实正确性必须等有火山账号时出网手测一次」这条悬案已关闭。
+// ⚠️ 但下面两条用例**本身仍然只是结构契约**：期望值来自**独立实现**（Python
+// hashlib/hmac 按同一算法规格重算，非本仓库代码产出），它们锁住「canonical 串
+// 拼装 + 三处火山特有偏离 + 密钥派生链」，抓的是 HMAC 用错 / header 排序 /
+// scope 结尾 / 日期格式这类实现错误。真机验证回答的是**另一个问题**（真实网关
+// 收不收），两者不可互相替代——所以这两条用例**没有被下调**，只是旁边多了一条
+// 已验证的事实。换 region / 换 Action 仍未验证。
 #include "doctest.h"
 
 #include "platform/http_client.h"
@@ -259,7 +262,8 @@ REGISTER_TEST(claude_quota_volcano_canonical_query_sorted_and_encoded,
 //
 // ⚠️ 期望值来自**独立实现**（Python hashlib/hmac 按同一算法规格重算），不是本仓库
 // 的 C++ 反算出来的。它锁死 canonical 串拼装 + 密钥派生链，但**不能**证明服务端
-// 会接受（无服务端金标准向量）——真实正确性等有火山账号时出网手测。
+// 会接受——服务端收不收这个问题由 G8 真机出网回答（已过：两次 Action 均 200），
+// 这两条用例仍只负责结构契约。
 
 REGISTER_TEST(claude_quota_volcano_signature_byte_exact_vector_a,
               "claude_quota: 火山签名逐字节（向量 A：GetAFPUsage/cn-beijing/2024-06-21）", {

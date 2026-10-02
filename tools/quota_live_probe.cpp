@@ -22,7 +22,11 @@
 //   手动按 README 段的命令编译运行；常规门禁（build-test-run.sh / ctest）
 //   完全看不到它。想跑就显式跑，跑挂了不影响任何门禁数字。
 //
-// ── 怎么编译（**故意不写进 CMake**：见上面三个理由）─────────────────
+// ── 怎么跑（**故意不写进 CMake**：见上面三个理由）──────────────────
+//   ctest 里**没有**这个探针。入口是 `bash scripts/run-quota-live-probe.sh`
+//   （2026-10-03 final 批加的显式入口，理由见该文件头），它负责按当前平台拼
+//   编译行、跑四家、并可选 `--dump`。手动编译形态见下（macOS 实测可用，
+//   yyjson 的 .o 与 openssl 路径是这平台特有的两处）：
 //   cd <repo>/build
 //   clang++ -std=c++20 -g -O0 \
 //     -I../src -I../src/module_claude_proxy \
@@ -30,23 +34,32 @@
 //     src/module_claude_proxy/libdevdesk_module_claude_proxy.a \
 //     src/platform/libdevdesk_platform.a \
 //     src/core/libdevdesk_core.a \
-//     -lcrypto -lcurl -lsqlite3 \
+//     src/ui_kit/libdevdesk_ui_kit.a \
+//     ./_eui_neo_build/CMakeFiles/eui_neo.dir/3rd/yyjson-0.12.0/src/yyjson.c.o \
+//     -L/opt/homebrew/opt/openssl@3/lib -lcrypto -lcurl -lsqlite3 \
 //     -o quota_live_probe
-//   ./quota_live_probe          # 跑四家
+//   ./quota_live_probe                       # 跑四家
+//   ./quota_live_probe --dump /tmp/quota.json # 跑四家 + 落 JSON（下游：
+//                                            #  home_probes --quota-fixture）
 //
-// 用法：`quota_live_probe [provider_id ...]`（不给参数 = 跑注册表里全部四家）。
+// 用法：`quota_live_probe [provider_id ...] [--dump <路径>]`
+//   不给 provider_id = 跑注册表里全部四家。
+//   `--dump <路径>`   = 把本次**真机查回来的结果**落成 JSON（见「--dump 段」）。
 // 退出码：0 = 每家都拿到可判定的结论（成功或**分类正确**的失败）；
-//         1 = 有 provider 完全不可达 / 分类可疑，需要人看。
+//         1 = 有 provider 完全不可达 / 分类可疑 / dump 落盘失败，需要人看。
 #include <algorithm>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <ctime>
+#include <fstream>
 #include <iostream>
 #include <map>
 #include <string>
 #include <vector>
 
 #include "core/logging.h"
+#include "platform/json.h"
 #include "quota/ccswitch_source.h"
 #include "quota/quota_error_text.h"
 #include "quota/quota_provider.h"
@@ -193,6 +206,108 @@ void printResult(const q::QuotaResult& r) {
     }
 }
 
+// ============ --dump：把真机结果落成 JSON（2026-10-03 final 批）============
+//
+// 为什么需要它：G8 的诚实边界是「只验了 provider 层，UI 呈现层没被真机点验过」。
+// 要让首页余量卡被**真数据**点验，需要一条「真网络 → 落库 → 渲染 → 落图」的
+// 通路。本文件是这条通路的**上游**：`--dump` 落一份 JSON，下游是 home_probes 的
+// `--quota-fixture <同一份 JSON>`（那里走真 QuotaStore 真桥真绘制）。
+//
+// ⚠ 凭据红线在落盘口同样成立：dump 的字段**只有**
+//   providerId / displayName / kind / error / errorMessage / currency /
+//   planName / balanceRemaining / windows[key,usedPercent,resetsAt]
+// —— apiKey / accessKeyId / secretAccessKey / base_url **一概不进**。
+// errorMessage / planName 另走 redact()（上游可能把凭据回显进错误文案）。
+//
+// 枚举落的是**列文本**（quotaErrorName / quotaKindName，quota_store.h 的单点
+// 映射），不是自造字符串：下游拿同一套函数反解，两边不可能各写一份映射。
+//
+// 返回 false = 没能落成（文件打不开 / JSON 不合法 / 往返自检不过），main 据此
+// 把退出码抬成 1 —— **落图链路不许静默半通**。
+struct DumpRow {
+    std::string providerId;
+    std::string displayName;
+    std::string ccswitchName;   // cc-switch 里的条目名 = 下游该建的 profile 名
+    q::QuotaResult result;
+};
+
+// JSON 字符串字面量（含两端引号）。转义交给平台自己的序列化器：手搓一份转义表
+// 迟早漏字符（\u0000 / 代理对 / DEL），而漏掉的表现是「JSON 静默解析错」——
+// 那正是本工具最不能出的错。
+std::string jsonQuote(const std::string& s) {
+    const core::Result<std::string> r =
+        platform::json::stringify(platform::json::makeString(s));
+    if (r.isFail()) return "\"\"";
+    return r.value();
+}
+
+bool writeDump(const std::string& path, const std::vector<DumpRow>& rows) {
+    // 数组 / 对象容器手拼（platform::json 没有「往数组里塞对象」的公开 API），
+    // 但**所有标量都走 jsonQuote / stringify**，转义仍是平台那份。
+    std::string text = "{\"schema\":\"devdesk-quota-live-dump/1\"";
+    text += ",\"fetchedAt\":" +
+            std::to_string(static_cast<long long>(std::time(nullptr)));
+    text += ",\"providers\":[";
+    for (std::size_t i = 0; i < rows.size(); ++i) {
+        const DumpRow& r = rows[i];
+        if (i > 0) text += ",";
+        text += "{\"providerId\":" + jsonQuote(r.providerId);
+        text += ",\"displayName\":" + jsonQuote(r.displayName);
+        text += ",\"ccswitchName\":" + jsonQuote(r.ccswitchName);
+        text += ",\"kind\":" + jsonQuote(q::quotaKindName(r.result.kind));
+        text += ",\"error\":" + jsonQuote(q::quotaErrorName(r.result.error));
+        text += ",\"errorMessage\":" + jsonQuote(redact(r.result.errorMessage));
+        text += ",\"currency\":" + jsonQuote(r.result.currency);
+        text += ",\"planName\":" + jsonQuote(redact(r.result.planName));
+        text += ",\"balanceRemaining\":" + std::to_string(r.result.balanceRemaining);
+        text += ",\"windows\":[";
+        for (std::size_t j = 0; j < r.result.windows.size(); ++j) {
+            const q::QuotaWindow& w = r.result.windows[j];
+            if (j > 0) text += ",";
+            text += "{\"key\":" + jsonQuote(w.key);
+            text += ",\"usedPercent\":" + std::to_string(w.usedPercent);
+            text += ",\"resetsAt\":" + jsonQuote(w.resetsAt) + "}";
+        }
+        text += "]}";
+    }
+    text += "]}";
+
+    // **往返自检（代码保证，不是注释保证）**：写完立刻用平台的 parse 把同一段
+    // 文本解回来，元素数必须与写出一致。不这么做的话，一个坏 JSON 会被下游
+    // （home_probes）当成「0 条真数据」静默渲染成空卡片 —— 而本批要证明的
+    // 恰恰是「卡片有真数据」。
+    const core::Result<platform::json::JsonValue> parsed =
+        platform::json::parse(text);
+    if (parsed.isFail()) {
+        std::cerr << "quota_live_probe: dump JSON 自检解析失败: "
+                  << parsed.errorMessage() << "\n";
+        return false;
+    }
+    const platform::json::JsonValue arr =
+        parsed.value().asObject().get("providers");
+    if (!arr.isArray() || static_cast<std::size_t>(arr.size()) != rows.size()) {
+        std::cerr << "quota_live_probe: dump JSON 往返元素数不符（写出 "
+                  << rows.size() << " 读回 "
+                  << (arr.isArray() ? arr.size() : -1) << "）\n";
+        return false;
+    }
+
+    std::ofstream out(path, std::ios::binary | std::ios::trunc);
+    if (!out) {
+        std::cerr << "quota_live_probe: dump 文件打不开: " << path << "\n";
+        return false;
+    }
+    out << text;
+    out.close();
+    if (!out) {
+        std::cerr << "quota_live_probe: dump 写入失败: " << path << "\n";
+        return false;
+    }
+    std::cout << "\n== dump ==\n  path      = " << path
+              << "\n  providers = " << arr.size() << "\n";
+    return true;
+}
+
 // cc-switch 的哪一条对应哪个 provider id：靠 usage_script.codingPlanProvider
 // （cc-switch 侧的判定，与我们的注册表 id 同名约定），缺则回落按 base_url 探测。
 // **只匹配，不猜**：匹配不上的 provider 报「无法对应」，让上层看到缺口，
@@ -240,9 +355,14 @@ int main(int argc, char** argv) {
     core::log::setLevel(core::log::Level::Warn);  // 不打 Debug：cc-switch 读取路径会打 provider id
 
     std::vector<std::string> wanted;
+    std::string dumpPath;
     for (int i = 1; i < argc; ++i) {
         const std::string arg = argv[i];
         if (arg == "--all") continue;
+        if (arg == "--dump" && i + 1 < argc) {
+            dumpPath = argv[++i];
+            continue;
+        }
         wanted.push_back(arg);
     }
     if (wanted.empty()) {
@@ -274,6 +394,7 @@ int main(int argc, char** argv) {
     buildTargets(list, wanted, &targets, &problems);
 
     std::cout << "\n== 真机出网（真实 platform::http::send）==\n";
+    std::vector<DumpRow> dumpRows;
     int unreachable = 0;
     for (const Target& t : targets) {
         std::cout << "\n-- " << t.providerId << "  (cc-switch: " << t.info->name
@@ -312,7 +433,19 @@ int main(int argc, char** argv) {
         if (traces.empty()) {
             std::cout << "    ⚠ 一次请求都没发出去（provider 在发请求前就返回了）\n";
         }
+        if (!dumpPath.empty()) {
+            DumpRow dr;
+            dr.providerId = t.providerId;
+            dr.displayName = provider->displayName();
+            dr.ccswitchName = t.info->name;
+            dr.result = result;
+            dumpRows.push_back(std::move(dr));
+        }
     }
+
+    // dump 失败也算失败（退出码 1）：本批的交付物就是「真数据落图」这条链，
+    // 链子上任何一环半通都必须显式红，而不是留一张看着挺像的图。
+    const bool dumpOk = dumpPath.empty() || writeDump(dumpPath, dumpRows);
 
     if (!problems.empty()) {
         std::cout << "\n== 对应失败 ==\n";
@@ -321,6 +454,10 @@ int main(int argc, char** argv) {
     std::cout << "\n== 汇总 ==\n";
     std::cout << "  请求成功发出: " << targets.size() << " / 请求 " << wanted.size() << "\n";
     std::cout << "  完全不可达: " << unreachable << "\n";
+    if (!dumpPath.empty()) {
+        std::cout << "  dump: " << (dumpOk ? "已落盘 " + dumpPath : "❌ 失败")
+                  << "\n";
+    }
     std::cout << "  （退出码只反映「能不能拿到可判定结论」，分类是否**正确**由人判）\n";
-    return unreachable == 0 && problems.empty() ? 0 : 1;
+    return unreachable == 0 && problems.empty() && dumpOk ? 0 : 1;
 }

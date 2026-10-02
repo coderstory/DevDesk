@@ -233,6 +233,32 @@ HomeQuotaBudget computeHomeQuotaBudget(float screenHeight, float statCardHeight,
                         + gap                          // 图表卡与快捷按钮行之间
                         + kHomeActionsH;               // 快捷按钮行
 
+    // ⓪ **页面本来就装不下时 → 滚动模式**（2026-10-03 final 批，G7 遗留 1 +
+    //    G8 遗留 1 的正解）。判据：不含余量卡行的整页高度已经超过客户区。
+    //
+    //    为什么这一档必须单列、且不能沿用下面的压缩逻辑：页面一旦要滚，
+    //    「压缩图表给余量卡让位」就是在为一个**不存在的问题**买单——少压那
+    //    100~160px 只是把滚动距离缩短这么多，图表滚一下照样看得见，却先把
+    //    用户最下面那块图表压成一条缝。G8 把阈值降到 746 仍漏掉设计最小窗
+    //    720，正是因为 720 落在 `compressionCanHelp == false` 那一档：
+    //    既压不出余量卡、余量卡又整张不画 = **两面落空**。
+    //
+    //    有了这一档之后，矮窗的行为从「牺牲图表换零收益」变成
+    //    「余量卡照常画满（内容多的部分自己滚），图表保持完整高度」。
+    //    `pageStillOverflows` 在这一档恒 false：页面确实超出视口，但那是
+    //    scrollView 的本职工作（home_module 已把整页挂进 home.scroll），
+    //    不是「余量卡把页面撑爆了」——后者才是这个字段要说的。
+    const float pageWithoutQuotaBody = fixed + kHomeChartH;
+    if (screenHeight < pageWithoutQuotaBody) {
+        out.chartHeight = kHomeChartH;            // 图表一分不压
+        out.quotaBodyHeight = kQuotaCardMaxBodyH; // 行内容给到上限（内容少时
+                                                  // computeQuotaCardMetrics
+                                                  // 自己取 min，不会撑高）
+        out.drawsQuotaCard = true;
+        out.pageStillOverflows = false;
+        return out;
+    }
+
     // ① 先按「图表不压缩」算一遍：窗口宽裕时余量卡能拿到多少
     float chart = kHomeChartH;
     float quotaBody = screenHeight - fixed - chart;

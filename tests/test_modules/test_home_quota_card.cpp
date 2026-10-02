@@ -774,12 +774,23 @@ REGISTER_TEST(home_quota_never_succeeded_never_draws_bar_even_with_windows,
     return true;
 })
 
-// ==================== ⑬ 窗口太矮时整张不画（不挤掉既有内容）====================
-// 首页整页**没有外层滚动容器**：余量卡若不按窗口剩余高度封顶，会把下方的
-// 图表卡与快捷按钮行顶出可视区（那是既有功能，本批不能弄坏它）。故窗口装不下
-// 一行余量行时**整张不画**。
-REGISTER_TEST(home_quota_card_hidden_when_window_too_short,
-              "home quota: 窗口装不下一行余量行时整张卡不画（保既有页面）", {
+// ==================== ⑬ 设计最小窗下余量卡**画得出来**，且不挤掉既有内容 ====
+//
+// ⚠ 2026-10-03 **口径反转**（反转理由写在这里，不靠「改断言让它变绿」）：
+// 本用例原本断言「720 高时余量卡必须整张缺席」，理由是「整页没有外层滚动容器，
+// 画了会把图表卡与快捷按钮行顶出可视区」。那个理由**已经不成立**：首页现已挂上
+// 外层 scrollView（home_module 的 home.scroll），超出的部分由滚动条吸收。
+// 继续断言「缺席」等于把 bug 钉死成契约——而这正是 G7 遗留 1 / G8 遗留 1 记了
+// 两批都没修的那件事。
+//
+// 新契约（本用例逐条钉）：
+//   ① 高窗 1000：照旧画出（这条从没变过）
+//   ② 设计最小窗 720：**也画出来**（本次修复的判据本体）
+//   ③ 既有内容一条都不能少：统计网格 / 图表卡 / 快捷按钮行都还在
+//   ④ 快捷按钮行**没被挤出滚动内容盒**——原来那句「顶掉快捷按钮行」的担心，
+//      换成可判定的形式：内容盒装不下 = 滚到底也够不着 = 真丢内容
+REGISTER_TEST(home_quota_card_visible_at_design_minimum_window,
+              "home quota: 设计最小窗 720 仍画出余量卡，且既有内容不丢", {
     test_support::TestEnv env(kDbPrefix, "shortwin", true);
     DOCTEST_REQUIRE(env.ready);
     auto& sq = env.db->db();
@@ -793,7 +804,7 @@ REGISTER_TEST(home_quota_card_hidden_when_window_too_short,
     std::unique_ptr<::core::Module> mod(create_home_module());
     mod->onStart();
 
-    // 高窗（1000）：装得下 → 画
+    // ① 高窗（1000）：装得下 → 画
     eui::Screen tall;
     tall.width = 1600.0f;
     tall.height = 1000.0f;
@@ -802,16 +813,37 @@ REGISTER_TEST(home_quota_card_hidden_when_window_too_short,
     DOCTEST_CHECK_MESSAGE(tallUi.find("home.quota") != nullptr,
                           "1000 高（默认窗）必须画出余量卡");
 
-    // 矮窗（720 = 设计最小窗高）：装不下 → 整张不画，但既有统计网格照旧在
+    // ② 矮窗（720 = 设计最小窗高）：**也画**（整页可滚，卡不再两面落空）
     eui::Screen shortScreen;
     shortScreen.width = 1200.0f;
     shortScreen.height = 720.0f;
     eui::Ui shortUi;
     composeFrame(*mod, shortUi, shortScreen, "home_quota_short");
-    DOCTEST_CHECK_MESSAGE(shortUi.find("home.quota") == nullptr,
-                          "720 高时余量卡必须整张缺席（否则顶掉快捷按钮行）");
+    // ⚠ **必须 layout**：本文件的 composeFrame 只建树、**不**排版（见其定义），
+    // 而下面 ④ 要读 frame —— 不 layout 的话所有 frame 都是 0，断言变成
+    // 「0 <= 0.5」恒真。踩过一次：home.root 高度从 wrapContent 改回固定值时，
+    // 这条断言因为没排版而**照样绿**，等于没有守卫（test_ui_modern 的 Home
+    // 几何段同样显式调 layout，同款理由）。
+    shortUi.layout(shortScreen.width, shortScreen.height);
+    DOCTEST_CHECK_MESSAGE(shortUi.find("home.quota") != nullptr,
+                          "720 高（设计最小窗）必须画出余量卡 —— 这条在 "
+                          "2026-10-03 之前是反的，是 G7/G8 遗留 1 的病根");
+    // ③ 既有内容一条都不能少
     DOCTEST_CHECK(shortUi.find("home.stats") != nullptr);
     DOCTEST_CHECK(shortUi.find("home.actions") != nullptr);
+    DOCTEST_CHECK(shortUi.find("home.api.chart") != nullptr);
+    // ④ 快捷按钮行仍**在滚动内容盒内**（滚到底够得着 = 没丢内容）
+    const auto* acts = shortUi.find("home.actions");
+    const auto* root = shortUi.find("home.root");
+    DOCTEST_REQUIRE(acts != nullptr);
+    DOCTEST_REQUIRE(root != nullptr);
+    DOCTEST_CHECK_MESSAGE(
+        acts->frame.y + acts->frame.height <=
+            root->frame.y + root->frame.height + 0.5f,
+        "快捷按钮行底 " +
+            std::to_string(acts->frame.y + acts->frame.height) +
+            " 溢出滚动内容底 " +
+            std::to_string(root->frame.y + root->frame.height));
     mod->onStop();
     return true;
 })
@@ -920,41 +952,69 @@ REGISTER_TEST(home_quota_budget_threshold_is_pinned,
     DOCTEST_CHECK(macDefault.chartHeight < module::home::quota_card::kHomeChartH);
     DOCTEST_CHECK(macDefault.chartHeight >= module::home::quota_card::kHomeChartMinH);
 
-    // ---- ③ 临界点前后：阈值必须是**确定的**，不能是「差不多」----
-    // 逐像素扫 700..900，找到「最矮仍画得出」的那一屏，并断言它就是纯函数的边界
-    float lowestDrawing = 0.0f;
-    for (float h = 700.0f; h <= 900.0f; h += 1.0f) {
-        const auto b = module::home::quota_card::computeHomeQuotaBudget(h, statH, pad, gap);
-        if (b.drawsQuotaCard) lowestDrawing = (lowestDrawing == 0.0f) ? h : lowestDrawing;
-    }
-    DOCTEST_CHECK(lowestDrawing > 0.0f);
-    // 边界上下各差一像素，判定必须翻转（证明这是一个真阈值，不是恒真）
-    const auto justAbove = module::home::quota_card::computeHomeQuotaBudget(
-        lowestDrawing, statH, pad, gap);
-    const auto justBelow = module::home::quota_card::computeHomeQuotaBudget(
-        lowestDrawing - 1.0f, statH, pad, gap);
-    DOCTEST_CHECK(justAbove.drawsQuotaCard);
-    DOCTEST_CHECK(!justBelow.drawsQuotaCard);
-    DOCTEST_CHECK(justBelow.pageStillOverflows);
-    // 再矮一屏：压缩**换不来**余量卡（连 kHomeChartMinH 都腾不出下限），
-    // 于是图表保持完整高度 —— 宁可画不出余量卡，也不把图表压成一条缝。
-    // 这条与 ④ 是同一个语义的两个取样点。
-    const auto wayBelow = module::home::quota_card::computeHomeQuotaBudget(
-        lowestDrawing - 1.0f, statH, pad, gap);
-    DOCTEST_CHECK(!wayBelow.drawsQuotaCard);
-    DOCTEST_CHECK_EQ(wayBelow.chartHeight, module::home::quota_card::kHomeChartH);
-
-    // ---- ④ 设计最小窗 1200×720：仍是「本页装不下」，且**图表不许被压** ----
-    // 首页没有外层滚动容器，这是本批**未解**的那一段（见 report-G8 遗留）：
-    // 要在 720 也画出余量卡，得给首页加外层 scrollView，那不是纯函数能解决的。
+    // ---- ③「滚动模式」边界：页面装不下那一档（G7 遗留 1 / G8 遗留 1 的修复）----
     //
-    // 关键：本窗高下压缩图表**换不来任何余量卡**（压到下限仍只有 70 < 96），
-    // 所以预算必须让图表保持完整高度 —— 否则是把用户本来看得懂的图表压成一条缝
-    // 换零收益。test_ui_modern 的「Home Token 分布」几何用例（跑在 1200×720、
-    // 峰值柱高钉死 84）就是这条的外部守门人。
+    // ⚠ 2026-10-03 **口径反转**，反转的理由写在这里（不是「改断言让它变绿」）：
+    // 旧断言是「低到某阈值就整张不画余量卡」，它编码的是「整页必须塞进视口」。
+    // 首页现已挂上外层 scrollView（home_module 的 home.scroll），页面超出的部分
+    // 由滚动条吸收 —— 于是「装不下」不再是拒绝画卡的��由，反而**正是**应该画卡的
+    // 信号：只有这时用户才需要滚着看，而滚的前提是得有东西可看。
+    //
+    // 所以新契约分两段，阈值 = 不含余量卡行的整页高度（fixed + kHomeChartH）：
+    //   屏高 ≥ 阈值 → 页面装得下 → **逐字沿用旧逻辑**（压缩图表给余量卡让位）
+    //   屏高 <  阈值 → 页面装不下 → 滚动模式：图表一分不压 + 余量卡给到上限
+    // 「压缩换位」那条旧逻辑仍在，只是它的适用范围被明确收窄了。
+    const float scrollModeThreshold =
+        /* fixed = */ pad * 2.0f +
+        module::home::quota_card::kHomeWelcomeH + gap + statH + gap +
+        module::home::quota_card::kQuotaCardChromeH + gap + gap +
+        module::home::quota_card::kHomeActionsH +
+        module::home::quota_card::kHomeChartH;
+
+    // 阈值上下各差一像素，**模式必须翻转**（证明这是一个真阈值，不是恒真）
+    const auto justFits = module::home::quota_card::computeHomeQuotaBudget(
+        scrollModeThreshold, statH, pad, gap);
+    const auto justScrolls = module::home::quota_card::computeHomeQuotaBudget(
+        scrollModeThreshold - 1.0f, statH, pad, gap);
+    // 装得下那一侧：仍走压缩让位（旧逻辑没被废掉）
+    DOCTEST_CHECK(justFits.chartHeight < module::home::quota_card::kHomeChartH);
+    // 装不下那一侧：图表**不压**、余量卡**照画**
+    DOCTEST_CHECK_EQ(justScrolls.chartHeight,
+                     module::home::quota_card::kHomeChartH);
+    DOCTEST_CHECK(justScrolls.drawsQuotaCard);
+    DOCTEST_CHECK(!justScrolls.pageStillOverflows);
+    DOCTEST_CHECK(justScrolls.quotaBodyHeight >=
+                  module::home::quota_card::kQuotaCardMinBodyH);
+
+    // 逐像素扫 600..1000：滚动模式那一段**每一屏都画得出**余量卡。
+    // 「任一屏高都不两面落空」正是本修复要保证的东西。
+    bool allDrawBelow = true;
+    for (float h = 600.0f; h <= scrollModeThreshold - 1.0f; h += 1.0f) {
+        const auto b = module::home::quota_card::computeHomeQuotaBudget(
+            h, statH, pad, gap);
+        if (!b.drawsQuotaCard || b.pageStillOverflows ||
+            b.chartHeight != module::home::quota_card::kHomeChartH) {
+            allDrawBelow = false;
+            break;
+        }
+    }
+    DOCTEST_CHECK_MESSAGE(allDrawBelow,
+                          "600.." + std::to_string(scrollModeThreshold - 1.0f) +
+                              " 区间内存在「不画余量卡」或「图表被压」的屏高 —— "
+                              "滚动模式下不该再有两面落空");
+
+    // ---- ④ 设计最小窗 1200×720：**画得出**，且图表**不许被压** ----
+    // 这一条在 G7 遗留 1 / G8 遗留 1 里记作「本批未解」：旧实现下 720 落在
+    // `compressionCanHelp == false` 那一档 —— 压不出余量卡、余量卡又整张不画，
+    // 两面落空（G8 把阈值降到 746 仍漏掉 720 正是因为这一点）。
+    // 现在整页有 scrollView，720 走滚动模式：余量卡照画、图表保持 260。
+    // 外部守门人：home_probes_min_window（ctest 里以 --size 1200x720 跑，
+    // 组 G(d) 断言卡片真的建出来了）+ 本纯函数这条。
     const auto minWindow = module::home::quota_card::computeHomeQuotaBudget(720.0f, statH, pad, gap);
-    DOCTEST_CHECK(!minWindow.drawsQuotaCard);
-    DOCTEST_CHECK(minWindow.pageStillOverflows);
+    DOCTEST_CHECK(minWindow.drawsQuotaCard);
+    DOCTEST_CHECK(!minWindow.pageStillOverflows);
     DOCTEST_CHECK_EQ(minWindow.chartHeight, module::home::quota_card::kHomeChartH);
+    DOCTEST_CHECK(minWindow.quotaBodyHeight >=
+                  module::home::quota_card::kQuotaCardMinBodyH);
     return true;
 })
