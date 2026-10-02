@@ -4,9 +4,40 @@
 // 帧循环（pollOnce / composeModuleFrame）→ 扫描断言」编排。仅用 EUI-NEO core
 // 层 API；唯一 DevDesk 侧依赖是 ui_kit 的 splash 测试缝（initializeWindowBackend
 // 里禁 splash，probe dump 不该拍到 splash——compose 路径同 app_sidebar）。
+//
+// ==================== 帧捕获：--screenshot（进程内 glReadPixels → PNG）======
+// 为什么要它：macOS 的 `screencapture` 需要「屏幕录制」TCC 授权，而 agent 会话
+// 由 launchd 拉起、不在终端的进程树下 → 拿不到授权，只能给几何断言没人能看图。
+// **进程内 glReadPixels 读自己的 GL 后备缓冲不需要任何系统授权**，是唯一能自动
+// 化的看图路径（PNG 编码走 EUI-NEO 已 vendored 的 libpng 简化 API）。
+//
+// 用法（主循环任意「当前状态值得看图」处一行）：
+//     auto args = probe::parseProbeArgs(argc, argv);   // 已支持 --screenshot <路径>
+//     ... 跑完帧循环 / 断言 ...
+//     if (!probe::captureIfRequested(args, window, runtime, &passed)) passed = false;
+//     // 不传 --screenshot 时 captureIfRequested 立刻返回 true：零开销、不写文件、
+//     // 不改退出码（既有 probe 行为逐字不变）。
+//
+// 多张图 / 想直接拿内存像素做像素断言 → 用会话对象：
+//     probe::FrameCapture capture(window);                       // 建渲染后端（一次即可）
+//     capture.capturePng(runtime, "a.png");                      // 渲染一帧 → 落盘
+//     capture.readFrame(runtime, rgba, w, h);                    // 渲染一帧 → 内存（top-down）
+//
+// 两条铁律（都来自 about_probe/claude_probes 的实测教训）：
+//   ① 探针常规帧循环只 update/compose **不 render**（composeModuleFrame 不画），
+//      本设施自己走「beginFrame → runtime.render → glReadPixels → present」，
+//      不自己画就只会拍到空窗黑图；
+//   ② glReadPixels 必须在 present() **之前**取——swap 之后后备缓冲内容未定义。
+//
+// 头文件级依赖：libpng（`<png.h>`，简化 API png_image_write_to_file）与 glad。
+// 两者都靠 tests/CMakeLists.txt 里探针 target 显式 link `PNG::PNG` 传递
+// include 路径——EUI-NEO 已 vendored libpng 1.6.43 并在 `PNG::PNG` 别名导出，
+// 这里不引入任何新 vendored 头。
 
 #include "core/dsl_runtime.h"
 #include "core/input/input_state.h"
+#include "core/render/render_backend.h"
+#include "core/theme.h"
 #include "core/window/window_backend.h"
 
 #include <ui_kit/splash.h>
@@ -15,10 +46,18 @@
 #define GLFW_INCLUDE_NONE
 #endif
 #include <GLFW/glfw3.h>
+// glad（EUI-NEO OpenGL 后端同款，render 已由它 load 过 loader）。⚠ 探针 TU 里
+// **不要**在本头之前 include 不带 GLFW_INCLUDE_NONE 的 <GLFW/glfw3.h> —— 那会
+// 先拉进平台 GL 头，而 glad.h 头两行就是 `#error OpenGL header already
+// included`（两者互斥，实测踩过）。GLFW / GL 符号一律由本头统一给。
+#include <glad/glad.h>
+#include <png.h>
 
+#include <cstring>
 #include <iostream>
 #include <algorithm>
 #include <cmath>
+#include <memory>
 #include <string>
 #include <unordered_map>
 #include <functional>
@@ -61,6 +100,10 @@ struct ProbeArgs {
     int windowW = 1200;      // 窗口宽（逻辑像素）
     int windowH = 1000;      // 窗口高
     bool manual = false;     // 手动驱动模式
+    // --screenshot <路径>：非空 = 该 probe 在「当前状态点」把真实渲染帧落成 PNG
+    // （见文件头「帧捕获」段）。**空 = 既有行为逐字不变**（不建渲染后端、不渲染、
+    // 不写文件、不改退出码）。
+    std::string screenshotPath;
 };
 
 inline int parseLeadingInt(const std::string& text, int fallback) {
@@ -74,7 +117,7 @@ inline int parseLeadingInt(const std::string& text, int fallback) {
     return value > 0 ? value : fallback;
 }
 
-/// 解析 --frames N / --size WxH / --manual；未知参数忽略。
+/// 解析 --frames N / --size WxH / --manual / --screenshot <路径>；未知参数忽略。
 inline ProbeArgs parseProbeArgs(int argc, char* argv[]) {
     ProbeArgs args;
     for (int i = 1; i < argc; ++i) {
@@ -88,6 +131,8 @@ inline ProbeArgs parseProbeArgs(int argc, char* argv[]) {
                 args.windowW = parseLeadingInt(size.substr(0, sep), args.windowW);
                 args.windowH = parseLeadingInt(size.substr(sep + 1), args.windowH);
             }
+        } else if (arg == "--screenshot" && i + 1 < argc) {
+            args.screenshotPath = argv[++i];
         } else if (arg == "--manual") {
             args.manual = true;
         }
@@ -115,6 +160,203 @@ inline void composeModuleFrame(core::dsl::Runtime& runtime,
                                ComposeFn&& composeFn) {
     pollOnce(window, runtime);
     runtime.compose(pageId, logicalWidth, logicalHeight, std::forward<ComposeFn>(composeFn));
+}
+
+// ==================== 帧捕获（--screenshot）实现 ====================
+
+/// GL 后备缓冲行序（左下原点）翻成 **top-down**（第 0 行 = 图顶，即 PNG 行序）。
+/// readFrameRgba 在 GL 边界调它；也供断言直接喂合成像素单测翻轴
+/// （见 screenshot_probe.cpp —— 不必起窗口就能证翻轴正确）。
+/// 越界保护：像素数不足直接不动（宁可不动也不要静默越界读）。
+inline void flipRowsToTopDown(std::vector<unsigned char>& rgba, int width, int height) {
+    if (width <= 0 || height <= 0) {
+        return;
+    }
+    const std::size_t stride = static_cast<std::size_t>(width) * 4u;
+    if (rgba.size() < stride * static_cast<std::size_t>(height)) {
+        return;
+    }
+    std::vector<unsigned char> scratch(stride);
+    for (int y = 0; y < height / 2; ++y) {
+        unsigned char* top =
+            rgba.data() + static_cast<std::size_t>(y) * stride;
+        unsigned char* bottom = rgba.data() +
+            static_cast<std::size_t>(height - 1 - y) * stride;
+        std::memcpy(scratch.data(), top, stride);
+        std::memcpy(top, bottom, stride);
+        std::memcpy(bottom, scratch.data(), stride);
+    }
+}
+
+/// 底层：top-down RGBA 像素（**第 0 行 = 图顶**）编码写 PNG。
+/// 不碰 GL / 窗口 —— 可被断言直接喂合成像素验证，无需窗口上下文。
+/// 编码走 libpng 简化 API png_image_write_to_file（EUI-NEO vendored libpng
+/// 1.6.43 已带该接口），无需自己手写 deflate。
+/// 失败（参数非法 / 打不开 / 写失败）→ stderr 明确诊断 + false，绝不静默假成功。
+inline bool writeRgbaToPng(const std::string& path,
+                           const unsigned char* rgba,
+                           int width,
+                           int height) {
+    if (rgba == nullptr || width <= 0 || height <= 0) {
+        std::cerr << "probe::writeRgbaToPng: 非法参数 (rgba="
+                  << (rgba == nullptr ? "null" : "ok") << ", " << width << "x"
+                  << height << ")\n";
+        return false;
+    }
+    png_image image{};  // libpng 要求先整体清零再填字段（version 必设）
+    image.version = PNG_IMAGE_VERSION;
+    image.width = width;
+    image.height = height;
+    image.format = PNG_FORMAT_RGBA;  // 输入已 8bit RGBA，逐字节原样落盘
+    // convert_to_8bit = 0（已是 8bit）；row_stride = 0 = 用最小连续行距；
+    // colormap = NULL（真彩色）。libpng 简化 API 一次调用即建文件、写完关闭。
+    if (!png_image_write_to_file(&image, path.c_str(), 0, rgba, 0, nullptr)) {
+        std::cerr << "probe::writeRgbaToPng: 写 PNG 失败 '" << path << "': "
+                  << image.message << "\n";
+        return false;
+    }
+    return true;
+}
+
+/// 帧捕获会话：持有渲染后端 + 窗口 framebuffer 像素尺寸 / 内容缩放。
+/// 构造 = glfwShow/Focus + createRenderBackend + initialize。
+/// 一个 probe 进程建一个就够——渲染后端是重量级对象（GL 上下文 / 渲染缓存），
+/// 反复建会重复初始化。
+class FrameCapture {
+public:
+    explicit FrameCapture(core::window::Handle window) : window_(window) {
+        if (window == nullptr) {
+            error_ = "窗口句柄为 null";
+            return;
+        }
+        // Handle 即 GLFWwindow*（core::window 的 GLFW 后端语义；nativeWindowInfo()
+        // 在 macOS 给的是 NSWindow*，两者不可混用）
+        auto* glfwWin = static_cast<GLFWwindow*>(window);
+        // 裸 GLFW 探针窗可能没被置前，先 show+focus 再取尺寸（满屏应用下尤其重要）
+        glfwShowWindow(glfwWin);
+        glfwFocusWindow(glfwWin);
+        glfwGetFramebufferSize(glfwWin, &fbWidth_, &fbHeight_);
+        float scaleX = 1.0f;
+        float scaleY = 1.0f;
+        glfwGetWindowContentScale(glfwWin, &scaleX, &scaleY);
+        scale_ = scaleX > 0.0f ? scaleX : 1.0f;
+        if (fbWidth_ <= 0 || fbHeight_ <= 0) {
+            error_ = "framebuffer 尺寸非法（窗口还没映射？）";
+            return;
+        }
+        backend_ = core::render::createRenderBackend(window);
+        if (backend_ == nullptr) {
+            error_ = "createRenderBackend 返回 null（渲染后端不可用）";
+            return;
+        }
+        if (!backend_->initialize()) {
+            error_ = "renderBackend->initialize() 失败";
+            backend_.reset();
+        }
+    }
+
+    FrameCapture(const FrameCapture&) = delete;
+    FrameCapture& operator=(const FrameCapture&) = delete;
+    ~FrameCapture() = default;  // 后端随句柄销毁（须早于 destroyWindow）
+
+    /// 建会话成功 = ok()；error() 给出可直接打进报告的中文原因。
+    bool ok() const { return error_.empty(); }
+    const std::string& error() const { return error_; }
+    /// framebuffer 像素宽高（= PNG 出来的图尺寸，与逻辑窗口宽高不同：Retina 2x）
+    int pixelWidth() const { return fbWidth_; }
+    int pixelHeight() const { return fbHeight_; }
+    float scale() const { return scale_; }
+
+    /// 真渲染 runtime 当前一帧 → glReadPixels 读回后备缓冲 → 返回 **top-down**
+    /// RGBA（已翻轴，第 0 行 = 图顶）。调用方若拿宽度请用本对象的
+    /// pixelWidth/pixelHeight —— 逻辑 px × scale 才是真实像素尺寸。
+    bool readFrame(core::dsl::Runtime& runtime,
+                   std::vector<unsigned char>& rgba,
+                   int& width,
+                   int& height) {
+        if (!ok()) {
+            std::cerr << "probe::FrameCapture::readFrame: " << error_ << "\n";
+            return false;
+        }
+        width = fbWidth_;
+        height = fbHeight_;
+        rgba.assign(static_cast<std::size_t>(width) *
+                        static_cast<std::size_t>(height) * 4u,
+                    0u);
+        {
+            // runtime.render 走 activeRenderBackend()——不激活就是空操作（黑图）
+            core::render::ScopedRenderBackend scoped(*backend_);
+            backend_->beginFrame(core::render::RenderSurface{
+                window_, core::window::nativeWindowInfo(window_), width, height,
+                scale_});
+            runtime.render(width, height, scale_,
+                           core::theme::current().colors.background);
+            // ⚠ 必须落在 present() 之前：swap 之后后备缓冲内容未定义
+            //   （about_probe.cpp:425 / claude_probes.cpp:844 同一条实测教训）
+            glPixelStorei(GL_PACK_ALIGNMENT, 1);
+            glReadPixels(0, 0, width, height, GL_RGBA, GL_UNSIGNED_BYTE,
+                         rgba.data());
+            glPixelStorei(GL_PACK_ALIGNMENT, 4);  // 还原默认，别影响后续渲染
+            flipRowsToTopDown(rgba, width, height);
+            backend_->present();
+        }
+        return true;
+    }
+
+    /// readFrame + writeRgbaToPng 一步到位。
+    bool capturePng(core::dsl::Runtime& runtime, const std::string& path) {
+        std::vector<unsigned char> rgba;
+        int width = 0;
+        int height = 0;
+        if (!readFrame(runtime, rgba, width, height)) {
+            return false;
+        }
+        if (!writeRgbaToPng(path, rgba.data(), width, height)) {
+            return false;
+        }
+        std::cout << "probe: screenshot " << path << " (" << width << "x"
+                  << height << ")\n";
+        return true;
+    }
+
+private:
+    core::window::Handle window_ = nullptr;
+    std::unique_ptr<core::render::RenderBackend> backend_;
+    std::string error_;
+    int fbWidth_ = 0;
+    int fbHeight_ = 0;
+    float scale_ = 1.0f;
+};
+
+/// 一次性便捷（只拍一张的场景）：建会话 → 渲染一帧 → 写 PNG → 销毁后端。
+inline bool captureFramePng(core::window::Handle window,
+                            core::dsl::Runtime& runtime,
+                            const std::string& path) {
+    FrameCapture capture(window);
+    return capture.capturePng(runtime, path);
+}
+
+/// --screenshot 的标准接线点。
+/// **未传路径 = 立刻 return true：零开销**（不建渲染后端、不渲染、不写文件），
+/// 既有 probe 行为与退出码逐字不变。传了路径就抓一张；失败时 stderr 明确诊断 +
+/// 置 *passed = false（调用方据此返回非零退出码，不静默）。
+inline bool captureIfRequested(const ProbeArgs& args,
+                               core::window::Handle window,
+                               core::dsl::Runtime& runtime,
+                               bool* passed = nullptr) {
+    if (args.screenshotPath.empty()) {
+        return true;
+    }
+    const bool captured =
+        captureFramePng(window, runtime, args.screenshotPath);
+    if (!captured) {
+        std::cerr << "probe: --screenshot 落图失败: " << args.screenshotPath
+                  << "（退出码将非零：视觉证据链缺失不能当通过）\n";
+        if (passed != nullptr) {
+            *passed = false;
+        }
+    }
+    return captured;
 }
 
 namespace detail {

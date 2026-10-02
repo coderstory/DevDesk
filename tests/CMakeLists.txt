@@ -221,6 +221,20 @@ foreach(_probe_source ${_devdesk_probe_sources})
         devdesk_module_about
         devdesk_module_pet
     )
+    # probe_harness.h 的帧捕获段（--screenshot）要 <png.h> 编码 PNG：libpng 由
+    # EUI-NEO vendored（1.6.43，简化 API png_image_write_to_file 自带 deflate），
+    # 这里只把它的 target 显式链给探针 + 借它传递 include 路径（源目录 + 生成
+    # pnglibconf.h 的 build 目录），不引入任何新 vendored 头。EUI-NEO 若哪天
+    # 不再带 libpng，这里硬失败——截图能力不能悄悄消失。
+    if(TARGET PNG::PNG)
+        target_link_libraries(${_probe_name} PRIVATE PNG::PNG)
+    elseif(TARGET png_static)
+        target_link_libraries(${_probe_name} PRIVATE png_static)
+    else()
+        message(FATAL_ERROR
+            "probe 帧捕获（--screenshot）需要 libpng：EUI-NEO 未导出 "
+            "PNG::PNG / png_static target")
+    endif()
     devdesk_apply_warnings(${_probe_name})
     if(MSVC)
         target_link_options(${_probe_name} PRIVATE /SUBSYSTEM:CONSOLE)
@@ -229,4 +243,13 @@ foreach(_probe_source ${_devdesk_probe_sources})
     endif()
     add_test(NAME ${_probe_name} COMMAND ${_probe_name})
     set_tests_properties(${_probe_name} PROPERTIES LABELS "probe")
+    # --screenshot 变体：默认那条不带参数走的是「零开销不写文件」路径，光靠它证
+    # 不了开关本身能落图。补一条带参的（落图留在构建目录，build/ 已 gitignore）。
+    if(_probe_name STREQUAL "screenshot_probe")
+        add_test(NAME ${_probe_name}_screenshot_switch
+            COMMAND ${_probe_name}
+                --screenshot "${CMAKE_CURRENT_BINARY_DIR}/probe-screenshot.png")
+        set_tests_properties(${_probe_name}_screenshot_switch
+            PROPERTIES LABELS "probe")
+    endif()
 endforeach()

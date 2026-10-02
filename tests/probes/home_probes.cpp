@@ -387,6 +387,12 @@ int main(int argc, char* argv[]) {
         core::proxy_stats::resetForTest();  // 清时钟与状态
     }
 
+    // ---- 退出前落一张「当前状态图」（--screenshot <路径>，2026-10-03 帧捕获批次）----
+    // 通用看图口：跑一次 home_probes 就能拿到此刻首页长什么样，不必再靠
+    // screencapture（agent 会话拿不到屏幕录制 TCC 授权）。不传该开关时
+    // captureIfRequested 立刻返回，行为与从前逐字一致（零开销 / 不写文件）。
+    probe::captureIfRequested(args, window, runtime, &passed);
+
     mod->onStop();
     runtime.shutdown(false);
     core::releaseInputQueue(window);

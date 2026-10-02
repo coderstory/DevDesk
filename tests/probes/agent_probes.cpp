@@ -22,8 +22,7 @@
 //
 // 断言机制：probe 无几何断言 helper，全部手搓 check() + nearEq()
 //（about_probe.cpp:60,94-99 口径）。收尾顺序照 about_probe.cpp:449-453。
-#include <GLFW/glfw3.h>  // 必须先于 harness：让 GLFW 默认拉平台 GL 头（claude_probes 同款）
-#include "probes/probe_harness.h"
+#include "probes/probe_harness.h"  // GL/GLFW 头由 harness 给（glad 路线；见 settings_cards_probes.cpp:43 同款说明）
 #include "test_support.h"
 
 #include "core/module_interface.h"
@@ -533,6 +532,12 @@ int main(int argc, char* argv[]) {
                       std::to_string(registered));
         }
     }
+
+    // ---- 退出前落一张「当前状态图」（--screenshot <路径>，2026-10-03 帧捕获批次）----
+    // 通用看图口：跑一次 agent_probes 就能拿到此刻智能体页长什么样，不必再靠
+    // screencapture（agent 会话拿不到屏幕录制 TCC 授权）。不传该开关时
+    // captureIfRequested 立刻返回，行为与从前逐字一致（零开销 / 不写文件）。
+    probe::captureIfRequested(args, window, runtime, &passed);
 
     mod->onStop();
     runtime.shutdown(false);
