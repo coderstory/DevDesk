@@ -14,6 +14,7 @@ add_library(devdesk_module_claude_proxy STATIC
     proxy_router.cpp
     proxy_runtime.cpp
     quota/opencode_go_provider.cpp
+    quota/ccswitch_source.cpp
     quota/deepseek_provider.cpp
     quota/provider_minimax_cn.cpp
     quota/quota_registry.cpp
