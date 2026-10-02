@@ -1448,3 +1448,104 @@ REGISTER_TEST(provider_config_non_env_top_level_json,
     }
     return true;
 })
+
+// ---- 批次 F（2026-10-02）：1M 上下文标记（槽位 supportsOneM 列 + 三纯函数）----
+// 语义照 cc-switch useModelState.ts（hasClaudeOneMMarker / stripClaudeOneMMarker /
+// setClaudeOneMMarker）：trimEnd 后**大小写不敏感**判尾；strip 命中才切尾 4 字符
+// 再 trimEnd、未命中原样返回；set 先 strip 再 trim 得 base，**base 空返回空串**
+// （空 base 不许带标记）。
+REGISTER_TEST(provider_config_one_m_marker_pure,
+              "provider_config: [1M] 标记 判定/剥离/设置（大小写不敏感 + 空 base）", {
+    using module::claude::hasOneMMarker;
+    using module::claude::stripOneMMarker;
+    using module::claude::setOneMMarker;
+
+    // 判定：大小写不敏感 + 容忍尾空白；非尾部 / 空串不算
+    DOCTEST_CHECK(hasOneMMarker("claude-opus-5-5[1M]"));
+    DOCTEST_CHECK(hasOneMMarker("claude-opus-5-5[1m]"));
+    DOCTEST_CHECK(hasOneMMarker("claude-opus-5-5 [1M]  "));
+    DOCTEST_CHECK_FALSE(hasOneMMarker("claude-opus-5-5"));
+    DOCTEST_CHECK_FALSE(hasOneMMarker(""));
+    DOCTEST_CHECK_FALSE(hasOneMMarker("[1M]-prefix"));
+    // 整串即标记：判定为真（cc-switch 同款 endsWith 语义），剥离后是空串
+    DOCTEST_CHECK(hasOneMMarker("[1M]"));
+
+    // 剥离：命中才动；未命中原样返回（含大小写混合）
+    DOCTEST_CHECK_EQ(stripOneMMarker("m-sonnet[1M]"), std::string("m-sonnet"));
+    DOCTEST_CHECK_EQ(stripOneMMarker("m-sonnet[1m]"), std::string("m-sonnet"));
+    DOCTEST_CHECK_EQ(stripOneMMarker("m-sonnet [1M] "), std::string("m-sonnet"));
+    DOCTEST_CHECK_EQ(stripOneMMarker("m-sonnet"), std::string("m-sonnet"));
+    DOCTEST_CHECK_EQ(stripOneMMarker(""), std::string(""));
+    DOCTEST_CHECK_EQ(stripOneMMarker("[1M]"), std::string(""));
+
+    // 设置：off = 纯 base；on = base + 规范大写标记（**重复拼接防护**：已含
+    // 标记（任意大小写）时再 on 只有一个 [1M]）；空 base 恒返回空串
+    DOCTEST_CHECK_EQ(setOneMMarker("m-sonnet", true), std::string("m-sonnet[1M]"));
+    DOCTEST_CHECK_EQ(setOneMMarker("m-sonnet", false), std::string("m-sonnet"));
+    DOCTEST_CHECK_EQ(setOneMMarker("m-sonnet[1m]", true), std::string("m-sonnet[1M]"));
+    DOCTEST_CHECK_EQ(setOneMMarker("m-sonnet[1M]", true), std::string("m-sonnet[1M]"));
+    DOCTEST_CHECK_EQ(setOneMMarker("m-sonnet[1M]", false), std::string("m-sonnet"));
+    DOCTEST_CHECK_EQ(setOneMMarker("  m-sonnet  ", true), std::string("m-sonnet[1M]"));
+    // 空 base（空串 / 纯空白 / 整串即标记）→ 不允许带标记
+    DOCTEST_CHECK_EQ(setOneMMarker("", true), std::string(""));
+    DOCTEST_CHECK_EQ(setOneMMarker("   ", true), std::string(""));
+    DOCTEST_CHECK_EQ(setOneMMarker("[1M]", true), std::string(""));
+    return true;
+})
+
+// 槽位 supportsOneM 列：表驱动断言（加槽位自动进入覆盖）+ 与 Claude 官方
+// 1M 上下文能力对齐（大上下文槽位 true / haiku·subagent false——依据见报告）。
+REGISTER_TEST(provider_config_one_m_slot_support_table,
+              "provider_config: 槽位 supportsOneM 列（表驱动 + 关键槽位取值）", {
+    const auto table = module::claude::modelSlotTable();
+    DOCTEST_REQUIRE_EQ(table.size(), module::claude::kModelSlotCount);
+    for (const auto& m : table) {
+        // 每行都必须显式声明（X 宏第 7 参）；jsonKey 反查期望值
+        const std::string key = m.jsonKey;
+        if (key == "default" || key == "sonnet" || key == "opus" ||
+            key == "fable") {
+            DOCTEST_CHECK_MESSAGE(m.supportsOneM,
+                                  "槽位 " + key + " 应支持 1M（大上下文）");
+        } else {
+            DOCTEST_CHECK_MESSAGE(!m.supportsOneM,
+                                  "槽位 " + key + " 不应支持 1M（保守）");
+        }
+    }
+    return true;
+})
+
+// 保存前归一（UI 写入口调用）：支持槽位标记规范化成大写 [1M]；不支持槽位
+// 强制剥离；无标记 / 空槽位原样不动（displayName 派生不因标记变化而变）
+REGISTER_TEST(provider_config_one_m_normalize,
+              "provider_config: 保存前归一（不支持槽位强制剥离 + 大小写规范化）", {
+    using module::claude::ModelsConfig;
+    using module::claude::normalizeOneMMarkers;
+    using module::claude::modelSlotTable;
+
+    ModelsConfig c;
+    c.def.model = "m-def[1m]";        // 支持 → 规范化（大小写）
+    c.sonnet.model = "m-sonnet";      // 支持、无标记 → 不动
+    c.opus.model = "";                // 空槽位 → 不动
+    c.haiku.model = "m-haiku[1M]";    // 不支持 → 强制剥离
+    c.fable.model = "m-fable [1m] ";  // 支持 → 规范化成 base+[1M]
+    c.subagent.model = "m-sub[1m]";   // 不支持 → 强制剥离
+    normalizeOneMMarkers(c);
+    DOCTEST_CHECK_EQ(c.def.model, std::string("m-def[1M]"));
+    DOCTEST_CHECK_EQ(c.sonnet.model, std::string("m-sonnet"));
+    DOCTEST_CHECK_EQ(c.opus.model, std::string(""));
+    DOCTEST_CHECK_EQ(c.haiku.model, std::string("m-haiku"));
+    DOCTEST_CHECK_EQ(c.fable.model, std::string("m-fable[1M]"));
+    DOCTEST_CHECK_EQ(c.subagent.model, std::string("m-sub"));
+
+    // 幂等：再归一一次结果不变（保存重入 / 多次写不累积）
+    const ModelsConfig once = c;
+    normalizeOneMMarkers(c);
+    for (const auto& m : modelSlotTable()) {
+        DOCTEST_CHECK_EQ((c.*m.slot).model, (once.*m.slot).model);
+    }
+
+    // 显示名（派生）不因标记变化而变：归一前后 deriveDisplayName 同值
+    DOCTEST_CHECK_EQ(module::claude::deriveDisplayName("m-def[1M]"),
+                     module::claude::deriveDisplayName("m-def"));
+    return true;
+})

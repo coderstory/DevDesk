@@ -312,6 +312,12 @@ bool serializeFormData(FormState& f, std::string* modelsJson, std::string* envJs
         if (!s.model.empty() || !s.name.empty()) { anySlot = true; break; }
     }
     if (anySlot) {
+        // 批次 F（2026-10-02）：保存前归一（**就地改写表单状态**，与「格式化当场
+        // 改写」同款既有模式）：支持 1M 的槽位把尾部标记规范成 [1M]（手输 [1m]
+        // 也落规范形）；**不支持 1M 的槽位强制剥离**（手输的标记不落库）；
+        // 无标记 / 空槽位原样。归一后 p.model（旧列）在 submitForm 里读的就是
+        // 规范值，与 models_config 一致
+        normalizeOneMMarkers(f.formModels_);
         auto r = serializeModelsConfig(f.formModels_);
         if (r.isFail()) {
             setFormError(f, "模型配置序列化失败: " + r.errorMessage());

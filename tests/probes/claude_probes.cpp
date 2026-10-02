@@ -40,6 +40,7 @@
 #include <fstream>
 
 #include "module_claude_proxy/claude_service.h"
+#include "provider_config.h"   // ⑦ 槽位表 / models_config 造数 + 序列化
 
 #include <algorithm>
 #include <cmath>
@@ -119,7 +120,21 @@ int main(int argc, char* argv[]) {
         p.extraSettingsJson =
             R"({"model": "probe-model", "statusLine": {"type": "command"}, "permissions": {"allow": ["Bash"]}})";
         p.sharedConfigId = env.svc->listSharedConfigs().value()[0].id;
-        seedOk = env.svc->updateProfile(p).isOk();
+        // 批次 F（2026-10-02）：模型映射 1M 开关三态造数（探针 ⑦ 的判别力来源）
+        //   def   支持 + 串尾 [1M]     → 勾上（回显）
+        //   opus  支持 + 无标记        → 未勾（滑块在左端）
+        //   haiku 不支持 + 串尾 [1M]   → 禁用（灰轨道）+ 不勾（双重条件）
+        module::claude::ModelsConfig mc;
+        mc.def.model = "probe-model[1M]";
+        mc.opus.model = "probe-opus";
+        mc.haiku.model = "probe-haiku[1M]";
+        auto mcText = module::claude::serializeModelsConfig(mc);
+        if (mcText.isOk()) {
+            p.modelsConfigJson = mcText.value();
+        } else {
+            seedOk = false;
+        }
+        if (seedOk) seedOk = env.svc->updateProfile(p).isOk();
     }
     // 30 条调用记录（P2：行数按可用高推的判别力来源——旧实现恒锁 10 行）
     if (seedOk && !ids.empty()) {
@@ -651,6 +666,128 @@ int main(int argc, char* argv[]) {
                                   : nullptr;
                 cancel != nullptr && cancel->onClick != nullptr) {
                 cancel->onClick();
+                composeFrame();
+            }
+        }
+        // ⑦ 批次 F（2026-10-02）：模型映射 pane 的「1M」开关几何 ——
+        //   a) 每行控件**在行内不错位**：开关命中区完全落在槽位行框内，且与
+        //      模型名值文本不相交（控件漏定位 / 漏留宽 → val 文本压到开关下）
+        //   b) **禁用态可辨识**：不支持 1M 的槽位（haiku）轨道色 ≠ 支持槽位
+        //      （def）轨道色（灰），且勾态回显（def 串尾 [1M] → 滑块在右端；
+        //      opus 无标记 → 滑块在左端）
+        // 造数（seeding 段）：档0 的 models_config = def[1M] / opus / haiku[1M]
+        //（haiku 不支持槽位但串里带标记 —— 双重条件的判别力来源）
+        // 收尾：回第 0 页签（下一档起点一致）
+        {
+            composeFrame();
+            if (auto* card =
+                    ui != nullptr ? ui->find("claude.profile.0.bg") : nullptr;
+                card != nullptr && card->onClick != nullptr) {
+                card->onClick();   // 选中（详情 shown 取选中，其次激活）
+                composeFrame();
+            }
+            if (auto* tab1 =
+                    ui != nullptr ? ui->find("claude.detail.tabs.hit.1") : nullptr;
+                tab1 != nullptr && tab1->onClick != nullptr) {
+                tab1->onClick();
+                composeFrame();
+            }
+            const size_t slotCount = module::claude::modelSlotTable().size();
+            for (size_t i = 0; i < slotCount; ++i) {
+                const std::string idx = std::to_string(i);
+                const core::dsl::Element* row =
+                    ui != nullptr ? ui->find("claude.slot.bg." + idx) : nullptr;
+                const core::dsl::Element* val =
+                    ui != nullptr ? ui->find("claude.slot.val." + idx) : nullptr;
+                const core::dsl::Element* hit =
+                    ui != nullptr ? ui->find("claude.slot.onem." + idx + ".hit")
+                                  : nullptr;
+                const core::dsl::Element* track =
+                    ui != nullptr ? ui->find("claude.slot.onem." + idx + ".track")
+                                  : nullptr;
+                if (row == nullptr || val == nullptr || hit == nullptr ||
+                    track == nullptr) {
+                    std::cerr << "claude_probes[" << tag << "]: 槽位行 " << idx
+                              << " 缺节点（row/val/onem.hit/onem.track）(⑦)\n";
+                    passed = false;
+                    continue;
+                }
+                // a) 控件在行内：左右不越行框
+                const float rowL = row->frame.x;
+                const float rowR = row->frame.x + row->frame.width;
+                const float hitL = hit->frame.x;
+                const float hitR = hit->frame.x + hit->frame.width;
+                if (hitL < rowL - 0.5f || hitR > rowR + 0.5f) {
+                    std::cerr << "claude_probes[" << tag << "]: 槽位 " << idx
+                              << " 1M 开关越出行框（hit "
+                              << hitL << ".." << hitR << " vs row "
+                              << rowL << ".." << rowR << "）(⑦)\n";
+                    passed = false;
+                }
+                // a2) 与模型名值文本不相交（估宽有误差，取 -0.5 容差）
+                const float valR = val->frame.x + val->frame.width;
+                if (valR > hitL + 0.5f) {
+                    std::cerr << "claude_probes[" << tag << "]: 槽位 " << idx
+                              << " 值文本右缘 " << valR << " 压进 1M 开关左缘 "
+                              << hitL << "（未留列宽）(⑦)\n";
+                    passed = false;
+                }
+                // a3) 轨道垂直居中于行（32 高行内）
+                const float trackMid =
+                    track->frame.y + track->frame.height * 0.5f;
+                const float rowMid = row->frame.y + row->frame.height * 0.5f;
+                if (std::fabs(trackMid - rowMid) > 1.0f) {
+                    std::cerr << "claude_probes[" << tag << "]: 槽位 " << idx
+                              << " 1M 轨道未垂直居中（track 中 " << trackMid
+                              << " vs 行中 " << rowMid << "）(⑦)\n";
+                    passed = false;
+                }
+            }
+            // b) 勾态回显 + 禁用态色差（三态造数见 seeding）
+            const core::dsl::Element* trackDef =
+                ui != nullptr ? ui->find("claude.slot.onem.0.track") : nullptr;
+            const core::dsl::Element* knobDef =
+                ui != nullptr ? ui->find("claude.slot.onem.0.knob") : nullptr;
+            const core::dsl::Element* trackOpus =
+                ui != nullptr ? ui->find("claude.slot.onem.2.track") : nullptr;
+            const core::dsl::Element* knobOpus =
+                ui != nullptr ? ui->find("claude.slot.onem.2.knob") : nullptr;
+            const core::dsl::Element* trackHaiku =
+                ui != nullptr ? ui->find("claude.slot.onem.3.track") : nullptr;
+            if (trackDef == nullptr || knobDef == nullptr ||
+                trackOpus == nullptr || knobOpus == nullptr ||
+                trackHaiku == nullptr) {
+                std::cerr << "claude_probes[" << tag
+                          << "]: 1M 开关三态节点缺失 (⑦)\n";
+                passed = false;
+            } else {
+                const float defOffset = knobDef->frame.x - trackDef->frame.x;
+                const float opusOffset = knobOpus->frame.x - trackOpus->frame.x;
+                // 勾态 = 滑块相对轨道的偏移；未勾也有 margin 偏移（非 0）→
+                // 用相对比较，不写绝对阈值
+                if (!(defOffset > opusOffset + 5.0f)) {
+                    std::cerr << "claude_probes[" << tag
+                              << "]: def 槽位串尾 [1M] 未回显为勾上（滑块偏移 "
+                              << defOffset << " vs opus 未勾 " << opusOffset
+                              << "）(⑦)\n";
+                    passed = false;
+                }
+                const bool sameTrack =
+                    trackHaiku->color.r == trackDef->color.r &&
+                    trackHaiku->color.g == trackDef->color.g &&
+                    trackHaiku->color.b == trackDef->color.b &&
+                    trackHaiku->color.a == trackDef->color.a;
+                if (sameTrack) {
+                    std::cerr << "claude_probes[" << tag
+                              << "]: 不支持 1M 的槽位轨道色与支持槽位相同"
+                                 "（禁用态不可辨识）(⑦)\n";
+                    passed = false;
+                }
+            }
+            if (auto* back =
+                    ui != nullptr ? ui->find("claude.detail.tabs.hit.0") : nullptr;
+                back != nullptr && back->onClick != nullptr) {
+                back->onClick();
                 composeFrame();
             }
         }

@@ -86,6 +86,67 @@ bool isModelSlotEnvKey(const std::string& key) {
     return false;
 }
 
+// ---- 1M 上下文标记（批次 F，2026-10-02）----
+// 语义逐条对齐 cc-switch useModelState.ts（见头文件注释）；实现只用 string 尾部
+// 比较 + 尾部空白裁剪，零正则、零 locale（C++ 侧保持纯函数、无 IO）。
+namespace {
+
+// 尾部空白裁剪（等价 JS trimEnd；只裁 ' ' / '\t' / '\r' / '\n'，与 isBlankText
+// 同一口径——不做 locale 相关的 std::isspace，避免全角空格的歧义）
+std::string trimEndCopy(const std::string& text) {
+    size_t end = text.size();
+    while (end > 0) {
+        const char c = text[end - 1];
+        if (c != ' ' && c != '\t' && c != '\r' && c != '\n') break;
+        --end;
+    }
+    return text.substr(0, end);
+}
+
+} // namespace
+
+bool hasOneMMarker(const std::string& model) {
+    const std::string trimmed = trimEndCopy(model);
+    constexpr size_t kMarkerLen = 4;   // "[1M]" 的字节数（与大小写无关）
+    if (trimmed.size() < kMarkerLen) return false;
+    const std::string tail = trimmed.substr(trimmed.size() - kMarkerLen);
+    return tail == "[1M]" || tail == "[1m]";
+}
+
+std::string stripOneMMarker(const std::string& model) {
+    if (!hasOneMMarker(model)) return model;   // 未命中原样返回（含尾空白）
+    const std::string trimmed = trimEndCopy(model);
+    return trimEndCopy(trimmed.substr(0, trimmed.size() - 4));
+}
+
+std::string setOneMMarker(const std::string& model, bool enabled) {
+    const std::string base = stripOneMMarker(model);
+    // base 的空判定照 cc-switch：strip 后再 trim()（两侧空白都不算内容）
+    size_t begin = 0;
+    size_t end = base.size();
+    while (begin < end && (base[begin] == ' ' || base[begin] == '\t' ||
+                           base[begin] == '\r' || base[begin] == '\n')) {
+        ++begin;
+    }
+    while (end > begin && (base[end - 1] == ' ' || base[end - 1] == '\t' ||
+                           base[end - 1] == '\r' || base[end - 1] == '\n')) {
+        --end;
+    }
+    const std::string core = base.substr(begin, end - begin);
+    if (core.empty()) return "";   // 空 base 不许带标记（cc-switch 同款）
+    return enabled ? core + kOneMMarkerSuffix : core;
+}
+
+void normalizeOneMMarkers(ModelsConfig& config) {
+    for (const auto& m : modelSlotTable()) {
+        ModelSlot& slot = config.*m.slot;
+        if (!hasOneMMarker(slot.model)) continue;   // 无标记 → 原样（含空槽位）
+        const std::string base = stripOneMMarker(slot.model);
+        slot.model = m.supportsOneM ? (base + kOneMMarkerSuffix)   // 支持 → 规范化大小写
+                                    : base;                  // 不支持 → 强制剥离
+    }
+}
+
 core::Result<std::string> serializeModelsConfig(const ModelsConfig& config) {
     platform::json::JsonObject obj;
     for (const auto& m : modelSlotTable()) {

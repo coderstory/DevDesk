@@ -525,6 +525,10 @@ private:
         // doCopyConfig / 删除确认弹窗）由 listActions() 与 doDelete 保留
         a.run = [this](int64_t id) { doRun(id); };
         a.openCalls = [this] { openCallsDialog(state_.logs); };
+        // 批次 F（2026-10-02）：模型映射 pane 的「1M」开关
+        a.setOneM = [this](int64_t id, std::size_t slotIdx, bool on) {
+            doSetOneM(id, slotIdx, on);
+        };
         return a;
     }
 
@@ -605,6 +609,54 @@ private:
         }
         state_.list.selectedId_ = id;
         showToast("已启用", "该 Profile 已设为激活（ACTIVE）", false);
+    }
+
+    // 批次 F（2026-10-02）：模型映射 pane 的「1M」开关落库。
+    // 入参 slotIdx = 槽位表序（pane 与 handler 同遍历 modelSlotTable()，两侧同源）。
+    // 落库形态不变：仍写 models_config 里「基础名 + 可选 [1M]」这一个字符串
+    //（零 schema 迁移）；保存前归一（不支持槽位剥标记 / 大小写规范化）与表单
+    // 保存同口径——归一函数只此一处实现，两个写入口共用。
+    void doSetOneM(int64_t id, std::size_t slotIdx, bool on) {
+        ClaudeService* svc = ClaudeService::global();
+        if (svc == nullptr) return;
+        const auto table = modelSlotTable();
+        if (id == 0 || slotIdx >= table.size()) return;   // 防御：无选中 / 越界
+        state_.list.dataDirty_ = true;   // 写操作标脏（下帧重查列表/详情）
+        // 每次重读：同一帧连点两行时不拿陈旧快照互相覆盖
+        auto got = svc->getProfile(id);
+        if (got.isFail()) {
+            showToast("设置失败", got.errorMessage(), true);
+            return;
+        }
+        Profile p = std::move(got).value();
+        ModelsConfig cfg = effectiveModelsConfig(p.modelsConfigJson);
+        ModelSlot& slot = cfg.*table[slotIdx].slot;
+        const std::string before = slot.model;
+        slot.model = setOneMMarker(slot.model, on);
+        if (slot.model == before) return;   // 幂等：无变化不写库
+        normalizeOneMMarkers(cfg);          // 保存前归一（与表单保存同口径）
+        auto text = serializeModelsConfig(cfg);
+        if (text.isFail()) {
+            showToast("设置失败", text.errorMessage(), true);
+            return;
+        }
+        p.modelsConfigJson = text.value();
+        // 旧 model 列与 default 槽位同步（与表单保存同口径；按表反查不抄下标）
+        for (const auto& m : table) {
+            if (std::string(m.jsonKey) == "default") {
+                p.model = (cfg.*m.slot).model;
+                break;
+            }
+        }
+        auto r = svc->updateProfile(p);
+        if (r.isFail()) {
+            showToast("设置失败", r.errorMessage(), true);
+            return;
+        }
+        showToast("已更新",
+                  std::string("「") + table[slotIdx].label + "」的 1M 上下文标记已" +
+                      (on ? "开启" : "关闭"),
+                  false);
     }
 
     // 运行：直连——生成临时 settings + claude --settings 打开新会话（D-1：

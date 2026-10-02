@@ -105,6 +105,11 @@ struct DetailActions {
     // batch-C C-3：删除 / 建副本 / 复制配置三键自详情动作行删除（重复入口，
     // 已有列表右键菜单）→ 对应回调字段一并撤除；业务实体（doDuplicate /
     // doCopyConfig / 删除确认弹窗）保留，经 ProfileListActions 供右键菜单
+    // 批次 F（2026-10-02）：模型映射 pane 的「1M」开关落库 —— 入参 = profile id
+    // + 槽位表下标（表序，pane 与 handler 同遍历 modelSlotTable()，不传裸指针）
+    // + 目标状态。**只有可用行**（槽位支持 1M 且 base 非空）会触发本回调：
+    // 不支持 / 空 base 的行控件置灰且不挂 onChange（点了不落库）
+    std::function<void(int64_t profileId, std::size_t slotIndex, bool on)> setOneM;
 };
 
 // ---- 五个 pane：各自返回内容底沿（见文件头契约）----
@@ -114,9 +119,10 @@ struct DetailActions {
 float drawDetailBasic(eui::Ui& ui, float x0, float y0, float w,
                       const core::theme::Tokens& t, const DetailView& v,
                       float contentBottom);
+// a = 动作回调（批次 F 起收）：模型映射 pane 的「1M」开关经 a.setOneM 落库
 float drawDetailModels(eui::Ui& ui, float x0, float y0, float w,
                        const core::theme::Tokens& t, const DetailView& v,
-                       float contentBottom);
+                       const DetailActions& a, float contentBottom);
 float drawDetailEnv(eui::Ui& ui, float x0, float y0, float w,
                     const core::theme::Tokens& t, const DetailView& v,
                     float contentBottom, PaneRows* rows = nullptr);

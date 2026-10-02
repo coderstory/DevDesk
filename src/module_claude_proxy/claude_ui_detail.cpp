@@ -28,13 +28,16 @@
 #include "settings_sync.h"
 
 #include <components/button.h>
+#include <components/switch.h>
 #include <components/tabs.h>
 #include <core/call_rate.h>
+#include <core/component_theme.h>
 #include <core/logging.h>
 
 #include <algorithm>
 #include <cctype>
 #include <cmath>
+#include <functional>
 #include <map>
 
 namespace module::claude {
@@ -220,21 +223,40 @@ float drawDetailBasic(eui::Ui& ui, float x0, float y0, float w,
 
 float drawDetailModels(eui::Ui& ui, float x0, float y0, float w,
                        const core::theme::Tokens& t, const DetailView& v,
-                       float contentBottom) {
+                       const DetailActions& a, float contentBottom) {
     (void)contentBottom;  // 槽位表行数固定（= 表行数），与容器高无关
     const Profile* shown = v.shown;
     // ---- 模型映射 pane：槽位逐行（遍历槽位表派生；widget id 序号 = 表序）----
+    // 批次 F（2026-10-02）：每行右端加「1M」开关 —— 把模型名尾部的 [1M] 后缀
+    // 变成可点的开关（语义照 cc-switch，判定/剥离/设置三函数在 provider_config，
+    // 存储仍是「基础名 + 可选 [1M]」一个字符串，零 schema 迁移）。
+    //   勾态 = **槽位支持位 && 串尾（大小写不敏感）有标记**（双重条件）
+    //   可用 = 槽位支持位 && base 非空（空 base 不许勾）
+    // 不可用的行**置灰但不隐藏**（用户能看到「有这个能力、这个槽位不支持」），
+    // 且不挂 onChange —— 点它不落库（手输的标记由保存前归一闪除）。
     ModelsConfig mc{};
     if (shown && !shown->modelsConfigJson.empty()) {
         auto mr = parseModelsConfig(shown->modelsConfigJson);
         if (mr.isOk()) mc = mr.value();
     }
+    // 开关列宽（右端固定列）：轨道 30 + 间隙 + 「1M」标签 + 两侧内缩 = 76；
+    // 值文本列相应收窄同宽（两列互不重叠，探针 ⑦ 有几何断言）。
+    // 色源走 core::theme::componentTokens（core → 组件主题的唯一映射，不手拼色）
+    constexpr float kOneMColW = 76.0f;
+    const components::SwitchStyle oneMStyle(core::theme::componentTokens(t));
+    components::SwitchStyle oneMDisabledStyle = oneMStyle;
+    // 禁用态（灰）：轨道/标签都走 textDisabled，滑块走 surfaceElevated ——
+    // 与可用行的「关」态（surfaceHover/surfaceActive 混色）色值不同，肉眼可辨
+    oneMDisabledStyle.off = t.colors.textDisabled;
+    oneMDisabledStyle.on = t.colors.textDisabled;
+    oneMDisabledStyle.knob = t.colors.surfaceElevated;
+    oneMDisabledStyle.text = t.colors.textDisabled;
     float sy = y0;
     int slotIdx = 0;
     for (const auto& meta : modelSlotTable()) {
         const ModelSlot& slot = mc.*meta.slot;
         const bool filled = !slot.model.empty();
-        const std::string idx = std::to_string(slotIdx++);
+        const std::string idx = std::to_string(slotIdx);
         ui.rect("claude.slot.bg." + idx)
             .position(x0, sy).size(w, 32.0f)
             .color(t.colors.surfaceElevated).radius(t.sizes.radiusSmall)
@@ -249,11 +271,41 @@ float drawDetailModels(eui::Ui& ui, float x0, float y0, float w,
             .verticalAlign(eui::VerticalAlign::Center)
             .color(t.colors.textTertiary).build();
         ui.text("claude.slot.val." + idx)
-            .position(x0 + 100.0f, sy).size(w - 112.0f, 32.0f)
+            .position(x0 + 100.0f, sy).size(w - 112.0f - kOneMColW, 32.0f)
             .text(filled ? slot.model : std::string("未配置"))
             .fontSize(13.0f).lineHeight(32.0f)
             .verticalAlign(eui::VerticalAlign::Center)
+            .clip()   // 值文本列变窄后长出列宽的长模型名硬裁（不压开关列）
             .color(filled ? t.colors.textPrimary : t.colors.textTertiary).build();
+        // 「1M」开关（不支持 / 空 base → 不传 onChange = 点了没反应）。
+        // 组件 builder 无 .position()（与 tabs 同款）→ 包一层定位 stack 对齐行右端
+        const bool oneMEnabled = meta.supportsOneM && filled;
+        const bool oneMChecked = meta.supportsOneM && hasOneMMarker(slot.model);
+        const int64_t shownId = shown != nullptr ? shown->id : 0;
+        const std::size_t slotIndex = static_cast<std::size_t>(slotIdx);
+        const std::function<void(bool)> onOneM =
+            (oneMEnabled && shown != nullptr && a.setOneM)
+                ? std::function<void(bool)>(
+                      [cb = a.setOneM, shownId, slotIndex](bool on) {
+                          cb(shownId, slotIndex, on);
+                      })
+                : std::function<void(bool)>();
+        ui.stack("claude.slot.onem." + idx + ".wrap")
+            .position(x0 + w - kOneMColW - 4.0f, sy)
+            .size(kOneMColW, 32.0f)
+            .content([&] {
+                components::toggleSwitch(ui, "claude.slot.onem." + idx)
+                    .size(kOneMColW, 32.0f)
+                    .checked(oneMChecked)
+                    .text("1M")
+                    .fontSize(11.0f)
+                    .trackSize(30.0f, 16.0f)
+                    .style(oneMEnabled ? oneMStyle : oneMDisabledStyle)
+                    .onChange(onOneM)
+                    .build();
+            })
+            .build();
+        ++slotIdx;
         sy += 38.0f;
     }
     return sy;
@@ -1124,7 +1176,7 @@ void drawDetailPanel(eui::Ui& ui, float rightW, float bodyH, float xOffset,
                 paneBottom = drawDetailBasic(ui, x0, paneY, w0, t, v,
                                              contentBottom);
             } else if (st.detailTab_ == 1) {
-                paneBottom = drawDetailModels(ui, x0, paneY, w0, t, v,
+                paneBottom = drawDetailModels(ui, x0, paneY, w0, t, v, a,
                                               contentBottom);
             } else if (st.detailTab_ == 2) {
                 paneBottom = drawDetailEnv(ui, x0, paneY, w0, t, v,

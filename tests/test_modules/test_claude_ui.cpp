@@ -7683,3 +7683,234 @@ REGISTER_TEST(claude_module_onstart_reentry_idempotent,
     DOCTEST_CHECK(!module::claude::ClaudeService::global()->isProxyRunning());
     return true;
 })
+
+// ---- O. 批次 F（2026-10-02）：模型映射「1M」开关（详情页）----
+// 语义照 cc-switch useModelState.ts：勾态 = **槽位支持位 && 串尾（大小写不敏感）
+// 有 [1M]**（双重条件，不是只看串）；不支持槽位 / 空 base 的行开关置灰且点了
+// 不落库。落库仍存「基础名 + 可选 [1M]」一个字符串（零 schema 迁移）。
+REGISTER_TEST(claude_ui_model_one_m_switch,
+              "claude_module: 模型映射 1M 开关（回显/落库/禁用行不生效）", {
+    TestEnv env;
+    auto a = env.svc->createProfile("1M开关", "https://onem.example.com",
+                                    "sk-ant-onem-0001", "");
+    DOCTEST_REQUIRE(a.isOk());
+    const int64_t pid = a.value().id;
+    // 造数（直接写库，绕开 UI）：覆盖四种状态
+    //   def     支持 + 无标记        → 开关可用、未勾
+    //   sonnet  支持 + 串尾 [1m]     → **回显勾上**（大小写不敏感）
+    //   opus    支持 + 无标记
+    //   haiku   不支持 + 串尾 [1M]   → 禁用 + 不勾（双重条件第二项不成立）
+    //   fable   支持 + 空 base       → 禁用（空 base 不许勾）
+    //   subagent 不支持 + 空 base    → 禁用
+    module::claude::ModelsConfig mc;
+    mc.def.model = "m-def";
+    mc.sonnet.model = "m-sonnet[1m]";
+    mc.opus.model = "m-opus";
+    mc.haiku.model = "m-haiku[1M]";
+    auto seeded = module::claude::serializeModelsConfig(mc);
+    DOCTEST_REQUIRE(seeded.isOk());
+    auto cur = env.svc->getProfile(pid);
+    DOCTEST_REQUIRE(cur.isOk());
+    cur.value().modelsConfigJson = seeded.value();
+    DOCTEST_REQUIRE(env.svc->updateProfile(cur.value()).isOk());
+
+    std::unique_ptr<::core::Module> mod(create_claude_module());
+    eui::Screen screen;
+    screen.width = 1600.0f;
+    screen.height = 1000.0f;
+    auto compose = [&](eui::Ui& ui) {
+        ui.begin("claude_onem");
+        mod->compose(ui, screen);
+        ui.end();
+        // 几何断言要 frame 有效：headless 的 ui.end() 不跑 layout，需显式补
+        //（claude_module_actions_row_alignment 同款）
+        ui.layout(screen.width, screen.height);
+    };
+    auto click = [](eui::Ui& ui, const std::string& id) -> bool {
+        const auto* node = ui.find(id);
+        if (node == nullptr || node->onClick == nullptr) {
+            std::cerr << "missing clickable: " << id << std::endl;
+            return false;
+        }
+        node->onClick();
+        return true;
+    };
+
+    // 选中该 profile（详情面板 shown 取选中，其次激活）
+    {
+        eui::Ui ui;
+        compose(ui);
+        DOCTEST_CHECK(click(ui, "claude.profile.0.bg"));
+    }
+    // 切到「模型映射」页签，核对每行开关存在 + 勾态回显
+    {
+        eui::Ui ui;
+        compose(ui);
+        DOCTEST_CHECK(click(ui, "claude.detail.tabs.hit.1"));
+    }
+    {
+        eui::Ui ui;
+        compose(ui);
+        const auto& table = module::claude::modelSlotTable();
+        for (size_t i = 0; i < table.size(); ++i) {
+            DOCTEST_CHECK(ui.find("claude.slot.onem." + std::to_string(i) +
+                                  ".hit") != nullptr);
+        }
+        const auto* trackDef = ui.find("claude.slot.onem.0.track");
+        const auto* knobDef = ui.find("claude.slot.onem.0.knob");
+        const auto* trackSonnet = ui.find("claude.slot.onem.1.track");
+        const auto* knobSonnet = ui.find("claude.slot.onem.1.knob");
+        const auto* trackHaiku = ui.find("claude.slot.onem.3.track");
+        const auto* knobHaiku = ui.find("claude.slot.onem.3.knob");
+        DOCTEST_REQUIRE(trackDef != nullptr);
+        DOCTEST_REQUIRE(knobDef != nullptr);
+        DOCTEST_REQUIRE(trackSonnet != nullptr);
+        DOCTEST_REQUIRE(knobSonnet != nullptr);
+        DOCTEST_REQUIRE(trackHaiku != nullptr);
+        DOCTEST_REQUIRE(knobHaiku != nullptr);
+        // 勾态判据 = 滑块相对轨道的偏移（勾上滑块移到轨道右端）；未勾也有
+        // margin 偏移（= max(spacing.micro, 轨道高×0.125)）→ 用**相对比较**
+        // （勾上行偏移 − 未勾行偏移 ≈ 轨道可走行程 ≥ 5px），不写绝对阈值
+        const float defOff = knobDef->frame.x - trackDef->frame.x;
+        const float sonOff = knobSonnet->frame.x - trackSonnet->frame.x;
+        const float haiOff = knobHaiku->frame.x - trackHaiku->frame.x;
+        DOCTEST_CHECK(sonOff > defOff + 5.0f);
+        // haiku：串尾确有 [1M] 但槽位不支持 → 双重条件 → 不勾（与未勾行同态）
+        DOCTEST_CHECK(std::fabs(haiOff - defOff) < 1.0f);
+        // 禁用态可辨识：不支持行轨道色 != 支持但未勾行（灰）
+        const bool sameColor =
+            trackHaiku->color.r == trackDef->color.r &&
+            trackHaiku->color.g == trackDef->color.g &&
+            trackHaiku->color.b == trackDef->color.b &&
+            trackHaiku->color.a == trackDef->color.a;
+        DOCTEST_CHECK_FALSE(sameColor);
+    }
+    // 禁用行点了不落库：haiku(3) 不支持 / fable(4) 空 base / subagent(5) 不支持
+    {
+        eui::Ui ui;
+        compose(ui);
+        DOCTEST_CHECK(click(ui, "claude.slot.onem.3.hit"));
+        DOCTEST_CHECK(click(ui, "claude.slot.onem.4.hit"));
+        DOCTEST_CHECK(click(ui, "claude.slot.onem.5.hit"));
+    }
+    {
+        auto got = env.svc->getProfile(pid);
+        DOCTEST_REQUIRE(got.isOk());
+        auto gotMc = module::claude::parseModelsConfig(got.value().modelsConfigJson);
+        DOCTEST_REQUIRE(gotMc.isOk());
+        DOCTEST_CHECK_EQ(gotMc.value().haiku.model, std::string("m-haiku[1M]"));
+        DOCTEST_CHECK_EQ(gotMc.value().fable.model, std::string(""));
+        DOCTEST_CHECK_EQ(gotMc.value().subagent.model, std::string(""));
+        DOCTEST_CHECK_EQ(gotMc.value().def.model, std::string("m-def"));
+    }
+    // 可用行：def 点一下 → 加标记落库；sonnet 点一下 → 去标记落库
+    //（两下都在同一帧的 UI 快照上：勾态取自当帧构建时的 checked，互不串扰）
+    {
+        eui::Ui ui;
+        compose(ui);
+        DOCTEST_CHECK(click(ui, "claude.slot.onem.0.hit"));
+        DOCTEST_CHECK(click(ui, "claude.slot.onem.1.hit"));
+    }
+    {
+        auto got = env.svc->getProfile(pid);
+        DOCTEST_REQUIRE(got.isOk());
+        auto gotMc = module::claude::parseModelsConfig(got.value().modelsConfigJson);
+        DOCTEST_REQUIRE(gotMc.isOk());
+        DOCTEST_CHECK_EQ(gotMc.value().def.model, std::string("m-def[1M]"));
+        DOCTEST_CHECK_EQ(gotMc.value().sonnet.model, std::string("m-sonnet"));
+        // 旧 model 列与 def 槽位同步（与表单保存同口径）
+        DOCTEST_CHECK_EQ(got.value().model, std::string("m-def[1M]"));
+        // 保存前归一是全表口径：不支持槽位的遗留标记顺带剥掉（自愈到不变式）
+        DOCTEST_CHECK_EQ(gotMc.value().haiku.model, std::string("m-haiku"));
+    }
+    mod->onStop();
+    cleanupProfileKey(kTestKeychainService, pid);
+    return true;
+})
+
+// ---- P. 批次 F：表单保存前归一（不支持槽位强制剥离 + 大小写规范化）----
+REGISTER_TEST(claude_ui_form_one_m_normalize_on_save,
+              "claude_module: 表单保存 1M 归一（不支持剥离 + 大小写规范化）", {
+    TestEnv env;
+    auto a = env.svc->createProfile("1M表单", "https://form1m.example.com",
+                                    "sk-ant-1m-form-0001", "");
+    DOCTEST_REQUIRE(a.isOk());
+    const int64_t pid = a.value().id;
+
+    std::unique_ptr<::core::Module> mod(create_claude_module());
+    eui::Screen screen;
+    screen.width = 1600.0f;
+    screen.height = 1000.0f;
+    auto compose = [&](eui::Ui& ui) {
+        ui.begin("claude_onem_form");
+        mod->compose(ui, screen);
+        ui.end();
+    };
+    auto click = [](eui::Ui& ui, const std::string& id) -> bool {
+        const auto* node = ui.find(id);
+        if (node == nullptr || node->onClick == nullptr) {
+            std::cerr << "missing clickable: " << id << std::endl;
+            return false;
+        }
+        node->onClick();
+        return true;
+    };
+    auto type = [](eui::Ui& ui, const std::string& id,
+                   const std::string& text) -> bool {
+        const auto* node = ui.find(id);
+        if (node == nullptr || node->onTextInput == nullptr) {
+            std::cerr << "missing input: " << id << std::endl;
+            return false;
+        }
+        core::TextInputEvent ev;
+        ev.text = text;
+        node->onTextInput(ev);
+        return true;
+    };
+
+    {
+        eui::Ui ui;
+        compose(ui);
+        DOCTEST_CHECK(click(ui, "claude.profile.0.bg"));
+    }
+    {
+        eui::Ui ui;
+        compose(ui);
+        DOCTEST_CHECK(click(ui, "claude.act.edit.bg"));
+    }
+    {
+        eui::Ui ui;
+        compose(ui);
+        DOCTEST_CHECK(click(ui, "claude.form.tabs.hit.1"));   // 模型映射页
+    }
+    // 手输：def 小写标记（支持→规范化）/ haiku 大写标记（不支持→剥离）/
+    //       opus 无标记（原样）
+    {
+        eui::Ui ui;
+        compose(ui);
+        DOCTEST_CHECK(type(ui, "claude.form.slot.0.model.hit", "m-form-def[1m]"));
+        DOCTEST_CHECK(type(ui, "claude.form.slot.2.model.hit", "m-form-opus"));
+        DOCTEST_CHECK(type(ui, "claude.form.slot.3.model.hit", "m-form-haiku[1M]"));
+    }
+    {
+        eui::Ui ui;
+        compose(ui);
+        DOCTEST_CHECK(click(ui, "claude.dialog.form.confirm.bg"));
+    }
+    {
+        auto got = env.svc->getProfile(pid);
+        DOCTEST_REQUIRE(got.isOk());
+        auto gotMc = module::claude::parseModelsConfig(got.value().modelsConfigJson);
+        DOCTEST_REQUIRE(gotMc.isOk());
+        // 支持槽位：保留且**规范成大写 [1M]**
+        DOCTEST_CHECK_EQ(gotMc.value().def.model, std::string("m-form-def[1M]"));
+        // 不支持槽位：手输的标记被**强制剥离**
+        DOCTEST_CHECK_EQ(gotMc.value().haiku.model, std::string("m-form-haiku"));
+        DOCTEST_CHECK_EQ(gotMc.value().opus.model, std::string("m-form-opus"));
+        // 旧 model 列 = def 槽位（含规范化后的标记）
+        DOCTEST_CHECK_EQ(got.value().model, std::string("m-form-def[1M]"));
+    }
+    mod->onStop();
+    cleanupProfileKey(kTestKeychainService, pid);
+    return true;
+})

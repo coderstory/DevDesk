@@ -34,7 +34,7 @@ struct ModelSlot {
 
 // 模型槽位（§4.1）：成员由槽位表生成，声明顺序 = 表顺序
 struct ModelsConfig {
-#define DEVDESK_MODEL_SLOT_MEMBER(name, jsonKey, label, formLabel, envKey, nameKey) \
+#define DEVDESK_MODEL_SLOT_MEMBER(name, jsonKey, label, formLabel, envKey, nameKey, oneM) \
     ModelSlot name;
     DEVDESK_MODEL_SLOT_LIST(DEVDESK_MODEL_SLOT_MEMBER)
 #undef DEVDESK_MODEL_SLOT_MEMBER
@@ -48,19 +48,23 @@ struct ModelSlotMeta {
     const char* envKey;     // 发往上游的模型键
     const char* nameKey;    // 官方 *_NAME 键；nullptr = 无该变体
     ModelSlot ModelsConfig::*slot;  // 对应数据成员
+    // 批次 F（2026-10-02）：该槽位是否支持 1M 上下文标记（X 宏第 7 参）。
+    // 语义 = 「允许串尾带 [1M]」，不是「当前是否已带」——当前勾态由
+    // hasOneMMarker(model) 单独判（UI 侧二者相与，照 cc-switch 双重条件）
+    bool supportsOneM;
 };
 
 // 槽位表（顺序 = UI 展示顺序 = managedEnvKeyNames 的槽位键顺序）。
 // 消费方一律遍历本表派生，不再手写 N 个槽位分支
-#define DEVDESK_MODEL_SLOT_ROW(name, jsonKey, label, formLabel, envKey, nameKey) \
-    ModelSlotMeta{jsonKey, label, formLabel, envKey, nameKey, &ModelsConfig::name},
+#define DEVDESK_MODEL_SLOT_ROW(name, jsonKey, label, formLabel, envKey, nameKey, oneM) \
+    ModelSlotMeta{jsonKey, label, formLabel, envKey, nameKey, &ModelsConfig::name, oneM},
 inline constexpr ModelSlotMeta kModelSlotMetas[] = {
     DEVDESK_MODEL_SLOT_LIST(DEVDESK_MODEL_SLOT_ROW)
 };
 #undef DEVDESK_MODEL_SLOT_ROW
 
 // 槽位数（由表派生：加一行即 +1；全项目不再硬编码 6）
-#define DEVDESK_MODEL_SLOT_COUNT_ONE(name, jsonKey, label, formLabel, envKey, nameKey) +1
+#define DEVDESK_MODEL_SLOT_COUNT_ONE(name, jsonKey, label, formLabel, envKey, nameKey, oneM) +1
 inline constexpr std::size_t kModelSlotCount =
     0 DEVDESK_MODEL_SLOT_LIST(DEVDESK_MODEL_SLOT_COUNT_ONE);
 #undef DEVDESK_MODEL_SLOT_COUNT_ONE
@@ -87,6 +91,32 @@ const char* modelSlotDefEnvKey();
 //（F-10：provider_config 不能反向 include UI 文件，判定落本层、UI 复用），
 // 两处注释互指单一来源
 bool isModelSlotEnvKey(const std::string& key);
+
+// ---- 1M 上下文标记（批次 F，2026-10-02）----
+// Claude Code 的「1M 上下文」开关在存储上就是模型名尾部的 [1M] 后缀；本组函数
+// 把它变成可判定的语义（UI 复选框只用这三个 + 槽位表的 supportsOneM 列）。
+// 语义照 cc-switch 参考实现（src/components/providers/forms/hooks/
+// useModelState.ts，逐条对齐、不做扩展）：
+//   hasOneMMarker   —— trimEnd 后**大小写不敏感**判尾 "[1m]"
+//   stripOneMMarker —— 命中才切尾 4 字符再 trimEnd；**未命中原样返回**
+//   setOneMMarker   —— 先 strip 再 trim 得 base；**base 空 → 返回空串**
+//                      （空 base 不许带标记）；否则 base + 大写 [1M] / 纯 base
+// 三个函数都不碰 *_NAME（显示名）——「标记不污染显示名」由「显示名是独立字段 +
+// deriveDisplayName 派生时剥标记」两处既有机制保证，本组不做额外处理。
+inline constexpr const char* kOneMMarkerSuffix = "[1M]";
+bool hasOneMMarker(const std::string& model);
+std::string stripOneMMarker(const std::string& model);
+std::string setOneMMarker(const std::string& model, bool enabled);
+
+// 保存前归一（**UI 写入口显式调用**，不塞进 serializeModelsConfig——序列化保持
+// 无损，「写什么存什么」的性质不动）：逐槽位
+//   支持 1M（meta.supportsOneM）且串尾有标记 → 规范成 base + "[1M]"（大小写）
+//   不支持且有标记                         → **强制剥离**（手输的标记不落库）
+//   无标记 / 空槽位                        → 原样不动
+// 幂等（重复保存不累积）。消费方：claude_ui_form 的表单保存、claude_module 的
+// 模型映射 1M 开关。**未覆盖**反向同步（settings.json → profile）路径——见交付
+// 报告遗留问题
+void normalizeOneMMarkers(ModelsConfig& config);
 
 // ---- models_config 序列化 / 反序列化 ----
 // 序列化固定写全槽位表所有行（空槽位写空串，roundtrip 稳定）
