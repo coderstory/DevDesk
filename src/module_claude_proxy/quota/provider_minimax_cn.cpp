@@ -280,7 +280,7 @@ public:
         return hostMatchesAny(baseUrl);
     }
 
-    QuotaResult fetch(const ProviderConfig& cfg, const HttpSendFn& http) override {
+    QuotaResult fetch(const ProviderConfig& cfg, const HttpSendFn& http) const override {
         if (cfg.apiKey.empty()) {
             // 配置不完整（缺字段）→ NotConfigured：不打网络，UI 引导去配置
             return makeError(QuotaError::NotConfigured,

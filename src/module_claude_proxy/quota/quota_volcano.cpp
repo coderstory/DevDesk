@@ -723,7 +723,7 @@ public:
         return segments[1] == "plan" || segments[1] == "coding";
     }
 
-    QuotaResult fetch(const ProviderConfig& cfg, const HttpSendFn& http) override {
+    QuotaResult fetch(const ProviderConfig& cfg, const HttpSendFn& http) const override {
         // 空缝必须返回错误而不是调用（调用即 std::bad_function_call，违反项目
         // "不抛 C++ 异常"铁律，见 quota_provider.h 的 HttpSendFn 约定）。
         if (!http) {

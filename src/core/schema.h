@@ -195,11 +195,19 @@ inline constexpr const char* kSql = R"(
     --                      quota_store 的 encodeQuotaWindows / decodeQuotaWindows）
     --   last_error_kind   QuotaError 名（UI 据此选文案）；"none" = 当前无错
     --
+    -- **fetched_at 与 last_success_at 是两列，不是一列**（评审 m1）：
+    --   fetched_at      = 最近一次**尝试**（成败都推进）。定时器用它判到期——
+    --                     若用「上次成功」，一次持续失败会每个 tick 重打供应商
+    --                     = 重试风暴。
+    --   last_success_at = 最近一次**成功**（失败不推进）。G7 用它显示「数据时间」。
+    -- 合成一列会让 G7 在一次 Transient 失败后显示自相矛盾的话：15 分钟前的
+    -- 数字 + 「刚刚查询过」。
+    --
     -- **「从未成功过」的可分辨性（本表最重要的一条不变量）**：失败落库时
-    -- windows_json 保持空、balance_remaining 保持 0，绝不写假的 0% ——G7 靠
-    -- 「windows_json 空 + last_error_kind 非 none」区分「失败且从未成功」
-    -- （只渲染错误行）与「有旧值 + 可能过期」。Transient 走另一条路：保留
-    -- 上次成功值、只更新 last_error / last_error_kind。
+    -- kind 保持空串、windows_json 保持空、balance_remaining 保持 0，绝不写
+    -- 假的 0% ——G7 靠「kind 空 + last_error_kind 非 none」区分「失败且从未
+    -- 成功」（只渲染错误行）与「有旧值 + 可能过期」。Transient 走另一条路：
+    -- 保留上次成功值、只更新 last_error / last_error_kind。
     CREATE TABLE IF NOT EXISTS profile_quota_result (
         profile_id INTEGER PRIMARY KEY,
         kind TEXT NOT NULL DEFAULT '',
@@ -208,6 +216,7 @@ inline constexpr const char* kSql = R"(
         currency TEXT NOT NULL DEFAULT '',
         plan_name TEXT NOT NULL DEFAULT '',
         fetched_at INTEGER NOT NULL DEFAULT 0,
+        last_success_at INTEGER NOT NULL DEFAULT 0,
         last_error TEXT NOT NULL DEFAULT '',
         last_error_kind TEXT NOT NULL DEFAULT ''
     );

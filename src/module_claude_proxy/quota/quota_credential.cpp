@@ -19,6 +19,14 @@ namespace pj = platform::json;
 // {"accessKeyId":"AK","secretAccessKey":"SK"} → map。坏 JSON / 非对象 →
 // **空 map**（容错：配置写坏了不该让整次查询崩成 Shape，让 provider 自己去
 // 撞它对字段的校验，出的错才是用户看得懂的那种）。
+//
+// **非字符串值的口径（评审 m5）：丢，不报错。** extra/secrets 里的数字 /
+// 布尔 / 嵌套对象一律不进 map（`fields` 的契约是 map<string,string>，
+// ProviderConfig::fields 也是这么声明的）。理由：这些字段的消费者是 provider
+// 自己——它会对缺失的必填字段给出「配置不完整，去补全」这种用户看得懂的
+// 错误；若在这里把数字 stringify 塞进去，provider 收到的是一个**看着合法、
+// 实则类型不对**的值，报错会指向错误的方向。丢 = 少一个字段 = provider
+// 说「这个字段没填」，这是对的。
 std::map<std::string, std::string> flatMapFromJson(const std::string& json) {
     std::map<std::string, std::string> out;
     if (json.empty()) return out;
@@ -42,7 +50,7 @@ QuotaResult notConfigured(const std::string& message) {
 }  // namespace
 
 QuotaResult ProfileCredentialSource::resolveAndFetch(int64_t profileId,
-                                                      QuotaProvider& provider,
+                                                      const QuotaProvider& provider,
                                                       const HttpSendFn& http) {
     // 配置行：provider_id 空 = 用户没配 → NotConfigured（不是 None：那是「配了
     // 但读不到密钥」共用的失败类，G7 据此引导「去补全」）。

@@ -74,7 +74,12 @@ struct QuotaConfigRow {
     int64_t profileId = 0;
     std::string providerId;    // 空串 = 该 profile 未配置余量查询（G7「去配置」）
     std::string extraJson;     // fields() 里非 secret 键的 JSON 对象原文
-    std::string secretsJson;   // fields() 里 secret 键的 JSON 对象原文
+    // fields() 里 secret 键的 JSON 对象原文。**结构体里始终是明文**：写库时
+    // 经 platform::credential::protect（Windows = DPAPI 密文 hex），读库时经
+    // unprotect —— 与 api_key_encrypted 复用同一对函数（评审 M3：同表两列
+    // 保护级别必须一致，不能让 secrets 落成明文而兄弟列是密文）。
+    // 调用方只管给明文 / 拿明文，不感知存储形态。
+    std::string secretsJson;
     bool enabled = false;
     bool autoRefresh = true;
     int intervalMinutes = 15;
@@ -92,9 +97,14 @@ struct QuotaResultRow {
     double balanceRemaining = 0.0;
     std::string currency;
     std::string planName;
-    // 最近一次**尝试**的时间戳（成败都写）。既驱动定时器的到期判定
-    // （interval 从它起算，避免失败时无限重试），也供 UI 显示「上次查询于…」。
+    // 最近一次**尝试**的时间戳（成败都写）。**只用于驱动定时器的到期判定**
+    //（interval 从它起算，避免一次持续失败每个 tick 重打供应商 = 重试风暴）。
     int64_t fetchedAt = 0;
+    // 最近一次**成功**的时间戳（失败不推进）。**G7 显示「数据时间」用这一列**，
+    // 不要用 fetchedAt：一次 Transient 失败后数据仍是 interval 之前的，若拿
+    // fetchedAt 展示会得到「15 分钟前的数字 + 刚刚查询过」这种自相矛盾的话
+    //（评审 m1）。
+    int64_t lastSuccessAt = 0;
     std::string lastError;                 // 面向用户的中文文案；成功时清空
     QuotaError lastErrorKind = QuotaError::None;
 

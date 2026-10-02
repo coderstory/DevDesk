@@ -35,7 +35,7 @@ struct QuotaCredentialSource {
     // QuotaResult（**不是** fail()）：这是「这一种可预料的失败结局」，要带着
     // 中文文案进 last_error，不是异常。
     virtual QuotaResult resolveAndFetch(int64_t profileId,
-                                         QuotaProvider& provider,
+                                         const QuotaProvider& provider,
                                          const HttpSendFn& http) = 0;
 };
 
@@ -47,7 +47,7 @@ public:
     ProfileCredentialSource(ProfileRepository& profiles, QuotaStore& store)
         : profiles_(profiles), store_(store) {}
 
-    QuotaResult resolveAndFetch(int64_t profileId, QuotaProvider& provider,
+    QuotaResult resolveAndFetch(int64_t profileId, const QuotaProvider& provider,
                                 const HttpSendFn& http) override;
 
 private:

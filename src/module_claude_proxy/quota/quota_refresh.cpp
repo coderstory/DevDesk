@@ -118,8 +118,8 @@ RefreshRoundResult QuotaRefresher::refreshProfile(int64_t profileId, int64_t now
         return out;
     }
 
-    QuotaProvider* provider = resolver_ ? resolver_(cfg.value().providerId)
-                                        : nullptr;
+    const QuotaProvider* provider = resolver_ ? resolver_(cfg.value().providerId)
+                                              : nullptr;
     if (provider == nullptr) {
         // 未注册的 provider：按 NotConfigured 落库（G7 引导「去配置」），
         // 不静默跳过——否则用户配了个写错的 id 却什么都看不到。
@@ -145,14 +145,29 @@ RefreshRoundResult QuotaRefresher::refreshProfile(int64_t profileId, int64_t now
 
     // ② **就绪之后才唤醒**（唯一出口，内部先探一次真实就绪再发）。
     //    批次 D 评审定的 major：次序反了 = UI 抢跑消费唤醒位 → 结果不上屏。
-    //    这里用 wakeAfterPublish 的同一个「探就绪 + 唤醒」出口，只是把
-    //    shared_future 换成「DB 里这行已可读」这个事实——用一个
-    //    shared_future<void> 承载「已就绪」信号，让该函数能真的探到状态。
+    //
+    //    ⚠ 就绪信号必须**由落库事实驱动**，不能是「紧挨着唤醒手动 set_value()」
+    //    （评审 M1）。旧写法是同一线程相邻两行 `set_value()` → `wakeAfterPublish`，
+    //    中间无可交错点 → `sawReady` 恒为 true，那条断言断言的是「源码里
+    //    set_value 写在前面」而不是「结果已就绪」，是恒真的假守卫；头注释还
+    //    声明它「不是抄源码顺序」，比断言本身更误导。
+    //    现在改成：**用一次真实读回证明这一行可读**，才据此 set_value。
+    //    于是「DB 写坏了 / 行读不回来」会让缝真的变红。
     auto promise = std::make_shared<std::promise<void>>();
     std::shared_future<void> published = promise->get_future().share();
-    promise->set_value();   // 发布：落库已完成，此刻起「结果就绪」为真
+    // 读回证明：只有真能从库里读出这一行，才发布「已就绪」。
+    const bool rowReadable = store_.loadResult(profileId).isOk();
+    if (rowReadable) {
+        promise->set_value();
+    }
     std::atomic<bool> sawReady{false};
     wakeAfterPublish(published, sawReady);
+    if (!rowReadable) {
+        // 读不回就绪信号 → 缝停在 false，用例判红。仍要唤醒：UI 收割时至少
+        // 能看到 last_error（错误文案比旧值更重要）。
+        LOG_WARN("QuotaRefresher: 落库后读不回该行，UI 收割将读到旧值: profile=" +
+                 std::to_string(profileId));
+    }
     wakeSawReady_.store(sawReady.load(std::memory_order_relaxed),
                         std::memory_order_relaxed);
     globalWakeSawReady().store(sawReady.load(std::memory_order_relaxed),
@@ -222,19 +237,13 @@ void QuotaRefresher::tickThreadLoop() {
 }
 
 QuotaRefresher::ProviderResolver makeRegistryProviderResolver() {
-    // findProvider 返回 **const** QuotaProvider*，而契约里 fetch() 是**非
-    // const** 成员（G0 quota_provider.h:144）——直接用注册表指针发查询编译不过。
-    // 这是 G0 契约层的一处内在矛盾，G1 已在 opencode_go_provider.h:8-13 记录
-    // 过并用「各 provider 额外开一个非 const 工厂」绕开；本适配器不重复那套
-    // 旁路，而是**就地**把 const 去掉：注册表返回的是进程内单例（provider
-    // 无状态、无人 delete，见 quota_registry.h:23-26），去掉 const 不会让
-    // 任何人真的去改它，也不会引入第二份 provider 实例。
-    // 换成「给注册表加一个非 const 重载」是更干净的方向，但那是改 G0 已冻结
-    // 的契约签名（findProvider 的 const 返回被 G0 用例钉死），留给 G6/G8
-    // 一并处置；本批用这一处**集中**的 const_cast，代价与理由记在报告里。
-    return [](const std::string& id) -> QuotaProvider* {
-        return const_cast<QuotaProvider*>(findProvider(id));
-    };
+    // 直接薄包一层，**零 cast**（评审 m2）：`fetch()` 已是 const 成员
+    // （quota_provider.h），而 findProvider 返回 `const QuotaProvider*`——
+    // 两者不再矛盾。曾经这里有个 const_cast，理由写的是「G0 用例钉死了 const
+    // 返回」，那是事实错误（评审实测零钉死，去掉 const 照常编译）；而且
+    // `create` 是裸函数指针、类型系统**不保证**工厂返回单例，const_cast 会把
+    // 「返回的不是单例」这个类型错误洗成运行时 UB。
+    return [](const std::string& id) { return findProvider(id); };
 }
 
 }  // namespace module::claude::quota

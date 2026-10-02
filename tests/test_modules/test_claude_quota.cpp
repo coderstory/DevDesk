@@ -61,7 +61,7 @@ public:
         return baseUrl == matchedBaseUrl_;
     }
 
-    QuotaResult fetch(const ProviderConfig& cfg, const HttpSendFn& http) override {
+    QuotaResult fetch(const ProviderConfig& cfg, const HttpSendFn& http) const override {
         lastConfig_ = cfg;
         httpSeamPresent_ = static_cast<bool>(http);
         // 真把请求交给注入缝（测试传假发送 → 零真实网络）：证明 HttpSendFn 是
@@ -86,9 +86,9 @@ private:
     std::vector<ProviderField> fields_;
     std::string matchedBaseUrl_;
     QuotaResult result_;
-    ProviderConfig lastConfig_;
-    bool httpSeamPresent_ = false;
-    int seamSawStatusCode_ = 0;
+    mutable ProviderConfig lastConfig_;   // fetch 已是 const 成员（评审 m2）
+    mutable bool httpSeamPresent_ = false;
+    mutable int seamSawStatusCode_ = 0;
 };
 
 // 注册表行工厂：**进程内单例**（provider 无状态；findProvider 返回 const 指针，

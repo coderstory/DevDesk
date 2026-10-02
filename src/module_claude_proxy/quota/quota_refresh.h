@@ -9,15 +9,22 @@
 // 的是「我盯着屏幕它才更新」——而且这个退化**没有任何报错**。
 // 故照 module_agent/scheduler.cpp:128-143 的 sleep 切片 tick 范式：
 // 一轮 = kTickSlicesPerRound 个 kTickSleepSliceMs 的小睡片，每片之间查
-// stopFlag_，于是 stopAll() 最多等一片（~200ms）就能 join，不像「一次睡到底」
-// 那样停机要等整个周期。
+// stopFlag_。**stopAll() 的等待上界（评审 m4 更正，别再写成「最多一片」）**：
+//   - 线程**睡眠中** → 最多等一片（默认 10 × 20ms = 200ms）
+//   - 线程**正在 refreshNow() 里发真实请求** → join 会等到那一轮跑完；
+//     各 provider timeoutMs = 15000ms（火山一次查询两次串行请求），N 个
+//     到期 profile 最坏 ≈ N × 15s。
+// 切片只解决「睡眠态停得下」，**不**给在途 HTTP 设上限。无 std::terminate
+// 风险（析构必 join），但调用方要在退出路径上给足时间预算。
 //
 // 三条本类自带的不变量：
 //
-//   1. **先就绪、后唤醒**。落库完成 → 结果落到**共享状态** → 才 requestUiUpdate。
-//      次序反了就是批次 D 那个间歇复现的 bug：UI 抢跑消费掉唤醒位、脏标记已清
-//      → 结果躺在内存里没人再上屏。本类复用 module::claude::wakeAfterPublish
-//      （那个函数出口内**先探一次真实就绪**再唤醒），并留一条次序缝断言给用例。
+//   1. **先就绪、后唤醒**。落库完成 → **读回证明可读** → 才 requestUiUpdate。
+//      唤醒跑在结果可读之前，UI 抢跑消费掉唤醒位、脏标记已清 → 结果躺在
+//      内存里没人再上屏（批次 D 那个间歇复现的 bug）。本类复用
+//      module::claude::wakeAfterPublish（出口内**先探一次真实就绪**再唤醒）。
+//      ⚠ 就绪信号由**落库事实**驱动，不是紧挨着唤醒手动 set_value——
+//      后者是同线程相邻两行，恒真，断言的只是源码顺序（见 wakeSawReady 注释）。
 //
 //   2. **不引入第二把数据库连接**。构造收 QuotaStore&（它内部持全进程唯一那把
 //      SqliteDb&），本类自己不碰句柄、只经 store 走。
@@ -70,7 +77,9 @@ public:
     // providerResolver：provider_id → provider。**注入而非直连全局注册表**：
     // 用例塞假 provider（零真实网络 + 可断言调用次数），生产传
     // findProvider 的适配器（见 makeRegistryProviderResolver）。
-    using ProviderResolver = std::function<QuotaProvider*(const std::string&)>;
+    // 返回 **const 指针**：`fetch()` 已是 const 成员（评审 m2），注册表的
+    // const 返回与之不再矛盾，消费方不需要任何 cast。
+    using ProviderResolver = std::function<const QuotaProvider*(const std::string&)>;
 
     QuotaRefresher(QuotaStore& store, QuotaCredentialSource& credentials,
                    ProviderResolver resolver, HttpSendFn http,
@@ -82,7 +91,8 @@ public:
 
     // 起后台线程（幂等；已停则不重启，与 Scheduler::start 同口径）。
     void start();
-    // 停线程并 join（幂等）。**不挂死**：最多等一个 sleep 片。
+    // 停线程并 join（幂等）。等待上界：睡眠态 ≤ 一个 sleep 片；**在途请求态
+    // ≤ 该轮剩余耗时**（N 个到期 profile 最坏 ≈ N × provider timeoutMs）。
     void stopAll();
 
     // 同步跑一轮（不经线程）。用例直调它注入时钟；生产只有测试与手动刷新用。
@@ -94,8 +104,13 @@ public:
     static bool isDue(const QuotaConfigRow& config, int64_t nowSec,
                       int64_t lastFetchedAt);
 
-    // 次序缝：最近一次唤醒发出时，结果是否**已经就绪**（true = 先就绪后唤醒）。
-    // 用例在唤醒那一刻读它，不是抄源码顺序（抄顺序的断言恒真）。
+    // 就绪缝：最近一次唤醒发出时，结果是否**已经从库里读得回来**。
+    //
+    // 就绪信号由**落库事实**驱动（一次真实 `loadResult` 读回），不是紧挨着
+    // 唤醒手动 `set_value()`（评审 M1：旧写法两行相邻、无可交错点 → 恒为 true，
+    // 断言的其实是「源码里 set_value 写在前面」而不是「结果已就绪」）。
+    // 因此它抓的是**落库失败 / 行读不回来**，不是「唤醒跑到了落库前面」——
+    // 后者是同线程相邻语句的静态次序，编译器保证，不需要用例来盯。
     bool wakeSawReady() const { return wakeSawReady_.load(std::memory_order_relaxed); }
 
 private:

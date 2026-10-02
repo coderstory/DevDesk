@@ -5,22 +5,27 @@
 // 覆盖：
 //   - windows_json 编解码**往返**（空数组 / 多窗口 / 小数不截断 / 坏输入容错）
 //   - 两表 CRUD（配置行 / 结果行；无行 → NotFound 而非默认行）
+//   - 畸形 usedPercent 一律**丢该窗口**（缺/类型错/越界），绝不落成假 0%
 //   - 失败韧性：Transient 保留上次成功值；鉴权类立即透出
 //   - **「从未成功过」不写假 0%**：kind 列空 + 数据列保持初始值
 //   - 定时器到点触发（**注入时钟 + 毫秒级 tick**，绝不等 15 分钟）
-//   - **先就绪、后唤醒**次序（缝在唤醒那一刻读共享状态，不是抄源码顺序）
-//   - 线程退出不挂死（stopAll 有界返回）
+//   - 就绪缝（**由落库事实驱动**：读不回那一行就判红）
+//   - 线程退出不挂死；**在途请求时 stopAll 会等它跑完**（退出延迟的真实口径）
+//   - secrets_json 经 platform::credential 存取 + protect 失败不留半截行
+//   - applyFetchResult 并发不丢更新（读—改—写同锁）
 #include "doctest.h"
 #include "test_support.h"
 
 #include <core/platform/platform.h>   // consumeUiUpdate（唤醒位读取，同批次 D 用例）
 
 #include "module_claude_proxy/profile_repository.h"
+#include "platform/credential_protection.h"
 #include "quota/quota_credential.h"
 #include "quota/quota_refresh.h"
 #include "quota/quota_store.h"
 
 #include <atomic>
+#include <cstdlib>
 #include <chrono>
 #include <map>
 #include <string>
@@ -55,31 +60,55 @@ public:
     std::string displayName() const override { return "脚本供应商"; }
     std::vector<ProviderField> fields() const override { return {}; }
 
-    QuotaResult fetch(const ProviderConfig& cfg, const HttpSendFn& http) override {
-        ++calls;
+    QuotaResult fetch(const ProviderConfig& cfg, const HttpSendFn& http) const override {
+        calls.fetch_add(1);
         lastBaseUrl = cfg.baseUrl;
         (void)http;   // 本 provider 不发请求（零真实网络）
         return result_;
     }
 
-    std::atomic<int> calls{0};
-    std::string lastBaseUrl;
+    // fetch 是 const 成员（评审 m2），所以这两个探针成员必须可写
+    mutable std::atomic<int> calls{0};
+    mutable std::string lastBaseUrl;
 
 private:
     QuotaResult result_;
 };
 
-// ---- 假凭据来源：不经 ProfileRepository，直接给固定结果（G6 的缝的替身）----
+// 假凭据来源之一：**转发**给 provider（定时器用例要的就是「provider 被调了几次」，
+// 且结果由 provider 决定）。
+//
+// ⚠ 评审 M4：曾经有个叫 `ScriptedCredentialSource` 的假件，构造参数收一个
+// QuotaResult 却被**完全忽略**（恒 return provider.fetch(...)）——名字承诺
+// 「可编排结果」、行为是「恒转发」。本批侥幸全绿只因两处恰好都传 okTiered()。
+// G6 一旦拿它验「凭据失败怎么落库」，它会返回 provider 的成功值、用例照样绿。
+// 故拆成两个**各名副其实**的假件：本件转发、另一个（下方）才真的按脚本返回。
+class ForwardingCredentialSource final : public QuotaCredentialSource {
+public:
+    QuotaResult resolveAndFetch(int64_t profileId, const QuotaProvider& provider,
+                                const HttpSendFn& http) override {
+        ++calls;
+        lastProfileId = profileId;
+        return provider.fetch(ProviderConfig{}, http);
+    }
+
+    std::atomic<int> calls{0};
+    int64_t lastProfileId = 0;
+};
+
+// 假凭据来源之二：**按构造时给的脚本返回**，绝不碰 provider（连 fetch 都不调）。
+// 「凭据层自己失败」这条路径只有这个假件能测——转发型假件永远拿不到
+// 「凭据解析失败但 provider 是好的」这种结局。
 class ScriptedCredentialSource final : public QuotaCredentialSource {
 public:
     explicit ScriptedCredentialSource(QuotaResult result)
         : result_(std::move(result)) {}
 
-    QuotaResult resolveAndFetch(int64_t profileId, QuotaProvider& provider,
+    QuotaResult resolveAndFetch(int64_t profileId, const QuotaProvider& provider,
                                 const HttpSendFn& http) override {
         ++calls;
         lastProfileId = profileId;
-        return provider.fetch(ProviderConfig{}, http);
+        return result_;   // 构造参数**真的**被读（评审 M4 的修法）
     }
 
     std::atomic<int> calls{0};
@@ -158,6 +187,59 @@ REGISTER_TEST(claude_quota_windows_json_roundtrip,
     DOCTEST_REQUIRE(mixed.isOk());
     DOCTEST_REQUIRE_EQ(mixed.value().size(), 1u);
     DOCTEST_CHECK_EQ(mixed.value()[0].key, std::string("weekly"));
+    return true;
+})
+
+REGISTER_TEST(claude_quota_windows_json_rejects_malformed_percent,
+              "claude_quota_store: 畸形 usedPercent 丢该窗口（缺/类型错/越界），绝不落成 0%", {
+    // B1：曾经「不是 number 就沿用默认值 0.0 并保留窗口」——那正是本模块
+    // 第一条不变量要杜绝的假 0%（G7 会把 0 画成绿的「几乎没用满」条）。
+    // 口径 = **丢该元素**：spec §9 要求越界输入「被拒或记 error」，
+    // 不是 clamp 后断言落在 [0,100]（那是恒真断言）。
+    // 每例都断言该窗口**不在**输出里。
+    const char* bad[] = {
+        R"([{"key":"weekly"}])",                              // 缺 usedPercent
+        R"([{"key":"weekly","usedPercent":"62.5"}])",        // 字符串而非数字
+        R"([{"key":"weekly","usedPercent":250}])",            // 越界上
+        R"([{"key":"weekly","usedPercent":-5}])",             // 越界下
+    };
+    for (const char* json : bad) {
+        auto decoded = module::claude::quota::decodeQuotaWindows(json);
+        DOCTEST_REQUIRE(decoded.isOk());
+        DOCTEST_CHECK_MESSAGE(decoded.value().empty(),
+                              std::string("畸形 usedPercent 被静默采纳成 0%：") + json);
+    }
+    // 边界值 0 与 100 是**合法**的（已用 0% / 已用 100%），不许被这条规则误杀
+    for (const char* edge : {R"([{"key":"weekly","usedPercent":0}])",
+                             R"([{"key":"weekly","usedPercent":100}])"}) {
+        auto decoded = module::claude::quota::decodeQuotaWindows(edge);
+        DOCTEST_REQUIRE(decoded.isOk());
+        DOCTEST_REQUIRE_EQ(decoded.value().size(), 1u);
+        DOCTEST_CHECK_EQ(decoded.value()[0].key, std::string("weekly"));
+    }
+    // 混合：坏窗口被丢，好窗口**仍要留下**（不能整表丢弃）
+    auto mixed = module::claude::quota::decodeQuotaWindows(
+        R"([{"key":"five_hour","usedPercent":62.5},)"
+        R"({"key":"weekly","usedPercent":"坏"},)"
+        R"({"key":"monthly","usedPercent":900}])");
+    DOCTEST_REQUIRE(mixed.isOk());
+    DOCTEST_REQUIRE_EQ(mixed.value().size(), 1u);
+    DOCTEST_CHECK_EQ(mixed.value()[0].key, std::string("five_hour"));
+    DOCTEST_CHECK_EQ(mixed.value()[0].usedPercent, 62.5);
+    // **整数百分比不许变成 0**：platform::json 把整数存成 Int（intVal，
+    // dblVal 留 0），只调 asDouble() 会把 `"usedPercent": 62` 读成 0%——
+    // 又一条假 0% 的路。上游给整数值是很正常的写法，故单钉一例。
+    auto intPct = module::claude::quota::decodeQuotaWindows(
+        R"([{"key":"weekly","usedPercent":62}])");
+    DOCTEST_REQUIRE(intPct.isOk());
+    DOCTEST_REQUIRE_EQ(intPct.value().size(), 1u);
+    DOCTEST_CHECK_EQ(intPct.value()[0].usedPercent, 62.0);
+    // 编码侧同样要能写回整数（encode 用 makeDouble，往返不因 62 vs 62.0 走偏）
+    auto intRoundTrip = module::claude::quota::decodeQuotaWindows(
+        module::claude::quota::encodeQuotaWindows({QuotaWindow{"weekly", 62.0, ""}}));
+    DOCTEST_REQUIRE(intRoundTrip.isOk());
+    DOCTEST_REQUIRE_EQ(intRoundTrip.value().size(), 1u);
+    DOCTEST_CHECK_EQ(intRoundTrip.value()[0].usedPercent, 62.0);
     return true;
 })
 
@@ -415,7 +497,7 @@ REGISTER_TEST(claude_quota_refresher_fires_when_due,
     DOCTEST_REQUIRE(store.saveConfig(notYet).isOk());
 
     ScriptedProvider provider{okTiered()};
-    ScriptedCredentialSource creds{okTiered()};
+    ForwardingCredentialSource creds;
     QuotaRefreshOptions opts;
     opts.slicesPerRound = 1;
     opts.sliceMs = 1;
@@ -472,7 +554,7 @@ REGISTER_TEST(claude_quota_refresher_publishes_before_wake,
     DOCTEST_REQUIRE(store.saveConfig(cfg).isOk());
 
     ScriptedProvider provider{okTiered()};
-    ScriptedCredentialSource creds{okTiered()};
+    ForwardingCredentialSource creds;
     QuotaRefresher refresher(store, creds,
                              [&provider](const std::string&) -> QuotaProvider* {
                                  return &provider;
@@ -516,7 +598,7 @@ REGISTER_TEST(claude_quota_refresher_thread_stops_without_hang,
     DOCTEST_REQUIRE(store.saveConfig(cfg).isOk());
 
     ScriptedProvider provider{okTiered()};
-    ScriptedCredentialSource creds{okTiered()};
+    ForwardingCredentialSource creds;
     QuotaRefreshOptions opts;
     opts.slicesPerRound = 5;   // 一轮 = 5 × 20ms = 100ms
     opts.sliceMs = 20;
@@ -565,7 +647,7 @@ REGISTER_TEST(claude_quota_refresher_unknown_provider_is_not_configured,
     cfg.autoRefresh = true;
     DOCTEST_REQUIRE(store.saveConfig(cfg).isOk());
 
-    ScriptedCredentialSource creds{okTiered()};
+    ForwardingCredentialSource creds;
     QuotaRefresher refresher(store, creds,
                              [](const std::string&) -> QuotaProvider* { return nullptr; },
                              HttpSendFn{}, [&clock] { return clock.now; },
@@ -643,13 +725,24 @@ REGISTER_TEST(claude_quota_credential_source_seam_is_swappable,
     DOCTEST_CHECK(result.error == QuotaError::None);
     DOCTEST_CHECK_EQ(provider.calls.load(), 1);
     DOCTEST_CHECK_EQ(provider.lastBaseUrl, std::string("https://api.example.com"));
+    const int callsAfterDefault = provider.calls.load();
 
     // 换成另一个实现（G6 的 cc-switch 源就是这一步）——缝的存在性证据：
     // 同样的虚接口，用例塞的实现立刻生效，本批代码一行没改。
-    ScriptedCredentialSource replacement{okTiered()};
+    // 这次特意注入一个**与 provider 不同的结局**：provider 是成功的，
+    // 但这个源说「凭据过期」。若假件又偷偷转发 provider（评审 M4 的原缺陷），
+    // 下面这条 Auth 断言会立刻红——这就是「假件不假」的证据。
+    ScriptedCredentialSource replacement{failure(QuotaError::Auth, "凭据过期")};
     auto viaReplacement = replacement.resolveAndFetch(pid, provider, HttpSendFn{});
-    DOCTEST_CHECK(viaReplacement.error == QuotaError::None);
+    DOCTEST_CHECK(viaReplacement.error == QuotaError::Auth);
+    DOCTEST_CHECK_EQ(viaReplacement.errorMessage, std::string("凭据过期"));
     DOCTEST_CHECK_EQ(replacement.lastProfileId, pid);
+    DOCTEST_CHECK_EQ(replacement.calls.load(), 1);
+    // 转发型假件则相反：结果由 provider 决定，provider 调几次就是几次
+    ForwardingCredentialSource forwarder;
+    auto viaForwarder = forwarder.resolveAndFetch(pid, provider, HttpSendFn{});
+    DOCTEST_CHECK(viaForwarder.error == QuotaError::None);
+    DOCTEST_CHECK_EQ(provider.calls.load(), callsAfterDefault + 1);
 
     // 没选供应商（provider_id 空串，G6 的「不配置」选项）→ NotConfigured
     //（**不是** fail()）：可预料的失败结局要带中文文案进 last_error，不是异常。
@@ -676,11 +769,11 @@ REGISTER_TEST(claude_quota_credential_source_reads_extra_and_secrets,
         std::string id() const override { return "fields"; }
         std::string displayName() const override { return "收字段"; }
         std::vector<ProviderField> fields() const override { return {}; }
-        QuotaResult fetch(const ProviderConfig& cfg, const HttpSendFn&) override {
+        QuotaResult fetch(const ProviderConfig& cfg, const HttpSendFn&) const override {
             seen = cfg.fields;
             return QuotaResult{};
         }
-        std::map<std::string, std::string> seen;
+        mutable std::map<std::string, std::string> seen;   // fetch 是 const 成员
     };
 
     test_support::TestDb tdb("quotacred", "fields");
@@ -706,5 +799,351 @@ REGISTER_TEST(claude_quota_credential_source_reads_extra_and_secrets,
     DOCTEST_CHECK_EQ(provider.seen.at("accessKeyId"), std::string("AK-覆盖"));
     DOCTEST_CHECK_EQ(provider.seen.at("secretAccessKey"), std::string("SK-1"));
     DOCTEST_CHECK_EQ(provider.seen.at("region"), std::string("cn-beijing"));
+    return true;
+})
+
+REGISTER_TEST(claude_quota_credential_source_drops_non_string_extra,
+              "claude_quota_credential_source: extra_json 里的数字/布尔/对象一律丢（口径钉死）", {
+    // m5：flatMapFromJson 静默丢非字符串值，此前无测试。口径 = **丢，不报错**
+    //（理由见 quota_credential.cpp 该函数注释：fields 的契约是
+    // map<string,string>；把数字 stringify 塞进去会让 provider 收到「看着合法、
+    // 实则类型不对」的值，报错指向错误方向。丢 = 少一个必填字段 = provider
+    // 说「这个字段没填」，那是对的）。
+    test_support::TestDb tdb("quotacred", "nonstr");
+    QuotaStore store(tdb.handle());
+    ProfileRepository repo(tdb.handle(), "QuotaNonStringTestService");
+    auto profile = repo.createProfile("混合字段", "https://api.mix.example",
+                                      "sk-abc", "m");
+    DOCTEST_REQUIRE(profile.isOk());
+    const int64_t pid = profile.value().id;
+
+    QuotaConfigRow cfg;
+    cfg.profileId = pid;
+    cfg.providerId = "fields";
+    cfg.extraJson = R"({"good":"值","num":42,"flag":true,"obj":{"a":1}})";
+    DOCTEST_REQUIRE(store.saveConfig(cfg).isOk());
+
+    class CapturingProvider final : public QuotaProvider {
+    public:
+        std::string id() const override { return "fields"; }
+        std::string displayName() const override { return "收字段"; }
+        std::vector<ProviderField> fields() const override { return {}; }
+        QuotaResult fetch(const ProviderConfig& cfg, const HttpSendFn&) const override {
+            seen = cfg.fields;
+            return QuotaResult{};
+        }
+        mutable std::map<std::string, std::string> seen;
+    };
+
+    module::claude::quota::ProfileCredentialSource source(repo, store);
+    CapturingProvider provider;
+    source.resolveAndFetch(pid, provider, HttpSendFn{});
+
+    DOCTEST_CHECK_EQ(provider.seen.size(), 1u);          // 只剩那个字符串
+    DOCTEST_CHECK_EQ(provider.seen.at("good"), std::string("值"));
+    DOCTEST_CHECK(provider.seen.find("num") == provider.seen.end());
+    DOCTEST_CHECK(provider.seen.find("flag") == provider.seen.end());
+    DOCTEST_CHECK(provider.seen.find("obj") == provider.seen.end());
+    return true;
+})
+
+REGISTER_TEST(claude_quota_store_secrets_roundtrip_through_credential_protection,
+              "claude_quota_store: secrets_json 经 platform::credential 存取（明文进、明文出）", {
+    // M3：本批把 secrets_json 接上 protect/unprotect（与 api_key_encrypted
+    // 复用同一对函数）——Windows 上写入即 DPAPI 密文，不给「按字面实现 DDL
+    // 就落成明文」留缝。POSIX 上 protect 是恒等（保护靠 sqlite_db.cpp 每次
+    // open 收紧 db/-wal/-shm 到 0600），故本用例在两平台都成立：
+    // 结构体里始终是明文，调用方不感知存储形态。
+    test_support::TestDb tdb("quotastore", "secrets");
+    QuotaStore store(tdb.handle());
+    const std::string secrets = R"({"secretAccessKey":"值-带-引号\"和\\反斜杠"})";
+
+    QuotaConfigRow row;
+    row.profileId = 1;
+    row.providerId = "volcano";
+    row.extraJson = R"({"accessKeyId":"AK"})";
+    row.secretsJson = secrets;
+    DOCTEST_REQUIRE(store.saveConfig(row).isOk());
+
+    auto loaded = store.loadConfig(1);
+    DOCTEST_REQUIRE(loaded.isOk());
+    // 往返无损：调用方拿到的仍是明文 JSON 原文
+    DOCTEST_CHECK_EQ(loaded.value().secretsJson, secrets);
+    DOCTEST_CHECK_EQ(loaded.value().extraJson, row.extraJson);   // 非密文列不被动
+    return true;
+})
+
+REGISTER_TEST(claude_quota_store_secrets_protect_failure_writes_nothing,
+              "claude_quota_store: protect 失败时不写行（不留「行在、secret 没加密」中间态）", {
+    // M3 的失败路径：注入一个 protect 失败的假后端（credential_protection.h
+    // 的 Backend 注入缝，CPX-14 同款），断言 saveConfig **失败且库里没有行**。
+    // 「建了行但 secret 没存进去」是比「根本没建」更难诊断的中间态。
+    test_support::TestDb tdb("quotastore", "protectfail");
+
+    platform::credential::Backend failing{};
+    failing.protect = [](const std::string&) {
+        return core::Result<std::string>::fail(core::ErrorCode::Internal,
+                                               "注入的 protect 失败");
+    };
+    failing.unprotect = [](const std::string& s) { return core::Result<std::string>::ok(s); };
+    const platform::credential::Backend* prev =
+        platform::credential::setBackendForTest(&failing);
+
+    QuotaStore store(tdb.handle());
+    QuotaConfigRow row;
+    row.profileId = 77;
+    row.providerId = "volcano";
+    row.secretsJson = R"({"secretAccessKey":"SK"})";
+    const auto saved = store.saveConfig(row);
+    platform::credential::setBackendForTest(prev);   // 复位后端（RAII 兜底）
+
+    DOCTEST_CHECK(saved.isFail());
+    DOCTEST_CHECK(store.loadConfig(77).isFail());   // 没有留下半截行
+    return true;
+})
+
+REGISTER_TEST(claude_quota_store_apply_fetch_result_is_atomic_under_concurrency,
+              "claude_quota_store: 并发 applyFetchResult 不丢更新（Transient 不覆盖并发成功）", {
+    // M2：韧性依赖的「读回上次成功值 → 搬进新行 → 写回」是复合操作，锁只覆盖
+    // 写的话非原子 —— 后台 ticker（T）读到旧行后，G6 的手动刷新（S）写进新数据，
+    // T 恢复执行就把旧行整体盖回去（静默丢数据，还会挂「可能过期」角标看起来
+    // 像正常行为）。
+    //
+    // 判据不能是「两次都成功」这种弱判据（两种锁法都满足 = 恒真）。这里用一个
+    // **只增不减的版本号**把丢更新变成可判定的不变式，且版本号由 **DB 里的行
+    // 自己**给出，不依赖任何线程内的共享变量：
+    //   - S（手动刷新）每次成功写，planName = "S<全局递增版本 v>"
+    //   - T（ticker）只写 Transient，把读到的 planName 原样搬回
+    // 不变式：DB 里的 planName 版本**永不回退**。T 每次落库后回读，只要发现
+    // 本次落库让版本号比「本次落库前读到的那个」小，就说明它盖掉了别人的新写。
+    //
+    // ⚠ 这里刻意**不用**「跟另一个线程的原子变量比」——那个变量在写成功之后才
+    // 更新，与 DB 写入之间有一个极窄窗口，会让正确实现也偶发误报（实测 6000
+    // 轮就有假阳性）。改成「写前读到的版本 vs 写后落库的版本」——两端都来自
+    // 同一次调用内、同一把锁保护的读，与实现无关，判据稳定。
+    test_support::TestDb tdb("quotastore", "concurrent");
+    QuotaStore store(tdb.handle());
+
+    // ⚠ 迭代数与线程数是**调出来的**：竞态窗口只有「读回返回」到「INSERT 拿锁」
+    // 之间几条指令，采样点不够就撞不上（实测 2 线程 × 400 轮 0 命中；8 ticker
+    // × 2500 迭代 6 次只中 2 次）。8 ticker × 8000 迭代是实测**两个方向都稳定**
+    // 的最小档位：修复在位 6/6 绿、撤掉锁 6/6 红。代价是本用例约 7 秒。
+    // 之所以不降档：一个假绿的并发用例比没有用例更糟——它会让后续批次以为
+    // 「并发安全已被守住」。
+    constexpr int kIters = 8000;
+    std::atomic<int> version{0};
+    std::atomic<int> lostUpdates{0};
+    std::atomic<int> firstBad{-1};
+    std::atomic<int> firstBadPrev{-1};
+
+    // 从 "S<v>" 解析版本号；不是该形态（非 S 写的）→ -1
+    auto versionOf = [](const std::string& planName) -> int {
+        if (planName.size() < 2 || planName[0] != 'S') return -1;
+        return std::atoi(planName.c_str() + 1);
+    };
+
+    // T（ticker）：只写 Transient；每次落库后回读校验版本没回退
+    auto tickerLoop = [&] {
+        for (int i = 0; i < kIters; ++i) {
+            const auto before = store.loadResult(5);
+            if (!store.applyFetchResult(
+                    5, failure(QuotaError::Transient, "抖动"), 3000).isOk()) {
+                continue;
+            }
+            const auto after = store.loadResult(5);
+            if (after.isFail() || !after.value().hasError()) continue;
+            const int v = versionOf(after.value().planName);
+            if (v < 0) continue;   // 还没被 S 写过，无从比较
+            const int prev = before.isOk() ? versionOf(before.value().planName) : -1;
+            // 本次落库让版本回退了 = 盖掉了别人的新写（丢更新）
+            if (prev >= 0 && v < prev) {
+                if (lostUpdates.fetch_add(1) == 0) {
+                    firstBad.store(v);
+                    firstBadPrev.store(prev);
+                }
+            }
+        }
+    };
+
+    // S（手动刷新）：每次成功写把版本推进
+    std::thread success([&] {
+        for (int i = 0; i < kIters; ++i) {
+            const int v = version.fetch_add(1) + 1;
+            QuotaResult r;
+            r.kind = QuotaKind::Tiered;
+            r.windows = {QuotaWindow{"five_hour", 42.0, ""}};
+            r.planName = "S" + std::to_string(v);
+            if (store.applyFetchResult(5, r, 2000).isOk()) version.store(v);
+        }
+    });
+    std::vector<std::thread> tickers;
+    for (int t = 0; t < 8; ++t) tickers.emplace_back(tickerLoop);
+    success.join();
+    for (auto& th : tickers) th.join();
+
+    DOCTEST_CHECK_MESSAGE(lostUpdates.load() == 0,
+        "读—改—写非原子：Transient 分支带着过期数据盖掉了并发写入的成功数据"
+        "（静默数据丢失）。命中 " + std::to_string(lostUpdates.load()) +
+        " 次，首次 S" + std::to_string(firstBadPrev.load()) +
+        " 被盖回 S" + std::to_string(firstBad.load()));
+
+    auto row = store.loadResult(5);
+    DOCTEST_REQUIRE(row.isOk());
+    DOCTEST_CHECK(row.value().hasEverSucceeded);
+    DOCTEST_CHECK(!row.value().windows.empty());
+    return true;
+})
+
+REGISTER_TEST(claude_quota_store_last_success_at_only_advances_on_success,
+              "claude_quota_store: last_success_at 只在成功时推进（数据时间 ≠ 尝试时间）", {
+    // m1：fetched_at 成败都推进（定时器用它，防重试风暴），last_success_at
+    // 只在成功时推进（G7 显示「数据时间」用它）。合成一列会让 G7 在一次失败
+    // 后显示「15 分钟前的数字 + 刚刚查询过」这种自相矛盾的话。
+    test_support::TestDb tdb("quotastore", "successat");
+    QuotaStore store(tdb.handle());
+
+    DOCTEST_REQUIRE(store.applyFetchResult(1, okTiered(), 1000).isOk());
+    auto first = store.loadResult(1);
+    DOCTEST_REQUIRE(first.isOk());
+    DOCTEST_CHECK_EQ(first.value().fetchedAt, int64_t(1000));
+    DOCTEST_CHECK_EQ(first.value().lastSuccessAt, int64_t(1000));
+
+    // Transient 失败：尝试时间推进，**数据时间不动**
+    DOCTEST_REQUIRE(store.applyFetchResult(
+                        1, failure(QuotaError::Transient, "抖动"), 2000).isOk());
+    auto afterFail = store.loadResult(1);
+    DOCTEST_REQUIRE(afterFail.isOk());
+    DOCTEST_CHECK_EQ(afterFail.value().fetchedAt, int64_t(2000));       // 尝试=2000
+    DOCTEST_CHECK_EQ(afterFail.value().lastSuccessAt, int64_t(1000));   // 数据仍是 1000
+
+    // 鉴权类失败同理（数据同样不动）
+    DOCTEST_REQUIRE(store.applyFetchResult(
+                        1, failure(QuotaError::Auth, "密钥无效"), 3000).isOk());
+    auto afterAuth = store.loadResult(1);
+    DOCTEST_REQUIRE(afterAuth.isOk());
+    DOCTEST_CHECK_EQ(afterAuth.value().lastSuccessAt, int64_t(1000));
+
+    // 再成功：两列一起推进
+    DOCTEST_REQUIRE(store.applyFetchResult(1, okTiered(), 4000).isOk());
+    auto healed = store.loadResult(1);
+    DOCTEST_REQUIRE(healed.isOk());
+    DOCTEST_CHECK_EQ(healed.value().fetchedAt, int64_t(4000));
+    DOCTEST_CHECK_EQ(healed.value().lastSuccessAt, int64_t(4000));
+    return true;
+})
+
+REGISTER_TEST(claude_quota_refresher_scan_throttle_branch,
+              "claude_quota_refresher: scanIntervalSec=60 的节流分支（生产默认路径）", {
+    // m3：唯一跑线程的用例设 scanIntervalSec=0，生产默认 60 秒那条
+    // `continue` 分支从未被执行过。本用例跑线程 + 拨时钟，覆盖它。
+    test_support::TestDb tdb("quotarefresh", "throttle");
+    QuotaStore store(tdb.handle());
+    FakeClock clock;
+
+    QuotaConfigRow cfg;
+    cfg.profileId = 1; cfg.providerId = "scripted"; cfg.enabled = true;
+    cfg.autoRefresh = true; cfg.intervalMinutes = 0;   // 每次扫描都算到期
+    DOCTEST_REQUIRE(store.saveConfig(cfg).isOk());
+
+    ScriptedProvider provider{okTiered()};
+    ForwardingCredentialSource creds;
+    QuotaRefreshOptions opts;
+    opts.slicesPerRound = 1;
+    opts.sliceMs = 2;
+    opts.scanIntervalSec = 60;    // ← 生产默认：这条节流分支
+    QuotaRefresher refresher(store, creds,
+                             [&provider](const std::string&) -> const QuotaProvider* {
+                                 return &provider;
+                             },
+                             HttpSendFn{}, [&clock] { return clock.now; }, opts);
+
+    refresher.start();
+    // 等到第一轮扫完（时钟没动，所以只应扫一次）
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(3);
+    while (provider.calls.load() == 0 &&
+           std::chrono::steady_clock::now() < deadline) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    }
+    DOCTEST_REQUIRE(provider.calls.load() >= 1);
+    const int afterFirst = provider.calls.load();
+
+    // 时钟**不动** → 节流分支应持续 continue，一轮都不该多刷
+    std::this_thread::sleep_for(std::chrono::milliseconds(150));
+    DOCTEST_CHECK_MESSAGE(provider.calls.load() == afterFirst,
+                          "时钟没前进却仍在扫描：scanIntervalSec 节流失效");
+
+    // 时钟拨过 60 秒 → 又扫一轮
+    clock.now += 61;
+    const auto deadline2 = std::chrono::steady_clock::now() + std::chrono::seconds(3);
+    while (provider.calls.load() == afterFirst &&
+           std::chrono::steady_clock::now() < deadline2) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    }
+    DOCTEST_CHECK_MESSAGE(provider.calls.load() > afterFirst,
+                          "拨过 scanIntervalSec 后没有再扫一轮");
+    refresher.stopAll();
+    return true;
+})
+
+REGISTER_TEST(claude_quota_refresher_stop_waits_for_inflight_fetch,
+              "claude_quota_refresher: stopAll 会等在途请求跑完（退出延迟口径的实测）", {
+    // m4：头注释曾声称「最多等一片」，那只对**睡眠态**成立。线程正在
+    // refreshNow() 里发请求时，join 会等到那一轮跑完。本用例用一个会
+    // sleep 住的假 provider 钉住这个口径——**不是**断言「立刻返回」。
+    test_support::TestDb tdb("quotarefresh", "inflight");
+    QuotaStore store(tdb.handle());
+    FakeClock clock;
+
+    QuotaConfigRow cfg;
+    cfg.profileId = 1; cfg.providerId = "slow"; cfg.enabled = true;
+    cfg.autoRefresh = true; cfg.intervalMinutes = 0;
+    DOCTEST_REQUIRE(store.saveConfig(cfg).isOk());
+
+    class SlowProvider final : public QuotaProvider {
+    public:
+        std::string id() const override { return "slow"; }
+        std::string displayName() const override { return "慢供应商"; }
+        std::vector<ProviderField> fields() const override { return {}; }
+        QuotaResult fetch(const ProviderConfig&, const HttpSendFn&) const override {
+            entered.store(true);
+            // 模拟一次 400ms 的真实请求（provider timeoutMs 量级 15s，
+            // 这里取小值让用例快）
+            std::this_thread::sleep_for(std::chrono::milliseconds(400));
+            return okTiered();
+        }
+        mutable std::atomic<bool> entered{false};
+    };
+
+    SlowProvider provider;
+    ForwardingCredentialSource creds;
+    QuotaRefreshOptions opts;
+    opts.slicesPerRound = 1;
+    opts.sliceMs = 2;
+    opts.scanIntervalSec = 0;
+    QuotaRefresher refresher(store, creds,
+                             [&provider](const std::string&) -> const QuotaProvider* {
+                                 return &provider;
+                             },
+                             HttpSendFn{}, [&clock] { return clock.now; }, opts);
+
+    refresher.start();
+    // 等请求真的发出去（进入 fetch 体内）
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(3);
+    while (!provider.entered.load() && std::chrono::steady_clock::now() < deadline) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    }
+    DOCTEST_REQUIRE(provider.entered.load());
+
+    // 在途时 stopAll：应**等**这一轮跑完（而不是立刻返回把请求腰斩）
+    const auto t0 = std::chrono::steady_clock::now();
+    refresher.stopAll();
+    const auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::steady_clock::now() - t0);
+    DOCTEST_CHECK_MESSAGE(elapsed.count() >= 100,
+                          "在途请求被腰斩：stopAll 立刻返回，线程仍在发请求");
+    // 但也不能挂死：远小于 provider 的 timeoutMs 量级
+    DOCTEST_CHECK_MESSAGE(elapsed.count() < 10000, "stopAll 在在途请求上挂死");
+    // 等完了 = 结果真落库了（没有半截状态）
+    DOCTEST_CHECK(store.loadResult(1).isOk());
     return true;
 })

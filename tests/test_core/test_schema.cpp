@@ -590,7 +590,7 @@ REGISTER_TEST(schema_is_idempotent_preserves_user_data,
 // 逐列断言对齐 spec 2026-10-02-provider-quota-and-storage §4.1 的 DDL。改列 /
 // 改默认值 / 类型漂移都在这里露出来——与仓库既有「逐表逐列」用例同一口径。
 REGISTER_TEST(schema_quota_tables_columns,
-              "schema: 余量两表列定义符合最终形态（配置 7 列 / 结果 9 列）", {
+              "schema: 余量两表列定义符合最终形态（配置 7 列 / 结果 10 列）", {
     auto path = test_support::tempDbPath(kDbPrefix, "cols_quota");
     std::error_code ec;
     std::filesystem::remove(path, ec);
@@ -622,6 +622,7 @@ REGISTER_TEST(schema_quota_tables_columns,
             "currency:TEXT:1:''",
             "plan_name:TEXT:1:''",
             "fetched_at:INTEGER:1:0",
+            "last_success_at:INTEGER:1:0",
             "last_error:TEXT:1:''",
             "last_error_kind:TEXT:1:''",
         };
@@ -655,8 +656,8 @@ REGISTER_TEST(schema_quota_tables_columns,
             "INSERT INTO profile_quota_result (profile_id) VALUES (7)").isOk());
         auto q2 = db.prepare(
             "SELECT kind, windows_json, balance_remaining, currency, plan_name, "
-            "fetched_at, last_error, last_error_kind FROM profile_quota_result "
-            "WHERE profile_id = 7");
+            "fetched_at, last_success_at, last_error, last_error_kind "
+            "FROM profile_quota_result WHERE profile_id = 7");
         DOCTEST_REQUIRE(q2.isOk());
         auto rows2 = q2.value().fetchAll();
         DOCTEST_REQUIRE(rows2.isOk());
@@ -668,6 +669,10 @@ REGISTER_TEST(schema_quota_tables_columns,
         DOCTEST_CHECK_EQ(res.getString("currency").valueOr("?"), std::string(""));
         DOCTEST_CHECK_EQ(res.getString("plan_name").valueOr("?"), std::string(""));
         DOCTEST_CHECK_EQ(res.getInt64("fetched_at").valueOr(-1), int64_t(0));
+        // last_success_at 与 fetched_at 是**两列**（评审 m1）：前者只在成功时
+        // 推进，供 G7 显示「数据时间」；后者成败都推进，供定时器判到期。
+        // 默认都为 0 = 从未查过。
+        DOCTEST_CHECK_EQ(res.getInt64("last_success_at").valueOr(-1), int64_t(0));
         DOCTEST_CHECK_EQ(res.getString("last_error").valueOr("?"), std::string(""));
         DOCTEST_CHECK_EQ(res.getString("last_error_kind").valueOr("?"), std::string(""));
     }

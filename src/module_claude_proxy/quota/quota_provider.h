@@ -141,7 +141,13 @@ public:
 
     // 发一次查询。**恒返回 QuotaResult**（约定 1）：失败填 error + errorMessage，
     // 不要把失败信号塞进 windows（约定 2）。可能阻塞（网络），调用方在后台线程调。
-    virtual QuotaResult fetch(const ProviderConfig& cfg, const HttpSendFn& http) = 0;
+    //
+    // **const 成员（评审 m2 更正）**：语义本就是「查询」而非「修改」，四个
+    // provider 的 fetch 体内零成员写入。做成 const 后 `findProvider()` 返回的
+    // `const QuotaProvider*` 就能直接用——注册表的 const 返回不再与本签名
+    // 矛盾，消费方不必 `const_cast`（那个 cast 会把「工厂返回的到底是不是
+    // 单例」这个类型错误洗成运行时 UB，而类型系统本来能挡住）。
+    virtual QuotaResult fetch(const ProviderConfig& cfg, const HttpSendFn& http) const = 0;
 };
 
 }  // namespace module::claude::quota

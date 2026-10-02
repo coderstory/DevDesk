@@ -10,6 +10,7 @@
 
 #include <sqlite3.h>   // sqlite3_changes（DELETE 影响行数）
 
+#include "platform/credential_protection.h"
 #include "platform/json.h"
 
 namespace module::claude::quota {
@@ -60,7 +61,7 @@ constexpr const char* kConfigColumns =
 
 constexpr const char* kResultColumns =
     "profile_id, kind, windows_json, balance_remaining, currency, plan_name, "
-    "fetched_at, last_error, last_error_kind";
+    "fetched_at, last_success_at, last_error, last_error_kind";
 
 // 行 → 结构。任一列取不出值即 fail（不用 valueOr 兜默认值：那会把「列名拼错」
 // 伪装成「值就是默认值」，SQL 改动时无声退化）。
@@ -84,7 +85,7 @@ core::Result<QuotaResultRow> resultRowFrom(const core::data::SqlRow& row) {
     QuotaResultRow out;
     std::string kindText, windowsJson, lastError, lastErrorKindText;
     double balance = 0.0;
-    int64_t fetchedAt = 0;
+    int64_t fetchedAt = 0, lastSuccessAt = 0;
     if (auto e = rowInt(row, "profile_id", out.profileId)) return core::Result<QuotaResultRow>::fail(e->first, e->second);
     if (auto e = rowStr(row, "kind", kindText)) return core::Result<QuotaResultRow>::fail(e->first, e->second);
     if (auto e = rowStr(row, "windows_json", windowsJson)) return core::Result<QuotaResultRow>::fail(e->first, e->second);
@@ -94,11 +95,13 @@ core::Result<QuotaResultRow> resultRowFrom(const core::data::SqlRow& row) {
     if (auto e = rowStr(row, "currency", out.currency)) return core::Result<QuotaResultRow>::fail(e->first, e->second);
     if (auto e = rowStr(row, "plan_name", out.planName)) return core::Result<QuotaResultRow>::fail(e->first, e->second);
     if (auto e = rowInt(row, "fetched_at", fetchedAt)) return core::Result<QuotaResultRow>::fail(e->first, e->second);
+    if (auto e = rowInt(row, "last_success_at", lastSuccessAt)) return core::Result<QuotaResultRow>::fail(e->first, e->second);
     if (auto e = rowStr(row, "last_error", lastError)) return core::Result<QuotaResultRow>::fail(e->first, e->second);
     if (auto e = rowStr(row, "last_error_kind", lastErrorKindText)) return core::Result<QuotaResultRow>::fail(e->first, e->second);
 
     out.balanceRemaining = balance;
     out.fetchedAt = fetchedAt;
+    out.lastSuccessAt = lastSuccessAt;
     out.lastError = std::move(lastError);
     out.lastErrorKind = quotaErrorFromName(lastErrorKindText);
 
@@ -166,9 +169,24 @@ core::Result<std::vector<QuotaWindow>> decodeQuotaWindows(const std::string& jso
         w.key = keyVal.isString() ? keyVal.asString() : std::string();
         if (w.key.empty()) continue;      // 无规范键的窗口无法呈现 → 跳过
         pj::JsonValue pct = obj.get("usedPercent");
-        if (pct.isNumber()) {
-            w.usedPercent = pct.asDouble();
-        }
+        // 畸形 usedPercent → **丢该元素**，不是采纳默认值（评审 B1）。
+        // 曾经的写法是「不是 number 就留着 QuotaWindow 默认的 0.0」，
+        // 那正好制造本模块第一条不变量要杜绝的东西：G7 会把 0 画成一条绿的
+        // 「几乎没用满」条，而用户实际拿到的是一份坏数据。写侧守住了
+        // 「不写假 0%」，读侧不能留一条绕过去的路。
+        // 越界同理：spec §9 明写越界输入「被拒或记 error」，不是 clamp 后
+        // 断言落在 [0,100]（那是恒真断言）。拒 = 这里丢该元素。
+        if (!pct.isNumber()) continue;              // 缺字段 / 类型错（含字符串 "62.5"）
+        // ⚠ 数字双分支读取（照抄 opencode_go_provider.cpp:62-71 /
+        // provider_minimax_cn.cpp:135-152 / todo_view_state.cpp:94-97 同款
+        // 先例）：type() 把 Int 与 Double **都**映射成 T_Number（json.cpp:33-34），
+        // 而 parse 的 Int 分支只填 intVal、dblVal 留 0（json.cpp:59-61）——
+        // 只读 asDouble() 会把整数百分比全读成 0%，又一条假 0% 的路。
+        // asDouble 为 0 时回退 asInt；Double 分支（62.5 一类）原样，小数不截断。
+        const double dbl = pct.asDouble();
+        const double v = dbl != 0.0 ? dbl : static_cast<double>(pct.asInt());
+        if (!(v >= 0.0 && v <= 100.0)) continue;   // 越界（250 / -5）→ 丢，不 clamp
+        w.usedPercent = v;
         pj::JsonValue resets = obj.get("resetsAt");
         if (resets.isString()) {
             w.resetsAt = resets.asString();
@@ -229,11 +247,34 @@ core::Result<QuotaConfigRow> QuotaStore::loadConfig(int64_t profileId) {
         return core::Result<QuotaConfigRow>::fail(ErrorCode::NotFound,
                                                   "该 profile 未配置余量查询");
     }
-    return configRowFrom(rows.value()[0]);
+    auto row = configRowFrom(rows.value()[0]);
+    if (row.isFail()) return row;
+    // secrets_json 读侧解保护（评审 M3）：与 api_key_encrypted **复用同一对**
+    // platform::credential 函数 —— POSIX 是恒等（保护靠 sqlite_db.cpp 每次
+    // open 收紧 db/-wal/-shm 到 0600），Windows 是 DPAPI 密文 hex。
+    // 解不开（换机器 / 换用户 / 列被篡改）→ fail(原错误码)，**不**静默回落
+    // 空串：静默会把「secret 解不开」伪装成「用户没配 secret」，G7 于是显示
+    // 「配置不完整，去补全」——用户去反复检查一个其实没问题的配置。
+    auto secrets = platform::credential::unprotect(row.value().secretsJson);
+    if (secrets.isFail()) {
+        return core::Result<QuotaConfigRow>::fail(secrets.errorCode(),
+                                                  secrets.errorMessage());
+    }
+    row.value().secretsJson = std::move(secrets.value());
+    return row;
 }
 
 core::Result<void> QuotaStore::saveConfig(const QuotaConfigRow& row) {
     std::lock_guard<std::recursive_mutex> lock(db_.mutex());
+    // secrets_json **写侧**加保护（评审 M3）：与 api_key_encrypted 复用同一对
+    // platform::credential 函数。Windows 上这一步是 DPAPI 加密——同一张表里
+    // secrets 与兄弟列保护级别一致，不给「按字面实现 DDL 就落成明文」留缝
+    //（spec §6.2 的原话警告）。失败（DPAPI 出错）→ **在建/改行之前**失败，
+    // 不留「行写好了但 secret 没加密」的中间态。
+    auto stored = platform::credential::protect(row.secretsJson);
+    if (stored.isFail()) {
+        return core::Result<void>::fail(stored.errorCode(), stored.errorMessage());
+    }
     auto st = db_.prepare(
         "INSERT OR REPLACE INTO profile_quota_config "
         "(profile_id, provider_id, extra_json, secrets_json, enabled, "
@@ -241,7 +282,8 @@ core::Result<void> QuotaStore::saveConfig(const QuotaConfigRow& row) {
     if (st.isFail()) return core::Result<void>::fail(st.errorCode(), st.errorMessage());
     auto& stmt = st.value();
     auto b = bindAll(stmt, row.profileId, row.providerId, row.extraJson,
-                     row.secretsJson, static_cast<int64_t>(row.enabled ? 1 : 0),
+                     stored.value(),
+                     static_cast<int64_t>(row.enabled ? 1 : 0),
                      static_cast<int64_t>(row.autoRefresh ? 1 : 0),
                      static_cast<int64_t>(row.intervalMinutes));
     if (b.isFail()) return b;
@@ -371,6 +413,14 @@ core::Result<std::vector<QuotaResultRow>> QuotaStore::listResults() {
 core::Result<void> QuotaStore::applyFetchResult(int64_t profileId,
                                                 const QuotaResult& result,
                                                 int64_t fetchedAt) {
+    // ⚠ 锁必须**从函数第一行**就持（评审 M2）：韧性依赖的「读回上次成功值 →
+    // 搬进新行 → 写回」是一个**复合操作**，锁只覆盖写的话就是非原子：
+    // 线程 A（后台 ticker）判定 Transient、读到 T0 旧值 → 线程 B（G6 卡片
+    // [刷新]）写进 T1 真数据 → A 恢复执行、把 B 的新数据整体覆盖回 T0 旧值
+    // + 错误文案。用户刚手动刷出来的数据被一次网络抖动无声回滚 = 静默丢数据。
+    // db_.mutex() 是 recursive_mutex，下面 loadResult 内部再取一次是安全重入。
+    std::lock_guard<std::recursive_mutex> lock(db_.mutex());
+
     // 韧性决策（不变量 3）：成功才写数据列；失败保留上次成功的值，只写错误两列。
     // 从未成功过时数据列保持初始值（windows 空 / balance 0 / kind 空），
     // 于是「失败且从未成功」在库里就是**可分辨**的一行，G7 不画 0% 条。
@@ -386,6 +436,10 @@ core::Result<void> QuotaStore::applyFetchResult(int64_t profileId,
         row.planName = result.planName;
         row.lastError.clear();
         row.lastErrorKind = QuotaError::None;
+        // 数据时间只在**成功**时推进（评审 m1）：Transient 失败后数据仍是
+        // interval 之前的，若此刻也推进，G7 会把 15 分钟前的数字配上
+        // 「刚刚查询过」——自相矛盾。定时器用 fetched_at，数据时间用本列。
+        row.lastSuccessAt = fetchedAt;
     } else {
         // 失败：先读回上次成功的那一行，把数据列**原样**搬过来。
         // 读不到行（真·从未成功过）或读失败都按「无旧值」处理 —— 读失败时
@@ -399,17 +453,17 @@ core::Result<void> QuotaStore::applyFetchResult(int64_t profileId,
             row.balanceRemaining = p.balanceRemaining;
             row.currency = p.currency;
             row.planName = p.planName;
+            row.lastSuccessAt = p.lastSuccessAt;   // 数据时间不动
         }
         row.lastError = result.errorMessage;
         row.lastErrorKind = result.error;
     }
 
-    std::lock_guard<std::recursive_mutex> lock(db_.mutex());
     auto st = db_.prepare(
         "INSERT OR REPLACE INTO profile_quota_result "
         "(profile_id, kind, windows_json, balance_remaining, currency, plan_name, "
-        " fetched_at, last_error, last_error_kind) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)");
+        " fetched_at, last_success_at, last_error, last_error_kind) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
     if (st.isFail()) return core::Result<void>::fail(st.errorCode(), st.errorMessage());
     auto& stmt = st.value();
     // kind 只在成功时落非空值；从未成功过就写空串（这正是「不写假 0%」的形态：
@@ -420,7 +474,7 @@ core::Result<void> QuotaStore::applyFetchResult(int64_t profileId,
         row.hasEverSucceeded ? encodeQuotaWindows(row.windows) : std::string();
     auto b = bindAll(stmt, row.profileId, kindText, windowsText,
                      row.balanceRemaining, row.currency, row.planName,
-                     row.fetchedAt, row.lastError,
+                     row.fetchedAt, row.lastSuccessAt, row.lastError,
                      std::string(quotaErrorName(row.lastErrorKind)));
     if (b.isFail()) return b;
     auto stepped = stmt.step();
