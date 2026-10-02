@@ -4,7 +4,9 @@
 // 设计决策：
 //   - Config 结构放 module 内部（任务允许"core 或 module 内部皆可，选最小改动"），
 //     core 不感知具体设置项
-//   - 持久化：core::paths::configFile() + platform::json（yyjson 薄封装）
+//   - 持久化：SQLite 的 app_config 表（core/app_config.h）+ platform::json
+//     （yyjson 薄封装，只负责「把结构编码成字符串」）；2026-10-03 起不再有
+//     config.json，core::paths::configFile() 已无生产调用方
 //   - SettingsStore 的文件路径由构造注入，便于单测用临时文件做读写往返
 //
 // 字段说明：
