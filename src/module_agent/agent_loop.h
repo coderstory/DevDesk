@@ -39,8 +39,16 @@ public:
     // 单调时钟缝（spec §5.2 墙钟上限）：返回 steady 毫秒。默认空 = 走
     // defaultNowMs()（steady_clock）；用例注入假时钟即可零等待验证超限判定。
     using NowMsFn = std::function<int64_t()>;
+    // **收尾写库失败**的回报缝。run() 恒返回 ok(runId)（run 确实起了，收尾只是
+    // 状态落库），所以「收尾没落成」在返回值里无处表达；此前只有一行 LOG_ERROR，
+    // 调用方无从得知 —— 于是 DB 里那行永远停在 'running'，UI 侧据此判「还有 run
+    // 在跑」，uiPolling_ 永不复位，**每帧一次 refreshData()（N+1 次查询）直到重启**
+    //（触发条件窄：磁盘满 / DB 写错；后果重：100% CPU + 持续磁盘 IO + UI 卡死）。
+    // 调用方（AgentModule）用它把该 runId 记为孤儿，从轮询判停里排除。
+    // 默认空 = 无人关心（测试 / 其它调用方）。**不抛异常**。
+    using FinishFailureFn = std::function<void(int64_t runId, std::string reason)>;
     AgentLoop(core::LlmEndpoint& llm, core::ToolRegistry& tools, AgentStore& store,
-              NowMsFn nowMs = {});
+              NowMsFn nowMs = {}, FinishFailureFn onFinishFailure = {});
     // 同步跑一次（调用方在工作线程调）。落库 agent_runs/agent_messages。
     // 失败不抛：见 spec §5.2 状态语义（completed/failed/limited/cancelled）。
     Result<int64_t> run(const AgentTask& task, std::atomic<bool>& cancelToken);
@@ -49,5 +57,6 @@ private:
     core::ToolRegistry& tools_;
     AgentStore& store_;
     NowMsFn nowMs_;
+    FinishFailureFn onFinishFailure_;
 };
 } // namespace module::agent

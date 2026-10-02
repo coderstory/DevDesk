@@ -154,8 +154,10 @@ AgentTask taskFromRow(const AgentTaskRow& row) {
 }
 
 AgentLoop::AgentLoop(core::LlmEndpoint& llm, core::ToolRegistry& tools,
-                     AgentStore& store, NowMsFn nowMs)
-    : llm_(llm), tools_(tools), store_(store), nowMs_(std::move(nowMs)) {}
+                     AgentStore& store, NowMsFn nowMs,
+                     FinishFailureFn onFinishFailure)
+    : llm_(llm), tools_(tools), store_(store), nowMs_(std::move(nowMs)),
+      onFinishFailure_(std::move(onFinishFailure)) {}
 
 Result<int64_t> AgentLoop::run(const AgentTask& task,
                                std::atomic<bool>& cancelToken) {
@@ -390,9 +392,15 @@ Result<int64_t> AgentLoop::run(const AgentTask& task,
         error);
     if (finished.isFail()) {
         // 收尾写不回：run 会停在 'running'，下次启动被 sweepStaleRuns 标
-        // 「悬挂 run」。此处只能留日志——调用方拿到的仍是 runId，无处再报。
+        // 「悬挂 run」。日志之外**必须**回报给调用方——那行永远停在 running，
+        // UI 侧据此判「还有 run 在跑」→ uiPolling_ 永不复位 → 每帧一次
+        // refreshData() 直到重启。仅日志的话调用方无从得知（见 agent_loop.h
+        // FinishFailureFn 注释）。
         LOG_ERROR("AgentLoop: 收尾 finishRun 失败（run " + std::to_string(runId) +
                   " 将留在 running）：" + finished.errorMessage());
+        if (onFinishFailure_) {
+            onFinishFailure_(runId, finished.errorMessage());
+        }
     }
     return Result<int64_t>::ok(runId);
 }

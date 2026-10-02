@@ -1426,3 +1426,52 @@ REGISTER_TEST(agent_ui_resident_enqueue_starts_run,
     mod.onStop();
     return true;
 })
+
+// ==================== UI 轮询判停（审计 m7）====================
+
+REGISTER_TEST(agent_has_live_run_excludes_orphaned_finish_failure,
+              "agent: 判停忽略孤儿 run（收尾写库失败 → 行永远 running）", {
+    // 真因：AgentLoop 收尾 finishRun 写库失败时，DB 那行永远停在 'running'，
+    // 而 run 线程早已结束。若「有 running 行」就当作「还有 run 在跑」，
+    // uiPolling_ 永不复位 → 此后每帧一次 refreshData()（N+1 次查询）直到重启。
+    // 触发条件窄（磁盘满 / DB 写错），后果重（100% CPU + 持续磁盘 IO + UI 卡死）。
+    //
+    // 本用例钉死 hasLiveRun 的排除语义：孤儿不算活 run（否则每帧轮询），
+    // 真在跑的仍然算（否则 UI 不刷新，真 run 跑完了都不更新状态）。
+    // 夹具口径照真实结构：latestRuns_ 是「taskId → 最近一次 run」，
+    // AgentRunRow 自带 id（runId）。孤儿集合按 **runId** 存
+    //（FinishFailureFn 回报的就是 runId）——这两者混用正是判停失效的成因。
+    auto running = [](int64_t runId, int64_t taskId) {
+        module::agent::AgentRunRow r;
+        r.id = runId;
+        r.taskId = taskId;
+        r.status = "running";
+        return r;
+    };
+    auto done = [](int64_t runId, int64_t taskId) {
+        module::agent::AgentRunRow r;
+        r.id = runId;
+        r.taskId = taskId;
+        r.status = "completed";
+        return r;
+    };
+
+    // ① 有 running 行、它不是孤儿 → 有活 run（UI 继续每帧跟进）
+    DOCTEST_CHECK(module::agent::hasLiveRun({{1, running(10, 1)}}, {}));
+    // ② 唯一的 running 行被判为孤儿（runId 10）→ 没有活 run（uiPolling_ 可复位）
+    DOCTEST_CHECK_FALSE(module::agent::hasLiveRun({{1, running(10, 1)}}, {10}));
+    // ③ 孤儿 + 另一个真在跑的 → 仍然有活 run（不能因为有一个孤儿就整体停轮询）
+    DOCTEST_CHECK(module::agent::hasLiveRun(
+        {{1, running(10, 1)}, {2, running(11, 2)}}, {10}));
+    // ④ 全是完成态 → 没有活 run
+    DOCTEST_CHECK_FALSE(module::agent::hasLiveRun({{1, done(10, 1)}}, {}));
+    // ⑤ 空表 → 没有活 run（不能崩、不能恒真）
+    DOCTEST_CHECK_FALSE(module::agent::hasLiveRun({}, {}));
+    // ⑥ 孤儿集合里只有别的 runId，不影响当前 running 行
+    DOCTEST_CHECK(module::agent::hasLiveRun({{1, running(10, 1)}}, {99}));
+    // ⑦ 按 taskId（map 的键）而不是 runId 去匹配孤儿，**必须匹配不上**——
+    //    否则就是拿错了键、排除逻辑形同虚设。runId 10 / taskId 1：
+    //    传 {1} 不该把它排除掉，仍算活 run。
+    DOCTEST_CHECK(module::agent::hasLiveRun({{1, running(10, 1)}}, {1}));
+    return true;
+})
