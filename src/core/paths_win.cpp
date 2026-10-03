@@ -6,7 +6,6 @@
 
 #include <windows.h>
 
-#include <cstddef>
 #include <cstdlib>
 #include <string>
 

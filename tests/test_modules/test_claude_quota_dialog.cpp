@@ -28,7 +28,6 @@
 
 #include <sqlite3.h>
 
-#include <cstddef>
 #include <cstdlib>
 #include <map>
 #include <filesystem>

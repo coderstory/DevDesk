@@ -4,7 +4,6 @@
 #include "atomic_write.h"
 
 #include <fstream>
-#include <ios>
 
 namespace core::detail {
 

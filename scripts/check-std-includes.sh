@@ -47,11 +47,19 @@
 #
 # ── --self-test：自证非恒真 ────────────────────────────────────────
 #   好树：真实源码必须 0 违规（否则是索引/映射表把正常代码判坏了）
-#   坏树 A：删掉某文件的一行 `#include <optional>` → 必须红
+#   坏树 A：删掉某文件的一行 `#include <optional>` → 必须红（CI 那次事故的复现）
 #   坏树 B：往某文件塞一行裸 `std::optional<int> bad_probe_xyz;` → 必须红
 #   坏树 C：把文件换成「只经项目头拿到 std 符号」的形态 → 必须**绿**（证明 ①
 #     的豁免是真的在起作用，不是一律报红）
-#   三条坏树都先 `diff` 断言**真的改了文件**（等价变异 = 零证据），再要求红。
+#   坏树 D：只给 `<map>` + 裸 `std::optional` → 必须红（判据 ③「实现细节传递」
+#     的反证：libc++ 经 __node_handle 带进来、libstdc++ 不带的那一类）
+#   坏树 E：只给 `<fstream>` + `std::ios::binary` → 必须**绿**（判据 ②「标准强制
+#     关系」的反向证据：豁免真在收窄，而不是要求每个文件重复 include）
+#   坏树 F：只给 `<ios>` + `std::istream` → 必须红（豁免**不得**越界：`<ios>` 的
+#     synopsis 只有 `#include <iosfwd>`，给的是不完整类型）
+#   D/E/F 三条同时是 `STD_CLOSURE` 表的回归护栏：删任一行、或加回旧的错误行
+#   `ios istream ostream streambuf`，对应自测必红（实测验过，见提交说明）。
+#   六条坏树都先 `diff` 断言**真的改了文件**（等价变异 = 零证据），再要求红。
 #
 # 退出码：0 = 通过；1 = 有违规；2 = 环境错
 #
@@ -196,8 +204,19 @@ std::memory_order_consume|<atomic>
 std::barrier|<barrier>
 std::latch|<latch>
 std::counting_semaphore|<semaphore>
-std::size_t|<cstddef>
-std::ptrdiff_t|<cstddef>
+# 接受列表的宽度 = 「标准**明文**声明该符号的头」的集合，不是「唯一正解」。
+#   size_t / ptrdiff_t：<cstddef> 是归属头；但 C 标准兼容头 <cstdio> <cstdlib>
+#   <cstring> <ctime> 的 synopsis 里**明文**写了 `using size_t = ...`（实测草案正文），
+#   所以这四个同样是**明文保证**，任一被显式 include 即通过 —— 与
+#   `std::abs|<cstdlib> <cmath>` 同一判据，不是给 size_t 开的特例。
+#   ⚠ 刻意**不含** <string>/<vector>/<map>：它们能带出 size_t 是**传递包含**（实现
+#   细节，libc++ 与 libstdc++ 恰好都带），不属于明文保证 —— 与 <optional> 经 <map>
+#   同属一类，正是本守卫要抓的。
+#   byte / max_align_t / nullptr_t：**只有** <cstddef> 声明（实测 <cstdio>/<cstdlib>/
+#   <cstring> 的 synopsis 里 nullptr_t 出现 0 次，且单独 `#include <cstdlib>` +
+#   `std::nullptr_t x;` 编译失败），故接受列表只有一项。
+std::size_t|<cstddef> <cstdio> <cstdlib> <cstring> <ctime>
+std::ptrdiff_t|<cstddef> <cstdio> <cstdlib> <cstring> <ctime>
 std::byte|<cstddef>
 std::max_align_t|<cstddef>
 std::nullptr_t|<cstddef>
@@ -527,19 +546,34 @@ std::chrono|<chrono>
 TBL_EOF
 )
 
-# C++ 标准**明文保证**的头与头包含关系（不是实现细节，所以不算「靠传递包含」）：
-#   [iostream.syn]  <iostream> 定义 <istream>/<ostream>/<ios>/<streambuf> 的实体
-#   [fstream.syn]   <fstream>   定义 <istream>/<ostream>
-#   [sstream.syn]   <sstream>   定义 <istream>/<ostream>
-#   [iomanip]       <iomanip>   定义 <istream>/<ostream>/<ios>
+# C++ 标准**强制保证**的头与头包含关系（不是实现细节，所以不算「靠传递包含」）。
+# 每行的第一个 token 是「本文件 include 的头」，其余是它**标准保证带到**的头。
+#
+# 依据（全部实测自标准正文，不是凭记忆）：
+#   [iostream.syn]  synopsis 明写 4 行 #include：<ios> <streambuf> <istream> <ostream>
+#   [fstream.syn]/[sstream.syn]/[istream.syn]/[ostream.syn]  synopsis **没有** 任何
+#       #include 行（实测 N4659/N4861/N4950/草案，四个版本全为 0）——所以它们带出
+#       <ios> **不是** synopsis 明写的，而是**推导**出来的，见 [ios.syn]/[streambuf]：
+#         basic_filebuf : public basic_streambuf          ([filebuf])
+#         basic_ifstream : public basic_istream           ([ifstream])
+#         basic_istream : virtual public basic_ios        ([istream])
+#       [class.derived.general]/2：基类「shall denote a class type that is **not an
+#       incompletely defined class**」。要定义 basic_ifstream 就必须有**完整**的
+#       basic_istream，要定义它又必须有**完整**的 basic_ios。传递闭包是强制的。
+#   [iomanip]  synopsis 无 #include，但它声明的操纵符形参类型是 basic_ostream/istream，
+#       同样由上面的闭包推得。
+# ⚠ 与之相对：`<ios>` **不**保证 istream/ostream —— `<ios>` 的 synopsis 只有一行
+#   `#include <iosfwd>`，而 `<iosfwd>` 只给**不完整**的 basic_istream/basic_ostream。
+#   实测：`#include <ios>` + `std::istream x;` 编译失败。原表里 "ios istream ostream
+#   streambuf" 那一行是**错的**，已删除（它会让守卫对真缺失放行 = 假绿）。
+#
 # 这几条与我们要抓的东西**不是一类**：`<optional>` 经 `<map>` → `__node_handle`
-# 传递进来是 libc++ 的实现细节、libstdc++ 根本没有；而 `<iostream>` 带出
-# `<ostream>` 是标准写死的，换编译器照样成立。把它们混在一起报全是误报。
+# 传递进来是 libc++ 的实现细节、libstdc++ 根本没有（实测 [map.overview] 的 synopsis
+# 里 **0 次** node_handle）；而 `<fstream>` 带出 `<ios>` 是标准强制的，换编译器照样成立。
 STD_CLOSURE="iostream ios istream ostream streambuf
 fstream ios istream ostream streambuf
 sstream ios istream ostream streambuf
-iomanip ios istream ostream
-ios istream ostream streambuf"
+iomanip ios istream ostream"
 
 # ── 源文件清单：src/ + tests/ 的 .cpp/.h（3rd 与 build 不在范围内）──
 list_sources() {
@@ -581,9 +615,39 @@ build_awk() {
         echo "}"
     } > "$out"
 
+    # STD_CLOSURE → awk 的二维数组 STD_E[头, i] / STD_N[头]。
+    # ⚠ 这里**必须有 print**：只赋值不输出，awk 就**一行都不吐**（实测生成 0 字节），
+    #   STD_E/STD_N 全空 → compute_effective 里的标准保证豁免**整条从未生效**，
+    #   而门禁照样一路绿。这就是「STD_CLOSURE 是死代码」的那次坑：判据写对了、
+    #   注释也写对了，唯独没人验证它真的被加载。踩过一次，判据改为**代码自证**：
+    #   生成完立刻断言产物非空且含赋值，为空即 exit 2（拒绝报绿）。
+    # ⚠ 产物必须包在 BEGIN{} 里：裸的 `STD_N["x"] = 2` 会被 awk 当成「模式 + 默认动作
+    #   {print}」，表一填满元素就恒真，之后**每一行输入都会被打印**（实测 371 文件
+    #   吐 5500 万行把管道挂死）。与上面 HDR 表同一个坑，这里一并用 BEGIN 封死。
+    _closure_awk="$out.closure"
     printf '%s\n' "$STD_CLOSURE" | awk '
-    { for (i = 1; i < NF; i++) STD_E[NF, i] = $i
-      STD_N[NF] = NF - 1 }' >> "$out"
+    NF >= 2 { key = $1
+               for (i = 2; i <= NF; i++) STD_E[key, i - 1] = $i
+               STD_N[key] = NF - 1 }
+    END {
+        print "BEGIN {"
+        for (k in STD_N) {
+            line = "    STD_N[\"" k "\"] = " STD_N[k]
+            for (i = 1; i <= STD_N[k]; i++)
+                line = line "; STD_E[\"" k "\", " i "] = \"" STD_E[k, i] "\""
+            print line
+        }
+        print "}"
+    }' > "$_closure_awk"
+    # 生成结果必须**结构正确**：每个键都是合法头名（非数字、含字母）。
+    # 上一版误用 NF 当键（NF 是字段数=数字），产物看着有内容、实际一条都匹配不上 ——
+    # 属于「跑通了、绿了、结论是错的」那类坑，这里用代码挡住而不是靠注释。
+    if ! grep -qE 'STD_N\["[a-z_]+"\]' "$_closure_awk"; then
+        echo "❌ STD_CLOSURE 产物结构非法（键必须是头名，不是字段数）—— 豁免判据已失效，拒绝报绿" >&2
+        return 2
+    fi
+    cat "$_closure_awk" >> "$out"
+    rm -f "$_closure_awk"
 
     cat >> "$out" <<'LOGIC_EOF'
 
@@ -855,7 +919,17 @@ fi
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
 AWKF="$TMP/check.awk"
+# ⚠ 必须接住返回码：build_awk 里的自证失败是 `return 2`，不接就等于没写
+#   （脚本没开 set -e，`build_awk` 失败也会继续跑后面的门禁 → 又是假绿）。
 build_awk "$AWKF" "$NFILES"
+if [ $? -eq 2 ]; then
+    echo "❌ 检查器自身构建失败（豁免表解析器没生效）—— 拒绝报绿" >&2
+    exit 2
+fi
+if ! grep -q 'STD_N\["' "$AWKF" 2>/dev/null; then
+    echo "❌ 生成的 awk 里没有 STD_N 赋值 —— 标准保证豁免未生效，拒绝报绿" >&2
+    exit 2
+fi
 
 # 只索引项目头（.cpp 的 include 在检查时现场采集）
 HEADERS="$(printf '%s\n' "$FILES" | grep '\.h$' || true)"
@@ -968,6 +1042,9 @@ if [ "$SELF_TEST" -eq 1 ]; then
     #     「所有文件都得重复 include」的无差别刷屏，迟早被人关掉）。
     mkdir -p "$TMP/projhdr"
     printf '#pragma once\n#include <optional>\n' > "$TMP/projhdr/optional_provider.h"
+    # 坏树 D/E/F 只需要一个「被索引的项目头」把 run_gate 的前置条件满足掉，
+    # 它自身**不提供**任何 std 声明（否则会把豁免的功劳算到它头上，测不出真判据）。
+    printf '#pragma once\n' > "$TMP/projhdr/dummy_provider.h"
     mkdir -p "$TMP/badC"
     { echo '#include "optional_provider.h"'
       grep -v '^#include <optional>$' "${ROOT}/${PROBE_REL}"
@@ -985,10 +1062,60 @@ if [ "$SELF_TEST" -eq 1 ]; then
         fi
     fi
 
+    # ── 坏树 D（新，判据第③条的反证）：符号只经**实现细节**传递才可见 → 必须红 ──
+    #     这正是 quota_store.cpp 炸 CI 的那一类：<map> 在 libc++ 里经 __node_handle
+    #     把 <optional> 带进来，libstdc++ 不带。这里**不给** <optional>，只给 <map>。
+    #     若守卫是恒绿的假绿守卫，这条会绿 → 自测当场失败。
+    mkdir -p "$TMP/badD"
+    printf '#include "dummy_provider.h"\n#include <map>\nnamespace {\nstd::optional<int> bad_probe_map_chain = {};\n}\n' \
+        > "$TMP/badD/probe.cpp"
+    if diff -q /dev/null "$TMP/badD/probe.cpp" >/dev/null 2>&1; then
+        echo "  ❌ 坏树 D：变异是空操作 —— 这条自测无效"; ok=1
+    elif OUT="$(run_gate "$TMP/badD/probe.cpp" "$TMP/projhdr/dummy_provider.h" 2>/dev/null)"; then
+        echo "  ❌ 坏树 D：靠 <map>→实现细节传递才可见的 std::optional 竟绿 —— **判据第③条失效**"; ok=1
+    else
+        echo "  ✅ 坏树 D：红 — $(printf '%s\n' "$OUT" | grep -v '^  ' | head -1 | cut -c1-110)"
+    fi
+
+    # ── 坏树 E（新，判据第②条的反向证据）：符号由**标准强制**的关系带出 → 必须绿 ──
+    #     删掉 <ios>、只留 <fstream>，用 std::ios::binary。标准强制 <fstream> 带出
+    #     完整 basic_ios（[ifstream] basic_ifstream : public basic_istream，
+    #     [class.derived.general]/2 基类不得是不完整类型），所以这**不是**缺 include。
+    #     若这条会红，说明豁免判据没收窄，守卫会退化成「所有文件都得重复 include」
+    #     的刷屏，迟早被人关掉 —— 这条就是防那个的。
+    mkdir -p "$TMP/badE"
+    printf '#include "dummy_provider.h"\n#include <fstream>\nnamespace {\nstd::ofstream bad_probe_out;\nint bad_probe_mode() { return std::ios::binary | std::ios::trunc; }\n}\n' \
+        > "$TMP/badE/probe.cpp"
+    if diff -q /dev/null "$TMP/badE/probe.cpp" >/dev/null 2>&1; then
+        echo "  ❌ 坏树 E：变异是空操作 —— 这条自测无效"; ok=1
+    elif OUT="$(run_gate "$TMP/badE/probe.cpp" "$TMP/projhdr/dummy_provider.h" 2>/dev/null)"; then
+        echo "  ✅ 坏树 E：绿（std::ios 由 <fstream> 经标准强制关系带出 → 不算缺头）—— 豁免真在生效"
+    else
+        echo "  ❌ 坏树 E：<fstream> 已标准保证 std::ios 仍红 —— 豁免判据写错了"
+        printf '%s\n' "$OUT" | grep -v '^  ' | head -3 | sed 's/^/       /'
+        ok=1
+    fi
+
+    # ── 坏树 F（新，豁免**不得**越界的那一侧）：<ios> **不**保证 istream → 必须红 ──
+    #     STD_CLOSURE 旧版有一条 "ios istream ostream streambuf"，实测是错的：
+    #     <ios> 的 synopsis 只有 `#include <iosfwd>`，只给**不完整**的 basic_istream，
+    #     `#include <ios>` + `std::istream x;` 编译失败。留着这条豁免就是假绿，
+    #     故单独用一条红把它钉死。
+    mkdir -p "$TMP/badF"
+    printf '#include "dummy_provider.h"\n#include <ios>\nnamespace {\nstd::istream bad_probe_by_value;\n}\n' \
+        > "$TMP/badF/probe.cpp"
+    if diff -q /dev/null "$TMP/badF/probe.cpp" >/dev/null 2>&1; then
+        echo "  ❌ 坏树 F：变异是空操作 —— 这条自测无效"; ok=1
+    elif OUT="$(run_gate "$TMP/badF/probe.cpp" "$TMP/projhdr/dummy_provider.h" 2>/dev/null)"; then
+        echo "  ❌ 坏树 F：<ios> 并不保证 std::istream 却放行 —— 豁免**越界**了（假绿）"; ok=1
+    else
+        echo "  ✅ 坏树 F：红 — $(printf '%s\n' "$OUT" | grep -v '^  ' | head -1 | cut -c1-110)"
+    fi
+
     if [ "$ok" -ne 0 ]; then
         echo "❌ --self-test 失败：守卫不能自证有效" >&2
     else
-        echo "✅ --self-test 通过：好树绿 / 坏树 A·B 红 / 坏树 C 绿（豁免生效）—— 非恒真"
+        echo "✅ --self-test 通过：好树绿 / 坏树 A·B·D·F 红 / 坏树 C·E 绿（豁免生效）—— 非恒真"
     fi
     exit "$ok"
 fi

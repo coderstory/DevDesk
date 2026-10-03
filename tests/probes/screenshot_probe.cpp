@@ -27,12 +27,10 @@
 #include <png.h>
 
 #include <algorithm>
-#include <cstddef>
 #include <cstdint>
 #include <cstdio>
 #include <filesystem>
 #include <fstream>
-#include <ios>
 #include <iostream>
 #include <string>
 #include <vector>
