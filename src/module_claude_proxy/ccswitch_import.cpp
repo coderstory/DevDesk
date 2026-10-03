@@ -51,6 +51,8 @@ constexpr int kBusyTimeoutMs = 2000;
 //   ANTHROPIC_MODEL        → model 列
 // 其余 env 键（含 CLAUDE_CODE_SUBAGENT_MODEL / ANTHROPIC_DEFAULT_*_MODEL 等）
 // 全部落 extraEnvJson ——「导入全部的配置内容」靠的就是这一条。
+// 例外（审计批 ②）：双 key 并存时，未用作 apiKey 的 ANTHROPIC_API_KEY 例外
+// 保留进 extraEnvJson（不丢值，见 mapCcSwitchProviderToProfile 内注释）。
 constexpr char kEnvBaseUrl[] = "ANTHROPIC_BASE_URL";
 constexpr char kEnvAuthToken[] = "ANTHROPIC_AUTH_TOKEN";
 constexpr char kEnvApiKey[] = "ANTHROPIC_API_KEY";
@@ -252,9 +254,17 @@ CcSwitchImportMapping mapCcSwitchProviderToProfile(
     const std::string apiKey =
         !authToken.empty() ? authToken : apiKeyEnv;
 
+    // 缺密钥 → 确定性跳过（审计批 ①，2026-10-03）：与「缺 base_url → 跳过」
+    // 同类——源条目缺必填字段，重试也不会好；「失败」留给可重试/系统错误
+    //（DB 错 / UNIQUE 竞态）。不在这里拦，会落进 createProfile 的
+    //「apiKey 不能为空」（profile_repository.cpp:379）失败桶，稀释失败信号。
+    if (apiKey.empty()) {
+        return skipped("缺密钥（env 无 ANTHROPIC_AUTH_TOKEN / ANTHROPIC_API_KEY）");
+    }
+
     // authField 三态（值域同 claude_service.h / provider_config.h）：
-    // 两个键都非空 → both；只有 TOKEN → bearer；只有 API_KEY → api_key；
-    // 都无 → both（无证据时的既有默认值）。
+    // 两个键都非空 → both；只有 TOKEN → bearer；只有 API_KEY → api_key。
+    // （都无 → 上方「缺密钥」已整条跳过，到不了这里；初值 both 只作兜底。）
     std::string authField = "both";
     if (!authToken.empty() && !apiKeyEnv.empty()) {
         authField = "both";
@@ -275,6 +285,22 @@ CcSwitchImportMapping mapCcSwitchProviderToProfile(
         const std::string value = envString(env, key.c_str());
         if (value.empty()) continue;
         extraEnv[key] = value;
+    }
+    // 双 key 并存：未用作 apiKey 的那个 key 保留进 extraEnvJson，不丢值
+    //（审计批 ②，2026-10-03，M4）。TOKEN 优先 → apiKey 取 TOKEN 时，API_KEY
+    // 的值原本整条丢（既是保留键不进 extraEnv、又不进 apiKey）。保留的运行期
+    // 安全由既有守卫保证，不靠这里收窄：
+    //   - 直连：buildDirectEnv 写选中密钥键时**清掉另一密钥键**
+    //     （provider_config.cpp:717-732，test_claude_service.cpp:3500 钉死）
+    //     ——直连恒单凭据；
+    //   - 代理：UpstreamDialect::applyHeaders 无条件丢弃客户端凭据、只注入
+    //     profile 的 key（upstream_dialect.cpp:142-155）——上游恒单凭据；
+    //   - 展示：详情页 env 面板按键名掩码（键名含 token/key/secret 的值截断，
+    //     claude_ui_detail.cpp）。
+    // 只可能是 ANTHROPIC_API_KEY：TOKEN 非空时 apiKey 已取 TOKEN；apiKey 取
+    // API_KEY 的前提是 TOKEN 为空，那时没有第二个值可保留。
+    if (!authToken.empty() && !apiKeyEnv.empty()) {
+        extraEnv[kEnvApiKey] = apiKeyEnv;
     }
     std::string extraEnvJson;
     if (!extraEnv.empty()) {

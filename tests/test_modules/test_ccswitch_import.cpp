@@ -3,8 +3,8 @@
 //
 // 被测：src/module_claude_proxy/ccswitch_import.{h,cpp}
 //   ① 纯映射函数（mapCcSwitchProviderToProfile）：settings_config JSON → Profile 字段，
-//      覆盖映射表全字段 + 边界（只 API_KEY 无 TOKEN / 缺 base_url / 同名冲突 /
-//      非法 JSON / 空名称）。
+//      覆盖映射表全字段 + 边界（只 API_KEY 无 TOKEN / 缺 base_url / 无密钥跳过 /
+//      双 key 未用值保留 / 同名冲突 / 非法 JSON / 空名称）。
 //   ② 读侧（listCcSwitchImportRows）：**只读打开**临时库，筛选
 //      app_type IN ('claude','claude-desktop')，其余 app_type 忽略。
 //
@@ -147,7 +147,9 @@ REGISTER_TEST(ccswitch_import_maps_all_fields,
     DOCTEST_CHECK_EQ(m.apiKey, std::string(kFakeToken));   // TOKEN 优先
     DOCTEST_CHECK_EQ(m.model, std::string("deepseek-flash[1M]"));
     DOCTEST_CHECK_EQ(m.authField, std::string("both"));     // 两键都有
-    // extraEnvJson：四保留键之外的全部键值，一个不丢
+    // extraEnvJson：四保留键之外的全部键值，一个不丢。例外（审计批 ②）：
+    // 双 key 并存时未用作 apiKey 的 ANTHROPIC_API_KEY 保留进表（本例 TOKEN
+    // 已用作 apiKey，API_KEY 是被保留的那个）。
     DOCTEST_CHECK_NE(m.extraEnvJson, std::string(""));
     DOCTEST_CHECK(m.extraEnvJson.find("ANTHROPIC_DEFAULT_SONNET_MODEL") !=
                   std::string::npos);
@@ -155,7 +157,8 @@ REGISTER_TEST(ccswitch_import_maps_all_fields,
                   std::string::npos);
     DOCTEST_CHECK(m.extraEnvJson.find("ANTHROPIC_BASE_URL") == std::string::npos);
     DOCTEST_CHECK(m.extraEnvJson.find("ANTHROPIC_AUTH_TOKEN") == std::string::npos);
-    DOCTEST_CHECK(m.extraEnvJson.find("ANTHROPIC_API_KEY") == std::string::npos);
+    DOCTEST_CHECK(m.extraEnvJson.find("ANTHROPIC_API_KEY") != std::string::npos);
+    DOCTEST_CHECK(m.extraEnvJson.find(kFakeApiKey) != std::string::npos);
     DOCTEST_CHECK(m.extraEnvJson.find("ANTHROPIC_MODEL") == std::string::npos);
     // extraSettingsJson：env 块外全部顶层属性，一个不丢
     DOCTEST_CHECK_NE(m.extraSettingsJson, std::string(""));
@@ -214,6 +217,58 @@ REGISTER_TEST(ccswitch_import_missing_base_url,
     DOCTEST_CHECK(m.skipReason.find("缺 base_url") != std::string::npos);
     // skipReason 不得携带密钥明文（假串也不许进文案）
     DOCTEST_CHECK(m.skipReason.find("sk-") == std::string::npos);
+    return true;
+})
+
+// ==================== ① 边界：无密钥 → 跳过（缺密钥），不落「失败」 ====================
+// 审计批 ①（2026-10-03）：无 AUTH_TOKEN 且无 API_KEY 的条目是「源缺必填字段」
+// 的确定性不可导入，与「缺 base_url → 跳过」同类；此前按映射建行会被
+// createProfile 的「apiKey 不能为空」（profile_repository.cpp:379）拒进
+// 「失败」桶——失败应留给可重试/系统错误。
+
+REGISTER_TEST(ccswitch_import_missing_key_skips,
+              "ccswitch 导入：无 TOKEN 无 KEY → 跳过「缺密钥」（skip 非 fail）", {
+    // 有 base_url、无任何密钥 → 确定性跳过
+    const std::string json = settingsConfigWith(
+        "https://api.example.com", "", "", "", std::string(), std::string());
+    const CcSwitchImportMapping m =
+        mapCcSwitchProviderToProfile("NoKey", json);
+    DOCTEST_CHECK_FALSE(m.ok);
+    DOCTEST_CHECK(m.skipReason.find("缺密钥") != std::string::npos);
+    // skipReason 不得携带密钥明文（防御性约定，本例本来就没有）
+    DOCTEST_CHECK(m.skipReason.find("sk-") == std::string::npos);
+    // 判定顺序钉死：base_url 与密钥都缺时，先报「缺 base_url」（既有顺序）
+    const std::string neither = settingsConfigWith(
+        "", "", "", "", std::string(), std::string());
+    const CcSwitchImportMapping m2 =
+        mapCcSwitchProviderToProfile("Neither", neither);
+    DOCTEST_CHECK_FALSE(m2.ok);
+    DOCTEST_CHECK(m2.skipReason.find("缺 base_url") != std::string::npos);
+    return true;
+})
+
+// ==================== ① 边界：双 key 并存 → 未用作 apiKey 的值保留进 extraEnv ====================
+// 审计批 ②（2026-10-03，M4）：TOKEN+API_KEY 双 key 时 apiKey 取 TOKEN，
+// API_KEY 的值原本整条丢（保留键不进 extraEnv、又不进 apiKey）。修法：
+// 未用作 apiKey 的那个 key 保留进 extraEnvJson，不丢值。运行期安全由既有
+// 守卫保证：直连 buildDirectEnv 清另一密钥键（provider_config.cpp:717-732）、
+// 代理 UpstreamDialect::applyHeaders 无条件丢弃客户端凭据（upstream_dialect.cpp:142-155）。
+
+REGISTER_TEST(ccswitch_import_dual_key_preserves_unused,
+              "ccswitch 导入：双 key → apiKey 取 TOKEN，未用的 API_KEY 值保留进 extraEnv 不丢", {
+    const std::string json = settingsConfigWith(
+        "https://api.deepseek.com/anthropic", kFakeToken, kFakeApiKey,
+        "", std::string(), std::string());
+    const CcSwitchImportMapping m =
+        mapCcSwitchProviderToProfile("DualKey", json);
+    DOCTEST_REQUIRE(m.ok);
+    DOCTEST_CHECK_EQ(m.apiKey, std::string(kFakeToken));   // TOKEN 优先
+    DOCTEST_CHECK_EQ(m.authField, std::string("both"));
+    // 未用作 apiKey 的 ANTHROPIC_API_KEY 连键带值保留进 extraEnvJson
+    DOCTEST_CHECK(m.extraEnvJson.find("ANTHROPIC_API_KEY") != std::string::npos);
+    DOCTEST_CHECK(m.extraEnvJson.find(kFakeApiKey) != std::string::npos);
+    // 已用作 apiKey 的 ANTHROPIC_AUTH_TOKEN 不重复进 extraEnv
+    DOCTEST_CHECK(m.extraEnvJson.find("ANTHROPIC_AUTH_TOKEN") == std::string::npos);
     return true;
 })
 
