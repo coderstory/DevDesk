@@ -64,6 +64,7 @@ REGISTERED_GUARDS=(
     "scripts/check-windows-cross-compile.sh"   # Windows CI 源文件集合交叉编译（只验编译，不验运行时）
     "scripts/check-std-includes.sh"            # std 符号缺显式 include（跨标准库无关的静态判据）
     "scripts/check-quota-shutdown-order.sh"    # 余量链停机顺序（join → refresher → credentials → store）
+    "scripts/check-eui-neo-version.sh"         # EUI-NEO 版本前置（跨仓库版本不匹配伪装成指错文件的编译错误）
 )
 
 if [ ! -f "$TESTS_CMAKE" ]; then
@@ -176,6 +177,16 @@ ${g}
 if [ "$SELF_TEST" -eq 1 ]; then
     TMP="$(mktemp -d)"
     trap 'rm -rf "$TMP"' EXIT
+    # 跨平台原地改文件。**不要用 `sed -i ''`**（BSD 专有）：GNU sed（Windows CI
+    # 的 MSYS2 就是它）会把 '' 当脚本、把真正的表达式当文件名，结果是**什么都没改**
+    # 还报一行错 —— 自测据此会误判成「假绿守卫」。2026-10-03 把本守卫的 --self-test
+    # 接进门禁链时才发现这处平台不对称，Windows job 会因此常红。
+    sed_i() {
+        local f="$1" t; shift
+        t="$(mktemp)"
+        sed "$@" "$f" > "$t" && cat "$t" > "$f"
+        rm -f "$t"
+    }
     # 构造一棵最小假树：好树 + 三个坏树
     mkdir -p "$TMP/good/tests" "$TMP/good/scripts"
     printf '%s\n' \
@@ -199,13 +210,13 @@ if [ "$SELF_TEST" -eq 1 ]; then
         cp -R "$TMP/good" "$TMP/$bad"
         case "$bad" in
             probe_probe_tag)
-                sed -i '' 's/LABELS "live"/LABELS "probe"/' "$TMP/$bad/tests/CMakeLists.txt"
+                sed_i "$TMP/$bad/tests/CMakeLists.txt" 's/LABELS "live"/LABELS "probe"/'
                 ;;
             probe_probe_tag_mixed)
                 :
                 ;;
             entry_missing)
-                sed -i '' '/quota_live_probe/d' "$TMP/$bad/tests/CMakeLists.txt"
+                sed_i "$TMP/$bad/tests/CMakeLists.txt" '/quota_live_probe/d'
                 ;;
             gate_calls_probe)
                 echo 'bash scripts/run-quota-live-probe.sh' >> "$TMP/$bad/scripts/build-test-run.sh"
@@ -216,12 +227,12 @@ if [ "$SELF_TEST" -eq 1 ]; then
                 ;;
             # E2 坏树：登记表里那道 windows 交叉编译守卫被门禁摘掉 → 必须报红
             guard_missing_from_gate)
-                sed -i '' '/check-windows-cross-compile\.sh/d' "$TMP/$bad/scripts/build-test-run.sh"
+                sed_i "$TMP/$bad/scripts/build-test-run.sh" '/check-windows-cross-compile\.sh/d'
                 ;;
         esac
     done
     cp -R "$TMP/good" "$TMP/probe_probe_tag_mixed"
-    sed -i '' 's/LABELS "live"/LABELS "probe;live"/' "$TMP/probe_probe_tag_mixed/tests/CMakeLists.txt"
+    sed_i "$TMP/probe_probe_tag_mixed/tests/CMakeLists.txt" 's/LABELS "live"/LABELS "probe;live"/'
 
     # 坏树 ⑤（静态审计 M3）：标签写到 add_test 之后第 18 行 —— 必须报红。
     # 这条钉住的是**守卫自身的健壮性**：旧版用「往后 12 行」的固定窗口，

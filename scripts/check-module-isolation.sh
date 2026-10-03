@@ -48,17 +48,22 @@
 #
 # 退出码：0 = 通过；1 = 违规（逐条打印 文件:行:命中行）；2 = 环境错（不得静默绿）
 #
-# 用法：bash scripts/check-module-isolation.sh [--root DIR]
+# 用法：bash scripts/check-module-isolation.sh [--root DIR] [--self-test]
 #   --root DIR  指定被检查的仓库根（默认自动定位：本脚本所属 git 仓库的根，
 #               worktree 里即该 worktree 根），反证测试用它指向仓库外拷贝树。
+#   --self-test 造坏输入证明本守卫不是恒绿，并**用真实仓库树做底**（见下）。
 set -uo pipefail
 
 usage() {
-    echo "用法: bash scripts/check-module-isolation.sh [--root DIR]" >&2
+    echo "用法: bash scripts/check-module-isolation.sh [--root DIR] [--self-test]" >&2
 }
 
 SELF="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# SELF 是**脚本所在目录**（沿用既有约定：git -C "$SELF" / dirname "$SELF" 都按目录用）。
+# --self-test 要拿它去**执行**本脚本，所以另存一份脚本自身的绝对路径，别把目录当命令跑。
+SELF_FILE="$SELF/$(basename "${BASH_SOURCE[0]}")"
 ROOT="$(git -C "$SELF" rev-parse --show-toplevel 2>/dev/null || dirname "$SELF")"
+SELF_TEST=0
 
 while [ $# -gt 0 ]; do
     case "$1" in
@@ -66,6 +71,10 @@ while [ $# -gt 0 ]; do
             [ $# -ge 2 ] || { usage; exit 2; }
             ROOT="$2"
             shift 2
+            ;;
+        --self-test)
+            SELF_TEST=1
+            shift
             ;;
         -h|--help)
             usage
@@ -78,6 +87,210 @@ while [ $# -gt 0 ]; do
             ;;
     esac
 done
+
+# ── --self-test：自证非恒真（2026-10-03 门禁加固补上）────────────────────
+# 为什么必须有：上一批给 D 段（module_home 侧）加了三条断言，但**这三条一次都
+# 没被机器跑过**——只有人手点。本守卫又是门禁链里跑得最频繁的一道，于是
+# 「判据哪天退化成恒真」这件事没有任何东西会发现。本块就是那个东西。
+#
+# 形态：**拿真实仓库树当底 + 定点变异**。不手搓最小假树——手搓的假树会与真实
+# 代码形状漂移（守卫将来加一条文件级断言，假树缺文件 → 好树假红；恒红守卫比没有
+# 守卫更糟），而且「假树上的判据」推不出「这份代码上的判据」。
+#
+# 每条坏树都先 `diff -r` 断言**树真的变了**，再断言它红了。顺序反了就白忙：
+# 「跑完是绿的，但什么都没改」是本项目反复栽的坑（本会话实施者与控制器各踩三次以上）。
+# 另外坏树要求的退出码是**恰好 1**（违规），不是「任何非零」——2 是环境错，
+# 把它当成红会把「守卫自己跑不起来」伪装成「守卫抓到了违规」。
+if [ "$SELF_TEST" -eq 1 ]; then
+    TMP="$(mktemp -d)"
+    trap 'rm -rf "$TMP"' EXIT
+
+    [ -d "$ROOT/src" ] || { echo "❌ 自检失败：$ROOT/src 不存在" >&2; exit 2; }
+    [ -f "$ROOT/CMakeLists.txt" ] || { echo "❌ 自检失败：$ROOT/CMakeLists.txt 不存在" >&2; exit 2; }
+
+    mkdir -p "$TMP/good"
+    cp -R "$ROOT/src" "$TMP/good/src"
+    cp "$ROOT/CMakeLists.txt" "$TMP/good/CMakeLists.txt"
+
+    new_tree() { rm -rf "$TMP/$1"; cp -R "$TMP/good" "$TMP/$1"; }
+
+    # 跨平台原地改文件。**不要用 `sed -i ''`**：那是 BSD 专有写法，GNU sed
+    # （Windows CI 的 MSYS2 就是它）会把 '' 当成脚本、把真正的表达式当成文件名，
+    # 结果是**什么都没改**还报一行错——自测据此会得出「假绿守卫」的错误结论。
+    # 本守卫要进 Windows CI 的门禁链，构造动作必须两平台同形。
+    sed_i() {
+        local f="$1" t; shift
+        t="$(mktemp)"
+        sed "$@" "$f" > "$t" && cat "$t" > "$f"
+        rm -f "$t"
+    }
+
+    run_tree() { bash "$SELF_FILE" --root "$TMP/$1" >/dev/null 2>&1; }
+
+    assert_red() {
+        local rc
+        run_tree "$1"; rc=$?
+        if diff -r "$TMP/good" "$TMP/$1" >/dev/null 2>&1; then
+            echo "  ❌ 坏树 [$1]：与好树逐字节相同 —— 变异没生效，这条自测是假证据（$2）"
+            fail=1; return
+        fi
+        if [ "$rc" -eq 1 ]; then
+            echo "  ✅ 坏树 [$1]：红 —— $2"
+        else
+            echo "  ❌ 坏树 [$1]：退出码 $rc（期望恰好 1 = 违规）—— $2"
+            fail=1
+        fi
+    }
+    assert_green() {
+        local rc
+        run_tree "$1"; rc=$?
+        if diff -r "$TMP/good" "$TMP/$1" >/dev/null 2>&1; then
+            echo "  ❌ 树 [$1]：与好树逐字节相同 —— 这条证据不成立（什么都没改）"
+            fail=1; return
+        fi
+        if [ "$rc" -eq 0 ]; then
+            echo "  ✅ 树 [$1]：绿 —— $2"
+        else
+            echo "  ❌ 树 [$1]：退出码 $rc（期望 0）—— $2"
+            fail=1
+        fi
+    }
+
+    fail=0
+
+    # 0) 好树基线：真实仓库树必须绿。它不绿，后面所有「坏树红了」都没有意义。
+    if run_tree good; then
+        echo "  ✅ 好树（真实仓库树逐字节拷贝）：绿"
+    else
+        echo "  ❌ 好树（真实仓库树）就红了 —— 本守卫对当前代码不成立，先修守卫"
+        bash "$SELF_FILE" --root "$TMP/good" 2>&1 | head -12
+        fail=1
+    fi
+
+    # 1) D7：module_home 里 include 兄弟模块头（上一轮审计员点的那个洞）
+    new_tree home_include_sibling
+    for f in "$TMP/home_include_sibling"/src/module_home/*.cpp \
+             "$TMP/home_include_sibling"/src/module_home/*.h; do
+        [ -f "$f" ] || continue
+        printf '%s\n' '#include "module_claude_proxy/quota/quota_store.h"' >> "$f"
+    done
+    assert_red home_include_sibling "module_home include 兄弟模块头（D7）"
+
+    # 2) D8：module_home 里打开 module::claude 命名空间
+    new_tree home_namespace_claude
+    for f in "$TMP/home_namespace_claude"/src/module_home/*.cpp \
+             "$TMP/home_namespace_claude"/src/module_home/*.h; do
+        [ -f "$f" ] || continue
+        printf '%s\n' 'namespace module::claude { struct SelfTestProbe {}; }' >> "$f"
+    done
+    assert_red home_namespace_claude "module_home 往 module::claude 里加东西（D8）"
+
+    # 3) D9：顶层链接表把 claude_proxy 排到 home 之前 —— 上一轮审计员说的那个炸法
+    new_tree link_order
+    awk '
+        { L[NR] = $0 }
+        END {
+            h = 0; p = 0
+            for (i = 1; i <= NR; i++) {
+                if (!h && L[i] ~ /devdesk_module_home[ \t]*$/) { h = i; hl = L[i] }
+                if (!p && L[i] ~ /devdesk_module_claude_proxy[ \t]*$/) { p = i; pl = L[i] }
+            }
+            if (!h || !p) exit 3
+            for (i = 1; i <= NR; i++) {
+                if (i == h) print pl
+                else if (i == p) print hl
+                else print L[i]
+            }
+        }
+    ' "$TMP/link_order/CMakeLists.txt" > "$TMP/cm.tmp" 2>/dev/null \
+        && cat "$TMP/cm.tmp" > "$TMP/link_order/CMakeLists.txt"
+    assert_red link_order "顶层链接顺序颠倒 home < claude_proxy（D9）"
+
+    # 4) D9 的另一半：链接表里根本没有 home 这一项 → 顺序不变式无法断言
+    new_tree link_missing_home
+    sed_i "$TMP/link_missing_home/CMakeLists.txt" '/devdesk_module_home[ \t]*$/d'
+    assert_red link_missing_home "链接表里缺 devdesk_module_home，守卫看不见自己要守的东西（D9 抽取失配）"
+
+    # 5) A1：settings 侧反向依赖 pet
+    new_tree settings_pet_include
+    printf '%s\n' '#include "module_pet/pet_window.h"' >> "$TMP/settings_pet_include/src/module_settings/settings_module.cpp"
+    assert_red settings_pet_include "settings_module.cpp include module_pet/（A1）"
+
+    # 6) A2：桥声明的 include 不再唯一
+    new_tree bridge_include_dup
+    printf '%s\n' '#include "module_pet_bridge.h"' >> "$TMP/bridge_include_dup/src/module_settings/settings_module.cpp"
+    assert_red bridge_include_dup "桥头被 include 两次，声明不再唯一（A2 要求恰好 1 次）"
+
+    # 7) A3：桥函数被「解耦」掉了——头里还导出着，调用点却没了
+    new_tree bridge_call_missing
+    sed_i "$TMP/bridge_call_missing/src/module_settings/settings_module.cpp" '/::module::pet::/d'
+    assert_red bridge_call_missing "桥函数无真调用点（解耦退化成删功能，A3）"
+
+    # 8) B：settings 自己的 CMakeLists 又 link 了兄弟模块库
+    new_tree settings_cmake_link
+    printf '%s\n' 'target_link_libraries(devdesk_settings PRIVATE devdesk_module_pet)' \
+        >> "$TMP/settings_cmake_link/src/module_settings/CMakeLists.txt"
+    assert_red settings_cmake_link "settings CMakeLists 非注释行 link 兄弟模块库（B）"
+
+    # 9) C5：module_agent include 兄弟模块头
+    new_tree agent_include_sibling
+    for f in "$TMP/agent_include_sibling"/src/module_agent/*.cpp \
+             "$TMP/agent_include_sibling"/src/module_agent/*.h; do
+        [ -f "$f" ] || continue
+        printf '%s\n' '#include "module_todo/todo_tools.h"' >> "$f"
+    done
+    assert_red agent_include_sibling "module_agent include 兄弟模块头（C5）"
+
+    # 10) C6：工具方回头依赖 module_agent（注册方不回依赖消费方）
+    new_tree tool_ref_agent
+    printf '%s\n' '#include "module_agent/agent_tools.h"' >> "$TMP/tool_ref_agent/src/module_todo/todo_tools.h"
+    assert_red tool_ref_agent "todo_tools 回依赖 module_agent（C6）"
+
+    # 11) 反向证据：一棵「写法不同但合规」的树必须绿。
+    #     没有这条，守卫可能退化成刷屏器——那种守卫迟早被人关掉，比没有守卫更糟。
+    #     这里刻意做三件「像整理、但合规」的事：① module_home 里加注释，注释里
+    #     **故意提到兄弟模块裸名**（判据按 include 路径形态 = 带斜杠后缀，
+    #     裸名不误报）；② 顶层链接表里把**与本不变式无关**的两个库换序；
+    #     ③ 改写 settings_module.cpp 的 include 顺序。
+    new_tree benign_style
+    for f in "$TMP/benign_style"/src/module_home/*.cpp; do
+        [ -f "$f" ] || continue
+        {
+            printf '\n'
+            printf '%s\n' '// 读法说明：本卡经 src/quota_home_bridge.h 这个中立头读 claude 侧数据。'
+            printf '%s\n' '// 注释里提到 module_claude_proxy / module_pet 这类裸名不算违规——'
+            printf '%s\n' '// 判据按 include 路径形态（带斜杠后缀）匹配，不是按子串。'
+        } >> "$f"
+    done
+    printf '%s\n' '// 说明：本模块不依赖 module_pet，所有桥调用都经 module_pet_bridge.h。' \
+        >> "$TMP/benign_style/src/module_settings/settings_module.cpp"
+    # 与 home/claude_proxy 相对顺序无关的换序：markdown ↔ todo
+    awk '
+        { L[NR] = $0 }
+        END {
+            h = 0; p = 0
+            for (i = 1; i <= NR; i++) {
+                if (!h && L[i] ~ /devdesk_module_markdown[ \t]*$/) { h = i; hl = L[i] }
+                if (!p && L[i] ~ /devdesk_module_todo[ \t]*$/) { p = i; pl = L[i] }
+            }
+            if (!h || !p) exit 3
+            for (i = 1; i <= NR; i++) {
+                if (i == h) print pl
+                else if (i == p) print hl
+                else print L[i]
+            }
+        }
+    ' "$TMP/benign_style/CMakeLists.txt" > "$TMP/cm.tmp" 2>/dev/null \
+        && cat "$TMP/cm.tmp" > "$TMP/benign_style/CMakeLists.txt"
+    assert_green benign_style "写法不同但合规：注释含裸模块名 + 无关库换序 + 追加说明"
+
+    if [ "$fail" -ne 0 ]; then
+        echo "❌ --self-test 失败：守卫不能自证有效" >&2
+        exit 1
+    fi
+    echo "✅ --self-test 通过：好树绿 / 10 棵坏树各红 / 反向树绿 —— 非恒真"
+    exit 0
+fi
 
 SRC="$ROOT/src/module_settings/settings_module.cpp"
 CMK="$ROOT/src/module_settings/CMakeLists.txt"
