@@ -109,8 +109,10 @@ public:
     // ---- P3：platform::FileWatcher 事件驱动（KNOWN_LIMITATIONS #5 根治）----
     //
     // 检测路径两条腿：
-    //   1. watcher（Windows 原生 / 其他平台 stub）：事件即刻按事件同步索引
-    //      （含 (mtime,size) 秒级粒度看不见的同秒等长改动），并置标记；
+    //   1. watcher（Windows ReadDirectoryChangesW / macOS FSEvents 原生；其余
+    //      POSIX stub——平台矩阵见 platform/file_watcher.h）：事件即刻按事件同步
+    //      索引（含 (mtime,size) 秒级粒度看不见的同秒等长改动），并按
+    //      onWatchEvent 的相关性过滤置标记；
     //   2. pollChanged：watcher 标记命中 → 直接 true；否则退回磁盘
     //      mtime/size 比对（stub 平台 / watcher 掉线时的兜底）。
     // 调用方（模块层）语义不变：true → rescan() + 刷新 UI。
@@ -119,13 +121,20 @@ public:
     // 返回 true = 磁盘与索引有差异（新文件/删除/修改），需要调用方 rescan()。
     core::Result<bool> pollChanged();
 
-    // 原生文件监听是否在工作（Win=true；POSIX/macOS stub 或启动失败=false，
-    // 此时 pollChanged 退化为纯 mtime/size 比对）。测试与诊断用。
+    // 原生文件监听是否在工作（Windows/macOS 原生=true；其余 POSIX stub 或启动
+    // 失败=false，此时 pollChanged 退化为纯 mtime/size 比对）。测试与诊断用。
     bool watcherActive() const;
 
     // watcher 是否有未消费的事件 credit（pollChanged 会消费）。
     // 模块层每帧轻量 peek：true → 即时 rescan+refresh（毫秒级响应），
     // 无需等 5s 轮询节流；stub 平台恒 false，自然退回轮询兜底。
+    //
+    // credit 只在批内含「索引/目录树相关」事件时置位（onWatchEvent 的相关性
+    // 过滤，2026-10-03 收口）：.md 路径事件、Unknown（空路径）、以及无法证明
+    // 无关的路径（目录 / 已不存在 / resolve 解析失败）。磁盘上存在的
+    // **非 .md 普通文件**（伴生库文件、编辑器临时文件等）不置 credit——它们
+    // 对索引与目录树零影响，置了只会让模块层无谓绕过 5s 轮询节流
+    // （伴生文件写盘风暴的形态）。
     bool hasWatchCredit() const;
 
     // 磁盘文件的 mtime（unix 秒）。文件不存在 → fail。
@@ -169,7 +178,8 @@ private:
     // 声明在所有被回调触碰的成员之后无意义——停止统一在析构函数体内完成。
     std::unique_ptr<platform::FileWatcher> watcher_;
     // watcher 有事件但模块层尚未消费（pollChanged 读取后清除）：
-    // 保证模块的 rescan+refreshList 一轮不被 mtime 短路漏掉
+    // 保证模块的 rescan+refreshList 一轮不被 mtime 短路漏掉。
+    // 仅「索引/目录树相关」批会置位（见 hasWatchCredit 的过滤契约）
     std::atomic<bool> watcherFired_{false};
     // 串行化 rescan：watcher 线程与 UI 线程（模块 5s tick）可能并发进入
     std::mutex rescanMu_;
