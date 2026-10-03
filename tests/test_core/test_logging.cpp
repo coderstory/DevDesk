@@ -4,7 +4,6 @@
 #include <cstdint>
 #include <filesystem>
 #include <fstream>
-#include <ios>
 #include <system_error>
 
 REGISTER_TEST(logging_set_get_level, "logging: set/get level", {

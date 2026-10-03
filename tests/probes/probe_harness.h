@@ -53,7 +53,6 @@
 #include <glad/glad.h>
 #include <png.h>
 
-#include <cstddef>
 #include <cstring>
 #include <iostream>
 #include <algorithm>

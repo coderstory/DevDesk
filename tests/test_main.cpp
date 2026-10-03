@@ -15,7 +15,6 @@
 #include "ui_kit/splash.h"
 #include <algorithm>
 #include <chrono>
-#include <cstddef>
 #include <cstdlib>
 #include <exception>
 #include <filesystem>

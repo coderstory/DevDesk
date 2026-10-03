@@ -24,7 +24,6 @@
 
 #include <algorithm>
 #include <cctype>
-#include <cstddef>
 #include <cstdlib>
 #include <filesystem>
 #include <memory>
