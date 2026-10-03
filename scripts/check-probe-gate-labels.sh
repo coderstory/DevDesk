@@ -53,6 +53,17 @@ done
 TESTS_CMAKE="${ROOT}/tests/CMakeLists.txt"
 GATE_SCRIPT="${ROOT}/scripts/build-test-run.sh"
 
+# 门禁守卫登记表（断言 E 用）。**新增门禁守卫时必须同步登记到这里**，
+# 否则本守卫的 E1 会立刻报红——那道红是设计意图，不是误报：
+# 「加了一道门禁但没人为它的判据登记」等于没加。
+# 每行注释写明这道守卫在守什么，便于下一个加门禁的人照抄格式。
+REGISTERED_GUARDS=(
+    "scripts/check-module-isolation.sh"        # 模块隔离：settings 不反向依赖 pet
+    "scripts/check-quota-write-paths.sh"       # 余量落库唯一入口
+    "scripts/check-probe-gate-labels.sh"       # 本守卫自己
+    "scripts/check-windows-cross-compile.sh"   # Windows *_win.cpp 交叉编译（只验编译，不验运行时）
+)
+
 if [ ! -f "$TESTS_CMAKE" ]; then
     echo "❌ 找不到 ${TESTS_CMAKE}（--root 指错？）" >&2
     exit 2
@@ -108,6 +119,43 @@ check() {
         echo "FAIL 断言 D：门禁脚本里出现了 run-quota-live-probe.sh —— build-test-run.sh 是常规门禁入口，不得调用真网络探针"
         fail=1
     fi
+    # 断言 E：门禁里跑的每一道 check-*.sh 都必须在本守卫的登记表里。
+    # 为什么要这条：每加一道门禁都要登记，是因为「加了守卫但没人知道它存在 /
+    # 没人为它的判据负责」等于没加——check-probe-gate-labels.sh 的职责就是把
+    # 「默认门禁里到底有哪些检查」钉成可核对的清单。少登记 → 有人绕过登记直接
+    # 往门禁里塞脚本；多登记（本守卫列了但门禁没跑）→ 清单撒谎。
+    #   E1 反向：门禁里出现的每个 check-*.sh 都必须在登记表里（防绕过登记）
+    #   E2 正向：登记表里的每个都必须真被门禁调用（防清单撒谎 / 守卫被摘掉）
+    local guard_in_gate guard_in_registry
+    guard_in_gate="$(grep -oE 'scripts/check-[a-z0-9-]+\.sh' "$src" | sort -u)"
+    guard_in_registry="$(printf '%s\n' "${REGISTERED_GUARDS[@]}")"
+    local g
+    for g in $guard_in_gate; do
+        case "
+${guard_in_registry}
+" in
+            *"
+${g}
+"*) : ;;
+            *)
+                echo "FAIL 断言 E1：门禁调用了未登记的守卫 ${g} —— 新增门禁必须同时登记到 check-probe-gate-labels.sh"
+                fail=1
+                ;;
+        esac
+    done
+    for g in $guard_in_registry; do
+        case "
+${guard_in_gate}
+" in
+            *"
+${g}
+"*) : ;;
+            *)
+                echo "FAIL 断言 E2：登记表里的 ${g} 没有被门禁调用 —— 清单与实际不一致（守卫被摘掉，或登记写错）"
+                fail=1
+                ;;
+        esac
+    done
     if [ "$fail" -ne 0 ]; then
         echo "  文件: ${src}"
         return 1
@@ -126,9 +174,18 @@ if [ "$SELF_TEST" -eq 1 ]; then
         '        COMMAND bash "x/run-quota-live-probe.sh" "${CMAKE_BINARY_DIR}")' \
         '    set_tests_properties(quota_live_probe PROPERTIES LABELS "live")' \
         'endif()' > "$TMP/good/tests/CMakeLists.txt"
-    printf '%s\n' 'echo gate' > "$TMP/good/scripts/build-test-run.sh"
+    # 好树的门禁脚本必须**恰好**列出登记表里那四道守卫，否则断言 E2 会报红
+    # （好树自己不过 = 恒红守卫）。用 printf 从 REGISTERED_GUARDS 生成，
+    # 免得以后加第五道守卫时这里忘了同步。
+    # 注意：此处是**顶层**（--self-test 分支不在函数里），不能写 local ——
+    # `local: can only be used in a function` 会把这一行变成报错中断。
+    : > "$TMP/good/scripts/build-test-run.sh"
+    for g in "${REGISTERED_GUARDS[@]}"; do
+        printf 'bash %s\n' "$g" >> "$TMP/good/scripts/build-test-run.sh"
+    done
 
-    for bad in probe_probe_tag entry_missing gate_calls_probe; do
+    for bad in probe_probe_tag entry_missing gate_calls_probe \
+               unregistered_guard guard_missing_from_gate; do
         cp -R "$TMP/good" "$TMP/$bad"
         case "$bad" in
             probe_probe_tag)
@@ -143,6 +200,14 @@ if [ "$SELF_TEST" -eq 1 ]; then
             gate_calls_probe)
                 echo 'bash scripts/run-quota-live-probe.sh' >> "$TMP/$bad/scripts/build-test-run.sh"
                 ;;
+            # E1 坏树：门禁里塞了一道**没登记**的守卫 → 必须报红
+            unregistered_guard)
+                echo 'bash scripts/check-some-new-guard.sh' >> "$TMP/$bad/scripts/build-test-run.sh"
+                ;;
+            # E2 坏树：登记表里那道 windows 交叉编译守卫被门禁摘掉 → 必须报红
+            guard_missing_from_gate)
+                sed -i '' '/check-windows-cross-compile\.sh/d' "$TMP/$bad/scripts/build-test-run.sh"
+                ;;
         esac
     done
     cp -R "$TMP/good" "$TMP/probe_probe_tag_mixed"
@@ -155,7 +220,8 @@ if [ "$SELF_TEST" -eq 1 ]; then
         echo "  ❌ 好树：本该绿却红了 —— 守卫本身坏了（恒红守卫比没有守卫更糟）"
         ok=1
     fi
-    for bad in probe_probe_tag probe_probe_tag_mixed entry_missing gate_calls_probe; do
+    for bad in probe_probe_tag probe_probe_tag_mixed entry_missing gate_calls_probe \
+               unregistered_guard guard_missing_from_gate; do
         if check "$TMP/$bad/tests/CMakeLists.txt" "$TMP/$bad/scripts/build-test-run.sh" >/dev/null 2>&1; then
             echo "  ❌ 坏树 [$bad]：本该红却绿了 —— **假绿守卫**，断言无效"
             ok=1
