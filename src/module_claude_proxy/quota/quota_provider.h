@@ -35,7 +35,11 @@ namespace module::claude::quota {
 // 余量形态：
 //   Tiered  = 分周期配额（5 小时 / 周 / 月），数据在 `windows`
 //   Balance = 余额（预付费），数据在 `balanceRemaining` + `currency`，无周期无重置
-enum class QuotaKind { Tiered, Balance };
+// `Count` 是**哨兵**（取值个数，不是第三种形态），供 quota_home_view.cpp 的
+// 「QuotaKind 与 QuotaHomeKind 逐值同义」static_assert 对表——两份同义枚举
+// （quota_home_bridge.h 的中立副本）加值时若只改一处，那条断言立刻红。
+// 与 QuotaError::Count 同款理由：基准必须住在枚举里，手写计数会与枚举一起漂移。
+enum class QuotaKind { Tiered, Balance, Count };
 
 // 查询结果的状态（**唯一错误通道**，见文件头约定 2）。
 // 分类依据是「调用方该做什么」，不是 HTTP 码本身：
@@ -49,7 +53,22 @@ enum class QuotaKind { Tiered, Balance };
 //                 「可能过期」角标，不重试风暴）
 //   NotConfigured 该 profile 没配余量查询 / 配置不完整（缺字段）
 //                 → G7 不画 0% 条，引导用户去配置
-enum class QuotaError { None, Auth, Entitlement, Shape, Transient, NotConfigured };
+//
+// `Count` 是**哨兵，不是真实的错误**：它恒等于「取值个数」，供
+// quota_error_text.cpp 的 `static_assert(文案表长度 == Count)` 做编译期对表。
+// 加枚举值时它自动顶上去，那条断言**立刻**把构建打红，逼人当场给新错误配文案。
+// 为什么哨兵必须住在枚举里（静态审计 m4 / 上一批 m1 的同一个坑）：手写的
+// 「取值个数」常量与枚举可以一起漂移 —— 加了枚举忘了改常量，断言照样绿，
+// 等于没守卫。哨兵在枚举内部，加枚举必然改变它的值，这是唯一无法绕过的基准。
+enum class QuotaError {
+    None,
+    Auth,
+    Entitlement,
+    Shape,
+    Transient,
+    NotConfigured,
+    Count,   // ← 哨兵（表尾）。只用于对表，绝不作为错误值产生或落库。
+};
 
 // 单个配额窗口。key 是**规范键名**，全项目只有三个取值：
 //   "five_hour" / "weekly" / "monthly"
