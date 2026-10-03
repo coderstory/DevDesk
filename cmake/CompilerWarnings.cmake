@@ -31,7 +31,7 @@ function(devdesk_apply_warnings target_name)
         # EUI-NEO 头文件（theme.h/markdown.h 的聚合初始化）会触发该警告，
         # 属第三方代码：降级为非致命，DevDesk 自己的新增告警仍可见
         target_compile_options(${target_name} PRIVATE -Wno-error=missing-field-initializers)
-        # 以下四条是 Release 档（-O3）才出现的 GCC 误报，源头都不在 DevDesk 代码里，
+        # 以下五条是 Release 档（-O3）才出现的 GCC 误报，源头都不在 DevDesk 代码里，
         # 只降级为非致命（仍打印、不静默），理由逐条写死；且只对 GNU 生效——
         # 这些告警名是 GCC 专属（Clang 不认 `-Wstringop-overflow` 等，会以
         # -Wunknown-warning-option 反噬到无条件开启的 -Werror 上，把 macOS 构建打死）。
@@ -51,13 +51,34 @@ function(devdesk_apply_warnings target_name)
         #    整数转换告警，叠全仓 -Werror 即编译红；MSVC 的 NULL 是 0 不报。与前三条
         #    同一性质（MinGW 特有告警豁免），比 patch vendored 头干净（升级 0.59 时
         #    vendor 文件保持原样）。
+        # ⑤ -Wfree-nonheap-object：libstdc++ bits/new_allocator.h:183
+        #    （`operator delete(__p, __n)`，经 vector::~vector → _M_deallocate 内联进来）
+        #    在 tests/test_modules/test_claude_quota.cpp:453
+        #    （claude_quota_fields_empty_is_legal）报「called on pointer '__result'
+        #    with nonzero offset 72」。**误报，已实测排除真实非法释放**（2026-10-03）：
+        #    - 72 = sizeof(ProviderField)（两个 std::string + bool，实测 72），
+        #      即 GCC 沿 `__result + 72` 的指针算术累加出来的偏移，不是可疑魔数；
+        #    - 用**完全相同**的编译命令加 `-fno-exceptions` 重编该 TU，告警消失且 .o
+        #      正常产出 → 被诊断的 operator delete **只存在于异常清理 CFG**上；
+        #    - 优化后 GIMPLE 里该 delete 落在 `[local count: 0]` 的 EH 基本块，
+        #      且只有「已构造元素数 == 0」（游标 == 分配基址）时才可达，释放的就是
+        #      operator new 的返回值本身；同一条 CFG 上其余 delete 全部用基址指针。
+        #    机理：_UninitDestroyGuard 取 `&__result`（**栈上 SSA 槽的地址**，本就不是
+        #    堆对象），GCC 的 ptr_info 把它当成 __result 这个**指针值**的 base，
+        #    于是沿 +72 偏移后判成「对非堆地址 delete」。
+        #    为什么不用「改写法」绕开：实测该用例无论怎么写都必须调用按值返回的
+        #    fields()，都会生成同一个 vector 临时量；而告警是否出现取决于**整个 TU 的
+        #    内联形态**（delta-debug 从 41 个用例缩到 11 个才复现；单独抽成最小复现
+        #    程序则完全不报）。任何源码改写都只是碰运气改变优化器状态，GCC 升版即复发。
+        #    故按本文件既定方针走「误报一律进 -Wno-error= 白名单」（仍打印、不静默）。
         if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
             target_compile_options(${target_name} PRIVATE
                 -Wno-error=array-bounds
                 -Wno-error=restrict
                 -Wno-error=stringop-overflow
                 -Wno-error=alloc-size-larger-than=9223372036854775807
-                -Wno-error=conversion-null)
+                -Wno-error=conversion-null
+                -Wno-error=free-nonheap-object)
         endif()
     elseif(CMAKE_CXX_COMPILER_ID STREQUAL "MSVC")
         target_compile_options(${target_name} PRIVATE /W4)

@@ -56,7 +56,12 @@ std::string suggestImportName(const std::string& baseUrl) {
     std::time_t t = std::time(nullptr);
     std::tm tm{};
     core::time::localTime(t, &tm);
-    char buf[16];
+    // 缓冲区按「GCC 能证明的最坏情况」定尺，不按「实际日期有多长」定尺：
+    // 三个 int 型字段每个最多吐 11 字节（"-2147483648"），加两个分隔符与结尾
+    // '\0' = 11*3 + 2 + 1 = 36。写 16 会被 GCC -Wformat-truncation 判红
+    // （2026-10-03 用 GCC 16.2.0 + Release 档全仓扫出来的硬错；本文件是跨平台
+    // 编译单元，MinGW 侧同版本 GCC 同理会红，但**未在 Windows CI 上实测**）。
+    char buf[36];
     std::snprintf(buf, sizeof(buf), "%04d-%02d-%02d",
                   tm.tm_year + 1900, tm.tm_mon + 1, tm.tm_mday);
     return "导入 " + std::string(buf);
