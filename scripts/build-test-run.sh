@@ -444,14 +444,22 @@ if [ "$RUN_TEST" = "1" ]; then
     echo "⏭ 跳过（--filter 定点模式：probe 与该筛选无关）"
   else
     echo "── UI probe ──"
-    PROBE_OUT=$(cd "$BUILD_DIR" && ctest -L probe 2>&1) || true
+    # ⚠ **必须带 --output-on-failure**：ctest 默认只给失败清单，**不给失败原因**。
+    #   实测事故（2026-10-03）：CI 首跑 probe 14/14 全红，而日志里只有「0% tests
+    #   passed, 14 tests failed」和一行清单——**没有一个字说明为什么**，排查者只能
+    #   本地复现猜。这与本脚本曾经「构建失败也报成功」是同一类毛病：门禁报了状态，
+    #   却把决定状态的那部分信息丢了。失败原因必须落在 CI 日志里。
+    PROBE_OUT=$(cd "$BUILD_DIR" && ctest -L probe --output-on-failure 2>&1) || true
     echo "$PROBE_OUT" | grep -E "tests passed|tests failed" | tail -1
     # ⚠ 只认 "100% tests passed"：ctest 的失败列表在输出末尾，grep 漏了就静默绿。
     if echo "$PROBE_OUT" | grep -q "100% tests passed"; then
       echo "✅ UI probe 全绿"
     else
+      # 失败原因优先透出：probe 的 stderr 才是有用信息，失败清单次之
       echo "$PROBE_OUT" | grep -E "^\s+[0-9]+ - .*Failed" | head -20
-      echo "❌ UI probe 有失败（上方为失败清单；要看完整输出跑: cd $BUILD_DIR && ctest -L probe --output-on-failure）"
+      echo "──── probe 失败原因（前 60 行）────"
+      echo "$PROBE_OUT" | grep -vE "^\s*([0-9]+/[0-9]+|Test +#|Start +[0-9]+:)|: (Passed|Failed) +[0-9]" | head -60
+      echo "❌ UI probe 有失败（上方为失败清单与原因；本地复现: cd $BUILD_DIR && ctest -L probe --output-on-failure）"
       exit 1
     fi
   fi
