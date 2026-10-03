@@ -376,7 +376,13 @@ void drawQuotaCard(eui::Ui& ui, const core::theme::Tokens& t, float contentWidth
                         .fontWeight(600)
                         .color(t.colors.textPrimary)
                         .build();
-                    // ⚠ 按值捕获（同上：onClick 在 compose 返回后才触发）
+                    // ⚠ **按值捕获**（与下面的 openConfig 完全同款：compose 栈上的临时
+                    // `hooks` 不会被延活到 onClick 触发那一刻）。
+                    // 这一处的危险性不是「std::function 拷贝其实也安全」——
+                    // 真正的问题是：`Hooks` 一旦换成捕获 `this` 的 lambda
+                    // 变体，按引用捕获就是**真悬垂**、按下即崩，而这一行
+                    // 看上去与「传引用」毫无区别。写成 `auto refreshAll =
+                    // hooks.refreshAll` 是**显式意图**：此处要的是快照。
                     auto refreshAll = hooks.refreshAll;
                     components::button(ui, "home.quota.refresh")
                         .size(96.0f, 28.0f)

@@ -62,6 +62,7 @@ REGISTERED_GUARDS=(
     "scripts/check-quota-write-paths.sh"       # 余量落库唯一入口
     "scripts/check-probe-gate-labels.sh"       # 本守卫自己
     "scripts/check-windows-cross-compile.sh"   # Windows *_win.cpp 交叉编译（只验编译，不验运行时）
+    "scripts/check-quota-shutdown-order.sh"    # 余量链停机顺序（join → refresher → credentials → store）
 )
 
 if [ ! -f "$TESTS_CMAKE" ]; then
@@ -73,14 +74,22 @@ if [ ! -f "$GATE_SCRIPT" ]; then
     exit 2
 fi
 
-# 条目块 = 从 `add_test(NAME quota_live_probe` 起、到该 if/endif 块结束。
-# 取「往后 12 行」是够用的窄窗口：本文件里 add_test 与 set_tests_properties
-# 紧邻（中间只隔一个 COMMAND 续行），12 行足够覆盖且不会串到下一个条目。
+# 条目块 = 从 `add_test(NAME quota_live_probe` 起、到**下一个 `add_test(` 或文件尾**。
+#
+# ⚠ **为什么不能用固定行数窗口**（静态审计 M3 亲手构造的反证）：旧版取
+# 「往后 12 行」。把 `set_tests_properties(... LABELS "live")` 挪到第 20 行
+# （完全合法的 CMake 写法——中间插几行注释而已）→ 旧守卫**报绿，EXIT=0**，
+# 断言 B/C 双双失效而它毫无察觉。那不是「窗口不够宽」，是「窗口的宽度本身
+# 就是一条要人同步的隐式不变式」——正是本项目反复翻车的那类：守卫声称覆盖了
+# 某个失败模式，实现只覆盖了其中一个子形态。
+# 现在用 awk 状态机：块在下一个 `add_test(` 之前结束（或到文件尾）。
 block_for() {
     awk -v name="quota_live_probe" '
-        index($0, "add_test(NAME " name) { inblock = 1; n = 0 }
-        inblock { print; n++ }
-        inblock && n > 12 { inblock = 0 }
+        index($0, "add_test(") {
+            if (inblock) { inblock = 0 }          # 上一个块到此为止
+            if (index($0, "add_test(NAME " name)) { inblock = 1 }
+        }
+        inblock { print }
     ' "$1"
 }
 
@@ -213,6 +222,26 @@ if [ "$SELF_TEST" -eq 1 ]; then
     cp -R "$TMP/good" "$TMP/probe_probe_tag_mixed"
     sed -i '' 's/LABELS "live"/LABELS "probe;live"/' "$TMP/probe_probe_tag_mixed/tests/CMakeLists.txt"
 
+    # 坏树 ⑤（静态审计 M3）：标签写到 add_test 之后第 18 行 —— 必须报红。
+    # 这条钉住的是**守卫自身的健壮性**：旧版用「往后 12 行」的固定窗口，
+    # 一条 probe 标签挪出窗口，断言 B/C 双双看不见而守卫**报绿**——那正是
+    # 「真机探针被挂进默认门禁 = 一次 CI 真打四家供应商」的形态。形态完全
+    # 合法（add_test 与 set_tests_properties 之间插十几行注释没有任何问题），
+    # 恰恰是最容易被「整理一下」制造出来的那种。
+    # ⚠ 标签值必须是 **probe** 而不是 live：标签挪远了但值仍是 live，正确答案
+    # 本来就是绿 —— 用 live 造这条自测会得到一条「永远红」的自测，等于把守卫
+    # 变成恒红（比没有守卫更糟）。本条的判据是「窗口外的违规必须被看见」。
+    cp -R "$TMP/good" "$TMP/label_far_below"
+    {
+        printf '%s\n' 'if(UNIX)'
+        printf '%s\n' '    add_test(NAME quota_live_probe'
+        printf '%s\n' '        COMMAND bash "x/run-quota-live-probe.sh" "${CMAKE_BINARY_DIR}")'
+        # 填充到 add_test 之后第 18 行才写标签（旧守卫的 12 行窗口看不见它）
+        for i in $(seq 1 17); do printf '%s\n' "    # fill ${i}"; done
+        printf '%s\n' '    set_tests_properties(quota_live_probe PROPERTIES LABELS "probe")'
+        printf '%s\n' 'endif()'
+    } > "$TMP/label_far_below/tests/CMakeLists.txt"
+
     ok=0
     if check "$TMP/good/tests/CMakeLists.txt" "$TMP/good/scripts/build-test-run.sh"; then
         echo "  ✅ 好树：绿"
@@ -221,7 +250,7 @@ if [ "$SELF_TEST" -eq 1 ]; then
         ok=1
     fi
     for bad in probe_probe_tag probe_probe_tag_mixed entry_missing gate_calls_probe \
-               unregistered_guard guard_missing_from_gate; do
+               unregistered_guard guard_missing_from_gate label_far_below; do
         if check "$TMP/$bad/tests/CMakeLists.txt" "$TMP/$bad/scripts/build-test-run.sh" >/dev/null 2>&1; then
             echo "  ❌ 坏树 [$bad]：本该红却绿了 —— **假绿守卫**，断言无效"
             ok=1

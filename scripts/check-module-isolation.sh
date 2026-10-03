@@ -33,6 +33,18 @@
 #         settings 族为 ARCH-02/ARCH-04 补入（M2 静态审计）：app.read_settings
 #         是 M2 新增的第 3 个工具落点，名单此前只补了 claude ——第三处落点
 #         从此不再只靠人记
+#   D. module_home 隔离（2026-10-03 静态审计 B1）：首页余量卡经
+#      src/quota_home_bridge.h 这个中立头读 claude 侧数据。**链接层面**
+#      devdesk_module_home 依赖 devdesk_module_claude_proxy（nm -u 实测两个
+#      未定义符号，见 module_home/CMakeLists.txt 的显式声明），而静态库链接
+#      **顺序敏感**。本段把三件「注释里说过」的事变成会红的断言：
+#      7) src/module_home/*.{h,cpp} 不得 include 兄弟模块头
+#         （按 include 路径形态 = 带斜杠后缀；注释里的裸模块名不误报）
+#      8) src/module_home/*.{h,cpp} 不得定义/打开 `namespace module::claude`
+#         （它只能**消费**中立头里的类型与自由函数，不能往那个命名空间里加东西）
+#      9) **链接顺序**：顶层 CMakeLists.txt 的链接表里 devdesk_module_home
+#         必须排在 devdesk_module_claude_proxy 之前 —— 顺序颠倒 = 两个桥
+#         符号 undefined，且**不会有任何注释提醒你**（注释都在被它打破的文件里）
 #
 # 退出码：0 = 通过；1 = 违规（逐条打印 文件:行:命中行）；2 = 环境错（不得静默绿）
 #
@@ -239,11 +251,57 @@ for tool_file in "$ROOT/src/module_todo/todo_tools.h" \
     check_absent_fixed "$tool_file" 'module_agent/'
 done
 
+# ---- D. module_home 隔离（静态审计 B1）----
+# 为什么必须有：首页余量卡经 src/quota_home_bridge.h 中立头读 claude 侧数据，
+#   链接层面 devdesk_module_home 确实有两个未定义符号落在
+#   devdesk_module_claude_proxy 里（nm -u 实测）。姿态与 pet 桥/settings 同款：
+#   include 层中立、链接层由最终目标兜住。**代价是这个库不自洽**，于是：
+#     ① 谁把兄弟模块头 include 进 module_home/ → 依赖形状悄悄变了，无人报警
+#     ② 谁把链接表整理成字母序 → 两个符号 undefined
+#   两条都是「只有出事才看得见」的类型，所以写成断言。
+HOME_DIR="$ROOT/src/module_home"
+[ -d "$HOME_DIR" ] || { echo "环境错误：目录不存在: $HOME_DIR" >&2; exit 2; }
+home_files=0
+for home_file in "$HOME_DIR"/*.h "$HOME_DIR"/*.cpp; do
+    [ -f "$home_file" ] || { echo "环境错误：module_home 源文件缺失: $home_file" >&2; exit 2; }
+    home_files=$((home_files + 1))
+    # D7：兄弟模块头零 include（带斜杠的 include 路径形态；注释里的裸名不误报）
+    for sibling in module_markdown module_todo module_claude_proxy \
+                   module_settings module_pet module_agent; do
+        check_absent_fixed "$home_file" "${sibling}/"
+    done
+    # D8：不得打开/定义 module::claude 命名空间。home 只能**消费**中立头里的
+    # 类型与自由函数（`module::claude::quota::X` 调用形是允许的，那是消费）。
+    check_absent_fixed "$home_file" 'namespace module::claude'
+done
+[ "$home_files" -gt 0 ] || { echo "环境错误：module_home 下零个源文件" >&2; exit 2; }
+
+# D9：链接顺序。静态库链接顺序敏感 —— devdesk_module_home 排在
+# devdesk_module_claude_proxy **之后**时，quota_home_bridge 的两个桥符号
+#（listQuotaHomeRows / requestQuotaImmediateRefresh）undefined，构建期红。
+# 这一条以前只有 module_home/CMakeLists.txt 里的一段注释，而**注释挡不住
+# 有人把顶层链接表整理成字母序**（home < claude_proxy 本来就不是字母序）。
+TOP_CMAKE="$ROOT/CMakeLists.txt"
+[ -f "$TOP_CMAKE" ] && [ -r "$TOP_CMAKE" ] \
+    || { echo "环境错误：不可读 $TOP_CMAKE" >&2; exit 2; }
+read -r _home_line _proxy_line <<< "$(awk '
+    /devdesk_module_home[ \t]*$/ && !ln_h { ln_h = FNR }
+    /devdesk_module_claude_proxy[ \t]*$/ && !ln_p { ln_p = FNR }
+    END { printf "%s %s", (ln_h ? ln_h : 0), (ln_p ? ln_p : 0) }
+' "$TOP_CMAKE")"
+if [ "$_home_line" -eq 0 ] || [ "$_proxy_line" -eq 0 ]; then
+    # 两个库任一不在顶层链接表里 → 抽取失配。宁红勿静默绿：这正是「守卫
+    # 看不见自己要守的东西」的那类假绿。
+    report "$(rel "$TOP_CMAKE"):0:链接表里找不到 devdesk_module_home($_home_line)/devdesk_module_claude_proxy($_proxy_line) —— 链接顺序不变式无法断言（守卫失准）"
+elif [ "$_home_line" -ge "$_proxy_line" ]; then
+    report "$(rel "$TOP_CMAKE"):${_proxy_line}:devdesk_module_home（第 ${_home_line} 行）必须排在 devdesk_module_claude_proxy（第 ${_proxy_line} 行）**之前** —— 静态库链接顺序敏感，颠倒即 listQuotaHomeRows / requestQuotaImmediateRefresh undefined"
+fi
+
 # ---- 结论 ----
 if [ "$VIOLATIONS" -gt 0 ]; then
     echo "❌ 模块隔离守卫失败：$VIOLATIONS 处违规（上方 文件:行:命中行）" >&2
     exit 1
 fi
 
-echo "✅ 模块隔离守卫通过（settings_module.cpp 无 pet 依赖 / 头文件导出的 ${DECL_COUNT} 个桥调用齐全；CMakeLists 未 link 兄弟模块；module_agent 零兄弟 include 且工具方不回依赖）"
+echo "✅ 模块隔离守卫通过（settings_module.cpp 无 pet 依赖 / 头文件导出的 ${DECL_COUNT} 个桥调用齐全；CMakeLists 未 link 兄弟模块；module_agent 零兄弟 include 且工具方不回依赖；module_home ${home_files} 个源文件零兄弟 include、零 namespace module::claude 定义、链接顺序 home<claude_proxy）"
 exit 0

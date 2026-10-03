@@ -28,6 +28,27 @@
 
 namespace module::claude::quota {
 
+// ---- 两份同义枚举的同步闸（编译期，静态审计 m1）-------------------
+// quota_home_bridge.h 的 QuotaHomeKind 与 quota_provider.h 的 QuotaKind 是
+// 同一件事的两份枚举。桥头要保持中立（不能 include 供应商层头，那会把
+// platform/http_client.h 拖进 module_home），所以「加一个 QuotaKind 值忘了
+// 改 QuotaHomeKind」这条漂移在**任何头文件里都看不见** —— 两边都能编译、
+// 都能显示，只是慢慢不一致，且没有任何机制会告诉你（这正是中立头文件头注释
+// 里点名要避免的「两份真值源」）。
+//
+// 这里把漂移变成**编译期红**：加一个枚举值而忘了另一处 → 编译直接失败，
+// 强迫人当场改另一处并想清楚为什么。放在本 .cpp 而不是桥头，是因为只有这里
+// 两个枚举都可见；写在桥头只能写出一句自说自话的话。
+static_assert(static_cast<int>(QuotaKind::Tiered) ==
+                  static_cast<int>(QuotaHomeKind::Tiered) &&
+                  static_cast<int>(QuotaKind::Balance) ==
+                      static_cast<int>(QuotaHomeKind::Balance),
+              "QuotaKind 与 QuotaHomeKind 必须逐值同义：新增枚举值时两处都要改，"
+              "否则桥层解码出来的形态与渲染层理解的形态会静默错位");
+static_assert(static_cast<int>(QuotaKind::Balance) == 1,
+              "QuotaKind 新增值时，同步更新上面那条 static_assert 与 "
+              "quota_home_bridge.h 的 QuotaHomeKind（本断言是它的哨兵）");
+
 namespace {
 
 // 规范窗口键 → 中文标签。**未知键回落成 key 本身**（不返回空串：空标签会

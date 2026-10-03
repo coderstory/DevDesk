@@ -19,12 +19,20 @@
 //
 // 三条本类自带的不变量：
 //
-//   1. **先就绪、后唤醒**。落库完成 → **读回证明可读** → 才 requestUiUpdate。
-//      唤醒跑在结果可读之前，UI 抢跑消费掉唤醒位、脏标记已清 → 结果躺在
-//      内存里没人再上屏（批次 D 那个间歇复现的 bug）。本类复用
-//      module::claude::wakeAfterPublish（出口内**先探一次真实就绪**再唤醒）。
-//      ⚠ 就绪信号由**落库事实**驱动，不是紧挨着唤醒手动 set_value——
-//      后者是同线程相邻两行，恒真，断言的只是源码顺序（见 wakeSawReady 注释）。
+//   1. **先就绪、后唤醒**。落库完成 → 才 requestUiUpdate。唤醒跑在结果可读
+//      之前，UI 抢跑消费掉唤醒位、脏标记已清 → 结果躺在内存里没人再上屏
+//      （批次 D 那个间歇复现的 bug）。本类复用 module::claude::wakeAfterPublish
+//      （出口内**先探一次真实就绪**再唤醒）。
+//      ⚠ **这里没有「次序缝」用例，是刻意的**（静态审计 M1 的实测结论）：
+//      「落库后能不能把行读回来」在本实现下**恒为 true**（同一个 SqliteDb、
+//      同一把 recursive_mutex、中间无别的写者），是一条结构上不可能变红的量。
+//      实测两次变异：退回无条件 set_value → 全绿；把它**硬编码 false**（缝永远红）
+//      → **仍然全绿**。G5 那条缝的注释还明确声称「于是 DB 写坏了会让缝变红」，
+//      比原来那条恒真 set_value 更隐蔽。故连同 wakeSawReady_ 与那条断言一并删除。
+//      「先落库后唤醒」由**同一线程的语句次序**保证（直线代码、无分支、
+//      编译器不得重排有 data dependence 的语句）——无可交错点，故不写用例。
+//      批次 D 那个 bug 的真正成因是**落库失败路径仍在发唤醒**，那一条由
+//      `if (persisted.isFail()) return out;` 分支覆盖，**且有**测试。
 //
 //   2. **不引入第二把数据库连接**。构造收 QuotaStore&（它内部持全进程唯一那把
 //      SqliteDb&），本类自己不碰句柄、只经 store 走。
@@ -124,16 +132,7 @@ public:
     static bool isDue(const QuotaConfigRow& config, int64_t nowSec,
                       int64_t lastFetchedAt, bool manual = false);
 
-    // 就绪缝：最近一次唤醒发出时，结果是否**已经从库里读得回来**。
-    //
-    // 就绪信号由**落库事实**驱动（一次真实 `loadResult` 读回），不是紧挨着
-    // 唤醒手动 `set_value()`（评审 M1：旧写法两行相邻、无可交错点 → 恒为 true，
-    // 断言的其实是「源码里 set_value 写在前面」而不是「结果已就绪」）。
-    // 因此它抓的是**落库失败 / 行读不回来**，不是「唤醒跑到了落库前面」——
-    // 后者是同线程相邻语句的静态次序，编译器保证，不需要用例来盯。
-    bool wakeSawReady() const { return wakeSawReady_.load(std::memory_order_relaxed); }
-
-private:
+    private:
     void tickThreadLoop();
     // 单个 profile 的完整一轮：查配置 → 到点则取凭据查询 → 落库 → 唤醒 UI。
     RefreshRoundResult refreshProfile(int64_t profileId, int64_t nowSec,
@@ -149,17 +148,18 @@ private:
     std::atomic<bool> stopFlag_{false};
     std::thread tickThread_;
     // 本类自己发出的唤醒次数（用例用来断言「刷完确实请求了 UI 收割」，
-    // 而不是靠读源码顺序）。
+    // 而不是靠读源码顺序）。**计数不是布尔**：`sawReady` 那种量恒为真，
+    // 只有「发了几次」是真会变的（变异：把 fetch_add 删掉 → 用例红）。
     std::atomic<int64_t> wakeCount_{0};
-    std::atomic<bool> wakeSawReady_{false};
 };
 
 // 生产用：从全局注册表解析 provider 的适配器（findProvider 的薄包装）。
 // 空 provider_id / 未命中 → nullptr（调用方按 NotConfigured 走）。
 QuotaRefresher::ProviderResolver makeRegistryProviderResolver();
 
-// 次序缝的进程级读取口（用例用；返回最近一次唤醒是否见到已就绪的结果）。
-bool quotaRefresherWakeSawReadyForTest();
+// 进程级缝的读取口（用例用；返回本类累计发出的唤醒次数）。
+// ⚠ 这里**曾经**还有一个 quotaRefresherWakeSawReadyForTest()，已整条删除——
+// 它断言的量在当前实现下恒为 true（详见头注释不变量 1 与 refreshProfile ②）。
 int64_t quotaRefresherWakeCountForTest();
 void quotaRefresherResetTestSeams();
 

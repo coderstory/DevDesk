@@ -29,6 +29,15 @@ std::string quotaErrorHeadline(QuotaError kind, const std::string& detail) {
         case QuotaError::NotConfigured:
             head = "配置不完整，请去补全";
             break;
+        // m4：新增第 6 个 QuotaError 而忘了在这里加 case 时，switch 落空
+        // → head 为**空串**。落库侧（quota_store.cpp 的 lastError）没有兜底，
+        // 于是 last_error 落成空串，首页错误行画出**空白** —— 用户看到的是
+        // 「报错了但没有字」。这里显式给出兜底文案：宁可显示「未知错误」，
+        // 也不要静默画空（与 quota_home_view.cpp「未知键回落为 key 本身而非
+        // 编一个中文标签」同款取向：宁可难看，不编、不空）。
+        default:
+            head = "未知错误";
+            break;
     }
     if (detail.empty()) return head;
     return head + "：" + detail;

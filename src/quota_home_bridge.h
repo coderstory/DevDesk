@@ -59,7 +59,16 @@ enum class QuotaCardState {
     FailedNever,
 };
 
-// 余量形态（与 QuotaKind 同义；此处独立枚举以免中立头 include 供应商层头）。
+// 余量形态（与 quota_provider.h 的 QuotaKind 同义）。
+//
+// 为什么是两份枚举而不是直接用 QuotaKind：本头要保持**中立**——它不能把
+// 供应商层的头拖进来（quota_provider.h include 了 platform/http_client.h，
+// 而 module_home 不该为此依赖 platform 的 HTTP 头）。
+//
+// ⚠ 但「两份同义枚举」本身就是「改一处漏一处」的温床：给 QuotaKind 加一个值
+// 而忘了这里 → 编译期**零提示**，两边静默不一致。同步闸放在
+// **quota_home_view.cpp**（那里两个枚举都可见）的 static_assert 上——中立头
+// 看不到 QuotaKind，在它身上写断言只会写出一句自说自话的话（静态审计 m1）。
 enum class QuotaHomeKind { Tiered = 0, Balance = 1 };
 
 // 一个窗口的展示态。usedPercent 是**已用**百分比，且**已由桥 clamp 到 [0,100]**
