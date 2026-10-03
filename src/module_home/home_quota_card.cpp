@@ -532,12 +532,16 @@ void drawQuotaCard(eui::Ui& ui, const core::theme::Tokens& t, float contentWidth
                                             .text(statusTextFor(row))
                                             .fontSize(t.sizes.fontSizeSmall)
                                             .lineHeight(kHeadH)
-                                            // **单行盒不许把字画出盒**：maxWidth
-                                            // 只在 wrap=true 时生效（EUI-NEO
-                                            // text.cpp），而这一格是固定高单行、
+                                            // **单行盒不许把字画出盒**：EUI-NEO
+                                            // 现语义（dsl.h:150-152）是 Ellipsis
+                                            // 需 wrap==false 且 maxWidth>0——
+                                            // maxWidth 并非只在 wrap=true 生效
+                                            // （旧注释失实）。本格是固定高单行、
                                             // 不能换行（换行会把 kHeadH 撑破、
-                                            // 与 quotaRowHeight 的高度预算脱钩）。
-                                            // 故防溢只能靠 clip 剪裁。
+                                            // 与 quotaRowHeight 的高度预算脱钩），
+                                            // 且状态标签是有界枚举文案，故
+                                            // Ellipsis 批（8df78dc）按「内容受控」
+                                            // 判据保留本格 clip 剪裁。
                                             .clip()
                                             .color(showErr ? t.colors.error
                                                            : t.colors
