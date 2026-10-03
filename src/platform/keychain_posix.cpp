@@ -5,8 +5,12 @@
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
+#include <ios>
+#include <iterator>
 #include <set>
 #include <string>
+#include <system_error>
+#include <utility>
 
 namespace platform::keychain {
 

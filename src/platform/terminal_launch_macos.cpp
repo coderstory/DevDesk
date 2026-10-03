@@ -13,6 +13,7 @@
 #include <ctime>
 #include <filesystem>
 #include <fstream>
+#include <ios>
 #include <string>
 #include <sys/stat.h>
 #include <system_error>

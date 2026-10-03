@@ -55,6 +55,7 @@
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
+#include <ios>
 #include <map>
 #include <memory>
 #include <sstream>

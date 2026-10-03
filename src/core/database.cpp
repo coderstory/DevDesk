@@ -5,6 +5,7 @@
 
 #include <atomic>
 #include <ctime>
+#include <utility>
 
 #include <sqlite3.h>
 

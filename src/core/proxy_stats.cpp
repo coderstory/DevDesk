@@ -6,6 +6,7 @@
 #include <chrono>
 #include <map>
 #include <mutex>
+#include <utility>
 #include <vector>
 
 namespace core::proxy_stats {

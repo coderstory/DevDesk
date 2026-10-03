@@ -6,6 +6,7 @@
 #include "quota_store.h"
 
 #include <mutex>
+#include <optional>
 #include <utility>
 
 #include <sqlite3.h>   // sqlite3_changes（DELETE 影响行数）

@@ -4,6 +4,7 @@
 
 #include <atomic>
 #include <chrono>
+#include <cctype>
 #include <condition_variable>
 #include <cstring>
 #include <deque>

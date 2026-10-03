@@ -25,6 +25,7 @@
 #include <map>
 #include <mutex>
 #include <thread>
+#include <utility>
 
 namespace platform::http {
 

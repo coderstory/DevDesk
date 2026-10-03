@@ -9,6 +9,7 @@
 #include "platform/json.h"
 
 #include <string>
+#include <utility>
 #include <variant>
 
 namespace module::agent {

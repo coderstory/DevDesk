@@ -15,6 +15,7 @@
 
 #include <filesystem>
 #include <string>
+#include <system_error>
 #include <vector>
 
 REGISTER_TEST(file_open_directory_empty_rejected,

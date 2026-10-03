@@ -26,6 +26,7 @@
 #include <functional>
 #include <memory>
 #include <string>
+#include <utility>
 
 #include "claude_service.h"
 #include "platform/http_server.h"

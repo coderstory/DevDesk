@@ -61,7 +61,8 @@ REGISTERED_GUARDS=(
     "scripts/check-module-isolation.sh"        # 模块隔离：settings 不反向依赖 pet
     "scripts/check-quota-write-paths.sh"       # 余量落库唯一入口
     "scripts/check-probe-gate-labels.sh"       # 本守卫自己
-    "scripts/check-windows-cross-compile.sh"   # Windows *_win.cpp 交叉编译（只验编译，不验运行时）
+    "scripts/check-windows-cross-compile.sh"   # Windows CI 源文件集合交叉编译（只验编译，不验运行时）
+    "scripts/check-std-includes.sh"            # std 符号缺显式 include（跨标准库无关的静态判据）
     "scripts/check-quota-shutdown-order.sh"    # 余量链停机顺序（join → refresher → credentials → store）
 )
 

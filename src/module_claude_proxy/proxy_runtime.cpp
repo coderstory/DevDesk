@@ -16,6 +16,7 @@
 #include <iomanip>
 #include <random>
 #include <sstream>
+#include <utility>
 
 namespace module::claude {
 

@@ -29,6 +29,7 @@ using module::markdown::kEditorInputId;
 #include <filesystem>
 #include <fstream>
 #include <memory>
+#include <ratio>
 #include <string>
 #include <system_error>
 #include <vector>

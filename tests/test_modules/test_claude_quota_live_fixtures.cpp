@@ -35,6 +35,7 @@
 #include "quota/quota_error_text.h"
 #include "quota/quota_volcano.h"
 
+#include <cstddef>
 #include <string>
 #include <utility>
 #include <vector>

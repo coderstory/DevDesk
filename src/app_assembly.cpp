@@ -15,6 +15,8 @@
 #include <eui/dsl.h>
 #include <eui/dsl_app.h>  // app::requestShow / requestUpdate / requestExit
 
+#include <cstddef>
+#include <cstdlib>
 #include <string>
 #include <vector>
 

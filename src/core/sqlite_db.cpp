@@ -2,8 +2,10 @@
 #include "file_perms.h"
 #include "logging.h"
 
+#include <cstddef>
 #include <cstring>
 #include <sqlite3.h>
+#include <utility>
 
 namespace core::data {
 

@@ -16,6 +16,7 @@
 #include <eui/types.h>
 
 #include <chrono>
+#include <ratio>
 #include <string>
 #include <vector>
 

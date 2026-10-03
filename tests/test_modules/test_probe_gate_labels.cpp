@@ -24,6 +24,7 @@
 #include "doctest.h"
 
 #include <algorithm>
+#include <cctype>
 #include <filesystem>
 #include <fstream>
 #include <sstream>

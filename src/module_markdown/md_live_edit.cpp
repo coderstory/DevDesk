@@ -3,6 +3,8 @@
 #include "md_live_edit.h"
 
 #include <algorithm>
+#include <utility>
+#include <vector>
 
 namespace module::markdown {
 

@@ -33,6 +33,7 @@
 #include <chrono>
 #include <filesystem>
 #include <fstream>
+#include <ios>
 #include <memory>
 #include <string>
 #include <thread>

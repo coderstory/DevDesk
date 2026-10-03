@@ -1,5 +1,7 @@
 #include "theme.h"
 
+#include <utility>
+
 #include <eui/types.h>
 
 namespace core::theme {

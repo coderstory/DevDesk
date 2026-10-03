@@ -7,6 +7,7 @@
 #include <chrono>
 #include <filesystem>
 #include <optional>
+#include <system_error>
 #include <thread>
 #include <type_traits>
 

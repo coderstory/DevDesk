@@ -22,6 +22,7 @@
 
 #include <filesystem>
 #include <string>
+#include <utility>
 
 namespace module::markdown {
 

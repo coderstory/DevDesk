@@ -12,10 +12,13 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cctype>
+#include <cstdio>
 #include <ctime>
 #include <memory>
 #include <mutex>
 #include <string>
+#include <utility>
 
 namespace module::claude {
 

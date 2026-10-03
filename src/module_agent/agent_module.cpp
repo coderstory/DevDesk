@@ -47,6 +47,8 @@
 
 #include <algorithm>
 #include <functional>
+#include <system_error>
+#include <utility>
 
 #include <components/button.h>
 #include <components/dropdown.h>

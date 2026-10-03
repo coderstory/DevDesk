@@ -17,6 +17,7 @@
 
 #include <algorithm>
 #include <string_view>
+#include <utility>
 
 namespace module::markdown {
 

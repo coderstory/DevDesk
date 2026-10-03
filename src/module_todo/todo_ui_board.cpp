@@ -14,6 +14,7 @@
 #include <components/input.h>
 #include <components/scrollview.h>
 
+#include <algorithm>
 #include <string>
 #include <vector>
 

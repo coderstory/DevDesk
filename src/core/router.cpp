@@ -6,6 +6,7 @@
 // 空态兜底的绘制归属 app 层，结构性断言见 spec §4.2.1 + 审计 CP-01。
 
 #include <atomic>
+#include <utility>
 
 namespace core {
 

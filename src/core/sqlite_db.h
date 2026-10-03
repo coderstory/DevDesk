@@ -12,6 +12,7 @@
 // 也在锁内完成，调用方不必也不能自己兜一层。
 #pragma once
 
+#include <cstddef>
 #include <filesystem>
 #include <functional>
 #include <map>

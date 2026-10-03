@@ -18,6 +18,7 @@
 #include <cstdlib>
 #include <filesystem>
 #include <string>
+#include <system_error>
 #include <vector>
 
 namespace platform::terminal {

@@ -27,6 +27,7 @@
 
 #include <array>
 #include <cmath>
+#include <cstddef>
 #include <cstdint>
 
 namespace module::about {

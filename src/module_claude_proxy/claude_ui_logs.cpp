@@ -17,6 +17,7 @@
 #include <atomic>
 #include <chrono>
 #include <ctime>
+#include <exception>
 #include <functional>
 #include <future>   // promise / shared_future（先就绪、后唤醒）
 #include <memory>

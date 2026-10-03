@@ -16,8 +16,11 @@
 
 #include <filesystem>
 #include <fstream>
+#include <ios>
+#include <iterator>
 #include <set>
 #include <string>
+#include <utility>
 
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN

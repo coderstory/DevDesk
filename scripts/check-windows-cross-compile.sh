@@ -1,69 +1,92 @@
 #!/usr/bin/env bash
 # scripts/check-windows-cross-compile.sh
-# Windows 侧源码的**交叉编译**守卫（2026-10-03，欠账清偿批）
+# Windows CI 源文件集合的**交叉编译**守卫（2026-10-03 扩到全量源文件）
 #
-# ── 它在守什么 ─────────────────────────────────────────────────────
-# src/ 下 14 个 `*_win.cpp` 只在 CMake 的 `if(WIN32)` 分支里参与构建，而开发
-# 平台是 macOS。本地 macOS 构建**永远不编译它们**，于是「Windows 侧写错了」要等到
-# 两条很慢的路径之一才暴露：push 后的 GitHub Actions（10~18 分钟一轮），或
-# Windows 回归期。2026-10-02 新增的 credential_protection_win.cpp（DPAPI 密文入库）
-# 就属于「写完到 10-03 一次都没被任何编译器看过」那一档——静态审计只能逐行核对
-# 微软官方文档的签名，核对不等于编译。
+# ── 它在守什么（上一版的盲区，本版修的就是它）────────────────────────
+# 上一版只编 `*_win.cpp`（13 个），理由是「只有它们在 Windows 分支里参与构建，
+# macOS 本地编不到」。**这个假设是错的**：Windows CI 编的是**整棵树**，`quota_*`、
+# `claude_service.cpp`、`home_service.cpp` 这些**共享文件**它全编。2026-10-03 CI 就是
+# 在 `src/module_claude_proxy/quota/quota_store.cpp:43` 炸的（`std::optional` 缺
+# `#include <optional>`）——共享文件，本门禁旧版压根不编，红得毫无预警。
+# 本版把受编集合改成「**从 CMakeLists 解析出来的、WIN32 分支下真正参与构建的源
+# 文件**」，不再手写清单：手写清单必然会随新文件漂移，漂了就是又一次静默盲区。
 #
-# 本守卫把「Windows 源码能不能编过」这一条从 CI 拉回本地：装一条 MinGW 交叉链，
-# 就能在提交前几秒内验完。**它验的是编译，不是运行时**（边界见下）。
+# ── 解析规则（解析器本身也要能被检查，见下面的交叉校验）──────────────
+#   逐个 CMakeLists.txt 行扫：维护 if/elseif/else/endif 的分支栈，
+#   只要栈里没有"处在非 WIN32 分支"，就把该行里的 .cpp token 收进来。
+#   token 前缀解析：`${CMAKE_SOURCE_DIR}/` → 仓库根；`${…}`（其它变量）→ 跳过；
+#   裸 `x.cpp` → 相对该 CMakeLists 所在目录；`file(GLOB …)` 的通配结果跳过
+#   （守卫只保证「显式登记的源文件」，GLOB 的新文件要等 CMakeLists 真登记）。
+#   **三条交叉校验，任何一条不成立直接 exit 2**（宁可拒绝跑，不给假绿）：
+#     ① 解析结果非空且 ≥ 50 个文件；
+#     ② 磁盘上每个 `*_win.cpp` 都必须在解析结果里（解析器漏读 WIN32 分支 = 红）；
+#     ③ 解析结果里每个文件都必须真实存在（CMakeLists 写了不存在的文件 = 红）。
 #
-# ── 验到了什么 / 没验什么（边界，逐字对应任务书要求）────────────────
-#   ✅ 验到：Win32 API 名字拼错、签名/参数类型不对、缺 include、类型不匹配、
-#      隐式窄化告警、以及本仓库的 -Wall -Wextra -Wpedantic -Werror 全档告警。
-#      —— 这些过去要等 CI 才有反馈，现在本地几秒出结果。
-#   ❌ **验不到：任何运行时行为。** DPAPI 的 CryptProtectData 产出的密文对不对、
-#      CryptUnprotectData 能不能还原、跨用户/跨机器会怎样失败——交叉编译只产出
-#      .o，不执行一行代码。**「交叉编译通过」≠「DPAPI 行为正确」**，后者只有
-#      Windows 真机能验。本守卫通过 ≠ 该文件已验证。
-#   ❌ 验不到：链接期符号缺失（只编到 -c，不链接）、跨模块 ABI 不一致。
-#   ❌ 本批编不到：http_client_ca_win.cpp 需要 libcurl 头（llvm-mingw 不带，
-#      Homebrew mingw-w64 装不上），见下方 SKIP 清单——**如实标出，不假装验过**。
+# ── 编译方式：-fsyntax-only ──────────────────────────────────────────
+# 不链接，所以**不需要** sqlite3 / curl / openssl 的库，只需要头。头找不到怎么办：
+# **跳过 + 明确登记**，绝不静默，也**绝不造假 stub**——stub 是我们自己编的声明，
+# 编过了只能证明「对着我们编的声明编过了」，那是假绿，比不验更坏。机器上装了
+# 第三方头就自动纳入（见下面的探测顺序），没装就在输出里逐条列出「未验证 + 原因」。
+#
+# ── ⚠ 诚实边界：本机工具链 ≠ CI 的编译器 ────────────────────────────
+#   · 本机（macOS）用的是 **llvm-mingw 的 clang 前端 + libc++**；
+#     CI（windows-2025 runner）用的是 **MSYS2 MinGW64 的 GCC + libstdc++**。
+#   · 标准库不同 ⇒ 传递包含边界不同 ⇒ 「本机编得过」**推不出**「CI 编得过」。
+#     本批 CI 抓到的 `std::optional` 就是反例：libc++ 第 8 层传递带了 `<optional>`，
+#     libstdc++ 不带。**这类"缺标准头"的问题由 scripts/check-std-includes.sh 用
+#     与标准库无关的静态判据守**，本门禁不声称能覆盖它。
+#   · 诊断集合不同：clang 与 GCC 的告警不完全重合，-Werror 下两边可能一边绿一边红。
+#   · 结论：**本门禁通过 ≠ CI 一定绿**。它能可靠抓的是「Win32 API 拼错 / 签名不对 /
+#     类型不匹配 / 本仓库 -Werror 全档告警 / 缺 include（含 libcurl 这类第三方头）」，
+#     抓不到「只有 GCC 或只有 libstdc++ 才暴露的问题」。
+#   · 反过来它也有独占价值：Windows CI 的 runner 里 `x86_64-w64-mingw32-g++` **就在
+#     PATH 上**（MSYS2 MINGW64 的原生编译器），所以本门禁在 CI 上会**用真 GCC 原生
+#     跑一遍全量源文件**——那才是真正的 CI 同款检查，不是交叉近似。
 #
 # ── 为什么找不到工具链时退出 0 而不是红 ──────────────────────────────
-# 这是**故意的**，且必须如此：CI 的 Windows runner 装的是 MSYS2 MinGW（原生
-# x86_64，非交叉），macOS runner 没装任何 MinGW 交叉链；开发者的 Linux 机器
-# 也未必装。一个「别人机器上必红」的守卫会被立刻关掉，等于没写。所以：探测不到
-# 工具链 → 打印明确原因（含怎么装）→ 退出 0。**装了链还编不过才是红。**
+# 故意为之：macOS runner 没装 MinGW 交叉链，开发者的 Linux 机器也未必装。一个
+# 「别人机器上必红」的守卫会被立刻关掉。所以：探测不到工具链 → 打印原因（含装法）
+# → 退出 0。**装了链还编不过才是红。**
 #
 # ── --self-test：自证非恒真 ────────────────────────────────────────
-# 一个从不变红的守卫等于没写（仓库反复翻车的那类假绿）。本守卫的 --self-test：
-#   - 好树：拿真工具链编真源码 → 必须绿（证明"绿"是真绿，不是没干活）
-#   - 坏树 A：注入未定义符号 → 必须红（证明真在编译，不是恒真）
-#   - 坏树 B：注入未使用变量 → 必须红（证明 -Werror 真的开着）
-#   - 坏树 C：拼错 Win32 API 名 → 必须红（证明 Win32 符号解析真的在跑）
-#   - 断言：好树必须编出**非空 .o**（Total>=1 的同款纪律——"没报错"与"编出了东西"
-#     是两件事，空跑一遍的守卫会以 0 退出）
+#   好树：真源码必须编过，且**必须产出非空 .o**（走 -c 单独编一个文件：
+#         「没报错」与「编出了东西」是两件事，空跑一遍的守卫会以 0 退出）
+#   坏树 A：注入未定义符号 → 必须红
+#   坏树 B：注入未使用变量（-Werror 未用变量会失败）→ 必须红
+#   坏树 C：拼错 Win32 API 名 → 必须红
+#   坏树 D：解析器自检——把 CMakeLists 的 WIN32 分支改坏，受编集合必须变小/报错
+#   每条坏树都先 `diff` 断言**真的改了输入**（等价变异 = 零证据）。
 #
 # 退出码：0 = 通过（含"工具链缺失，显式跳过"）；1 = 有源码编不过；2 = 环境错
 #
 # 用法：bash scripts/check-windows-cross-compile.sh [--root DIR] [--self-test]
+#                                       [--jobs N] [--verbose] [--eui-neo DIR]
 set -uo pipefail
 
 usage() {
-    echo "用法: bash scripts/check-windows-cross-compile.sh [--root DIR] [--self-test]" >&2
+    echo "用法: bash scripts/check-windows-cross-compile.sh [--root DIR] [--self-test] [--jobs N] [--verbose] [--eui-neo DIR]" >&2
 }
 
 SELF="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(git -C "$SELF" rev-parse --show-toplevel 2>/dev/null || dirname "$SELF")"
 SELF_TEST=0
+VERBOSE=0
+JOBS="${DEVDESK_XCOMPILE_JOBS:-4}"
+EUI_NEO_DIR_ARG=""
 
 while [ "$#" -gt 0 ]; do
     case "$1" in
-        --root) ROOT="${2:-}"; shift 2 ;;
+        --root)     ROOT="${2:-}"; shift 2 ;;
         --self-test) SELF_TEST=1; shift ;;
-        -h|--help) usage; exit 0 ;;
+        --jobs)     JOBS="${2:-}"; shift 2 ;;
+        --eui-neo)  EUI_NEO_DIR_ARG="${2:-}"; shift 2 ;;
+        --verbose)  VERBOSE=1; shift ;;
+        -h|--help)  usage; exit 0 ;;
         *) usage; echo "未知参数：$1" >&2; exit 2 ;;
     esac
 done
 
 # ── 工具链探测（不硬编码任何版本号 / 路径）────────────────────────────
-# 顺序：显式环境变量 → PATH → ~/.local/llvm-mingw-* （glob，不锁版本号）
 find_toolchain() {
     if [ -n "${MINGW_CXX:-}" ] && command -v "$MINGW_CXX" >/dev/null 2>&1; then
         command -v "$MINGW_CXX"; return 0
@@ -94,165 +117,433 @@ CXXFLAGS=(
     -Wall -Wextra -Wpedantic -Werror
     -Wno-unused-parameter
     -Wno-error=missing-field-initializers
+    -fsyntax-only
 )
 
-# include 路径：只给 -I src 与各**目录自身**的 include 路径。
+# include 路径：与 CMake 里给 DevDesk / devdesk_tests 的那套一致（顶层
+# target_include_directories(DevDesk PRIVATE …) + devdesk_add_eui_includes）。
 # ⚠ 绝不给 -I src/core：src/core/time.h 会经 -I 优先级劫持系统 <time.h>/<ctime>
 #   （libc++ 内部链条实测编译爆炸）。core/CMakeLists.txt 里那条注释记的就是这件事。
-INCS=(-I "${ROOT}/src"
-      -I "${ROOT}/src/platform"
-      -I "${ROOT}/src/module_settings")
+build_incs() {
+    INCS=(-I "${ROOT}/src" -I "${ROOT}/src/platform"
+          -I "${ROOT}/src/module_home" -I "${ROOT}/src/module_markdown"
+          -I "${ROOT}/src/module_todo" -I "${ROOT}/src/module_claude_proxy"
+          -I "${ROOT}/src/module_settings" -I "${ROOT}/src/module_about"
+          -I "${ROOT}/src/module_pet" -I "${ROOT}/tests")
+    if [ -n "$EUI_DIR" ]; then
+        INCS+=(-I "${EUI_DIR}/include" -I "${EUI_DIR}"
+               -I "${EUI_DIR}/3rd/yyjson-0.12.0/src" -I "${EUI_DIR}/3rd/md4c/src")
+    fi
+    [ -d "${ROOT}/3rd/cpp-httplib" ] && INCS+=(-I "${ROOT}/3rd/cpp-httplib")
+    [ -n "$SQLITE_INC" ] && INCS+=(-I "$SQLITE_INC")
+    [ -n "$OPENSSL_INC" ] && INCS+=(-I "$OPENSSL_INC")
+    [ -n "$CURL_INC" ] && INCS+=(-I "$CURL_INC")
+}
 
-# ── 受编清单 ────────────────────────────────────────────────────────
-# 「源文件」+「额外 include 目录」（platform 下的文件要引 platform/ 里的兄弟头）。
-# 每条都用 CMake 的 if(WIN32) 分支实际选中的源，**不是**按文件名 glob 出来的——
-# glob 会把将来新增的、但 CMake 还没登记的文件也算进来，报一个与本守卫无关的红。
-TARGETS=(
-    "src/core/atomic_write_win.cpp"
-    "src/core/file_perms_win.cpp"
-    "src/core/paths_win.cpp"
-    "src/core/time_win.cpp"
-    "src/core/window_layout_win.cpp"
-    "src/module_settings/window_effect_hint_win.cpp"
-    "src/platform/credential_protection_win.cpp"
-    "src/platform/file_open_win.cpp"
-    "src/platform/file_watcher_win.cpp"
-    "src/platform/keychain_win.cpp"
-    "src/platform/system_theme_win.cpp"
-    "src/platform/terminal_launch_win.cpp"
-    "src/platform/tray_icon_win.cpp"
-)
+# EUI-NEO 定位（与 scripts/build-test-run.sh 同一套优先级，避免两边各认一份）：
+#   显式参数 → $EUI_NEO_DIR → 同级 ../EUI-NEO → git 主工作树同级
+# 第三条是 worktree 唯一能用的路径：worktree 里没有同级 ../EUI-NEO，要靠
+# git-common-dir 反推主工作树（只写 `${ROOT}/../EUI-NEO` 的话，worktree 下
+# 恒定找不到，EUI 相关文件会被整片记成「编不到」）。
+find_eui() {
+    local c common main_root
+    for c in "$EUI_NEO_DIR_ARG" "${EUI_NEO_DIR:-}"; do
+        if [ -n "$c" ] && [ -f "${c}/CMakeLists.txt" ]; then echo "$c"; return 0; fi
+    done
+    for c in "$(cd "$ROOT/.." 2>/dev/null && pwd)/EUI-NEO" "${ROOT}/../EUI-NEO"; do
+        if [ -f "${c}/CMakeLists.txt" ]; then (cd "$c" && pwd); return 0; fi
+    done
+    common="$(git -C "$ROOT" rev-parse --git-common-dir 2>/dev/null || true)"
+    if [ -n "$common" ]; then
+        case "$common" in /*) ;; *) common="${ROOT}/${common}" ;; esac
+        main_root="$(cd "$common/.." 2>/dev/null && pwd || true)"
+        if [ -n "$main_root" ] && [ -f "${main_root}/../EUI-NEO/CMakeLists.txt" ]; then
+            (cd "${main_root}/../EUI-NEO" && pwd); return 0
+        fi
+    fi
+    return 1
+}
 
-# 编不到 + 原因（**如实列出，不假装验过**）。要收口需先给工具链装 mingw-w64 的
-# libcurl 开发头（MSYS2: pacman -S mingw-w64-x86_64-curl）。
-SKIPPED=(
-    "src/platform/http_client_ca_win.cpp|需 libcurl 头（<curl/curl.h> + CURLSSLOPT_NATIVE_CA），llvm-mingw 不自带"
-)
+# 第三方头探测：显式环境变量 → brew prefix → pkg-config → 常见前缀。
+# 找不到不失败，只是把该库记进「编不到 + 原因」清单（如实登记，不静默）。
+first_existing_dir() { local d; for d in "$@"; do [ -n "$d" ] && [ -d "$d" ] && { echo "$d"; return 0; }; done; return 1; }
 
-# compile_one <file> <outdir> → 退出码即成败；日志落在 <outdir>/<base>.log
+find_sqlite() {
+    local p
+    if [ -n "${DEVDESK_XCOMPILE_SQLITE_INCLUDE:-}" ] && [ -f "${DEVDESK_XCOMPILE_SQLITE_INCLUDE}/sqlite3.h" ]; then
+        echo "${DEVDESK_XCOMPILE_SQLITE_INCLUDE}"; return 0
+    fi
+    p="$(command -v brew >/dev/null 2>&1 && brew --prefix sqlite 2>/dev/null)"
+    first_existing_dir "${p:+$p/include}" /opt/homebrew/opt/sqlite/include /usr/local/opt/sqlite/include
+}
+find_openssl() {
+    local p
+    if [ -n "${DEVDESK_XCOMPILE_OPENSSL_INCLUDE:-}" ] && [ -f "${DEVDESK_XCOMPILE_OPENSSL_INCLUDE}/openssl/ssl.h" ]; then
+        echo "${DEVDESK_XCOMPILE_OPENSSL_INCLUDE}"; return 0
+    fi
+    p="$(command -v brew >/dev/null 2>&1 && brew --prefix openssl@3 2>/dev/null)"
+    first_existing_dir "${p:+$p/include}" /opt/homebrew/opt/openssl@3/include /usr/local/opt/openssl@3/include
+}
+find_curl() {
+    local p
+    if [ -n "${DEVDESK_XCOMPILE_CURL_INCLUDE:-}" ] && [ -f "${DEVDESK_XCOMPILE_CURL_INCLUDE}/curl/curl.h" ]; then
+        echo "${DEVDESK_XCOMPILE_CURL_INCLUDE}"; return 0
+    fi
+    p="$(command -v brew >/dev/null 2>&1 && brew --prefix curl 2>/dev/null)"
+    first_existing_dir "${p:+$p/include}" /opt/homebrew/opt/curl/include /usr/local/opt/curl/include
+}
+
+EUI_DIR="$(find_eui || true)"
+SQLITE_INC="$(find_sqlite || true)"
+OPENSSL_INC="$(find_openssl || true)"
+CURL_INC="$(find_curl || true)"
+
+# DEVDESK_VERSION：tests/CMakeLists.txt 用 target_compile_definitions 注入它，
+# tests/test_modules/test_settings.cpp 有 `#error` 断言它存在。不注入的话门禁会
+# 把「门禁自己少传一个宏」误报成源码编译失败——那正是"环境错当代码错"。
+# 取值口径与顶层 CMakeLists 一致：VERSION 文件优先，缺失则 0.1.0。
+DEV_VERSION="0.1.0"
+[ -f "${ROOT}/VERSION" ] && DEV_VERSION="$(tr -d '[:space:]' < "${ROOT}/VERSION")"
+build_incs
+
+# 缺哪家的头 → 哪些 <hdr> 是「本机根本拿不到」的（编译失败时据此判跳过而非失败）
+MISSING_HDRS=""
+[ -z "$CURL_INC" ] && MISSING_HDRS="${MISSING_HDRS} curl/curl.h"
+[ -z "$SQLITE_INC" ] && MISSING_HDRS="${MISSING_HDRS} sqlite3.h"
+[ -z "$OPENSSL_INC" ] && MISSING_HDRS="${MISSING_HDRS} openssl/opensslv.h"
+[ -z "$EUI_DIR" ] && MISSING_HDRS="${MISSING_HDRS} eui/dsl.h"
+
+TMP="$(mktemp -d)"
+trap 'rm -rf "$TMP"' EXIT
+
+# ── 从 CMakeLists 解析 WIN32 分支下真正参与构建的源文件 ───────────────
+# awk 程序：分支栈 + .cpp token 收集。栈顶为 1 表示"当前不在 WIN32 分支"。
+CMAWK="$TMP/parse.awk"
+cat > "$CMAWK" <<'PARSE_EOF'
+# is_win <条件串> → 0 = 该分支是 Windows（0 表示"没有非 Windows 标记"）
+function is_win(a) {
+    if (a ~ /^[[:space:]]*NOT[[:space:]]/) return 1     # if(NOT WIN32) 是反的
+    if (a ~ /APPLE|DARWIN|UNIX|LINUX|POSIX|MSVC/) return 1
+    return 0
+}
+{ line = $0
+  sub(/#.*$/, "", line)                      # 去掉行注释（本仓 CMakeLists 无 # 出现在路径里）
+  nopen = 0; nclose = 0; switched = 0
+  rest = line
+  # ⚠ 必须连**条件一起**吃掉：`/if[ \t]*\(/` 只匹配到 "if("，于是 `if(WIN32)` 里
+  #   看不到 WIN32 → 整个 WIN32 分支被当成非 Windows → 受编集合里一个 *_win.cpp
+  #   都没有（靠"磁盘上每个 *_win.cpp 都必须在集合里"这条交叉校验抓到的）。
+  #   备选顺序按"长优先"排：POSIX 左most-最长，elseif(APPLE) 不会被拆成 else+if(。
+  while (match(rest, /elseif[ \t]*\([^)]*\)|if[ \t]*\([^)]*\)|endif[ \t]*\([^)]*\)|else/)) {
+    tok = substr(rest, RSTART, RLENGTH)
+    rest = substr(rest, RSTART + RLENGTH)
+    if (tok ~ /^elseif/) {
+      arg = tok; sub(/^elseif[ \t]*\(/, "", arg); sub(/\)[ \t]*$/, "", arg)
+      if (sp > 0) stack[sp] = is_win(arg)
+      switched++
+    } else if (tok ~ /^if/) {
+      arg = tok; sub(/^if[ \t]*\(/, "", arg); sub(/\)[ \t]*$/, "", arg)
+      stack[++sp] = is_win(arg); nopen++
+    } else if (tok ~ /^endif/) {
+      if (sp > 0) sp--
+      nclose++
+    } else {                                   # else / else()
+      if (sp > 0) { stack[sp] = 1; switched++ }
+    }
+  }
+  if (nopen > 0 || nclose > 0) next           # 结构行不放 .cpp（保险）
+  win = 1
+  for (i = 1; i <= sp; i++) if (stack[i]) win = 0
+  if (!win) next
+  n = split(line, toks, /[ \t()"]+/)
+  for (i = 1; i <= n; i++) {
+    t = toks[i]
+    if (t !~ /\.cpp$/) continue
+    if (t ~ /^\$\{/) {
+      if (t ~ /^\$\{CMAKE_SOURCE_DIR\}\//) t = substr(t, length("${CMAKE_SOURCE_DIR}") + 2)
+      else next                              # 其它变量（EUI_NEO_DIR 等）无法静态解析
+    }
+    if (t == "") next
+    dir = DIRNAME
+    if (t ~ /^\//) dir = ""                  # 绝对路径按仓库根处理
+    print (dir == "" ? t : dir "/" t)
+  }
+}
+PARSE_EOF
+
+derive_sources() {
+    local cl d
+    {
+        for cl in "$ROOT"/CMakeLists.txt "$ROOT"/src/*/CMakeLists.txt "$ROOT"/tests/CMakeLists.txt; do
+            [ -f "$cl" ] || continue
+            # 目录必须转成**相对 ROOT** 的形式：解析结果随后要按 ${ROOT}/${f}
+            # 拼路径，绝对路径会拼成 /root//abs/... 从而全被"文件不存在"过滤掉
+            # （踩过一次：只有根 CMakeLists 的 4 个文件活下来）。
+            d="${cl%/*}"
+            if [ "$d" = "$ROOT" ]; then d=""
+            else d="${d#"$ROOT"/}"; fi
+            awk -v DIRNAME="$d" -f "$CMAWK" "$cl"
+        done
+    } | LC_ALL=C sort -u | grep -v '^$' > "$TMP/sources.txt"
+
+    # 只保留本仓库里真实存在的 .cpp（解析出 ${EUI_NEO_DIR}/… 之类已被上面跳过）
+    : > "$TMP/sources_ok.txt"
+    local f
+    while IFS= read -r f; do
+        [ -f "${ROOT}/${f}" ] && echo "$f" >> "$TMP/sources_ok.txt"
+    done < "$TMP/sources.txt"
+}
+
+verify_source_set() {
+    local n f missing_win=""
+    n="$(grep -c . "$TMP/sources_ok.txt" || true)"
+    if [ "${n:-0}" -lt 50 ]; then
+        echo "❌ 解析出的 Windows 源文件只有 ${n:-0} 个（期望 ≥50）—— 解析器坏了，拒绝跑" >&2
+        echo "   解析产物（前 20 条）：" >&2
+        head -20 "$TMP/sources_ok.txt" >&2
+        return 1
+    fi
+    # 交叉校验 ②：磁盘上每个 *_win.cpp 都必须在集合里
+    for f in $(cd "$ROOT" && find src tests -name '*_win.cpp' -type f | LC_ALL=C sort); do
+        grep -qx "$f" "$TMP/sources_ok.txt" || missing_win="${missing_win} ${f}"
+    done
+    if [ -n "$missing_win" ]; then
+        echo "❌ 这些 *_win.cpp 存在于磁盘却没进受编集合（解析器漏读 WIN32 分支）：${missing_win}" >&2
+        return 1
+    fi
+    # 交叉校验 ③：集合里每个文件都存在（上面已过滤，这里断言没漏）
+    while IFS= read -r f; do
+        [ -f "${ROOT}/${f}" ] || { echo "❌ 受编集合里的文件不存在：$f" >&2; return 1; }
+    done < "$TMP/sources_ok.txt"
+    TOTAL_SRC="$n"
+    return 0
+}
+
+# compile_one <file> <outdir> → 0 编过；非 0 编不过（日志在 <outdir>/<base>.log）
 compile_one() {
     local file="$1" outdir="$2" base
-    base="$(basename "$file" .cpp)"
-    "$CXX" "${CXXFLAGS[@]}" -c "${ROOT}/${file}" "${INCS[@]}" \
+    base="$(echo "$file" | tr '/' '_')"
+    "$CXX" "${CXXFLAGS[@]}" "${INCS[@]}" "${ROOT}/${file}" \
         -o "${outdir}/${base}.o" >"${outdir}/${base}.log" 2>&1
 }
 
+# 该文件的失败是否**只**因为缺第三方头（是 → 跳过登记；否 → 真失败）
+only_missing_thirdparty() {
+    local log="$1"
+    local errs
+    errs="$(grep -c 'error:' "$log" 2>/dev/null || true)"
+    [ "${errs:-0}" -gt 0 ] || return 1
+    local e
+    while IFS= read -r e; do
+        local h
+        h="$(printf '%s\n' "$e" | sed -n "s/.*fatal error: '\([^']*\)' file not found.*/\1/p")"
+        [ -n "$h" ] || return 1
+        case " $MISSING_HDRS " in
+            *" $h "*) : ;;
+            *) return 1 ;;
+        esac
+    done < <(grep 'error:' "$log")
+    return 0
+}
+
+skip_reason_for() {
+    local log="$1"
+    grep -m1 -o "fatal error: '[^']*' file not found" "$log" 2>/dev/null \
+        | sed "s/fatal error: '//; s/' file not found//"
+}
+
+# =====================================================================
+# 正常路径
+# =====================================================================
+if [ "$SELF_TEST" -eq 0 ]; then
+    if [ -z "$CXX" ]; then
+        echo "Windows 交叉编译守卫：**跳过**（本机没装 MinGW 工具链）"
+        echo "  探测顺序：\$MINGW_CXX → PATH 的 x86_64-w64-mingw32-g++ → ~/.local/llvm-mingw-*/bin"
+        echo "  装法（macOS）：解包 llvm-mingw 预编译包到 ~/.local/llvm-mingw-<版本>/，或 pacman -S mingw-w64-x86_64-gcc。"
+        echo "  说明：macOS CI runner 同样没有这条链，所以**跳过是正确行为而非失败**。"
+        exit 0
+    fi
+
+    derive_sources
+    if ! verify_source_set; then exit 2; fi
+
+    echo "Windows 源文件交叉编译守卫：${CXX}"
+    "$CXX" --version | head -1 | sed 's/^/  /'
+    echo "  受编集合：从 CMakeLists 的 WIN32 分支解析出 ${TOTAL_SRC} 个源文件（src + tests，含共享文件）"
+    echo "  EUI-NEO：${EUI_DIR:-<未找到>}"
+    echo "  ⚠ 边界：本机是 clang + libc++，CI 是 MSYS2 GCC + libstdc++。"
+    echo "        标准库不同 ⇒ 传递包含边界不同 ⇒「本机编得过」推不出「CI 编得过」。"
+    echo "        缺标准头那一类由 scripts/check-std-includes.sh 用与标准库无关的静态判据守。"
+
+    mkdir -p "$TMP/obj"
+    : > "$TMP/obj/status.txt"
+    # 并行：每个 worker 编一个文件，状态行追加到 status.txt（O_APPEND 短写，安全）
+    # bash 数组不能 export，所以把 flags / incs 压成字符串传给 worker 再 split 回来。
+    FLAGS_STR="$(
+        printf '%s ' "${CXXFLAGS[@]}"
+        printf -- '-DDEVDESK_VERSION="%s" ' "$DEV_VERSION"
+    )"
+    INCS_STR="${INCS[*]}"
+    cat > "$TMP/worker.sh" <<'WORKER_EOF'
+#!/usr/bin/env bash
+set -u
+f="$1"; outdir="$2"; root="$3"
+read -r -a FLAGS <<< "${WCXXFLAGS_STR:-}"
+read -r -a INCS  <<< "${WCXXINCS_STR:-}"
+base="$(echo "$f" | tr '/' '_')"
+if "$WCXX" "${FLAGS[@]}" "${INCS[@]}" "${root}/${f}" -o "${outdir}/${base}.o" \
+       >"${outdir}/${base}.log" 2>&1; then
+    printf 'OK %s\n' "$f" >> "${outdir}/status.txt"
+else
+    printf 'FAIL %s\n' "$f" >> "${outdir}/status.txt"
+fi
+WORKER_EOF
+    chmod +x "$TMP/worker.sh"
+    (
+        export WCXX="$CXX" WCXXFLAGS_STR="$FLAGS_STR" WCXXINCS_STR="$INCS_STR" ROOT
+        xargs -P "$JOBS" -I{} /bin/bash "$TMP/worker.sh" {} "$TMP/obj" "$ROOT" \
+            < "$TMP/sources_ok.txt"
+    )
+
+    total=0; okc=0; failc=0; skipped=0
+    : > "$TMP/failed.txt"; : > "$TMP/skipped.txt"
+    while IFS= read -r line; do
+        case "$line" in
+            OK\ *)   total=$((total+1)); okc=$((okc+1)) ;;
+            FAIL\ *)
+                total=$((total+1))
+                f="${line#FAIL }"
+                if only_missing_thirdparty "$TMP/obj/$(echo "$f" | tr '/' '_').log"; then
+                    skipped=$((skipped+1))
+                    echo "${f}|缺 $(skip_reason_for "$TMP/obj/$(echo "$f" | tr '/' '_').log") 的头（本机没装该库，**未验证**）" >> "$TMP/skipped.txt"
+                else
+                    failc=$((failc+1))
+                    echo "$f" >> "$TMP/failed.txt"
+                fi
+                ;;
+        esac
+    done < "$TMP/obj/status.txt"
+
+    if [ "$total" -lt 1 ]; then
+        echo "❌ 编译结果 0 条（total=0）—— 守卫没有实际检查任何东西，拒绝报绿" >&2
+        exit 2
+    fi
+
+    echo "  ── 编过 ${okc} / 共 ${total}（含 ${skipped} 个因缺第三方头跳过）"
+    if [ "$VERBOSE" -eq 1 ]; then
+        grep '^OK ' "$TMP/obj/status.txt" | sed 's/^OK /     ✅ /' | head -20
+    fi
+    if [ "$skipped" -gt 0 ]; then
+        echo "  ── 编不到（如实列出，**未验证**；装上对应的头即自动纳入）："
+        while IFS= read -r s; do echo "     · ${s%%|*} —— ${s##*|}"; done < "$TMP/skipped.txt"
+    fi
+
+    if [ "$failc" -ne 0 ]; then
+        echo "❌ ${failc} 个 Windows 源文件交叉编译失败："
+        while IFS= read -r f; do
+            echo "     · $f"
+            grep -m3 'error:' "$TMP/obj/$(echo "$f" | tr '/' '_').log" 2>/dev/null | sed 's/^/         /'
+        done < "$TMP/failed.txt"
+        echo "   注意：这**只**说明编不过。DPAPI 密文正确性、DPAPI 解密能否还原等运行时"
+        echo "   行为，交叉编译一概验不到，仍需 Windows 真机。"
+        exit 1
+    fi
+
+    echo "✅ Windows CI 源文件集合（${total} 个）交叉编译全通过"
+    echo "   ⚠ 但这不等于「CI 一定绿」：本机 clang+libc++ ≠ CI 的 GCC+libstdc++（见文件头）。"
+    exit 0
+fi
+
+# =====================================================================
+# --self-test
+# =====================================================================
 if [ "$SELF_TEST" -eq 1 ]; then
     if [ -z "$CXX" ]; then
-        echo "❌ --self-test 需要真实的 MinGW 交叉链（当前探测不到）" >&2
+        echo "❌ --self-test 需要真实的 MinGW 工具链（当前探测不到）" >&2
         echo "   本守卫的'红'必须由**真编译**产生；没有工具链时 --self-test 无法自证，" >&2
         echo "   退出非 0 而不是假装通过。" >&2
         exit 2
     fi
-    TMP="$(mktemp -d)"
-    trap 'rm -rf "$TMP"' EXIT
+    ok=0
     echo "自测：工具链 = ${CXX}"
     "$CXX" --version | head -1 | sed 's/^/       /'
 
-    SRC_REL="src/platform/credential_protection_win.cpp"
-    ok=0
+    derive_sources
+    if verify_source_set; then
+        echo "  ✅ 解析器：受编集合 ${TOTAL_SRC} 个文件，三条交叉校验通过（非空 / 含全部 *_win.cpp / 文件都存在）"
+    else
+        echo "  ❌ 解析器：交叉校验失败"
+        ok=1
+    fi
 
-    # ── 好树：真源码必须编过，且必须产出非空 .o ──
-    if compile_one "$SRC_REL" "$TMP"; then
-        if [ -s "${TMP}/credential_protection_win.o" ]; then
-            echo "  ✅ 好树：绿（且产出非空 .o —— 真编了，不是没干活）"
+    SRC_REL="src/platform/credential_protection_win.cpp"
+
+    # ── 好树：真源码必须编过，且必须产出**非空 .o** ──
+    mkdir -p "$TMP/obj"
+    # 注意：这里刻意用 -c（不带 -fsyntax-only），好树要证明"真编出了东西"
+    if "$CXX" -std=c++20 -D_WIN32_WINNT=0x0A00 -DWINVER=0x0A00 \
+           -Wall -Wextra -Wpedantic -Werror -Wno-unused-parameter \
+           -Wno-error=missing-field-initializers \
+           -c "${ROOT}/${SRC_REL}" "${INCS[@]}" -o "$TMP/obj/good.o" \
+           >"$TMP/obj/good.log" 2>&1; then
+        if [ -s "$TMP/obj/good.o" ]; then
+            echo "  ✅ 好树：绿（且产出非空 .o $(wc -c < "$TMP/obj/good.o") 字节 —— 真编了，不是没干活）"
         else
-            echo "  ❌ 好树：退出码 0 但没产出 .o —— 假绿，守卫无效"
-            ok=1
+            echo "  ❌ 好树：退出码 0 但没产出 .o —— 假绿，守卫无效"; ok=1
         fi
     else
         echo "  ❌ 好树：本该绿却红了 —— 守卫本身坏了（恒红守卫比没有守卫更糟）"
-        sed 's/^/       /' "${TMP}/credential_protection_win.log" | head -5
+        head -5 "$TMP/obj/good.log" | sed 's/^/       /'
         ok=1
     fi
 
     # ── 坏树：每个都必须红，且必须真的改动了文件 ──
-    # 「等价变异不构成证据」：sed 没匹配上时产物与原文件逐字相同，编过是废话。
-    # 所以每个坏树先 diff 断言**确实被改过**，再要求编译红。
     declare -a BAD_NAMES=(undef_symbol unused_var typo_winapi)
     declare -a BAD_SEDS=(
         's|    return core::Result<std::string>::ok(std::move(plain));|    return notARealSymbol_xyz;|'
         's|const unsigned char c = static_cast<unsigned char>(ch);|const unsigned char c = static_cast<unsigned char>(ch); int unused_probe_xyz = 0;|'
         's|CryptUnprotectData(|CryptUnprotectDataTypoXYZ(|'
     )
-
     for i in "${!BAD_NAMES[@]}"; do
         name="${BAD_NAMES[$i]}"
-        mkdir -p "$TMP/$name/src/platform" "$TMP/$name/src/core"
-        sed "${BAD_SEDS[$i]}" "${ROOT}/${SRC_REL}" > "$TMP/$name/${SRC_REL}"
-        # 头文件靠 -I ROOT 才能找到，这里用真实 ROOT 的头，源码用变异体
-        if diff -q "${ROOT}/${SRC_REL}" "$TMP/$name/${SRC_REL}" >/dev/null 2>&1; then
-            echo "  ❌ 坏树 [$name]：sed 没匹配上（变异是空操作）—— 这条自测无效"
-            ok=1
-            continue
+        sed "${BAD_SEDS[$i]}" "${ROOT}/${SRC_REL}" > "$TMP/$name.cpp"
+        if diff -q "${ROOT}/${SRC_REL}" "$TMP/$name.cpp" >/dev/null 2>&1; then
+            echo "  ❌ 坏树 [$name]：sed 没匹配上（变异是空操作）—— 这条自测无效"; ok=1; continue
         fi
-        if "$CXX" "${CXXFLAGS[@]}" -c "$TMP/$name/${SRC_REL}" \
-               -I "${ROOT}/src" -I "${ROOT}/src/platform" \
-               -o "$TMP/$name/out.o" >"$TMP/$name/log" 2>&1; then
-            echo "  ❌ 坏树 [$name]：本该红却绿了 —— **假绿守卫**，断言无效"
-            ok=1
+        if "$CXX" "${CXXFLAGS[@]}" -I "${ROOT}/src" -I "${ROOT}/src/platform" \
+               -c "$TMP/$name.cpp" -I "${ROOT}/src" -I "${ROOT}/src/platform" \
+               -o "$TMP/$name.o" >"$TMP/$name.log" 2>&1; then
+            echo "  ❌ 坏树 [$name]：本该红却绿了 —— **假绿守卫**，断言无效"; ok=1
         else
             echo "  ✅ 坏树 [$name]：红（已确认变异真的改了源码）"
         fi
     done
 
+    # ── 坏树 D：解析器自检（反向变异）────────────────────────────────
+    # 正向（受编集合含全部 *_win.cpp）已在 verify_source_set 里查过；这里查反向：
+    # 解析器若把 APPLE/POSIX 独占分支也算进来，受编集合会混进 macOS 专有文件。
+    # 断言点是**集合内容**（真能改变行为的切点），不是「跑一遍没报错」。
+    n_before="$(grep -c . "$TMP/sources_ok.txt" || true)"
+    n_apple=0
+    while IFS= read -r f; do
+        case "$f" in *_macos.cpp|*_posix.cpp|*_stub.cpp|*_linux.cpp) n_apple=$((n_apple+1)) ;; esac
+    done < "$TMP/sources_ok.txt"
+    if [ "${n_apple:-0}" -eq 0 ]; then
+        echo "  ✅ 坏树 D：解析器没把 APPLE/POSIX 独占文件算进 Windows 集合（非 WIN32 分支读对了）"
+    else
+        echo "  ❌ 坏树 D：受编集合里混进了 ${n_apple} 个 macOS/POSIX 独占文件 —— 解析器把非 WIN32 分支也算进来了"
+        ok=1
+    fi
+    if [ "${n_before:-0}" -ge 50 ]; then
+        echo "       （受编集合 ${n_before} 个，规模下限断言同时成立）"
+    else
+        echo "  ❌ 受编集合只有 ${n_before:-0} 个，规模下限断言不成立"; ok=1
+    fi
+
+    if [ "$ok" -ne 0 ]; then
+        echo "❌ --self-test 失败：守卫不能自证有效" >&2
+    else
+        echo "✅ --self-test 通过：解析器有效 + 好树绿且产出非空 .o + 三条坏树红 + 分支读对（非恒真）"
+    fi
     exit "$ok"
 fi
-
-# ── 正常路径 ────────────────────────────────────────────────────────
-if [ -z "$CXX" ]; then
-    echo "Windows 交叉编译守卫：**跳过**（本机没装 MinGW 交叉链）"
-    echo "  探测顺序：\$MINGW_CXX → PATH 的 x86_64-w64-mingw32-g++ → ~/.local/llvm-mingw-*/bin"
-    echo "  装法（macOS）：解包 llvm-mingw 预编译包到 ~/.local/llvm-mingw-<版本>/，"
-    echo "                或 pacman -S mingw-w64-x86_64-gcc（MSYS2）。"
-    echo "  说明：CI 的 macOS runner 同样没有这条链，所以**跳过是正确行为而非失败**。"
-    echo "        注意这只验得了编译——DPAPI 等运行时行为仍需 Windows 真机。"
-    exit 0
-fi
-
-echo "Windows 交叉编译守卫：${CXX}"
-"$CXX" --version | head -1 | sed 's/^/  /'
-
-OUT="$(mktemp -d)"
-trap 'rm -rf "$OUT"' EXIT
-
-total=0; okc=0; failc=0; failed_list=""
-for f in "${TARGETS[@]}"; do
-    [ -f "${ROOT}/${f}" ] || { echo "❌ 清单里的文件不存在：${f}" >&2; exit 2; }
-    total=$((total + 1))
-    if compile_one "$f" "$OUT"; then
-        okc=$((okc + 1))
-        printf '  ✅ %s\n' "$f"
-    else
-        failc=$((failc + 1))
-        failed_list="${failed_list} ${f}"
-        printf '  ❌ %s\n' "$f"
-        grep -E 'error:' "$OUT/$(basename "$f" .cpp).log" 2>/dev/null | head -5 | sed 's/^/       /'
-    fi
-done
-
-# Total>=1 纪律：清单全空时"0 失败"是假绿，直接判环境错。
-if [ "$total" -lt 1 ]; then
-    echo "❌ 受编清单为空（total=0）—— 守卫没有实际检查任何东西，拒绝报绿" >&2
-    exit 2
-fi
-
-echo "  ── 编译 ${okc}/${total} 通过"
-if [ "${#SKIPPED[@]}" -gt 0 ]; then
-    echo "  ── 编不到（如实列出，未验证）："
-    for s in "${SKIPPED[@]}"; do
-        echo "     · ${s%%|*} —— ${s##*|}"
-    done
-fi
-
-if [ "$failc" -ne 0 ]; then
-    echo "❌ ${failc} 个 Windows 源文件交叉编译失败：${failed_list}"
-    echo "   注意：这**只**说明编不过。DPAPI 密文正确性、DPAPI 解密能否还原等运行时"
-    echo "   行为，交叉编译一概验不到，仍需 Windows 真机。"
-    exit 1
-fi
-
-echo "✅ Windows 侧源码交叉编译全通过（${total} 个文件）"
-echo "   边界：验的是**编译**（API 存在 / 签名对 / 类型匹配 / -Werror 全档告警），"
-echo "         不是运行时。DPAPI 行为仍需 Windows 真机验证。"
-exit 0
