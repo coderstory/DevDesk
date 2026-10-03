@@ -1,12 +1,16 @@
 // tests/test_modules/test_ccswitch_import.cpp
 // 从 cc-switch 导入 Profile：映射纯函数 + 只读读侧 —— 用例
 //
-// 被测：src/module_claude_proxy/ccswitch_import.{h,cpp}
+// 被测：src/module_claude_proxy/ccswitch_import.{h,cpp} + claude_ui_ccswitch.cpp
 //   ① 纯映射函数（mapCcSwitchProviderToProfile）：settings_config JSON → Profile 字段，
 //      覆盖映射表全字段 + 边界（只 API_KEY 无 TOKEN / 缺 base_url / 无密钥跳过 /
 //      双 key 未用值保留 / 同名冲突 / 非法 JSON / 空名称）。
 //   ② 读侧（listCcSwitchImportRows）：**只读打开**临时库，筛选
 //      app_type IN ('claude','claude-desktop')，其余 app_type 忽略。
+//   ③ 编排层（confirmCcSwitchImport，审计 M5）：勾选过滤 → 计数聚合 →
+//      失败不中断 → 结果报告结构 → 标脏/toast 时机 → 二段写半失败事后状态
+//      → 无服务早退。经 ClaudeService::setGlobal 注入真服务 + 临时库直接驱动，
+//      零生产测试缝。
 //
 // 夹具策略（同 test_claude_quota_ccswitch.cpp）：全部自建临时 sqlite 库
 //（用 sqlite3 C API 建表插行），经 CCSWITCH_DB_PATH 指路；**绝不碰**用户真实的
@@ -20,13 +24,16 @@
 
 #include "core/logging.h"
 #include "module_claude_proxy/ccswitch_import.h"
+#include "module_claude_proxy/claude_ui_ccswitch.h"   // ③ 编排层入口（透出 claude_service.h）
 #include "quota/ccswitch_source.h"
 
 #include <sqlite3.h>
 
 #include <algorithm>
 #include <filesystem>
+#include <memory>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace {
@@ -406,5 +413,389 @@ REGISTER_TEST(ccswitch_import_reads_raw_config,
     DOCTEST_CHECK(rows.status == CcSwitchImportStatus::Ok);
     DOCTEST_REQUIRE_EQ(rows.rows.size(), static_cast<std::size_t>(1));
     DOCTEST_CHECK_EQ(rows.rows[0].settingsConfig, json);
+    return true;
+})
+
+// ==================== ③ 编排层（confirmCcSwitchImport，审计 M5）====================
+//
+// 审计 M5（.superpowers/sdd/2026-10-03-quota/ccswitch-import-audit.md §5）：
+// confirmCcSwitchImport 的 ~90 行编排（勾选过滤 → 带 existingNames 重映射 →
+// createProfile → 失败收集 → 二段补写 → 结果报告 → 标脏/toast）零测试覆盖
+// （probe 故意不点确认避免污染，映射单测够不着 global 单例）。
+//
+// 测试形态：**直接驱动自由函数**——它不依赖窗口（入参 = 状态结构体 +
+// existingProfiles + hooks 回调），ClaudeService 经 setGlobal 注入真服务 +
+// 临时库（test_claude_ui.cpp TestEnv 同款 RAII 形态，该文件不改不引）。
+// 无需 headless ui、无需改任何生产代码（零测试缝）。
+//
+// 范围纪律：映射层已钉住的语义（同名/缺 base_url/缺密钥 skip 的判定本身）
+// 在 ① 已覆盖，这里**不重复**；本节只测编排层独有的聚合行为——多结果混合
+// 计数、失败不中断后续条目、结果报告结构与顺序、标脏调用时机、二段写
+// 半失败的事后状态、无服务早退。
+//
+// 密钥纪律同上：夹具一律假串（sk-ccswitch-test-*）；hooks 捕获的 toast
+// 文案里断言不含 "sk-"（失败原因不携带密钥）。
+
+namespace {
+
+// RAII：临时库 + 注册全局 ClaudeService（析构一定解除注册，防悬垂污染后续
+// 用例；test_main 的 resetCaseGlobals 是兜底，不是本夹具的替代）
+struct CcSwitchConfirmEnv : test_support::TestDb {
+    std::unique_ptr<module::claude::ClaudeService> svc;
+
+    CcSwitchConfirmEnv()
+        : test_support::TestDb("devdesk_test_ccswitch_confirm_", "") {
+        svc = std::make_unique<module::claude::ClaudeService>(
+            db->db(), "DevDeskTestCcSwitchConfirm");
+        module::claude::ClaudeService::setGlobal(svc.get());
+    }
+    ~CcSwitchConfirmEnv() {
+        module::claude::ClaudeService::setGlobal(nullptr);
+    }
+};
+
+// hooks 捕获器：markDataDirty 调用次数 + toast 三元组逐次记录
+struct HookRecorder {
+    int dirtyCalls = 0;
+    std::vector<std::string> toastTitles;
+    std::vector<std::string> toastMsgs;
+    std::vector<bool> toastErrors;
+
+    module::claude::CcSwitchImportDialogHooks hooks() {
+        return module::claude::CcSwitchImportDialogHooks{
+            [this] { ++dirtyCalls; },
+            [this](const std::string& title, const std::string& msg, bool err) {
+                toastTitles.push_back(title);
+                toastMsgs.push_back(msg);
+                toastErrors.push_back(err);
+            }};
+    }
+};
+
+// 一行候选：name + settings_config 原文（settingsConfigWith 产）
+struct Candidate {
+    std::string name;
+    std::string settingsConfig;
+};
+
+// 装配弹窗状态（rows/mappings/selected 三向量同长对齐；confirm 不读
+// mappings_（确认时带 existingNames 重映射），这里按 open 语义填齐，
+// 保持 claude_ui_state.h 声明的不变式）
+module::claude::CcSwitchImportDialogState makeConfirmState(
+    const std::vector<Candidate>& candidates,
+    const std::vector<bool>& selected) {
+    module::claude::CcSwitchImportDialogState st;
+    st.open_ = true;
+    st.loaded_ = true;
+    for (std::size_t i = 0; i < candidates.size(); ++i) {
+        const Candidate& c = candidates[i];
+        st.rows_.push_back(
+            {"id-" + std::to_string(i), "claude", c.name, c.settingsConfig});
+        st.mappings_.push_back(
+            mapCcSwitchProviderToProfile(c.name, c.settingsConfig));
+        st.selected_.push_back(selected.empty() ? true : selected[i]);
+    }
+    return st;
+}
+
+// 按名取 profile（找不到返回 nullptr）
+const module::claude::Profile* findProfile(
+    const std::vector<module::claude::Profile>& profiles,
+    const std::string& name) {
+    for (const module::claude::Profile& p : profiles) {
+        if (p.name == name) return &p;
+    }
+    return nullptr;
+}
+
+}  // namespace
+
+// ---- ③-1 全部成功：计数 / 行序报告 / 标脏 / toast / 二段写落库 / 首建激活 ----
+
+REGISTER_TEST(ccswitch_confirm_all_success,
+              "ccswitch 编排：全部成功 2 条 → 2/0/0 + 行序报告 + 标脏一次 + toast「导入成功」+ 二段写落库 + 首条自动激活", {
+    CcSwitchConfirmEnv env;
+    HookRecorder rec;
+    // Alpha 带额外 env + 顶层设置（触发二段补写 updateProfile）；Beta 纯净
+    const std::vector<Candidate> candidates = {
+        {"Alpha", settingsConfigWith("https://a.example.com", kFakeToken, "", "model-a",
+                                     "\"ANTHROPIC_DEFAULT_SONNET_MODEL\":\"m\"",
+                                     "\"theme\":\"dark\"")},
+        {"Beta", settingsConfigWith("https://b.example.com", kFakeToken, "", "",
+                                    std::string(), std::string())},
+    };
+    module::claude::CcSwitchImportDialogState st =
+        makeConfirmState(candidates, {});
+
+    module::claude::confirmCcSwitchImport(st, /*existingProfiles=*/{},
+                                          rec.hooks());
+
+    DOCTEST_CHECK_EQ(st.resultSuccess_, 2);
+    DOCTEST_CHECK_EQ(st.resultSkipped_, 0);
+    DOCTEST_CHECK_EQ(st.resultFailed_, 0);
+    DOCTEST_REQUIRE_EQ(st.resultLines_.size(), static_cast<std::size_t>(2));
+    DOCTEST_CHECK_EQ(st.resultLines_[0], std::string("成功：Alpha"));
+    DOCTEST_CHECK_EQ(st.resultLines_[1], std::string("成功：Beta"));  // 行序 = 候选序
+    // 标脏无条件一次（claude_ui_ccswitch.h 口径：0 成功也刷新列表）
+    DOCTEST_CHECK_EQ(rec.dirtyCalls, 1);
+    // toast：无失败无跳过 → 「导入成功」档、非错误
+    DOCTEST_REQUIRE_EQ(rec.toastTitles.size(), static_cast<std::size_t>(1));
+    DOCTEST_CHECK_EQ(rec.toastTitles[0], std::string("导入成功"));
+    DOCTEST_CHECK_EQ(rec.toastMsgs[0], std::string("已导入 2 条 Profile"));
+    DOCTEST_CHECK_FALSE(rec.toastErrors[0]);
+    DOCTEST_CHECK(rec.toastMsgs[0].find("sk-") == std::string::npos);
+    // DB 侧效应：两条都落库；Alpha 的 extraEnv/extraSettings 落上——二段
+    // 补写真跑过（createProfile 不写 extra_env 列，只有 updateProfile 补写）
+    auto listR = env.svc->listProfiles();
+    DOCTEST_REQUIRE(listR.isOk());
+    const std::vector<module::claude::Profile> profiles =
+        std::move(listR).value();
+    DOCTEST_REQUIRE_EQ(profiles.size(), static_cast<std::size_t>(2));
+    const module::claude::Profile* alpha = findProfile(profiles, "Alpha");
+    const module::claude::Profile* beta = findProfile(profiles, "Beta");
+    DOCTEST_REQUIRE(alpha != nullptr);
+    DOCTEST_REQUIRE(beta != nullptr);
+    DOCTEST_CHECK(alpha->extraEnvJson.find("ANTHROPIC_DEFAULT_SONNET_MODEL") !=
+                  std::string::npos);
+    DOCTEST_CHECK(alpha->extraSettingsJson.find("\"theme\"") != std::string::npos);
+    DOCTEST_CHECK_EQ(beta->extraEnvJson, std::string(""));
+    // 编排传 activateIfNoneActive=true：首条自动激活、第二条不抢占
+    DOCTEST_CHECK(alpha->isActive);
+    DOCTEST_CHECK_FALSE(beta->isActive);
+    return true;
+})
+
+// ---- ③-2 混合：UNIQUE 竞态失败 + 成功 + 同名跳过（失败在前，证明不中断）----
+
+REGISTER_TEST(ccswitch_confirm_mixed_counts_and_no_abort,
+              "ccswitch 编排：竞态失败→成功→同名跳过混合 → 1/1/1 计数、失败原因进报告、失败不中断后续", {
+    CcSwitchConfirmEnv env;
+    HookRecorder rec;
+    // 预置 Base（进 existing 名单 → 确认时同名跳过）
+    auto baseR = env.svc->createProfile(
+        "Base", "https://base.example.com", kFakeToken, "", /*activate=*/true,
+        /*sharedConfigId=*/0, "bearer", "", /*fallbackProfileId=*/0, "");
+    DOCTEST_REQUIRE(baseR.isOk());
+    // 真实 UNIQUE 竞态路径：UI 确认回调在点击时读一次 listProfiles；读到之后、
+    // confirm 之前别的窗口建了 Ghost → confirm 拿着过期名单进来，映射放过
+    // Ghost、INSERT 撞 UNIQUE → 落「失败」桶（审计批 ① 口径：失败桶留给
+    // 可重试/系统错误，UNIQUE 竞态正属此类）
+    auto existingR = env.svc->listProfiles();
+    DOCTEST_REQUIRE(existingR.isOk());
+    std::vector<module::claude::Profile> existing = std::move(existingR).value();
+    auto ghostR = env.svc->createProfile(
+        "Ghost", "https://ghost.example.com", kFakeToken, "", true, 0, "bearer",
+        "", 0, "");
+    DOCTEST_REQUIRE(ghostR.isOk());
+
+    // 行序故意失败在前：Ghost 失败后 Fresh 仍要被处理（失败不中断）
+    const std::vector<Candidate> candidates = {
+        {"Ghost", settingsConfigWith("https://ghost.example.com", kFakeToken,
+                                     "", "", std::string(), std::string())},
+        {"Fresh", settingsConfigWith("https://fresh.example.com", kFakeToken,
+                                     "", "", std::string(), std::string())},
+        {"Base", settingsConfigWith("https://base.example.com", kFakeToken, "",
+                                    "", std::string(), std::string())},
+    };
+    module::claude::CcSwitchImportDialogState st =
+        makeConfirmState(candidates, {});
+
+    module::claude::confirmCcSwitchImport(st, existing, rec.hooks());
+
+    DOCTEST_CHECK_EQ(st.resultSuccess_, 1);
+    DOCTEST_CHECK_EQ(st.resultSkipped_, 1);
+    DOCTEST_CHECK_EQ(st.resultFailed_, 1);
+    DOCTEST_REQUIRE_EQ(st.resultLines_.size(), static_cast<std::size_t>(3));
+    // 失败原因进报告（createProfile 的 UNIQUE 文案），不带密钥
+    DOCTEST_CHECK_EQ(st.resultLines_[0].find("失败：Ghost（"),
+                     static_cast<std::size_t>(0));
+    DOCTEST_CHECK(st.resultLines_[0].find("已存在") != std::string::npos);
+    DOCTEST_CHECK(st.resultLines_[0].find("sk-") == std::string::npos);
+    // 失败之后的成功条目照常处理（不中断）
+    DOCTEST_CHECK_EQ(st.resultLines_[1], std::string("成功：Fresh"));
+    DOCTEST_CHECK_EQ(st.resultLines_[2].find("跳过：Base（"),
+                     static_cast<std::size_t>(0));
+    DOCTEST_CHECK(st.resultLines_[2].find("同名") != std::string::npos);
+    DOCTEST_CHECK_EQ(rec.dirtyCalls, 1);   // 部分成功也标脏（列表要出新条目）
+    // 有失败 → toast 错误档 + 三计数 + 总数
+    DOCTEST_REQUIRE_EQ(rec.toastTitles.size(), static_cast<std::size_t>(1));
+    DOCTEST_CHECK_EQ(rec.toastTitles[0], std::string("导入完成（有失败）"));
+    DOCTEST_CHECK_EQ(rec.toastMsgs[0],
+                     std::string("成功 1 / 跳过 1 / 失败 1（共 3 条）"));
+    DOCTEST_CHECK(rec.toastErrors[0]);
+    // DB：Fresh 真落库（成功 = 真写了）；Ghost/Base 各一条（预置）
+    auto listR = env.svc->listProfiles();
+    DOCTEST_REQUIRE(listR.isOk());
+    const std::vector<module::claude::Profile> profiles =
+        std::move(listR).value();
+    DOCTEST_REQUIRE_EQ(profiles.size(), static_cast<std::size_t>(3));
+    DOCTEST_REQUIRE(findProfile(profiles, "Fresh") != nullptr);
+    return true;
+})
+
+// ---- ③-3 未勾选条目完全不进结果报告 ----
+
+REGISTER_TEST(ccswitch_confirm_unselected_excluded,
+              "ccswitch 编排：未勾选条目不进结果报告（计数/行数/DB 三处一致）", {
+    CcSwitchConfirmEnv env;
+    HookRecorder rec;
+    const std::vector<Candidate> candidates = {
+        {"Picked", settingsConfigWith("https://p.example.com", kFakeToken, "",
+                                      "", std::string(), std::string())},
+        {"Dropped", settingsConfigWith("https://d.example.com", kFakeToken, "",
+                                       "", std::string(), std::string())},
+    };
+    module::claude::CcSwitchImportDialogState st =
+        makeConfirmState(candidates, {true, false});
+
+    module::claude::confirmCcSwitchImport(st, {}, rec.hooks());
+
+    DOCTEST_CHECK_EQ(st.resultSuccess_, 1);
+    DOCTEST_CHECK_EQ(st.resultSkipped_, 0);
+    DOCTEST_CHECK_EQ(st.resultFailed_, 0);
+    DOCTEST_REQUIRE_EQ(st.resultLines_.size(), static_cast<std::size_t>(1));
+    DOCTEST_CHECK_EQ(st.resultLines_[0], std::string("成功：Picked"));
+    DOCTEST_CHECK_EQ(rec.dirtyCalls, 1);
+    DOCTEST_REQUIRE_EQ(rec.toastTitles.size(), static_cast<std::size_t>(1));
+    DOCTEST_CHECK_EQ(rec.toastMsgs[0], std::string("已导入 1 条 Profile"));
+    // DB：只落勾选那条
+    auto listR = env.svc->listProfiles();
+    DOCTEST_REQUIRE(listR.isOk());
+    const std::vector<module::claude::Profile> profiles =
+        std::move(listR).value();
+    DOCTEST_REQUIRE_EQ(profiles.size(), static_cast<std::size_t>(1));
+    DOCTEST_CHECK_EQ(profiles[0].name, std::string("Picked"));
+    return true;
+})
+
+// ---- ③-4 空勾选确认（审计 I2：现行 toast 措辞轻误导，裁决改文案前钉住现状）----
+
+REGISTER_TEST(ccswitch_confirm_empty_selection_current_behavior,
+              "ccswitch 编排：空勾选确认 → 0/0/0 + 无结果行 + 仍标脏 + toast「已导入 0 条」（审计 I2 现状钉住）", {
+    CcSwitchConfirmEnv env;
+    HookRecorder rec;
+    const std::vector<Candidate> candidates = {
+        {"A", settingsConfigWith("https://a.example.com", kFakeToken, "", "",
+                                 std::string(), std::string())},
+        {"B", settingsConfigWith("https://b.example.com", kFakeToken, "", "",
+                                 std::string(), std::string())},
+    };
+    module::claude::CcSwitchImportDialogState st =
+        makeConfirmState(candidates, {false, false});
+
+    module::claude::confirmCcSwitchImport(st, {}, rec.hooks());
+
+    // 现行行为（claude_ui_ccswitch.cpp:241-245 的 else 档）：0 勾选也走
+    // 「导入成功 已导入 0 条」——审计 I2 记为措辞轻误导；未裁决改文案前
+    // 钉住现状，无意的行为漂移（改静默/改报错）会在此红
+    DOCTEST_CHECK_EQ(st.resultSuccess_, 0);
+    DOCTEST_CHECK_EQ(st.resultSkipped_, 0);
+    DOCTEST_CHECK_EQ(st.resultFailed_, 0);
+    DOCTEST_CHECK(st.resultLines_.empty());
+    DOCTEST_CHECK_EQ(rec.dirtyCalls, 1);   // markDataDirty 无条件
+    DOCTEST_REQUIRE_EQ(rec.toastTitles.size(), static_cast<std::size_t>(1));
+    DOCTEST_CHECK_EQ(rec.toastTitles[0], std::string("导入成功"));
+    DOCTEST_CHECK_EQ(rec.toastMsgs[0], std::string("已导入 0 条 Profile"));
+    DOCTEST_CHECK_FALSE(rec.toastErrors[0]);
+    // DB 零写入
+    auto listR = env.svc->listProfiles();
+    DOCTEST_REQUIRE(listR.isOk());
+    DOCTEST_CHECK(std::move(listR).value().empty());
+    return true;
+})
+
+// ---- ③-5 服务未就绪早退：全落失败桶 + 错误 toast + 不标脏 ----
+
+REGISTER_TEST(ccswitch_confirm_null_service,
+              "ccswitch 编排：ClaudeService 未注册 → 勾选数全落失败桶 + 错误 toast + 不标脏", {
+    // 出厂态 = 未注册（test_main 每例后重置是兜底；此处显式再清一次，
+    // 同 test_claude_ui.cpp claude_module_compose_null_service 的保险写法）
+    module::claude::ClaudeService::setGlobal(nullptr);
+    HookRecorder rec;
+    const std::vector<Candidate> candidates = {
+        {"A", settingsConfigWith("https://a.example.com", kFakeToken, "", "",
+                                 std::string(), std::string())},
+        {"B", settingsConfigWith("https://b.example.com", kFakeToken, "", "",
+                                 std::string(), std::string())},
+    };
+    module::claude::CcSwitchImportDialogState st =
+        makeConfirmState(candidates, {});
+
+    module::claude::confirmCcSwitchImport(st, {}, rec.hooks());
+
+    DOCTEST_REQUIRE_EQ(st.resultLines_.size(), static_cast<std::size_t>(1));
+    DOCTEST_CHECK_EQ(st.resultLines_[0],
+                     std::string("服务未就绪（ClaudeService 未注册）"));
+    DOCTEST_CHECK_EQ(st.resultFailed_, 2);   // = 勾选数
+    DOCTEST_CHECK_EQ(st.resultSuccess_, 0);
+    DOCTEST_CHECK_EQ(st.resultSkipped_, 0);
+    DOCTEST_CHECK_EQ(rec.dirtyCalls, 0);     // 早退：标脏不调
+    DOCTEST_REQUIRE_EQ(rec.toastTitles.size(), static_cast<std::size_t>(1));
+    DOCTEST_CHECK_EQ(rec.toastTitles[0], std::string("导入失败"));
+    DOCTEST_CHECK_EQ(rec.toastMsgs[0], std::string("ClaudeService 未就绪"));
+    DOCTEST_CHECK(rec.toastErrors[0]);
+    return true;
+})
+
+// ---- ③-6 二段写半失败：已建但 env 写入失败 → 失败桶如实报告 + 半写行保留 + 同批重名兜底 ----
+
+REGISTER_TEST(ccswitch_confirm_env_write_half_fail,
+              "ccswitch 编排：已建但 env 写入失败 → 落失败桶、半写行如实留在库、同批重名兜底跳过", {
+    CcSwitchConfirmEnv env;
+    HookRecorder rec;
+    // 预置激活 profile：编排在 activateIfNoneActive=true 下建行，已有激活时
+    // createProfile 不做激活 UPDATE（首建自动激活才 UPDATE），故障注入就只打
+    // 二段补写的 updateProfile
+    auto anchorR = env.svc->createProfile(
+        "Anchor", "https://anchor.example.com", kFakeToken, "", true, 0,
+        "bearer", "", 0, "");
+    DOCTEST_REQUIRE(anchorR.isOk());
+    // 故障注入（零生产缝）：BEFORE UPDATE 触发器 RAISE(ABORT)，做 DB 级错误
+    //（磁盘满/锁死一类的确定性替身）；INSERT 不受影响 → 行建得成、补写必败
+    auto trig = env.db->db().exec(
+        "CREATE TRIGGER ccswitch_test_block_update "
+        "BEFORE UPDATE ON claude_profiles "
+        "BEGIN SELECT RAISE(ABORT, 'test: update blocked'); END;");
+    DOCTEST_REQUIRE(trig.isOk());
+
+    // 同名两行（cc-switch 的 PK 是 (id, app_type)，不同 id 允许同名）：
+    // 行 1 建行成功但补写失败 → 失败 + 名字进 existingNames（行已建，同批
+    // 后续重名会撞它）；行 2 撞同批兜底 → 跳过「同名」而非再去撞 UNIQUE
+    const std::string halfJson = settingsConfigWith(
+        "https://half.example.com", kFakeToken, "", "",
+        "\"ANTHROPIC_DEFAULT_SONNET_MODEL\":\"m\"", "\"theme\":\"dark\"");
+    const std::vector<Candidate> candidates = {{"EnvCarrier", halfJson},
+                                               {"EnvCarrier", halfJson}};
+    module::claude::CcSwitchImportDialogState st =
+        makeConfirmState(candidates, {});
+
+    module::claude::confirmCcSwitchImport(st, {}, rec.hooks());
+
+    DOCTEST_CHECK_EQ(st.resultSuccess_, 0);
+    DOCTEST_CHECK_EQ(st.resultSkipped_, 1);
+    DOCTEST_CHECK_EQ(st.resultFailed_, 1);
+    DOCTEST_REQUIRE_EQ(st.resultLines_.size(), static_cast<std::size_t>(2));
+    // 「已建，但 env 写入失败」如实进失败桶（不静默、不谎报成功）
+    DOCTEST_CHECK(st.resultLines_[0].find("失败：EnvCarrier（已建，但 env 写入失败") !=
+                  std::string::npos);
+    // 同批重名兜底：失败分支也 push existingNames → 第二行跳过而非再失败
+    DOCTEST_CHECK_EQ(st.resultLines_[1].find("跳过：EnvCarrier（"),
+                     static_cast<std::size_t>(0));
+    DOCTEST_CHECK(st.resultLines_[1].find("同名") != std::string::npos);
+    DOCTEST_REQUIRE_EQ(rec.toastTitles.size(), static_cast<std::size_t>(1));
+    DOCTEST_CHECK(rec.toastErrors[0]);
+    DOCTEST_CHECK_EQ(rec.toastMsgs[0],
+                     std::string("成功 0 / 跳过 1 / 失败 1（共 2 条）"));
+    // DB 事后状态如实：EnvCarrier 行存在（createProfile 已 INSERT 成功）但
+    // extra_env 空（补写失败）——「已建但 env 缺」的中间态可被用户看到并补救
+    auto listR = env.svc->listProfiles();
+    DOCTEST_REQUIRE(listR.isOk());
+    const std::vector<module::claude::Profile> profiles =
+        std::move(listR).value();
+    DOCTEST_REQUIRE_EQ(profiles.size(),
+                       static_cast<std::size_t>(2));   // Anchor + EnvCarrier
+    const module::claude::Profile* half = findProfile(profiles, "EnvCarrier");
+    DOCTEST_REQUIRE(half != nullptr);
+    DOCTEST_CHECK_EQ(half->extraEnvJson, std::string(""));
     return true;
 })
