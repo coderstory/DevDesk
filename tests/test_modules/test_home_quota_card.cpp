@@ -1018,3 +1018,222 @@ REGISTER_TEST(home_quota_budget_threshold_is_pinned,
                   module::home::quota_card::kQuotaCardMinBodyH);
     return true;
 })
+
+// ==================== ⑮ 余量快照的「脏标记失效时机」（静态审计 M4 前置）============
+//
+// 这组断言守的是**行为**：数据变了，compose 必须在下一次重排里反映出来。
+// 它**故意不依赖任何缓存机制**——旧实现每帧都查（当然通过），加了缓存之后
+// 仍然必须通过。正因为它在旧实现上是绿的，它证明的是「行为没退化」，
+// 而不是「新实现的某个内部字段被赋了值」。
+//
+// 另一半（没变时**不该**重查）由 ⑯ 守：只有它红，缓存才有存在意义；而它
+// 在旧实现上必然红（旧实现就是每帧查），所以它是「改动的判据」而不是
+// 「改动的护栏」。两条合起来才是完整的不变式：
+//     变了要反映（⑮，任何实现都得满足） + 没变不重查（⑯，缓存的意义）。
+//
+// ⚠ ⑮ 的三条 case 各选一种**不同的**写入通道，为的是让「脏标记失效」不能
+// 靠某一条特定路径侥幸成立：
+//     ① 新 profile       → INSERT claude_profiles（**不经 QuotaStore**）
+//     ② 余量结果更新      → QuotaStore::applyFetchResult（后台刷新器那条路）
+//     ③ 配置改了          → QuotaStore::saveConfig（provider 换人）
+// 另加 ④「数据没变时重排多次，结果必须稳定」（防缓存返回半截/撕裂的行）。
+REGISTER_TEST(home_quota_snapshot_reflects_db_changes,
+              "home quota: 库变了 compose 必须反映（新 profile / 结果更新 / 配置改）", {
+    test_support::TestEnv env(kDbPrefix, "dirty", true);
+    DOCTEST_REQUIRE(env.ready);
+    auto& sq = env.db->db();
+    cq::QuotaStore store(sq);
+
+    // 首行：配好 + 成功过一次（Normal 态，有条可断言）
+    const int64_t p1 = insertProfile(sq, "P1-初始");
+    DOCTEST_REQUIRE(store.saveConfig(makeConfig(p1, "opencode_go")).isOk());
+    DOCTEST_REQUIRE(store.applyFetchResult(
+                        p1, tieredOk({makeWindow("five_hour", 30.0, "")}), 1000)
+                        .isOk());
+
+    std::unique_ptr<::core::Module> mod(create_home_module());
+    mod->onStart();
+    eui::Screen screen;
+    screen.width = 1600.0f;
+    screen.height = 1400.0f;
+    const auto rowId = [](int64_t pid) {
+        return "home.quota.row." + std::to_string(pid);
+    };
+    // 重排一帧并返回该帧的树（每次都用**新** Ui：树是幂等重建的，同一个 Ui
+    // 连着 begin/end 两帧会让 find 命中上一帧的残留，掩盖「没重查」）。
+    auto frame = [&]() {
+        auto ui = std::make_unique<eui::Ui>();
+        composeFrame(*mod, *ui, screen, "home_quota_dirty");
+        return ui;
+    };
+
+    // ---- 基线：P1 存在、五小时 30% ----
+    {
+        auto ui = frame();
+        DOCTEST_REQUIRE(ui->find(rowId(p1) + ".bar.five_hour.pct") != nullptr);
+        DOCTEST_CHECK_EQ(ui->find(rowId(p1) + ".bar.five_hour.pct")->text,
+                         std::string("30%"));
+        // 未配置的行此刻还不存在（对照组：下面的「不存在」断言不是恒真）
+        DOCTEST_CHECK(ui->find(rowId(999999)) == nullptr);
+    }
+
+    // ---- ① 新 profile（裸 INSERT，不经 QuotaStore / ProfileRepository）----
+    // 走这条路的理由：它是**最不容易被写侧钩子覆盖**的一条（应用层根本不
+    // 知道这次写入）。若缓存只认「某个写路径的钩子」，这里就会露馅。
+    const int64_t p2 = insertProfile(sq, "P2-新增");
+    {
+        auto ui = frame();
+        DOCTEST_REQUIRE_MESSAGE(
+            ui->find(rowId(p2)) != nullptr,
+            "库里新增了 profile，compose 却没画出来 —— 脏标记漏了新增这条路");
+        // 新行没有配置 → Unconfigured（「未配置余量查询」），不是空白行
+        DOCTEST_REQUIRE(ui->find(rowId(p2) + ".status") != nullptr);
+        DOCTEST_CHECK_EQ(ui->find(rowId(p2) + ".status")->text,
+                         std::string("未配置余量查询"));
+    }
+
+    // ---- ② 余量结果更新（后台刷新器那条路：QuotaStore::applyFetchResult）----
+    DOCTEST_REQUIRE(store.applyFetchResult(
+                        p1, tieredOk({makeWindow("five_hour", 77.0, "")}), 2000)
+                        .isOk());
+    {
+        auto ui = frame();
+        DOCTEST_REQUIRE(ui->find(rowId(p1) + ".bar.five_hour.pct") != nullptr);
+        DOCTEST_CHECK_EQ(
+            ui->find(rowId(p1) + ".bar.five_hour.pct")->text,
+            std::string("77%"));
+    }
+
+    // ---- ③ 配置改了（provider 换人：opencode_go → deepseek）----
+    // 换 provider 会改 providerDisplayName（渲染在 .provider 节点上），
+    // 且 kind/窗口都可能变——断言落在**节点文本**上，不是内部字段。
+    DOCTEST_REQUIRE(store.saveConfig(makeConfig(p1, "deepseek")).isOk());
+    {
+        auto ui = frame();
+        DOCTEST_REQUIRE(ui->find(rowId(p1) + ".provider") != nullptr);
+        DOCTEST_CHECK_MESSAGE(
+            ui->find(rowId(p1) + ".provider")->text != std::string("OpenCode Go"),
+            "provider 配置已换成 deepseek，compose 仍显示旧供应商名 —— "
+            "脏标记漏了 saveConfig 这条路");
+    }
+
+    // ---- ④ 数据没变 → 多次重排结果必须**稳定**（防撕裂/半截行）----
+    // 这条不是「不该重查」（那是 ⑯），而是「重查多少次都得对」：缓存返回
+    // 旧值、或只更新了一半的行（例如新 profile 有了但百分比还是旧的），这里都会红。
+    {
+        auto a = frame();
+        auto b = frame();
+        const std::string id1 = rowId(p1);
+        DOCTEST_REQUIRE(a->find(id1 + ".bar.five_hour.pct") != nullptr);
+        DOCTEST_REQUIRE(b->find(id1 + ".bar.five_hour.pct") != nullptr);
+        DOCTEST_CHECK_EQ(a->find(id1 + ".bar.five_hour.pct")->text,
+                         b->find(id1 + ".bar.five_hour.pct")->text);
+        DOCTEST_CHECK_EQ(a->find(id1 + ".provider")->text,
+                         b->find(id1 + ".provider")->text);
+        DOCTEST_CHECK_EQ(a->find(rowId(p2) + ".status")->text,
+                         b->find(rowId(p2) + ".status")->text);
+    }
+
+    // ---- ⑤ 数据被删掉（裸 DELETE，与 home_probes 组 H(b) 同一条路）----
+    // 这条是「删除也要让缓存失效」的判据。裸 DELETE 不经任何应用层写路径，
+    // 正是最容易漏的一类；写侧钩子方案在这里会露馅，DB 层版本号方案不会。
+    DOCTEST_REQUIRE(sq.exec("DELETE FROM profile_quota_config WHERE profile_id = " +
+                            std::to_string(p2))
+                        .isOk());
+    {
+        auto ui = frame();
+        // 行仍在（profile 还在，只是没配置了）→ 判据是状态文案回到「未配置」
+        // 而不是「行消失」：profile 还在，行就该在（桥不变量 2）。
+        DOCTEST_REQUIRE(ui->find(rowId(p2) + ".status") != nullptr);
+        DOCTEST_CHECK_EQ(ui->find(rowId(p2) + ".status")->text,
+                         std::string("未配置余量查询"));
+    }
+    mod->onStop();
+    return true;
+})
+
+// ==================== ⑯ 「没变时不该重查」（缓存存在的理由）============
+//
+// 与 ⑮ 相反：这条**在旧实现上必然红**（旧实现每帧都查库），所以它不是
+// 「护栏」而是「改动的判据」——它红了才说明缓存真的生效了。
+//
+// 判据用**真实调用计数**，不用「compose 里有没有出现 listQuotaHomeRows」这种
+// 源码形态断言：形态断言在「函数被换个名字/换条路径调用」时会静默失效，
+// 而计数是运行时事实。
+REGISTER_TEST(home_quota_snapshot_not_requery_when_unchanged,
+              "home quota: 数据没变时连续 compose 不应重复查库（缓存生效）", {
+    test_support::TestEnv env(kDbPrefix, "cachehit", true);
+    DOCTEST_REQUIRE(env.ready);
+    auto& sq = env.db->db();
+    cq::QuotaStore store(sq);
+    const int64_t p1 = insertProfile(sq, "P1-缓存");
+    DOCTEST_REQUIRE(store.saveConfig(makeConfig(p1, "opencode_go")).isOk());
+    DOCTEST_REQUIRE(store.applyFetchResult(
+                        p1, tieredOk({makeWindow("five_hour", 42.0, "")}), 1000)
+                        .isOk());
+
+    std::unique_ptr<::core::Module> mod(create_home_module());
+    mod->onStart();
+    eui::Screen screen;
+    screen.width = 1600.0f;
+    screen.height = 1400.0f;
+    const std::string id1 = "home.quota.row." + std::to_string(p1);
+
+    // 首帧：冷启动必须出数据（**不能**是空帧——缓存最容易犯的错就是首帧空）
+    {
+        auto ui = std::make_unique<eui::Ui>();
+        composeFrame(*mod, *ui, screen, "home_quota_cache_cold");
+        DOCTEST_REQUIRE_MESSAGE(
+            ui->find(id1 + ".bar.five_hour.pct") != nullptr,
+            "冷启动首帧必须画出余量条（缓存若让首帧空掉，用户看到的是空卡）");
+    }
+
+    // 连续 20 帧，数据一动不动 → 真实查库次数**不得增长**
+    const int64_t before = cq::quotaHomeRowsQueryCountForTest();
+    for (int i = 0; i < 20; ++i) {
+        auto ui = std::make_unique<eui::Ui>();
+        composeFrame(*mod, *ui, screen, "home_quota_cache_idle");
+    }
+    const int64_t after = cq::quotaHomeRowsQueryCountForTest();
+    DOCTEST_CHECK_EQ(after - before, static_cast<int64_t>(0));
+
+    // 缓存期间内容仍正确（防「不重查」退化成「返回错的东西」）
+    {
+        auto ui = std::make_unique<eui::Ui>();
+        composeFrame(*mod, *ui, screen, "home_quota_cache_verify");
+        DOCTEST_REQUIRE(ui->find(id1 + ".bar.five_hour.pct") != nullptr);
+        DOCTEST_CHECK_EQ(ui->find(id1 + ".bar.five_hour.pct")->text,
+                         std::string("42%"));
+    }
+
+    // 数据一变 → 必须**恰好**多查一次（既不能漏，也不能每帧都查）
+    DOCTEST_REQUIRE(store.applyFetchResult(
+                        p1, tieredOk({makeWindow("five_hour", 55.0, "")}), 2000)
+                        .isOk());
+    const int64_t preChange = cq::quotaHomeRowsQueryCountForTest();
+    {
+        auto ui = std::make_unique<eui::Ui>();
+        composeFrame(*mod, *ui, screen, "home_quota_cache_after");
+        DOCTEST_REQUIRE(ui->find(id1 + ".bar.five_hour.pct") != nullptr);
+        DOCTEST_CHECK_MESSAGE(
+            ui->find(id1 + ".bar.five_hour.pct")->text == std::string("55%"),
+            "数据变了但 compose 仍显示旧值 —— 缓存脏标记没被置位");
+    }
+    const int64_t postChange = cq::quotaHomeRowsQueryCountForTest();
+    DOCTEST_CHECK_MESSAGE(postChange - preChange == 1,
+                          "数据变了一帧内应恰好重查 1 次，实测 " +
+                              std::to_string(postChange - preChange) +
+                              " 次（0 = 脏标记漏了；>1 = 一帧里查了多次）");
+
+    // 变化后再空转 20 帧 → 又一次都不查（脏标记消费后必须回到静止态）
+    const int64_t settled = cq::quotaHomeRowsQueryCountForTest();
+    for (int i = 0; i < 20; ++i) {
+        auto ui = std::make_unique<eui::Ui>();
+        composeFrame(*mod, *ui, screen, "home_quota_cache_settled");
+    }
+    DOCTEST_CHECK_EQ(cq::quotaHomeRowsQueryCountForTest() - settled,
+                     static_cast<int64_t>(0));
+
+    mod->onStop();
+    return true;
+})

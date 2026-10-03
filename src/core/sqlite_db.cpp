@@ -79,11 +79,20 @@ Result<std::string> SqlRow::getString(const std::string& col) const {
 // ============ Statement ============
 
 Statement::Statement(sqlite3* db, sqlite3_stmt* stmt,
-                     std::shared_ptr<std::recursive_mutex> mutex)
-    : db_(db), stmt_(stmt), mutex_(std::move(mutex)) {}
+                     std::shared_ptr<std::recursive_mutex> mutex,
+                     std::shared_ptr<std::atomic<uint64_t>> version)
+    : db_(db), stmt_(stmt), mutex_(std::move(mutex)),
+      version_(std::move(version)) {
+    // 只读性判一次并缓存：sqlite3_stmt_readonly() 纯查 VDBE 程序、不碰数据，
+    // 且已 prepare 完的语句其结论不会再变。判据来自 sqlite 官方语义——SELECT /
+    // EXPLAIN / BEGIN / PRAGMA 读法为 true，INSERT/UPDATE/DELETE/REPLACE/DDL
+    // 为 false（故写路径都会被计入版本号）。
+    readonly_ = (sqlite3_stmt_readonly(stmt_) != 0);
+}
 
 Statement::Statement(Statement&& other) noexcept
-    : db_(other.db_), stmt_(other.stmt_), mutex_(other.mutex_) {
+    : db_(other.db_), stmt_(other.stmt_), mutex_(other.mutex_),
+      version_(other.version_), readonly_(other.readonly_) {
     other.db_ = nullptr;
     other.stmt_ = nullptr;
 }
@@ -94,6 +103,8 @@ Statement& Statement::operator=(Statement&& other) noexcept {
         db_ = other.db_;
         stmt_ = other.stmt_;
         mutex_ = other.mutex_;   // 锁跟句柄走（shared_ptr，可赋值）
+        version_ = other.version_;
+        readonly_ = other.readonly_;
         other.db_ = nullptr;
         other.stmt_ = nullptr;
     }
@@ -114,6 +125,14 @@ void Statement::releaseStmt() noexcept {
         sqlite3_finalize(stmt_);
     }
     stmt_ = nullptr;
+}
+
+// 推进写版本号。**只在锁内、且只在非只读语句上调用**（两个调用点都在
+// step() 的锁内，见其注释）。release：与读侧 writeVersion() 的 acquire 配对，
+// 保证「读到新版本」蕴含「导致它的写已可见」。
+void Statement::bumpVersionOnWrite() noexcept {
+    if (readonly_ || !version_) return;
+    version_->fetch_add(1, std::memory_order_release);
 }
 
 // 审计 L5：bind 原不持锁（step/currentRow 持），跨线程共用同一语句时
@@ -148,8 +167,19 @@ Result<void> Statement::bind(int index, const std::vector<uint8_t>& blob) {
 Result<bool> Statement::step() {
     std::lock_guard<std::recursive_mutex> lock(*mutex_);
     int rc = sqlite3_step(stmt_);
-    if (rc == SQLITE_ROW) return Result<bool>::ok(true);
-    if (rc == SQLITE_DONE) return Result<bool>::ok(false);
+    if (rc == SQLITE_ROW) {
+        // 非只读语句返回 ROW 只可能是 RETURNING（写语句的结果行），算已写。
+        bumpVersionOnWrite();
+        return Result<bool>::ok(true);
+    }
+    if (rc == SQLITE_DONE) {
+        bumpVersionOnWrite();
+        return Result<bool>::ok(false);
+    }
+    // 失败：不推进版本号。失败语句**可能已经改了库**（部分列约束失败时
+    // sqlite 会先做完能做的），但把「可能」当成「一定」会让脏标记在失败
+    // 路径上白置位（多查一次，可接受）；反过来漏置位则是 UI 停在旧数据上，
+    // 两者不可比。宁可漏这一次——下一次真写入会把它纠正回来。
     return Result<bool>::fail(mapErrCode(rc),
         std::string("step: ") + sqlite3_errmsg(db_));
 }
@@ -307,7 +337,8 @@ SqliteDb::~SqliteDb() {
 // 移动不换锁：mutex_ 是 shared_ptr，被搬走的对象与搬入的对象共用同一把
 // （旧实现每次移动都新造一把 mutex，锁与句柄就此分家——见 sqlite_db.h 注释）
 SqliteDb::SqliteDb(SqliteDb&& other) noexcept
-    : handle_(other.handle_), mutex_(other.mutex_) {
+    : handle_(other.handle_), mutex_(other.mutex_),
+      writeVersion_(other.writeVersion_) {
     other.handle_ = nullptr;
 }
 
@@ -322,6 +353,9 @@ SqliteDb& SqliteDb::operator=(SqliteDb&& other) noexcept {
         handle_ = other.handle_;
         other.handle_ = nullptr;
         mutex_ = other.mutex_;
+        // 版本号跟着走（同 mutex_ 的理由：留在旧对象上 = Statement 推进的
+        // 计数器与读侧看到的不是同一个，脏标记从此永不置位）
+        writeVersion_ = other.writeVersion_;
     }
     return *this;
 }
@@ -335,6 +369,12 @@ Result<void> SqliteDb::exec(const std::string& sql) {
         sqlite3_free(errMsg);
         return Result<void>::fail(mapErrCode(rc), "exec: " + err);
     }
+    // 裸 SQL 写入口也必须置位（静态审计 M4 的失效判据）。这里不做
+    // 「是不是 SELECT」的解析判断，改为**一律置位**：exec 的调用面全是
+    // 迁移/DDL/测试与探针的裸写（实测 src/ 下 exec 无 SELECT 调用），
+    // 一次误置位的代价只是多查一次库，而漏置位是 UI 停在旧数据上。
+    // transaction() 的 BEGIN/COMMIT 也走 exec —— 那两次置位是无害的多查。
+    writeVersion_->fetch_add(1, std::memory_order_release);
     return Result<void>::ok();
 }
 
@@ -347,7 +387,8 @@ Result<Statement> SqliteDb::prepare(const std::string& sql) {
         return Result<Statement>::fail(mapErrCode(rc),
             std::string("prepare: ") + sqlite3_errmsg(handle_));
     }
-    return Result<Statement>::ok(Statement(handle_, stmt, mutex_));
+    return Result<Statement>::ok(
+        Statement(handle_, stmt, mutex_, writeVersion_));
 }
 
 Result<void> SqliteDb::transaction(std::function<Result<void>()> fn) {

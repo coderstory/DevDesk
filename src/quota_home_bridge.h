@@ -145,4 +145,18 @@ void requestQuotaImmediateRefresh();
 // 做成可测的独立函数：断言「按钮点了之后确实有一轮被放行」不依赖读源码顺序。
 bool consumeQuotaImmediateRefreshRequest();
 
+// ---- 真实查库计数（测试缝，生产零调用点）------------------------------
+//
+// 数的是 `listQuotaHomeRows` 被调了几次，也就是「真去库上取了几次余量行」。
+// 它存在的原因是**形状断言不管用**：断言「compose 里不出现 listQuotaHomeRows」
+// 会在有人把调用换条路径（换函数名、内联一份、绕一层转发）时静默失效——
+// 而这正是缓存类改动最常见的退化方式。计数是运行时事实，换路径照样数得出来。
+//
+// 语义上它是**全局**计数（不是 per-DB / per-module）：用例只断言**增量**
+// （前后相减），不依赖绝对值，所以别的用例调过本函数不影响判定。
+int64_t quotaHomeRowsQueryCountForTest();
+
+// 复位计数（用例开头调，避免读到别的用例留下的值）。
+void quotaHomeResetQueryCountForTest();
+
 }  // namespace module::claude::quota

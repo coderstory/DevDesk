@@ -15,6 +15,8 @@
 //      再兜一次，让本兜底之前落下的旧行（无迁移纪律：老行不迁）也显示得出话。
 #include "quota_home_bridge.h"
 
+#include <atomic>
+#include <cstdint>
 #include <map>
 #include <mutex>
 #include <string>
@@ -57,6 +59,14 @@ static_assert(static_cast<int>(QuotaKind::Tiered) ==
               "QuotaKind 与 QuotaHomeKind 必须逐值同义（不只是个数相等）");
 
 namespace {
+
+// 真实查库计数（测试缝，见 quota_home_bridge.h 的声明处）。
+// 原子而非普通整型：它会被后台刷新线程与 UI 线程同时加减（刷新器落库后
+// 首页可能同帧重排），非原子会丢计数 → 用例读到偏小的增量而误判。
+std::atomic<int64_t>& globalQueryCount() {
+    static std::atomic<int64_t> count{0};
+    return count;
+}
 
 // 规范窗口键 → 中文标签。**未知键回落成 key 本身**（不返回空串：空标签会
 // 让进度条左侧空一截，用户看不出这条是什么周期）。键的取值只有三个
@@ -103,6 +113,9 @@ QuotaCardState quotaCardState(const std::string& providerId,
 
 core::Result<std::vector<QuotaHomeRow>> listQuotaHomeRows(
     core::data::SqliteDb& db) {
+    // 计数 +1 在**取锁之前**：本函数从头到尾持锁，计数若放在锁后，
+    // 「调用者等锁」的那段时间就不算数，而用例量的正是「真查了几次库」。
+    globalQueryCount().fetch_add(1, std::memory_order_relaxed);
     // 锁从第一行持到函数返回（不变量 1）。recursive_mutex：下面 QuotaStore 的
     // 各方法会再取一次，重入安全。
     std::lock_guard<std::recursive_mutex> lock(db.mutex());
@@ -210,6 +223,14 @@ core::Result<std::vector<QuotaHomeRow>> listQuotaHomeRows(
         out.push_back(std::move(row));
     }
     return core::Result<std::vector<QuotaHomeRow>>::ok(std::move(out));
+}
+
+int64_t quotaHomeRowsQueryCountForTest() {
+    return globalQueryCount().load(std::memory_order_relaxed);
+}
+
+void quotaHomeResetQueryCountForTest() {
+    globalQueryCount().store(0, std::memory_order_relaxed);
 }
 
 }  // namespace module::claude::quota
