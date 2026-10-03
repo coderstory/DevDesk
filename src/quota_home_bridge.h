@@ -69,7 +69,11 @@ enum class QuotaCardState {
 // 而忘了这里 → 编译期**零提示**，两边静默不一致。同步闸放在
 // **quota_home_view.cpp**（那里两个枚举都可见）的 static_assert 上——中立头
 // 看不到 QuotaKind，在它身上写断言只会写出一句自说自话的话（静态审计 m1）。
-enum class QuotaHomeKind { Tiered = 0, Balance = 1 };
+//
+// `Count` 是哨兵（取值个数），与 QuotaKind::Count 一一对应：上面那条断言既比
+// 前缀逐值同义、也比**哨兵相等**——只比前缀的话，给 QuotaKind 加第 3 个值而
+// 忘了改这里，两条断言照样全绿（静态审计指出过的「注释冒充守卫」形态）。
+enum class QuotaHomeKind { Tiered = 0, Balance = 1, Count = 2 };
 
 // 一个窗口的展示态。usedPercent 是**已用**百分比，且**已由桥 clamp 到 [0,100]**
 // （clampUsedPercent 的口径在这里兑现，首页不再自己裁）。

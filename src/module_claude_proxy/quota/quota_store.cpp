@@ -210,6 +210,10 @@ const char* quotaErrorName(QuotaError error) {
         case QuotaError::Shape: return "shape";
         case QuotaError::Transient: return "transient";
         case QuotaError::NotConfigured: return "not_configured";
+        // 哨兵（取值个数，不是错误）。**它不该被调用** —— 调用方手里是真实错误。
+        // 真被调用说明上游造了个越界的值，按与下方 return 同一套保守兜底处理：
+        // 认不出的错误不静默变成「无错」。
+        case QuotaError::Count: break;
     }
     return "transient";   // 枚举外的值不静默变成「无错」
 }

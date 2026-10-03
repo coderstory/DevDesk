@@ -40,15 +40,21 @@ namespace module::claude::quota {
 // 这里把漂移变成**编译期红**：加一个枚举值而忘了另一处 → 编译直接失败，
 // 强迫人当场改另一处并想清楚为什么。放在本 .cpp 而不是桥头，是因为只有这里
 // 两个枚举都可见；写在桥头只能写出一句自说自话的话。
+//
+// ⚠ 为什么必须有第二条（哨兵相等）：第一条只逐值比 Tiered / Balance 两个
+// **已有**取值。给 QuotaKind 加第 3 个值而忘了改 QuotaHomeKind 时，第一条照样
+// 全绿——那正是「注释冒充代码断言」的形态：断言看起来在守这件事，实际守不住。
+// 两个枚举各有 `Count` 哨兵（取值个数），哨兵相等 ⟺ 两个枚举的取值个数相等。
+static_assert(static_cast<int>(QuotaKind::Count) ==
+                  static_cast<int>(QuotaHomeKind::Count),
+              "QuotaKind 与 QuotaHomeKind 的取值个数必须相等：给 quota_provider.h "
+              "的 QuotaKind 加了新值而忘了改 quota_home_bridge.h 的 QuotaHomeKind —— "
+              "桥层解码出来的形态与渲染层理解的形态会静默错位");
 static_assert(static_cast<int>(QuotaKind::Tiered) ==
                   static_cast<int>(QuotaHomeKind::Tiered) &&
                   static_cast<int>(QuotaKind::Balance) ==
                       static_cast<int>(QuotaHomeKind::Balance),
-              "QuotaKind 与 QuotaHomeKind 必须逐值同义：新增枚举值时两处都要改，"
-              "否则桥层解码出来的形态与渲染层理解的形态会静默错位");
-static_assert(static_cast<int>(QuotaKind::Balance) == 1,
-              "QuotaKind 新增值时，同步更新上面那条 static_assert 与 "
-              "quota_home_bridge.h 的 QuotaHomeKind（本断言是它的哨兵）");
+              "QuotaKind 与 QuotaHomeKind 必须逐值同义（不只是个数相等）");
 
 namespace {
 

@@ -68,6 +68,7 @@ add_executable(devdesk_tests
     test_modules/test_claude_quota_store.cpp
     test_modules/test_claude_quota_volcano.cpp
     test_modules/test_claude_quota_live_fixtures.cpp
+    test_modules/test_claude_quota_lifecycle.cpp
     # 「真机探针绝不进默认门禁」的**默认门禁里跑的**代码断言。
     # 此前 tests/CMakeLists.txt 与 scripts/run-quota-live-probe.sh 都声称
     # 「由本文件守门」，而文件不存在（静态审计 B2）。补上，注释才变成真的。
