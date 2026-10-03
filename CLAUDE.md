@@ -243,7 +243,7 @@ main → 7 个 Router 页面 (home / markdown / todo / claude_proxy / agent / se
 | **火山 Agent Plan 分支无真机样本**：抓到的 AFP 响应是 `PlanType` 空 + 四窗口 `Quota:0`（落回 Coding Plan）。**能产出窗口的那条路径（Quota>0）从未被真实响应验证过** | `tests/test_modules/test_claude_quota_live_fixtures.cpp:203-207`、`src/module_claude_proxy/quota/quota_volcano.cpp:610-690` |
 | **Windows DPAPI 运行时未验证**：`credential_protection_win.cpp` 只有静态审读 + CI 编译门禁，没有在真 Windows 上跑过「加密入库 → 解密读回」 | `src/platform/credential_protection_win.cpp`；`keychain_win.cpp` 同理 |
 | **矮窗看不到首页余量卡**：机制已确认——首页整页无外层 `scrollView`，高度预算（`computeHomeQuotaBudget`）算不下时整张卡不画。⚠ G8 简报记的触发尺寸是「1200×720（设计最小窗）」，与 `main.cpp:529-530` 现行的最小窗 **1330×845 逻辑**口径**不一致**（哪个数对**未核**） | `src/module_home/home_module.cpp` 高度预算段；G8 简报「G7 遗留 1」 |
-| **`.clip()` 只剪不省略**：EUI-NEO 的 `.clip()` 是硬裁、不产生省略号。余量卡错误行已单独改成省略号（`4e76052`），其它裁剪面（如 markdown 状态栏）仍是无提示硬裁 | EUI-NEO 能力上限，见 `docs/EUI-NEO-CAPABILITIES.md` |
+| **`.clip()` 只剪不省略 —— 已修（`8df78dc` / dev merge `7362788`，2026-10-03）**：13 处单行文本裁剪面已接 Ellipsis 省略号（quota .name/.provider、settings 降级提示、md.subtitle / md.status.save、ccswitch.note / result、slot.val / env.key / env.val / env.hint / advjson.row.key、todo.subtitle），`.clip()` 保留作几何兜底；另有 7 处有界内容 / 几何界（视口栈、quota .status / .error 等）有意不动。`.clip()` 本身仍是硬裁不产生省略号——**EUI-NEO 能力上限不变**，只是 DevDesk 侧文本溢出面已不再单独依赖它 | `8df78dc` 提交说明（13 处清单 + 保留判据）；`docs/EUI-NEO-CAPABILITIES.md` |
 | **覆盖率工具仍不存在**：仓库里没有 `--coverage` 插桩、`scripts/` 没有覆盖率步骤、CI 也不收集 | 见「功能开发生命周期」阶段 4 |
 
 ### ⚠ 跨仓库耦合（推 DevDesk 前必读）

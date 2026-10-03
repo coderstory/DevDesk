@@ -1211,21 +1211,33 @@ int main(int argc, char* argv[]) {
     {
         const auto rows =
             module::claude::quota::listQuotaHomeRows(env.db->db());
+        // 审计尾巴（组 J 同款）：查询败时组 I 原直接 `.value()` → LOG_FATAL
+        // +abort（result.h 契约），探针以崩溃收场而不是干净 FAIL（后面的
+        // 组全部不跑、诊断全丢）。先查 isFail，败 → FAIL + 空列表（本组
+        // 判据全部跳过，但不恒绿：passed 已置 false）。
+        if (rows.isFail()) {
+            std::cerr << "home_probes: 组 I FAIL——listQuotaHomeRows 失败: "
+                      << rows.errorMessage() << "（组 I 判据本轮全部跳过）\n";
+            passed = false;
+        }
+        const std::vector<module::claude::quota::QuotaHomeRow> rowList =
+            rows.isOk() ? rows.value()
+                        : std::vector<module::claude::quota::QuotaHomeRow>{};
         // 错误行必须真的存在，否则本组是空跑（恒真假绿）。门禁那条不带
         // --quota-fixture，靠上面的 i==8 假种子保证有错误行。
         int errorRows = 0;
-        for (const auto& r : rows.value()) {
+        for (const auto& r : rowList) {
             const bool isErr = r.state == module::claude::quota::QuotaCardState::Incomplete ||
                                r.state == module::claude::quota::QuotaCardState::FailedNever ||
                                r.state == module::claude::quota::QuotaCardState::FailedStale;
             if (isErr && !r.lastError.empty()) ++errorRows;
         }
-        if (rows.isFail() || errorRows < 1) {
+        if (rows.isOk() && errorRows < 1) {
             std::cerr << "home_probes: 组 I FAIL——没有错误行可断言（错误行 "
                       << errorRows << " 条）：本组会空跑成恒真假绿\n";
             passed = false;
         }
-        for (const auto& row : rows.value()) {
+        for (const auto& row : rowList) {
             const bool isErr =
                 row.state == module::claude::quota::QuotaCardState::Incomplete ||
                 row.state == module::claude::quota::QuotaCardState::FailedNever ||
@@ -1427,7 +1439,7 @@ int main(int argc, char* argv[]) {
         //   段：「maxWidth 只在 wrap=true 时生效……故防溢只能靠 clip 剪裁」）。
         //   断言这条不变式本身，才是对「护栏在不在」的真正钉死。
         int statusCheckedRows = 0;
-        for (const auto& row : rows.value()) {
+        for (const auto& row : rowList) {
             const std::string rid =
                 "home.quota.row." + std::to_string(row.profileId);
             const core::dsl::Element* statusEl =
