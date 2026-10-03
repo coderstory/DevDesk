@@ -449,7 +449,14 @@ int main(int argc, char* argv[]) {
             }
         } else {
             for (int i = 0; i < 9; ++i) {
-                const std::string name = "quota-p" + std::to_string(i);
+                // i==0 的名字刻意给长（52 字符 ≈ 内在宽 400px > kNameW 168px）：
+                // head 行的 .name 是固定宽单行盒且不能 wrap（换行会撑破
+                // quotaRowHeight 的高度预算），组 J(c) 用它钉「防溢护栏必须在场」。
+                // 前缀 quota-p 不变——组 H(b) 按 LIKE 'quota-p%' 清库。
+                const std::string name =
+                    (i == 0)
+                        ? "quota-p0-claude-pro-max-with-very-long-profile-name"
+                        : ("quota-p" + std::to_string(i));
                 if (!env.db->db()
                          .exec("INSERT INTO claude_profiles (name, base_url, "
                                "api_key_hint, api_key_check, model, created_at, "
@@ -529,6 +536,18 @@ int main(int argc, char* argv[]) {
                     w.usedPercent = 20.0 + static_cast<double>(i) * 8.0;
                     if (i == 3) w.resetsAt = "2030-01-01T00:00:00";
                     r.windows.push_back(w);
+                    if (i == 0) {
+                        // 组 J(a) 前提：同一 profile 两条窗口、reset **一有一无**
+                        // ——pct 列是否固定，只有混合形态才有判别力（单一形态
+                        // 的行 pct 天然同位，断它 = 恒真假绿）。真机 fixture 的
+                        // OpenCode Go 行（five_hour 无 reset / weekly+monthly 有）
+                        // 正是这个形态。
+                        QuotaWindow w2;
+                        w2.key = "weekly";
+                        w2.usedPercent = 25.0;
+                        w2.resetsAt = "2030-01-01T00:00:00";
+                        r.windows.push_back(w2);
+                    }
                 }
                 store.applyFetchResult(pid, r, base);
             }
@@ -868,6 +887,200 @@ int main(int argc, char* argv[]) {
                           << "（屏高 " << args.windowH << "）\n";
                 passed = false;
             }
+        }
+    }
+
+    // ==================== 组 J：G7 余量卡三症状几何（2026-10-03 用户报告）====================
+    // 用户报告：供应商余量卡「布局存在错位，按钮位置没对齐，文本重叠」。
+    // 三症状各自钉一条几何判据（全部数字判，不接受「看起来对」）：
+    //
+    // J(a) 布局错位：窗口行的 pct 列 x 不固定。drawWindowRow 按有没有 reset
+    //     各算一套 gaps/barW（旧代码 `hasReset ? 3·gap : 2·gap`），无 reset
+    //     的行 pct 右移 116px——同一 profile 的百分比数字上下不齐（实测
+    //     five_hour.pct x=1068 vs weekly/monthly.pct x=952；真机 fixture 的
+    //     OpenCode Go 行可见「0.0%」顶到最右、97%/82% 缩在中间）。
+    //     判据：同一 profile 的全部 .bar.*.pct 元素 .frame.x 逐个相等
+    //     （0.5px 容差）。种子前提：quota-p0 两条窗口、reset 一有一无
+    //     （单一 reset 形态的行 pct 天然同位，断它 = 恒真）；空跑守卫：
+    //     混合形态行数 < 1 即红。
+    // J(b) 按钮位置没对齐（两处，各自独立致红）：
+    //     (1)「去配置」按钮高 26 装在 24 的 head 行里（kHeadH=24、按钮
+    //         .size(cfgW, 26)）→ alignItems CENTER 后上下各溢出 head frame
+    //         1px（实测 button y=349 < head y=350、button 底 375 > head 底
+    //         374，行 box 顶再往上 1px 是 kRowGap 间隙带）。判据：按钮
+    //         frame 必须完全落在 head frame 之内（0.5px 容差）。
+    //     (2) 卡头行（home.quota.head）没有 .gap()，而 title 宽按
+    //         cw−104（= 按钮 96 + 间距 8）预留 → title 与按钮之间 0 间距、
+    //         [刷新] 右缘恒比内容列右缘短 8px（实测 refresh 右缘 1136 vs
+    //         head 右缘 1144，按钮不贴右）。判据：refresh 右缘 == head
+    //         右缘（0.5px 容差）。
+    // J(c) 文本重叠：head 行 .name/.provider 是固定宽单行盒且既无 clip 也
+    //     无 wrap（.status 已有 .clip()，这两格是漏网）——长 profile 名的
+    //     字形直接画出 168px 盒、压进 provider 列（真机 cc-switch 条目名
+    //     长度不受控）。判据（组 F 同款两段式）：clip/wrap 任一在场 → 过；
+    //     否则按元素真实样式量内在宽 ≤ 盒宽 + 1px。种子前提：quota-p0 名字
+    //     刻意给长（52 字符，无护栏时内在宽 ≈ 400px > 168px 必红）；空跑
+    //     守卫：没有一格真溢出 = 红（种子被改短时整组空转）。
+    {
+        composeFrame();
+        const auto rows = module::claude::quota::listQuotaHomeRows(env.db->db());
+
+        // ---- J(a) 同一 profile 的 pct 列 x 固定 ----
+        int mixedResetRows = 0;
+        for (const auto& row : rows.value()) {
+            const std::string rid =
+                "home.quota.row." + std::to_string(row.profileId);
+            // 收集本行全部 pct 元素；同时判定 reset 是否一有一无（判别力前提）
+            std::vector<const core::dsl::Element*> pcts;
+            bool anyReset = false;
+            bool anyNoReset = false;
+            for (const auto& w : row.windows) {
+                const core::dsl::Element* pct =
+                    ui != nullptr
+                        ? ui->find(rid + ".bar." + w.key + ".pct")
+                        : nullptr;
+                if (pct == nullptr) continue;   // 无条状态（不画窗口行）不算
+                pcts.push_back(pct);
+                const core::dsl::Element* reset =
+                    ui->find(rid + ".bar." + w.key + ".reset");
+                if (reset != nullptr) {
+                    anyReset = true;
+                } else {
+                    anyNoReset = true;
+                }
+            }
+            if (pcts.size() < 2 || !(anyReset && anyNoReset)) continue;
+            ++mixedResetRows;
+            for (size_t k = 1; k < pcts.size(); ++k) {
+                if (std::fabs(pcts[k]->frame.x - pcts[0]->frame.x) > 0.5f) {
+                    std::cerr << "home_probes: 组 J(a) FAIL——" << rid
+                              << " 的 pct 列不齐：pct[0].x=" << pcts[0]->frame.x
+                              << " vs pct[" << k << "].x=" << pcts[k]->frame.x
+                              << "（差 " << (pcts[k]->frame.x - pcts[0]->frame.x)
+                              << "px；无 reset 的行把 pct 顶进 reset 列？）\n";
+                    passed = false;
+                }
+            }
+        }
+        if (mixedResetRows < 1) {
+            std::cerr << "home_probes: 组 J(a) FAIL——没有任何一行窗口 reset "
+                         "一有一无（mixedResetRows=" << mixedResetRows
+                      << "）：本组空跑成恒真假绿，种子需要混合 reset 形态\n";
+            passed = false;
+        }
+
+        // ---- J(b)(1)「去配置」按钮 frame 必须落在 head frame 之内 ----
+        int configBtnRows = 0;
+        for (const auto& row : rows.value()) {
+            const std::string rid =
+                "home.quota.row." + std::to_string(row.profileId);
+            const core::dsl::Element* head =
+                ui != nullptr ? ui->find(rid + ".head") : nullptr;
+            const core::dsl::Element* btn =
+                ui != nullptr ? ui->find(rid + ".config") : nullptr;
+            if (btn == nullptr) continue;   // 非 Unconfigured/Incomplete 行无按钮
+            ++configBtnRows;
+            if (head == nullptr) {
+                std::cerr << "home_probes: 组 J(b) FAIL——" << rid
+                          << " 有 .config 但 .head 缺失\n";
+                passed = false;
+                continue;
+            }
+            if (btn->frame.y < head->frame.y - 0.5f ||
+                btn->frame.y + btn->frame.height >
+                    head->frame.y + head->frame.height + 0.5f ||
+                btn->frame.x < head->frame.x - 0.5f ||
+                btn->frame.x + btn->frame.width >
+                    head->frame.x + head->frame.width + 0.5f) {
+                std::cerr << "home_probes: 组 J(b) FAIL——" << rid
+                          << ".config frame (" << btn->frame.x << ","
+                          << btn->frame.y << " " << btn->frame.width << "x"
+                          << btn->frame.height << ") 溢出 head frame ("
+                          << head->frame.x << "," << head->frame.y << " "
+                          << head->frame.width << "x" << head->frame.height
+                          << ")（按钮比 head 行高？）\n";
+                passed = false;
+            }
+        }
+        if (configBtnRows < 1) {
+            std::cerr << "home_probes: 组 J(b) FAIL——没有任何一行有「去配置」"
+                         "按钮（configBtnRows=" << configBtnRows
+                      << "）：本组空跑成恒真假绿\n";
+            passed = false;
+        }
+
+        // ---- J(b)(2) 卡头 [刷新] 按钮右缘必须贴内容列右缘 ----
+        {
+            const core::dsl::Element* head =
+                ui != nullptr ? ui->find("home.quota.head") : nullptr;
+            const core::dsl::Element* refresh =
+                ui != nullptr ? ui->find("home.quota.refresh") : nullptr;
+            if (head == nullptr || refresh == nullptr) {
+                std::cerr << "home_probes: 组 J(b) FAIL——卡头结构缺失 (head="
+                          << (head != nullptr ? "ok" : "null") << ", refresh="
+                          << (refresh != nullptr ? "ok" : "null") << ")\n";
+                passed = false;
+            } else {
+                const float headRight = head->frame.x + head->frame.width;
+                const float refreshRight =
+                    refresh->frame.x + refresh->frame.width;
+                if (std::fabs(headRight - refreshRight) > 0.5f) {
+                    std::cerr << "home_probes: 组 J(b) FAIL——[刷新] 右缘 "
+                              << refreshRight << " != head 右缘 " << headRight
+                              << "（差 " << (headRight - refreshRight)
+                              << "px：head 行缺 .gap()，按钮不贴右）\n";
+                    passed = false;
+                }
+            }
+        }
+
+        // ---- J(c) head 行 name/provider 防溢护栏（clip/wrap）在场 ----
+        int nameCellsChecked = 0;
+        for (const auto& row : rows.value()) {
+            const std::string rid =
+                "home.quota.row." + std::to_string(row.profileId);
+            for (const char* suffix : {".name", ".provider"}) {
+                const core::dsl::Element* el =
+                    ui != nullptr ? ui->find(rid + suffix) : nullptr;
+                if (el == nullptr) continue;
+                ++nameCellsChecked;
+                if (textFitsOrGuarded(*el)) continue;
+                std::cerr << "home_probes: 组 J(c) FAIL——" << el->id
+                          << " 无 clip/wrap 且文案宽超出盒宽（文案「"
+                          << el->text << "」盒宽 " << el->frame.width
+                          << "px：长名字的字形会压进相邻列 = 文本重叠）\n";
+                passed = false;
+            }
+        }
+        if (nameCellsChecked < 1) {
+            std::cerr << "home_probes: 组 J(c) FAIL——一格 .name/.provider 都没"
+                         "读到（" << nameCellsChecked
+                      << "）：本轮空转 = 没有守卫\n";
+            passed = false;
+        }
+        // 空跑守卫：种子必须真有一格长名字（无护栏时内在宽 > 盒宽），否则
+        // 上面的宽度比较对每一格都恒过 = 恒真假绿。rawWidthOfElement 强制
+        // Clip+maxWidth=0，量的就是「没护栏时会不会溢出」，与本格是否已接
+        // clip 无关。⚠ --quota-fixture（真机）模式下本守卫会红——真 profile
+        // 名恰好都短（没有一格真溢出），这与组 I(c) 在 fixture 模式红是同一
+        // 口径（真机数据不含该场景 → 诚实呈现，不静默绿）；门禁那条
+        // （ctest -L probe）走离线假种子，长名字由种子保证。
+        int longNameCells = 0;
+        for (const auto& row : rows.value()) {
+            const std::string rid =
+                "home.quota.row." + std::to_string(row.profileId);
+            const core::dsl::Element* nameEl =
+                ui != nullptr ? ui->find(rid + ".name") : nullptr;
+            if (nameEl == nullptr) continue;
+            if (rawWidthOfElement(*nameEl) > nameEl->frame.width + 1.0f) {
+                ++longNameCells;
+            }
+        }
+        if (longNameCells < 1) {
+            std::cerr << "home_probes: 组 J(c) FAIL——没有任何一格名字超出盒宽"
+                         "（longNameCells=" << longNameCells
+                      << "）：种子名字不够长，本组空跑成恒真假绿\n";
+            passed = false;
         }
     }
 

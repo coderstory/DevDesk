@@ -296,16 +296,23 @@ HomeQuotaBudget computeHomeQuotaBudget(float screenHeight, float statCardHeight,
 
 namespace {
 
-// 一行窗口（进度条 + 百分比 [+ 倒计时]）
+// 一行窗口（进度条 + 百分比 [+ 倒计时]）。
+// ⚠ **pct 列永远按「reset 列在场」预留**（2026-10-03 布局错位修复）：旧代码
+// 按有没有 reset 各算一套 gaps/barW（`hasReset ? 3·gap : 2·gap`），无 reset
+// 的行 pct 右移 116px——同一 profile 的百分比数字上下不齐（真机 OpenCode Go
+// 行「0.0%」顶到最右、97%/82% 缩在中间）。固定四列（label | bar | pct |
+// [reset 槽]）后 pct 的 x 与 reset 有无无关；无 reset 的行 reset 槽留空，
+// bar 相应收窄。行内元素按 `.gap` 左排、children 宽度和 < cw 时右侧自然留白，
+// 故「不渲染 reset 元素」也能保持 pct 落位（head 行 [刷新] 的 8px 留白同理）。
 void drawWindowRow(eui::Ui& ui, const core::theme::Tokens& t, float cw,
                    const std::string& rowId, const QuotaHomeWindow& w,
                    int64_t nowSec) {
     const std::string countdown = formatQuotaResetCountdown(w.resetsAt, nowSec);
     const bool hasReset = !countdown.empty();
     const std::string barId = rowId + ".bar." + w.key;
-    const float gaps = hasReset ? kInnerGap * 3.0f : kInnerGap * 2.0f;
+    const float gaps = kInnerGap * 3.0f;
     const float barW = std::max(
-        24.0f, cw - kWinLabelW - kPctW - (hasReset ? kResetW : 0.0f) - gaps);
+        24.0f, cw - kWinLabelW - kPctW - kResetW - gaps);
 
     ui.row(barId + ".row").size(cw, kWinRowH).alignItems(eui::Align::CENTER)
         .gap(kInnerGap).content([&] {
@@ -366,8 +373,12 @@ void drawQuotaCard(eui::Ui& ui, const core::theme::Tokens& t, float contentWidth
         .content([&] {
             const float cw = contentWidth - kPad * 2.0f;
             // ---- 标题行 + [刷新] ----
+            // ⚠ `.gap(kInnerGap)` 必须在（2026-10-03 按钮不贴右修复）：title
+            // 宽按 cw−104 预留（= 按钮 96 + 间距 8），行不挂 gap 时 title 与
+            // 按钮零间距、[刷新] 右缘恒比内容列右缘短 8px（探针组 J(b) 实测
+            // 1136 vs 1144）。
             ui.row("home.quota.head").size(cw, kTitleH)
-                .alignItems(eui::Align::CENTER).content([&] {
+                .alignItems(eui::Align::CENTER).gap(kInnerGap).content([&] {
                     ui.text("home.quota.title")
                         .size(cw - 104.0f, 24.0f)
                         .text("供应商余量")
@@ -464,6 +475,14 @@ void drawQuotaCard(eui::Ui& ui, const core::theme::Tokens& t, float contentWidth
                                     .alignItems(eui::Align::CENTER)
                                     .gap(kInnerGap)
                                     .content([&] {
+                                        // ⚠ .name/.provider 与 .status 同款
+                                        // 防溢护栏（2026-10-03 文本重叠修复）：
+                                        // 两格都是固定宽单行盒且不能 wrap
+                                        // （换行会撑破 quotaRowHeight 的高度
+                                        // 预算），而 profile 名（cc-switch 条目
+                                        // 名）与供应商显示名的长度都不受控——
+                                        // 长 profile 名的字形曾直接画出 168px
+                                        // 盒、压进 provider 列。
                                         inner.text(rowId + ".name")
                                             .size(nameW, kHeadH)
                                             .text(row.profileName)
@@ -471,6 +490,7 @@ void drawQuotaCard(eui::Ui& ui, const core::theme::Tokens& t, float contentWidth
                                             .lineHeight(kHeadH)
                                             .fontWeight(600)
                                             .color(t.colors.textPrimary)
+                                            .clip()
                                             .build();
                                         inner.text(rowId + ".provider")
                                             .size(kProviderW, kHeadH)
@@ -478,6 +498,7 @@ void drawQuotaCard(eui::Ui& ui, const core::theme::Tokens& t, float contentWidth
                                             .fontSize(t.sizes.fontSizeSmall)
                                             .lineHeight(kHeadH)
                                             .color(t.colors.textSecondary)
+                                            .clip()
                                             .build();
                                         if (showStale) {
                                             inner.text(rowId + ".stale")
@@ -519,9 +540,15 @@ void drawQuotaCard(eui::Ui& ui, const core::theme::Tokens& t, float contentWidth
                                             auto openConfig = hooks.openConfig;
                                             const int64_t profileId =
                                                 row.profileId;
+                                            // ⚠ 按钮高 = kHeadH（2026-10-03
+                                            // 按钮错位修复）：旧 26 高装在 24
+                                            // 的 head 行里，alignItems CENTER
+                                            // 后上下各溢出 head frame 1px
+                                            // （探针组 J(b) 实测 button y=349
+                                            // < head y=350）。
                                             components::button(
                                                 inner, rowId + ".config")
-                                                .size(cfgW, 26.0f)
+                                                .size(cfgW, kHeadH)
                                                 .text("去配置")
                                                 .fontSize(
                                                     t.sizes.fontSizeSmall)
