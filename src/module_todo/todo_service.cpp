@@ -6,6 +6,7 @@
 #include "core/overdue.h"
 #include "core/result.h"
 #include "core/sqlite_db.h"
+#include "core/str_util.h"
 #include "platform/json.h"
 
 #include <cstring>
@@ -27,17 +28,11 @@ Priority intToPriority(int v) {
 }
 
 // LIKE 模式转义 % _ \（配合 SQL 的 ESCAPE '\'），防止用户查询串里的通配符被当作
-// SQL LIKE 元字符导致误命中。与 markdown 模块同款实现；因 module_* 互不依赖铁律，
-// 此处本地复制一份而非跨模块 include。
-std::string escapeLikePattern(const std::string& raw) {
-    std::string out;
-    out.reserve(raw.size() + 8);
-    for (char ch : raw) {
-        if (ch == '\\' || ch == '%' || ch == '_') out.push_back('\\');
-        out.push_back(ch);
-    }
-    return out;
-}
+// SQL LIKE 元字符导致误命中。
+// 2026-10-03 轻量化：原先这里靠「module_* 互不依赖铁律」本地复制了一份，注释
+// 本身也承认了（「此处本地复制一份而非跨模块 include」）。正确解法不是跨模块
+// include，而是下沉 core——三份逐字相同的实现已合并到 core/str_util.h。
+using core::str::escapeLikePattern;
 
 } // namespace
 

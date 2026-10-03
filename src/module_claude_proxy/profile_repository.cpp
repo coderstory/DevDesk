@@ -6,6 +6,7 @@
 #include "profile_repository.h"
 
 #include "core/logging.h"
+#include "core/time.h"
 #include "platform/credential_protection.h"
 #include "platform/keychain.h"
 #include "provider_config.h"
@@ -24,10 +25,9 @@ namespace module::claude {
 
 namespace {
 
-// 取当前 unix 秒
-std::time_t nowUnix() {
-    return std::time(nullptr);
-}
+// 取当前 unix 秒 —— 2026-10-03 轻量化：4 份逐字相同的本地 nowUnix() 合并到
+// core::time::nowUnix。
+using core::time::nowUnix;
 
 // 去除前导/尾随空白
 std::string trim(const std::string& s) {

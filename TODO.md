@@ -25,10 +25,10 @@
 - **需求**：拖动卡片时，卡片本体跟随光标移动（此前只变半透明 0.45，不跟手）
 - ✅ **已完成**（598a970）：跟手副本 `todo.dragghost` 画在**页面级顶层 root**（`todo_ui_board.cpp` 的 `drawDragGhost`）——anchor = 按下时卡片 bounds + 按下点起累计位移（框架 `DragEvent::totalX/totalY`），经新纯函数 `ui::dragGhostAnchor` 换算到页面 compose 空间；zIndex 100（压过看板子树、低于弹窗栈底 1000）；opacity 0.85（让目标列插入位占位条从副本底下透出）。源列原卡照旧 0.45 半透明留原位（占位骨架），源列 0.6 调暗门控未动
 - **原「关键点」两处失实，已纠正**：① `BoardPlate.dragOffset` 字段不存在（全仓零命中）；② 方案不是 `drawCard` 加 `.translate()` —— 列内容在 `components::scrollView` 根 stack 的 `.clip()` 内（`components/scrollview.h:88`，clip 在渲染侧对整棵子树做 scissor 求交：`core/runtime/runtime_render.h:223-230`），列内 translate 会被裁到列边界，跨列拖（主用例）不成立，故改页面级副本 + 绝对锚点定位
-- **未验证**：真人手拖的体感与屏幕像素（本机 `screencapture` 被 TCC 挡，无截屏，也无人肉眼看过）。替代证据（均实测绿）：无头用例 `todo_ui_drag_follow_ghost` + `todo_probes` 类 12（`queuePointerButton/Motion` 真实注入指针走真实命中测试与拖拽派发，断言副本帧位 = 卡位 + 累计位移；fc1b4f8）——两处都做过变异验证（去掉跟手副本 / 去掉位移项即红）
+- **未验证**：真人手拖的体感与屏幕像素（本机 `screencapture` 被 TCC 挡，无截屏，也无人肉眼看过）。替代证据（均实测绿）：无头用例 `todo_ui_drag_follow_ghost`（**2026-10-03 轻量化后仅剩这一条**——原并列的 `todo_probes` 类 12 探针与本用例逐条重复、CI 从不执行，已随 8 个重复 probe 一并删除）；本用例做过变异验证（去掉跟手副本 / 去掉位移项即红）
 
 ### 4. Probes 扩展
-- **已交付**：`tests/probes/` 现有 **13 个探针源文件**（about / agent / claude / claude_calls_latency / home / markdown / module_toggle_sidebar / pet / screenshot / settings_cards / settings_dropdown_z / todo + `probe_harness.h`），全部编译、接入 `ctest -L probe`，并在 `scripts/build-test-run.sh` 测试段之后自动跑（失败即整体 `exit 1`）。
+- **已交付**：`tests/probes/` 现有 **5 个探针源文件**（2026-10-03 轻量化：从 13 个收到 5 个）（home / module_toggle_sidebar / screenshot / settings_dropdown_z + `probe_harness.h`），全部编译、接入 `ctest -L probe`，并在 `scripts/build-test-run.sh` 测试段之后自动跑（失败即整体 `exit 1`）。
 - ~~**版本控制缺口（2026-09-28 实测）**：`tests/probes/` 下 3 个 probe 源文件从未被 git 跟踪——`claude_probes.cpp` / `home_probes.cpp` / `markdown_probes.cpp`，共 942 行。**待办：把这 3 个文件 `git add` 进版本控制**~~ → ✅ **已解决**：`git ls-files tests/probes/` 现在 13 个文件全在版本控制里（2026-10-03 核）。
 - **2026-10-03 新增能力**：探针进程内帧捕获 `--screenshot <路径>`（`glReadPixels` → PNG，不需要系统「屏幕录制」授权；`screenshot_probe` 是它的自测）。详见 `CLAUDE.md`「功能开发生命周期」阶段 4。
 - **待补**：

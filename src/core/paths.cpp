@@ -1,6 +1,7 @@
 #include "paths.h"
 #include "atomic_write.h"
 #include "logging.h"
+#include "str_util.h"
 
 #include <cstdlib>
 #include <filesystem>
@@ -70,14 +71,9 @@ constexpr const char* kRequiredGitignoreLines[] = {
     "!/.gitignore",                   // 放行自身（数据根本身要能进 git）
 };
 
-std::string trimAscii(const std::string& s) {
-    size_t b = 0;
-    size_t e = s.size();
-    auto sp = [](char c) { return c == ' ' || c == '\t' || c == '\r' || c == '\n'; };
-    while (b < e && sp(s[b])) ++b;
-    while (e > b && sp(s[e - 1])) --e;
-    return s.substr(b, e - b);
-}
+// trimAscii 已下沉 core::str（2026-10-03 轻量化：与
+// module_markdown/markdown_service.cpp 那份逐字等价，合并到 core/str_util.h）。
+using core::str::trimAscii;
 
 std::string readWholeFile(const fs::path& file) {
     std::ifstream in(file, std::ios::binary);

@@ -38,10 +38,9 @@ namespace {
 // 旧 Keychain service 名的固定前缀（残留清理命名空间派生时拼在短哈希之前）
 constexpr const char* kKeychainServicePrefix = "DevDesk";
 
-// 取当前 unix 秒
-std::time_t nowUnix() {
-    return std::time(nullptr);
-}
+// 取当前 unix 秒 —— 2026-10-03 轻量化：4 份逐字相同的本地 nowUnix() 合并到
+// core::time::nowUnix（本文件已 include core/time.h）。
+using core::time::nowUnix;
 
 // 去除前导/尾随空白
 std::string trim(const std::string& s) {

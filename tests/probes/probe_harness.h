@@ -76,7 +76,7 @@ inline core::window::RenderApi configuredRenderApi() {
 //
 // ── 事故（2026-10-03）────────────────────────────────────────────────
 // GitHub 的 macOS runner 上跑的进程**不挂在 WindowServer 的 bootstrap
-// namespace 里**，probe 建不出窗口 → 首次并入门禁的 14 个 probe 全红，
+// namespace 里**，probe 建不出窗口 → 首次并入门禁的 probe 全红（当时 14 条），
 // 而本机 14/14 全绿。本文件把「环境没显示」从**红色失败**改成
 // **诚实的跳过**（ctest SKIP_RETURN_CODE 77），但**绝不是**「建窗失败一律
 // 跳过」——那等于把门禁关掉，真代码 bug 会长得和没显示一模一样。

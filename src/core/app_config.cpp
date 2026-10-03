@@ -5,6 +5,7 @@
 // 这样「每个句柄操作入锁」由 SqliteDb / Statement 一处兜住（含 finalize ——
 // 那是 2026-10-02 真机 SIGSEGV 的头号漏点，见 sqlite_db.h 抬头）。
 #include "app_config.h"
+#include "time.h"
 
 #include <ctime>
 #include <utility>
@@ -13,9 +14,10 @@ namespace core::appconfig {
 
 namespace {
 
-// 写入时刻（unix 秒）。与 profile_repository.cpp / claude_service.cpp 的
-// 同名局部函数同款：core 没有「现在」的统一入口，各存储层各自取系统时钟。
-std::time_t nowUnix() { return std::time(nullptr); }
+// 写入时刻（unix 秒）。2026-10-03 轻量化：「core 没有『现在』的统一入口，各存储
+// 层各自取系统时钟」这句话当时是事实、现在不是了 —— 入口补在 core/time.h，
+// 4 份逐字相同的本地 nowUnix() 已收敛到那里。
+using core::time::nowUnix;
 
 constexpr const char* kSetSql =
     "INSERT INTO app_config (key, value, updated_at) VALUES (?, ?, ?) "

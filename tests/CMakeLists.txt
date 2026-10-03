@@ -200,8 +200,11 @@ add_test(NAME devdesk_unit_tests COMMAND devdesk_tests)
 # devdesk_tests 用例（已在上方 TIN-10 自检中排除）：单独编译成可执行，
 # 以 LABELS "probe" 注册 ctest，便于定向跑单个 probe。
 # DEVDESK_BUILD_PROBES=OFF（2026-10-03，CI 瘦身）：不生成任何 probe 目标与
-# ctest 注册。CI 无 GUI 会话，14 个 probe 测试全走 SKIP_RETURN_CODE 77 跳过，
-# 但 12 个 probe 可执行仍要编译链接——纯浪费。本地默认 ON（真门禁在本地）。
+# ctest 注册。CI 无 GUI 会话，6 个 probe 测试全走 SKIP_RETURN_CODE 77 跳过，
+# 但 4 个 probe 可执行仍要编译链接——纯浪费。本地默认 ON（真门禁在本地）。
+# （2026-10-03 轻量化：probes/ 从 12 个 .cpp 收到 4 个——删掉的 8 个与无头单测
+#  逐条重复，且其中 2 个还被刻意设计成「当前必红」当 TODO 清单用，红灯混在门禁
+#  里会淹没真信号。留下的 4 个各有独占判据，见 CLAUDE.md「功能开发生命周期」。）
 # devdesk_tests 不引用任何 probes/*.cpp（TIN-10 也把 probes/ 排除在用例核对
 # 外），整段包进开关不影响单测；quota_live_probe 在本段之外（它是 bash 脚本
 # 测试、LABELS "live"，没有编译成本，也不该跟着消失）。

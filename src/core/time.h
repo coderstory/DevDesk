@@ -8,6 +8,12 @@
 
 namespace core::time {
 
+// 当前 UNIX 时刻。存在的理由不是「省一次 std::time 调用」，而是收敛散落的
+// 「现在几点」口径：2026-10-03 轻量化前有 4 份逐字相同的本地 `nowUnix()`
+// （core/app_config.cpp / module_claude_proxy 的 claude_service、
+// call_log_store、profile_repository），合并为这一处。
+inline std::time_t nowUnix() { return std::time(nullptr); }
+
 // 线程安全版 localtime：把 time_t 转换为本地时间的 std::tm（写入 *out）
 // 替代业务代码里散布的平台分支（localtime_s / localtime_r / localtime）
 void localTime(std::time_t t, std::tm* out);

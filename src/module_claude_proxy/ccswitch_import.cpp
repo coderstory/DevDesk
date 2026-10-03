@@ -4,7 +4,9 @@
 //
 // 平台适配（DevDesk 铁律：业务代码零 #ifdef）：用户主目录探测与打开 flags
 // 都在 quota/ccswitch_source 里（已交付、已被 test_claude_quota_ccswitch.cpp
-// 守），本文件直接复用，**不重写一份**。
+// 守）；sqlite 读取骨架（RAII / 探列 / columnText / 只读打开）在
+// quota/ccswitch_sqlite.h，本文件与 quota/ccswitch_source.cpp **真的共用同一份**
+// （2026-10-03 轻量化修正：此前这句话与实现相反——6 个函数被逐字抄了一遍）。
 //   ⚠ Windows 待验证：cc-switch 在 Windows 上的库路径**未经真机核实**。当前
 //   userHomeDir() 探测 USERPROFILE（+ HOMEDRIVE/HOMEPATH 兜底），推测落在
 //   `%USERPROFILE%\.cc-switch\cc-switch.db` —— 但那只是推测，**未实测**。
@@ -15,6 +17,7 @@
 
 #include "provider_config.h"
 #include "quota/ccswitch_source.h"
+#include "quota/ccswitch_sqlite.h"  // 与 quota/ccswitch_source.cpp 共用的读取脚手架
 
 #include <sqlite3.h>
 
@@ -34,14 +37,27 @@ namespace module::claude {
 namespace {
 
 using quota::ccSwitchDbPath;
-using quota::kCcSwitchOpenFlags;
+using quota::ccswitch_sqlite::columnText;
+using quota::ccswitch_sqlite::DbHandle;
+using quota::ccswitch_sqlite::hasColumn;
+using quota::ccswitch_sqlite::OpenStatus;
+using quota::ccswitch_sqlite::openReadOnly;
+using quota::ccswitch_sqlite::providerColumns;
+using quota::ccswitch_sqlite::sqliteError;
+using quota::ccswitch_sqlite::StmtHandle;
+
+// 结果体装配的一行 wrapper（模板的 ListT 只在返回类型里，无法推导）。
+CcSwitchImportRows unavailable(CcSwitchImportStatus status, std::string reason) {
+    return quota::ccswitch_sqlite::makeUnavailable<CcSwitchImportRows>(
+        status, std::move(reason));
+}
 
 // 导入只取 Claude Code 侧两类：DevDesk 管的是 Claude Code 的 settings.json。
 // 同库的 codex / gemini / grokbuild 是别的产品，凭据形态不同，导进来必然坏。
 constexpr char kAppTypeClaude[] = "claude";
 constexpr char kAppTypeClaudeDesktop[] = "claude-desktop";
 
-constexpr int kBusyTimeoutMs = 2000;
+// busy timeout 见 quota/ccswitch_sqlite.h（kBusyTimeoutMs，两条读路径共用）。
 
 // env 里被「抽成独立 Profile 字段」而**不进 extraEnvJson** 的四个键。
 // 顺序无关（是集合），但逐条写出理由便于日后核对：
@@ -63,82 +79,22 @@ bool isReservedEnvKey(const std::string& key) {
            key == kEnvModel;
 }
 
-// ---- sqlite RAII（与 quota/ccswitch_source.cpp 同款：确定性关闭，不抛异常）----
-struct SqliteCloser {
-    void operator()(sqlite3* db) const noexcept {
-        if (db != nullptr) sqlite3_close(db);
-    }
-};
-using DbHandle = std::unique_ptr<sqlite3, SqliteCloser>;
-
-struct SqliteStmtCloser {
-    void operator()(sqlite3_stmt* stmt) const noexcept {
-        if (stmt != nullptr) sqlite3_finalize(stmt);
-    }
-};
-using StmtHandle = std::unique_ptr<sqlite3_stmt, SqliteStmtCloser>;
-
-std::string columnText(sqlite3_stmt* stmt, int index) {
-    const unsigned char* text = sqlite3_column_text(stmt, index);
-    if (text == nullptr) return {};
-    return std::string(reinterpret_cast<const char*>(text));
-}
-
-std::vector<std::string> providerColumns(sqlite3* db) {
-    std::vector<std::string> columns;
-    const char* sql = "SELECT name FROM pragma_table_info('providers')";
-    sqlite3_stmt* raw = nullptr;
-    if (sqlite3_prepare_v2(db, sql, -1, &raw, nullptr) != SQLITE_OK) return columns;
-    const StmtHandle stmt(raw);
-    while (sqlite3_step(stmt.get()) == SQLITE_ROW) {
-        columns.push_back(columnText(stmt.get(), 0));
-    }
-    return columns;
-}
-
-bool hasColumn(const std::vector<std::string>& columns, const char* name) {
-    return std::find(columns.begin(), columns.end(), name) != columns.end();
-}
-
-std::string sqliteError(sqlite3* db, int code) {
-    const char* message = db != nullptr ? sqlite3_errmsg(db) : nullptr;
-    std::string text = message != nullptr ? message : sqlite3_errstr(code);
-    if (text.empty()) text = "sqlite 错误 " + std::to_string(code);
-    return text;
-}
-
-CcSwitchImportRows unavailable(CcSwitchImportStatus status, std::string reason) {
-    CcSwitchImportRows out;
-    out.status = status;
-    out.unavailableReason = std::move(reason);
-    return out;
-}
-
 // ---- 读侧 ----
+// sqlite 骨架（RAII / 探列 / columnText / sqliteError / 只读打开）来自
+// quota/ccswitch_sqlite.h —— 2026-10-03 轻量化前本文件把它们从
+// quota/ccswitch_source.cpp 逐字抄了一份（文件头却写着「不重写一份」）。
 
 CcSwitchImportRows readAll() {
     const std::string path = ccSwitchDbPath();
-    if (path.empty()) {
-        return unavailable(CcSwitchImportStatus::NotFound,
-                           "找不到用户主目录，无法定位 cc-switch 配置库");
+    DbHandle db;
+    std::string reason;
+    const OpenStatus opened = openReadOnly(db, &reason, path, "数据库");
+    if (opened == OpenStatus::NotFound) {
+        return unavailable(CcSwitchImportStatus::NotFound, std::move(reason));
     }
-    std::error_code ec;
-    if (!std::filesystem::exists(path, ec) || ec) {
-        return unavailable(CcSwitchImportStatus::NotFound,
-                           "未找到 cc-switch 数据库（" + path + "）");
+    if (opened == OpenStatus::Unreadable) {
+        return unavailable(CcSwitchImportStatus::Unreadable, std::move(reason));
     }
-
-    // 只读打开（flags 见 quota/ccswitch_source：恒 READONLY，恒不含 CREATE）
-    sqlite3* raw = nullptr;
-    const int openCode =
-        sqlite3_open_v2(path.c_str(), &raw, kCcSwitchOpenFlags, nullptr);
-    const DbHandle db(raw);
-    if (openCode != SQLITE_OK) {
-        return unavailable(CcSwitchImportStatus::Unreadable,
-                           "打不开 cc-switch 数据库（只读）：" +
-                               sqliteError(db.get(), openCode));
-    }
-    sqlite3_busy_timeout(db.get(), kBusyTimeoutMs);
 
     const std::vector<std::string> columns = providerColumns(db.get());
     if (columns.empty()) {

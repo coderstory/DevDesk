@@ -145,14 +145,8 @@ REGISTER_TEST(file_open_win_wide_to_utf8,
 
 #endif  // _WIN32
 
-// ============ ③ openFileFromArgv 本尊 smoke（安全返回，不崩不抛） ============
-
-REGISTER_TEST(file_open_from_argv_smoke,
-              "file_open: openFileFromArgv smoke 不崩不抛（审计 [17]）", {
-    // 测试进程 argv[1] 可能是过滤子串（如 "file_open"）或空——内容不确定，
-    // 只锁「无论命令行是什么，返回 string 且函数本身安全」
-    const std::string r = platform::file_open::openFileFromArgv();
-    DOCTEST_CHECK(r.empty() || !r.empty());   // 恒真：能正常返回即不崩
-    return true;
-})
+// ============ ③ openFileFromArgv 本尊 smoke ============
+// 原 file_open_from_argv_smoke 已删（2026-10-03 轻量化）：它唯一断言是
+// `r.empty() || !r.empty()` —— 排中律恒真，无论实现怎么写都绿。「不崩不抛」由
+// 本文件其余用例（含本函数的调用路径）顺带覆盖，不需要一条恒真用例来虚增计数。
 

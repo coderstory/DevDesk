@@ -68,3 +68,6 @@ installer/**/out/
 
 # SDD/审计工作区草稿（progress/review 包/报告/截图），永不入库
 .superpowers/
+
+# ctest 在源码根跑时生成的临时目录（CTestCostData.txt 等），不是源码
+Testing/

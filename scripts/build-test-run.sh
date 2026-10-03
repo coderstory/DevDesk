@@ -90,8 +90,10 @@ esac
 export CMAKE_BUILD_PARALLEL_LEVEL="${DEVDESK_JOBS:-3}"
 
 # ---- UI probe 可执行构建开关（2026-10-03，CI 瘦身）----
-# CI 无 GUI 会话：14 个 probe 测试全走 SKIP_RETURN_CODE 77 跳过，但 12 个 probe
+# CI 无 GUI 会话：6 个 probe 测试全走 SKIP_RETURN_CODE 77 跳过，但 4 个 probe
 # 可执行仍在编译链接（CI 日志里成片的 Building ... probe 行）——纯浪费。
+# （2026-10-03 轻量化前是 14 条测试 / 12 个可执行：其中 8 个 probe 与无头单测
+#  逐条重复、CI 又从不执行，已删。）
 # DEVDESK_BUILD_PROBES=0 → configure 传 -DDEVDESK_BUILD_PROBES=OFF，probe 目标
 # 与 ctest 注册整体不生成；单测全量与静态守卫照跑（真门禁不动）。
 # 只认 "0" 为 OFF，其余任何值（含空 / 乱值）一律 ON —— 门禁宁多跑不静默少跑。

@@ -30,12 +30,8 @@ REGISTER_TEST(http_build_response, "http: build Response", {
     return true;
 })
 
-REGISTER_TEST(http_chunk_result_enum, "http: ChunkResult enum values", {
-    DOCTEST_CHECK(platform::http::ChunkResult::More != platform::http::ChunkResult::End);
-    DOCTEST_CHECK(platform::http::ChunkResult::More != platform::http::ChunkResult::Error);
-    DOCTEST_CHECK(platform::http::ChunkResult::End != platform::http::ChunkResult::Error);
-    return true;
-})
+// 原 http_chunk_result_enum（三个 ChunkResult 成员互不等）已删：enum class 成员
+// 两两不等是语言保证的恒真式。ChunkResult 的真实行为由下方真实 HTTP 用例覆盖。
 
 // ============ 真实 HTTP 行为（审计 TIN-11：原 3 例只回显结构体默认值，从不发送）============
 // 全部打本地 127.0.0.1（Server 随机端口），不依赖外网、不依赖真实代理。

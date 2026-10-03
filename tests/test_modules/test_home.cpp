@@ -29,10 +29,8 @@ constexpr const char* kDbPrefix = "devdesk_test_homesvc_";
 
 } // namespace
 
-REGISTER_TEST(home_pageid_first, "home: PageId Home is first", {
-    DOCTEST_CHECK_EQ(static_cast<int>(core::PageId::Home), 0);
-    return true;
-})
+// 原 home_pageid_first（`PageId::Home == 0`）已删：与 test_todo.cpp 的
+// todo_pageid 同款顺序不变量，两处各写一份；留 test_todo 那一份即可。
 
 REGISTER_TEST(home_service_real_stats,
               "HomeService: 仪表盘统计聚合 + 纯函数",

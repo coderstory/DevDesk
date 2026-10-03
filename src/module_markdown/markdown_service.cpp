@@ -3,6 +3,7 @@
 
 #include "core/atomic_write.h"
 #include "core/logging.h"
+#include "core/str_util.h"
 
 #include <algorithm>
 #include <cctype>
@@ -79,15 +80,10 @@ FtsQueryPlan buildFtsQuery(const std::string& raw) {
 }
 
 // LIKE 模式下转义 % _ \（配合 ESCAPE '\'）
-std::string escapeLikePattern(const std::string& raw) {
-    std::string out;
-    out.reserve(raw.size() + 8);
-    for (char ch : raw) {
-        if (ch == '\\' || ch == '%' || ch == '_') out.push_back('\\');
-        out.push_back(ch);
-    }
-    return out;
-}
+// escapeLikePattern 已下沉 core::str（2026-10-03 轻量化：本文件与
+// module_claude_proxy/call_log_store.cpp、module_todo/todo_service.cpp 三份
+// 逐字相同，合并到 core/str_util.h）。
+using core::str::escapeLikePattern;
 
 // 把 SqlRow 转成 NoteMeta
 NoteMeta rowToNoteImpl(const core::data::SqlRow& row) {
@@ -1089,12 +1085,8 @@ core::Result<std::vector<NoteMeta>> MarkdownService::search(
 namespace {
 
 // 去掉 ASCII 首尾空白（标签名清洗用；UTF-8 正文不受影响）
-std::string trimAscii(const std::string& s) {
-    size_t b = 0, e = s.size();
-    while (b < e && (s[b] == ' ' || s[b] == '\t' || s[b] == '\r' || s[b] == '\n')) ++b;
-    while (e > b && (s[e - 1] == ' ' || s[e - 1] == '\t' || s[e - 1] == '\r' || s[e - 1] == '\n')) --e;
-    return s.substr(b, e - b);
-}
+// 2026-10-03 轻量化：定义已下沉 core::str（与 core/paths.cpp 那份合并）。
+using core::str::trimAscii;
 
 } // namespace
 

@@ -61,6 +61,43 @@ int logLevelIndex(const std::string& level) {
     return 1;  // INFO 默认档
 }
 
+// ---- 卡内文本行（2026-10-03 轻量化）-------------------------------------
+// 8 张卡的标题行、4 张卡的描述行各写过一条 8~9 行的 builder 链，逐字重复
+//（只有 y / 宽 / 高 / 行高 / 文案不同）。这里收成两个 helper。
+//
+// **零行为变化**：position-x(28) / 字重(600) / 颜色(textPrimary·textTertiary) /
+// fontSize(fontSizeLarge·fs(12)) 在所有调用点完全相同，已逐处核对；属性设置顺序
+// 也与原链一致。收进来的收益不是行数，而是「改一次生效」——比如日后调卡内左缩进
+// 或标题字重，不必再去 8 处各改一遍（漏一处就是一处视觉不一致）。
+
+// 卡标题：y = 标题顶，w = 标题盒宽，h = 盒高，lineHeight 通常 = h。
+void cardTitle(eui::Ui& ui, const std::string& id, const core::theme::Tokens& t,
+               float y, float w, float h, float lineHeight,
+               const std::string& text) {
+    ui.text(id + ".title")
+        .position(28.0f, y)
+        .size(w, h)
+        .text(text)
+        .fontSize(t.sizes.fontSizeLarge)
+        .lineHeight(lineHeight)
+        .fontWeight(600)
+        .color(t.colors.textPrimary)
+        .build();
+}
+
+// 卡描述行：与标题同左缘(28)、同行高口径（lineHeight 恒 = 盒高 h）。
+void cardDesc(eui::Ui& ui, const std::string& id, const core::theme::Tokens& t,
+              float y, float w, float h, const std::string& text) {
+    ui.text(id + ".desc")
+        .position(28.0f, y)
+        .size(w, h)
+        .text(text)
+        .fontSize(fs(12.0f))
+        .lineHeight(h)
+        .color(t.colors.textTertiary)
+        .build();
+}
+
 } // namespace
 
 // ---------- 卡片 1：外观（主题 + 字号 + 窗口效果） ----------
@@ -99,23 +136,9 @@ void drawAppearanceCard(const CardDrawArgs& args) {
         .size(w, h)
         .zIndex(40)
         .content([&] {
-            ui.text(id + ".title")
-                .position(28.0f, 18.0f)
-                .size(w - 56.0f, titleH)
-                .text("外观")
-                .fontSize(t.sizes.fontSizeLarge)
-                .lineHeight(titleH)
-                .fontWeight(600)
-                .color(t.colors.textPrimary)
-                .build();
-            ui.text(id + ".desc")
-                .position(28.0f, descY)
-                .size(w - 56.0f, descH)
-                .text("主题与窗口底色即时生效；字号缩放全局生效")
-                .fontSize(fs(12.0f))
-                .lineHeight(descH)
-                .color(t.colors.textTertiary)
-                .build();
+            cardTitle(ui, id, t, 18.0f, w - 56.0f, titleH, titleH, "外观");
+            cardDesc(ui, id, t, descY, w - 56.0f, descH,
+                     "主题与窗口底色即时生效；字号缩放全局生效");
 
             // 左：主题切换
             ui.text(id + ".theme.label")
@@ -274,15 +297,7 @@ void drawEditorFontCard(const CardDrawArgs& args) {
         .size(w, h)
         .zIndex(30)
         .content([&] {
-            ui.text(id + ".title")
-                .position(28.0f, 16.0f)
-                .size(w - 56.0f, 22.0f)
-                .text("编辑器字号")
-                .fontSize(t.sizes.fontSizeLarge)
-                .lineHeight(22.0f)
-                .fontWeight(600)
-                .color(t.colors.textPrimary)
-                .build();
+            cardTitle(ui, id, t, 16.0f, w - 56.0f, 22.0f, 22.0f, "编辑器字号");
             // 下拉 y/高随生效字号派生（2026-09-30 merge-review R1 本期修，
             // 单一来源 logFieldHeight / editorFontDdOffsetY，见
             // settings_ui_logic.h）；100% 档与旧字面 42/36 逐值相等
@@ -362,24 +377,10 @@ void drawModulesCard(const CardDrawArgs& args) {
     ui.stack(id)
         .size(w, h)
         .content([&] {
-            ui.text(id + ".title")
-                .position(28.0f, 16.0f)
-                .size(w - 56.0f, 22.0f)
-                .text("模块")
-                .fontSize(t.sizes.fontSizeLarge)
-                .lineHeight(22.0f)
-                .fontWeight(600)
-                .color(t.colors.textPrimary)
-                .build();
-            ui.text(id + ".desc")
-                .position(28.0f, 40.0f)
-                .size(w - 56.0f, roundFs(16.0f))
-                .text("开关即时生效：关闭后该模块代码不再执行，侧边栏入口与"
-                      "页面当帧更新")
-                .fontSize(fs(12.0f))
-                .lineHeight(roundFs(16.0f))
-                .color(t.colors.textTertiary)
-                .build();
+            cardTitle(ui, id, t, 16.0f, w - 56.0f, 22.0f, 22.0f, "模块");
+            cardDesc(ui, id, t, 40.0f, w - 56.0f, roundFs(16.0f),
+                     "开关即时生效：关闭后该模块代码不再执行，侧边栏入口与"
+                     "页面当帧更新");
 
             // 开关行行几何随生效字号派生（2026-09-30 spec §2.3 本期修）：
             // 名称/描述行盒、行内 y 偏移与行距（100% 档 = 56，零回归锚）；
@@ -457,23 +458,9 @@ void drawPetCard(const CardDrawArgs& args) {
         .size(w, h)
         .zIndex(40)
         .content([&] {
-            ui.text(id + ".title")
-                .position(28.0f, 16.0f)
-                .size(w - 56.0f, 22.0f)
-                .text("桌宠")
-                .fontSize(t.sizes.fontSizeLarge)
-                .lineHeight(22.0f)
-                .fontWeight(600)
-                .color(t.colors.textPrimary)
-                .build();
-            ui.text(id + ".desc")
-                .position(28.0f, 40.0f)
-                .size(w - 56.0f, roundFs(16.0f))
-                .text("换肤与位置重置即时生效；关闭桌宠立即隐藏、重新开启立即恢复")
-                .fontSize(fs(12.0f))
-                .lineHeight(roundFs(16.0f))
-                .color(t.colors.textTertiary)
-                .build();
+            cardTitle(ui, id, t, 16.0f, w - 56.0f, 22.0f, 22.0f, "桌宠");
+            cardDesc(ui, id, t, 40.0f, w - 56.0f, roundFs(16.0f),
+                     "换肤与位置重置即时生效；关闭桌宠立即隐藏、重新开启立即恢复");
             // 皮肤下拉（列表为空时占位一项，选择被忽略）
             std::vector<std::string> items = in.petSkins;
             if (items.empty()) {
@@ -653,15 +640,8 @@ void drawDirectoryCard(const CardDrawArgs& args) {
     ui.stack(id)
         .size(w, h)
         .content([&] {
-            ui.text(id + ".title")
-                .position(28.0f, 16.0f)
-                .size(w - 56.0f, 22.0f)
-                .text("Markdown 笔记目录（只读）")
-                .fontSize(t.sizes.fontSizeLarge)
-                .lineHeight(22.0f)
-                .fontWeight(600)
-                .color(t.colors.textPrimary)
-                .build();
+            cardTitle(ui, id, t, 16.0f, w - 56.0f, 22.0f, 22.0f,
+                      "Markdown 笔记目录（只读）");
 
             // 审计 THS-01：存在性读快照（原每帧 fs::exists(mdDir)），
             // 刷新点见 refreshExternalState
@@ -774,15 +754,7 @@ void drawProxyCard(const CardDrawArgs& args) {
             const bool running = svc && svc->isProxyRunning();
             const int port = running ? svc->proxyPort() : 0;
 
-            ui.text(id + ".title")
-                .position(28.0f, 16.0f)
-                .size(240.0f, 22.0f)
-                .text("Claude 代理")
-                .fontSize(t.sizes.fontSizeLarge)
-                .lineHeight(22.0f)
-                .fontWeight(600)
-                .color(t.colors.textPrimary)
-                .build();
+            cardTitle(ui, id, t, 16.0f, 240.0f, 22.0f, 22.0f, "Claude 代理");
 
             // 随应用启动代理（Phase B 硬性需求 1，默认关）——放卡片右上，
             // 不新增卡片高度（SwitchBuilder 无 position，套 stack 定位，
@@ -803,17 +775,11 @@ void drawProxyCard(const CardDrawArgs& args) {
                 })
                 .build();
 
-            ui.text(id + ".desc")
-                .position(28.0f, 40.0f)
-                .size(w - 56.0f, descH)
-                .text(running
-                      ? "本地代理 http://127.0.0.1:" + std::to_string(port) +
-                            "（仅本机可访问，无需凭据）"
-                      : "本地代理未运行（默认不随应用启动，可在 Claude 页手动启动）")
-                .fontSize(fs(12.0f))
-                .lineHeight(descH)
-                .color(t.colors.textTertiary)
-                .build();
+            cardDesc(ui, id, t, 40.0f, w - 56.0f, descH,
+                     running
+                         ? "本地代理 http://127.0.0.1:" + std::to_string(port) +
+                               "（仅本机可访问，无需凭据）"
+                         : "本地代理未运行（默认不随应用启动，可在 Claude 页手动启动）");
 
             // ---- 代理端口行（总设计 §8.5 第 5 条，审计 2026-09-23 [14]）----
             // 数字输入 + Enter/应用按钮提交；代理运行中改端口自动 stop→start
@@ -959,15 +925,7 @@ void drawLogCard(const CardDrawArgs& args) {
         .size(w, h)
         .zIndex(30)
         .content([&] {
-            ui.text(id + ".title")
-                .position(28.0f, 16.0f)
-                .size(w - 56.0f, 22.0f)
-                .text("日志")
-                .fontSize(t.sizes.fontSizeLarge)
-                .lineHeight(22.0f)
-                .fontWeight(600)
-                .color(t.colors.textPrimary)
-                .build();
+            cardTitle(ui, id, t, 16.0f, w - 56.0f, 22.0f, 22.0f, "日志");
 
             // 档位说明（0 = 永久）；存的是原始天数 int，T10 清理任务按值读取
             static const char* kRetentionLabels[] = {
@@ -1088,15 +1046,8 @@ void drawLogViewCard(const CardDrawArgs& args) {
         .size(w, h)
         .content([&] {
             const float btnW = 96.0f;
-            ui.text(id + ".title")
-                .position(28.0f, 16.0f)
-                .size(w - 56.0f - btnW - 12.0f, 22.0f)
-                .text("运行日志（末尾 500 行）")
-                .fontSize(t.sizes.fontSizeLarge)
-                .lineHeight(22.0f)
-                .fontWeight(600)
-                .color(t.colors.textPrimary)
-                .build();
+            cardTitle(ui, id, t, 16.0f, w - 56.0f - btnW - 12.0f, 22.0f, 22.0f,
+                      "运行日志（末尾 500 行）");
             components::button(ui, id + ".refresh")
                 .position(w - 28.0f - btnW, 14.0f)
                 .size(btnW, 28.0f)

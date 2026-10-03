@@ -51,12 +51,8 @@ extern "C" ::core::Module* create_markdown_module();
 
 namespace fs = std::filesystem;
 
-REGISTER_TEST(module_pageid, "markdown: PageId", {
-    DOCTEST_CHECK(core::PageId::Markdown != core::PageId::Todo);
-    DOCTEST_CHECK(core::PageId::Markdown != core::PageId::Home);
-    return true;
-})
-
+// 原 module_pageid（`Markdown != Todo/Home`）已删：enum class 成员两两不等是语言
+// 保证的恒真式，删前它是纯虚增用例数。PageId → 字符串与序位由下一个用例覆盖。
 REGISTER_TEST(module_pagid_to_string, "markdown: pageIdToString", {
     DOCTEST_CHECK_EQ(core::pageIdToString(core::PageId::Home), std::string("Home"));
     DOCTEST_CHECK_EQ(core::pageIdToString(core::PageId::Markdown), std::string("Markdown"));

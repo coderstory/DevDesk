@@ -131,22 +131,22 @@ if [ "$SELF_TEST" -eq 1 ]; then
             > "$dir/tests/probes/probe_harness.h"
     }
     # 好树：两个 probe（都带 77）+ 一个非 probe
-    GOOD_CTEST='set_tests_properties(about_probe PROPERTIES  LABELS "probe" SKIP_RETURN_CODE "77" _BACKTRACE_TRIPLES "x;1;add_test;")
+    GOOD_CTEST='set_tests_properties(home_probes PROPERTIES  LABELS "probe" SKIP_RETURN_CODE "77" _BACKTRACE_TRIPLES "x;1;add_test;")
 set_tests_properties(home_probes PROPERTIES  LABELS "probe" SKIP_RETURN_CODE "77" _BACKTRACE_TRIPLES "x;2;add_test;")
 set_tests_properties(devdesk_tests PROPERTIES  LABELS "unit" _BACKTRACE_TRIPLES "x;3;add_test;")'
     mk_tree "$TMP/good" "$GOOD_CTEST" 77
 
     # 坏树 A：一个 probe 缺 SKIP_RETURN_CODE
-    mk_tree "$TMP/badA" 'set_tests_properties(about_probe PROPERTIES  LABELS "probe" SKIP_RETURN_CODE "77" _BACKTRACE_TRIPLES "x;1;")
+    mk_tree "$TMP/badA" 'set_tests_properties(home_probes PROPERTIES  LABELS "probe" SKIP_RETURN_CODE "77" _BACKTRACE_TRIPLES "x;1;")
 set_tests_properties(home_probes PROPERTIES  LABELS "probe" _BACKTRACE_TRIPLES "x;2;")' 77
     # 坏树 B：probe 的跳过码写成 76（与 harness 的 77 漂移）
-    mk_tree "$TMP/badB" 'set_tests_properties(about_probe PROPERTIES  LABELS "probe" SKIP_RETURN_CODE "76" _BACKTRACE_TRIPLES "x;1;")' 77
+    mk_tree "$TMP/badB" 'set_tests_properties(home_probes PROPERTIES  LABELS "probe" SKIP_RETURN_CODE "76" _BACKTRACE_TRIPLES "x;1;")' 77
     # 坏树 C：harness 的 kSkipExitCode 改成 78（源码改了、登记没跟）
     mk_tree "$TMP/badC" "$GOOD_CTEST" 78
     # 坏树 D：没有任何 probe 标签的测试（门禁空转）
     mk_tree "$TMP/badD" 'set_tests_properties(devdesk_tests PROPERTIES  LABELS "unit" _BACKTRACE_TRIPLES "x;1;")' 77
     # 坏树 E：**非 probe** 测试缺 SKIP_RETURN_CODE → 必须**绿**（判据不误伤无关测试）
-    mk_tree "$TMP/badE" 'set_tests_properties(about_probe PROPERTIES  LABELS "probe" SKIP_RETURN_CODE "77" _BACKTRACE_TRIPLES "x;1;")
+    mk_tree "$TMP/badE" 'set_tests_properties(home_probes PROPERTIES  LABELS "probe" SKIP_RETURN_CODE "77" _BACKTRACE_TRIPLES "x;1;")
 set_tests_properties(devdesk_tests PROPERTIES  LABELS "unit" _BACKTRACE_TRIPLES "x;2;")' 77
 
     ok=0
