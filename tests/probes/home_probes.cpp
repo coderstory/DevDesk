@@ -1925,6 +1925,70 @@ int main(int argc, char* argv[]) {
         composeFrame();
     }
 
+    // ==================== 组 M：[刷新] 与 [去配置] 等宽（2026-10-03 真机点验「宽度不一样」）====================
+    // 用户报告：「刷新和去配置按钮的宽度不一样」。上一批（515815b，组 L）修的
+    // 是**右缘**对齐（滚动档同线），但两按钮自身宽度不同：[刷新] 卡头行
+    // .size(96,28)（home_quota_card.cpp 硬编码字面量）vs [去配置] 行内
+    // kConfigBtnW=88——内容文字长度不同（「刷新」带 icon vs 「去配置」三字），
+    // 而 EUI-NEO button 的 .size 是**定宽帧**（无 minWidth / 无内容自适应，
+    // button.h:48 width_ 直落 frame :103-104/136）→ 宽窄不一，视觉不齐
+    // （1200x1300 落图实测 96 vs 88 逻辑 px，差 8px）。
+    // 修复：两按钮读同一个宽度常量 kQuotaBtnW=96（= 原 [刷新] 宽，含 icon 的
+    // 较大自然宽；「去配置」三字仅 ~39px 也装得下），home_quota_card.cpp 内
+    // 单一来源——两处字面量分开写就是漂移入口（本组就是为钉住它而生）。
+    // 断言：M(a) [刷新] frame.width == 每个 [去配置] frame.width（0.5px 容差）
+    //        —— 等宽是跨档不变式（按钮宽是常量，不随滚动/行数变），组 L 收尾
+    //        态（1 行未配置，必带 [去配置]）单档断言即足。
+    // 空跑守卫：[刷新] 缺失 / 一个 [去配置] 都没有 = 本组空转恒真假绿，红。
+    {
+        const core::dsl::Element* refresh =
+            ui != nullptr ? ui->find("home.quota.refresh") : nullptr;
+        if (refresh == nullptr) {
+            std::cerr << "home_probes: 组 M FAIL——卡头 [刷新] 按钮缺失"
+                         "（home.quota.refresh 未找到）\n";
+            passed = false;
+        }
+        const auto rowsM =
+            module::claude::quota::listQuotaHomeRows(env.db->db());
+        if (rowsM.isFail()) {
+            std::cerr << "home_probes: 组 M FAIL——listQuotaHomeRows 失败: "
+                      << rowsM.errorMessage() << "（本组判据全部跳过）\n";
+            passed = false;
+        } else {
+            int configBtns = 0;
+            for (const auto& row : rowsM.value()) {
+                const std::string rid =
+                    "home.quota.row." + std::to_string(row.profileId);
+                const core::dsl::Element* btn =
+                    ui != nullptr ? ui->find(rid + ".config") : nullptr;
+                if (btn == nullptr) continue;  // 本行无 [去配置]（状态语义，
+                                               // showsConfigButton 决定），非结构缺失
+                ++configBtns;
+                // M(a) 两按钮等宽
+                if (refresh != nullptr &&
+                    std::fabs(btn->frame.width - refresh->frame.width) >
+                        0.5f) {
+                    std::cerr << "home_probes: 组 M(a) FAIL——" << rid
+                              << ".config 宽 " << btn->frame.width
+                              << " != [刷新] 宽 " << refresh->frame.width
+                              << "（差 "
+                              << (refresh->frame.width - btn->frame.width)
+                              << "px：两按钮宽窄不一）\n";
+                    passed = false;
+                }
+            }
+            // 空跑守卫：一个 [去配置] 都没有 = 等宽断言没有断言面
+            if (configBtns < 1) {
+                std::cerr << "home_probes: 组 M(a) FAIL——没有任何一行带 "
+                             "[去配置] 按钮（configBtns=0）：本组空转\n";
+                passed = false;
+            }
+            std::cout << "home_probes: 组 M：[刷新] 宽 "
+                      << (refresh != nullptr ? refresh->frame.width : -1.0f)
+                      << "，[去配置] " << configBtns << " 个\n";
+        }
+    }
+
     // ---- 退出前落一张「当前状态图」（--screenshot <路径>，2026-10-03 帧捕获批次）----
     // 通用看图口：跑一次 home_probes 就能拿到此刻首页长什么样，不必再靠
     // screencapture（agent 会话拿不到屏幕录制 TCC 授权）。不传该开关时
