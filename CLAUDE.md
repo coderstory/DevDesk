@@ -212,11 +212,12 @@ main → 7 个 Router 页面 (home / markdown / todo / claude_proxy / agent / se
 
 - **单测全量**：`Total: 1259 / Passed: 1253 / Failed: 0`（macOS，CI run `37093130440` 的 macOS job，日志时间 2026-10-03T03:29Z）。`Total − Passed` = **6**，是按平台条件 `DOCTEST_SKIP` 的用例数（全仓 12 处 `DOCTEST_SKIP`：Windows 专属内存采样、`DEVDESK_SOAK` 门控、junction 注入、按平台权限模型分派等），**不是失败**；具体是哪 6 条以该次运行 `Skipped:` 行为准。`scripts/build-test-run.sh` 只回显 `Total/Passed/Failed` 三行，`Skipped:` 在原始输出里。
 - **CI 存在且是双平台**：`.github/workflows/ci.yml` —— `push dev` / `PR → dev·master` 触发；macOS job = `xcode-27` runner + Homebrew，Windows job = `windows-2025` + MSYS2 MinGW64。两个 job 都跑 `scripts/build-test-run.sh --release --no-run`（含 `ctest -L probe`）。**别再说"仓库没有 CI"**——`docs/superpowers/plans/2026-09-28-platform-adaptation-audit.md` 里"仓库无 `.github/`"的断言写于当时，早已不成立。
-- **🔴 CI 当前是红的**（截至 2026-10-03 11:2x 本地）：
-  - 最后一次**全绿** = **2026-10-01**（run `36849232387`）。
-  - **Windows job：编译失败**。`tests/test_modules/test_claude_quota.cpp:453`（用例 `claude_quota_fields_empty_is_legal`）在 MinGW GCC 16.2.0 + `-Werror` 下触发 `free-nonheap-object`（内联的 `std::vector<ProviderField>` 析构，`bits/new_allocator.h:183`），`ninja: build stopped`。
-  - **macOS job：构建成功、单测全绿，但 14 个 UI probe 全红**（`ctest -L probe`，0% passed）。失败原因**未取证**（本机 probe 是绿的）。
-  - ⚠ **因此「Windows 代码从 09-28 起一次都没编译过」是错的**——CI 一直在编 Windows（最后绿灯 10-01）；但**此刻 Windows 侧确实编不过**，要修的是上面那条 `-Werror`，不要归因到平台迁移。
+- **🔴 CI 红灯根因已修复并合并进 dev、但未复验**（截至 2026-10-03，口径为「已修、待复验确认」，**不得宣称 CI 已绿**）：
+  - 最后一次**全绿** = **2026-10-01**（run `36849232387`）——那是修复前的历史基线，不是本次修复后的状态。
+  - **Windows 编译失败的根因已修**：`test_claude_quota.cpp:453` 的 `-Wfree-nonheap-object` 判红经 2026-10-03 实测证伪为 GCC 误报（详见下方「已交付」WinWarn 批），按既定政策进 `-Wno-error=` 白名单（仍打印、不静默）；`-Wformat-truncation` 两处缓冲 16→36。已在 dev（merge `dd5cc1e`）。
+  - **macOS 14 个 UI probe 全红的根因已修**：无 GUI 会话时「无显示」诚实跳过（ctest `SKIP_RETURN_CODE 77`）+ 门禁三态（全绿/全跳过/混合）+ 跳过登记守卫 + 判据失败不被跳过掩盖。已在 dev（merge `7d6b729`）。
+  - ⏳ **两条修复是否已 push、CI 重跑复验是否通过：未确认**。本地 `origin/dev` 跟踪引用停在 `d1f37a5`（2026-10-03 12:16），早于两个 merge；`git branch -a --contains` 对两个 merge 只命中本地 dev——但跟踪引用可能滞后，最终以推送后重跑的 CI 为准。winwarn 批提交自注「未在 Windows CI 实测」。
+  - ⚠ **历史重申**：**「Windows 代码从 09-28 起一次都没编译过」是错的**——CI 一直在编 Windows（最后绿灯 10-01）；此前红灯的两条根因即上面两批所修，不要归因到平台迁移。
 
 ### 已交付（2026-10-01 ~ 10-03 这批）
 
@@ -228,13 +229,15 @@ main → 7 个 Router 页面 (home / markdown / todo / claude_proxy / agent / se
 - **凭据入库**：profile 的 API key 从系统钥匙串迁进 SQLite 的 `claude_profiles.api_key_encrypted` 列。保护级别**按平台拆**（铁律：平台无关头 + `_win` / `_posix` 分文件）：macOS/POSIX = 明文列 + 文件权限 `0600`；Windows = DPAPI 密文的 hex 文本。见 `src/platform/credential_protection.h`。
 - **配置入库**：六类 JSON 配置（`config.json` / `pet_config.json` / `markdown_view_state.json` / `todo_view_state.json` / `run-settings/*.json` / `claude_settings_snapshot.json`）全部迁进 SQLite 的 `app_config` 等表；`core::paths::configFile()` 与 `DEVDESK_CONFIG_PATH` 已随清理批删除。**唯一保留在文件系统的配置是 `~/.claude/settings.json`**（那是 Claude Code 的接管契约，动了就断接管）。
 - **探针帧捕获（2026-10-03）**：`--screenshot` 走进程内 `glReadPixels` → PNG，**不需要任何系统截屏授权**（agent 会话拿不到「屏幕录制」TCC）。
+- **Windows GCC 告警修复（WinWarn 批，10-03，merge `dd5cc1e`）**：`test_claude_quota.cpp:453` 的 `-Wfree-nonheap-object` 经 2026-10-03 实测证伪为 GCC 误报（完全相同编译命令加 `-fno-exceptions` 重编该 TU 告警消失 → 被诊断的 `operator delete` 只存在于异常清理 CFG；`72 = sizeof(ProviderField)`，是 `_UninitDestroyGuard` 取 `&__result` 栈上地址后沿 +72 误判）；按 `cmake/CompilerWarnings.cmake` 既定政策进 `-Wno-error=` 白名单（仍打印、不静默）；另把两处 `char buf[16]` 按 GCC 可证明最坏情况加大到 36（三个 int 各 11 字节 + 2 分隔符 + NUL，`src/module_claude_proxy/claude_ui_logic.cpp` / `src/module_home/home_service.cpp`）。**提交自注「未在 Windows CI 实测」**——只修了 GCC 16.2.0 全仓扫出的两条告警，Windows 侧复验待 CI 重跑。
+- **probe 无显示诚实跳过 + 门禁三态（hd 批，10-03，merge `7d6b729`）**：CI macOS runner 无 GUI 会话导致 14 个 UI probe 全红的根因打法——「无显示」走 ctest `SKIP_RETURN_CODE 77` 诚实跳过（`tests/probes/probe_harness.h`），门禁落成三态：**全绿 → 绿 / 全跳过 → 本地红「无显示环境，probe 未执行」+ CI（`GITHUB_ACTIONS=true`）绿但显式警告「本次未验证 UI」（绝不静默绿）/ 部分跳过 → 红「判据误判或代码 bug，必须人工查」**。新守卫 `scripts/check-probe-skip-gate.sh` 在 configure 产物 `CTestTestfile.cmake` 层断言每个 probe 带 `SKIP_RETURN_CODE 77` 且与 harness `kSkipExitCode` 一致（自带 `--self-test`，好树绿/坏树红，非恒真）；`tests/probes/screenshot_probe.cpp` ⑥ 无显示判据表失败先于窗口段 `return 1`，不被跳过掩盖。提交自带本地实测（`dd33415`，有 GUI 会话）：全绿 `1263/1257/0` + probe 14/14 通过、强制全跳过（本地红 / CI 绿带警告）、混合（1/14 跳过）红、变异守卫守住。
 - 更早的大批交付（P0–P8 / W 各波 / R8·R10 / macOS 三特性 / UI 现代化 M1-M3 / 桌宠 6 皮肤 / 安装程序）见下方「实施沿革」与 `CHANGELOG.md`。
 
 ### 已知欠账（诚实清单，2026-10-03）
 
 | 欠账 | 依据 / 位置 |
 |---|---|
-| **CI 红**：Windows 编译失败 + macOS probe 14/14 红 | 见上「测试与 CI」 |
+| **CI 复验待确认**：两条红灯根因（Windows 编译失败 / macOS probe 全红）修复已合并进 dev（winwarn 批 `dd5cc1e`、hd 批 `7d6b729`），但**未 push、CI 未重跑**，不得宣称已绿 | 见上「测试与 CI」 |
 | **首页余量卡每帧读 SQLite（锁竞争）**：`compose` 里直接调 `listQuotaHomeRows(*qdb)`，而该函数从首行持 `db.mutex()` 到返回；后台 `QuotaRefresher` 线程正在写同两张表 → UI 每帧取一次全局库锁 | `src/module_home/home_module.cpp:708`、`src/module_claude_proxy/quota/quota_home_view.cpp:98-102` |
 | **`-wal` / `-shm` chmod 的极端场景**：空事务失败时不会被 chmod（正常路径由 `Database::open` 先 `BEGIN IMMEDIATE;COMMIT;` 把伴生文件逼出来再一并收紧） | G8 简报「F1 m1 残留」；修它要动 `sqlite_db.h` / 装配顺序 |
 | **火山 Agent Plan 分支无真机样本**：抓到的 AFP 响应是 `PlanType` 空 + 四窗口 `Quota:0`（落回 Coding Plan）。**能产出窗口的那条路径（Quota>0）从未被真实响应验证过** | `tests/test_modules/test_claude_quota_live_fixtures.cpp:203-207`、`src/module_claude_proxy/quota/quota_volcano.cpp:610-690` |
