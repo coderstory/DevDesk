@@ -17,7 +17,7 @@
 [![c++](https://img.shields.io/badge/C%2B%2B-20-00599C?style=flat-square&logo=cplusplus&logoColor=white)](#架构)
 [![gui](https://img.shields.io/badge/GUI-EUI--NEO-D97757?style=flat-square)](#架构)
 [![deps](https://img.shields.io/badge/runtime%20deps-none-2ea44f?style=flat-square)](#快速开始)
-[![tests](https://img.shields.io/badge/tests-847-2ea44f?style=flat-square)](#项目状态)
+[![tests](https://img.shields.io/badge/tests-1259-2ea44f?style=flat-square)](#项目状态)
 
 <br>
 
@@ -184,8 +184,8 @@ Windows 构建默认静态链接（sqlite3 / curl / ssl / crypto / C++ 运行时
 
 <p align="center">
 六个模块全功能运行，可经设置页自由插拔<br>
-全量测试 <b>847</b> 条，<b>836</b> 通过 —— 其余 3 条是<b>已知的平台不对称红</b><br>
-<sub>（macOS 侧 FileWatcher 为轮询兜底 ×2、keychain 空账号语义 ×1），非回归</sub>
+全量测试 <b>Total 1259 / Passed 1253 / Failed 0</b>（macOS，2026-10-03 CI 日志；<b>以运行输出 <code>Total:</code> 为准</b>）<br>
+<sub>Total 与 Passed 的差额是按平台条件 <code>DOCTEST_SKIP</code> 的用例（Windows 专属实现 / soak 门控 / 非活跃平台分支等），不是失败</sub>
 </p>
 
 <h4 align="center">平台支持</h4>
