@@ -181,6 +181,24 @@ if [ -z "$EUI_DIR" ]; then
 fi
 echo "── EUI-NEO: $EUI_DIR ──"
 
+# ---- 0b. EUI-NEO 版本前置校验（必须在 configure / 构建之前）----
+# 为什么放在这里、而不是构建失败之后再解释：DevDesk 与 EUI-NEO 是两个独立仓库，
+# CI 用 `git clone --depth 1 <fork>` 取框架，**不锁版本**。2026-10-03 实测踩过——
+# 先推 DevDesk 触发了 CI、之后才推 EUI-NEO，于是编译报
+#   error: 'class core::dsl::TextBuilder' has no member named 'overflow'
+#   （位置 src/module_home/home_quota_card.cpp:617）
+# **报错文件是错的**：那行代码没问题，错的是框架版本，一个跨仓库版本不匹配被伪装成
+# 了一个指向错误文件的编译错误，排查方向被带偏一整轮。
+# 现在它在构建前就红，并明确说「EUI-NEO 版本不匹配」+ 该怎么处置。
+# 判据由 DevDesk 自身源码与 CMakeLists 自动推导（见该脚本文件头），不是手维护清单：
+# 新增一处 EUI-NEO 消费点或 EUI-NEO 加一条 include 路径，本守卫都自动跟上，零同步。
+echo "── EUI-NEO 版本前置校验 ──"
+if ! bash scripts/check-eui-neo-version.sh --root "$PWD" --eui-dir "$EUI_DIR"; then
+  echo "❌ EUI-NEO 版本前置校验失败（详见上方）" >&2
+  echo "   这是**框架版本**问题，不是 DevDesk 代码写错了；先同步 EUI-NEO，别改 DevDesk" >&2
+  exit 1
+fi
+
 # ---- 1. 杀旧进程（必须在构建前：运行中的 exe 被 Windows 文件锁住，链接必失败）----
 # TIN-02：按**可执行文件绝对路径**杀，不按进程名杀。原来 taskkill -F -IM <名字> 会
 # 杀全机同名进程——多条 worktree 并发构建时互相打断别人的测试/应用（临时路径的
@@ -507,6 +525,55 @@ if ! bash scripts/check-std-includes.sh; then
   echo "❌ std include 守卫失败（有文件直接用了 std 符号却只靠标准库内部传递包含才看得见）"
   exit 1
 fi
+
+# ---- 3b-6. 守卫自检（2026-10-03 门禁加固）----
+# 这一段跑的**不是**代码，是上面那些守卫**自己**。它回答的是一个前面所有段都回答
+# 不了的问题：「这些守卫现在还活着吗？」
+#
+# 为什么必须接进链里（这一批的立项理由）：在此之前，check-quota-write-paths /
+# check-quota-shutdown-order / check-probe-gate-labels / check-std-includes 四道守卫
+# 都带 --self-test，但**没有一个在门禁链里跑过**——它们全是手动点的。后果是：
+# 某道守卫被改坏、或它的判据退化成恒真，**CI 永远发现不了**，而门禁日志看上去全绿。
+# 上一轮审计的原话是「契约和守卫都声称覆盖了某个失败模式，实际实现没有」，这里
+# 是同一类问题的最后一层：连「守卫是否还在断言」都没有机制保证。
+#
+# ---- 关于「self-test 红的语义与真守卫红不同，混在一起输出难读」----
+# 上一批修复者据此**不把 self-test 接进链**，理由是「每次门禁跑 mktemp + 树构造，
+# 且两种红的语义不同」。**这条理由本批推翻**，因为它把「难读」当成了硬阻塞：
+#   · 「难读」有确定解法 —— 就是下面这个分段标题。两种红天然分成两段：
+#       上面的「── xxx 守卫 ──」= **你的代码坏了**（守卫正常工作，报告违规）；
+#       本段的「── 守卫自检 ──」  = **守卫自己坏了**（判据退化/变异没生效）。
+#     读日志的人扫一眼标题就知道该去修代码还是该修守卫，比现在「根本没有这段、
+#     出了问题也没人知道」强得多。
+#   · 另一半理由（跑 mktemp + 树构造）不是缺点而是**必要成本**：自检的全部价值
+#     就在于「造一棵坏树，确认它真的会红」。不造树就没有这条保证，成本省下来
+#     的那点时间买不到任何东西。
+#   · 真正的代价是**耗时**（本段约 40~60 秒：造树 + 多轮全量扫描）。换来的是
+#     「守卫被改坏」从「无人知晓」变成「CI 立刻红」。这笔账是划算的。
+#
+# 本段**故意放在所有真守卫之后**：代码真的有问题时，先报代码问题，别让守卫自检
+# 的噪音盖住它。
+echo "── 守卫自检（验证上面各守卫自己没坏，非你的代码问题）──"
+SELF_TEST_FAIL=0
+for _guard in check-module-isolation \
+               check-quota-write-paths \
+               check-quota-shutdown-order \
+               check-probe-gate-labels \
+               check-std-includes; do
+  if ! bash "scripts/${_guard}.sh" --self-test; then
+    echo "❌ 守卫自检失败：scripts/${_guard}.sh --self-test —— 这是**守卫自己**坏了（判据退化成恒真或变异没生效），不是代码问题" >&2
+    SELF_TEST_FAIL=1
+  fi
+done
+if ! bash scripts/check-eui-neo-version.sh --eui-dir "$EUI_DIR" --self-test; then
+  echo "❌ 守卫自检失败：scripts/check-eui-neo-version.sh --self-test —— 同样是守卫自己坏了" >&2
+  SELF_TEST_FAIL=1
+fi
+if [ "$SELF_TEST_FAIL" -ne 0 ]; then
+  echo "❌ 守卫自检未通过（见上方逐条；修完守卫本身再重跑门禁）" >&2
+  exit 1
+fi
+echo "✅ 守卫自检全过（6 道守卫的自检均好树绿 / 坏树红 —— 判据仍有效）"
 
 # ---- 3c. 安装到 /Applications（--install，仅 macOS；默认不开则整段不执行）----
 # 顺序即「事故的反面」，每一步都在补一个曾经漏掉的环节：
