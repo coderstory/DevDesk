@@ -11,6 +11,10 @@
 #include <thread>
 #include <type_traits>
 
+#if !defined(_WIN32)
+#include <sys/stat.h>
+#endif
+
 REGISTER_TEST(sqlite_open_memory, "SqliteDb: open in-memory", {
     auto r = core::data::SqliteDb::open(":memory:");
     DOCTEST_CHECK(r.isOk());
@@ -175,5 +179,189 @@ REGISTER_TEST(sqlite_no_default_ctor,
                   "SqliteDb 不应可默认构造：SqliteDb::open() 是唯一入口");
     static_assert(!std::is_default_constructible_v<core::Database>,
                   "Database 不应可默认构造：Database::open() 是唯一入口");
+    return true;
+})
+
+// ============ -wal/-shm 晚现时权限收敛（G8 简报 F1 m1 残留，2026-10-03 收口）============
+//
+// 缺口：SqliteDb::open 用 `BEGIN IMMEDIATE; COMMIT;` 空写事务把 -wal/-shm 逼出来
+// 再收紧三件套。若该空事务失败（实测场景：数据目录暂不可写，rc=8 readonly），
+// 伴生文件此刻缺席，open 的收紧对不存在的文件跳过——本会话稍后**首个写事务**
+// 才创建它们，且若主库此刻是宽松权限，凭据页就留在组/其他可读的 -wal 里，
+// 无人再收紧（macOS 系统 sqlite 在连接关闭后**不删**伴生文件，实测——暴露面
+// 不止会话内，会一直留到下次 open）。
+//
+// ⚠ 平台实测（2026-10-03，macOS 系统 libsqlite3）：POSIX 上 sqlite 创建
+// -wal/-shm 时**继承主库文件的权限位**（主库 0600/0644/0400 → 伴生文件出生即
+// 同模式）。所以「主库已被 open 收紧到 0600」时晚现伴生文件会天生 0600——
+// 「落回 umask 0644」只在主库此刻为宽松权限时成立，真实可达形态：
+//   ① open 时的收紧本身失败（闩要重试的那条路）；
+//   ② 外部工具以宽松权限重建三件套（多进程竞态）；
+//   ③ 未来 sqlite 版本不再继承主库权限位（届时回到 umask 出生）。
+// 用例因此显式把主库放宽到 0644 再做晚现写——把缺口变成可观测、断言非恒真，
+// 不依赖 sqlite 的继承实现细节。
+//
+// 修法：open 里置「三件套未确认 0600」闩，此后每条成功写路径（exec / 写 step）
+// 补一次收紧，三件套齐且全部收紧成功才落闩。下面三个用例分别打三条写路径，
+// 共用同一缺口初态构造（openDbAfterFailedWarmup）：
+//   阶段 1：正常 open + 写 + 关，落一个 WAL 模式主库；显式删 -wal/-shm 构造
+//           「主库在、伴生文件缺席」初态；
+//   阶段 2：目录收紧 0500 → open 里 PRAGMA journal_mode 与空事务**双双失败**
+//           （伴生文件无法创建）→ 返回的连接即缺口现场（warm-up 失败只 WARN
+//           不阻断）；随后恢复目录可写、把主库放宽到 0644（见上方 ⚠ 段）。
+// 阶段 3 由用例本体做「晚现后的首个写」，断言三件套 == 0600。
+// 修前本组必红（三件套停在 0644）；变异（摘掉写路径补收紧）同样必红。
+
+namespace {
+
+#if !defined(_WIN32)
+// 实际权限位（低 12 位）。test_file_perms.cpp 有同款 modeOf，但在那边的匿名
+// namespace 里无法跨文件复用；只被 POSIX 分支用到，按其注释纪律与守卫放在一起。
+bool statModeOf(const std::filesystem::path& p, unsigned& outMode) {
+    struct stat st{};
+    if (::stat(p.string().c_str(), &st) != 0) return false;
+    outMode = static_cast<unsigned>(st.st_mode) & 07777u;
+    return true;
+}
+#endif
+
+// 目录只读作用域：0555 期间无论断言在哪失败（fail-fast return false），析构都
+// 恢复 0700——不把临时目录留在 remove_all 都清不掉的状态。
+struct DirWriteRestore {
+    std::filesystem::path dir;
+    bool armed = false;
+    ~DirWriteRestore() {
+        if (!armed) return;
+        std::error_code ec;
+        std::filesystem::permissions(dir, std::filesystem::perms::owner_all,
+                                     std::filesystem::perm_options::replace, ec);
+    }
+};
+
+// 构造「open 时空事务失败、-wal/-shm 缺席」的缺口现场（见上方三阶段注释）。
+// 返回 false = 前置失败（已打印）；成功时 out 持有缺口现场的连接。
+bool openDbAfterFailedWarmup(const std::filesystem::path& dir,
+                             const std::filesystem::path& dbPath,
+                             std::optional<core::data::SqliteDb>& out) {
+    std::error_code ec;
+    std::filesystem::remove_all(dir, ec);
+    std::filesystem::create_directories(dir, ec);
+    DOCTEST_REQUIRE(!ec);
+    {
+        auto first = core::data::SqliteDb::open(dbPath);
+        DOCTEST_REQUIRE(first.isOk());
+        DOCTEST_REQUIRE(first.value().exec("CREATE TABLE t (x INTEGER)").isOk());
+    }
+    // 主库保留（WAL 头就在它里面），伴生文件显式删——不能依赖「关闭即删」：
+    // macOS 系统 sqlite 实测 close 后伴生文件仍在。
+    std::filesystem::remove(dbPath.string() + "-wal", ec);
+    std::filesystem::remove(dbPath.string() + "-shm", ec);
+
+    std::filesystem::permissions(
+        dir,
+        std::filesystem::perms::owner_read | std::filesystem::perms::owner_exec,
+        std::filesystem::perm_options::replace, ec);
+    DOCTEST_REQUIRE(!ec);
+    DirWriteRestore restore{dir, true};
+
+    auto r = core::data::SqliteDb::open(dbPath);
+    DOCTEST_REQUIRE(r.isOk());   // 空事务失败只 WARN、不阻断开库（既有口径）
+
+    // 阶段 3 前半：恢复目录可写（RAII 兜底之外显式做，保证断言前目录已可写）
+    std::filesystem::permissions(dir, std::filesystem::perms::owner_all,
+                                 std::filesystem::perm_options::replace, ec);
+    DOCTEST_REQUIRE(!ec);
+    restore.armed = false;
+
+    // 把主库放宽到 0644（可观测化，见文件头 ⚠ 段：不放宽则晚现伴生文件继承
+    // 主库 0600，断言恒真、变异不红）。等价于真实世界「open 收紧曾失败 /
+    // 外部工具宽松重建 / 未来 sqlite 不继承」三种形态。
+    std::filesystem::permissions(
+        dbPath,
+        std::filesystem::perms::owner_read | std::filesystem::perms::owner_write |
+            std::filesystem::perms::group_read | std::filesystem::perms::others_read,
+        std::filesystem::perm_options::replace, ec);
+    DOCTEST_REQUIRE(!ec);
+    out.emplace(std::move(r.value()));
+    return true;
+}
+
+// 三件套（db / -wal / -shm）全部存在且 0600。POSIX 分支真断言；Windows 的保护
+// 级别是 DPAPI 密文 + 用户目录 ACL（file_perms_win 明确 no-op），权限位口径
+// 不适用，只验形状（与 test_file_perms.cpp 同款平台分派）。
+bool checkStoreTrioOwnerOnly(const std::filesystem::path& dbPath) {
+#if defined(_WIN32)
+    return true;
+#else
+    const std::filesystem::path trio[] = {
+        dbPath,
+        std::filesystem::path(dbPath.string() + "-wal"),
+        std::filesystem::path(dbPath.string() + "-shm"),
+    };
+    for (const auto& f : trio) {
+        std::error_code ec;
+        DOCTEST_REQUIRE(std::filesystem::exists(f, ec));
+        unsigned mode = 0;
+        DOCTEST_REQUIRE(statModeOf(f, mode));
+        DOCTEST_CHECK_MESSAGE(mode == 0600u,
+                              f.filename().string() + " mode=" + std::to_string(mode));
+    }
+    return true;
+#endif
+}
+
+} // namespace
+
+REGISTER_TEST(sqlite_wal_late_exec,
+              "SqliteDb: warm-up 失败后晚现的 -wal/-shm 收敛 0600（exec 写路径，G8 F1 m1 残留）", {
+    const auto dir = test_temp::tempPath("devdesk_test_wallate_exec");
+    const auto dbPath = dir / "gap.db";
+    std::optional<core::data::SqliteDb> db;
+    DOCTEST_REQUIRE(openDbAfterFailedWarmup(dir, dbPath, db));
+    DOCTEST_REQUIRE(db->exec("INSERT INTO t VALUES (1)").isOk());   // 晚现后的首个写
+    DOCTEST_REQUIRE(checkStoreTrioOwnerOnly(dbPath));
+    db.reset();   // 先关连接（Windows 不允许删除打开中的文件）
+    std::error_code ec;
+    std::filesystem::remove_all(dir, ec);
+    return true;
+})
+
+REGISTER_TEST(sqlite_wal_late_tx,
+              "SqliteDb: warm-up 失败后晚现的 -wal/-shm 收敛 0600（事务路径，G8 F1 m1 残留）", {
+    const auto dir = test_temp::tempPath("devdesk_test_wallate_tx");
+    const auto dbPath = dir / "gap.db";
+    std::optional<core::data::SqliteDb> db;
+    DOCTEST_REQUIRE(openDbAfterFailedWarmup(dir, dbPath, db));
+    auto tx = db->transaction([&]() -> core::Result<void> {
+        auto p = db->prepare("INSERT INTO t VALUES (?)");
+        if (p.isFail()) return core::Result<void>::fail(p.errorCode(), p.errorMessage());
+        if (auto b = p.value().bind(1, static_cast<int64_t>(7)); b.isFail()) {
+            return core::Result<void>::fail(b.errorCode(), b.errorMessage());
+        }
+        auto s = p.value().step();
+        if (s.isFail()) return core::Result<void>::fail(s.errorCode(), s.errorMessage());
+        return core::Result<void>::ok();
+    });
+    DOCTEST_REQUIRE(tx.isOk());
+    DOCTEST_REQUIRE(checkStoreTrioOwnerOnly(dbPath));
+    db.reset();
+    std::error_code ec;
+    std::filesystem::remove_all(dir, ec);
+    return true;
+})
+
+REGISTER_TEST(sqlite_wal_late_stmt,
+              "SqliteDb: warm-up 失败后晚现的 -wal/-shm 收敛 0600（autocommit step 写路径，G8 F1 m1 残留）", {
+    const auto dir = test_temp::tempPath("devdesk_test_wallate_stmt");
+    const auto dbPath = dir / "gap.db";
+    std::optional<core::data::SqliteDb> db;
+    DOCTEST_REQUIRE(openDbAfterFailedWarmup(dir, dbPath, db));
+    auto p = db->prepare("INSERT INTO t VALUES (1)");
+    DOCTEST_REQUIRE(p.isOk());
+    DOCTEST_REQUIRE(p.value().step().isOk());
+    DOCTEST_REQUIRE(checkStoreTrioOwnerOnly(dbPath));
+    db.reset();
+    std::error_code ec;
+    std::filesystem::remove_all(dir, ec);
     return true;
 })

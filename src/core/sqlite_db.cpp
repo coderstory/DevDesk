@@ -35,6 +35,31 @@ namespace {
         const char* name = sqlite3_column_name(stmt, idx);
         return name ? name : "";
     }
+
+    // 写路径补收紧（G8 简报 F1 m1 残留，2026-10-03 收口）：open 时空写事务失败
+    // → -wal/-shm 可能由本会话稍后的首个写事务才创建，且 POSIX 上伴生文件继承
+    // 主库当时的权限位——主库宽松时凭据页就留在组/其他可读的 -wal 里（macOS
+    // 系统 sqlite close 后还不删伴生文件，实测——暴露面不止会话内）。闩未落时
+    // 补一次 restrictSqliteStoreFiles；**三件套齐（count>=3）且全部成功才落闩**
+    // ——只认 ok 会把「文件还没出现」误当收紧完成，之后晚现的文件就没人管了。
+    // 并发安全：pending/warned 均为 atomic；本函数只碰文件元数据（stat/chmod）、
+    // 不碰 sqlite3* 句柄，无需 db 锁，多线程同时补收紧幂等无害。失败只报一次
+    // （warned），防高频写路径（代理 logCall 每次调用一条 INSERT）刷屏。
+    void retightenStoreFilesAfterWrite(const std::shared_ptr<StorePermsLatch>& perms) {
+        if (!perms || !perms->pending.load(std::memory_order_relaxed)) return;
+        auto r = core::fileperms::restrictSqliteStoreFiles(perms->file);
+        if (r.isOk() && r.value() >= 3) {
+            perms->pending.store(false, std::memory_order_relaxed);
+            return;
+        }
+        if (r.isFail()) {
+            bool alreadyWarned = false;
+            if (perms->warned.compare_exchange_strong(alreadyWarned, true)) {
+                LOG_ERROR("数据库文件权限补收紧失败（-wal/-shm 可能以宽松权限存在，"
+                          "凭据落点可被同机其他用户读取）: " + r.errorMessage());
+            }
+        }
+    }
 }
 
 bool SqlRow::isNull(const std::string& col) const {
@@ -80,9 +105,10 @@ Result<std::string> SqlRow::getString(const std::string& col) const {
 
 Statement::Statement(sqlite3* db, sqlite3_stmt* stmt,
                      std::shared_ptr<std::recursive_mutex> mutex,
-                     std::shared_ptr<std::atomic<uint64_t>> version)
+                     std::shared_ptr<std::atomic<uint64_t>> version,
+                     std::shared_ptr<StorePermsLatch> perms)
     : db_(db), stmt_(stmt), mutex_(std::move(mutex)),
-      version_(std::move(version)) {
+      version_(std::move(version)), perms_(std::move(perms)) {
     // 只读性判一次并缓存：sqlite3_stmt_readonly() 纯查 VDBE 程序、不碰数据，
     // 且已 prepare 完的语句其结论不会再变。判据来自 sqlite 官方语义——SELECT /
     // EXPLAIN / BEGIN / PRAGMA 读法为 true，INSERT/UPDATE/DELETE/REPLACE/DDL
@@ -92,7 +118,7 @@ Statement::Statement(sqlite3* db, sqlite3_stmt* stmt,
 
 Statement::Statement(Statement&& other) noexcept
     : db_(other.db_), stmt_(other.stmt_), mutex_(other.mutex_),
-      version_(other.version_), readonly_(other.readonly_) {
+      version_(other.version_), perms_(other.perms_), readonly_(other.readonly_) {
     other.db_ = nullptr;
     other.stmt_ = nullptr;
 }
@@ -104,6 +130,7 @@ Statement& Statement::operator=(Statement&& other) noexcept {
         stmt_ = other.stmt_;
         mutex_ = other.mutex_;   // 锁跟句柄走（shared_ptr，可赋值）
         version_ = other.version_;
+        perms_ = other.perms_;   // 权限闩同理跟句柄走（见 StorePermsLatch 注释）
         readonly_ = other.readonly_;
         other.db_ = nullptr;
         other.stmt_ = nullptr;
@@ -170,10 +197,15 @@ Result<bool> Statement::step() {
     if (rc == SQLITE_ROW) {
         // 非只读语句返回 ROW 只可能是 RETURNING（写语句的结果行），算已写。
         bumpVersionOnWrite();
+        retightenStoreFilesAfterWrite(perms_);
         return Result<bool>::ok(true);
     }
     if (rc == SQLITE_DONE) {
         bumpVersionOnWrite();
+        // 写路径补收紧（G8 F1 m1 残留）：写 step 成功点即伴生文件「已出现/
+        // 将被首个 COMMIT 落帧」的点，闩未落就补一次收紧（只读语句被
+        // bumpVersionOnWrite 的同款 readonly_ 判据排除——读不落帧、无凭据页）。
+        retightenStoreFilesAfterWrite(perms_);
         return Result<bool>::ok(false);
     }
     // 失败：不推进版本号。失败语句**可能已经改了库**（部分列约束失败时
@@ -289,40 +321,54 @@ Result<SqliteDb> SqliteDb::open(const std::filesystem::path& file) {
     // 下次打开是全新 0644 文件，只在建库时设等于没设。
     //
     // 失败处置（原注释声称「WARN 不阻断」，但返回值被直接丢弃 → 实际零日志）：
-    //   ① 空事务失败（典型 SQLITE_BUSY，另一进程持锁）→ 取返回码并 LOG_WARN。
+    //   ① 空事务失败（典型 SQLITE_BUSY/READONLY）→ 取返回码并 LOG_WARN。
     //      不阻断开库：锁竞争是瞬时的，硬失败会让「另一个 DevDesk 开着」变成
-    //      「本进程起不来」，比留着 0644 的 -wal 更糟。
+    //      「本进程起不来」，比留着宽松权限的 -wal 更糟。
     //   ② chmod 失败 → LOG_ERROR 不静默：那是「凭据可能被同机他人读到」。
     //
-    // ⚠️ **残留缺口（本行不掩盖它）**：若 ① 失败，此刻 -wal/-shm 尚未被创建，
-    // 下面的 restrictSqliteStoreFiles 对不存在的文件跳过（file_perms_posix.cpp:41
-    // `if (!exists) continue`）。本会话内稍后由首个写事务创建的 -wal/-shm 因此
-    // **不会**被 chmod，落回 umask 的 0644，凭证页就留在 0644 的 -wal 里。
-    // 也就是说「每次打开都校正」只在空事务成功时成立。要彻底关掉这个洞需要把
-    // 收紧动作放到一次**成功写事务之后**（例如 applySchema 落库后），那会动
-    // sqlite_db.h 的成员或 database.cpp 的装配顺序，超出本条范围——记在此处，
-    // 由后续批次接手，不要把上面 ① 的 WARN 当成「已经处理好了」。
+    // F1 m1 残留收口（2026-10-03）：① 失败时 -wal/-shm 可能尚未创建，下面的
+    // restrictSqliteStoreFiles 对不存在的文件跳过——本会话稍后首个写事务才创建
+    // 它们（POSIX 上继承主库当时的权限位），原实现就此失守。现在 open 末尾按
+    // 「三件套是否已全部确认 0600」置 StorePermsLatch：未确认则此后的每条成功
+    // 写路径（exec / 写 step，见 retightenStoreFilesAfterWrite）都会补一次收紧，
+    // 三件套齐且全部成功才落闩。多进程竞态（外部工具以宽松权限重建三件套）与
+    // open 时收紧失败的重试也由同一把闩覆盖。
     char* warmupErr = nullptr;
     const int warmupRc = sqlite3_exec(handle, "BEGIN IMMEDIATE; COMMIT;", nullptr,
                                        nullptr, &warmupErr);
     if (warmupRc != SQLITE_OK) {
         LOG_WARN(std::string("SQLite 空写事务失败（-wal/-shm 可能未被创建，"
-                             "本会话稍后由写事务创建时不会自动 chmod 0600）：") +
+                             "将由写路径的权限闩在首个成功写后补收紧）：") +
                  (warmupErr ? warmupErr : sqlite3_errmsg(handle)));
     }
     if (warmupErr != nullptr) sqlite3_free(warmupErr);
-    if (auto permR = core::fileperms::restrictSqliteStoreFiles(file); permR.isFail()) {
+    auto permR = core::fileperms::restrictSqliteStoreFiles(file);
+    if (permR.isFail()) {
         LOG_ERROR("数据库文件权限收紧失败（凭据落点可能对同机其他用户可读）: " +
                   permR.errorMessage());
     }
 
     SqliteDb db;
     db.handle_ = handle;
+    // 置闩（见上方注释）：内存库/空路径无落点恒不置位；落盘库只在三件套
+    // 「全部存在且全部收紧成功」（ok 且 count>=3）时才视为已确认。
+    auto perms = std::make_shared<StorePermsLatch>();
+    perms->file = file;
+    const bool noStoreFile =
+        file.string().empty() || file.string() == ":memory:";
+    const bool trioConfirmed = permR.isOk() && permR.value() >= 3;
+    perms->pending.store(!noStoreFile && !trioConfirmed,
+                         std::memory_order_relaxed);
+    db.perms_ = std::move(perms);
     return Result<SqliteDb>::ok(std::move(db));
 }
 
 SqliteDb::~SqliteDb() {
     if (handle_) {
+        // 兜底补收紧（G8 F1 m1 残留）：macOS 系统 sqlite 在 close 后不删伴生文件
+        // （实测），闩还挂着就让三件套以确认过的 0600 留在盘上。只碰文件元数据、
+        // 不碰句柄，无需先取锁。
+        retightenStoreFilesAfterWrite(perms_);
         // 审计 L5：原用 sqlite3_close，未 finalize 的语句会让它返回 SQLITE_BUSY
         // 且被忽略——句柄静默不关（Windows 上文件句柄泄漏）。close_v2 是延迟
         // 关闭语义：连接变 zombie，最后一条语句 finalize 时真正回收。
@@ -338,7 +384,7 @@ SqliteDb::~SqliteDb() {
 // （旧实现每次移动都新造一把 mutex，锁与句柄就此分家——见 sqlite_db.h 注释）
 SqliteDb::SqliteDb(SqliteDb&& other) noexcept
     : handle_(other.handle_), mutex_(other.mutex_),
-      writeVersion_(other.writeVersion_) {
+      writeVersion_(other.writeVersion_), perms_(other.perms_) {
     other.handle_ = nullptr;
 }
 
@@ -356,6 +402,9 @@ SqliteDb& SqliteDb::operator=(SqliteDb&& other) noexcept {
         // 版本号跟着走（同 mutex_ 的理由：留在旧对象上 = Statement 推进的
         // 计数器与读侧看到的不是同一个，脏标记从此永不置位）
         writeVersion_ = other.writeVersion_;
+        // 权限闩同理跟着走（见 StorePermsLatch 注释）：留在旧对象上 = 移动后
+        // 新对象上的写路径拿不到闩，补收紧从此不再发生
+        perms_ = other.perms_;
     }
     return *this;
 }
@@ -364,6 +413,10 @@ Result<void> SqliteDb::exec(const std::string& sql) {
     std::lock_guard<std::recursive_mutex> lock(*mutex_);
     char* errMsg = nullptr;
     int rc = sqlite3_exec(handle_, sql.c_str(), nullptr, nullptr, &errMsg);
+    // 写路径补收紧（G8 F1 m1 残留）：放在 rc 判分之前——sqlite3_exec 逐条
+    // autocommit，脚本中途失败时前几条可能已各自提交，-wal 已落了帧，失败
+    // 分支同样要补（闩的 count>=3 落闩条件保证不会把「文件未出现」误当完成）。
+    retightenStoreFilesAfterWrite(perms_);
     if (rc != SQLITE_OK) {
         std::string err = errMsg ? errMsg : "unknown";
         sqlite3_free(errMsg);
@@ -388,7 +441,7 @@ Result<Statement> SqliteDb::prepare(const std::string& sql) {
             std::string("prepare: ") + sqlite3_errmsg(handle_));
     }
     return Result<Statement>::ok(
-        Statement(handle_, stmt, mutex_, writeVersion_));
+        Statement(handle_, stmt, mutex_, writeVersion_, perms_));
 }
 
 Result<void> SqliteDb::transaction(std::function<Result<void>()> fn) {
