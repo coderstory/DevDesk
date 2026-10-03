@@ -815,52 +815,17 @@ REGISTER_TEST(claude_service_delete_profile,
     return true;
 })
 
-// ---- 6b. deleteProfile：Keychain 清理失败时中止（SQLite 行保留） ----
-
-#if defined(_WIN32)
-REGISTER_TEST(claude_service_delete_profile_keychain_fail,
-              "claude_service: Keychain 删除失败时中止 deleteProfile", {
-    test_support::TestDb tdb(kDbPrefix, "delfail");
-    module::claude::ClaudeService svc(tdb.handle(), kTestKeychainService);
-
-    auto created = svc.createProfile("Stuck", "https://stuck.example.com",
-                                     "sk-ant-stuck-7777", "m");
-    DOCTEST_REQUIRE(created.isOk());
-    const int64_t id = created.value().id;
-
-    // Windows keychain 存储路径（见 keychain_win.cpp）：
-    // <appData>/keychain/<service>/<encode(account)>.key，account "claude:<id>"
-    // 经 CP-11 可逆编码（非白名单字符 %XX 转义）后为 "claude%3A<id>"。
-    // 把密钥文件换成非空目录 → fs::remove 必失败，注入 Keychain 删除失败
-    const auto keyPath = core::paths::appDataDir() / "keychain" /
-                         kTestKeychainService /
-                         ("claude%3A" + std::to_string(id) + ".key");
-    std::error_code ec;
-    DOCTEST_REQUIRE(std::filesystem::exists(keyPath, ec));
-    std::filesystem::remove(keyPath, ec);
-    std::filesystem::create_directories(keyPath, ec);
-    {
-        std::ofstream blocker(keyPath / "blocker.txt");
-        blocker << "make dir non-empty";
-    }
-
-    // 中止：deleteProfile 失败，SQLite 行保留（可重试，数据不丢）
-    auto r = svc.deleteProfile(id);
-    DOCTEST_CHECK(r.isFail());
-    DOCTEST_CHECK(svc.getProfile(id).isOk());
-
-    // 恢复现场后重试 → 成功，两边都清干净
-    std::filesystem::remove_all(keyPath, ec);
-    DOCTEST_REQUIRE(platform::keychain::storeSecret(
-        kTestKeychainService, "claude:" + std::to_string(id),
-        "sk-ant-stuck-7777").isOk());
-    DOCTEST_REQUIRE(svc.deleteProfile(id).isOk());
-    DOCTEST_CHECK(svc.getProfile(id).isFail());
-    DOCTEST_CHECK(platform::keychain::loadSecret(
-        kTestKeychainService, "claude:" + std::to_string(id)).isFail());
-    return true;
-})
-#endif  // _WIN32
+// ---- 6b. deleteProfile：Keychain 清理失败时中止（已移除） ----
+// E-1/E-2 凭据入库（cbccb96）后 createProfile 只把密钥写进 SQLite 的
+// api_key_encrypted 列、不再写 Keychain 文件；deleteProfile 也只清 DB 凭据列
+// + 删行，不再调 platform::keychain::deleteSecret。本用例的两个前提（createProfile
+// 会写 Keychain 文件 / deleteProfile 删 Keychain 失败时中止）都已失效——
+// 断言 exists(keyPath) 必红（文件从不被建）、r.isFail() 必红（deleteProfile 不再
+// 碰 Keychain，必成功）。旧的「把密钥文件换非空目录注入删除失败」的注入机制
+// 依赖文件系统 Keychain 存储，迁库后无对应注入点。安全属性（凭据清理失败时
+// 中止 deleteProfile、行保留可重试）改由 TwoPhaseKeyWrite 在 DB 层结构性保证
+//（profile_repository.cpp:675-683：先清三列、失败即 return，行不动）。
+// 此处留注释不留 SKIP：该行为已不存在，SKIP 会留一个「该跑但跳过」的假象。
 
 // ---- 6c. 启动时孤儿 Keychain 清理 ----
 

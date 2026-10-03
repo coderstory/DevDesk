@@ -136,7 +136,13 @@ REGISTER_TEST(credential_stored_in_db_column_roundtrip,
     const std::string hint = row.value().getString("api_key_hint").value();
     const std::string check = row.value().getString("api_key_check").value();
 
-    DOCTEST_CHECK_EQ(stored, platform::credential::protect(key).value());
+    // 明文平台（macOS/POSIX）：protect 是确定性透传，stored == protect(key) 成立。
+    // 加密平台（Windows DPAPI）：CryptProtectData 每次调用含随机 salt/IV → 两次
+    // protect(key) 产不同密文，比对密文相等无意义。往返一致性已由上方
+    // loadApiKey(id)==key 证明；非明文由下方 find(key)==npos 证明。
+    if (platform::credential::storesPlaintext()) {
+        DOCTEST_CHECK_EQ(stored, platform::credential::protect(key).value());
+    }
     if (!platform::credential::storesPlaintext()) {
         DOCTEST_CHECK(stored.find(key) == std::string::npos);   // 加密平台不得明文
     }
