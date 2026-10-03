@@ -486,7 +486,9 @@ private:
                             .fontWeight(700)
                             .color(t.colors.textPrimary)
                             .build();
-                        // subtitle 包 clip 栈：长快捷键提示超宽时裁掉，不溢出压到右侧 segmented
+                        // subtitle 包 clip 栈：长快捷键提示超宽时截断，不溢出压到右侧 segmented。
+                        // 2026-10-03 起内层文本接单行省略号（ellipsis 管排版宽，
+                        // 截断有「…」提示）；栈 .clip() 保留作几何兜底（管绘制范围）
                         const float subW = contentW - actionsW - segW;
                         ui.stack("md.subtitle.clip")
                             .size(subW, 18.0f)
@@ -498,6 +500,8 @@ private:
                                     .fontSize(t.sizes.fontSizeSmall)
                                     .lineHeight(18.0f)
                                     .color(t.colors.textSecondary)
+                                    .maxWidth(subW)
+                                    .overflow(core::TextOverflow::Ellipsis)
                                     .build();
                             })
                             .build();
@@ -1452,7 +1456,13 @@ private:
         ui.text("md.status.save")
             .position(x + 24.0f, y)
             .size(statusLeftW, 22.0f)
-            .clip()  // 超长文件名裁掉，不越过右缘压右侧文本
+            // 超长文件名不越过右缘压右侧文本：单行省略号（截断有「…」提示，
+            // 显式 maxWidth 是生效前提——runtime 在 element.maxWidth==0 时回退
+            // frame.width，DSL 布局却按 element.maxWidth 走，两条路会分叉）；
+            // clip 保留作几何兜底（ellipsis 管排版宽，clip 管绘制范围）
+            .maxWidth(statusLeftW)
+            .overflow(core::TextOverflow::Ellipsis)
+            .clip()
             .text(left)
             .fontSize(11.0f)
             .lineHeight(22.0f)

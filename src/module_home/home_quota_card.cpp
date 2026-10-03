@@ -476,13 +476,21 @@ void drawQuotaCard(eui::Ui& ui, const core::theme::Tokens& t, float contentWidth
                                     .gap(kInnerGap)
                                     .content([&] {
                                         // ⚠ .name/.provider 与 .status 同款
-                                        // 防溢护栏（2026-10-03 文本重叠修复）：
+                                        // 防溢护栏（2026-10-03 文本重叠修复）
+                                        // + 省略号升级（同日 Ellipsis 批次，
+                                        // 4e76052 的 .error 先例同款）：
                                         // 两格都是固定宽单行盒且不能 wrap
                                         // （换行会撑破 quotaRowHeight 的高度
                                         // 预算），而 profile 名（cc-switch 条目
                                         // 名）与供应商显示名的长度都不受控——
                                         // 长 profile 名的字形曾直接画出 168px
-                                        // 盒、压进 provider 列。
+                                        // 盒、压进 provider 列。护栏分层：
+                                        // **ellipsis 管排版宽**（截断有「…」
+                                        // 提示，用户看得出名字被截——显式
+                                        // maxWidth 是生效前提，漏了框架侧静默
+                                        // no-op），**clip 管绘制范围**（scissor
+                                        // 兜底，ellipsis 压不住的极窄容器情形
+                                        // 由它收口），两层不冲突。
                                         inner.text(rowId + ".name")
                                             .size(nameW, kHeadH)
                                             .text(row.profileName)
@@ -490,6 +498,9 @@ void drawQuotaCard(eui::Ui& ui, const core::theme::Tokens& t, float contentWidth
                                             .lineHeight(kHeadH)
                                             .fontWeight(600)
                                             .color(t.colors.textPrimary)
+                                            .maxWidth(nameW)
+                                            .overflow(
+                                                core::TextOverflow::Ellipsis)
                                             .clip()
                                             .build();
                                         inner.text(rowId + ".provider")
@@ -498,6 +509,9 @@ void drawQuotaCard(eui::Ui& ui, const core::theme::Tokens& t, float contentWidth
                                             .fontSize(t.sizes.fontSizeSmall)
                                             .lineHeight(kHeadH)
                                             .color(t.colors.textSecondary)
+                                            .maxWidth(kProviderW)
+                                            .overflow(
+                                                core::TextOverflow::Ellipsis)
                                             .clip()
                                             .build();
                                         if (showStale) {

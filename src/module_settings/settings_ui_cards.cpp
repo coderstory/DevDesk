@@ -218,6 +218,8 @@ void drawAppearanceCard(const CardDrawArgs& args) {
             const std::string degraded = windowEffectDegradedHint(
                 in.cfg.windowEffect, app::activeWindowEffect());
             if (!degraded.empty()) {
+                // 可用宽（与 .size 同口径）：28 = 右内缩，16 = 图标让位
+                const float hintW = w - effectX - 16.0f - 28.0f;
                 // ⚠ 字符换 FA：图标/文字拆两个元素（icon 字体通道）
                 ui.text(id + ".effect.hint.icon")
                     .position(effectX, hintY)
@@ -229,13 +231,22 @@ void drawAppearanceCard(const CardDrawArgs& args) {
                     .build();
                 ui.text(id + ".effect.hint")
                     .position(effectX + 16.0f, hintY)
-                    .size(w - effectX - 16.0f - 28.0f, hintH)
+                    .size(hintW, hintH)
                     .text(degraded)
                     .fontSize(fs(11.0f))
                     .lineHeight(hintH)
                     .color(t.colors.warning)
                     // 类 6(d)（probes 证伪门禁落点）：窄窗可用宽不足时截断
-                    // 而非溢出（完整文案在宽窗可见）
+                    // 而非溢出（完整文案在宽窗可见）。2026-10-03 起硬裁升级为
+                    // 单行省略号：固定宽单行文本被截要有「…」提示，用户才知
+                    // 道后面还有字（EUI-NEO dsl.h:150-152 三件套 =
+                    // overflow==Ellipsis && maxWidth>0 && !wrap，wrap 本就
+                    // 默认 false；显式 maxWidth 是生效前提——runtime 在
+                    // element.maxWidth==0 时回退 frame.width，DSL 布局却按
+                    // element.maxWidth 走，两条路会分叉）。clip 保留作几何兜底
+                    //（ellipsis 管排版宽，clip 管绘制范围，两层不冲突）。
+                    .maxWidth(hintW)
+                    .overflow(core::TextOverflow::Ellipsis)
                     .clip()
                     .build();
             }

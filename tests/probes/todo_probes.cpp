@@ -168,6 +168,32 @@ int main(int argc, char* argv[]) {
                                   });
     };
 
+    // ---- 首帧：顶栏 subtitle 省略号接线（2026-10-03 Ellipsis 批次）----
+    // todo.subtitle 是固定宽单行静态提示（41 字实宽 ≈545px，窄窗 ≲1400 必溢出
+    // 出标题列），外层与 md.subtitle.clip 同款的包 clip 栈原是硬裁——升级为
+    // 单行省略号（内层文本接线，栈 .clip() 保留作几何兜底）。断言三件套
+    // （EUI-NEO dsl.h:150-152）：overflow==Ellipsis && maxWidth>0 && !wrap，
+    // 漏一条框架侧是静默 no-op。
+    composeFrame();
+    {
+        const core::dsl::Element* sub =
+            ui != nullptr ? ui->find("todo.subtitle") : nullptr;
+        if (sub == nullptr) {
+            std::cerr << "todo_probes: 'todo.subtitle' not found\n";
+            passed = false;
+        } else if (sub->overflow != core::TextOverflow::Ellipsis ||
+                   sub->wrap || sub->maxWidth <= 0.0f) {
+            std::cerr << "todo_probes: todo.subtitle 未接单行省略号（overflow="
+                      << (sub->overflow == core::TextOverflow::Ellipsis
+                              ? "Ellipsis"
+                              : "Clip")
+                      << ", wrap=" << (sub->wrap ? 1 : 0)
+                      << ", maxWidth=" << sub->maxWidth
+                      << "）：窄窗提示被硬裁，无「…」提示\n";
+            passed = false;
+        }
+    }
+
     // ---- 首帧：找源卡（拖拽锚点）+ 拖前几何基准 ----
     composeFrame();
     const core::dsl::Element* srcCard =

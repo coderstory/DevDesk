@@ -275,7 +275,14 @@ float drawDetailModels(eui::Ui& ui, float x0, float y0, float w,
             .text(filled ? slot.model : std::string("未配置"))
             .fontSize(13.0f).lineHeight(32.0f)
             .verticalAlign(eui::VerticalAlign::Center)
-            .clip()   // 值文本列变窄后长出列宽的长模型名硬裁（不压开关列）
+            // 值文本列变窄后长出列宽的长模型名单行省略号（不压开关列）——
+            // 2026-10-03 起硬裁升级为省略号：截断有「…」提示，用户看得出
+            // 模型名被截（三件套 overflow==Ellipsis && maxWidth>0 && !wrap，
+            // dsl.h:150-152；显式 maxWidth 是生效前提）。clip 保留作几何兜底
+            //（ellipsis 管排版宽，clip 管绘制范围，两层不冲突）。
+            .maxWidth(w - 112.0f - kOneMColW)
+            .overflow(core::TextOverflow::Ellipsis)
+            .clip()
             .color(filled ? t.colors.textPrimary : t.colors.textTertiary).build();
         // 「1M」开关（不支持 / 空 base → 不传 onChange = 点了没反应）。
         // 组件 builder 无 .position()（与 tabs 同款）→ 包一层定位 stack 对齐行右端
@@ -394,12 +401,12 @@ float drawDetailEnv(eui::Ui& ui, float x0, float y0, float w,
         return y0 + emptyH;
     }
     const float keyColW = std::min(220.0f, w * 0.45f);
-    // 键名截断估宽（长文本策略 ①）：大写 Latin@12px 每字符实宽 ~7.5-8.5px，
-    // 取 8（旧 7 偏小 —— 35 字符键截到 31 字符后仍漏出键列 ~12px）；随缩放
-    // 同步放大，再加 .clip() 硬界兜底（估宽是估的，clip 是保证）
-    constexpr float kKeyPxPerChar = 8.0f;
-    const int keyMaxChars =
-        std::max(6, static_cast<int>(keyColW / (kKeyPxPerChar * fs)));
+    // 键名超宽走单行省略号（2026-10-03 Ellipsis 批次）：旧的「8px/字符」估宽
+    // 手工截断（kKeyPxPerChar/keyMaxChars）已拆——估宽是估的（35 字符键截到
+    // 31 字符后仍漏出键列 ~12px，E2 注释自己承认），像素级截断交给框架：
+    // overflow==Ellipsis && maxWidth>0 && !wrap（dsl.h:150-152；显式 maxWidth
+    // 是生效前提，漏了框架侧静默 no-op）。clip 保留作几何兜底（ellipsis 管
+    // 排版宽，clip 管绘制范围，两层不冲突）。
     // 来源标注列（第二行左侧固定列）：宽 120 够放「本 Profile」/「片段・<名>」，
     // 超出部分由 .clip() 硬裁（不压到右侧官方说明列）
     constexpr float kSrcColW = 120.0f;
@@ -437,10 +444,7 @@ float drawDetailEnv(eui::Ui& ui, float x0, float y0, float w,
             if (sensitive && val.size() > 12)
                 shownVal = val.substr(0, 8) + "…";
         }
-        // 键名过长则截断，避免压到右侧值列
-        std::string kDisp = k;
-        if (static_cast<int>(kDisp.size()) > keyMaxChars)
-            kDisp = kDisp.substr(0, keyMaxChars - 1) + "…";
+        // 键名过长由省略号按像素截断（旧估宽手工截断已拆，见 keyColW 注释）
         const char* hint = envVarHint(k);
         const std::string rid = std::to_string(ei2);
         const float valX = x0 + 12.0f + keyColW + 24.0f;  // 键列↔值列间距 24（2026-09-25：12→24，反馈太挤）
@@ -451,19 +455,24 @@ float drawDetailEnv(eui::Ui& ui, float x0, float y0, float w,
             .border(1.0f, hint ? t.colors.borderMuted : t.colors.error)
             .build();
         // 行带 1：键名 | 值（同一行框同带，Center 对齐 → 「键 值」成一行）。
-        // .clip() 兜底：截断估宽 / 单行策略都是估的，clip 是硬界 —— 长文本
-        // 策略（E2）= 键按 kKeyPxPerChar 截断、值/来源/说明单行硬裁，**不换行
-        // 不撑高**（换行会把第二行挤出固定行带，与下行叠印）
+        // 长文本策略（E2，2026-10-03 起第二版）= 键/值按 maxWidth 像素级
+        // 单行省略号 + .clip() 硬界兜底，**不换行不撑高**（换行会把第二行
+        // 挤出固定行带，与下行叠印）
         ui.text(std::string("claude.env.key.") + rid)
             .position(x0 + 12.0f, ey + line1Y).size(keyColW, line1H)
+            .maxWidth(keyColW)
+            .overflow(core::TextOverflow::Ellipsis)
             .clip()
-            .text(kDisp).fontSize(keyFs).lineHeight(line1H)
+            .text(k).fontSize(keyFs).lineHeight(line1H)
             .verticalAlign(eui::VerticalAlign::Center)
             .color(t.colors.primary).build();
         // 值列：框高 = 行带 1（旧实现 48 跨整卡居中，墨迹压进行带 2 —— 见
-        // 上方几何注释；现在与键名同带，不再与说明行相交）
+        // 上方几何注释；现在与键名同带，不再与说明行相交）。env 值（URL 等）
+        // 长度不受控，同款省略号。
         ui.text(std::string("claude.env.val.") + rid)
             .position(valX, ey + line1Y).size(valW, line1H)
+            .maxWidth(valW)
+            .overflow(core::TextOverflow::Ellipsis)
             .clip()
             .text(shownVal).fontSize(keyFs).lineHeight(line1H)
             .verticalAlign(eui::VerticalAlign::Center)
@@ -476,7 +485,9 @@ float drawDetailEnv(eui::Ui& ui, float x0, float y0, float w,
             ? srcIt->second : EnvSource::Profile;
         std::string srcText = envSourceLabel(src);
         // 行带 2：来源 | 官方说明。说明列加 .clip()（旧无 —— 长说明横穿值列，
-        // 是「文本都重叠」的元凶之一）
+        // 是「文本都重叠」的元凶之一）；来源列是**有界枚举标签**（托管键 /
+        // 本 Profile），clip 足够不动。说明列文案长度不受控（官方清单原文），
+        // 2026-10-03 起升级为单行省略号。
         ui.text(std::string("claude.env.src.") + rid)
             .position(x0 + 12.0f, ey + line2Y).size(kSrcColW, line2H)
             .clip()
@@ -485,9 +496,12 @@ float drawDetailEnv(eui::Ui& ui, float x0, float y0, float w,
             .color(src == EnvSource::Managed ? t.colors.textTertiary
                                              : t.colors.textSecondary)
             .build();
+        const float hintW = std::max(40.0f, w - 24.0f - kSrcColW - kSrcGap);
         ui.text(std::string("claude.env.hint.") + rid)
             .position(x0 + 12.0f + kSrcColW + kSrcGap, ey + line2Y)
-            .size(std::max(40.0f, w - 24.0f - kSrcColW - kSrcGap), line2H)
+            .size(hintW, line2H)
+            .maxWidth(hintW)
+            .overflow(core::TextOverflow::Ellipsis)
             .clip()
             .text(hint ? hint : "（未收录官方清单）")
             .fontSize(smallFs).lineHeight(line2H)
@@ -899,8 +913,13 @@ float drawDetailAdvanced(eui::Ui& ui, float x0, float y0, float w,
             .position(x0, ey).size(w, kKeyRowH)
             .color(t.colors.surfaceElevated).radius(t.sizes.radiusSmall)
             .border(1.0f, t.colors.borderMuted).build();
+        // 键列：JSON 键长度不受控（用户手写的高级属性），单行省略号（2026-10-03
+        // Ellipsis 批次，env 键列同款：overflow==Ellipsis && maxWidth>0 && !wrap
+        // + clip 兜底）；来源列是有界枚举标签（片段/本 Profile），保留 clip 不动。
         ui.text("claude.advjson.row.key." + idx)
             .position(x0 + 12.0f, ey).size(w * 0.4f, kKeyRowH)
+            .maxWidth(w * 0.4f)
+            .overflow(core::TextOverflow::Ellipsis)
             .clip()
             .text(k).fontSize(keyFs).lineHeight(kKeyRowH)
             .verticalAlign(eui::VerticalAlign::Center)
