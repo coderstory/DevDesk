@@ -123,6 +123,13 @@ int main(int argc, char* argv[]) {
         p.extraSettingsJson =
             R"({"model": "probe-model", "statusLine": {"type": "command"}, "permissions": {"allow": ["Bash"]}})";
         p.sharedConfigId = env.svc->listSharedConfigs().value()[0].id;
+        // 2026-10-03 Ellipsis 批次（探针 ⑩ 的判别力来源）：一条长 env 键
+        //（66 字符 > 键列 220px）+ 一条长 env 值（超长 URL > 值列）。⚠ 键名
+        // 刻意不含 token/key/secret 子串——drawDetailEnv 的脱敏判定按键名
+        // 子串匹配，命中会把值截成「前 8 字 + …」遮掉长值，判别力就没了。
+        p.extraEnvJson =
+            R"({"MY_VERY_LONG_EXTRA_ENV_VARIABLE_NAME_FOR_ELLIPSIS_PROBE_0123":)"
+            R"("https://a-very-long-upstream-base-url-that-overflows-the-value-column.example.com/v1/messages"})";
         // 批次 F（2026-10-02）：模型映射 1M 开关三态造数（探针 ⑦ 的判别力来源）
         //   def   支持 + 串尾 [1M]     → 勾上（回显）
         //   opus  支持 + 无标记        → 未勾（滑块在左端）
@@ -855,6 +862,51 @@ int main(int argc, char* argv[]) {
                             passed = false;
                         }
                     }
+                    // b3) cc-switch 状态行（note）省略号接线（2026-10-03 Ellipsis
+                    // 批次）：note 是固定宽单行（w−56），内容 = 供应商名/原因
+                    // 拼接、长度不受控，原 .clip() 硬裁。CCSWITCH_DB_PATH 指到
+                    // 不存在路径 → 状态行恒渲染「未找到 cc-switch 配置…」
+                    //（test_claude_ui.cpp quota_dialog_ccswitch_unavailable 同款
+                    // 夹具口径），不读机器上的真实 cc-switch 库。
+                    {
+                        const test_support::ScopedEnv noCc(
+                            "CCSWITCH_DB_PATH",
+                            "/nonexistent-probe-ellipsis/cc-switch.db");
+                        if (auto* load =
+                                ui != nullptr
+                                    ? ui->find(
+                                          "claude.dialog.quota.ccswitch.load.bg")
+                                    : nullptr;
+                            load != nullptr && load->onClick != nullptr) {
+                            load->onClick();
+                            composeFrame();
+                        }
+                        const core::dsl::Element* note =
+                            ui != nullptr
+                                ? ui->find("claude.dialog.quota.ccswitch.note")
+                                : nullptr;
+                        if (note == nullptr) {
+                            std::cerr << "claude_probes[" << tag
+                                      << "]: 点「从 cc-switch 读取」后状态行"
+                                         " 'claude.dialog.quota.ccswitch.note'"
+                                         " 未渲染（b3 断言落空）(⑧)\n";
+                            passed = false;
+                        } else if (note->overflow !=
+                                       core::TextOverflow::Ellipsis ||
+                                   note->wrap || note->maxWidth <= 0.0f) {
+                            std::cerr << "claude_probes[" << tag
+                                      << "]: cc-switch 状态行未接单行省略号"
+                                         "（overflow="
+                                      << (note->overflow ==
+                                                  core::TextOverflow::Ellipsis
+                                              ? "Ellipsis"
+                                              : "Clip")
+                                      << ", wrap=" << (note->wrap ? 1 : 0)
+                                      << ", maxWidth=" << note->maxWidth
+                                      << "）：长供应商名/长原因被硬裁 (⑧)\n";
+                            passed = false;
+                        }
+                    }
                 }
                 // 收尾：取消关弹窗（不落库），状态归零供下一尺寸档
                 if (auto* cancel =
@@ -940,6 +992,23 @@ int main(int argc, char* argv[]) {
                               << " vs 行中 " << rowMid << "）(⑦)\n";
                     passed = false;
                 }
+                // a4) 值文本列 = 单行省略号（2026-10-03 Ellipsis 批次）：长模型名
+                // 原被 .clip() 硬裁（源码注释原话「硬裁不压开关列」）——升级为
+                // 省略号，用户要能看出模型名被截。接线三件套（EUI-NEO
+                // dsl.h:150-152）：overflow==Ellipsis && maxWidth>0 && !wrap，
+                // 漏一条框架侧是静默 no-op；clip 保留作几何兜底。
+                if (val->overflow != core::TextOverflow::Ellipsis ||
+                    val->wrap || val->maxWidth <= 0.0f) {
+                    std::cerr << "claude_probes[" << tag << "]: 槽位 " << idx
+                              << " 值文本未接单行省略号（overflow="
+                              << (val->overflow == core::TextOverflow::Ellipsis
+                                      ? "Ellipsis"
+                                      : "Clip")
+                              << ", wrap=" << (val->wrap ? 1 : 0)
+                              << ", maxWidth=" << val->maxWidth
+                              << "）：长模型名被硬裁，无「…」提示 (⑦)\n";
+                    passed = false;
+                }
             }
             // b) 勾态回显 + 禁用态色差（三态造数见 seeding）
             const core::dsl::Element* trackDef =
@@ -988,6 +1057,187 @@ int main(int argc, char* argv[]) {
                 back->onClick();
                 composeFrame();
             }
+        }
+    }
+
+    // ---- ⑩ 环境变量 / 高级配置 pane 的省略号接线（2026-10-03 Ellipsis 批次）----
+    // env 页签的键/值列与高级配置页签的键列原是 .clip() 硬裁（键列还叠着一层
+    // 「8px/字符」的估宽手工截断——估宽会漏 ~12px，E2 注释自己承认）。升级为
+    // 单行省略号（EUI-NEO dsl.h:150-152 三件套：overflow==Ellipsis &&
+    // maxWidth>0 && !wrap；clip 保留作几何兜底）。判别力：seeding 段给
+    // profile 0 塞了 66 字符长键 + 超长 URL 值——键列 220px、值列 ~700px 都
+    // 真溢出，rawWidth（强制 Clip+maxWidth=0 量「无护栏宽」，home_probes
+    // rawWidthOfElement 同源）必须 > 列宽，否则本组空跑成恒真假绿。
+    {
+        frameW = 1200.0f;
+        frameH = 1000.0f;
+        composeFrame();
+        // 选中 profile 0（详情 shown 取选中，其次激活）→ 切到「环境变量」页签
+        if (auto* card =
+                ui != nullptr ? ui->find("claude.profile.0.bg") : nullptr;
+            card != nullptr && card->onClick != nullptr) {
+            card->onClick();
+            composeFrame();
+        }
+        if (auto* tab2 =
+                ui != nullptr ? ui->find("claude.detail.tabs.hit.2") : nullptr;
+            tab2 != nullptr && tab2->onClick != nullptr) {
+            tab2->onClick();
+            composeFrame();
+        }
+        const std::string tag = "ellipsis";
+        int envRows = 0;
+        int longKeyRows = 0;
+        int longValRows = 0;
+        for (int i = 0; i < 64; ++i) {
+            const std::string n = std::to_string(i);
+            const core::dsl::Element* key =
+                ui != nullptr ? ui->find("claude.env.key." + n) : nullptr;
+            if (key == nullptr) break;
+            const core::dsl::Element* val =
+                ui != nullptr ? ui->find("claude.env.val." + n) : nullptr;
+            if (val == nullptr) {
+                std::cerr << "claude_probes[" << tag << "]: env 行 " << n
+                          << " 缺 .val 节点\n";
+                passed = false;
+                continue;
+            }
+            ++envRows;
+            // ① 接线三件套 + clip 兜底（key/val 两列同判）
+            for (const core::dsl::Element* el : {key, val}) {
+                if (el->overflow != core::TextOverflow::Ellipsis ||
+                    el->wrap || el->maxWidth <= 0.0f || !el->clip) {
+                    std::cerr << "claude_probes[" << tag << "]: " << el->id
+                              << " 未接单行省略号（overflow="
+                              << (el->overflow == core::TextOverflow::Ellipsis
+                                      ? "Ellipsis"
+                                      : "Clip")
+                              << ", wrap=" << (el->wrap ? 1 : 0)
+                              << ", maxWidth=" << el->maxWidth
+                              << ", clip=" << (el->clip ? 1 : 0)
+                              << "）：长键/长值被硬裁，无「…」提示\n";
+                    passed = false;
+                }
+            }
+            // ② 键文本 = 全名（估宽手工截断已拆——element.text 不再是「前缀+…」）
+            const std::string ell = "\xE2\x80\xA6";
+            if (key->text.size() >= ell.size() &&
+                key->text.compare(key->text.size() - ell.size(), ell.size(),
+                                  ell) == 0) {
+                std::cerr << "claude_probes[" << tag << "]: " << key->id
+                          << " 文本仍以手工「…」结尾（估宽截断没拆干净，"
+                             "省略号应交给框架按像素截）：\""
+                          << key->text << "\"\n";
+                passed = false;
+            }
+            // ③ 真溢出的那格：渲染行宽必须 ≤ 列宽（省略号真生效，不是空转）
+            for (const core::dsl::Element* el : {key, val}) {
+                core::TextStyle st;
+                st.text = el->text;
+                st.fontFamily = el->fontFamily;
+                st.fontSize = el->fontSize;
+                st.fontWeight = el->fontWeight;
+                st.maxWidth = 0.0f;
+                st.overflow = core::TextOverflow::Clip;
+                st.wrap = el->wrap;
+                st.lineHeight = el->lineHeight;
+                const float rawWidth =
+                    core::TextPrimitive::measureTextSize(st).x;
+                if (rawWidth <= el->frame.width + 0.5f) continue;
+                if (el == key) ++longKeyRows; else ++longValRows;
+                if (el->maxWidth < el->frame.width - 0.5f ||
+                    el->maxWidth > el->frame.width + 0.5f) {
+                    std::cerr << "claude_probes[" << tag << "]: " << el->id
+                              << " maxWidth " << el->maxWidth
+                              << " != 列宽 " << el->frame.width
+                              << "（省略号预算与列几何脱钩）\n";
+                    passed = false;
+                }
+                core::TextStyle ellSt;
+                ellSt.text = el->text;
+                ellSt.fontFamily = el->fontFamily;
+                ellSt.fontSize = el->fontSize;
+                ellSt.fontWeight = el->fontWeight;
+                ellSt.maxWidth = el->maxWidth;
+                ellSt.overflow = el->overflow;
+                ellSt.wrap = el->wrap;
+                ellSt.lineHeight = el->lineHeight;
+                const float ellWidth =
+                    core::TextPrimitive::measureTextSize(ellSt).x;
+                if (ellWidth > el->maxWidth + 0.01f) {
+                    std::cerr << "claude_probes[" << tag << "]: " << el->id
+                              << " 溢出（原文宽 " << rawWidth << " > 列宽 "
+                              << el->frame.width << "）但省略号行宽 " << ellWidth
+                              << " > maxWidth " << el->maxWidth
+                              << "：仍会画出本列\n";
+                    passed = false;
+                }
+            }
+        }
+        if (envRows < 1) {
+            std::cerr << "claude_probes[" << tag << "]: env 页签一行都没画"
+                         "（profile 0 未选中或页签没切上？）\n";
+            passed = false;
+        }
+        if (longKeyRows < 1) {
+            std::cerr << "claude_probes[" << tag << "]: 没有任何一行键名真溢出"
+                         "（longKeyRows=" << longKeyRows
+                      << "）：种子长键失效，键列断言空转\n";
+            passed = false;
+        }
+        if (longValRows < 1) {
+            std::cerr << "claude_probes[" << tag << "]: 没有任何一行 env 值真"
+                         "溢出（longValRows=" << longValRows
+                      << "）：种子长值失效，值列断言空转\n";
+            passed = false;
+        }
+
+        // 高级配置页签（tabs.hit.3）：键列同款接线（advjson.row.key；src 列是
+        // 有界枚举标签「片段/本 Profile」，保留 clip 不动）。键全短（model/
+        // statusLine/permissions）→ 只断接线不断溢出（有界键集，恒真风险低：
+        // 断的是「有人改回 Clip」这一回归）。
+        if (auto* tab3 =
+                ui != nullptr ? ui->find("claude.detail.tabs.hit.3") : nullptr;
+            tab3 != nullptr && tab3->onClick != nullptr) {
+            tab3->onClick();
+            composeFrame();
+            int advRows = 0;
+            for (int i = 0; i < 16; ++i) {
+                const std::string n = std::to_string(i);
+                const core::dsl::Element* k =
+                    ui != nullptr ? ui->find("claude.advjson.row.key." + n)
+                                  : nullptr;
+                if (k == nullptr) break;
+                ++advRows;
+                if (k->overflow != core::TextOverflow::Ellipsis ||
+                    k->wrap || k->maxWidth <= 0.0f) {
+                    std::cerr << "claude_probes[" << tag << "]: " << k->id
+                              << " 未接单行省略号（overflow="
+                              << (k->overflow == core::TextOverflow::Ellipsis
+                                      ? "Ellipsis"
+                                      : "Clip")
+                              << ", maxWidth=" << k->maxWidth
+                              << "）：长键名被硬裁\n";
+                    passed = false;
+                }
+            }
+            if (advRows < 1) {
+                std::cerr << "claude_probes[" << tag << "]: 高级配置页签一行"
+                             "键都没画（profile 0 的 extraSettingsJson 没解析出？）\n";
+                passed = false;
+            }
+        } else {
+            std::cerr << "claude_probes[" << tag << "]: "
+                         "'claude.detail.tabs.hit.3' 缺失（高级配置页签断言跳过）\n";
+            passed = false;
+        }
+
+        // 回第 0 页签（与 ⑦ 收尾同款，别把页签状态漏给后续块）
+        if (auto* back =
+                ui != nullptr ? ui->find("claude.detail.tabs.hit.0") : nullptr;
+            back != nullptr && back->onClick != nullptr) {
+            back->onClick();
+            composeFrame();
         }
     }
 

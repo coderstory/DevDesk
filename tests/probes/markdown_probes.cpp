@@ -247,6 +247,40 @@ int main(int argc, char* argv[]) {
     // 初始帧（视图状态已恢复双栏态：打开 note.md，预览列在树）
     settleFrames(1);
 
+    // ==================== 组 S：状态栏文件名 / 顶栏 subtitle 省略号接线 =====
+    // （2026-10-03 Ellipsis 批次）TODO-8a 的「b. 判别字段」半边：
+    // md.status.save（文件名 + 保存状态）与 md.subtitle（快捷键提示）都是
+    // 固定宽单行文本，原 .clip() 硬裁无「…」——长文件名被静默剪掉，用户看
+    // 不出后面还有字。断言接线三件套（EUI-NEO dsl.h:150-152）：
+    // overflow==Ellipsis && maxWidth>0 && !wrap；clip 保留作几何兜底。
+    // 红 = 有人把省略号改回硬裁（改动前本组红 = 先红后绿的「红」）。
+    // TODO-8a 的几何半边（窄窗长文件名不越 md.status.bg 右缘）仍留人工：
+    // 探针种子的 note.md 名字短，不为此构造长名文件。
+    {
+        for (const char* id : {"md.status.save", "md.subtitle"}) {
+            const core::dsl::Element* el =
+                ui != nullptr ? ui->find(id) : nullptr;
+            if (el == nullptr) {
+                std::cerr << "markdown_probes: " << id
+                          << " not found（组 S 前提缺失：header/状态栏没画）\n";
+                passed = false;
+                continue;
+            }
+            if (el->overflow != core::TextOverflow::Ellipsis || el->wrap ||
+                el->maxWidth <= 0.0f) {
+                std::cerr << "markdown_probes: " << id
+                          << " 未接单行省略号（overflow="
+                          << (el->overflow == core::TextOverflow::Ellipsis
+                                  ? "Ellipsis"
+                                  : "Clip")
+                          << ", wrap=" << (el->wrap ? 1 : 0)
+                          << ", maxWidth=" << el->maxWidth
+                          << "）：超长文本被硬裁，无「…」提示\n";
+                passed = false;
+            }
+        }
+    }
+
     // ==================== 组 A：类 3(b) 双层卡（P2） ====================
     // 切编辑态（单栏）→ 断言旧列壳 bg 不存在
     if (!clickMode(0, "编辑")) {

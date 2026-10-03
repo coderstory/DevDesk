@@ -346,6 +346,25 @@ int main(int argc, char* argv[]) {
                              "其一为 true）\n";
                 passed = false;
             }
+            // 2026-10-03 Ellipsis 批次：硬裁升级为单行省略号——降级提示是
+            // 固定宽单行文本（窄窗必溢出的那类，源码注释原话「截断而非溢出」），
+            // 用户要能看出「后面还有字」。接线三件套（EUI-NEO dsl.h:150-152）：
+            // overflow==Ellipsis && maxWidth>0 && !wrap，漏任何一条框架侧是
+            // 静默 no-op；.clip() 保留作几何兜底（ellipsis 管排版宽，clip 管
+            // 绘制范围，两层不冲突——4e76052 的 .error 先例同款）。
+            if (hint->overflow != core::TextOverflow::Ellipsis ||
+                hint->wrap || hint->maxWidth <= 0.0f) {
+                std::cerr << "settings_cards_probes: 降级提示行 "
+                             "'settings.card.appearance.effect.hint' 未接单行"
+                             "省略号（overflow="
+                          << (hint->overflow == core::TextOverflow::Ellipsis
+                                  ? "Ellipsis"
+                                  : "Clip")
+                          << ", wrap=" << (hint->wrap ? 1 : 0)
+                          << ", maxWidth=" << hint->maxWidth
+                          << "）：窄窗截断无「…」提示，用户看不出被截\n";
+                passed = false;
+            }
         }
     }
 

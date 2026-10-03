@@ -56,7 +56,9 @@ void drawHeader(eui::Ui& ui, float contentW, float headerH, float bodyH,
                         .build();
                     // subtitle 保持静态操作说明（动态反馈走 toast）；
                     // 包 clip 栈：41 字文案实宽 ≈545px，窄窗（≲1400）会压到
-                    // 右侧搜索框/按钮（同 md.subtitle.clip 写法）
+                    // 右侧搜索框/按钮（同 md.subtitle.clip 写法）。2026-10-03
+                    // 起内层文本接单行省略号（截断有「…」提示），栈 .clip()
+                    // 保留作几何兜底（ellipsis 管排版宽，clip 管绘制范围）。
                     ui.stack("todo.subtitle.clip")
                         .size(contentW - 560.0f, 18.0f)
                         .clip()
@@ -66,6 +68,8 @@ void drawHeader(eui::Ui& ui, float contentW, float headerH, float bodyH,
                                 .text("点击卡片查看详情 · Ctrl+↑/↓ 移动选中任务 · 右键卡片/列头更多操作 · 拖动卡片跨列移动")
                                 .fontSize(t.sizes.fontSizeSmall)
                                 .lineHeight(18.0f)
+                                .maxWidth(contentW - 560.0f)
+                                .overflow(core::TextOverflow::Ellipsis)
                                 .color(t.colors.textSecondary)
                                 .build();
                         })

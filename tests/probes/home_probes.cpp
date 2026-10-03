@@ -924,10 +924,22 @@ int main(int argc, char* argv[]) {
     {
         composeFrame();
         const auto rows = module::claude::quota::listQuotaHomeRows(env.db->db());
+        // 审计 minor-1（2026-10-03 quota-card-fix-audit）：查询败时组 J 原直接
+        // `.value()` → LOG_FATAL+abort（result.h 契约），探针以崩溃收场而不是
+        // 干净 FAIL（后面的组全部不跑、诊断全丢）。照组 H(a) 的写法先查 isFail，
+        // 败 → FAIL + 空列表（本组三段判据全部跳过，但不恒绿：passed 已置 false）。
+        if (rows.isFail()) {
+            std::cerr << "home_probes: 组 J FAIL——listQuotaHomeRows 失败: "
+                      << rows.errorMessage() << "（组 J 判据本轮全部跳过）\n";
+            passed = false;
+        }
+        const std::vector<module::claude::quota::QuotaHomeRow> rowList =
+            rows.isOk() ? rows.value()
+                        : std::vector<module::claude::quota::QuotaHomeRow>{};
 
         // ---- J(a) 同一 profile 的 pct 列 x 固定 ----
         int mixedResetRows = 0;
-        for (const auto& row : rows.value()) {
+        for (const auto& row : rowList) {
             const std::string rid =
                 "home.quota.row." + std::to_string(row.profileId);
             // 收集本行全部 pct 元素；同时判定 reset 是否一有一无（判别力前提）
@@ -971,7 +983,7 @@ int main(int argc, char* argv[]) {
 
         // ---- J(b)(1)「去配置」按钮 frame 必须落在 head frame 之内 ----
         int configBtnRows = 0;
-        for (const auto& row : rows.value()) {
+        for (const auto& row : rowList) {
             const std::string rid =
                 "home.quota.row." + std::to_string(row.profileId);
             const core::dsl::Element* head =
@@ -1036,7 +1048,7 @@ int main(int argc, char* argv[]) {
 
         // ---- J(c) head 行 name/provider 防溢护栏（clip/wrap）在场 ----
         int nameCellsChecked = 0;
-        for (const auto& row : rows.value()) {
+        for (const auto& row : rowList) {
             const std::string rid =
                 "home.quota.row." + std::to_string(row.profileId);
             for (const char* suffix : {".name", ".provider"}) {
@@ -1066,7 +1078,7 @@ int main(int argc, char* argv[]) {
         // 口径（真机数据不含该场景 → 诚实呈现，不静默绿）；门禁那条
         // （ctest -L probe）走离线假种子，长名字由种子保证。
         int longNameCells = 0;
-        for (const auto& row : rows.value()) {
+        for (const auto& row : rowList) {
             const std::string rid =
                 "home.quota.row." + std::to_string(row.profileId);
             const core::dsl::Element* nameEl =
@@ -1080,6 +1092,95 @@ int main(int argc, char* argv[]) {
             std::cerr << "home_probes: 组 J(c) FAIL——没有任何一格名字超出盒宽"
                          "（longNameCells=" << longNameCells
                       << "）：种子名字不够长，本组空跑成恒真假绿\n";
+            passed = false;
+        }
+
+        // ---- J(d) 长名/长供应商名以「…」收尾（Ellipsis 接线，2026-10-03 批次）----
+        // J(c) 钉「护栏在场」，J(d) 更进一步：真溢出的那格必须是**单行省略号**
+        // 而不是硬剪——上一批给 .name/.provider 补的 .clip() 只是防重叠，长名
+        // 被静默剪掉、用户看不出「后面还有字」（.error 行已走 Ellipsis 路线，
+        // 4e76052；name/provider 是同一欠账，见 quota-card-fix-audit minor-3）。
+        // 判据与组 I(c) 同款三段式，只对**真溢出**的格子生效（rawWidth > 盒宽，
+        // rawWidthOfElement 强制 Clip+maxWidth=0 量「没护栏时的宽」）：
+        //   (1) 接线：overflow==Ellipsis && maxWidth>0 && !wrap——漏任何一条
+        //       EUI-NEO 侧是静默 no-op；
+        //   (2) 结果：渲染行宽逐位 == 「保留前缀 + …」的宽（末尾字形就是
+        //       U+2026），且 ≤ maxWidth；
+        //   (3) 同源：渲染路径与 DSL 测量路径（measureTextSize）同值。
+        // 空跑守卫：ellipsisCells >= 1（离线种子 quota-p0 的 52 字符名保证）。
+        int ellipsisCells = 0;
+        for (const auto& row : rowList) {
+            const std::string rid =
+                "home.quota.row." + std::to_string(row.profileId);
+            for (const char* suffix : {".name", ".provider"}) {
+                const core::dsl::Element* el =
+                    ui != nullptr ? ui->find(rid + suffix) : nullptr;
+                if (el == nullptr) continue;
+                if (rawWidthOfElement(*el) <= el->frame.width + 0.5f) {
+                    continue;   // 没溢出的格子本组无话可说（J(c) 已管护栏）
+                }
+                ++ellipsisCells;
+                if (el->wrap) {
+                    std::cerr << "home_probes: 组 J(d) FAIL——" << el->id
+                              << " wrap==true：省略号是单行语义，wrap 下是 no-op\n";
+                    passed = false;
+                } else if (el->overflow != core::TextOverflow::Ellipsis) {
+                    std::cerr << "home_probes: 组 J(d) FAIL——" << el->id
+                              << " 溢出但 overflow != Ellipsis（当前 "
+                              << (el->overflow == core::TextOverflow::Clip
+                                      ? "Clip"
+                                      : "?")
+                              << "）：长名被硬剪，用户看不出还有内容\n";
+                    passed = false;
+                } else if (el->maxWidth <= 0.0f) {
+                    std::cerr << "home_probes: 组 J(d) FAIL——" << el->id
+                              << " maxWidth==0：ellipsis 静默不生效（runtime 回退"
+                                 " frame.width，DSL 布局按 0 走，两条路分叉）\n";
+                    passed = false;
+                } else {
+                    const EllipsisExpectation expect = expectedEllipsis(*el);
+                    const float rendered = renderedLineWidth(*el);
+                    std::cout << "home_probes: 组 J(d) " << el->id << " 原文宽 "
+                              << rawWidthOfElement(*el) << " > 盒宽 "
+                              << el->frame.width << " → 保留 " << expect.keep
+                              << "/" << expect.glyphCount << " 字形，行宽 "
+                              << rendered << " ≤ maxWidth " << el->maxWidth
+                              << "，末尾为 U+2026\n";
+                    if (std::fabs(rendered - expect.expectedWidth) > 0.01f) {
+                        std::cerr << "home_probes: 组 J(d) FAIL——" << el->id
+                                  << " 渲染行宽 " << rendered << " != 「前缀 + …」"
+                                  << "的宽 " << expect.expectedWidth
+                                  << "：末尾不是省略号\n";
+                        passed = false;
+                    }
+                    if (rendered > el->maxWidth + 0.01f) {
+                        std::cerr << "home_probes: 组 J(d) FAIL——" << el->id
+                                  << " 行宽 " << rendered << " > maxWidth "
+                                  << el->maxWidth << "：仍会画出本格\n";
+                        passed = false;
+                    }
+                    if (expect.keep >= expect.glyphCount) {
+                        std::cerr << "home_probes: 组 J(d) FAIL——" << el->id
+                                  << " 一字未截（保留 " << expect.keep << "/"
+                                  << expect.glyphCount << "）却判溢出：前提不符\n";
+                        passed = false;
+                    }
+                    const float measured =
+                        core::TextPrimitive::measureTextSize(styleOfElement(*el)).x;
+                    if (std::fabs(measured - rendered) > 0.01f) {
+                        std::cerr << "home_probes: 组 J(d) FAIL——" << el->id
+                                  << " 渲染行宽 " << rendered
+                                  << " != DSL 测量宽 " << measured
+                                  << "：两条路径分叉\n";
+                        passed = false;
+                    }
+                }
+            }
+        }
+        if (ellipsisCells < 1) {
+            std::cerr << "home_probes: 组 J(d) FAIL——没有任何一格 .name/.provider"
+                         " 真溢出（ellipsisCells=" << ellipsisCells
+                      << "）：本组空跑成恒真假绿，种子需要长名/长供应商名\n";
             passed = false;
         }
     }
@@ -1365,6 +1466,12 @@ int main(int argc, char* argv[]) {
         }
         passed = false;
     }
+
+    // ---- 中途落图（--screenshot-seeded <路径>，2026-10-03 Ellipsis 批次）----
+    // 此刻 = 余量种子全在场（quota-p0 的 52 字符长名 + i==8 错误行都画在卡上），
+    // 下一组 H(b) 马上清库——「长名省略号」的取证图只能在这个状态点拍。
+    // 不传开关时 captureSeedIfRequested 立即返回（零开销，probe_harness.h 契约）。
+    probe::captureSeedIfRequested(args, window, runtime, &passed);
 
     // ==================== 组 H：G7 余量卡滚动（P1） ====================
     // H(a) 滚动条**由内容溢出驱动**：出滚动条 ⟺ 内容高 > 视口高。

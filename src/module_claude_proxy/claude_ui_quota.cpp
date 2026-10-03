@@ -213,6 +213,12 @@ void drawQuotaConfigDialog(eui::Ui& ui, const eui::Screen& screen,
         if (!note.empty()) {
             ui.text("claude.dialog.quota.ccswitch.note")
                 .position(28.0f, g.ccNoteY).size(w - 56.0f, kLabelH)
+                // 单行省略号（2026-10-03 Ellipsis 批次）：note = 供应商名/原因
+                // 拼接、长度不受控，硬裁用户看不出被截。三件套 =
+                // overflow==Ellipsis && maxWidth>0 && !wrap（dsl.h:150-152）；
+                // clip 保留作几何兜底（ellipsis 管排版宽，clip 管绘制范围）
+                .maxWidth(w - 56.0f)
+                .overflow(core::TextOverflow::Ellipsis)
                 .text(note).fontSize(11.0f).lineHeight(kLabelH).clip()
                 .color(noteColor).build();
         }
@@ -263,6 +269,10 @@ void drawQuotaConfigDialog(eui::Ui& ui, const eui::Screen& screen,
             const bool isErr = !st.error.empty() || st.testIsError;
             ui.text("claude.dialog.quota.result")
                 .position(28.0f, g.resultY).size(w - 56.0f, kLabelH)
+                // 单行省略号（同 ccswitch.note）：测试结果/上游错误文案长度
+                // 不受控，硬裁看不出被截。clip 保留作几何兜底。
+                .maxWidth(w - 56.0f)
+                .overflow(core::TextOverflow::Ellipsis)
                 .text(st.error.empty() ? st.testMessage : st.error)
                 .fontSize(12.0f).lineHeight(kLabelH).clip()
                 .color(isErr ? t.colors.error : t.colors.success).build();
