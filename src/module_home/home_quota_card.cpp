@@ -596,10 +596,28 @@ void drawQuotaCard(eui::Ui& ui, const core::theme::Tokens& t, float contentWidth
                                         .text(row.lastError)
                                         .fontSize(t.sizes.fontSizeSmall)
                                         .lineHeight(kErrRowH)
-                                        // 同 head .status：固定高单行盒 +
-                                        // 上游原文长度不可控（headline 后面还
-                                        // 跟着供应商 detail），不 clip 就会画到
-                                        // 卡片右缘之外。
+                                        // **省略号是单行语义**：只有
+                                        // wrap==false 且 maxWidth>0 才生效，而
+                                        // 这一格正是固定高单行（换行会把
+                                        // kErrRowH 撑破、与 quotaRowHeight 的高度
+                                        // 预算脱钩）→ 显式给 maxWidth 是**生效
+                                        // 前提**，漏了它 ellipsis 静默不生效
+                                        // （runtime 在 element.maxWidth==0 时回退到
+                                        // frame.width，但 DSL 布局走的是
+                                        // element.maxWidth，两条路会分叉）。
+                                        // 口径 = innerW = 内容列宽 = 该行右缘，
+                                        // 与探针组 I(b) 的「内容列右缘」同一口径。
+                                        .maxWidth(innerW)
+                                        .overflow(core::TextOverflow::Ellipsis)
+                                        // 兜底 scissor：ellipsis 把**排版宽**压到
+                                        // maxWidth 内，但框架文档化了它压不住的
+                                        // 那种情形——省略号自身 advance > maxWidth
+                                        // 的极窄容器（本卡 innerW ≈ 1064px，
+                                        // 不可能触发）。留着它，「绝不画出内容列」
+                                        // 这条不变式由**两层**（排版 + 裁剪）保证，
+                                        // 而不是单押在 ellipsis 上。
+                                        // 探针组 I(c) 断言的是「… 是 ellipsis 产生的」
+                                        // ——它与 clip 无关，所以 clip 不是遮羞布。
                                         .clip()
                                         .color(t.colors.error)
                                         .build();
