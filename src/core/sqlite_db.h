@@ -47,6 +47,22 @@ struct SqlRow {
     Result<std::string> getString(const std::string& col) const;
 };
 
+// 「三件套权限未确认 0600」闩（G8 简报 F1 m1 残留，2026-10-03 收口）。
+// SqliteDb::open 的空写事务（BEGIN IMMEDIATE; COMMIT;）负责把 db/-wal/-shm
+// 逼出来再统一收紧；它失败时伴生文件可能尚未落盘，open 的收紧对缺席文件跳过
+// ——本会话稍后首个写事务才创建它们（POSIX 上还继承主库当时的权限位，主库
+// 宽松时伴生文件就是宽松的），凭据页留在组/其他可读的 -wal 里。此闩 =「三件套
+// 尚未全部确认 0600」：置位期间每条成功写路径（exec / 写 step，析构再兜底一次）
+// 补一次 fileperms::restrictSqliteStoreFiles，三件套齐且全部收紧成功才落闩——
+// 落闩后写路径零开销（一次 relaxed load）。
+// 必须共享（shared_ptr 持有）：SqliteDb 装配期被移动数次，且 Statement 的写
+// step 也要补收紧（与 mutex_/writeVersion_ 同一理由，见 Statement 构造注释）。
+struct StorePermsLatch {
+    std::filesystem::path file;          // 主库落点（:memory:/空路径 → 恒不置位）
+    std::atomic<bool> pending{false};    // true = 三件套未确认 0600，写后要补收紧
+    std::atomic<bool> warned{false};     // 补收紧失败只报一次（防高频写路径刷屏）
+};
+
 // Statement 句柄
 class Statement {
 public:
@@ -60,9 +76,14 @@ public:
     // （见 SqliteDb::writeVersion）。裸指针/成员值都会在 SqliteDb 被移动时分家
     // ——语句推进的是搬空的旧计数器，读侧看的是新计数器，脏标记从此永不置位
     // （首页余量卡会永远停在旧值，且没有任何报错）。
+    //
+    // perms 同理（G8 F1 m1 残留收口，2026-10-03）：写 step 成功后要按闩补一次
+    // 三件套权限收紧（见 StorePermsLatch）——SqliteDb 被移动后语句必须还能拿到
+    // 同一把闩，否则移动后创建的语句就补不了收紧。
     Statement(sqlite3* db, sqlite3_stmt* stmt,
               std::shared_ptr<std::recursive_mutex> mutex,
-              std::shared_ptr<std::atomic<uint64_t>> version);
+              std::shared_ptr<std::atomic<uint64_t>> version,
+              std::shared_ptr<StorePermsLatch> perms);
     ~Statement();
 
     Statement(const Statement&) = delete;
@@ -102,6 +123,8 @@ private:
     std::shared_ptr<std::recursive_mutex> mutex_;
     // 与 SqliteDb::writeVersion_ 共享同一计数器（见构造函数的注释）
     std::shared_ptr<std::atomic<uint64_t>> version_;
+    // 与 SqliteDb::perms_ 共享同一把权限闩（见构造函数与 StorePermsLatch 的注释）
+    std::shared_ptr<StorePermsLatch> perms_;
     // 本语句是否会写库。prepare 时由 sqlite3_stmt_readonly() 判一次并缓存：
     // step() 每次都要据此决定要不要推进版本号，而 sqlite3_stmt_readonly()
     // 是纯查 VDBE 程序、不碰数据，但每步都调一次仍属白付的代价。
@@ -179,6 +202,10 @@ private:
     // 永不置位）。见 Statement 构造函数的注释。
     std::shared_ptr<std::atomic<uint64_t>> writeVersion_ =
         std::make_shared<std::atomic<uint64_t>>(0);
+    // 三件套权限闩（G8 F1 m1 残留收口，见 StorePermsLatch）：open() 里创建并
+    // 按三件套确认结果置位；与锁/版本号同理必须共享。open 是唯一构造入口，
+    // 此处默认 nullptr，析构/移动路径的补收紧对空闩安全跳过。
+    std::shared_ptr<StorePermsLatch> perms_;
 };
 
 } // namespace core::data
