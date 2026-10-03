@@ -272,7 +272,13 @@ float drawDetailModels(eui::Ui& ui, float x0, float y0, float w,
             .color(t.colors.textTertiary).build();
         ui.text("claude.slot.val." + idx)
             .position(x0 + 100.0f, sy).size(w - 112.0f - kOneMColW, 32.0f)
-            .text(filled ? slot.model : std::string("未配置"))
+            // 显示层剥 [1M]（2026-10-03 用户反馈：1M 状态已由行右端的复选框
+            // 表达，值文本再带 [1M] 就是重复）。剥除走 deriveDisplayName（§2.2
+            // 既有显示名派生，剥尾 [1M]/[200K]/[1m]），**只动显示**——存储与
+            // 发往上游的模型名仍带标记（那是 Claude Code 的 1M 开关语义，
+            // 勾态判定 hasOneMMarker 也读的原始串）
+            .text(filled ? deriveDisplayName(slot.model)
+                         : std::string("未配置"))
             .fontSize(13.0f).lineHeight(32.0f)
             .verticalAlign(eui::VerticalAlign::Center)
             // 值文本列变窄后长出列宽的长模型名单行省略号（不压开关列）——

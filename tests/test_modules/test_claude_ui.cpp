@@ -631,7 +631,7 @@ REGISTER_TEST(claude_module_form_tabs_roundtrip,
             compose(ui);
             const auto* s0 = ui.find("claude.slot.val.0");
             slotUpdated = s0 != nullptr &&
-                          s0->text.find("fangzhou/glm-5.3[1M]") !=
+                          s0->text.find("fangzhou/glm-5.3") !=
                               std::string::npos;
             if (!slotUpdated) {
                 std::this_thread::sleep_for(std::chrono::milliseconds(5));
@@ -642,8 +642,15 @@ REGISTER_TEST(claude_module_form_tabs_roundtrip,
         compose(ui);
         const auto* slot0 = ui.find("claude.slot.val.0");  // 默认槽位
         DOCTEST_REQUIRE(slot0 != nullptr);
-        DOCTEST_CHECK(slot0->text.find("fangzhou/glm-5.3[1M]") !=
-                      std::string::npos);
+        // 显示层剥 [1M]（2026-10-03 用户反馈：1M 状态已由复选框表达，名字里
+        // 不再重复带 [1M]）——值列文本 = deriveDisplayName(存储值)。用**精确
+        // 相等**断言：find 前缀命中会被未剥的 "…[1M]" 假绿混过
+        DOCTEST_CHECK_EQ(slot0->text, std::string("fangzhou/glm-5.3"));
+        // 列表卡片 model 行同口径剥除（同一 deriveDisplayName 通道）
+        const auto* cardModel = ui.find("claude.profile.0.model");
+        DOCTEST_REQUIRE(cardModel != nullptr);
+        DOCTEST_CHECK_EQ(cardModel->text,
+                         std::string("model: fangzhou/glm-5.3"));
     }
     // DB 往返：models_config / extra_env / 旧 model 列同步
     {
@@ -5246,6 +5253,17 @@ REGISTER_TEST(claude_ui_logic_pure_functions,
     DOCTEST_CHECK_EQ(modelsSummary(slotOnly),
                      std::string("（默认未配）· 槽位已配 1/6"));
 
+    // 显示层剥 [1M]（2026-10-03）：默认槽位带标记 → 摘要显示剥除后的名字
+    //（1M 状态由详情页复选框表达，摘要文本不重复带标记）
+    module::claude::ModelsConfig mcDef;
+    mcDef.def.model = "m-def[1M]";
+    auto defJson = module::claude::serializeModelsConfig(mcDef);
+    DOCTEST_REQUIRE(defJson.isOk());
+    module::claude::Profile defWithMarker;
+    defWithMarker.modelsConfigJson = defJson.value();
+    DOCTEST_CHECK_EQ(modelsSummary(defWithMarker),
+                     std::string("默认 m-def · 槽位已配 1/6"));
+
     // suggestImportName：剥 scheme / 路径 / 端口；无 host → 「导入 <日期>」
     DOCTEST_CHECK_EQ(suggestImportName("https://api.example.com/v1"),
                      std::string("导入 api.example.com"));
@@ -7842,6 +7860,16 @@ REGISTER_TEST(claude_ui_model_one_m_switch,
             trackHaiku->color.b == trackDef->color.b &&
             trackHaiku->color.a == trackDef->color.a;
         DOCTEST_CHECK_FALSE(sameColor);
+        // 显示层剥标记（2026-10-03 用户反馈：1M 由复选框表达，名字不重复带
+        // [1M]）：值列文本 = deriveDisplayName(存储值)——sonnet 串尾**小写**
+        // [1m] 照剥；haiku 槽位不支持但串尾 [1M] 同样剥（剥除是无条件显示
+        // 语义，勾态才看双重条件）。存储值原样（下方落库断言仍带标记）
+        const auto* valSonnet = ui.find("claude.slot.val.1");
+        const auto* valHaiku = ui.find("claude.slot.val.3");
+        DOCTEST_REQUIRE(valSonnet != nullptr);
+        DOCTEST_REQUIRE(valHaiku != nullptr);
+        DOCTEST_CHECK_EQ(valSonnet->text, std::string("m-sonnet"));
+        DOCTEST_CHECK_EQ(valHaiku->text, std::string("m-haiku"));
     }
     // 禁用行点了不落库：haiku(3) 不支持 / fable(4) 空 base / subagent(5) 空 base
     {

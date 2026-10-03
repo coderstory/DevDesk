@@ -40,7 +40,9 @@ std::string modelsSummary(const Profile& p) {
             ? ("（默认未配）· 槽位已配 " + std::to_string(configured) + "/" + total)
             : std::string("-");
     }
-    return "默认 " + mc.def.model + " · 槽位已配 " +
+    // 显示层剥 [1M]（2026-10-03 用户反馈：1M 状态由复选框表达，名字里不重复
+    // 带标记）——摘要文本走 deriveDisplayName，存储值原样
+    return "默认 " + deriveDisplayName(mc.def.model) + " · 槽位已配 " +
            std::to_string(configured) + "/" + total;
 }
 
