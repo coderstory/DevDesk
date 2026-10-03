@@ -23,6 +23,7 @@
 #include "module_pet/pet_window.h"  // 纯数据头（PetWindowConfig 等声明，零 EUI-NEO 依赖）
 #include "settings_config.h"
 
+#include <cstddef>
 #include <filesystem>
 #include <functional>
 #include <optional>

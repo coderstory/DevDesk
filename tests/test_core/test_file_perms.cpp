@@ -17,6 +17,7 @@
 #include <array>
 #include <filesystem>
 #include <fstream>
+#include <ios>
 #include <sstream>
 #include <string>
 #include <system_error>
@@ -36,6 +37,12 @@ std::string readAll(const std::filesystem::path& p) {
     return oss.str();
 }
 
+#if !defined(_WIN32)
+// ⚠ storeFiles 与 modeOf 都只被 checkStoreFilePerms 的 **POSIX 分支**调用。
+//   放在 `#if` 外面时，Windows 编译它们就是无人引用的函数 → clang 下
+//   `-Werror,-Wunused-function` 直接红（2026-10-03 由扩展后的
+//   scripts/check-windows-cross-compile.sh 抓到；MSYS2 GCC 同理）。
+//   判据：只被平台分支用到的辅助函数，必须和那个分支的守卫放在一起。
 std::array<std::filesystem::path, 3> storeFiles(
     const std::filesystem::path& dbPath) {
     return {dbPath,
@@ -43,7 +50,6 @@ std::array<std::filesystem::path, 3> storeFiles(
             std::filesystem::path(dbPath.string() + "-shm")};
 }
 
-#if !defined(_WIN32)
 // 实际权限位（只取低 12 位：suid/sgid/sticky + rwxrwxrwx）
 bool modeOf(const std::filesystem::path& p, unsigned& outMode) {
     struct stat st{};

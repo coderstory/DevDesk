@@ -9,6 +9,7 @@
 
 #include <cstdio>
 #include <ctime>
+#include <utility>
 
 namespace module::claude {
 

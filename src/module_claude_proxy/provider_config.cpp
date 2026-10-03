@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <optional>
+#include <utility>
 
 #include "env_var_hints.h"
 #include "platform/json.h"

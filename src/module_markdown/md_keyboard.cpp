@@ -6,6 +6,7 @@
 #include "md_line_scanner.h"
 
 #include <algorithm>
+#include <utility>
 #include <vector>
 
 namespace module::markdown {

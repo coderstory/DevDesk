@@ -4,6 +4,7 @@
 
 #include <cstdlib>
 #include <filesystem>
+#include <system_error>
 
 namespace platform::terminal {
 

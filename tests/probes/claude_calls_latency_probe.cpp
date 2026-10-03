@@ -36,6 +36,7 @@
 #include <cstdlib>
 #include <iostream>
 #include <memory>
+#include <ratio>
 #include <string>
 #include <thread>
 #include <vector>

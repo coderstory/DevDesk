@@ -1,6 +1,8 @@
 // src/core/tool.cpp
 #include "core/tool.h"
 
+#include <utility>
+
 namespace core {
 
 ToolRegistry& ToolRegistry::instance() {

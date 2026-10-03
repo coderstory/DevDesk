@@ -35,6 +35,7 @@
 #include <core/theme.h>
 #include <eui/dsl.h>
 
+#include <cstddef>
 #include <ctime>
 #include <functional>
 #include <string>

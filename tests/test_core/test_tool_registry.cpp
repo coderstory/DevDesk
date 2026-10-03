@@ -3,6 +3,8 @@
 #include "doctest.h"
 #include "core/tool.h"
 
+#include <utility>
+
 namespace {
 class FakeTool : public core::ITool {
 public:

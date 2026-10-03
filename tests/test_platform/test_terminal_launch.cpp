@@ -16,7 +16,9 @@
 #include <ctime>
 #include <filesystem>
 #include <fstream>
+#include <ios>
 #include <string>
+#include <system_error>
 #include <vector>
 
 namespace {

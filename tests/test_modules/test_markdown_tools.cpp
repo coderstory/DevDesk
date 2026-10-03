@@ -22,6 +22,7 @@
 
 #include <filesystem>
 #include <fstream>
+#include <ios>
 #include <memory>
 #include <sstream>
 #include <string>

@@ -79,6 +79,7 @@
 #include <functional>
 #include <map>
 #include <memory>
+#include <ratio>
 #include <set>
 #include <string>
 #include <thread>

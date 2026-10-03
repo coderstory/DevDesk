@@ -42,6 +42,7 @@ using module::markdown::kEditorInputId;
 #include <map>
 #include <memory>
 #include <string>
+#include <string_view>
 #include <system_error>
 #include <thread>
 #include <vector>

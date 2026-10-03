@@ -8,6 +8,7 @@
 
 #include <cstdint>
 #include <cstdlib>
+#include <system_error>
 #include <vector>
 
 namespace fs = std::filesystem;

@@ -22,6 +22,7 @@
 #include "deepseek_provider.h"
 
 #include <cctype>
+#include <cstddef>
 #include <cstdlib>
 #include <string>
 #include <utility>

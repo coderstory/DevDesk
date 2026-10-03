@@ -3,8 +3,10 @@
 
 #include <filesystem>
 #include <fstream>
+#include <ios>
 #include <iterator>
 #include <string>
+#include <system_error>
 #include <type_traits>
 #include <utility>
 #include <vector>

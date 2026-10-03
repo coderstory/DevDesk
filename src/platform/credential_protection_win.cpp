@@ -12,6 +12,7 @@
 #include <cstddef>
 #include <limits>
 #include <string>
+#include <utility>
 
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN

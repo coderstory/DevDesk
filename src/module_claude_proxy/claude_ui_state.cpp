@@ -12,6 +12,7 @@
 
 #include <atomic>
 #include <chrono>
+#include <exception>
 #include <future>
 #include <memory>
 #include <utility>

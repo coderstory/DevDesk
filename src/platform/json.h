@@ -2,6 +2,7 @@
 // yyjson 薄封装（详见 spec §7.4）
 #pragma once
 
+#include <cstddef>
 #include <cstdint>
 #include <map>
 #include <string>

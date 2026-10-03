@@ -483,17 +483,28 @@ if ! bash scripts/check-quota-shutdown-order.sh; then
 fi
 
 # ---- 3b-4. Windows 交叉编译守卫（2026-10-03；纯静态检查，--no-test 也跑）----
-# src/ 下 14 个 *_win.cpp 只在 CMake 的 if(WIN32) 分支里参与构建，本地 macOS
-# 构建**永远不编译它们**——「Windows 侧写错了」要等 push 后的 CI（10~18 分钟
-# 一轮）才暴露。credential_protection_win.cpp（DPAPI 密文入库）就是「写完一次
-# 都没被任何编译器看过」那一档。本守卫把这一条用 MinGW 交叉链拉回本地。
+# 受编集合 = **从 CMakeLists 的 WIN32 分支解析出来的、Windows CI 真正会编的源文件**
+# （src + tests，共享文件全在内）。早先版本只编 `*_win.cpp`，那是错的：CI 编整棵树，
+# 共享文件它也编——`src/module_claude_proxy/quota/quota_store.cpp:43` 缺
+# `#include <optional>` 就是在共享文件上炸的，旧门禁压根不编它，红得毫无预警。
 # 找不到工具链时它**显式打印跳过原因并退出 0**（CI 的 macOS runner 没装这条链，
 # 「别人机器上必红」的守卫会被立刻关掉）；装了链还编不过才是红。
-# ⚠ 边界：它只验**编译**。DPAPI 的密文对不对、解密能不能还原，交叉编译一律
-#   验不到，仍需 Windows 真机——守卫通过 ≠ 该文件已验证。
+# ⚠ 边界：它只验**编译**，且本机是 clang+libc++、CI 是 GCC+libstdc++，两者标准库
+#   不同 ⇒「本机编得过」推不出「CI 编得过」。DPAPI 等运行时行为更是验不到。
 echo "── Windows 交叉编译守卫 ──"
 if ! bash scripts/check-windows-cross-compile.sh; then
-  echo "❌ Windows 交叉编译守卫失败（某个 *_win.cpp 编不过；上方为 file:line + 错因）"
+  echo "❌ Windows 交叉编译守卫失败（某个 Windows 源文件编不过；上方为 file:line + 错因）"
+  exit 1
+fi
+
+# ---- 3b-5. std include 守卫（2026-10-03；纯静态检查，--no-test 也跑）----
+# 上面那个守卫**抓不到缺标准头**：本机交叉链是 libc++，`quota_store.cpp` 删掉
+# `#include <optional>` 照样编过（`<optional>` 被 core/sqlite_db.h → <map> →
+# __node_handle 第 8 层传递带进来），而 MSYS2 的 libstdc++ 不带 → 只有 CI 会红。
+# 所以另立一道与标准库无关的判据：本文件直接用了 std::X，就得显式 include 对应头。
+echo "── std include 守卫 ──"
+if ! bash scripts/check-std-includes.sh; then
+  echo "❌ std include 守卫失败（有文件直接用了 std 符号却只靠标准库内部传递包含才看得见）"
   exit 1
 fi
 

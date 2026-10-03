@@ -28,6 +28,7 @@
 
 #include <sqlite3.h>
 
+#include <cstddef>
 #include <cstdlib>
 #include <map>
 #include <filesystem>
@@ -67,7 +68,7 @@ CcSwitchProviderInfo ccProvider(const std::string& id, const std::string& baseUr
 
 // 指向真 cc-switch 读取器的环境变量（生产路径用；用例多数走注入缝）
 void pointCcSwitchDbAt(const std::filesystem::path& p) {
-    ::setenv("CCSWITCH_DB_PATH", p.string().c_str(), 1);
+    test_support::setEnvVar("CCSWITCH_DB_PATH", p.string());
 }
 
 // 逐个取字段 key（断言用；不假设顺序）
@@ -242,7 +243,7 @@ REGISTER_TEST(quota_dialog_ccswitch_match_fills_fields,
         DOCTEST_CHECK(maskSecret(f.value).find("SKFROMCC") == std::string::npos);
     }
 
-    ::setenv("CCSWITCH_DB_PATH", "", 1);
+    test_support::setEnvVar("CCSWITCH_DB_PATH", "");
     return true;
 })
 
@@ -272,7 +273,7 @@ REGISTER_TEST(quota_dialog_ccswitch_unavailable,
     DOCTEST_CHECK_EQ(row.value().ccswitchProviderId, std::string(""));
     DOCTEST_CHECK(row.value().secretsJson.find("SKFROMCC") == std::string::npos);
 
-    ::setenv("CCSWITCH_DB_PATH", "", 1);
+    test_support::setEnvVar("CCSWITCH_DB_PATH", "");
     return true;
 })
 
@@ -310,7 +311,7 @@ REGISTER_TEST(quota_dialog_saves_ccswitch_reference_without_secrets,
     DOCTEST_CHECK(row.value().secretsJson.find("SK-SHOULD-NOT-PERSIST") == std::string::npos);
     DOCTEST_CHECK(row.value().secretsJson.find("AKMANUALCOPY") == std::string::npos);
 
-    ::setenv("CCSWITCH_DB_PATH", "", 1);
+    test_support::setEnvVar("CCSWITCH_DB_PATH", "");
     return true;
 })
 
@@ -449,7 +450,7 @@ REGISTER_TEST(quota_dialog_test_config_uses_ccswitch,
     DOCTEST_REQUIRE(sk != cfg.fields.end());
     DOCTEST_CHECK_EQ(sk->second, std::string("SKLIVE"));
 
-    ::setenv("CCSWITCH_DB_PATH", "", 1);
+    test_support::setEnvVar("CCSWITCH_DB_PATH", "");
     return true;
 })
 

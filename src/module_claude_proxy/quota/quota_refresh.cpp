@@ -3,6 +3,9 @@
 #include "quota_refresh.h"
 
 #include <chrono>
+#include <exception>
+#include <memory>
+#include <system_error>
 #include <utility>
 
 #include <core/platform/platform.h>   // core::platform::requestUiUpdate

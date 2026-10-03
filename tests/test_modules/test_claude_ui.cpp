@@ -29,6 +29,7 @@
 #include <ui_kit/dialog_form.h>  // G6：弹窗宽度（几何不溢出断言用）
 
 #include <chrono>
+#include <algorithm>
 #include <cmath>
 #include <cstdlib>
 #include <ctime>
@@ -7980,7 +7981,7 @@ REGISTER_TEST(claude_quota_button_always_present,
 // ---- ② 选火山 → 两个字段（secret 明文不进 InputState）；deepseek → 零字段 ----
 REGISTER_TEST(claude_quota_dialog_dynamic_field_render,
               "claude_module: 弹窗按 provider 动态渲染字段（火山 2 / deepseek 0）", {
-    ::setenv("CCSWITCH_DB_PATH", "/nonexistent-g6/cc-switch.db", 1);
+    test_support::setEnvVar("CCSWITCH_DB_PATH", "/nonexistent-g6/cc-switch.db");
     TestEnv env;
     auto volcano = env.svc->createProfile(
         "火山", "https://ark.cn-beijing.volces.com/api/coding/v3", "sk-ant-vv", "m");
@@ -8051,7 +8052,7 @@ REGISTER_TEST(claude_quota_dialog_dynamic_field_render,
     mod->onStop();
     cleanupProfileKey(kTestKeychainService, volcano.value().id);
     cleanupProfileKey(kTestKeychainService, deepseek.value().id);
-    ::setenv("CCSWITCH_DB_PATH", "", 1);
+    test_support::setEnvVar("CCSWITCH_DB_PATH", "");
     return true;
 })
 
@@ -8060,7 +8061,7 @@ REGISTER_TEST(claude_quota_dialog_dynamic_field_render,
 // 明文一个字符都不许出现在 EUI 的 InputState 里。
 REGISTER_TEST(claude_quota_dialog_secret_not_echoed,
               "claude_module: secret 字段渲染的是脱敏串，InputState 里没有明文", {
-    ::setenv("CCSWITCH_DB_PATH", "/nonexistent-g6/cc-switch.db", 1);
+    test_support::setEnvVar("CCSWITCH_DB_PATH", "/nonexistent-g6/cc-switch.db");
     TestEnv env;
     test_support::ScopedAppDatabase scoped(env.db->db());
     auto p = env.svc->createProfile(
@@ -8128,14 +8129,14 @@ REGISTER_TEST(claude_quota_dialog_secret_not_echoed,
 
     mod->onStop();
     cleanupProfileKey(kTestKeychainService, p.value().id);
-    ::setenv("CCSWITCH_DB_PATH", "", 1);
+    test_support::setEnvVar("CCSWITCH_DB_PATH", "");
     return true;
 })
 
 // ---- ③ cc-switch 读不到 → 明确文案 + 仍可手填 ----
 REGISTER_TEST(claude_quota_dialog_ccswitch_unavailable_message,
               "claude_module: cc-switch 读不到时弹窗给出明确文案且不崩", {
-    ::setenv("CCSWITCH_DB_PATH", "/nonexistent-g6/cc-switch.db", 1);
+    test_support::setEnvVar("CCSWITCH_DB_PATH", "/nonexistent-g6/cc-switch.db");
     TestEnv env;
     auto p = env.svc->createProfile(
         "火山", "https://ark.cn-beijing.volces.com/api/coding/v3", "sk-ant-vv", "m");
@@ -8167,7 +8168,7 @@ REGISTER_TEST(claude_quota_dialog_ccswitch_unavailable_message,
 
     mod->onStop();
     cleanupProfileKey(kTestKeychainService, p.value().id);
-    ::setenv("CCSWITCH_DB_PATH", "", 1);
+    test_support::setEnvVar("CCSWITCH_DB_PATH", "");
     return true;
 })
 
@@ -8177,7 +8178,7 @@ REGISTER_TEST(claude_quota_dialog_ccswitch_unavailable_message,
 // 「后台结果 → UI 文案」整条链，而不会真的去打火山网关。
 REGISTER_TEST(claude_quota_dialog_test_connection_reports,
               "claude_module: 测试连接失败有文案显示（不静默吞掉）", {
-    ::setenv("CCSWITCH_DB_PATH", "/nonexistent-g6/cc-switch.db", 1);
+    test_support::setEnvVar("CCSWITCH_DB_PATH", "/nonexistent-g6/cc-switch.db");
     TestEnv env;
     test_support::ScopedAppDatabase scoped(env.db->db());
     auto p = env.svc->createProfile(
@@ -8218,14 +8219,14 @@ REGISTER_TEST(claude_quota_dialog_test_connection_reports,
 
     mod->onStop();
     cleanupProfileKey(kTestKeychainService, p.value().id);
-    ::setenv("CCSWITCH_DB_PATH", "", 1);
+    test_support::setEnvVar("CCSWITCH_DB_PATH", "");
     return true;
 })
 
 // ---- ⑤ 保存 → 配置表落库正确 ----
 REGISTER_TEST(claude_quota_dialog_saves_to_db,
               "claude_module: 弹窗保存后 profile_quota_config 行正确", {
-    ::setenv("CCSWITCH_DB_PATH", "/nonexistent-g6/cc-switch.db", 1);
+    test_support::setEnvVar("CCSWITCH_DB_PATH", "/nonexistent-g6/cc-switch.db");
     TestEnv env;
     // 保存走 QuotaStore → core::appDatabase()，必须注册（模块装配同款）
     test_support::ScopedAppDatabase scoped(env.db->db());
@@ -8258,7 +8259,7 @@ REGISTER_TEST(claude_quota_dialog_saves_to_db,
 
     mod->onStop();
     cleanupProfileKey(kTestKeychainService, p.value().id);
-    ::setenv("CCSWITCH_DB_PATH", "", 1);
+    test_support::setEnvVar("CCSWITCH_DB_PATH", "");
     return true;
 })
 

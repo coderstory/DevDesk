@@ -38,7 +38,9 @@
 #include <filesystem>
 #include <memory>
 #include <string>
+#include <system_error>
 #include <thread>
+#include <utility>
 #include <vector>
 
 namespace {

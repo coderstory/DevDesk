@@ -25,10 +25,13 @@
 #include <components/scrollview.h>
 #include <components/theme.h>
 
+#include <algorithm>
+#include <cmath>
 #include <ctime>
 #include <functional>
 #include <memory>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace module::home {

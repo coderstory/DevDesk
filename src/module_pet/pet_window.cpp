@@ -15,6 +15,8 @@
 #include <cstdlib>
 #include <filesystem>
 #include <random>
+#include <ratio>
+#include <system_error>
 #include <utility>
 
 #include "core/component_theme.h"

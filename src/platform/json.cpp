@@ -2,6 +2,7 @@
 
 #include <yyjson.h>
 
+#include <cstddef>
 #include <cstdlib>
 #include <map>
 #include <string>
