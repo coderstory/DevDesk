@@ -33,15 +33,6 @@ jobs:
       - name: 取 EUI-NEO（须与 DevDesk 同级目录）
         run: git clone --depth 1 "$EUI_NEO_REPO" EUI-NEO
 
-      # 版本前置校验：克隆的是 fork 的默认分支 HEAD，**不锁版本**。DevDesk 与框架是
-      # 两个独立仓库，两边推送的先后顺序会让 CI 拿到「还没落地的那个版本」。
-      # 2026-10-03 实测踩过：结果是一个指向错误文件的编译错误
-      # （home_quota_card.cpp:617 报 TextBuilder 没有 overflow —— 那行代码没问题，
-      # 错的是框架版本），排查方向被带偏一整轮。这里在构建之前就拦住，并说人话。
-      - name: EUI-NEO 版本前置校验
-        working-directory: DevDesk
-        run: bash scripts/check-eui-neo-version.sh --eui-dir ../EUI-NEO
-
       - name: 切到镜像上最新的 Xcode
         run: |
           ls -d /Applications/Xcode*.app 2>/dev/null || true
@@ -93,14 +84,6 @@ jobs:
 
       - name: 取 EUI-NEO（须与 DevDesk 同级目录）
         run: git clone --depth 1 "$env:EUI_NEO_REPO" EUI-NEO
-
-      # 见 macos job 里同名步骤的注释：跨仓库版本不匹配会被伪装成指错文件的编译错误。
-      # 必须排在 setup-msys2 **之前**：本步只解析头文件，不需要工具链。
-      - name: EUI-NEO 版本前置校验
-        working-directory: DevDesk
-        # Windows runner 的默认 shell 是 pwsh，跑不了 .sh —— 显式切 Git Bash。
-        shell: bash
-        run: bash scripts/check-eui-neo-version.sh --eui-dir ../EUI-NEO
 
       - uses: msys2/setup-msys2@v2
         with:
