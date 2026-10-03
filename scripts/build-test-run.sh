@@ -520,6 +520,13 @@ if [ "$RUN_TEST" = "1" ]; then
         exit 1
       fi
     elif [ "$PROBE_SKIPPED" -gt 0 ]; then
+      # 不变式（本分支与 :482 失败优先为何并存、各自兜什么）：
+      #   ctest 现行格式对混合态（通过+跳过、零失败）**仍印 "100% tests
+      #   passed"**（跳过不算失败，见 :453-457 实测）→ :482 grep 命中不触发
+      #   → 落到本分支，报红"部分跳过"。
+      #   若 ctest 改汇总格式、对混合态印 <100%，:482 失败优先会先兜住并
+      #   exit 1 → 本分支不可达；结果仍 RED（无假绿），仅诊断文字变成"有
+      #   失败"而非"部分跳过"。留本分支 = 不赌 ctest 永不改格式（删了等于赌）。
       # 同一条判据对所有探针一视同仁，正常只有「全跑」或「全跳」两种形态；
       # 部分跳过 = 判据误判或代码/环境异常，必须人工查。
       echo "❌ UI probe 部分跳过（${PROBE_SKIPPED}/${PROBE_TOTAL}）——判定为判据误判或代码 bug，必须人工查"
@@ -539,6 +546,9 @@ fi
 # ctest 当 Failed（「诚实跳过」退化成「环境红」——正是上面三态要防的假红）。
 # 守卫读 **configure 产物**（生成 CTestTestfile.cmake）而不是源码注释，自带
 # --self-test 证明非恒真（见脚本文件头）。
+# 此守卫位于 RUN_TEST 门之外——--no-test 也跑：它依赖 configure 产物
+# CTestTestfile.cmake，而 --no-test 仍会 configure 过，故守卫能跑；与下方
+# 模块隔离守卫同款（那条 section 标题也注明了 --no-test 也跑）。
 echo "── 探针跳过登记守卫 ──"
 if ! bash scripts/check-probe-skip-gate.sh --build-dir "$BUILD_DIR"; then
   echo "❌ 探针跳过登记守卫失败（某个 probe 测试没登记 SKIP_RETURN_CODE，或登记值与 harness 的 kSkipExitCode 不一致）"
