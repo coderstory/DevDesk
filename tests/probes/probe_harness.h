@@ -54,6 +54,7 @@
 #include <png.h>
 
 #include <cstring>
+#include <cstdlib>
 #include <iostream>
 #include <algorithm>
 #include <cmath>
@@ -71,12 +72,173 @@ inline core::window::RenderApi configuredRenderApi() {
     return core::window::RenderApi::OpenGL;
 }
 
+// ==================== 无显示环境检测（CI runner 无 GUI 会话） ====================
+//
+// ── 事故（2026-10-03）────────────────────────────────────────────────
+// GitHub 的 macOS runner 上跑的进程**不挂在 WindowServer 的 bootstrap
+// namespace 里**，probe 建不出窗口 → 首次并入门禁的 14 个 probe 全红，
+// 而本机 14/14 全绿。本文件把「环境没显示」从**红色失败**改成
+// **诚实的跳过**（ctest SKIP_RETURN_CODE 77），但**绝不是**「建窗失败一律
+// 跳过」——那等于把门禁关掉，真代码 bug 会长得和没显示一模一样。
+//
+// ── 判据 = 「金丝雀窗口 + GLFW 错误码」两段，都用裸 GLFW 判定 ──────
+//
+// 【为什么金丝雀能区分】金丝雀窗口由**裸 GLFW** 建（下面 probeDisplayCapability
+// 里那十几行），**不碰任何 DevDesk / EUI-NEO 代码**：尺寸、标题、GL 版本全是
+// 编译期常量。所以「金丝雀建不出来」这件事**在因果上不可能**由我们的代码 bug
+// 造成 —— 它只反映「本进程能不能造出与 probe 同等要求的窗口」。
+// 反过来：金丝雀建成了而真探针窗建不出来，那**必然**是代码 / 配置问题
+// （我们的 hint、GL 版本请求、断言……），此时必须报红。两者构成正反对照。
+//
+// 【为什么还要看错误码】金丝雀建不出来不等于一定是环境：GLFW 的
+// INVALID_VALUE / INVALID_ENUM / NOT_INITIALIZED 表示**调用方**把参数写错了
+// （那是 harness 自己的 bug），OUT_OF_MEMORY 是资源问题。只有「平台/能力不可用」
+// 那一族才是环境。把这一族单列出来，判据才不是恒真的。
+//
+// 错误码取值与语义出处（均读自 EUI-NEO/3rd/glfw/include/GLFW/glfw3.h）：
+//   GLFW_PLATFORM_UNAVAILABLE 0x0001000E  glfw3.h:849「没有可用的窗口系统」
+//   GLFW_PLATFORM_ERROR       0x00010008  glfw3.h:762「平台 API 调用失败」
+//                                          （macOS 无 GUI 会话时 Cocoa 建窗失败走这条，
+//                                            见 3rd/glfw/src/cocoa_window.m:833）
+//   GLFW_API_UNAVAILABLE      0x00010006  glfw3.h:734「请求的客户端 API 不可用」
+//   GLFW_VERSION_UNAVAILABLE  0x00010007  glfw3.h:751「请求的 GL 版本不支持」
+//                                          （无 GPU 的 runner 只有 GDI 泛型 GL 1.1）
+//   GLFW_FORMAT_UNAVAILABLE   0x00010009  glfw3.h:781「没有满足的 framebuffer 配置」
+// **不**归环境管的：INVALID_VALUE / INVALID_ENUM / NOT_INITIALIZED /
+// OUT_OF_MEMORY / NO_ERROR —— 一律 RealFailure（红）。
+
+/// CTest 的「跳过」返回码约定。tests/CMakeLists.txt 里每个 probe 测试都必须配
+/// SKIP_RETURN_CODE 77（由 scripts/check-probe-skip-gate.sh 守卫），否则 77
+/// 会被 ctest 当成普通失败。
+inline constexpr int kSkipExitCode = 77;
+
+/// 金丝雀的探测结果。纯数据、无副作用 → 可被 screenshot_probe 的分类表断言
+/// 直接喂构造值（那里不需要真窗口就能验判据不是恒真的）。
+struct DisplayCapability {
+    /// glfwInit() 是否成功（false 时后面两项无意义）
+    bool initialized = false;
+    /// 金丝雀窗口是否建成
+    bool canaryCreated = false;
+    /// 失败时的 GLFW 错误码；成功路径恒为 GLFW_NO_ERROR
+    int glfwError = GLFW_NO_ERROR;
+};
+
+enum class DisplayVerdict {
+    /// 环境具备显示能力：此后 probe 的任何失败都是代码 / 配置问题 → 必须红
+    Available,
+    /// 环境不具备显示能力（无 GUI 会话 / 无 GL）→ 诚实跳过（77）
+    NoDisplay,
+    /// 不是显示环境造成的失败（参数写错、资源不足……）→ 真失败，必须红
+    RealFailure,
+};
+
+/// GLFW 错误码 → 「是否属于环境没显示/没 GL 那一族」。
+/// ⚠ 这条判据**不是恒真的**：下面 screenshot_probe 的分类表断言把「真代码
+/// bug 形状的错误码」逐个喂进来，断言它们**不**判成 NoDisplay。
+inline bool isDisplayEnvironmentError(int code) {
+    switch (code) {
+        case GLFW_PLATFORM_UNAVAILABLE:
+        case GLFW_PLATFORM_ERROR:
+        case GLFW_API_UNAVAILABLE:
+        case GLFW_VERSION_UNAVAILABLE:
+        case GLFW_FORMAT_UNAVAILABLE:
+            return true;
+        default:
+            return false;
+    }
+}
+
+/// 金丝雀结果 → 三态判定。**纯函数**（不碰 GLFW 运行时），可单测。
+inline DisplayVerdict classifyDisplayCapability(const DisplayCapability& cap) {
+    if (!cap.initialized) {
+        // 连 GLFW 都没起来：只有「平台不可用」才算环境，否则是 harness 自己的 bug
+        return isDisplayEnvironmentError(cap.glfwError) ? DisplayVerdict::NoDisplay
+                                                        : DisplayVerdict::RealFailure;
+    }
+    if (cap.canaryCreated) {
+        return DisplayVerdict::Available;
+    }
+    return isDisplayEnvironmentError(cap.glfwError) ? DisplayVerdict::NoDisplay
+                                                    : DisplayVerdict::RealFailure;
+}
+
+inline const char* displayVerdictName(DisplayVerdict v) {
+    switch (v) {
+        case DisplayVerdict::Available: return "Available";
+        case DisplayVerdict::NoDisplay: return "NoDisplay";
+        case DisplayVerdict::RealFailure: return "RealFailure";
+    }
+    return "?";
+}
+
+/// 金丝雀窗口名（出现在 CI 日志里，便于一眼认出这是环境探测而非真探针）
+inline constexpr const char* kDisplayCanaryTitle = "devdesk-probe-display-canary";
+
+/// 跑一次金丝雀：用**裸 GLFW** 建一个隐藏的、与 probe 同等 GL 要求的窗口。
+/// 全程不引用 DevDesk / EUI-NEO 的窗口代码 —— 判据因此独立于被测代码。
+/// 跑完把 hints 复位（hint 会跨 glfwCreateWindow 残留），让随后的真探针窗
+/// 从干净状态开始。
+inline DisplayCapability probeDisplayCapability() {
+    DisplayCapability cap;
+    if (glfwInit() != GLFW_TRUE) {
+        const char* desc = nullptr;
+        cap.glfwError = glfwGetError(&desc);
+        return cap;
+    }
+    cap.initialized = true;
+
+    // GL 要求与 EUI-NEO 的 configureOpenGLWindowHints（core/window/
+    // window_backend.cpp:758）对齐：3.3 core。**故意不调用**那个函数 —— 一旦
+    // 判据依赖被测框架自己的代码，它就不再是独立的对照实验了。
+    glfwDefaultWindowHints();
+    glfwWindowHint(GLFW_CLIENT_API, GLFW_OPENGL_API);
+    glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);
+    glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 3);
+    glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
+    glfwWindowHint(GLFW_VISIBLE, GLFW_FALSE);   // 探测窗不弹到屏幕上
+    GLFWwindow* canary =
+        glfwCreateWindow(64, 64, kDisplayCanaryTitle, nullptr, nullptr);
+    if (canary != nullptr) {
+        cap.canaryCreated = true;
+        glfwDestroyWindow(canary);
+    } else {
+        const char* desc = nullptr;
+        cap.glfwError = glfwGetError(&desc);
+    }
+    glfwDefaultWindowHints();   // 复位：hint 跨 createWindow 残留
+    return cap;
+}
+
 /// 窗口后端生命周期（GLFW），成对调用。
+/// 无显示环境 → 打印可进 CI 日志的原因 + 以 77 退出（ctest 记 Skipped）；
+/// 其它初始化失败 → 返回 false（调用方返回非零 → ctest 记 Failed）。
 inline bool initializeWindowBackend() {
     // splash 测试缝：probe 进程同样活不过 splash 2.3s 时序，禁掉后 compose
     // 路径（若后续 probe 直连 app::compose / drawSidebar）不会拍到 splash
     ::ui_kit::setSplashDisabledForTests(true);
-    return glfwInit() == GLFW_TRUE;
+    const DisplayCapability cap = probeDisplayCapability();
+    switch (classifyDisplayCapability(cap)) {
+        case DisplayVerdict::NoDisplay:
+            // cerr 是 unitbuf 的，但 std::exit 不跑析构 / 不 flush 其它流 ——
+            // 显式 flush，保证「为什么跳过」一定落进 ctest 日志。
+            std::cerr << "PROBE_SKIP_NO_DISPLAY: 本进程没有可用的显示环境"
+                         "（金丝雀窗口建不出来，glfwError=0x"
+                      << std::hex << cap.glfwError << std::dec
+                      << " → 判定 NoDisplay）——本 probe 需要真窗口，跳过。"
+                         "在有 GUI 会话的机器上跑同一条命令即可真跑："
+                         "cd <build> && ctest -L probe --output-on-failure\n";
+            std::cerr.flush();
+            std::exit(kSkipExitCode);
+        case DisplayVerdict::RealFailure:
+            std::cerr << "probe::initializeWindowBackend: 窗口后端初始化失败，"
+                         "且**不**是无显示环境造成的（glfwError=0x"
+                      << std::hex << cap.glfwError << std::dec
+                      << "，判定 RealFailure）——这是代码问题，门禁应当报红\n";
+            return false;
+        case DisplayVerdict::Available:
+            break;
+    }
+    return true;
 }
 
 inline void terminateWindowBackend() {
@@ -84,6 +246,11 @@ inline void terminateWindowBackend() {
 }
 
 /// 创建探针窗口：不可缩放 + OpenGL；失败返回 nullptr。
+///
+/// ⚠ 金丝雀此时**已经**建成了（initializeWindowBackend 里），所以这里的失败
+/// **不是**环境问题：能造出金丝雀窗却造不出这个窗，差的就是我们的 hint /
+/// GL 版本请求 / 窗口参数。诊断信息里明确写出这一点，避免下次再被误判成
+/// 「CI 环境问题」而放过真 bug。
 inline core::window::Handle makeWindow(const std::string& title, int width, int height) {
     core::window::WindowCreateRequest request;
     request.title = title.c_str();
@@ -91,7 +258,17 @@ inline core::window::Handle makeWindow(const std::string& title, int width, int 
     request.height = height;
     request.resizable = false;
     request.renderApi = configuredRenderApi();
-    return core::window::createWindow(request);
+    core::window::Handle handle = core::window::createWindow(request);
+    if (handle == nullptr) {
+        const char* desc = nullptr;
+        const int code = glfwGetError(&desc);
+        std::cerr << "probe::makeWindow(" << title << ", " << width << "x" << height
+                  << "): 窗口创建失败，glfwError=0x" << std::hex << code << std::dec
+                  << "（" << (desc != nullptr ? desc : "(无描述)") << "）\n"
+                  << "  ⚠ 显示环境金丝雀已建成 → 本次失败**不是**环境问题，"
+                     "是代码/配置问题（探针不应跳过，应报红）\n";
+    }
+    return handle;
 }
 
 /// 命令行探针参数。
