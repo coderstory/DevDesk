@@ -89,6 +89,18 @@ esac
 # （CPU/内存全占，单条 build 反而更慢）。默认 3 并发编译单元，可用 DEVDESK_JOBS 覆盖。
 export CMAKE_BUILD_PARALLEL_LEVEL="${DEVDESK_JOBS:-3}"
 
+# ---- UI probe 可执行构建开关（2026-10-03，CI 瘦身）----
+# CI 无 GUI 会话：14 个 probe 测试全走 SKIP_RETURN_CODE 77 跳过，但 12 个 probe
+# 可执行仍在编译链接（CI 日志里成片的 Building ... probe 行）——纯浪费。
+# DEVDESK_BUILD_PROBES=0 → configure 传 -DDEVDESK_BUILD_PROBES=OFF，probe 目标
+# 与 ctest 注册整体不生成；单测全量与静态守卫照跑（真门禁不动）。
+# 只认 "0" 为 OFF，其余任何值（含空 / 乱值）一律 ON —— 门禁宁多跑不静默少跑。
+BUILD_PROBES="${DEVDESK_BUILD_PROBES:-1}"
+case "$BUILD_PROBES" in
+  0) BUILD_PROBES_CMAKE="OFF" ;;
+  *) BUILD_PROBES="1"; BUILD_PROBES_CMAKE="ON" ;;
+esac
+
 # ---- 编译缓存 ccache（可选，缺则自动降级）----
 # 三件套（CCACHE_DIR / CCACHE_BASEDIR / CCACHE_NOHASHDIR）已落进 ccache 持久配置，无需环境变量。
 # 持久配置**在两个平台上位置不同**（ccache 各自按平台约定读，写错地方等于没写）：
@@ -298,9 +310,30 @@ if [ -f "$BUILD_DIR/CMakeCache.txt" ] && grep -q "^CMAKE_BUILD_TYPE:" "$BUILD_DI
     exit 1
   fi
 fi
-if [ "$CLEAN" = "1" ] || [ ! -f "$BUILD_DIR/build.ninja" ]; then
+# probe 开关一致性（增量路径防漂移）：configure 只在 --clean / 首建时跑，已有
+# build.ninja 的目录若缓存里的 DEVDESK_BUILD_PROBES 与本次请求不同而不补一次
+# configure，会出现两种静默错位：OFF 请求落在「probe 目标照编、probe 门禁段却
+# 按 OFF 跳过」（静默弱门禁），ON 请求落在「probe 没编、门禁段跑了 ctest -L
+# probe 匹配 0 条」（误红）。检测到漂移就**出声补一次 configure**（与上面构建
+# 类型守卫的硬失败不同：probe 开关只增删目标、不换编译 flag，重配廉价且无损，
+# 不必逼用户 --clean）。
+NEED_CONF_PROBES=0
+if [ -f "$BUILD_DIR/CMakeCache.txt" ] && grep -q "^DEVDESK_BUILD_PROBES:" "$BUILD_DIR/CMakeCache.txt"; then
+  CACHED_PROBES="$(grep -m1 "^DEVDESK_BUILD_PROBES:" "$BUILD_DIR/CMakeCache.txt" | cut -d= -f2- | tr -d '\r')"
+  if [ "$CACHED_PROBES" != "$BUILD_PROBES_CMAKE" ]; then
+    echo "── probe 开关变化（缓存 ${CACHED_PROBES} → 本次 ${BUILD_PROBES_CMAKE}），补一次 configure ──"
+    NEED_CONF_PROBES=1
+  fi
+elif [ "$BUILD_PROBES_CMAKE" = "OFF" ] && [ -f "$BUILD_DIR/build.ninja" ]; then
+  # 老目录（本开关进 CMake 之前 configure 的）：缓存里没有该条目，ninja 自愈
+  # 重配会取 option 默认 ON —— 与 OFF 请求不符，同样补一次 configure。
+  echo "── probe 开关变化（缓存 无(老目录) → 本次 OFF），补一次 configure ──"
+  NEED_CONF_PROBES=1
+fi
+if [ "$CLEAN" = "1" ] || [ ! -f "$BUILD_DIR/build.ninja" ] || [ "$NEED_CONF_PROBES" = "1" ]; then
   CONF_OUT=$(cmake -B "$BUILD_DIR" -G Ninja -DCMAKE_BUILD_TYPE="$BUILD_TYPE" \
     -DEUI_NEO_DIR="$EUI_DIR" \
+    -DDEVDESK_BUILD_PROBES="$BUILD_PROBES_CMAKE" \
     "${CCACHE_ARGS[@]}" \
     "${OPENSSL_ARGS[@]}" 2>&1) || {
     echo "$CONF_OUT" | tail -30
@@ -438,8 +471,14 @@ fi
 # 走 ctest 而非直接跑 probe 可执行文件：它自带超时与 label 过滤。
 # `$FILTER` 非空时跳过（那是定点排查单条 doctest 用例的形态，probe 与之无关），
 # 并明确打印跳过原因 —— 静默跳过正是这条门禁当初失效的同类毛病。
+# `DEVDESK_BUILD_PROBES=0` 时整段跳过（下方「ctest -L probe 匹配到 0 条测试
+# = 门禁空转」的红是防 probe **意外丢失**的；OFF 是显式选择，probe 压根没编
+# 没注册，不该被它拦下）——同样出声打印，不静默。
 if [ "$RUN_TEST" = "1" ]; then
-  if [ -n "$FILTER" ]; then
+  if [ "$BUILD_PROBES" = "0" ]; then
+    echo "── UI probe ──"
+    echo "⏭ UI probe 未构建（DEVDESK_BUILD_PROBES=0：probe 目标未编、未注册进 ctest —— 显式选择，非门禁失效；本地默认 ON 才跑 probe 门禁）"
+  elif [ -n "$FILTER" ]; then
     echo "── UI probe ──"
     echo "⏭ 跳过（--filter 定点模式：probe 与该筛选无关）"
   else
@@ -549,8 +588,13 @@ fi
 # 此守卫位于 RUN_TEST 门之外——--no-test 也跑：它依赖 configure 产物
 # CTestTestfile.cmake，而 --no-test 仍会 configure 过，故守卫能跑；与下方
 # 模块隔离守卫同款（那条 section 标题也注明了 --no-test 也跑）。
+# DEVDESK_BUILD_PROBES=0 时跳过：守卫断言 A 要求产物里 ≥1 条 probe 测试，而
+# OFF = 显式不生成任何 probe 条目 —— 这是选择，不是漏登记，守卫若照跑必红。
+# （守卫自检 --self-test 造独立树、不受影响，仍在下方 3b-6 链里照跑。）
 echo "── 探针跳过登记守卫 ──"
-if ! bash scripts/check-probe-skip-gate.sh --build-dir "$BUILD_DIR"; then
+if [ "$BUILD_PROBES" = "0" ]; then
+  echo "⏭ 跳过（DEVDESK_BUILD_PROBES=0：probe 未构建，configure 产物里没有 probe 条目可查；--self-test 自检仍在守卫自检链照跑）"
+elif ! bash scripts/check-probe-skip-gate.sh --build-dir "$BUILD_DIR"; then
   echo "❌ 探针跳过登记守卫失败（某个 probe 测试没登记 SKIP_RETURN_CODE，或登记值与 harness 的 kSkipExitCode 不一致）"
   exit 1
 fi

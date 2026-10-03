@@ -20,6 +20,12 @@ env:
   CCACHE_MAXSIZE: 1G
   # 让构建输出实时刷到 CI 日志（默认被脚本吞掉，看起来像卡死）
   DEVDESK_BUILD_VERBOSE: "1"
+  # CI 不编 probe 二进制（2026-10-03）：runner 无 GUI 会话，14 个 UI probe 测试
+  # 全走 SKIP_RETURN_CODE 77 跳过，12 个 probe 可执行的编译链接是纯浪费。
+  # 0 → build-test-run.sh 传 -DDEVDESK_BUILD_PROBES=OFF（probe 目标与 ctest
+  # 注册整体不生成，probe 门禁段与探针跳过登记守卫显式跳过打 ⏭）。
+  # 单测全量与静态守卫照跑；probe 真门禁靠本地（默认 ON）+ headless 断言单测。
+  DEVDESK_BUILD_PROBES: "0"
 
 jobs:
   macos:

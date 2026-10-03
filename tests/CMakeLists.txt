@@ -199,6 +199,14 @@ add_test(NAME devdesk_unit_tests COMMAND devdesk_tests)
 # ==================== 独立 probe 可执行（probes/ 目录） =============# probes/ 下每个 .cpp 是独立小程序（如 dropdown z 可视化验证），不属于
 # devdesk_tests 用例（已在上方 TIN-10 自检中排除）：单独编译成可执行，
 # 以 LABELS "probe" 注册 ctest，便于定向跑单个 probe。
+# DEVDESK_BUILD_PROBES=OFF（2026-10-03，CI 瘦身）：不生成任何 probe 目标与
+# ctest 注册。CI 无 GUI 会话，14 个 probe 测试全走 SKIP_RETURN_CODE 77 跳过，
+# 但 12 个 probe 可执行仍要编译链接——纯浪费。本地默认 ON（真门禁在本地）。
+# devdesk_tests 不引用任何 probes/*.cpp（TIN-10 也把 probes/ 排除在用例核对
+# 外），整段包进开关不影响单测；quota_live_probe 在本段之外（它是 bash 脚本
+# 测试、LABELS "live"，没有编译成本，也不该跟着消失）。
+option(DEVDESK_BUILD_PROBES "构建 UI probe 可执行（无 GUI 环境如 CI 设 OFF，省 12 个可执行的编译链接时长）" ON)
+if(DEVDESK_BUILD_PROBES)
 file(GLOB _devdesk_probe_sources CONFIGURE_DEPENDS
     ${CMAKE_CURRENT_SOURCE_DIR}/probes/*.cpp)
 
@@ -288,6 +296,7 @@ foreach(_probe_source ${_devdesk_probe_sources})
             PROPERTIES SKIP_RETURN_CODE 77)
     endif()
 endforeach()
+endif()
 
 # ==================== 真机出网探针（**默认门禁之外**，2026-10-03）============
 # 走真网络 + 需要用户本机 ~/.cc-switch/cc-switch.db + 每次实打实打四家供应商
