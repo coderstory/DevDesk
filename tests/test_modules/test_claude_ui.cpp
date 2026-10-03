@@ -620,6 +620,24 @@ REGISTER_TEST(claude_module_form_tabs_roundtrip,
             compose(ui);
             DOCTEST_CHECK(click(ui, "claude.detail.tabs.hit.1"));  // 切到模型 tab（tabs 组件 hit 区）
         }
+        // 保存是异步刷新（H2）：写库同步、快照收割异步，详情 pane 读的是后台
+        // 快照——有界轮询等新槽位值进**渲染树**（照 claude_h2_compose_snapshot_async
+        // 的轮询写法；旧版保存后只 compose 2 帧就读旧快照 = Windows CI 快照竞态
+        // flaky 根因，见 headless-flaky-analysis.md）
+        bool slotUpdated = false;
+        for (int i = 0; i < 300 && !slotUpdated; ++i) {
+            mod->onPageEnter();   // 保持脏意图存活（在途旧快照收割会清脏 → 重新置脏）
+            eui::Ui ui;
+            compose(ui);
+            const auto* s0 = ui.find("claude.slot.val.0");
+            slotUpdated = s0 != nullptr &&
+                          s0->text.find("fangzhou/glm-5.3[1M]") !=
+                              std::string::npos;
+            if (!slotUpdated) {
+                std::this_thread::sleep_for(std::chrono::milliseconds(5));
+            }
+        }
+        DOCTEST_CHECK(slotUpdated);   // 新 models_config 已进渲染快照
         eui::Ui ui;
         compose(ui);
         const auto* slot0 = ui.find("claude.slot.val.0");  // 默认槽位
@@ -1050,13 +1068,19 @@ REGISTER_TEST(claude_module_import_current_reads_advanced_json,
         compose(ui);
         DOCTEST_CHECK(click(ui, "claude.dialog.form.confirm.bg"));
     }
-    // 保存是异步刷新（H2）：有界轮询等卡片/详情进快照
+    // 保存是异步刷新（H2）：写库同步、快照收割异步——轮询必须等**渲染快照**
+    //（DB 第 1 轮即真 = 旧版等的是写库而非快照，Windows CI 快照竞态 flaky
+    // 根因，见 headless-flaky-analysis.md；写法照 claude_h2_compose_snapshot_async）
     bool saved = false;
+    bool cardReady = false;   // 快照收割完成：卡片已进渲染树（下一步 click 依赖）
     int64_t pid = 0;
-    for (int i = 0; i < 300 && !saved; ++i) {
+    for (int i = 0; i < 300 && !(saved && cardReady); ++i) {
         mod->onPageEnter();
         eui::Ui ui;
         compose(ui);
+        if (!cardReady) {
+            cardReady = ui.find("claude.profile.0.bg") != nullptr;
+        }
         auto list = env.svc->listProfiles();
         if (list.isOk()) {
             for (const auto& p : list.value()) {
@@ -1067,9 +1091,12 @@ REGISTER_TEST(claude_module_import_current_reads_advanced_json,
                 }
             }
         }
-        if (!saved) std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        if (!(saved && cardReady)) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        }
     }
     DOCTEST_CHECK(saved);   // 高级配置真落库（不只是 UI 显示）
+    DOCTEST_CHECK(cardReady);   // 快照收割完成（卡片进渲染树，可点）
     {
         eui::Ui ui;
         compose(ui);
@@ -3877,11 +3904,15 @@ REGISTER_TEST(claude_ui_json_fullscreen_buffer_roundtrip_and_error_gate,
         DOCTEST_CHECK(click(ui, "claude.jsonfs.apply.bg"));   // 保存
     }
     bool okB = false;
+    bool cardReady = false;   // 快照收割完成：卡片已进渲染树（fs_d1 的 click 依赖）
     int64_t idB = 0;
-    for (int i = 0; i < 300 && !okB; ++i) {
+    for (int i = 0; i < 300 && !(okB && cardReady); ++i) {
         mod->onPageEnter();
         eui::Ui ui;
         compose(ui, "fs_b_poll_b");
+        if (!cardReady) {
+            cardReady = ui.find("claude.profile.0.bg") != nullptr;
+        }
         auto list = env.svc->listProfiles();
         if (list.isOk()) {
             for (const auto& p : list.value()) {
@@ -3891,9 +3922,12 @@ REGISTER_TEST(claude_ui_json_fullscreen_buffer_roundtrip_and_error_gate,
                 }
             }
         }
-        if (!okB) std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        if (!(okB && cardReady)) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        }
     }
     DOCTEST_CHECK(okB);   // 全屏框的输入确实写进了表单保存的那份缓冲
+    DOCTEST_CHECK(cardReady);   // 快照收割完成（卡片进渲染树，fs_d1 可点）
 
     // ③ 校验红字同源：编辑 ①的 profile → 全屏内改坏 JSON → 「保存」→ 全屏
     //    error 节点非空且不退全屏；「放弃修改」（batch-C C-2，原「完成」回表单）
@@ -7548,11 +7582,18 @@ REGISTER_TEST(claude_shared_dialog_json_roundtrip,
                            R"({"model":"frag-m","permissions":{"p":1}})"));
         DOCTEST_CHECK(click(ui, "claude.dialog.shared.confirm.bg"));
     }
+    // 保存是异步刷新（H2）：写库同步、快照收割异步——轮询必须等**渲染快照**
+    //（DB 第 1 轮即真 = 旧版等的是写库而非快照，Windows CI 快照竞态 flaky
+    // 根因，见 headless-flaky-analysis.md；写法照 claude_h2_compose_snapshot_async）
     bool saved = false;
-    for (int i = 0; i < 300 && !saved; ++i) {
+    bool cardReady = false;   // 快照收割完成：片段卡已进渲染树（下一步 click 依赖）
+    for (int i = 0; i < 300 && !(saved && cardReady); ++i) {
         mod->onPageEnter();
         eui::Ui ui;
         compose(ui);
+        if (!cardReady) {
+            cardReady = ui.find("claude.shared.card.0.bg") != nullptr;
+        }
         auto list = env.svc->listSharedConfigs();
         if (list.isOk()) {
             for (const auto& c : list.value()) {
@@ -7561,9 +7602,12 @@ REGISTER_TEST(claude_shared_dialog_json_roundtrip,
                 }
             }
         }
-        if (!saved) std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        if (!(saved && cardReady)) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        }
     }
     DOCTEST_CHECK(saved);
+    DOCTEST_CHECK(cardReady);   // 快照收割完成（片段卡进渲染树，可点）
 
     // 重开编辑回读：JSON 框预填 DB 原文（= 上一步落库的 pretty 文本，
     // 逐字节相等才算「保存 → 重开回读」这条链真的走通）
