@@ -455,24 +455,30 @@ if [ "$RUN_TEST" = "1" ]; then
     #   跳过时也是 100%（实测：一个全跳过的 -L probe 跑仍输出 "100% tests passed
     #   out of 2"）。只认那一句的话，一条「什么都没验」的门禁会长得和全绿一模一样，
     #   **这正是当初这条门禁失效的同类毛病**。所以下面显式解析三态。
+    #
+    # ⚠ **总数也从本次运行的输出里取**（汇总行 "... out of N" 的 N = 本次 -L probe
+    #   匹配到的全部条数，**含跳过项**）。2026-10-03 用三种形态实测过 N 的口径：
+    #   1 通过+1 跳过 / 2 跳过 / 1 通过 分别输出 "out of 2" / "out of 2" / "out of 1"
+    #   —— 恒等于 `ctest -N` 的 Total Tests，故不必再跑一次 -N（那一次还会把
+    #   Testing/Temporary/LastTest.log 清成 121 字节，跳过原因就永远捞不到了）。
     PROBE_OUT=$(cd "$BUILD_DIR" && ctest -L probe --output-on-failure 2>&1) || true
     echo "$PROBE_OUT" | grep -E "tests passed|tests failed" | tail -1
     # 跳过数：ctest 把跳过项列在 "The following tests did not run:" 段里，
     # 形如 "  2 - t_skip (Skipped)"。逐条数 (Skipped) 行，不靠百分比反推。
     PROBE_SKIPPED=$(echo "$PROBE_OUT" | grep -cE '^\s*[0-9]+ - .*\(Skipped\)$' || true)
     : "${PROBE_SKIPPED:=0}"
-    # ⚠ **必须先捞跳过原因，再算总数**：`ctest -N`（下面那次 dry run）会把
-    #   Testing/Temporary/LastTest.log **清空重写成 121 字节**（实测：跑完
-    #   13657 字节 / 14 条原因，`ctest -N` 之后剩 0 条）。顺序反了就永远捞不到
-    #   原因，CI 日志里只剩一句没有解释的「Skipped」。
+    # 跳过原因只在 -V / LastTest.log 里（--output-on-failure **不**显示跳过测试的
+    # 输出——实测过）。probe 打印的 PROBE_SKIP_NO_DISPLAY 走 stderr，ctest 同样把它
+    # 收进 LastTest.log（实测）。**在任何可能改写 LastTest.log 的命令之前**捞。
     PROBE_SKIP_REASONS=""
     if [ "$PROBE_SKIPPED" -gt 0 ]; then
       PROBE_SKIP_REASONS=$(cd "$BUILD_DIR" && grep -h "PROBE_SKIP_NO_DISPLAY" \
-          Testing/Temporary/LastTest.log 2>/dev/null | sed 's/^/  /' | sort -u | head -5)
+          Testing/Temporary/LastTest.log 2>/dev/null | sed 's/^/  /' | sort -u | head -5 || true)
     fi
-    PROBE_TOTAL=$(cd "$BUILD_DIR" && ctest -L probe -N 2>/dev/null \
-        | sed -n 's/^Total Tests: *//p' | tr -d ' ')
+    PROBE_TOTAL=$(echo "$PROBE_OUT" \
+        | sed -n 's/.*out of \([0-9][0-9]*\).*/\1/p' | tail -1 || true)
     : "${PROBE_TOTAL:=0}"
+    # ── 失败优先：任何 Failed 都是红（含「有失败也有跳过」）──
     if ! echo "$PROBE_OUT" | grep -q "100% tests passed"; then
       # 失败原因优先透出：probe 的 stderr 才是有用信息，失败清单次之
       echo "$PROBE_OUT" | grep -E "^\s*[0-9]+ - .*Failed" | head -20
@@ -481,29 +487,62 @@ if [ "$RUN_TEST" = "1" ]; then
       echo "❌ UI probe 有失败（上方为失败清单与原因；本地复现: cd $BUILD_DIR && ctest -L probe --output-on-failure）"
       exit 1
     fi
-    if [ "$PROBE_SKIPPED" -gt 0 ]; then
-      # 跳过的原因只在 -V / LastTest.log 里（--output-on-failure **不**显示跳过
-      # 测试的输出——实测过），所以这里显式把 probe 打印的跳过原因捞出来，
-      # 否则 CI 日志里只有一句「Skipped」而没人知道为什么。
-      echo "⚠️  ${PROBE_SKIPPED}/${PROBE_TOTAL} 个 probe 因无显示环境跳过（ctest 记 Skipped，非失败）"
-      echo "──── 跳过原因 ────"
-      echo "${PROBE_SKIP_REASONS:-  （未能从 LastTest.log 取到原因文本）}"
-      echo "  （在有 GUI 会话的机器上跑同一命令即可真跑: cd $BUILD_DIR && ctest -L probe --output-on-failure）"
-    fi
-    # ⚠ **全部跳过 = 门禁形同虚设，必须报红**：一个「全部跳过」和一个「全绿」在
-    #   后果上等价（都没验到东西），但前者看起来像通过了。所以这里不走 ✅ 分支。
-    if [ "$PROBE_TOTAL" -gt 0 ] && [ "$PROBE_SKIPPED" -ge "$PROBE_TOTAL" ]; then
-      echo "❌ UI probe **全部 ${PROBE_TOTAL} 个被跳过** —— 本次门禁未验证任何 UI 断言"
-      echo "   （不能当通过：全跳过与全绿后果相同，但前者看起来像过了。这条门禁当初"
-      echo "     就是这样失效的——静默跳过。）需要能建窗的机器 / 会话才能验 UI。"
+    # ── 有跳过却解析不出总数 = 判不了三态，宁可红（否则「混合态」会被 -ge 判成
+    #    全跳过，在 CI 上直接变绿——那正是最该防的静默假绿）──
+    if [ "$PROBE_SKIPPED" -gt 0 ] && [ "$PROBE_TOTAL" -le 0 ]; then
+      echo "❌ UI probe 有 ${PROBE_SKIPPED} 个跳过，却解析不出总数（汇总行缺 out-of-N）"
+      echo "   —— 无法判定三态，按最坏情况报红，不许当通过"
       exit 1
     fi
-    if [ "$PROBE_SKIPPED" -gt 0 ]; then
-      echo "✅ UI probe 无失败（其中 ${PROBE_SKIPPED} 个因无显示环境跳过，见上方原因）"
+    # ── 三态判定（2026-10-03 裁决）──────────────────────────────────────
+    #   全绿   (0 跳过)        → 绿
+    #   全跳过 (跳过数 == 总数) → 本地（无 GITHUB_ACTIONS）红 + 诊断；CI 绿 + 大声警告
+    #   混合   (0 < 跳过 < 总数)→ 红 + 诊断（有显示环境不该出现混合态）
+    if [ "$PROBE_TOTAL" -le 0 ]; then
+      echo "❌ ctest -L probe 匹配到 0 条测试 —— 探针没被注册进构建（门禁空转，不能当绿）"
+      exit 1
+    fi
+    if [ "$PROBE_SKIPPED" -ge "$PROBE_TOTAL" ]; then
+      echo "⚠️  UI probe ${PROBE_SKIPPED}/${PROBE_TOTAL} 个**全部跳过**（ctest 记 Skipped，非失败）"
+      echo "──── 跳过原因 ────"
+      echo "${PROBE_SKIP_REASONS:-  （未能从 LastTest.log 取到原因文本）}"
+      if [ "${GITHUB_ACTIONS:-}" = "true" ]; then
+        # CI runner 无 GUI 会话是**已知的环境事实**：恒红会毁掉门禁的意义（每次都红 =
+        # 没人再看），但**绝不静默绿**——下面这句必须显式出现在 CI 日志里。
+        echo "⚠ probe 未执行：CI runner 无 GUI 会话，本次未验证 UI"
+        echo "   （因此本次不判 Fail；在有 GUI 会话的机器上跑同一命令即可真跑:"
+        echo "     cd $BUILD_DIR && ctest -L probe --output-on-failure）"
+      else
+        # 本地 mac 有图形会话：全跳过 = 异常（环境真没显示，或跳过判据误判），必须红。
+        echo "❌ 无显示环境，probe 未执行 —— 本机应有 GUI 会话，全部跳过是异常（不是通过）"
+        echo "   （本地全跳过 ≠ 全绿：${PROBE_TOTAL} 个 UI 断言一个都没验。要么环境确实没显示，"
+        echo "     要么 tests/probes/probe_harness.h 的金丝雀判据误判）"
+        exit 1
+      fi
+    elif [ "$PROBE_SKIPPED" -gt 0 ]; then
+      # 同一条判据对所有探针一视同仁，正常只有「全跑」或「全跳」两种形态；
+      # 部分跳过 = 判据误判或代码/环境异常，必须人工查。
+      echo "❌ UI probe 部分跳过（${PROBE_SKIPPED}/${PROBE_TOTAL}）——判定为判据误判或代码 bug，必须人工查"
+      echo "──── 跳过原因 ────"
+      echo "${PROBE_SKIP_REASONS:-  （未能从 LastTest.log 取到原因文本）}"
+      echo "   （有 GUI 会话的机器上不该出现混合态；复现: cd $BUILD_DIR && ctest -L probe --output-on-failure -V）"
+      exit 1
     else
       echo "✅ UI probe 全绿"
     fi
   fi
+fi
+
+# ---- 3b-0. 探针跳过登记守卫（2026-10-03 agent-hd 收尾批）----
+# probe 在无显示环境以 77 退出（ctest 的跳过约定），tests/CMakeLists.txt 必须给
+# **每个** probe 测试登记 SKIP_RETURN_CODE 77。少一条 = 无显示 CI 里那条 77 被
+# ctest 当 Failed（「诚实跳过」退化成「环境红」——正是上面三态要防的假红）。
+# 守卫读 **configure 产物**（生成 CTestTestfile.cmake）而不是源码注释，自带
+# --self-test 证明非恒真（见脚本文件头）。
+echo "── 探针跳过登记守卫 ──"
+if ! bash scripts/check-probe-skip-gate.sh --build-dir "$BUILD_DIR"; then
+  echo "❌ 探针跳过登记守卫失败（某个 probe 测试没登记 SKIP_RETURN_CODE，或登记值与 harness 的 kSkipExitCode 不一致）"
+  exit 1
 fi
 
 # ---- 3b. 模块隔离静态守卫（TIN-01；纯静态检查，--no-test 也跑）----
@@ -608,6 +647,7 @@ for _guard in check-module-isolation \
                check-quota-write-paths \
                check-quota-shutdown-order \
                check-probe-gate-labels \
+               check-probe-skip-gate \
                check-std-includes; do
   if ! bash "scripts/${_guard}.sh" --self-test; then
     echo "❌ 守卫自检失败：scripts/${_guard}.sh --self-test —— 这是**守卫自己**坏了（判据退化成恒真或变异没生效），不是代码问题" >&2
@@ -622,7 +662,7 @@ if [ "$SELF_TEST_FAIL" -ne 0 ]; then
   echo "❌ 守卫自检未通过（见上方逐条；修完守卫本身再重跑门禁）" >&2
   exit 1
 fi
-echo "✅ 守卫自检全过（6 道守卫的自检均好树绿 / 坏树红 —— 判据仍有效）"
+echo "✅ 守卫自检全过（7 道守卫的自检均好树绿 / 坏树红 —— 判据仍有效）"
 
 # ---- 3c. 安装到 /Applications（--install，仅 macOS；默认不开则整段不执行）----
 # 顺序即「事故的反面」，每一步都在补一个曾经漏掉的环节：

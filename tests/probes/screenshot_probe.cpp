@@ -309,6 +309,16 @@ int main(int argc, char* argv[]) {
                   "「建窗失败就跳过」，门禁等于被关掉");
     }
 
+    // ⚠ ⑥ 判据表在**建窗之前**跑：无显示环境时即使 ⑥ 断言失败也会继续走到
+    // initializeWindowBackend → 无显示 → **std::exit(77)**，⑥ 的失败会被
+    // 「跳过」整个掩盖掉（CI 上会变成绿+警告）。判据自己是门禁的最后一层，
+    // 它红了绝不能长成「没验到」——先于窗口段把失败落成 Failed（红）。
+    if (!gPassed) {
+        std::cerr << "screenshot_probe: ⑥ 无显示环境判据表有失败（见上方 FAIL），"
+                     "不入窗口段——判据失败不得被「跳过」掩盖\n";
+        return 1;
+    }
+
     // ==================== ⑤ 真窗口抓图（live）====================
     if (!probe::initializeWindowBackend()) {
         std::cerr << "screenshot_probe: 窗口后端初始化失败\n";
