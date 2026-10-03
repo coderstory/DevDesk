@@ -55,7 +55,13 @@
 //   I(a) 数「整棵余量树里携带该错误文案的 Text 元素个数」== 1 且必须是 .error
 //        —— 钉字符串在树中的出现次数，不是「某格是否为空」。
 //   I(b) 错误行 / head .status 的**右缘 ≤ 内容列右缘**（宽度比较，非字面量）；
-//        且无 clip/wrap 时文案宽必须 ≤ 盒宽。
+//        且无 clip/wrap 时**按元素真实样式**（含 maxWidth/overflow）量文案宽。
+//   I(c) 超长错误文案以「…」(U+2026) 收尾（2026-10-03，EUI-NEO `cbd0b48`）。
+//        上一批的 `.clip()` 只把溢出部分硬剪掉——用户看到半句话却不知道后面还有
+//        内容。改成单行省略号后要钉住三件事：① 这一格确实溢出（否则整组空跑成
+//        恒真假绿）；② 产品那格真的接了 overflow==Ellipsis + maxWidth>0 +
+//        !wrap（漏一条 = 框架侧**静默 no-op**，不报错）；③ 渲染行宽逐位等于
+//        「保留前缀 + …」且 ≤ maxWidth，即末尾那个字形确实是省略号。
 //   ⚠ 门禁那条（ctest -L probe）不带 --quota-fixture，只走离线假种子，故假种子
 //   里**必须**有一条错误行（i==8），否则本组空跑成恒真假绿——已由组内
 //   「错误行 < 1 即红」硬钉住。
@@ -251,6 +257,120 @@ std::string loadQuotaFixture(const std::string& path, core::data::SqliteDb& sq,
     return std::string();
 }
 
+// ============ 组 I(c)：单行省略号（core::TextOverflow::Ellipsis）===========
+//
+// 背景（2026-10-03）：`.error` 格上一批只加了 `.clip()`，超长错误文案被**静默
+// 剪掉**——用户看到半句话，不知道后面还有内容。EUI-NEO `cbd0b48` 落地了单行省略号，
+// 这里的活是「把它用起来 + 钉住它真的在用」。
+//
+// 取证路径与 runtime 同源：`runtime_render.h` 的 prepareText 就是把 Element 的
+// 字段逐条喂给 TextPrimitive。所以本组**不重画整张卡**，而是把 `.error` 那一格的
+// 元素字段喂进一个裸 TextPrimitive，量 `prepare()` 之后的行宽——断的是
+// 「产品那一格有没有正确接线 maxWidth / overflow」，而「框架能不能画省略号」是
+// EUI-NEO 自己 tests/unit/text_ellipsis.cpp 的职责，不在这里重复。
+//
+// 三条断言，逐条可独立致红：
+//   (1) **前提**：原文按 Clip 量出来的宽 > 内容列宽。不成立 = 这一格压根没溢出，
+//       整组退化成「没溢出也不红」的恒真假绿（种子不够长时的经典坑）。
+//   (2) **接线**：产品那格声明 overflow==Ellipsis 且 maxWidth>0 且 !wrap。
+//       漏任何一条，EUI-NEO 侧 ellipsis 是**静默 no-op**（不是报错）。
+//   (3) **结果**：渲染行宽 == measureTextWidth(保留前缀 + "…")，即末尾那个字形
+//       **就是** U+2026（而不是「多留一个字」或「硬剪」）；且行宽 ≤ maxWidth。
+//
+// 变异口径（两条都真能改变行为）：
+//   摘 `.overflow(Ellipsis)` → (3) 红（行宽变成整句宽，与「前缀+…」不等）。
+//   摘 `.maxWidth(innerW)`   → (3) 红（ellipsis 静默不生效，同上）。
+// 两者都不是等价变异：它们分别关掉「开哪个模式」和「给多宽」，都会让行宽回到
+// 整句宽这一种**不同的**取值。
+//
+// ⚠ **实测踩过的坑（这一组第一版写成恒假）**：前提 (1) 一开始用
+// `styleOfElement()` 去量「原文宽」，而那个 helper 会把元素上的 maxWidth /
+// overflow 一起带进去 —— 量回来的是**已经被省略号截断过**的行宽（1055.96 ≤
+// maxWidth 1064），于是「原文宽 > 可用宽」永远不成立，errRowsOverflowing 恒 0。
+// 症状极具欺骗性：改长种子后数字**一动不动**。故前提 (1) 必须用下面
+// `rawWidthOfElement()`（强制 Clip + maxWidth=0）单量，两者不可混用。
+
+// U+2026 HORIZONTAL ELLIPSIS（UTF-8 = E2 80 A6），与 EUI-NEO 同一常量。
+constexpr const char* kEllipsisGlyph = "\xE2\x80\xA6";
+
+// 把 DSL 元素里与文本排版相关的字段原样搬进 TextStyle —— 与 runtime_render.h
+// prepareText 的赋值列表一一对应（少搬一个就是「量了个不存在的东西」）。
+core::TextStyle styleOfElement(const core::dsl::Element& el) {
+    core::TextStyle st;
+    st.text = el.text;
+    st.fontFamily = el.fontFamily;
+    st.fontSize = el.fontSize;
+    st.fontWeight = el.fontWeight;
+    st.maxWidth = el.maxWidth;
+    st.wrap = el.wrap;
+    st.overflow = el.overflow;
+    st.lineHeight = el.lineHeight;
+    return st;
+}
+
+// **未经任何截断的**整句宽度：强制 Clip 且 maxWidth=0（Clip 下 maxWidth 本就
+// 不参与约束，见 EUI-NEO text.cpp measureTextSize），故这条路径与元素有没有
+// 接 maxWidth / overflow 完全无关。专门用于组 I(c) 的前提 (1) 与「有没有被
+// 截断」的判断——用它去量「原文宽」是本组第一版的真实 bug，勿复用
+// styleOfElement。
+float rawWidthOfElement(const core::dsl::Element& el) {
+    core::TextStyle st = styleOfElement(el);
+    st.maxWidth = 0.0f;
+    st.overflow = core::TextOverflow::Clip;
+    return core::TextPrimitive::measureTextSize(st).x;
+}
+
+// 按**渲染路径**量一行：裸 TextPrimitive + prepare() + measuredSize()。
+// 不用静态 measureTextSize —— 那是 DSL 布局路径；两条路径必须同值，但断言要
+// 断的是用户真正看到的那条（渲染），故这里走渲染，并在下面单独断言两者一致。
+float renderedLineWidth(const core::dsl::Element& el) {
+    core::TextPrimitive primitive;
+    primitive.initialize();
+    primitive.setText(el.text);
+    primitive.setFontFamily(el.fontFamily);
+    primitive.setFontSize(el.fontSize);
+    primitive.setFontWeight(el.fontWeight);
+    primitive.setMaxWidth(el.maxWidth);
+    primitive.setWrap(el.wrap);
+    primitive.setOverflow(el.overflow);
+    primitive.setLineHeight(el.lineHeight);
+    primitive.prepare();
+    return primitive.measuredSize().x;
+}
+
+// 期望保留的字形数：最大的 keep 使 caretX[keep] + 省略号 advance <= maxWidth。
+// caretX 与 shaped glyph 的 advance 序列同源（makeTextMetrics 逐字累加），
+// byteIndices[k] = 前 k 个字形的 UTF-8 字节数 → 前缀 = substr(0, byteIndices[k])。
+struct EllipsisExpectation {
+    std::string prefix;   // 应当被保留的原文前缀（码点边界上）
+    float expectedWidth = 0.0f;   // 「前缀 + …」的宽
+    std::size_t keep = 0;
+    std::size_t glyphCount = 0;
+};
+
+EllipsisExpectation expectedEllipsis(const core::dsl::Element& el) {
+    const core::TextPrimitive::TextMetrics metrics =
+        core::TextPrimitive::measureTextMetrics(
+            el.text, el.fontFamily, el.fontSize, el.fontWeight);
+    const float ellipsisWidth = core::TextPrimitive::measureTextWidth(
+        kEllipsisGlyph, el.fontFamily, el.fontSize, el.fontWeight);
+    std::size_t keep = 0;
+    for (std::size_t index = 1; index < metrics.caretX.size(); ++index) {
+        if (metrics.caretX[index] + ellipsisWidth > el.maxWidth) break;
+        keep = index;
+    }
+    EllipsisExpectation out;
+    out.keep = keep;
+    out.glyphCount = metrics.caretX.empty() ? 0u : metrics.caretX.size() - 1u;
+    const std::size_t byteEnd =
+        keep < metrics.byteIndices.size() ? static_cast<std::size_t>(metrics.byteIndices[keep])
+                                          : el.text.size();
+    out.prefix = el.text.substr(0, byteEnd);
+    out.expectedWidth = core::TextPrimitive::measureTextWidth(
+        out.prefix + kEllipsisGlyph, el.fontFamily, el.fontSize, el.fontWeight);
+    return out;
+}
+
 }  // namespace
 
 int main(int argc, char* argv[]) {
@@ -372,13 +492,32 @@ int main(int argc, char* argv[]) {
                     // 这批假种子）。文案刻意给长的：上游 detail 跟在 headline
                     // 后面，真机上就是这样（见 /tmp/af-home-quota-live.png 的
                     // MiniMax 行）—— 断言要钉的是「长文案也不越出内容列」。
+                    //
+                    // ⚠ **长度是实测钉出来的，不是拍脑袋**（1200×1000 实测）：
+                    //   · 原种子（…可到控制台确认后再试）整句 1334.27px > 可用
+                    //     1064px —— 确实溢出，但只有 1.25 倍，省略号只吃掉尾巴
+                    //     ~25%，落图上**肉眼分不出**「省略号」与「硬剪」。
+                    //   · 追加后半段后整句 2338.97px ≈ 可用宽的 2.2 倍，保留
+                    //     114/232 字形、行宽 1055.96 ≤ 1064 —— 截掉一半，肉眼
+                    //     一眼可辨，且不因换字号/换窗口宽就翻回不溢出。
+                    //   · 真机 MiniMax 原文只有 224 字节 = 1049.63px < 1064
+                    //     （**不溢出**），所以「能看见 …」的落图必须另造场景，
+                    //     不能拿真机数据当证据。
+                    // 组 I(c) 每次运行都打印这组实时数字，空跑守卫会报「还差多少 px」。
                     r.kind = QuotaKind::Tiered;
                     r.error = QuotaError::Transient;
+                    // ⚠ errorMessage 是**供应商原文 detail**，不含 headline：
+                    // quota_home_view.cpp 会自己拼 `headline + 「：」 + detail`，
+                    // 种子再写一遍 headline 就会在卡上出现
+                    // 「网络失败，稍后重试：网络失败，稍后重试：…」（实测过）。
                     r.errorMessage =
-                        "网络失败，稍后重试：套餐过期或无权限，换密钥没用，得续费"
+                        "套餐过期或无权限，换密钥没用，得续费"
                         "或换账号：example.invalid 接口业务错误（code 2062）："
                         "no active token plan subscription——可能套餐已过期或"
-                        "额度已用尽，可到控制台确认后再试";
+                        "额度已用尽，可到控制台确认后再试；该账号近 7 日已连续"
+                        "三次返回同一错误码，若确认仍有效请直接联系供应商工单"
+                        "（附 request id 0000-1111-2222-3333），不要重复重试"
+                        "以免触发风控；换新密钥无效——配额绑定在账号而非密钥上";
                 } else if (i == 7) {
                     r.kind = QuotaKind::Balance;
                     r.balanceRemaining = 8.5 + i;
@@ -745,6 +884,16 @@ int main(int argc, char* argv[]) {
     // I(b) **不溢出内容列**：错误文案所在格的**右缘** ≤ 内容列右缘。
     //     钉的是**宽度比较**（本格右缘 vs 父行内容宽），不是某个字面量宽度 ——
     //     换字号 / 换文案长度 / 换窗口宽都仍成立。
+    // 组 I(c) 的实际断言覆盖面：真正**溢出**内容列的错误行数。组尾钉 >=1，
+    // 防止「种子文案不够长 → 一格都没溢出 → I(c) 整组空跑成恒真假绿」。
+    // 声明在组外：本组尾部（组 I 的 {} 之外）还要读它做空跑守卫。
+    int errRowsOverflowing = 0;
+    // 空跑守卫的诊断四件套（只服务于「种子文案不够长」这一种失败）。
+    float errWidestGap = -1.0e30f;
+    std::string errWidestRowId;
+    float errWidestRaw = 0.0f;
+    float errWidestAvailable = 0.0f;
+    std::string errWidestText;
     {
         const auto rows =
             module::claude::quota::listQuotaHomeRows(env.db->db());
@@ -837,9 +986,11 @@ int main(int argc, char* argv[]) {
                           << "\n";
                 passed = false;
             }
-            // 文案装不下时**必须**有防溢护栏（clip 或 wrap）：maxWidth 单独
-            // 不生效（EUI-NEO text.cpp 只在 wrap=true 时用 maxWidth），所以
-            // 「没 clip 没 wrap + 文案比本格宽」= 真的会画出去。
+            // 防溢护栏三选一：clip（scissor 硬剪）/ wrap（换行）/ 单行省略号
+            // （overflow==Ellipsis && maxWidth>0 && !wrap）。⚠ 量的必须是
+            // **元素真实声明的样式**（含 maxWidth/overflow），否则量的是「没接
+            // 线时的文本宽」——省略号那一格会被误判成「溢出」（假红），而
+            // 没接 maxWidth 的格子又会因为漏量而被放过（假绿）。
             for (const core::dsl::Element* el : {errEl, statusEl}) {
                 if (el->clip || el->wrap) continue;
                 core::TextStyle st;
@@ -847,6 +998,9 @@ int main(int argc, char* argv[]) {
                 st.fontFamily = el->fontFamily;
                 st.fontSize = el->fontSize;
                 st.fontWeight = el->fontWeight;
+                st.maxWidth = el->maxWidth;
+                st.overflow = el->overflow;
+                st.wrap = el->wrap;
                 st.lineHeight = el->lineHeight;
                 const float w = core::TextPrimitive::measureTextSize(st).x;
                 if (w > el->frame.width + 1.0f) {
@@ -856,7 +1010,109 @@ int main(int argc, char* argv[]) {
                     passed = false;
                 }
             }
+
+            // ---- I(c) 超长错误文案以「…」收尾（不是被硬剪）----
+            // 只在**这一格真的溢出**时才断言：(1) 前提（原文按 Clip 量 > 内容列
+            // 宽）；不溢出时本组对它无话可说，跳过——但跳过次数被 errorRowsKnown
+            // 记着，组尾统一钉「至少有一格真溢出」，否则整组空跑成恒真假绿。
+            const float rawWidth = rawWidthOfElement(*errEl);
+            const float errAvailable = contentRight - errEl->frame.x;
+            // 记下最接近溢出的那一格，供组尾空跑守卫把数字打出来——「种子太短」
+            // 这种空跑必须一眼看出差多少，而不是只报一个 0。
+            if (rawWidth - errAvailable > errWidestGap) {
+                errWidestGap = rawWidth - errAvailable;
+                errWidestRowId = errEl->id;
+                errWidestRaw = rawWidth;
+                errWidestAvailable = errAvailable;
+                errWidestText = errEl->text;
+            }
+            if (rawWidth > errAvailable + 0.5f) {
+                ++errRowsOverflowing;
+                const float errMaxWidth = errEl->maxWidth;
+                if (errEl->overflow != core::TextOverflow::Ellipsis) {
+                    std::cerr << "home_probes: 组 I(c) FAIL——" << errEl->id
+                              << " 溢出（原文宽 " << rawWidth << " > 可用 "
+                              << (contentRight - errEl->frame.x)
+                              << "）但 overflow != Ellipsis：文案被静默硬剪\n";
+                    passed = false;
+                } else if (errEl->wrap) {
+                    std::cerr << "home_probes: 组 I(c) FAIL——" << errEl->id
+                              << " wrap==true：省略号是单行语义，wrap 下是 no-op\n";
+                    passed = false;
+                } else if (errMaxWidth <= 0.0f) {
+                    std::cerr << "home_probes: 组 I(c) FAIL——" << errEl->id
+                              << " maxWidth==0：ellipsis 静默不生效（runtime 会回退到 "
+                              "frame.width，DSL 布局却按 0 走，两条路会分叉）\n";
+                    passed = false;
+                } else {
+                    const EllipsisExpectation expect = expectedEllipsis(*errEl);
+                    const float rendered = renderedLineWidth(*errEl);
+                    // 一行摘要：本组**实际断言了什么**（长度、保留了多少字形、
+                    // 截到多宽）。没有它，「组 I(c) 绿」只说明「没红」，看不出
+                    // 它是在多长的文案上真跑过的——而这正是本组最容易被悄悄
+                    // 退化成空跑的地方。
+                    std::cout << "home_probes: 组 I(c) " << errEl->id
+                              << " 原文宽 " << rawWidth << " > 可用 " << errAvailable
+                              << " → 保留 " << expect.keep << "/" << expect.glyphCount
+                              << " 字形，行宽 " << rendered << " ≤ maxWidth "
+                              << errMaxWidth << "，末尾为 U+2026\n";
+                    // (3a) 末尾那个字形**就是** U+2026：行宽逐位等于「保留前缀 + …」。
+                    //      若框架改成多留一个字 / 不加省略号 / 硬剪，行宽就落在别的
+                    //      取值上，这里立刻红。
+                    if (std::fabs(rendered - expect.expectedWidth) > 0.01f) {
+                        std::cerr << "home_probes: 组 I(c) FAIL——" << errEl->id
+                                  << " 渲染行宽 " << rendered
+                                  << " != 「前缀(保留 " << expect.keep << "/"
+                                  << expect.glyphCount << " 字形) + …」的宽 "
+                                  << expect.expectedWidth
+                                  << "：末尾不是省略号\n";
+                        passed = false;
+                    }
+                    // (3b) 行总宽 ≤ 内容列（不越出右缘）。
+                    if (rendered > errMaxWidth + 0.01f) {
+                        std::cerr << "home_probes: 组 I(c) FAIL——" << errEl->id
+                                  << " 行宽 " << rendered << " > maxWidth "
+                                  << errMaxWidth << "：仍会画出内容列\n";
+                        passed = false;
+                    }
+                    // (3c) 截断确实发生了（不是「本来就放得下」的空转）。
+                    if (expect.keep >= expect.glyphCount) {
+                        std::cerr << "home_probes: 组 I(c) FAIL——" << errEl->id
+                                  << " 一字未截（保留 " << expect.keep << "/"
+                                  << expect.glyphCount << "）却判溢出："
+                                  << "前提(1) 与实际不符\n";
+                        passed = false;
+                    }
+                    // (3d) 渲染路径与 DSL 布局路径（measureTextSize）同值——
+                    //      两者分叉 = 盒宽按一套排、字按另一套画。
+                    const float measured =
+                        core::TextPrimitive::measureTextSize(styleOfElement(*errEl)).x;
+                    if (std::fabs(measured - rendered) > 0.01f) {
+                        std::cerr << "home_probes: 组 I(c) FAIL——" << errEl->id
+                                  << " 渲染行宽 " << rendered
+                                  << " != DSL 测量宽 " << measured
+                                  << "：两条路径分叉\n";
+                        passed = false;
+                    }
+                }
+            }
         }
+    }
+    // 组 I(c) 空跑守卫：必须真的有一格溢出可断言。
+    if (errRowsOverflowing < 1) {
+        std::cerr << "home_probes: 组 I(c) FAIL——没有任何一条错误文案超出内容列"
+                  << "（errRowsOverflowing=" << errRowsOverflowing
+                  << "）：本组空跑成恒真假绿，种子文案需要更长";
+        if (errWidestRowId.empty()) {
+            std::cerr << "（一行错误文案都没有）\n";
+        } else {
+            std::cerr << "；最接近溢出的 " << errWidestRowId << "：原文宽 "
+                      << errWidestRaw << " vs 可用 " << errWidestAvailable
+                      << "（还差 " << -errWidestGap << "px）；实际文案前 60 字「"
+                      << errWidestText.substr(0, 60) << "」（共 "
+                      << errWidestText.size() << " 字节）\n";
+        }
+        passed = false;
     }
 
     // ==================== 组 H：G7 余量卡滚动（P1） ====================
