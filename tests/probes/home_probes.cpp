@@ -1704,6 +1704,227 @@ int main(int argc, char* argv[]) {
         }
     }
 
+    // ==================== 组 L：[刷新] 与 [去配置] 右缘同线（2026-10-03 真机点验「一个前一个后」）====================
+    // 用户报告：「刷新和去配置 2 个按钮没对齐 一个前 一个后」。
+    // 根因：[去配置] 在 home.quota.scroll（scrollView）里——内容溢出时
+    // scrollView 把内容列缩成 width−(scrollbar+gap)（EUI-NEO scrollview.h:74-76，
+    // 默认 metrics 8+16=24px），行 head 连同 [去配置] 的右缘跟着缩；[刷新] 在
+    // scrollView **外**的卡头行里、不跟缩 → 滚动条一出现 [刷新] 恒比 [去配置]
+    // 突出 24px。上批（37becde）J(b)(2) 的实测数字里就带着这条错位：卡头行
+    // 右缘 1144 vs 行 head 右缘 1120——那批只把 [刷新] 对到卡头行自身右缘，
+    // 没对到行 head，真机（行多必滚动）看到的仍是「一个前一个后」。
+    // 修复：m.overflows 时卡头行宽 == 滚动内容列宽（inset 取自与 scrollView
+    // 同一份 componentTokens metrics，两侧同源不漂移）。
+    // 断言（两档同码，各自独立致红；空跑守卫钉前提）：
+    //   L(a) 每个 [去配置] 右缘 == [刷新] 右缘（0.5px 容差）——按钮面对齐。
+    //   L(b) 每个行 head 右缘 == 卡头行右缘（0.5px）——结构面（name/status
+    //        列同线，不止按钮）。
+    //   L(c) 两按钮各自与所在行垂直居中（center.y 相等）且同高（height 相等）
+    //        ——两按钮分属 kTitleH=28 / kHeadH=24 两档行高，**跨行** y/高度
+    //        全等不是本卡的布局语义（J(b)(1) 已钉「按钮高==行高」）；
+    //        「对齐」的语义 = 右缘同线 + 行内各自居中。
+    // 档位：非滚动档 = 组 H(b) 收尾态（仅 1 行未配置、无滚动条，两缘本来就
+    //       同在 cw——控制组，修复前后都应绿）；滚动档 = 本组补种 5 个双窗
+    //       profile（内容 24+5×72+5×10=434 > 视口 ~250）后断——**修复前此档
+    //       必红 24px**，断完清掉补种行再排一帧，退出状态与从前逐字一致。
+    {
+        auto assertTier = [&](const char* tier, bool expectBar) {
+            const core::dsl::Element* refresh =
+                ui != nullptr ? ui->find("home.quota.refresh") : nullptr;
+            const core::dsl::Element* cardHead =
+                ui != nullptr ? ui->find("home.quota.head") : nullptr;
+            const core::dsl::Element* bar =
+                ui != nullptr ? ui->find("home.quota.scroll.scroll") : nullptr;
+            if (refresh == nullptr || cardHead == nullptr) {
+                std::cerr << "home_probes: 组 L FAIL（" << tier
+                          << "）——卡头结构缺失 (refresh="
+                          << (refresh != nullptr ? "ok" : "null")
+                          << ", head=" << (cardHead != nullptr ? "ok" : "null")
+                          << ")\n";
+                passed = false;
+                return;
+            }
+            // 空跑守卫：滚动档必须有滚动条（没有 = 补种没溢出，右缘断言会
+            // 假绿）；非滚动档必须没有（有 = 档位标签说谎）。
+            if ((bar != nullptr) != expectBar) {
+                std::cerr << "home_probes: 组 L FAIL（" << tier << "）——滚动条"
+                          << (bar != nullptr ? "在" : "不在") << "，与该档预期（"
+                          << (expectBar ? "滚动" : "非滚动")
+                          << "）不符：前提不成立，右缘断言失真\n";
+                passed = false;
+                return;
+            }
+            const float refreshRight = refresh->frame.x + refresh->frame.width;
+            const float cardHeadRight =
+                cardHead->frame.x + cardHead->frame.width;
+            // L(c) 卡头侧：[刷新] 与卡头行垂直居中且同高
+            const float refreshCy =
+                refresh->frame.y + refresh->frame.height * 0.5f;
+            const float cardHeadCy =
+                cardHead->frame.y + cardHead->frame.height * 0.5f;
+            if (std::fabs(refreshCy - cardHeadCy) > 0.5f ||
+                std::fabs(refresh->frame.height - cardHead->frame.height) >
+                    0.5f) {
+                std::cerr << "home_probes: 组 L(c) FAIL（" << tier
+                          << "）——[刷新] (" << refresh->frame.y << "+"
+                          << refresh->frame.height << ") 与卡头行 ("
+                          << cardHead->frame.y << "+" << cardHead->frame.height
+                          << ") 不同心/不同高\n";
+                passed = false;
+            }
+            const auto rowsL =
+                module::claude::quota::listQuotaHomeRows(env.db->db());
+            if (rowsL.isFail()) {
+                std::cerr << "home_probes: 组 L FAIL（" << tier
+                          << "）——listQuotaHomeRows 失败: "
+                          << rowsL.errorMessage() << "（本档判据全部跳过）\n";
+                passed = false;
+                return;
+            }
+            int configBtns = 0;
+            int headRows = 0;
+            for (const auto& row : rowsL.value()) {
+                const std::string rid =
+                    "home.quota.row." + std::to_string(row.profileId);
+                const core::dsl::Element* rowHead =
+                    ui != nullptr ? ui->find(rid + ".head") : nullptr;
+                const core::dsl::Element* btn =
+                    ui != nullptr ? ui->find(rid + ".config") : nullptr;
+                if (rowHead == nullptr) continue;  // 行 head 缺失 = 结构问题，
+                                                   // 滚动视口不裁树（非虚拟化）
+                ++headRows;
+                // L(b) 结构面：行 head 右缘 == 卡头行右缘
+                const float rowHeadRight =
+                    rowHead->frame.x + rowHead->frame.width;
+                if (std::fabs(rowHeadRight - cardHeadRight) > 0.5f) {
+                    std::cerr << "home_probes: 组 L(b) FAIL（" << tier
+                              << "）——" << rid << ".head 右缘 " << rowHeadRight
+                              << " != 卡头行右缘 " << cardHeadRight << "（差 "
+                              << (cardHeadRight - rowHeadRight)
+                              << "px：滚动缩进没同步到卡头行？）\n";
+                    passed = false;
+                }
+                if (btn == nullptr) continue;
+                ++configBtns;
+                // L(a) 按钮面：[去配置] 右缘 == [刷新] 右缘
+                const float btnRight = btn->frame.x + btn->frame.width;
+                if (std::fabs(btnRight - refreshRight) > 0.5f) {
+                    std::cerr << "home_probes: 组 L(a) FAIL（" << tier
+                              << "）——" << rid << ".config 右缘 " << btnRight
+                              << " != [刷新] 右缘 " << refreshRight << "（差 "
+                              << (refreshRight - btnRight)
+                              << "px：一个前一个后）\n";
+                    passed = false;
+                }
+                // L(c) 行侧：[去配置] 与所在 head 行垂直居中且同高
+                const float btnCy = btn->frame.y + btn->frame.height * 0.5f;
+                const float headCy =
+                    rowHead->frame.y + rowHead->frame.height * 0.5f;
+                if (std::fabs(btnCy - headCy) > 0.5f ||
+                    std::fabs(btn->frame.height - rowHead->frame.height) >
+                        0.5f) {
+                    std::cerr << "home_probes: 组 L(c) FAIL（" << tier
+                              << "）——" << rid << ".config (" << btn->frame.y
+                              << "+" << btn->frame.height << ") 与所在 head 行 ("
+                              << rowHead->frame.y << "+" << rowHead->frame.height
+                              << ") 不同心/不同高\n";
+                    passed = false;
+                }
+            }
+            // 空跑守卫：一档里一个 [去配置] 都没有 = L(a) 没断言面，恒真假绿
+            if (configBtns < 1) {
+                std::cerr << "home_probes: 组 L(a) FAIL（" << tier
+                          << "）——没有任何一行带 [去配置] 按钮（configBtns=0）"
+                          << "：本档空转\n";
+                passed = false;
+            }
+            if (headRows < 1) {
+                std::cerr << "home_probes: 组 L(b) FAIL（" << tier
+                          << "）——一行 head 都没读到（headRows=0）：本档空转\n";
+                passed = false;
+            }
+            std::cout << "home_probes: 组 L（" << tier << "）：[刷新] 右缘 "
+                      << refreshRight << "，行 head " << headRows << " 行，"
+                      << "[去配置] " << configBtns << " 个\n";
+        };
+
+        // ---- 非滚动档：组 H(b) 收尾态（1 行未配置、无滚动条）----
+        composeFrame();
+        composeFrame();
+        assertTier("非滚动档", false);
+
+        // ---- 滚动档：补种 5 个双窗 profile → 内容必超视口 ----
+        {
+            using namespace module::claude::quota;
+            QuotaStore store(env.db->db());
+            const int64_t now = static_cast<int64_t>(std::time(nullptr));
+            for (int i = 0; i < 5; ++i) {
+                const std::string name = "quota-L" + std::to_string(i);
+                if (!env.db->db()
+                         .exec("INSERT INTO claude_profiles (name, base_url, "
+                               "api_key_hint, api_key_check, model, created_at, "
+                               "updated_at) VALUES ('" +
+                                   name +
+                                   "', 'https://example.invalid', 'sk-***', "
+                                   "'chk', 'm', " +
+                                   std::to_string(now) + ", " +
+                                   std::to_string(now) + ")")
+                         .isOk()) {
+                    std::cerr << "home_probes: 组 L 补种 profile 插入失败\n";
+                    passed = false;
+                    break;
+                }
+                auto st = env.db->db().prepare("SELECT last_insert_rowid() AS id");
+                auto rows = st.isOk()
+                                ? st.value().fetchAll()
+                                : core::Result<
+                                      std::vector<core::data::SqlRow>>::fail(
+                                      st.errorCode(), st.errorMessage());
+                if (rows.isFail() || rows.value().empty()) {
+                    std::cerr << "home_probes: 组 L 取补种 profileId 失败\n";
+                    passed = false;
+                    break;
+                }
+                const int64_t pid = rows.value()[0].getInt64("id").value();
+                QuotaConfigRow cfg;
+                cfg.profileId = pid;
+                cfg.providerId = "opencode_go";
+                cfg.enabled = true;
+                cfg.autoRefresh = true;
+                cfg.intervalMinutes = 15;
+                store.saveConfig(cfg);
+                QuotaResult r;
+                r.kind = QuotaKind::Tiered;
+                QuotaWindow w1;
+                w1.key = "five_hour";
+                w1.usedPercent = 30.0;
+                w1.resetsAt = "2030-01-01T00:00:00";
+                r.windows.push_back(w1);
+                QuotaWindow w2;
+                w2.key = "weekly";
+                w2.usedPercent = 60.0;
+                w2.resetsAt = "2030-01-01T00:00:00";
+                r.windows.push_back(w2);
+                store.applyFetchResult(pid, r, now);
+            }
+        }
+        composeFrame();
+        composeFrame();
+        assertTier("滚动档", true);
+
+        // ---- 清掉补种行，退出状态与从前一致（H(b) 收尾态，不污染收尾图）----
+        if (!env.db->db()
+                 .exec("DELETE FROM claude_profiles WHERE name LIKE 'quota-L%'")
+                 .isOk() ||
+            !env.db->db().exec("DELETE FROM profile_quota_config").isOk() ||
+            !env.db->db().exec("DELETE FROM profile_quota_result").isOk()) {
+            std::cerr << "home_probes: 组 L 清理补种行失败\n";
+            passed = false;
+        }
+        composeFrame();
+        composeFrame();
+    }
+
     // ---- 退出前落一张「当前状态图」（--screenshot <路径>，2026-10-03 帧捕获批次）----
     // 通用看图口：跑一次 home_probes 就能拿到此刻首页长什么样，不必再靠
     // screencapture（agent 会话拿不到屏幕录制 TCC 授权）。不传该开关时

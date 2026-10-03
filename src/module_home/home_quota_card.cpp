@@ -365,10 +365,14 @@ void drawQuotaCard(eui::Ui& ui, const core::theme::Tokens& t, float contentWidth
     const QuotaCardMetrics m =
         computeQuotaCardMetrics(rows, contentWidth, maxBodyHeight);
     const int64_t nowSec = static_cast<int64_t>(std::time(nullptr));
+    // 组件 token 单一来源（2026-10-03 两按钮对齐修复）：卡壳 / 卡头行滚动
+    // 缩进 / scrollView 三处共用一份——「卡头行按滚动缩进」与「scrollView
+    // 缩内容列」必须读同一对常量，分开各取一份就是漂移入口。
+    const auto ct = core::theme::componentTokens(t);
 
     components::card(ui, "home.quota")
         .size(contentWidth, m.cardHeight)
-        .theme(core::theme::componentTokens(t))
+        .theme(ct)
         .padding(kPad)
         .content([&] {
             const float cw = contentWidth - kPad * 2.0f;
@@ -377,10 +381,24 @@ void drawQuotaCard(eui::Ui& ui, const core::theme::Tokens& t, float contentWidth
             // 宽按 cw−104 预留（= 按钮 96 + 间距 8），行不挂 gap 时 title 与
             // 按钮零间距、[刷新] 右缘恒比内容列右缘短 8px（探针组 J(b) 实测
             // 1136 vs 1144）。
-            ui.row("home.quota.head").size(cw, kTitleH)
+            // ⚠ 卡头行宽必须与滚动内容列**同宽**（2026-10-03「一个前一个后」
+            // 修复）：scrollView 在内容溢出时把内容列缩成
+            // width−(scrollbar+gap)（EUI-NEO scrollview.h:74-76，默认 metrics
+            // 8+16=24px），行 head 连同 [去配置] 右缘跟着缩到 cw−24；[刷新]
+            // 不在 scrollView 里，卡头行仍按 cw 排的话 [刷新] 恒比 [去配置]
+            // 突出 24px（真机点验报告原话「一个前一个后」；探针组 L 滚动档
+            // 实测 1144 vs 1120）。m.overflows 与 scrollView 的 scrollable
+            // 同判据（内容高 > 视口高，组 H(a) 钉两者一致）；inset 取自与
+            // scrollView 同一份 ct.metrics，两侧永不漂移。
+            const float sbInset =
+                m.overflows
+                    ? ct.metrics.control.scrollbar + ct.metrics.spacing.section
+                    : 0.0f;
+            const float headW = cw - sbInset;
+            ui.row("home.quota.head").size(headW, kTitleH)
                 .alignItems(eui::Align::CENTER).gap(kInnerGap).content([&] {
                     ui.text("home.quota.title")
-                        .size(cw - 104.0f, 24.0f)
+                        .size(headW - 104.0f, 24.0f)
                         .text("供应商余量")
                         .fontSize(t.sizes.fontSizeLarge - 1.0f)
                         .lineHeight(24.0f)
@@ -433,7 +451,7 @@ void drawQuotaCard(eui::Ui& ui, const core::theme::Tokens& t, float contentWidth
                 .position(0.0f, kTitleH + kTitleGap)
                 .size(cw, m.bodyHeight)
                 .gap(kRowGap)
-                .theme(core::theme::componentTokens(t))
+                .theme(ct)
                 .content([&](eui::Ui& inner, float innerW, float) {
                     for (const QuotaHomeRow& row : rows) {
                         const std::string rowId =
