@@ -324,11 +324,14 @@ void drawProfileCard(eui::Ui& ui,
 
     // model（default 槽位——§6.2 列表卡片）。
     // 宽 = width-64（同 name/url；model 行下方无徽标，右缘留 16px 边距）
+    // 显示层剥 [1M]（2026-10-03 用户反馈）：卡片是纯展示面，模型名带 [1M]
+    // 只会与详情页的 1M 复选框语义重复 —— 走 deriveDisplayName 剥尾标记，
+    // 存储与发上游的原始串不动
     ui.text(id + ".model")
         .position(64.0f, y + 62.0f)
         .size(width - 64.0f, 14.0f)
-        .text(std::string("model: ") +
-              effectiveModelsConfig(p.modelsConfigJson).def.model)
+        .text(std::string("model: ") + deriveDisplayName(
+                  effectiveModelsConfig(p.modelsConfigJson).def.model))
         .fontSize(11.0f)
         .lineHeight(14.0f)
         .color(t.colors.textSecondary)
