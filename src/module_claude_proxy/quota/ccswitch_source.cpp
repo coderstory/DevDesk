@@ -314,7 +314,12 @@ std::string ccSwitchDbPath() {
     }
     const std::string home = userHomeDir();
     if (home.empty()) return {};
-    return (std::filesystem::path(home) / kCcSwitchDir / kDbFileName).string();
+    // generic_string()：路径对外口径（日志 / 错误文案 / 测试断言）一律正斜杠，
+    // 跨平台一致。Windows 上 string() 返回反斜杠（\.cc-switch\），测试断言
+    // path.find("/.cc-switch/") 与日志可读性都依赖 POSIX 形态；sqlite3_open_v2
+    // 在 Windows 上同样接受正斜杠（CreateFile 规范化路径分隔符）。
+    return (std::filesystem::path(home) / kCcSwitchDir / kDbFileName)
+        .generic_string();
 }
 
 CcSwitchProviderList listCcSwitchProviders() { return readAll(); }
