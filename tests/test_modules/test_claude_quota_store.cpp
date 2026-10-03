@@ -546,7 +546,7 @@ REGISTER_TEST(claude_quota_refresher_fires_when_due,
 })
 
 REGISTER_TEST(claude_quota_refresher_publishes_before_wake,
-              "claude_quota_refresher: 先就绪后唤醒（缝在唤醒那一刻读共享状态）", {
+              "claude_quota_refresher: 刷新成功后确实发了唤醒（落库 → 唤醒，顺序在源码里）", {
     test_support::TestDb tdb("quotarefresh", "order");
     QuotaStore store(tdb.handle());
     FakeClock clock;
@@ -571,21 +571,43 @@ REGISTER_TEST(claude_quota_refresher_publishes_before_wake,
     auto round = refresher.refreshNow();
     DOCTEST_REQUIRE(round.isOk());
 
-    // 唤醒确实发了（结果就绪后没人请求重绘 = 主循环停在 glfwWaitEvents，
-    // 内容要等用户下一次动鼠标才上屏）
+    // ⚠ **这条用例原来断言的那个量已被删除**（静态审计 M1）。
+    // 原文断言 `quotaRefresherWakeSawReadyForTest()`，声称「唤醒那一刻读共享
+    // 状态以证明结果已就绪」。实测它**恒为 true**：`applyFetchResult` 刚写完的
+    // 行，紧接着 `loadResult` 走同一个 SqliteDb、同一把 recursive_mutex、
+    // 中间无别的写者 → **必然**读得回。两次变异：
+    //   · 退回无条件 set_value        → quota 167 例全绿
+    //   · rowReadable 硬编码 false     → **仍然全绿**（缝永远红也抓不到）
+    // 那条注释还写着「于是 DB 写坏了 / 行读不回来会让缝真的变红」，而实测红不了。
+    // → 恒真的假守卫，比原来那条更隐蔽，故整条删除（含 wakeSawReady_ /
+    //   quotaRefresherWakeSawReadyForTest() / 那行断言）。
+    //
+    // 现在本用例守的是**真的会变的量**：
+    //   ① 刷新成功后确实发了唤醒（consumeUiUpdate 为真）——删掉 wakeAfterPublish
+    //      这一行立刻红；
+    //   ② 唤醒次数恰好 1（不是 0、不是 2）——删掉 fetch_add 立刻红；
+    //   ③ 落库确实发生了（round 里的 persisted）——它承载了「先落库」这半边。
+    // 「先落库、后唤醒」的**次序**由同一线程的语句次序保证（直线代码、无分支、
+    // 编译器不得重排有 data dependence 的语句），没有可交错的点，因此**写不出
+    // 让缝变红的场景** —— 硬造一条只会得到第二条恒真的假守卫。
+    // 批次 D 那个 bug 的真正成因是「落库失败路径仍在发唤醒」，由
+    // `if (persisted.isFail()) return out;` 覆盖，那一条**有**测试
+    // （applyFetchResult 失败时推进 lastSuccessAt，静态审计变异 6 实测变红）。
     DOCTEST_CHECK_MESSAGE(
         ::core::platform::consumeUiUpdate(),
         "刷新完成后无人请求重绘：首页余量卡要等用户下一次动鼠标才更新");
     DOCTEST_CHECK_EQ(module::claude::quota::quotaRefresherWakeCountForTest(),
                      int64_t(1));
-    // **次序断言**（本用例的判据）：唤醒发出那一刻结果必须**已经就绪**。
-    // 「先唤醒、后就绪」是批次 D 那个间歇复现的 bug 的形态——UI 抢跑消费掉
-    // 唤醒位、脏标记已清 → 结果落在内存里没人再上屏。窗口只有纳秒级，
-    // 光看最终结果抓不到，所以缝在唤醒那一刻真读一次共享状态。
-    DOCTEST_CHECK_MESSAGE(
-        module::claude::quota::quotaRefresherWakeSawReadyForTest(),
-        "唤醒先于结果就绪：UI 可能抢跑消费唤醒位 → 结果不上屏（次序必须是"
-        "「先落库、后 requestUiUpdate」）");
+    DOCTEST_REQUIRE_EQ(round.value().size(), 1u);
+    DOCTEST_CHECK_MESSAGE(round.value()[0].persisted,
+                          "本轮结果未落库 —— 「先落库」这半边没了，"
+                          "而它正是「后唤醒」成立的前提");
+    // 落库之后行确实可读（这是「就绪」的**结果**判据，不是唤醒那一刻的缝）：
+    // 它会在「落库根本没发生 / 落到了别的 profile」时变红。
+    auto persisted = store.loadResult(1);
+    DOCTEST_REQUIRE(persisted.isOk());
+    DOCTEST_CHECK_MESSAGE(persisted.value().hasEverSucceeded,
+                          "落库后读不回该行：唤醒发出去了但 UI 收割会读到旧值");
     return true;
 })
 

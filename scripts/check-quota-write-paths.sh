@@ -10,9 +10,15 @@
 # 破了）。本守卫把那句注释变成会红的断言。
 #
 # ── 断言（四条）────────────────────────────────────────────────────
-#   A. `src/` 下**任何**文件都不得出现针对 `profile_quota_result` 的 DML，
-#      除了 quota_store.cpp 里的那两条白名单语句（见 B）。schema.h 的
+#   A. `src/` **与 `tools/`** 下任何文件都不得出现针对 `profile_quota_result`
+#      的 DML，除了 quota_store.cpp 里的那两条白名单语句（见 B）。schema.h 的
 #      CREATE TABLE 是 DDL、不在管辖内；注释行按「首非空白为 #」过滤。
+#      ⚠ **为什么必须扫 tools/**：tools/quota_live_probe.cpp 就在 tools/ 下、
+#      **链接同一个 devdesk_module_claude_proxy.a**（run-quota-live-probe.sh），
+#      它完全有能力绕过 applyFetchResult 直写这张表，而守卫一个字都不会报。
+#      静态审计（2026-10-03）亲手构造过这个反证：往临时树的 tools/rogue.cpp
+#      放一条 `DELETE FROM profile_quota_result` → 旧版守卫报绿、EXIT=0。
+#      「韧性决策只有一个入口」这个守卫，在自己最该管的目录外留了个洞。
 #   B. 那两条白名单语句必须**词法落在**对应函数体内：
 #        INSERT OR REPLACE INTO profile_quota_result  → QuotaStore::applyFetchResult
 #        DELETE FROM profile_quota_result             → QuotaStore::deleteResult
@@ -23,8 +29,8 @@
 #      `INSERT OR REPLACE` 直接跟表名，漏了 `INTO`，于是 INSERT 一条都扫不到，
 #      脚本却因为「扫到了 DELETE」而报绿——**假绿守卫**，正是本项目反复翻车的那类）。
 #   D. **自证非恒真**（--self-test）：同一段逻辑喂构造的坏输入（INSERT 挪出
-#      applyFetchResult / 另一个文件直接 DELETE / 把 INSERT 删掉），必须逐条报红。
-#      一条从不变绿的守卫等于没写。
+#      applyFetchResult / 另一个文件直接 DELETE / 把 INSERT 删掉 / **在
+#      tools/ 下直写 DELETE**），必须逐条报红。一条从不变绿的守卫等于没写。
 #
 # 退出码：0 = 通过；1 = 违规；2 = 环境错（**不静默绿**）
 #
@@ -68,8 +74,8 @@ if [ ! -f "$STORE" ]; then
     echo "环境错：找不到 $STORE_REL" >&2
     exit 2
 fi
-if [ ! -d "$ROOT/src" ]; then
-    echo "环境错：$ROOT 下没有 src/（--root 指错了？）" >&2
+if [ ! -d "$ROOT/src" ] && [ ! -d "$ROOT/tools" ]; then
+    echo "环境错：$ROOT 下既没有 src/ 也没有 tools/（--root 指错了？）" >&2
     exit 2
 fi
 
@@ -87,8 +93,20 @@ scan_write_paths() {
     local inserts=0
     local deletes=0
 
+    # ⚠ **扫描面 = src/ + tools/**（静态审计 B3）。tools/ 下的
+    # quota_live_probe.cpp 链接同一个静态库、能绕过 applyFetchResult 直写这张
+    # 表 —— 旧版只扫 src/ 时这里是个洞（亲手构造反证：tools/rogue.cpp 里一条
+    # DELETE → 守卫报绿 EXIT=0）。少扫一个目录 = 守卫在它最该管的地方失明。
+    local scan_dirs=()
+    [ -d "$root/src" ] && scan_dirs+=("$root/src")
+    [ -d "$root/tools" ] && scan_dirs+=("$root/tools")
+    if [ "${#scan_dirs[@]}" -eq 0 ]; then
+        echo "环境错：$root 下既没有 src/ 也没有 tools/"
+        return 2
+    fi
+
     local hits
-    hits="$(grep -rnE "$DML_RE" "$root/src" --include='*.cpp' --include='*.h' 2>/dev/null \
+    hits="$(grep -rnE "$DML_RE" "${scan_dirs[@]}" --include='*.cpp' --include='*.h' 2>/dev/null \
         | grep -vE ':[[:space:]]*#' || true)"
 
     if [ -z "$hits" ]; then
@@ -112,6 +130,14 @@ scan_write_paths() {
 
         # 归属函数：从文件开头数到本行，最后一个顶格函数签名就是它。本文件所有
         # 函数签名顶格、闭合 `}` 也顶格（仓库统一风格），故 `^[A-Za-z_].*\(` 即签名。
+        # ⚠ **已知脆弱点（静态审计 m3 登记，此处刻意不修）**：签名**折行**时匹配到的
+        #   是折行后的最后一行（quota_store.cpp:417-419 的 applyFetchResult 本身
+        #   就折行，当前恰好还能用）。有人**再折一行**（参数列表某项单独成行且顶格）
+        #   → sig 被更新成一个不以 `QuotaStore::` 结尾的行 → sed 抽不出函数名 →
+        #   owner_name 为空 → **报红**。方向是保守的（假红，不是假绿），
+        #   故本轮不修；但它不是「无害」——真出问题时它会挡住一次正确提交，
+        #   所以登记在案：若某天守卫在 applyFetchResult 那行报「落在 <未知函数>」，
+        #   先去数 applyFetchResult 的签名折了几行，而不是去改归属逻辑。
         local owner_name
         owner_name="$(awk -v target="$lineno" '
             /^[A-Za-z_].*\(/ { sig=$0 }
@@ -218,8 +244,36 @@ NOINSERT
     printf '%s' "$out3" | grep -q "恰好 1 条" \
         || { echo "❌ 自证失败：没报出条数钉死那条"; fail=1; }
 
+    # 坏输入 ④：直写挪到 **tools/** 下 —— 必须报红。
+    # 这条专门钉住 2026-10-03 静态审计 B3 那个亲手构造出来的洞：旧版只扫
+    # src/，在 tools/rogue.cpp 里放一条 DELETE 照样 EXIT=0 报绿，而
+    # tools/quota_live_probe.cpp 就在那儿、链同一个静态库、完全能绕开入口。
+    # 只补扫描面而不补这条自测 = 下次有人把扫描面改回去，没人知道。
+    cat > "$TMP/$STORE_REL" <<'GOODSTORE2'
+namespace module::claude::quota {
+void QuotaStore::deleteResult(int64_t) {
+    db_.prepare("DELETE FROM profile_quota_result WHERE profile_id = ?");
+}
+void QuotaStore::applyFetchResult(int64_t, const QuotaResult&, int64_t) {
+    db_.prepare("INSERT OR REPLACE INTO profile_quota_result (profile_id) VALUES (?)");
+}
+}
+GOODSTORE2
+    mkdir -p "$TMP/tools"
+    cat > "$TMP/tools/rogue.cpp" <<'ROGUE'
+void rogueProbeMain() {
+    db.prepare("DELETE FROM profile_quota_result WHERE profile_id=1");
+}
+ROGUE
+    out4="$(scan_write_paths "$TMP" 2>&1)"; rc4=$?
+    echo "$out4"
+    [ "$rc4" -ne 0 ] || { echo "❌ 自证失败：tools/ 下直写 DELETE 仍报绿（审计 B3 的洞复发）"; fail=1; }
+    printf '%s' "$out4" | grep -q "tools/rogue.cpp" \
+        || { echo "❌ 自证失败：没认出 tools/rogue.cpp 的越界写入（扫描面可能又退回 src-only）"; fail=1; }
+    rm -rf "$TMP/tools"
+
     [ "$fail" -eq 0 ] || exit 1
-    echo "✅ 守卫自证非恒真：坏输入①②③各报红、好表不误报"
+    echo "✅ 守卫自证非恒真：坏输入①②③④各报红、好表不误报"
     exit 0
 fi
 

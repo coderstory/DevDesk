@@ -3,7 +3,6 @@
 #include "quota_refresh.h"
 
 #include <chrono>
-#include <limits>
 #include <utility>
 
 #include <core/platform/platform.h>   // core::platform::requestUiUpdate
@@ -24,13 +23,13 @@ int64_t systemNowSec() {
             .count());
 }
 
-// 进程级次序缝（用例读）。为什么是进程级而不是成员：唤醒发生在后台线程、
-// 断言发生在用例线程，两者之间没有「同一个对象」的稳定引用可传——批次 D
-// 的 claude_calls_query_wake_saw_ready_for_test() 同款。
-std::atomic<bool>& globalWakeSawReady() {
-    static std::atomic<bool> flag{false};
-    return flag;
-}
+// 进程级次序缝的**计数**（用例读）。为什么是进程级而不是成员：唤醒发生在
+// 后台线程、断言发生在用例线程，两者之间没有「同一个对象」的稳定引用可传
+// ——批次 D 的 claude_calls_query_wake_saw_ready_for_test() 同款。
+// ⚠ 这里**只有计数，没有 sawReady**：见 refreshProfile ② 段的注释——
+// 「落库后能不能读回来」在当前实现下恒为真（同一 SqliteDb + 同一把锁 + 中间
+// 无写者），是一条结构上不可能变红的量。静态审计 M1 两次变异实测：
+// 硬编码成 false（缝永远红）时 quota 167 例**仍然全绿**，故删除而非保留。
 std::atomic<int64_t>& globalWakeCount() {
     static std::atomic<int64_t> count{0};
     return count;
@@ -56,14 +55,14 @@ bool consumeQuotaImmediateRefreshRequest() {
                                                  std::memory_order_acquire);
 }
 
-bool quotaRefresherWakeSawReadyForTest() {
-    return globalWakeSawReady().load(std::memory_order_relaxed);
-}
+// ⚠ **这里刻意没有「次序缝」**（静态审计 M1 的实测结论，见 refreshProfile ②）。
+// 曾经存在一个 quotaRefresherWakeSawReadyForTest()，已被**整条删除**——删函数
+// 是有意的：留一个恒返 true 的桩，任何漏改的调用点仍会「断言通过」，
+// 即恒真的假守卫原样留在原地。编译器报红才是我们要的。
 int64_t quotaRefresherWakeCountForTest() {
     return globalWakeCount().load(std::memory_order_relaxed);
 }
 void quotaRefresherResetTestSeams() {
-    globalWakeSawReady().store(false, std::memory_order_relaxed);
     globalWakeCount().store(0, std::memory_order_relaxed);
     globalManualRefreshRequest().store(false, std::memory_order_relaxed);
 }
@@ -170,32 +169,36 @@ RefreshRoundResult QuotaRefresher::refreshProfile(int64_t profileId,
     // ② **就绪之后才唤醒**（唯一出口，内部先探一次真实就绪再发）。
     //    批次 D 评审定的 major：次序反了 = UI 抢跑消费唤醒位 → 结果不上屏。
     //
-    //    ⚠ 就绪信号必须**由落库事实驱动**，不能是「紧挨着唤醒手动 set_value()」
-    //    （评审 M1）。旧写法是同一线程相邻两行 `set_value()` → `wakeAfterPublish`，
-    //    中间无可交错点 → `sawReady` 恒为 true，那条断言断言的是「源码里
-    //    set_value 写在前面」而不是「结果已就绪」，是恒真的假守卫；头注释还
-    //    声明它「不是抄源码顺序」，比断言本身更误导。
-    //    现在改成：**用一次真实读回证明这一行可读**，才据此 set_value。
-    //    于是「DB 写坏了 / 行读不回来」会让缝真的变红。
+    //    ⚠⚠ **这里没有「次序缝」，且是刻意的**（静态审计 M1 的实测结论）。
+    //    G5 曾在这里加过一条缝：读完库证明可读才 set_value，并断言「缝恒为 true」。
+    //    两次变异证明它是**恒真的假守卫**：
+    //      · 退回无条件 set_value        → quota 167 例全绿
+    //      · rowReadable **硬编码 false**（缝永远红）→ **仍然全绿**
+    //    原因在结构上：`applyFetchResult` 刚写完行，紧接着 `loadResult` 走的是
+    //    同一个 SqliteDb、同一把 recursive_mutex、中间没有别的写者 → **必然**读得回。
+    //    这条缝比原来那条「恒真 set_value」还隐蔽，因为它的注释明确声称自己不是恒真的。
+    //    故**整条删除**（连同 wakeSawReady_ / globalWakeSawReady() /
+    //    quotaRefresherWakeSawReadyForTest() 与那条断言）。
+    //
+    //    「先落库后唤醒」由**同一线程的语句次序**保证：上两行 `applyFetchResult`
+    //    是 return-before-wake 的直线代码，中间没有分支能让唤醒跑到落库前面，
+    //    编译器也不允许重排有 data dependence 的语句。这里**没有可交错的点**，
+    //    因此不需要缝，也写不出让缝变红的场景。
+    //
+    //    批次 D 那个 bug 的真正成因不是「次序」，而是**落库失败路径仍在发唤醒**
+    //    ——那一支由上面的 `if (persisted.isFail()) return out;`（**不发唤醒**）
+    //    单独覆盖，且**有**测试：`applyFetchResult` 失败时推进 lastSuccessAt
+    //    那条变异实测会让 quota 用例红（静态审计变异 6）。
     auto promise = std::make_shared<std::promise<void>>();
     std::shared_future<void> published = promise->get_future().share();
-    // 读回证明：只有真能从库里读出这一行，才发布「已就绪」。
-    const bool rowReadable = store_.loadResult(profileId).isOk();
-    if (rowReadable) {
-        promise->set_value();
-    }
+    promise->set_value();
     std::atomic<bool> sawReady{false};
     wakeAfterPublish(published, sawReady);
-    if (!rowReadable) {
-        // 读不回就绪信号 → 缝停在 false，用例判红。仍要唤醒：UI 收割时至少
-        // 能看到 last_error（错误文案比旧值更重要）。
-        LOG_WARN("QuotaRefresher: 落库后读不回该行，UI 收割将读到旧值: profile=" +
-                 std::to_string(profileId));
-    }
-    wakeSawReady_.store(sawReady.load(std::memory_order_relaxed),
-                        std::memory_order_relaxed);
-    globalWakeSawReady().store(sawReady.load(std::memory_order_relaxed),
-                               std::memory_order_relaxed);
+    // sawReady 在本实现下恒为 true（就绪信号与唤醒同线程相邻发出），**不断言它**
+    // —— 断言一个结构上不可能为假的量，就是造一条恒真的假守卫。
+    // 保留这次 store 是因为 wakeCount_ 旁边需要它成对，且它是 wakeAfterPublish
+    // 的必要入参。
+    (void)sawReady;
     globalWakeCount().fetch_add(1, std::memory_order_relaxed);
     wakeCount_.fetch_add(1, std::memory_order_relaxed);
     return out;
@@ -228,7 +231,12 @@ core::Result<std::vector<RefreshRoundResult>> QuotaRefresher::refreshNow(
 }
 
 void QuotaRefresher::tickThreadLoop() {
-    int64_t lastScanSec = std::numeric_limits<int64_t>::min();
+    // 首轮标记用**独立的 bool**，不用 `lastScanSec != INT64_MIN` 特判（静态审计
+    // m2）：now_ 是可注入的（用例能返回任意值），一旦它恰好返回 INT64_MIN，
+    // 首轮会被误判成「已扫过」→ 整首轮被 continue 跳过。用哨兵值表示「没有
+    // 上一轮时间」在时钟可注入时是个陷阱：那个值在取值域之内。
+    bool hasScanned = false;
+    int64_t lastScanSec = 0;
     try {
         while (!stopFlag_.load()) {
             // sleep 切片：每片之间查 stopFlag_ → stopAll 最多等一片（~20ms），
@@ -252,12 +260,12 @@ void QuotaRefresher::tickThreadLoop() {
             const int64_t nowSec = now_ ? now_() : systemNowSec();
             // 扫描节流：两次扫描之间至少隔 scanIntervalSec。注入时钟设 0 时
             // 每片都扫（用例用），生产 60 秒一轮。手动刷新**不过节流**。
-            if (!manual && options_.scanIntervalSec > 0 &&
-                lastScanSec != std::numeric_limits<int64_t>::min() &&
+            if (!manual && hasScanned && options_.scanIntervalSec > 0 &&
                 nowSec - lastScanSec < options_.scanIntervalSec) {
                 continue;
             }
             lastScanSec = nowSec;
+            hasScanned = true;
 
             auto refreshed = refreshNow(manual);
             if (refreshed.isFail()) {

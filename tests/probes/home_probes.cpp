@@ -1097,6 +1097,44 @@ int main(int argc, char* argv[]) {
                 }
             }
         }
+        // I(c) **`.status` 的防溢护栏必须在场**（静态审计 m6）。
+        //
+        // 原实现只在**错误行**上查 clip/wrap，而修复后错误行的 .status 文本
+        // **恒为空串** → measureTextSize("") = 0 → 那条宽度检查对 .status 是
+        // 恒真的空转（审计实测：删掉 .status 的 .clip()，14/14 probe 全绿）。
+        //
+        // ⚠ 判据为什么是「护栏在不在」而不是「文本有没有超出盒宽」：
+        //   当前三种非错误状态的标签（未配置余量查询 / 配置不完整，去补全 /
+        //   等待首次查询）在任何窗口宽下都装得进 statusW → 宽度判据恒不触发，
+        //   那才是**又一条恒真假绿**（本条第一版就是这么写的，实测删掉
+        //   .clip() 仍然全绿，当场拆穿）。
+        //   而「.status 是固定高单行盒 + 上游文案长度不可控 → 必须有 clip 或
+        //   wrap」是代码里**明写的不变式**（home_quota_card.cpp 的 .status
+        //   段：「maxWidth 只在 wrap=true 时生效……故防溢只能靠 clip 剪裁」）。
+        //   断言这条不变式本身，才是对「护栏在不在」的真正钉死。
+        int statusCheckedRows = 0;
+        for (const auto& row : rows.value()) {
+            const std::string rid =
+                "home.quota.row." + std::to_string(row.profileId);
+            const core::dsl::Element* statusEl =
+                ui != nullptr ? ui->find(rid + ".status") : nullptr;
+            if (statusEl == nullptr) continue;
+            ++statusCheckedRows;
+            if (statusEl->clip || statusEl->wrap) continue;
+            std::cerr << "home_probes: 组 I(c) FAIL——" << statusEl->id
+                      << " 既无 clip 也无 wrap（文本=\"" << statusEl->text
+                      << "\"）：.status 是固定高单行盒且 maxWidth 只在 wrap=true "
+                         "时生效，无护栏 = 上游长文案直接画出内容列\n";
+            passed = false;
+        }
+        // 非恒真守卫的第一道闸：这条检查一行都没跑到 = 空转，必须报红。
+        // 「过滤器匹配 0 条时静默绿」是本项目踩过多次的坑。
+        if (statusCheckedRows < 1) {
+            std::cerr << "home_probes: 组 I(c) FAIL——一行 .status 都没找到（读到 "
+                      << statusCheckedRows
+                      << " 行）：本轮空转 = 没有守卫\n";
+            passed = false;
+        }
     }
     // 组 I(c) 空跑守卫：必须真的有一格溢出可断言。
     if (errRowsOverflowing < 1) {

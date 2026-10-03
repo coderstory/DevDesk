@@ -68,6 +68,10 @@ add_executable(devdesk_tests
     test_modules/test_claude_quota_store.cpp
     test_modules/test_claude_quota_volcano.cpp
     test_modules/test_claude_quota_live_fixtures.cpp
+    # 「真机探针绝不进默认门禁」的**默认门禁里跑的**代码断言。
+    # 此前 tests/CMakeLists.txt 与 scripts/run-quota-live-probe.sh 都声称
+    # 「由本文件守门」，而文件不存在（静态审计 B2）。补上，注释才变成真的。
+    test_modules/test_probe_gate_labels.cpp
     test_modules/test_provider_config.cpp
     test_modules/test_settings_sync.cpp
     test_modules/test_claude_ui.cpp
@@ -282,8 +286,11 @@ endforeach()
 #     (cd build && ctest -L live)
 #
 # LABELS 只有 **live**、**没有 probe** —— 门禁跑的是 `ctest -L probe`，看不到它。
-# 这条「绝不进默认门禁」由 tests/test_modules/test_probe_gate_labels.cpp 的
-# 单测逐条解析本文件断言（改坏即全量红），不是靠注释保证。
+# 「绝不进默认门禁」由**两个独立的代码实现**守住（改坏任一个另一个仍报警）：
+#   ① scripts/check-probe-gate-labels.sh（awk 状态机，build-test-run.sh 串跑）
+#   ② tests/test_modules/test_probe_gate_labels.cpp（本文件下一段的单测，进全量）
+# 两者解析路径刻意不同（awk vs C++ 逐行扫）：一个的解析逻辑被改坏时，另一个
+# 仍是有效信号。**不是靠注释保证** —— 那句注释曾经声称有个不存在的文件在守。
 if(UNIX)
     add_test(NAME quota_live_probe
         COMMAND bash "${CMAKE_SOURCE_DIR}/scripts/run-quota-live-probe.sh"

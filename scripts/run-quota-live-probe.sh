@@ -24,10 +24,18 @@
 #   ① 本脚本**不被** scripts/build-test-run.sh 调用（那里只跑 ctest -L probe）。
 #   ② ctest 条目的 LABELS 是 **live**，不含 **probe** → 任何 `ctest -L probe`
 #      都看不到它。
-#   ③ tests/test_modules/test_probe_gate_labels.cpp 有一条**默认门禁里跑的
-#      单测**在解析 tests/CMakeLists.txt，逐条断言上面两条仍然成立。改坏任一条
-#      → 全量套件当场红。（那条断言自带「先确认真的匹配到了东西」的守卫，
-#      过滤器匹配 0 条时不会静默绿。）
+#   ①② 由**两个独立实现**同时守住（改坏一个另一个仍报警）：
+#      · scripts/check-probe-gate-labels.sh —— awk 状态机，build-test-run.sh 串跑
+#      · tests/test_modules/test_probe_gate_labels.cpp —— 默认门禁里跑的单测
+#    两者解析路径刻意不同（awk vs C++ 逐行扫）：一个的解析逻辑被改坏时，另一个
+#    仍是有效信号。⚠ 这句话曾经指向一个**不存在的文件**（静态审计 B2）——
+#    「注释说有、实际没有」是本项目反复翻车的那一类，现在它是真的了。
+#
+# ── 本脚本自己的前置检查（2026-10-03 B3 补）─────────────────────────
+# 编译真机探针之前先跑两个静态守卫。理由：探针会**链接同一个
+# devdesk_module_claude_proxy.a**、完全有能力绕过 applyFetchResult 直写
+# profile_quota_result，而 build-test-run.sh 那条路上只有 ctest -L probe
+# —— 真机这条路上原本**没有任何补偿性检查**（静态审计 B3 实测确认）。
 #
 # ── 凭据红线 ──────────────────────────────────────────────────────
 # 脚本只读 ~/.cc-switch/cc-switch.db（探针内部即 SQLITE_OPEN_READONLY），
@@ -53,6 +61,19 @@ if [ ! -d "${BUILD_DIR}" ]; then
     echo "   先跑一次：bash scripts/build-test-run.sh --no-run" >&2
     exit 2
 fi
+
+# ---- 编译前：跑两个静态守卫（B3）------------------------------------
+# 为什么这条路上要有：探针链接的就是 devdesk_module_claude_proxy.a，
+# 完全有能力绕过 applyFetchResult 直写 profile_quota_result；而 build-test-run.sh
+# 那条路上只有 ctest -L probe（探针本身不在那儿），即**真机这条路上原本没有任何
+# 补偿性检查**。守卫失败即中止 —— 不带着一个已知违规去打真网络。
+echo "── 编译前静态守卫 ──"
+for guard in check-quota-write-paths check-probe-gate-labels; do
+    if ! bash "${REPO_ROOT}/scripts/${guard}.sh"; then
+        echo "❌ ${guard}.sh 失败 —— 已中止，不带着已知违规去跑真机探针" >&2
+        exit 1
+    fi
+done
 
 # ---- 编译器（与 build-test-run.sh 用同一套：ccache 若在 PATH 就带上）----
 if [ -n "${CXX:-}" ]; then

@@ -472,6 +472,16 @@ if ! bash scripts/check-probe-gate-labels.sh; then
   exit 1
 fi
 
+# ---- 3b-4. 余量链停机顺序守卫（M5；纯静态检查，--no-test 也跑）----
+# 「测试线程 join → 刷新器 stopAll+reset → 凭据源 reset → store reset」是本批
+# 最贵的并发契约之一，此前**只有注释在说**。静态审计实测两次变异全量零新增失败：
+# 把 quotaStore_.reset() 挪到最前（正是要防的悬垂）、把 join 整行删掉（留 joinable
+# → 析构 std::terminate）。守卫对**源码形态**断言顺序，成本为零、确定性 100%。
+if ! bash scripts/check-quota-shutdown-order.sh; then
+  echo "❌ 余量停机顺序守卫失败（顺序错了就是悬垂：store 先死，刷新器下一次扫描解引用即 UB）"
+  exit 1
+fi
+
 # ---- 3b-4. Windows 交叉编译守卫（2026-10-03；纯静态检查，--no-test 也跑）----
 # src/ 下 14 个 *_win.cpp 只在 CMake 的 if(WIN32) 分支里参与构建，本地 macOS
 # 构建**永远不编译它们**——「Windows 侧写错了」要等 push 后的 CI（10~18 分钟

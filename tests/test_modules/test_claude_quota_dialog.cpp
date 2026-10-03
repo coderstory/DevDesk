@@ -556,6 +556,78 @@ REGISTER_TEST(quota_dialog_ccswitch_credential_overlay,
     return true;
 })
 
+// ---- ⑥b **取用侧覆盖方向**（静态审计 M6 补）------------------------
+//
+// 上面那条 `quota_dialog_ccswitch_credentials_override_on_fetch` 只钉住了
+// **secretAccessKey** 一个字段，而且它的库行 extra/secrets 是**空的**
+//（不变量 2 的正常形态）—— 于是它证明的是「cc-switch 的值填进了空字段」，
+// **不是**「cc-switch 赢过库里的手填副本」。静态审计实测：把 accessKeyId 的
+// 覆盖改成 `if (false)`（cc-switch 完全不覆盖）→ quota 167 例**全绿**。
+//
+// 本条钉的正是那个方向：**库里手填了同名值**（外部改库 / 历史遗留 / 直接
+// 手改 sqlite 都可能造成这种状态），cc-switch 的值仍然必须赢。
+// 变异靶点：
+//   · `if (!matched->accessKeyId.empty())` → `if (false)`     → accessKeyId 红
+//   · `if (!matched->secretAccessKey.empty())` → `if (false)` → secretAccessKey 红
+//   · 整个 if 块删掉                                          → 两个字段都红
+// 零真实网络（假 provider 捕获 cfg.fields）。
+REGISTER_TEST(quota_dialog_ccswitch_wins_over_db_copy_on_fetch,
+              "quota_dialog: 取用侧 cc-switch 覆盖赢过库里的手填副本（两个字段各钉一次）", {
+    using module::claude::ProfileRepository;
+    test_support::TestDb dbEnv(kDbPrefix, "");
+    QuotaStore store(dbEnv.handle());
+
+    ProfileRepository profiles(dbEnv.handle(), "DevDeskTestQuotaCcwins");
+    auto created = profiles.createProfile("火山", "https://ark.cn-beijing.volces.com/api/coding/v3",
+                                          "sk-ant-profile-key", "m");
+    DOCTEST_REQUIRE(created.isOk());
+    const int64_t pid = created.value().id;
+
+    // ⚠ 库里**故意留着**手填副本：cc-switch 引用与手填值共存。正常保存路径
+    //   不会产生这种行（不变量 2 无条件清空），但 quota_credential.cpp 的
+    //   注释明确承诺「万一外部改了库留了副本，覆盖方向仍是 cc-switch 赢」——
+    //   **那句承诺此前没有任何测试**。这里让它变成会红的断言。
+    QuotaConfigRow row;
+    row.profileId = pid;
+    row.providerId = "volcano";
+    row.ccswitchProviderId = "cc-77";
+    row.enabled = true;
+    row.extraJson = R"({"accessKeyId":"AK-MANUAL-IN-DB"})";
+    row.secretsJson = R"({"secretAccessKey":"SK-MANUAL-IN-DB"})";
+    DOCTEST_REQUIRE(store.saveConfig(row).isOk());
+
+    CapturingProvider provider;
+    ProfileCredentialSource creds(
+        profiles, store, [] { return fakeCcSwitch({ccProvider("cc-77",
+                                                              "https://ark.cn-beijing.volces.com/api/coding/v3",
+                                                              "AK-FROM-CCSWITCH",
+                                                              "SK-FROM-CCSWITCH")}); });
+    creds.resolveAndFetch(pid, provider, HttpSendFn());
+    DOCTEST_REQUIRE(provider.got);
+
+    // 方向钉死：拿到的是 **cc-switch 的值**，不是库里手填的那份。
+    const auto ak = provider.lastFields.find("accessKeyId");
+    DOCTEST_REQUIRE(ak != provider.lastFields.end());
+    DOCTEST_CHECK_MESSAGE(ak->second == std::string("AK-FROM-CCSWITCH"),
+                          "accessKeyId 用的是库里的手填副本「" + ak->second +
+                              "」而不是 cc-switch 的值 —— 「cc-switch 赢」的方向反了");
+    DOCTEST_CHECK_MESSAGE(ak->second.find("AK-MANUAL-IN-DB") == std::string::npos,
+                          "accessKeyId 仍是库里的手填副本：cc-switch 覆盖完全没发生");
+
+    const auto sk = provider.lastFields.find("secretAccessKey");
+    DOCTEST_REQUIRE(sk != provider.lastFields.end());
+    DOCTEST_CHECK_MESSAGE(sk->second == std::string("SK-FROM-CCSWITCH"),
+                          "secretAccessKey 用的是库里的手填副本「" + sk->second +
+                              "」而不是 cc-switch 的值 —— 「cc-switch 赢」的方向反了");
+    DOCTEST_CHECK_MESSAGE(sk->second.find("SK-MANUAL-IN-DB") == std::string::npos,
+                          "secretAccessKey 仍是库里的手填副本：cc-switch 覆盖完全没发生");
+
+    // profile 自身的密钥（api_key_encrypted 解密来的）**不受** cc-switch 覆盖影响
+    // ——覆盖范围只有 AK/SK 两个字段。这条同时钉住「覆盖不是无差别的整体替换」。
+    DOCTEST_CHECK_EQ(provider.lastApiKey, std::string("sk-ant-profile-key"));
+    return true;
+})
+
 // ---- ⑨ 不变量 2 的反向：选了 cc-switch → 手填副本**无条件**被清空 ----
 // 变异靶点：把 buildQuotaConfigRow 里的「清空 extra/secrets」删掉，本条即红。
 REGISTER_TEST(quota_dialog_ccswitch_wins_over_manual,
