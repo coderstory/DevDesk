@@ -28,9 +28,9 @@ namespace fs = std::filesystem;
 
 namespace {
 // P3 watcher 接入后的确定性辅助：等待原生文件监听把此前磁盘操作的突发
-// 通知送达（Win 去抖 200ms + 线程调度余量），再 rescan 兑现/消费 credit。
-// stub 平台事件永不到达 → credit 恒 false → pollChanged 回到 mtime 比对，
-// 断言不受影响。用于「无变化 → false」类断言前置。
+// 通知送达（原生平台去抖 200ms + 线程调度余量；Windows 与 macOS 均真实现），
+// 再 rescan 兑现/消费 credit。stub 平台事件永不到达 → credit 恒 false →
+// pollChanged 回到 mtime 比对，断言不受影响。用于「无变化 → false」类断言前置。
 void settleWatcher(module::markdown::MarkdownService& svc) {
     std::this_thread::sleep_for(std::chrono::milliseconds(400));
     (void)svc.rescan();  // 消费 credit + 以磁盘为准对齐（幂等）
@@ -916,7 +916,8 @@ REGISTER_TEST(md_service_watcher_external_new_file,
     auto db = makeDb();
     applySchema(db);
     module::markdown::MarkdownService svc(db, dir);
-    if (!svc.watcherActive()) {  // POSIX/macOS stub：事件链路不存在，跳过
+    if (!svc.watcherActive()) {  // 非 Apple 的 POSIX stub：事件链路不存在，跳过
+                                   //（macOS 已是 FSEvents 真实现，git 600081a）
         fs::remove_all(dir);
         DOCTEST_SKIP("FileWatcher 非活跃平台（stub），事件链路用例跳过");
     }
@@ -949,7 +950,7 @@ REGISTER_TEST(md_service_watcher_same_len_external_edit,
     auto db = makeDb();
     applySchema(db);
     module::markdown::MarkdownService svc(db, dir);
-    if (!svc.watcherActive()) {
+    if (!svc.watcherActive()) {  // 非 Apple 的 POSIX stub（macOS 已是真实现）
         fs::remove_all(dir);
         DOCTEST_SKIP("FileWatcher 非活跃平台（stub），等长改写用例跳过");
     }
@@ -968,6 +969,89 @@ REGISTER_TEST(md_service_watcher_same_len_external_edit,
     const bool hit =
         waitExternalChangeIndexed(svc, "zzzxywwvv732", dir / "eq.md");
     DOCTEST_CHECK(hit);
+
+    // 清场用非抛出版 remove_all（同 :886 用例：避免与 watcher 读句柄竞态抛异常）
+    std::error_code cleanupEc;
+    fs::remove_all(dir, cleanupEc);
+    return true;
+})
+
+// ==================== 伴生文件噪声收口（2026-10-03 flaky 潜伏竞态）====================
+// 原生 watcher（Windows ReadDirectoryChangesW / macOS FSEvents）对监听根下一切
+// 文件变化都上报、不区分扩展名——夹具若把库建进笔记目录，每次落库（E2 后还含
+// app_config 视图状态行）都是事件 → onWatchEvent 置 credit → 模块层绕过 5s
+// 轮询节流 → 用例中途 rescan+refreshList 竞态。两个用例分别守住「夹具不制造
+// 噪声」与「产品侧对纯噪声事件不打 credit」。
+
+// 夹具守卫（全平台注册——守卫是纯路径判定，不依赖 watcher 存活）：
+// MdHeadlessEnv 的库必须落在被 FileWatcher 监听的笔记目录之外，且
+// isPathUnder 判定本身非恒真（之下=真 / 相等与兄弟=假）。
+REGISTER_TEST(md_headless_env_state_outside_notes_dir,
+              "markdown 夹具（MdHeadlessEnv）: 库目录在笔记目录（被监听）外 + isPathUnder 自测", {
+    // isPathUnder 自测：防恒真守卫（守卫烂了这里先红）
+    const auto base = test_support::makeTempDir("devdesk_md_test_", "guard_base");
+    const auto sib = test_support::makeTempDir("devdesk_md_test_", "guard_sib");
+    DOCTEST_CHECK(test_support::isPathUnder(base / "sub" / "x.db", base));
+    DOCTEST_CHECK(test_support::isPathUnder(base / "x.db", base));
+    DOCTEST_CHECK(!test_support::isPathUnder(base, base));   // 相等不算「之下」
+    DOCTEST_CHECK(!test_support::isPathUnder(sib, base));    // 兄弟目录不算
+    std::error_code gEc;
+    fs::remove_all(base, gEc);
+    fs::remove_all(sib, gEc);
+
+    // 夹具实态：库与状态目录都不在笔记目录（被监听）内
+    test_support::MdHeadlessEnv env("devdesk_md_test_", "guardenv", "guard.db");
+    DOCTEST_CHECK(!test_support::isPathUnder(env.dbPath, env.dir));
+    DOCTEST_CHECK(!test_support::isPathUnder(env.stateDir, env.dir));
+    // 记账一致：dbPath 指的地方真的有库文件（防「记了 A、开在 B」漂移）
+    std::error_code ec;
+    DOCTEST_CHECK(fs::exists(env.dbPath, ec));
+    return true;
+})
+
+// 产品侧防御（原生 watcher 平台注册，stub 跳过）：监听目录内写**非 .md 普通
+// 文件**（夹具库 / atomicWrite 的 .devdesk-tmp 临时文件形态）不得置 credit；
+// 对照组：.md 写盘必须置 credit——证明过滤没有过度。
+REGISTER_TEST(md_service_watcher_companion_file_no_credit,
+              "MarkdownService: 伴生非笔记文件写盘不打 watcher credit（5s 节流不被绕过）", {
+    const auto dir = test_support::makeTempDir("devdesk_md_test_", "fwatch_noise");
+    auto db = makeDb();  // :memory:——库不在被监听目录里，本用例只制造纯噪声
+    applySchema(db);
+    module::markdown::MarkdownService svc(db, dir);
+    if (!svc.watcherActive()) {  // 非 Apple 的 POSIX stub（macOS 已是真实现）
+        fs::remove_all(dir);
+        DOCTEST_SKIP("FileWatcher 非活跃平台（stub），事件链路用例跳过");
+    }
+
+    waitWatcherArmed();
+    // 预置噪声文件（创建事件——含可能伴生的目录事件——先出现，由 settle 一并
+    // 消费掉；噪声注入阶段只做「改写已存在的文件」，与真实风暴形态一致：
+    // WAL 库的 -wal/-shm、编辑器临时文件都是**已存在文件被反复改写**）
+    DOCTEST_REQUIRE(writeTextFile(dir / "state.db", "noise v1"));
+    DOCTEST_REQUIRE(writeTextFile(dir / "note.md.devdesk-tmp", "noise v1"));
+    settleWatcher(svc);  // 武装探针 + 噪声文件创建的 credit 已消费，恢复稳态
+    DOCTEST_CHECK(!svc.hasWatchCredit());
+
+    // 噪声注入：改写**已存在的**非 .md 普通文件（夹具库 / 编辑器临时文件的
+    // 高频写盘形态——不动目录项，只产生文件级 Modified 事件）。原生 watcher
+    // 会上报事件，但这些事件对索引/目录树零影响 → 不得置 credit。
+    DOCTEST_REQUIRE(writeTextFile(dir / "state.db", "noise v2"));
+    DOCTEST_REQUIRE(writeTextFile(dir / "note.md.devdesk-tmp", "noise v2"));
+    bool noiseCredit = false;
+    for (int i = 0; i < 40 && !noiseCredit; ++i) {  // 40×50ms=2s ≥ 10× 去抖窗
+        std::this_thread::sleep_for(std::chrono::milliseconds(50));
+        if (svc.hasWatchCredit()) noiseCredit = true;
+    }
+    DOCTEST_CHECK(!noiseCredit);
+
+    // 对照：.md 写盘在有限时间内置 credit（事件链路活着 + 过滤不过度）
+    DOCTEST_REQUIRE(writeTextFile(dir / "real.md", "# real\n"));
+    bool mdCredit = false;
+    for (int i = 0; i < 100 && !mdCredit; ++i) {  // 100×50ms=5s
+        std::this_thread::sleep_for(std::chrono::milliseconds(50));
+        if (svc.hasWatchCredit()) mdCredit = true;
+    }
+    DOCTEST_CHECK(mdCredit);
 
     // 清场用非抛出版 remove_all（同 :886 用例：避免与 watcher 读句柄竞态抛异常）
     std::error_code cleanupEc;

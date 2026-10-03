@@ -425,26 +425,65 @@ struct TestEnv : TestDb {
     TestEnv& operator=(const TestEnv&) = delete;
 };
 
+// path「严格位于 ancestor 之下」判定（先各自 lexically_normal，再词法前缀比对；
+// child == ancestor 不算「之下」）。测试守卫用——MdHeadlessEnv 以它断言伴生
+// 状态目录不在被监听的笔记目录内。测试路径都来自 test_temp::tempPath 的同一
+// 个临时根、无符号链接歧义，词法比较足够；勿用于需要对付 .. / 符号链接的
+// 生产路径校验（那类校验在产品代码里有自己的实现）。
+inline bool isPathUnder(const std::filesystem::path& child,
+                        const std::filesystem::path& ancestor) {
+    std::string c = child.lexically_normal().generic_string();
+    std::string a = ancestor.lexically_normal().generic_string();
+    while (a.size() > 1 && a.back() == '/') a.pop_back();
+    while (c.size() > 1 && c.back() == '/') c.pop_back();
+    if (a == "/" ) return c.size() > 1 && c.front() == '/';
+    return c.size() > a.size() + 1 && c.compare(0, a.size(), a) == 0 &&
+           c[a.size()] == '/';
+}
+
 // ==================== 6) 笔记无头环境（TIN-06b）====================
-// RAII：临时笔记目录 + 目录内已 migrate 的临时库（注册为 appDatabase），并把
-// 笔记目录环境变量指到该临时目录，析构撤销环境变量 + 删整棵目录。原
-// test_markdown.cpp 的 MdUiEnv / test_md_highlight.cpp 的 MdHlEnv
-// / test_md_keyboard.cpp 的 MdKbEnv 三份合流——三份 body 一字不差，只有临时目录
-// 前缀与库文件名不同（前缀保留，便于辨认残骸是谁留下的）。构造失败即抛。
+// RAII：临时笔记目录 + **被监听目录之外**的伴生状态目录（内含已 migrate 的
+// 临时库，注册为 appDatabase），并把笔记目录环境变量指到该临时目录，析构
+// 撤销环境变量 + 删两棵目录。原 test_markdown.cpp 的 MdUiEnv /
+// test_md_highlight.cpp 的 MdHlEnv / test_md_keyboard.cpp 的 MdKbEnv 三份合流
+// ——三份 body 一字不差，只有临时目录前缀与库文件名不同（前缀保留，便于辨认
+// 残骸是谁留下的）。构造失败即抛。
 //
-// 视图状态隔离（审计 [23]）自 2026-10-03（批次 E2）起改由**上面这个已注册的
-// 临时库**承担：状态是 app_config 表的一行（键 kMarkdownViewStateKey），用例经
+// 视图状态隔离（审计 [23]）自 2026-10-03（批次 E2）起由**这个已注册的临时库**
+// 承担：状态是 app_config 表的一行（键 kMarkdownViewStateKey），用例经
 // test_support::writeRawConfigRow 写进去。原 DEVDESK_MARKDOWN_VIEW_STATE_PATH
 // 文件缝（md_view_state.cpp 已不再 getenv）随之撤掉——继续设它只会让人以为
 // 视图状态是从那条环境变量来的，而实际写了什么它根本不读。
+//
+// 库迁出笔记目录（2026-10-03 flaky 分析潜伏竞态收口）：MarkdownService 构造
+// 即对笔记目录起原生 FileWatcher（Windows ReadDirectoryChangesW / macOS
+// FSEvents，其余 POSIX stub），而 watcher 对监听根下**一切**文件变化都上报
+// （不区分扩展名）。库若建在笔记目录**内**（dir/dbName + WAL 伴生的
+// -wal/-shm 文件），每次落库都是 watcher 事件 → onWatchEvent 置 credit →
+// 模块层 credit 绕过 5s 轮询节流 → 用例中途 rescan+refreshList 的随机竞态
+// （macOS 同样暴露，并非 Windows 专属）。E2 之后库还承载 app_config（视图
+// 状态行也在里面），写库只会更频繁——测试环境不该被产品监听逻辑盯上：库
+// 一律住 stateDir（笔记目录的兄弟目录，不在监听范围内）。
 struct MdHeadlessEnv {
-    std::filesystem::path dir;
+    std::filesystem::path dir;       // 笔记目录（DEVDESK_NOTES_DIR；被 FileWatcher 监听）
+    std::filesystem::path stateDir;  // 伴生状态目录（库；刻意在监听范围外）
+    std::filesystem::path dbPath;    // 库文件绝对路径（= stateDir / dbName）
     std::unique_ptr<core::Database> db;
 
     MdHeadlessEnv(const std::string& dirPrefix, const std::string& tag,
                   const std::string& dbName) {
         dir = makeTempDir(dirPrefix, tag);
-        auto r = core::Database::open(dir / dbName);
+        stateDir = makeTempDir(dirPrefix, tag + "_state");
+        // 守卫（fail-fast）：库不得落在被监听的笔记目录内——未来谁把它搬回去，
+        // 这里立刻抛，而不是等真 watcher 平台上随机竞态回归。
+        if (isPathUnder(stateDir, dir)) {
+            throw std::runtime_error(
+                "MdHeadlessEnv: 伴生状态目录不得建在笔记目录（被 FileWatcher "
+                "监听）内: " +
+                stateDir.string() + " under " + dir.string());
+        }
+        dbPath = stateDir / dbName;
+        auto r = core::Database::open(dbPath);
         if (r.isFail()) {
             throw std::runtime_error("Database::open failed: " +
                                      r.errorMessage());
@@ -463,6 +502,7 @@ struct MdHeadlessEnv {
         ::core::registerAppDatabase(nullptr);
         std::error_code ec;
         std::filesystem::remove_all(dir, ec);
+        std::filesystem::remove_all(stateDir, ec);
     }
     MdHeadlessEnv(const MdHeadlessEnv&) = delete;
     MdHeadlessEnv& operator=(const MdHeadlessEnv&) = delete;

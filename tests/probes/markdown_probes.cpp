@@ -68,15 +68,26 @@ bool floatEq(float a, float b) { return std::fabs(a - b) < 0.5f; }
 // 一行（键 kMarkdownViewStateKey），由 main 在 onStart 前用
 // test_support::seedAppConfigRow 写进下面这个连接；旧的
 // DEVDESK_MARKDOWN_VIEW_STATE_PATH 文件缝已无人读，一并撤掉。
-// 析构反转：注销 appDatabase → 还原环境变量 → 删整棵临时目录。
+// 析构反转：注销 appDatabase → 还原环境变量 → 删两棵临时目录。
+//
+// 库刻意住在笔记目录**外**的 stateDir（2026-10-03 flaky 潜伏竞态收口，同
+// MdHeadlessEnv）：模块 onStart 即对笔记目录起原生 FileWatcher（Windows
+// ReadDirectoryChangesW / macOS FSEvents），watcher 对监听根下一切文件变化
+// 都上报——库若在里面，每次落库（含 E2 后的 app_config 写）都是事件 →
+// credit 绕过 5s 轮询节流 → 探针中途 rescan+refreshList 竞态。
 struct ProbeMdEnv {
     std::unique_ptr<core::Database> db;
-    std::filesystem::path dir;       // 笔记目录（DEVDESK_NOTES_DIR）
+    std::filesystem::path dir;       // 笔记目录（DEVDESK_NOTES_DIR；被 FileWatcher 监听）
+    std::filesystem::path stateDir;  // 库（被监听目录外，同 MdHeadlessEnv 守卫语义）
     std::string savedNotes;
 
     ProbeMdEnv() {
         dir = test_support::makeTempDir("mkprobe_", "notes");
-        auto r = core::Database::open(dir / "devdesk.db");
+        stateDir = test_support::makeTempDir("mkprobe_", "state");
+        if (test_support::isPathUnder(stateDir, dir)) {
+            throw std::runtime_error("md probe: 伴生状态目录不得建在笔记目录（被监听）内");
+        }
+        auto r = core::Database::open(stateDir / "devdesk.db");
         if (r.isFail()) {
             throw std::runtime_error("md probe: Database::open failed: " +
                                      r.errorMessage());
@@ -96,6 +107,7 @@ struct ProbeMdEnv {
         test_support::setEnvVar("DEVDESK_NOTES_DIR", savedNotes);
         std::error_code ec;
         std::filesystem::remove_all(dir, ec);
+        std::filesystem::remove_all(stateDir, ec);
     }
 
     ProbeMdEnv(const ProbeMdEnv&) = delete;

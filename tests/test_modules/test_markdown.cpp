@@ -6308,8 +6308,9 @@ REGISTER_TEST(md_module_live_preview_parity,
 // (kind,hash,stableId) 映射到新文档，而不是落到「覆盖旧字节的新块」。
 //
 // 执行前置（v2 修订 F5）：轮询节流 = 真实 5s 时钟（无注入缝）；无头下静默路径靠
-// Windows 真实 FileWatcher 的 credit（hasWatchCredit）绕过节流（与
-// test_markdown_service.cpp 的 watcher 用例同一机制）。mtime 秒级严格 > 比较 →
+// 原生 FileWatcher（Windows ReadDirectoryChangesW / macOS FSEvents 均为真实现；
+// 非 Apple POSIX stub 无事件，该路径退化为 5s 轮询）的 credit（hasWatchCredit）
+// 绕过节流（与 test_markdown_service.cpp 的 watcher 用例同一机制）。mtime 秒级严格 > 比较 →
 // 外写后按「max(写前文件时间, 写后真实时间) + 2s」推进（多次外写严格递增，秒级
 // floor 后仍 ≥2 整秒间隔，末次不会因落在同一墙钟秒而检测不到；等价满足「晚于
 // lastKnownMtime_ 所在秒」，免 ≥1s 真睡）。watcher 送达是异步的（去抖 200ms +

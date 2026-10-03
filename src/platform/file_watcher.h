@@ -27,6 +27,19 @@
 // （markdown_service 依赖 SqliteDb recursive_mutex + rescanMu_ 串行化）。
 // 不抛异常（devdesk 约定），启动失败一律 Result 返回。
 //
+// 消费方契约（扩展名无关）：监听是目录级的——监听根下**一切**条目的变化都会
+// 上报，不区分扩展名/文件类型（.md 笔记、数据库文件、编辑器临时文件、
+// .DS_Store / Thumbs.db 一视同仁），消费方必须按自己的相关性过滤事件
+// （markdown_service 只认 .md 路径 / Unknown / 目录或已不存在的路径，见
+//   onWatchEvent 的 credit 过滤——完整口径以该函数注释为准）。
+// 由此推论：**不要把高频落盘的伴生文件（数据库/状态文件）放进被监听目录**——
+// 原生平台（Win/macOS）上它们每次写盘都会成为事件源；stub 平台无事件，
+// 行为差异本身就是平台不对称（macOS 曾长期被误认为 stub，实为 FSEvents 真实现，
+// 见 git 600081a——判断平台行为以本文件「平台实现」段与 CMake 平台分派为准，
+// 不要信消费方代码里的转述注释）。消费方过滤的完整口径以 markdown_service
+// 的 onWatchEvent 为准（.md 路径 / Unknown / 目录或已不存在的路径置 credit，
+// 磁盘上存在的非 .md 普通文件不置）。
+//
 // 已知边界（Win）：
 //   - 启动武装窗口（arming window）：start() 在**调用线程**打开目录句柄，而
 //     首个 ReadDirectoryChangesW 由 worker 线程**异步**发出（线程创建 + 循环

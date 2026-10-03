@@ -126,7 +126,9 @@ MarkdownService::MarkdownService(core::data::SqliteDb& db,
                                  const fs::path& notesDir)
     : db_(db), notesDir_(notesDir),
       watcher_(std::make_unique<platform::FileWatcher>()) {
-    // 启动原生文件监听（Windows 真实现 / 其他平台 stub 静默降级）。
+    // 启动原生文件监听（Windows ReadDirectoryChangesW / macOS FSEvents 真实现；
+    // 其余 POSIX stub 静默降级——平台矩阵见 platform/file_watcher.h，勿凭本注释
+    // 转述判断平台行为）。
     // rescan() 同样会建目录，但 watcher 要先于首扫存在，故这里先幂等建好。
     std::error_code ec;
     fs::create_directories(notesDir_, ec);
@@ -155,9 +157,62 @@ bool MarkdownService::hasWatchCredit() const {
 }
 
 void MarkdownService::onWatchEvent(std::vector<platform::FileWatchEvent> events) {
-    // 1) 置标记：模块层下一次 pollChanged 必为 true → 其 rescan+refreshList
-    //    照旧跑一轮（UI 列表 ≤5s 内对齐，模块无需感知 watcher 的存在）。
-    watcherFired_.store(true);
+    // 1) 置标记：仅当批内含「索引/目录树相关」事件（credit 相关性过滤，
+    //    2026-10-03 flaky 分析潜伏竞态收口）。模块层下一次 pollChanged 必为
+    //    true → 其 rescan+refreshList 照旧跑一轮（UI 列表毫秒级对齐，模块
+    //    无需感知 watcher 的存在）。
+    //
+    //    为什么过滤：原生 watcher（Windows ReadDirectoryChangesW / macOS
+    //    FSEvents——两者都是真实现）对监听根下**一切**文件变化都上报，不区分
+    //    扩展名。若伴生文件（消费方自己的数据库——含 app_config 视图状态行、
+    //    编辑器临时文件、.DS_Store 等）也住在被监听目录里，它们每次写盘都会
+    //    置 credit → 模块层 credit 绕过 5s 轮询节流 → 逐帧 rescan+refreshList
+    //    风暴（测试夹具把 SQLite 库建进笔记目录时正是这个形态；macOS 同样
+    //    暴露，并非 Windows 专属）。
+    //    为什么这样过滤：credit 的唯一价值在「pollChanged 的 (mtime,size)
+    //    秒级比对失明」的场合——失明只发生在同路径同秒等长的 .md 内容改写
+    //    （其余一切变化都会改变磁盘↔索引比对结果，5s 轮询本身可见）。
+    //    故只对以下事件置 credit：
+    //      - Unknown（空路径：缓冲溢出/根变化，必须全量重扫）
+    //      - .md 路径事件（含被删/改名的 .md——索引相关）
+    //      - 磁盘上存在且为目录的路径（目录增删改改变目录树与 .md 集合，
+    //        listAllFolders 走磁盘枚举、不经索引，目录事件只有 credit 这一条
+    //        即时通道）
+    //      - 已不存在且非 .md 的路径（可能是被删的目录——事件里区分不出
+    //        「删掉的目录」与「删掉的伴生文件」，保守置位；方向安全：
+    //        最多多一轮 rescan，不会漏）
+    //    明确不置：磁盘上存在的非 .md **普通文件**——对索引与目录树零影响，
+    //    纯噪声。stub 平台无事件，行为不变。
+    bool indexRelevant = false;
+    for (const auto& ev : events) {
+        if (ev.relativePath.empty()) {  // Unknown：无法定位，必须当相关处理
+            indexRelevant = true;
+            break;
+        }
+        // UTF-8 → fs::path 必须走 u8string 构造（Windows 上 std::string→path
+        // 按 ACP 解码，中文笔记名会乱码），与 rescan 的目录枚举编码链一致
+        const fs::path rel{std::u8string(ev.relativePath.begin(),
+                                         ev.relativePath.end())};
+        if (rel.extension() == ".md") {
+            indexRelevant = true;
+            break;
+        }
+        // resolve() 是 Result 形（安全收口，评审修复 2026-10-01）：解析失败
+        // （越界路径等）与 step-2 同源的防御语义——但 credit 判定方向要保守：
+        // 无法证明「与索引无关」就当相关处理（宁多一轮 rescan 不漏扫）
+        const auto resolved = resolve(rel);
+        if (resolved.isFail()) {
+            indexRelevant = true;
+            break;
+        }
+        std::error_code ec;
+        if (!fs::is_regular_file(resolved.value(), ec)) {
+            // 目录（存在）或已不存在的路径（可能是被删的目录）→ 保守相关
+            indexRelevant = true;
+            break;
+        }
+    }
+    if (indexRelevant) watcherFired_.store(true);
 
     // 2) 即刻尽力同步索引（watcher 线程）：让搜索/索引毫秒级跟上外部改动。
     //    UI 正持有 rescanMu_（模块 tick 的 rescan 在跑）时跳过——那轮 rescan
