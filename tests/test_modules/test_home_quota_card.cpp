@@ -774,7 +774,7 @@ REGISTER_TEST(home_quota_never_succeeded_never_draws_bar_even_with_windows,
     return true;
 })
 
-// ==================== ⑬ 设计最小窗下余量卡**画得出来**，且不挤掉既有内容 ====
+// ==================== ⑬ 矮窗下余量卡**画得出来**，且不挤掉既有内容 ====
 //
 // ⚠ 2026-10-03 **口径反转**（反转理由写在这里，不靠「改断言让它变绿」）：
 // 本用例原本断言「720 高时余量卡必须整张缺席」，理由是「整页没有外层滚动容器，
@@ -785,12 +785,15 @@ REGISTER_TEST(home_quota_never_succeeded_never_draws_bar_even_with_windows,
 //
 // 新契约（本用例逐条钉）：
 //   ① 高窗 1000：照旧画出（这条从没变过）
-//   ② 设计最小窗 720：**也画出来**（本次修复的判据本体）
+//   ② 矮窗 720（spec 早期过期值，真实设计最小窗 1330×845 逻辑 / 本机有效
+//      805 点——本档刻意低于一切真实下限，作守护性深档；真实两档由
+//      home_probes 组 K 钉）：**也画出来**（本次修复的判据本体）
 //   ③ 既有内容一条都不能少：统计网格 / 图表卡 / 快捷按钮行都还在
 //   ④ 快捷按钮行**没被挤出滚动内容盒**——原来那句「顶掉快捷按钮行」的担心，
 //      换成可判定的形式：内容盒装不下 = 滚到底也够不着 = 真丢内容
 REGISTER_TEST(home_quota_card_visible_at_design_minimum_window,
-              "home quota: 设计最小窗 720 仍画出余量卡，且既有内容不丢", {
+              "home quota: 矮窗 720（守护深档；真实最小窗 1330×845/805 见探针组 K）"
+              "仍画出余量卡，且既有内容不丢", {
     test_support::TestEnv env(kDbPrefix, "shortwin", true);
     DOCTEST_REQUIRE(env.ready);
     auto& sq = env.db->db();
@@ -813,7 +816,8 @@ REGISTER_TEST(home_quota_card_visible_at_design_minimum_window,
     DOCTEST_CHECK_MESSAGE(tallUi.find("home.quota") != nullptr,
                           "1000 高（默认窗）必须画出余量卡");
 
-    // ② 矮窗（720 = 设计最小窗高）：**也画**（整页可滚，卡不再两面落空）
+    // ② 矮窗（720 = 守护性深档，低于真实最小窗 845/805）：**也画**（整页可滚，
+    //    卡不再两面落空）
     eui::Screen shortScreen;
     shortScreen.width = 1200.0f;
     shortScreen.height = 720.0f;
@@ -826,7 +830,7 @@ REGISTER_TEST(home_quota_card_visible_at_design_minimum_window,
     // 几何段同样显式调 layout，同款理由）。
     shortUi.layout(shortScreen.width, shortScreen.height);
     DOCTEST_CHECK_MESSAGE(shortUi.find("home.quota") != nullptr,
-                          "720 高（设计最小窗）必须画出余量卡 —— 这条在 "
+                          "720 高（守护深档）必须画出余量卡 —— 这条在 "
                           "2026-10-03 之前是反的，是 G7/G8 遗留 1 的病根");
     // ③ 既有内容一条都不能少
     DOCTEST_CHECK(shortUi.find("home.stats") != nullptr);
@@ -918,7 +922,8 @@ REGISTER_TEST(home_quota_manual_refresh_due_rules,
 })
 // ============ G8：首页高度预算（纯函数）============
 //
-// G7 遗留 1 的欠账：1200×720（设计最小窗）下看不到余量卡。这段把原先内联在
+// G7 遗留 1 的欠账：1200×720（spec 早期过期值；真实设计最小窗 1330×845 逻辑）
+// 下看不到余量卡。这段把原先内联在
 // compose lambda 里、谁也测不到的预算算式提成纯函数，并把**阈值钉死**——
 // 「矮窗下画不画」从此是一条会红的断言，不是心算。
 REGISTER_TEST(home_quota_budget_threshold_is_pinned,
@@ -1003,7 +1008,7 @@ REGISTER_TEST(home_quota_budget_threshold_is_pinned,
                               " 区间内存在「不画余量卡」或「图表被压」的屏高 —— "
                               "滚动模式下不该再有两面落空");
 
-    // ---- ④ 设计最小窗 1200×720：**画得出**，且图表**不许被压** ----
+    // ---- ④ 矮窗 1200×720（守护深档）：**画得出**，且图表**不许被压** ----
     // 这一条在 G7 遗留 1 / G8 遗留 1 里记作「本批未解」：旧实现下 720 落在
     // `compressionCanHelp == false` 那一档 —— 压不出余量卡、余量卡又整张不画，
     // 两面落空（G8 把阈值降到 746 仍漏掉 720 正是因为这一点）。

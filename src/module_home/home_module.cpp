@@ -694,14 +694,17 @@ public:
                 // 于是「矮窗下余量卡画不画」只能靠人肉心算——而心算与代码漂移过
                 // 一次（G7 遗留 1 里记的「既有内容 580 / 可用 640」与代码实算对不上）。
                 //
-                // 首页整页**没有外层滚动容器**，所以规则是：余量卡行内容至少
-                // kQuotaCardMinBodyH，否则整张不画；不够就压缩下方图表卡
-                // （最多压到 kHomeChartMinH）给它让位——但**只在压缩真能换到
-                // 一张画得出来的余量卡时**才压。压不出就不压：宁可这窗看不见
-                // 余量卡，也不把用户本来看得懂的图表压成一条缝换零收益。
-                // 仍装不下时 pageStillOverflows 为真——那是「本页装不下」的实话，
-                // 不是余量卡的 bug（真要在设计最小窗也画出，得给首页加外层
-                // scrollView，那是另一件事，见 report-G8 遗留）。
+                // 高度预算的两档规则（computeHomeQuotaBudget；首页整页**已挂进
+                // 外层 home.scroll**，见文件头「首页外层滚动容器」段）：
+                //   · 页面装不下（屏高 < fixed + kHomeChartH）→ 滚动模式：图表
+                //     一分不压，余量卡照画，超出部分由滚动条吸收；
+                //   · 页面装得下 → 余量卡行内容不足 kQuotaCardMinBodyH 时压缩
+                //     图表卡（至多压到 kHomeChartMinH）让位。图表可让的量
+                //     （kHomeChartH − kHomeChartMinH = 100）≥ 卡身下限（96），
+                //     故这一档压缩**恒换得到**一张画得出来的卡——drawsQuotaCard
+                //     在现行常量下对任何屏高都为真，「整张不画」只会因预算函数
+                //     被改坏而出现（守卫：home_quota_budget_* 单测 + 探针组 K 的
+                //     真实最小窗多档断言 + home_probes_min_window 短窗实跑档）。
                 const module::home::quota_card::HomeQuotaBudget quotaBudget =
                     module::home::quota_card::computeHomeQuotaBudget(
                         screen.height, statH, pad, gap);

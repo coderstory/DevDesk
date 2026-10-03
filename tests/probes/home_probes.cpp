@@ -1452,6 +1452,139 @@ int main(int argc, char* argv[]) {
         }
     }
 
+    // ==================== 组 K：矮窗多档——余量卡在真实最小窗各档都构建（2026-10-03 口径核定批）====================
+    // G7 遗留 1 / G8 遗留 1 的收口守卫，补两处判别力空缺：
+    //   · 组 G(d) 只在探针**实际运行**的那档屏高有判别力（默认 1200×1000 下
+    //     旧实现也画卡）；
+    //   · home_probes_min_window 只补了 1200×720 一档——而 720 是 **spec 早期
+    //     过期值**，真实设计最小窗是 **1330×845 逻辑**（main.cpp:529-530
+    //     kMinWindowLogical*；G8 简报把它记成「设计最小窗」是过期口径），
+    //     本机工作区放不下 845 点、经 minWindowSizeForWorkArea 收缩后的
+    //     **有效**下限是 1330×805 点（core/window_layout.h 头注）。此前
+    //     没有任何守卫钉在这两档真实可达高度上。
+    //
+    // 本组用**无头 compose**一跑覆盖三档（同一模块实例在不同 Screen 下各排
+    // 一帧，test_home_quota_card ⑬ 的 tall/short 同款）：compose 的 screen 是
+    // 参数，不必为每档开一条 ctest 条目重跑全组。三档 = 预算的两个工作档：
+    //   · 845 设计最小窗：装得下档的**刀口**——quotaBody = 845−fixed−kHomeChartH
+    //     = 95 < 96，靠压缩图表 1px（260→259）恰好画出卡；
+    //   · 805 本机有效最小窗：压缩档（图表压到 ~219）；
+    //   · 700 滚动模式档（< fixed+kHomeChartH = 750）：整页出滚动条、图表
+    //     一分不压、卡照画。低于一切真实下限，作守护性深档（min_window 的
+    //     720 同理，700 比它更深）。
+    // 判据（每档一致）：
+    //   K(a) 余量卡节点存在、非零尺寸、且不压统计网格（矮窗整张不画 = 欠账复发）
+    //   K(b) 整页滚动容器在场（矮窗可见性依赖它吸收溢出；G 同款 content 节点）
+    //   K(c) 既有内容一条不少（stats / chart / actions / root）
+    //   K(d) 快捷按钮行仍在滚动内容盒内（滚到底够得着 = 没丢内容，⑬④ 同款）
+    //   K(e) 图表卡高度 == computeHomeQuotaBudget 的结论，且预算说这档画卡
+    //        （home_module 把 budget.chartHeight 传进图表卡；预算与渲染分叉
+    //        时这里红，常量漂移时 home_quota_budget_* 单测先红）
+    // 数据前提：本组在组 H(b)（清库）之后跑，库里只剩未配置行——卡画不画只由
+    // 屏高预算决定（空态/未配置也画卡），与行数无关，无需补种子。
+    {
+        struct Tier {
+            float height;
+            const char* label;
+        };
+        const Tier tiers[] = {
+            {845.0f, "1330×845 设计最小窗（main.cpp:529-530，装得下档刀口）"},
+            {805.0f, "1330×805 本机有效最小窗（工作区 833−28 收缩，压缩档）"},
+            {700.0f, "1330×700 滚动模式档（< fixed+kHomeChartH，守护性深档）"},
+        };
+        // 预算输入与 home_module compose 同源（不另写一套魔法数）：statH =
+        // 144×fontScale，pad/gap 取主题 token（组 G(b) 同款口径）。
+        const auto& kTheme = core::theme::current();
+        const float kStatH = 144.0f * core::theme::fontScale();
+        const float kPad = kTheme.sizes.spacingXXLarge;
+        const float kGap = kTheme.sizes.spacingLarge * 1.25f;
+        for (const Tier& tier : tiers) {
+            eui::Screen tierScreen;
+            tierScreen.width = 1330.0f;
+            tierScreen.height = tier.height;
+            eui::Ui tierUi;
+            tierUi.begin("home_probe_k_" +
+                         std::to_string(static_cast<int>(tier.height)));
+            mod->compose(tierUi, tierScreen);
+            tierUi.end();
+            // ⚠ 必须 layout：compose 只建树不排版，不 layout 所有 frame 都是 0
+            //（⑬ 踩过「0 <= 0.5」恒真假绿的坑）。
+            tierUi.layout(tierScreen.width, tierScreen.height);
+
+            const core::dsl::Element* card = tierUi.find("home.quota");
+            const core::dsl::Element* pageScroll =
+                tierUi.find("home.scroll.content");
+            const core::dsl::Element* stats = tierUi.find("home.stats");
+            const core::dsl::Element* chart = tierUi.find("home.api.chart");
+            const core::dsl::Element* acts = tierUi.find("home.actions");
+            const core::dsl::Element* root = tierUi.find("home.root");
+            const char* ok = "ok";
+            const char* no = "null";
+            if (pageScroll == nullptr || stats == nullptr || chart == nullptr ||
+                acts == nullptr || root == nullptr) {
+                std::cerr << "home_probes: 组 K(b/c) FAIL（" << tier.label
+                          << "）——结构缺失 (scrollContent="
+                          << (pageScroll != nullptr ? ok : no)
+                          << ", stats=" << (stats != nullptr ? ok : no)
+                          << ", chart=" << (chart != nullptr ? ok : no)
+                          << ", acts=" << (acts != nullptr ? ok : no)
+                          << ", root=" << (root != nullptr ? ok : no) << ")\n";
+                passed = false;
+                continue;
+            }
+            // K(a) 判据本体：卡必须画出来（矮窗整张不画 = 欠账复发）
+            if (card == nullptr) {
+                std::cerr << "home_probes: 组 K(a) FAIL（" << tier.label
+                          << "）——余量卡整张未构建：矮窗不可见"
+                          << "（G7 遗留 1 / G8 遗留 1 复发）\n";
+                passed = false;
+            } else {
+                if (card->frame.width <= 0.0f || card->frame.height <= 0.0f) {
+                    std::cerr << "home_probes: 组 K(a) FAIL（" << tier.label
+                              << "）——余量卡已构建但零尺寸 "
+                              << card->frame.width << "x" << card->frame.height
+                              << "\n";
+                    passed = false;
+                }
+                if (card->frame.y <
+                    stats->frame.y + stats->frame.height - 0.5f) {
+                    std::cerr << "home_probes: 组 K(a) FAIL（" << tier.label
+                              << "）——余量卡压住统计网格：card.y="
+                              << card->frame.y << " stats 底="
+                              << (stats->frame.y + stats->frame.height) << "\n";
+                    passed = false;
+                }
+            }
+            // K(d) 快捷按钮行仍在滚动内容盒内（滚到底够得着 = 没丢内容）
+            if (acts->frame.y + acts->frame.height >
+                root->frame.y + root->frame.height + 0.5f) {
+                std::cerr << "home_probes: 组 K(d) FAIL（" << tier.label
+                          << "）——快捷按钮行溢出滚动内容盒：底="
+                          << (acts->frame.y + acts->frame.height) << " > 内容底="
+                          << (root->frame.y + root->frame.height) << "\n";
+                passed = false;
+            }
+            // K(e) 图表卡高度 == 预算结论（渲染与预算分叉 = 两条口径漂移）
+            const module::home::quota_card::HomeQuotaBudget budget =
+                module::home::quota_card::computeHomeQuotaBudget(
+                    tier.height, kStatH, kPad, kGap);
+            if (!budget.drawsQuotaCard) {
+                std::cerr << "home_probes: 组 K(e) FAIL（" << tier.label
+                          << "）——预算函数说这档不画卡（quotaBody="
+                          << budget.quotaBodyHeight
+                          << "）：预算回退或常量漂移\n";
+                passed = false;
+            }
+            if (std::fabs(chart->frame.height - budget.chartHeight) > 0.5f) {
+                std::cerr << "home_probes: 组 K(e) FAIL（" << tier.label
+                          << "）——图表卡高 " << chart->frame.height
+                          << " != 预算结论 " << budget.chartHeight
+                          << "（渲染与预算分叉）\n";
+                passed = false;
+            }
+        }
+    }
+
     // ---- 退出前落一张「当前状态图」（--screenshot <路径>，2026-10-03 帧捕获批次）----
     // 通用看图口：跑一次 home_probes 就能拿到此刻首页长什么样，不必再靠
     // screencapture（agent 会话拿不到屏幕录制 TCC 授权）。不传该开关时
