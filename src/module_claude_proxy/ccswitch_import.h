@@ -14,23 +14,30 @@
 //     日志 / 不看全局状态），cc-switch 一行 → DevDesk Profile 字段，逐项对应
 //     见下表。单测直接对它断言，无需起库。
 //
-// ── 字段映射表（主会话 2026-10-03 裁决，不自行改）────────────────────────
+// ── 字段映射表（主会话 2026-10-03 裁决，不自行改；同日审计批 ①② 修订两处，
+//    见各行「审计批」标注）────────────────────────────────────────────────
 //   | DevDesk                | 来源                                                     |
 //   |------------------------|----------------------------------------------------------|
 //   | name                   | cc-switch `name`（**同名冲突 → 跳过**，见 existingNames）    |
 //   | baseUrl                | `env.ANTHROPIC_BASE_URL`（缺 → 跳过，原因「缺 base_url」）  |
 //   | apiKey                 | `env.ANTHROPIC_AUTH_TOKEN` 优先，缺则 `env.ANTHROPIC_API_KEY` |
+//   |                        | （都缺 → 跳过「缺密钥」，审计批 ①）                        |
 //   | model                  | `env.ANTHROPIC_MODEL`（缺 → 空串）                         |
 //   | authField              | 两键都有 → 'both' / 只有 TOKEN → 'bearer' /                |
-//   |                        | 只有 API_KEY → 'api_key' / 都无 → 'both'（值域同既有）    |
+//   |                        | 只有 API_KEY → 'api_key'（都无 → 整条跳过「缺密钥」，      |
+//   |                        | 审计批 ①；值域同既有）                                    |
 //   | extraEnvJson           | `env` 里**除** BASE_URL / AUTH_TOKEN / API_KEY / MODEL 外   |
-//   |                        | 全部键值（**JSON 原文**）                                  |
-//   | extraSettingsJson      | settings_config **去掉 env 块后**的全部顶层属性（原文）     |
+//   |                        | 全部键值，经 serializeExtraEnv **规范化重序列化**（键排序、 |
+//   |                        | 只收字符串值、空串值丢弃——非逐字节原文）；双 key 并存时     |
+//   |                        | 未用作 apiKey 的 API_KEY 例外保留进表（审计批 ②，不丢值）  |
+//   | extraSettingsJson      | settings_config **去掉 env 块后**的全部顶层属性（值保全，  |
+//   |                        | 经 pretty 重排——非逐字节原文）                             |
 //   | dialectOverride        | 留空（既有 host 推断自动处理）                             |
 //   | sharedConfigId /        | 0                                                            |
 //   | fallbackProfileId      |                                                              |
 //   | modelsConfigJson       | 空串                                                        |
-// 「导入全部的配置内容」= 上面两个 JSON 字段**完整保留，不丢键**。
+// 「导入全部的配置内容」= 上面两个 JSON 字段**键值保全，不丢键**（形态经
+// 规范化，见 extraEnvJson / extraSettingsJson 两行——原文逐字节保真不是契约）。
 //
 // ── 密钥去向 ─────────────────────────────────────────────────────────────
 // apiKey 只在这里作为**内存局部变量**存在；写库一律走既有
@@ -77,7 +84,7 @@ CcSwitchImportRows listCcSwitchImportRows();
 // ===== 纯映射 =====
 
 // 映射结果。ok == true 时下面各字段有效；ok == false 时 skipReason 是面向
-// 用户的中文原因（同名冲突 / 缺 base_url / JSON 解析失败 / 名称为空）。
+// 用户的中文原因（同名冲突 / 缺 base_url / 缺密钥 / JSON 解析失败 / 名称为空）。
 struct CcSwitchImportMapping {
     bool ok = false;
     std::string skipReason;         //!< ok == false 时非空
@@ -98,7 +105,9 @@ struct CcSwitchImportMapping {
 //                        一致；DB 那个 UNIQUE 是大小写敏感的，故此处亦然）。
 //                        传空集合 = 不做冲突判定（纯映射单测用）。
 //
-// 判定顺序：settings_config 解析失败 → 名称为空 → 同名冲突 → 缺 base_url。
+// 判定顺序：settings_config 解析失败 → 名称为空 → 同名冲突 → 缺 base_url →
+// 缺密钥（审计批 ①：无 AUTH_TOKEN 且无 API_KEY 与缺 base_url 同为「源缺必填
+// 字段」的确定性跳过；都缺时先报缺 base_url）。
 // 任一项命中都产出 ok=false + skipReason，**不产出部分字段**。
 CcSwitchImportMapping mapCcSwitchProviderToProfile(
     const std::string& ccName, const std::string& settingsConfigJson,

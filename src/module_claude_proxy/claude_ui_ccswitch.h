@@ -44,14 +44,19 @@ void openCcSwitchImportDialog(CcSwitchImportDialogState& st);
 
 // 跑导入：逐条 createProfile（含凭据加密）+ 同名跳过报告 + 失败收集。
 // existingProfiles 用来做同名冲突判定（映射层 existingNames 入参）。
-// 跑完写 st.resultLines_ 与三个计数；成功 ≥1 → markDataDirty + toast 绿；
-// 全失败 → toast 红；有跳过 → toast 黄（不阻断）。
+// 跑完写 st.resultLines_ 与三个计数；markDataDirty **无条件**调用（只要
+// hook 在——0 成功也刷新列表，与表单保存同款）。toast 只有 isError 两态、
+// **没有黄色档**：有失败 → isError=true（「导入完成（有失败）」）；无失败
+//（含部分跳过）→ isError=false（「导入完成」/「导入成功」），跳过数进正文。
 void confirmCcSwitchImport(CcSwitchImportDialogState& st,
                            const std::vector<Profile>& existingProfiles,
                            const CcSwitchImportDialogHooks& hooks);
 
-// 弹窗绘制（DialogFrame 范式）。复选框用 components::checkbox（与既有 agent
-// 表单同款），列表条目 = name + base_url + model（**密钥一律不显示**）。
+// 弹窗绘制（DialogFrame 范式）。复选框**手绘**（rect 框 + 选中时 primary
+// 底 + fa-check 字标），不引 components::checkbox——其头文件在 -Werror 下
+// 有 unused-variable 告警（EUI-NEO 既有问题，agent_module 同款规避）；全选/
+// 取消全选用 button 文本按钮，行点击区 = 整行 hit rect。列表条目 = name +
+// base_url + model（**密钥一律不显示**）。
 void drawCcSwitchImportDialog(eui::Ui& ui, const eui::Screen& screen,
                               const core::theme::Tokens& t,
                               const components::theme::ThemeColorTokens& themeTokens,
