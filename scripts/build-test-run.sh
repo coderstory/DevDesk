@@ -472,6 +472,21 @@ if ! bash scripts/check-probe-gate-labels.sh; then
   exit 1
 fi
 
+# ---- 3b-4. Windows 交叉编译守卫（2026-10-03；纯静态检查，--no-test 也跑）----
+# src/ 下 14 个 *_win.cpp 只在 CMake 的 if(WIN32) 分支里参与构建，本地 macOS
+# 构建**永远不编译它们**——「Windows 侧写错了」要等 push 后的 CI（10~18 分钟
+# 一轮）才暴露。credential_protection_win.cpp（DPAPI 密文入库）就是「写完一次
+# 都没被任何编译器看过」那一档。本守卫把这一条用 MinGW 交叉链拉回本地。
+# 找不到工具链时它**显式打印跳过原因并退出 0**（CI 的 macOS runner 没装这条链，
+# 「别人机器上必红」的守卫会被立刻关掉）；装了链还编不过才是红。
+# ⚠ 边界：它只验**编译**。DPAPI 的密文对不对、解密能不能还原，交叉编译一律
+#   验不到，仍需 Windows 真机——守卫通过 ≠ 该文件已验证。
+echo "── Windows 交叉编译守卫 ──"
+if ! bash scripts/check-windows-cross-compile.sh; then
+  echo "❌ Windows 交叉编译守卫失败（某个 *_win.cpp 编不过；上方为 file:line + 错因）"
+  exit 1
+fi
+
 # ---- 3c. 安装到 /Applications（--install，仅 macOS；默认不开则整段不执行）----
 # 顺序即「事故的反面」，每一步都在补一个曾经漏掉的环节：
 #   ① 重组 bundle：build-app.sh 会 rm -rf 重建 .app + 拷二进制 + 刷 Info.plist 版本 + 拷 assets。
