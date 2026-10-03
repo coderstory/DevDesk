@@ -18,6 +18,7 @@
 #pragma once
 
 #include "claude_service.h"
+#include "ccswitch_import.h"
 #include "provider_config.h"
 #include "quota/quota_dialog_config.h"
 
@@ -230,6 +231,29 @@ struct ImportState {
     ImportedConfig importPreview_; // 解析结果预览
 };
 
+// ============ cc-switch 导入弹窗（2026-10-03）============
+// 独立状态（不塞进 FormState）：它带一次**只读读库**（listCcSwitchImportRows）
+// 与一组**勾选 / 全选 / 导入结果报告**，与表单写流程是两件事，复用会让表单
+// 状态被一次导入批量污染。**必须接入 anyDialogOpen 门控与 closeTopmostDialog
+// Esc 序链**（绘制序最靠后 = 序链最顶层）。
+struct CcSwitchImportDialogState {
+    bool open_ = false;
+    bool loaded_ = false;             // rows 已装载（false = 首次打开需触发读库）
+    // 候选行（listCcSwitchImportRows 的结果）+ 每行的映射结果（ok/skipReason）+
+    // 每行是否被勾选。三个向量同长度、按下标对齐。
+    std::vector<CcSwitchImportRow> rows_;
+    std::vector<CcSwitchImportMapping> mappings_;
+    std::vector<bool> selected_;
+    // 读库失败的中文原因（空 = 成功 / 未尝试）。非空时列表区不画，改画错误态。
+    std::string loadError_;
+    // 导入结果报告（confirmCcSwitchImport 填充）：每条「name: 成功 / 跳过(原因) /
+    // 失败(原因)」一行。非空 = 已跑过一次导入，列表区上方画结果汇总。
+    std::vector<std::string> resultLines_;
+    int resultSuccess_ = 0;
+    int resultSkipped_ = 0;
+    int resultFailed_ = 0;
+};
+
 // ============ 完整调用记录弹窗（审计 [11]：搜索/状态码过滤/翻页共用）============
 struct LogsState {
     bool callsDialogOpen_ = false;
@@ -268,6 +292,7 @@ struct ClaudeUiState {
     DetailState detail;
     FormState form;
     SharedConfigDialogState shared;   // 批 2：共享配置片段编辑弹窗（独立状态）
+    CcSwitchImportDialogState ccswitchImport;  // 从 cc-switch 导入弹窗
     ImportState import;
     LogsState logs;
     QuotaDialogState quota;           // G6：余量查询配置弹窗

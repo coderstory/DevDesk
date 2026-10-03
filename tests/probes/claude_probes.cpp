@@ -42,9 +42,12 @@
 #include "module_claude_proxy/claude_ui_quota.h"   // G6：弹窗几何纯函数（对账用）
 #include "provider_config.h"   // ⑦ 槽位表 / models_config 造数 + 序列化
 
+#include <sqlite3.h>
+
 #include <algorithm>
 #include <cmath>
 #include <cstdlib>
+#include <filesystem>
 #include <iostream>
 #include <memory>
 #include <string>
@@ -983,6 +986,103 @@ int main(int argc, char* argv[]) {
                     ui != nullptr ? ui->find("claude.detail.tabs.hit.0") : nullptr;
                 back != nullptr && back->onClick != nullptr) {
                 back->onClick();
+                composeFrame();
+            }
+        }
+    }
+
+    // ---- ⑨ cc-switch 导入入口 + 弹窗渲染（2026-10-03）----
+    // 验证三件事：①「从 cc-switch 导入」按钮存在且可点；②点击后弹窗 panel
+    // 渲染出来；③候选行 0 渲染（claude 那条），且 codex 那条被 SQL 筛掉
+    //（候选行只该有 2 条 = claude + claude-desktop，不该有 codex 的行）。
+    // 夹具：临时 cc-switch 库 + 2 条 claude 供应商 + 1 条 codex（应被筛掉）。
+    // 密钥一律假串（sk-probe-fake-*），绝不上生产；弹窗不显示密钥由映射单测的
+    // skipReason 不含 "sk-" 断言守住，这里只验「入口 + 弹窗 + 行渲染」。
+    {
+        const auto dbDir = test_support::makeTempDir("ccswitch_probe", "db");
+        const std::filesystem::path dbPath = dbDir / "cc-switch.db";
+        const char* schema =
+            "CREATE TABLE providers (id TEXT NOT NULL, app_type TEXT NOT NULL, "
+            "name TEXT NOT NULL, settings_config TEXT NOT NULL, "
+            "meta TEXT NOT NULL DEFAULT '{}', "
+            "is_current BOOLEAN NOT NULL DEFAULT 0, "
+            "in_failover_queue BOOLEAN NOT NULL DEFAULT 0, "
+            "PRIMARY KEY (id, app_type));";
+        sqlite3* rawDb = nullptr;
+        if (sqlite3_open_v2(dbPath.string().c_str(), &rawDb,
+                            SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE,
+                            nullptr) == SQLITE_OK) {
+            char* err = nullptr;
+            const auto exec = [&](const std::string& s) {
+                if (sqlite3_exec(rawDb, s.c_str(), nullptr, nullptr, &err) != SQLITE_OK) {
+                    if (err) sqlite3_free(err);
+                }
+            };
+            exec(schema);
+            exec("INSERT INTO providers (id, app_type, name, settings_config) VALUES "
+                 "('id-p1', 'claude', 'ProbeOne', "
+                 "'{\"env\":{\"ANTHROPIC_BASE_URL\":\"https://probe.one/anthropic\","
+                 "\"ANTHROPIC_AUTH_TOKEN\":\"sk-probe-fake-token\","
+                 "\"ANTHROPIC_MODEL\":\"probe-m\"}}');");
+            exec("INSERT INTO providers (id, app_type, name, settings_config) VALUES "
+                 "('id-p2', 'claude-desktop', 'ProbeDesktop', "
+                 "'{\"env\":{\"ANTHROPIC_BASE_URL\":\"https://probe.two\","
+                 "\"ANTHROPIC_API_KEY\":\"sk-probe-fake-key\"}}');");
+            exec("INSERT INTO providers (id, app_type, name, settings_config) VALUES "
+                 "('id-codex', 'codex', 'CodexIgnore', "
+                 "'{\"env\":{\"ANTHROPIC_BASE_URL\":\"https://codex.ignore\"}}');");
+            sqlite3_close(rawDb);
+        }
+        const test_support::ScopedEnv ccEnv("CCSWITCH_DB_PATH", dbPath.string());
+
+        // 默认尺寸档（避免极矮窗几何误判）
+        frameW = 1200.0f;
+        frameH = 1000.0f;
+        composeFrame();
+        const std::string tag = "ccswitch";
+        const core::dsl::Element* importBtn = ui != nullptr
+            ? ui->find("claude.profiles.import.ccswitch.bg") : nullptr;
+        if (importBtn == nullptr || importBtn->onClick == nullptr) {
+            std::cerr << "claude_probes[" << tag << "]: 'claude.profiles.import."
+                         "ccswitch' missing or not clickable\n";
+            passed = false;
+        } else {
+            importBtn->onClick();
+            composeFrame();
+            const core::dsl::Element* panel = ui != nullptr
+                ? ui->find("claude.dialog.ccswitch.panel") : nullptr;
+            if (panel == nullptr) {
+                std::cerr << "claude_probes[" << tag
+                          << "]: dialog panel not rendered after click\n";
+                passed = false;
+            } else {
+                // 候选行 0（claude 那条）必须渲染；候选行 2（codex 那条）必须
+                // 不存在 —— SQL WHERE app_type IN ('claude','claude-desktop') 筛掉的
+                if (ui->find("claude.dialog.ccswitch.row.0.wrap") == nullptr) {
+                    std::cerr << "claude_probes[" << tag
+                              << "]: candidate row 0 not rendered\n";
+                    passed = false;
+                }
+                if (ui->find("claude.dialog.ccswitch.row.2.wrap") != nullptr) {
+                    std::cerr << "claude_probes[" << tag
+                              << "]: candidate row 2 should not exist (codex "
+                                 "filtered out by app_type)\n";
+                    passed = false;
+                }
+                // 「导入选中」确认按钮存在且可点（不真点，避免建 profile 污染后续）
+                const core::dsl::Element* confirm = ui->find(
+                    "claude.dialog.ccswitch.confirm.bg");
+                if (confirm == nullptr || confirm->onClick == nullptr) {
+                    std::cerr << "claude_probes[" << tag
+                              << "]: confirm button missing or not clickable\n";
+                    passed = false;
+                }
+            }
+            // 关弹窗（点取消），不留下开着的弹窗给后续 --dump 落图
+            if (auto* cancel = ui != nullptr
+                    ? ui->find("claude.dialog.ccswitch.cancel.bg") : nullptr;
+                cancel != nullptr && cancel->onClick != nullptr) {
+                cancel->onClick();
                 composeFrame();
             }
         }

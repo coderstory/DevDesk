@@ -691,8 +691,12 @@ void drawProfileListPanel(eui::Ui& ui, float leftW, float bodyH,
             }
 
             // 底部按钮：新建 + 导入当前配置（读
-            // ~/.claude/settings.json 预填新建表单）
-            const float btnW = (leftW - 40.0f - 12.0f) * 0.5f;
+            // ~/.claude/settings.json 预填新建表单）+ 从 cc-switch 导入
+            // （2026-10-03）：三键等分，12px 间距。文本一行内不截断
+            //（labelWidth = w when 无 icon，112px @ 13px 容得下
+            // 「从 cc-switch 导入」）。
+            const float btnW = (leftW - 40.0f - 24.0f) * (1.0f / 3.0f);
+            const float btnGap = 12.0f;
             components::button(ui, "claude.profiles.new")
                 .position(20.0f, bottomButtonRowY(bodyH))
                 .size(btnW, 40.0f)
@@ -706,7 +710,7 @@ void drawProfileListPanel(eui::Ui& ui, float leftW, float bodyH,
                 .onClick([onNew = actions.onNewProfile] { onNew(); })
                 .build();
             components::button(ui, "claude.profiles.import")
-                .position(20.0f + btnW + 12.0f, bottomButtonRowY(bodyH))
+                .position(20.0f + btnW + btnGap, bottomButtonRowY(bodyH))
                 .size(btnW, 40.0f)
                 .text("导入当前配置")
                 .icon(0xF019)  // fa-download
@@ -718,6 +722,21 @@ void drawProfileListPanel(eui::Ui& ui, float leftW, float bodyH,
                 .radius(t.sizes.radius)
                 .border(1.0f, t.colors.borderDefault)
                 .onClick([onImport = actions.onImportCurrent] { onImport(); })
+                .build();
+            components::button(ui, "claude.profiles.import.ccswitch")
+                .position(20.0f + 2.0f * (btnW + btnGap),
+                          bottomButtonRowY(bodyH))
+                .size(btnW, 40.0f)
+                .text("从 cc-switch 导入")
+                .fontSize(t.sizes.fontSizeSmall)
+                .colors(t.colors.surfaceElevated, t.colors.hover,
+                        t.colors.active)
+                .textColor(t.colors.textPrimary)
+                .radius(t.sizes.radius)
+                .border(1.0f, t.colors.borderDefault)
+                .onClick([onImportCc = actions.onImportCcSwitch] {
+                    if (onImportCc) onImportCc();
+                })
                 .build();
         })
         .build();
