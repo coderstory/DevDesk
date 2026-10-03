@@ -12,7 +12,9 @@
 // 也在锁内完成，调用方不必也不能自己兜一层。
 #pragma once
 
+#include <atomic>
 #include <cstddef>
+#include <cstdint>
 #include <filesystem>
 #include <functional>
 #include <map>
@@ -53,8 +55,14 @@ public:
     // 的旧对象上——锁与句柄就此分家，跨线程再无串行可言。共享所有权保证同一个
     // sqlite3* 的所有 Statement 与其 SqliteDb 锁的永远是同一把，且语句活得比
     // 连接久时锁也不会悬垂。
+    //
+    // version 同理是 shared_ptr：它是「这条连接上的数据变了没有」的**单一判据**
+    // （见 SqliteDb::writeVersion）。裸指针/成员值都会在 SqliteDb 被移动时分家
+    // ——语句推进的是搬空的旧计数器，读侧看的是新计数器，脏标记从此永不置位
+    // （首页余量卡会永远停在旧值，且没有任何报错）。
     Statement(sqlite3* db, sqlite3_stmt* stmt,
-              std::shared_ptr<std::recursive_mutex> mutex);
+              std::shared_ptr<std::recursive_mutex> mutex,
+              std::shared_ptr<std::atomic<uint64_t>> version);
     ~Statement();
 
     Statement(const Statement&) = delete;
@@ -85,9 +93,20 @@ private:
     // 释放语句（finalize）——析构与移动赋值共用；持锁，见 .cpp 注释
     void releaseStmt() noexcept;
 
+    // 非只读语句真正改动库时推进共享版本号。**必须在 mutex() 内调用**
+    // （与 step 同一临界区），实现见 .cpp。
+    void bumpVersionOnWrite() noexcept;
+
     sqlite3* db_;
     sqlite3_stmt* stmt_;
     std::shared_ptr<std::recursive_mutex> mutex_;
+    // 与 SqliteDb::writeVersion_ 共享同一计数器（见构造函数的注释）
+    std::shared_ptr<std::atomic<uint64_t>> version_;
+    // 本语句是否会写库。prepare 时由 sqlite3_stmt_readonly() 判一次并缓存：
+    // step() 每次都要据此决定要不要推进版本号，而 sqlite3_stmt_readonly()
+    // 是纯查 VDBE 程序、不碰数据，但每步都调一次仍属白付的代价。
+    // 缓存它是安全的：一条已 prepare 完的语句，其「只读性」不会再变。
+    bool readonly_ = true;
 };
 
 class SqliteDb {
@@ -121,6 +140,32 @@ public:
     // SQLITE_OPEN_FULLMUTEX（见 sqlite_db.cpp open()）只锁单次 API 调用、盖不住。
     sqlite3* handle() { return handle_; }
 
+    // ---- 写版本号（2026-10-03 静态审计 M4 的失效判据）--------------------
+    //
+    // 「这条连接上的数据被写过没有」的**单一判据**：每次有语句真正改动库
+    // （Statement::step 在非只读语句上跑到 SQLITE_DONE/ROW、或 exec 跑了
+    // 非 SELECT 脚本）就 fetch_add(1)。
+    //
+    // **为什么放在这一层而不是各个写路径上**（这是本条设计的全部要点）：
+    // 失效判据必须覆盖**所有**写入口，否则漏掉的那一条会让读侧永久停在旧值
+    // 且无任何报错。本仓至少存在三条绕过「业务写路径」的合法写入口：
+    //   ① 测试与探针的裸 SQL（tests/probes/home_probes.cpp 组 H(b) 直接
+    //      `exec("DELETE FROM profile_quota_config")`，随后断言 compose 已反映）；
+    //   ② core::app_config 的 setMany 等 core 层批量写；
+    //   ③ 将来任何新增的写路径（今天的 QuotaStore 只是**恰好**是余量两表的
+    //      唯一入口——check-quota-write-paths.sh 守的正是这条，而它连
+    //      profile_quota_config 都没覆盖）。
+    // 把判据钉在「所有写必经的那一层」，就不必在每个新写入口上记得挂钩子。
+    //
+    // 读侧用 acquire load（写侧 release fetch_add）：读到新版本号即意味着
+    // 那些写在内存序上**先于**本次读可见，于是「版本变了 → 重查」重查到的
+    // 一定包含导致它变化的那次写。这是 release/acquire 在这里唯一的作用，
+    // 别把它省成 relaxed（省了就退化成「可能读到旧值」——于是脏标记偶发不置位，
+    // UI 停在旧数据上，且是低概率、难复现的那种）。
+    uint64_t writeVersion() const {
+        return writeVersion_->load(std::memory_order_acquire);
+    }
+
 private:
     SqliteDb() = default;   // 仅 open()（本类静态成员）可用，见上方说明
 
@@ -129,6 +174,11 @@ private:
     // 引用它的 Statement 也不会因宿主移动/析构而拿到悬垂引用。
     std::shared_ptr<std::recursive_mutex> mutex_ =
         std::make_shared<std::recursive_mutex>();
+    // 与锁同理必须共享：SqliteDb 在装配期被移动数次，值语义的成员会留在
+    // 被搬空的旧对象上（Statement 推进旧计数器、读侧读新计数器 → 脏标记
+    // 永不置位）。见 Statement 构造函数的注释。
+    std::shared_ptr<std::atomic<uint64_t>> writeVersion_ =
+        std::make_shared<std::atomic<uint64_t>>(0);
 };
 
 } // namespace core::data

@@ -281,6 +281,12 @@ public:
 
     void onStop() override {
         service_.reset();
+        // 余量快照作废：停机后 appDatabase 可能已关闭/重开，而新连接的
+        // writeVersion 从 0 起——若旧快照的 seenVersion 恰好等于新连接的值，
+        // 就会拿旧连接的行去画新连接的卡。强制下次首帧重查。
+        quotaRows_.clear();
+        quotaErr_.clear();
+        quotaSeenVersionValid_ = false;
         LOG_INFO("Home 模块停止");
     }
 
@@ -701,21 +707,9 @@ public:
                         screen.height, statH, pad, gap);
                 if (moduleRegistered(::core::PageId::ClaudeProxy)) {
                     if (quotaBudget.drawsQuotaCard) {
-                    std::vector<module::claude::quota::QuotaHomeRow> quotaRows;
-                    std::string quotaErr;
-                    if (auto* qdb = ::core::appDatabase()) {
-                        auto qr =
-                            module::claude::quota::listQuotaHomeRows(*qdb);
-                        if (qr.isOk()) {
-                            quotaRows = std::move(qr.value());
-                        } else {
-                            // 不静默：查询失败会在卡上显形（不是「暂无 profile」）
-                            quotaErr = qr.errorMessage();
-                            LOG_ERROR("Home 余量卡读取失败: " + quotaErr);
-                        }
-                    } else {
-                        quotaErr = "数据库未初始化（appDatabase 为空）";
-                    }
+                    refreshQuotaRows();
+                    const std::vector<module::claude::quota::QuotaHomeRow>&
+                        quotaRows = quotaRows_;
                     module::home::quota_card::Hooks hooks;
                     hooks.refreshAll = [] {
                         module::claude::quota::
@@ -726,7 +720,7 @@ public:
                                    "action:quota_config:" +
                                        std::to_string(profileId));
                     };
-                    hooks.loadError = quotaErr;
+                    hooks.loadError = quotaErr_;
                     module::home::quota_card::drawQuotaCard(
                         ui, t, contentW, quotaRows, hooks,
                         quotaBudget.quotaBodyHeight);
@@ -1005,6 +999,58 @@ public:
 private:
     static constexpr int kRecentNoteLimit = 5;
 
+    // ==================== 余量快照缓存（静态审计 M4）====================
+    //
+    // 旧形态：compose **每帧**持 db.mutex() 跑 3 次真 SQL（listQuotaHomeRows
+    // 从头到尾持锁）。本仓只有一把 sqlite 连接，而后台 QuotaRefresher 正在写
+    // 这两张表——刷新器落库窗口撞上 compose 时，UI 帧就阻塞在那把锁上。
+    // 首页整页 2Hz onTimer 重排，叠加 hover 过渡时 compose 更频，撞上的概率
+    // 不低。claude_module 早就把同类数据挪进 refreshDataCache 的脏标记缓存，
+    // 首页余量这条**新链没跟上**——本方法就是把它补上。
+    //
+    // 失效判据是 db.writeVersion()（见 sqlite_db.h 的注释：为什么必须落在
+    // 「所有写必经的那一层」而不是各写路径上）。compose 每帧只做一次
+    // acquire load（**不取锁、不查库**），版本没变就直接复用上次的行。
+    //
+    // 为什么**同步查一次**而不是像 refreshDataCache 那样派后台线程：
+    // 改动版把「每帧查」降成「数据变了才查」，而余量数据的变更频率是
+    // 分钟级（刷新器按 interval 扫 + 用户手点[刷新]）。为一年几次的变更
+    // 引入 std::future + 收割 + 跨线程发布，是拿一个真实存在的
+    // 悬垂/竞态面（模块停机时在途 future 与已关连接赛跑——M5 记的正是
+    // 这类顺序问题）换一个用不上的收益。同线程查一次的最坏情况是「变更
+    // 当帧多花一次三查询」，与旧行为同量级，不构成新的卡顿源。
+    //
+    // 首帧必须出数据（不得空帧）：旧行为每帧都查，首帧天然有值；加了缓存
+    // 后若首次 compose 走「命中」分支就会画出空卡。故 seenVersionValid_
+    // 初始为 false，强制首帧查一次。
+    void refreshQuotaRows() {
+        auto* qdb = ::core::appDatabase();
+        if (qdb == nullptr) {
+            quotaRows_.clear();
+            quotaErr_ = "数据库未初始化（appDatabase 为空）";
+            return;
+        }
+        const uint64_t ver = qdb->writeVersion();
+        if (quotaSeenVersionValid_ && quotaSeenVersion_ == ver) {
+            return;   // 数据没变 → 复用快照（本帧零查询、零锁）
+        }
+        // 版本取**查询前**的快照：查询期间落库的写会让下一帧看到版本变化 →
+        // 多查一次（宁可多查不漏显）。反过来（查询后取版本）会漏：本次查询
+        // 读到的是旧数据，却把版本记成新的，于是之后永不再查。
+        auto qr = module::claude::quota::listQuotaHomeRows(*qdb);
+        if (qr.isOk()) {
+            quotaRows_ = std::move(qr.value());
+            quotaErr_.clear();
+        } else {
+            // 不静默：查询失败会在卡上显形（不是「暂无 profile」）
+            quotaRows_.clear();
+            quotaErr_ = qr.errorMessage();
+            LOG_ERROR("Home 余量卡读取失败: " + quotaErr_);
+        }
+        quotaSeenVersion_ = ver;
+        quotaSeenVersionValid_ = true;
+    }
+
     // ① 的取数结果（compose 只读；空态/失败态靠 hasValue + lastRateError_ 区分）
     using LastCallRate = module::home::LastCallRate;
 
@@ -1019,6 +1065,13 @@ private:
     }
 
     std::unique_ptr<HomeService> service_;
+    // 余量快照缓存（见 refreshQuotaRows 的注释）。快照与版本号都由**本模块
+    // 实例**持有，不放全局：多模块实例（测试里一进程造多个）与「换库重开」
+    // 都不会互相污染。全局缓存曾是被明确否决的形态。
+    std::vector<module::claude::quota::QuotaHomeRow> quotaRows_;
+    std::string quotaErr_;
+    uint64_t quotaSeenVersion_ = 0;
+    bool quotaSeenVersionValid_ = false;   // false = 从未查过（首帧强制查）
     DashboardStats stats_;
     bool statsLoaded_ = false;
     std::string statsError_;
