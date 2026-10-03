@@ -255,6 +255,12 @@ foreach(_probe_source ${_devdesk_probe_sources})
     endif()
     add_test(NAME ${_probe_name} COMMAND ${_probe_name})
     set_tests_properties(${_probe_name} PROPERTIES LABELS "probe")
+    # 无显示环境（CI runner 不在 WindowServer / 桌面会话里）→ 探针以
+    # probe::kSkipExitCode(77) 退出，这里把它登记成 ctest 的 Skipped 而非
+    # Failed。**判据在 tests/probes/probe_harness.h 的金丝雀逻辑里**（裸 GLFW
+    # 建一个探针同等要求的隐藏窗，建不出来且错误码属「平台/能力不可用」才跳）。
+    # 本行只负责告诉 ctest「77 = 跳过」，不负责判定；少这一行 77 会被当失败。
+    set_tests_properties(${_probe_name} PROPERTIES SKIP_RETURN_CODE 77)
     # --screenshot 变体：默认那条不带参数走的是「零开销不写文件」路径，光靠它证
     # 不了开关本身能落图。补一条带参的（落图留在构建目录，build/ 已 gitignore）。
     if(_probe_name STREQUAL "screenshot_probe")
@@ -263,6 +269,8 @@ foreach(_probe_source ${_devdesk_probe_sources})
                 --screenshot "${CMAKE_CURRENT_BINARY_DIR}/probe-screenshot.png")
         set_tests_properties(${_probe_name}_screenshot_switch
             PROPERTIES LABELS "probe")
+        set_tests_properties(${_probe_name}_screenshot_switch
+            PROPERTIES SKIP_RETURN_CODE 77)
     endif()
     # home 的**设计最小窗**尺寸档（2026-10-03 final 批）。默认那条按 1200×1000
     # 跑，而「矮窗下余量卡画不画」这件事**只在 720 这档才有判别力**（1000 高的
@@ -273,6 +281,8 @@ foreach(_probe_source ${_devdesk_probe_sources})
             COMMAND ${_probe_name} --size 1200x720)
         set_tests_properties(${_probe_name}_min_window
             PROPERTIES LABELS "probe")
+        set_tests_properties(${_probe_name}_min_window
+            PROPERTIES SKIP_RETURN_CODE 77)
     endif()
 endforeach()
 

@@ -449,18 +449,59 @@ if [ "$RUN_TEST" = "1" ]; then
     #   passed, 14 tests failed」和一行清单——**没有一个字说明为什么**，排查者只能
     #   本地复现猜。这与本脚本曾经「构建失败也报成功」是同一类毛病：门禁报了状态，
     #   却把决定状态的那部分信息丢了。失败原因必须落在 CI 日志里。
+    #
+    # ⚠⚠ **Skipped 必须单独数，不能只看 "100% tests passed"**（2026-10-03 实测）：
+    #   ctest 对「跳过」的测试**照样**把 "100% tests passed" 打在汇总行上——全部
+    #   跳过时也是 100%（实测：一个全跳过的 -L probe 跑仍输出 "100% tests passed
+    #   out of 2"）。只认那一句的话，一条「什么都没验」的门禁会长得和全绿一模一样，
+    #   **这正是当初这条门禁失效的同类毛病**。所以下面显式解析三态。
     PROBE_OUT=$(cd "$BUILD_DIR" && ctest -L probe --output-on-failure 2>&1) || true
     echo "$PROBE_OUT" | grep -E "tests passed|tests failed" | tail -1
-    # ⚠ 只认 "100% tests passed"：ctest 的失败列表在输出末尾，grep 漏了就静默绿。
-    if echo "$PROBE_OUT" | grep -q "100% tests passed"; then
-      echo "✅ UI probe 全绿"
-    else
+    # 跳过数：ctest 把跳过项列在 "The following tests did not run:" 段里，
+    # 形如 "  2 - t_skip (Skipped)"。逐条数 (Skipped) 行，不靠百分比反推。
+    PROBE_SKIPPED=$(echo "$PROBE_OUT" | grep -cE '^\s*[0-9]+ - .*\(Skipped\)$' || true)
+    : "${PROBE_SKIPPED:=0}"
+    # ⚠ **必须先捞跳过原因，再算总数**：`ctest -N`（下面那次 dry run）会把
+    #   Testing/Temporary/LastTest.log **清空重写成 121 字节**（实测：跑完
+    #   13657 字节 / 14 条原因，`ctest -N` 之后剩 0 条）。顺序反了就永远捞不到
+    #   原因，CI 日志里只剩一句没有解释的「Skipped」。
+    PROBE_SKIP_REASONS=""
+    if [ "$PROBE_SKIPPED" -gt 0 ]; then
+      PROBE_SKIP_REASONS=$(cd "$BUILD_DIR" && grep -h "PROBE_SKIP_NO_DISPLAY" \
+          Testing/Temporary/LastTest.log 2>/dev/null | sed 's/^/  /' | sort -u | head -5)
+    fi
+    PROBE_TOTAL=$(cd "$BUILD_DIR" && ctest -L probe -N 2>/dev/null \
+        | sed -n 's/^Total Tests: *//p' | tr -d ' ')
+    : "${PROBE_TOTAL:=0}"
+    if ! echo "$PROBE_OUT" | grep -q "100% tests passed"; then
       # 失败原因优先透出：probe 的 stderr 才是有用信息，失败清单次之
-      echo "$PROBE_OUT" | grep -E "^\s+[0-9]+ - .*Failed" | head -20
+      echo "$PROBE_OUT" | grep -E "^\s*[0-9]+ - .*Failed" | head -20
       echo "──── probe 失败原因（前 60 行）────"
       echo "$PROBE_OUT" | grep -vE "^\s*([0-9]+/[0-9]+|Test +#|Start +[0-9]+:)|: (Passed|Failed) +[0-9]" | head -60
       echo "❌ UI probe 有失败（上方为失败清单与原因；本地复现: cd $BUILD_DIR && ctest -L probe --output-on-failure）"
       exit 1
+    fi
+    if [ "$PROBE_SKIPPED" -gt 0 ]; then
+      # 跳过的原因只在 -V / LastTest.log 里（--output-on-failure **不**显示跳过
+      # 测试的输出——实测过），所以这里显式把 probe 打印的跳过原因捞出来，
+      # 否则 CI 日志里只有一句「Skipped」而没人知道为什么。
+      echo "⚠️  ${PROBE_SKIPPED}/${PROBE_TOTAL} 个 probe 因无显示环境跳过（ctest 记 Skipped，非失败）"
+      echo "──── 跳过原因 ────"
+      echo "${PROBE_SKIP_REASONS:-  （未能从 LastTest.log 取到原因文本）}"
+      echo "  （在有 GUI 会话的机器上跑同一命令即可真跑: cd $BUILD_DIR && ctest -L probe --output-on-failure）"
+    fi
+    # ⚠ **全部跳过 = 门禁形同虚设，必须报红**：一个「全部跳过」和一个「全绿」在
+    #   后果上等价（都没验到东西），但前者看起来像通过了。所以这里不走 ✅ 分支。
+    if [ "$PROBE_TOTAL" -gt 0 ] && [ "$PROBE_SKIPPED" -ge "$PROBE_TOTAL" ]; then
+      echo "❌ UI probe **全部 ${PROBE_TOTAL} 个被跳过** —— 本次门禁未验证任何 UI 断言"
+      echo "   （不能当通过：全跳过与全绿后果相同，但前者看起来像过了。这条门禁当初"
+      echo "     就是这样失效的——静默跳过。）需要能建窗的机器 / 会话才能验 UI。"
+      exit 1
+    fi
+    if [ "$PROBE_SKIPPED" -gt 0 ]; then
+      echo "✅ UI probe 无失败（其中 ${PROBE_SKIPPED} 个因无显示环境跳过，见上方原因）"
+    else
+      echo "✅ UI probe 全绿"
     fi
   fi
 fi

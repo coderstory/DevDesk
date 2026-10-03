@@ -18,6 +18,13 @@
 //      魔数 \x89PNG 逐字节核 + 手解 IHDR 宽高 + libpng 解码回像素，
 //      断言 **上半屏是 B、下半屏是 A**（翻轴错立刻红）+ 两种颜色都真实出现
 //      （证不是全黑/全空）+ --screenshot 开关真能落盘。
+//   ⑥ 无显示环境判据表（不起窗口，见下）：把「真代码 bug 形状的错误码」逐个
+//      喂给 classifyDisplayCapability，断言它们**不**判成跳过。门禁会不会被
+//      悄悄关掉，全看这一组。
+//
+// 组 ⑥ 为什么在这条 probe 里（而不是单测）：它守的是**门禁自己的判据**。
+// 放在建窗之前 → 即使本机无显示环境、真探针窗那段被跳过，这组照样跑；
+// 判据的验证不能依赖被判据的东西。
 //
 // 产物写 tests 的临时目录（test_support::TempDir，析构整棵删），不污染仓库；
 // ctest 的 --screenshot 变体把图留在构建目录（build/ 已 gitignore）。
@@ -229,6 +236,78 @@ int main(int argc, char* argv[]) {
     // ==================== ④ 零开销：未传 --screenshot 不写任何文件 ============
     // 放在建窗之后跑：传真实的 window/runtime，证明零开销路径「连窗口都不碰」
     // ——只提前 return，不建渲染后端、不渲染、不落盘（既有 probe 行为不变）。
+
+    // ==================== ⑥ 无显示环境判据表（纯 CPU，不起窗口）============
+    // 钉住 probe_harness.h 的 classifyDisplayCapability —— **门禁会不会被关掉
+    // 全看这几行**。判据的核心承诺是：「无显示」与「代码 bug」不会长得一样。
+    // 分类表把**真代码 bug 形状的错误码**逐个喂进去，断言它们**不**判成
+    // NoDisplay；反过来只有「平台/能力不可用」那一族才判 NoDisplay。
+    //
+    // 放在建窗**之前**：这样即使本机/CI 没有显示环境（真探针窗那段要跳过），
+    // 这组断言也照样跑 —— 判据本身的验证不能依赖被判据的东西。
+    {
+        using probe::DisplayCapability;
+        using probe::DisplayVerdict;
+        struct Row {
+            DisplayCapability cap;
+            DisplayVerdict want;
+            const char* what;
+        };
+        const Row rows[] = {
+            // —— 环境类：金丝雀建不出来 +「平台/能力不可用」→ 跳过 ——
+            {{true, false, GLFW_PLATFORM_UNAVAILABLE}, DisplayVerdict::NoDisplay,
+             "⑥ 平台不可用（CI 无 GUI 会话）应判 NoDisplay"},
+            {{true, false, GLFW_PLATFORM_ERROR}, DisplayVerdict::NoDisplay,
+             "⑥ Cocoa 建窗失败应判 NoDisplay"},
+            {{true, false, GLFW_API_UNAVAILABLE}, DisplayVerdict::NoDisplay,
+             "⑥ 客户端 API 不可用应判 NoDisplay"},
+            {{true, false, GLFW_VERSION_UNAVAILABLE}, DisplayVerdict::NoDisplay,
+             "⑥ GL 版本不可用（无 GPU runner）应判 NoDisplay"},
+            {{true, false, GLFW_FORMAT_UNAVAILABLE}, DisplayVerdict::NoDisplay,
+             "⑥ 无满足的 framebuffer 配置应判 NoDisplay"},
+            {{false, false, GLFW_PLATFORM_UNAVAILABLE}, DisplayVerdict::NoDisplay,
+             "⑥ glfwInit 阶段平台不可用应判 NoDisplay"},
+            // —— 代码 bug 类：**绝不**跳过，必须红 ——
+            {{true, false, GLFW_INVALID_VALUE}, DisplayVerdict::RealFailure,
+             "⑥ 参数非法（调用方写错）必须判 RealFailure，不能跳过——"
+             "否则真代码 bug 会被静默放过"},
+            {{true, false, GLFW_INVALID_ENUM}, DisplayVerdict::RealFailure,
+             "⑥ 枚举非法必须判 RealFailure"},
+            {{true, false, GLFW_NOT_INITIALIZED}, DisplayVerdict::RealFailure,
+             "⑥ 未初始化就调用必须判 RealFailure"},
+            {{true, false, GLFW_OUT_OF_MEMORY}, DisplayVerdict::RealFailure,
+             "⑥ 内存不足必须判 RealFailure"},
+            {{true, false, GLFW_NO_ERROR}, DisplayVerdict::RealFailure,
+             "⑥ 建窗失败却无错误码：不能默认当环境问题，必须报红"},
+            {{false, false, GLFW_INVALID_VALUE}, DisplayVerdict::RealFailure,
+             "⑥ glfwInit 因参数非法失败必须判 RealFailure"},
+            {{false, false, GLFW_NO_ERROR}, DisplayVerdict::RealFailure,
+             "⑥ glfwInit 失败却无错误码必须判 RealFailure"},
+            // —— 金丝雀建成：此后任何失败都是代码问题 ——
+            {{true, true, GLFW_NO_ERROR}, DisplayVerdict::Available,
+             "⑥ 金丝雀建成应判 Available（真探针窗失败时必须报红而非跳过）"},
+        };
+        int noDisplayCount = 0;
+        int realFailureCount = 0;
+        for (const Row& row : rows) {
+            const DisplayVerdict got = probe::classifyDisplayCapability(row.cap);
+            if (got == DisplayVerdict::NoDisplay) ++noDisplayCount;
+            if (got == DisplayVerdict::RealFailure) ++realFailureCount;
+            if (!check(got == row.want,
+                       std::string(row.what) + "（实得 " +
+                           probe::displayVerdictName(got) + "）")) {
+                break;
+            }
+        }
+        // 非恒真：两种判定都必须真的出现过，且数量与表一致。
+        check(noDisplayCount == 6,
+              "⑥ 判据把 " + std::to_string(noDisplayCount) +
+                  " 行判成 NoDisplay（应为 6）");
+        check(realFailureCount == 7,
+              "⑥ 判据把 " + std::to_string(realFailureCount) +
+                  " 行判成 RealFailure（应为 7）——若为 0，说明判据成了"
+                  "「建窗失败就跳过」，门禁等于被关掉");
+    }
 
     // ==================== ⑤ 真窗口抓图（live）====================
     if (!probe::initializeWindowBackend()) {
