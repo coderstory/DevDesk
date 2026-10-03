@@ -238,7 +238,7 @@ main → 7 个 Router 页面 (home / markdown / todo / claude_proxy / agent / se
 | 欠账 | 依据 / 位置 |
 |---|---|
 | **CI 复验待确认**：两条红灯根因（Windows 编译失败 / macOS probe 全红）修复已合并进 dev（winwarn 批 `dd5cc1e`、hd 批 `7d6b729`），但**未 push、CI 未重跑**，不得宣称已绿 | 见上「测试与 CI」 |
-| **首页余量卡每帧读 SQLite（锁竞争）**：`compose` 里直接调 `listQuotaHomeRows(*qdb)`，而该函数从首行持 `db.mutex()` 到返回；后台 `QuotaRefresher` 线程正在写同两张表 → UI 每帧取一次全局库锁 | `src/module_home/home_module.cpp:708`、`src/module_claude_proxy/quota/quota_home_view.cpp:98-102` |
+| **首页余量卡每帧读 SQLite（锁竞争）** —— **已修（M4 `75b93c0` / dev merge `179235c`，2026-10-03）**：compose 不再每帧直调 `listQuotaHomeRows(*qdb)` 持 `db.mutex()`，改走 `refreshQuotaRows()` 脏标记缓存——每帧仅一次 `writeVersion()` 无锁 acquire load，版本未变即复用快照（零查询、零锁），仅版本变时查一次。harness 实测 100 次 compose：200 次查询 → 0 次 | `src/module_home/home_module.cpp:710`（compose 调 `refreshQuotaRows`）/ `:1026-1051`（缓存体：`:1033` 读版本、`:1034` 命中早退、`:1040` 脏时才查） |
 | **`-wal` / `-shm` chmod 的极端场景**：空事务失败时不会被 chmod（正常路径由 `Database::open` 先 `BEGIN IMMEDIATE;COMMIT;` 把伴生文件逼出来再一并收紧） | G8 简报「F1 m1 残留」；修它要动 `sqlite_db.h` / 装配顺序 |
 | **火山 Agent Plan 分支无真机样本**：抓到的 AFP 响应是 `PlanType` 空 + 四窗口 `Quota:0`（落回 Coding Plan）。**能产出窗口的那条路径（Quota>0）从未被真实响应验证过** | `tests/test_modules/test_claude_quota_live_fixtures.cpp:203-207`、`src/module_claude_proxy/quota/quota_volcano.cpp:610-690` |
 | **Windows DPAPI 运行时未验证**：`credential_protection_win.cpp` 只有静态审读 + CI 编译门禁，没有在真 Windows 上跑过「加密入库 → 解密读回」 | `src/platform/credential_protection_win.cpp`；`keychain_win.cpp` 同理 |
