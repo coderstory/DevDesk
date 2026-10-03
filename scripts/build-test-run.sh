@@ -193,10 +193,19 @@ echo "── EUI-NEO: $EUI_DIR ──"
 # 判据由 DevDesk 自身源码与 CMakeLists 自动推导（见该脚本文件头），不是手维护清单：
 # 新增一处 EUI-NEO 消费点或 EUI-NEO 加一条 include 路径，本守卫都自动跟上，零同步。
 echo "── EUI-NEO 版本前置校验 ──"
-if ! bash scripts/check-eui-neo-version.sh --root "$PWD" --eui-dir "$EUI_DIR"; then
-  echo "❌ EUI-NEO 版本前置校验失败（详见上方）" >&2
-  echo "   这是**框架版本**问题，不是 DevDesk 代码写错了；先同步 EUI-NEO，别改 DevDesk" >&2
-  exit 1
+# 2026-10-03 起默认跳过（用户裁决）：本守卫对 EUI-NEO 头做**几十个 TU 的编译探测**
+# （-fsyntax-only，当前 50+、随 EUI-NEO 消费点自动增长），每次构建本地 + CI 都要
+# 编译这些翻译单元（Windows CI 上耗时数分钟），日常构建不再执行。需要时（消费了
+# EUI-NEO 新 API / 排查跨仓版本不匹配）设 DEVDESK_EUI_API_CHECK=1 启用。
+# 跳过必须出声（下方 ⏭ 行），不静默。
+if [ "${DEVDESK_EUI_API_CHECK:-0}" = "1" ]; then
+  if ! bash scripts/check-eui-neo-version.sh --root "$PWD" --eui-dir "$EUI_DIR"; then
+    echo "❌ EUI-NEO 版本前置校验失败（详见上方）" >&2
+    echo "   这是**框架版本**问题，不是 DevDesk 代码写错了；先同步 EUI-NEO，别改 DevDesk" >&2
+    exit 1
+  fi
+else
+  echo "⏭ EUI API 校验跳过（DEVDESK_EUI_API_CHECK=1 启用）"
 fi
 
 # ---- 1. 杀旧进程（必须在构建前：运行中的 exe 被 Windows 文件锁住，链接必失败）----
@@ -653,6 +662,8 @@ fi
 # 的噪音盖住它。
 echo "── 守卫自检（验证上面各守卫自己没坏，非你的代码问题）──"
 SELF_TEST_FAIL=0
+# 自检计数随开关动态：链内 6 道 +（DEVDESK_EUI_API_CHECK=1 时）check-eui-neo-version
+_GUARD_SELF_COUNT=6
 for _guard in check-module-isolation \
                check-quota-write-paths \
                check-quota-shutdown-order \
@@ -664,15 +675,20 @@ for _guard in check-module-isolation \
     SELF_TEST_FAIL=1
   fi
 done
-if ! bash scripts/check-eui-neo-version.sh --eui-dir "$EUI_DIR" --self-test; then
-  echo "❌ 守卫自检失败：scripts/check-eui-neo-version.sh --self-test —— 同样是守卫自己坏了" >&2
-  SELF_TEST_FAIL=1
+# check-eui-neo-version 的自检与其真守卫（0b 段）同门：默认跳过（几十个 TU 的编译
+# 探测太贵，2026-10-03 起日常构建不再执行），DEVDESK_EUI_API_CHECK=1 时才自检它。
+if [ "${DEVDESK_EUI_API_CHECK:-0}" = "1" ]; then
+  _GUARD_SELF_COUNT=7
+  if ! bash scripts/check-eui-neo-version.sh --eui-dir "$EUI_DIR" --self-test; then
+    echo "❌ 守卫自检失败：scripts/check-eui-neo-version.sh --self-test —— 同样是守卫自己坏了" >&2
+    SELF_TEST_FAIL=1
+  fi
 fi
 if [ "$SELF_TEST_FAIL" -ne 0 ]; then
   echo "❌ 守卫自检未通过（见上方逐条；修完守卫本身再重跑门禁）" >&2
   exit 1
 fi
-echo "✅ 守卫自检全过（7 道守卫的自检均好树绿 / 坏树红 —— 判据仍有效）"
+echo "✅ 守卫自检全过（${_GUARD_SELF_COUNT} 道守卫的自检均好树绿 / 坏树红 —— 判据仍有效）"
 
 # ---- 3c. 安装到 /Applications（--install，仅 macOS；默认不开则整段不执行）----
 # 顺序即「事故的反面」，每一步都在补一个曾经漏掉的环节：
