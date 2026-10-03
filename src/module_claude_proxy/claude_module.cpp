@@ -23,6 +23,7 @@
 #include "claude_service.h"
 #include "claude_tools.h"
 #include "claude_ui_detail.h"
+#include "claude_ui_ccswitch.h"
 #include "claude_ui_form.h"
 #include "claude_ui_list.h"
 #include "claude_ui_logic.h"
@@ -338,6 +339,9 @@ public:
         // G6：余量查询弹窗（画在全部弹窗之后 = Esc 序链最顶层）
         drawQuotaConfigDialog(ui, screen, t, themeTokens, state_.quota,
                               quotaHooks());
+        // 2026-10-03：从 cc-switch 导入弹窗（画在最上层 = Esc 序链最顶层）
+        drawCcSwitchImportDialog(ui, screen, t, themeTokens,
+                                 state_.ccswitchImport, ccswitchImportHooks());
         harvestQuotaTestResult();   // 后台「测试连接」结果回 UI（每帧轮询）
         harvestTestResult();  // 后台「测试连通」结果回 UI（每帧轮询）
         drawToast(ui, screen, themeTokens);
@@ -445,7 +449,7 @@ public:
             state_.form.formOpen_ || state_.form.deleteConfirmOpen_ ||
             state_.logs.callsDialogOpen_ ||
             state_.shared.open_ || state_.shared.deleteConfirmOpen_ ||
-            state_.quota.open;
+            state_.quota.open || state_.ccswitchImport.open_;
         if (key.key == eui::InputKey::N) {
             if (anyDialogOpen) return false;
             openCreateForm(state_.form, state_.import);
@@ -479,6 +483,8 @@ private:
         }
         // G6：余量弹窗绘制序在最后（见 compose 尾段）→ Esc 序链最顶层
         if (state_.quota.open) { state_.quota.open = false; return true; }
+        // 2026-10-03：cc-switch 导入弹窗画在 quota 之后（最顶层）
+        if (state_.ccswitchImport.open_) { state_.ccswitchImport.open_ = false; return true; }
         if (state_.shared.deleteConfirmOpen_) { state_.shared.deleteConfirmOpen_ = false; return true; }
         if (state_.shared.open_) { state_.shared.open_ = false; return true; }
         if (state_.logs.callsDialogOpen_) { state_.logs.callsDialogOpen_ = false; return true; }
@@ -495,6 +501,10 @@ private:
         a.onNewProfile = [this] { openCreateForm(state_.form, state_.import); };
         a.onImportCurrent = [this] {
             startImportCurrentConfig(state_.form, state_.import, formHooks());
+        };
+        // 2026-10-03：从 cc-switch 导入（只读读库 → 弹窗勾选 → createProfile）
+        a.onImportCcSwitch = [this] {
+            openCcSwitchImportDialog(state_.ccswitchImport);
         };
         // 右键菜单动作（UI 现代化 M1-5）：与 detailActions 既有按钮回调
         // 同源的最小委托（编辑=openEditForm / 复制=doDuplicate /
@@ -530,6 +540,14 @@ private:
         h.toast = toastHook();
         h.markDataDirty = [this] { state_.list.dataDirty_ = true; };
         h.selectProfile = [this](int64_t id) { state_.list.selectedId_ = id; };
+        return h;
+    }
+
+    // 2026-10-03：cc-switch 导入弹窗回调（toast / 标脏刷新列表，同表单口径）
+    CcSwitchImportDialogHooks ccswitchImportHooks() {
+        CcSwitchImportDialogHooks h;
+        h.toast = toastHook();
+        h.markDataDirty = [this] { state_.list.dataDirty_ = true; };
         return h;
     }
 

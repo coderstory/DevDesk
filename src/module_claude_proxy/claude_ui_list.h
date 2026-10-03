@@ -48,6 +48,7 @@ void drawClaudeGuideBar(eui::Ui& ui, float contentW,
 struct ProfileListActions {
     std::function<void()> onNewProfile;      // 「+ 新建 Profile」
     std::function<void()> onImportCurrent;   // 「导入当前配置」
+    std::function<void()> onImportCcSwitch;  // 「从 cc-switch 导入」（2026-10-03）
     // 右键菜单动作（UI 现代化 M1-5）：与既有按钮回调同源的最小委托
     //（claude_module listActions 装配：编辑=openEditForm / 建副本=doDuplicate /
     // 删除=确认弹窗 / 设为当前=doSetActive——不新写业务逻辑）。batch-C C-3 起
