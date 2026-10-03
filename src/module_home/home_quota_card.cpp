@@ -46,7 +46,14 @@ constexpr float kInnerGap = 8.0f;
 constexpr float kNameW = 168.0f;
 constexpr float kProviderW = 112.0f;
 constexpr float kStaleW = 68.0f;
-constexpr float kConfigBtnW = 88.0f;
+// 卡头 [刷新] 与行内 [去配置] 的**统一按钮宽**（2026-10-03 真机点验「两按钮
+// 宽度不一样」）：EUI-NEO button 的 .size 是定宽帧、无 minWidth / 无内容自适
+// 应（button.h:48 的 width_ 直落 frame），等宽只能靠两侧读**同一个**常量——
+// 旧形态是 [刷新] 硬编码 96 + 行内 kConfigBtnW=88 两处字面量，宽窄差 8px
+// （探针组 M 修复前实测 96 vs 88）。取 96 = 含 icon 的 [刷新] 的较大自然宽
+// （icon≈14 + gap 8 + 「刷新」26 + 两侧留白 ≈ 72）；「去配置」三字仅 ~39px，
+// 居中放进 96 无压力。**这是两按钮唯一的宽度来源**，再分开写就是漂移入口。
+constexpr float kQuotaBtnW = 96.0f;
 constexpr float kWinLabelW = 52.0f;
 constexpr float kPctW = 52.0f;
 constexpr float kResetW = 108.0f;
@@ -378,9 +385,9 @@ void drawQuotaCard(eui::Ui& ui, const core::theme::Tokens& t, float contentWidth
             const float cw = contentWidth - kPad * 2.0f;
             // ---- 标题行 + [刷新] ----
             // ⚠ `.gap(kInnerGap)` 必须在（2026-10-03 按钮不贴右修复）：title
-            // 宽按 cw−104 预留（= 按钮 96 + 间距 8），行不挂 gap 时 title 与
-            // 按钮零间距、[刷新] 右缘恒比内容列右缘短 8px（探针组 J(b) 实测
-            // 1136 vs 1144）。
+            // 宽按 cw−(kQuotaBtnW+kInnerGap) 预留（= 按钮 96 + 间距 8），行不
+            // 挂 gap 时 title 与按钮零间距、[刷新] 右缘恒比内容列右缘短 8px
+            // （探针组 J(b) 实测 1136 vs 1144）。
             // ⚠ 卡头行宽必须与滚动内容列**同宽**（2026-10-03「一个前一个后」
             // 修复）：scrollView 在内容溢出时把内容列缩成
             // width−(scrollbar+gap)（EUI-NEO scrollview.h:74-76，默认 metrics
@@ -398,7 +405,7 @@ void drawQuotaCard(eui::Ui& ui, const core::theme::Tokens& t, float contentWidth
             ui.row("home.quota.head").size(headW, kTitleH)
                 .alignItems(eui::Align::CENTER).gap(kInnerGap).content([&] {
                     ui.text("home.quota.title")
-                        .size(headW - 104.0f, 24.0f)
+                        .size(headW - (kQuotaBtnW + kInnerGap), 24.0f)
                         .text("供应商余量")
                         .fontSize(t.sizes.fontSizeLarge - 1.0f)
                         .lineHeight(24.0f)
@@ -414,7 +421,7 @@ void drawQuotaCard(eui::Ui& ui, const core::theme::Tokens& t, float contentWidth
                     // hooks.refreshAll` 是**显式意图**：此处要的是快照。
                     auto refreshAll = hooks.refreshAll;
                     components::button(ui, "home.quota.refresh")
-                        .size(96.0f, 28.0f)
+                        .size(kQuotaBtnW, 28.0f)
                         .text("刷新")
                         .icon(0xF021)   // fa-arrows-rotate
                         .fontSize(t.sizes.fontSizeSmall)
@@ -469,7 +476,7 @@ void drawQuotaCard(eui::Ui& ui, const core::theme::Tokens& t, float contentWidth
                                 const float nameW =
                                     std::min(kNameW, innerW * 0.24f);
                                 const float staleW = showStale ? kStaleW : 0.0f;
-                                const float cfgW = showCfg ? kConfigBtnW : 0.0f;
+                                const float cfgW = showCfg ? kQuotaBtnW : 0.0f;
                                 // gap 插在**每两个相邻子元素之间**，而 head 的子
                                 // 元素恒为 name / provider / [stale] / status /
                                 // [cfg] —— 间隙数 = 子元素数 - 1，**不是**「有几
