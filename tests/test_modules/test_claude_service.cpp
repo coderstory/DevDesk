@@ -3187,9 +3187,9 @@ REGISTER_TEST(claude_service_run_profile_direct_env_writes_temp_settings,
 
     // ③ 落盘文件 = --settings 指向的同一路径；内容 = 合法 settings JSON（env 子对象）
     DOCTEST_REQUIRE(std::filesystem::exists(settingsFile));
-    // ③b 权限 0600（2026-10-03 安全审计 F3）：文件里有**明文 API key**，
-    // core::atomicWriteFile 不设权限 → 默认 umask 022 下落成 0644（同机其他本地
-    // 用户可直读，实测本机现存 run-*.json 就是 -rw-r--r--）→ 写后必须收紧
+    // ③b 权限 0600（安全审计 F3）：文件里有**明文 API key**。
+    // atomicWriteFile 的 prepareRestrictedFile 使 tmp 出生即 0600；写入侧再过一道
+    // restrictToOwnerOnly 做纵深防御，此处断言最终落盘必为 owner-only
     DOCTEST_CHECK(runSettingsFileIsOwnerOnly(settingsFile));
     auto parsed = platform::json::parse(readFileToString(settingsFile));
     DOCTEST_REQUIRE(parsed.isOk());
