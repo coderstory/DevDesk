@@ -1,10 +1,6 @@
-// MarkdownTools 实现：每个工具一个小类，同文件存放。
-//   md.search / md.read / md.list_tags（只读）；md.create（写但可逆）；
-//   md.delete（破坏性，isDestructive）。
-// 出参：结构化数据组对象再 stringify；数组用逐元素 stringify + 拼接 + parse 校验
-//（platform::json 无数组追加 API）。
-// 路径安全由 MarkdownService::resolve() 收口（containment 校验），本文件不绕过
-// service 直碰文件系统（md.create 存在性探测同样走 svc_.read）。
+// MarkdownTools 实现：每个工具一个小类（md.search / md.read / md.list_tags 只读；
+// md.create 写但可逆；md.delete 破坏性）。出参为 JSON 文本；数组用逐元素 stringify
+// + 拼接 + parse 校验。路径安全由 MarkdownService::resolve() 收口，本文件不直碰文件系统。
 #include "markdown_tools.h"
 
 #include "core/logging.h"
@@ -149,10 +145,8 @@ public:
             return toolError("读取笔记失败: " + content.errorMessage());
         }
 
-        // 本工具是唯一回「文件原文」的工具，而 json stringify 放行非法字节、parse 严格
-        // 拒绝 → 非 UTF-8 笔记走到 AgentLoop 自检会 LOG_FATAL + abort（整应用死）。
-        // 故在边界拦下：非法 → toolError 回喂 LLM（回喂乱码有被原样写回毁笔记的风险；
-        // 显式失败可行动，且磁盘原笔记一字不动）。
+        // 本工具是唯一回「文件原文」的工具，非 UTF-8 内容进 stringify→parse 自检
+        // 会 abort；故在边界拦下，toolError 回喂 LLM（磁盘原笔记一字不动）。
         if (!platform::utf8::isValid(content.value())) {
             LOG_WARN("md.read: 笔记不是合法 UTF-8，拒绝回喂（path=" + path + "）");
             return toolError(

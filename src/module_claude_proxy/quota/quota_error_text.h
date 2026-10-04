@@ -1,7 +1,5 @@
 // src/module_claude_proxy/quota/quota_error_text.h
-// QuotaError → 用户可读中文文案（唯一文案源，与用户定的口径，改文案 = 改产品语义）。
-// 拆成独立 TU 的理由：三个消费者（弹窗测试连接 / 首页错误行 / 落库兜底）都只依赖本头，
-//   留在弹窗层会让 store 与 home 反向依赖「弹窗配置」头。
+// QuotaError → 用户可读中文文案（唯一文案源，改文案 = 改产品语义）。
 #pragma once
 
 #include <string>

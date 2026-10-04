@@ -1,13 +1,10 @@
 // src/module_claude_proxy/quota/ccswitch_source.cpp
 // 从 cc-switch 只读读取 Claude 供应商配置（不复制密钥）。
-// 字段语义对齐 cc-switch rev bfaaba16 的 resolve_usage_credentials() Claude 分支
-//   （settings_config.env）与 UsageScript / ProviderMeta；库恒以 SQLITE_OPEN_READONLY 打开。
-// 刻意收紧：base_url 匹配用 host 完全相等 + path 相等（非裸 contains），
-//   故 api.deepseek.com.evil.com 不命中。
-// 主目录靠探测 HOME / USERPROFILE / HOMEDRIVE+HOMEPATH，不写平台宏。
+// base_url 匹配用 host 完全相等 + path 相等（非裸 contains）。
+// 主目录探测 HOME / USERPROFILE / HOMEDRIVE+HOMEPATH，不写平台宏。
 #include "ccswitch_source.h"
 
-#include "ccswitch_sqlite.h"  // 只读读取脚手架（与 ccswitch_import.cpp 共用）
+#include "ccswitch_sqlite.h"
 
 #include <sqlite3.h>
 
@@ -33,10 +30,7 @@ constexpr char kDbFileName[] = "cc-switch.db";
 // 只取 app_type = "claude"：同库的 claude-desktop / codex / gemini 是别的产品。
 constexpr char kClaudeAppType[] = "claude";
 
-// 写锁等待时长见 ccswitch_sqlite.h（kBusyTimeoutMs）。
-
-// 取 key 的顺序有语义（对齐 first_non_empty）：空串要跳过——OpenCode Go 实测
-// key 存在 ANTHROPIC_API_KEY，而 AUTH_TOKEN 被种成空串占位。
+// 取 key 顺序有语义（同 first_non_empty）：空串也要跳过，可能是空串占位。
 constexpr const char* const kApiKeyEnvOrder[] = {
     "ANTHROPIC_AUTH_TOKEN",
     "ANTHROPIC_API_KEY",
@@ -65,7 +59,7 @@ std::string userHomeDir() {
     return {};
 }
 
-// URL → (host, path)：小写化，去 userinfo / 端口 / query / 尾斜杠（与 opencode_go 的 splitUrl 同款）。
+// URL → (host, path)：小写化，去 userinfo / 端口 / query / 尾斜杠。
 struct UrlParts {
     std::string host;
     std::string path;
@@ -95,7 +89,6 @@ UrlParts splitUrl(const std::string& rawUrl) {
     return parts;
 }
 
-// sqlite 骨架来自 ccswitch_sqlite.h（与 ccswitch_import.cpp 共用）。
 using ccswitch_sqlite::columnOrNull;
 using ccswitch_sqlite::columnText;
 using ccswitch_sqlite::DbHandle;

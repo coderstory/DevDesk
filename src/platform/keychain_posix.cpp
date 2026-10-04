@@ -27,15 +27,15 @@ namespace {
     }
 }
 
-// 真实实现（经 keychain.h 的函数指针表转发）
+// 真实实现
 core::Result<void> realStoreSecret(const std::string& service, const std::string& account, const std::string& secret) {
     auto path = getKeyFilePath(service, account);
     std::ofstream f(path, std::ios::binary);
     if (!f) return core::Result<void>::fail(core::ErrorCode::FileWriteFailed, "cannot write key file");
     f << secret;
     f.close();
-    // 写完收紧为 0600：默认 umask 022 下新建文件为 0644，多用户机器上他人可直读明文 API key。
-    // error_code 重载（不抛异常）；chmod 失败则删掉已落盘密钥并按失败返回——宁可保存失败也不留他人可读明文。
+    // 写完收紧为 0600：默认 umask 下新建文件为 0644，多用户机器上他人可直读明文 API key；
+    // chmod 失败则删掉已落盘密钥并按失败返回——宁可保存失败也不留他人可读明文。
     std::error_code ec;
     std::filesystem::permissions(
         path,
@@ -61,8 +61,7 @@ core::Result<std::string> realLoadSecret(const std::string& service, const std::
 
 core::Result<void> realDeleteSecret(const std::string& service, const std::string& account) {
     auto path = getKeyFilePath(service, account);
-    // 原先 ec 被吞、无条件返回 ok，删除失败（权限/只读/IO）调用方无从感知。对齐 keychain_win：
-    // 不存在 → Ok（幂等删除）；真实失败 → Internal 带 error_code 消息。
+    // 不存在 → Ok（幂等删除）；真实失败 → Internal 带 error_code 消息（对齐 keychain_win）。
     std::error_code ec;
     std::filesystem::remove(path, ec);
     if (ec) {

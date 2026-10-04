@@ -1,7 +1,6 @@
 // src/platform/system_theme.h
-// 平台无关接口：系统是否偏好深色（「跟随系统主题」）。本头零平台宏，实现拆 *_win.cpp / *_posix.cpp /
-// *_macos.cpp，CMake 按平台选。依赖方向：本接口连 core 都不需要（纯值返回）；core::theme 不得反向
-// 依赖 platform——「auto→浅/深」的解析在 module 层完成。
+// 平台无关接口：系统是否偏好深色（「跟随系统主题」）。本头零平台宏，实现拆 *_win/_posix/_macos.cpp。
+// core::theme 不得反向依赖 platform——「auto→浅/深」的解析在 module 层完成。
 #pragma once
 
 namespace platform {

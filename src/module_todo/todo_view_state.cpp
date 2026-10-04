@@ -1,8 +1,5 @@
-// src/module_todo/todo_view_state.cpp
-// todo 视图状态的 app_config 表存取（接口见 todo_view_state.h）。不读旧 JSON
-// 文件、不迁移。
-// 整份一行而非按顶层键拆分：本状态只有一个写者，且每次都是「load 整个结构 →
-// 改 → 整个存回」，拆行的「多写者互不覆盖」收益不存在，成本却是多次 UPSERT。
+// todo 视图状态的 app_config 表存取（接口见 todo_view_state.h）。
+// 整份一行存储：单写者、每次整读整写，拆行的多写者收益不存在而成本是多次 UPSERT
 #include "module_todo/todo_view_state.h"
 
 #include <algorithm>
@@ -20,8 +17,7 @@ namespace {
 constexpr const char* kKeyScrolls = "columnScrolls";
 constexpr const char* kKeySelectedTask = "selectedTaskId";
 
-// json 对象键是字符串；手写十进制解析（项目铁律不碰异常，不用 std::stoll）。
-// 列 id 是数据库自增正整数，只接受纯数字键；越界/乱键返回 false
+// json 对象键是字符串；手写十进制解析（项目铁律不碰异常，不用 std::stoll）。只接受纯数字键；越界/乱键返回 false
 bool parseColumnId(const std::string& key, int64_t& out) {
     if (key.empty() || key.size() > 18) return false;
     int64_t v = 0;
@@ -57,8 +53,7 @@ core::Result<TodoViewState> TodoViewStateStore::loadChecked() const {
     }
     auto raw = core::appconfig::get(*db_, kTodoViewStateKey);
     if (raw.isFail()) {
-        // 键不存在 = 首次启动（正常路径，静默用默认）；表不存在 / SQL 失败 =
-        // 真故障，报出来而不是与「没配过」混同
+        // 键不存在 = 首次启动（正常路径，静默用默认）；表不存在 / SQL 失败 = 真故障，须报出而非与「没配过」混同
         if (raw.errorCode() == core::ErrorCode::NotFound) {
             return core::Result<TodoViewState>::ok(st);
         }
@@ -84,9 +79,8 @@ core::Result<TodoViewState> TodoViewStateStore::loadChecked() const {
             if (!parseColumnId(key, id)) continue;
             platform::json::JsonValue v = scrolls.get(key);
             if (v.isNumber()) {
-                // 数字双分支读取：两种落盘形态都要认——整值可能写成 "512"
-                // 走 Int 分支，也可能写成 "512.0" 走 Double 分支。只有
-                // asDouble() 会丢值（走 Int 分支时返回 0），故回退 asInt()。
+                // 数字双分支读取：整值可能写成 "512"（Int 分支）也可能写成 "512.0"（Double 分支）；
+                // 只有 asDouble() 会丢值（Int 分支返回 0），故回退 asInt()
                 const double d = v.asDouble() != 0.0
                                      ? v.asDouble()
                                      : static_cast<double>(v.asInt());
@@ -133,8 +127,7 @@ core::Result<void> TodoViewStateStore::save(const TodoViewState& stRaw) const {
         return core::Result<void>::fail(core::ErrorCode::Internal,
                                         "视图状态序列化失败: " + text.errorMessage());
     }
-    // 一次 UPSERT 即一次提交——与旧的「原子写文件」等价（且顺带拿到事务的
-    // 原子性：要么这行是新值，要么还是旧值，不会出现半截）
+    // 一次 UPSERT 即一次提交，天然原子（要么这行是新值，要么还是旧值，不会出现半截）
     return core::appconfig::set(*db_, kTodoViewStateKey, text.value());
 }
 

@@ -6,7 +6,7 @@
 #pragma once
 
 #include "core/module_interface.h"
-#include "settings_config.h"  // kModuleId*（门控键）
+#include "settings_config.h"
 
 // 7 个模块工厂声明（extern "C"）
 extern "C" ::core::Module* create_home_module();

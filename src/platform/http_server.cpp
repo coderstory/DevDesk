@@ -1,8 +1,7 @@
 // src/platform/http_server.cpp
 // 基于 cpp-httplib 的本地 HTTP 服务器。
-// 线程模型：std::thread 里跑 httplib listen 循环，stop() 时 join；请求由 cpp-httplib 内部线程池处理
-//（每请求一任务）。绑定地址由调用方给定（DevDesk 代理固定 127.0.0.1，仅本机可访问，无鉴权）。
-// 路由：route(method,path,handler) 转发到 svr.Get/Post/...；在 cpp-httplib Handler 里桥接 ctx → writer。
+// 线程模型：std::thread 里跑 httplib listen 循环，stop() 时 join；请求由 cpp-httplib 内部线程池处理。
+// 绑定地址由调用方给定（本地代理固定 127.0.0.1，仅本机可访问，无鉴权）。
 
 #include "http_server.h"
 #include "http_headers.h"
@@ -70,8 +69,8 @@ httplib::Server::Handler toLibHandler(RouteHandler userHandler) {
                     };
                     const bool more = provider(writeChunk, isWritable);
                     if (!more) {
-                        // cpp-httplib 约定：provider 返回 false 会被当作 Canceled（不写终止 chunk，客户端
-                        // 看到截断）。正确做法是 sink.done() 写 "0\r\n\r\n" 正常收尾，再返回 true 让写循环退出。
+                        // provider 返回 false 会被 cpp-httplib 当 Canceled（客户端看到截断）；
+                        // sink.done() 写 "0\r\n\r\n" 正常收尾，再返回 true 让写循环退出。
                         sink.done();
                     }
                     return true;
@@ -136,7 +135,7 @@ Server::Server(std::string bindAddress, int port)
     : bindAddress_(std::move(bindAddress)),
       port_(port),
       impl_(new Impl()) {
-    // 请求体上限（spec §10.4）：所有路由单点收口，超出由 cpp-httplib 回 413
+    // 请求体上限：所有路由单点收口，超出由 cpp-httplib 回 413
     impl_->svr.set_payload_max_length(kMaxBodyBytes);
 }
 

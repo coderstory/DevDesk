@@ -1,4 +1,3 @@
-// src/module_agent/trigger_config.cpp
 // trigger_config 编解码实现（契约见 trigger_config.h）
 #include "module_agent/trigger_config.h"
 

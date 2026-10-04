@@ -6,9 +6,8 @@
 namespace core::window_layout {
 
 FrameInsetsBaseline frameInsetsBaseline() {
-    // 无实测数据：X11 下 windowScaleForPoint 恒返 1.0，与 macOS 走同一条
-    // 「单位即窗口单位」路径，故沿用同形状的保守估计——只算标题栏、不假设左右
-    // 边框（装饰宽通常 0~8，高估方向比低估安全）。将来取证后回填
+    // X11 下 windowScaleForPoint 恒返 1.0，与 macOS 同路径；保守估计只算标题栏、不假设左右边框
+    //（装饰宽通常 0~8，高估方向比低估安全）
     return FrameInsetsBaseline{0.0f, 28.0f};
 }
 

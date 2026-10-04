@@ -1,4 +1,3 @@
-// src/module_agent/tool_info.cpp
 // ToolRegistry 枚举 + schema 解码实现（契约见 tool_info.h）
 #include "module_agent/tool_info.h"
 

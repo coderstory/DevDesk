@@ -1,11 +1,7 @@
 // src/module_claude_proxy/upstream_dialect.h
-// 上游方言（provider dialect）：把不同 Anthropic-compatible 网关的差异
-// ——鉴权头形态 / 必需会话头 / User-Agent 策略 / 模型名标记——集中到一处，
-// 转发代码（proxy_router / streaming_proxy）不再散落 "某个网关才这样" 的 if。
-//
-// 新增一个网关时只改本文件：Kind 加一项、forBaseUrl 加 host 分派、
-// dialectKindToText/dialectKindFromText 加一对文本值、applyHeaders/normalizeBody
-// 加分支，两个转发路径零改动。
+// 上游方言：把不同 Anthropic-compatible 网关的差异——鉴权头形态 / 必需会话头 /
+// UA 策略 / 模型名标记——集中到一处。新增网关只改本文件：Kind 加一项、
+// forBaseUrl 加 host 分派、文本转换加一对值、applyHeaders/normalizeBody 加分支。
 #pragma once
 
 #include <map>
@@ -16,9 +12,8 @@
 
 namespace module::claude {
 
-// 代理对外 User-Agent（所有上游统一使用，不透传客户端 UA）：opencode.ai
-//（Cloudflare）按 UA 指纹拦请求（Python-urllib 实测 403，claude-cli 200）；
-// 客户端是什么工具不影响上游正确性（鉴权是 key），统一用 Claude Code 签名。
+// 代理对外 User-Agent（所有上游统一，不透传客户端 UA）：opencode.ai
+//（Cloudflare）按 UA 指纹拦请求，统一用 Claude Code 签名。
 inline constexpr const char* kProxyUserAgent = "claude-cli/2.1.0 (external, cli)";
 
 struct UpstreamDialect {
@@ -43,11 +38,9 @@ struct UpstreamDialect {
     // 是否剥掉模型名尾部 [1M]（本地 1M 标记，上游通常不认识，带着会被判不可用）
     bool stripModelSuffix() const;
 
-    // 就地把请求头调整成该方言期望的形态：
-    //   - 鉴权：清掉客户端所有大小写变体凭据再按 authField 注入（both → 双发；
-    //     bearer/api_key 单发；空 key 一律不注入）
-    //   - UA 无条件覆盖为 kProxyUserAgent；anthropic-version 缺省补默认值
-    //   - x-opencode-session（仅 OpencodeZen）：没带注入代理实例级 id，已带不覆盖
+    // 就地把请求头调整成该方言期望的形态：清掉客户端所有大小写变体凭据再按
+    // authField 注入（空 key 一律不注入）；UA 无条件覆盖；anthropic-version
+    // 缺省补默认值；x-opencode-session（仅 OpencodeZen）没带才注入。
     void applyHeaders(std::map<std::string, std::string>& headers,
                       const std::string& apiKey, AuthField authField) const;
 
@@ -57,8 +50,7 @@ struct UpstreamDialect {
 };
 
 // ---- 方言覆盖文本 ↔ Kind（Profile::dialectOverride 值域）----
-// 值域：'anthropic_default' / 'opencode_zen'（空串 = 未覆盖；UI 本线不暴露）。
-// 文本 → Kind：空串/未知 → nullopt（调用方回落 host 推断）。
+// 值域：'anthropic_default' / 'opencode_zen'（空串 = 未覆盖）；空串/未知 → nullopt（回落 host 推断）。
 std::optional<UpstreamDialect::Kind> dialectKindFromText(const std::string& text);
 
 // Kind → 规范文本（写侧规范化：库里只存两个规范值之一或空串）

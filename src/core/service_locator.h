@@ -1,9 +1,7 @@
-// src/core/service_locator.h
-// 只读服务定位器：把「消费方 → 提供方」的跨模块接触面收成两步——提供方在模块 onStart 前
-// ServiceLocator::set<T>(provider)，消费方按需 requireService<T>()。边界：本头只依赖 result.h，
-// T 是接口类型；只读（不创建/不持有/不管生命周期，谁注册谁注销）；requireService 缺失返回 fail
-// 而非裸空指针，强制调用方写降级路径。线程模型：注册/注销只在启动装配段与测试体内（单线程），
-// 运行期只读；槽位复位收在 tests/test_main.cpp 的 TIN-07 清单。
+// 只读服务定位器：提供方在模块 onStart 前 set<T>(provider)，消费方按需 requireService<T>()。
+// 边界：T 是接口类型；只读（不创建/不持有/不管生命周期，谁注册谁注销）；缺失返回 fail 而非
+// 裸空指针，强制调用方写降级路径。线程模型：注册/注销只在启动装配段与测试体内（单线程），
+// 运行期只读
 #pragma once
 
 #include "core/result.h"
@@ -20,8 +18,7 @@ struct ServiceSlot {
     static inline T* instance = nullptr;
 };
 
-// 清零回调登记表（类型擦除）：C++ 无反射，要一次清空全部槽位需一份类型清单，
-// 由 set<T>() 首次调用登记（见 ensureSlotResettable），供 resetForTest() 遍历清零
+// 清零回调登记表（类型擦除）：C++ 无反射，由 set<T>() 首次调用登记，供 resetForTest() 遍历清零
 inline std::vector<void (*)()>& slotResetters() {
     static std::vector<void (*)()> resetters;
     return resetters;
@@ -65,9 +62,8 @@ public:
         return Result<T*>::ok(service);
     }
 
-    // 清零全部已用槽位（出厂态 = 全部未注册）。测试 per-case 复位入口（每用例前调用，生产不调）。
-    // 类型无关——含匿名空间的测试本地桩接口，正是逐类型 set<T>(nullptr) 白名单式清零覆盖不到的；
-    // 新增接口类型也不必回来补登记
+    // 清零全部已用槽位（测试 per-case 复位入口，生产不调）。类型无关——覆盖匿名空间的测试本地
+    // 桩接口，新增接口类型也不必回来补登记
     static void resetForTest() {
         for (void (*clear)() : detail::slotResetters()) {
             clear();
@@ -75,8 +71,7 @@ public:
     }
 };
 
-// RAII 注册：构造即注册、析构还原原值（原未注册 → 还原成 nullptr）。不抛异常故析构一定跑，
-// 用例内 fail-fast 提前 return 也不会留下悬垂注册
+// RAII 注册：构造即注册、析构还原原值。不抛异常故析构一定跑，用例 fail-fast 也不留悬垂注册
 template <typename T>
 class ScopedService {
 public:

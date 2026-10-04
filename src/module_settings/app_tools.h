@@ -1,10 +1,8 @@
 // src/module_settings/app_tools.h
 // Settings 模块的智能体工具集：app.read_settings 只读工具，供 module_agent 经
 // core::ToolRegistry 按名调用（模块隔离：只依赖 core/tool.h + 标准库）。
-//
-// 契约：输出是 SettingsConfig 白名单字段集（9 键，清单见 app_tools.cpp），非整份
-// 配置转储，无凭据键；值取自 sanitized 后的 load() 返回值。存储异常（库未就绪 /
-// 表缺失 / 值损坏）→ Result ok + isError + 中文说明；Result::fail 只留给不变量破坏。
+// 契约：输出是 SettingsConfig 白名单字段集（清单见 app_tools.cpp），非整份配置转储，无凭据键；
+// 存储异常 → Result ok + isError + 中文说明；Result::fail 只留给不变量破坏。
 #pragma once
 
 #include <memory>
@@ -15,8 +13,7 @@
 namespace module::settings {
 
 // 工厂：产出 "app.read_settings" 只读工具。db = 应用共享连接（生产传
-// ::core::appDatabase()，测试传临时库）。工具自持 SettingsStore、不摸模块成员
-// ——agent 工作线程调用天然安全，不需要锁。
+// ::core::appDatabase()，测试传临时库）。工具自持 SettingsStore，agent 工作线程调用天然安全。
 std::shared_ptr<core::ITool> makeAppReadSettingsTool(core::data::SqliteDb* db);
 
 } // namespace module::settings

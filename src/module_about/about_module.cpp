@@ -1,7 +1,5 @@
-// src/module_about/about_module.cpp
 // 关于页独立模块：纯 compose 页，只读静态信息 + 构建期注入常量，
-// 无 onStart/onStop/storage，不 include settings_config.h、不依赖任何 module_*。
-// 平台/架构由 CMake 在配置期注入 DEVDESK_PLATFORM / DEVDESK_ARCH，本文件只消费宏。
+// 无 onStart/onStop/storage，不依赖任何 module_*。平台/架构由 CMake 配置期注入宏，本文件只消费。
 #include "core/component_theme.h"
 #include "core/logging.h"
 #include "core/module_interface.h"
@@ -141,8 +139,7 @@ void aboutCard(eui::Ui& ui, const std::string& id, const core::theme::Tokens& t,
         .build();
 }
 
-// 数据卡「打开」按钮（已随数据卡移除，保留备用）；
-// [[maybe_unused]] 防 -Werror=unused-function（GCC 对匿名命名空间未用函数告警）。
+// 备用「打开」按钮；[[maybe_unused]] 防 -Werror=unused-function（GCC 对匿名命名空间未用函数告警）
 [[maybe_unused]] void openDirectoryButton(eui::Ui& ui, const std::string& id,
                          const core::theme::Tokens& t, float x, float y,
                          const std::string& path) {
@@ -167,9 +164,8 @@ void aboutCard(eui::Ui& ui, const std::string& id, const core::theme::Tokens& t,
         .build();
 }
 
-// 动态光晕背景：多个光斑（数量/直径/层数见 about_anim.h 常量）+ 利萨如漂移 +
-// 呼吸 + 聚光扫过带 + 最外圈 shadow 霓虹边；休眠由 awake() 单点开关控制。
-// 驱动由 onFrame 换成 onTimer 30fps（光晕要一直动，但不必每帧重绘）。
+// 动态光晕背景：光斑 + 利萨如漂移 + 呼吸 + 聚光扫过带 + 霓虹边；休眠由 awake() 单点开关控制。
+// 驱动 onTimer 30fps（光晕要一直动，但不必每帧重绘）。
 
 // 主题两色线性插值（theme 运行期可切换，故在 compose 时现算）
 eui::Color mixThemeColor(const eui::Color& a, const eui::Color& b, float t) {
@@ -270,28 +266,23 @@ public:
             }
         }
 
-        // 居中 900px 主内容区（窄窗不滚动）：页面宽 = 窗口宽 − 侧边栏（展开 208），
-        // 按最小窗宽 1330 推得页面宽 1122，居中不溢出。
+        // 居中 900px 主内容区（窄窗不滚动）：按最小窗宽 1330 减侧边栏 208 推得页面宽 1122，居中不溢出
         constexpr float kAboutContentW = 900.0f;
         const float x = std::max(0.0f, (screen.width - kAboutContentW) / 2.0f);
         constexpr float cardGap = 8.0f;
         // 单张卡高 = 上留白 24 + 标题行 28 + 6 行 × 28 + 下留白 24 = 244。
         constexpr float cardH = 24.0f + 28.0f + 6.0f * 28.0f + 24.0f;
-        // hero 间距与标题行高：沿用既有字面量，提为常量仅为把内容块总高写成算式。
+        // hero 间距与标题行高：提为常量仅为把内容块总高写成算式
         constexpr float heroGap = 8.0f;
         constexpr float heroTitleH = 40.0f;
         constexpr float footerH = 20.0f;
 
-        // topPad 现在只作「极矮窗兜底起点」（下方 y 的 max 护栏）；正常窗口下起笔点
-        // 是反推值、恒大于它。顶部留白的解法是把内容块变高（卡高 204→244），而非下移。
-        // 取值用一档 XXLarge(40)，与页面底 padding 同档。
+        // topPad = 极矮窗兜底起点（下方 max 护栏）；正常窗口起笔点是反推值、恒大于它
         const float topPad = t.sizes.spacingXXLarge;
-        // hero 图标 = XXLarge + Large = 56（1.75× 页面标题）：图标是装饰尺寸，不在
-        // 字号规范内；再往上 em 盒内余量更小、有裁切风险，故停在这一档。
+        // hero 图标 = 56（装饰尺寸，不在字号规范内；再大 em 盒余量小、有裁切风险）
         const float heroIcon = t.sizes.spacingXXLarge + t.sizes.spacingLarge;
-        // 内容块整体贴向页脚上方，页脚仍贴页面底。起点反推：
-        //   y = 页脚顶 − 一档间距 − 内容块总高。
-        // max(topPad, …) 护栏：极矮窗装不下时退回顶部对齐（页脚侧另有护栏防重叠）。
+        // 内容块整体贴页脚上方，起点反推 y = 页脚顶 − 一档间距 − 内容块总高；
+        // max(topPad, …) 护栏：极矮窗装不下时退回顶部对齐
         const float contentH = heroIcon + heroGap + heroTitleH +
                                t.sizes.spacingXLarge + cardH + cardGap + cardH;
         const float footerTop = screen.height - t.sizes.spacingXXLarge - footerH;
@@ -314,7 +305,6 @@ public:
             .color(t.colors.textPrimary)
             .horizontalAlign(eui::HorizontalAlign::Center)
             .build();
-        // 原 hero 副标题三行已删（与下方「应用信息」卡重复），改用一档 XLarge 间距。
         y += heroTitleH + t.sizes.spacingXLarge;
 
         // 两卡占满内容区宽、等高 cardH，上下堆叠，起始 y 由 contentH 反推（贴底对齐）。
@@ -344,8 +334,7 @@ public:
         aboutCard(ui, "about.card.deps", t, x, y + cardH + cardGap, cardW, cardH,
                   0xF5FD /* fa-layer-group */, "依赖与框架", depsRows, 6);
 
-        // 页脚贴页面底部（底边留白 = spacingXXLarge，与设置页 pad 同档）；
-        // max() 护栏：极矮窗下 footer 不回退到与卡片重叠。
+        // 页脚贴页面底部；max() 护栏：极矮窗下 footer 不与卡片重叠。
         const float cardsBottom = y + cardH + cardGap + cardH;
         const float footerY = std::max(cardsBottom + cardGap, footerTop);
         ui.text("about.footer")

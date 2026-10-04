@@ -17,8 +17,7 @@ namespace {
 
 // ==================== 头部键大小写不敏感操作 ====================
 // HTTP 头名大小写不敏感，而 headers 是 std::map<std::string,...>（大小写敏感）：
-// 同名不同大小写在 map 里会并存 → 上游收到重复头（流式路径曾踩过：
-// 客户端的小写 authorization 与注入的 Authorization 并存）。一律先清干净。
+// 同名不同大小写会并存 → 上游收到重复头。一律先清干净。
 
 std::string toLowerAscii(std::string s) {
     std::transform(s.begin(), s.end(), s.begin(),
@@ -91,12 +90,9 @@ std::string trimTrailingWs(const std::string& s) {
 }
 
 // ==================== 顶层 JSON 字段定位（只读扫描） ====================
-// 目标：拿到顶层 "model" 值的**原始字节区间**，从而只替换这一小段，
-// 其余字节原样发给上游。不用「解析整个 body 再重新序列化」的理由：
-// platform::json 的序列化按 std::map 输出（键序变字母序）且浮点走 %.17g
-// （0.7 → 0.69999999999999996）——对透明代理来说是无谓的扰动。这里只做
-// 值区间的定点替换，不做全量重写。
-// 通用扫描器在 json_scan.h（CPX-11 与 streaming_proxy 的重复实现合并），
+// 拿到顶层 "model" 值的原始字节区间，只定点替换这一小段，其余字节原样发上游。
+// 不用「解析整个 body 再重新序列化」：platform::json 序列化按 std::map 键序
+// 输出且浮点走 %.17g——对透明代理是无谓扰动。通用扫描器在 json_scan.h，
 // 本文件只保留「值必须是字符串」这一层判定。
 
 // 在顶层对象里找字符串字段 key，回填其值（含引号）的字节区间 [begin, end)；
@@ -121,9 +117,8 @@ UpstreamDialect UpstreamDialect::opencodeZen() {
 
 UpstreamDialect UpstreamDialect::forBaseUrl(const std::string& baseUrl,
                                             const std::string& overrideText) {
-    // 显式覆盖优先（审计 CPX-13）：host 推断对自建网关 / 内网镜像无效
-    //（后缀像 opencode.ai 的镜像被判成 zen，或反过来），profile 可钉住方言。
-    // 未覆盖（空串 / 未知值）→ 原样走 host 推断，行为与从前逐项一致
+    // 显式覆盖优先：host 推断对自建网关 / 内网镜像无效（后缀像 opencode.ai
+    // 的镜像会被误判），profile 可钉住方言；未覆盖 → 走 host 推断
     if (const auto forced = dialectKindFromText(overrideText)) {
         return UpstreamDialect{*forced};
     }
@@ -174,7 +169,7 @@ bool UpstreamDialect::normalizeBody(std::string& body) const {
     return normalizeModelInBody(body);
 }
 
-// ==================== 方言覆盖文本（CPX-13） ====================
+// ==================== 方言覆盖文本 ====================
 
 std::optional<UpstreamDialect::Kind> dialectKindFromText(const std::string& text) {
     if (text == "anthropic_default") {

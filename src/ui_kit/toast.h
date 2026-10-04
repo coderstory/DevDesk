@@ -1,6 +1,6 @@
 // src/ui_kit/toast.h
-// presentation 能力层：跨模块复制的「toast 状态位 + 绘制接线」。toast 需 EUI-NEO 组件，
-// 不放 core；module_* 间不可互相依赖，故归本层（core / platform 不得反向依赖）。
+// presentation 能力层：toast 状态位 + 绘制接线。toast 需 EUI-NEO 组件，不放 core；
+// module_* 间不可互相依赖，故归本层（core / platform 不得反向依赖）。
 #pragma once
 
 #include <components/theme.h>
@@ -19,7 +19,7 @@ struct ToastState {
     std::string body;
     bool isError = false;
 
-    // 等价于各模块原先的 showToast(title, msg, isError) / setStatus(msg, isError)。
+    // 等价于 showToast(title, msg, isError) / setStatus(msg, isError)。
     void show(std::string title, std::string body, bool isError = false) {
         this->title = std::move(title);
         this->body = std::move(body);
@@ -27,11 +27,11 @@ struct ToastState {
         open = true;
     }
 
-    // 等价于原先 onAutoDismiss / onDismiss 回调里的 toastOpen_ = false。
+    // 等价于 onAutoDismiss / onDismiss 回调里的 toastOpen_ = false。
     void dismiss() { open = false; }
 };
 
-// 各站点现状的绘制差异项（迁移不得改动任何站点的时长与图标）；默认值取多数站点取值，
+// 各站点绘制差异项（不得改动任何站点的时长与图标）；默认值取多数站点取值，
 // 少数派在调用点显式覆盖（claude 3.5s/0xF058；md·todo 3.5s/0xF00C；app.notice 4.5s/0xF05A）。
 struct ToastOptions {
     float durationSec = 3.5f;         // 自动消失秒数（0 = 不自动消失）
@@ -40,8 +40,8 @@ struct ToastOptions {
 };
 
 // 绘制单实例 toast：每帧无条件调用，显隐由 state.open 控制；state 取非 const 引用以回写
-// 自动消失 / 关闭回调。节点 id 与拆分前一致（`<id>` / `<id>.bg` / `.icon` / `.title` /
-// `.message` / `.close` / `.timer`），单测按此定位不得改。
+// 自动消失 / 关闭回调。节点 id（`<id>` / `<id>.bg` / `.icon` / `.title` /
+// `.message` / `.close` / `.timer`）单测按此定位不得改。
 // 正文无条件以 state.body 覆盖组件默认值（含空串）——否则 EUI-NEO 的英文占位正文会在
 // 无正文站点（如 todo 的 setStatus）被画出来；空串 → 空文本节点 → 视觉无正文。
 // screen = 所在页面逻辑尺寸（toast 据此贴右下角），Ui 不暴露 screen 故由调用方透传。

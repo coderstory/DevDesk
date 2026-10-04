@@ -1,4 +1,3 @@
-// src/module_agent/agent_loop.h
 // AgentLoop：单次 run 的执行器（消息累积 → LLM → tool_use 执行 → 回喂 → 落库）
 #pragma once
 #include <atomic>
@@ -12,7 +11,7 @@
 
 namespace module::agent {
 
-using core::Result;   // 本仓库统一错误类型
+using core::Result;
 
 struct AgentTask {
     int64_t id = 0;
@@ -23,8 +22,7 @@ struct AgentTask {
     bool allowDestructive = false;
 };
 
-// store 行 → 执行体入参的唯一映射：AgentModule/Scheduler/测试三方共用，避免手抄漂移。
-// 只搬 AgentTask 关心的六项；trigger/enabled 归派发侧判定，不进执行体
+// store 行 → 执行体入参的唯一映射：AgentModule/Scheduler/测试三方共用，避免手抄漂移
 struct AgentTaskRow;
 AgentTask taskFromRow(const AgentTaskRow& row);
 
@@ -32,13 +30,10 @@ class AgentStore;
 
 class AgentLoop {
 public:
-    // 单调时钟缝：返回 steady 毫秒；默认走 defaultNowMs()。用例注入假时钟可
-    // 零等待验证超限判定
+    // 单调时钟缝：返回 steady 毫秒；用例注入假时钟可零等待验证超限判定
     using NowMsFn = std::function<int64_t()>;
-    // **收尾写库失败**的回报缝。run() 恒返回 ok(runId)，收尾失败在返回值里无处
-    // 表达——DB 那行永停 'running'，UI 据此判「还有 run 在跑」→ uiPolling_ 永不复位，
-    // 每帧 refreshData 直到重启（触发窄：磁盘满/DB 错；后果重：CPU + IO + UI 卡死）。
-    // 调用方（AgentModule）用它把该 runId 记为孤儿排除出轮询判停。默认空 = 无人关心
+    // 收尾写库失败的回报缝：run() 恒返回 ok(runId)，DB 行永停 'running' → UI 轮询永不判停，
+    // 调用方（AgentModule）需把该 runId 记为孤儿排除出轮询判停。默认空 = 无人关心
     using FinishFailureFn = std::function<void(int64_t runId, std::string reason)>;
     AgentLoop(core::LlmEndpoint& llm, core::ToolRegistry& tools, AgentStore& store,
               NowMsFn nowMs = {}, FinishFailureFn onFinishFailure = {});

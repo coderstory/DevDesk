@@ -1,11 +1,8 @@
 // src/module_claude_proxy/quota/opencode_go_provider.cpp
-// OpenCode Go 余量 provider。移植 cc-switch coding_plan.rs（bfaaba16）。
-// 上游端点（第一方未文档化，形态改过）：
-//   GET https://opencode.ai/zen/go/v1/usage，Authorization: Bearer <workspace key>
-//   （与推理侧只认 x-api-key 相反，不可互换）；200 → usage.{rolling,weekly,monthly}.percent。
-// 三条坑：① 窗口只按上游 key 名映射（rolling→five_hour 等），绝不按 resetsAt 排序猜周期；
-//   ② percent==0 时 resetsAt 是占位值 → 丢弃重置时间但保留窗口；
-//   ③ 403（key 有效但无 Go 订阅）与 401 分开；三窗口全解析不出 = Shape，不渲染空卡。
+// OpenCode Go 余量 provider（上游端点第一方未文档化）。
+// GET https://opencode.ai/zen/go/v1/usage，Authorization: Bearer <workspace key>（与推理侧只认 x-api-key 相反，不可互换）；
+// 200 → usage.{rolling,weekly,monthly}.percent；窗口只按上游 key 名映射，绝不按 resetsAt 排序猜周期。
+// 坑：percent==0 时 resetsAt 是占位值（丢弃重置时间但保留窗口）；403（key 有效但无 Go 订阅）与 401 分开；三窗口全解析不出 = Shape。
 #include "opencode_go_provider.h"
 
 #include "quota_percent.h"
@@ -25,7 +22,7 @@ namespace module::claude::quota {
 namespace {
 
 constexpr char kUsageUrl[] = "https://opencode.ai/zen/go/v1/usage";
-// cc-switch 用 15s；余量是后台刷新，不该占着连接 30s（Request 默认值）。
+// 余量是后台刷新，取短超时，不占 Request 默认的 30s 连接。
 constexpr long kUsageTimeoutMs = 15000;
 
 // 上游 key → 规范键（数组序 = 展示序）。
@@ -89,8 +86,6 @@ std::vector<QuotaWindow> parseWindows(const platform::json::JsonObject& usage) {
     return windows;
 }
 
-// base_url 探测（加固版）：cc-switch 用裸子串会被 notopencode.ai / evil.com/opencode.ai 命中，
-// 这里改成 host 标签边界 + path 精确两段判定。
 std::string toLower(std::string text) {
     std::transform(text.begin(), text.end(), text.begin(), [](unsigned char c) {
         return static_cast<char>(std::tolower(c));
@@ -146,7 +141,7 @@ public:
     bool matchesBaseUrl(const std::string& baseUrl) const override {
         const UrlParts parts = splitUrl(baseUrl);
         if (!isOpencodeAiHost(parts.host)) return false;
-        // 两档 base：/zen/go 与 /zen/go/v1；Zen 按量版 /zen/v1 没有用量 API（实测 404），不命中。
+        // 两档 base：/zen/go 与 /zen/go/v1；Zen 按量版 /zen/v1 没有用量 API，不命中。
         return parts.path == "/zen/go" || parts.path == "/zen/go/v1";
     }
 
@@ -172,9 +167,8 @@ public:
         const platform::http::Response response =
             sent.valueOr(platform::http::Response{});
 
-        // 传输层失败的第二形态（第一种 Result::fail 已在上面拦下）：ok(Response{statusCode=0,
-        // networkError=true})。不查的话 statusCode 0 会落进下面的 <200 分支，用户看到
-        // 「返回 HTTP 0」这种不存在的状态码，排查方向被指向 HTTP 而真因在网络层。
+        // 传输层失败的第二形态（Result::fail 之外）：ok(Response{statusCode=0, networkError=true})。
+        // 不拦会落进下面 <200 分支，用户看到不存在的「HTTP 0」，排查被指向 HTTP 而真因在网络层。
         if (response.networkError) {
             return failure(QuotaError::Transient,
                            "网络请求失败：" + response.errorMessage);
@@ -202,7 +196,7 @@ public:
         }
         const platform::json::JsonValue usage = parsed.value().asObject().get("usage");
         if (!usage.isObject()) {
-            // 含旧扁平形态（rollingUsage 等）：不作兼容，直接报形态不认识。
+            // 扁平形态（rollingUsage 等）也不兼容，直接报形态不认识。
             return failure(QuotaError::Shape,
                            "余量响应形态不认识（缺少 usage 对象）");
         }
@@ -225,7 +219,7 @@ public:
 }  // namespace
 
 QuotaProvider* createOpenCodeGoProvider() {
-    static OpenCodeGoProvider instance;  // 进程内单例（无状态，只借不还）
+    static OpenCodeGoProvider instance;  // 进程内单例
     return &instance;
 }
 

@@ -5,8 +5,7 @@
 namespace platform::credential {
 
 core::Result<std::string> realProtect(const std::string& plaintext) {
-    // 本平台不做内容级加密，保密性由文件权限保证；若改成明文之外的形态，
-    // 必须同步改 realStoresPlaintext()。
+    // 本平台不做内容级加密；若改成明文之外的形态，必须同步改 realStoresPlaintext()。
     return core::Result<std::string>::ok(plaintext);
 }
 

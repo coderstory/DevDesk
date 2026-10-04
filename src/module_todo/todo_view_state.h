@@ -1,7 +1,5 @@
-// src/module_todo/todo_view_state.h
-// todo 视图状态跨会话持久化，落在中立的 app_config 表（键 todo_view_state），
-// 不进任何其他模块（module_* 互不依赖）。
-// 滚动按列 id 记忆（旧实现按列索引，重排/删列后串列）。
+// todo 视图状态跨会话持久化，落在中立的 app_config 表（键 todo_view_state），不进任何其他模块。
+// 滚动按列 id 记忆（重排/删列不串列）。
 #pragma once
 
 #include <cstdint>
@@ -23,9 +21,7 @@ struct TodoViewState {
 };
 
 // todo 视图状态读写（不抛异常；键缺失 / 值损坏一律回退默认值）。
-// db：应用共享连接（生产传 ::core::appDatabase()，测试传临时库句柄）。允许为
-// nullptr，但那不是「没配置」而是「数据库没就绪」：save() 返回 fail Result，
-// load() 回退默认值并打 LOG_ERROR。
+// db 允许为 nullptr，但那不是「没配置」而是「数据库没就绪」：save() 返回 fail Result，load() 回退默认并 LOG_ERROR
 class TodoViewStateStore {
 public:
     explicit TodoViewStateStore(core::data::SqliteDb* db);

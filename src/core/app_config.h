@@ -1,8 +1,6 @@
-// src/core/app_config.h
-// 通用「键 → JSON 值」配置存储：单张 app_config 表（不按配置文件各建表——多表 = 多个真相源）。
-// core 这层只做 TEXT 键值存取，不知任何配置结构、不碰 yyjson（YYJSON 住在 platform）；
-// 各配置怎么编码成字符串由各自模块用 platform::json 做。落盘形态不再有 JSON 文件。
-// 并发：不直接调 sqlite3_*，一律经 SqliteDb prepare/Statement 与 transaction；setMany 整批一个事务。
+// 通用「键 → JSON 值」配置存储：单张 app_config 表（多表 = 多个真相源）。core 层只做 TEXT 键值
+// 存取，不知配置结构、不碰 yyjson（编码由各配置模块经 platform::json 做）。并发：不直接调
+// sqlite3_*，一律经 SqliteDb prepare/Statement 与 transaction；setMany 整批一个事务
 #pragma once
 
 #include <cstdint>
@@ -15,8 +13,8 @@
 
 namespace core::appconfig {
 
-// app_config 表一行（key TEXT PK / value TEXT NOT NULL / updated_at INTEGER）。value 恒为能存住任意
-// 字节的 TEXT：中文、空串、`{}`/`[]`、换行、超长串都按原样进出
+// app_config 表一行（key TEXT PK / value TEXT NOT NULL / updated_at INTEGER）；value 恒为 TEXT，
+// 中文/空串/`{}`/换行/超长串都按原样进出
 struct Entry {
     std::string key;
     std::string value;
@@ -44,8 +42,8 @@ Result<void> erase(core::data::SqliteDb& db, const std::string& key);
 Result<std::vector<Entry>> listWithPrefix(core::data::SqliteDb& db,
                                           const std::string& prefix);
 
-// 删掉 prefix 之下、不在 keep 集合里的全部键——把「整份覆盖」语义搬进 SQLite：按行存后
-// 不再写出的键必须显式清掉，否则废弃键永久留在库里。keep 内的键原样保留
+// 删掉 prefix 之下、不在 keep 集合里的全部键：整份覆盖语义要求不再写出的键显式清掉，
+// 否则废弃键永久留在库里。keep 内的键原样保留
 Result<void> eraseWithPrefixExcept(core::data::SqliteDb& db,
                                    const std::string& prefix,
                                    const std::vector<std::string>& keep);

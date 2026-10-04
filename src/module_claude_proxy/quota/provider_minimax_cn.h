@@ -1,6 +1,5 @@
 // src/module_claude_proxy/quota/provider_minimax_cn.h
-// MiniMax 中国站余量 provider，移植 cc-switch coding_plan.rs。
-// 旧域端点 api.minimaxi.com + Bearer；base_resp 业务错误（HTTP 200 也可能是失败）；
+// MiniMax 中国站余量 provider。端点 api.minimaxi.com + Bearer；base_resp 业务错误（HTTP 200 也可能是失败）；
 // general 桶、剩余百分比反转、周桶 status 门控。
 #pragma once
 

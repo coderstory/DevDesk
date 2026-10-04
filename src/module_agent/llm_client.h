@@ -1,4 +1,3 @@
-// src/module_agent/llm_client.h
 // LlmEndpoint 生产实现：经本地代理 HTTP 端口发 /v1/messages。链路 = 预检代理 →
 // 解析槽位 → 组请求体 → 发送 → 状态码检查 → 解析响应。HTTP 发送经 HttpFn 可注入
 #pragma once
@@ -21,8 +20,7 @@ public:
         const platform::http::Request&)>;
     explicit LlmClient(core::IClaudeProxyService& proxy, HttpFn http = nullptr);
 
-    // model 形参语义 = 槽位键名（AgentLoop 原样传 task.modelSlot）；本函数内
-    // resolveModelSlot 取实际 model id 再进请求体
+    // model 形参语义 = 槽位键名（AgentLoop 原样传 task.modelSlot），本函数内 resolveModelSlot 取实际 id
     core::Result<core::LlmResponse> send(
         const std::vector<core::LlmMessage>& messages,
         const std::string& toolsJson,

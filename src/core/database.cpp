@@ -50,8 +50,7 @@ core::Result<int64_t> pruneCallLogs(core::data::SqliteDb& db, int retentionDays)
     const int64_t cutoff = static_cast<int64_t>(std::time(nullptr)) -
                            static_cast<int64_t>(retentionDays) * 86400;
 
-    // 持锁覆盖 step + sqlite3_changes，避免并发语句插队导致计数失真
-    //（recursive_mutex，Statement 内部加锁可重入）
+    // 持锁覆盖 step + sqlite3_changes（recursive_mutex 内部可重入），避免并发语句插队导致计数失真
     std::lock_guard<std::recursive_mutex> lock(db.mutex());
 
     auto prep = db.prepare(

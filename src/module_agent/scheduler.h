@@ -1,10 +1,6 @@
-// src/module_agent/scheduler.h
-// Scheduler：agent 任务的触发侧。定时（cron）触发 + 常驻 worker 队列；自己的 run
-// 线程表 + 分钟防重表。「同 task 不并发」的闸不在本类——单闸在 AgentLoop::run，
-// 本类只做「起线程 + 等收尾」的薄 spawn。
-// 契约：① 成员声明顺序——Scheduler 必须声明在 loop_/llm_/store_ 之后（逆序析构下
-// Scheduler 先亡，其 run 线程 join 期间依赖的 loop/store 仍存活）；② stopAll 可重复
-// （每次收干当前 runs_），但不支持并发调用（单线程收尾口径）。
+// Scheduler：agent 任务的触发侧。定时（cron）触发 + 常驻 worker 队列；「同 task 不并发」的闸
+// 在 AgentLoop::run，本类只做「起线程 + 等收尾」的薄 spawn。契约：① 成员声明顺序——Scheduler
+// 必须声明在 loop_/llm_/store_ 之后（逆序析构下先亡）；② stopAll 可重复但不支持并发调用。
 #pragma once
 #include <atomic>
 #include <condition_variable>
@@ -34,11 +30,9 @@ public:
     // 每次扫 enabled 且 schedule 的任务：cron 匹配 + 同分钟防重 → 派发。公开供测试直调
     core::Result<void> tickNow();
     size_t activeRunCount();            // 测试观察面：runs_ 容器条目数（含已收尾未 reap 的）
-    // 常驻 worker 手动入队。pop 即 spawn、不等上一跑结束；同 task 连发两单由
-    // AgentLoop 单闸拒绝。停止后不再入队（避免幽灵单）
+    // 常驻 worker 手动入队。pop 即 spawn、不等上一跑结束；同 task 连发两单由 AgentLoop 单闸拒绝
     void enqueueResident(int64_t taskId);
-    // 测试观察面：常驻待跑队列长度。停止后入队必须不落地，否则留幽灵单——
-    // 这条不变式只能由队列长度断言钉住
+    // 测试观察面：常驻待跑队列长度——「停止后入队不落地」不变式只能由队列长度断言钉住
     size_t residentQueueSize();
 
 private:

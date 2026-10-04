@@ -1,9 +1,7 @@
 // src/module_claude_proxy/quota/quota_error_text.cpp
-// 文案表实现（从 quota_dialog_config.cpp 逐字搬迁，零改动）。
-// 形态：下标表 + 编译期对表，不是 switch。两道防线缺一不可：
-//   ① 下标越界 → 运行时兜底 kUnknownHeadline（不返回空串）；
+// 文案表实现。
+// 形态：下标表 + 编译期对表，不是 switch。两道防线：① 下标越界 → 运行时兜底 kUnknownHeadline（不返回空串）；
 //   ② static_assert(表长 == QuotaError::Count) → 加枚举忘配文案时编译期红。
-// ① 保证「不空」，② 保证「不漏」。
 #include "quota_error_text.h"
 
 #include <cstddef>
@@ -16,12 +14,12 @@ namespace {
 
 // QuotaError → 一句话中文。下标 == static_cast<int>(QuotaError)。文案是与用户定的口径，改文案 = 改产品语义。
 constexpr const char* kQuotaErrorHeadline[] = {
-    /* None          */ "",
-    /* Auth          */ "密钥无效，请换一把 API Key",
-    /* Entitlement   */ "套餐过期或无权限，换密钥没用，得续费或换账号",
-    /* Shape         */ "上游响应结构不认识（供应商可能改了接口）",
-    /* Transient     */ "网络失败，稍后重试",
-    /* NotConfigured */ "配置不完整，请去补全",
+    "",
+    "密钥无效，请换一把 API Key",
+    "套餐过期或无权限，换密钥没用，得续费或换账号",
+    "上游响应结构不认识（供应商可能改了接口）",
+    "网络失败，稍后重试",
+    "配置不完整，请去补全",
 };
 
 // 编译期守卫：枚举个数 == 文案表条目数。基准取枚举内哨兵 QuotaError::Count（手写常量会与枚举一起漂移 → 假守卫，哨兵改不了）。

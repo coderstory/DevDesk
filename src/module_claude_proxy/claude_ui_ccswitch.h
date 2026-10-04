@@ -1,21 +1,7 @@
 // src/module_claude_proxy/claude_ui_ccswitch.h
-// 从 cc-switch 导入 Profile 弹窗的**绘制层 + 导入编排**（2026-10-03）
-//
-// 分层依据同 claude_ui_quota / claude_ui_logs：compose 每帧调一次、纯绘制 +
-// 回调写状态，不做业务判断的「绘制」部分在这里；导入编排（读库 → 映射 →
-// createProfile → 结果报告）也在本文件，因为它要持有 ClaudeService 句柄与
-// 现有 profile 名单 —— 这两样都从模块 compose 装配进来，自由函数捕获 this
-// 的禁令不适用（见 R4 纪律：状态显式入参、回调显式绑）。
-//
-// 入口三件（模块 compose 装配时调用）：
-//   openCcSwitchImportDialog —— 用户点「从 cc-switch 导入」按钮：读库 + 映射 +
-//                               全选，弹窗 open=true。读库失败也开弹窗
-//                               （画错误态，不让用户对着无反应的按钮发愣）。
-//   confirmCcSwitchImport    —— 用户点「导入选中」：逐条 createProfile（含
-//                               凭据加密）+ 同名跳过报告 + 失败收集；写完
-//                               落结果汇总（resultLines_），标脏刷新列表。
-//   drawCcSwitchImportDialog —— 每帧绘制弹窗（DialogFrame 范式，与既有 13
-//                               处同款）。
+// 从 cc-switch 导入 Profile 弹窗：绘制层（compose 每帧、纯绘制 + 回调写状态）+ 导入编排。
+// 入口：openCcSwitchImportDialog（读库 + 映射 + 全选；读库失败也开弹窗画错误态）；
+// confirmCcSwitchImport（逐条 createProfile + 报告 + 标脏）；drawCcSwitchImportDialog（每帧绘制）。
 #pragma once
 
 #include "claude_ui_state.h"
@@ -42,21 +28,14 @@ struct CcSwitchImportDialogHooks {
 // 打开弹窗：读库 + 映射 + 全选。读库失败也开弹窗（画错误态）。
 void openCcSwitchImportDialog(CcSwitchImportDialogState& st);
 
-// 跑导入：逐条 createProfile（含凭据加密）+ 同名跳过报告 + 失败收集。
-// existingProfiles 用来做同名冲突判定（映射层 existingNames 入参）。
-// 跑完写 st.resultLines_ 与三个计数；markDataDirty **无条件**调用（只要
-// hook 在——0 成功也刷新列表，与表单保存同款）。toast 只有 isError 两态、
-// **没有黄色档**：有失败 → isError=true（「导入完成（有失败）」）；无失败
-//（含部分跳过）→ isError=false（「导入完成」/「导入成功」），跳过数进正文。
+// 跑导入：逐条 createProfile（含凭据加密）+ 同名跳过报告 + 失败收集；跑完写
+// st.resultLines_ 与三个计数并标脏。toast 无黄色档：有失败 → isError=true。
 void confirmCcSwitchImport(CcSwitchImportDialogState& st,
                            const std::vector<Profile>& existingProfiles,
                            const CcSwitchImportDialogHooks& hooks);
 
-// 弹窗绘制（DialogFrame 范式）。复选框**手绘**（rect 框 + 选中时 primary
-// 底 + fa-check 字标），不引 components::checkbox——其头文件在 -Werror 下
-// 有 unused-variable 告警（EUI-NEO 既有问题，agent_module 同款规避）；全选/
-// 取消全选用 button 文本按钮，行点击区 = 整行 hit rect。列表条目 = name +
-// base_url + model（**密钥一律不显示**）。
+// 弹窗绘制（DialogFrame 范式）。复选框手绘（不引 components::checkbox：其头文件
+// 在 -Werror 下有 unused-variable 告警）；列表条目 = name + base_url + model，密钥一律不显示。
 void drawCcSwitchImportDialog(eui::Ui& ui, const eui::Screen& screen,
                               const core::theme::Tokens& t,
                               const components::theme::ThemeColorTokens& themeTokens,

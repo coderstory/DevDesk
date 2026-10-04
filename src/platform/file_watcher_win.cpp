@@ -1,13 +1,9 @@
 // src/platform/file_watcher_win.cpp
-// Windows：ReadDirectoryChangesW + OVERLAPPED + 专用后台线程。
-// 线程模型：start() 在调用线程开目录句柄（失败即刻返回，无线程残留）；worker 常驻循环（未决读 →
-// WaitForMultipleObjects(事件|停止) → 解析 → 去抖 → 回调）；stop() 置 running=false + SetEvent，
-// worker 自行 CancelIoEx 作废未决读并退出。句柄关闭责任归 worker 退出路径（回调线程内 stop 不 join、
-// 不关句柄），不存在「句柄已关、worker 仍在用」的失效 HANDLE。
-// 去抖：pending 空时无限期等待（零空转）；收到事件后解析、立刻重发读请求（捕获无间隙），再按
-// debounceMs 静默窗口等待，窗口内来事件则重置，到点整批交付。
-// 坑：①启动武装窗口——start() 开句柄与 worker 首读之间发生的改动不上报也不补发（平台语义），需
-// 零丢失者应确认已产生过事件或依赖上层轮询；②读请求「完成→重发」间有微秒级空窗，同靠轮询兜底。
+// Windows：ReadDirectoryChangesW + OVERLAPPED + 专用后台线程。start() 在调用线程开目录句柄，
+// worker 常驻循环（未决读 → WaitForMultipleObjects → 解析 → 去抖 → 回调）；stop() 置 running=false +
+// SetEvent，worker 自行 CancelIoEx 作废未决读并退出，句柄关闭责任归 worker 退出路径。
+// 坑：①start() 开句柄与 worker 首读之间的武装窗口内改动不上报也不补发（平台语义）；
+// ②读请求「完成→重发」间有微秒级空窗，同靠上层轮询兜底；③去抖：pending 空时无限期等待，窗口内来事件则重置。
 #include "platform/file_watcher.h"
 
 #include "core/logging.h"
@@ -125,8 +121,7 @@ struct FileWatcher::Impl {
         if (HANDLE e = stopEvent.exchange(nullptr)) CloseHandle(e);
     }
 
-    // worker 退出路径：先把仍指向自己副本的 Impl 字段置空再关副本（判空幂等）；字段可能
-    // 已被 start() 换成新句柄——只在相等时清，不动新句柄。
+    // worker 退出路径：先清 Impl 字段再关副本（判空幂等）；字段可能已被 start() 换成新句柄——只在相等时清。
     void releaseOwnHandles(HANDLE dh, HANDLE se) {
         if (dirHandle.load() == dh) dirHandle.store(nullptr);
         if (stopEvent.load() == se) stopEvent.store(nullptr);
@@ -139,7 +134,7 @@ struct FileWatcher::Impl {
         if (HANDLE e = stopEvent.load()) SetEvent(e);
         if (worker.joinable()) {
             // 回调线程内自 stop：只请求停止——不 detach（worker 仍在 Impl 成员里跑，析构即 UAF）、
-            // 不 join、不关句柄（worker 自己会退出并收句柄）。join 由之后非回调线程的 stop()/析构完成。
+            // 不 join、不关句柄（worker 自己会退出并收句柄）。
             if (worker.get_id() == std::this_thread::get_id()) return;
             worker.join();
         }

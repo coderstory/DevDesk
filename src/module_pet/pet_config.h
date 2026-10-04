@@ -1,8 +1,5 @@
-// src/module_pet/pet_config.h
-// 桌宠自身持久化配置：整份存 SQLite app_config 表的一行（键 pet_config）。
-// 原 pet_config.json 已退役（不读、不写、不迁移）。
-// 整份存一行而非按顶层键拆行：本配置只有一个写者，每次都是「读整结构→改字段→写回」，
-// 拆行的多写者收益在此不存在。
+// 桌宠自身持久化配置：整份存 SQLite app_config 表的一行（键 pet_config），不读文件。
+// 整份存一行而非按顶层键拆行：只有一个写者，每次都是「读整结构→改字段→写回」。
 #pragma once
 
 #include <cmath>
@@ -57,8 +54,7 @@ struct PetConfig {
     int y = -1;                               //  单边独立：只重置未设置的那一边）
     double scale = 1.0;                       // 显示大小档（kPetScalePresets 之一；
                                               //  默认中档 1.0×；sanitized 收敛非法值）
-    // 【历史】挂机穿透（clickThrough）已移除（穿透后右键也点不中，
-    // 用户易被困住）；字段不再读写，旧配置残留键被 load 静默忽略，save 时消失。
+    // clickThrough 已不支持，勿加回：穿透后右键也点不中，用户易被困住。
 };
 
 // 默认 app_config 键名（供测试与工具层拼键名）。

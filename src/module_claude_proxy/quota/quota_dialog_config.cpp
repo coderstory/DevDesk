@@ -261,8 +261,7 @@ core::Result<QuotaConfigRow> buildQuotaConfigRow(const QuotaDialogState& st,
     row.extraJson = encExtra.value();
     row.secretsJson = encSecrets.value();   // 明文；protect 由 QuotaStore::saveConfig 做
 
-    // 不变量 2（代码保证）：引用非空 → extra / secrets 一律丢弃。放在编码之后而非早返回是刻意的——
-    // 早返回版本里 clear() 是死代码（此刻本就空），删掉它全量用例照绿；这里 clear 作用在真可能被填过的值上，删掉即红。
+    // 不变量 2：引用非空 → extra / secrets 一律丢弃（在编码后清空，作用在真可能被填过的值上）。
     if (hasCcSwitchRef) {
         row.extraJson.clear();
         row.secretsJson.clear();

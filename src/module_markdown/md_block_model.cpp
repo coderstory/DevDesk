@@ -1,8 +1,6 @@
-// src/module_markdown/md_block_model.cpp
 // 块级切分器 + 增量对齐（设计说明见 md_block_model.h 头注释）。
-// 「宁可多并，不可错切」：错切破坏逐块渲染与整篇渲染的等价性，多并永远安全。切点白名单 =
-//   md4c 必然开新块处（列 0 围栏、空行后、ATX 标题、列 < 内容缩进的列表标记、"> " 引用、
-//   空行后分隔线/表格）；歧义位置（setext、段落内表格、lazy 延续、列表内容缩进内）全并入。
+// 切点白名单 = md4c 必然开新块处；歧义位置（setext、lazy 延续、列表内容缩进内等）
+// 一律并入——错切破坏逐块渲染与整篇渲染的等价性，多并永远安全。
 // 围栏配对复用 scanFences（与大纲/编辑器高亮同一状态机）。
 #include "md_block_model.h"
 
@@ -136,7 +134,7 @@ size_t lineStartAfter(const std::string& text, size_t le, size_t n) {
 }
 
 // 链接引用定义行：^ {0,3}\[label\]:\s。refdef 是 md4c 的全文档上下文——含 refdef 的文档
-// 整篇退化为单块（增量收益归零但渲染正确）；宁可漏增量不可错切。
+// 整篇退化为单块。
 bool isRefdefLine(std::string_view body) {
     const size_t indent = leadingSpaces(body);
     if (indent > 3 || indent >= body.size() || body[indent] != '[') return false;
@@ -201,7 +199,7 @@ std::vector<MdBlock> segmentMarkdownBlocks(const std::string& text) {
     const size_t n = text.size();
     if (n == 0) return out;
 
-    // 围栏状态机与大纲/编辑器高亮同源（一鱼三吃第三吃）
+    // 围栏状态机与大纲/编辑器高亮同源
     const std::vector<MdFenceBlock> fences = scanFences(text);
 
     // refdef 检测（围栏外）：命中 → 全文档单块退化（见 isRefdefLine 注释）
@@ -452,8 +450,8 @@ MdBlockUpdate MdBlockModel::update(const std::string& text) {
         r.dirtyFirst = p;
         r.dirtyLast = k - 1 - s;
     }
-    // 增量口径：切块本身恒为 O(n) 行扫描（万行 ms 级）；「编辑只重算受影响块」的收益在解析/
-    // 布局层——脏区间外块命中上游缓存不重析。连切块也 O(dirty) 的重扫留待实测超预算再做。
+    // 增量口径：切块恒为 O(n) 行扫描；「编辑只重算受影响块」的收益在解析/布局层
+    //——脏区间外块命中上游缓存不重析。
     r.incremental = false;
 
     blocks_ = std::move(next);

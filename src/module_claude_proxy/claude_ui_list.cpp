@@ -22,9 +22,7 @@ namespace module::claude {
 
 namespace {
 
-// 共享配置区块几何：区块**钉面板底**（锚点 = 底部按钮行上沿 − 间距），自然高
-// 恒定（固定部分 + 2 行条目），增删片段 / 出错时左列列表视口不重排；条目装
-// 不下时在块内滚，「+ 新建片段」为固定尾部恒可见可点。列表视口吃剩余高。
+// 共享配置区块：钉面板底、自然高恒定，左列列表视口不随增删片段重排
 constexpr float kSharedHeaderBottom = 30.0f;   // 标题行 + 下边距
 constexpr float kSharedCardH = 56.0f;
 constexpr float kSharedCardGap = 8.0f;
@@ -54,16 +52,14 @@ float sharedBlockMaxH(float bodyH) {
                               kSharedListMinH - kSharedBottomGap);
 }
 
-// 条目区恒 2 行高（用户要求最多显示 2 条、超出滚动），不随条目数涨
+// 条目区恒 2 行高、超出滚动，不随条目数涨
 constexpr size_t kSharedVisibleCards = 2;
 
-// 条目区高按整行取口而非「2 卡 + 1 间距」(120)：行容器自带行尾距，恰 2 条时
-// 内容高 128 == 视口 → 不出滚动条；取 120 会让恰 2 条也出一条 8px 空滚动条
+// 条目区高按整行取口：取「2 卡 + 1 间距」会因行容器行尾距在恰 2 条时多出 8px 空滚动条
 constexpr float kSharedCardsH = static_cast<float>(kSharedVisibleCards) *
                                 (kSharedCardH + kSharedCardGap);
 
-// 区块自然高恒定：空 / 错态也按同一框架画（提示行画在框架顶部、其余留白），
-// 不收缩到实际条数——区块恒高，左列列表视口增删片段 / 出错恢复不重排
+// 区块自然高恒定：空 / 错态也按同一框架画，不收缩到实际条数，保证左列列表视口不重排
 float sharedBlockNaturalH() {
     return kSharedFixedH + kSharedCardsH;
 }
@@ -73,9 +69,7 @@ float sharedBlockH(float bodyH) {
     return std::min(sharedBlockNaturalH(), sharedBlockMaxH(bodyH));
 }
 
-// 头像圆圈随机色：compose 每帧都跑，真随机会闪烁 → 按 profile id 稳定派生
-//（FNV-1a 哈希取色板下标，同一 profile 永远同色）。色板为 9 个低饱和暖色
-//（与主题主色同族），深浅主题各派生 fill/ring 两档（eui::mixColor）
+// 头像圆圈色按 profile id 稳定派生（FNV-1a 取色板下标）：compose 每帧跑真随机会闪烁。色板 9 个低饱和暖色。
 constexpr size_t kAvatarPaletteSize = 9;
 const eui::Color kAvatarPalette[kAvatarPaletteSize] = {
     eui::Color("#D97757"),  // clay（与主题主色同族）
@@ -113,8 +107,7 @@ AvatarColors avatarColorsFor(const eui::Color& base, bool isDark) {
             eui::mixColor(base, eui::Color(0.0f, 0.0f, 0.0f), 0.25f)};
 }
 
-// 取名字首 UTF-8 码点：旧 std::string(1, name[0]) 只取首字节，CJK 首字符是
-// 3 字节序列，截出单字节渲染成 ?；非法 / 截断序列回退 ?
+// 取名字首 UTF-8 码点（单取首字节会把 CJK 截成 ?）；非法 / 截断序列回退 ?
 std::string firstUtf8CharOr(const std::string& name) {
     if (name.empty()) return "?";
     const auto b0 = static_cast<unsigned char>(name[0]);
@@ -139,8 +132,7 @@ std::string firstUtf8CharOr(const std::string& name) {
     return name.substr(0, len);
 }
 
-// Profile 卡片（点击选中，选中/激活高亮）。
-// st 为引用：点击回调写回选中态（须指向存活到下一帧的对象 = 模块状态成员）
+// Profile 卡片（点击选中，选中/激活高亮）。st 为引用：点击回调写回选中态，须指向存活到下一帧的模块状态成员
 void drawProfileCard(eui::Ui& ui,
                      const std::string& id,
                      float y,
@@ -155,7 +147,6 @@ void drawProfileCard(eui::Ui& ui,
     const float borderW = p.isActive ? 2.0f : 1.0f;
     const eui::Color bg = p.isActive ? t.colors.primarySoftBg : t.colors.surface;
 
-    // 卡片背景（可点击 → 选中后详情面板跟随）
     ui.rect(id + ".bg")
         .position(0.0f, y)
         .size(width, h)
@@ -168,8 +159,7 @@ void drawProfileCard(eui::Ui& ui,
         .onClick([sp = &st, pid = p.id] { sp->selectedId_ = pid; })
         .build();
 
-    // 头像：按 profile id 稳定派生的圆 + 1.5px 同色系包边（旧 1px 中性边
-    // 用户看不见）；垂直居中由 (h - 头像径) 推导，行高变了也居中
+    // 头像：按 profile id 稳定派生的圆 + 1.5px 同色系包边；垂直居中由 (h - 头像径) 推导
     const float avatarSize = 40.0f;
     const float avatarY = y + (h - avatarSize) * 0.5f;
     const AvatarColors avatar = avatarColorsFor(
@@ -183,7 +173,7 @@ void drawProfileCard(eui::Ui& ui,
         .radius(avatarSize * 0.5f)
         .border(1.5f, avatar.ring)
         .build();
-    // 头像首字按 UTF-8 码点取（旧取首字节使 CJK 名渲染成 ?），颜色随包边
+    // 头像首字按 UTF-8 码点取，颜色随包边
     const std::string initial = firstUtf8CharOr(p.name);
     ui.text(id + ".avatar.text")
         .position(16.0f, avatarY)
@@ -198,8 +188,7 @@ void drawProfileCard(eui::Ui& ui,
         .fontWeight(600)
         .build();
 
-    // 名称右缘贴 ACTIVE 徽标左缘前 4px；徽标仅激活时占位，超长文本仍会
-    // 从盒尾溢出被徽标盖住（与 URL 同款）
+    // 名称右缘贴 ACTIVE 徽标左缘前 4px；徽标仅激活时占位，超长文本从盒尾溢出被徽标盖住
     ui.text(id + ".name")
         .position(64.0f, y + 18.0f)
         .size(width - 64.0f, 20.0f)
@@ -217,8 +206,7 @@ void drawProfileCard(eui::Ui& ui,
             .color(t.colors.primary)
             .radius(t.sizes.radiusPill)
             .build();
-        // 胶囊文字须显式垂直居中：runtime 只在 verticalAlign=Center 时把
-        // ink 中心对齐到 frame 中心，否则从行框顶沿起排，看着偏上
+        // 胶囊文字须显式垂直居中：runtime 只在 verticalAlign=Center 时把 ink 中心对齐到 frame 中心，否则从行框顶沿起排
         ui.text(id + ".active.text")
             .position(width - 60.0f, y + 16.0f)
             .size(48.0f, 20.0f)
@@ -242,8 +230,7 @@ void drawProfileCard(eui::Ui& ui,
         .color(t.colors.textTertiary)
         .build();
 
-    // 绑定了共享配置片段的卡片角标「共享」：服务层保证无悬空 id（删片段
-    // 同事务解绑），故 sharedConfigId != 0 即可判定
+    // 绑定共享片段的卡片角标「共享」：服务层保证无悬空 id（删片段同事务解绑），sharedConfigId != 0 即可判定
     if (p.sharedConfigId != 0) {
         ui.rect(id + ".shared.badge")
             .position(width - 60.0f, y + 42.0f)
@@ -264,8 +251,7 @@ void drawProfileCard(eui::Ui& ui,
             .build();
     }
 
-    // model 行：显示层剥 [1M]（与详情页 1M 复选框语义重复），存储与发上游
-    // 的原始串不动
+    // model 行：显示层剥 [1M]（详情页复选框表达 1M 状态），存储与发上游的原始串不动
     ui.text(id + ".model")
         .position(64.0f, y + 62.0f)
         .size(width - 64.0f, 14.0f)
@@ -373,8 +359,7 @@ void drawClaudeHeader(eui::Ui& ui, float contentW, float headerH,
 
 void drawClaudeGuideBar(eui::Ui& ui, float contentW,
                         const core::theme::Tokens& t) {
-    // 引导条：代理未运行时的接管语义提示（图标/文字拆两元素，图标字体
-    // 不能与正文混排）
+    // 引导条：代理未运行时的接管语义提示（图标字体不能与正文混排，图标/文字拆两元素）
     ui.row("claude.guide.wrap")
         .size(contentW, kGuideBarH)
         .gap(6.0f)
@@ -439,11 +424,7 @@ void drawProfileListPanel(eui::Ui& ui, float leftW, float bodyH,
             const float cardY0 = kListTopY;
             const float cardGap = 12.0f;
 
-            // 共享区块钉面板底（位置/高度见文件顶部常量）。退化守门只有两种
-            // 从定义推不出的「高度预算不足」：① 区块被压扁到 < 固定部分 +
-            // 提示行（标题/空态行与按钮重叠）；② 列表保底视口被挤没。按统一
-            // 原则记 ERROR 可见，不做 assert——退化域低于支持的最小窗，GUI
-            // 不该为此崩，且 Release 会把 assert 编掉
+            // 退化守门只有两种「高度预算不足」：① 区块被压扁；② 列表保底视口被挤没。记 ERROR 而非 assert（Release 会编掉 assert）
             const float sharedH = sharedBlockH(bodyH);
             const float sharedBlockTop = sharedBlockBottomY(bodyH) - sharedH;
             if (sharedH < kSharedFixedH + kSharedInfoH) {
@@ -491,10 +472,7 @@ void drawProfileListPanel(eui::Ui& ui, float leftW, float bodyH,
                     })
                     .build();
             } else {
-                // virtualList：仅可见行进 slot 窗口重建，行 pitch = 96 +
-                // cardGap，overscan 一个视口高。视口高 = 区块顶 − 间距 − 列表
-                // 起点（锚定式推导），列表恒吃剩余高；区块高的上界已保证
-                // listH ≥ 列表保底，旧 96px clamp 不再需要
+                // virtualList：仅可见行进 slot 窗口重建，overscan 一个视口高；视口高 = 区块顶 − 间距 − 列表起点，列表恒吃剩余高
                 const float rowPitch = 96.0f + cardGap;
                 const float listH = std::max(
                     0.0f, sharedBlockTop - kSharedBottomGap - cardY0);
@@ -523,18 +501,13 @@ void drawProfileListPanel(eui::Ui& ui, float leftW, float bodyH,
                         (void)rowHeight;
                         const auto idx = static_cast<size_t>(index);
                         if (idx >= profiles.size()) return;
-                        // 行容器 = 裸 stack：card 组件自带底色会与卡内交互层
-                        // .bg 叠成双底色，故只保留 .bg 作唯一底；事件挂点与
-                        // 卡装饰都在 drawProfileCard
+                        // 行容器 = 裸 stack：card 组件自带底色会与交互层 .bg 叠成双底色，仅保留 .bg 作唯一底
                         const std::string cardId =
                             "claude.profile." + std::to_string(idx);
                         inner.stack(rowId + ".card")
                             .size(contentWidth, 96.0f)
                             .content([&] {
-                                // 右键菜单锚点 = PointerEvent 原始坐标经
-                                // menuAnchorForPointer 换算（页面坐标，
-                                // onContextMenu 通道已除 dpiScale）；st 为
-                                // 引用：写回存活到下一帧的模块状态
+                                // 右键菜单锚点 = PointerEvent 原始坐标经 menuAnchorForPointer 换算（页面坐标）；st 为引用写回模块状态
                                 inner.stack(cardId + ".wrap")
                                     .size(contentWidth, 96.0f)
                                     .onContextMenu(
@@ -568,9 +541,7 @@ void drawProfileListPanel(eui::Ui& ui, float leftW, float bodyH,
                             .build();
                     })
                     .build();
-                // 共享区块不并入 virtualList 行窗（等高槽位无非等高末行支持），
-                // 垫在列表下方钉面板底；位于视口 clip 之外，末卡滚到底不会被
-                // 盖住 / 误点
+                // 共享区块不并入 virtualList 行窗（无非等高末行支持），垫在列表下方钉面板底，位于视口 clip 之外
                 ui.stack("claude.shared.block")
                     .position(20.0f, sharedBlockTop)
                     .size(leftW - 40.0f, sharedH)
@@ -582,8 +553,7 @@ void drawProfileListPanel(eui::Ui& ui, float leftW, float bodyH,
                     .build();
             }
 
-            // 底部三键等分（新建 / 导入当前配置 / 从 cc-switch 导入），
-            // 12px 间距
+            // 底部三键等分（新建 / 导入当前配置 / 从 cc-switch 导入），12px 间距
             const float btnW = (leftW - 40.0f - 24.0f) * (1.0f / 3.0f);
             const float btnGap = 12.0f;
             components::button(ui, "claude.profiles.new")
@@ -631,9 +601,7 @@ void drawProfileListPanel(eui::Ui& ui, float leftW, float bodyH,
         .build();
 }
 
-// 共享配置区块：标题行 + 片段卡片 +「+ 新建片段」。正常 / 空 / 错三路径都钉
-// 面板底；块高由调用方按 sharedBlockH 传入（单一来源），块内元素一律相对
-// 块顶从 0 起算（绝对位置由外层 stack 的 .position 决定）
+// 共享配置区块：正常 / 空 / 错三路径都钉面板底；块高由调用方按 sharedBlockH 传入，块内元素相对块顶从 0 起算
 void drawSharedConfigBlock(eui::Ui& ui, float width, float blockH,
                            const core::theme::Tokens& t,
                            const components::theme::ThemeColorTokens& themeTokens,
@@ -653,8 +621,7 @@ void drawSharedConfigBlock(eui::Ui& ui, float width, float blockH,
 
     const float contentTop = kSharedHeaderBottom;
     const float contentH = std::max(0.0f, blockH - kSharedFixedH);
-    // 片段集 / 空态 / 错误态任一变化 → 块内滚动偏移归零（签名跨数据集残留会
-    // 跳回旧偏移）；签名计算放在分支之前，否则「错误 → 恢复」走不到归零
+    // 片段集 / 空态 / 错误态任一变化 → 块内滚动偏移归零（签名跨数据集残留会跳回旧偏移）；签名计算放在分支之前
     size_t scrollKey = sharedConfigsError.empty() ? 0u : 1u;
     for (const auto& sc : sharedConfigs) {
         scrollKey = scrollKey * 1315423911u +
@@ -696,8 +663,7 @@ void drawSharedConfigBlock(eui::Ui& ui, float width, float blockH,
                     const SharedConfig& sc = sharedConfigs[i];
                     const std::string cid =
                         "claude.shared.card." + std::to_string(i);
-                    // 行容器 = 定高 stack：滚动内容是流式 column（条目按自身
-                    // 高度排），行距由容器高多出的 kSharedCardGap 提供
+                    // 行容器 = 定高 stack：滚动内容是流式 column，行距由容器高多出的 kSharedCardGap 提供
                     inner.stack(cid + ".item")
                         .size(contentWidth, kSharedCardH + kSharedCardGap)
                         .content([&] {
@@ -749,9 +715,8 @@ void drawSharedConfigBlock(eui::Ui& ui, float width, float blockH,
         .build();
 }
 
-// Profile 右键菜单：动作经 ProfileListActions 委托到模块既有按钮同源逻辑，
-// 本函数不写业务。常驻构建（关闭态由组件内 opacity 收起）：无右键目标时
-// 强制置关开合标志再返回——目标与开合标志同生共灭，防「隐形菜单卡开」
+// Profile 右键菜单：动作经 ProfileListActions 委托到模块既有逻辑，本函数不写业务。
+// 常驻构建（关闭态由组件内 opacity 收起）；无右键目标时强制置关，防「隐形菜单卡开」。
 void drawProfileContextMenu(eui::Ui& ui, const eui::Screen& screen,
                             const components::theme::ThemeColorTokens& themeTokens,
                             ProfileListState& st,
@@ -771,8 +736,7 @@ void drawProfileContextMenu(eui::Ui& ui, const eui::Screen& screen,
     }
     const std::vector<components::ContextMenuItem> items = {
         {"编辑"}, {"建副本"}, {"复制配置"}, {"删除"}, {"设为当前"}};
-    // 回调不捕获 self 指针（profiles 是 compose 局部副本，点击发生在下帧 →
-    // 悬垂）：按值拷贝 Profile，actions 五个闭包一并按值拷入
+    // 回调不捕获 self 指针（profiles 是 compose 局部副本，点击发生在下帧 → 悬垂）：按值拷贝 Profile 与五个闭包
     components::contextMenu(ui, "claude.list.ctx")
         .open(st.ctxMenuOpen_)
         .screen(screen.width, screen.height)

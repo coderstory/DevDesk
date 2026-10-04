@@ -16,9 +16,8 @@ namespace json {
 class JsonObject;
 class JsonValue;
 
-// 深拷贝值类型：无引用计数/无 COW，拷贝构造与赋值复制整棵子树。代价：大 JSON 上按值传参/返回 =
-// 整树复制，循环里对大树反复取值（get()/asObject()）易累积成 O(n²)。当前调用点规模小；可粘贴导入
-// 路径已加输入长度上限（provider_config.h 的 kMaxImportTextBytes）。
+// 深拷贝值类型：无引用计数/无 COW，拷贝构造与赋值复制整棵子树。大 JSON 按值传参/返回 = 整树复制，
+// 循环里对大树反复取值易累积成 O(n²)；导入路径已加输入长度上限（provider_config.h 的 kMaxImportTextBytes）。
 class JsonObject {
 public:
     JsonObject();
@@ -59,8 +58,7 @@ public:
     JsonValue& operator=(JsonValue&& other) noexcept;
     ~JsonValue();
 
-    // 类型与取值一律从堆上的 JsonImpl 派生（唯一真值源）。此前另存一份 public 镜像字段，而特殊成员
-    // 只搬 data_ → 左值拷贝/移动后 asString()/asInt() 静默返回默认值；删镜像后不存在「漏同步」。
+    // 类型与取值一律从堆上的 JsonImpl 派生（唯一真值源）；特殊成员只搬 data_，不可另存镜像字段。
     Type type() const;
     bool isNull() const { return type() == T_Null; }
     bool isBool() const { return type() == T_Bool; }

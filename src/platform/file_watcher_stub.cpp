@@ -1,8 +1,6 @@
 // src/platform/file_watcher_stub.cpp
-// POSIX 兜底实现（Windows/macOS 之外的构建，如 Linux）：校验参数后返回 ok，但永不监听、
-// 回调永不触发。消费方以 active()==false 判定「watcher 不可用」，退回自身 mtime/size 轮询
-//（即接入前行为，功能不退化，只是根治不了秒级漏检窗口）。当前发布平台 Win/macOS 均有原生
-// 真实现，本文件只兜底 Linux 等；start/stop/active 语义与错误码同两端，消费方无需分支。
+// POSIX 兜底实现（Windows/macOS 之外的构建，如 Linux）：校验参数后返回 ok，但永不监听、回调永不触发。
+// 消费方以 active()==false 判定并退回自身轮询；start/stop/active 语义与错误码同两端，消费方无需分支。
 #include "platform/file_watcher.h"
 
 #include "core/logging.h"

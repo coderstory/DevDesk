@@ -1,7 +1,5 @@
 // src/module_claude_proxy/quota/deepseek_provider.h
-// DeepSeek 余额 provider —— Balance 型。
-// 移植 cc-switch（bfaaba16）services/balance.rs 的 DeepSeek 分支。
-// DeepSeek 只有余额，无窗口 / 无 used / 无 reset → QuotaResult.windows 恒空。
+// DeepSeek 余额 provider —— Balance 型，只有余额，无窗口 / 无 used / 无 reset。
 #pragma once
 
 #include "quota_provider.h"

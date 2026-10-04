@@ -1,9 +1,7 @@
-// src/core/call_rate.h
-// 「单次调用速率」的唯一口径：首页 Token 速率卡与 Claude 详情页明细列读同一张 claude_call_logs
-// 的同几列却分属两个 module_*，口径收进 core 单源（纯函数）。速率 = output_tokens / (latency_ms/1000)
-// 单位 tok/s；仅成功调用有速率（status_code 200..299 且 output_tokens > 0，latency_ms > 0），
-// 否则无速率 → UI 空态/「—」，不显示 0（0 是合法速率值，与没有速率必须可区分）。
-// 分母用 latency_ms 不用扣首字：first_event_ms 只在流式末回填，非流式/老行是 NULL。
+// 「单次调用速率」唯一口径：首页 Token 速率卡与 Claude 详情页明细列同源（纯函数）。
+// 速率 = output_tokens / (latency_ms/1000)，单位 tok/s；仅成功调用有速率（200..299 且
+// output_tokens>0、latency_ms>0），否则无速率 → UI 空态/「—」（0 是合法速率值，须与无速率可区分）。
+// 分母用 latency_ms 不用首字耗时：first_event_ms 只在流式末回填，非流式/缺列行是 NULL
 #pragma once
 
 #include <cstdint>
@@ -27,8 +25,7 @@ inline bool tps(int statusCode, int64_t outputTokens, int64_t latencyMs,
     return true;
 }
 
-// 速率文案：恒 1 位小数（44.96→"45.0"）。与实时卡 formatRateTps 不同（后者 >=100 取整）——
-// 本口径是单次调用值，规格要求保留 1 位小数
+// 速率文案：恒 1 位小数（44.96→"45.0"）；与实时卡 formatRateTps（>=100 取整）口径不同
 inline std::string formatTps(double value) {
     char buf[32];
     std::snprintf(buf, sizeof(buf), "%.1f", value);

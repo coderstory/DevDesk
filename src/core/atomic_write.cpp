@@ -10,8 +10,7 @@ core::Result<void> atomicWriteFile(const std::filesystem::path& target,
     std::filesystem::path tmp = target;
     tmp += ".devdesk-tmp";
     {
-        // 权限先就位再打开写句柄：POSIX 权限位在 open(O_CREAT) 时定死，事后
-        // chmod 追不回已被别人 open 的 fd（调用点有含明文 API key 的文件）
+        // 权限先就位再打开写句柄：POSIX 权限位在 open(O_CREAT) 时定死，事后 chmod 追不回已开的 fd
         std::error_code permEc;
         if (!detail::prepareRestrictedFile(tmp, permEc)) {
             return core::Result<void>::fail(

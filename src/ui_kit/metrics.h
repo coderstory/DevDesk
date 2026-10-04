@@ -1,10 +1,8 @@
 // src/ui_kit/metrics.h
-// presentation 能力层：跨模块复制的「设计数值」具名常量单一来源（kHeaderH / DialogWidth /
-// kDialogInsetX / kDialogBodyInsetX / kNavItemH）。本层被 module_* 与 app 层链接，core /
-// platform 不得反向依赖。
-//
-// 纯常量（零 include、零 EUI-NEO 依赖）。已 token 化的量（spacing* / radius* / fontSize*）
-// 不在本头重复声明——那会造成「同值两处」。
+// presentation 能力层：跨模块设计数值具名常量单一来源（kHeaderH / DialogWidth /
+// kDialogInsetX / kDialogBodyInsetX / kNavItemH）。本层被 module_* 与 app 层链接，
+// core / platform 不得反向依赖。纯常量（零 include、零 EUI-NEO 依赖）；
+// 已 token 化的量（spacing* / radius* / fontSize*）不在本头重复声明。
 #pragma once
 
 namespace ui_kit {
@@ -15,7 +13,7 @@ inline constexpr float kHeaderH = 64.0f;
 // 侧边栏导航项高：命中区 / 图标 / 文字三处高度与逐项步进共用。
 inline constexpr float kNavItemH = 40.0f;
 
-// 标准对话框宽度取值集合（13 处调用点），避免同一个 460 各写一遍字面量。
+// 标准对话框宽度取值集合，避免同一个 460 各写一遍字面量。
 enum class DialogWidth {
     Compact,    // 420 —— claude 删除确认
     Standard,   // 460 —— todo 全部 / markdown 全部

@@ -1,7 +1,5 @@
 // src/module_claude_proxy/quota/quota_percent.h
-// usedPercent 范围裁剪（唯一入口）。
-// 上游可能给 >100 / <0 / NaN 原样流出，而渲染层不负责裁剪，故裁剪在本层做、由代码保证
-//   （每个 provider 构造 QuotaWindow 时都过这个函数）。做成显式 helper 而不改冻结的契约层。
+// usedPercent 范围裁剪（唯一入口）：上游可能给 >100 / <0 / NaN 原样流出，渲染层不负责裁剪，故在本层由代码保证。
 #pragma once
 
 namespace module::claude::quota {

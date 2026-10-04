@@ -108,11 +108,9 @@ namespace {
 }
 
 ClaudeService::~ClaudeService() {
-    // 析构摘牌（退出时序 UAF）：惰性装配下本析构可能先于 exit hook 的模块 onStop
-    // 跑，不摘牌则 onStop 经 global() 拿到已析构对象（悬垂读）。守卫只摘自己那张牌。
+    // 析构摘牌：防止 onStop 经 global() 拿到已析构对象（悬垂读）。
     if (g_globalClaudeService == this) g_globalClaudeService = nullptr;
-    // 确保停止代理：停机序列在 ProxyRuntime::stop()（先取消在途流，否则 ~Server
-    // 的 join 被阻塞在读 chunk 的 worker 上）。声明序末位，成员析构也会兜底。
+    // 确保停止代理（停机序列在 ProxyRuntime::stop()）；声明序末位，成员析构也会兜底。
     proxyRuntime_.stop();
 }
 
@@ -203,7 +201,7 @@ core::Result<void> ClaudeService::deleteProfile(int64_t id, bool* proxyStopped) 
 }
 
 core::Result<int> ClaudeService::cleanupOrphanKeychainEntries() {
-    // 残留清理实现在 ProfileRepository（方法名保留历史叫法）
+    // 残留清理实现在 ProfileRepository
     return profileRepository_.cleanupOrphanKeychainEntries();
 }
 
@@ -230,9 +228,8 @@ core::Result<void> ClaudeService::setActiveProfile(int64_t id) {
         return core::Result<void>::fail(p.errorCode(), p.errorMessage());
     }
 
-    // 反向同步：settings.json 的 env 收编进当前激活 profile，必须早于 activateProfile
-    //（否则 syncTakeOver 会把自己写的托管值当用户值捕获）。无激活 → 跳过不读文件。
-    // 读不了/解析失败 → 中止本次切换，profile 一字未改。
+    // 反向同步必须早于 activateProfile（否则 syncTakeOver 会把自己写的托管值当
+    // 用户值捕获）。无激活 → 跳过；读不了/解析失败 → 中止本次切换。
     auto curActive = getActiveProfile();
     if (curActive.isOk()) {
         auto capture = syncCaptureActiveProfile();
@@ -331,7 +328,7 @@ std::optional<std::string> ClaudeService::resolveModelSlot(
     // "def" 是 "default" 的别名；表行 jsonKey 就是 "default"，先归一再查表
     const std::string key = (slot == "def") ? "default" : slot;
 
-    // default 槽保留旧列语义：models_config 未配置或解析失败时回落 profile.model。
+    // default 槽：models_config 未配置或解析失败时回落 profile.model。
     if (key == "default") {
         if (!profile.modelsConfigJson.empty()) {
             auto cfgR = parseModelsConfig(profile.modelsConfigJson);
@@ -462,8 +459,7 @@ std::optional<int> ClaudeService::takeProxyEvent(std::time_t nowSec) {
 }
 
 // 代理 server 生命周期：server/路由/在途流/端口镜像在 ProxyRuntime。门面保留两条
-// settings.json 策略尾——startProxy 尾 syncTakeOver（失败不阻断），stopProxy 尾
-// syncRestore（settings.json 永不指向死代理）。
+// settings.json 策略尾——startProxy 尾 syncTakeOver（失败不阻断），stopProxy 尾 syncRestore。
 core::Result<int> ClaudeService::startProxy(const std::string& bindAddress,
                                             int port) {
     auto started = proxyRuntime_.startProxy(bindAddress, port);
@@ -572,9 +568,8 @@ core::Result<void> ClaudeService::runProfile(int64_t id, std::string* hint) {
                                std::to_string(writtenAtMs);
     const std::filesystem::path file = dir / (runKey + ".json");
 
-    // DB 记录先行：DB 行是记录与追踪的真值，文件是喂给外部进程的临时载体（会话可能
-    // 被强杀、文件会被清扫，只有库里的行能长期留住）。settings_json 含明文 API key，
-    // 经分平台保护入库（macOS/POSIX 明文 + 库文件 0600；Windows DPAPI 密文 hex）。
+    // DB 记录先行：DB 行是真值，文件是临时载体（会话可能被强杀、文件会被清扫）。
+    // settings_json 含明文 API key，经分平台保护入库。
     auto record = recordRunSettings(runKey, id, p.name, writtenAt, file.string(),
                                     text.value());
     if (record.isFail()) {
@@ -829,9 +824,8 @@ core::Result<void> ClaudeService::syncCaptureActiveProfile() {
 }
 
 core::Result<void> ClaudeService::syncTakeOver() {
-    // 编排：取激活 Profile + 端口传入 SettingsTakeOver。无激活仍接管 BASE_URL/占位
-    // key（转发层会报 503 提示先启用）。门面把「生效 JSON」（profile ⊕ 片段，片段赢；
-    // 非法/超限按空处理并 WARN）预先算好放进 Profile 副本，子对象直接消费。
+    // 编排：取激活 Profile + 端口传入 SettingsTakeOver；无激活仍接管 BASE_URL/占位
+    // key（转发层报 503）。「生效 JSON」（profile ⊕ 片段，片段赢）预先算好放进 Profile 副本。
     Profile active;
     auto a = getActiveProfile();
     if (a.isOk()) {

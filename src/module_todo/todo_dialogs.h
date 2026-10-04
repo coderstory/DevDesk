@@ -1,9 +1,6 @@
-// src/module_todo/todo_dialogs.h
-// Todo 弹窗层：6 个对话框 + 右键菜单 + datepicker 的「打开状态 + 表单字段 +
-// 渲染 + 提交」状态与契约。状态是纯值类型（无模块/Ui 引用）；渲染与提交在
-// todo_ui_dialogs.cpp。要落库的动作走 DialogHost（模块构造期绑定），弹窗层不
-// 捕获 TodoModule。元素 id/文案/几何/控制流沿用拆分前 todo_module.cpp（无头 UI
-// 用例按 id 定位与触发，不得改）。PopupStack 是「谁在最上层」的唯一真相源。
+// Todo 弹窗层：6 个对话框 + 右键菜单 + datepicker 的「打开状态 + 表单字段 + 渲染 + 提交」状态与契约。
+// 状态是纯值类型（无模块/Ui 引用）；渲染与提交在 todo_ui_dialogs.cpp；落库动作走 DialogHost（模块构造期绑定），
+// 弹窗层不捕获 TodoModule。元素 id/文案/几何/控制流是无头 UI 用例契约（按 id 定位与触发，不得改）。
 #pragma once
 
 #include "todo_ui_logic.h"
@@ -21,8 +18,7 @@
 
 namespace module::todo::ui {
 
-// 最上层弹窗的单一持有者：唯一真相源 items——最后打开的在最上（栈顶）、绘制
-// zIndex = 栈内位置、Esc 关栈顶，三者天然一致。toast 不入栈（状态位在 TodoModule）
+// 最上层弹窗单一持有者：items 最后打开的在栈顶，绘制 zIndex、Esc 关栈顶与之天然一致；toast 不入栈
 enum class Popup {
     NewTask,
     NewColumn,
@@ -35,8 +31,7 @@ enum class Popup {
 };
 
 struct PopupStack {
-    // 栈底 z / 每层增量：整栈上界须留在 toast（默认 1100）之下——8 个弹窗
-    // 全叠满也只有 1070，状态提示不被盖住
+    // 栈底 z / 每层增量：整栈叠满也只有 1070，须留在 toast（默认 1100）之下
     static constexpr int kBaseZ = 1000;
     static constexpr int kZStep = 10;
 
@@ -67,8 +62,7 @@ struct PopupStack {
     Popup top() const { return items.back(); }
 };
 
-// 弹窗层 → 模块的通道：只读数据 + 数据层动作（模块构造期绑定一次）。动作体写在
-// 模块侧，读模块当下状态——与拆分前的成员方法调用同款语义。
+// 弹窗层 → 模块的通道：只读数据 + 数据层动作（模块构造期绑定一次），动作体读模块当下状态
 struct DialogHost {
     const std::vector<Column>* columns = nullptr;
     const std::vector<Task>* tasks = nullptr;
@@ -177,14 +171,12 @@ struct DetailDialog {
     Task collect(const std::vector<Task>& tasks) const;
     // 表单原样落库；false = 保存失败（已 setStatus 报错），调用方保持弹窗打开
     bool save(const DialogHost& host) const;
-    // 详情弹窗关闭统一入口（Esc 兜底与 backdrop 点击共用同一份守卫）。
-    // true = 真的关了；false = 被未存改动守卫拦下（弹窗仍在栈顶）
+    // 详情弹窗关闭统一入口（Esc 兜底与 backdrop 点击共用同一份守卫）；false = 被未存改动守卫拦下
     bool requestClose(PopupStack& popups, const DialogHost& host);
 };
 
-// 右键菜单。菜单定位走模块自身布局空间（ui::boardGeom），不用指针事件的窗口
-// 坐标（页面在侧边栏右侧，两者相差一个侧边栏宽）；锚点经 menuAnchorForPointer
-// 统一换算。不变式：taskId 与 columnId 二选一
+// 右键菜单。菜单定位走模块自身布局空间（ui::boardGeom），不用指针窗口坐标（相差一个侧边栏宽），
+// 锚点经 menuAnchorForPointer 统一换算。不变式：taskId 与 columnId 二选一
 struct ContextMenuState {
     int64_t taskId = 0;
     int64_t columnId = 0;

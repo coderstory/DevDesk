@@ -1,8 +1,6 @@
 // src/module_claude_proxy/proxy_runtime.cpp
-// 代理运行时实现（R10-A3）：本地 HTTP 代理 server/路由生命周期 + 在途流
-// 登记 + 端口镜像 + 终态事件单槽。自 claude_service.cpp 整段迁出，行为零变化
-//（段级拆分见 R10 spec §2.3 P-A3：停机序列 = cancelActiveStreams → server->
-// stop → 状态 reset；settings.json 接管/还原尾留门面，不在此文件）
+// 代理运行时实现：本地 HTTP 代理 server/路由生命周期 + 在途流登记 + 端口镜像
+// + 终态事件单槽。停机序列 = cancelActiveStreams → server->stop → 状态 reset。
 #include "proxy_runtime.h"
 
 #include "claude_service.h"
@@ -24,9 +22,8 @@ namespace module::claude {
 
 ProxyRuntime::ProxyRuntime(ClaudeService& service) : service_(service) {}
 
-// 析构时确保停止代理（Server 析构会 join 线程）。审计 2026-09-23 [9]：
-// 与 stop() 同款停机序列——先取消在途流，否则 ~Server 的 join 被阻塞在
-// readChunk 的 worker 卡住
+// 析构时确保停止代理（Server 析构会 join 线程）：与 stop() 同款停机序列——
+// 先取消在途流，否则 join 被阻塞在 readChunk 的 worker 卡住
 ProxyRuntime::~ProxyRuntime() {
     stop();
 }
@@ -88,10 +85,9 @@ core::Result<int> ProxyRuntime::startProxy(const std::string& bindAddress,
 void ProxyRuntime::stop() {
     if (!server_) return;
     LOG_INFO("停止 Claude 代理");
-    // 审计 2026-09-23 [9]：先取消在途流式上游，再停 server。server_->stop()
-    // 内部要 join httplib worker，而在途流的 worker 阻塞在 provider 的
-    // readChunk 上——不取消就要等流自然结束（活动生成期无空闲超时，
-    // UI「停止代理」按钮/退出流程会挂起，进程变幽灵）。
+    // 先取消在途流式上游，再停 server：server_->stop() 内部要 join httplib
+    // worker，而在途流的 worker 阻塞在 readChunk 上——不取消就要等流自然结束
+    //（活动生成期无空闲超时，停止/退出会挂起成幽灵进程）。
     cancelActiveStreams();
     server_->stop();
     server_.reset();
@@ -117,7 +113,7 @@ void ProxyRuntime::setConfiguredProxyPort(int port) {
     configuredProxyPort_ = port;
 }
 
-// ---------- 在途流式上游登记（审计 2026-09-23 [9]）----------
+// ---------- 在途流式上游登记 ----------
 
 void ProxyRuntime::registerActiveStream(
     const std::shared_ptr<platform::http::StreamingResponse>& stream) {
@@ -148,16 +144,14 @@ void ProxyRuntime::cancelActiveStreams() {
         }
         activeStreams_.clear();
     }
-    // 锁外逐个 cancel：只置标志 + notify_all（持 queueMutex），阻塞在
-    // readChunk 的 worker 线程立即拿到 Error/"proxy stopping" 退出 provider
-    // 循环 → httplib worker 收工 → Server::stop() 的 join 不再等流结束
+    // 锁外逐个 cancel：只置标志 + notify_all，阻塞在 readChunk 的 worker
+    // 线程立即退出 provider 循环 → Server::stop() 的 join 不再等流结束
     for (auto& sp : live) {
         sp->cancelWithReason("proxy stopping");
     }
 }
 
-// ---------- 最近代理请求事件单槽（mailbox，R10 spec §2.2：与登记表同写者-
-// 读者对，并入本类一段，不单独成类）----------
+// ---------- 最近代理请求事件单槽（mailbox）----------
 
 void ProxyRuntime::recordProxyEvent(int statusCode) {
     std::lock_guard<std::mutex> lock(proxyEventMutex_);

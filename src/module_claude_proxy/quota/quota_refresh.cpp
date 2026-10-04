@@ -12,7 +12,7 @@
 
 #include "core/logging.h"
 #include "module_claude_proxy/claude_ui_logic.h"   // wakeAfterPublish（唯一唤醒出口）
-#include "quota_home_bridge.h"   // 手动刷新请求位（中立桥，G7 [刷新] 按钮）
+#include "quota_home_bridge.h"   // 手动刷新请求位（中立桥，[刷新] 按钮）
 #include "quota_registry.h"
 
 namespace module::claude::quota {
@@ -27,13 +27,12 @@ int64_t systemNowSec() {
 }
 
 // 进程级唤醒计数缝（用例读）：唤醒在后台线程、断言在用例线程，没有稳定对象引用可传。
-// 只有计数、没有 sawReady——「落库后能不能读回来」在当前实现下恒为真，是结构上不可能变红的量，已删除。
 std::atomic<int64_t>& globalWakeCount() {
     static std::atomic<int64_t> count{0};
     return count;
 }
 
-// 手动刷新请求位（G7）。进程级而非成员级：请求方（UI 线程）与消费方（tick 线程）间没有稳定对象引用可传。
+// 手动刷新请求位。进程级而非成员级：请求方（UI 线程）与消费方（tick 线程）间没有稳定对象引用可传。
 // 静态存储期 = 进程结束即析构，不与刷新器生命周期赛跑（存裸指针跨线程解引用才是真的赛跑）。
 std::atomic<bool>& globalManualRefreshRequest() {
     static std::atomic<bool> flag{false};
@@ -51,7 +50,6 @@ bool consumeQuotaImmediateRefreshRequest() {
                                                  std::memory_order_acquire);
 }
 
-// 刻意没有「次序缝」：曾有一个恒返 true 的桩，漏改的调用点仍会「断言通过」（假守卫），故整条删除——编译器报红才是要的。
 int64_t quotaRefresherWakeCountForTest() {
     return globalWakeCount().load(std::memory_order_relaxed);
 }
@@ -153,15 +151,13 @@ RefreshRoundResult QuotaRefresher::refreshProfile(int64_t profileId,
     }
     out.persisted = true;
 
-    // ② 就绪之后才唤醒（唯一出口，内部先探一次真实就绪再发）。次序反了 = UI 抢跑消费唤醒位 → 结果不上屏。
-    // 这里刻意没有「次序缝」：applyFetchResult 刚写完行、loadResult 走同一 SqliteDb 与同一把锁，必然读得回，
-    // 断言它恒真的缝是无意义的假守卫。真正要防的是「落库失败路径仍发唤醒」，由上面的 return out 覆盖。
+    // ② 就绪之后才唤醒（唯一出口）。次序反了 = UI 抢跑消费唤醒位 → 结果不上屏。
     auto promise = std::make_shared<std::promise<void>>();
     std::shared_future<void> published = promise->get_future().share();
     promise->set_value();
     std::atomic<bool> sawReady{false};
     wakeAfterPublish(published, sawReady);
-    // sawReady 在本实现下恒为 true，不断言（断言结构上不可能为假的量 = 假守卫）；这里仅因它是 wakeAfterPublish 的必要入参而保留。
+    // sawReady 在本实现下恒为 true，不断言；仅因是 wakeAfterPublish 的必要入参而保留。
     (void)sawReady;
     globalWakeCount().fetch_add(1, std::memory_order_relaxed);
     wakeCount_.fetch_add(1, std::memory_order_relaxed);

@@ -388,11 +388,11 @@ void submitForm(FormState& f, const FormSubmitHooks& hooks,
         p.model = f.formModels_.def.model;   // model 列与 default 槽位同步
         p.modelsConfigJson = modelsJson;
         p.extraEnvJson = envJson;
-        p.extraSettingsJson = extraSettingsPretty;   // 高级设置 JSON（§7.3 落库统一 pretty）
+        p.extraSettingsJson = extraSettingsPretty;   // 高级设置 JSON（统一 pretty）
         p.apiKeyPlain = f.formKey_;   // 空 = 不换 key
         p.authField = authFieldToText(f.formAuthField_);
-        p.sharedConfigId = f.formSharedConfigId_;   // 批 2：绑定/解绑随保存落库
-        p.fallbackProfileId = f.formFallbackProfileId_;   // 批 3：备用随保存落库（自引用由服务层校验兜底）
+        p.sharedConfigId = f.formSharedConfigId_;   // 绑定/解绑随保存落库
+        p.fallbackProfileId = f.formFallbackProfileId_;   // 备用随保存落库（自引用由服务层校验兜底）
         // 新下拉值须真正写入编辑路径（不接线则落不了盘）；p 来自 getProfile 已含既有覆盖
         p.dialectOverride = f.formDialectOverride_;
         auto r = svc->updateProfile(p);
@@ -816,7 +816,7 @@ void drawFormEnvTab(eui::Ui& ui, float w,
                     const components::theme::ThemeColorTokens& themeTokens,
                     FormState& f, ImportState& imp,
                     const std::vector<SharedConfig>& sharedConfigs) {
-    (void)sharedConfigs;   // 绑定下拉已迁高级配置页；签名保留防调用点连锁改动
+    (void)sharedConfigs;   // 签名保留，参数不使用
     constexpr size_t kMaxVisibleRows = 5;
 
     ui.text("claude.form.env.label")
@@ -869,7 +869,7 @@ void drawFormEnvTab(eui::Ui& ui, float w,
             .build();
         components::button(ui, "claude.form.env.row." + idx + ".del")
             .position(682.0f, y).size(50.0f, 32.0f)
-            .icon(0xF00D)  // fa-xmark（✕ 换 FA）
+            .icon(0xF00D)  // fa-xmark
             .fontSize(12.0f)
             .colors(t.colors.surfaceElevated, t.colors.hover,
                     t.colors.active)
@@ -1035,7 +1035,7 @@ void drawProfileFormDialog(eui::Ui& ui, const eui::Screen& screen,
                 isEdit ? "编辑 Profile" : "新建 Profile", 20.0f, t.colors.textPrimary,
                 {.y = 20.0f, .height = 26.0f, .lineHeight = 26.0f});
 
-            // tabs：四页序固定（尾插第 4 页保住既有 form.tabs.hit.0/1/2 测试导航）；TabsBuilder 无 position，套 stack 定位
+            // tabs 四页；TabsBuilder 无 position，套 stack 定位
             ui.stack("claude.form.tabs.wrap")
                 .position(28.0f, 52.0f)
                 .size(w - 56.0f, 34.0f)
@@ -1056,7 +1056,6 @@ void drawProfileFormDialog(eui::Ui& ui, const eui::Screen& screen,
             } else if (f.formTab_ == 1) {
                 drawFormModelsTab(ui, w, t, themeTokens, f);
             } else if (f.formTab_ == 3) {
-                // 高级配置：catch-all else 前插 ==3 分支，0/1/2 语义不动
                 drawFormAdvancedTab(ui, w, t, themeTokens, f, profiles,
                                     sharedConfigs);
             } else {

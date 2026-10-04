@@ -37,8 +37,7 @@ std::string sanitizeFtsToken(const std::string& token) {
 }
 
 // FTS 查询计划。match = 安全 MATCH 表达式（"" = 跳过 FTS）；
-// anyLossy = 有词元含被丢弃符号 → 需 LIKE 兜底；
-// allLossy = 全部词元失真 → FTS 前缀必然误命中，跳过 FTS 只走 LIKE。
+// anyLossy = 有词元失真 → 需 LIKE 兜底；allLossy = 全部失真 → 只走 LIKE。
 struct FtsQueryPlan {
     std::string match;
     bool anyLossy = false;
@@ -134,13 +133,10 @@ bool MarkdownService::hasWatchCredit() const {
 }
 
 void MarkdownService::onWatchEvent(std::vector<platform::FileWatchEvent> events) {
-    // 1) 置标记：仅当批内含「索引/目录树相关」事件（credit 相关性过滤）。
-    // 为什么过滤：原生 watcher 上报监听根下一切变化，不区分扩展名；伴生文件
-    //（数据库、编辑器临时文件、.DS_Store）每次写盘都置 credit → 绕过 5s 轮询节流，
-    // 逐帧 rescan 风暴。credit 的唯一价值在「pollChanged 的 (mtime,size) 秒级比对
-    // 失明」（只发生在同路径同秒等长 .md 改写）→ 只对以下事件置 credit：
-    //   Unknown（空路径）/ .md 路径事件 / 目录路径 / 已不存在且非 .md 的路径。
-    // 明确不置：存在的非 .md 普通文件（对索引与目录树零影响）。stub 平台无事件。
+    // 1) 置标记：原生 watcher 上报监听根下一切变化，若不按相关性过滤，伴生文件
+    //（数据库/临时文件/.DS_Store）会逐帧触发 rescan 风暴。只对以下事件置 credit：
+    // Unknown（空路径）/ .md 路径 / 目录 / 已不存在的非 .md 路径；存在的非 .md
+    // 普通文件对索引与目录树零影响，不置。stub 平台无事件。
     bool indexRelevant = false;
     for (const auto& ev : events) {
         if (ev.relativePath.empty()) {  // Unknown：无法定位，必须当相关处理
@@ -169,25 +165,24 @@ void MarkdownService::onWatchEvent(std::vector<platform::FileWatchEvent> events)
     }
     if (indexRelevant) watcherFired_.store(true);
 
-    // 2) 即刻尽力同步索引（watcher 线程）。UI 持有 rescanMu_ 时跳过（那轮 rescan
-    // 以磁盘为准收敛，标记已置，下轮 pollChanged 仍会刷新）。
+    // 2) 即刻尽力同步索引（watcher 线程）。UI 持有 rescanMu_ 时跳过
+    //（那轮 rescan 以磁盘为准收敛，下轮 pollChanged 仍会刷新）。
     std::unique_lock<std::mutex> lock(rescanMu_, std::try_to_lock);
     if (!lock.owns_lock()) return;
 
     bool needFullRescan = false;
     for (const auto& ev : events) {
         if (ev.relativePath.empty()) {
-            needFullRescan = true;  // Unknown（缓冲溢出等）：无法逐项处理
+            needFullRescan = true;
             continue;
         }
-        // UTF-8 → fs::path 必须走 u8string（Windows 上 std::string→path 按 ACP 解码会乱码）。
         const fs::path rel{std::u8string(ev.relativePath.begin(),
                                          ev.relativePath.end())};
         if (rel.extension() != ".md") continue;  // 目录/非笔记事件交给标记兜底
         const std::string relPosix = toPosix(rel);
         const auto resolved = resolve(rel);
         if (resolved.isFail()) {
-            // watcher 事件不该越界（来自目录枚举）；出现即防御：跳过，标记已置，下轮 poll 兜底
+            // 防御：watcher 事件不该越界；标记已置，下轮 poll 兜底
             LOG_WARN("watcher 事件路径越界，跳过 " + ev.relativePath + ": " +
                      resolved.errorMessage());
             continue;
@@ -196,11 +191,11 @@ void MarkdownService::onWatchEvent(std::vector<platform::FileWatchEvent> events)
         std::error_code ec;
         const bool exists = fs::is_regular_file(absPath, ec) && !ec;
         core::Result<void> one = exists
-            // 事件确证文件动过 → force 跳过 (size,mtime) 短路（同秒等长改写 mtime 看不见）。
+            // force 跳过 (size,mtime) 短路：同秒等长改写 mtime 比对失明
             ? syncOneToIndex(absPath, relPosix, /*force=*/true)
             : deleteFromIndex(relPosix);
         if (one.isFail()) {
-            // 半截读/锁冲突等：本轮放弃，标记已置，下轮 rescan 修正
+            // 本轮放弃，标记已置，下轮 rescan 修正
             LOG_WARN("watcher 事件同步失败 " + ev.relativePath + ": " +
                      one.errorMessage());
         }
@@ -221,11 +216,8 @@ core::Result<void> MarkdownService::rescan() {
 }
 
 core::Result<fs::path> MarkdownService::resolve(const fs::path& relPath) const {
-    // relPath 为 POSIX 相对路径，文件系统直接接受 '/'，无需转换。
-    // containment 校验：① notesDir_ / relPath 的两种逃逸形态（相对上跳、绝对 RHS
-    //    整体替换）都必须拒；② 先 lexically_normal 再逐组件前缀比较（字符串前缀会把
-    //    "/notes/evil" 误判成 "/notes" 内含）；③ 逃逸 → ValidationError + 中文说明。
-    // 边界：symlink 不在词法 containment 内，M2 写路径工具上线时重审。
+    // containment 校验：先 lexically_normal 再逐组件前缀比较（字符串前缀会把
+    // "/notes/evil" 误判成 "/notes" 内含）；两种逃逸形态都必须拒。写路径同此守卫。
     const fs::path base = notesDir_.lexically_normal();
     const fs::path candidate = (notesDir_ / relPath).lexically_normal();
     auto baseIt = base.begin();
@@ -241,7 +233,6 @@ core::Result<fs::path> MarkdownService::resolve(const fs::path& relPath) const {
 }
 
 std::string MarkdownService::toPosix(const fs::path& p) {
-    // generic_string() 恒 POSIX 风格，跨平台一致
     return p.generic_string();
 }
 
@@ -251,25 +242,20 @@ std::string MarkdownService::extractTitle(const std::string& content,
     std::istringstream iss(content);
     std::string line;
     while (std::getline(iss, line)) {
-        // 跳过前导空白
         size_t i = 0;
         while (i < line.size() &&
                (line[i] == ' ' || line[i] == '\t' || line[i] == '\r')) {
             ++i;
         }
         if (i >= line.size()) continue; // 空行
-        // 必须以 "#" 开头
         if (line[i] != '#') break;
-        // 跳过连续的 #
         ++i;
         while (i < line.size() && line[i] == '#') ++i;
-        // 跳过后续空白
         while (i < line.size() &&
                (line[i] == ' ' || line[i] == '\t')) {
             ++i;
         }
         std::string title = line.substr(i);
-        // 去掉尾部空白
         while (!title.empty() &&
                (title.back() == ' ' || title.back() == '\t' ||
                 title.back() == '\r' || title.back() == '\n')) {
@@ -312,7 +298,6 @@ core::Result<void> MarkdownService::syncOneToIndex(
 
     const std::string title = extractTitle(content, relPathPosix);
 
-    // 查 index 里是否有这行（按 path）
     auto selPrep = db_.prepare(
         "SELECT id, size_bytes, modified_at FROM markdown_index WHERE path = ?");
     if (selPrep.isFail()) {
@@ -334,7 +319,6 @@ core::Result<void> MarkdownService::syncOneToIndex(
         const bool exists = stepResult.value();
 
         if (exists) {
-            // 拿旧的 size/mtime 判断是否要更新
             auto rowResult = stmt.currentRow();
             if (rowResult.isFail()) {
                 return core::Result<void>::fail(rowResult.errorCode(),
@@ -350,13 +334,13 @@ core::Result<void> MarkdownService::syncOneToIndex(
             if (!force &&
                 oldSize == static_cast<int64_t>(fileSize) &&
                 oldMtime == static_cast<int64_t>(mtimeSec)) {
-                // 无变化跳过 update。force=true 不走此短路：秒级比对对「同秒改回等长内容」失明。
+                // force=true 不走此短路：秒级比对对「同秒改回等长内容」失明
                 return core::Result<void>::ok();
             }
         }
     }
 
-    // INSERT OR IGNORE + UPDATE 分两步走保证幂等
+    // INSERT OR IGNORE + UPDATE 两步保证幂等
     auto upsert = db_.transaction([&]() -> core::Result<void> {
         {
             auto prep = db_.prepare(
@@ -379,7 +363,7 @@ core::Result<void> MarkdownService::syncOneToIndex(
                     "step insert: " + stepResult.errorMessage());
             }
         }
-        // UPDATE（覆盖 INSERT IGNORE 的 0 行情况）
+        // UPDATE（覆盖 INSERT IGNORE 未命中行的情况）
         {
             auto prep = db_.prepare(
                 "UPDATE markdown_index SET title = ?, size_bytes = ?, "
@@ -399,8 +383,8 @@ core::Result<void> MarkdownService::syncOneToIndex(
                     "step update: " + stepResult.errorMessage());
             }
         }
-        // FTS5 同步必须先删后插：markdown_fts 的 path 列 UNINDEXED、无 UNIQUE 约束，
-        // INSERT OR REPLACE 不会去重而是追加新行 → 旧内容残留、搜索命中过期数据。
+        // FTS5 须先删后插：path 列 UNINDEXED 无 UNIQUE，INSERT OR REPLACE
+        // 会追加而非去重 → 旧内容残留、搜索命中过期数据。
         {
             auto prep = db_.prepare(
                 "DELETE FROM markdown_fts WHERE path = ?");
@@ -509,8 +493,8 @@ core::Result<void> MarkdownService::rescanLocked() {
             "无法创建笔记目录: " + ec.message());
     }
 
-    // 1) 先取索引快照（待剪枝候选集），再遍历磁盘 —— 顺序不能反：反了会留下窗口
-    //（UI 线程遍历期间写入的行可能被当成「磁盘已不存在」删掉，级联删标签，下轮才自愈）。
+    // 1) 先取索引快照，再遍历磁盘 —— 顺序不能反：反了会把遍历期间写入的行
+    // 误判为「磁盘已不存在」而误删（级联删标签）。
     auto prep = db_.prepare("SELECT path FROM markdown_index");
     if (prep.isFail()) {
         return core::Result<void>::fail(prep.errorCode(),
@@ -532,7 +516,7 @@ core::Result<void> MarkdownService::rescanLocked() {
     }
 
     // 2) 递归遍历磁盘，把所有 .md 文件 upsert 到索引
-    std::set<std::string> foundPaths; // POSIX 风格相对路径
+    std::set<std::string> foundPaths;
     for (auto it = fs::recursive_directory_iterator(
                     notesDir_, fs::directory_options::skip_permission_denied, ec);
          !ec && it != fs::recursive_directory_iterator();
@@ -543,7 +527,6 @@ core::Result<void> MarkdownService::rescanLocked() {
             const auto& absPath = entry.path();
             if (absPath.extension() != ".md") continue;
 
-            // 计算相对路径（POSIX 风格）
             auto relGeneric = fs::relative(absPath, notesDir_, ec);
             if (ec) continue;
             const std::string relPosix = relGeneric.generic_string();
@@ -558,8 +541,8 @@ core::Result<void> MarkdownService::rescanLocked() {
         }
     }
     if (ec) {
-        // 遍历中途出错 → foundPaths 残缺，按它剪枝会成批误删真实笔记（含标签级联）。
-        // 本轮放弃剪枝，只保留已完成的 upsert，下一轮以磁盘为准收敛。
+        // 遍历中途出错 → foundPaths 残缺，按它剪枝会成批误删真实笔记。
+        // 本轮放弃剪枝，下一轮以磁盘为准收敛。
         return core::Result<void>::fail(core::ErrorCode::FileReadFailed,
             "遍历笔记目录时出错，本轮跳过索引剪枝: " + ec.message());
     }
@@ -573,7 +556,7 @@ core::Result<void> MarkdownService::rescanLocked() {
         }
     }
 
-    // 4) 清理 FTS 孤儿行（历史 OR REPLACE 对 FTS5 不去重，可能留重复行）
+    // 4) 清理 FTS 孤儿行
     if (auto cleanup = db_.exec(
             "DELETE FROM markdown_fts WHERE path NOT IN "
             "(SELECT path FROM markdown_index)");
@@ -611,9 +594,7 @@ core::Result<std::vector<NoteMeta>> MarkdownService::listAll() {
 
 core::Result<std::vector<NoteMeta>> MarkdownService::listInDirectory(
     const fs::path& dir) {
-    // dir 为 POSIX 相对目录（"" = 根）。
     std::string prefix = dir.empty() ? "" : toPosix(dir);
-    // 直接 listAll 再按父目录筛（结果集通常 < 1000 条，性能可接受）。
     auto listResult = listAll();
     if (listResult.isFail()) {
         return listResult;
@@ -621,7 +602,6 @@ core::Result<std::vector<NoteMeta>> MarkdownService::listInDirectory(
     std::vector<NoteMeta> filtered;
     for (auto& n : listResult.value()) {
         const std::string& path = n.relativePath.generic_string();
-        // 父目录 = 去掉最后一段
         const auto pos = path.find_last_of('/');
         std::string parent;
         if (pos == std::string::npos) parent = "";
@@ -672,14 +652,13 @@ core::Result<void> MarkdownService::write(const fs::path& relPath,
             "无法创建父目录 " + parent.string() + ": " + ec.message());
     }
 
-    // 原子写（core::atomicWriteFile）；失败码映射回 FileWriteFailed（文本保存统一用文件写失败码）。
+    // 原子写；失败码统一映射为 FileWriteFailed
     auto wr = core::atomicWriteFile(absPath, content, "笔记");
     if (wr.isFail()) {
         return core::Result<void>::fail(core::ErrorCode::FileWriteFailed,
                                         wr.errorMessage());
     }
 
-    // 同步索引
     auto syncResult = syncOneToIndex(absPath, relPosix);
     if (syncResult.isFail()) {
         return syncResult;
@@ -688,12 +667,12 @@ core::Result<void> MarkdownService::write(const fs::path& relPath,
 }
 
 core::Result<void> MarkdownService::create(const fs::path& relPath) {
-    // 路径安全校验（trust boundary 在服务层；模块层另有同规则前置校验）
+    // trust boundary 在服务层
     if (!isSafeNewNotePath(toPosix(relPath))) {
         return core::Result<void>::fail(core::ErrorCode::ValidationError,
             "路径不合法（不允许绝对路径、盘符或 ..）: " + toPosix(relPath));
     }
-    // 规范化路径：补 .md 后缀
+    // 无扩展名时补 .md
     fs::path norm = relPath;
     if (norm.extension() != ".md") {
         norm += ".md";
@@ -715,7 +694,6 @@ core::Result<void> MarkdownService::create(const fs::path& relPath) {
     const std::string title = norm.stem().string();
     const std::string content = "# " + title + "\n\n";
 
-    // 确保父目录存在
     const auto parent = absPath.parent_path();
     std::error_code ec;
     fs::create_directories(parent, ec);
@@ -724,14 +702,13 @@ core::Result<void> MarkdownService::create(const fs::path& relPath) {
             "无法创建父目录: " + ec.message());
     }
 
-    // 原子写（core::atomicWriteFile）；失败码映射回 FileWriteFailed（文本保存统一用文件写失败码）。
+    // 原子写；失败码统一映射为 FileWriteFailed
     auto wr = core::atomicWriteFile(absPath, content, "笔记");
     if (wr.isFail()) {
         return core::Result<void>::fail(core::ErrorCode::FileWriteFailed,
                                         wr.errorMessage());
     }
 
-    // 同步索引
     auto syncResult = syncOneToIndex(absPath, relPosix);
     if (syncResult.isFail()) {
         // 回滚：删文件
@@ -745,16 +722,15 @@ core::Result<void> MarkdownService::remove(const fs::path& relPath) {
     const std::string relPosix = toPosix(relPath);
     const auto resolved = resolve(relPath);
     if (resolved.isFail()) {
-        // 越界路径拒绝删（否则是笔记目录外任意文件删除缺口）
+        // 越界路径拒绝删（否则是目录外任意文件删除缺口）
         return core::Result<void>::fail(resolved.errorCode(),
                                         resolved.errorMessage());
     }
     const auto absPath = resolved.value();
 
-    // 删文件（不存在也允许）
+    // 不存在也允许删（索引照清）
     std::error_code ec;
     fs::remove(absPath, ec);
-    // 不报错：即使文件不存在，索引也要清
 
     return deleteFromIndex(relPosix);
 }
@@ -762,12 +738,11 @@ core::Result<void> MarkdownService::remove(const fs::path& relPath) {
 core::Result<std::string> MarkdownService::rename(const fs::path& oldRelPath,
                                                   const fs::path& newRelPath) {
     const std::string oldPosix = toPosix(oldRelPath);
-    // 新名走与 create() 同一安全规则（绝对路径/盘符/.. 一律拒绝）
     if (!isSafeNewNotePath(toPosix(newRelPath))) {
         return core::Result<std::string>::fail(core::ErrorCode::ValidationError,
             "新名不合法（不允许绝对路径、盘符或 ..）: " + toPosix(newRelPath));
     }
-    // 无扩展名时补 .md（与 create() 一致）
+    // 无扩展名时补 .md
     fs::path norm = newRelPath;
     if (norm.extension() != ".md") {
         norm += ".md";
@@ -809,7 +784,7 @@ core::Result<std::string> MarkdownService::rename(const fs::path& oldRelPath,
             "重命名失败 " + oldPosix + " → " + newPosix + ": " + ec.message());
     }
 
-    // 读新文件内容（title 与 FTS 同源）。读失败不致命：title 退化文件名，5s rescan 修正。
+    // 读新文件内容（title 与 FTS 同源）；读失败不致命，下轮 rescan 修正。
     std::string content;
     {
         std::ifstream ifs(absNew);
@@ -824,7 +799,6 @@ core::Result<std::string> MarkdownService::rename(const fs::path& oldRelPath,
     const int64_t mtime = fileMtimeEpoch(absNew);
     const std::string title = extractTitle(content, norm);
 
-    // 索引行按 path 就地 UPDATE（id 不变 → 标签外键关联保留，故不用 remove+create）。
     auto tx = db_.transaction([&]() -> core::Result<void> {
         {
             auto prep = db_.prepare(
@@ -879,7 +853,7 @@ core::Result<std::string> MarkdownService::rename(const fs::path& oldRelPath,
         return core::Result<void>::ok();
     });
     if (tx.isFail()) {
-        // DB 失败 → 把磁盘改回去（保持文件位置 = 索引 path 一致）；回滚失败留响亮日志。
+        // DB 失败 → 磁盘改回去（保持文件位置 = 索引 path 一致）
         std::error_code rbEc;
         fs::rename(absNew, absOld, rbEc);
         if (rbEc) {
@@ -911,8 +885,7 @@ core::Result<std::vector<NoteMeta>> MarkdownService::search(
         }
     };
 
-    // ---- 路径 A：FTS5 MATCH（拉丁词、按 rank 排序）----
-    // 全部词元失真时跳过 FTS，见 FtsQueryPlan 注释
+    // ---- 路径 A：FTS5 MATCH（拉丁词，按 rank 排序）----
     const FtsQueryPlan plan = buildFtsQuery(query);
     if (!plan.match.empty() && !plan.allLossy) {
         auto prep = db_.prepare(
@@ -942,8 +915,7 @@ core::Result<std::vector<NoteMeta>> MarkdownService::search(
     }
 
     // ---- 路径 B：LIKE 字面子串兜底（CJK / 失真词元）----
-    // unicode61 把连续 CJK 视为单个 token（"界面" 命不中 "用户界面"），失真词元
-    //（"c++" 清洗成 "c"）FTS 语义亦错；故含非 ASCII / 有失真 / FTS 没命中时走 LIKE。
+    // unicode61 把连续 CJK 视为单个 token；失真词元 FTS 语义亦错，故走 LIKE。
     const bool hasNonAscii = std::any_of(
         query.begin(), query.end(),
         [](char c) { return static_cast<unsigned char>(c) >= 0x80; });
@@ -1033,7 +1005,6 @@ core::Result<void> MarkdownService::setTags(
     }
 
     auto tx = db_.transaction([&]() -> core::Result<void> {
-        // 笔记必须在索引中（标签挂在 markdown_index.id 上）
         int64_t noteId = -1;
         {
             auto prep = db_.prepare(
@@ -1082,7 +1053,6 @@ core::Result<void> MarkdownService::setTags(
                     "step setTags delete: " + step.errorMessage());
             }
         }
-        // upsert 标签 + 建关联
         for (const auto& name : clean) {
             {
                 auto prep = db_.prepare(
@@ -1136,7 +1106,7 @@ core::Result<void> MarkdownService::setTags(
                 }
             }
         }
-        // 清理无笔记引用的孤儿标签（标签最后一个使用者被移除后自动消失）
+        // 清理无笔记引用的孤儿标签
         {
             auto prep = db_.prepare(
                 "DELETE FROM markdown_tags WHERE id NOT IN "
@@ -1223,15 +1193,12 @@ NoteMeta MarkdownService::rowToNote(const core::data::SqlRow& row) {
 
 core::Result<bool> MarkdownService::pollChanged() {
     // Credit 语义：watcher 报过事件 → 本次必返 true（消费该 credit），即使
-    // (mtime,size) 比对失明也强制调用方跑一轮 rescan + UI 刷新。watcher 线程已
-    // force-sync 过受影响文件，这一轮 true 的真正消费方是列表刷新。
+    // (mtime,size) 比对失明也强制调用方跑一轮 rescan + UI 刷新。
     if (watcherFired_.exchange(false)) {
         return core::Result<bool>::ok(true);
     }
 
     // ---- mtime/size 比对：stub 平台 / watcher 掉线的兜底主路径 ----
-
-    // 磁盘侧快照：path → (mtime, size)
     std::map<std::string, std::pair<int64_t, int64_t>> disk;
     std::error_code ec;
     if (fs::exists(notesDir_, ec)) {

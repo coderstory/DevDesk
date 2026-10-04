@@ -1,9 +1,8 @@
 // src/module_claude_proxy/quota/quota_volcano.cpp
-// 火山方舟余量 provider，逐字移植 cc-switch coding_plan.rs（bfaaba16）的火山分支。
+// 火山方舟余量 provider。
 // 用量接口是控制面 OpenAPI（open.volcengineapi.com，非推理域名），强制火山签名 V4（AK/SK）——
 //   复用推理 Bearer Key 会被网关以 400 InvalidAuthorization 拒，故 fields() 收 AK/SK、不吃 profile 的 apiKey。
-// 真机已验证（G8）：cn-beijing + GetAFPUsage / GetCodingPlanUsage 两条路径被真实网关接受（HTTP 200、Result 非空）；
-//   换 region / 换 Action 是否仍逐字节一致未验证，新增形态应先跑 tools/quota_live_probe.cpp。
+// cn-beijing + GetAFPUsage / GetCodingPlanUsage 两条路径已过真实网关；换 region / 换 Action 未验证，新增形态先跑 tools/quota_live_probe.cpp。
 #include "quota_volcano.h"
 
 #include <openssl/hmac.h>
@@ -126,7 +125,6 @@ std::string uriEncode(const std::string& input) {
 std::string canonicalQuery(const std::string& action, const std::string& region) {
     std::vector<std::pair<std::string, std::string>> pairs = {
         {"Action", action}, {"Region", region}, {"Version", kApiVersion}};
-    // stable_sort：与上游 Rust sort_by（稳定排序）同语义；key 互不相同，稳定性实际不影响结果，但保持「同输入必同输出」。
     std::stable_sort(pairs.begin(), pairs.end(),
                      [](const std::pair<std::string, std::string>& a,
                         const std::pair<std::string, std::string>& b) {
@@ -149,8 +147,7 @@ std::string regionFromBaseUrl(const std::string& baseUrl) {
     const std::size_t slash = host.find('/');
     if (slash != std::string::npos) host = host.substr(0, slash);
 
-    // host 必须先小写化：base_url 是用户手填自由文本，若不小写，Ark.CN-Shanghai.volces.com 会「匹配得上 provider
-    // 却拿不到 region」→ 回落 cn-beijing，签名 scope 不符被拒签，错误还指向「检查 AK/SK」误导换一把本来正确的密钥。
+    // host 必须先小写化：base_url 是用户手填自由文本，不小写会拿不到 region → 回落默认，签名 scope 不符被拒签且误导换密钥。
     std::transform(host.begin(), host.end(), host.begin(), [](unsigned char c) {
         return static_cast<char>(std::tolower(c));
     });
@@ -199,7 +196,6 @@ SignedHeaders signRequest(const std::string& accessKeyId, const std::string& sec
     const std::string shortDate = out.xDate.substr(0, 8);  // yyyymmdd
     out.xContentSha256 = sha256Hex(body);
 
-    // ① canonical headers 用固定顺序，不排序（火山特有）
     const std::string canonicalHeaders = std::string("host:") + kOpenApiHost +
                                          "\nx-date:" + out.xDate +
                                          "\nx-content-sha256:" + out.xContentSha256 +
@@ -208,14 +204,11 @@ SignedHeaders signRequest(const std::string& accessKeyId, const std::string& sec
                                          canonicalHeaders + "\n" + kSignedHeaders + "\n" +
                                          out.xContentSha256;
 
-    // ③ credential scope 结尾是 `request`（不是 aws4_request）
     const std::string credentialScope =
         shortDate + "/" + region + "/" + std::string(kService) + "/request";
-    // ② string_to_sign 的算法串是 `HMAC-SHA256`（无 AWS4 前缀）
     const std::string stringToSign = std::string("HMAC-SHA256\n") + out.xDate + "\n" +
                                      credentialScope + "\n" + sha256Hex(canonicalRequest);
 
-    // 签名密钥派生：kDate = HMAC(SK, date)（SK 不加 AWS4 前缀），终止串 `request`
     const std::string kDate = hmacSha256Raw(secretAccessKey, shortDate);
     const std::string kRegion = hmacSha256Raw(kDate, region);
     const std::string kServiceKey = hmacSha256Raw(kRegion, kService);
@@ -236,14 +229,15 @@ using platform::json::JsonObject;
 using platform::json::JsonValue;
 namespace json = platform::json;
 
-constexpr long kOpenApiTimeoutMs = 15000;  // 同上游 15s
+constexpr long kOpenApiTimeoutMs = 15000;
 
-// 单次 OpenAPI 调用的归类（照搬上游 VolcCall 四态）
+// 单次 OpenAPI 调用的四态归类：Body（2xx 且可解析，Result 可空 = 未订阅）/ Auth（硬鉴权失败，命中即停）/
+//   Soft（非鉴权 HTTP 错误或非法 JSON，可继续试另一 plan）/ Transient（瞬时传输失败，立即传播）。
 enum class CallKind {
-    Body,       // 2xx + JSON 可解析 + 无错误信封（业务 Result 仍可能为空 = 未订阅）
-    Auth,       // 硬鉴权失败（401/403 或 AccessDenied/Signature 类）——凭据共用，命中即停
-    Soft,       // 非鉴权 HTTP 错误 / 响应体非法 JSON——记录后可继续试另一个 plan
-    Transient,  // 瞬时传输失败（网络 / 超时 / 读体中断）——立即传播
+    Body,
+    Auth,
+    Soft,
+    Transient,
 };
 
 struct CallOutcome {
@@ -265,8 +259,7 @@ std::string lowerAscii(std::string s) {
     return s;
 }
 
-// JSON 数字取值，必须按槽取：Int（intVal）与 Double（dblVal）分两字段存，只读 asDouble() 会把整数读成 0。
-// 字符串数字按整串解析，尾部有残留即失败（同上游 parse_f64）。
+// JSON 数字必须按槽取（Int/Double 两字段分开存），只读 asDouble() 会把整数读成 0；字符串数字按整串解析，尾部残留即失败。
 bool jsonF64(const JsonValue& v, double& out) {
     if (v.type() == JsonValue::T_Number) {
         const double d = v.asDouble();
@@ -295,8 +288,7 @@ bool jsonI64(const JsonValue& v, std::int64_t& out) {
     return true;
 }
 
-// 重置时间归一：字符串原样（上游给 ISO8601）；数字 <= 0 视为「无重置」（火山 session 无活跃窗口回 -1），
-// < 1e12 按秒、否则按毫秒，统一转 epoch 秒 → ISO8601；无重置 / 未给 → 空串。
+// 重置时间归一：字符串原样；数字 <= 0 视为无重置，< 1e12 按秒否则按毫秒，统一转 epoch 秒 → ISO8601；未给 → 空串。
 std::string resetTimeOf(const JsonValue& v) {
     if (v.type() == JsonValue::T_String) return v.asString();
     std::int64_t n = 0;
@@ -306,7 +298,6 @@ std::string resetTimeOf(const JsonValue& v) {
     return volcano_detail::iso8601FromEpochSeconds(n / 1000);
 }
 
-// 取第一个存在且为字符串的键（防御式 fallback 链）
 std::string firstString(const JsonObject& obj, const std::vector<const char*>& keys) {
     for (const char* key : keys) {
         const JsonValue v = obj.get(key);
@@ -315,7 +306,6 @@ std::string firstString(const JsonObject& obj, const std::vector<const char*>& k
     return {};
 }
 
-// `Result` 包裹层解包（上游 body.get("Result").unwrap_or(&body)）
 JsonValue unwrapResult(const JsonValue& body) {
     if (body.isObject()) {
         const JsonValue result = body.asObject().get("Result");
@@ -373,7 +363,7 @@ std::string truncateForError(std::string text) {
     return text;
 }
 
-// 鉴权失败文案：同时点出「AK/SK」与「签名」两条排查方向（上游英文单条，这里按中文文案约定改写）。
+// 鉴权失败文案：同时点出「AK/SK」与「签名」两条排查方向。
 std::string authMessage(const std::string& where, const std::string& code,
                         const std::string& message) {
     std::string out = "火山方舟鉴权失败（" + where;
@@ -392,7 +382,6 @@ std::string summarize(const char* action, const JsonValue& body) {
     return std::string(action) + "=" + text;
 }
 
-// 一次控制面 OpenAPI 调用
 CallOutcome openApiCall(const std::string& region, const std::string& accessKeyId,
                         const std::string& secretAccessKey, const char* action,
                         const HttpSendFn& http) {
@@ -459,7 +448,7 @@ CallOutcome openApiCall(const std::string& region, const std::string& accessKeyI
     return {CallKind::Body, parsed.value(), ""};
 }
 
-// 窗口标签归一
+// 窗口标签归一（上游别名 → 规范键）。
 std::string canonicalWindowKey(const std::string& label) {
     const std::string lower = lowerAscii(label);
     if (lower == "session" || lower == "5h" || lower == "fivehour" || lower == "five_hour" ||
@@ -471,8 +460,7 @@ std::string canonicalWindowKey(const std::string& label) {
     return {};
 }
 
-// GetAFPUsage → 窗口：展示 5h / 周 / 月（与控制台一致）；AFPDaily 被控制台隐藏（历史默认值非强制限额）→ 跳过。
-// 已用% = Used/Quota*100 过 clampUsedPercent；Quota <= 0 视为未订阅 → 跳过，使「已鉴权但无 Agent Plan」回落到 Coding Plan 探测。
+// GetAFPUsage → 窗口：5h/周/月（与控制台一致）；AFPDaily 控制台不展示 → 跳过；Quota <= 0 视为未订阅 → 回落 Coding Plan 探测。
 void appendAfpWindows(const JsonValue& result, std::vector<QuotaWindow>& windows) {
     if (!result.isObject()) return;
     const JsonObject resultObj = result.asObject();
@@ -501,8 +489,7 @@ void appendAfpWindows(const JsonValue& result, std::vector<QuotaWindow>& windows
     }
 }
 
-// GetCodingPlanUsage → 窗口（防御式）：回 session/weekly/monthly 三类窗口、只给百分比（已用）、重置时间秒级。
-// 宽松匹配 QuotaUsage / Usages / Details 三个数组名；按显式 Level 字段映射周期，绝不按 ResetTimestamp 排序猜。
+// GetCodingPlanUsage → 窗口（防御式）：宽松匹配 QuotaUsage / Usages / Details 三个数组名；按显式 Level 字段映射周期，绝不按 ResetTimestamp 排序猜。
 void appendCodingPlanWindows(const JsonValue& result, std::vector<QuotaWindow>& windows) {
     if (!result.isObject()) return;
     const JsonObject resultObj = result.asObject();
@@ -515,14 +502,13 @@ void appendCodingPlanWindows(const JsonValue& result, std::vector<QuotaWindow>& 
         const JsonValue item = arr[i];
         if (!item.isObject()) continue;
         const JsonObject itemObj = item.asObject();
-        // 真实字段是 `Level`（实测 session/weekly/monthly）；其余作防御式 fallback
+        // 真实字段是 `Level`（session/weekly/monthly）；其余作防御式 fallback
         const std::string label =
             firstString(itemObj, {"Level", "Type", "Period", "Label", "Window"});
         const std::string key = canonicalWindowKey(label);
         if (key.empty()) continue;
 
-        // 读不到百分比绝不能降级成 0.0（0.0 = 已用 0% = 还剩 100%，会把「拿不到数据」画成「额度充足」）：
-        // 读不到就跳过该条目，让「本轮没解析出任何窗口」落到 queryVolcano 的 emptyResponses → Shape 分支（带原始响应便于核对）。
+        // 读不到百分比绝不能降级成 0.0（0.0 = 还剩 100% 的假象）：读不到就跳过该条目，落到 queryVolcano 的 Shape 分支。
         double percent = 0.0;
         if (!jsonF64(itemObj.get("Percent"), percent) &&
             !jsonF64(itemObj.get("UsedPercent"), percent) &&
@@ -562,7 +548,6 @@ QuotaResult queryVolcano(const std::string& region, const std::string& accessKey
     std::vector<std::string> softErrors;
     std::vector<std::string> emptyResponses;
 
-    // 1) Agent Plan
     const CallOutcome afp = openApiCall(region, accessKeyId, secretAccessKey,
                                         volcano_detail::kActionAfpUsage, http);
     switch (afp.kind) {
@@ -593,7 +578,6 @@ QuotaResult queryVolcano(const std::string& region, const std::string& accessKey
         }
     }
 
-    // 2) Coding Plan
     const CallOutcome coding = openApiCall(region, accessKeyId, secretAccessKey,
                                            volcano_detail::kActionCodingPlanUsage, http);
     switch (coding.kind) {
@@ -622,7 +606,6 @@ QuotaResult queryVolcano(const std::string& region, const std::string& accessKey
         }
     }
 
-    // 3) 两个 plan 都没给出可用额度
     if (!softErrors.empty()) {
         return errorResult(QuotaError::Transient,
                            "火山方舟用量查询失败：" + joinAll(softErrors, "；"));
@@ -736,7 +719,6 @@ public:
 }  // namespace
 
 QuotaProvider* volcanoProvider() {
-    // 进程内单例：provider 无状态，调用方只借不还（quota_registry.h 的工厂契约）
     static VolcanoProvider instance;
     return &instance;
 }

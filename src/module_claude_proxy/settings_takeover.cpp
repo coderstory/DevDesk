@@ -1,6 +1,5 @@
 // src/module_claude_proxy/settings_takeover.cpp
-// settings.json 接管/还原的协议侧实现（R10-A4 自 claude_service.cpp 整段迁出，
-// 行为零变化；段级拆分见 R10 spec §2.3 P-A4，断言口径见 §2.4 P-A4）
+// settings.json 接管/还原的协议侧实现（协议见 settings_takeover.h）
 #include "settings_takeover.h"
 
 #include <string>
@@ -18,7 +17,7 @@ void SettingsTakeOver::setPaths(const settings_sync::Paths& paths) {
 }
 
 std::vector<std::string> SettingsTakeOver::warningsSnapshot() const {
-    // F2：值返回 + 锁内拷贝。返回活引用会让 UI 每帧遍历的缓冲被写者（agent
+    // 值返回 + 锁内拷贝。返回活引用会让 UI 每帧遍历的缓冲被写者（agent
     // 线程的 setActiveProfile → syncTakeOver）整体替换释放 → 竞争 / UAF
     std::lock_guard<std::mutex> lock(mu_);
     return warnings_;
@@ -31,10 +30,9 @@ bool SettingsTakeOver::isClaudeCodeManaged() const {
 
 void SettingsTakeOver::recoverPendingSettingsRestore() {
     if (paths_.settingsFile.empty()) return;
-    // 接管开着才补还原（2026-09-27 恢复默认开）：启动序列里这一步负责把上次
-    // 异常退出残留的 sidecar 收尾，必须先于任何 startProxy（否则残留的托管键
-    // 会被误快照为用户原值）。开关关掉时连它也不做——「不碰 settings.json」
-    // 是关掉开关的整体语义，历史遗留 sidecar 留到下次开启接管时再处理。
+    // 接管开着才补还原：启动序列里这一步负责把上次异常退出残留的 sidecar
+    // 收尾，必须先于任何 startProxy（否则残留的托管键会被误快照为用户原值）。
+    // 开关关掉时连它也不做——「不碰 settings.json」是关掉开关的整体语义。
     if (!enabled_) return;
     auto r = settings_sync::recoverPendingSnapshot(paths_);
     if (!r.ok) {
@@ -45,9 +43,8 @@ void SettingsTakeOver::recoverPendingSettingsRestore() {
 core::Result<void> SettingsTakeOver::syncTakeOver(
     const Profile& activeProfile, int proxyPort) {
     if (paths_.settingsFile.empty()) return core::Result<void>::ok();
-    // 接管默认开（2026-09-27 恢复）：起代理即接管 settings.json，停代理还原。
-    // 显式关掉开关才走下面这条——此时 DevDesk 完全不碰该文件（本机另装
-    // cc-switch 等同类工具、不愿两边互相覆盖时的用法）。
+    // 接管默认开：起代理即接管 settings.json，停代理还原。显式关掉开关才走
+    // 下面这条——此时 DevDesk 完全不碰该文件。
     if (!enabled_) {
         LOG_INFO("Claude Code settings 接管未开启：不动 " +
                  paths_.settingsFile.string());
@@ -59,13 +56,12 @@ core::Result<void> SettingsTakeOver::syncTakeOver(
     auto r = settings_sync::takeOver(activeProfile, proxyPort, paths_);
     size_t warnCount = 0;
     {
-        // F2：warnings_ 整体重写（vector 缓冲释放）——与读侧 warningsSnapshot()
+        // warnings_ 整体重写（vector 缓冲释放）——与读侧 warningsSnapshot()
         // 同一把 mu_，读者拿到的永远是某一次写完之后的自洽快照
         std::lock_guard<std::mutex> lock(mu_);
         warnings_ = std::move(r.warnings);
         if (!r.ok) {
-            // 条目 3：失败不再只进日志——并入 warnings_（与 getter 一起
-            // 供 UI 透传）。调用方语义不变：接管失败不阻断起代理/切 profile
+            // 失败并入 warnings_ 供 UI 透传；接管失败不阻断起代理/切 profile
             warnings_.push_back("Claude Code settings 接管失败: " + r.error);
         }
         warnCount = warnings_.size();
@@ -92,20 +88,17 @@ core::Result<void> SettingsTakeOver::syncRestore() {
         }
         return core::Result<void>::ok();
     }
-    // 无 sidecar 也走 restore（条目 2②）：其中的「残留代理形态键」兜底负责把
-    // settings.json 里仍指向死代理的键清掉；无该形态时 restore 内部是真 no-op
-    //（不写文件）。启动补还原仍以 sidecar 为前提——不在每次启动就动别人的配置
+    // 无 sidecar 也走 restore：其中的「残留代理形态键」兜底负责把 settings.json
+    // 里仍指向死代理的键清掉；无该形态时 restore 内部是真 no-op（不写文件）
     auto r = settings_sync::restore(paths_);
     if (!r.ok) {
-        // CPX-02（R10-A4 收尾）：还原失败不再只进日志——并入 warnings_ 供 UI
-        // 透传并返回 Result 上报（门面 stopProxy 经其 syncRestore() 包装
-        // LOG_WARN 留痕）
-        std::lock_guard<std::mutex> lock(mu_);   // F2：同上，写侧持 mu_
+        // 还原失败并入 warnings_ 供 UI 透传并返回 Result 上报
+        std::lock_guard<std::mutex> lock(mu_);   // 写侧持 mu_
         warnings_.push_back("Claude Code settings 还原失败: " + r.error);
         return core::Result<void>::fail(core::ErrorCode::Internal, r.error);
     }
     {
-        std::lock_guard<std::mutex> lock(mu_);   // F2
+        std::lock_guard<std::mutex> lock(mu_);   // 写侧持 mu_
         warnings_.clear();
     }
     LOG_INFO("Claude Code settings 已还原（settings.json 不再指向本地代理）");

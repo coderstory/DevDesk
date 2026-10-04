@@ -11,7 +11,7 @@ namespace core::proxy_stats {
 
 // reader 一次拷贝拿走
 struct Snapshot {
-    int activeStreams = 0;    // 活动流数
+    int activeStreams = 0;
     int64_t sessionTokens = 0; // 进程启动以来累计 output tokens（多流总和）
     double rateTps = 0.0;     // 最近 ~2s 窗口的 tok/s
     int64_t lastActivityMs = 0; // 距最近一次 token 事件的毫秒数（无事件为 -1）

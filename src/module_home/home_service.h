@@ -1,4 +1,3 @@
-// src/module_home/home_service.h
 // Home 仪表盘数据服务：只依赖 core::data::SqliteDb，不依赖任何 module_*（查询的表
 // 都是 core::schema 定义的稳定 schema，可独立只读查询）。
 #pragma once
@@ -23,7 +22,6 @@ struct RecentNote {
 
 // 最近一次成功调用的速率快照。hasValue=false 三种来源（UI 一律走空态 "--"）：
 // 无成功调用 / latency_ms <= 0（无法算速率）/ 查询失败（错误经 Result 单独回传）。
-// 速率算法与成功判定单源 core/call_rate.h。
 struct LastCallRate {
     bool hasValue = false;
     double tps = 0.0;         // tok/s（仅 hasValue 时有效）
@@ -61,8 +59,7 @@ std::string formatTodayCn(std::time_t now);
 // 累计缩写：0→"0"，12400→"12.4k"，1234567→"1.2M"
 std::string formatTokenCount(int64_t tokens);
 // 速率格式：0→"0"，<100 保留 1 位小数，>=100 整数。
-// 卡片数字已改用单次调用口径（core/call_rate.h::formatTps），本函数只剩实时速率
-//（2s 窗口，sparkline 数据源）的用例在用，勿当死代码删。
+// 仅实时速率（2s 窗口，sparkline 数据源）在用，勿当死代码删。
 std::string formatRateTps(double tps);
 
 class HomeService {
@@ -76,8 +73,8 @@ public:
     // output_tokens > 0」；速率单源 core/call_rate.h。无此行 → hasValue=false（非错误）。
     core::Result<LastCallRate> getLastCallRate();
 
-    // 当日（本地零点起）按小时聚合 output_tokens（未采集 = NULL 按 0），恒返回 hours
-    // 个点。去头去尾在 hourlyDataRange 里做——裁剪是展示口径，不藏进数据层。
+    // 当日（本地零点起）按小时聚合 output_tokens（未采集 = NULL 按 0），恒返回 hours 个点；
+    // 去头去尾在 hourlyDataRange 里做——裁剪是展示口径，不藏进数据层。
     core::Result<std::vector<int64_t>> getTodayHourlyTokenTotals(int hours = 24);
 
 private:

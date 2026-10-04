@@ -1,8 +1,6 @@
-// src/module_home/home_module.cpp
 // Home 仪表盘模块：只读聚合 markdown_index / todo_tasks / claude_call_logs，
-// 经 core::appDatabase() 拿共享连接（与 Markdown/Todo 同装配模式）。
-// 导航经 core::appRouter()，module_* 之间互不依赖；跨模块动作走 Router payload
-//（"action:*" / "open:*"），由目标页消费。
+// 经 core::appDatabase() 拿共享连接。导航经 core::appRouter()，module_* 互不依赖；
+// 跨模块动作走 Router payload（"action:*" / "open:*"），由目标页消费。
 #include "core/call_rate.h"
 #include "core/component_theme.h"
 #include "core/database.h"
@@ -36,8 +34,7 @@ namespace module::home {
 
 namespace {
 
-// 数字字号随位数收缩：700 字重数字 ≈0.60em/位，可用宽不足时降号（下限 24 档），
-// 上限 base。只缩字号，不动行高/垂直节奏。
+// 数字字号随位数收缩：700 字重数字 ≈0.60em/位，可用宽不足时降号（下限 24 档），上限 base
 float statNumberFont(float base, int digits, float availWidth, float scale) {
     if (digits <= 0) return base;
     const float want =
@@ -53,10 +50,9 @@ int digitCount(const std::string& text) {
     return n;
 }
 
-// 渲染单个统计卡片（card 组件，点击整卡跳转）。
-// numberColor/badgeColor 非空时覆盖默认配色；timerSeconds > 0 挂 0 尺寸 onTimer 定期
-// 重绘；chart 非空叠加迷你图表；onTick 为该 timer 回调（默认空实现）。
-// 卡内容四周统一 16px 内边距（显式 .padding，替代组件默认 20，防旧坐标叠加致溢出）。
+// 渲染单个统计卡片（card 组件，点击整卡跳转）。numberColor/badgeColor 非空覆盖默认配色；
+// timerSeconds > 0 挂 0 尺寸 onTimer 定期重绘；chart 非空叠加迷你图表；onTick 为该 timer 回调。
+// 卡内容四周统一 16px 内边距（显式 .padding 替代组件默认 20）
 void drawStatCard(eui::Ui& ui,
                   const std::string& id,
                   float width,
@@ -125,8 +121,7 @@ void drawStatCard(eui::Ui& ui,
                                                      : t.colors.textPrimary))
                         .build();
                     ui.text(id + ".badge")
-                        // 底对齐 height-48（= 16 inset + 16 badge + 16 底边距），
-                        // 任何字号档底部都不贴卡边
+                        // 底对齐 height-48（= 16 inset + 16 badge + 16 底边距），任何字号档底部不贴卡边
                         .position(0.0f, height - 48.0f)
                         .size(cw, 16.0f)
                         .text(badge)
@@ -138,8 +133,7 @@ void drawStatCard(eui::Ui& ui,
                                                     : t.colors.textTertiary))
                         .build();
                     if (timerSeconds > 0.0f) {
-                        // 0.5s 周期整卡重绘（流式速率实时刷新；compose 不是每帧重跑，
-                        // 靠 onTimer 触发）。onTick 非空时用它（Token 卡靠它感知流末）
+                        // 周期整卡重绘（compose 不是每帧重跑，靠 onTimer 触发）；onTick 非空时用它
                         ui.stack(id + ".timer")
                             .size(0.0f, 0.0f)
                             .onTimer(timerSeconds,
@@ -162,16 +156,14 @@ void drawStatCard(eui::Ui& ui,
         .build();
 }
 
-// 模块注册感知：按 Router 注册状态隐藏对应卡片/按钮，不显示陈旧数据；
-// appRouter() 为 null（无头测试）视为全启用。
+// 模块注册感知：按 Router 注册状态隐藏对应卡片/按钮，不显示陈旧数据；appRouter() 为 null（无头测试）视为全启用
 bool moduleRegistered(::core::PageId page) {
     auto* router = ::core::appRouter();
     return router == nullptr || router->isRegistered(page);
 }
 
-// 统计卡 / 快捷按钮元数据表：static 纯数据表，不带 lambda/可调用列（static 表带
-// 可调用列首次初始化只求值一次，捕获引用会冻结甚至悬垂）。行序 = 渲染序；数值/
-// 副标题文案在 compose 逐行查表外取。
+// 统计卡 / 快捷按钮元数据表：static 纯数据表，不带 lambda/可调用列（static 表带可调用列
+// 首次初始化只求值一次，捕获引用会冻结甚至悬垂）。行序 = 渲染序；数值/副标题文案在 compose 逐行查表外取。
 
 // 统计卡：kind = 行身份，module = 归属模块（注册态过滤），target = 点击跳转页。
 enum class StatCardKind { Tokens, Notes, TodoPending, TodoOverdue, ApiCalls };
@@ -249,8 +241,7 @@ public:
 
     void onStop() override {
         service_.reset();
-        // 余量快照作废：停机后新连接 writeVersion 从 0 起，旧快照的 seenVersion 若
-        // 恰好相等就会拿旧行画新卡，故强制下次首帧重查。
+        // 余量快照作废：停机后新连接 writeVersion 从 0 起，旧快照 seenVersion 恰好相等会拿旧行画新卡
         quotaRows_.clear();
         quotaErr_.clear();
         quotaSeenVersionValid_ = false;
@@ -280,8 +271,7 @@ public:
         refreshLastRate();
     }
 
-    // 最近一次成功调用的速率（独立于 getStats——它的失败不该把整页拖成「加载失败」，
-    // 但也不能静默：查询失败单独记 lastRateError_，Token 卡显示「加载失败」）。
+    // 最近一次成功调用的速率（独立于 getStats）：失败不拖垮整页也不静默，单独记 lastRateError_
     void refreshLastRate() {
         if (!service_) return;
         auto r = service_->getLastCallRate();
@@ -306,17 +296,15 @@ public:
         const auto& t = core::theme::current();
         const float pad = t.sizes.spacingXXLarge;       // 40
         const float gap = t.sizes.spacingLarge * 1.25f; // 20
-        // ⚠ contentW 不在这里定义：整页挂在 home.scroll 下，内容宽取决于是否出滚动条，
-        // 只有 scrollView 的 content 回调拿到的 innerW 说了算（见下方同名遮蔽定义）。
-        // kHeaderActionsW = header 右侧按钮组宽，与标题列相加必须等于 contentW。
+        // ⚠ contentW 不在这里定义：整页挂在 home.scroll 下，内容宽只有 scrollView 的 content
+        // 回调拿到的 innerW 说了算（见下方同名遮蔽定义）。kHeaderActionsW + 标题列 = contentW。
         constexpr float kHeaderActionsW = 212.0f;
         const float cardGap = 20.0f;
         // 卡高 144 × fontScale 派生（144 = 16+16+8+56+16+16，见 drawStatCard）。
         const float statH = 144.0f * core::theme::fontScale();
         const std::time_t now = std::time(nullptr);
 
-        // 模块注册感知：卡片/按钮按目标模块注册状态显隐。统计卡可见数从元数据表
-        // 按注册态过滤派生（新增/关闭模块改表即改计数），全关整行隐藏。
+        // 模块注册感知：统计卡可见数从元数据表按注册态过滤派生（改表即改计数），全关整行隐藏。
         int statCount = 0;
         for (const auto& card : kStatCards) {
             if (moduleRegistered(card.module)) ++statCount;
@@ -324,11 +312,9 @@ public:
 
         // 页面不自铺底色，用主窗口 clearColor 透出（否则半透/磨砂档页面 alpha 恒 1 看不见效果）。
 
-        // 首页外层滚动容器：矮窗下真正装不下的是整页（不含余量卡就已超客户区），故整页
-        // 包一层 scrollView，超出由滚动条吸收，装得下时几何逐字不变。
+        // 首页外层滚动容器：整页包一层 scrollView，矮窗超出由滚动条吸收，装得下时几何不变。
         // ⚠ 上游坑：layoutColumn() 算子元素只看流式游标，position() 挂在 column 的流式
-        // 子元素上会被静默忽略——home.root 的直接子块一律只用 flow + size()（用 position()
-        // 的只有卡内部元素）。形参 ui 刻意与外层同名，整页代码换个容器一行不用改。
+        // 子元素上会被静默忽略——home.root 的直接子块一律只用 flow + size()。形参 ui 刻意与外层同名。
         components::scrollView(ui, "home.scroll")
             .size(screen.width, screen.height)
             .theme(core::theme::componentTokens(t))
@@ -336,8 +322,7 @@ public:
             // ⚠ contentW 遮蔽外层：出滚动条时内容列收窄，必须跟 innerW 走，否则横向溢出。
             const float contentW = innerW - pad * 2.0f;
         ui.column("home.root")
-            // 高度用 wrapContent：固定高度会让 scrollView 的测量 pass 永远量到「正好等于视口」
-            // → 永远不判可滚。
+            // 高度用 wrapContent：固定高度会让 scrollView 的测量 pass 永远量到「正好等于视口」→ 永不判可滚
             .width(innerW)
             .height(core::SizeValue::wrapContent())
             .padding(pad)
@@ -347,7 +332,7 @@ public:
                     .size(contentW, 72.0f)
                     .alignItems(eui::Align::CENTER)
                     .content([&] {
-                        // 标题列宽 = contentW − 右侧按钮组宽 212（对偶写法：两段和 = contentW，header 行 gap=0）。
+                        // 标题列宽 = contentW − 右侧按钮组宽（两段和 = contentW，header 行 gap=0）；
                         // 欢迎区不垫渐变底（浅色主题白→白渐变 = 纯白通栏卡），文案直接铺页面背景。
                         ui.column("home.greeting")
                             .size(std::max(280.0f, contentW - kHeaderActionsW), 72.0f)
@@ -416,22 +401,20 @@ public:
                     return ok ? std::to_string(v) : std::string("--");
                 };
 
-                // Token 速率卡：数字 = 最近一次成功调用的速率（output_tokens / (latency_ms/1000)，
-                // 口径单源 core/call_rate.h）；无成功调用 → 空态「--」。流式实时值只喂 sparkline。
-                // 配色沿用旧三态：流式中 primary 数字 + success 绿 badge。
+                // Token 速率卡：数字 = 最近一次成功调用的速率（口径单源 core/call_rate.h）；
+                // 无成功调用 → 空态「--」。流式实时值只喂 sparkline；流式中 primary 数字 + success 绿 badge。
                 const core::proxy_stats::Snapshot snap =
                     core::proxy_stats::snapshot();
                 const bool streaming = snap.activeStreams > 0;
-                // 「加载失败」= 整页统计没加载成功 **或** 最近速率查询自己失败——不把「未加载」
-                // 冒充成「暂无成功调用」。
+                // 「加载失败」= 整页统计没加载成功或最近速率查询自己失败——不把「未加载」冒充「暂无成功调用」
                 const bool rateFailed =
                     !statsLoaded_ || !lastRateError_.empty();
                 const bool rateOk = !rateFailed && lastRate_.hasValue;
                 const std::string tokenNumber =
                     rateOk ? core::call_rate::formatTps(lastRate_.tps)
                            : std::string("--");
-                // badge 文案不带「会话」二字（11px 全角在最小窗会溢出卡片）。副标题分档：流式中
-                // 「● N 路生成中」；空闲「最近一次成功调用」/「暂无成功调用」/「加载失败」。
+                // badge 文案不带「会话」二字（11px 全角在最小窗会溢出卡片）。分档：流式中「● N 路生成中」；
+                // 空闲「最近一次成功调用」/「暂无成功调用」/「加载失败」。
                 const std::string tokenBadge =
                     streaming
                         ? "● " + std::to_string(snap.activeStreams) +
@@ -466,8 +449,7 @@ public:
                             if (!moduleRegistered(card.module)) continue;
                             switch (card.kind) {
                                 case StatCardKind::Tokens: {
-                                    // 周期重绘仅「有速率活动」时挂载：旧 0.5s 常挂 onTimer → 整页 2Hz 重排 + 常驻
-                                    // animating_ → hover 0.1s 过渡被反复打断闪烁。
+                                    // 周期重绘仅「有速率活动」时挂载：常挂 onTimer 会整页 2Hz 重排并打断 hover 过渡
                                     bool seriesLive = false;
                                     for (float v : sparkSeries) {
                                         if (v > 0.05f) {
@@ -510,8 +492,7 @@ public:
                                                                         t))
                                                          .build();
                                                  },
-                                                 // 流末重查：数字来自落库行，用量在流末才回填，只在 1→0 那一拍查一次，
-                                                 // 流式期间不加查询。
+                                                 // 流末重查：数字来自落库行，用量在流末才回填；只在 1→0 那一拍查一次
                                                  [this] {
                                                      const int active =
                                                          core::proxy_stats::
@@ -574,11 +555,9 @@ public:
                     .build();
                 }
 
-                // 供应商余量（独立全宽区块，不占统计格——1200 宽下 statW 放不下每 profile 一行）。
-                // 数据来自只读库中立桥 quota_home_bridge.h；首页不发 HTTP，后台刷新由 claude_module
-                // 的 QuotaRefresher 负责，[刷新] 只写请求信号。claude_proxy 关闭 → 整卡隐藏。
-                // 高度预算先算一次（与下方图表卡共用，矮窗下图表要让位），算式在纯函数
-                // computeHomeQuotaBudget（可单测），不再内联在 lambda 里靠人肉心算。
+                // 供应商余量（独立全宽区块）。数据来自只读库中立桥 quota_home_bridge.h；首页不发 HTTP，
+                // 后台刷新由 claude_module 的 QuotaRefresher 负责，[刷新] 只写请求信号；claude_proxy 关闭 → 整卡隐藏。
+                // 高度预算由纯函数 computeHomeQuotaBudget 统一算（与下方图表卡共用，矮窗下图表要让位）。
                 const module::home::quota_card::HomeQuotaBudget quotaBudget =
                     module::home::quota_card::computeHomeQuotaBudget(
                         screen.height, statH, pad, gap);
@@ -604,12 +583,10 @@ public:
                     }  // 窗口够高才画（见上）
                 }
 
-                // 今日 Token 用量分布：纵轴 = 该小时 output_tokens 合计；x 轴只画「第一个有数据的
-                // 小时」..「最后一个」闭区间；整天无数据 → 空态。
-                // 不用 components::barChart：它把纵值硬编码成 [0,1] 百分比语义（clamp(v,0,1)、
-                // tooltip 恒 percent），喂 token 合计会被整体夹成满格。故模块内自绘柱体——几何
-                // 沿用 barchart.h 常量，元素 id 沿用 home.api.chart.bars.*（probe/单测不失效）；
-                // 代价是无悬停 tooltip，改由柱顶数值标签直接标出合计。
+                // 今日 Token 用量分布：纵轴 = 该小时 output_tokens 合计；x 轴只画「第一个有数据的小时」
+                // ..「最后一个」闭区间；整天无数据 → 空态。
+                // 不用 components::barChart：它把纵值硬编码成 [0,1] 百分比语义，喂 token 合计会被夹成满格，
+                // 故模块内自绘柱体（元素 id 沿用 home.api.chart.bars.*，probe/单测不失效）；无悬停 tooltip，用柱顶数值标签。
                 if (moduleRegistered(::core::PageId::ClaudeProxy)) {
                     const auto tokenSeries =
                         service_ ? service_->getTodayHourlyTokenTotals(24)
@@ -730,14 +707,14 @@ public:
                                                 .x(bx)
                                                 .y(by)
                                                 .size(barW, barH)
-                                                // 色取 barchart.h 默认 palette[0]，与改口径前的柱子同色。
+                                                // 色取 barchart.h 默认 palette[0]
                                                 .color(components::theme::color(
                                                     0.22f, 0.50f, 0.88f))
                                                 .radius(std::min(
                                                     t.sizes.radius,
                                                     barW * 0.34f))
                                                 .build();
-                                            // 柱顶数值 = 该小时 token 合计（替代旧 barChart 的悬停百分比）。
+                                            // 柱顶数值 = 该小时 token 合计
                                             ui.text(
                                                 "home.api.chart.bars.val." +
                                                 std::to_string(i))
@@ -837,11 +814,9 @@ public:
 private:
     static constexpr int kRecentNoteLimit = 5;
 
-    // 余量快照缓存：旧形态 compose 每帧持 db.mutex() 跑 3 次真 SQL，而后台 QuotaRefresher
-    // 正在写这两张表——刷新落库窗口撞上 compose 时 UI 帧就阻塞在锁上。
-    // 失效判据是 db.writeVersion()：compose 每帧只做一次 acquire load（不取锁不查库），
-    // 版本没变就复用上次的行。余量变更频率是分钟级，故同步查一次即可（不派后台线程）。
-    // 首帧必须出数据：seenVersionValid_ 初始 false，强制首帧查一次。
+    // 余量快照缓存：compose 不持 db.mutex() 跑真 SQL——后台 QuotaRefresher 正在写这两张表，撞锁会阻塞 UI 帧。
+    // 失效判据 = db.writeVersion()：compose 每帧只做一次 acquire load（不取锁不查库），版本没变就复用快照；
+    // 首帧 seenVersionValid_ 初始 false 强制查一次。
     void refreshQuotaRows() {
         auto* qdb = ::core::appDatabase();
         if (qdb == nullptr) {
@@ -892,8 +867,7 @@ private:
     std::string statsError_;
     LastCallRate lastRate_;
     std::string lastRateError_;   // 非空 = 最近速率查询失败（卡显示「加载失败」）
-    // 上一拍看到的活跃流数（只有 Token 卡的 timer 回调写它）：1→0 那一拍 = 流式刚结束
-    // → 重查最近一次成功调用（数字来自落库行，流末才回填用量）。
+    // 上一拍看到的活跃流数（只有 Token 卡的 timer 回调写它）：1→0 那一拍 = 流式刚结束 → 重查
     int prevActiveStreams_ = 0;
 };
 

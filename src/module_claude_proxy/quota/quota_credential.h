@@ -20,7 +20,7 @@ namespace quota {
 
 class QuotaStore;
 
-// 凭据来源缝。G6 的实现（如 cc-switch）经这里接入。
+// 凭据来源缝（如 cc-switch 的实现经这里接入）。
 struct QuotaCredentialSource {
     virtual ~QuotaCredentialSource() = default;
 
@@ -34,7 +34,6 @@ struct QuotaCredentialSource {
 // 默认实现：读本 profile 自己的凭据（api_key_encrypted 解密 + extra/secrets）。
 // cc-switch 覆盖钩子：装配层可传 CcSwitchListFn（生产 = readRealCcSwitchProviders，测试注入假列表）。
 // ccswitchProviderId 非空时用该条目的 accessKeyId / secretAccessKey 覆盖同名字段后再 fetch——密钥只在内存过一手，不落库。
-// 之所以是本类的一个钩子而非第二个 QuotaCredentialSource 实现：ProviderConfig 的装配只应有一份，再写一个实现就是第二份装配点。
 class ProfileCredentialSource final : public QuotaCredentialSource {
 public:
     // cc-switch 读取缝：返回候选列表。恒返回、不抛异常（同 listCcSwitchProviders）。测试注入假列表 → 零真实磁盘 IO。
@@ -52,7 +51,7 @@ public:
 private:
     ProfileRepository& profiles_;
     QuotaStore& store_;
-    CcSwitchListFn ccSwitch_;   // 空 = 不做 cc-switch 覆盖（测试与旧装配）
+    CcSwitchListFn ccSwitch_;   // 空 = 不做 cc-switch 覆盖
 };
 
 // 生产用 cc-switch 读取缝的薄包装（`listCcSwitchProviders` 的 std::function 形态）。

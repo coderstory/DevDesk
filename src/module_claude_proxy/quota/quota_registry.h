@@ -1,7 +1,5 @@
 // src/module_claude_proxy/quota/quota_registry.h
-// 供应商余量的显式注册表。
-// 为何不用静态自注册：静态库不拉未被引用的 TU，构造函数不跑 → 注册表神秘少一个 provider，
-//   且无任何编译错误 / 警告。故沿用仓库既有的显式 constexpr 表模式，加 provider = 表加一行 + tests 加断言。
+// 供应商余量的显式注册表（不用静态自注册：静态库不拉未被引用的 TU，构造函数不跑，注册表会静默缺项）。
 #pragma once
 
 #include <cstddef>
@@ -24,10 +22,8 @@ struct QuotaProviderEntry {
 // 行序 = 探测优先级（detectByBaseUrl 返回首个命中行），也是 UI 下拉序。
 extern const QuotaProviderEntry kQuotaProviders[];
 
-// 表的物理长度（含表尾哨兵），由 quota_registry.cpp 就地 std::size 得出。
-// 单开函数的原因：头文件那行是边界未知的 extern 数组，sizeof 编译不过（incomplete type），长度只有定义处拿得到。
-// 用途：结构守卫比对「表长」与「哨兵前前缀长度」是否相等——插行插到哨兵之后会让 provider 永久不可达却照常编译，这条断言能抓住。
-// 它不是第二个真相源：长度始终由表本身算出。
+// 表的物理长度（含表尾哨兵），由定义处就地 std::size 得出（头文件的 extern 数组边界未知，sizeof 编译不过）。
+// 结构守卫用它比对「表长」与「哨兵前缀长度」：插行插到哨兵之后会让 provider 永久不可达却照常编译。
 std::size_t quotaProviderTableLength();
 
 // 按 id 精确查（整串相等）。返回命中行的单例；空 id / 未命中 / 空表 / 工厂返 nullptr → nullptr。重复 id 取表序首行。

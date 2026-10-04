@@ -1,4 +1,3 @@
-// src/core/window_layout.cpp
 // 启动期主窗口尺寸决策实现（纯计算，规则见 window_layout.h）。平台差异经 frameInsetsBaseline() /
 // windowUnitName() 注入，本文件零平台宏、可无头单测
 #include "window_layout.h"
@@ -80,7 +79,7 @@ WindowSize minWindowSizeForWorkArea(const InitialWindowRequest& request,
                                     const FrameInsets& frameInsets) {
     const float s = normalizedScale(scale);
 
-    // 第一条：换算（与 windowSize 同公式——"min 漏了这一步"是两端收不进屏/缩过头的共同病因）
+    // 换算（与 windowSize 同公式；漏这步会两端收不进屏/缩过头）
     WindowSize minSize;
     minSize.width = minSizeInWindowUnits(request.minLogicalWidth, s);
     minSize.height = minSizeInWindowUnits(request.minLogicalHeight, s);
@@ -90,8 +89,7 @@ WindowSize minWindowSizeForWorkArea(const InitialWindowRequest& request,
         return minSize;
     }
 
-    // 第二条：与「工作区−外框」取 min。顺序不能反——必须先换算出窗口单位再拿同一单位钳，
-    // 否则比较无意义（换算与钳制是必须成对的一步）
+    // 与「工作区−外框」取 min；必须先换算出窗口单位再以同一单位钳（换算与钳制须成对）
     minSize.width = clampMinToWorkArea(minSize.width, workArea.width - frameInsets.width);
     minSize.height = clampMinToWorkArea(minSize.height, workArea.height - frameInsets.height);
     return minSize;

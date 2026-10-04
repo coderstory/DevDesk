@@ -1,12 +1,8 @@
 // src/module_claude_proxy/quota/quota_store.h
-// 余量配置的唯一落库口。两张表、逐 profile 一行：profile_quota_config（供应商 + 额外字段 + 刷新策略）、
-//   profile_quota_result（最近一次结果 + 错误）。
-// 四条不变量：
-//   1. windows_json 编解码只有这一处，行结构存已解码的 vector<QuotaWindow>，任何消费方不得手搓 JSON。
-//   2. 落库句柄一律经本类（不做第二把连接）；每个公开方法 lock_guard 覆盖整段 prepare → step → fetchAll
-//      （macOS libsqlite3 THREADSAFE=2，连接内无互斥，并发直接损坏连接）。
-//   3. 失败韧性只有一处决策：applyFetchResult 是「一次 fetch 落表」的唯一入口。
-//   4. 「从未成功过」必须可分辨：数据列只在成功时写，失败只写 last_error / last_error_kind。
+// 余量配置的唯一落库口。两张表、逐 profile 一行：profile_quota_config（供应商 + 额外字段 + 刷新策略）、profile_quota_result（最近一次结果 + 错误）。
+// 不变量：1) windows_json 编解码只有这一处，任何消费方不得手搓 JSON；2) 落库句柄一律经本类（不做第二把连接），
+//   每个公开方法 lock_guard 覆盖整段 prepare → step → fetchAll（连接内无互斥，并发直接损坏连接）；
+//   3) applyFetchResult 是「一次 fetch 落表」的唯一入口；4) 数据列只在成功时写，失败只写错误两列。
 #pragma once
 
 #include <cstdint>
@@ -39,12 +35,9 @@ struct QuotaConfigRow {
     int64_t profileId = 0;
     std::string providerId;    // 空串 = 该 profile 未配置余量查询
     std::string extraJson;     // fields() 里非 secret 键的 JSON 对象原文
-    // fields() 里 secret 键的 JSON 对象原文。结构体里始终是明文：写库经 platform::credential::protect
-    // （Windows = DPAPI 密文 hex），读库经 unprotect——与 api_key_encrypted 复用同一对函数（同表两列保护级别一致）。
+    // fields() 里 secret 键的 JSON 对象原文。结构体里始终是明文：写库经 platform::credential::protect、读库经 unprotect（与 api_key_encrypted 同一对函数）。
     std::string secretsJson;
-    // cc-switch provider 引用。非空 = 余量凭据经 cc-switch 只读读取器现取；空 = 来自 extraJson / secretsJson（手填）。
-    // 只存引用不存密钥：cc-switch 改了 key / base_url 下次查询即生效，DevDesk 库里也没有第二份副本。
-    // 代码保证：buildQuotaConfigRow 在本字段非空时强制清空 extraJson / secretsJson（选了 cc-switch 就绝不留手填副本）。
+    // cc-switch provider 引用，非空 = 凭据经 cc-switch 只读读取器现取；代码保证非空时 extraJson / secretsJson 一律清空。
     std::string ccswitchProviderId;
     bool enabled = false;
     bool autoRefresh = true;
@@ -68,10 +61,9 @@ struct QuotaResultRow {
     std::string lastError;                 // 面向用户的中文文案；成功时清空
     QuotaError lastErrorKind = QuotaError::None;
 
-    // 「从未成功过」：kind 列从未被写过，数据列一律初始值（windows 空 / balance 0）——这正是「不写假 0%」的落库形态。
+    // 「从未成功过」：kind 列从未被写过，数据列一律初始值（windows 空 / balance 0）。
     bool neverSucceeded() const { return !hasEverSucceeded; }
 
-    // 当前带着错误吗（UI 决定要不要挂「可能过期」角标）。
     bool hasError() const { return lastErrorKind != QuotaError::None; }
 };
 
@@ -95,10 +87,8 @@ public:
     core::Result<void> deleteResult(int64_t profileId);
     core::Result<std::vector<QuotaResultRow>> listResults();
 
-    // 一次 fetch 落库的唯一入口（不变量 3）。刷新路径只许调它。
-    // None → 写数据列并清空错误两列；其余错误（Transient / Auth / Entitlement / Shape / NotConfigured）→ 保留上次成功的数据列，只写错误两列。
-    // 保留数据列的理由：网络抖一下不该让余量条整个消失（失败且有过成功值 → 旧条 + 角标；从未成功 → 只有错误行）。
-    // fetchedAt 无论成败都写；任何 DB 写失败都透传错误，不吞。
+    // 一次 fetch 落库的唯一入口（不变量 3），刷新路径只许调它。fetchedAt 无论成败都写。
+    // None → 写数据列并清空错误两列；其余错误 → 保留上次成功的数据列，只写错误两列（网络抖动不该让余量条消失）。
     core::Result<void> applyFetchResult(int64_t profileId, const QuotaResult& result,
                                         int64_t fetchedAt);
 

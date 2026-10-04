@@ -34,9 +34,8 @@ constexpr float kRowPitch = 56.0f;        // 每条候选占的行高
 constexpr float kResultH = 18.0f;
 constexpr float kButtonsBottomGap = 60.0f; // 底部按钮行（drawDialogButtons 写死 h-60）
 
-// 候选行可见字段（**密钥不显示**）：name + base_url + model。映射结果 ok=false
-// 时画一行红色 skipReason 提示，但仍可勾选（用户可能想看完整列表）—— 实际上
-// ok=false 的行勾选了也只会进「跳过」结果，故画成禁用勾选 + 灰文更诚实。
+// 候选行可见字段（**密钥不显示**）：name + base_url + model。映射失败行画红色
+// skipReason 并画成禁用勾选 + 灰文（导入选中也只会进「跳过」结果）。
 void drawCandidateRow(eui::Ui& ui, const core::theme::Tokens& t,
                       const components::theme::ThemeColorTokens& themeTokens,
                       const std::string& baseId, float rowW,
@@ -50,10 +49,8 @@ void drawCandidateRow(eui::Ui& ui, const core::theme::Tokens& t,
         .radius(t.sizes.radiusLarge)
         .border(1.0f, t.colors.borderDefault)
         .build();
-    // 勾选指示（手绘：rect 框 + 选中时 primary 底 + fa-check 字标）。
-    // components::checkbox 头在 -Werror 下有 unused-variable 告警（EUI-NEO 既有
-    // 问题，agent_module 同款规避），这里不引它；行点击翻转 selected 由行底
-    // 的 hit rect 负责（见下方），指示器纯视觉。
+    // 勾选指示（手绘：rect 框 + 选中时 primary 底 + fa-check 字标）；不引
+    // components::checkbox（其头在 -Werror 下有 unused-variable 告警）。指示器纯视觉。
     constexpr float kBoxSize = 18.0f;
     const float boxY = (kRowPitch - 8.0f - kBoxSize) * 0.5f;
     ui.rect(baseId + ".cb.box")
@@ -140,9 +137,8 @@ void openCcSwitchImportDialog(CcSwitchImportDialogState& st) {
     st.rows_ = std::move(rows.rows);
     st.mappings_.clear();
     st.mappings_.reserve(st.rows_.size());
-    // 首次打开：现有 profile 名单此刻模块还没传进来（open 是按钮回调，模块
-    // compose 下一帧才装配 existingProfiles）。映射层 existingNames 留空 →
-    // 不做冲突判定；confirmCcSwitchImport 时带 existingProfiles 重映射一次。
+    // 现有 profile 名单此刻尚未传入（open 是按钮回调），映射层 existingNames 留空
+    // → 不做冲突判定；confirmCcSwitchImport 时带 existingProfiles 重映射一次。
     for (const auto& row : st.rows_) {
         st.mappings_.push_back(
             mapCcSwitchProviderToProfile(row.name, row.settingsConfig));
@@ -393,10 +389,8 @@ void drawCcSwitchImportDialog(eui::Ui& ui, const eui::Screen& screen,
         confirm.fontSize = 14.0f;
         confirm.style = ui_kit::DialogButtonStyle::Primary;
         confirm.onClick = [sp = &st, hooks] {
-            // existingProfiles 由模块 compose 每帧装配进 drawCcSwitchImportDialog
-            // 的调用点——但这里是按钮回调（发生在下一帧 compose 之前），不能直接
-            // 拿到。改为：confirm 内部读 ClaudeService::global()->listProfiles()
-            // 取现有名单（与 form submitForm 同款「需要时现读」手法）。
+            // 按钮回调发生在下一帧 compose 之前，拿不到装配参数 → 此处现读
+            // ClaudeService::global()->listProfiles() 取现有名单。
             std::vector<Profile> existing;
             if (ClaudeService* svc = ClaudeService::global(); svc != nullptr) {
                 auto r = svc->listProfiles();

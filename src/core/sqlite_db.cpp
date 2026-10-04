@@ -35,9 +35,8 @@ namespace {
         return name ? name : "";
     }
 
-    // 写路径补收紧：open 时空写事务失败时 -wal/-shm 可能尚未创建（POSIX 上继承主库权限位）。
-    // 三件套齐（count>=3）且全部成功才落闩（只认 ok 会把「文件还没出现」误当完成）。并发安全：
-    // pending/warned 均 atomic，只碰文件元数据不碰句柄；失败只报一次防高频写路径刷屏
+    // -wal/-shm 可能尚未创建，三件套齐（count>=3）且全部成功才落闩。并发安全：pending/warned
+    // 均 atomic，只碰文件元数据；失败只报一次防高频写路径刷屏
     void retightenStoreFilesAfterWrite(const std::shared_ptr<StorePermsLatch>& perms) {
         if (!perms || !perms->pending.load(std::memory_order_relaxed)) return;
         auto r = core::fileperms::restrictSqliteStoreFiles(perms->file);
@@ -100,8 +99,7 @@ Statement::Statement(sqlite3* db, sqlite3_stmt* stmt,
                      std::shared_ptr<StorePermsLatch> perms)
     : db_(db), stmt_(stmt), mutex_(std::move(mutex)),
       version_(std::move(version)), perms_(std::move(perms)) {
-    // 只读性判一次并缓存：sqlite3_stmt_readonly() 纯查 VDBE，已 prepare 的语句结论不再变。
-    // SELECT/EXPLAIN/BEGIN/PRAGMA 读法为 true，INSERT/UPDATE/DELETE/REPLACE/DDL 为 false
+    // 只读性判一次并缓存：sqlite3_stmt_readonly() 纯查 VDBE，已 prepare 的语句结论不变
     readonly_ = (sqlite3_stmt_readonly(stmt_) != 0);
 }
 
@@ -127,7 +125,7 @@ Statement& Statement::operator=(Statement&& other) noexcept {
     return *this;
 }
 
-// finalize 也是句柄操作（还 VDBE/归还 lookaside 空闲链），必须与 prepare/step 同锁。
+// finalize 也是句柄操作（还 VDBE/归还 lookaside），必须与 prepare/step 同锁。
 // 锁在此取不能推给调用方：Statement 析构点常在调用方锁外，裸调 finalize 会与其他线程 step 并发而崩溃
 Statement::~Statement() { releaseStmt(); }
 
@@ -140,8 +138,7 @@ void Statement::releaseStmt() noexcept {
     stmt_ = nullptr;
 }
 
-// 推进写版本号，只在锁内且只对非只读语句调用。release 与读侧 acquire 配对，
-// 保证「读到新版本」蕴含「导致它的写已可见」
+// 只在锁内且只对非只读语句调用；release 与读侧 acquire 配对，读到新版本 ⇒ 导致它的写已可见
 void Statement::bumpVersionOnWrite() noexcept {
     if (readonly_ || !version_) return;
     version_->fetch_add(1, std::memory_order_release);
@@ -179,18 +176,18 @@ Result<bool> Statement::step() {
     std::lock_guard<std::recursive_mutex> lock(*mutex_);
     int rc = sqlite3_step(stmt_);
     if (rc == SQLITE_ROW) {
-        // 非只读语句返回 ROW 只可能是 RETURNING（写语句的结果行），算已写。
+        // 非只读语句返回 ROW 只可能是 RETURNING，算已写
         bumpVersionOnWrite();
         retightenStoreFilesAfterWrite(perms_);
         return Result<bool>::ok(true);
     }
     if (rc == SQLITE_DONE) {
         bumpVersionOnWrite();
-        // 写 step 成功即伴生文件已出现的点，闩未落就补收紧（只读语句被 readonly_ 排除）
+        // 写 step 成功即伴生文件已出现，闩未落就补收紧
         retightenStoreFilesAfterWrite(perms_);
         return Result<bool>::ok(false);
     }
-    // 失败不推进版本号：失败语句可能已改库，但宁可漏置（多查一次可接受）——漏置由下一次真写纠正
+    // 失败不推进版本号：宁可漏置（多查一次可接受），漏置由下一次真写纠正
     return Result<bool>::fail(mapErrCode(rc),
         std::string("step: ") + sqlite3_errmsg(db_));
 }
@@ -248,8 +245,8 @@ Result<std::vector<SqlRow>> Statement::fetchAll() {
     return Result<std::vector<SqlRow>>::ok(std::move(rows));
 }
 
-// sqlite3_reset 是句柄操作，与 prepare/bind/step 同一把锁。注意其返回值是上一次 step 的结果，
-// 不是本次操作的——step 失败时不要靠它判断成败
+// sqlite3_reset 是句柄操作，与 prepare/bind/step 同一把锁。其返回值是上一次 step 的结果
+// 不是本次的——step 失败时不要靠它判断成败
 Result<void> Statement::reset() {
     std::lock_guard<std::recursive_mutex> lock(*mutex_);
     return checkRc(db_, sqlite3_reset(stmt_), "reset");
@@ -262,9 +259,8 @@ int Statement::columnCount() const {
 
 Result<SqliteDb> SqliteDb::open(const std::filesystem::path& file) {
     sqlite3* handle = nullptr;
-    // SQLITE_OPEN_FULLMUTEX 兜底：macOS libsqlite3 是 THREADSAFE=2，裸 open 的连接内部零自锁，
-    // 加此 flag 至少让未来漏掉的锁从崩溃降级为串行化。但 recursive_mutex 必须留着——FULLMUTEX
-    // 只锁单次 API 调用，盖不住 transaction() 的 BEGIN+fn()+COMMIT 整段与 sqlite3_changes 等跨调用配对
+    // FULLMUTEX 兜底：macOS libsqlite3 是 THREADSAFE=2，裸 open 连接内部零自锁；但 recursive_mutex
+    // 必须留——FULLMUTEX 只锁单次 API 调用，盖不住 transaction 的整段与跨调用配对
     int rc = sqlite3_open_v2(file.string().c_str(), &handle,
         SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE | SQLITE_OPEN_FULLMUTEX, nullptr);
     if (rc != SQLITE_OK) {
@@ -276,10 +272,8 @@ Result<SqliteDb> SqliteDb::open(const std::filesystem::path& file) {
     sqlite3_exec(handle, "PRAGMA foreign_keys = ON;", nullptr, nullptr, nullptr);
     sqlite3_exec(handle, "PRAGMA journal_mode = WAL;", nullptr, nullptr, nullptr);
 
-    // 凭据落点保护：API key 就在库里、WAL 把凭据页复制进 -wal，故 db/-wal/-shm 三件套一律收紧为
-    // 仅属主可读写。PRAGMA journal_mode=WAL 本身不建 -wal/-shm（首个写事务才落盘），这里显式跑一次
-    // 空写事务逼出三件套再统一 chmod；且每次 open 都做（-wal/-shm 连接关闭即删，下次是全新 0644）。
-    // 失败处置：空事务失败 LOG_WARN 不阻断开库（锁竞争是瞬时的），chmod 失败 LOG_ERROR 不静默
+    // 凭据落点保护：API key 在库里、WAL 把凭据页复制进 -wal，db/-wal/-shm 三件套一律收紧为仅属主可读写。
+    // WAL 模式首个写事务才落盘伴生文件，空写事务逼出三件套再统一 chmod，每次 open 都做（close 即删，下次全新 0644）
     char* warmupErr = nullptr;
     const int warmupRc = sqlite3_exec(handle, "BEGIN IMMEDIATE; COMMIT;", nullptr,
                                        nullptr, &warmupErr);
@@ -297,7 +291,7 @@ Result<SqliteDb> SqliteDb::open(const std::filesystem::path& file) {
 
     SqliteDb db;
     db.handle_ = handle;
-    // 置闩：内存库/空路径恒不置位；落盘库只在三件套全部存在且收紧成功（ok 且 count>=3）时已确认
+    // 置闩：内存库/空路径恒不置位；三件套全部确认收紧成功（ok 且 count>=3）才不置 pending
     auto perms = std::make_shared<StorePermsLatch>();
     perms->file = file;
     const bool noStoreFile =
@@ -313,8 +307,7 @@ SqliteDb::~SqliteDb() {
     if (handle_) {
         // 兜底补收紧：macOS sqlite close 后不删伴生文件，闩还挂着就让三件套以 0600 留盘（只碰元数据无需锁）
         retightenStoreFilesAfterWrite(perms_);
-        // 用 close_v2：sqlite3_close 遇未 finalize 语句返回 SQLITE_BUSY 会被忽略 → 句柄静默不关；
-        // close_v2 延迟关闭，最后一条语句 finalize 时回收。close 是句柄操作，持锁执行
+        // close_v2 延迟关闭：sqlite3_close 遇未 finalize 语句返回 SQLITE_BUSY → 句柄静默不关；close 持锁执行
         std::lock_guard<std::recursive_mutex> lock(*mutex_);
         sqlite3_close_v2(handle_);
         handle_ = nullptr;
@@ -332,15 +325,14 @@ SqliteDb& SqliteDb::operator=(SqliteDb&& other) noexcept {
     if (this != &other) {
         if (handle_) {
             std::lock_guard<std::recursive_mutex> lock(*mutex_);
-            // 与析构同款：close_v2 延迟关闭（避免语句未 finalize 时静默不关导致句柄泄漏）
             sqlite3_close_v2(handle_);
         }
         handle_ = other.handle_;
         other.handle_ = nullptr;
         mutex_ = other.mutex_;
-        // 版本号跟着走：留在旧对象上 = 推进的计数器与读侧不是同一个，脏标记永不置位
+        // 版本号跟句柄走：留在旧对象上 = 计数器与读侧不是同一个，脏标记永不置位
         writeVersion_ = other.writeVersion_;
-        // 权限闩同理：留在旧对象上 = 新对象的写路径拿不到闩，补收紧不再发生
+        // 权限闩同理跟句柄走：留在旧对象上 = 写路径拿不到闩，补收紧不再发生
         perms_ = other.perms_;
     }
     return *this;
@@ -350,21 +342,19 @@ Result<void> SqliteDb::exec(const std::string& sql) {
     std::lock_guard<std::recursive_mutex> lock(*mutex_);
     char* errMsg = nullptr;
     int rc = sqlite3_exec(handle_, sql.c_str(), nullptr, nullptr, &errMsg);
-    // 补收紧放在 rc 判分之前：exec 逐条 autocommit，中途失败时前几条可能已提交（闩的 count>=3 防误判）
+    // 补收紧放在 rc 判分之前：exec 逐条 autocommit，中途失败时前几条可能已提交（count>=3 防误判）
     retightenStoreFilesAfterWrite(perms_);
     if (rc != SQLITE_OK) {
         std::string err = errMsg ? errMsg : "unknown";
         sqlite3_free(errMsg);
         return Result<void>::fail(mapErrCode(rc), "exec: " + err);
     }
-    // 裸 SQL 写入口一律置位，不解析「是不是 SELECT」：exec 调用面全是迁移/DDL/测试裸写，
-    // 误置位只是多查一次库，漏置位是 UI 停在旧数据上（transaction 的 BEGIN/COMMIT 走此亦无害）
+    // 裸 SQL 写入口一律置位，不解析是否 SELECT：误置位只是多查一次，漏置位是 UI 停在旧数据
     writeVersion_->fetch_add(1, std::memory_order_release);
     return Result<void>::ok();
 }
 
 Result<Statement> SqliteDb::prepare(const std::string& sql) {
-    // prepare 与 exec/step/currentRow 共用同一把锁
     std::lock_guard<std::recursive_mutex> lock(*mutex_);
     sqlite3_stmt* stmt = nullptr;
     int rc = sqlite3_prepare_v2(handle_, sql.c_str(), -1, &stmt, nullptr);
@@ -377,14 +367,11 @@ Result<Statement> SqliteDb::prepare(const std::string& sql) {
 }
 
 Result<void> SqliteDb::transaction(std::function<Result<void>()> fn) {
-    // 全程持锁：BEGIN + fn() + COMMIT/ROLLBACK 必须同一把 recursive_mutex。锁只盖 BEGIN/COMMIT
-    // 时，跨线程无串行——代理线程的 INSERT 能穿插进 UI 事务被 ROLLBACK 吞掉，两个 BEGIN 也会互撞。
-    // fn() 内取的是同一把锁（同线程重入不死锁）；约束：fn() 内只做 DB 操作，不得长阻塞 IO/网络
+    // 全程持锁：BEGIN+fn()+COMMIT/ROLLBACK 必须同一把 recursive_mutex；只盖 BEGIN/COMMIT 时跨线程
+    // 无串行（INSERT 会穿插进 UI 事务被 ROLLBACK 吞掉）。fn() 内取同一把锁（重入不死锁），不得长阻塞 IO
     std::lock_guard<std::recursive_mutex> lock(*mutex_);
 
-    // 事务深度用 thread_local 记（只记本线程，别的线程被上面的锁挡住）：sqlite 不支持嵌套事务，
-    // 内层再发 BEGIN 会失败。内层只跑 fn()，最外层统一 BEGIN/COMMIT/ROLLBACK；深度 0 的调用路径不变。
-    // 异常安全由 lock_guard + 显式 ROLLBACK 保证。
+    // 事务深度 thread_local：sqlite 不支持嵌套事务，内层只跑 fn()，最外层统一 BEGIN/COMMIT/ROLLBACK
     static thread_local int txDepth = 0;
     const bool outermost = (txDepth == 0);
     if (outermost) {
@@ -399,7 +386,7 @@ Result<void> SqliteDb::transaction(std::function<Result<void>()> fn) {
     auto result = fn();
     --txDepth;
     if (!outermost) {
-        // 内层不 COMMIT/ROLLBACK：失败照样外传，外层 isFail() 即整批 ROLLBACK，原子性不丢
+        // 内层不 COMMIT/ROLLBACK：失败外传，外层 isFail() 即整批 ROLLBACK，原子性不丢
         return result;
     }
     char* err = nullptr;
@@ -419,8 +406,8 @@ Result<void> SqliteDb::transaction(std::function<Result<void>()> fn) {
 }
 
 Result<void> SqliteDb::applySchema(const std::string& sql) {
-    // 整份 schema 包在一个事务里（失败整体回滚）。幂等由脚本自身保证（DDL 全 CREATE IF NOT EXISTS，
-    // 种子 INSERT 带 NOT EXISTS 守卫）；无 schema_version、不迁移不兼容旧数据（缺列重来即可）
+    // 整份 schema 包在一个事务里（失败整体回滚）；幂等由脚本自身保证（DDL 全 CREATE IF NOT EXISTS、
+    // 种子 INSERT 带 NOT EXISTS 守卫）；无 schema_version，缺列重来即可
     auto txResult = transaction([&]() -> core::Result<void> {
         return exec(sql);
     });

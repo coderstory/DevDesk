@@ -1,4 +1,3 @@
-// src/module_todo/todo_ui_dialogs.cpp
 // Todo 浮层区绘制 + 提交：6 个对话框 + 右键菜单 + datepicker。
 // 每个对话框的「表单字段 → 提交」与其绘制紧邻定义（入参 DialogSet/DialogHost）。
 #include "todo_dialogs.h"
@@ -183,8 +182,7 @@ void drawNewColumnDialog(eui::Ui& ui, const eui::Screen& screen,
     });
 }
 
-// 右键菜单。菜单项点击分发（onContextSelectPath）留在模块：它编排各弹窗的
-// 打开与写操作，不是菜单自身的状态。
+// 右键菜单。菜单项点击分发（onContextSelectPath）留在模块：编排各弹窗打开与写操作，非菜单自身状态
 void drawContextMenu(eui::Ui& ui, const eui::Screen& screen,
                      const core::theme::Tokens& t, DialogSet& d,
                      const DialogHost& host,
@@ -220,8 +218,7 @@ void drawContextMenu(eui::Ui& ui, const eui::Screen& screen,
     }
 
     const BoardGeom g = boardGeom(screen.width, host.columns->size(), t);
-    // 锚点统一经 core::menuAnchorForPointer：x 取列中芯、y 取卡片视觉底（未滚
-    // 几何），滚动偏移经 scrollOffsetY 叠加；宽度交 autoWidth
+    // 锚点统一经 core::menuAnchorForPointer：x 取列中芯、y 取卡片视觉底（未滚几何），滚动偏移经 scrollOffsetY 叠加
     const float x = cardLeft(g, d.ctx.columnIndex) + g.colW * 0.5f;
     const float scrollY = d.ctx.cardIndex >= 0
         ? columnScrollOffset(*host.columns, columnScrolls,
@@ -316,8 +313,7 @@ void drawRenameDialog(eui::Ui& ui, const eui::Screen& screen,
     });
 }
 
-// 删除确认弹窗提交：taskId>0 = 删任务（外键 CASCADE 连带删列下全部任务）；
-// 否则 columnId>0 = 删列
+// 删除确认弹窗提交：taskId>0 = 删任务；否则 columnId>0 = 删列（外键 CASCADE 连带删列下任务）
 void ConfirmDeleteDialog::confirm(DialogSet& d, const DialogHost& host) {
     if (forTask()) {
         const int64_t id = taskId;
@@ -438,7 +434,7 @@ void drawOverdueDialog(eui::Ui& ui, const eui::Screen& screen,
             ui.text("todo.dialog.overdue.title.icon")
                 .position(28.0f, 20.0f)
                 .size(18.0f, 28.0f)
-                .icon(0xF071)  // fa-triangle-exclamation（⚠ 字符换 FA）
+                .icon(0xF071)  // fa-triangle-exclamation
                 .fontSize(t.sizes.fontSizeLarge + 2.0f)
                 .lineHeight(28.0f)
                 .color(t.colors.error)
@@ -517,7 +513,7 @@ void drawOverdueDialog(eui::Ui& ui, const eui::Screen& screen,
 
 void DetailDialog::reset(const Task& task) {
     taskId = task.id;
-    title = task.title;  // 不再装载列（详情内无「移动到」）
+    title = task.title;  // 不装载列（详情内无「移动到」）
     description = task.description.value_or("");
     priority = task.priority;
     dueAt = task.dueAt;
@@ -579,11 +575,9 @@ bool DetailDialog::save(const DialogHost& host) const {
     return host.updateTask(collect(*host.tasks));
 }
 
-// 详情弹窗关闭统一入口（Esc 兜底与 backdrop 点击共用同一份守卫，避免语义漂移）。
-// true = 真的关了；false = 被未存改动守卫拦下（弹窗仍在栈顶）
+// 详情弹窗关闭统一入口（Esc 兜底与 backdrop 点击共用同一份守卫，避免语义漂移）；false = 被未存改动守卫拦下
 bool DetailDialog::requestClose(PopupStack& popups, const DialogHost& host) {
-    // 有未存改动时第一次只警告不关，再触发一次才关（dialog 无 dismissable
-    // 开关，两击语义是当前组件能力下的守卫）
+    // 有未存改动时第一次只警告不关，再触发一次才关（dialog 无 dismissable 开关，两击语义是组件能力下的守卫）
     if (dirty(*host.tasks) && !discardArmed) {
         discardArmed = true;
         host.warn("有未保存修改：点「保存」落库，或再点一次遮罩放弃");
@@ -599,7 +593,7 @@ void drawDetailDialog(eui::Ui& ui, const eui::Screen& screen,
                       const DialogHost& host) {
     const auto themeTokens = core::theme::componentTokens(t);
     const float w = ui_kit::dialogWidthPx(ui_kit::DialogWidth::Wide);
-    const float h = 588.0f;  // 「移动到」区已删后的收口高；底部操作区 y 随 h-58 上移
+    const float h = 588.0f;  // 弹窗高；底部操作区 y 随 h-58 上移
 
     ui_kit::DialogFrame frame;
     frame.id = "todo.dialog.detail";
@@ -658,9 +652,8 @@ void drawDetailDialog(eui::Ui& ui, const eui::Screen& screen,
             for (int i = 0; i < 4; ++i) {
                 const bool active = (d.detail.priority == prios[i]);
                 const float bw = 100.0f;
-                // 按钮底色 = 它代表的优先级色（priorityButtonBg：未选中浅 tint，
-                // 选中 0.55 深 tint，与卡底同源）。文字用 textPrimary（textSecondary
-                // 在浅色档实测 < WCAG AA 4.5:1）。选中/未选中靠底色深浅 + 边框区分
+                // 按钮底色 = 它代表的优先级色（priorityButtonBg：未选中浅 tint、选中 0.55 深 tint，与卡底同源）。
+                // 文字用 textPrimary（textSecondary 浅色档 < WCAG AA 4.5:1）；选中/未选中靠底色深浅 + 边框区分
                 components::button(ui, "todo.dialog.detail.prio." + std::to_string(i))
                     .position(28.0f + static_cast<float>(i) * (bw + 8.0f), 264.0f)
                     .size(bw, 32.0f)
@@ -697,7 +690,7 @@ void drawDetailDialog(eui::Ui& ui, const eui::Screen& screen,
                 .border(1.0f, !hasDue ? t.colors.primary : t.colors.borderDefault)
                 .onClick([&d] { d.detail.dueAt = std::nullopt; })
                 .build();
-            // fa-calendar（码点已对 EUI-NEO FA7 cmap 离线核对）
+            // fa-calendar
             components::button(ui, "todo.dialog.detail.due.pick")
                 .position(136.0f, 328.0f)
                 .size(180.0f, 32.0f)

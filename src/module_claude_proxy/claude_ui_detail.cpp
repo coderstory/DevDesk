@@ -33,8 +33,7 @@ constexpr float kActTopGap = 20.0f;     // 内容框底 → actY
 constexpr float kActBottomPad = 24.0f;  // actY+61 → 面板底
 constexpr float kActReserve = kActionBlockH + kActBottomPad;  // 85
 
-// 模型映射域的 env 键：键集从槽位表派生（与写入点同源），判定下沉
-// isModelSlotEnvKey，此处仅语义别名。
+// 模型映射域的 env 键：键集从槽位表派生（与写入点同源），此处仅语义别名。
 bool isModelMappingEnvKey(const std::string& key) {
     return isModelSlotEnvKey(key);
 }
@@ -269,7 +268,7 @@ float drawDetailEnv(eui::Ui& ui, float x0, float y0, float w,
     std::map<std::string, std::string> envMap;
     std::map<std::string, EnvSource> envSources;
     if (shown != nullptr) {
-        // 片段不再携带 env 键：本 pane 只列 profile 自身 env ∪ 托管键
+        // 本 pane 只列 profile 自身 env ∪ 托管键（片段不携带 env 键）。
         const int port = v.svc ? v.svc->configuredProxyPort() : 0;
         envMap = buildProxyEnv(shown->modelsConfigJson, shown->extraEnvJson,
                                port, &envSources);
@@ -283,7 +282,7 @@ float drawDetailEnv(eui::Ui& ui, float x0, float y0, float w,
             }
         }
     }
-    // ---- 行几何：全部从 fontScale 派生，禁写死 100% 像素（旧写死致缩放后墨迹叠印）----
+    // ---- 行几何：全部从 fontScale 派生，禁写死像素 ----
     // 行带 1 = round(键字号×1.7)，行带 2 = round(说明字号×1.6)，行卡 = 4+带1+2+带2+4，
     // 行距 = 行卡+6；键/值同带、来源/说明同带，两带 y 区间不相交。
     const float fs = core::theme::fontScale();
@@ -372,7 +371,7 @@ float drawDetailEnv(eui::Ui& ui, float x0, float y0, float w,
             .text(shownVal).fontSize(keyFs).lineHeight(line1H)
             .verticalAlign(eui::VerticalAlign::Center)
             .color(t.colors.textSecondary).build();
-        // 来源标注：托管键 / 本 Profile（Shared 分支随片段 env 消亡移除；枚举保留复用）
+        // 来源标注：托管键 / 本 Profile。
         const auto srcIt = envSources.find(k);
         const EnvSource src = srcIt != envSources.end()
             ? srcIt->second : EnvSource::Profile;
@@ -427,14 +426,13 @@ const std::vector<ClaudeService::CallLogEntry>& emptyCalls() {
     return kEmpty;
 }
 
-// 最近调用 pane：表头 + 行（行数纯按可用高推）+ 错误/空态 + 「查看全部 →」。行/表头
-// id 沿用旧底部预览（claude.calls.*，无头用例按此断言）；返回本 pane 内容底沿。
+// 最近调用 pane：表头 + 行（行数纯按可用高推）+ 错误/空态 + 「查看全部 →」；返回本 pane 内容底沿。
 float drawDetailCallsPane(eui::Ui& ui, float x0, float y0, float w,
                           const core::theme::Tokens& t,
                           const DetailView& v,
                           const std::function<void()>& openCalls,
                           float contentBottom, PaneRows* rows) {
-    // 调用表头列布局同旧底部预览；「速率」列从「方法/路径」让出 110px
+    // 「速率」列从「方法/路径」让出 110px
     const float colTimeX = x0;
     const float colPathX = x0 + 80.0f;
     const float colStatusX = x0 + w - 310.0f;
@@ -494,7 +492,6 @@ float drawDetailCallsPane(eui::Ui& ui, float x0, float y0, float w,
     size_t rowsCap = static_cast<size_t>(
         static_cast<int>(rowsAvail / kRowPitch));
 
-    // 最近调用（真实数据，从 claude_call_logs 读）
     const std::vector<ClaudeService::CallLogEntry>& recent =
         v.recent ? *v.recent : emptyCalls();
     const std::string& callsError = v.callsError;
@@ -633,8 +630,7 @@ float drawDetailCallsPane(eui::Ui& ui, float x0, float y0, float w,
         (callsOverflow ? kOverflowH : 0.0f) +
         (singleLineDrawn ? kEmptyH + kViewallGap : kViewallGap);
     if (viewY + kViewallH <= contentBottom + 0.5f) {
-        // 「查看全部」是自绘按钮（非 components::button）：换组件要改既有单测定位的
-        // claude.calls.viewall.hit 并重算行数预算；自绘满足同样交互，破坏面小。
+        // 「查看全部」是自绘按钮（单测定位 claude.calls.viewall.hit 依赖此 id）。
         ui.rect("claude.calls.viewall.hit")
             .position(x0, viewY)
             .size(w, kViewallH)
@@ -660,12 +656,11 @@ float drawDetailCallsPane(eui::Ui& ui, float x0, float y0, float w,
 }
 
 // 高级配置 pane：方言 + 备用 Profile 两行只读 + 生效 JSON 逐顶层键来源行。数据由
-// compose 装配进 DetailView，本函数零服务调用；行数纯按可用高推（暂定上限 8），
-// 内容底沿恒 ≤ contentBottom，五页签同高不变式保持。
+// compose 装配进 DetailView，本函数零服务调用；行数纯按可用高推（暂定上限 8）。
 float drawDetailAdvanced(eui::Ui& ui, float x0, float y0, float w,
                          const core::theme::Tokens& t, const DetailView& v,
                          float contentBottom) {
-    // ---- 行几何：全部从 fontScale 派生（旧写死致缩放墨迹叠印）；横向列宽不缩放 ----
+    // ---- 行几何：全部从 fontScale 派生；横向列宽不缩放 ----
     const float fs = core::theme::fontScale();
     const auto rfs = [fs](float base) { return std::round(base * fs); };
     const float labelFs = 11.0f * fs;                // 标签 / 来源 / 说明小字
@@ -870,7 +865,7 @@ void drawDetailActions(eui::Ui& ui, float x0, float w, float actY,
                     f(shownCopy);
                 })
                 .build();
-            // 删除/建副本/复制配置已从本行移除（同源逻辑保留在列表右键菜单）；运行 = 新终端打开 claude 会话
+            // 运行 = 新终端打开 claude 会话（删除/建副本/复制配置在列表右键菜单）
             components::button(ui, "claude.act.run")
                 .size(actW, 36.0f)
                 .text("运行")

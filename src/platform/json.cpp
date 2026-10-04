@@ -47,8 +47,7 @@ namespace {
         return v;
     }
 
-    // yyjson_val → JsonImpl（递归；数组/对象完整还原）。yyjson 读 API 不接收 const 指针
-    //（上游 const 语义不完整），故此处不 const 化
+    // yyjson_val → JsonImpl（递归；数组/对象完整还原）。yyjson 读 API 不接收 const 指针，故不 const 化
     JsonImpl valToImpl(yyjson_val* val) {
         JsonImpl out;
         if (yyjson_is_null(val)) {
@@ -87,9 +86,8 @@ namespace {
         return out;
     }
 
-    // JsonImpl → yyjson 可变文档（写侧）。键序照 std::map 序，缩进/分隔交 yyjson。与旧手写实现
-    //（已删）的字节差异只有两类、语义等价：double 用 yyjson 最短形（512.0→"512.0"）；控制字符转义
-    // hex 大写。其余逐字节一致；期望值锁在 test_json.cpp 的 json_stringify_bytes_snapshot。
+    // JsonImpl → yyjson 可变文档（写侧）。键序照 std::map 序；double 用 yyjson 最短形
+    //（512.0→"512.0"）、控制字符转义 hex 大写，期望值锁在 test_json.cpp 的 json_stringify_bytes_snapshot。
     yyjson_mut_val* implToMut(yyjson_mut_doc* doc, const JsonImpl& impl) {
         switch (impl.kind) {
             case JsonImpl::Kind::Null:
@@ -295,7 +293,7 @@ core::Result<JsonValue> parse(const std::string& text) {
     return core::Result<JsonValue>::ok(std::move(out));
 }
 
-// 序列化（yyjson writer）。与旧手写实现的字节差异与锁定期望值见 implToMut 注释与 snapshot 用例
+// 序列化（yyjson writer）。字节级期望值见 implToMut 注释与 snapshot 用例
 core::Result<std::string> stringify(const JsonValue& value, bool pretty) {
     yyjson_mut_doc* doc = yyjson_mut_doc_new(nullptr);
     if (doc == nullptr) {
@@ -309,11 +307,10 @@ core::Result<std::string> stringify(const JsonValue& value, bool pretty) {
                                                "JSON 序列化失败（yyjson 节点构造失败）");
     }
     yyjson_mut_doc_set_root(doc, root);
-    // ALLOW_INVALID_UNICODE / ALLOW_INF_AND_NAN：与旧实现的「原样透传」语义对齐，不让此前能成功的
-    // 值变成失败（非法字节转义为替换字符、inf/nan 写 Infinity/NaN）
+    // ALLOW_INVALID_UNICODE / ALLOW_INF_AND_NAN：非法字节转义为替换字符、inf/nan 写 Infinity/NaN
     yyjson_write_flag flags =
         YYJSON_WRITE_ALLOW_INVALID_UNICODE | YYJSON_WRITE_ALLOW_INF_AND_NAN;
-    if (pretty) flags |= YYJSON_WRITE_PRETTY_TWO_SPACES;  // 两空格缩进 = 旧实现缩进
+    if (pretty) flags |= YYJSON_WRITE_PRETTY_TWO_SPACES;  // 两空格缩进
     yyjson_write_err err{};
     size_t len = 0;
     char* text = yyjson_mut_write_opts(doc, flags, nullptr, &len, &err);

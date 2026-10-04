@@ -9,20 +9,16 @@
 #include <set>
 #include <vector>
 
-// 弃用 API 窄抑制：SecKeychain* 系列（FindGenericPassword/AddGenericPassword/ItemDelete/ItemFreeContent）
-// 在 macOS 27 SDK 被标记弃用，而平台栈带 -Werror → 构建阻塞。每个调用点用 #pragma clang diagnostic
-// push/ignored/pop **逐语句**抑制，不覆盖整文件、不给 target 加 -Wno-deprecated-declarations（那会连带
-// 屏蔽其它真正危险的弃用告警）。迁移到 SecItem* 涉及访问控制与权限语义变化，本轮无法真机验证，不做。
+// 弃用 API 窄抑制：SecKeychain* 系列在 macOS 27 SDK 被标记弃用，平台栈带 -Werror；每个调用点逐语句
+// 抑制，不覆盖整文件、不给 target 加 -Wno-deprecated-declarations（会连带屏蔽其它危险的弃用告警）。
 
 namespace platform::keychain {
 namespace {
 
-// 空 service / account 守卫：SecKeychainFindGenericPassword 的 serviceLength/accountLength 传 0 是
-// **通配**语义（该维度匹配任意值，两个都传 0 则匹配整库任意 generic password），命中一条即 errSecSuccess
-// 而非 errSecItemNotFound。于是「account 为空」会被静默当成「随便给我一条」：load 返回同 service 下别的
-// 条目密钥；delete 删掉随机别人的条目；store 的通配删旧同样命中 + 写一条空 account 条目（此后成孤儿）。
-// 而空 account 在本项目有确切含义：ProfileRepository 用空 account 表示「该 profile 没有密钥」。
-// 故进入 Keychain API **之前**显式处置：load → fail(NotFound)；store → fail(ValidationError)；delete → ok()（幂等空操作）。
+// 空 service / account 守卫：SecKeychainFindGenericPassword 的长度传 0 是**通配**语义（该维度匹配
+// 任意值，两个 0 匹配整库任意条目），空 account 会被静默当成「随便一条」→ load 返回别人的密钥、
+// delete 删掉别人的条目。本项目空 account 表示「该 profile 没有密钥」，故进 Keychain API 前显式处置：
+// load → fail(NotFound)；store → fail(ValidationError)；delete → ok()（幂等空操作）。
 bool blankKeyIdentity(const std::string& service, const std::string& account) {
     return service.empty() || account.empty();
 }
@@ -30,7 +26,7 @@ bool blankKeyIdentity(const std::string& service, const std::string& account) {
 } // namespace
 
 // macOS 扫描路径测试缝：默认 nullptr = 真实 Security.framework；只把「枚举」「删除」两个边界动作换成
-// 可注入函数指针，中间的 service 过滤 + shouldDeleteOrphan 决策 + removed 累积 + 失败短路一行不动。
+// 可注入函数指针，中间的 service 过滤 + shouldDeleteOrphan 决策 + removed 累积 + 失败短路不动。
 namespace macos_scan {
 namespace {
 const Hooks* g_hooks = nullptr;
@@ -175,7 +171,7 @@ core::Result<std::vector<macos_scan::ScannedEntry>> realEnumerateScanEntries(
     CFTypeRef result = nullptr;
     OSStatus status = SecItemCopyMatching(query, &result);
     CFRelease(query);
-    // service 命名空间为空 → 无条目（上层据此返回空 removed，与原行为一致）
+    // service 命名空间为空 → 无条目（上层据此返回空 removed）
     if (status == errSecItemNotFound) {
         return core::Result<std::vector<macos_scan::ScannedEntry>>::ok(
             std::move(found));
@@ -228,8 +224,7 @@ core::Result<std::vector<std::string>> realDeleteSecretsNotIn(
     std::vector<std::string> removed;
     std::set<std::string> keep(keepAccounts.begin(), keepAccounts.end());
 
-    // 边界动作取注入钩子：默认 nullptr = 真实枚举/真实删除，生产路径与拆分前逐字等价
-    //（决策、service 过滤、removed 累积、失败短路一行未动）
+    // 边界动作取注入钩子：默认 nullptr = 真实枚举/真实删除
     const macos_scan::Hooks* hooks = macos_scan::currentHooks();
 
     auto foundR = (hooks != nullptr && hooks->enumerate != nullptr)
@@ -244,14 +239,12 @@ core::Result<std::vector<std::string>> realDeleteSecretsNotIn(
     for (const auto& entry : found) {
         const std::string& entryService = entry.first;
         const std::string& account = entry.second;
-        // service 过滤放在循环里（不只在枚举段）：任何枚举来源（含测试注入的假命名空间）都过这道闸，
-        //「扫到就删」的回退写法必红；真实枚举段的同款过滤只是纯优化。
+        // service 过滤放在循环里（不只在枚举段）：任何枚举来源（含测试注入）都过这道闸。
         if (entryService != service) continue;
         // 白名单前缀之外的 account 一律保留——shouldDeleteOrphan 统一决策，见 keychain.h
         if (!shouldDeleteOrphan(account, keep)) continue;
 
-        // 直调真实实现（不经 dispatcher）：注入层只服务调用方，不反向渗进 real* 内部；钩子的 erase
-        // 同理只替换边界动作，决策仍在本循环内。
+        // 直调真实实现（不经 dispatcher）：注入层只服务调用方，不渗进 real* 内部。
         core::Result<void> del =
             (hooks != nullptr && hooks->erase != nullptr)
                 ? hooks->erase(entryService, account)

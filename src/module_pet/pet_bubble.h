@@ -50,7 +50,7 @@ inline std::string overdueBubbleText(
 }
 
 // 内容源③代理请求事件文案（纯函数供单测）。桥返回 HTTP 状态码：0 = 上游不可达 →
-// 「网络失败」，>=400 →「代理出错：{status}」，其余 →「转发完成」；nullopt/未注入 → 空串。
+// 「网络失败」，>=400 →「代理出错：{status}」，其余 →「转发完成」；nullopt/未注入 → 空串；
 // 读取即消费（take 语义），一个事件最多弹一次。
 inline std::string proxyEventBubbleText(
     const std::function<std::optional<int>()>& getProxyEvent) {
@@ -87,7 +87,7 @@ inline std::pair<std::string, double> petDataBubbleText(
 
 // 气泡调度（纯函数）：输入 dt + 当前状态（气泡在场/是否 Idle）+ roll → 本轮弹哪一级。
 // 命中口径：气泡在场或非 Idle 不弹；dt <= 0 不弹；roll < dt/150 → 数据槽位（③>②）；
-// roll < dt/60 → ①静态语料；其余不弹。平均间隔：数据槽位 150s、任意一泡 60s。
+// roll < dt/60 → ①静态语料；其余不弹。
 enum class PetBubbleSource {
     None,    // 本轮不弹
     Data,    // 数据槽位：③代理事件 > ②逾期（文案/秒数由 petDataBubbleText 定）
@@ -122,9 +122,8 @@ inline PetBubblePlan petBubbleSchedule(double dtSec, bool bubbleVisible, bool id
     return {};
 }
 
-// 气泡布局：整窗加高一条「气泡让位条」，精灵帧整体下移，气泡画在条内、与帧留
-// 6px 间距（不再盖在宠物头顶）。窗口顶 y=0 起是气泡条 0..28，y=34（kBubbleStripH）
-// 以下是精灵帧。
+// 气泡布局：整窗加高一条「气泡让位条」，精灵帧整体下移，气泡画在条内、与帧留 6px 间距。
+// 窗口顶 y=0..28 是气泡条，y=34（kBubbleStripH）以下是精灵帧。
 // 单位口径：全部是窗口单位 = 点，不乘 Retina contentScale。「气泡不越出屏幕工作区」
 // 由 clampPetPosToMonitors 保证（调用方传整窗高，钳制后气泡条上沿不越工作区上缘）。
 struct PetRect {

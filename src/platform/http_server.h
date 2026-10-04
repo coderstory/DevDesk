@@ -28,13 +28,12 @@ public:
     void setStatus(int code);
     void setHeader(const std::string& key, const std::string& value);
     void write(const std::string& data);
-    // 空操作：响应在 handler 返回时统一提交，end() 无状态可置；保留签名是既有调用协议。
+    // 空操作：响应在 handler 返回时统一提交；保留签名是既有调用协议。
     void end();
 
     // 流式 API：与 write()/end() 互斥，调用后走 chunked 传输编码。
-    // provider 被 cpp-httplib 反复调用（每轮写一块）：writeChunk(data,len) 写一块、返回 false = 客户端
-    // 已断；isWritable() 查询连接是否可写；provider 返回 true 继续、false 结束响应。releaser 在响应彻底
-    // 结束时（含客户端断开）调用一次，用于 cancel 上游。
+    // provider 被 cpp-httplib 反复调用：writeChunk 返回 false = 客户端已断；provider 返回 true
+    // 继续、false 结束响应。releaser 在响应彻底结束（含客户端断开）时调用一次，用于 cancel 上游。
     using ChunkWriter = std::function<bool(const char* data, size_t len)>;
     using IsWritableFn = std::function<bool()>;
     using ChunkProvider = std::function<bool(ChunkWriter writeChunk, IsWritableFn isWritable)>;

@@ -1,12 +1,8 @@
 // src/platform/file_watcher.h
-// platform::FileWatcher —— 文件系统变化事件监听。平台实现：*_win.cpp（ReadDirectoryChangesW + 后台
-// 线程）/ *_macos.cpp（FSEvents + 专属 CFRunLoop）/ *_stub.cpp（无原生能力：start 返回 ok 但 active()
-// 恒 false，消费方据此降级为 mtime/size 轮询）。不抛异常，失败走 Result。契约：监听是**目录级**的
-//（不按扩展名过滤，消费方自滤；**不要把高频落盘的伴生文件放进被监听目录**）；回调在 watcher 后台
-// 线程执行，消费方自负线程安全；回调内 stop() 只请求停止不 join，join 由之后非回调线程的 stop()/析构完成。
-// 已知边界（Win）：start() 与首个 ReadDirectoryChangesW 之间的武装窗口内改动不上报也不补发（需零丢失
-// 者等首个事件）；事件到达即同步，编辑器可能仍在写 → 可能读到半截（200ms 去抖已压到批量 flush 级）；
-// 存活期持目录句柄，MinGW 的 ifstream 不带 FILE_SHARE_DELETE，清场方先 stop() 等回调返回再删。
+// 文件系统变化事件监听。平台实现：*_win.cpp（ReadDirectoryChangesW + 后台线程）/ *_macos.cpp
+//（FSEvents + 专属 CFRunLoop）/ *_stub.cpp（start 返回 ok 但 active() 恒 false，消费方降级轮询）。
+// 契约：目录级监听（不按扩展名过滤，消费方自滤）；回调在 watcher 后台线程执行，消费方自负线程安全；
+// 回调内 stop() 只请求停止不 join，join 由之后非回调线程的 stop()/析构完成。不抛异常，失败走 Result。
 
 #pragma once
 
@@ -27,8 +23,8 @@ enum class FileWatchAction {
     Deleted,   // 删除（FILE_ACTION_REMOVED / ItemRemoved；移入回收站同样报删除）
     Modified,  // 内容写入 / 时间戳变化（FILE_ACTION_MODIFIED / ItemModified 等）
     Renamed,   // 重命名（FILE_ACTION_RENAMED_* / ItemRenamed：新旧名各发一条，以磁盘存在性为准）
-    Unknown,   // 缓冲溢出等无法逐项解析的兜底（relativePath 空，消费方应全量重扫；Win 通知缓冲
-               // 溢出、macOS MustScanSubDirs/UserDropped/KernelDropped/RootChanged 都走这里）
+    Unknown,   // 缓冲溢出等无法逐项解析的兜底（relativePath 空，消费方应全量重扫；
+               // Win 通知缓冲溢出与 macOS 丢事件标志都走这里）
 };
 
 struct FileWatchEvent {
@@ -44,16 +40,14 @@ class FileWatcher {
 public:
     FileWatcher();
     // 析构自动 stop()（join 后台线程）；对象必须活到回调返回——回调内析构属误用
-    //（detached/在跑的 worker 会摸已析构的 Impl，见 stop() 契约）
     ~FileWatcher();
 
     FileWatcher(const FileWatcher&) = delete;
     FileWatcher& operator=(const FileWatcher&) = delete;
 
-    // 启动监听 dir（递归子树）。事件在 debounceMs 静默窗口后成批交给 onChange。
-    //   dir 空 / 非已存在目录 / 回调为空 → fail；原生监听建不起来（句柄/线程/事件流）→ fail（Internal/FileNotFound）；
-    //   平台无真实现（POSIX stub）→ 返回 ok 但 active()==false，消费方据此退回轮询兜底。
-    // 重复 start 先隐式 stop（支持换目录重启）。
+    // 启动监听 dir（递归子树），事件在 debounceMs 静默窗口后成批交给 onChange。
+    //   dir 空 / 非已存在目录 / 回调为空 → fail(Validation)；原生监听建不起来 → fail(Internal/FileNotFound)；
+    //   平台无真实现（POSIX stub）→ 返回 ok 但 active()==false，消费方退回轮询。重复 start 先隐式 stop。
     core::Result<void> start(const std::filesystem::path& dir,
                              FileWatchCallback onChange,
                              std::chrono::milliseconds debounceMs =

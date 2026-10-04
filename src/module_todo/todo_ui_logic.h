@@ -1,4 +1,3 @@
-// src/module_todo/todo_ui_logic.h
 // Todo UI 可单测纯函数（键盘移动 / 拖拽几何 / 截止日期 / 优先级配色）。无状态、不碰 DB
 #pragma once
 
@@ -43,9 +42,8 @@ struct MoveTarget {
     int position;
 };
 
-// Ctrl/Cmd+↑↓ 的移动目标。moveTask 语义 = "插到 position == newPosition 的任务
-// 之前"：上移取紧邻上方 position，下移取紧邻下方 position+1；到顶/底 → nullopt。
-// 用 DB 真实 position 计算（moveTask 留空洞，rank 不可靠）
+// Ctrl/Cmd+↑↓ 的移动目标。moveTask 语义 = "插到 position == newPosition 的任务之前"：
+// 上移取紧邻上方 position，下移取紧邻下方 position+1；到顶/底 → nullopt。用 DB 真实 position（rank 有空洞不可靠）
 inline std::optional<MoveTarget> computeKeyboardMove(
     const std::vector<Task>& tasks, int64_t taskId, bool up) {
     const Task* self = nullptr;
@@ -92,10 +90,10 @@ inline int computeAppendPosition(const std::vector<Task>& tasks, int64_t columnI
     return maxPos + 1;
 }
 
-// 拖拽命中输入：拖拽锚点 = 按下时被拖卡片的 bounds（指针空间），板面几何 = compose
-// 空间。指针 → compose 统一走 core::windowToCompose，尺度由调用点显式声明。
-// ⚠ 同帧契约：pressY 与 scrollOffset 必须是"按下那一帧"的成对值——bounds.y 含按下
-// 时刻的列滚动，还原板面顶边只能减同一个值（调用方在 DragState 里快照）
+// 拖拽命中输入：拖拽锚点 = 按下时被拖卡片的 bounds（指针空间），板面几何 = compose 空间。
+// 指针 → compose 统一走 core::windowToCompose，尺度由调用点显式声明。
+// ⚠ 同帧契约：pressY 与 scrollOffset 必须是按下那一帧的成对值——bounds.y 含按下时刻的列滚动，
+// 还原板面顶边只能减同一个值（调用方在 DragState 里快照）
 struct DragHitInput {
     int fromColIndex = 0;
     int colCount = 0;
@@ -125,8 +123,7 @@ inline bool dragScaleMismatch(float explicitScale, float probeScale) {
            std::fabs(probeScale - explicitScale) > 0.001f;
 }
 
-// 指针 → 目标列索引；列间隙 / 板外 / 输入退化 → -1。bounds.y 含列滚动（滚动走
-// transform），先还原成未滚动位置再推板面顶边
+// 指针 → 目标列索引；列间隙 / 板外 / 输入退化 → -1。bounds.y 含列滚动，先还原成未滚动位置再推板面顶边
 inline int dragDropTarget(const DragHitInput& in, double pointerX, double pointerY) {
     if (in.colCount <= 0 || in.cardWidth <= 0.0f || in.pressWidth <= 0.0f ||
         in.colWidth <= 0.0f || in.fromColIndex < 0 ||
@@ -135,8 +132,7 @@ inline int dragDropTarget(const DragHitInput& in, double pointerX, double pointe
     }
     const float dpi = in.dpiScale;
     const float stride = in.colWidth + in.colGap;
-    // 板面原点：按下锚点（卡片左缘 → compose）减 kColumnContentInset 还原列左缘，
-    // 再左移若干列步长
+    // 板面原点：按下锚点（卡片左缘 → compose）减 kColumnContentInset 还原列左缘，再左移若干列步长
     const float originX = ::core::windowToCompose(in.pressX, in.pageOriginX, dpi) -
                           kColumnContentInset -
                           static_cast<float>(in.fromColIndex) * stride;
@@ -159,8 +155,7 @@ inline int dragDropTarget(const DragHitInput& in, double pointerX, double pointe
     return -1;
 }
 
-// 拖拽插入行号（0 = 首卡前；>= taskCount = 列尾追加），几何口径与 dragDropTarget
-// 同源。targetScroll 只喂视觉预览（占位条），落库换算不吃它。不在目标列/板外 → -1
+// 拖拽插入行号（0 = 首卡前；>= taskCount = 列尾追加），几何口径与 dragDropTarget 同源；不在目标列/板外 → -1
 inline int dragDropRowIndex(const DragHitInput& in, int targetCol, double pointerX,
                             double pointerY, float targetScroll, int taskCount) {
     if (in.colCount <= 0 || in.cardWidth <= 0.0f || in.pressWidth <= 0.0f ||
@@ -194,9 +189,8 @@ inline int dragDropRowIndex(const DragHitInput& in, int targetCol, double pointe
     return row;
 }
 
-// 拖拽跟手副本锚点（页面 compose 空间左上角）。输入 = 按下卡片 bounds（指针空间）
-// + 按下起的累计位移（DragEvent::totalX/totalY）——用累计值免存按下指针。
-// 尺度因子与 dragDropTarget 同源（锚点走 windowToCompose、位移除同一个 dpiScale），
+// 拖拽跟手副本锚点（页面 compose 空间左上角）。输入 = 按下卡片 bounds + 按下起累计位移（DragEvent::totalX/Y）。
+// 尺度因子与 dragDropTarget 同源（锚点走 windowToCompose、位移除同一个 dpiScale）——
 // 两者不可各用一套因子，否则非 100% 缩放下跟手距离走偏。退化 dpiScale 按同尺度处理
 struct GhostAnchor {
     float x = 0.0f;
@@ -247,8 +241,7 @@ inline std::optional<eui::Color> columnDotColor(const std::optional<std::string>
     return std::nullopt;
 }
 
-// 逾期天数（本地日历日差）：昨天到期今天看 = 1 天；未过期/当天到期 → 0。
-// 走 localDayNumber（days_from_civil）算日历日，免 tm_yday 跨年/闰年坑
+// 逾期天数（本地日历日差）：昨天到期今天看 = 1 天；未过期/当天到期 → 0。走 localDayNumber 免 tm_yday 跨年/闰年坑
 inline int overdueDays(int64_t dueAt, int64_t now) {
     if (now <= dueAt) return 0;
     const int64_t diff =
@@ -257,8 +250,7 @@ inline int overdueDays(int64_t dueAt, int64_t now) {
     return diff <= 0 ? 0 : static_cast<int>(diff);
 }
 
-// 搜索过滤：搜索激活时只保留命中集合内的任务（列内排序不变）。用 unordered_set
-// 而非线性 find——搜索激活时每帧 compose，集合查找 O(1)
+// 搜索过滤：搜索激活时只保留命中集合内的任务（列内排序不变）；每帧 compose，unordered_set 查找 O(1)
 inline std::vector<const Task*> filterBySearch(const std::vector<const Task*>& tasks,
                                                const std::unordered_set<int64_t>& matchedIds,
                                                bool searching) {
@@ -272,8 +264,7 @@ inline std::vector<const Task*> filterBySearch(const std::vector<const Task*>& t
     return out;
 }
 
-// 优先级 → 中文标签。下标 = Priority 值域（None=0…High=3），static_assert 保证
-// 新增枚举时编译期失败；越界（脏数据）走 [0]
+// 优先级 → 中文标签。下标 = Priority 值域，static_assert 保证新增枚举时编译期失败；越界走 [0]
 inline const char* priorityLabel(Priority p) {
     static constexpr const char* kLabels[] = {"无", "●低", "●中", "●高"};
     static_assert(std::size(kLabels) == static_cast<size_t>(Priority::High) + 1);
@@ -282,8 +273,7 @@ inline const char* priorityLabel(Priority p) {
 }
 
 inline eui::Color priorityColor(Priority p, const core::theme::Tokens& t) {
-    // 存 ColorTokens 成员指针而非色值：色值随主题在运行期解析，不会缓存首帧主题色。
-    // 下标 = Priority 值域，越界走 [0]
+    // 存 ColorTokens 成员指针而非色值：色值随主题运行期解析，不缓存首帧主题色。下标 = Priority 值域，越界走 [0]
     static constexpr eui::Color core::theme::ColorTokens::*kColorFields[] = {
         &core::theme::ColorTokens::textTertiary,  // None
         &core::theme::ColorTokens::info,          // Low
@@ -295,8 +285,7 @@ inline eui::Color priorityColor(Priority p, const core::theme::Tokens& t) {
     return t.colors.*kColorFields[idx <= static_cast<size_t>(Priority::High) ? idx : 0];
 }
 
-// 优先级色底：卡底与详情弹窗优先级按钮底的唯一色源（priorityColor 色表 +
-// 强度表 + priorityTintBg 算式，改配色只动这里）。低档压在 0.16 以下（不刺眼）
+// 优先级色底：卡底与详情弹窗优先级按钮底的唯一色源（priorityColor 色表 + 强度表 + priorityTintBg 算式）
 inline constexpr float kPriorityTintStrength[] = {0.12f, 0.16f, 0.22f, 0.30f};
 static_assert(std::size(kPriorityTintStrength) ==
               static_cast<size_t>(Priority::High) + 1);
@@ -315,20 +304,17 @@ inline eui::Color priorityTintBg(Priority p, const core::theme::Tokens& t,
     return eui::mixColor(base, priorityColor(p, t), strength);
 }
 
-// ① 看板卡底：None 不加 tint，低/中/高按强度表混。入参是基色（三态各走一次同一
-// 算式），优先级色相与 hover/active 反馈叠加而非互相覆盖
+// ① 看板卡底：None 不加 tint，低/中/高按强度表混；优先级色相与 hover/active 反馈叠加而非互相覆盖
 inline eui::Color priorityCardBg(Priority p, const core::theme::Tokens& t,
                                  const eui::Color& base) {
     return priorityTintBg(p, t, base,
                           p == Priority::None ? 0.0f : priorityTintStrength(p));
 }
 
-// ② 按钮选中档强度：不取 1.0 实色——四色原色亮度跨度大，实色底配单一前景 token
-// 总有一档掉到 4.5:1 以下；0.55 深 tint 对 textPrimary 四档实测均 ≥ 6.0:1
+// ② 按钮选中档强度：不取 1.0 实色——实色底配单一前景 token 总有一档掉到 4.5:1 以下；0.55 深 tint 四档均 ≥ 6.0:1
 inline constexpr float kPriorityButtonPickedStrength = 0.55f;
 
-// ② 按钮底：「无」也是可选项，须有自己的底色，故 None 档取 0.12（近中性灰）。
-// base 由调用方给三态基色，优先级色相与 hover/按下反馈叠加
+// ② 按钮底：「无」也是可选项须有自己的底色，None 档取 0.12（近中性灰）；base 由调用方给三态基色
 inline eui::Color priorityButtonBg(Priority p, const core::theme::Tokens& t,
                                    bool picked, const eui::Color& base) {
     return priorityTintBg(p, t, base,
@@ -379,8 +365,7 @@ inline std::vector<const Task*> tasksInColumn(const std::vector<Task>& tasks,
     return out;
 }
 
-// 拖拽按行落库位置：插到「行 == rowIndex 的任务」之前（用 DB 真实 position）；
-// rowIndex 越界 / 空列 → 列尾追加
+// 拖拽按行落库位置：插到「行 == rowIndex 的任务」之前（用 DB 真实 position）；rowIndex 越界 / 空列 → 列尾追加
 inline int computeInsertPosition(const std::vector<Task>& tasks,
                                  int64_t columnId, int rowIndex) {
     const auto colTasks = tasksInColumn(tasks, columnId);
@@ -390,8 +375,7 @@ inline int computeInsertPosition(const std::vector<Task>& tasks,
     return colTasks[static_cast<size_t>(rowIndex)]->position;
 }
 
-// ① 同列重排行号换算：dragDropRowIndex 的行号含被拖卡自身（预览条即所见），
-// 落库要摘出自身——row > ownIndex 时减 1；换算后 == ownIndex = 插回原位 → nullopt
+// ① 同列重排行号换算：行号含被拖卡自身（预览条即所见），落库要摘出自身——row > ownIndex 时减 1；插回原位 → nullopt
 inline std::optional<int> computeReorderRow(int ownIndex, int rowIndex) {
     if (ownIndex < 0 || rowIndex < 0) return std::nullopt;
     const int adjusted = rowIndex > ownIndex ? rowIndex - 1 : rowIndex;
@@ -399,8 +383,7 @@ inline std::optional<int> computeReorderRow(int ownIndex, int rowIndex) {
     return adjusted;
 }
 
-// ② 落库位置：语义同 computeInsertPosition，但行序排除被拖卡自身（moveTask 先摘
-// 出再插入，自身在行序里会让插入位错一格）。rowIndex 越界 → 排除自身后 max+1
+// ② 落库位置：语义同 computeInsertPosition，但行序排除被拖卡自身（否则插入位错一格）；rowIndex 越界 → 排除自身后 max+1
 inline int computeReorderInsertPosition(const std::vector<Task>& tasks,
                                         int64_t columnId, int64_t draggedTaskId,
                                         int rowIndex) {
@@ -483,13 +466,11 @@ inline float cardTop(const BoardGeom& g, int cardIndex) {
            static_cast<float>(cardIndex) * (kCardHeight + kCardGap);
 }
 
-// chip 几何与字号（标签 / 截止 pill）：drawChip 与 chipWidth 估宽共用同一份常量
-//——调字号必须同步调估宽，否则 chip 排到卡外或文字被裁
+// chip 几何与字号（标签 / 截止 pill）：drawChip 与 chipWidth 估宽共用同一份常量——调字号必须同步调估宽
 constexpr float kChipHeight = 22.0f;
 constexpr float kChipFontInset = 1.0f;  // 字号 = fontSizeSmall - inset（13-1=12）
 
-// chip 宽度估算（估计值略偏大，只多留白、不裁字）
-// ponytail: 不发 FontRegistry 实测；偏差只影响 chip 间留白
+// chip 宽度估算（估计值略偏大，只多留白、不裁字；不发 FontRegistry 实测）
 inline float chipWidth(const std::string& text) {
     float w = 20.0f;
     for (unsigned char c : text) {
@@ -498,8 +479,7 @@ inline float chipWidth(const std::string& text) {
     return w;
 }
 
-// 卡片内容组几何：内容组在 kCardHeight 内垂直居中（块内排版不变）；水平只居中
-// 主文本，chip 行与完成角标 x 不动。常量供 drawCard / drawDragGhost / 无头断言同源
+// 卡片内容组几何：内容组在 kCardHeight 内垂直居中；水平只居中主文本。常量供 drawCard / drawDragGhost / 无头断言同源
 constexpr float kCardTitleLineH = 18.0f;      // 标题行高（= lineHeight）
 constexpr float kCardTitleToChipGap = 12.0f;  // 标题行底 → chip 行顶
 // 标题框左右对称内缩 40（总留白 80），右缘 W-40 让开完成角标区间 [W-36, W-12]

@@ -11,20 +11,19 @@
 
 namespace platform::keychain {
 
-// 孤儿清理白名单前缀：deleteSecretsNotIn 的语义是「凡不在 keep 里的都删」（对 service 命名空间
-// 无差别全清）。本应用 service 下条目只有 profile 密钥（account 约定 claude:<id>）；白名单前缀
-//（claude:）之外一律保留（不删、不计数）。前缀比较大小写敏感（account 由本应用恒小写生成）。
+// 孤儿清理白名单前缀：deleteSecretsNotIn 的语义是「凡不在 keep 里的都删」。本应用 service 下条目
+// 只有 profile 密钥（account 约定 claude:<id>），前缀之外一律保留；前缀比较大小写敏感（account 由本应用恒小写生成）。
 inline bool deletableOrphanAccount(const std::string& account) {
     return account.rfind("claude:", 0) == 0;
 }
 
-// 统一决策：不在 keep 里**且**命中白名单前缀才允许删。三平台删除分支都必须经它，保证语义一字不差。
+// 统一决策：不在 keep 里**且**命中白名单前缀才允许删。三平台删除分支都必须经它。
 inline bool shouldDeleteOrphan(const std::string& account,
                                const std::set<std::string>& keepAccounts) {
     return keepAccounts.count(account) == 0 && deletableOrphanAccount(account);
 }
 
-// 真实实现（按平台拆文件：keychain_win / keychain_posix / keychain_macos）
+// 真实实现
 core::Result<void> realStoreSecret(const std::string& service,
                                    const std::string& account,
                                    const std::string& secret);
@@ -36,9 +35,8 @@ core::Result<std::vector<std::string>> realDeleteSecretsNotIn(
     const std::string& service,
     const std::vector<std::string>& keepAccounts);
 
-// 注入缝：函数指针表 + 单一可替换槽位，默认指向真实实现。生产调用形态零变化（签名一字不变，多一次
-// 间接调用），存储格式/编码不动。用途：多步写协议的失败分支原先无从单测（TwoPhaseKeyWrite 依赖
-//「Keychain 写失败」才能走到补偿），测试可整表替换成假实现注入失败并观察补偿。
+// 注入缝：函数指针表 + 单一可替换槽位，默认指向真实实现，生产调用形态零变化；
+// 测试可整表替换成假实现注入失败并观察补偿。
 struct Backend {
     core::Result<void> (*storeSecret)(const std::string& service,
                                       const std::string& account,

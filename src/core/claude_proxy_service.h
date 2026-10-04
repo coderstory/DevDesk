@@ -1,8 +1,6 @@
-// src/core/claude_proxy_service.h
-// Claude 代理「运行面」窄接口：设置页要读/动代理运行时状态，但 module_settings 不能 include
-// module_claude_proxy 的任何头，故定义消费方真正用到的几个方法作接口，提供方经 ServiceLocator
-// 注册（生产 = main.cpp 的转发适配器，测试 = 各测试文件注册自己的 service）。接口不收
-//「将来可能用到」的口子。本接口不改变 ClaudeService 所有权，main.cpp 仍是唯一创建/持有方。
+// Claude 代理「运行面」窄接口：module_settings 不能 include module_claude_proxy 的头，故定义
+// 消费方真正用到的几个方法，提供方经 ServiceLocator 注册（生产 = main.cpp 的转发适配器）。
+// 本接口不改变 ClaudeService 所有权，main.cpp 仍是唯一创建/持有方
 #pragma once
 
 #include "core/result.h"
@@ -17,7 +15,6 @@ class IClaudeProxyService {
 public:
     virtual ~IClaudeProxyService() = default;
 
-    // 代理 server 状态（设置页代理卡 / 端口应用）
     virtual bool isProxyRunning() const = 0;
     // 实际监听端口；未运行 = 0（与 ClaudeService::proxyPort 同口径）
     virtual int proxyPort() const = 0;
@@ -28,21 +25,18 @@ public:
     virtual core::Result<int> startProxy(const std::string& bindAddress,
                                          int port) = 0;
 
-    // Claude Code settings 接管（设置页接管状态行 / 覆盖警告）
     virtual bool isClaudeCodeManaged() const = 0;
     // 按值快照——实现侧可能被 agent 线程改写
     virtual std::vector<std::string> lastSyncWarnings() const = 0;
     // 接管实际使用的 settings.json 路径（未注入 = 空串）；给 string 不把 filesystem::path 摆进接口
     virtual std::string settingsFilePath() const = 0;
 
-    // Agent 模型槽位解析（LlmClient 消费）
-    // 返回激活 profile 的 models_config 里 slot 槽位的 model id；"def" 与 "default" 等价，
-    // default 未配置时回落 profile.model。无激活 profile/未配置/空 → nullopt
+    // Agent 模型槽位解析：返回激活 profile 的 slot 槽位 model id，"def"/"default" 等价，
+    // default 未配置回落 profile.model；无激活 profile/未配置/空 → nullopt
     virtual std::optional<std::string> resolveModelSlot(const std::string& slot) = 0;
 };
 
-// 适配器：把「进程内单例（static T* global()）」适配成上面的接口。生产实例化点 = main.cpp，
-// 测试 = test_settings.cpp（同一转发路径）。core 不 include 任何 module_* 头，T 由实例化点提供。
+// 适配器：进程内单例（static T* global()）→ 上面的接口；core 不 include module_* 头，T 由实例化点提供。
 // 空单例语义：global() == nullptr 时各方法按服务不可用返回 false/0/空串/空 vector/no-op
 template <typename T>
 class GlobalClaudeProxyService final : public IClaudeProxyService {

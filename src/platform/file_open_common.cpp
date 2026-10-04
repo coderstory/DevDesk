@@ -1,5 +1,5 @@
 // src/platform/file_open_common.cpp
-// file_open 的平台无关纯逻辑：argv 选参数 + shell 单引号转义（macOS/POSIX 两份逐字实现下沉共用）。
+// file_open 的平台无关纯逻辑：argv 选参数 + shell 单引号转义。
 #include "file_open.h"
 #include "file_open_common.h"
 
@@ -14,7 +14,7 @@ std::string selectOpenFileArg(const std::vector<std::string>& utf8Args) {
     return candidate;
 }
 
-// shell 单引号转义：macOS(/usr/bin/open) 与 POSIX(xdg-open) 此前各持一份逐字相同实现，下沉共用
+// shell 单引号转义：macOS(/usr/bin/open) 与 POSIX(xdg-open) 共用
 std::string shellSingleQuote(const std::string& s) {
     std::string out = "'";
     for (const char c : s) {

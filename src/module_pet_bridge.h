@@ -1,7 +1,5 @@
-// src/module_pet_bridge.h
-// 设置页 ↔ 桌宠的进程内自由函数桥：把 extern 声明收口到单一中立头（settings include 它不构成
-// include 兄弟模块头）。settings 不 include pet 实体头、CMake 不 link devdesk_module_pet，符号在
-// 链接期解析。全部不抛异常。末尾 static_assert 把声明钉死在函数指针类型上，改声明立刻编译报错。
+// 设置页 ↔ 桌宠的进程内自由函数桥：settings 只 include 本中立头，不 include pet 实体头，
+// CMake 不 link devdesk_module_pet（符号链接期解析）。全部不抛异常；末尾 static_assert 钉死签名
 #pragma once
 
 #include <string>
@@ -21,22 +19,22 @@ int currentPetScaleIndex();
 std::vector<std::string> petScalePresetLabels();
 
 // B 组：改 pet 模块状态（写盘 + 同步窗口操作）
-// showPetWindow 四态结果：bool 会把「未装配/已开着/启动失败」折成一个 false，收成枚举以便区分
+// showPetWindow 四态结果：bool 会把「未装配/已开着/启动失败」折成一个 false，收成枚举区分
 enum class PetShowOutcome {
     Shown,        // 已按 rt.config 重新入队开窗请求
     AlreadyOpen,  // 窗口本就开着，无需动作
-    NotAssembled, // 本会话从未装配桌宠（模块开关关）——注册门控重启后生效
+    NotAssembled, // 本会话从未装配桌宠（模块开关关）
     StartFailed,  // 已装配但重开失败（皮肤资产不可用，未入队开窗）
 };
 
-// 换肤：名字必须在 discoverSkins() 内（会拼进文件系统路径，防配置注入）；写盘并热切换，
-// 窗口未开时只持久化
+// 换肤：名字必须在 discoverSkins() 内（会拼进文件系统路径，防配置注入）；
+// 写盘并热切换，窗口未开时只持久化
 void applyPetSkin(const std::string& skinName);
 // 位置重置：持久化坐标清回未设置哨兵，窗口开着则移回默认位
 void resetPetPosition();
 // 重新显示桌宠窗口（四态见 PetShowOutcome）
 PetShowOutcome showPetWindow();
-// 关闭桌宠窗口（模块开关取消勾选 → 立即关窗，与右键「隐藏桌宠」同路径）。
+// 关闭桌宠窗口（模块开关取消勾选 → 立即关窗）；
 // true = 曾开着/有可见意图并已请求关闭；只清可见意图，不清装配标志
 bool closePetWindow();
 // 显示大小切档（越界静默拒绝）：写盘并热切换，窗口未开时只持久化

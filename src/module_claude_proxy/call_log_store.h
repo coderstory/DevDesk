@@ -1,11 +1,7 @@
 // src/module_claude_proxy/call_log_store.h
 // CallLogStore：claude_call_logs 表读写 + 落库版本号
-// （R10-A1 自 ClaudeService 抽出；职责边界见 R10 spec §2.2，方法搬移不改语义）
-//
-// 线程约定（现状同款，见 R10 spec §2.2）：
-//   - 写 = proxy worker 线程（ProxyRouter 经 ClaudeService 门面调 logCall）
-//   - 读 = UI 线程（Claude 页日志面板 / 首页最近调用快照）
-//   - 版本号 callLogVersion_ 用 atomic：写方 fetch_add / 读方 acquire load
+// 线程约定：写 = proxy worker 线程，读 = UI 线程；版本号用 atomic
+// （写方 fetch_add release / 读方 acquire load）
 #pragma once
 
 #include <atomic>
@@ -29,9 +25,7 @@ public:
         std::string path;
         int statusCode = 0;
         int64_t latencyMs = 0;
-        // 输出 token（migration v5 的用量列，流末回填）：NULL（未采集：非流式
-        // 行 / 老行 / 上游没给 usage）经查询侧 COALESCE 归 0——速率列据此
-        // 显示「—」，与真实的 0 个 token 同处理（两者都算「没有速率」）。
+        // 输出 token（流末回填）；NULL（未采集）查询侧归 0，速率列显示「—」
         int64_t outputTokens = 0;
         int64_t requestBytes = 0;
         int64_t responseBytes = 0;
@@ -39,12 +33,8 @@ public:
         std::time_t startedAt = 0;
     };
 
-    // 日志面板查询条件（产品审计 2026-09-23 [11]）：总设计 §8.3 第 6 条承诺
-    // 「完整日志面板（支持过滤、搜索）」，此前只有 recentCalls(20) 静态列表。
-    // search 按 path/method 模糊匹配（LIKE，% 与 _ 转义为字面量，ASCII 大小写
-    // 不敏感）；statusClass 按状态码分桶（status_code 列可空，NULL 按 0 归
-    // 「错误」桶）；limit/offset 翻页。排序与 recentCalls 一致
-    // （started_at DESC, id DESC）。
+    // 查询条件：search 对 path/method 模糊匹配（% 与 _ 转义为字面量，ASCII
+    // 大小写不敏感）；statusClass 分桶（NULL 归「错误」桶）；排序同 recentCalls
     struct CallLogQuery {
         // statusClass 取值：
         static constexpr int kStatusAll = 0;  // 全部
@@ -62,8 +52,7 @@ public:
 
     explicit CallLogStore(core::data::SqliteDb& db);
 
-    // 插入一条调用日志；落库成功即推进 callLogVersion()（审计 perf [13]，
-    // Claude 页 compose 据此只在有新调用时重查 recentCalls）
+    // 插入一条调用日志；落库成功即推进 callLogVersion()
     core::Result<void> logCall(const CallLogEntry& entry);
 
     // 最近 limit 条（按 started_at DESC, id DESC；limit <= 0 时按 20 兜底）

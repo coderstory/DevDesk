@@ -4,9 +4,8 @@
 namespace core::window_layout {
 
 FrameInsetsBaseline frameInsetsBaseline() {
-    // Windows 标题栏/边框随 DPI 等比放大，故按 96 DPI 基准保存：本机
-    //（1920×1080 @125% = 120 DPI）实测外框比客户区多 +18 宽 / +47 高，折算回
-    // 96 DPI 得 14.4 / 37.6；取浮点基准 + 向上取整，125% 下正好还原实测值
+    // Windows 标题栏/边框随 DPI 等比放大，按 96 DPI 基准保存（125% 实测 +18 宽/+47 高折算回
+    // 96 DPI 得 14.4/37.6）；取浮点基准 + 向上取整，125% 下正好还原实测值
     return FrameInsetsBaseline{14.4f, 37.6f};
 }
 

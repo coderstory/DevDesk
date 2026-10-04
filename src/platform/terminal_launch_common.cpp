@@ -1,6 +1,6 @@
 // src/platform/terminal_launch_common.cpp
-// terminal_launch 的跨平台纯函数：命令文本拼装的全部逻辑集中在这里，平台实现只负责系统调用——两套
-// 正文拼装（Windows wt/PowerShell、macOS .command）在当前平台就能被单测覆盖。本文件**无条件编译**。
+// terminal_launch 的跨平台纯函数：命令文本拼装的全部逻辑集中在这里，平台实现只负责系统调用；
+// 本文件无条件编译。
 #include "terminal_launch_common.h"
 
 #include <chrono>
@@ -35,8 +35,6 @@ std::string commandLine(const LaunchSpec& spec,
 } // namespace
 
 // 引号 / 转义
-
-// shellSingleQuote 已下沉为 platform::file_open::shellSingleQuote，经头文件 using 复用，不再自持。
 
 std::string powershellSingleQuote(const std::string& s) {
     std::string out = "'";
@@ -200,8 +198,7 @@ std::string buildPowerShellBody(const LaunchSpec& spec) {
 }
 
 std::string escapeWtTitle(const std::string& title) {
-    // wt 命令行用 `;` 分隔多条命令 → 标题里的 `;` 必须写成 `\;`（实测 `--title 'A;B'` 标题只剩 "B"，
-    // `--title 'A\;B'` 才得 "A;B"）。只处理 `;`，其余字符（含 `\`）原样交给 wt——不引入未实测的转义规则。
+    // wt 命令行用 `;` 分隔多条命令 → 标题里的 `;` 必须写成 `\;` 才能按字面显示；其余字符原样交给 wt。
     std::string out;
     out.reserve(title.size() + 4);
     for (const char c : title) {
@@ -248,8 +245,8 @@ std::vector<std::string> buildWindowsFallbackArgs(const LaunchSpec& spec) {
 }
 
 std::string buildMacCommandBody(const LaunchSpec& spec) {
-    // cd + （无 exec 的）claude --settings '<临时文件>'；脚本本身不含密钥。为什么去掉 exec：自删靠 EXIT
-    // 陷阱——exec 会替换 shell 进程、trap 随之消失，自删语义就没了。
+    // cd + claude --settings '<临时文件>'；脚本本身不含密钥。不能 exec：exec 替换 shell 进程，
+    // EXIT 陷阱随之消失、自删就没了。
     std::string body = "cd " + shellSingleQuote(spec.workingDir) + " && " +
                        commandLine(spec, shellSingleQuote) + "\n";
     const std::string settingsPath = settingsPathArg(spec.args);

@@ -1,8 +1,6 @@
 // src/platform/credential_protection_win.cpp
-// Windows：DPAPI 加密后的 blob **hex 编码**进文本列（「不用 Keychain」≠「明文落盘」）。
-// 调用形态同 keychain_win.cpp（CryptProtectData/CryptUnprotectData + CRYPTPROTECT_UI_FORBIDDEN，
-// 用户级、禁弹 UI）；区别只在落点——那里是 %APPDATA% 下的 .key 文件，这里是 DB 文本列，
-// 故选 hex（TEXT 列直接存二进制会被截断/编码歧义）。列里一律是密文。
+// Windows：DPAPI 密文 hex 编码进文本列（TEXT 列直接存二进制会被截断/编码歧义），列里一律是密文。
+// CryptProtectData/CryptUnprotectData + CRYPTPROTECT_UI_FORBIDDEN，用户级、禁弹 UI。
 #include "credential_protection.h"
 
 #include <cstddef>
@@ -22,8 +20,7 @@
 namespace platform::credential {
 namespace {
 
-// hex 编解码（小写输出，解码大小写都收）。不用 base64：DPAPI blob 全字节随机，
-// hex 2 倍体积对几百字节无感，换来零依赖与肉眼可核。
+// hex 编解码（小写输出，解码大小写都收）。
 std::string hexEncode(const std::string& raw) {
     static constexpr char kHex[] = "0123456789abcdef";
     std::string out;
@@ -67,8 +64,7 @@ std::string dpapiError(const char* what) {
 } // namespace
 
 core::Result<std::string> realProtect(const std::string& plaintext) {
-    // DATA_BLOB::cbData 是 DWORD，size() 是 size_t（Win64 为 64 位），窄化会**静默截断**
-    // 成「一条被截短的密钥」而非一次失败；这里显式判一次。用 numeric_limits 而非 MAXDWORD 宏（少一外部符号依赖）。
+    // cbData 是 DWORD：size_t 窄化超限会静默截断成短密钥而非失败，显式判一次。
     if (plaintext.size() >
         static_cast<std::size_t>(std::numeric_limits<DWORD>::max())) {
         return core::Result<std::string>::fail(
@@ -94,13 +90,13 @@ core::Result<std::string> realProtect(const std::string& plaintext) {
 core::Result<std::string> realUnprotect(const std::string& stored) {
     std::string blob;
     if (!hexDecode(stored, blob) || blob.empty()) {
-        // 形态不认识就明说：不静默回落空串（否则「密钥不可用」被伪装成「没配过密钥」）
+        // 形态不认识就报错：不静默回落空串（否则「密钥不可用」伪装成「没配过密钥」）
         return core::Result<std::string>::fail(
             core::ErrorCode::Internal,
             "凭据列形态损坏（DPAPI blob 的 hex 形态不成立）");
     }
 
-    // 同 protect 侧：blob.size() 是 size_t，窄化前显式判一次（「形态损坏」分支正是不该留截断口）
+    // 同上：size_t 窄化 DWORD 前显式判一次，不留截断口
     if (blob.size() > static_cast<std::size_t>(std::numeric_limits<DWORD>::max())) {
         return core::Result<std::string>::fail(
             core::ErrorCode::Internal,

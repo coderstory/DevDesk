@@ -1,6 +1,4 @@
-// src/app_sidebar.h
-// 常驻侧边栏 + 折叠/展开。从 main.cpp 拆出以便无头单测直接驱动 compose/drawSidebar——
-// main.cpp 的 getRouter() 会拉起全部真实模块，测试不可用；这里改走 core::appRouter() 注入。
+// 常驻侧边栏 + 折叠/展开（无头单测经 core::appRouter() 驱动，不经 main.cpp 的真实装配）
 #pragma once
 
 #include <eui/dsl.h>
@@ -17,8 +15,8 @@ constexpr float kSidebarWidthCollapsed = 72.0f;
 // 运行时折叠状态（进程内单值，启动由 main 从 app_config 表恢复）
 bool sidebarCollapsed();
 
-// collapsed = 目标态。persist=true 时同时落库，默认 false = 只改内存（启动恢复、纯内存翻转
-// 都不该顺手写库）。落点 = SQLite 的 app_config 表，core::appDatabase() 为 null 时只改内存
+// collapsed = 目标态。persist=true 时同时落库（app_config 表；core::appDatabase() 为 null 时只改内存），
+// 默认 false = 只改内存（启动恢复、纯内存翻转不该顺手写库）
 void setSidebarCollapsed(bool collapsed, bool persist = false);
 
 // 测试缝：复位进程级折叠状态回厂（展开），纯内存零持久化
@@ -35,7 +33,7 @@ void drawSidebar(eui::Ui& ui, const eui::Screen& screen);
 void compose(eui::Ui& ui, const eui::Screen& screen);
 
 // 应用级 toast 通知：不属于任何页面模块的反馈（如托盘入口）经此通道显示。调用方只写状态，
-// compose 顶层每帧绘制，自动消失后 clearAppNotice。单实例
+// compose 顶层每帧绘制，自动消失后 clearAppNotice
 void showAppNotice(const std::string& title, const std::string& message);
 void clearAppNotice();
 bool appNoticeVisible();

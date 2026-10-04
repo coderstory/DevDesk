@@ -1,9 +1,7 @@
 // src/module_claude_proxy/quota/provider_minimax_cn.cpp
-// MiniMax 中国站余量 provider，移植 cc-switch coding_plan.rs。
-// 端点写死旧域 api.minimaxi.com（profile 的 base_url 是 api.minimax.cn 也照样打它，同一账号体系与 Key）。
+// MiniMax 中国站余量 provider。端点写死 api.minimaxi.com（profile 的 base_url 是 api.minimax.cn 也照样打它，同一账号体系与 Key）。
 // base_resp 存在但 status_code 缺失/非整数 → 算业务错误（上游 unwrap_or(-1) + != 0）。
-// 上游给的是剩余百分比 → 先反转成「已用」再裁剪（clampUsedPercent，见 quota_percent.h）。
-// 周桶按 current_weekly_status == 1 门控（无周限额套餐该字段为 3，画出来是假周条）。
+// 上游给剩余百分比 → 反转成「已用」再裁剪（见 quota_percent.h）；周桶按 current_weekly_status == 1 门控（无周限额套餐该字段为 3，画出来是假周条）。
 #include "provider_minimax_cn.h"
 
 #include "quota_percent.h"
@@ -21,15 +19,14 @@
 namespace module::claude::quota {
 namespace {
 
-// 额度接口只在 api.minimaxi.com / api.minimax.io 有公开出处，国内新域 api.minimax.cn 无文档，故写死旧域、不读 cfg.baseUrl。
+// 余量端点只在 api.minimaxi.com / api.minimax.io 有公开文档，故写死、不读 cfg.baseUrl。
 constexpr const char* kRemainsUrl =
     "https://api.minimaxi.com/v1/api/openplatform/coding_plan/remains";
-constexpr long kTimeoutMs = 15000;  // 同上游 15s
+constexpr long kTimeoutMs = 15000;
 
 // 探测命中的 host（标签边界匹配，防 api.minimax.cn.example.com 伪造）；国际站 api.minimax.io 是另一个 provider。
 constexpr const char* kMatchHosts[] = {"api.minimaxi.com", "api.minimax.cn"};
 
-// base_url → host：去 scheme / userinfo / port / path / query，去尾点，转小写；容忍用户手填的松散形态。
 std::string urlHost(const std::string& urlOrHost) {
     std::string s = urlOrHost;
     const auto notSpace = [](unsigned char c) { return !std::isspace(c); };
@@ -122,12 +119,12 @@ bool jsonNumber(const platform::json::JsonValue& v, double& out) {
 bool jsonInteger(const platform::json::JsonValue& v, int64_t& out) {
     if (!v.isNumber()) return false;
     const double d = v.asDouble();
-    if (d == 0.0) {  // Int 分支（asDouble() 恒 0）；Double 0.0 走同一分支也正确
+    if (d == 0.0) {
         out = v.asInt();
         return true;
     }
-    if (d < -9.0e18 || d > 9.0e18) return false;  // int64 安全区外
-    if (static_cast<double>(static_cast<int64_t>(d)) != d) return false;  // 有小数部分
+    if (d < -9.0e18 || d > 9.0e18) return false;
+    if (static_cast<double>(static_cast<int64_t>(d)) != d) return false;
     out = static_cast<int64_t>(d);
     return true;
 }
@@ -151,17 +148,16 @@ QuotaResult parseRemainsBody(const platform::json::JsonValue& body) {
         const platform::json::JsonValue baseResp = root.get("base_resp");
         const platform::json::JsonObject baseObj =
             baseResp.isObject() ? baseResp.asObject() : platform::json::JsonObject();
-        int64_t code = -1;  // 上游 unwrap_or(-1)
+        int64_t code = -1;  // 缺失/非整数默认 -1
         int64_t parsedCode = -1;
         if (jsonInteger(baseObj.get("status_code"), parsedCode)) code = parsedCode;
         if (code != 0) {
-            std::string msg = "Unknown error";  // 上游同款兜底文案
+            std::string msg = "Unknown error";
             const platform::json::JsonValue statusMsg = baseObj.get("status_msg");
             if (statusMsg.isString() && !statusMsg.asString().empty()) {
                 msg = statusMsg.asString();
             }
-            // 错误码与上游文案原样透出。上游对非零 status_code 不细分鉴权/配额/限流，
-            // 但现实主因是套餐过期/额度用尽（改密钥没用、得续费）→ 归 Entitlement（不判 Transient，避免引导成网络重试）。
+            // 上游不细分错误码，主因是套餐过期/额度用尽（改密钥没用）→ 归 Entitlement，不引导成网络重试。
             return makeError(QuotaError::Entitlement,
                              "MiniMax 接口业务错误（code " + std::to_string(code) +
                                  "）：" + msg +
@@ -169,7 +165,6 @@ QuotaResult parseRemainsBody(const platform::json::JsonValue& body) {
         }
     }
 
-    // ② model_remains[] 取 model_name == "general"
     const platform::json::JsonValue remains = root.get("model_remains");
     if (!remains.isArray()) {
         return makeError(QuotaError::Shape, "响应缺少 model_remains 数组");
@@ -237,7 +232,6 @@ public:
     // 空 fields = 沿用 profile 的 api key。
     std::vector<ProviderField> fields() const override { return {}; }
 
-    // 探测：host 标签边界匹配两个官方 host（含子域），伪造后缀不命中
     bool matchesBaseUrl(const std::string& baseUrl) const override {
         return hostMatchesAny(baseUrl);
     }
@@ -255,7 +249,7 @@ public:
 
         platform::http::Request req;
         req.method = "GET";
-        req.url = kRemainsUrl;  // 旧域写死，不读 cfg.baseUrl
+        req.url = kRemainsUrl;
         req.headers["Authorization"] = "Bearer " + cfg.apiKey;
         req.headers["Content-Type"] = "application/json";
         req.timeoutMs = kTimeoutMs;
@@ -265,8 +259,7 @@ public:
             return makeError(QuotaError::Transient, "网络错误：" + resp.errorMessage());
         }
         const platform::http::Response& response = resp.value();
-        // 传输层失败的第二形态（第一种 Result::fail 已拦下）：ok(Response{statusCode=0, networkError=true})。
-        // 不查这条 statusCode 0 会落进下面的 <200 分支，用户看到不存在的「HTTP 0」，真因（网络层）被掩盖。
+        // 传输层失败的第二形态（Result::fail 之外）：ok(Response{statusCode=0, networkError=true})，不拦会显示不存在的「HTTP 0」。
         if (response.networkError) {
             return makeError(QuotaError::Transient,
                              "网络请求失败：" + response.errorMessage);

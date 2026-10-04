@@ -1,18 +1,16 @@
-// src/app_assembly.cpp
-// 应用装配层实现：自 main.cpp 逐字搬运，行为零变化，仅把 DB/配置/路由来源改为显式参数（便于
-// 无头单测替换）。搬运动机与装配顺序约定见 app_assembly.h
+// 应用装配层实现，约定见 app_assembly.h
 #include "app_assembly.h"
 
-#include "app_sidebar.h"  // app::showAppNotice
+#include "app_sidebar.h"
 #include "core/logging.h"
-#include "core/database.h"        // core::appDatabase()
+#include "core/database.h"
 #include "module_markdown/md_file_open.h"
-#include "module_toggle_bridge.h"  // ensureClaudeServiceAssembled
+#include "module_toggle_bridge.h"
 #include "platform/file_open.h"
-#include "settings_config.h"       // SettingsStore / kModuleIdClaudeProxy
+#include "settings_config.h"
 
 #include <eui/dsl.h>
-#include <eui/dsl_app.h>  // app::requestShow / requestUpdate / requestExit
+#include <eui/dsl_app.h>
 
 #include <cstdlib>
 #include <string>
@@ -45,16 +43,13 @@ std::vector<::core::PageId> assembleAndStart(
     const std::vector<GatedEntry>& modules, const PreStartHook& preStart) {
     (void)cfg;  // 门控已由 buildGatedEntries 前置，不再读取
 
-    // 1) 前置：ClaudeService 创建 + setGlobal（模块 onStart 依赖它非 null）
     if (preStart) {
         preStart();
     }
 
-    // 2) 注册给 module_* 层（快捷按钮/卡片点击通过 core::appRouter() 导航）
     ::core::registerAppRouter(&router);
 
-    // 2b) 空态兜底渲染注入：当前页无对应模块时 Router 不自行绘制，改由 app 层注入（core 侧只剩
-    // std::function 成员与调用，保持 eui::Ui 仅可透传边界）
+    // 2b) 空态兜底渲染注入：当前页无对应模块时 Router 不自行绘制，改由 app 层注入
     router.setFallbackCompose([](eui::Ui& ui, const eui::Screen&) {
         ui.text("empty").text("无页面").build();
     });
@@ -68,16 +63,13 @@ std::vector<::core::PageId> assembleAndStart(
         registered.push_back(module->pageId());
     };
 
-    // 3) 注册门控：清单已由 buildGatedEntries 前置，这里纯注册，注册顺序 = 列表顺序 = 表序；
-    // 不注册 = onStart/compose/菜单项不可达（结构性保证）
+    // 3) 注册门控：清单已前置，这里纯注册、序=表序；不注册 = onStart/compose/菜单项不可达
     for (const auto& entry : modules) {
         registerOne(entry.module);
     }
 
-    // 4) 各模块 onStart（此刻 preStart 已跑完，ClaudeService::global() 非空）
     router.startAll();
 
-    // 5) 退出接线（LIFO 约定见头文件）
     armExitHook();
     return registered;
 }
@@ -85,8 +77,7 @@ std::vector<::core::PageId> assembleAndStart(
 std::vector<GatedEntry> buildGatedEntries(
     const module::settings::SettingsConfig& cfg,
     const ::app::registry::ModuleEntry* table, std::size_t tableSize) {
-    // 恒注册行（gatingKey==nullptr）必含，门控行 moduleEnabled(cfg,key) 才含，序=表序。实例列恒为
-    // nullptr，由调用方按 page 填入（生命周期归调用方）
+    // 恒注册行必含，门控行 moduleEnabled(cfg,key) 才含，序=表序；实例列恒 nullptr 由调用方填
     std::vector<GatedEntry> gated;
     for (std::size_t i = 0; i < tableSize; ++i) {
         const auto& e = table[i];
@@ -129,7 +120,6 @@ bool armExitHook() {
 bool exitHookArmed() { return g_exitHookArmed; }
 
 // 测试缝：退出接线记账门回厂（未挂）。atexit 不可撤销，只翻记账位使 armExitHook 可再触发
-//（handlers 判空幂等、重复无害）；防「装配即挂上」断言吃到上一用例残留态
 void resetAssemblyGlobals() { g_exitHookArmed = false; }
 
 void runExitHook() {
@@ -150,7 +140,6 @@ void captureOpenFileFromArgv() {
 }
 
 void captureOpenFileFromArgv(const std::vector<std::string>& utf8Args) {
-    // 测试缝：argv 来源参数化，选择逻辑与生产同源
     capturePendingOpenFile(platform::file_open::selectOpenFileArg(utf8Args));
 }
 
@@ -201,8 +190,7 @@ std::optional<::core::PageId> pageForTrayAction(::core::tray::TrayMenuAction act
 }
 
 const char* trayPageDisplayName(::core::PageId page) {
-    // 短名单源 = app_registry 表（与 Module::shortName() 同值）。表是静态元数据，不需要活实例，
-    // 关闭模块的提示文案仍可查
+    // 短名单源 = app_registry 表（静态元数据，无需活实例，关闭模块的提示文案仍可查）
     for (const auto& e : ::app::registry::kModuleRegistry) {
         if (e.page == page) {
             return e.shortName;
@@ -253,9 +241,8 @@ void dispatchModuleToggle(const std::string& moduleId, bool on,
         }
         if (on) {
             if (moduleId == module::settings::kModuleIdClaudeProxy) {
-                // 惰性装配：启动期 claude 关、会话内开启时在此补装配，必须先于 registerModule/onStart
-                //（claude 模块 compose 期读 ClaudeService::global()）。autoStart 从持久配置现读；
-                // 桥未装配（启动早期/测试）时 no-op + LOG_WARN
+                // 惰性装配：启动期关、会话内开启时补装配，必须先于 registerModule/onStart
+                //（compose 期读 ClaudeService::global()）；桥未装配时 no-op+LOG_WARN
                 const module::settings::SettingsStore store(
                     ::core::appDatabase());
                 app::toggle::ensureClaudeServiceAssembled(

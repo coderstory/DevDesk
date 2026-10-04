@@ -1,14 +1,7 @@
-// src/module_todo/todo_tools.cpp
-// TodoTools 6 工具实现：todo.list / create / update / move / complete / delete
-//（delete 不可恢复 → isDestructive=true）。每个工具一个小类，同文件存放。
-//
-// 出参形状：结构化数据组对象再 stringify；数组用「逐元素 stringify + 文本拼接 +
-// parse 校验」组装（platform::json 无数组追加 API，joinBlockArray 同款先例）。
-//
-// updateTask 是整字段 UPDATE（全列覆写，见 todo_service.cpp）→ todo.update 必须
-// 先取旧任务叠加新值再回写，否则未提供的字段被清空。同理 createTask/moveTask/
-// completeTask/deleteTask 对不存在的 id 是静默 no-op 或悬空写入 → 工具先查存在性，
-// 把「目标不存在」作为 isError 回喂，不给 LLM 假成功。
+// TodoTools 6 工具实现：todo.list / create / update / move / complete / delete（delete 不可恢复 → isDestructive=true）。
+// 出参：数组用「逐元素 stringify + 文本拼接 + parse 校验」组装（platform::json 无数组追加 API）。
+// todo.update 必须先取旧任务叠加新值再回写（updateTask 是整字段 UPDATE，否则未提供字段被清空）；
+// 对不存在的 id 服务层多为静默 no-op → 工具先查存在性，把「目标不存在」作为 isError 回喂，不给假成功。
 #include "todo_tools.h"
 
 #include "core/logging.h"
@@ -45,8 +38,7 @@ Result<ToolResult> toolOk(const std::string& contentJson) {
     return Result<ToolResult>::ok(ToolResult{false, contentJson});
 }
 
-// 参数解析：空串视为 {}（LLM 的 input 可能为空对象省略）；其余必须解析成
-// object。解析失败 = 参数非法（工具级错误），由调用方转 isError。
+// 参数解析：空串视为 {}（LLM 的 input 可能为空对象省略）；其余必须解析成 object，失败转 isError
 Result<pj::JsonObject> parseArgs(const ToolArgs& args) {
     if (args.json.empty()) {
         return Result<pj::JsonObject>::ok(pj::JsonObject());
@@ -97,8 +89,7 @@ Result<std::string> taskToJsonText(const Task& t) {
     return Result<std::string>::ok(text.value());
 }
 
-// 按 id 线性找任务（listAllTasks 全量后过滤）；不存在 → NotFound。
-// 服务层的按 id 写操作对幽灵 id 多为静默 no-op，存在性前置检查让错误可见。
+// 按 id 线性找任务；服务层按 id 写操作对幽灵 id 多为静默 no-op，存在性前置检查让错误可见。不存在 → NotFound
 Result<Task> findTask(TodoService& svc, int64_t id) {
     auto all = svc.listAllTasks();
     if (all.isFail()) {
@@ -372,15 +363,13 @@ private:
     TodoService& svc_;
 };
 
-// todo.delete（破坏性）
-// 类名避开 delete 关键字（C++ 关键字不能作标识符），工具名仍是 "todo.delete"
+// 类名避开 delete 关键字；工具名仍是 "todo.delete"（不可恢复，破坏性工具）
 class TodoDeleteTool : public core::ITool {
 public:
     explicit TodoDeleteTool(TodoService& svc) : svc_(svc) {}
 
     std::string name() const override { return "todo.delete"; }
 
-    // 删除不可恢复 → AgentLoop 在 task.allowDestructive=0 时直接终止 run
     bool isDestructive() const override { return true; }
 
     std::string schemaJson() const override {

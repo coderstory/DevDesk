@@ -1,10 +1,8 @@
 // src/module_claude_proxy/quota/quota_refresh.h
 // 余量的后台定时刷新。
-// 用真后台线程而非 UI onTimer：onTimer 挂 UI 帧回调，窗口隐藏 / 挂起时整帧不进 compose → tick 静默停止。
-// sleep 切片 tick：一轮 = slicesPerRound × sliceMs，片间查 stopFlag_。stopAll() 睡眠态最多等一片（默认 200ms），
-//   在途请求态要等那轮跑完（最坏 ≈ N × 15s）；无 std::terminate 风险（析构必 join）。
-// 三条不变量：1. 先落库、后就绪唤醒（顺序反了 UI 抢跑消费唤醒位，结果不上屏）；
-//   2. 不引入第二把数据库连接；3. 时钟与 tick 间隔可注入（用例不等真 15 分钟）。
+// 用真后台线程而非 UI onTimer：窗口隐藏 / 挂起时整帧不进 compose，onTimer 的 tick 会静默停止。
+// sleep 切片 tick：一轮 = slicesPerRound × sliceMs，片间查 stopFlag_；stopAll() 睡眠态最多等一片（默认 200ms），析构必 join、无 std::terminate。
+// 不变量：先落库、后就绪唤醒；不引入第二把数据库连接；时钟与 tick 间隔可注入（用例不等真 15 分钟）。
 #pragma once
 
 #include <atomic>
@@ -20,10 +18,8 @@
 
 namespace module::claude::quota {
 
-// 后台扫描间隔的生产默认值——全项目唯一的那个 60。
-// 两处消费者共用它：QuotaRefreshOptions::scanIntervalSec 默认值 + 保存后的 toast 文案
-//   「后台将在 N 秒内自动查询」。各写一个字面量会「改了 A 忘了 B」。改此值属产品决策，
-//   须同步改 test_claude_quota_store 的 production_scan_interval_is_single_source。
+// 生产扫描间隔——两处消费者共用（QuotaRefreshOptions::scanIntervalSec 默认值 + toast 文案「后台将在 N 秒内自动查询」），各写字面量会改 A 忘 B。
+// 改此值属产品决策，须同步改 test_claude_quota_store 的 production_scan_interval_is_single_source。
 inline constexpr int kQuotaProductionScanIntervalSec = 60;
 
 // 一轮刷新的产出（供调用方 / 用例断言「这一轮刷了谁」）。
@@ -96,7 +92,7 @@ public:
 // 生产用：从全局注册表解析 provider 的适配器。空 provider_id / 未命中 → nullptr（调用方按 NotConfigured 走）。
 QuotaRefresher::ProviderResolver makeRegistryProviderResolver();
 
-// 进程级缝的读取口（用例用；返回累计唤醒次数）。⚠ 曾有 quotaRefresherWakeSawReadyForTest()，因断言的量恒为 true 已整条删除。
+// 进程级缝的读取口（用例用；返回累计唤醒次数）。
 int64_t quotaRefresherWakeCountForTest();
 void quotaRefresherResetTestSeams();
 

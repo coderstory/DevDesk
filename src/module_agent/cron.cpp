@@ -1,4 +1,3 @@
-// src/module_agent/cron.cpp
 // cron 5 字段解析 + 匹配：纯函数，无 IO 无时钟。支持 * / 单值 / a-b / a-b/c /
 // */c / a/c / 逗号列表；拒绝字段数≠5、空字段、越界、逆序区间、步长 0、非数字
 #include "module_agent/cron.h"
@@ -68,8 +67,7 @@ bool parseItem(const std::string& item, int lo, int hi, bool* out) {
         }
     }
     if (start < lo || end > hi) return false;           // 越界
-    // 步长上界 = 字段跨度（hi-lo+1）：超过则只命中一次、等价单值；拒绝它同时堵死
-    // 「巨大 step 让 v += step 有符号溢出 → 数组越界写」的 UB
+    // 步长上界 = 字段跨度：拒绝巨大 step，堵死 v += step 有符号溢出 → 数组越界写的 UB
     if (step > hi - lo + 1) return false;
     for (int v = start; v <= end;) {
         out[v] = true;

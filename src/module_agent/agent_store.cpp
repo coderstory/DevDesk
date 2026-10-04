@@ -1,7 +1,5 @@
-// src/module_agent/agent_store.cpp
 // AgentStore 落库层实现：统一模式 = db_.mutex() 锁内 prepare → bind → step。
-// 列序按 brief 固定表、bind 顺序 = 问号顺序；不抛不吞，各步失败逐个透传；
-// optional 入参/列 → nullptr 绑定 / isNull 判空映射 std::nullopt
+// 列序按 brief 固定表、bind 顺序 = 问号顺序；不抛不吞，各步失败逐个透传
 #include "module_agent/agent_store.h"
 
 #include <ctime>
@@ -176,8 +174,7 @@ Result<int64_t> AgentStore::startRun(int64_t taskId) {
 }
 
 Result<int64_t> AgentStore::startRunExclusive(int64_t taskId) {
-    // 查存在性 → 插行在同一把锁内（recursive_mutex，startRun 可重入），中间不放锁 =
-    // 跨线程原子。手动启动与 Scheduler/cron 派发都经 AgentLoop::run → 这里
+    // 查存在性 → 插行同一把锁内（跨线程原子）；手动启动与 Scheduler/cron 派发都经 AgentLoop::run → 这里
     std::lock_guard<std::recursive_mutex> lock(db_.mutex());
     auto st = db_.prepare(
         "SELECT 1 FROM agent_runs WHERE task_id=? AND status='running' LIMIT 1");
@@ -215,8 +212,7 @@ Result<void> AgentStore::updateTask(int64_t id, const std::string& name,
     if (ok.isFail()) return Result<void>::fail(ok.errorCode(), ok.errorMessage());
     auto step = s.step();
     if (step.isFail()) return Result<void>::fail(step.errorCode(), step.errorMessage());
-    // id 不存在 → fail(NotFound)，不静默 no-op。持锁覆盖 step + sqlite3_changes，
-    // 计数不会被并发语句插队
+    // id 不存在 → fail(NotFound)，不静默 no-op；持锁覆盖 step + sqlite3_changes，计数不被并发插队
     if (sqlite3_changes(db_.handle()) == 0) {
         return Result<void>::fail(ErrorCode::NotFound,
                                   "任务不存在：id=" + std::to_string(id));
@@ -368,8 +364,7 @@ Result<std::vector<AgentMessageRow>> AgentStore::listMessages(int64_t runId) {
 Result<std::vector<AgentRunRow>> AgentStore::listRuns(int64_t taskId, int limit) {
     std::lock_guard<std::recursive_mutex> lock(db_.mutex());
     auto st = db_.prepare(
-        // id DESC 兜底：started_at 是秒精度，同秒两 run 会并列，只按 started_at DESC
-        // 时 LIMIT 窗口可能把较旧那条当「最近一次」返回；id 单调，(started_at, id) = 确定
+        // id DESC 兜底：started_at 秒精度，同秒两 run 并列时 LIMIT 窗口可能返回较旧那条；id 单调故 (started_at, id) 确定
         "SELECT id,task_id,status,started_at,ended_at,iterations,input_tokens,"
         "output_tokens,error FROM agent_runs WHERE task_id=?"
         " ORDER BY started_at DESC, id DESC LIMIT ?");

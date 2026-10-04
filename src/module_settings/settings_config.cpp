@@ -22,8 +22,7 @@ constexpr const char* kKeyTheme = "theme";
 constexpr const char* kKeyThemeMode = "themeMode";
 constexpr const char* kKeyEditorFontSize = "editorFontSize";
 constexpr const char* kKeyLogLevel = "logLevel";
-// W9 换键一次性重置：EUI-NEO 0.7.0 修了字号 em 语义后，fontScalePercent/V2 下的
-// 存量值都是缩水语义下选的、失去意义 → 一律忽略、回落默认 100；保存只写 V3 键。
+// 字号键用 V3（fontScalePercent/V2 旧键一律不读，回落默认 100）
 constexpr const char* kKeyFontScale = "fontScalePercentV3";
 constexpr const char* kKeyLogRetention = "logRetentionDays";
 constexpr const char* kKeyProxyAutoStart = "claudeProxyAutoStart";
@@ -47,13 +46,13 @@ bool isKnownModuleId(const std::string& id) {
 } // namespace
 
 std::vector<std::string> defaultEnabledModules() {
-    // agent 不在默认清单（跑 LLM 有成本，用户主动启用；语义同 pet）。
+    // agent 不在默认清单（跑 LLM 有成本，用户主动启用）。
     return {kModuleIdHome, kModuleIdMarkdown, kModuleIdTodo,
             kModuleIdClaudeProxy, kModuleIdSettings};
 }
 
 bool moduleEnabled(const SettingsConfig& cfg, const std::string& moduleId) {
-    // home/settings 不可关闭（设计 §5.1：落地页 + 开关 UI 宿主）
+    // home/settings 不可关闭（落地页 + 开关 UI 宿主）
     if (moduleId == kModuleIdHome || moduleId == kModuleIdSettings) return true;
     return std::find(cfg.enabledModules.begin(), cfg.enabledModules.end(),
                      moduleId) != cfg.enabledModules.end();
@@ -87,7 +86,7 @@ core::log::Level parseLogLevel(const std::string& mode) {
     return core::log::Level::Info;
 }
 
-// ---- 关于卡文案（spec 缩水 C）。宏缺失回退（手工编译/其他 target）----
+// ---- 关于卡文案。宏缺失回退（手工编译/其他 target）----
 #ifndef DEVDESK_VERSION
 #define DEVDESK_VERSION "dev"
 #endif
@@ -129,7 +128,6 @@ SettingsConfig SettingsStore::sanitized(const SettingsConfig& cfg) {
     if (out.logRetentionDays > kMaxLogRetentionDays) {
         out.logRetentionDays = kMaxLogRetentionDays;
     }
-    // 只认四档大写字符串，未知值收敛 INFO（与 parseLogLevel 同口径）。
     if (out.logLevel != kLogLevelDebug && out.logLevel != kLogLevelWarn &&
         out.logLevel != kLogLevelError) {
         out.logLevel = kLogLevelInfo;
@@ -141,17 +139,14 @@ SettingsConfig SettingsStore::sanitized(const SettingsConfig& cfg) {
     if (out.editorFontSize > kMaxEditorFontSize) {
         out.editorFontSize = kMaxEditorFontSize;
     }
-    // 越界/0/负数不钳边界、回落默认 8888（与 setConfiguredProxyPort 同语义：
-    // 0 钳到 1 会得到必然 bind 失败/被特权的端口）。
+    // 越界/0/负数不钳边界、回落默认 8888（0 钳到 1 会得到必然 bind 失败/被特权的端口）。
     if (out.proxyPort < kMinProxyPort || out.proxyPort > kMaxProxyPort) {
         out.proxyPort = kDefaultProxyPort;
     }
-    // 只认三档，未知值收敛 auto；不在此解析 auto→darkTheme（需 platform 检测，
-    // sanitized 保持纯函数）。
+    // 只认三档，未知值收敛 auto；不在此解析 auto→darkTheme（保持纯函数）。
     if (out.themeMode != kThemeModeLight && out.themeMode != kThemeModeDark) {
         out.themeMode = kThemeModeAuto;
     }
-    // 只认三档，未知值收敛 off。
     if (out.windowEffect != kWindowEffectTranslucent &&
         out.windowEffect != kWindowEffectFrosted) {
         out.windowEffect = kWindowEffectOff;
@@ -175,11 +170,7 @@ SettingsConfig SettingsStore::sanitized(const SettingsConfig& cfg) {
     return out;
 }
 
-// 两层 alpha 必须分开（首轮 P1/P2 的根因）：窗口背景色层（theme × titleAlpha，
-// 即标题栏整条）+ clearColor 层（theme × contentAlpha，内容区盖在材质/窗口背景
-// 之上）。首轮两处 alpha 被 EUI-NEO 从同一 clearColor 推导成同值 → 半透档肉眼
-// 无差（P1）、磨砂档标题栏/内容区差 105/255（P2）。二轮按「内容区 ≥244、标题栏−
-// 内容区 ≤20、落在纱上的文字对比度 ≥关闭档 95%」反解，具体取值见函数内。
+// 两层 alpha 串联叠加（窗口背景色层 + clearColor 层），同值推导会让半透/磨砂档视觉无法区分。
 float windowEffectAlpha(const std::string& mode) {
     if (mode == kWindowEffectTranslucent) return 0.60f;
     if (mode == kWindowEffectFrosted) return 0.15f;
@@ -187,17 +178,14 @@ float windowEffectAlpha(const std::string& mode) {
 }
 
 float windowEffectTitleBarAlpha(const std::string& mode) {
-    // 标题栏层 = 窗口背景色，是透出上限（wallpaper 先穿这层再穿 clearColor 纱）；
-    // 半透档抬到 0.95 才够「内容区 ≥244、标题栏−内容区 ≤20」。磨砂档 0.65 使
-    // 材质输出 ≈193，标题栏与内容区都落在浅灰可读区间。
+    // 标题栏层 = 窗口背景色，是透出上限（wallpaper 先穿这层再穿 clearColor 纱）。
     if (mode == kWindowEffectTranslucent) return 0.90f;
     if (mode == kWindowEffectFrosted) return 0.65f;
     return 1.0f;
 }
 
 float windowEffectThemeOpacity(const std::string& mode) {
-    // 有效不透明度 = 1 − (1−标题栏α)(1−内容区α)；对无材质档精确成立，供单测锁
-    //「≥244 且 <250 目标带」；磨砂档多一层材质，本式不适用。
+    // 有效不透明度 = 1 − (1−标题栏α)(1−内容区α)；对无材质档精确成立，磨砂档不适用。
     const float content = windowEffectAlpha(mode);
     const float bar = windowEffectTitleBarAlpha(mode);
     return 1.0f - (1.0f - bar) * (1.0f - content);
@@ -225,8 +213,7 @@ std::string windowEffectDegradedHint(const std::string& mode,
             return {};
         }
         if (active == WindowEffect::Transparent) {
-            // 降级文案平台化：磨砂的系统版本要求因平台而异，按平台各写各的，
-            // 平台差异走 window_effect_hint_*.cpp（业务代码零平台宏）。
+            // 降级文案平台化：磨砂的系统版本要求因平台而异，走 window_effect_hint_*.cpp。
             return frostedDegradedHint();
         }
         return "当前系统不支持窗口效果，已回退为不透明";
@@ -236,12 +223,10 @@ std::string windowEffectDegradedHint(const std::string& mode,
 }
 
 void applyWindowVisuals(const std::string& mode) {
-    // 底色随主题 token，alpha 按档位；setClearColor 覆盖主窗 + 全部子窗并触发重绘。
     const core::theme::Tokens& theme = core::theme::current();
     const eui::Color& bg = theme.colors.background;
     app::setClearColor(eui::Color{bg.r, bg.g, bg.b, windowEffectAlpha(mode)});
-    // 标题栏底：同主题色、独立 alpha（见上）。显式 customColor → 不走 EUI-NEO 的
-    //「按 clearColor 推导」兜底（那条推导把两处 alpha 绑成同值，正是劈叉成因）。
+    // 标题栏底：同主题色独立 alpha；显式 customColor 避开 EUI-NEO 按 clearColor 推导的兜底（那条把两处 alpha 绑成同值）。
     const auto channel = [](float v) -> unsigned {
         const float c = v < 0.0f ? 0.0f : (v > 1.0f ? 1.0f : v);
         return static_cast<unsigned>(c * 255.0f + 0.5f);
@@ -303,8 +288,7 @@ core::Result<std::string> encodeRow(const char* topKey,
 SettingsConfig SettingsStore::load() const {
     auto loaded = loadChecked();
     if (loaded.isFail()) {
-        // load 不能返回 Result，故把「读不到」升级成 ERROR 日志：配置已回退默认，
-        // 且本次改动不会保存（save 同样因库未就绪而失败）。
+        // load 不能返回 Result，故把「读不到」升级成 ERROR 日志：配置已回退默认。
         LOG_ERROR("Settings: 读取应用配置失败，回退默认值（本次改动将无法保存）: " +
                   loaded.errorMessage());
         return sanitized(SettingsConfig{});
@@ -320,7 +304,6 @@ core::Result<SettingsConfig> SettingsStore::loadChecked() const {
             "应用数据库未就绪（core::appDatabase() 为空：装配段漏 "
             "registerAppDatabase，或已注销）");
     }
-    // 一次前缀查询拿全这份配置的全部顶层键（不随键数增长 SQL 条数）
     auto rows = core::appconfig::listWithPrefix(*db_, keyNamespace());
     if (rows.isFail()) {
         return core::Result<SettingsConfig>::fail(
@@ -329,7 +312,6 @@ core::Result<SettingsConfig> SettingsStore::loadChecked() const {
     }
     const std::vector<core::appconfig::Entry>& all = rows.value();
 
-    // 每个字段：键缺失 / 类型不符 → 保持默认值（与旧 load() 同口径）；解析失败才报错。
     const auto readRow = [&](const char* topKey)
         -> core::Result<std::string> {
         return rowValue(all, configKey(topKey));
@@ -344,7 +326,6 @@ core::Result<SettingsConfig> SettingsStore::loadChecked() const {
             cfg.darkTheme = (v.value().asString() != "light");
         }
     }
-    // 只认三档字面值；非法 → 回落 auto。auto→深浅解析在 SettingsModule（load 保持纯函数）。
     if (auto raw = readRow(kKeyThemeMode); raw.isOk()) {
         auto v = parseRow(configKey(kKeyThemeMode), raw.value());
         if (v.isFail()) return core::Result<SettingsConfig>::fail(
@@ -357,7 +338,6 @@ core::Result<SettingsConfig> SettingsStore::loadChecked() const {
             }
         }
     }
-    // 旧键 fontScalePercent / fontScalePercentV2 刻意不读（见文件头注释）
     if (auto raw = readRow(kKeyFontScale); raw.isOk()) {
         auto v = parseRow(configKey(kKeyFontScale), raw.value());
         if (v.isFail()) return core::Result<SettingsConfig>::fail(
@@ -443,13 +423,11 @@ core::Result<void> SettingsStore::save(const SettingsConfig& cfgRaw) const {
             "应用数据库未就绪（core::appDatabase() 为空），配置未保存");
     }
 
-    // 每行 = 一个顶层键，value = 该键的 JSON 值文本
     struct Row { const char* key; platform::json::JsonValue value; };
     const Row rows[] = {
         {kKeyTheme,
          platform::json::makeString(cfg.darkTheme ? "dark" : "light")},
-        // themeMode 与 theme 双写：前者 = 用户意图，后者 = 当前解析档
-        //（main.cpp 启动路径只认 theme，settings onStart 随即幂等纠正）。
+        // themeMode 与 theme 双写：前者 = 用户意图，后者 = 当前解析档（main.cpp 启动路径只认 theme）。
         {kKeyThemeMode, platform::json::makeString(cfg.themeMode)},
         {kKeyEditorFontSize, platform::json::makeInt(cfg.editorFontSize)},
         {kKeyLogLevel, platform::json::makeString(cfg.logLevel)},
@@ -476,7 +454,7 @@ core::Result<void> SettingsStore::save(const SettingsConfig& cfgRaw) const {
         keep.push_back(configKey(r.key));
     }
 
-    // 清旧键与新键写入放同一个事务：避免「新键已写、旧键未删」的中间态被别线程读到。
+    // 写入与清除非本前缀键放同一个事务：避免中间态被别线程读到。
     return db_->transaction([&]() -> core::Result<void> {
         auto wrote = core::appconfig::setMany(*db_, entries);
         if (wrote.isFail()) return wrote;

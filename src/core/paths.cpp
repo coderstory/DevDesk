@@ -63,7 +63,6 @@ constexpr const char* kRequiredGitignoreLines[] = {
     "!/.gitignore",                   // 放行自身（数据根本身要能进 git）
 };
 
-// trimAscii 已下沉 core::str（与 markdown_service.cpp 那份合并到 core/str_util.h）
 using core::str::trimAscii;
 
 std::string readWholeFile(const fs::path& file) {
@@ -143,8 +142,7 @@ fs::path markdownDir() {
 }
 
 fs::path petsDir() {
-    // 覆盖优先级：DEVDESK_PETS_DIR > DEVDESK_DATA_ROOT > 平台默认根。本函数只决定皮肤写在哪；
-    // 能从哪儿发现皮肤见 module_pet 的 skinRootCandidates()（不读环境变量）
+    // 覆盖优先级：DEVDESK_PETS_DIR > DEVDESK_DATA_ROOT > 平台默认根
     if (const char* env = std::getenv("DEVDESK_PETS_DIR")) {
         return fs::path(env);
     }

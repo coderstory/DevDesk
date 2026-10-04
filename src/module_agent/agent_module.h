@@ -1,9 +1,6 @@
-// src/module_agent/agent_module.h
 // 智能体页模块：生命周期实体 + 手动触发 + 页面骨架。
-// 线程模型：onStart/onStop/startTask/compose 全在主线程；每次「启动」起一个 run
-// 工作线程跑同步 AgentLoop::run，只触碰自己的 cancel/done atomic 与 AgentStore，
-// 不摸模块成员。onStop 顺序是结构契约（勿改）：全取消 → 全 join → 清容器 →
-// 注销工具 → 放服务。
+// 线程模型：onStart/onStop/startTask/compose 全在主线程；run 工作线程只触碰自己的
+// cancel/done atomic 与 AgentStore。onStop 顺序是结构契约（勿改）：全取消 → 全 join → 清容器 → 注销工具 → 放服务。
 #pragma once
 
 #include <atomic>
@@ -35,10 +32,8 @@ namespace module::agent {
 
 class AgentLoop;
 
-// UI 轮询判停的唯一判定。收尾 finishRun 写库失败时 DB 行永停 'running'（线程早已
-// 结束、行再也等不到改写）；若当作「还有 run 在跑」，uiPolling_ 永不复位 →
-// 此后每帧一次 refreshData() 直到重启。孤儿 runId 必须排除——比对的是
-// AgentRunRow::id（runId），不是 map 键（taskId）。抽成自由函数便于单测钉死
+// UI 轮询判停唯一判定：finishRun 写库失败 → DB 行永停 'running'，若当「还有 run 在跑」
+// 则 uiPolling_ 永不复位。孤儿 runId 须按 AgentRunRow::id（runId）排除，非 map 键 taskId
 bool hasLiveRun(const std::map<int64_t, AgentRunRow>& latestRuns,
                 const std::set<int64_t>& orphanedRunIds);
 
@@ -68,8 +63,7 @@ public:
     // Esc 关最上层弹窗；键走得到本通道 = 焦点元素没消费（输入框聚焦时已被 onCancel 收走）
     bool onKeyEvent(const ::eui::KeyEvent& event) override;
 
-    // 测试缝（用例直调，等价于用户在表单里完成动作）：输入框 onTextInput 只能
-    // 追加、无法覆盖草稿（赋值把光标置 0），故草稿写入口落在这里；下拉/开关无需缝
+    // 测试缝：输入框 onTextInput 只能追加、无法覆盖草稿（赋值把光标置 0），故草稿写入口在此
     void setEditCronDraft(const std::string& cron);
     void setDialogIterDraft(int iter);
 
@@ -85,8 +79,7 @@ private:
     // 惰性装配单入口：首次使用时解析 IClaudeProxyService 并建 llm_/loop_/scheduler_；幂等
     void ensureLlm();
     void startTask(int64_t taskId);
-    // 任务弹窗（新建/编辑共用表单）：新建态 editingTaskId_ 空、字段取默认值，
-    // 编辑态从 getTask 回填。cron 非法 → 弹窗内报错、不落库、不关窗
+    // 任务弹窗（新建/编辑共用表单）：cron 非法 → 弹窗内报错、不落库、不关窗
     void openNewTaskDialog();
     void openTaskEditor(int64_t taskId);
     void closeTaskDialog();
@@ -99,8 +92,7 @@ private:
     void reapFinishedRuns();
     // 单条消息展开/收起（seq 定位，切 run 即清）
     void toggleMessageExpanded(int64_t seq);
-    // 默认展开态：最近一条带 text 的 assistant 消息；目标 seq 变化才动展开集，
-    // 用户手动收起后不被每帧刷新顶回来
+    // 默认展开最近一条带 text 的 assistant 消息；目标 seq 变化才动展开集，手动收起不被顶回
     void applyDefaultMessageExpansion();
     // 「可用工具」注册表快照：惰性装载，每次展开强制重装（反映模块启停变化）
     void ensureToolsCache(bool forceReload);
@@ -129,8 +121,7 @@ private:
     // run 线程表：主线程写；mutex 为纵深防御（现调用点全在主线程）
     std::mutex runsMu_;
     std::vector<std::unique_ptr<ActiveRun>> runs_;
-    // 收尾写库失败的 runId（FinishFailureFn 回报，run 线程写）；判停时必须排除，
-    // 否则 uiPolling_ 永不复位。与 runs_ 同用 runsMu_
+    // 收尾写库失败的 runId（FinishFailureFn 回报，run 线程写）；判停必须排除，与 runs_ 同用 runsMu_
     std::set<int64_t> orphanedRunIds_;
 
     // compose 数据缓存（仅主线程读写）
@@ -161,8 +152,7 @@ private:
     bool editDestructive_ = false;
     bool editTriggerOpen_ = false;   // 触发类型下拉开合（UI 态）
     bool editSlotOpen_ = false;      // 模型槽位下拉弹层开合
-    // 页内错误行：弹窗之外动作失败时的唯一可见出口（弹窗内失败走 editError_）；
-    // 下一次成功动作清
+    // 页内错误行：弹窗之外动作失败唯一可见出口（弹窗内走 editError_）；下一次成功动作清
     std::string pageError_;
     bool tasksDirty_ = false;   // onStart/onPageEnter/写操作置位 → 下帧重查
     bool uiPolling_ = false;    // 有 run 期间每帧跟进状态/消息，全终止后停

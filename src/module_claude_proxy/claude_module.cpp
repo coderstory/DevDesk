@@ -1,8 +1,7 @@
 // src/module_claude_proxy/claude_module.cpp
 // Claude 配置切换器模块：Module 接口 + compose 骨架 + 事件回调接线 + 操作。
 // 可视区域在 claude_ui_*.cpp 的自由函数里（状态显式入参、不捕获 this），本文件只管分区委派。
-// 数据缓存 H2 契约：compose 只读内存快照，SQLite 查询全在后台线程，命中帧零 IO。
-// 每个写操作标脏缓存，下一帧重查。
+// 数据缓存：compose 只读内存快照，SQLite 查询全在后台线程，命中帧零 IO；写操作标脏缓存，下一帧重查。
 #include "claude_service.h"
 #include "claude_tools.h"
 #include "claude_ui_detail.h"
@@ -51,8 +50,7 @@ public:
     std::string iconGlyph() const override { return eui::utf8(0xF021); }  // fa-arrows-rotate
 
     ~ClaudeModule() override {
-        // 两线程都必须 join 干净（留 joinable 即 std::terminate）；后台刷新经
-        // future 回传，析构自动等本轮结束。
+        // 必须 join 干净（留 joinable 即 std::terminate）。
         stopQuotaRefresh();
         if (testThread_.joinable()) testThread_.join();
     }
@@ -84,8 +82,7 @@ public:
         // 引导条：代理未运行且本会话从未启动过时显示（内存态一次性）
         if (proxyRunning) state_.list.proxyEverSeen_ = true;
         const bool showGuide = !proxyRunning && !state_.list.proxyEverSeen_;
-        // 预留高必须 = kGuideBarH + spacingLarge（与绘制侧一致）；不用 flexGrow：
-        // bodyH 在 compose 期间就要传给左右子面板。
+        // 预留高必须与绘制侧一致；bodyH 在 compose 期间就要传给左右子面板。
         const float bodyH = contentH - headerH - t.sizes.spacingLarge -
                             (showGuide ? kGuideBarH + t.sizes.spacingLarge : 0.0f);
 
@@ -166,8 +163,7 @@ public:
             dv.fallbackName = "-";
         }
 
-        // 高级配置键来源清单：生效 JSON = profile ⊕ 片段（片段赢），
-        // 键出现在片段对象 → 片段，其余 → 本 Profile；解析失败经 note 区分。
+        // 生效 JSON = profile ⊕ 片段（片段赢）；解析失败经 note 区分。
         if (shown != nullptr) {
             std::string fragmentJson;
             if (shown->sharedConfigId != 0) {
@@ -313,8 +309,7 @@ public:
     void onStop() override {
         if (!started_) return;   // 重入幂等
         LOG_INFO("Claude 模块停止");
-        // 先停余量刷新（在途请求最坏 15s，且线程里的 QuotaStore 引用会在成员
-        // 析构后悬垂）；再注销工具、最后停代理。
+        // 先停余量刷新（线程里的 QuotaStore 引用会在成员析构后悬垂）；再注销工具、最后停代理。
         stopQuotaRefresh();
         if (claudeTools_) {
             claudeTools_->unregisterAll();
@@ -521,8 +516,7 @@ private:
         showToast("已启用", "该 Profile 已设为激活（ACTIVE）", false);
     }
 
-    // 「1M」开关落库（models_config 里「基础名 + 可选 [1M]」字符串，零 schema
-    // 迁移）；归一与表单保存同口径
+    // 「1M」开关落库（models_config 里「基础名 + 可选 [1M]」字符串）；归一与表单保存同口径
     void doSetOneM(int64_t id, std::size_t slotIdx, bool on) {
         ClaudeService* svc = ClaudeService::global();
         if (svc == nullptr) return;
@@ -605,8 +599,7 @@ private:
     }
 
     // 当前 profile → settings.json 形态 JSON → 系统剪贴板。占位 = 脱敏 hint，
-    // 不导明文 key（剪贴板是跨应用共享面）；setClipboardText 无回读校验 →
-    // 固定 LOG_WARN 留痕（已知限制）。
+    // 不导明文 key；setClipboardText 无回读校验 → 固定 LOG_WARN 留痕。
     void doCopyConfig(const Profile& p) {
         ClaudeService* svc = ClaudeService::global();
         if (svc == nullptr || p.id == 0) {
@@ -649,8 +642,7 @@ private:
             showToast("复制配置失败", "配置序列化失败", true);
             return;
         }
-        // 导出脱敏守卫：「导出不含凭据」无结构性保证，做实值校验——明文密钥
-        // 出现在待写文本里即中止
+        // 导出脱敏守卫：明文密钥出现在待写文本里即中止。
         if (svc != nullptr) {
             auto secret = svc->loadApiKey(p.id);
             if (secret.isOk() && !secret.value().empty() &&
@@ -790,8 +782,7 @@ private:
                                hasExisting ? &existing : nullptr);
     }
 
-    // 消费 Router 挂在本页的「去配置」负载（走 Router：模块隔离，home 不得
-    // include 本模块）
+    // 消费 Router 挂在本页的「去配置」负载（模块隔离，home 不得 include 本模块）。
     void consumeQuotaConfigPayload() {
         auto* router = ::core::appRouter();
         if (router == nullptr) return;

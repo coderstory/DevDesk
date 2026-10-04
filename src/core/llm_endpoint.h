@@ -26,9 +26,8 @@ struct LlmResponse {
 class LlmEndpoint {
 public:
     virtual ~LlmEndpoint() = default;
-    // 发一次 /v1/messages 请求（messages = 完整对话历史，toolsJson = tools 定义数组）。
-    // model 形参语义 = 槽位键名（AgentLoop 原样传 task.modelSlot）：槽位 → model id
-    // 的解析由实现（LlmClient）经 IClaudeProxyService::resolveModelSlot 完成。
+    // 发一次 /v1/messages 请求（messages = 完整对话历史，toolsJson = tools 定义数组）。model 形参 =
+    // 槽位键名（原样传 task.modelSlot），槽位 → model id 解析由实现经 resolveModelSlot 完成
     virtual Result<LlmResponse> send(
         const std::vector<LlmMessage>& messages,
         const std::string& toolsJson,

@@ -1,13 +1,6 @@
 // src/module_claude_proxy/claude_tools.cpp
-// ClaudeTools 实现（agent M2 Task 8）。每个工具一个小类，同文件存放：
-//   claude.list_profiles    → {"profiles":[{id,name,active},...]}（只读）
-//   claude.switch_profile   → {"id":N,"switched":true}（**破坏性**，isDestructive）
-//   claude.test_connection  → {"statusCode":N,"ok":bool}（只读；发一次测试请求）
-//   claude.recent_logs      → {"logs":[{id,statusCode,latencyMs,error,startedAt},...]}
-//
-// 出参形状约定（与 markdown_tools.cpp 同款）：结构化数据组对象再 stringify；
-// 数组用「逐元素 stringify + 文本拼接 + parse 校验」组装（platform::json 没有
-// 数组追加 API）。
+// ClaudeTools 实现。出参形状约定：结构化数据组对象再 stringify；数组用「逐元素
+// stringify + 文本拼接 + parse 校验」组装（platform::json 没有数组追加 API）。
 #include "claude_tools.h"
 
 #include "core/logging.h"
@@ -26,7 +19,7 @@ using core::ToolArgs;
 using core::ToolResult;
 namespace pj = platform::json;
 
-// ---- 结果组装辅助（本文件工具共用，照 markdown_tools.cpp 形态）----
+// ---- 结果组装辅助 ----
 
 // 工具级错误：Result ok + isError + {"error":"<中文>"}（错误回喂 LLM）
 Result<ToolResult> toolError(const std::string& message) {
@@ -69,12 +62,8 @@ Result<std::string> stringifyObj(pj::JsonObject obj) {
     return Result<std::string>::ok(text.value());
 }
 
-// 可选整数参数：缺失 → nullopt（调用方取默认值）。
-//
-// 取值语义注意（platform::json 的 JsonImpl::Kind）：整数 literal 存 Int kind
-//（asInt 有值）、带小数点 / 指数的 literal 存 Double kind（asInt 恒 0）。故
-// 「isNumber + asInt」会把 1.5 / 1.0 一并挡掉，**不会静默取整成另一个 id**；
-// 字符串 / 布尔 / null 同样拒绝。参数非法 → fail（调用方转 toolError 回喂）。
+// 可选整数参数：缺失 → nullopt。platform::json 带小数点/指数的 literal 存 Double（asInt 恒 0），
+// 故 isNumber+asInt 会挡掉 1.5/1.0，不静默取整；字符串/布尔/null 同样拒绝。
 Result<std::optional<int64_t>> optionalIntField(const pj::JsonObject& obj,
                                                 const char* key) {
     if (!obj.has(key)) {
@@ -156,9 +145,8 @@ public:
 
     std::string name() const override { return "claude.switch_profile"; }
 
-    // 切激活 Profile = 不可逆的全局副作用（代理运行中会立刻改写 settings.json，
-    // Claude Code 的下一个请求就打到新上游）→ AgentLoop 在 allowDestructive=0
-    // 时直接终止 run（spec §5.3，不挂起等确认）
+    // 切激活 Profile = 不可逆的全局副作用（代理运行中立即改写 settings.json）；
+    // allowDestructive=0 时 AgentLoop 直接终止 run。
     bool isDestructive() const override { return true; }
 
     std::string schemaJson() const override {
@@ -203,7 +191,7 @@ public:
 
     std::string name() const override { return "claude.test_connection"; }
 
-    // 只按 spec §5.3 归类为只读（发一次 GET /v1/models 探测）；不改任何本地状态
+    // 只读探测（GET /v1/models），不改任何本地状态
     std::string schemaJson() const override {
         return R"({"name":"claude.test_connection","description":"对某个 Profile 的上游发一次连通性测试（GET /v1/models，只读）。不传 id 则测当前激活的 Profile","input_schema":{"type":"object","properties":{"id":{"type":"integer","description":"目标 Profile 的 id（可选；缺省 = 当前激活的 Profile）"}},"required":[]}})";
     }

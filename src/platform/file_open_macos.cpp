@@ -32,16 +32,14 @@ core::Result<void> openDirectory(const std::string& path) {
         return core::Result<void>::fail(core::ErrorCode::ValidationError,
                                         "目录路径为空");
     }
-    // 目录必须先存在（与 Windows 侧对齐；旧实现靠 /usr/bin/open 退出码兜底，
-    // 改非阻塞后退出码不可见）
+    // 目录必须先存在（非阻塞派生下 /usr/bin/open 的退出码不可见）
     if (::access(path.c_str(), F_OK) != 0) {
         return core::Result<void>::fail(
             core::ErrorCode::ValidationError,
             "目录不存在: " + path + "（" + std::strerror(errno) + "）");
     }
-    // 非阻塞派生：不用 std::system（经 /bin/sh 拼命令，会阻塞等整段 LaunchServices 握手）。
-    // fork + execl 直接传 argv（路径含空格/引号天然安全，不再需要 shellSingleQuote）；双 fork
-    // 让孙进程被 launchd 收养、不产生僵尸。语义同 Windows：派生成功 = 已受理，不承诺窗口弹出。
+    // 非阻塞派生：不用 std::system（经 /bin/sh 拼命令，且阻塞等 LaunchServices 握手）；
+    // 双 fork 让孙进程被 launchd 收养、不产生僵尸。fork + execl 直传 argv，路径含空格/引号天然安全。
     const pid_t outer = ::fork();
     if (outer < 0) {
         return core::Result<void>::fail(

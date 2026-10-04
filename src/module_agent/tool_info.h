@@ -1,7 +1,5 @@
-// src/module_agent/tool_info.h
-// 「可用工具」区块的数据源：从 ToolRegistry 枚举已注册工具，把 ITool::schemaJson()
-// 解码成展示用 ToolInfo。schema 解析只在本文件（单一解码口径）；坏 schema 容错降级，
-// 枚举是展示面，不因个别坏 schema 白屏
+// 「可用工具」区块的数据源：从 ToolRegistry 枚举已注册工具，把 ITool::schemaJson() 解码成
+// 展示用 ToolInfo。schema 解析只在本文件（单一解码口径）；坏 schema 容错降级，不因个别坏 schema 白屏
 #pragma once
 
 #include <string>

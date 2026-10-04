@@ -1,6 +1,5 @@
-// src/module_agent/cron.h —— spec §5.1 R4 语法：5 字段「分 时 日 月 周」，
-// 支持 * , - /；周 0-6（0=周日）；不支持 Quartz 扩展（L/W/#）与英文名称。
-// 纯函数、无 IO 无时钟：parse 在任务保存时校验，matches 在 tick 时判定。
+// cron 5 字段「分 时 日 月 周」语法：支持 * , - /；周 0-6（0=周日）；
+// 不支持 Quartz 扩展（L/W/#）与英文名称。纯函数、无 IO 无时钟：parse 保存时校验，matches 在 tick 时判定。
 #pragma once
 #include <array>
 #include <ctime>      // std::tm（cronMatches 形参）

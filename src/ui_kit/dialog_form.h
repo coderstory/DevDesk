@@ -1,10 +1,10 @@
 // src/ui_kit/dialog_form.h
-// presentation 能力层：跨模块复制的「对话框外框 + 表单行 + 按钮对」接线。
+// presentation 能力层：对话框外框 + 表单行 + 按钮对的复用接线。
 //
 // 分层：dialog / button 需 eui_neo 实体符号，不放 core；module_* 之间不可互相依赖，
 // 故归本层（被 module_* 与 app 层链接，core / platform 不得反向依赖）。尺寸常量单一
-// 来源见 ui_kit/metrics.h。所有几何 / 字号 / 颜色 / 节点 id 按各站点现状逐字搬运，
-// 差异一律参数化、不统一取值；节点 id（`<id>` / `<id>.cancel` / `<id>.confirm`）不得改。
+// 来源见 ui_kit/metrics.h。差异一律参数化、不统一取值；节点 id（`<id>` /
+// `<id>.cancel` / `<id>.confirm`）不得改。
 #pragma once
 
 #include <components/theme.h>
@@ -23,7 +23,7 @@ namespace ui_kit {
 // zIndex 哨兵：不调 .zIndex()（用组件默认 1000）；todo 侧会显式给值。
 inline constexpr int kDialogZIndexUnset = -1;
 
-// 对话框外框：13 处逐字重复的 dialog 接线（除 content 与 zIndex 取值外全同）。
+// 对话框外框：跨站点统一的 dialog 接线（除 content 与 zIndex 取值外全同）。
 struct DialogFrame {
     std::string id;
     DialogWidth width = DialogWidth::Standard;
@@ -58,7 +58,7 @@ void drawDialogText(eui::Ui& ui, const std::string& id, float dialogWidth,
                     const std::string& text, float fontSize, const eui::Color& color,
                     const DialogTextOptions& options = {});
 
-// ---- 标题行（13 处同款：宽 w-56、高 28、行高 28、700 字重）----
+// ---- 标题行（宽 w-56、高 28、行高 28、700 字重）----
 struct DialogTitleOptions {
     float x = kDialogInsetX;
     float y = 24.0f;
@@ -72,7 +72,7 @@ void drawDialogTitle(eui::Ui& ui, const std::string& id, float dialogWidth,
                      const DialogTitleOptions& options = {});
 
 // ---- 标准按钮对 ----
-// 13 处现状 7 种样式组合逐字复刻（不合并、不近似）；Themed = 走 .theme(themeTokens, primary)。
+// 7 种样式组合逐字复刻（不合并、不近似）；Themed = 走 .theme(themeTokens, primary)。
 enum class DialogButtonStyle {
     Secondary,        // .colors(surfaceElevated/hover/active) + textPrimary + border
     SecondaryThemed,  // .theme(themeTokens,false) + textPrimary + border

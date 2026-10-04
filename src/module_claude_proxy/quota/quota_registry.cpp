@@ -4,10 +4,10 @@
 
 #include <iterator>
 
-#include "opencode_go_provider.h"  // G1：OpenCode Go 工厂
-#include "deepseek_provider.h"    // G3：DeepSeek 工厂
-#include "provider_minimax_cn.h"   // G2：MiniMax 中国站工厂
-#include "quota_volcano.h"        // G4：火山方舟工厂
+#include "opencode_go_provider.h"
+#include "deepseek_provider.h"
+#include "provider_minimax_cn.h"
+#include "quota_volcano.h"
 
 namespace module::claude::quota {
 
@@ -17,7 +17,7 @@ namespace module::claude::quota {
 constexpr QuotaProviderEntry kQuotaProviders[] = {
     {"opencode_go", &createOpenCodeGoProvider},   // OpenCode Go（base_url 两档 /zen/go 与 /zen/go/v1）
     {"deepseek", &createDeepSeekProvider},        // DeepSeek（Balance 型）
-    {"minimax_cn", &createMinimaxCn},             // MiniMax 中国站（旧域 + 百分比反转 + weekly 门控）
+    {"minimax_cn", &createMinimaxCn},             // MiniMax 中国站（端点写死 + 百分比反转 + weekly 门控）
     {"volcano", &volcanoProvider},  // 火山方舟（Agent Plan / Coding Plan）
     {nullptr, nullptr},  // ← 表尾哨兵；后续 provider 的行插在本行之前
 };

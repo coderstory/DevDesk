@@ -1,6 +1,5 @@
 // src/module_claude_proxy/quota/ccswitch_sqlite.h
-// cc-switch 只读库读取的共用脚手架（RAII / 探列 / 文本列 / 只读打开），
-// 被 ccswitch_source.cpp 与 ccswitch_import.cpp 共用。
+// cc-switch 只读库读取的共用脚手架（RAII / 探列 / 文本列 / 只读打开），被 ccswitch_source.cpp 与 ccswitch_import.cpp 共用。
 // 只读硬约束见 ccswitch_source.h（恒 SQLITE_OPEN_READONLY，不建表、不写 schema、不动 -wal/-shm）。
 #pragma once
 
@@ -59,7 +58,7 @@ inline bool hasColumn(const std::vector<std::string>& columns, const char* name)
     return std::find(columns.begin(), columns.end(), name) != columns.end();
 }
 
-// 缺列用 NULL 占位而非整条 SELECT 失败，cc-switch 换列时仍读得回认得的字段。
+// 缺列用 NULL 占位而非整条 SELECT 失败，认得的字段仍读得回。
 inline std::string columnOrNull(const std::vector<std::string>& columns,
                                 const char* name) {
     return hasColumn(columns, name) ? std::string(name) : std::string("NULL");
@@ -107,7 +106,7 @@ inline OpenStatus openReadOnly(DbHandle& db, std::string* reason,
     return OpenStatus::Ok;
 }
 
-// 结果体装配：两个 Result 都有 status / unavailableReason，枚举类型不同。ListT 只在返回类型、无法推导，须显式给出。
+// 结果体装配：ListT 只在返回类型里、无法推导，须显式给出。
 template <typename ListT, typename StatusT>
 inline ListT makeUnavailable(StatusT status, std::string reason) {
     ListT out;

@@ -1,4 +1,3 @@
-// src/module_about/about_anim.h
 // 关于页「动态光晕」状态机：6 个柔光球（利萨如漂移 + 呼吸）+ 聚光扫过带。
 // 纯值类型 + inline 函数，零 EUI 依赖；独立成头以便单测直接驱动。
 // 坑：绘制元素闸门 ≤ 20（光斑 6×3 层 + 扫带 2）；球心 center + amp ≤ 1.0 不出页面。
@@ -48,8 +47,7 @@ struct AboutAnimState {
     static constexpr float kDiameterMax = 400.0f;
     static constexpr float kLayerAlphaMax = 0.15f;  // 最内层
     static constexpr float kLayerAlphaMin = 0.05f;  // 最外层
-    // 层半径 = radius × (0.70 + 0.15k)。反同心环带的关键是相邻层边缘间距 < 柔边
-    // 模糊宽（0.15R ≈ 18-30px < blur 56，三级 alpha 台阶并成连续渐变）。
+    // 层半径 = radius × (0.70 + 0.15k)：相邻层边缘间距 < 柔边模糊宽，三级 alpha 台阶并成连续渐变
     static constexpr float kLayerRadiusInner = 0.70f;
     static constexpr float kLayerRadiusStep = 0.15f;
     static constexpr float kBreathDepth = 0.35f;      // 呼吸 ±35%
@@ -60,8 +58,7 @@ struct AboutAnimState {
     static constexpr float kPeriodRatioY = 0.62f;     // y 轴周期 / x 轴周期
     static constexpr float kNeonShadowBlur = 48.0f;   // 最外圈霓虹边
     static constexpr float kNeonShadowAlpha = 0.35f;
-    // 内层柔边 shadow（offset 0，同色）把离散硬边圆盘化成软边圆盘，抹平同心圆台阶；
-    // 每层多一个 shadow pass，元素数不变。
+    // 内层柔边 shadow（offset 0，同色）把离散硬边圆盘化成软边圆盘，抹平同心圆台阶；元素数不变
     static constexpr float kLayerSoftBlur = 56.0f;
     // 柔边 halo alpha 倍率 2.0：blur 边界值是峰值一半，取 2 倍才使台阶归零。
     static constexpr float kLayerSoftAlphaScale = 2.0f;
@@ -83,8 +80,7 @@ struct AboutAnimState {
     static constexpr float kSweepShadowAlpha = 0.10f;
     static constexpr float kSweepHeightFactor = 1.5f; // 带高 = 页高 × 1.5（两端出画）
 
-    // 驱动用 onTimer 30fps 节拍（非每帧重绘），dt 固定 kFrameSeconds；空闲 120s
-    // 后休眠（compose 撤掉 onTimer → 零重绘），任意指针移动唤醒。
+    // 驱动用 onTimer 30fps 节拍（非每帧重绘）；空闲 120s 后休眠（compose 撤掉 onTimer → 零重绘）
     static constexpr float kFrameSeconds = 1.0f / 30.0f;
     static constexpr float kWakeHoldSeconds = 120.0f;
 

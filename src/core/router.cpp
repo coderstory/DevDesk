@@ -1,8 +1,7 @@
 #include "router.h"
 #include "logging.h"
 
-// 本文件不含任何 EUI-NEO 头：eui::Ui/Screen/KeyEvent 经 module_interface.h
-// 的 header-only 类型桥接透传；空态兜底的绘制归 app 层。
+// 本文件不含任何 EUI-NEO 头：eui 类型经 module_interface.h 透传；空态兜底绘制归 app 层。
 
 #include <atomic>
 #include <utility>
@@ -42,8 +41,7 @@ bool Router::isRegistered(PageId page) const {
 }
 
 void Router::navigateTo(PageId page, const std::string& payload) {
-    // 未注册页兜底：残留跳转入口（Home 卡片、文件打开分发等）不送进空白页，
-    // 回退 Home（恒注册，无递归）；Home 也没注册则保持当前页不动
+    // 未注册页兜底：回退 Home（恒注册，无递归）；Home 也没注册则保持当前页不动
     if (!isRegistered(page)) {
         LOG_WARN("跳转到未注册页面 " + std::string(pageIdToString(page)) +
                  (payload.empty() ? std::string()

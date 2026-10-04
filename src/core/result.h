@@ -1,5 +1,4 @@
-// src/core/result.h
-// DevDesk 统一错误处理（不抛异常，对非 C++ 用户友好）
+// DevDesk 统一错误处理 Result（不抛异常）
 #pragma once
 
 #include <cstdlib>
@@ -94,8 +93,7 @@ public:
     }
 
     // 显式取值：只在「按不变量不可能失败」处调用；失败即 LOG_FATAL + std::abort()，不抛异常
-    //（抛在 -fno-exceptions 的 TU 编译不过、带异常又能被捕获，行为随编译选项漂移）。可能失败的
-    // 取值一律走 valueOr()
+    //（行为不随编译选项漂移）。可能失败的取值一律走 valueOr()
     const T& value() const {
         if (!isOk()) {
             LOG_FATAL("Result::value() called on error: " + errorMessage());
@@ -115,8 +113,8 @@ public:
 
     ErrorCode errorCode() const { return code_; }
 
-    // 默认构造态（索引 0）无错误信息：返回占位串而非 get<2> 抛 bad_variant_access（-fno-exceptions
-    // 下抛即 terminate）。静态存储保证引用有效
+    // 默认构造态（索引 0）返回占位串而非 get<2> 抛 bad_variant_access（-fno-exceptions 下即 terminate）；
+    // 静态存储保证引用有效
     const std::string& errorMessage() const {
         static const std::string kUninitialized = "（未初始化）";
         if (data_.index() == 0) return kUninitialized;

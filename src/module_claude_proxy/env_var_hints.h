@@ -1,6 +1,5 @@
 // src/module_claude_proxy/env_var_hints.h
 // Claude Code 环境变量名 → 中文说明（env 表单变量名 hover tooltip 用）。
-// 来源：官方文档 code.claude.com/docs/en/env-vars（2026-09-23 更新）全量清单。
 // 未收录的变量返回 nullptr（不挂 tooltip）。header-only inline：多 TU 安全。
 #pragma once
 

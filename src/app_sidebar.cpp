@@ -1,8 +1,5 @@
-// src/app_sidebar.cpp
-// 常驻侧边栏 + 折叠/展开实现（接口见 app_sidebar.h）。折叠态规格：宽度 208→72；折叠只显
-// 居中图标、label 不渲染（hover tooltip 补模块名）；底部开关展开态 fa-angles-left/折叠态 fa-bars。
-// 动画登记为瞬时切换：EUI-NEO AnimProperty 无 Width 档（Frame 档会带动整棵子树位移，与页面区
-// 宽度瞬时计算错拍），后续若上游补 Width 动画再接。
+// 常驻侧边栏 + 折叠/展开实现（接口见 app_sidebar.h）。折叠态：宽 208→72，只显居中图标，
+// label 不渲染；动画为瞬时切换（EUI-NEO AnimProperty 无 Width 档）。
 #include "app_sidebar.h"
 
 #include "core/component_theme.h"
@@ -39,9 +36,7 @@ void setSidebarCollapsed(bool collapsed, bool persist) {
         LOG_WARN("侧边栏折叠状态未持久化（应用数据库未就绪，不影响本次会话）");
         return;
     }
-    // 持久化：load → 改单字段 → save，保留其余配置。SettingsStore::save 把顶层键放一个事务里
-    // 逐行写，其余行原样保留，别的写者不会因本函数手慢而丢字段。失败只记日志不回滚内存态
-    //（下次启动回默认展开）
+    // 持久化：load → 改单字段 → save（save 逐行写、其余行原样保留）；失败只记日志不回滚内存态
     const module::settings::SettingsStore store(db);
     auto cfg = store.load();
     cfg.sidebarCollapsed = collapsed;
@@ -68,7 +63,7 @@ void clearAppNotice() {
 }
 
 bool appNoticeVisible() { return g_appNotice.open; }
-// 无通知时一律空串：open=false 时内容必已清空，与旧实现输出一致
+// 无通知时一律空串：open=false 时内容必已清空
 std::string appNoticeTitle() { return g_appNotice.open ? g_appNotice.title : std::string{}; }
 std::string appNoticeMessage() { return g_appNotice.open ? g_appNotice.body : std::string{}; }
 
@@ -85,7 +80,6 @@ void drawSidebar(eui::Ui& ui, const eui::Screen& screen) {
     const bool collapsed = g_sidebarCollapsed;
     const float kWidth = sidebarWidth();
 
-    // 渲染自证：首帧挂载日志（侧边栏每帧重绘，static 只记一次）
     static const bool mounted = [] {
         LOG_INFO("侧边栏导航已挂载（" +
                  std::to_string(::core::appRouter()->modules().size()) +
@@ -93,18 +87,15 @@ void drawSidebar(eui::Ui& ui, const eui::Screen& screen) {
         return true;
     }();
     (void)mounted;
-
-    const float itemH = ui_kit::kNavItemH;  // 导航项高 40（ui_kit/metrics.h）
-    const float gap = 4.0f;            // 导航项 gap 4
-    const float padX = t.sizes.spacingLarge;  // 左右 padding 16
+    const float itemH = ui_kit::kNavItemH;
+    const float gap = 4.0f;
+    const float padX = t.sizes.spacingLarge;
     constexpr float kIconW = 28.0f;
-    constexpr float kItemInset = 12.0f;  // 内容距高亮条左缘内边距（用户反馈文字贴边）
+    constexpr float kItemInset = 12.0f;  // 内容距高亮条左缘内边距
 
-    // 顶部留白取页面主区 padding 同档 token（spacingXXLarge=40）：品牌块上缘与页面内容齐平。
-    // 原值 24 在 macOS 上显得贴顶（客户区顶即屏幕可见区顶），故按 macOS 观感定，Windows 跟随
+    // 顶部留白取页面主区 padding 同档 token（spacingXXLarge=40）：品牌块上缘与页面内容齐平
     const float topPad = t.sizes.spacingXXLarge;
-    // 品牌块高 32（字面值，提成常量只为让导航起点与它同源）。不用 fontSizePage 的运行时值：
-    // fontScale 会缩放 fontSize* 而该框历来不随之变，改了会改观感
+    // 品牌块高 32（字面值，不用 fontSizePage 运行时值：fontScale 会缩放 fontSize* 而该框不随之变）
     constexpr float kBrandH = 32.0f;
     // 品牌块 → 导航列表间距 28（无对应 token 档位；token 只有 4/8/16/24/40）
     constexpr float kBrandNavGap = 28.0f;
@@ -112,8 +103,7 @@ void drawSidebar(eui::Ui& ui, const eui::Screen& screen) {
     ui.stack("app.sidebar")
         .size(kWidth, screen.height)
         .content([&] {
-            // 侧边栏底色 = 主窗口 clearColor（随主题/窗口效果档运行时跟随）——不自铺不透明底，
-            // 半透/磨砂档下与页面主体一致透出效果
+            // 底色 = 主窗口 clearColor（随主题/效果档跟随），不自铺不透明底以在半透/磨砂档透出效果
             ui.rect("app.sidebar.divider")
                 .position(kWidth - 1.0f, 0.0f)
                 .size(1.0f, screen.height)
@@ -121,8 +111,7 @@ void drawSidebar(eui::Ui& ui, const eui::Screen& screen) {
                 .radius(t.sizes.radius)
                 .build();
 
-            // brand 行：展开 = logo 图标 + "DevDesk" 横排；折叠 = 只显示居中 logo 图标。
-            // 两态共用 topPad，否则切折叠时 logo 会跳一下
+            // brand 行：展开 = logo + "DevDesk" 横排，折叠 = 只显示居中 logo；两态共用 topPad 防跳动
             if (collapsed) {
                 ui.text("app.sidebar.brand")
                     .position(0.0f, topPad)
@@ -154,7 +143,7 @@ void drawSidebar(eui::Ui& ui, const eui::Screen& screen) {
                     .build();
             }
 
-            float y = topPad + kBrandH + kBrandNavGap;  // 40 + 32 + 28 = 100
+            float y = topPad + kBrandH + kBrandNavGap;
             for (auto* m : router->modules()) {
                 if (!m) continue;
                 const ::core::PageId page = m->pageId();
@@ -175,7 +164,6 @@ void drawSidebar(eui::Ui& ui, const eui::Screen& screen) {
                     .build();
                 // 图标与文字分两个元素：Icon 字体（FontAwesome）不能和正文字体混排在一个 Text 里
                 if (collapsed) {
-                    // 折叠：图标水平居中（框居中 + 框内 horizontalAlign Center），label 不渲染
                     ui.text(id + ".icon")
                         .position((kWidth - kIconW) * 0.5f, y)
                         .size(kIconW, itemH)
@@ -240,15 +228,14 @@ void drawSidebar(eui::Ui& ui, const eui::Screen& screen) {
 }
 
 void compose(eui::Ui& ui, const eui::Screen& screen) {
-    // 启动 splash：极光波 + logo + 进度条，2.0s 动画 + 0.3s 淡出后切主界面；期间跳过布局
+    // 启动 splash：2.0s 动画 + 0.3s 淡出后切主界面；期间跳过布局
     if (ui_kit::drawSplashIfNeeded(ui, screen)) {
         return;
     }
     ::core::Router* router = ::core::appRouter();
     if (!router) return;
-    // 首帧一次性落真实 contentScale：启动尺寸决策发生在窗口创建之前，那时 contentScale 还查不到
-    //（EUI-NEO 首次 update 前恒 1.0），旧日志的「缩放 1.000000」被误读成 Retina 没折算。
-    // compose 收到的 Screen::scale 与 app::contentScale() 同源同值（物理 = 逻辑 × scale）
+    // 首帧一次性落真实 contentScale：窗口创建前查不到（首次 update 前恒 1.0）；Screen::scale 与
+    // app::contentScale() 同源同值（物理 = 逻辑 × scale）
     static const bool scaleLogged = [&screen]() {
         LOG_INFO("首帧屏幕尺度：contentScale(Screen.scale)=" +
                  std::to_string(screen.scale) + "（逻辑画布 " +
@@ -259,32 +246,29 @@ void compose(eui::Ui& ui, const eui::Screen& screen) {
         return true;
     }();
     (void)scaleLogged;
-    // 布局 row(常驻侧边栏, 页面内容)：侧边栏宽随折叠态 208/72，页面区拿剩余宽度（折叠后 +136px）
+    // 布局 row(常驻侧边栏, 页面内容)：侧边栏宽随折叠态 208/72，页面区拿剩余宽度
     ui.row("app.root")
         .size(screen.width, screen.height)
         .content([&] {
             drawSidebar(ui, screen);
             const float pageW = pageContentWidth(screen.width);
-            // 页面区原点 x = 侧边栏实际占宽；模块把窗口坐标的指针位置换算成页面坐标时经 Router 取本值
+            // 页面区原点 x = 侧边栏实际占宽；模块把窗口坐标指针位置换算成页面坐标时经 Router 取本值
             router->setPageOriginX(sidebarWidth());
             ui.stack("app.page")
                 .size(pageW, screen.height)
                 .clip()
                 .content([&] {
-                    // 页面模块按去掉侧边栏后的宽度布局，scale 一并透传（见下）
                     eui::Screen pageScreen;
                     pageScreen.width = pageW;
                     pageScreen.height = screen.height;
-                    // 手搓 Screen 不填 scale 会退化成 1.0（EUI-NEO 默认值），页面内做坐标换算的模块
-                    // 就与框架三处（Screen/PointerEvent/DragEvent）不同源。本次把尺度真值随框架 Screen 一起带上
+                    // 手搓 Screen 不填 scale 会退化成 1.0，页面内坐标换算与框架三处不同源
                     pageScreen.scale = screen.scale;
                     router->compose(ui, pageScreen);
                 })
                 .build();
         })
         .build();
-    // 应用级 toast：row 之后顶层绘制盖过侧边栏/页面；每帧无条件调用、visible 控状态。
-    // 用 info 图标、无失败态，时长 4.5s
+    // 应用级 toast：row 之后顶层绘制盖过侧边栏/页面；每帧无条件调用、visible 控状态
     ui_kit::drawToast(ui, screen, "app.notice", g_appNotice,
                       core::theme::componentTokens(core::theme::current()),
                       ui_kit::ToastOptions{.durationSec = 4.5f, .okIcon = 0xF05A});

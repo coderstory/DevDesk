@@ -1,6 +1,6 @@
 // src/platform/terminal_launch_macos.cpp
-// macOS：写 .command 脚本 → chmod 0755 → /usr/bin/open（LaunchServices 决定**用户默认终端 app**，
-// 不强绑 Terminal.app）。脚本只含 cd + 程序名，**不含密钥**。⚠️ 本机（Windows）无法编译/运行验证。
+// macOS：写 .command 脚本 → chmod 0755 → /usr/bin/open（LaunchServices 决定用户默认终端 app）。
+// 脚本只含 cd + 程序名，**不含密钥**。
 #include "terminal_launch.h"
 #include "terminal_launch_common.h"
 
@@ -81,8 +81,7 @@ core::Result<void> launch(const LaunchSpec& spec) {
         return core::Result<void>::fail(core::ErrorCode::Internal,
             "chmod 0755 失败: " + script.string());
     }
-    // open <脚本> = 交给 LaunchServices 用**用户默认终端 app** 打开；单引号转义用 common 里的
-    // shellSingleQuote。
+    // open <脚本> = 交给 LaunchServices 用用户默认终端 app 打开
     const int ret = std::system(
         ("/usr/bin/open " + shellSingleQuote(script.string())).c_str());
     if (ret != 0) {

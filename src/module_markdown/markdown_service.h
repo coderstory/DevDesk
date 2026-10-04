@@ -64,9 +64,8 @@ public:
     core::Result<void> remove(const std::filesystem::path& relPath);
 
 // 重命名/移动笔记（磁盘 rename + 索引 path 就地 UPDATE + FTS 先删后插）。
-// 关键：markdown_index.id 保持不变 → 标签外键关联保留；不能走 remove+create
-//（会级联删标签）。目标已存在 → AlreadyExists；失败回滚 rename。
-// 返回最终生效的 POSIX 相对路径。
+// markdown_index.id 保持不变 → 标签外键关联保留，不能走 remove+create（会级联删标签）。
+// 目标已存在 → AlreadyExists；失败回滚 rename；返回最终 POSIX 相对路径。
     core::Result<std::string> rename(const std::filesystem::path& oldRelPath,
                                      const std::filesystem::path& newRelPath);
 
@@ -91,21 +90,19 @@ public:
     core::Result<std::vector<NoteMeta>> notesWithTag(const std::string& tag);
 
 // ---- 文件变化自动感知：watcher 事件 + 磁盘轮询两条腿 ----
-// 1) watcher（平台原生；其余 POSIX stub）：事件即刻同步索引（含同秒等长改动），
-//    并按相关性过滤置 credit；2) pollChanged：credit 命中 → true，否则退回磁盘
-//    mtime/size 比对（stub 平台 / watcher 掉线兜底）。true → rescan() + 刷新 UI。
+// watcher 事件即刻同步索引并按相关性置 credit；pollChanged 先消费 credit，
+// 否则退回磁盘 mtime/size 比对（stub 平台 / watcher 掉线兜底）。true → rescan()。
 
-// 轻量磁盘轮询：只比 mtime/size，不读内容/不写索引/不打日志。
-// 返回 true = 磁盘与索引有差异，需调用方 rescan()。
+// 轻量磁盘轮询：只比 mtime/size，不读内容/不写索引。true = 有差异，需 rescan()。
     core::Result<bool> pollChanged();
 
 // 原生文件监听是否在工作（stub / 启动失败 = false，pollChanged 退化为比对）。
     bool watcherActive() const;
 
 // watcher 是否有未消费的事件 credit（pollChanged 消费）。模块层每帧 peek：
-// true → 即时 rescan+refresh（毫秒级响应），stub 平台恒 false 自然退回轮询。
-// credit 只在批内含「索引/目录树相关」事件置位：.md 事件、Unknown（空路径）、
-// 无法证明无关的路径；存在的非 .md 普通文件不置（对索引/树零影响）。
+// true → 即时 rescan（毫秒级响应），stub 平台恒 false 退回轮询。
+// credit 只在「索引/目录树相关」事件置位：.md、Unknown（空路径）、目录、
+// 已不存在的非 .md 路径；存在的非 .md 普通文件不置。
     bool hasWatchCredit() const;
 
 // 磁盘文件的 mtime（unix 秒）。文件不存在 → fail。供外部修改检测用。
@@ -155,14 +152,12 @@ private:
     core::Result<void> rescanLocked();
 
 // relPath (POSIX) → 笔记目录内绝对路径。先 lexically_normal 再逐组件确认仍在
-// notesDir_ 之内 —— operator/ 对相对上跳与绝对 RHS 都会逃出笔记目录，而
-// md.read 等工具把 LLM 可控路径喂进这里。逃逸 → fail（ValidationError）；
-// 写路径（write/create/remove/rename）同此守卫。
+// notesDir_ 之内（LLM 可控路径会进这里）；逃逸 → fail（ValidationError）。
     core::Result<std::filesystem::path> resolve(
         const std::filesystem::path& relPath) const;
 
-// 把文件 upsert 到索引 + FTS（不做 rescan 的删除清理）。force=true 跳过
-// (size,mtime) 短路：watcher 事件已确证文件动过，秒级粒度不可信。
+// 把文件 upsert 到索引 + FTS（不做删除清理）。force=true 跳过 (size,mtime)
+// 短路：watcher 事件已确证文件动过，秒级粒度不可信。
     core::Result<void> syncOneToIndex(const std::filesystem::path& absPath,
                                       const std::string& relPathPosix,
                                       bool force = false);

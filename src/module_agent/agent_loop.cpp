@@ -1,6 +1,5 @@
-// src/module_agent/agent_loop.cpp
 // AgentLoop 主循环：消息累积 → LLM → tool_use 执行 → 回喂 → 循环 → 落库。
-// 状态语义见 spec §5.2；不抛异常，全程 Result 传递。
+// 不抛异常，全程 Result 传递。
 #include "module_agent/agent_loop.h"
 
 #include <algorithm>
@@ -22,10 +21,10 @@ namespace {
 // max_iterations 硬上限 50（loop 内 clamp，不只靠 UI 钮制）
 constexpr int kMaxIterationsHardCap = 50;
 
-// spec §5.2 硬上限：
-constexpr int64_t kTokenHardCap = 200000;               // token 累计
-constexpr int64_t kWallClockHardCapMs = 30 * 60 * 1000; // 单 run 墙钟 30 分钟
-constexpr int64_t kRequestTimeoutMs = 60 * 1000;        // 请求超时默认
+// 硬上限：
+constexpr int64_t kTokenHardCap = 200000;
+constexpr int64_t kWallClockHardCapMs = 30 * 60 * 1000;
+constexpr int64_t kRequestTimeoutMs = 60 * 1000;
 
 int64_t defaultNowMs() {
     return std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -36,8 +35,7 @@ int64_t defaultNowMs() {
 constexpr size_t kMaxToolResultBytes = 32 * 1024;
 const char* kTruncatedMarker = "\n[truncated]";
 
-// platform::json 无对象数组 push 口径：每块 stringify 后逗号连接，再 parse 自检，
-// 拼装层出错当场 abort，不发坏 body
+// platform::json 无对象数组 push 口径：每块 stringify 后逗号连接，parse 自检失败当场 abort
 platform::json::JsonValue parseArrayOrDie(const std::string& text,
                                           const char* what) {
     auto v = platform::json::parse(text);
@@ -60,15 +58,13 @@ std::string joinBlockArray(const std::vector<std::string>& blockTexts) {
     return text;
 }
 
-// 读 content block 字符串字段；非字符串 / 缺失 → 空串
 std::string strField(const platform::json::JsonObject& obj, const char* key) {
     platform::json::JsonValue v = obj.get(key);
     return v.isString() ? v.asString() : std::string();
 }
 
-// 工具返回的 contentJson → tool_result 的 text 块文本：JSON 字符串取值原样，其他
-// 形状 stringify，解析失败原文。先 UTF-8 归一（非法字节 stringify 放行、parse 拒绝
-// → parseArrayOrDie abort 整进程），再按 kMaxToolResultBytes 截断
+// 工具 contentJson → tool_result text：字符串原样、其他形状 stringify、解析失败原文。
+// 先 UTF-8 归一（非法字节 stringify 放行、parse 拒绝 → abort），再按 kMaxToolResultBytes 截断
 std::string toolResultText(const std::string& contentJson) {
     std::string text;
     if (!contentJson.empty()) {
@@ -136,8 +132,7 @@ AgentLoop::AgentLoop(core::LlmEndpoint& llm, core::ToolRegistry& tools,
 
 Result<int64_t> AgentLoop::run(const AgentTask& task,
                                std::atomic<bool>& cancelToken) {
-    // 起 run 行。startRunExclusive = 全仓唯一「同 task 不并发」闸点（手动与
-    // Scheduler/cron 派发都经此处）；失败（他路在跑）原样上抛，不落行不发请求
+    // startRunExclusive = 全仓唯一「同 task 不并发」闸点（手动与 Scheduler/cron 都经此）；失败原样上抛
     auto started = store_.startRunExclusive(task.id);
     if (started.isFail()) return started;
     const int64_t runId = started.value();
@@ -148,9 +143,8 @@ Result<int64_t> AgentLoop::run(const AgentTask& task,
     int64_t inTotal = 0, outTotal = 0;
     std::string status = "completed";
     std::optional<std::string> error;
-    bool fatal = false;                       // 落库失败 = 不可恢复，直接收尾
+    bool fatal = false;
 
-    // 落库一条消息并追加历史；落库失败置 fatal，run 以 failed 收尾
     auto keep = [&](const std::string& role, const std::string& content,
                     const std::optional<std::string>& toolCallId) -> bool {
         auto w = store_.appendMessage(runId, seq++, role, content, toolCallId);
@@ -182,7 +176,6 @@ Result<int64_t> AgentLoop::run(const AgentTask& task,
 
     const std::string toolsJson = tools_.allSchemasJson();
     const int effectiveMax = std::min(task.maxIterations, kMaxIterationsHardCap);
-    // 单 run 墙钟预算 = min(max_iterations × 请求超时(60s), 30 分钟)，只在循环顶部判定
     const int64_t startMs = nowMs_ ? nowMs_() : defaultNowMs();
     const int64_t wallBudgetMs =
         std::min<int64_t>(static_cast<int64_t>(effectiveMax) * kRequestTimeoutMs,
@@ -216,7 +209,7 @@ Result<int64_t> AgentLoop::run(const AgentTask& task,
         if (r.inputTokens > 0) inTotal += r.inputTokens;
         if (r.outputTokens > 0) outTotal += r.outputTokens;
         ++iterations;
-        if (!keepAssistant(r)) break;          // 落库失败 → fatal
+        if (!keepAssistant(r)) break;
         // token 检查点在 keepAssistant 之后：破限轮的用量照实落库，落库完立即判停
         if (inTotal + outTotal > kTokenHardCap) {
             status = "limited";
@@ -230,7 +223,7 @@ Result<int64_t> AgentLoop::run(const AgentTask& task,
                 status = "completed";
             } else if (r.stopReason == "max_tokens" ||
                        r.stopReason == "stop_sequence") {
-                status = "limited";            // 截断/受限（L1）
+                status = "limited";
                 error = "stop_reason=" + r.stopReason;
             } else {
                 status = "failed";
@@ -325,8 +318,7 @@ Result<int64_t> AgentLoop::run(const AgentTask& task,
             error = "stop_reason=tool_use 但响应里没有 tool_use block";
             break;
         }
-        // 多个 tool_result 合一条 user 消息（须紧跟对应 assistant）；tool_call_id
-        // 只在单块时记（多块记首个会误导审计，故留 NULL）
+        // 多个 tool_result 合一条 user 消息（须紧跟 assistant）；多块时 tool_call_id 留 NULL，记首个会误导
         const std::optional<std::string> toolCallId =
             resultIds.size() == 1 ? std::optional<std::string>(resultIds.front())
                                   : std::nullopt;
@@ -339,8 +331,7 @@ Result<int64_t> AgentLoop::run(const AgentTask& task,
         outTotal > 0 ? std::optional<int64_t>(outTotal) : std::nullopt,
         error);
     if (finished.isFail()) {
-        // 收尾写不回 → run 停在 'running'，UI 判「还有 run 在跑」→ uiPolling_ 永不复位。
-        // 日志之外必须回报调用方
+        // 收尾写不回 → run 永停 'running'，UI 轮询判停永不满足；必须回报调用方记孤儿
         LOG_ERROR("AgentLoop: 收尾 finishRun 失败（run " + std::to_string(runId) +
                   " 将留在 running）：" + finished.errorMessage());
         if (onFinishFailure_) {

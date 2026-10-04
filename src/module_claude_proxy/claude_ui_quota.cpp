@@ -1,7 +1,5 @@
-// claude_ui_quota.cpp —— 余量查询弹窗绘制（契约见同名头文件）
-//
-// 节点 id 前缀一律 `claude.dialog.quota.*`，无头用例与 probe 按这些 id 定位。
-// **改 id 等于改测试**（同 claude_ui_form 的既有纪律）。
+// claude_ui_quota.cpp —— 余量查询弹窗绘制（契约见同名头文件）。
+// 节点 id 前缀一律 `claude.dialog.quota.*`；改 id 等于改测试。
 #include "claude_ui_quota.h"
 
 #include <components/button.h>
@@ -62,9 +60,8 @@ QuotaDialogLayout computeQuotaDialogLayout(std::size_t fieldCount) {
     g.resultY = y;
     y += kLabelH;
 
-    // 底部按钮行固定 h−60（与 ui_kit::drawDialogButtons 同款），内容可用底 =
-    // 按钮行上沿 − 8。高度取「内容底 + 底部留白」，保证任何字段数下内容都不
-    // 压按钮；**下界**保证按钮行恒有 40px 可用（字段数退到 0 时也不会塌）。
+    // 底部按钮行固定 h−60（与 ui_kit::drawDialogButtons 同款）。高度 = 内容底 +
+    // 底部留白；下界保证按钮行恒有 40px 可用（字段数退到 0 时不塌）。
     g.height = y + 8.0f + kBottomPad;
     g.buttonsY = g.height - kBottomPad;   // 与 drawDialogButtons 的取法一致
     g.contentBottom = g.buttonsY - 8.0f;
@@ -78,8 +75,7 @@ void drawQuotaConfigDialog(eui::Ui& ui, const eui::Screen& screen,
                            const QuotaDialogHooks& hooks) {
     const float w = ui_kit::dialogWidthPx(ui_kit::DialogWidth::Form);
     const std::vector<QuotaProviderOption> options = quotaNs::quotaProviderOptions();
-    // 几何**只由字段数**决定（见头文件）；cc-switch 候选条数由下拉弹层承载，
-    // 不占行高 —— 于是「候选 0 条 / 5 条」下按钮行与内容底完全一致。
+    // 几何只由字段数决定（见头文件）；cc-switch 候选条数由下拉弹层承载，不占行高。
     const QuotaDialogLayout g = computeQuotaDialogLayout(st.fields.size());
 
     ui_kit::DialogFrame frame;
@@ -135,31 +131,22 @@ void drawQuotaConfigDialog(eui::Ui& ui, const eui::Screen& screen,
                 .position(28.0f, fy).size(w - 56.0f, kLabelH)
                 .text(f.spec.label).fontSize(11.0f).lineHeight(kLabelH)
                 .color(t.colors.textTertiary).build();
-            // 字段来源标注（任务书要求：别让用户不知道值是哪来的）
+            // 字段来源标注
             ui.text(base + ".source")
                 .position(28.0f + (w - 56.0f) * 0.42f, fy)
                 .size((w - 56.0f) * 0.58f, kLabelH)
                 .text(f.sourceLabel.empty() ? "手动填写" : f.sourceLabel)
                 .fontSize(11.0f).lineHeight(kLabelH)
                 .color(t.colors.textTertiary).build();
-            // **secret 分支（代码保证，不是注释）**：EUI 的 input 是「所见即所得」的
-                    // 文本控件——预填任何内容（哪怕是脱敏串）用户一打字就会把
-                    // 光标插进那段内容里，onChange 回传的就是「脱敏串 + 新字符」
-                    // 的混合物，值当场被污染。所以 secret 字段的输入框
-                    // **恒为空**，已存的值改用一行独立的脱敏回显节点
-                    // （`<key>.masked`）呈现：
-                    //   · 明文与脱敏串都**不进** InputState → 结构上漏不出去；
-                    //   · 打字正常（从空串开始）；
-                    //   · 「留空 = 保持现有」与 API Key 输入框同口径。
-                    // 非 secret 字段正常回显（AK 是标识不是秘密）。
+            // **secret 分支**：input 预填内容一打字就会混入 onChange 回传值（污染）。
+            // secret 恒空框（明文/脱敏串都不进 InputState），已存值走 <key>.masked 回显。
                     auto builder = components::input(ui, base);
                     builder.position(28.0f, fy + kFieldLabelGap)
                         .size(w - 56.0f, kControlH)
                         .fontSize(14.0f)
                         .theme(themeTokens);
                     if (f.spec.secret) {
-                        // 有值 → 占位符留空（下面的「已设置」回显已经说明了状态，
-                        // 两个提示叠在同一个框里只会互相干扰）
+                        // 有值 → 占位符留空（下方「已设置」回显已说明状态）
                         builder.value(std::string())
                             .placeholder(f.value.empty() ? "点击输入该密钥"
                                                          : std::string());
@@ -194,8 +181,7 @@ void drawQuotaConfigDialog(eui::Ui& ui, const eui::Screen& screen,
             .onClick([h = hooks.loadCcSwitch] { if (h) h(); })
             .build();
 
-        // 状态行：读不到时给明确文案（任务书点名「不崩 + 有话说」）。
-        // 空串 = 还没读，按钮自己就是入口，不占一行废话。
+        // 状态行：读不到时给明确文案；空串 = 还没读，不占一行。
         std::string note;
         eui::Color noteColor = t.colors.textTertiary;
         if (st.ccSwitchLoaded && st.ccSwitch.status != quotaNs::CcSwitchSourceStatus::Ok) {
@@ -204,8 +190,7 @@ void drawQuotaConfigDialog(eui::Ui& ui, const eui::Screen& screen,
         } else if (st.ccSwitchLoaded && st.ccSwitchIdx >= 0 &&
                    static_cast<std::size_t>(st.ccSwitchIdx) <
                        st.ccSwitch.providers.size()) {
-            // **上下界都判**：ccSwitchIdx 由外部 hook 写入，悬垂索引直接
-            // operator[] 就是 UB（不是「读到空串」）。
+            // **上下界都判**：ccSwitchIdx 由外部 hook 写入，悬垂索引 operator[] 是 UB。
             const quota::CcSwitchProviderInfo& info =
                 st.ccSwitch.providers[static_cast<std::size_t>(st.ccSwitchIdx)];
             note = "已选 cc-switch：" + info.name + "（密钥不落库，查询时现读）";
@@ -213,10 +198,8 @@ void drawQuotaConfigDialog(eui::Ui& ui, const eui::Screen& screen,
         if (!note.empty()) {
             ui.text("claude.dialog.quota.ccswitch.note")
                 .position(28.0f, g.ccNoteY).size(w - 56.0f, kLabelH)
-                // 单行省略号（2026-10-03 Ellipsis 批次）：note = 供应商名/原因
-                // 拼接、长度不受控，硬裁用户看不出被截。三件套 =
-                // overflow==Ellipsis && maxWidth>0 && !wrap（dsl.h:150-152）；
-                // clip 保留作几何兜底（ellipsis 管排版宽，clip 管绘制范围）
+                // 单行省略号：note 长度不受控，硬裁用户看不出被截（三件套 =
+                // overflow==Ellipsis && maxWidth>0 && !wrap）；clip 保留作几何兜底
                 .maxWidth(w - 56.0f)
                 .overflow(core::TextOverflow::Ellipsis)
                 .text(note).fontSize(11.0f).lineHeight(kLabelH).clip()
@@ -269,8 +252,7 @@ void drawQuotaConfigDialog(eui::Ui& ui, const eui::Screen& screen,
             const bool isErr = !st.error.empty() || st.testIsError;
             ui.text("claude.dialog.quota.result")
                 .position(28.0f, g.resultY).size(w - 56.0f, kLabelH)
-                // 单行省略号（同 ccswitch.note）：测试结果/上游错误文案长度
-                // 不受控，硬裁看不出被截。clip 保留作几何兜底。
+                // 单行省略号（同 ccswitch.note）：文案长度不受控；clip 保留作几何兜底。
                 .maxWidth(w - 56.0f)
                 .overflow(core::TextOverflow::Ellipsis)
                 .text(st.error.empty() ? st.testMessage : st.error)

@@ -1,7 +1,5 @@
-// src/module_todo/todo_service.h
-// Todo 看板业务逻辑层（详见 spec §7.2 / §8.2）。所有可能失败的操作返回
-// core::Result<T>；复合操作（moveTask）走事务保证原子性；tags 以 TEXT 存
-// JSON 数组（["a","b",…]）。经 core::data::SqliteDb 引用访问数据库。
+// Todo 看板业务逻辑层。所有可能失败的操作返回 core::Result<T>；复合操作（moveTask）走事务保证原子性；
+// tags 以 TEXT 存 JSON 数组（["a","b",…]）。经 core::data::SqliteDb 引用访问数据库。
 #pragma once
 
 #include "core/result.h"
@@ -22,8 +20,7 @@ struct Column {
     std::string title;
     int position;
     std::optional<std::string> color;
-    // 语义标记（migration v3，v8 起含 'archive'）：'done'/'todo'/'archive'/空 =
-    // 普通列。完成态流转与归档空态文案按它定位目标列，不靠标题字符串
+    // 语义标记：'done'/'todo'/'archive'/空 = 普通列；完成态流转按它定位目标列，不靠标题字符串
     std::string kind;
 };
 

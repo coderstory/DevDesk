@@ -1,11 +1,8 @@
 // src/module_claude_proxy/quota/quota_home_view.cpp
 // 首页余量卡片的只读数据侧（中立桥 quota_home_bridge.h 的实现）。
-// 三条纪律：
-//   1. 所有句柄操作在 db.mutex() 锁内：全仓只有一把 sqlite 连接且 macOS libsqlite3 THREADSAFE=2
-//      （连接内无互斥），后台刷新线程写、UI 线程读，漏锁即真崩（2026-10-02 有 SIGSEGV 前科）。
-//   2. 不重写解码：windows_json 走 decodeQuotaWindows，错误枚举走 quotaErrorFromName，文案走
-//      quotaErrorHeadline，裁剪走 clampUsedPercent——全部复用既有单点。
-//   3. last_error 有错时恒非空：写侧已兜底，读侧再兜一次，让旧行（老行不迁）也显示得出话。
+// 纪律：1) 所有句柄操作在 db.mutex() 锁内——全仓只有一把 sqlite 连接，后台刷新线程写、UI 线程读，漏锁即真崩；
+//   2) 解码 / 错误枚举 / 文案 / 裁剪全部复用既有单点，不重写；
+//   3) last_error 有错时读侧再兜底一次，恒显示得出话。
 #include "quota_home_bridge.h"
 
 #include <atomic>
@@ -24,9 +21,7 @@
 
 namespace module::claude::quota {
 
-// 两份同义枚举的同步闸（编译期）：quota_home_bridge.h 的 QuotaHomeKind 与 quota_provider.h 的 QuotaKind
-// 是同一件事的两份枚举，桥头要保持中立（不能 include 供应商层头），漂移在任何头文件里都看不见。
-// 两条断言：逐值同义 + 哨兵相等（只逐值比会漏掉「加了第 3 个值忘了改另一处」，那正是注释冒充断言）。
+// 两份同义枚举的同步闸（编译期）：逐值同义 + 哨兵相等；桥头保持中立，不能 include 供应商层头。
 static_assert(static_cast<int>(QuotaKind::Count) ==
                   static_cast<int>(QuotaHomeKind::Count),
               "QuotaKind 与 QuotaHomeKind 的取值个数必须相等：给 quota_provider.h "
@@ -54,8 +49,7 @@ const char* windowLabelFor(const std::string& key) {
     return nullptr;
 }
 
-// last_error_kind 列文本 → 「当前有错吗」。空串必须先判为无错：列默认值 '' 含义是「从没写过」，
-// 而 quotaErrorFromName("") 回落 Transient，会把它误报成「网络失败」。
+// last_error_kind 列文本 → 「当前有错吗」。空串必须先判为无错：quotaErrorFromName("") 回落 Transient，会误报「网络失败」。
 bool errorColumnMeansError(const std::string& kindName) {
     return !kindName.empty() && kindName != "none";
 }
@@ -66,20 +60,16 @@ QuotaCardState quotaCardState(const std::string& providerId,
                               const std::string& errorKindName,
                               bool hasEverSucceeded) {
     // 优先级即契约，改顺序必须改 test_home_quota_card 的五态用例
-    // 1) provider_id 空 = 未配置（哪怕留着历史结果也不画条：那不是有效值）
+    // 1) provider_id 空 = 未配置
     if (providerId.empty()) return QuotaCardState::Unconfigured;
     const bool errored = errorColumnMeansError(errorKindName);
-    // 2) 无错 + 有过成功值 = 正常。不用 windows 空不空：Balance 型成功时 windows 恒空，会误判成「从没查过」。
+    // 2) 无错 + 有过成功值 = 正常。不看 windows 空不空：Balance 型成功时 windows 恒空，会误判成「从没查过」。
     if (!errored && hasEverSucceeded) return QuotaCardState::Normal;
-    // 3) 无错 + 从未成功 = 刚配好还没到点
     if (!errored) return QuotaCardState::Pending;
-    // 4) 有错 + 有过成功值 = 旧值 + 「可能过期」
     if (hasEverSucceeded) return QuotaCardState::FailedStale;
-    // 5) 有错 + 从未成功 + 配置类 = 配置不完整（引导去补全）
     if (quotaErrorFromName(errorKindName) == QuotaError::NotConfigured) {
         return QuotaCardState::Incomplete;
     }
-    // 6) 有错 + 从未成功 + 其余 = 只渲染错误行
     return QuotaCardState::FailedNever;
 }
 
@@ -144,7 +134,6 @@ core::Result<std::vector<QuotaHomeRow>> listQuotaHomeRows(
             const QuotaResultRow& src = rit->second;
             row.hasEverSucceeded = src.hasEverSucceeded;
             row.lastSuccessAt = src.lastSuccessAt;
-            // 枚举 → 列文本走 quotaErrorName（单点）。中立头只见列文本，判据可用字面量在用例里断言。
             row.lastErrorKind = quotaErrorName(src.lastErrorKind);
             row.hasError = src.hasError();
             row.kind = src.kind == QuotaKind::Balance ? QuotaHomeKind::Balance
@@ -153,14 +142,12 @@ core::Result<std::vector<QuotaHomeRow>> listQuotaHomeRows(
             row.currency = src.currency;
             row.planName = src.planName;
             row.lastError = src.lastError;
-            // 按 kind 选文案（不按有没有数据）：headline 按错误分类定，last_error 原作细节接在后面。
-            // 故 401 一定显示「密钥无效…」；headline 对非 None 恒非空，旧行也显示得出话。
+            // 按 kind 选文案（不按有没有数据）；headline 对非 None 恒非空。
             if (row.hasError) {
                 row.lastError =
                     quotaErrorHeadline(src.lastErrorKind, src.lastError);
             }
-            // 窗口已是解码后的内存形态（编解码单点在 quota_store.cpp），这里只补中文标签 + 裁剪。
-            // 从未成功时 windows 恒空，铺出来也是空数组，交给 showsQuotaBar 判 false。
+            // 窗口已是解码后形态（编解码单点在 quota_store.cpp），这里只补中文标签 + 裁剪；从未成功时 windows 恒空。
             for (const QuotaWindow& w : src.windows) {
                 QuotaHomeWindow hw;
                 hw.key = w.key;

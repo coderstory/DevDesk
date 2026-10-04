@@ -1,4 +1,3 @@
-// src/module_agent/message_blocks.cpp
 // contentJson 块级解码与渲染辅助实现（契约见 message_blocks.h）
 #include "module_agent/message_blocks.h"
 
@@ -16,7 +15,6 @@ namespace {
 
 namespace pj = platform::json;
 
-// JsonObject 取字符串字段（缺失/非字符串 → 空串）
 std::string strField(const pj::JsonObject& obj, const char* key) {
     pj::JsonValue v = obj.get(key);
     return v.isString() ? v.asString() : std::string();
@@ -185,8 +183,7 @@ float estimateTextBlockHeight(const std::string& text, float contentW,
     if (text.empty() || contentW <= 0.0f || fontSize <= 0.0f) {
         return lh;   // 至少一行
     }
-    // 与渲染同一台引擎测量：measureTextSize 按 style.maxWidth 做相同换行判定，
-    // 返回 {maxLineWidth, 行数×lineHeight}（不再用 0.55em/ASCII 启发式，宽窄字形差异大）
+    // 与渲染同一台引擎测量：measureTextSize 按 style.maxWidth 做相同换行判定，返回 {行宽, 行数×lineHeight}
     core::TextStyle style;
     style.text = text;
     style.fontSize = fontSize;

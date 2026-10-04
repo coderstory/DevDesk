@@ -1,8 +1,5 @@
-// src/module_home/home_quota_card.cpp
-// 首页余量卡片绘制（契约见 home_quota_card.h）。三条纪律：
-//   1. 画不画条只有 showsQuotaBar 一个判据（假 0% 红线）；
-//   2. 状态文案按 kind 选（错误文案由桥算好，这里原样渲染）；
-//   3. 几何全部来自常量 + 纯函数，probe 能直接量。
+// 首页余量卡片绘制（契约见 home_quota_card.h）。纪律：画不画条只看 showsQuotaBar；
+// 状态文案按 kind 在桥里选，这里原样渲染；几何全部来自常量 + 纯函数，probe 可量。
 #include "home_quota_card.h"
 
 #include <algorithm>
@@ -42,7 +39,7 @@ constexpr float kNameW = 168.0f;
 constexpr float kProviderW = 112.0f;
 constexpr float kStaleW = 68.0f;
 // 卡头 [刷新] 与行内 [去配置] 的统一按钮宽：button.size 是定宽帧、无内容自适应，
-// 等宽只能靠读同一个常量（两按钮唯一的宽度来源，分开写就是漂移入口）。
+// 等宽只能靠读同一个常量（分开写就是漂移入口）。
 constexpr float kQuotaBtnW = 96.0f;
 constexpr float kWinLabelW = 52.0f;
 constexpr float kPctW = 52.0f;
@@ -82,8 +79,8 @@ const char* stateFallbackText(QuotaCardState state) {
     return "";
 }
 
-// 状态行文字：有错时给空串——错误文案由专属错误行渲染一次，head 行再渲染一遍
-// 会重复且被固定宽单行盒截断。不按「有没有数据」选，按 kind 选（在桥里）。
+// 状态行文字：有错时给空串——错误文案由专属错误行渲染，head 行再渲染会重复且被
+// 固定宽单行盒截断。
 std::string statusTextFor(const QuotaHomeRow& row) {
     if (showsErrorLine(row.state)) return std::string();
     return stateFallbackText(row.state);
@@ -131,8 +128,7 @@ bool parseIsoUtcSeconds(const std::string& s, int64_t* out) {
 }  // namespace
 
 bool showsQuotaBar(QuotaCardState state) {
-    // 「画条」= 有过成功值 = Normal / FailedStale。其余四态恒 false：没配 / 配置不完整 /
-    // 从未成功过（画出来必是 0%），即「假 0% 红线」的防线。
+    // 「画条」= 有过成功值（Normal / FailedStale）。没配/不完整/从未成功时画条必是假 0%。
     return state == QuotaCardState::Normal ||
            state == QuotaCardState::FailedStale;
 }
@@ -201,7 +197,7 @@ QuotaCardMetrics computeQuotaCardMetrics(const std::vector<QuotaHomeRow>& rows,
     float contentH = 0.0f;
     for (const auto& row : rows) contentH += quotaRowHeight(row);
     contentH += kRowGap * static_cast<float>(rows.size() - 1);
-    // maxBodyHeight 由调用方按窗口剩余空间给；负值（窗口太矮）兜成 0
+    // maxBodyHeight 由调用方按窗口剩余空间给；负值（窗口太矮）兜成 0。
     const float cap = std::max(0.0f, maxBodyHeight);
     m.bodyHeight = std::min(contentH, cap);
     m.overflows = contentH > m.bodyHeight + 0.5f;
@@ -220,15 +216,12 @@ HomeQuotaBudget computeHomeQuotaBudget(float screenHeight, float statCardHeight,
                         + gap                          // 图表卡与快捷按钮行之间
                         + kHomeActionsH;               // 快捷按钮行
 
-    // ⓪ 页面本来就装不下（不含余量卡行已超客户区）→ 滚动模式：图表一分不压、余量卡
-    // 行内容给到上限，超出由整页 home.scroll 吸收。压缩图表给余量卡让位在这里是净亏，
-    // 故必须单列这一档（pageStillOverflows 恒 false——那是 scrollView 的本职工作）。
+    // ⓪ 页面本来装不下 → 滚动模式：图表一分不压、余量卡行内容给到上限，超出由
+    // 整页 home.scroll 吸收（pageStillOverflows 恒 false——那是 scrollView 的本职）。
     const float pageWithoutQuotaBody = fixed + kHomeChartH;
     if (screenHeight < pageWithoutQuotaBody) {
         out.chartHeight = kHomeChartH;            // 图表一分不压
-        out.quotaBodyHeight = kQuotaCardMaxBodyH; // 行内容给到上限（内容少时
-                                                  // computeQuotaCardMetrics
-                                                  // 自己取 min，不会撑高）
+        out.quotaBodyHeight = kQuotaCardMaxBodyH; // 行内容给上限（内容少时取 min）
         out.drawsQuotaCard = true;
         out.pageStillOverflows = false;
         return out;
@@ -237,8 +230,7 @@ HomeQuotaBudget computeHomeQuotaBudget(float screenHeight, float statCardHeight,
     // ① 先按「图表不压缩」算一遍。
     float chart = kHomeChartH;
     float quotaBody = screenHeight - fixed - chart;
-    // ② 只有「压缩图表」真的换得到一张画得出来的余量卡时才压缩——矮到连
-    // kHomeChartMinH 都腾不出 kQuotaCardMinBodyH 的窗口，压缩只是把图表压成一条缝。
+    // ② 只有压缩图表真能换到一张画得出来的余量卡时才压缩，否则只是把图表压成一条缝。
     const bool compressionCanHelp =
         screenHeight - fixed - kHomeChartMinH >= kQuotaCardMinBodyH;
     if (quotaBody < kQuotaCardMinBodyH && compressionCanHelp) {
@@ -256,8 +248,8 @@ HomeQuotaBudget computeHomeQuotaBudget(float screenHeight, float statCardHeight,
 
 namespace {
 
-// 一行窗口（进度条 + 百分比 [+ 倒计时]）。pct 列永远按「reset 列在场」预留——
-// 固定四列（label | bar | pct | [reset 槽]）后 pct 的 x 与 reset 有无无关。
+// 一行窗口（进度条 + 百分比 [+ 倒计时]）。pct 列按「reset 列在场」预留：
+// 固定四列后 pct 的 x 与 reset 有无无关。
 void drawWindowRow(eui::Ui& ui, const core::theme::Tokens& t, float cw,
                    const std::string& rowId, const QuotaHomeWindow& w,
                    int64_t nowSec) {
@@ -328,9 +320,9 @@ void drawQuotaCard(eui::Ui& ui, const core::theme::Tokens& t, float contentWidth
         .padding(kPad)
         .content([&] {
             const float cw = contentWidth - kPad * 2.0f;
-            // 标题行 + [刷新]。⚠ .gap(kInnerGap) 必须在（否则 title 与按钮零间距，[刷新] 右缘
-            // 短 8px）。卡头行宽须与滚动内容列同宽：scrollView 溢出时收窄 width−(scrollbar+gap)，
-            // 卡头行不跟就会比 [去配置] 突出 24px（inset 取自同一份 ct.metrics，两侧永不漂移）。
+            // 标题行 + [刷新]。⚠ .gap(kInnerGap) 必须在（否则按钮零间距、右缘短 8px）。
+            // 卡头行宽须与滚动内容列同宽：scrollView 溢出时收窄 width−(scrollbar+gap)，
+            // 卡头行不跟就会比 [去配置] 突出（inset 取自同一份 ct.metrics，永不漂移）。
             const float sbInset =
                 m.overflows
                     ? ct.metrics.control.scrollbar + ct.metrics.spacing.section
@@ -346,8 +338,8 @@ void drawQuotaCard(eui::Ui& ui, const core::theme::Tokens& t, float contentWidth
                         .fontWeight(600)
                         .color(t.colors.textPrimary)
                         .build();
-                    // ⚠ 按值捕获：compose 栈上的临时 hooks 不会被延活到 onClick 触发那一刻；Hooks 一旦
-                    // 换成捕获 this 的变体会真悬垂。写成 `auto x = hooks.x` 是显式意图：此处要快照。
+                    // ⚠ 按值捕获：compose 栈上的临时 hooks 不会延活到 onClick 触发那一刻；
+                    // 换成捕获 this 的变体会真悬垂。`auto x = hooks.x` 是显式快照意图。
                     auto refreshAll = hooks.refreshAll;
                     components::button(ui, "home.quota.refresh")
                         .size(kQuotaBtnW, 28.0f)
@@ -399,13 +391,12 @@ void drawQuotaCard(eui::Ui& ui, const core::theme::Tokens& t, float contentWidth
                         inner.column(rowId)
                             .size(innerW, quotaRowHeight(row))
                             .content([&] {
-                                // 行首：名称 + 供应商 + 状态 + 去配置。
                                 const float nameW =
                                     std::min(kNameW, innerW * 0.24f);
                                 const float staleW = showStale ? kStaleW : 0.0f;
                                 const float cfgW = showCfg ? kQuotaBtnW : 0.0f;
-                                // gap 插在每两个相邻子元素之间，间隙数 = 子元素数 − 1（不是「有几个可选徽标」）;
-                                // 按子元素数算，否则 .status 右缘恒越出内容列右缘 16px。
+                                // gap 数 = 子元素数 − 1（不是可选徽标数），
+                                // 按子元素数算否则 .status 右缘恒越出内容列右缘。
                                 const int headChildCount =
                                     3 + (staleW > 0.0f ? 1 : 0) +
                                     (cfgW > 0.0f ? 1 : 0);
@@ -421,9 +412,9 @@ void drawQuotaCard(eui::Ui& ui, const core::theme::Tokens& t, float contentWidth
                                     .alignItems(eui::Align::CENTER)
                                     .gap(kInnerGap)
                                     .content([&] {
-                                        // ⚠ .name/.provider 与 .status 固定宽单行盒且不能 wrap（换行会撑破 quotaRowHeight 的
-                                        // 高度预算），而 profile 名长度不受控。护栏分层：ellipsis 管排版宽（需显式 maxWidth
-                                        // 才生效），clip 管绘制范围（scissor 兜底），两层不冲突。
+                                        // ⚠ .name/.provider/.status 是固定宽单行盒不能 wrap（否则撑破
+                                        // quotaRowHeight 预算），而名长不受控：ellipsis 管排版宽（需
+                                        // 显式 maxWidth 才生效），clip 管绘制范围，两层不冲突。
                                         inner.text(rowId + ".name")
                                             .size(nameW, kHeadH)
                                             .text(row.profileName)
@@ -465,20 +456,19 @@ void drawQuotaCard(eui::Ui& ui, const core::theme::Tokens& t, float contentWidth
                                             .text(statusTextFor(row))
                                             .fontSize(t.sizes.fontSizeSmall)
                                             .lineHeight(kHeadH)
-                                            // 单行盒不许把字画出盒：Ellipsis 需 wrap==false 且 maxWidth>0；本格固定高单行且
-                                            // 状态标签是有界枚举文案，故保留 clip 剪裁。
+                                            // 单行盒不许把字画出盒：Ellipsis 需 wrap==false 且 maxWidth>0，故加 clip。
                                             .clip()
                                             .color(showErr ? t.colors.error
                                                            : t.colors
                                                                  .textTertiary)
                                             .build();
                                         if (showCfg) {
-                                            // ⚠ 按值捕获：onClick 在 compose 返回后才触发，hooks 是 compose 栈上临时对象——
-                                            // 按引用捕获就是悬垂，点一下直接崩（test_home_quota_config_button... 段错误）。
+                                            // ⚠ 按值捕获：onClick 在 compose 返回后才触发，hooks 是
+                                            // 栈上临时对象，按引用捕获就是悬垂，点一下直接崩。
                                             auto openConfig = hooks.openConfig;
                                             const int64_t profileId =
                                                 row.profileId;
-                                            // ⚠ 按钮高 = kHeadH：旧 26 高装在 24 的 head 行里，CENTER 后上下各溢出 1px。
+                                            // ⚠ 按钮高 = kHeadH，与 head 行同高，CENTER 后不溢出。
                                             components::button(
                                                 inner, rowId + ".config")
                                                 .size(cfgW, kHeadH)
@@ -505,7 +495,6 @@ void drawQuotaCard(eui::Ui& ui, const core::theme::Tokens& t, float contentWidth
                                         }
                                     })
                                     .build();
-
                                 // 数据区（唯一画条的地方）。
                                 if (showBar) {
                                     if (row.kind == QuotaHomeKind::Balance) {
@@ -562,9 +551,8 @@ void drawQuotaCard(eui::Ui& ui, const core::theme::Tokens& t, float contentWidth
                                         .text(row.lastError)
                                         .fontSize(t.sizes.fontSizeSmall)
                                         .lineHeight(kErrRowH)
-                                        // 省略号是单行语义：只有 wrap==false 且 maxWidth>0 才生效，这一格正是固定高单行，
-                                        // 显式给 maxWidth 是生效前提（漏了它 ellipsis 静默失效）。.clip() 是 scissor 兜底，
-                                        // 让「绝不画出内容列」由排版 + 裁剪两层保证；口径 = innerW = 内容列宽。
+                                        // 省略号是单行语义：只有 wrap==false 且 maxWidth>0 才生效，本格固定高
+                                        // 单行，显式 maxWidth 是生效前提（漏了 ellipsis 静默失效）；.clip() 兜底。
                                         .maxWidth(innerW)
                                         .overflow(core::TextOverflow::Ellipsis)
                                         .clip()

@@ -1,9 +1,7 @@
-// src/module_agent/message_blocks.h
 // agent_messages.contentJson 的块级解码 + 渲染辅助，是 contentJson 的唯一解码点
 //（trigger_config.h 同款「单一编解码」口径）：渲染层、预览、高度估算全走这里。
 // 形态：user 首条 = [{"type":"text",...}]；assistant = LLM content blocks 原文；
-// tool 回喂 = [{"type":"tool_result",...,"content":<str|blocks>}]；旧纯文本行 /
-// JSON 字符串字面量 → Plain/Text 兼容
+// tool 回喂 = [{"type":"tool_result",...}]；坏 JSON / 字符串字面量 → Plain/Text 兼容
 #pragma once
 
 #include <cstdint>
@@ -15,8 +13,7 @@
 
 namespace module::agent {
 
-// 解码后的单个 content 块。tool_use input 以 JSON 原文存 text（渲染层自做摘要+截断）；
-// tool_result content 两形态（字符串 / text blocks）都摊平为纯文本
+// tool_use input 以 JSON 原文存 text（渲染层自做摘要+截断）；tool_result content 两形态都摊平为纯文本
 struct MessageBlock {
     enum class Type {
         Text,       // {"type":"text","text":...}
@@ -30,8 +27,7 @@ struct MessageBlock {
     bool isError = false;    // 仅 ToolResult
 };
 
-// 解码：contentJson → 块列表，容错不报错。坏 JSON / 非数组 → 单 Plain 原文；
-// JSON 字符串字面量 → 单 Text；空串 → 空列表
+// 解码容错不报错：坏 JSON / 非数组 → 单 Plain 原文；JSON 字符串字面量 → 单 Text；空串 → 空列表
 std::vector<MessageBlock> decodeMessageBlocks(const std::string& contentJson);
 
 // 全部块纯文本拼接（预览/复制用）；tool_use 贡献「<name>(<input 摘要>)」一行
@@ -47,8 +43,7 @@ std::string messagePreviewFromJson(const std::string& contentJson,
 // 工具参数摘要：input JSON 压单行 + UTF-8 截断
 std::string toolArgsSummary(const std::string& inputJson, size_t maxBytes);
 
-// 展开的单文本块高。真实测量：调 TextPrimitive::measureTextSize，行数 = 返回高 /
-// lineHeight，至少 1 行；字体不可用（测量全零）时退「按 1 行」
+// 展开的单文本块高，真实测量：调 TextPrimitive::measureTextSize，字体不可用（测量全零）时退 1 行
 float estimateTextBlockHeight(const std::string& text, float contentW,
                               float fontSize, float lineHeight);
 

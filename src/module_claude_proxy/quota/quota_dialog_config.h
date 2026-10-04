@@ -1,11 +1,8 @@
 // src/module_claude_proxy/quota/quota_dialog_config.h
 // 余量查询弹窗的配置逻辑层（不含任何 EUI 绘制）。
-// 逻辑从绘制剥出：弹窗按 fields() 动态渲染供应商专属字段，而「哪些字段 / 值从哪来 / 存成什么行」
-//   是纯数据问题，剥出后单测能直接断言 key 名，绘制层退化成按字段表逐行画。
-// 三条不变量：
-//   1. 供应商选项不写死字符串——由 quotaProviderOptions() 从注册表逐行取出，索引 0 恒「不配置」，加 provider 零改动。
-//   2. cc-switch 优先、手填兜底且不共存：ccswitchProviderId 非空时 extra/secrets 一律清空（buildQuotaConfigRow 代码保证）。
-//   3. secret 展示值一律脱敏，只有 maskSecret() 一个入口（前 4 + •••• + 尾 2）；没有缓存的 displayValue，避免两份真值源。
+// 弹窗按 fields() 动态渲染供应商专属字段，本层管「哪些字段 / 值从哪来 / 存成什么行」。
+// 不变量：① 供应商选项不写死，由 quotaProviderOptions() 从注册表取出，索引 0 恒「不配置」；
+//   ② cc-switch 优先且与手填不共存：ccswitchProviderId 非空时 extra/secrets 一律清空；③ secret 展示一律走 maskSecret()，没有第二份真值源。
 #pragma once
 
 #include <cstdint>
@@ -65,12 +62,11 @@ struct QuotaDialogState {
 
     // ---- 保存 ----
     std::string error;               ///< 校验失败红字
-    bool savedWithProvider = false;  ///< 上次保存是否带了 providerId（G7 消费）
+    bool savedWithProvider = false;  ///< 上次保存是否带了 providerId
 };
 
 // 打开弹窗：按 base_url 探测默认供应商（detectByBaseUrl），无命中 → 「不配置」；existing 非空则预填，nullptr = 从未配置。
-//
-// ⚠ 默认选中不猜：无命中就是「不配置」，猜错等于把别人的 quota 查到当前 profile 上。
+// 默认选中不猜：无命中就是「不配置」，猜错等于把别人的 quota 查到当前 profile 上。
 void openQuotaDialog(QuotaDialogState& st, int64_t profileId,
                      const std::string& baseUrl, const std::string& apiKey,
                      const QuotaConfigRow* existing);
@@ -93,8 +89,6 @@ ProviderConfig buildQuotaTestConfig(const QuotaDialogState& st);
 
 // secret 字段脱敏回显：空 → 空；≤6 字符 → 全 •；否则「前 4 + •••• + 尾 2」。比 profile 密钥（前 6 + *** + 尾 4）更保守——AK/SK 有效熵在尾部。
 std::string maskSecret(const std::string& plaintext);
-
-// ⚠ quotaErrorHeadline 的声明已搬到 quota_error_text.h（首页错误行 / 落库兜底也消费它）；本头照旧 include，既有调用点零改动。
 
 // 「测试连接」的完整结果文案：成功给一行摘要，失败给 headline + 供应商原文。
 std::string quotaTestMessage(const QuotaResult& result);

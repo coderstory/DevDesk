@@ -1,6 +1,5 @@
-// macOS 深色检测（CMake APPLE 分支编译）。用纯 C 的 CFPreferences 读 NSGlobalDomain 的
-// AppleInterfaceStyle（不用 NSUserDefaults，避免引入 .mm / ObjC++ TU）；读不到（浅色系统不写该键、
-// 无 GUI 会话 / SSH）一律按浅色兜底。此前 APPLE 分支误用 posix（恒 false），已修。
+// macOS 深色检测。用纯 C 的 CFPreferences 读 NSGlobalDomain 的 AppleInterfaceStyle
+//（不用 NSUserDefaults，避免引入 .mm / ObjC++ TU）；读不到（浅色系统不写该键、无 GUI 会话）按浅色兜底。
 #include "system_theme.h"
 
 #include <CoreFoundation/CoreFoundation.h>

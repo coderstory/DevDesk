@@ -1,4 +1,3 @@
-// src/module_agent/scheduler.cpp
 // 触发侧实现：tickNow 扫描 → cron 匹配 → 同分钟防重 → 薄 spawn。不抛异常（线程体自带 catch）
 #include "module_agent/scheduler.h"
 
@@ -54,8 +53,7 @@ void Scheduler::start() {
 
 void Scheduler::enqueueResident(int64_t taskId) {
     {
-        // 停止判定与入队同锁：锁外判 stopFlag_ 时，stopAll 窗口里落地的 push 会成为
-        // 幽灵单（常驻线程已退出、永不被消费）
+        // 停止判定与入队同锁：锁外判 stopFlag_ 时 stopAll 窗口里落地的 push 会成为幽灵单
         std::lock_guard<std::mutex> lock(mu_);
         if (stopFlag_.load()) return;   // 已停：不再接单
         residentQueue_.push_back(taskId);
@@ -64,15 +62,13 @@ void Scheduler::enqueueResident(int64_t taskId) {
 }
 
 void Scheduler::stopAll() {
-    // 幂等但不早退：每次调用都必须收干当前 runs_。早退会让「首次 stopAll 之后又派发
-    // 的 run」逃出收尾，~Scheduler 析构 joinable thread 即 std::terminate
+    // 幂等但不早退：早退会让「stopAll 之后又派发的 run」逃出收尾，析构 joinable thread 即 terminate
     stopFlag_.store(true);
     {
         std::lock_guard<std::mutex> lock(mu_);
         cv_.notify_all();   // 唤醒常驻线程（其 wait 谓词含 stopFlag_）
     }
-    // 顺序契约：先灭派发源、再收在跑 run——反序会让派发线程在收尾窗口再 spawn 新 run。
-    // 常驻线程先于 tick 线程 join（前者是收尾窗口里唯一继续接单的源）
+    // 顺序契约：先灭派发源、再收在跑 run；常驻线程先 join（收尾窗口里唯一继续接单的源）
     if (residentThread_.joinable()) residentThread_.join();
     if (tickThread_.joinable()) tickThread_.join();
     std::vector<std::unique_ptr<ActiveRun>> doomed;
@@ -179,8 +175,7 @@ core::Result<void> Scheduler::tickNow() {
     core::time::localTime(static_cast<std::time_t>(nowSec), &local);   // tm_wday 同步填充
     for (const auto& t : tasks.value()) {
         if (!t.enabled || t.triggerType != "schedule") continue;
-        // trigger_config 解析唯一落点 = trigger_config.h。坏配置不静默 continue——
-        // 点名 task id 的 WARN 是用户唯一能看见「任务存在却永不触发」的通道
+        // trigger_config 解析唯一落点 = trigger_config.h；坏配置不静默 continue——点名 task id 的 WARN 是用户唯一可见通道
         auto cfg = decodeTriggerConfig(t.triggerConfig);
         if (cfg.isFail()) {
             LOG_WARN("Scheduler: 任务 " + std::to_string(t.id) +
@@ -217,8 +212,8 @@ core::Result<void> Scheduler::dispatchRun(int64_t taskId) {
     auto run = std::make_unique<ActiveRun>();
     run->taskId = taskId;
     ActiveRun* raw = run.get();
-    // 入表 + 线程创建在同一把 mu_ 内完成：否则收尾窗口会看到「表里有条目、thread 未
-    // 赋值」的半成品。run 线程体不取 mu_，故持锁创建不会死锁
+    // 入表 + 线程创建同一把 mu_ 内：否则收尾窗口看到「表里有条目、thread 未赋值」的半成品；
+    // run 线程体不取 mu_，持锁创建不会死锁
     std::lock_guard<std::mutex> lock(mu_);
     runs_.push_back(std::move(run));
     try {

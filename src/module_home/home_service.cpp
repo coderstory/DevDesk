@@ -1,4 +1,4 @@
-// src/module_home/home_service.cpp — Home 仪表盘数据服务实现
+// Home 仪表盘数据服务实现
 #include "home_service.h"
 
 #include "core/call_rate.h"
@@ -40,8 +40,8 @@ std::string formatRelativeTime(int64_t modifiedAt, std::time_t now) {
 
     std::tm local{};
     core::time::localTime(static_cast<std::time_t>(modifiedAt), &local);
-    // buf 按 GCC 能证明的最坏情况定尺：3 个 int 字段各最多 11 字节 + 2 分隔符 + '\0'
-    // = 36；写 16 会被 -Wformat-truncation 判红。
+    // buf 按最坏情况定尺（3 个 int 字段各 11 字节 + 分隔符 + '\0'），
+    // 写小了会被 -Wformat-truncation 判红。
     char buf[36];
     std::snprintf(buf, sizeof(buf), "%04d-%02d-%02d",
                   local.tm_year + 1900, local.tm_mon + 1, local.tm_mday);
@@ -213,8 +213,8 @@ core::Result<std::vector<int64_t>> HomeService::getTodayHourlyTokenTotals(
     const std::time_t now = std::time(nullptr);
     const int64_t dayStart = startOfDayEpoch(now);
     const int64_t dayEnd = dayStart + 86400;
-    // 小时下标 = (started_at - 本地零点) / 3600；DST 日边缘越界的落点按 [0, hours) 过滤。
-    // COALESCE：全未采集行 SUM 返回 NULL，与「0 token」同义，按 0 收。
+    // 小时下标 = (started_at - 本地零点) / 3600，越界落点按 [0, hours) 过滤；
+    // COALESCE：全未采集行 SUM 返回 NULL，与「0 token」同义。
     auto prep = db_.prepare(
         "SELECT (started_at - ?) / 3600 AS h, "
         "COALESCE(SUM(output_tokens), 0) AS n "
@@ -262,7 +262,7 @@ core::Result<std::vector<int64_t>> HomeService::getTodayHourlyTokenTotals(
 
 core::Result<LastCallRate> HomeService::getLastCallRate() {
     // 「成功」谓词与 core/call_rate.h 的 isSuccessful 同口径（2xx 且 output_tokens > 0），
-    // SQL 侧写出同一条件，两处必须一起改；排序 started_at DESC, id DESC 与 recentCalls 一致。
+    // 两处必须一起改；排序与 recentCalls 一致。
     auto prep = db_.prepare(
         "SELECT status_code, output_tokens, latency_ms, started_at "
         "FROM claude_call_logs "

@@ -1,12 +1,8 @@
 // src/platform/file_watcher_macos.cpp
 // macOS：FSEvents（FSEventStreamCreate + 专属后台线程的 CFRunLoop）。契约（错误码、事件映射、
 // 回调线程、stop 语义）见 file_watcher.h。
-// 停止唤醒用**有界 tick** 而非跨线程 CFRunLoopStop：CFRunLoopRef 不可 retain/release，worker
-// 退出即销毁、跨线程持有有悬垂窗口——故 run loop 只被 worker 自己访问，每轮 ≤kIdleTickSeconds
-// 睡一下醒来查 running；代价是 stop() 时延上界 = 一个 tick。
-// 事件映射不照文档直译，判据来自 APFS 实测：ItemCreated 在「改既有文件」时也会置，故仅当无
-// ItemInodeMetaMod 才判 Created；删除恒带 ItemRemoved，故 Removed 判在 Renamed 之前。批内相同
-// (action, 路径) 去重；超 kMaxPendingEvents 折叠成单条 Unknown。
+// 停止唤醒用有界 tick 而非跨线程 CFRunLoopStop：CFRunLoopRef 不可 retain/release，跨线程持有有悬垂
+// 窗口；run loop 只被 worker 自己访问，每轮 ≤kIdleTickSeconds 醒来查 running，stop() 时延上界 = 一个 tick。
 
 #include "platform/file_watcher.h"
 
@@ -57,7 +53,8 @@ constexpr long long kMaxDebounceMs = 60000;
 // start() 等 worker 武装的上限；FSEventStreamStart 是同步调用，正常毫秒级，超时只作防御。
 constexpr int kStartHandshakeMs = 5000;
 
-// 判定顺序与判据见文件头（APFS 实测标志组合）
+// APFS 判据：改既有文件也会置 ItemCreated，故仅当无 ItemInodeMetaMod 才判 Created；
+// 删除恒带 ItemRemoved，故 Removed 判在 Renamed 之前。
 FileWatchAction mapFlags(FSEventStreamEventFlags f) {
     if ((f & kFSEventStreamEventFlagItemRemoved) != 0) return FileWatchAction::Deleted;
     if ((f & kFSEventStreamEventFlagItemRenamed) != 0) return FileWatchAction::Renamed;
@@ -92,8 +89,8 @@ std::string cfStringToUtf8(CFStringRef s) {
 }
 
 // 事件绝对路径 → 监听根下相对路径（POSIX 分隔、UTF-8）。roots 给「原样」与「规范化」两侧前缀：
-// /tmp、/var/folders 是符号链接（真实路径 /private/...），FSEvents 回哪侧取决于内核视角，两侧都
-// 匹配才不把整棵笔记树判成「无法定位」。不在任何根下 → 空串（消费方走全量重扫兜底）。
+// /tmp、/var/folders 是符号链接，FSEvents 回哪侧取决于内核视角，两侧都匹配才不误判；
+// 不在任何根下 → 空串（消费方走全量重扫兜底）。
 std::string relativeUnderRoot(const std::string& absPath,
                               const std::vector<std::string>& roots) {
     for (const auto& root : roots) {
@@ -121,7 +118,7 @@ struct FileWatcher::Impl {
     FileWatchCallback callback;
     long long debounceMs = 200;
 
-    // start() ←→ worker 的武装握手：worker 完成 FSEventStreamStart 后放行 start()
+    // start() ←→ worker 的武装握手
     std::mutex startMu;
     std::condition_variable startCv;
     bool startSignaled = false;
@@ -130,16 +127,15 @@ struct FileWatcher::Impl {
     std::string startError;
 
     // 以下字段 worker 线程独占（run loop 回调与主循环同线程，无需加锁）
-    std::string watchRoot;            // 原样形式：建流路径 + 日志
+    std::string watchRoot;
     std::vector<std::string> roots;   // 前缀匹配用（原样 + 规范化）
     FSEventStreamRef stream = nullptr;
     bool streamStarted = false;       // FSEventStreamStop 只对已 Start 的流调用
     std::vector<FileWatchEvent> pending;
     std::set<std::string> pendingKeys;  // 批内去重键（action + 路径）
-    bool overflowed = false;            // 本批已折叠为 Unknown（不再累积，见 pushEvent）
+    bool overflowed = false;            // 本批已折叠为 Unknown
     std::chrono::steady_clock::time_point lastEventAt{};
 
-    // worker → start() 握手
     void signalStart(bool ok, core::ErrorCode code, std::string msg) {
         {
             std::lock_guard<std::mutex> lock(startMu);
@@ -155,9 +151,8 @@ struct FileWatcher::Impl {
     void pushEvent(FileWatchAction action, std::string relPath) {
         if (overflowed) return;  // 本批已折叠为 Unknown：静默丢弃余量（见下）
         if (pending.size() >= kMaxPendingEvents) {
-            // 突发规模超上限：整批折叠为单条 Unknown 并**停止累积**。消费方收空路径即做「以磁盘
-            // 为准」的全量重扫，交付在突发之后故丢弃的余量不漏；同时给内存封顶（FSEvents 逐文件
-            // 投递在 git checkout 下可达数万条）。
+            // 突发规模超上限：整批折叠为单条 Unknown 并停止累积，消费方收空路径即全量重扫；
+            // 交付在突发之后故丢弃的余量不漏，同时给内存封顶。
             overflowed = true;
             pendingKeys.clear();
             pending.clear();
@@ -173,7 +168,6 @@ struct FileWatcher::Impl {
     }
 
     // 无法逐项枚举（内核丢事件/需重扫子树/根自身变化/路径不在根下）：追加一条空路径 Unknown。
-    // 已在批内的逐项事件保留——仍然有效，丢弃只会白丢信息。
     void pushRescan() { pushEvent(FileWatchAction::Unknown, std::string()); }
 
     void deliver() {
@@ -206,8 +200,7 @@ struct FileWatcher::Impl {
                 CFArrayGetValueAtIndex(paths, static_cast<CFIndex>(i)));
             std::string rel = relativeUnderRoot(cfStringToUtf8(s), self->roots);
             if (rel.empty()) {
-                // 根自身变化/路径不在根下：无法定位到具体文件 → 全量重扫（保持「空 relativePath
-                // ⟺ Unknown」契约）
+                // 无法定位具体文件 → 全量重扫（保持「空 relativePath ⟺ Unknown」契约）
                 self->pushRescan();
                 continue;
             }
@@ -254,8 +247,8 @@ struct FileWatcher::Impl {
         }
 
         {
-            // FSEventStreamScheduleWithRunLoop 自 macOS 13 起弃用（推荐 SetDispatchQueue），但本实现
-            // 按「专属后台线程 + CFRunLoop」的接口约定走，仍可用；显式压掉弃用告警（仓库 -Werror）
+            // FSEventStreamScheduleWithRunLoop 自 macOS 13 弃用（推荐 SetDispatchQueue），但本实现
+            // 按「专属后台线程 + CFRunLoop」约定走仍可用；显式压掉弃用告警（仓库 -Werror）
             const CFRunLoopRef rl = CFRunLoopGetCurrent();  // 只在本线程使用/传参
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wdeprecated-declarations"
@@ -277,8 +270,8 @@ struct FileWatcher::Impl {
         while (running.load()) {
             CFTimeInterval wait = kIdleTickSeconds;
             if (!pending.empty()) {
-                // 有货：等到静默窗口（debounceMs 内无新事件）再整批交付，与 win 的
-                // WaitForMultipleObjects(timeout=debounceMs) 一一对应；分片等待使 stop 时延上界仍是一个 tick
+                // 有货：等到静默窗口（debounceMs 内无新事件）再整批交付，对应 win 的
+                // WaitForMultipleObjects(timeout=debounceMs)；分片等待使 stop 时延上界仍是一个 tick
                 const auto idleMs = std::chrono::duration_cast<std::chrono::milliseconds>(
                                         std::chrono::steady_clock::now() - lastEventAt)
                                         .count();
@@ -303,7 +296,7 @@ struct FileWatcher::Impl {
         running.store(false);  // worker 在一个 tick 内看到并自行收流退出
         if (worker.joinable()) {
             // 回调线程内自 stop：只请求停止——不 detach（worker 仍在 Impl 成员里跑，析构即 UAF）、
-            // 不 join、不碰流。join 由之后非回调线程的 stop()/析构完成；对象必须活到回调返回。
+            // 不 join、不碰流；join 由之后非回调线程的 stop()/析构完成。
             if (worker.get_id() == std::this_thread::get_id()) return;
             worker.join();
         }
@@ -352,9 +345,7 @@ core::Result<void> FileWatcher::start(const std::filesystem::path& dir,
         const std::string canonStr = trimTrailingSlash(canon.native());
         if (canonStr != impl_->watchRoot) impl_->roots.push_back(canonStr);
     }
-    // 清批内状态：pending/pendingKeys/overflowed/lastEventAt 挂 Impl 而非 worker 局部（win 版是局部）。
-    // stop() 时未交付的旧批留在 Impl；若不清，下次 start() 换根后首个迭代因 lastEventAt 陈旧而立刻
-    // deliver()，把**旧根的事件**当成新根的交给新回调。
+    // 清批内状态：若不清，重启后 lastEventAt 陈旧会让首个迭代立刻 deliver()，把旧根的事件当成新根的交给新回调。
     impl_->pending.clear();
     impl_->pendingKeys.clear();
     impl_->overflowed = false;

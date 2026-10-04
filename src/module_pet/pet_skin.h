@@ -1,4 +1,3 @@
-// src/module_pet/pet_skin.h
 // 桌宠皮肤：assets/pets/<skin-name>/pet.json + 同尺寸 RGBA PNG 序列帧；内置皮肤
 //（robot/ghost）为随包静态资产，运行期只解析/发现、不程序生成。
 // 解析是纯函数（parsePetSkinJson）不碰文件系统；sleep/typing/phrases 缺失时静默忽略。
@@ -23,7 +22,7 @@ inline constexpr int kMinFrameSize = 16;
 inline constexpr int kMaxFrameSize = 512;
 
 // 显示大小缩放后的帧尺寸（纯函数）：等比单因子 f = min(scale, kMaxFrameSize/w,
-// kMaxFrameSize/h)——上界按比例收敛，缩放后长宽比恒等原始比、Cover 零裁切；下界不钳。
+// kMaxFrameSize/h)——上界按比例收敛，长宽比恒等原始比、Cover 零裁切；下界不钳。
 // 单位 = 点，不乘 Retina contentScale。
 inline std::pair<int, int> scaledFrameSize(int frameWidth, int frameHeight,
                                            double scale) {
@@ -39,10 +38,10 @@ inline std::pair<int, int> scaledFrameSize(int frameWidth, int frameHeight,
 
 struct PetSkin {
     std::string name;                 // 皮肤名（= 目录名）
-    int frameWidth = 128;             // 帧尺寸 = 窗口尺寸（紧包围盒，设计 §4.2）
+    int frameWidth = 128;             // 帧尺寸 = 窗口尺寸（紧包围盒）
     int frameHeight = 128;
-    double frameRate = 4.0;           // 帧/秒（idle/poked 共用，MVP）
-    std::string license;              // 授权信息随包自带（设置页可展示，M2）
+    double frameRate = 4.0;           // 帧/秒（idle/poked 共用）
+    std::string license;              // 授权信息随包自带（设置页可展示）
     std::string source;
     std::vector<std::string> idleFrames;   // 帧文件名（循环播放）
     std::vector<std::string> pokedFrames;  // 被戳反应帧（播一遍回 idle；可为空）

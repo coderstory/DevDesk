@@ -1,4 +1,3 @@
-// src/core/database.h
 // DevDesk 数据库门面（封装 SqliteDb + 当前 schema）。open() 是唯一入口：open → migrate → db()，
 // 失败即 Result fail（main.cpp 里 fail 走 LOG_FATAL+abort）
 #pragma once
@@ -10,12 +9,10 @@
 
 namespace core {
 
-// 应用级数据库：单连接 + schema 落库。打开底层 SqliteDb、应用当前 schema（单份幂等脚本）、
-// 提供 db() 给 module_* 层的 service
+// 应用级数据库：单连接 + schema 落库（单份幂等脚本），db() 供 module_* 层的 service 用
 class Database {
 public:
-    // 默认构造明确禁用（open() 是唯一入口）。SqliteDb 默认构造是 private 故 `= default` 被隐式删除，
-    // clang 会对隐式删除的显式 default 报 -Wdefaulted-function-deleted（GCC 不报），`= delete` 跨编译器一致
+    // `= delete` 而非 `= default`：clang 对隐式删除的显式 default 报 -Wdefaulted-function-deleted
     Database() = delete;
     ~Database() = default;
 
@@ -33,7 +30,6 @@ public:
     // 滚动清理调用日志：删 started_at 早于 now - retentionDays 的行，返回删除条数；幂等，retentionDays<0 按 0
     core::Result<int64_t> pruneCallLogs(int retentionDays);
 
-    // 访问底层 SqliteDb（给 module_* 层用）
     core::data::SqliteDb& db() { return db_; }
     const core::data::SqliteDb& db() const { return db_; }
 
@@ -46,8 +42,8 @@ private:
 // 滚动清理调用日志（自由函数版）：供 module_* 层经 appDatabase() 拿连接后直接调用（切档位时立即清理）
 core::Result<int64_t> pruneCallLogs(core::data::SqliteDb& db, int retentionDays);
 
-// 进程级数据库共享访问器：main.cpp 启动时（落完 schema 后）registerAppDatabase()，
-// module_* 在 onStart 用 appDatabase() 拿同一份连接。nullptr = 尚未注册（模块画空态）
+// 进程级数据库共享访问器：main.cpp 落完 schema 后注册，module_* 经 appDatabase() 拿同一份连接；
+// nullptr = 尚未注册（模块画空态）
 void registerAppDatabase(core::data::SqliteDb* db);
 core::data::SqliteDb* appDatabase();
 

@@ -1,11 +1,7 @@
 // src/module_settings/settings_module.cpp
-// 设置页模块：Module 接口实现、生命周期、设置变更动作、日志 tail 与外部状态快照、
-// 卡片注册表（kCardSpecs）；卡片绘制在 settings_ui_cards.*，纯逻辑在 settings_ui_logic.*。
-// 页面 = 通用 / 模块 / 日志 三 tab。
-// 依赖边界：module_* 互不依赖 —— claude 经 core 窄接口、pet 经 module_pet_bridge.h、
-// 模块开关经 module_toggle_bridge.h，均单向无环。
-// 渲染路径不做 fs 查询：接管状态 / 笔记目录存在性 / 皮肤清单统一在 refreshExternalState
-// 装载，compose 只读快照。
+// 设置页模块：Module 实现、生命周期、设置变更动作、日志 tail 与外部状态快照、卡片注册表。
+// 依赖边界：module_* 互不依赖 —— claude 经 core 窄接口、pet 经 module_pet_bridge.h、模块开关经 module_toggle_bridge.h。
+// 渲染路径不做 fs 查询：外部状态统一在 refreshExternalState 装载，compose 只读快照。
 
 #include "app_tools.h"
 #include "settings_config.h"
@@ -25,12 +21,10 @@
 #include <core/platform/platform.h>   // core::platform::requestUiUpdate（唤醒主循环）
 #include "platform/system_theme.h"
 
-// module_pet 解耦桥（中立桥头，src 根、应用层）：settings 不 include module_pet 头、
-// CMake 不 link，符号在最终可执行文件链接期解析；签名漂移 static_assert 见该头。
+// module_pet 解耦桥：settings 不 include module_pet 头，符号在可执行文件链接期解析。
 #include "module_pet_bridge.h"
 
-// 模块开关即时生效桥（module_toggle_bridge.h，同 module_pet_bridge 模式）：实现 =
-// 函数指针缝 + 默认 no-op，真 handler 由 main.cpp 装配段注入。
+// 模块开关即时生效桥：函数指针缝 + 默认 no-op，真 handler 由 main.cpp 装配段注入。
 #include "module_toggle_bridge.h"
 
 #include <ui_kit/metrics.h>
@@ -55,32 +49,28 @@ namespace module::settings {
 
 namespace {
 
-// 卡片注册表（R6）：每行 = 一张卡（tab 归属 / 门控 / 卡高种类 / 是否吃页面几何 /
-// 绘制函数）；顺序 = 绘制顺序。加卡只改此表。
+// 卡片注册表：每行 = 一张卡（tab / 门控 / 卡高种类 / 是否吃页面几何 / 绘制函数），顺序 = 绘制顺序。
 enum class CardHeightKind {
-    Fixed,          // 用 spec.height
-    ProxyWarnings,  // 代理卡：由同步警告行数推导（compose 顶部算好的 proxyH）
-    FillRemainder,  // 日志查看卡：吃 scrollView 剩余视口高（外层负责滚动）
+    Fixed,
+    ProxyWarnings,
+    FillRemainder,
 };
 
 struct CardSpec {
-    int tab;                // 所属 tab（kTabGeneral / kTabModules / kTabLog）
-    const char* id;         // 卡根元素 id
-    const char* gate;       // nullptr = 恒显；否则 = 模块开关门控键（插拔方案 A §5.4）
+    int tab;
+    const char* id;
+    const char* gate;       // nullptr = 恒显；否则 = 模块开关门控键
     CardHeightKind heightKind;
     float height;           // Fixed 档生效
     bool pageGeom;          // 下发卡顶页面绝对 y + 屏高（下拉 openUp 几何）
     void (*draw)(const CardDrawArgs&);
 };
 
-// 门控读的是「下次启动的卡布局」的同一份配置（cfg_）——拨开关即时预览
 const CardSpec kCardSpecs[] = {
-    // 通用 tab：外观（主题 + 字号缩放 + 窗口效果）+ 编辑器字号
     {kTabGeneral, "settings.card.appearance", nullptr, CardHeightKind::Fixed,
      kAppearanceCardHeight, false, &drawAppearanceCard},
     {kTabGeneral, "settings.card.editor", nullptr, CardHeightKind::Fixed,
      kEditorFontCardHeight, true, &drawEditorFontCard},
-    // 模块 tab：插拔开关 + 桌宠 + 目录 + 代理（后三者按模块开关整卡隐藏）
     {kTabModules, "settings.card.modules", nullptr, CardHeightKind::Fixed,
      kModulesCardHeight, false, &drawModulesCard},
     {kTabModules, "settings.card.pet", kModuleIdPet, CardHeightKind::Fixed,
@@ -89,7 +79,6 @@ const CardSpec kCardSpecs[] = {
      CardHeightKind::Fixed, kDirectoryCardHeight, false, &drawDirectoryCard},
     {kTabModules, "settings.card.proxy", kModuleIdClaudeProxy,
      CardHeightKind::ProxyWarnings, 0.0f, false, &drawProxyCard},
-    // 日志 tab：保留天数 + 级别卡 + tail 查看卡（后者吃剩余视口高）
     {kTabLog, "settings.card.log", nullptr, CardHeightKind::Fixed,
      kLogSettingsCardHeight, true, &drawLogCard},
     {kTabLog, "settings.tab.log", nullptr, CardHeightKind::FillRemainder,
@@ -108,8 +97,7 @@ public:
     void onStart() override {
         store_ = std::make_unique<SettingsStore>(::core::appDatabase());
         cfg_ = store_->load();
-        // 注册 app.read_settings（agent 只经 ToolRegistry 按名取用；工具自持
-        // SettingsStore 纯读，agent 工作线程并发安全）。name 冲突记日志不中断。
+        // 注册 app.read_settings；name 冲突记日志不中断。
         appReadSettingsTool_ =
             makeAppReadSettingsTool(::core::appDatabase());
         auto toolReg =
@@ -118,15 +106,12 @@ public:
             LOG_ERROR("Settings: app.read_settings 注册失败: " +
                       toolReg.errorMessage());
         }
-        // 启动即应用持久化主题 + 字号缩放（main.cpp 也做过同样恢复，这里幂等重放）；
-        // applyThemeRuntime 在 auto 模式按 platform 检测结果解析深浅。
         applyThemeRuntime();
         ::core::theme::setFontScale(
             static_cast<float>(cfg_.fontScalePercent) / 100.0f);
-        // 编辑器字号经 core::theme 通道传给 markdown（模块隔离：markdown 不 include 本模块）。
+        // 编辑器字号经 core::theme 通道传给 markdown（模块隔离）。
         ::core::theme::setEditorFontSize(
             static_cast<float>(cfg_.editorFontSize));
-        // 把持久化日志级别应用到运行时（core::log::setLevel 已存在，即时生效）。
         ::core::log::setLevel(parseLogLevel(cfg_.logLevel));
         LOG_INFO("Settings 模块启动（主题=" + ::core::theme::currentThemeName() +
                  "（模式=" + cfg_.themeMode + "）" +
@@ -134,26 +119,21 @@ public:
                  ", 编辑器字号=" + std::to_string(cfg_.editorFontSize) + "px" +
                  ", 日志级别=" + cfg_.logLevel +
                  ", 日志保留=" + retentionLabel(cfg_.logRetentionDays) + "）");
-        // 日志 tail 首次装载同步做一次（onStart 非渲染路径）：compose 恒读快照，
-        // 首帧必须有值——异步首刷会让日志查看卡先闪一帧「暂无日志内容」。
+        // 日志 tail 首次装载同步做一次：首帧必须有值，异步首刷会闪一帧「暂无日志内容」。
         applyLogTail(readLogTailLines());
-        // 外部状态（接管 / 笔记目录存在性 / 皮肤清单）同点首次装载，compose 只读快照。
         refreshExternalState();
     }
 
     void onStop() override {
-        // 工具先注销再释放（teardown 契约：收尾最后一步注销工具，registry find()
-        // 返回 shared_ptr keep-alive，在跑 run 不会悬垂）。
+        // 先注销工具再释放（registry find() 返回 shared_ptr keep-alive，在跑 run 不会悬垂）。
         ::core::ToolRegistry::instance().unregisterTool("app.read_settings");
         appReadSettingsTool_.reset();
         store_.reset();
         LOG_INFO("Settings 模块停止");
     }
 
-    // 重新进入设置页（auto 模式回到本页重新解析系统深浅）
     void onPageEnter() override {
-        // auto 模式的跟随点：系统深浅运行中变更后回到本页即重新解析（EUI-NEO 无
-        // 系统主题变更回调，无法任意页面实时跟随——已登记为限制）。
+        // auto 模式的跟随点：EUI-NEO 无系统主题变更回调，只能回本页时重新解析。
         if (cfg_.themeMode == kThemeModeAuto) {
             applyThemeRuntime();
         }
@@ -161,9 +141,7 @@ public:
         refreshExternalState();
     }
 
-    // Ctrl+S 显式保存：设置页除端口草稿外全部即时落盘，故 Ctrl+S = 提交唯一待决
-    // 变更（端口草稿非空且 ≠ 已应用端口 → applyProxyPort；否则重写配置 + 回显
-    //「已保存」）。「重新生成 Token」确认弹窗打开时不响应。
+    // Ctrl+S：端口草稿非空且 ≠ 已应用端口 → applyProxyPort，否则重写配置 + 回显「已保存」。
     bool onKeyEvent(const eui::KeyEvent& key) override {
         if (key.action != eui::KeyAction::Press) {
             return false;
@@ -191,8 +169,7 @@ public:
         return true;
     }
 
-    // 按 themeMode 解析并应用深浅（系统检测经 platform::prefersDarkTheme，模块层
-    // 可依赖 platform 而 core 不可，故解析在此）。结果写回 cfg_.darkTheme 供落盘。
+    // 按 themeMode 解析并应用深浅（系统检测在模块层：module 可依赖 platform 而 core 不可）。
     void applyThemeRuntime() {
         const bool dark =
             resolveThemeDark(cfg_.themeMode, platform::prefersDarkTheme());
@@ -219,7 +196,6 @@ public:
     void applyFontPreset(int index) {
         if (index < 0 || index >= kFontPresetCount) return;
         cfg_.fontScalePercent = kFontPresets[index];
-        // 写入 core::theme 全局缩放：token 读取层生效，所有模块零改动受益
         ::core::theme::setFontScale(
             static_cast<float>(cfg_.fontScalePercent) / 100.0f);
         persist();
@@ -229,7 +205,6 @@ public:
                  "%（core::theme token 层全局缩放）");
     }
 
-    // 编辑器字号档位切换：写 core::theme 全局通道即时生效，persist 供下次启动恢复。
     void applyEditorFontPreset(int index) {
         if (index < 0 || index >= kEditorFontPresetCount) return;
         cfg_.editorFontSize = kEditorFontPresets[index];
@@ -242,8 +217,7 @@ public:
                  "px（core::theme 全局通道）");
     }
 
-    // 窗口效果三档切换：clearColor alpha + backdrop 请求即时生效；系统不支持时
-    // compose 每帧回查 activeWindowEffect 显示降级提示行（常驻比 toast 稳）。
+    // 窗口效果三档切换：即时生效；系统不支持时 compose 每帧回查显示降级提示行。
     void applyWindowEffectPreset(int index) {
         if (index < 0 || index >= kWindowEffectPresetCount) return;
         cfg_.windowEffect = kWindowEffectPresets[index];
@@ -296,8 +270,7 @@ public:
                  std::string(on ? "true" : "false"));
     }
 
-    // 应用代理端口：解析 draft → 写 app_config → 同步运行面端口镜像 → 运行中自动
-    // stop→start 重启。重启失败时代理已停、sidecar 已还原，状态栏提示可换端口重试。
+    // 应用代理端口：重启失败时代理已停、sidecar 已还原，状态栏提示可换端口重试。
     void applyProxyPort() {
         int port = 0;
         if (!parseProxyPortInput(proxyPortDraft_, port)) {
@@ -320,9 +293,7 @@ public:
             svc->setConfiguredProxyPort(port);
         }
         if (!svc || !svc->isProxyRunning()) {
-            // 生效时机有两个（勿改回单一「下次启动」口径）：① 启动期装配注入
-            //（main.cpp assembleClaudeServiceNow）；② 会话内开启 claude 模块时的
-            // 惰性装配。下一个生效点出现时，这里与 main.cpp 那处必须同步更新。
+            // 端口生效时机两处必须同步：① main.cpp assembleClaudeServiceNow 装配注入；② 会话内启用 claude 模块时的惰性装配。
             setStatus("代理端口已保存：" + std::to_string(oldPort) + " → " +
                       std::to_string(port) +
                       "（代理未运行：手动启动代理，或启用 claude 模块时生效）");
@@ -333,7 +304,7 @@ public:
         }
         svc->stopProxy();
         auto r = svc->startProxy("127.0.0.1", port);
-        // stop→start 会改写/删除 sidecar；本页动作引起的状态变化就地刷新快照（成败都刷）。
+        // stop→start 会改写/删除 sidecar；就地刷新快照（成败都刷）。
         refreshExternalState();
         if (r.isFail()) {
             setStatus("端口已保存为 " + std::to_string(port) +
@@ -349,29 +320,26 @@ public:
                  std::to_string(port) + "，代理已自动重启");
     }
 
-    // 日志级别切档：core::log::setLevel 即时应用，persist 供下次启动恢复。切档同时
-    // 置 logTailDirty_——否则同屏 tail 快照不动，用户看不到切档效果。
+    // 日志级别切档同时置 logTailDirty_：否则同屏 tail 快照不动，用户看不到切档效果。
     void applyLogLevelPreset(int index) {
         if (index < 0 || index >= kLogLevelPresetCount) return;
         cfg_.logLevel = kLogLevelPresets[index];
         ::core::log::setLevel(parseLogLevel(cfg_.logLevel));
         persist();
-        logTailDirty_ = true;   // 可见面即时跟随（C-5）
+        logTailDirty_ = true;   // 切档后可见面即时跟随
         setStatus("日志级别：" + cfg_.logLevel + "（即时生效）");
         LOG_INFO("Settings: 日志级别 → " + cfg_.logLevel + "（core::log::setLevel）");
     }
 
-    // 端口输入变更：写草稿 + 校验错误随下一次输入清除。
     void setProxyPortDraft(const std::string& v) {
         proxyPortDraft_ = v;
-        // 校验错误（红字）随下一次输入清除；成功提示（非红字）保留到下一次操作。
+        // 校验错误（红字）随下一次输入清除；成功提示保留到下一次操作。
         if (statusIsError_) {
             statusMessage_.clear();
             statusIsError_ = false;
         }
     }
 
-    // 桌宠换肤：下标越界守卫（含空清单）→ 桥调用。热切换即时可见，不补 toast。
     void changePetSkinAt(int idx) {
         if (idx < 0 || idx >= static_cast<int>(petSkins_.size())) {
             return;
@@ -380,7 +348,6 @@ public:
         ::module::pet::applyPetSkin(petSkinName_);
     }
 
-    // 显示大小切档：下标守卫读同一份文案快照；选择即生效，不补 toast。
     void changePetScaleAt(int idx) {
         if (idx < 0 || idx >= static_cast<int>(petScaleLabels_.size())) {
             return;
@@ -391,14 +358,11 @@ public:
                  petScaleLabels_[static_cast<size_t>(idx)]);
     }
 
-    // 位置重置：回主屏右下角，持久化坐标清回未设置。
     void resetPetPosition() {
         ::module::pet::resetPetPosition();
         setStatus("桌宠位置已重置（主屏右下角）");
     }
 
-    // 显示桌宠（PAB-13）：桥已收成四态枚举，按原因给 toast（未装配 = 中性提示非错误，
-    // 启动失败 = 错误样式，已开着 / 成功各一句反馈）——避免「点了没效果」。
     void showPetWindow() {
         using Outcome = ::module::pet::PetShowOutcome;
         switch (::module::pet::showPetWindow()) {
@@ -418,8 +382,7 @@ public:
         }
     }
 
-    // 桌宠开关即时可见性：桌宠是唯一有独立可见载体（无边框子窗）的模块——注册门控
-    // 要等重启，但窗口不必：关 → 立即关窗，开 → 立即原位重开（未装配则提示重启生效）。
+    // 桌宠开关即时可见性：关 → 立即关窗，开 → 立即原位重开（未装配则提示重启生效）。
     void applyPetModuleVisibility(bool on) {
         if (!on) {
             const bool closed = ::module::pet::closePetWindow();
@@ -430,7 +393,6 @@ public:
                      (closed ? "窗口已请求关闭" : "无窗口可关") + "（重启后不再装配）");
             return;
         }
-        // AlreadyOpen 与重开成功对用户是同一结果：窗口即在屏幕上，状态行收底即可。
         using Outcome = ::module::pet::PetShowOutcome;
         switch (::module::pet::showPetWindow()) {
             case Outcome::Shown:
@@ -439,7 +401,6 @@ public:
                 LOG_INFO("Settings: 桌宠模块开启 → 窗口已重新入队开窗");
                 break;
             case Outcome::NotAssembled:
-                // 本会话未装配 = 窗口无从谈起，toast 给可见反馈（中性提示非错误，重启生效）。
                 showToast("已启用，重启 DevDesk 后生效");
                 LOG_INFO("Settings: 桌宠模块开启 → 本会话未装配，重启后生效");
                 break;
@@ -451,9 +412,7 @@ public:
         }
     }
 
-    // 模块开关：只写 app_config + 经 app::toggle 桥发「开关意图」，即时生效经桥路由
-    //（真 handler 由 main.cpp 装配段注入）。home/settings 恒启用；桌宠例外——额外做
-    // 一次即时窗口同步（见 applyPetModuleVisibility）。
+    // 模块开关：只写 app_config + 经 app::toggle 桥发「开关意图」；桌宠额外做即时窗口同步。
     void applyModuleEnabled(const std::string& moduleId, bool on) {
         auto& v = cfg_.enabledModules;
         auto it = std::find(v.begin(), v.end(), moduleId);
@@ -489,9 +448,7 @@ public:
         statusIsError_ = isError;
     }
 
-    // ---- Toast 反馈 ----
-    // 页头副标题小字（setStatus）对「点卡片按钮」反馈太弱，桥失败分支改走 toast；
-    // 状态位与绘制接线走 ui_kit（节点 id = settings.toast）。
+    // 桥失败分支走 toast（页头副标题反馈太弱）；节点 id = settings.toast。
     void showToast(const std::string& title, const std::string& msg = "",
                    bool isError = false) {
         toast_.show(title, msg, isError);
@@ -506,34 +463,29 @@ public:
 
     void compose(eui::Ui& ui, const eui::Screen& screen) override {
         const auto& t = core::theme::current();
-        const float pad = t.sizes.spacingXXLarge;  // 40
+        const float pad = t.sizes.spacingXXLarge;
         const float contentW = screen.width - pad * 2.0f;
 
-        // 页面底色 = 主窗口 clearColor（随主题/窗口效果运行时跟随）——不自铺不透明底。
+        // 页面底色 = 主窗口 clearColor，不自铺不透明底。
 
         const float headerH = ui_kit::kHeaderH;
         const float tabH = kSettingsTabHeight;
-        // 日志 tail 读盘已移出渲染路径（后台线程）；渲染恒读快照 → 切 tab / 首帧不闪空。
+        // 日志 tail 读盘在后台线程，渲染恒读快照 → 切 tab / 首帧不闪空。
         if (settingsTab_ == kTabLog) {
             refreshLogTailCache();
         }
-        // contentKey 带 proxyH：警告行数变化时滚动高度缓存失效重测
         auto* svc = claudeProxy();
-        // 接管状态读快照（原每帧 stat sidecar）。冷启动兜底：快照从未装载过时本帧同步刷一次。
         if (!externalStateLoaded_) {
             refreshExternalState();
         }
         size_t warnLines = 0;
         if (svc) {
-            // 警告行不以「已接管」为展示门：takeOver 写 sidecar 前失败时 sidecar 不存在，
-            // 但失败原因正是最该看见的一条（与详情页 claude_module.cpp 同口径）。
+            // 警告行不以「已接管」为门：takeOver 写 sidecar 前失败时 sidecar 不存在，但失败原因恰是最该看见的一条。
             warnLines = std::min<size_t>(
                 svc->lastSyncWarnings().size(), 2);
         }
-        // 代理卡高随生效字号派生：proxyCardHeightFor 是接管/警告行几何的单一来源。
         const float proxyH = proxyCardHeightFor(warnLines);
-        // 模块插拔门控：claude 关 → 代理卡整卡隐藏，markdown 关 → 目录卡整卡隐藏。
-        // 读 cfg_（= 启动注册状态的来源），拨开关即时预览下次启动的布局。
+        // 模块插拔门控：读 cfg_（启动注册状态的来源），拨开关即时预览下次启动的布局。
         const bool claudeOn =
             moduleEnabled(cfg_, kModuleIdClaudeProxy);
         const bool mdOn = moduleEnabled(cfg_, kModuleIdMarkdown);
@@ -545,12 +497,9 @@ public:
             .padding(pad)
             .gap(t.sizes.spacingLarge)
             .content([&] {
-                // 已删 M3-4 主体渐变底板（settings.body.gradient/bg）：9 卡卡框早先已删，
-                // 这就是用户眼中「最外层卡片」。删除后关档靠 clearColor 当底、半透/磨砂档
-                // 露出窗口背景（回归反断言见 tests/test_ui_modern.cpp）。
                 drawHeader(ui, contentW, headerH, t);
 
-                // tab 栏：components::tabs 无 .position，套定位 stack（仿 claude detail tabs 写法）。
+                // tab 栏：components::tabs 无 .position，套定位 stack。
                 ui.stack("settings.tabs.wrap")
                     .size(contentW, tabH)
                     .content([&] {
@@ -564,7 +513,6 @@ public:
                             .theme(compTheme)
                             .onChange([this](int idx) {
                                 settingsTab_ = idx;
-                                // 切到日志 tab：下一帧重读 tail；切到模块 tab：刷新外部状态快照。
                                 if (idx == kTabLog) logTailDirty_ = true;
                                 if (idx == kTabModules) refreshExternalState();
                             })
@@ -581,8 +529,7 @@ public:
                     .gap(t.sizes.spacingLarge)
                     .step(60.0f)
                     .theme(compTheme)
-                    // contentKey 带 tab 索引 + 代理卡高 + 卡片显隐签名：切 tab / 卡片增减时
-                    // 滚动高度缓存失效重测（不带 tab 索引会沿用上个 tab 的高度）。
+                    // contentKey 带 tab 索引 + 代理卡高 + 卡片显隐签名：切 tab / 卡片增减时缓存失效重测。
                     .contentKey("settings.cards.t" +
                                 std::to_string(settingsTab_) + "." +
                                 std::to_string(static_cast<int>(proxyH)) +
@@ -600,23 +547,20 @@ public:
             })
             .build();
 
-        // toast 每帧无条件绘制（显隐由状态位控制，同 claude/markdown 各站点）
         drawToast(ui, screen, t);
 
         LOG_DEBUG("Settings 模块 compose 完成");
     }
 
 private:
-    // 跨模块服务取用（审计 D6）：本页对 Claude 运行时的引用都经 core 只读服务定位器；
-    // 未注册 = claude 模块关闭 / 服务未装配 → nullptr，调用点按「服务不可用」降级。
+    // 跨模块服务取用：经 core 只读服务定位器；未注册 → nullptr，调用点按「服务不可用」降级。
     static ::core::IClaudeProxyService* claudeProxy() {
         auto r =
             ::core::ServiceLocator::requireService<::core::IClaudeProxyService>();
         return r.isOk() ? r.value() : nullptr;
     }
 
-    // 7 个下拉共用一个「谁打开着」索引（取值语义见 settings_ui_logic.h 的
-    // isDropdownOpen / applyDropdownOpen）。
+    // 7 个下拉共用一个「谁打开着」索引（取值语义见 settings_ui_logic.h）。
     void setDropdownOpen(Dropdown d, bool v) {
         openDropdown_ = applyDropdownOpen(openDropdown_, d, v);
     }
@@ -651,13 +595,11 @@ private:
         return a;
     }
 
-    // 注册表卡高解析：Fixed = 表内常量；ProxyWarnings = 代理卡警告行数推导；
-    // FillRemainder = 日志查看卡吃剩余视口高（极小窗口兜底 260 由外层 scrollView 滚动）。
+    // 注册表卡高解析：Fixed = 表内常量；ProxyWarnings = 警告行数推导；FillRemainder = 剩余视口高。
     static float cardHeight(const CardSpec& spec, float proxyH, float remain) {
         switch (spec.heightKind) {
         case CardHeightKind::Fixed:
-            // spec.height 是 100% 档基准，运行期随生效字号放大（roundFs）：卡内行盒
-            // 派生后内容底沿增长，卡高不同步放大就会把尾行挤出卡外。100% 档 roundFs(x)==x。
+            // spec.height 是 100% 档基准，运行期随生效字号放大：卡高不同步放大就会把尾行挤出卡外。
             return roundFs(spec.height);
         case CardHeightKind::ProxyWarnings:
             return proxyH;
@@ -667,8 +609,7 @@ private:
         return spec.height;  // 兜底：枚举穷举，仅为满足「所有路径有返回」
     }
 
-    // 卡区（R6）：遍历注册表画本 tab 的卡。纵向游标只累计本 tab 参与绘制的卡
-    //（全量累加会让下拉方向算错）；带下拉的卡算 openUp 需页面绝对 Y。
+    // 遍历注册表画本 tab 的卡；纵向游标只累计参与绘制的卡，带下拉的卡需页面绝对 Y（openUp）。
     void drawCardRegion(eui::Ui& ui, float contentWidth, float cardsTopY,
                         float cardsH, float screenH,
                         const core::theme::Tokens& t, float proxyH,
@@ -685,7 +626,7 @@ private:
         const SettingsCardActions a = cardActions();
         const float gapY = t.sizes.spacingLarge;
         float cardY = 0.0f;
-        // 原 switch 的 `case kTabGeneral: default:`——越界 tab（不可达）回落通用页
+        // 越界 tab（不可达）回落通用页
         const int tab = (settingsTab_ >= 0 && settingsTab_ < kSettingTabCount)
                             ? settingsTab_
                             : kTabGeneral;
@@ -738,7 +679,6 @@ private:
             .build();
     }
 
-    // 打开笔记目录：目录不存在先创建，再交平台文件管理器打开（Win/macOS/xdg-open）。
     void openNotesDirectory() {
         const std::filesystem::path mdDir = ::core::paths::markdownDir();
         std::error_code ec;
@@ -749,7 +689,7 @@ private:
                       ": " + ec.message());
             return;
         }
-        // 「打开目录」是唯一创建笔记目录的动作——刷新存在性快照，目录卡本帧起不再显示「尚未创建」。
+        // 「打开目录」是唯一创建笔记目录的动作——刷新存在性快照。
         refreshExternalState();
         auto r = ::platform::file_open::openDirectory(mdDir.string());
         if (r.isFail()) {
@@ -762,8 +702,7 @@ private:
         LOG_INFO("Settings: 已打开笔记目录 " + mdDir.string());
     }
 
-    // 纯读盘（static、不碰成员 → 可后台跑）：只读文件末尾窗口防大日志进内存，
-    // 保留末尾 kLogTailMaxLines 行（滑动裁剪，避免逐行 erase 的 O(n²)）。
+    // 纯读盘（static → 可后台跑）：只读文件末尾窗口防大日志进内存，滑动裁剪避免 O(n²)。
     static std::vector<std::string> readLogTailLines() {
         std::vector<std::string> lines;
         std::ifstream f(::core::paths::logFile(), std::ios::binary);
@@ -809,8 +748,7 @@ private:
         LOG_INFO("Settings: 日志 tail 刷新，读取 " + std::to_string(n) + " 行");
     }
 
-    // compose 只读快照 + 只发意图：① 上一轮读就绪则搬进快照（wait_for(0) 不阻塞）；
-    // ② 脏标记置位且无在途读则发一次后台读意图。可见时机最多晚一个 tick。
+    // compose 只收割快照 + 只发意图，不阻塞；可见时机最多晚一个 tick。
     void refreshLogTailCache() {
         if (logTailFuture_.valid() &&
             logTailFuture_.wait_for(std::chrono::seconds(0)) ==
@@ -829,24 +767,21 @@ private:
             return;
         }
         logTailDirty_ = false;
-        // 先就绪、后唤醒（与 claude_ui_logs.cpp 同一形态）：std::async 在 callable
-        // 返回后才发布值，任务内先唤醒会让 UI 抢跑（收割看到未就绪 → 结果没人上屏）。
+        // 先 set_value 后唤醒：std::async 在 callable 返回后才发布值，任务内先唤醒会让 UI 抢跑收割到未就绪。
         auto promise =
             std::make_shared<std::promise<std::vector<std::string>>>();
         logTailFuture_ = promise->get_future().share();
         logTailWorker_ = std::async(std::launch::async, [promise] {
             try {
-                promise->set_value(readLogTailLines());   // ① 结果落到共享状态
+                promise->set_value(readLogTailLines());
             } catch (...) {
                 promise->set_exception(std::current_exception());
             }
-            core::platform::requestUiUpdate();            // ② 就绪之后才唤醒
+            core::platform::requestUiUpdate();            // 就绪之后才唤醒
         });
     }
 
-    // 外部状态只读快照的刷新点（读一次 → 存成员 → compose 只读）：原先落在渲染路径的
-    // 三处 fs 查询（sidecar stat / markdownDir stat / discoverSkins）全部移出。调用点全在
-    // 非渲染路径（onStart / onPageEnter / 切模块 tab / 打开目录后）+ compose 冷启动兜底。
+    // 外部状态只读快照刷新点（读一次存成员，compose 只读）；调用点全在非渲染路径 + compose 冷启动兜底。
     void refreshExternalState() {
         auto* svc = claudeProxy();
         takeoverManaged_ = svc && svc->isClaudeCodeManaged();
@@ -874,17 +809,14 @@ private:
     // 代理端口输入草稿：空 = 未编辑（compose 显示 cfg_.proxyPort），应用成功后刷新。
     std::string proxyPortDraft_;
     float cardsScrollOffset_ = 0.0f;      // 卡片区 scrollView 滚动位置
-    // ---- tab 化 + 日志查看 ----
     int settingsTab_ = 0;                 // 当前 tab（通用/模块/日志）
     std::vector<std::string> logTail_;    // 日志文件末尾行内存快照（compose 只渲染）
     unsigned logTailVersion_ = 0;         // tail 读取版本号（进日志查看卡 contentKey）
     bool logTailDirty_ = true;            // 待重读标记（切日志 tab / 点刷新置位）
     bool logTailLoaded_ = false;          // 快照是否装载过（冷启动兜底，见 refreshLogTailCache）
-    // 后台读盘结果槽 + worker（结果槽 = shared_future，worker set_value 发布 → 再
-    // requestUiUpdate 唤醒）；在途判据 = logTailFuture_.valid()。
+    // 后台读盘：结果槽 = shared_future（set_value 后再 requestUiUpdate 唤醒），在途判据 = logTailFuture_.valid()。
     std::shared_future<std::vector<std::string>> logTailFuture_;
     std::future<void> logTailWorker_;
-    // ---- 外部状态只读快照（compose 不做 fs 查询）----
     bool externalStateLoaded_ = false;    // 首次装载标记（compose 冷启动兜底）
     bool takeoverManaged_ = false;        // Claude Code 接管（sidecar 存在性）
     bool notesDirExists_ = false;         // Markdown 笔记目录存在性

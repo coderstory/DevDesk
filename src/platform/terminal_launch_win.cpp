@@ -1,8 +1,7 @@
 // src/platform/terminal_launch_win.cpp
-// Windows：wt.exe 在（探测 %LOCALAPPDATA%\Microsoft\WindowsApps\wt.exe）→ CreateProcessW(wt 全路径,
-// "wt.exe -w new -d <dir> --title <t> powershell…")；否则退化 CreateProcessW(powershell 全路径,
-// CREATE_NEW_CONSOLE, lpCurrentDirectory=<起始目录>)。两条分支 exe 都必须是**全路径**：lpApplicationName
-// 传部分名只按「当前驱动器+当前目录」补全、**不查 PATH** → 实测 err=2 起不来。命令文本全来自 common 纯函数。
+// Windows：wt.exe 在（探测 %LOCALAPPDATA%\Microsoft\WindowsApps\wt.exe）→ CreateProcessW(wt 全路径)；
+// 否则退化 CreateProcessW(powershell 全路径, CREATE_NEW_CONSOLE, lpCurrentDirectory=<起始目录>)。
+// 两条分支 exe 都必须是**全路径**：lpApplicationName 不查 PATH，传部分名只按当前目录补全。
 #include "terminal_launch.h"
 #include "terminal_launch_common.h"
 
@@ -57,7 +56,7 @@ std::wstring windowsTerminalPath() {
     return p;
 }
 
-// 分离式派发：不等待退出、不继承句柄；进程/线程句柄用完即关（D-9：不持有会话）
+// 分离式派发：不等待退出、不继承句柄；进程/线程句柄用完即关（不持有会话）
 core::Result<void> spawn(const std::wstring& exe,
                          const std::vector<std::string>& argv,
                          const std::wstring& currentDir) {
@@ -108,8 +107,7 @@ core::Result<void> launch(const LaunchSpec& spec) {
         // wt -d 已带起始目录 → 不需要 lpCurrentDirectory
         return spawn(wt, buildWindowsLaunchArgs(spec), std::wstring());
     }
-    // 退化分支：没有 wt -d，**必须**显式设 lpCurrentDirectory；正文里的 Set-Location 是双保险。
-    // exe 走全路径（裸名 "powershell.exe" 不查 PATH → 实测 err=2 起不来）。
+    // 退化分支：没有 wt -d，必须显式设 lpCurrentDirectory；正文里的 Set-Location 是双保险。exe 走全路径。
     return spawn(utf8ToWide(fallbackPowerShellExe(systemRootUtf8())),
                  buildWindowsFallbackArgs(spec), utf8ToWide(spec.workingDir));
 }

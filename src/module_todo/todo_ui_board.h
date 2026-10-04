@@ -1,9 +1,7 @@
-// src/module_todo/todo_ui_board.h
 // Todo 看板区绘制单元：表头、看板、列、列内容、卡片。
-// 不持有模块状态、不捕获 this：画图数据经 BoardView 显式入参，回写动作走
-// BoardActions。元素 id/文案/几何/控制流沿用拆分前 todo_module.cpp（无头 UI 用例
-// 按 id 定位，不得改）。拖拽状态机留在 TodoModule，本单元只画「拖动中」视觉
-// （源列调暗 + 目标列高亮 + 占位条 + 跟手副本），并原样转交 onPress/onDrag/onRelease。
+// 不持有模块状态、不捕获 this：画图数据经 BoardView 显式入参，回写动作走 BoardActions。
+// 元素 id/文案/几何/控制流是无头 UI 用例契约（按 id 定位，不得改）。拖拽状态机留在 TodoModule，
+// 本单元只画「拖动中」视觉（源列调暗 + 目标列高亮 + 占位条 + 跟手副本），原样转交指针事件。
 #pragma once
 
 #include "todo_ui_logic.h"
@@ -21,8 +19,7 @@
 
 namespace module::todo::ui {
 
-// 板面几何快照（drawBoard / drawCard 每帧刷新，拖拽命中换算用）。写权在本单元、
-// 读权在模块（hitDropColumn）——故类型随本单元走，模块持有一个实例。
+// 板面几何快照（drawBoard / drawCard 每帧刷新）：写权在本单元、读权在模块（hitDropColumn）
 struct BoardPlate {
     float colW = 0.0f;
     float colGap = 0.0f;
@@ -30,8 +27,7 @@ struct BoardPlate {
     float cardW = 0.0f;
 };
 
-// 看板 → 模块的回写通道（模块构造期绑定一次）；回调体写在模块侧，读模块当下
-// 状态——与拆分前 `[this] { ... }` 同款语义，不是当帧快照。
+// 看板 → 模块的回写通道（模块构造期绑定一次）；回调体写在模块侧，读模块当下状态，不是当帧快照
 struct BoardActions {
     std::function<void(const std::string&)> searchChanged;
     std::function<void()> searchCancelled;
@@ -46,14 +42,12 @@ struct BoardActions {
     std::function<void(const Task&)> cardClicked;
     std::function<void(const Task&, int, int)> cardMenu;
     std::function<void(const Task&, int, int, const eui::Rect&)> cardPressed;
-    // 四参：指针 x/y（命中换算，物理像素）+ 按下点起累计位移 totalX/totalY
-    //（跟手副本锚点用，模块喂给 ui::dragGhostAnchor）。累计值由框架算。
+    // 四参：指针 x/y（命中换算，物理像素）+ 按下点起累计位移 totalX/totalY（跟手副本锚点用，框架算）
     std::function<void(double, double, double, double)> cardDragged;
     std::function<void(double, double, bool)> cardReleased;
 };
 
-// 看板绘制的只读输入（模块每帧组装一次）。容器是模块成员的引用（不拷贝），
-// 拖拽中间态与标量取当帧值快照。
+// 看板绘制的只读输入（模块每帧组装一次）：容器是模块成员的引用（不拷贝），拖拽中间态与标量取当帧快照
 struct BoardView {
     const std::vector<Column>& columns;
     const std::vector<Task>& tasks;
@@ -66,9 +60,8 @@ struct BoardView {
     int dragHoverColumn = -1;
     // 拖拽插入行预览（-1 = 不预览，0 = 首卡前，>= 列卡数 = 列尾）
     int dragHoverRow = -1;
-    // 拖拽跟手副本在页面 compose 空间的左上角（模块每帧由按下锚点 + 指针累计
-    // 位移换算，见 ui::dragGhostAnchor）。给的是绝对锚点，不是「卡内偏移」——
-    // 副本画在页面顶层 root（列内 translate 会被 scrollView 的 clip 剪掉）。
+    // 拖拽跟手副本在页面 compose 空间的左上角（模块每帧换算，见 ui::dragGhostAnchor）。
+    // 给的是绝对锚点不是「卡内偏移」——副本画在页面顶层 root（列内 translate 会被 scrollView 的 clip 剪掉）
     bool dragGhostOn = false;
     float dragGhostX = 0.0f;
     float dragGhostY = 0.0f;
@@ -76,8 +69,7 @@ struct BoardView {
     bool hasService = false;
     const std::string& loadError;
     const BoardActions& act;
-    // 落位淡入按 dragActive 门控列内容容器 opacity：拖拽中 0.6（跟手即暗），
-    // 松手平滑 0.6→1.0 淡回（0.12s OutQuad）
+    // 落位淡入按 dragActive 门控列内容容器 opacity：拖拽中 0.6，松手 0.6→1.0 淡回（0.12s OutQuad）
 };
 
 // 表头（标题 + 搜索框 + 逾期入口 + 建列/建任务）
@@ -88,8 +80,7 @@ void drawHeader(eui::Ui& ui, float contentW, float headerH, float bodyH,
 void drawBoard(eui::Ui& ui, float contentW, float bodyH,
                const core::theme::Tokens& t, const BoardView& v, BoardPlate& plate);
 
-// 拖拽跟手副本（页面级顶层 root：画在 todo.root 之后、弹窗之前）。plate 只读
-//（卡宽来源）；v.dragGhostOn = false 时零元素产出。
+// 拖拽跟手副本（页面级顶层 root：画在 todo.root 之后、弹窗之前）；v.dragGhostOn = false 时零元素产出
 void drawDragGhost(eui::Ui& ui, const core::theme::Tokens& t,
                    const BoardView& v, const BoardPlate& plate);
 

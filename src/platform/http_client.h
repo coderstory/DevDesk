@@ -22,9 +22,8 @@ struct Request {
     std::string body;
     long timeoutMs = 30000;
     bool verifyTls = true;
-    // 流式专用空闲超时（仅 sendStreaming）：传输速率低于 lowSpeedBytesPerSec 持续
-    // lowSpeedTimeSec 秒 → curl 中止（CURLE_OPERATION_TIMEDOUT），替代总墙钟超时
-    //（长生成场景只要一直有新 chunk 就不会被砍）；任一 <= 0 表示不启用。
+    // 流式专用空闲超时（仅 sendStreaming）：速率低于 lowSpeedBytesPerSec 持续 lowSpeedTimeSec 秒
+    // → curl 中止（CURLE_OPERATION_TIMEDOUT），替代总墙钟超时；任一 <= 0 表示不启用。
     long lowSpeedBytesPerSec = 0;
     long lowSpeedTimeSec = 0;
 };
@@ -49,10 +48,9 @@ enum class ChunkResult {
 };
 
 // 流式响应句柄（三线程 + 队列 + backpressure）
-// 内部：libcurl 在独立 std::thread 上跑 curl_easy_perform（Thread B）；CURLOPT_WRITEFUNCTION 把每个
-// chunk 推入内部 queue（生产者），消费方通过 readChunk() 拉；队列 >= 100 时生产者阻塞在 write callback
-// 内（libcurl 停止收数据、TCP 窗口收敛），<= 50 恢复——回调内阻塞是 libcurl 唯一线程安全的背压方式，
-// 不使用跨线程 curl_easy_pause。statusCode 由 header callback 解析状态行填充。
+// 内部：libcurl 在独立线程跑 curl_easy_perform，每个 chunk 推入内部 queue，消费方经 readChunk() 拉；
+// 队列 >= 100 时生产者阻塞在 write callback 内（libcurl 停止收数据、TCP 窗口收敛），<= 50 恢复——
+// 回调内阻塞是 libcurl 唯一线程安全的背压方式，不使用跨线程 curl_easy_pause。
 // 生命周期：sendStreaming() 启动线程并返回 unique_ptr；析构 = cancel() + join()，引用方应在销毁前读完。
 class StreamingResponse {
 public:
@@ -80,14 +78,13 @@ public:
     // 主动取消（立即停止 libcurl 接收、解锁 readChunk）；readChunk 以 Error + "cancelled" 返回。
     void cancel();
 
-    // 带原因的主动取消：readChunk 返回 Error + reason（消费方据此区分「客户端断开」与「服务方
-    // 主动中止」，stopProxy 时用于告诉在途流「代理正在停止」）
+    // 带原因的主动取消：readChunk 返回 Error + reason（消费方据此区分断开与主动中止）。
     void cancelWithReason(const std::string& reason);
 
     // 当前队列深度（测试/调试用）
     size_t queueDepth() const;
 
-    // 当前生产者是否被背压阻塞（queue >= 100，backpressure 触发）
+    // 当前生产者是否被背压阻塞（queue >= 100）
     bool isPaused() const;
 
 private:

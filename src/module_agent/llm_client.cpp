@@ -1,7 +1,6 @@
-// src/module_agent/llm_client.cpp
 // LlmClient 实现：预检代理 → 解析槽位 → 组 Anthropic 请求体 → 发送 → 检查状态码
-// → 解析响应。不抛异常全程 Result。platform::json 无对象数组 push 口径，messages
-// 数组逐元素 stringify 拼接后 parse 自检；拼装出错这里降级成 send 失败，不 abort
+// → 解析响应。不抛异常全程 Result。messages 数组逐元素 stringify 拼接后 parse 自检，
+// 拼装出错降级成 send 失败，不 abort
 #include "module_agent/llm_client.h"
 
 #include <string>
@@ -13,11 +12,9 @@
 namespace module::agent {
 namespace {
 
-// 单次请求 max_tokens（计划定值 4096）
 constexpr int64_t kLlmMaxTokens = 4096;
 
-// 把已 stringify 的元素文本拼成 JSON 数组原文并 parse 自检；拼装层出错当场
-// 返回 JsonParseError，绝不把坏 body 发给上游
+// 把已 stringify 的元素文本拼成 JSON 数组原文并 parse 自检，绝不把坏 body 发给上游
 core::Result<platform::json::JsonValue> parseJoinedArray(
     const std::vector<std::string>& elementTexts, const char* what) {
     std::string text = "[";
@@ -36,8 +33,7 @@ core::Result<platform::json::JsonValue> parseJoinedArray(
     return core::Result<platform::json::JsonValue>::ok(std::move(v.value()));
 }
 
-// usage 整数字段；缺/非数字 → -1（「未采集」口径）。asInt 只认 Int 形，网关若回
-// 小数会取成 0（agent_loop 对 <=0 不累计，只丢统计不丢数据）
+// usage 整数字段；缺/非数字 → -1（未采集）。asInt 只认 Int 形，网关回小数会取成 0（对 <=0 不累计）
 int64_t usageInt(const platform::json::JsonObject& usage, const char* key) {
     platform::json::JsonValue v = usage.get(key);
     return v.isNumber() ? v.asInt() : -1;
@@ -144,7 +140,6 @@ core::Result<core::LlmResponse> LlmClient::send(
                 res.body.substr(0, 200));
     }
 
-    // 解析响应 → LlmResponse
     auto parsed = platform::json::parse(res.body);
     if (parsed.isFail() || !parsed.value().isObject()) {
         return core::Result<core::LlmResponse>::fail(

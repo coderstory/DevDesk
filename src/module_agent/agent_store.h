@@ -1,4 +1,3 @@
-// src/module_agent/agent_store.h
 // 智能体落库层：agent_tasks / agent_runs / agent_messages 三表 CRUD + 悬挂 run 清扫，
 // 是 AgentLoop / AgentModule 唯一的持久化口
 #pragma once
@@ -10,7 +9,7 @@
 
 namespace module::agent {
 
-using core::Result;   // 本仓库统一错误类型
+using core::Result;
 
 struct AgentTaskRow {
     int64_t id = 0;
@@ -45,12 +44,10 @@ public:
                                const std::string& triggerConfig = "");
     Result<std::vector<AgentTaskRow>> listTasks();
     Result<AgentTaskRow> getTask(int64_t id);                    // 不存在 → NotFound
-    // 任务的唯一「同 task 不并发」闸：锁内先查 running 行再插（同一把 db_.mutex()
-    // 内 = 原子）。全仓唯一落 running 行的路径；已有 running → fail(AlreadyExists) 且不落行
+    // 任务的唯一「同 task 不并发」闸：锁内查 running 再插 = 原子；已有 running → fail(AlreadyExists) 且不落行
     Result<int64_t> startRunExclusive(int64_t taskId);
     Result<int64_t> startRun(int64_t taskId);                    // INSERT status='running'
-    // 七列覆盖 + updated_at；enabled 不在此列（启停归 setTaskEnabled，两动作互不覆盖）。
-    // id 不存在（0 行变更）→ NotFound
+    // 七列覆盖 + updated_at；enabled 归 setTaskEnabled（两动作互不覆盖）；id 不存在 → NotFound
     Result<void> updateTask(int64_t id, const std::string& name, const std::string& goal,
                             const std::string& triggerType,
                             const std::string& triggerConfig,

@@ -54,9 +54,8 @@ public:
     core::Result<Profile> getProfile(int64_t id);
 
     // 创建并保存到 SQLite（凭据入 api_key_encrypted）。activateIfNoneActive=true：
-    // 创建后无激活 Profile 则自动激活（不抢占已有），返回值 isActive 供 UI 分文案。
-    // sharedConfigId / fallbackProfileId 建时即设；authField 非法值写侧归一 'both'；
-    // dialectOverride 空 = 按 host 推断、非法值归空；extraSettingsJson 空 = 未配置。
+    // 无激活则自动激活（不抢占已有）；authField 非法值写侧归一 'both'；
+    // dialectOverride 空 = 按 host 推断、非法值归空。
     core::Result<Profile> createProfile(const std::string& name,
                                        const std::string& baseUrl,
                                        const std::string& apiKey,
@@ -74,8 +73,7 @@ public:
     core::Result<void> updateProfile(const Profile& profile);
 
     // 删除 profile（清空凭据三列再删行）；凭据清理失败则中止、行保留可重试。
-    // 删激活 profile 且代理运行中 → 成功后 stopProxy()（还原 settings.json，
-    // 否则 Claude Code 全量 503）；proxyStopped 出参供 UI toast。
+    // 删激活 profile 且代理运行中 → 成功后 stopProxy()；proxyStopped 出参供 UI toast。
     core::Result<void> deleteProfile(int64_t id, bool* proxyStopped = nullptr);
 
     // 启动时清理旧 Keychain 残留（只删 claude:*，护栏：数据根零 profile 整体跳过）。
@@ -95,14 +93,13 @@ public:
     core::Result<Profile> getActiveProfile();
     core::Result<void> setActiveProfile(int64_t id);
 
-    // 复制 Profile：名称加「副本」后缀（重名递增避让，100 次冲突 → fail）；
-    // API key 一并复制（源 key 缺失 → fail）；副本不激活。二段补写失败 →
-    // best-effort 删副本回滚。shared_config_id / dialect_override 一并复制。
+    // 复制 Profile：名称加「副本」后缀（重名递增避让）；API key 一并复制（源缺 → fail）；
+    // 副本不激活；二段补写失败 → best-effort 删副本回滚。
     core::Result<Profile> duplicateProfile(int64_t srcId);
 
     // ---- 共享配置片段（改动当场生效）----
-    // 改/删/解绑后，激活 profile 代理在跑则立即 re-takeover；删除同事务解绑
-    //（不留悬空 id）；解绑后同名键回落 profile 自身值（片段值从不写进 profile 行）。
+    // 改/删/解绑后，激活 profile 代理在跑则立即 re-takeover；删除同事务解绑；
+    // 解绑后同名键回落 profile 自身值（片段值从不写进 profile 行）。
     core::Result<std::vector<SharedConfig>> listSharedConfigs();
     core::Result<SharedConfig> createSharedConfig(const std::string& name,
                                                  const std::string& extraSettingsJson);
@@ -119,9 +116,8 @@ public:
     std::optional<Profile> resolveFallbackProfile(const Profile& profile);
 
     // ---- 模型槽位解析 ----
-    // 激活 profile 的 models_config 里 slot → 实际 model id；"def"/"default" 等价。
-    // 无激活 / 槽位空 / 未知键 → nullopt；default 槽位额外回落 profile.model。
-    // 槽位键 ↔ 成员映射真相源 = provider_config.h 的 DEVDESK_MODEL_SLOT_LIST。
+    // 激活 profile 的 models_config 里 slot → 实际 model id；"def"/"default" 等价；
+    // 无激活 / 槽位空 / 未知键 → nullopt，default 槽位额外回落 profile.model。
     std::optional<std::string> resolveModelSlot(const std::string& slot);
 
     // ---- 连通性测试 ----
@@ -154,9 +150,9 @@ public:
 
     // ---- 代理 server 生命周期 ----
 
-    // 代理启动前置校验（无激活 profile 起代理会全量 503）。两项必须全过，任一
-    // 不过 → fail 且零副作用（不 bind 端口、不接管、不动激活行）：① 有激活且
-    // 可读的 profile；② 连通测试过（GET /v1/models 2xx）。不得在 UI 线程同步调用。
+    // 代理启动前置校验（无激活 profile 起代理会全量 503）；任一不过 → fail 且零副作用
+    //（不 bind、不接管、不动激活行）：① 有激活且可读的 profile；② GET /v1/models 2xx。
+    // 不得在 UI 线程同步调用。
     core::Result<void> validateProxyPreconditions(
         int probeTimeoutMs = kProxyPreStartProbeTimeoutMs);
 
@@ -175,7 +171,7 @@ public:
 
     // ---- 在途流式请求登记 ----
     // stopProxy()/析构必须先 cancelActiveStreams() 再停 server——否则 httplib worker
-    // 阻塞在读 chunk 里，Server::stop() 的 join 挂成幽灵进程。实现已迁 ProxyRuntime。
+    // 阻塞在读 chunk 里，Server::stop() 的 join 挂成幽灵进程。
     void registerActiveStream(
         const std::shared_ptr<platform::http::StreamingResponse>& stream);
     void cancelActiveStreams();
@@ -184,9 +180,8 @@ public:
     int proxyPort() const;            // 0 if not running
 
     // ---- 用该 Profile 生成临时 settings 直连，打开新的 Claude Code 会话 ----
-    // 顺序固定：读 profile → 读密钥 → 临时 settings 落盘 → 启动会话。不启代理、
-    // 不切激活、不碰 ~/.claude/settings.json（零全局副作用）；密钥临时明文落盘。
-    // id 为 0/不存在/读密钥失败/落盘失败 → fail。hint：非致命提示出参。
+    // 不启代理、不切激活、不碰 ~/.claude/settings.json（零全局副作用）；密钥临时明文落盘。
+    // id 为 0/不存在/读密钥失败/落盘失败 → fail；hint：非致命提示出参。
     core::Result<void> runProfile(int64_t id, std::string* hint = nullptr);
 
     // 终端启动注入点（默认 = platform::terminal::launch）；测试注入假实现断言参数。
@@ -195,8 +190,8 @@ public:
             launcher);
 
     // ---- 配置端口 ----
-    // 设置页「代理端口」的运行时镜像（模块不能依赖 module_settings，端口经
-    // 单例桥接）；setter 钳制到 [kMinProxyPort, kMaxProxyPort]。状态在 ProxyRuntime。
+    // 设置页「代理端口」的运行时镜像（端口经单例桥接）；setter 钳制到
+    // [kMinProxyPort, kMaxProxyPort]。状态在 ProxyRuntime。
     int configuredProxyPort() const { return proxyRuntime_.configuredProxyPort(); }
     void setConfiguredProxyPort(int port);
 
@@ -209,9 +204,8 @@ public:
         settingsTakeover_.setPaths(paths);
     }
 
-    // 接管开关（默认 true）。开着时三条路径门控：起代理 → 接管（BASE_URL 指向
-    // 本地代理 + 占位 token + 模型槽位 env，其余字段原样保留）；停代理 → 按
-    // sidecar 快照按键级还原；启动时 → 补还原残留。关掉 = 完全不碰 settings.json。
+    // 接管开关（默认 true）。开着时门控：起代理 → 接管；停代理 → 按 sidecar 快照
+    // 按键级还原；启动时 → 补还原残留。关掉 = 完全不碰 settings.json。
     void setSettingsTakeOverEnabled(bool on) { settingsTakeover_.setEnabled(on); }
     bool settingsTakeOverEnabled() const { return settingsTakeover_.enabled(); }
 
@@ -248,9 +242,8 @@ public:
 private:
     // 行解析/哈希/片段校验等私有工具与 TwoPhaseKeyWrite 在 profile_repository.h
 
-    // 两条编排入口：syncTakeOver() 取激活 Profile + 端口，生效高级设置 JSON
-    // 预先装配进 Profile 副本（片段叠加、片段赢）；失败并入 warnings_（UI 经
-    // lastSyncWarnings 透传），不阻断上层。syncRestore() 失败只 LOG_WARN。
+    // 两条编排入口：syncTakeOver() 取激活 Profile + 端口，生效高级设置 JSON 预先装配
+    // 进 Profile 副本（片段赢）；失败并入 warnings_，不阻断上层。syncRestore() 失败只 LOG_WARN。
     core::Result<void> syncTakeOver();
     void syncRestore();
 
@@ -259,9 +252,8 @@ private:
                                                         int timeoutMs);
     static constexpr int kTestConnectionTimeoutMs = 15000;
 
-    // 反向同步：读 settings.json 的 env → 对齐到激活 profile（出现覆盖/缺席清空/
-    // 守卫键不写也不清）。由 setActiveProfile 在置位事务之前调用。文件不存在/空/
-    // 无 env → no-op 成功；读不了/解析失败 → fail（中止切换）；无变化零写入。
+    // 反向同步：读 settings.json 的 env → 对齐到激活 profile（覆盖/缺席清空/守卫键不写也不清）。
+    // 由 setActiveProfile 在置位事务之前调用；文件不存在/空/无 env → no-op，解析失败 → fail。
     core::Result<void> syncCaptureActiveProfile();
 
     // ---- 直连会话 settings 的 DB 记录 ----

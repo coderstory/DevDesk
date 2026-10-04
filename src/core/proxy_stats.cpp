@@ -1,4 +1,3 @@
-// src/core/proxy_stats.cpp
 // 共享流式统计实现：mutex + 每流累计 + 16 槽采样环
 #include "proxy_stats.h"
 
@@ -34,8 +33,7 @@ struct State {
     int ringCount = 0;
     int ringNext = 0;
 
-    // 速率采样序列环（sparkline 数据源）：每个 usage 事件采样一次 rateTps（约 1-2s 一个，
-    // 64 点覆盖 ~1-2 分钟），rateSeries 按时间序取最近 N 点
+    // 速率采样环（sparkline 数据源）：每个 usage 事件采样一次 rateTps，rateSeries 按时间序取最近 N 点
     static constexpr int kRateRingSize = 64;
     double rateRing[kRateRingSize];
     int rateCount = 0;
@@ -64,9 +62,8 @@ struct State {
         }
     }
 
-    // 最近 2s 窗口速率：基线 = 2s 前最近一次采样的总累计；找不到（全在 2s 内）则用最老采样、
-    // 窗口按实际经过时长算（静止 >2s 时基线追上当前值 → 自然 0）。found=false 分支不能用 baseT=0：
-    // steady 时钟是绝对值，会让 windowMs = 绝对时钟，首 burst 前 2 秒速率严重低估
+    // 最近 2s 窗口速率：基线 = 2s 前最近一次采样的总累计，找不到（全在 2s 内）则用最老采样、
+    // 窗口按实际经过时长算。found=false 分支不能用 baseT=0：steady 是绝对时钟，首 burst 前 2s 会严重低估
     double rateTps(int64_t nowMs) const {
         if (ringCount == 0) return 0.0;
         bool found = false;
@@ -92,10 +89,8 @@ struct State {
     }
 };
 
-// 永不析构持有：原函数局部 static 首次使用点是 home compose 的 snapshot()，只跑在 armExitHook
-// 之后 → atexit LIFO 使 ~State 恒早于 exit hook；而 exit hook 的 stopProxy 会 join worker，
-// worker 取消路径（endStream）仍要写这里 → 对已析构 mutex/map 操作是退出期 UB。与进程同寿即根除。
-// resetForTest 仍可清状态
+// 永不析构持有：exit hook 的 stopProxy 会 join worker，worker 取消路径（endStream）仍要写这里；
+// 函数局部 static 的析构恒早于 exit hook → 退出期 UB，与进程同寿即根除。resetForTest 仍可清状态
 State& state() {
     static auto& s = *new State();
     return s;

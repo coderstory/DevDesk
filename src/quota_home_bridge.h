@@ -1,8 +1,6 @@
-// src/quota_home_bridge.h
-// 首页余量卡片的中立只读桥：数据与解码全部经本桥，module_home 零 include module_claude_proxy
-//（windows_json 编解码、错误枚举映射、错误中文文案的单点都在 module_claude_proxy，首页自写
-// 一份就是「两份真值源」）。三条不变量：1) 只读——不发 HTTP 不写行，[刷新] 只置请求信号；
-// 2) 排序确定——按 profile_id 升序；3) 五态判据是纯函数 quotaCardState。
+// 首页余量卡片的中立只读桥：数据与解码单点在此，module_home 零 include module_claude_proxy。
+// 三条不变量：1) 只读——不发 HTTP 不写行，[刷新] 只置请求信号；2) 排序确定——按 profile_id 升序；
+// 3) 五态判据是纯函数 quotaCardState
 #pragma once
 
 #include <cstdint>
@@ -14,13 +12,9 @@
 
 namespace module::claude::quota {
 
-// 首页余量行五态 + 一个补充态：
-//   Unconfigured provider_id 空（「未配置」→ 去配置按钮）；Incomplete 已选供应商但必填字段空/
-//   key 读不到（从未成功）；Pending 配好了但一次都没成功也没错误（刚保存、定时器没到点）；
-//   Normal 有过成功值且当前无错；FailedStale 当前有错但有过成功值；FailedNever 有错且从未成功
-//（只渲染错误行，绝不画 0% 条）。
-// Pending 是补充态：spec 用「有窗口/有余额」判正常，但 Balance 成功时 windows 恒空，改用
-//「有过成功值」（kind 列非空）后「刚配好没到点」落表外，须显式态否则被误判成失败或 0%
+// 五态语义见 quotaCardState（优先级即契约；FailedNever 只渲染错误行，绝不画 0% 条）。
+// Pending 是补充态：Balance 成功时 windows 恒空，须以「有过成功值」（kind 列非空）显式区分，
+// 否则刚配好没到点被误判成失败或 0%
 enum class QuotaCardState {
     Unconfigured = 0,
     Incomplete,
@@ -30,9 +24,8 @@ enum class QuotaCardState {
     FailedNever,
 };
 
-// 余量形态（与 quota_provider.h 的 QuotaKind 同义）。本头保持中立，不能把供应商层头
-//（含 platform/http_client.h）拖进来，故另立同义枚举。同步闸放在 quota_home_view.cpp 的
-// static_assert（那里两个枚举都可见）；Count 是哨兵，断言既比前缀逐值同义也比哨兵相等
+// 余量形态（与 quota_provider.h 的 QuotaKind 同义）。本头保持中立，不能拖入供应商层头，
+// 故另立同义枚举；同步闸在 quota_home_view.cpp 的 static_assert（含哨兵 Count 相等）
 enum class QuotaHomeKind { Tiered = 0, Balance = 1, Count = 2 };
 
 // 一个窗口的展示态。usedPercent 是已用百分比，已由桥 clamp 到 [0,100]（首页不再自己裁）
@@ -66,10 +59,9 @@ struct QuotaHomeRow {
     std::string lastErrorKind;   // 库列文本：none/auth/entitlement/shape/transient/not_configured
 };
 
-// 五态判据（纯函数，无 IO）。errorKindName 是 last_error_kind 列文本原样（空串=从没写过→无错）。
-// 优先级即契约（改顺序必须改用例）：1) providerId 空→Unconfigured（哪怕有历史结果也不画条）；
-// 2) 无错+有过成功值→Normal；3) 无错+从未成功→Pending；4) 有错+有过成功值→FailedStale；
-// 5) 有错+从未成功+配置类→Incomplete；6) 其余→FailedNever
+// 五态判据（纯函数，无 IO）；errorKindName 是 last_error_kind 列文本原样（空串=无错）。优先级即
+// 契约（改顺序必须改用例）：providerId 空→Unconfigured；无错+有成功值→Normal；无错+从未成功→
+// Pending；有错+有成功值→FailedStale；有错+从未成功+配置类→Incomplete；其余→FailedNever
 QuotaCardState quotaCardState(const std::string& providerId,
                               const std::string& errorKindName,
                               bool hasEverSucceeded);
@@ -78,18 +70,15 @@ QuotaCardState quotaCardState(const std::string& providerId,
 // 只读；任一子查询失败即整体 fail（首页显示「加载失败」，不静默空态）
 core::Result<std::vector<QuotaHomeRow>> listQuotaHomeRows(core::data::SqliteDb& db);
 
-// 手动刷新请求：只置一个进程级请求位，不阻塞不发 HTTP；后台刷新线程在 sleep 切片消费它，
-// 最坏 ~一个切片（默认 200ms）就开跑。不做同步 refreshNow——真网络查询 N 个 profile 最坏
-// N×15s 会冻住 UI 线程
+// 手动刷新请求：只置一个进程级请求位，不阻塞不发 HTTP；后台刷新线程在 sleep 切片消费，
+// 最坏 ~一个切片（默认 200ms）就开跑。不做同步 refreshNow——网络查询最坏 N×15s 会冻住 UI 线程
 void requestQuotaImmediateRefresh();
 
-// 消费请求位（后台刷新线程每片调一次；true=本次消费到，要立即跑一轮）。独立函数以便断言
-//「点按钮后确实放行一轮」
+// 消费请求位（后台刷新线程每片调一次；true=本次消费到要立即跑一轮）；独立函数以便断言
 bool consumeQuotaImmediateRefreshRequest();
 
-// 真实查库计数（测试缝，生产零调用点）：数 listQuotaHomeRows 被调几次。形状断言会在换路径
-//（改函数名/内联/转发）时静默失效，计数是运行时事实换路径照样数得出。语义是全局计数，
-// 用例只断言增量不依赖绝对值
+// 真实查库计数（测试缝，生产零调用点）：数 listQuotaHomeRows 被调几次；换路径（改名/内联/转发）
+// 静默失效时计数仍有效。语义是全局计数，用例只断言增量
 int64_t quotaHomeRowsQueryCountForTest();
 
 // 复位计数（用例开头调）

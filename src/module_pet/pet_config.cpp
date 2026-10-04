@@ -1,5 +1,4 @@
-// src/module_pet/pet_config.cpp
-// pet_config 的 app_config 表存取；整份存一行（键 pet_config），不读旧文件、不迁移。
+// pet_config 的 app_config 表存取；整份存一行（键 pet_config），不读文件。
 #include "module_pet/pet_config.h"
 
 #include <utility>

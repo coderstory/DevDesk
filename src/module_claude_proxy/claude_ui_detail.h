@@ -1,11 +1,7 @@
 // src/module_claude_proxy/claude_ui_detail.h
-// 右栏单元：详情面板四 pane + 操作按钮组 + 「最近调用」页签（tab 4），逐字自
-// claude_module.cpp 的 compose 搬出。
-// 「返回内容底沿」契约：每个 pane 函数返回本 pane 内容底沿 y（与 y0 同坐标系）。
-// 布局统一为锚定式：容器可用高只有一个来源（bodyH）；贴底元素锚容器底
-//（actY = bodyH − 动作块预留）；内容视口与越界判定用真实裁剪下沿 contentBottom
-//（pane 多收该参数，行数预算按它推，不用硬上限/硬下限）。
-// 锚定而非写死绝对 y：Windows 侧 bodyH 与 macOS 差 15~45px。
+// 右栏单元：详情面板四 pane + 操作按钮组 + 「最近调用」页签（tab 4）。
+// 契约：每个 pane 函数返回本 pane 内容底沿 y（与 y0 同坐标系）。
+// 布局锚定式：贴底元素锚容器底（actY = bodyH − 动作块预留），行数预算用真实裁剪下沿 contentBottom。
 #pragma once
 
 #include "claude_service.h"
@@ -35,21 +31,15 @@ struct DetailView {
     std::time_t now = 0;               // 调用时间列「今天/昨天」判定
     // 共享配置片段快照（基础 pane 绑定行 + 生效 env 来源标注）
     const std::vector<SharedConfig>* sharedConfigs = nullptr;
-    // 高级配置 pane：
-    //   dialectText = 生效方言展示串。compose 装配：显式覆盖 → 「名（显式）」，
-    //   空 → 「自动（按站点推断）→ 生效名」；显示名走 dialectKindDisplayName
-    //   fallbackName = 备用 Profile 名。compose 从 profiles 快照按
-    //   fallbackProfileId 解析（悬空/0 → 「无」/「（已删除）」），pane 内零服务调用
+    // 高级配置 pane：dialectText = 生效方言展示串（显式覆盖 →「名（显式）」，空 →
+    //「自动（按站点推断）→ 生效名」）；fallbackName = 备用 Profile 名（悬空/0 →「无」/「（已删除）」）。
     std::string dialectText;
     std::string fallbackName;
-    // 高级配置 pane 的键来源清单：生效 JSON（profile ⊕ 片段，片段赢）逐顶层键
-    // → 来源标签。compose 装配（pane 内零服务调用）；model 键附加说明进
-    // extraSettingsNote。解析失败/空 JSON → 列表空 + pane 单行说明
+    // 高级配置 pane 的键来源清单：生效 JSON（profile ⊕ 片段，片段赢）逐顶层键 → 来源标签；
+    // compose 装配（pane 内零服务调用）；model 键附加说明进 extraSettingsNote。
     std::vector<std::pair<std::string, std::string>> extraSettingsKeys;
     std::string extraSettingsNote;
-    // 注：没有 bodyH 字段——容器可用高只由 drawDetailPanel 的 bodyH 形参持有，
-    // 行数预算一律用 contentBottom（曾经的 DetailView::bodyH 是与真实裁剪下沿
-    // 差 105px 的另一个量，按它算预算是 bug）
+    // 没有 bodyH 字段：行数预算一律用 contentBottom（真实裁剪下沿）。
 };
 
 // 生效来源短标签（compose 装配与 pane 共用的单一来源）：三类来源 → 中文标签
@@ -74,10 +64,8 @@ struct DetailActions {
     // 不因「还没配置」而不渲染。
     std::function<void(int64_t id)> quota;
     std::function<void()> openCalls;                                 // 「查看全部 →」
-    // 删除 / 建副本 / 复制配置三键自详情动作行删除（已有列表右键菜单），对应
-    // 回调字段一并撤除；业务实体保留经 ProfileListActions 供右键菜单
-    // 模型映射 pane 的「1M」开关落库 —— 入参 = profile id + 槽位表下标（表序）
-    // + 目标状态。只有可用行（支持 1M 且 base 非空）会触发（其余置灰不挂 onChange）
+    // 模型映射 pane 的「1M」开关落库：入参 = profile id + 槽位表下标（表序）+ 目标状态。
+    // 只有可用行（支持 1M 且 base 非空）会触发（其余置灰不挂 onChange）。
     std::function<void(int64_t profileId, std::size_t slotIndex, bool on)> setOneM;
 };
 
@@ -88,7 +76,7 @@ struct DetailActions {
 float drawDetailBasic(eui::Ui& ui, float x0, float y0, float w,
                       const core::theme::Tokens& t, const DetailView& v,
                       float contentBottom);
-// a = 动作回调（批次 F 起收）：模型映射 pane 的「1M」开关经 a.setOneM 落库
+// a = 动作回调；模型映射 pane 的「1M」开关经 a.setOneM 落库
 float drawDetailModels(eui::Ui& ui, float x0, float y0, float w,
                        const core::theme::Tokens& t, const DetailView& v,
                        const DetailActions& a, float contentBottom);

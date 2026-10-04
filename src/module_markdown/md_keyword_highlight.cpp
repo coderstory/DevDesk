@@ -1,10 +1,7 @@
-// src/module_markdown/md_keyword_highlight.cpp
-// 代码关键字多色词法器（Phase 3 ⑤，接口语义与扩展路线见头文件）。
-// 形态：单一手写状态机 + per-language LangSpec 数据表（语言数少时比 vtable 干净，加语言
-//   在 langOf/词法开关两处扩展）。按行驱动：跨行 token 用 mode_ 在行间传递，每行独立产
-//   run ⇒「空行无 run、普通 run 不含换行」与逐行 fallback 一致，跨行 token 按行切同色 run。
-// 容错（与 md_highlight 同源）：识别不确定 = 漏标回默认色，不错标（未闭合单行串整段默认；
-//   数字过配宁多并一档）。
+// 代码关键字多色词法器（接口语义见头文件）。
+// 形态：单一手写状态机 + per-language LangSpec 数据表。按行驱动：跨行 token 用
+// mode_ 在行间传递，跨行 token 按行切同色 run。
+// 容错（与 md_highlight 同源）：识别不确定 = 漏标回默认色，不错标。
 #include "md_keyword_highlight.h"
 
 #include <cctype>

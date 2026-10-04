@@ -14,7 +14,7 @@ void drawDialogFrame(eui::Ui& ui, const eui::Screen& screen, const DialogFrame& 
         .screen(screen.width, screen.height)
         .size(frame.widthPx(), frame.height)
         .theme(themeTokens);
-    // claude / markdown 不调 .zIndex()（用组件默认 1000），todo 按 popupZ() 显式给值。
+    // claude / markdown 不调 .zIndex()（用组件默认 1000），todo 显式给值。
     if (frame.zIndex != kDialogZIndexUnset) {
         builder.zIndex(frame.zIndex);
     }
@@ -24,7 +24,7 @@ void drawDialogFrame(eui::Ui& ui, const eui::Screen& screen, const DialogFrame& 
 void drawDialogText(eui::Ui& ui, const std::string& id, float dialogWidth,
                     const std::string& text, float fontSize, const eui::Color& color,
                     const DialogTextOptions& options) {
-    // 校验错误行现状是「空串不建节点」（if (!err.empty()) 包一层），不是画空文本。
+    // 校验错误行是「空串不建节点」，不是画空文本。
     if (options.skipIfEmpty && text.empty()) {
         return;
     }
@@ -55,7 +55,7 @@ void drawDialogTitle(eui::Ui& ui, const std::string& id, float dialogWidth,
     textOptions.inset = options.inset;
     textOptions.height = options.height;
     textOptions.lineHeight = options.lineHeight;
-    textOptions.bold = true;  // 现状 13 处标题一律 700
+    textOptions.bold = true;  // 标题一律 700
     drawDialogText(ui, id, dialogWidth, text, fontSize, color, textOptions);
 }
 
@@ -71,7 +71,7 @@ float buttonWidth(float dialogWidth) {
     return (dialogWidth - kDialogInsetX * 2.0f - kDialogButtonGap) * 0.5f;
 }
 
-// 单按钮：几何 + 文案字号 + 该站点现状的样式组合，最后统一 onClick。
+// 单按钮：几何 + 文案字号 + 样式组合，最后统一 onClick。
 void buildDialogButton(eui::Ui& ui, const std::string& id, float x, float y, float width,
                        const DialogButtonSpec& spec, const core::theme::Tokens& t,
                        const components::theme::ThemeColorTokens& themeTokens) {

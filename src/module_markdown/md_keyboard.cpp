@@ -150,7 +150,7 @@ bool applyEnterList(EditBuffer& buf) {
 }
 
 void applyTab(EditBuffer& buf, bool shift) {
-    // spec §5.2：缩进单位 = 4 空格（反缩进每行去 1 个 Tab 或至多 4 个前导空格）
+    // 缩进单位 = 4 空格
     constexpr int kIndentUnit = 4;
     const int s = std::min(buf.selStart, buf.selEnd);
     const int e = std::max(buf.selStart, buf.selEnd);
@@ -200,8 +200,8 @@ void applyTab(EditBuffer& buf, bool shift) {
         }
     }
 
-    // 偏移修正：off 始终按原始坐标比较，shift 累计位移最后一次性应用（原实现边比边移，
-    // 删减钳回行首时拿已位移的 off 比原始 pos，多行反缩进选区端点偏 1）。
+    // 偏移修正：off 始终按原始坐标比较，shift 累计位移最后一次性应用
+    //（边比边移会让多行反缩进选区端点偏 1）。
     const auto adjust = [&edits](int& offRef) {
         int off = offRef;
         int shift = 0;
@@ -229,7 +229,7 @@ void applyWrapAround(EditBuffer& buf, const std::string& marker) {
     const int s = std::min(buf.selStart, buf.selEnd);
     const int e = std::max(buf.selStart, buf.selEnd);
     const int m = static_cast<int>(marker.size());
-    // 再按 = 去包裹（unwrap toggle，spec §5.2）：选区两端恰为 marker → 移除
+    // 再按 = 去包裹：选区两端恰为 marker → 移除
     if (s != e && s - m >= 0 && e + m <= static_cast<int>(buf.text.size()) &&
         buf.text.compare(static_cast<size_t>(s - m), static_cast<size_t>(m),
                          marker) == 0 &&

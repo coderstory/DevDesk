@@ -1,11 +1,8 @@
 // src/module_claude_proxy/quota/ccswitch_source.h
-// 从 cc-switch 只读读取 Claude 供应商配置（不复制密钥）。
-// 只存 cc-switch 的 provider id 作引用、现读现取：改了 key / base_url 下次查询即生效，
-//   且 DevDesk 库里没有第二份密钥副本；密钥只在内存过一手，不落库、不落日志、不进文案。
-// 只读硬约束：一律 SQLITE_OPEN_READONLY（kCcSwitchOpenFlags），不 CREATE、不建表、
-//   不写 schema、不动 -wal/-shm；不要拿 core/sqlite_db.cpp 的读写 SqliteDb 来读（反面教材）。
-// 失败语义：库不存在 / 打不开 / 表结构不认识 / JSON 字段坏 → 不抛异常，返回空列表 +
-//   面向用户的「来源不可用」原因；缺字段一律当空值退化，不整体失败。
+// 从 cc-switch 只读读取 Claude 供应商配置；密钥只在内存过一手，不落库、不落日志、不进文案。
+// 只存 cc-switch 的 provider id 作引用、现读现取：改了 key / base_url 下次查询即生效。
+// 只读硬约束：恒 SQLITE_OPEN_READONLY，不 CREATE、不写 schema、不动 -wal/-shm、不用读写连接。
+// 失败语义：库不存在 / 打不开 / 表结构不认识 / JSON 字段坏 → 不抛异常，返回空列表 + 面向用户的原因；缺字段一律当空值退化。
 #pragma once
 
 #include <string>
@@ -13,7 +10,7 @@
 
 namespace module::claude::quota {
 
-// 一个 cc-switch Claude 供应商在 DevDesk 侧需要的全部信息（字段语义对齐 cc-switch bfaaba16）。
+// 一个 cc-switch Claude 供应商在 DevDesk 侧需要的全部信息：
 struct CcSwitchProviderInfo {
     std::string id;     // cc-switch providers.id（DevDesk 侧只存这个，当引用）
     std::string name;   // 展示名（providers.name）
@@ -50,14 +47,12 @@ std::string ccSwitchDbPath();
 // 读出全部 Claude 侧（app_type = "claude"）供应商。恒返回、不抛异常；行序 = 扫描序（首个命中即取）。
 CcSwitchProviderList listCcSwitchProviders();
 
-// 按 base_url 自动匹配：host 完全相等（大小写不敏感）+ path 完全相等（去尾斜杠 / query）。
-// host 用标签边界语义，api.deepseek.com 不命中 api.deepseek.com.evil.com（cc-switch 用裸 contains，本模块更严）。
-// 命中返回 provider id；未命中 / baseUrl 为空 / 来源不可用 → 空串。
+// 按 base_url 自动匹配：host 完全相等（大小写不敏感、标签边界语义，api.deepseek.com 不命中 api.deepseek.com.evil.com）
+// + path 完全相等（去尾斜杠 / query）；命中返回 provider id，未命中 / baseUrl 为空 / 来源不可用 → 空串。
 std::string matchCcSwitchProviderByBaseUrl(const std::string& baseUrl);
 
 // 打开 cc-switch 库的 sqlite flags：恒含 SQLITE_OPEN_READONLY，恒不含 READWRITE / CREATE。
-// 暴露出来的理由：SQLite 拿不到 O_RDWR 时会静默降级成只读（chmod 0444 的库用 READWRITE
-// 照样打开成功），「权限 + 内容没变」区分不出两者，单测只能直接问这个常量。
+// 暴露是因为 SQLite 拿不到 O_RDWR 时会静默降级成只读，「权限 + 内容没变」区分不出，单测只能直接问这个常量。
 extern const int kCcSwitchOpenFlags;
 
 }  // namespace module::claude::quota

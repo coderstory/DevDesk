@@ -1,10 +1,5 @@
 // src/module_claude_proxy/ccswitch_import.cpp
-// 从 cc-switch 导入 Profile：只读读侧 + 纯映射实现（字段映射表见头文件）。
-// 平台适配（业务代码零 #ifdef）：主目录探测与打开 flags 在 quota/ccswitch_source，
-// sqlite 读取骨架（RAII / 探列 / columnText / 只读打开）在 quota/ccswitch_sqlite.h，
-// 本文件与 quota/ccswitch_source.cpp 真共用同一份。
-// ⚠ Windows 待验证：cc-switch 库路径未实测，推测 %USERPROFILE%\.cc-switch\cc-switch.db；
-// 实测后若不同，改 ccSwitchDbPath 一处即可（本文件不含路径假设）。
+// cc-switch 导入实现（字段映射表见头文件）。Windows 的 cc-switch 库路径尚未实测。
 #include "ccswitch_import.h"
 
 #include "provider_config.h"
@@ -38,7 +33,7 @@ using quota::ccswitch_sqlite::providerColumns;
 using quota::ccswitch_sqlite::sqliteError;
 using quota::ccswitch_sqlite::StmtHandle;
 
-// 结果体装配的一行 wrapper（模板的 ListT 只在返回类型里，无法推导）。
+// wrapper：模板参数 ListT 只在返回类型里，无法推导。
 CcSwitchImportRows unavailable(CcSwitchImportStatus status, std::string reason) {
     return quota::ccswitch_sqlite::makeUnavailable<CcSwitchImportRows>(
         status, std::move(reason));
@@ -48,12 +43,8 @@ CcSwitchImportRows unavailable(CcSwitchImportStatus status, std::string reason) 
 constexpr char kAppTypeClaude[] = "claude";
 constexpr char kAppTypeClaudeDesktop[] = "claude-desktop";
 
-// busy timeout 见 quota/ccswitch_sqlite.h（kBusyTimeoutMs，两条读路径共用）。
-
-// env 里被「抽成独立 Profile 字段」而不进 extraEnvJson 的四个键（集合语义）：
-// BASE_URL → baseUrl；AUTH_TOKEN / API_KEY → apiKey（TOKEN 优先）；MODEL → model。
-// 其余 env 键全落 extraEnvJson。例外：双 key 并存时未用作 apiKey 的 API_KEY
-// 保留进 extraEnvJson（见 mapCcSwitchProviderToProfile 内注释）。
+// env 里抽成独立 Profile 字段的四个键（BASE_URL→baseUrl；AUTH_TOKEN / API_KEY→
+// apiKey，TOKEN 优先；MODEL→model），其余 env 键全落 extraEnvJson。
 constexpr char kEnvBaseUrl[] = "ANTHROPIC_BASE_URL";
 constexpr char kEnvAuthToken[] = "ANTHROPIC_AUTH_TOKEN";
 constexpr char kEnvApiKey[] = "ANTHROPIC_API_KEY";
@@ -83,8 +74,7 @@ CcSwitchImportRows readAll() {
         return unavailable(CcSwitchImportStatus::Schema,
                            "cc-switch 数据库里没有 providers 表（库结构可能已变）");
     }
-    // 导入要四列全在（身份/筛产品/名/映射来源），缺任一列导入路径就没法工作
-    //——不像 quota 侧能逐字段退化。
+    // 导入要四列全在，缺任一列即 Schema 错误。
     for (const char* required : {"id", "app_type", "name", "settings_config"}) {
         if (!hasColumn(columns, required)) {
             return unavailable(
@@ -93,7 +83,6 @@ CcSwitchImportRows readAll() {
         }
     }
 
-    // app_type IN (...)：SQL 里做产品筛选，不用读出来再判。
     const std::string sql =
         "SELECT id, app_type, name, settings_config FROM providers "
         "WHERE app_type IN (?, ?)";
@@ -164,7 +153,7 @@ CcSwitchImportMapping mapCcSwitchProviderToProfile(
         return skipped("cc-switch 里这条配置没有名称");
     }
 
-    // 同名冲突 → 跳过不覆盖；放最前判（撞名的那条不该被看第二眼）。
+    // 同名冲突 → 跳过不覆盖。
     if (std::find(existingNames.begin(), existingNames.end(), ccName) !=
         existingNames.end()) {
         return skipped("DevDesk 已有同名 Profile，已跳过");
@@ -189,14 +178,12 @@ CcSwitchImportMapping mapCcSwitchProviderToProfile(
     const std::string apiKey =
         !authToken.empty() ? authToken : apiKeyEnv;
 
-    // 缺密钥 → 确定性跳过：源条目缺必填字段重试也不会好，失败留给可重试/系统
-    // 错误。不拦会落进 createProfile 的「apiKey 不能为空」失败桶，稀释失败信号。
+    // 缺密钥 → 确定性跳过（源缺必填字段，重试也不会好）。
     if (apiKey.empty()) {
         return skipped("缺密钥（env 无 ANTHROPIC_AUTH_TOKEN / ANTHROPIC_API_KEY）");
     }
 
-    // authField 三态：两键都非空 → both；只有 TOKEN → bearer；只有 API_KEY →
-    // api_key（都无 → 上方已跳过；初值 both 只作兜底）。
+    // authField 三态：两键都非空 → both；只有 TOKEN → bearer；只有 API_KEY → api_key。
     std::string authField = "both";
     if (!authToken.empty() && !apiKeyEnv.empty()) {
         authField = "both";
@@ -206,8 +193,7 @@ CcSwitchImportMapping mapCcSwitchProviderToProfile(
         authField = "api_key";
     }
 
-    // extraEnvJson：四个保留键之外的全部键值，走既有 serializeExtraEnv（与表单
-    // 写 extra_env 同一序列化器，形态与 UI 手填路径逐字同款）。非字符串值丢弃：
+    // extraEnvJson：保留键之外的全部键值，走 serializeExtraEnv。非字符串值丢弃：
     // extra_env 契约是 string→string，硬塞进去等于把整段配置读成空。
     std::map<std::string, std::string> extraEnv;
     for (const std::string& key : env.keys()) {
@@ -216,10 +202,8 @@ CcSwitchImportMapping mapCcSwitchProviderToProfile(
         if (value.empty()) continue;
         extraEnv[key] = value;
     }
-    // 双 key 并存：未用作 apiKey 的 API_KEY 保留进 extraEnvJson，不丢值。运行期
-    // 安全靠既有守卫：直连写选中密钥键时清掉另一密钥键（恒单凭据）；代理
-    // applyHeaders 无条件丢弃客户端凭据；展示按键名掩码截断。只可能是 API_KEY：
-    // TOKEN 非空时 apiKey 已取 TOKEN。
+    // 双 key 并存：未用作 apiKey 的 API_KEY 保留进 extraEnvJson（TOKEN 非空时
+    // apiKey 已取 TOKEN，故此处只可能是 API_KEY）；运行期安全由既有守卫保证。
     if (!authToken.empty() && !apiKeyEnv.empty()) {
         extraEnv[kEnvApiKey] = apiKeyEnv;
     }

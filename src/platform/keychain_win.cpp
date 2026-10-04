@@ -1,9 +1,8 @@
 // src/platform/keychain_win.cpp
 // Windows：DPAPI（CryptProtectData/CryptUnprotectData，用户级、禁弹 UI）+ 文件存储，密文 blob 落盘
 // %APPDATA%/DevDesk/keychain/<service>/<account>.key。service/account 做可逆文件名编码（白名单
-// [A-Za-z0-9-_] 原样、其余 %XX，见 encodeName）→ 不同 account 必落不同文件；落盘走 tmp+rename
-// 原子写（core::atomicWriteFile）。CP-11 前用不可逆旧命名（legacyName），load 缺失时回退读旧文件、
-// delete 两侧都清、sweep 两形态都认。与 macOS 语义对齐：load 不存在 → NotFound；delete 不存在 → Ok。
+// [A-Za-z0-9-_] 原样、其余 %XX，见 encodeName）→ 不同 account 必落不同文件；落盘走 tmp+rename 原子写。
+// 旧命名文件仍兼容：load 缺失时回退读旧命名、delete 两侧都清、sweep 两形态都认。load 不存在 → NotFound；delete 不存在 → Ok。
 #include "keychain.h"
 
 #include <core/atomic_write.h>
@@ -53,7 +52,7 @@ std::string encodeName(const std::string& name) {
     return out.empty() ? std::string("%") : out;
 }
 
-// CP-11 前的旧命名（不可逆）：白名单外替换 '_'。仅用于读取/清理旧文件，新写入一律 encodeName。
+// 旧命名（不可逆）：白名单外替换 '_'。仅用于读取/清理旧文件，新写入一律 encodeName。
 std::string legacyName(const std::string& name) {
     std::string out;
     out.reserve(name.size());
@@ -80,7 +79,7 @@ std::string dpapiError(const char* what) {
 
 } // namespace
 
-// 真实实现（经 keychain.h 的函数指针表转发）
+// 真实实现
 core::Result<void> realStoreSecret(const std::string& service,
                                    const std::string& account,
                                    const std::string& secret) {
@@ -107,8 +106,7 @@ core::Result<void> realStoreSecret(const std::string& service,
             "create keychain dir failed: " + ec.message());
     }
 
-    // 原子写替代旧 ofstream(binary|trunc) 原地覆盖：崩溃/断电不再留半截文件（否则 loadSecret
-    // 分不清「没配」与「损坏」），失败时目标保持原内容。错误码保持历史语义：落盘失败一律 FileWriteFailed。
+    // 原子写保证崩溃/断电不留半截文件（否则 loadSecret 分不清「没配」与「损坏」），失败时目标保持原内容。
     const std::string blob(reinterpret_cast<const char*>(output.pbData),
                            output.cbData);
     LocalFree(output.pbData);
@@ -126,8 +124,8 @@ core::Result<std::string> realLoadSecret(const std::string& service,
                                          const std::string& account) {
     const fs::path path = keyFilePath(service, account);
 
-    // CP-11 前落盘用不可逆旧命名，新编码缺失时回退读旧文件（内容同样 DPAPI 解密）。service 维度实际
-    // 全为白名单字符、两命名同形，故不另开目录回退；读成功不回写 encoded（读取路径无写副作用）。
+    // 旧命名文件兼容：新编码缺失时回退读旧文件（内容同样 DPAPI 解密）；
+    // 读成功不回写 encoded（读取路径无写副作用）。
     std::error_code ec;
     fs::path target = path;
     if (!fs::exists(path, ec)) {
@@ -175,7 +173,6 @@ core::Result<void> realDeleteSecret(const std::string& service,
         path.parent_path() / (legacyName(account) + ".key");
 
     // 新编码与旧命名两侧都清，否则 load 会经旧命名回退把已删密钥读回来；任一不存在不算错（幂等）。
-    // 两形态同形时第二次 remove 是无害空操作。
     std::error_code ec;
     fs::remove(path, ec);
     if (ec) {
@@ -213,15 +210,15 @@ core::Result<std::vector<std::string>> realDeleteSecretsNotIn(
         keep.insert(legacyName(a));
     }
 
-    // 白名单前缀：落盘 stem 是 encodeName(account)（现行）或 legacyName(account)（CP-11 前），不命中
+    // 白名单前缀：落盘 stem 是 encodeName(account) 或 legacyName(account)（旧命名），不命中
     // 一律保留。比对发生在编码后的文件名形态上，故不能直调 shouldDeleteOrphan。
     const std::string sweepPrefix = encodeName("claude:");
     auto sweepableStem = [&sweepPrefix](const std::string& stem) {
         if (stem.compare(0, sweepPrefix.size(), sweepPrefix) == 0) {
             return true;
         }
-        // 旧形态：legacyName("claude:<id>") = "claude_<id>"（':' → '_'）。不可逆命名的歧义代价：字面
-        // claude_<n> 账号也会被判可清，可接受——真实写入口只有 claude:<id>，从不产生字面 claude_<n>。
+        // 旧形态：legacyName("claude:<id>") = "claude_<id>"。字面 claude_<n> 账号也会被判可清，可接受
+        //——真实写入口只有 claude:<id>，从不产生字面 claude_<n>。
         if (stem.size() > 7 && stem.compare(0, 7, "claude_") == 0) {
             bool allDigits = true;
             for (char ch : stem.substr(7)) {

@@ -1,11 +1,8 @@
 // src/module_claude_proxy/quota/deepseek_provider.cpp
-// DeepSeek 余额 provider —— Balance 型。
-// 移植 cc-switch（bfaaba16）services/balance.rs 的 DeepSeek 分支：
-//   GET https://api.deepseek.com/user/balance，Bearer + Accept: json，超时 15s；2xx 解析
-//   balance_infos[0].total_balance / currency；is_available == false → Entitlement。
-// DeepSeek 只有余额，无窗口 / 无 used / 无 reset → QuotaResult.windows 恒空。
-// 错误语义：恒返回 QuotaResult、不抛异常；传输失败 → Transient，401 → Auth，
-//   403 / is_available=false → Entitlement，结构不认识 → Shape，空 key → NotConfigured。
+// DeepSeek 余额 provider —— Balance 型：只有余额，无窗口 / 无 used / 无 reset。
+// GET https://api.deepseek.com/user/balance，Bearer，超时 15s；2xx 解析 balance_infos[0].total_balance / currency。
+// 恒返回 QuotaResult、不抛异常：传输失败 → Transient，401 → Auth，403 / is_available=false → Entitlement，
+// 结构不认识 → Shape，空 key → NotConfigured。
 #include "deepseek_provider.h"
 
 #include <cctype>
@@ -48,7 +45,7 @@ std::string hostOf(const std::string& url) {
     return s;
 }
 
-// host 标签边界匹配：host == domain 或以 "." + domain 结尾。防 api.deepseek.com.evil.com 伪造（cc-switch 用裸子串会误命中）。
+// host 标签边界匹配：host == domain 或以 "." + domain 结尾，防 api.deepseek.com.evil.com 伪造。
 bool hostMatches(const std::string& host, const std::string& domain) {
     if (host == domain) return true;
     if (host.size() <= domain.size() + 1) return false;
@@ -56,7 +53,7 @@ bool hostMatches(const std::string& host, const std::string& domain) {
     return host[host.size() - domain.size() - 1] == '.';
 }
 
-// JSON number 与字符串数字都收（DeepSeek 实际返回字符串小数如 "110.00"）。strtod 不抛异常，要求整串是数字（"12abc" 判不认识）。
+// JSON number 与字符串数字都收（上游返回字符串小数）。strtod 不抛异常，要求整串是数字（"12abc" 判不认识）。
 bool numberField(const platform::json::JsonObject& obj, const char* key, double& out) {
     const platform::json::JsonValue value = obj.get(key);
     if (value.isNumber()) {
@@ -109,9 +106,8 @@ public:
         if (resp.networkError) {
             return failure(QuotaError::Transient, "网络请求失败：" + resp.errorMessage);
         }
-        // 状态码按「调用方该做什么」分类：
-        //   401 → Auth；403 → Entitlement（改密钥没用）；408/429/5xx → Transient；
-        //   其余 4xx → Shape（确定性失败，不是返回空卡）
+        // 状态码按「调用方该做什么」分类：401 → Auth；403 → Entitlement（改密钥没用）；408/429/5xx → Transient；
+        // 其余 4xx → Shape（确定性失败，不是返回空卡）
         if (resp.statusCode == 401) {
             return failure(QuotaError::Auth, "鉴权失败（HTTP 401）：请检查 API 密钥");
         }
@@ -143,7 +139,7 @@ public:
                            "余额不足，请充值（上游标记 Insufficient balance）");
         }
 
-        // balance_infos 必须非空数组：cc-switch 对空数组静默成功，本模块有意收紧为 Shape（该报错而非空卡）。
+        // balance_infos 必须为非空数组，否则按 Shape 报错（不静默返回空卡）。
         const platform::json::JsonValue infos = root.get("balance_infos");
         if (!infos.isArray() || infos.size() <= 0) {
             return failure(QuotaError::Shape, "响应缺少 balance_infos 数组（或为空）");
@@ -161,12 +157,11 @@ public:
             return failure(QuotaError::Shape, "balance_infos[0] 缺少 currency");
         }
 
-        // 多币种取表序首条（cc-switch 按数组序展示，主币种在首条，顺序稳定）；DevDesk 单标量取首条最贴近。
-        // planName 留空（上游没给套餐名）。
+        // 多币种取数组首条（主币种在首条，顺序稳定）；planName 留空（上游没给套餐名）。
         QuotaResult out;
         out.kind = QuotaKind::Balance;
-        out.balanceRemaining = total;        // remaining = total_balance
-        out.currency = currency.asString();  // 币种原样不换算
+        out.balanceRemaining = total;
+        out.currency = currency.asString();
         return out;
     }
 };
@@ -174,7 +169,7 @@ public:
 }  // namespace
 
 QuotaProvider* createDeepSeekProvider() {
-    static DeepSeekProvider instance;  // 进程内单例（provider 无状态，只借不还）
+    static DeepSeekProvider instance;
     return &instance;
 }
 

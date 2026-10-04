@@ -1,4 +1,3 @@
-// src/module_pet/pet_skin.cpp
 // 皮肤解析 + 内置皮肤目录发现；机器人/幽灵为随包静态资产，运行期不程序生成 PNG。
 #include "module_pet/pet_skin.h"
 
@@ -105,7 +104,7 @@ Result<PetSkin> parsePetSkinJson(const std::string& jsonText) {
         return Result<PetSkin>::fail(idle.errorCode(), "states.idle: " + idle.errorMessage());
     }
     skin.idleFrames = std::move(idle.value());
-    // sleep/typing 帧缺失或非法一律静默忽略（状态机各自回落 idle，老皮肤包零迁移）。
+    // sleep/typing 帧缺失或非法一律静默忽略（状态机各自回落 idle）。
     if (states.has("poked")) {
         auto poked = parseFrameArray(states.get("poked"), /*asFrameNames=*/true);
         if (poked.isOk()) {
@@ -160,8 +159,7 @@ Result<PetSkin> loadSkin(const std::filesystem::path& dir) {
 }
 
 Result<PetSkin> ensureDefaultSkin() {
-    // 默认皮肤 = 随包 robot。候选根按 skinRootCandidates 顺序逐个尝试，任一成功即返回；
-    // 全部失败返回 fail（生成器已删，不再写盘生成）。
+    // 默认皮肤 = 随包 robot。候选根按 skinRootCandidates 顺序逐个尝试，任一成功即返回。
     for (const std::filesystem::path& root : skinRootCandidates()) {
         auto skin = loadSkin(root / kDefaultSkinName);
         if (skin.isOk()) {

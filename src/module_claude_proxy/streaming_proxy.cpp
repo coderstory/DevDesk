@@ -1,5 +1,5 @@
 // src/module_claude_proxy/streaming_proxy.cpp
-// SSE 流式 Claude 代理实现（spec §10.4）
+// SSE 流式 Claude 代理实现
 #include "streaming_proxy.h"
 
 #include "core/logging.h"
@@ -13,7 +13,7 @@
 
 namespace module::claude {
 
-// ---------- SSE 事件重组 + usage 解析（设计 §3） ----------
+// ---------- SSE 事件重组 + usage 解析 ----------
 
 namespace {
 
@@ -28,9 +28,8 @@ bool takeTokenField(const platform::json::JsonObject& usage, const char* key,
 }
 
 // 从一条完整 SSE 事件里解析累计 usage：四类 token 写进 out（缺失的不动），
-// 返回本事件的累计 output tokens（没有 / 解析失败返回 -1，与旧实现同口径）。
-//   - message_start：usage 嵌在 message 里（message.usage）
-//   - message_delta：usage 在顶层（usage）
+// 返回本事件的累计 output tokens（没有 / 解析失败返回 -1）。
+// message_start：usage 嵌在 message.usage；message_delta：usage 在顶层。
 int64_t parseUsageFromEvent(const std::string& event, StreamUsage& out) {
     // 逐行找 "data:" 行（事件行以 \n 分隔，容忍 \r 结尾）
     size_t lineStart = 0;
@@ -90,8 +89,7 @@ int64_t parseUsageFromEvent(const std::string& event, StreamUsage& out) {
 } // namespace
 
 std::vector<int64_t> SseUsageParser::feed(const std::string& chunk) {
-    // ponytail: 1MB 无事件分隔符直接清缓冲（非 SSE 响应护栏），正常 SSE 事件
-    // 远小于此；需要更精细处理时改按 content-length/类型判断
+    // 1MB 无事件分隔符直接清缓冲（非 SSE 响应护栏），正常 SSE 事件远小于此
     constexpr size_t kMaxBuf = 1u << 20;
     buf_ += chunk;
     std::vector<int64_t> out;
@@ -128,7 +126,7 @@ bool wantsStream(const std::string& body) {
     if (!json_scan::findTopLevelValueSpan(body, "stream", begin, end)) {
         return false;
     }
-    // 与旧 isJsonTrue 同口径：值区间前 4 字节是 "true" 即为真
+    // 值区间前 4 字节是 "true" 即为真
     return body.compare(begin, 4, "true") == 0;
 }
 
@@ -152,7 +150,7 @@ std::string buildUpstreamUrl(const std::string& baseUrl,
 }
 
 std::string buildUpstreamErrorFrame(const std::string& upstreamError) {
-    // 转义引号/反斜杠/换行，保证 data 行是合法 JSON（错误 JSON 转义属 W8）
+    // 转义引号/反斜杠/换行，保证 data 行是合法 JSON
     std::string escaped;
     escaped.reserve(upstreamError.size() + 16);
     for (const char c : upstreamError) {
@@ -186,10 +184,9 @@ sendStreamingClaude(const platform::http::Request& req,
             core::ErrorCode::ValidationError, "上游 URL 为空（profile.baseUrl 未配置）");
     }
 
-    // 2. 按上游方言归一（鉴权头 / UA / 会话头 / 模型名标记）——
-    //    各网关差异全部收敛在 UpstreamDialect 里，此处不再有 provider if。
-    //    方言由 profile.dialectOverride 钉住（空串 = 未覆盖 → host 推断，
-    //    与不传该参逐项一致；CPX-13 接线），与缓冲转发 / 连通性探测同源
+    // 2. 按上游方言归一（鉴权头 / UA / 会话头 / 模型名标记）——各网关差异
+    //    收敛在 UpstreamDialect。方言由 profile.dialectOverride 钉住（空串 =
+    //    host 推断），与缓冲转发 / 连通性探测同源
     const UpstreamDialect dialect =
         UpstreamDialect::forBaseUrl(profile.baseUrl, profile.dialectOverride);
     dialect.applyHeaders(upstream.headers, profile.apiKeyPlain,
@@ -221,13 +218,13 @@ void forwardStream(platform::http::ResponseWriter& out,
         return;
     }
 
-    // 统计接线（设计 §3）：流生命周期内共享一个重组器 + 流 id，
-    // endStream 幂等，provider 三条 return false 路径 + releaser 都调
+    // 统计接线：流生命周期内共享一个重组器 + 流 id，endStream 幂等，
+    // provider 三条 return false 路径 + releaser 都调
     const uint64_t statsId = core::proxy_stats::beginStream();
 
-    // 用量状态（migration v5）：parser 与「首个 chunk 时刻」都随流生命周期。
-    // provider 与 releaser 由 cpp-httplib 在同一 worker 线程顺序调用（releaser
-    // 必在 provider 收尾之后），故这两个字段不需要加锁。
+    // 用量状态：parser 与「首个 chunk 时刻」都随流生命周期。provider 与
+    // releaser 由 cpp-httplib 在同一 worker 线程顺序调用（releaser 必在
+    // provider 收尾之后），故这两个字段不需要加锁。
     struct UsageState {
         SseUsageParser parser;      // 只由 provider 写
         int64_t firstEventMs = -1;  // provider 写，releaser 读
@@ -240,7 +237,7 @@ void forwardStream(platform::http::ResponseWriter& out,
         [upstream, statsId, usageState, streamStart](
             platform::http::ResponseWriter::ChunkWriter writeChunk,
             platform::http::ResponseWriter::IsWritableFn isWritable) -> bool {
-        // 客户端已断开 → 立即停止上游（spec §10.4 取消语义）
+        // 客户端已断开 → 立即停止上游
         if (isWritable && !isWritable()) {
             LOG_INFO("客户端断开，取消上游流式请求");
             upstream->cancel();
@@ -259,9 +256,9 @@ void forwardStream(platform::http::ResponseWriter& out,
         }
         if (r == platform::http::ChunkResult::Error) {
             LOG_WARN("上游流式错误: " + err);
-            // W7 P0-2：上游断流/超时不再静默收尾——先合成一个 event: error
-            // SSE 帧写给客户端（Claude Code 能感知截断），再正常结束 chunked
-            // 传输。err == "cancelled"（客户端已断开）时跳过，写也写不进去。
+            // 上游断流/超时不静默收尾——先合成一个 event: error SSE 帧写给
+            // 客户端（可感知截断），再正常结束 chunked 传输。
+            // err == "cancelled"（客户端已断开）时跳过，写也写不进去。
             if (err != "cancelled") {
                 const std::string frame = buildUpstreamErrorFrame(err);
                 if (!writeChunk(frame.data(), frame.size())) {

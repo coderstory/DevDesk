@@ -1,7 +1,6 @@
-// src/module_markdown/md_highlight.cpp
-// 行级 Markdown 词法高亮（styled-runs Phase C）。
-// 边界：行级扫描器非完整 CommonMark——跨行强调、软换行段边界 token 等边角会漏标
-//（漏标回默认色，优于错标）；预览侧仍走 md4c 保证渲染正确。
+// 行级 Markdown 词法高亮（styled-runs）。
+// 边界：行级扫描器非完整 CommonMark——跨行强调等边角会漏标（漏标回默认色，优于错标）；
+// 预览侧仍走 md4c 保证渲染正确。
 #include "md_highlight.h"
 
 #include "core/theme.h"
@@ -17,9 +16,8 @@ MdHighlightColors mdHighlightColors(const core::theme::Tokens& tokens) {
         tokens.colors.textTertiary,   // marker
         tokens.colors.success,        // code
         tokens.colors.info,           // link / italic
-        tokens.colors.primaryText,    // listMarker（文字色走 primaryText，浅色下达标深一档）
+        tokens.colors.primaryText,    // listMarker
         tokens.colors.textSecondary,  // quote
-        // 预览代码块关键字多色（Phase 3 ⑤）：取既有语义 token，浅/深两档自动适配。
         tokens.colors.info,           // codeKeyword
         tokens.colors.warning,        // codeString
         tokens.colors.textTertiary,   // codeComment
@@ -131,8 +129,7 @@ void scanInline(std::string_view line, size_t from,
 } // namespace
 
 void MdHighlighter::ensureFences(const std::string& fullText) {
-    // 每次回调全文本等值比较（memcmp 级）——10k 行文档 × 可视行数实测 ~1ms 级
-    //（见 md_highlight_perf 探针）；超预算再换 (revision, 指纹) 键控。
+    // 全文本等值比较实测 ~1ms 级（见 md_highlight_perf 探针）
     if (fullText == fenceText_) return;
     fenceText_ = fullText;
     fences_ = scanFences(fullText);

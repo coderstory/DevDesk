@@ -1,5 +1,5 @@
 // src/module_claude_proxy/quota/quota_credential.cpp
-// 默认凭据来源实现：读本 profile 自己的 api_key_encrypted（E1 已落库）+ 配置表。
+// 默认凭据来源实现：读本 profile 的 api_key_encrypted + 配置表。
 #include "quota_credential.h"
 
 #include <map>
@@ -17,10 +17,8 @@ namespace {
 
 namespace pj = platform::json;
 
-// {"accessKeyId":"AK",...} → map。坏 JSON / 非对象 → 空 map（容错：让 provider 自己去撞字段校验，
-// 出的错才是用户看得懂的）。
-// 非字符串值一律丢、不报错：fields 的契约是 map<string,string>；stringify 塞进去会让 provider
-// 收到「看着合法、实则类型不对」的值，报错指向错误方向。丢 = provider 说「这个字段没填」，这是对的。
+// {"accessKeyId":"AK",...} → map。坏 JSON / 非对象 → 空 map（让 provider 自己去撞字段校验，报错才看得懂）。
+// 非字符串值一律丢：fields 契约是 map<string,string>，塞 stringify 值会把报错指向错误方向。
 std::map<std::string, std::string> flatMapFromJson(const std::string& json) {
     std::map<std::string, std::string> out;
     if (json.empty()) return out;

@@ -14,10 +14,9 @@ namespace module::claude {
 namespace {
 
 // 槽位映射表真源 = provider_config.h 的 DEVDESK_MODEL_SLOT_LIST，此处只提供
-// 基于 modelSlotTable() 的派生判定，不维护平行表（曾因三表不同步而静默漏键）
+// 基于 modelSlotTable() 的派生判定，不维护平行表
 
-// 非官方变量别名表：AUTO_COMPACT_ENABLED 非官方，官方关闭自动压缩用
-// DISABLE_AUTO_COMPACT
+// 非官方变量别名表：AUTO_COMPACT_ENABLED → 官方关闭自动压缩键 DISABLE_AUTO_COMPACT
 struct EnvAlias {
     const char* alias;
     const char* official;
@@ -33,8 +32,7 @@ bool isUnrecognizedEnvKey(const std::string& key) {
     return envVarHint(key) == nullptr && !isModelSlotEnvKey(key);
 }
 
-// 别名值取反：真值（开启自动压缩）→ DISABLE_AUTO_COMPACT="0"；
-// 假值/空 → "1"。非空非假值一律按真处理（宁可不误禁用）
+// 别名值取反：真值 → "0"（不禁用），假值/空 → "1"；非空非假值一律按真处理
 std::string invertedBoolValue(const std::string& v) {
     if (v.empty() || v == "0" || v == "false" || v == "off" || v == "OFF" ||
         v == "False" || v == "FALSE") {
@@ -42,10 +40,6 @@ std::string invertedBoolValue(const std::string& v) {
     }
     return "0";
 }
-
-// 键名格式硬校验已于 2026-09-24 移除：env 块内的变量名一律可导入
-//（用户要求——小写/连字符/数字开头等非标准键也收；「不在官方清单」
-// 由表单侧红边框提示，不阻断导入）
 
 bool isBlankText(const std::string& text) {
     for (const char c : text) {
@@ -64,8 +58,7 @@ std::string deriveDisplayName(const std::string& model) {
 }
 
 const char* modelSlotDefEnvKey() {
-    // 单一来源 = 槽位表 default 行的 envKey（不手抄键名）；空串返回仅为
-    // 表被改坏时的理论兜底（抑制步静默失效，不崩）
+    // 单一来源 = 槽位表 default 行的 envKey；空串返回 = 表被改坏时的理论兜底
     for (const auto& m : modelSlotTable()) {
         if (std::string(m.jsonKey) == "default") return m.envKey;
     }
@@ -73,7 +66,6 @@ const char* modelSlotDefEnvKey() {
 }
 
 bool isModelSlotEnvKey(const std::string& key) {
-    // claude_ui_detail 的 isModelMappingEnvKey 转发本函数
     for (const auto& m : modelSlotTable()) {
         if (key == m.envKey) return true;
         if (m.nameKey != nullptr && key == m.nameKey) return true;
@@ -81,12 +73,10 @@ bool isModelSlotEnvKey(const std::string& key) {
     return false;
 }
 
-// 1M 上下文标记：语义逐条对齐 cc-switch useModelState.ts（见头文件注释）；
-// 零正则、零 locale，保持纯函数
+// 1M 上下文标记：语义对齐 cc-switch useModelState.ts（见头文件）；零正则零 locale
 namespace {
 
-// 尾部空白裁剪（等价 JS trimEnd；只裁四字符，与 isBlankText 同口径，
-// 不用 locale 相关 std::isspace 避免全角空格歧义）
+// 尾部空白裁剪等价 JS trimEnd：不用 locale 相关 std::isspace 避免全角空格歧义
 std::string trimEndCopy(const std::string& text) {
     size_t end = text.size();
     while (end > 0) {
@@ -254,7 +244,7 @@ std::optional<platform::json::JsonObject> parseExtraSettingsSide(
     return parsed.value().asObject();
 }
 
-// "env" 顶层键的读侧兜底警告（D-5：防 DB 直写等非 UI 路径绕过校验后静默丢弃）
+// "env" 顶层键的读侧兜底警告（防 DB 直写等非 UI 路径绕过校验后静默丢弃）
 void warnEnvKeySkipped(const char* side, std::vector<std::string>* warnings) {
     if (warnings != nullptr) {
         warnings->push_back(std::string(side) +
@@ -273,8 +263,7 @@ std::string effectiveExtraSettingsJson(const std::string& profileJson,
     auto fragmentObj = parseExtraSettingsSide(fragmentJson, "片段的", warningsOut);
     if (!profileObj && !fragmentObj) return {};   // 双空 → 空串（含双未配置）
 
-    // 逐键叠加：profile 先入、片段后入（后写者赢 = 片段赢）；解绑后同名键
-    // 回落 profile 自身值——片段值从不写进 profile 行
+    // 逐键叠加：profile 先入、片段后入（后写者赢）；片段值从不写进 profile 行
     platform::json::JsonObject merged;
     auto addSide = [&](const std::optional<platform::json::JsonObject>& obj,
                        const char* side) {
@@ -298,8 +287,7 @@ std::string effectiveExtraSettingsJson(const std::string& profileJson,
     return text.value();
 }
 
-// settings.json 原文 → 非 env 顶层属性 JSON（pretty）：输入上限同
-// kMaxImportTextBytes，输出走与 effectiveExtraSettingsJson 相同的序列化通道。
+// settings.json 原文 → 非 env 顶层属性 JSON（pretty）：输入上限同 kMaxImportTextBytes。
 std::string nonEnvTopLevelJson(const std::string& settingsDocText) {
     if (settingsDocText.empty() ||
         settingsDocText.size() > kMaxImportTextBytes) {
@@ -324,8 +312,7 @@ std::string nonEnvTopLevelJson(const std::string& settingsDocText) {
 std::vector<std::string> extraSettingsTopLevelKeys(
     const std::string& extraSettingsJson) {
     std::vector<std::string> out;
-    // best-effort 枚举（静默容错）：解析失败警告由 applyExtraSettingsToSettingsDoc
-    // 统一发，此处不重复（takeOver 快照段先跑，双报会刷两条同文警告）
+    // best-effort 枚举：解析失败警告由 applyExtraSettingsToSettingsDoc 统一发，防双报
     if (isBlankText(extraSettingsJson) ||
         extraSettingsJson.size() > kMaxExtraSettingsBytes) {
         return out;
@@ -334,7 +321,7 @@ std::vector<std::string> extraSettingsTopLevelKeys(
     if (parsed.isFail() || !parsed.value().isObject()) return out;
     auto obj = parsed.value().asObject();
     for (const auto& k : obj.keys()) {
-        if (k == "env") continue;   // 永不写入（D-5）
+        if (k == "env") continue;   // 永不写入
         out.push_back(k);
     }
     return out;
@@ -361,8 +348,8 @@ ExtraSettingsApply applyExtraSettingsToSettingsDoc(
     }
     auto obj = parsed.value().asObject();
 
-    // 逐键并入（§4.2 步骤 2）：非 env 键赢过 live settings.json 既有同名键
-    //（D-3：被覆盖旧值已在 sidecar 快照中，还原无损）
+    // 逐键并入：非 env 键赢过 live settings.json 既有同名键
+    //（被覆盖旧值已在 sidecar 快照中，还原无损）
     bool writeModel = false;
     for (const auto& k : obj.keys()) {
         if (k == "env") {
@@ -377,10 +364,7 @@ ExtraSettingsApply applyExtraSettingsToSettingsDoc(
         }
     }
 
-    // 模型键抑制：生效 JSON 含非空字符串顶层 "model" → 从 root.env 移除
-    // ANTHROPIC_MODEL（def 槽位值失效；键仍在托管全集里，还原语义不变）。
-    // 发生在合并写入后的 apply 步；本轮 JSON 不含 "model" 时该键由陈旧删除
-    // 逻辑自然撤走
+    // 模型键抑制：顶层 "model" 非空字符串 → 从 root.env 移除 ANTHROPIC_MODEL（def 槽位值失效）；本轮无 "model" 时由陈旧删除逻辑撤走
     if (writeModel) {
         out.modelSuppressed = true;
         if (root.has("env") && root.get("env").isObject()) {
@@ -457,7 +441,6 @@ EnvAliasMapping applyEnvAliases(const std::map<std::string, std::string>& env) {
             out.aliasMappedKeys.push_back(key);
         } else {
             out.env[key] = value;
-            // 官方键与槽位托管键两处都不命中才标未识别
             if (isUnrecognizedEnvKey(key)) {
                 out.unrecognizedKeys.push_back(key);
             }
@@ -618,8 +601,7 @@ std::map<std::string, std::string> buildProxyEnv(
     std::map<std::string, EnvSource>* sourcesOut) {
     std::map<std::string, std::string> out;
 
-    // 来源标注：sourcesOut 非空时每写一层顺手记「这个键最后被哪层写入」——
-    // env 是扁平 map 结果里没有出处，用可选出参而非 provenance 框架。
+    // 来源标注：sourcesOut 非空时记每个键最后被哪层写入（env 是扁平 map 无出处）。
     if (sourcesOut != nullptr) sourcesOut->clear();
     auto markOne = [&](const std::string& k, EnvSource s) {
         if (sourcesOut != nullptr) (*sourcesOut)[k] = s;
@@ -629,7 +611,7 @@ std::map<std::string, std::string> buildProxyEnv(
         for (const auto& [k, v] : m) (*sourcesOut)[k] = s;
     };
 
-    // extra_env 先入表（别名归一），托管键随后写入 → 冲突时托管键优先（规则 5）
+    // extra_env 先入表（别名归一），托管键随后写入 → 冲突时托管键优先
     auto extra = parseExtraEnv(extraEnvJson);
     if (extra.isOk()) {
         out = applyEnvAliases(extra.value()).env;
@@ -646,12 +628,12 @@ std::map<std::string, std::string> buildProxyEnv(
     const ModelsConfig mc = effectiveModelsConfig(modelsConfigJson);
     for (const auto& m : modelSlotTable()) {
         const ModelSlot& slot = mc.*m.slot;
-        if (slot.model.empty()) continue;  // 空槽位跳过（规则 3）
+        if (slot.model.empty()) continue;  // 空槽位跳过
         out[m.envKey] = slot.model;
         markOne(m.envKey, EnvSource::Managed);
         if (m.nameKey != nullptr) {
             out[m.nameKey] = slot.name.empty()
-                ? deriveDisplayName(slot.model)  // 显示名派生（规则 4）
+                ? deriveDisplayName(slot.model)  // 显示名派生
                 : slot.name;
             markOne(m.nameKey, EnvSource::Managed);
         }
@@ -666,8 +648,7 @@ std::map<std::string, std::string> buildDirectEnv(
     const std::string& extraEnvJson) {
     std::map<std::string, std::string> out;
 
-    // extra_env 先入表（别名归一），托管键最后写入压过——导入数据可能带
-    // 旧 BASE_URL / token，托管键必须最后落子。
+    // extra_env 先入表（别名归一），托管键最后写入压过（导入数据可能带旧键）。
     auto extra = parseExtraEnv(extraEnvJson);
     if (extra.isOk()) {
         out = applyEnvAliases(extra.value()).env;
@@ -681,10 +662,7 @@ std::map<std::string, std::string> buildDirectEnv(
         if (!url.empty()) out["ANTHROPIC_BASE_URL"] = url;
     }
 
-    // 密钥键按认证字段三态只写一个，同时**清掉另一密钥键**：extra_env 可能
-    // 带进反向的 token 键，留着会让直连请求携带两个凭据、网关可能取到过期的
-    // 一个（代理路径免疫——客户端鉴权头被代理剥掉，直连没有这层保护，必须
-    // 单键）。密钥值为空串 → 不写
+    // 密钥键只写一个并清掉另一密钥键：extra_env 可能带进反向 token 键，直连携带两个凭据时网关可能取到过期的那个（代理路径免疫）。密钥空串 → 不写
     const AuthField field = authFieldFromText(authField);
     const char* tokenKey = (field == AuthField::ApiKey)
         ? "ANTHROPIC_API_KEY"
@@ -711,8 +689,7 @@ std::map<std::string, std::string> buildDirectEnv(
     return out;
 }
 
-// 托管键全集：与槽位是否有值无关（buildProxyEnv 只在槽位非空时写槽位键，
-// 检测侧需要全集）
+// 托管键全集与槽位是否有值无关（buildProxyEnv 只在槽位非空时写键，检测侧需要全集）
 std::vector<std::string> managedEnvKeyNames() {
     std::vector<std::string> out;
     out.reserve(2 + 2 * kModelSlotCount);  // 2 个固定键 + 每行至多 2 个槽位键
@@ -823,48 +800,46 @@ ReverseSyncParse parseEnvForReverseSync(
     }
     auto env = parsed.value().asObject();
 
-    // 跳过键登记：原始键名 + 别名归一后的键名都要记（profile 的 extra_env 存
-    // 的是归一后的键，只记原始键名会漏保护 DISABLE_AUTO_COMPACT 一类）
+    // 跳过键登记：原始键名 + 别名归一后的键名都要记（只记原始键名会漏保护）
     auto markSkipped = [&out](const std::string& key) {
         out.cfg.skippedKeys.push_back(key);
         for (const auto& a : kEnvAliases) {
             if (key == a.alias) out.cfg.skippedKeys.push_back(a.official);
         }
     };
-    // token 目标只有一个（本 profile 的凭据列）：任一 token 键命中守卫都按
-    // 「整个 token 字段不写也不清」登记
+    // token 目标只有一个：任一 token 键命中守卫都按「整个 token 字段不写也不清」登记
     auto markTokenSkipped = [&markSkipped]() {
         markSkipped("ANTHROPIC_AUTH_TOKEN");
         markSkipped("ANTHROPIC_API_KEY");
     };
 
-    // 第一遍：G1 托管键 / G4 空值 / G6 非字符串或超长 → 跳过（不写也不清）
+    // 第一遍：托管键 / 空值 / 非字符串或超长 → 跳过（不写也不清）
     std::map<std::string, std::string> valid;
     for (const auto& key : env.keys()) {
-        if (containsKey(managedKeys, key)) {  // G1
+        if (containsKey(managedKeys, key)) {
             markSkipped(key);
             continue;
         }
         auto val = env.get(key);
-        if (!val.isString()) {  // G6
+        if (!val.isString()) {
             out.cfg.warnings.push_back("env 值非字符串，已跳过: " + key);
             markSkipped(key);
             continue;
         }
         const std::string v = val.asString();
-        if (v.size() > 4096) {  // G6
+        if (v.size() > 4096) {
             out.cfg.warnings.push_back("env 值超过 4KB 上限，已跳过: " + key);
             markSkipped(key);
             continue;
         }
-        if (v.empty()) {  // G4
+        if (v.empty()) {
             markSkipped(key);
             continue;
         }
         valid[key] = v;
     }
 
-    // G2：loopback BASE_URL（本地代理形态）→ base_url 与本次 token 都不写也不清
+    // loopback BASE_URL（本地代理形态）→ base_url 与本次 token 都不写也不清
     bool loopbackBaseUrl = false;
     {
         auto it = valid.find("ANTHROPIC_BASE_URL");
@@ -887,7 +862,7 @@ ReverseSyncParse parseEnvForReverseSync(
     }
 
     // token：AUTH_TOKEN 优先，其次 API_KEY（同现 → AUTH_TOKEN + warning）；
-    // G3 占位符 → 不写也不清（保持 profile 原密钥）
+    // 占位符 → 不写也不清（保持 profile 原密钥）
     {
         auto auth = valid.find("ANTHROPIC_AUTH_TOKEN");
         auto api = valid.find("ANTHROPIC_API_KEY");
@@ -898,18 +873,17 @@ ReverseSyncParse parseEnvForReverseSync(
                     "同时含 ANTHROPIC_API_KEY 与 ANTHROPIC_AUTH_TOKEN，"
                     "已采用 AUTH_TOKEN");
             }
-        } else if (auth != valid.end()) {  // AUTH_TOKEN 占位符 → G3
+        } else if (auth != valid.end()) {  // AUTH_TOKEN 占位符
             markTokenSkipped();
         } else if (api != valid.end() && api->second != kProxyAuthPlaceholder) {
             out.cfg.authToken = api->second;
-        } else if (api != valid.end()) {  // API_KEY 占位符 → G3
+        } else if (api != valid.end()) {  // API_KEY 占位符
             markTokenSkipped();
         }
         valid.erase("ANTHROPIC_AUTH_TOKEN");
         valid.erase("ANTHROPIC_API_KEY");
     }
 
-    // 模型槽位 / *_NAME 槽位（遍历槽位表派生）
     for (const auto& m : modelSlotTable()) {
         auto mit = valid.find(m.envKey);
         if (mit != valid.end()) {
@@ -957,17 +931,14 @@ ReverseSyncMerge mergeReverseSyncEnv(const ImportedConfig& cfg,
     ModelsConfig merged = cur;
     for (const auto& m : modelSlotTable()) {
         if (!isKeep(m.envKey)) {
-            (merged.*m.slot).model = (cfg.models.*m.slot).model;  // 出现覆盖 / 缺席清空（G5）
+            (merged.*m.slot).model = (cfg.models.*m.slot).model;  // 出现覆盖 / 缺席清空
         }
         // nameKey 为空的槽位无官方 _NAME 变体 → name 不属托管字段，任何情况下不动
         if (m.nameKey != nullptr && !isKeep(m.nameKey)) {
             (merged.*m.slot).name = (cfg.models.*m.slot).name;
         }
     }
-    // 反向同步也要走同一套 1M 归一：用户在 settings.json 手写 [1M] 到不支持
-    // 1M 的槽位时，不剥会原样落库、表单开关状态与落库值不一致。归一放在比较
-    // 之前——「唯一差异是本就该剥的标记」时判为相等，不产生无意义写库；
-    // 与 UI 写入口同一条函数，同样幂等
+    // 反向同步走同一套 1M 归一：手写 [1M] 到不支持槽位时不剥会落库与开关不一致；放在比较前，唯一差异是本就该剥的标记时不产生无意义写库（幂等）
     normalizeOneMMarkers(merged);
 
     out.modelsConfigJson = curModelsConfigJson;
@@ -990,7 +961,7 @@ ReverseSyncMerge mergeReverseSyncEnv(const ImportedConfig& cfg,
         if (!isKeep(k)) mergedExtra[k] = v;  // 出现覆盖 / 新增（守卫键不写）
     }
     for (const auto& [k, v] : curExtra) {
-        if (isKeep(k)) mergedExtra[k] = v;  // 守卫键保持原值（G1–G4/G6：不清）
+        if (isKeep(k)) mergedExtra[k] = v;  // 守卫键保持原值（不清）
     }
     out.extraEnvJson = curExtraEnvJson;
     if (mergedExtra != curExtra) {
@@ -1036,8 +1007,7 @@ bool shouldFailoverTo(int statusCode, const std::string& errorKind) {
         case 501:
             return false;
         default:
-            // 401/403 / 429 / 5xx / 其余 4xx → 换；2xx/3xx 到不了判定点
-            //（只在失败时判），保守不换
+            // 401/403 / 429 / 5xx / 其余 4xx → 换；2xx/3xx 到不了判定点，保守不换
             return statusCode >= 400 && statusCode < 600;
     }
 }

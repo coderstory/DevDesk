@@ -1,4 +1,3 @@
-// src/module_todo/todo_service.cpp
 // Todo 看板业务逻辑层实现
 #include "todo_service.h"
 
@@ -26,8 +25,7 @@ Priority intToPriority(int v) {
     return static_cast<Priority>(v);
 }
 
-// LIKE 模式转义 % _ \（配合 SQL 的 ESCAPE '\'），防用户查询串里的通配符被当作
-// LIKE 元字符导致误命中
+// LIKE 模式转义 % _ \（配合 SQL 的 ESCAPE '\'），防查询串里的通配符被当作元字符误命中
 using core::str::escapeLikePattern;
 
 } // namespace
@@ -229,9 +227,8 @@ core::Result<Column> TodoService::createColumn(const std::string& title) {
     int pos = nextPosResult.value();
     const int64_t now = nowEpochSeconds();
 
-    // INSERT ... RETURNING id（SQLite ≥3.35）单语句原子取回新 rowid：旧实现
-    // 「INSERT+COMMIT 后 SELECT last_insert_rowid()」两步间不持锁，并发写者会
-    // 改写连接级 last_insert_rowid，取回错误 id
+    // INSERT ... RETURNING id 单语句原子取回新 rowid：两步「INSERT 后 SELECT last_insert_rowid()」
+    // 会被并发写者改写连接级 last_insert_rowid，取回错误 id
     auto prep = db_.prepare(
         "INSERT INTO todo_columns (title, position, color, created_at) "
         "VALUES (?, ?, NULL, ?) RETURNING id");
@@ -266,10 +263,9 @@ core::Result<Column> TodoService::createColumn(const std::string& title) {
         return core::Result<Column>::fail(idVal.errorCode(), idVal.errorMessage());
     }
 
-    // 步进到 DONE 释放连接上的 in-progress 语句：RETURNING 取行后不 drain，
-    // 同连接上的事务 COMMIT 会撞 "cannot commit transaction - SQL statements in
-    // progress"（recursive_mutex 只逐调用持锁，取行到返回间其他线程开事务仍会撞）。
-    // 失败极罕见且行已写入，只 WARN。
+    // drain 到 DONE 释放 in-progress 语句：不 drain 则同连接事务 COMMIT 会撞
+    // "cannot commit transaction - SQL statements in progress"（recursive_mutex 只逐调用持锁）。
+    // 失败极罕见且行已写入，只 WARN
     auto drain = stmt.step();
     if (drain.isFail()) {
         LOG_WARN("Todo: INSERT ... RETURNING 收尾 step 失败（行已写入，继续）: " +
@@ -286,8 +282,7 @@ core::Result<Column> TodoService::createColumn(const std::string& title) {
 }
 
 core::Result<void> TodoService::renameColumn(int64_t id, const std::string& title) {
-    // 持锁覆盖 UPDATE + changes() 取数，避免并发语句插队导致计数失真
-    //（recursive_mutex，Statement 内部加锁可重入）
+    // 持锁覆盖 UPDATE + changes() 取数，避免并发语句插队导致计数失真（recursive_mutex 可重入）
     std::lock_guard<std::recursive_mutex> lock(db_.mutex());
 
     auto prep = db_.prepare("UPDATE todo_columns SET title = ? WHERE id = ?");
@@ -344,9 +339,8 @@ core::Result<void> TodoService::deleteColumn(int64_t id) {
 
 core::Result<void> TodoService::reorderColumns(const std::vector<int64_t>& ids) {
     auto txResult = db_.transaction([&]() -> core::Result<void> {
-        // 按 ids 顺序重设 position = 0,1,2...。position 无唯一约束，逐行覆盖即可，
-        // 无需负位段过渡。边界：ids 必须是全部列的一次排列（唯一调用点 doShiftColumn
-        // 传全集）。每次重新 prepare（sqlite3 不允许同一 stmt 多次 step）
+        // 按 ids 顺序重设 position = 0,1,2...；ids 必须是全部列的一次排列（唯一调用点 doShiftColumn 传全集）。
+        // 每次重新 prepare（sqlite3 不允许同一 stmt 多次 step）
         for (size_t i = 0; i < ids.size(); ++i) {
             auto onePrep = db_.prepare("UPDATE todo_columns SET position = ? WHERE id = ?");
             if (onePrep.isFail()) {
@@ -425,8 +419,7 @@ core::Result<Task> TodoService::createTask(int64_t columnId, const std::string& 
     int pos = nextPosResult.value();
     const int64_t now = nowEpochSeconds();
 
-    // 同 createColumn：INSERT ... RETURNING id 取代「事务内 INSERT + COMMIT 后
-    // SELECT last_insert_rowid()」，消除并发写者改写连接级 rowid 的竞态。
+    // 同 createColumn：INSERT ... RETURNING id 消除并发写者改写连接级 rowid 的竞态
     auto prep = db_.prepare(
         "INSERT INTO todo_tasks "
         "(column_id, title, description, priority, due_at, tags, position, completed_at, created_at, updated_at) "
@@ -490,8 +483,7 @@ core::Result<void> TodoService::updateTask(const Task& task) {
 
     std::string tagsJson = serializeTags(task.tags);
 
-    // 只更新内容字段：column_id / position 不在此处——改列/改序一律走 moveTask
-    //（避免 updateTask 被误用时静默挪列或顶到列首）。
+    // 只更新内容字段：column_id / position 改列/改序一律走 moveTask（避免 updateTask 误用时静默挪列或顶到列首）
     auto prep = db_.prepare(
         "UPDATE todo_tasks SET "
         "title = ?, description = ?, priority = ?, "
@@ -715,8 +707,7 @@ core::Result<std::vector<Task>> TodoService::search(const std::string& query) {
 core::Result<std::vector<Task>> TodoService::listOverdue() {
     const int64_t now = nowEpochSeconds();
 
-    // 逾期谓词单源：core/overdue.h 的 kWhereSql（与首页 HomeService::getStats
-    // 共用同一份片段，列名/口径改一处两边同步生效）
+    // 逾期谓词单源：core/overdue.h 的 kWhereSql（与 HomeService::getStats 共用，改一处两边同步）
     const std::string sql =
         std::string(
             "SELECT id, column_id, title, description, priority, due_at, tags, position, completed_at "
